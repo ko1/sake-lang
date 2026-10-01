@@ -1,7 +1,7 @@
 # Sake Tutorial
 
-Sake (/seɪk/) exists for the sake of a new shape for types. It keeps **Ruby's syntax**, but you
-write the type on each **operation**, never on a variable.
+Sake (/seɪk/) is designed for the sake of finding a new place for types. It keeps **Ruby's
+syntax**, but you write the type on each **operation**, never on a variable.
 
 ```ruby
 String.upcase(s)      # Sake
