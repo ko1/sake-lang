@@ -147,6 +147,20 @@ module Sake
       end
     end
 
+    # String.scan gives Strings, or with capture groups a Tuple per match. Only a literal Regexp's
+    # groups are known; a group is possibly nil unless the pattern has no alternation or optional group.
+    def scan_elem(pat)
+      return t("String") if pat.is_a?(Prism::StringNode)
+      return u(t("String"), unknown("scan groups")) unless pat.is_a?(Prism::RegularExpressionNode)
+      src = pat.unescaped
+      n = Regexp.new("(?:#{src})|", pat.extended? ? Regexp::EXTENDED : 0).match("").size - 1
+      return t("String") if n.zero?
+      g = src.match?(/\||\)(?:[?*]|{0|{,)/) ? u(t("String"), t("Nil")) : t("String")
+      tuple(Array.new(n) { g })
+    rescue RegexpError
+      u(t("String"), unknown("scan groups"))
+    end
+
     def builtin_result_ext(name, args, blk, node)
       if (kind = SHOWS[name])
         (name == "Kernel.format" || name == "Kernel.sprintf" ? args.drop(1) : args).each { show_deep(_1, kind, node) }
@@ -173,7 +187,7 @@ module Sake
         call_block(blk, [t("String")])
         a0
       when "Regexp.match", "String.match" then u(t("MatchData"), t("Nil"))
-      when "String.scan" then new_site(node, " #{name}", u(t("String"), unknown("scan groups")))
+      when "String.scan" then new_site(node, " #{name}", scan_elem(node.arguments.arguments[1]))
       when "MatchData.named_captures"
         hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = t("String"); s.val = u(t("String"), t("Nil")) }
       when "Float.infinite?" then u(t("Integer"), t("Nil"))
