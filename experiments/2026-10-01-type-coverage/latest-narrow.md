@@ -26,7 +26,7 @@
 | index_errors2.sake | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
 | index_errors3.sake | 2 | 2 | 0 | 0 | 0 | 2 | 0 | 0 |
 | index_errors4.sake | 2 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
-| interpolation.sake | 2 | 10 | 0 | 0 | 0 | 10 | 1 | 1 |
+| interpolation.sake | 2 | 16 | 0 | 0 | 0 | 10 | 0 | 0 |
 | io.sake | 2 | 6 | 0 | 0 | 0 | 1 | 0 | 0 |
 | it_param.sake | 2 | 9 | 0 | 0 | 0 | 9 | 0 | 0 |
 | nil_error.sake | 1 | 2 | 0 | 1 | 0 | 3 | 0 | 0 |

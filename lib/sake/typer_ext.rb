@@ -122,7 +122,35 @@ module Sake
       "Nil" => %w[]
     }.flat_map { |type, names| names.map { [_1, type] } }.to_h.freeze
 
+    # Built-ins that show values run each type's own to_s / inspect, so the typer analyzes those too.
+    SHOWS = { "Kernel.puts" => :to_s, "Kernel.print" => :to_s, "Kernel.p" => :inspect, "Kernel.pp" => :inspect,
+              "Kernel.format" => :to_s, "Kernel.sprintf" => :to_s, "Array.join" => :to_s }.freeze
+
+    def show_deep(ty, kind, node, seen = {})
+      ty.each do |a|
+        next if seen[a]
+        seen[a] = true
+        if a.is_a?(String)
+          show_types([a], kind, node)
+          next
+        end
+        inner = case a[0]
+                when :array then elem_of([a])
+                when :tuple then u(*a[1])
+                when :record then u(*a[1].map(&:last))
+                when :hash then u(*hash_kv([a]))
+                when :set then set_elem([a])
+                else []
+                end
+        # Elements are shown with inspect, except that puts and join show Array elements with to_s.
+        show_deep(inner, kind == :to_s && a[0] == :array ? :to_s : :inspect, node, seen)
+      end
+    end
+
     def builtin_result_ext(name, args, blk, node)
+      if (kind = SHOWS[name])
+        (name == "Kernel.format" || name == "Kernel.sprintf" ? args.drop(1) : args).each { show_deep(_1, kind, node) }
+      end
       table = table_result(name, args, blk, node)
       return table unless table == :none
       a0 = args[0]

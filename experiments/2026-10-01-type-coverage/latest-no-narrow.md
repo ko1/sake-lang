@@ -20,11 +20,13 @@
 | field_shorthand.sake | 2 | 25 | 0 | 4 | 0 | 29 | 0 | 0 |
 | first.sake | 2 | 30 | 0 | 0 | 0 | 29 | 0 | 0 |
 | include.sake | 2 | 8 | 0 | 0 | 0 | 8 | 0 | 0 |
+| include_order.sake | 2 | 2 | 0 | 0 | 0 | 2 | 0 | 0 |
 | index.sake | 2 | 34 | 1 | 0 | 0 | 15 | 0 | 0 |
 | index_errors.sake | 1 | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | index_errors2.sake | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
 | index_errors3.sake | 2 | 2 | 0 | 0 | 0 | 2 | 0 | 0 |
 | index_errors4.sake | 2 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
+| interpolation.sake | 2 | 16 | 0 | 0 | 0 | 10 | 0 | 0 |
 | io.sake | 2 | 6 | 0 | 0 | 0 | 1 | 0 | 0 |
 | it_param.sake | 2 | 9 | 0 | 0 | 0 | 9 | 0 | 0 |
 | nil_error.sake | 1 | 2 | 0 | 1 | 0 | 3 | 0 | 0 |
@@ -32,10 +34,10 @@
 | no_toplevel_functions.sake | 2 | 4 | 0 | 0 | 0 | 4 | 0 | 0 |
 | numeric_errors.sake | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
 | numeric_time.sake | 2 | 32 | 0 | 0 | 0 | 31 | 0 | 0 |
-| pattern.sake | 2 | 8 | 2 | 0 | 0 | 9 | 0 | 0 |
+| pattern.sake | 2 | 7 | 2 | 0 | 0 | 8 | 0 | 0 |
 | pattern_runtime.sake | 2 | 1 | 0 | 1 | 0 | 1 | 0 | 0 |
 | record.sake | 2 | 8 | 0 | 1 | 0 | 5 | 0 | 0 |
-| ruby_types.sake | 2 | 61 | 3 | 0 | 0 | 51 | 0 | 0 |
+| ruby_types.sake | 2 | 58 | 3 | 0 | 0 | 48 | 0 | 0 |
 | ruby_types_errors.sake | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | runtime_type_error.sake | 2 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
 | scope.sake | 2 | 6 | 0 | 0 | 0 | 6 | 0 | 0 |
