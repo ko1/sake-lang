@@ -134,3 +134,7 @@ ruby test/test_cli.rb           # the command line, and whether the generated do
 
 This is a research prototype, built to see how far "types on operations" can go. The design is
 still moving: decisions and open questions are kept in [DESIGN.md](DESIGN.md).
+
+## License
+
+[MIT](LICENSE)
