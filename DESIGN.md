@@ -234,3 +234,44 @@ AI 向けの話と最適化の話は、同じ結論に収束する: **操作に�
 
 - Prism で AST を得る → 名前解決 → 型推論・検査 → 解釈実行。
 - 最初は小さなサブセット（整数、文字列、`Data.define`、関数定義、if、ブロック）から始める。
+
+## 実装 v0（Ruby 製インタプリタ、2026-10-01 着手）
+
+`bin/sake [--check] FILE.sake`。Prism でパース → `Resolver`（名前解決・引数の個数・ブロックの有無を実行前にすべて検査）→ `Interpreter`（AST を直接評価し、操作の型タグを常に検査する）。終了コードは 0 = 成功、1 = 実行時エラー、2 = 静的エラー。テストは `ruby test/test_samples.rb`（`test/samples/*.sake` と `*.expected` のゴールデン比較。`UPDATE=1` で期待値を書き直す）。
+
+### ko1 の決定（2026-10-01）
+
+- **標準ライブラリの API 名は Ruby に揃える**（Elixir ではない）。`Integer.to_s`、`Array.each`、`String.include?` など。
+- `puts` / `print` / `p` は、組み込みの型なら何でも受け付ける（`to_s` の protocol が決まるまでの暫定）。
+- `Integer / Integer` は Ruby と同じく、切り捨てた Integer を返す。
+- **修飾の無い呼び出しは、内側が勝つ。** その class/module → トップレベルの関数 → `Kernel` の順で静的に解決する。名前の重なりはエラーにしない（重なりをエラーにすると、`Door.open` のような、よくある名前を自分の型に付けられなくなるため）。外側の関数を呼びたいときは `Kernel.puts(...)` のように修飾する。
+
+### 実装中に暫定で置いたもの（Claude の判断。要確認）
+
+- 型名は、true/false を `Boolean`、nil を `Nil` とする。真偽の判定は、Ruby と Elixir に共通する「nil と false だけが偽」。
+- `BinaryOp` の表に載せたもの:
+  - 数値どうしの四則演算・`%`・`**`・比較。
+  - String の `+`・比較、`String * Integer`。
+  - `==` / `!=`: 同じ型どうしと、Integer と Float の組だけ。Tuple / Array / Data の等価は protocol 待ち。
+  - `Integer ** 負の数`は、Rational が無いのでエラー。
+- 型を明示した演算 `Integer.+(a, b)` は、両方の引数がその型でなければエラー。
+- ブロック:
+  - 使えるのは `yield` だけ（`&blk` は、呼ぶと `blk.call` が小文字レシーバになるので保留）。
+  - `yield` する関数をブロック無しで呼んだら静的エラー。`yield` しない関数にブロックを渡しても静的エラー。
+  - 引数が 2 つ以上のブロックに Tuple を 1 つ渡すと、分解して束縛する。
+  - 引数が 0 個のブロックは、渡された引数を捨ててよい。それ以外は、個数が合わなければエラー。
+  - `next` はブロックと while の中で使える。`break` は while の中だけ。`return` はブロックの中から外側の関数を抜ける（Ruby と同じ）。
+- `return a, b` と多重代入の右辺はタプル。
+- 出力の書式（`puts` / `p`）は Ruby と同じにした。Data は `#<data Point x=1, y=2>`。同じ課題を Ruby で書いた場合と期待出力を共用できる。
+- エラーメッセージは英語（AI に読ませる前提）。
+- `x.y` のエラーでは、修正案を次のように作る。
+  - Data のフィールド名と組み込みの操作名から候補を探す。
+  - 受け手がリテラルなら、その型に絞る。
+  - `s.strip.upcase` のような連鎖は、1 件のエラーとして `String.upcase(String.strip(s))` に書き換えて示す。
+
+### 未決のため、静的エラーにして保留しているもの
+
+- 添字（`t[i]`、`a[i]`）。範囲外のときの振る舞いが未決のため。
+- nil を返す Ruby API（`first` / `last` / `find` / `min` / `max` / `pop` / `index`）。nil の設計待ち。
+- `Array.new`。Ruby の `Array.new(size, v)` と、§7 の案 `Array.new(Float)` がぶつかるため。
+- 単項演算子、文字列補間（`to_s`）、`%w[]`、型スコープ `Integer.(...)`、protocol。

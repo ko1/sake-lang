@@ -1,0 +1,223 @@
+# frozen_string_literal: true
+
+module Sake
+  # Evaluates the Prism AST directly, using the call targets fixed by Resolver.
+  class Interpreter
+    Frame = Struct.new(:name, :block)
+    SakeBlock = Struct.new(:node, :params, :env)
+
+    class Env
+      attr_reader :parent, :frame, :vars
+
+      def initialize(parent, frame)
+        @parent = parent
+        @frame = frame
+        @vars = {}
+      end
+
+      def up(depth)
+        e = self
+        depth.times { e = e.parent }
+        e
+      end
+    end
+
+    class ReturnSignal < StandardError
+      attr_reader :frame, :value
+
+      def initialize(frame, value)
+        @frame = frame
+        @value = value
+        super()
+      end
+    end
+
+    class JumpSignal < StandardError
+      attr_reader :value
+
+      def initialize(value)
+        @value = value
+        super()
+      end
+    end
+    class NextSignal < JumpSignal; end
+    class BreakSignal < JumpSignal; end
+
+    MAX_DEPTH = 10_000
+
+    def initialize(program)
+      @program = program
+      @registry = program.registry
+      @stack = [] # [function name, call line]
+    end
+
+    def run
+      env = Env.new(nil, Frame.new("<main>", nil))
+      @program.toplevel.each { eval_node(_1, env) }
+      nil
+    end
+
+    private
+
+    def fail_at(node, kind, message)
+      raise RunError.new(kind, message, node.location.start_line, @stack.dup)
+    end
+
+    def eval_node(node, env)
+      case node
+      when nil then nil
+      when Prism::StatementsNode
+        v = nil
+        node.body.each { v = eval_node(_1, env) }
+        v
+      when Prism::IntegerNode then node.value
+      when Prism::FloatNode then node.value
+      when Prism::StringNode then node.unescaped.dup
+      when Prism::TrueNode then true
+      when Prism::FalseNode then false
+      when Prism::NilNode then nil
+      when Prism::LocalVariableReadNode then env.up(node.depth).vars[node.name]
+      when Prism::LocalVariableWriteNode
+        env.up(node.depth).vars[node.name] = eval_node(node.value, env)
+      when Prism::LocalVariableOperatorWriteNode
+        scope = env.up(node.depth)
+        scope.vars[node.name] = binary_op(node, node.binary_operator, scope.vars[node.name], eval_node(node.value, env))
+      when Prism::MultiWriteNode then multi_write(node, env)
+      when Prism::IfNode
+        if Values.truthy?(eval_node(node.predicate, env))
+          eval_node(node.statements, env)
+        else
+          eval_node(node.subsequent, env)
+        end
+      when Prism::UnlessNode
+        if Values.truthy?(eval_node(node.predicate, env))
+          eval_node(node.else_clause, env)
+        else
+          eval_node(node.statements, env)
+        end
+      when Prism::ElseNode then eval_node(node.statements, env)
+      when Prism::WhileNode, Prism::UntilNode then loop_node(node, env)
+      when Prism::AndNode
+        l = eval_node(node.left, env)
+        Values.truthy?(l) ? eval_node(node.right, env) : l
+      when Prism::OrNode
+        l = eval_node(node.left, env)
+        Values.truthy?(l) ? l : eval_node(node.right, env)
+      when Prism::ParenthesesNode then eval_node(node.body, env)
+      when Prism::ArrayNode then Tuple.new(node.elements.map { eval_node(_1, env) })
+      when Prism::ReturnNode then raise ReturnSignal.new(env.frame, jump_value(node, env, tuple: true))
+      when Prism::NextNode then raise NextSignal.new(jump_value(node, env))
+      when Prism::BreakNode then raise BreakSignal.new(jump_value(node, env))
+      when Prism::YieldNode
+        call_block(env.frame.block, eval_args(node.arguments, env), node)
+      when Prism::CallNode then call(node, env)
+      else raise "BUG: unchecked node #{node.type} at line #{node.location.start_line}"
+      end
+    end
+
+    def jump_value(node, env, tuple: false)
+      vals = eval_args(node.arguments, env)
+      tuple && vals.size > 1 ? Tuple.new(vals) : vals.first
+    end
+
+    def eval_args(args_node, env) = (args_node&.arguments || []).map { eval_node(_1, env) }
+
+    def loop_node(node, env)
+      want = node.is_a?(Prism::WhileNode)
+      while Values.truthy?(eval_node(node.predicate, env)) == want
+        begin
+          eval_node(node.statements, env)
+        rescue NextSignal
+          next
+        rescue BreakSignal => e
+          return e.value
+        end
+      end
+      nil
+    end
+
+    def multi_write(node, env)
+      v = eval_node(node.value, env)
+      fail_at(node, "TypeError", "multiple assignment needs a Tuple, got #{Values.type_of(v)}") unless v.is_a?(Tuple)
+      if v.elems.size != node.lefts.size
+        fail_at(node, "ArgumentError", "multiple assignment of #{node.lefts.size} variables from a Tuple of size #{v.elems.size}")
+      end
+      node.lefts.zip(v.elems) { |t, x| env.up(t.depth).vars[t.name] = x }
+      v
+    end
+
+    def call(node, env)
+      target = @program.calls.fetch(node)
+      if target == :binary_op
+        return binary_op(node, node.name, eval_node(node.receiver, env), eval_node(node.arguments.arguments.first, env))
+      end
+
+      args = eval_args(node.arguments, env)
+      blk = node.block && SakeBlock.new(node.block, @program.blocks.fetch(node.block), env)
+      case target
+      when UserFunction then call_user(target, args, blk, node)
+      when Builtin then call_builtin(target, args, blk, node)
+      end
+    end
+
+    def call_user(fn, args, blk, node)
+      fail_at(node, "SystemStackError", "stack level too deep") if @stack.size >= MAX_DEPTH
+      frame = Frame.new(fn.full_name, blk)
+      env = Env.new(nil, frame)
+      fn.params.zip(args) { |name, v| env.vars[name.to_sym] = v }
+      @stack.push([fn.full_name, node.location.start_line])
+      begin
+        eval_node(fn.body, env)
+      rescue ReturnSignal => e
+        raise unless e.frame.equal?(frame)
+        e.value
+      ensure
+        @stack.pop
+      end
+    end
+
+    def call_builtin(fn, args, blk, node)
+      args.each_with_index do |v, i|
+        want = fn.param_type(i)
+        next if type_ok?(want, v)
+        fail_at(node, "TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.type_of(v)}")
+      end
+      ruby_blk = blk && ->(*xs) { call_block(blk, xs, node) }
+      fn.impl.call(*args, &ruby_blk)
+    rescue Fail => e
+      fail_at(node, e.kind, "#{fn.full_name}: #{e.message}")
+    end
+
+    def type_ok?(want, v)
+      return true if want == "Any"
+      Array(want).include?(Values.type_of(v))
+    end
+
+    def binary_op(node, op, a, b)
+      rows = @registry.binary_ops[op.to_s]
+      key = [Values.type_of(a), Values.type_of(b)]
+      impl = rows[key]
+      unless impl
+        defined = rows.keys.map { "(#{_1.join(", ")})" }.join(", ")
+        fail_at(node, "TypeError", "BinaryOp.#{op}: no implementation for (#{key.join(", ")}); defined for #{defined}")
+      end
+      impl.call(a, b)
+    rescue Fail => e
+      fail_at(node, e.kind, "BinaryOp.#{op}: #{e.message}")
+    end
+
+    def call_block(blk, args, node)
+      params = blk.params
+      # A Tuple passed to a block with several parameters is destructured.
+      args = args.first.elems if params.size > 1 && args.size == 1 && args.first.is_a?(Tuple)
+      if !params.empty? && params.size != args.size
+        fail_at(blk.node, "ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}")
+      end
+      env = Env.new(blk.env, blk.env.frame)
+      params.zip(args) { |name, v| env.vars[name.to_sym] = v }
+      eval_node(blk.node.body, env)
+    rescue NextSignal => e
+      e.value
+    end
+  end
+end
