@@ -137,6 +137,9 @@ module Sake
       when :tuple then "Tuple"
       when :array then "Array"
       when :record then "{#{a[1].map { |f, ty| "#{f}: #{atom_type_name(ty.first)}" }.join(", ")}}"
+      when :range then "Range"
+      when :hash then "Hash"
+      when :set then "Set"
       else "?"
       end
     end
@@ -159,12 +162,19 @@ module Sake
           s = @sites[a[1]]
           s.declared ? "#{s.declared}[]@#{s.label}" : "Array@#{s.label}[#{show(s.elem)}]"
         when :unknown then "?(#{a[1]})"
+        when :range then "Range[#{show(a[1])}]"
+        when :hash
+          s = hash_sites[a[1]]
+          "Hash@#{s.label}[#{show(s.key)} => #{show(s.val)}]"
+        when :set then "Set@#{set_sites[a[1]].label}[#{show(set_sites[a[1]].elem)}]"
+        when :pairs then "pairs"
         end
       end
     end
 
     def snapshot
-      [@sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup]
+      [@sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
+       hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] }]
     end
 
     # --- array sites and fields ---
@@ -333,7 +343,7 @@ module Sake
         recv = subject(env, fa)
         cur = call_builtin(fa.getter, [recv], nil, node)
         call_builtin(fa.setter, [recv, binop(node, node.binary_operator.to_s, cur, ev(node.value, env))], nil, node)
-      else unknown("node #{node.type}")
+      else ev_ext(node, env)
       end
     end
 
@@ -544,6 +554,10 @@ module Sake
       results = []
       failing = []
       recv.each do |a|
+        if (ext = index_get_ext(node, a, key))
+          results << ext
+          next
+        end
         unless key == ["Integer"] && (a == "String" || (a.is_a?(Array) && %i[array tuple].include?(a[0])))
           failing << a
           next
@@ -572,14 +586,18 @@ module Sake
       lit = key_node.is_a?(Prism::IntegerNode) ? key_node.value : nil
       recv.each do |a|
         next unless a.is_a?(Array)
-        if a[0] == :array
+        if a[0] == :hash
+          s = hash_sites[a[1]]
+          s.key = u(s.key, key)
+          s.val = u(s.val, val)
+        elsif a[0] == :array
           write_elems([a], [val], node, "Index.[]=")
         elsif a[0] == :tuple
           want = lit && (-a[1].size...a[1].size).cover?(lit) ? a[1][lit] : u(*a[1])
           record(node, "Index.[]=", "value", want.map { atom_type_name(_1) }, val)
         end
       end
-      bad = recv.reject { |a| a.is_a?(Array) && %i[array tuple].include?(a[0]) }
+      bad = recv.reject { |a| a.is_a?(Array) && %i[array tuple hash].include?(a[0]) }
       verdict = unknown?(recv) ? :unknown : (bad.empty? ? :proven : (bad.size == recv.size ? :error : :partial))
       add_check(node, "Index.[]=", "pair", "(Array|Tuple, Integer)", recv, verdict, bad)
       val
@@ -631,6 +649,9 @@ module Sake
       if (dt = @program.struct_types[ns]) && name != "[]"
         return data_op(dt, name, args, node)
       end
+      if (r = constructor_ext(ns, name, args, node))
+        return r
+      end
       if name == "[]"
         if ns == "Array"
           return site_for(node, init: u(*args))
@@ -658,6 +679,8 @@ module Sake
     def new_site(node, label, elem) = site_for(node, label, init: elem).tap { |ty| write_elems(ty, [elem], node, "") }
 
     def builtin_result(name, args, blk, node)
+      ext = builtin_result_ext(name, args, blk, node)
+      return ext unless ext == :none
       a0 = args[0]
       case name
       when "Kernel.puts", "Kernel.print" then t("Nil")
@@ -710,6 +733,7 @@ module Sake
         u(t("Integer"), t("Nil"))
       when "Array.sum"
         e = elem_of(a0)
+        e = call_block(blk, [e]) if blk && !e.empty?
         record(node, "Array.sum", "elem", NUM, e)
         e.empty? ? t("Integer") : u(*e.select { NUM.include?(_1) }.then { _1.empty? ? [t("Integer")] : [_1] })
       when "Array.reverse", "Array.sort", "Array.take", "Array.drop"
@@ -782,3 +806,4 @@ module Sake
     end
   end
 end
+require_relative "typer_ext"

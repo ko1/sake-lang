@@ -18,12 +18,14 @@
 | field_shorthand.sake | 2 | 25 | 0 | 4 | 0 | 44 | 0 | 0 |
 | first.sake | 2 | 30 | 0 | 0 | 0 | 42 | 0 | 0 |
 | index.sake | 2 | 34 | 1 | 0 | 0 | 30 | 0 | 0 |
+| io.sake | 2 | 6 | 0 | 0 | 0 | 1 | 0 | 0 |
 | it_param.sake | 2 | 9 | 0 | 0 | 0 | 15 | 0 | 0 |
 | nil_error.sake | 1 | 2 | 0 | 1 | 0 | 5 | 0 | 0 |
 | nil_field.sake | 2 | 3 | 5 | 0 | 0 | 14 | 0 | 0 |
 | nil_narrowing.strict.sake | 2 | 19 | 2 | 0 | 0 | 26 | 0 | 0 |
 | no_toplevel_functions.sake | 2 | 4 | 0 | 0 | 0 | 7 | 0 | 0 |
 | record.sake | 2 | 8 | 0 | 1 | 0 | 11 | 0 | 0 |
+| ruby_types.sake | 2 | 61 | 3 | 0 | 0 | 101 | 0 | 0 |
 | runtime_type_error.sake | 2 | 0 | 0 | 1 | 0 | 2 | 0 | 0 |
 | scope.sake | 2 | 6 | 0 | 0 | 0 | 9 | 0 | 0 |
 | strings.sake | 2 | 12 | 0 | 0 | 0 | 20 | 0 | 0 |

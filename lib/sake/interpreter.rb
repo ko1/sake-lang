@@ -73,6 +73,10 @@ module Sake
       when Prism::IntegerNode then node.value
       when Prism::FloatNode then node.value
       when Prism::StringNode then node.unescaped.dup
+      when Prism::SymbolNode then node.unescaped.to_sym
+      when Prism::RegularExpressionNode then regexp(node)
+      when Prism::RangeNode then range(node, env)
+      when Prism::KeywordHashNode then HashPairs.new(node.elements.map { [eval_node(_1.key, env), eval_node(_1.value, env)] })
       when Prism::TrueNode then true
       when Prism::FalseNode then false
       when Prism::NilNode then nil
@@ -171,6 +175,28 @@ module Sake
         env.up(target.depth).vars[target.name] = v[field]
       end
       nil
+    end
+
+    def regexp(node)
+      opts = 0
+      opts |= Regexp::IGNORECASE if node.ignore_case?
+      opts |= Regexp::EXTENDED if node.extended?
+      opts |= Regexp::MULTILINE if node.multi_line?
+      Regexp.new(node.unescaped, opts)
+    end
+
+    RANGE_ENDS = [Integer, Float, String, NilClass].freeze
+
+    def range(node, env)
+      l = eval_node(node.left, env)
+      r = eval_node(node.right, env)
+      [l, r].each do |v|
+        next if RANGE_ENDS.any? { v.is_a?(_1) }
+        fail_at(node, "TypeError", "a Range end must be Integer, Float, or String, got #{Values.describe(v)}")
+      end
+      Range.new(l, r, node.exclude_end?)
+    rescue ::ArgumentError
+      fail_at(node, "ArgumentError", "bad Range: #{Values.inspect(l)}, #{Values.inspect(r)}")
     end
 
     def jump_value(node, env, tuple: false)

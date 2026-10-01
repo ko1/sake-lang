@@ -75,6 +75,11 @@ Rules:
 | Record | `{x: a, y: b}` | set of (field, type) pairs fixed at creation |
 | Array | `Array[a, ...]` | no declared element type |
 | Array of T | `T[a, ...]`, e.g. `Float[]`, `Point[p]` | element type T, checked on every write |
+| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | keys are value types ([§12.1](#121-hash-and-set)) |
+| Set | `Set[1, 2]` | elements are value types |
+| Symbol | `:name` | |
+| Range | `1..5`, `1...5`, `1..` | ends are Integer, Float, String, or nil |
+| Regexp, MatchData | `/(\d+)-(\d+)/`, `String.match(s, re)` | no interpolation |
 | Struct type | `Point.new(x, y)` | record with mutable fields |
 
 - **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is
@@ -183,7 +188,11 @@ function.
 | `-` `*` `/` `%` `**` | numeric pairs as for `+` |
 | `*` | also (String, Integer) → String |
 | `<` `<=` `>` `>=` | numeric pairs, (String, String) → true/false |
-| `==` `!=` | numeric pairs, (String, String), (true/false, true/false), (nil, nil); and (T, nil), (nil, T) for **any** T |
+| `==` `!=` | numeric pairs, (String, String), (Symbol, Symbol), (true/false, true/false), (nil, nil); and (T, nil), (nil, T) for **any** T |
+| `&` `\|` `^` `<<` `>>` | (Integer, Integer) → Integer |
+| `\|` `&` `-` | (Set, Set) → Set (union, intersection, difference) |
+| `=~` | (String, Regexp), (Regexp, String) → Integer or nil; `!~` (String, Regexp) → true/false |
+| `%` | (String, Integer / Float / String / Symbol / Tuple / nil / true / false) → String, Ruby's format (`"%d items" % 3`, `"%s-%s" % [a, b]`) |
 
 - **No matching row.** If no row matches the operand types, the operation raises `TypeError`. The
   message lists the rows that do exist. There is no implicit conversion.
@@ -210,6 +219,9 @@ has a closed table:
 | Array, Integer | the element, or nil outside the Array | stores `v` (an Array of T checks `v`) |
 | String, Integer | a one-character String, or nil outside the String | not available |
 | Tuple, Integer | the element; outside the Tuple, `IndexError` | stores `v` if it has the type of that position |
+| Array, Range / String, Range | the slice, or nil | not available |
+| Hash, any key | the value, or the default (nil unless made by `Hash.new(default)`) | stores `v`; the key must be a value type |
+| MatchData, Integer / String | the group, or nil | not available |
 
 - **Negative indexes** count from the end, as in Ruby.
 - **A miss gives `nil`**, as in Ruby, so the static type of `a[i]` is `T | nil`. With `--strict`,
@@ -223,7 +235,7 @@ has a closed table:
 ### 8.3 Not supported
 
 - Unary operators: `!x`, `-x`, `+x`, `~x`.
-- `<=>` and the bitwise operators.
+- `<=>`.
 
 Both are static errors.
 
@@ -348,6 +360,23 @@ Arrays are mutable and shared by reference.
 **Ruby habits.** A Tuple or Record passed where an Array is expected, such as `result = []`
 followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
 
+### 12.1 Hash and Set
+
+- **Constructors.** `Hash[k => v, ...]` (also `Hash[name: v]`, whose keys are Symbols), `Hash[]`,
+  and `Hash.new(default)` create a Hash. `Set[x, ...]` creates a Set. The literal `{...}` is a
+  Record, not a Hash.
+- **Keys and elements.** Hash keys and Set elements must be **value types**: Integer, Float,
+  String, Symbol, true, false, nil, and Tuples and Records made of these. Anything else is a
+  `TypeError`. A Struct, Array, Hash, or Set is not a value type, because equality of those types
+  is undecided (protocols).
+- **Keys are copied.** A Tuple or Record key is copied when it is stored, so a later write to the
+  original does not change the key.
+- **Default values.** `Hash.new(default)` gives `default` for a missing key, as in Ruby, and the
+  same object is shared, as in Ruby. The block form `Hash.new { ... }` is not available, because
+  blocks are not values.
+- **Blocks.** A block over a Hash receives `[key, value]` as one Tuple, so `|k, v|` takes it apart.
+- **Order.** Iteration follows insertion order, as in Ruby.
+
 ## 13. Errors
 
 ### 13.1 Static errors
@@ -390,6 +419,10 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 | `IndexError` | a Tuple index outside the Tuple; `Array.fetch` outside the Array; writing past the end of an Array of T |
 | `ArgumentError` | Tuple size mismatch in multiple assignment; block parameter count; negative sizes; comparing incomparable values in `sort` |
 | `ZeroDivisionError` | Integer `/` or `%` by zero |
+| `KeyError` | `Hash.fetch` of a missing key; a Record pattern naming a missing field |
+| `RangeError` | an operation that needs a finite Range, given an endless one |
+| `RegexpError` | `Regexp.new` with an invalid pattern |
+| `IOError` | `File.read` and the like failing |
 | `FloatDomainError` | converting NaN or Infinity to Integer |
 | `Math::DomainError` | e.g. `Math.sqrt(-1)` |
 | `SystemStackError` | recursion deeper than 10,000 |
@@ -405,7 +438,10 @@ one.
 |---|---|---|
 | `puts(*xs)` | nil | prints like Ruby's `puts`; Arrays and Tuples print one element per line |
 | `print(*xs)` | nil | no newline |
-| `p(x)` | x | prints `x` in Ruby's `inspect` format |
+| `p(x)`, `pp(x)` | x | prints `x` in Ruby's `inspect` format |
+| `format(fmt, *xs)`, `sprintf` | String | Ruby's format; arguments are Integer, Float, String, Symbol, nil, true, false |
+| `Integer(x)`, `Float(x)` | Integer, Float | Ruby's strict conversions; `ArgumentError` on bad input |
+| `rand`, `rand(n)` | Float, or Integer/Float below n | |
 
 ### Integer
 
@@ -417,6 +453,10 @@ one.
 | `even?`, `odd?`, `zero?` | true/false |
 | `times(n) { \|i\| }` | n (block) |
 | `upto(a, b) { \|i\| }`, `downto(a, b) { \|i\| }` | a (block) |
+| `& \| ^ << >>` (both Integer) | Integer |
+| `divmod(a, b)` | `[quotient, remainder]` Tuple |
+| `gcd`, `lcm`, `pow(a, b, [mod])`, `bit_length`, `sqrt(n)`, `clamp(n, lo, hi)` | Integer |
+| `digits` · `chr` · `between?(n, lo, hi)` | Array of Integer · String · true/false |
 
 ### Float
 
@@ -428,7 +468,8 @@ one.
 | `to_i`, `floor`, `ceil` | Integer |
 | `round(f)` / `round(f, digits)` | Integer / Float |
 | `abs` | Float |
-| `nan?` | true/false |
+| `nan?` · `finite?` · `infinite?` | true/false · true/false · 1, -1, or nil |
+| `truncate` · `divmod(a, b)` · `clamp(f, lo, hi)` | Integer · `[Float, Float]` Tuple · Float |
 
 ### String
 
@@ -444,6 +485,10 @@ one.
 | `empty?`, `include?(s, t)`, `start_with?(s, t)`, `end_with?(s, t)` | true/false |
 | `chars`, `lines`, `split(s, [sep])` | Array of String |
 | `index(s, t)` | Integer or nil |
+| `center(s, n, [pad])`, `tr(s, a, b)`, `delete(s, chars)`, `squeeze`, `succ`, `next` | String |
+| `ord` · `hex` · `oct` · `bytes` | Integer · Integer · Integer · Array of Integer |
+| `casecmp?(s, t)` | true/false |
+| `each_line(s) { \|l\| }` | s (block) |
 | `each_char(s) { \|c\| }` | s (block) |
 
 ### Array
@@ -467,12 +512,94 @@ one.
 | `unshift(a, *xs)` | a, changed in place |
 | `find`, `detect`, `min_by`, `max_by` | an element, or nil (block) |
 | `index(a, x)`, `find_index(a) { \|x\| }` | Integer or nil |
+| `zip(a, *bs)` · `product(a, b)` | Array of Tuples |
+| `each_slice(a, n)`, `each_cons(a, n)` | a (block receives an Array) |
+| `flatten`, `compact`, `uniq`, `rotate(a, [n])`, `shuffle`, `dup` | a new Array |
+| `sample` · `delete(a, x)` · `delete_at(a, i)` | an element or nil |
+| `delete_if` · `insert(a, i, *xs)` · `clear` | a, changed in place |
+| `tally` · `group_by` · `to_h` | Hash (block for `group_by`; `to_h` takes `[k, v]` Tuples) |
+| `partition` | `[matching, rest]` Tuple of Arrays (block) |
+| `flat_map` | Array; the block returns an Array |
+| `each_with_object(a, memo) { \|x, memo\| }` | memo (block) |
+| `sum(a) { \|x\| }`, `count(a, [x])` | the block is optional |
 
 ### Tuple
 
 | Operation | Result |
 |---|---|
 | `length`, `size` | Integer |
+| `to_a` | Array |
+
+### Symbol
+
+| Operation | Result |
+|---|---|
+| `to_s` · `length` · `size` | String · Integer · Integer |
+| `String.to_sym(s)`, `String.intern(s)` | Symbol |
+
+### Range
+
+Operations that iterate need a Range that starts with an Integer. Operations that need a finite
+Range raise `RangeError` on an endless one.
+
+| Operation | Result |
+|---|---|
+| `each`, `each_with_index`, `step(r, n)` | r (block) |
+| `to_a`, `map`, `select`, `filter`, `reject` | Array (block for `map` and the filters) |
+| `reduce(r, init)`, `inject` · `sum` · `size` · `count` | accumulated value · Integer · Integer · Integer (block optional) |
+| `any?`, `all?`, `none?` · `find`, `detect` | true/false · an element or nil (block) |
+| `include?`, `cover?`, `member?` · `exclude_end?` | true/false |
+| `first`, `last`, `min`, `max`, `begin`, `end` | an element or nil (`first(r, n)`, `last(r, n)` give an Array) |
+
+### Hash
+
+| Operation | Result |
+|---|---|
+| `Hash[k => v, ...]` · `Hash.new([default])` | a new Hash |
+| `length`, `size` · `empty?` | Integer · true/false |
+| `key?`, `has_key?`, `include?`, `member?` · `value?`, `has_value?` | true/false |
+| `fetch(h, k, [default])` | the value, the default, or `KeyError` |
+| `dig(h, k)` · `delete(h, k)` · `key(h, v)` | value or nil · removed value or nil · key or nil |
+| `store(h, k, v)` · `clear` · `merge(a, b)` · `invert` | v · h · a new Hash · a new Hash |
+| `keys` · `values` · `to_a` | Array · Array · Array of `[k, v]` Tuples |
+| `each`, `each_pair` · `each_key` · `each_value` | h (block) |
+| `map` · `sort_by` | Array · Array of `[k, v]` (block) |
+| `select`, `filter`, `reject` · `transform_values` · `transform_keys` | a new Hash (block) |
+| `any?`, `all?`, `none?` · `count` · `sum` | true/false · Integer (block optional) · sum of block values |
+| `find`, `detect`, `min_by`, `max_by` | `[k, v]` or nil (block) |
+
+### Set
+
+| Operation | Result |
+|---|---|
+| `Set[...]` | a new Set |
+| `length`, `size` · `empty?` · `include?`, `member?` | Integer · true/false · true/false |
+| `add(s, x)` · `add?(s, x)` · `delete(s, x)` | s · s or nil · s |
+| `to_a` · `each` · `map` | Array · s (block) · Array (block) |
+| `select`, `filter`, `reject` · `union`, `intersection`, `difference` | a new Set |
+| `subset?`, `superset?`, `disjoint?`, `intersect?` | true/false |
+
+### Regexp and MatchData
+
+| Operation | Result |
+|---|---|
+| `Regexp.new(s)` · `Regexp.escape(s)` · `Regexp.source(r)` | Regexp · String · String |
+| `Regexp.match(r, s)`, `String.match(s, r)` | MatchData or nil |
+| `Regexp.match?(r, s)`, `String.match?(s, r)` | true/false |
+| `String.scan(s, r)` | Array of String (Array of Tuples when the pattern has groups) |
+| `MatchData.captures` · `named_captures` · `names` · `to_a` | Array · Hash · Array · Array |
+| `MatchData.to_s`, `pre_match`, `post_match` · `begin(m, i)`, `end(m, i)` | String · Integer |
+
+`String.sub`, `String.gsub`, `String.index`, and `String.split` also take a Regexp. Globals such as
+`$1` and `$~` do not exist; keep the MatchData in a variable and index it (`m[1]`).
+
+### File and input
+
+| Operation | Result |
+|---|---|
+| `gets` (Kernel) | String or nil |
+| `File.read(path)` · `File.readlines(path)` | String · Array of String (lines keep their newline) |
+| `File.write(path, s)` · `File.exist?(path)` | Integer · true/false |
 
 ### Math
 
@@ -490,14 +617,15 @@ create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 
 Each of these is rejected statically. Most wait on a design decision.
 
-- **Hash.** `Hash[...]` is planned.
 - **Writing to Record fields.**
 - **`Array.new`.**
 - **Unary operators.**
 - **String interpolation**, which waits on how values become strings.
 - **Protocols.** These are generic operations such as `to_s` and `==` over all types.
 - **The type scope `Integer.(a + b)`.**
-- **Symbol, Range, `case`/`when`, `%w[]`.**
+- **`case`/`when`, `for`, `%w[]`, `%i[]`.**
+- **Built-in constants** such as `Math::PI` and `Float::INFINITY`.
+- **Rational, Complex, Time.**
 - **First-class blocks.**
 - **Exceptions** (`raise`, `rescue`).
 - **Several files** (`require`).

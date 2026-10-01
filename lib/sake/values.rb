@@ -9,6 +9,11 @@ module Sake
     def initialize(elems)
       @elems = elems
     end
+
+    # Structural, so that Tuples work as Hash keys and Set elements.
+    def ==(other) = other.is_a?(Tuple) && @elems == other.elems
+    alias eql? ==
+    def hash = [Tuple, @elems].hash
   end
 
   # `T[...]`: an Array whose element type is declared; checked on every write.
@@ -48,6 +53,10 @@ module Sake
 
     def field?(f) = @shape.fields.include?(f)
     def [](f) = @values[@shape.fields.index(f)]
+
+    def ==(other) = other.is_a?(RecordValue) && @shape.equal?(other.shape) && @values == other.values
+    alias eql? ==
+    def hash = [RecordValue, @shape.fields, @values].hash
   end
 
   # An instance of a Struct.new type; fields are mutable.
@@ -74,6 +83,12 @@ module Sake
       when Array then "Array"
       when StructValue then v.type.name
       when RecordValue then v.shape.name
+      when Symbol then "Symbol"
+      when Hash then "Hash"
+      when Set then "Set"
+      when Range then "Range"
+      when Regexp then "Regexp"
+      when MatchData then "MatchData"
       else raise "BUG: not a Sake value: #{v.inspect}"
       end
     end
@@ -92,6 +107,27 @@ module Sake
 
     def truthy?(v) = !(v.nil? || v == false)
 
+    # Hash keys and Set elements: values compared by content. A Struct, Array, Hash or Set is not one,
+    # because equality of those types is undecided (protocols).
+    def key_value?(v)
+      case v
+      when Integer, Float, String, Symbol, true, false, nil then true
+      when Tuple then v.elems.all? { key_value?(_1) }
+      when RecordValue then v.values.all? { key_value?(_1) }
+      else false
+      end
+    end
+
+    # Keys are copied on insertion, so a later write to a Tuple or Record cannot change a stored key.
+    def key_copy(v)
+      case v
+      when Tuple then Tuple.new(v.elems.map { key_copy(_1) })
+      when RecordValue then RecordValue.new(v.shape, v.values.map { key_copy(_1) })
+      when String then v.frozen? ? v : v.dup.freeze
+      else v
+      end
+    end
+
     # Same output as Ruby's #inspect so that expected outputs match Ruby versions of a task.
     def inspect(v)
       case v
@@ -101,6 +137,10 @@ module Sake
         fs = v.type.fields.zip(v.values).map { |f, x| "#{f}=#{inspect(x)}" }
         "#<struct #{v.type.name} #{fs.join(", ")}>"
       when RecordValue then "{#{v.shape.fields.zip(v.values).map { |f, x| "#{f}: #{inspect(x)}" }.join(", ")}}"
+      when Hash
+        "{#{v.map { |k, x| k.is_a?(Symbol) && k.inspect.match?(/\A:\w+[?!]?\z/) ? "#{k}: #{inspect(x)}" : "#{inspect(k)} => #{inspect(x)}" }.join(", ")}}"
+      when Set then "Set[#{v.map { inspect(_1) }.join(", ")}]"
+      when Range then "#{v.begin.nil? ? "" : inspect(v.begin)}#{v.exclude_end? ? "..." : ".."}#{v.end.nil? ? "" : inspect(v.end)}"
       else v.inspect
       end
     end
@@ -109,7 +149,8 @@ module Sake
       case v
       when String then v
       when nil then ""
-      when Tuple, Array, StructValue, RecordValue then inspect(v)
+      when Tuple, Array, StructValue, RecordValue, Hash, Set then inspect(v)
+      when Range then inspect(v)
       else v.to_s
       end
     end

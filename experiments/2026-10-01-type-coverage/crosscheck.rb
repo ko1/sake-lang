@@ -14,8 +14,8 @@ module Recorder
   attr_accessor :observed
 
   def call_builtin(fn, args, blk, node)
-    # Arguments of the untyped constructor and of Index.[] / []= are "Any": nothing is checked.
-    return super if fn.full_name == "Array[]" || fn.namespace == "Index"
+    # Arguments of the untyped constructors (Array[], Hash[], Set[]) and of Index.[] / []= are "Any": nothing is checked.
+    return super if %w[Array[] Hash[] Set[]].include?(fn.full_name) || fn.namespace == "Index"
     args.each_with_index do |a, i|
       # `T[...]` checks each element; the typer records those as arg "elem".
       arg = fn.name == "[]" ? "elem" : i + 1
@@ -42,7 +42,7 @@ end
 def atom_name(a)
   return a if a.is_a?(String)
   return "{#{a[1].map { |f, ty| "#{f}: #{atom_name(ty.first)}" }.join(", ")}}" if a[0] == :record
-  { tuple: "Tuple", array: "Array", unknown: "?" }.fetch(a[0])
+  { tuple: "Tuple", array: "Array", unknown: "?", range: "Range", hash: "Hash", set: "Set" }.fetch(a[0])
 end
 
 # Static type of a check site as a set of name tuples comparable with the observations.

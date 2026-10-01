@@ -19,7 +19,7 @@ module Sake
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
-    BINARY_OPS = %i[+ - * / % ** == != < <= > >= <=> & | ^ << >>].freeze
+    BINARY_OPS = %i[+ - * / % ** == != < <= > >= <=> & | ^ << >> =~ !~].freeze
     UNARY_OPS = %i[-@ +@ ! ~].freeze
     FORBIDDEN = %w[send __send__ public_send method_missing define_method eval instance_eval class_eval
                    module_eval instance_exec class_exec instance_variable_get instance_variable_set
@@ -252,7 +252,17 @@ module Sake
       when Prism::SelfNode then error(node, "Sake has no `self`")
       when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode
         check_field_shorthand(node, ctx)
-      when Prism::SymbolNode then error(node, "symbols are not supported (only as Struct.new field names)")
+      when Prism::SymbolNode, Prism::RegularExpressionNode then nil
+      when Prism::RangeNode
+        error(node, "a Range needs at least one end") if node.left.nil? && node.right.nil?
+        check_each(ctx, node.left, node.right)
+      when Prism::InterpolatedSymbolNode, Prism::InterpolatedRegularExpressionNode
+        error(node, "interpolation is not supported yet (how values become strings is undecided)")
+      when Prism::NumberedReferenceReadNode, Prism::BackReferenceReadNode, Prism::GlobalVariableReadNode, Prism::GlobalVariableWriteNode
+        error(node, "Sake has no global variables (`#{node.slice}`)",
+              node.is_a?(Prism::NumberedReferenceReadNode) ? ["keep the match: `m = String.match(s, re)`, then `m[#{node.number}]`"] : [])
+      when Prism::MatchWriteNode
+        error(node, "named captures do not create local variables in Sake", ["keep the match: `m = Regexp.match(re, s)`, then `m[\"name\"]`"])
       else
         error(node, "unsupported syntax: #{node.type.to_s.delete_suffix("_node").tr("_", " ")} `#{first_line(node.slice)}`")
       end
@@ -321,11 +331,20 @@ module Sake
       check_args(node.arguments, ctx)
     end
 
-    def check_args(args_node, ctx)
+    def check_args(args_node, ctx, hash_pairs: false)
       (args_node&.arguments || []).each do |a|
         case a
         when Prism::SplatNode then error(a, "splat arguments are not supported")
-        when Prism::KeywordHashNode then error(a, "keyword arguments are not supported")
+        when Prism::KeywordHashNode
+          if hash_pairs
+            a.elements.each do |el|
+              next error(el, "`**` is not supported") unless el.is_a?(Prism::AssocNode)
+              check(el.key, ctx)
+              check(el.value, ctx)
+            end
+          else
+            error(a, "keyword arguments are not supported")
+          end
         when Prism::ForwardingArgumentsNode then error(a, "argument forwarding is not supported")
         else check(a, ctx)
         end
@@ -373,13 +392,17 @@ module Sake
         return lowercase_receiver_error(node, ctx)
       end
 
-      check_args(node.arguments, ctx)
+      hash_ctor = recv.is_a?(Prism::ConstantReadNode) && recv.name == :Hash && node.name == :[]
+      if hash_ctor && !(args.empty? || (args.size == 1 && args[0].is_a?(Prism::KeywordHashNode)))
+        error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
+      end
+      check_args(node.arguments, ctx, hash_pairs: hash_ctor)
       check_block(blk, ctx) if blk
       return unless target
 
       @calls[node] = target
       check_arity(node, target, args.size, !blk.nil?)
-      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == "[]" && !%w[Array Index].include?(target.namespace)
+      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == "[]" && !%w[Array Index Hash Set].include?(target.namespace)
     end
 
     def check_arity(node, target, argc, has_block)
@@ -398,7 +421,9 @@ module Sake
           expected = target.min_arity == target.max_arity ? target.min_arity : "#{target.min_arity}..#{target.max_arity == Float::INFINITY ? "" : target.max_arity}"
           error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{expected})")
         end
-        if target.block == :required && !has_block
+        if target.block == :optional
+          nil
+        elsif target.block == :required && !has_block
           error(node, "#{target.full_name} requires a block")
         elsif target.block == :none && has_block
           error(node, "#{target.full_name} does not take a block")
@@ -550,6 +575,10 @@ module Sake
       when Prism::IntegerNode then "Integer"
       when Prism::FloatNode then "Float"
       when Prism::ArrayNode then "Tuple"
+      when Prism::SymbolNode then "Symbol"
+      when Prism::RangeNode then "Range"
+      when Prism::RegularExpressionNode then "Regexp"
+      when Prism::ParenthesesNode then n.body.is_a?(Prism::StatementsNode) && n.body.body.size == 1 ? literal_type(n.body.body.first) : nil
       when Prism::NilNode then "nil"
       when Prism::TrueNode then "true"
       when Prism::FalseNode then "false"

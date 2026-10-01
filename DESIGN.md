@@ -316,6 +316,18 @@ AI 向けの話と最適化の話は、同じ結論に収束する: **操作に�
   - 未決（§7）: Tuple を変数の添字で引く `t[i]` を、静的に許すか。
     - 実行時は、どちらに決めてもその位置の値を返すだけである。
     - 実験的な型推論は、当面すべての位置の型の union で近似している。
+- **Ruby の型を順に入れた**（2026-10-01、ko1 の「Ruby の型をどんどん導入」による）。対象は Symbol、Range、Hash、Set、Regexp / MatchData、File と gets、`format`、Integer / Float / String / Array の多くの操作。
+  - API の名前と挙動は Ruby に合わせた。
+  - Hash: `Hash[k => v]` と `Hash.new(default)` で作る（`{...}` は Record のため）。`h[k]` は `Index` の表に (Hash, any) の行を足した。無いキーは nil、または既定値。
+  - Hash のブロックは `[k, v]` の Tuple を受け取る。`Hash.to_a` / `zip` / `partition` / `divmod` など、Ruby が組を返すところは Tuple を返す。
+  - Range はリテラル（`1..5`）。反復する操作は Integer で始まる Range に限る。
+  - Regexp はリテラル（`/re/`）。`$1` などのグローバル変数は無いので、MatchData を変数に入れて `m[1]` で読む。
+  - **Claude が暫定で決めたもの（要確認）:**
+    - Hash のキーと Set の要素は「値型」に限る。値型とは、Integer / Float / String / Symbol / true / false / nil と、それらからなる Tuple / Record のこと。Struct・Array・Hash・Set は、等価性（protocol）が未決なので入れられない。
+    - Tuple / Record のキーは、格納するときにコピーする（中身が可変なので、後から書き換わってキーが壊れるのを防ぐ）。
+    - `Hash.new { ... }`（ブロックで既定値を作る形）は入れない。ブロックを値として保存することになり、second-class の決定に反するため。
+    - `format` の引数は、基本の型（数・文字列・Symbol・nil・真偽）に限る。
+  - 未対応のまま残したもの: `case` / `when`、`for`、例外、Rational / Complex / Time、`Math::PI` のような組み込みの定数。
 - **値の定数（`PI = 3.14`）は入れない。** 名前付きの値は関数で書く（`def pi = 3.14`）。
   - 理由: 大文字の名前を型（名前空間）に限ったままにできる。可変な値の定数をどう扱うか（凍結するか）、初期化の順序をどうするかといった問題も生じない。
   - `PI = 3.14` は静的エラーにし、修正案として `def pi = 3.14` を出す。`PI` を使っている箇所には、修正案として `pi` を出す。2026-10-01 の実験で、AI が最初に `PI = ...` と書き、修正案が無かったために詰まったため。

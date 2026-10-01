@@ -637,7 +637,68 @@ typed_array_errors.sake:2:12: error: Point[]: element 1 must be Point, got Integ
 (exit status 2)
 ```
 
-## 10. nil
+## 10. Ruby's other types
+
+Hash, Set, Symbol, Range, and Regexp work as in Ruby. Their operations carry the type like
+everything else (`Hash.each`, `Range.to_a`, `String.match`), while `h[k]`, `1..5`, `:name`, and
+`/re/` are written as in Ruby.
+
+- `Hash[k => v]` and `Hash.new(0)` make a Hash, because `{...}` is a Record.
+- A missing key gives `nil`, or the default given to `Hash.new`.
+- A block over a Hash receives `[key, value]`, which `|k, v|` takes apart.
+
+```ruby
+text = "the cat and the hat and the bat"
+counts = Hash.new(0)
+Array.each(String.split(text, " ")) { |w| counts[w] += 1 }
+p(counts)
+top = Hash.max_by(counts) { |w, n| n }
+p(top)
+p(Array.tally(String.chars("banana")))
+
+ages = Hash["ann" => 31, "bob" => 25]
+ages["cy"] = 40
+Hash.each(ages) { |name, age| puts(format("%-4s %3d", name, age)) }
+p(ages["nobody"])                        # a missing key gives nil
+p(Hash.fetch(ages, "nobody", 0))
+
+p(Range.to_a(1..5))
+p(Range.select(1..20) { it % 7 == 0 })
+p(Array[10, 20, 30, 40][1..2])
+
+seen = Set[]
+Array.each(Array[3, 1, 3, 2, 1]) { Set.add(seen, it) }
+p(seen)
+
+m = String.match("2026-10-01", /(\d+)-(\d+)-(\d+)/)
+p(MatchData.captures(m)) if m
+p(String.scan("a1b22c333", /\d+/))
+p(:ok)
+```
+
+```
+$ sake ruby_types.sake
+{"the" => 3, "cat" => 1, "and" => 2, "hat" => 1, "bat" => 1}
+["the", 3]
+{"b" => 1, "a" => 3, "n" => 2}
+ann   31
+bob   25
+cy    40
+nil
+0
+[1, 2, 3, 4, 5]
+[7, 14]
+[20, 30]
+Set[3, 1, 2]
+["2026", "10", "01"]
+["1", "22", "333"]
+:ok
+```
+
+Hash keys and Set elements must be values compared by content: numbers, Strings, Symbols, `true`,
+`false`, `nil`, and Tuples and Records of them. Equality of Structs and Arrays is not decided yet.
+
+## 11. nil
 
 A value that may be absent is simply `nil`. Check it with `if x`, `while x`, `x != nil`, or
 `return unless x`. When a `nil` reaches an operation that needs something else, the error says
@@ -718,7 +779,7 @@ strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node)
 (exit status 2)
 ```
 
-## 11. What Sake rejects
+## 12. What Sake rejects
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
@@ -754,7 +815,7 @@ forbidden.sake:8:1: error: `eval` is not allowed in Sake (it defeats static anal
 To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
 the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
-## 12. Looking at the types (experimental)
+## 13. Looking at the types (experimental)
 
 `--types` runs a whole-program type inference without running the program. It reports, for every
 operation that checks its argument, one of the following:
@@ -798,7 +859,7 @@ fields:
   Item.qty: Integer
 ```
 
-In the `strict` program from section 10, the inference finds the one unchecked use:
+In the `strict` program from section 11, the inference finds the one unchecked use:
 
 ```
 $ sake --types strict.sake
@@ -811,7 +872,7 @@ fields:
   Node.next: nil | Node
 ```
 
-## 13. Putting it together
+## 14. Putting it together
 
 A bank account with a transaction history. The history starts as an empty `Array[]` and is filled
 with `[kind, amount]` Tuples, which a `do |kind, amount|` block destructures.

@@ -236,8 +236,9 @@ module Sake
       raise Fail.new("ArgumentError", "cannot compare elements of types #{types.join(", ")}")
     end
 
-    INDEX_ROWS = "(Array, Integer), (String, Integer), (Tuple, Integer)"
-    INDEX_SET_ROWS = "(Array, Integer), (Tuple, Integer)"
+    INDEX_ROWS = "(Array, Integer), (Array, Range), (String, Integer), (String, Range), (Tuple, Integer), " \
+                 "(Hash, any key), (MatchData, Integer), (MatchData, String)"
+    INDEX_SET_ROWS = "(Array, Integer), (Tuple, Integer), (Hash, any key)"
 
     # `x[k]` and `x[k] = v` call these. A miss gives nil as in Ruby, except that a Tuple's length is part
     # of its type, so reading or writing outside it is an IndexError.
@@ -248,8 +249,15 @@ module Sake
 
     def index_get(x, k)
       case [x, k]
-      in [Array | String, Integer] then x[k]
+      in [Array | String, Integer | Range] then x[k]
       in [Tuple, Integer] then x.elems[tuple_pos(x, k)]
+      in [Hash, _] then x[k]
+      in [MatchData, Integer | String | Symbol]
+        begin
+          x[k]
+        rescue ::IndexError => e
+          raise Fail.new("IndexError", e.message)
+        end
       else raise Fail.new("TypeError", "no implementation for (#{Values.describe(x)}, #{Values.describe(k)}); defined for #{INDEX_ROWS}")
       end
     end
@@ -265,6 +273,7 @@ module Sake
         rescue IndexError => e
           raise Fail.new("IndexError", e.message)
         end
+      in [Hash, _] then x[key!(k)] = v
       in [Tuple, Integer]
         i = tuple_pos(x, k)
         want = Values.type_of(x.elems[i])

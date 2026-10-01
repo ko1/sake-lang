@@ -185,7 +185,22 @@ When the mistake is visible in the source, it is reported before running:
 
 @@example typed_array_errors
 
-## 10. nil
+## 10. Ruby's other types
+
+Hash, Set, Symbol, Range, and Regexp work as in Ruby. Their operations carry the type like
+everything else (`Hash.each`, `Range.to_a`, `String.match`), while `h[k]`, `1..5`, `:name`, and
+`/re/` are written as in Ruby.
+
+- `Hash[k => v]` and `Hash.new(0)` make a Hash, because `{...}` is a Record.
+- A missing key gives `nil`, or the default given to `Hash.new`.
+- A block over a Hash receives `[key, value]`, which `|k, v|` takes apart.
+
+@@example ruby_types
+
+Hash keys and Set elements must be values compared by content: numbers, Strings, Symbols, `true`,
+`false`, `nil`, and Tuples and Records of them. Equality of Structs and Arrays is not decided yet.
+
+## 11. nil
 
 A value that may be absent is simply `nil`. Check it with `if x`, `while x`, `x != nil`, or
 `return unless x`. When a `nil` reaches an operation that needs something else, the error says
@@ -200,7 +215,7 @@ every unchecked use before running. A local variable you have tested counts as c
 @@example strict
 @@run strict --strict
 
-## 11. What Sake rejects
+## 12. What Sake rejects
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
@@ -216,7 +231,7 @@ All of these are reported together, before running:
 To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
 the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
-## 12. Looking at the types (experimental)
+## 13. Looking at the types (experimental)
 
 `--types` runs a whole-program type inference without running the program. It reports, for every
 operation that checks its argument, one of the following:
@@ -232,11 +247,11 @@ anywhere:
 @@example types
 @@run types --types
 
-In the `strict` program from section 10, the inference finds the one unchecked use:
+In the `strict` program from section 11, the inference finds the one unchecked use:
 
 @@run strict --types
 
-## 13. Putting it together
+## 14. Putting it together
 
 A bank account with a transaction history. The history starts as an empty `Array[]` and is filled
 with `[kind, amount]` Tuples, which a `do |kind, amount|` block destructures.
