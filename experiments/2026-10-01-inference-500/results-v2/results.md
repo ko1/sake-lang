@@ -12,7 +12,7 @@
 
 - not converged within the pass limit: 0
 - dead (never called) functions: 87
-- run-time check sites: proven=51352 partial=3833 error=286 unknown=75
+- run-time check sites: proven=51352 partial=3833 unknown=75 error=286
 
 ## TypeProf on the Ruby versions (451 programs; 49 failed)
 
@@ -130,19 +130,14 @@
 
 ## Corpus check
 
-- programs: 500; run with exit 0 and output identical to Ruby and .out: 495
-  - corpus/04-numeric/eigenvalues.sake: exit1,ruby-differs,out-differs
-  - corpus/09-dp/coin_change.sake: exit1,ruby-differs,out-differs
-  - corpus/10-grids/word_search.sake: exit1,ruby-differs,out-differs
-  - corpus/14-errors/matrix_checks.sake: exit1,ruby-differs,out-differs
-  - corpus/16-dates/meeting_scheduler.sake: exit1,ruby-differs,out-differs
+- programs: 500; run with exit 0 and output identical to Ruby and .out: 500
 
 ## Soundness (crosscheck)
 
 | typer | programs checked | violations | programs with violations |
 |---|---|---|---|
-| as is | 500 | 3 | 2 |
-| sabotaged (negative control) | 500 | 1722 | 176 |
+| as is | 500 | 0 | 0 |
+| sabotaged (negative control) | 500 | 1734 | 175 |
 
 ## Dispatch demand
 
