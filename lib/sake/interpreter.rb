@@ -453,8 +453,9 @@ module Sake
       params = b.params
       # A Tuple passed to a block with several parameters is destructured.
       if params.size > 1 && args.size == 1
-        args = args.first.elems if args.first.is_a?(Tuple)
-        args = args.first.to_a if args.first.is_a?(Array) # an Array of exactly that length, checked below
+        if args.first.is_a?(Tuple) then args = args.first.elems
+        elsif args.first.is_a?(Array) then args = args.first.to_a # an Array of exactly that length, checked below
+        end
       end
       if !params.empty? && params.size != args.size
         raise RunError.new("ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}",

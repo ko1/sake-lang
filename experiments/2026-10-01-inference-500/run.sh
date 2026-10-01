@@ -32,14 +32,14 @@ rm "$O/one.tsv"
 # 2. inference coverage (Sake typer; TypeProf on the Ruby versions)
 echo "$FILES" | par 10 "$O/sake.jsonl" ruby measure.rb
 # REUSE=DIR takes the results that do not depend on the Sake implementation (TypeProf, Ruby receivers) from DIR.
-if [ -n "$REUSE" ]; then cp "$REUSE/typeprof.jsonl" "$O/"; else echo "$RBS" | par 5 "$O/typeprof.jsonl" ruby typeprof_measure.rb; fi
+if [ -n "$REUSE" ]; then cp "$REUSE"/typeprof.jsonl* "$O/"; else echo "$RBS" | par 5 "$O/typeprof.jsonl" ruby typeprof_measure.rb; fi
 
 # 4. soundness: observed run-time types are inside the inferred ones; the sabotaged typer must fail
 echo "$FILES" | par 10 "$O/crosscheck.md" sh -c 'ruby -w crosscheck.rb "$@" 2>&1; true' sh
 echo "$FILES" | par 10 "$O/crosscheck-sabotage.md" sh -c 'ruby crosscheck.rb --sabotage "$@" 2>&1; true' sh
 
 # 5. dispatch demand: receivers of 2+ classes in the Ruby versions; hand-written dispatch in Sake
-if [ -n "$REUSE" ]; then cp "$REUSE/polysites.jsonl" "$O/"; else echo "$RBS" | par 10 "$O/polysites.jsonl" ruby polysites.rb; fi
+if [ -n "$REUSE" ]; then cp "$REUSE"/polysites.jsonl* "$O/"; else echo "$RBS" | par 10 "$O/polysites.jsonl" ruby polysites.rb; fi
 echo "$FILES" | xargs -n 50 ruby sake_dispatch.rb | sort > "$O/dispatch.jsonl"
 
 ruby summarize.rb "$O" > "$O/results.md"

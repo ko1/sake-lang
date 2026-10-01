@@ -1,13 +1,13 @@
 # Statement-level delta reducer for TypeProf blow-ups.
 # usage: ruby reduce.rb IN.rb OUT.rb MODE   (MODE: mem | crash:<regexp>)
 # A candidate is kept iff (1) `ruby -c` accepts it, (2) `ruby cand.rb` exits 0 within 10 s,
-# (3) the predicate holds: mem = typeprof still running at TO s with RSS > RSS_MB;
+# (3) the predicate holds: mem = typeprof still running at TO s (RSS > RSS_MB, default 0) or OOM;
 #     crash:<re> = typeprof output matches <re>.
 require "prism"
 require "tmpdir"
 IN, OUT, MODE = ARGV
 TO = (ENV["TO"] || 10).to_i
-RSS_MB = (ENV["RSS_MB"] || 250).to_i
+RSS_MB = (ENV["RSS_MB"] || 0).to_i
 LOCK = File.open(File.join(__dir__, "..", ".tp.lock"), File::CREAT | File::RDWR)
 $tests = 0
 
