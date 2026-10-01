@@ -26,7 +26,8 @@ module Sake
     end
   end
 
-  StructType = Struct.new(:name, :fields)
+  # exception: made by Exception.new (or built in); its first field is message and it can be raised.
+  StructType = Struct.new(:name, :fields, :exception)
 
   # The type of a Record: its set of (field, type) pairs, sorted by field and interned.
   Shape = Struct.new(:fields, :types) do
@@ -135,7 +136,11 @@ module Sake
       when Array then "[#{v.map { inspect(_1) }.join(", ")}]"
       when StructValue
         fs = v.type.fields.zip(v.values).map { |f, x| "#{f}=#{inspect(x)}" }
-        "#<struct #{v.type.name} #{fs.join(", ")}>"
+        if v.type.exception
+          "#<#{v.type.name}: #{to_s(v.values[0])}#{fs.drop(1).map { " #{_1}" }.join}>"
+        else
+          "#<struct #{v.type.name} #{fs.join(", ")}>"
+        end
       when RecordValue then "{#{v.shape.fields.zip(v.values).map { |f, x| "#{f}: #{inspect(x)}" }.join(", ")}}"
       when Hash
         "{#{v.map { |k, x| k.is_a?(Symbol) && k.inspect.match?(/\A:\w+[?!]?\z/) ? "#{k}: #{inspect(x)}" : "#{inspect(k)} => #{inspect(x)}" }.join(", ")}}"

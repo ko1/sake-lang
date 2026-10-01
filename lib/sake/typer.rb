@@ -80,8 +80,11 @@ module Sake
         @yield_depth = Hash.new(0)
         @instantiated = {}
         @callers = []
+        @raised = [{}]   # stack of {exception type name => [raise nodes]} for the code being analyzed
+        @handled = []    # exception type names of the rescue clauses being analyzed (for a bare raise)
         env = Env.new(nil, Frame.new(nil, [], nil))
         @program.toplevel.each { ev(_1, env) }
+        @raised.last.each { |name, nodes| nodes.uniq.each { add_check(_1, "raise", name, "a rescue", t(name), :error, [name]) } }
         break if snapshot == before || @passes >= MAX_PASSES
       end
       all_fns = @program.functions.values.flat_map(&:values)
@@ -181,7 +184,7 @@ module Sake
     end
 
     def snapshot
-      [@sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
+      [(@raises ||= {}).transform_values(&:dup), @sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
        hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] }]
     end
 
@@ -247,6 +250,8 @@ module Sake
     def findings
       @checks.values.filter_map do |c|
         next if %i[proven unknown].include?(c.verdict)
+        next [c, "rescue"] if c.op == "rescue"
+        next [c, "unrescued"] if c.op == "raise"
         next [c, "type"] if c.verdict == :error
         parts = c.failing.map { |f| c.op.start_with?("BinaryOp.") ? f : [f] }
         next [c, "type"] unless parts.all? { |p| p.any? { nil_atom?(_1) } }
@@ -327,6 +332,9 @@ module Sake
       when Prism::ArrayNode then tuple(node.elements.map { ev(_1, env) })
       when Prism::HashNode then record_type(node.elements.map { [_1.key.unescaped, ev(_1.value, env)] })
       when Prism::MatchRequiredNode then match_record(node, env)
+      when Prism::BeginNode then typer_begin(node, env)
+      when Prism::RescueModifierNode then typer_rescue_modifier(node, env)
+      when Prism::RetryNode then []
       when Prism::MatchPredicateNode
         m, = match_atoms(ev(node.value, env), node.pattern)
         bind_pattern(env, node.pattern, m)
@@ -570,6 +578,7 @@ module Sake
 
     def call(node, env)
       target = target_of(node, env)
+      return typer_raise(node, env) if target == :raise
       if target == :binary_op
         return binop(node, node.name.to_s, ev(node.receiver, env), ev(node.arguments.arguments.first, env))
       end
@@ -615,12 +624,94 @@ module Sake
       end
 
       key = [fn, args]
-      return @returns[key] || [] if @in_progress[key] || @done[key]
+      if @in_progress[key] || @done[key]
+        merge_raised(@raises[key] || {})
+        return @returns[key] || []
+      end
       @in_progress[key] = true
+      @raised.push({})
       r = run_body(fn, args, nil)
+      @raises[key] = merge_into(@raises[key] || {}, @raised.pop)
+      merge_raised(@raises[key])
       @in_progress.delete(key)
       @done[key] = true
       @returns[key] = u(@returns[key] || [], r)
+    end
+
+    # --- exceptions: which user-raised exception types may leave each piece of code ---
+
+    def merge_into(a, b) = a.merge(b) { |_, x, y| (x + y).uniq }
+    def merge_raised(h) = @raised[-1] = merge_into(@raised[-1], h)
+    def struct_type(name) = @program.struct_types[name]
+
+    def raise_types(node, env)
+      nodes = node.arguments&.arguments || []
+      case nodes.size
+      when 0 then @handled.last || []
+      when 2 then [nodes[0].slice]
+      else
+        v = ev(nodes[0], env)
+        v.filter_map { |a| a == "String" ? "RuntimeError" : (a.is_a?(String) && struct_type(a)&.exception ? a : nil) }
+      end
+    end
+
+    def typer_raise(node, env)
+      (node.arguments&.arguments || []).drop((node.arguments&.arguments || []).size == 2 ? 1 : 0).each { ev(_1, env) }
+      raise_types(node, env).each { merge_raised(_1 => [node]) }
+      env.dead = true
+      []
+    end
+
+    # Exception types that only `raise` produces; built-in operations may raise the other kinds anywhere.
+    def user_raised?(name) = name == "RuntimeError" || !Resolver::BUILTIN_EXCEPTIONS.include?(name)
+
+    def typer_begin(node, env)
+      @raised.push({})
+      body_env = env.dup_level
+      result = ev(node.statements, body_env)
+      raised = @raised.pop
+      envs = [body_env]
+      results = [result]
+      clause = node.rescue_clause
+      while clause
+        names = clause.exceptions.map(&:slice)
+        if names.empty?
+          caught = raised.keys + Resolver::BUILTIN_EXCEPTIONS
+        else
+          names.each do |n|
+            next if !user_raised?(n) || raised.key?(n)
+            add_check(clause, "rescue", n, "raised in the begin body", [], :error, [n])
+          end
+          caught = names
+        end
+        e = env.dup_level
+        join_into(e, e.dup_level, body_env)
+        if clause.reference
+          ty = u(*caught.uniq.map { [_1] })
+          assign(e, clause.reference.depth, clause.reference.name, ty)
+        end
+        # A bare raise in the clause re-raises what was caught; only explicitly raised types are tracked.
+        @handled.push(caught.select { raised.key?(_1) })
+        results << ev(clause.statements, e)
+        @handled.pop
+        envs << e
+        raised = raised.reject { |n, _| names.empty? || names.include?(n) }
+        clause = clause.subsequent
+      end
+      merge_raised(raised)
+      if node.else_clause
+        results[0] = ev(node.else_clause, body_env)
+      end
+      join_many(env, envs)
+      ev(node.ensure_clause.statements, env) if node.ensure_clause
+      u(*results)
+    end
+
+    def typer_rescue_modifier(node, env)
+      @raised.push({})
+      r = ev(node.expression, env)
+      @raised.pop
+      u(r, ev(node.rescue_expression, env))
     end
 
     def run_body(fn, args, blk)

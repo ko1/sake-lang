@@ -4,7 +4,7 @@ Sake (/seɪk/) is designed for the sake of finding a new place for types. It kee
 but you write the type on each operation, never on a variable.
 
 This document describes the language as implemented by the v0 interpreter (`bin/sake`). Sake is
-experimental. Points still open in the design are listed in [§15](#15-not-yet-supported) and in
+experimental. Points still open in the design are listed in [§16](#16-not-yet-supported) and in
 [../DESIGN.md](../DESIGN.md) (in Japanese). For a guided introduction, see [tutorial.md](tutorial.md).
 
 ## 1. Principles
@@ -44,9 +44,10 @@ whole-program type inference; whatever is not reported is still checked while ru
 | Level | Option | Items | Stops before running |
 |---|---|---|---|
 | 0 | `--strict=0` | (none) | syntax, names, argument counts, blocks, calls on values, forbidden syntax, literal types in `T[...]` (always checked) |
-| 1 | default | `type` | a value whose type, other than nil, does not fit: `"" + 1`, or `pick() + 1` where `pick` returns 1 or "" |
-| 2 | `--strict` | `type`, `nil` | also a value that may be nil, used without a check (except results of `x[k]`) |
-| 3 | `--strict=3` | `type`, `nil`, `index-nil` | also the result of `x[k]`, which is nil on a miss, used without a check |
+| 1 | default | `type`, `rescue` | a value whose type, other than nil, does not fit (`"" + 1`, or `pick() + 1` where `pick` returns 1 or ""); a `rescue` of an exception the begin body never raises |
+| 2 | `--strict` | `type`, `rescue`, `nil` | also a value that may be nil, used without a check (except results of `x[k]`) |
+| 3 | `--strict=3` | `type`, `rescue`, `nil`, `index-nil` | also the result of `x[k]`, which is nil on a miss, used without a check |
+| 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued |
 
 - **Naming items.** `--strict=type,nil` selects exactly these items. `--strict=2,index-nil` adds an
   item to a level, and `--strict=3,-index-nil` removes one.
@@ -446,9 +447,58 @@ followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
 - **Blocks.** A block over a Hash receives `[key, value]` as one Tuple, so `|k, v|` takes it apart.
 - **Order.** Iteration follows insertion order, as in Ruby.
 
-## 13. Errors
+## 13. Exceptions
 
-### 13.1 Static errors
+```ruby
+ParseError = Exception.new(:line)        # fields: message, line
+
+begin
+  raise ParseError.new("empty", 1)
+rescue ParseError => e
+  ParseError.get_line(e)
+rescue KeyError, IndexError => e
+  Exception.message(e)
+rescue => e                              # any rescuable exception
+  raise                                  # re-raise
+else
+  ...                                    # when nothing was raised
+ensure
+  ...                                    # always, once
+end
+```
+
+- **Exception types.** `Name = Exception.new(:field, ...)` declares an exception type. It is a
+  Struct type whose first field is `message`, so `Name.new("msg", ...)`, `Name.get_message`,
+  `Name.get_field`, and `@field` work as for other Struct types. There is no inheritance.
+- **Built-in exception types.** These are raised by operations, each with only `message`:
+  `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`,
+  `IOError`, `RegexpError`, `FloatDomainError`, `Math::DomainError`.
+- **`raise` forms:**
+  - `raise "msg"` raises `RuntimeError`.
+  - `raise T, "msg"` raises `T.new("msg")`, where T has no fields besides `message`.
+  - `raise value` raises an exception value.
+  - A bare `raise` re-raises inside a rescue clause.
+- **`rescue`.** `rescue A, B => e` catches the listed types only, since there is no hierarchy.
+  `rescue => e` catches every rescuable exception; `e` is a union, so narrow it with
+  `case e in A ...`.
+- **Reading the message.** `Exception.message(e)` reads the message of any exception value.
+- **Program errors.** `TypeError`, `NoMatchingPatternError`, and `SystemStackError` cannot be
+  rescued, and naming them in `rescue` is a static error. They are what the checks before running
+  report ([§2.1](#21-strictness)).
+- **Other forms.** `def f ... rescue ... end`, `expr rescue fallback`, and `retry` work as in Ruby.
+  `ensure` runs once, when the begin block is left.
+- **Exception flow.** The type inference tracks which explicitly raised types may leave each
+  function:
+  - `rescue` (level 1) reports a rescue clause for a type that the begin body never raises.
+    Built-in kinds such as `ZeroDivisionError` can come from ordinary operations, so they are
+    always assumed possible.
+  - `unrescued` (level 4) reports a `raise` that may reach the top level.
+- **Uncaught exceptions.** An uncaught exception ends the program like a runtime error:
+  `FILE:LINE: in FUNCTION: ParseError: message`.
+
+## 14. Errors
+
+### 14.1 Static errors
 
 Static errors are reported all together, sorted by position, and nothing runs. The format is:
 
@@ -472,7 +522,7 @@ The kinds of static error are:
 - literal type mismatches in `T[...]`;
 - the items selected by `--strict` ([§2.1](#21-strictness)): by default, values whose type does not fit.
 
-### 13.2 Runtime errors
+### 14.2 Runtime errors
 
 The format is:
 
@@ -496,7 +546,7 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 | `Math::DomainError` | e.g. `Math.sqrt(-1)` |
 | `SystemStackError` | recursion deeper than 10,000 |
 
-## 14. Built-in operations
+## 15. Built-in operations
 
 The names follow Ruby's core library. "→" gives the result type. Operations marked "block" require
 one.
@@ -682,7 +732,7 @@ Range raise `RangeError` on an endless one.
 `Integer[...]`, `Float[...]`, `String[...]`, `Tuple[...]`, and `D[...]` for each Struct type `D`
 create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 
-## 15. Not yet supported
+## 16. Not yet supported
 
 Each of these is rejected statically. Most wait on a design decision.
 
@@ -697,5 +747,4 @@ Each of these is rejected statically. Most wait on a design decision.
 - **Built-in constants** such as `Math::PI` and `Float::INFINITY`.
 - **Rational, Complex, Time.**
 - **First-class blocks.**
-- **Exceptions** (`raise`, `rescue`).
 - **Several files** (`require`).

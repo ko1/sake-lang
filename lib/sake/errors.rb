@@ -21,7 +21,8 @@ module Sake
     end
   end
 
-  # An error raised while running a Sake program.
+  # An error raised while running a Sake program: by `raise` (value is the exception) or by an
+  # operation (value is built from kind and message when a rescue needs it).
   class RunError < Error
     attr_reader :kind, :line, :frames, :expected
     attr_accessor :path, :hints
@@ -37,6 +38,8 @@ module Sake
     end
 
     def nil_value? = @nil_value
+
+    attr_accessor :value
 
     MAX_FRAMES = 12
 

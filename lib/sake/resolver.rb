@@ -29,7 +29,12 @@ module Sake
                    const_get const_set binding].freeze
     # trait: checking a module's own function while the module is included somewhere; names it lacks
     # are requirements on the including namespace, not errors.
-    Ctx = Struct.new(:ns, :fn, :in_block, :in_loop, :trait)
+    Ctx = Struct.new(:ns, :fn, :in_block, :in_loop, :trait, :in_rescue)
+    # Raised by operations, and rescuable by name. Program errors (NOT_RESCUABLE) are what the checks before
+    # running report, so they cannot be rescued.
+    BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError
+                            RegexpError FloatDomainError Math::DomainError].freeze
+    NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError].freeze
     BUILTIN_TYPES = %w[Integer Float String Array Tuple Hash Set Range Symbol Regexp MatchData].freeze
 
     def initialize(path, root, registry)
@@ -43,6 +48,11 @@ module Sake
       @includes = {} # namespace => [[module name, include node]]
       @requirements = Hash.new { |h, k| h[k] = [] } # module's own function => names it needs from includers
       @direct_calls = []    # [node, function] calls that must not reach a function with requirements
+      (BUILTIN_EXCEPTIONS + NOT_RESCUABLE).each { define_struct(_1, ["message"], exception: true) }
+      @registry.define("Exception", :message, ["Any"]) do |e|
+        raise Fail.new("TypeError", "Exception.message: argument 1 must be an exception, got #{Values.describe(e)}") unless e.is_a?(StructValue) && e.type.exception
+        e.values[0]
+      end
       @toplevel = []
       @calls = {}.compare_by_identity
       @blocks = {}.compare_by_identity
@@ -129,23 +139,30 @@ module Sake
         return error(v, "Sake's named types are mutable, so they are made with Struct.new, not Data.define",
                      ["#{node.name} = Struct.new(#{v.arguments&.slice})"])
       end
-      unless struct_new?(v)
+      exception = constant_call?(v, :Exception, :new)
+      unless struct_new?(v) || exception
         fn = node.name.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
         @value_constants[node.name] = fn
         return error(node, "Sake has no value constants; only a Struct type can be assigned to a constant",
                      ["define a function instead: `def #{fn} = #{first_line(v.slice)}`"])
       end
-      return error(v.block, "Struct.new with a block is not supported; define functions in `class #{node.name}`") if v.block
+      return error(v.block, "#{v.receiver.name}.new with a block is not supported; define functions in `class #{node.name}`") if v.block
 
       name = node.name.to_s
       fields = (v.arguments&.arguments || []).filter_map do |a|
-        a.is_a?(Prism::SymbolNode) ? a.unescaped : error(a, "Struct.new takes field names as symbols, like `Struct.new(:x, :y)`")
+        a.is_a?(Prism::SymbolNode) ? a.unescaped : error(a, "#{v.receiver.name}.new takes field names as symbols, like `#{v.receiver.name}.new(:x, :y)`")
       end
+      fields.unshift("message") if exception && fields.first != "message"
       dup = fields.find { fields.count(_1) > 1 }
-      return error(v, "duplicate field `#{dup}` in Struct.new") if dup
+      return error(v, "duplicate field `#{dup}` in #{v.receiver.name}.new") if dup
       return error(node, "`#{name}` is already defined") if @struct_types[name] || @registry.namespace?(name)
 
-      dt = @struct_types[name] = StructType.new(name, fields)
+      define_struct(name, fields, exception:)
+    end
+
+    def define_struct(name, fields, exception: false)
+      dt = @struct_types[name] = StructType.new(name, fields, exception)
+      return if name.include?("::")
       @registry.define(name, :new, fields.map { "Any" }) { |*vs| StructValue.new(dt, vs) }
       Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
@@ -194,6 +211,8 @@ module Sake
         end
       end
     end
+
+    def lookup_unqualified?(ctx, name) = (ctx.ns && lookup(ctx.ns, name)) || @functions.dig(nil, name)
 
     def include_call?(st)
       st.is_a?(Prism::CallNode) && st.receiver.nil? && st.name == :include && st.arguments && !st.block
@@ -311,6 +330,9 @@ module Sake
       when Prism::CallNode then check_call(node, ctx)
       when Prism::HashNode then check_record_literal(node, ctx)
       when Prism::MatchRequiredNode then check_record_pattern(node, ctx)
+      when Prism::BeginNode then check_begin(node, ctx)
+      when Prism::RescueModifierNode then check_each(ctx, node.expression, node.rescue_expression)
+      when Prism::RetryNode then error(node, "`retry` is only allowed in a rescue clause") unless ctx.in_rescue
       when Prism::MatchPredicateNode
         check(node.value, ctx)
         check_pattern(node.pattern, ctx)
@@ -438,6 +460,58 @@ module Sake
 
     def set_call(node, ctx, target) = (@calls[node] ||= {})[ctx.ns] = target
 
+    def check_begin(node, ctx)
+      check(node.statements, ctx)
+      clause = node.rescue_clause
+      while clause
+        clause.exceptions.each { check_rescued_type(_1) }
+        unless clause.reference.nil? || clause.reference.is_a?(Prism::LocalVariableTargetNode)
+          error(clause.reference, "rescue binds a local variable: `rescue T => e`")
+        end
+        check(clause.statements, ctx.dup.tap { _1.in_rescue = true })
+        clause = clause.subsequent
+      end
+      check(node.else_clause, ctx)
+      check(node.ensure_clause&.statements, ctx)
+    end
+
+    def exception_name(n)
+      case n
+      when Prism::ConstantReadNode then n.name.to_s
+      when Prism::ConstantPathNode then n.slice
+      end
+    end
+
+    def check_rescued_type(n)
+      name = exception_name(n)
+      if NOT_RESCUABLE.include?(name)
+        error(n, "#{name} cannot be rescued: it is a program error, which the checks before running report")
+      elsif !(name && @struct_types[name]&.exception)
+        hint = @struct_types[name.to_s] ? ["declare it with `#{name} = Exception.new(...)`"] : []
+        error(n, "`#{n.slice}` is not an exception type", hint)
+      end
+    end
+
+    # raise; raise "message"; raise exception_value; raise ExceptionType, "message"
+    def check_raise(node, ctx)
+      args = node.arguments&.arguments || []
+      args.each_with_index { |a, i| check(a, ctx) unless i.zero? && args.size == 2 }
+      case args.size
+      when 0 then error(node, "a bare `raise` re-raises, so it is only allowed in a rescue clause") unless ctx.in_rescue
+      when 1 then nil
+      when 2
+        name = exception_name(args[0])
+        dt = name && @struct_types[name]
+        if !dt&.exception
+          error(args[0], "`raise T, message` needs an exception type, got `#{args[0].slice}`")
+        elsif dt.fields.size > 1
+          error(args[0], "#{name} has fields besides message; raise it with `raise #{name}.new(...)`")
+        end
+      else error(node, "raise takes at most an exception type and a message")
+      end
+      set_call(node, ctx, :raise)
+    end
+
     def check_each(ctx, *nodes) = nodes.each { check(_1, ctx) }
 
     def check_jump_args(node, ctx)
@@ -479,6 +553,7 @@ module Sake
 
       if recv.nil?
         return error(node, "`#{node.name}` is not allowed in Sake (it defeats static analysis)") if FORBIDDEN.include?(node.name.to_s)
+        return check_raise(node, ctx) if node.name == :raise && !lookup_unqualified?(ctx, "raise")
         target = resolve_unqualified(node, ctx)
       elsif recv.is_a?(Prism::ConstantReadNode) && (node.call_operator_loc || node.name == :[])
         target = resolve_qualified(node, recv.name.to_s)

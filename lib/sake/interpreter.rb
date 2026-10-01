@@ -42,6 +42,7 @@ module Sake
     end
     class NextSignal < JumpSignal; end
     class BreakSignal < JumpSignal; end
+    class RetrySignal < StandardError; end
 
     MAX_DEPTH = 10_000
 
@@ -49,6 +50,7 @@ module Sake
       @program = program
       @registry = program.registry
       @stack = [] # [function name, call line]
+      @handling = [] # errors being handled by rescue clauses, innermost last (for a bare `raise`)
     end
 
     def run
@@ -118,6 +120,15 @@ module Sake
       when Prism::ArrayNode then Tuple.new(node.elements.map { eval_node(_1, env) })
       when Prism::HashNode then RecordValue.build(node.elements.map { [_1.key.unescaped, eval_node(_1.value, env)] })
       when Prism::MatchRequiredNode then match_record(node, env)
+      when Prism::BeginNode then begin_node(node, env)
+      when Prism::RescueModifierNode
+        begin
+          eval_node(node.expression, env)
+        rescue RunError => e
+          raise unless rescuable?(e)
+          eval_node(node.rescue_expression, env)
+        end
+      when Prism::RetryNode then raise RetrySignal
       when Prism::MatchPredicateNode then pattern_match?(eval_node(node.value, env), node.pattern, env)
       when Prism::CaseMatchNode then case_match(node, env)
       when Prism::ReturnNode then raise ReturnSignal.new(env.frame, jump_value(node, env, tuple: true))
@@ -162,6 +173,75 @@ module Sake
         val = binary_op(node, node.binary_operator, cur, eval_node(node.value, env))
       end
       call_builtin(@registry.lookup("Index", "[]="), [recv, key, val], nil, node)
+    end
+
+    NOT_RESCUABLE = Resolver::NOT_RESCUABLE
+
+    def rescuable?(e) = !NOT_RESCUABLE.include?(e.kind)
+
+    def exception_type(name) = @program.struct_types.fetch(name)
+
+    # The exception value of an error, built from its kind and message when an operation raised it.
+    def exception_value(e)
+      e.value ||= StructValue.new(exception_type(e.kind), [e.message])
+    end
+
+    def do_raise(node, env)
+      nodes = node.arguments&.arguments || []
+      raise @handling.last if nodes.empty?
+
+      args = nodes.size == 2 ? [nil, eval_node(nodes[1], env)] : [eval_node(nodes[0], env)]
+      value =
+        if args.size == 2
+          type = exception_type(nodes[0].slice)
+          fail_at(node, "TypeError", "raise: the message must be String, got #{Values.describe(args[1])}") unless args[1].is_a?(String)
+          StructValue.new(type, [args[1]])
+        elsif args[0].is_a?(String)
+          StructValue.new(exception_type("RuntimeError"), [args[0]])
+        elsif args[0].is_a?(StructValue) && args[0].type.exception
+          args[0]
+        else
+          fail_at(node, "TypeError", "raise needs a String or an exception, got #{Values.describe(args[0])}")
+        end
+      err = RunError.new(value.type.name, Values.to_s(value.values[0]), node.location.start_line, @stack.dup)
+      err.value = value
+      raise err
+    end
+
+    # `retry` in a rescue clause runs the begin body again; ensure runs once, when leaving.
+    def begin_node(node, env)
+      loop do
+        return run_begin(node, env)
+      rescue RetrySignal
+        next
+      end
+    ensure
+      eval_node(node.ensure_clause.statements, env) if node.ensure_clause
+    end
+
+    def run_begin(node, env)
+      result = eval_node(node.statements, env)
+    rescue RunError => e
+      clause = rescuable?(e) && find_clause(node.rescue_clause, e)
+      raise unless clause
+      @handling.push(e)
+      begin
+        env.up(clause.reference.depth).vars[clause.reference.name] = exception_value(e) if clause.reference
+        eval_node(clause.statements, env)
+      ensure
+        @handling.pop
+      end
+    else
+      node.else_clause ? eval_node(node.else_clause, env) : result
+    end
+
+    def find_clause(clause, e)
+      while clause
+        names = clause.exceptions.map(&:slice)
+        return clause if names.empty? || names.include?(e.kind)
+        clause = clause.subsequent
+      end
+      nil
     end
 
     def case_match(node, env)
@@ -267,6 +347,7 @@ module Sake
         return binary_op(node, node.name, eval_node(node.receiver, env), eval_node(node.arguments.arguments.first, env))
       end
 
+      return do_raise(node, env) if target == :raise
       if target.is_a?(IndexCall)
         return call_builtin(target.builtin, [eval_node(node.receiver, env), *eval_args(node.arguments, env)], nil, node)
       end

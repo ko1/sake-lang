@@ -15,6 +15,7 @@
 | blocks.sake | 2 | 28 | 0 | 0 | 0 | 40 | 0 | 0 |
 | bool_op_error.sake | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
 | data.sake | 2 | 2 | 0 | 1 | 0 | 8 | 0 | 0 |
+| exceptions.sake | 2 | 17 | 0 | 1 | 2 | 37 | 0 | 0 |
 | field_shorthand.sake | 2 | 25 | 0 | 4 | 0 | 44 | 0 | 0 |
 | first.sake | 2 | 30 | 0 | 0 | 0 | 42 | 0 | 0 |
 | include.sake | 2 | 8 | 0 | 0 | 0 | 15 | 0 | 0 |

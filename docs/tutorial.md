@@ -32,9 +32,10 @@ How much is checked before running is set with `--strict`:
 | Level | How to ask | Also stops before running |
 |---|---|---|
 | 0 | `--strict=0` | only syntax, names, argument counts, calls on values, and the like |
-| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation |
+| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation; **rescue**: a rescue of an exception never raised |
 | 2 | `--strict` | **nil**: a value that may be nil, used without a check |
 | 3 | `--strict=3` | **index-nil**: the result of `x[k]`, used without a check |
+| 4 | `--strict=4` | **unrescued**: a `raise` that may reach the top level |
 
 Items can also be named: `--strict=type,nil`, or `--strict=3,-index-nil`. Whatever is not checked
 before running is still checked while running, by each operation.
@@ -938,7 +939,68 @@ strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node) [nil
 (exit status 2)
 ```
 
-## 12. What Sake rejects
+## 12. Exceptions
+
+`raise`, `rescue`, `else`, `ensure`, and `retry` work as in Ruby. An exception type is declared with
+`Exception.new`: it is a Struct type whose first field is `message`. There is no hierarchy, so a
+`rescue` lists the types it catches.
+
+```ruby
+ParseError = Exception.new(:line)        # an exception type: message, then its own fields
+
+def parse(s)
+  raise ParseError.new("empty input", 1) if String.empty?(s)
+  raise ArgumentError, "too long" if String.size(s) > 5
+  String.to_i(s)
+end
+
+Array.each(Array["", "123456", "42"]) do |s|
+  begin
+    p(parse(s))
+  rescue ParseError => e                 # list the types to rescue; there is no hierarchy
+    puts(String.+("line ", Integer.to_s(ParseError.get_line(e))))
+  rescue ArgumentError => e
+    puts(Exception.message(e))
+  ensure
+    puts("--")
+  end
+end
+
+def safe_div(a, b)
+  a / b
+rescue ZeroDivisionError
+  0
+end
+p(safe_div(1, 0))
+v = Hash.fetch(Hash["a" => 1], "b") rescue -1
+p(v)
+```
+
+```
+$ sake exceptions.sake
+line 1
+--
+too long
+--
+42
+--
+0
+-1
+```
+
+The checker tracks which exceptions each function may raise. By default it reports a `rescue`
+that can never match. Level 4 also reports a `raise` that nothing rescues:
+
+```
+$ sake --strict=4 exceptions_flow.sake
+exceptions_flow.sake:5:3: error: raise: ParseError may reach the top level without being rescued [unrescued]
+  hint: rescue it, or check with a level below 4
+exceptions_flow.sake:11:1: error: rescue OtherError: the begin body never raises OtherError [rescue]
+  hint: remove this rescue, or raise OtherError in the body
+(exit status 2)
+```
+
+## 13. What Sake rejects
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
@@ -974,7 +1036,7 @@ forbidden.sake:8:1: error: `eval` is not allowed in Sake (it defeats static anal
 To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
 the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
-## 13. Looking at the types (experimental)
+## 14. Looking at the types (experimental)
 
 `--types` runs a whole-program type inference without running the program. It reports, for every
 operation that checks its argument, one of the following:
@@ -1031,7 +1093,7 @@ fields:
   Node.next: nil | Node
 ```
 
-## 14. Putting it together
+## 15. Putting it together
 
 A bank account with a transaction history. The history starts as an empty `Array[]` and is filled
 with `[kind, amount]` Tuples, which a `do |kind, amount|` block destructures.

@@ -47,7 +47,7 @@ class TestCLI < Minitest::Test
 
   def test_bad_strict_option
     _, err, st = run_sake_args("puts(1)\n", "--strict=9")
-    assert_match(/strict levels are 0..3/, err)
+    assert_match(/strict levels are 0..4/, err)
     assert_equal 2, st.exitstatus
     _, err, = run_sake_args("puts(1)\n", "--strict=nill")
     assert_match(/unknown strict item `nill`/, err)

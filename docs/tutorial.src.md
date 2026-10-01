@@ -30,9 +30,10 @@ How much is checked before running is set with `--strict`:
 | Level | How to ask | Also stops before running |
 |---|---|---|
 | 0 | `--strict=0` | only syntax, names, argument counts, calls on values, and the like |
-| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation |
+| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation; **rescue**: a rescue of an exception never raised |
 | 2 | `--strict` | **nil**: a value that may be nil, used without a check |
 | 3 | `--strict=3` | **index-nil**: the result of `x[k]`, used without a check |
+| 4 | `--strict=4` | **unrescued**: a `raise` that may reach the top level |
 
 Items can also be named: `--strict=type,nil`, or `--strict=3,-index-nil`. Whatever is not checked
 before running is still checked while running, by each operation.
@@ -264,7 +265,20 @@ reports every unchecked use before running. A local variable you have tested cou
 @@example strict
 @@run strict --strict
 
-## 12. What Sake rejects
+## 12. Exceptions
+
+`raise`, `rescue`, `else`, `ensure`, and `retry` work as in Ruby. An exception type is declared with
+`Exception.new`: it is a Struct type whose first field is `message`. There is no hierarchy, so a
+`rescue` lists the types it catches.
+
+@@example exceptions
+
+The checker tracks which exceptions each function may raise. By default it reports a `rescue`
+that can never match. Level 4 also reports a `raise` that nothing rescues:
+
+@@run exceptions_flow --strict=4
+
+## 13. What Sake rejects
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
@@ -280,7 +294,7 @@ All of these are reported together, before running:
 To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
 the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
-## 13. Looking at the types (experimental)
+## 14. Looking at the types (experimental)
 
 `--types` runs a whole-program type inference without running the program. It reports, for every
 operation that checks its argument, one of the following:
@@ -300,7 +314,7 @@ In the `strict` program from section 11, the inference finds the one unchecked u
 
 @@run strict --types
 
-## 14. Putting it together
+## 15. Putting it together
 
 A bank account with a transaction history. The history starts as an empty `Array[]` and is filled
 with `[kind, amount]` Tuples, which a `do |kind, amount|` block destructures.
