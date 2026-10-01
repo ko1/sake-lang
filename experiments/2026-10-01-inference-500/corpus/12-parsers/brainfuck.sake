@@ -1,0 +1,80 @@
+BracketError = Exception.new(:pos)
+
+def strip_comments(src) = Array.join(Array.select(String.chars(src)) { |c| String.include?("+-<>[].,", c) }, "")
+
+def jump_table(code)
+  jumps = Hash[]
+  open = Integer[]
+  Array.each_with_index(String.chars(code)) do |c, i|
+    if c == "["
+      Array.push(open, i)
+    elsif c == "]"
+      j = Array.pop(open)
+      raise BracketError.new("unmatched ']'", i) if j == nil
+      jumps[i] = j
+      jumps[j] = i
+    end
+  end
+  raise BracketError.new("unmatched '['", Array.last(open)) unless Array.empty?(open)
+  jumps
+end
+
+def run(src, input, tape_size)
+  code = strip_comments(src)
+  jumps = jump_table(code)
+  tape = Integer[]
+  Integer.times(tape_size) { Array.push(tape, 0) }
+  ptr = 0
+  pc = 0
+  inp = 0
+  out = ""
+  steps = 0
+  n = String.size(code)
+  while pc < n
+    c = code[pc]
+    if c == "+"
+      tape[ptr] = (tape[ptr] + 1) % 256
+    elsif c == "-"
+      tape[ptr] = (tape[ptr] - 1) % 256
+    elsif c == ">"
+      ptr = (ptr + 1) % tape_size
+    elsif c == "<"
+      ptr = (ptr - 1) % tape_size
+    elsif c == "."
+      out += Integer.chr(tape[ptr])
+    elsif c == ","
+      ch = input[inp]
+      tape[ptr] = ch ? String.ord(ch) : 0
+      inp += 1
+    elsif c == "["
+      pc = jumps[pc] if tape[ptr] == 0
+    elsif c == "]"
+      pc = jumps[pc] if tape[ptr] != 0
+    end
+    pc += 1
+    steps += 1
+  end
+  used = Array.count(tape) { |v| v != 0 }
+  {out: out, steps: steps, cells: used}
+end
+
+def programs
+  Array[
+    ["hello", "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.", ""],
+    ["add 3+4", ",>,[<+>-]<------------------------------------------------.", "34"],
+    ["reverse", ">,[>,]<[.<]", "stressed"],
+    ["upcase", ",[--------------------------------.,] read and shift each byte", "sake"],
+    ["broken", "+[>+<-]]", ""],
+    ["open", "[[]", ""]
+  ]
+end
+
+Array.each(programs) do |name, src, input|
+  begin
+    r = run(src, input, 64)
+    r => {out:, steps:, cells:}
+    puts(format("%-8s %-20s steps=%-5d cells=%d", name, Kernel.inspect(String.chomp(out)), steps, cells))
+  rescue BracketError => e
+    puts(format("%-8s error: %s at %d", name, Exception.message(e), BracketError.get_pos(e)))
+  end
+end

@@ -1,0 +1,114 @@
+# A meeting-room booking system for one week: requests are checked for
+# conflicts and opening hours, rejected requests raise typed errors, and the
+# week is summarised per room.
+
+Booking = Struct.new(:id, :room, :day, :start, :finish, :owner)
+Conflict = Exception.new(:existing)
+OutsideHours = Exception.new(:day)
+UnknownRoom = Exception.new(:room)
+
+def days = Array["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+def rooms = Hash["Atlas" => 12, "Boreal" => 6, "Cedar" => 4]
+
+def to_min(hhmm)
+  h, _sep, m = String.partition(hhmm, ":")
+  String.to_i(h) * 60 + String.to_i(m)
+end
+
+def hhmm(t) = format("%02d:%02d", t / 60, t % 60)
+
+class Booking
+  def overlaps?(b, other)
+    @room == Booking.get_room(other) && @day == Booking.get_day(other) &&
+      @start < Booking.get_finish(other) && Booking.get_start(other) < @finish
+  end
+
+  def minutes(b) = @finish - @start
+
+  def to_s(b) = "##{@id} #{@room} #{days[@day]} #{hhmm(@start)}-#{hhmm(@finish)} #{@owner}"
+end
+
+Calendar = Struct.new(:bookings, :next_id)
+
+class Calendar
+  def book(cal, room, day_name, from, to, owner)
+    raise UnknownRoom.new("no such room", room) unless Hash.key?(rooms, room)
+    day = Array.index(days, day_name)
+    raise OutsideHours.new("not a working day", day_name) if day == nil
+    start = to_min(from)
+    finish = to_min(to)
+    if start < 8 * 60 || finish > 19 * 60 || finish <= start
+      raise OutsideHours.new("outside 08:00-19:00: #{from}-#{to}", day_name)
+    end
+    b = Booking.new(@next_id, room, day, start, finish, owner)
+    clash = Array.find(@bookings) { |other| Booking.overlaps?(b, other) }
+    raise Conflict.new("overlaps", clash) if clash
+    Array.push(@bookings, b)
+    @next_id += 1
+    b
+  end
+
+  def cancel(cal, id)
+    victim = Array.find(@bookings) { |b| Booking.get_id(b) == id }
+    return false if victim == nil
+    Array.delete(@bookings, victim)
+    true
+  end
+end
+
+requests = Array[
+  ["Atlas", "Mon", "09:00", "10:00", "kim"],
+  ["Atlas", "Mon", "09:30", "10:30", "lee"],
+  ["Boreal", "Mon", "09:30", "10:30", "lee"],
+  ["Cedar", "Tue", "07:30", "08:30", "max"],
+  ["Cedar", "Tue", "08:00", "09:00", "max"],
+  ["Dome", "Wed", "10:00", "11:00", "nia"],
+  ["Atlas", "Sat", "10:00", "11:00", "nia"],
+  ["Atlas", "Wed", "13:00", "16:00", "ola"],
+  ["Atlas", "Wed", "15:59", "17:00", "kim"],
+  ["Atlas", "Wed", "16:00", "17:00", "kim"],
+  ["Boreal", "Thu", "11:00", "10:00", "lee"],
+  ["Boreal", "Thu", "11:00", "12:30", "lee"],
+  ["Cedar", "Fri", "14:00", "18:30", "max"],
+  ["Boreal", "Fri", "09:00", "12:00", "ola"]
+]
+
+cal = Calendar.new(Booking[], 1)
+rejected = Hash.new(0)
+Array.each(requests) do |room, day, from, to, owner|
+  begin
+    b = Calendar.book(cal, room, day, from, to, owner)
+    puts("ok       #{b}")
+  rescue Conflict => e
+    rejected["conflict"] += 1
+    puts("conflict #{room} #{day} #{from}-#{to} #{owner}: #{Exception.message(e)} #{Conflict.get_existing(e)}")
+  rescue OutsideHours => e
+    rejected["hours"] += 1
+    puts("hours    #{room} #{OutsideHours.get_day(e)} #{owner}: #{Exception.message(e)}")
+  rescue UnknownRoom => e
+    rejected["room"] += 1
+    puts("room     #{UnknownRoom.get_room(e)}: #{Exception.message(e)}")
+  end
+end
+puts("Rejected: #{Array.join(Hash.map(rejected) { |k, n| "#{k}=#{n}" }, ", ")}")
+
+puts("Cancel #2: #{Calendar.cancel(cal, 2)}, cancel #99: #{Calendar.cancel(cal, 99)}")
+retry_b = Calendar.book(cal, "Boreal", "Mon", "10:00", "11:00", "kim")
+puts("rebooked #{retry_b}")
+
+puts
+puts("Utilisation (11 h days):")
+Hash.each(rooms) do |room, seats|
+  mine = Array.select(Calendar.get_bookings(cal)) { |b| Booking.get_room(b) == room }
+  used = Array.sum(Array.map(mine) { |b| Booking.minutes(b) })
+  pct = used * 100 / (5 * 11 * 60)
+  busiest = Array.max_by(mine) { |b| Booking.minutes(b) }
+  top = busiest ? Booking.to_s(busiest) : "-"
+  puts(format("  %-7s %2d seats %4d min %3d%%  longest: %s", room, seats, used, pct, top))
+end
+
+per_day = Array.group_by(Calendar.get_bookings(cal)) { |b| Booking.get_day(b) }
+puts("Bookings per day: " + Array.join(Array.map(Range.to_a(0..4)) { |d| "#{days[d]}=#{Array.size(Hash.fetch(per_day, d, Array[]))}" }, " "))
+owners = Array.tally(Array.map(Calendar.get_bookings(cal)) { |b| Booking.get_owner(b) })
+puts("By owner: #{Array.join(Array.map(Array.sort(Hash.keys(owners))) { |o| "#{o}:#{owners[o]}" }, " ")}")

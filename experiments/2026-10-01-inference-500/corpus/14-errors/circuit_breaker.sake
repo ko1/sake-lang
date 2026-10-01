@@ -1,0 +1,75 @@
+# A circuit breaker guarding a remote dependency, driven by a simulated clock and outcome list.
+CircuitOpenError = Exception.new(:retry_at)
+RemoteError = Exception.new(:status)
+
+class Breaker < {reader: [threshold, cooldown], accessor: [state, failures, opened_at, transitions]}
+  def guard(b, now)
+    if @state == :open
+      if now - @opened_at >= @cooldown
+        move(b, :half_open, now)
+      else
+        raise CircuitOpenError.new("circuit open", @opened_at + @cooldown)
+      end
+    end
+    begin
+      result = yield
+    rescue RemoteError => e
+      record_failure(b, now)
+      raise
+    end
+    record_success(b, now)
+    result
+  end
+
+  def record_failure(b, now)
+    @failures += 1
+    if @state == :half_open || @failures >= @threshold
+      move(b, :open, now)
+      @opened_at = now
+    end
+  end
+
+  def record_success(b, now)
+    @failures = 0
+    move(b, :closed, now) if @state != :closed
+  end
+
+  def move(b, to, now)
+    Array.push(@transitions, "t=#{now} #{@state} -> #{to}")
+    @state = to
+  end
+end
+
+def remote_call(outcome, request)
+  return "200 #{request}" if outcome == 200
+  raise RemoteError.new("upstream returned #{outcome}", outcome)
+end
+
+# [time, outcome the remote would give at that time]
+schedule = Array[
+  [0, 200], [1, 500], [2, 503], [3, 500], [4, 200], [6, 200],
+  [9, 500], [10, 500], [11, 200], [12, 200], [16, 200], [17, 502],
+  [18, 502], [19, 502], [25, 200], [26, 200]
+]
+
+breaker = Breaker.new(3, 5, :closed, 0, 0, Array[])
+counts = Hash.new(0)
+Array.each(schedule) do |t, outcome|
+  line = format("t=%2d", t)
+  begin
+    body = Breaker.guard(breaker, t) { remote_call(outcome, "req@#{t}") }
+    counts[:ok] += 1
+    puts("#{line} ok      #{body}")
+  rescue CircuitOpenError => e
+    counts[:rejected] += 1
+    puts("#{line} reject  #{Exception.message(e)} until t=#{CircuitOpenError.get_retry_at(e)}")
+  rescue RemoteError => e
+    counts[:failed] += 1
+    puts("#{line} fail    #{RemoteError.get_status(e)} (failures=#{Breaker.get_failures(breaker)}, #{Breaker.get_state(breaker)})")
+  end
+end
+
+puts("transitions:")
+Array.each(Breaker.get_transitions(breaker)) { |tr| puts("  #{tr}") }
+puts("ok=#{counts[:ok]} failed=#{counts[:failed]} rejected=#{counts[:rejected]}")
+puts("final state: #{Breaker.get_state(breaker)}")

@@ -1,0 +1,104 @@
+Renderer = Struct.new(:state, :out, :para, :counts)
+
+def escape_html(s) = String.gsub(String.gsub(String.gsub(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+
+def inline(s)
+  t = escape_html(s)
+  t = String.gsub(t, /\*\*(.+?)\*\*/, "<strong>\\1</strong>")
+  t = String.gsub(t, /`([^`]+)`/, "<code>\\1</code>")
+  String.gsub(t, /_(.+?)_/, "<em>\\1</em>")
+end
+
+class Renderer
+  def fresh = Renderer.new(:normal, Array[], Array[], Hash.new(0))
+
+  def emit(r, html, kind)
+    Array.push(@out, html)
+    @counts[kind] += 1
+  end
+
+  def close_block(r)
+    case @state
+    in :paragraph
+      emit(r, "<p>#{Array.join(Array.map(@para) { inline(it) }, " ")}</p>", :p)
+      @para = Array[]
+    in :ulist then Array.push(@out, "</ul>")
+    in :olist then Array.push(@out, "</ol>")
+    in :quote
+      emit(r, "<blockquote>#{Array.join(Array.map(@para) { inline(it) }, " ")}</blockquote>", :quote)
+      @para = Array[]
+    in :normal | :code then nil
+    end
+    @state = :normal
+  end
+
+  def line(r, raw)
+    if @state == :code
+      if String.start_with?(raw, "```")
+        Array.push(@out, "</code></pre>")
+        @state = :normal
+      else
+        Array.push(@out, escape_html(raw))
+      end
+      return
+    end
+    text = String.rstrip(raw)
+    heading = String.match(text, /\A(\#{1,6}) +(.*)\z/)
+    bullet = String.match(text, /\A[-*] +(.*)\z/)
+    numbered = String.match(text, /\A\d+\. +(.*)\z/)
+    if String.empty?(text)
+      close_block(r)
+    elsif String.start_with?(text, "```")
+      close_block(r)
+      lang = String.strip(text[3..])
+      Array.push(@out, String.empty?(lang) ? "<pre><code>" : "<pre><code class=\"#{lang}\">")
+      @counts[:code] += 1
+      @state = :code
+    elsif heading
+      close_block(r)
+      level = String.size(heading[1])
+      emit(r, "<h#{level}>#{inline(heading[2])}</h#{level}>", :heading)
+    elsif bullet
+      if @state != :ulist
+        close_block(r)
+        Array.push(@out, "<ul>")
+        @state = :ulist
+      end
+      emit(r, "  <li>#{inline(bullet[1])}</li>", :item)
+    elsif numbered
+      if @state != :olist
+        close_block(r)
+        Array.push(@out, "<ol>")
+        @state = :olist
+      end
+      emit(r, "  <li>#{inline(numbered[1])}</li>", :item)
+    elsif String.start_with?(text, ">")
+      close_block(r) if @state != :quote
+      @state = :quote
+      Array.push(@para, String.strip(text[1..]))
+    else
+      close_block(r) if @state != :paragraph
+      @state = :paragraph
+      Array.push(@para, String.strip(text))
+    end
+  end
+
+  def finish(r)
+    if @state == :code
+      Array.push(@out, "</code></pre>")
+      @state = :normal
+    end
+    close_block(r)
+    @out
+  end
+end
+
+doc = "# Release notes\n\nThis release adds **state machines** and\nfixes _many_ bugs.\n\n## Changes\n- faster `lexer`\n- new <parser> API\n* fewer allocations\n1. read the docs\n2. upgrade\n\n> Simple things should be simple,\n> complex things possible.\n\n```ruby\nif a < b && c\n  puts \"x\"\n```\nTrailing paragraph with a_b and 3 * 4.\n```\nunterminated block\n"
+
+r = Renderer.fresh
+String.each_line(doc) { |l| Renderer.line(r, String.chomp(l)) }
+html = Renderer.finish(r)
+Array.each(html) { puts(it) }
+puts("--")
+counts = Renderer.get_counts(r)
+puts(Array.join(Array.map(Array.sort_by(Hash.keys(counts)) { Symbol.to_s(it) }) { |k| "#{k}=#{counts[k]}" }, " "))

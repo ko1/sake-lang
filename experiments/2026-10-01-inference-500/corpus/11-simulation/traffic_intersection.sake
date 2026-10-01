@@ -1,0 +1,103 @@
+Vehicle = Struct.new(:id, :approach, :arrived, :turn)
+Phase = Struct.new(:name, :green, :min_time, :max_time, :yellow)
+
+class Controller < {reader: [phases], accessor: [index, elapsed, in_yellow, switches]}
+  def current(c) = Array.fetch(@phases, @index)
+
+  def green_for?(c, approach)
+    @in_yellow == false && Array.include?(Phase.get_green(current(c)), approach)
+  end
+
+  def tick(c, queues)
+    @elapsed += 1
+    ph = current(c)
+    if @in_yellow
+      if @elapsed >= Phase.get_yellow(ph)
+        @in_yellow = false
+        @index = (@index + 1) % Array.size(@phases)
+        @elapsed = 0
+        @switches += 1
+      end
+      return
+    end
+    served = Array.sum(Array.map(Phase.get_green(ph)) { |a| Array.size(queues[a]) })
+    waiting = Hash.sum(queues) { |a, q| Array.include?(Phase.get_green(ph), a) ? 0 : Array.size(q) }
+    gap_out = served == 0 && waiting > 0
+    if @elapsed >= Phase.get_max_time(ph) || (@elapsed >= Phase.get_min_time(ph) && gap_out)
+      @in_yellow = true
+      @elapsed = 0
+    end
+  end
+end
+
+def arrivals(t)
+  pattern = Array[
+    [:north, 3, 0, :straight], [:south, 4, 1, :left], [:east, 2, 0, :straight],
+    [:west, 5, 2, :right], [:north, 7, 3, :left], [:east, 9, 4, :right]
+  ]
+  out = Array[]
+  Array.each(pattern) do |approach, every, offset, turn|
+    Array.push(out, [approach, turn]) if t % every == offset
+  end
+  out
+end
+
+def run(min_g, max_g, duration)
+  phases = Phase[
+    Phase.new("NS", Array[:north, :south], min_g, max_g, 2),
+    Phase.new("EW", Array[:east, :west], min_g, max_g, 2)
+  ]
+  ctl = Controller.new(phases, 0, 0, false, 0)
+  queues = Hash[north: Vehicle[], south: Vehicle[], east: Vehicle[], west: Vehicle[]]
+  waits = Hash.new(0)
+  passed = Hash.new(0)
+  max_queue = Hash.new(0)
+  next_id = 1
+  t = 0
+  while t < duration
+    Array.each(arrivals(t)) do |approach, turn|
+      Array.push(queues[approach], Vehicle.new(next_id, approach, t, turn))
+      next_id += 1
+    end
+    Hash.each(queues) do |approach, q|
+      next unless Controller.green_for?(ctl, approach)
+      head = Array.first(q)
+      next if head == nil
+      if Vehicle.get_turn(head) == :left
+        opposite = approach == :north ? :south : (approach == :south ? :north : (approach == :east ? :west : :east))
+        oncoming = Array.first(queues[opposite])
+        next if oncoming && Vehicle.get_turn(oncoming) != :left && Vehicle.get_arrived(oncoming) < Vehicle.get_arrived(head)
+      end
+      Array.shift(q)
+      waits[approach] += t - Vehicle.get_arrived(head)
+      passed[approach] += 1
+    end
+    Hash.each(queues) { |a, q| max_queue[a] = Array.size(q) if Array.size(q) > max_queue[a] }
+    Controller.tick(ctl, queues)
+    t += 1
+  end
+  left = Hash.sum(queues) { |a, q| Array.size(q) }
+  {waits: waits, passed: passed, max_queue: max_queue, left: left, switches: Controller.get_switches(ctl)}
+end
+
+def show(label, r)
+  r => {waits:, passed:, max_queue:, left:, switches:}
+  total_passed = Hash.sum(passed) { |a, n| n }
+  total_wait = Hash.sum(waits) { |a, w| w }
+  puts("#{label}: passed #{total_passed}, still queued #{left}, phase changes #{switches}")
+  Array.each(Array[:north, :south, :east, :west]) do |a|
+    n = passed[a]
+    avg = n == 0 ? 0.0 : waits[a] / Integer.to_f(n)
+    puts(format("  %-6s passed %3d  avg wait %5.2f  max queue %2d", a, n, avg, max_queue[a]))
+  end
+  total_wait / Integer.to_f(total_passed)
+end
+
+results = Array[]
+Array.each(Array[[3, 8], [5, 15], [8, 30]]) do |min_g, max_g|
+  avg = show("min #{min_g} max #{max_g}", run(min_g, max_g, 120))
+  Array.push(results, [min_g, max_g, avg])
+end
+best = Array.min_by(results) { |mn, mx, avg| avg }
+mn, mx, avg = best
+puts(format("best timing: min %d max %d (avg wait %.3f)", mn, mx, avg))

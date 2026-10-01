@@ -1,0 +1,98 @@
+Tarjan = Struct.new(:graph, :index, :low, :on_stack, :stack, :counter, :sccs)
+
+class Tarjan
+  def run(graph)
+    t = Tarjan.new(graph, Hash[], Hash[], Set[], Array[], 0, Array[])
+    Array.each(Array.sort(Hash.keys(graph))) do |v|
+      visit(t, v) unless Hash.key?(get_index(t), v)
+    end
+    get_sccs(t)
+  end
+
+  def visit(t, v)
+    @index[v] = @counter
+    @low[v] = @counter
+    @counter += 1
+    Array.push(@stack, v)
+    Set.add(@on_stack, v)
+    Array.each(Hash.fetch(@graph, v, Array[])) do |w|
+      if Hash.key?(@index, w) == false
+        visit(t, w)
+        @low[v] = @low[w] if @low[w] < @low[v]
+      elsif Set.include?(@on_stack, w)
+        @low[v] = @index[w] if @index[w] < @low[v]
+      end
+    end
+    if @low[v] == @index[v]
+      comp = Array[]
+      while true
+        w = Array.pop(@stack)
+        Set.delete(@on_stack, w)
+        Array.push(comp, w)
+        break if w == v
+      end
+      Array.push(@sccs, Array.sort(comp))
+    end
+  end
+end
+
+def parse(text)
+  graph = Hash[]
+  Array.each(String.lines(text)) do |line|
+    from, _, rest = String.partition(String.strip(line), " uses ")
+    next if String.empty?(from)
+    graph[from] ||= Array[]
+    Array.each(String.split(rest, /,\s*/)) do |to|
+      Array.push(graph[from], to)
+      graph[to] ||= Array[]
+    end
+  end
+  graph
+end
+
+def condense(graph, sccs)
+  owner = Hash[]
+  Array.each_with_index(sccs) { |comp, i| Array.each(comp) { |v| owner[v] = i } }
+  links = Set[]
+  Hash.each(graph) do |v, outs|
+    Array.each(outs) do |w|
+      a = owner[v]
+      b = owner[w]
+      Set.add(links, [a, b]) if a != b
+    end
+  end
+  links
+end
+
+text = <<~DEPS
+  app uses router, view, db
+  router uses controller
+  controller uses model, view
+  model uses db, validator
+  validator uses model
+  view uses helper, template
+  template uses helper
+  helper uses view
+  db uses pool
+  pool uses logger
+  logger uses config
+  config uses logger
+  cli uses app, config
+DEPS
+
+graph = parse(text)
+sccs = Tarjan.run(graph)
+puts("modules: #{Hash.size(graph)}, components: #{Array.size(sccs)}")
+# Tarjan emits components in reverse topological order: dependencies first.
+Array.each_with_index(sccs) do |comp, i|
+  tag = Array.size(comp) > 1 ? "CYCLE" : "ok"
+  puts(format("%2d %-5s %s", i, tag, Array.join(comp, " ")))
+end
+cycles = Array.select(sccs) { |c| Array.size(c) > 1 }
+puts("modules caught in cycles: #{Array.sum(Array.map(cycles) { |c| Array.size(c) })}")
+links = condense(graph, sccs)
+puts("links between components: #{Set.size(links)}")
+sorted_links = Array.sort_by(Set.to_a(links)) { |a, b| a * 100 + b }
+Array.each(sorted_links) do |a, b|
+  puts("  #{Array.join(sccs[a], "+")} -> #{Array.join(sccs[b], "+")}")
+end

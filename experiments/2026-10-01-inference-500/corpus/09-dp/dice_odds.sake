@@ -1,0 +1,78 @@
+Die = Struct.new(:name, :faces)
+
+class Die
+  def standard(n) = Die.new("d#{n}", Range.to_a(1..n))
+  def to_s(d) = @name
+end
+
+# distribution of the total of several dice, as exact fractions
+def distribution(dice)
+  dist = Hash[0 => 1r]
+  Array.each(dice) do |die|
+    faces = Die.get_faces(die)
+    share = Rational(1, Array.size(faces))
+    nxt = Hash.new(0r)
+    Hash.each(dist) do |total, prob|
+      Array.each(faces) { |f| nxt[total + f] += prob * share }
+    end
+    dist = nxt
+  end
+  dist
+end
+
+def expectation(dist) = Hash.sum(dist) { |v, prob| prob * v }
+
+def at_least(dist, target) = Hash.sum(Hash.select(dist) { |v, prob| v >= target }) { |v, prob| prob }
+
+def show_histogram(dist)
+  peak = Array.max(Hash.values(dist))
+  Array.each(Array.sort(Hash.keys(dist))) do |v|
+    prob = dist[v]
+    bar = "*" * Rational.round(prob / peak * 30)
+    puts(format("  %3d %-8s %6.2f%% %s", v, Rational.to_s(prob), Rational.to_f(prob) * 100, bar))
+  end
+end
+
+# probability that a pool of d6 dice gets at least `need` successes (5 or 6 each)
+def success_odds(pool, need)
+  ways = Array[1r]
+  hit = Rational(1, 3)
+  Integer.times(pool) do
+    nxt = Array.fill(Range.to_a(0..(Array.size(ways))), 0r)
+    Array.each_with_index(ways) do |prob, k|
+      nxt[k] += prob * (1 - hit)
+      nxt[k + 1] += prob * hit
+    end
+    ways = nxt
+  end
+  Array.sum(Array.drop(ways, need))
+end
+
+two_d6 = distribution(Array[Die.standard(6), Die.standard(6)])
+puts("2d6:")
+show_histogram(two_d6)
+puts("  mean #{Rational.to_s(expectation(two_d6))}")
+
+sets = Array[
+  Array[Die.standard(6), Die.standard(6), Die.standard(6)],
+  Array[Die.standard(20)],
+  Array[Die.standard(4), Die.standard(8), Die.standard(12)],
+  Array[Die.new("fudge", Array[-1, -1, 0, 0, 1, 1]), Die.new("fudge", Array[-1, -1, 0, 0, 1, 1]), Die.new("fudge", Array[-1, -1, 0, 0, 1, 1])]
+]
+Array.each(sets) do |dice|
+  dist = distribution(dice)
+  label = Array.join(Array.map(dice) { |d| Kernel.to_s(d) }, "+")
+  mode = Hash.max_by(dist) { |v, prob| prob }
+  low = Array.min(Hash.keys(dist))
+  high = Array.max(Hash.keys(dist))
+  puts(format("%-14s range %d..%d, mean %s, most likely %d (%s)", label, low, high, Rational.to_s(expectation(dist)), mode[0], Rational.to_s(mode[1])))
+  target = (low + high + 1) / 2 + 2
+  odds = at_least(dist, target)
+  puts(format("  P(total >= %d) = %s ~ %.4f", target, Rational.to_s(odds), Rational.to_f(odds)))
+end
+
+puts("dice pool, success on 5 or 6:")
+Array.each(Array[[3, 1], [3, 2], [6, 2], [6, 4], [10, 5]]) do |pool, need|
+  odds = success_odds(pool, need)
+  puts(format("  %2d dice, need %d: %6.2f%%", pool, need, Rational.to_f(odds) * 100))
+end

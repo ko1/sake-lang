@@ -1,0 +1,89 @@
+# Paginating a filtered, sorted catalog: Array slices by Range, page windows, cursors, and out-of-range pages.
+
+Product = Struct.new(:sku, :name, :category, :price, :stock)
+
+def catalog
+  rows = Array[
+    "A1 kettle kitchen 25.0 4", "A2 toaster kitchen 30.0 0", "A3 blender kitchen 55.5 2",
+    "B1 lamp living 18.0 10", "B2 rug living 120.0 1", "B3 cushion living 9.5 25",
+    "C1 drill garage 80.0 3", "C2 ladder garage 65.0 0", "C3 toolbox garage 22.0 7",
+    "D1 pan kitchen 19.9 12", "D2 knife kitchen 14.0 30", "D3 whisk kitchen 4.5 40",
+    "E1 shelf living 45.0 5", "E2 clock living 27.0 8"
+  ]
+  Array.map(rows) do |r|
+    f = String.split(r, " ")
+    Product.new(f[0], f[1], String.to_sym(f[2]), String.to_f(f[3]), String.to_i(f[4]))
+  end
+end
+
+def page_count(total, per) = Integer.ceildiv(total, per)
+
+def page(items, number, per)
+  return nil if number < 1
+  from = (number - 1) * per
+  slice = items[from...(from + per)]
+  return nil if slice == nil || Array.empty?(slice)
+  {number: number, items: slice, first: from + 1, last: from + Array.size(slice), total: Array.size(items)}
+end
+
+def window(current, pages, width)
+  half = width / 2
+  lo = Integer.clamp(current - half, 1, Integer.clamp(pages - width + 1, 1, pages))
+  hi = Integer.clamp(lo + width - 1, 1, pages)
+  Range.to_a(lo..hi)
+end
+
+def nav(current, pages)
+  parts = Array.map(window(current, pages, 3)) { |n| n == current ? "[#{n}]" : Integer.to_s(n) }
+  Array.unshift(parts, "<") if current > 1
+  Array.push(parts, ">") if current < pages
+  Array.join(parts, " ")
+end
+
+def show(pg, pages)
+  if pg == nil
+    puts("  (no such page)")
+    return
+  end
+  pg => {number:, items:, first:, last:, total:}
+  puts("  page #{number}/#{pages}: items #{first}-#{last} of #{total}   #{nav(number, pages)}")
+  Array.each(items) { |p| puts(format("    %-3s %-9s %7.2f", Product.get_sku(p), Product.get_name(p), Product.get_price(p))) }
+end
+
+products = catalog
+in_stock = Array.sort_by(Array.select(products) { |p| Product.get_stock(p) > 0 }) { |p| Product.get_price(p) }
+per = 4
+pages = page_count(Array.size(in_stock), per)
+puts("in stock: #{Array.size(in_stock)} of #{Array.size(products)}, #{pages} pages of #{per}")
+Array.each(Array[1, 3, 0, 9]) do |n|
+  puts("request page #{n}:")
+  show(page(in_stock, n, per), pages)
+end
+
+puts("== Cursor-based (after sku) ==")
+by_sku = Array.sort_by(products) { |p| Product.get_sku(p) }
+cursor = nil
+batch = 0
+while true
+  start = cursor == nil ? 0 : Array.find_index(by_sku) { |p| Product.get_sku(p) == cursor } + 1
+  chunk = Array.take(Array.drop(by_sku, start), 5)
+  break if Array.empty?(chunk)
+  batch += 1
+  puts("  batch #{batch}: #{Array.join(Array.map(chunk) { |p| Product.get_sku(p) }, " ")}")
+  cursor = Product.get_sku(Array.last(chunk))
+end
+
+puts("== Per category, 2 per page ==")
+groups = Array.group_by(in_stock) { |p| Product.get_category(p) }
+Array.each(Array.sort_by(Hash.keys(groups)) { |c| Symbol.to_s(c) }) do |cat|
+  items = groups[cat]
+  slices = Array[]
+  Array.each_slice(items, 2) { |s| Array.push(slices, Array.join(Array.map(s) { |p| Product.get_name(p) }, "+")) }
+  puts("  #{cat}: #{Array.join(slices, " | ")}")
+end
+middle = in_stock[3..5]
+puts("items 4..6: #{Array.join(Array.map(middle) { |p| Product.get_name(p) }, ", ")}")
+p(in_stock[50..52])
+last_page = page(in_stock, pages, per)
+last_page => {items:}
+puts("last page holds #{Array.size(items)}; cheapest overall #{Product.get_name(Array.first(in_stock))}, priciest #{Product.get_name(Array.last(in_stock))}")

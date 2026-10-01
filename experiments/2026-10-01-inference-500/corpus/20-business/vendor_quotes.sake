@@ -1,0 +1,93 @@
+Quote = Struct.new(:vendor, :item, :currency, :tiers, :lead_days, :shipping)
+Need = Struct.new(:item, :qty, :by_day)
+
+def fx = Hash["USD" => 1.0, "EUR" => 1.08, "JPY" => 0.0067]
+
+class Quote
+  # tiers: [[min_qty, unit_price], ...] in ascending min_qty
+  def unit_price(q, qty)
+    tier = Array.last(Array.select(@tiers) { |min, price| qty >= min })
+    return nil unless tier
+    _min, price = tier
+    price
+  end
+
+  def landed_cost(q, qty)
+    price = unit_price(q, qty)
+    return nil if price == nil
+    (price * qty + @shipping) * Hash.fetch(fx, @currency)
+  end
+end
+
+def parse_tiers(s)
+  Array.map(String.split(s, " ")) do |t|
+    min, _at, price = String.partition(t, "@")
+    [String.to_i(min), String.to_f(price)]
+  end
+end
+
+quotes = Array.map(Array[
+  ["Acme", "bolt-m8", "USD", "100@0.12 1000@0.09 10000@0.07", 5, 15.0],
+  ["Bosch", "bolt-m8", "EUR", "500@0.10 5000@0.075", 9, 0.0],
+  ["Chiyoda", "bolt-m8", "JPY", "1000@14 20000@10", 14, 3000.0],
+  ["Acme", "washer-8", "USD", "100@0.03 1000@0.02", 5, 10.0],
+  ["Chiyoda", "washer-8", "JPY", "500@3.5", 14, 1500.0],
+  ["Bosch", "washer-8", "EUR", "100@0.025", 9, 12.0],
+  ["Bosch", "bracket-l", "EUR", "10@4.20 100@3.65", 9, 25.0],
+  ["Dynamo", "bracket-l", "USD", "50@3.90", 3, 40.0],
+  ["Acme", "hinge-60", "USD", "20@6.50", 21, 12.0]
+]) do |vendor, item, cur, tiers, lead, ship|
+  Quote.new(vendor, item, cur, parse_tiers(tiers), lead, ship)
+end
+
+needs = Array[
+  Need.new("bolt-m8", 4000, 10),
+  Need.new("washer-8", 300, 15),
+  Need.new("bracket-l", 60, 10),
+  Need.new("hinge-60", 25, 14),
+  Need.new("spring-3", 100, 30)
+]
+
+awards = Hash[]
+puts(format("%-10s %6s  %-8s %10s  %s", "item", "qty", "vendor", "USD", "alternatives"))
+Array.each(needs) do |need|
+  item = Need.get_item(need)
+  qty = Need.get_qty(need)
+  offers = Array.select(quotes) { |q| Quote.get_item(q) == item }
+  priced = Array.filter_map(offers) do |q|
+    cost = Quote.landed_cost(q, qty)
+    cost && Quote.get_lead_days(q) <= Need.get_by_day(need) ? [q, cost] : nil
+  end
+  if Array.empty?(priced)
+    reason = Array.empty?(offers) ? "no quotes" : "no vendor meets qty/deadline"
+    puts(format("%-10s %6d  %-8s %10s  (%s)", item, qty, "-", "-", reason))
+    next
+  end
+  best, cost = Array.min_by(priced) { |q, c| c }
+  others = Array.map(Array.reject(priced) { |q, c| q == best }) { |q, c| format("%s %.2f", Quote.get_vendor(q), c) }
+  awards[item] = [Quote.get_vendor(best), cost]
+  puts(format("%-10s %6d  %-8s %10.2f  %s", item, qty, Quote.get_vendor(best), cost, Array.join(others, ", ")))
+end
+
+puts
+split_total = Hash.sum(awards) { |item, award| award[1] }
+puts(format("Split award total: %.2f across %d vendors", split_total, Array.size(Array.uniq(Array.map(Hash.values(awards)) { |v, c| v }))))
+
+# could one vendor take everything that was awarded?
+vendors = Array.uniq(Array.map(quotes) { |q| Quote.get_vendor(q) })
+Array.each(vendors) do |v|
+  costs = Array.map(Hash.keys(awards)) do |item|
+    need = Array.find(needs) { |n| Need.get_item(n) == item }
+    q = Array.find(quotes) { |x| Quote.get_vendor(x) == v && Quote.get_item(x) == item }
+    q ? Quote.landed_cost(q, Need.get_qty(need)) : nil
+  end
+  if Array.include?(costs, nil)
+    puts(format("  %-8s cannot supply %d of %d items", v, Array.count(costs, nil), Array.size(costs)))
+  else
+    total = Array.sum(costs)
+    puts(format("  %-8s single-vendor total %.2f (%+.1f%%)", v, total, (total - split_total) * 100 / split_total))
+  end
+end
+
+top_vendor, won = Hash.max_by(Array.group_by(Hash.values(awards)) { |v, c| v }) { |v, list| Array.size(list) }
+puts("Vendor with most awards: #{top_vendor} (#{Array.size(won)})")

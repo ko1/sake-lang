@@ -1,0 +1,158 @@
+Block = Struct.new(:kind, :lines, :level)
+
+def escape_html(s) = String.gsub(String.gsub(String.gsub(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+
+def find_from(s, needle, from)
+  rel = String.index(s[from..] || "", needle)
+  rel == nil ? nil : from + rel
+end
+
+def inline(s)
+  out = ""
+  i = 0
+  n = String.size(s)
+  while i < n
+    c = s[i]
+    if c == "`"
+      close = find_from(s, "`", i + 1)
+      if close
+        out += "<code>#{escape_html(s[(i + 1)...close])}</code>"
+        i = close + 1
+        next
+      end
+    elsif c == "*" && s[i + 1] == "*"
+      close = find_from(s, "**", i + 2)
+      if close
+        out += "<strong>#{inline(s[(i + 2)...close])}</strong>"
+        i = close + 2
+        next
+      end
+    elsif c == "*"
+      close = find_from(s, "*", i + 1)
+      if close
+        out += "<em>#{inline(s[(i + 1)...close])}</em>"
+        i = close + 1
+        next
+      end
+    elsif c == "["
+      mid = find_from(s, "](", i + 1)
+      close = mid ? find_from(s, ")", mid + 2) : nil
+      if mid && close
+        out += "<a href=\"#{s[(mid + 2)...close]}\">#{inline(s[(i + 1)...mid])}</a>"
+        i = close + 1
+        next
+      end
+    end
+    out += escape_html(c)
+    i += 1
+  end
+  out
+end
+
+def parse_blocks(text)
+  blocks = Block[]
+  current = nil
+  fence = nil
+  Array.each(String.lines(text)) do |raw|
+    line = String.chomp(raw)
+    if fence
+      if String.start_with?(line, "```")
+        fence = nil
+        current = nil
+      else
+        Array.push(Block.get_lines(fence), line)
+      end
+      next
+    end
+    kind = nil
+    content = line
+    level = 0
+    if String.start_with?(line, "```")
+      fence = Block.new(:code, Array[], 0)
+      Array.push(blocks, fence)
+      current = nil
+      next
+    elsif String.strip(line) == ""
+      current = nil
+      next
+    elsif (m = String.match(line, /\A(\#{1,6})\s+(.*)\z/))
+      Array.push(blocks, Block.new(:heading, Array[m[2]], String.size(m[1])))
+      current = nil
+      next
+    elsif (m = String.match(line, /\A[-*]\s+(.*)\z/))
+      kind = :ul
+      content = m[1]
+    elsif (m = String.match(line, /\A\d+\.\s+(.*)\z/))
+      kind = :ol
+      content = m[1]
+    elsif (m = String.match(line, /\A>\s?(.*)\z/))
+      kind = :quote
+      content = m[1]
+    else
+      kind = :para
+    end
+    if current != nil && Block.get_kind(current) == kind
+      Array.push(Block.get_lines(current), content)
+    elsif current != nil && Block.get_kind(current) != :para && kind == :para && String.start_with?(line, "  ")
+      lines = Block.get_lines(current)
+      lines[-1] = lines[-1] + " " + String.strip(content)
+    else
+      current = Block.new(kind, Array[content], 0)
+      Array.push(blocks, current)
+    end
+  end
+  blocks
+end
+
+def render(blocks)
+  html = Array[]
+  Array.each(blocks) do |b|
+    lines = Block.get_lines(b)
+    case Block.get_kind(b)
+    in :heading
+      lv = Block.get_level(b)
+      Array.push(html, "<h#{lv}>#{inline(lines[0])}</h#{lv}>")
+    in :para then Array.push(html, "<p>#{inline(Array.join(lines, " "))}</p>")
+    in :quote then Array.push(html, "<blockquote>#{inline(Array.join(lines, " "))}</blockquote>")
+    in :code then Array.push(html, "<pre><code>#{escape_html(Array.join(lines, "\n"))}</code></pre>")
+    in :ul | :ol
+      tag = Symbol.to_s(Block.get_kind(b))
+      items = Array.map(lines) { |l| "  <li>#{inline(l)}</li>" }
+      Array.push(html, "<#{tag}>\n#{Array.join(items, "\n")}\n</#{tag}>")
+    end
+  end
+  Array.join(html, "\n")
+end
+
+def document
+  <<~MD
+    # Sake *notes*
+
+    Sake writes the type on **every operation**, e.g. `String.upcase(s)`.
+    It keeps Ruby's syntax & semantics where it can.
+
+    ## Checklist
+    - parse **headings** and *lists*
+    - inline `code <tags>` stays escaped
+      and continuation lines join
+    * links like [the spec](docs/spec.md)
+
+    1. tokenize
+    2. parse
+    3. render
+
+    > Quotes can span
+    > two lines with a [link](http://example.com/?a=1&b=2).
+
+    ```
+    def f(x) = x * 2   # <not> **markup**
+    ```
+
+    Unclosed *emphasis and a lone ` backtick, plus 2 * 3 * 4 = 24.
+    ###### Deep heading
+  MD
+end
+
+blocks = parse_blocks(document)
+puts("#{Array.size(blocks)} blocks: #{Array.join(Array.map(blocks) { |b| Symbol.to_s(Block.get_kind(b)) }, " ")}")
+puts(render(blocks))

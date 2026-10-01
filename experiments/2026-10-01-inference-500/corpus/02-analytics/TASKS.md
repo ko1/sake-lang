@@ -1,0 +1,27 @@
+# 02-analytics: text analytics with Hash
+
+- word_frequency: Count content words in a paragraph (stopwords removed), print the top 10 with ties broken alphabetically, a word-length histogram and hapax statistics.
+- ngram_counts: Count word unigrams/bigrams/trigrams with each_cons, rank them, and build a next-word probability table keyed by Tuple pairs.
+- anagram_groups: Group a word list by sorted-letter signature, report groups and loners, and check phrase anagrams by comparing letter-count hashes.
+- inverted_index: Build a positional inverted index (word -> doc id -> positions) over small documents and answer AND/OR/NOT queries with Sets and phrase queries with positions.
+- tf_idf: Compute TF-IDF vectors for five short documents held in a Hash, list top terms per document, a cosine-similarity matrix, the most similar pair and a ranked query.
+- caesar_crack: Break Caesar ciphers by chi-squared comparison of letter-count hashes against English letter frequencies, and print a letter histogram.
+- markov_text: Build order-1 and order-2 word Markov chains (state -> follower counts) and generate sentences with a deterministic linear congruential choice.
+- spell_suggest: Norvig-style spelling corrector: generate edit-distance-1/2 candidates as Sets, pick the most frequent known word from a word-count Hash, and cache results.
+- log_summary: Parse a timestamped application log with a regexp into Structs and summarize by level, component, level x component matrix, normalized error patterns, hour, user and query time.
+- csv_pivot: Parse CSV sales rows into Structs (rejecting bad rows via a custom exception), pivot revenue by region x quarter with Tuple keys, and summarize per product.
+- kwic_concordance: Build a keyword-in-context concordance (word -> [sentence, position] list), print aligned context lines, collocates within a window, and sentence dispersion.
+- sentiment_lexicon: Score product reviews with a sentiment lexicon Hash plus negator Set and intensifier Hash, compare against star ratings in a confusion table, and rank products.
+- cooccurrence_pmi: Count sentence-level word co-occurrence with sorted Tuple pair keys, compute pointwise mutual information, list neighbors and frequent words that never co-occur.
+- readability: Compute Flesch reading ease and grade level per paragraph with a heuristic syllable counter memoized in a Hash, merging per-paragraph Stats structs.
+- near_duplicates: Detect near-duplicate documents with word-bigram shingle Sets, exact Jaccard vs MinHash estimates, and cluster duplicates with a Hash-based union-find.
+- autocomplete: Build a character trie of Struct nodes (children in a Hash) from a query log, suggest top completions by frequency, and cross-check against a prefix -> phrases Hash.
+- hashtag_trends: Extract hashtags and mentions from posts with String.scan, tabulate tags per day, compute day-over-day trend scores, and analyze the mention graph (Hash of Hashes).
+- vocabulary_growth: Track vocabulary growth (type/token ratio) over a text, fit Heaps' law by log-log regression, and print the frequency spectrum and a Zipf rank*frequency check.
+- email_domains: Extract email addresses from free text, validate them with named-capture regexps (invalid ones raise and are rescued), dedupe with a Set, and group by domain, TLD and organisation.
+- naive_bayes: Train a multinomial naive Bayes text classifier (per-class word-count Hashes, Laplace smoothing, log probabilities), evaluate on held-out sentences, and list indicative words per class.
+- access_log_urls: Parse web access log lines (method, path, percent-decoded query params), aggregate per route into Records of Arrays/Sets, and report status codes, search terms, 404s and per-IP activity.
+- rhyme_scheme: Derive rhyme keys from line-final words (regexp plus an override Hash), assign letters to detect rhyme schemes (classified with case/in on Strings), and group rhyme families across poems.
+- soundex_index: Compute Soundex codes from a letter->digit Hash, index people by the code of their surname, report spelling variants and answer fuzzy lookups.
+- language_guess: Identify the language of short texts by comparing ranked character-trigram profiles (Hash of trigram -> rank) with the out-of-place distance, plus a shared-trigram matrix.
+- rake_keywords: RAKE keyword extraction: split text into candidate phrases at stopwords, score words by degree/frequency through a Scoring module, rank Comparable Keyword structs, merge across documents, and skip empty documents via an exception.

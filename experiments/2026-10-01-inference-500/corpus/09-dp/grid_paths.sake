@@ -1,0 +1,121 @@
+Grid = Struct.new(:rows, :height, :width)
+
+class Grid
+  def parse(text)
+    rows = Array.map(String.split(text, "\n")) { |line| String.chars(String.strip(line)) }
+    Grid.new(rows, Array.size(rows), Array.size(rows[0]))
+  end
+
+  def cell(g, r, c) = @rows[r][c]
+  def blocked?(g, r, c) = cell(g, r, c) == "#"
+  def cost(g, r, c) = blocked?(g, r, c) ? nil : (cell(g, r, c) == "." ? 1 : String.to_i(cell(g, r, c)))
+end
+
+def count_paths(g)
+  h = Grid.get_height(g)
+  w = Grid.get_width(g)
+  ways = Range.map(0...h) { Range.map(0...w) { 0 } }
+  Integer.times(h) do |r|
+    Integer.times(w) do |c|
+      next if Grid.blocked?(g, r, c)
+      if r == 0 && c == 0
+        ways[r][c] = 1
+      else
+        up = r > 0 ? ways[r - 1][c] : 0
+        left = c > 0 ? ways[r][c - 1] : 0
+        ways[r][c] = up + left
+      end
+    end
+  end
+  ways[h - 1][w - 1]
+end
+
+def cheapest_path(g)
+  h = Grid.get_height(g)
+  w = Grid.get_width(g)
+  best = Range.map(0...h) { Range.map(0...w) { nil } }
+  from = Range.map(0...h) { Range.map(0...w) { nil } }
+  Integer.times(h) do |r|
+    Integer.times(w) do |c|
+      here = Grid.cost(g, r, c)
+      next if here == nil
+      if r == 0 && c == 0
+        best[r][c] = here
+        next
+      end
+      up = r > 0 ? best[r - 1][c] : nil
+      left = c > 0 ? best[r][c - 1] : nil
+      if up != nil && (left == nil || up <= left)
+        best[r][c] = up + here
+        from[r][c] = :down
+      elsif left != nil
+        best[r][c] = left + here
+        from[r][c] = :right
+      end
+    end
+  end
+  total = best[h - 1][w - 1]
+  return nil if total == nil
+  moves = Array[]
+  r = h - 1
+  c = w - 1
+  while r > 0 || c > 0
+    dir = from[r][c]
+    Array.unshift(moves, dir)
+    if dir == :down
+      r -= 1
+    else
+      c -= 1
+    end
+  end
+  [total, moves]
+end
+
+def render(g, moves)
+  marks = Array.map(Grid.get_rows(g)) { |row| Array.dup(row) }
+  r = 0
+  c = 0
+  marks[0][0] = "*"
+  Array.each(moves) do |m|
+    if m == :down
+      r += 1
+    else
+      c += 1
+    end
+    marks[r][c] = "*"
+  end
+  Array.each(marks) { |row| puts("    " + Array.join(row, "")) }
+end
+
+def compress(moves)
+  runs = Array.chunk_while(moves) { |a, b| a == b }
+  parts = Array.map(runs) { |run| "#{Array.size(run)}#{run[0] == :down ? "D" : "R"}" }
+  Array.join(parts, " ")
+end
+
+maps = Hash[
+  "open" => "....\n....\n....",
+  "walls" => "..#..\n.#...\n...#.\n#....",
+  "weighted" => "13.9\n.9.1\n52.1\n1191",
+  "sealed" => "..#\n.#.\n#..",
+  "maze" => ".2..#.\n.#.#..\n...7#.\n#9#...\n...#1."
+]
+
+Hash.each(maps) do |name, text|
+  g = Grid.parse(text)
+  puts("#{name} (#{Grid.get_height(g)}x#{Grid.get_width(g)}): #{count_paths(g)} monotone paths")
+  result = cheapest_path(g)
+  if result
+    total, moves = result
+    puts("  cheapest: cost #{total}, moves #{compress(moves)}")
+    render(g, moves)
+  else
+    puts("  no path to the corner")
+  end
+end
+
+puts("lattice paths in an empty n x n grid:")
+Array.each(Array[2, 5, 10, 16]) do |n|
+  text = Array.join(Array.map(Range.to_a(1..n)) { "." * n }, "\n")
+  puts(format("  %2d: %d", n, count_paths(Grid.parse(text))))
+end

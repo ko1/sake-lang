@@ -1,0 +1,90 @@
+# Ascii85 (Adobe variant, with <~ ~> delimiters and the "z" shortcut for zero groups),
+# encoder and decoder, compared against hex for size overhead.
+
+A85Error = Exception.new(:index)
+
+def encode85(bytes)
+  out = ""
+  Array.each_slice(bytes, 4) do |chunk|
+    n = Array.size(chunk)
+    padded = Array.dup(chunk)
+    Array.push(padded, 0) while Array.size(padded) < 4
+    value = Array.reduce(padded, 0) { |acc, b| (acc << 8) | b }
+    if value == 0 && n == 4
+      out += "z"
+    else
+      digits = String[]
+      Integer.times(5) do
+        Array.unshift(digits, Integer.chr(value % 85 + 33))
+        value /= 85
+      end
+      out += Array.join(Array.take(digits, n + 1), "")
+    end
+  end
+  "<~" + out + "~>"
+end
+
+def decode85(text)
+  body = String.strip(text)
+  raise A85Error.new("missing delimiters", 0) unless String.start_with?(body, "<~") && String.end_with?(body, "~>")
+  body = String.gsub(body[2...(String.size(body) - 2)], /\s/, "")
+  bytes = Integer[]
+  group = Integer[]
+  Array.each_with_index(String.chars(body)) do |c, i|
+    if c == "z"
+      raise A85Error.new("z inside a group", i) if Array.empty?(group) == false
+      Array.push(bytes, 0, 0, 0, 0)
+      next
+    end
+    code = String.ord(c) - 33
+    raise A85Error.new("invalid character #{Kernel.inspect(c)}", i) if code < 0 || code > 84
+    Array.push(group, code)
+    if Array.size(group) == 5
+      Array.concat(bytes, group_bytes(group, 4, i))
+      group = Integer[]
+    end
+  end
+  if Array.empty?(group) == false
+    raise A85Error.new("final group of one character", String.size(body)) if Array.size(group) == 1
+    n = Array.size(group) - 1
+    Array.push(group, 84) while Array.size(group) < 5
+    Array.concat(bytes, group_bytes(group, n, String.size(body)))
+  end
+  bytes
+end
+
+def group_bytes(group, keep, at)
+  value = Array.reduce(group, 0) { |acc, d| acc * 85 + d }
+  raise A85Error.new("group overflows 32 bits", at) if value > 0xFFFFFFFF
+  all = Array.map(Integer[24, 16, 8, 0]) { |s| (value >> s) & 0xFF }
+  Array.take(all, keep)
+end
+
+def text_of(bytes) = Array.join(Array.map(bytes) { |b| Integer.chr(b) }, "")
+
+inputs = Array["Man ", "sure.", "Hello, World!", "", "\x00\x00\x00\x00\x00\x00\x00\x00abc",
+               "Ascii85 packs four bytes into five printable characters."]
+Array.each(inputs) do |s|
+  bytes = String.bytes(s)
+  enc = encode85(bytes)
+  back = decode85(enc)
+  hex_len = Array.size(bytes) * 2
+  overhead = Array.empty?(bytes) ? 0.0 : 100.0 * (String.size(enc) - 4) / Array.size(bytes) - 100.0
+  puts("#{Kernel.inspect(s)}")
+  puts(format("  %s", enc))
+  puts(format("  %d bytes -> %d chars (%+.0f%%, hex would be %d) roundtrip=%s",
+              Array.size(bytes), String.size(enc) - 4, overhead, hex_len, text_of(back) == s))
+end
+
+puts("-- with whitespace --")
+puts(text_of(decode85("<~9jqo^BlbD-BleB1DJ+*+F(f,q/0JhKF<GL>Cj@.4Gp$d7F!,L7@<6@)/0JDEF<G%<+EV:2F!,\n O<DJ+*.@<*K0@<6L(Df-\\0Ec5e;DffZ(EZee.Bl.9pF\"AGXBPCsi+DGm>@3BB/F*&OCAfu2/AKY\n i(DIb:@FD,*)+C]U=@3BN#EcYf8ATD3s@q?d$AftVqCh[NqF<G:8+EV:.+Cf>-FD5W8ARlolDIa\n l(DId<j@<?3r@:F%a+D58'ATD4$Bl@l3De:,-DJs`8ARoFb/0JMK@qB4^F!,R<AKZ&-DfTqBG%G\n >uD.RTpAKYo'+CT/5+Cei#DII?(E,9)oF*2M7/c~>")))
+
+puts("-- errors --")
+Array.each(Array["<~87cURD]i,\"Ebo80~>", "87cURD", "<~87c{URD~>", "<~87cURz~>", "<~s8W-\"s~>", "<~s8W-!~>"]) do |bad|
+  begin
+    b = decode85(bad)
+    puts("#{bad} -> #{Kernel.inspect(text_of(b))}")
+  rescue A85Error => e
+    puts("#{bad} -> #{Exception.message(e)} (at #{A85Error.get_index(e)})")
+  end
+end

@@ -1,0 +1,95 @@
+def source
+  "I do not like green eggs and ham. I do not like them Sam I am. " +
+  "I would not like them here or there. I would not like them anywhere. " +
+  "I do so like green eggs and ham. Thank you, thank you, Sam I am. " +
+  "Would you like them in a house? Would you like them with a mouse? " +
+  "I do not like them in a house. I do not like them with a mouse."
+end
+
+Chain = Struct.new(:order, :table, :starts)
+
+class Chain
+  def build(words, order)
+    chain = Chain.new(order, Hash[], Array[])
+    Array.each_with_index(words) do |w, i|
+      next if i + order >= Array.size(words)
+      key = Array.join(Array.take(Array.drop(words, i), order), " ")
+      if i == 0 || String.match?(words[i - 1], /[.?]$/)
+        Array.push(get_starts(chain), key) unless Array.include?(get_starts(chain), key)
+      end
+      nxt = words[i + order]
+      followers = get_table(chain)[key] ||= Hash.new(0)
+      followers[nxt] += 1
+    end
+    chain
+  end
+
+  def weighted(chain, key)
+    followers = get_table(chain)[key]
+    return Array[] unless followers
+    Array.sort_by(Hash.to_a(followers)) { |w, n| w }
+  end
+
+  def pick(options, r)
+    total = Array.sum(options) { |w, n| n }
+    target = r % total
+    Array.each(options) do |w, n|
+      return w if target < n
+      target -= n
+    end
+    nil
+  end
+
+  def generate(chain, start, max_words, seed)
+    out = String.split(start, " ")
+    state = seed
+    order = get_order(chain)
+    while Array.size(out) < max_words
+      key = Array.join(Array.drop(out, Array.size(out) - order), " ")
+      options = weighted(chain, key)
+      break if Array.empty?(options)
+      state = (state * 1103515245 + 12345) % 2147483648
+      w = pick(options, state / 65536)
+      break unless w
+      Array.push(out, w)
+      break if String.match?(w, /[.?]$/)
+    end
+    Array.join(out, " ")
+  end
+
+  def branching(chain)
+    stats = Hash.new(0)
+    Hash.each(get_table(chain)) { |key, followers| stats[Hash.size(followers)] += 1 }
+    stats
+  end
+end
+
+words = String.split(source, " ")
+puts("words: #{Array.size(words)}")
+
+Array.each(Array[1, 2]) do |order|
+  chain = Chain.build(words, order)
+  table = Chain.get_table(chain)
+  puts("== order #{order}: #{Hash.size(table)} states, #{Array.size(Chain.get_starts(chain))} starts ==")
+  stats = Chain.branching(chain)
+  Array.each(Array.sort(Hash.keys(stats))) { |b| puts("  #{stats[b]} states with #{b} follower(s)") }
+  busiest = Hash.max_by(table) { |key, f| Hash.size(f) }
+  if busiest
+    key, f = busiest
+    desc = Array.map(Chain.weighted(chain, key)) { |w, n| "#{w}:#{n}" }
+    puts("  busiest '#{key}' -> #{Array.join(desc, " ")}")
+  end
+  Array.each(Array[7, 42, 2026]) do |seed|
+    start = Chain.get_starts(chain)[seed % Array.size(Chain.get_starts(chain))]
+    puts("  [#{seed}] #{Chain.generate(chain, start, 14, seed)}")
+  end
+end
+
+chain = Chain.build(words, 2)
+lengths = Hash[]
+Array.each(Chain.get_starts(chain)) do |st|
+  lengths[st] = Array.size(String.split(Chain.generate(chain, st, 30, 1), " "))
+end
+Hash.each(lengths) { |st, n| puts(format("  %-12s %2d words", st, n)) }
+avg = Array.sum(Hash.values(lengths)) * 1.0 / Hash.size(lengths)
+puts(format("average sentence length: %.2f", avg))

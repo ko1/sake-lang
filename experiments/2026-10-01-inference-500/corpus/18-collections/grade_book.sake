@@ -1,0 +1,90 @@
+# Grade book: nested Hashes of scores, weighted averages, letter grades by Float Ranges, curves, honors.
+
+def weights = Hash["hw" => 0.3, "midterm" => 0.3, "final" => 0.4]
+
+def letter_table
+  Array[
+    [90.0..100.0, "A"], [80.0...90.0, "B"], [70.0...80.0, "C"], [60.0...70.0, "D"], [0.0...60.0, "F"]
+  ]
+end
+
+def letter(score)
+  row = Array.find(letter_table) { |r, l| Range.cover?(r, score) }
+  row ? row[1] : "?"
+end
+
+def book
+  Hash[
+    "ana" => Hash["hw" => Array[95, 88, 92, 100], "midterm" => Array[91], "final" => Array[94]],
+    "bo" => Hash["hw" => Array[70, 65, 0, 80], "midterm" => Array[72], "final" => Array[68]],
+    "cy" => Hash["hw" => Array[85, 90, 87], "midterm" => Array[79], "final" => Array[88]],
+    "dot" => Hash["hw" => Array[100, 100, 98, 99], "midterm" => Array[97], "final" => Array[99]],
+    "ed" => Hash["hw" => Array[50, 61, 58, 40], "midterm" => Array[55], "final" => Array[]],
+    "flo" => Hash["hw" => Array[82, 79, 91, 85], "midterm" => Array[84]]
+  ]
+end
+
+def mean(xs) = Array.empty?(xs) ? nil : Array.sum(xs) / Integer.to_f(Array.size(xs))
+
+def hw_average(scores)
+  return nil if Array.empty?(scores)
+  kept = Array.size(scores) > 3 ? Array.drop(Array.sort(scores), 1) : scores
+  mean(kept)
+end
+
+def weighted(parts)
+  missing = Array.reject(Hash.keys(weights)) { |k| Hash.key?(parts, k) && parts[k] != nil }
+  return [nil, missing] unless Array.empty?(missing)
+  total = Hash.sum(weights) { |k, w| parts[k] * w }
+  [total, missing]
+end
+
+students = book
+results = Hash[]
+Hash.each(students) do |name, cats|
+  parts = Hash[]
+  Hash.each(cats) do |cat, scores|
+    parts[cat] = cat == "hw" ? hw_average(scores) : mean(scores)
+  end
+  results[name] = weighted(parts)
+end
+
+puts("== Final scores ==")
+complete, incomplete = Hash.partition(results) { |name, r| r[0] != nil }
+Array.each(Array.sort_by(complete) { |name, r| 100.0 - r[0] }) do |name, r|
+  puts(format("%-4s %6.2f %s", name, r[0], letter(r[0])))
+end
+Array.each(incomplete) { |name, r| puts(format("%-4s incomplete (missing %s)", name, Array.join(r[1], ", "))) }
+
+scores = Array.map(complete) { |name, r| r[0] }
+avg = mean(scores)
+puts(format("class average: %.2f", avg))
+hi = Array.max_by(complete) { |name, r| r[0] }
+lo = Array.min_by(complete) { |name, r| r[0] }
+puts("top: #{hi[0]}, bottom: #{lo[0]}")
+
+dist = Array.tally(Array.map(scores) { |s| letter(s) })
+puts("distribution: #{Array.join(Array.map(letter_table) { |r, l| "#{l}=#{Hash.fetch(dist, l, 0)}" }, " ")}")
+
+puts("== Curve to a 90 average (capped at 100) ==")
+bump = 90.0 - avg
+bump = 0.0 if bump < 0
+Array.each(complete) do |name, r|
+  curved = Float.clamp(r[0] + bump, 0.0, 100.0)
+  change = letter(r[0]) == letter(curved) ? "" : " (#{letter(r[0])} -> #{letter(curved)})"
+  puts(format("%-4s %6.2f%s", name, curved, change))
+end
+
+puts("== Per category ==")
+Array.each(Hash.keys(weights)) do |cat|
+  all = Array.flat_map(Hash.values(students)) { |cats| Hash.fetch(cats, cat, Array[]) }
+  zeros = Array.count(all) { |s| s == 0 }
+  lo, hi = Array.minmax(all)
+  puts(format("%-8s n=%2d min=%3d max=%3d mean=%6.2f zeros=%d", cat, Array.size(all), lo, hi, mean(all), zeros))
+end
+
+honors = Array.map(Array.select(complete) { |name, r| r[0] >= 90.0 }) { |name, r| name }
+perfect_hw = Hash.keys(Hash.select(students) { |name, cats| Array.all?(Hash.fetch(cats, "hw", Array[])) { |s| s >= 95 } })
+puts("honors: #{Array.join(honors, ", ")}")
+puts("hw always >= 95: #{Array.join(perfect_hw, ", ")}")
+puts("needs attention: #{Array.join(Array.sort(Hash.keys(Hash.select(students) { |n, cats| Array.any?(Hash.fetch(cats, "hw", Array[])) { |s| s < 60 } })), ", ")}")

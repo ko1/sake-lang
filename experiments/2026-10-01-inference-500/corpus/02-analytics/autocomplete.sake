@@ -1,0 +1,98 @@
+Node = Struct.new(:children, :count, :word)
+
+def query_log
+  "weather today|weather tomorrow|weather today|web design|webcam|weather radar|" +
+  "wedding dress|weather today|web design|wedding venues|webcam|weather tomorrow|" +
+  "west elm|western union|weather today|web hosting|weekend getaway|western union|" +
+  "wedding dress|web design|weather radar|weight loss|weight loss|weight watchers"
+end
+
+class Node
+  def empty = Node.new(Hash[], 0, nil)
+
+  def insert(root, phrase)
+    node = root
+    String.each_char(phrase) do |c|
+      kids = get_children(node)
+      kids[c] ||= Node.empty
+      node = kids[c]
+    end
+    set_word(node, phrase)
+    set_count(node, get_count(node) + 1)
+  end
+
+  def find(root, prefix)
+    node = root
+    String.each_char(prefix) do |c|
+      node = get_children(node)[c]
+      return nil unless node
+    end
+    node
+  end
+
+  def collect(node, out)
+    w = get_word(node)
+    Array.push(out, [w, get_count(node)]) if w
+    keys = Array.sort(Hash.keys(get_children(node)))
+    Array.each(keys) { |c| collect(get_children(node)[c], out) }
+    out
+  end
+
+  def size(node)
+    total = 1
+    Hash.each_value(get_children(node)) { |child| total += Node.size(child) }
+    total
+  end
+end
+
+def suggest(root, prefix, limit)
+  node = Node.find(root, prefix)
+  return Array[] unless node
+  all = Node.collect(node, Array[])
+  ranked = Array.sort_by(all) { |w, c| format("%04d%s", 9999 - c, w) }
+  Array.take(ranked, limit)
+end
+
+def prefix_table(counts, max_len)
+  table = Hash[]
+  Hash.each(counts) do |phrase, c|
+    len = String.size(phrase)
+    len = max_len if len > max_len
+    Integer.upto(1, len) do |n|
+      key = phrase[0...n]
+      table[key] ||= Array[]
+      Array.push(table[key], phrase)
+    end
+  end
+  table
+end
+
+phrases = String.split(query_log, "|")
+counts = Array.tally(phrases)
+root = Node.empty
+Array.each(phrases) { |ph| Node.insert(root, ph) }
+puts("queries: #{Array.size(phrases)}, distinct: #{Hash.size(counts)}, trie nodes: #{Node.size(root)}")
+
+Array.each(Array["w", "wea", "web", "wed", "west", "weigh", "x"]) do |prefix|
+  hits = suggest(root, prefix, 3)
+  if Array.empty?(hits)
+    puts(format("%-6s -> (no suggestions)", prefix))
+  else
+    puts(format("%-6s -> %s", prefix, Array.join(Array.map(hits) { |w, c| "#{w} (#{c})" }, ", ")))
+  end
+end
+
+table = prefix_table(counts, 4)
+puts("prefix table: #{Hash.size(table)} keys")
+widest = Hash.max_by(table) { |k, v| Array.size(v) * 10 - String.size(k) }
+if widest
+  k, v = widest
+  puts("widest prefix: '#{k}' covers #{Array.size(v)} phrases")
+end
+mismatch = 0
+Hash.each(table) do |prefix, list|
+  node = Node.find(root, prefix)
+  from_trie = node ? Array.size(Node.collect(node, Array[])) : 0
+  mismatch += 1 if from_trie != Array.size(list)
+end
+puts("trie and prefix table agree on #{Hash.size(table) - mismatch} of #{Hash.size(table)} prefixes")

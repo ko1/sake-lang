@@ -1,0 +1,104 @@
+World = Struct.new(:cells, :height, :width, :tick)
+
+class World
+  def parse(lines) = World.new(Array.map(lines) { String.chars(it) }, Array.size(lines), String.size(lines[0]), 0)
+
+  def at(w, r, c)
+    return "#" if r < 0 || r >= @height || c < 0 || c >= @width
+    @cells[r][c]
+  end
+
+  def empty?(w, r, c) = at(w, r, c) == " "
+
+  def move(w, r, c, nr, nc)
+    displaced = @cells[nr][nc]
+    @cells[nr][nc] = @cells[r][c]
+    @cells[r][c] = displaced
+  end
+
+  # one step, bottom row first so a grain moves at most once; returns how many cells moved
+  def step(w)
+    moved = Set[]
+    count = 0
+    sides = Integer.even?(@tick) ? Array[-1, 1] : Array[1, -1]
+    Integer.downto(@height - 1, 0) do |r|
+      Integer.times(@width) do |c|
+        next if Set.include?(moved, [r, c])
+        kind = @cells[r][c]
+        next unless kind == "o" || kind == "~"
+        target = nil
+        if empty?(w, r + 1, c) || (kind == "o" && at(w, r + 1, c) == "~")
+          target = [r + 1, c]
+        else
+          diag = Array.find(sides) { |dc| empty?(w, r + 1, c + dc) && empty?(w, r, c + dc) }
+          if diag
+            target = [r + 1, c + diag]
+          elsif kind == "~"
+            flat = Array.find(sides) { |dc| empty?(w, r, c + dc) }
+            target = [r, c + flat] if flat
+          end
+        end
+        next unless target
+        nr, nc = target
+        move(w, r, c, nr, nc)
+        Set.add(moved, target)
+        count += 1
+      end
+    end
+    @tick += 1
+    count
+  end
+
+  def census(w)
+    tally = Array.tally(Array.flatten(@cells))
+    "sand=#{tally["o"] || 0} water=#{tally["~"] || 0}"
+  end
+
+  def to_s(w) = Array.join(Array.map(@cells) { |row| "|#{Array.join(row, "")}|" }, "\n")
+end
+
+def simulate(name, lines, limit, show_every)
+  puts("== #{name} ==")
+  w = World.parse(lines)
+  puts(w)
+  before = World.census(w)
+  moves = Integer[]
+  settled = false
+  while settled == false && World.get_tick(w) < limit
+    n = World.step(w)
+    Array.push(moves, n)
+    settled = true if n == 0
+    if settled == false && World.get_tick(w) % show_every == 0
+      puts("-- tick #{World.get_tick(w)} (#{n} moved)")
+      puts(w)
+    end
+  end
+  puts(settled ? "settled after #{World.get_tick(w) - 1} ticks" : "still moving after #{limit} ticks")
+  puts(w)
+  puts("moves per tick: #{Array.join(moves, ",")}")
+  puts("conserved: #{before == World.census(w)} (#{World.census(w)})")
+end
+
+simulate("hourglass", Array[
+  "oooooooo",
+  " oooooo ",
+  "  #oo#  ",
+  "   ##   ",
+  "        ",
+  "        ",
+], 30, 4)
+
+simulate("dam break", Array[
+  "~~~~#    ",
+  "~~~~#    ",
+  "~~~~     ",
+  "#########",
+], 40, 5)
+
+simulate("sand into water", Array[
+  "  ooo   ",
+  "        ",
+  "#      #",
+  "#~~~~~~#",
+  "########",
+], 20, 100)

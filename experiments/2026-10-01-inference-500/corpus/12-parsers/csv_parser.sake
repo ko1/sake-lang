@@ -1,0 +1,113 @@
+CsvError = Exception.new(:row)
+
+def parse_csv(text, sep)
+  rows = Array[]
+  row = String[]
+  field = ""
+  state = :start
+  Array.each(String.chars(text)) do |c|
+    case state
+    in :start | :field
+      if c == "\"" && state == :start
+        state = :quoted
+      elsif c == sep
+        Array.push(row, field)
+        field = ""
+        state = :start
+      elsif c == "\n"
+        Array.push(row, field)
+        Array.push(rows, row)
+        row = String[]
+        field = ""
+        state = :start
+      elsif c != "\r"
+        field += c
+        state = :field
+      end
+    in :quoted
+      if c == "\""
+        state = :quote_in_quoted
+      else
+        field += c
+      end
+    in :quote_in_quoted
+      if c == "\""
+        field += "\""
+        state = :quoted
+      elsif c == sep
+        Array.push(row, field)
+        field = ""
+        state = :start
+      elsif c == "\n"
+        Array.push(row, field)
+        Array.push(rows, row)
+        row = String[]
+        field = ""
+        state = :start
+      else
+        raise CsvError.new("unexpected '#{c}' after closing quote", Array.size(rows) + 1)
+      end
+    end
+  end
+  raise CsvError.new("unterminated quoted field", Array.size(rows) + 1) if state == :quoted
+  if String.empty?(field) == false || Array.empty?(row) == false
+    Array.push(row, field)
+    Array.push(rows, row)
+  end
+  rows
+end
+
+def to_records(rows)
+  header = Array.shift(rows)
+  records = Array[]
+  bad = Array[]
+  Array.each_with_index(rows) do |row, i|
+    if Array.size(row) != Array.size(header)
+      Array.push(bad, "row #{i + 2}: expected #{Array.size(header)} fields, got #{Array.size(row)}")
+    else
+      Array.push(records, Array.to_h(Array.zip(header, row)))
+    end
+  end
+  [records, bad]
+end
+
+def sales_csv
+  "region,product,amount,note\n" \
+  "north,widget,12.50,\n" \
+  "south,\"gadget, large\",30.00,\"said \"\"rush\"\"\"\n" \
+  "north,gizmo,7.25,\"two\nlines\"\n" \
+  "east,widget,abc,typo\n" \
+  "south,widget,5\n" \
+  "east,gadget,19.99,ok\n" \
+  "north,widget,3.75,last"
+end
+
+rows = parse_csv(sales_csv, ",")
+puts("parsed #{Array.size(rows)} rows")
+Array.each(rows) { |r| puts("  #{Array.size(r)}: #{Array.join(Array.map(r) { Kernel.inspect(it) }, " | ")}") }
+
+records, bad = to_records(rows)
+Array.each(bad) { |b| puts("skip #{b}") }
+
+totals = Hash.new(0.0)
+counts = Hash.new(0)
+Array.each(records) do |rec|
+  amount = rec["amount"]
+  unless String.match?(amount, /\A\d+(\.\d+)?\z/)
+    puts("bad amount #{Kernel.inspect(amount)} for #{rec["product"]}")
+    next
+  end
+  totals[rec["region"]] += String.to_f(amount)
+  counts[rec["product"]] += 1
+end
+Array.each(Array.sort(Hash.keys(totals))) { |r| puts(format("%-6s %8.2f", r, totals[r])) }
+puts("products: #{Array.join(Array.map(Hash.sort_by(counts) { |k, v| k }) { |k, v| "#{k}x#{v}" }, ", ")}")
+
+Array.each(Array["a;b;c\n1;\"x;y\";3\n", "a,b\n\"open,1\n", "a,b\n\"x\"y,2\n"]) do |text|
+  sep = String.include?(text, ";") ? ";" : ","
+  begin
+    puts("ok: #{Kernel.inspect(parse_csv(text, sep))}")
+  rescue CsvError => e
+    puts("error on row #{CsvError.get_row(e)}: #{Exception.message(e)}")
+  end
+end

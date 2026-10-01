@@ -1,0 +1,207 @@
+class Instr < {accessor: [op, a, b], default: {a: nil, b: nil}}
+  def to_s(i)
+    parts = Array[Symbol.to_s(@op)]
+    Array.push(parts, Kernel.to_s(@a)) if @a != nil
+    Array.push(parts, Kernel.to_s(@b)) if @b != nil
+    Array.join(parts, " ")
+  end
+end
+
+Frame = Struct.new(:ret, :locals)
+VMError = Exception.new(:pc)
+
+def parse_arg(s) = String.match?(s, /\A-?\d+\z/) ? String.to_i(s) : s
+
+def assemble(text)
+  labels = Hash[]
+  code = Instr[]
+  Array.each(String.lines(text)) do |raw|
+    line = String.strip(String.sub(raw, /;.*/, ""))
+    next if String.empty?(line)
+    m = String.match(line, /\A(\w+):\z/)
+    if m
+      labels[m[1]] = Array.size(code)
+      next
+    end
+    words = String.split(line, " ")
+    op = String.to_sym(words[0])
+    a = words[1] ? parse_arg(words[1]) : nil
+    b = words[2] ? parse_arg(words[2]) : nil
+    Array.push(code, Instr.new(op, a, b))
+  end
+  Array.each(code) do |ins|
+    a = Instr.get_a(ins)
+    if a in String
+      addr = labels[a]
+      raise VMError.new("undefined label #{a}", -1) if addr == nil
+      Instr.set_a(ins, addr)
+    end
+  end
+  code
+end
+
+def pop!(stack, pc)
+  raise VMError.new("stack underflow", pc) if Array.empty?(stack)
+  Array.pop(stack)
+end
+
+def run(code, out)
+  stack = Array[]
+  frames = Array[Frame.new(-1, Array[])]
+  pc = 0
+  steps = 0
+  max_stack = 0
+  max_depth = 1
+  counts = Hash.new(0)
+  while true
+    ins = code[pc]
+    raise VMError.new("pc out of range", pc) if ins == nil
+    op = Instr.get_op(ins)
+    a = Instr.get_a(ins)
+    counts[op] += 1
+    steps += 1
+    raise VMError.new("step limit exceeded", pc) if steps > 100000
+    frame = Array.last(frames)
+    next_pc = pc + 1
+    case op
+    in :push then Array.push(stack, a)
+    in :load then Array.push(stack, Frame.get_locals(frame)[a] || 0)
+    in :store then Frame.get_locals(frame)[a] = pop!(stack, pc)
+    in :add | :sub | :mul | :div | :mod | :lt | :eq
+      y = pop!(stack, pc)
+      x = pop!(stack, pc)
+      v = case op
+          in :add then x + y
+          in :sub then x - y
+          in :mul then x * y
+          in :div then x / y
+          in :mod then x % y
+          in :lt then x < y ? 1 : 0
+          in :eq then x == y ? 1 : 0
+          end
+      Array.push(stack, v)
+    in :dup
+      v = pop!(stack, pc)
+      Array.push(stack, v, v)
+    in :jmp then next_pc = a
+    in :jz then next_pc = a if pop!(stack, pc) == 0
+    in :call
+      locals = Array[]
+      Integer.times(Instr.get_b(ins)) { Array.unshift(locals, pop!(stack, pc)) }
+      Array.push(frames, Frame.new(pc + 1, locals))
+      max_depth = Array.size(frames) if Array.size(frames) > max_depth
+      next_pc = a
+    in :ret
+      Array.pop(frames)
+      next_pc = Frame.get_ret(frame)
+    in :print then Array.push(out, Integer.to_s(pop!(stack, pc)))
+    in :halt then break
+    else raise VMError.new("bad opcode #{op}", pc)
+    end
+    max_stack = Array.size(stack) if Array.size(stack) > max_stack
+    pc = next_pc
+  end
+  {steps: steps, max_stack: max_stack, max_depth: max_depth, counts: counts}
+end
+
+def program_ok
+  <<~ASM
+      call main 0
+      halt
+    fact:            ; fact(n)
+      load 0
+      push 2
+      lt
+      jz fact_rec
+      push 1
+      ret
+    fact_rec:
+      load 0
+      load 0
+      push 1
+      sub
+      call fact 1
+      mul
+      ret
+    fib:             ; fib(n), naive recursion
+      load 0
+      push 2
+      lt
+      jz fib_rec
+      load 0
+      ret
+    fib_rec:
+      load 0
+      push 1
+      sub
+      call fib 1
+      load 0
+      push 2
+      sub
+      call fib 1
+      add
+      ret
+    main:
+      push 10
+      call fact 1
+      print
+      push 15
+      call fib 1
+      print
+      push 0         ; sum of 1..100 with locals 0 (sum) and 1 (i)
+      store 0
+      push 1
+      store 1
+    loop:
+      push 100
+      load 1
+      lt
+      jz body
+      jmp done
+    body:
+      load 0
+      load 1
+      add
+      store 0
+      load 1
+      push 1
+      add
+      store 1
+      jmp loop
+    done:
+      load 0
+      print
+      push 0
+      ret
+  ASM
+end
+
+def program_bad
+  <<~ASM
+      push 1
+      push 2
+      add
+      mul           ; needs two operands
+      halt
+  ASM
+end
+
+def program_undefined = "  push 1\n  jz nowhere\n  halt\n"
+
+Array.each(Array[["ok", program_ok], ["bad", program_bad], ["undefined", program_undefined]]) do |name, text|
+  puts("== #{name}")
+  out = Array[]
+  begin
+    code = assemble(text)
+    puts("#{Array.size(code)} instructions; first: #{Array.first(code)}; last: #{Array.last(code)}")
+    stats = run(code, out)
+    puts("output: #{Array.join(out, ", ")}")
+    stats => {steps:, max_stack:, max_depth:, counts:}
+    puts("steps=#{steps} max_stack=#{max_stack} max_depth=#{max_depth}")
+    top = Array.take(Array.sort_by(Hash.to_a(counts)) { |op, n| format("%08d %s", 99999999 - n, op) }, 4)
+    puts("hot: #{Array.join(Array.map(top) { |op, n| "#{op}=#{n}" }, " ")}")
+  rescue VMError => e
+    puts("output so far: #{Array.join(out, ", ")}")
+    puts("vm error at #{VMError.get_pc(e)}: #{Exception.message(e)}")
+  end
+end

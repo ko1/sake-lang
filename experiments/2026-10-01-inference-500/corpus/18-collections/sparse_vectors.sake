@@ -1,0 +1,100 @@
+# Sparse vectors backed by a Hash: arithmetic and indexing operators, dot products, cosine similarity.
+
+class SparseVec < {reader: [entries]}
+  include Arithmetic
+  include Indexable
+
+  def [](v, k) = Hash.fetch(@entries, k, 0)
+
+  def []=(v, k, x)
+    if x == 0
+      Hash.delete(@entries, k)
+    else
+      @entries[k] = x
+    end
+  end
+
+  def +(a, b)
+    out = SparseVec.new(Hash.merge(@entries, Hash[]))
+    Hash.each(SparseVec.get_entries(b)) { |k, x| out[k] = out[k] + x }
+    out
+  end
+
+  def -(a, b) = a + scale(b, -1)
+
+  def *(a, k)
+    SparseVec.new(Hash.transform_values(@entries) { |x| x * k })
+  end
+
+  def scale(v, k) = SparseVec.new(Hash.transform_values(@entries) { |x| x * k })
+
+  def dot(a, b)
+    small, big = Hash.size(@entries) <= Hash.size(SparseVec.get_entries(b)) ? [a, b] : [b, a]
+    Hash.sum(SparseVec.get_entries(small)) { |k, x| x * big[k] }
+  end
+
+  def norm(v) = Math.sqrt(dot(v, v))
+  def nnz(v) = Hash.size(@entries)
+  def keys(v) = Array.to_set(Hash.keys(@entries))
+
+  def to_s(v)
+    parts = Array.map(Array.sort_by(Hash.to_a(@entries)) { |k, x| k }) { |k, x| "#{k}:#{x}" }
+    "{" + Array.join(parts, " ") + "}"
+  end
+end
+
+def from_text(text)
+  v = SparseVec.new(Hash[])
+  Array.each(String.scan(String.downcase(text), /[a-z]+/)) { |w| v[w] += 1 }
+  v
+end
+
+def cosine(a, b)
+  na = SparseVec.norm(a)
+  nb = SparseVec.norm(b)
+  return 0.0 if na == 0.0 || nb == 0.0
+  SparseVec.dot(a, b) / (na * nb)
+end
+
+a = SparseVec.new(Hash["x" => 3, "y" => 4])
+b = SparseVec.new(Hash["y" => 1, "z" => 2])
+puts("a = #{a}")
+puts("b = #{b}")
+puts("a + b = #{a + b}")
+puts("a - b = #{a - b}")
+puts("a * 2 = #{a * 2}")
+puts("a . b = #{SparseVec.dot(a, b)}")
+puts("|a| = #{SparseVec.norm(a)}")
+c = a - a
+puts("a - a = #{c} (nnz #{SparseVec.nnz(c)})")
+a["w"] = 7
+a["x"] = 0
+puts("after edits a = #{a}, a[q] = #{a["q"]}")
+
+docs = Hash[
+  "d1" => "the quick brown fox jumps over the lazy dog",
+  "d2" => "the lazy dog sleeps all day",
+  "d3" => "quick brown foxes are quick",
+  "d4" => "a day in the life of a dog"
+]
+vecs = Hash.transform_values(docs) { |t| from_text(t) }
+puts("vocabulary sizes: #{Array.join(Array.map(Hash.to_a(vecs)) { |n, v| "#{n}=#{SparseVec.nnz(v)}" }, " ")}")
+total = Array.reduce(Hash.values(vecs), SparseVec.new(Hash[])) { |acc, v| acc + v }
+top = Array.take(Array.sort_by(Hash.to_a(SparseVec.get_entries(total))) { |w, n| format("%03d%s", 999 - n, w) }, 4)
+puts("most frequent: #{Array.join(Array.map(top) { |w, n| "#{w}(#{n})" }, " ")}")
+
+puts("cosine similarity:")
+names = Hash.keys(vecs)
+Array.each(names) do |r|
+  row = Array.map(names) { |c2| format("%.2f", cosine(vecs[r], vecs[c2])) }
+  puts("  #{r} #{Array.join(row, " ")}")
+end
+pairs = Array.map(Array.combination(names, 2)) { |pr| [pr[0], pr[1], cosine(vecs[pr[0]], vecs[pr[1]])] }
+best = Array.max_by(pairs) { |x, y, s| s }
+puts("closest pair: #{best[0]} & #{best[1]}")
+others = Hash.values(Hash.reject(vecs) { |n, v| n == "d3" })
+shared = Array.reduce(Array.map(others) { |v| SparseVec.keys(v) }, nil) { |acc, s| acc == nil ? s : acc & s }
+puts("words in every doc but d3: #{Array.join(Set.sort(shared), " ")}")
+query = from_text("lazy dog day")
+ranked = Array.sort_by(names) { |n| 1.0 - cosine(query, vecs[n]) }
+puts("query 'lazy dog day': #{Array.join(ranked, " > ")}")

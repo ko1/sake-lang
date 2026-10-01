@@ -1,0 +1,105 @@
+NegativeCycle = Exception.new(:cycle)
+
+Arc = Struct.new(:from, :to, :weight)
+
+def parse_arcs(spec)
+  arcs = Arc[]
+  Array.each(String.split(spec, ";")) do |item|
+    m = String.match(String.strip(item), /\A(\w+)\s*->\s*(\w+)\s+(-?\d+)\z/)
+    raise ArgumentError, "bad arc: #{item}" if m == nil
+    Array.push(arcs, Arc.new(m[1], m[2], String.to_i(m[3])))
+  end
+  arcs
+end
+
+def vertices(arcs)
+  vs = Array[]
+  Array.each(arcs) do |a|
+    Array.push(vs, Arc.get_from(a)) unless Array.include?(vs, Arc.get_from(a))
+    Array.push(vs, Arc.get_to(a)) unless Array.include?(vs, Arc.get_to(a))
+  end
+  vs
+end
+
+def relax_all(arcs, dist, pred)
+  changed = nil
+  Array.each(arcs) do |a|
+    du = dist[Arc.get_from(a)]
+    next if du == nil
+    cand = du + Arc.get_weight(a)
+    dv = dist[Arc.get_to(a)]
+    if dv == nil || cand < dv
+      dist[Arc.get_to(a)] = cand
+      pred[Arc.get_to(a)] = Arc.get_from(a)
+      changed = Arc.get_to(a)
+    end
+  end
+  changed
+end
+
+def trace_cycle(pred, start, n)
+  v = start
+  Integer.times(n) { v = pred[v] }
+  cycle = Array[v]
+  u = pred[v]
+  while u != v
+    Array.push(cycle, u)
+    u = pred[u]
+  end
+  Array.push(cycle, v)
+  Array.reverse(cycle)
+end
+
+def bellman_ford(arcs, source)
+  vs = vertices(arcs)
+  dist = Hash[source => 0]
+  pred = Hash[]
+  rounds = 0
+  Integer.times(Array.size(vs) - 1) do
+    rounds += 1
+    return [dist, pred, rounds] if relax_all(arcs, dist, pred) == nil
+  end
+  last = relax_all(arcs, dist, pred)
+  if last
+    raise NegativeCycle.new("negative cycle reachable from #{source}", trace_cycle(pred, last, Array.size(vs)))
+  end
+  [dist, pred, rounds]
+end
+
+def route(pred, source, target)
+  path = Array[target]
+  while Array.first(path) != source
+    up = pred[Array.first(path)]
+    return nil unless up
+    Array.unshift(path, up)
+  end
+  path
+end
+
+def run(title, spec, source)
+  puts("== #{title}")
+  arcs = parse_arcs(spec)
+  dist, pred, rounds = bellman_ford(arcs, source)
+  puts("settled after #{rounds} round(s)")
+  Array.each(Array.sort(vertices(arcs))) do |v|
+    d = dist[v]
+    if d
+      puts(format("  %-6s %5d  via %s", v, d, Array.join(route(pred, source, v), ">")))
+    else
+      puts(format("  %-6s %5s", v, "--"))
+    end
+  end
+rescue NegativeCycle => e
+  puts("  #{Exception.message(e)}: #{Array.join(NegativeCycle.get_cycle(e), " -> ")}")
+rescue ArgumentError => e
+  puts("  input error: #{Exception.message(e)}")
+end
+
+run("delivery costs with rebates",
+    "depot -> a 4; depot -> b 6; a -> b -3; b -> c 2; a -> c 5; c -> d 1; d -> e -2; b -> e 7; f -> depot 1",
+    "depot")
+run("arbitrage loop",
+    "s -> x 1; x -> y 2; y -> z -4; z -> x 1; z -> t 3",
+    "s")
+run("broken input", "s -> x 1; x => y 2", "s")
+run("chain", "n1 -> n2 1; n2 -> n3 1; n3 -> n4 1; n4 -> n5 1", "n1")

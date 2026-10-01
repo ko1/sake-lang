@@ -1,0 +1,118 @@
+SingularError = Exception.new(:step)
+
+LU = Struct.new(:a, :perm, :sign)
+
+class LU
+  def factor(m)
+    n = Array.size(m)
+    a = Array.map(m) { |row| Array.dup(row) }
+    perm = Range.to_a(0...n)
+    sign = 1
+    Range.each(0...n) do |k|
+      best = k
+      Range.each((k + 1)...n) { |i| best = i if Float.abs(a[i][k]) > Float.abs(a[best][k]) }
+      raise SingularError.new("zero pivot", k) if Float.abs(a[best][k]) < 1e-13
+      if best != k
+        row = a[k]
+        a[k] = a[best]
+        a[best] = row
+        idx = perm[k]
+        perm[k] = perm[best]
+        perm[best] = idx
+        sign = 0 - sign
+      end
+      Range.each((k + 1)...n) do |i|
+        a[i][k] /= a[k][k]
+        f = a[i][k]
+        Range.each((k + 1)...n) { |j| a[i][j] -= f * a[k][j] }
+      end
+    end
+    LU.new(a, perm, sign)
+  end
+
+  def size(lu) = Array.size(@a)
+
+  def solve(lu, b)
+    n = size(lu)
+    y = Array.map(@perm) { |p| b[p] }
+    Range.each(0...n) { |i| Range.each(0...i) { |j| y[i] -= @a[i][j] * y[j] } }
+    Integer.downto(n - 1, 0) do |i|
+      Range.each((i + 1)...n) { |j| y[i] -= @a[i][j] * y[j] }
+      y[i] /= @a[i][i]
+    end
+    y
+  end
+
+  def det(lu) = Range.reduce(0...size(lu), @sign * 1.0) { |acc, i| acc * @a[i][i] }
+
+  def inverse(lu)
+    n = size(lu)
+    cols = Range.map(0...n) { |j| solve(lu, Range.map(0...n) { |i| i == j ? 1.0 : 0.0 }) }
+    Range.map(0...n) { |i| Range.map(0...n) { |j| cols[j][i] } }
+  end
+
+  def lower(lu)
+    n = size(lu)
+    Range.map(0...n) { |i| Range.map(0...n) { |j| j < i ? @a[i][j] : (i == j ? 1.0 : 0.0) } }
+  end
+
+  def upper(lu)
+    n = size(lu)
+    Range.map(0...n) { |i| Range.map(0...n) { |j| j >= i ? @a[i][j] : 0.0 } }
+  end
+end
+
+def norm1(m)
+  n = Array.size(m)
+  Array.max(Range.map(0...n) { |j| Array.sum(Array.map(m) { |row| Float.abs(row[j]) }) })
+end
+
+def matmul(x, y)
+  Array.map(x) { |row| Range.map(0...Array.size(y[0])) { |j| Range.reduce(0...Array.size(row), 0.0) { |acc, k| acc + row[k] * y[k][j] } } }
+end
+
+def show(name, m)
+  puts("#{name}:")
+  Array.each(m) { |row| puts("  " + Array.join(Array.map(row) { |x| format("%9.4f", x) }, " ")) }
+end
+
+a = Array[
+  Float[2.0, 1.0, 1.0, 0.0],
+  Float[4.0, 3.0, 3.0, 1.0],
+  Float[8.0, 7.0, 9.0, 5.0],
+  Float[6.0, 7.0, 9.0, 8.0]
+]
+
+lu = LU.factor(a)
+puts("permutation: #{LU.get_perm(lu)}, sign #{LU.get_sign(lu)}")
+show("L", LU.lower(lu))
+show("U", LU.upper(lu))
+pa = Array.map(LU.get_perm(lu)) { |p| a[p] }
+diff = matmul(LU.lower(lu), LU.upper(lu))
+err = 0.0
+Array.each_with_index(diff) { |row, i| Array.each_with_index(row) { |v, j| err = Array.max(Float[err, Float.abs(v - pa[i][j])]) } }
+puts(format("max |LU - PA| = %.2e", err))
+puts(format("det(A) = %.6f", LU.det(lu)))
+
+rhs_list = Array[Float[1.0, 2.0, 3.0, 4.0], Float[0.0, 0.0, 0.0, 1.0], Float[5.0, -1.0, 2.5, 0.0]]
+Array.each(rhs_list) do |b|
+  x = LU.solve(lu, b)
+  puts("solve #{b} -> [#{Array.join(Array.map(x) { |v| format("%.6f", v) }, ", ")}]")
+end
+
+inv = LU.inverse(lu)
+show("inverse", inv)
+cond = norm1(a) * norm1(inv)
+puts(format("condition number (1-norm) = %.3f", cond))
+
+Array.each(Integer[4, 6, 8]) do |n|
+  h = Range.map(0...n) { |i| Range.map(0...n) { |j| 1.0 / (i + j + 1) } }
+  hl = LU.factor(h)
+  puts(format("hilbert %d: det=%.3e cond=%.3e", n, LU.det(hl), norm1(h) * norm1(LU.inverse(hl))))
+end
+
+begin
+  LU.factor(Array[Float[1.0, 2.0, 3.0], Float[4.0, 5.0, 6.0], Float[7.0, 8.0, 9.0]])
+rescue SingularError => e
+  puts("singular: #{Exception.message(e)} at step #{SingularError.get_step(e)}")
+end

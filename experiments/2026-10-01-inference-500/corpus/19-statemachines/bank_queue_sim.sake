@@ -1,0 +1,121 @@
+class Event < {reader: [time, order, kind, customer, teller]}
+  include Comparable
+  def <=>(a, b)
+    c = @time <=> Event.get_time(b)
+    c == 0 ? @order <=> Event.get_order(b) : c
+  end
+end
+
+Customer = Struct.new(:id, :arrived, :service, :started)
+Teller = Struct.new(:name, :state, :busy_time, :served)
+Heap = Struct.new(:items)
+
+class Heap
+  def push(h, x)
+    Array.push(@items, x)
+    i = Array.size(@items) - 1
+    while i > 0
+      parent = (i - 1) / 2
+      break if @items[parent] <= @items[i]
+      tmp = @items[parent]
+      @items[parent] = @items[i]
+      @items[i] = tmp
+      i = parent
+    end
+  end
+
+  def pop(h)
+    top = Array.first(@items)
+    last = Array.pop(@items)
+    return top if Array.empty?(@items)
+    @items[0] = last
+    i = 0
+    n = Array.size(@items)
+    while true
+      l = 2 * i + 1
+      r = l + 1
+      m = i
+      m = l if l < n && @items[l] < @items[m]
+      m = r if r < n && @items[r] < @items[m]
+      break if m == i
+      tmp = @items[m]
+      @items[m] = @items[i]
+      @items[i] = tmp
+      i = m
+    end
+    top
+  end
+
+  def empty?(h) = Array.empty?(@items)
+end
+
+Lcg = Struct.new(:seed)
+class Lcg
+  def next_int(g, n)
+    @seed = (@seed * 1103515245 + 12345) % 2147483648
+    @seed / 65536 % n
+  end
+end
+
+def simulate(teller_count, customers)
+  heap = Heap.new(Array[])
+  order = 0
+  Array.each(customers) do |c|
+    order += 1
+    Heap.push(heap, Event.new(Customer.get_arrived(c), order, :arrive, c, nil))
+  end
+  tellers = Array.map(Range.to_a(1..teller_count)) { |i| Teller.new("T#{i}", :idle, 0, 0) }
+  line = Array[]
+  max_line = 0
+  waits = Array[]
+  clock = 0
+  until Heap.empty?(heap)
+    ev = Heap.pop(heap)
+    clock = Event.get_time(ev)
+    case Event.get_kind(ev)
+    in :arrive then Array.push(line, Event.get_customer(ev))
+    in :depart
+      t = Event.get_teller(ev)
+      Teller.set_state(t, :idle)
+      Teller.set_served(t, Teller.get_served(t) + 1)
+    end
+    max_line = Array.size(line) if Array.size(line) > max_line
+    Array.each(tellers) do |t|
+      next if Teller.get_state(t) == :busy || Array.empty?(line)
+      c = Array.shift(line)
+      Customer.set_started(c, clock)
+      Array.push(waits, clock - Customer.get_arrived(c))
+      Teller.set_state(t, :busy)
+      Teller.set_busy_time(t, Teller.get_busy_time(t) + Customer.get_service(c))
+      order += 1
+      Heap.push(heap, Event.new(clock + Customer.get_service(c), order, :depart, c, t))
+    end
+  end
+  {tellers: tellers, waits: waits, max_line: max_line, end_time: clock}
+end
+
+def make_customers(n, seed)
+  g = Lcg.new(seed)
+  t = 0
+  Array.map(Range.to_a(1..n)) do |i|
+    t += Lcg.next_int(g, 6)
+    Customer.new(i, t, 3 + Lcg.next_int(g, 8), nil)
+  end
+end
+
+customers_spec = Array[[30, 7], [30, 2026]]
+Array.each(customers_spec) do |n, seed|
+  Array.each(Integer[1, 2, 3]) do |k|
+    cs = make_customers(n, seed)
+    r = simulate(k, cs)
+    r => {tellers:, waits:, max_line:, end_time:}
+    avg = Array.sum(waits) / Integer.to_f(Array.size(waits))
+    late = Array.count(waits) { it > 10 }
+    puts(format("seed=%-4d tellers=%d end=%3d avg_wait=%6.2f max_wait=%3d max_line=%2d waited>10: %d",
+      seed, k, end_time, avg, Array.max(waits), max_line, late))
+    Array.each(tellers) do |t|
+      util = 100.0 * Teller.get_busy_time(t) / end_time
+      puts(format("    %s served %2d busy %3d (%.1f%%)", Teller.get_name(t), Teller.get_served(t), Teller.get_busy_time(t), util))
+    end
+  end
+end

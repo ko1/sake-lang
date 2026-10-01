@@ -1,0 +1,117 @@
+SingularMatrix = Exception.new(:column)
+
+def copy_rows(a) = Array.map(a) { |row| Array.dup(row) }
+
+def solve(a, b)
+  n = Array.size(a)
+  m = copy_rows(a)
+  rhs = Array.dup(b)
+  swaps = 0
+  Range.each(0...n) do |col|
+    pivot = Array.max_by(Range.to_a(col...n)) { |r| Float.abs(m[r][col]) }
+    raise SingularMatrix.new("matrix is singular", col) if Float.abs(m[pivot][col]) < 1e-12
+    if pivot != col
+      tmp = m[col]
+      m[col] = m[pivot]
+      m[pivot] = tmp
+      t = rhs[col]
+      rhs[col] = rhs[pivot]
+      rhs[pivot] = t
+      swaps += 1
+    end
+    Range.each((col + 1)...n) do |r|
+      factor = m[r][col] / m[col][col]
+      next if factor == 0.0
+      Range.each(col...n) { |c| m[r][c] -= factor * m[col][c] }
+      rhs[r] -= factor * rhs[col]
+    end
+  end
+  x = Array.map(rhs) { |v| 0.0 }
+  Integer.downto(n - 1, 0) do |i|
+    s = rhs[i]
+    Range.each((i + 1)...n) { |j| s -= m[i][j] * x[j] }
+    x[i] = s / m[i][i]
+  end
+  det = Range.reduce(0...n, 1.0) { |acc, i| acc * m[i][i] }
+  det = 0.0 - det if Integer.odd?(swaps)
+  {x: x, det: det, swaps: swaps}
+end
+
+def inverse(a)
+  n = Array.size(a)
+  aug = Range.map(0...n) do |i|
+    row = Array.dup(a[i])
+    Range.each(0...n) { |j| Array.push(row, i == j ? 1.0 : 0.0) }
+    row
+  end
+  Range.each(0...n) do |col|
+    pivot = Array.max_by(Range.to_a(col...n)) { |r| Float.abs(aug[r][col]) }
+    raise SingularMatrix.new("cannot invert", col) if Float.abs(aug[pivot][col]) < 1e-12
+    tmp = aug[col]
+    aug[col] = aug[pivot]
+    aug[pivot] = tmp
+    p = aug[col][col]
+    aug[col] = Array.map(aug[col]) { |v| v / p }
+    Range.each(0...n) do |r|
+      next if r == col
+      f = aug[r][col]
+      row = aug[r]
+      aug[r] = Range.map(0...Array.size(row)) { |c| row[c] - f * aug[col][c] }
+    end
+  end
+  Array.map(aug) { |row| Array.drop(row, n) }
+end
+
+def mat_vec(a, x) = Array.map(a) { |row| Array.sum(Array.map(Array.zip(row, x)) { |p, q| p * q }) }
+
+def residual(a, x, b)
+  r = Array.map(Array.zip(mat_vec(a, x), b)) { |ax, bi| Float.abs(ax - bi) }
+  Array.max(r)
+end
+
+def fmt_vec(v) = "[" + Array.join(Array.map(v) { |e| format("%.6f", e) }, ", ") + "]"
+
+systems = Array[
+  ["3x3 well-conditioned",
+   Array[Float[2.0, 1.0, -1.0], Float[-3.0, -1.0, 2.0], Float[-2.0, 1.0, 2.0]],
+   Float[8.0, -11.0, -3.0]],
+  ["needs pivoting",
+   Array[Float[0.0, 2.0, 1.0], Float[1.0, -2.0, -3.0], Float[-1.0, 1.0, 2.0]],
+   Float[-8.0, 0.0, 3.0]],
+  ["4x4 circuit",
+   Array[Float[10.0, -2.0, 0.0, -3.0], Float[-2.0, 8.0, -1.0, 0.0], Float[0.0, -1.0, 6.0, -2.0], Float[-3.0, 0.0, -2.0, 9.0]],
+   Float[12.0, 0.0, 5.0, -4.0]],
+  ["singular",
+   Array[Float[1.0, 2.0, 3.0], Float[2.0, 4.0, 6.0], Float[1.0, 0.0, 1.0]],
+   Float[1.0, 2.0, 3.0]]
+]
+
+Array.each(systems) do |name, a, b|
+  puts("== #{name}")
+  begin
+    res = solve(a, b)
+    res => {x:, det:, swaps:}
+    puts("  x = #{fmt_vec(x)}")
+    puts(format("  det = %.4f (row swaps: %d), residual = %.2e", det, swaps, residual(a, x, b)))
+    inv = inverse(a)
+    prod = Array.map(a) { |row| Range.map(0...Array.size(a)) { |j| Range.reduce(0...Array.size(row), 0.0) { |acc, k| acc + row[k] * inv[k][j] } } }
+    off = 0.0
+    Array.each_with_index(prod) do |row, i|
+      Array.each_with_index(row) { |v, j| off = Array.max(Float[off, Float.abs(v - (i == j ? 1.0 : 0.0))]) }
+    end
+    puts(format("  |A * inv(A) - I|max = %.2e", off))
+    puts("  inv row 0 = #{fmt_vec(inv[0])}")
+  rescue SingularMatrix => e
+    puts("  #{Exception.message(e)} at column #{SingularMatrix.get_column(e)}")
+  end
+end
+
+# Hilbert matrices: watch the residual vs. the error grow
+Array.each(Integer[3, 5, 7, 9]) do |n|
+  h = Range.map(0...n) { |i| Range.map(0...n) { |j| 1.0 / (i + j + 1) } }
+  ones = Range.map(0...n) { |i| 1.0 }
+  b = mat_vec(h, ones)
+  solve(h, b) => {x:}
+  err = Array.max(Array.map(x) { |v| Float.abs(v - 1.0) })
+  puts(format("hilbert n=%d residual=%.2e error=%.2e", n, residual(h, x, b), err))
+end

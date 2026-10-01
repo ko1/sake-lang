@@ -1,0 +1,117 @@
+Doctor = Struct.new(:name, :specialty, :days, :grid)
+Request = Struct.new(:patient, :specialty, :minutes, :prefer)
+
+def day_names = Array["Mon", "Tue", "Wed", "Thu", "Fri"]
+def slot_len = 15
+def opening = 9 * 60
+def slots_per_day = 32
+
+def clock(slot)
+  m = opening + slot * slot_len
+  format("%02d:%02d", m / 60, m % 60)
+end
+
+def new_doctor(name, specialty, days)
+  grid = Array.map(day_names) { |d| Array.include?(days, d) ? Array.map(Range.to_a(1..slots_per_day)) { nil } : nil }
+  Doctor.new(name, specialty, days, grid)
+end
+
+# first run of `need` free slots on a day, within the preferred half of the day
+def free_run(row, need, prefer)
+  lo, hi = case prefer
+           in :morning then [0, 12]
+           in :afternoon then [16, slots_per_day]
+           in :any then [0, slots_per_day]
+           end
+  start = lo
+  while start + need <= hi
+    blocked = Range.find(start...(start + need)) { |i| row[i] != nil }
+    return start unless blocked
+    start = blocked + 1
+  end
+  nil
+end
+
+def schedule(doctors, req)
+  need = Integer.ceildiv(Request.get_minutes(req), slot_len)
+  candidates = Array.select(doctors) { |d| Doctor.get_specialty(d) == Request.get_specialty(req) }
+  Array.each_with_index(day_names) do |day, di|
+    Array.each(candidates) do |doc|
+      row = Doctor.get_grid(doc)[di]
+      next unless row
+      start = free_run(row, need, Request.get_prefer(req))
+      next unless start
+      Integer.times(need) { |k| row[start + k] = Request.get_patient(req) }
+      return [doc, day, start, need]
+    end
+  end
+  nil
+end
+
+def cancel(doctors, patient)
+  freed = 0
+  Array.each(doctors) do |doc|
+    Array.each(Doctor.get_grid(doc)) do |row|
+      next unless row
+      Array.each_index(row) do |i|
+        if row[i] == patient
+          row[i] = nil
+          freed += 1
+        end
+      end
+    end
+  end
+  freed
+end
+
+def book_and_report(doctors, req, waitlist)
+  booked = schedule(doctors, req)
+  if booked
+    doc, day, start, need = booked
+    puts(format("%-6s %-11s %s %s-%s with %s", Request.get_patient(req), Request.get_specialty(req), day, clock(start), clock(start + need), Doctor.get_name(doc)))
+  else
+    puts(format("%-6s %-11s no slot (%s), waitlisted", Request.get_patient(req), Request.get_specialty(req), Request.get_prefer(req)))
+    Array.push(waitlist, req)
+  end
+end
+
+doctors = Array[
+  new_doctor("Dr. Ito", "general", Array["Mon", "Tue", "Thu"]),
+  new_doctor("Dr. Park", "general", Array["Wed", "Fri"]),
+  new_doctor("Dr. Rao", "dermatology", Array["Tue"]),
+  new_doctor("Dr. Diaz", "cardiology", Array["Mon", "Fri"])
+]
+
+requests = Array[
+  Request.new("amy", "general", 30, :morning),
+  Request.new("bo", "dermatology", 120, :morning),
+  Request.new("cal", "dermatology", 60, :morning),
+  Request.new("dee", "cardiology", 90, :afternoon),
+  Request.new("eli", "dermatology", 45, :afternoon),
+  Request.new("fay", "general", 45, :any),
+  Request.new("gus", "dermatology", 240, :afternoon),
+  Request.new("hal", "dermatology", 30, :morning),
+  Request.new("ivy", "orthopedics", 30, :any)
+]
+
+waitlist = Array[]
+Array.each(requests) { |r| book_and_report(doctors, r, waitlist) }
+
+puts
+puts("bo cancels: #{cancel(doctors, "bo")} slots freed")
+pending = waitlist
+waitlist = Array[]
+while (r = Array.shift(pending))
+  book_and_report(doctors, r, waitlist)
+end
+
+puts
+Array.each(doctors) do |doc|
+  Array.each_with_index(Doctor.get_grid(doc)) do |row, di|
+    next unless row
+    line = Array.join(Array.map(row) { |p| p ? String.upcase(p[0]) : "." }, "")
+    used = Array.count(row) { |p| p != nil }
+    puts(format("%-9s %s %s %3d%%", Doctor.get_name(doc), day_names[di], line, used * 100 / slots_per_day))
+  end
+end
+puts("Still waiting: #{Array.join(Array.map(waitlist) { |r| Request.get_patient(r) }, ", ")}")

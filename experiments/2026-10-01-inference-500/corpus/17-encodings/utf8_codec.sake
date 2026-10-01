@@ -1,0 +1,110 @@
+# A UTF-8 encoder and validating decoder working on raw byte arrays.
+# The decoder reports overlong forms, surrogates, bad continuation bytes and truncation.
+
+Utf8Error = Exception.new(:offset)
+
+def encode_cp(cp)
+  if cp < 0x80
+    Integer[cp]
+  elsif cp < 0x800
+    Integer[0xC0 | (cp >> 6), 0x80 | (cp & 0x3F)]
+  elsif cp < 0x10000
+    raise Utf8Error.new(format("surrogate U+%04X", cp), 0) if cp >= 0xD800 && cp <= 0xDFFF
+    Integer[0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F)]
+  elsif cp <= 0x10FFFF
+    Integer[0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F)]
+  else
+    raise Utf8Error.new(format("out of range U+%X", cp), 0)
+  end
+end
+
+def encode(cps)
+  out = Integer[]
+  Array.each(cps) { |cp| Array.concat(out, encode_cp(cp)) }
+  out
+end
+
+def sequence_info(lead)
+  if lead < 0x80
+    [1, lead, 0]
+  elsif lead & 0xE0 == 0xC0
+    [2, lead & 0x1F, 0x80]
+  elsif lead & 0xF0 == 0xE0
+    [3, lead & 0x0F, 0x800]
+  elsif lead & 0xF8 == 0xF0
+    [4, lead & 0x07, 0x10000]
+  else
+    [0, 0, 0]
+  end
+end
+
+def decode(bytes)
+  cps = Integer[]
+  i = 0
+  n = Array.size(bytes)
+  while i < n
+    len, cp, min = sequence_info(bytes[i])
+    raise Utf8Error.new(format("invalid lead byte %02X", bytes[i]), i) if len == 0
+    raise Utf8Error.new("truncated sequence", i) if i + len > n
+    Range.each(1...len) do |k|
+      b = bytes[i + k]
+      raise Utf8Error.new(format("bad continuation byte %02X", b), i + k) if b & 0xC0 != 0x80
+      cp = (cp << 6) | (b & 0x3F)
+    end
+    raise Utf8Error.new(format("overlong encoding of U+%04X", cp), i) if cp < min
+    raise Utf8Error.new(format("surrogate U+%04X", cp), i) if cp >= 0xD800 && cp <= 0xDFFF
+    raise Utf8Error.new(format("out of range U+%X", cp), i) if cp > 0x10FFFF
+    Array.push(cps, cp)
+    i += len
+  end
+  cps
+end
+
+def hex_bytes(bytes) = Array.join(Array.map(bytes) { |b| format("%02X", b) }, " ")
+def show_cps(cps) = Array.join(Array.map(cps) { |c| format("U+%04X", c) }, " ")
+
+puts("== encoding code points ==")
+Array.each(Integer[0x41, 0xE9, 0x20AC, 0x3042, 0x1F600, 0x10FFFF]) do |cp|
+  bytes = encode_cp(cp)
+  puts(format("U+%06X -> %-12s (%d bytes)", cp, hex_bytes(bytes), Array.size(bytes)))
+end
+
+puts("== agreeing with the host strings ==")
+Array.each(Array["héllo", "€100", "日本語", "naïve café"]) do |s|
+  host = String.bytes(s)
+  cps = decode(host)
+  again = encode(cps)
+  same = hex_bytes(again) == hex_bytes(host)
+  puts("#{s}: #{Array.size(host)} bytes, #{Array.size(cps)} code points, re-encoded same=#{same}")
+  puts("  #{show_cps(cps)}")
+end
+
+puts("== invalid input ==")
+bad_inputs = Array[
+  Integer[0x48, 0x69, 0xFF],
+  Integer[0xC0, 0xAF],
+  Integer[0xE2, 0x82],
+  Integer[0xE2, 0x28, 0xA1],
+  Integer[0xED, 0xA0, 0x80],
+  Integer[0xF4, 0x90, 0x80, 0x80],
+  Integer[0xF0, 0x9F, 0x98, 0x80, 0x41]
+]
+errors = 0
+Array.each(bad_inputs) do |bytes|
+  begin
+    cps = decode(bytes)
+    puts("#{hex_bytes(bytes)}: ok #{show_cps(cps)}")
+  rescue Utf8Error => e
+    errors += 1
+    puts("#{hex_bytes(bytes)}: #{Exception.message(e)} at offset #{Utf8Error.get_offset(e)}")
+  end
+end
+puts("#{errors} of #{Array.size(bad_inputs)} rejected")
+
+Array.each(Integer[0xD800, 0x110000]) do |cp|
+  begin
+    encode_cp(cp)
+  rescue Utf8Error => e
+    puts("encode: #{Exception.message(e)}")
+  end
+end

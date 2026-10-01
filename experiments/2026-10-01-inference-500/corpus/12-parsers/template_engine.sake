@@ -1,0 +1,136 @@
+Tag = Struct.new(:kind, :name, :children)
+TemplateError = Exception.new(:pos)
+
+def parse_template(src)
+  root = Tag.new(:root, "", Tag[])
+  stack = Array[root]
+  pos = 0
+  while true
+    rel = String.index(src[pos..], "{{")
+    if rel == nil
+      Array.push(Tag.get_children(Array.last(stack)), Tag.new(:text, src[pos..], Tag[])) if pos < String.size(src)
+      break
+    end
+    open = pos + rel
+    Array.push(Tag.get_children(Array.last(stack)), Tag.new(:text, src[pos...open], Tag[])) if open > pos
+    raw = src[open + 2] == "{"
+    closer = raw ? "}}}" : "}}"
+    body_start = open + (raw ? 3 : 2)
+    rel_close = String.index(src[body_start..], closer)
+    raise TemplateError.new("unclosed tag", open) if rel_close == nil
+    inner = String.strip(src[body_start...(body_start + rel_close)])
+    pos = body_start + rel_close + String.size(closer)
+    sigil = inner[0]
+    name = String.strip(inner[1..] || "")
+    current = Tag.get_children(Array.last(stack))
+    if raw
+      Array.push(current, Tag.new(:raw, inner, Tag[]))
+    elsif sigil == "#" || sigil == "^"
+      tag = Tag.new(sigil == "#" ? :section : :inverted, name, Tag[])
+      Array.push(current, tag)
+      Array.push(stack, tag)
+    elsif sigil == "/"
+      top = Array.pop(stack)
+      if Array.empty?(stack) || Tag.get_name(top) != name
+        raise TemplateError.new("unexpected {{/#{name}}}", open)
+      end
+    elsif sigil == "!"
+      nil
+    else
+      raise TemplateError.new("empty tag", open) if String.empty?(inner)
+      Array.push(current, Tag.new(:var, inner, Tag[]))
+    end
+  end
+  if Array.size(stack) > 1
+    raise TemplateError.new("unclosed section '#{Tag.get_name(Array.last(stack))}'", String.size(src))
+  end
+  root
+end
+
+def lookup(contexts, name)
+  return Array.last(contexts) if name == "."
+  parts = String.split(name, ".")
+  Array.reverse_each(contexts) do |ctx|
+    if (ctx in Hash) && Hash.key?(ctx, parts[0])
+      v = ctx[parts[0]]
+      Array.each(Array.drop(parts, 1)) { |part| v = (v in Hash) ? v[part] : nil }
+      return v
+    end
+  end
+  nil
+end
+
+def escape(s)
+  String.gsub(String.gsub(String.gsub(String.gsub(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;")
+end
+
+def blank?(v)
+  return true if v == nil || (v in false)
+  (v in Array) && Array.empty?(v)
+end
+
+def render(tag, contexts, out)
+  Array.each(Tag.get_children(tag)) do |t|
+    name = Tag.get_name(t)
+    case Tag.get_kind(t)
+    in :text then Array.push(out, name)
+    in :var then Array.push(out, escape(Kernel.to_s(lookup(contexts, name))))
+    in :raw then Array.push(out, Kernel.to_s(lookup(contexts, name)))
+    in :inverted then render(t, contexts, out) if blank?(lookup(contexts, name))
+    in :section
+      v = lookup(contexts, name)
+      if v in Array
+        Array.each(v) do |item|
+          Array.push(contexts, item)
+          render(t, contexts, out)
+          Array.pop(contexts)
+        end
+      elsif blank?(v) == false
+        Array.push(contexts, v)
+        render(t, contexts, out)
+        Array.pop(contexts)
+      end
+    end
+  end
+  out
+end
+
+def fill(template, data) = Array.join(render(parse_template(template), Array[data], Array[]), "")
+
+def data
+  Hash[
+    "shop" => "Tea & Co",
+    "user" => Hash["name" => "Ada <admin>", "vip" => true, "address" => Hash["city" => "Kyoto"]],
+    "items" => Array[
+      Hash["name" => "sencha", "qty" => 2, "price" => 3.5],
+      Hash["name" => "matcha", "qty" => 1, "price" => 12.0, "note" => "ceremonial"],
+      Hash["name" => "hojicha", "qty" => 3, "price" => 2.25]
+    ],
+    "tags" => Array["green", "loose", "organic"],
+    "coupons" => Array[],
+    "footer" => "<em>thanks</em>"
+  ]
+end
+
+def templates
+  Array[
+    "Hello {{user.name}} from {{user.address.city}}!{{#user.vip}} (VIP){{/user.vip}}",
+    "{{! receipt }}{{shop}} receipt:\n{{#items}}- {{qty}} x {{name}} @ {{price}}{{#note}} [{{note}}]{{/note}}\n{{/items}}",
+    "Tags: {{#tags}}<{{.}}> {{/tags}}| coupons: {{#coupons}}{{code}}{{/coupons}}{{^coupons}}none{{/coupons}}",
+    "{{footer}} vs {{{footer}}}; missing=[{{nothing}}] [{{user.zip.code}}]",
+    "{{#items}}{{name}} for {{user.name}}; {{/items}}",
+    "{{#items}}oops",
+    "{{name}} {{/items}}",
+    "Hi {{user.name",
+    "{{ }}"
+  ]
+end
+
+Array.each_with_index(templates) do |t, i|
+  puts("--- template #{i + 1}")
+  begin
+    puts(fill(t, data))
+  rescue TemplateError => e
+    puts("error at #{TemplateError.get_pos(e)}: #{Exception.message(e)}")
+  end
+end

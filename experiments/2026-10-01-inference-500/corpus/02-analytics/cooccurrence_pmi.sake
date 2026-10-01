@@ -1,0 +1,102 @@
+def sentences
+  Array[
+    "coffee with milk and sugar",
+    "tea with milk",
+    "green tea with honey",
+    "black coffee no sugar",
+    "coffee and cake in the morning",
+    "tea and cake in the afternoon",
+    "honey and lemon tea",
+    "milk and honey",
+    "espresso is strong coffee",
+    "strong black tea",
+    "sugar in coffee",
+    "lemon cake with sugar"
+  ]
+end
+
+def stop = Set["with", "and", "no", "in", "the", "is"]
+
+def word_sets(sents)
+  Array.map(sents) do |s|
+    ws = Set[]
+    Array.each(String.split(s, " ")) { |w| Set.add(ws, w) unless Set.include?(stop, w) }
+    ws
+  end
+end
+
+def pair_key(a, b) = a < b ? [a, b] : [b, a]
+
+def count_all(sets)
+  single = Hash.new(0)
+  pairs = Hash.new(0)
+  Array.each(sets) do |ws|
+    words = Set.sort(ws)
+    Array.each(words) { |w| single[w] += 1 }
+    Array.each_with_index(words) do |a, i|
+      Array.each(Array.drop(words, i + 1)) { |b| pairs[pair_key(a, b)] += 1 }
+    end
+  end
+  [single, pairs]
+end
+
+def pmi(single, pairs, n, a, b)
+  joint = pairs[pair_key(a, b)]
+  return nil if joint == 0
+  Math.log2(joint * n * 1.0 / (single[a] * single[b]))
+end
+
+def neighbors(pairs, word)
+  result = Hash[]
+  Hash.each(pairs) do |key, c|
+    a, b = key
+    if a == word
+      result[b] = c
+    elsif b == word
+      result[a] = c
+    end
+  end
+  result
+end
+
+sets = word_sets(sentences)
+n = Array.size(sets)
+single, pairs = count_all(sets)
+puts("sentences: #{n}, words: #{Hash.size(single)}, co-occurring pairs: #{Hash.size(pairs)}")
+
+frequent = Array.select(Array.sort(Hash.keys(single))) { |w| single[w] >= 3 }
+puts("frequent words: " + Array.join(Array.map(frequent) { |w| "#{w}(#{single[w]})" }, " "))
+
+scored = Array[]
+Hash.each(pairs) do |key, c|
+  next if c < 2
+  a, b = key
+  score = pmi(single, pairs, n, a, b)
+  Array.push(scored, [a, b, c, score]) if score
+end
+scored = Array.sort_by(scored) { |a, b, c, s| a + " " + b }
+scored = Array.sort_by(scored) { |a, b, c, s| 0.0 - s }
+puts("pairs seen 2+ times, by PMI:")
+Array.each(scored) { |a, b, c, s| puts(format("  %-7s %-7s %d  %6.3f", a, b, c, s)) }
+
+Array.each(Array["tea", "coffee", "honey", "water"]) do |w|
+  nb = neighbors(pairs, w)
+  if Hash.empty?(nb)
+    puts("#{w}: no neighbors")
+    next
+  end
+  best = Array.sort(Hash.keys(nb))
+  parts = Array.map(best) do |o|
+    v = pmi(single, pairs, n, w, o)
+    format("%s:%.2f", o, v || 0.0)
+  end
+  puts("#{w}: #{Array.join(parts, " ")}")
+end
+
+never = Array[]
+Array.each_with_index(frequent) do |a, i|
+  Array.each(Array.drop(frequent, i + 1)) do |b|
+    Array.push(never, "#{a}/#{b}") if pmi(single, pairs, n, a, b) == nil
+  end
+end
+puts("frequent words never together: #{Array.join(never, ", ")}")

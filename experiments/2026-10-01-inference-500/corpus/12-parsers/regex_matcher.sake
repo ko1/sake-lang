@@ -1,0 +1,169 @@
+Node = Struct.new(:kind, :chars, :negate, :quant)
+PatternError = Exception.new(:pos)
+
+class Node
+  def single?(n, c)
+    return false if c == nil
+    case @kind
+    in :char then @chars == c
+    in :any then c != "\n"
+    in :class then String.include?(@chars, c) != @negate
+    end
+  end
+
+  def to_s(n)
+    body = case @kind
+           in :char then @chars
+           in :any then "."
+           in :bol then "^"
+           in :eol then "$"
+           in :class then "[#{@negate ? "^" : ""}#{@chars}]"
+           end
+    suffix = case @quant
+             in :one then ""
+             in :star then "*"
+             in :plus then "+"
+             in :opt then "?"
+             end
+    body + suffix
+  end
+end
+
+def expand_range(a, b)
+  out = ""
+  Integer.upto(String.ord(a), String.ord(b)) { |k| out += Integer.chr(k) }
+  out
+end
+
+def compile(pat)
+  nodes = Node[]
+  i = 0
+  n = String.size(pat)
+  while i < n
+    c = pat[i]
+    if c == "^" && i == 0
+      Array.push(nodes, Node.new(:bol, "", false, :one))
+    elsif c == "$" && i == n - 1
+      Array.push(nodes, Node.new(:eol, "", false, :one))
+    elsif c == "."
+      Array.push(nodes, Node.new(:any, "", false, :one))
+    elsif c == "["
+      start = i
+      i += 1
+      negate = pat[i] == "^"
+      i += 1 if negate
+      chars = ""
+      while pat[i] != "]"
+        raise PatternError.new("unterminated character class", start) if pat[i] == nil
+        if pat[i + 1] == "-" && pat[i + 2] != nil && pat[i + 2] != "]"
+          chars += expand_range(pat[i], pat[i + 2])
+          i += 3
+        else
+          chars += pat[i]
+          i += 1
+        end
+      end
+      Array.push(nodes, Node.new(:class, chars, negate, :one))
+    elsif c == "\\"
+      i += 1
+      e = pat[i]
+      raise PatternError.new("trailing backslash", i - 1) if e == nil
+      if e == "d"
+        Array.push(nodes, Node.new(:class, "0123456789", false, :one))
+      elsif e == "w"
+        Array.push(nodes, Node.new(:class, expand_range("a", "z") + expand_range("A", "Z") + expand_range("0", "9") + "_", false, :one))
+      else
+        Array.push(nodes, Node.new(:char, e, false, :one))
+      end
+    elsif c == "*" || c == "+" || c == "?"
+      last = Array.last(nodes)
+      if last == nil || Node.get_quant(last) != :one || Node.get_kind(last) == :bol
+        raise PatternError.new("nothing to repeat", i)
+      end
+      Node.set_quant(last, c == "*" ? :star : (c == "+" ? :plus : :opt))
+    else
+      Array.push(nodes, Node.new(:char, c, false, :one))
+    end
+    i += 1
+  end
+  nodes
+end
+
+def match_here(nodes, ni, s, si)
+  return si if ni == Array.size(nodes)
+  node = nodes[ni]
+  kind = Node.get_kind(node)
+  if kind == :bol
+    return si == 0 ? match_here(nodes, ni + 1, s, si) : nil
+  end
+  if kind == :eol
+    return si == String.size(s) ? match_here(nodes, ni + 1, s, si) : nil
+  end
+  q = Node.get_quant(node)
+  if q == :one
+    return nil unless Node.single?(node, s[si])
+    return match_here(nodes, ni + 1, s, si + 1)
+  end
+  max = q == :opt ? 1 : String.size(s) - si
+  k = 0
+  k += 1 while k < max && Node.single?(node, s[si + k])
+  min = q == :plus ? 1 : 0
+  Integer.downto(k, min) do |len|
+    e = match_here(nodes, ni + 1, s, si + len)
+    return e if e != nil
+  end
+  nil
+end
+
+def search(nodes, s)
+  Range.each(0..String.size(s)) do |start|
+    e = match_here(nodes, 0, s, start)
+    return [start, e] if e != nil
+  end
+  nil
+end
+
+def builtin(pat, s)
+  m = String.match(s, Regexp.new(pat))
+  m ? [MatchData.begin(m, 0), MatchData.end(m, 0)] : nil
+end
+
+def same_span?(mine, theirs)
+  return theirs == nil if mine == nil
+  return false if theirs == nil
+  a, b = mine
+  c, d = theirs
+  a == c && b == d
+end
+
+def cases
+  Array[
+    ["abc", "xxabcxx"], ["a.c", "abc adc"], ["^ab*", "abbbc"], ["^ab*", "cab"],
+    ["colou?r", "my color"], ["colou?r", "colour!"], ["\\d+", "order 66 now"],
+    ["[a-c]+x", "zzbcax"], ["[^aeiou ]+", "a quiet rhythm"], ["\\w+@\\w+\\.com", "mail bob@example.com!"],
+    ["a*a*a*b", "aaaaaaaaaaaaaaac"], ["end$", "the end"], ["end$", "endless"], ["x*", ""],
+    ["a+b+", "aaabbbccc"], ["\\.\\*", "1.*2"], ["[0-9][0-9]:[0-5][0-9]", "at 23:59 or 7:5"],
+    ["*a", "a"], ["ab[cd", "abc"], ["a**", "aa"]
+  ]
+end
+
+agree = 0
+Array.each(cases) do |pat, s|
+  begin
+    nodes = compile(pat)
+    found = search(nodes, s)
+    shape = Array.join(Array.map(nodes) { |nd| Kernel.to_s(nd) }, " ")
+    if found
+      a, b = found
+      result = "#{a}..#{b} #{Kernel.inspect(s[a...b])}"
+    else
+      result = "no match"
+    end
+    same = same_span?(found, builtin(pat, s))
+    agree += 1 if same
+    puts(format("%-24s %-24s %-28s %s", pat, Kernel.inspect(s), result, same ? "ok" : "DIFFERS [#{shape}]"))
+  rescue PatternError => e
+    puts(format("%-24s %-24s error at %d: %s", pat, Kernel.inspect(s), PatternError.get_pos(e), Exception.message(e)))
+  end
+end
+puts("#{agree} results agree with the built-in engine")

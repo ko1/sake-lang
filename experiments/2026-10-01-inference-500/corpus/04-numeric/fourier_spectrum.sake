@@ -1,0 +1,106 @@
+def pi = 3.141592653589793
+
+class Cpx < {reader: [re, im]}
+  include Arithmetic
+
+  def polar(r, theta) = Cpx.new(r * Math.cos(theta), r * Math.sin(theta))
+  def +(a, b) = Cpx.new(@re + Cpx.get_re(b), @im + Cpx.get_im(b))
+  def -(a, b) = Cpx.new(@re - Cpx.get_re(b), @im - Cpx.get_im(b))
+
+  def *(a, b)
+    case b
+    in Cpx then Cpx.new(@re * Cpx.get_re(b) - @im * Cpx.get_im(b), @re * Cpx.get_im(b) + @im * Cpx.get_re(b))
+    in Float then Cpx.new(@re * b, @im * b)
+    end
+  end
+
+  def abs(a) = Math.hypot(@re, @im)
+  def conj(a) = Cpx.new(@re, 0.0 - @im)
+  def to_s(a) = format("%.3f%+.3fi", @re, @im)
+end
+
+def dft(xs)
+  n = Array.size(xs)
+  Range.map(0...n) do |k|
+    acc = Cpx.new(0.0, 0.0)
+    Array.each_with_index(xs) do |x, t|
+      acc = acc + x * Cpx.polar(1.0, -2.0 * pi * k * t / n)
+    end
+    acc
+  end
+end
+
+def fft(xs)
+  n = Array.size(xs)
+  return xs if n == 1
+  raise ArgumentError, "length #{n} is not a power of two" if Integer.odd?(n)
+  ev = Array[]
+  od = Array[]
+  Array.each_with_index(xs) { |x, i| Array.push(Integer.even?(i) ? ev : od, x) }
+  e = fft(ev)
+  o = fft(od)
+  out = Array.map(xs) { |x| x }
+  Range.each(0...(n / 2)) do |k|
+    tw = Cpx.polar(1.0, -2.0 * pi * k / n) * o[k]
+    out[k] = e[k] + tw
+    out[k + n / 2] = e[k] - tw
+  end
+  out
+end
+
+def inverse_fft(spec)
+  n = Array.size(spec)
+  conj = fft(Array.map(spec) { |c| Cpx.conj(c) })
+  Array.map(conj) { |c| Cpx.conj(c) * (1.0 / n) }
+end
+
+n = 64
+rate = 64.0
+signal = Range.map(0...n) do |i|
+  t = i / rate
+  v = 1.5 * Math.sin(2.0 * pi * 5.0 * t) + 0.8 * Math.cos(2.0 * pi * 12.0 * t) + 0.3 * Math.sin(2.0 * pi * 20.0 * t + 0.7) + 0.25
+  Cpx.new(v, 0.0)
+end
+
+slow = dft(signal)
+fast = fft(signal)
+diff = Array.max(Array.map(Array.zip(slow, fast)) { |s, f| Cpx.abs(s - f) })
+puts(format("max |DFT - FFT| = %.2e", diff))
+
+amps = Range.map(0..(n / 2)) do |k|
+  scale = (k == 0 || k == n / 2) ? 1.0 / n : 2.0 / n
+  [k * rate / n, Cpx.abs(fast[k]) * scale]
+end
+peaks = Array.select(amps) { |f, a| a > 0.1 }
+puts("components above 0.1:")
+Array.each(Array.sort_by(peaks) { |f, a| 0.0 - a }) { |f, a| puts(format("  %5.1f Hz amplitude %.4f", f, a)) }
+dc_f, dc_a = amps[0]
+puts(format("DC offset %.4f", dc_a))
+puts("bin 12 = #{fast[12]}")
+
+energy_time = Array.sum(Array.map(signal) { |c| Cpx.get_re(c) ** 2 })
+energy_freq = Array.sum(Array.map(fast) { |c| Cpx.abs(c) ** 2 }) / n
+puts(format("Parseval: time %.6f freq %.6f", energy_time, energy_freq))
+
+back = inverse_fft(fast)
+err = Array.max(Array.map(Array.zip(back, signal)) { |b, s| Cpx.abs(b - s) })
+puts(format("round trip error %.2e", err))
+
+# low-pass: zero bins above 10 Hz, transform back, compare with the pure 5 Hz part + DC
+filtered = Range.map(0...n) do |k|
+  freq = k <= n / 2 ? k : n - k
+  freq * rate / n > 10.0 ? Cpx.new(0.0, 0.0) : fast[k]
+end
+smooth = inverse_fft(filtered)
+worst = 0.0
+Array.each_with_index(smooth) do |c, i|
+  want = 1.5 * Math.sin(2.0 * pi * 5.0 * i / rate) + 0.25
+  worst = Array.max(Float[worst, Float.abs(Cpx.get_re(c) - want)])
+end
+puts(format("low-pass max deviation from 5 Hz + DC: %.2e", worst))
+
+begin
+  fft(Array.take(signal, 12))
+rescue ArgumentError => e
+  puts("fft refused: #{Exception.message(e)}")
+end

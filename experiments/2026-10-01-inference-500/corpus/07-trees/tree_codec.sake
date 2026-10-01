@@ -1,0 +1,124 @@
+TNode = Struct.new(:val, :left, :right)
+DecodeError = Exception.new(:token)
+
+def make_node(tok)
+  return nil if tok == "null" || tok == "#"
+  raise DecodeError.new("bad token #{Kernel.inspect(tok)}", tok) unless String.match?(tok, /\A-?\d+\z/)
+  TNode.new(String.to_i(tok), nil, nil)
+end
+
+# "[1,2,3,null,5]" level order, as in many puzzle sites
+def from_level(text)
+  body = String.delete_suffix(String.delete_prefix(String.strip(text), "["), "]")
+  return nil if String.strip(body) == ""
+  toks = Array.map(String.split(body, ",")) { |t| String.strip(t) }
+  root = make_node(Array.shift(toks))
+  queue = Array[root]
+  until Array.empty?(queue) || Array.empty?(toks)
+    node = Array.shift(queue)
+    next if node == nil
+    left = make_node(Array.shift(toks))
+    TNode.set_left(node, left)
+    Array.push(queue, left)
+    next if Array.empty?(toks)
+    right = make_node(Array.shift(toks))
+    TNode.set_right(node, right)
+    Array.push(queue, right)
+  end
+  root
+end
+
+def to_level(root)
+  out = Array[]
+  queue = Array[root]
+  until Array.empty?(queue)
+    node = Array.shift(queue)
+    if node == nil
+      Array.push(out, "null")
+    else
+      Array.push(out, Integer.to_s(TNode.get_val(node)))
+      Array.push(queue, TNode.get_left(node), TNode.get_right(node))
+    end
+  end
+  Array.pop(out) while Array.last(out) == "null"
+  "[#{Array.join(out, ",")}]"
+end
+
+def to_preorder(node, out)
+  if node == nil
+    Array.push(out, "#")
+  else
+    Array.push(out, Integer.to_s(TNode.get_val(node)))
+    to_preorder(TNode.get_left(node), out)
+    to_preorder(TNode.get_right(node), out)
+  end
+  out
+end
+
+def from_preorder(toks)
+  tok = Array.shift(toks)
+  raise DecodeError.new("unexpected end of input", "") if tok == nil
+  node = make_node(tok)
+  return nil if node == nil
+  TNode.set_left(node, from_preorder(toks))
+  TNode.set_right(node, from_preorder(toks))
+  node
+end
+
+def decode_preorder(text)
+  toks = String.split(text, " ")
+  root = from_preorder(toks)
+  raise DecodeError.new("#{Array.size(toks)} extra token(s)", Array.first(toks)) unless Array.empty?(toks)
+  root
+end
+
+def same?(a, b)
+  return a == b if a == nil || b == nil
+  TNode.get_val(a) == TNode.get_val(b) && same?(TNode.get_left(a), TNode.get_left(b)) && same?(TNode.get_right(a), TNode.get_right(b))
+end
+
+def mirror(node)
+  return nil if node == nil
+  TNode.new(TNode.get_val(node), mirror(TNode.get_right(node)), mirror(TNode.get_left(node)))
+end
+
+def symmetric?(root) = root == nil || same?(TNode.get_left(root), mirror(TNode.get_right(root)))
+
+# returns [height, diameter in edges, best downward path sum, best path sum anywhere]
+def measure(node)
+  return [0, 0, 0, nil] if node == nil
+  lh, ld, ldown, lbest = measure(TNode.get_left(node))
+  rh, rd, rdown, rbest = measure(TNode.get_right(node))
+  v = TNode.get_val(node)
+  gl = ldown > 0 ? ldown : 0
+  gr = rdown > 0 ? rdown : 0
+  through = v + gl + gr
+  best = Array.max(Array.compact(Array[lbest, rbest, through]))
+  [1 + Array.max(Array[lh, rh]), Array.max(Array[ld, rd, lh + rh]), v + Array.max(Array[gl, gr]), best]
+end
+
+inputs = Array["[1,2,3,null,5]", "[1,2,2,3,4,4,3]", "[-10,9,20,null,null,15,7]", "[5,4,8,11,null,13,4,7,2,null,null,null,1]",
+               "[]", "[2,-1]", "[1,2,x]"]
+Array.each(inputs) do |text|
+  begin
+    root = from_level(text)
+    pre = Array.join(to_preorder(root, Array[]), " ")
+    back = decode_preorder(pre)
+    h, diam, _down, best = measure(root)
+    puts(text)
+    puts("  preorder: #{pre}")
+    puts("  level again: #{to_level(back)}, round trip #{same?(root, back) ? "ok" : "FAILED"}")
+    puts("  mirror: #{to_level(mirror(root))}, symmetric: #{symmetric?(root)}")
+    puts("  height #{h}, diameter #{diam}, max path sum #{best == nil ? "-" : best}")
+  rescue DecodeError => e
+    puts("#{text}: decode error: #{Exception.message(e)}")
+  end
+end
+
+Array.each(Array["1 2 # # 3 # #", "1 2 # #", "1 # # 4"]) do |pre|
+  begin
+    puts("#{pre} -> #{to_level(decode_preorder(pre))}")
+  rescue DecodeError => e
+    puts("#{pre} -> decode error: #{Exception.message(e)} (token #{Kernel.inspect(DecodeError.get_token(e))})")
+  end
+end

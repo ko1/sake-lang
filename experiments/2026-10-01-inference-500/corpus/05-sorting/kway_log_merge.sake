@@ -1,0 +1,139 @@
+# Merge per-server log files (each already sorted by time) into one timeline
+# with a heap of cursors, then do sorted-list set operations on user ids.
+
+Entry = Struct.new(:ts, :server, :text)
+Cursor = Struct.new(:entries, :pos)
+
+class Cursor
+  include Comparable
+  def head(c) = Array.fetch(@entries, @pos)
+  def done?(c) = @pos >= Array.size(@entries)
+  def <=>(a, b)
+    x = head(a)
+    y = head(b)
+    c = Entry.get_ts(x) <=> Entry.get_ts(y)
+    c == 0 ? Entry.get_server(x) <=> Entry.get_server(y) : c
+  end
+end
+
+def parse_line(server, line)
+  parts = String.split(line, " ")
+  Entry.new(String.to_i(parts[0]), server, Array.join(Array.drop(parts, 1), " "))
+end
+
+def sift_up(h, i)
+  while i > 0
+    parent = (i - 1) / 2
+    break if h[parent] <= h[i]
+    t = h[parent]
+    h[parent] = h[i]
+    h[i] = t
+    i = parent
+  end
+end
+
+def sift_down(h, i)
+  n = Array.size(h)
+  while true
+    smallest = i
+    Array.each(Array[2 * i + 1, 2 * i + 2]) do |c|
+      smallest = c if c < n && h[c] < h[smallest]
+    end
+    break if smallest == i
+    t = h[smallest]
+    h[smallest] = h[i]
+    h[i] = t
+    i = smallest
+  end
+end
+
+def kway_merge(sources)
+  heap = Array[]
+  Hash.each(sources) do |server, lines|
+    entries = Array.map(lines) { |l| parse_line(server, l) }
+    next if Array.empty?(entries)
+    Array.push(heap, Cursor.new(entries, 0))
+    sift_up(heap, Array.size(heap) - 1)
+  end
+  out = Array[]
+  until Array.empty?(heap)
+    c = heap[0]
+    Array.push(out, Cursor.head(c))
+    Cursor.set_pos(c, Cursor.get_pos(c) + 1)
+    if Cursor.done?(c)
+      last = Array.pop(heap)
+      next if Array.empty?(heap)
+      heap[0] = last
+    end
+    sift_down(heap, 0)
+  end
+  out
+end
+
+def sorted_intersection(a, b)
+  i = 0
+  j = 0
+  out = Array[]
+  while i < Array.size(a) && j < Array.size(b)
+    if a[i] == b[j]
+      Array.push(out, a[i])
+      i += 1
+      j += 1
+    elsif a[i] < b[j]
+      i += 1
+    else
+      j += 1
+    end
+  end
+  out
+end
+
+def sorted_union(a, b)
+  i = 0
+  j = 0
+  out = Array[]
+  while i < Array.size(a) || j < Array.size(b)
+    if j >= Array.size(b) || (i < Array.size(a) && a[i] < b[j])
+      x = a[i]
+      i += 1
+    elsif i >= Array.size(a) || b[j] < a[i]
+      x = b[j]
+      j += 1
+    else
+      x = a[i]
+      i += 1
+      j += 1
+    end
+    Array.push(out, x) if Array.empty?(out) || Array.last(out) != x
+  end
+  out
+end
+
+logs = Hash[
+  "web1" => Array["100 GET / u17", "104 GET /cart u3", "110 POST /pay u3", "131 GET / u42"],
+  "web2" => Array["101 GET / u8", "104 GET /help u17", "125 GET /cart u8"],
+  "web3" => Array[],
+  "api" => Array["99 auth u3", "104 auth u8", "106 auth u17", "140 auth u99", "141 auth u42"]
+]
+
+timeline = kway_merge(logs)
+Array.each(timeline) do |e|
+  puts(format("%4d %-5s %s", Entry.get_ts(e), Entry.get_server(e), Entry.get_text(e)))
+end
+
+def users_of(timeline, server)
+  ids = Array.map(Array.select(timeline) { |e| Entry.get_server(e) == server }) do |e|
+    String.to_i(String.delete_prefix(Array.last(String.split(Entry.get_text(e), " ")), "u"))
+  end
+  Array.uniq(Array.sort(ids))
+end
+
+web = sorted_union(users_of(timeline, "web1"), users_of(timeline, "web2"))
+api = users_of(timeline, "api")
+puts("web users:  #{web}")
+puts("api users:  #{api}")
+puts("both:       #{sorted_intersection(web, api)}")
+puts("api only:   #{Array.reject(api) { |u| Array.bsearch(web) { |w| w >= u } == u }}")
+by_second = Array.group_by(timeline) { |e| Entry.get_ts(e) }
+busy = Hash.select(by_second) { |_, es| Array.size(es) > 1 }
+Hash.each(busy) { |ts, es| puts("t=#{ts}: #{Array.join(Array.map(es) { |e| Entry.get_server(e) }, "+")}") }

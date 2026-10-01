@@ -1,0 +1,129 @@
+Terrain = Struct.new(:cells, :w, :h)
+Node = Struct.new(:f, :g, :x, :y)
+
+class Terrain
+  include Indexable
+
+  def parse(rows) = Terrain.new(Array.map(rows) { |r| String.chars(r) }, String.size(rows[0]), Array.size(rows))
+
+  def [](t, pos)
+    x, y = pos
+    return nil if x < 0 || y < 0 || x >= @w || y >= @h
+    @cells[y][x]
+  end
+
+  def []=(t, pos, ch)
+    x, y = pos
+    @cells[y][x] = ch
+  end
+
+  def cost(t, pos)
+    case t[pos]
+    in "." | "S" | "G" then 1
+    in "~" then 5
+    in "^" then 3
+    else nil
+    end
+  end
+
+  def locate(t, ch)
+    Integer.times(@h) do |y|
+      Integer.times(@w) do |x|
+        return [x, y] if @cells[y][x] == ch
+      end
+    end
+    nil
+  end
+end
+
+class Node
+  include Comparable
+  def <=>(a, b)
+    c = @f <=> Node.get_f(b)
+    c == 0 ? Node.get_g(b) <=> @g : c
+  end
+end
+
+def heuristic(x, y, gx, gy) = Integer.abs(x - gx) + Integer.abs(y - gy)
+
+def astar(t, start, goal)
+  gx, gy = goal
+  sx, sy = start
+  open = Node[Node.new(heuristic(sx, sy, gx, gy), 0, sx, sy)]
+  best = Hash[start => 0]
+  came = Hash[]
+  expanded = 0
+  until Array.empty?(open)
+    pick = 0
+    Array.each_with_index(open) { |n, i| pick = i if n < open[pick] }
+    cur = Array.delete_at(open, pick)
+    x = Node.get_x(cur)
+    y = Node.get_y(cur)
+    g = Node.get_g(cur)
+    next if g > Hash.fetch(best, [x, y], g)
+    expanded += 1
+    return [g, came, expanded] if x == gx && y == gy
+    Array.each(Array[[1, 0], [-1, 0], [0, 1], [0, -1]]) do |dx, dy|
+      nb = [x + dx, y + dy]
+      step = Terrain.cost(t, nb)
+      next unless step
+      ng = g + step
+      old = best[nb]
+      next if old && old <= ng
+      best[nb] = ng
+      came[nb] = [x, y]
+      nx, ny = nb
+      Array.push(open, Node.new(ng + heuristic(nx, ny, gx, gy), ng, nx, ny))
+    end
+  end
+  [nil, came, expanded]
+end
+
+def mark_path(t, came, start, goal)
+  cur = came[goal]
+  steps = 1
+  while cur
+    sx, sy = start
+    cx, cy = cur
+    break if cx == sx && cy == sy
+    t[cur] = "*"
+    steps += 1
+    cur = came[cur]
+  end
+  steps
+end
+
+def solve(title, rows)
+  puts("== #{title}")
+  t = Terrain.parse(rows)
+  start = Terrain.locate(t, "S")
+  goal = Terrain.locate(t, "G")
+  cost, came, expanded = astar(t, start, goal)
+  if cost == nil
+    puts("unreachable (expanded #{expanded})")
+    return
+  end
+  steps = mark_path(t, came, start, goal)
+  puts("cost #{cost}, #{steps} steps, expanded #{expanded}")
+  Array.each(Terrain.get_cells(t)) { |r| puts(Array.join(r, "")) }
+end
+
+solve("valley", Array[
+  "S..~~~....",
+  ".#.~~~.##.",
+  ".#..^^.#..",
+  ".####..#.#",
+  "...~~..#..",
+  ".#.~~###..",
+  ".#......^G"
+])
+solve("river", Array[
+  "S.~~..",
+  "..~~..",
+  "..~~.G"
+])
+solve("sealed", Array[
+  "S.#...",
+  "..#.G.",
+  "###..."
+])

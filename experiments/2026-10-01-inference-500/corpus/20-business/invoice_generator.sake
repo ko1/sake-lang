@@ -1,0 +1,123 @@
+Client = Struct.new(:code, :name, :terms_days, :discount_pct, :rates)
+Entry = Struct.new(:date, :client, :person, :hours, :note)
+Expense = Struct.new(:date, :client, :amount, :note)
+InvoiceLine = Struct.new(:text, :qty, :unit, :amount)
+
+def staff_roles = Hash["alice" => :senior, "bob" => :junior, "carol" => :senior, "dan" => :designer]
+def standard_rates = Hash[senior: 150r, junior: 90r, designer: 110r]
+def tax_rate = 8.25r / 100
+
+def cents(r) = Rational.round(r * 100)
+
+def money(r)
+  c = cents(r)
+  whole = Integer.to_s(c / 100)
+  grouped = String.reverse(Array.join(String.scan(String.reverse(whole), /\d{1,3}/), ","))
+  "$#{grouped}.#{format("%02d", c % 100)}"
+end
+
+def parse_date(s)
+  parts = Array.map(String.split(s, "-")) { |x| String.to_i(x) }
+  Time.new(parts[0], parts[1], parts[2])
+end
+
+def rate_for(client, person)
+  role = Hash.fetch(staff_roles, person)
+  Hash.fetch(Client.get_rates(client), role, Hash.fetch(standard_rates, role))
+end
+
+def build_lines(client, entries, expenses)
+  lines = InvoiceLine[]
+  mine = Array.select(entries) { |e| Entry.get_client(e) == Client.get_code(client) }
+  by_person = Array.group_by(mine) { |e| Entry.get_person(e) }
+  Array.each(Array.sort(Hash.keys(by_person))) do |person|
+    es = Hash.fetch(by_person, person)
+    hours = Array.sum(es) { |e| Entry.get_hours(e) }
+    rate = rate_for(client, person)
+    notes = Array.join(Array.uniq(Array.map(es) { |e| Entry.get_note(e) }), "; ")
+    Array.push(lines, InvoiceLine.new("#{String.capitalize(person)} - #{notes}", hours, rate, hours * rate))
+  end
+  Array.each(Array.select(expenses) { |x| Expense.get_client(x) == Client.get_code(client) }) do |x|
+    Array.push(lines, InvoiceLine.new("Expense: #{Expense.get_note(x)}", 1r, Expense.get_amount(x), Expense.get_amount(x)))
+  end
+  lines
+end
+
+def print_invoice(number, client, lines, issued)
+  due = issued + Client.get_terms_days(client) * 86400
+  puts("INVOICE #{number}")
+  puts("Bill to: #{Client.get_name(client)}")
+  puts("Issued:  #{Time.strftime(issued, "%Y-%m-%d")}   Due: #{Time.strftime(due, "%Y-%m-%d (%a)")}")
+  puts("-" * 64)
+  Array.each(lines) do |l|
+    text = InvoiceLine.get_text(l)
+    text = text[0...37] + "..." if String.size(text) > 40
+    puts(format("%-40s %5.2f %8s %10s", text, Rational.to_f(InvoiceLine.get_qty(l)), money(InvoiceLine.get_unit(l)), money(InvoiceLine.get_amount(l))))
+  end
+  subtotal = Array.sum(lines) { |l| InvoiceLine.get_amount(l) }
+  discount = subtotal * Client.get_discount_pct(client) / 100
+  taxable = subtotal - discount
+  tax = taxable * tax_rate
+  total = taxable + tax
+  puts("-" * 64)
+  puts(format("%55s %8s", "Subtotal", money(subtotal)))
+  puts(format("%55s %8s", "Discount #{Client.get_discount_pct(client)}%", money(discount))) if discount > 0
+  puts(format("%55s %8s", "Tax 8.25%", money(tax)))
+  puts(format("%55s %8s", "TOTAL", money(total)))
+  puts
+  cents(total)
+end
+
+clients = Array[
+  Client.new("acme", "Acme Corp.", 30, 0, Hash[senior: 140r]),
+  Client.new("glob", "Globex Ltd.", 15, 5, Hash[]),
+  Client.new("init", "Initech", 45, 10, Hash[junior: 85r, designer: 100r]),
+  Client.new("hool", "Hooli", 30, 0, Hash[])
+]
+
+timesheet = <<~TXT
+  2026-09-01 acme alice 3.5 Architecture review
+  2026-09-02 acme bob 6 API implementation
+  2026-09-03 glob carol 2.25 Kickoff workshop
+  2026-09-03 acme bob 7.5 API implementation
+  2026-09-04 init dan 4 Logo concepts
+  2026-09-08 init bob 3 Data migration scripts for the legacy billing system
+  2026-09-09 acme alice 1.25 Code review
+  2026-09-10 glob carol 5.5 Requirements document
+  2026-09-11 init dan 2.5 Logo revisions
+TXT
+
+entries = Array.map(String.lines(timesheet)) do |line|
+  m = String.match(String.chomp(line), /\A(\S+) (\w+) (\w+) ([\d.]+) (.+)\z/)
+  Entry.new(parse_date(m[1]), m[2], m[3], String.to_r(m[4]), m[5])
+end
+
+expenses = Array[
+  Expense.new(parse_date("2026-09-03"), "glob", 184.4r, "Train tickets"),
+  Expense.new(parse_date("2026-09-12"), "acme", 1299r / 10, "Test devices"),
+  Expense.new(parse_date("2026-09-15"), "glob", 36r, "Workshop supplies")
+]
+
+issued = parse_date("2026-09-30")
+seq = 41
+billed = Hash[]
+Array.each(clients) do |client|
+  lines = build_lines(client, entries, expenses)
+  if Array.empty?(lines)
+    puts("(nothing to bill for #{Client.get_name(client)})")
+    puts
+    next
+  end
+  seq += 1
+  number = "INV-#{Time.year(issued)}-#{String.rjust(Integer.to_s(seq), 4, "0")}"
+  billed[Client.get_code(client)] = print_invoice(number, client, lines, issued)
+end
+
+total_hours = Array.sum(entries) { |e| Entry.get_hours(e) }
+puts("Billed hours: #{Rational.to_f(total_hours)}")
+grand = Hash.sum(billed) { |code, c| c }
+puts("Grand total: #{money(Rational(grand, 100))}")
+first = Array.min_by(entries) { |e| Entry.get_date(e) }
+last = Array.max_by(entries) { |e| Entry.get_date(e) }
+span = (Entry.get_date(last) - Entry.get_date(first)) / 86400
+puts("Work period: #{Time.strftime(Entry.get_date(first), "%b %-d")} - #{Time.strftime(Entry.get_date(last), "%b %-d")} (#{Float.to_i(span) + 1} days)")

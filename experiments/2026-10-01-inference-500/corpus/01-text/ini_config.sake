@@ -1,0 +1,138 @@
+ConfigError = Exception.new(:line_no)
+Entry = Struct.new(:section, :key, :raw, :line_no)
+
+class Entry
+  def full_key(e) = "#{@section}.#{@key}"
+end
+
+def parse_ini(text)
+  entries = Entry[]
+  section = "global"
+  last = nil
+  Array.each_with_index(String.lines(text)) do |raw_line, i|
+    line = String.chomp(raw_line)
+    no = i + 1
+    if String.match?(line, /\A\s+\S/) && last != nil
+      Entry.set_raw(last, Entry.get_raw(last) + " " + String.strip(line))
+      next
+    end
+    line = String.strip(line)
+    next if String.empty?(line) || String.start_with?(line, "#") || String.start_with?(line, ";")
+    m = String.match(line, /\A\[([\w.-]+)\]\z/)
+    if m != nil
+      section = m[1]
+      last = nil
+      next
+    end
+    kv = String.match(line, /\A([\w.-]+)\s*[=:]\s*(.*)\z/)
+    raise ConfigError.new("cannot parse '#{line}'", no) if kv == nil
+    value = String.sub(kv[2], /\s+[#;].*\z/, "")
+    last = Entry.new(section, kv[1], value, no)
+    Array.push(entries, last)
+  end
+  entries
+end
+
+def to_table(entries)
+  table = Hash[]
+  Array.each(entries) do |e|
+    table[Entry.full_key(e)] = Entry.get_raw(e)
+  end
+  table
+end
+
+def interpolate(table, value, depth)
+  raise ConfigError.new("interpolation too deep in '#{value}'", 0) if depth > 5
+  out = ""
+  rest = value
+  while true
+    m = String.match(rest, /\$\{([\w.-]+)\}/)
+    break if m == nil
+    ref = table[m[1]]
+    raise ConfigError.new("undefined reference ${#{m[1]}}", 0) if ref == nil
+    out += MatchData.pre_match(m) + interpolate(table, ref, depth + 1)
+    rest = MatchData.post_match(m)
+  end
+  out + rest
+end
+
+def coerce(s)
+  if String.match?(s, /\A".*"\z/)
+    s[1...-1]
+  elsif String.match?(s, /\A-?\d+\z/)
+    String.to_i(s)
+  elsif String.match?(s, /\A-?\d+\.\d+\z/)
+    String.to_f(s)
+  elsif Array.include?(Array["true", "yes", "on"], String.downcase(s))
+    true
+  elsif Array.include?(Array["false", "no", "off"], String.downcase(s))
+    false
+  elsif String.include?(s, ",")
+    Array.map(String.split(s, ",")) { |x| coerce(String.strip(x)) }
+  else
+    s
+  end
+end
+
+def kind(v)
+  case v
+  in Integer then "int"
+  in Float then "float"
+  in true | false then "bool"
+  in Array then "list[#{Array.size(v)}]"
+  in String then "str"
+  end
+end
+
+def load(text)
+  entries = parse_ini(text)
+  table = to_table(entries)
+  config = Hash[]
+  Array.each(entries) do |e|
+    key = Entry.full_key(e)
+    begin
+      config[key] = coerce(interpolate(table, Entry.get_raw(e), 0))
+    rescue ConfigError => err
+      raise ConfigError.new(Exception.message(err), Entry.get_line_no(e))
+    end
+  end
+  config
+end
+
+def config_text
+  "# service configuration\n" +
+  "name = billing\n" +
+  "[server]\n" +
+  "host = 0.0.0.0\n" +
+  "port = 8080   ; default port\n" +
+  "workers: 4\n" +
+  "url = http://${server.host}:${server.port}/${global.name}\n" +
+  "[db]\n" +
+  "path = /var/${global.name}/data.db\n" +
+  "timeout = 2.5\n" +
+  "readonly = no\n" +
+  "replicas = alpha, beta,\n" +
+  "   gamma\n" +
+  "motd = \"Welcome, ${global.name} users\"\n"
+end
+
+config = load(config_text)
+width = Array.max(Array.map(Hash.keys(config)) { |k| String.size(k) })
+Hash.each(config) do |k, v|
+  puts("#{String.ljust(k, width)}  #{String.ljust(kind(v), 8)} #{Kernel.inspect(v)}")
+end
+port = config["server.port"]
+puts("next port: #{port + 1}") if port in Integer
+Array.each(Array["db.replicas", "db.missing"]) do |k|
+  v = Hash.fetch(config, k, nil)
+  puts(v == nil ? "#{k}: (not set)" : "#{k}: #{Kernel.inspect(v)}")
+end
+
+Array.each(Array["[a]\nx = ${a.y}\ny = ${a.x}\n", "[a]\nnot a pair\n", "k = ${nope.k}\n"]) do |bad|
+  begin
+    load(bad)
+    puts("loaded")
+  rescue ConfigError => e
+    puts("config error (line #{ConfigError.get_line_no(e)}): #{Exception.message(e)}")
+  end
+end

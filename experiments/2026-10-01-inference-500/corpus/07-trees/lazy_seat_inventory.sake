@@ -1,0 +1,135 @@
+SoldOut = Exception.new(:day, :available)
+
+class LazyTree < {reader: [n, mins, sums, pending]}
+  def build(values)
+    n = Array.size(values)
+    t = LazyTree.new(n, Range.map(0...(4 * n)) { 0 }, Range.map(0...(4 * n)) { 0 }, Range.map(0...(4 * n)) { 0 })
+    init(t, values, 1, 0, n - 1)
+    t
+  end
+
+  def init(t, values, node, lo, hi)
+    if lo == hi
+      @mins[node] = values[lo]
+      @sums[node] = values[lo]
+      return
+    end
+    mid = (lo + hi) / 2
+    init(t, values, node * 2, lo, mid)
+    init(t, values, node * 2 + 1, mid + 1, hi)
+    pull(t, node)
+  end
+
+  def pull(t, node)
+    a = node * 2
+    b = a + 1
+    @mins[node] = @mins[a] < @mins[b] ? @mins[a] : @mins[b]
+    @sums[node] = @sums[a] + @sums[b]
+  end
+
+  def apply(t, node, lo, hi, delta)
+    @mins[node] += delta
+    @sums[node] += delta * (hi - lo + 1)
+    @pending[node] += delta
+  end
+
+  def push_down(t, node, lo, hi)
+    d = @pending[node]
+    return if d == 0
+    mid = (lo + hi) / 2
+    apply(t, node * 2, lo, mid, d)
+    apply(t, node * 2 + 1, mid + 1, hi, d)
+    @pending[node] = 0
+  end
+
+  def add(t, from, to, delta) = add_rec(t, 1, 0, @n - 1, from, to, delta)
+
+  def add_rec(t, node, lo, hi, from, to, delta)
+    return if to < lo || hi < from
+    if from <= lo && hi <= to
+      apply(t, node, lo, hi, delta)
+      return
+    end
+    push_down(t, node, lo, hi)
+    mid = (lo + hi) / 2
+    add_rec(t, node * 2, lo, mid, from, to, delta)
+    add_rec(t, node * 2 + 1, mid + 1, hi, from, to, delta)
+    pull(t, node)
+  end
+
+  def min(t, from, to) = min_rec(t, 1, 0, @n - 1, from, to)
+
+  def min_rec(t, node, lo, hi, from, to)
+    return nil if to < lo || hi < from
+    return @mins[node] if from <= lo && hi <= to
+    push_down(t, node, lo, hi)
+    mid = (lo + hi) / 2
+    a = min_rec(t, node * 2, lo, mid, from, to)
+    b = min_rec(t, node * 2 + 1, mid + 1, hi, from, to)
+    return b if a == nil
+    return a if b == nil
+    a < b ? a : b
+  end
+
+  def sum(t, from, to) = sum_rec(t, 1, 0, @n - 1, from, to)
+
+  def sum_rec(t, node, lo, hi, from, to)
+    return 0 if to < lo || hi < from
+    return @sums[node] if from <= lo && hi <= to
+    push_down(t, node, lo, hi)
+    mid = (lo + hi) / 2
+    sum_rec(t, node * 2, lo, mid, from, to) + sum_rec(t, node * 2 + 1, mid + 1, hi, from, to)
+  end
+
+  # first day in from..to whose availability is below need
+  def first_short(t, from, to, need)
+    Range.find(from..to) { |d| min(t, d, d) < need }
+  end
+end
+
+class Train < {reader: [name, seats, tree]}
+  def open(name, days, seats) = Train.new(name, seats, LazyTree.build(Range.map(0...days) { seats }))
+
+  def reserve(tr, from, to, count)
+    avail = LazyTree.min(@tree, from, to)
+    if avail < count
+      day = LazyTree.first_short(@tree, from, to, count)
+      raise SoldOut.new("#{@name}: only #{avail} seats on day #{day}", day, avail)
+    end
+    LazyTree.add(@tree, from, to, 0 - count)
+  end
+
+  def cancel(tr, from, to, count) = LazyTree.add(@tree, from, to, count)
+
+  def occupancy(tr, from, to)
+    days = to - from + 1
+    sold = @seats * days - LazyTree.sum(@tree, from, to)
+    100.0 * sold / (@seats * days)
+  end
+end
+
+train = Train.open("Night Express", 14, 40)
+requests = Array[
+  [:reserve, 0, 6, 12], [:reserve, 3, 9, 20], [:reserve, 5, 5, 8], [:reserve, 4, 8, 5],
+  [:reserve, 2, 4, 10], [:cancel, 3, 9, 20], [:reserve, 2, 4, 10], [:reserve, 10, 13, 40],
+  [:reserve, 12, 13, 1], [:reserve, 0, 13, 3]
+]
+Array.each(requests) do |kind, from, to, count|
+  begin
+    if kind == :reserve
+      Train.reserve(train, from, to, count)
+    else
+      Train.cancel(train, from, to, count)
+    end
+    puts(format("%-7s days %2d-%2d x%2d  ok", Symbol.to_s(kind), from, to, count))
+  rescue SoldOut => e
+    puts(format("%-7s days %2d-%2d x%2d  REFUSED: %s", Symbol.to_s(kind), from, to, count, Exception.message(e)))
+  end
+end
+
+tree = Train.get_tree(train)
+row = Array.map(Range.to_a(0...14)) { |d| String.rjust(Integer.to_s(LazyTree.min(tree, d, d)), 3) }
+puts("free seats:#{Array.join(row, "")}")
+puts(format("week 1 occupancy: %.1f%%, week 2: %.1f%%", Train.occupancy(train, 0, 6), Train.occupancy(train, 7, 13)))
+puts("tightest day in week 1 has #{LazyTree.min(tree, 0, 6)} seats")
+puts("seats sold over the fortnight: #{40 * 14 - LazyTree.sum(tree, 0, 13)}")

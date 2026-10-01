@@ -1,0 +1,130 @@
+module CellSet
+  def population(g)
+    n = 0
+    each_cell(g) { |r, c, alive| n += 1 if alive }
+    n
+  end
+
+  def bounding_box(g)
+    rows = Array[]
+    cols = Array[]
+    each_cell(g) do |r, c, alive|
+      if alive
+        Array.push(rows, r)
+        Array.push(cols, c)
+      end
+    end
+    return nil if Array.empty?(rows)
+    [Array.min(rows), Array.min(cols), Array.max(rows), Array.max(cols)]
+  end
+end
+
+class Grid < {reader: [h, w, cells]}
+  include Indexable
+  include CellSet
+
+  def blank(h, w) = Grid.new(h, w, Range.map(0...h) { Range.map(0...w) { false } })
+
+  def from_text(text)
+    lines = String.lines(text)
+    lines = Array.map(lines) { |l| String.chomp(l) }
+    w = Array.max(Array.map(lines) { |l| String.size(l) })
+    g = blank(Array.size(lines), w)
+    Array.each_with_index(lines) do |line, r|
+      Array.each_with_index(String.chars(line)) { |ch, c| g[[r, c]] = ch == "#" }
+    end
+    g
+  end
+
+  def [](g, rc)
+    r, c = rc
+    @cells[r % @h][c % @w]
+  end
+
+  def []=(g, rc, v)
+    r, c = rc
+    row = @cells[r % @h]
+    row[c % @w] = v
+  end
+
+  def each_cell(g)
+    Integer.times(@h) do |r|
+      Integer.times(@w) { |c| yield(r, c, g[[r, c]]) }
+    end
+  end
+
+  def neighbours(g, r, c)
+    n = 0
+    Array.each(Array[-1, 0, 1]) do |dr|
+      Array.each(Array[-1, 0, 1]) do |dc|
+        next if dr == 0 && dc == 0
+        n += 1 if g[[r + dr, c + dc]]
+      end
+    end
+    n
+  end
+
+  def step(g)
+    nxt = blank(@h, @w)
+    each_cell(g) do |r, c, alive|
+      n = neighbours(g, r, c)
+      nxt[[r, c]] = alive ? (n == 2 || n == 3) : n == 3
+    end
+    nxt
+  end
+
+  def same?(g, other)
+    each_cell(g) { |r, c, alive| return false if alive != other[[r, c]] }
+    true
+  end
+
+  def to_s(g)
+    Array.join(Array.map(@cells) { |row| Array.join(Array.map(row) { |x| x ? "#" : "." }, "") }, "\n")
+  end
+end
+
+def run(name, text, generations)
+  g = Grid.from_text(text)
+  history = Array[g]
+  puts("== #{name} (#{Grid.get_h(g)}x#{Grid.get_w(g)}) population #{CellSet.population(g)} ==")
+  puts(g)
+  Range.each(1..generations) do |gen|
+    g = Grid.step(g)
+    seen_at = Array.find_index(history) { |old| Grid.same?(old, g) }
+    if seen_at
+      period = gen - seen_at
+      kind = period == 1 ? "still life" : "oscillator with period #{period}"
+      puts("generation #{gen}: repeats generation #{seen_at} -> #{kind}")
+      return period
+    end
+    Array.push(history, g)
+  end
+  box = CellSet.bounding_box(g)
+  puts("after #{generations}: population #{CellSet.population(g)}")
+  puts(g)
+  if box
+    r0, c0, r1, c1 = box
+    puts("bounding box rows #{r0}..#{r1} cols #{c0}..#{c1}")
+  else
+    puts("everything died")
+  end
+  nil
+end
+
+block = "....\n.##.\n.##.\n....\n"
+blinker = ".....\n..#..\n..#..\n..#..\n.....\n"
+glider = ".#......\n..#.....\n###.....\n........\n........\n........\n"
+toad = "......\n......\n..###.\n.###..\n......\n......\n"
+dies = "#....\n.....\n....#\n"
+
+results = Hash[]
+results["block"] = run("block", block, 5)
+results["blinker"] = run("blinker", blinker, 5)
+results["toad"] = run("toad", toad, 5)
+results["glider"] = run("glider", glider, 4)
+results["dies"] = run("dies", dies, 3)
+
+puts("== summary ==")
+Hash.each(results) do |name, period|
+  puts(format("%-8s %s", name, period ? "period #{period}" : "no repeat"))
+end

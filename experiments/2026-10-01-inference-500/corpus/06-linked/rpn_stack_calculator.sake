@@ -1,0 +1,126 @@
+Cell = Struct.new(:value, :below)
+StackUnderflow = Exception.new(:token)
+BadToken = Exception.new(:token, :position)
+
+class Stack < {reader: [top, depth]}
+  def empty = Stack.new(nil, 0)
+
+  def push(s, v)
+    @top = Cell.new(v, @top)
+    @depth += 1
+    s
+  end
+
+  def pop(s, token)
+    cell = @top
+    raise StackUnderflow.new("stack underflow at '#{token}'", token) if cell == nil
+    @top = Cell.get_below(cell)
+    @depth -= 1
+    Cell.get_value(cell)
+  end
+
+  def peek(s)
+    cell = @top
+    cell ? Cell.get_value(cell) : nil
+  end
+
+  def to_s(s)
+    items = Array[]
+    cell = @top
+    while cell
+      Array.unshift(items, Cell.get_value(cell))
+      cell = Cell.get_below(cell)
+    end
+    "[" + Array.join(Array.map(items) { |x| format_num(x) }, " ") + "]"
+  end
+end
+
+def format_num(x)
+  if x in Float
+    Float.to_s(Float.round(x, 4))
+  else
+    Kernel.to_s(x)
+  end
+end
+
+def number?(tok) = String.match?(tok, /\A-?\d+(\.\d+)?\z/)
+
+def parse_number(tok)
+  String.include?(tok, ".") ? String.to_f(tok) : String.to_i(tok)
+end
+
+def apply(op, a, b)
+  case op
+  in "+" then a + b
+  in "-" then a - b
+  in "*" then a * b
+  in "/" then b == 0 ? raise(ZeroDivisionError, "divided by 0") : a / b
+  in "%" then a % b
+  in "^" then a ** b
+  in "max" then a > b ? a : b
+  in "min" then a < b ? a : b
+  end
+end
+
+def binary?(tok) = Array.include?(Array["+", "-", "*", "/", "%", "^", "max", "min"], tok)
+
+def evaluate(expr, trace)
+  stack = Stack.empty
+  tokens = String.split(expr, " ")
+  Array.each_with_index(tokens) do |tok, i|
+    if number?(tok)
+      Stack.push(stack, parse_number(tok))
+    elsif binary?(tok)
+      b = Stack.pop(stack, tok)
+      a = Stack.pop(stack, tok)
+      Stack.push(stack, apply(tok, a, b))
+    elsif tok == "dup"
+      v = Stack.pop(stack, tok)
+      Stack.push(stack, v)
+      Stack.push(stack, v)
+    elsif tok == "swap"
+      b = Stack.pop(stack, tok)
+      a = Stack.pop(stack, tok)
+      Stack.push(stack, b)
+      Stack.push(stack, a)
+    elsif tok == "neg"
+      Stack.push(stack, 0 - Stack.pop(stack, tok))
+    else
+      raise BadToken.new("unknown token '#{tok}'", tok, i)
+    end
+    puts("    #{String.ljust(tok, 5)} #{stack}") if trace
+  end
+  raise ArgumentError, "#{Stack.get_depth(stack)} values left on stack" if Stack.get_depth(stack) != 1
+  Stack.peek(stack)
+end
+
+exprs = Array[
+  "3 4 + 2 *",
+  "5 1 2 + 4 * + 3 -",
+  "2 3 ^ 1 swap -",
+  "1.5 2 * 0.25 +",
+  "7 2 / 7 2 % max",
+  "10 dup * neg 3 min",
+  "4 +",
+  "1 2 3 +",
+  "8 0 /",
+  "6 2 sqrt",
+  "22 7.0 /"
+]
+
+traced = 0
+Array.each(exprs) do |e|
+  puts("#{e}")
+  begin
+    result = evaluate(e, traced < 2)
+    puts("  = #{format_num(result)}")
+  rescue StackUnderflow => err
+    puts("  error: #{Exception.message(err)} (token #{StackUnderflow.get_token(err)})")
+  rescue BadToken => err
+    puts("  error: #{Exception.message(err)} at position #{BadToken.get_position(err)}")
+  rescue ArgumentError, ZeroDivisionError => err
+    puts("  error: #{Exception.message(err)}")
+  ensure
+    traced += 1
+  end
+end

@@ -1,0 +1,197 @@
+DimensionError = Exception.new(:op)
+SingularError = Exception.new
+
+class Matrix < {reader: [rows]}
+  include Arithmetic
+  include Indexable
+
+  def build(n, m)
+    rows = Array[]
+    Integer.times(n) do |i|
+      row = Array[]
+      Integer.times(m) { |j| Array.push(row, yield(i, j)) }
+      Array.push(rows, row)
+    end
+    Matrix.new(rows)
+  end
+
+  def identity(n) = build(n, n) { |i, j| i == j ? 1 : 0 }
+  def nrows(a) = Array.size(@rows)
+  def ncols(a) = Array.size(@rows[0])
+
+  def [](a, rc)
+    r, c = rc
+    @rows[r][c]
+  end
+
+  def []=(a, rc, v)
+    r, c = rc
+    row = @rows[r]
+    row[c] = v
+  end
+
+  def same_shape(a, b, op)
+    unless nrows(a) == nrows(b) && ncols(a) == ncols(b)
+      raise DimensionError.new("#{op}: #{nrows(a)}x#{ncols(a)} vs #{nrows(b)}x#{ncols(b)}", op)
+    end
+  end
+
+  def +(a, b)
+    same_shape(a, b, "+")
+    build(nrows(a), ncols(a)) { |i, j| a[[i, j]] + b[[i, j]] }
+  end
+
+  def -(a, b)
+    same_shape(a, b, "-")
+    build(nrows(a), ncols(a)) { |i, j| a[[i, j]] - b[[i, j]] }
+  end
+
+  def *(a, b)
+    case b
+    in Matrix
+      raise DimensionError.new("*: #{ncols(a)} cols vs #{nrows(b)} rows", "*") if ncols(a) != nrows(b)
+      build(nrows(a), ncols(b)) do |i, j|
+        sum = 0
+        Integer.times(ncols(a)) { |k| sum += a[[i, k]] * b[[k, j]] }
+        sum
+      end
+    in Integer | Float | Rational
+      build(nrows(a), ncols(a)) { |i, j| a[[i, j]] * b }
+    end
+  end
+
+  def **(a, n)
+    result = identity(nrows(a))
+    base = a
+    while n > 0
+      result = result * base if Integer.odd?(n)
+      base = base * base
+      n = n / 2
+    end
+    result
+  end
+
+  def transpose(a) = build(ncols(a), nrows(a)) { |i, j| a[[j, i]] }
+
+  def to_rational(a) = build(nrows(a), ncols(a)) { |i, j| Rational(a[[i, j]], 1) }
+
+  def determinant(a)
+    m = to_rational(a)
+    n = nrows(m)
+    det = Rational(1, 1)
+    Integer.times(n) do |col|
+      pivot = Range.find(col...n) { |r| m[[r, col]] != 0 }
+      return Rational(0, 1) if pivot == nil
+      if pivot != col
+        rows = Matrix.get_rows(m)
+        tmp = rows[pivot]
+        rows[pivot] = rows[col]
+        rows[col] = tmp
+        det = det * -1
+      end
+      det = det * m[[col, col]]
+      Range.each((col + 1)...n) do |r|
+        f = m[[r, col]] / m[[col, col]]
+        Range.each(col...n) { |c| m[[r, c]] = m[[r, c]] - f * m[[col, c]] }
+      end
+    end
+    det
+  end
+
+  def inverse(a)
+    n = nrows(a)
+    aug = build(n, 2 * n) { |i, j| j < n ? Rational(a[[i, j]], 1) : (j - n == i ? Rational(1, 1) : Rational(0, 1)) }
+    Integer.times(n) do |col|
+      pivot = Range.find(col...n) { |r| aug[[r, col]] != 0 }
+      raise SingularError.new("matrix is singular") if pivot == nil
+      rows = Matrix.get_rows(aug)
+      tmp = rows[pivot]
+      rows[pivot] = rows[col]
+      rows[col] = tmp
+      pv = aug[[col, col]]
+      Integer.times(2 * n) { |c| aug[[col, c]] = aug[[col, c]] / pv }
+      Integer.times(n) do |r|
+        next if r == col
+        f = aug[[r, col]]
+        Integer.times(2 * n) { |c| aug[[r, c]] = aug[[r, c]] - f * aug[[col, c]] }
+      end
+    end
+    build(n, n) { |i, j| aug[[i, j + n]] }
+  end
+
+  def cell_s(x)
+    case x
+    in Rational then Rational.denominator(x) == 1 ? Integer.to_s(Rational.numerator(x)) : Rational.to_s(x)
+    in Integer then Integer.to_s(x)
+    in Float then format("%.2f", x)
+    end
+  end
+
+  def to_s(a)
+    cells = Array.map(@rows) { |row| Array.map(row) { |x| cell_s(x) } }
+    width = Array.max(Array.map(Array.flatten(cells)) { |s| String.size(s) })
+    lines = Array.map(cells) { |row| "[ " + Array.join(Array.map(row) { |s| String.rjust(s, width) }, " ") + " ]" }
+    Array.join(lines, "\n")
+  end
+end
+
+a = Matrix.new(Array[Array[2, 1, 0], Array[1, 3, 1], Array[0, 1, 4]])
+b = Matrix.new(Array[Array[1, 0, 2], Array[0, 1, 0], Array[3, 0, 1]])
+
+puts("A =")
+puts(a)
+puts("A + B =")
+puts(a + b)
+puts("A - B =")
+puts(a - b)
+puts("A * B =")
+puts(a * b)
+puts("A * 3 =")
+puts(a * 3)
+puts("A^T * 0.5 =")
+puts(Matrix.transpose(a) * 0.5)
+puts("det A = #{Matrix.determinant(a)}, det B = #{Matrix.determinant(b)}")
+puts("det(A*B) = #{Matrix.determinant(a * b)}")
+
+inv = Matrix.inverse(a)
+puts("inverse A =")
+puts(inv)
+puts("A * inverse A =")
+puts(a * inv)
+
+fib = Matrix.new(Array[Array[1, 1], Array[1, 0]])
+Array.each(Array[1, 2, 10, 30, 60]) do |n|
+  puts("fib(#{n}) = #{(fib ** n)[[0, 1]]}")
+end
+
+rect = Matrix.build(2, 3) { |i, j| i * 3 + j }
+puts("R (2x3) =")
+puts(rect)
+puts("R * R^T =")
+puts(rect * Matrix.transpose(rect))
+
+begin
+  puts(rect * rect)
+rescue DimensionError => e
+  puts("error (#{DimensionError.get_op(e)}): #{Exception.message(e)}")
+end
+begin
+  puts(a + rect)
+rescue DimensionError => e
+  puts("error (#{DimensionError.get_op(e)}): #{Exception.message(e)}")
+end
+
+sing = Matrix.new(Array[Array[1, 2], Array[2, 4]])
+puts("det singular = #{Matrix.determinant(sing)}")
+begin
+  Matrix.inverse(sing)
+rescue SingularError => e
+  puts("error: #{Exception.message(e)}")
+end
+
+m = Matrix.identity(3)
+m[[0, 2]] = 5
+m[[2, 0]] += 7
+puts("edited identity =")
+puts(m)
+puts("trace = #{Array.sum(Range.map(0...3) { |i| m[[i, i]] })}")

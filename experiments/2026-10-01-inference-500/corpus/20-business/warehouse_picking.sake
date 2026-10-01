@@ -1,0 +1,105 @@
+Bin = Struct.new(:location, :sku, :qty, :expires)
+Pick = Struct.new(:order_id, :sku, :location, :qty)
+Location = Struct.new(:aisle, :bay, :level)
+
+class Location
+  include Comparable
+
+  def parse(code)
+    m = String.match(code, /\A([A-Z])-(\d\d)-(\d)\z/)
+    raise ArgumentError, "bad location #{code}" unless m
+    Location.new(String.ord(m[1]) - String.ord("A") + 1, String.to_i(m[2]), String.to_i(m[3]))
+  end
+
+  # serpentine walk: odd aisles go up the bays, even aisles come back down
+  def walk_key(l)
+    bay = Integer.odd?(@aisle) ? @bay : 100 - @bay
+    (@aisle * 100 + bay) * 10 + @level
+  end
+
+  def <=>(a, b) = walk_key(a) <=> Location.walk_key(b)
+end
+
+def parse_bins(text)
+  Array.map(String.lines(text)) do |line|
+    f = String.split(String.strip(line), /\s+/)
+    Bin.new(f[0], f[1], String.to_i(f[2]), f[3] == "-" ? nil : f[3])
+  end
+end
+
+# first-expiring stock first; bins without an expiry date go last
+def allocate(bins, order_id, sku, wanted)
+  candidates = Array.select(bins) { |b| Bin.get_sku(b) == sku && Bin.get_qty(b) > 0 }
+  ordered = Array.sort_by(candidates) { |b| (Bin.get_expires(b) || "9999-99-99") + Bin.get_location(b) }
+  picks = Array[]
+  left = wanted
+  Array.each(ordered) do |b|
+    next if left == 0
+    take = Array.min(Array[left, Bin.get_qty(b)])
+    Bin.set_qty(b, Bin.get_qty(b) - take)
+    left -= take
+    Array.push(picks, Pick.new(order_id, sku, Bin.get_location(b), take))
+  end
+  [picks, left]
+end
+
+bins = parse_bins(<<~TXT)
+  A-01-1 SOAP 40 2027-01-31
+  A-04-2 SOAP 25 2026-11-30
+  B-02-1 TOWEL 60 -
+  B-07-3 SHAMPOO 12 2026-12-15
+  C-03-1 SHAMPOO 30 2027-03-01
+  A-09-1 BRUSH 8 -
+  C-08-2 TOWEL 15 -
+  B-07-1 COMB 100 -
+  D-01-1 LOTION 6 2026-10-20
+TXT
+
+orders = Array[
+  ["SO-1001", Array[["SOAP", 30], ["TOWEL", 4], ["COMB", 2]]],
+  ["SO-1002", Array[["SHAMPOO", 20], ["BRUSH", 10]]],
+  ["SO-1003", Array[["LOTION", 2], ["SOAP", 10], ["TOWEL", 70]]],
+  ["SO-1004", Array[["RAZOR", 1], ["SHAMPOO", 15]]]
+]
+
+all_picks = Array[]
+backorders = Array[]
+Array.each(orders) do |order_id, lines|
+  Array.each(lines) do |sku, qty|
+    picks, short = allocate(bins, order_id, sku, qty)
+    Array.concat(all_picks, picks)
+    Array.push(backorders, [order_id, sku, short]) if short > 0
+  end
+end
+
+puts("Pick route (batch of #{Array.size(orders)} orders):")
+by_location = Array.group_by(all_picks) { |p| Pick.get_location(p) }
+route = Array.sort_by(Hash.keys(by_location)) { |code| Location.parse(code) }
+step = 0
+Array.each(route) do |code|
+  picks = Hash.fetch(by_location, code)
+  step += 1
+  total = Array.sum(picks) { |p| Pick.get_qty(p) }
+  split = Array.join(Array.map(picks) { |p| "#{Pick.get_order_id(p)}:#{Pick.get_qty(p)}" }, " ")
+  puts(format("%2d. %s %-8s x%-3d (%s)", step, code, Pick.get_sku(Array.first(picks)), total, split))
+end
+
+puts
+puts("Backorders:")
+Array.each(backorders) { |o, sku, short| puts("  #{o} #{sku} short #{short}") }
+
+puts
+first = Location.parse(Array.first(route))
+last = Location.parse(Array.last(route))
+puts("Route starts at aisle #{Location.get_aisle(first)}, ends at aisle #{Location.get_aisle(last)}; in order: #{first < last}")
+farthest = Array.max(Array.map(route) { |c| Location.parse(c) })
+puts("Last stop by walk order: aisle #{Location.get_aisle(farthest)} bay #{Location.get_bay(farthest)}")
+empty = Array.select(bins) { |b| Bin.get_qty(b) == 0 }
+puts("Bins emptied: #{Array.join(Array.map(empty) { |b| Bin.get_location(b) }, ", ")}")
+expiring = Array.select(bins) { |b| Bin.get_qty(b) > 0 && Bin.get_expires(b) != nil && Bin.get_expires(b) < "2026-12-31" }
+Array.each(expiring) { |b| puts("Expiring this year: #{Bin.get_location(b)} #{Bin.get_sku(b)} x#{Bin.get_qty(b)} (#{Bin.get_expires(b)})") }
+begin
+  Location.parse("Z9")
+rescue ArgumentError => e
+  puts("Error: #{Exception.message(e)}")
+end

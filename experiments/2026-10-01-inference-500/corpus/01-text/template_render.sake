@@ -1,0 +1,112 @@
+TemplateError = Exception.new(:name)
+
+def apply_filter(value, filter)
+  pieces = String.split(filter, ":")
+  name = pieces[0]
+  arg = pieces[1]
+  case name
+  in "upper" then String.upcase(Kernel.to_s(value))
+  in "lower" then String.downcase(Kernel.to_s(value))
+  in "title"
+    Array.join(Array.map(String.split(Kernel.to_s(value), " ")) { |w| String.capitalize(w) }, " ")
+  in "join"
+    case value
+    in Array then Array.join(Array.map(value) { |x| Kernel.to_s(x) }, arg == nil ? ", " : arg)
+    else Kernel.to_s(value)
+    end
+  in "count"
+    case value
+    in Array then Array.size(value)
+    in String then String.size(value)
+    else 1
+    end
+  in "money"
+    case value
+    in Integer then format("$%d.%02d", value / 100, value % 100)
+    else raise TemplateError.new("money needs cents, got #{value}", filter)
+    end
+  in "pad" then String.ljust(Kernel.to_s(value), String.to_i(arg))
+  in "default" then value == nil ? arg : value
+  else raise TemplateError.new("unknown filter '#{name}'", filter)
+  end
+end
+
+def lookup(context, path)
+  value = context
+  Array.each(String.split(path, ".")) do |key|
+    case value
+    in Hash then value = value[key]
+    else return nil
+    end
+  end
+  value
+end
+
+def evaluate(context, expr)
+  parts = Array.map(String.split(expr, "|")) { |s| String.strip(s) }
+  path = Array.shift(parts)
+  value = lookup(context, path)
+  filters = parts
+  if value == nil && Array.none?(filters) { |f| String.start_with?(f, "default") }
+    raise TemplateError.new("missing value for '#{path}'", path)
+  end
+  Array.each(filters) { |f| value = apply_filter(value, f) }
+  value
+end
+
+def render(template, context)
+  out = ""
+  rest = template
+  while true
+    m = String.match(rest, /\{\{([^}]*)\}\}/)
+    if m == nil
+      out += rest
+      break
+    end
+    out += MatchData.pre_match(m)
+    out += Kernel.to_s(evaluate(context, String.strip(m[1])))
+    rest = MatchData.post_match(m)
+  end
+  out
+end
+
+def templates
+  Array[
+    "Dear {{customer.name | title}},",
+    "Your order no. {{order.id}} of {{order.items | count}} items ({{order.items | join:/}}) ships today.",
+    "Total: {{order.total | money}}  Status: {{order.status | upper}}",
+    "{{customer.city | default:unknown | upper}} / {{customer.name | pad:16}}|",
+    "Coupon: {{order.coupon}}",
+    "Shipping {{order.total | money | lower}} via {{carrier | frobnicate}}",
+    "Weight: {{order.weight | money}}"
+  ]
+end
+
+def context
+  Hash[
+    "customer" => Hash["name" => "ada lovelace", "city" => nil],
+    "order" => Hash[
+      "id" => 1042,
+      "items" => Array["notebook", "pencil", "ruler"],
+      "total" => 12_345,
+      "status" => "packed",
+      "weight" => 2.5
+    ],
+    "carrier" => "post"
+  ]
+end
+
+ctx = context
+ok = 0
+failed = 0
+Array.each_with_index(templates) do |t, i|
+  begin
+    line = render(t, ctx)
+    puts(format("%2d ok   %s", i + 1, line))
+    ok += 1
+  rescue TemplateError => e
+    puts(format("%2d FAIL %s [%s]", i + 1, Exception.message(e), TemplateError.get_name(e)))
+    failed += 1
+  end
+end
+puts("rendered #{ok}, failed #{failed}")

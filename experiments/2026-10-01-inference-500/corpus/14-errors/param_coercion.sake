@@ -1,0 +1,92 @@
+# Coerce raw string query parameters into typed values per a declared spec, collecting every coercion error.
+CoercionError = Exception.new(:param, :raw)
+
+# name => [type, required, default]
+def search_spec
+  Array[
+    ["q", :string, true, ""],
+    ["page", :int, false, "1"],
+    ["per_page", :int, false, "20"],
+    ["min_price", :decimal, false, ""],
+    ["max_price", :decimal, false, ""],
+    ["in_stock", :bool, false, "false"],
+    ["sort", :enum, false, "relevance"],
+    ["tags", :list, false, ""]
+  ]
+end
+
+def sort_options = Array["relevance", "price", "newest"]
+
+def coerce(name, kind, raw)
+  case kind
+  in :string then raw
+  in :int
+    raise CoercionError.new("#{name} must be an integer", name, raw) unless String.match?(raw, /\A\d+\z/)
+    String.to_i(raw)
+  in :decimal
+    raise CoercionError.new("#{name} must be a decimal", name, raw) unless String.match?(raw, /\A\d+(\.\d{1,2})?\z/)
+    String.to_r(raw)
+  in :bool
+    case String.downcase(raw)
+    in "1" | "true" | "yes" | "on" then true
+    in "0" | "false" | "no" | "off" then false
+    else raise CoercionError.new("#{name} must be a boolean", name, raw)
+    end
+  in :enum
+    raise CoercionError.new("#{name} must be one of #{Array.join(sort_options, "/")}", name, raw) unless Array.include?(sort_options, raw)
+    String.to_sym(raw)
+  in :list
+    Array.reject(Array.map(String.split(raw, ",")) { String.strip(it) }) { String.empty?(it) }
+  end
+end
+
+def parse_query(query)
+  raw = Hash[]
+  Array.each(String.split(query, "&")) do |pair|
+    k, _sep, v = String.partition(pair, "=")
+    raw[k] = String.gsub(v, "+", " ")
+  end
+  raw
+end
+
+def coerce_all(query)
+  raw = parse_query(query)
+  values = Hash[]
+  errors = Array[]
+  Array.each(search_spec) do |name, kind, required, default|
+    given = raw[name]
+    if given == nil || String.empty?(given)
+      if required
+        Array.push(errors, "#{name} is required")
+        next
+      end
+      next if String.empty?(default)
+      given = default
+    end
+    begin
+      values[name] = coerce(name, kind, given)
+    rescue CoercionError => e
+      Array.push(errors, "#{Exception.message(e)} (got #{Kernel.inspect(CoercionError.get_raw(e))})")
+    end
+  end
+  Array.each(Hash.keys(raw)) { |k| Array.push(errors, "unknown parameter #{k}") unless Array.any?(search_spec) { |s| s[0] == k } }
+  lo = values["min_price"]
+  hi = values["max_price"]
+  Array.push(errors, "min_price is above max_price") if lo != nil && hi != nil && lo > hi
+  [values, errors]
+end
+
+queries = Array[
+  "q=red+shoes&page=2&in_stock=yes&tags=sale,+summer,",
+  "page=x&per_page=50&sort=cheapest",
+  "q=lamp&min_price=30&max_price=12.50&in_stock=maybe",
+  "q=desk&min_price=9.999&color=oak&sort=price",
+  "q=pen&page=&per_page=&max_price=4.5"
+]
+
+Array.each_with_index(queries) do |query, i|
+  values, errors = coerce_all(query)
+  puts("query #{i + 1}: #{query}")
+  Hash.each(values) { |k, v| puts("  #{k} = #{Kernel.inspect(v)}") }
+  Array.each(errors) { puts("  ! #{it}") }
+end

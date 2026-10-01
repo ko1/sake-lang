@@ -1,0 +1,262 @@
+BasicError = Exception.new(:line)
+ForFrame = Struct.new(:var, :limit, :step, :index)
+Toks = Struct.new(:list, :pos)
+Basic = Struct.new(:numbers, :code, :vars, :pc, :gosubs, :fors, :out, :partial, :line)
+
+class Toks
+  def peek(t) = @list[@pos]
+
+  def take(t)
+    tok = @list[@pos]
+    @pos += 1
+    tok
+  end
+
+  def accept(t, s)
+    return false unless peek(t) == s
+    @pos += 1
+    true
+  end
+
+  def done?(t) = @pos >= Array.size(@list)
+end
+
+class Basic
+  def error!(b, msg) = raise(BasicError.new(msg, @line))
+
+  def expect(b, t, s)
+    error!(b, "expected #{s} but got #{Toks.peek(t) || "end of line"}") unless Toks.accept(t, s)
+  end
+
+  def relation(b, t)
+    a = sum(b, t)
+    op = Toks.peek(t)
+    return a unless Array.include?(Array["=", "<>", "<", ">", "<=", ">="], op)
+    Toks.take(t)
+    c = sum(b, t)
+    r = case op
+        in "=" then a == c
+        in "<>" then a != c
+        in "<" then a < c
+        in ">" then a > c
+        in "<=" then a <= c
+        in ">=" then a >= c
+        end
+    r ? 1 : 0
+  end
+
+  def sum(b, t)
+    v = product(b, t)
+    while true
+      if Toks.accept(t, "+")
+        v += product(b, t)
+      elsif Toks.accept(t, "-")
+        v -= product(b, t)
+      else
+        return v
+      end
+    end
+  end
+
+  def product(b, t)
+    v = atom(b, t)
+    while true
+      if Toks.accept(t, "*")
+        v *= atom(b, t)
+      elsif Toks.accept(t, "/")
+        d = atom(b, t)
+        error!(b, "division by zero") if d == 0
+        v /= d
+      elsif Toks.accept(t, "MOD")
+        v %= atom(b, t)
+      else
+        return v
+      end
+    end
+  end
+
+  def atom(b, t)
+    tok = Toks.take(t)
+    error!(b, "unexpected end of expression") if tok == nil
+    return 0 - atom(b, t) if tok == "-"
+    if tok == "("
+      v = relation(b, t)
+      expect(b, t, ")")
+      return v
+    end
+    return String.to_i(tok) if String.match?(tok, /\A\d+\z/)
+    error!(b, "bad token #{tok}") unless String.match?(tok, /\A[A-Z]\z/)
+    Hash.fetch(@vars, tok, 0)
+  end
+
+  def jump(b, target)
+    idx = Array.index(@numbers, target)
+    error!(b, "no line #{target}") if idx == nil
+    @pc = idx
+  end
+
+  def variable(b, t)
+    name = Toks.take(t)
+    error!(b, "expected a variable") unless name != nil && String.match?(name, /\A[A-Z]\z/)
+    name
+  end
+
+  def statement(b, t)
+    kw = Toks.peek(t)
+    if kw == "REM"
+      return
+    elsif kw == "PRINT"
+      Toks.take(t)
+      text = ""
+      newline = true
+      until Toks.done?(t)
+        tok = Toks.peek(t)
+        if String.start_with?(tok, "\"")
+          Toks.take(t)
+          text += tok[1...-1]
+        else
+          text += Integer.to_s(relation(b, t))
+        end
+        newline = true
+        if Toks.accept(t, ";")
+          newline = false
+        elsif Toks.accept(t, ",")
+          text += " "
+          newline = false
+        end
+      end
+      if newline
+        Array.push(@out, @partial + text)
+        @partial = ""
+      else
+        @partial += text
+      end
+    elsif kw == "IF"
+      Toks.take(t)
+      cond = relation(b, t)
+      expect(b, t, "THEN")
+      target = relation(b, t)
+      jump(b, target) if cond != 0
+    elsif kw == "GOTO"
+      Toks.take(t)
+      jump(b, relation(b, t))
+    elsif kw == "GOSUB"
+      Toks.take(t)
+      Array.push(@gosubs, @pc)
+      jump(b, relation(b, t))
+    elsif kw == "RETURN"
+      Toks.take(t)
+      error!(b, "RETURN without GOSUB") if Array.empty?(@gosubs)
+      @pc = Array.pop(@gosubs)
+    elsif kw == "END"
+      Toks.take(t)
+      @pc = Array.size(@numbers)
+    elsif kw == "FOR"
+      Toks.take(t)
+      name = variable(b, t)
+      expect(b, t, "=")
+      @vars[name] = relation(b, t)
+      expect(b, t, "TO")
+      limit = relation(b, t)
+      step = Toks.accept(t, "STEP") ? relation(b, t) : 1
+      Array.push(@fors, ForFrame.new(name, limit, step, @pc))
+    elsif kw == "NEXT"
+      Toks.take(t)
+      name = variable(b, t)
+      frame = Array.last(@fors)
+      error!(b, "NEXT without FOR") if frame == nil || ForFrame.get_var(frame) != name
+      v = @vars[name] + ForFrame.get_step(frame)
+      @vars[name] = v
+      step = ForFrame.get_step(frame)
+      if (step > 0 && v <= ForFrame.get_limit(frame)) || (step < 0 && v >= ForFrame.get_limit(frame))
+        @pc = ForFrame.get_index(frame)
+      else
+        Array.pop(@fors)
+      end
+    else
+      Toks.accept(t, "LET")
+      name = variable(b, t)
+      expect(b, t, "=")
+      @vars[name] = relation(b, t)
+    end
+    error!(b, "unexpected #{Toks.peek(t)}") unless Toks.done?(t)
+  end
+
+  def run(b, limit)
+    steps = 0
+    while @pc < Array.size(@numbers)
+      steps += 1
+      error!(b, "step limit reached") if steps > limit
+      @line = @numbers[@pc]
+      src = @code[@line]
+      @pc += 1
+      statement(b, Toks.new(String.scan(src, /"[^"]*"|\d+|[A-Za-z]+|<>|<=|>=|\S/), 0))
+    end
+    steps
+  end
+end
+
+def load(text)
+  code = Hash[]
+  Array.each(String.lines(text)) do |raw|
+    m = String.match(String.strip(raw), /\A(\d+)\s+(.*)\z/)
+    next unless m
+    code[String.to_i(m[1])] = m[2]
+  end
+  Basic.new(Array.sort(Hash.keys(code)), code, Hash[], 0, Array[], Array[], Array[], "", 0)
+end
+
+def run_program(name, text)
+  puts("=== #{name}")
+  b = load(text)
+  begin
+    steps = Basic.run(b, 3000)
+    status = "ok, #{steps} statements"
+  rescue BasicError => e
+    status = "error in line #{BasicError.get_line(e)}: #{Exception.message(e)}"
+  end
+  Array.push(Basic.get_out(b), Basic.get_partial(b)) unless String.empty?(Basic.get_partial(b))
+  Array.each(Basic.get_out(b)) { |l| puts(l) }
+  puts("[#{status}]")
+end
+
+run_program("primes", <<~BAS)
+  10 REM primes below 50
+  20 FOR N = 2 TO 50
+  30 LET P = 1
+  35 LET D = 2
+  40 IF D * D > N THEN 90
+  50 IF N MOD D = 0 THEN 80
+  60 LET D = D + 1
+  70 GOTO 40
+  80 LET P = 0
+  90 IF P = 0 THEN 110
+  100 PRINT N; " ";
+  110 NEXT N
+  120 PRINT
+  130 END
+BAS
+
+run_program("subroutines", <<~BAS)
+  10 LET A = 0
+  20 LET B = 1
+  30 FOR I = 1 TO 10
+  40 GOSUB 100
+  50 NEXT I
+  60 PRINT "fib(10) = "; A
+  70 FOR K = 10 TO 1 STEP -3
+  80 PRINT K,
+  85 NEXT K
+  90 PRINT "done"
+  95 END
+  100 LET C = A + B
+  110 LET A = B
+  120 LET B = C
+  130 RETURN
+BAS
+
+run_program("countdown", "10 X = 3\n20 PRINT \"T-\"; X\n30 X = X - 1\n40 IF X > 0 THEN 20\n50 PRINT \"liftoff \"; (2 + 3) * 4 - 6 / 2\n")
+run_program("bad goto", "10 PRINT \"before\"\n20 GOTO 99\n30 PRINT \"after\"\n")
+run_program("bad return", "10 RETURN\n")
+run_program("div zero", "10 A = 5\n20 PRINT A / (A - 5)\n")
+run_program("forever", "10 GOTO 10\n")

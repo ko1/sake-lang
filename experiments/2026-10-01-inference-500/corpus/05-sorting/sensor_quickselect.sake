@@ -1,0 +1,121 @@
+# Per-sensor order statistics with quickselect (Lomuto partition, deterministic
+# median-of-medians pivot), checked against sorting.
+
+def partition(a, lo, hi, pivot_index)
+  pivot = a[pivot_index]
+  a[pivot_index] = a[hi]
+  a[hi] = pivot
+  store = lo
+  Integer.upto(lo, hi - 1) do |i|
+    if a[i] < pivot
+      t = a[i]
+      a[i] = a[store]
+      a[store] = t
+      store += 1
+    end
+  end
+  a[hi] = a[store]
+  a[store] = pivot
+  store
+end
+
+def median_of_five(a, lo, hi)
+  group = Array.sort(a[lo..hi])
+  group[(Array.size(group) - 1) / 2]
+end
+
+# Deterministic pivot: the median of the medians of groups of five.
+def pivot_value(a, lo, hi)
+  return median_of_five(a, lo, hi) if hi - lo < 5
+  medians = Array[]
+  i = lo
+  while i <= hi
+    Array.push(medians, median_of_five(a, i, Integer.clamp(i + 4, lo, hi)))
+    i += 5
+  end
+  quickselect(medians, (Array.size(medians) - 1) / 2)
+end
+
+def quickselect(input, k)
+  raise IndexError, "rank #{k} out of 0...#{Array.size(input)}" if k < 0 || k >= Array.size(input)
+  a = Array.dup(input)
+  lo = 0
+  hi = Array.size(a) - 1
+  while true
+    return a[lo] if lo == hi
+    pv = pivot_value(a, lo, hi)
+    pos = partition(a, lo, hi, Range.find(lo..hi) { |i| a[i] == pv })
+    if k == pos
+      return a[pos]
+    elsif k < pos
+      hi = pos - 1
+    else
+      lo = pos + 1
+    end
+  end
+end
+
+def median(a)
+  n = Array.size(a)
+  if Integer.odd?(n)
+    quickselect(a, n / 2)
+  else
+    (quickselect(a, n / 2 - 1) + quickselect(a, n / 2)) / 2.0
+  end
+end
+
+def percentile(a, pct)
+  rank = Float.ceil(pct / 100.0 * Array.size(a)) - 1
+  quickselect(a, Integer.clamp(rank, 0, Array.size(a) - 1))
+end
+
+readings = Array[
+  ["north", 21.4], ["north", 22.0], ["south", 18.9], ["north", 21.7], ["east", 25.2],
+  ["south", 19.4], ["east", 24.8], ["north", 35.0], ["south", 18.1], ["east", 25.0],
+  ["north", 21.9], ["south", 19.0], ["east", 26.1], ["north", 22.3], ["south", -4.0],
+  ["east", 24.9], ["north", 21.5], ["south", 18.7], ["east", 25.5], ["north", 21.8],
+  ["west", 15.5]
+]
+
+by_sensor = Hash[]
+Array.each(readings) do |name, value|
+  by_sensor[name] = Array[] unless Hash.key?(by_sensor, name)
+  Array.push(by_sensor[name], value)
+end
+
+Array.each(Array.sort(Hash.keys(by_sensor))) do |name|
+  vals = by_sensor[name]
+  med = median(vals)
+  lo = quickselect(vals, 0)
+  hi = quickselect(vals, Array.size(vals) - 1)
+  p90 = percentile(vals, 90)
+  check = Array.sort(vals)
+  ok = lo == check[0] && hi == Array.last(check)
+  puts(format("%-6s n=%2d min=%5.1f median=%5.2f p90=%5.1f max=%5.1f %s",
+              name, Array.size(vals), lo, med, p90, hi, ok ? "ok" : "MISMATCH"))
+end
+
+puts("outliers (more than 5.0 from the sensor median):")
+Hash.each(by_sensor) do |name, vals|
+  med = median(vals)
+  Array.each(vals) do |v|
+    d = v - med
+    puts("  #{name}: #{v} (#{d > 0 ? "+" : ""}#{Float.round(d, 2)})") if Float.abs(d) > 5.0
+  end
+end
+
+big = Array[]
+x = 12345
+Integer.times(301) do
+  x = (x * 7919 + 17) % 100003
+  Array.push(big, x % 1000)
+end
+sorted = Array.sort(big)
+all_ok = Array.all?(Array[0, 1, 50, 150, 299, 300]) { |k| quickselect(big, k) == sorted[k] }
+puts("big: median=#{median(big)} p99=#{percentile(big, 99)} ranks agree=#{all_ok}")
+
+begin
+  quickselect(Array[3.0, 1.0], 2)
+rescue IndexError => e
+  puts("error: #{Exception.message(e)}")
+end

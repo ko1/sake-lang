@@ -1,0 +1,142 @@
+module Block
+  def render(b, width) = raise("render not implemented")
+  def plain_text(b) = ""
+  def kind(b) = "block"
+
+  def word_count(b) = Array.size(String.split(plain_text(b), " "))
+  def height(b, width) = Array.size(render(b, width))
+end
+
+def wrap(text, width, indent)
+  lines = Array[]
+  line = ""
+  Array.each(String.split(text, " ")) do |w|
+    if String.empty?(line)
+      line = w
+    elsif String.size(line) + 1 + String.size(w) <= width - String.size(indent)
+      line = line + " " + w
+    else
+      Array.push(lines, indent + line)
+      line = w
+    end
+  end
+  Array.push(lines, indent + line) unless String.empty?(line)
+  lines
+end
+
+class Heading < {reader: [level, title]}
+  include Block
+  def kind(b) = "h#{@level}"
+  def plain_text(b) = @title
+  def render(b, width)
+    text = @level == 1 ? String.upcase(@title) : @title
+    rule = @level == 1 ? "=" : "-"
+    Array[text, rule * Array.min(Array[String.size(text), width])]
+  end
+end
+
+class Paragraph < {reader: [text]}
+  include Block
+  def kind(b) = "p"
+  def plain_text(b) = @text
+  def render(b, width) = wrap(@text, width, "")
+end
+
+class Bullets < {reader: [items]}
+  include Block
+  def kind(b) = "ul"
+  def plain_text(b) = Array.join(@items, " ")
+  def render(b, width)
+    out = Array[]
+    Array.each(@items) do |item|
+      lines = wrap(item, width, "  ")
+      first = lines[0]
+      lines[0] = "* " + String.lstrip(first) if first
+      Array.concat(out, lines)
+    end
+    out
+  end
+end
+
+class Table < {reader: [header, rows]}
+  include Block
+  def kind(b) = "table"
+  def plain_text(b) = Array.join(Array.map(@rows) { |r| Array.join(r, " ") }, " ")
+  def render(b, width)
+    all = Array[@header]
+    Array.concat(all, @rows)
+    widths = Range.map(0...Array.size(@header)) { |i| Array.max(Array.map(all) { |r| String.size(r[i]) }) }
+    fmt_row = Array.map(all) { |r| Array.join(Range.map(0...Array.size(r)) { |i| String.ljust(r[i], widths[i]) }, " | ") }
+    sep = Array.join(Array.map(widths) { |w| "-" * w }, "-+-")
+    lines = Array[fmt_row[0], sep]
+    Array.concat(lines, Array.drop(fmt_row, 1))
+    Array.map(lines) { |l| String.size(l) > width ? l[0...width - 1] + ">" : l }
+  end
+end
+
+class Code < {reader: [lang, source]}
+  include Block
+  def kind(b) = "code"
+  def render(b, width)
+    body = Array.map(String.lines(@source)) { |l| "    " + String.chomp(l) }
+    Array.concat(Array["    [#{@lang}]"], body)
+  end
+end
+
+def toc(blocks)
+  n1 = 0
+  n2 = 0
+  out = Array[]
+  Array.each(blocks) do |b|
+    next unless b in Heading
+    if Heading.get_level(b) == 1
+      n1 += 1
+      n2 = 0
+      Array.push(out, "#{n1}. #{Heading.get_title(b)}")
+    else
+      n2 += 1
+      Array.push(out, "   #{n1}.#{n2} #{Heading.get_title(b)}")
+    end
+  end
+  out
+end
+
+def render_doc(blocks, width)
+  puts("+" + "-" * width + "+")
+  Array.each_with_index(blocks) do |b, i|
+    puts("|" + String.ljust("", width) + "|") if i > 0
+    Array.each(Block.render(b, width)) { |l| puts("|" + String.ljust(l, width) + "|") }
+  end
+  puts("+" + "-" * width + "+")
+end
+
+doc = Array[
+  Heading.new(1, "Sake release notes"),
+  Paragraph.new("This release makes operators on user types dispatch through modules, so a type joins Arithmetic or Comparable by including it and defining the operator."),
+  Heading.new(2, "Highlights"),
+  Bullets.new(Array["Mixin functions dispatch on the first argument at run time.", "Indexing is an operator too.", "Struct equality compares fields recursively."]),
+  Heading.new(2, "Numbers"),
+  Table.new(Array["area", "tests", "status"], Array[Array["operators", "212", "pass"], Array["modules", "87", "pass"], Array["inference", "1290", "3 skipped"]]),
+  Heading.new(1, "Example"),
+  Code.new("sake", "class Money < {reader: [cents]}\n  include Arithmetic\nend\n"),
+  Paragraph.new("Thanks to everyone who reported issues.")
+]
+
+puts("== contents ==")
+Array.each(toc(doc)) { |l| puts(l) }
+
+Array.each(Array[60, 34]) do |w|
+  puts("== width #{w} ==")
+  render_doc(doc, w)
+end
+
+puts("== stats ==")
+Array.each(doc) do |b|
+  puts(format("%-6s words %3d  height@60 %2d  height@34 %2d", Block.kind(b), Block.word_count(b), Block.height(b, 60), Block.height(b, 34)))
+end
+total_words = Array.sum(Array.map(doc) { |b| Block.word_count(b) })
+puts("total words: #{total_words}")
+tallest = Array.max_by(doc) { |b| Block.height(b, 34) }
+puts("tallest at 34: #{Block.kind(tallest)}") if tallest
+kinds = Array.tally(Array.map(doc) { |b| Block.kind(b) })
+puts("blocks: #{Array.join(Array.map(Hash.to_a(kinds)) { |k, n| "#{k}=#{n}" }, " ")}")

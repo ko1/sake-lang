@@ -1,0 +1,25 @@
+- tokenizer: Hand-written lexer for a small C-like language producing Token structs with line/column, error recovery, and a per-kind summary.
+- calc_rd: Recursive-descent calculator with precedence, right-associative power, unary minus, variables, built-in functions, and typed parse errors.
+- shunting_yard: Converts infix expressions to RPN with Dijkstra's shunting-yard algorithm (operator table of Records) and evaluates them exactly with Rationals.
+- stack_vm: Assembles a textual stack-machine program with labels into Instr structs and runs it with call frames, collecting execution statistics.
+- rpn_calc: HP-style RPN calculator with stack words (dup, swap, over, sum), registers, mixed Integer/Float arithmetic, and recoverable errors per input line.
+- json_parser: Recursive-descent JSON parser into Hash/Array/scalars with escapes and error positions, a pretty printer, and dotted-path queries.
+- ini_parser: Parses INI text (sections, comments, continuation lines) and validates it against a schema of Records, converting typed values and collecting errors with line numbers.
+- csv_parser: Character-level state-machine CSV parser (quoted fields, doubled quotes, embedded newlines) feeding header-keyed records and per-region totals.
+- lisp_interp: Small Scheme interpreter: reader, environments with closures, special forms (define, lambda, let, cond, set!), primitives, and error reporting.
+- regex_matcher: Compiles a small regex dialect (., [], \d, \w, * + ?, ^ $) into Node structs and matches it by backtracking, cross-checking each result against the built-in Regexp.
+- brainfuck: Brainfuck interpreter with a precomputed bracket jump table, wrapping tape, embedded input, and bracket-mismatch errors.
+- forth: Forth interpreter session with colon definitions, recursion, IF/ELSE/THEN, DO/LOOP with I, string output, and per-line error recovery.
+- symbolic_diff: Parses formulas into Num/Var/Bin/Fn structs, differentiates symbolically with simplifying constructors, pretty-prints with minimal parentheses, and checks against a numeric derivative.
+- pratt_parser: Pratt (top-down operator precedence) parser with a binding-power table, prefix/postfix/ternary operators, calls and indexing into a generic Node tree, printed as S-expressions and evaluated with dynamic type checks.
+- assembler: Two-pass assembler for an 8-register toy ISA (labels, immediates, operand checks) that encodes words with bit operations, disassembles them, and simulates the encoded prime-sieve program.
+- template_engine: Mustache-style template engine: parses tags into a Tag tree (sections, inverted sections, comments, raw/escaped variables) and renders it against nested Hash data with a context stack.
+- query_engine: Tokenizes and parses a SQL subset (SELECT/WHERE with AND/OR, GROUP BY with COUNT/SUM/AVG/MAX, ORDER BY, LIMIT) into structs and executes it over in-memory rows.
+- markdown: Markdown-to-HTML converter: line-based block parser (headings, lists with continuation, quotes, code fences, paragraphs) and a recursive inline scanner for code, strong, emphasis, and links.
+- truth_table: Parses propositional formulas (!, &, |, ->, <->) into Record trees, prints truth tables, classifies tautology/contradiction, lists DNF minterms, and checks equivalences.
+- chem_formula: Recursive parser for chemical formulas with nested ()/[] groups and hydrates, computing element counts and molar masses and checking whether reactions are balanced.
+- turing_machine: Parses textual Turing-machine specs into a rule table keyed by (state, symbol) Tuples and runs them on a sparse Hash tape (binary increment, palindromes, 3-state busy beaver).
+- tiny_basic: Line-numbered BASIC interpreter (LET, PRINT with ; and , separators, IF/THEN, GOTO, GOSUB/RETURN, FOR/NEXT with STEP, END) with a per-statement expression parser and runtime errors tied to line numbers.
+- cmdline_parser: GNU-style command-line option parser driven by an Opt spec table: long/short options, bundled shorts, inline values, --no- negation, counters, repeatable lists, the -- terminator, and usage errors.
+- type_checker: Parses a tiny expression language (let, if, int/str/bool literals, operators, built-in calls) into tagged Tuple trees, type-checks it with an environment, and evaluates well-typed programs.
+- indent_lexer: Python-style indentation lexer emitting INDENT/DEDENT tokens from an indentation stack, building a nested outline tree from them, and reporting inconsistent dedents, tabs, and orphan indents.

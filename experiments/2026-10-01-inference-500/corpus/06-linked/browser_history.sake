@@ -1,0 +1,108 @@
+Page = Struct.new(:url, :title, :visits, :back, :forward)
+
+class Tab < {reader: [name], accessor: [current, opened]}
+  def create(name, url) = Tab.new(name, Page.new(url, title_for(url), 1, nil, nil), 1)
+
+  def visit(tab, url)
+    cur = @current
+    if url == Page.get_url(cur)
+      Page.set_visits(cur, Page.get_visits(cur) + 1)
+      return cur
+    end
+    page = Page.new(url, title_for(url), 1, cur, nil)
+    Page.set_forward(cur, page)
+    @current = page
+    @opened += 1
+    page
+  end
+
+  def back(tab, steps)
+    moved = 0
+    while moved < steps
+      prev = Page.get_back(@current)
+      break unless prev
+      @current = prev
+      moved += 1
+    end
+    moved
+  end
+
+  def forward(tab, steps)
+    moved = 0
+    while moved < steps
+      nxt = Page.get_forward(@current)
+      break unless nxt
+      @current = nxt
+      moved += 1
+    end
+    moved
+  end
+
+  def trail(tab)
+    first = @current
+    while (b = Page.get_back(first))
+      first = b
+    end
+    parts = Array[]
+    page = first
+    while page
+      label = Page.get_title(page)
+      label = "[#{label}]" if page == @current
+      Array.push(parts, label)
+      page = Page.get_forward(page)
+    end
+    Array.join(parts, " > ")
+  end
+end
+
+def title_for(url)
+  m = String.match(url, /\Ahttps?:\/\/([^\/]+)(\/[^?#]*)?/)
+  return url unless m
+  host = String.delete_prefix(m[1], "www.")
+  path = m[2] || "/"
+  path == "/" ? host : host + path
+end
+
+tab = Tab.create("main", "https://www.example.com/")
+log = Array[
+  [:visit, "https://www.example.com/docs"],
+  [:visit, "https://www.example.com/docs/api?x=1"],
+  [:visit, "https://news.site/today"],
+  [:back, "2"],
+  [:visit, "https://www.example.com/docs"],
+  [:forward, "1"],
+  [:visit, "https://shop.site/cart#top"],
+  [:visit, "https://shop.site/checkout"],
+  [:back, "5"],
+  [:forward, "2"],
+  [:visit, "mailto:someone"],
+  [:back, "1"],
+  [:forward, "9"]
+]
+Array.each(log) do |action, arg|
+  case action
+  in :visit
+    Tab.visit(tab, arg)
+    puts(format("visit   %-38s %s", arg, Tab.trail(tab)))
+  in :back
+    n = Tab.back(tab, String.to_i(arg))
+    puts(format("back %s  moved %-31d %s", arg, n, Tab.trail(tab)))
+  in :forward
+    n = Tab.forward(tab, String.to_i(arg))
+    puts(format("fwd %s   moved %-31d %s", arg, n, Tab.trail(tab)))
+  end
+end
+puts("pages opened: #{Tab.get_opened(tab)}")
+
+cur = Tab.get_current(tab)
+puts("current: #{Page.get_title(cur)} (visits #{Page.get_visits(cur)})")
+hist = Array[]
+page = cur
+while page
+  Array.push(hist, Page.get_url(page))
+  page = Page.get_back(page)
+end
+puts("back stack (#{Array.size(hist)}):")
+Array.each_with_index(hist) { |u, i| puts("  #{i}: #{u}") }
+hosts = Array.tally(Array.map(hist) { |u| String.split(title_for(u), "/")[0] })
+puts(Array.join(Array.map(Hash.to_a(hosts)) { |h, n| "#{h}x#{n}" }, " "))

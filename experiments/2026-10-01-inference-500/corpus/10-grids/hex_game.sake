@@ -1,0 +1,111 @@
+class Hex < {reader: [q, r]}
+  include Arithmetic
+  def +(a, b) = Hex.new(@q + Hex.get_q(b), @r + Hex.get_r(b))
+  def -(a, b) = Hex.new(@q - Hex.get_q(b), @r - Hex.get_r(b))
+  def key(h) = [@q, @r]
+  def length(h)
+    s = 0 - @q - @r
+    (Integer.abs(@q) + Integer.abs(@r) + Integer.abs(s)) / 2
+  end
+  def to_s(h) = "(#{@q},#{@r})"
+end
+
+def hex_dirs = Hex[Hex.new(1, 0), Hex.new(1, -1), Hex.new(0, -1), Hex.new(-1, 0), Hex.new(-1, 1), Hex.new(0, 1)]
+
+def distance(a, b) = Hex.length(a - b)
+
+# union-find over keys, with path halving and two virtual edge nodes per player
+UnionFind = Struct.new(:parent)
+
+class UnionFind
+  def find(uf, x)
+    @parent[x] = x unless Hash.key?(@parent, x)
+    while @parent[x] != x
+      @parent[x] = @parent[@parent[x]]
+      x = @parent[x]
+    end
+    x
+  end
+
+  def union(uf, a, b)
+    ra = find(uf, a)
+    rb = find(uf, b)
+    @parent[ra] = rb if ra != rb
+  end
+
+  def same?(uf, a, b) = find(uf, a) == find(uf, b)
+end
+
+Game = Struct.new(:size, :stones, :sets, :winner)
+
+class Game
+  def start(size) = Game.new(size, Hash[], UnionFind.new(Hash[]), nil)
+
+  def inside?(g, h) = Hex.get_q(h) >= 0 && Hex.get_q(h) < @size && Hex.get_r(h) >= 0 && Hex.get_r(h) < @size
+
+  def key_text(h) = "#{Hex.get_q(h)},#{Hex.get_r(h)}"
+
+  # red joins left/right (q edges), blue joins top/bottom (r edges)
+  def place(g, player, h)
+    raise ArgumentError, "#{h} is off the board" unless inside?(g, h)
+    raise ArgumentError, "#{h} is taken" if Hash.key?(@stones, Hex.key(h))
+    @stones[Hex.key(h)] = player
+    k = key_text(h)
+    Array.each(hex_dirs) do |d|
+      n = h + d
+      UnionFind.union(@sets, k, key_text(n)) if @stones[Hex.key(n)] == player
+    end
+    if player == :red
+      UnionFind.union(@sets, k, "red-west") if Hex.get_q(h) == 0
+      UnionFind.union(@sets, k, "red-east") if Hex.get_q(h) == @size - 1
+      @winner = :red if UnionFind.same?(@sets, "red-west", "red-east")
+    else
+      UnionFind.union(@sets, k, "blue-north") if Hex.get_r(h) == 0
+      UnionFind.union(@sets, k, "blue-south") if Hex.get_r(h) == @size - 1
+      @winner = :blue if UnionFind.same?(@sets, "blue-north", "blue-south")
+    end
+    @winner
+  end
+
+  def to_s(g)
+    lines = Range.map(0...@size) do |r|
+      cells = Range.map(0...@size) do |q|
+        case @stones[[q, r]]
+        in :red then "R"
+        in :blue then "B"
+        in nil then "."
+        end
+      end
+      "#{" " * r}#{Array.join(cells, " ")}"
+    end
+    Array.join(lines, "\n")
+  end
+end
+
+origin = Hex.new(0, 0)
+puts("neighbours of #{origin}: #{Array.join(Array.map(hex_dirs) { |d| origin + d }, " ")}")
+puts("distance (0,0)-(3,-1): #{distance(origin, Hex.new(3, -1))}, (2,2)-(-1,0): #{distance(Hex.new(2, 2), Hex.new(-1, 0))}")
+ring = Array.select(Array.flat_map(Range.to_a(-2..2)) { |q| Range.map(-2..2) { |r| Hex.new(q, r) } }) { |h| distance(origin, h) == 2 }
+puts("ring of radius 2 has #{Array.size(ring)} cells: #{Array.join(Array.take(ring, 4), " ")} ...")
+
+def play(title, size, moves)
+  puts("== #{title} ==")
+  g = Game.start(size)
+  player = :red
+  Array.each(moves) do |q, r|
+    next if Game.get_winner(g)
+    begin
+      w = Game.place(g, player, Hex.new(q, r))
+      puts("#{player} wins with (#{q},#{r}) on move #{Hash.size(Game.get_stones(g))}") if w
+    rescue ArgumentError => e
+      puts("#{player}: #{Exception.message(e)}; turn lost")
+    end
+    player = player == :red ? :blue : :red
+  end
+  puts(g)
+  puts("no winner yet") unless Game.get_winner(g)
+end
+
+play("red straight", 4, Array[[0, 1], [0, 0], [1, 1], [1, 0], [2, 1], [2, 0], [3, 1]])
+play("blue zigzag", 4, Array[[0, 0], [2, 0], [1, 0], [2, 1], [3, 3], [1, 2], [0, 3], [1, 3]])
+play("mistakes", 3, Array[[0, 0], [0, 0], [5, 1], [1, 1], [2, 2]])

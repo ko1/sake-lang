@@ -1,0 +1,108 @@
+Request = Struct.new(:ip, :method, :path, :params, :status, :bytes)
+BadLine = Exception.new(:line)
+
+def log_lines
+  Array[
+    "10.0.0.1 GET /search?q=red%20shoes&page=1 200 5120",
+    "10.0.0.2 GET /product/42 200 2048",
+    "10.0.0.1 GET /search?q=red%20shoes&page=2 200 4800",
+    "10.0.0.3 POST /cart/add?item=42&qty=2 302 0",
+    "10.0.0.2 GET /search?q=blue+hat 200 3900",
+    "10.0.0.4 GET /product/7 404 512",
+    "10.0.0.3 GET /checkout 200 8000",
+    "corrupted entry",
+    "10.0.0.5 GET /search?q=red%20shoes&sort=price 200 5300",
+    "10.0.0.4 GET /product/999 404 512",
+    "10.0.0.1 GET /product/42?ref=search 200 2048",
+    "10.0.0.6 GET /search?q=caf%C3%A9 200 1500",
+    "10.0.0.5 POST /cart/add?item=7&qty=1 500 128",
+    "10.0.0.6 GET /search?page=3 200 4000"
+  ]
+end
+
+def decode(s)
+  bytes = String.bytes(String.tr(s, "+", " "))
+  out = Array[]
+  i = 0
+  while i < Array.size(bytes)
+    b = bytes[i]
+    if b == 37 && i + 2 < Array.size(bytes)
+      Array.push(out, Integer.chr(String.hex(Integer.chr(bytes[i + 1]) + Integer.chr(bytes[i + 2]))))
+      i += 3
+    else
+      Array.push(out, Integer.chr(b))
+      i += 1
+    end
+  end
+  Array.join(out, "")
+end
+
+def parse_line(line)
+  m = String.match(line, /\A(\S+) (GET|POST) (\S+) (\d{3}) (\d+)\z/)
+  raise BadLine.new("cannot parse", line) unless m
+  path, sep, query = String.partition(m[3], "?")
+  params = Hash[]
+  unless String.empty?(query)
+    Array.each(String.split(query, "&")) do |pair|
+      k, eq, v = String.partition(pair, "=")
+      params[decode(k)] = decode(v)
+    end
+  end
+  Request.new(m[1], m[2], path, params, String.to_i(m[4]), String.to_i(m[5]))
+end
+
+def route(path) = String.gsub(path, /\/\d+/, "/:id")
+
+requests = Array[]
+bad = Array[]
+Array.each(log_lines) do |line|
+  begin
+    Array.push(requests, parse_line(line))
+  rescue BadLine => e
+    Array.push(bad, BadLine.get_line(e))
+  end
+end
+puts("requests: #{Array.size(requests)}, unparseable: #{Array.size(bad)} #{bad}")
+
+status = Hash.new(0)
+Array.each(requests) { |r| status[Request.get_status(r)] += 1 }
+puts("status: " + Array.join(Array.map(Array.sort(Hash.keys(status))) { |s| "#{s}x#{status[s]}" }, " "))
+
+routes = Hash[]
+Array.each(requests) do |r|
+  key = "#{Request.get_method(r)} #{route(Request.get_path(r))}"
+  stats = routes[key] ||= {hits: Array[], bytes: Array[], ips: Set[], params: Set[]}
+  stats => {hits:, bytes:, ips:, params:}
+  Array.push(hits, Request.get_status(r))
+  Array.push(bytes, Request.get_bytes(r))
+  Set.add(ips, Request.get_ip(r))
+  Hash.each_key(Request.get_params(r)) { |k| Set.add(params, k) }
+end
+puts("routes:")
+Array.each(Array.sort(Hash.keys(routes))) do |key|
+  routes[key] => {hits:, bytes:, ips:, params:}
+  errors = Array.count(hits) { |s| s >= 400 }
+  puts(format("  %-22s hits=%d errors=%d bytes=%6d visitors=%d params=%s",
+              key, Array.size(hits), errors, Array.sum(bytes), Set.size(ips), Array.join(Set.sort(params), ",")))
+end
+
+terms = Hash.new(0)
+Array.each(requests) do |r|
+  q = Request.get_params(r)["q"]
+  terms[q] += 1 if q
+end
+puts("search terms:")
+ranked = Array.sort_by(Hash.to_a(terms)) { |t, n| format("%03d %s", 100 - n, t) }
+Array.each(ranked) { |t, n| puts("  #{n} #{t}") }
+
+missing = Array.uniq(Array.map(Array.select(requests) { |r| Request.get_status(r) == 404 }) { |r| Request.get_path(r) })
+puts("not found: #{Array.join(missing, ", ")}")
+
+per_ip = Array.group_by(requests) { |r| Request.get_ip(r) }
+Array.each(Array.sort(Hash.keys(per_ip))) do |ip|
+  rs = per_ip[ip]
+  failed = Array.count(rs) { |r| Request.get_status(r) >= 400 }
+  pages = Array.map(Array.select(rs) { |r| Hash.key?(Request.get_params(r), "page") }) { |r| Request.get_params(r)["page"] }
+  extra = Array.empty?(pages) ? "" : " pages=#{Array.join(pages, ",")}"
+  puts(format("  %-9s %d req, %d failed%s", ip, Array.size(rs), failed, extra))
+end

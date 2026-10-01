@@ -1,0 +1,119 @@
+NotPositiveDefinite = Exception.new(:row)
+
+module Model
+  def fitted(m, x) = predict(m, x)
+  def label(m) = describe(m)
+  def residuals(m, xs, ys) = Array.map(Array.zip(xs, ys)) { |x, y| y - predict(m, x) }
+  def rmse(m, xs, ys) = Math.sqrt(Array.sum(Array.map(residuals(m, xs, ys)) { |r| r * r }) / Array.size(xs))
+
+  def aic(m, xs, ys)
+    n = Array.size(xs)
+    sse = Array.sum(Array.map(residuals(m, xs, ys)) { |r| r * r })
+    n * Math.log(sse / n) + 2.0 * nparams(m)
+  end
+end
+
+class PolyModel < {reader: [coeffs]}
+  include Model
+  def predict(m, x) = Array.reduce(Array.reverse(@coeffs), 0.0) { |acc, c| acc * x + c }
+  def nparams(m) = Array.size(@coeffs)
+  def describe(m) = "poly deg #{Array.size(@coeffs) - 1}: " + Array.join(Array.map(@coeffs) { |c| format("%.4f", c) }, ", ")
+end
+
+class ExpModel < {reader: [a, k]}
+  include Model
+  def predict(m, x) = @a * Math.exp(@k * x)
+  def nparams(m) = 2
+  def describe(m) = format("exp: %.4f * e^(%.4f x)", @a, @k)
+end
+
+def cholesky(a)
+  n = Array.size(a)
+  l = Range.map(0...n) { Range.map(0...n) { 0.0 } }
+  Range.each(0...n) do |i|
+    Range.each(0..i) do |j|
+      s = a[i][j]
+      Range.each(0...j) { |k| s -= l[i][k] * l[j][k] }
+      if i == j
+        raise NotPositiveDefinite.new("matrix is not positive definite", i) if s <= 0.0
+        l[i][i] = Math.sqrt(s)
+      else
+        l[i][j] = s / l[j][j]
+      end
+    end
+  end
+  l
+end
+
+def cholesky_solve(a, b)
+  l = cholesky(a)
+  n = Array.size(b)
+  y = Array.dup(b)
+  Range.each(0...n) do |i|
+    Range.each(0...i) { |k| y[i] -= l[i][k] * y[k] }
+    y[i] /= l[i][i]
+  end
+  Integer.downto(n - 1, 0) do |i|
+    Range.each((i + 1)...n) { |k| y[i] -= l[k][i] * y[k] }
+    y[i] /= l[i][i]
+  end
+  y
+end
+
+def fit_poly(xs, ys, degree)
+  m = degree + 1
+  ata = Range.map(0...m) { |i| Range.map(0...m) { |j| Array.sum(Array.map(xs) { |x| x ** (i + j) }) } }
+  aty = Range.map(0...m) { |i| Array.sum(Array.map(Array.zip(xs, ys)) { |x, y| y * x ** i }) }
+  PolyModel.new(cholesky_solve(ata, aty))
+end
+
+def fit_exp(xs, ys)
+  return nil if Array.any?(ys) { |y| y <= 0.0 }
+  line = fit_poly(xs, Array.map(ys) { |y| Math.log(y) }, 1)
+  c = PolyModel.get_coeffs(line)
+  ExpModel.new(Math.exp(c[0]), c[1])
+end
+
+xs = Range.map(0..11) { |i| i * 0.5 }
+growth = Float[1.02, 1.30, 1.71, 2.18, 2.80, 3.69, 4.71, 6.08, 7.92, 10.10, 13.05, 16.92]
+wave = Float[0.10, 0.62, 0.95, 0.98, 0.70, 0.22, -0.31, -0.78, -0.99, -0.88, -0.52, 0.02]
+
+Array.each(Array[["growth", growth], ["wave", wave]]) do |name, ys|
+  puts("== #{name}")
+  models = Array[]
+  Range.each(1..4) do |d|
+    begin
+      Array.push(models, fit_poly(xs, ys, d))
+    rescue NotPositiveDefinite => e
+      puts("  degree #{d}: #{Exception.message(e)} at row #{NotPositiveDefinite.get_row(e)}")
+    end
+  end
+  em = fit_exp(xs, ys)
+  if em
+    Array.push(models, em)
+  else
+    puts("  exponential model skipped (non-positive data)")
+  end
+  Array.each(models) do |m|
+    puts(format("  %-48s rmse=%.4f aic=%8.3f", Model.label(m), Model.rmse(m, xs, ys), Model.aic(m, xs, ys)))
+  end
+  best = Array.min_by(models) { |m| Model.aic(m, xs, ys) }
+  puts("  best by AIC: #{Model.label(best)}")
+  puts(format("  prediction at x=6.0: %.3f", Model.fitted(best, 6.0)))
+  worst = Array.max_by(Array.zip(xs, Model.residuals(best, xs, ys))) { |x, r| Float.abs(r) }
+  wx, wr = worst
+  puts(format("  largest residual %.4f at x=%.1f", wr, wx))
+end
+
+begin
+  cholesky(Array[Float[1.0, 2.0], Float[2.0, 1.0]])
+rescue NotPositiveDefinite => e
+  puts("indefinite matrix rejected at row #{NotPositiveDefinite.get_row(e)}")
+end
+
+dup_xs = Float[1.0, 1.0, 1.0, 1.0]
+begin
+  fit_poly(dup_xs, Float[2.0, 2.1, 1.9, 2.0], 2)
+rescue NotPositiveDefinite => e
+  puts("repeated x values: cannot fit degree 2 (row #{NotPositiveDefinite.get_row(e)})")
+end

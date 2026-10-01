@@ -1,0 +1,118 @@
+Node = Struct.new(:id, :label, :next)
+
+def build(labels, tail_to)
+  nodes = Node[]
+  Array.each_with_index(labels) { |l, i| Array.push(nodes, Node.new(i, l, nil)) }
+  Array.each_cons(nodes, 2) { |pair| Node.set_next(pair[0], pair[1]) }
+  last = Array.last(nodes)
+  Node.set_next(last, nodes[tail_to]) if last && tail_to
+  Array.first(nodes)
+end
+
+def floyd(head)
+  slow = head
+  fast = head
+  steps = 0
+  while fast && Node.get_next(fast)
+    slow = Node.get_next(slow)
+    fast = Node.get_next(Node.get_next(fast))
+    steps += 1
+    if fast && Node.get_id(slow) == Node.get_id(fast)
+      start = head
+      meet = slow
+      mu = 0
+      while Node.get_id(start) != Node.get_id(meet)
+        start = Node.get_next(start)
+        meet = Node.get_next(meet)
+        mu += 1
+      end
+      lam = 1
+      probe = Node.get_next(start)
+      while Node.get_id(probe) != Node.get_id(start)
+        probe = Node.get_next(probe)
+        lam += 1
+      end
+      return {cyclic: true, start: mu, length: lam, steps: steps}
+    end
+  end
+  {cyclic: false, start: -1, length: 0, steps: steps}
+end
+
+def brent(head)
+  return [0, 0] if head == nil
+  power = 1
+  lam = 1
+  tortoise = head
+  hare = Node.get_next(head)
+  while hare && Node.get_id(hare) != Node.get_id(tortoise)
+    if power == lam
+      tortoise = hare
+      power *= 2
+      lam = 0
+    end
+    hare = Node.get_next(hare)
+    lam += 1
+  end
+  return [0, 0] if hare == nil
+  tortoise = head
+  hare = head
+  Integer.times(lam) { hare = Node.get_next(hare) }
+  mu = 0
+  while Node.get_id(tortoise) != Node.get_id(hare)
+    tortoise = Node.get_next(tortoise)
+    hare = Node.get_next(hare)
+    mu += 1
+  end
+  [mu, lam]
+end
+
+def first_repeat_by_set(head)
+  seen = Set[]
+  node = head
+  while node
+    return Node.get_label(node) unless Set.add?(seen, Node.get_id(node))
+    node = Node.get_next(node)
+  end
+  nil
+end
+
+def walk(head, limit)
+  out = Array[]
+  node = head
+  while node && Array.size(out) < limit
+    Array.push(out, Node.get_label(node))
+    node = Node.get_next(node)
+  end
+  Array.join(out, "")
+end
+
+def break_cycle(head)
+  info = floyd(head)
+  info => {cyclic:, start:, length:}
+  return false unless cyclic
+  node = head
+  Integer.times(start + length - 1) { node = Node.get_next(node) }
+  Node.set_next(node, nil)
+  true
+end
+
+cases = Array[
+  ["straight", "abcdef", nil],
+  ["rho", "abcdefgh", 3],
+  ["full loop", "pqrs", 0],
+  ["self loop", "xyz", 2],
+  ["single", "k", nil],
+  ["tiny rho", "mn", 1]
+]
+Array.each(cases) do |name, labels, tail_to|
+  head = build(String.chars(labels), tail_to)
+  info = floyd(head)
+  info => {cyclic:, start:, length:, steps:}
+  mu, lam = brent(head)
+  puts(format("%-10s walk=%-14s floyd: cyclic=%-5s start=%2d len=%d steps=%d  brent: %d/%d  repeat=%s",
+    name, walk(head, 12), cyclic, start, length, steps, mu, lam, Kernel.inspect(first_repeat_by_set(head))))
+  if break_cycle(head)
+    floyd(head) => {cyclic: still}
+    puts(format("%-10s repaired: %s cyclic=%s", "", walk(head, 20), still))
+  end
+end

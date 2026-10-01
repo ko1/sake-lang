@@ -1,0 +1,114 @@
+Booking = Struct.new(:start, :finish, :who)
+INode = Struct.new(:booking, :max_end, :left, :right)
+Conflict = Exception.new(:existing)
+
+def minutes(hhmm)
+  parts = String.split(hhmm, ":")
+  String.to_i(parts[0]) * 60 + String.to_i(parts[1])
+end
+
+def clock(min) = format("%02d:%02d", min / 60, min % 60)
+
+class Booking
+  def overlaps?(b, s, f) = @start < f && s < @finish
+  def to_s(b) = "#{clock(@start)}-#{clock(@finish)} #{@who}"
+end
+
+def insert(node, b)
+  return INode.new(b, Booking.get_finish(b), nil, nil) if node == nil
+  if Booking.get_start(b) < Booking.get_start(INode.get_booking(node))
+    INode.set_left(node, insert(INode.get_left(node), b))
+  else
+    INode.set_right(node, insert(INode.get_right(node), b))
+  end
+  INode.set_max_end(node, Booking.get_finish(b)) if Booking.get_finish(b) > INode.get_max_end(node)
+  node
+end
+
+def any_overlap(node, s, f)
+  while node
+    b = INode.get_booking(node)
+    return b if Booking.overlaps?(b, s, f)
+    left = INode.get_left(node)
+    node = left != nil && INode.get_max_end(left) > s ? left : INode.get_right(node)
+  end
+  nil
+end
+
+def all_overlaps(node, s, f, out)
+  return out if node == nil || INode.get_max_end(node) <= s
+  all_overlaps(INode.get_left(node), s, f, out)
+  b = INode.get_booking(node)
+  Array.push(out, b) if Booking.overlaps?(b, s, f)
+  all_overlaps(INode.get_right(node), s, f, out) if Booking.get_start(b) < f
+  out
+end
+
+def in_order(node, out)
+  return out if node == nil
+  in_order(INode.get_left(node), out)
+  Array.push(out, INode.get_booking(node))
+  in_order(INode.get_right(node), out)
+end
+
+class Room < {reader: [name], accessor: [root, count]}
+  def book(r, who, from, to)
+    s = minutes(from)
+    f = minutes(to)
+    raise ArgumentError, "#{who}: end before start" if f <= s
+    clash = any_overlap(@root, s, f)
+    raise Conflict.new("#{who} #{from}-#{to} clashes with #{clash}", clash) if clash != nil
+    b = Booking.new(s, f, who)
+    @root = insert(@root, b)
+    @count += 1
+    b
+  end
+
+  def free_slots(r, day_start, day_end, min_len)
+    slots = Array[]
+    cursor = minutes(day_start)
+    stop = minutes(day_end)
+    Array.each(in_order(@root, Array[])) do |b|
+      Array.push(slots, [cursor, Booking.get_start(b)]) if Booking.get_start(b) - cursor >= min_len
+      cursor = Booking.get_finish(b) if Booking.get_finish(b) > cursor
+    end
+    Array.push(slots, [cursor, stop]) if stop - cursor >= min_len
+    slots
+  end
+end
+
+room = Room.new("Orion", nil, 0)
+requests = Array[
+  ["standup", "09:00", "09:15"], ["design review", "10:00", "11:30"], ["1:1 ann", "11:30", "12:00"],
+  ["lunch talk", "12:30", "13:30"], ["hiring sync", "11:00", "11:45"], ["retro", "15:00", "16:00"],
+  ["planning", "14:00", "15:00"], ["oops", "16:30", "16:00"], ["late call", "17:30", "18:30"],
+  ["coffee", "09:10", "09:20"], ["deep work", "13:30", "14:00"]
+]
+Array.each(requests) do |who, from, to|
+  begin
+    b = Room.book(room, who, from, to)
+    puts("booked   #{b}")
+  rescue Conflict => e
+    puts("rejected #{Exception.message(e)}")
+  rescue ArgumentError => e
+    puts("invalid  #{Exception.message(e)}")
+  end
+end
+
+puts("#{Room.get_name(room)}: #{Room.get_count(room)} bookings")
+Array.each(in_order(Room.get_root(room), Array[])) { |b| puts("  #{b}") }
+
+puts("-- who is in the room? --")
+Array.each(Array["09:05", "11:30", "12:15", "14:59", "17:45"]) do |t|
+  m = minutes(t)
+  hits = all_overlaps(Room.get_root(room), m, m + 1, Array[])
+  puts("  #{t}: #{Array.empty?(hits) ? "free" : Array.join(Array.map(hits) { |b| Booking.get_who(b) }, ", ")}")
+end
+
+puts("-- overlapping 11:00-14:10 --")
+Array.each(all_overlaps(Room.get_root(room), minutes("11:00"), minutes("14:10"), Array[])) { |b| puts("  #{b}") }
+
+puts("-- free slots of 30+ minutes, 08:00-19:00 --")
+Array.each(Room.free_slots(room, "08:00", "19:00", 30)) do |s, f|
+  puts("  #{clock(s)}-#{clock(f)} (#{f - s} min)")
+end

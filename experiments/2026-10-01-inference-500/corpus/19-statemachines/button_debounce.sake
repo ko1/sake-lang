@@ -1,0 +1,93 @@
+Edge = Struct.new(:kind, :time)
+Gesture = Struct.new(:name, :start, :finish)
+
+class Debouncer < {reader: [threshold, edges, state, count], default: {state: :released, count: 0}}
+  def feed(d, t, level)
+    case @state
+    in :released
+      if level == 1
+        @state = :maybe_pressed
+        @count = 1
+      end
+    in :maybe_pressed
+      if level == 1
+        @count += 1
+        if @count >= @threshold
+          @state = :pressed
+          Array.push(@edges, Edge.new(:down, t - @threshold + 1))
+        end
+      else
+        @state = :released
+      end
+    in :pressed
+      if level == 0
+        @state = :maybe_released
+        @count = 1
+      end
+    in :maybe_released
+      if level == 0
+        @count += 1
+        if @count >= @threshold
+          @state = :released
+          Array.push(@edges, Edge.new(:up, t - @threshold + 1))
+        end
+      else
+        @state = :pressed
+      end
+    end
+  end
+end
+
+def long_press = 12
+def double_gap = 6
+
+def gestures(edges)
+  found = Array[]
+  state = :idle
+  down_at = 0
+  first_click = nil
+  Array.each(edges) do |e|
+    t = Edge.get_time(e)
+    if state == :waiting_second && t - Edge.get_time(first_click) > double_gap
+      Array.push(found, Gesture.new("click", Edge.get_time(first_click), Edge.get_time(first_click)))
+      state = :idle
+    end
+    case Edge.get_kind(e)
+    in :down
+      down_at = t
+      state = state == :waiting_second ? :second_down : :down
+    in :up
+      held = t - down_at
+      if held >= long_press
+        Array.push(found, Gesture.new("long-press", down_at, t))
+        state = :idle
+      elsif state == :second_down
+        Array.push(found, Gesture.new("double-click", Edge.get_time(first_click), t))
+        state = :idle
+      else
+        first_click = Edge.new(:click, down_at)
+        state = :waiting_second
+      end
+    end
+  end
+  if state == :waiting_second && first_click
+    Array.push(found, Gesture.new("click", Edge.get_time(first_click), Edge.get_time(first_click)))
+  end
+  found
+end
+
+signal = "0001011100000000111100111100000000000111111111111111000000001101111000000011110000000"
+Array.each(Integer[2, 3]) do |threshold|
+  d = Debouncer.new(threshold, Array[])
+  t = 0
+  String.each_char(signal) do |ch|
+    Debouncer.feed(d, t, String.to_i(ch))
+    t += 1
+  end
+  edges = Debouncer.get_edges(d)
+  puts("threshold #{threshold}: #{Array.size(edges)} edges, final state #{Debouncer.get_state(d)}")
+  puts("  " + Array.join(Array.map(edges) { |e| "#{Edge.get_kind(e)}@#{Edge.get_time(e)}" }, " "))
+  Array.each(gestures(edges)) do |g|
+    puts(format("  %-12s %3d..%-3d", Gesture.get_name(g), Gesture.get_start(g), Gesture.get_finish(g)))
+  end
+end

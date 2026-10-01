@@ -1,0 +1,100 @@
+House = Struct.new(:name, :loot, :left, :right)
+
+# houses on a street: no two neighbours
+def street(loot)
+  take = 0
+  skip = 0
+  Array.each(loot) do |v|
+    new_take = skip + v
+    skip = take > skip ? take : skip
+    take = new_take
+  end
+  take > skip ? take : skip
+end
+
+def street_plan(loot)
+  n = Array.size(loot)
+  return Array[] if n == 0
+  best = Array[]
+  Array.each_with_index(loot) do |v, i|
+    with_it = v + (i >= 2 ? best[i - 2] : 0)
+    without = i >= 1 ? best[i - 1] : 0
+    Array.push(best, with_it > without ? with_it : without)
+  end
+  chosen = Array[]
+  i = n - 1
+  while i >= 0
+    prev = i >= 1 ? best[i - 1] : 0
+    if best[i] != prev
+      Array.unshift(chosen, i)
+      i -= 2
+    else
+      i -= 1
+    end
+  end
+  chosen
+end
+
+# houses in a circle: first and last are neighbours
+def circle(loot)
+  n = Array.size(loot)
+  return 0 if n == 0
+  return loot[0] if n == 1
+  a = street(Array.take(loot, n - 1))
+  b = street(Array.drop(loot, 1))
+  a > b ? a : b
+end
+
+# houses on a tree: no parent together with its child; returns [with root, without root]
+def tree_best(node)
+  return [0, 0] if node == nil
+  lw, lo = tree_best(House.get_left(node))
+  rw, ro = tree_best(House.get_right(node))
+  with_root = House.get_loot(node) + lo + ro
+  without_root = Array.max(Array[lw, lo]) + Array.max(Array[rw, ro])
+  [with_root, without_root]
+end
+
+def tree_plan(node, may_take, out)
+  return out if node == nil
+  with_root, without_root = tree_best(node)
+  take = may_take && with_root > without_root
+  Array.push(out, House.get_name(node)) if take
+  tree_plan(House.get_left(node), take == false, out)
+  tree_plan(House.get_right(node), take == false, out)
+  out
+end
+
+def tree_size(node)
+  return 0 if node == nil
+  1 + tree_size(House.get_left(node)) + tree_size(House.get_right(node))
+end
+
+streets = Array[
+  Array[2, 7, 9, 3, 1],
+  Array[1, 2, 3, 1],
+  Array[5, 1, 1, 5],
+  Array[10],
+  Array[6, 7, 1, 30, 8, 2, 4],
+  Array[4, 1, 2, 7, 5, 3, 1, 9, 2, 8]
+]
+Array.each(streets) do |loot|
+  plan = street_plan(loot)
+  taken = Array.map(plan) { |i| loot[i] }
+  puts(format("%-30s line %3d circle %3d  houses %s", Kernel.inspect(loot), street(loot), circle(loot), Array.join(plan, ",")))
+  puts("  plan sum mismatch") if Array.sum(taken) != street(loot)
+end
+
+leaf = House.new("leaf", 1, nil, nil)
+mill = House.new("mill", 3, nil, House.new("barn", 1, nil, nil))
+farm = House.new("farm", 3, House.new("hut", 2, nil, House.new("shed", 3, nil, nil)), mill)
+village = House.new("hall", 4,
+  House.new("inn", 6, House.new("well", 5, nil, nil), House.new("forge", 1, leaf, nil)),
+  House.new("chapel", 2, House.new("manor", 9, nil, nil), House.new("dock", 3, nil, House.new("pier", 7, nil, nil))))
+
+Array.each(Array[["farm", farm], ["village", village], ["empty", nil]]) do |label, root|
+  with_root, without_root = tree_best(root)
+  best = Array.max(Array[with_root, without_root])
+  names = tree_plan(root, true, Array[])
+  puts("#{label} (#{tree_size(root)} houses): best #{best}, take #{Array.empty?(names) ? "nothing" : Array.join(names, ", ")}")
+end

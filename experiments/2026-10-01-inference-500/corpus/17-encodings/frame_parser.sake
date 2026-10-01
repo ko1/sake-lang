@@ -1,0 +1,109 @@
+# A serial-line frame parser: 0x7E sync, type, length, payload, XOR checksum.
+# It resynchronises after garbage, rejects bad checksums, and decodes payloads by type
+# into different record types.
+
+Temperature = Struct.new(:sensor, :centi)
+Position = Struct.new(:lat, :lon)
+Note = Struct.new(:text)
+Stats = Struct.new(:frames, :bad_checksum, :skipped, :unknown)
+
+def sync = 0x7E
+
+def checksum(bytes) = Array.reduce(bytes, 0) { |acc, b| acc ^ b }
+
+def frame(type, payload)
+  body = Array.concat(Integer[type, Array.size(payload)], payload)
+  Array.push(Array.concat(Integer[sync], body), checksum(body))
+end
+
+def s16(hi, lo)
+  v = (hi << 8) | lo
+  v >= 0x8000 ? v - 0x10000 : v
+end
+
+def s32(bytes, at)
+  v = (bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]
+  v >= 0x80000000 ? v - 0x100000000 : v
+end
+
+def be16(v) = Integer[(v >> 8) & 0xFF, v & 0xFF]
+def be32(v) = Integer[(v >> 24) & 0xFF, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF]
+
+def decode_payload(type, p)
+  case type
+  in 1 then Temperature.new(p[0], s16(p[1], p[2]))
+  in 2 then Position.new(s32(p, 0), s32(p, 4))
+  in 3 then Note.new(Array.join(Array.map(p) { |b| Integer.chr(b) }, ""))
+  else nil
+  end
+end
+
+def parse(stream, stats)
+  messages = Array[]
+  i = 0
+  n = Array.size(stream)
+  while i < n
+    if stream[i] != sync
+      Stats.set_skipped(stats, Stats.get_skipped(stats) + 1)
+      i += 1
+      next
+    end
+    break if i + 3 > n
+    type = stream[i + 1]
+    len = stream[i + 2]
+    last = i + 3 + len
+    break if last >= n
+    body = stream[(i + 1)...last]
+    if checksum(body) != stream[last]
+      Stats.set_bad_checksum(stats, Stats.get_bad_checksum(stats) + 1)
+      i += 1
+      next
+    end
+    msg = decode_payload(type, stream[(i + 3)...last])
+    if msg
+      Array.push(messages, msg)
+    else
+      Stats.set_unknown(stats, Stats.get_unknown(stats) + 1)
+    end
+    Stats.set_frames(stats, Stats.get_frames(stats) + 1)
+    i = last + 1
+  end
+  messages
+end
+
+def describe(msg)
+  case msg
+  in Temperature
+    c = Temperature.get_centi(msg)
+    format("temp   sensor %d: %s%d.%02d C", Temperature.get_sensor(msg), c < 0 ? "-" : "", Integer.abs(c) / 100, Integer.abs(c) % 100)
+  in Position
+    format("pos    %.5f, %.5f", Position.get_lat(msg) / 1.0e7, Position.get_lon(msg) / 1.0e7)
+  in Note
+    "note   #{Kernel.inspect(Note.get_text(msg))}"
+  end
+end
+
+stream = Integer[0x00, 0xFF]
+Array.concat(stream, frame(1, Array.concat(Integer[3], be16(2150))))
+Array.concat(stream, frame(2, Array.concat(be32(356_812_362), be32(0x100000000 - 1_223_456_789))))
+Array.concat(stream, Integer[0x13, 0x37])
+Array.concat(stream, frame(3, String.bytes("door open")))
+bad = frame(1, Array.concat(Integer[4], be16(0x10000 - 1250)))
+bad[4] ^= 0x01
+Array.concat(stream, bad)
+Array.concat(stream, frame(1, Array.concat(Integer[4], be16(0x10000 - 1250))))
+Array.concat(stream, frame(9, Integer[1, 2, 3]))
+Array.concat(stream, frame(3, String.bytes("")))
+Array.concat(stream, Array.take(frame(3, String.bytes("truncated")), 6))
+
+puts("stream: #{Array.size(stream)} bytes")
+stats = Stats.new(0, 0, 0, 0)
+msgs = parse(stream, stats)
+Array.each(msgs) { |m| puts(describe(m)) }
+p(stats)
+
+temps = Array.select(msgs) { |m| m in Temperature }
+unless Array.empty?(temps)
+  total = Array.sum(Array.map(temps) { |t| Temperature.get_centi(t) })
+  puts(format("average of %d readings: %.2f C", Array.size(temps), total / 100.0 / Array.size(temps)))
+end

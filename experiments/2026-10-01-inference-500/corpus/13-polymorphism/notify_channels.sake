@@ -1,0 +1,129 @@
+DeliveryFailed = Exception.new(:channel, :retryable)
+
+Message = Struct.new(:to, :subject, :body, :urgent)
+
+module Channel
+  def name(ch) = "channel"
+  def cost_cents(ch, msg) = 0
+  def available?(ch, hour) = true
+  def deliver(ch, msg, attempt) = raise("deliver not implemented")
+
+  def describe(ch) = "#{name(ch)} (#{cost_cents(ch, Message.new("x", "", "", false))}c base)"
+end
+
+class Email < {reader: [domain_blocklist]}
+  include Channel
+  def name(ch) = "email"
+  def deliver(ch, msg, attempt)
+    domain = Array.last(String.split(Message.get_to(msg), "@"))
+    if Array.include?(@domain_blocklist, domain)
+      raise DeliveryFailed.new("#{domain} rejects mail", "email", false)
+    end
+    "mail to #{Message.get_to(msg)}: #{Message.get_subject(msg)}"
+  end
+end
+
+class Sms < {reader: [per_segment]}
+  include Channel
+  def name(ch) = "sms"
+  def segments(ch, msg) = Integer.ceildiv(String.size(Message.get_body(msg)) + 1, 160)
+  def cost_cents(ch, msg) = segments(ch, msg) * @per_segment
+  def available?(ch, hour) = hour >= 8 && hour < 21
+  def deliver(ch, msg, attempt)
+    raise DeliveryFailed.new("sms gateway timeout", "sms", true) if attempt == 1 && String.size(Message.get_body(msg)) > 150
+    "sms (#{segments(ch, msg)} seg) to #{Message.get_to(msg)}"
+  end
+end
+
+class Push < {reader: [devices]}
+  include Channel
+  def name(ch) = "push"
+  def cost_cents(ch, msg) = 1
+  def deliver(ch, msg, attempt)
+    token = @devices[Message.get_to(msg)]
+    raise DeliveryFailed.new("no device for #{Message.get_to(msg)}", "push", false) if token == nil
+    "push to device #{token}: #{truncate(Message.get_subject(msg), 12)}"
+  end
+end
+
+class Webhook < {reader: [url, failures]}
+  include Channel
+  def name(ch) = "webhook"
+  def cost_cents(ch, msg) = 2
+  def deliver(ch, msg, attempt)
+    if attempt <= @failures
+      raise DeliveryFailed.new("#{@url} returned 503", "webhook", true)
+    end
+    "POST #{@url} (attempt #{attempt})"
+  end
+end
+
+def truncate(s, n) = String.size(s) > n ? s[0...n - 1] + "~" : s
+
+def send_with_retry(ch, msg, max_attempts, log)
+  attempt = 1
+  begin
+    result = Channel.deliver(ch, msg, attempt)
+    Array.push(log, "  ok   #{result}")
+    true
+  rescue DeliveryFailed => e
+    Array.push(log, "  fail #{DeliveryFailed.get_channel(e)} attempt #{attempt}: #{Exception.message(e)}")
+    if DeliveryFailed.get_retryable(e) && attempt < max_attempts
+      attempt += 1
+      retry
+    end
+    false
+  end
+end
+
+def route(channels, msg, hour, log)
+  candidates = Array.select(channels) { |ch| Channel.available?(ch, hour) }
+  candidates = Array.sort_by(candidates) { |ch| Channel.cost_cents(ch, msg) } unless Message.get_urgent(msg)
+  Array.each(candidates) do |ch|
+    return ch if send_with_retry(ch, msg, 3, log)
+  end
+  nil
+end
+
+push = Push.new(Hash["ann@example.com" => "dev-a1", "cy@corp.test" => "dev-c9"])
+channels = Array[
+  Webhook.new("https://hooks.example.com/notify", 3),
+  Sms.new(4),
+  push,
+  Email.new(Array["blocked.org"])
+]
+
+puts("channels:")
+Array.each(channels) { |ch| puts("  #{Channel.describe(ch)}") }
+
+long_text = "Your weekly report is ready. " * 6
+messages = Array[
+  [Message.new("ann@example.com", "Build finished", "All 412 tests passed.", false), 10],
+  [Message.new("bob@blocked.org", "Invoice overdue", "Please pay invoice #77 by Friday.", false), 23],
+  [Message.new("cy@corp.test", "Server down", "db-2 is not responding since 03:12", true), 3],
+  [Message.new("dee@blocked.org", "Weekly report", long_text, false), 12],
+  [Message.new("eve@blocked.org", "Password reset", "Use code 491-022.", true), 20]
+]
+
+spent = Hash.new(0)
+Array.each(messages) do |msg, hour|
+  log = Array[]
+  used = route(channels, msg, hour, log)
+  puts(format("[%02d:00] %s -> %s", hour, Message.get_subject(msg), Message.get_to(msg)))
+  Array.each(log) { |line| puts(line) }
+  if used
+    c = Channel.cost_cents(used, msg)
+    spent[Channel.name(used)] += c
+    puts("  delivered via #{Channel.name(used)} for #{c}c")
+  else
+    puts("  UNDELIVERED")
+  end
+end
+
+puts("cost by channel:")
+Hash.each(spent) { |name, c| puts(format("  %-8s %3dc", name, c)) }
+puts("total: #{Hash.sum(spent) { |name, c| c }}c")
+sms = Array.find(channels) { |ch| ch in Sms }
+if sms
+  puts("sms for long text: #{Channel.cost_cents(sms, Message.new("x", "s", long_text, false))}c")
+end

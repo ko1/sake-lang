@@ -1,0 +1,121 @@
+UnknownFlag = Exception.new(:flag)
+
+def flag_names = Array[:read, :write, :delete, :share, :admin, :billing, :audit, :deploy]
+
+class Bits < {reader: [mask]}
+  include Bitwise
+  include Arithmetic
+  include Indexable
+
+  def none = Bits.new(0)
+
+  def bit(name)
+    i = Array.index(flag_names, name)
+    raise UnknownFlag.new("unknown flag #{name}", name) if i == nil
+    i
+  end
+
+  def of(names) = Array.reduce(names, none) { |acc, n| acc | Bits.new(1 << bit(n)) }
+
+  def &(a, b) = Bits.new(@mask & Bits.get_mask(b))
+  def |(a, b) = Bits.new(@mask | Bits.get_mask(b))
+  def ^(a, b) = Bits.new(@mask ^ Bits.get_mask(b))
+  def -(a, b) = Bits.new(@mask & (Bits.get_mask(b) ^ 255))
+  def <<(a, n) = Bits.new((@mask << n) & 255)
+
+  def [](a, i) = (@mask >> i) & 1 == 1
+  def []=(a, i, v)
+    if v
+      @mask = @mask | (1 << i)
+    else
+      @mask = @mask & ((1 << i) ^ 255)
+    end
+  end
+
+  def count(a)
+    n = 0
+    m = @mask
+    while m > 0
+      n += m & 1
+      m = m >> 1
+    end
+    n
+  end
+
+  def include_all?(a, b) = (@mask & Bits.get_mask(b)) == Bits.get_mask(b)
+  def empty?(a) = @mask == 0
+
+  def names(a) = Array.select(flag_names) { |n| a[bit(n)] }
+  def to_s(a) = "{#{Array.join(names(a), ",")}}"
+  def binary(a) = format("%08b", @mask)
+end
+
+def roles
+  Hash[
+    "viewer" => Bits.of(Array[:read]),
+    "editor" => Bits.of(Array[:read, :write, :share]),
+    "owner" => Bits.of(Array[:read, :write, :delete, :share]),
+    "finance" => Bits.of(Array[:read, :billing, :audit]),
+    "ops" => Bits.of(Array[:read, :deploy, :audit]),
+    "root" => Bits.new(255)
+  ]
+end
+
+def effective(user_roles, granted, revoked)
+  base = Array.reduce(user_roles, Bits.none) { |acc, r| acc | (roles[r] || Bits.none) }
+  (base | granted) - revoked
+end
+
+users = Array[
+  ["ann", Array["editor"], Array[:audit], Array[]],
+  ["bob", Array["viewer", "finance"], Array[], Array[:audit]],
+  ["cyd", Array["owner", "ops"], Array[], Array[:delete]],
+  ["dee", Array["intern"], Array[], Array[]],
+  ["eve", Array["root"], Array[], Array[:billing, :deploy]]
+]
+
+puts("roles:")
+Hash.each(roles) { |name, bits| puts(format("  %-8s %s %s", name, Bits.binary(bits), bits)) }
+
+perms = Hash[]
+puts("users:")
+Array.each(users) do |name, rs, plus, minus|
+  e = effective(rs, Bits.of(plus), Bits.of(minus))
+  perms[name] = e
+  puts(format("  %-4s %s %-40s (%d flags)", name, Bits.binary(e), Kernel.to_s(e), Bits.count(e)))
+end
+
+puts("checks:")
+checks = Array[["ann", Array[:write, :share]], ["bob", Array[:audit]], ["cyd", Array[:deploy, :read]],
+               ["dee", Array[:read]], ["eve", Array[:admin, :delete]], ["ann", Array[:teleport]]]
+Array.each(checks) do |who, need|
+  begin
+    ok = Bits.include_all?(perms[who], Bits.of(need))
+    puts("  #{who} #{Array.join(need, "+")}: #{ok ? "allowed" : "denied"}")
+  rescue UnknownFlag => err
+    puts("  #{who}: #{Exception.message(err)}")
+  end
+end
+
+puts("set algebra:")
+ann = perms["ann"]
+cyd = perms["cyd"]
+puts("  ann & cyd = #{ann & cyd}")
+puts("  ann | cyd = #{ann | cyd}")
+puts("  ann ^ cyd = #{ann ^ cyd}")
+puts("  cyd - ann = #{cyd - ann}")
+puts("  ann << 1  = #{ann << 1}")
+common = Array.reduce(Hash.values(perms), Bits.new(255)) { |acc, b| acc & b }
+puts("  shared by everyone: #{Bits.empty?(common) ? "nothing" : Kernel.to_s(common)}")
+
+puts("toggling:")
+b = Bits.of(Array[:read])
+b[Bits.bit(:write)] = true
+b[Bits.bit(:deploy)] = true
+b[Bits.bit(:read)] = false
+puts("  #{b} write? #{b[Bits.bit(:write)]} read? #{b[Bits.bit(:read)]}")
+
+counts = Hash.new(0)
+Hash.each(perms) { |name, bits| Array.each(Bits.names(bits)) { |f| counts[f] += 1 } }
+popular = Hash.max_by(counts) { |f, n| n }
+puts("most granted flag: #{popular[0]} (#{popular[1]} users)") if popular

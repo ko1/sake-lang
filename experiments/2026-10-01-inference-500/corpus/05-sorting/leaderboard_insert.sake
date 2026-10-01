@@ -1,0 +1,98 @@
+# A live game leaderboard kept sorted with binary-search insertion and removal
+# as scores arrive; answers rank, neighbours, and "score needed for top N".
+
+Entry = Struct.new(:player, :score)
+
+class Entry
+  include Comparable
+  # better entries sort first: higher score, then name
+  def <=>(a, b)
+    c = Entry.get_score(b) <=> @score
+    c == 0 ? @player <=> Entry.get_player(b) : c
+  end
+end
+
+Board = Struct.new(:entries, :scores, :moves)
+
+class Board
+  def create = Board.new(Array[], Hash[], 0)
+
+  def position(b, e)
+    lo = 0
+    hi = Array.size(@entries)
+    while lo < hi
+      mid = (lo + hi) / 2
+      if @entries[mid] < e
+        lo = mid + 1
+      else
+        hi = mid
+      end
+    end
+    lo
+  end
+
+  def submit(b, player, points)
+    old = @scores[player]
+    return false if old != nil && old >= points
+    if old != nil
+      i = position(b, Entry.new(player, old))
+      Array.delete_at(@entries, i)
+    end
+    e = Entry.new(player, points)
+    i = position(b, e)
+    Array.insert(@entries, i, e)
+    @scores[player] = points
+    @moves += Array.size(@entries) - i
+    true
+  end
+
+  # competition ranking: ties share the best rank
+  def rank(b, player)
+    s = @scores[player]
+    return nil unless s
+    position(b, Entry.new("", s)) + 1
+  end
+
+  def needed_for_top(b, n)
+    return 1 if Array.size(@entries) < n
+    Entry.get_score(@entries[n - 1]) + 1
+  end
+
+  def show(b, n)
+    Array.each_with_index(Array.take(@entries, n)) do |e, i|
+      puts(format("  %2d %-7s %5d", rank(b, Entry.get_player(e)), Entry.get_player(e), Entry.get_score(e)))
+    end
+  end
+end
+
+events = Array[
+  ["mika", 1200], ["juno", 950], ["rex", 1430], ["ola", 950], ["mika", 1100],
+  ["sven", 2010], ["ola", 1500], ["tara", 1430], ["juno", 1430], ["kai", 80],
+  ["rex", 2600], ["lin", 1999], ["kai", 1430], ["ola", 1499]
+]
+
+board = Board.create()
+ignored = Array[]
+Array.each(events) do |player, pts|
+  Array.push(ignored, "#{player}:#{pts}") unless Board.submit(board, player, pts)
+end
+puts("leaderboard after #{Array.size(events)} submissions (ignored #{ignored}):")
+Board.show(board, 10)
+
+Array.each(Array["juno", "lin", "nobody"]) do |pl|
+  r = Board.rank(board, pl)
+  puts(r ? "#{pl} is ranked #{r}" : "#{pl} has no score")
+end
+puts("score needed for top 3: #{Board.needed_for_top(board, 3)}")
+puts("score needed for top 20: #{Board.needed_for_top(board, 20)}")
+
+entries = Board.get_entries(board)
+Array.each_cons(entries, 2) { |pair| raise "out of order" if pair[1] < pair[0] }
+puts("in order: #{Array.size(entries)} entries, #{Board.get_moves(board)} element moves")
+groups = Hash.select(Array.group_by(entries) { |e| Entry.get_score(e) }) { |_, es| Array.size(es) > 1 }
+Hash.each(groups) { |s, es| puts("tied at #{s}: #{Array.join(Array.map(es) { |e| Entry.get_player(e) }, ", ")}") }
+
+Board.submit(board, "juno", 3000)
+puts("juno jumps to rank #{Board.rank(board, "juno")}; top is now #{Entry.get_player(Array.first(entries))}")
+median = entries[Array.size(entries) / 2]
+puts("median score: #{Entry.get_score(median)}")

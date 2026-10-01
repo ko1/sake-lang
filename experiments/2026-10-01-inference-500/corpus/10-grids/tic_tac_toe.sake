@@ -1,0 +1,129 @@
+Game = Struct.new(:cells, :memo, :nodes)
+
+def lines
+  Array[[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]]
+end
+
+def other(player) = player == "X" ? "O" : "X"
+
+class Game
+  def from(text)
+    cells = Array.map(String.chars(String.delete(text, "|"))) { |ch| ch == "." ? nil : ch }
+    Game.new(cells, Hash[], 0)
+  end
+
+  def winner(g)
+    Array.each(lines) do |a, b, c|
+      v = @cells[a]
+      return v if v && v == @cells[b] && v == @cells[c]
+    end
+    nil
+  end
+
+  def free(g) = Array.select(Range.to_a(0...9)) { |i| @cells[i] == nil }
+
+  def to_move(g)
+    xs = Array.count(@cells) { it == "X" }
+    os = Array.count(@cells) { it == "O" }
+    xs > os ? "O" : "X"
+  end
+
+  def key(g) = Array.join(Array.map(@cells) { it || "." }, "")
+
+  # score from X's point of view: +10 - depth for an X win, -10 + depth for an O win
+  def minimax(g, player, depth)
+    @nodes += 1
+    k = "#{key(g)}#{player}"
+    cached = @memo[k]
+    return cached if cached
+    w = winner(g)
+    result =
+      if w == "X"
+        10 - depth
+      elsif w == "O"
+        depth - 10
+      elsif Array.empty?(free(g))
+        0
+      else
+        scores = Array.map(free(g)) do |i|
+          @cells[i] = player
+          s = minimax(g, other(player), depth + 1)
+          @cells[i] = nil
+          s
+        end
+        player == "X" ? Array.max(scores) : Array.min(scores)
+      end
+    @memo[k] = result
+    result
+  end
+
+  def best_move(g)
+    player = to_move(g)
+    best = nil
+    best_score = nil
+    Array.each(free(g)) do |i|
+      @cells[i] = player
+      s = minimax(g, other(player), 1)
+      @cells[i] = nil
+      better = best_score == nil || (player == "X" ? s > best_score : s < best_score)
+      if better
+        best = i
+        best_score = s
+      end
+    end
+    [best, best_score]
+  end
+
+  def to_s(g)
+    rows = Range.map(0...3) { |r| Array.join(Array.map(Array.take(Array.drop(@cells, r * 3), 3)) { it || "." }, "|") }
+    Array.join(rows, "\n")
+  end
+end
+
+def verdict(score)
+  if score > 0
+    "X wins"
+  elsif score < 0
+    "O wins"
+  else
+    "draw"
+  end
+end
+
+def analyse(text)
+  g = Game.from(text)
+  w = Game.winner(g)
+  if w
+    puts("#{text}: already won by #{w}")
+    return
+  end
+  if Array.empty?(Game.free(g))
+    puts("#{text}: board full, draw")
+    return
+  end
+  move, score = Game.best_move(g)
+  puts("#{text}: #{Game.to_move(g)} plays #{move} -> #{verdict(score)} (score #{score}, #{Game.get_nodes(g)} nodes)")
+end
+
+def self_play(text)
+  g = Game.from(text)
+  puts("self-play from #{text}:")
+  until Game.winner(g) || Array.empty?(Game.free(g))
+    player = Game.to_move(g)
+    move, _score = Game.best_move(g)
+    Game.get_cells(g)[move] = player
+    puts("  #{player} -> #{move}")
+  end
+  puts(g)
+  w = Game.winner(g)
+  puts(w ? "winner: #{w}" : "result: draw")
+end
+
+analyse("X.O|.X.|...")
+analyse("XX.|OO.|...")
+analyse("X..|.O.|..X")
+analyse("XOX|OXO|OXO")
+analyse("XXX|OO.|...")
+analyse("O..|.X.|...")
+self_play("X..|...|...")
+self_play("X.O|...|...")

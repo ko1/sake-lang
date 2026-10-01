@@ -1,0 +1,103 @@
+# Positional numeral systems: converting to and from bases 2..36, parsing with
+# validation, balanced ternary, and numbers that are palindromes in two bases.
+
+InvalidDigit = Exception.new(:char, :base)
+
+def alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+def to_base(n, base)
+  raise ArgumentError, "base #{base} out of range" unless Integer.between?(base, 2, 36)
+  return "0" if n == 0
+  sign = n < 0 ? "-" : ""
+  n = Integer.abs(n)
+  out = ""
+  while n > 0
+    n, r = Integer.divmod(n, base)
+    out = alphabet[r] + out
+  end
+  sign + out
+end
+
+def parse_base(s, base)
+  s = String.downcase(String.strip(s))
+  neg = String.start_with?(s, "-")
+  s = String.delete_prefix(s, "-")
+  raise ArgumentError, "empty number" if String.empty?(s)
+  value = 0
+  String.each_char(s) do |c|
+    next if c == "_"
+    d = String.index(alphabet, c)
+    raise InvalidDigit.new("bad digit '#{c}' for base #{base}", c, base) if d == nil || d >= base
+    value = value * base + d
+  end
+  neg ? 0 - value : value
+end
+
+def balanced_ternary(n)
+  return "0" if n == 0
+  out = ""
+  while n != 0
+    r = n % 3
+    if r == 2
+      out = "T" + out
+      n = (n + 1) / 3
+    else
+      out = Integer.to_s(r) + out
+      n = (n - r) / 3
+    end
+  end
+  out
+end
+
+def from_balanced_ternary(s)
+  Array.reduce(String.chars(s), 0) do |acc, c|
+    acc * 3 + (c == "T" ? -1 : String.to_i(c))
+  end
+end
+
+puts("to_base:")
+Array.each(Array[[255, 2], [255, 16], [-42, 7], [1295, 36], [0, 5], [100, 1]]) do |n, b|
+  begin
+    puts("  #{n} in base #{b} = #{to_base(n, b)}")
+  rescue ArgumentError => e
+    puts("  #{n} in base #{b}: #{Exception.message(e)}")
+  end
+end
+
+puts("parse:")
+inputs = Array[["ff", 16], ["1010_1010", 2], ["-zz", 36], ["129", 8], ["", 10], [" 7Fa ", 16], ["12g", 16]]
+Array.each(inputs) do |s, b|
+  begin
+    v = parse_base(s, b)
+    puts(format("  %-12s base %2d = %d", "\"#{s}\"", b, v))
+  rescue InvalidDigit, ArgumentError => e
+    puts(format("  %-12s base %2d: %s", "\"#{s}\"", b, Exception.message(e)))
+  end
+end
+
+puts("round trips:")
+ok = Range.count(2..36) do |b|
+  Array.all?(Array[0, 1, 35, 1000, 65535, 123456789]) { |n| parse_base(to_base(n, b), b) == n }
+end
+puts("  bases with exact round trip: #{ok} of 35")
+
+puts("balanced ternary:")
+Array.each(Array[0, 1, 2, 5, 8, -7, 100, -100]) do |n|
+  bt = balanced_ternary(n)
+  puts(format("  %5d -> %-8s -> %d", n, bt, from_balanced_ternary(bt)))
+end
+
+puts("palindromic in base 10 and base 2:")
+both = Range.select(1..2000) do |n|
+  d = Integer.to_s(n)
+  b = to_base(n, 2)
+  d == String.reverse(d) && b == String.reverse(b)
+end
+Array.each(both) { |n| puts("  #{n} = #{to_base(n, 2)}") }
+
+puts("digit sums of 2^20 by base:")
+n = 2 ** 20
+Array.each(Array[2, 3, 7, 10, 16, 36]) do |b|
+  s = Array.sum(Array.map(String.chars(to_base(n, b))) { |c| String.index(alphabet, c) || 0 })
+  puts("  base #{b}: #{to_base(n, b)} (digit sum #{s})")
+end

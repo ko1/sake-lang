@@ -1,0 +1,133 @@
+# A binary min-heap over anything that supports <, used for Integers, Strings and Tasks.
+class Heap < {reader: [items]}
+  def empty = Heap.new(Array[])
+  def size(h) = Array.size(@items)
+  def empty?(h) = Array.empty?(@items)
+  def peek(h) = Array.first(@items)
+
+  def push(h, x)
+    Array.push(@items, x)
+    i = Array.size(@items) - 1
+    while i > 0
+      parent = (i - 1) / 2
+      break unless @items[i] < @items[parent]
+      swap(h, i, parent)
+      i = parent
+    end
+    h
+  end
+
+  def pop(h)
+    return nil if Array.empty?(@items)
+    top = @items[0]
+    last = Array.pop(@items)
+    if Array.empty?(@items) == false
+      @items[0] = last
+      i = 0
+      n = Array.size(@items)
+      while true
+        l = 2 * i + 1
+        r = l + 1
+        smallest = i
+        smallest = l if l < n && @items[l] < @items[smallest]
+        smallest = r if r < n && @items[r] < @items[smallest]
+        break if smallest == i
+        swap(h, i, smallest)
+        i = smallest
+      end
+    end
+    top
+  end
+
+  def swap(h, i, j)
+    t = @items[i]
+    @items[i] = @items[j]
+    @items[j] = t
+  end
+
+  def drain(h)
+    out = Array[]
+    while empty?(h) == false
+      Array.push(out, pop(h))
+    end
+    out
+  end
+end
+
+class Task < {reader: [id, title, priority, deadline], accessor: [done_at]}
+  include Comparable
+  def <=>(a, b)
+    c = @priority <=> Task.get_priority(b)
+    c = @deadline <=> Task.get_deadline(b) if c == 0
+    c = @id <=> Task.get_id(b) if c == 0
+    c
+  end
+  def to_s(t) = format("#%d %-18s p%d due %2d", @id, @title, @priority, @deadline)
+end
+
+def k_smallest(xs, k)
+  h = Heap.empty
+  Array.each(xs) { |x| Heap.push(h, x) }
+  Range.map(1..k) { Heap.pop(h) }
+end
+
+nums = Array[42, 7, 19, 3, 88, 3, 51, 26, 14, 70, 1, 65]
+puts("nums sorted by heap: #{Array.join(Heap.drain(Array.reduce(nums, Heap.empty) { |h, x| Heap.push(h, x) }), " ")}")
+puts("3 smallest: #{Array.join(k_smallest(nums, 3), ", ")}")
+words = String.split("pear fig apple kiwi banana cherry date", " ")
+wh = Heap.empty
+Array.each(words) { |w| Heap.push(wh, w) }
+puts("first word: #{Heap.peek(wh)}, size #{Heap.size(wh)}")
+puts("words: #{Array.join(Heap.drain(wh), " ")}")
+puts("pop from empty: #{Heap.pop(wh) == nil ? "nil" : "value"}")
+
+tasks = Task[
+  Task.new(1, "write report", 2, 9, nil),
+  Task.new(2, "fix prod bug", 0, 3, nil),
+  Task.new(3, "review PR", 1, 5, nil),
+  Task.new(4, "lunch", 3, 12, nil),
+  Task.new(5, "deploy hotfix", 0, 4, nil),
+  Task.new(6, "update docs", 2, 9, nil),
+  Task.new(7, "plan sprint", 1, 8, nil)
+]
+arrivals = Hash[0 => Array[1, 3, 4], 1 => Array[2], 3 => Array[5, 6], 6 => Array[7]]
+durations = Hash[1 => 3, 2 => 2, 3 => 1, 4 => 1, 5 => 1, 6 => 2, 7 => 2]
+
+puts("== scheduling ==")
+queue = Heap.empty
+clock = 0
+finished = Array[]
+while Array.size(finished) < Array.size(tasks)
+  Array.each(arrivals[clock] || Array[]) do |id|
+    t = Array.find(tasks) { |x| Task.get_id(x) == id }
+    Heap.push(queue, t) if t
+  end
+  current = Heap.pop(queue)
+  if current == nil
+    puts(format("t=%2d idle", clock))
+    clock += 1
+    next
+  end
+  spent = durations[Task.get_id(current)]
+  # newly arriving tasks during the run must wait; arrivals are processed tick by tick
+  Range.each((clock + 1)...(clock + spent)) do |tick|
+    Array.each(arrivals[tick] || Array[]) do |id|
+      t = Array.find(tasks) { |x| Task.get_id(x) == id }
+      Heap.push(queue, t) if t
+    end
+  end
+  clock += spent
+  Task.set_done_at(current, clock)
+  late = clock > Task.get_deadline(current) ? " LATE" : ""
+  puts(format("t=%2d done %s%s", clock, current, late))
+  Array.push(finished, current)
+end
+
+late_tasks = Array.select(finished) { |t| Task.get_done_at(t) > Task.get_deadline(t) }
+puts("late: #{Array.size(late_tasks)} of #{Array.size(finished)}")
+worst = Array.max_by(late_tasks) { |t| Task.get_done_at(t) - Task.get_deadline(t) }
+puts("worst: #{Task.get_title(worst)} by #{Task.get_done_at(worst) - Task.get_deadline(worst)}") if worst
+puts("sorted tasks:")
+Array.each(Array.sort(tasks)) { |t| puts("  #{t}") }
+puts("most urgent: #{Array.min(tasks)}")
+puts("tie broken by id: #{Task.new(9, "a", 2, 9, nil) < Task.new(1, "b", 2, 9, nil)}")

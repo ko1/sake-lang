@@ -1,0 +1,25 @@
+- registration_form: validate user registration submissions with per-field rules and accumulate every error per form, then summarize by field.
+- retry_backoff: call scripted flaky services with retry, exponential backoff with a cap, and distinguish transient, fatal and give-up errors.
+- config_loader: parse an INI-like config line by line, convert values against a typed schema with ranges, and collect parse/schema problems with line numbers.
+- bank_transfers: apply transfers between accounts with custom exceptions for missing, frozen, short and over-limit cases, rolling back partial withdrawals.
+- csv_import: import CSV product rows against a per-column schema (formats, ranges, calendar dates) and collect cell-level errors as records.
+- expr_calculator: tokenize, parse (recursive descent) and evaluate calculator lines with variables, reporting syntax errors with a caret and evaluation errors.
+- circuit_breaker: guard a scripted remote dependency with a closed/open/half-open circuit breaker that re-raises remote errors and rejects calls while open.
+- result_pipeline: validate order lines through a chain of steps returning {ok:}/{error:} records (railway style) instead of raising.
+- nested_schema: validate nested Hash/Array documents against a recursive rule tree, reporting type, range, missing and unexpected-field errors with JSON-style paths.
+- warehouse_reservation: reserve stock for multi-line orders across locked warehouses all-or-nothing, releasing locks in ensure and recording backorders.
+- order_lifecycle: drive orders through a transition table keyed by [state, event] tuples, raising InvalidTransition or GuardFailed and collecting them per order.
+- card_validation: validate payment card entries (brand by prefix, length, Luhn checksum, MM/YY expiry, CVV) raising one coded CardError per entry.
+- log_triage: parse structured log lines with a regexp, skip malformed lines until a limit aborts the run, and summarize errors per component.
+- dependency_resolver: compute package install order by DFS, raising CycleError with the cycle path, MissingPackage and VersionConflict.
+- matrix_checks: matrix +, -, * and [] on a Matrix type via Arithmetic/Indexable, raising DimensionError on shape mismatch and SingularMatrix for exact Rational inverses.
+- unit_quantities: parse quantity strings with units and aliases, convert between compatible units, and classify format, unknown-unit, dimension and value errors.
+- job_queue: run queued background jobs on a simulated clock, requeueing temporary failures with delays and dead-lettering permanent or exhausted ones.
+- http_error_mapping: route simulated HTTP requests through rate-limit and error-mapping middleware (yield) that turns domain exceptions into status codes.
+- param_coercion: coerce raw query-string parameters into ints, Rationals, booleans, symbols and lists per a spec with defaults, collecting coercion errors.
+- ledger_reconcile: load ledger and bank transactions (failing fast on corrupt rows or duplicate refs) and classify amount, date and missing-entry discrepancies.
+- quote_fallback: fetch currency quotes from providers in priority order under a simulated time budget, skipping bad providers and falling back to a cache.
+- password_policy: check password changes for length, character classes, leetspeak dictionary words, personal data and reuse, then score strength; violations travel in one exception.
+- error_wrapping: load profiles through storage and decode layers, wrapping low-level errors into higher-level ones and printing the cause chain.
+- contracts: a Contract mixin providing precondition, postcondition and invariant checks (dispatching to each type's describe/invariant_problem) used by a bounded Stack and an interval type.
+- spreadsheet_errors: evaluate spreadsheet cells with formulas and functions, turning raised CellErrors into propagated error values (#DIV/0!, #REF!, #CYCLE!, #NAME?, #VALUE!).

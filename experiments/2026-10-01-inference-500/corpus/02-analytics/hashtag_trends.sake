@@ -1,0 +1,87 @@
+Post = Struct.new(:day, :author, :text)
+
+def posts
+  Post[
+    Post.new(1, "ana", "Loving the new #ruby release! #programming"),
+    Post.new(1, "ben", "@ana agreed, #ruby keeps getting faster #perf"),
+    Post.new(1, "cy", "Coffee first, then #programming. #mondays"),
+    Post.new(1, "dee", "#mondays are hard @cy @ben"),
+    Post.new(2, "ana", "Benchmarks are in: #perf wins across the board #ruby"),
+    Post.new(2, "ben", "#perf #perf #perf (sorry) @ana"),
+    Post.new(2, "eve", "Anyone else trying #typeinference? @ana @ben"),
+    Post.new(2, "cy", "#typeinference without annotations sounds like magic"),
+    Post.new(3, "dee", "Reading about #typeinference and #ruby @eve"),
+    Post.new(3, "eve", "#TypeInference talk slides are up! #programming"),
+    Post.new(3, "ana", "@eve great talk #typeinference"),
+    Post.new(3, "fay", "first post, hello world #hello")
+  ]
+end
+
+def tags(text) = Array.uniq(Array.map(String.scan(text, /#(\w+)/)) { |m| String.downcase(m[0]) })
+def mentions(text) = Array.map(String.scan(text, /@(\w+)/)) { |m| m[0] }
+
+daily = Hash[]
+mention_graph = Hash[]
+tag_authors = Hash[]
+Array.each(posts) do |pt|
+  day = Post.get_day(pt)
+  counts = daily[day] ||= Hash.new(0)
+  Array.each(tags(Post.get_text(pt))) do |t|
+    counts[t] += 1
+    tag_authors[t] ||= Set[]
+    Set.add(tag_authors[t], Post.get_author(pt))
+  end
+  Array.each(mentions(Post.get_text(pt))) do |m|
+    targets = mention_graph[Post.get_author(pt)] ||= Hash.new(0)
+    targets[m] += 1
+  end
+end
+
+days = Array.sort(Hash.keys(daily))
+all_tags = Array.sort(Array.uniq(Array.flat_map(Hash.values(daily)) { |c| Hash.keys(c) }))
+puts(format("%-14s", "tag") + Array.join(Array.map(days) { |d| format("%5s", "d#{d}") }, "") + "  authors")
+Array.each(all_tags) do |t|
+  row = Array.map(days) { |d| format("%5d", daily[d][t]) }
+  puts(format("%-14s", "#" + t) + Array.join(row, "") + "  #{Set.size(tag_authors[t])}")
+end
+
+def trend(daily, tag, from, to)
+  before = daily[from][tag]
+  after = daily[to][tag]
+  return nil if before + after < 2
+  (after - before) * 1.0 / (before + 1)
+end
+
+scores = Array.filter_map(all_tags) do |t|
+  s = trend(daily, t, 1, 3)
+  s ? [t, s] : nil
+end
+rising = Array.sort_by(scores) { |t, s| format("%08.3f %s", 100.0 - s, t) }
+puts("trend day1 -> day3:")
+Array.each(rising) { |t, s| puts(format("  #%-13s %+.2f", t, s)) }
+
+puts("mentions:")
+Array.each(Array.sort(Hash.keys(mention_graph))) do |who|
+  targets = mention_graph[who]
+  parts = Array.map(Array.sort(Hash.keys(targets))) { |t| "#{t}x#{targets[t]}" }
+  puts("  #{who} -> #{Array.join(parts, " ")}")
+end
+
+received = Hash.new(0)
+Hash.each(mention_graph) { |who, targets| Hash.each(targets) { |t, n| received[t] += n } }
+star = Hash.max_by(received) { |who, n| n }
+if star
+  who, n = star
+  puts("most mentioned: @#{who} (#{n})")
+end
+mutual = Array[]
+Hash.each(mention_graph) do |a, targets|
+  Hash.each_key(targets) do |b|
+    back = mention_graph[b]
+    Array.push(mutual, "#{a}<->#{b}") if a < b && back && Hash.key?(back, a)
+  end
+end
+puts("mutual mentions: #{Array.join(Array.sort(mutual), ", ")}")
+silent = Array.sort(Array.uniq(Array.map(posts) { |pt| Post.get_author(pt) }))
+silent = Array.reject(silent) { |a| Hash.key?(mention_graph, a) || Hash.key?(received, a) }
+puts("never in a mention: #{Array.join(silent, ", ")}")

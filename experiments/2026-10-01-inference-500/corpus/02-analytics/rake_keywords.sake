@@ -1,0 +1,162 @@
+Keyword = Struct.new(:phrase, :score, :count, :docs)
+EmptyDocument = Exception.new(:name)
+
+def stopwords
+  Set["a", "an", "and", "are", "as", "at", "be", "by", "can", "for", "from", "has", "have", "in", "is",
+      "it", "its", "of", "on", "or", "over", "such", "that", "the", "their", "these", "this", "to", "using",
+      "was", "we", "which", "with", "be", "both", "into", "also", "than", "they", "all", "each", "only"]
+end
+
+def documents
+  Hash[
+    "inference" => "Compatibility of systems of linear constraints over the set of natural numbers. " +
+                   "Criteria of compatibility of a system of linear Diophantine equations, strict inequations, " +
+                   "and nonstrict inequations are considered. Upper bounds for components of a minimal set of " +
+                   "solutions and algorithms of construction of minimal generating sets of solutions for all " +
+                   "types of systems are given.",
+    "types" => "Type inference reconstructs the types of program expressions without annotations. " +
+               "A type inference engine collects constraints over type variables and solves the constraints " +
+               "by unification. Minimal annotations can still help the type inference engine report errors.",
+    "search" => "Keyword extraction finds the important phrases of a document. Rapid automatic keyword extraction " +
+                "scores candidate phrases by word degree and word frequency. Candidate phrases are split at " +
+                "stop words and punctuation.",
+    "blank" => "   "
+  ]
+end
+
+class Keyword
+  include Comparable
+  def <=>(a, b)
+    c = Keyword.get_score(b) <=> @score
+    c == 0 ? @phrase <=> Keyword.get_phrase(b) : c
+  end
+  def to_s(k) = format("%-42s %6.2f  x%d", @phrase, @score, @count)
+end
+
+module Scoring
+  module_function
+  def degree(freq, deg, w) = deg[w] * 1.0
+  def frequency(freq, deg, w) = freq[w] * 1.0
+  def ratio(freq, deg, w) = deg[w] * 1.0 / freq[w]
+  def score(metric, freq, deg, w)
+    case metric
+    in :degree then degree(freq, deg, w)
+    in :frequency then frequency(freq, deg, w)
+    in :ratio then ratio(freq, deg, w)
+    end
+  end
+end
+
+def candidates(text)
+  phrases = Array[]
+  sentences = String.split(String.downcase(text), /[.,;:!?()]+/)
+  Array.each(sentences) do |sentence|
+    current = Array[]
+    Array.each(String.split(sentence, /\s+/)) do |w|
+      next if String.empty?(w)
+      if Set.include?(stopwords, w)
+        Array.push(phrases, current) unless Array.empty?(current)
+        current = Array[]
+      else
+        Array.push(current, w)
+      end
+    end
+    Array.push(phrases, current) unless Array.empty?(current)
+  end
+  phrases
+end
+
+def word_stats(phrases)
+  freq = Hash.new(0)
+  deg = Hash.new(0)
+  Array.each(phrases) do |ph|
+    Array.each(ph) do |w|
+      freq[w] += 1
+      deg[w] += Array.size(ph)
+    end
+  end
+  [freq, deg]
+end
+
+def adjoining(text)
+  words = Array.reject(String.split(String.downcase(text), /[^a-z]+/)) { |w| String.empty?(w) }
+  found = Hash.new(0)
+  Array.each_cons(words, 3) do |tri|
+    a = tri[0]
+    mid = tri[1]
+    b = tri[2]
+    if Set.include?(stopwords, mid) && Set.include?(stopwords, a) == false && Set.include?(stopwords, b) == false
+      found["#{a} #{mid} #{b}"] += 1
+    end
+  end
+  Hash.select(found) { |k, n| n >= 2 }
+end
+
+def extract(name, text, metric)
+  raise EmptyDocument.new("document has no words", name) if String.empty?(String.strip(text))
+  phrases = candidates(text)
+  freq, deg = word_stats(phrases)
+  keywords = Hash[]
+  Array.each(phrases) do |ph|
+    key = Array.join(ph, " ")
+    s = Array.sum(ph) { |w| Scoring.score(metric, freq, deg, w) }
+    kw = keywords[key]
+    if kw
+      Keyword.set_count(kw, Keyword.get_count(kw) + 1)
+    else
+      keywords[key] = Keyword.new(key, s, 1, Set[name])
+    end
+  end
+  Hash.each(adjoining(text)) do |phrase, n|
+    parts = String.split(phrase, " ")
+    s = Array.sum(Array.reject(parts) { |w| Set.include?(stopwords, w) }) { |w| Scoring.score(metric, freq, deg, w) }
+    keywords[phrase] = Keyword.new(phrase, s, n, Set[name])
+  end
+  keywords
+end
+
+all = Hash[]
+skipped = Array[]
+Array.each(Array.sort(Hash.keys(documents))) do |name|
+  begin
+    kws = extract(name, documents[name], :ratio)
+  rescue EmptyDocument => e
+    Array.push(skipped, "#{EmptyDocument.get_name(e)} (#{EmptyDocument.get_message(e)})")
+    next
+  end
+  ranked = Array.sort(Hash.values(kws))
+  puts("== #{name}: #{Hash.size(kws)} candidates ==")
+  Array.each(Array.take(ranked, 5)) { |k| puts("  #{k}") }
+  Hash.each(kws) do |phrase, k|
+    merged = all[phrase]
+    if merged
+      Keyword.set_score(merged, Keyword.get_score(merged) + Keyword.get_score(k))
+      Keyword.set_count(merged, Keyword.get_count(merged) + Keyword.get_count(k))
+      Set.add(Keyword.get_docs(merged), name)
+    else
+      all[phrase] = Keyword.new(phrase, Keyword.get_score(k), Keyword.get_count(k), Set[name])
+    end
+  end
+end
+puts("skipped: #{Array.join(skipped, ", ")}") unless Array.empty?(skipped)
+
+shared = Array.select(Hash.values(all)) { |k| Set.size(Keyword.get_docs(k)) > 1 }
+puts("phrases in several documents: " +
+     Array.join(Array.map(Array.sort(shared)) { |k| "#{Keyword.get_phrase(k)} [#{Array.join(Set.sort(Keyword.get_docs(k)), ",")}]" }, "; "))
+
+repeated = Array.sort(Array.select(Hash.values(all)) { |k| Keyword.get_count(k) > 1 })
+puts("repeated phrases:")
+Array.each(repeated) { |k| puts("  #{k}") }
+
+puts("metric comparison for 'types':")
+Array.each(Array[:degree, :frequency, :ratio]) do |metric|
+  top = Array.take(Array.sort(Hash.values(extract("types", documents["types"], metric))), 3)
+  puts(format("  %-9s %s", metric, Array.join(Array.map(top) { |k| Keyword.get_phrase(k) }, " | ")))
+end
+
+phrases = candidates(documents["search"])
+freq, deg = word_stats(phrases)
+words = Array.sort_by(Hash.keys(freq)) { |w| format("%08.3f %s", 100.0 - Scoring.ratio(freq, deg, w), w) }
+puts("word scores (search): " + Array.join(Array.map(Array.take(words, 6)) { |w| format("%s=%d/%d", w, deg[w], freq[w]) }, " "))
+lengths = Array.tally(Array.map(phrases) { |ph| Array.size(ph) })
+puts("candidate lengths: " + Array.join(Array.map(Array.sort(Hash.keys(lengths))) { |n| "#{n}:#{lengths[n]}" }, " "))

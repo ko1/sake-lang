@@ -1,0 +1,129 @@
+Leaf = Struct.new(:label, :size)
+Split = Struct.new(:attr, :branches, :majority)
+
+def entropy(rows, target)
+  n = Float(Array.size(rows))
+  counts = Array.tally(Array.map(rows) { |r| r[target] })
+  Array.sum(Array.map(Hash.values(counts)) { |c| p = c / n; 0.0 - p * Math.log2(p) })
+end
+
+def majority(rows, target)
+  counts = Array.tally(Array.map(rows) { |r| r[target] })
+  best = Array.max_by(Array.sort(Hash.keys(counts))) { |k| counts[k] }
+  best
+end
+
+def gain(rows, attr, target)
+  base = entropy(rows, target)
+  groups = Array.group_by(rows) { |r| r[attr] }
+  rest = Array.sum(Array.map(Hash.values(groups)) { |g| Array.size(g) * entropy(g, target) / Array.size(rows) })
+  base - rest
+end
+
+def train(rows, attrs, target, depth, max_depth)
+  labels = Array.uniq(Array.map(rows) { |r| r[target] })
+  return Leaf.new(Array.first(labels), Array.size(rows)) if Array.size(labels) == 1
+  return Leaf.new(majority(rows, target), Array.size(rows)) if Array.empty?(attrs) || depth == max_depth
+  scored = Array.map(attrs) { |a| [a, gain(rows, a, target)] }
+  best, best_gain = Array.max_by(scored) { |_a, g| g }
+  return Leaf.new(majority(rows, target), Array.size(rows)) if best_gain < 0.001
+  remaining = Array.reject(attrs) { |a| a == best }
+  branches = Hash[]
+  groups = Array.group_by(rows) { |r| r[best] }
+  Array.each(Array.sort(Hash.keys(groups))) do |value|
+    branches[value] = train(groups[value], remaining, target, depth + 1, max_depth)
+  end
+  Split.new(best, branches, majority(rows, target))
+end
+
+def classify(node, row)
+  case node
+  in Leaf then Leaf.get_label(node)
+  in Split
+    child = Split.get_branches(node)[row[Split.get_attr(node)]]
+    child == nil ? Split.get_majority(node) : classify(child, row)
+  end
+end
+
+def show(node, indent)
+  case node
+  in Leaf then puts("#{indent}=> #{Leaf.get_label(node)} (#{Leaf.get_size(node)})")
+  in Split
+    Hash.each(Split.get_branches(node)) do |value, child|
+      if child in Leaf
+        puts("#{indent}#{Split.get_attr(node)} = #{value} => #{Leaf.get_label(child)} (#{Leaf.get_size(child)})")
+      else
+        puts("#{indent}#{Split.get_attr(node)} = #{value}:")
+        show(child, indent + "  ")
+      end
+    end
+  end
+end
+
+def count_nodes(node)
+  case node
+  in Leaf then [1, 1]
+  in Split
+    total = 1
+    leaves = 0
+    Hash.each_value(Split.get_branches(node)) do |c|
+      t, l = count_nodes(c)
+      total += t
+      leaves += l
+    end
+    [total, leaves]
+  end
+end
+
+def load(text)
+  lines = String.lines(String.strip(text))
+  header = String.split(String.strip(Array.shift(lines)), ",")
+  Array.map(lines) do |line|
+    row = Hash[]
+    Array.each_with_index(String.split(String.strip(line), ",")) { |v, i| row[header[i]] = v }
+    row
+  end
+end
+
+training = load(<<~CSV)
+  outlook,temp,humidity,wind,play
+  sunny,hot,high,weak,no
+  sunny,hot,high,strong,no
+  overcast,hot,high,weak,yes
+  rain,mild,high,weak,yes
+  rain,cool,normal,weak,yes
+  rain,cool,normal,strong,no
+  overcast,cool,normal,strong,yes
+  sunny,mild,high,weak,no
+  sunny,cool,normal,weak,yes
+  rain,mild,normal,weak,yes
+  sunny,mild,normal,strong,yes
+  overcast,mild,high,strong,yes
+  overcast,hot,normal,weak,yes
+  rain,mild,high,strong,no
+CSV
+attrs = Array["outlook", "temp", "humidity", "wind"]
+puts(format("entropy(play) = %.4f", entropy(training, "play")))
+Array.each(attrs) { |a| puts(format("  gain(%-8s) = %.4f", a, gain(training, a, "play"))) }
+
+Array.each(Array[1, 3]) do |max_depth|
+  tree = train(training, attrs, "play", 0, max_depth)
+  total, leaves = count_nodes(tree)
+  puts("-- max depth #{max_depth}: #{total} nodes, #{leaves} leaves --")
+  show(tree, "  ")
+  correct = Array.count(training) { |r| classify(tree, r) == r["play"] }
+  puts(format("  training accuracy: %d/%d (%.1f%%)", correct, Array.size(training), 100.0 * correct / Array.size(training)))
+end
+
+tree = train(training, attrs, "play", 0, 10)
+tests = load(<<~CSV)
+  outlook,temp,humidity,wind
+  sunny,cool,high,strong
+  overcast,mild,normal,weak
+  rain,hot,normal,strong
+  foggy,mild,high,weak
+CSV
+Array.each(tests) do |r|
+  desc = Array.join(Array.map(attrs) { |a| r[a] }, "/")
+  puts("#{desc} -> #{classify(tree, r)}")
+end

@@ -1,0 +1,117 @@
+Edge = Struct.new(:to, :next)
+QCell = Struct.new(:v, :next)
+CycleError = Exception.new(:stuck)
+
+class Graph < {reader: [names, ids, heads, indegree]}
+  def create = Graph.new(String[], Hash[], Array[], Integer[])
+
+  def id(g, name)
+    i = @ids[name]
+    return i if i
+    i = Array.size(@names)
+    @ids[name] = i
+    Array.push(@names, name)
+    Array.push(@heads, nil)
+    Array.push(@indegree, 0)
+    i
+  end
+
+  def add_edge(g, from, to)
+    a = id(g, from)
+    b = id(g, to)
+    @heads[a] = Edge.new(b, @heads[a])
+    @indegree[b] += 1
+  end
+
+  def each_neighbor(g, v)
+    e = @heads[v]
+    while e
+      yield(Edge.get_to(e))
+      e = Edge.get_next(e)
+    end
+  end
+
+  def topo_order(g)
+    deg = Array.dup(@indegree)
+    ready = Array.select(Range.to_a(0...Array.size(@names))) { |v| deg[v] == 0 }
+    ready = Array.sort_by(ready) { |v| @names[v] }
+    order = Array[]
+    until Array.empty?(ready)
+      v = Array.shift(ready)
+      Array.push(order, @names[v])
+      each_neighbor(g, v) do |w|
+        deg[w] -= 1
+        if deg[w] == 0
+          Array.push(ready, w)
+          ready = Array.sort_by(ready) { |x| @names[x] }
+        end
+      end
+    end
+    if Array.size(order) < Array.size(@names)
+      stuck = Array.sort(Array.map(Array.select(Range.to_a(0...Array.size(@names))) { |v| deg[v] > 0 }) { |v| @names[v] })
+      raise CycleError.new("cycle among #{Array.join(stuck, ", ")}", stuck)
+    end
+    order
+  end
+
+  def bfs_levels(g, start)
+    s = @ids[start]
+    return nil unless s
+    dist = Hash[s => 0]
+    head = QCell.new(s, nil)
+    tail = head
+    while head
+      v = QCell.get_v(head)
+      each_neighbor(g, v) do |w|
+        next if Hash.key?(dist, w)
+        dist[w] = dist[v] + 1
+        cell = QCell.new(w, nil)
+        QCell.set_next(tail, cell)
+        tail = cell
+      end
+      head = QCell.get_next(head)
+    end
+    levels = Hash[]
+    Hash.each(dist) do |v, d|
+      levels[d] ||= Array[]
+      Array.push(levels[d], @names[v])
+    end
+    levels
+  end
+end
+
+def load(spec)
+  g = Graph.create
+  Array.each(String.lines(spec)) do |line|
+    m = String.match(String.strip(line), /\A(\S+)\s*:\s*(.*)\z/)
+    next unless m
+    course = m[1]
+    Graph.id(g, course)
+    Array.each(String.split(m[2], ",")) do |pre|
+      pre = String.strip(pre)
+      Graph.add_edge(g, pre, course) unless String.empty?(pre)
+    end
+  end
+  g
+end
+
+catalog = "intro: \ndata: intro\nalgo: data, discrete\ndiscrete: intro\nos: data, arch\narch: intro\ncompilers: algo, arch\nml: algo, stats\nstats: discrete\ncapstone: compilers, ml, os\n"
+g = load(catalog)
+puts("#{Array.size(Graph.get_names(g))} courses")
+begin
+  puts("order: #{Array.join(Graph.topo_order(g), " -> ")}")
+rescue CycleError => e
+  puts("error: #{Exception.message(e)}")
+end
+levels = Graph.bfs_levels(g, "intro")
+Array.each(Array.sort(Hash.keys(levels))) { |d| puts("  #{d} step(s) after intro: #{Array.join(Array.sort(levels[d]), ", ")}") }
+from_algo = Graph.bfs_levels(g, "algo")
+puts("unlocked by algo: #{Array.join(Array.sort(Array.flat_map(Array.select(Hash.to_a(from_algo)) { |d, ns| d > 0 }) { |d, ns| ns }), ", ")}")
+p(Graph.bfs_levels(g, "astrology"))
+
+bad = load("a: c\nb: a\nc: b\nd: \ne: d\n")
+begin
+  Graph.topo_order(bad)
+rescue CycleError => e
+  puts("error: #{Exception.message(e)} (#{Array.size(CycleError.get_stuck(e))} stuck)")
+end

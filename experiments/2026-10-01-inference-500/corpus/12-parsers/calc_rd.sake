@@ -1,0 +1,192 @@
+ParseError = Exception.new(:pos)
+UnknownName = Exception.new(:name)
+
+Calc = Struct.new(:src, :pos, :env)
+
+class Calc
+  def skip_ws(c)
+    @pos += 1 while @src[@pos] == " "
+  end
+
+  def peek(c)
+    skip_ws(c)
+    @src[@pos]
+  end
+
+  def expect(c, ch)
+    got = peek(c)
+    raise ParseError.new("expected '#{ch}' but got #{got ? "'#{got}'" : "end"}", @pos) unless got == ch
+    @pos += 1
+  end
+
+  def at_end?(c) = peek(c) == nil
+
+  def statement(c)
+    skip_ws(c)
+    m = String.match(@src[@pos..], /\A([a-z_][a-z0-9_]*)\s*=(?!=)/)
+    if m
+      name = m[1]
+      @pos += String.size(MatchData.to_s(m))
+      v = expr(c)
+      Hash.store(@env, name, v)
+      return v
+    end
+    expr(c)
+  end
+
+  def expr(c)
+    v = term(c)
+    while true
+      op = peek(c)
+      if op == "+"
+        @pos += 1
+        v = v + term(c)
+      elsif op == "-"
+        @pos += 1
+        v = v - term(c)
+      else
+        break
+      end
+    end
+    v
+  end
+
+  def term(c)
+    v = power(c)
+    while true
+      op = peek(c)
+      if op == "*"
+        @pos += 1
+        v = v * power(c)
+      elsif op == "/"
+        @pos += 1
+        v = v / power(c)
+      elsif op == "%"
+        @pos += 1
+        v = v % power(c)
+      else
+        break
+      end
+    end
+    v
+  end
+
+  def power(c)
+    base = unary(c)
+    if peek(c) == "^"
+      @pos += 1
+      return base ** power(c)
+    end
+    base
+  end
+
+  def unary(c)
+    if peek(c) == "-"
+      @pos += 1
+      return 0 - unary(c)
+    end
+    primary(c)
+  end
+
+  def primary(c)
+    ch = peek(c)
+    raise ParseError.new("unexpected end of input", @pos) if ch == nil
+    if ch == "("
+      @pos += 1
+      v = expr(c)
+      expect(c, ")")
+      return v
+    end
+    rest = @src[@pos..]
+    m = String.match(rest, /\A\d+(\.\d+)?/)
+    if m
+      text = MatchData.to_s(m)
+      @pos += String.size(text)
+      return m[1] ? Float(text) : Integer(text)
+    end
+    m = String.match(rest, /\A[a-z_][a-z0-9_]*/)
+    raise ParseError.new("unexpected '#{ch}'", @pos) unless m
+    name = MatchData.to_s(m)
+    @pos += String.size(name)
+    if peek(c) == "("
+      @pos += 1
+      args = Array[expr(c)]
+      while peek(c) == ","
+        @pos += 1
+        Array.push(args, expr(c))
+      end
+      expect(c, ")")
+      return call(c, name, args)
+    end
+    v = @env[name]
+    raise UnknownName.new("unknown variable", name) if v == nil
+    v
+  end
+
+  def call(c, name, args)
+    if name == "max"
+      Array.max(args)
+    elsif name == "min"
+      Array.min(args)
+    elsif name == "abs"
+      a = args[0]
+      a < 0 ? 0 - a : a
+    elsif name == "sqrt"
+      Math.sqrt(args[0])
+    else
+      raise UnknownName.new("unknown function", name)
+    end
+  end
+end
+
+def evaluate(line, env)
+  c = Calc.new(line, 0, env)
+  v = Calc.statement(c)
+  raise ParseError.new("trailing input", Calc.get_pos(c)) unless Calc.at_end?(c)
+  v
+end
+
+def show(v)
+  if v in Float
+    Float.to_s(Float.round(v, 6))
+  else
+    Integer.to_s(v)
+  end
+end
+
+env = Hash["pi" => 3.141592653589793]
+lines = Array[
+  "1 + 2 * 3",
+  "(1 + 2) * 3",
+  "2 ^ 3 ^ 2",
+  "-4 + 10 / 3",
+  "17 % 5 * -2",
+  "r = 2.5",
+  "area = pi * r ^ 2",
+  "area / 2",
+  "max(3, 7 * 2, 9) - min(4, 1)",
+  "sqrt(16) + abs(-3)",
+  "x = (1 + 2",
+  "4 / (2 - 2)",
+  "y * 2",
+  "foo(1)",
+  "3 + * 4",
+  "1 2",
+  "count = count2 = 5"
+]
+
+Array.each_with_index(lines) do |line, i|
+  begin
+    v = evaluate(line, env)
+    puts(format("%2d  %-30s => %s", i + 1, line, show(v)))
+  rescue ParseError => e
+    puts(format("%2d  %-30s !! parse error at %d: %s", i + 1, line, ParseError.get_pos(e), Exception.message(e)))
+  rescue UnknownName => e
+    puts(format("%2d  %-30s !! %s '%s'", i + 1, line, Exception.message(e), UnknownName.get_name(e)))
+  rescue ZeroDivisionError
+    puts(format("%2d  %-30s !! division by zero", i + 1, line))
+  end
+end
+
+puts("variables:")
+Array.each(Array.sort(Hash.keys(env))) { |k| puts("  #{k} = #{show(env[k])}") }

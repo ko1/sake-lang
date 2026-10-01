@@ -1,0 +1,218 @@
+SyntaxErr = Exception.new(:token)
+TypeErr = Exception.new
+
+Stream = Struct.new(:tokens, :pos)
+
+class Stream
+  def peek(s) = @tokens[@pos]
+
+  def take(s)
+    t = @tokens[@pos]
+    raise SyntaxErr.new("unexpected end of input", "end") if t == nil
+    @pos += 1
+    t
+  end
+
+  def expect(s, want)
+    t = take(s)
+    raise SyntaxErr.new("expected '#{want}'", t) unless t == want
+  end
+
+  def expr(s)
+    t = peek(s)
+    if t == "let"
+      take(s)
+      name = take(s)
+      raise SyntaxErr.new("expected a name", name) unless String.match?(name, /\A[a-z_]\w*\z/)
+      expect(s, "=")
+      value = expr(s)
+      expect(s, "in")
+      return [:let, name, value, expr(s)]
+    end
+    if t == "if"
+      take(s)
+      c = expr(s)
+      expect(s, "then")
+      a = expr(s)
+      expect(s, "else")
+      return [:if, c, a, expr(s)]
+    end
+    compare(s)
+  end
+
+  def compare(s)
+    left = concat(s)
+    op = peek(s)
+    if op == "==" || op == "<"
+      take(s)
+      return [:bin, op, left, concat(s)]
+    end
+    left
+  end
+
+  def concat(s)
+    left = additive(s)
+    left = [:bin, take(s), left, additive(s)] while peek(s) == "++"
+    left
+  end
+
+  def additive(s)
+    left = term(s)
+    left = [:bin, take(s), left, term(s)] while peek(s) == "+" || peek(s) == "-"
+    left
+  end
+
+  def term(s)
+    left = atom(s)
+    left = [:bin, take(s), left, atom(s)] while peek(s) == "*"
+    left
+  end
+
+  def atom(s)
+    t = take(s)
+    if t == "("
+      e = expr(s)
+      expect(s, ")")
+      e
+    elsif String.match?(t, /\A\d+\z/)
+      [:lit, String.to_i(t)]
+    elsif String.start_with?(t, "\"")
+      [:lit, t[1...-1]]
+    elsif t == "true" || t == "false"
+      [:lit, t == "true"]
+    elsif String.match?(t, /\A[a-z_]\w*\z/) && Array.include?(Array["let", "in", "if", "then", "else"], t) == false
+      if peek(s) == "("
+        take(s)
+        arg = expr(s)
+        expect(s, ")")
+        return [:call, t, arg]
+      end
+      [:var, t]
+    else
+      raise SyntaxErr.new("unexpected token", t)
+    end
+  end
+end
+
+def parse(src)
+  s = Stream.new(String.scan(src, /"[^"]*"|\d+|[a-z_]\w*|\+\+|==|\S/), 0)
+  e = Stream.expr(s)
+  rest = Stream.peek(s)
+  raise SyntaxErr.new("unexpected token", rest) if rest != nil
+  e
+end
+
+def builtins
+  Hash["len" => [:str, :int], "show" => [:int, :str], "not" => [:bool, :bool], "upcase" => [:str, :str]]
+end
+
+def type_of_value(v)
+  case v
+  in Integer then :int
+  in String then :str
+  in true | false then :bool
+  end
+end
+
+def check(e, env)
+  case e[0]
+  in :lit then type_of_value(e[1])
+  in :var
+    t = env[e[1]]
+    raise TypeErr.new("unbound variable #{e[1]}") if t == nil
+    t
+  in :let then check(e[3], Hash.merge(env, Hash[e[1] => check(e[2], env)]))
+  in :if
+    c = check(e[1], env)
+    raise TypeErr.new("condition must be bool, got #{c}") unless c == :bool
+    a = check(e[2], env)
+    b = check(e[3], env)
+    raise TypeErr.new("branches differ: #{a} vs #{b}") unless a == b
+    a
+  in :call
+    sig = builtins[e[1]]
+    raise TypeErr.new("unknown function #{e[1]}") if sig == nil
+    param, result = sig
+    arg = check(e[2], env)
+    raise TypeErr.new("#{e[1]} expects #{param}, got #{arg}") unless arg == param
+    result
+  in :bin
+    op = e[1]
+    l = check(e[2], env)
+    r = check(e[3], env)
+    case op
+    in "+" | "-" | "*"
+      raise TypeErr.new("'#{op}' needs int operands, got #{l} and #{r}") unless l == :int && r == :int
+      :int
+    in "++"
+      raise TypeErr.new("'++' needs str operands, got #{l} and #{r}") unless l == :str && r == :str
+      :str
+    in "<"
+      raise TypeErr.new("'<' needs int operands, got #{l} and #{r}") unless l == :int && r == :int
+      :bool
+    in "=="
+      raise TypeErr.new("'==' compares #{l} with #{r}") unless l == r
+      :bool
+    end
+  end
+end
+
+def evaluate(e, env)
+  case e[0]
+  in :lit then e[1]
+  in :var then env[e[1]]
+  in :let then evaluate(e[3], Hash.merge(env, Hash[e[1] => evaluate(e[2], env)]))
+  in :if then evaluate(e[1], env) ? evaluate(e[2], env) : evaluate(e[3], env)
+  in :call
+    v = evaluate(e[2], env)
+    case e[1]
+    in "len" then String.size(v)
+    in "show" then Integer.to_s(v)
+    in "not" then v == false
+    in "upcase" then String.upcase(v)
+    end
+  in :bin
+    a = evaluate(e[2], env)
+    b = evaluate(e[3], env)
+    case e[1]
+    in "+" then a + b
+    in "-" then a - b
+    in "*" then a * b
+    in "++" then a + b
+    in "<" then a < b
+    in "==" then a == b
+    end
+  end
+end
+
+def show_value(v) = (v in String) ? Kernel.inspect(v) : Kernel.to_s(v)
+
+programs = Array[
+  "1 + 2 * 3",
+  "let x = 5 in let y = x * x in y - x",
+  "\"ab\" ++ show(len(\"hello\") + 1)",
+  "if len(\"abc\") < 4 then upcase(\"short\") else \"long\"",
+  "let ok = not(1 == 2) in if ok then 10 else 20",
+  "let s = \"x\" in s == \"x\"",
+  "1 + \"two\"",
+  "if 1 then 2 else 3",
+  "if true then 1 else \"one\"",
+  "len(42)",
+  "let a = 1 in b",
+  "frob(1)",
+  "\"a\" == 1",
+  "let x = in 3",
+  "(1 + 2",
+  "1 2"
+]
+Array.each(programs) do |src|
+  begin
+    e = parse(src)
+    t = check(e, Hash[])
+    puts("#{src}\n  : #{t} = #{show_value(evaluate(e, Hash[]))}")
+  rescue SyntaxErr => err
+    puts("#{src}\n  syntax error: #{Exception.message(err)} at '#{SyntaxErr.get_token(err)}'")
+  rescue TypeErr => err
+    puts("#{src}\n  type error: #{Exception.message(err)}")
+  end
+end

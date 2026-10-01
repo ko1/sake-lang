@@ -1,0 +1,111 @@
+Hourly = Struct.new(:id, :name, :rate, :retirement_pct)
+Salaried = Struct.new(:id, :name, :annual, :retirement_pct)
+Stub = Struct.new(:employee, :gross, :pretax, :tax, :health, :net)
+PayrollError = Exception.new(:employee_id)
+
+# yearly brackets: [upper limit, rate]; nil limit is the top bracket
+def brackets = Array[[10000, 0.0], [40000, 0.12], [90000, 0.22], [nil, 0.3]]
+def health_premium = 85.0
+def periods_per_year = 26
+
+# shared by both kinds of employee; Employee.f(e) runs the f of e's type
+module Employee
+  def name(e) = get_name(e)
+  def id(e) = get_id(e)
+  def retirement(e) = get_retirement_pct(e)
+  def label(e) = "#{get_id(e)} #{get_name(e)}"
+  def gross_pay(e, hours) = raise("gross_pay is not defined for #{get_name(e)}")
+end
+
+class Hourly
+  include Employee
+  def gross_pay(e, hours)
+    raise PayrollError.new("no timecard", @id) if hours == nil
+    raise PayrollError.new("impossible hours #{hours}", @id) if hours > 100 || hours < 0
+    regular = Array.min(Array[hours, 80.0])
+    overtime = hours - regular
+    @rate * regular + @rate * 1.5 * overtime
+  end
+end
+
+class Salaried
+  include Employee
+  def gross_pay(e, hours) = @annual / periods_per_year
+end
+
+# tax on one period: annualize, apply the brackets, divide back
+def period_tax(taxable)
+  yearly = taxable * periods_per_year
+  tax = 0.0
+  lower = 0
+  Array.each(brackets) do |limit, rate|
+    top = limit || yearly
+    if yearly > lower
+      tax += (Array.min(Array[yearly, top]) - lower) * rate
+    end
+    lower = top
+  end
+  Float.round(tax / periods_per_year, 2)
+end
+
+def run_period(employees, timecards)
+  stubs = Stub[]
+  errors = Array[]
+  Array.each(employees) do |e|
+    begin
+      gross = Float.round(Employee.gross_pay(e, timecards[Employee.id(e)]), 2)
+      pretax = Float.round(gross * Employee.retirement(e) / 100.0, 2)
+      tax = period_tax(gross - pretax)
+      net = Float.round(gross - pretax - tax - health_premium, 2)
+      Array.push(stubs, Stub.new(e, gross, pretax, tax, health_premium, net))
+    rescue PayrollError => err
+      Array.push(errors, "#{Employee.label(e)}: #{Exception.message(err)}")
+    end
+  end
+  [stubs, errors]
+end
+
+employees = Array[
+  Hourly.new(101, "Rosa", 22.5, 3),
+  Hourly.new(102, "Tomas", 18.0, 0),
+  Salaried.new(201, "Ingrid", 78000.0, 6),
+  Hourly.new(103, "Wei", 31.0, 5),
+  Salaried.new(202, "Omar", 132000.0, 10),
+  Hourly.new(104, "Lena", 16.75, 2)
+]
+
+periods = Array[
+  ["Sep 1-14", Hash[101 => 80.0, 102 => 86.5, 103 => 72.0, 104 => 40.0]],
+  ["Sep 15-28", Hash[101 => 91.0, 102 => 80.0, 103 => 120.0]]
+]
+
+ytd = Hash.new(0.0)
+Array.each(periods) do |label, cards|
+  stubs, errors = run_period(employees, cards)
+  puts("== Pay period #{label} ==")
+  puts(format("%-7s %9s %8s %8s %7s %9s", "name", "gross", "401k", "tax", "health", "net"))
+  Array.each(stubs) do |s|
+    e = Stub.get_employee(s)
+    puts(format("%-7s %9.2f %8.2f %8.2f %7.2f %9.2f", Employee.name(e), Stub.get_gross(s), Stub.get_pretax(s), Stub.get_tax(s), Stub.get_health(s), Stub.get_net(s)))
+    ytd[Employee.name(e)] += Stub.get_gross(s)
+  end
+  Array.each(errors) { |m| puts("  skipped #{m}") }
+  total_gross = Array.sum(stubs) { |s| Stub.get_gross(s) }
+  total_tax = Array.sum(stubs) { |s| Stub.get_tax(s) }
+  puts(format("%-7s %9.2f %8s %8.2f", "total", total_gross, "", total_tax))
+  hourly_cost = Array.sum(Array.select(stubs) { |s| Stub.get_employee(s) in Hourly }) { |s| Stub.get_gross(s) }
+  puts(format("hourly share %.1f%%", hourly_cost * 100 / total_gross))
+  puts
+end
+
+puts("Year to date:")
+Array.each(Hash.sort_by(ytd) { |n, g| 0.0 - g }) do |n, g|
+  puts(format("  %-7s %10.2f", n, g))
+end
+top_name, top_gross = Hash.max_by(ytd) { |n, g| g }
+puts("Highest paid: #{top_name}")
+effective = Array.map(Array[30000, 60000, 100000, 150000]) do |income|
+  t = period_tax(income * 1.0 / periods_per_year) * periods_per_year
+  format("%d: %.1f%%", income, t * 100 / income)
+end
+puts("Effective rates: #{Array.join(effective, ", ")}")

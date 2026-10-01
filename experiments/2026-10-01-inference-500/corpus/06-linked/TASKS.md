@@ -1,0 +1,25 @@
+- singly_linked_list: A singly linked list with head/tail/size: push/pop, find, remove, in-place reverse, sorted insert.
+- rpn_stack_calculator: Evaluates RPN expressions on a linked-cell stack with tracing and custom underflow/bad-token exceptions.
+- markup_tag_checker: Checks tag nesting in small HTML-like documents with a parent-linked frame stack, reporting stray, crossed, and unclosed tags.
+- two_stack_print_queue: A print spooler whose FIFO queue is built from two linked stacks, driven by Record-shaped requests with per-owner budgets.
+- ring_buffer_metrics: Fixed-capacity ring buffers (overwrite or raise when full) keep sliding windows of metric readings and raise alerts on high averages.
+- deque_sliding_window: A doubly linked deque with negative indexing via `[]`, used for sliding-window maxima, palindrome checks, and rotation.
+- lru_cache: An LRU cache from a Hash plus a doubly linked recency list, used directly, to memoize a slow function at several sizes, and to cache pages by Symbol.
+- lfu_cache_buckets: An O(1) LFU cache with a doubly linked list of frequency buckets, each holding a doubly linked list of items.
+- merge_log_streams: Parses per-host log streams into linked lists, merge-sorts an unordered one, and merges all streams pairwise by a Comparable timestamp.
+- sparse_polynomial: Sparse polynomials as sorted linked lists of terms with user-defined `+ - *`, derivative, power, evaluation, and Rational coefficients.
+- josephus_circle: Runs the Josephus elimination on a circular singly linked list of seats and checks winners against the closed-form recurrence.
+- undo_redo_editor: A text editor whose commands (Insert/Delete/Replace structs) live on linked undo/redo stacks, with inverses, save points, and a dirty flag.
+- skip_list_index: A skip list with an LCG-driven level generator, supporting insert/update, delete, range queries, and per-level counts over Integer and String keys.
+- browser_history: Browser tab history as a doubly linked list of pages with back/forward by N steps, truncating forward history on a new visit.
+- triage_priority_list: An emergency-room wait list kept as a sorted linked list of Comparable patients, with escalation, leaving, and wait statistics.
+- bank_teller_sim: A discrete-time bank simulation with one linked queue per teller, shortest-line assignment, and wait statistics from a module_function Stats module.
+- digit_list_bignum: Arbitrary-size naturals as little-endian digit lists with `+`, `*`, Comparable ordering, factorials, and Fibonacci, checked against Integer.
+- cycle_detection: Builds rho-shaped linked lists and finds cycle start and length with Floyd and Brent, cross-checks with a visited set, then breaks the cycle.
+- free_list_pool: A fixed-size resource pool with index-linked free and in-use lists in parallel arrays, with exhaustion and bad-handle exceptions.
+- circular_playlist: A circular doubly linked playlist with skipping both ways, removal, moving the current track, timed playback, and per-artist totals.
+- sparse_matrix_rows: Sparse matrices as per-row sorted linked lists of entries, with `[[r, c]]` indexing, `+`, `*`, transpose, and matrix-vector products.
+- chained_hash_table: A string-keyed hash table with separate chaining, djb2 hashing, `[]`/`[]=` operators, deletion, and growth by rehashing chains.
+- adjacency_list_courses: A course-prerequisite graph with linked adjacency lists: Kahn topological order with cycle reporting, and BFS levels using a linked queue.
+- monotonic_stack_prices: A linked stack whose frames carry running min/max, used for stock spans, next-greater elements, and the largest rectangle in a histogram.
+- list_toolkit: A module_function toolkit over cons cells (dedupe, partition, k-th from end, in-place palindrome check, rotate, interleave, fold) applied to Integer, character, and word lists.

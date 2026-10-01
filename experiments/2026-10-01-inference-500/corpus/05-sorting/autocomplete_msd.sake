@@ -1,0 +1,86 @@
+# An autocomplete index: MSD radix sort of a word list (bucket per character),
+# then prefix queries answered with two binary searches on the sorted list.
+
+def char_at(s, d)
+  return 0 if d >= String.size(s)
+  String.ord(s[d]) - 96
+end
+
+def msd_sort(words, d)
+  return words if Array.size(words) <= 1
+  buckets = Array[]
+  Integer.times(27) { Array.push(buckets, Array[]) }
+  Array.each(words) { |w| Array.push(buckets[char_at(w, d)], w) }
+  out = Array.dup(buckets[0])
+  Integer.upto(1, 26) do |c|
+    Array.concat(out, msd_sort(buckets[c], d + 1))
+  end
+  out
+end
+
+def first_at_least(sorted, s)
+  lo = 0
+  hi = Array.size(sorted)
+  while lo < hi
+    mid = (lo + hi) / 2
+    if sorted[mid] < s
+      lo = mid + 1
+    else
+      hi = mid
+    end
+  end
+  lo
+end
+
+def complete(sorted, prefix, limit)
+  start = first_at_least(sorted, prefix)
+  stop = first_at_least(sorted, prefix + "{")   # "{" sorts right after "z"
+  matches = sorted[start...stop]
+  [stop - start, Array.take(matches, limit)]
+end
+
+def normalize(text)
+  words = String.split(String.downcase(text), /[^a-z]+/)
+  Array.reject(words) { |w| String.empty?(w) }
+end
+
+def longest_common_prefix(a, b)
+  n = 0
+  n += 1 while n < String.size(a) && n < String.size(b) && a[n] == b[n]
+  a[0...n]
+end
+
+text = "The quick brown fox jumps over the lazy dog. A quiet quarry quietly quits; " +
+       "the dog dozes, the fox forages. Brown bread, brownies and broth: browse the bakery. " +
+       "Jumping jacks, jumpers and jugglers join the joyful jamboree."
+
+words = Array.uniq(normalize(text))
+sorted = msd_sort(words, 0)
+puts("#{Array.size(sorted)} distinct words")
+puts("msd order matches builtin sort: #{Array.join(sorted, " ") == Array.join(Array.sort(words), " ")}")
+puts(Array.join(Array.take(sorted, 10), " "))
+
+Array.each(Array["qu", "brow", "j", "the", "x", "do"]) do |prefix|
+  total, shown = complete(sorted, prefix, 4)
+  more = total > Array.size(shown) ? " (+#{total - Array.size(shown)} more)" : ""
+  puts(format("%-5s -> %s%s", prefix, Array.join(shown, ", "), more))
+end
+
+freq = Array.tally(normalize(text))
+best = nil
+Hash.each(freq) do |w, n|
+  if best == nil || n > freq[best] || (n == freq[best] && w < best)
+    best = w
+  end
+end
+puts("most frequent: #{best} x#{freq[best]}")
+
+groups = Array.chunk_while(sorted) { |a, b| a[0] == b[0] }
+widest = Array.max_by(groups) { |g| Array.size(g) }
+puts("largest initial-letter group: #{widest[0][0]} (#{Array.size(widest)} words)")
+best_lcp = ""
+Integer.upto(1, Array.size(sorted) - 1) do |i|
+  l = longest_common_prefix(sorted[i - 1], sorted[i])
+  best_lcp = l if String.size(l) > String.size(best_lcp)
+end
+puts("longest shared prefix between neighbours: #{best_lcp}")

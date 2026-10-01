@@ -1,0 +1,108 @@
+# cells: 1 = filled, 0 = empty, nil = unknown
+def clue(line)
+  runs = Array.chunk_while(line) { |a, b| a == b }
+  Array.map(Array.select(runs) { |run| run[0] == 1 }) { |run| Array.size(run) }
+end
+
+def arrangements(clues, length)
+  return Array[Range.map(0...length) { 0 }] if Array.empty?(clues)
+  first = Array.first(clues)
+  rest = Array.drop(clues, 1)
+  min_rest = Array.sum(rest) + Array.size(rest)
+  out = Array[]
+  Range.each(0..(length - first - min_rest)) do |start|
+    head = Array[]
+    Integer.times(start) { Array.push(head, 0) }
+    Integer.times(first) { Array.push(head, 1) }
+    if Array.empty?(rest)
+      Integer.times(length - start - first) { Array.push(head, 0) }
+      Array.push(out, head)
+    else
+      Array.push(head, 0)
+      Array.each(arrangements(rest, length - Array.size(head))) do |tail|
+        Array.push(out, Array.concat(Array.dup(head), tail))
+      end
+    end
+  end
+  out
+end
+
+def fits?(candidate, known)
+  Array.all?(Array.zip(candidate, known)) { |c, k| k == nil || k == c }
+end
+
+# returns the line with every cell that all consistent arrangements agree on
+def refine(clues, known)
+  options = Array.select(arrangements(clues, Array.size(known))) { |a| fits?(a, known) }
+  return nil if Array.empty?(options)
+  Range.map(0...Array.size(known)) do |i|
+    values = Array.uniq(Array.map(options) { |a| a[i] })
+    Array.size(values) == 1 ? values[0] : nil
+  end
+end
+
+Puzzle = Struct.new(:row_clues, :col_clues, :grid)
+
+class Puzzle
+  def from_picture(lines)
+    pic = Array.map(lines) { |l| Array.map(String.chars(l)) { it == "#" ? 1 : 0 } }
+    cols = Range.map(0...String.size(lines[0])) { |c| Array.map(pic) { |row| row[c] } }
+    grid = Array.map(pic) { |row| Array.map(row) { nil } }
+    Puzzle.new(Array.map(pic) { clue(it) }, Array.map(cols) { clue(it) }, grid)
+  end
+
+  def column(pz, c) = Array.map(@grid) { |row| row[c] }
+
+  def unknowns(pz) = Array.sum(Array.map(@grid) { |row| Array.count(row) { it == nil } })
+
+  # one sweep over rows then columns; returns false on a contradiction
+  def sweep(pz)
+    Array.each_with_index(@row_clues) do |clues, r|
+      line = refine(clues, @grid[r])
+      return false unless line
+      @grid[r] = line
+    end
+    Array.each_with_index(@col_clues) do |clues, c|
+      line = refine(clues, column(pz, c))
+      return false unless line
+      Array.each_with_index(line) { |v, r| @grid[r][c] = v }
+    end
+    true
+  end
+
+  def solve(pz)
+    passes = 0
+    while unknowns(pz) > 0
+      before = unknowns(pz)
+      passes += 1
+      return [:contradiction, passes] unless sweep(pz)
+      return [:stuck, passes] if unknowns(pz) == before
+    end
+    [:solved, passes]
+  end
+
+  def to_s(pz)
+    Array.join(Array.map(@grid) do |row|
+      Array.join(Array.map(row) { |v| v == nil ? "?" : (v == 1 ? "#" : ".") }, "")
+    end, "\n")
+  end
+end
+
+def clue_text(clues) = Array.join(Array.map(clues) { |c| Array.empty?(c) ? "0" : Array.join(c, ".") }, " ")
+
+def run(name, lines)
+  pz = Puzzle.from_picture(lines)
+  puts("#{name}: rows #{clue_text(Puzzle.get_row_clues(pz))} | cols #{clue_text(Puzzle.get_col_clues(pz))}")
+  status, passes = Puzzle.solve(pz)
+  puts("  #{status} after #{passes} passes, #{Puzzle.unknowns(pz)} unknown")
+  puts(pz)
+  if status == :solved
+    same = Array.join(Array.map(Puzzle.get_grid(pz)) { |row| Array.join(Array.map(row) { it == 1 ? "#" : "." }, "") }, "/") == Array.join(lines, "/")
+    puts("  matches picture: #{same}")
+  end
+end
+
+run("heart", Array[".##.##.", "#######", "#######", ".#####.", "..###..", "...#..."])
+run("arrow", Array["..#...", "..##..", "######", "######", "..##..", "..#..."])
+run("checker", Array["#.#.", ".#.#", "#.#.", ".#.#"])
+run("empty corner", Array["###", "#..", "#.."])

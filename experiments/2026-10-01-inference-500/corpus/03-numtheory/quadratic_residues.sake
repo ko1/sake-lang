@@ -1,0 +1,124 @@
+# Quadratic residues: Legendre and Jacobi symbols, quadratic reciprocity check,
+# Tonelli-Shanks square roots mod p, and primes as sums of two squares.
+
+NoSquareRoot = Exception.new(:a, :p)
+
+def legendre(a, p)
+  r = Integer.pow(a % p, (p - 1) / 2, p)
+  r == p - 1 ? -1 : r
+end
+
+def jacobi(a, n)
+  raise ArgumentError, "n must be odd and positive" if n <= 0 || Integer.even?(n)
+  a %= n
+  result = 1
+  while a != 0
+    while Integer.even?(a)
+      a /= 2
+      result = 0 - result if n % 8 == 3 || n % 8 == 5
+    end
+    a, n = n, a
+    result = 0 - result if a % 4 == 3 && n % 4 == 3
+    a %= n
+  end
+  n == 1 ? result : 0
+end
+
+def sqrt_mod(a, p)
+  a %= p
+  return 0 if a == 0
+  raise NoSquareRoot.new("#{a} is not a square mod #{p}", a, p) if legendre(a, p) != 1
+  return Integer.pow(a, (p + 1) / 4, p) if p % 4 == 3
+  q = p - 1
+  s = 0
+  while Integer.even?(q)
+    q /= 2
+    s += 1
+  end
+  z = 2
+  z += 1 while legendre(z, p) != -1
+  m = s
+  c = Integer.pow(z, q, p)
+  t = Integer.pow(a, q, p)
+  r = Integer.pow(a, (q + 1) / 2, p)
+  while t != 1
+    i = 0
+    t2 = t
+    while t2 != 1
+      t2 = t2 * t2 % p
+      i += 1
+    end
+    b = Integer.pow(c, 2 ** (m - i - 1), p)
+    m = i
+    c = b * b % p
+    t = t * c % p
+    r = r * b % p
+  end
+  r
+end
+
+def two_squares(p)
+  return [1, 1] if p == 2
+  x = sqrt_mod(p - 1, p)
+  a, b = p, x
+  limit = Integer.sqrt(p)
+  while b > limit
+    a, b = b, a % b
+  end
+  c = Integer.sqrt(p - b * b)
+  [b < c ? b : c, b < c ? c : b]
+end
+
+def primes_upto(n) = Range.select(2..n) { |k| Range.none?(2..Integer.sqrt(k)) { |d| k % d == 0 } }
+
+p = 23
+qr = Array.select(Range.to_a(1..(p - 1))) { |a| legendre(a, p) == 1 }
+puts("quadratic residues mod #{p}: #{Array.join(qr, " ")}")
+squares = Array.uniq(Array.sort(Array.map(Range.to_a(1..(p - 1))) { |x| x * x % p }))
+puts("matches squares: #{Array.join(squares, " ") == Array.join(qr, " ")}")
+
+primes = Array.drop(primes_upto(200), 1)
+recip = Array[]
+Array.each(primes) do |p1|
+  Array.each(primes) do |q1|
+    next if q1 <= p1
+    lhs = legendre(p1, q1) * legendre(q1, p1)
+    rhs = Integer.even?((p1 - 1) / 2 * ((q1 - 1) / 2)) ? 1 : -1
+    Array.push(recip, [p1, q1]) if lhs != rhs
+  end
+end
+puts("reciprocity violations among odd primes < 200: #{Array.size(recip)}")
+
+puts("Jacobi symbols (a/n):")
+Array.each(Integer[15, 21, 45]) do |n|
+  row = Array.map(Range.to_a(1..12)) { |a| String.rjust(Integer.to_s(jacobi(a, n)), 2) }
+  puts("  n=#{n}: #{Array.join(row, " ")}")
+end
+begin
+  jacobi(3, 10)
+rescue ArgumentError => e
+  puts("  jacobi(3, 10): #{Exception.message(e)}")
+end
+
+puts("square roots mod p:")
+Array.each(Array[[10, 13], [5, 41], [2, 113], [3, 7], [56, 101], [1030, 10009]]) do |a, pr|
+  begin
+    r = sqrt_mod(a, pr)
+    other = (pr - r) % pr
+    lo = r < other ? r : other
+    puts("  sqrt(#{a}) mod #{pr} = #{lo}, #{pr - lo}  (check #{lo * lo % pr})")
+  rescue NoSquareRoot => e
+    puts("  #{Exception.message(e)}")
+  end
+end
+
+puts("primes = 1 mod 4 as a^2 + b^2:")
+sums = Array.map(Array.select(primes) { |q| q % 4 == 1 && q < 120 }) do |q|
+  a, b = two_squares(q)
+  "#{q}=#{a}^2+#{b}^2"
+end
+Array.each_slice(sums, 5) { |row| puts("  " + Array.join(row, "  ")) }
+
+counts = Hash.new(0)
+Array.each(primes) { |q| counts[legendre(2, q)] += 1 }
+puts("2 is a residue for #{counts[1]} primes, a non-residue for #{counts[-1]}")

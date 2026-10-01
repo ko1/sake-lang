@@ -1,0 +1,123 @@
+Spot = Struct.new(:level, :number, :size, :plate)
+Ticket = Struct.new(:plate, :spot, :entered, :kind)
+GarageFull = Exception.new(:plate, :kind)
+
+def size_rank(size)
+  case size
+  in :compact then 1
+  in :regular then 2
+  in :large then 3
+  end
+end
+
+def needed_size(kind)
+  case kind
+  in :motorcycle then :compact
+  in :car then :regular
+  in :van | :truck then :large
+  end
+end
+
+class Garage < {reader: [spots, tickets, receipts]}
+  def free_spots(g) = Array.select(@spots) { Spot.get_plate(it) == nil }
+
+  def park(g, plate, kind, at)
+    need = size_rank(needed_size(kind))
+    fits = Array.select(free_spots(g)) { |s| size_rank(Spot.get_size(s)) >= need }
+    spot = Array.min_by(fits) { |s| size_rank(Spot.get_size(s)) * 1000 + Spot.get_level(s) * 100 + Spot.get_number(s) }
+    raise GarageFull.new("no spot for #{plate}", plate, kind) if spot == nil
+    Spot.set_plate(spot, plate)
+    @tickets[plate] = Ticket.new(plate, spot, at, kind)
+    spot
+  end
+
+  def leave(g, plate, at)
+    ticket = Hash.delete(@tickets, plate)
+    return nil if ticket == nil
+    spot = Ticket.get_spot(ticket)
+    Spot.set_plate(spot, nil)
+    minutes = Float.to_i((at - Ticket.get_entered(ticket)) / 60.0)
+    amount = fee(minutes, Ticket.get_kind(ticket))
+    Array.push(@receipts, [plate, minutes, amount])
+    [minutes, amount]
+  end
+
+  def occupancy(g)
+    levels = Array.group_by(@spots) { Spot.get_level(it) }
+    Array.map(Array.sort(Hash.keys(levels))) do |lv|
+      list = levels[lv]
+      used = Array.count(list) { Spot.get_plate(it) != nil }
+      "L#{lv}:#{used}/#{Array.size(list)}"
+    end
+  end
+end
+
+def fee(minutes, kind)
+  return 0 if minutes <= 30
+  hours = Integer.ceildiv(minutes, 60)
+  rate = kind == :motorcycle ? 100 : (kind == :car ? 250 : 400)
+  days, rest = Integer.divmod(hours, 24)
+  day_max = rate * 8
+  partial = rest * rate
+  partial = day_max if partial > day_max
+  days * day_max + partial
+end
+
+def money(c) = format("$%d.%02d", c / 100, c % 100)
+
+def build_spots
+  spots = Spot[]
+  layout = Array[[1, Array[:compact, :compact, :regular, :regular, :large]], [2, Array[:regular, :regular, :regular, :large]]]
+  Array.each(layout) do |level, sizes|
+    Array.each_with_index(sizes) { |size, i| Array.push(spots, Spot.new(level, i + 1, size, nil)) }
+  end
+  spots
+end
+
+g = Garage.new(build_spots, Hash[], Array[])
+base = Time.new(2026, 10, 1, 7, 0, 0)
+
+events = Array[
+  [0, :in, "MOTO-1", :motorcycle], [5, :in, "CAR-11", :car], [12, :in, "VAN-7", :van],
+  [20, :in, "CAR-12", :car], [25, :in, "MOTO-2", :motorcycle], [31, :in, "TRK-3", :truck],
+  [40, :in, "CAR-13", :car], [45, :out, "MOTO-1", :motorcycle], [50, :in, "CAR-14", :car],
+  [52, :in, "TRK-4", :truck], [55, :in, "MOTO-3", :motorcycle], [90, :out, "CAR-11", :car],
+  [95, :in, "TRK-4", :truck], [200, :out, "VAN-7", :van], [210, :out, "CAR-99", :car],
+  [600, :out, "CAR-12", :car], [700, :out, "TRK-3", :truck], [1500, :out, "CAR-13", :car],
+  [1990, :out, "MOTO-2", :motorcycle]
+]
+
+refused = Array[]
+Array.each(events) do |offset, action, plate, kind|
+  at = base + offset * 60
+  stamp = Time.strftime(at, "%d %H:%M")
+  if action == :in
+    begin
+      spot = Garage.park(g, plate, kind, at)
+      puts("#{stamp} #{String.ljust(plate, 7)} in  -> L#{Spot.get_level(spot)}-#{Spot.get_number(spot)} (#{Spot.get_size(spot)})")
+    rescue GarageFull => e
+      Array.push(refused, GarageFull.get_plate(e))
+      puts("#{stamp} #{String.ljust(plate, 7)} refused: full for #{GarageFull.get_kind(e)}")
+    end
+  else
+    result = Garage.leave(g, plate, at)
+    if result
+      minutes, amount = result
+      puts("#{stamp} #{String.ljust(plate, 7)} out after #{minutes} min, pays #{money(amount)}")
+    else
+      puts("#{stamp} #{String.ljust(plate, 7)} out: no ticket")
+    end
+  end
+  puts("  occupancy #{Array.join(Garage.occupancy(g), " ")}") if offset % 50 == 0
+end
+
+puts("--- end of run")
+puts("still parked: #{Array.join(Array.sort(Hash.keys(Garage.get_tickets(g))), ", ")}")
+puts("refused: #{Array.join(refused, ", ")}")
+receipts = Garage.get_receipts(g)
+puts("revenue: #{money(Array.sum(Array.map(receipts) { |p, m, a| a }))}")
+longest = Array.max_by(receipts) { |p, m, a| m }
+if longest
+  plate, minutes, amount = longest
+  puts("longest stay: #{plate} #{minutes / 60}h#{minutes % 60}m")
+end

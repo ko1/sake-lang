@@ -1,0 +1,124 @@
+# A small Date type built on Julian Day Numbers: validation, + days, - date,
+# comparison, and a few questions answered with it.
+
+InvalidDate = Exception.new(:text)
+
+def leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+def days_in_month(y, m)
+  return 29 if m == 2 && leap?(y)
+  Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+end
+
+class Date < {reader: [jdn]}
+  include Comparable
+  include Arithmetic
+
+  def civil(y, m, d)
+    if m < 1 || m > 12 || d < 1 || d > days_in_month(y, m)
+      raise InvalidDate.new("invalid date", format("%04d-%02d-%02d", y, m, d))
+    end
+    a = (14 - m) / 12
+    yy = y + 4800 - a
+    mm = m + 12 * a - 3
+    Date.new(d + (153 * mm + 2) / 5 + 365 * yy + yy / 4 - yy / 100 + yy / 400 - 32045)
+  end
+
+  def parse(s)
+    m = String.match(s, /\A(\d{4})-(\d{2})-(\d{2})\z/)
+    raise InvalidDate.new("bad format", s) if m == nil
+    civil(String.to_i(m[1]), String.to_i(m[2]), String.to_i(m[3]))
+  end
+
+  # Returns [year, month, day].
+  def ymd(dt)
+    a = @jdn + 32044
+    b = (4 * a + 3) / 146097
+    c = a - 146097 * b / 4
+    d = (4 * c + 3) / 1461
+    e = c - 1461 * d / 4
+    m = (5 * e + 2) / 153
+    day = e - (153 * m + 2) / 5 + 1
+    month = m + 3 - 12 * (m / 10)
+    year = 100 * b + d - 4800 + m / 10
+    [year, month, day]
+  end
+
+  def wday(dt) = (@jdn + 1) % 7
+
+  def +(dt, n) = Date.new(@jdn + n)
+
+  def -(dt, other)
+    case other
+    in Integer then Date.new(@jdn - other)
+    in Date then @jdn - Date.get_jdn(other)
+    end
+  end
+
+  def <=>(a, b) = @jdn <=> Date.get_jdn(b)
+
+  def to_s(dt)
+    y, m, d = ymd(dt)
+    format("%04d-%02d-%02d", y, m, d)
+  end
+end
+
+def weekday_abbr = Array["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+today = Date.civil(2026, 10, 1)
+puts("Today: #{today} (#{weekday_abbr[Date.wday(today)]})")
+
+puts("Offsets:")
+Array.each(Array[1, 7, 30, 100, 365, 1000, -1, -365]) do |n|
+  puts(format("  %+5d days -> %s", n, Date.to_s(today + n)))
+end
+
+events = Hash[
+  "New Year" => "2027-01-01",
+  "Leap day" => "2028-02-29",
+  "Moon landing" => "1969-07-20",
+  "Bad leap" => "2027-02-29",
+  "Typo" => "2026-13-01",
+  "Garbled" => "26/10/01"
+]
+
+parsed = Array[]
+Hash.each(events) do |name, text|
+  begin
+    dt = Date.parse(text)
+    Array.push(parsed, [name, dt])
+    diff = dt - today
+    rel = diff >= 0 ? "in #{diff} days" : "#{0 - diff} days ago"
+    puts(format("%-13s %s  %s", name, Date.to_s(dt), rel))
+  rescue InvalidDate => e
+    puts(format("%-13s %-10s  rejected: %s", name, InvalidDate.get_text(e), Exception.message(e)))
+  end
+end
+
+sorted = Array.sort_by(parsed) { |name, dt| Date.get_jdn(dt) }
+puts("Chronological: #{Array.join(Array.map(sorted) { |name, dt| name }, ", ")}")
+upcoming = Array.find(sorted) { |name, dt| dt > today }
+if upcoming
+  name, dt = upcoming
+  puts("Next event: #{name} on #{dt}")
+end
+
+# Round-trip check: every day of a few years converts back to itself.
+start = Date.civil(1999, 12, 25)
+errors = 0
+Integer.times(3000) do |i|
+  dt = start + i
+  y, m, d = Date.ymd(dt)
+  errors += 1 if Date.civil(y, m, d) != dt
+end
+puts("Round-trip errors over 3000 days: #{errors}")
+
+# The 10000th day of a life, and which weekday a birthday falls on through the years.
+born = Date.parse("1990-05-17")
+puts("Day 10000 after #{born}: #{born + 10000}")
+weekdays = Range.map(2026..2032) do |y|
+  b = Date.civil(y, 5, 17)
+  "#{y}:#{weekday_abbr[Date.wday(b)]}"
+end
+puts(Array.join(weekdays, " "))
+puts("Earliest parsed: #{Array.min(Array.map(parsed) { |name, dt| dt })}")

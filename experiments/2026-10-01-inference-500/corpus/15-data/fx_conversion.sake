@@ -1,0 +1,96 @@
+Txn = Struct.new(:account, :date, :currency, :amount)
+RateMissing = Exception.new(:currency, :date)
+
+def rate_table
+  <<~TXT
+    2026-06-01 USD 0.9210 GBP 1.1680 JPY 0.005920 CHF 1.0330
+    2026-06-02 USD 0.9198 GBP 1.1702 JPY 0.005911
+    2026-06-03 USD 0.9225 GBP 1.1695 JPY 0.005934 CHF 1.0351
+    2026-06-05 USD 0.9240 GBP 1.1710 JPY 0.005950 CHF 1.0362
+  TXT
+end
+
+def transactions
+  Txn[
+    Txn.new("ops", "2026-06-01", "USD", "1200.00"), Txn.new("ops", "2026-06-02", "EUR", "-310.50"),
+    Txn.new("ops", "2026-06-02", "CHF", "450.00"), Txn.new("ops", "2026-06-04", "USD", "-99.99"),
+    Txn.new("sales", "2026-06-01", "GBP", "2500.00"), Txn.new("sales", "2026-06-03", "JPY", "185000"),
+    Txn.new("sales", "2026-06-05", "USD", "780.25"), Txn.new("sales", "2026-06-05", "SEK", "1000.00"),
+    Txn.new("travel", "2026-06-03", "JPY", "-42000"), Txn.new("travel", "2026-05-30", "GBP", "-120.00"),
+    Txn.new("travel", "2026-06-05", "EUR", "-64.20")
+  ]
+end
+
+def parse_rates(text)
+  rates = Hash[]
+  Array.each(String.lines(text)) do |line|
+    tokens = String.split(line)
+    date = Array.fetch(tokens, 0)
+    day = Hash[]
+    Array.each_slice(Array.drop(tokens, 1), 2) { |pair| day[Array.fetch(pair, 0)] = Rational(Array.fetch(pair, 1)) }
+    rates[date] = day
+  end
+  rates
+end
+
+def lookup(rates, currency, date)
+  return 1r if currency == "EUR"
+  dates = Array.reverse(Array.sort(Array.select(Hash.keys(rates)) { it <= date }))
+  Array.each(dates) do |d|
+    r = Hash.fetch(rates, d)[currency]
+    return r if r
+  end
+  raise RateMissing.new("no #{currency} rate on or before #{date}", currency, date)
+end
+
+def eur(r)
+  case r
+  in Rational then format("%12.2f", Rational.to_f(r))
+  in Integer then format("%12.2f", Integer.to_f(r))
+  end
+end
+
+rates = parse_rates(rate_table)
+converted = Array[]
+failures = Array[]
+Array.each(transactions) do |t|
+  amount = Rational(Txn.get_amount(t))
+  begin
+    rate = lookup(rates, Txn.get_currency(t), Txn.get_date(t))
+    Array.push(converted, [t, amount * rate, rate])
+  rescue RateMissing => e
+    Array.push(failures, e)
+  end
+end
+
+puts("Converted to EUR:")
+Array.each(converted) do |t, value, rate|
+  stale = Txn.get_currency(t) != "EUR" && Hash.fetch(rates, Txn.get_date(t), Hash[])[Txn.get_currency(t)] == nil
+  puts(format("  %-6s %s %3s %10s @ %-9s %s%s", Txn.get_account(t), Txn.get_date(t), Txn.get_currency(t),
+              Txn.get_amount(t), Rational.to_f(rate), eur(value), stale ? "  (earlier rate)" : ""))
+end
+puts
+
+puts("Balances by account (EUR):")
+by_account = Array.group_by(converted) { |t, v, r| Txn.get_account(t) }
+Hash.each(by_account) do |account, rows|
+  inflow = Array.sum(Array.select(rows) { |t, v, r| v > 0 }) { |t, v, r| v }
+  outflow = Array.sum(Array.select(rows) { |t, v, r| v < 0 }) { |t, v, r| v }
+  puts(format("  %-6s in %s  out %s  net %s", account, eur(inflow), eur(outflow), eur(inflow + outflow)))
+end
+total = Array.sum(converted) { |t, v, r| v }
+puts(format("  %-6s %s", "total", eur(total)))
+exact = Array.reduce(converted, 0r) { |acc, row| t, v, r = row; acc + v }
+puts("  exact total: #{Rational.numerator(exact)}/#{Rational.denominator(exact)}")
+puts
+
+puts("Exposure by currency:")
+by_cur = Array.group_by(converted) { |t, v, r| Txn.get_currency(t) }
+gross = Array.sum(converted) { |t, v, r| Rational.abs(v) }
+Array.each(Array.sort_by(Hash.to_a(by_cur)) { |cur, rows| 0 - Array.sum(rows) { |t, v, r| Rational.to_f(Rational.abs(v)) } }) do |cur, rows|
+  g = Array.sum(rows) { |t, v, r| Rational.abs(v) }
+  puts(format("  %s %s %5.1f%%", cur, eur(g), Rational.to_f(g / gross * 100)))
+end
+puts
+puts("Not converted:")
+Array.each(failures) { |e| puts("  #{RateMissing.get_currency(e)} on #{RateMissing.get_date(e)}: #{Exception.message(e)}") }

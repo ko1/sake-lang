@@ -1,0 +1,106 @@
+Entry = Struct.new(:source, :day, :amount, :memo, :matched)
+ParseError = Exception.new(:source, :text)
+
+def bank_csv
+  <<~CSV
+    2026-05-01;-1250,00;RENT MAY
+    2026-05-02;-42,17;GROCERY MART 0112
+    2026-05-03;3200,00;PAYROLL ACME
+    2026-05-05;-89,99;ISP MONTHLY
+    2026-05-07;-15,00;ATM FEE
+    2026-05-09;-42,17;GROCERY MART 0112
+    2026-05-11;-230,40;HARDWARE CO
+    2026-05-12;n/a;PENDING
+    2026-05-14;-60,00;TRANSFER TO SAVINGS
+  CSV
+end
+
+def ledger_csv
+  <<~CSV
+    2026-04-30,-1250.00,Rent
+    2026-05-02,-42.17,Groceries
+    2026-05-03,3200.00,Salary
+    2026-05-04,-89.99,Internet
+    2026-05-09,-42.17,Groceries
+    2026-05-10,-23.04,Hardware store
+    2026-05-13,-60.00,Savings
+    2026-05-20,-75.00,Gym
+  CSV
+end
+
+def day_number(date)
+  m = String.match(date, /\A(\d{4})-(\d\d)-(\d\d)\z/)
+  raise ParseError.new("bad date", "date", date) if m == nil
+  t = Time.new(String.to_i(m[1]), String.to_i(m[2]), String.to_i(m[3]))
+  Float.round((t - epoch) / 86400)
+end
+
+def cents(text, decimal_mark)
+  normalized = String.tr(text, decimal_mark, ".")
+  raise ParseError.new("bad amount", "amount", text) unless String.match?(normalized, /\A-?\d+\.\d\d\z/)
+  Float.round(String.to_f(normalized) * 100)
+end
+
+def load(text, source, sep, decimal_mark, problems)
+  entries = Entry[]
+  Array.each(String.lines(text)) do |line|
+    parts = String.split(String.chomp(line), sep)
+    begin
+      raise ParseError.new("expected 3 fields", source, line) if Array.size(parts) != 3
+      date = Array.fetch(parts, 0)
+      Array.push(entries, Entry.new(source, day_number(date), cents(Array.fetch(parts, 1), decimal_mark), Array.fetch(parts, 2), nil))
+    rescue ParseError => e
+      Array.push(problems, "#{source}: #{Exception.message(e)} (#{ParseError.get_text(e)})")
+    end
+  end
+  entries
+end
+
+def money(c) = format("%s%d.%02d", c < 0 ? "-" : " ", Integer.abs(c) / 100, Integer.abs(c) % 100)
+
+def epoch = Time.new(2026, 1, 1)
+
+def date_of(day) = Time.strftime(epoch + (day * 86400 + 43200), "%m-%d")
+
+problems = Array[]
+bank = load(bank_csv, "bank", ";", ",", problems)
+ledger = load(ledger_csv, "ledger", ",", ".", problems)
+
+pairs = Array[]
+Integer.upto(0, 3) do |tolerance|
+  Array.each(ledger) do |l|
+    next if Entry.get_matched(l)
+    candidate = Array.find(bank) do |b|
+      Entry.get_matched(b) == nil && Entry.get_amount(b) == Entry.get_amount(l) &&
+        Integer.abs(Entry.get_day(b) - Entry.get_day(l)) <= tolerance
+    end
+    next unless candidate
+    Entry.set_matched(l, candidate)
+    Entry.set_matched(candidate, l)
+    Array.push(pairs, [l, candidate, tolerance])
+  end
+end
+
+puts("Matched #{Array.size(pairs)} transactions:")
+Array.each(Array.sort_by(pairs) { |l, b, t| Entry.get_day(l) }) do |l, b, t|
+  lag = t == 0 ? "" : " (#{Entry.get_day(b) - Entry.get_day(l)}d)"
+  puts(format("  %s %10s  %-15s <-> %s%s", date_of(Entry.get_day(l)), money(Entry.get_amount(l)), Entry.get_memo(l), Entry.get_memo(b), lag))
+end
+
+only_ledger = Array.select(ledger) { Entry.get_matched(it) == nil }
+only_bank = Array.select(bank) { Entry.get_matched(it) == nil }
+puts
+puts("In ledger only:")
+Array.each(only_ledger) { |e| puts(format("  %s %10s  %s", date_of(Entry.get_day(e)), money(Entry.get_amount(e)), Entry.get_memo(e))) }
+puts("In bank only:")
+Array.each(only_bank) do |e|
+  hint = Array.find(only_ledger) { |l| Entry.get_amount(l) * 10 == Entry.get_amount(e) || Entry.get_amount(l) == Entry.get_amount(e) * 10 }
+  extra = hint ? "  -- digit slip? ledger has #{money(Entry.get_amount(hint))} #{Entry.get_memo(hint)}" : ""
+  puts(format("  %s %10s  %s%s", date_of(Entry.get_day(e)), money(Entry.get_amount(e)), Entry.get_memo(e), extra))
+end
+puts
+puts("Unreadable lines:")
+Array.each(problems) { puts("  #{it}") }
+diff = Array.sum(bank) { Entry.get_amount(it) } - Array.sum(ledger) { Entry.get_amount(it) }
+puts
+puts("Balance difference (bank - ledger): #{String.strip(money(diff))}")

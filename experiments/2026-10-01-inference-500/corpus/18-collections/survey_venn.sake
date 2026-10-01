@@ -1,0 +1,69 @@
+# Feature-usage survey: Venn regions of three Sets, inclusion-exclusion check, and per-plan breakdowns.
+
+def responses
+  Array[
+    ["u01", "free", "search export"], ["u02", "pro", "search sync api"], ["u03", "free", "search"],
+    ["u04", "team", "sync api"], ["u05", "pro", "export sync"], ["u06", "free", ""],
+    ["u07", "team", "search export sync api"], ["u08", "pro", "api"], ["u09", "free", "search sync"],
+    ["u10", "team", "export"], ["u11", "pro", "search export sync"], ["u12", "free", "search export"]
+  ]
+end
+
+def users_of(rows, feature)
+  Array.to_set(Array.filter_map(rows) { |id, plan, feats| Array.include?(String.split(feats, " "), feature) ? id : nil })
+end
+
+def label(s) = Set.empty?(s) ? "-" : Array.join(Set.sort(s), " ")
+
+rows = responses
+all = Array.to_set(Array.map(rows) { |id, plan, feats| id })
+s = users_of(rows, "search")
+e = users_of(rows, "export")
+y = users_of(rows, "sync")
+puts("respondents: #{Set.size(all)}")
+puts("search=#{Set.size(s)} export=#{Set.size(e)} sync=#{Set.size(y)}")
+
+regions = Hash[
+  "search only" => s - e - y,
+  "export only" => e - s - y,
+  "sync only" => y - s - e,
+  "search+export" => (s & e) - y,
+  "search+sync" => (s & y) - e,
+  "export+sync" => (e & y) - s,
+  "all three" => s & e & y,
+  "none" => all - (s | e | y)
+]
+puts("== Venn regions ==")
+Hash.each(regions) { |name, members| puts(format("%-14s %2d  %s", name, Set.size(members), label(members))) }
+
+covered = Hash.sum(regions) { |name, members| Set.size(members) }
+puts("regions add up: #{covered == Set.size(all)}")
+union_size = Set.size(s) + Set.size(e) + Set.size(y) - Set.size(s & e) - Set.size(s & y) - Set.size(e & y) + Set.size(s & e & y)
+puts("inclusion-exclusion: #{union_size} == #{Set.size(s | e | y)}")
+names = Hash.keys(regions)
+overlapping = Array.select(Array.combination(names, 2)) { |pair| Set.intersect?(regions[pair[0]], regions[pair[1]]) }
+puts("overlapping regions: #{Array.size(overlapping)}")
+
+puts("== Exactly k features (of search/export/sync) ==")
+counts = Hash.new(0)
+Set.each(all) { |u| counts[u] = Array.count(Array[s, e, y]) { |set| Set.include?(set, u) } }
+Array.each(Range.to_a(0..3)) do |k|
+  who = Array.sort(Hash.keys(Hash.select(counts) { |u, n| n == k }))
+  puts("  #{k}: #{Array.size(who)} #{Array.join(who, " ")}")
+end
+
+puts("== By plan ==")
+plans = Array.group_by(rows) { |id, plan, feats| plan }
+Array.each(Array.sort(Hash.keys(plans))) do |plan|
+  ids = Array.to_set(Array.map(plans[plan]) { |id, pl, f| id })
+  shares = Array.map(Array[["search", s], ["export", e], ["sync", y]]) do |name, set|
+    format("%s %3.0f%%", name, Set.size(ids & set) * 100.0 / Set.size(ids))
+  end
+  puts(format("  %-5s n=%d  %s", plan, Set.size(ids), Array.join(shares, "  ")))
+end
+
+api = users_of(rows, "api")
+puts("api users: #{label(api)}; all on paid plans? #{Set.all?(api) { |u| Array.any?(rows) { |id, plan, f| id == u && plan != "free" } }}")
+puts("api users without sync: #{label(api - y)}")
+feature_counts = Array.tally(Array.flat_map(rows) { |id, plan, feats| String.split(feats, " ") })
+puts("popularity: #{Array.join(Array.map(Array.sort_by(Hash.to_a(feature_counts)) { |f, n| format("%02d%s", 99 - n, f) }) { |f, n| "#{f}(#{n})" }, " ")}")

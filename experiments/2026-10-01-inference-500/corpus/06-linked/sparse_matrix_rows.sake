@@ -1,0 +1,152 @@
+Entry = Struct.new(:col, :val, :next)
+DimensionError = Exception.new(:left, :right)
+
+class Sparse < {reader: [rows, ncols]}
+  include Arithmetic
+  include Indexable
+
+  def zero(nrows, ncols)
+    rows = Array[]
+    Integer.times(nrows) { Array.push(rows, nil) }
+    Sparse.new(rows, ncols)
+  end
+
+  def from_dense(grid)
+    m = zero(Array.size(grid), Array.size(grid[0]))
+    Array.each_with_index(grid) do |row, r|
+      Array.each_with_index(row) { |v, c| m[[r, c]] = v if v != 0 }
+    end
+    m
+  end
+
+  def nrows(m) = Array.size(@rows)
+
+  def [](m, rc)
+    r, c = rc
+    e = @rows[r]
+    while e && Entry.get_col(e) < c
+      e = Entry.get_next(e)
+    end
+    e && Entry.get_col(e) == c ? Entry.get_val(e) : 0
+  end
+
+  def []=(m, rc, v)
+    r, c = rc
+    prev = nil
+    e = @rows[r]
+    while e && Entry.get_col(e) < c
+      prev = e
+      e = Entry.get_next(e)
+    end
+    if e && Entry.get_col(e) == c
+      if v == 0
+        prev ? Entry.set_next(prev, Entry.get_next(e)) : @rows[r] = Entry.get_next(e)
+      else
+        Entry.set_val(e, v)
+      end
+    elsif v != 0
+      fresh = Entry.new(c, v, e)
+      prev ? Entry.set_next(prev, fresh) : @rows[r] = fresh
+    end
+  end
+
+  def each_in_row(m, r)
+    e = @rows[r]
+    while e
+      yield(Entry.get_col(e), Entry.get_val(e))
+      e = Entry.get_next(e)
+    end
+  end
+
+  def nonzeros(m)
+    n = 0
+    Integer.times(nrows(m)) { |r| each_in_row(m, r) { n += 1 } }
+    n
+  end
+
+  def +(a, b)
+    raise DimensionError.new("cannot add #{shape(a)} and #{shape(b)}", shape(a), shape(b)) if shape(a) != shape(b)
+    out = zero(nrows(a), @ncols)
+    Integer.times(nrows(a)) do |r|
+      each_in_row(a, r) { |c, v| out[[r, c]] = v }
+      each_in_row(b, r) { |c, v| out[[r, c]] += v }
+    end
+    out
+  end
+
+  def *(a, b)
+    raise DimensionError.new("cannot multiply #{shape(a)} by #{shape(b)}", shape(a), shape(b)) if @ncols != nrows(b)
+    out = zero(nrows(a), Sparse.get_ncols(b))
+    Integer.times(nrows(a)) do |r|
+      each_in_row(a, r) do |k, v|
+        each_in_row(b, k) { |c, w| out[[r, c]] += v * w }
+      end
+    end
+    out
+  end
+
+  def transpose(m)
+    out = zero(@ncols, nrows(m))
+    Integer.downto(nrows(m) - 1, 0) do |r|
+      each_in_row(m, r) { |c, v| out[[c, r]] = v }
+    end
+    out
+  end
+
+  def times_vector(m, xs)
+    Array.map(Range.to_a(0...nrows(m))) do |r|
+      s = 0
+      each_in_row(m, r) { |c, v| s += v * xs[c] }
+      s
+    end
+  end
+
+  def shape(m) = "#{nrows(m)}x#{@ncols}"
+
+  def to_s(m)
+    lines = Array.map(Range.to_a(0...nrows(m))) do |r|
+      Array.join(Array.map(Range.to_a(0...@ncols)) { |c| String.rjust(Kernel.to_s(m[[r, c]]), 4) }, "")
+    end
+    Array.join(lines, "\n")
+  end
+end
+
+a = Sparse.from_dense(Array[Array[1, 0, 0, 2], Array[0, 0, 3, 0], Array[0, 4, 0, 0]])
+b = Sparse.from_dense(Array[Array[0, 1], Array[5, 0], Array[0, 0], Array[2, 0]])
+puts("A (#{Sparse.shape(a)}, #{Sparse.nonzeros(a)} nonzeros):")
+puts(a)
+puts("A^T:")
+puts(Sparse.transpose(a))
+puts("A * B:")
+puts(a * b)
+puts("A + A:")
+puts(a + a)
+a[[0, 0]] = 0
+a[[2, 3]] = 7
+a[[1, 2]] = -3
+puts("after edits (#{Sparse.nonzeros(a)} nonzeros):")
+puts(a)
+puts("A * [1,2,3,4] = #{Kernel.inspect(Sparse.times_vector(a, Array[1, 2, 3, 4]))}")
+begin
+  puts(a * a)
+rescue DimensionError => e
+  puts("error: #{Exception.message(e)}")
+end
+begin
+  puts(a + b)
+rescue DimensionError => e
+  puts("error: #{Exception.message(e)} [#{DimensionError.get_left(e)} vs #{DimensionError.get_right(e)}]")
+end
+
+n = 30
+band = Sparse.zero(n, n)
+Integer.times(n) do |i|
+  band[[i, i]] = 2
+  band[[i, i + 1]] = -1 if i + 1 < n
+  band[[i + 1, i]] = -1 if i + 1 < n
+end
+sq = band * band
+puts("band #{Sparse.shape(band)}: #{Sparse.nonzeros(band)} nonzeros; squared: #{Sparse.nonzeros(sq)} nonzeros, trace #{Array.sum(Array.map(Range.to_a(0...n)) { |i| sq[[i, i]] })}")
+ones = Array[]
+Integer.times(n) { Array.push(ones, 1) }
+puts("band * ones = #{Array.sum(Sparse.times_vector(band, ones))}")

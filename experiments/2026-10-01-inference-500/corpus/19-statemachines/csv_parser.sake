@@ -1,0 +1,117 @@
+CsvError = Exception.new(:line, :col)
+
+def parse_csv(text)
+  rows = Array[]
+  row = Array[]
+  field = ""
+  state = :field_start
+  line = 1
+  col = 0
+  String.each_char(text + "\n") do |c|
+    col += 1
+    case state
+    in :field_start
+      if c == "\""
+        state = :quoted
+      elsif c == ","
+        Array.push(row, field)
+        field = ""
+      elsif c == "\n"
+        Array.push(row, field)
+        Array.push(rows, row) unless Array.size(row) == 1 && field == ""
+        row = Array[]
+        field = ""
+        line += 1
+        col = 0
+      elsif c != "\r"
+        field += c
+        state = :unquoted
+      end
+    in :unquoted
+      if c == ","
+        Array.push(row, field)
+        field = ""
+        state = :field_start
+      elsif c == "\n"
+        Array.push(row, field)
+        Array.push(rows, row)
+        row = Array[]
+        field = ""
+        state = :field_start
+        line += 1
+        col = 0
+      elsif c == "\""
+        raise CsvError.new("quote inside unquoted field", line, col)
+      elsif c != "\r"
+        field += c
+      end
+    in :quoted
+      if c == "\""
+        state = :quote_seen
+      else
+        field += c
+        if c == "\n"
+          line += 1
+          col = 0
+        end
+      end
+    in :quote_seen
+      if c == "\""
+        field += "\""
+        state = :quoted
+      elsif c == ","
+        Array.push(row, field)
+        field = ""
+        state = :field_start
+      elsif c == "\n"
+        Array.push(row, field)
+        Array.push(rows, row)
+        row = Array[]
+        field = ""
+        state = :field_start
+        line += 1
+        col = 0
+      elsif c != "\r"
+        raise CsvError.new("garbage after closing quote", line, col)
+      end
+    end
+  end
+  raise CsvError.new("unterminated quoted field", line, col) if state == :quoted
+  rows
+end
+
+def flat(f) = String.gsub(f, "\n", "|")
+
+def report(name, text)
+  puts("== #{name}")
+  rows = parse_csv(text)
+  header = Array.first(rows)
+  body = Array.drop(rows, 1)
+  widths = Array.map(header) { String.size(it) }
+  bad, good = Array.partition(body) { Array.size(it) != Array.size(header) }
+  Array.each(good) do |r|
+    Array.each_with_index(r) do |f, i|
+      w = String.size(flat(f))
+      widths[i] = w if w > widths[i]
+    end
+  end
+  table = Array[header]
+  Array.concat(table, good)
+  Array.each(table) do |r|
+    puts(Array.join(Array.map(Array.zip(r, widths)) { |f, w| String.ljust(flat(f), w) }, " | "))
+  end
+  puts("#{Array.size(good)} rows, #{Array.size(bad)} with wrong field count")
+  amount_col = Array.index(header, "amount")
+  if amount_col
+    total = Array.sum(Array.map(good) { |r| String.to_f(r[amount_col]) })
+    puts(format("amount total: %.2f", total))
+  end
+rescue CsvError => e
+  puts("parse error at line #{CsvError.get_line(e)}, col #{CsvError.get_col(e)}: #{Exception.message(e)}")
+end
+
+report("orders", "id,customer,amount,note\r\n1,Alice,12.50,\r\n2,\"Bob, Jr.\",7.25,\"said \"\"hi\"\"\"\r\n3,Cy,100,\"two\nlines\"\r\n4,Dee,3\r\n")
+report("empty fields", "a,b,c\n,,\n1,,3\n\n")
+report("bad quote", "name,amount\nab\"c,1\n")
+report("garbage", "name,amount\n\"x\"y,2\n")
+report("unterminated", "name,amount\n\"open,5\n")

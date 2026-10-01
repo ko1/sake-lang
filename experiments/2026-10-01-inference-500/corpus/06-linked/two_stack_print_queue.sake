@@ -1,0 +1,105 @@
+Link = Struct.new(:item, :rest)
+Job = Struct.new(:id, :owner, :pages, :color)
+
+class TwoStackQueue < {reader: [inbox, outbox, size], accessor: [transfers]}
+  def create = TwoStackQueue.new(nil, nil, 0, 0)
+
+  def enqueue(q, x)
+    @inbox = Link.new(x, @inbox)
+    @size += 1
+    q
+  end
+
+  def shift_over(q)
+    return if @outbox
+    while (link = @inbox)
+      @outbox = Link.new(Link.get_item(link), @outbox)
+      @inbox = Link.get_rest(link)
+      @transfers += 1
+    end
+  end
+
+  def dequeue(q)
+    shift_over(q)
+    link = @outbox
+    return nil if link == nil
+    @outbox = Link.get_rest(link)
+    @size -= 1
+    Link.get_item(link)
+  end
+
+  def peek(q)
+    shift_over(q)
+    link = @outbox
+    link ? Link.get_item(link) : nil
+  end
+
+  def empty?(q) = @size == 0
+end
+
+class Job
+  def to_s(j) = "##{@id} #{@owner} (#{@pages}p#{@color ? ", color" : ""})"
+  def cost(j) = @pages * (@color ? 15 : 4)
+end
+
+def spool(requests)
+  q = TwoStackQueue.create
+  next_id = 100
+  printed = Array[]
+  per_owner = Hash.new(0)
+  budget = Hash["ann" => 200, "bob" => 120, "cy" => 500]
+  Array.each(requests) do |req|
+    case req
+    in {print: owner, pages:, color:}
+      next_id += 1
+      job = Job.new(next_id, owner, pages, color)
+      TwoStackQueue.enqueue(q, job)
+      puts("queued   #{job}")
+    in {run: n}
+      Integer.times(n) do
+        job = TwoStackQueue.dequeue(q)
+        if job == nil
+          puts("idle     (queue empty)")
+        else
+          owner = Job.get_owner(job)
+          cost = Job.cost(job)
+          left = Hash.fetch(budget, owner, 0) - per_owner[owner]
+          if cost > left
+            puts("rejected #{job}: cost #{cost} > budget left #{left}")
+          else
+            per_owner[owner] += cost
+            Array.push(printed, job)
+            puts("printed  #{job} cost #{cost}")
+          end
+        end
+      end
+    in {peek:}
+      nxt = TwoStackQueue.peek(q)
+      puts("next up: #{nxt ? Kernel.to_s(nxt) : "nothing"}")
+    end
+  end
+  [q, printed, per_owner]
+end
+
+requests = Array[
+  {print: "ann", pages: 3, color: false},
+  {print: "bob", pages: 10, color: true},
+  {print: "cy", pages: 25, color: false},
+  {peek: true},
+  {run: 2},
+  {print: "ann", pages: 40, color: true},
+  {print: "dan", pages: 1, color: false},
+  {print: "bob", pages: 2, color: false},
+  {peek: true},
+  {run: 3},
+  {print: "cy", pages: 12, color: true},
+  {run: 3}
+]
+
+q, printed, spent = spool(requests)
+puts("---")
+puts("printed #{Array.size(printed)} jobs, #{Array.sum(Array.map(printed) { Job.get_pages(it) })} pages")
+puts("transfers between stacks: #{TwoStackQueue.get_transfers(q)}, still queued: #{TwoStackQueue.get_size(q)}")
+Array.each(Array.sort_by(Hash.to_a(spent)) { |owner, total| owner }) { |owner, total| puts(format("  %-4s %4d", owner, total)) }
+biggest = Array.max_by(printed) { Job.cost(it) }
+puts("most expensive: #{biggest}") if biggest

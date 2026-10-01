@@ -1,0 +1,145 @@
+Account = Struct.new(:code, :name, :kind, :debits, :credits)
+Journal = Struct.new(:no, :date, :memo, :lines)
+LedgerError = Exception.new(:entry_no)
+
+def chart
+  Array[
+    ["1000", "Cash", :asset], ["1100", "Accounts receivable", :asset], ["1500", "Equipment", :asset],
+    ["2000", "Accounts payable", :liability], ["2100", "Loan", :liability],
+    ["3000", "Owner equity", :equity], ["4000", "Sales", :income], ["4100", "Interest income", :income],
+    ["5000", "Rent", :expense], ["5100", "Wages", :expense], ["5200", "Supplies", :expense], ["5300", "Interest expense", :expense]
+  ]
+end
+
+class Account
+  def debit_normal?(a) = @kind == :asset || @kind == :expense
+  def balance(a) = debit_normal?(a) ? @debits - @credits : @credits - @debits
+end
+
+def amount(s)
+  whole, _dot, frac = String.partition(s, ".")
+  String.to_i(whole) * 100 + String.to_i(String.ljust(frac, 2, "0"))
+end
+
+def show(c)
+  sign = c < 0 ? "-" : ""
+  c = Integer.abs(c)
+  "#{sign}#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+end
+
+def post(accounts, journal)
+  no = Journal.get_no(journal)
+  lines = Journal.get_lines(journal)
+  raise LedgerError.new("needs at least two lines", no) if Array.size(lines) < 2
+  Array.each(lines) do |code, side, cents|
+    raise LedgerError.new("unknown account #{code}", no) unless Hash.key?(accounts, code)
+    raise LedgerError.new("non-positive amount on #{code}", no) if cents <= 0
+  end
+  dr = Array.sum(Array.select(lines) { |c, side, cents| side == :dr }) { |c, side, cents| cents }
+  cr = Array.sum(Array.select(lines) { |c, side, cents| side == :cr }) { |c, side, cents| cents }
+  raise LedgerError.new("unbalanced: debits #{show(dr)} credits #{show(cr)}", no) if dr != cr
+  Array.each(lines) do |code, side, cents|
+    acct = Hash.fetch(accounts, code)
+    if side == :dr
+      Account.set_debits(acct, Account.get_debits(acct) + cents)
+    else
+      Account.set_credits(acct, Account.get_credits(acct) + cents)
+    end
+  end
+  dr
+end
+
+def parse_journal(text)
+  journals = Array[]
+  Array.each(String.lines(text)) do |raw|
+    line = String.rstrip(raw)
+    next if String.empty?(line)
+    if String.start_with?(line, " ")
+      m = String.match(line, /\A\s+(\d{4})\s+(dr|cr)\s+([\d.]+)\z/)
+      raise LedgerError.new("cannot read '#{String.strip(line)}'", Journal.get_no(Array.last(journals))) unless m
+      Array.push(Journal.get_lines(Array.last(journals)), [m[1], String.to_sym(m[2]), amount(m[3])])
+    else
+      date, _sep, memo = String.partition(line, " ")
+      Array.push(journals, Journal.new(Array.size(journals) + 1, date, memo, Array[]))
+    end
+  end
+  journals
+end
+
+accounts = Hash[]
+Array.each(chart) { |code, name, kind| accounts[code] = Account.new(code, name, kind, 0, 0) }
+
+text = <<~TXT
+  2026-09-01 Owner investment
+    1000 dr 25000
+    3000 cr 25000
+  2026-09-01 Loan from bank
+    1000 dr 10000
+    2100 cr 10000
+  2026-09-02 Buy equipment
+    1500 dr 8400.50
+    1000 cr 4000
+    2000 cr 4400.50
+  2026-09-05 Rent September
+    5000 dr 1800
+    1000 cr 1800
+  2026-09-10 Invoice client A
+    1100 dr 6200
+    4000 cr 6200
+  2026-09-12 Typo in supplies
+    5200 dr 120.40
+    1000 cr 120.04
+  2026-09-15 Cash sale
+    1000 dr 950.25
+    4000 cr 950.25
+  2026-09-20 Client A pays
+    1000 dr 4000
+    1100 cr 4000
+  2026-09-25 Payroll
+    5100 dr 5200
+    1000 cr 5200
+  2026-09-28 Coffee machine
+    5900 dr 300
+    1000 cr 300
+  2026-09-30 Loan interest
+    5300 dr 62.50
+    1000 cr 62.50
+  2026-09-30 Bank interest
+    1000 dr 4.17
+    4100 cr 4.17
+TXT
+
+posted = 0
+Array.each(parse_journal(text)) do |j|
+  begin
+    total = post(accounts, j)
+    posted += 1
+    puts(format("#%02d %s %-20s %10s", Journal.get_no(j), Journal.get_date(j), Journal.get_memo(j), show(total)))
+  rescue LedgerError => e
+    puts(format("#%02d %s %-20s REJECTED: %s", LedgerError.get_entry_no(e), Journal.get_date(j), Journal.get_memo(j), Exception.message(e)))
+  end
+end
+
+puts
+puts("Trial balance")
+tdr = 0
+tcr = 0
+Hash.each_value(accounts) do |a|
+  bal = Account.get_debits(a) - Account.get_credits(a)
+  next if Account.get_debits(a) == 0 && Account.get_credits(a) == 0
+  dcol = bal > 0 ? show(bal) : ""
+  ccol = bal < 0 ? show(0 - bal) : ""
+  tdr += bal if bal > 0
+  tcr -= bal if bal < 0
+  puts(format("  %s %-20s %10s %10s", Account.get_code(a), Account.get_name(a), dcol, ccol))
+end
+puts(format("  %-25s %10s %10s", "", show(tdr), show(tcr)))
+
+by_kind = Array.group_by(Hash.values(accounts)) { |a| Account.get_kind(a) }
+sum_kind = Hash.transform_values(by_kind) { |as| Array.sum(as) { |a| Account.balance(a) } }
+income = Hash.fetch(sum_kind, :income) - Hash.fetch(sum_kind, :expense)
+puts
+puts("Net income: #{show(income)}")
+puts("Assets #{show(Hash.fetch(sum_kind, :asset))} = Liabilities #{show(Hash.fetch(sum_kind, :liability))} + Equity #{show(Hash.fetch(sum_kind, :equity) + income)}")
+balanced = Hash.fetch(sum_kind, :asset) == Hash.fetch(sum_kind, :liability) + Hash.fetch(sum_kind, :equity) + income
+puts("Books balance: #{balanced}; posted #{posted} entries")

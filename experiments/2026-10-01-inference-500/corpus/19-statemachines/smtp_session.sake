@@ -1,0 +1,107 @@
+Message = Struct.new(:from, :rcpts, :lines)
+Session = Struct.new(:state, :client, :from, :rcpts, :data, :delivered, :errors)
+
+def local_domains = Array["example.org", "mail.example.org"]
+
+class Session
+  def fresh = Session.new(:connected, nil, nil, Array[], Array[], Array[], 0)
+
+  def reset(s)
+    @from = nil
+    @rcpts = Array[]
+    @data = Array[]
+  end
+
+  def fail(s, code, text)
+    @errors += 1
+    "#{code} #{text}"
+  end
+
+  def address(arg, prefix)
+    m = String.match(arg, /\A#{prefix}:\s*<([^<>@\s]+@([^<>\s]+))>\z/i)
+    return nil if m == nil
+    [m[1], String.downcase(m[2])]
+  end
+
+  def handle(s, line)
+    if @state == :data
+      if line == "."
+        Array.push(@delivered, Message.new(@from, @rcpts, @data))
+        n = Array.size(@data)
+        reset(s)
+        @state = :greeted
+        return "250 OK: queued as #{Array.size(@delivered)} (#{n} lines)"
+      end
+      Array.push(@data, String.start_with?(line, "..") ? line[1..] : line)
+      return nil
+    end
+    verb, _sp, arg = String.partition(line, " ")
+    verb = String.upcase(verb)
+    case verb
+    in "HELO" | "EHLO"
+      return fail(s, 501, "domain required") if String.empty?(arg)
+      reset(s)
+      @client = arg
+      @state = :greeted
+      "250 hello #{arg}"
+    in "MAIL"
+      return fail(s, 503, "send HELO first") if @state == :connected
+      return fail(s, 503, "nested MAIL") if @state != :greeted
+      addr = address(arg, "FROM")
+      return fail(s, 501, "bad sender syntax") if addr == nil
+      @from = addr[0]
+      @state = :mail
+      "250 sender ok"
+    in "RCPT"
+      return fail(s, 503, "need MAIL first") if @state != :mail && @state != :rcpt
+      addr = address(arg, "TO")
+      return fail(s, 501, "bad recipient syntax") if addr == nil
+      email, domain = addr
+      return fail(s, 550, "relaying denied for #{domain}") unless Array.include?(local_domains, domain)
+      return fail(s, 452, "too many recipients") if Array.size(@rcpts) >= 3
+      Array.push(@rcpts, email)
+      @state = :rcpt
+      "250 recipient ok"
+    in "DATA"
+      return fail(s, 503, "need RCPT first") if @state != :rcpt
+      @state = :data
+      "354 end with <CRLF>.<CRLF>"
+    in "RSET"
+      reset(s)
+      @state = :greeted if @state != :connected
+      "250 reset"
+    in "NOOP" then "250 ok"
+    in "QUIT"
+      @state = :closed
+      "221 bye"
+    else fail(s, 500, "unknown command #{verb}")
+    end
+  end
+end
+
+transcripts = Hash[
+  "good" => Array["EHLO client.test", "MAIL FROM:<ann@client.test>", "RCPT TO:<bob@example.org>",
+                  "RCPT TO:<cy@Mail.Example.org>", "DATA", "Subject: hi", "", "..leading dot", "bye", ".", "QUIT"],
+  "rude" => Array["MAIL FROM:<x@y.z>", "HELO", "HELO h", "RCPT TO:<a@example.org>", "MAIL FROM:bad",
+                  "MAIL FROM:<x@y.z>", "MAIL FROM:<x@y.z>", "RCPT TO:<spam@elsewhere.com>", "DATA", "VRFY bob", "QUIT"],
+  "many" => Array["HELO h", "MAIL FROM:<a@h>", "RCPT TO:<1@example.org>", "RCPT TO:<2@example.org>",
+                  "RCPT TO:<3@example.org>", "RCPT TO:<4@example.org>", "RSET", "NOOP", "MAIL FROM:<b@h>",
+                  "RCPT TO:<z@example.org>", "DATA", "one line", ".", "QUIT", "NOOP"]
+]
+
+Hash.each(transcripts) do |name, lines|
+  s = Session.fresh
+  puts("== #{name}")
+  Array.each(lines) do |line|
+    if Session.get_state(s) == :closed
+      puts("  C: #{line}   (connection closed)")
+      next
+    end
+    reply = Session.handle(s, line)
+    puts(reply ? "  C: #{line}\n  S: #{reply}" : "  C: #{line}")
+  end
+  Array.each(Session.get_delivered(s)) do |m|
+    puts("  delivered from #{Message.get_from(m)} to #{Array.join(Message.get_rcpts(m), ", ")}: #{Kernel.inspect(Message.get_lines(m))}")
+  end
+  puts("  errors: #{Session.get_errors(s)}, final state: #{Session.get_state(s)}")
+end

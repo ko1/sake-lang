@@ -1,0 +1,145 @@
+Opt = Struct.new(:long, :short, :type, :default, :help)
+UsageError = Exception.new(:arg)
+
+def spec
+  Opt[
+    Opt.new("verbose", "v", :count, 0, "more output (repeatable)"),
+    Opt.new("color", "c", :flag, true, "colorize output"),
+    Opt.new("jobs", "j", :int, 1, "parallel jobs"),
+    Opt.new("output", "o", :string, "-", "output file"),
+    Opt.new("include", "I", :list, nil, "include path (repeatable)"),
+    Opt.new("dry-run", "n", :flag, false, "do nothing")
+  ]
+end
+
+def find_long(name) = Array.find(spec) { |o| Opt.get_long(o) == name }
+def find_short(ch) = Array.find(spec) { |o| Opt.get_short(o) == ch }
+
+def defaults
+  h = Hash[]
+  Array.each(spec) { |o| h[Opt.get_long(o)] = Opt.get_type(o) == :list ? Array[] : Opt.get_default(o) }
+  h
+end
+
+def convert(opt, value, arg)
+  return value unless Opt.get_type(opt) == :int
+  raise UsageError.new("--#{Opt.get_long(opt)} needs an integer, got '#{value}'", arg) unless String.match?(value, /\A-?\d+\z/)
+  String.to_i(value)
+end
+
+def store(result, opt, value)
+  name = Opt.get_long(opt)
+  case Opt.get_type(opt)
+  in :list then Array.push(result[name], value)
+  in :count then result[name] += 1
+  in :flag | :int | :string then result[name] = value
+  end
+end
+
+class Opt
+  def takes_value?(o) = Array.include?(Array[:int, :string, :list], @type)
+end
+
+def parse_args(argv)
+  result = defaults
+  positional = Array[]
+  i = 0
+  only_positional = false
+  while i < Array.size(argv)
+    arg = argv[i]
+    i += 1
+    if only_positional || arg == "-" || String.start_with?(arg, "-") == false
+      Array.push(positional, arg)
+    elsif arg == "--"
+      only_positional = true
+    elsif String.start_with?(arg, "--")
+      body = arg[2..]
+      name, eq, inline = String.partition(body, "=")
+      negated = false
+      opt = find_long(name)
+      if opt == nil && String.start_with?(name, "no-")
+        opt = find_long(name[3..])
+        negated = opt != nil && Opt.get_type(opt) == :flag
+        opt = nil unless negated
+      end
+      raise UsageError.new("unknown option --#{name}", arg) if opt == nil
+      if Opt.takes_value?(opt)
+        if String.empty?(eq)
+          raise UsageError.new("--#{name} needs a value", arg) if i >= Array.size(argv)
+          inline = argv[i]
+          i += 1
+        end
+        store(result, opt, convert(opt, inline, arg))
+      else
+        raise UsageError.new("--#{name} does not take a value", arg) unless String.empty?(eq)
+        store(result, opt, negated ? false : true)
+      end
+    else
+      j = 1
+      while j < String.size(arg)
+        ch = arg[j]
+        opt = find_short(ch)
+        raise UsageError.new("unknown option -#{ch}", arg) if opt == nil
+        j += 1
+        if Opt.takes_value?(opt)
+          value = arg[j..]
+          if String.empty?(value)
+            raise UsageError.new("-#{ch} needs a value", arg) if i >= Array.size(argv)
+            value = argv[i]
+            i += 1
+          end
+          store(result, opt, convert(opt, value, arg))
+          j = String.size(arg)
+        else
+          store(result, opt, true)
+        end
+      end
+    end
+  end
+  [result, positional]
+end
+
+def show(v)
+  case v
+  in Array then "[" + Array.join(v, ", ") + "]"
+  in String then Kernel.inspect(v)
+  in Integer | true | false then Kernel.to_s(v)
+  end
+end
+
+def usage
+  lines = Array.map(spec) do |o|
+    left = "-#{Opt.get_short(o)}, --#{Opt.get_long(o)}"
+    left += " VALUE" if Opt.takes_value?(o)
+    format("  %-24s %s", left, Opt.get_help(o))
+  end
+  "usage: tool [options] FILE...\n" + Array.join(lines, "\n")
+end
+
+puts(usage)
+argvs = Array[
+  Array["build.c", "-vv", "--jobs=4", "-o", "out.bin", "util.c"],
+  Array["-I", "inc", "-Ilib", "--include", "vendor", "--no-color", "-nv", "main.c"],
+  Array["-j8", "--output=-", "--", "-weird-file", "--jobs"],
+  Array["-", "--dry-run", "--verbose", "--verbose"],
+  Array["--jobs", "many"],
+  Array["--frobnicate"],
+  Array["-vx"],
+  Array["--output"],
+  Array["--dry-run=yes"],
+  Array["--no-jobs", "3"]
+]
+Array.each(argvs) do |argv|
+  puts("$ tool #{Array.join(argv, " ")}")
+  begin
+    result, files = parse_args(argv)
+    d = defaults
+    Array.each(Hash.to_a(result)) do |k, v|
+      changed = (v in Array) ? Array.empty?(v) == false : v != d[k]
+      puts("    #{String.ljust(k, 8)} = #{show(v)}") if changed
+    end
+    puts("    files    = #{show(files)}")
+  rescue UsageError => e
+    puts("    error: #{Exception.message(e)} (in '#{UsageError.get_arg(e)}')")
+  end
+end

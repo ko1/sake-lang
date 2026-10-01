@@ -1,0 +1,134 @@
+Todo = Struct.new(:id, :title, :priority, :due, :tags, :done)
+CommandError = Exception.new(:line)
+
+def priority_rank(p)
+  case p
+  in :high then 0
+  in :normal then 1
+  in :low then 2
+  end
+end
+
+def parse_priority(s, lineno)
+  case s
+  in "!!" then :high
+  in "!" then :normal
+  in "." then :low
+  else raise CommandError.new("bad priority '#{s}'", lineno)
+  end
+end
+
+# due dates are "MM-DD"; an Integer MMDD orders them
+def due_key(due) = String.to_i(String.delete(due, "-"))
+
+class TodoList < {reader: [items], accessor: [next_id]}
+  def create = TodoList.new(Todo[], 1)
+
+  def add(list, title, priority, due, tags)
+    t = Todo.new(@next_id, title, priority, due, tags, false)
+    @next_id += 1
+    Array.push(@items, t)
+    t
+  end
+
+  def find(list, id) = Array.find(@items) { |t| Todo.get_id(t) == id }
+
+  def complete(list, id, lineno)
+    t = find(list, id)
+    raise CommandError.new("no todo ##{id}", lineno) unless t
+    raise CommandError.new("##{id} is already done", lineno) if Todo.get_done(t)
+    Todo.set_done(t, true)
+    t
+  end
+
+  def ordered(list)
+    Array.sort_by(@items) do |t|
+      (priority_rank(Todo.get_priority(t)) * 10000 + due_key(Todo.get_due(t))) * 1000 + Todo.get_id(t)
+    end
+  end
+
+  def pending(list) = Array.reject(ordered(list)) { |t| Todo.get_done(t) }
+
+  def tagged(list, tag) = Array.select(ordered(list)) { |t| Set.include?(Todo.get_tags(t), tag) }
+end
+
+def show(t)
+  mark = Todo.get_done(t) ? "x" : " "
+  tags = Array.join(Array.map(Set.sort(Todo.get_tags(t))) { |g| "##{g}" }, " ")
+  format("[%s] %3d %-6s %s  %-24s %s", mark, Todo.get_id(t), Symbol.to_s(Todo.get_priority(t)), Todo.get_due(t), Todo.get_title(t), tags)
+end
+
+def run(list, script)
+  lineno = 0
+  Array.each(String.lines(script)) do |raw|
+    lineno += 1
+    line = String.strip(raw)
+    next if String.empty?(line) || String.start_with?(line, "#")
+    begin
+      cmd, _sep, rest = String.partition(line, " ")
+      case cmd
+      in "add"
+        m = String.match(rest, /\A(\S+) (\d\d-\d\d) (.*)\z/)
+        raise CommandError.new("cannot parse '#{rest}'", lineno) unless m
+        words = String.split(m[3], " ")
+        tag_words, title_words = Array.partition(words) { |w| String.start_with?(w, "#") }
+        tags = Array.to_set(Array.map(tag_words) { |w| String.delete_prefix(w, "#") })
+        t = TodoList.add(list, Array.join(title_words, " "), parse_priority(m[1], lineno), m[2], tags)
+        puts("added ##{Todo.get_id(t)} #{Todo.get_title(t)}")
+      in "done"
+        t = TodoList.complete(list, String.to_i(rest), lineno)
+        puts("done  ##{Todo.get_id(t)} #{Todo.get_title(t)}")
+      in "list"
+        puts("-- #{rest} --")
+        shown = rest == "all" ? TodoList.ordered(list) : TodoList.tagged(list, rest)
+        Array.each(shown) { |t| puts(show(t)) }
+      else
+        raise CommandError.new("unknown command '#{cmd}'", lineno)
+      end
+    rescue CommandError => e
+      puts("line #{CommandError.get_line(e)}: #{Exception.message(e)}")
+    end
+  end
+end
+
+script = <<~TXT
+  # weekly plan
+  add !! 10-03 Pay office rent #admin #money
+  add ! 10-05 Call the accountant #admin
+  add . 10-09 Water the plants #office
+  add !! 10-02 Send invoice to Acme #money #clients
+  add ! 10-02 Order printer toner #office
+  add ? 10-04 Something odd
+  add ! tomorrow Fix the sign
+  done 4
+  done 4
+  done 17
+  add . 10-03 Book team lunch #team #office
+  add ! 10-05 Review contracts #clients #admin
+  frobnicate now
+  done 2
+  list all
+  list office
+  list clients
+TXT
+
+list = TodoList.create
+run(list, script)
+
+puts
+puts("Pending by priority:")
+groups = Array.group_by(TodoList.pending(list)) { |t| Todo.get_priority(t) }
+Hash.each(groups) do |prio, ts|
+  titles = Array.map(ts) { |t| Todo.get_title(t) }
+  puts("  #{prio}: #{Array.join(titles, ", ")}")
+end
+
+tag_counts = Hash.new(0)
+Array.each(TodoList.get_items(list)) do |t|
+  Set.each(Todo.get_tags(t)) { |g| tag_counts[g] += 1 }
+end
+puts("Tags: " + Array.join(Array.map(Hash.sort_by(tag_counts) { |g, n| g }) { |g, n| "#{g}=#{n}" }, " "))
+
+done = Array.count(TodoList.get_items(list)) { |t| Todo.get_done(t) }
+total = Array.size(TodoList.get_items(list))
+puts(format("Progress: %d/%d (%.0f%%)", done, total, done * 100.0 / total))

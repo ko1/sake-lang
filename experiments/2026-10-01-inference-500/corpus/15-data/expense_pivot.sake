@@ -1,0 +1,85 @@
+class Pivot < {reader: [cells, rows, cols]}
+  include Indexable
+
+  def create = Pivot.new(Hash.new(0), Array[], Array[])
+
+  def [](pv, key) = @cells[key]
+
+  def []=(pv, key, v)
+    row, col = key
+    Array.push(@rows, row) unless Array.include?(@rows, row)
+    Array.push(@cols, col) unless Array.include?(@cols, col)
+    @cells[key] = v
+  end
+
+  def row_total(pv, row) = Array.sum(@cols) { |c| @cells[[row, c]] }
+  def col_total(pv, col) = Array.sum(@rows) { |r| @cells[[r, col]] }
+  def grand_total(pv) = Array.sum(@rows) { |r| row_total(pv, r) }
+end
+
+def expenses
+  Array[
+    ["2026-01-04", "travel", 412.50], ["2026-01-09", "meals", 86.20],
+    ["2026-01-15", "software", 299.00], ["2026-01-21", "meals", 41.75],
+    ["2026-02-02", "travel", 1290.00], ["2026-02-11", "office", 64.99],
+    ["2026-02-14", "meals", 152.40], ["2026-02-27", "software", 299.00],
+    ["2026-03-03", "office", 210.10], ["2026-03-08", "travel", 388.00],
+    ["2026-03-19", "meals", 73.30], ["2026-03-22", "training", 950.00],
+    ["2026-03-30", "software", 49.00], ["2026-04-01", "meals", 18.90],
+    ["2026-04-12", "travel", 702.25], ["2026-04-18", "office", 33.15]
+  ]
+end
+
+def month_name(ym)
+  names = String.split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", " ")
+  idx = String.to_i(ym[5..6]) - 1
+  names[idx] || ym
+end
+
+def cell(v) = v == 0 ? format("%9s", "-") : format("%9.2f", v)
+
+pv = Pivot.create
+Array.each(expenses) do |date, category, amount|
+  month = date[0...7]
+  pv[[category, month]] += amount
+end
+
+categories = Array.sort(Pivot.get_rows(pv))
+months = Array.sort(Pivot.get_cols(pv))
+grand = Pivot.grand_total(pv)
+
+header = format("%-10s", "category") + Array.join(Array.map(months) { format("%9s", month_name(it)) }, "") + format("%10s %6s", "total", "share")
+puts(header)
+puts("=" * String.size(header))
+Array.each(Array.sort_by(categories) { 0 - Pivot.row_total(pv, it) }) do |cat|
+  line = format("%-10s", cat)
+  Array.each(months) { |m| line += cell(pv[[cat, m]]) }
+  total = Pivot.row_total(pv, cat)
+  line += format("%10.2f %5.1f%%", total, total / grand * 100)
+  puts(line)
+end
+puts("-" * String.size(header))
+footer = format("%-10s", "total")
+Array.each(months) { |m| footer += format("%9.2f", Pivot.col_total(pv, m)) }
+puts(footer + format("%10.2f %5.1f%%", grand, 100.0))
+
+puts
+month_totals = Array.map(months) { |m| [m, Pivot.col_total(pv, m)] }
+peak = Array.max_by(month_totals) { |m, t| t }
+low = Array.min_by(month_totals) { |m, t| t }
+if peak && low
+  peak_m, peak_t = peak
+  low_m, low_t = low
+  puts(format("Busiest month: %s (%.2f)", month_name(peak_m), peak_t))
+  puts(format("Quietest month: %s (%.2f)", month_name(low_m), low_t))
+end
+Array.each_cons(month_totals, 2) do |pair|
+  a = Array.fetch(pair, 0)
+  b = Array.fetch(pair, 1)
+  am, at = a
+  bm, bt = b
+  change = (bt - at) / at * 100
+  puts(format("%s -> %s: %+7.1f%%", month_name(am), month_name(bm), change))
+end
+recurring = Array.select(categories) { |c| Array.all?(months) { |m| pv[[c, m]] > 0 } }
+puts("Every month: #{Array.join(recurring, ", ")}")

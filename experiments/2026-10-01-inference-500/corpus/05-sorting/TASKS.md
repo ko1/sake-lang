@@ -1,0 +1,25 @@
+- gradebook_insertion: Stable insertion sort of student records by score, binary-search insertion of late entries, tied ranks and grade distribution.
+- merge_sort_inversions: Merge sort that counts inversions, used to compute Kendall tau distance between judges' rankings plus a consensus board.
+- quicksort_median3: In-place quicksort with median-of-three pivots and insertion-sort cutoff, generic over a key block, with comparison/swap statistics on a product catalog.
+- heap_scheduler: Binary min-heap Struct used as a job scheduler (Comparable jobs), for in-place heapsort of latencies, and for top-k selection.
+- log_time_bisect: Lower/upper-bound binary searches answering time-window queries over a sorted event log, and search in a rotated ring buffer.
+- sensor_quickselect: Quickselect with a median-of-medians pivot for per-sensor median, percentiles and outlier detection over Float readings.
+- kway_log_merge: K-way merge of per-server sorted logs with a heap of Comparable cursors, plus sorted-list union/intersection of user ids.
+- radix_order_ids: Stable counting sort of shipments by zone, LSD radix sort of order ids in several bases, largest id gap and a weight histogram.
+- autocomplete_msd: MSD radix sort of the words of a text and prefix completion via two binary searches, plus word frequency and neighbour common prefixes.
+- bucket_sort_ratings: Bucket sort of computed product rating scores in [0, 1) with insertion-sorted buckets, nearest-score binary search and top-percentile listing.
+- shell_sort_gaps: Shell sort with Shell/Knuth/Ciura gap sequences (a module_function module) compared by comparison counts across input shapes.
+- staff_multikey_sort: Stable merge sort with a comparator block driven by a parsed multi-key sort spec (Records of field and direction) over a staff directory.
+- meeting_intervals: Sort meetings by start, merge overlapping busy blocks, list free slots, count rooms needed by a sorted sweep, and detect double bookings per room.
+- sorted_matrix_search: Staircase search and k-th smallest (binary search on value) in a row/column-sorted price table, and flat binary search in a row-major sorted seat table.
+- bisect_on_answer: Binary search on the answer for minimum truck capacity and fair chapter splitting among readers, and Float bisection for a loan's interest rate.
+- probe_count_search: Linear, binary, interpolation, exponential and jump search compared by read counts through an Indexable counting wrapper type over three key distributions.
+- external_sort_sim: Simulated external merge sort of parsed CSV score records: memory-sized sorted runs merged with limited fan-in, I/O counts per configuration, and parse errors as a custom exception.
+- hashtag_trends: Per-hour hashtag counts ranked with a Comparable Struct (count desc, then name), top tags per hour, rank climbers and dropped tags.
+- triage_partition: Dutch-national-flag in-place partition of patients by urgency colour versus a stable partition, and a three-way quicksort of arrival times with many duplicates.
+- trail_peak_search: Summit of unimodal elevation profiles by binary search on the slope, altitude lookup on each monotone side, a custom exception for non-unimodal trails, and ternary search for the best ticket price.
+- gift_two_pointers: Two-pointer searches on a price-sorted gift list: best pair within budget, exact-sum pairs, closest three-item bundle, and pairs with a fixed price gap.
+- version_resolver: Parse and sort semantic version strings with a Comparable Struct (pre-releases first) and resolve "~>", ">=", "<", "=" constraints via binary search for the first matching index.
+- leaderboard_insert: A game leaderboard Struct kept sorted by binary-search insertion/removal of Comparable entries, with competition ranks, ties and score-needed-for-top-N queries.
+- natural_runs_sort: Simplified Timsort: natural run detection with reversal of descending runs, binary insertion to a minimum run length, and stack-balanced merging, with statistics on several series.
+- library_catalog: Library catalog with ISBN binary search raising a custom NotFound (retried after normalizing the query), Comparable shelf order, a sorted title-word index with prefix search, and Record-pattern queries.

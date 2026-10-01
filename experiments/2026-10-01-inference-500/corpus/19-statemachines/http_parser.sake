@@ -1,0 +1,131 @@
+Request = Struct.new(:method, :path, :version, :headers, :body)
+HttpError = Exception.new(:state)
+
+class HttpParser < {reader: [state, buffer, request, remaining, done]}
+  def start = HttpParser.new(:request_line, "", Request.new("", "", "", Hash[], ""), 0, Array[])
+
+  def take_line(hp)
+    idx = String.index(@buffer, "\r\n")
+    return nil if idx == nil
+    line = @buffer[0...idx]
+    @buffer = @buffer[(idx + 2)..]
+    line
+  end
+
+  def finish(hp)
+    Array.push(@done, @request)
+    @request = Request.new("", "", "", Hash[], "")
+    @state = :request_line
+  end
+
+  def feed(hp, chunk)
+    @buffer += chunk
+    progress = true
+    while progress
+      progress = step(hp)
+    end
+  end
+
+  def step(hp)
+    case @state
+    in :request_line
+      line = take_line(hp)
+      return false if line == nil
+      return true if line == ""
+      parts = String.split(line, " ")
+      raise HttpError.new("bad request line: #{line}", @state) if Array.size(parts) != 3
+      m, path, version = Array.fetch(parts, 0), Array.fetch(parts, 1), Array.fetch(parts, 2)
+      raise HttpError.new("bad version #{version}", @state) unless String.start_with?(version, "HTTP/1.")
+      Request.set_method(@request, m)
+      Request.set_path(@request, path)
+      Request.set_version(@request, version)
+      @state = :headers
+      true
+    in :headers
+      line = take_line(hp)
+      return false if line == nil
+      headers = Request.get_headers(@request)
+      if line == ""
+        if headers["transfer-encoding"] == "chunked"
+          @state = :chunk_size
+        else
+          @remaining = String.to_i(Hash.fetch(headers, "content-length", "0"))
+          if @remaining == 0
+            finish(hp)
+          else
+            @state = :body
+          end
+        end
+        return true
+      end
+      name, sep, value = String.partition(line, ":")
+      raise HttpError.new("bad header: #{line}", @state) if sep == ""
+      headers[String.downcase(String.strip(name))] = String.strip(value)
+      true
+    in :body
+      return false if String.empty?(@buffer)
+      piece = @buffer[0...@remaining]
+      @buffer = @buffer[String.size(piece)..]
+      Request.set_body(@request, Request.get_body(@request) + piece)
+      @remaining -= String.size(piece)
+      finish(hp) if @remaining == 0
+      true
+    in :chunk_size
+      line = take_line(hp)
+      return false if line == nil
+      raise HttpError.new("bad chunk size #{Kernel.inspect(line)}", @state) unless String.match?(line, /\A[0-9a-fA-F]+\z/)
+      @remaining = String.hex(line)
+      @state = @remaining == 0 ? :trailer : :chunk_data
+      true
+    in :chunk_data
+      return false if String.size(@buffer) < @remaining + 2
+      Request.set_body(@request, Request.get_body(@request) + @buffer[0...@remaining])
+      raise HttpError.new("missing CRLF after chunk", @state) if @buffer[@remaining...(@remaining + 2)] != "\r\n"
+      @buffer = @buffer[(@remaining + 2)..]
+      @state = :chunk_size
+      true
+    in :trailer
+      line = take_line(hp)
+      return false if line == nil
+      finish(hp) if line == ""
+      true
+    end
+  end
+end
+
+def slices(s, n)
+  out = Array[]
+  i = 0
+  while i < String.size(s)
+    Array.push(out, s[i...(i + n)])
+    i += n
+  end
+  out
+end
+
+stream = "GET /index.html HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n\r\n" +
+  "POST /api/items HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 26\r\n\r\n{\"name\":\"widget\",\"qty\":3}\n" +
+  "PUT /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n7\r\n, world\r\nA\r\n from Sake\r\n0\r\n\r\n" +
+  "DELETE /items/7 HTTP/1.0\r\n\r\n"
+
+Array.each(Integer[7, 64]) do |size|
+  hp = HttpParser.start
+  Array.each(slices(stream, size)) { |chunk| HttpParser.feed(hp, chunk) }
+  reqs = HttpParser.get_done(hp)
+  puts("chunk size #{size}: #{Array.size(reqs)} requests, parser #{HttpParser.get_state(hp)}, leftover #{String.size(HttpParser.get_buffer(hp))}")
+  Array.each(reqs) do |r|
+    hs = Request.get_headers(r)
+    puts("  #{Request.get_method(r)} #{Request.get_path(r)} #{Request.get_version(r)} headers=#{Array.join(Array.sort(Hash.keys(hs)), ",")}")
+    puts("    body=#{Kernel.inspect(Request.get_body(r))}") unless String.empty?(Request.get_body(r))
+  end
+end
+
+Array.each(Array["GET /\r\n\r\n", "GET / HTTP/2\r\n\r\n", "GET / HTTP/1.1\r\nNoColon\r\n\r\n", "PUT / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"]) do |bad|
+  hp = HttpParser.start
+  begin
+    HttpParser.feed(hp, bad)
+    puts("unexpected success")
+  rescue HttpError => e
+    puts("error in #{HttpError.get_state(e)}: #{Exception.message(e)}")
+  end
+end

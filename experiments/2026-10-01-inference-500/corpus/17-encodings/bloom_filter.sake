@@ -1,0 +1,84 @@
+# A Bloom filter over 32-bit words using FNV-1a and djb2 with double hashing,
+# measuring the false-positive rate against the theoretical estimate.
+
+Bloom = Struct.new(:size, :hashes, :words, :count)
+
+def fnv1a(s)
+  h = 0x811C9DC5
+  Array.each(String.bytes(s)) do |b|
+    h ^= b
+    h = (h * 0x01000193) & 0xFFFFFFFF
+  end
+  h
+end
+
+def djb2(s)
+  h = 5381
+  Array.each(String.bytes(s)) { |b| h = ((h << 5) + h + b) & 0xFFFFFFFF }
+  h
+end
+
+class Bloom
+  def create(size, hashes)
+    words = Integer[]
+    Integer.times((size + 31) / 32) { Array.push(words, 0) }
+    Bloom.new(size, hashes, words, 0)
+  end
+
+  def positions(bf, item)
+    h1 = fnv1a(item)
+    h2 = djb2(item) | 1
+    Array.map(Range.to_a(0...@hashes)) { |i| (h1 + i * h2) % @size }
+  end
+
+  def add(bf, item)
+    Array.each(positions(bf, item)) do |p|
+      @words[p / 32] |= 1 << (p % 32)
+    end
+    @count += 1
+  end
+
+  def include?(bf, item)
+    Array.all?(positions(bf, item)) { |p| (@words[p / 32] >> (p % 32)) & 1 == 1 }
+  end
+
+  def bits_set(bf) = Array.sum(Array.map(@words) { |w| popcount(w) })
+
+  def expected_fp(bf) = (1.0 - Math.exp(0.0 - @hashes * @count / Integer.to_f(@size))) ** @hashes
+end
+
+def popcount(n)
+  c = 0
+  while n != 0
+    n &= n - 1
+    c += 1
+  end
+  c
+end
+
+def word_list(prefix, n) = Array.map(Range.to_a(1..n)) { |i| "#{prefix}-#{i * 7919 % 10007}" }
+
+puts(format("fnv1a(\"\") = %08x", fnv1a("")))
+puts(format("fnv1a(\"a\") = %08x", fnv1a("a")))
+puts(format("fnv1a(\"foobar\") = %08x", fnv1a("foobar")))
+puts(format("djb2(\"hello\") = %d", djb2("hello")))
+
+members = word_list("user", 60)
+strangers = word_list("guest", 150)
+
+Array.each(Array[[256, 2], [512, 3], [1024, 5]]) do |size, k|
+  bf = Bloom.create(size, k)
+  Array.each(members) { |m| Bloom.add(bf, m) }
+  missed = Array.count(members) { |m| Bloom.include?(bf, m) == false }
+  fps = Array.count(strangers) { |s| Bloom.include?(bf, s) }
+  rate = Integer.fdiv(fps, Array.size(strangers))
+  fill = Integer.fdiv(Bloom.bits_set(bf), size)
+  puts(format("m=%4d k=%d fill=%.2f false-negatives=%d false-positives=%3d/%d (%.3f, expected %.3f)",
+              size, k, fill, missed, fps, Array.size(strangers), rate, Bloom.expected_fp(bf)))
+end
+
+bf = Bloom.create(128, 3)
+Array.each(Array["apple", "banana", "cherry"]) { |w| Bloom.add(bf, w) }
+Array.each(Array["apple", "banana", "durian", "elderberry", "cherry"]) do |w|
+  puts("#{w}: #{Bloom.include?(bf, w) ? "maybe present" : "definitely absent"}  #{Kernel.inspect(Bloom.positions(bf, w))}")
+end

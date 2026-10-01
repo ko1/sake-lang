@@ -1,0 +1,111 @@
+# Meeting-room bookings as Ranges of minutes: merge overlaps, find gaps, and answer queries.
+
+Booking = Struct.new(:room, :who, :span)
+
+def hhmm(m) = format("%02d:%02d", m / 60, m % 60)
+
+def parse_time(s)
+  parts = String.split(s, ":")
+  String.to_i(parts[0]) * 60 + String.to_i(parts[1])
+end
+
+def span_to_s(r) = "#{hhmm(Range.begin(r))}-#{hhmm(Range.end(r))}"
+
+def parse_booking(line)
+  f = String.split(line, " ")
+  Booking.new(f[0], f[1], parse_time(f[2])...parse_time(f[3]))
+end
+
+def merge_spans(spans)
+  sorted = Array.sort_by(spans) { |r| Range.begin(r) }
+  merged = Array[]
+  Array.each(sorted) do |r|
+    last = Array.last(merged)
+    if last && Range.begin(r) <= Range.end(last)
+      hi = Range.end(r) > Range.end(last) ? Range.end(r) : Range.end(last)
+      merged[Array.size(merged) - 1] = Range.begin(last)...hi
+    else
+      Array.push(merged, r)
+    end
+  end
+  merged
+end
+
+def gaps(merged, day)
+  out = Array[]
+  cursor = Range.begin(day)
+  Array.each(merged) do |r|
+    Array.push(out, cursor...Range.begin(r)) if Range.begin(r) > cursor
+    cursor = Range.end(r) if Range.end(r) > cursor
+  end
+  Array.push(out, cursor...Range.end(day)) if cursor < Range.end(day)
+  out
+end
+
+def overlap?(a, b) = Range.begin(a) < Range.end(b) && Range.begin(b) < Range.end(a)
+
+lines = Array[
+  "A ann 09:00 10:00", "A bob 09:30 11:00", "A cho 13:00 14:00",
+  "B dev 08:30 09:15", "B eve 10:00 12:30", "B fay 12:00 12:45",
+  "A gus 10:45 11:30", "C hal 09:00 17:00", "B ivy 15:00 16:00"
+]
+bookings = Array.map(lines) { |l| parse_booking(l) }
+day = parse_time("08:00")...parse_time("18:00")
+
+by_room = Array.group_by(bookings) { |b| Booking.get_room(b) }
+Array.each(Array.sort(Hash.keys(by_room))) do |room|
+  list = by_room[room]
+  spans = Array.map(list) { |b| Booking.get_span(b) }
+  merged = merge_spans(spans)
+  busy = Array.sum(Array.map(merged) { |r| Range.size(r) })
+  puts("Room #{room}: #{Array.size(list)} bookings, busy #{busy} min")
+  puts("  busy: #{Array.join(Array.map(merged) { |r| span_to_s(r) }, ", ")}")
+  free = gaps(merged, day)
+  puts("  free: #{Array.join(Array.map(free) { |r| span_to_s(r) }, ", ")}")
+  longest = Array.max_by(free) { |r| Range.size(r) }
+  puts("  longest free: #{longest ? span_to_s(longest) : "none"}")
+  Array.each(Array.combination(list, 2)) do |pair|
+    a = pair[0]
+    b = pair[1]
+    if overlap?(Booking.get_span(a), Booking.get_span(b))
+      puts("  clash: #{Booking.get_who(a)} and #{Booking.get_who(b)}")
+    end
+  end
+end
+
+puts("== Who is in at... ==")
+Array.each(Array["09:10", "12:15", "17:30"]) do |t|
+  m = parse_time(t)
+  here = Array.select(bookings) { |b| Range.cover?(Booking.get_span(b), m) }
+  names = Array.map(here) { |b| "#{Booking.get_who(b)}@#{Booking.get_room(b)}" }
+  puts("#{t}: #{Array.empty?(names) ? "nobody" : Array.join(names, " ")}")
+end
+
+puts("== First room free for 60 min from 10:00 ==")
+want = 60
+from = parse_time("10:00")
+found = nil
+Array.each(Array.sort(Hash.keys(by_room))) do |room|
+  next if found
+  spans = Array.map(by_room[room]) { |b| Booking.get_span(b) }
+  slot = Array.find(gaps(merge_spans(spans), day)) do |r|
+    start = Range.begin(r) > from ? Range.begin(r) : from
+    Range.end(r) - start >= want
+  end
+  if slot
+    start = Range.begin(slot) > from ? Range.begin(slot) : from
+    found = [room, start...(start + want)]
+  end
+end
+if found
+  room, r = found
+  puts("room #{room} at #{span_to_s(r)}")
+else
+  puts("no room")
+end
+
+hours = Range.map(8...18) { |h| [h, Array.count(bookings) { |b| overlap?(Booking.get_span(b), (h * 60)...(h * 60 + 60)) }] }
+puts("== Load per hour ==")
+Array.each(hours) { |h, n| puts(format("%02d %s", h, "#" * n)) }
+peak = Array.max_by(hours) { |h, n| n }
+puts("peak hour: #{peak[0]} with #{peak[1]}")

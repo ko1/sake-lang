@@ -1,0 +1,27 @@
+# Tasks (03-numtheory)
+
+- sieve_primes: Sieve of Eratosthenes with per-block prime counts, twin primes, largest prime gaps, Mersenne exponents and Sophie Germain primes.
+- linear_diophantine: Extended Euclid with Bezout coefficients, lcm of 1..n, solving a*x + b*y = c with a NoSolution exception, and non-negative stamp combinations / Frobenius number.
+- digit_curiosities: Digit sums and digital roots, Armstrong and Harshad numbers, palindromic squares, reverse-and-add (Lychrel candidates) and Kaprekar's 6174 routine.
+- perfect_amicable: Proper divisors and perfect/abundant/deficient classification, a divisor-sum sieve for perfect numbers and amicable pairs, and aliquot sequences with cycle detection.
+- modular_crt: A Mod type with arithmetic/comparison operators and modular inverses (NotInvertible / ModulusMismatch exceptions), plus a general Chinese Remainder Theorem solver.
+- factor_functions: Trial-division factorization into a prime=>exponent Hash and the functions tau, sigma, phi, Moebius and radical; highly composite records, Mertens values, smooth numbers.
+- collatz_stats: Collatz chain lengths with a memo Hash, record holders, peaks, trajectory of 27 and a length histogram over Chain structs.
+- base_conversion: Converting integers to and from bases 2..36 with validation (InvalidDigit / ArgumentError), balanced ternary, double-base palindromes and digit sums by base.
+- continued_fractions: Continued fraction expansions of Rationals and of square roots (periods), convergents as Rationals with errors, and Pell equation fundamental solutions.
+- pythagorean_triples: A Comparable Triple type; primitive triples by Euclid's formula, all triples grouped by perimeter, and three levels of the Berggren tree.
+- miller_rabin: Trial division, Fermat and deterministic Miller-Rabin primality tests; Carmichael numbers, base-2 pseudoprimes, large Mersenne candidates and next primes after powers of ten.
+- check_digits: Luhn, ISBN-10 (with X), ISBN-13 and mod-97 check digits: validation with Symbol results, completion, conversion, and single-digit/transposition typo detection.
+- goldbach: Goldbach partitions of even numbers from a prime table, per-block min/max counts (Goldbach's comet), record smallest primes, and the weak ternary conjecture for small odds.
+- rsa_toy: Textbook RSA with a Key struct: key generation (BadExponent exception), block encoding of text, encrypt/decrypt, signatures, cracking a weak key by factoring, and the multiplicative property.
+- farey_stern_brocot: Farey sequences as Rationals with the neighbour determinant property, Stern-Brocot paths (L/R strings) and back, and best rational approximations of pi, sqrt 2 and e.
+- integer_partitions: Recursive partition generator using yield, partition counting by DP, Euler's distinct = odd parts theorem, pentagonal-number recurrence, coin change, Ramanujan congruences.
+- quadratic_residues: Legendre and Jacobi symbols, a quadratic reciprocity check, Tonelli-Shanks square roots mod p (NoSquareRoot exception), and Fermat's two-square decomposition of primes.
+- pollard_rho: Pollard's rho (Floyd and Brent) and p-1 factoring compared by iteration counts, with a Miller-Rabin-backed recursive full factorization.
+- linear_sieve: Euler's linear sieve filling smallest-prime-factor, phi and mu tables in one pass; square-free density, coprime pair counts via Moebius, inverse totients and Mertens zeros.
+- repeating_decimals: Long division with a remainder Hash to find repetends (Record results), periods via multiplicative order, full reptend primes, cyclic numbers and Midy's theorem.
+- happy_cycles: Happy numbers with a memo Hash, and the cycles/fixed points reached by iterating the sum of k-th powers of digits for k = 2..5.
+- primitive_roots: Multiplicative orders, primitive roots (NoPrimitiveRoot exception), an index table used to solve x^5 = 5 (mod 31), and baby-step giant-step discrete logarithms.
+- fibonacci_numbers: Fibonacci via a Mat2 type with `*`/`%` operators and fast doubling; Pisano periods, Zeckendorf representations, gcd/Cassini identities and ranks of apparition.
+- egyptian_fractions: Greedy and duplicate-splitting Egyptian fraction expansions of Rationals, harmonic numbers, and an Erdos-Straus 4/n = 1/x + 1/y + 1/z search.
+- calendar_congruences: Zeller's congruence cross-checked with Doomsday and Time.wday, the Gregorian Easter computus with its date distribution, and Friday-the-13th weekday counts.

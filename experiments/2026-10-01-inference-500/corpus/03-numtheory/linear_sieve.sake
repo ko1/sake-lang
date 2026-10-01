@@ -1,0 +1,109 @@
+# Linear (Euler) sieve computing smallest prime factor, phi and mu for all n <= N
+# in one pass; then square-free density, coprime-pair probability, and totient
+# curiosities.
+
+Tables = Struct.new(:spf, :phi, :mu, :primes)
+
+def linear_sieve(n)
+  spf = Integer[]
+  phi = Integer[]
+  mu = Integer[]
+  Range.each(0..n) do
+    Array.push(spf, 0)
+    Array.push(phi, 0)
+    Array.push(mu, 0)
+  end
+  phi[1] = 1
+  mu[1] = 1
+  primes = Integer[]
+  Range.each(2..n) do |i|
+    if spf[i] == 0
+      spf[i] = i
+      phi[i] = i - 1
+      mu[i] = -1
+      Array.push(primes, i)
+    end
+    j = 0
+    while j < Array.size(primes)
+      p = primes[j]
+      break if p > spf[i] || i * p > n
+      spf[i * p] = p
+      if i % p == 0
+        phi[i * p] = phi[i] * p
+        mu[i * p] = 0
+      else
+        phi[i * p] = phi[i] * (p - 1)
+        mu[i * p] = 0 - mu[i]
+      end
+      j += 1
+    end
+  end
+  Tables.new(spf, phi, mu, primes)
+end
+
+def factor_with(spf, n)
+  out = Integer[]
+  while n > 1
+    Array.push(out, spf[n])
+    n /= spf[n]
+  end
+  out
+end
+
+n = 1500
+t = linear_sieve(n)
+spf = Tables.get_spf(t)
+phi = Tables.get_phi(t)
+mu = Tables.get_mu(t)
+puts("primes <= #{n}: #{Array.size(Tables.get_primes(t))}")
+
+puts("factorizations via smallest-prime-factor table:")
+Array.each(Integer[360, 1155, 1024, 1499, 1001]) do |k|
+  puts("  #{k} = #{Array.join(factor_with(spf, k), " * ")}")
+end
+
+puts(format("%5s %5s %5s %3s", "k", "spf", "phi", "mu"))
+Array.each(Integer[1, 2, 12, 30, 97, 100, 210, 1499]) do |k|
+  puts(format("%5d %5d %5d %3d", k, spf[k], phi[k], mu[k]))
+end
+
+squarefree = Range.count(1..n) { |k| mu[k] != 0 }
+puts(format("square-free density: %.4f (6/pi^2 = %.4f)", squarefree / Integer.to_f(n), 6 / (3.141592653589793 ** 2)))
+
+# number of coprime pairs (a, b) in 1..m is sum_d mu(d) * floor(m/d)^2
+m = 600
+coprime = 0
+Range.each(1..m) { |d| coprime += mu[d] * (m / d) * (m / d) }
+puts(format("coprime pairs in 1..%d: %d, probability %.4f", m, coprime, coprime / Integer.to_f(m * m)))
+
+totient_sum = Array.sum(Array.drop(phi, 1))
+puts("sum of phi(k) for k <= #{n}: #{totient_sum}  (3n^2/pi^2 ~ #{Float.round(3 * n * n / (3.141592653589793 ** 2))})")
+
+equal_pairs = Array.select(Range.to_a(1..(n - 1))) { |k| phi[k] == phi[k + 1] }
+puts("k with phi(k) = phi(k+1): #{Array.join(Array.take(equal_pairs, 10), " ")} ...")
+
+inverse = Hash[]
+Range.each(1..n) do |k|
+  v = phi[k]
+  next if v > 48
+  list = inverse[v]
+  if list
+    Array.push(list, k)
+  else
+    inverse[v] = Integer[k]
+  end
+end
+puts("inverse totient (values <= 48):")
+Array.each(Array.sort(Hash.keys(inverse))) do |v|
+  puts("  phi^-1(#{v}) = #{Array.join(inverse[v], " ")}") if Array.size(inverse[v]) >= 4
+end
+missing = Array.reject(Range.to_a(1..48)) { |v| Hash.key?(inverse, v) || Integer.odd?(v) }
+puts("even non-totients <= 48: #{Array.join(missing, " ")}")
+
+mertens = 0
+zeros = Integer[]
+Range.each(1..n) do |k|
+  mertens += mu[k]
+  Array.push(zeros, k) if mertens == 0
+end
+puts("Mertens zeros <= #{n}: #{Array.size(zeros)}, last at #{Array.last(zeros)}")

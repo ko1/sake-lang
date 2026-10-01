@@ -1,0 +1,107 @@
+Product = Struct.new(:name, :price, :stock)
+VendError = Exception.new(:code)
+Machine = Struct.new(:state, :credit, :products, :coins, :sales, :log)
+
+def accepted_coins = Integer[100, 25, 10, 5]
+
+class Machine
+  def build(products)
+    coins = Hash.new(0)
+    Array.each(accepted_coins) { |c| coins[c] = 4 }
+    Machine.new(:idle, 0, products, coins, 0, Array[])
+  end
+
+  def note(m, msg)
+    Array.push(@log, msg)
+  end
+
+  def insert(m, coin)
+    raise VendError.new("coin #{coin} rejected", :bad_coin) unless Array.include?(accepted_coins, coin)
+    @credit += coin
+    @coins[coin] += 1
+    @state = :collecting
+    note(m, "credit #{@credit}")
+  end
+
+  def make_change(m, amount)
+    change = Array[]
+    remaining = amount
+    Array.each(accepted_coins) do |c|
+      while remaining >= c && @coins[c] > 0
+        @coins[c] -= 1
+        remaining -= c
+        Array.push(change, c)
+      end
+    end
+    if remaining > 0
+      Array.each(change) { |c| @coins[c] += 1 }
+      raise VendError.new("cannot make change for #{amount}", :no_change)
+    end
+    change
+  end
+
+  def select(m, slot)
+    product = @products[slot]
+    raise VendError.new("unknown slot #{slot}", :bad_slot) if product == nil
+    raise VendError.new("#{Product.get_name(product)} sold out", :sold_out) if Product.get_stock(product) == 0
+    price = Product.get_price(product)
+    if @credit < price
+      raise VendError.new("need #{price - @credit} more for #{Product.get_name(product)}", :short)
+    end
+    @state = :dispensing
+    change = make_change(m, @credit - price)
+    Product.set_stock(product, Product.get_stock(product) - 1)
+    @sales += price
+    @credit = 0
+    @state = :idle
+    note(m, "vend #{Product.get_name(product)} change #{Array.join(Array.map(change) { Integer.to_s(it) }, "+")}")
+  end
+
+  def cancel(m)
+    if @credit == 0
+      note(m, "nothing to return")
+      return
+    end
+    change = make_change(m, @credit)
+    note(m, "returned #{Array.sum(change)}")
+    @credit = 0
+    @state = :idle
+  end
+
+  def dispatch(m, kind, arg)
+    case kind
+    in :coin then insert(m, arg)
+    in :select then select(m, arg)
+    in :cancel then cancel(m)
+    end
+  rescue VendError => e
+    note(m, "error[#{VendError.get_code(e)}] #{Exception.message(e)}")
+  end
+end
+
+products = Hash[
+  "A1" => Product.new("Cola", 125, 2),
+  "A2" => Product.new("Water", 90, 1),
+  "B1" => Product.new("Chips", 65, 0),
+  "B2" => Product.new("Candy", 40, 5)
+]
+m = Machine.build(products)
+events = Array[
+  [:coin, 100], [:coin, 25], [:select, "A1"],
+  [:coin, 3], [:coin, 100], [:select, "B1"], [:select, "C9"], [:select, "A2"],
+  [:coin, 25], [:coin, 25], [:select, "A1"], [:coin, 100], [:select, "A1"],
+  [:cancel, nil], [:coin, 10], [:coin, 10], [:coin, 25], [:select, "B2"],
+  [:coin, 100], [:select, "A2"], [:coin, 100], [:coin, 100], [:select, "A1"],
+  [:cancel, nil]
+]
+Array.each(events) do |kind, arg|
+  Machine.dispatch(m, kind, arg)
+  puts(format("%-8s %-6s state=%-10s credit=%3d | %s", kind, arg, Machine.get_state(m), Machine.get_credit(m), Array.last(Machine.get_log(m))))
+end
+
+puts("sales: #{Machine.get_sales(m)}")
+Hash.each(products) do |slot, prod|
+  puts(format("%s %-6s stock=%d", slot, Product.get_name(prod), Product.get_stock(prod)))
+end
+coins = Machine.get_coins(m)
+puts("coins: " + Array.join(Array.map(accepted_coins) { |c| "#{c}x#{coins[c]}" }, " "))

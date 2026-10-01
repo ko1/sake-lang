@@ -1,0 +1,25 @@
+- descriptive_stats: mean/median/sd/quartiles/skewness, IQR outliers and densest bucket for three named Float samples.
+- root_finding: bisection, Newton and secant solvers (functions passed as blocks) on cubics, cos x = x, Kepler's equation and square roots, with custom exceptions for bad brackets and non-convergence.
+- numeric_integration: trapezoid, Simpson, 3-point Gauss-Legendre, Romberg and adaptive Simpson compared on five integrals, plus the trapezoid convergence ratio.
+- cubic_spline: natural cubic spline (tridiagonal Thomas solve) on Runge's function, compared with linear and Lagrange interpolation, with an out-of-range exception.
+- matrix_ops: a dense Matrix type with +, -, * (scalar or matrix), indexing, transpose, trace, cofactor determinant, fast power and shape-mismatch exceptions.
+- gaussian_elimination: linear solve with partial pivoting, determinant, Gauss-Jordan inverse and residuals on several systems (one singular) and on Hilbert matrices.
+- linear_regression: per-site ordinary least squares (slope, intercept, r^2, slope standard error) on grouped observations, degenerate groups, pooled and weighted refits, predictions.
+- ode_solver: Euler, midpoint and RK4 integrators (right-hand side as a block) on a harmonic oscillator, logistic growth, Lotka-Volterra and an observed-order check.
+- vector_geometry: a Vec3 type with arithmetic and norm ordering, dot/cross/projection/angles, Gram-Schmidt with dependent-vector detection, and triangle mesh areas/normals.
+- fourier_spectrum: a hand-written complex type, O(n^2) DFT vs recursive radix-2 FFT, amplitude spectrum peaks, Parseval check, inverse FFT round trip and a low-pass filter.
+- time_series: daily temperature series with Hampel outlier replacement, SMA/EMA/rolling std, smoothed extrema, warm-spell runs and day-to-day change statistics.
+- histogram_fit: a deterministic LCG + Box-Muller sample, Sturges histogram with ASCII bars, chi-square against a fitted normal (erf approximation), Gaussian KDE modes and quantiles.
+- polynomial: a Poly type with +, -, * (scalar or poly), Horner evaluation, derivative, long division, pretty printing, real roots by Newton + deflation, and Chebyshev recurrence.
+- eigenvalues: power iteration with residual test (and non-convergence exception), shifted inverse iteration via Gaussian solve, and cyclic Jacobi rotations for symmetric matrices.
+- lu_decomposition: an LU type (Doolittle with partial pivoting and permutation vector) reused for several right-hand sides, determinant, inverse, 1-norm condition numbers of Hilbert matrices, singular detection.
+- optimization: golden-section search on three 1-D functions, gradient descent with backtracking and Nelder-Mead on Rosenbrock, and Nelder-Mead from four starts on Himmelblau.
+- monte_carlo: xorshift32 generator and a Welford running-statistics type with defaults; Monte Carlo pi, plain vs antithetic integration with 95% intervals, random-walk endpoint tally and Buffon's needle.
+- correlation_matrix: Pearson and Spearman (tie-averaged ranks) matrices over named columns with missing values (pairwise deletion), Tuple-keyed Hash results, strongest pair, partial correlation and Fisher-z interval.
+- float_accuracy: machine epsilon, ULP distance, naive vs Neumaier-compensated vs pairwise summation on several series, cancellation in the quadratic formula, (1+1/n)^n, and Infinity/NaN behaviour.
+- interval_arithmetic: an Interval type with +, -, *, / against Intervals, Floats or Integers (zero-containing divisor raises), dependency-problem demo, branch-and-bound global minimum and root enclosure by bisection.
+- bezier_curves: Bezier curves over [x, y] Tuple control points: de Casteljau vs Bernstein evaluation, subdivision, polyline and adaptive arc length, sampled bounding box and closest-point search.
+- numerical_derivatives: forward/backward/central/five-point differences and Richardson extrapolation on four functions, step-size error sweep, second derivative and a finite-difference Jacobian.
+- curve_fitting: polynomial (degrees 1-4, normal equations solved by Cholesky) and log-linear exponential fits behind a shared Model mixin (residuals, RMSE, AIC), best-model selection and non-positive-definite errors.
+- special_functions: Lanczos gamma with reflection and pole errors, Stirling log-gamma, erf by series and continued fraction, Bessel J0 series and its zeros, beta function and a Hash-memoized gamma.
+- loan_amortization: annuity payments and cent-rounded amortization schedules for three loans, yearly totals in a Hash of Tuples, extra-payment savings, and implied APR by bisection with a no-solution exception.

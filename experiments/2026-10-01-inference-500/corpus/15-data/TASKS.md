@@ -1,0 +1,27 @@
+# Tasks: data processing and reports
+
+- sales_by_region: parse embedded CSV sales lines, group by region, and print a revenue table with shares, a top-rep leaderboard, and a product mix.
+- employee_dept_join: inner and left joins of employees with departments and managers via id indexes, unmatched rows on both sides, and per-department salary statistics.
+- csv_import_validation: split quoted CSV lines by hand, validate each row (integers, dates, required fields, duplicate ids) with a custom exception carrying line and column, and report imported rows and rejections.
+- expense_pivot: pivot dated expenses into a category x month table through a Pivot type with Tuple-keyed indexing, with row/column totals, shares, and month-over-month change.
+- invoice_totals: compute invoices from line items with a Money type (Arithmetic and Comparable operators), volume discounts, coupons chosen by pattern matching, per-region tax that may be missing, and a summary.
+- grade_book: weighted category grades from sparse score hashes, letter grades, competition ranking, class statistics, a letter histogram, missing work, and hardest assignments.
+- access_log_report: parse access-log lines with a regexp, then report status classes, an hourly bar chart, per-endpoint hit counts with error rates and latency percentiles, slow requests, and the busiest client.
+- metric_anomalies: daily metric series with Time dates: missing-day detection, mean/stddev/median/MAD, robust outliers, a 3-day moving average, weekday vs weekend medians, and ISO-week totals.
+- inventory_diff: parse two pipe-separated inventory snapshots into Hashes of Items and report added, removed, and field-level changes, stock movements, price drift, and stock value.
+- cohort_retention: build per-user active-month Sets from an activity log, then print a signup-cohort retention matrix, one-month retention by plan, dormant users, and activity from unknown users.
+- customer_dedupe: normalize contact emails, phones, and names, cluster duplicates with a union-find over shared keys, and print merged golden records chosen from the most recently updated values.
+- budget_variance: aggregate transactions by (department, line) Tuple keys against a nested budget Hash, printing variance, utilization, status flags, unbudgeted lines, and subtotals.
+- top_products: Bayesian-adjusted product ratings from reviews, top three per category ordered by a Comparable Score type (rating, votes, title), with unknown-product reviews and unrated products.
+- bank_reconcile: load a bank statement and a ledger in different CSV dialects (with a custom exception for unreadable lines), match entries by amount within a growing date tolerance, and report unmatched items, digit-slip hints, and the balance difference.
+- timesheet_payroll: parse weekly shift lines (including overnight shifts), split daily and weekly overtime, compute pay per worker and week with exempt workers, flag long shifts and unknown worker ids.
+- survey_crosstab: filter Record survey responses, cross-tabulate answers by region and by age band with row percentages, and compute chi-square statistics.
+- fx_conversion: convert multi-currency transactions to EUR with exact Rational arithmetic, falling back to the latest earlier rate and raising a custom exception when none exists, then report balances per account and exposure per currency.
+- size_histogram: bucket file sizes into power-of-two ranges and print a bar histogram with cumulative percentages, human-readable sizes, median and p90.
+- quality_rules: validate key=value records against heterogeneous rule types (required, range, pattern, one-of) that share a Rule mixin called through module dispatch, and report problems per record and per rule.
+- league_standings: build a league table from match results round by round with a Comparable Team type (points, goal difference, goals, name), recent form, rank movement, and rank history.
+- fulfillment_report: join orders, order lines, products, and shipments to compute order value, weight, fulfillment status and lateness, open lines, revenue by category, carrier lead times, and data problems (unknown SKUs, stray shipments).
+- table_renderer: render heterogeneous Hash rows as a boxed text table driven by Column specs (alignment, integer grouping, decimals, word wrapping), with a computed density column and a totals row.
+- clickstream_sessions: parse click events, split each user's events into sessions on a 30-minute gap with a Session type, and report session paths, a view/cart/checkout funnel, bounce rate, abandoned carts, and top pages.
+- groupby_query: a small GROUP BY engine over key=value rows with dynamically typed columns: where-conditions, multi-column grouping, count/sum/avg/min/max aggregates, ordering, limits, and a custom exception for unknown columns.
+- etl_star_schema: extract sales from a pipe-separated POS feed and a JSON-lines web feed (fields pulled with regexps), load them into a star schema with surrogate-key dimensions and facts, and report rollups, a region x category matrix, and rejected records.

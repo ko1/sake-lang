@@ -1,0 +1,87 @@
+# Word statistics over a few short documents: stopwords, frequencies, bigrams, and document overlap.
+
+def stopwords = Set["the", "a", "an", "of", "and", "to", "in", "is", "it", "that", "on", "for", "with", "as", "was", "be"]
+
+def documents
+  Hash[
+    "intro" => "The cat sat on the mat. The cat was happy, and the mat was warm.",
+    "sequel" => "A dog chased the cat around the garden; the dog was fast and the cat was faster.",
+    "garden" => "In the garden the roses grow. Roses need water, sun, and a patient gardener.",
+    "notes" => "Water the roses. Feed the cat. Walk the dog. Repeat."
+  ]
+end
+
+def tokenize(text)
+  words = String.scan(String.downcase(text), /[a-z]+/)
+  Array.reject(words) { |w| Set.include?(stopwords, w) }
+end
+
+def bigrams(words)
+  out = Array[]
+  Array.each_cons(words, 2) { |pair| Array.push(out, Array.join(pair, " ")) }
+  out
+end
+
+def top_n(counts, n)
+  sorted = Array.sort_by(Hash.to_a(counts)) { |w, c| format("%05d %s", 100000 - c, w) }
+  Array.take(sorted, n)
+end
+
+docs = documents
+tokens = Hash.transform_values(docs) { |text| tokenize(text) }
+
+puts("== Per document ==")
+Hash.each(tokens) do |name, words|
+  uniq = Array.uniq(words)
+  longest = Array.max_by(words) { |w| String.size(w) }
+  puts(format("%-7s words=%2d unique=%2d longest=%s", name, Array.size(words), Array.size(uniq), longest))
+end
+
+all_words = Array.flat_map(Hash.values(tokens)) { |ws| ws }
+freq = Array.tally(all_words)
+puts("== Top words ==")
+Array.each(top_n(freq, 5)) { |w, c| puts(format("%-10s %d", w, c)) }
+
+puts("== Top bigrams ==")
+bi = Hash.new(0)
+Hash.each(tokens) { |name, words| Array.each(bigrams(words)) { |b| bi[b] += 1 } }
+repeated = Hash.select(bi) { |b, c| c > 1 }
+puts("distinct: #{Hash.size(bi)}, repeated: #{Hash.size(repeated)}")
+Array.each(top_n(bi, 4)) { |b, c| puts("#{b}: #{c}") }
+
+puts("== Document frequency ==")
+vocab = Hash.transform_values(tokens) { |ws| Array.to_set(ws) }
+df = Hash.new(0)
+Hash.each_value(vocab) { |set| Set.each(set) { |w| df[w] += 1 } }
+everywhere = Hash.keys(Hash.select(df) { |w, n| n == Hash.size(vocab) })
+p(Array.sort(everywhere))
+in_three = Array.sort(Hash.keys(Hash.select(df) { |w, n| n >= 3 }))
+p(in_three)
+
+puts("== Shared vocabulary ==")
+names = Array.sort(Hash.keys(vocab))
+Array.each(Array.combination(names, 2)) do |pair|
+  a = pair[0]
+  b = pair[1]
+  shared = Set.intersection(vocab[a], vocab[b])
+  next if Set.empty?(shared)
+  puts("#{a} & #{b}: #{Array.join(Set.sort(shared), ",")}")
+end
+
+puts("== Unique to one document ==")
+Hash.each(vocab) do |name, set|
+  others = Hash.reduce(vocab, Set[]) { |acc, kv| kv[0] == name ? acc : acc | kv[1] }
+  only = Set.sort(set - others)
+  puts("#{name}: #{Array.join(Array.take(only, 4), " ")}#{Array.size(only) > 4 ? " ..." : ""}")
+end
+
+puts("== Letters ==")
+letters = Array.tally(Array.flat_map(all_words) { |w| String.chars(w) })
+vowels = Set["a", "e", "i", "o", "u"]
+v, c = Hash.partition(letters) { |l, n| Set.include?(vowels, l) }
+puts("vowels: #{Array.sum(Array.map(v) { |l, n| n })}, consonants: #{Array.sum(Array.map(c) { |l, n| n })}")
+rare = Array.sort(Array.map(Array.select(Hash.to_a(letters)) { |l, n| n == 1 }) { |l, n| l })
+puts("seen once: #{Array.join(rare, "")}")
+missing = Array[]
+String.upto("a", "z") { |l| Array.push(missing, l) unless Hash.key?(letters, l) }
+puts("never: #{Array.join(missing, "")}")

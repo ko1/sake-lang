@@ -1,0 +1,93 @@
+Trade = Struct.new(:buy_day, :sell_day, :buy_price, :sell_price)
+
+class Trade
+  def gain(t) = @sell_price - @buy_price
+  def to_s(t) = "buy d#{@buy_day}@#{@buy_price} sell d#{@sell_day}@#{@sell_price} (+#{gain(t)})"
+end
+
+# at most k transactions; profit[t][d] = best profit using t trades within days 0..d
+def best_with_k(prices, k)
+  n = Array.size(prices)
+  return {profit: 0, trades: Trade[]} if n < 2 || k == 0
+  profit = Range.map(0..k) { Range.map(0...n) { 0 } }
+  Integer.upto(1, k) do |t|
+    hold = profit[t - 1][0] - prices[0]
+    Integer.upto(1, n - 1) do |d|
+      sell_now = prices[d] + hold
+      profit[t][d] = profit[t][d - 1] > sell_now ? profit[t][d - 1] : sell_now
+      candidate = profit[t - 1][d] - prices[d]
+      hold = candidate if candidate > hold
+    end
+  end
+  trades = Trade[]
+  t = k
+  d = n - 1
+  while t > 0 && d > 0
+    if profit[t][d] == profit[t][d - 1]
+      d -= 1
+      next
+    end
+    # find the buy day b that explains profit[t][d]
+    b = Range.find(0..(d - 1)) { |b| profit[t - 1][b] - prices[b] + prices[d] == profit[t][d] }
+    Array.unshift(trades, Trade.new(b, d, prices[b], prices[d]))
+    t -= 1
+    d = b
+  end
+  {profit: profit[k][n - 1], trades: trades}
+end
+
+# unlimited trades, one day of rest after each sale
+def best_with_cooldown(prices)
+  hold = nil
+  sold = 0
+  rest = 0
+  Array.each(prices) do |p|
+    prev_sold = sold
+    sold = hold == nil ? 0 : hold + p
+    new_hold = rest - p
+    hold = new_hold if hold == nil || new_hold > hold
+    rest = rest > prev_sold ? rest : prev_sold
+  end
+  sold > rest ? sold : rest
+end
+
+# unlimited trades, a fee per completed trade
+def best_with_fee(prices, fee)
+  cash = 0
+  hold = 0 - prices[0]
+  Array.each(Array.drop(prices, 1)) do |p|
+    cash = Array.max(Array[cash, hold + p - fee])
+    hold = Array.max(Array[hold, cash - p])
+  end
+  cash
+end
+
+markets = Hash[
+  "steady" => Array[3, 2, 6, 5, 0, 3],
+  "volatile" => Array[1, 7, 2, 9, 3, 8, 1, 10, 4, 6],
+  "falling" => Array[9, 8, 7, 5, 4, 2],
+  "single" => Array[5],
+  "swings" => Array[2, 4, 1, 7, 5, 11, 3, 9, 6, 14, 8, 12]
+]
+
+Hash.each(markets) do |name, prices|
+  puts("#{name}: #{Array.join(prices, " ")}")
+  Array.each(Array[1, 2, 3]) do |k|
+    best_with_k(prices, k) => {profit:, trades:}
+    puts("  k=#{k}: profit #{profit}")
+    Array.each(trades) { |t| puts("    #{t}") }
+    total = Array.sum(Array.map(trades) { |t| Trade.gain(t) })
+    puts("    MISMATCH #{total}") if total != profit
+  end
+  if Array.size(prices) > 1
+    puts("  cooldown: #{best_with_cooldown(prices)}, fee 2: #{best_with_fee(prices, 2)}")
+  end
+end
+
+swings = markets["swings"]
+puts("profit by number of trades (swings):")
+Range.each(0..6) do |k|
+  best_with_k(swings, k) => {profit:}
+  bar = "#" * (profit / 2)
+  puts(format("  %d %3d %s", k, profit, bar))
+end
