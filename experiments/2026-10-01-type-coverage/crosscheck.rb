@@ -14,7 +14,8 @@ module Recorder
   attr_accessor :observed
 
   def call_builtin(fn, args, blk, node)
-    return super if fn.full_name == "Array[]" # untyped constructor: nothing is checked
+    # Arguments of the untyped constructor and of Index.[] / []= are "Any": nothing is checked.
+    return super if fn.full_name == "Array[]" || fn.namespace == "Index"
     args.each_with_index do |a, i|
       # `T[...]` checks each element; the typer records those as arg "elem".
       arg = fn.name == "[]" ? "elem" : i + 1

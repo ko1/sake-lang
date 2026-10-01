@@ -11,6 +11,9 @@ module Sake
   # `@x` inside a function of a Struct type: field x of the function's first parameter.
   FieldAccess = Struct.new(:getter, :setter, :param)
 
+  # `x[k]` / `x[k] = v`: the receiver becomes the first argument of Index.[] / Index.[]=.
+  IndexCall = Struct.new(:builtin)
+
   # calls / blocks are identity hashes keyed by Prism nodes.
   Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, keyword_init: true)
 
@@ -188,6 +191,16 @@ module Sake
         nil
       when Prism::StatementsNode then node.body.each { check(_1, ctx) }
       when Prism::LocalVariableWriteNode then check(node.value, ctx)
+      when Prism::LocalVariableOrWriteNode then check(node.value, ctx)
+      when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode
+        if (node.arguments&.arguments || []).size != 1 || node.block
+          error(node, "`#{first_line(node.slice)}` takes one index")
+        elsif node.is_a?(Prism::IndexOperatorWriteNode) && !binary_op?(node.binary_operator)
+          error(node, "operator `#{node.binary_operator}=` is not supported")
+        end
+        check(node.receiver, ctx)
+        check_args(node.arguments, ctx)
+        check(node.value, ctx)
       when Prism::LocalVariableOperatorWriteNode
         error(node, "operator `#{node.binary_operator}=` is not supported") unless binary_op?(node.binary_operator)
         check(node.value, ctx)
@@ -348,7 +361,12 @@ module Sake
         error(node, "unary operator `#{node.slice}` is not supported yet (undecided)", hint)
         return check(recv, ctx)
       elsif node.call_operator_loc.nil? && %i[[] []=].include?(node.name)
-        error(node, "indexing `#{first_line(node.slice)}` is not supported yet (out-of-range behavior is undecided)")
+        want = node.name == :[] ? 1 : 2
+        if args.size != want
+          error(node, "`#{first_line(node.slice)}` takes #{want == 1 ? "one index" : "one index and a value"}")
+        else
+          @calls[node] = IndexCall.new(@registry.lookup("Index", node.name.to_s))
+        end
         check(recv, ctx)
         return check_args(node.arguments, ctx)
       else
@@ -361,7 +379,7 @@ module Sake
 
       @calls[node] = target
       check_arity(node, target, args.size, !blk.nil?)
-      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == "[]" && target.namespace != "Array"
+      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == "[]" && !%w[Array Index].include?(target.namespace)
     end
 
     def check_arity(node, target, argc, has_block)

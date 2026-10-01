@@ -20,6 +20,7 @@ module Sake
       install_array(reg)
       install_tuple(reg)
       install_math(reg)
+      install_index(reg)
       %w[Integer Float String Tuple].each { install_typed_array(reg, _1) }
     end
 
@@ -141,6 +142,7 @@ module Sake
       reg.define("String", :sub, %w[String String String]) { |s, a, b| s.sub(a, b) }
       reg.define("String", :gsub, %w[String String String]) { |s, a, b| s.gsub(a, b) }
       reg.define("String", :count, %w[String String]) { |s, t| s.count(t) }
+      reg.define("String", :index, %w[String String]) { |s, t| s.index(t) }
       reg.define("String", :each_char, ["String"], block: :required) { |s, &b| s.each_char { b.(_1) }; s }
       reg.define("String", :ljust, %w[String Integer], optional: ["String"]) { |s, n, pad = " "| s.ljust(n, pad) }
       reg.define("String", :rjust, %w[String Integer], optional: ["String"]) { |s, n, pad = " "| s.rjust(n, pad) }
@@ -174,6 +176,27 @@ module Sake
       %i[any? all? none?].each do |m|
         reg.define("Array", m, ["Array"], block: :required) { |a, &b| a.public_send(m) { Values.truthy?(b.(_1)) } }
       end
+      # These return nil on a miss, as in Ruby.
+      reg.define("Array", :at, %w[Array Integer]) { |a, i| a[i] }
+      reg.define("Array", :fetch, %w[Array Integer]) do |a, i|
+        a.fetch(i)
+      rescue IndexError => e
+        raise Fail.new("IndexError", e.message)
+      end
+      reg.define("Array", :first, ["Array"], &:first)
+      reg.define("Array", :last, ["Array"], &:last)
+      reg.define("Array", :pop, ["Array"], &:pop)
+      reg.define("Array", :shift, ["Array"], &:shift)
+      reg.define("Array", :unshift, ["Array"], rest: "Any") { |a, *xs| a.unshift(*check_elems(a, xs)) }
+      reg.define("Array", :min, ["Array"]) { |a| sort_checked(a) { a.min } }
+      reg.define("Array", :max, ["Array"]) { |a| sort_checked(a) { a.max } }
+      reg.define("Array", :min_by, ["Array"], block: :required) { |a, &b| sort_checked(a) { a.min_by { b.(_1) } } }
+      reg.define("Array", :max_by, ["Array"], block: :required) { |a, &b| sort_checked(a) { a.max_by { b.(_1) } } }
+      %i[find detect].each do |m|
+        reg.define("Array", m, ["Array"], block: :required) { |a, &b| a.find { Values.truthy?(b.(_1)) } }
+      end
+      reg.define("Array", :index, %w[Array Any]) { |a, x| a.index(x) }
+      reg.define("Array", :find_index, ["Array"], block: :required) { |a, &b| a.find_index { Values.truthy?(b.(_1)) } }
       reg.define("Array", :count, ["Array"], block: :required) { |a, &b| a.count { Values.truthy?(b.(_1)) } }
       %i[reduce inject].each do |m|
         reg.define("Array", m, %w[Array Any], block: :required) { |a, init, &b| a.reduce(init) { |acc, x| b.(acc, x) } }
@@ -211,6 +234,50 @@ module Sake
     rescue ArgumentError, NoMethodError
       types = a.map { Values.describe(_1) }.uniq
       raise Fail.new("ArgumentError", "cannot compare elements of types #{types.join(", ")}")
+    end
+
+    INDEX_ROWS = "(Array, Integer), (String, Integer), (Tuple, Integer)"
+    INDEX_SET_ROWS = "(Array, Integer), (Tuple, Integer)"
+
+    # `x[k]` and `x[k] = v` call these. A miss gives nil as in Ruby, except that a Tuple's length is part
+    # of its type, so reading or writing outside it is an IndexError.
+    def install_index(reg)
+      reg.define("Index", :[], %w[Any Any]) { |x, k| index_get(x, k) }
+      reg.define("Index", :[]=, %w[Any Any Any]) { |x, k, v| index_set(x, k, v) }
+    end
+
+    def index_get(x, k)
+      case [x, k]
+      in [Array | String, Integer] then x[k]
+      in [Tuple, Integer] then x.elems[tuple_pos(x, k)]
+      else raise Fail.new("TypeError", "no implementation for (#{Values.describe(x)}, #{Values.describe(k)}); defined for #{INDEX_ROWS}")
+      end
+    end
+
+    def index_set(x, k, v)
+      case [x, k]
+      in [TypedArray, Integer] if k > x.size
+        raise Fail.new("IndexError", "index #{k} is past the end of #{x.elem_type}[] (length #{x.size}); the gap would be nil")
+      in [Array, Integer]
+        check_elems(x, [v])
+        begin
+          x[k] = v
+        rescue IndexError => e
+          raise Fail.new("IndexError", e.message)
+        end
+      in [Tuple, Integer]
+        i = tuple_pos(x, k)
+        want = Values.type_of(x.elems[i])
+        raise Fail.new("TypeError", "Tuple position #{k} holds #{Values.display_type(want)}, got #{Values.describe(v)}") if Values.type_of(v) != want
+        x.elems[i] = v
+      else raise Fail.new("TypeError", "no implementation for (#{Values.describe(x)}, #{Values.describe(k)}); defined for #{INDEX_SET_ROWS}")
+      end
+    end
+
+    def tuple_pos(t, k)
+      n = t.elems.size
+      raise Fail.new("IndexError", "index #{k} is outside a Tuple of length #{n}") unless (-n...n).cover?(k)
+      k.negative? ? n + k : k
     end
 
     def install_tuple(reg)

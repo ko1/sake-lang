@@ -580,6 +580,48 @@ empty_braces.sake:2:10: error: `{"a" => ...}` is not a Hash in Sake: `{name: val
 (exit status 2)
 ```
 
+`x[k]` is shorthand for `Index.[](x, k)`, and `x[k] = v` for `Index.[]=(x, k, v)`. Like
+`BinaryOp`, `Index` has a fixed table: (Array, Integer), (String, Integer), and (Tuple, Integer).
+
+- **A miss gives `nil`**, as in Ruby. `Array.fetch` raises an error instead.
+- **Tuples.** A Tuple's length is part of its type, so reading outside it is an error.
+- **Writing a Tuple position** requires a value of that position's type.
+
+```ruby
+words = String.split("the quick brown fox", " ")
+p(words[0])
+p(words[-1])
+p(words[10])                   # outside the Array: nil, as in Ruby
+words[1] = "slow"
+p(words)
+
+counts = Array[0, 0, 0]
+counts[1] += 1
+p(counts)
+
+t = [1, "one"]
+t[0] = 2                       # a Tuple keeps the type of each position
+p(t)
+
+best = nil
+best ||= Array.max(Array[3, 9, 4])
+p(best)
+p(t[2])                        # a Tuple's length is part of its type
+```
+
+```
+$ sake indexing.sake
+"the"
+"fox"
+nil
+["the", "slow", "brown", "fox"]
+[0, 1, 0]
+[2, "one"]
+9
+indexing.sake:19: in <main>: IndexError: Index.[]: index 2 is outside a Tuple of length 2
+(exit status 1)
+```
+
 `Point[1, 2]` means "an Array of Point". It does **not** mean `Point.new(1, 2)` as it does in Ruby.
 When the mistake is visible in the source, it is reported before running:
 
@@ -681,7 +723,6 @@ strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node)
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
-- indexing
 - string interpolation
 - unary operators
 - `eval`, `send`, and similar
@@ -694,8 +735,6 @@ PI = 3.14159
 class Point
   def origin = self
 end
-nums = Array[1, 2, 3]
-puts(nums[0])
 puts("total: #{1 + 2}")
 puts(!true)
 eval("1 + 1")
@@ -706,10 +745,9 @@ $ sake forbidden.sake
 forbidden.sake:2:1: error: Sake has no value constants; only a Struct type can be assigned to a constant
   hint: define a function instead: `def pi = 3.14159`
 forbidden.sake:4:16: error: Sake has no `self`
-forbidden.sake:7:10: error: indexing `nums[0]` is not supported yet (out-of-range behavior is undecided)
-forbidden.sake:8:6: error: string interpolation is not supported yet (how values become strings is undecided); use String.+
-forbidden.sake:9:6: error: unary operator `!true` is not supported yet (undecided)
-forbidden.sake:10:1: error: `eval` is not allowed in Sake (it defeats static analysis)
+forbidden.sake:6:6: error: string interpolation is not supported yet (how values become strings is undecided); use String.+
+forbidden.sake:7:6: error: unary operator `!true` is not supported yet (undecided)
+forbidden.sake:8:1: error: `eval` is not allowed in Sake (it defeats static analysis)
 (exit status 2)
 ```
 

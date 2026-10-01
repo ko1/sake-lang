@@ -197,13 +197,32 @@ function.
 - **Not operators.** `&&` and `||` short-circuit and return one of their operands, as in Ruby. They
   are not entries in `BinaryOp`.
 
-### 8.2 Not supported
+### 8.2 Indexing
+
+`x[k]` means `Index.[](x, k)`, and `x[k] = v` means `Index.[]=(x, k, v)`. Like `BinaryOp`, `Index`
+has a closed table:
+
+| Receiver, index | `x[k]` | `x[k] = v` |
+|---|---|---|
+| Array, Integer | the element, or nil outside the Array | stores `v` (an Array of T checks `v`) |
+| String, Integer | a one-character String, or nil outside the String | not available |
+| Tuple, Integer | the element; outside the Tuple, `IndexError` | stores `v` if it has the type of that position |
+
+- **Negative indexes** count from the end, as in Ruby.
+- **A miss gives `nil`**, as in Ruby, so the static type of `a[i]` is `T | nil`. With `--strict`,
+  check the result before using it. `Array.fetch(a, i)` raises `IndexError` instead.
+- **Tuples.** A Tuple's length is part of its type, so an index outside it is an `IndexError`.
+- **Writing past the end.** Writing past the end of an untyped Array fills the gap with nil, as in
+  Ruby. An Array of T raises `IndexError` instead, because nil is not a T.
+- **Compound assignment.** `x[k] OP= v` and `x[k] ||= v` evaluate `x` and `k` once.
+- **Local `||=`.** `y ||= v` assigns to a local only when it is nil or false.
+
+### 8.3 Not supported
 
 - Unary operators: `!x`, `-x`, `+x`, `~x`.
 - `<=>` and the bitwise operators.
-- Indexing: `a[i]` and `a[i] = v`.
 
-All of these are static errors.
+Both are static errors.
 
 ## 9. Control flow
 
@@ -280,8 +299,8 @@ Option wrapper.
 shape fixes its type at creation. A growable collection is made by an operation with a type
 (`Array[...]`, `T[...]`).
 
-- **Contents are mutable.** The contents of a literal may be replaced by values of the same type.
-  The write is checked. Sake has no syntax for such writes yet.
+- **Contents are mutable.** The contents of a literal may be replaced by values of the same type,
+  and each write is checked. Tuples are written with `t[i] = v`. Records have no write syntax yet.
 - **Length is fixed.** The length is part of the type, so an empty `[]` cannot grow.
 - **nil.** A position created with `nil` has the type nil. To leave room for a value, create it
   with a placeholder of the intended type, such as `0` or `""`.
@@ -289,7 +308,8 @@ shape fixes its type at creation. A growable collection is made by an operation 
 **Tuple.** The literal `[a, b, ...]` is a Tuple.
 
 - Its elements are read by multiple assignment, `x, y = t`, and the counts must match.
-- There is no indexing yet.
+- `t[0]` reads a position and `t[0] = v` replaces it with a value of the same type
+  ([§8.2](#82-indexing)).
 - `Tuple.size` and `Tuple.length` give the number of elements.
 
 **Record.** The literal `{x: a, y: b}` is a Record.
@@ -364,6 +384,7 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 | Kind | Raised by |
 |---|---|
 | `TypeError` | an operation received a value of the wrong type; a `BinaryOp` row is missing; a typed Array write; multiple assignment from a non-Tuple |
+| `IndexError` | a Tuple index outside the Tuple; `Array.fetch` outside the Array; writing past the end of an Array of T |
 | `ArgumentError` | Tuple size mismatch in multiple assignment; block parameter count; negative sizes; comparing incomparable values in `sort` |
 | `ZeroDivisionError` | Integer `/` or `%` by zero |
 | `FloatDomainError` | converting NaN or Infinity to Integer |
@@ -419,6 +440,7 @@ one.
 | `ljust(s, n, [pad])`, `rjust(s, n, [pad])` | String |
 | `empty?`, `include?(s, t)`, `start_with?(s, t)`, `end_with?(s, t)` | true/false |
 | `chars`, `lines`, `split(s, [sep])` | Array of String |
+| `index(s, t)` | Integer or nil |
 | `each_char(s) { \|c\| }` | s (block) |
 
 ### Array
@@ -437,6 +459,11 @@ one.
 | `any?`, `all?`, `none?` | true/false (block) |
 | `count(a) { \|x\| }` | Integer (block) |
 | `reduce(a, init) { \|acc, x\| }`, `inject(a, init) { \|acc, x\| }` | the accumulated value; `init` is required (block) |
+| `at(a, i)`, `first`, `last`, `min`, `max`, `pop`, `shift` | an element, or nil (`pop` and `shift` remove it) |
+| `fetch(a, i)` | the element, or `IndexError` |
+| `unshift(a, *xs)` | a, changed in place |
+| `find`, `detect`, `min_by`, `max_by` | an element, or nil (block) |
+| `index(a, x)`, `find_index(a) { \|x\| }` | Integer or nil |
 
 ### Tuple
 
@@ -461,9 +488,7 @@ create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 Each of these is rejected statically. Most wait on a design decision.
 
 - **Hash.** `Hash[...]` is planned.
-- **Writing to Tuple and Record contents.**
-- **Indexing** `a[i]`, `t[i]`, and operations that return `nil` on a miss (`first`, `last`, `find`,
-  `min`, `max`, `pop`, `index`). These wait on the out-of-range behavior.
+- **Writing to Record fields.**
 - **`Array.new`.**
 - **Unary operators.**
 - **String interpolation**, which waits on how values become strings.

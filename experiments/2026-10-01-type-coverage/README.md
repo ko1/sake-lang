@@ -160,3 +160,13 @@ nil の設計を入れた後、`crosscheck.rb` を流し直した結果は次の
   - proven 513 / partial 7 / error 14 / unknown 0 / violation 0。
   - sabotage での violation: 14 件。
 - 最初は、写しを作らずにコーパスを対象から外して流していた。その状態では sabotage の violation が 0 件になり、負の対照が働いていなかった（Float を使う例がコーパスにしか無いため）。写しを作って流し直したところ、14 件に戻った。
+
+## 追記 3: 結果ファイルの上書きを直した（同日）
+
+- `run.sh` は当初、`results-*.md` と `types-report.txt` を上書きしていた。そのため、追記 1 と 2 で `run.sh` を流したとき、コミット 8da5bfc の結果が改名後の結果で置き換わっていた（コミット 9d09d53 に含まれる）。
+- 8da5bfc の結果ファイルを git から戻した。上の「結果」の表は、これらのファイルに対応する。
+- `run.sh` は、今のコードでの結果を `latest-*.md` と `latest-types-report.txt` に書くように変えた。
+- 添字 `x[k]`（`Index`）を入れた後の latest は次のとおり。
+  - 対象: 30 本。
+  - partial 8 / violation 0。
+  - sabotage での violation: 14 件。

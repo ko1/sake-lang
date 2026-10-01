@@ -1,12 +1,13 @@
 # frozen_string_literal: true
 
 module Sake
-  # Literal `[a, b]`. Ruby Arrays are used as Sake Arrays (`Array[a, b]`).
+  # Literal `[a, b]`: length and positional types are fixed; elements may be replaced by the same type.
+  # Ruby Arrays are used as Sake Arrays (`Array[a, b]`).
   class Tuple
     attr_reader :elems
 
     def initialize(elems)
-      @elems = elems.freeze
+      @elems = elems
     end
   end
 

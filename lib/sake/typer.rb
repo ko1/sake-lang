@@ -270,6 +270,21 @@ module Sake
         cur = env.up(node.depth).vars[node.name] || t("Nil")
         assign(env, node.depth, node.name, binop(node, node.binary_operator.to_s, cur, ev(node.value, env)))
       when Prism::MultiWriteNode then multi_write(node, env)
+      when Prism::LocalVariableOrWriteNode
+        cur = env.up(node.depth).vars[node.name] || t("Nil")
+        assign(env, node.depth, node.name, u(*(cur - %w[Nil Boolean]).map { [_1] }, ev(node.value, env)))
+      when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode
+        key_node = node.arguments.arguments.first
+        recv = ev(node.receiver, env)
+        key = ev(key_node, env)
+        cur = index_get(node, recv, key, key_node)
+        val =
+          if node.is_a?(Prism::IndexOrWriteNode)
+            u(*(cur - %w[Nil Boolean]).map { [_1] }, ev(node.value, env))
+          else
+            binop(node, node.binary_operator.to_s, cur, ev(node.value, env))
+          end
+        index_set(node, recv, key, key_node, val)
       when Prism::IfNode then branch(env, node.predicate, node.statements, node.subsequent)
       when Prism::UnlessNode then branch(env, node.predicate, node.else_clause, node.statements)
       when Prism::ElseNode then ev(node.statements, env)
@@ -449,6 +464,20 @@ module Sake
         return binop(node, node.name.to_s, ev(node.receiver, env), ev(node.arguments.arguments.first, env))
       end
 
+      if target.is_a?(IndexCall)
+        keys = node.arguments.arguments
+        recv = ev(node.receiver, env)
+        args = keys.map { ev(_1, env) }
+        return index_get(node, recv, args[0], keys[0]) if target.builtin.name == "[]"
+        return index_set(node, recv, args[0], keys[0], args[1])
+      end
+      if target.is_a?(Builtin) && target.namespace == "Index"
+        keys = node.arguments.arguments
+        args = keys.map { ev(_1, env) }
+        return index_get(node, args[0], args[1], keys[1]) if target.name == "[]"
+        return index_set(node, args[0], args[1], keys[1], args[2])
+      end
+
       args = (node.arguments&.arguments || []).map { ev(_1, env) }
       blk = node.block && BlockCtx.new(node.block, @program.blocks.fetch(node.block), env)
       case target
@@ -504,6 +533,56 @@ module Sake
         break if blk.env.chain_snapshot == before
       end
       u(result, @next_acc.pop)
+    end
+
+    # Index.[]: a miss gives nil for Array and String; a Tuple has a fixed length, so a literal index
+    # selects one position and any other index gives the union of all positions.
+    def index_get(node, recv, key, key_node)
+      return [] if recv.empty? || key.empty?
+      return unknown("index") if unknown?(recv) || unknown?(key)
+      lit = key_node.is_a?(Prism::IntegerNode) ? key_node.value : nil
+      results = []
+      failing = []
+      recv.each do |a|
+        unless key == ["Integer"] && (a == "String" || (a.is_a?(Array) && %i[array tuple].include?(a[0])))
+          failing << a
+          next
+        end
+        case a
+        when "String" then results << t("String") << t("Nil")
+        else
+          if a[0] == :array
+            results << elem_of([a]) << t("Nil")
+          elsif lit && (-a[1].size...a[1].size).cover?(lit)
+            results << a[1][lit]
+          elsif lit
+            failing << a
+          else
+            results.concat(a[1])
+          end
+        end
+      end
+      verdict = failing.empty? ? :proven : (failing.size == recv.size ? :error : :partial)
+      add_check(node, "Index.[]", "pair", "(Array|String|Tuple, Integer)", recv, verdict, failing)
+      u(*results)
+    end
+
+    def index_set(node, recv, key, key_node, val)
+      return [] if recv.empty? || key.empty? || val.empty?
+      lit = key_node.is_a?(Prism::IntegerNode) ? key_node.value : nil
+      recv.each do |a|
+        next unless a.is_a?(Array)
+        if a[0] == :array
+          write_elems([a], [val], node, "Index.[]=")
+        elsif a[0] == :tuple
+          want = lit && (-a[1].size...a[1].size).cover?(lit) ? a[1][lit] : u(*a[1])
+          record(node, "Index.[]=", "value", want.map { atom_type_name(_1) }, val)
+        end
+      end
+      bad = recv.reject { |a| a.is_a?(Array) && %i[array tuple].include?(a[0]) }
+      verdict = unknown?(recv) ? :unknown : (bad.empty? ? :proven : (bad.size == recv.size ? :error : :partial))
+      add_check(node, "Index.[]=", "pair", "(Array|Tuple, Integer)", recv, verdict, bad)
+      val
     end
 
     def binop(node, op, a, b)
@@ -614,6 +693,21 @@ module Sake
         write_elems(a0, [elem_of(args[1])], node, name)
         a0
       when "Array.join" then t("String")
+      when "Array.at", "Array.first", "Array.last", "Array.pop", "Array.shift", "Array.min", "Array.max"
+        u(elem_of(a0), t("Nil"))
+      when "Array.fetch" then elem_of(a0)
+      when "Array.unshift"
+        write_elems(a0, args.drop(1), node, name)
+        a0
+      when "Array.find", "Array.detect", "Array.min_by", "Array.max_by"
+        e = elem_of(a0)
+        call_block(blk, [e]) unless e.empty?
+        u(e, t("Nil"))
+      when "Array.index", "String.index" then u(t("Integer"), t("Nil"))
+      when "Array.find_index"
+        e = elem_of(a0)
+        call_block(blk, [e]) unless e.empty?
+        u(t("Integer"), t("Nil"))
       when "Array.sum"
         e = elem_of(a0)
         record(node, "Array.sum", "elem", NUM, e)

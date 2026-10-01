@@ -85,6 +85,11 @@ module Sake
         scope = env.up(node.depth)
         scope.vars[node.name] = binary_op(node, node.binary_operator, scope.vars[node.name], eval_node(node.value, env))
       when Prism::MultiWriteNode then multi_write(node, env)
+      when Prism::LocalVariableOrWriteNode
+        scope = env.up(node.depth)
+        cur = scope.vars[node.name]
+        Values.truthy?(cur) ? cur : (scope.vars[node.name] = eval_node(node.value, env))
+      when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode then index_update(node, env)
       when Prism::IfNode
         if Values.truthy?(eval_node(node.predicate, env))
           eval_node(node.statements, env)
@@ -135,6 +140,20 @@ module Sake
     def subject(env, fa)
       env = env.parent while env.parent
       env.vars[fa.param]
+    end
+
+    # `x[k] OP= v` and `x[k] ||= v`: the receiver and index are evaluated once.
+    def index_update(node, env)
+      recv = eval_node(node.receiver, env)
+      key = eval_node(node.arguments.arguments.first, env)
+      cur = call_builtin(@registry.lookup("Index", "[]"), [recv, key], nil, node)
+      if node.is_a?(Prism::IndexOrWriteNode)
+        return cur if Values.truthy?(cur)
+        val = eval_node(node.value, env)
+      else
+        val = binary_op(node, node.binary_operator, cur, eval_node(node.value, env))
+      end
+      call_builtin(@registry.lookup("Index", "[]="), [recv, key, val], nil, node)
     end
 
     # `value => {x:, y: name}` binds fields of a Record to locals.
@@ -189,6 +208,10 @@ module Sake
       target = @program.calls.fetch(node)
       if target == :binary_op
         return binary_op(node, node.name, eval_node(node.receiver, env), eval_node(node.arguments.arguments.first, env))
+      end
+
+      if target.is_a?(IndexCall)
+        return call_builtin(target.builtin, [eval_node(node.receiver, env), *eval_args(node.arguments, env)], nil, node)
       end
 
       args = eval_args(node.arguments, env)

@@ -171,6 +171,15 @@ In Sake, `[]` and `{}` are not growable collections. Ruby code that grows them s
 @@example ruby_habits
 @@example empty_braces
 
+`x[k]` is shorthand for `Index.[](x, k)`, and `x[k] = v` for `Index.[]=(x, k, v)`. Like
+`BinaryOp`, `Index` has a fixed table: (Array, Integer), (String, Integer), and (Tuple, Integer).
+
+- **A miss gives `nil`**, as in Ruby. `Array.fetch` raises an error instead.
+- **Tuples.** A Tuple's length is part of its type, so reading outside it is an error.
+- **Writing a Tuple position** requires a value of that position's type.
+
+@@example indexing
+
 `Point[1, 2]` means "an Array of Point". It does **not** mean `Point.new(1, 2)` as it does in Ruby.
 When the mistake is visible in the source, it is reported before running:
 
@@ -196,7 +205,6 @@ every unchecked use before running. A local variable you have tested counts as c
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
-- indexing
 - string interpolation
 - unary operators
 - `eval`, `send`, and similar
