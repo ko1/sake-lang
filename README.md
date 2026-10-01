@@ -1,5 +1,7 @@
 # Sake
 
+読み方は英語で "Seiku"。
+
 Ruby の文法で書く、操作に型を書く言語の実験的な処理系。設計は [DESIGN.md](DESIGN.md)。
 言語の説明は英語で [docs/tutorial.md](docs/tutorial.md)（動作例つき）と [docs/spec.md](docs/spec.md)。
 両方を 1 ページにまとめたガイド: `docs/guide.html`（artifact: https://claude.ai/artifact/EdrbscXRGUtkKppprRKohP 。`ruby tools/gen_guide.rb` で再生成してから同じ artifact に publish する）。
