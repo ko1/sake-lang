@@ -61,6 +61,11 @@ chance to fail halfway through:
 
 @@example typo
 
+Nested calls read inside out. Two forms let them read in order instead, with every step still
+naming its type: `x.T.f(...)` is `T.f(x, ...)`, and `_` is the value of the previous statement:
+
+@@example chains
+
 Sake's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`,
 `Array.each`), so the names you already know work. Names from other languages do not
 (`Integer.to_string` above).

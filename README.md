@@ -74,6 +74,7 @@ bin/sake -c FILE.sake           # check only
 bin/sake --strict FILE.sake     # check more strictly before running (level 2)
 bin/sake --strict=3 FILE.sake   # levels 0-4, or items: --strict=type,nil
 bin/sake --types FILE.sake      # experimental: print the inferred types
+bin/sake --dump=ast FILE.sake   # print the SakeAST (the resolved program that runs)
 ```
 
 The exit status is 0 on success, 1 for an error while running, and 2 for a problem found before
@@ -96,6 +97,8 @@ running.
 - **Named types**: `Struct.new` types, and exception types made with `Exception.new`.
 - **Operators**: `a + b` runs the `+` of `a`'s type, and `a[i]` its `[]`. Your own types join by
   including `Arithmetic`, `Comparable`, `Bitwise`, or `Indexable`.
+- **Chains**: `x.T.f(args)` is `T.f(x, args)`, and `_` is the previous statement's value, so a
+  sequence of operations reads in order while each step still names its type.
 - **Functions and blocks**: functions are polymorphic and take no annotations. Blocks are passed
   with `yield`.
 - **Modules**: `module` with `include` works like Ruby's modules, resolved statically. There is no
@@ -115,7 +118,8 @@ interpolation, unary operators, and built-in constants such as `Math::PI`.
 
 ```
 bin/sake                 the command
-lib/sake/                resolver (checks before running), interpreter, typer (type inference),
+lib/sake/                resolver (checks before running), lower (Prism AST to SakeAST), interpreter
+                         and typer (type inference), both on SakeAST,
                          standard library (stdlib*.rb)
 test/                    golden tests (test/samples/*.sake with *.expected) and CLI tests
 docs/                    tutorial, specification, built-in list, one-page guide, examples

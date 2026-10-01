@@ -28,14 +28,24 @@ require_relative "classify"
 module Measure
   attr_reader :rec, :fn_args, :fn_rets
 
+  # The typer evaluates SakeAST; a Prism expression is measured at the SakeAST node that computes its
+  # value (other nodes made from the same Prism node, such as the subject read of `@x`, do not count).
+  CALLS = [Sake::AST::CallBuiltin, Sake::AST::CallUser, Sake::AST::CallDispatch, Sake::AST::BinOp, Sake::AST::IsNil,
+           Sake::AST::IndexGet, Sake::AST::IndexSet, Sake::AST::FieldGet, Sake::AST::FieldSet, Sake::AST::Raise,
+           Sake::AST::ReRaise, Sake::AST::LVarGet].freeze
+
   def ev(node, env)
     reset_rec if @rec_pass != @passes
     r = super
-    case node
-    when Prism::LocalVariableReadNode, Prism::ItLocalVariableReadNode, Prism::InstanceVariableReadNode,
-         Prism::CallNode, Prism::YieldNode
-      @rec[node] = Sake::Typer.union(@rec[node] || [], r)
-    end
+    o = node.origin
+    primary =
+      case o
+      when Prism::LocalVariableReadNode, Prism::ItLocalVariableReadNode then node.is_a?(Sake::AST::LVarGet)
+      when Prism::InstanceVariableReadNode then node.is_a?(Sake::AST::FieldGet)
+      when Prism::CallNode then CALLS.include?(node.class)
+      when Prism::YieldNode then node.is_a?(Sake::AST::Yield)
+      end
+    @rec[o] = Sake::Typer.union(@rec[o] || [], r) if primary
     r
   end
 
@@ -104,7 +114,10 @@ ARGV.each do |path|
     unit =
       case n
       when Prism::LocalVariableReadNode, Prism::ItLocalVariableReadNode, Prism::InstanceVariableReadNode then "expr.var"
-      when Prism::CallNode, Prism::YieldNode then "expr.call"
+      when Prism::CallNode, Prism::YieldNode
+        # `.T` in a chain `x.T.f(...)` is not an expression of its own.
+        next if n.is_a?(Prism::CallNode) && n.receiver && n.name.to_s.match?(/\A[A-Z]/) && n.arguments.nil? && n.block.nil?
+        "expr.call"
       end
     next unless unit
     ty = typer.rec[n]

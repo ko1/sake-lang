@@ -43,28 +43,6 @@ module Sake
       u(elem_of(ty), set_elem(ty), range_elem(ty), *atoms_of(ty, :hash).map { |a| s = hash_sites[a[1]]; pair_type(s.key, s.val) })
     end
 
-    def ev_ext(node, env)
-      case node
-      when Prism::SymbolNode then t("Symbol")
-      when Prism::InterpolatedStringNode, Prism::InterpolatedSymbolNode, Prism::InterpolatedRegularExpressionNode
-        node.parts.each do |part|
-          v = case part
-              when Prism::EmbeddedStatementsNode then ev(part.statements, env)
-              when Prism::EmbeddedVariableNode then ev(part.variable, env)
-              end
-          show_types(v, :to_s, part) if v
-        end
-        { Prism::InterpolatedStringNode => t("String"), Prism::InterpolatedSymbolNode => t("Symbol") }.fetch(node.class) { t("Regexp") }
-      when Prism::RegularExpressionNode then t("Regexp")
-      when Prism::RangeNode
-        ends = u(*[node.left, node.right].compact.map { ev(_1, env) })
-        [[:range, u(*(ends - ["Nil"]).map { [_1] })]].freeze
-      when Prism::KeywordHashNode
-        [[:pairs, node.elements.map { [ev(_1.key, env), ev(_1.value, env)] }]].freeze
-      else unknown("node #{node.type}")
-      end
-    end
-
     def constructor_ext(ns, name, args, node)
       case [ns, name]
       when ["Hash", CTOR]
@@ -246,7 +224,7 @@ module Sake
         k.empty? ? t("Nil") : u(pair_type(k, v), t("Nil"))
       when "Hash.sum"
         k, v = hash_kv(a0)
-        k.empty? ? t("Integer") : call_block(blk, [pair_type(k, v)])
+        k.empty? ? t("Integer") : u(t("Integer"), call_block(blk, [pair_type(k, v)])) # an empty Hash sums to 0
       when "Hash.transform_values"
         k, v = hash_kv(a0)
         hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = k; s.val = v.empty? ? [] : call_block(blk, [v]) }
@@ -365,7 +343,7 @@ module Sake
       when :recv then a0
       when :recv_nil then u(a0, t("Nil"))
       when :elem_nil then u(elem, t("Nil"))
-      when :elem_sum then elem.empty? ? t("Integer") : u(*elem.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] })
+      when :elem_sum then u(t("Integer"), *elem.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] }) # empty: 0
       when :array then new_site(node, " #{name}", elem)
       when :array_block then new_site(node, " #{name}", bres)
       when :array_block_truthy then new_site(node, " #{name}", without_nil(bres))
