@@ -116,7 +116,11 @@ module Sake
 
       ns = cp.name.to_s
       if node.is_a?(Prism::ClassNode) && node.superclass
-        error(node.superclass, "class inheritance is not supported (Sake has no dispatch on receivers)")
+        child = node.constant_path.slice
+        parent = node.superclass.slice
+        field = parent.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
+        error(node.superclass, "Sake has no class inheritance; reuse a type by composition",
+              ["#{child} = Struct.new(:#{field}, ...), then #{parent}.f(#{child}.get_#{field}(x))"])
       end
       @registry.add_namespace(ns)
       body = node.body

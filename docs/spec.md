@@ -54,7 +54,9 @@ definition.
 Rules:
 
 - Namespaces cannot be nested (`A::B` is rejected).
-- Classes cannot inherit.
+- Classes cannot inherit. Reuse a type by composition: `Circle = Struct.new(:shape, :r)`, then
+  `Shape.describe(Circle.get_shape(c))`. If inheritance comes later, it will be static: `Shape.f`
+  always runs Shape's `f`.
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
