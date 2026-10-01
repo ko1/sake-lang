@@ -363,7 +363,11 @@ module Sake
       reg.define("Array", :each_cons, %w[Array Integer], block: :required) { |a, n, &b| nonneg(n) && a.each_cons(n) { b.(_1) }; a }
       reg.define("Array", :flatten, ["Array"], &:flatten)
       reg.define("Array", :compact, ["Array"], &:compact)
-      reg.define("Array", :uniq, ["Array"], &:uniq)
+      # Struct values compare by their type's == (fields by default), not by Ruby's hash/eql?.
+      reg.define("Array", :uniq, ["Array"]) do |a|
+        next a.uniq unless a.any? { _1.is_a?(StructValue) || _1.is_a?(Tuple) || _1.is_a?(RecordValue) }
+        a.each_with_object([]) { |x, out| out << x unless out.include?(x) }
+      end
       reg.define("Array", :tally, ["Array"]) { |a| a.each_with_object(Hash.new(0)) { |x, h| h[key!(x)] += 1 }.then { Hash[_1] } }
       reg.define("Array", :group_by, ["Array"], block: :required) do |a, &b|
         a.each_with_object({}) { |x, h| (h[key!(b.(x))] ||= []) << x }

@@ -372,10 +372,7 @@ table**:
 
 ### 8.3 Not supported
 
-- Unary operators: `!x`, `-x`, `+x`, `~x`.
-- `<=>`.
-
-Both are static errors.
+- Unary operators: `!x`, `-x`, `+x`, `~x`. They are static errors.
 
 ## 9. Control flow
 
@@ -879,7 +876,8 @@ Each of these is rejected statically. Most wait on a design decision.
 - **Writing to Record fields.**
 - **`Array.new`.**
 - **Unary operators.**
-- **Protocols** beyond showing values: `==`, `hash`, and `<=>` defined by a type.
+- **`hash` defined by a type**, so that Struct values used as Hash keys or Set elements compare by their own `==` (a type can already define `==` and `<=>`, [§8.1](#81-binary-operators)).
+- **Equality and order of Tuples** (`[a, b] == [c, d]`, Tuple keys in `sort_by`): undecided.
 - **The type scope `Integer.(a + b)`.**
 - **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**
 - **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.

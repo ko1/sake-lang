@@ -68,7 +68,8 @@ module Sake
     def resolve
       collect
       check_all
-      raise StaticErrors.new(@diags.sort_by { [_1.line, _1.column] }) unless @diags.empty?
+      # A function included into several namespaces is checked once per namespace; report each problem once.
+      raise StaticErrors.new(@diags.uniq { [_1.line, _1.column, _1.message] }.sort_by { [_1.line, _1.column] }) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks,
                   functions: @functions, struct_types: @struct_types,
                   includes: @linearized.transform_values { |l| l.map(&:first) })

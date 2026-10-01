@@ -70,8 +70,9 @@ module Sake
       end
       maybe = c.verdict == :error ? "are " : "may be "
       case c.op
-      when /\A(Arithmetic|Comparable|Bitwise|Kernel)\./
-        mod = $1
+      # Operand pairs only: `Kernel.Rational` and other built-ins of these modules check single arguments.
+      when ->(op) { c.arg == "pair" && op.match?(/\A(Arithmetic|Comparable|Bitwise|Kernel)\./) }
+        mod = c.op.split(".", 2)[0]
         op = c.op.split(".", 2)[1]
         lefts = c.failing.map(&:first).select { _1.is_a?(String) && program.struct_types.key?(_1) }.uniq
         unless lefts.empty?
