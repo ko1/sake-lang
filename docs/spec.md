@@ -293,6 +293,29 @@ Both are static errors.
   the next iteration. `begin ... end while` is not supported.
 - The modifier forms `stmt if c`, `stmt unless c`, `stmt while c`, and `stmt until c`.
 
+### 9.1 Pattern matching
+
+`x in P` is true when `x` matches the pattern `P`. `case x` followed by `in P then ...` branches runs
+the first branch whose pattern matches. If no branch matches and there is no `else`, it raises
+`NoMatchingPatternError`.
+
+| Pattern | Matches |
+|---|---|
+| a type name: `Integer`, `String`, `Tuple`, `Hash`, `Point`, `Record`, ... | a value of that type (its type tag) |
+| `nil`, `true`, `false`, `1`, `"s"`, `:ok` | an equal value of the same type |
+| `P \| Q` | either |
+| `{x:, y: name}` | a Record with those fields; binds the locals `x` and `name` |
+
+- **No dispatch.** Matching compares type tags and values. There is no `===`, so `case`/`when` is
+  not supported.
+- **Narrowing.** In `if x in Integer`, and in each `in` branch of `case x`, a local `x` is narrowed
+  to the matching types. The `else` branch, and each later branch, sees the types that are left.
+  This is how a union such as `Integer | String` is used without a `type` report.
+- **Exhaustiveness.** A `case` without `else` that may leave a type unmatched is reported as
+  `type` ([§2.1](#21-strictness)). The set of types is closed, so this can be checked.
+- **Parentheses.** As in Ruby, `x in P` must be in parentheses when it is an argument:
+  `p((x in Integer))`.
+
 ## 10. Struct types
 
 ```ruby
@@ -669,7 +692,8 @@ Each of these is rejected statically. Most wait on a design decision.
 - **String interpolation**, which waits on how values become strings.
 - **Protocols.** These are generic operations such as `to_s` and `==` over all types.
 - **The type scope `Integer.(a + b)`.**
-- **`case`/`when`, `for`, `%w[]`, `%i[]`.**
+- **`case`/`when`** (use `case`/`in`), **`for`, `%w[]`, `%i[]`.**
+- **Patterns other than those in [§9.1](#91-pattern-matching)**: arrays, find patterns, pins, guards.
 - **Built-in constants** such as `Math::PI` and `Float::INFINITY`.
 - **Rational, Complex, Time.**
 - **First-class blocks.**

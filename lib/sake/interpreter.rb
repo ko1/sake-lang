@@ -118,6 +118,8 @@ module Sake
       when Prism::ArrayNode then Tuple.new(node.elements.map { eval_node(_1, env) })
       when Prism::HashNode then RecordValue.build(node.elements.map { [_1.key.unescaped, eval_node(_1.value, env)] })
       when Prism::MatchRequiredNode then match_record(node, env)
+      when Prism::MatchPredicateNode then pattern_match?(eval_node(node.value, env), node.pattern, env)
+      when Prism::CaseMatchNode then case_match(node, env)
       when Prism::ReturnNode then raise ReturnSignal.new(env.frame, jump_value(node, env, tuple: true))
       when Prism::NextNode then raise NextSignal.new(jump_value(node, env))
       when Prism::BreakNode then raise BreakSignal.new(jump_value(node, env))
@@ -160,6 +162,33 @@ module Sake
         val = binary_op(node, node.binary_operator, cur, eval_node(node.value, env))
       end
       call_builtin(@registry.lookup("Index", "[]="), [recv, key, val], nil, node)
+    end
+
+    def case_match(node, env)
+      v = eval_node(node.predicate, env)
+      branch = node.conditions.find { pattern_match?(v, _1.pattern, env) }
+      return eval_node(branch.statements, env) if branch
+      return eval_node(node.else_clause, env) if node.else_clause
+      fail_at(node, "NoMatchingPatternError", "no `in` branch matches #{Values.describe(v)}")
+    end
+
+    def pattern_match?(v, pat, env)
+      case pat
+      when Prism::ConstantReadNode
+        name = pat.name.to_s
+        name == "Record" ? v.is_a?(RecordValue) : Values.type_of(v) == name
+      when Prism::AlternationPatternNode then pattern_match?(v, pat.left, env) || pattern_match?(v, pat.right, env)
+      when Prism::HashPatternNode
+        return false unless v.is_a?(RecordValue) && pat.elements.all? { v.field?(_1.key.unescaped) }
+        pat.elements.each do |el|
+          target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
+          env.up(target.depth).vars[target.name] = v[el.key.unescaped]
+        end
+        true
+      else
+        lit = eval_node(pat, env)
+        Values.type_of(lit) == Values.type_of(v) && lit == v
+      end
     end
 
     # `value => {x:, y: name}` binds fields of a Record to locals.

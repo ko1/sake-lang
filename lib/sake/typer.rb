@@ -327,6 +327,11 @@ module Sake
       when Prism::ArrayNode then tuple(node.elements.map { ev(_1, env) })
       when Prism::HashNode then record_type(node.elements.map { [_1.key.unescaped, ev(_1.value, env)] })
       when Prism::MatchRequiredNode then match_record(node, env)
+      when Prism::MatchPredicateNode
+        m, = match_atoms(ev(node.value, env), node.pattern)
+        bind_pattern(env, node.pattern, m)
+        t("Boolean")
+      when Prism::CaseMatchNode then case_match(node, env)
       when Prism::ReturnNode
         vals = (node.arguments&.arguments || []).map { ev(_1, env) }
         v = vals.size > 1 ? tuple(vals) : (vals.first || t("Nil"))
@@ -435,6 +440,11 @@ module Sake
         end
       when Prism::LocalVariableReadNode
         restrict(env, pred, truthy ? :non_nil : :falsy)
+      when Prism::MatchPredicateNode
+        var = pred.value
+        return unless var.is_a?(Prism::LocalVariableReadNode) && var.depth.zero? && env.vars[var.name]
+        m, rest = match_atoms(env.vars[var.name], pred.pattern)
+        env.vars[var.name] = u(*(truthy ? m : rest).map { [_1] })
       when Prism::CallNode
         return unless %i[== !=].include?(pred.name) && pred.call_operator_loc.nil? && pred.arguments&.arguments&.size == 1
         l = pred.receiver
@@ -444,6 +454,79 @@ module Sake
         is_nil = (pred.name == :==) == truthy
         restrict(env, var, is_nil ? :nil : :non_nil)
       end
+    end
+
+    # [atoms that may match the pattern, atoms that may not]
+    def match_atoms(ty, pat)
+      case pat
+      when Prism::ConstantReadNode
+        name = pat.name.to_s
+        ty.partition { |a| name == "Record" ? a.is_a?(Array) && a[0] == :record : atom_type_name(a) == name }
+      when Prism::NilNode then ty.partition { nil_atom?(_1) }
+      when Prism::AlternationPatternNode
+        m1, r1 = match_atoms(ty, pat.left)
+        m2, r2 = match_atoms(r1, pat.right)
+        [m1 + m2, r2]
+      when Prism::HashPatternNode
+        fields = pat.elements.map { _1.key.unescaped }
+        ty.partition { |a| a.is_a?(Array) && a[0] == :record && fields.all? { |f| a[1].any? { _1[0] == f } } }
+      else
+        # A literal: values of its type may match, but may also differ, so nothing is ruled out.
+        lit = { Prism::TrueNode => "Boolean", Prism::FalseNode => "Boolean", Prism::IntegerNode => "Integer", Prism::FloatNode => "Float",
+                Prism::StringNode => "String", Prism::SymbolNode => "Symbol" }.fetch(pat.class)
+        [ty.select { atom_type_name(_1) == lit }, ty]
+      end
+    end
+
+    def bind_pattern(env, pat, matched)
+      case pat
+      when Prism::HashPatternNode
+        pat.elements.each do |el|
+          f = el.key.unescaped
+          target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
+          assign(env, target.depth, target.name, u(*matched.map { |a| a[1].find { _1[0] == f }[1] }))
+        end
+      when Prism::AlternationPatternNode
+        bind_pattern(env, pat.left, matched)
+        bind_pattern(env, pat.right, matched)
+      end
+    end
+
+    # Each `in` sees what earlier branches left; whatever no branch takes is reported (the set is closed).
+    def case_match(node, env)
+      v = ev(node.predicate, env)
+      var = node.predicate.is_a?(Prism::LocalVariableReadNode) && node.predicate.depth.zero? ? node.predicate : nil
+      remaining = v
+      results = []
+      envs = []
+      node.conditions.each do |c|
+        m, remaining = match_atoms(remaining, c.pattern)
+        next if m.empty? && !v.empty?
+        e = env.dup_level
+        e.vars[var.name] = u(*m.map { [_1] }) if var
+        bind_pattern(e, c.pattern, m)
+        results << ev(c.statements, e)
+        envs << e
+      end
+      if node.else_clause
+        e = env.dup_level
+        e.vars[var.name] = u(*remaining.map { [_1] }) if var
+        results << ev(node.else_clause, e)
+        envs << e
+      elsif !remaining.empty? && !unknown?(v)
+        add_check(node, "case/in", "branch", "a matching `in` branch", v, remaining.size == v.size ? :error : :partial, remaining)
+      end
+      join_many(env, envs) unless envs.empty?
+      u(*results)
+    end
+
+    def join_many(env, envs)
+      live = envs.reject(&:dead)
+      if live.empty?
+        env.dead = true
+        live = envs
+      end
+      live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") }) }
     end
 
     def restrict(env, var, how)

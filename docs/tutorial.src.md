@@ -102,6 +102,18 @@ work as in Ruby. Only `nil` and `false` are falsy.
 
 @@example control
 
+### Matching by type
+
+`x in Integer` tests a value's type. `case x` with `in` branches picks the branch by type, literal,
+or Record shape. Inside a matching branch, the variable has the matching type, so a value that may
+be an Integer or a String can be used without a type report:
+
+@@example patterns
+
+The set of types is closed, so a `case` that may match nothing is found before running:
+
+@@example patterns_exhaustive
+
 ## 6. Blocks
 
 Operations that take a block are called like any other operation, with the subject as the first

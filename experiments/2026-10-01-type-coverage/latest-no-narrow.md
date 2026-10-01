@@ -28,6 +28,8 @@
 | nil_error.sake | 1 | 2 | 0 | 1 | 0 | 5 | 0 | 0 |
 | nil_field.sake | 2 | 3 | 5 | 0 | 0 | 14 | 0 | 0 |
 | no_toplevel_functions.sake | 2 | 4 | 0 | 0 | 0 | 7 | 0 | 0 |
+| pattern.sake | 2 | 8 | 2 | 0 | 0 | 23 | 0 | 0 |
+| pattern_runtime.sake | 2 | 1 | 0 | 1 | 0 | 2 | 0 | 0 |
 | record.sake | 2 | 8 | 0 | 1 | 0 | 11 | 0 | 0 |
 | ruby_types.sake | 2 | 61 | 3 | 0 | 0 | 101 | 0 | 0 |
 | ruby_types_errors.sake | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |

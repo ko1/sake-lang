@@ -256,6 +256,71 @@ collatz(27) steps: 111
 ok
 ```
 
+### Matching by type
+
+`x in Integer` tests a value's type. `case x` with `in` branches picks the branch by type, literal,
+or Record shape. Inside a matching branch, the variable has the matching type, so a value that may
+be an Integer or a String can be used without a type report:
+
+```ruby
+def describe(x)
+  case x
+  in Integer | Float then String.+("number ", format("%p", x))
+  in String then String.+("string ", x)
+  in nil then "nothing"
+  in {name:} then String.+("record named ", name)
+  in :ok then "ok symbol"
+  else "other"
+  end
+end
+Point = Struct.new(:x, :y)
+p(describe(3)); p(describe(2.5)); p(describe("s")); p(describe(nil)); p(describe({name: "r"})); p(describe(:ok)); p(describe(Point.new(1, 2)))
+
+def pick(c) = c ? 1 : ""
+v = pick(true)
+if v in Integer
+  p(v + 1)
+else
+  p(String.size(v))
+end
+p((Point.new(1, 2) in Point))
+p(("s" in Integer | Float))
+```
+
+```
+$ sake patterns.sake
+"number 3"
+"number 2.5"
+"string s"
+"nothing"
+"record named r"
+"ok symbol"
+"other"
+2
+true
+false
+```
+
+The set of types is closed, so a `case` that may match nothing is found before running:
+
+```ruby
+def only_ints(x)
+  case x
+  in Integer then x * 2
+  end
+end
+p(only_ints(4))
+p(only_ints("a"))
+```
+
+```
+$ sake patterns_exhaustive.sake
+patterns_exhaustive.sake:2:3: error: case/in: no `in` branch matches String [type]
+  hint: add an `in` branch for it, or an `else`
+  hint: reached by the call at line 7
+(exit status 2)
+```
+
 ## 6. Blocks
 
 Operations that take a block are called like any other operation, with the subject as the first

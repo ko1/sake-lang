@@ -311,6 +311,18 @@ module Sake
       when Prism::CallNode then check_call(node, ctx)
       when Prism::HashNode then check_record_literal(node, ctx)
       when Prism::MatchRequiredNode then check_record_pattern(node, ctx)
+      when Prism::MatchPredicateNode
+        check(node.value, ctx)
+        check_pattern(node.pattern, ctx)
+      when Prism::CaseMatchNode
+        check(node.predicate, ctx)
+        node.conditions.each do |c|
+          check_pattern(c.pattern, ctx)
+          check(c.statements, ctx)
+        end
+        check(node.else_clause, ctx)
+      when Prism::CaseNode
+        error(node, "`case`/`when` is not supported (Ruby's `===` dispatches on the receiver); match with `case x` / `in Type`")
       when Prism::InterpolatedStringNode
         error(node, "string interpolation is not supported yet (how values become strings is undecided); use String.+")
       when Prism::DefNode then error(node, "`def` must be at the top level or directly in a class/module body")
@@ -400,6 +412,29 @@ module Sake
     end
 
     def pattern_target(v) = v.is_a?(Prism::ImplicitNode) ? v.value : v
+
+    PATTERN_TYPES = (BUILTIN_TYPES + %w[Record]).freeze
+
+    # Patterns of `x in P` and `case x in P`: a type name, a literal, `P | Q`, or a Record pattern.
+    def check_pattern(pat, ctx)
+      case pat
+      when Prism::ConstantReadNode
+        name = pat.name.to_s
+        return if @struct_types.key?(name) || PATTERN_TYPES.include?(name)
+        error(pat, "`#{name}` is not a type", spell(name, PATTERN_TYPES + @struct_types.keys).map { "did you mean `#{_1}`?" })
+      when Prism::NilNode, Prism::TrueNode, Prism::FalseNode, Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::SymbolNode
+        nil
+      when Prism::AlternationPatternNode
+        check_pattern(pat.left, ctx)
+        check_pattern(pat.right, ctx)
+      when Prism::HashPatternNode
+        ok = pat.constant.nil? && pat.rest.nil? && !pat.elements.empty? &&
+             pat.elements.all? { |el| el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) && pattern_target(el.value).is_a?(Prism::LocalVariableTargetNode) }
+        error(pat, "only Record patterns that bind fields are supported: `in {x:, y: name}`") unless ok
+      else
+        error(pat, "unsupported pattern `#{first_line(pat.slice)}`; use a type (`in Integer`), a literal, `A | B`, or `{x:}`")
+      end
+    end
 
     def set_call(node, ctx, target) = (@calls[node] ||= {})[ctx.ns] = target
 

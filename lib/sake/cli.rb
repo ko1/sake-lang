@@ -56,6 +56,8 @@ module Sake
         tuples, others = c.failing.partition { _1.is_a?(Array) && _1[0] == :tuple }
         return ["#{c.op}: the index is outside the Tuple #{typer.show(tuples)}", []] if others.empty?
         ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{Stdlib::INDEX_ROWS}", []]
+      when "case/in"
+        ["case/in: no `in` branch matches #{typer.show_failing(c)}", ["add an `in` branch for it, or an `else`"]]
       when "pattern"
         ["the pattern needs field `#{c.arg}`, but the value #{maybe.sub("are", "is")}#{typer.show_failing(c)}", []]
       else
