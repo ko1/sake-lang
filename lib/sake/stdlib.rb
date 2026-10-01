@@ -180,7 +180,7 @@ module Sake
         a.sum
       end
       reg.define("Array", :sort, ["Array"]) { |a| sort_checked(a) { a.sort } }
-      reg.define("Array", :sort_by, ["Array"], block: :required) { |a, &b| sort_checked(a) { a.sort_by { b.(_1) } } }
+      reg.define("Array", :sort_by, ["Array"], block: :required) { |a, &b| ks = []; sort_checked(a, ks) { a.sort_by { ks << b.(_1); ks[-1] } } }
       reg.define("Array", :take, %w[Array Integer]) { |a, n| nonneg(n) && a.take(n) }
       reg.define("Array", :drop, %w[Array Integer]) { |a, n| nonneg(n) && a.drop(n) }
       reg.define("Array", :each, ["Array"], block: :required) { |a, &b| a.each { b.(_1) }; a }
@@ -206,8 +206,8 @@ module Sake
       reg.define("Array", :unshift, ["Array"], rest: "Any") { |a, *xs| a.unshift(*check_elems(a, xs)) }
       reg.define("Array", :min, ["Array"]) { |a| sort_checked(a) { a.min } }
       reg.define("Array", :max, ["Array"]) { |a| sort_checked(a) { a.max } }
-      reg.define("Array", :min_by, ["Array"], block: :required) { |a, &b| sort_checked(a) { a.min_by { b.(_1) } } }
-      reg.define("Array", :max_by, ["Array"], block: :required) { |a, &b| sort_checked(a) { a.max_by { b.(_1) } } }
+      reg.define("Array", :min_by, ["Array"], block: :required) { |a, &b| ks = []; sort_checked(a, ks) { a.min_by { ks << b.(_1); ks[-1] } } }
+      reg.define("Array", :max_by, ["Array"], block: :required) { |a, &b| ks = []; sort_checked(a, ks) { a.max_by { ks << b.(_1); ks[-1] } } }
       %i[find detect].each do |m|
         reg.define("Array", m, ["Array"], block: :required) { |a, &b| a.find { Values.truthy?(b.(_1)) } }
       end
@@ -245,11 +245,14 @@ module Sake
       true
     end
 
-    def sort_checked(a)
+    # keys: for the *_by forms, the block results seen so far (those are what is compared).
+    def sort_checked(a, keys = nil)
       yield
     rescue ArgumentError, NoMethodError
-      types = a.map { Values.describe(_1) }.uniq
-      raise Fail.new("ArgumentError", "cannot compare elements of types #{types.join(", ")}")
+      vals = keys || a
+      types = vals.map { Values.describe(_1) }.uniq
+      hint = types.include?("Tuple") ? " (Tuples have no order; use a Struct with <=>, or a String or Integer key)" : ""
+      raise Fail.new("ArgumentError", "cannot compare #{keys ? "block results" : "elements"} of types #{types.join(", ")}#{hint}")
     end
 
     INDEX_ROWS = "(Array, Integer), (Array, Range), (String, Integer), (String, Range), (Tuple, Integer), " \

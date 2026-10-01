@@ -234,12 +234,14 @@ module Sake
       end
       %i[min_by max_by].each do |m|
         reg.define("Hash", m, ["Hash"], block: :required) do |h, &b|
-          kv = sort_checked(h.values) { h.public_send(m) { |k, v| b.(pair(k, v)) } }
+          ks = []
+          kv = sort_checked(h.values, ks) { h.public_send(m) { |k, v| ks << b.(pair(k, v)); ks[-1] } }
           kv && pair(*kv)
         end
       end
       reg.define("Hash", :sort_by, ["Hash"], block: :required) do |h, &b|
-        sort_checked(h.values) { h.sort_by { |k, v| b.(pair(k, v)) } }.map { |k, v| pair(k, v) }
+        ks = []
+        sort_checked(h.values, ks) { h.sort_by { |k, v| ks << b.(pair(k, v)); ks[-1] } }.map { |k, v| pair(k, v) }
       end
       reg.define("Hash", :sum, ["Hash"], block: :required) { |h, &b| h.sum { |k, v| b.(pair(k, v)) } }
       reg.define("Hash", :transform_values, ["Hash"], block: :required) { |h, &b| h.transform_values { b.(_1) } }
