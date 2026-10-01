@@ -26,6 +26,7 @@ module Sake
       @registry = registry
       @functions = {} # namespace (nil = top level) => name => UserFunction
       @data_types = {}
+      @value_constants = {} # rejected `NAME = value` => suggested function name
       @toplevel = []
       @calls = {}.compare_by_identity
       @blocks = {}.compare_by_identity
@@ -72,7 +73,10 @@ module Sake
     def collect_constant(node)
       v = node.value
       unless data_define?(v)
-        return error(node, "constant assignment is only supported as `#{node.name} = Data.define(...)`")
+        fn = node.name.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
+        @value_constants[node.name] = fn
+        return error(node, "Sake has no value constants; only a Data type can be assigned to a constant",
+                     ["define a function instead: `def #{fn} = #{first_line(v.slice)}`"])
       end
       return error(v.block, "Data.define with a block is not supported; define functions in `class #{node.name}`") if v.block
 
@@ -215,7 +219,12 @@ module Sake
       when Prism::DefNode then error(node, "`def` must be at the top level or directly in a class/module body")
       when Prism::ClassNode, Prism::ModuleNode then error(node, "class/module must be at the top level")
       when Prism::ConstantWriteNode then error(node, "constant assignment must be at the top level")
-      when Prism::ConstantReadNode then error(node, "type `#{node.name}` cannot be used as a value")
+      when Prism::ConstantReadNode
+        if (fn = @value_constants[node.name])
+          error(node, "`#{node.name}` is not defined (Sake has no value constants)", ["call the function instead: `#{fn}`"])
+        else
+          error(node, "type `#{node.name}` cannot be used as a value")
+        end
       when Prism::SelfNode then error(node, "Sake has no `self`")
       when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode
         error(node, "Sake has no instance variables; use Data.define fields")

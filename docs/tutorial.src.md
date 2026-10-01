@@ -182,7 +182,7 @@ All of these are reported together, before running:
 @@example forbidden
 
 To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
-the branches.
+the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
 ## 12. Looking at the types (experimental)
 

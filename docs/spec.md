@@ -55,7 +55,9 @@ Rules:
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
-- Constants can only be assigned from `Data.define`.
+- Constants can only be assigned from `Data.define`. Sake has **no value constants**. For a named
+  value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error
+  whose hint gives that function, and each use of `PI` gets the hint `pi`.
 
 ## 4. Values and types
 
@@ -423,6 +425,5 @@ Each of these is rejected statically. Most wait on a design decision.
 - **The type scope `Integer.(a + b)`.**
 - **Hash, Symbol, Range, `case`/`when`, `%w[]`.**
 - **First-class blocks.**
-- **Value constants** such as `PI = 3.14`.
 - **Exceptions** (`raise`, `rescue`).
 - **Several files** (`require`).

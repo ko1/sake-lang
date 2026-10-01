@@ -594,6 +594,7 @@ All of these are reported together, before running:
 
 ```ruby
 Point = Data.define(:x, :y)
+PI = 3.14159
 class Point
   def norm(p) = @x
 end
@@ -606,16 +607,18 @@ eval("1 + 1")
 
 ```
 $ sake forbidden.sake
-forbidden.sake:3:17: error: Sake has no instance variables; use Data.define fields
-forbidden.sake:6:10: error: indexing `nums[0]` is not supported yet (out-of-range behavior is undecided)
-forbidden.sake:7:6: error: string interpolation is not supported yet (how values become strings is undecided); use String.+
-forbidden.sake:8:6: error: unary operator `!true` is not supported yet (undecided)
-forbidden.sake:9:1: error: `eval` is not allowed in Sake (it defeats static analysis)
+forbidden.sake:2:1: error: Sake has no value constants; only a Data type can be assigned to a constant
+  hint: define a function instead: `def pi = 3.14159`
+forbidden.sake:4:17: error: Sake has no instance variables; use Data.define fields
+forbidden.sake:7:10: error: indexing `nums[0]` is not supported yet (out-of-range behavior is undecided)
+forbidden.sake:8:6: error: string interpolation is not supported yet (how values become strings is undecided); use String.+
+forbidden.sake:9:6: error: unary operator `!true` is not supported yet (undecided)
+forbidden.sake:10:1: error: `eval` is not allowed in Sake (it defeats static analysis)
 (exit status 2)
 ```
 
 To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
-the branches.
+the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
 ## 12. Looking at the types (experimental)
 
