@@ -849,7 +849,10 @@ module Sake
 
     # The result of a Struct type's own operator (or nil when the type cannot do op).
     def user_op_result(op, x, b)
-      return t("Boolean") if %w[== !=].include?(op)
+      if %w[== !=].include?(op)
+        (fn = @program.functions.dig(x, "==")) and call_user(fn, [[x].freeze, b], nil)
+        return t("Boolean")
+      end
       mod = Operators::MODULE_OF.fetch(op)
       return nil unless Operators.includes?(@program.includes || {}, x, mod)
       if (fn = @program.functions.dig(x, op))
@@ -937,7 +940,40 @@ module Sake
       end
       # `Integer.+(a, b)`: the operator rows whose left operand is the type.
       return binop(node, name, args[0], args[1]) if @registry.binary_ops.key?(name) && fn.params.size == 2 && fn.params[1] == "Any"
+      struct_hooks(args)
       builtin_result(fn.full_name, args, blk, node)
+    end
+
+    # The Ruby methods behind a built-in (sort, max, include?, uniq, Hash keys, ...) call a Struct
+    # type's own <=> and ==; analyze those for every Struct value the arguments can reach.
+    def struct_hooks(tys)
+      atoms = []
+      tys.each { reachable_structs(_1, atoms, {}) }
+      return if atoms.empty?
+      other = u(*atoms.map { [_1] })
+      atoms.uniq.each do |x|
+        %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [[x].freeze, other], nil) }
+      end
+    end
+
+    def reachable_structs(ty, out, seen)
+      ty.each do |a|
+        next if seen[a]
+        seen[a] = true
+        if struct_atom?(a)
+          out << a
+          @fields[a].each_value { reachable_structs(_1, out, seen) } # the default == compares fields
+          next
+        end
+        next unless a.is_a?(Array)
+        case a[0]
+        when :tuple then a[1].each { reachable_structs(_1, out, seen) }
+        when :record then a[1].each { |_, t| reachable_structs(t, out, seen) }
+        when :array then reachable_structs(@sites[a[1]].elem, out, seen)
+        when :set then reachable_structs(set_sites[a[1]].elem, out, seen)
+        when :hash then hash_kv([a]).each { reachable_structs(_1, out, seen) }
+        end
+      end
     end
 
     def data_op(dt, name, args, node)
