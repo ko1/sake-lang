@@ -4,7 +4,9 @@ require "prism"
 require "did_you_mean"
 
 module Sake
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields) do
+  # origin / include_node: set on a copy of an included module's function; the copy's body is resolved
+  # in the including namespace.
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
   end
 
@@ -14,7 +16,8 @@ module Sake
   # `x[k]` / `x[k] = v`: the receiver becomes the first argument of Index.[] / Index.[]=.
   IndexCall = Struct.new(:builtin)
 
-  # calls / blocks are identity hashes keyed by Prism nodes.
+  # calls: node => {namespace (nil = top level) => target}, because a function body included into several
+  # namespaces resolves once per namespace. blocks: node => parameter names.
   Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
@@ -24,7 +27,10 @@ module Sake
     FORBIDDEN = %w[send __send__ public_send method_missing define_method eval instance_eval class_eval
                    module_eval instance_exec class_exec instance_variable_get instance_variable_set
                    const_get const_set binding].freeze
-    Ctx = Struct.new(:ns, :fn, :in_block, :in_loop)
+    # trait: checking a module's own function while the module is included somewhere; names it lacks
+    # are requirements on the including namespace, not errors.
+    Ctx = Struct.new(:ns, :fn, :in_block, :in_loop, :trait)
+    BUILTIN_TYPES = %w[Integer Float String Array Tuple Hash Set Range Symbol Regexp MatchData].freeze
 
     def initialize(path, root, registry)
       @path = path
@@ -33,6 +39,10 @@ module Sake
       @functions = {} # namespace (nil = top level) => name => UserFunction
       @struct_types = {}
       @value_constants = {} # rejected `NAME = value` => suggested function name
+      @modules = {}         # module name => ModuleNode
+      @includes = {} # namespace => [[module name, include node]]
+      @requirements = Hash.new { |h, k| h[k] = [] } # module's own function => names it needs from includers
+      @direct_calls = []    # [node, function] calls that must not reach a function with requirements
       @toplevel = []
       @calls = {}.compare_by_identity
       @blocks = {}.compare_by_identity
@@ -69,6 +79,41 @@ module Sake
         else @toplevel << st
         end
       end
+      apply_includes
+    end
+
+    # Copies each included module's functions into the including namespace (own definitions win).
+    def apply_includes
+      @includes.each do |ns, list|
+        list.each do |mod, node|
+          error(node, "`include #{mod}`: #{mod} is not a module", @struct_types[mod] || BUILTIN_TYPES.include?(mod) ? ["only a `module` can be included"] : []) unless @modules.key?(mod)
+        end
+      end
+      @includes.each_key do |ns|
+        linearize(ns, []).each do |mod, node|
+          (@functions[mod] || {}).each do |name, fn|
+            next if fn.origin || lookup(ns, name)
+            (@functions[ns] ||= {})[name] = fn.dup.tap do |c|
+              c.namespace = ns
+              c.origin = mod
+              c.include_node = node
+            end
+          end
+        end
+      end
+    end
+
+    # Modules included by ns, nearest first, each once; the include node is the one written in ns.
+    def linearize(ns, seen)
+      return [] if seen.include?(ns)
+      @includes.fetch(ns, []).flat_map do |mod, node|
+        next [] unless @modules.key?(mod)
+        if seen.include?(mod) || mod == ns
+          error(node, "`include #{mod}` makes a cycle")
+          next []
+        end
+        [[mod, node], *linearize(mod, seen + [ns]).map { |m, _| [m, node] }]
+      end.uniq(&:first)
     end
 
     def constant_call?(v, recv, name)
@@ -122,20 +167,36 @@ module Sake
         error(node.superclass, "Sake has no class inheritance; reuse a type by composition",
               ["#{child} = Struct.new(:#{field}, ...), then #{parent}.f(#{child}.get_#{field}(x))"])
       end
+      type = @struct_types.key?(ns) || BUILTIN_TYPES.include?(ns)
+      if node.is_a?(Prism::ClassNode) && !type
+        error(cp, "`class #{ns}`: #{ns} is not a type; a namespace of functions is a module", ["module #{ns}"])
+      elsif node.is_a?(Prism::ModuleNode) && type
+        error(cp, "`module #{ns}`: #{ns} is a type; add operations to a type with class", ["class #{ns}"])
+      end
+      @modules[ns] = node if node.is_a?(Prism::ModuleNode)
       @registry.add_namespace(ns)
       body = node.body
       return if body.nil?
       return error(body, "unsupported syntax in class body") unless body.is_a?(Prism::StatementsNode)
 
       body.body.each do |st|
-        if !st.is_a?(Prism::DefNode)
-          error(st, "only `def` is allowed in a class/module body")
+        if include_call?(st)
+          st.arguments.arguments.each do |a|
+            next error(a, "include takes module names") unless a.is_a?(Prism::ConstantReadNode)
+            (@includes[ns] ||= []) << [a.name.to_s, st]
+          end
+        elsif !st.is_a?(Prism::DefNode)
+          error(st, "only `def` and `include` are allowed in a class/module body")
         elsif st.receiver
           error(st, "`def #{st.receiver.slice}.#{st.name}` inside `#{cp.slice}`: write `def #{st.name}` (it defines #{ns}.#{st.name})")
         else
           collect_def(st, ns)
         end
       end
+    end
+
+    def include_call?(st)
+      st.is_a?(Prism::CallNode) && st.receiver.nil? && st.name == :include && st.arguments && !st.block
     end
 
     def collect_def(node, ns)
@@ -182,10 +243,18 @@ module Sake
     # --- check bodies ---
 
     def check_all
+      traits = @includes.values.flatten(1).map(&:first).to_set
       @functions.each_value do |fs|
-        fs.each_value { |f| check(f.body, Ctx.new(f.namespace, f, false, false)) }
+        fs.each_value { |f| check(f.body, Ctx.new(f.namespace, f, false, false, !f.origin && traits.include?(f.namespace))) }
       end
-      @toplevel.each { check(_1, Ctx.new(nil, nil, false, false)) }
+      @toplevel.each { check(_1, Ctx.new(nil, nil, false, false, false)) }
+      @direct_calls.each do |node, fn|
+        next if @requirements[fn].empty?
+        includers = @includes.select { |_, l| l.any? { _1[0] == fn.namespace } }.keys
+                              .select { |ns| @requirements[fn].all? { lookup(ns, _1) } }
+        error(node, "#{fn.full_name} needs #{@requirements[fn].uniq.map { "`#{_1}`" }.join(", ")} from a namespace that includes #{fn.namespace}",
+              includers.map { "#{_1}.#{fn.name}(...)" })
+      end
     end
 
     def check(node, ctx)
@@ -276,6 +345,11 @@ module Sake
       check(node.value, ctx) if node.respond_to?(:value)
       field = node.name.to_s.delete_prefix("@")
       dt = ctx.ns && @struct_types[ctx.ns]
+      return if ctx.trait # a field of the including Struct type; checked in each includer
+      if ctx.fn&.origin && !(dt && dt.fields.include?(field))
+        return error(ctx.fn.include_node, "`include #{ctx.fn.origin}` in #{ctx.ns}: #{ctx.fn.origin}.#{ctx.fn.name} uses `#{node.name}`, " \
+                                          "but #{ctx.ns} is not a Struct type with field `#{field}` (line #{node.location.start_line})")
+      end
       unless ctx.fn && dt
         return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a Struct type",
                      ["outside one, write the accessor: `Type.get_#{field}(obj)`"])
@@ -287,7 +361,7 @@ module Sake
       if node.is_a?(Prism::InstanceVariableOperatorWriteNode) && !binary_op?(node.binary_operator)
         return error(node, "operator `#{node.binary_operator}=` is not supported")
       end
-      @calls[node] = FieldAccess.new(lookup(dt.name, "get_#{field}"), lookup(dt.name, "set_#{field}"), ctx.fn.params.first.to_sym)
+      set_call(node, ctx, FieldAccess.new(lookup(dt.name, "get_#{field}"), lookup(dt.name, "set_#{field}"), ctx.fn.params.first.to_sym))
     end
 
     def check_record_literal(node, ctx)
@@ -326,6 +400,8 @@ module Sake
     end
 
     def pattern_target(v) = v.is_a?(Prism::ImplicitNode) ? v.value : v
+
+    def set_call(node, ctx, target) = (@calls[node] ||= {})[ctx.ns] = target
 
     def check_each(ctx, *nodes) = nodes.each { check(_1, ctx) }
 
@@ -375,7 +451,7 @@ module Sake
         return error(recv, "`#{recv.slice}` (nested constants) is not supported")
       elsif node.call_operator_loc.nil? && BINARY_OPS.include?(node.name) && args.size == 1
         error(node, "operator `#{node.name}` is not supported") unless binary_op?(node.name)
-        @calls[node] = :binary_op
+        set_call(node, ctx, :binary_op)
         check(recv, ctx)
         check_args(node.arguments, ctx)
         return
@@ -388,7 +464,7 @@ module Sake
         if args.size != want
           error(node, "`#{first_line(node.slice)}` takes #{want == 1 ? "one index" : "one index and a value"}")
         else
-          @calls[node] = IndexCall.new(@registry.lookup("Index", node.name.to_s))
+          set_call(node, ctx, IndexCall.new(@registry.lookup("Index", node.name.to_s)))
         end
         check(recv, ctx)
         return check_args(node.arguments, ctx)
@@ -404,7 +480,7 @@ module Sake
       check_block(blk, ctx) if blk
       return unless target
 
-      @calls[node] = target
+      set_call(node, ctx, target)
       check_arity(node, target, args.size, !blk.nil?)
       check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == "[]" && !%w[Array Index Hash Set].include?(target.namespace)
     end
@@ -476,7 +552,18 @@ module Sake
     def resolve_unqualified(node, ctx)
       name = node.name.to_s
       found = (ctx.ns && lookup(ctx.ns, name)) || @functions.dig(nil, name) || @registry.lookup("Kernel", name)
-      return found if found
+      if found
+        @direct_calls << [node, found] if found.is_a?(UserFunction) && !ctx.trait
+        return found
+      end
+      if ctx.trait
+        @requirements[ctx.fn] << name
+        return nil
+      end
+      if ctx.fn&.origin
+        return error(ctx.fn.include_node, "`include #{ctx.fn.origin}` in #{ctx.ns}: #{ctx.fn.origin}.#{ctx.fn.name} needs `#{name}`, " \
+                                          "which #{ctx.ns} does not define (used at line #{node.location.start_line})")
+      end
 
       what = node.variable_call? ? "undefined local variable or function" : "undefined function"
       visible = (ctx.ns ? names_in(ctx.ns) : []) + @functions.fetch(nil, {}).keys + @registry.names("Kernel")
@@ -497,7 +584,10 @@ module Sake
         return error(node.receiver, "undefined type or module `#{ns}`", spell(ns, @registry.namespaces).map { "did you mean `#{_1}`?" })
       end
       found = lookup(ns, name)
-      return found if found
+      if found
+        @direct_calls << [node, found] if found.is_a?(UserFunction)
+        return found
+      end
 
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
       others = namespaces_defining(name) - [ns]

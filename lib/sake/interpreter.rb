@@ -3,7 +3,7 @@
 module Sake
   # Evaluates the Prism AST directly, using the call targets fixed by Resolver.
   class Interpreter
-    Frame = Struct.new(:name, :block)
+    Frame = Struct.new(:name, :block, :ns)
     SakeBlock = Struct.new(:node, :params, :env)
 
     class Env
@@ -52,7 +52,7 @@ module Sake
     end
 
     def run
-      env = Env.new(nil, Frame.new("<main>", nil))
+      env = Env.new(nil, Frame.new("<main>", nil, nil))
       @program.toplevel.each { eval_node(_1, env) }
       nil
     end
@@ -125,20 +125,22 @@ module Sake
         call_block(env.frame.block, eval_args(node.arguments, env), node)
       when Prism::CallNode then call(node, env)
       when Prism::InstanceVariableReadNode
-        fa = @program.calls.fetch(node)
+        fa = target_of(node, env)
         call_builtin(fa.getter, [subject(env, fa)], nil, node)
       when Prism::InstanceVariableWriteNode
-        fa = @program.calls.fetch(node)
+        fa = target_of(node, env)
         recv = subject(env, fa)
         call_builtin(fa.setter, [recv, eval_node(node.value, env)], nil, node)
       when Prism::InstanceVariableOperatorWriteNode
-        fa = @program.calls.fetch(node)
+        fa = target_of(node, env)
         recv = subject(env, fa)
         cur = call_builtin(fa.getter, [recv], nil, node)
         call_builtin(fa.setter, [recv, binary_op(node, node.binary_operator, cur, eval_node(node.value, env))], nil, node)
       else raise "BUG: unchecked node #{node.type} at line #{node.location.start_line}"
       end
     end
+
+    def target_of(node, env) = @program.calls.fetch(node).fetch(env.frame.ns)
 
     # The function's first parameter, even inside blocks that shadow its name.
     def subject(env, fa)
@@ -231,7 +233,7 @@ module Sake
     end
 
     def call(node, env)
-      target = @program.calls.fetch(node)
+      target = target_of(node, env)
       if target == :binary_op
         return binary_op(node, node.name, eval_node(node.receiver, env), eval_node(node.arguments.arguments.first, env))
       end
@@ -250,7 +252,7 @@ module Sake
 
     def call_user(fn, args, blk, node)
       fail_at(node, "SystemStackError", "stack level too deep") if @stack.size >= MAX_DEPTH
-      frame = Frame.new(fn.full_name, blk)
+      frame = Frame.new(fn.full_name, blk, fn.namespace)
       env = Env.new(nil, frame)
       fn.params.zip(args) { |name, v| env.vars[name.to_sym] = v }
       @stack.push([fn.full_name, node.location.start_line])

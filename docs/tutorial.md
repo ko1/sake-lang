@@ -461,7 +461,7 @@ definition, write its namespace, as in `Kernel.puts(...)`.
 ```ruby
 def label(x) = String.+("top: ", x)
 
-class Door
+module Door
   def open(d) = label("door")              # Door.label wins over the top-level label
   def label(x) = String.+("door: ", x)
   def show(d) = puts(open(d))              # Door.open wins over the top-level open
@@ -479,6 +479,75 @@ $ sake scope.sake
 door: door
 top: top
 door: door
+```
+
+### Sharing functions with `include`
+
+`class` adds operations to a type, and `module` is a namespace with no type.
+
+`include M` borrows `M`'s functions, as Ruby's modules do, but statically. Inside a borrowed
+function, unqualified names are looked up in the namespace that includes it. So `Summary` below
+can use the `each` that `Basket` or `Countdown` provides.
+
+```ruby
+module Summary                       # needs `each` and `count` from whoever includes it
+  def total(c)
+    sum = 0
+    each(c) { |x| sum += x }
+    sum
+  end
+  def average(c) = total(c) / count(c)
+end
+
+Basket = Struct.new(:items)
+class Basket                         # `class` adds operations to a type
+  include Summary
+  def each(b) = Array.each(@items) { |x| yield(x) }
+  def count(b) = Array.size(@items)
+end
+
+module Countdown                     # `module` is a namespace without a type
+  include Summary
+  def each(n) = Integer.downto(n, 1) { |i| yield(i) }
+  def count(n) = n
+end
+
+b = Basket.new(Array[3, 4, 5])
+puts(Basket.total(b))                # Summary.total, with each = Basket.each
+puts(Basket.average(b))
+puts(Countdown.total(4))             # Summary.total, with each = Countdown.each
+```
+
+```
+$ sake modules.sake
+12
+4
+10
+```
+
+A missing requirement is found before running. So are a `class` that is not a type, and a direct
+call to a function that needs its includer:
+
+```ruby
+module Summary
+  def total(c) = each(c) + 1
+end
+module Empty
+  include Summary
+end
+class Helpers
+  def twice(x) = x * 2
+end
+puts(Summary.total(1))
+```
+
+```
+$ sake module_errors.sake
+module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)
+module_errors.sake:7:7: error: `class Helpers`: Helpers is not a type; a namespace of functions is a module
+  hint: module Helpers
+module_errors.sake:10:14: error: Summary.total needs `each` from a namespace that includes Summary
+(exit status 2)
 ```
 
 ## 9. Tuples, Records, and arrays

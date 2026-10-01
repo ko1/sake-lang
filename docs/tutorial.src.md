@@ -148,6 +148,21 @@ definition, write its namespace, as in `Kernel.puts(...)`.
 
 @@example scope
 
+### Sharing functions with `include`
+
+`class` adds operations to a type, and `module` is a namespace with no type.
+
+`include M` borrows `M`'s functions, as Ruby's modules do, but statically. Inside a borrowed
+function, unqualified names are looked up in the namespace that includes it. So `Summary` below
+can use the `each` that `Basket` or `Countdown` provides.
+
+@@example modules
+
+A missing requirement is found before running. So are a `class` that is not a type, and a direct
+call to a function that needs its includer:
+
+@@example module_errors
+
 ## 9. Tuples, Records, and arrays
 
 A literal has no operation with a type, so its shape fixes its type when it is created. A growable

@@ -44,7 +44,10 @@ A program is a single file. Its top level may contain:
 - **Namespaced function definitions**: `def Type.name(params) ...`. This is equivalent to defining
   `name` inside `class Type`.
 - **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only
-  `def name(...)` (no receiver).
+  `def name(...)` (no receiver) and `include Module`.
+  - `class` adds operations to a **type**: a Struct type or a built-in type such as `String`.
+  - `module` is a namespace with **no type**.
+  - Using the other one is a static error with a hint.
 - **Struct types**: `Name = Struct.new(:field, ...)`.
 - **Statements**: any other expression. Statements run in order.
 
@@ -113,7 +116,8 @@ The error suggests the qualified form.
 
 A call without a receiver, `f(args)`, is resolved statically. The first match wins:
 
-1. the enclosing class or module, including its built-in operations and Struct accessors;
+1. the enclosing class or module, including its built-in operations, Struct accessors, and the
+   functions it includes ([§5.4](#54-include));
 2. top-level functions;
 3. `Kernel` (`puts`, `print`, `p`).
 
@@ -122,7 +126,25 @@ several levels. An outer definition can always be reached with its namespace (`K
 
 Code at the top level has no enclosing namespace, so resolution starts at step 2.
 
-### 5.4 Arity and blocks
+### 5.4 include
+
+`include M` in a class or module body borrows the functions of the module `M`. This is Ruby's
+module, resolved statically:
+
+- **Borrowing.** Each function `f` of `M` becomes `X.f` in the including namespace `X`, unless `X`
+  already has `f`, in which case `X`'s own definition wins. Modules included by `M` are borrowed
+  too, nearest first.
+- **Resolution in the includer.** Inside a borrowed function, unqualified names are resolved in
+  `X`, so `M` can use functions that `X` provides, such as `each`. Nothing is dispatched at run
+  time: each `X.f` is fixed before running. `@x` refers to a field of `X` when `X` is a Struct
+  type.
+- **Requirements.** If `X` lacks a name that `M`'s functions need, `include M` is a static error.
+  Calling such a function directly, as in `M.total(x)`, is a static error too, with a hint to call
+  it through an includer.
+- **Restrictions.** Only modules can be included, and include cycles are errors.
+- **Not inheritance.** `include` adds no subtype relation: `M.f(x)` always runs `M`'s own `f`.
+
+### 5.5 Arity and blocks
 
 The following are checked statically:
 

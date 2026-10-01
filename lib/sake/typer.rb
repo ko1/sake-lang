@@ -332,20 +332,22 @@ module Sake
         call_block(env.frame.block, args)
       when Prism::CallNode then call(node, env)
       when Prism::InstanceVariableReadNode
-        fa = @program.calls.fetch(node)
+        fa = target_of(node, env)
         call_builtin(fa.getter, [subject(env, fa)], nil, node)
       when Prism::InstanceVariableWriteNode
-        fa = @program.calls.fetch(node)
+        fa = target_of(node, env)
         recv = subject(env, fa)
         call_builtin(fa.setter, [recv, ev(node.value, env)], nil, node)
       when Prism::InstanceVariableOperatorWriteNode
-        fa = @program.calls.fetch(node)
+        fa = target_of(node, env)
         recv = subject(env, fa)
         cur = call_builtin(fa.getter, [recv], nil, node)
         call_builtin(fa.setter, [recv, binop(node, node.binary_operator.to_s, cur, ev(node.value, env))], nil, node)
       else ev_ext(node, env)
       end
     end
+
+    def target_of(node, env) = @program.calls.fetch(node).fetch(env.frame.fn&.namespace)
 
     def subject(env, fa)
       env = env.parent while env.parent
@@ -469,7 +471,7 @@ module Sake
     end
 
     def call(node, env)
-      target = @program.calls.fetch(node)
+      target = target_of(node, env)
       if target == :binary_op
         return binop(node, node.name.to_s, ev(node.receiver, env), ev(node.arguments.arguments.first, env))
       end
