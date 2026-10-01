@@ -15,6 +15,9 @@ require "prism"
 require "rbs"
 require_relative "classify"
 
+TIME_LIMIT = 120             # seconds per program
+MEMORY_LIMIT = 3 * 1024**3   # bytes of address space per program
+
 def structural(t)
   case t
   when RBS::Types::Union then t.types.flat_map { structural(_1) }.uniq.sort_by(&:inspect)
@@ -73,9 +76,11 @@ def decls(list, ns = nil, &blk)
 end
 
 ARGV.each do |path|
-  out, err, st = Open3.capture3("typeprof", "--show-errors", path)
+  # Some programs make TypeProf run for many minutes and grow past 9 GB; those are cut off.
+  out, err, st = Open3.capture3("timeout", TIME_LIMIT.to_s, "typeprof", "--show-errors", path, rlimit_as: MEMORY_LIMIT)
   unless st.success?
-    puts JSON.generate(path:, error: "typeprof failed: #{err.lines.first&.chomp}")
+    why = st.exitstatus == 124 ? "timeout (#{TIME_LIMIT} s)" : "failed (exit #{st.exitstatus || st.termsig}): #{err.lines.grep(/Error|memory/i).first&.chomp}"
+    puts JSON.generate(path:, error: "typeprof #{why}")
     next
   end
   errors = out.lines.grep(/^# \(\d+,\d+\)-/).map { _1.delete_prefix("# ").chomp }
