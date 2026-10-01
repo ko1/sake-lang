@@ -1087,6 +1087,7 @@ module Sake
           acc = nxt
         end
         acc
+      when "Exception.message" then t("String")
       else unknown("no signature for #{name}")
       end
     end
