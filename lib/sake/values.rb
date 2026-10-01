@@ -10,6 +10,16 @@ module Sake
     end
   end
 
+  # `T[...]`: an Array whose element type is declared; checked on every write.
+  class TypedArray < ::Array
+    attr_reader :elem_type
+
+    def initialize(elem_type, elems)
+      super(elems)
+      @elem_type = elem_type
+    end
+  end
+
   DataType = Struct.new(:name, :fields)
 
   # An instance of a Data.define type; fields are mutable.

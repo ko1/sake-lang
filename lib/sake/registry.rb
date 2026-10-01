@@ -3,7 +3,7 @@
 module Sake
   # A built-in operation `Namespace.name`. Each param is a type name, "Any", or an Array of type names.
   Builtin = Struct.new(:namespace, :name, :params, :optional, :rest, :block, :impl, keyword_init: true) do
-    def full_name = "#{namespace}.#{name}"
+    def full_name = name == "[]" ? "#{namespace}[]" : "#{namespace}.#{name}"
     def min_arity = params.size
     def max_arity = rest ? Float::INFINITY : params.size + optional.size
 

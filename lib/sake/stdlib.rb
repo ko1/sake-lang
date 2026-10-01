@@ -20,6 +20,7 @@ module Sake
       install_array(reg)
       install_tuple(reg)
       install_math(reg)
+      %w[Integer Float String Tuple].each { install_typed_array(reg, _1) }
     end
 
     def int_pow(a, b)
@@ -141,9 +142,9 @@ module Sake
       reg.define("Array", :length, ["Array"], &:length)
       reg.define("Array", :size, ["Array"], &:size)
       reg.define("Array", :empty?, ["Array"], &:empty?)
-      reg.define("Array", :push, ["Array"], rest: "Any") { |a, *xs| a.push(*xs) }
-      reg.define("Array", :append, ["Array"], rest: "Any") { |a, *xs| a.push(*xs) }
-      reg.define("Array", :concat, %w[Array Array]) { |a, b| a.concat(b) }
+      reg.define("Array", :push, ["Array"], rest: "Any") { |a, *xs| a.push(*check_elems(a, xs)) }
+      reg.define("Array", :append, ["Array"], rest: "Any") { |a, *xs| a.push(*check_elems(a, xs)) }
+      reg.define("Array", :concat, %w[Array Array]) { |a, b| a.concat(check_elems(a, b)) }
       reg.define("Array", :include?, %w[Array Any]) { |a, x| a.include?(x) }
       reg.define("Array", :join, ["Array"], optional: ["String"]) { |a, sep = ""| a.map { Values.to_s(_1) }.join(sep) }
       reg.define("Array", :reverse, ["Array"], &:reverse)
@@ -167,6 +168,27 @@ module Sake
       reg.define("Array", :count, ["Array"], block: :required) { |a, &b| a.count { Values.truthy?(b.(_1)) } }
       %i[reduce inject].each do |m|
         reg.define("Array", m, %w[Array Any], block: :required) { |a, init, &b| a.reduce(init) { |acc, x| b.(acc, x) } }
+      end
+    end
+
+    def check_elems(a, xs)
+      return xs unless a.is_a?(TypedArray)
+      xs.each do |x|
+        t = Values.type_of(x)
+        raise Fail.new("TypeError", "#{a.elem_type}[] element must be #{a.elem_type}, got #{Values.describe(x)}") if t != a.elem_type
+      end
+      xs
+    end
+
+    # `T[...]` for a type T (built-in or Data). `Array[...]` stays the untyped constructor.
+    def install_typed_array(reg, type, data: false)
+      reg.define(type, :[], [], rest: "Any") do |*xs|
+        xs.each_with_index do |x, i|
+          next if Values.type_of(x) == type
+          hint = data ? " (to create one #{type}, write #{type}.new(...))" : ""
+          raise Fail.new("TypeError", "element #{i + 1} must be #{type}, got #{Values.describe(x)}#{hint}")
+        end
+        TypedArray.new(type, xs)
       end
     end
 

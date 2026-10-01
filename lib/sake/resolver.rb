@@ -85,6 +85,7 @@ module Sake
 
       dt = @data_types[name] = DataType.new(name, fields)
       @registry.define(name, :new, fields.map { "Any" }) { |*vs| Record.new(dt, vs) }
+      Stdlib.install_typed_array(@registry, name, data: true)
       fields.each_with_index do |f, i|
         @registry.define(name, "get_#{f}", [name]) { |r| r.values[i] }
         @registry.define(name, "set_#{f}", [name, "Any"]) { |r, x| r.values[i] = x }
@@ -283,6 +284,7 @@ module Sake
 
       @calls[node] = target
       check_arity(node, target, args.size, !blk.nil?)
+      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == "[]" && target.namespace != "Array"
     end
 
     def check_arity(node, target, argc, has_block)
@@ -307,6 +309,15 @@ module Sake
           error(node, "#{target.full_name} does not take a block")
         end
       end
+    end
+
+    # `Point[1, 2]` is a Ruby-ism for Point.new; in Sake it is an Array of Point, so literals are certain failures.
+    def check_typed_array_literals(node, target, args)
+      type = target.namespace
+      i = args.index { (lit = literal_type(_1)) && lit != type }
+      return unless i
+      hints = @data_types[type] ? ["#{type}.new(#{args.map(&:slice).join(", ")}) creates one #{type}; #{type}[...] is an Array of #{type}"] : []
+      error(args[i], "#{type}[]: element #{i + 1} must be #{type}, got #{literal_type(args[i])}", hints)
     end
 
     def check_block(blk, ctx)
@@ -442,6 +453,9 @@ module Sake
       when Prism::IntegerNode then "Integer"
       when Prism::FloatNode then "Float"
       when Prism::ArrayNode then "Tuple"
+      when Prism::NilNode then "nil"
+      when Prism::TrueNode then "true"
+      when Prism::FalseNode then "false"
       end
     end
 
