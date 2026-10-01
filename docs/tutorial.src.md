@@ -150,6 +150,18 @@ inside `class Point`.
 
 @@example data
 
+A type can also be declared with its settings after `<`:
+
+- `reader:`, `writer:`, and `accessor:` choose which fields have `get_` and `set_` outside the
+  class.
+- `default:` gives default values, which also fix the type of a field.
+- `exception: true` makes an exception type.
+
+Writing `Account.set_owner(a, "eve")` outside the class would be a static error, because `owner` is
+read-only there.
+
+@@example class_settings
+
 There is no `p.x`. Field access is an operation with a type, like everything else:
 
 @@example data_errors

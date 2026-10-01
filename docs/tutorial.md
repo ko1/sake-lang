@@ -459,6 +459,35 @@ $ sake data.sake
 10
 ```
 
+A type can also be declared with its settings after `<`:
+
+- `reader:`, `writer:`, and `accessor:` choose which fields have `get_` and `set_` outside the
+  class.
+- `default:` gives default values, which also fix the type of a field.
+- `exception: true` makes an exception type.
+
+Writing `Account.set_owner(a, "eve")` outside the class would be a static error, because `owner` is
+read-only there.
+
+```ruby
+class Account < {reader: [owner], accessor: [balance], default: {balance: 0}}
+  def deposit(a, n) = @balance += n
+  def rename(a, s) = @owner = s          # a reader field is writable inside the class
+end
+
+a = Account.new("ann")                   # balance takes its default
+Account.deposit(a, 50)
+Account.rename(a, "bob")
+p(a)
+p(Account.get_owner(a))
+```
+
+```
+$ sake class_settings.sake
+#<struct Account owner="bob", balance=50>
+"bob"
+```
+
 There is no `p.x`. Field access is an operation with a type, like everything else:
 
 ```ruby
