@@ -10,14 +10,17 @@ require_relative "../lib/sake/cli"
 ROOT = File.expand_path("..", __dir__)
 EXAMPLES = File.join(ROOT, "docs/examples")
 
-def run_example(name, flags)
+# The transcript of `sake FLAGS NAME.sake` run in docs/examples (also used by gen_guide.rb).
+def example_output(name, flags)
   out = StringIO.new
   err = StringIO.new
   status = Dir.chdir(EXAMPLES) { Sake::CLI.main([*flags, "#{name}.sake"], out:, err:) }
   text = +"$ sake #{[*flags, "#{name}.sake"].join(" ")}\n#{out.string}#{err.string}"
   text << "(exit status #{status})\n" unless status.zero?
-  "```\n#{text}```\n"
+  text
 end
+
+def run_example(name, flags) = "```\n#{example_output(name, flags)}```\n"
 
 def build
   src = File.read(File.join(ROOT, "docs/tutorial.src.md"))
