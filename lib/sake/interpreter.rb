@@ -113,8 +113,26 @@ module Sake
       when Prism::YieldNode
         call_block(env.frame.block, eval_args(node.arguments, env), node)
       when Prism::CallNode then call(node, env)
+      when Prism::InstanceVariableReadNode
+        fa = @program.calls.fetch(node)
+        call_builtin(fa.getter, [subject(env, fa)], nil, node)
+      when Prism::InstanceVariableWriteNode
+        fa = @program.calls.fetch(node)
+        recv = subject(env, fa)
+        call_builtin(fa.setter, [recv, eval_node(node.value, env)], nil, node)
+      when Prism::InstanceVariableOperatorWriteNode
+        fa = @program.calls.fetch(node)
+        recv = subject(env, fa)
+        cur = call_builtin(fa.getter, [recv], nil, node)
+        call_builtin(fa.setter, [recv, binary_op(node, node.binary_operator, cur, eval_node(node.value, env))], nil, node)
       else raise "BUG: unchecked node #{node.type} at line #{node.location.start_line}"
       end
+    end
+
+    # The function's first parameter, even inside blocks that shadow its name.
+    def subject(env, fa)
+      env = env.parent while env.parent
+      env.vars[fa.param]
     end
 
     def jump_value(node, env, tuple: false)

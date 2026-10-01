@@ -273,8 +273,25 @@ module Sake
         args = (node.arguments&.arguments || []).map { ev(_1, env) }
         call_block(env.frame.block, args)
       when Prism::CallNode then call(node, env)
+      when Prism::InstanceVariableReadNode
+        fa = @program.calls.fetch(node)
+        call_builtin(fa.getter, [subject(env, fa)], nil, node)
+      when Prism::InstanceVariableWriteNode
+        fa = @program.calls.fetch(node)
+        recv = subject(env, fa)
+        call_builtin(fa.setter, [recv, ev(node.value, env)], nil, node)
+      when Prism::InstanceVariableOperatorWriteNode
+        fa = @program.calls.fetch(node)
+        recv = subject(env, fa)
+        cur = call_builtin(fa.getter, [recv], nil, node)
+        call_builtin(fa.setter, [recv, binop(node, node.binary_operator.to_s, cur, ev(node.value, env))], nil, node)
       else unknown("node #{node.type}")
       end
+    end
+
+    def subject(env, fa)
+      env = env.parent while env.parent
+      env.vars[fa.param] || t("Nil")
     end
 
     # Writes from inside a block to an outer variable are weak (the block may run zero or more times).

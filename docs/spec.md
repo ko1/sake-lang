@@ -232,6 +232,20 @@ This defines the namespace `Point` with the following operations:
   is visible through every other variable that holds the same value.
 - **Adding operations.** Add your own operations in `class Point ... end` or with `def Point.f`.
   Inside them, the accessors can be called unqualified (`get_x(p)`).
+- **Field shorthand `@x`.** Inside a function of a Data type (in `class Point` or `def Point.f`),
+  `@x` means field `x` of the function's **first parameter**, which is the subject by convention:
+
+  | Written | Means |
+  |---|---|
+  | `@x` | `Point.get_x(p)` |
+  | `@x = v` | `Point.set_x(p, v)` |
+  | `@x OP= v` | `Point.set_x(p, Point.get_x(p) OP v)` |
+
+  - `p` is the first parameter's current value, even inside a block whose parameter has the same
+    name.
+  - The usual runtime check applies: the first argument must be a Point.
+  - `@x` is a static error in each of these cases: outside a function of a Data type, in a function
+    with no parameters, and when the field does not exist.
 - **Printing.** `p` prints a Data value as `#<data Point x=1, y=2>`. `puts` prints it the same way.
 - **`Data.define` restrictions.** It must be assigned to a top-level constant. It takes symbols
   only, and no block.
@@ -300,8 +314,8 @@ The kinds of static error are:
 - a block passed where none is taken, or missing where one is required;
 - calls on values;
 - forbidden constructs: `send`, `public_send`, `__send__`, `method_missing`, `define_method`, the
-  `eval` family, `instance_variable_get`/`set`, `const_get`/`set`, `binding`, `self`, and instance
-  variables;
+  `eval` family, `instance_variable_get`/`set`, `const_get`/`set`, `binding`, `self`, and `@x`
+  outside a function of a Data type;
 - unsupported syntax;
 - duplicate definitions;
 - literal type mismatches in `T[...]`;

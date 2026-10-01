@@ -8,6 +8,9 @@ module Sake
     def full_name = namespace ? "#{namespace}.#{name}" : name
   end
 
+  # `@x` inside a function of a Data type: field x of the function's first parameter.
+  FieldAccess = Struct.new(:getter, :setter, :param)
+
   # calls / blocks are identity hashes keyed by Prism nodes.
   Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :data_types, keyword_init: true)
 
@@ -227,11 +230,29 @@ module Sake
         end
       when Prism::SelfNode then error(node, "Sake has no `self`")
       when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode
-        error(node, "Sake has no instance variables; use Data.define fields")
+        check_field_shorthand(node, ctx)
       when Prism::SymbolNode then error(node, "symbols are not supported (only as Data.define field names)")
       else
         error(node, "unsupported syntax: #{node.type.to_s.delete_suffix("_node").tr("_", " ")} `#{first_line(node.slice)}`")
       end
+    end
+
+    def check_field_shorthand(node, ctx)
+      check(node.value, ctx) if node.respond_to?(:value)
+      field = node.name.to_s.delete_prefix("@")
+      dt = ctx.ns && @data_types[ctx.ns]
+      unless ctx.fn && dt
+        return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a Data type",
+                     ["outside one, write the accessor: `Type.get_#{field}(obj)`"])
+      end
+      return error(node, "`#{node.name}` needs a first argument (the #{dt.name}) in #{ctx.fn.full_name}") if ctx.fn.params.empty?
+      unless dt.fields.include?(field)
+        return error(node, "#{dt.name} has no field `#{field}`", spell(field, dt.fields).map { "did you mean `@#{_1}`?" })
+      end
+      if node.is_a?(Prism::InstanceVariableOperatorWriteNode) && !binary_op?(node.binary_operator)
+        return error(node, "operator `#{node.binary_operator}=` is not supported")
+      end
+      @calls[node] = FieldAccess.new(lookup(dt.name, "get_#{field}"), lookup(dt.name, "set_#{field}"), ctx.fn.params.first.to_sym)
     end
 
     def check_each(ctx, *nodes) = nodes.each { check(_1, ctx) }

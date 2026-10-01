@@ -120,6 +120,13 @@ There is no `p.x`. Field access is an operation with a type, like everything els
 
 @@example data_errors
 
+Inside a function of a Data type, `@x` is shorthand for field `x` of the function's **first
+argument**, which is the subject by convention. `@x` reads the field, `@x = v` writes it, and
+`@x += v` updates it. The type comes from the enclosing `class Point`, so `@x` is still an
+operation with a type:
+
+@@example data_shorthand
+
 Because each operation checks its argument, passing the wrong record is caught at the exact
 operation, with the call chain:
 
@@ -171,7 +178,7 @@ every unchecked use before running. A local variable you have tested counts as c
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
-- instance variables
+- `self`, and `@x` outside a function of a Data type
 - indexing
 - string interpolation
 - unary operators

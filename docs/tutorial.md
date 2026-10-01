@@ -386,6 +386,39 @@ data_errors.sake:6:12: error: wrong number of arguments for Point.new (given 1, 
 (exit status 2)
 ```
 
+Inside a function of a Data type, `@x` is shorthand for field `x` of the function's **first
+argument**, which is the subject by convention. `@x` reads the field, `@x = v` writes it, and
+`@x += v` updates it. The type comes from the enclosing `class Point`, so `@x` is still an
+operation with a type:
+
+```ruby
+Point = Data.define(:x, :y)
+
+class Point
+  def norm2(p) = @x * @x + @y * @y           # @x is Point.get_x(p): p is the first argument
+  def move(p, dx, dy)
+    @x += dx                                 # Point.set_x(p, Point.get_x(p) + dx)
+    @y += dy
+    p
+  end
+end
+
+pt = Point.new(3, 4)
+puts(Point.norm2(pt))
+Point.move(pt, 1, 1)
+p(pt)
+puts(Point.norm2(7))
+```
+
+```
+$ sake data_shorthand.sake
+25
+#<data Point x=4, y=5>
+data_shorthand.sake:4: in Point.norm2: TypeError: Point.get_x: argument 1 must be Point, got Integer
+  from data_shorthand.sake:16: in <main>
+(exit status 1)
+```
+
 Because each operation checks its argument, passing the wrong record is caught at the exact
 operation, with the call chain:
 
@@ -584,7 +617,7 @@ strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node)
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
-- instance variables
+- `self`, and `@x` outside a function of a Data type
 - indexing
 - string interpolation
 - unary operators
@@ -596,7 +629,7 @@ All of these are reported together, before running:
 Point = Data.define(:x, :y)
 PI = 3.14159
 class Point
-  def norm(p) = @x
+  def origin = self
 end
 nums = Array[1, 2, 3]
 puts(nums[0])
@@ -609,7 +642,7 @@ eval("1 + 1")
 $ sake forbidden.sake
 forbidden.sake:2:1: error: Sake has no value constants; only a Data type can be assigned to a constant
   hint: define a function instead: `def pi = 3.14159`
-forbidden.sake:4:17: error: Sake has no instance variables; use Data.define fields
+forbidden.sake:4:16: error: Sake has no `self`
 forbidden.sake:7:10: error: indexing `nums[0]` is not supported yet (out-of-range behavior is undecided)
 forbidden.sake:8:6: error: string interpolation is not supported yet (how values become strings is undecided); use String.+
 forbidden.sake:9:6: error: unary operator `!true` is not supported yet (undecided)
