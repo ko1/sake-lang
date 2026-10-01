@@ -87,6 +87,7 @@ module Sake
       dt = @data_types[name] = DataType.new(name, fields)
       @registry.define(name, :new, fields.map { "Any" }) { |*vs| Record.new(dt, vs) }
       Stdlib.install_typed_array(@registry, name, data: true)
+      Stdlib.define_nil_equality(@registry, name)
       fields.each_with_index do |f, i|
         @registry.define(name, "get_#{f}", [name]) { |r| r.values[i] }
         @registry.define(name, "set_#{f}", [name, "Any"]) { |r, x| r.values[i] = x }
@@ -414,7 +415,7 @@ module Sake
       end
       check(inner, ctx)
 
-      suggestions = suggest(node)
+      suggestions = node.name == :nil? ? ["#{node.receiver.slice} == nil"] : suggest(node)
       hints = suggestions.empty? ? ["Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"] : suggestions
       shown = node.attribute_write? ? "#{node.name.to_s.delete_suffix("=")} = ..." : node.name
       error(node, "method call on a value `#{first_line(node.receiver.slice)}.#{shown}` is not allowed", hints)

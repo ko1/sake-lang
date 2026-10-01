@@ -59,8 +59,8 @@ module Sake
 
     private
 
-    def fail_at(node, kind, message)
-      raise RunError.new(kind, message, node.location.start_line, @stack.dup)
+    def fail_at(node, kind, message, **opts)
+      raise RunError.new(kind, message, node.location.start_line, @stack.dup, **opts)
     end
 
     def eval_node(node, env)
@@ -182,7 +182,8 @@ module Sake
       args.each_with_index do |v, i|
         want = fn.param_type(i)
         next if type_ok?(want, v)
-        fail_at(node, "TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}")
+        fail_at(node, "TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
+                expected: want, nil_value: v.nil?)
       end
       ruby_blk = blk && ->(*xs) { call_block(blk, xs, node) }
       fn.impl.call(*args, &ruby_blk)
@@ -200,8 +201,12 @@ module Sake
       key = [Values.type_of(a), Values.type_of(b)]
       impl = rows[key]
       unless impl
-        defined = rows.keys.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }.join(", ")
-        fail_at(node, "TypeError", "BinaryOp.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}")
+        nil_rows, plain = rows.keys.partition { |r| r.include?("Nil") && r.uniq.size == 2 }
+        defined = plain.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }
+        defined << "(any, nil), (nil, any)" unless nil_rows.empty?
+        defined = defined.join(", ")
+        fail_at(node, "TypeError", "BinaryOp.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
+                nil_value: a.nil? || b.nil?)
       end
       impl.call(a, b)
     rescue Fail => e

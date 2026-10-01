@@ -23,21 +23,27 @@ module Sake
 
   # An error raised while running a Sake program.
   class RunError < Error
-    attr_reader :kind, :line, :frames
-    attr_accessor :path
+    attr_reader :kind, :line, :frames, :expected
+    attr_accessor :path, :hints
 
-    def initialize(kind, message, line, frames = [])
+    def initialize(kind, message, line, frames = [], expected: nil, nil_value: false)
       @kind = kind
       @line = line
       @frames = frames
+      @expected = expected
+      @nil_value = nil_value
+      @hints = []
       super(message)
     end
+
+    def nil_value? = @nil_value
 
     # frames: [callee, call line], outermost first.
     def report
       callers = ["<main>", *frames.map(&:first)]
       s = +"#{path}:#{line}: in #{callers.last}: #{kind}: #{message}"
       frames.each_with_index.reverse_each { |(_, l), i| s << "\n  from #{path}:#{l}: in #{callers[i]}" }
+      hints.each { |h| s << "\n  hint: #{h}" }
       s
     end
   end

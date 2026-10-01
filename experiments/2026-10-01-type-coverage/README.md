@@ -125,3 +125,26 @@
   - 原因は crosscheck 側にあった。`T[...]` / `Array[...]` の要素の検査を、推論器は `"elem"` というキーで記録していたのに、crosscheck は引数の番号で突き合わせていた。
   - 修正後は 0 件になった。推論器の不健全さではなかった。
 - 最初の `run.sh` は、除外条件の誤りで `typed_array_static.sake`（静的エラーで止まるサンプル）を含めてしまい、途中で落ちた。除外条件を直して再実行した。
+
+## 追記: nil の設計を入れた後（同日）
+
+この実験を受けて、nil の扱いを次のように決めた（DESIGN.md「実装 v0」）。
+
+- nil は `nil | T` の union にする。
+- 絞り込みの形を広げた（`x != nil`、`&&`、早期脱出など）。
+- `(T, nil)` の `==` / `!=` を表に足した。
+
+上の「結果」の数字は、コミット 8da5bfc での値である。この後のコミットで `run.sh` を流すと、数字は変わる。
+
+nil の設計を入れた後、`crosscheck.rb` を流し直した結果は次のとおり。
+
+- 対象は 26 本（上の 23 本、`corpus/first/linked_list.sake`、nil のサンプル 2 本）。
+- proven 476 / partial 7 / error 8 / unknown 0 / violation 0。sabotage では violation 14 件。
+
+結果の要点:
+
+- **`corpus/first/linked_list.sake`（`while node != nil`）は、そのまま動くようになった。** partial は 0 件で、`x != nil` による絞り込みが効いている。
+- **partial の 7 件はすべて、新しく足した nil のサンプルにある。** 内訳は次のとおり。
+  - 意図して書いた「確かめずに使う」箇所が 2 件。
+  - 実際に nil に当たる箇所が 2 件。
+  - `while Node.get_next(n) != nil` の形が 3 件。フィールドの読み出しは絞り込まない規則なので、取りこぼしになる。`--strict` では誤検出として報告される。

@@ -21,10 +21,11 @@ module Sake
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
     Frame = Struct.new(:fn, :ret, :block)
     BlockCtx = Struct.new(:node, :params, :env)
-    Check = Struct.new(:line, :op, :arg, :expected, :actual, :verdict)
+    Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing)
 
     class Env
       attr_reader :vars, :parent, :frame
+      attr_accessor :dead # control left via return/next/break; this path does not fall through
 
       def initialize(parent, frame, vars = {})
         @parent = parent
@@ -61,6 +62,7 @@ module Sake
       @site_ids = {}.compare_by_identity
       @sites = {}
       @fields = Hash.new { |h, k| h[k] = {} }
+      @nil_writes = Hash.new { |h, k| h[k] = Hash.new { |h2, f| h2[f] = [] } } # dt => field => [line]
       @returns = {}
     end
 
@@ -154,7 +156,8 @@ module Sake
       end
     end
 
-    def field_write(dt, field, ty)
+    def field_write(dt, field, ty, node)
+      @nil_writes[dt][field] << node.location.start_line if ty.include?("Nil")
       @fields[dt][field] = u(@fields[dt][field] || [], ty)
     end
 
@@ -171,26 +174,44 @@ module Sake
     def record(node, op, arg, want, actual)
       return if want == "Any" || actual.empty?
       wants = Array(want)
+      failing = actual.reject { |a| wants.any? { atom_matches?(a, _1) } }
       verdict =
         if unknown?(actual) then :unknown
-        else
-          hits = actual.count { |a| wants.any? { atom_matches?(a, _1) } }
-          if hits == actual.size then :proven
-          elsif hits.zero? then :error
-          else :partial
-          end
+        elsif failing.empty? then :proven
+        elsif failing.size == actual.size then :error
+        else :partial
         end
-      add_check(node, op, arg, wants.join("|"), actual, verdict)
+      add_check(node, op, arg, wants.join("|"), actual, verdict, failing)
     end
 
-    def add_check(node, op, arg, expected, actual, verdict)
+    def add_check(node, op, arg, expected, actual, verdict, failing = [])
       key = [node.location.start_line, node.location.start_column, op, arg]
       prev = @checks[key]
       if prev
         prev.actual = u(prev.actual, actual)
         prev.verdict = worse(prev.verdict, verdict)
+        prev.failing = (prev.failing + failing).uniq
       else
-        @checks[key] = Check.new(node.location.start_line, op, arg, expected, actual, verdict)
+        @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing)
+      end
+    end
+
+    # Checks that fail only when a value is nil: the `--strict` report.
+    def nil_risks
+      @checks.values.select do |c|
+        c.verdict == :partial && c.failing.all? { |f| f == "Nil" || (f.is_a?(Array) && f.all?(String) && f.include?("Nil")) }
+      end
+    end
+
+    # "Data.field (nil written at line N)" for fields that may hold nil next to a type in `wants`.
+    def nil_sources(wants = nil)
+      @fields.flat_map do |dt, fs|
+        fs.filter_map do |f, ty|
+          next unless ty.include?("Nil")
+          next if wants && (ty - ["Nil"]).none? { |a| Array(wants).any? { |w| atom_matches?(a, w) } }
+          lines = @nil_writes[dt][f].uniq.sort
+          "#{dt}.#{f} may be nil (nil is stored at line #{lines.join(", ")})"
+        end
       end
     end
 
@@ -224,20 +245,29 @@ module Sake
       when Prism::WhileNode, Prism::UntilNode then loop_node(node, env)
       when Prism::AndNode, Prism::OrNode
         l = ev(node.left, env)
-        u(l, ev(node.right, env))
+        right_env = env.dup_level
+        narrow(right_env, node.left, node.is_a?(Prism::AndNode))
+        r = ev(node.right, right_env)
+        join_into(env, env.dup_level, right_env)
+        # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
+        left = node.is_a?(Prism::AndNode) ? l & %w[Nil Boolean] : l - ["Nil"]
+        u(*left.map { [_1] }, r)
       when Prism::ParenthesesNode then ev(node.body, env)
       when Prism::ArrayNode then tuple(node.elements.map { ev(_1, env) })
       when Prism::ReturnNode
         vals = (node.arguments&.arguments || []).map { ev(_1, env) }
         v = vals.size > 1 ? tuple(vals) : (vals.first || t("Nil"))
         env.frame.ret = u(env.frame.ret, v)
+        env.dead = true
         []
       when Prism::NextNode
         vals = (node.arguments&.arguments || []).map { ev(_1, env) }
         @next_acc[-1] = u(@next_acc[-1], vals.first || t("Nil")) if @next_acc&.any?
+        env.dead = true
         []
       when Prism::BreakNode
         (node.arguments&.arguments || []).each { ev(_1, env) }
+        env.dead = true
         []
       when Prism::YieldNode
         args = (node.arguments&.arguments || []).map { ev(_1, env) }
@@ -254,9 +284,15 @@ module Sake
       ty
     end
 
+    # Paths that ended in return/next/break do not reach the join point.
     def join_into(env, a, b)
+      live = [a, b].reject(&:dead)
+      if live.empty?
+        env.dead = true
+        live = [a, b]
+      end
       (a.vars.keys | b.vars.keys).each do |k|
-        env.vars[k] = u(a.vars[k] || t("Nil"), b.vars[k] || t("Nil"))
+        env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") })
       end
     end
 
@@ -264,7 +300,8 @@ module Sake
       ev(pred, env)
       e1 = env.dup_level
       e2 = env.dup_level
-      narrow_truthy(e1, pred)
+      narrow(e1, pred, true)
+      narrow(e2, pred, false)
       r = u(ev(then_node, e1), ev(else_node, e2))
       join_into(env, e1, e2)
       r
@@ -275,8 +312,9 @@ module Sake
         before = env.chain_snapshot
         ev(node.predicate, env)
         body = env.dup_level
-        narrow_truthy(body, node.predicate) if node.is_a?(Prism::WhileNode)
+        narrow(body, node.predicate, node.is_a?(Prism::WhileNode))
         ev(node.statements, body)
+        body.dead = false # break/next leave the iteration, not the loop
         join_into(env, env.dup_level, body)
         return t("Nil") if env.chain_snapshot == before
       end
@@ -284,10 +322,48 @@ module Sake
       t("Nil")
     end
 
-    def narrow_truthy(env, pred)
-      return unless @narrow && pred.is_a?(Prism::LocalVariableReadNode) && pred.depth.zero?
-      ty = env.vars[pred.name] or return
-      env.vars[pred.name] = u(*(ty - ["Nil"]).map { [_1] })
+    # Narrows a local variable's type on the path where `pred` is truthy (or falsy).
+    # Forms: `x`, `x != nil`, `x == nil`, `a && b`, `a || b`, parentheses. Field reads are never narrowed
+    # (values are mutable, so another alias may change the field between the test and the use).
+    def narrow(env, pred, truthy)
+      return unless @narrow
+      case pred
+      when Prism::ParenthesesNode
+        body = pred.body
+        narrow(env, body.body.last, truthy) if body.is_a?(Prism::StatementsNode) && body.body.size == 1
+      when Prism::AndNode
+        if truthy
+          narrow(env, pred.left, true)
+          narrow(env, pred.right, true)
+        end
+      when Prism::OrNode
+        unless truthy
+          narrow(env, pred.left, false)
+          narrow(env, pred.right, false)
+        end
+      when Prism::LocalVariableReadNode
+        restrict(env, pred, truthy ? :non_nil : :falsy)
+      when Prism::CallNode
+        return unless %i[== !=].include?(pred.name) && pred.call_operator_loc.nil? && pred.arguments&.arguments&.size == 1
+        l = pred.receiver
+        r = pred.arguments.arguments.first
+        var = [l, r].find { _1.is_a?(Prism::LocalVariableReadNode) }
+        return unless var && [l, r].any?(Prism::NilNode)
+        is_nil = (pred.name == :==) == truthy
+        restrict(env, var, is_nil ? :nil : :non_nil)
+      end
+    end
+
+    def restrict(env, var, how)
+      return unless var.depth.zero?
+      ty = env.vars[var.name] or return
+      atoms =
+        case how
+        when :non_nil then ty - ["Nil"]
+        when :nil then ty & ["Nil"]
+        when :falsy then ty & %w[Nil Boolean]
+        end
+      env.vars[var.name] = u(*atoms.map { [_1] })
     end
 
     def multi_write(node, env)
@@ -375,15 +451,19 @@ module Sake
       results = []
       hits = 0
       pairs = a.product(b)
+      failing = []
       pairs.each do |x, y|
         key = [x, y].map { _1.is_a?(String) ? _1 : (_1[0] == :tuple ? "Tuple" : "Array") }
-        next unless rows.key?(key)
+        unless rows.key?(key)
+          failing << key
+          next
+        end
         hits += 1
         results << binop_result(op, *key)
       end
       verdict = hits == pairs.size ? :proven : (hits.zero? ? :error : :partial)
       actual = pairs.map { |x, y| tuple([[x].freeze, [y].freeze]) }
-      add_check(node, "BinaryOp.#{op}", "pair", "table row", u(*actual), verdict)
+      add_check(node, "BinaryOp.#{op}", "pair", "table row", u(*actual), verdict, failing)
       u(*results)
     end
 
@@ -400,7 +480,7 @@ module Sake
       ns = fn.namespace
       name = fn.name
       if (dt = @program.data_types[ns]) && name != "[]"
-        return data_op(dt, name, args)
+        return data_op(dt, name, args, node)
       end
       if name == "[]"
         if ns == "Array"
@@ -414,14 +494,14 @@ module Sake
       builtin_result(fn.full_name, args, blk, node)
     end
 
-    def data_op(dt, name, args)
+    def data_op(dt, name, args, node)
       case name
       when "new"
-        dt.fields.zip(args) { |f, a| field_write(dt.name, f, a) }
+        dt.fields.zip(args) { |f, a| field_write(dt.name, f, a, node) }
         t(dt.name)
       when /\Aget_(.+)\z/ then @fields[dt.name][$1] || []
       when /\Aset_(.+)\z/
-        field_write(dt.name, $1, args[1])
+        field_write(dt.name, $1, args[1], node)
         args[1]
       end
     end

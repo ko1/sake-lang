@@ -54,7 +54,16 @@ module Sake
       %w[Boolean Nil].each do |t|
         %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } }
       end
+      %w[Integer Float String Boolean Tuple Array].each { define_nil_equality(reg, _1) }
       reg.add_namespace("BinaryOp")
+    end
+
+    # `x == nil` / `x != nil` for any type T (Ruby semantics: false / true unless x is nil).
+    def define_nil_equality(reg, type)
+      %i[== !=].each do |op|
+        reg.define_binary(op, type, "Nil") { |a, b| a.public_send(op, b) }
+        reg.define_binary(op, "Nil", type) { |a, b| a.public_send(op, b) }
+      end
     end
 
     # `Integer.+(a, b)` etc.: the operator with both operands fixed to the type.
