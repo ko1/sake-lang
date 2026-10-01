@@ -841,7 +841,7 @@ module Sake
       if (ns == "Struct" && name == "new") || (ns == "Data" && name == "define")
         return error(node, "Struct.new must be assigned to a top-level constant: `Point = Struct.new(:x, :y)`")
       end
-      if name == "call"
+      if name == "call" && node.respond_to?(:message_loc) && node.message_loc.nil? # `T.(...)`, not a function named call
         return error(node, "type scope `#{ns}.(...)` is not supported yet")
       end
       if (old = { "BinaryOp" => "Arithmetic", "Index" => "Indexable" }[ns])
