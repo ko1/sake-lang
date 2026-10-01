@@ -1,0 +1,428 @@
+# Sake Language Specification (v0)
+
+This document describes the language as implemented by the v0 interpreter (`bin/sake`). Sake is
+experimental. Points still open in the design are listed in [§15](#15-not-yet-supported) and in
+[../DESIGN.md](../DESIGN.md) (in Japanese). For a guided introduction, see [tutorial.md](tutorial.md).
+
+## 1. Principles
+
+1. **Ruby syntax.** A Sake program is a Ruby program as parsed by Prism. Sake accepts a subset of
+   Ruby's syntax and gives some constructs a different meaning.
+2. **Types are written on operations, not on bindings.** An operation is called with its type,
+   `Type.op(subject, args...)`. Variables, parameters, return values, and fields carry no type
+   annotations.
+3. **Every call target is known before running.** There is no dispatch on the receiver, no
+   `method_missing`, and no reflection. Name errors are reported for the whole program before
+   execution starts.
+4. **Values carry type tags, and every operation checks them.** A wrong type is reported as an
+   error at the operation that received it, with the line number. These checks are always
+   enabled.
+
+## 2. Running programs
+
+```
+bin/sake FILE.sake            # check, then run
+bin/sake --check FILE.sake    # only the static checks
+bin/sake --strict FILE.sake   # static checks + report unchecked uses of maybe-nil values, then run
+bin/sake --types FILE.sake    # experimental type inference report (does not run the program)
+```
+
+| Exit status | Meaning |
+|---|---|
+| 0 | success |
+| 1 | runtime error |
+| 2 | static error (nothing was executed) |
+
+## 3. Program structure
+
+A program is a single file. Its top level may contain:
+
+- **Function definitions**: `def name(params) ... end` and `def name(params) = expr`.
+- **Namespaced function definitions**: `def Type.name(params) ...`. This is equivalent to defining
+  `name` inside `class Type`.
+- **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only
+  `def name(...)` (no receiver).
+- **Data types**: `Name = Data.define(:field, ...)`.
+- **Statements**: any other expression. Statements run in order.
+
+All definitions are collected before anything runs. A function may be called on a line above its
+definition.
+
+Rules:
+
+- Namespaces cannot be nested (`A::B` is rejected).
+- Classes cannot inherit.
+- `def self.x` is rejected, because Sake has no `self`.
+- Defining the same name twice in one namespace is an error. Redefining a built-in operation is
+  also an error.
+- Constants can only be assigned from `Data.define`.
+
+## 4. Values and types
+
+| Type | Literals / constructors | Notes |
+|---|---|---|
+| Integer | `42`, `-7` | arbitrary precision |
+| Float | `1.5`, `2.0` | |
+| String | `"abc"`, `'abc'` | no interpolation |
+| true / false | `true`, `false` | internally one type, `Boolean`, which cannot be written in source |
+| nil | `nil` | see [§11](#11-nil) |
+| Tuple | `[a, b, ...]` | fixed size; element types are positional |
+| Array | `Array[a, ...]` | no declared element type |
+| Array of T | `T[a, ...]`, e.g. `Float[]`, `Point[p]` | element type T, checked on every write |
+| Data type | `Point.new(x, y)` | record with mutable fields |
+
+- **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is
+  truthy.
+- **Error messages.** `nil`, `true`, and `false` are shown as values (`got nil`). Every other value
+  is shown by its type name (`got Integer`).
+
+## 5. Operations and name resolution
+
+### 5.1 Qualified calls
+
+`Type.op(args...)` calls the operation `op` of namespace `Type`. By convention the subject is the
+first argument. Both `Type` and `op` must exist, or the program is rejected before running. When
+they do not exist, the error offers spelling suggestions and lists other namespaces that define
+`op`.
+
+### 5.2 No calls on values
+
+A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error.
+The error suggests the qualified form.
+
+- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.upcase(String.strip(s))`.
+- **Field access** gets the accessor: `p.x` suggests `Point.get_x(p)`, and `p.x = v` suggests
+  `Point.set_x(p, v)`.
+- **Literal receivers** narrow the suggestions to the literal's type.
+- **`x.nil?`** suggests `x == nil`.
+
+### 5.3 Unqualified calls
+
+A call without a receiver, `f(args)`, is resolved statically. The first match wins:
+
+1. the enclosing class or module, including its built-in operations and Data accessors;
+2. top-level functions;
+3. `Kernel` (`puts`, `print`, `p`).
+
+An inner definition **shadows** an outer one. It is not an error for the same name to exist at
+several levels. An outer definition can always be reached with its namespace (`Kernel.puts`).
+
+Code at the top level has no enclosing namespace, so resolution starts at step 2.
+
+### 5.4 Arity and blocks
+
+The following are checked statically:
+
+- the number of arguments, for both user functions and built-in operations;
+- for a user function, a block must be passed **iff** the function contains `yield`;
+- a built-in operation either requires a block or rejects one.
+
+## 6. Functions
+
+```ruby
+def area(w, h) = w * h
+def describe(n)
+  return "negative" if n < 0
+  Integer.to_s(n)
+end
+```
+
+- **Parameters.** Only required positional parameters are allowed. Optional, rest, keyword, and
+  block parameters (`&b`) are rejected, as are destructuring parameters.
+- **Return value.** The value of the last expression, or of `return expr`. `return a, b` returns
+  the Tuple `[a, b]`.
+- **Polymorphism.** Functions are polymorphic. A function works on any arguments its operations
+  accept. Type errors surface at the operation that fails.
+- **Local variables.** Each function has its own scope, with no access to top-level locals. As in
+  Ruby, reading a local before its first assignment gives `nil`.
+- **Recursion.** Allowed. A depth over 10,000 calls raises `SystemStackError`. `bin/sake` runs the
+  program on a thread with a large stack so that this limit, not Ruby's stack, applies. Long
+  backtraces are shortened.
+
+## 7. Blocks
+
+A block can be passed to a built-in operation or to a user function that yields.
+
+```ruby
+Array.map(xs) { |x| x * 2 }
+Array.each(pairs) do |k, v| ... end
+Integer.times(3) { p it }
+```
+
+- **Not values.** Blocks are second-class. They cannot be stored, returned, or passed with `&`.
+  `proc`, `lambda`, and `->` are not available.
+- **Parameters.** `|a, b|` lists plain names. `it` and `_1` … `_9` work as in Ruby.
+- **Tuple destructuring.** If a block declares two or more parameters and receives a single Tuple,
+  the Tuple is destructured.
+- **Parameter count.** A block with no parameters ignores its arguments. Otherwise, a block called
+  with the wrong number of arguments raises `ArgumentError`.
+- **Scope.** A block sees and can assign the enclosing local variables.
+- **`next [v]`.** Ends the current block call with value `v` (default `nil`).
+- **`return`.** Inside a block, `return` returns from the enclosing **function**, as in Ruby.
+- **`break`.** Not allowed inside blocks.
+
+`yield(args...)` calls the block given to the current function. It is a static error outside a
+function.
+
+## 8. Operators
+
+### 8.1 Binary operators
+
+`a OP b` means `BinaryOp.OP(a, b)`. The result type depends on the operand types, through a
+**closed table**:
+
+| Operator | Rows |
+|---|---|
+| `+` | (Integer, Integer) → Integer; (Integer, Float), (Float, Integer), (Float, Float) → Float; (String, String) → String |
+| `-` `*` `/` `%` `**` | numeric pairs as for `+` |
+| `*` | also (String, Integer) → String |
+| `<` `<=` `>` `>=` | numeric pairs, (String, String) → true/false |
+| `==` `!=` | numeric pairs, (String, String), (true/false, true/false), (nil, nil); and (T, nil), (nil, T) for **any** T |
+
+- **No matching row.** If no row matches the operand types, the operation raises `TypeError`. The
+  message lists the rows that do exist. There is no implicit conversion.
+- **Integer division.** `/` and `%` on Integers follow Ruby: `7 / 2 == 3` and `-7 / 2 == -4`.
+  Dividing an Integer by zero raises `ZeroDivisionError`. Float division by zero follows IEEE.
+- **Negative exponent.** `Integer ** negative Integer` raises `ArgumentError`, because Sake has no
+  Rational.
+- **Equality of compound values.** `==` between Tuples, Arrays, or Data values is not defined yet.
+  Only comparison with `nil` is defined for them.
+- **Compound assignment.** `x OP= e` means `x = x OP e`.
+- **Typed form.** `Integer.+(a, b)`, `Float.*(a, b)`, `String.+(a, b)`, and so on name the type
+  explicitly. Both operands must then have that type. The exception is `String.*(s, n)`, which
+  takes `(String, Integer)`.
+- **Not operators.** `&&` and `||` short-circuit and return one of their operands, as in Ruby. They
+  are not entries in `BinaryOp`.
+
+### 8.2 Not supported
+
+- Unary operators: `!x`, `-x`, `+x`, `~x`.
+- `<=>` and the bitwise operators.
+- Indexing: `a[i]` and `a[i] = v`.
+
+All of these are static errors.
+
+## 9. Control flow
+
+- `if` / `elsif` / `else`, `unless` / `else`, and the ternary `c ? a : b`. A missing branch yields
+  `nil`.
+- `while` and `until`, which yield `nil`. Inside a loop, `break` leaves the loop and `next` starts
+  the next iteration. `begin ... end while` is not supported.
+- The modifier forms `stmt if c`, `stmt unless c`, `stmt while c`, and `stmt until c`.
+
+## 10. Data types
+
+```ruby
+Point = Data.define(:x, :y)
+```
+
+This defines the namespace `Point` with the following operations:
+
+| Operation | Meaning |
+|---|---|
+| `Point.new(x, y)` | create; positional arguments, one per field |
+| `Point.get_x(p)` | read field `x` |
+| `Point.set_x(p, v)` | write field `x` in place; returns `v` |
+| `Point[p1, ...]` | an Array of Point ([§12](#12-tuples-and-arrays)) |
+| `p == nil`, `p != nil` | comparison with nil |
+
+- **Mutability.** Values are mutable and shared by reference. A change made through one variable
+  is visible through every other variable that holds the same value.
+- **Adding operations.** Add your own operations in `class Point ... end` or with `def Point.f`.
+  Inside them, the accessors can be called unqualified (`get_x(p)`).
+- **Printing.** `p` prints a Data value as `#<data Point x=1, y=2>`. `puts` prints it the same way.
+- **`Data.define` restrictions.** It must be assigned to a top-level constant. It takes symbols
+  only, and no block.
+
+## 11. nil
+
+`nil` is an ordinary value. A value that may be absent has the type `nil | T`, and there is no
+Option wrapper.
+
+- **Run time.** An operation that receives `nil` where it needs T raises `TypeError ... got nil`.
+  The interpreter then runs the static analysis, on the error path only, and adds hints naming the
+  fields that may hold `nil` and the lines that store it.
+- **Narrowing.** The static analysis narrows a **local variable** in the following places:
+
+  | Form | Where `x` is narrowed |
+  |---|---|
+  | `if x` / `while x` / `x && …` | non-nil in the branch taken when `x` is truthy |
+  | `x != nil` / `x == nil` | nil or non-nil in the matching branch |
+  | `return unless x`, `next unless x`, `break unless x`, and other early exits | non-nil after the statement |
+
+  Field reads (`Node.get_next(n)`) are **not** narrowed, because fields are mutable. Copy the field
+  into a local variable first, then test the local.
+- **`--strict`.** Reports, before running, every operation that may receive an unchecked `nil`. The
+  run does not start.
+
+## 12. Tuples and arrays
+
+**Tuple.** The literal `[a, b, ...]` is a Tuple.
+
+- Its elements are read by multiple assignment, `x, y = t`, and the counts must match.
+- There is no indexing yet.
+- `Tuple.size` and `Tuple.length` give the number of elements.
+
+**Array.** `Array[a, ...]` creates an Array with no declared element type. Any value can be added
+to it.
+
+**Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type
+(`Integer`, `Float`, `String`, `Tuple`) or a Data type.
+
+- **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and
+  `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer
+  cannot go into `Float[]`.
+- **Static check.** If a literal argument of `T[...]` has another type, the error is reported
+  before running. This catches `Point[1, 2]`, Ruby's spelling of `Point.new(1, 2)`.
+- **Untyped results.** Arrays returned by `map`, `select`, `sort`, and similar operations have no
+  declared element type.
+
+Arrays are mutable and shared by reference.
+
+## 13. Errors
+
+### 13.1 Static errors
+
+Static errors are reported all together, sorted by position, and nothing runs. The format is:
+
+```
+FILE:LINE:COLUMN: error: MESSAGE
+  hint: SUGGESTION
+```
+
+The kinds of static error are:
+
+- syntax errors (from Prism);
+- undefined types, operations, and functions;
+- wrong argument counts;
+- a block passed where none is taken, or missing where one is required;
+- calls on values;
+- forbidden constructs: `send`, `public_send`, `__send__`, `method_missing`, `define_method`, the
+  `eval` family, `instance_variable_get`/`set`, `const_get`/`set`, `binding`, `self`, and instance
+  variables;
+- unsupported syntax;
+- duplicate definitions;
+- literal type mismatches in `T[...]`;
+- in `--strict` mode, unchecked uses of maybe-nil values.
+
+### 13.2 Runtime errors
+
+The format is:
+
+```
+FILE:LINE: in FUNCTION: KIND: MESSAGE
+  from FILE:LINE: in CALLER
+  hint: SUGGESTION
+```
+
+| Kind | Raised by |
+|---|---|
+| `TypeError` | an operation received a value of the wrong type; a `BinaryOp` row is missing; a typed Array write; multiple assignment from a non-Tuple |
+| `ArgumentError` | Tuple size mismatch in multiple assignment; block parameter count; negative sizes; comparing incomparable values in `sort` |
+| `ZeroDivisionError` | Integer `/` or `%` by zero |
+| `FloatDomainError` | converting NaN or Infinity to Integer |
+| `Math::DomainError` | e.g. `Math.sqrt(-1)` |
+| `SystemStackError` | recursion deeper than 10,000 |
+
+## 14. Built-in operations
+
+The names follow Ruby's core library. "→" gives the result type. Operations marked "block" require
+one.
+
+### Kernel
+
+| Operation | Result | Notes |
+|---|---|---|
+| `puts(*xs)` | nil | prints like Ruby's `puts`; Arrays and Tuples print one element per line |
+| `print(*xs)` | nil | no newline |
+| `p(x)` | x | prints `x` in Ruby's `inspect` format |
+
+### Integer
+
+| Operation | Result |
+|---|---|
+| `+ - * / % **` (Integer, Integer) | Integer |
+| `< <= > >= == !=` (Integer, Integer) | true/false |
+| `to_s`, `to_f`, `abs`, `succ`, `pred` | String, Float, Integer, Integer, Integer |
+| `even?`, `odd?`, `zero?` | true/false |
+| `times(n) { \|i\| }` | n (block) |
+| `upto(a, b) { \|i\| }`, `downto(a, b) { \|i\| }` | a (block) |
+
+### Float
+
+| Operation | Result |
+|---|---|
+| `+ - * / % **` (Float, Float) | Float |
+| `< <= > >= == !=` (Float, Float) | true/false |
+| `to_s` | String |
+| `to_i`, `floor`, `ceil` | Integer |
+| `round(f)` / `round(f, digits)` | Integer / Float |
+| `abs` | Float |
+| `nan?` | true/false |
+
+### String
+
+| Operation | Result |
+|---|---|
+| `+(a, b)`, `*(s, n)` | String |
+| `== != < <= > >=` (String, String) | true/false |
+| `length`, `size`, `count(s, chars)`, `to_i` | Integer |
+| `to_f` | Float |
+| `upcase`, `downcase`, `capitalize`, `swapcase`, `reverse`, `strip`, `lstrip`, `rstrip`, `chomp`, `to_s` | String |
+| `sub(s, from, to)`, `gsub(s, from, to)` | String (plain-string patterns) |
+| `ljust(s, n, [pad])`, `rjust(s, n, [pad])` | String |
+| `empty?`, `include?(s, t)`, `start_with?(s, t)`, `end_with?(s, t)` | true/false |
+| `chars`, `lines`, `split(s, [sep])` | Array of String |
+| `each_char(s) { \|c\| }` | s (block) |
+
+### Array
+
+| Operation | Result |
+|---|---|
+| `Array[...]` | a new Array |
+| `length`, `size` | Integer |
+| `empty?`, `include?(a, x)` | true/false |
+| `push(a, *xs)`, `append(a, *xs)`, `concat(a, b)` | a, modified in place |
+| `join(a, [sep])` | String |
+| `sum(a)` | Integer or Float; elements must be numbers; 0 for an empty Array |
+| `reverse`, `sort`, `take(a, n)`, `drop(a, n)` | a new Array |
+| `each(a) { \|x\| }`, `each_with_index(a) { \|x, i\| }` | a (block) |
+| `map`, `select`, `filter`, `reject`, `sort_by` | a new Array (block) |
+| `any?`, `all?`, `none?` | true/false (block) |
+| `count(a) { \|x\| }` | Integer (block) |
+| `reduce(a, init) { \|acc, x\| }`, `inject(a, init) { \|acc, x\| }` | the accumulated value; `init` is required (block) |
+
+### Tuple
+
+| Operation | Result |
+|---|---|
+| `length`, `size` | Integer |
+
+### Math
+
+| Operation | Result |
+|---|---|
+| `sqrt`, `cbrt`, `sin`, `cos`, `tan`, `atan`, `exp`, `log`, `log2`, `log10` (Integer or Float) | Float |
+| `atan2(y, x)`, `hypot(x, y)` | Float |
+
+### Typed arrays
+
+`Integer[...]`, `Float[...]`, `String[...]`, `Tuple[...]`, and `D[...]` for each Data type `D`
+create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
+
+## 15. Not yet supported
+
+Each of these is rejected statically. Most wait on a design decision.
+
+- **Indexing** `a[i]`, `t[i]`, and operations that return `nil` on a miss (`first`, `last`, `find`,
+  `min`, `max`, `pop`, `index`). These wait on the out-of-range behavior.
+- **`Array.new`.**
+- **Unary operators.**
+- **String interpolation**, which waits on how values become strings.
+- **Protocols.** These are generic operations such as `to_s` and `==` over all types.
+- **The type scope `Integer.(a + b)`.**
+- **Hash, Symbol, Range, `case`/`when`, `%w[]`.**
+- **First-class blocks.**
+- **Value constants** such as `PI = 3.14`.
+- **Exceptions** (`raise`, `rescue`).
+- **Several files** (`require`).

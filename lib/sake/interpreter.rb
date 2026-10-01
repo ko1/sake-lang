@@ -173,6 +173,8 @@ module Sake
       rescue ReturnSignal => e
         raise unless e.frame.equal?(frame)
         e.value
+      rescue ::SystemStackError
+        fail_at(node, "SystemStackError", "stack level too deep (the interpreter's Ruby stack is exhausted)")
       ensure
         @stack.pop
       end

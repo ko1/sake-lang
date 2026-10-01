@@ -25,13 +25,15 @@ module Sake
     Resolver.new(path, result.value, registry).resolve
   end
 
+  # The program runs in its own thread: bin/sake sizes thread stacks (RUBY_THREAD_*_STACK_SIZE)
+  # so that Sake's own depth limit, not Ruby's stack, bounds recursion.
   def run(source, path, out: $stdout)
     program = load(source, path, out:)
-    Interpreter.new(program).run
+    th = Thread.new { Interpreter.new(program).run }
+    th.report_on_exception = false
+    th.value
   rescue RunError => e
     e.path = path
     raise
-  rescue ::SystemStackError
-    raise RunError.new("SystemStackError", "stack level too deep", 0).tap { _1.path = path }
   end
 end

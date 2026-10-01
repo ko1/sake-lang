@@ -24,7 +24,7 @@ module Sake
       @path = path
       @root = root
       @registry = registry
-      @functions = Hash.new { |h, k| h[k] = {} } # namespace (nil = top level) => name => UserFunction
+      @functions = {} # namespace (nil = top level) => name => UserFunction
       @data_types = {}
       @toplevel = []
       @calls = {}.compare_by_identity
@@ -132,12 +132,12 @@ module Sake
 
       name = node.name.to_s
       fn = UserFunction.new(ns, name, collect_params(node), node.body, node, yields?(node.body))
-      if (prev = @functions[ns][name])
+      if (prev = @functions.dig(ns, name))
         error(node, "`#{fn.full_name}` is already defined at line #{prev.node.location.start_line}")
       elsif ns && @registry.lookup(ns, name)
         error(node, "`#{fn.full_name}` is a built-in operation and cannot be redefined")
       else
-        @functions[ns][name] = fn
+        (@functions[ns] ||= {})[name] = fn
       end
     end
 
@@ -353,11 +353,11 @@ module Sake
     # Inner scope wins: the current namespace, then top-level functions, then Kernel.
     def resolve_unqualified(node, ctx)
       name = node.name.to_s
-      found = (ctx.ns && lookup(ctx.ns, name)) || @functions[nil][name] || @registry.lookup("Kernel", name)
+      found = (ctx.ns && lookup(ctx.ns, name)) || @functions.dig(nil, name) || @registry.lookup("Kernel", name)
       return found if found
 
       what = node.variable_call? ? "undefined local variable or function" : "undefined function"
-      visible = (ctx.ns ? names_in(ctx.ns) : []) + @functions[nil].keys + @registry.names("Kernel")
+      visible = (ctx.ns ? names_in(ctx.ns) : []) + @functions.fetch(nil, {}).keys + @registry.names("Kernel")
       hints = spell(name, visible).map { "did you mean `#{_1}`?" }
       hints.concat(namespaces_defining(name).map { "#{_1}.#{name}(#{node.arguments&.slice})" })
       error(node, "#{what} `#{name}`", hints)

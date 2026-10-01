@@ -38,11 +38,20 @@ module Sake
 
     def nil_value? = @nil_value
 
+    MAX_FRAMES = 12
+
     # frames: [callee, call line], outermost first.
     def report
       callers = ["<main>", *frames.map(&:first)]
       s = +"#{path}:#{line}: in #{callers.last}: #{kind}: #{message}"
-      frames.each_with_index.reverse_each { |(_, l), i| s << "\n  from #{path}:#{l}: in #{callers[i]}" }
+      shown = frames.each_with_index.reverse_each.to_a
+      if shown.size > MAX_FRAMES
+        omitted = shown.size - MAX_FRAMES
+        shown = shown.first(MAX_FRAMES - 2) + [nil] + shown.last(2)
+      end
+      shown.each do |(_, l), i|
+        s << (i ? "\n  from #{path}:#{l}: in #{callers[i]}" : "\n  ... #{omitted} frames omitted ...")
+      end
       hints.each { |h| s << "\n  hint: #{h}" }
       s
     end
