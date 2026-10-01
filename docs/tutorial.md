@@ -116,6 +116,8 @@ puts(Float.round(2.5))   # without digits: an Integer
 puts(Integer.+(1, 2))    # the operator written with its type
 puts("ab" * 3)
 puts("a" < "b")
+p(1/3r + 1/6r)
+p(2r ** -1)
 ```
 
 ```
@@ -130,6 +132,8 @@ $ sake numbers.sake
 3
 ababab
 true
+(1/2)
+(1/2)
 ```
 
 A pair that is not in the table is reported before running. The error names the operation, the
@@ -152,7 +156,7 @@ ahead, and the same mistake stops when it runs:
 
 ```
 $ sake --strict=0 binop_error.sake
-binop_error.sake:3: in <main>: TypeError: BinaryOp.+: no implementation for (String, Integer); defined for (Integer, Integer), (Integer, Float), (Float, Integer), (Float, Float), (String, String)
+binop_error.sake:3: in <main>: TypeError: BinaryOp.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Time, Integer), (Time, Float), (Time, Rational)
 (exit status 1)
 ```
 

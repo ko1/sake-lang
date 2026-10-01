@@ -108,6 +108,8 @@ Rules:
 | Symbol | `:name` | |
 | Range | `1..5`, `1...5`, `1..` | ends are Integer, Float, String, or nil |
 | Regexp, MatchData | `/(\d+)-(\d+)/`, `String.match(s, re)` | no interpolation |
+| Rational, Complex | `2r`, `1/3r`, `Rational(1, 3)`, `2i`, `Complex(1, 2)` | Ruby's numeric tower |
+| Time | `Time.now`, `Time.at(0)`, `Time.new(2026, 10, 1)` | |
 | Struct type | `Point.new(x, y)` | record with mutable fields |
 
 - **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is
@@ -231,7 +233,7 @@ function.
 
 | Operator | Rows |
 |---|---|
-| `+` | (Integer, Integer) → Integer; (Integer, Float), (Float, Integer), (Float, Float) → Float; (String, String) → String |
+| `+` | (Integer, Integer) → Integer; with a Float → Float; with a Rational (and no Float) → Rational; with a Complex → Complex; (String, String) → String |
 | `-` `*` `/` `%` `**` | numeric pairs as for `+` |
 | `*` | also (String, Integer) → String |
 | `<` `<=` `>` `>=` | numeric pairs, (String, String) → true/false |
@@ -245,8 +247,10 @@ function.
   message lists the rows that do exist. There is no implicit conversion.
 - **Integer division.** `/` and `%` on Integers follow Ruby: `7 / 2 == 3` and `-7 / 2 == -4`.
   Dividing an Integer by zero raises `ZeroDivisionError`. Float division by zero follows IEEE.
-- **Negative exponent.** `Integer ** negative Integer` raises `ArgumentError`, because Sake has no
-  Rational.
+- **Negative exponent.** `Integer ** negative Integer` raises `ArgumentError`, so that the type of
+  `a ** b` does not depend on the value of `b`. Write `2r ** -1` for a Rational.
+- **Complex.** A Complex has no ordering, so `<` and the like are not defined for it.
+- **Time.** `Time ± number` gives a Time; `Time - Time` gives a Float of seconds; two Times compare.
 - **Equality of compound values.** `==` between Tuples, Arrays, or Struct values is not defined yet.
   Only comparison with `nil` is defined for them.
 - **Compound assignment.** `x OP= e` means `x = x OP e`.
@@ -649,6 +653,24 @@ one.
 | `length`, `size` | Integer |
 | `to_a` | Array |
 
+### Rational, Complex
+
+| Operation | Result |
+|---|---|
+| `Rational(a, [b])` · `Integer.to_r` · `Float.to_r` · `Float.rationalize` | Rational |
+| `Rational.numerator`, `denominator`, `to_i`, `floor`, `ceil`, `round`, `truncate` · `to_f` · `abs` | Integer · Float · Rational |
+| `Complex(re, [im])` · `Complex.real`, `imaginary` · `abs`, `arg` · `conjugate` | Complex · a real number · Float · Complex |
+| `Complex.rectangular` · `Complex.polar` | `[re, im]` · `[abs, arg]` Tuples |
+| `Integer.fdiv(a, b)` | Float |
+
+### Time
+
+| Operation | Result |
+|---|---|
+| `Time.now` · `Time.at(seconds)` · `Time.new(y, [m, d, h, min, s])` · `Time.utc(t)` | Time |
+| `year`, `month`, `day`, `hour`, `min`, `sec`, `wday`, `yday`, `to_i` | Integer |
+| `to_f` · `to_s` · `strftime(t, fmt)` | Float · String · String |
+
 ### Symbol
 
 | Operation | Result |
@@ -742,9 +764,9 @@ Each of these is rejected statically. Most wait on a design decision.
 - **String interpolation**, which waits on how values become strings.
 - **Protocols.** These are generic operations such as `to_s` and `==` over all types.
 - **The type scope `Integer.(a + b)`.**
-- **`case`/`when`** (use `case`/`in`), **`for`, `%w[]`, `%i[]`.**
+- **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**
+- **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.
 - **Patterns other than those in [§9.1](#91-pattern-matching)**: arrays, find patterns, pins, guards.
 - **Built-in constants** such as `Math::PI` and `Float::INFINITY`.
-- **Rational, Complex, Time.**
 - **First-class blocks.**
 - **Several files** (`require`).

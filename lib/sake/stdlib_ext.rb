@@ -9,6 +9,8 @@ module Sake
     module_function
 
     def install_ext(reg, out, input)
+      install_numeric_tower(reg)
+      install_time(reg)
       install_symbol(reg)
       install_range(reg)
       install_hash(reg)
@@ -48,6 +50,78 @@ module Sake
           ruby_error("ArgumentError") { f % (x.is_a?(Tuple) ? x.elems : x) }
         end
       end
+    end
+
+    REAL = %w[Integer Float Rational].freeze
+    NUMERIC = (REAL + ["Complex"]).freeze
+
+    def num_op(op, a, b)
+      a.public_send(op, b)
+    rescue ::ZeroDivisionError
+      raise Fail.new("ZeroDivisionError", "divided by 0")
+    end
+
+    # Rational and Complex join the table. `Integer ** negative Integer` stays an error (ko1's decision), so
+    # that the result type does not depend on a value; `2r ** -1` gives a Rational.
+    def install_numeric_tower(reg)
+      NUMERIC.product(NUMERIC) do |t1, t2|
+        next if t1 != "Rational" && t1 != "Complex" && t2 != "Rational" && t2 != "Complex"
+        %i[+ - * / **].each { |op| reg.define_binary(op, t1, t2) { |a, b| num_op(op, a, b) } }
+        %i[== !=].each { |op| reg.define_binary(op, t1, t2) { |a, b| a.public_send(op, b) } }
+        next if t1 == "Complex" || t2 == "Complex"
+        %i[% < <= > >=].each { |op| reg.define_binary(op, t1, t2) { |a, b| num_op(op, a, b) } }
+      end
+      install_typed_ops(reg, "Rational", %i[+ - * / % ** < <= > >= == !=])
+      install_typed_ops(reg, "Complex", %i[+ - * / ** == !=])
+      reg.define("Kernel", :Rational, [%w[Integer Rational String]], optional: [%w[Integer Rational]]) do |a, b = 1|
+        Rational(a, b)
+      rescue ::ZeroDivisionError
+        raise Fail.new("ZeroDivisionError", "divided by 0")
+      rescue ::ArgumentError => e
+        raise Fail.new("ArgumentError", e.message)
+      end
+      reg.define("Kernel", :Complex, [REAL], optional: [REAL]) { |a, b = 0| Complex(a, b) }
+      reg.define("Integer", :to_r, ["Integer"], &:to_r)
+      reg.define("Float", :to_r, ["Float"]) { |f| float_to_i(f, &:to_r) }
+      reg.define("Float", :rationalize, ["Float"]) { |f| float_to_i(f, &:rationalize) }
+      reg.define("Integer", :fdiv, %w[Integer Integer]) { |a, b| a.fdiv(b) }
+      %i[numerator denominator to_i floor ceil round truncate].each { |m| reg.define("Rational", m, ["Rational"], &m) }
+      reg.define("Rational", :to_f, ["Rational"], &:to_f)
+      reg.define("Rational", :to_s, ["Rational"], &:to_s)
+      reg.define("Rational", :abs, ["Rational"], &:abs)
+      reg.define("Rational", :zero?, ["Rational"], &:zero?)
+      %i[real imaginary abs arg conjugate].each { |m| reg.define("Complex", m, ["Complex"], &m) }
+      reg.define("Complex", :to_s, ["Complex"], &:to_s)
+      reg.define("Complex", :rectangular, ["Complex"]) { |c| Tuple.new(c.rectangular) }
+      reg.define("Complex", :polar, ["Complex"]) { |c| Tuple.new(c.polar) }
+      %w[sqrt cbrt sin cos tan atan exp log log2 log10].each { |m| reg.lookup("Math", m).params[0] = REAL }
+      reg.lookup("Array", "sum").impl = lambda do |a, &b|
+        xs = b ? a.map { b.(_1) } : a
+        xs.each { |x| raise Fail.new("TypeError", "element must be a number, got #{Values.describe(x)}") unless NUMERIC.include?(Values.type_of(x)) }
+        xs.sum
+      end
+    end
+
+    TIME_FIELDS = %i[year month day hour min sec wday yday].freeze
+
+    def install_time(reg)
+      reg.define("Time", :now, []) { Time.now }
+      reg.define("Time", :at, [REAL]) { |s| Time.at(s) }
+      reg.define("Time", :new, ["Integer"], optional: %w[Integer Integer Integer Integer Integer]) do |*xs|
+        ruby_error("ArgumentError") { Time.new(*xs) }
+      end
+      TIME_FIELDS.each { |m| reg.define("Time", m, ["Time"], &m) }
+      reg.define("Time", :to_i, ["Time"], &:to_i)
+      reg.define("Time", :to_f, ["Time"], &:to_f)
+      reg.define("Time", :to_s, ["Time"], &:to_s)
+      reg.define("Time", :utc, ["Time"]) { _1.dup.utc }
+      reg.define("Time", :strftime, %w[Time String]) { |t, f| t.strftime(f) }
+      %w[Integer Float Rational].each do |n|
+        reg.define_binary(:+, "Time", n) { |t, s| t + s }
+        reg.define_binary(:-, "Time", n) { |t, s| t - s }
+      end
+      reg.define_binary(:-, "Time", "Time") { |a, b| a - b }
+      %i[< <= > >= == !=].each { |op| reg.define_binary(op, "Time", "Time") { |a, b| a.public_send(op, b) } }
     end
 
     def install_symbol(reg)

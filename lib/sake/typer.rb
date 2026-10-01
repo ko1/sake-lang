@@ -290,6 +290,8 @@ module Sake
         r
       when Prism::IntegerNode then t("Integer")
       when Prism::FloatNode then t("Float")
+      when Prism::RationalNode then t("Rational")
+      when Prism::ImaginaryNode then t("Complex")
       when Prism::StringNode then t("String")
       when Prism::TrueNode, Prism::FalseNode then t("Boolean")
       when Prism::NilNode then t("Nil")
@@ -831,10 +833,18 @@ module Sake
       u(*results)
     end
 
+    # Result types of the BinaryOp rows (Ruby's numeric tower).
     def binop_result(op, t1, t2)
-      return t("Boolean") if COMPARE_OPS.include?(op)
+      return t("Boolean") if COMPARE_OPS.include?(op) || op == "!~"
+      return u(t("Integer"), t("Nil")) if op == "=~"
       return t("String") if t1 == "String"
-      t1 == "Integer" && t2 == "Integer" ? t("Integer") : t("Float")
+      return t("Set") if t1 == "Set"
+      return (t2 == "Time" ? t("Float") : t("Time")) if t1 == "Time"
+      types = [t1, t2]
+      return t("Complex") if types.include?("Complex")
+      return t("Float") if types.include?("Float")
+      return t("Rational") if types.include?("Rational")
+      t("Integer")
     end
 
     def call_builtin(fn, args, blk, node)
@@ -931,8 +941,8 @@ module Sake
       when "Array.sum"
         e = elem_of(a0)
         e = call_block(blk, [e]) if blk && !e.empty?
-        record(node, "Array.sum", "elem", NUM, e)
-        e.empty? ? t("Integer") : u(*e.select { NUM.include?(_1) }.then { _1.empty? ? [t("Integer")] : [_1] })
+        record(node, "Array.sum", "elem", Stdlib::NUMERIC, e)
+        e.empty? ? t("Integer") : u(*e.select { Stdlib::NUMERIC.include?(_1) }.then { _1.empty? ? [t("Integer")] : [_1] })
       when "Array.reverse", "Array.sort", "Array.take", "Array.drop"
         new_site(node, " #{name}", elem_of(a0))
       when "Array.select", "Array.filter", "Array.reject", "Array.sort_by"

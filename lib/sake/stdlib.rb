@@ -25,7 +25,10 @@ module Sake
     end
 
     def int_pow(a, b)
-      raise Fail.new("ArgumentError", "negative exponent #{b} for Integer ** Integer (Sake has no Rational)") if b.negative?
+      if b.negative?
+        base = a.negative? ? "(#{a}r)" : "#{a}r"
+        raise Fail.new("ArgumentError", "Integer ** negative Integer (#{a} ** #{b}) is an error; for a Rational, write #{base} ** #{b}")
+      end
       a**b
     end
 

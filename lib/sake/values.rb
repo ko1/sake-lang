@@ -85,6 +85,9 @@ module Sake
       when StructValue then v.type.name
       when RecordValue then v.shape.name
       when Symbol then "Symbol"
+      when Rational then "Rational"
+      when Complex then "Complex"
+      when Time then "Time"
       when Hash then "Hash"
       when Set then "Set"
       when Range then "Range"
@@ -112,7 +115,7 @@ module Sake
     # because equality of those types is undecided (protocols).
     def key_value?(v)
       case v
-      when Integer, Float, String, Symbol, true, false, nil then true
+      when Integer, Float, Rational, Complex, String, Symbol, Time, true, false, nil then true
       when Tuple then v.elems.all? { key_value?(_1) }
       when RecordValue then v.values.all? { key_value?(_1) }
       else false

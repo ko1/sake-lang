@@ -35,7 +35,7 @@ module Sake
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError
                             RegexpError FloatDomainError Math::DomainError].freeze
     NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError].freeze
-    BUILTIN_TYPES = %w[Integer Float String Array Tuple Hash Set Range Symbol Regexp MatchData].freeze
+    BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
     def initialize(path, root, registry)
       @path = path
@@ -278,7 +278,7 @@ module Sake
 
     def check(node, ctx)
       case node
-      when nil, Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::TrueNode,
+      when nil, Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::ImaginaryNode, Prism::StringNode, Prism::TrueNode,
            Prism::FalseNode, Prism::NilNode, Prism::LocalVariableReadNode, Prism::ItLocalVariableReadNode
         nil
       when Prism::StatementsNode then node.body.each { check(_1, ctx) }
@@ -343,6 +343,11 @@ module Sake
           check(c.statements, ctx)
         end
         check(node.else_clause, ctx)
+      when Prism::ForNode
+        coll = node.collection.slice
+        type = literal_type(node.collection) || "Array"
+        error(node, "`for` is not supported; iterate with an operation",
+              ["#{type}.each(#{coll}) { |#{node.index.slice}| ... }"])
       when Prism::CaseNode
         error(node, "`case`/`when` is not supported (Ruby's `===` dispatches on the receiver); match with `case x` / `in Type`")
       when Prism::InterpolatedStringNode
@@ -778,6 +783,8 @@ module Sake
       when Prism::StringNode then "String"
       when Prism::IntegerNode then "Integer"
       when Prism::FloatNode then "Float"
+      when Prism::RationalNode then "Rational"
+      when Prism::ImaginaryNode then "Complex"
       when Prism::ArrayNode then "Tuple"
       when Prism::SymbolNode then "Symbol"
       when Prism::RangeNode then "Range"

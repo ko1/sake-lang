@@ -72,8 +72,7 @@ module Sake
         v = nil
         node.body.each { v = eval_node(_1, env) }
         v
-      when Prism::IntegerNode then node.value
-      when Prism::FloatNode then node.value
+      when Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::ImaginaryNode then node.value
       when Prism::StringNode then node.unescaped.dup
       when Prism::SymbolNode then node.unescaped.to_sym
       when Prism::RegularExpressionNode then regexp(node)
@@ -413,7 +412,11 @@ module Sake
       impl = rows[key]
       unless impl
         nil_rows, plain = rows.keys.partition { |r| r.include?("Nil") && r.uniq.size == 2 }
-        defined = plain.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }
+        # Pairs of numbers are listed once, as one entry naming the number types involved.
+        nums = Stdlib::NUMERIC
+        num_rows, plain = plain.partition { |r| r.all? { nums.include?(_1) } }
+        defined = num_rows.empty? ? [] : ["(any two of #{nums.select { |n| num_rows.flatten.include?(n) }.join(", ")})"]
+        defined += plain.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }
         defined << "(any, nil), (nil, any)" unless nil_rows.empty?
         defined = defined.join(", ")
         fail_at(node, "TypeError", "BinaryOp.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",

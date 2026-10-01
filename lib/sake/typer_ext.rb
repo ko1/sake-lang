@@ -82,17 +82,24 @@ module Sake
       "Integer" => %w[Symbol.length Symbol.size Hash.length Hash.size Set.length Set.size Range.sum Range.size
                       Integer.gcd Integer.lcm Integer.pow Integer.bit_length Integer.sqrt Integer.clamp
                       Float.truncate String.ord String.hex String.oct MatchData.begin MatchData.end
-                      Kernel.Integer File.write Array.count Range.count Hash.count],
-      "Float" => %w[Kernel.Float Float.clamp],
+                      Kernel.Integer File.write Array.count Range.count Hash.count
+                      Rational.numerator Rational.denominator Rational.to_i Rational.floor Rational.ceil
+                      Rational.round Rational.truncate Time.year Time.month Time.day Time.hour Time.min
+                      Time.sec Time.wday Time.yday Time.to_i],
+      "Float" => %w[Kernel.Float Float.clamp Rational.to_f Integer.fdiv Time.to_f Complex.arg],
+      "Rational" => %w[Kernel.Rational Integer.to_r Float.to_r Float.rationalize Rational.abs],
+      "Complex" => %w[Kernel.Complex Complex.conjugate],
+      "Time" => %w[Time.now Time.at Time.new Time.utc],
       "String" => %w[Symbol.to_s Regexp.source Regexp.escape MatchData.to_s MatchData.pre_match MatchData.post_match
                      String.center String.tr String.delete String.squeeze String.succ String.next
-                     Kernel.format Kernel.sprintf Integer.chr File.read],
+                     Kernel.format Kernel.sprintf Integer.chr File.read Rational.to_s Complex.to_s
+                     Time.to_s Time.strftime],
       "Symbol" => %w[Symbol.to_sym String.to_sym String.intern],
       "Boolean" => %w[Hash.empty? Hash.key? Hash.has_key? Hash.include? Hash.member? Hash.value? Hash.has_value?
                       Set.empty? Set.include? Set.member? Set.subset? Set.superset? Set.disjoint? Set.intersect?
                       Range.include? Range.cover? Range.member? Range.exclude_end? Range.any? Range.all? Range.none?
                       Hash.any? Hash.all? Hash.none? Regexp.match? String.match? String.casecmp? File.exist?
-                      Integer.between? Float.finite?],
+                      Integer.between? Float.finite? Rational.zero?],
       "Regexp" => %w[Regexp.new],
       "Nil" => %w[]
     }.flat_map { |type, names| names.map { [_1, type] } }.to_h.freeze
@@ -105,6 +112,10 @@ module Sake
       end
       case name
       when "Kernel.gets" then u(t("String"), t("Nil"))
+      when "Complex.real", "Complex.imaginary" then u(t("Integer"), t("Float"), t("Rational"))
+      when "Complex.abs" then u(t("Integer"), t("Float"))
+      when "Complex.rectangular" then tuple([u(t("Integer"), t("Float"), t("Rational"))] * 2)
+      when "Complex.polar" then tuple([u(t("Integer"), t("Float")), u(t("Integer"), t("Float"))])
       when "Kernel.rand" then args.empty? || args[0] == ["Float"] ? t("Float") : t("Integer")
       when "Kernel.pp" then a0
       when "File.readlines", "String.bytes", "MatchData.captures", "MatchData.names", "MatchData.to_a"
