@@ -87,6 +87,13 @@ module Sake
         fn = d.table[Values.type_of(args[0])]
         fail_at(n, "TypeError", "#{d.module}.#{d.name}: #{Values.describe(args[0])} does not include #{d.module}") unless fn
         call_user(fn, args, block_val(n.block, f), n.origin)
+      when CallUnion
+        args = n.args.map { ev(_1, f) }
+        un = n.union
+        fn = un.table[Values.type_of(args[0])]
+        fail_at(n, "TypeError", "#{un.full_name}: argument 1 must be #{un.types.join(" or ")}, got #{Values.describe(args[0])}", nil_value: args[0].nil?) unless fn
+        blk = block_val(n.block, f)
+        fn.is_a?(UserFunction) ? call_user(fn, args, blk, n.origin) : call_builtin(fn, args, blk, n.origin)
       when BinOp then binary_op(n.origin, n.op, ev(n.left, f), ev(n.right, f))
       when UnOp then unary_op(n.origin, n.op, ev(n.value, f))
       when IsNil

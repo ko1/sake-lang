@@ -35,6 +35,7 @@ module Sake
     node :CallBuiltin, :fn, :args, :block
     node :CallUser, :fn, :args, :block
     node :CallDispatch, :dispatch, :args, :block
+    node :CallUnion, :union, :args, :block   # `(A|B).f(x, ...)`: union.table maps x's type to f
     node :BinOp, :op, :left, :right         # dispatched on the left operand
     node :IsNil, :value, :negate            # `x == nil` / `x != nil`
     node :UnOp, :op, :value                 # `-x` / `+x` / `~x`, dispatched on x (`!x` is an If)

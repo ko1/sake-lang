@@ -107,7 +107,7 @@ module Sake
         env.dead = true
         []
       when Yield then call_block(env.frame.block, n.args.map { ev(_1, env) })
-      when CallBuiltin, CallUser, CallDispatch then call(n, env)
+      when CallBuiltin, CallUser, CallDispatch, CallUnion then call(n, env)
       when BinOp then binop(n.origin, n.op, ev(n.left, env), ev(n.right, env))
       when UnOp then unop(n.origin, n.op, ev(n.value, env))
       when IsNil then binop(n.origin, n.negate ? "!=" : "==", ev(n.value, env), t("Nil"))
@@ -380,6 +380,21 @@ module Sake
           @callers.push(o.location.start_line)
           begin
             call_user(fn, [[a].freeze, *args.drop(1)], blk)
+          ensure
+            @callers.pop
+          end
+        end
+        u(*rs)
+      when CallUnion
+        un = n.union
+        record(o, un.full_name, "subject", un.types, args[0])
+        rs = args[0].filter_map do |a|
+          fn = un.table[atom_type_name(a)] or next
+          xs = [[a].freeze, *args.drop(1)]
+          next call_builtin(fn, xs, blk, o) unless fn.is_a?(UserFunction)
+          @callers.push(o.location.start_line)
+          begin
+            call_user(fn, xs, blk)
           ensure
             @callers.pop
           end

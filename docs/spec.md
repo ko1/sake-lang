@@ -235,7 +235,25 @@ A module's functions are of two kinds, as in Ruby:
   type's own `to_s` and `inspect`, or use the built-in form. `"#{x}"`, `puts`, and `p` are
   shorthands for them.
 
-### 5.7 Arity and blocks
+### 5.7 Listing the types: `(A|B).f(x)`
+
+`(A|B).f(x, args...)` lists, on the operation itself, the types that `x` may have. While running, the
+type of `x` picks `A.f` or `B.f`; any other type raises `TypeError`. Before running, every listed
+type must have `f` (a static error otherwise), and the checker reports a value of `x` whose type is
+not listed. The result is the union of the results.
+
+```ruby
+def weight(t) = (Leaf|Node).get_weight(t)   # a field of the same name in two Struct types
+def size_of(x) = (String|Array|Hash).size(x)
+```
+
+- The list names types: built-in types and Struct types, each at most once. `nil` cannot be
+  listed; check for nil first.
+- Unlike a module's dispatch ([§5.6](#56-calling-a-modules-functions-module_function-and-dispatch)),
+  nothing has to be declared: the call site states the set, and it covers types that share an
+  operation's name without sharing a module, such as built-in types or same-named fields.
+
+### 5.8 Arity and blocks
 
 The following are checked statically:
 

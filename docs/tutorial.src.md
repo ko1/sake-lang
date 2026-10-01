@@ -212,6 +212,17 @@ work:
 
 @@example operators
 
+### Listing the types on the operation
+
+When a value may be one of a few types that have an operation of the same name, list them on the
+operation: `(A|B).f(x)` runs the `f` of `x`'s type. The list is checked before running:
+
+@@example union_call
+
+Without the check before running, the same value stops at the call:
+
+@@run union_call --strict=0
+
 ### Sharing functions with `include`
 
 `class` adds operations to a type, and `module` is a namespace with no type.

@@ -693,6 +693,42 @@ true
 [1, 20, 4]
 ```
 
+### Listing the types on the operation
+
+When a value may be one of a few types that have an operation of the same name, list them on the
+operation: `(A|B).f(x)` runs the `f` of `x`'s type. The list is checked before running:
+
+```ruby
+Leaf = Struct.new(:weight)
+Node = Struct.new(:weight, :left, :right)
+
+# The operation lists the types its argument may have.
+def weight(t) = (Leaf|Node).get_weight(t)
+def size_of(x) = (String|Array).size(x)
+
+puts(weight(Leaf.new(3)) + weight(Node.new(5, Leaf.new(1), Leaf.new(1))))
+puts(size_of("sake") + size_of(Array[1, 2]))
+puts(size_of(42))
+```
+
+```
+$ sake union_call.sake
+union_call.sake:6:18: error: (String|Array).size: argument 1 must be String or Array, but is Integer [type]
+  hint: reached by the call at line 10
+(exit status 2)
+```
+
+Without the check before running, the same value stops at the call:
+
+```
+$ sake --strict=0 union_call.sake
+8
+6
+union_call.sake:6: in size_of: TypeError: (String|Array).size: argument 1 must be String or Array, got Integer
+  from union_call.sake:10: in <main>
+(exit status 1)
+```
+
 ### Sharing functions with `include`
 
 `class` adds operations to a type, and `module` is a namespace with no type.

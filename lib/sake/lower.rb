@@ -251,6 +251,7 @@ module Sake
       case t
       when UserFunction then CallUser.new(fn: t, args: xs, block: blk, origin: n)
       when Dispatch then CallDispatch.new(dispatch: t, args: xs, block: blk, origin: n)
+      when UnionCall then CallUnion.new(union: t, args: xs, block: blk, origin: n)
       when Builtin
         if (dt = @program.struct_types[t.namespace]) && blk.nil?
           f = field_name(t)

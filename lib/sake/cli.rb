@@ -55,6 +55,9 @@ module Sake
 
     # Reports the type checker's findings for the chosen items as static errors.
     def type_message(c, what, typer, program)
+      if c.arg == "subject" && c.op.start_with?("(")
+        return ["#{c.op}: argument 1 must be #{c.expected.split("|").join(" or ")}, but #{c.verdict == :error ? "is" : "can be"} #{typer.show_failing(c)}", []]
+      end
       if c.arg == "subject"
         mod = c.op.split(".").first
         return ["#{c.op} dispatches on its first argument, which #{c.verdict == :error ? "is" : "can be"} #{typer.show_failing(c)}; " \

@@ -30,7 +30,7 @@ module Measure
 
   # The typer evaluates SakeAST; a Prism expression is measured at the SakeAST node that computes its
   # value (other nodes made from the same Prism node, such as the subject read of `@x`, do not count).
-  CALLS = [Sake::AST::CallBuiltin, Sake::AST::CallUser, Sake::AST::CallDispatch, Sake::AST::BinOp, Sake::AST::IsNil,
+  CALLS = [Sake::AST::CallBuiltin, Sake::AST::CallUser, Sake::AST::CallDispatch, Sake::AST::CallUnion, Sake::AST::UnOp, Sake::AST::BinOp, Sake::AST::IsNil,
            Sake::AST::IndexGet, Sake::AST::IndexSet, Sake::AST::FieldGet, Sake::AST::FieldSet, Sake::AST::Raise,
            Sake::AST::ReRaise, Sake::AST::LVarGet].freeze
 

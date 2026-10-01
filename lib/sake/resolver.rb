@@ -18,6 +18,11 @@ module Sake
   # `M.f(x, ...)` for a mixin function f of module M: table maps each type including M to its f.
   Dispatch = Struct.new(:module, :name, :table)
 
+  # `(A|B).f(x, ...)`: table maps each listed type to its f; x's type picks one.
+  UnionCall = Struct.new(:types, :name, :table) do
+    def full_name = "(#{types.join("|")}).#{name}"
+  end
+
 
   # calls: node => {namespace (nil = top level) => target}, because a function body included into several
   # namespaces resolves once per namespace. blocks: node => parameter names.
@@ -727,6 +732,9 @@ module Sake
         return error(node, "`_` is the previous statement's value, and no statement precedes it here",
                      ["`_` reads the statement just before, in the same body (a function, block, or branch)"])
       end
+      if (types = union_receiver(recv))
+        return check_union_call(node, types, args, blk, ctx)
+      end
       if (subject = chain_subject(node))
         # `x.T.f(args)` is `T.f(x, args)`.
         target = resolve_qualified(node, recv.name.to_s, node.name.to_s, argc: args.size + 1)
@@ -877,6 +885,53 @@ module Sake
       hints = spell(name, visible).map { "did you mean `#{_1}`?" }
       hints.concat(namespaces_defining(name).map { "#{_1}.#{name}(#{node.arguments&.slice})" })
       error(node, "#{what} `#{name}`", hints)
+    end
+
+    # `(A|B|C)`: the listed names (Constant | Constant | ...), or nil when recv is not that form.
+    def union_receiver(recv)
+      return nil unless recv.is_a?(Prism::ParenthesesNode) && recv.body.is_a?(Prism::StatementsNode) && recv.body.body.size == 1
+      flat = lambda do |n|
+        case n
+        when Prism::ConstantReadNode then [n]
+        when Prism::NilNode then [n]
+        when Prism::CallNode
+          return nil unless n.name == :| && n.call_operator_loc.nil? && n.receiver && n.arguments&.arguments&.size == 1
+          (l = flat.(n.receiver)) && (r = flat.(n.arguments.arguments[0])) ? l + r : nil
+        end
+      end
+      top = recv.body.body[0]
+      return nil unless top.is_a?(Prism::CallNode) && top.name == :|
+      flat.(top)
+    end
+
+    # `(A|B).f(x, ...)`: f of each listed type; at run time x's type picks one.
+    def check_union_call(node, type_nodes, args, blk, ctx)
+      check_args(node.arguments, ctx)
+      check_block(blk, ctx) if blk
+      if (n = type_nodes.find { _1.is_a?(Prism::NilNode) })
+        return error(n, "nil cannot be listed in `(...)`: check for nil first (`if x`), then call the operation")
+      end
+      types = type_nodes.map { _1.name.to_s }
+      return error(node.receiver, "list a type at most once in `(#{types.join("|")})`") if types.uniq.size != types.size
+      if args.empty?
+        return error(node, "(#{types.join("|")}).#{node.name} needs an argument to dispatch on")
+      end
+      table = {}
+      type_nodes.zip(types) do |tn, t|
+        unless @struct_types.key?(t) || BUILTIN_TYPES.include?(t)
+          error(tn, "`#{t}` is not a type; `(...)` lists types (Struct types or built-in types)")
+          next
+        end
+        found = lookup(t, node.name.to_s)
+        unless found
+          error(tn, "#{t} has no `#{node.name}`, so `(#{types.join("|")}).#{node.name}` cannot dispatch to it",
+                spell(node.name.to_s, names_in(t)).map { "did you mean `#{t}.#{_1}`?" })
+          next
+        end
+        check_arity(node, found, args.size, !blk.nil?)
+        table[t] = found
+      end
+      set_call(node, ctx, UnionCall.new(types, node.name.to_s, table)) if table.size == types.size
     end
 
     # `x.T.f(...)`: the subject x of a chain whose step `.T` names a type or module.
