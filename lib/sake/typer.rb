@@ -213,7 +213,13 @@ module Sake
       end
     end
 
+    # A field whose default fixed its type keeps that type; other writes are checks.
     def field_write(dt, field, ty, node)
+      if (fixed = @program.struct_types[dt]&.field_types&.[](field))
+        record(node, "#{dt}.#{field}", "field", fixed, ty)
+        @fields[dt][field] = t(fixed)
+        return
+      end
       @nil_writes[dt][field] << node.location.start_line if ty.any? { nil_atom?(_1) }
       @fields[dt][field] = u(@fields[dt][field] || [], ty)
     end
@@ -881,7 +887,10 @@ module Sake
     def data_op(dt, name, args, node)
       case name
       when "new"
-        dt.fields.zip(args) { |f, a| field_write(dt.name, f, a, node) }
+        dt.fields.each_with_index do |f, i|
+          ty = args[i] || (dt.field_types[f] ? t(dt.field_types[f]) : t("Nil"))
+          field_write(dt.name, f, ty, node)
+        end
         t(dt.name)
       when /\Aget_(.+)\z/ then @fields[dt.name][$1] || []
       when /\Aset_(.+)\z/

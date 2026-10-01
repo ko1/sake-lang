@@ -52,6 +52,11 @@ module Sake
 
     # Reports the type checker's findings for the chosen items as static errors.
     def type_message(c, what, typer)
+      if c.arg == "field"
+        type, field = c.op.split(".", 2)
+        verb = c.verdict == :error ? "is" : "can be"
+        return ["field #{field} of #{type} must be #{c.expected} (fixed by its default), but #{verb} #{typer.show_failing(c)}", []]
+      end
       maybe = c.verdict == :error ? "are " : "may be "
       case c.op
       when /\ABinaryOp\./ then ["#{c.op}: the operands #{maybe}#{typer.show_failing(c)}, which has no row in the table", []]

@@ -81,6 +81,7 @@ module Sake
       stmts = @root.statements.body
       # Struct types first so that `class Point` bodies can see their accessors.
       stmts.grep(Prism::ConstantWriteNode).each { collect_constant(_1) }
+      stmts.grep(Prism::ClassNode).select { _1.superclass.is_a?(Prism::HashNode) }.each { collect_class_config(_1) }
       stmts.each do |st|
         case st
         when Prism::ConstantWriteNode then nil
@@ -160,15 +161,109 @@ module Sake
       define_struct(name, fields, exception:)
     end
 
-    def define_struct(name, fields, exception: false)
-      dt = @struct_types[name] = StructType.new(name, fields, exception)
+    # readers / writers: the fields with a public get_ / set_ (all of them by default).
+    # defaults: field => default value (a value type); a non-nil default fixes the field's type.
+    def define_struct(name, fields, exception: false, readers: fields, writers: fields, defaults: {})
+      field_types = defaults.reject { |_, v| v.nil? }.transform_values { Values.type_of(_1) }
+      dt = @struct_types[name] = StructType.new(name, fields, exception, field_types, {}, {})
       return if name.include?("::")
-      @registry.define(name, :new, fields.map { "Any" }) { |*vs| StructValue.new(dt, vs) }
+      check = lambda do |f, x|
+        want = field_types[f]
+        if want && Values.type_of(x) != want
+          raise Fail.new("TypeError", "field #{f} of #{name} must be #{want} (fixed by its default), got #{Values.describe(x)}")
+        end
+      end
+      required = fields.size - fields.reverse.take_while { defaults.key?(_1) }.size
+      @registry.define(name, :new, fields.take(required).map { "Any" }, optional: fields.drop(required).map { "Any" }) do |*vs|
+        vals = fields.each_with_index.map { |f, i| i < vs.size ? vs[i] : defaults[f] }
+        fields.zip(vals) { |f, x| check.(f, x) }
+        StructValue.new(dt, vals)
+      end
       Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
       fields.each_with_index do |f, i|
-        @registry.define(name, "get_#{f}", [name]) { |r| r.values[i] }
-        @registry.define(name, "set_#{f}", [name, "Any"]) { |r, x| r.values[i] = x }
+        dt.getters[f] = Builtin.new(namespace: name, name: "get_#{f}", params: [name], optional: [], rest: nil, block: :none,
+                                    impl: ->(r) { r.values[i] })
+        dt.setters[f] = Builtin.new(namespace: name, name: "set_#{f}", params: [name, "Any"], optional: [], rest: nil, block: :none,
+                                    impl: ->(r, x) { check.(f, x); r.values[i] = x })
+        @registry.define(name, "get_#{f}", [name], &dt.getters[f].impl) if readers.include?(f)
+        @registry.define(name, "set_#{f}", [name, "Any"], &dt.setters[f].impl) if writers.include?(f)
+      end
+    end
+
+    CONFIG_KEYS = %w[accessor reader writer default exception].freeze
+    DEFAULT_LITERALS = [Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::StringNode, Prism::SymbolNode,
+                        Prism::TrueNode, Prism::FalseNode, Prism::NilNode].freeze
+
+    # `class C < {accessor: [x], reader: [y], writer: [z], default: {y: 0}, exception: true}`
+    def collect_class_config(node)
+      cp = node.constant_path
+      return unless cp.is_a?(Prism::ConstantReadNode)
+      name = cp.name.to_s
+      return error(cp, "`#{name}` is already defined") if @struct_types[name] || @registry.namespace?(name)
+
+      fields = []
+      readers = []
+      writers = []
+      defaults = {}
+      exception = false
+      node.superclass.elements.each do |el|
+        key = el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) ? el.key.unescaped : nil
+        unless CONFIG_KEYS.include?(key)
+          hints = spell(key.to_s, CONFIG_KEYS).map { "did you mean `#{_1}`?" }
+          error(el, "unknown class setting `#{key || el.slice}`", hints + ["settings: #{CONFIG_KEYS.join(", ")}"])
+          next
+        end
+        case key
+        when "accessor", "reader", "writer"
+          names = config_field_names(el.value) or next
+          fields |= names
+          readers |= names if key != "writer"
+          writers |= names if key != "reader"
+        when "default"
+          next error(el.value, "default: takes a Record, like `default: {port: 80}`") unless el.value.is_a?(Prism::HashNode)
+          el.value.elements.each do |d|
+            next error(d, "write a default as `field: value`") unless d.is_a?(Prism::AssocNode) && d.key.is_a?(Prism::SymbolNode)
+            next error(d.value, "a default must be a literal number, String, Symbol, true, false, or nil") unless DEFAULT_LITERALS.any? { d.value.is_a?(_1) }
+            defaults[d.key.unescaped] = literal_value(d.value)
+          end
+        when "exception"
+          exception = el.value.is_a?(Prism::TrueNode)
+          error(el.value, "exception: takes true or false") unless exception || el.value.is_a?(Prism::FalseNode)
+        end
+      end
+      (defaults.keys - fields).each { error(node.superclass, "default for `#{_1}`, which is not a field") }
+      if exception && fields.first != "message"
+        fields.unshift("message")
+        readers |= ["message"]
+        writers |= ["message"]
+      end
+      define_struct(name, fields, exception:, readers:, writers:, defaults:)
+    end
+
+    def literal_value(n)
+      case n
+      when Prism::NilNode then nil
+      when Prism::TrueNode then true
+      when Prism::FalseNode then false
+      when Prism::StringNode then n.unescaped.dup.freeze
+      when Prism::SymbolNode then n.unescaped.to_sym
+      else n.value
+      end
+    end
+
+    def config_field_names(list)
+      unless list.is_a?(Prism::ArrayNode)
+        error(list, "list the fields, like `[x, y]`")
+        return nil
+      end
+      list.elements.filter_map do |e|
+        case e
+        when Prism::SymbolNode then e.unescaped
+        when Prism::CallNode then e.receiver.nil? && e.arguments.nil? ? e.name.to_s : error(e, "a field name, like `x`")
+        when Prism::LocalVariableReadNode then e.name.to_s
+        else error(e, "a field name, like `x`")
+        end
       end
     end
 
@@ -177,7 +272,7 @@ module Sake
       return error(cp, "nested namespace `#{cp.slice}` is not supported") unless cp.is_a?(Prism::ConstantReadNode)
 
       ns = cp.name.to_s
-      if node.is_a?(Prism::ClassNode) && node.superclass
+      if node.is_a?(Prism::ClassNode) && node.superclass && !node.superclass.is_a?(Prism::HashNode)
         child = node.constant_path.slice
         parent = node.superclass.slice
         field = parent.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
@@ -400,7 +495,7 @@ module Sake
       if node.is_a?(Prism::InstanceVariableOperatorWriteNode) && !binary_op?(node.binary_operator)
         return error(node, "operator `#{node.binary_operator}=` is not supported")
       end
-      set_call(node, ctx, FieldAccess.new(lookup(dt.name, "get_#{field}"), lookup(dt.name, "set_#{field}"), ctx.fn.params.first.to_sym))
+      set_call(node, ctx, FieldAccess.new(dt.getters[field], dt.setters[field], ctx.fn.params.first.to_sym))
     end
 
     def check_record_literal(node, ctx)
@@ -708,6 +803,11 @@ module Sake
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
       others = namespaces_defining(name) - [ns]
       hints << "`#{name}` is defined in #{others.map { "`#{_1}.#{name}`" }.join(", ")}" unless others.empty?
+      if (dt = @struct_types[ns]) && name =~ /\A(get|set)_(.+)\z/ && dt.fields.include?($2)
+        kind = $1 == "set" ? "read-only (reader)" : "write-only (writer)"
+        return error(node, "field `#{$2}` of #{ns} is #{kind}",
+                     ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`; or list it under `accessor:`"])
+      end
       if (dt = @struct_types[ns])
         field = name.delete_suffix("=")
         if dt.fields.include?(field)

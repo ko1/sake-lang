@@ -323,6 +323,34 @@ the first branch whose pattern matches. If no branch matches and there is no `el
 
 ## 10. Struct types
 
+### 10.1 Declaring a type with settings
+
+```ruby
+class Account < {reader: [owner], accessor: [balance], default: {balance: 0}}
+  ...
+end
+```
+
+The Record after `<` holds the settings of the type. It is not a superclass, since there is no
+inheritance.
+
+| Setting | Meaning |
+|---|---|
+| `accessor: [x, ...]` | fields with `get_x` and `set_x` |
+| `reader: [x, ...]` | fields with `get_x` only; inside the type's functions, `@x = v` still writes them |
+| `writer: [x, ...]` | fields with `set_x` only; inside the type's functions, `@x` still reads them |
+| `default: {x: v, ...}` | default values, which must be literal numbers, Strings, Symbols, true, false, or nil; trailing fields with defaults may be omitted in `new`; a non-nil default fixes the field's type, and each write is checked |
+| `exception: true` | an exception type: `message` is added as the first field |
+
+- **Field order.** Fields are in order of first appearance, across the settings.
+- **`new`.** `C.new` takes every field positionally, whatever its access.
+- **`Struct.new(:x, :y)`.** Shorthand for `class C < {accessor: [x, y]}`.
+- **`Exception.new(:line)`.** Shorthand for `{exception: true, accessor: [line]}`.
+- **Errors.** An unknown setting is a static error with a spelling hint. So is a write from
+  outside to a read-only field.
+
+### 10.2 Struct.new
+
 ```ruby
 Point = Struct.new(:x, :y)
 ```

@@ -17,6 +17,7 @@ module Recorder
     # Arguments of the untyped constructors (Array[], Hash[], Set[]) and of Index.[] / []= are "Any": nothing is checked.
     unless %w[Array[] Hash[] Set[]].include?(fn.full_name) || fn.namespace == "Index"
       args.each_with_index do |a, i|
+        next if fn.name != "[]" && fn.param_type(i) == "Any" # nothing to check (also internal setters of `@x = v`)
         # `T[...]` checks each element; the typer records those as arg "elem".
         arg = fn.name == "[]" ? "elem" : i + 1
         key = [node.location.start_line, node.location.start_column, fn.full_name, arg]

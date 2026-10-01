@@ -28,7 +28,9 @@ module Sake
   end
 
   # exception: made by Exception.new (or built in); its first field is message and it can be raised.
-  StructType = Struct.new(:name, :fields, :exception)
+  # field_types: field => type name fixed by a default value. getters / setters: field => Builtin, used by
+  # `@x` inside the type's functions whether or not the field is public.
+  StructType = Struct.new(:name, :fields, :exception, :field_types, :getters, :setters)
 
   # The type of a Record: its set of (field, type) pairs, sorted by field and interned.
   Shape = Struct.new(:fields, :types) do
