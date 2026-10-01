@@ -278,8 +278,8 @@ Integer.times(3) { p it }
 - **Not values.** Blocks are second-class. They cannot be stored, returned, or passed with `&`.
   `proc`, `lambda`, and `->` are not available.
 - **Parameters.** `|a, b|` lists plain names. `it` and `_1` … `_9` work as in Ruby.
-- **Tuple destructuring.** If a block declares two or more parameters and receives a single Tuple,
-  the Tuple is destructured.
+- **Destructuring.** If a block declares two or more parameters and receives a single Tuple or
+  Array, its elements become the parameters. The counts must match (`ArgumentError` otherwise).
 - **Parameter count.** A block with no parameters ignores its arguments. Otherwise, a block called
   with the wrong number of arguments raises `ArgumentError`.
 - **Scope.** A block sees and can assign the enclosing local variables.
@@ -511,7 +511,9 @@ shape fixes its type at creation. A growable collection is made by an operation 
 
 **Tuple.** The literal `[a, b, ...]` is a Tuple.
 
-- Its elements are read by multiple assignment, `x, y = t`, and the counts must match.
+- Its elements are read by multiple assignment, `x, y = t`, and the counts must match. Multiple
+  assignment also takes an Array apart (`key, value = String.split(s, "=")`); its length must
+  match too, so a variable never receives a nil that was not in the Array.
 - `t[0]` reads a position and `t[0] = v` replaces it with a value of the same type
   ([§8.2](#82-indexing)).
 - `Tuple.size` and `Tuple.length` give the number of elements.
@@ -653,9 +655,9 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 
 | Kind | Raised by |
 |---|---|
-| `TypeError` | an operation received a value of the wrong type; an operator not supported by the left operand's type; a typed Array write; multiple assignment from a non-Tuple |
+| `TypeError` | an operation received a value of the wrong type; an operator not supported by the left operand's type; a typed Array write; multiple assignment from a value other than a Tuple or an Array |
 | `IndexError` | a Tuple index outside the Tuple; `Array.fetch` outside the Array; writing past the end of an Array of T |
-| `ArgumentError` | Tuple size mismatch in multiple assignment; block parameter count; negative sizes; comparing incomparable values in `sort` |
+| `ArgumentError` | size mismatch in multiple assignment; block parameter count; negative sizes; comparing incomparable values in `sort` |
 | `ZeroDivisionError` | Integer `/` or `%` by zero |
 | `KeyError` | `Hash.fetch` of a missing key; a Record pattern naming a missing field |
 | `RangeError` | an operation that needs a finite Range, given an endless one |

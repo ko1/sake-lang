@@ -353,9 +353,10 @@ module Sake
       v = ev(n.value, env)
       size = n.slots.size
       tuples = v.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == size }
-      record(n.origin, "multiple assignment", 1, "Tuple", v)
+      elems = elem_of(v) # an Array gives each variable its element type (its length is checked at run time)
+      record(n.origin, "multiple assignment", 1, %w[Tuple Array], v)
       n.slots.each_with_index do |s, i|
-        ty = unknown?(v) ? unknown("destructure") : u(*tuples.map { _1[1][i] })
+        ty = unknown?(v) ? unknown("destructure") : u(*tuples.map { _1[1][i] }, elems)
         assign(env, s, ty)
       end
       v
@@ -486,7 +487,8 @@ module Sake
         return unknown("block destructure") if unknown?(a)
         # A Tuple of that size is spread over the parameters; any other value fails the block's arity.
         tuples = a.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == params.size }
-        args = params.each_index.map { |i| u(*tuples.map { _1[1][i] }) } unless tuples.empty?
+        elems = elem_of(a) # an Array is spread too (its length must match the parameters)
+        args = params.each_index.map { |i| u(*tuples.map { _1[1][i] }, elems) } unless tuples.empty? && elems.empty?
       end
       own = (params + blk.node.locals).to_set
       (@next_acc ||= []).push([])

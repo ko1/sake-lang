@@ -388,7 +388,7 @@ b1
 
 Your own functions receive a block through `yield`.
 
-- When a block has several parameters and receives one Tuple, the Tuple is destructured.
+- When a block has several parameters and receives one Tuple or Array, it is destructured.
 - `next` gives the block's value.
 - `return` inside a block leaves the enclosing function.
 

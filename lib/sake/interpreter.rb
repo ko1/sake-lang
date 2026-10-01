@@ -288,11 +288,13 @@ module Sake
 
     def multi_write(n, f)
       v = ev(n.value, f)
-      fail_at(n, "TypeError", "multiple assignment needs a Tuple, got #{Values.describe(v)}") unless v.is_a?(Tuple)
-      if v.elems.size != n.slots.size
-        fail_at(n, "ArgumentError", "multiple assignment of #{n.slots.size} variables from a Tuple of size #{v.elems.size}")
+      # From an Array the lengths must match too: the variables never get a nil that was not there.
+      elems = v.is_a?(Tuple) ? v.elems : (v.is_a?(Array) ? v : nil)
+      fail_at(n, "TypeError", "multiple assignment needs a Tuple or an Array, got #{Values.describe(v)}") unless elems
+      if elems.size != n.slots.size
+        fail_at(n, "ArgumentError", "multiple assignment of #{n.slots.size} variables from #{Values.describe(v)} of size #{elems.size}")
       end
-      n.slots.zip(v.elems) { |s, x| f.slots[s] = x }
+      n.slots.zip(elems) { |s, x| f.slots[s] = x }
       v
     end
 
@@ -443,7 +445,10 @@ module Sake
       b = blk.node
       params = b.params
       # A Tuple passed to a block with several parameters is destructured.
-      args = args.first.elems if params.size > 1 && args.size == 1 && args.first.is_a?(Tuple)
+      if params.size > 1 && args.size == 1
+        args = args.first.elems if args.first.is_a?(Tuple)
+        args = args.first.to_a if args.first.is_a?(Array) # an Array of exactly that length, checked below
+      end
       if !params.empty? && params.size != args.size
         raise RunError.new("ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}",
                            b.origin.location.start_line, @stack.dup)

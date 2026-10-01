@@ -1,13 +1,16 @@
 #!/bin/bash
-# usage: tp [-t SECONDS] [-m KB] FILE.rb   -> prints "<status> <wall s> <maxrss MB> FILE"
+# usage: [TP_PATCH=reuse_splat] [TP_KEEP=out.txt] tp [-t SECONDS] [-m KB] FILE.rb [FILE.rbs...]   -> prints "<status> <wall s> <maxrss MB> FILE"
 # Runs one typeprof at a time (flock), under timeout and ulimit -v.
 T=120; M=3000000
 while getopts t:m: o; do case $o in t) T=$OPTARG;; m) M=$OPTARG;; esac; done; shift $((OPTIND-1))
 exec 9>/tmp/claude-1000/typeprof-timeout-analysis.lock
 flock 9
 f="$*"
+TPBIN=$(ruby -e 'print Gem.bin_path("typeprof","typeprof")')
+# TP_PATCH=name loads tools/name.rb (in-process diagnostic monkeypatch) before TypeProf
+RUBYOPTS_TP=${TP_PATCH:+-I$(dirname $0) -r$TP_PATCH}
 out=$(mktemp)
-( ulimit -v $M; /usr/bin/time -f "%e %M" -o $out.time timeout $T typeprof --show-errors "$@" > $out.out 2> $out.err ); st=$?
+( ulimit -v $M; /usr/bin/time -f "%e %M" -o $out.time timeout $T ruby $RUBYOPTS_TP $TPBIN --show-errors "$@" > $out.out 2> $out.err ); st=$?
 read wall rss < <(tail -1 $out.time)
 case $st in 0) s=ok;; 124) s=TIMEOUT;; *) s="exit$st";; esac
 printf "%s %s %d %s\n" $s $wall $((rss/1024)) "$f"
