@@ -807,7 +807,8 @@ Range raise `RangeError` on an endless one.
 | `length`, `size` · `empty?` · `include?`, `member?` | Integer · true/false · true/false |
 | `add(s, x)` · `add?(s, x)` · `delete(s, x)` | s · s or nil · s |
 | `to_a` · `each` · `map` | Array · s (block) · Array (block) |
-| `select`, `filter`, `reject` · `union`, `intersection`, `difference` | a new Set |
+| `select`, `filter`, `reject` | a new Array (block), as in Ruby |
+| `union`, `intersection`, `difference` | a new Set |
 | `subset?`, `superset?`, `disjoint?`, `intersect?` | true/false |
 
 ### Regexp and MatchData

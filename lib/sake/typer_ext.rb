@@ -263,8 +263,10 @@ module Sake
         call_block(blk, [set_elem(a0)]) unless set_elem(a0).empty?
         a0
       when "Set.map" then new_site(node, " #{name}", set_elem(a0).empty? ? [] : call_block(blk, [set_elem(a0)]))
-      when "Set.select", "Set.filter", "Set.reject", "Set.union", "Set.intersection", "Set.difference"
-        call_block(blk, [set_elem(a0)]) if blk && !set_elem(a0).empty?
+      when "Set.select", "Set.filter", "Set.reject" # an Array, as in Ruby
+        call_block(blk, [set_elem(a0)]) unless set_elem(a0).empty?
+        new_site(node, " #{name}", set_elem(a0))
+      when "Set.union", "Set.intersection", "Set.difference"
         set_site(node).tap { |s| set_sites[s[0][1]].elem = u(set_elem(a0), *args.drop(1).map { set_elem(_1) }) }
       # more Array
       when "Array.zip"

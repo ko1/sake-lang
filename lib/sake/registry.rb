@@ -38,7 +38,17 @@ module Sake
     end
 
     def define(ns, name, params, optional: [], rest: nil, block: :none, &impl)
-      @ns[ns][name.to_s] = Builtin.new(namespace: ns, name: name.to_s, params:, optional:, rest:, block:, impl:)
+      @ns[ns][name.to_s] = Builtin.new(namespace: ns, name: name.to_s, params:, optional:, rest:, block:, impl: strict(impl))
+    end
+
+    # A proc with several parameters splats a lone Array argument (`|a, sep = ""|` given [1, 2] sees
+    # a = 1); a method made from it takes its arguments as given, with the same self.
+    def strict(impl)
+      return impl if impl.lambda? || impl.parameters.size < 2
+      owner = impl.binding.receiver
+      name = :"__sake_builtin_#{impl.object_id}"
+      owner.define_singleton_method(name, &impl)
+      owner.method(name)
     end
 
     def define_binary(op, t1, t2, &impl)
