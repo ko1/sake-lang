@@ -1,0 +1,118 @@
+# Tic-tac-toe: replay scripted games, reject illegal moves, and let a minimax player finish them.
+
+IllegalMove = Exception.new(:square)
+
+def lines
+  Array[[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]]
+end
+
+def other(mark) = mark == :x ? :o : :x
+
+class Move < {reader: [square, score, depth]}
+  include Comparable
+  def <=>(a, b)
+    by_score = @score <=> Move.get_score(b)
+    return by_score if by_score != 0
+    by_depth = Move.get_depth(b) <=> @depth
+    return by_depth if by_depth != 0
+    Move.get_square(b) <=> @square
+  end
+end
+
+class Board < {reader: [squares, turn]}
+  def empty = Board.new(Array.map(Range.to_a(0...9)) { nil }, :x)
+
+  def winner(b)
+    line = Array.find(lines) do |l|
+      i, j, k = l
+      m = @squares[i]
+      m != nil && @squares[j] == m && @squares[k] == m
+    end
+    return nil unless line
+    i, _j, _k = line
+    @squares[i]
+  end
+
+  def free(b) = Array.select(Range.to_a(0...9)) { |i| @squares[i] == nil }
+
+  def outcome(b)
+    w = winner(b)
+    return [:win, w] if w
+    return [:draw, nil] if Array.empty?(free(b))
+    [:playing, nil]
+  end
+
+  def play(b, sq)
+    raise IllegalMove.new("square #{sq} is off the board", sq) unless Integer.between?(sq, 0, 8)
+    raise IllegalMove.new("square #{sq} is taken by #{@squares[sq]}", sq) if @squares[sq]
+    @squares[sq] = @turn
+    @turn = other(@turn)
+    b
+  end
+
+  def undo(b, sq)
+    @squares[sq] = nil
+    @turn = other(@turn)
+  end
+
+  def negamax(b, depth)
+    w = winner(b)
+    return Move.new(nil, depth - 10, depth) if w
+    moves = free(b)
+    return Move.new(nil, 0, depth) if Array.empty?(moves)
+    results = Array.map(moves) do |sq|
+      play(b, sq)
+      reply = negamax(b, depth + 1)
+      undo(b, sq)
+      Move.new(sq, 0 - Move.get_score(reply), Move.get_depth(reply))
+    end
+    Array.max(results)
+  end
+
+  def to_s(b)
+    rows = Array.map(Array[0, 3, 6]) do |r|
+      Array.join(Array.map(Range.to_a(r...r + 3)) { |i| m = @squares[i]; m ? Symbol.to_s(m) : Integer.to_s(i) }, " ")
+    end
+    Array.join(rows, "\n")
+  end
+end
+
+def describe(b)
+  state, mark = Board.outcome(b)
+  case state
+  in :win then "#{mark} wins"
+  in :draw then "draw"
+  in :playing then "#{Board.get_turn(b)} to move"
+  end
+end
+
+def run(name, script)
+  b = Board.empty
+  puts("== #{name} ==")
+  k = 0
+  while k < Array.size(script)
+    sq = script[k]
+    k += 1
+    begin
+      Board.play(b, sq)
+    rescue IllegalMove => e
+      puts("illegal: #{Exception.message(e)}")
+    end
+    break if Board.winner(b)
+  end
+  until Board.winner(b) || Array.empty?(Board.free(b))
+    best = Board.negamax(b, 0)
+    sq = Move.get_square(best)
+    puts("#{Board.get_turn(b)} plays #{sq} (score #{Move.get_score(best)})")
+    Board.play(b, sq)
+  end
+  puts(b)
+  puts(describe(b))
+  puts
+end
+
+run("opposite corners", Array[0, 4, 8])
+run("blunder", Array[4, 1, 0])
+run("x fork", Array[0, 4, 8, 2, 6])
+run("illegal moves", Array[4, 4, 9, 0, 2, 6])
+run("finished", Array[0, 3, 1, 4, 2, 5])

@@ -1,0 +1,174 @@
+JSONError = Exception.new(:pos)
+
+class Reader < {reader: [src], accessor: [pos]}
+  def peek(r) = @src[@pos]
+
+  def error(r, msg) = raise(JSONError.new(msg, @pos))
+
+  def skip_ws(r)
+    @pos += 1 while peek(r) != nil && String.include?(" \n\t", peek(r))
+  end
+
+  def expect(r, ch)
+    skip_ws(r)
+    c = peek(r)
+    error(r, "expected '#{ch}' but found #{c ? "'#{c}'" : "end of input"}") if c != ch
+    @pos += 1
+  end
+
+  def parse_document(r)
+    v = parse_value(r)
+    skip_ws(r)
+    error(r, "trailing characters") if peek(r) != nil
+    v
+  end
+
+  def parse_value(r)
+    skip_ws(r)
+    c = peek(r)
+    error(r, "unexpected end of input") if c == nil
+    if c == "{"
+      parse_object(r)
+    elsif c == "["
+      parse_array(r)
+    elsif c == "\""
+      parse_string(r)
+    elsif String.match?(c, /[-\d]/)
+      parse_number(r)
+    else
+      m = String.match(@src[@pos..], /\A(true|false|null)/)
+      error(r, "unexpected '#{c}'") if m == nil
+      word = m[1]
+      @pos += String.size(word)
+      word == "null" ? nil : word == "true"
+    end
+  end
+
+  def parse_object(r)
+    obj = Hash[]
+    expect(r, "{")
+    skip_ws(r)
+    if peek(r) == "}"
+      @pos += 1
+      return obj
+    end
+    while true
+      skip_ws(r)
+      error(r, "object key must be a string") if peek(r) != "\""
+      key = parse_string(r)
+      expect(r, ":")
+      obj[key] = parse_value(r)
+      skip_ws(r)
+      break if peek(r) == "}"
+      expect(r, ",")
+    end
+    @pos += 1
+    obj
+  end
+
+  def parse_array(r)
+    items = Array[]
+    expect(r, "[")
+    skip_ws(r)
+    if peek(r) == "]"
+      @pos += 1
+      return items
+    end
+    while true
+      Array.push(items, parse_value(r))
+      skip_ws(r)
+      break if peek(r) == "]"
+      expect(r, ",")
+    end
+    @pos += 1
+    items
+  end
+
+  def parse_string(r)
+    @pos += 1
+    out = ""
+    while true
+      c = peek(r)
+      error(r, "unterminated string") if c == nil
+      @pos += 1
+      break if c == "\""
+      if c == "\\"
+        e = peek(r)
+        @pos += 1
+        esc = Hash["n" => "\n", "t" => "\t", "\"" => "\"", "\\" => "\\", "/" => "/"]
+        error(r, "bad escape") if e == nil || esc[e] == nil
+        out += esc[e]
+      else
+        out += c
+      end
+    end
+    out
+  end
+
+  def parse_number(r)
+    m = String.match(@src[@pos..], /\A-?\d+(\.\d+)?([eE][-+]?\d+)?/)
+    error(r, "bad number") if m == nil
+    text = MatchData.to_s(m)
+    @pos += String.size(text)
+    m[1] || m[2] ? Float(text) : Integer(text)
+  end
+end
+
+def quote(s) = "\"" + String.gsub(String.gsub(String.gsub(s, "\\", "\\\\\\\\"), "\"", "\\\""), "\n", "\\n") + "\""
+
+def dump(v, indent)
+  pad = "  " * indent
+  case v
+  in Hash
+    return "{}" if Hash.empty?(v)
+    lines = Hash.map(v) { |k, x| "#{pad}  #{quote(k)}: #{dump(x, indent + 1)}" }
+    "{\n#{Array.join(lines, ",\n")}\n#{pad}}"
+  in Array
+    return "[]" if Array.empty?(v)
+    lines = Array.map(v) { |x| "#{pad}  #{dump(x, indent + 1)}" }
+    "[\n#{Array.join(lines, ",\n")}\n#{pad}]"
+  in String then quote(v)
+  in nil then "null"
+  else Kernel.to_s(v)
+  end
+end
+
+def query(v, path)
+  Array.each(String.split(path, ".")) do |key|
+    v = case v
+        in Hash then v[key]
+        in Array then String.match?(key, /\A\d+\z/) ? v[String.to_i(key)] : nil
+        else nil
+        end
+  end
+  v
+end
+
+def numbers_in(v, acc)
+  case v
+  in Hash then Hash.each_value(v) { |x| numbers_in(x, acc) }
+  in Array then Array.each(v) { |x| numbers_in(x, acc) }
+  in Integer | Float then Array.push(acc, v)
+  else nil
+  end
+  acc
+end
+
+doc = "{\"store\": {\"name\": \"Corner \\\"Shop\\\"\", \"open\": true,\n \"items\": [{\"name\": \"tea\", \"price\": 3.5, \"qty\": 12},\n {\"name\": \"cake\", \"price\": 4, \"qty\": 0, \"tags\": [\"sweet\", \"fresh\"]}],\n \"owner\": null, \"rating\": -1.25e1, \"notes\": \"line1\\nline2\", \"empty\": {}, \"none\": []}}"
+data = Reader.parse_document(Reader.new(doc, 0))
+puts(dump(data, 0))
+Array.each(Array["store.name", "store.items.1.tags.0", "store.items.0.price", "store.owner",
+                 "store.items.5.name", "store.open.x", "store.items.1.qty"]) do |path|
+  puts(format("%-22s -> %s", path, dump(query(data, path), 0)))
+end
+nums = numbers_in(data, Array[])
+puts("numbers: #{Array.join(Array.map(nums) { Kernel.to_s(it) }, ", ")}  sum=#{Array.sum(nums)}")
+
+Array.each(Array["[1, 2,, 3]", "{\"a\": tru}", "{\"a\" 1}", "[\"open", "{1: 2}", "[1] x", "  ", "[\"bad \\q\"]"]) do |bad|
+  begin
+    Reader.parse_document(Reader.new(bad, 0))
+    puts("parsed?! #{bad}")
+  rescue JSONError => e
+    puts(format("%-14s error at %d: %s", bad, JSONError.get_pos(e), Exception.message(e)))
+  end
+end

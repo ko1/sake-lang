@@ -1,0 +1,155 @@
+# Sudoku: parse, validate, and solve with constraint propagation plus backtracking.
+
+InvalidPuzzle = Exception.new(:cell)
+
+Sudoku = Struct.new(:cells, :guesses)
+
+class Sudoku
+  def parse(text)
+    digits = String.delete(String.delete(text, "\n"), " ")
+    raise ArgumentError, "need 81 cells, got #{String.size(digits)}" if String.size(digits) != 81
+    cells = Integer[]
+    String.each_char(digits) do |ch|
+      Array.push(cells, ch == "." ? 0 : String.to_i(ch))
+    end
+    Sudoku.new(cells, 0)
+  end
+
+  def peers(i)
+    r, c = Integer.divmod(i, 9)
+    br = r / 3 * 3
+    bc = c / 3 * 3
+    result = Set[]
+    Integer.times(9) do |k|
+      Set.add(result, r * 9 + k)
+      Set.add(result, k * 9 + c)
+      Set.add(result, (br + k / 3) * 9 + bc + k % 3)
+    end
+    Set.delete(result, i)
+    result
+  end
+
+  def candidates(s, i)
+    used = Set[]
+    Set.each(peers(i)) { |j| Set.add(used, @cells[j]) }
+    Array.reject(Range.to_a(1..9)) { |d| Set.include?(used, d) }
+  end
+
+  def validate(s)
+    Array.each_with_index(@cells) do |v, i|
+      next if v == 0
+      clash = Set.find(peers(i)) { |j| @cells[j] == v }
+      if clash
+        raise InvalidPuzzle.new("digit #{v} repeats at r#{clash / 9 + 1}c#{clash % 9 + 1}", i)
+      end
+    end
+    s
+  end
+
+  def propagate(s, trail)
+    changed = true
+    while changed
+      changed = false
+      Array.each_with_index(@cells) do |v, i|
+        next if v != 0
+        cands = candidates(s, i)
+        return false if Array.empty?(cands)
+        if Array.size(cands) == 1
+          @cells[i] = cands[0]
+          Array.push(trail, i)
+          changed = true
+        end
+      end
+    end
+    true
+  end
+
+  def solve(s)
+    trail = Integer[]
+    if propagate(s, trail)
+      empties = Array.select(Range.to_a(0...81)) { |i| @cells[i] == 0 }
+      return true if Array.empty?(empties)
+      best = Array.min_by(empties) { |i| Array.size(candidates(s, i)) }
+      Array.each(candidates(s, best)) do |d|
+        @guesses += 1
+        @cells[best] = d
+        return true if solve(s)
+        @cells[best] = 0
+      end
+    end
+    Array.each(trail) { |i| @cells[i] = 0 }
+    false
+  end
+
+  def to_s(s)
+    lines = Array[]
+    rows = Array[]
+    Array.each_slice(@cells, 9) { |row| Array.push(rows, row) }
+    Array.each_with_index(rows) do |row, r|
+      Array.push(lines, "------+-------+------") if r > 0 && r % 3 == 0
+      groups = Array[]
+      Array.each_slice(row, 3) do |g|
+        Array.push(groups, Array.join(Array.map(g) { |v| v == 0 ? "." : Integer.to_s(v) }, " "))
+      end
+      Array.push(lines, Array.join(groups, " | "))
+    end
+    Array.join(lines, "\n")
+  end
+end
+
+def run(name, text)
+  puts("== #{name} ==")
+  s = Sudoku.validate(Sudoku.parse(text))
+  givens = Array.count(Sudoku.get_cells(s)) { |v| v != 0 }
+  puts("givens: #{givens}")
+  if Sudoku.solve(s)
+    puts(s)
+    puts("solved with #{Sudoku.get_guesses(s)} guesses")
+  else
+    puts("no solution (#{Sudoku.get_guesses(s)} guesses tried)")
+  end
+rescue InvalidPuzzle => e
+  puts("invalid: #{Exception.message(e)} (cell #{InvalidPuzzle.get_cell(e)})")
+rescue ArgumentError => e
+  puts("bad input: #{Exception.message(e)}")
+ensure
+  puts
+end
+
+run("easy", "53..7....
+6..195...
+.98....6.
+8...6...3
+4..8.3..1
+7...2...6
+.6....28.
+...419..5
+....8..79")
+run("medium", "..9748...
+7........
+.2.1.9...
+..7...24.
+.64.1.59.
+.98...3..
+...8.3.2.
+........6
+...2759..")
+run("duplicate", "53..7....
+6..195...
+.98....6.
+8...6...3
+4..8.3..1
+7...2...6
+.6....28.
+...419..5
+5...8..79")
+run("short", "123456789")
+run("stuck", "12345678.
+........9
+.........
+.........
+.........
+.........
+.........
+.........
+.........")

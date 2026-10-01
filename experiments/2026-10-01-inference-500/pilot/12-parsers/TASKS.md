@@ -1,0 +1,4 @@
+- expr_parser: Tokenizes and parses arithmetic expressions by recursive descent (precedence, right-assoc `^`, unary minus) into an AST of Structs, prints and evaluates them against a variable Hash, and reports parse/eval errors with positions.
+- stack_vm: Two-pass assembler (labels, comments, operand checks) for a stack-machine language, plus a VM with call/ret, variables and a step limit, run on several good and broken programs.
+- mini_lang: Interpreter for a small language with assignment, print, if/else, functions and return, using AST node types dispatched through a `Node` module and return implemented as an exception.
+- json_reader: Character-level JSON reader producing Hash/Array/String/number/true/false/nil values, with a pretty printer, dotted path queries that may miss, and positioned error reports.

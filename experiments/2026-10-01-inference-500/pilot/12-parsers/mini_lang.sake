@@ -1,0 +1,200 @@
+LangError = Exception.new
+ReturnSignal = Exception.new(:value)
+Frame = Struct.new(:vars, :funcs, :out, :depth)
+
+module Node
+  def run(node, fr) = raise(LangError.new("cannot run #{node}"))
+end
+def precedence = Array[Array["<", ">", "==", "!="], Array["+", "-"], Array["*", "/", "%"]]
+def run_all(stmts, fr) = Array.each(stmts) { |s| Node.run(s, fr) }
+
+class Lit < {reader: [value]}
+  include Node
+  def run(n, fr) = @value
+end
+class Ref < {reader: [name]}
+  include Node
+  def run(n, fr)
+    v = Frame.get_vars(fr)[@name]
+    raise LangError.new("undefined variable '#{@name}'") if v == nil
+    v
+  end
+end
+class Bin < {reader: [op, left, right]}
+  include Node
+  def run(n, fr)
+    a = Node.run(@left, fr)
+    b = Node.run(@right, fr)
+    case @op
+    in "+" then a + b
+    in "-" then a - b
+    in "*" then a * b
+    in "/" | "%"
+      raise LangError.new("division by zero") if b == 0
+      @op == "/" ? a / b : a % b
+    in "<" then a < b ? 1 : 0
+    in ">" then a > b ? 1 : 0
+    in "==" then a == b ? 1 : 0
+    else a != b ? 1 : 0
+    end
+  end
+end
+class Call < {reader: [name, args]}
+  include Node
+  def run(n, fr)
+    f = Frame.get_funcs(fr)[@name]
+    raise LangError.new("undefined function '#{@name}'") if f == nil
+    params = FunDef.get_params(f)
+    want = Array.size(params)
+    raise LangError.new("#{@name} expects #{want} argument(s), got #{Array.size(@args)}") if want != Array.size(@args)
+    raise LangError.new("call depth exceeded in #{@name}") if Frame.get_depth(fr) >= 200
+    vars = Hash[]
+    Array.each(Array.zip(params, @args)) { |p, e| vars[p] = Node.run(e, fr) }
+    callee = Frame.new(vars, Frame.get_funcs(fr), Frame.get_out(fr), Frame.get_depth(fr) + 1)
+    begin
+      run_all(FunDef.get_body(f), callee)
+      0
+    rescue ReturnSignal => r
+      ReturnSignal.get_value(r)
+    end
+  end
+end
+class Assign < {reader: [name, expr]}
+  include Node
+  def run(n, fr) = Frame.get_vars(fr)[@name] = Node.run(@expr, fr)
+end
+class Print < {reader: [exprs]}
+  include Node
+  def run(n, fr) = Array.push(Frame.get_out(fr), Array.join(Array.map(@exprs) { Node.run(it, fr) }, " "))
+end
+class If < {reader: [cond, then_body, else_body]}
+  include Node
+  def run(n, fr) = Node.run(@cond, fr) != 0 ? run_all(@then_body, fr) : run_all(@else_body, fr)
+end
+class FunDef < {reader: [name, params, body]}
+  include Node
+  def run(n, fr) = Frame.get_funcs(fr)[@name] = n
+end
+class Return < {reader: [expr]}
+  include Node
+  def run(n, fr) = raise(ReturnSignal.new("return", Node.run(@expr, fr)))
+end
+
+class Parser < {reader: [tokens], accessor: [pos]}
+  def peek(ps) = @tokens[@pos]
+  def take(ps)
+    t = @tokens[@pos]
+    raise LangError.new("unexpected end of program") if t == nil
+    @pos += 1
+    t
+  end
+  def accept(ps, tok)
+    return false if peek(ps) != tok
+    @pos += 1
+    true
+  end
+  def expect(ps, tok)
+    t = take(ps)
+    raise LangError.new("expected '#{tok}' but found '#{t}'") if t != tok
+  end
+  def ident(ps)
+    t = take(ps)
+    raise LangError.new("expected a name but found '#{t}'") unless String.match?(t, /\A[a-z_]\w*\z/)
+    t
+  end
+  def comma_list(ps)
+    items = Array[]
+    return items if accept(ps, ")")
+    Array.push(items, yield)
+    Array.push(items, yield) while accept(ps, ",")
+    expect(ps, ")")
+    items
+  end
+  def block(ps)
+    stmts = Array[]
+    Array.push(stmts, statement(ps)) until Array.include?(Array[nil, "end", "else"], peek(ps))
+    stmts
+  end
+  def statement(ps)
+    if accept(ps, "print")
+      exprs = Array[expr(ps)]
+      Array.push(exprs, expr(ps)) while accept(ps, ",")
+      Print.new(exprs)
+    elsif accept(ps, "if")
+      cond = expr(ps)
+      expect(ps, "then")
+      then_body = block(ps)
+      else_body = accept(ps, "else") ? block(ps) : Array[]
+      expect(ps, "end")
+      If.new(cond, then_body, else_body)
+    elsif accept(ps, "fun")
+      name = ident(ps)
+      expect(ps, "(")
+      params = comma_list(ps) { ident(ps) }
+      body = block(ps)
+      expect(ps, "end")
+      FunDef.new(name, params, body)
+    elsif accept(ps, "return")
+      Return.new(expr(ps))
+    else
+      name = ident(ps)
+      expect(ps, "=")
+      Assign.new(name, expr(ps))
+    end
+  end
+  def expr(ps) = binary(ps, 0)
+  def binary(ps, level)
+    return atom(ps) if level == Array.size(precedence)
+    left = binary(ps, level + 1)
+    while Array.include?(precedence[level], peek(ps))
+      op = take(ps)
+      left = Bin.new(op, left, binary(ps, level + 1))
+    end
+    left
+  end
+  def atom(ps)
+    t = take(ps)
+    return Lit.new(String.to_i(t)) if String.match?(t, /\A\d+\z/)
+    if t == "("
+      e = expr(ps)
+      expect(ps, ")")
+      return e
+    end
+    @pos -= 1
+    name = ident(ps)
+    return Ref.new(name) unless accept(ps, "(")
+    Call.new(name, comma_list(ps) { expr(ps) })
+  end
+end
+
+def interpret(source)
+  clean = String.gsub(source, /#[^\n]*/, "")
+  tokens = String.scan(clean, /\d+|[a-z_]\w*|==|!=|[-+*\/%<>=(),]|\S/)
+  ps = Parser.new(tokens, 0)
+  program = Parser.block(ps)
+  raise LangError.new("unexpected '#{Parser.peek(ps)}'") if Parser.peek(ps) != nil
+  fr = Frame.new(Hash[], Hash[], Array[], 0)
+  run_all(program, fr)
+  Frame.get_out(fr)
+end
+
+programs = Hash[
+  "fib" => "fun fib(n)\n  if n < 2 then return n end\n  return fib(n - 1) + fib(n - 2)\nend\nfun show(i, n)\n  if i < n then print i, fib(i)  rest = show(i + 1, n) end\nend\nx = show(0, 8)",
+  "functions" => "fun fact(n)\n  if n < 2 then return 1 end\n  return n * fact(n - 1)\nend\nfun gcd(a, b)\n  if b == 0 then return a else return gcd(b, a % b) end\nend\nprint fact(12), gcd(1071, 462)\nprint gcd(fact(6), 84)",
+  "collatz" => "# length of Collatz chains\nfun steps(n)\n  if n == 1 then return 0 end\n  if n % 2 == 0 then next = n / 2 else next = 3 * n + 1 end\n  return 1 + steps(next)\nend\nprint steps(6), steps(27), steps(97)",
+  "undefined" => "x = 1\nprint x + y",
+  "arity" => "fun add(a, b) return a + b end\nprint add(1)",
+  "runaway" => "fun f(n) return f(n + 1) end\nprint f(0)",
+  "syntax" => "if 1 then print 2",
+  "divide" => "fun half(n) return n / (n - n) end\nprint half(8)"
+]
+
+Hash.each(programs) do |name, source|
+  begin
+    out = interpret(source)
+    puts("#{name}: #{Array.size(out)} line(s)")
+    Array.each(out) { |line| puts("  | #{line}") }
+  rescue LangError => e
+    puts("#{name}: error: #{Exception.message(e)}")
+  end
+end

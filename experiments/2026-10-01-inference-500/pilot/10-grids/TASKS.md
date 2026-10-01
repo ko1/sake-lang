@@ -1,0 +1,4 @@
+- game_of_life: Conway's Game of Life on bounded boards (blinker, glider, beehive, R-pentomino) with an Indexable board type, population history, and cycle detection via a Hash of seen states.
+- maze_solver: Parse text mazes, find the shortest S-to-G path by BFS with a parent Hash, draw the path, count turns, and flood-fill to report unreachable pockets.
+- sudoku: Parse, validate (custom exception for duplicate digits, ArgumentError for bad length), and solve sudoku puzzles by propagation of single candidates plus backtracking.
+- tic_tac_toe: Replay scripted tic-tac-toe games with illegal-move exceptions and finish them with a negamax player whose moves compare through a Comparable Move type.

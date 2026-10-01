@@ -1,0 +1,190 @@
+Token = Struct.new(:kind, :text, :pos)
+Num = Struct.new(:value)
+Var = Struct.new(:name)
+BinOp = Struct.new(:op, :left, :right)
+ParseError = Exception.new(:pos)
+EvalError = Exception.new
+
+class Num
+  def to_s(n) = Integer.to_s(@value)
+end
+
+class Var
+  def to_s(v) = @name
+end
+
+class BinOp
+  def to_s(b) = "(#{@left} #{@op} #{@right})"
+end
+
+def tokenize(src)
+  tokens = Token[]
+  i = 0
+  n = String.size(src)
+  while i < n
+    c = src[i]
+    if c == " "
+      i += 1
+    elsif String.match?(c, /\d/)
+      j = i
+      j += 1 while j < n && String.match?(src[j], /\d/)
+      Array.push(tokens, Token.new(:num, src[i...j], i))
+      i = j
+    elsif String.match?(c, /[a-z]/)
+      j = i
+      j += 1 while j < n && String.match?(src[j], /[a-z0-9_]/)
+      Array.push(tokens, Token.new(:ident, src[i...j], i))
+      i = j
+    elsif String.include?("+-*/%^()", c)
+      Array.push(tokens, Token.new(:op, c, i))
+      i += 1
+    else
+      raise ParseError.new("unexpected character '#{c}'", i)
+    end
+  end
+  Array.push(tokens, Token.new(:eof, "end of input", n))
+  tokens
+end
+
+class Parser < {reader: [tokens], accessor: [pos]}
+  def peek(ps) = Array.fetch(@tokens, @pos)
+
+  def advance(ps)
+    t = peek(ps)
+    @pos += 1 if Token.get_kind(t) != :eof
+    t
+  end
+
+  def op?(ps, ops)
+    t = peek(ps)
+    Token.get_kind(t) == :op && Array.include?(ops, Token.get_text(t))
+  end
+
+  def expect(ps, text)
+    t = advance(ps)
+    if Token.get_text(t) != text
+      raise ParseError.new("expected '#{text}' but got '#{Token.get_text(t)}'", Token.get_pos(t))
+    end
+    t
+  end
+
+  def parse(ps)
+    tree = parse_expr(ps)
+    t = peek(ps)
+    if Token.get_kind(t) != :eof
+      raise ParseError.new("unexpected '#{Token.get_text(t)}'", Token.get_pos(t))
+    end
+    tree
+  end
+
+  def parse_expr(ps)
+    left = parse_term(ps)
+    while op?(ps, Array["+", "-"])
+      op = Token.get_text(advance(ps))
+      left = BinOp.new(op, left, parse_term(ps))
+    end
+    left
+  end
+
+  def parse_term(ps)
+    left = parse_unary(ps)
+    while op?(ps, Array["*", "/", "%"])
+      op = Token.get_text(advance(ps))
+      left = BinOp.new(op, left, parse_unary(ps))
+    end
+    left
+  end
+
+  def parse_unary(ps)
+    if op?(ps, Array["-"])
+      advance(ps)
+      return BinOp.new("-", Num.new(0), parse_unary(ps))
+    end
+    parse_power(ps)
+  end
+
+  def parse_power(ps)
+    base = parse_atom(ps)
+    if op?(ps, Array["^"])
+      advance(ps)
+      return BinOp.new("^", base, parse_unary(ps))
+    end
+    base
+  end
+
+  def parse_atom(ps)
+    t = advance(ps)
+    text = Token.get_text(t)
+    case Token.get_kind(t)
+    in :num then Num.new(String.to_i(text))
+    in :ident then Var.new(text)
+    else
+      if text == "("
+        inner = parse_expr(ps)
+        expect(ps, ")")
+        inner
+      else
+        raise ParseError.new("unexpected '#{text}'", Token.get_pos(t))
+      end
+    end
+  end
+end
+
+def evaluate(node, env)
+  case node
+  in Num then Num.get_value(node)
+  in Var
+    name = Var.get_name(node)
+    v = env[name]
+    raise EvalError.new("undefined variable '#{name}'") if v == nil
+    v
+  in BinOp
+    l = evaluate(BinOp.get_left(node), env)
+    r = evaluate(BinOp.get_right(node), env)
+    op = BinOp.get_op(node)
+    if op == "+"
+      l + r
+    elsif op == "-"
+      l - r
+    elsif op == "*"
+      l * r
+    elsif op == "^"
+      raise EvalError.new("negative exponent #{r}") if r < 0
+      l ** r
+    else
+      raise EvalError.new("division by zero in #{node}") if r == 0
+      op == "/" ? l / r : l % r
+    end
+  end
+end
+
+def count_nodes(node)
+  case node
+  in BinOp then 1 + count_nodes(BinOp.get_left(node)) + count_nodes(BinOp.get_right(node))
+  else 1
+  end
+end
+
+env = Hash["x" => 3, "y" => 4, "rate" => 7]
+sources = Array[
+  "1 + 2 * 3", "(1 + 2) * 3", "2 ^ 3 ^ 2", "x * x + y * y", "-x + 10",
+  "rate * (x - -y) % 5", "10 / (y - 4)", "z + 1", "3 + * 4", "7 $ 2",
+  "(1 + 2", "2 ^ -1", "100 / 7 / 2"
+]
+ok = 0
+Array.each(sources) do |src|
+  begin
+    ps = Parser.new(tokenize(src), 0)
+    tree = Parser.parse(ps)
+    value = evaluate(tree, env)
+    ok += 1
+    puts(format("%-22s => %-30s = %d  [%d nodes]", src, tree, value, count_nodes(tree)))
+  rescue ParseError => e
+    puts(format("%-22s !! parse error at %d: %s", src, ParseError.get_pos(e), Exception.message(e)))
+    puts("    #{src}")
+    puts("    #{" " * ParseError.get_pos(e)}^")
+  rescue EvalError => e
+    puts(format("%-22s !! eval error: %s", src, Exception.message(e)))
+  end
+end
+puts("#{ok}/#{Array.size(sources)} evaluated")

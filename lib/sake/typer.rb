@@ -159,35 +159,43 @@ module Sake
       end
     end
 
-    def show(ty)
+    # seen: the sites being shown; a site inside itself (a recursive structure) is shown by its label only.
+    def show(ty, seen = {})
       return "(none)" if ty.empty?
-      ty.map { show_atom(_1) }.join(" | ")
+      ty.map { show_atom(_1, seen) }.join(" | ")
     end
 
-    def show_atom(a)
+    def show_atom(a, seen = {})
       case a
       when "Boolean" then "true|false"
       when "Nil", "IndexNil" then "nil"
       when String then a
       else
         case a[0]
-        when :tuple then "[#{a[1].map { show(_1) }.join(", ")}]"
-        when :record then "{#{a[1].map { |f, ty| "#{f}: #{show(ty)}" }.join(", ")}}"
+        when :tuple then "[#{a[1].map { show(_1, seen) }.join(", ")}]"
+        when :record then "{#{a[1].map { |f, ty| "#{f}: #{show(ty, seen)}" }.join(", ")}}"
         when :array
           s = @sites[a[1]]
-          s.declared ? "#{s.declared}[]@#{s.label}" : "Array@#{s.label}[#{show(s.elem)}]"
+          return "#{s.declared}[]@#{s.label}" if s.declared
+          return "Array@#{s.label}" if seen[a]
+          "Array@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
         when :unknown then "?(#{a[1]})"
-        when :range then "Range[#{show(a[1])}]"
+        when :range then "Range[#{show(a[1], seen)}]"
         when :hash
           s = hash_sites[a[1]]
-          "Hash@#{s.label}[#{show(s.key)} => #{show(s.val)}]"
-        when :set then "Set@#{set_sites[a[1]].label}[#{show(set_sites[a[1]].elem)}]"
+          return "Hash@#{s.label}" if seen[a]
+          inner = seen.merge(a => true)
+          "Hash@#{s.label}[#{show(s.key, inner)} => #{show(s.val, inner)}]"
+        when :set
+          s = set_sites[a[1]]
+          seen[a] ? "Set@#{s.label}" : "Set@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
         when :pairs then "pairs"
         end
       end
     end
 
     def snapshot
+
       [(@raises ||= {}).transform_values(&:dup), @sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
        hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] }]
     end

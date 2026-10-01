@@ -1,0 +1,141 @@
+# Solve text mazes by breadth-first search, draw the path, and count the walled-off pockets.
+
+Maze = Struct.new(:name, :grid, :rows, :cols)
+
+class Maze
+  def parse(name, text)
+    grid = Array.map(String.lines(text)) { |l| String.chars(String.chomp(l)) }
+    Maze.new(name, grid, Array.size(grid), Array.size(grid[0]))
+  end
+
+  def at(m, pos)
+    r, c = pos
+    return nil if r < 0 || c < 0 || r >= @rows || c >= @cols
+    @grid[r][c]
+  end
+
+  def find_char(m, ch)
+    Array.each_with_index(@grid) do |row, r|
+      c = Array.index(row, ch)
+      return [r, c] if c
+    end
+    nil
+  end
+
+  def open?(m, pos)
+    ch = at(m, pos)
+    ch != nil && ch != "#"
+  end
+
+  def neighbors(m, pos)
+    r, c = pos
+    cand = Array[[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
+    Array.select(cand) { |p| open?(m, p) }
+  end
+
+  def shortest_path(m, start, goal)
+    parent = Hash[start => nil]
+    queue = Array[start]
+    until Array.empty?(queue)
+      cur = Array.shift(queue)
+      break if same_pos?(cur, goal)
+      Array.each(neighbors(m, cur)) do |nb|
+        next if Hash.key?(parent, nb)
+        parent[nb] = cur
+        Array.push(queue, nb)
+      end
+    end
+    return nil unless Hash.key?(parent, goal)
+    path = Array[]
+    node = goal
+    while node
+      Array.unshift(path, node)
+      node = parent[node]
+    end
+    path
+  end
+
+  def flood(m, start, seen)
+    stack = Array[start]
+    Set.add(seen, start)
+    size = 0
+    while (cur = Array.pop(stack))
+      size += 1
+      Array.each(neighbors(m, cur)) do |nb|
+        Array.push(stack, nb) if Set.add?(seen, nb)
+      end
+    end
+    size
+  end
+
+  def pockets(m, start)
+    seen = Set[]
+    flood(m, start, seen)
+    sizes = Array[]
+    Integer.times(@rows) do |r|
+      Integer.times(@cols) do |c|
+        pos = [r, c]
+        next unless open?(m, pos)
+        next if Set.include?(seen, pos)
+        Array.push(sizes, flood(m, pos, seen))
+      end
+    end
+    sizes
+  end
+
+  def draw(m, path)
+    on_path = Set[]
+    Array.each(path) { |p| Set.add(on_path, p) }
+    Array.each_with_index(@grid) do |row, r|
+      line = Range.map(0...@cols) do |c|
+        ch = row[c]
+        ch == " " && Set.include?(on_path, [r, c]) ? "*" : ch
+      end
+      puts(Array.join(line, ""))
+    end
+  end
+end
+
+def same_pos?(a, b)
+  ar, ac = a
+  br, bc = b
+  ar == br && ac == bc
+end
+
+def solve(text, name)
+  m = Maze.parse(name, text)
+  start = Maze.find_char(m, "S")
+  goal = Maze.find_char(m, "G")
+  puts("== #{Maze.get_name(m)} (#{Maze.get_rows(m)}x#{Maze.get_cols(m)}) ==")
+  if start == nil || goal == nil
+    puts("missing start or goal")
+    return
+  end
+  path = Maze.shortest_path(m, start, goal)
+  if path
+    puts("shortest path: #{Array.size(path) - 1} steps")
+    Maze.draw(m, path)
+    turns = 0
+    Array.each_cons(path, 3) do |win|
+      ar, ac = win[0]
+      br, bc = win[1]
+      cr, cc = win[2]
+      turns += 1 if br - ar != cr - br || bc - ac != cc - bc
+    end
+    puts("turns: #{turns}")
+  else
+    puts("no path from #{start} to #{goal}")
+  end
+  sizes = Maze.pockets(m, start)
+  if Array.empty?(sizes)
+    puts("every open cell is reachable")
+  else
+    puts("unreachable pockets: #{Array.size(sizes)}, sizes #{Array.sort(sizes)}")
+  end
+  puts
+end
+
+solve("##########\n#S   #   #\n# ## # # #\n#  #   # #\n## ##### #\n#      #G#\n# #### # #\n#    #   #\n##########", "winding")
+solve("#########\n#S      #\n### # # #\n#   # #G#\n##### ###\n#   #   #\n#########", "pockets")
+solve("#######\n#S #  #\n#  # G#\n#######", "walled")
+solve("#####\n#S  #\n#####", "no goal")

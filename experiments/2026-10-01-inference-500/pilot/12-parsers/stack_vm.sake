@@ -1,0 +1,158 @@
+Instr = Struct.new(:op, :arg, :line)
+AsmError = Exception.new(:line)
+VMError = Exception.new(:pc)
+
+def arg_kind(op)
+  if Array.include?(Array["push"], op)
+    :int
+  elsif Array.include?(Array["jmp", "jz", "jnz", "call"], op)
+    :label
+  elsif Array.include?(Array["load", "store"], op)
+    :name
+  elsif Array.include?(Array["pop", "dup", "swap", "over", "add", "sub", "mul", "div", "mod",
+                             "lt", "eq", "print", "ret", "halt"], op)
+    :none
+  else
+    nil
+  end
+end
+
+def assemble(source)
+  code = Instr[]
+  labels = Hash[]
+  lineno = 0
+  String.each_line(source) do |raw|
+    lineno += 1
+    line = String.strip(String.sub(raw, /;.*/, ""))
+    next if String.empty?(line)
+    m = String.match(line, /\A(\w+):\z/)
+    if m
+      name = m[1]
+      raise AsmError.new("duplicate label '#{name}'", lineno) if Hash.key?(labels, name)
+      labels[name] = Array.size(code)
+      next
+    end
+    parts = String.split(line, /\s+/)
+    op = String.downcase(parts[0])
+    kind = arg_kind(op)
+    raise AsmError.new("unknown instruction '#{op}'", lineno) if kind == nil
+    want = kind == :none ? 1 : 2
+    raise AsmError.new("'#{op}' takes #{want - 1} operand(s)", lineno) if Array.size(parts) != want
+    arg = nil
+    if kind == :int
+      arg = Integer(parts[1]) rescue raise(AsmError.new("bad number '#{parts[1]}'", lineno))
+    elsif kind != :none
+      arg = parts[1]
+    end
+    Array.push(code, Instr.new(op, arg, lineno))
+  end
+  Array.each(code) do |ins|
+    next unless arg_kind(Instr.get_op(ins)) == :label
+    target = labels[Instr.get_arg(ins)]
+    raise AsmError.new("undefined label '#{Instr.get_arg(ins)}'", Instr.get_line(ins)) if target == nil
+    Instr.set_arg(ins, target)
+  end
+  code
+end
+
+def pop1(stack, pc)
+  v = Array.pop(stack)
+  raise VMError.new("stack underflow", pc) if v == nil
+  v
+end
+
+def run(code, max_steps)
+  stack = Integer[]
+  frames = Integer[]
+  vars = Hash[]
+  output = Array[]
+  pc = 0
+  steps = 0
+  while pc < Array.size(code)
+    steps += 1
+    raise VMError.new("step limit #{max_steps} exceeded", pc) if steps > max_steps
+    ins = code[pc]
+    op = Instr.get_op(ins)
+    arg = Instr.get_arg(ins)
+    pc += 1
+    if op == "push"
+      Array.push(stack, arg)
+    elsif op == "pop"
+      pop1(stack, pc - 1)
+    elsif op == "dup"
+      v = pop1(stack, pc - 1)
+      Array.push(stack, v, v)
+    elsif op == "swap"
+      b = pop1(stack, pc - 1)
+      a = pop1(stack, pc - 1)
+      Array.push(stack, b, a)
+    elsif op == "over"
+      b = pop1(stack, pc - 1)
+      a = pop1(stack, pc - 1)
+      Array.push(stack, a, b, a)
+    elsif Array.include?(Array["add", "sub", "mul", "div", "mod", "lt", "eq"], op)
+      b = pop1(stack, pc - 1)
+      a = pop1(stack, pc - 1)
+      raise VMError.new("division by zero", pc - 1) if b == 0 && (op == "div" || op == "mod")
+      r = case op
+          in "add" then a + b
+          in "sub" then a - b
+          in "mul" then a * b
+          in "div" then a / b
+          in "mod" then a % b
+          in "lt" then a < b ? 1 : 0
+          else a == b ? 1 : 0
+          end
+      Array.push(stack, r)
+    elsif op == "jmp"
+      pc = arg
+    elsif op == "jz"
+      pc = arg if pop1(stack, pc - 1) == 0
+    elsif op == "jnz"
+      pc = arg if pop1(stack, pc - 1) != 0
+    elsif op == "call"
+      Array.push(frames, pc)
+      pc = arg
+    elsif op == "ret"
+      back = Array.pop(frames)
+      raise VMError.new("return without call", pc - 1) if back == nil
+      pc = back
+    elsif op == "load"
+      v = vars[arg]
+      raise VMError.new("unset variable '#{arg}'", pc - 1) if v == nil
+      Array.push(stack, v)
+    elsif op == "store"
+      vars[arg] = pop1(stack, pc - 1)
+    elsif op == "print"
+      Array.push(output, pop1(stack, pc - 1))
+    else
+      break
+    end
+  end
+  {output: output, steps: steps, depth: Array.size(stack)}
+end
+
+programs = Array[
+  ["factorial", "push 1\nstore acc\npush 10\nstore n\nloop:\n  load n\n  jz done\n  load acc\n  load n\n  mul\n  store acc\n  load n\n  push 1\n  sub\n  store n\n  jmp loop\ndone:\n  load acc\n  print\n  halt\n"],
+  ["fibonacci", "push 0\npush 1\npush 12\nstore k\nnext:   ; a b on stack\n  over\n  print\n  swap\n  over\n  add\n  load k\n  push 1\n  sub\n  dup\n  store k\n  jnz next\n  pop\n  pop\n"],
+  ["gcd calls", "push 1071\npush 462\ncall gcd\nprint\npush 270\npush 192\ncall gcd\nprint\nhalt\ngcd:\n  dup\n  jz gcd_end\n  swap\n  over\n  mod\n  jmp gcd\ngcd_end:\n  pop\n  ret\n"],
+  ["underflow", "push 1\nadd\nprint\n"],
+  ["divzero", "push 4\npush 0\ndiv\n"],
+  ["forever", "top:\n  push 1\n  pop\n  jmp top\n"],
+  ["bad label", "push 1\njnz nowhere\n"],
+  ["bad op", "push 2\n; comment only\nsquare\n"],
+  ["bad number", "push 12x\n"]
+]
+
+Array.each(programs) do |name, source|
+  begin
+    code = assemble(source)
+    result = run(code, 500)
+    result => {output:, steps:, depth:}
+    puts(format("%-10s ok: %s (%d instrs, %d steps, stack %d)", name, Array.join(output, " "), Array.size(code), steps, depth))
+  rescue AsmError => e
+    puts(format("%-10s asm error, line %d: %s", name, AsmError.get_line(e), Exception.message(e)))
+  rescue VMError => e
+    puts(format("%-10s vm error at pc %d: %s", name, VMError.get_pc(e), Exception.message(e)))
+  end
+end
