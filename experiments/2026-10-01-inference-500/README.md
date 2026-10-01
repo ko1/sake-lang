@@ -1,5 +1,7 @@
 # 2026-10-01 型推論は、いろいろなプログラムでどこまで決まるか（500 本）
 
+結論の解説ページ（artifact）: <https://claude.ai/artifact/BeRhEirMeBWWwuGLSng3BG>（`report.html`）
+
 ## 問い
 
 型を一切書かない Sake のプログラムに対して、操作に書いた型だけから、推論器はどこまで型を決められるか。
@@ -167,3 +169,4 @@ Sake 版では、手で型を分けて同じ名前の操作を呼んでいる箇
 - `results-baseline/`, `results-head/`, `results-fixed/`：各版の結果（`results.md` が要約。大きい `sake.jsonl` は gzip）
 - `notes-tally.md`：書き手の NOTES の集計
 - `union-receiver-prior-art.md`：`(A|B).op(x)` の先行例の調査
+- `report.html`：結論の解説ページ（上の artifact の元）
