@@ -88,6 +88,7 @@ module Sake
         fail_at(n, "TypeError", "#{d.module}.#{d.name}: #{Values.describe(args[0])} does not include #{d.module}") unless fn
         call_user(fn, args, block_val(n.block, f), n.origin)
       when BinOp then binary_op(n.origin, n.op, ev(n.left, f), ev(n.right, f))
+      when UnOp then unary_op(n.origin, n.op, ev(n.value, f))
       when IsNil
         v = ev(n.value, f)
         # A Struct value goes through its type's own ==, as `x == nil` does.
@@ -351,6 +352,8 @@ module Sake
       mod = Operators::MODULE_OF.fetch(op)
       return a.public_send(op, b) if %w[== !=].include?(op) && (a.nil? || b.nil?)
       return user_op(node, mod, op, [a, b]) if a.is_a?(StructValue)
+      # Records compare by their fields (any two shapes; different shapes are not equal).
+      return a.public_send(op, b) if %w[== !=].include?(op) && a.is_a?(RecordValue) && b.is_a?(RecordValue)
       rows = @registry.binary_ops[op]
       key = [Values.type_of(a), Values.type_of(b)]
       impl = rows[key]
@@ -369,6 +372,19 @@ module Sake
       impl.call(a, b)
     rescue Fail => e
       raise RunError.new(e.kind, "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup)
+    end
+
+    # `-x` / `+x` / `~x`: a Struct value runs its type's own operator; built-in types use their table.
+    def unary_op(node, op, a)
+      mod = Operators::MODULE_OF.fetch(op)
+      return user_op(node, mod, op, [a]) if a.is_a?(StructValue)
+      impl = @registry.unary_ops[op][Values.type_of(a)]
+      unless impl
+        defined = @registry.unary_ops[op].keys.join(", ")
+        raise RunError.new("TypeError", "#{mod}.#{op}: no implementation for #{Values.describe(a)}; defined for #{defined}",
+                           node.location.start_line, @stack.dup, nil_value: a.nil?)
+      end
+      impl.call(a)
     end
 
     # `x[k]` / `x[k] = v`: the index operation of x's type.

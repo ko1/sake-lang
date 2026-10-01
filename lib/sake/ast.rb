@@ -37,6 +37,7 @@ module Sake
     node :CallDispatch, :dispatch, :args, :block
     node :BinOp, :op, :left, :right         # dispatched on the left operand
     node :IsNil, :value, :negate            # `x == nil` / `x != nil`
+    node :UnOp, :op, :value                 # `-x` / `+x` / `~x`, dispatched on x (`!x` is an If)
     node :FieldGet, :type, :field, :fn, :subject # `@x` / `T.get_x(s)`; fn: the getter (it checks the subject)
     node :FieldSet, :type, :field, :fn, :subject, :value
     node :IndexGet, :recv, :key

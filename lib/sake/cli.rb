@@ -88,6 +88,15 @@ module Sake
         tuples, others = c.failing.partition { _1.is_a?(Array) && _1[0] == :tuple }
         return ["#{c.op}: the index is outside the Tuple #{typer.show(tuples)}", []] if others.empty?
         ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{Stdlib::INDEX_ROWS}", []]
+      when ->(_) { c.arg == "operand" }
+        mod, op = c.op.split(".", 2)
+        if (t = c.failing.find { _1.is_a?(String) && program.struct_types.key?(_1) })
+          return ["#{c.op}: #{t} does not include #{mod}", ["add `include #{mod}` and `def #{op}(a)` to class #{t}"]] unless Operators.includes?(program.includes, t, mod)
+          return ["#{c.op}: #{t} includes #{mod} but does not define #{op}", ["define `def #{op}(a)` in class #{t}"]]
+        end
+        ["#{c.op}: the operand #{maybe.sub("are", "is")}#{typer.show_failing(c)}, which has no #{op}; defined for #{c.expected.split("|").join(", ")}", []]
+      when ->(_) { c.arg == "elements" }
+        ["#{c.op}: elements compared in order #{maybe}#{typer.show_failing(c)}, which cannot be compared", []]
       when "case/in"
         ["case/in: no `in` branch matches #{typer.show_failing(c)}", ["add an `in` branch for it, or an `else`"]]
       when "pattern"

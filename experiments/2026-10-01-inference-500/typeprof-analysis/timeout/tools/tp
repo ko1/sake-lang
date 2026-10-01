@@ -1,0 +1,15 @@
+#!/bin/bash
+# usage: tp [-t SECONDS] [-m KB] FILE.rb   -> prints "<status> <wall s> <maxrss MB> FILE"
+# Runs one typeprof at a time (flock), under timeout and ulimit -v.
+T=120; M=3000000
+while getopts t:m: o; do case $o in t) T=$OPTARG;; m) M=$OPTARG;; esac; done; shift $((OPTIND-1))
+exec 9>/tmp/claude-1000/typeprof-timeout-analysis.lock
+flock 9
+f="$*"
+out=$(mktemp)
+( ulimit -v $M; /usr/bin/time -f "%e %M" -o $out.time timeout $T typeprof --show-errors "$@" > $out.out 2> $out.err ); st=$?
+read wall rss < <(tail -1 $out.time)
+case $st in 0) s=ok;; 124) s=TIMEOUT;; *) s="exit$st";; esac
+printf "%s %s %d %s\n" $s $wall $((rss/1024)) "$f"
+[ -n "$TP_KEEP" ] && cp $out.out "$TP_KEEP"
+rm -f $out $out.*

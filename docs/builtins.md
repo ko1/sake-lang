@@ -9,7 +9,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 ## Array
 
 - `Array.!=(x, Any)`
+- `Array.<(x, Any)`
+- `Array.<=(x, Any)`
+- `Array.<=>(x, Any)`
 - `Array.==(x, Any)`
+- `Array.>(x, Any)`
+- `Array.>=(x, Any)`
 - `Array.[](x, Any)`
 - `Array.[]=(x, Any, Any)`
 - `Array.all?(x) { }`
@@ -172,6 +177,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Hash
 
+- `Hash.!=(x, Any)`
+- `Hash.==(x, Any)`
 - `Hash.[](x, Any)`
 - `Hash.[]=(x, Any, Any)`
 - `Hash.all?(x) { }`
@@ -439,8 +446,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Set
 
+- `Set.!=(x, Any)`
 - `Set.&(x, Any)`
 - `Set.-(x, Any)`
+- `Set.==(x, Any)`
 - `Set.add(x, Any)`
 - `Set.add?(x, Any)`
 - `Set.all?(x) { }`
@@ -637,7 +646,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 ## Tuple
 
 - `Tuple.!=(x, Any)`
+- `Tuple.<(x, Any)`
+- `Tuple.<=(x, Any)`
+- `Tuple.<=>(x, Any)`
 - `Tuple.==(x, Any)`
+- `Tuple.>(x, Any)`
+- `Tuple.>=(x, Any)`
 - `Tuple.[](x, Any)`
 - `Tuple.[]=(x, Any, Any)`
 - `Tuple.length(x)`

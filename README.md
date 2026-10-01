@@ -111,8 +111,7 @@ running.
   escape a function.
 - **Built-in library**: about 550 operations, named after Ruby's core library.
 
-Not yet: protocols or generic functions (for example `to_s` or `==` across types), string
-interpolation, unary operators, and built-in constants such as `Math::PI`.
+Not yet: `case`/`when`, first-class blocks, and built-in constants such as `Math::PI`.
 
 ## Repository layout
 

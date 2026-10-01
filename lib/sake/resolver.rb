@@ -753,8 +753,8 @@ module Sake
         check_args(node.arguments, ctx)
         return
       elsif node.call_operator_loc.nil? && UNARY_OPS.include?(node.name)
-        hint = node.name == :-@ ? ["write `0 - #{recv.slice}`"] : []
-        error(node, "unary operator `#{node.slice}` is not supported yet (undecided)", hint)
+        # `!x` is `x ? false : true`; `-x`, `+x`, `~x` dispatch on x's type, like binary operators.
+        set_call(node, ctx, Operators::Call.new(Operators::MODULE_OF[node.name.to_s], node.name.to_s)) unless node.name == :!
         return check(recv, ctx)
       elsif node.call_operator_loc.nil? && %i[[] []=].include?(node.name)
         want = node.name == :[] ? 1 : 2
@@ -789,7 +789,7 @@ module Sake
     def check_arity(node, target, argc, has_block)
       case target
       when Operators::Call
-        want = target.op == "[]=" ? 3 : 2
+        want = target.op == "[]=" ? 3 : (Operators::UNARY.include?(target.op) ? 1 : 2)
         error(node, "#{target.module}.#{target.op} takes #{want} arguments (given #{argc})") if argc != want
       when Dispatch
         fn = @functions.dig(target.module, target.name)

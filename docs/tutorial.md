@@ -367,7 +367,7 @@ Array.each(Array[1, 2, 3]) { |x| print(x * 10, " ") }
 puts
 p(Array.map(nums) { |x| x * x })
 p(Array.select(nums) { it > 3 })                   # `it` names the only parameter
-p(Array.sort_by(nums) { 0 - _1 })                  # so does _1
+p(Array.sort_by(nums) { -_1 })                     # so does _1
 puts(Array.reduce(nums, 0) { |acc, x| acc + x })
 Array.each_with_index(Array["a", "b"]) { |s, i| puts("#{s}#{i}") }
 Integer.times(3) { |i| print(i, " ") }
@@ -1123,7 +1123,6 @@ exceptions_flow.sake:11:1: error: rescue OtherError: the begin body never raises
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
-- unary operators
 - `eval`, `send`, and similar
 
 All of these are reported together, before running:
@@ -1134,7 +1133,6 @@ PI = 3.14159
 class Point
   def origin = self
 end
-puts(!true)
 eval("1 + 1")
 ```
 
@@ -1143,13 +1141,11 @@ $ sake forbidden.sake
 forbidden.sake:2:1: error: Sake has no value constants; only a Struct type can be assigned to a constant
   hint: define a function instead: `def pi = 3.14159`
 forbidden.sake:4:16: error: Sake has no `self`
-forbidden.sake:6:6: error: unary operator `!true` is not supported yet (undecided)
-forbidden.sake:7:1: error: `eval` is not allowed in Sake (it defeats static analysis)
+forbidden.sake:6:1: error: `eval` is not allowed in Sake (it defeats static analysis)
 (exit status 2)
 ```
 
-Instead of `!x`, write `x == false` or swap
-the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
+For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
 ## 14. Looking at the types (experimental)
 

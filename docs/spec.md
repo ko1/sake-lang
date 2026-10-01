@@ -300,9 +300,9 @@ operator through that module ([§5.6](#56-calling-a-modules-functions-module_fun
 
 | Module | Operators | Built-in types that include it |
 |---|---|---|
-| `Arithmetic` | `+ - * / % **` | Integer, Float, Rational, Complex, String, Time, Set |
-| `Comparable` | `<=> < <= > >=` | Integer, Float, Rational, String, Time |
-| `Bitwise` | `& \| ^ << >>` | Integer, Set |
+| `Arithmetic` | `+ - * / % **`, unary `-x` `+x` (`-@` `+@`) | Integer, Float, Rational, Complex, String, Time, Set |
+| `Comparable` | `<=> < <= > >=` | Integer, Float, Rational, String, Time, Tuple, Array |
+| `Bitwise` | `& \| ^ << >>`, unary `~x` | Integer, Set |
 | `Indexable` | `[]`, `[]=` ([§8.2](#82-indexing)) | Array, Hash, String, Tuple, MatchData |
 | `Kernel` | `== != =~ !~` | every type |
 
@@ -327,8 +327,10 @@ table**:
 | `+` | (Integer, Integer) → Integer; with a Float → Float; with a Rational (and no Float) → Rational; with a Complex → Complex; (String, String) → String |
 | `-` `*` `/` `%` `**` | numeric pairs as for `+` |
 | `*` | also (String, Integer) → String |
-| `<` `<=` `>` `>=` | numeric pairs, (String, String) → true/false |
-| `==` `!=` | numeric pairs, (String, String), (Symbol, Symbol), (true/false, true/false), (nil, nil); and (T, nil), (nil, T) for **any** T |
+| `<` `<=` `>` `>=` `<=>` | numeric pairs, (String, String), (Tuple, Tuple), (Array, Array) → true/false (`<=>`: -1, 0, 1, or nil) |
+| `==` `!=` | numeric pairs, (String, String), (Symbol, Symbol), (true/false, true/false), (nil, nil), (Tuple, Tuple), (Array, Array), (Set, Set), (Hash, Hash), two Records; and (T, nil), (nil, T) for **any** T |
+| unary `-` `+` | Integer, Float, Rational, Complex → the same type |
+| unary `~` | Integer → Integer |
 | `&` `\|` `^` `<<` `>>` | (Integer, Integer) → Integer |
 | `\|` `&` `-` | (Set, Set) → Set (union, intersection, difference) |
 | `=~` | (String, Regexp), (Regexp, String) → Integer or nil; `!~` (String, Regexp) → true/false |
@@ -342,7 +344,11 @@ table**:
   `a ** b` does not depend on the value of `b`. Write `2r ** -1` for a Rational.
 - **Complex.** A Complex has no ordering, so `<` and the like are not defined for it.
 - **Time.** `Time ± number` gives a Time; `Time - Time` gives a Float of seconds; two Times compare.
-- **Equality of Tuples and Arrays.** `==` between Tuples or Arrays is not defined yet.
+- **Collections.** Tuples, Arrays, Sets, Hashes, and Records are equal when their contents are
+  (two Records also need the same fields). Tuples and Arrays are ordered element by element, as
+  Ruby's Arrays are; when two elements cannot be compared, `<` and the like raise `ArgumentError`
+  and `<=>` gives nil. Before running, the checker reports element types that cannot be compared.
+- **`!x`** is `x ? false : true`: it works on any value and is not an operation of a type.
 - **Compound assignment.** `x OP= e` means `x = x OP e`.
 - **Not operators.** `&&` and `||` short-circuit and return one of their operands, as in Ruby.
 
@@ -369,10 +375,6 @@ table**:
   Ruby. An Array of T raises `IndexError` instead, because nil is not a T.
 - **Compound assignment.** `x[k] OP= v` and `x[k] ||= v` evaluate `x` and `k` once.
 - **Local `||=`.** `y ||= v` assigns to a local only when it is nil or false.
-
-### 8.3 Not supported
-
-- Unary operators: `!x`, `-x`, `+x`, `~x`. They are static errors.
 
 ## 9. Control flow
 
@@ -875,9 +877,7 @@ Each of these is rejected statically. Most wait on a design decision.
 
 - **Writing to Record fields.**
 - **`Array.new`.**
-- **Unary operators.**
 - **`hash` defined by a type**, so that Struct values used as Hash keys or Set elements compare by their own `==` (a type can already define `==` and `<=>`, [§8.1](#81-binary-operators)).
-- **Equality and order of Tuples** (`[a, b] == [c, d]`, Tuple keys in `sort_by`): undecided.
 - **The type scope `Integer.(a + b)`.**
 - **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**
 - **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.

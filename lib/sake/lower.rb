@@ -225,6 +225,9 @@ module Sake
 
     def call(n)
       return prev_value(n) if n.receiver.nil? && n.name == :_ && n.variable_call?
+      if n.name == :! && n.call_operator_loc.nil? && n.receiver && n.arguments.nil? # `!x` is `x ? false : true`
+        return If.new(cond: lower(n.receiver), then_: lit(false, n), else_: lit(true, n), origin: n)
+      end
       t = target(n)
       return unresolved(n) if t.nil?
       if t.is_a?(Operators::Call)
@@ -234,6 +237,7 @@ module Sake
           elsif n.receiver.is_a?(Prism::ConstantReadNode) then args(n.arguments)
           else [lower(n.receiver), *args(n.arguments)]
           end
+        return UnOp.new(op: t.op, value: xs[0], origin: n) if Operators::UNARY.include?(t.op)
         return IndexGet.new(recv: xs[0], key: xs[1], origin: n) if t.module == "Indexable" && t.op == "[]"
         return IndexSet.new(recv: xs[0], key: xs[1], value: xs[2], origin: n) if t.module == "Indexable"
         return IsNil.new(value: xs[0], negate: t.op == "!=", origin: n) if %w[== !=].include?(t.op) && xs[1].is_a?(Lit) && xs[1].value.nil?

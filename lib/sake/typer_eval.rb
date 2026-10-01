@@ -109,6 +109,7 @@ module Sake
       when Yield then call_block(env.frame.block, n.args.map { ev(_1, env) })
       when CallBuiltin, CallUser, CallDispatch then call(n, env)
       when BinOp then binop(n.origin, n.op, ev(n.left, env), ev(n.right, env))
+      when UnOp then unop(n.origin, n.op, ev(n.value, env))
       when IsNil then binop(n.origin, n.negate ? "!=" : "==", ev(n.value, env), t("Nil"))
       when IndexGet then index_get(n.origin, ev(n.recv, env), ev(n.key, env), lit_of(n.key))
       when IndexSet

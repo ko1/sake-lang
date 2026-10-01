@@ -9,8 +9,10 @@ module Sake
       "<=>" => "Comparable", "<" => "Comparable", "<=" => "Comparable", ">" => "Comparable", ">=" => "Comparable",
       "&" => "Bitwise", "|" => "Bitwise", "^" => "Bitwise", "<<" => "Bitwise", ">>" => "Bitwise",
       "==" => "Kernel", "!=" => "Kernel", "=~" => "Kernel", "!~" => "Kernel",
-      "[]" => "Indexable", "[]=" => "Indexable"
+      "[]" => "Indexable", "[]=" => "Indexable",
+      "-@" => "Arithmetic", "+@" => "Arithmetic", "~" => "Bitwise" # unary: `-x`, `+x`, `~x`
     }.freeze
+    UNARY = %w[-@ +@ ~].freeze
     MODULES = %w[Arithmetic Comparable Bitwise Indexable].freeze
 
     # The modules each built-in type includes (every type also includes Kernel).

@@ -320,15 +320,13 @@ that can never match. Level 4 also reports a `raise` that nothing rescues:
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
-- unary operators
 - `eval`, `send`, and similar
 
 All of these are reported together, before running:
 
 @@example forbidden
 
-Instead of `!x`, write `x == false` or swap
-the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
+For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
 ## 14. Looking at the types (experimental)
 

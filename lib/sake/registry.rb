@@ -30,11 +30,12 @@ module Sake
 
   # Namespace => name => Builtin, plus the closed BinaryOp table.
   class Registry
-    attr_reader :binary_ops
+    attr_reader :binary_ops, :unary_ops
 
     def initialize
       @ns = Hash.new { |h, k| h[k] = {} }
       @binary_ops = Hash.new { |h, k| h[k] = {} }
+      @unary_ops = Hash.new { |h, k| h[k] = {} }
     end
 
     def define(ns, name, params, optional: [], rest: nil, block: :none, &impl)
@@ -53,6 +54,11 @@ module Sake
 
     def define_binary(op, t1, t2, &impl)
       @binary_ops[op.to_s][[t1, t2]] = impl
+    end
+
+    # `-x`, `+x`, `~x` for a built-in type t (the result has the type of x).
+    def define_unary(op, t, &impl)
+      @unary_ops[op.to_s][t] = impl
     end
 
     def namespace?(ns) = @ns.key?(ns)

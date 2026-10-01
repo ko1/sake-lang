@@ -59,6 +59,20 @@ module Sake
         %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } }
       end
       %w[Integer Float String Boolean Tuple Array].each { define_nil_equality(reg, _1) }
+      %w[Integer Float Rational Complex].each { |t| %i[-@ +@].each { |op| reg.define_unary(op, t) { |a| a.public_send(op) } } }
+      reg.define_unary(:~, "Integer") { |a| ~a }
+      # Collections compare by their contents; Tuple and Array also in dictionary order.
+      %w[Tuple Array Set Hash].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
+      %w[Tuple Array].each do |t|
+        reg.define_binary(:<=>, t, t) { |a, b| a <=> b }
+        COMPARE.each do |op|
+          reg.define_binary(op, t, t) do |a, b|
+            c = a <=> b
+            raise Fail.new("ArgumentError", "comparison of #{t} with #{t} failed (elements that cannot be compared)") if c.nil?
+            c.public_send(op, 0)
+          end
+        end
+      end
     end
 
     # `x == nil` / `x != nil` for any type T (Ruby semantics: false / true unless x is nil).
@@ -251,7 +265,7 @@ module Sake
     rescue ArgumentError, NoMethodError
       vals = keys || a
       types = vals.map { Values.describe(_1) }.uniq
-      hint = types.include?("Tuple") ? " (Tuples have no order; use a Struct with <=>, or a String or Integer key)" : ""
+      hint = types.include?("Tuple") ? " (Tuples compare element by element; some elements cannot be compared)" : ""
       raise Fail.new("ArgumentError", "cannot compare #{keys ? "block results" : "elements"} of types #{types.join(", ")}#{hint}")
     end
 

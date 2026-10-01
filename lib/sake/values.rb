@@ -12,6 +12,8 @@ module Sake
 
     # Structural, so that Tuples work as Hash keys and Set elements.
     def ==(other) = other.is_a?(Tuple) && @elems == other.elems
+    # Dictionary order, as Ruby's Array (nil when some pair of elements cannot be compared).
+    def <=>(other) = other.is_a?(Tuple) ? @elems <=> other.elems : nil
     def to_s = Values.inspect(self) # for Ruby methods such as join and format
     alias eql? ==
     def hash = [Tuple, @elems].hash

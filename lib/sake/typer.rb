@@ -261,7 +261,7 @@ module Sake
     def operand_pair?(c) = c.arg == "pair" && !c.op.start_with?("Indexable.")
 
     def show_failing(c)
-      return c.failing.map { |x, y| "(#{show([x])}, #{show([y])})" }.uniq.join(", ") if operand_pair?(c)
+      return c.failing.map { |x, y| "(#{show([x])}, #{show([y])})" }.uniq.join(", ") if operand_pair?(c) || c.arg == "elements"
       c.failing.map { show([_1]) }.uniq.join(" | ")
     end
 
@@ -435,6 +435,11 @@ module Sake
         end
       end
       pairs.reject { |x, _| struct_atom?(x) }.each do |x, y|
+        if %w[== !=].include?(op) && [x, y].all? { _1.is_a?(Array) && _1[0] == :record }
+          hits += 1
+          results << t("Boolean")
+          next
+        end
         key = [x, y].map { atom_type_name(_1) }
         if %w[== !=].include?(op) && key.include?("Nil")
           hits += 1
@@ -452,6 +457,62 @@ module Sake
       verdict = hits == pairs.size ? :proven : (hits.zero? ? :error : :partial)
       actual = pairs.map { |x, y| tuple([[x].freeze, [y].freeze]) }
       add_check(node, op_name(op), "pair", "table row", u(*actual), verdict, failing)
+      check_ordered_elements(node, op, pairs) if op == "<=>" || COMPARE_OPS.take(4).include?(op)
+      u(*results)
+    end
+
+    # Tuples and Arrays are ordered by their elements: each pair of element types must be comparable.
+    def check_ordered_elements(node, op, pairs)
+      elem_pairs = []
+      pairs.each do |x, y|
+        if [x, y].all? { _1.is_a?(Array) && _1[0] == :tuple }
+          x[1].zip(y[1]).each { |ex, ey| elem_pairs.concat(ex.product(ey)) if ey }
+        elsif [x, y].all? { _1.is_a?(Array) && _1[0] == :array }
+          elem_pairs.concat(elem_of([x]).product(elem_of([y])))
+        end
+      end
+      return if elem_pairs.empty?
+      failing = elem_pairs.reject { |ex, ey| comparable_atoms?(ex, ey) }
+      verdict = failing.empty? ? :proven : (failing.size == elem_pairs.size ? :error : :partial)
+      add_check(node, op_name(op), "elements", "comparable elements", u(*elem_pairs.map { |ex, ey| tuple([[ex].freeze, [ey].freeze]) }),
+                verdict, failing)
+    end
+
+    def comparable_atoms?(x, y, depth = 0)
+      return true if [x, y].any? { _1.is_a?(Array) && _1[0] == :unknown }
+      if struct_atom?(x)
+        return Operators.includes?(@program.includes || {}, x, "Comparable") && !!@program.functions.dig(x, "<=>")
+      end
+      if depth < 3 && [x, y].all? { _1.is_a?(Array) && _1[0] == :tuple }
+        return x[1].zip(y[1]).all? { |ex, ey| ey.nil? || ex.product(ey).all? { |a, b| comparable_atoms?(a, b, depth + 1) } }
+      end
+      if depth < 3 && [x, y].all? { _1.is_a?(Array) && _1[0] == :array }
+        return elem_of([x]).product(elem_of([y])).all? { |a, b| comparable_atoms?(a, b, depth + 1) }
+      end
+      @registry.binary_ops["<=>"].key?([x, y].map { atom_type_name(_1) })
+    end
+
+    # `-x` / `+x` / `~x`: a built-in type keeps its type; a Struct type runs its own operator.
+    def unop(node, op, a)
+      return [] if a.empty?
+      if unknown?(a)
+        add_check(node, op_name(op), "operand", "a type with #{op}", a, :unknown)
+        return unknown("operand")
+      end
+      results = []
+      failing = []
+      a.each do |x|
+        if struct_atom?(x)
+          fn = Operators.includes?(@program.includes || {}, x, Operators::MODULE_OF.fetch(op)) && @program.functions.dig(x, op)
+          fn ? results << call_user(fn, [[x].freeze], nil) : failing << x
+        elsif @registry.unary_ops[op].key?(atom_type_name(x))
+          results << [x].freeze
+        else
+          failing << x
+        end
+      end
+      verdict = failing.empty? ? :proven : (failing.size == a.size ? :error : :partial)
+      add_check(node, op_name(op), "operand", @registry.unary_ops[op].keys.join("|"), a, verdict, failing)
       u(*results)
     end
 
