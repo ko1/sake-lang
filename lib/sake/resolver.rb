@@ -33,7 +33,8 @@ module Sake
                    const_get const_set binding].freeze
     # trait: checking a module's own function while the module is included somewhere; names it lacks
     # are requirements on the including namespace, not errors.
-    Ctx = Struct.new(:ns, :fn, :in_block, :in_loop, :trait, :in_rescue)
+    # prev: a statement precedes this one in its list, so `_` (its value) can be read.
+    Ctx = Struct.new(:ns, :fn, :in_block, :in_loop, :trait, :in_rescue, :prev)
     # Raised by operations, and rescuable by name. Program errors (NOT_RESCUABLE) are what the checks before
     # running report, so they cannot be rescued.
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError
@@ -403,7 +404,13 @@ module Sake
       @functions.each_value do |fs|
         fs.each_value { |f| check(f.body, Ctx.new(f.namespace, f, false, false, !f.origin && traits.include?(f.namespace))) }
       end
-      @toplevel.each { check(_1, Ctx.new(nil, nil, false, false, false)) }
+      # `_` after a definition has no value to read: only an expression statement counts as previous.
+      body = @root.statements.body
+      @toplevel.each do |st|
+        i = body.index { _1.equal?(st) }
+        prev = i.positive? && !definition?(body[i - 1])
+        check(st, Ctx.new(nil, nil, false, false, false, false, prev))
+      end
       @direct_calls.each do |node, fn|
         next if @requirements[fn].empty?
         includers = @includes.select { |_, l| l.any? { _1[0] == fn.namespace } }.keys
@@ -413,12 +420,26 @@ module Sake
       end
     end
 
+    def definition?(n) = n.is_a?(Prism::DefNode) || n.is_a?(Prism::ClassNode) || n.is_a?(Prism::ModuleNode) || n.is_a?(Prism::ConstantWriteNode)
+
+    # Each statement after the first can read the previous one's value as `_`. In parentheses and
+    # interpolation the first statement sees what the enclosing statement sees.
+    def check_statements(list, ctx, inherit: false)
+      list.body.each_with_index do |st, i|
+        check(st, ctx.dup.tap { _1.prev = i.positive? || (inherit && ctx.prev) })
+      end
+    end
+
     def check(node, ctx)
       case node
+      when Prism::LocalVariableReadNode
+        if node.name == :_
+          error(node, "`_` is the previous statement's value, but here it names a local variable", ["give the variable another name"])
+        end
       when nil, Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::ImaginaryNode, Prism::StringNode, Prism::TrueNode,
-           Prism::FalseNode, Prism::NilNode, Prism::LocalVariableReadNode, Prism::ItLocalVariableReadNode
+           Prism::FalseNode, Prism::NilNode, Prism::ItLocalVariableReadNode
         nil
-      when Prism::StatementsNode then node.body.each { check(_1, ctx) }
+      when Prism::StatementsNode then check_statements(node, ctx)
       when Prism::LocalVariableWriteNode then check(node.value, ctx)
       when Prism::LocalVariableOrWriteNode then check(node.value, ctx)
       when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode
@@ -446,7 +467,8 @@ module Sake
         check(node.predicate, ctx)
         check(node.statements, ctx.dup.tap { _1.in_loop = true })
       when Prism::AndNode, Prism::OrNode then check_each(ctx, node.left, node.right)
-      when Prism::ParenthesesNode then check(node.body, ctx)
+      when Prism::ParenthesesNode
+        node.body.is_a?(Prism::StatementsNode) ? check_statements(node.body, ctx, inherit: true) : check(node.body, ctx)
       when Prism::ArrayNode
         if node.opening_loc&.slice&.start_with?("%")
           error(node, "`#{node.opening_loc.slice}...]` is not supported yet (whether it is a Tuple or an Array is undecided)")
@@ -491,7 +513,7 @@ module Sake
         node.parts.each do |part|
           case part
           when Prism::StringNode then nil
-          when Prism::EmbeddedStatementsNode then check(part.statements, ctx)
+          when Prism::EmbeddedStatementsNode then part.statements && check_statements(part.statements, ctx, inherit: true)
           when Prism::EmbeddedVariableNode then check(part.variable, ctx)
           else error(part, "unsupported part of an interpolated literal")
           end
@@ -699,6 +721,21 @@ module Sake
       end
       recv = node.receiver
 
+      if recv.nil? && node.name == :_ && node.variable_call?
+        return if ctx.prev
+        return error(node, "`_` is the previous statement's value, and no statement precedes it here",
+                     ["`_` reads the statement just before, in the same body (a function, block, or branch)"])
+      end
+      if (subject = chain_subject(node))
+        # `x.T.f(args)` is `T.f(x, args)`.
+        target = resolve_qualified(node, recv.name.to_s, node.name.to_s, argc: args.size + 1)
+        check(subject, ctx)
+        check_args(node.arguments, ctx)
+        check_block(blk, ctx) if blk
+        return unless target
+        set_call(node, ctx, target)
+        return check_arity(node, target, args.size + 1, !blk.nil?)
+      end
       if recv.nil?
         return error(node, "`#{node.name}` is not allowed in Sake (it defeats static analysis)") if FORBIDDEN.include?(node.name.to_s)
         return check_raise(node, ctx) if node.name == :raise && !lookup_unqualified?(ctx, "raise")
@@ -728,6 +765,10 @@ module Sake
         check(recv, ctx)
         return check_args(node.arguments, ctx)
       else
+        if node.name.to_s.match?(/\A[A-Z]/) && node.arguments.nil? && blk.nil?
+          check(recv, ctx)
+          return error(node, "`#{first_line(node.slice)}` needs an operation after the type: `#{first_line(recv.slice)}.#{node.name}.op(...)`")
+        end
         return lowercase_receiver_error(node, ctx)
       end
 
@@ -837,7 +878,16 @@ module Sake
       error(node, "#{what} `#{name}`", hints)
     end
 
-    def resolve_qualified(node, ns, name = node.name.to_s)
+    # `x.T.f(...)`: the subject x of a chain whose step `.T` names a type or module.
+    def chain_subject(node)
+      r = node.receiver
+      return nil unless node.call_operator_loc && r.is_a?(Prism::CallNode) && r.receiver && r.call_operator_loc
+      return nil unless r.name.to_s.match?(/\A[A-Z]/) && r.arguments.nil? && r.block.nil?
+      r.receiver
+    end
+
+    # argc: the number of arguments when node's own count is not it (a chain adds its subject).
+    def resolve_qualified(node, ns, name = node.name.to_s, argc: nil)
       if (ns == "Struct" && name == "new") || (ns == "Data" && name == "define")
         return error(node, "Struct.new must be assigned to a top-level constant: `Point = Struct.new(:x, :y)`")
       end
@@ -848,14 +898,14 @@ module Sake
         return error(node.receiver, "`#{ns}` is now `#{Operators::MODULE_OF[name] || old}`")
       end
       if (Operators::MODULES.include?(ns) || ns == "Kernel") && Operators::MODULE_OF[name] == ns
-        return error(node, "#{ns}.#{name} dispatches on its first argument, so it needs one") if (node.arguments&.arguments || []).empty?
+        return error(node, "#{ns}.#{name} dispatches on its first argument, so it needs one") if (argc || (node.arguments&.arguments || []).size).zero?
         return Operators::Call.new(ns, name)
       end
       unless @registry.namespace?(ns)
         return error(node.receiver, "undefined type or module `#{ns}`", spell(ns, @registry.namespaces).map { "did you mean `#{_1}`?" })
       end
       found = lookup(ns, name)
-      return mixin_call(node, ns, name, found) if found.is_a?(UserFunction) && @modules.key?(ns) && !found.module_function
+      return mixin_call(node, ns, name, found, argc) if found.is_a?(UserFunction) && @modules.key?(ns) && !found.module_function
       if found
         @direct_calls << [node, found] if found.is_a?(UserFunction)
         return found
@@ -879,8 +929,8 @@ module Sake
     end
 
     # M.f(x) for a mixin function: dispatch on the type of x among the types that include M.
-    def mixin_call(node, mod, name, fn)
-      if (node.arguments&.arguments || []).empty?
+    def mixin_call(node, mod, name, fn, argc = nil)
+      if (argc || (node.arguments&.arguments || []).size).zero?
         return error(node, "#{mod}.#{name} is a mixin function: it has no subject to dispatch on",
                      ["call it on a type that includes #{mod}, or mark it with `module_function`"])
       end
@@ -925,6 +975,12 @@ module Sake
 
       suggestions = node.name == :nil? ? ["#{node.receiver.slice} == nil"] : suggest(node)
       hints = suggestions.empty? ? ["Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"] : suggestions
+      # The chain form of the first suggestion, for a single step: `x.T.f(args)`.
+      if suggestions.any? && !lowercase_call?(node.receiver) && !node.attribute_write? && (op = suggestions.first[/\A[A-Z][\w:]*\.[^(\s]+/])
+        args = (node.arguments&.arguments || []).map(&:slice)
+        blk = node.block.is_a?(Prism::BlockNode) ? " #{node.block.slice.include?("\n") ? "{ ... }" : node.block.slice}" : ""
+        hints << "#{first_line(node.receiver.slice)}.#{op}#{args.empty? ? "" : "(#{args.join(", ")})"}#{blk}"
+      end
       shown = node.attribute_write? ? "#{node.name.to_s.delete_suffix("=")} = ..." : node.name
       error(node, "method call on a value `#{first_line(node.receiver.slice)}.#{shown}` is not allowed", hints)
     end

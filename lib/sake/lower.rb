@@ -45,11 +45,35 @@ module Sake
       frame = Frame.new
       @scopes = [Scope.new({}, frame)]
       params.each { @scopes[0].slot(_1.to_sym) }
-      body = seq(stmts.compact.map { lower(_1) }, stmts.first)
+      @prev = nil
+      body = statements(stmts.compact, stmts.first)
       AST::Function.new(name:, fn:, nparams: params.size, nslots: frame.names.size, slot_names: frame.names, body:)
     end
 
     def seq(nodes, origin) = nodes.size == 1 ? nodes[0] : Seq.new(body: nodes, origin:)
+
+    # The previous statement's value, for `_`: a slot is made only when some `_` reads it.
+    Prev = Struct.new(:slot)
+
+    # inherit: the first statement reads the `_` of the enclosing statement (parentheses, interpolation).
+    def statements(stmts, origin, inherit: false)
+      outer = @prev
+      nodes = []
+      stmts.each_with_index do |st, i|
+        @prev = i.positive? ? Prev.new : (inherit ? outer : nil)
+        node = lower(st)
+        nodes[-1] = LVarSet.new(slot: @prev.slot, value: nodes[-1], origin: stmts[i - 1]) if i.positive? && @prev.slot
+        nodes << node
+      end
+      @prev = outer
+      seq(nodes, origin)
+    end
+
+    def prev_value(n)
+      raise "BUG: `_` with no previous statement at line #{n.location.start_line}" unless @prev
+      @prev.slot ||= @scopes[-1].slot(:"_#{n.location.start_offset}")
+      get(@prev.slot, n)
+    end
 
     def scope(depth) = @scopes[-1 - depth]
     def slot(depth, name) = scope(depth).slot(name)
@@ -62,7 +86,7 @@ module Sake
     def lower(n)
       case n
       when nil then lit(nil, n)
-      when Prism::StatementsNode then seq(n.body.map { lower(_1) }, n)
+      when Prism::StatementsNode then statements(n.body, n)
       when Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::ImaginaryNode then lit(n.value, n)
       when Prism::StringNode then Str.new(string: n.unescaped.dup.freeze, origin: n)
       when Prism::SymbolNode then lit(n.unescaped.to_sym, n)
@@ -95,7 +119,7 @@ module Sake
         While.new(cond: lower(n.predicate), body: lower(n.statements), until_: n.is_a?(Prism::UntilNode), origin: n)
       when Prism::AndNode then And.new(left: lower(n.left), right: lower(n.right), origin: n)
       when Prism::OrNode then Or.new(left: lower(n.left), right: lower(n.right), origin: n)
-      when Prism::ParenthesesNode then lower(n.body)
+      when Prism::ParenthesesNode then n.body.is_a?(Prism::StatementsNode) ? statements(n.body.body, n.body, inherit: true) : lower(n.body)
       when Prism::ArrayNode then MakeTuple.new(elems: n.elements.map { lower(_1) }, origin: n)
       when Prism::HashNode then MakeRecord.new(keys: n.elements.map { _1.key.unescaped }, values: n.elements.map { lower(_1.value) }, origin: n)
       when Prism::MatchRequiredNode
@@ -145,7 +169,8 @@ module Sake
       parts = n.parts.map do |part|
         case part
         when Prism::StringNode then Str.new(string: part.unescaped.dup.freeze, origin: part)
-        when Prism::EmbeddedStatementsNode then ToS.new(value: lower(part.statements), origin: part)
+        when Prism::EmbeddedStatementsNode
+          ToS.new(value: part.statements ? statements(part.statements.body, part.statements, inherit: true) : lit(nil, part), origin: part)
         when Prism::EmbeddedVariableNode then ToS.new(value: lower(part.variable), origin: part)
         end
       end
@@ -199,11 +224,16 @@ module Sake
     end
 
     def call(n)
+      return prev_value(n) if n.receiver.nil? && n.name == :_ && n.variable_call?
       t = target(n)
       return unresolved(n) if t.nil?
       if t.is_a?(Operators::Call)
-        explicit = n.receiver.is_a?(Prism::ConstantReadNode)
-        xs = explicit ? args(n.arguments) : [lower(n.receiver), *args(n.arguments)]
+        subject = chain_subject(n)
+        xs =
+          if subject then [lower(subject), *args(n.arguments)]
+          elsif n.receiver.is_a?(Prism::ConstantReadNode) then args(n.arguments)
+          else [lower(n.receiver), *args(n.arguments)]
+          end
         return IndexGet.new(recv: xs[0], key: xs[1], origin: n) if t.module == "Indexable" && t.op == "[]"
         return IndexSet.new(recv: xs[0], key: xs[1], value: xs[2], origin: n) if t.module == "Indexable"
         return IsNil.new(value: xs[0], negate: t.op == "!=", origin: n) if %w[== !=].include?(t.op) && xs[1].is_a?(Lit) && xs[1].value.nil?
@@ -211,7 +241,8 @@ module Sake
       end
       return raise_node(n) if t == :raise
 
-      xs = args(n.arguments)
+      subject = chain_subject(n)
+      xs = [*(subject ? [lower(subject)] : []), *args(n.arguments)]
       blk = n.block && block(n.block)
       case t
       when UserFunction then CallUser.new(fn: t, args: xs, block: blk, origin: n)
@@ -224,6 +255,13 @@ module Sake
         end
         CallBuiltin.new(fn: t, args: xs, block: blk, origin: n)
       end
+    end
+
+    # `x.T.f(...)`: x (see Resolver#chain_subject).
+    def chain_subject(n)
+      r = n.receiver
+      return nil unless n.call_operator_loc && r.is_a?(Prism::CallNode) && r.receiver && r.call_operator_loc
+      r.name.to_s.match?(/\A[A-Z]/) && r.arguments.nil? && r.block.nil? ? r.receiver : nil
     end
 
     def raise_node(n)

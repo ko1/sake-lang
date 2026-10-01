@@ -76,6 +76,7 @@ $ sake method_call.sake
 method_call.sake:2:11: error: method call on a value `name.upcase` is not allowed
   hint: String.upcase(name)
   hint: Symbol.upcase(name)
+  hint: name.String.upcase
 method_call.sake:3:17: error: method call on a value `name.strip.capitalize` is not allowed
   hint: String.capitalize(String.strip(name))
   hint: Symbol.capitalize(String.strip(name))
@@ -99,6 +100,30 @@ typo.sake:2:6: error: undefined type or module `Strng`
   hint: did you mean `String`?
 typo.sake:3:14: error: undefined function `Integer.to_string`
 (exit status 2)
+```
+
+Nested calls read inside out. Two forms let them read in order instead, with every step still
+naming its type: `x.T.f(...)` is `T.f(x, ...)`, and `_` is the value of the previous statement:
+
+```ruby
+line = "pear, Apple ,fig"
+
+# Left to right: each step names its type, and the value on its left is the first argument.
+puts(String.split(line, ",")
+  .Array.map { |s| String.downcase(String.strip(s)) }
+  .Array.sort
+  .Array.join(" < "))
+
+# Top to bottom: `_` is the previous statement's value.
+String.split(line, ",")
+Array.map(_) { |s| String.size(String.strip(s)) }
+puts("longest: #{Array.max(_)}")
+```
+
+```
+$ sake chains.sake
+apple < fig < pear
+longest: 5
 ```
 
 Sake's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`,
@@ -505,6 +530,7 @@ puts(Point.new(1))
 $ sake data_errors.sake
 data_errors.sake:3:9: error: method call on a value `pt.x` is not allowed
   hint: Point.get_x(pt)
+  hint: pt.Point.get_x
 data_errors.sake:4:4: error: method call on a value `pt.y = ...` is not allowed
   hint: Point.set_y(pt, 5)
 data_errors.sake:5:12: error: undefined function `Point.get_z`

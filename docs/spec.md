@@ -141,10 +141,37 @@ first argument. Both `Type` and `op` must exist, or the program is rejected befo
 they do not exist, the error offers spelling suggestions and lists other namespaces that define
 `op`.
 
-### 5.2 No calls on values
+### 5.2 Chains and `_`
+
+Two forms let a sequence of operations read from left to right, top to bottom, with every step
+still naming its type:
+
+- **Chain.** `x.T.f(args...)` is `T.f(x, args...)`: the step `.T` names a type or module, and the
+  value to its left becomes the first argument. Steps can follow one another, also with the dot at
+  the start of the next line. `x.T` with no operation after it is a static error.
+
+  ```ruby
+  String.split(line, ",")
+    .Array.map { |s| String.strip(s) }
+    .Array.join("|")
+  ```
+
+- **`_`** is the value of the previous statement in the same body (a function, a block, a
+  branch, or the top level). Reading `_` in the first statement of a body, or right after a
+  definition, is a static error. In parentheses and in string interpolation, the first statement
+  reads the `_` of the enclosing statement. `_` may still be bound as a name to ignore (`|_, v|`,
+  `a, _ = t`), but a `_` that names a local variable cannot be read.
+
+  ```ruby
+  String.split(line, ",")
+  Array.map(_) { |s| String.strip(s) }
+  Array.join(_, "|")
+  ```
+
+### 5.3 No calls on values
 
 A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error.
-The error suggests the qualified form.
+The error suggests the qualified form, and for a single step also the chain form (`x.T.op(...)`).
 
 - **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.upcase(String.strip(s))`.
 - **Field access** gets the accessor: `p.x` suggests `Point.get_x(p)`, and `p.x = v` suggests
@@ -152,12 +179,12 @@ The error suggests the qualified form.
 - **Literal receivers** narrow the suggestions to the literal's type.
 - **`x.nil?`** suggests `x == nil`.
 
-### 5.3 Unqualified calls
+### 5.4 Unqualified calls
 
 A call without a receiver, `f(args)`, is resolved statically. The first match wins:
 
 1. the enclosing class or module, including its built-in operations, Struct accessors, and the
-   functions it includes ([§5.4](#54-include));
+   functions it includes ([§5.5](#55-include));
 2. top-level functions;
 3. `Kernel` (`puts`, `print`, `p`).
 
@@ -166,7 +193,7 @@ several levels. An outer definition can always be reached with its namespace (`K
 
 Code at the top level has no enclosing namespace, so resolution starts at step 2.
 
-### 5.4 include
+### 5.5 include
 
 `include M` in a class or module body borrows the functions of the module `M`. This is Ruby's
 module, resolved statically:
@@ -186,7 +213,7 @@ module, resolved statically:
 - **Restrictions.** Only modules can be included, and include cycles are errors.
 - **Not inheritance.** `include` adds no subtype relation.
 
-### 5.5 Calling a module's functions: module_function and dispatch
+### 5.6 Calling a module's functions: module_function and dispatch
 
 A module's functions are of two kinds, as in Ruby:
 
@@ -208,7 +235,7 @@ A module's functions are of two kinds, as in Ruby:
   type's own `to_s` and `inspect`, or use the built-in form. `"#{x}"`, `puts`, and `p` are
   shorthands for them.
 
-### 5.6 Arity and blocks
+### 5.7 Arity and blocks
 
 The following are checked statically:
 
@@ -269,7 +296,7 @@ function.
 
 An operator dispatches on the type of its **left operand**: `a OP b` runs `T.OP(a, b)`, where `T` is
 the type of `a`. Each operator belongs to a module, and `a OP b` is shorthand for calling the
-operator through that module ([§5.5](#55-calling-a-modules-functions-module_function-and-dispatch)):
+operator through that module ([§5.6](#56-calling-a-modules-functions-module_function-and-dispatch)):
 
 | Module | Operators | Built-in types that include it |
 |---|---|---|
