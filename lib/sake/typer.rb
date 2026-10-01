@@ -1,0 +1,540 @@
+# frozen_string_literal: true
+
+module Sake
+  # Experimental whole-program type inference (forward abstract interpretation).
+  #
+  # A type is a canonical union: a sorted, frozen Array of atoms; [] is bottom (no value reaches here).
+  # Atoms: "Integer" "Float" "String" "Boolean" "Nil" "<Data name>",
+  #        [:tuple, [type, ...]], [:array, site_id], [:unknown, reason].
+  # User functions are instantiated per argument types (Crystal style); functions that yield are
+  # analyzed per call site. Arrays carry an allocation site whose element type is the union of every
+  # write; Data fields are the union of every write per type. The whole program is re-analyzed until
+  # these tables stop changing, and only the last pass's observations are reported.
+  class Typer
+    NUM = %w[Integer Float].freeze
+    COMPARE_OPS = %w[< <= > >= == !=].freeze
+    MAX_PASSES = 30
+    MAX_YIELD_DEPTH = 3
+    MAX_LOOP_ITER = 10
+    MAX_TUPLE_DEPTH = 3
+
+    Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
+    Frame = Struct.new(:fn, :ret, :block)
+    BlockCtx = Struct.new(:node, :params, :env)
+    Check = Struct.new(:line, :op, :arg, :expected, :actual, :verdict)
+
+    class Env
+      attr_reader :vars, :parent, :frame
+
+      def initialize(parent, frame, vars = {})
+        @parent = parent
+        @frame = frame
+        @vars = vars
+      end
+
+      def up(depth)
+        e = self
+        depth.times { e = e.parent }
+        e
+      end
+
+      def dup_level = Env.new(@parent, @frame, @vars.dup)
+
+      def chain_snapshot
+        e = self
+        snap = []
+        while e
+          snap << e.vars.dup
+          e = e.parent
+        end
+        snap
+      end
+    end
+
+    attr_reader :checks, :sites, :fields, :dead_functions, :passes
+
+    # narrow: inside `if x` / `while x` on a local variable, drop nil from x's type.
+    def initialize(program, narrow: true)
+      @program = program
+      @narrow = narrow
+      @registry = program.registry
+      @site_ids = {}.compare_by_identity
+      @sites = {}
+      @fields = Hash.new { |h, k| h[k] = {} }
+      @returns = {}
+    end
+
+    def run
+      @passes = 0
+      loop do
+        @passes += 1
+        before = snapshot
+        @checks = {}
+        @done = {}
+        @in_progress = {}
+        @yield_depth = Hash.new(0)
+        @instantiated = {}
+        env = Env.new(nil, Frame.new(nil, [], nil))
+        @program.toplevel.each { ev(_1, env) }
+        break if snapshot == before || @passes >= MAX_PASSES
+      end
+      all_fns = @program.functions.values.flat_map(&:values)
+      @dead_functions = all_fns.reject { @instantiated[_1] }
+      self
+    end
+
+    # --- types ---
+
+    def self.union(*tys)
+      atoms = tys.flatten(1).uniq
+      tuples, rest = atoms.partition { _1.is_a?(Array) && _1[0] == :tuple }
+      merged = tuples.group_by { _1[1].size }.map do |_, ts|
+        [:tuple, ts.map { _1[1] }.transpose.map { |es| union(*es) }]
+      end
+      (rest + merged).uniq.sort_by(&:inspect).freeze
+    end
+
+    def u(*tys) = Typer.union(*tys)
+    def t(name) = [name].freeze
+    def unknown(reason) = [[:unknown, reason]].freeze
+    def unknown?(ty) = ty.any? { _1.is_a?(Array) && _1[0] == :unknown }
+
+    def tuple(elems, depth = 0)
+      return unknown("tuple depth") if elems.any? { tuple_depth(_1) >= MAX_TUPLE_DEPTH }
+      [[:tuple, elems]].freeze
+    end
+
+    def tuple_depth(ty)
+      ty.map { |a| a.is_a?(Array) && a[0] == :tuple ? 1 + (a[1].map { tuple_depth(_1) }.max || 0) : 0 }.max || 0
+    end
+
+    def show(ty)
+      return "(none)" if ty.empty?
+      ty.map { show_atom(_1) }.join(" | ")
+    end
+
+    def show_atom(a)
+      case a
+      when "Boolean" then "true|false"
+      when "Nil" then "nil"
+      when String then a
+      else
+        case a[0]
+        when :tuple then "[#{a[1].map { show(_1) }.join(", ")}]"
+        when :array
+          s = @sites[a[1]]
+          s.declared ? "#{s.declared}[]@#{s.label}" : "Array@#{s.label}[#{show(s.elem)}]"
+        when :unknown then "?(#{a[1]})"
+        end
+      end
+    end
+
+    def snapshot
+      [@sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup]
+    end
+
+    # --- array sites and fields ---
+
+    def site_for(node, label_extra = nil, declared: nil, init: [])
+      id = (@site_ids[node] ||= @site_ids.size + 1)
+      @sites[id] ||= Site.new(id, node, "L#{node.location.start_line}#{label_extra}", declared, init, declared ? t(declared) : init)
+      [[:array, id]].freeze
+    end
+
+    def array_sites(ty) = ty.select { _1.is_a?(Array) && _1[0] == :array }.map { @sites[_1[1]] }
+    def elem_of(ty) = u(*array_sites(ty).map(&:elem))
+
+    def write_elems(ty, xs, node, op)
+      array_sites(ty).each do |s|
+        if s.declared
+          xs.each { |x| record(node, op, "elem", s.declared, x) }
+        else
+          s.elem = u(s.elem, *xs)
+        end
+      end
+    end
+
+    def field_write(dt, field, ty)
+      @fields[dt][field] = u(@fields[dt][field] || [], ty)
+    end
+
+    # --- checks ---
+
+    def atom_matches?(atom, want)
+      case atom
+      when String then want == atom
+      else
+        (atom[0] == :tuple && want == "Tuple") || (atom[0] == :array && want == "Array")
+      end
+    end
+
+    def record(node, op, arg, want, actual)
+      return if want == "Any" || actual.empty?
+      wants = Array(want)
+      verdict =
+        if unknown?(actual) then :unknown
+        else
+          hits = actual.count { |a| wants.any? { atom_matches?(a, _1) } }
+          if hits == actual.size then :proven
+          elsif hits.zero? then :error
+          else :partial
+          end
+        end
+      add_check(node, op, arg, wants.join("|"), actual, verdict)
+    end
+
+    def add_check(node, op, arg, expected, actual, verdict)
+      key = [node.location.start_line, node.location.start_column, op, arg]
+      prev = @checks[key]
+      if prev
+        prev.actual = u(prev.actual, actual)
+        prev.verdict = worse(prev.verdict, verdict)
+      else
+        @checks[key] = Check.new(node.location.start_line, op, arg, expected, actual, verdict)
+      end
+    end
+
+    # An instantiation that surely fails makes the site an error even if other instantiations pass.
+    def worse(a, b) = %i[error unknown partial proven].find { [a, b].include?(_1) }
+
+    # --- evaluation ---
+
+    def ev(node, env)
+      case node
+      when nil then t("Nil")
+      when Prism::StatementsNode
+        r = t("Nil")
+        node.body.each { r = ev(_1, env) }
+        r
+      when Prism::IntegerNode then t("Integer")
+      when Prism::FloatNode then t("Float")
+      when Prism::StringNode then t("String")
+      when Prism::TrueNode, Prism::FalseNode then t("Boolean")
+      when Prism::NilNode then t("Nil")
+      when Prism::LocalVariableReadNode then env.up(node.depth).vars[node.name] || t("Nil")
+      when Prism::ItLocalVariableReadNode then env.vars[:it] || t("Nil")
+      when Prism::LocalVariableWriteNode then assign(env, node.depth, node.name, ev(node.value, env))
+      when Prism::LocalVariableOperatorWriteNode
+        cur = env.up(node.depth).vars[node.name] || t("Nil")
+        assign(env, node.depth, node.name, binop(node, node.binary_operator.to_s, cur, ev(node.value, env)))
+      when Prism::MultiWriteNode then multi_write(node, env)
+      when Prism::IfNode then branch(env, node.predicate, node.statements, node.subsequent)
+      when Prism::UnlessNode then branch(env, node.predicate, node.else_clause, node.statements)
+      when Prism::ElseNode then ev(node.statements, env)
+      when Prism::WhileNode, Prism::UntilNode then loop_node(node, env)
+      when Prism::AndNode, Prism::OrNode
+        l = ev(node.left, env)
+        u(l, ev(node.right, env))
+      when Prism::ParenthesesNode then ev(node.body, env)
+      when Prism::ArrayNode then tuple(node.elements.map { ev(_1, env) })
+      when Prism::ReturnNode
+        vals = (node.arguments&.arguments || []).map { ev(_1, env) }
+        v = vals.size > 1 ? tuple(vals) : (vals.first || t("Nil"))
+        env.frame.ret = u(env.frame.ret, v)
+        []
+      when Prism::NextNode
+        vals = (node.arguments&.arguments || []).map { ev(_1, env) }
+        @next_acc[-1] = u(@next_acc[-1], vals.first || t("Nil")) if @next_acc&.any?
+        []
+      when Prism::BreakNode
+        (node.arguments&.arguments || []).each { ev(_1, env) }
+        []
+      when Prism::YieldNode
+        args = (node.arguments&.arguments || []).map { ev(_1, env) }
+        call_block(env.frame.block, args)
+      when Prism::CallNode then call(node, env)
+      else unknown("node #{node.type}")
+      end
+    end
+
+    # Writes from inside a block to an outer variable are weak (the block may run zero or more times).
+    def assign(env, depth, name, ty)
+      scope = env.up(depth)
+      scope.vars[name] = depth.zero? ? ty : u(scope.vars[name] || t("Nil"), ty)
+      ty
+    end
+
+    def join_into(env, a, b)
+      (a.vars.keys | b.vars.keys).each do |k|
+        env.vars[k] = u(a.vars[k] || t("Nil"), b.vars[k] || t("Nil"))
+      end
+    end
+
+    def branch(env, pred, then_node, else_node)
+      ev(pred, env)
+      e1 = env.dup_level
+      e2 = env.dup_level
+      narrow_truthy(e1, pred)
+      r = u(ev(then_node, e1), ev(else_node, e2))
+      join_into(env, e1, e2)
+      r
+    end
+
+    def loop_node(node, env)
+      MAX_LOOP_ITER.times do
+        before = env.chain_snapshot
+        ev(node.predicate, env)
+        body = env.dup_level
+        narrow_truthy(body, node.predicate) if node.is_a?(Prism::WhileNode)
+        ev(node.statements, body)
+        join_into(env, env.dup_level, body)
+        return t("Nil") if env.chain_snapshot == before
+      end
+      env.vars.transform_values! { unknown("loop did not converge") }
+      t("Nil")
+    end
+
+    def narrow_truthy(env, pred)
+      return unless @narrow && pred.is_a?(Prism::LocalVariableReadNode) && pred.depth.zero?
+      ty = env.vars[pred.name] or return
+      env.vars[pred.name] = u(*(ty - ["Nil"]).map { [_1] })
+    end
+
+    def multi_write(node, env)
+      v = ev(node.value, env)
+      n = node.lefts.size
+      tuples = v.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == n }
+      record(node, "multiple assignment", 1, "Tuple", v)
+      node.lefts.each_with_index do |target, i|
+        ty = unknown?(v) ? unknown("destructure") : u(*tuples.map { _1[1][i] })
+        assign(env, target.depth, target.name, ty)
+      end
+      v
+    end
+
+    def call(node, env)
+      target = @program.calls.fetch(node)
+      if target == :binary_op
+        return binop(node, node.name.to_s, ev(node.receiver, env), ev(node.arguments.arguments.first, env))
+      end
+
+      args = (node.arguments&.arguments || []).map { ev(_1, env) }
+      blk = node.block && BlockCtx.new(node.block, @program.blocks.fetch(node.block), env)
+      case target
+      when UserFunction then call_user(target, args, blk)
+      when Builtin then call_builtin(target, args, blk, node)
+      end
+    end
+
+    def call_user(fn, args, blk)
+      @instantiated[fn] = true
+      if fn.yields
+        return unknown("recursive yield") if @yield_depth[fn] >= MAX_YIELD_DEPTH
+        @yield_depth[fn] += 1
+        begin
+          return run_body(fn, args, blk)
+        ensure
+          @yield_depth[fn] -= 1
+        end
+      end
+
+      key = [fn, args]
+      return @returns[key] || [] if @in_progress[key] || @done[key]
+      @in_progress[key] = true
+      r = run_body(fn, args, nil)
+      @in_progress.delete(key)
+      @done[key] = true
+      @returns[key] = u(@returns[key] || [], r)
+    end
+
+    def run_body(fn, args, blk)
+      frame = Frame.new(fn, [], blk)
+      env = Env.new(nil, frame)
+      fn.params.zip(args) { |name, ty| env.vars[name.to_sym] = ty }
+      u(ev(fn.body, env), frame.ret)
+    end
+
+    def call_block(blk, args)
+      return unknown("no block") unless blk
+      params = blk.params
+      if params.size > 1 && args.size == 1
+        a = args.first
+        return unknown("block destructure") if unknown?(a)
+        tuples = a.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == params.size }
+        args = params.each_index.map { |i| u(*tuples.map { _1[1][i] }) } if tuples.size == a.size
+      end
+      (@next_acc ||= []).push([])
+      result = []
+      MAX_LOOP_ITER.times do
+        before = blk.env.chain_snapshot
+        env = Env.new(blk.env, blk.env.frame)
+        params.each_with_index { |name, i| env.vars[name.to_sym] = args[i] || t("Nil") }
+        result = u(result, ev(blk.node.body, env))
+        break if blk.env.chain_snapshot == before
+      end
+      u(result, @next_acc.pop)
+    end
+
+    def binop(node, op, a, b)
+      return [] if a.empty? || b.empty?
+      if unknown?(a) || unknown?(b)
+        add_check(node, "BinaryOp.#{op}", "pair", "table row", u(a, b), :unknown)
+        return unknown("operand")
+      end
+      rows = @registry.binary_ops[op]
+      results = []
+      hits = 0
+      pairs = a.product(b)
+      pairs.each do |x, y|
+        key = [x, y].map { _1.is_a?(String) ? _1 : (_1[0] == :tuple ? "Tuple" : "Array") }
+        next unless rows.key?(key)
+        hits += 1
+        results << binop_result(op, *key)
+      end
+      verdict = hits == pairs.size ? :proven : (hits.zero? ? :error : :partial)
+      actual = pairs.map { |x, y| tuple([[x].freeze, [y].freeze]) }
+      add_check(node, "BinaryOp.#{op}", "pair", "table row", u(*actual), verdict)
+      u(*results)
+    end
+
+    def binop_result(op, t1, t2)
+      return t("Boolean") if COMPARE_OPS.include?(op)
+      return t("String") if t1 == "String"
+      t1 == "Integer" && t2 == "Integer" ? t("Integer") : t("Float")
+    end
+
+    def call_builtin(fn, args, blk, node)
+      args.each_with_index { |a, i| record(node, fn.full_name, i + 1, fn.param_type(i), a) }
+      return [] if args.any?(&:empty?)
+
+      ns = fn.namespace
+      name = fn.name
+      if (dt = @program.data_types[ns]) && name != "[]"
+        return data_op(dt, name, args)
+      end
+      if name == "[]"
+        if ns == "Array"
+          return site_for(node, init: u(*args))
+        end
+        return site_for(node, declared: ns).tap { |ty| write_elems(ty, args, node, "#{ns}[]") }
+      end
+      if %w[Integer Float String].include?(ns) && @registry.binary_ops[name]&.any?
+        return binop_result(name, *fn.params) if fn.params.size == 2 && fn.params.all? { _1.is_a?(String) }
+      end
+      builtin_result(fn.full_name, args, blk, node)
+    end
+
+    def data_op(dt, name, args)
+      case name
+      when "new"
+        dt.fields.zip(args) { |f, a| field_write(dt.name, f, a) }
+        t(dt.name)
+      when /\Aget_(.+)\z/ then @fields[dt.name][$1] || []
+      when /\Aset_(.+)\z/
+        field_write(dt.name, $1, args[1])
+        args[1]
+      end
+    end
+
+    def new_site(node, label, elem) = site_for(node, label, init: elem).tap { |ty| write_elems(ty, [elem], node, "") }
+
+    def builtin_result(name, args, blk, node)
+      a0 = args[0]
+      case name
+      when "Kernel.puts", "Kernel.print" then t("Nil")
+      when "Kernel.p" then a0
+      when "Integer.to_s", "Float.to_s", "String.to_s" then t("String")
+      when "Integer.to_f", "String.to_f" then t("Float")
+      when "Float.to_i", "Float.floor", "Float.ceil", "String.to_i", "String.length", "String.size",
+           "String.count", "Array.length", "Array.size", "Tuple.length", "Tuple.size"
+        t("Integer")
+      when "Float.round" then args.size > 1 ? t("Float") : t("Integer")
+      when "Integer.abs", "Integer.succ", "Integer.pred" then t("Integer")
+      when "Float.abs" then t("Float")
+      when "Integer.even?", "Integer.odd?", "Integer.zero?", "Float.nan?", "String.empty?", "String.include?",
+           "String.start_with?", "String.end_with?", "Array.empty?", "Array.include?"
+        t("Boolean")
+      when /\AString\./
+        if %w[String.chars String.lines String.split].include?(name)
+          new_site(node, " #{name}", t("String"))
+        elsif name == "String.each_char"
+          call_block(blk, [t("String")])
+          t("String")
+        else
+          t("String")
+        end
+      when /\AMath\./ then t("Float")
+      when "Integer.times", "Integer.upto", "Integer.downto"
+        call_block(blk, [t("Integer")])
+        t("Integer")
+      when "Array.push", "Array.append"
+        write_elems(a0, args.drop(1), node, name)
+        a0
+      when "Array.concat"
+        write_elems(a0, [elem_of(args[1])], node, name)
+        a0
+      when "Array.join" then t("String")
+      when "Array.sum"
+        e = elem_of(a0)
+        record(node, "Array.sum", "elem", NUM, e)
+        e.empty? ? t("Integer") : u(*e.select { NUM.include?(_1) }.then { _1.empty? ? [t("Integer")] : [_1] })
+      when "Array.reverse", "Array.sort", "Array.take", "Array.drop"
+        new_site(node, " #{name}", elem_of(a0))
+      when "Array.select", "Array.filter", "Array.reject", "Array.sort_by"
+        e = elem_of(a0)
+        call_block(blk, [e]) unless e.empty?
+        new_site(node, " #{name}", e)
+      when "Array.map"
+        e = elem_of(a0)
+        r = e.empty? ? [] : call_block(blk, [e])
+        new_site(node, " #{name}", r)
+      when "Array.each"
+        e = elem_of(a0)
+        call_block(blk, [e]) unless e.empty?
+        a0
+      when "Array.each_with_index"
+        e = elem_of(a0)
+        call_block(blk, [e, t("Integer")]) unless e.empty?
+        a0
+      when "Array.any?", "Array.all?", "Array.none?"
+        e = elem_of(a0)
+        call_block(blk, [e]) unless e.empty?
+        t("Boolean")
+      when "Array.count"
+        e = elem_of(a0)
+        call_block(blk, [e]) unless e.empty?
+        t("Integer")
+      when "Array.reduce", "Array.inject"
+        e = elem_of(a0)
+        acc = args[1]
+        return acc if e.empty?
+        MAX_LOOP_ITER.times do
+          nxt = u(acc, call_block(blk, [acc, e]))
+          break if nxt == acc
+          acc = nxt
+        end
+        acc
+      else unknown("no signature for #{name}")
+      end
+    end
+  end
+end
+
+module Sake
+  class Typer
+    def summary
+      counts = Hash.new(0)
+      @checks.each_value { counts[_1.verdict] += 1 }
+      counts
+    end
+
+    def report
+      out = +""
+      out << "passes: #{@passes}\n"
+      out << "checks: #{%i[proven partial error unknown].map { "#{_1}=#{summary[_1]}" }.join(" ")}\n"
+      @checks.values.sort_by { [_1.line, _1.op] }.each do |c|
+        next if c.verdict == :proven
+        out << "  #{c.verdict.to_s.ljust(7)} L#{c.line} #{c.op} arg #{c.arg}: want #{c.expected}, got #{show(c.actual)}\n"
+      end
+      out << "arrays:\n"
+      @sites.each_value do |s|
+        kind = s.declared ? "declared #{s.declared}" : "init #{show(s.init)} -> #{show(s.elem)}#{s.init != s.elem ? " (widened)" : ""}"
+        out << "  #{s.label}: #{kind}\n"
+      end
+      out << "fields:\n"
+      @fields.each { |dt, fs| fs.each { |f, ty| out << "  #{dt}.#{f}: #{show(ty)}\n" } }
+      out << "dead functions: #{@dead_functions.map(&:full_name).join(", ")}\n" unless @dead_functions.empty?
+      out
+    end
+  end
+end

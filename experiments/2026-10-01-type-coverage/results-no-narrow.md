@@ -1,0 +1,25 @@
+| program | passes | proven | partial | error | unknown | observed sites | unchecked observed | violations |
+|---|---|---|---|---|---|---|---|---|
+| bank.sake | 2 | 31 | 0 | 0 | 0 | 41 | 0 | 0 |
+| collatz.sake | 2 | 27 | 0 | 0 | 0 | 30 | 0 | 0 |
+| fizzbuzz.sake | 2 | 9 | 0 | 0 | 0 | 10 | 0 | 0 |
+| inventory.sake | 2 | 35 | 0 | 0 | 0 | 57 | 0 | 0 |
+| linked_list.sake | 2 | 15 | 5 | 0 | 0 | 25 | 0 | 0 |
+| matrix.sake | 2 | 44 | 0 | 0 | 0 | 59 | 0 | 0 |
+| primes.sake | 2 | 23 | 0 | 0 | 0 | 25 | 0 | 0 |
+| shapes.sake | 2 | 65 | 0 | 0 | 0 | 74 | 0 | 0 |
+| stats.sake | 2 | 35 | 0 | 0 | 0 | 39 | 0 | 0 |
+| words.sake | 2 | 27 | 0 | 0 | 0 | 32 | 0 | 0 |
+| binary_op.sake | 1 | 15 | 0 | 1 | 0 | 28 | 0 | 0 |
+| binary_op_error.sake | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
+| blocks.sake | 2 | 28 | 0 | 0 | 0 | 40 | 0 | 0 |
+| bool_op_error.sake | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
+| data.sake | 2 | 2 | 0 | 1 | 0 | 8 | 0 | 0 |
+| first.sake | 2 | 30 | 0 | 0 | 0 | 42 | 0 | 0 |
+| it_param.sake | 2 | 9 | 0 | 0 | 0 | 15 | 0 | 0 |
+| nil_error.sake | 1 | 2 | 0 | 1 | 0 | 5 | 0 | 0 |
+| runtime_type_error.sake | 2 | 0 | 0 | 1 | 0 | 2 | 0 | 0 |
+| scope.sake | 2 | 6 | 0 | 0 | 0 | 9 | 0 | 0 |
+| strings.sake | 2 | 12 | 0 | 0 | 0 | 20 | 0 | 0 |
+| typed_array.sake | 2 | 11 | 0 | 1 | 0 | 21 | 0 | 0 |
+| typed_array_runtime.sake | 2 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |

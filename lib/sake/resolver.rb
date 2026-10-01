@@ -9,7 +9,7 @@ module Sake
   end
 
   # calls / blocks are identity hashes keyed by Prism nodes.
-  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, keyword_init: true)
+  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :data_types, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -36,7 +36,8 @@ module Sake
       collect
       check_all
       raise StaticErrors.new(@diags.sort_by { [_1.line, _1.column] }) unless @diags.empty?
-      Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks)
+      Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks,
+                  functions: @functions, data_types: @data_types)
     end
 
     private
