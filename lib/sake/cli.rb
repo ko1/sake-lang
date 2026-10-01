@@ -6,29 +6,91 @@ require_relative "../sake"
 module Sake
   module CLI
     USAGE = <<~TEXT
-      usage: sake [--check | --strict | --types] FILE.sake
+      usage: sake [-c] [--strict[=SPEC]] [--types] FILE.sake
 
-        --check   only run the static checks (name resolution, arity, syntax)
-        --strict  also report, before running, every place where a value that may be nil
-                  is used without a check (`if x`, `x != nil`, `return unless x`, ...)
-        --types   experimental: infer types and classify each runtime type check as
-                  proven / partial (union) / error (surely fails) / unknown
+        -c               check only: report problems, do not run
+        --strict[=SPEC]  how strictly to check before running (default: level 1)
+                         --strict       the recommended level (2)
+                         --strict=N     level N:
+                                          0  syntax, names, arguments, calls on values, ...
+                                          1  + type       a type that is not nil does not fit
+                                          2  + nil        a value that may be nil is used unchecked
+                                          3  + index-nil  the result of x[k] is used unchecked
+                         --strict=type,nil          exactly these items
+                         --strict=2,index-nil       level 2 plus an item; `-item` removes one
+        --types          experimental: print the inferred types instead of running
 
-      exit status: 0 = ok, 1 = runtime error, 2 = static error (reported before running)
+      exit status: 0 = ok, 1 = runtime error, 2 = problem found before running
     TEXT
+
+    STRICT_ITEMS = %w[type nil index-nil].freeze
+    STRICT_LEVELS = [[], %w[type], %w[type nil], %w[type nil index-nil]].freeze
+    DEFAULT_LEVEL = 1
+    RECOMMENDED_LEVEL = 2
 
     module_function
 
     NIL_CHECK_HINT = "check the value first: `if x`, `while x`, `return unless x`, or `x != nil`"
 
-    def strict_check(program)
+    def parse_strict(spec)
+      spec.split(",").inject([]) do |items, word|
+        case word
+        when /\A\d+\z/ then items | STRICT_LEVELS.fetch(word.to_i) { raise ArgumentError, "strict levels are 0..#{STRICT_LEVELS.size - 1}" }
+        when /\A-(.+)\z/ then items - [strict_item($1)]
+        else items | [strict_item(word.delete_prefix("+"))]
+        end
+      end
+    end
+
+    def strict_item(name)
+      return name if STRICT_ITEMS.include?(name)
+      raise ArgumentError, "unknown strict item `#{name}` (items: #{STRICT_ITEMS.join(", ")})"
+    end
+
+    # Reports the type checker's findings for the chosen items as static errors.
+    def type_message(c, what, typer)
+      maybe = c.verdict == :error ? "are " : "may be "
+      case c.op
+      when /\ABinaryOp\./ then ["#{c.op}: the operands #{maybe}#{typer.show_failing(c)}, which has no row in the table", []]
+      when "Index.[]", "Index.[]="
+        tuples, others = c.failing.partition { _1.is_a?(Array) && _1[0] == :tuple }
+        return ["#{c.op}: the index is outside the Tuple #{typer.show(tuples)}", []] if others.empty?
+        ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{Stdlib::INDEX_ROWS}", []]
+      when "pattern"
+        ["the pattern needs field `#{c.arg}`, but the value #{maybe.sub("are", "is")}#{typer.show_failing(c)}", []]
+      else
+        hint = c.verdict == :error ? [] : ["the value has several types here; make each of them fit"]
+        got = typer.show_failing(c)
+        if c.expected.split("|").include?("Array") && c.failing.any? { _1.is_a?(Array) && _1[0] == :tuple }
+          hint = ["`[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`"]
+        end
+        subject = c.arg == "elem" ? "an element" : what
+        ["#{c.op}: #{subject} must be #{c.expected}, but #{c.verdict == :error ? "is" : "can be"} #{got}", hint]
+      end
+    end
+
+    def strict_check(program, items, err)
       require_relative "typer"
-      typer = Typer.new(program).run
-      diags = typer.nil_risks.sort_by { [_1.line, _1.column] }.map do |c|
-        what = c.arg == "pair" ? "an operand" : "argument #{c.arg}"
+      typer =
+        begin
+          Typer.new(program).run
+        rescue StandardError => e
+          err.puts "warning: type checks skipped (internal error in the type checker: #{e.class}: #{e.message})"
+          return
+        end
+      diags = typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.line, c.column] }.map do |c, item|
+        what = c.arg == "pair" ? "the operands" : "argument #{c.arg}"
         wants = c.expected.split("|") unless c.arg == "pair"
-        Diagnostic.new(program.path, c.line, c.column, "#{c.op}: #{what} may be nil (#{typer.show(c.actual)})",
-                       [NIL_CHECK_HINT, *typer.nil_sources(wants)])
+        msg, hints =
+          case item
+          when "type" then type_message(c, what, typer)
+          when "nil" then ["#{c.op}: #{what} may be nil (#{typer.show(c.actual)})", [NIL_CHECK_HINT, *typer.nil_sources(wants)]]
+          else
+            ["#{c.op}: #{what} may be nil, because x[k] gives nil when the index or key is missing",
+             [NIL_CHECK_HINT, "or use Array.fetch / Hash.fetch, which raise instead"]]
+          end
+        hints += ["reached by the call at line #{c.via.join(" → line ")}"] if c.via&.any?
+        Diagnostic.new(program.path, c.line, c.column, "#{msg} [#{item}]", hints)
       end
       raise StaticErrors.new(diags) unless diags.empty?
     end
@@ -43,25 +105,44 @@ module Sake
     end
 
     def main(argv, out: $stdout, err: $stderr)
-      check_only = !argv.delete("--check").nil?
-      types = !argv.delete("--types").nil?
-      strict = !argv.delete("--strict").nil?
-      if argv.size != 1 || argv.first.start_with?("-")
-        err.write(USAGE)
-        return argv.include?("--help") || argv.include?("-h") ? 0 : 2
+      check_only = false
+      types = false
+      items = STRICT_LEVELS[DEFAULT_LEVEL]
+      files = []
+      argv.each do |arg|
+        case arg
+        when "-c" then check_only = true
+        when "--types" then types = true
+        when "--strict" then items = STRICT_LEVELS[RECOMMENDED_LEVEL]
+        when /\A--strict=(.*)\z/ then items = parse_strict($1)
+        when "-h", "--help"
+          out.write(USAGE)
+          return 0
+        when /\A-/ then raise ArgumentError, "unknown option #{arg}"
+        else files << arg
+        end
       end
-      path = argv.first
+      raise ArgumentError, "give one FILE.sake" unless files.size == 1
+
+      path = files.first
       source = File.read(path)
+      program = Sake.load(source, path, out:)
       if types
         require_relative "typer"
-        out.write(Typer.new(Sake.load(source, path, out:)).run.report)
-      elsif check_only
-        Sake.load(source, path, out:)
+        out.write(Typer.new(program).run.report)
+        return 0
+      end
+      strict_check(program, items, err) unless items.empty?
+      if check_only
+        out.puts "#{path}: OK"
       else
-        strict_check(Sake.load(source, path, out:)) if strict
-        Sake.run(source, path, out:)
+        Sake.execute(program)
       end
       0
+    rescue ArgumentError => e
+      err.puts "sake: #{e.message}"
+      err.write(USAGE)
+      2
     rescue StaticErrors => e
       out.flush
       err.puts e.message

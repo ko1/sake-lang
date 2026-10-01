@@ -13,7 +13,9 @@ class TestSamples < Minitest::Test
   def self.render(name)
     out = StringIO.new
     err = StringIO.new
-    flags = name.end_with?(".strict") ? ["--strict"] : []
+    # A first line `# sake: FLAGS` gives the command-line flags.
+    first = File.open(File.join(DIR, "#{name}.sake"), &:gets).to_s
+    flags = first[/\A# sake: (.*)$/, 1]&.split || (name.end_with?(".strict") ? ["--strict"] : [])
     status = Dir.chdir(DIR) { Sake::CLI.main([*flags, "#{name}.sake"], out:, err:) }
     "#{out.string}--- stderr\n#{err.string}--- exit #{status}\n"
   end

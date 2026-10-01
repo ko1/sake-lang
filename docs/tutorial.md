@@ -24,7 +24,20 @@ Run a program with:
 bin/sake FILE.sake
 ```
 
-Exit status is 0 on success, 1 for a runtime error, and 2 for an error found before running.
+`bin/sake -c FILE.sake` only checks the program. Exit status is 0 on success, 1 for an error while
+running, and 2 for a problem found before running.
+
+How much is checked before running is set with `--strict`:
+
+| Level | How to ask | Also stops before running |
+|---|---|---|
+| 0 | `--strict=0` | only syntax, names, argument counts, calls on values, and the like |
+| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation |
+| 2 | `--strict` | **nil**: a value that may be nil, used without a check |
+| 3 | `--strict=3` | **index-nil**: the result of `x[k]`, used without a check |
+
+Items can also be named: `--strict=type,nil`, or `--strict=3,-index-nil`. Whatever is not checked
+before running is still checked while running, by each operation.
 
 ## 1. Hello
 
@@ -118,8 +131,8 @@ ababab
 true
 ```
 
-A pair that is not in the table fails when it runs. The error names the operation, the line, and
-the types it received:
+A pair that is not in the table is reported before running. The error names the operation, the
+line, and the types:
 
 ```ruby
 total = 10
@@ -129,6 +142,15 @@ puts(label + total)
 
 ```
 $ sake binop_error.sake
+binop_error.sake:3:6: error: BinaryOp.+: the operands are (String, Integer), which has no row in the table [type]
+(exit status 2)
+```
+
+Every operation also checks its arguments while running. With `--strict=0`, nothing is checked
+ahead, and the same mistake stops when it runs:
+
+```
+$ sake --strict=0 binop_error.sake
 binop_error.sake:3: in <main>: TypeError: BinaryOp.+: no implementation for (String, Integer); defined for (Integer, Integer), (Integer, Float), (Float, Integer), (Float, Float), (String, String)
 (exit status 1)
 ```
@@ -142,8 +164,8 @@ puts(Integer.+(1, 2.5))
 
 ```
 $ sake typed_op_error.sake
-typed_op_error.sake:1: in <main>: TypeError: Integer.+: argument 2 must be Integer, got Float
-(exit status 1)
+typed_op_error.sake:1:6: error: Integer.+: argument 2 must be Integer, but is Float [type]
+(exit status 2)
 ```
 
 ## 4. Functions
@@ -415,15 +437,19 @@ puts(Point.norm2(7))
 
 ```
 $ sake data_shorthand.sake
-25
-#<struct Point x=4, y=5>
-data_shorthand.sake:4: in Point.norm2: TypeError: Point.get_x: argument 1 must be Point, got Integer
-  from data_shorthand.sake:16: in <main>
-(exit status 1)
+data_shorthand.sake:4:18: error: Point.get_x: argument 1 must be Point, but is Integer [type]
+  hint: reached by the call at line 16
+data_shorthand.sake:4:23: error: Point.get_x: argument 1 must be Point, but is Integer [type]
+  hint: reached by the call at line 16
+data_shorthand.sake:4:28: error: Point.get_y: argument 1 must be Point, but is Integer [type]
+  hint: reached by the call at line 16
+data_shorthand.sake:4:33: error: Point.get_y: argument 1 must be Point, but is Integer [type]
+  hint: reached by the call at line 16
+(exit status 2)
 ```
 
-Because each operation checks its argument, passing the wrong record is caught at the exact
-operation, with the call chain:
+Passing the wrong record is reported before running. The error is inside `length`, and the hint
+points back to the call that passes a Point:
 
 ```ruby
 Point = Struct.new(:x, :y)
@@ -441,6 +467,21 @@ puts(length(Point.new(3, 4)))
 
 ```
 $ sake data_runtime_error.sake
+data_runtime_error.sake:5:20: error: Line.get_to: argument 1 must be Line, but is Point [type]
+  hint: reached by the call at line 11
+data_runtime_error.sake:5:50: error: Line.get_from: argument 1 must be Line, but is Point [type]
+  hint: reached by the call at line 11
+data_runtime_error.sake:6:20: error: Line.get_to: argument 1 must be Line, but is Point [type]
+  hint: reached by the call at line 11
+data_runtime_error.sake:6:50: error: Line.get_from: argument 1 must be Line, but is Point [type]
+  hint: reached by the call at line 11
+(exit status 2)
+```
+
+While running, the same check stops at the exact operation and prints the call chain:
+
+```
+$ sake --strict=0 data_runtime_error.sake
 5.0
 data_runtime_error.sake:5: in length: TypeError: Line.get_to: argument 1 must be Line, got Point
   from data_runtime_error.sake:11: in <main>
@@ -584,14 +625,8 @@ Array.push(fs, 3)
 
 ```
 $ sake collections.sake
-one
-2
-[1, "two", 3.0, nil]
-["to", "be", "or", "not", "to", "be"]
-To Be Or Not To Be
-4.0
-collections.sake:17: in <main>: TypeError: Array.push: Float[] element must be Float, got Integer
-(exit status 1)
+collections.sake:17:1: error: Array.push: an element must be Float, but is Integer [type]
+(exit status 2)
 ```
 
 A Record is read with a pattern. `r => {mean:, count: n}` binds `mean` and `n`:
@@ -613,12 +648,8 @@ r => {median:}
 
 ```
 $ sake records.sake
-{count: 3, mean: 6, total: 18}
-6
-3
-{x: 1, y: 2}
-records.sake:12: in <main>: KeyError: Record {count: Integer, mean: Integer, total: Integer} has no field `median`
-(exit status 1)
+records.sake:12:7: error: the pattern needs field `median`, but the value is {count: Integer, mean: Integer, total: Integer} [type]
+(exit status 2)
 ```
 
 In Sake, `[]` and `{}` are not growable collections. Ruby code that grows them stops with a hint:
@@ -630,9 +661,9 @@ Integer.times(3) { |i| Array.push(squares, i * i) }
 
 ```
 $ sake ruby_habits.sake
-ruby_habits.sake:2: in <main>: TypeError: Array.push: argument 1 must be Array, got Tuple
+ruby_habits.sake:2:24: error: Array.push: argument 1 must be Array, but is [] [type]
   hint: `[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`
-(exit status 1)
+(exit status 2)
 ```
 
 ```ruby
@@ -680,15 +711,8 @@ p(t[2])                        # a Tuple's length is part of its type
 
 ```
 $ sake indexing.sake
-"the"
-"fox"
-nil
-["the", "slow", "brown", "fox"]
-[0, 1, 0]
-[2, "one"]
-9
-indexing.sake:19: in <main>: IndexError: Index.[]: index 2 is outside a Tuple of length 2
-(exit status 1)
+indexing.sake:19:3: error: Index.[]: the index is outside the Tuple [Integer, String] [type]
+(exit status 2)
 ```
 
 `Point[1, 2]` means "an Array of Point". It does **not** mean `Point.new(1, 2)` as it does in Ruby.
@@ -815,8 +839,8 @@ nil.sake:28: in <main>: TypeError: Node.get_value: argument 1 must be Node, got 
 (exit status 1)
 ```
 
-By default, using a value that might be `nil` is only checked when it runs. `--strict` reports
-every unchecked use before running. A local variable you have tested counts as checked
+By default (level 1), a value that might be `nil` is checked when it runs. `--strict` (level 2)
+reports every unchecked use before running. A local variable you have tested counts as checked
 (`second_checked`). A field you read again does not, because fields are mutable:
 
 ```ruby
@@ -842,9 +866,10 @@ $ sake strict.sake
 
 ```
 $ sake --strict strict.sake
-strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node)
+strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node) [nil]
   hint: check the value first: `if x`, `while x`, `return unless x`, or `x != nil`
   hint: Node.next may be nil (nil is stored at line 10)
+  hint: reached by the call at line 11
 (exit status 2)
 ```
 

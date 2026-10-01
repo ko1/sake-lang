@@ -29,8 +29,10 @@ module Sake
 
   # The program runs in its own thread: bin/sake sizes thread stacks (RUBY_THREAD_*_STACK_SIZE)
   # so that Sake's own depth limit, not Ruby's stack, bounds recursion.
-  def run(source, path, out: $stdout)
-    program = load(source, path, out:)
+  def run(source, path, out: $stdout) = execute(load(source, path, out:))
+
+  def execute(program)
+    path = program.path
     th = Thread.new { Interpreter.new(program).run }
     th.report_on_exception = false
     th.value

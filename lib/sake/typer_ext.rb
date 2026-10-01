@@ -67,13 +67,13 @@ module Sake
 
     def index_get_ext(_node, a, key)
       case a
-      when "MatchData" then u(t("String"), t("Nil"))
-      when "String" then atoms_of(key, :range).any? ? u(t("String"), t("Nil")) : nil
+      when "MatchData" then u(t("String"), t("IndexNil"))
+      when "String" then atoms_of(key, :range).any? ? u(t("String"), t("IndexNil")) : nil
       else
         return nil unless a.is_a?(Array)
         case a[0]
-        when :hash then u(hash_sites[a[1]].val, hash_sites[a[1]].default)
-        when :array then atoms_of(key, :range).any? ? u([a].freeze, t("Nil")) : nil
+        when :hash then u(hash_sites[a[1]].val, hash_sites[a[1]].default.map { _1 == "Nil" ? "IndexNil" : _1 }.then { u(*_1.map { |x| [x] }) })
+        when :array then atoms_of(key, :range).any? ? u([a].freeze, t("IndexNil")) : nil
         end
       end
     end
@@ -200,7 +200,7 @@ module Sake
         call_block(blk, [new_site(node, " #{name} slice", elem_of(a0))]) unless elem_of(a0).empty?
         a0
       when "Array.flatten" then new_site(node, " #{name}", u(*elem_of(a0).map { |e| e.is_a?(Array) && e[0] == :array ? elem_of([e]) : [e] }))
-      when "Array.compact" then new_site(node, " #{name}", u(*(elem_of(a0) - ["Nil"]).map { [_1] }))
+      when "Array.compact" then new_site(node, " #{name}", without_nil(elem_of(a0)))
       when "Array.uniq", "Array.rotate", "Array.shuffle" then new_site(node, " #{name}", elem_of(a0))
       when "Array.sample", "Array.delete", "Array.delete_at" then u(elem_of(a0), t("Nil"))
       when "Array.tally" then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = elem_of(a0); s.val = t("Integer") }

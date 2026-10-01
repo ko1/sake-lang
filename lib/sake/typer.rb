@@ -7,6 +7,7 @@ module Sake
   # Atoms: "Integer" "Float" "String" "Boolean" "Nil" "<Struct name>",
   #        [:tuple, [type, ...]], [:record, [[field, type], ...]], [:array, site_id], [:unknown, reason].
   # A record atom has one atom per field (the type fixed at creation), sorted by field.
+  # "IndexNil" is a nil that came from x[k] (a miss); at run time it is an ordinary nil.
   # User functions are instantiated per argument types (Crystal style); functions that yield are
   # analyzed per call site. Arrays carry an allocation site whose element type is the union of every
   # write; Struct fields are the union of every write per type. The whole program is re-analyzed until
@@ -22,7 +23,8 @@ module Sake
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
     Frame = Struct.new(:fn, :ret, :block)
     BlockCtx = Struct.new(:node, :params, :env)
-    Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing)
+    # via: lines of the calls that led to the first failing instantiation, outermost first.
+    Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing, :via)
 
     class Env
       attr_reader :vars, :parent, :frame
@@ -77,6 +79,7 @@ module Sake
         @in_progress = {}
         @yield_depth = Hash.new(0)
         @instantiated = {}
+        @callers = []
         env = Env.new(nil, Frame.new(nil, [], nil))
         @program.toplevel.each { ev(_1, env) }
         break if snapshot == before || @passes >= MAX_PASSES
@@ -131,8 +134,13 @@ module Sake
     end
 
     # The runtime type name of an atom (Values.type_of).
+    NILS = %w[Nil IndexNil].freeze
+
+    def nil_atom?(a) = NILS.include?(a)
+    def without_nil(ty) = u(*(ty - NILS).map { [_1] })
+
     def atom_type_name(a)
-      return a if a.is_a?(String)
+      return (a == "IndexNil" ? "Nil" : a) if a.is_a?(String)
       case a[0]
       when :tuple then "Tuple"
       when :array then "Array"
@@ -152,7 +160,7 @@ module Sake
     def show_atom(a)
       case a
       when "Boolean" then "true|false"
-      when "Nil" then "nil"
+      when "Nil", "IndexNil" then "nil"
       when String then a
       else
         case a[0]
@@ -199,18 +207,13 @@ module Sake
     end
 
     def field_write(dt, field, ty, node)
-      @nil_writes[dt][field] << node.location.start_line if ty.include?("Nil")
+      @nil_writes[dt][field] << node.location.start_line if ty.any? { nil_atom?(_1) }
       @fields[dt][field] = u(@fields[dt][field] || [], ty)
     end
 
     # --- checks ---
 
-    def atom_matches?(atom, want)
-      case atom
-      when String then want == atom
-      else atom_type_name(atom) == want
-      end
-    end
+    def atom_matches?(atom, want) = atom_type_name(atom) == want
 
     def record(node, op, arg, want, actual)
       return if want == "Any" || actual.empty?
@@ -232,24 +235,36 @@ module Sake
         prev.actual = u(prev.actual, actual)
         prev.verdict = worse(prev.verdict, verdict)
         prev.failing = (prev.failing + failing).uniq
+        prev.via ||= @callers.dup unless failing.empty?
       else
-        @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing)
+        @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing,
+                                 failing.empty? ? nil : @callers.dup)
       end
     end
 
-    # Checks that fail only when a value is nil: the `--strict` report.
-    def nil_risks
-      @checks.values.select do |c|
-        c.verdict == :partial && c.failing.all? { |f| f == "Nil" || (f.is_a?(Array) && f.all?(String) && f.include?("Nil")) }
+    # [check, item] for every check that may fail, where item is a strict item name:
+    # "type" (surely fails, or may fail for a non-nil type), "nil", or "index-nil" (a nil from x[k]).
+    def findings
+      @checks.values.filter_map do |c|
+        next if %i[proven unknown].include?(c.verdict)
+        next [c, "type"] if c.verdict == :error
+        parts = c.failing.map { |f| c.op.start_with?("BinaryOp.") ? f : [f] }
+        next [c, "type"] unless parts.all? { |p| p.any? { nil_atom?(_1) } }
+        [c, parts.any? { |p| p.include?("Nil") } ? "nil" : "index-nil"]
       end
+    end
+
+    def show_failing(c)
+      return c.failing.map { |x, y| "(#{show([x])}, #{show([y])})" }.uniq.join(", ") if c.op.start_with?("BinaryOp.")
+      c.failing.map { show([_1]) }.uniq.join(" | ")
     end
 
     # "Struct.field (nil written at line N)" for fields that may hold nil next to a type in `wants`.
     def nil_sources(wants = nil)
       @fields.flat_map do |dt, fs|
         fs.filter_map do |f, ty|
-          next unless ty.include?("Nil")
-          next if wants && (ty - ["Nil"]).none? { |a| Array(wants).any? { |w| atom_matches?(a, w) } }
+          next unless ty.any? { nil_atom?(_1) }
+          next if wants && (ty - NILS).none? { |a| Array(wants).any? { |w| atom_matches?(a, w) } }
           lines = @nil_writes[dt][f].uniq.sort
           "#{dt}.#{f} may be nil (nil is stored at line #{lines.join(", ")})"
         end
@@ -282,7 +297,7 @@ module Sake
       when Prism::MultiWriteNode then multi_write(node, env)
       when Prism::LocalVariableOrWriteNode
         cur = env.up(node.depth).vars[node.name] || t("Nil")
-        assign(env, node.depth, node.name, u(*(cur - %w[Nil Boolean]).map { [_1] }, ev(node.value, env)))
+        assign(env, node.depth, node.name, u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(node.value, env)))
       when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode
         key_node = node.arguments.arguments.first
         recv = ev(node.receiver, env)
@@ -290,7 +305,7 @@ module Sake
         cur = index_get(node, recv, key, key_node)
         val =
           if node.is_a?(Prism::IndexOrWriteNode)
-            u(*(cur - %w[Nil Boolean]).map { [_1] }, ev(node.value, env))
+            u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(node.value, env))
           else
             binop(node, node.binary_operator.to_s, cur, ev(node.value, env))
           end
@@ -306,7 +321,7 @@ module Sake
         r = ev(node.right, right_env)
         join_into(env, env.dup_level, right_env)
         # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
-        left = node.is_a?(Prism::AndNode) ? l & %w[Nil Boolean] : l - ["Nil"]
+        left = node.is_a?(Prism::AndNode) ? l & (NILS + ["Boolean"]) : l - NILS
         u(*left.map { [_1] }, r)
       when Prism::ParenthesesNode then ev(node.body, env)
       when Prism::ArrayNode then tuple(node.elements.map { ev(_1, env) })
@@ -436,9 +451,9 @@ module Sake
       ty = env.vars[var.name] or return
       atoms =
         case how
-        when :non_nil then ty - ["Nil"]
-        when :nil then ty & ["Nil"]
-        when :falsy then ty & %w[Nil Boolean]
+        when :non_nil then ty - NILS
+        when :nil then ty & NILS
+        when :falsy then ty & (NILS + ["Boolean"])
         end
       env.vars[var.name] = u(*atoms.map { [_1] })
     end
@@ -493,7 +508,13 @@ module Sake
       args = (node.arguments&.arguments || []).map { ev(_1, env) }
       blk = node.block && BlockCtx.new(node.block, @program.blocks.fetch(node.block), env)
       case target
-      when UserFunction then call_user(target, args, blk)
+      when UserFunction
+        @callers.push(node.location.start_line)
+        begin
+          call_user(target, args, blk)
+        ensure
+          @callers.pop
+        end
       when Builtin then call_builtin(target, args, blk, node)
       end
     end
@@ -565,10 +586,10 @@ module Sake
           next
         end
         case a
-        when "String" then results << t("String") << t("Nil")
+        when "String" then results << t("String") << t("IndexNil")
         else
           if a[0] == :array
-            results << elem_of([a]) << t("Nil")
+            results << elem_of([a]) << t("IndexNil")
           elsif lit && (-a[1].size...a[1].size).cover?(lit)
             results << a[1][lit]
           elsif lit
@@ -624,7 +645,7 @@ module Sake
           next
         end
         unless rows.key?(key)
-          failing << key
+          failing << [x, y]
           next
         end
         hits += 1

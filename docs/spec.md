@@ -24,17 +24,39 @@ experimental. Points still open in the design are listed in [§15](#15-not-yet-s
 ## 2. Running programs
 
 ```
-bin/sake FILE.sake            # check, then run
-bin/sake --check FILE.sake    # only the static checks
-bin/sake --strict FILE.sake   # static checks + report unchecked uses of maybe-nil values, then run
-bin/sake --types FILE.sake    # experimental type inference report (does not run the program)
+bin/sake FILE.sake              # check, then run
+bin/sake -c FILE.sake           # check only
+bin/sake --strict FILE.sake     # check more strictly (level 2), then run
+bin/sake --types FILE.sake      # experimental: print the inferred types instead of running
 ```
 
 | Exit status | Meaning |
 |---|---|
 | 0 | success |
 | 1 | runtime error |
-| 2 | static error (nothing was executed) |
+| 2 | problem found before running (nothing was executed) |
+
+### 2.1 Strictness
+
+`--strict` sets which problems stop the program before it runs. Each item is reported from the
+whole-program type inference; whatever is not reported is still checked while running.
+
+| Level | Option | Items | Stops before running |
+|---|---|---|---|
+| 0 | `--strict=0` | (none) | syntax, names, argument counts, blocks, calls on values, forbidden syntax, literal types in `T[...]` (always checked) |
+| 1 | default | `type` | a value whose type, other than nil, does not fit: `"" + 1`, or `pick() + 1` where `pick` returns 1 or "" |
+| 2 | `--strict` | `type`, `nil` | also a value that may be nil, used without a check (except results of `x[k]`) |
+| 3 | `--strict=3` | `type`, `nil`, `index-nil` | also the result of `x[k]`, which is nil on a miss, used without a check |
+
+- **Naming items.** `--strict=type,nil` selects exactly these items. `--strict=2,index-nil` adds an
+  item to a level, and `--strict=3,-index-nil` removes one.
+- **Labels.** Each report ends with its item, such as `[type]`.
+- **Errors inside functions.** A report inside a polymorphic function adds a hint naming the call
+  that led there.
+- **Unreached branches.** Branches are not evaluated, so a problem in a branch that never runs is
+  still reported, as in Erlang's Dialyzer.
+- **Internal errors.** If the type inference itself fails, the type checks are skipped with a
+  warning, and the program runs.
 
 ## 3. Program structure
 
@@ -329,8 +351,8 @@ Option wrapper.
 
   Field reads (`Node.get_next(n)`) are **not** narrowed, because fields are mutable. Copy the field
   into a local variable first, then test the local.
-- **`--strict`.** Reports, before running, every operation that may receive an unchecked `nil`. The
-  run does not start.
+- **`--strict`.** Level 2 reports, before running, every operation that may receive an unchecked
+  `nil`. Level 3 also covers results of `x[k]` ([§2.1](#21-strictness)).
 
 ## 12. Tuples, Records, and arrays
 
@@ -425,7 +447,7 @@ The kinds of static error are:
 - unsupported syntax;
 - duplicate definitions;
 - literal type mismatches in `T[...]`;
-- in `--strict` mode, unchecked uses of maybe-nil values.
+- the items selected by `--strict` ([§2.1](#21-strictness)): by default, values whose type does not fit.
 
 ### 13.2 Runtime errors
 

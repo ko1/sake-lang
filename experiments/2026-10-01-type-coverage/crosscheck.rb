@@ -40,7 +40,7 @@ if ARGV.delete("--sabotage")
 end
 
 def atom_name(a)
-  return a if a.is_a?(String)
+  return (a == "IndexNil" ? "Nil" : a) if a.is_a?(String)
   return "{#{a[1].map { |f, ty| "#{f}: #{atom_name(ty.first)}" }.join(", ")}}" if a[0] == :record
   { tuple: "Tuple", array: "Array", unknown: "?", range: "Range", hash: "Hash", set: "Set" }.fetch(a[0])
 end

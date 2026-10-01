@@ -22,7 +22,20 @@ Run a program with:
 bin/sake FILE.sake
 ```
 
-Exit status is 0 on success, 1 for a runtime error, and 2 for an error found before running.
+`bin/sake -c FILE.sake` only checks the program. Exit status is 0 on success, 1 for an error while
+running, and 2 for a problem found before running.
+
+How much is checked before running is set with `--strict`:
+
+| Level | How to ask | Also stops before running |
+|---|---|---|
+| 0 | `--strict=0` | only syntax, names, argument counts, calls on values, and the like |
+| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation |
+| 2 | `--strict` | **nil**: a value that may be nil, used without a check |
+| 3 | `--strict=3` | **index-nil**: the result of `x[k]`, used without a check |
+
+Items can also be named: `--strict=type,nil`, or `--strict=3,-index-nil`. Whatever is not checked
+before running is still checked while running, by each operation.
 
 ## 1. Hello
 
@@ -55,10 +68,15 @@ table of the type pairs it accepts. Mixing Integer and Float gives a Float.
 
 @@example numbers
 
-A pair that is not in the table fails when it runs. The error names the operation, the line, and
-the types it received:
+A pair that is not in the table is reported before running. The error names the operation, the
+line, and the types:
 
 @@example binop_error
+
+Every operation also checks its arguments while running. With `--strict=0`, nothing is checked
+ahead, and the same mistake stops when it runs:
+
+@@run binop_error --strict=0
 
 Writing the operator with a type, as in `Integer.+(a, b)`, requires both operands to be of that
 type:
@@ -130,10 +148,14 @@ operation with a type:
 
 @@example data_shorthand
 
-Because each operation checks its argument, passing the wrong record is caught at the exact
-operation, with the call chain:
+Passing the wrong record is reported before running. The error is inside `length`, and the hint
+points back to the call that passes a Point:
 
 @@example data_runtime_error
+
+While running, the same check stops at the exact operation and prints the call chain:
+
+@@run data_runtime_error --strict=0
 
 ## 8. Where unqualified names go
 
@@ -223,8 +245,8 @@ where that `nil` can come from:
 
 @@example nil
 
-By default, using a value that might be `nil` is only checked when it runs. `--strict` reports
-every unchecked use before running. A local variable you have tested counts as checked
+By default (level 1), a value that might be `nil` is checked when it runs. `--strict` (level 2)
+reports every unchecked use before running. A local variable you have tested counts as checked
 (`second_checked`). A field you read again does not, because fields are mutable:
 
 @@example strict
