@@ -138,7 +138,7 @@ module Sake
 
     def multi_write(node, env)
       v = eval_node(node.value, env)
-      fail_at(node, "TypeError", "multiple assignment needs a Tuple, got #{Values.type_of(v)}") unless v.is_a?(Tuple)
+      fail_at(node, "TypeError", "multiple assignment needs a Tuple, got #{Values.describe(v)}") unless v.is_a?(Tuple)
       if v.elems.size != node.lefts.size
         fail_at(node, "ArgumentError", "multiple assignment of #{node.lefts.size} variables from a Tuple of size #{v.elems.size}")
       end
@@ -180,7 +180,7 @@ module Sake
       args.each_with_index do |v, i|
         want = fn.param_type(i)
         next if type_ok?(want, v)
-        fail_at(node, "TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.type_of(v)}")
+        fail_at(node, "TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}")
       end
       ruby_blk = blk && ->(*xs) { call_block(blk, xs, node) }
       fn.impl.call(*args, &ruby_blk)
@@ -198,8 +198,8 @@ module Sake
       key = [Values.type_of(a), Values.type_of(b)]
       impl = rows[key]
       unless impl
-        defined = rows.keys.map { "(#{_1.join(", ")})" }.join(", ")
-        fail_at(node, "TypeError", "BinaryOp.#{op}: no implementation for (#{key.join(", ")}); defined for #{defined}")
+        defined = rows.keys.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }.join(", ")
+        fail_at(node, "TypeError", "BinaryOp.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}")
       end
       impl.call(a, b)
     rescue Fail => e

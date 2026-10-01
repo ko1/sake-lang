@@ -39,6 +39,12 @@ module Sake
       end
     end
 
+    # For messages: nil/true/false are shown as themselves, other values by type name.
+    def describe(v) = [nil, true, false].include?(v) ? v.inspect : type_of(v)
+
+    # For messages about table rows keyed by internal type names.
+    def display_type(t) = { "Nil" => "nil", "Boolean" => "true|false" }.fetch(t, t)
+
     def truthy?(v) = !(v.nil? || v == false)
 
     # Same output as Ruby's #inspect so that expected outputs match Ruby versions of a task.

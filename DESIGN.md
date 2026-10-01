@@ -244,11 +244,12 @@ AI 向けの話と最適化の話は、同じ結論に収束する: **操作に�
 - **標準ライブラリの API 名は Ruby に揃える**（Elixir ではない）。`Integer.to_s`、`Array.each`、`String.include?` など。
 - `puts` / `print` / `p` は、組み込みの型なら何でも受け付ける（`to_s` の protocol が決まるまでの暫定）。
 - `Integer / Integer` は Ruby と同じく、切り捨てた Integer を返す。
+- エラーメッセージでは、nil / true / false を型名ではなく値そのものとして書く（`got nil`、`(true, Integer)`）。型名を決める必要が出るのは、シグネチャ（条件 B）・nil の設計・protocol の実装を入れるときなので、それまで保留する。処理系の内部では `Boolean` / `Nil` というキーを使っているが、ソースには書けない。
 - **修飾の無い呼び出しは、内側が勝つ。** その class/module → トップレベルの関数 → `Kernel` の順で静的に解決する。名前の重なりはエラーにしない（重なりをエラーにすると、`Door.open` のような、よくある名前を自分の型に付けられなくなるため）。外側の関数を呼びたいときは `Kernel.puts(...)` のように修飾する。
 
 ### 実装中に暫定で置いたもの（Claude の判断。要確認）
 
-- 型名は、true/false を `Boolean`、nil を `Nil` とする。真偽の判定は、Ruby と Elixir に共通する「nil と false だけが偽」。
+- 真偽の判定は、Ruby と Elixir に共通する「nil と false だけが偽」。
 - `BinaryOp` の表に載せたもの:
   - 数値どうしの四則演算・`%`・`**`・比較。
   - String の `+`・比較、`String * Integer`。

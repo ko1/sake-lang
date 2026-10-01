@@ -148,7 +148,7 @@ module Sake
       reg.define("Array", :join, ["Array"], optional: ["String"]) { |a, sep = ""| a.map { Values.to_s(_1) }.join(sep) }
       reg.define("Array", :reverse, ["Array"], &:reverse)
       reg.define("Array", :sum, ["Array"]) do |a|
-        a.each { |x| raise Fail.new("TypeError", "Array.sum: element must be Integer or Float, got #{Values.type_of(x)}") unless NUM.include?(Values.type_of(x)) }
+        a.each { |x| raise Fail.new("TypeError", "Array.sum: element must be Integer or Float, got #{Values.describe(x)}") unless NUM.include?(Values.type_of(x)) }
         a.sum
       end
       reg.define("Array", :sort, ["Array"]) { |a| sort_checked(a) { a.sort } }
@@ -178,7 +178,7 @@ module Sake
     def sort_checked(a)
       yield
     rescue ArgumentError, NoMethodError
-      types = a.map { Values.type_of(_1) }.uniq
+      types = a.map { Values.describe(_1) }.uniq
       raise Fail.new("ArgumentError", "cannot compare elements of types #{types.join(", ")}")
     end
 
