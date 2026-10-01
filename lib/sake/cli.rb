@@ -6,7 +6,7 @@ require_relative "../sake"
 module Sake
   module CLI
     USAGE = <<~TEXT
-      usage: sake [-c] [--strict[=SPEC]] [--types] [--ast] FILE.sake
+      usage: sake [-c] [--strict[=SPEC]] [--types] [--dump=ast] FILE.sake
 
         -c               check only: report problems, do not run
         --strict[=SPEC]  how strictly to check before running (default: level 1)
@@ -21,7 +21,7 @@ module Sake
                          --strict=type,nil          exactly these items
                          --strict=2,index-nil       level 2 plus an item; `-item` removes one
         --types          experimental: print the inferred types instead of running
-        --ast            print the SakeAST (the resolved program the interpreter runs)
+        --dump=ast       print the SakeAST (the resolved program the interpreter runs)
 
       exit status: 0 = ok, 1 = runtime error, 2 = problem found before running
     TEXT
@@ -151,7 +151,7 @@ module Sake
         case arg
         when "-c" then check_only = true
         when "--types" then types = true
-        when "--ast" then ast = true
+        when "--dump=ast" then ast = true
         when "--strict" then items = STRICT_LEVELS[RECOMMENDED_LEVEL]
         when /\A--strict=(.*)\z/ then items = parse_strict($1)
         when "-h", "--help"
