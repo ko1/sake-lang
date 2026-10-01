@@ -184,9 +184,31 @@ module, resolved statically:
   Calling such a function directly, as in `M.total(x)`, is a static error too, with a hint to call
   it through an includer.
 - **Restrictions.** Only modules can be included, and include cycles are errors.
-- **Not inheritance.** `include` adds no subtype relation: `M.f(x)` always runs `M`'s own `f`.
+- **Not inheritance.** `include` adds no subtype relation.
 
-### 5.5 Arity and blocks
+### 5.5 Calling a module's functions: module_function and dispatch
+
+A module's functions are of two kinds, as in Ruby:
+
+| Kind | How it is declared | `M.f(args)` |
+|---|---|---|
+| module function | after `module_function`, by `module_function :f`, or with `def M.f` | runs `M`'s own `f` (static) |
+| mixin function | any other function of a module | **dispatches**: runs the `f` of the first argument's type, which must include `M` |
+
+- **No subject.** A mixin function cannot be called without arguments (`M.foo`), because there
+  is nothing to dispatch on. Calling one when no type includes `M` is also a static error, with a
+  hint to use `module_function`.
+- **Type check.** The type inference checks that the first argument's possible types all include
+  `M`, and reports one that does not as a `type` problem. While running, a type that does not
+  include `M` raises `TypeError`.
+- **Static calls.** A type's own namespace is always static: `Basket.total(b)` runs Basket's
+  `total`, whether defined in Basket or borrowed from `Summary`. `Summary.total(x)` is the
+  dispatching form.
+- **Kernel.** Every type includes `Kernel`. `Kernel.to_s(x)` and `Kernel.inspect(x)` dispatch to a
+  type's own `to_s` and `inspect`, or use the built-in form. `"#{x}"`, `puts`, and `p` are
+  shorthands for them.
+
+### 5.6 Arity and blocks
 
 The following are checked statically:
 

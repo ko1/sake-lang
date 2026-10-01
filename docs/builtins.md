@@ -302,6 +302,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
 - `Kernel.format(String, *Any)`
 - `Kernel.gets()`
+- `Kernel.inspect(Any)`
 - `Kernel.p(Any)`
 - `Kernel.pp(Any)`
 - `Kernel.print(*Any)`
@@ -309,6 +310,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.rand([Integer|Float])`
 - `Kernel.sleep([Integer|Float|Rational])`
 - `Kernel.sprintf(String, *Any)`
+- `Kernel.to_s(Any)`
 
 ## MatchData
 

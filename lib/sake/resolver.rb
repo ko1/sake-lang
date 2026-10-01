@@ -6,12 +6,17 @@ require "did_you_mean"
 module Sake
   # origin / include_node: set on a copy of an included module's function; the copy's body is resolved
   # in the including namespace.
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node) do
+  # module_function: callable as M.f (static). Other functions of a module are mixin functions:
+  # M.f(x) dispatches to the f of x's type, which must include M.
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
   end
 
   # `@x` inside a function of a Struct type: field x of the function's first parameter.
   FieldAccess = Struct.new(:getter, :setter, :param)
+
+  # `M.f(x, ...)` for a mixin function f of module M: table maps each type including M to its f.
+  Dispatch = Struct.new(:module, :name, :table)
 
   # `x[k]` / `x[k] = v`: the receiver becomes the first argument of Index.[] / Index.[]=.
   IndexCall = Struct.new(:builtin)
@@ -45,6 +50,7 @@ module Sake
       @struct_types = {}
       @value_constants = {} # rejected `NAME = value` => suggested function name
       @modules = {}         # module name => ModuleNode
+      @module_function_names = {} # module => names given to `module_function :name`
       @includes = {} # namespace => [[module name, include node]]
       @requirements = Hash.new { |h, k| h[k] = [] } # module's own function => names it needs from includers
       @direct_calls = []    # [node, function] calls that must not reach a function with requirements
@@ -90,18 +96,29 @@ module Sake
         else @toplevel << st
         end
       end
+      apply_module_function_names
       apply_includes
     end
 
     # Copies each included module's functions into the including namespace (own definitions win).
+    def apply_module_function_names
+      @module_function_names.each do |ns, names|
+        names.each do |n|
+          fn = @functions.dig(ns, n)
+          fn ? fn.module_function = true : error(@modules[ns], "module_function :#{n}: #{ns} has no function #{n}")
+        end
+      end
+    end
+
     def apply_includes
       @includes.each do |ns, list|
         list.each do |mod, node|
           error(node, "`include #{mod}`: #{mod} is not a module", @struct_types[mod] || BUILTIN_TYPES.include?(mod) ? ["only a `module` can be included"] : []) unless @modules.key?(mod)
         end
       end
+      @linearized = {}
       @includes.each_key do |ns|
-        linearize(ns, []).each do |mod, node|
+        (@linearized[ns] = linearize(ns, [])).each do |mod, node|
           (@functions[mod] || {}).each do |name, fn|
             next if fn.origin || lookup(ns, name)
             (@functions[ns] ||= {})[name] = fn.dup.tap do |c|
@@ -292,8 +309,19 @@ module Sake
       return if body.nil?
       return error(body, "unsupported syntax in class body") unless body.is_a?(Prism::StatementsNode)
 
+      module_function_all = false
       body.body.each do |st|
-        if include_call?(st)
+        if st.is_a?(Prism::CallNode) && st.receiver.nil? && st.name == :module_function
+          next error(st, "module_function is only for modules") unless node.is_a?(Prism::ModuleNode)
+          if st.arguments.nil?
+            module_function_all = true
+          else
+            st.arguments.arguments.each do |a|
+              next error(a, "module_function takes function names as symbols") unless a.is_a?(Prism::SymbolNode)
+              (@module_function_names[ns] ||= []) << a.unescaped
+            end
+          end
+        elsif include_call?(st)
           st.arguments.arguments.each do |a|
             next error(a, "include takes module names") unless a.is_a?(Prism::ConstantReadNode)
             (@includes[ns] ||= []) << [a.name.to_s, st]
@@ -304,6 +332,7 @@ module Sake
           error(st, "`def #{st.receiver.slice}.#{st.name}` inside `#{cp.slice}`: write `def #{st.name}` (it defines #{ns}.#{st.name})")
         else
           collect_def(st, ns)
+          @functions.dig(ns, st.name.to_s)&.module_function = true if module_function_all
         end
       end
     end
@@ -328,6 +357,8 @@ module Sake
 
       name = node.name.to_s
       fn = UserFunction.new(ns, name, collect_params(node), node.body, node, yields?(node.body))
+      # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
+      fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
       if (prev = @functions.dig(ns, name))
         error(node, "`#{fn.full_name}` is already defined at line #{prev.node.location.start_line}")
       elsif ns && @registry.lookup(ns, name)
@@ -712,6 +743,9 @@ module Sake
 
     def check_arity(node, target, argc, has_block)
       case target
+      when Dispatch
+        fn = @functions.dig(target.module, target.name)
+        check_arity(node, fn, argc, has_block) if fn
       when UserFunction
         if argc != target.params.size
           error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{target.params.size})")
@@ -809,6 +843,7 @@ module Sake
         return error(node.receiver, "undefined type or module `#{ns}`", spell(ns, @registry.namespaces).map { "did you mean `#{_1}`?" })
       end
       found = lookup(ns, name)
+      return mixin_call(node, ns, name, found) if found.is_a?(UserFunction) && @modules.key?(ns) && !found.module_function
       if found
         @direct_calls << [node, found] if found.is_a?(UserFunction)
         return found
@@ -829,6 +864,25 @@ module Sake
         end
       end
       error(node, "undefined function `#{ns}.#{name}`", hints)
+    end
+
+    # M.f(x) for a mixin function: dispatch on the type of x among the types that include M.
+    def mixin_call(node, mod, name, fn)
+      if (node.arguments&.arguments || []).empty?
+        return error(node, "#{mod}.#{name} is a mixin function: it has no subject to dispatch on",
+                     ["call it on a type that includes #{mod}, or mark it with `module_function`"])
+      end
+      types = @linearized.select { |t, mods| (@struct_types.key?(t) || BUILTIN_TYPES.include?(t)) && mods.any? { _1[0] == mod } }.keys
+      if types.empty?
+        return error(node, "#{mod}.#{name} is a mixin function, and no type includes #{mod}",
+                     ["to call it as #{mod}.#{name}(...), mark it with `module_function`"])
+      end
+      table = types.to_h { |t| [t, lookup(t, name)] }
+      table.each do |t, impl|
+        next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && impl.yields == fn.yields
+        error(node, "#{mod}.#{name} dispatches to #{t}.#{name}, whose arguments or block differ from #{mod}.#{name}")
+      end
+      Dispatch.new(mod, name, table)
     end
 
     def lookup(ns, name) = @functions.fetch(ns, {})[name] || @registry.lookup(ns, name)

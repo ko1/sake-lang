@@ -612,6 +612,18 @@ module Sake
       args = (node.arguments&.arguments || []).map { ev(_1, env) }
       blk = node.block && BlockCtx.new(node.block, @program.blocks.fetch(node.block), env)
       case target
+      when Dispatch
+        record(node, "#{target.module}.#{target.name}", "subject", target.table.keys, args[0])
+        rs = args[0].filter_map do |a|
+          fn = target.table[atom_type_name(a)] or next
+          @callers.push(node.location.start_line)
+          begin
+            call_user(fn, [[a].freeze, *args.drop(1)], blk)
+          ensure
+            @callers.pop
+          end
+        end
+        u(*rs)
       when UserFunction
         @callers.push(node.location.start_line)
         begin

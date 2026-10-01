@@ -16,11 +16,12 @@
 | bool_op_error.sake | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
 | class_settings.sake | 2 | 15 | 0 | 1 | 0 | 13 | 0 | 0 |
 | data.sake | 2 | 2 | 0 | 1 | 0 | 3 | 0 | 0 |
+| dispatch_runtime.sake | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
 | exceptions.sake | 2 | 17 | 0 | 1 | 2 | 19 | 0 | 0 |
 | field_shorthand.sake | 2 | 25 | 0 | 4 | 0 | 29 | 0 | 0 |
 | first.sake | 2 | 30 | 0 | 0 | 0 | 29 | 0 | 0 |
-| include.sake | 2 | 8 | 0 | 0 | 0 | 8 | 0 | 0 |
-| include_order.sake | 2 | 2 | 0 | 0 | 0 | 2 | 0 | 0 |
+| include.sake | 2 | 12 | 0 | 0 | 0 | 10 | 0 | 0 |
+| include_order.sake | 2 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | index.sake | 2 | 34 | 1 | 0 | 0 | 15 | 0 | 0 |
 | index_errors.sake | 1 | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | index_errors2.sake | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |

@@ -607,6 +607,7 @@ definition, write its namespace, as in `Kernel.puts(...)`.
 def label(x) = "top: #{x}"
 
 module Door
+  module_function
   def open(d) = label("door")              # Door.label wins over the top-level label
   def label(x) = "door: #{x}"
   def show(d) = puts(open(d))              # Door.open wins over the top-level open
@@ -634,8 +635,16 @@ door: door
 function, unqualified names are looked up in the namespace that includes it. So `Summary` below
 can use the `each` that `Basket` or `Countdown` provides.
 
+There are two ways to call a module's functions:
+
+- **Module functions.** Functions after `module_function` are called directly, as `Units.km(x)`.
+- **Mixin functions.** Calling any other function through the module, as `Summary.total(x)`,
+  **dispatches**: it runs the `total` of `x`'s type, which must include `Summary`. This is the one
+  place besides operators where the function is picked while running, and the module name says
+  so.
+
 ```ruby
-module Summary                       # needs `each` and `count` from whoever includes it
+module Summary                       # mixin functions: they need `each` and `count` from the includer
   def total(c)
     sum = 0
     each(c) { |x| sum += x }
@@ -644,30 +653,34 @@ module Summary                       # needs `each` and `count` from whoever inc
   def average(c) = total(c) / count(c)
 end
 
-Basket = Struct.new(:items)
-class Basket                         # `class` adds operations to a type
+class Basket < {reader: [items]}     # `class` adds operations to a type
   include Summary
   def each(b) = Array.each(@items) { |x| yield(x) }
   def count(b) = Array.size(@items)
 end
 
-module Countdown                     # `module` is a namespace without a type
+class Countdown < {reader: [n]}
   include Summary
-  def each(n) = Integer.downto(n, 1) { |i| yield(i) }
-  def count(n) = n
+  def each(c) = Integer.downto(@n, 1) { |i| yield(i) }
+  def count(c) = @n
+end
+
+module Units                         # `module_function`: called directly, as Units.km
+  module_function
+  def km(m) = m / 1000.0
 end
 
 b = Basket.new(Array[3, 4, 5])
-puts(Basket.total(b))                # Summary.total, with each = Basket.each
-puts(Basket.average(b))
-puts(Countdown.total(4))             # Summary.total, with each = Countdown.each
+puts(Basket.total(b))                # static: Basket's total (borrowed from Summary)
+puts(Summary.total(Countdown.new(4)))  # dispatch: the total of the argument's type
+puts(Units.km(2500))
 ```
 
 ```
 $ sake modules.sake
 12
-4
 10
+2.5
 ```
 
 A missing requirement is found before running. So are a `class` that is not a type, and a direct
@@ -691,7 +704,8 @@ $ sake module_errors.sake
 module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)
 module_errors.sake:7:7: error: `class Helpers`: Helpers is not a type; a namespace of functions is a module
   hint: module Helpers
-module_errors.sake:10:14: error: Summary.total needs `each` from a namespace that includes Summary
+module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary
+  hint: to call it as Summary.total(...), mark it with `module_function`
 (exit status 2)
 ```
 

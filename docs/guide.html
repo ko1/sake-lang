@@ -661,6 +661,7 @@ puts(length(<span class="tc">Point</span>.new(<span class="tn">3</span>, <span c
 <figure class="ex"><pre class="src"><code><span class="tk">def</span> label(x) = <span class="ts">&quot;</span><span class="ts">top: </span><span class="ts">#{</span>x<span class="ts">}</span><span class="ts">&quot;</span>
 
 <span class="tk">module</span> <span class="tc">Door</span>
+  module_function
   <span class="tk">def</span> open(d) = label(<span class="ts">&quot;</span><span class="ts">door</span><span class="ts">&quot;</span>)              <span class="tm"># Door.label wins over the top-level label</span>
   <span class="tk">def</span> label(x) = <span class="ts">&quot;</span><span class="ts">door: </span><span class="ts">#{</span>x<span class="ts">}</span><span class="ts">&quot;</span>
   <span class="tk">def</span> show(d) = puts(open(d))              <span class="tm"># Door.open wins over the top-level open</span>
@@ -676,8 +677,9 @@ door: door
 top: top
 door: door</pre></figure>
 <h3>Sharing functions with <code>include</code></h3>
-<p><code>class</code> adds operations to a type, and <code>module</code> is a namespace with no type. <code>include M</code> borrows <code>M</code>'s functions, as Ruby's modules do, but statically. Inside a borrowed function, unqualified names are looked up in the namespace that includes it, so <code>Summary</code> can use the <code>each</code> that <code>Basket</code> or <code>Countdown</code> provides. Nothing is dispatched at run time.</p>
-<figure class="ex"><pre class="src"><code><span class="tk">module</span> <span class="tc">Summary</span>                       <span class="tm"># needs `each` and `count` from whoever includes it</span>
+<p><code>class</code> adds operations to a type, and <code>module</code> is a namespace with no type. <code>include M</code> borrows <code>M</code>'s functions, as Ruby's modules do, but statically. Inside a borrowed function, unqualified names are looked up in the namespace that includes it, so <code>Summary</code> can use the <code>each</code> that <code>Basket</code> or <code>Countdown</code> provides.</p>
+<p>A module's functions are called in one of two ways. Functions after <code>module_function</code> are called directly (<code>Units.km(x)</code>). Calling any other function through its module (<code>Summary.total(x)</code>) <strong>dispatches</strong> to the function of <code>x</code>'s type, which must include the module. Like Elixir's protocols, the module name on the call says that the function is picked while running.</p>
+<figure class="ex"><pre class="src"><code><span class="tk">module</span> <span class="tc">Summary</span>                       <span class="tm"># mixin functions: they need `each` and `count` from the includer</span>
   <span class="tk">def</span> total(c)
     sum = <span class="tn">0</span>
     each(c) { |x| sum += x }
@@ -686,27 +688,31 @@ door: door</pre></figure>
   <span class="tk">def</span> average(c) = total(c) / count(c)
 <span class="tk">end</span>
 
-<span class="tc">Basket</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">items</span>)
-<span class="tk">class</span> <span class="tc">Basket</span>                         # `class` adds operations to a type
+<span class="tk">class</span> <span class="tc">Basket</span> &lt; {reader: [items]}     <span class="tm"># `class` adds operations to a type</span>
   include <span class="tc">Summary</span>
   <span class="tk">def</span> each(b) = <span class="tc">Array</span>.each(<span class="te">@items</span>) { |x| <span class="tk">yield</span>(x) }
   <span class="tk">def</span> count(b) = <span class="tc">Array</span>.size(<span class="te">@items</span>)
 <span class="tk">end</span>
 
-<span class="tk">module</span> <span class="tc">Countdown</span>                     <span class="tm"># `module` is a namespace without a type</span>
+<span class="tk">class</span> <span class="tc">Countdown</span> &lt; {reader: [n]}
   include <span class="tc">Summary</span>
-  <span class="tk">def</span> each(n) = <span class="tc">Integer</span>.downto(n, <span class="tn">1</span>) { |i| <span class="tk">yield</span>(i) }
-  <span class="tk">def</span> count(n) = n
+  <span class="tk">def</span> each(c) = <span class="tc">Integer</span>.downto(<span class="te">@n</span>, <span class="tn">1</span>) { |i| <span class="tk">yield</span>(i) }
+  <span class="tk">def</span> count(c) = <span class="te">@n</span>
+<span class="tk">end</span>
+
+<span class="tk">module</span> <span class="tc">Units</span>                         <span class="tm"># `module_function`: called directly, as Units.km</span>
+  module_function
+  <span class="tk">def</span> km(m) = m / <span class="tn">1000.0</span>
 <span class="tk">end</span>
 
 b = <span class="tc">Basket</span>.new(<span class="tc">Array</span>[<span class="tn">3</span>, <span class="tn">4</span>, <span class="tn">5</span>])
-puts(<span class="tc">Basket</span>.total(b))                # Summary.total, with each = Basket.each
-puts(<span class="tc">Basket</span>.average(b))
-puts(<span class="tc">Countdown</span>.total(<span class="tn">4</span>))             # Summary.total, with each = Countdown.each
+puts(<span class="tc">Basket</span>.total(b))                # static: Basket&#39;s total (borrowed from Summary)
+puts(<span class="tc">Summary</span>.total(<span class="tc">Countdown</span>.new(<span class="tn">4</span>)))  <span class="tm"># dispatch: the total of the argument&#39;s type</span>
+puts(<span class="tc">Units</span>.km(<span class="tn">2500</span>))
 </code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake modules.sake</span>
 12
-4
-10</pre></figure>
+10
+2.5</pre></figure>
 <p>A missing requirement is found before running. So are a <code>class</code> that is not a type, and a direct call to a function that needs its includer:</p>
 <figure class="ex"><pre class="src"><code><span class="tk">module</span> <span class="tc">Summary</span>
   <span class="tk">def</span> total(c) = each(c) + <span class="tn">1</span>
@@ -722,7 +728,8 @@ puts(<span class="tc">Summary</span>.total(<span class="tn">1</span>))
 <span class="oerr">module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)</span>
 <span class="oerr">module_errors.sake:7:7: error: `class Helpers`: Helpers is not a type; a namespace of functions is a module</span>
 <span class="ohint">  hint: module Helpers</span>
-<span class="oerr">module_errors.sake:10:14: error: Summary.total needs `each` from a namespace that includes Summary</span>
+<span class="oerr">module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary</span>
+<span class="ohint">  hint: to call it as Summary.total(...), mark it with `module_function`</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li>The includer's own definition wins over a borrowed one. Modules included by a module are borrowed too.</li>

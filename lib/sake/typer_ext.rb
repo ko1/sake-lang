@@ -108,7 +108,7 @@ module Sake
       "Rational" => %w[Kernel.Rational Integer.to_r Float.to_r Float.rationalize Rational.abs],
       "Complex" => %w[Kernel.Complex Complex.conjugate],
       "Time" => %w[Time.now Time.at Time.new Time.utc],
-      "String" => %w[Symbol.to_s Regexp.source Regexp.escape MatchData.to_s MatchData.pre_match MatchData.post_match
+      "String" => %w[Kernel.to_s Kernel.inspect Symbol.to_s Regexp.source Regexp.escape MatchData.to_s MatchData.pre_match MatchData.post_match
                      String.center String.tr String.delete String.squeeze String.succ String.next
                      Kernel.format Kernel.sprintf Integer.chr File.read Rational.to_s Complex.to_s
                      Time.to_s Time.strftime],
@@ -123,7 +123,7 @@ module Sake
     }.flat_map { |type, names| names.map { [_1, type] } }.to_h.freeze
 
     # Built-ins that show values run each type's own to_s / inspect, so the typer analyzes those too.
-    SHOWS = { "Kernel.puts" => :to_s, "Kernel.print" => :to_s, "Kernel.p" => :inspect, "Kernel.pp" => :inspect,
+    SHOWS = { "Kernel.to_s" => :to_s, "Kernel.inspect" => :inspect, "Kernel.puts" => :to_s, "Kernel.print" => :to_s, "Kernel.p" => :inspect, "Kernel.pp" => :inspect,
               "Kernel.format" => :to_s, "Kernel.sprintf" => :to_s, "Array.join" => :to_s }.freeze
 
     def show_deep(ty, kind, node, seen = {})

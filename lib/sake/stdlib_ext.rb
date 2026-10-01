@@ -301,6 +301,9 @@ module Sake
           raise Fail.new("ArgumentError", e.message)
         end
       end
+      # Every type includes Kernel: these show a value with its type's own to_s / inspect, if any.
+      reg.define("Kernel", :to_s, ["Any"]) { |x| Values.to_s(x) }
+      reg.define("Kernel", :inspect, ["Any"]) { |x| Values.inspect(x) }
       reg.define("Kernel", :pp, ["Any"]) { |v| reg.lookup("Kernel", "p").impl.(v) }
       reg.define("Kernel", :rand, [], optional: [NUM]) { |n = nil| n ? rand(n) : rand }
       reg.define("Kernel", :Integer, [%w[String Integer Float]]) { |x| ruby_error("ArgumentError") { Integer(x) } }

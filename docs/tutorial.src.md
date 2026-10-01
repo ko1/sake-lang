@@ -206,6 +206,14 @@ definition, write its namespace, as in `Kernel.puts(...)`.
 function, unqualified names are looked up in the namespace that includes it. So `Summary` below
 can use the `each` that `Basket` or `Countdown` provides.
 
+There are two ways to call a module's functions:
+
+- **Module functions.** Functions after `module_function` are called directly, as `Units.km(x)`.
+- **Mixin functions.** Calling any other function through the module, as `Summary.total(x)`,
+  **dispatches**: it runs the `total` of `x`'s type, which must include `Summary`. This is the one
+  place besides operators where the function is picked while running, and the module name says
+  so.
+
 @@example modules
 
 A missing requirement is found before running. So are a `class` that is not a type, and a direct

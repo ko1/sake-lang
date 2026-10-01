@@ -384,6 +384,12 @@ module Sake
       blk = node.block && SakeBlock.new(node.block, @program.blocks.fetch(node.block), env)
       case target
       when UserFunction then call_user(target, args, blk, node)
+      when Dispatch
+        fn = target.table[Values.type_of(args[0])]
+        unless fn
+          fail_at(node, "TypeError", "#{target.module}.#{target.name}: #{Values.describe(args[0])} does not include #{target.module}")
+        end
+        call_user(fn, args, blk, node)
       when Builtin then call_builtin(target, args, blk, node)
       end
     end
