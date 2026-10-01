@@ -6,6 +6,7 @@ require_relative "sake/values"
 require_relative "sake/registry"
 require_relative "sake/stdlib"
 require_relative "sake/stdlib_ext"
+require_relative "sake/stdlib_table"
 require_relative "sake/resolver"
 require_relative "sake/interpreter"
 

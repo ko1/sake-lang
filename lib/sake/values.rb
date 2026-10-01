@@ -12,6 +12,7 @@ module Sake
 
     # Structural, so that Tuples work as Hash keys and Set elements.
     def ==(other) = other.is_a?(Tuple) && @elems == other.elems
+    def to_s = Values.inspect(self) # for Ruby methods such as join and format
     alias eql? ==
     def hash = [Tuple, @elems].hash
   end
@@ -56,6 +57,7 @@ module Sake
     def [](f) = @values[@shape.fields.index(f)]
 
     def ==(other) = other.is_a?(RecordValue) && @shape.equal?(other.shape) && @values == other.values
+    def to_s = Values.inspect(self)
     alias eql? ==
     def hash = [RecordValue, @shape.fields, @values].hash
   end

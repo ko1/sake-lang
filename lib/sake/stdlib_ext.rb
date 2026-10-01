@@ -9,6 +9,7 @@ module Sake
     module_function
 
     def install_ext(reg, out, input)
+      install_table(reg)
       install_numeric_tower(reg)
       install_time(reg)
       install_symbol(reg)

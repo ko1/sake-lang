@@ -105,13 +105,15 @@ module Sake
     }.flat_map { |type, names| names.map { [_1, type] } }.to_h.freeze
 
     def builtin_result_ext(name, args, blk, node)
+      table = table_result(name, args, blk, node)
+      return table unless table == :none
       a0 = args[0]
       if (ty = FIXED_EXT[name])
         call_block(blk, [each_elem(a0)]) if blk && !each_elem(a0).empty?
         return t(ty)
       end
       case name
-      when "Kernel.gets" then u(t("String"), t("Nil"))
+      when "Kernel.gets", "String.index" then name == "Kernel.gets" ? u(t("String"), t("Nil")) : u(t("Integer"), t("Nil"))
       when "Complex.real", "Complex.imaginary" then u(t("Integer"), t("Float"), t("Rational"))
       when "Complex.abs" then u(t("Integer"), t("Float"))
       when "Complex.rectangular" then tuple([u(t("Integer"), t("Float"), t("Rational"))] * 2)
@@ -256,6 +258,79 @@ module Sake
         acc = nxt
       end
       acc
+    end
+  end
+end
+
+module Sake
+  class Typer
+    TABLE = StdlibTable::ROWS.to_h { |ns, name, _params, result, opts| ["#{ns}.#{name}", [result, opts || {}]] }
+
+    # A second site created by the same call (an inner Array, a group's values, ...).
+    def aux_site(node, tag, elem)
+      key = ((@aux_keys ||= {})[[node.object_id, tag]] ||= Object.new)
+      id = (@site_ids[key] ||= @site_ids.size + 1)
+      @sites[id] ||= Site.new(id, key, "L#{node.location.start_line} #{tag}", nil, elem, elem)
+      @sites[id].elem = u(@sites[id].elem, elem)
+      [[:array, id]].freeze
+    end
+
+    def table_result(name, args, blk, node)
+      result, opts = TABLE[name]
+      return :none unless result
+      a0 = opts[:kernel] ? [] : args[0]
+      elem = each_elem(a0)
+      elem = t("Integer") if elem.empty? && opts[:int_range]
+      bres = []
+      if blk && !%i[acc_elem acc_pair].include?(opts[:yields])
+        yargs =
+          case opts[:yields]
+          when :two then [elem, elem]
+          when :elem_memo, :pair_memo then [elem, args[1]]
+          when :slice then [aux_site(node, "slice", elem)]
+          else [opts[:yield_type] ? t(opts[:yield_type]) : elem]
+          end
+        bres = call_block(blk, yargs) unless yargs.any?(&:empty?)
+      end
+      k, v = hash_kv(a0)
+      case result
+      when /\AArray<(\w+)>\z/ then new_site(node, " #{name}", t($1))
+      when String then t(result)
+      when :bool then t("Boolean")
+      when :bool_nil then u(t("Boolean"), t("Nil"))
+      when :int_nil then u(t("Integer"), t("Nil"))
+      when :string_nil then u(t("String"), t("Nil"))
+      when :recv then a0
+      when :recv_nil then u(a0, t("Nil"))
+      when :elem_nil then u(elem, t("Nil"))
+      when :elem_sum then elem.empty? ? t("Integer") : u(*elem.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] })
+      when :array then new_site(node, " #{name}", elem)
+      when :array_block then new_site(node, " #{name}", bres)
+      when :array_block_truthy then new_site(node, " #{name}", without_nil(bres))
+      when :array_flat then new_site(node, " #{name}", elem_of(bres))
+      when :array_of_arrays then new_site(node, " #{name}", aux_site(node, "inner", elem))
+      when :array_elem_nil then new_site(node, " #{name}", u(elem, t("Nil")))
+      when :array_union then new_site(node, " #{name}", u(elem, *args.drop(1).map { elem_of(_1) }))
+      when :array_zip then new_site(node, " #{name}", tuple([elem, *args.drop(1).map { u(elem_of(_1), t("Nil")) }]))
+      when :transpose then new_site(node, " #{name}", aux_site(node, "inner", elem_of(elem)))
+      when :tuple3_string then tuple([t("String")] * 3)
+      when :tuple_int2 then tuple([t("Integer")] * 2)
+      when :tuple_elem_nil2 then tuple([u(elem, t("Nil"))] * 2)
+      when :tuple_arrays, :tuple_pair_arrays then aux_site(node, "part", elem).then { tuple([_1, _1]) }
+      when :set_elem then set_site(node).tap { set_sites[_1[0][1]].elem = u(set_sites[_1[0][1]].elem, elem) }
+      when :memo then args[1]
+      when :fold then fold(args[1], elem, blk)
+      when :hash_group then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = bres; s.val = aux_site(node, "group", elem) }
+      when :hash_tally then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = elem; s.val = t("Integer") }
+      when :hash_compact then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = k; s.val = without_nil(v) }
+      when :hash_same then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = k; s.val = v }
+      when :array_val_nil then new_site(node, " #{name}", u(v, t("Nil")))
+      when :array_val then new_site(node, " #{name}", v)
+      when :hash_default then u(*atoms_of(a0, :hash).map { hash_sites[_1[1]].default })
+      when :pair_nil then k.empty? ? t("Nil") : u(pair_type(k, v), t("Nil"))
+      when :array_pairs then new_site(node, " #{name}", k.empty? ? [] : pair_type(k, v))
+      else raise "BUG: table result #{result.inspect}"
+      end
     end
   end
 end

@@ -10,7 +10,7 @@
 | shapes.sake | 2 | 60 | 1 | 4 | 0 | 74 | 0 | 7 |
 | stats.sake | 2 | 33 | 0 | 2 | 0 | 39 | 0 | 7 |
 | words.sake | 2 | 27 | 0 | 0 | 0 | 32 | 0 | 0 |
-| binary_op.sake | 1 | 15 | 0 | 1 | 0 | 28 | 0 | 0 |
+| binary_op.sake | 1 | 15 | 0 | 1 | 0 | 28 | 0 | 1 |
 | binary_op_error.sake | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
 | blocks.sake | 2 | 28 | 0 | 0 | 0 | 40 | 0 | 0 |
 | bool_op_error.sake | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
@@ -30,14 +30,15 @@
 | nil_field.sake | 2 | 3 | 5 | 0 | 0 | 14 | 0 | 0 |
 | no_toplevel_functions.sake | 2 | 4 | 0 | 0 | 0 | 7 | 0 | 0 |
 | numeric_errors.sake | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
-| numeric_time.sake | 2 | 30 | 0 | 2 | 0 | 46 | 0 | 2 |
+| numeric_time.sake | 2 | 30 | 0 | 2 | 0 | 46 | 0 | 10 |
 | pattern.sake | 2 | 10 | 0 | 0 | 0 | 23 | 0 | 0 |
 | pattern_runtime.sake | 2 | 1 | 0 | 1 | 0 | 2 | 0 | 0 |
 | record.sake | 2 | 8 | 0 | 1 | 0 | 11 | 0 | 0 |
-| ruby_types.sake | 2 | 61 | 3 | 0 | 0 | 101 | 0 | 0 |
+| ruby_types.sake | 2 | 61 | 3 | 0 | 0 | 101 | 0 | 1 |
 | ruby_types_errors.sake | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
 | runtime_type_error.sake | 2 | 0 | 0 | 1 | 0 | 2 | 0 | 0 |
 | scope.sake | 2 | 6 | 0 | 0 | 0 | 9 | 0 | 0 |
+| stdlib_table.sake | 2 | 75 | 0 | 0 | 0 | 124 | 0 | 0 |
 | strings.sake | 2 | 12 | 0 | 0 | 0 | 20 | 0 | 0 |
 | tuple_as_array.sake | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 0 |
 | typed_array.sake | 2 | 11 | 0 | 1 | 0 | 21 | 0 | 0 |

@@ -55,6 +55,11 @@ class TestCLI < Minitest::Test
     assert_match(/unknown option --check/, err)
   end
 
+  def test_builtins_list_is_up_to_date
+    _, _, st = Open3.capture3(RbConfig.ruby, File.join(ROOT, "tools/gen_builtins.rb"), "--check")
+    assert st.success?, "docs/builtins.md is stale; run `ruby tools/gen_builtins.rb`"
+  end
+
   def test_guide_is_up_to_date
     _, _, st = Open3.capture3(RbConfig.ruby, File.join(ROOT, "tools/gen_guide.rb"), "--check")
     assert st.success?, "docs/guide.html is stale; run `ruby tools/gen_guide.rb`"

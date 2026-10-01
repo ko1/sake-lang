@@ -11,18 +11,22 @@ require_relative "../../lib/sake"
 require_relative "../../lib/sake/typer"
 
 module Recorder
-  attr_accessor :observed
+  attr_accessor :observed, :result_types
 
   def call_builtin(fn, args, blk, node)
     # Arguments of the untyped constructors (Array[], Hash[], Set[]) and of Index.[] / []= are "Any": nothing is checked.
-    return super if %w[Array[] Hash[] Set[]].include?(fn.full_name) || fn.namespace == "Index"
-    args.each_with_index do |a, i|
-      # `T[...]` checks each element; the typer records those as arg "elem".
-      arg = fn.name == "[]" ? "elem" : i + 1
-      key = [node.location.start_line, node.location.start_column, fn.full_name, arg]
-      (observed[key] ||= Set.new) << [Sake::Values.type_of(a)]
+    unless %w[Array[] Hash[] Set[]].include?(fn.full_name) || fn.namespace == "Index"
+      args.each_with_index do |a, i|
+        # `T[...]` checks each element; the typer records those as arg "elem".
+        arg = fn.name == "[]" ? "elem" : i + 1
+        key = [node.location.start_line, node.location.start_column, fn.full_name, arg]
+        (observed[key] ||= Set.new) << [Sake::Values.type_of(a)]
+      end
     end
-    super
+    r = super
+    # The result type is checked too: every built-in has a hand-written result type in the typer.
+    (result_types[node] ||= [fn.full_name, Set.new])[1] << Sake::Values.type_of(r)
+    r
   end
 
   def binary_op(node, op, a, b)
@@ -64,8 +68,9 @@ ARGV.each do |path|
   typer = Sake::Typer.new(program, narrow:).run
   static_by_loc = typer.checks.to_h { |k, c| [[k[0], k[1], k[2], k[3]], c] }
 
-  interp = Sake::Interpreter.new(Sake.load(File.read(path), path, out:))
+  interp = Sake::Interpreter.new(program) # the same nodes as the typer saw
   interp.observed = {}
+  interp.result_types = {}.compare_by_identity
   begin
     interp.run
   rescue Sake::RunError
@@ -88,6 +93,13 @@ ARGV.each do |path|
     names = static_names(c)
     next if names.include?(["?"]) || seen.subset?(names)
     bad << "L#{key[0]} #{key[2]} #{key[3]}: observed #{seen.to_a.inspect}, static #{typer.show(c.actual)}"
+  end
+  interp.result_types.each do |node, (name, seen)|
+    static = typer.results[node]
+    next if static.nil? || static.any? { _1.is_a?(Array) && _1[0] == :unknown }
+    names = static.map { atom_name(_1) }.to_set
+    next if seen.subset?(names)
+    bad << "L#{node.location.start_line} #{name} result: observed #{seen.to_a.inspect}, static #{typer.show(static)}"
   end
   violations += bad.size
   s = typer.summary

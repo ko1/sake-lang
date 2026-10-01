@@ -38,6 +38,7 @@
 | ruby_types_errors.sake | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
 | runtime_type_error.sake | 2 | 0 | 0 | 1 | 0 | 2 | 0 | 0 |
 | scope.sake | 2 | 6 | 0 | 0 | 0 | 9 | 0 | 0 |
+| stdlib_table.sake | 2 | 75 | 0 | 0 | 0 | 124 | 0 | 0 |
 | strings.sake | 2 | 12 | 0 | 0 | 0 | 20 | 0 | 0 |
 | tuple_as_array.sake | 1 | 0 | 0 | 1 | 0 | 2 | 0 | 0 |
 | typed_array.sake | 2 | 11 | 0 | 1 | 0 | 21 | 0 | 0 |

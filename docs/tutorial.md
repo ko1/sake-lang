@@ -72,8 +72,10 @@ puts(name.strip.capitalize)
 $ sake method_call.sake
 method_call.sake:2:11: error: method call on a value `name.upcase` is not allowed
   hint: String.upcase(name)
+  hint: Symbol.upcase(name)
 method_call.sake:3:17: error: method call on a value `name.strip.capitalize` is not allowed
   hint: String.capitalize(String.strip(name))
+  hint: Symbol.capitalize(String.strip(name))
 (exit status 2)
 ```
 

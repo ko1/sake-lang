@@ -14,6 +14,8 @@ bin/sake --types FILE.sake        # 実験的な型推論の結果（検査箇�
 ruby test/test_samples.rb         # テスト（UPDATE=1 で期待値を更新）
 ruby test/test_cli.rb             # bin/sake 経由のテストと、docs/tutorial.md が最新かの確認
 ruby tools/gen_tutorial.rb        # docs/tutorial.src.md と docs/examples/ から docs/tutorial.md を生成
+ruby tools/gen_builtins.rb        # 組み込み操作の一覧 docs/builtins.md を生成
+ruby tools/gen_guide.rb           # docs/guide.src.html から docs/guide.html を生成
 ```
 
 - `lib/sake/resolver.rb`: 実行前の名前解決・検査（修正案つきのエラー）

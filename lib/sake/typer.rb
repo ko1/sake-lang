@@ -57,6 +57,9 @@ module Sake
 
     attr_reader :checks, :sites, :fields, :dead_functions, :passes
 
+    # Inferred result type of each built-in call node (last pass), for validating result types.
+    def results = @results || {}
+
     # narrow: inside `if x` / `while x` on a local variable, drop nil from x's type.
     def initialize(program, narrow: true)
       @program = program
@@ -75,6 +78,7 @@ module Sake
         @passes += 1
         before = snapshot
         @checks = {}
+        @results = {}.compare_by_identity
         @done = {}
         @in_progress = {}
         @yield_depth = Hash.new(0)
@@ -609,7 +613,10 @@ module Sake
         ensure
           @callers.pop
         end
-      when Builtin then call_builtin(target, args, blk, node)
+      when Builtin
+        r = call_builtin(target, args, blk, node)
+        (@results ||= {}.compare_by_identity)[node] = u((@results[node] || []), r) # for crosscheck
+        r
       end
     end
 

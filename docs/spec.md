@@ -552,7 +552,8 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 
 ## 15. Built-in operations
 
-The names follow Ruby's core library. "→" gives the result type. Operations marked "block" require
+The tables below are a guide to the most used operations. **The complete list, generated from the
+interpreter, is [builtins.md](builtins.md).** The names follow Ruby's core library. "→" gives the result type. Operations marked "block" require
 one.
 
 ### Kernel
