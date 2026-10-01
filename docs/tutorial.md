@@ -2,7 +2,7 @@
 
 # Sake Tutorial
 
-Sake (pronounced "Seiku") is an experimental language that uses **Ruby's syntax** but turns one habit around:
+Sake (/seɪk/, as in "for the sake of") is an experimental language that uses **Ruby's syntax** but turns one habit around:
 instead of writing types on variables, you write the type on each **operation**.
 
 ```ruby

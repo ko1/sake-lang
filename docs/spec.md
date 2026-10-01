@@ -1,7 +1,7 @@
 # Sake Language Specification (v0)
 
 This document describes the language as implemented by the v0 interpreter (`bin/sake`). Sake
-(pronounced "Seiku") is experimental. Points still open in the design are listed in [§15](#15-not-yet-supported) and in
+(/seɪk/, as in "for the sake of") is experimental. Points still open in the design are listed in [§15](#15-not-yet-supported) and in
 [../DESIGN.md](../DESIGN.md) (in Japanese). For a guided introduction, see [tutorial.md](tutorial.md).
 
 ## 1. Principles
