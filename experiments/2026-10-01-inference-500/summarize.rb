@@ -88,3 +88,38 @@ end
   puts "**#{c}** (#{causes[c].values.sum}): " + causes[c].sort_by { -_2 }.first(15).map { "`#{_1}` #{_2}" }.join(", ")
   puts
 end
+
+verify = File.exist?(File.join(dir, "verify.tsv")) ? File.readlines(File.join(dir, "verify.tsv")).map { _1.chomp.split("\t") } : []
+puts "\n## Corpus check\n\n- programs: #{verify.size}; run with exit 0 and output identical to Ruby and .out: #{verify.count { _1[1] == "ok" }}"
+verify.reject { _1[1] == "ok" }.each { puts "  - #{_1[0]}: #{_1[1]}" }
+
+def cross(path)
+  rows = File.exist?(path) ? File.readlines(path).grep(/^\| (?!program|---)/).map { _1.split("|").map(&:strip) } : []
+  [rows.size, rows.sum { _1[9].to_i }, rows.count { _1[9].to_i.positive? }]
+end
+n, v, p_ = cross(File.join(dir, "crosscheck.md"))
+sn, sv, sp = cross(File.join(dir, "crosscheck-sabotage.md"))
+puts "\n## Soundness (crosscheck)\n\n| typer | programs checked | violations | programs with violations |\n|---|---|---|---|"
+puts "| as is | #{n} | #{v} | #{p_} |\n| sabotaged (negative control) | #{sn} | #{sv} | #{sp} |"
+
+poly = load(File.join(dir, "polysites.jsonl")).reject { _1["error"] }
+unless poly.empty?
+  puts "\n## Dispatch demand\n\nRuby versions, run with receiver tracing: call sites (line, method) whose receivers had 2+ classes (nil excluded).\n"
+  cats = Hash.new(0)
+  progs = Hash.new(0)
+  poly.each { |r| r["poly"].each { |k, c| cats[k] += c; progs[k] += 1 } }
+  puts "\n| category | sites | programs |\n|---|---|---|"
+  %w[operator show exception user builtin mixed].each { |k| puts "| #{k} | #{cats[k]} | #{progs[k]} |" }
+  puts "\n(traced sites in total: #{poly.sum { _1["sites"] }}; programs: #{poly.size})"
+  ms = Hash.new(0)
+  poly.each { |r| r["found"].each { |f| ms["#{f["category"]}: (#{f["classes"].join("|")}).#{f["method"]}"] += 1 if %w[builtin mixed].include?(f["category"]) } }
+  puts "\nbuiltin/mixed sites: " + ms.sort_by { -_2 }.first(25).map { "`#{_1}` #{_2}" }.join(", ")
+end
+disp = load(File.join(dir, "dispatch.jsonl"))
+unless disp.empty?
+  man = disp.flat_map { _1["manual"] }
+  puts "\nSake versions: hand-written dispatch (case/in or if-in branches calling the same operation through different types): " \
+       "#{man.size} operations in #{disp.count { _1["manual"].any? }} programs; calls through a module of the program: " \
+       "#{disp.sum { _1["module_calls"] }} in #{disp.count { _1["module_calls"].positive? }} programs."
+  puts "\n" + man.map { "(#{_1["types"].join("|")}).#{_1["op"]}" }.tally.sort_by { -_2 }.first(30).map { "`#{_1}` #{_2}" }.join(", ")
+end
