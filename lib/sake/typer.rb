@@ -174,9 +174,14 @@ module Sake
 
     # --- array sites and fields ---
 
+    # Declared element types whose atoms carry structure (Tuple[...] of [Float, Float]): the site keeps
+    # the written atoms of that type, not just the name.
+    STRUCTURED = %w[Tuple Range].freeze
+
     def site_for(node, label_extra = nil, declared: nil, init: [])
       id = (@site_ids[node] ||= @site_ids.size + 1)
-      @sites[id] ||= Site.new(id, node, "L#{node.location.start_line}#{label_extra}", declared, init, declared ? t(declared) : init)
+      elem = declared && !STRUCTURED.include?(declared) ? t(declared) : init
+      @sites[id] ||= Site.new(id, node, "L#{node.location.start_line}#{label_extra}", declared, init, elem)
       [[:array, id]].freeze
     end
 
@@ -187,6 +192,9 @@ module Sake
       array_sites(ty).each do |s|
         if s.declared
           xs.each { |x| record(node, op, "elem", s.declared, x) }
+          if STRUCTURED.include?(s.declared)
+            s.elem = u(s.elem, *xs.map { |x| x.select { atom_type_name(_1) == s.declared } })
+          end
         else
           s.elem = u(s.elem, *xs)
         end
@@ -438,7 +446,8 @@ module Sake
           next
         end
         hits += 1
-        results << binop_result(op, *key)
+        # Set | & - give a new Set: its elements come from the operands (a plain "Set" would have none).
+        results << (key == %w[Set Set] ? set_site(node, " #{op}").tap { |r| set_sites[r[0][1]].elem = u(set_sites[r[0][1]].elem, set_elem([x]), *(op == "|" ? [set_elem([y])] : [])) } : binop_result(op, *key))
       end
       verdict = hits == pairs.size ? :proven : (hits.zero? ? :error : :partial)
       actual = pairs.map { |x, y| tuple([[x].freeze, [y].freeze]) }
@@ -475,7 +484,8 @@ module Sake
       end
       if name == CTOR
         if ns == "Array"
-          return site_for(node, init: u(*args))
+          # Every instantiation adds its element types (the site is made once, by the first).
+          return site_for(node, init: u(*args)).tap { |ty| write_elems(ty, args, node, "") }
         end
         return site_for(node, declared: ns).tap { |ty| write_elems(ty, args, node, "#{ns}[]") }
       end
@@ -591,7 +601,8 @@ module Sake
         e = elem_of(a0)
         e = call_block(blk, [e]) if blk && !e.empty?
         record(node, "Array.sum", "elem", Stdlib::NUMERIC, e)
-        e.empty? ? t("Integer") : u(*e.select { Stdlib::NUMERIC.include?(_1) }.then { _1.empty? ? [t("Integer")] : [_1] })
+        # An empty Array sums to 0, an Integer, whatever its elements would be.
+        u(t("Integer"), *e.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] })
       when "Array.reverse", "Array.sort", "Array.take", "Array.drop"
         new_site(node, " #{name}", elem_of(a0))
       when "Array.select", "Array.filter", "Array.reject", "Array.sort_by"

@@ -98,11 +98,12 @@ module Sake
         []
       when Next
         v = ev(n.value, env)
-        @next_acc[-1] = u(@next_acc[-1], v) if @next_acc&.any?
+        @next_acc[-1] = u(@next_acc[-1], v) if @next_acc&.any? && !loop_jump(env)
         env.dead = true
         []
       when Break
         ev(n.value, env)
+        loop_jump(env)
         env.dead = true
         []
       when Yield then call_block(env.frame.block, n.args.map { ev(_1, env) })
@@ -179,19 +180,31 @@ module Sake
       r
     end
 
+    # `break` / `next` in a while loop: the variables at that point reach the loop's exit and its next
+    # test. Returns false when the innermost target is a block (its `next` ends the block's run).
+    def loop_jump(env)
+      jumps = (@jumps ||= []).last or return false
+      jumps << env.dup_level
+      true
+    end
+
     def loop_node(n, env)
+      (@jumps ||= []).push(nil) # placeholder, replaced per iteration
       MAX_LOOP_ITER.times do
         before = env.chain_snapshot
         ev(n.cond, env)
         body = env.dup_level
         narrow(body, n.cond, !n.until_)
+        @jumps[-1] = []
         ev(n.body, body)
-        body.dead = false # break/next leave the iteration, not the loop
-        join_into(env, env.dup_level, body)
+        join_many(env, [env.dup_level, body, *@jumps[-1]])
+        env.dead = false # the loop may not run at all
         return t("Nil") if env.chain_snapshot == before
       end
       env.vars.transform_values! { unknown("loop did not converge") }
       t("Nil")
+    ensure
+      @jumps.pop
     end
 
     # Narrows a local variable's type on the path where `pred` is truthy (or falsy).
@@ -231,8 +244,16 @@ module Sake
       end
     end
 
-    # [atoms that may match the pattern, atoms that may not]
+    # [atoms that may match the pattern, atoms that may not]. An unknown atom may be anything: it goes
+    # to both sides.
     def match_atoms(ty, pat)
+      unk = ty.select { _1.is_a?(Array) && _1[0] == :unknown }
+      return [unk, unk] if unk.size == ty.size && !ty.empty?
+      m, r = match_known(ty - unk, pat)
+      [m + unk, r + unk]
+    end
+
+    def match_known(ty, pat)
       case pat
       when PType
         name = pat.name
@@ -255,7 +276,9 @@ module Sake
     def bind_pattern(env, pat, matched)
       case pat
       when PRecord
-        pat.keys.zip(pat.slots) { |f, s| assign(env, s, u(*matched.map { |a| a[1].find { _1[0] == f }[1] })) }
+        pat.keys.zip(pat.slots) do |f, s|
+          assign(env, s, unknown?(matched) ? unknown("pattern") : u(*matched.map { |a| a[1].find { _1[0] == f }[1] }))
+        end
       when PAlt
         bind_pattern(env, pat.left, matched)
         bind_pattern(env, pat.right, matched)
@@ -460,11 +483,13 @@ module Sake
       if params.size > 1 && args.size == 1
         a = args.first
         return unknown("block destructure") if unknown?(a)
+        # A Tuple of that size is spread over the parameters; any other value fails the block's arity.
         tuples = a.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == params.size }
-        args = params.each_index.map { |i| u(*tuples.map { _1[1][i] }) } if tuples.size == a.size
+        args = params.each_index.map { |i| u(*tuples.map { _1[1][i] }) } unless tuples.empty?
       end
       own = (params + blk.node.locals).to_set
       (@next_acc ||= []).push([])
+      (@jumps ||= []).push(false)
       result = []
       MAX_LOOP_ITER.times do
         before = blk.env.chain_snapshot
@@ -473,6 +498,7 @@ module Sake
         result = u(result, ev(blk.node.body, env))
         break if blk.env.chain_snapshot == before
       end
+      @jumps.pop
       u(result, @next_acc.pop)
     end
   end
