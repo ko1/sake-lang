@@ -2,8 +2,8 @@
 
 # Sake Tutorial
 
-Sake (/seɪk/, as in "for the sake of") is an experimental language that uses **Ruby's syntax** but turns one habit around:
-instead of writing types on variables, you write the type on each **operation**.
+Sake (/seɪk/) exists for the sake of a new shape for types. It keeps **Ruby's syntax**, but you
+write the type on each **operation**, never on a variable.
 
 ```ruby
 String.upcase(s)      # Sake
