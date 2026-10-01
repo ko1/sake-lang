@@ -1,7 +1,10 @@
 # Sake Language Specification (v0)
 
-This document describes the language as implemented by the v0 interpreter (`bin/sake`). Sake
-(/seɪk/, as in "for the sake of") is experimental. Points still open in the design are listed in [§15](#15-not-yet-supported) and in
+Sake (/seɪk/) is designed for the sake of finding a new place for types. It keeps Ruby's syntax,
+but you write the type on each operation, never on a variable.
+
+This document describes the language as implemented by the v0 interpreter (`bin/sake`). Sake is
+experimental. Points still open in the design are listed in [§15](#15-not-yet-supported) and in
 [../DESIGN.md](../DESIGN.md) (in Japanese). For a guided introduction, see [tutorial.md](tutorial.md).
 
 ## 1. Principles
