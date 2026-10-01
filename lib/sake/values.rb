@@ -68,6 +68,8 @@ module Sake
   class StructValue
     attr_reader :type, :values
 
+    def to_s = Values.to_s(self) # for Ruby methods such as format
+
     def initialize(type, values)
       @type = type
       @values = values
@@ -138,6 +140,9 @@ module Sake
 
     # Same output as Ruby's #inspect so that expected outputs match Ruby versions of a task.
     def inspect(v)
+      if v.is_a?(StructValue) && (h = hooks) && (s = h.call(:inspect, v))
+        return s
+      end
       case v
       when Tuple then "[#{v.elems.map { inspect(_1) }.join(", ")}]"
       when Array then "[#{v.map { inspect(_1) }.join(", ")}]"
@@ -157,7 +162,13 @@ module Sake
       end
     end
 
+    # A running interpreter installs hooks so that a type's own to_s / inspect are used.
+    def hooks = Thread.current[:sake_show_hooks]
+
     def to_s(v)
+      if v.is_a?(StructValue) && (h = hooks) && (s = h.call(:to_s, v))
+        return s
+      end
       case v
       when String then v
       when nil then ""

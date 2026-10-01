@@ -42,6 +42,9 @@ before running is still checked while running, by each operation.
 
 @@example hello
 
+`"#{expr}"` interpolates as in Ruby. A type can define its own `to_s` (used by `puts`, `print`,
+`"#{...}"`, `Array.join`, and `format`'s `%s`) and `inspect` (used by `p`); section 7 shows one.
+
 `puts`, `print`, and `p` are the built-in functions you call without a type. They come from
 `Kernel` and accept any value. Your own top-level functions are also called without a type
 (section 4).
@@ -295,7 +298,6 @@ that can never match. Level 4 also reports a `raise` that nothing rescues:
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
-- string interpolation
 - unary operators
 - `eval`, `send`, and similar
 
@@ -303,7 +305,7 @@ All of these are reported together, before running:
 
 @@example forbidden
 
-To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
+Instead of `!x`, write `x == false` or swap
 the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
 ## 14. Looking at the types (experimental)

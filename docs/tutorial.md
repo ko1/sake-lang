@@ -53,6 +53,9 @@ Hello, Sake!
 OPERATIONS CARRY THEIR TYPE
 ```
 
+`"#{expr}"` interpolates as in Ruby. A type can define its own `to_s` (used by `puts`, `print`,
+`"#{...}"`, `Array.join`, and `format`'s `%s`) and `inspect` (used by `p`); section 7 shows one.
+
 `puts`, `print`, and `p` are the built-in functions you call without a type. They come from
 `Kernel` and accept any value. Your own top-level functions are also called without a type
 (section 4).
@@ -251,7 +254,7 @@ until n == 1
   n = Integer.even?(n) ? n / 2 : 3 * n + 1
   steps += 1
 end
-puts(String.+("collatz(27) steps: ", Integer.to_s(steps)))
+puts("collatz(27) steps: #{steps}")
 puts("small") unless steps > 100
 puts("ok") if steps == 111
 ```
@@ -272,10 +275,10 @@ be an Integer or a String can be used without a type report:
 ```ruby
 def describe(x)
   case x
-  in Integer | Float then String.+("number ", format("%p", x))
-  in String then String.+("string ", x)
+  in Integer | Float then "number #{x}"
+  in String then "string #{x}"
   in nil then "nothing"
-  in {name:} then String.+("record named ", name)
+  in {name:} then "record named #{name}"
   in :ok then "ok symbol"
   else "other"
   end
@@ -342,7 +345,7 @@ p(Array.map(nums) { |x| x * x })
 p(Array.select(nums) { it > 3 })                   # `it` names the only parameter
 p(Array.sort_by(nums) { 0 - _1 })                  # so does _1
 puts(Array.reduce(nums, 0) { |acc, x| acc + x })
-Array.each_with_index(Array["a", "b"]) { |s, i| puts(String.+(s, Integer.to_s(i))) }
+Array.each_with_index(Array["a", "b"]) { |s, i| puts("#{s}#{i}") }
 Integer.times(3) { |i| print(i, " ") }
 puts
 ```
@@ -379,7 +382,7 @@ def first_over(a, limit)
 end
 
 puts(twice(3) { |x| x + 4 })
-each_pair(Array[1, 2, 3]) { |x, sq| puts(String.+(Integer.to_s(x), String.+(" -> ", Integer.to_s(sq)))) }   # ...destructured here
+each_pair(Array[1, 2, 3]) { |x, sq| puts("#{x} -> #{sq}") }   # ...destructured here
 puts(first_over(Array[1, 5, 10], 4))
 odd_only = Array.map(Array[1, 2, 3, 4]) { |x| next 0 if Integer.even?(x); x }
 p(odd_only)
@@ -433,7 +436,7 @@ Point = Struct.new(:x, :y)
 
 class Point
   def add(a, b) = Point.new(get_x(a) + get_x(b), get_y(a) + get_y(b))
-  def to_s(p) = String.+(String.+("(", Integer.to_s(get_x(p))), String.+(", ", String.+(Integer.to_s(get_y(p)), ")")))
+  def to_s(p) = "(#{get_x(p)}, #{get_y(p)})"       # used by puts and "#{...}"
 end
 
 def Point.scale!(p, k)           # same as defining `scale!` inside `class Point`
@@ -445,8 +448,8 @@ end
 a = Point.new(1, 2)
 b = a                             # b and a are the same value
 Point.scale!(b, 10)
-puts(Point.to_s(a))               # mutation through b is visible through a
-puts(Point.to_s(Point.add(a, Point.new(5, 5))))
+puts(a)                           # uses Point.to_s; the change through b is visible through a
+puts("sum: #{Point.add(a, Point.new(5, 5))}")
 p(a)
 puts(Point.get_x(a))
 ```
@@ -454,7 +457,7 @@ puts(Point.get_x(a))
 ```
 $ sake data.sake
 (10, 20)
-(15, 25)
+sum: (15, 25)
 #<struct Point x=10, y=20>
 10
 ```
@@ -601,11 +604,11 @@ The inner definition wins, so common names such as `open` stay usable. To reach 
 definition, write its namespace, as in `Kernel.puts(...)`.
 
 ```ruby
-def label(x) = String.+("top: ", x)
+def label(x) = "top: #{x}"
 
 module Door
   def open(d) = label("door")              # Door.label wins over the top-level label
-  def label(x) = String.+("door: ", x)
+  def label(x) = "door: #{x}"
   def show(d) = puts(open(d))              # Door.open wins over the top-level open
 end
 
@@ -993,7 +996,7 @@ Array.each(Array["", "123456", "42"]) do |s|
   begin
     p(parse(s))
   rescue ParseError => e                 # list the types to rescue; there is no hierarchy
-    puts(String.+("line ", Integer.to_s(ParseError.get_line(e))))
+    puts("line #{ParseError.get_line(e)}")
   rescue ArgumentError => e
     puts(Exception.message(e))
   ensure
@@ -1040,7 +1043,6 @@ exceptions_flow.sake:11:1: error: rescue OtherError: the begin body never raises
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
-- string interpolation
 - unary operators
 - `eval`, `send`, and similar
 
@@ -1052,7 +1054,6 @@ PI = 3.14159
 class Point
   def origin = self
 end
-puts("total: #{1 + 2}")
 puts(!true)
 eval("1 + 1")
 ```
@@ -1062,13 +1063,12 @@ $ sake forbidden.sake
 forbidden.sake:2:1: error: Sake has no value constants; only a Struct type can be assigned to a constant
   hint: define a function instead: `def pi = 3.14159`
 forbidden.sake:4:16: error: Sake has no `self`
-forbidden.sake:6:6: error: string interpolation is not supported yet (how values become strings is undecided); use String.+
-forbidden.sake:7:6: error: unary operator `!true` is not supported yet (undecided)
-forbidden.sake:8:1: error: `eval` is not allowed in Sake (it defeats static analysis)
+forbidden.sake:6:6: error: unary operator `!true` is not supported yet (undecided)
+forbidden.sake:7:1: error: `eval` is not allowed in Sake (it defeats static analysis)
 (exit status 2)
 ```
 
-To build strings, use `String.+` and `Integer.to_s`. Instead of `!x`, write `x == false` or swap
+Instead of `!x`, write `x == false` or swap
 the branches. For a named value such as `PI`, define a function (`def pi = 3.14159`).
 
 ## 14. Looking at the types (experimental)
@@ -1156,11 +1156,11 @@ class Account
   end
 
   def statement(acct)
-    puts(String.+("Statement for ", get_owner(acct)))
+    puts("Statement for #{get_owner(acct)}")
     Array.each(get_history(acct)) do |kind, amount|
-      puts(String.+("  ", String.+(String.ljust(kind, 10), String.rjust(Integer.to_s(amount), 6))))
+      puts(format("  %-10s%6d", kind, amount))
     end
-    puts(String.+("  balance   ", String.rjust(Integer.to_s(get_balance(acct)), 6)))
+    puts(format("  %-10s%6d", "balance", get_balance(acct)))
   end
 end
 

@@ -54,6 +54,7 @@ module Sake
     end
 
     def run
+      Thread.current[:sake_show_hooks] = method(:show_hook)
       env = Env.new(nil, Frame.new("<main>", nil, nil))
       @program.toplevel.each { eval_node(_1, env) }
       nil
@@ -75,6 +76,14 @@ module Sake
       when Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::ImaginaryNode then node.value
       when Prism::StringNode then node.unescaped.dup
       when Prism::SymbolNode then node.unescaped.to_sym
+      when Prism::InterpolatedStringNode then interpolate(node, env)
+      when Prism::InterpolatedSymbolNode then interpolate(node, env).to_sym
+      when Prism::InterpolatedRegularExpressionNode
+        begin
+          Regexp.new(interpolate(node, env), regexp_options(node))
+        rescue ::RegexpError => e
+          fail_at(node, "RegexpError", e.message)
+        end
       when Prism::RegularExpressionNode then regexp(node)
       when Prism::RangeNode then range(node, env)
       when Prism::KeywordHashNode then HashPairs.new(node.elements.map { [eval_node(_1.key, env), eval_node(_1.value, env)] })
@@ -287,12 +296,32 @@ module Sake
       nil
     end
 
-    def regexp(node)
+    # Calls a type's own to_s / inspect, if it has one; nil means "use the built-in form".
+    def show_hook(kind, v)
+      fn = @program.functions.dig(v.type.name, kind.to_s) or return nil
+      s = call_user(fn, [v], nil, fn.node)
+      return s if s.is_a?(String)
+      fail_at(fn.node, "TypeError", "#{fn.full_name} must return a String, got #{Values.describe(s)}")
+    end
+
+    def interpolate(node, env)
+      node.parts.map do |part|
+        case part
+        when Prism::StringNode then part.unescaped
+        when Prism::EmbeddedStatementsNode then Values.to_s(eval_node(part.statements, env))
+        when Prism::EmbeddedVariableNode then Values.to_s(eval_node(part.variable, env))
+        end
+      end.join
+    end
+
+    def regexp(node) = Regexp.new(node.unescaped, regexp_options(node))
+
+    def regexp_options(node)
       opts = 0
       opts |= Regexp::IGNORECASE if node.ignore_case?
       opts |= Regexp::EXTENDED if node.extended?
       opts |= Regexp::MULTILINE if node.multi_line?
-      Regexp.new(node.unescaped, opts)
+      opts
     end
 
     RANGE_ENDS = [Integer, Float, String, NilClass].freeze

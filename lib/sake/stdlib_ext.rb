@@ -292,11 +292,14 @@ module Sake
       raise Fail.new("IOError", e.message)
     end
 
-    FORMAT_ARGS = %w[Integer Float String Symbol Nil Boolean].freeze
-
     def install_more_kernel(reg)
       %i[format sprintf].each do |m|
-        reg.define("Kernel", m, ["String"], rest: FORMAT_ARGS) { |f, *xs| ruby_error("ArgumentError") { format(f, *xs) } }
+        # %s uses each value's to_s, including a type's own; other directives need numbers or Strings.
+        reg.define("Kernel", m, ["String"], rest: "Any") do |f, *xs|
+          format(f, *xs)
+        rescue ::ArgumentError, ::TypeError, ::KeyError => e
+          raise Fail.new("ArgumentError", e.message)
+        end
       end
       reg.define("Kernel", :pp, ["Any"]) { |v| reg.lookup("Kernel", "p").impl.(v) }
       reg.define("Kernel", :rand, [], optional: [NUM]) { |n = nil| n ? rand(n) : rand }

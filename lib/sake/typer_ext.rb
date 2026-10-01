@@ -23,6 +23,15 @@ module Sake
       [[:set, id]].freeze
     end
 
+    # Runs a type's own to_s / inspect for each Struct type in ty, and checks that it returns a String.
+    def show_types(ty, kind, node)
+      ty.each do |a|
+        next unless a.is_a?(String) && (fn = @program.functions.dig(a, kind.to_s))
+        r = call_user(fn, [t(a)], nil)
+        record(node, fn.full_name, "result", "String", r)
+      end
+    end
+
     def atoms_of(ty, kind) = ty.select { _1.is_a?(Array) && _1[0] == kind }
     def hash_kv(ty) = atoms_of(ty, :hash).map { hash_sites[_1[1]] }.then { |ss| [u(*ss.map(&:key)), u(*ss.map(&:val))] }
     def set_elem(ty) = u(*atoms_of(ty, :set).map { set_sites[_1[1]].elem })
@@ -37,6 +46,15 @@ module Sake
     def ev_ext(node, env)
       case node
       when Prism::SymbolNode then t("Symbol")
+      when Prism::InterpolatedStringNode, Prism::InterpolatedSymbolNode, Prism::InterpolatedRegularExpressionNode
+        node.parts.each do |part|
+          v = case part
+              when Prism::EmbeddedStatementsNode then ev(part.statements, env)
+              when Prism::EmbeddedVariableNode then ev(part.variable, env)
+              end
+          show_types(v, :to_s, part) if v
+        end
+        { Prism::InterpolatedStringNode => t("String"), Prism::InterpolatedSymbolNode => t("Symbol") }.fetch(node.class) { t("Regexp") }
       when Prism::RegularExpressionNode then t("Regexp")
       when Prism::RangeNode
         ends = u(*[node.left, node.right].compact.map { ev(_1, env) })

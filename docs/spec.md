@@ -96,7 +96,7 @@ Rules:
 |---|---|---|
 | Integer | `42`, `-7` | arbitrary precision |
 | Float | `1.5`, `2.0` | |
-| String | `"abc"`, `'abc'` | no interpolation |
+| String | `"abc"`, `'abc'`, `"a#{x}"` | interpolation uses `to_s` ([§4.1](#41-showing-values)) |
 | true / false | `true`, `false` | internally one type, `Boolean`, which cannot be written in source |
 | nil | `nil` | see [§11](#11-nil) |
 | Tuple | `[a, b, ...]` | length and positional types fixed at creation |
@@ -107,7 +107,7 @@ Rules:
 | Set | `Set[1, 2]` | elements are value types |
 | Symbol | `:name` | |
 | Range | `1..5`, `1...5`, `1..` | ends are Integer, Float, String, or nil |
-| Regexp, MatchData | `/(\d+)-(\d+)/`, `String.match(s, re)` | no interpolation |
+| Regexp, MatchData | `/(\d+)-(\d+)/`, `/#{x}/`, `String.match(s, re)` | |
 | Rational, Complex | `2r`, `1/3r`, `Rational(1, 3)`, `2i`, `Complex(1, 2)` | Ruby's numeric tower |
 | Time | `Time.now`, `Time.at(0)`, `Time.new(2026, 10, 1)` | |
 | Struct type | `Point.new(x, y)` | record with mutable fields |
@@ -116,6 +116,21 @@ Rules:
   truthy.
 - **Error messages.** `nil`, `true`, and `false` are shown as values (`got nil`). Every other value
   is shown by its type name (`got Integer`).
+
+### 4.1 Showing values
+
+Every value can be shown, in two forms:
+
+| Form | Used by | Built-in form |
+|---|---|---|
+| `to_s` | `puts`, `print`, `"#{x}"`, `Array.join`, `format`'s `%s`, `:"#{x}"`, `/#{x}/` | as Ruby's `to_s`: `nil` shows as empty, Arrays and Tuples as `inspect` |
+| `inspect` | `p`, and elements inside an Array, Tuple, Hash, or Record | as Ruby's `inspect`: `#<struct Point x=1, y=2>` |
+
+- **Your own form.** A Struct type can define its own `to_s` and `inspect` in its class:
+  `def to_s(p) = "(#{@x}, #{@y})"`. Each takes exactly one argument and must return a String;
+  a non-String result is a `type` problem before running, and a `TypeError` while running.
+- **Which one runs.** The set of types is closed, so which `to_s` runs is known whenever the
+  value's type is.
 
 ## 5. Operations and name resolution
 
@@ -792,8 +807,7 @@ Each of these is rejected statically. Most wait on a design decision.
 - **Writing to Record fields.**
 - **`Array.new`.**
 - **Unary operators.**
-- **String interpolation**, which waits on how values become strings.
-- **Protocols.** These are generic operations such as `to_s` and `==` over all types.
+- **Protocols** beyond showing values: `==`, `hash`, and `<=>` defined by a type.
 - **The type scope `Integer.(a + b)`.**
 - **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**
 - **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.

@@ -358,6 +358,14 @@ module Sake
     # --- check bodies ---
 
     def check_all
+      # to_s / inspect defined for a type are used by interpolation, puts, p, join, and format.
+      @struct_types.each_key do |type|
+        %w[to_s inspect].each do |name|
+          fn = @functions.dig(type, name) or next
+          error(fn.node, "#{type}.#{name} takes exactly one argument (the value to show)") if fn.params.size != 1
+          error(fn.node, "#{type}.#{name} cannot take a block") if fn.yields
+        end
+      end
       traits = @includes.values.flatten(1).map(&:first).to_set
       @functions.each_value do |fs|
         fs.each_value { |f| check(f.body, Ctx.new(f.namespace, f, false, false, !f.origin && traits.include?(f.namespace))) }
@@ -446,8 +454,15 @@ module Sake
               ["#{type}.each(#{coll}) { |#{node.index.slice}| ... }"])
       when Prism::CaseNode
         error(node, "`case`/`when` is not supported (Ruby's `===` dispatches on the receiver); match with `case x` / `in Type`")
-      when Prism::InterpolatedStringNode
-        error(node, "string interpolation is not supported yet (how values become strings is undecided); use String.+")
+      when Prism::InterpolatedStringNode, Prism::InterpolatedSymbolNode, Prism::InterpolatedRegularExpressionNode
+        node.parts.each do |part|
+          case part
+          when Prism::StringNode then nil
+          when Prism::EmbeddedStatementsNode then check(part.statements, ctx)
+          when Prism::EmbeddedVariableNode then check(part.variable, ctx)
+          else error(part, "unsupported part of an interpolated literal")
+          end
+        end
       when Prism::DefNode then error(node, "`def` must be at the top level or directly in a class/module body")
       when Prism::ClassNode, Prism::ModuleNode then error(node, "class/module must be at the top level")
       when Prism::ConstantWriteNode then error(node, "constant assignment must be at the top level")
@@ -464,8 +479,6 @@ module Sake
       when Prism::RangeNode
         error(node, "a Range needs at least one end") if node.left.nil? && node.right.nil?
         check_each(ctx, node.left, node.right)
-      when Prism::InterpolatedSymbolNode, Prism::InterpolatedRegularExpressionNode
-        error(node, "interpolation is not supported yet (how values become strings is undecided)")
       when Prism::NumberedReferenceReadNode, Prism::BackReferenceReadNode, Prism::GlobalVariableReadNode, Prism::GlobalVariableWriteNode
         error(node, "Sake has no global variables (`#{node.slice}`)",
               node.is_a?(Prism::NumberedReferenceReadNode) ? ["keep the match: `m = String.match(s, re)`, then `m[#{node.number}]`"] : [])
