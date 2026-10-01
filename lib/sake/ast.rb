@@ -41,6 +41,7 @@ module Sake
     node :FieldSet, :type, :field, :fn, :subject, :value
     node :IndexGet, :recv, :key
     node :IndexSet, :recv, :key, :value
+    node :IndexUpdate, :recv, :key, :op, :value # `x[k] OP= v` (op: "||" for ||=); x and k evaluated once
     node :Block, :params, :locals, :body    # params/locals: slots; locals are cleared on entry
     node :Yield, :args
     node :Return, :value

@@ -43,28 +43,6 @@ module Sake
       u(elem_of(ty), set_elem(ty), range_elem(ty), *atoms_of(ty, :hash).map { |a| s = hash_sites[a[1]]; pair_type(s.key, s.val) })
     end
 
-    def ev_ext(node, env)
-      case node
-      when Prism::SymbolNode then t("Symbol")
-      when Prism::InterpolatedStringNode, Prism::InterpolatedSymbolNode, Prism::InterpolatedRegularExpressionNode
-        node.parts.each do |part|
-          v = case part
-              when Prism::EmbeddedStatementsNode then ev(part.statements, env)
-              when Prism::EmbeddedVariableNode then ev(part.variable, env)
-              end
-          show_types(v, :to_s, part) if v
-        end
-        { Prism::InterpolatedStringNode => t("String"), Prism::InterpolatedSymbolNode => t("Symbol") }.fetch(node.class) { t("Regexp") }
-      when Prism::RegularExpressionNode then t("Regexp")
-      when Prism::RangeNode
-        ends = u(*[node.left, node.right].compact.map { ev(_1, env) })
-        [[:range, u(*(ends - ["Nil"]).map { [_1] })]].freeze
-      when Prism::KeywordHashNode
-        [[:pairs, node.elements.map { [ev(_1.key, env), ev(_1.value, env)] }]].freeze
-      else unknown("node #{node.type}")
-      end
-    end
-
     def constructor_ext(ns, name, args, node)
       case [ns, name]
       when ["Hash", CTOR]

@@ -101,6 +101,7 @@ module Sake
         r = ev(n.recv, f)
         k = ev(n.key, f)
         index_op(n.origin, "[]=", [r, k, ev(n.value, f)])
+      when IndexUpdate then index_update(n, f)
       when Yield then call_block(f.block, n.args.map { ev(_1, f) }, n.origin)
       when Interp then n.parts.map { ev(_1, f) }.join
       when ToS then Values.to_s(ev(n.value, f))
@@ -136,6 +137,19 @@ module Sake
       when Unresolved then raise "BUG: #{n.message}"
       else raise "BUG: unknown node #{n.class}"
       end
+    end
+
+    def index_update(n, f)
+      r = ev(n.recv, f)
+      k = ev(n.key, f)
+      cur = index_op(n.origin, "[]", [r, k])
+      if n.op == "||"
+        return cur if Values.truthy?(cur)
+        val = ev(n.value, f)
+      else
+        val = binary_op(n.origin, n.op, cur, ev(n.value, f))
+      end
+      index_op(n.origin, "[]=", [r, k, val])
     end
 
     def block_val(b, f) = b && BlockVal.new(b, f)

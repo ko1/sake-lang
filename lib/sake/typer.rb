@@ -26,43 +26,16 @@ module Sake
     # via: lines of the calls that led to the first failing instantiation, outermost first.
     Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing, :via)
 
-    class Env
-      attr_reader :vars, :parent, :frame
-      attr_accessor :dead # control left via return/next/break; this path does not fall through
-
-      def initialize(parent, frame, vars = {})
-        @parent = parent
-        @frame = frame
-        @vars = vars
-      end
-
-      def up(depth)
-        e = self
-        depth.times { e = e.parent }
-        e
-      end
-
-      def dup_level = Env.new(@parent, @frame, @vars.dup)
-
-      def chain_snapshot
-        e = self
-        snap = []
-        while e
-          snap << e.vars.dup
-          e = e.parent
-        end
-        snap
-      end
-    end
-
     attr_reader :checks, :sites, :fields, :dead_functions, :passes
 
     # Inferred result type of each built-in call node (last pass), for validating result types.
     def results = @results || {}
 
     # narrow: inside `if x` / `while x` on a local variable, drop nil from x's type.
-    def initialize(program, narrow: true)
+    # ast: the program's SakeAST, when the caller already has it.
+    def initialize(program, narrow: true, ast: nil)
       @program = program
+      @ast = ast || Lower.program(program)
       @narrow = narrow
       @registry = program.registry
       @site_ids = {}.compare_by_identity
@@ -86,8 +59,7 @@ module Sake
         @callers = []
         @raised = [{}]   # stack of {exception type name => [raise nodes]} for the code being analyzed
         @handled = []    # exception type names of the rescue clauses being analyzed (for a bare raise)
-        env = Env.new(nil, Frame.new(nil, [], nil))
-        @program.toplevel.each { ev(_1, env) }
+        ev(@ast.main.body, Env.new(nil, Frame.new(nil, [], nil)))
         @raised.last.each { |name, nodes| nodes.uniq.each { add_check(_1, "raise", name, "a rescue", t(name), :error, [name]) } }
         break if snapshot == before || @passes >= MAX_PASSES
       end
@@ -302,361 +274,6 @@ module Sake
 
     # --- evaluation ---
 
-    def ev(node, env)
-      case node
-      when nil then t("Nil")
-      when Prism::StatementsNode
-        r = t("Nil")
-        node.body.each { r = ev(_1, env) }
-        r
-      when Prism::IntegerNode then t("Integer")
-      when Prism::FloatNode then t("Float")
-      when Prism::RationalNode then t("Rational")
-      when Prism::ImaginaryNode then t("Complex")
-      when Prism::StringNode then t("String")
-      when Prism::TrueNode, Prism::FalseNode then t("Boolean")
-      when Prism::NilNode then t("Nil")
-      when Prism::LocalVariableReadNode then env.up(node.depth).vars[node.name] || t("Nil")
-      when Prism::ItLocalVariableReadNode then env.vars[:it] || t("Nil")
-      when Prism::LocalVariableWriteNode then assign(env, node.depth, node.name, ev(node.value, env))
-      when Prism::LocalVariableOperatorWriteNode
-        cur = env.up(node.depth).vars[node.name] || t("Nil")
-        assign(env, node.depth, node.name, binop(node, node.binary_operator.to_s, cur, ev(node.value, env)))
-      when Prism::MultiWriteNode then multi_write(node, env)
-      when Prism::LocalVariableOrWriteNode
-        cur = env.up(node.depth).vars[node.name] || t("Nil")
-        assign(env, node.depth, node.name, u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(node.value, env)))
-      when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode
-        key_node = node.arguments.arguments.first
-        recv = ev(node.receiver, env)
-        key = ev(key_node, env)
-        cur = index_get(node, recv, key, key_node)
-        val =
-          if node.is_a?(Prism::IndexOrWriteNode)
-            u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(node.value, env))
-          else
-            binop(node, node.binary_operator.to_s, cur, ev(node.value, env))
-          end
-        index_set(node, recv, key, key_node, val)
-      when Prism::IfNode then branch(env, node.predicate, node.statements, node.subsequent)
-      when Prism::UnlessNode then branch(env, node.predicate, node.else_clause, node.statements)
-      when Prism::ElseNode then ev(node.statements, env)
-      when Prism::WhileNode, Prism::UntilNode then loop_node(node, env)
-      when Prism::AndNode, Prism::OrNode
-        l = ev(node.left, env)
-        right_env = env.dup_level
-        narrow(right_env, node.left, node.is_a?(Prism::AndNode))
-        r = ev(node.right, right_env)
-        join_into(env, env.dup_level, right_env)
-        # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
-        left = node.is_a?(Prism::AndNode) ? l & (NILS + ["Boolean"]) : l - NILS
-        u(*left.map { [_1] }, r)
-      when Prism::ParenthesesNode then ev(node.body, env)
-      when Prism::ArrayNode then tuple(node.elements.map { ev(_1, env) })
-      when Prism::HashNode then record_type(node.elements.map { [_1.key.unescaped, ev(_1.value, env)] })
-      when Prism::MatchRequiredNode then match_record(node, env)
-      when Prism::BeginNode then typer_begin(node, env)
-      when Prism::RescueModifierNode then typer_rescue_modifier(node, env)
-      when Prism::RetryNode then []
-      when Prism::MatchPredicateNode
-        m, = match_atoms(ev(node.value, env), node.pattern)
-        bind_pattern(env, node.pattern, m)
-        t("Boolean")
-      when Prism::CaseMatchNode then case_match(node, env)
-      when Prism::ReturnNode
-        vals = (node.arguments&.arguments || []).map { ev(_1, env) }
-        v = vals.size > 1 ? tuple(vals) : (vals.first || t("Nil"))
-        env.frame.ret = u(env.frame.ret, v)
-        env.dead = true
-        []
-      when Prism::NextNode
-        vals = (node.arguments&.arguments || []).map { ev(_1, env) }
-        @next_acc[-1] = u(@next_acc[-1], vals.first || t("Nil")) if @next_acc&.any?
-        env.dead = true
-        []
-      when Prism::BreakNode
-        (node.arguments&.arguments || []).each { ev(_1, env) }
-        env.dead = true
-        []
-      when Prism::YieldNode
-        args = (node.arguments&.arguments || []).map { ev(_1, env) }
-        call_block(env.frame.block, args)
-      when Prism::CallNode then call(node, env)
-      when Prism::InstanceVariableReadNode
-        fa = target_of(node, env)
-        call_builtin(fa.getter, [subject(env, fa)], nil, node)
-      when Prism::InstanceVariableWriteNode
-        fa = target_of(node, env)
-        recv = subject(env, fa)
-        call_builtin(fa.setter, [recv, ev(node.value, env)], nil, node)
-      when Prism::InstanceVariableOperatorWriteNode
-        fa = target_of(node, env)
-        recv = subject(env, fa)
-        cur = call_builtin(fa.getter, [recv], nil, node)
-        call_builtin(fa.setter, [recv, binop(node, node.binary_operator.to_s, cur, ev(node.value, env))], nil, node)
-      else ev_ext(node, env)
-      end
-    end
-
-    def target_of(node, env) = @program.calls.fetch(node).fetch(env.frame.fn&.namespace)
-
-    def subject(env, fa)
-      env = env.parent while env.parent
-      env.vars[fa.param] || t("Nil")
-    end
-
-    # Writes from inside a block to an outer variable are weak (the block may run zero or more times).
-    def assign(env, depth, name, ty)
-      scope = env.up(depth)
-      scope.vars[name] = depth.zero? ? ty : u(scope.vars[name] || t("Nil"), ty)
-      ty
-    end
-
-    # Paths that ended in return/next/break do not reach the join point.
-    def join_into(env, a, b)
-      live = [a, b].reject(&:dead)
-      if live.empty?
-        env.dead = true
-        live = [a, b]
-      end
-      (a.vars.keys | b.vars.keys).each do |k|
-        env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") })
-      end
-    end
-
-    def branch(env, pred, then_node, else_node)
-      ev(pred, env)
-      e1 = env.dup_level
-      e2 = env.dup_level
-      narrow(e1, pred, true)
-      narrow(e2, pred, false)
-      r = u(ev(then_node, e1), ev(else_node, e2))
-      join_into(env, e1, e2)
-      r
-    end
-
-    def loop_node(node, env)
-      MAX_LOOP_ITER.times do
-        before = env.chain_snapshot
-        ev(node.predicate, env)
-        body = env.dup_level
-        narrow(body, node.predicate, node.is_a?(Prism::WhileNode))
-        ev(node.statements, body)
-        body.dead = false # break/next leave the iteration, not the loop
-        join_into(env, env.dup_level, body)
-        return t("Nil") if env.chain_snapshot == before
-      end
-      env.vars.transform_values! { unknown("loop did not converge") }
-      t("Nil")
-    end
-
-    # Narrows a local variable's type on the path where `pred` is truthy (or falsy).
-    # Forms: `x`, `x != nil`, `x == nil`, `a && b`, `a || b`, parentheses. Field reads are never narrowed
-    # (values are mutable, so another alias may change the field between the test and the use).
-    def narrow(env, pred, truthy)
-      return unless @narrow
-      case pred
-      when Prism::ParenthesesNode
-        body = pred.body
-        narrow(env, body.body.last, truthy) if body.is_a?(Prism::StatementsNode) && body.body.size == 1
-      when Prism::AndNode
-        if truthy
-          narrow(env, pred.left, true)
-          narrow(env, pred.right, true)
-        end
-      when Prism::OrNode
-        unless truthy
-          narrow(env, pred.left, false)
-          narrow(env, pred.right, false)
-        end
-      when Prism::LocalVariableReadNode
-        restrict(env, pred, truthy ? :non_nil : :falsy)
-      when Prism::MatchPredicateNode
-        var = pred.value
-        return unless var.is_a?(Prism::LocalVariableReadNode) && var.depth.zero? && env.vars[var.name]
-        m, rest = match_atoms(env.vars[var.name], pred.pattern)
-        env.vars[var.name] = u(*(truthy ? m : rest).map { [_1] })
-      when Prism::CallNode
-        return unless %i[== !=].include?(pred.name) && pred.call_operator_loc.nil? && pred.arguments&.arguments&.size == 1
-        l = pred.receiver
-        r = pred.arguments.arguments.first
-        var = [l, r].find { _1.is_a?(Prism::LocalVariableReadNode) }
-        return unless var && [l, r].any?(Prism::NilNode)
-        is_nil = (pred.name == :==) == truthy
-        restrict(env, var, is_nil ? :nil : :non_nil)
-      end
-    end
-
-    # [atoms that may match the pattern, atoms that may not]
-    def match_atoms(ty, pat)
-      case pat
-      when Prism::ConstantReadNode
-        name = pat.name.to_s
-        ty.partition { |a| name == "Record" ? a.is_a?(Array) && a[0] == :record : atom_type_name(a) == name }
-      when Prism::NilNode then ty.partition { nil_atom?(_1) }
-      when Prism::AlternationPatternNode
-        m1, r1 = match_atoms(ty, pat.left)
-        m2, r2 = match_atoms(r1, pat.right)
-        [m1 + m2, r2]
-      when Prism::HashPatternNode
-        fields = pat.elements.map { _1.key.unescaped }
-        ty.partition { |a| a.is_a?(Array) && a[0] == :record && fields.all? { |f| a[1].any? { _1[0] == f } } }
-      else
-        # A literal: values of its type may match, but may also differ, so nothing is ruled out.
-        lit = { Prism::TrueNode => "Boolean", Prism::FalseNode => "Boolean", Prism::IntegerNode => "Integer", Prism::FloatNode => "Float",
-                Prism::StringNode => "String", Prism::SymbolNode => "Symbol" }.fetch(pat.class)
-        [ty.select { atom_type_name(_1) == lit }, ty]
-      end
-    end
-
-    def bind_pattern(env, pat, matched)
-      case pat
-      when Prism::HashPatternNode
-        pat.elements.each do |el|
-          f = el.key.unescaped
-          target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
-          assign(env, target.depth, target.name, u(*matched.map { |a| a[1].find { _1[0] == f }[1] }))
-        end
-      when Prism::AlternationPatternNode
-        bind_pattern(env, pat.left, matched)
-        bind_pattern(env, pat.right, matched)
-      end
-    end
-
-    # Each `in` sees what earlier branches left; whatever no branch takes is reported (the set is closed).
-    def case_match(node, env)
-      v = ev(node.predicate, env)
-      var = node.predicate.is_a?(Prism::LocalVariableReadNode) && node.predicate.depth.zero? ? node.predicate : nil
-      remaining = v
-      results = []
-      envs = []
-      node.conditions.each do |c|
-        m, remaining = match_atoms(remaining, c.pattern)
-        next if m.empty? && !v.empty?
-        e = env.dup_level
-        e.vars[var.name] = u(*m.map { [_1] }) if var
-        bind_pattern(e, c.pattern, m)
-        results << ev(c.statements, e)
-        envs << e
-      end
-      if node.else_clause
-        e = env.dup_level
-        e.vars[var.name] = u(*remaining.map { [_1] }) if var
-        results << ev(node.else_clause, e)
-        envs << e
-      elsif !remaining.empty? && !unknown?(v)
-        add_check(node, "case/in", "branch", "a matching `in` branch", v, remaining.size == v.size ? :error : :partial, remaining)
-      end
-      join_many(env, envs) unless envs.empty?
-      u(*results)
-    end
-
-    def join_many(env, envs)
-      live = envs.reject(&:dead)
-      if live.empty?
-        env.dead = true
-        live = envs
-      end
-      live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") }) }
-    end
-
-    def restrict(env, var, how)
-      return unless var.depth.zero?
-      ty = env.vars[var.name] or return
-      atoms =
-        case how
-        when :non_nil then ty - NILS
-        when :nil then ty & NILS
-        when :falsy then ty & (NILS + ["Boolean"])
-        end
-      env.vars[var.name] = u(*atoms.map { [_1] })
-    end
-
-    def match_record(node, env)
-      v = ev(node.value, env)
-      node.pattern.elements.each do |el|
-        field = el.key.unescaped
-        target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
-        has = v.select { |a| a.is_a?(Array) && a[0] == :record && a[1].any? { _1[0] == field } }
-        failing = v - has
-        verdict = unknown?(v) ? :unknown : (failing.empty? ? :proven : (has.empty? ? :error : :partial))
-        add_check(el, "pattern", field, "Record with #{field}", v, verdict, failing) unless v.empty?
-        ty = unknown?(v) ? unknown("pattern") : u(*has.map { |a| a[1].find { _1[0] == field }[1] })
-        assign(env, target.depth, target.name, ty)
-      end
-      t("Nil")
-    end
-
-    def multi_write(node, env)
-      v = ev(node.value, env)
-      n = node.lefts.size
-      tuples = v.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == n }
-      record(node, "multiple assignment", 1, "Tuple", v)
-      node.lefts.each_with_index do |target, i|
-        ty = unknown?(v) ? unknown("destructure") : u(*tuples.map { _1[1][i] })
-        assign(env, target.depth, target.name, ty)
-      end
-      v
-    end
-
-    def call(node, env)
-      target = target_of(node, env)
-      return typer_raise(node, env) if target == :raise
-      if target.is_a?(Operators::Call) || (target.is_a?(Builtin) && %w[[] []=].include?(target.name))
-        explicit = node.receiver.is_a?(Prism::ConstantReadNode)
-        nodes = explicit ? node.arguments.arguments : [node.receiver, *node.arguments.arguments]
-        xs = nodes.map { ev(_1, env) }
-        op = target.is_a?(Builtin) ? target.name : target.op
-        if !target.is_a?(Builtin) && target.module != "Indexable"
-          return binop(node, op, xs[0], xs[1])
-        end
-        return op == "[]" ? index_get(node, xs[0], xs[1], nodes[1]) : index_set(node, xs[0], xs[1], nodes[1], xs[2])
-      end
-
-      args = (node.arguments&.arguments || []).map { ev(_1, env) }
-      blk = node.block && BlockCtx.new(node.block, @program.blocks.fetch(node.block), env)
-      case target
-      when Dispatch
-        record(node, "#{target.module}.#{target.name}", "subject", target.table.keys, args[0])
-        rs = args[0].filter_map do |a|
-          fn = target.table[atom_type_name(a)] or next
-          @callers.push(node.location.start_line)
-          begin
-            call_user(fn, [[a].freeze, *args.drop(1)], blk)
-          ensure
-            @callers.pop
-          end
-        end
-        u(*rs)
-      when UserFunction
-        @callers.push(node.location.start_line)
-        begin
-          call_user(target, args, blk)
-        ensure
-          @callers.pop
-        end
-      when Builtin
-        r = call_builtin(target, args, blk, node)
-        (@results ||= {}.compare_by_identity)[node] = u((@results[node] || []), r) # for crosscheck
-        narrow_by_call(env, node, args.each_index.map { target.param_type(_1) }) unless target.name == CTOR
-        r
-      end
-    end
-
-    # A built-in checks its arguments at run time, so after it returns, a local variable passed to it
-    # holds a type it accepts (none, when the call always fails).
-    def narrow_by_call(env, node, wants)
-      return unless @narrow
-      (node.arguments&.arguments || []).each_with_index do |arg, i|
-        want = wants[i]
-        next if want.nil? || want == "Any"
-        next unless arg.is_a?(Prism::LocalVariableReadNode) && arg.depth.zero? && (ty = env.vars[arg.name])
-        next if unknown?(ty)
-        kept = ty.select { |a| Array(want).any? { atom_matches?(a, _1) } }
-        env.vars[arg.name] = u(*kept.map { [_1] })
-      end
-    end
-
     def call_user(fn, args, blk)
       @instantiated[fn] = true
       if fn.yields
@@ -690,110 +307,15 @@ module Sake
     def merge_raised(h) = @raised[-1] = merge_into(@raised[-1], h)
     def struct_type(name) = @program.struct_types[name]
 
-    def raise_types(node, env)
-      nodes = node.arguments&.arguments || []
-      case nodes.size
-      when 0 then @handled.last || []
-      when 2 then [nodes[0].slice]
-      else
-        v = ev(nodes[0], env)
-        v.filter_map { |a| a == "String" ? "RuntimeError" : (a.is_a?(String) && struct_type(a)&.exception ? a : nil) }
-      end
-    end
-
-    def typer_raise(node, env)
-      (node.arguments&.arguments || []).drop((node.arguments&.arguments || []).size == 2 ? 1 : 0).each { ev(_1, env) }
-      raise_types(node, env).each { merge_raised(_1 => [node]) }
-      env.dead = true
-      []
-    end
-
     # Exception types that only `raise` produces; built-in operations may raise the other kinds anywhere.
     def user_raised?(name) = name == "RuntimeError" || !Resolver::BUILTIN_EXCEPTIONS.include?(name)
 
-    def typer_begin(node, env)
-      @raised.push({})
-      body_env = env.dup_level
-      result = ev(node.statements, body_env)
-      raised = @raised.pop
-      envs = [body_env]
-      results = [result]
-      clause = node.rescue_clause
-      while clause
-        names = clause.exceptions.map(&:slice)
-        if names.empty?
-          caught = raised.keys + Resolver::BUILTIN_EXCEPTIONS
-        else
-          names.each do |n|
-            next if !user_raised?(n) || raised.key?(n)
-            add_check(clause, "rescue", n, "raised in the begin body", [], :error, [n])
-          end
-          caught = names
-        end
-        e = env.dup_level
-        join_into(e, e.dup_level, body_env)
-        if clause.reference
-          ty = u(*caught.uniq.map { [_1] })
-          assign(e, clause.reference.depth, clause.reference.name, ty)
-        end
-        # A bare raise in the clause re-raises what was caught; only explicitly raised types are tracked.
-        @handled.push(caught.select { raised.key?(_1) })
-        results << ev(clause.statements, e)
-        @handled.pop
-        envs << e
-        raised = raised.reject { |n, _| names.empty? || names.include?(n) }
-        clause = clause.subsequent
-      end
-      merge_raised(raised)
-      if node.else_clause
-        results[0] = ev(node.else_clause, body_env)
-      end
-      join_many(env, envs)
-      ev(node.ensure_clause.statements, env) if node.ensure_clause
-      u(*results)
-    end
-
-    def typer_rescue_modifier(node, env)
-      @raised.push({})
-      r = ev(node.expression, env)
-      @raised.pop
-      u(r, ev(node.rescue_expression, env))
-    end
-
-    def run_body(fn, args, blk)
-      frame = Frame.new(fn, [], blk)
-      env = Env.new(nil, frame)
-      fn.params.zip(args) { |name, ty| env.vars[name.to_sym] = ty }
-      u(ev(fn.body, env), frame.ret)
-    end
-
-    def call_block(blk, args)
-      return unknown("no block") unless blk
-      params = blk.params
-      if params.size > 1 && args.size == 1
-        a = args.first
-        return unknown("block destructure") if unknown?(a)
-        tuples = a.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == params.size }
-        args = params.each_index.map { |i| u(*tuples.map { _1[1][i] }) } if tuples.size == a.size
-      end
-      (@next_acc ||= []).push([])
-      result = []
-      MAX_LOOP_ITER.times do
-        before = blk.env.chain_snapshot
-        env = Env.new(blk.env, blk.env.frame)
-        params.each_with_index { |name, i| env.vars[name.to_sym] = args[i] || t("Nil") }
-        result = u(result, ev(blk.node.body, env))
-        break if blk.env.chain_snapshot == before
-      end
-      u(result, @next_acc.pop)
-    end
-
     # Index.[]: a miss gives nil for Array and String; a Tuple has a fixed length, so a literal index
     # selects one position and any other index gives the union of all positions.
-    def index_get(node, recv, key, key_node)
+    # lit: the index when it is an Integer literal.
+    def index_get(node, recv, key, lit)
       return [] if recv.empty? || key.empty?
       return unknown("index") if unknown?(recv) || unknown?(key)
-      lit = key_node.is_a?(Prism::IntegerNode) ? key_node.value : nil
       results = []
       failing = []
       recv.each do |a|
@@ -834,9 +356,8 @@ module Sake
       u(*results)
     end
 
-    def index_set(node, recv, key, key_node, val)
+    def index_set(node, recv, key, lit, val)
       return [] if recv.empty? || key.empty? || val.empty?
-      lit = key_node.is_a?(Prism::IntegerNode) ? key_node.value : nil
       recv.each do |a|
         if struct_atom?(a) && Operators.includes?(@program.includes || {}, a, "Indexable") && (fn = @program.functions.dig(a, "[]="))
           call_user(fn, [[a].freeze, key, val], nil)
@@ -1143,3 +664,4 @@ module Sake
   end
 end
 require_relative "typer_ext"
+require_relative "typer_eval"

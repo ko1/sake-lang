@@ -53,7 +53,6 @@ module Sake
 
     def scope(depth) = @scopes[-1 - depth]
     def slot(depth, name) = scope(depth).slot(name)
-    def temp = @scopes[-1].frame.alloc("(tmp)")
 
     def target(node) = @program.calls.fetch(node, {}).fetch(@ns) { nil }
 
@@ -161,20 +160,9 @@ module Sake
       tuple && vals.size > 1 ? MakeTuple.new(elems: vals, origin: n) : vals.first
     end
 
-    # `x[k] OP= v` / `x[k] ||= v`: the receiver and index are evaluated once, into temporaries.
     def index_update(n)
-      r = temp
-      k = temp
-      cur = IndexGet.new(recv: get(r, n), key: get(k, n), origin: n)
-      update =
-        if n.is_a?(Prism::IndexOrWriteNode)
-          Or.new(left: cur, right: IndexSet.new(recv: get(r, n), key: get(k, n), value: lower(n.value), origin: n), origin: n)
-        else
-          IndexSet.new(recv: get(r, n), key: get(k, n),
-                       value: BinOp.new(op: n.binary_operator.to_s, left: cur, right: lower(n.value), origin: n), origin: n)
-        end
-      Seq.new(body: [LVarSet.new(slot: r, value: lower(n.receiver), origin: n),
-                     LVarSet.new(slot: k, value: lower(n.arguments.arguments.first), origin: n), update], origin: n)
+      op = n.is_a?(Prism::IndexOrWriteNode) ? "||" : n.binary_operator.to_s
+      IndexUpdate.new(recv: lower(n.receiver), key: lower(n.arguments.arguments.first), op:, value: lower(n.value), origin: n)
     end
 
     def begin_node(n)
