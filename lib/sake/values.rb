@@ -20,10 +20,37 @@ module Sake
     end
   end
 
-  DataType = Struct.new(:name, :fields)
+  StructType = Struct.new(:name, :fields)
 
-  # An instance of a Data.define type; fields are mutable.
-  class Record
+  # The type of a Record: its set of (field, type) pairs, sorted by field and interned.
+  Shape = Struct.new(:fields, :types) do
+    def name = "{#{fields.zip(types).map { |f, t| "#{f}: #{t}" }.join(", ")}}"
+    def display = "{#{fields.zip(types).map { |f, t| "#{f}: #{Values.display_type(t)}" }.join(", ")}}"
+  end
+
+  # `{x: 1, y: 2}`: the shape is fixed at creation; values may be replaced by ones of the same type.
+  class RecordValue
+    SHAPES = {}
+    attr_reader :shape, :values
+
+    def self.build(pairs)
+      sorted = pairs.sort_by(&:first)
+      fields = sorted.map(&:first)
+      types = sorted.map { Values.type_of(_1[1]) }
+      new(SHAPES[[fields, types]] ||= Shape.new(fields.freeze, types.freeze), sorted.map(&:last))
+    end
+
+    def initialize(shape, values)
+      @shape = shape
+      @values = values
+    end
+
+    def field?(f) = @shape.fields.include?(f)
+    def [](f) = @values[@shape.fields.index(f)]
+  end
+
+  # An instance of a Struct.new type; fields are mutable.
+  class StructValue
     attr_reader :type, :values
 
     def initialize(type, values)
@@ -44,13 +71,20 @@ module Sake
       when nil then "Nil"
       when Tuple then "Tuple"
       when Array then "Array"
-      when Record then v.type.name
+      when StructValue then v.type.name
+      when RecordValue then v.shape.name
       else raise "BUG: not a Sake value: #{v.inspect}"
       end
     end
 
     # For messages: nil/true/false are shown as themselves, other values by type name.
-    def describe(v) = [nil, true, false].include?(v) ? v.inspect : type_of(v)
+    def describe(v)
+      case v
+      when nil, true, false then v.inspect
+      when RecordValue then v.shape.display
+      else type_of(v)
+      end
+    end
 
     # For messages about table rows keyed by internal type names.
     def display_type(t) = { "Nil" => "nil", "Boolean" => "true|false" }.fetch(t, t)
@@ -62,9 +96,10 @@ module Sake
       case v
       when Tuple then "[#{v.elems.map { inspect(_1) }.join(", ")}]"
       when Array then "[#{v.map { inspect(_1) }.join(", ")}]"
-      when Record
+      when StructValue
         fs = v.type.fields.zip(v.values).map { |f, x| "#{f}=#{inspect(x)}" }
-        "#<data #{v.type.name} #{fs.join(", ")}>"
+        "#<struct #{v.type.name} #{fs.join(", ")}>"
+      when RecordValue then "{#{v.shape.fields.zip(v.values).map { |f, x| "#{f}: #{inspect(x)}" }.join(", ")}}"
       else v.inspect
       end
     end
@@ -73,7 +108,7 @@ module Sake
       case v
       when String then v
       when nil then ""
-      when Tuple, Array, Record then inspect(v)
+      when Tuple, Array, StructValue, RecordValue then inspect(v)
       else v.to_s
       end
     end

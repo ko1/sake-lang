@@ -107,6 +107,8 @@ module Sake
         Values.truthy?(l) ? l : eval_node(node.right, env)
       when Prism::ParenthesesNode then eval_node(node.body, env)
       when Prism::ArrayNode then Tuple.new(node.elements.map { eval_node(_1, env) })
+      when Prism::HashNode then RecordValue.build(node.elements.map { [_1.key.unescaped, eval_node(_1.value, env)] })
+      when Prism::MatchRequiredNode then match_record(node, env)
       when Prism::ReturnNode then raise ReturnSignal.new(env.frame, jump_value(node, env, tuple: true))
       when Prism::NextNode then raise NextSignal.new(jump_value(node, env))
       when Prism::BreakNode then raise BreakSignal.new(jump_value(node, env))
@@ -133,6 +135,23 @@ module Sake
     def subject(env, fa)
       env = env.parent while env.parent
       env.vars[fa.param]
+    end
+
+    # `value => {x:, y: name}` binds fields of a Record to locals.
+    def match_record(node, env)
+      v = eval_node(node.value, env)
+      pat = node.pattern
+      unless v.is_a?(RecordValue)
+        hints = v.is_a?(StructValue) ? ["for a Struct, read a field with `#{v.type.name}.get_#{pat.elements.first.key.unescaped}(value)`"] : []
+        fail_at(node, "TypeError", "pattern `#{pat.slice}` needs a Record, got #{Values.describe(v)}", hints:)
+      end
+      pat.elements.each do |el|
+        field = el.key.unescaped
+        fail_at(el, "KeyError", "Record #{v.shape.display} has no field `#{field}`") unless v.field?(field)
+        target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
+        env.up(target.depth).vars[target.name] = v[field]
+      end
+      nil
     end
 
     def jump_value(node, env, tuple: false)
@@ -203,12 +222,22 @@ module Sake
         want = fn.param_type(i)
         next if type_ok?(want, v)
         fail_at(node, "TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
-                expected: want, nil_value: v.nil?)
+                expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
       end
       ruby_blk = blk && ->(*xs) { call_block(blk, xs, node) }
       fn.impl.call(*args, &ruby_blk)
     rescue Fail => e
       fail_at(node, e.kind, "#{fn.full_name}: #{e.message}")
+    end
+
+    # Ruby habits: `result = []` / `{}` used as a growable collection.
+    def literal_hints(want, v)
+      return [] unless Array(want).include?("Array")
+      case v
+      when Tuple then ["`[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`"]
+      when RecordValue then ["`{...}` is a Record; for a growable collection, write `Array[...]` (Hash is not available yet)"]
+      else []
+      end
     end
 
     def type_ok?(want, v)
@@ -217,6 +246,7 @@ module Sake
     end
 
     def binary_op(node, op, a, b)
+      return a.public_send(op, b) if %w[== !=].include?(op.to_s) && (a.nil? || b.nil?)
       rows = @registry.binary_ops[op.to_s]
       key = [Values.type_of(a), Values.type_of(b)]
       impl = rows[key]

@@ -40,6 +40,7 @@ end
 
 def atom_name(a)
   return a if a.is_a?(String)
+  return "{#{a[1].map { |f, ty| "#{f}: #{atom_name(ty.first)}" }.join(", ")}}" if a[0] == :record
   { tuple: "Tuple", array: "Array", unknown: "?" }.fetch(a[0])
 end
 

@@ -322,9 +322,12 @@ block_errors.sake:6:7: error: Array.each requires a block
 (exit status 2)
 ```
 
-## 7. Data types
+## 7. Struct types
 
-`Data.define` creates a record type together with its operations: `Point.new`, a `get_` operation
+`Struct.new` creates a named type together with its operations. Ruby's `Data.define` is not used: Ruby's
+`Data` is immutable, while Sake's named types are mutable, like Ruby's `Struct`.
+
+`Struct.new` gives the type these operations: `Point.new`, a `get_` operation
 for each field, and a `set_` operation for each field. Fields are **mutable**.
 
 To add your own operations to a type, put them inside `class Point`. Inside that body, unqualified
@@ -332,7 +335,7 @@ names such as `get_x` refer to `Point`'s operations. `def Point.f` is shorthand 
 inside `class Point`.
 
 ```ruby
-Point = Data.define(:x, :y)
+Point = Struct.new(:x, :y)
 
 class Point
   def add(a, b) = Point.new(get_x(a) + get_x(b), get_y(a) + get_y(b))
@@ -358,14 +361,14 @@ puts(Point.get_x(a))
 $ sake data.sake
 (10, 20)
 (15, 25)
-#<data Point x=10, y=20>
+#<struct Point x=10, y=20>
 10
 ```
 
 There is no `p.x`. Field access is an operation with a type, like everything else:
 
 ```ruby
-Point = Data.define(:x, :y)
+Point = Struct.new(:x, :y)
 pt = Point.new(1, 2)
 puts(pt.x)
 pt.y = 5
@@ -386,13 +389,13 @@ data_errors.sake:6:12: error: wrong number of arguments for Point.new (given 1, 
 (exit status 2)
 ```
 
-Inside a function of a Data type, `@x` is shorthand for field `x` of the function's **first
+Inside a function of a Struct type, `@x` is shorthand for field `x` of the function's **first
 argument**, which is the subject by convention. `@x` reads the field, `@x = v` writes it, and
 `@x += v` updates it. The type comes from the enclosing `class Point`, so `@x` is still an
 operation with a type:
 
 ```ruby
-Point = Data.define(:x, :y)
+Point = Struct.new(:x, :y)
 
 class Point
   def norm2(p) = @x * @x + @y * @y           # @x is Point.get_x(p): p is the first argument
@@ -413,7 +416,7 @@ puts(Point.norm2(7))
 ```
 $ sake data_shorthand.sake
 25
-#<data Point x=4, y=5>
+#<struct Point x=4, y=5>
 data_shorthand.sake:4: in Point.norm2: TypeError: Point.get_x: argument 1 must be Point, got Integer
   from data_shorthand.sake:16: in <main>
 (exit status 1)
@@ -423,8 +426,8 @@ Because each operation checks its argument, passing the wrong record is caught a
 operation, with the call chain:
 
 ```ruby
-Point = Data.define(:x, :y)
-Line = Data.define(:from, :to)
+Point = Struct.new(:x, :y)
+Line = Struct.new(:from, :to)
 
 def length(l)
   dx = Point.get_x(Line.get_to(l)) - Point.get_x(Line.get_from(l))
@@ -478,9 +481,14 @@ top: top
 door: door
 ```
 
-## 9. Tuples and arrays
+## 9. Tuples, Records, and arrays
+
+A literal has no operation with a type, so its shape fixes its type when it is created. A growable
+collection is made by an operation with a type:
 
 - **Tuple.** A literal `[a, b]` is a Tuple of fixed size. Take it apart with multiple assignment.
+- **Record.** A literal `{x: a, y: b}` is a Record. Its type is its set of fields and their
+  types. Take it apart with a pattern.
 - **Array.** `Array[...]` builds an Array with no declared element type.
 - **Typed Array.** `T[...]` builds an Array whose element type is T. The element type is checked
   on every write.
@@ -517,11 +525,66 @@ collections.sake:17: in <main>: TypeError: Array.push: Float[] element must be F
 (exit status 1)
 ```
 
+A Record is read with a pattern. `r => {mean:, count: n}` binds `mean` and `n`:
+
+```ruby
+def stats(xs)
+  total = Array.sum(xs)
+  {count: Array.size(xs), total: total, mean: total / Array.size(xs)}
+end
+
+r = stats(Array[3, 5, 10])
+p(r)
+r => {mean:, count: n}        # take fields apart by name
+puts(mean)
+puts(n)
+p({y: 2, x: 1})               # field order does not matter
+r => {median:}
+```
+
+```
+$ sake records.sake
+{count: 3, mean: 6, total: 18}
+6
+3
+{x: 1, y: 2}
+records.sake:12: in <main>: KeyError: Record {count: Integer, mean: Integer, total: Integer} has no field `median`
+(exit status 1)
+```
+
+In Sake, `[]` and `{}` are not growable collections. Ruby code that grows them stops with a hint:
+
+```ruby
+squares = []                  # a Tuple of length 0, not an Array
+Integer.times(3) { |i| Array.push(squares, i * i) }
+```
+
+```
+$ sake ruby_habits.sake
+ruby_habits.sake:2: in <main>: TypeError: Array.push: argument 1 must be Array, got Tuple
+  hint: `[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`
+(exit status 1)
+```
+
+```ruby
+counts = {}
+names = {"a" => 1}
+```
+
+```
+$ sake empty_braces.sake
+empty_braces.sake:1:10: error: `{}` is an empty Record, not a Hash
+  hint: for a growable collection, write `Array[]` (Hash is not available yet)
+empty_braces.sake:2:10: error: `{"a" => ...}` is not a Hash in Sake: `{name: value}` makes a Record
+  hint: Hash is not available yet
+(exit status 2)
+```
+
 `Point[1, 2]` means "an Array of Point". It does **not** mean `Point.new(1, 2)` as it does in Ruby.
 When the mistake is visible in the source, it is reported before running:
 
 ```ruby
-Point = Data.define(:x, :y)
+Point = Struct.new(:x, :y)
 ps = Point[1, 2]
 ```
 
@@ -539,7 +602,7 @@ A value that may be absent is simply `nil`. Check it with `if x`, `while x`, `x 
 where that `nil` can come from:
 
 ```ruby
-Node = Data.define(:value, :next)
+Node = Struct.new(:value, :next)
 
 def build(n)
   head = nil
@@ -585,7 +648,7 @@ every unchecked use before running. A local variable you have tested counts as c
 (`second_checked`). A field you read again does not, because fields are mutable:
 
 ```ruby
-Node = Data.define(:value, :next)
+Node = Struct.new(:value, :next)
 
 def second(node) = Node.get_value(Node.get_next(node))
 
@@ -617,7 +680,7 @@ strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node)
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
-- `self`, and `@x` outside a function of a Data type
+- `self`, and `@x` outside a function of a Struct type
 - indexing
 - string interpolation
 - unary operators
@@ -626,7 +689,7 @@ Sake rejects anything that would hide which code runs, or that it has not decide
 All of these are reported together, before running:
 
 ```ruby
-Point = Data.define(:x, :y)
+Point = Struct.new(:x, :y)
 PI = 3.14159
 class Point
   def origin = self
@@ -640,7 +703,7 @@ eval("1 + 1")
 
 ```
 $ sake forbidden.sake
-forbidden.sake:2:1: error: Sake has no value constants; only a Data type can be assigned to a constant
+forbidden.sake:2:1: error: Sake has no value constants; only a Struct type can be assigned to a constant
   hint: define a function instead: `def pi = 3.14159`
 forbidden.sake:4:16: error: Sake has no `self`
 forbidden.sake:7:10: error: indexing `nums[0]` is not supported yet (out-of-range behavior is undecided)
@@ -667,7 +730,7 @@ It also prints the element type of every Array and the type of every field. No t
 anywhere:
 
 ```ruby
-Item = Data.define(:name, :price, :qty)
+Item = Struct.new(:name, :price, :qty)
 
 def total(items) = Array.reduce(items, 0) { |acc, it| acc + Item.get_price(it) * Item.get_qty(it) }
 
@@ -716,7 +779,7 @@ A bank account with a transaction history. The history starts as an empty `Array
 with `[kind, amount]` Tuples, which a `do |kind, amount|` block destructures.
 
 ```ruby
-Account = Data.define(:owner, :balance, :history)
+Account = Struct.new(:owner, :balance, :history)
 
 class Account
   def open(owner) = Account.new(owner, 0, Array[])

@@ -148,3 +148,15 @@ nil の設計を入れた後、`crosscheck.rb` を流し直した結果は次の
   - 意図して書いた「確かめずに使う」箇所が 2 件。
   - 実際に nil に当たる箇所が 2 件。
   - `while Node.get_next(n) != nil` の形が 3 件。フィールドの読み出しは絞り込まない規則なので、取りこぼしになる。`--strict` では誤検出として報告される。
+
+## 追記 2: `Data.define` から `Struct.new` への改名（同日）
+
+名前付きの型を作る `Data.define` を `Struct.new` に改名したため、`corpus/` のプログラムは、そのままでは静的エラーで止まるようになった。
+
+- `corpus/` は書かれたときのまま残す。
+- `run.sh` は、`Data.define(` を `Struct.new(` に置き換えた一時的な写しを作ってから流す。
+- 改名後の crosscheck の結果は次のとおり。
+  - 対象: 30 本（写しのコーパス 11 本 ＋ サンプル）。
+  - proven 513 / partial 7 / error 14 / unknown 0 / violation 0。
+  - sabotage での violation: 14 件。
+- 最初は、写しを作らずにコーパスを対象から外して流していた。その状態では sabotage の violation が 0 件になり、負の対照が働いていなかった（Float を使う例がコーパスにしか無いため）。写しを作って流し直したところ、14 件に戻った。

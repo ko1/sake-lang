@@ -189,12 +189,12 @@ module Sake
       xs
     end
 
-    # `T[...]` for a type T (built-in or Data). `Array[...]` stays the untyped constructor.
-    def install_typed_array(reg, type, data: false)
+    # `T[...]` for a type T (built-in or Struct). `Array[...]` stays the untyped constructor.
+    def install_typed_array(reg, type, struct: false)
       reg.define(type, :[], [], rest: "Any") do |*xs|
         xs.each_with_index do |x, i|
           next if Values.type_of(x) == type
-          hint = data ? " (to create one #{type}, write #{type}.new(...))" : ""
+          hint = struct ? " (to create one #{type}, write #{type}.new(...))" : ""
           raise Fail.new("TypeError", "element #{i + 1} must be #{type}, got #{Values.describe(x)}#{hint}")
         end
         TypedArray.new(type, xs)

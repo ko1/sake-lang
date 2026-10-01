@@ -63,7 +63,7 @@ def String.shout(s) = ...                   # 上の略記
 ### 3. データ
 
 ```ruby
-Point = Data.define(:x, :y)   # Point.new / Point.get_x / Point.set_x / ... が生成される
+Point = Struct.new(:x, :y)    # Point.new / Point.get_x / Point.set_x / ... が生成される（2026-10-01 に Data.define から改名）
 p = Point.new(1, 2)
 Point.get_x(p)                # get
 Point.set_x(p, 3)             # set
@@ -296,7 +296,11 @@ AI 向けの話と最適化の話は、同じ結論に収束する: **操作に�
     - `{x: 1, y: 2}` は、`Point = Struct.new(:x, :y)` があっても Point にはならない。
     - Struct は宣言した名前で区別する型（nominal）、Record は形で区別する型（structural）である。
     - 内部の表現は共有してよいが、型としては混ぜない。混ぜないことで、`Point.get_x` が使えるのは Point だけ、という「どの操作が使えるかが 1 行で決まる」性質を保つ。
-- 名前付きの型は、可変なので Ruby の `Struct` に合わせて `Struct.new` で作る方向で検討中（Ruby の `Data` は不変なので、名前と中身がずれている）。
+- **名前付きの型は `Struct.new` で作る**（ko1 の決定、2026-10-01）。
+  - それまでは `Data.define` だった。しかし Ruby の `Data` は不変、Sake の名前付きの型は可変（2026-09-30 の決定）なので、名前と中身がずれていた。Ruby で可変なのは `Struct` である。
+  - `Data.define` と書かれたら、修正案（`Struct.new(...)`）付きの静的エラーにする。
+  - 内部の呼び名も DataType / Record から StructType / StructValue に改めた。Record は無名レコード `{...}` の名前として使う。
+  - `p` の表示は Ruby の Struct と同じ `#<struct Point x=1, y=2>`。
 - **値の定数（`PI = 3.14`）は入れない。** 名前付きの値は関数で書く（`def pi = 3.14`）。
   - 理由: 大文字の名前を型（名前空間）に限ったままにできる。可変な値の定数をどう扱うか（凍結するか）、初期化の順序をどうするかといった問題も生じない。
   - `PI = 3.14` は静的エラーにし、修正案として `def pi = 3.14` を出す。`PI` を使っている箇所には、修正案として `pi` を出す。2026-10-01 の実験で、AI が最初に `PI = ...` と書き、修正案が無かったために詰まったため。

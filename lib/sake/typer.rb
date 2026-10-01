@@ -4,11 +4,12 @@ module Sake
   # Experimental whole-program type inference (forward abstract interpretation).
   #
   # A type is a canonical union: a sorted, frozen Array of atoms; [] is bottom (no value reaches here).
-  # Atoms: "Integer" "Float" "String" "Boolean" "Nil" "<Data name>",
-  #        [:tuple, [type, ...]], [:array, site_id], [:unknown, reason].
+  # Atoms: "Integer" "Float" "String" "Boolean" "Nil" "<Struct name>",
+  #        [:tuple, [type, ...]], [:record, [[field, type], ...]], [:array, site_id], [:unknown, reason].
+  # A record atom has one atom per field (the type fixed at creation), sorted by field.
   # User functions are instantiated per argument types (Crystal style); functions that yield are
   # analyzed per call site. Arrays carry an allocation site whose element type is the union of every
-  # write; Data fields are the union of every write per type. The whole program is re-analyzed until
+  # write; Struct fields are the union of every write per type. The whole program is re-analyzed until
   # these tables stop changing, and only the last pass's observations are reported.
   class Typer
     NUM = %w[Integer Float].freeze
@@ -107,7 +108,37 @@ module Sake
     end
 
     def tuple_depth(ty)
-      ty.map { |a| a.is_a?(Array) && a[0] == :tuple ? 1 + (a[1].map { tuple_depth(_1) }.max || 0) : 0 }.max || 0
+      ty.map do |a|
+        next 0 unless a.is_a?(Array)
+        case a[0]
+        when :tuple then 1 + (a[1].map { tuple_depth(_1) }.max || 0)
+        when :record then 1 + (a[1].map { tuple_depth(_1[1]) }.max || 0)
+        else 0
+        end
+      end.max || 0
+    end
+
+    MAX_RECORD_VARIANTS = 16
+
+    # One record atom per combination of field atoms: a record's field types are fixed per value.
+    def record_type(pairs)
+      sorted = pairs.sort_by(&:first)
+      return [] if sorted.any? { _1[1].empty? }
+      return unknown("record depth") if sorted.any? { tuple_depth(_1[1]) >= MAX_TUPLE_DEPTH }
+      combos = sorted.map { |_, ty| ty }.inject([[]]) { |acc, ty| acc.product(ty).map { |c, a| c + [[a].freeze] } }
+      return unknown("record variants") if combos.size > MAX_RECORD_VARIANTS
+      u(*combos.map { |c| [[:record, sorted.map(&:first).zip(c)]] })
+    end
+
+    # The runtime type name of an atom (Values.type_of).
+    def atom_type_name(a)
+      return a if a.is_a?(String)
+      case a[0]
+      when :tuple then "Tuple"
+      when :array then "Array"
+      when :record then "{#{a[1].map { |f, ty| "#{f}: #{atom_type_name(ty.first)}" }.join(", ")}}"
+      else "?"
+      end
     end
 
     def show(ty)
@@ -123,6 +154,7 @@ module Sake
       else
         case a[0]
         when :tuple then "[#{a[1].map { show(_1) }.join(", ")}]"
+        when :record then "{#{a[1].map { |f, ty| "#{f}: #{show(ty)}" }.join(", ")}}"
         when :array
           s = @sites[a[1]]
           s.declared ? "#{s.declared}[]@#{s.label}" : "Array@#{s.label}[#{show(s.elem)}]"
@@ -166,8 +198,7 @@ module Sake
     def atom_matches?(atom, want)
       case atom
       when String then want == atom
-      else
-        (atom[0] == :tuple && want == "Tuple") || (atom[0] == :array && want == "Array")
+      else atom_type_name(atom) == want
       end
     end
 
@@ -203,7 +234,7 @@ module Sake
       end
     end
 
-    # "Data.field (nil written at line N)" for fields that may hold nil next to a type in `wants`.
+    # "Struct.field (nil written at line N)" for fields that may hold nil next to a type in `wants`.
     def nil_sources(wants = nil)
       @fields.flat_map do |dt, fs|
         fs.filter_map do |f, ty|
@@ -254,6 +285,8 @@ module Sake
         u(*left.map { [_1] }, r)
       when Prism::ParenthesesNode then ev(node.body, env)
       when Prism::ArrayNode then tuple(node.elements.map { ev(_1, env) })
+      when Prism::HashNode then record_type(node.elements.map { [_1.key.unescaped, ev(_1.value, env)] })
+      when Prism::MatchRequiredNode then match_record(node, env)
       when Prism::ReturnNode
         vals = (node.arguments&.arguments || []).map { ev(_1, env) }
         v = vals.size > 1 ? tuple(vals) : (vals.first || t("Nil"))
@@ -383,6 +416,21 @@ module Sake
       env.vars[var.name] = u(*atoms.map { [_1] })
     end
 
+    def match_record(node, env)
+      v = ev(node.value, env)
+      node.pattern.elements.each do |el|
+        field = el.key.unescaped
+        target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
+        has = v.select { |a| a.is_a?(Array) && a[0] == :record && a[1].any? { _1[0] == field } }
+        failing = v - has
+        verdict = unknown?(v) ? :unknown : (failing.empty? ? :proven : (has.empty? ? :error : :partial))
+        add_check(el, "pattern", field, "Record with #{field}", v, verdict, failing) unless v.empty?
+        ty = unknown?(v) ? unknown("pattern") : u(*has.map { |a| a[1].find { _1[0] == field }[1] })
+        assign(env, target.depth, target.name, ty)
+      end
+      t("Nil")
+    end
+
     def multi_write(node, env)
       v = ev(node.value, env)
       n = node.lefts.size
@@ -470,7 +518,12 @@ module Sake
       pairs = a.product(b)
       failing = []
       pairs.each do |x, y|
-        key = [x, y].map { _1.is_a?(String) ? _1 : (_1[0] == :tuple ? "Tuple" : "Array") }
+        key = [x, y].map { atom_type_name(_1) }
+        if %w[== !=].include?(op) && key.include?("Nil")
+          hits += 1
+          results << t("Boolean")
+          next
+        end
         unless rows.key?(key)
           failing << key
           next
@@ -496,7 +549,7 @@ module Sake
 
       ns = fn.namespace
       name = fn.name
-      if (dt = @program.data_types[ns]) && name != "[]"
+      if (dt = @program.struct_types[ns]) && name != "[]"
         return data_op(dt, name, args, node)
       end
       if name == "[]"

@@ -26,13 +26,13 @@ module Sake
     attr_reader :kind, :line, :frames, :expected
     attr_accessor :path, :hints
 
-    def initialize(kind, message, line, frames = [], expected: nil, nil_value: false)
+    def initialize(kind, message, line, frames = [], expected: nil, nil_value: false, hints: [])
       @kind = kind
       @line = line
       @frames = frames
       @expected = expected
       @nil_value = nil_value
-      @hints = []
+      @hints = hints
       super(message)
     end
 

@@ -105,9 +105,12 @@ running:
 
 @@example block_errors
 
-## 7. Data types
+## 7. Struct types
 
-`Data.define` creates a record type together with its operations: `Point.new`, a `get_` operation
+`Struct.new` creates a named type together with its operations. Ruby's `Data.define` is not used: Ruby's
+`Data` is immutable, while Sake's named types are mutable, like Ruby's `Struct`.
+
+`Struct.new` gives the type these operations: `Point.new`, a `get_` operation
 for each field, and a `set_` operation for each field. Fields are **mutable**.
 
 To add your own operations to a type, put them inside `class Point`. Inside that body, unqualified
@@ -120,7 +123,7 @@ There is no `p.x`. Field access is an operation with a type, like everything els
 
 @@example data_errors
 
-Inside a function of a Data type, `@x` is shorthand for field `x` of the function's **first
+Inside a function of a Struct type, `@x` is shorthand for field `x` of the function's **first
 argument**, which is the subject by convention. `@x` reads the field, `@x = v` writes it, and
 `@x += v` updates it. The type comes from the enclosing `class Point`, so `@x` is still an
 operation with a type:
@@ -145,14 +148,28 @@ definition, write its namespace, as in `Kernel.puts(...)`.
 
 @@example scope
 
-## 9. Tuples and arrays
+## 9. Tuples, Records, and arrays
+
+A literal has no operation with a type, so its shape fixes its type when it is created. A growable
+collection is made by an operation with a type:
 
 - **Tuple.** A literal `[a, b]` is a Tuple of fixed size. Take it apart with multiple assignment.
+- **Record.** A literal `{x: a, y: b}` is a Record. Its type is its set of fields and their
+  types. Take it apart with a pattern.
 - **Array.** `Array[...]` builds an Array with no declared element type.
 - **Typed Array.** `T[...]` builds an Array whose element type is T. The element type is checked
   on every write.
 
 @@example collections
+
+A Record is read with a pattern. `r => {mean:, count: n}` binds `mean` and `n`:
+
+@@example records
+
+In Sake, `[]` and `{}` are not growable collections. Ruby code that grows them stops with a hint:
+
+@@example ruby_habits
+@@example empty_braces
 
 `Point[1, 2]` means "an Array of Point". It does **not** mean `Point.new(1, 2)` as it does in Ruby.
 When the mistake is visible in the source, it is reported before running:
@@ -178,7 +195,7 @@ every unchecked use before running. A local variable you have tested counts as c
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
-- `self`, and `@x` outside a function of a Data type
+- `self`, and `@x` outside a function of a Struct type
 - indexing
 - string interpolation
 - unary operators

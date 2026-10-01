@@ -42,7 +42,7 @@ A program is a single file. Its top level may contain:
   `name` inside `class Type`.
 - **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only
   `def name(...)` (no receiver).
-- **Data types**: `Name = Data.define(:field, ...)`.
+- **Struct types**: `Name = Struct.new(:field, ...)`.
 - **Statements**: any other expression. Statements run in order.
 
 All definitions are collected before anything runs. A function may be called on a line above its
@@ -55,7 +55,7 @@ Rules:
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
-- Constants can only be assigned from `Data.define`. Sake has **no value constants**. For a named
+- Constants can only be assigned from `Struct.new`. Sake has **no value constants**. For a named
   value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error
   whose hint gives that function, and each use of `PI` gets the hint `pi`.
 
@@ -68,10 +68,11 @@ Rules:
 | String | `"abc"`, `'abc'` | no interpolation |
 | true / false | `true`, `false` | internally one type, `Boolean`, which cannot be written in source |
 | nil | `nil` | see [§11](#11-nil) |
-| Tuple | `[a, b, ...]` | fixed size; element types are positional |
+| Tuple | `[a, b, ...]` | length and positional types fixed at creation |
+| Record | `{x: a, y: b}` | set of (field, type) pairs fixed at creation |
 | Array | `Array[a, ...]` | no declared element type |
 | Array of T | `T[a, ...]`, e.g. `Float[]`, `Point[p]` | element type T, checked on every write |
-| Data type | `Point.new(x, y)` | record with mutable fields |
+| Struct type | `Point.new(x, y)` | record with mutable fields |
 
 - **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is
   truthy.
@@ -102,7 +103,7 @@ The error suggests the qualified form.
 
 A call without a receiver, `f(args)`, is resolved statically. The first match wins:
 
-1. the enclosing class or module, including its built-in operations and Data accessors;
+1. the enclosing class or module, including its built-in operations and Struct accessors;
 2. top-level functions;
 3. `Kernel` (`puts`, `print`, `p`).
 
@@ -187,7 +188,7 @@ function.
   Dividing an Integer by zero raises `ZeroDivisionError`. Float division by zero follows IEEE.
 - **Negative exponent.** `Integer ** negative Integer` raises `ArgumentError`, because Sake has no
   Rational.
-- **Equality of compound values.** `==` between Tuples, Arrays, or Data values is not defined yet.
+- **Equality of compound values.** `==` between Tuples, Arrays, or Struct values is not defined yet.
   Only comparison with `nil` is defined for them.
 - **Compound assignment.** `x OP= e` means `x = x OP e`.
 - **Typed form.** `Integer.+(a, b)`, `Float.*(a, b)`, `String.+(a, b)`, and so on name the type
@@ -212,10 +213,10 @@ All of these are static errors.
   the next iteration. `begin ... end while` is not supported.
 - The modifier forms `stmt if c`, `stmt unless c`, `stmt while c`, and `stmt until c`.
 
-## 10. Data types
+## 10. Struct types
 
 ```ruby
-Point = Data.define(:x, :y)
+Point = Struct.new(:x, :y)
 ```
 
 This defines the namespace `Point` with the following operations:
@@ -232,7 +233,7 @@ This defines the namespace `Point` with the following operations:
   is visible through every other variable that holds the same value.
 - **Adding operations.** Add your own operations in `class Point ... end` or with `def Point.f`.
   Inside them, the accessors can be called unqualified (`get_x(p)`).
-- **Field shorthand `@x`.** Inside a function of a Data type (in `class Point` or `def Point.f`),
+- **Field shorthand `@x`.** Inside a function of a Struct type (in `class Point` or `def Point.f`),
   `@x` means field `x` of the function's **first parameter**, which is the subject by convention:
 
   | Written | Means |
@@ -244,11 +245,13 @@ This defines the namespace `Point` with the following operations:
   - `p` is the first parameter's current value, even inside a block whose parameter has the same
     name.
   - The usual runtime check applies: the first argument must be a Point.
-  - `@x` is a static error in each of these cases: outside a function of a Data type, in a function
+  - `@x` is a static error in each of these cases: outside a function of a Struct type, in a function
     with no parameters, and when the field does not exist.
-- **Printing.** `p` prints a Data value as `#<data Point x=1, y=2>`. `puts` prints it the same way.
-- **`Data.define` restrictions.** It must be assigned to a top-level constant. It takes symbols
+- **Printing.** `p` prints a Struct value as `#<struct Point x=1, y=2>`. `puts` prints it the same way.
+- **`Struct.new` restrictions.** It must be assigned to a top-level constant. It takes symbols
   only, and no block.
+- **No `Data.define`.** `Data.define` is rejected with a hint to use `Struct.new`. Ruby's `Data` is
+  immutable, but Sake's named types are mutable, which is what Ruby's `Struct` provides.
 
 ## 11. nil
 
@@ -271,7 +274,17 @@ Option wrapper.
 - **`--strict`.** Reports, before running, every operation that may receive an unchecked `nil`. The
   run does not start.
 
-## 12. Tuples and arrays
+## 12. Tuples, Records, and arrays
+
+**Literals and constructors.** A literal (`[...]`, `{...}`) has no operation with a type, so its
+shape fixes its type at creation. A growable collection is made by an operation with a type
+(`Array[...]`, `T[...]`).
+
+- **Contents are mutable.** The contents of a literal may be replaced by values of the same type.
+  The write is checked. Sake has no syntax for such writes yet.
+- **Length is fixed.** The length is part of the type, so an empty `[]` cannot grow.
+- **nil.** A position created with `nil` has the type nil. To leave room for a value, create it
+  with a placeholder of the intended type, such as `0` or `""`.
 
 **Tuple.** The literal `[a, b, ...]` is a Tuple.
 
@@ -279,11 +292,25 @@ Option wrapper.
 - There is no indexing yet.
 - `Tuple.size` and `Tuple.length` give the number of elements.
 
+**Record.** The literal `{x: a, y: b}` is a Record.
+
+- **Type.** The type of a Record is its set of (field, type) pairs, for example
+  `{x: Integer, y: Integer}`. Two Records with the same set have the same type.
+- **Field order.** Order does not matter: `{y: 2, x: 1}` is printed as `{x: 1, y: 2}`.
+- **Not a Struct.** A Record is never a Struct value, even when the fields match: Struct types are
+  nominal, and Record types are structural.
+- **Reading fields.** Take fields apart with a pattern, `r => {x:, y: name}`. This binds the local
+  `x` to field `x` and the local `name` to field `y`. Listing only some of the fields is allowed.
+  - A field the Record does not have raises `KeyError`.
+  - A value that is not a Record raises `TypeError`.
+- **Restrictions.** Field names are written as labels (`x:`). An empty `{}` and `{key => value}`
+  are static errors, because a Hash is not available yet.
+
 **Array.** `Array[a, ...]` creates an Array with no declared element type. Any value can be added
 to it.
 
 **Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type
-(`Integer`, `Float`, `String`, `Tuple`) or a Data type.
+(`Integer`, `Float`, `String`, `Tuple`) or a Struct type.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and
   `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer
@@ -294,6 +321,9 @@ to it.
   declared element type.
 
 Arrays are mutable and shared by reference.
+
+**Ruby habits.** A Tuple or Record passed where an Array is expected, such as `result = []`
+followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
 
 ## 13. Errors
 
@@ -315,7 +345,7 @@ The kinds of static error are:
 - calls on values;
 - forbidden constructs: `send`, `public_send`, `__send__`, `method_missing`, `define_method`, the
   `eval` family, `instance_variable_get`/`set`, `const_get`/`set`, `binding`, `self`, and `@x`
-  outside a function of a Data type;
+  outside a function of a Struct type;
 - unsupported syntax;
 - duplicate definitions;
 - literal type mismatches in `T[...]`;
@@ -423,13 +453,15 @@ one.
 
 ### Typed arrays
 
-`Integer[...]`, `Float[...]`, `String[...]`, `Tuple[...]`, and `D[...]` for each Data type `D`
+`Integer[...]`, `Float[...]`, `String[...]`, `Tuple[...]`, and `D[...]` for each Struct type `D`
 create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 
 ## 15. Not yet supported
 
 Each of these is rejected statically. Most wait on a design decision.
 
+- **Hash.** `Hash[...]` is planned.
+- **Writing to Tuple and Record contents.**
 - **Indexing** `a[i]`, `t[i]`, and operations that return `nil` on a miss (`first`, `last`, `find`,
   `min`, `max`, `pop`, `index`). These wait on the out-of-range behavior.
 - **`Array.new`.**
@@ -437,7 +469,7 @@ Each of these is rejected statically. Most wait on a design decision.
 - **String interpolation**, which waits on how values become strings.
 - **Protocols.** These are generic operations such as `to_s` and `==` over all types.
 - **The type scope `Integer.(a + b)`.**
-- **Hash, Symbol, Range, `case`/`when`, `%w[]`.**
+- **Symbol, Range, `case`/`when`, `%w[]`.**
 - **First-class blocks.**
 - **Exceptions** (`raise`, `rescue`).
 - **Several files** (`require`).

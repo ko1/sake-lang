@@ -8,11 +8,11 @@ module Sake
     def full_name = namespace ? "#{namespace}.#{name}" : name
   end
 
-  # `@x` inside a function of a Data type: field x of the function's first parameter.
+  # `@x` inside a function of a Struct type: field x of the function's first parameter.
   FieldAccess = Struct.new(:getter, :setter, :param)
 
   # calls / blocks are identity hashes keyed by Prism nodes.
-  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :data_types, keyword_init: true)
+  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -28,7 +28,7 @@ module Sake
       @root = root
       @registry = registry
       @functions = {} # namespace (nil = top level) => name => UserFunction
-      @data_types = {}
+      @struct_types = {}
       @value_constants = {} # rejected `NAME = value` => suggested function name
       @toplevel = []
       @calls = {}.compare_by_identity
@@ -41,7 +41,7 @@ module Sake
       check_all
       raise StaticErrors.new(@diags.sort_by { [_1.line, _1.column] }) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks,
-                  functions: @functions, data_types: @data_types)
+                  functions: @functions, struct_types: @struct_types)
     end
 
     private
@@ -56,7 +56,7 @@ module Sake
 
     def collect
       stmts = @root.statements.body
-      # Data types first so that `class Point` bodies can see their accessors.
+      # Struct types first so that `class Point` bodies can see their accessors.
       stmts.grep(Prism::ConstantWriteNode).each { collect_constant(_1) }
       stmts.each do |st|
         case st
@@ -68,32 +68,38 @@ module Sake
       end
     end
 
-    def data_define?(v)
-      v.is_a?(Prism::CallNode) && v.receiver.is_a?(Prism::ConstantReadNode) &&
-        v.receiver.name == :Data && v.name == :define
+    def constant_call?(v, recv, name)
+      v.is_a?(Prism::CallNode) && v.receiver.is_a?(Prism::ConstantReadNode) && v.receiver.name == recv && v.name == name
     end
+
+    def struct_new?(v) = constant_call?(v, :Struct, :new)
 
     def collect_constant(node)
       v = node.value
-      unless data_define?(v)
+      if constant_call?(v, :Data, :define)
+        # Ruby's Data is immutable; Sake's named types are mutable, which is Ruby's Struct.
+        return error(v, "Sake's named types are mutable, so they are made with Struct.new, not Data.define",
+                     ["#{node.name} = Struct.new(#{v.arguments&.slice})"])
+      end
+      unless struct_new?(v)
         fn = node.name.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
         @value_constants[node.name] = fn
-        return error(node, "Sake has no value constants; only a Data type can be assigned to a constant",
+        return error(node, "Sake has no value constants; only a Struct type can be assigned to a constant",
                      ["define a function instead: `def #{fn} = #{first_line(v.slice)}`"])
       end
-      return error(v.block, "Data.define with a block is not supported; define functions in `class #{node.name}`") if v.block
+      return error(v.block, "Struct.new with a block is not supported; define functions in `class #{node.name}`") if v.block
 
       name = node.name.to_s
       fields = (v.arguments&.arguments || []).filter_map do |a|
-        a.is_a?(Prism::SymbolNode) ? a.unescaped : error(a, "Data.define takes field names as symbols, like `Data.define(:x, :y)`")
+        a.is_a?(Prism::SymbolNode) ? a.unescaped : error(a, "Struct.new takes field names as symbols, like `Struct.new(:x, :y)`")
       end
       dup = fields.find { fields.count(_1) > 1 }
-      return error(v, "duplicate field `#{dup}` in Data.define") if dup
-      return error(node, "`#{name}` is already defined") if @data_types[name] || @registry.namespace?(name)
+      return error(v, "duplicate field `#{dup}` in Struct.new") if dup
+      return error(node, "`#{name}` is already defined") if @struct_types[name] || @registry.namespace?(name)
 
-      dt = @data_types[name] = DataType.new(name, fields)
-      @registry.define(name, :new, fields.map { "Any" }) { |*vs| Record.new(dt, vs) }
-      Stdlib.install_typed_array(@registry, name, data: true)
+      dt = @struct_types[name] = StructType.new(name, fields)
+      @registry.define(name, :new, fields.map { "Any" }) { |*vs| StructValue.new(dt, vs) }
+      Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
       fields.each_with_index do |f, i|
         @registry.define(name, "get_#{f}", [name]) { |r| r.values[i] }
@@ -217,6 +223,8 @@ module Sake
         error(node, "`break` is only supported directly inside `while`/`until`") unless ctx.in_loop
         check_jump_args(node, ctx)
       when Prism::CallNode then check_call(node, ctx)
+      when Prism::HashNode then check_record_literal(node, ctx)
+      when Prism::MatchRequiredNode then check_record_pattern(node, ctx)
       when Prism::InterpolatedStringNode
         error(node, "string interpolation is not supported yet (how values become strings is undecided); use String.+")
       when Prism::DefNode then error(node, "`def` must be at the top level or directly in a class/module body")
@@ -231,7 +239,7 @@ module Sake
       when Prism::SelfNode then error(node, "Sake has no `self`")
       when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode
         check_field_shorthand(node, ctx)
-      when Prism::SymbolNode then error(node, "symbols are not supported (only as Data.define field names)")
+      when Prism::SymbolNode then error(node, "symbols are not supported (only as Struct.new field names)")
       else
         error(node, "unsupported syntax: #{node.type.to_s.delete_suffix("_node").tr("_", " ")} `#{first_line(node.slice)}`")
       end
@@ -240,9 +248,9 @@ module Sake
     def check_field_shorthand(node, ctx)
       check(node.value, ctx) if node.respond_to?(:value)
       field = node.name.to_s.delete_prefix("@")
-      dt = ctx.ns && @data_types[ctx.ns]
+      dt = ctx.ns && @struct_types[ctx.ns]
       unless ctx.fn && dt
-        return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a Data type",
+        return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a Struct type",
                      ["outside one, write the accessor: `Type.get_#{field}(obj)`"])
       end
       return error(node, "`#{node.name}` needs a first argument (the #{dt.name}) in #{ctx.fn.full_name}") if ctx.fn.params.empty?
@@ -254,6 +262,43 @@ module Sake
       end
       @calls[node] = FieldAccess.new(lookup(dt.name, "get_#{field}"), lookup(dt.name, "set_#{field}"), ctx.fn.params.first.to_sym)
     end
+
+    def check_record_literal(node, ctx)
+      if node.elements.empty?
+        return error(node, "`{}` is an empty Record, not a Hash", ["for a growable collection, write `Array[]` (Hash is not available yet)"])
+      end
+      seen = []
+      node.elements.each do |el|
+        unless el.is_a?(Prism::AssocNode)
+          error(el, "`#{el.slice}` is not supported in a Record literal")
+          next
+        end
+        key = el.key
+        if !key.is_a?(Prism::SymbolNode)
+          error(el, "`{#{key.slice} => ...}` is not a Hash in Sake: `{name: value}` makes a Record", ["Hash is not available yet"])
+        elsif key.closing_loc&.slice != ":"
+          error(el, "write a Record field as `#{key.unescaped}: value`")
+        elsif seen.include?(key.unescaped)
+          error(el, "duplicate field `#{key.unescaped}` in a Record")
+        else
+          seen << key.unescaped
+        end
+        check(el.value, ctx)
+      end
+    end
+
+    def check_record_pattern(node, ctx)
+      check(node.value, ctx)
+      pat = node.pattern
+      ok = pat.is_a?(Prism::HashPatternNode) && pat.constant.nil? && pat.rest.nil? && !pat.elements.empty? &&
+           pat.elements.all? do |el|
+             el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) &&
+               pattern_target(el.value).is_a?(Prism::LocalVariableTargetNode)
+           end
+      error(node, "only Record patterns that bind fields are supported: `value => {x:, y: name}`") unless ok
+    end
+
+    def pattern_target(v) = v.is_a?(Prism::ImplicitNode) ? v.value : v
 
     def check_each(ctx, *nodes) = nodes.each { check(_1, ctx) }
 
@@ -348,7 +393,7 @@ module Sake
       type = target.namespace
       i = args.index { (lit = literal_type(_1)) && lit != type }
       return unless i
-      hints = @data_types[type] ? ["#{type}.new(#{args.map(&:slice).join(", ")}) creates one #{type}; #{type}[...] is an Array of #{type}"] : []
+      hints = @struct_types[type] ? ["#{type}.new(#{args.map(&:slice).join(", ")}) creates one #{type}; #{type}[...] is an Array of #{type}"] : []
       error(args[i], "#{type}[]: element #{i + 1} must be #{type}, got #{literal_type(args[i])}", hints)
     end
 
@@ -395,8 +440,8 @@ module Sake
 
     def resolve_qualified(node, ns)
       name = node.name.to_s
-      if ns == "Data" && name == "define"
-        return error(node, "Data.define must be assigned to a top-level constant: `Point = Data.define(:x, :y)`")
+      if (ns == "Struct" && name == "new") || (ns == "Data" && name == "define")
+        return error(node, "Struct.new must be assigned to a top-level constant: `Point = Struct.new(:x, :y)`")
       end
       if name == "call"
         return error(node, "type scope `#{ns}.(...)` is not supported yet")
@@ -410,7 +455,7 @@ module Sake
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
       others = namespaces_defining(name) - [ns]
       hints << "`#{name}` is defined in #{others.map { "`#{_1}.#{name}`" }.join(", ")}" unless others.empty?
-      if (dt = @data_types[ns])
+      if (dt = @struct_types[ns])
         field = name.delete_suffix("=")
         if dt.fields.include?(field)
           hints << (name.end_with?("=") ? "#{ns}.set_#{field}(obj, value)" : "#{ns}.get_#{field}(obj)")
@@ -464,9 +509,9 @@ module Sake
       candidates =
         if node.attribute_write?
           field = name.delete_suffix("=")
-          @data_types.values.select { _1.fields.include?(field) }.map { "#{_1.name}.set_#{field}" }
+          @struct_types.values.select { _1.fields.include?(field) }.map { "#{_1.name}.set_#{field}" }
         else
-          getters = @data_types.values.select { _1.fields.include?(name) }.map { "#{_1.name}.get_#{name}" }
+          getters = @struct_types.values.select { _1.fields.include?(name) }.map { "#{_1.name}.get_#{name}" }
           ops = namespaces_defining(name)
           if (lit = literal_type(node.receiver)) && ops.include?(lit)
             ops = [lit]
