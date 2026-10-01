@@ -6,7 +6,7 @@ require_relative "../sake"
 module Sake
   module CLI
     USAGE = <<~TEXT
-      usage: sake [-c] [--strict[=SPEC]] [--types] FILE.sake
+      usage: sake [-c] [--strict[=SPEC]] [--types] [--ast] FILE.sake
 
         -c               check only: report problems, do not run
         --strict[=SPEC]  how strictly to check before running (default: level 1)
@@ -21,6 +21,7 @@ module Sake
                          --strict=type,nil          exactly these items
                          --strict=2,index-nil       level 2 plus an item; `-item` removes one
         --types          experimental: print the inferred types instead of running
+        --ast            print the SakeAST (the resolved program the interpreter runs)
 
       exit status: 0 = ok, 1 = runtime error, 2 = problem found before running
     TEXT
@@ -31,6 +32,8 @@ module Sake
     DEFAULT_LEVEL = 1
     RECOMMENDED_LEVEL = 2
 
+    class UsageError < StandardError; end
+
     module_function
 
     NIL_CHECK_HINT = "check the value first: `if x`, `while x`, `return unless x`, or `x != nil`"
@@ -38,7 +41,7 @@ module Sake
     def parse_strict(spec)
       spec.split(",").inject([]) do |items, word|
         case word
-        when /\A\d+\z/ then items | STRICT_LEVELS.fetch(word.to_i) { raise ArgumentError, "strict levels are 0..#{STRICT_LEVELS.size - 1}" }
+        when /\A\d+\z/ then items | STRICT_LEVELS.fetch(word.to_i) { raise UsageError, "strict levels are 0..#{STRICT_LEVELS.size - 1}" }
         when /\A-(.+)\z/ then items - [strict_item($1)]
         else items | [strict_item(word.delete_prefix("+"))]
         end
@@ -47,7 +50,7 @@ module Sake
 
     def strict_item(name)
       return name if STRICT_ITEMS.include?(name)
-      raise ArgumentError, "unknown strict item `#{name}` (items: #{STRICT_ITEMS.join(", ")})"
+      raise UsageError, "unknown strict item `#{name}` (items: #{STRICT_ITEMS.join(", ")})"
     end
 
     # Reports the type checker's findings for the chosen items as static errors.
@@ -141,26 +144,34 @@ module Sake
     def main(argv, out: $stdout, err: $stderr)
       check_only = false
       types = false
+      ast = false
       items = STRICT_LEVELS[DEFAULT_LEVEL]
       files = []
       argv.each do |arg|
         case arg
         when "-c" then check_only = true
         when "--types" then types = true
+        when "--ast" then ast = true
         when "--strict" then items = STRICT_LEVELS[RECOMMENDED_LEVEL]
         when /\A--strict=(.*)\z/ then items = parse_strict($1)
         when "-h", "--help"
           out.write(USAGE)
           return 0
-        when /\A-/ then raise ArgumentError, "unknown option #{arg}"
+        when /\A-/ then raise UsageError, "unknown option #{arg}"
         else files << arg
         end
       end
-      raise ArgumentError, "give one FILE.sake" unless files.size == 1
+      raise UsageError, "give one FILE.sake" unless files.size == 1
 
       path = files.first
       source = File.read(path)
       program = Sake.load(source, path, out:)
+      if ast
+        code = Lower.program(program)
+        out.puts AST.dump(code.main)
+        code.functions.each_value { out.puts AST.dump(_1) }
+        return 0
+      end
       if types
         require_relative "typer"
         out.write(Typer.new(program).run.report)
@@ -173,7 +184,7 @@ module Sake
         Sake.execute(program)
       end
       0
-    rescue ArgumentError => e
+    rescue UsageError => e
       err.puts "sake: #{e.message}"
       err.write(USAGE)
       2

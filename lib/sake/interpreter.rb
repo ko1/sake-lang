@@ -1,26 +1,15 @@
 # frozen_string_literal: true
 
+require_relative "lower"
+
 module Sake
-  # Evaluates the Prism AST directly, using the call targets fixed by Resolver.
+  # Runs SakeAST (see ast.rb). Messages report the line of each node's origin.
   class Interpreter
-    Frame = Struct.new(:name, :block, :ns)
-    SakeBlock = Struct.new(:node, :params, :env)
+    include AST
 
-    class Env
-      attr_reader :parent, :frame, :vars
-
-      def initialize(parent, frame)
-        @parent = parent
-        @frame = frame
-        @vars = {}
-      end
-
-      def up(depth)
-        e = self
-        depth.times { e = e.parent }
-        e
-      end
-    end
+    # slots: the function's locals (its blocks' too); block: the block passed to the function.
+    Frame = Struct.new(:name, :slots, :block)
+    BlockVal = Struct.new(:node, :frame)
 
     class ReturnSignal < StandardError
       attr_reader :frame, :value
@@ -46,9 +35,12 @@ module Sake
 
     MAX_DEPTH = 10_000
 
+    attr_reader :ast
+
     def initialize(program)
       @program = program
       @registry = program.registry
+      @ast = Lower.program(program)
       @stack = [] # [function name, call line]
       @handling = [] # errors being handled by rescue clauses, innermost last (for a bare `raise`)
     end
@@ -56,133 +48,97 @@ module Sake
     def run
       Thread.current[:sake_show_hooks] = method(:show_hook)
       Thread.current[:sake_struct_ops] = method(:struct_ruby_op)
-      env = Env.new(nil, Frame.new("<main>", nil, nil))
-      @program.toplevel.each { eval_node(_1, env) }
+      main = @ast.main
+      ev(main.body, Frame.new("<main>", Array.new(main.nslots), nil))
       nil
     end
 
     private
 
+    def line(node) = node.origin.location.start_line
+
     def fail_at(node, kind, message, **opts)
-      raise RunError.new(kind, message, node.location.start_line, @stack.dup, **opts)
+      raise RunError.new(kind, message, line(node), @stack.dup, **opts)
     end
 
-    def eval_node(node, env)
-      case node
-      when nil then nil
-      when Prism::StatementsNode
+    def ev(n, f)
+      case n
+      when Lit then n.value
+      when Str then n.string.dup
+      when LVarGet then f.slots[n.slot]
+      when LVarSet then f.slots[n.slot] = ev(n.value, f)
+      when Seq
         v = nil
-        node.body.each { v = eval_node(_1, env) }
+        n.body.each { v = ev(_1, f) }
         v
-      when Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::ImaginaryNode then node.value
-      when Prism::StringNode then node.unescaped.dup
-      when Prism::SymbolNode then node.unescaped.to_sym
-      when Prism::InterpolatedStringNode then interpolate(node, env)
-      when Prism::InterpolatedSymbolNode then interpolate(node, env).to_sym
-      when Prism::InterpolatedRegularExpressionNode
+      when If then Values.truthy?(ev(n.cond, f)) ? ev(n.then_, f) : ev(n.else_, f)
+      when While then loop_node(n, f)
+      when And
+        l = ev(n.left, f)
+        Values.truthy?(l) ? ev(n.right, f) : l
+      when Or
+        l = ev(n.left, f)
+        Values.truthy?(l) ? l : ev(n.right, f)
+      when CallBuiltin then call_builtin(n.fn, n.args.map { ev(_1, f) }, block_val(n.block, f), n.origin)
+      when CallUser then call_user(n.fn, n.args.map { ev(_1, f) }, block_val(n.block, f), n.origin)
+      when CallDispatch
+        args = n.args.map { ev(_1, f) }
+        d = n.dispatch
+        fn = d.table[Values.type_of(args[0])]
+        fail_at(n, "TypeError", "#{d.module}.#{d.name}: #{Values.describe(args[0])} does not include #{d.module}") unless fn
+        call_user(fn, args, block_val(n.block, f), n.origin)
+      when BinOp then binary_op(n.origin, n.op, ev(n.left, f), ev(n.right, f))
+      when IsNil
+        v = ev(n.value, f)
+        # A Struct value goes through its type's own ==, as `x == nil` does.
+        v.is_a?(StructValue) ? binary_op(n.origin, n.negate ? "!=" : "==", v, nil) : (n.negate ? !v.nil? : v.nil?)
+      when FieldGet then call_builtin(n.fn, [ev(n.subject, f)], nil, n.origin)
+      when FieldSet
+        s = ev(n.subject, f)
+        call_builtin(n.fn, [s, ev(n.value, f)], nil, n.origin)
+      when IndexGet then index_op(n.origin, "[]", [ev(n.recv, f), ev(n.key, f)])
+      when IndexSet
+        r = ev(n.recv, f)
+        k = ev(n.key, f)
+        index_op(n.origin, "[]=", [r, k, ev(n.value, f)])
+      when Yield then call_block(f.block, n.args.map { ev(_1, f) }, n.origin)
+      when Interp then n.parts.map { ev(_1, f) }.join
+      when ToS then Values.to_s(ev(n.value, f))
+      when ToSym then ev(n.value, f).to_sym
+      when MakeTuple then Tuple.new(n.elems.map { ev(_1, f) })
+      when MakeRecord then RecordValue.build(n.keys.zip(n.values.map { ev(_1, f) }))
+      when MakePairs then HashPairs.new(n.keys.zip(n.values).map { |k, v| [ev(k, f), ev(v, f)] })
+      when MakeRange then range(n, f)
+      when MakeRegexp
         begin
-          Regexp.new(interpolate(node, env), regexp_options(node))
+          Regexp.new(n.parts.map { ev(_1, f) }.join, n.options)
         rescue ::RegexpError => e
-          fail_at(node, "RegexpError", e.message)
+          fail_at(n, "RegexpError", e.message)
         end
-      when Prism::RegularExpressionNode then regexp(node)
-      when Prism::RangeNode then range(node, env)
-      when Prism::KeywordHashNode then HashPairs.new(node.elements.map { [eval_node(_1.key, env), eval_node(_1.value, env)] })
-      when Prism::TrueNode then true
-      when Prism::FalseNode then false
-      when Prism::NilNode then nil
-      when Prism::LocalVariableReadNode then env.up(node.depth).vars[node.name]
-      # Prism gives every block that mentions `it` its own implicit parameter.
-      when Prism::ItLocalVariableReadNode then env.vars[:it]
-      when Prism::LocalVariableWriteNode
-        env.up(node.depth).vars[node.name] = eval_node(node.value, env)
-      when Prism::LocalVariableOperatorWriteNode
-        scope = env.up(node.depth)
-        scope.vars[node.name] = binary_op(node, node.binary_operator, scope.vars[node.name], eval_node(node.value, env))
-      when Prism::MultiWriteNode then multi_write(node, env)
-      when Prism::LocalVariableOrWriteNode
-        scope = env.up(node.depth)
-        cur = scope.vars[node.name]
-        Values.truthy?(cur) ? cur : (scope.vars[node.name] = eval_node(node.value, env))
-      when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode then index_update(node, env)
-      when Prism::IfNode
-        if Values.truthy?(eval_node(node.predicate, env))
-          eval_node(node.statements, env)
-        else
-          eval_node(node.subsequent, env)
-        end
-      when Prism::UnlessNode
-        if Values.truthy?(eval_node(node.predicate, env))
-          eval_node(node.else_clause, env)
-        else
-          eval_node(node.statements, env)
-        end
-      when Prism::ElseNode then eval_node(node.statements, env)
-      when Prism::WhileNode, Prism::UntilNode then loop_node(node, env)
-      when Prism::AndNode
-        l = eval_node(node.left, env)
-        Values.truthy?(l) ? eval_node(node.right, env) : l
-      when Prism::OrNode
-        l = eval_node(node.left, env)
-        Values.truthy?(l) ? l : eval_node(node.right, env)
-      when Prism::ParenthesesNode then eval_node(node.body, env)
-      when Prism::ArrayNode then Tuple.new(node.elements.map { eval_node(_1, env) })
-      when Prism::HashNode then RecordValue.build(node.elements.map { [_1.key.unescaped, eval_node(_1.value, env)] })
-      when Prism::MatchRequiredNode then match_record(node, env)
-      when Prism::BeginNode then begin_node(node, env)
-      when Prism::RescueModifierNode
+      when Return then raise ReturnSignal.new(f, ev(n.value, f))
+      when Next then raise NextSignal.new(ev(n.value, f))
+      when Break then raise BreakSignal.new(ev(n.value, f))
+      when Retry then raise RetrySignal
+      when Raise then do_raise(n, f)
+      when ReRaise then raise @handling.last
+      when Begin then begin_node(n, f)
+      when RescueMod
         begin
-          eval_node(node.expression, env)
+          ev(n.expr, f)
         rescue RunError => e
           raise unless rescuable?(e)
-          eval_node(node.rescue_expression, env)
+          ev(n.rescue_, f)
         end
-      when Prism::RetryNode then raise RetrySignal
-      when Prism::MatchPredicateNode then pattern_match?(eval_node(node.value, env), node.pattern, env)
-      when Prism::CaseMatchNode then case_match(node, env)
-      when Prism::ReturnNode then raise ReturnSignal.new(env.frame, jump_value(node, env, tuple: true))
-      when Prism::NextNode then raise NextSignal.new(jump_value(node, env))
-      when Prism::BreakNode then raise BreakSignal.new(jump_value(node, env))
-      when Prism::YieldNode
-        call_block(env.frame.block, eval_args(node.arguments, env), node)
-      when Prism::CallNode then call(node, env)
-      when Prism::InstanceVariableReadNode
-        fa = target_of(node, env)
-        call_builtin(fa.getter, [subject(env, fa)], nil, node)
-      when Prism::InstanceVariableWriteNode
-        fa = target_of(node, env)
-        recv = subject(env, fa)
-        call_builtin(fa.setter, [recv, eval_node(node.value, env)], nil, node)
-      when Prism::InstanceVariableOperatorWriteNode
-        fa = target_of(node, env)
-        recv = subject(env, fa)
-        cur = call_builtin(fa.getter, [recv], nil, node)
-        call_builtin(fa.setter, [recv, binary_op(node, node.binary_operator, cur, eval_node(node.value, env))], nil, node)
-      else raise "BUG: unchecked node #{node.type} at line #{node.location.start_line}"
+      when MultiWrite then multi_write(n, f)
+      when MatchP then pattern_match?(ev(n.value, f), n.pattern, f)
+      when CaseIn then case_match(n, f)
+      when MatchRecord then match_record(n, f)
+      when Unresolved then raise "BUG: #{n.message}"
+      else raise "BUG: unknown node #{n.class}"
       end
     end
 
-    def target_of(node, env) = @program.calls.fetch(node).fetch(env.frame.ns)
-
-    # The function's first parameter, even inside blocks that shadow its name.
-    def subject(env, fa)
-      env = env.parent while env.parent
-      env.vars[fa.param]
-    end
-
-    # `x[k] OP= v` and `x[k] ||= v`: the receiver and index are evaluated once.
-    def index_update(node, env)
-      recv = eval_node(node.receiver, env)
-      key = eval_node(node.arguments.arguments.first, env)
-      cur = index_op(node, "[]", [recv, key])
-      if node.is_a?(Prism::IndexOrWriteNode)
-        return cur if Values.truthy?(cur)
-        val = eval_node(node.value, env)
-      else
-        val = binary_op(node, node.binary_operator, cur, eval_node(node.value, env))
-      end
-      index_op(node, "[]=", [recv, key, val])
-    end
+    def block_val(b, f) = b && BlockVal.new(b, f)
 
     NOT_RESCUABLE = Resolver::NOT_RESCUABLE
 
@@ -195,104 +151,86 @@ module Sake
       e.value ||= StructValue.new(exception_type(e.kind), [e.message])
     end
 
-    def do_raise(node, env)
-      nodes = node.arguments&.arguments || []
-      raise @handling.last if nodes.empty?
-
-      args = nodes.size == 2 ? [nil, eval_node(nodes[1], env)] : [eval_node(nodes[0], env)]
+    def do_raise(n, f)
+      arg = ev(n.args[0], f)
       value =
-        if args.size == 2
-          type = exception_type(nodes[0].slice)
-          fail_at(node, "TypeError", "raise: the message must be String, got #{Values.describe(args[1])}") unless args[1].is_a?(String)
-          StructValue.new(type, [args[1]])
-        elsif args[0].is_a?(String)
-          StructValue.new(exception_type("RuntimeError"), [args[0]])
-        elsif args[0].is_a?(StructValue) && args[0].type.exception
-          args[0]
+        if n.type
+          fail_at(n, "TypeError", "raise: the message must be String, got #{Values.describe(arg)}") unless arg.is_a?(String)
+          StructValue.new(exception_type(n.type), [arg])
+        elsif arg.is_a?(String)
+          StructValue.new(exception_type("RuntimeError"), [arg])
+        elsif arg.is_a?(StructValue) && arg.type.exception
+          arg
         else
-          fail_at(node, "TypeError", "raise needs a String or an exception, got #{Values.describe(args[0])}")
+          fail_at(n, "TypeError", "raise needs a String or an exception, got #{Values.describe(arg)}")
         end
-      err = RunError.new(value.type.name, Values.to_s(value.values[0]), node.location.start_line, @stack.dup)
+      err = RunError.new(value.type.name, Values.to_s(value.values[0]), line(n), @stack.dup)
       err.value = value
       raise err
     end
 
     # `retry` in a rescue clause runs the begin body again; ensure runs once, when leaving.
-    def begin_node(node, env)
+    def begin_node(n, f)
       loop do
-        return run_begin(node, env)
+        return run_begin(n, f)
       rescue RetrySignal
         next
       end
     ensure
-      eval_node(node.ensure_clause.statements, env) if node.ensure_clause
+      ev(n.ensure_, f) if n.ensure_
     end
 
-    def run_begin(node, env)
-      result = eval_node(node.statements, env)
+    def run_begin(n, f)
+      result = ev(n.body, f)
     rescue RunError => e
-      clause = rescuable?(e) && find_clause(node.rescue_clause, e)
+      clause = rescuable?(e) && n.rescues.find { |c| c.names.empty? || c.names.include?(e.kind) }
       raise unless clause
       @handling.push(e)
       begin
-        env.up(clause.reference.depth).vars[clause.reference.name] = exception_value(e) if clause.reference
-        eval_node(clause.statements, env)
+        f.slots[clause.slot] = exception_value(e) if clause.slot
+        ev(clause.body, f)
       ensure
         @handling.pop
       end
     else
-      node.else_clause ? eval_node(node.else_clause, env) : result
+      n.else_ ? ev(n.else_, f) : result
     end
 
-    def find_clause(clause, e)
-      while clause
-        names = clause.exceptions.map(&:slice)
-        return clause if names.empty? || names.include?(e.kind)
-        clause = clause.subsequent
-      end
-      nil
+    def case_match(n, f)
+      v = ev(n.subject, f)
+      clause = n.clauses.find { |pat, _| pattern_match?(v, pat, f) }
+      return ev(clause[1], f) if clause
+      return ev(n.else_, f) if n.else_
+      fail_at(n, "NoMatchingPatternError", "no `in` branch matches #{Values.describe(v)}")
     end
 
-    def case_match(node, env)
-      v = eval_node(node.predicate, env)
-      branch = node.conditions.find { pattern_match?(v, _1.pattern, env) }
-      return eval_node(branch.statements, env) if branch
-      return eval_node(node.else_clause, env) if node.else_clause
-      fail_at(node, "NoMatchingPatternError", "no `in` branch matches #{Values.describe(v)}")
-    end
-
-    def pattern_match?(v, pat, env)
+    def pattern_match?(v, pat, f)
       case pat
-      when Prism::ConstantReadNode
-        name = pat.name.to_s
-        name == "Record" ? v.is_a?(RecordValue) : Values.type_of(v) == name
-      when Prism::AlternationPatternNode then pattern_match?(v, pat.left, env) || pattern_match?(v, pat.right, env)
-      when Prism::HashPatternNode
-        return false unless v.is_a?(RecordValue) && pat.elements.all? { v.field?(_1.key.unescaped) }
-        pat.elements.each do |el|
-          target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
-          env.up(target.depth).vars[target.name] = v[el.key.unescaped]
-        end
+      when PType then pat.name == "Record" ? v.is_a?(RecordValue) : Values.type_of(v) == pat.name
+      when PAlt then pattern_match?(v, pat.left, f) || pattern_match?(v, pat.right, f)
+      when PRecord
+        return false unless v.is_a?(RecordValue) && pat.keys.all? { v.field?(_1) }
+        pat.keys.zip(pat.slots) { |k, s| f.slots[s] = v[k] }
         true
-      else
-        lit = eval_node(pat, env)
+      when PValue
+        lit = ev(pat.value, f)
         Values.type_of(lit) == Values.type_of(v) && lit == v
       end
     end
 
     # `value => {x:, y: name}` binds fields of a Record to locals.
-    def match_record(node, env)
-      v = eval_node(node.value, env)
-      pat = node.pattern
+    def match_record(n, f)
+      v = ev(n.value, f)
+      pat = n.origin.pattern
       unless v.is_a?(RecordValue)
-        hints = v.is_a?(StructValue) ? ["for a Struct, read a field with `#{v.type.name}.get_#{pat.elements.first.key.unescaped}(value)`"] : []
-        fail_at(node, "TypeError", "pattern `#{pat.slice}` needs a Record, got #{Values.describe(v)}", hints:)
+        hints = v.is_a?(StructValue) ? ["for a Struct, read a field with `#{v.type.name}.get_#{n.keys.first}(value)`"] : []
+        fail_at(n, "TypeError", "pattern `#{pat.slice}` needs a Record, got #{Values.describe(v)}", hints:)
       end
-      pat.elements.each do |el|
-        field = el.key.unescaped
-        fail_at(el, "KeyError", "Record #{v.shape.display} has no field `#{field}`") unless v.field?(field)
-        target = el.value.is_a?(Prism::ImplicitNode) ? el.value.value : el.value
-        env.up(target.depth).vars[target.name] = v[field]
+      n.keys.each_with_index do |field, i|
+        unless v.field?(field)
+          raise RunError.new("KeyError", "Record #{v.shape.display} has no field `#{field}`", pat.elements[i].location.start_line, @stack.dup)
+        end
+        f.slots[n.slots[i]] = v[field]
       end
       nil
     end
@@ -302,55 +240,28 @@ module Sake
       fn = @program.functions.dig(v.type.name, kind.to_s) or return nil
       s = call_user(fn, [v], nil, fn.node)
       return s if s.is_a?(String)
-      fail_at(fn.node, "TypeError", "#{fn.full_name} must return a String, got #{Values.describe(s)}")
-    end
-
-    def interpolate(node, env)
-      node.parts.map do |part|
-        case part
-        when Prism::StringNode then part.unescaped
-        when Prism::EmbeddedStatementsNode then Values.to_s(eval_node(part.statements, env))
-        when Prism::EmbeddedVariableNode then Values.to_s(eval_node(part.variable, env))
-        end
-      end.join
-    end
-
-    def regexp(node) = Regexp.new(node.unescaped, regexp_options(node))
-
-    def regexp_options(node)
-      opts = 0
-      opts |= Regexp::IGNORECASE if node.ignore_case?
-      opts |= Regexp::EXTENDED if node.extended?
-      opts |= Regexp::MULTILINE if node.multi_line?
-      opts
+      raise RunError.new("TypeError", "#{fn.full_name} must return a String, got #{Values.describe(s)}", fn.node.location.start_line, @stack.dup)
     end
 
     RANGE_ENDS = [Integer, Float, String, NilClass].freeze
 
-    def range(node, env)
-      l = eval_node(node.left, env)
-      r = eval_node(node.right, env)
+    def range(n, f)
+      l = ev(n.left, f)
+      r = ev(n.right, f)
       [l, r].each do |v|
         next if RANGE_ENDS.any? { v.is_a?(_1) }
-        fail_at(node, "TypeError", "a Range end must be Integer, Float, or String, got #{Values.describe(v)}")
+        fail_at(n, "TypeError", "a Range end must be Integer, Float, or String, got #{Values.describe(v)}")
       end
-      Range.new(l, r, node.exclude_end?)
+      Range.new(l, r, n.exclusive)
     rescue ::ArgumentError
-      fail_at(node, "ArgumentError", "bad Range: #{Values.inspect(l)}, #{Values.inspect(r)}")
+      fail_at(n, "ArgumentError", "bad Range: #{Values.inspect(l)}, #{Values.inspect(r)}")
     end
 
-    def jump_value(node, env, tuple: false)
-      vals = eval_args(node.arguments, env)
-      tuple && vals.size > 1 ? Tuple.new(vals) : vals.first
-    end
-
-    def eval_args(args_node, env) = (args_node&.arguments || []).map { eval_node(_1, env) }
-
-    def loop_node(node, env)
-      want = node.is_a?(Prism::WhileNode)
-      while Values.truthy?(eval_node(node.predicate, env)) == want
+    def loop_node(n, f)
+      want = !n.until_
+      while Values.truthy?(ev(n.cond, f)) == want
         begin
-          eval_node(node.statements, env)
+          ev(n.body, f)
         rescue NextSignal
           next
         rescue BreakSignal => e
@@ -360,53 +271,32 @@ module Sake
       nil
     end
 
-    def multi_write(node, env)
-      v = eval_node(node.value, env)
-      fail_at(node, "TypeError", "multiple assignment needs a Tuple, got #{Values.describe(v)}") unless v.is_a?(Tuple)
-      if v.elems.size != node.lefts.size
-        fail_at(node, "ArgumentError", "multiple assignment of #{node.lefts.size} variables from a Tuple of size #{v.elems.size}")
+    def multi_write(n, f)
+      v = ev(n.value, f)
+      fail_at(n, "TypeError", "multiple assignment needs a Tuple, got #{Values.describe(v)}") unless v.is_a?(Tuple)
+      if v.elems.size != n.slots.size
+        fail_at(n, "ArgumentError", "multiple assignment of #{n.slots.size} variables from a Tuple of size #{v.elems.size}")
       end
-      node.lefts.zip(v.elems) { |t, x| env.up(t.depth).vars[t.name] = x }
+      n.slots.zip(v.elems) { |s, x| f.slots[s] = x }
       v
     end
 
-    def call(node, env)
-      target = target_of(node, env)
-      if target.is_a?(Operators::Call)
-        explicit = node.receiver.is_a?(Prism::ConstantReadNode)
-        xs = explicit ? eval_args(node.arguments, env) : [eval_node(node.receiver, env), *eval_args(node.arguments, env)]
-        return target.module == "Indexable" ? index_op(node, target.op, xs) : binary_op(node, target.op, xs[0], xs[1])
-      end
-
-      return do_raise(node, env) if target == :raise
-
-      args = eval_args(node.arguments, env)
-      blk = node.block && SakeBlock.new(node.block, @program.blocks.fetch(node.block), env)
-      case target
-      when UserFunction then call_user(target, args, blk, node)
-      when Dispatch
-        fn = target.table[Values.type_of(args[0])]
-        unless fn
-          fail_at(node, "TypeError", "#{target.module}.#{target.name}: #{Values.describe(args[0])} does not include #{target.module}")
-        end
-        call_user(fn, args, blk, node)
-      when Builtin then call_builtin(target, args, blk, node)
-      end
-    end
-
-    def call_user(fn, args, blk, node)
-      fail_at(node, "SystemStackError", "stack level too deep") if @stack.size >= MAX_DEPTH
-      frame = Frame.new(fn.full_name, blk, fn.namespace)
-      env = Env.new(nil, frame)
-      fn.params.zip(args) { |name, v| env.vars[name.to_sym] = v }
-      @stack.push([fn.full_name, node.location.start_line])
+    # origin: the Prism node of the call, for the line in messages and the stack.
+    def call_user(fn, args, blk, origin)
+      raise RunError.new("SystemStackError", "stack level too deep", origin.location.start_line, @stack.dup) if @stack.size >= MAX_DEPTH
+      ast = @ast.functions.fetch(fn)
+      slots = Array.new(ast.nslots)
+      args.each_with_index { |v, i| slots[i] = v }
+      frame = Frame.new(fn.full_name, slots, blk)
+      @stack.push([fn.full_name, origin.location.start_line])
       begin
-        eval_node(fn.body, env)
+        ev(ast.body, frame)
       rescue ReturnSignal => e
         raise unless e.frame.equal?(frame)
         e.value
       rescue ::SystemStackError
-        fail_at(node, "SystemStackError", "stack level too deep (the interpreter's Ruby stack is exhausted)")
+        raise RunError.new("SystemStackError", "stack level too deep (the interpreter's Ruby stack is exhausted)",
+                           origin.location.start_line, @stack.dup)
       ensure
         @stack.pop
       end
@@ -416,13 +306,13 @@ module Sake
       args.each_with_index do |v, i|
         want = fn.param_type(i)
         next if type_ok?(want, v)
-        fail_at(node, "TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
-                expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
+        raise RunError.new("TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
+                           node.location.start_line, @stack.dup, expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
       end
       ruby_blk = blk && ->(*xs) { call_block(blk, xs, node) }
       fn.impl.call(*args, &ruby_blk)
     rescue Fail => e
-      fail_at(node, e.kind, "#{fn.full_name}: #{e.message}")
+      raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup)
     end
 
     # Ruby habits: `result = []` / `{}` used as a growable collection.
@@ -441,6 +331,7 @@ module Sake
     end
 
     # `a OP b`: a Struct operand runs its type's own operator; built-in types use the table of rows.
+    # node: the Prism node (for messages).
     def binary_op(node, op, a, b)
       op = op.to_s
       mod = Operators::MODULE_OF.fetch(op)
@@ -458,12 +349,12 @@ module Sake
         defined += plain.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }
         defined << "(any, nil), (nil, any)" unless nil_rows.empty?
         defined = defined.join(", ")
-        fail_at(node, "TypeError", "#{mod}.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
-                nil_value: a.nil? || b.nil?)
+        raise RunError.new("TypeError", "#{mod}.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
+                           node.location.start_line, @stack.dup, nil_value: a.nil? || b.nil?)
       end
       impl.call(a, b)
     rescue Fail => e
-      fail_at(node, e.kind, "#{mod}.#{op}: #{e.message}")
+      raise RunError.new(e.kind, "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup)
     end
 
     # `x[k]` / `x[k] = v`: the index operation of x's type.
@@ -472,8 +363,8 @@ module Sake
       return user_op(node, "Indexable", op, xs) if recv.is_a?(StructValue)
       fn = @registry.lookup(Values.type_of(recv), op)
       unless fn
-        fail_at(node, "TypeError", "Indexable.#{op}: #{Values.describe(recv)} cannot be indexed#{op == "[]=" ? " for writing" : ""}",
-                nil_value: recv.nil?)
+        raise RunError.new("TypeError", "Indexable.#{op}: #{Values.describe(recv)} cannot be indexed#{op == "[]=" ? " for writing" : ""}",
+                           node.location.start_line, @stack.dup, nil_value: recv.nil?)
       end
       call_builtin(fn, xs, nil, node)
     end
@@ -489,19 +380,18 @@ module Sake
         eq = struct_equal?(recv, args[1])
         return op == "==" ? eq : !eq
       end
-      unless Operators.includes?(@program.includes, type, mod)
-        fail_at(node, "TypeError", "#{mod}.#{op}: #{type} does not include #{mod}")
-      end
+      fail_node = ->(msg, kind = "TypeError") { raise RunError.new(kind, msg, node.location.start_line, @stack.dup) }
+      fail_node.("#{mod}.#{op}: #{type} does not include #{mod}") unless Operators.includes?(@program.includes, type, mod)
       if (fn = own_fn(type, op))
         return call_user(fn, args, nil, node)
       end
       if mod == "Comparable" && (cmp = own_fn(type, "<=>"))
         r = call_user(cmp, args, nil, node)
-        fail_at(node, "ArgumentError", "comparison of #{type} with #{Values.describe(args[1])} failed") unless r.is_a?(Integer)
+        fail_node.("comparison of #{type} with #{Values.describe(args[1])} failed", "ArgumentError") unless r.is_a?(Integer)
         return { "<" => r.negative?, "<=" => r <= 0, ">" => r.positive?, ">=" => r >= 0 }.fetch(op)
       end
       need = mod == "Comparable" && op != "<=>" ? "#{op} or <=>" : op
-      fail_at(node, "TypeError", "#{mod}.#{op}: #{type} does not define #{need}")
+      fail_node.("#{mod}.#{op}: #{type} does not define #{need}")
     end
 
     def struct_equal?(a, b)
@@ -518,16 +408,20 @@ module Sake
       call_user(fn, [a, b], nil, fn.node)
     end
 
+    # node: the Prism node of the call or yield that runs the block.
     def call_block(blk, args, node)
-      params = blk.params
+      b = blk.node
+      params = b.params
       # A Tuple passed to a block with several parameters is destructured.
       args = args.first.elems if params.size > 1 && args.size == 1 && args.first.is_a?(Tuple)
       if !params.empty? && params.size != args.size
-        fail_at(blk.node, "ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}")
+        raise RunError.new("ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}",
+                           b.origin.location.start_line, @stack.dup)
       end
-      env = Env.new(blk.env, blk.env.frame)
-      params.zip(args) { |name, v| env.vars[name.to_sym] = v }
-      eval_node(blk.node.body, env)
+      slots = blk.frame.slots
+      b.locals.each { slots[_1] = nil }
+      params.each_with_index { |s, i| slots[s] = args[i] }
+      ev(b.body, blk.frame)
     rescue NextSignal => e
       e.value
     end
