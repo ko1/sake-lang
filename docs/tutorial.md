@@ -107,8 +107,8 @@ Sake's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`
 
 ## 3. Numbers and operators
 
-Operators work as in Ruby. `a + b` is shorthand for `BinaryOp.+(a, b)`, and `BinaryOp` has a fixed
-table of the type pairs it accepts. Mixing Integer and Float gives a Float.
+Operators work as in Ruby: `a + b` runs the `+` of `a`'s type. For the built-in types, a fixed table
+gives the result for each pair of operand types. Mixing Integer and Float gives a Float.
 
 ```ruby
 puts(7 / 2)           # Integer / Integer truncates toward -infinity, as in Ruby
@@ -152,7 +152,7 @@ puts(label + total)
 
 ```
 $ sake binop_error.sake
-binop_error.sake:3:6: error: BinaryOp.+: the operands are (String, Integer), which has no row in the table [type]
+binop_error.sake:3:6: error: Arithmetic.+: the operands are (String, Integer), which the left operand's type does not support [type]
 (exit status 2)
 ```
 
@@ -161,7 +161,7 @@ ahead, and the same mistake stops when it runs:
 
 ```
 $ sake --strict=0 binop_error.sake
-binop_error.sake:3: in <main>: TypeError: BinaryOp.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Time, Integer), (Time, Float), (Time, Rational)
+binop_error.sake:3: in <main>: TypeError: Arithmetic.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Time, Integer), (Time, Float), (Time, Rational)
 (exit status 1)
 ```
 
@@ -174,8 +174,7 @@ puts(Integer.+(1, 2.5))
 
 ```
 $ sake typed_op_error.sake
-typed_op_error.sake:1:6: error: Integer.+: argument 2 must be Integer, but is Float [type]
-(exit status 2)
+3.5
 ```
 
 ## 4. Functions
@@ -627,6 +626,53 @@ top: top
 door: door
 ```
 
+### Operators for your own types
+
+An operator belongs to a module: `Arithmetic` (`+ - * / % **`), `Comparable` (`<=>` and
+`< <= > >=`), `Bitwise`, and `Indexable` (`[]`, `[]=`). A type joins by including the module and
+defining the operator. With `Comparable`, `<=>` alone gives the comparisons and makes `Array.sort`
+work:
+
+```ruby
+class Money < {reader: [cents]}
+  include Arithmetic
+  include Comparable
+  def +(a, b) = Money.new(@cents + Money.get_cents(b))
+  def <=>(a, b) = @cents <=> Money.get_cents(b)
+  def to_s(m) = "$#{@cents / 100}.#{String.rjust(Integer.to_s(@cents % 100), 2, "0")}"
+end
+a = Money.new(150)
+b = Money.new(275)
+puts(a + b)
+p(a < b)
+p(Array.sort(Array[b, a]))
+p(Array.max(Array[a, b]))
+p(a == Money.new(150))
+p(Array.include?(Array[a], Money.new(150)))
+class Grid < {reader: [cells]}
+  include Indexable
+  def [](g, k) = Array.at(@cells, k)
+  def []=(g, k, v)
+    Array.[]=(@cells, k, v)
+  end
+end
+g = Grid.new(Array[1, 2, 3])
+g[1] = 20
+g[2] += 1
+p(Array[g[0], g[1], g[2]])
+```
+
+```
+$ sake operators.sake
+$4.25
+true
+[#<struct Money cents=150>, #<struct Money cents=275>]
+#<struct Money cents=275>
+true
+true
+[1, 20, 4]
+```
+
 ### Sharing functions with `include`
 
 `class` adds operations to a type, and `module` is a namespace with no type.
@@ -798,8 +844,8 @@ empty_braces.sake:2:10: error: `{"a" => ...}` is not a Hash in Sake: `{name: val
 (exit status 2)
 ```
 
-`x[k]` is shorthand for `Index.[](x, k)`, and `x[k] = v` for `Index.[]=(x, k, v)`. Like
-`BinaryOp`, `Index` has a fixed table: (Array, Integer), (String, Integer), and (Tuple, Integer).
+`x[k]` runs the `[]` of `x`'s type, and `x[k] = v` its `[]=`. Array, Hash, String, Tuple, and
+MatchData have them.
 
 - **A miss gives `nil`**, as in Ruby. `Array.fetch` raises an error instead.
 - **Tuples.** A Tuple's length is part of its type, so reading outside it is an error.
@@ -829,7 +875,7 @@ p(t[2])                        # a Tuple's length is part of its type
 
 ```
 $ sake indexing.sake
-indexing.sake:19:3: error: Index.[]: the index is outside the Tuple [Integer, String] [type]
+indexing.sake:19:3: error: Indexable.[]: the index is outside the Tuple [Integer, String] [type]
 (exit status 2)
 ```
 

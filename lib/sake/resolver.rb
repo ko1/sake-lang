@@ -18,12 +18,11 @@ module Sake
   # `M.f(x, ...)` for a mixin function f of module M: table maps each type including M to its f.
   Dispatch = Struct.new(:module, :name, :table)
 
-  # `x[k]` / `x[k] = v`: the receiver becomes the first argument of Index.[] / Index.[]=.
-  IndexCall = Struct.new(:builtin)
 
   # calls: node => {namespace (nil = top level) => target}, because a function body included into several
   # namespaces resolves once per namespace. blocks: node => parameter names.
-  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, keyword_init: true)
+  # includes: namespace => names of the modules it includes (for dispatch through modules and operators).
+  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -70,7 +69,8 @@ module Sake
       check_all
       raise StaticErrors.new(@diags.sort_by { [_1.line, _1.column] }) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks,
-                  functions: @functions, struct_types: @struct_types)
+                  functions: @functions, struct_types: @struct_types,
+                  includes: @linearized.transform_values { |l| l.map(&:first) })
     end
 
     private
@@ -113,6 +113,7 @@ module Sake
     def apply_includes
       @includes.each do |ns, list|
         list.each do |mod, node|
+          next if Operators::MODULES.include?(mod)
           error(node, "`include #{mod}`: #{mod} is not a module", @struct_types[mod] || BUILTIN_TYPES.include?(mod) ? ["only a `module` can be included"] : []) unless @modules.key?(mod)
         end
       end
@@ -136,6 +137,7 @@ module Sake
     def linearize(ns, seen)
       return [] if seen.include?(ns)
       @includes.fetch(ns, []).reverse.flat_map do |mod, node|
+        next [[mod, node]] if Operators::MODULES.include?(mod)
         next [] unless @modules.key?(mod)
         if seen.include?(mod) || mod == ns
           error(node, "`include #{mod}` makes a cycle")
@@ -686,7 +688,7 @@ module Sake
       end
     end
 
-    def binary_op?(name) = !@registry.binary_ops[name.to_s].empty?
+    def binary_op?(name) = Operators::MODULE_OF.key?(name.to_s)
 
     def check_call(node, ctx)
       args = node.arguments&.arguments || []
@@ -702,12 +704,13 @@ module Sake
         return check_raise(node, ctx) if node.name == :raise && !lookup_unqualified?(ctx, "raise")
         target = resolve_unqualified(node, ctx)
       elsif recv.is_a?(Prism::ConstantReadNode) && (node.call_operator_loc || node.name == :[])
-        target = resolve_qualified(node, recv.name.to_s)
+        # `T[...]` is the constructor syntax; `T.[](x, k)` is T's index operation.
+        target = resolve_qualified(node, recv.name.to_s, node.call_operator_loc ? node.name.to_s : CTOR)
       elsif recv.is_a?(Prism::ConstantPathNode)
         return error(recv, "`#{recv.slice}` (nested constants) is not supported")
       elsif node.call_operator_loc.nil? && BINARY_OPS.include?(node.name) && args.size == 1
         error(node, "operator `#{node.name}` is not supported") unless binary_op?(node.name)
-        set_call(node, ctx, :binary_op)
+        set_call(node, ctx, Operators::Call.new(Operators::MODULE_OF[node.name.to_s], node.name.to_s))
         check(recv, ctx)
         check_args(node.arguments, ctx)
         return
@@ -720,7 +723,7 @@ module Sake
         if args.size != want
           error(node, "`#{first_line(node.slice)}` takes #{want == 1 ? "one index" : "one index and a value"}")
         else
-          set_call(node, ctx, IndexCall.new(@registry.lookup("Index", node.name.to_s)))
+          set_call(node, ctx, Operators::Call.new("Indexable", node.name.to_s))
         end
         check(recv, ctx)
         return check_args(node.arguments, ctx)
@@ -738,11 +741,14 @@ module Sake
 
       set_call(node, ctx, target)
       check_arity(node, target, args.size, !blk.nil?)
-      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == "[]" && !%w[Array Index Hash Set].include?(target.namespace)
+      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == CTOR && !%w[Array Hash Set].include?(target.namespace)
     end
 
     def check_arity(node, target, argc, has_block)
       case target
+      when Operators::Call
+        want = target.op == "[]=" ? 3 : 2
+        error(node, "#{target.module}.#{target.op} takes #{want} arguments (given #{argc})") if argc != want
       when Dispatch
         fn = @functions.dig(target.module, target.name)
         check_arity(node, fn, argc, has_block) if fn
@@ -831,13 +837,19 @@ module Sake
       error(node, "#{what} `#{name}`", hints)
     end
 
-    def resolve_qualified(node, ns)
-      name = node.name.to_s
+    def resolve_qualified(node, ns, name = node.name.to_s)
       if (ns == "Struct" && name == "new") || (ns == "Data" && name == "define")
         return error(node, "Struct.new must be assigned to a top-level constant: `Point = Struct.new(:x, :y)`")
       end
       if name == "call"
         return error(node, "type scope `#{ns}.(...)` is not supported yet")
+      end
+      if (old = { "BinaryOp" => "Arithmetic", "Index" => "Indexable" }[ns])
+        return error(node.receiver, "`#{ns}` is now `#{Operators::MODULE_OF[name] || old}`")
+      end
+      if (Operators::MODULES.include?(ns) || ns == "Kernel") && Operators::MODULE_OF[name] == ns
+        return error(node, "#{ns}.#{name} dispatches on its first argument, so it needs one") if (node.arguments&.arguments || []).empty?
+        return Operators::Call.new(ns, name)
       end
       unless @registry.namespace?(ns)
         return error(node.receiver, "undefined type or module `#{ns}`", spell(ns, @registry.namespaces).map { "did you mean `#{_1}`?" })
@@ -889,7 +901,7 @@ module Sake
     def names_in(ns) = @functions.fetch(ns, {}).keys | @registry.names(ns)
 
     def namespaces_defining(name)
-      (@registry.namespaces_defining(name) | @functions.select { |ns, fs| ns && fs.key?(name) }.keys) - ["BinaryOp"]
+      (@registry.namespaces_defining(name) | @functions.select { |ns, fs| ns && fs.key?(name) }.keys) - Operators::MODULES
     end
 
     def spell(word, dict) = DidYouMean::SpellChecker.new(dictionary: dict.uniq).correct(word)

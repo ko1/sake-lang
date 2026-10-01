@@ -51,7 +51,7 @@ module Sake
     end
 
     # Reports the type checker's findings for the chosen items as static errors.
-    def type_message(c, what, typer)
+    def type_message(c, what, typer, program)
       if c.arg == "subject"
         mod = c.op.split(".").first
         return ["#{c.op} dispatches on its first argument, which #{c.verdict == :error ? "is" : "can be"} #{typer.show_failing(c)}; " \
@@ -67,8 +67,20 @@ module Sake
       end
       maybe = c.verdict == :error ? "are " : "may be "
       case c.op
-      when /\ABinaryOp\./ then ["#{c.op}: the operands #{maybe}#{typer.show_failing(c)}, which has no row in the table", []]
-      when "Index.[]", "Index.[]="
+      when /\A(Arithmetic|Comparable|Bitwise|Kernel)\./
+        mod = $1
+        op = c.op.split(".", 2)[1]
+        lefts = c.failing.map(&:first).select { _1.is_a?(String) && program.struct_types.key?(_1) }.uniq
+        unless lefts.empty?
+          t = lefts.first
+          if !Operators.includes?(program.includes, t, mod)
+            return ["#{c.op}: #{t} does not include #{mod}", ["add `include #{mod}` and `def #{op}(a, b)` to class #{t}"]]
+          end
+          need = mod == "Comparable" && op != "<=>" ? "neither #{op} nor <=>" : op
+          return ["#{c.op}: #{t} includes #{mod} but defines #{need}", ["define `def #{mod == "Comparable" ? "<=>" : op}(a, b)` in class #{t}"]]
+        end
+        ["#{c.op}: the operands #{maybe}#{typer.show_failing(c)}, which the left operand's type does not support", []]
+      when "Indexable.[]", "Indexable.[]="
         tuples, others = c.failing.partition { _1.is_a?(Array) && _1[0] == :tuple }
         return ["#{c.op}: the index is outside the Tuple #{typer.show(tuples)}", []] if others.empty?
         ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{Stdlib::INDEX_ROWS}", []]
@@ -101,7 +113,7 @@ module Sake
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item
-          when "type" then type_message(c, what, typer)
+          when "type" then type_message(c, what, typer, program)
           when "rescue"
             ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]
           when "unrescued"

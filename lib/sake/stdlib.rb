@@ -59,7 +59,6 @@ module Sake
         %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } }
       end
       %w[Integer Float String Boolean Tuple Array].each { define_nil_equality(reg, _1) }
-      reg.add_namespace("BinaryOp")
     end
 
     # `x == nil` / `x != nil` for any type T (Ruby semantics: false / true unless x is nil).
@@ -71,10 +70,24 @@ module Sake
     end
 
     # `Integer.+(a, b)` etc.: the operator with both operands fixed to the type.
-    def install_typed_ops(reg, type, ops)
-      ops.each do |op|
-        impl = reg.binary_ops[op.to_s][[type, type]] or raise "BUG: no row #{op} #{type}"
-        reg.define(type, op, [type, type]) { |a, b| impl.(a, b) }
+    # Kept for the callers; the operator functions are defined from the table by install_operator_functions.
+    def install_typed_ops(_reg, _type, _ops) = nil
+
+    # `T.op(a, b)` for each built-in type T: the rows of the table whose left operand is T.
+    def install_operator_functions(reg)
+      reg.binary_ops.each do |op, rows|
+        rows.keys.map(&:first).uniq.each do |type|
+          next unless reg.namespace?(type) && reg.lookup(type, op).nil?
+          right = rows.keys.select { _1[0] == type }.map(&:last)
+          reg.define(type, op, [type, "Any"]) do |a, b|
+            impl = rows[[type, Values.type_of(b)]]
+            unless impl
+              raise Fail.new("TypeError", "no implementation for (#{type}, #{Values.describe(b)}); " \
+                                          "defined for (#{type}, #{right.map { Values.display_type(_1) }.join("|")})")
+            end
+            impl.(a, b)
+          end
+        end
       end
     end
 
@@ -152,7 +165,7 @@ module Sake
     end
 
     def install_array(reg)
-      reg.define("Array", :[], [], rest: "Any") { |*xs| xs }
+      reg.define("Array", CTOR, [], rest: "Any") { |*xs| xs }
       reg.define("Array", :length, ["Array"], &:length)
       reg.define("Array", :size, ["Array"], &:size)
       reg.define("Array", :empty?, ["Array"], &:empty?)
@@ -217,7 +230,7 @@ module Sake
 
     # `T[...]` for a type T (built-in or Struct). `Array[...]` stays the untyped constructor.
     def install_typed_array(reg, type, struct: false)
-      reg.define(type, :[], [], rest: "Any") do |*xs|
+      reg.define(type, CTOR, [], rest: "Any") do |*xs|
         xs.each_with_index do |x, i|
           next if Values.type_of(x) == type
           hint = struct ? " (to create one #{type}, write #{type}.new(...))" : ""
@@ -245,9 +258,13 @@ module Sake
 
     # `x[k]` and `x[k] = v` call these. A miss gives nil as in Ruby, except that a Tuple's length is part
     # of its type, so reading or writing outside it is an IndexError.
+    # `T.[](x, k)` / `T.[]=(x, k, v)` for the built-in Indexable types.
     def install_index(reg)
-      reg.define("Index", :[], %w[Any Any]) { |x, k| index_get(x, k) }
-      reg.define("Index", :[]=, %w[Any Any Any]) { |x, k, v| index_set(x, k, v) }
+      %w[Array Hash String Tuple MatchData].each do |t|
+        reg.add_namespace(t)
+        reg.define(t, :[], [t, "Any"]) { |x, k| index_get(x, k) }
+        reg.define(t, :[]=, [t, "Any", "Any"]) { |x, k, v| index_set(x, k, v) } unless %w[String MatchData].include?(t)
+      end
     end
 
     def index_get(x, k)

@@ -55,6 +55,7 @@ module Sake
 
     def run
       Thread.current[:sake_show_hooks] = method(:show_hook)
+      Thread.current[:sake_struct_ops] = method(:struct_ruby_op)
       env = Env.new(nil, Frame.new("<main>", nil, nil))
       @program.toplevel.each { eval_node(_1, env) }
       nil
@@ -173,14 +174,14 @@ module Sake
     def index_update(node, env)
       recv = eval_node(node.receiver, env)
       key = eval_node(node.arguments.arguments.first, env)
-      cur = call_builtin(@registry.lookup("Index", "[]"), [recv, key], nil, node)
+      cur = index_op(node, "[]", [recv, key])
       if node.is_a?(Prism::IndexOrWriteNode)
         return cur if Values.truthy?(cur)
         val = eval_node(node.value, env)
       else
         val = binary_op(node, node.binary_operator, cur, eval_node(node.value, env))
       end
-      call_builtin(@registry.lookup("Index", "[]="), [recv, key, val], nil, node)
+      index_op(node, "[]=", [recv, key, val])
     end
 
     NOT_RESCUABLE = Resolver::NOT_RESCUABLE
@@ -371,14 +372,13 @@ module Sake
 
     def call(node, env)
       target = target_of(node, env)
-      if target == :binary_op
-        return binary_op(node, node.name, eval_node(node.receiver, env), eval_node(node.arguments.arguments.first, env))
+      if target.is_a?(Operators::Call)
+        explicit = node.receiver.is_a?(Prism::ConstantReadNode)
+        xs = explicit ? eval_args(node.arguments, env) : [eval_node(node.receiver, env), *eval_args(node.arguments, env)]
+        return target.module == "Indexable" ? index_op(node, target.op, xs) : binary_op(node, target.op, xs[0], xs[1])
       end
 
       return do_raise(node, env) if target == :raise
-      if target.is_a?(IndexCall)
-        return call_builtin(target.builtin, [eval_node(node.receiver, env), *eval_args(node.arguments, env)], nil, node)
-      end
 
       args = eval_args(node.arguments, env)
       blk = node.block && SakeBlock.new(node.block, @program.blocks.fetch(node.block), env)
@@ -440,9 +440,13 @@ module Sake
       Array(want).include?(Values.type_of(v))
     end
 
+    # `a OP b`: a Struct operand runs its type's own operator; built-in types use the table of rows.
     def binary_op(node, op, a, b)
-      return a.public_send(op, b) if %w[== !=].include?(op.to_s) && (a.nil? || b.nil?)
-      rows = @registry.binary_ops[op.to_s]
+      op = op.to_s
+      mod = Operators::MODULE_OF.fetch(op)
+      return a.public_send(op, b) if %w[== !=].include?(op) && (a.nil? || b.nil?)
+      return user_op(node, mod, op, [a, b]) if a.is_a?(StructValue)
+      rows = @registry.binary_ops[op]
       key = [Values.type_of(a), Values.type_of(b)]
       impl = rows[key]
       unless impl
@@ -454,12 +458,64 @@ module Sake
         defined += plain.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }
         defined << "(any, nil), (nil, any)" unless nil_rows.empty?
         defined = defined.join(", ")
-        fail_at(node, "TypeError", "BinaryOp.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
+        fail_at(node, "TypeError", "#{mod}.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
                 nil_value: a.nil? || b.nil?)
       end
       impl.call(a, b)
     rescue Fail => e
-      fail_at(node, e.kind, "BinaryOp.#{op}: #{e.message}")
+      fail_at(node, e.kind, "#{mod}.#{op}: #{e.message}")
+    end
+
+    # `x[k]` / `x[k] = v`: the index operation of x's type.
+    def index_op(node, op, xs)
+      recv = xs[0]
+      return user_op(node, "Indexable", op, xs) if recv.is_a?(StructValue)
+      fn = @registry.lookup(Values.type_of(recv), op)
+      unless fn
+        fail_at(node, "TypeError", "Indexable.#{op}: #{Values.describe(recv)} cannot be indexed#{op == "[]=" ? " for writing" : ""}",
+                nil_value: recv.nil?)
+      end
+      call_builtin(fn, xs, nil, node)
+    end
+
+    def own_fn(type, name) = @program.functions.dig(type, name)
+
+    # An operator on a Struct value: the type must include the module and define the operator.
+    # Comparable builds < <= > >= from <=>; == compares fields unless the type defines its own.
+    def user_op(node, mod, op, args)
+      recv = args[0]
+      type = recv.type.name
+      if %w[== !=].include?(op)
+        eq = struct_equal?(recv, args[1])
+        return op == "==" ? eq : !eq
+      end
+      unless Operators.includes?(@program.includes, type, mod)
+        fail_at(node, "TypeError", "#{mod}.#{op}: #{type} does not include #{mod}")
+      end
+      if (fn = own_fn(type, op))
+        return call_user(fn, args, nil, node)
+      end
+      if mod == "Comparable" && (cmp = own_fn(type, "<=>"))
+        r = call_user(cmp, args, nil, node)
+        fail_at(node, "ArgumentError", "comparison of #{type} with #{Values.describe(args[1])} failed") unless r.is_a?(Integer)
+        return { "<" => r.negative?, "<=" => r <= 0, ">" => r.positive?, ">=" => r >= 0 }.fetch(op)
+      end
+      need = mod == "Comparable" && op != "<=>" ? "#{op} or <=>" : op
+      fail_at(node, "TypeError", "#{mod}.#{op}: #{type} does not define #{need}")
+    end
+
+    def struct_equal?(a, b)
+      if (fn = own_fn(a.type.name, "=="))
+        return Values.truthy?(call_user(fn, [a, b], nil, fn.node))
+      end
+      b.is_a?(StructValue) && b.type.equal?(a.type) && a.values == b.values
+    end
+
+    # Ruby-level == and <=> of Struct values (Array.include?, sort, ...) use the type's own definitions.
+    def struct_ruby_op(kind, a, b)
+      return struct_equal?(a, b) if kind == :==
+      fn = own_fn(a.type.name, "<=>") or return nil
+      call_user(fn, [a, b], nil, fn.node)
     end
 
     def call_block(blk, args, node)

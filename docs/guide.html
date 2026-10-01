@@ -263,7 +263,7 @@ puts(<span class="tc">Integer</span>.to_string(<span class="tn">42</span>))
 
 <section id="operators">
 <h2>Numbers and operators</h2>
-<p>Operators behave as in Ruby. <code>a + b</code> is shorthand for <code>BinaryOp.+(a, b)</code>, and <code>BinaryOp</code> has a fixed table of the operand types it accepts.</p>
+<p>Operators behave as in Ruby: <code>a + b</code> runs the <code>+</code> of <code>a</code>'s type. For the built-in types, a fixed table gives the result for each pair of operand types.</p>
 <figure class="ex"><pre class="src"><code>puts(<span class="tn">7</span> / <span class="tn">2</span>)           <span class="tm"># Integer / Integer truncates toward -infinity, as in Ruby</span>
 puts(-<span class="tn">7</span> / <span class="tn">2</span>)
 puts(<span class="tn">7</span> % <span class="tn">3</span>)
@@ -303,16 +303,15 @@ true
 label = <span class="ts">&quot;</span><span class="ts">items: </span><span class="ts">&quot;</span>
 puts(label + total)
 </code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake binop_error.sake</span>
-<span class="oerr">binop_error.sake:3:6: error: BinaryOp.+: the operands are (String, Integer), which has no row in the table [type]</span>
+<span class="oerr">binop_error.sake:3:6: error: Arithmetic.+: the operands are (String, Integer), which the left operand&#39;s type does not support [type]</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <figure class="ex"><pre class="out" aria-label="output"><span class="oprompt">$ sake --strict=0 binop_error.sake</span>
-<span class="oerr">binop_error.sake:3: in &lt;main&gt;: TypeError: BinaryOp.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Time, Integer), (Time, Float), (Time, Rational)</span>
+<span class="oerr">binop_error.sake:3: in &lt;main&gt;: TypeError: Arithmetic.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Time, Integer), (Time, Float), (Time, Rational)</span>
 <span class="odim">(exit status 1)</span></pre></figure>
 <p>Writing the operator with a type, as in <code>Integer.+(a, b)</code>, requires both operands to be of that type:</p>
 <figure class="ex"><pre class="src"><code>puts(<span class="tc">Integer</span>.+(<span class="tn">1</span>, <span class="tn">2.5</span>))
 </code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake typed_op_error.sake</span>
-<span class="oerr">typed_op_error.sake:1:6: error: Integer.+: argument 2 must be Integer, but is Float [type]</span>
-<span class="odim">(exit status 2)</span></pre></figure>
+3.5</pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li><code>- * / % **</code> take the same numeric pairs as <code>+</code>. <code>*</code> also takes (String, Integer).</li>
   <li><code>&lt; &lt;= &gt; &gt;=</code> compare two numbers or two Strings.</li>
@@ -676,6 +675,42 @@ puts(<span class="tc">Door</span>.open(<span class="tn">1</span>))
 door: door
 top: top
 door: door</pre></figure>
+<h3>Operators for your own types</h3>
+<p>An operator belongs to a module: <code>Arithmetic</code> (<code>+ - * / % **</code>), <code>Comparable</code> (<code>&lt;=&gt;</code> and <code>&lt; &lt;= &gt; &gt;=</code>), <code>Bitwise</code>, and <code>Indexable</code> (<code>[]</code>, <code>[]=</code>). A type joins by including the module and defining the operator. With <code>Comparable</code>, <code>&lt;=&gt;</code> alone gives the comparisons and makes <code>Array.sort</code> work.</p>
+<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Money</span> &lt; {reader: [cents]}
+  include <span class="tc">Arithmetic</span>
+  include <span class="tc">Comparable</span>
+  <span class="tk">def</span> +(a, b) = <span class="tc">Money</span>.new(<span class="te">@cents</span> + <span class="tc">Money</span>.get_cents(b))
+  <span class="tk">def</span> &lt;=&gt;(a, b) = <span class="te">@cents</span> &lt;=&gt; <span class="tc">Money</span>.get_cents(b)
+  <span class="tk">def</span> to_s(m) = <span class="ts">&quot;</span><span class="ts">$</span><span class="ts">#{</span><span class="te">@cents</span> / <span class="tn">100</span><span class="ts">}</span><span class="ts">.</span><span class="ts">#{</span><span class="tc">String</span>.rjust(<span class="tc">Integer</span>.to_s(<span class="te">@cents</span> % <span class="tn">100</span>), <span class="tn">2</span>, <span class="ts">&quot;</span><span class="ts">0</span><span class="ts">&quot;</span>)<span class="ts">}</span><span class="ts">&quot;</span>
+<span class="tk">end</span>
+a = <span class="tc">Money</span>.new(<span class="tn">150</span>)
+b = <span class="tc">Money</span>.new(<span class="tn">275</span>)
+puts(a + b)
+p(a &lt; b)
+p(<span class="tc">Array</span>.sort(<span class="tc">Array</span>[b, a]))
+p(<span class="tc">Array</span>.max(<span class="tc">Array</span>[a, b]))
+p(a == <span class="tc">Money</span>.new(<span class="tn">150</span>))
+p(<span class="tc">Array</span>.include?(<span class="tc">Array</span>[a], <span class="tc">Money</span>.new(<span class="tn">150</span>)))
+<span class="tk">class</span> <span class="tc">Grid</span> &lt; {reader: [cells]}
+  include <span class="tc">Indexable</span>
+  <span class="tk">def</span> [](g, k) = <span class="tc">Array</span>.at(<span class="te">@cells</span>, k)
+  <span class="tk">def</span> []=(g, k, v)
+    <span class="tc">Array</span>.[]=(<span class="te">@cells</span>, k, v)
+  <span class="tk">end</span>
+<span class="tk">end</span>
+g = <span class="tc">Grid</span>.new(<span class="tc">Array</span>[<span class="tn">1</span>, <span class="tn">2</span>, <span class="tn">3</span>])
+g[<span class="tn">1</span>] = <span class="tn">20</span>
+g[<span class="tn">2</span>] += <span class="tn">1</span>
+p(<span class="tc">Array</span>[g[<span class="tn">0</span>], g[<span class="tn">1</span>], g[<span class="tn">2</span>]])
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake operators.sake</span>
+$4.25
+true
+[#&lt;struct Money cents=150&gt;, #&lt;struct Money cents=275&gt;]
+#&lt;struct Money cents=275&gt;
+true
+true
+[1, 20, 4]</pre></figure>
 <h3>Sharing functions with <code>include</code></h3>
 <p><code>class</code> adds operations to a type, and <code>module</code> is a namespace with no type. <code>include M</code> borrows <code>M</code>'s functions, as Ruby's modules do, but statically. Inside a borrowed function, unqualified names are looked up in the namespace that includes it, so <code>Summary</code> can use the <code>each</code> that <code>Basket</code> or <code>Countdown</code> provides.</p>
 <p>A module's functions are called in one of two ways. Functions after <code>module_function</code> are called directly (<code>Units.km(x)</code>). Calling any other function through its module (<code>Summary.total(x)</code>) <strong>dispatches</strong> to the function of <code>x</code>'s type, which must include the module. Like Elixir's protocols, the module name on the call says that the function is picked while running.</p>
@@ -800,7 +835,7 @@ names = {<span class="ts">&quot;</span><span class="ts">a</span><span class="ts"
 <span class="ohint">  hint: for a Hash, write `Hash[&quot;a&quot; =&gt; ...]`</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <h3>Indexing</h3>
-<p><code>x[k]</code> is shorthand for <code>Index.[](x, k)</code>, and <code>x[k] = v</code> for <code>Index.[]=(x, k, v)</code>. Like <code>BinaryOp</code>, <code>Index</code> has a fixed table: (Array, Integer), (String, Integer), and (Tuple, Integer).</p>
+<p><code>x[k]</code> runs the <code>[]</code> of <code>x</code>'s type, and <code>x[k] = v</code> its <code>[]=</code>. Array, Hash, String, Tuple, and MatchData have them.</p>
 <ul>
   <li>A miss gives <code>nil</code>, as in Ruby, so with <code>--strict</code> you check <code>a[i]</code> before using it. <code>Array.fetch</code> raises an error instead.</li>
   <li>A Tuple's length is part of its type, so reading outside it is an error.</li>
@@ -826,7 +861,7 @@ best ||= <span class="tc">Array</span>.max(<span class="tc">Array</span>[<span c
 p(best)
 p(t[<span class="tn">2</span>])                        # a Tuple&#39;s length is part of its type
 </code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake indexing.sake</span>
-<span class="oerr">indexing.sake:19:3: error: Index.[]: the index is outside the Tuple [Integer, String] [type]</span>
+<span class="oerr">indexing.sake:19:3: error: Indexable.[]: the index is outside the Tuple [Integer, String] [type]</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <p><code>Point[1, 2]</code> means "an Array of Point". It is not Ruby's shorthand for <code>Point.new(1, 2)</code>. When the mistake is visible in the source, it is reported before running:</p>
 <figure class="ex"><pre class="src"><code><span class="tc">Point</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">x</span>, <span class="ts">:</span><span class="ts">y</span>)
@@ -1248,7 +1283,7 @@ Statement for Alice
 <span class="odim">  from FILE:LINE: in CALLER</span>
 <span class="ohint">  hint: SUGGESTION</span></pre>
 <div class="tbl"><table><thead><tr><th>Kind</th><th>When</th></tr></thead><tbody>
-<tr><td><code>TypeError</code></td><td>An operation got the wrong type, a <code>BinaryOp</code> pair is not in the table, a write to an Array of T has the wrong type, or a multiple assignment is not from a Tuple</td></tr>
+<tr><td><code>TypeError</code></td><td>An operation got the wrong type, an operator the left operand's type does not support, a write to an Array of T has the wrong type, or a multiple assignment is not from a Tuple</td></tr>
 <tr><td><code>IndexError</code></td><td>A Tuple index outside the Tuple, <code>Array.fetch</code> outside the Array, or a write past the end of an Array of T</td></tr>
 <tr><td><code>ArgumentError</code></td><td>A Tuple size mismatch, a block parameter count mismatch, a negative size, or <code>sort</code> on values that cannot be compared</td></tr>
 <tr><td><code>ZeroDivisionError</code></td><td>Integer <code>/</code> or <code>%</code> by zero</td></tr>

@@ -12,7 +12,7 @@ def signature(b)
   ps += b.optional.map { "[#{Array(_1).join("|")}]" }
   ps << "*#{Array(b.rest).join("|")}" if b.rest
   block = { required: " { }", optional: " [{ }]" }.fetch(b.block, "")
-  b.name == "[]" && b.namespace != "Index" ? "#{b.namespace}[#{ps.join(", ")}]" : "#{b.full_name}(#{ps.join(", ")})#{block}"
+  b.name == Sake::CTOR ? "#{b.namespace}[#{ps.join(", ")}]" : "#{b.full_name}(#{ps.join(", ")})#{block}"
 end
 
 def build

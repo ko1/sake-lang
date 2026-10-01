@@ -9,6 +9,12 @@ module Sake
     module_function
 
     def install_ext(reg, out, input)
+      install_ext_body(reg, out, input)
+      Operators::MODULES.each { reg.add_namespace(_1) }
+      install_operator_functions(reg)
+    end
+
+    def install_ext_body(reg, out, input)
       install_table(reg)
       install_numeric_tower(reg)
       install_time(reg)
@@ -40,6 +46,9 @@ module Sake
     end
 
     def install_ext_binary_ops(reg)
+      (REAL.product(REAL) + [%w[String String], %w[Time Time]]).each do |t1, t2|
+        reg.define_binary(:<=>, t1, t2) { |a, b| a <=> b }
+      end
       %i[& | ^ << >>].each { |op| reg.define_binary(op, "Integer", "Integer") { |a, b| a.public_send(op, b) } }
       %i[| & -].each { |op| reg.define_binary(op, "Set", "Set") { |a, b| a.public_send(op, b) } }
       %w[Symbol].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
@@ -181,7 +190,7 @@ module Sake
     end
 
     def install_hash(reg)
-      reg.define("Hash", :[], [], rest: "Any") do |*args|
+      reg.define("Hash", CTOR, [], rest: "Any") do |*args|
         h = {}
         args.each { |hp| hp.pairs.each { |k, v| h[key!(k)] = v } }
         h
@@ -238,7 +247,7 @@ module Sake
     end
 
     def install_set(reg)
-      reg.define("Set", :[], [], rest: "Any") { |*xs| Set.new(xs.map { key!(_1) }) }
+      reg.define("Set", CTOR, [], rest: "Any") { |*xs| Set.new(xs.map { key!(_1) }) }
       reg.define("Set", :length, ["Set"], &:length)
       reg.define("Set", :size, ["Set"], &:size)
       reg.define("Set", :empty?, ["Set"], &:empty?)

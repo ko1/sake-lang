@@ -67,8 +67,8 @@ Sake's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`
 
 ## 3. Numbers and operators
 
-Operators work as in Ruby. `a + b` is shorthand for `BinaryOp.+(a, b)`, and `BinaryOp` has a fixed
-table of the type pairs it accepts. Mixing Integer and Float gives a Float.
+Operators work as in Ruby: `a + b` runs the `+` of `a`'s type. For the built-in types, a fixed table
+gives the result for each pair of operand types. Mixing Integer and Float gives a Float.
 
 @@example numbers
 
@@ -198,6 +198,15 @@ definition, write its namespace, as in `Kernel.puts(...)`.
 
 @@example scope
 
+### Operators for your own types
+
+An operator belongs to a module: `Arithmetic` (`+ - * / % **`), `Comparable` (`<=>` and
+`< <= > >=`), `Bitwise`, and `Indexable` (`[]`, `[]=`). A type joins by including the module and
+defining the operator. With `Comparable`, `<=>` alone gives the comparisons and makes `Array.sort`
+work:
+
+@@example operators
+
 ### Sharing functions with `include`
 
 `class` adds operations to a type, and `module` is a namespace with no type.
@@ -244,8 +253,8 @@ In Sake, `[]` and `{}` are not growable collections. Ruby code that grows them s
 @@example ruby_habits
 @@example empty_braces
 
-`x[k]` is shorthand for `Index.[](x, k)`, and `x[k] = v` for `Index.[]=(x, k, v)`. Like
-`BinaryOp`, `Index` has a fixed table: (Array, Integer), (String, Integer), and (Tuple, Integer).
+`x[k]` runs the `[]` of `x`'s type, and `x[k] = v` its `[]=`. Array, Hash, String, Tuple, and
+MatchData have them.
 
 - **A miss gives `nil`**, as in Ruby. `Array.fetch` raises an error instead.
 - **Tuples.** A Tuple's length is part of its type, so reading outside it is an error.

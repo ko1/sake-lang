@@ -39,7 +39,7 @@ class TestCLI < Minitest::Test
     assert_equal "", err
     assert_equal 0, st.exitstatus
     _, err, st = run_sake_args("puts(\"\" + 1)\n", "-c")
-    assert_match(/no row in the table \[type\]/, err)
+    assert_match(/the left operand.s type does not support \[type\]/, err)
     assert_equal 2, st.exitstatus
     _, _, st = run_sake_args("puts(\"\" + 1)\n", "-c", "--strict=0")
     assert_equal 0, st.exitstatus

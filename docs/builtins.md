@@ -8,7 +8,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Array
 
-- `Array[*Any]`
+- `Array.!=(x, Any)`
+- `Array.==(x, Any)`
+- `Array.[](x, Any)`
+- `Array.[]=(x, Any, Any)`
 - `Array.all?(x) { }`
 - `Array.any?(x) { }`
 - `Array.append(x, *Any)`
@@ -65,6 +68,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.min_by(x) { }`
 - `Array.minmax(x)`
 - `Array.minmax_by(x) { }`
+- `Array[*Any]`
 - `Array.none?(x) { }`
 - `Array.one?(x) { }`
 - `Array.partition(x) { }`
@@ -101,13 +105,13 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Complex
 
-- `Complex.!=(x, Complex)`
-- `Complex.*(x, Complex)`
-- `Complex.**(x, Complex)`
-- `Complex.+(x, Complex)`
-- `Complex.-(x, Complex)`
-- `Complex./(x, Complex)`
-- `Complex.==(x, Complex)`
+- `Complex.!=(x, Any)`
+- `Complex.*(x, Any)`
+- `Complex.**(x, Any)`
+- `Complex.+(x, Any)`
+- `Complex.-(x, Any)`
+- `Complex./(x, Any)`
+- `Complex.==(x, Any)`
 - `Complex.abs(x)`
 - `Complex.arg(x)`
 - `Complex.conjugate(x)`
@@ -126,19 +130,19 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Float
 
-- `Float.!=(x, Float)`
-- `Float.%(x, Float)`
-- `Float.*(x, Float)`
-- `Float.**(x, Float)`
-- `Float.+(x, Float)`
-- `Float.-(x, Float)`
-- `Float./(x, Float)`
-- `Float.<(x, Float)`
-- `Float.<=(x, Float)`
-- `Float.==(x, Float)`
-- `Float.>(x, Float)`
-- `Float.>=(x, Float)`
-- `Float[*Any]`
+- `Float.!=(x, Any)`
+- `Float.%(x, Any)`
+- `Float.*(x, Any)`
+- `Float.**(x, Any)`
+- `Float.+(x, Any)`
+- `Float.-(x, Any)`
+- `Float./(x, Any)`
+- `Float.<(x, Any)`
+- `Float.<=(x, Any)`
+- `Float.<=>(x, Any)`
+- `Float.==(x, Any)`
+- `Float.>(x, Any)`
+- `Float.>=(x, Any)`
 - `Float.abs(x)`
 - `Float.between?(x, Float, Float)`
 - `Float.ceil(x)`
@@ -152,6 +156,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Float.modulo(x, Integer|Float|Rational)`
 - `Float.nan?(x)`
 - `Float.negative?(x)`
+- `Float[*Any]`
 - `Float.next_float(x)`
 - `Float.positive?(x)`
 - `Float.prev_float(x)`
@@ -167,7 +172,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Hash
 
-- `Hash[*Any]`
+- `Hash.[](x, Any)`
+- `Hash.[]=(x, Any, Any)`
 - `Hash.all?(x) { }`
 - `Hash.any?(x) { }`
 - `Hash.clear(x)`
@@ -210,6 +216,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.merge(x, Hash)`
 - `Hash.min_by(x) { }`
 - `Hash.new([Any])`
+- `Hash[*Any]`
 - `Hash.none?(x) { }`
 - `Hash.one?(x) { }`
 - `Hash.partition(x) { }`
@@ -231,26 +238,25 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.values(x)`
 - `Hash.values_at(x, *Any)`
 
-## Index
-
-- `Index.[](Any, Any)`
-- `Index.[]=(Any, Any, Any)`
-
 ## Integer
 
-- `Integer.!=(x, Integer)`
-- `Integer.%(x, Integer)`
-- `Integer.*(x, Integer)`
-- `Integer.**(x, Integer)`
-- `Integer.+(x, Integer)`
-- `Integer.-(x, Integer)`
-- `Integer./(x, Integer)`
-- `Integer.<(x, Integer)`
-- `Integer.<=(x, Integer)`
-- `Integer.==(x, Integer)`
-- `Integer.>(x, Integer)`
-- `Integer.>=(x, Integer)`
-- `Integer[*Any]`
+- `Integer.!=(x, Any)`
+- `Integer.%(x, Any)`
+- `Integer.&(x, Any)`
+- `Integer.*(x, Any)`
+- `Integer.**(x, Any)`
+- `Integer.+(x, Any)`
+- `Integer.-(x, Any)`
+- `Integer./(x, Any)`
+- `Integer.<(x, Any)`
+- `Integer.<<(x, Any)`
+- `Integer.<=(x, Any)`
+- `Integer.<=>(x, Any)`
+- `Integer.==(x, Any)`
+- `Integer.>(x, Any)`
+- `Integer.>=(x, Any)`
+- `Integer.>>(x, Any)`
+- `Integer.^(x, Any)`
 - `Integer.abs(x)`
 - `Integer.allbits?(x, Integer)`
 - `Integer.anybits?(x, Integer)`
@@ -273,6 +279,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Integer.magnitude(x)`
 - `Integer.modulo(x, Integer)`
 - `Integer.negative?(x)`
+- `Integer[*Any]`
 - `Integer.next(x)`
 - `Integer.nobits?(x, Integer)`
 - `Integer.odd?(x)`
@@ -293,6 +300,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Integer.truncate(x, [Integer])`
 - `Integer.upto(x, Integer) { }`
 - `Integer.zero?(x)`
+- `Integer.|(x, Any)`
 
 ## Kernel
 
@@ -314,6 +322,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## MatchData
 
+- `MatchData.[](x, Any)`
 - `MatchData.begin(x, Integer)`
 - `MatchData.captures(x)`
 - `MatchData.end(x, Integer)`
@@ -392,18 +401,19 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Rational
 
-- `Rational.!=(x, Rational)`
-- `Rational.%(x, Rational)`
-- `Rational.*(x, Rational)`
-- `Rational.**(x, Rational)`
-- `Rational.+(x, Rational)`
-- `Rational.-(x, Rational)`
-- `Rational./(x, Rational)`
-- `Rational.<(x, Rational)`
-- `Rational.<=(x, Rational)`
-- `Rational.==(x, Rational)`
-- `Rational.>(x, Rational)`
-- `Rational.>=(x, Rational)`
+- `Rational.!=(x, Any)`
+- `Rational.%(x, Any)`
+- `Rational.*(x, Any)`
+- `Rational.**(x, Any)`
+- `Rational.+(x, Any)`
+- `Rational.-(x, Any)`
+- `Rational./(x, Any)`
+- `Rational.<(x, Any)`
+- `Rational.<=(x, Any)`
+- `Rational.<=>(x, Any)`
+- `Rational.==(x, Any)`
+- `Rational.>(x, Any)`
+- `Rational.>=(x, Any)`
 - `Rational.abs(x)`
 - `Rational.ceil(x)`
 - `Rational.denominator(x)`
@@ -420,6 +430,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Regexp
 
+- `Regexp.=~(x, Any)`
 - `Regexp.escape(String)`
 - `Regexp.match(x, String)`
 - `Regexp.match?(x, String)`
@@ -428,7 +439,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Set
 
-- `Set[*Any]`
+- `Set.&(x, Any)`
+- `Set.-(x, Any)`
 - `Set.add(x, Any)`
 - `Set.add?(x, Any)`
 - `Set.all?(x) { }`
@@ -458,6 +470,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Set.member?(x, Any)`
 - `Set.merge(x, Set)`
 - `Set.min(x)`
+- `Set[*Any]`
 - `Set.none?(x) { }`
 - `Set.partition(x) { }`
 - `Set.proper_subset?(x, Set)`
@@ -474,18 +487,23 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Set.superset?(x, Set)`
 - `Set.to_a(x)`
 - `Set.union(x, Set)`
+- `Set.|(x, Any)`
 
 ## String
 
-- `String.!=(x, String)`
+- `String.!=(x, Any)`
+- `String.!~(x, Any)`
+- `String.%(x, Any)`
 - `String.*(x, Integer)`
-- `String.+(x, String)`
-- `String.<(x, String)`
-- `String.<=(x, String)`
-- `String.==(x, String)`
-- `String.>(x, String)`
-- `String.>=(x, String)`
-- `String[*Any]`
+- `String.+(x, Any)`
+- `String.<(x, Any)`
+- `String.<=(x, Any)`
+- `String.<=>(x, Any)`
+- `String.==(x, Any)`
+- `String.=~(x, Any)`
+- `String.>(x, Any)`
+- `String.>=(x, Any)`
+- `String.[](x, Any)`
 - `String.ascii_only?(x)`
 - `String.between?(x, String, String)`
 - `String.bytes(x)`
@@ -522,6 +540,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.lstrip(x)`
 - `String.match(x, String|Regexp)`
 - `String.match?(x, String|Regexp)`
+- `String[*Any]`
 - `String.next(x)`
 - `String.oct(x)`
 - `String.ord(x)`
@@ -553,6 +572,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Symbol
 
+- `Symbol.!=(x, Any)`
+- `Symbol.==(x, Any)`
 - `Symbol.capitalize(x)`
 - `Symbol.casecmp?(x, Symbol)`
 - `Symbol.downcase(x)`
@@ -569,6 +590,15 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Time
 
+- `Time.!=(x, Any)`
+- `Time.+(x, Any)`
+- `Time.-(x, Any)`
+- `Time.<(x, Any)`
+- `Time.<=(x, Any)`
+- `Time.<=>(x, Any)`
+- `Time.==(x, Any)`
+- `Time.>(x, Any)`
+- `Time.>=(x, Any)`
 - `Time.at(Integer|Float|Rational)`
 - `Time.ceil(x, [Integer])`
 - `Time.day(x)`
@@ -606,8 +636,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Tuple
 
-- `Tuple[*Any]`
+- `Tuple.!=(x, Any)`
+- `Tuple.==(x, Any)`
+- `Tuple.[](x, Any)`
+- `Tuple.[]=(x, Any, Any)`
 - `Tuple.length(x)`
+- `Tuple[*Any]`
 - `Tuple.size(x)`
 - `Tuple.to_a(x)`
 

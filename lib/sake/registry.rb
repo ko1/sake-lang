@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
 module Sake
+  # The internal name of a constructor written `T[...]`; it cannot clash with `[]`, the index operation.
+  CTOR = "new[]"
+
   # A built-in operation `Namespace.name`. Each param is a type name, "Any", or an Array of type names.
   Builtin = Struct.new(:namespace, :name, :params, :optional, :rest, :block, :impl, keyword_init: true) do
-    def full_name = name == "[]" && namespace != "Index" ? "#{namespace}[]" : "#{namespace}.#{name}"
+    def full_name = name == CTOR ? "#{namespace}[]" : "#{namespace}.#{name}"
     def min_arity = params.size
     def max_arity = rest ? Float::INFINITY : params.size + optional.size
 

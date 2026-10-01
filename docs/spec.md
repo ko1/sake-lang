@@ -267,8 +267,33 @@ function.
 
 ### 8.1 Binary operators
 
-`a OP b` means `BinaryOp.OP(a, b)`. The result type depends on the operand types, through a
-**closed table**:
+An operator dispatches on the type of its **left operand**: `a OP b` runs `T.OP(a, b)`, where `T` is
+the type of `a`. Each operator belongs to a module, and `a OP b` is shorthand for calling the
+operator through that module ([§5.5](#55-calling-a-modules-functions-module_function-and-dispatch)):
+
+| Module | Operators | Built-in types that include it |
+|---|---|---|
+| `Arithmetic` | `+ - * / % **` | Integer, Float, Rational, Complex, String, Time, Set |
+| `Comparable` | `<=> < <= > >=` | Integer, Float, Rational, String, Time |
+| `Bitwise` | `& \| ^ << >>` | Integer, Set |
+| `Indexable` | `[]`, `[]=` ([§8.2](#82-indexing)) | Array, Hash, String, Tuple, MatchData |
+| `Kernel` | `== != =~ !~` | every type |
+
+- **Your own types.** A Struct type joins an operator by including the module and defining the
+  operator in its class, such as `include Arithmetic` with `def +(a, b)`. With `include Comparable`,
+  defining `<=>` is enough: `<`, `<=`, `>`, and `>=` come from it, and `Array.sort`, `min`, and `max`
+  use it too.
+- **Equality.** `==` on Struct values compares the type and the fields, as Ruby's Struct does,
+  unless the type defines its own `==`. `Array.include?`, `index`, and similar operations use the
+  same equality.
+- **Explicit forms.** `Arithmetic.+(a, b)` dispatches the same way. `Integer.+(a, b)` calls
+  Integer's `+` directly; it requires `a` to be an Integer, and `b` may be any type that Integer's
+  `+` accepts.
+- **Errors.** Using an operator whose module the left operand's type does not include, or does not
+  define, is a `type` problem before running and a `TypeError` while running.
+
+For the built-in types, the result type depends on both operand types, through a **closed
+table**:
 
 | Operator | Rows |
 |---|---|
@@ -290,19 +315,15 @@ function.
   `a ** b` does not depend on the value of `b`. Write `2r ** -1` for a Rational.
 - **Complex.** A Complex has no ordering, so `<` and the like are not defined for it.
 - **Time.** `Time ± number` gives a Time; `Time - Time` gives a Float of seconds; two Times compare.
-- **Equality of compound values.** `==` between Tuples, Arrays, or Struct values is not defined yet.
-  Only comparison with `nil` is defined for them.
+- **Equality of Tuples and Arrays.** `==` between Tuples or Arrays is not defined yet.
 - **Compound assignment.** `x OP= e` means `x = x OP e`.
-- **Typed form.** `Integer.+(a, b)`, `Float.*(a, b)`, `String.+(a, b)`, and so on name the type
-  explicitly. Both operands must then have that type. The exception is `String.*(s, n)`, which
-  takes `(String, Integer)`.
-- **Not operators.** `&&` and `||` short-circuit and return one of their operands, as in Ruby. They
-  are not entries in `BinaryOp`.
+- **Not operators.** `&&` and `||` short-circuit and return one of their operands, as in Ruby.
 
 ### 8.2 Indexing
 
-`x[k]` means `Index.[](x, k)`, and `x[k] = v` means `Index.[]=(x, k, v)`. Like `BinaryOp`, `Index`
-has a closed table:
+`x[k]` means `Indexable.[](x, k)`, and `x[k] = v` means `Indexable.[]=(x, k, v)`: they run the
+`[]` and `[]=` of `x`'s type. A Struct type joins with `include Indexable` and `def [](x, k)` /
+`def []=(x, k, v)`. The built-in types behave as follows:
 
 | Receiver, index | `x[k]` | `x[k] = v` |
 |---|---|---|
@@ -605,7 +626,7 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 
 | Kind | Raised by |
 |---|---|
-| `TypeError` | an operation received a value of the wrong type; a `BinaryOp` row is missing; a typed Array write; multiple assignment from a non-Tuple |
+| `TypeError` | an operation received a value of the wrong type; an operator not supported by the left operand's type; a typed Array write; multiple assignment from a non-Tuple |
 | `IndexError` | a Tuple index outside the Tuple; `Array.fetch` outside the Array; writing past the end of an Array of T |
 | `ArgumentError` | Tuple size mismatch in multiple assignment; block parameter count; negative sizes; comparing incomparable values in `sort` |
 | `ZeroDivisionError` | Integer `/` or `%` by zero |

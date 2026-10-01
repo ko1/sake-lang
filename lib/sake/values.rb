@@ -70,6 +70,14 @@ module Sake
 
     def to_s = Values.to_s(self) # for Ruby methods such as format
 
+    # Used by Ruby methods (include?, sort, ...): the type's own == and <=> when the interpreter runs.
+    def ==(other)
+      hook = Thread.current[:sake_struct_ops]
+      hook ? hook.call(:==, self, other) : other.is_a?(StructValue) && other.type.equal?(type) && other.values == values
+    end
+
+    def <=>(other) = Thread.current[:sake_struct_ops]&.call(:<=>, self, other)
+
     def initialize(type, values)
       @type = type
       @values = values

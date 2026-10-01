@@ -15,11 +15,11 @@ module Recorder
 
   def call_builtin(fn, args, blk, node)
     # Arguments of the untyped constructors (Array[], Hash[], Set[]) and of Index.[] / []= are "Any": nothing is checked.
-    unless %w[Array[] Hash[] Set[]].include?(fn.full_name) || fn.namespace == "Index"
+    unless %w[Array[] Hash[] Set[]].include?(fn.full_name) || %w[[] []=].include?(fn.name)
       args.each_with_index do |a, i|
-        next if fn.name != "[]" && fn.param_type(i) == "Any" # nothing to check (also internal setters of `@x = v`)
+        next if fn.name != Sake::CTOR && fn.param_type(i) == "Any" # nothing to check (also internal setters of `@x = v`)
         # `T[...]` checks each element; the typer records those as arg "elem".
-        arg = fn.name == "[]" ? "elem" : i + 1
+        arg = fn.name == Sake::CTOR ? "elem" : i + 1
         key = [node.location.start_line, node.location.start_column, fn.full_name, arg]
         (observed[key] ||= Set.new) << [Sake::Values.type_of(a)]
       end
@@ -31,7 +31,7 @@ module Recorder
   end
 
   def binary_op(node, op, a, b)
-    key = [node.location.start_line, node.location.start_column, "BinaryOp.#{op}", "pair"]
+    key = [node.location.start_line, node.location.start_column, "#{Sake::Operators::MODULE_OF[op.to_s]}.#{op}", "pair"]
     (observed[key] ||= Set.new) << [Sake::Values.type_of(a), Sake::Values.type_of(b)]
     super
   end

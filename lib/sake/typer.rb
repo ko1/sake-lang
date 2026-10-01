@@ -263,14 +263,17 @@ module Sake
         next [c, "rescue"] if c.op == "rescue"
         next [c, "unrescued"] if c.op == "raise"
         next [c, "type"] if c.verdict == :error
-        parts = c.failing.map { |f| c.op.start_with?("BinaryOp.") ? f : [f] }
+        parts = c.failing.map { |f| operand_pair?(c) ? f : [f] }
         next [c, "type"] unless parts.all? { |p| p.any? { nil_atom?(_1) } }
         [c, parts.any? { |p| p.include?("Nil") } ? "nil" : "index-nil"]
       end
     end
 
+    # A check of an operator's two operands, whose failing entries are [left, right] pairs.
+    def operand_pair?(c) = c.arg == "pair" && !c.op.start_with?("Indexable.")
+
     def show_failing(c)
-      return c.failing.map { |x, y| "(#{show([x])}, #{show([y])})" }.uniq.join(", ") if c.op.start_with?("BinaryOp.")
+      return c.failing.map { |x, y| "(#{show([x])}, #{show([y])})" }.uniq.join(", ") if operand_pair?(c)
       c.failing.map { show([_1]) }.uniq.join(" | ")
     end
 
@@ -591,22 +594,15 @@ module Sake
     def call(node, env)
       target = target_of(node, env)
       return typer_raise(node, env) if target == :raise
-      if target == :binary_op
-        return binop(node, node.name.to_s, ev(node.receiver, env), ev(node.arguments.arguments.first, env))
-      end
-
-      if target.is_a?(IndexCall)
-        keys = node.arguments.arguments
-        recv = ev(node.receiver, env)
-        args = keys.map { ev(_1, env) }
-        return index_get(node, recv, args[0], keys[0]) if target.builtin.name == "[]"
-        return index_set(node, recv, args[0], keys[0], args[1])
-      end
-      if target.is_a?(Builtin) && target.namespace == "Index"
-        keys = node.arguments.arguments
-        args = keys.map { ev(_1, env) }
-        return index_get(node, args[0], args[1], keys[1]) if target.name == "[]"
-        return index_set(node, args[0], args[1], keys[1], args[2])
+      if target.is_a?(Operators::Call) || (target.is_a?(Builtin) && %w[[] []=].include?(target.name))
+        explicit = node.receiver.is_a?(Prism::ConstantReadNode)
+        nodes = explicit ? node.arguments.arguments : [node.receiver, *node.arguments.arguments]
+        xs = nodes.map { ev(_1, env) }
+        op = target.is_a?(Builtin) ? target.name : target.op
+        if !target.is_a?(Builtin) && target.module != "Indexable"
+          return binop(node, op, xs[0], xs[1])
+        end
+        return op == "[]" ? index_get(node, xs[0], xs[1], nodes[1]) : index_set(node, xs[0], xs[1], nodes[1], xs[2])
       end
 
       args = (node.arguments&.arguments || []).map { ev(_1, env) }
@@ -778,6 +774,11 @@ module Sake
       results = []
       failing = []
       recv.each do |a|
+        if struct_atom?(a)
+          fn = Operators.includes?(@program.includes || {}, a, "Indexable") && @program.functions.dig(a, "[]")
+          fn ? results << call_user(fn, [[a].freeze, key], nil) : failing << a
+          next
+        end
         if (ext = index_get_ext(node, a, key))
           results << ext
           next
@@ -801,7 +802,7 @@ module Sake
         end
       end
       verdict = failing.empty? ? :proven : (failing.size == recv.size ? :error : :partial)
-      add_check(node, "Index.[]", "pair", "(Array|String|Tuple, Integer)", recv, verdict, failing)
+      add_check(node, "Indexable.[]", "pair", "(Array|String|Tuple, Integer)", recv, verdict, failing)
       u(*results)
     end
 
@@ -809,28 +810,55 @@ module Sake
       return [] if recv.empty? || key.empty? || val.empty?
       lit = key_node.is_a?(Prism::IntegerNode) ? key_node.value : nil
       recv.each do |a|
+        if struct_atom?(a) && Operators.includes?(@program.includes || {}, a, "Indexable") && (fn = @program.functions.dig(a, "[]="))
+          call_user(fn, [[a].freeze, key, val], nil)
+          next
+        end
         next unless a.is_a?(Array)
         if a[0] == :hash
           s = hash_sites[a[1]]
           s.key = u(s.key, key)
           s.val = u(s.val, val)
         elsif a[0] == :array
-          write_elems([a], [val], node, "Index.[]=")
+          write_elems([a], [val], node, "Indexable.[]=")
         elsif a[0] == :tuple
           want = lit && (-a[1].size...a[1].size).cover?(lit) ? a[1][lit] : u(*a[1])
-          record(node, "Index.[]=", "value", want.map { atom_type_name(_1) }, val)
+          record(node, "Indexable.[]=", "value", want.map { atom_type_name(_1) }, val)
         end
       end
-      bad = recv.reject { |a| a.is_a?(Array) && %i[array tuple hash].include?(a[0]) }
+      bad = recv.reject do |a|
+        (a.is_a?(Array) && %i[array tuple hash].include?(a[0])) ||
+          (struct_atom?(a) && Operators.includes?(@program.includes || {}, a, "Indexable") && @program.functions.dig(a, "[]="))
+      end
       verdict = unknown?(recv) ? :unknown : (bad.empty? ? :proven : (bad.size == recv.size ? :error : :partial))
-      add_check(node, "Index.[]=", "pair", "(Array|Tuple, Integer)", recv, verdict, bad)
+      add_check(node, "Indexable.[]=", "pair", "(Array|Tuple, Integer)", recv, verdict, bad)
       val
     end
 
+    def op_name(op) = "#{Operators::MODULE_OF.fetch(op)}.#{op}"
+
+    def struct_atom?(a) = a.is_a?(String) && @program.struct_types.key?(a)
+
+    # The result of a Struct type's own operator (or nil when the type cannot do op).
+    def user_op_result(op, x, b)
+      return t("Boolean") if %w[== !=].include?(op)
+      mod = Operators::MODULE_OF.fetch(op)
+      return nil unless Operators.includes?(@program.includes || {}, x, mod)
+      if (fn = @program.functions.dig(x, op))
+        return call_user(fn, [[x].freeze, b], nil)
+      end
+      if mod == "Comparable" && (cmp = @program.functions.dig(x, "<=>"))
+        call_user(cmp, [[x].freeze, b], nil)
+        return t("Boolean")
+      end
+      nil
+    end
+
     def binop(node, op, a, b)
+      op = op.to_s
       return [] if a.empty? || b.empty?
       if unknown?(a) || unknown?(b)
-        add_check(node, "BinaryOp.#{op}", "pair", "table row", u(a, b), :unknown)
+        add_check(node, op_name(op), "pair", "table row", u(a, b), :unknown)
         return unknown("operand")
       end
       rows = @registry.binary_ops[op]
@@ -838,7 +866,15 @@ module Sake
       hits = 0
       pairs = a.product(b)
       failing = []
-      pairs.each do |x, y|
+      a.select { struct_atom?(_1) }.each do |x|
+        if (r = user_op_result(op, x, b))
+          hits += b.size
+          results << r
+        else
+          b.each { |y| failing << [x, y] }
+        end
+      end
+      pairs.reject { |x, _| struct_atom?(x) }.each do |x, y|
         key = [x, y].map { atom_type_name(_1) }
         if %w[== !=].include?(op) && key.include?("Nil")
           hits += 1
@@ -854,12 +890,13 @@ module Sake
       end
       verdict = hits == pairs.size ? :proven : (hits.zero? ? :error : :partial)
       actual = pairs.map { |x, y| tuple([[x].freeze, [y].freeze]) }
-      add_check(node, "BinaryOp.#{op}", "pair", "table row", u(*actual), verdict, failing)
+      add_check(node, op_name(op), "pair", "table row", u(*actual), verdict, failing)
       u(*results)
     end
 
     # Result types of the BinaryOp rows (Ruby's numeric tower).
     def binop_result(op, t1, t2)
+      return u(t("Integer"), t("Nil")) if op == "<=>"
       return t("Boolean") if COMPARE_OPS.include?(op) || op == "!~"
       return u(t("Integer"), t("Nil")) if op == "=~"
       return t("String") if t1 == "String"
@@ -878,21 +915,20 @@ module Sake
 
       ns = fn.namespace
       name = fn.name
-      if (dt = @program.struct_types[ns]) && name != "[]"
+      if (dt = @program.struct_types[ns]) && name != CTOR
         return data_op(dt, name, args, node)
       end
       if (r = constructor_ext(ns, name, args, node))
         return r
       end
-      if name == "[]"
+      if name == CTOR
         if ns == "Array"
           return site_for(node, init: u(*args))
         end
         return site_for(node, declared: ns).tap { |ty| write_elems(ty, args, node, "#{ns}[]") }
       end
-      if %w[Integer Float String].include?(ns) && @registry.binary_ops[name]&.any?
-        return binop_result(name, *fn.params) if fn.params.size == 2 && fn.params.all? { _1.is_a?(String) }
-      end
+      # `Integer.+(a, b)`: the operator rows whose left operand is the type.
+      return binop(node, name, args[0], args[1]) if @registry.binary_ops.key?(name) && fn.params.size == 2 && fn.params[1] == "Any"
       builtin_result(fn.full_name, args, blk, node)
     end
 

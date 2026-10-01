@@ -94,8 +94,8 @@ running.
 - **Values**: Integer, Float, Rational, Complex, String, Symbol, true/false, nil, Tuple `[a, b]`,
   Record `{x: 1}`, Array, Hash, Set, Range, Regexp, and Time.
 - **Named types**: `Struct.new` types, and exception types made with `Exception.new`.
-- **Operators**: `a + b` means `BinaryOp.+(a, b)`, and `a[i]` means `Index.[](a, i)`. Both look up
-  a closed table.
+- **Operators**: `a + b` runs the `+` of `a`'s type, and `a[i]` its `[]`. Your own types join by
+  including `Arithmetic`, `Comparable`, `Bitwise`, or `Indexable`.
 - **Functions and blocks**: functions are polymorphic and take no annotations. Blocks are passed
   with `yield`.
 - **Modules**: `module` with `include` works like Ruby's modules, resolved statically. There is no
