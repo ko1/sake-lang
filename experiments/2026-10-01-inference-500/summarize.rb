@@ -3,12 +3,16 @@
 # Summarizes the outputs of run.sh into Markdown.
 # usage: ruby summarize.rb OUTDIR   (reads sake.jsonl, typeprof.jsonl, strict.tsv; prints Markdown)
 require "json"
+require "zlib"
 
 dir = ARGV.fetch(0)
 CLASSES = %w[mono nilable union partial unknown none].freeze
 UNITS = %w[expr.var expr.call sig.param sig.ret sig.field].freeze
 
-def load(path) = File.exist?(path) ? File.readlines(path).map { JSON.parse(_1) } : []
+def load(path)
+  return Zlib::GzipReader.open("#{path}.gz") { |z| z.readlines.map { JSON.parse(_1) } } if File.exist?("#{path}.gz")
+  File.exist?(path) ? File.readlines(path).map { JSON.parse(_1) } : []
+end
 def domain(path) = File.basename(File.dirname(path))
 def pct(n, d) = d.zero? ? "-" : format("%.1f%%", 100.0 * n / d)
 
