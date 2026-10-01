@@ -17,6 +17,7 @@ module Sake
                                              + rescue     a rescue clause for an exception never raised
                                           2  + nil        a value that may be nil is used unchecked
                                           3  + index-nil  the result of x[k] is used unchecked
+                                             + exhaustive a case/in may get a value no branch takes
                                           4  + unrescued  a raise that may reach the top level
                          --strict=type,nil          exactly these items
                          --strict=2,index-nil       level 2 plus an item; `-item` removes one
@@ -26,9 +27,9 @@ module Sake
       exit status: 0 = ok, 1 = runtime error, 2 = problem found before running
     TEXT
 
-    STRICT_ITEMS = %w[type rescue nil index-nil unrescued].freeze
-    STRICT_LEVELS = [[], %w[type rescue], %w[type rescue nil], %w[type rescue nil index-nil],
-                     %w[type rescue nil index-nil unrescued]].freeze
+    STRICT_ITEMS = %w[type rescue nil index-nil exhaustive unrescued].freeze
+    STRICT_LEVELS = [[], %w[type rescue], %w[type rescue nil], %w[type rescue nil index-nil exhaustive],
+                     %w[type rescue nil index-nil exhaustive unrescued]].freeze
     DEFAULT_LEVEL = 1
     RECOMMENDED_LEVEL = 2
 
@@ -100,6 +101,8 @@ module Sake
         ["#{c.op}: the operand #{maybe.sub("are", "is")}#{typer.show_failing(c)}, which has no #{op}; defined for #{c.expected.split("|").join(", ")}", []]
       when ->(_) { c.arg == "elements" }
         ["#{c.op}: elements compared in order #{maybe}#{typer.show_failing(c)}, which cannot be compared", []]
+      when ->(op) { op == "case/in" && c.arg == "value" }
+        ["case/in: no `in` branch matches some values of #{typer.show_failing(c)}", ["add an `else`, or `in` branches for the other values"]]
       when "case/in"
         ["case/in: no `in` branch matches #{typer.show_failing(c)}", ["add an `in` branch for it, or an `else`"]]
       when "pattern"
@@ -129,7 +132,7 @@ module Sake
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item
-          when "type" then type_message(c, what, typer, program)
+          when "type", "exhaustive" then type_message(c, what, typer, program)
           when "rescue"
             ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]
           when "unrescued"

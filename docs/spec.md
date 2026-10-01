@@ -46,7 +46,7 @@ whole-program type inference; whatever is not reported is still checked while ru
 | 0 | `--strict=0` | (none) | syntax, names, argument counts, blocks, calls on values, forbidden syntax, literal types in `T[...]` (always checked) |
 | 1 | default | `type`, `rescue` | a value whose type, other than nil, does not fit (`"" + 1`, or `pick() + 1` where `pick` returns 1 or ""); a `rescue` of an exception the begin body never raises |
 | 2 | `--strict` | `type`, `rescue`, `nil` | also a value that may be nil, used without a check (except results of `x[k]`) |
-| 3 | `--strict=3` | `type`, `rescue`, `nil`, `index-nil` | also the result of `x[k]`, which is nil on a miss, used without a check |
+| 3 | `--strict=3` | `type`, `rescue`, `nil`, `index-nil`, `exhaustive` | also the result of `x[k]`, which is nil on a miss, used without a check; a `case`/`in` that may get a value of an open type (String, Integer, a Symbol not written as a literal, ...) that no literal branch takes |
 | 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued |
 
 - **Naming items.** `--strict=type,nil` selects exactly these items. `--strict=2,index-nil` adds an
@@ -420,8 +420,12 @@ the first branch whose pattern matches. If no branch matches and there is no `el
 - **Narrowing.** In `if x in Integer`, and in each `in` branch of `case x`, a local `x` is narrowed
   to the matching types. The `else` branch, and each later branch, sees the types that are left.
   This is how a union such as `Integer | String` is used without a `type` report.
-- **Exhaustiveness.** A `case` without `else` that may leave a type unmatched is reported as
-  `type` ([§2.1](#21-strictness)). The set of types is closed, so this can be checked.
+- **Exhaustiveness.** A `case` without `else` that may leave a **type** unmatched is reported as
+  `type` ([§2.1](#21-strictness)): the set of types is closed, so this can be checked. Symbol
+  literals are tracked as values, so `case op in :add ... in :sub` is complete when `op` only ever
+  holds those literals. When literal branches may leave some **values** of an open type (some
+  String, Integer, or a Symbol made at run time), the report is the `exhaustive` item (level 3):
+  the program may well be correct, and `NoMatchingPatternError` still stops it if not.
 - **Parentheses.** As in Ruby, `x in P` must be in parentheses when it is an argument:
   `p((x in Integer))`.
 

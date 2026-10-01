@@ -76,7 +76,17 @@ module Sake
       merged = tuples.group_by { _1[1].size }.map do |_, ts|
         [:tuple, ts.map { _1[1] }.transpose.map { |es| union(*es) }]
       end
-      (rest + merged).uniq.sort_by(&:inspect).freeze
+      (normalize_symbols(rest) + merged).uniq.sort_by(&:inspect).freeze
+    end
+
+    MAX_SYMBOLS = 32
+
+    # A Symbol literal is the atom [:sym, name]; "Symbol" (any Symbol) covers them, and too many become it.
+    def self.normalize_symbols(atoms)
+      syms = atoms.select { _1.is_a?(Array) && _1[0] == :sym }
+      return atoms if syms.empty?
+      return atoms - syms if atoms.include?("Symbol")
+      syms.size > MAX_SYMBOLS ? atoms - syms + ["Symbol"] : atoms
     end
 
     def u(*tys) = Typer.union(*tys)
@@ -127,6 +137,7 @@ module Sake
       when :range then "Range"
       when :hash then "Hash"
       when :set then "Set"
+      when :sym then "Symbol"
       else "?"
       end
     end
@@ -162,6 +173,7 @@ module Sake
           s = set_sites[a[1]]
           seen[a] ? "Set@#{s.label}" : "Set@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
         when :pairs then "pairs"
+        when :sym then ":#{a[1]}"
         end
       end
     end
@@ -250,6 +262,7 @@ module Sake
         next if %i[proven unknown].include?(c.verdict)
         next [c, "rescue"] if c.op == "rescue"
         next [c, "unrescued"] if c.op == "raise"
+        next [c, "exhaustive"] if c.op == "case/in" && c.arg == "value"
         next [c, "type"] if c.verdict == :error
         parts = c.failing.map { |f| operand_pair?(c) ? f : [f] }
         next [c, "type"] unless parts.all? { |p| p.any? { nil_atom?(_1) } }

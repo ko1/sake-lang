@@ -1,7 +1,7 @@
 # usage: ruby tools/features.rb TIMEOUT_LIST CORPUS_GLOB  -> features.tsv (one row per program)
 # Static (Prism) features of each program. "mp_calls" = calls whose block has >= 2 positional params.
 require "prism"; require "json"
-timeouts = File.readlines(ARGV[0], chomp: true).map { File.basename(_1) }.to_h { [_1, true] }
+timeouts = File.readlines(ARGV[0], chomp: true).map { _1.sub(%r{.*corpus/}, "") }.to_h { [_1, true] }
 class V < Prism::Visitor
   attr_reader :f, :mp
   def initialize; @f = Hash.new(0); @mp = Hash.new(0); @defs = []; @depth = 0; super; end
@@ -49,5 +49,5 @@ puts (["timeout", "path"] + cols + ["mp_methods"]).join("\t")
 Dir[ARGV[1]].sort.each do |path|
   src = File.read(path); v = V.new; Prism.parse(src).value.accept(v)
   v.f[:loc] = src.lines.count { _1 !~ /\A\s*(#|$)/ }
-  puts ([timeouts[File.basename(path)] ? 1 : 0, path.sub(%r{.*corpus/}, "")] + cols.map { v.f[_1] } + [v.mp.map { "#{_1}:#{_2}" }.join(",")]).join("\t")
+  puts ([timeouts[path.sub(%r{.*corpus/}, "")] ? 1 : 0, path.sub(%r{.*corpus/}, "")] + cols.map { v.f[_1] } + [v.mp.map { "#{_1}:#{_2}" }.join(",")]).join("\t")
 end

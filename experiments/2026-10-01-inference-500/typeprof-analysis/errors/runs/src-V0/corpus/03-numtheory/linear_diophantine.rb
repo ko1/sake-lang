@@ -1,0 +1,110 @@
+# Extended Euclid, Bezout coefficients, and solving a*x + b*y = c,
+# including non-negative solutions for coin/stamp style problems.
+
+class NoSolution < StandardError
+  attr_reader :a, :b, :c
+
+  def initialize(message, a, b, c)
+    super(message)
+    @a = a
+    @b = b
+    @c = c
+  end
+end
+
+class Step
+  attr_reader :q, :r, :s, :t
+
+  def initialize(q, r, s, t)
+    @q = q
+    @r = r
+    @s = s
+    @t = t
+  end
+end
+
+def ext_gcd(a, b)
+  old_r, r = a, b
+  old_s, s = 1, 0
+  old_t, t = 0, 1
+  steps = []
+  while r != 0
+    q = old_r / r
+    old_r, r = r, old_r - q * r
+    old_s, s = s, old_s - q * s
+    old_t, t = t, old_t - q * t
+    steps << Step.new(q, r, s, t)
+  end
+  { g: old_r, x: old_s, y: old_t, steps: steps }
+end
+
+def solve(a, b, c)
+  ext_gcd(a, b) => { g:, x:, y: }
+  raise NoSolution.new("#{g} does not divide #{c}", a, b, c) if c % g != 0
+  k = c / g
+  { x0: x * k, y0: y * k, dx: b / g, dy: a / g }
+end
+
+# smallest x >= 0 in the family x0 + n*dx, with the matching y
+def smallest_nonneg(sol)
+  sol => { x0:, y0:, dx:, dy: }
+  n = -x0 / dx
+  n += 1 if x0 + n * dx < 0
+  n -= 1 while x0 + (n - 1) * dx >= 0
+  [x0 + n * dx, y0 - n * dy]
+end
+
+def nonneg_solutions(a, b, c)
+  x, y = smallest_nonneg(solve(a, b, c))
+  g = a.gcd(b)
+  dx = b / g
+  dy = a / g
+  out = []
+  while y >= 0
+    out << [x, y]
+    x += dx
+    y -= dy
+  end
+  out
+end
+
+def frobenius(a, b) = a * b - a - b
+
+puts "== extended Euclid =="
+[[240, 46], [1071, 462], [17, 5], [99, 78]].each do |a, b|
+  r = ext_gcd(a, b)
+  g, x, y = r[:g], r[:x], r[:y]
+  qs = r[:steps].map(&:q)
+  puts "gcd(#{a}, #{b}) = #{g} = #{a}*(#{x}) + #{b}*(#{y})  quotients #{qs}"
+  raise "Bezout check failed" if a * x + b * y != g
+end
+
+puts "== lcm of 1..n =="
+acc = 1
+(1..20).each do |n|
+  acc = acc.lcm(n)
+  puts "  lcm(1..#{n}) = #{acc}" if n % 4 == 0
+end
+
+puts "== a*x + b*y = c =="
+problems = [[12, 18, 30], [12, 18, 31], [7, 11, 100], [35, 15, 5], [6, 10, 7]]
+problems.each do |a, b, c|
+  sol = solve(a, b, c)
+  puts "#{a}x + #{b}y = #{c}: x = #{sol[:x0]} + #{sol[:dx]}n, y = #{sol[:y0]} - #{sol[:dy]}n"
+rescue NoSolution => e
+  puts "#{e.a}x + #{e.b}y = #{e.c}: no solution (#{e.message})"
+end
+
+puts "== stamps of 5 and 7 cents =="
+[24, 35, 23, 74].each do |amount|
+  ways = nonneg_solutions(5, 7, amount)
+  if ways.empty?
+    puts "  #{amount}: impossible"
+  else
+    puts "  #{amount}: #{ways.map { |x, y| "#{x}x5+#{y}x7" }.join(", ")}"
+  end
+end
+f = frobenius(5, 7)
+puts "largest impossible amount: #{f}"
+unreachable = (1..f).select { |n| nonneg_solutions(5, 7, n).empty? }
+puts "unreachable count: #{unreachable.size} = (5-1)(7-1)/2 = #{(5 - 1) * (7 - 1) / 2}"

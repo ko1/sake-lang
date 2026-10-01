@@ -10,6 +10,7 @@ require_relative "rewrite"
 
 EXP = File.expand_path("../..", __dir__)
 TYPEPROF = Gem.bin_path("typeprof", "typeprof")
+TPLOCK = File.join(__dir__, "runs/.tplock") # every typeprof process (driver and ad-hoc probes) takes this lock
 VARIANTS = {
   "V0" => [[], []],                                                     # harness check: must equal results-head
   "V1" => [%w[interface], []],
@@ -38,7 +39,7 @@ progs.each_with_index do |path, i|
   FileUtils.mkdir_p(File.dirname(file))
   File.write(file, src)
   t = Time.now
-  o, e, st = Open3.capture3("timeout", "120", RbConfig.ruby, *reqs, TYPEPROF, "--show-errors", file, rlimit_as: 3 * 1024**3)
+  o, e, st = Open3.capture3("flock", TPLOCK, "timeout", "120", RbConfig.ruby, *reqs, TYPEPROF, "--show-errors", file, rlimit_as: 3 * 1024**3)
   rec = { path:, sec: (Time.now - t).round(2), rewrites: stats }
   if st.success?
     rec[:errors] = o.lines.grep(/^# \(\d+,\d+\)-/).map { _1.delete_prefix("# ").chomp }

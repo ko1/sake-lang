@@ -45,7 +45,7 @@ module Sake
 
     def ev(n, env)
       case n
-      when Lit then t(LIT_TYPES.fetch(n.value.class))
+      when Lit then n.value.is_a?(Symbol) ? [[:sym, n.value.to_s]].freeze : t(LIT_TYPES.fetch(n.value.class))
       when Str then t("String")
       when Seq
         r = t("Nil")
@@ -268,7 +268,11 @@ module Sake
       when PValue
         v = pat.value
         return ty.partition { nil_atom?(_1) } if v.is_a?(Lit) && v.value.nil?
-        # A literal: values of its type may match, but may also differ, so nothing is ruled out.
+        # A Symbol literal decides a Symbol-literal atom exactly; other literals rule nothing out.
+        if v.is_a?(Lit) && v.value.is_a?(Symbol)
+          exact = [:sym, v.value.to_s]
+          return [ty.select { _1 == exact || _1 == "Symbol" }, ty - [exact]]
+        end
         lit = v.is_a?(Str) ? "String" : LIT_TYPES.fetch(v.value.class)
         [ty.select { atom_type_name(_1) == lit }, ty]
       end
@@ -308,7 +312,17 @@ module Sake
         results << ev(n.else_, e)
         envs << e
       elsif !remaining.empty? && !unknown?(v)
-        add_check(n.origin, "case/in", "branch", "a matching `in` branch", v, remaining.size == v.size ? :error : :partial, remaining)
+        # Values a literal pattern may leave (some String, any Symbol not written as a literal) are not
+        # a type problem: the type's set of values is open. Both true and false cover Boolean.
+        lits = n.clauses.filter_map { |pat, _| pat.is_a?(PValue) && pat.value.is_a?(Lit) ? pat.value.value : nil }
+        lits += n.clauses.filter_map { |pat, _| pat.is_a?(PValue) && pat.value.is_a?(Str) ? "" : nil }
+        remaining -= ["Boolean"] if lits.include?(true) && lits.include?(false)
+        lit_types = lits.map { LIT_TYPES.fetch(_1.class) { "String" } }
+        open, closed = remaining.partition { _1.is_a?(String) && lit_types.include?(atom_type_name(_1)) }
+        unless closed.empty?
+          add_check(n.origin, "case/in", "branch", "a matching `in` branch", v, closed.size == v.size ? :error : :partial, closed)
+        end
+        add_check(n.origin, "case/in", "value", "a matching `in` branch", v, :partial, open) unless open.empty?
       end
       join_many(env, envs) unless envs.empty?
       u(*results)

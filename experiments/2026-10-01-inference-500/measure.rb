@@ -83,6 +83,7 @@ module Measure
     when :set then [:set, structural(set_sites.fetch(a[1]).elem, seen)]
     when :range then [:range, structural(a[1], seen)]
     when :unknown then [:unknown]
+    when :sym then "Symbol" # a Symbol literal is a Symbol
     else [a[0]]
     end
   end
