@@ -464,6 +464,7 @@ Option wrapper.
   | `if x` / `while x` / `x && …` | non-nil in the branch taken when `x` is truthy |
   | `x != nil` / `x == nil` | nil or non-nil in the matching branch |
   | `return unless x`, `next unless x`, `break unless x`, and other early exits | non-nil after the statement |
+  | `String.size(x)`, or any built-in operation taking `x` as an argument | after the call, a type that the operation accepts (it checks its arguments while running) |
 
   Field reads (`Node.get_next(n)`) are **not** narrowed, because fields are mutable. Copy the field
   into a local variable first, then test the local.

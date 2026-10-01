@@ -572,12 +572,6 @@ puts(length(Point.new(3, 4)))
 $ sake data_runtime_error.sake
 data_runtime_error.sake:5:20: error: Line.get_to: argument 1 must be Line, but is Point [type]
   hint: reached by the call at line 11
-data_runtime_error.sake:5:50: error: Line.get_from: argument 1 must be Line, but is Point [type]
-  hint: reached by the call at line 11
-data_runtime_error.sake:6:20: error: Line.get_to: argument 1 must be Line, but is Point [type]
-  hint: reached by the call at line 11
-data_runtime_error.sake:6:50: error: Line.get_from: argument 1 must be Line, but is Point [type]
-  hint: reached by the call at line 11
 (exit status 2)
 ```
 

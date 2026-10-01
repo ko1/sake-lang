@@ -162,7 +162,7 @@ module Sake
     # seen: the sites being shown; a site inside itself (a recursive structure) is shown by its label only.
     def show(ty, seen = {})
       return "(none)" if ty.empty?
-      ty.map { show_atom(_1, seen) }.join(" | ")
+      ty.map { show_atom(_1, seen) }.uniq.join(" | ")
     end
 
     def show_atom(a, seen = {})
@@ -638,7 +638,22 @@ module Sake
       when Builtin
         r = call_builtin(target, args, blk, node)
         (@results ||= {}.compare_by_identity)[node] = u((@results[node] || []), r) # for crosscheck
+        narrow_by_call(env, node, args.each_index.map { target.param_type(_1) }) unless target.name == CTOR
         r
+      end
+    end
+
+    # A built-in checks its arguments at run time, so after it returns, a local variable passed to it
+    # holds a type it accepts (none, when the call always fails).
+    def narrow_by_call(env, node, wants)
+      return unless @narrow
+      (node.arguments&.arguments || []).each_with_index do |arg, i|
+        want = wants[i]
+        next if want.nil? || want == "Any"
+        next unless arg.is_a?(Prism::LocalVariableReadNode) && arg.depth.zero? && (ty = env.vars[arg.name])
+        next if unknown?(ty)
+        kept = ty.select { |a| Array(want).any? { atom_matches?(a, _1) } }
+        env.vars[arg.name] = u(*kept.map { [_1] })
       end
     end
 
@@ -791,10 +806,11 @@ module Sake
           results << ext
           next
         end
-        unless key == ["Integer"] && (a == "String" || (a.is_a?(Array) && %i[array tuple].include?(a[0])))
+        unless a == "String" || (a.is_a?(Array) && %i[array tuple].include?(a[0]))
           failing << a
           next
         end
+        next unless key.include?("Integer") # other index types are reported below
         case a
         when "String" then results << t("String") << t("IndexNil")
         else
@@ -811,6 +827,10 @@ module Sake
       end
       verdict = failing.empty? ? :proven : (failing.size == recv.size ? :error : :partial)
       add_check(node, "Indexable.[]", "pair", "(Array|String|Tuple, Integer)", recv, verdict, failing)
+      if recv.any? { _1 == "String" || (_1.is_a?(Array) && %i[array tuple].include?(_1[0])) }
+        bad = key.reject { _1 == "Integer" || (_1.is_a?(Array) && _1[0] == :range) }
+        add_check(node, "Indexable.[]", "index", "Integer", key, bad.empty? ? :proven : (bad.size == key.size ? :error : :partial), bad)
+      end
       u(*results)
     end
 

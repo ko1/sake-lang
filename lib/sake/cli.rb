@@ -80,7 +80,7 @@ module Sake
           return ["#{c.op}: #{t} includes #{mod} but defines #{need}", ["define `def #{mod == "Comparable" ? "<=>" : op}(a, b)` in class #{t}"]]
         end
         ["#{c.op}: the operands #{maybe}#{typer.show_failing(c)}, which the left operand's type does not support", []]
-      when "Indexable.[]", "Indexable.[]="
+      when ->(op) { c.arg == "pair" && %w[Indexable.[] Indexable.[]=].include?(op) }
         tuples, others = c.failing.partition { _1.is_a?(Array) && _1[0] == :tuple }
         return ["#{c.op}: the index is outside the Tuple #{typer.show(tuples)}", []] if others.empty?
         ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{Stdlib::INDEX_ROWS}", []]
@@ -109,7 +109,7 @@ module Sake
           return
         end
       diags = typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.line, c.column] }.map do |c, item|
-        what = c.arg == "pair" ? "the operands" : "argument #{c.arg}"
+        what = { "pair" => "the operands", "index" => "the index" }.fetch(c.arg) { "argument #{c.arg}" }
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item
