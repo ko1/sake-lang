@@ -2,12 +2,12 @@
 
 # Sake-lang Tutorial
 
-Sake-lang (pronounced /seɪk læŋ/) is designed for the sake of finding a new place for types. It keeps **Ruby's
+Sake (/seɪk/) is designed for the sake of finding a new place for types. It keeps **Ruby's
 syntax**, but you write the type on each **operation**, never on a variable.
 
 ```ruby
-String.upcase(s)      # Sake-lang
-s.upcase              # Ruby — an error in Sake-lang
+String.upcase(s)      # Sake
+s.upcase              # Ruby — an error in Sake
 ```
 
 Because every operation names its type, a single line tells you which function runs, and the
@@ -59,7 +59,7 @@ OPERATIONS CARRY THEIR TYPE
 
 ## 2. Operations carry their type
 
-In Ruby you would write `name.upcase`. Sake-lang rejects calls on values and tells you how to write
+In Ruby you would write `name.upcase`. Sake rejects calls on values and tells you how to write
 them with the type. Chains are rewritten as a whole:
 
 ```ruby
@@ -98,7 +98,7 @@ typo.sake:3:14: error: undefined function `Integer.to_string`
 (exit status 2)
 ```
 
-Sake-lang's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`,
+Sake's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`,
 `Array.each`), so the names you already know work. Names from other languages do not
 (`Integer.to_string` above).
 
@@ -419,7 +419,7 @@ block_errors.sake:6:7: error: Array.each requires a block
 ## 7. Struct types
 
 `Struct.new` creates a named type together with its operations. Ruby's `Data.define` is not used: Ruby's
-`Data` is immutable, while Sake-lang's named types are mutable, like Ruby's `Struct`.
+`Data` is immutable, while Sake's named types are mutable, like Ruby's `Struct`.
 
 `Struct.new` gives the type these operations: `Point.new`, a `get_` operation
 for each field, and a `set_` operation for each field. Fields are **mutable**.
@@ -724,7 +724,7 @@ records.sake:12:7: error: the pattern needs field `median`, but the value is {co
 (exit status 2)
 ```
 
-In Sake-lang, `[]` and `{}` are not growable collections. Ruby code that grows them stops with a hint:
+In Sake, `[]` and `{}` are not growable collections. Ruby code that grows them stops with a hint:
 
 ```ruby
 squares = []                  # a Tuple of length 0, not an Array
@@ -747,7 +747,7 @@ names = {"a" => 1}
 $ sake empty_braces.sake
 empty_braces.sake:1:10: error: `{}` is an empty Record, not a Hash
   hint: for a Hash, write `Hash[]`; for a growable list, `Array[]`
-empty_braces.sake:2:10: error: `{"a" => ...}` is not a Hash in Sake-lang: `{name: value}` makes a Record
+empty_braces.sake:2:10: error: `{"a" => ...}` is not a Hash in Sake: `{name: value}` makes a Record
   hint: for a Hash, write `Hash["a" => ...]`
 (exit status 2)
 ```
@@ -1006,9 +1006,9 @@ exceptions_flow.sake:11:1: error: rescue OtherError: the begin body never raises
 (exit status 2)
 ```
 
-## 13. What Sake-lang rejects
+## 13. What Sake rejects
 
-Sake-lang rejects anything that would hide which code runs, or that it has not decided yet:
+Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
 - string interpolation
@@ -1030,12 +1030,12 @@ eval("1 + 1")
 
 ```
 $ sake forbidden.sake
-forbidden.sake:2:1: error: Sake-lang has no value constants; only a Struct type can be assigned to a constant
+forbidden.sake:2:1: error: Sake has no value constants; only a Struct type can be assigned to a constant
   hint: define a function instead: `def pi = 3.14159`
-forbidden.sake:4:16: error: Sake-lang has no `self`
+forbidden.sake:4:16: error: Sake has no `self`
 forbidden.sake:6:6: error: string interpolation is not supported yet (how values become strings is undecided); use String.+
 forbidden.sake:7:6: error: unary operator `!true` is not supported yet (undecided)
-forbidden.sake:8:1: error: `eval` is not allowed in Sake-lang (it defeats static analysis)
+forbidden.sake:8:1: error: `eval` is not allowed in Sake (it defeats static analysis)
 (exit status 2)
 ```
 

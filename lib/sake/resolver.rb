@@ -136,14 +136,14 @@ module Sake
       v = node.value
       if constant_call?(v, :Data, :define)
         # Ruby's Data is immutable; Sake's named types are mutable, which is Ruby's Struct.
-        return error(v, "Sake-lang's named types are mutable, so they are made with Struct.new, not Data.define",
+        return error(v, "Sake's named types are mutable, so they are made with Struct.new, not Data.define",
                      ["#{node.name} = Struct.new(#{v.arguments&.slice})"])
       end
       exception = constant_call?(v, :Exception, :new)
       unless struct_new?(v) || exception
         fn = node.name.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
         @value_constants[node.name] = fn
-        return error(node, "Sake-lang has no value constants; only a Struct type can be assigned to a constant",
+        return error(node, "Sake has no value constants; only a Struct type can be assigned to a constant",
                      ["define a function instead: `def #{fn} = #{first_line(v.slice)}`"])
       end
       return error(v.block, "#{v.receiver.name}.new with a block is not supported; define functions in `class #{node.name}`") if v.block
@@ -181,7 +181,7 @@ module Sake
         child = node.constant_path.slice
         parent = node.superclass.slice
         field = parent.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
-        error(node.superclass, "Sake-lang has no class inheritance; reuse a type by composition",
+        error(node.superclass, "Sake has no class inheritance; reuse a type by composition",
               ["#{child} = Struct.new(:#{field}, ...), then #{parent}.f(#{child}.get_#{field}(x))"])
       end
       type = @struct_types.key?(ns) || BUILTIN_TYPES.include?(ns)
@@ -225,7 +225,7 @@ module Sake
         ns = node.receiver.name.to_s
         @registry.add_namespace(ns)
       when Prism::SelfNode
-        return error(node, "Sake-lang has no `self`; inside `class Foo`, `def #{node.name}` defines Foo.#{node.name}")
+        return error(node, "Sake has no `self`; inside `class Foo`, `def #{node.name}` defines Foo.#{node.name}")
       else
         return error(node.receiver, "`def x.#{node.name}` is not supported; use `def Type.#{node.name}`")
       end
@@ -357,11 +357,11 @@ module Sake
       when Prism::ConstantWriteNode then error(node, "constant assignment must be at the top level")
       when Prism::ConstantReadNode
         if (fn = @value_constants[node.name])
-          error(node, "`#{node.name}` is not defined (Sake-lang has no value constants)", ["call the function instead: `#{fn}`"])
+          error(node, "`#{node.name}` is not defined (Sake has no value constants)", ["call the function instead: `#{fn}`"])
         else
           error(node, "type `#{node.name}` cannot be used as a value")
         end
-      when Prism::SelfNode then error(node, "Sake-lang has no `self`")
+      when Prism::SelfNode then error(node, "Sake has no `self`")
       when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode
         check_field_shorthand(node, ctx)
       when Prism::SymbolNode, Prism::RegularExpressionNode then nil
@@ -371,10 +371,10 @@ module Sake
       when Prism::InterpolatedSymbolNode, Prism::InterpolatedRegularExpressionNode
         error(node, "interpolation is not supported yet (how values become strings is undecided)")
       when Prism::NumberedReferenceReadNode, Prism::BackReferenceReadNode, Prism::GlobalVariableReadNode, Prism::GlobalVariableWriteNode
-        error(node, "Sake-lang has no global variables (`#{node.slice}`)",
+        error(node, "Sake has no global variables (`#{node.slice}`)",
               node.is_a?(Prism::NumberedReferenceReadNode) ? ["keep the match: `m = String.match(s, re)`, then `m[#{node.number}]`"] : [])
       when Prism::MatchWriteNode
-        error(node, "named captures do not create local variables in Sake-lang", ["keep the match: `m = Regexp.match(re, s)`, then `m[\"name\"]`"])
+        error(node, "named captures do not create local variables in Sake", ["keep the match: `m = Regexp.match(re, s)`, then `m[\"name\"]`"])
       else
         error(node, "unsupported syntax: #{node.type.to_s.delete_suffix("_node").tr("_", " ")} `#{first_line(node.slice)}`")
       end
@@ -415,7 +415,7 @@ module Sake
         end
         key = el.key
         if !key.is_a?(Prism::SymbolNode)
-          error(el, "`{#{key.slice} => ...}` is not a Hash in Sake-lang: `{name: value}` makes a Record",
+          error(el, "`{#{key.slice} => ...}` is not a Hash in Sake: `{name: value}` makes a Record",
                 ["for a Hash, write `Hash[#{key.slice} => ...]`"])
         elsif key.closing_loc&.slice != ":"
           error(el, "write a Record field as `#{key.unescaped}: value`")
@@ -558,7 +558,7 @@ module Sake
       recv = node.receiver
 
       if recv.nil?
-        return error(node, "`#{node.name}` is not allowed in Sake-lang (it defeats static analysis)") if FORBIDDEN.include?(node.name.to_s)
+        return error(node, "`#{node.name}` is not allowed in Sake (it defeats static analysis)") if FORBIDDEN.include?(node.name.to_s)
         return check_raise(node, ctx) if node.name == :raise && !lookup_unqualified?(ctx, "raise")
         target = resolve_unqualified(node, ctx)
       elsif recv.is_a?(Prism::ConstantReadNode) && (node.call_operator_loc || node.name == :[])
@@ -744,7 +744,7 @@ module Sake
       check(inner, ctx)
 
       suggestions = node.name == :nil? ? ["#{node.receiver.slice} == nil"] : suggest(node)
-      hints = suggestions.empty? ? ["Sake-lang has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"] : suggestions
+      hints = suggestions.empty? ? ["Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"] : suggestions
       shown = node.attribute_write? ? "#{node.name.to_s.delete_suffix("=")} = ..." : node.name
       error(node, "method call on a value `#{first_line(node.receiver.slice)}.#{shown}` is not allowed", hints)
     end

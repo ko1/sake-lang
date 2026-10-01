@@ -1,12 +1,12 @@
 # Sake-lang
 
-**Sake-lang** (pronounced /seɪk læŋ/) is an experimental programming language. It is designed for
-the sake of finding a new place for types. It keeps **Ruby's syntax**, but you write the type
+**Sake** (/seɪk/, as in "for the sake of") is an experimental programming language. It is designed
+for the sake of finding a new place for types. It keeps **Ruby's syntax**, but you write the type
 on each **operation**, never on a variable, a parameter, or a field:
 
 ```ruby
-String.upcase(name)        # Sake-lang
-name.upcase                # Ruby: an error in Sake-lang, reported with the fix above
+String.upcase(name)        # Sake
+name.upcase                # Ruby: an error in Sake, reported with the fix above
 ```
 
 Because every operation names its type:
@@ -20,7 +20,7 @@ Because every operation names its type:
 - **Run-time checks remain.** Every operation still checks its arguments while running, so what
   the checks before running miss still stops at the exact operation.
 
-The motivation is to make a language that is easy for AI to write. An experiment comparing Sake-lang
+The motivation is to make a language that is easy for AI to write. An experiment comparing Sake
 with Ruby, with and without type signatures, is planned (see [DESIGN.md](DESIGN.md), in
 Japanese).
 

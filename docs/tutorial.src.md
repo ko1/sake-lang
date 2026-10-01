@@ -1,11 +1,11 @@
 # Sake-lang Tutorial
 
-Sake-lang (pronounced /seɪk læŋ/) is designed for the sake of finding a new place for types. It keeps **Ruby's
+Sake (/seɪk/) is designed for the sake of finding a new place for types. It keeps **Ruby's
 syntax**, but you write the type on each **operation**, never on a variable.
 
 ```ruby
-String.upcase(s)      # Sake-lang
-s.upcase              # Ruby — an error in Sake-lang
+String.upcase(s)      # Sake
+s.upcase              # Ruby — an error in Sake
 ```
 
 Because every operation names its type, a single line tells you which function runs, and the
@@ -48,7 +48,7 @@ before running is still checked while running, by each operation.
 
 ## 2. Operations carry their type
 
-In Ruby you would write `name.upcase`. Sake-lang rejects calls on values and tells you how to write
+In Ruby you would write `name.upcase`. Sake rejects calls on values and tells you how to write
 them with the type. Chains are rewritten as a whole:
 
 @@example method_call
@@ -58,7 +58,7 @@ chance to fail halfway through:
 
 @@example typo
 
-Sake-lang's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`,
+Sake's standard library uses **Ruby's names** (`Integer.to_s`, `String.include?`,
 `Array.each`), so the names you already know work. Names from other languages do not
 (`Integer.to_string` above).
 
@@ -139,7 +139,7 @@ running:
 ## 7. Struct types
 
 `Struct.new` creates a named type together with its operations. Ruby's `Data.define` is not used: Ruby's
-`Data` is immutable, while Sake-lang's named types are mutable, like Ruby's `Struct`.
+`Data` is immutable, while Sake's named types are mutable, like Ruby's `Struct`.
 
 `Struct.new` gives the type these operations: `Point.new`, a `get_` operation
 for each field, and a `set_` operation for each field. Fields are **mutable**.
@@ -216,7 +216,7 @@ A Record is read with a pattern. `r => {mean:, count: n}` binds `mean` and `n`:
 
 @@example records
 
-In Sake-lang, `[]` and `{}` are not growable collections. Ruby code that grows them stops with a hint:
+In Sake, `[]` and `{}` are not growable collections. Ruby code that grows them stops with a hint:
 
 @@example ruby_habits
 @@example empty_braces
@@ -278,9 +278,9 @@ that can never match. Level 4 also reports a `raise` that nothing rescues:
 
 @@run exceptions_flow --strict=4
 
-## 13. What Sake-lang rejects
+## 13. What Sake rejects
 
-Sake-lang rejects anything that would hide which code runs, or that it has not decided yet:
+Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
 - `self`, and `@x` outside a function of a Struct type
 - string interpolation

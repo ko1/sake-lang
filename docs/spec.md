@@ -1,15 +1,15 @@
-# Sake-lang Language Specification (v0)
+# Sake-lang Specification (v0)
 
-Sake-lang (pronounced /seɪk læŋ/) is designed for the sake of finding a new place for types. It keeps Ruby's syntax,
+Sake (/seɪk/) is designed for the sake of finding a new place for types. It keeps Ruby's syntax,
 but you write the type on each operation, never on a variable.
 
-This document describes the language as implemented by the v0 interpreter (`bin/sake`). Sake-lang is
+This document describes the language as implemented by the v0 interpreter (`bin/sake`). Sake is
 experimental. Points still open in the design are listed in [§16](#16-not-yet-supported) and in
 [../DESIGN.md](../DESIGN.md) (in Japanese). For a guided introduction, see [tutorial.md](tutorial.md).
 
 ## 1. Principles
 
-1. **Ruby syntax.** A Sake-lang program is a Ruby program as parsed by Prism. Sake-lang accepts a subset of
+1. **Ruby syntax.** A Sake program is a Ruby program as parsed by Prism. Sake accepts a subset of
    Ruby's syntax and gives some constructs a different meaning.
 2. **Types are written on operations, not on bindings.** An operation is called with its type,
    `Type.op(subject, args...)`. Variables, parameters, return values, and fields carry no type
@@ -83,10 +83,10 @@ Rules:
 - Classes cannot inherit. Reuse a type by composition: `Circle = Struct.new(:shape, :r)`, then
   `Shape.describe(Circle.get_shape(c))`. If inheritance comes later, it will be static: `Shape.f`
   always runs Shape's `f`.
-- `def self.x` is rejected, because Sake-lang has no `self`.
+- `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
-- Constants can only be assigned from `Struct.new`. Sake-lang has **no value constants**. For a named
+- Constants can only be assigned from `Struct.new`. Sake has **no value constants**. For a named
   value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error
   whose hint gives that function, and each use of `PI` gets the hint `pi`.
 
@@ -359,7 +359,7 @@ This defines the namespace `Point` with the following operations:
 - **`Struct.new` restrictions.** It must be assigned to a top-level constant. It takes symbols
   only, and no block.
 - **No `Data.define`.** `Data.define` is rejected with a hint to use `Struct.new`. Ruby's `Data` is
-  immutable, but Sake-lang's named types are mutable, which is what Ruby's `Struct` provides.
+  immutable, but Sake's named types are mutable, which is what Ruby's `Struct` provides.
 
 ## 11. nil
 

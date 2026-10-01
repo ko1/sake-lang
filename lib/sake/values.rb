@@ -95,7 +95,7 @@ module Sake
       when Range then "Range"
       when Regexp then "Regexp"
       when MatchData then "MatchData"
-      else raise "BUG: not a Sake-lang value: #{v.inspect}"
+      else raise "BUG: not a Sake value: #{v.inspect}"
       end
     end
 
