@@ -169,7 +169,7 @@ module Sake
     def check(node, ctx)
       case node
       when nil, Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::TrueNode,
-           Prism::FalseNode, Prism::NilNode, Prism::LocalVariableReadNode
+           Prism::FalseNode, Prism::NilNode, Prism::LocalVariableReadNode, Prism::ItLocalVariableReadNode
         nil
       when Prism::StatementsNode then node.body.each { check(_1, ctx) }
       when Prism::LocalVariableWriteNode then check(node.value, ctx)
@@ -340,8 +340,10 @@ module Sake
           error(r, "nested destructuring `#{r.slice}` is not supported; `|a, b|` already destructures a Tuple")
           "_"
         end
+      when Prism::ItParametersNode then ["it"]
+      when Prism::NumberedParametersNode then (1..pn.maximum).map { "_#{_1}" }
       else
-        error(pn, "numbered parameters / `it` are not supported; name the parameter `|x|`")
+        error(pn, "unsupported block parameters `#{pn.slice}`")
         []
       end
     end

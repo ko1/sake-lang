@@ -77,6 +77,8 @@ module Sake
       when Prism::FalseNode then false
       when Prism::NilNode then nil
       when Prism::LocalVariableReadNode then env.up(node.depth).vars[node.name]
+      # Prism gives every block that mentions `it` its own implicit parameter.
+      when Prism::ItLocalVariableReadNode then env.vars[:it]
       when Prism::LocalVariableWriteNode
         env.up(node.depth).vars[node.name] = eval_node(node.value, env)
       when Prism::LocalVariableOperatorWriteNode
