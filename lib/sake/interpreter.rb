@@ -395,7 +395,7 @@ module Sake
       return [] unless Array(want).include?("Array")
       case v
       when Tuple then ["`[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`"]
-      when RecordValue then ["`{...}` is a Record; for a growable collection, write `Array[...]` (Hash is not available yet)"]
+      when RecordValue then ["`{...}` is a Record; for a growable collection, write `Array[...]` or `Hash[...]`"]
       else []
       end
     end
