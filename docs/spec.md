@@ -158,7 +158,9 @@ module, resolved statically:
 
 - **Borrowing.** Each function `f` of `M` becomes `X.f` in the including namespace `X`, unless `X`
   already has `f`, in which case `X`'s own definition wins. Modules included by `M` are borrowed
-  too, nearest first.
+  too.
+- **Order.** Modules are searched in Ruby's ancestor order: the module included **last** comes
+  first. With `include A` then `include B`, a `bar` in both comes from B, as in Ruby.
 - **Resolution in the includer.** Inside a borrowed function, unqualified names are resolved in
   `X`, so `M` can use functions that `X` provides, such as `each`. Nothing is dispatched at run
   time: each `X.f` is fixed before running. `@x` refers to a field of `X` when `X` is a Struct

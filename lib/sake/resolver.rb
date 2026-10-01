@@ -114,10 +114,11 @@ module Sake
       end
     end
 
-    # Modules included by ns, nearest first, each once; the include node is the one written in ns.
+    # Modules included by ns in Ruby's ancestor order: the last `include` first, each module once.
+    # Earlier entries win, so a later include wins over an earlier one. The include node is the one in ns.
     def linearize(ns, seen)
       return [] if seen.include?(ns)
-      @includes.fetch(ns, []).flat_map do |mod, node|
+      @includes.fetch(ns, []).reverse.flat_map do |mod, node|
         next [] unless @modules.key?(mod)
         if seen.include?(mod) || mod == ns
           error(node, "`include #{mod}` makes a cycle")
