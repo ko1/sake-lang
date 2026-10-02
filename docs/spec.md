@@ -337,7 +337,9 @@ operator through that module ([§5.6](#56-calling-a-modules-functions-module_fun
   defining `<=>` is enough: `<`, `<=`, `>`, and `>=` come from it, and `Array.sort`, `min`, and `max`
   use it too.
 - **Equality.** `==` on Struct values compares the type and the fields, as Ruby's Struct does,
-  unless the type defines its own `==`. `Array.include?`, `index`, and similar operations use the
+  unless the type defines its own `==`. A type that includes `Comparable` and defines `<=>` (and not
+  `==`) is equal to a value of the same type when `<=>` gives 0, as Ruby's `Comparable#==`; a value
+  of another type, such as nil, is never equal, and `<=>` is not called. `Array.include?`, `index`, and similar operations use the
   same equality.
 - **Explicit forms.** `Arithmetic.+(a, b)` dispatches the same way. `Integer.+(a, b)` calls
   Integer's `+` directly; it requires `a` to be an Integer, and `b` may be any type that Integer's

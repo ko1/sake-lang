@@ -422,7 +422,9 @@ module Sake
     # The result of a Struct type's own operator (or nil when the type cannot do op).
     def user_op_result(op, x, b)
       if %w[== !=].include?(op)
-        (fn = @program.functions.dig(x, "==")) and call_user(fn, [[x].freeze, b], nil)
+        fn = @program.functions.dig(x, "==")
+        fn ||= Operators.includes?(@program.includes || {}, x, "Comparable") && @program.functions.dig(x, "<=>")
+        call_user(fn, [[x].freeze, b.include?(x) ? [x].freeze : b], nil) if fn && (b.include?(x) || @program.functions.dig(x, "=="))
         return t("Boolean")
       end
       mod = Operators::MODULE_OF.fetch(op)

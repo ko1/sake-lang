@@ -453,9 +453,16 @@ module Sake
       fail_node.("#{mod}.#{op}: #{type} does not define #{need}")
     end
 
+    # A type's own ==; else, with Comparable and <=>, a value of the same type is equal when `a <=> b` is 0
+    # (as Ruby's Comparable#==; `x == nil` never calls <=>); else the fields.
     def struct_equal?(a, b)
       if (fn = own_fn(a.type.name, "=="))
         return Values.truthy?(call_user(fn, [a, b], nil, fn.node))
+      end
+      if Operators.includes?(@program.includes, a.type.name, "Comparable") && (cmp = own_fn(a.type.name, "<=>"))
+        return true if a.equal?(b)
+        return false unless b.is_a?(StructValue) && b.type.equal?(a.type) # nil and other types are not equal
+        return call_user(cmp, [a, b], nil, cmp.node) == 0
       end
       b.is_a?(StructValue) && b.type.equal?(a.type) && a.values == b.values
     end
