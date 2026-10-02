@@ -288,7 +288,7 @@ footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.85re
       <li><b>網羅性の検査を分けた。</b>型の漏れは level 1 のまま、値の集合が開いた型（String など）の値の漏れは新しい項目 <code>exhaustive</code>（level 3）。推論器は Symbol のリテラルを値として追跡するので、<code>case op in :add … in :sub</code> は網羅を証明できる。</li>
       <li><b><code>(A|B).f(x)</code> を入れた。</b>Struct 型も列挙できる。列挙した型に <code>f</code> が無ければ静的エラー。nil は列挙できない。</li>
       <li><b>Tuple・Array・Set・Hash・Record は中身で <code>==</code>、Tuple と Array は辞書順で比べられる。</b><code>sort_by { [a, b] }</code> が書ける。</li>
-      <li><b>Array からの多重代入</b>（<code>k, v = String.split(s, "=")</code>）。長さが違えば実行時エラーで、nil で埋めない。</li>
+      <li><b>Array からの多重代入</b>（<code>k, v = String.split(s, "=")</code>）。長さが違えば実行時エラーで、nil で埋めない。<br><span class="muted"><b>2026-10-02 に撤回：</b>「配列に入れてから取り出しても結局 nil」という指摘で、Ruby に合わせて足りない要素は nil、余りは捨てるに変えた。推論器はその nil を <code>x[k]</code> と同じ index-nil として扱う（9 節）。</span></li>
       <li><b>単項演算子</b>：<code>-x</code> は <code>Arithmetic.-@</code>、<code>!x</code> は <code>x ? false : true</code>。</li>
       <li><b>値の定数は入れない</b>（変えない）。</li>
     </ul>
@@ -307,6 +307,31 @@ footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.85re
 </section>
 
 <section class="col">
+  <div class="eyebrow">9 · 書き直しと、残りの機能を入れた後（2026-10-02 に追記）</div>
+  <h2>書き手が挙げた難点を全部入れて、測り直した</h2>
+  <p>8 節の決定の後、書き手に 500 本を新しい機能で書き直させた（corpus-v2。337 本が変わった）。単項演算子 167 箇所、<code>!x</code> 102 箇所、Tuple のソートキー 83 箇所が使われ、回避策の <code>0 - x</code> は 115 → 1、<code>x == false</code> は 130 → 0 になった。書き手が残った難点として挙げたものは、その後すべて入れた：</p>
+  <ul class="plain">
+    <li>多重代入とブロックの分解を Ruby に合わせる（足りない要素は nil）、要素の入れ替え <code>a[i], a[j] = a[j], a[i]</code>、<code>|(a, b), i|</code></li>
+    <li>Array の <code>+ - *</code>、<code>Array.new(n, v)</code> と <code>Array.new(n) { }</code>、2 引数の添字 <code>s[i, n]</code></li>
+    <li>ブロックの中の <code>break</code>（ブロックを渡した呼び出しを抜け、その値になる）</li>
+    <li>splat：<code>first, *rest = xs</code>、<code>|k, *vs|</code>、組み込みの可変長引数への <code>*xs</code>。ユーザ関数への <code>f(*args)</code> と <code>zip</code> への splat は、推論の精度を落とすので静的エラーのまま。</li>
+    <li>型の違う値の <code>==</code> は false、Struct・Array・Hash・Set を Hash のキーに、Comparable の <code>==</code> は <code>&lt;=&gt;</code> が 0</li>
+  </ul>
+  <div class="tbl">
+  <table>
+    <tr><th></th><th class="n">v2<br><small>書き直す前</small></th><th class="n">v3<br><small>書き直した後</small></th><th class="n">v4<br><small>残りの機能の後</small></th></tr>
+    <tr><td>変数の読み mono / nilable</td><td class="n">80.6% / 13.2%</td><td class="n">81.2% / 12.6%</td><td class="n">80.0% / 13.8%</td></tr>
+    <tr><td>引数 mono</td><td class="n">79.4%</td><td class="n">80.4%</td><td class="n">78.9%</td></tr>
+    <tr><td>level 1 で止められた正しいプログラム</td><td class="n">108</td><td class="n">106</td><td class="n">106</td></tr>
+    <tr><td>level 3</td><td class="n">456</td><td class="n">451</td><td class="n">457</td></tr>
+    <tr><td>健全性の違反（負の対照）</td><td class="n">0（1,734）</td><td class="n">0（1,701）</td><td class="n">0（1,701）</td></tr>
+  </table>
+  </div>
+  <p>v4 で mono が 1 ポイント下がったのは、多重代入を Ruby に合わせたため。Array から取り出した変数は、要素が足りなければ nil になるので <code>nil | T</code> になる。v3 で mono・v4 で nilable になった変数の読み 668 箇所のうち 517 箇所は分解の変数そのもの、残り 151 箇所はその値を入れた Hash のキーなどへの伝播だった。<code>x[k]</code> と同じ扱いにするという決定どおりで、推論が弱くなったのではない。level 3 の増加（+6 本）も同じ理由。</p>
+  <p class="muted">v4 のコーパスはまだ新しい機能を使っていない（v3 と同じ corpus-v2）。level 1 の診断は 307 → 280 件に減ったが、どの変更が効いたかの内訳は取っていない。</p>
+</section>
+
+<section class="col">
   <div class="eyebrow">制限と訂正</div>
   <ul class="plain">
     <li>書き手は 1 種類の AI。人が書いたプログラムではなく、課題も書き手が選んだ。</li>
@@ -317,7 +342,7 @@ footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.85re
 
 <footer>
   <div>Sake-lang リポジトリ <span class="mono">experiments/2026-10-01-inference-500/</span>（README.md、results-*/results.md、notes-tally.md）</div>
-  <div>推論器：SakeAST 版（Prism から作った解決済みの AST の上で動く）。Ruby 4.0.2、TypeProf 0.31.1。2026-10-01。</div>
+  <div>推論器：SakeAST 版（Prism から作った解決済みの AST の上で動く）。Ruby 4.0.2、TypeProf 0.31.1。2026-10-01（9 節は 2026-10-02、commit b5156d3）。</div>
 </footer>
 </main>
 
