@@ -102,8 +102,13 @@ module Sake
         env.dead = true
         []
       when Break
-        ev(n.value, env)
-        loop_jump(env)
+        v = ev(n.value, env)
+        if n.target == :block
+          b = (@running_blocks || []).last
+          b.breaks = u(b.breaks, v) if b
+        else
+          loop_jump(env)
+        end
         env.dead = true
         []
       when Yield then call_block(env.frame.block, n.args.map { ev(_1, env) })
@@ -405,7 +410,16 @@ module Sake
         return n.fn.name == "[]" ? index_get(o, xs[0], xs[1], lit) : index_set(o, xs[0], xs[1], lit, xs[2])
       end
       args = n.args.map { ev(_1, env) }
-      blk = n.block && BlockCtx.new(n.block, n.block.params, env)
+      blk = n.block && BlockCtx.new(n.block, n.block.params, env, [])
+      r = call_with(n, env, args, blk)
+      return r unless blk && !blk.breaks.empty?
+      r = u(r, blk.breaks)
+      (@results ||= {}.compare_by_identity)[o] = u(@results[o] || [], r) if n.is_a?(CallBuiltin) # for crosscheck
+      r
+    end
+
+    def call_with(n, env, args, blk)
+      o = n.origin
       case n
       when CallDispatch
         d = n.dispatch
@@ -545,6 +559,7 @@ module Sake
       own = (params + blk.node.locals).to_set
       (@next_acc ||= []).push([])
       (@jumps ||= []).push(false)
+      (@running_blocks ||= []).push(blk)
       result = []
       MAX_LOOP_ITER.times do
         before = blk.env.chain_snapshot
@@ -554,6 +569,7 @@ module Sake
         break if blk.env.chain_snapshot == before
       end
       @jumps.pop
+      @running_blocks.pop
       u(result, @next_acc.pop)
     end
   end

@@ -22,7 +22,8 @@ module Sake
 
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
     Frame = Struct.new(:fn, :ret, :block)
-    BlockCtx = Struct.new(:node, :params, :env)
+    # breaks: the types of the block's `break` values, which become results of the call it was given to.
+    BlockCtx = Struct.new(:node, :params, :env, :breaks)
     # via: lines of the calls that led to the first failing instantiation, outermost first.
     Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing, :via)
 

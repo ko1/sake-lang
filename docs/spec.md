@@ -311,7 +311,10 @@ Integer.times(3) { p it }
 - **Scope.** A block sees and can assign the enclosing local variables.
 - **`next [v]`.** Ends the current block call with value `v` (default `nil`).
 - **`return`.** Inside a block, `return` returns from the enclosing **function**, as in Ruby.
-- **`break`.** Not allowed inside blocks.
+- **`break`.** Inside a block, `break` (or `break v`) ends the call the block was given to, whose
+  value is then `v` (or nil), as in Ruby: `Array.each(xs) { |x| break x if x > 10 }`. Inside a
+  `while` in the block, `break` leaves the `while`. The checker adds the break values to the call's
+  result type.
 
 `yield(args...)` calls the block given to the current function. It is a static error outside a
 function.

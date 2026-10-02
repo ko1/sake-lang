@@ -48,7 +48,7 @@ module Sake
     node :Yield, :args
     node :Return, :value
     node :Next, :value
-    node :Break, :value
+    node :Break, :value, :target           # target: :loop (the innermost while) or :block
     node :Retry
     node :Raise, :type, :args               # type: name for `raise T, msg`, else nil
     node :ReRaise

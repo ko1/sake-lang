@@ -116,7 +116,13 @@ module Sake
       when Prism::UnlessNode then If.new(cond: lower(n.predicate), then_: lower(n.else_clause), else_: lower(n.statements), origin: n)
       when Prism::ElseNode then lower(n.statements)
       when Prism::WhileNode, Prism::UntilNode
-        While.new(cond: lower(n.predicate), body: lower(n.statements), until_: n.is_a?(Prism::UntilNode), origin: n)
+        (@jump_targets ||= []).push(:loop)
+        body = begin
+          lower(n.statements)
+        ensure
+          @jump_targets.pop
+        end
+        While.new(cond: lower(n.predicate), body:, until_: n.is_a?(Prism::UntilNode), origin: n)
       when Prism::AndNode then And.new(left: lower(n.left), right: lower(n.right), origin: n)
       when Prism::OrNode then Or.new(left: lower(n.left), right: lower(n.right), origin: n)
       when Prism::ParenthesesNode then n.body.is_a?(Prism::StatementsNode) ? statements(n.body.body, n.body, inherit: true) : lower(n.body)
@@ -134,7 +140,7 @@ module Sake
         CaseIn.new(subject: lower(n.predicate), clauses:, else_: n.else_clause && lower(n.else_clause), origin: n)
       when Prism::ReturnNode then Return.new(value: jump_value(n, tuple: true), origin: n)
       when Prism::NextNode then Next.new(value: jump_value(n), origin: n)
-      when Prism::BreakNode then Break.new(value: jump_value(n), origin: n)
+      when Prism::BreakNode then Break.new(value: jump_value(n), target: (@jump_targets || []).last || :loop, origin: n)
       when Prism::YieldNode then Yield.new(args: args(n.arguments), origin: n)
       when Prism::CallNode then call(n)
       when Prism::InstanceVariableReadNode
@@ -317,7 +323,12 @@ module Sake
           destructure(sc, name, hidden, b, prologue)
           hidden
         end
-        body = lower(b.body)
+        (@jump_targets ||= []).push(:block)
+        body = begin
+          lower(b.body)
+        ensure
+          @jump_targets.pop
+        end
         body = Seq.new(body: [*prologue, body], origin: b.body || b) unless prologue.empty?
         locals = sc.vars.values - params
         Block.new(params:, locals:, body:, origin: b)

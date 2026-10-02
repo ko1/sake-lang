@@ -31,6 +31,16 @@ module Sake
     end
     class NextSignal < JumpSignal; end
     class BreakSignal < JumpSignal; end
+
+    # `break` in a block: block is the BlockVal it leaves.
+    class BlockBreak < JumpSignal
+      attr_reader :block
+
+      def initialize(block, value)
+        @block = block
+        super(value)
+      end
+    end
     class RetrySignal < StandardError; end
 
     MAX_DEPTH = 10_000
@@ -43,6 +53,7 @@ module Sake
       @ast = Lower.program(program)
       @stack = [] # [function name, call line]
       @handling = [] # errors being handled by rescue clauses, innermost last (for a bare `raise`)
+      @running_blocks = [] # blocks being run, innermost last (for `break`)
     end
 
     def run
@@ -83,21 +94,7 @@ module Sake
       when Or
         l = ev(n.left, f)
         Values.truthy?(l) ? l : ev(n.right, f)
-      when CallBuiltin then call_builtin(n.fn, n.args.map { ev(_1, f) }, block_val(n.block, f), n.origin)
-      when CallUser then call_user(n.fn, n.args.map { ev(_1, f) }, block_val(n.block, f), n.origin)
-      when CallDispatch
-        args = n.args.map { ev(_1, f) }
-        d = n.dispatch
-        fn = d.table[Values.type_of(args[0])]
-        fail_at(n, "TypeError", "#{d.module}.#{d.name}: #{Values.describe(args[0])} does not include #{d.module}") unless fn
-        call_user(fn, args, block_val(n.block, f), n.origin)
-      when CallUnion
-        args = n.args.map { ev(_1, f) }
-        un = n.union
-        fn = un.table[Values.type_of(args[0])]
-        fail_at(n, "TypeError", "#{un.full_name}: argument 1 must be #{un.types.join(" or ")}, got #{Values.describe(args[0])}", nil_value: args[0].nil?) unless fn
-        blk = block_val(n.block, f)
-        fn.is_a?(UserFunction) ? call_user(fn, args, blk, n.origin) : call_builtin(fn, args, blk, n.origin)
+      when CallBuiltin, CallUser, CallDispatch, CallUnion then n.block ? call_catching_break(n, f) : call_node(n, f, nil)
       when BinOp then binary_op(n.origin, n.op, ev(n.left, f), ev(n.right, f))
       when UnOp then unary_op(n.origin, n.op, ev(n.value, f))
       when IsNil
@@ -134,7 +131,9 @@ module Sake
         end
       when Return then raise ReturnSignal.new(f, ev(n.value, f))
       when Next then raise NextSignal.new(ev(n.value, f))
-      when Break then raise BreakSignal.new(ev(n.value, f))
+      when Break
+        v = ev(n.value, f)
+        raise(n.target == :block ? BlockBreak.new(@running_blocks.last, v) : BreakSignal.new(v))
       when Retry then raise RetrySignal
       when Raise then do_raise(n, f)
       when ReRaise then raise @handling.last
@@ -169,6 +168,33 @@ module Sake
     end
 
     def block_val(b, f) = b && BlockVal.new(b, f)
+
+    def call_node(n, f, blk)
+      args = n.args.map { ev(_1, f) }
+      case n
+      when CallBuiltin then call_builtin(n.fn, args, blk, n.origin)
+      when CallUser then call_user(n.fn, args, blk, n.origin)
+      when CallDispatch
+        d = n.dispatch
+        fn = d.table[Values.type_of(args[0])]
+        fail_at(n, "TypeError", "#{d.module}.#{d.name}: #{Values.describe(args[0])} does not include #{d.module}") unless fn
+        call_user(fn, args, blk, n.origin)
+      when CallUnion
+        un = n.union
+        fn = un.table[Values.type_of(args[0])]
+        fail_at(n, "TypeError", "#{un.full_name}: argument 1 must be #{un.types.join(" or ")}, got #{Values.describe(args[0])}", nil_value: args[0].nil?) unless fn
+        fn.is_a?(UserFunction) ? call_user(fn, args, blk, n.origin) : call_builtin(fn, args, blk, n.origin)
+      end
+    end
+
+    # `break` in a block ends the call the block was given to, with the break's value (as Ruby).
+    def call_catching_break(n, f)
+      blk = block_val(n.block, f)
+      call_node(n, f, blk)
+    rescue BlockBreak => e
+      raise unless e.block.equal?(blk)
+      e.value
+    end
 
     NOT_RESCUABLE = Resolver::NOT_RESCUABLE
 
@@ -492,7 +518,12 @@ module Sake
       slots = blk.frame.slots
       b.locals.each { slots[_1] = nil }
       params.each_with_index { |s, i| slots[s] = args[i] }
-      ev(b.body, blk.frame)
+      @running_blocks.push(blk)
+      begin
+        ev(b.body, blk.frame)
+      ensure
+        @running_blocks.pop
+      end
     rescue NextSignal => e
       e.value
     end

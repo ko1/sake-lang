@@ -507,7 +507,7 @@ module Sake
         error(node, "`next` outside a block or loop") unless ctx.in_block || ctx.in_loop
         check_jump_args(node, ctx)
       when Prism::BreakNode
-        error(node, "`break` is only supported directly inside `while`/`until`") unless ctx.in_loop
+        error(node, "`break` outside a loop or block") unless ctx.in_loop || ctx.in_block
         check_jump_args(node, ctx)
       when Prism::CallNode then check_call(node, ctx)
       when Prism::HashNode then check_record_literal(node, ctx)
