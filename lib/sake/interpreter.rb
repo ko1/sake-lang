@@ -361,6 +361,8 @@ module Sake
       mod = Operators::MODULE_OF.fetch(op)
       return a.public_send(op, b) if %w[== !=].include?(op) && (a.nil? || b.nil?)
       return user_op(node, mod, op, [a, b]) if a.is_a?(StructValue)
+      # A value of another type is never equal to a Struct value (as `struct == other` says).
+      return op == "!=" if %w[== !=].include?(op) && b.is_a?(StructValue)
       # Records compare by their fields (any two shapes; different shapes are not equal).
       return a.public_send(op, b) if %w[== !=].include?(op) && a.is_a?(RecordValue) && b.is_a?(RecordValue)
       rows = @registry.binary_ops[op]

@@ -448,7 +448,7 @@ module Sake
         end
       end
       pairs.reject { |x, _| struct_atom?(x) }.each do |x, y|
-        if %w[== !=].include?(op) && [x, y].all? { _1.is_a?(Array) && _1[0] == :record }
+        if %w[== !=].include?(op) && ([x, y].all? { _1.is_a?(Array) && _1[0] == :record } || struct_atom?(y))
           hits += 1
           results << t("Boolean")
           next

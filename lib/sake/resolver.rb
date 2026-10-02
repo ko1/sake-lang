@@ -534,7 +534,8 @@ module Sake
           error(node, "type `#{node.name}` cannot be used as a value")
         end
       when Prism::SelfNode then error(node, "Sake has no `self`")
-      when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode
+      when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode,
+           Prism::InstanceVariableOrWriteNode
         check_field_shorthand(node, ctx)
       when Prism::SymbolNode, Prism::RegularExpressionNode then nil
       when Prism::RangeNode

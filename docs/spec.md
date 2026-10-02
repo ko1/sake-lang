@@ -362,6 +362,8 @@ table**:
   `a ** b` does not depend on the value of `b`. Write `2r ** -1` for a Rational.
 - **Complex.** A Complex has no ordering, so `<` and the like are not defined for it.
 - **Time.** `Time ± number` gives a Time; `Time - Time` gives a Float of seconds; two Times compare.
+- **Struct values and other types.** A Struct value is never equal to a value of another type;
+  `struct == other` and `other == struct` both give false (unless the type defines its own `==`).
 - **Collections.** Tuples, Arrays, Sets, Hashes, and Records are equal when their contents are
   (two Records also need the same fields). Tuples and Arrays are ordered element by element, as
   Ruby's Arrays are; when two elements cannot be compared, `<` and the like raise `ArgumentError`
@@ -485,6 +487,7 @@ This defines the namespace `Point` with the following operations:
   | `@x` | `Point.get_x(p)` |
   | `@x = v` | `Point.set_x(p, v)` |
   | `@x OP= v` | `Point.set_x(p, Point.get_x(p) OP v)` |
+  | `@x \|\|= v` | `Point.get_x(p) \|\| Point.set_x(p, v)` |
 
   - `p` is the first parameter's current value, even inside a block whose parameter has the same
     name.

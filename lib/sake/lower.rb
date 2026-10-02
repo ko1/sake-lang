@@ -147,6 +147,9 @@ module Sake
         fa = target(n) or return unresolved(n)
         cur = field_get(fa.getter, get(0, n), n)
         field_set(fa.setter, get(0, n), BinOp.new(op: n.binary_operator.to_s, left: cur, right: lower(n.value), origin: n), n)
+      when Prism::InstanceVariableOrWriteNode
+        fa = target(n) or return unresolved(n)
+        Or.new(left: field_get(fa.getter, get(0, n), n), right: field_set(fa.setter, get(0, n), lower(n.value), n), origin: n)
       else raise "BUG: unlowered node #{n.type} at line #{n.location.start_line}"
       end
     end
