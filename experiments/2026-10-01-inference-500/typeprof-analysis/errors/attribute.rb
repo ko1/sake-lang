@@ -27,8 +27,12 @@ head.each do |path, errs|
   names.drop(1).each do |n|
     rec = runs[n][path]
     if rec.nil? || rec["failed"]
+      # the counterfactual could not be analyzed (TypeProf out of memory / time): what is still
+      # unattributed cannot be attributed to this or any later variant
       failed[n] += 1
-      next
+      remaining.each { |k, c| c.times { (first[k] ||= []) << "failed@#{n}" } if c > 0 }
+      remaining.transform_values! { 0 }
+      break
     end
     now = rec["errors"].tally
     newerr[n] += now.sum { |k, c| [c - (errs.tally[k] || 0), 0].max }

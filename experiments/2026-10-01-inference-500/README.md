@@ -187,3 +187,4 @@ Sake 版では、手で型を分けて同じ名前の操作を呼んでいる箇
 - `notes-tally.md`：書き手の NOTES の集計
 - `union-receiver-prior-art.md`：`(A|B).op(x)` の先行例の調査
 - `report.html`：結論の解説ページ（上の artifact の元）
+- `typeprof-analysis/`：TypeProf の結果の詳しい解析（完走できなかった原因、誤報の原因、untyped の原因。最小の再現例と診断用パッチ）。開発者向けの解説ページ <https://claude.ai/artifact/UUxaeKVUa9HAC95CS7hpzN>（`typeprof-analysis/report.html`）

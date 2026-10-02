@@ -18,10 +18,19 @@ VARIANTS = {
   "V1" => [%w[interface], []],
   "V2" => [%w[interface numeric_catchall], []],
   "V3" => [%w[interface numeric_catchall masgn], []],
-  "V4" => [%w[interface numeric_catchall masgn], %i[nilq]],
-  "V5" => [%w[interface numeric_catchall masgn], %i[nilq acond]],
-  "V6" => [%w[interface numeric_catchall masgn rbs_nonnil], %i[nilq acond]],
-  "V7" => [%w[interface numeric_catchall masgn rbs_nonnil nil_literal], %i[nilq acond]],
+  "V4" => [%w[interface numeric_catchall masgn sigvertex], []],
+  "V5" => [%w[interface numeric_catchall masgn sigvertex], %i[modfunc]],
+  "V6" => [%w[interface numeric_catchall masgn sigvertex], %i[modfunc shadow]],
+  "V7" => [%w[interface numeric_catchall masgn sigvertex], %i[modfunc shadow nilq]],
+  "V8" => [%w[interface numeric_catchall masgn sigvertex], %i[modfunc shadow nilq acond]],
+  "V9" => [%w[interface numeric_catchall masgn sigvertex rbs_nonnil], %i[modfunc shadow nilq acond]],
+  "V10" => [%w[interface numeric_catchall masgn sigvertex rbs_nonnil nil_literal], %i[modfunc shadow nilq acond]],
+  "V11" => [%w[interface numeric_catchall masgn sigvertex rbs_nonnil nil_literal empty_arg], %i[modfunc shadow nilq acond]],
+  # single-factor variants (each change alone, on top of nothing)
+  "S-interface" => [%w[interface], []], "S-numeric_catchall" => [%w[numeric_catchall], []],
+  "S-masgn" => [%w[masgn], []], "S-sigvertex" => [%w[sigvertex], []], "S-modfunc" => [[], %i[modfunc]],
+  "S-shadow" => [[], %i[shadow]], "S-nilq" => [[], %i[nilq]], "S-acond" => [[], %i[acond]],
+  "S-rbs_nonnil" => [%w[rbs_nonnil], []], "S-nil_literal" => [%w[nil_literal], []], "S-empty_arg" => [%w[empty_arg], []],
 }
 name = ARGV.fetch(0)
 patches, rewrites = VARIANTS.fetch(name)
@@ -34,7 +43,14 @@ progs = progs.select { _1["errors"]&.any? }.map { _1["path"] }
 scratch = File.join(__dir__, "runs/src-#{name}")
 out = File.open(File.join(__dir__, "runs/#{name}.jsonl"), "w")
 lock = File.open(TPLOCK, File::CREAT | File::RDWR)
+# attribute.rb stops at a program's first failed variant, so later variants skip it
+prev = VARIANTS.keys[VARIANTS.keys.index(name) - 1]
+prev_failed = name == "V0" || !name.start_with?("V") ? {} : File.readlines(File.join(__dir__, "runs/#{prev}.jsonl")).map { JSON.parse(_1) }.select { _1["failed"] }.to_h { [_1["path"], true] }
 progs.each_with_index do |path, i|
+  if prev_failed[path]
+    out.puts JSON.generate(path:, sec: 0, failed: "skipped: failed in #{prev}"); out.flush
+    next
+  end
   src = File.read(File.join(EXP, path))
   stats = {}
   src, stats = Rewrite.apply(src, rewrites) unless rewrites.empty?
