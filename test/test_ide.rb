@@ -1,0 +1,40 @@
+# frozen_string_literal: true
+
+# The browser IDE's Ruby side (lib/sake/ide.rb): JSON in, JSON out.
+require "minitest/autorun"
+require_relative "../lib/sake/ide"
+
+class TestIDE < Minitest::Test
+  def call(req) = JSON.parse(Sake::IDE.dispatch(JSON.generate(req)))
+
+  def test_run_reads_stdin_and_reports_status
+    r = call(cmd: "run", src: "name = gets\nputs(\"hi \#{name}\")\n", level: 1, stdin: "Sake")
+    assert_equal ["hi Sake\n", "", 0], r.values_at("stdout", "stderr", "status")
+    r = call(cmd: "run", src: "p(1 + \"a\")\n", level: 1, stdin: "")
+    assert_equal 2, r["status"]
+    assert_match(/main\.sake:1:/, r["stderr"])
+  end
+
+  def test_analyze_gives_errors_at_the_level_and_warnings_above_it
+    r = call(cmd: "analyze", src: "Node = Struct.new(:value, :next)\ndef second(n) = Node.get_value(Node.get_next(n))\np(second(Node.new(1, Node.new(2, nil))))\n", level: 1)
+    d = r["diagnostics"].first
+    assert_equal ["warning", 2, 2], d.values_at("severity", "level", "line")
+    assert_equal [{ "name" => "second", "line" => 2, "params" => [%w[n Node]], "returns" => "Integer" }], r["functions"]
+    assert(r["hovers"].any? { _1["type"] == "nil | Node" })
+  end
+
+  def test_analyze_static_errors_and_symbols
+    r = call(cmd: "analyze", src: "Point = Struct.new(:x, :y)\nputs(String.upcse(\"a\"))\n", level: 1)
+    assert_equal ["error", 2, 12], r["diagnostics"].first.values_at("severity", "line", "col")
+    assert_nil r["ast"]
+    assert_equal %w[x y], r["symbols"]["types"]["Point"]["fields"]
+  end
+
+  def test_catalog_lists_named_operations
+    c = call(cmd: "catalog")
+    names = c["namespaces"]["Array"].map { _1["name"] }
+    assert_includes names, "sum"
+    refute_includes names, "+"
+    assert_equal "Array.sum(x, [Integer|Float|Rational|Complex]) [{ }]", c["namespaces"]["Array"].find { _1["name"] == "sum" }["signature"]
+  end
+end

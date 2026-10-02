@@ -7,14 +7,6 @@ require_relative "../lib/sake"
 
 ROOT = File.expand_path("..", __dir__)
 
-def signature(b)
-  ps = b.params.each_with_index.map { |t, i| i.zero? && t == b.namespace ? "x" : Array(t).join("|") }
-  ps += b.optional.map { "[#{Array(_1).join("|")}]" }
-  ps << "*#{Array(b.rest).join("|")}" if b.rest
-  block = { required: " { }", optional: " [{ }]" }.fetch(b.block, "")
-  b.name == Sake::CTOR ? "#{b.namespace}[#{ps.join(", ")}]" : "#{b.full_name}(#{ps.join(", ")})#{block}"
-end
-
 def build
   reg = Sake::Registry.new
   Sake::Stdlib.install(reg, StringIO.new)
@@ -27,7 +19,7 @@ def build
     names = reg.names(ns)
     next if names.empty?
     out << "\n## #{ns}\n\n"
-    names.sort.each { |n| out << "- `#{signature(reg.lookup(ns, n))}`\n" }
+    names.sort.each { |n| out << "- `#{reg.lookup(ns, n).signature}`\n" }
   end
   out << "\n## Exception types\n\n"
   named, scoped = Sake::Resolver::BUILTIN_EXCEPTIONS.partition { !_1.include?("::") }

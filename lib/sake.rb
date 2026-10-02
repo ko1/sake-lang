@@ -33,8 +33,9 @@ module Sake
   # so that Sake's own depth limit, not Ruby's stack, bounds recursion.
   def run(source, path, out: $stdout) = execute(load(source, path, out:))
 
-  def execute(program)
+  def execute(program, thread: true)
     path = program.path
+    return Interpreter.new(program).run unless thread
     th = Thread.new { Interpreter.new(program).run }
     th.report_on_exception = false
     th.value

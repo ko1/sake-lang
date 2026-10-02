@@ -134,7 +134,13 @@ module Sake
           err.puts "warning: type checks skipped (internal error in the type checker: #{e.class}: #{e.message})"
           return
         end
-      diags = typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.line, c.column] }.map do |c, item|
+      diags = strict_diagnostics(program, items, typer)
+      raise StaticErrors.new(diags) unless diags.empty?
+    end
+
+    # The typer's findings for the chosen items, as diagnostics.
+    def strict_diagnostics(program, items, typer)
+      typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.line, c.column] }.map do |c, item|
         what = { "pair" => "the operands", "index" => "the index", "value" => "the value" }.fetch(c.arg) { "argument #{c.arg}" }
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
@@ -152,7 +158,6 @@ module Sake
         hints += ["reached by the call at line #{c.via.join(" → line ")}"] if c.via&.any?
         Diagnostic.new(program.path, c.line, c.column, "#{msg} [#{item}]", hints)
       end
-      raise StaticErrors.new(diags) unless diags.empty?
     end
 
     # Runs only on the error path: static analysis tells where the nil may have come from.
@@ -187,7 +192,16 @@ module Sake
       raise UsageError, "give one FILE.sake" unless files.size == 1
 
       path = files.first
-      source = File.read(path)
+      run_source(File.read(path), path, check_only:, types:, ast:, items:, out:, err:)
+    rescue UsageError => e
+      err.puts "sake: #{e.message}"
+      err.write(USAGE)
+      2
+    end
+
+    # What `sake` does with a program's source; returns the exit status. thread: false runs the
+    # program on the current thread (where threads are not available, as in ruby.wasm).
+    def run_source(source, path, items:, check_only: false, types: false, ast: false, out: $stdout, err: $stderr, thread: true)
       program = Sake.load(source, path, out:)
       if ast
         code = Lower.program(program)
@@ -204,13 +218,9 @@ module Sake
       if check_only
         out.puts "#{path}: OK"
       else
-        Sake.execute(program)
+        Sake.execute(program, thread:)
       end
       0
-    rescue UsageError => e
-      err.puts "sake: #{e.message}"
-      err.write(USAGE)
-      2
     rescue StaticErrors => e
       out.flush
       err.puts e.message

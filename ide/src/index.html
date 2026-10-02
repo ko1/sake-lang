@@ -1,0 +1,170 @@
+<title>Sake Playground</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one screen — a bar of controls, then the editor and the result pane side by side (stacked when narrow), split by a draggable divider. */
+:root {
+  --paper: #fbfbf8;        /* editor ground: unbleached paper */
+  --panel: #f1f2ee;        /* result pane */
+  --ink: #1d2128;
+  --ink-soft: #5a6170;
+  --ink-faint: #9aa0aa;
+  --rule: #dcdfd8;
+  --accent: #2b4d86;       /* ai-iro, indigo dye */
+  --on-accent: #ffffff;
+  --selection: #c9d6ee;
+  --line-active: #f0f2ea;
+  --good: #2f7a4f; --warn: #a86a10; --bad: #b3322f;
+  --good-bg: #e3f0e7; --warn-bg: #f6ead4; --bad-bg: #f7e1df;
+  --syn-keyword: #8a3f8f; --syn-type: #2b4d86; --syn-atom: #a0522d; --syn-number: #1f7a7a;
+  --syn-string: #3d7a2a; --syn-comment: #8c929c; --syn-def: #1d2128; --syn-field: #7a5a12; --syn-op: #5a6170;
+  --shadow: 0 6px 24px rgba(20, 30, 50, .12);
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #15181e; --panel: #1b1f27; --ink: #e3e6ec; --ink-soft: #a3aab7; --ink-faint: #626a78; --rule: #2c323d;
+    --accent: #7ea3e6; --on-accent: #10131a; --selection: #2c4470; --line-active: #1c2029;
+    --good: #6cc495; --warn: #e2b05a; --bad: #f08a83; --good-bg: #1c3127; --warn-bg: #352a17; --bad-bg: #3a1f1e;
+    --syn-keyword: #d49be0; --syn-type: #8fb2f0; --syn-atom: #e7a073; --syn-number: #6fcfcf;
+    --syn-string: #9fd38a; --syn-comment: #6f7785; --syn-def: #e3e6ec; --syn-field: #e2c47a; --syn-op: #a3aab7;
+    --shadow: 0 6px 24px rgba(0, 0, 0, .45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #15181e; --panel: #1b1f27; --ink: #e3e6ec; --ink-soft: #a3aab7; --ink-faint: #626a78; --rule: #2c323d;
+  --accent: #7ea3e6; --on-accent: #10131a; --selection: #2c4470; --line-active: #1c2029;
+  --good: #6cc495; --warn: #e2b05a; --bad: #f08a83; --good-bg: #1c3127; --warn-bg: #352a17; --bad-bg: #3a1f1e;
+  --syn-keyword: #d49be0; --syn-type: #8fb2f0; --syn-atom: #e7a073; --syn-number: #6fcfcf;
+  --syn-string: #9fd38a; --syn-comment: #6f7785; --syn-def: #e3e6ec; --syn-field: #e2c47a; --syn-op: #a3aab7;
+  --shadow: 0 6px 24px rgba(0, 0, 0, .45);
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 14px; display: flex; flex-direction: column; overflow: hidden; }
+button, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 16px; border-bottom: 1px solid var(--rule); background: var(--paper); }
+.brand { display: flex; align-items: baseline; gap: 8px; margin-right: 6px; }
+.brand b { font-family: var(--mono); font-weight: 600; font-size: 17px; letter-spacing: .02em; }
+.brand span { color: var(--ink-soft); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+.bar .grow { flex: 1; }
+select { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; max-width: 100%; }
+.btn { border: 1px solid var(--rule); background: var(--panel); border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.btn.primary:disabled { opacity: .5; cursor: default; }
+.btn kbd { font-family: var(--mono); font-size: 11px; opacity: .8; margin-left: 6px; }
+.engine { color: var(--ink-faint); font-size: 12px; font-family: var(--mono); }
+
+#workspace { --split: 54%; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--split) 7px minmax(0, 1fr); }
+#editor { min-width: 0; min-height: 0; overflow: hidden; }
+#split { background: var(--rule); cursor: col-resize; position: relative; touch-action: none; }
+#split::after { content: ""; position: absolute; inset: 0 -4px; }
+#split:hover, #split:focus-visible { background: var(--accent); }
+.result { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
+.tabs { display: flex; gap: 2px; padding: 8px 12px 0; border-bottom: 1px solid var(--rule); }
+.tabs button { border: none; background: none; padding: 7px 12px 8px; cursor: pointer; color: var(--ink-soft); border-bottom: 2px solid transparent; font-weight: 500; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.panel { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 18px; }
+
+.boot { margin: 12px 16px 0; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); display: grid; gap: 8px; }
+.boot .track { height: 4px; background: var(--rule); border-radius: 2px; overflow: hidden; }
+.boot .fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.boot.failed { border-color: var(--bad); color: var(--bad); }
+.boot.failed .track { display: none; }
+
+.run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.pill { font-family: var(--mono); font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--paper); border: 1px solid var(--rule); color: var(--ink-soft); }
+.pill.good { background: var(--good-bg); color: var(--good); border-color: transparent; }
+.pill.bad { background: var(--bad-bg); color: var(--bad); border-color: transparent; }
+.pill.running { color: var(--accent); }
+pre { margin: 0 0 10px; font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+pre.stdout { padding: 10px 12px; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; }
+pre.stderr { padding: 10px 12px; background: var(--bad-bg); color: var(--bad); border-radius: 6px; }
+.muted { color: var(--ink-soft); }
+.small { font-size: 12px; }
+.note { padding: 8px 12px; border-left: 3px solid var(--warn); background: var(--warn-bg); border-radius: 0 6px 6px 0; }
+.line-link { font-family: var(--mono); font-size: inherit; background: none; border: none; padding: 0; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.line-link.fn { text-decoration: none; font-weight: 600; }
+details.stdin { margin-top: 14px; border-top: 1px solid var(--rule); padding-top: 10px; }
+details.stdin summary { cursor: pointer; color: var(--ink-soft); }
+#stdin { width: 100%; min-height: 70px; margin-top: 8px; font-family: var(--mono); font-size: 13px; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 8px; resize: vertical; box-sizing: border-box; }
+
+#types section { margin-bottom: 18px; }
+#types h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
+#types h3 .count { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--ink-faint); }
+.problems { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.problems li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 6px 10px; border-radius: 6px; background: var(--paper); border-left: 3px solid var(--bad); }
+.problems li.warning { border-left-color: var(--warn); }
+.problems .msg { font-size: 13px; overflow-wrap: anywhere; }
+.problems .item { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+.ok-line { color: var(--good); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--paper); border: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+.chip.good { color: var(--good); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-weight: 500; color: var(--ink-faint); font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--rule); }
+td { padding: 5px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+code { font-family: var(--mono); font-size: 12.5px; }
+code.ty { color: var(--syn-type); }
+code.ty.union { color: var(--warn); }
+code.ty.nilable { color: var(--syn-atom); }
+.param { white-space: nowrap; }
+#ast { font-size: 12px; color: var(--ink); }
+.type-tip { font-family: var(--mono); font-size: 12.5px; padding: 4px 9px; color: var(--syn-type); max-width: 40em; white-space: pre-wrap; }
+
+@media (max-width: 820px) {
+  #workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--split) 7px minmax(0, 1fr); }
+  #split { cursor: row-resize; }
+  #split::after { inset: -4px 0; }
+}
+@media (prefers-reduced-motion: reduce) { .boot .fill { transition: none; } }
+</style>
+
+<header class="bar">
+  <div class="brand"><b>Sake</b><span>playground</span></div>
+  <select id="example" aria-label="Open an example"></select>
+  <div class="grow"></div>
+  <select id="level" aria-label="Strictness of the checks before running"></select>
+  <button id="run" class="btn primary" type="button" disabled>Run<kbd>⌘/Ctrl ⏎</kbd></button>
+  <button id="stop" class="btn" type="button" hidden>Stop</button>
+  <span id="engine" class="engine">loading Ruby…</span>
+</header>
+
+<main id="workspace">
+  <div id="editor"></div>
+  <div id="split" role="separator" aria-orientation="vertical" aria-label="Resize the editor and the result pane" tabindex="0"></div>
+  <section class="result" aria-label="Result">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="output" aria-selected="true">Output</button>
+      <button type="button" role="tab" data-tab="types" aria-selected="false">Types</button>
+      <button type="button" role="tab" data-tab="ast" aria-selected="false">SakeAST</button>
+    </div>
+    <div id="boot" class="boot" role="status">
+      <span id="boot-label">Downloading Ruby 4.0 (ruby.wasm, 10 MB)…</span>
+      <div class="track"><div id="boot-bar" class="fill"></div></div>
+    </div>
+    <div id="panel-output" class="panel" role="tabpanel">
+      <div class="run-head"><span id="run-status" class="pill">not run yet</span><span class="muted small">Output of <code>sake --strict=LEVEL main.sake</code></span></div>
+      <div id="run-output"><p class="muted">Press Run to execute the program. Static errors stop it before it runs, as the level decides.</p></div>
+      <details class="stdin">
+        <summary>Input (stdin)</summary>
+        <textarea id="stdin" spellcheck="false" placeholder="Text the program reads with gets"></textarea>
+      </details>
+    </div>
+    <div id="panel-types" class="panel" role="tabpanel" hidden>
+      <div id="types"><p class="muted">The typer runs as you type. Its results appear here once Ruby has started.</p></div>
+    </div>
+    <div id="panel-ast" class="panel" role="tabpanel" hidden>
+      <pre id="ast" class="muted">The SakeAST (what the interpreter runs) appears here.</pre>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>

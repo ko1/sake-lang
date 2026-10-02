@@ -10,6 +10,15 @@ module Sake
     def min_arity = params.size
     def max_arity = rest ? Float::INFINITY : params.size + optional.size
 
+    # `Array.sum(x, [Integer|Float]) [{ }]`: x is the subject, [T] optional, *T rest, { } a block.
+    def signature
+      ps = params.each_with_index.map { |t, i| i.zero? && t == namespace ? "x" : Array(t).join("|") }
+      ps += optional.map { "[#{Array(_1).join("|")}]" }
+      ps << "*#{Array(rest).join("|")}" if rest
+      blk = { required: " { }", optional: " [{ }]" }.fetch(block, "")
+      name == CTOR ? "#{namespace}[#{ps.join(", ")}]" : "#{full_name}(#{ps.join(", ")})#{blk}"
+    end
+
     def param_type(i)
       if i < params.size then params[i]
       elsif i < params.size + optional.size then optional[i - params.size]
