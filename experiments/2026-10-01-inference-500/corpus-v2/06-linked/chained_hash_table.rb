@@ -1,0 +1,1 @@
+../../corpus/06-linked/chained_hash_table.rb

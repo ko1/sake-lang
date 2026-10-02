@@ -1,0 +1,1 @@
+../../corpus/12-parsers/truth_table.rb

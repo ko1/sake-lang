@@ -1,0 +1,114 @@
+Summer = Struct.new(:sum, :comp)
+
+class Summer
+  def zero = Summer.new(0.0, 0.0)
+
+  # Kahan-Babuska (Neumaier) compensated addition
+  def add(s, x)
+    t = @sum + x
+    if Float.abs(@sum) >= Float.abs(x)
+      @comp += (@sum - t) + x
+    else
+      @comp += (x - t) + @sum
+    end
+    @sum = t
+    s
+  end
+
+  def total(s) = @sum + @comp
+end
+
+def naive_sum(xs) = Array.reduce(xs, 0.0) { |acc, x| acc + x }
+
+def kahan_sum(xs)
+  s = Summer.zero
+  Array.each(xs) { |x| Summer.add(s, x) }
+  Summer.total(s)
+end
+
+def pairwise_sum(xs, lo, hi)
+  return 0.0 if hi <= lo
+  return xs[lo] if hi - lo == 1
+  mid = (lo + hi) / 2
+  pairwise_sum(xs, lo, mid) + pairwise_sum(xs, mid, hi)
+end
+
+def machine_epsilon
+  eps = 1.0
+  eps /= 2.0 while 1.0 + eps / 2.0 > 1.0
+  eps
+end
+
+def quadratic_naive(a, b, c)
+  d = Math.sqrt(b * b - 4.0 * a * c)
+  [(-b + d) / (2.0 * a), (-b - d) / (2.0 * a)]
+end
+
+def quadratic_stable(a, b, c)
+  d = Math.sqrt(b * b - 4.0 * a * c)
+  q = b >= 0.0 ? -0.5 * (b + d) : -0.5 * (b - d)
+  [c / q, q / a]
+end
+
+def ulps_between(a, b)
+  return 0 if a == b
+  lo = a < b ? a : b
+  hi = a < b ? b : a
+  count = 0
+  while lo < hi && count < 1000
+    lo = Float.next_float(lo)
+    count += 1
+  end
+  count
+end
+
+eps = machine_epsilon
+puts(format("machine epsilon: %.6e (2^%d)", eps, Float.round(Math.log2(eps))))
+puts(format("1.0 + eps/2 == 1.0: %s", 1.0 + eps / 2.0 == 1.0))
+puts(format("0.1 + 0.2 = %.17f, ulps from 0.3: %d", 0.1 + 0.2, ulps_between(0.1 + 0.2, 0.3)))
+
+cases = Array[
+  ["harmonic 1..3000", Range.map(1..3000) { |k| 1.0 / k }],
+  ["alternating 1-1/2+1/3...", Range.map(1..3000) { |k| (Integer.odd?(k) ? 1.0 : -1.0) / k }],
+  ["big + many small", Array.concat(Array[1.0e16], Range.map(1..2000) { 1.0 })],
+  ["tenths x 2000", Range.map(1..2000) { 0.1 }]
+]
+puts(format("%-26s %22s %22s %22s", "series", "naive", "kahan", "pairwise"))
+Array.each(cases) do |name, xs|
+  n = naive_sum(xs)
+  k = kahan_sum(xs)
+  pw = pairwise_sum(xs, 0, Array.size(xs))
+  puts(format("%-26s %22.15f %22.15f %22.15f", name, n, k, pw))
+  sorted = Array.sort_by(xs) { |x| Float.abs(x) }
+  puts(format("%-26s sorted ascending: %.15f (naive)", "", naive_sum(sorted)))
+end
+puts(format("ln 2 = %.15f", Math.log(2.0)))
+
+puts("quadratic x^2 + b x + 1 = 0, small root:")
+Array.each(Float[1.0e3, 1.0e5, 1.0e7, 1.0e9]) do |b|
+  n1, n2 = quadratic_naive(1.0, b, 1.0)
+  s1, s2 = quadratic_stable(1.0, b, 1.0)
+  exact = -1.0 / b
+  rel_n = Float.abs((n1 - exact) / exact)
+  rel_s = Float.abs((s1 - exact) / exact)
+  puts(format("  b=%.0e naive=%.10e (rel err %.1e) stable=%.10e (rel err %.1e)", b, n1, rel_n, s1, rel_s))
+end
+
+puts("(1 + 1/n)^n vs e:")
+Array.each(Integer[10, 1000, 100000, 10000000, 1000000000000000]) do |n|
+  approx = (1.0 + 1.0 / n) ** n
+  puts(format("  n=%-17d %.12f err=%.2e", n, approx, Float.abs(approx - Math.exp(1.0))))
+end
+
+puts("special values:")
+inf = 1.0 / 0.0
+nan = inf - inf
+puts("  inf=#{inf} -inf=#{-inf} nan=#{nan}")
+puts("  nan == nan: #{nan == nan}, nan?: #{Float.nan?(nan)}, finite?(inf): #{Float.finite?(inf)}")
+puts("  infinite?: #{Float.infinite?(inf)} #{Float.infinite?(-inf)} #{Kernel.inspect(Float.infinite?(1.0))}")
+puts("  1/inf = #{1.0 / inf}, -1/inf = #{-1.0 / inf}")
+begin
+  Float.to_i(nan)
+rescue FloatDomainError => e
+  puts("  to_i(nan) raised FloatDomainError")
+end

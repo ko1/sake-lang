@@ -1,0 +1,97 @@
+Sale = Struct.new(:region, :product, :quarter, :units, :price)
+RowError = Exception.new(:line_no)
+
+def csv_text
+  "region,product,quarter,units,price
+north,widget,Q1,120,2.50
+north,gadget,Q1,40,10.00
+south,widget,Q1,80,2.50
+south,gadget,Q2,55,9.50
+east,widget,Q2,200,2.25
+north,widget,Q2,130,2.50
+west,gizmo,Q2,abc,4.00
+east,gadget,Q3,60,10.00
+south,widget,Q3,95,2.40
+north,gizmo,Q3,15,4.00
+west,widget,Q4,70,2.60
+east,gizmo
+south,gadget,Q4,65,9.75
+north,widget,Q4,150,2.45
+"
+end
+
+def parse_row(header, line, line_no)
+  cells = String.split(line, ",")
+  if Array.size(cells) != Array.size(header)
+    raise RowError.new("expected #{Array.size(header)} fields, got #{Array.size(cells)}", line_no)
+  end
+  row = Hash[]
+  Array.each_with_index(header) { |h, i| row[h] = cells[i] }
+  units = row["units"]
+  unless String.match?(units, /^\d+$/)
+    raise RowError.new("units is not a number: #{units}", line_no)
+  end
+  Sale.new(row["region"], row["product"], row["quarter"], String.to_i(units), String.to_f(row["price"]))
+end
+
+class Sale
+  def revenue(s) = @units * @price
+end
+
+def pivot(sales)
+  table = Hash.new(0.0)
+  Array.each(sales) do |s|
+    table[[Sale.get_region(s), Sale.get_quarter(s)]] += Sale.revenue(s)
+  end
+  table
+end
+
+def print_pivot(table, rows, cols)
+  puts(format("%-8s", "") + Array.join(Array.map(cols) { |c| format("%9s", c) }) + format("%10s", "total"))
+  col_totals = Hash.new(0.0)
+  Array.each(rows) do |r|
+    line = format("%-8s", r)
+    row_total = 0.0
+    Array.each(cols) do |c|
+      v = table[[r, c]]
+      row_total += v
+      col_totals[c] += v
+      line += format("%9.2f", v)
+    end
+    puts(line + format("%10.2f", row_total))
+  end
+  grand = Array.sum(Hash.values(col_totals))
+  puts(format("%-8s", "total") + Array.join(Array.map(cols) { |c| format("%9.2f", col_totals[c]) }) + format("%10.2f", grand))
+end
+
+lines = String.lines(csv_text)
+header = String.split(String.chomp(lines[0]), ",")
+sales = Array[]
+errors = Array[]
+Array.each_with_index(Array.drop(lines, 1)) do |raw, i|
+  begin
+    Array.push(sales, parse_row(header, String.chomp(raw), i + 2))
+  rescue RowError => e
+    Array.push(errors, "line #{RowError.get_line_no(e)}: #{RowError.get_message(e)}")
+  end
+end
+puts("rows: #{Array.size(sales)} ok, #{Array.size(errors)} rejected")
+Array.each(errors) { |msg| puts("  #{msg}") }
+
+regions = Array.sort(Array.uniq(Array.map(sales) { |s| Sale.get_region(s) }))
+quarters = Array.sort(Array.uniq(Array.map(sales) { |s| Sale.get_quarter(s) }))
+print_pivot(pivot(sales), regions, quarters)
+
+by_product = Array.group_by(sales) { |s| Sale.get_product(s) }
+puts("by product:")
+Array.each(Array.sort(Hash.keys(by_product))) do |prod|
+  group = by_product[prod]
+  units = Array.sum(group) { |s| Sale.get_units(s) }
+  rev = Array.sum(group) { |s| Sale.revenue(s) }
+  puts(format("  %-7s units=%4d revenue=%8.2f avg price=%5.2f", prod, units, rev, rev / units))
+end
+
+best = Array.max_by(sales) { |s| Sale.revenue(s) }
+if best
+  puts(format("largest sale: %s %s %s %.2f", Sale.get_region(best), Sale.get_product(best), Sale.get_quarter(best), Sale.revenue(best)))
+end

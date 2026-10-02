@@ -1,0 +1,1 @@
+../../corpus/14-errors/circuit_breaker.rb

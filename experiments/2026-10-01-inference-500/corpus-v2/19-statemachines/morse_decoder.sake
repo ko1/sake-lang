@@ -1,0 +1,79 @@
+def morse_table
+  Hash[
+    "A" => ".-", "B" => "-...", "C" => "-.-.", "D" => "-..", "E" => ".", "F" => "..-.",
+    "G" => "--.", "H" => "....", "I" => "..", "J" => ".---", "K" => "-.-", "L" => ".-..",
+    "M" => "--", "N" => "-.", "O" => "---", "P" => ".--.", "Q" => "--.-", "R" => ".-.",
+    "S" => "...", "T" => "-", "U" => "..-", "V" => "...-", "W" => ".--", "X" => "-..-",
+    "Y" => "-.--", "Z" => "--..", "0" => "-----", "1" => ".----", "2" => "..---", "3" => "...--"
+  ]
+end
+
+# Encode text as [on?, duration] pulses, with deterministic timing jitter.
+def encode(text, unit)
+  pulses = Array[]
+  jitter = Integer[0, 1, -1, 1, 0, -1]
+  k = 0
+  words = String.split(String.upcase(text), " ")
+  Array.each_with_index(words) do |word, wi|
+    Array.push(pulses, [false, 7 * unit + jitter[k % 6]]) if wi > 0
+    Array.each_with_index(String.chars(word)) do |ch, ci|
+      Array.push(pulses, [false, 3 * unit + jitter[k % 6]]) if ci > 0
+      code = Hash.fetch(morse_table, ch, "........")
+      Array.each_with_index(String.chars(code)) do |sym, si|
+        Array.push(pulses, [false, unit + jitter[(k + 3) % 6]]) if si > 0
+        Array.push(pulses, [true, (sym == "." ? unit : 3 * unit) + jitter[k % 6]])
+        k += 1
+      end
+    end
+  end
+  pulses
+end
+
+def decode(pulses)
+  on_lengths = Array.map(Array.select(pulses) { |on, d| on }) { |on, d| d }
+  threshold = (Array.min(on_lengths) + Array.max(on_lengths)) / 2.0
+  dots = Array.select(on_lengths) { it < threshold }
+  unit = Array.sum(dots) / Integer.to_f(Array.size(dots))
+  reverse = Hash.invert(morse_table)
+  state = :between_symbols
+  symbol = ""
+  text = ""
+  unknown = 0
+  flush = 0
+  Array.each(pulses) do |on, d|
+    if on
+      symbol += d < threshold ? "." : "-"
+      state = :in_letter
+      next
+    end
+    ratio = d / unit
+    next if ratio < 2.0 || state != :in_letter
+    letter = reverse[symbol]
+    if letter
+      text += letter
+    else
+      text += "?"
+      unknown += 1
+    end
+    symbol = ""
+    flush += 1
+    text += " " if ratio >= 5.0
+    state = ratio >= 5.0 ? :between_words : :between_letters
+  end
+  unless String.empty?(symbol)
+    letter = reverse[symbol]
+    text += letter ? letter : "?"
+    unknown += 1 if letter == nil
+  end
+  {text: text, unit: unit, unknown: unknown, letters: flush + 1}
+end
+
+Array.each(Array[["sos help!", 3], ["state machine 2", 4], ["hello world", 6], ["c3po x", 5]]) do |msg, unit|
+  pulses = encode(msg, unit)
+  r = decode(pulses)
+  r => {text:, unit: guessed, unknown:, letters:}
+  ons = Array.count(pulses) { |on, d| on }
+  total = Array.sum(pulses) { |on, d| d }
+  puts(format("%-16s unit=%d guessed=%.2f pulses=%3d on=%3d time=%4d", Kernel.inspect(msg), unit, guessed, Array.size(pulses), ons, total))
+  puts(format("  decoded %-16s letters=%d unknown=%d %s", Kernel.inspect(text), letters, unknown, text == String.upcase(msg) ? "OK" : "MISMATCH"))
+end

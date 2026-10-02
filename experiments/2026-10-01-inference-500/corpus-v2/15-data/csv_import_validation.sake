@@ -1,0 +1,112 @@
+RowError = Exception.new(:line, :column)
+Order = Struct.new(:id, :customer, :date, :qty, :price, :note)
+
+def input
+  <<~CSV
+    id,customer,date,qty,price,note
+    1001,"Acme, Inc.",2026-03-01,4,19.99,
+    1002,Globex,2026-03-02,10,4.50,"rush, gift wrap"
+    1003,Initech,2026-13-02,1,99.00,
+    1004,"Umbrella ""Corp""",2026-03-04,two,5.00,
+    1005,Hooli,2026-03-05,3,,missing price
+    1006,Acme, Inc.,2026-03-06,1,1.00,
+    1007,Globex,2026-03-07,0,12.00,
+    1008,Stark,2026-03-08,7,3.25,"said ""thanks"""
+    1001,Wayne,2026-03-09,2,8.00,duplicate id
+  CSV
+end
+
+def split_csv_line(line)
+  fields = String[]
+  cur = ""
+  quoted = false
+  chars = String.chars(line)
+  i = 0
+  while i < Array.size(chars)
+    c = Array.fetch(chars, i)
+    if quoted
+      if c == "\"" && chars[i + 1] == "\""
+        cur += "\""
+        i += 1
+      elsif c == "\""
+        quoted = false
+      else
+        cur += c
+      end
+    elsif c == "\""
+      quoted = true
+    elsif c == ","
+      Array.push(fields, cur)
+      cur = ""
+    else
+      cur += c
+    end
+    i += 1
+  end
+  Array.push(fields, cur)
+  fields
+end
+
+def parse_int(s, line, col)
+  raise RowError.new("#{col} is not an integer: #{inspect(s)}", line, col) unless String.match?(s, /\A\d+\z/)
+  String.to_i(s)
+end
+
+def parse_date(s, line)
+  m = String.match(s, /\A(\d{4})-(\d{2})-(\d{2})\z/)
+  raise RowError.new("bad date #{s}", line, "date") if m == nil
+  month = String.to_i(m[2])
+  day = String.to_i(m[3])
+  raise RowError.new("month out of range in #{s}", line, "date") unless Integer.between?(month, 1, 12)
+  raise RowError.new("day out of range in #{s}", line, "date") unless Integer.between?(day, 1, 31)
+  s
+end
+
+def parse_row(fields, header, line)
+  if Array.size(fields) != Array.size(header)
+    raise RowError.new("expected #{Array.size(header)} fields, got #{Array.size(fields)}", line, "*")
+  end
+  row = Array.to_h(Array.zip(header, fields))
+  id = parse_int(Hash.fetch(row, "id"), line, "id")
+  qty = parse_int(Hash.fetch(row, "qty"), line, "qty")
+  raise RowError.new("qty must be positive", line, "qty") if qty == 0
+  price_s = Hash.fetch(row, "price")
+  raise RowError.new("price is empty", line, "price") if String.empty?(price_s)
+  price = Float(price_s)
+  note = Hash.fetch(row, "note")
+  Order.new(id, Hash.fetch(row, "customer"), parse_date(Hash.fetch(row, "date"), line), qty, price, String.empty?(note) ? nil : note)
+end
+
+lines = String.lines(input)
+header = split_csv_line(String.chomp(Array.fetch(lines, 0)))
+orders = Order[]
+errors = Array[]
+seen_ids = Hash[]
+Array.each_with_index(Array.drop(lines, 1)) do |raw, i|
+  line_no = i + 2
+  begin
+    order = parse_row(split_csv_line(String.chomp(raw)), header, line_no)
+    first = seen_ids[Order.get_id(order)]
+    raise RowError.new("duplicate id #{Order.get_id(order)} (first on line #{first})", line_no, "id") if first
+    seen_ids[Order.get_id(order)] = line_no
+    Array.push(orders, order)
+  rescue RowError => e
+    Array.push(errors, e)
+  end
+end
+
+puts("Imported #{Array.size(orders)} of #{Array.size(lines) - 1} rows")
+Array.each(orders) do |o|
+  note = Order.get_note(o)
+  total = Order.get_qty(o) * Order.get_price(o)
+  puts(format("  #%d %-18s %s %3d x %6.2f = %8.2f%s", Order.get_id(o), Order.get_customer(o), Order.get_date(o),
+              Order.get_qty(o), Order.get_price(o), total, note ? "  [#{note}]" : ""))
+end
+puts(format("  total value: %.2f", Array.sum(orders) { Order.get_qty(it) * Order.get_price(it) }))
+puts
+puts("Rejected #{Array.size(errors)} rows:")
+Array.each(errors) do |e|
+  puts("  line #{RowError.get_line(e)} [#{RowError.get_column(e)}]: #{Exception.message(e)}")
+end
+by_col = Array.tally(Array.map(errors) { RowError.get_column(it) })
+puts("Errors by column: " + Array.join(Array.map(Hash.sort_by(by_col) { |c, n| c }) { |c, n| "#{c}=#{n}" }, ", "))

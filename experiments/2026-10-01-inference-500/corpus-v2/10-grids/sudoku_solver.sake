@@ -1,0 +1,97 @@
+InvalidPuzzle = Exception.new(:row, :col)
+
+Sudoku = Struct.new(:cells, :guesses, :peers)
+
+class Sudoku
+  def parse(rows)
+    cells = Integer[]
+    Array.each(rows) do |line|
+      Array.each(String.chars(line)) do |ch|
+        Array.push(cells, ch == "." ? 0 : String.to_i(ch))
+      end
+    end
+    raise ArgumentError, "expected 81 cells, got #{Array.size(cells)}" if Array.size(cells) != 81
+    Sudoku.new(cells, 0, Range.map(0...81) { |i| peers_of(i) })
+  end
+
+  def peers_of(i)
+    r = i / 9
+    c = i % 9
+    br = r / 3 * 3
+    bc = c / 3 * 3
+    out = Array[]
+    Integer.times(9) do |k|
+      Array.push(out, r * 9 + k, k * 9 + c, (br + k / 3) * 9 + bc + k % 3)
+    end
+    Array.reject(Array.uniq(out)) { it == i }
+  end
+
+  def candidates(s, i)
+    used = Set[]
+    Array.each(@peers[i]) { |j| Set.add(used, @cells[j]) }
+    Range.reject(1..9) { |d| Set.include?(used, d) }
+  end
+
+  def validate!(s)
+    Array.each_with_index(@cells) do |v, i|
+      next if v == 0
+      Array.each(@peers[i]) do |j|
+        raise InvalidPuzzle.new("digit #{v} repeated", i / 9 + 1, i % 9 + 1) if @cells[j] == v
+      end
+    end
+    s
+  end
+
+  def solve(s)
+    best = nil
+    best_cands = nil
+    Array.each_with_index(@cells) do |v, i|
+      next if v != 0
+      cands = candidates(s, i)
+      if best_cands == nil || Array.size(cands) < Array.size(best_cands)
+        best = i
+        best_cands = cands
+      end
+    end
+    return true if best == nil
+    Array.each(best_cands) do |d|
+      @guesses += 1
+      @cells[best] = d
+      return true if solve(s)
+    end
+    @cells[best] = 0
+    false
+  end
+
+  def to_s(s)
+    lines = Array[]
+    Integer.times(9) do |r|
+      Array.push(lines, "------+-------+------") if r == 3 || r == 6
+      groups = Array[]
+      Array.each_slice(Array.take(Array.drop(@cells, r * 9), 9), 3) { |g| Array.push(groups, Array.join(g, " ")) }
+      Array.push(lines, Array.join(groups, " | "))
+    end
+    Array.join(lines, "\n")
+  end
+end
+
+def run(name, rows)
+  puts("## #{name}")
+  s = Sudoku.validate!(Sudoku.parse(rows))
+  givens = Array.count(Sudoku.get_cells(s)) { it != 0 }
+  if Sudoku.solve(s)
+    puts("solved (#{givens} givens, #{Sudoku.get_guesses(s)} placements)")
+    puts(s)
+  else
+    puts("no solution after #{Sudoku.get_guesses(s)} placements")
+  end
+rescue InvalidPuzzle => e
+  puts("invalid: #{Exception.message(e)} at r#{InvalidPuzzle.get_row(e)}c#{InvalidPuzzle.get_col(e)}")
+rescue ArgumentError => e
+  puts("unreadable: #{Exception.message(e)}")
+end
+
+run("easy", Array["53..7....", "6..195...", ".98....6.", "8...6...3", "4..8.3..1", "7...2...6", ".6....28.", "...419..5", "....8..79"])
+run("nearly done", Array["5.4678912", "672195.48", "19834256.", "8.9761423", "4268537.1", "71392485.", "9615.7284", "287419635", "34528617."])
+run("duplicate", Array["55..7....", "6..195...", ".98....6.", "8...6...3", "4..8.3..1", "7...2...6", ".6....28.", "...419..5", "....8..79"])
+run("short", Array["123", "456"])

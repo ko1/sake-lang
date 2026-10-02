@@ -1,0 +1,97 @@
+# Route simulated HTTP requests through middleware that maps domain exceptions to status codes.
+NotFound = Exception.new(:resource)
+Unauthorized = Exception.new(:realm)
+Forbidden = Exception.new(:role)
+ValidationFailed = Exception.new(:fields)
+RateLimited = Exception.new(:retry_in)
+
+Request = Struct.new(:method, :path, :token, :body)
+Response = Struct.new(:status, :body)
+
+def users = Hash["1" => {name: "ann", role: "admin"}, "2" => {name: "ben", role: "viewer"}]
+def tokens = Hash["t-ann" => "1", "t-ben" => "2"]
+
+def current_user(req)
+  token = Request.get_token(req)
+  raise Unauthorized.new("missing token", "api") if token == nil
+  id = tokens[token]
+  raise Unauthorized.new("invalid token", "api") if id == nil
+  users[id]
+end
+
+def handle(req)
+  path = Request.get_path(req)
+  m = String.match(path, /\A\/users\/(\w+)\z/)
+  case Request.get_method(req)
+  in "GET"
+    raise NotFound.new("no route #{path}", path) if m == nil
+    user = users[m[1]]
+    raise NotFound.new("user #{m[1]} not found", "user") if user == nil
+    user => {name:, role:}
+    "#{name} (#{role})"
+  in "PUT"
+    me = current_user(req)
+    me => {role:}
+    raise Forbidden.new("admins only", role) if role != "admin"
+    raise NotFound.new("no route #{path}", path) if m == nil
+    bad = Array.select(Hash.keys(Request.get_body(req))) { !Array.include?(Array["name", "role"], it) }
+    name = Request.get_body(req)["name"]
+    Array.push(bad, "name") if name != nil && String.length(name) < 2
+    raise ValidationFailed.new("invalid fields", bad) unless Array.empty?(bad)
+    "updated #{m[1]}"
+  else
+    raise ArgumentError, "unsupported method"
+  end
+end
+
+def with_rate_limit(counts, req, limit)
+  key = Request.get_token(req) || "anonymous"
+  counts[key] += 1
+  raise RateLimited.new("too many requests", counts[key] - limit) if counts[key] > limit
+  yield
+end
+
+def with_error_mapping
+  Response.new(200, yield)
+rescue NotFound => e
+  Response.new(404, Exception.message(e))
+rescue Unauthorized => e
+  Response.new(401, "#{Exception.message(e)} (realm #{Unauthorized.get_realm(e)})")
+rescue Forbidden => e
+  Response.new(403, "#{Exception.message(e)}; you are #{Forbidden.get_role(e)}")
+rescue ValidationFailed => e
+  Response.new(422, "#{Exception.message(e)}: #{Array.join(ValidationFailed.get_fields(e), ", ")}")
+rescue RateLimited => e
+  Response.new(429, "retry in #{RateLimited.get_retry_in(e)}s")
+rescue ArgumentError => e
+  Response.new(405, Exception.message(e))
+end
+
+requests = Array[
+  Request.new("GET", "/users/1", nil, Hash[]),
+  Request.new("GET", "/users/9", nil, Hash[]),
+  Request.new("GET", "/teams/1", nil, Hash[]),
+  Request.new("PUT", "/users/2", nil, Hash["name" => "bo"]),
+  Request.new("PUT", "/users/2", "t-bad", Hash["name" => "bo"]),
+  Request.new("PUT", "/users/1", "t-ben", Hash["name" => "benny"]),
+  Request.new("PUT", "/users/2", "t-ann", Hash["name" => "b", "email" => "x"]),
+  Request.new("PUT", "/users/2", "t-ann", Hash["role" => "editor"]),
+  Request.new("DELETE", "/users/2", "t-ann", Hash[]),
+  Request.new("GET", "/users/2", "t-ann", Hash[]),
+  Request.new("GET", "/users/1", "t-ann", Hash[])
+]
+
+counts = Hash.new(0)
+by_status = Hash.new(0)
+log = Array[]
+Array.each(requests) do |req|
+  begin
+    res = with_error_mapping { with_rate_limit(counts, req, 4) { handle(req) } }
+    by_status[Response.get_status(res)] += 1
+    puts(format("%-6s %-10s %d %s", Request.get_method(req), Request.get_path(req), Response.get_status(res), Response.get_body(res)))
+  ensure
+    Array.push(log, Request.get_method(req))
+  end
+end
+puts("handled #{Array.size(log)} requests")
+Array.each(Array.sort(Hash.keys(by_status))) { |s| puts("  #{s}: #{by_status[s]}") }

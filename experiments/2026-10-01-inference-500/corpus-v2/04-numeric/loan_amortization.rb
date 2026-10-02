@@ -1,0 +1,1 @@
+../../corpus/04-numeric/loan_amortization.rb

@@ -1,0 +1,27 @@
+# Changes (14-errors, corpus -> corpus-v2)
+
+- bank_transfers: unchanged
+- card_validation: expiry check is the Tuple comparison `[year, month] < today` (was the spelled-out `year < now_y || (year == now_y && month < now_m)` after destructuring `today`)
+- circuit_breaker: unchanged
+- config_loader: unchanged
+- contracts: `!Array.empty?(@items)` (was `Array.empty?(@items) == false`)
+- csv_import: unchanged
+- dependency_resolver: unchanged
+- error_wrapping: unchanged
+- expr_calculator: unchanged
+- http_error_mapping: `!Array.include?(...)` (was `Array.include?(...) == false`)
+- job_queue: `Array.min_by` key is the Tuple `[run_at, id]` (was the packed String `format("%06d %s", ...)`); `while !Array.empty?(...)` (was `== false`)
+- ledger_reconcile: unary minus `-cents` (was `0 - cents`); `ref, date, amount, memo = fields` destructures the Array (was index access `fields[0], fields[1], ...`)
+- log_triage: unchanged
+- matrix_checks: shapes compared with Tuple `==` (`sa == sb`, `shape(m) == [2, 2]`), removing the hand-written `same_shape?` helper and its `== false`; unary minus in `inverse2` (was `0 - ...`)
+- nested_schema: unchanged
+- order_lifecycle: unchanged
+- param_coercion: unchanged
+- password_policy: unchanged
+- quote_fallback: unchanged
+- registration_form: `Hash.sort_by` key is the Tuple `[-n, f]` (was the packed String `format("%06d %s", 999999 - n, f)`); `local, domain = parts` destructures the Array (was `parts[0], parts[1]`); `!Array.empty?(missing)` (was `== false`)
+- result_pipeline: `customer, sku, raw, coupon = fields` destructures the Array in `parse_quantity` (was `fields[0]` ... `fields[3]`)
+- retry_backoff: unchanged
+- spreadsheet_errors: unchanged
+- unit_quantities: unchanged
+- warehouse_reservation: `sort_by { -Warehouse.available(it, sku) }` (was `0 - ...`)

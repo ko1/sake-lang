@@ -1,0 +1,123 @@
+# Protocol-buffers style wire format: LEB128 varints, zigzag signed ints, fixed32 and
+# length-delimited fields. Encodes a few records, then decodes them by field number.
+
+Field = Struct.new(:number, :wire, :value)
+WireError = Exception.new(:offset)
+
+def varint(n)
+  out = Integer[]
+  loop_n = n
+  while loop_n >= 0x80
+    Array.push(out, (loop_n & 0x7F) | 0x80)
+    loop_n >>= 7
+  end
+  Array.push(out, loop_n)
+  out
+end
+
+def zigzag(n) = n >= 0 ? n * 2 : -n * 2 - 1
+def unzigzag(z) = Integer.even?(z) ? z / 2 : -(z + 1) / 2
+
+def key(number, wire) = varint((number << 3) | wire)
+
+def encode_field(f)
+  num = Field.get_number(f)
+  v = Field.get_value(f)
+  case Field.get_wire(f)
+  in 0
+    Array.concat(key(num, 0), varint(v))
+  in 5
+    out = key(num, 5)
+    Integer.times(4) { |i| Array.push(out, (v >> (8 * i)) & 0xFF) }
+    out
+  in 2
+    data = String.bytes(v)
+    Array.concat(Array.concat(key(num, 2), varint(Array.size(data))), data)
+  end
+end
+
+def read_varint(bytes, pos)
+  result = 0
+  shift = 0
+  while true
+    b = bytes[pos]
+    raise WireError.new("truncated varint", pos) if b == nil
+    result |= (b & 0x7F) << shift
+    pos += 1
+    shift += 7
+    break if b < 0x80
+  end
+  [result, pos]
+end
+
+def decode(bytes)
+  fields = Field[]
+  pos = 0
+  while pos < Array.size(bytes)
+    k, pos = read_varint(bytes, pos)
+    number = k >> 3
+    wire = k & 7
+    case wire
+    in 0
+      v, pos = read_varint(bytes, pos)
+      Array.push(fields, Field.new(number, 0, v))
+    in 5
+      raise WireError.new("truncated fixed32", pos) if pos + 4 > Array.size(bytes)
+      v = 0
+      Integer.times(4) { |i| v |= bytes[pos + i] << (8 * i) }
+      pos += 4
+      Array.push(fields, Field.new(number, 5, v))
+    in 2
+      len, pos = read_varint(bytes, pos)
+      raise WireError.new("length #{len} past end", pos) if pos + len > Array.size(bytes)
+      s = Array.join(Array.map(bytes[pos...(pos + len)]) { |b| Integer.chr(b) }, "")
+      pos += len
+      Array.push(fields, Field.new(number, 2, s))
+    else
+      raise WireError.new("unsupported wire type #{wire}", pos)
+    end
+  end
+  fields
+end
+
+def person(id, name, delta, score)
+  Field[Field.new(1, 0, id), Field.new(2, 2, name), Field.new(3, 0, zigzag(delta)),
+        Field.new(4, 5, score)]
+end
+
+def hex(bytes) = Array.join(Array.map(bytes) { |b| format("%02x", b) }, " ")
+
+puts("== varints ==")
+Array.each(Integer[0, 1, 127, 128, 300, 16384, 2147483647]) do |n|
+  enc = varint(n)
+  back, used = read_varint(enc, 0)
+  puts(format("%10d -> %-16s back=%d (%d bytes)", n, hex(enc), back, used))
+end
+puts("zigzag: #{Array.join(Array.map(Integer[0, -1, 1, -2, 2, -64, 64]) { |n| "#{n}=>#{zigzag(n)}" }, " ")}")
+
+puts("== records ==")
+records = Array[person(150, "Ada", -3, 1000), person(7, "Grace Hopper", 42, 65535),
+                person(123456, "", 0, 4294967295)]
+Array.each(records) do |rec|
+  bytes = Array[]
+  Array.each(rec) { |f| Array.concat(bytes, encode_field(f)) }
+  puts(hex(bytes))
+  decoded = decode(bytes)
+  by_number = Hash[]
+  Array.each(decoded) { |f| by_number[Field.get_number(f)] = Field.get_value(f) }
+  name = by_number[2]
+  delta = by_number[3]
+  delta_s = (delta in Integer) ? Integer.to_s(unzigzag(delta)) : "?"
+  puts("  id=#{by_number[1]} name=#{Kernel.inspect(name)} delta=#{delta_s} score=#{by_number[4]} (#{Array.size(bytes)} bytes)")
+end
+
+puts("== damaged ==")
+Array.each(Array[Integer[0x08, 0x96], Integer[0x12, 0x05, 0x41, 0x42], Integer[0x1b, 0x00],
+                 Integer[0x25, 0x01, 0x02]]) do |bytes|
+  begin
+    fs = decode(bytes)
+    puts("#{hex(bytes)}: #{Array.size(fs)} fields")
+  rescue WireError => e
+    puts("#{hex(bytes)}: #{Exception.message(e)} (at #{WireError.get_offset(e)})")
+  end
+end

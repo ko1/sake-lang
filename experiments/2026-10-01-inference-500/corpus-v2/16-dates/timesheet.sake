@@ -1,0 +1,129 @@
+# Payroll from clock punches: pairs IN/OUT events (shifts may cross midnight),
+# flags broken sequences, splits hours into day/night, and applies daily and
+# weekly overtime rules.
+
+Punch = Struct.new(:who, :kind, :at)
+Shift = Struct.new(:who, :start, :finish)
+PunchError = Exception.new(:who, :at)
+
+def days_from_civil(y, m, d)
+  y -= 1 if m <= 2
+  era = y / 400
+  yoe = y - era * 400
+  doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+end
+
+def parse_time(s)
+  m = String.match(s, /\A(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})\z/)
+  raise ArgumentError, "bad timestamp #{s}" if m == nil
+  y, mo, d, h, mi = Array.map(MatchData.captures(m)) { |x| String.to_i(x) }
+  (days_from_civil(y, mo, d) * 24 + h) * 60 + mi
+end
+
+def hm(mins) = format("%d:%02d", mins / 60, mins % 60)
+
+def stamp(t) = format("%s %02d:%02d", Array["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][t / 1440 % 7], (t % 1440) / 60, t % 60)
+
+def log_text
+  "ana IN 2026-09-28 08:58
+ana OUT 2026-09-28 17:30
+ben IN 2026-09-28 21:55
+ana IN 2026-09-29 09:05
+ben OUT 2026-09-29 06:10
+ana OUT 2026-09-29 19:45
+ben IN 2026-09-29 22:00
+ben OUT 2026-09-30 06:00
+ana IN 2026-09-30 08:30
+ana IN 2026-09-30 12:30
+ana OUT 2026-09-30 17:00
+cat IN 2026-09-30 10:00
+ben IN 2026-09-30 22:05
+ben OUT 2026-10-01 07:30
+cat OUT 2026-09-30 14:00
+ana IN 2026-10-01 07:00
+ana OUT 2026-10-01 19:00
+cat OUT 2026-10-01 18:00
+ben IN 2026-10-01 22:00
+ben OUT 2026-10-02 06:00
+ana IN 2026-10-02 08:00
+ana OUT 2026-10-02 18:30
+ben IN 2026-10-02 21:30"
+end
+
+def load_punches
+  Array.map(String.lines(log_text)) do |line|
+    who, kind, date, time = String.split(String.strip(line), " ")
+    Punch.new(who, String.to_sym(kind), parse_time("#{date} #{time}"))
+  end
+end
+
+def pair_shifts(punches, problems)
+  open = Hash[]
+  shifts = Shift[]
+  Array.each(Array.sort_by(punches) { |p| Punch.get_at(p) }) do |p|
+    who = Punch.get_who(p)
+    begin
+      case Punch.get_kind(p)
+      in :IN
+        raise PunchError.new("IN while already in since #{stamp(open[who])}", who, Punch.get_at(p)) if open[who]
+        open[who] = Punch.get_at(p)
+      in :OUT
+        start = open[who]
+        raise PunchError.new("OUT without IN", who, Punch.get_at(p)) if start == nil
+        Hash.delete(open, who)
+        raise PunchError.new("shift longer than 16h", who, Punch.get_at(p)) if Punch.get_at(p) - start > 16 * 60
+        Array.push(shifts, Shift.new(who, start, Punch.get_at(p)))
+      end
+    rescue PunchError => e
+      Array.push(problems, "#{PunchError.get_who(e)} at #{stamp(PunchError.get_at(e))}: #{Exception.message(e)}")
+    end
+  end
+  Hash.each(open) { |who, at| Array.push(problems, "#{who} at #{stamp(at)}: still clocked in") }
+  shifts
+end
+
+# Minutes between 22:00 and 06:00 within [start, finish).
+def night_minutes(start, finish)
+  total = 0
+  day = start / 1440 - 1
+  while day * 1440 < finish
+    Array.each(Array[[day * 1440, day * 1440 + 360], [day * 1440 + 1320, day * 1440 + 1440]]) do |a, b|
+      lo = Array.max(Array[a, start])
+      hi = Array.min(Array[b, finish])
+      total += hi - lo if hi > lo
+    end
+    day += 1
+  end
+  total
+end
+
+problems = Array[]
+shifts = pair_shifts(load_punches, problems)
+puts("Problems:")
+Array.each(problems) { |s| puts("  #{s}") }
+
+rate = Hash["ana" => 2400, "ben" => 2600, "cat" => 2200]
+puts
+puts("Who  shifts   worked  night  daily-OT  weekly-OT     pay")
+Array.each(Array.sort(Array.uniq(Array.map(shifts) { |s| Shift.get_who(s) }))) do |who|
+  mine = Array.select(shifts) { |s| Shift.get_who(s) == who }
+  worked = 0
+  night = 0
+  daily_ot = 0
+  Array.each(mine) do |s|
+    len = Shift.get_finish(s) - Shift.get_start(s)
+    worked += len
+    night += night_minutes(Shift.get_start(s), Shift.get_finish(s))
+    daily_ot += len - 600 if len > 600
+  end
+  weekly_ot = Array.max(Array[worked - daily_ot - 40 * 60, 0])
+  cents = Hash.fetch(rate, who, 2000)
+  pay = (worked * cents + (daily_ot + weekly_ot) * cents / 2 + night * cents / 4) / 60
+  puts(format("%-4s %6d %8s %6s %9s %10s %7.2f", who, Array.size(mine), hm(worked), hm(night), hm(daily_ot), hm(weekly_ot), pay / 100.0))
+end
+
+longest = Array.max_by(shifts) { |s| Shift.get_finish(s) - Shift.get_start(s) }
+if longest
+  puts("Longest shift: #{Shift.get_who(longest)} #{stamp(Shift.get_start(longest))} -> #{stamp(Shift.get_finish(longest))} (#{hm(Shift.get_finish(longest) - Shift.get_start(longest))})")
+end

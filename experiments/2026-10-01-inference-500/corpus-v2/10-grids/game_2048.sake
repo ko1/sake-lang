@@ -1,0 +1,105 @@
+Game = Struct.new(:board, :score, :spawns, :moves)
+
+# slide one row to the left, merging equal neighbours once; returns [row, points]
+def slide_row(row)
+  tiles = Array.reject(row) { it == 0 }
+  out = Integer[]
+  points = 0
+  i = 0
+  while i < Array.size(tiles)
+    a = tiles[i]
+    b = tiles[i + 1]
+    if a == b
+      Array.push(out, a * 2)
+      points += a * 2
+      i += 2
+    else
+      Array.push(out, a)
+      i += 1
+    end
+  end
+  Array.push(out, 0) while Array.size(out) < Array.size(row)
+  [out, points]
+end
+
+def rotate_left(board) = Range.map(0...4) { |i| Array.map(board) { |row| row[3 - i] } }
+def rotate_right(board) = Range.map(0...4) { |i| Array.map(Array.reverse(board)) { |row| row[i] } }
+
+class Game
+  def start(rows) = Game.new(rows, 0, 0, 0)
+
+  def shift(g, dir)
+    turns = case dir
+            in "L" then 0
+            in "U" then 1
+            in "R" then 2
+            in "D" then 3
+            end
+    b = @board
+    Integer.times(turns) { b = rotate_left(b) }
+    gained = 0
+    moved = Array.map(b) do |row|
+      out, points = slide_row(row)
+      gained += points
+      out
+    end
+    Integer.times(turns) { moved = rotate_right(moved) }
+    return false if moved == @board
+    @board = moved
+    @score += gained
+    @moves += 1
+    true
+  end
+
+  def spawn(g)
+    empties = Array[]
+    Array.each_with_index(@board) do |row, r|
+      Array.each_with_index(row) { |v, c| Array.push(empties, [r, c]) if v == 0 }
+    end
+    return nil if Array.empty?(empties)
+    @spawns += 1
+    r, c = empties[(@spawns * 7) % Array.size(empties)]
+    value = @spawns % 5 == 0 ? 4 : 2
+    @board[r][c] = value
+    [r, c, value]
+  end
+
+  def stuck?(g)
+    Array.none?(Array["L", "U", "R", "D"]) do |dir|
+      probe = Game.new(Array.map(@board) { Array.dup(it) }, 0, 0, 0)
+      shift(probe, dir)
+    end
+  end
+
+  def best(g) = Array.max(Array.flatten(@board)) || 0
+
+  def to_s(g)
+    Array.join(Array.map(@board) { |row| Array.join(Array.map(row) { |v| String.rjust(v == 0 ? "." : Integer.to_s(v), 5) }) }, "\n")
+  end
+end
+
+p(slide_row(Array[2, 2, 2, 2]))
+p(slide_row(Array[4, 0, 4, 8]))
+p(slide_row(Array[2, 4, 8, 16]))
+
+g = Game.start(Array[Array[2, 0, 0, 2], Array[0, 4, 0, 0], Array[0, 0, 0, 0], Array[2, 0, 0, 0]])
+puts(g)
+script = "LURDLLUURDDLURDLULLUDRLLUDDLURRDLLU"
+ignored = 0
+String.each_char(script) do |dir|
+  next if Game.stuck?(g)
+  if Game.shift(g, dir)
+    placed = Game.spawn(g)
+    if placed
+      r, c, v = placed
+      puts("#{dir}: score #{Game.get_score(g)}, new #{v} at #{r},#{c}") if Game.get_moves(g) % 5 == 0
+    end
+  else
+    ignored += 1
+  end
+end
+puts(g)
+puts("moves #{Game.get_moves(g)}, ignored #{ignored}, score #{Game.get_score(g)}, best tile #{Game.best(g)}, stuck #{Game.stuck?(g)}")
+
+late = Game.start(Array[Array[2, 4, 2, 4], Array[4, 2, 4, 2], Array[2, 4, 2, 4], Array[4, 2, 4, 8]])
+puts("checkerboard stuck: #{Game.stuck?(late)}")

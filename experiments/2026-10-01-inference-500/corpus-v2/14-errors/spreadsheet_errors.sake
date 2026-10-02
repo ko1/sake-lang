@@ -1,0 +1,105 @@
+# Evaluate a small spreadsheet whose formulas can fail; errors become cell values like #DIV/0! and propagate.
+CellError = Exception.new(:code)
+
+Sheet = Struct.new(:cells, :cache, :evaluating)
+
+def sheet_cells
+  Hash[
+    "A1" => "10", "A2" => "32", "A3" => "hello", "A4" => "=A1+A2",
+    "B1" => "=A4/A1", "B2" => "=A1/C1", "B3" => "=B2+1", "B4" => "=SUM(A1:A2)",
+    "C1" => "0", "C2" => "=A3*2", "C3" => "=Z9+1", "C4" => "=SUM(A1:A4)",
+    "D1" => "=D2+1", "D2" => "=D1*2", "D3" => "=MAX(A1:A2)-MIN(A1:A2)", "D4" => "=AVG(C1:C1)",
+    "E1" => "=SUM(A1:B1)", "E2" => "=AVG(A1:A2)", "E3" => "=FOO(A1:A2)", "E4" => "=A1+"
+  ]
+end
+
+def cell_value(sheet, ref)
+  cache = Sheet.get_cache(sheet)
+  return cache[ref] if Hash.key?(cache, ref)
+  raw = Sheet.get_cells(sheet)[ref]
+  raise CellError.new("unknown cell #{ref}", "#REF!") if raw == nil
+  raise CellError.new("cycle through #{ref}", "#CYCLE!") if Set.include?(Sheet.get_evaluating(sheet), ref)
+  Set.add(Sheet.get_evaluating(sheet), ref)
+  value = begin
+    if String.start_with?(raw, "=")
+      eval_formula(sheet, String.delete_prefix(raw, "="))
+    elsif String.match?(raw, /\A-?\d+(\.\d+)?\z/)
+      Float(raw)
+    else
+      raw
+    end
+  rescue CellError => e
+    "#{CellError.get_code(e)}"
+  ensure
+    Set.delete(Sheet.get_evaluating(sheet), ref)
+  end
+  cache[ref] = value
+  value
+end
+
+def number(sheet, ref)
+  v = cell_value(sheet, ref)
+  case v
+  in Float then v
+  in String
+    raise CellError.new("error in #{ref}", v) if String.start_with?(v, "#")
+    raise CellError.new("#{ref} is text", "#VALUE!")
+  end
+end
+
+def expand(range)
+  m = String.match(range, /\A([A-Z])(\d+):([A-Z])(\d+)\z/)
+  raise CellError.new("bad range #{range}", "#REF!") if m == nil
+  cols = Array.map(Range.to_a(String.ord(m[1])..String.ord(m[3]))) { Integer.chr(it) }
+  rows = Range.to_a(String.to_i(m[2])..String.to_i(m[4]))
+  Array.flat_map(cols) { |c| Array.map(rows) { |r| "#{c}#{r}" } }
+end
+
+def call_function(sheet, name, range)
+  values = Array.map(expand(range)) { number(sheet, it) }
+  case name
+  in "SUM" then Array.sum(values)
+  in "MAX" then Array.max(values)
+  in "MIN" then Array.min(values)
+  in "AVG"
+    raise CellError.new("empty range", "#DIV/0!") if Array.empty?(values)
+    Array.sum(values) / Array.size(values)
+  else
+    raise CellError.new("unknown function #{name}", "#NAME?")
+  end
+end
+
+def operand(sheet, text)
+  m = String.match(text, /\A([A-Z]+)\(([A-Z0-9:]+)\)\z/)
+  return call_function(sheet, m[1], m[2]) if m
+  return number(sheet, text) if String.match?(text, /\A[A-Z]\d+\z/)
+  return Float(text) if String.match?(text, /\A\d+(\.\d+)?\z/)
+  raise CellError.new("cannot read '#{text}'", "#VALUE!")
+end
+
+def eval_formula(sheet, expr)
+  m = String.match(expr, /\A(.+?)([-+*\/])(.*)\z/)
+  return operand(sheet, expr) if m == nil
+  left = operand(sheet, m[1])
+  right = operand(sheet, m[3])
+  case m[2]
+  in "+" then left + right
+  in "-" then left - right
+  in "*" then left * right
+  in "/"
+    raise CellError.new("division by zero", "#DIV/0!") if right == 0.0
+    left / right
+  end
+end
+
+sheet = Sheet.new(sheet_cells, Hash[], Set[])
+Array.each(Array["A", "B", "C", "D", "E"]) do |col|
+  row = Array.map(Range.to_a(1..4)) do |r|
+    v = cell_value(sheet, "#{col}#{r}")
+    s = (v in Float) ? Float.to_s(Float.round(v, 2)) : v
+    String.ljust(s, 9)
+  end
+  puts("#{col} | #{String.rstrip(Array.join(row, " "))}")
+end
+errors = Array.select(Hash.to_a(Sheet.get_cache(sheet))) { |ref, v| (v in String) && String.start_with?(v, "#") }
+puts("#{Array.size(errors)} error cells: #{Array.join(Array.map(Array.sort_by(errors) { |ref, v| ref }) { |ref, v| "#{ref}=#{v}" }, " ")}")

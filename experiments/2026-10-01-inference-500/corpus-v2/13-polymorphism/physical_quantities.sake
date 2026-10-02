@@ -1,0 +1,154 @@
+DimensionMismatch = Exception.new(:left, :right)
+
+# dims is a Tuple [metre, kilogram, second] of exponents.
+def named_units
+  Hash[[0, 0, 0] => "", [1, 0, 0] => "m", [0, 1, 0] => "kg", [0, 0, 1] => "s",
+       [1, 0, -1] => "m/s", [1, 0, -2] => "m/s^2", [1, 1, -2] => "N", [2, 1, -2] => "J",
+       [2, 1, -3] => "W", [-1, 1, -2] => "Pa", [3, 0, 0] => "m^3", [0, 0, -1] => "Hz"]
+end
+
+def prefixes = Hash["km" => [1000.0, "m"], "cm" => [0.01, "m"], "mm" => [0.001, "m"], "g" => [0.001, "kg"],
+                    "min" => [60.0, "s"], "h" => [3600.0, "s"], "t" => [1000.0, "kg"]]
+
+class Qty < {reader: [value, dims]}
+  include Arithmetic
+  include Comparable
+
+  def unit_dims(name)
+    case name
+    in "m" then [1, 0, 0]
+    in "kg" then [0, 1, 0]
+    in "s" then [0, 0, 1]
+    in "N" then [1, 1, -2]
+    in "J" then [2, 1, -2]
+    in "W" then [2, 1, -3]
+    end
+  end
+
+  def parse(text)
+    num, unit = String.split(text, " ")
+    value = String.to_f(num)
+    dims = [0, 0, 0]
+    sign = 1
+    Array.each(String.scan(unit, /[\/*]|[a-zA-Z]+(?:\^-?\d+)?/)) do |tok|
+      if tok == "/"
+        sign = -1
+        next
+      end
+      next if tok == "*"
+      pieces = String.split(tok, "^")
+      name = pieces[0]
+      pow = pieces[1]
+      exp = (pow ? String.to_i(pow) : 1) * sign
+      scale = prefixes[name]
+      if scale
+        factor, base = scale
+        value = value * factor ** exp
+        name = base
+      end
+      d = unit_dims(name)
+      dims = [dims[0] + d[0] * exp, dims[1] + d[1] * exp, dims[2] + d[2] * exp]
+    end
+    Qty.new(value, dims)
+  end
+
+  def check(a, b, op)
+    unless @dims == Qty.get_dims(b)
+      raise DimensionMismatch.new("cannot #{op} #{unit_s(@dims)} and #{unit_s(Qty.get_dims(b))}", @dims, Qty.get_dims(b))
+    end
+  end
+
+  def +(a, b)
+    check(a, b, "add")
+    Qty.new(@value + Qty.get_value(b), @dims)
+  end
+
+  def -(a, b)
+    check(a, b, "subtract")
+    Qty.new(@value - Qty.get_value(b), @dims)
+  end
+
+  def *(a, b)
+    case b
+    in Qty
+      d = Qty.get_dims(b)
+      Qty.new(@value * Qty.get_value(b), [@dims[0] + d[0], @dims[1] + d[1], @dims[2] + d[2]])
+    in Integer | Float then Qty.new(@value * b, @dims)
+    end
+  end
+
+  def /(a, b)
+    case b
+    in Qty
+      d = Qty.get_dims(b)
+      Qty.new(@value / Qty.get_value(b), [@dims[0] - d[0], @dims[1] - d[1], @dims[2] - d[2]])
+    in Integer | Float then Qty.new(@value / b, @dims)
+    end
+  end
+
+  def **(a, n) = Qty.new(@value ** n, [@dims[0] * n, @dims[1] * n, @dims[2] * n])
+
+  def <=>(a, b)
+    check(a, b, "compare")
+    @value <=> Qty.get_value(b)
+  end
+
+  def unit_s(dims)
+    named = named_units[dims]
+    return named if named
+    parts = Array[]
+    Array.each_with_index(Array["m", "kg", "s"]) do |sym, i|
+      e = dims[i]
+      next if e == 0
+      Array.push(parts, e == 1 ? sym : "#{sym}^#{e}")
+    end
+    Array.join(parts, "*")
+  end
+
+  def to_s(a)
+    u = unit_s(@dims)
+    v = format("%.4g", @value)
+    u == "" ? v : "#{v} #{u}"
+  end
+end
+
+def kinetic_energy(m, v) = m * v ** 2 * 0.5
+
+g = Qty.parse("9.81 m/s^2")
+puts("g = #{g}")
+
+inputs = Array["72 kg", "36 km/h", "1.5 h", "250 g", "120 cm", "3 min", "2.5 t", "980 cm/s^2", "4 m^3"]
+Array.each(inputs) { |s| puts(format("%-12s -> %s", s, Qty.parse(s))) }
+
+mass = Qty.parse("72 kg")
+speed = Qty.parse("36 km/h")
+trip = Qty.parse("1.5 h")
+puts("distance = #{speed * trip}")
+puts("weight = #{mass * g}")
+puts("kinetic energy = #{kinetic_energy(mass, speed)}")
+climb = Qty.parse("120 m")
+work = mass * g * climb
+puts("work to climb #{climb} = #{work}")
+puts("power over 3 min = #{work / Qty.parse("3 min")}")
+puts("pressure of #{mass * g} on 0.05 m^2 = #{mass * g / Qty.parse("0.05 m^2")}")
+puts("frequency of 0.25 s period = #{Qty.parse("1 m") / Qty.parse("1 m") / Qty.parse("0.25 s")}")
+puts("odd unit: #{Qty.parse("3 kg") * Qty.parse("2 s")}")
+puts("dimensionless: #{Qty.parse("10 km") / Qty.parse("500 m")}")
+
+legs = Array.map(Array["1.2 km", "800 m", "350 m", "2.05 km"]) { |s| Qty.parse(s) }
+total = Array.reduce(legs, Qty.parse("0 m")) { |acc, q| acc + q }
+puts("legs: #{Array.join(legs, " + ")} = #{total}")
+puts("longest leg: #{Array.max(legs)}, shortest: #{Array.min(legs)}")
+puts("sorted: #{Array.join(Array.sort(legs), " < ")}")
+
+attempts = Array[["add", "5 m", "3 s"], ["compare", "2 J", "2 N"], ["add", "1 km", "10 m"]]
+Array.each(attempts) do |op, a, b|
+  qa = Qty.parse(a)
+  qb = Qty.parse(b)
+  begin
+    result = op == "add" ? Kernel.to_s(qa + qb) : Kernel.to_s(qa < qb)
+    puts("#{a} #{op} #{b} = #{result}")
+  rescue DimensionMismatch => e
+    puts("#{a} #{op} #{b}: #{Exception.message(e)}")
+  end
+end

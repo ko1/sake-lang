@@ -1,0 +1,1 @@
+../../corpus/07-trees/spanning_tree.rb

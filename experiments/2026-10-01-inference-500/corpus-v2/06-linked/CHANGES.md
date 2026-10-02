@@ -1,0 +1,27 @@
+# Changes (06-linked, corpus-v2)
+
+- adjacency_list_courses: two inside-out pipelines (`stuck` in `topo_order`, "unlocked by algo") rewritten as `x.Array.select {...}.Array.map {...}.Array.sort` chains.
+- bank_teller_sim: unchanged (the packed `min_by` key is the Ruby original's own expression).
+- browser_history: unchanged.
+- chained_hash_table: `sort_by` key `format("%04d %s", 1000 - v, k)` -> Tuple key `[-v, k]` (Tuple ordering, unary minus).
+- circular_playlist: `Integer.times(0 - n)` -> `-n`; `sort_by(Hash.to_a(h)) { 0 - s }` -> `Hash.sort_by(h) { -s }`; `target = t if ... && target == nil` -> `target ||= t if ...` (as in Ruby).
+- cycle_detection: `each_cons(nodes, 2) { |pair| ... pair[0], pair[1] }` -> `{ |a, b| ... }` (block parameters take an Array apart).
+- deque_sliding_window: `0 - @length`, `0 - i - 1` -> unary minus; `Deque.empty?(w) == false` -> `!Deque.empty?(w)`.
+- digit_list_bignum: three-line Fibonacci swap via `nxt` -> `fib_a, fib_b = fib_b, fib_a + fib_b` (as in Ruby).
+- free_list_pool: `@live[slot] == false` -> `!@live[slot]`.
+- josephus_circle: String sort key `format("%03d %s", 100 - n, name)` -> Tuple key `[-n, name]`, with `Hash.sort_by` instead of `Array.sort_by(Hash.to_a(...))`.
+- lfu_cache_buckets: unchanged.
+- list_toolkit: unchanged (`x > a ? x : a` kept: `[a, x]` is a Tuple and `Array.max` needs an Array).
+- lru_cache: unchanged.
+- markup_tag_checker: Integer sort key `line * 10000 + col` -> Tuple key `[line, col]`; `self_closing == false` -> `!self_closing`.
+- merge_log_streams: unchanged (`<=>` and `each_slice` mirror the Ruby code).
+- monotonic_stack_prices: `MinMaxStack.empty?(st) == false` -> `!MinMaxStack.empty?(st)` (2 places).
+- ring_buffer_metrics: `if @overwrite == false` -> `unless @overwrite` (as in Ruby).
+- rpn_stack_calculator: `0 - Stack.pop(stack, tok)` -> `-Stack.pop(stack, tok)` (unary minus).
+- singly_linked_list: unchanged.
+- skip_list_index: unchanged.
+- sparse_matrix_rows: unchanged.
+- sparse_polynomial: `0 - c` -> `-c`; `c < 0 ? 0 - c : c` for an Integer-or-Rational coefficient -> `(Integer|Rational).abs(c)`.
+- triage_priority_list: unchanged (`<=>` and `words[i]` mirror the Ruby code).
+- two_stack_print_queue: unchanged (`in {peek: true}` is still not a supported pattern).
+- undo_redo_editor: `parts = String.split(arg, "|")` + `parts[0]`, `parts[1]` -> `from, to = String.split(arg, "|")` (multiple assignment from an Array).

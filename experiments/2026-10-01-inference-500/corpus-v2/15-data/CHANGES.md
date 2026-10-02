@@ -1,0 +1,27 @@
+# Changes: data processing and reports (corpus -> corpus-v2)
+
+- access_log_report: multi-key sort uses the Tuple key `[-hits, p, m]` (ordered Tuples, unary `-`) instead of a zero-padded `format("%05d %s %s", 99999 - hits, ...)` String key.
+- bank_reconcile: `date, amount, memo = parts` (Array destructuring) instead of three `Array.fetch` calls.
+- budget_variance: the over-budget filter takes the `[dept, line]` key apart in the block, `{ |d, l| ... }` (block destructuring), instead of `{ |key| d, l = key; ... }`.
+- clickstream_sessions: `h, m, s = Array.map(String.split(...))` (Array destructuring) instead of `Array.fetch`; `!Session.reached?(...)` (unary `!`) instead of `== false`; top pages sorted by the Tuple key `[-n, page]` instead of a padded `format("%04d %s", 9999 - n, page)` key.
+- cohort_retention: `Array.each_slice(tokens, 2) do |uid, date|` (block destructuring of an Array) instead of `Array.fetch` on the slice.
+- csv_import_validation: unchanged.
+- customer_dedupe: unchanged.
+- employee_dept_join: span-of-control sort key `-n * 100 + id` (unary `-`) instead of `0 - n * 100 + id`.
+- etl_star_schema: `day, store, sku, qty_s, price = parts` (Array destructuring) instead of five `Array.fetch` calls; `_k, _natural, a = Array.fetch(@rows, key - 1)` without a temporary; rollup sorted by `-v` instead of `0 - v`.
+- expense_pivot: `Array.each_cons(month_totals, 2) do |a, b|` (block destructuring) instead of `Array.fetch(pair, 0/1)`; `-Pivot.row_total(...)` instead of `0 - ...`; `Array.join` without the `""` separator (the interpreter crash is fixed).
+- fulfillment_report: revenue by category sorted by `-v` instead of `0 - v`.
+- fx_conversion: `eur` formats with `(Rational|Integer).to_f(r)` (type list on the operation) instead of a `case r in Rational ... in Integer ...`; rate pairs read with `Array.each_slice(..., 2) { |cur, r| ... }` instead of `Array.fetch`; exposure sorted by `-Array.sum(...)` instead of `0 - ...`.
+- grade_book: competition ranking sorts by `-s` instead of `0 - s`.
+- groupby_query: unchanged.
+- inventory_diff: unchanged (the Ruby version also reads the columns with `fetch`).
+- invoice_totals: `Money.*` is `Money.new((Integer|Float).round(@cents * k))` (type list on the operation) instead of a `case k in Integer ... in Float ...` with two copies of the constructor.
+- league_standings: `_round, games = String.split(...)` (Array destructuring) instead of `Array.fetch(parts, 1)`.
+- metric_anomalies: `y, m, d = Array.map(String.split(s, "-")) { ... }` (Array destructuring) instead of `Array.fetch(parts, i)`; `Array.each_cons(points, 2) do |a, b|` instead of `Array.fetch` on the pair.
+- quality_rules: unchanged.
+- sales_by_region: `region, rep, product, units, price = fields` (Array destructuring) instead of five `Array.fetch`; region sort by `-total`; rep leaderboard sorted by the Tuple key `[-amt, rep]` instead of `format("%012d %s", 1_000_000_000 - amt, rep)`; product mix uses `mix[key] ||= [0, 0]` (a Tuple updated in place) instead of an `Integer[0, 0]` with an explicit nil check, and reads it with `units, amt = entry`.
+- size_histogram: unchanged.
+- survey_crosstab: unchanged.
+- table_renderer: rows sorted by `-it[:density]` instead of `0 - it[:density]`.
+- timesheet_payroll: `h, m = String.split(hhmm, ":")`, `week, who = Array.take(tokens, 2)`, `from, to = String.split(span, "-")` (Array destructuring) and `Array.each_slice(..., 2) do |day, span|` (block destructuring) instead of `Array.fetch` throughout.
+- top_products: unchanged.

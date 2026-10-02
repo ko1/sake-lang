@@ -1,0 +1,101 @@
+DecodeError = Exception.new(:offset)
+
+def rle_encode(s)
+  out = ""
+  chars = String.chars(s)
+  i = 0
+  while i < Array.size(chars)
+    c = chars[i]
+    run = 1
+    run += 1 while i + run < Array.size(chars) && chars[i + run] == c && run < 99
+    if run >= 3 || String.match?(c, /\d/)
+      out += format("%02d%s", run, c)
+    else
+      out += c * run
+    end
+    i += run
+  end
+  out
+end
+
+def rle_decode(s)
+  out = ""
+  chars = String.chars(s)
+  i = 0
+  while i < Array.size(chars)
+    c = chars[i]
+    if String.match?(c, /\d/)
+      digits = ""
+      while i < Array.size(chars) && String.size(digits) < 2
+        digits += chars[i]
+        i += 1
+      end
+      ch = chars[i]
+      raise DecodeError.new("count #{digits} without a character", i) if ch == nil
+      out += ch * String.to_i(digits)
+    else
+      out += c
+    end
+    i += 1
+  end
+  out
+end
+
+def bwt(s)
+  text = s + "$"
+  n = String.size(text)
+  rotations = Range.map(0...n) { |i| text[i..] + text[0...i] }
+  sorted = Array.sort(rotations)
+  Array.join(Array.map(sorted) { |r| r[-1] }, "")
+end
+
+def inverse_bwt(last)
+  n = String.size(last)
+  table = Array.map(Range.to_a(0...n)) { |_| "" }
+  col = String.chars(last)
+  Integer.times(n) do
+    table = Array.sort(Range.map(0...n) { |i| col[i] + table[i] })
+  end
+  row = Array.find(table) { |r| String.end_with?(r, "$") }
+  raise DecodeError.new("no end marker", 0) if row == nil
+  row[0...-1]
+end
+
+def move_to_front(s)
+  alphabet = Array.sort(Array.uniq(String.chars(s)))
+  codes = Integer[]
+  String.each_char(s) do |c|
+    idx = Array.index(alphabet, c)
+    Array.push(codes, idx)
+    Array.delete_at(alphabet, idx)
+    Array.unshift(alphabet, c)
+  end
+  codes
+end
+
+def ratio(a, b) = format("%.0f%%", 100.0 * String.size(b) / String.size(a))
+
+samples = Array["banana_bandana", "aaaaaaaaaabbbbbbbbbbcccccccccc", "abracadabra abracadabra abracadabra",
+                "tick tock tick tock tick tock", "ab3cd"]
+Array.each(samples) do |s|
+  direct = rle_encode(s)
+  b = bwt(s)
+  via_bwt = rle_encode(b)
+  back = inverse_bwt(rle_decode(via_bwt))
+  mtf = move_to_front(b)
+  zeros = Array.count(mtf) { |x| x == 0 }
+  puts("text:     #{s}")
+  puts("  rle:    #{direct} (#{ratio(s, direct)})")
+  puts("  bwt:    #{b}")
+  puts("  bwt+rle #{via_bwt} (#{ratio(s, via_bwt)})")
+  puts("  mtf:    #{Array.join(mtf, " ")}  zeros=#{zeros}/#{Array.size(mtf)}")
+  puts("  round trip: #{back == s ? "ok" : "MISMATCH " + back}")
+end
+
+Array.each(Array["03a02b", "12x", "4", "04"]) do |enc|
+  begin
+    puts("decode #{Kernel.inspect(enc)} -> #{Kernel.inspect(rle_decode(enc))}")
+  rescue DecodeError => e
+    puts("decode #{Kernel.inspect(enc)} failed at #{DecodeError.get_offset(e)}: #{Exception.message(e)}")
+  end
+end

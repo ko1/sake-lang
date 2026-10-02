@@ -1,0 +1,111 @@
+# Compare two inventory snapshots (SKU => quantity, price) and produce a change report.
+
+ParseError = Exception.new(:line_no)
+Item = Struct.new(:sku, :qty, :price)
+
+def parse_snapshot(text)
+  items = Hash[]
+  Array.each_with_index(String.lines(text)) do |line, i|
+    line = String.strip(line)
+    next if String.empty?(line) || String.start_with?(line, "#")
+    m = String.match(line, /\A([A-Z]{2}-\d{3})\s+(\d+)\s+(\d+\.\d\d)\z/)
+    raise ParseError.new("bad line: #{line}", i + 1) unless m
+    sku = m[1]
+    raise ParseError.new("duplicate #{sku}", i + 1) if Hash.key?(items, sku)
+    items[sku] = Item.new(sku, String.to_i(m[2]), String.to_f(m[3]))
+  end
+  items
+end
+
+class Item
+  def value(i) = @qty * @price
+end
+
+def money(x) = format("%.2f", x)
+
+def report(old, new)
+  old_keys = Array.to_set(Hash.keys(old))
+  new_keys = Array.to_set(Hash.keys(new))
+  added = Set.sort(new_keys - old_keys)
+  removed = Set.sort(old_keys - new_keys)
+  common = Set.sort(old_keys & new_keys)
+
+  puts("added (#{Array.size(added)}):")
+  Array.each(added) { |k| puts("  + #{k} qty=#{Item.get_qty(new[k])} @ #{money(Item.get_price(new[k]))}") }
+  puts("removed (#{Array.size(removed)}):")
+  Array.each(removed) { |k| puts("  - #{k} qty=#{Item.get_qty(old[k])}") }
+
+  changed = Array.filter_map(common) do |k|
+    a = old[k]
+    b = new[k]
+    dq = Item.get_qty(b) - Item.get_qty(a)
+    dp = Item.get_price(b) - Item.get_price(a)
+    next nil if dq == 0 && Float.abs(dp) < 0.005
+    [k, dq, dp]
+  end
+  puts("changed (#{Array.size(changed)}):")
+  Array.each(changed) do |k, dq, dp|
+    parts = Array[]
+    Array.push(parts, format("qty %+d", dq)) if dq != 0
+    Array.push(parts, format("price %+.2f", dp)) if Float.abs(dp) >= 0.005
+    puts("  ~ #{k} #{Array.join(parts, ", ")}")
+  end
+  unchanged = Array.size(common) - Array.size(changed)
+  puts("unchanged: #{unchanged}")
+
+  total_old = Array.sum(Array.map(Hash.values(old)) { |it| Item.value(it) })
+  total_new = Array.sum(Array.map(Hash.values(new)) { |it| Item.value(it) })
+  puts("stock value: #{money(total_old)} -> #{money(total_new)} (#{format("%+.2f", total_new - total_old)})")
+
+  by_prefix = Hash.transform_values(Array.group_by(Hash.values(new)) { |it| Item.get_sku(it)[0..1] }) do |items|
+    Array.sum(Array.map(items) { |it| Item.get_qty(it) })
+  end
+  puts("units by category: #{Array.join(Array.map(Array.sort_by(Hash.to_a(by_prefix)) { |c, n| c }) { |c, n| "#{c}=#{n}" }, " ")}")
+  low = Array.sort(Hash.keys(Hash.select(new) { |k, it| Item.get_qty(it) < 5 }))
+  puts("low stock: #{Array.empty?(low) ? "-" : Array.join(low, ", ")}")
+end
+
+monday = <<~INV
+  # sku     qty  price
+  HW-001    40   2.50
+  HW-002    12   7.25
+  EL-100     3  19.99
+  EL-101    25   4.10
+  PA-500   100   0.15
+INV
+
+tuesday = <<~INV
+  HW-001    32   2.50
+  HW-002    12   7.75
+  EL-101    25   4.10
+  EL-102     8  12.00
+  PA-500    96   0.15
+  PA-501     2   0.90
+INV
+
+broken = <<~INV
+  HW-001    32   2.50
+  HW-01X    12   7.75
+INV
+
+dupes = <<~INV
+  HW-001    1   2.50
+  HW-001    2   2.50
+INV
+
+old = parse_snapshot(monday)
+new = parse_snapshot(tuesday)
+report(old, new)
+
+Array.each(Array[broken, dupes]) do |text|
+  begin
+    parse_snapshot(text)
+    puts("parsed ok")
+  rescue ParseError => e
+    puts("line #{ParseError.get_line_no(e)}: #{Exception.message(e)}")
+  end
+end
+
+missing = Hash.fetch(new, "ZZ-999", nil)
+p(missing)
+p(Hash.dig(new, "EL-102") != nil)

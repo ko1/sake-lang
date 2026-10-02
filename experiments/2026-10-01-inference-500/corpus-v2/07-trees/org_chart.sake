@@ -1,0 +1,125 @@
+Employee = Struct.new(:id, :name, :title, :manager_id, :salary, :reports)
+OrgError = Exception.new(:employee_id)
+
+def parse(text)
+  staff = Hash[]
+  String.each_line(text) do |line|
+    id, name, title, mgr, salary = Array.map(String.split(String.chomp(line), "|")) { |x| String.strip(x) }
+    e = Employee.new(String.to_i(id), name, title, mgr == "-" ? nil : String.to_i(mgr), String.to_i(salary), Array[])
+    staff[Employee.get_id(e)] = e
+  end
+  staff
+end
+
+def link(staff)
+  roots = Array[]
+  Hash.each_value(staff) do |e|
+    mid = Employee.get_manager_id(e)
+    if mid == nil
+      Array.push(roots, e)
+    else
+      boss = staff[mid]
+      raise OrgError.new("#{Employee.get_name(e)} reports to unknown id #{mid}", Employee.get_id(e)) if boss == nil
+      Array.push(Employee.get_reports(boss), e)
+    end
+  end
+  Hash.each_value(staff) do |e|
+    sorted = Array.sort_by(Employee.get_reports(e)) { |r| Employee.get_name(r) }
+    Employee.set_reports(e, sorted)
+  end
+  roots
+end
+
+def chain(staff, e)
+  seen = Set[]
+  path = Array[e]
+  while (mid = Employee.get_manager_id(Array.last(path)))
+    raise OrgError.new("reporting cycle at #{Employee.get_name(Array.last(path))}", mid) if Set.include?(seen, mid)
+    Set.add(seen, mid)
+    Array.push(path, staff[mid])
+  end
+  path
+end
+
+class Employee
+  def headcount(e) = Array.sum(Array.map(@reports) { |r| 1 + headcount(r) })
+  def cost(e) = @salary + Array.sum(Array.map(@reports) { |r| cost(r) })
+  def depth(e) = Array.empty?(@reports) ? 0 : 1 + Array.max(Array.map(@reports) { |r| depth(r) })
+end
+
+def render(e, prefix, last, out)
+  connector = prefix == nil ? "" : (last ? "`-- " : "|-- ")
+  lead = prefix == nil ? "" : prefix
+  info = "#{Employee.get_name(e)} (#{Employee.get_title(e)})"
+  n = Employee.headcount(e)
+  info += " [#{n} under, $#{Employee.cost(e) / 1000}k]" if n > 0
+  Array.push(out, lead + connector + info)
+  child_prefix = prefix == nil ? "" : lead + (last ? "    " : "|   ")
+  reports = Employee.get_reports(e)
+  Array.each_with_index(reports) { |r, i| render(r, child_prefix, i == Array.size(reports) - 1, out) }
+  out
+end
+
+def common_manager(staff, a, b)
+  up_a = Array.map(chain(staff, a)) { |e| Employee.get_id(e) }
+  Array.find(chain(staff, b)) { |e| Array.include?(up_a, Employee.get_id(e)) }
+end
+
+def by_name(staff, name) = Array.find(Hash.values(staff)) { |e| Employee.get_name(e) == name }
+
+data = <<~TXT
+  1 | Grace   | CEO               | - | 310000
+  2 | Alan    | CTO               | 1 | 240000
+  3 | Ada     | CFO               | 1 | 230000
+  4 | Linus   | Eng Manager       | 2 | 180000
+  5 | Barbara | Eng Manager       | 2 | 175000
+  6 | Ken     | Engineer          | 4 | 150000
+  7 | Dennis  | Engineer          | 4 | 148000
+  8 | Margaret| Staff Engineer    | 5 | 190000
+  9 | Edsger  | Engineer          | 5 | 140000
+  10| Donald  | Intern            | 9 | 60000
+  11| Frances | Controller        | 3 | 160000
+  12| Radia   | Accountant        | 11| 95000
+TXT
+
+staff = parse(data)
+roots = link(staff)
+Array.each(roots) { |r| Array.each(render(r, nil, true, Array[])) { |l| puts(l) } }
+
+puts("-- stats --")
+managers = Array.reject(Hash.values(staff)) { |e| Array.empty?(Employee.get_reports(e)) }
+widest = Array.max_by(managers) { |e| Array.size(Employee.get_reports(e)) }
+puts("depth of org: #{Employee.depth(Array.first(roots))}")
+puts("managers: #{Array.size(managers)}, widest span: #{Employee.get_name(widest)} (#{Array.size(Employee.get_reports(widest))})")
+avg = Array.sum(Array.map(Hash.values(staff)) { |e| Employee.get_salary(e) }) / Hash.size(staff)
+puts("average salary: $#{avg}")
+leaves = Array.select(Hash.values(staff)) { |e| Array.empty?(Employee.get_reports(e)) }
+puts("individual contributors: #{Array.join(Array.sort(Array.map(leaves) { |e| Employee.get_name(e) }), ", ")}")
+
+puts("-- chains and common managers --")
+d = by_name(staff, "Donald")
+puts("Donald: #{Array.join(Array.map(chain(staff, d)) { |e| Employee.get_name(e) }, " -> ")}")
+pairs = Array[["Ken", "Dennis"], ["Donald", "Ken"], ["Radia", "Margaret"], ["Alan", "Edsger"], ["Ken", "Nobody"]]
+Array.each(pairs) do |x, y|
+  a = by_name(staff, x)
+  b = by_name(staff, y)
+  if a == nil || b == nil
+    puts("#{x} & #{y}: unknown employee")
+    next
+  end
+  m = common_manager(staff, a, b)
+  puts("#{x} & #{y}: #{m ? Employee.get_name(m) : "none"}")
+end
+
+puts("-- bad data --")
+bad = Array["1 | A | Boss | - | 1\n2 | B | Lead | 7 | 1\n", "1 | A | Boss | 2 | 1\n2 | B | Lead | 1 | 1\n"]
+Array.each(bad) do |text|
+  begin
+    s = parse(text)
+    link(s)
+    Hash.each_value(s) { |e| chain(s, e) }
+    puts("ok")
+  rescue OrgError => e
+    puts("error (employee #{OrgError.get_employee_id(e)}): #{Exception.message(e)}")
+  end
+end

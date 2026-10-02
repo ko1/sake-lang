@@ -1,0 +1,1 @@
+../../corpus/05-sorting/version_resolver.rb

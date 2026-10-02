@@ -1,0 +1,78 @@
+# Merge two sensor time series keyed by minute: key-Set union, forward fill, moving averages, resampling.
+
+def parse_series(text)
+  h = Hash[]
+  Array.each(String.split(text, ";")) do |pair|
+    t, v = String.split(String.strip(pair), "=")
+    h[String.to_i(t)] = v == "na" ? nil : String.to_f(v)
+  end
+  h
+end
+
+def forward_fill(keys, series)
+  last = nil
+  out = Hash[]
+  Array.each(keys) do |k|
+    v = series[k]
+    if v != nil
+      last = v
+    end
+    out[k] = last
+  end
+  out
+end
+
+def moving_average(values, n)
+  avgs = Array[]
+  Array.each_cons(values, n) do |win|
+    nums = Array.compact(win)
+    Array.push(avgs, Array.empty?(nums) ? nil : Array.sum(nums) / Array.size(nums))
+  end
+  avgs
+end
+
+def fmt(v) = v == nil ? "  --" : format("%5.1f", v)
+
+temp = parse_series("0=20.5; 1=20.7; 2=na; 3=21.4; 5=22.0; 6=22.4; 7=29.9; 8=22.9; 10=23.1; 11=23.0; 12=22.8")
+hum = parse_series("0=45; 2=46; 3=47; 4=na; 5=49; 7=50; 9=52; 10=51; 13=50")
+
+tk = Array.to_set(Hash.keys(temp))
+hk = Array.to_set(Hash.keys(hum))
+all_keys = Set.sort(tk | hk)
+puts("temp points: #{Set.size(tk)}, humidity points: #{Set.size(hk)}, merged minutes: #{Array.size(all_keys)}")
+puts("only temp: #{Array.join(Set.sort(tk - hk), ",")}; only humidity: #{Array.join(Set.sort(hk - tk), ",")}")
+nulls = Array.select(all_keys) { |k| temp[k] == nil && Hash.key?(temp, k) }
+puts("explicit gaps in temp: #{Array.join(nulls, ",")}")
+
+span = Range.to_a(Array.first(all_keys)..Array.last(all_keys))
+missing_minutes = Array.reject(span) { |m| Set.include?(tk | hk, m) }
+puts("minutes with no reading at all: #{Array.empty?(missing_minutes) ? "none" : Array.join(missing_minutes, ",")}")
+
+tf = forward_fill(span, temp)
+hf = forward_fill(span, hum)
+puts("== Merged (forward filled) ==")
+puts("  min  temp   hum")
+Array.each(span) { |m| puts(format("  %3d %s %s%s", m, fmt(tf[m]), fmt(hf[m]), temp[m] == nil ? " *" : "")) }
+
+temps = Array.map(span) { |m| tf[m] }
+ma = moving_average(temps, 3)
+puts("== 3-minute moving average of temp ==")
+puts("  " + Array.join(Array.map(ma) { |v| String.strip(fmt(v)) }, " "))
+
+spikes = Array.filter_map(Array.zip(Array.drop(span, 1), Array.drop(temps, 1), Array.take(ma, Array.size(span) - 1))) do |m, v, avg|
+  v != nil && avg != nil && Float.abs(v - avg) > 3.0 ? m : nil
+end
+puts("spikes at minute: #{Array.join(spikes, ",")}")
+
+puts("== 5-minute buckets ==")
+buckets = Array.group_by(span) { |m| m / 5 * 5 }
+Hash.each(buckets) do |start, mins|
+  ts = Array.compact(Array.map(mins) { |m| temp[m] })
+  hs = Array.compact(Array.map(mins) { |m| hum[m] })
+  t_avg = Array.empty?(ts) ? nil : Array.sum(ts) / Array.size(ts)
+  h_max = Array.max(hs)
+  puts(format("  %2d-%2d temp avg %s, humidity max %s, readings %d/%d", start, start + 4, fmt(t_avg), fmt(h_max), Array.size(ts) + Array.size(hs), Array.size(mins) * 2))
+end
+pairs = Array.select(Array.zip(temps, Array.map(span) { |m| hf[m] })) { |t, h| t != nil && h != nil }
+hot_humid = Array.count(pairs) { |t, h| t > 22.0 && h >= 50 }
+puts("minutes above 22C with humidity >= 50: #{hot_humid}")

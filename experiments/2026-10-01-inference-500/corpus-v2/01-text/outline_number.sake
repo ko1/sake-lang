@@ -1,0 +1,118 @@
+Node = Struct.new(:title, :pages, :children)
+OutlineError = Exception.new(:line_no)
+
+class Node
+  def total_pages(node)
+    Array.empty?(@children) ? @pages : Array.sum(@children) { |c| total_pages(c) }
+  end
+end
+
+def parse_outline(text)
+  root = Node.new("(root)", 0, Node[])
+  stack = Array[root]
+  Array.each_with_index(String.lines(text)) do |raw, i|
+    line = String.chomp(raw)
+    next if String.empty?(String.strip(line))
+    spaces = String.size(line) - String.size(String.lstrip(line))
+    raise OutlineError.new("odd indentation (#{spaces} spaces)", i + 1) if spaces % 2 == 1
+    level = spaces / 2 + 1
+    if level > Array.size(stack)
+      raise OutlineError.new("jumps from level #{Array.size(stack) - 1} to #{level}", i + 1)
+    end
+    m = String.match(String.strip(line), /\A(.*?)\s*\((\d+)p\)\z/)
+    title = m == nil ? String.strip(line) : m[1]
+    pages = m == nil ? 1 : String.to_i(m[2])
+    node = Node.new(title, pages, Node[])
+    Array.pop(stack) while Array.size(stack) > level
+    Array.push(Node.get_children(Array.last(stack)), node)
+    Array.push(stack, node)
+  end
+  root
+end
+
+def roman(n)
+  out = ""
+  rest = n
+  Array.each(Array[[10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]]) do |v, s|
+    while rest >= v
+      out += s
+      rest -= v
+    end
+  end
+  out
+end
+
+def label(scheme, path)
+  case scheme
+  in :decimal then Array.join(path, ".") + "."
+  in :legal then "§" + Array.join(path, ".")
+  in :classic
+    n = Array.last(path)
+    case Array.size(path) % 4
+    in 1 then roman(n) + "."
+    in 2 then Integer.chr(64 + n) + "."
+    in 3 then Integer.to_s(n) + "."
+    in 0 then Integer.chr(96 + n) + ")"
+    end
+  end
+end
+
+def walk(node, path, depth)
+  Array.each_with_index(Node.get_children(node)) do |child, i|
+    child_path = Array.push(Array.dup(path), i + 1)
+    yield(child, child_path, depth)
+    walk(child, child_path, depth + 1) { |n, p, d| yield(n, p, d) }
+  end
+end
+
+def toc(root, scheme, width, max_depth)
+  lines = Array[]
+  page = 1
+  walk(root, Integer[], 0) do |node, path, depth|
+    if depth < max_depth
+      head = "  " * depth + label(scheme, path) + " " + Node.get_title(node)
+      num = Integer.to_s(page)
+      dots = width - String.size(head) - String.size(num) - 2
+      leader = dots > 0 ? " " + "." * dots + " " : " "
+      Array.push(lines, head + leader + num)
+    end
+    page += Node.get_pages(node) if Array.empty?(Node.get_children(node))
+  end
+  Array.push(lines, "-" * width)
+  Array.push(lines, String.rjust("#{page - 1} pages", width))
+  lines
+end
+
+def outline_text
+  "Introduction (2p)\n" +
+  "Language\n" +
+  "  Syntax (3p)\n" +
+  "  Types\n" +
+  "    Values (2p)\n" +
+  "    Operations (4p)\n" +
+  "      Arithmetic (1p)\n" +
+  "      Indexing (1p)\n" +
+  "  Errors (2p)\n" +
+  "Runtime\n" +
+  "  Interpreter (5p)\n" +
+  "  Standard library (6p)\n" +
+  "Appendix (1p)\n"
+end
+
+root = parse_outline(outline_text)
+puts("sections: #{Array.size(Node.get_children(root))}, pages: #{Node.total_pages(root)}")
+Array.each(Array[[:decimal, 99], [:classic, 99], [:legal, 2]]) do |scheme, depth|
+  puts
+  puts("[#{scheme}]")
+  Array.each(toc(root, scheme, 44, depth)) { |l| puts(l) }
+end
+
+puts
+Array.each(Array["A\n    B\n", "A\n   B\n", "A\n  B\nC\n      D\n"]) do |bad|
+  begin
+    r = parse_outline(bad)
+    puts("ok: #{Array.size(Node.get_children(r))} top-level")
+  rescue OutlineError => e
+    puts("line #{OutlineError.get_line_no(e)}: #{Exception.message(e)}")
+  end
+end

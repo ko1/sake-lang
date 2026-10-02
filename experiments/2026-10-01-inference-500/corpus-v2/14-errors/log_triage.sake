@@ -1,0 +1,76 @@
+# Parse application log lines, tolerate malformed ones up to a limit, and summarize errors per component.
+MalformedLine = Exception.new(:lineno)
+TooManyErrors = Exception.new(:count)
+
+def log_text
+  "2026-09-30T10:00:01 INFO  api     request id=1 path=/users ms=12
+2026-09-30T10:00:02 WARN  db      slow query ms=850
+2026-09-30T10:00:02 ERROR api     upstream failed code=502 ms=3001
+garbage line without structure
+2026-09-30T10:00:03 INFO  api     request id=2 path=/orders ms=40
+2026-09-30T10:00:04 ERROR db      deadlock detected code=40001
+2026-09-30T10:00:05 DEBUG cache   miss key=user:7
+2026-09-30T10:00:05 FATAL worker  out of memory
+2026-09-30T10:00:06 ERROR api     upstream failed code=504 ms=5000
+2026-09-30T10:00:07 INFO  api     request id=3 path=/users ms=9
+2026-09-30 10:00:08 INFO api broken timestamp
+2026-09-30T10:00:09 ERROR cache   connection reset
+2026-09-30T10:00:10 NOTICE api    unknown level"
+end
+
+def levels = Array["DEBUG", "INFO", "WARN", "ERROR", "FATAL"]
+
+Entry = Struct.new(:time, :level, :component, :message, :attrs)
+
+def parse_entry(line, lineno)
+  m = String.match(line, /\A(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}) +([A-Z]+) +([a-z]+) +(.*)\z/)
+  raise MalformedLine.new("unparseable", lineno) if m == nil
+  level = m[2]
+  raise MalformedLine.new("unknown level #{level}", lineno) unless Array.include?(levels, level)
+  attrs = Hash[]
+  Array.each(String.scan(m[4], /(\w+)=(\S+)/)) { |k, v| attrs[k] = v }
+  text = String.strip(String.gsub(m[4], /\w+=\S+/, ""))
+  Entry.new(String.split(m[1], "T")[1], level, m[3], text, attrs)
+end
+
+def parse_all(text, max_bad)
+  entries = Array[]
+  bad = Array[]
+  Array.each_with_index(String.lines(text)) do |line, i|
+    begin
+      Array.push(entries, parse_entry(String.chomp(line), i + 1))
+    rescue MalformedLine => e
+      Array.push(bad, "line #{MalformedLine.get_lineno(e)}: #{Exception.message(e)}")
+      raise TooManyErrors.new("more than #{max_bad} malformed lines", Array.size(bad)) if Array.size(bad) > max_bad
+    end
+  end
+  [entries, bad]
+end
+
+def report(entries, bad)
+  serious = Array.select(entries) { Array.index(levels, Entry.get_level(it)) >= 3 }
+  puts("#{Array.size(entries)} entries, #{Array.size(serious)} error/fatal, #{Array.size(bad)} malformed")
+  Array.each(bad) { puts("  skipped #{it}") }
+  by_comp = Array.group_by(serious) { Entry.get_component(it) }
+  Array.each(Array.sort(Hash.keys(by_comp))) do |comp|
+    list = by_comp[comp]
+    codes = Array.compact(Array.map(list) { Entry.get_attrs(it)["code"] })
+    worst = Array.max_by(list) { Array.index(levels, Entry.get_level(it)) }
+    puts(format("  %-7s %d  worst=%-5s codes=%s", comp, Array.size(list), Entry.get_level(worst), Array.empty?(codes) ? "-" : Array.join(codes, ",")))
+  end
+  slow = Array.select(entries) do |e|
+    ms = Entry.get_attrs(e)["ms"]
+    ms != nil && String.to_i(ms) >= 1000
+  end
+  Array.each(slow) { |e| puts("  slow: #{Entry.get_time(e)} #{Entry.get_component(e)} #{Entry.get_message(e)} (#{Entry.get_attrs(e)["ms"]}ms)") }
+end
+
+Array.each(Array[5, 2]) do |limit|
+  puts("== limit #{limit}")
+  begin
+    entries, bad = parse_all(log_text, limit)
+    report(entries, bad)
+  rescue TooManyErrors => e
+    puts("aborted: #{Exception.message(e)} (#{TooManyErrors.get_count(e)} seen)")
+  end
+end

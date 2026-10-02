@@ -1,0 +1,76 @@
+# Trending hashtags: count tags per hour, rank them (count desc, then name),
+# and report the top tags per hour and the biggest rank climbers.
+
+Tally = Struct.new(:tag, :count)
+
+class Tally
+  include Comparable
+  # "smaller" means ranked higher
+  def <=>(a, b)
+    c = Tally.get_count(b) <=> @count
+    c == 0 ? @tag <=> Tally.get_tag(b) : c
+  end
+  def to_s(t) = "#{@tag}(#{@count})"
+end
+
+def extract_tags(text)
+  Array.map(String.scan(text, /#[A-Za-z0-9_]+/)) { |t| String.downcase(t) }
+end
+
+def ranking(posts)
+  counts = Hash.new(0)
+  Array.each(posts) { |text| Array.each(extract_tags(text)) { |t| counts[t] += 1 } }
+  Array.sort(Hash.map(counts) { |tag, n| Tally.new(tag, n) })
+end
+
+def rank_of(ranked, tag)
+  i = Array.find_index(ranked) { |t| Tally.get_tag(t) == tag }
+  i == nil ? nil : i + 1
+end
+
+feed = Array[
+  [9, "Morning! #coffee #monday"], [9, "Traffic again #commute #monday"],
+  [9, "#Coffee first, then #code"], [9, "standup done #work #code"],
+  [9, "#coffee #coffee break"], [10, "Ship it #release #code"],
+  [10, "Release notes are up #release"], [10, "Bug found after #release #oncall"],
+  [10, "#coffee refill"], [10, "Lunch plans? #food"],
+  [11, "#oncall pager again #release"], [11, "Rollback #release #oncall"],
+  [11, "#food truck day #food"], [11, "Postmortem at 3 #oncall #work"],
+  [11, "#code review queue #work"], [11, "no hashtags here"]
+]
+
+by_hour = Array.group_by(feed) { |hour, _| hour }
+hours = Array.sort(Hash.keys(by_hour))
+rankings = Hash[]
+Array.each(hours) do |h|
+  posts = Array.map(by_hour[h]) { |_, text| text }
+  ranked = ranking(posts)
+  rankings[h] = ranked
+  puts(format("%02d:00 top 3: %s", h, Array.join(Array.take(ranked, 3), ", ")))
+end
+
+overall = ranking(Array.map(feed) { |_, text| text })
+puts("overall: #{Array.join(overall, " ")}")
+puts("leader: #{Array.min(overall)}, least: #{Array.max(overall)}")
+
+first = rankings[Array.first(hours)]
+last = rankings[Array.last(hours)]
+moves = Array[]
+Array.each(last) do |t|
+  tag = Tally.get_tag(t)
+  now = rank_of(last, tag)
+  before = rank_of(first, tag)
+  if before == nil
+    Array.push(moves, [tag, "new at ##{now}", 100])
+  else
+    Array.push(moves, [tag, "#{before} -> #{now}", before - now])
+  end
+end
+climbers = Array.sort_by(Array.select(moves) { |_, _, d| d > 0 }) { |tag, _, d| [-d, tag] }
+puts("climbers since #{Array.first(hours)}:00:")
+Array.each(climbers) { |tag, desc, _| puts("  #{tag}: #{desc}") }
+dropped = Array.reject(first) { |t| rank_of(last, Tally.get_tag(t)) }
+puts("dropped out: #{Array.join(Array.map(dropped) { |t| Tally.get_tag(t) }, ", ")}")
+
+untagged = Array.count(feed) { |_, text| Array.empty?(extract_tags(text)) }
+puts("posts without tags: #{untagged}")

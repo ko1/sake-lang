@@ -1,0 +1,130 @@
+# A binary min-heap used three ways: a job scheduler ordered by (priority, arrival),
+# heapsort of request latencies, and the k slowest requests with a bounded heap.
+
+Job = Struct.new(:priority, :seq, :name)
+
+class Job
+  include Comparable
+  def <=>(a, b)
+    c = @priority <=> Job.get_priority(b)
+    c == 0 ? @seq <=> Job.get_seq(b) : c
+  end
+  def to_s(j) = "#{@name}(p#{@priority})"
+end
+
+Heap = Struct.new(:items)
+
+class Heap
+  def empty = Heap.new(Array[])
+  def size(h) = Array.size(@items)
+  def peek(h) = Array.first(@items)
+
+  def push(h, x)
+    a = @items
+    Array.push(a, x)
+    i = Array.size(a) - 1
+    while i > 0
+      parent = (i - 1) / 2
+      break if a[parent] <= a[i]
+      t = a[parent]
+      a[parent] = a[i]
+      a[i] = t
+      i = parent
+    end
+    h
+  end
+
+  def pop(h)
+    a = @items
+    return nil if Array.empty?(a)
+    top = a[0]
+    last = Array.pop(a)
+    if Array.size(a) > 0
+      a[0] = last
+      sift_down(a, 0, Array.size(a))
+    end
+    top
+  end
+
+  def sift_down(a, i, n)
+    while true
+      l = 2 * i + 1
+      r = l + 1
+      m = i
+      m = l if l < n && a[l] < a[m]
+      m = r if r < n && a[r] < a[m]
+      break if m == i
+      t = a[m]
+      a[m] = a[i]
+      a[i] = t
+      i = m
+    end
+  end
+end
+
+# Heapsort in descending order, in place, using a min-heap over the whole array.
+def heapsort_desc(input)
+  a = Array.dup(input)
+  n = Array.size(a)
+  Integer.downto(n / 2 - 1, 0) { |i| Heap.sift_down(a, i, n) }
+  Integer.downto(n - 1, 1) do |last|
+    t = a[0]
+    a[0] = a[last]
+    a[last] = t
+    Heap.sift_down(a, 0, last)
+  end
+  a
+end
+
+def top_k(values, k)
+  h = Heap.empty()
+  Array.each(values) do |v|
+    if Heap.size(h) < k
+      Heap.push(h, v)
+    elsif v > Heap.peek(h)
+      Heap.pop(h)
+      Heap.push(h, v)
+    end
+  end
+  result = Array[]
+  while Heap.size(h) > 0
+    Array.unshift(result, Heap.pop(h))
+  end
+  result
+end
+
+# --- scheduler ---
+queue = Heap.empty()
+arrivals = Array[[3, "backup"], [1, "page-oncall"], [2, "rebuild-index"], [1, "restart-web"],
+                 [5, "rotate-logs"], [2, "email-digest"], [3, "compact-db"]]
+seq = 0
+Array.each(arrivals) do |prio, name|
+  Heap.push(queue, Job.new(prio, seq, name))
+  seq += 1
+end
+puts("next up: #{Heap.peek(queue)}")
+order = Array[]
+Integer.times(4) { Array.push(order, Heap.pop(queue)) }
+puts("ran: #{Array.join(order, ", ")}")
+Heap.push(queue, Job.new(0, seq, "hotfix"))
+remaining = Array[]
+while (j = Heap.pop(queue))
+  Array.push(remaining, Kernel.to_s(j))
+end
+puts("then: #{Array.join(remaining, ", ")}")
+p(Heap.pop(queue))
+
+# --- latencies ---
+latencies = Array[]
+v = 41
+Integer.times(60) do
+  v = (v * 37 + 11) % 997
+  Array.push(latencies, v)
+end
+desc = heapsort_desc(latencies)
+puts("heapsort desc head: #{Array.take(desc, 8)}")
+puts("matches builtin: #{desc == Array.reverse(Array.sort(latencies))}")
+puts("top 5 slowest: #{top_k(latencies, 5)}")
+p95 = desc[Array.size(desc) / 20]
+puts("p95 latency: #{p95}ms")
+puts("words: #{top_k(Array["pear", "fig", "apple", "kiwi", "plum", "date"], 3)}")

@@ -1,0 +1,135 @@
+# Simulated external merge sort of CSV score records: memory holds only a few
+# records, so the input is cut into sorted runs that are merged with a limited
+# fan-in, pass after pass. "Disk" is an Array of runs; I/O is counted.
+
+Record = Struct.new(:player, :score, :line)
+
+class Record
+  # order: higher score first, then player name
+  def before?(a, b)
+    return @score > Record.get_score(b) if @score != Record.get_score(b)
+    @player < Record.get_player(b)
+  end
+end
+
+Disk = Struct.new(:reads, :writes)
+
+BadLine = Exception.new(:line_no)
+
+def parse(csv)
+  out = Array[]
+  Array.each_with_index(String.lines(csv)) do |raw, i|
+    line = String.strip(raw)
+    next if String.empty?(line) || String.start_with?(line, "#")
+    fields = String.split(line, ",")
+    raise BadLine.new("expected 2 fields, got #{Array.size(fields)}", i + 1) if Array.size(fields) != 2
+    begin
+      score = Integer(String.strip(fields[1]))
+    rescue ArgumentError
+      raise BadLine.new("bad score #{String.strip(fields[1])}", i + 1)
+    end
+    Array.push(out, Record.new(String.strip(fields[0]), score, i + 1))
+  end
+  out
+end
+
+def insertion_sort(a)
+  Integer.upto(1, Array.size(a) - 1) do |i|
+    x = a[i]
+    j = i - 1
+    while j >= 0 && Record.before?(x, a[j])
+      a[j + 1] = a[j]
+      j -= 1
+    end
+    a[j + 1] = x
+  end
+  a
+end
+
+def make_runs(records, memory, disk)
+  runs = Array[]
+  Array.each_slice(records, memory) do |chunk|
+    Disk.set_reads(disk, Disk.get_reads(disk) + Array.size(chunk))
+    Array.push(runs, insertion_sort(Array.dup(chunk)))
+    Disk.set_writes(disk, Disk.get_writes(disk) + Array.size(chunk))
+  end
+  runs
+end
+
+def merge_group(group, disk)
+  pos = Array.map(group) { |_| 0 }
+  out = Array[]
+  while true
+    best = nil
+    Array.each_with_index(group) do |run, k|
+      next if pos[k] >= Array.size(run)
+      best = k if best == nil || Record.before?(run[pos[k]], group[best][pos[best]])
+    end
+    break if best == nil
+    Array.push(out, group[best][pos[best]])
+    pos[best] += 1
+    Disk.set_reads(disk, Disk.get_reads(disk) + 1)
+    Disk.set_writes(disk, Disk.get_writes(disk) + 1)
+  end
+  out
+end
+
+def external_sort(records, memory, fan_in)
+  disk = Disk.new(0, 0)
+  runs = make_runs(records, memory, disk)
+  sizes = Array[Array.size(runs)]
+  while Array.size(runs) > 1
+    next_runs = Array[]
+    Array.each_slice(runs, fan_in) { |group| Array.push(next_runs, merge_group(group, disk)) }
+    runs = next_runs
+    Array.push(sizes, Array.size(runs))
+  end
+  [Array.empty?(runs) ? Array[] : runs[0], sizes, disk]
+end
+
+csv = <<~CSV
+  # player, score
+  aki, 340
+  bo, 512
+  chen, 298
+  dara, 512
+  eli, 77
+  fumi, 430
+  gus, 298
+  hana, 615
+  ivo, 512
+  jun, 150
+  kim, 430
+  lev, 299
+  mai, 88
+  noor, 702
+  oto, 340
+  pia, 512
+  quin, 5
+CSV
+
+records = parse(csv)
+puts("#{Array.size(records)} records")
+Array.each(Array[[3, 2], [4, 4], [5, 3], [17, 2]]) do |memory, fan_in|
+  sorted, sizes, disk = external_sort(records, memory, fan_in)
+  puts(format("memory=%-2d fan-in=%d runs per pass %-14s reads=%3d writes=%3d",
+              memory, fan_in, Array.join(sizes, "->"), Disk.get_reads(disk), Disk.get_writes(disk)))
+end
+
+sorted, _, _ = external_sort(records, 3, 2)
+Array.each_with_index(Array.take(sorted, 6)) do |r, i|
+  puts(format("%d. %-5s %4d (line %d)", i + 1, Record.get_player(r), Record.get_score(r), Record.get_line(r)))
+end
+puts("last: #{Record.get_player(Array.last(sorted))}")
+groups = Array.group_by(sorted) { |r| Record.get_score(r) }
+Hash.each(groups) do |score, rs|
+  puts("tie at #{score}: #{Array.join(Array.map(rs) { |r| Record.get_player(r) }, ", ")}") if Array.size(rs) > 1
+end
+
+Array.each(Array["zed, 10\nyan 20\n", "zed, 10\nyan, lots\n"]) do |bad|
+  begin
+    parse(bad)
+  rescue BadLine => e
+    puts("line #{BadLine.get_line_no(e)}: #{Exception.message(e)}")
+  end
+end

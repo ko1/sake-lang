@@ -1,0 +1,141 @@
+class Poly < {reader: [coeffs]}
+  include Arithmetic
+
+  def make(cs)
+    trimmed = Array.dup(cs)
+    while Array.size(trimmed) > 1 && Float.abs(Array.last(trimmed)) < 1e-12
+      Array.pop(trimmed)
+    end
+    Poly.new(trimmed)
+  end
+
+  def degree(p) = Array.size(@coeffs) - 1
+  def coef(p, i) = Array.fetch(@coeffs, i) rescue 0.0
+
+  def +(a, b)
+    n = Array.max(Array[Array.size(@coeffs), Array.size(Poly.get_coeffs(b))])
+    make(Range.map(0...n) { |i| coef(a, i) + coef(b, i) })
+  end
+
+  def -(a, b)
+    n = Array.max(Array[Array.size(@coeffs), Array.size(Poly.get_coeffs(b))])
+    make(Range.map(0...n) { |i| coef(a, i) - coef(b, i) })
+  end
+
+  def *(a, b)
+    case b
+    in Float then make(Array.map(@coeffs) { |c| c * b })
+    in Poly
+      out = Range.map(0..(degree(a) + degree(b))) { 0.0 }
+      Array.each_with_index(@coeffs) do |ca, i|
+        Array.each_with_index(Poly.get_coeffs(b)) { |cb, j| out[i + j] += ca * cb }
+      end
+      make(out)
+    end
+  end
+
+  def at(p, x) = Array.reduce(Array.reverse(@coeffs), 0.0) { |acc, c| acc * x + c }
+
+  def derivative(p)
+    return make(Float[0.0]) if degree(p) == 0
+    make(Range.map(1..degree(p)) { |i| @coeffs[i] * i })
+  end
+
+  def divmod(a, b)
+    rem = Array.dup(@coeffs)
+    db = degree(b)
+    lead = Array.last(Poly.get_coeffs(b))
+    return [make(Float[0.0]), a] if degree(a) < db
+    q = Range.map(0..(degree(a) - db)) { 0.0 }
+    Integer.downto(degree(a) - db, 0) do |k|
+      factor = rem[k + db] / lead
+      q[k] = factor
+      Range.each(0..db) { |j| rem[k + j] -= factor * Poly.get_coeffs(b)[j] }
+    end
+    [make(q), make(Array.take(rem, Array.max(Array[db, 1])))]
+  end
+
+  def to_s(p)
+    terms = Array[]
+    Integer.downto(degree(p), 0) do |i|
+      c = @coeffs[i]
+      next if c == 0.0 && degree(p) > 0
+      mag = format("%g", Float.abs(c))
+      body = case i
+             in 0 then mag
+             in 1 then mag == "1" ? "x" : "#{mag}x"
+             else mag == "1" ? "x^#{i}" : "#{mag}x^#{i}"
+             end
+      sign = c < 0.0 ? "-" : "+"
+      if Array.empty?(terms)
+        Array.push(terms, c < 0.0 ? "-#{body}" : body)
+      else
+        Array.push(terms, "#{sign} #{body}")
+      end
+    end
+    Array.join(terms, " ")
+  end
+end
+
+def from_roots(roots) = Array.reduce(roots, Poly.make(Float[1.0])) { |acc, r| acc * Poly.make(Float[-r, 1.0]) }
+
+def newton_root(p, x0)
+  d = Poly.derivative(p)
+  x = x0
+  Integer.times(100) do
+    fx = Poly.at(p, x)
+    dx = Poly.at(d, x)
+    return nil if dx == 0.0
+    step = fx / dx
+    x -= step
+    return x if Float.abs(step) < 1e-13
+  end
+  nil
+end
+
+def real_roots(p)
+  roots = Array[]
+  q = p
+  while Poly.degree(q) > 0
+    r = newton_root(q, 0.5)
+    break if r == nil
+    r = newton_root(p, r) || r
+    Array.push(roots, r)
+    q, rem = Poly.divmod(q, Poly.make(Float[-r, 1.0]))
+  end
+  [Array.sort(roots), q]
+end
+
+p1 = Poly.make(Float[1.0, -3.0, 0.0, 2.0])
+p2 = Poly.make(Float[-1.0, 1.0])
+puts("p1 = #{p1}")
+puts("p2 = #{p2}")
+puts("p1 + p2 = #{p1 + p2}")
+puts("p1 - p1 = #{p1 - p1}")
+puts("p1 * p2 = #{p1 * p2}")
+puts("p1 * 0.5 = #{p1 * 0.5}")
+puts("p1' = #{Poly.derivative(p1)}, p1'' = #{Poly.derivative(Poly.derivative(p1))}")
+q, r = Poly.divmod(p1, p2)
+puts("p1 / p2 = #{q} remainder #{r}")
+puts(format("p1(2.5) = %.4f", Poly.at(p1, 2.5)))
+
+w = from_roots(Float[1.0, 2.0, 3.0, 4.0, 5.0])
+puts("w = #{w}")
+roots, rest = real_roots(w)
+puts("roots of w: #{Array.join(Array.map(roots) { |x| format("%.10f", x) }, ", ")}")
+
+perturbed = w + Poly.make(Float[0.0, 0.0, 0.0, 0.0, 1e-4])
+proots, prest = real_roots(perturbed)
+puts("after +1e-4 x^4: #{Array.join(Array.map(proots) { |x| format("%.6f", x) }, ", ")}")
+
+mixed = Poly.make(Float[2.0, 0.0, 1.0]) * Poly.make(Float[-3.0, 1.0])
+mroots, mrest = real_roots(mixed)
+puts("#{mixed}: real roots #{Array.join(Array.map(mroots) { |x| format("%.6f", x) }, ", ")}; leftover #{mrest}")
+
+cheb = Array[Poly.make(Float[1.0]), Poly.make(Float[0.0, 1.0])]
+Range.each(2..6) do |n|
+  Array.push(cheb, Poly.make(Float[0.0, 2.0]) * cheb[n - 1] - cheb[n - 2])
+end
+Array.each_with_index(cheb) { |t, n| puts("T#{n} = #{t}") }
+x = 0.3
+puts(format("T6(0.3) = %.8f, cos(6 acos 0.3) = %.8f", Poly.at(cheb[6], x), Math.cos(6.0 * Math.atan2(Math.sqrt(1.0 - x * x), x))))

@@ -1,0 +1,27 @@
+# Changes: 19-statemachines (corpus-v2)
+
+- bank_queue_sim: `Array.map(Range.to_a(1..n))` -> `Range.map(1..n)` (twice). The index swap keeps its `tmp` and `while true` stays (see NOTES).
+- bracket_checker: unchanged
+- button_debounce: unchanged
+- circuit_breaker: unchanged (`S.call(...)` now works, but the operation stays `request` to match the Ruby version)
+- csv_parser: `Array.sum(Array.map(good) { ... })` -> `Array.sum(good) { ... }`; `Array[header]` + `Array.concat` and the `if` instead of `[a, b].max` stay
+- dfa_minimize: `Set.include?(seen, t) == false` -> `!Set.include?(seen, t)` (unary `!`)
+- divisibility_dfa: `in_a && in_b == false` -> `in_a && !in_b` (unary `!`); `to_base` stays (no `Integer.to_s(n, base)`)
+- elevator: Tuple key in `min_by { [Integer.abs(f - @floor), f] }` replaces the packed key `abs * 100 + f` (Tuple ordering); `Array.empty?(pending) == false` -> `!Array.empty?(pending)`
+- enemy_ai: unchanged (`Array.min(Array[@hp + 15, 100])` stays: no `Integer.min`, and a Tuple has no `max`/`min`)
+- event_sourcing: the `Event` mixin and its five `class X; include Event; end` blocks replaced by one `def event_seq(ev) = (Opened|Deposited|Withdrawn|Transferred|Closed).get_seq(ev)` (`(A|B).f(x)` on same-named fields)
+- expr_lexer: unchanged
+- http_parser: `m, path, version = Array.fetch(parts, 0), Array.fetch(parts, 1), Array.fetch(parts, 2)` -> `m, path, version = parts` (multiple assignment from an Array)
+- job_pipeline: unchanged (`Array.push(Array.dup(path), name)` stays: no `Array + Tuple`)
+- keypad_lock: unchanged
+- machine_mixin: unchanged
+- markdown_blocks: unchanged
+- morse_decoder: `if String.empty?(symbol) == false` -> `unless String.empty?(symbol)` (as the Ruby version); `Array.sum(Array.map(pulses) { ... })` -> `Array.sum(pulses) { |on, d| d }`
+- order_workflow: `Array.include?(ok, event) == false` -> `!Array.include?(ok, event)` (unary `!`)
+- regex_nfa: three `... == false` -> `!...` (unary `!`); `Array.concat` / `Array.push` instead of `holes + holes` stay
+- shell_words: unchanged
+- smtp_session: unchanged
+- tcp_states: `Set.include?(seen, to) == false` -> `!Set.include?(seen, to)` (unary `!`); `|key, value|` then `from, _ev = key` stays (no nested block destructuring)
+- traffic_light: `Phase.get_walk(ph) == false` and `@ped_waiting == false` -> `!...` (unary `!`)
+- turnstile: sort key `format("%04d %s", 1000 - n, a)` -> `[-n, a]` (Tuple ordering in `sort_by`, unary `-`); the nested `case @state` / `if event == ...` stays (no array patterns)
+- vending_machine: unchanged

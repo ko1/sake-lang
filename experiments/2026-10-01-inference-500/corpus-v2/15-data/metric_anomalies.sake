@@ -1,0 +1,108 @@
+Point = Struct.new(:day, :value)
+
+def readings
+  Array[
+    ["2026-02-01", 120], ["2026-02-02", 132], ["2026-02-03", 128], ["2026-02-04", 125],
+    ["2026-02-05", 140], ["2026-02-06", 95], ["2026-02-07", 90], ["2026-02-09", 131],
+    ["2026-02-10", 129], ["2026-02-11", 310], ["2026-02-12", 136], ["2026-02-13", 141],
+    ["2026-02-14", 99], ["2026-02-15", 97], ["2026-02-16", 138], ["2026-02-17", 145],
+    ["2026-02-19", 12], ["2026-02-20", 150], ["2026-02-21", 104], ["2026-02-22", 101]
+  ]
+end
+
+def parse_day(s)
+  y, m, d = Array.map(String.split(s, "-")) { String.to_i(it) }
+  Time.new(y, m, d)
+end
+
+def day_seconds = 86400
+
+def series
+  Array.map(readings) { |s, v| Point.new(parse_day(s), v) }
+end
+
+def label(t) = Time.strftime(t, "%a %m-%d")
+
+def find_gaps(points)
+  gaps = Array[]
+  Array.each_cons(points, 2) do |a, b|
+    days = Float.round((Point.get_day(b) - Point.get_day(a)) / day_seconds)
+    Integer.times(days - 1) { |k| Array.push(gaps, Point.get_day(a) + (k + 1) * day_seconds) } if days > 1
+  end
+  gaps
+end
+
+def moving_average(values, window)
+  out = Array[]
+  Array.each_with_index(values) do |v, i|
+    next if i + 1 < window
+    slice = values[(i + 1 - window)..i]
+    Array.push(out, slice ? Array.sum(slice) / Float(window) : nil)
+  end
+  out
+end
+
+def mean(xs) = Array.sum(xs) / Float(Array.size(xs))
+
+def stddev(xs)
+  m = mean(xs)
+  Math.sqrt(Array.sum(xs) { |x| (x - m) ** 2 } / (Array.size(xs) - 1))
+end
+
+def median(xs)
+  s = Array.sort(xs)
+  n = Array.size(s)
+  Integer.odd?(n) ? Integer.to_f(Array.fetch(s, n / 2)) : (Array.fetch(s, n / 2 - 1) + Array.fetch(s, n / 2)) / 2.0
+end
+
+def mad(xs)
+  m = median(xs)
+  median(Array.map(xs) { Float.abs(it - m) })
+end
+
+points = series
+values = Array.map(points) { Point.get_value(it) }
+first = Array.first(points)
+last = Array.last(points)
+if first && last
+  puts("Series #{label(Point.get_day(first))} .. #{label(Point.get_day(last))}: #{Array.size(points)} readings")
+end
+gaps = find_gaps(points)
+puts("Missing days: #{Array.empty?(gaps) ? "none" : Array.join(Array.map(gaps) { label(it) }, ", ")}")
+puts(format("mean %.1f  stddev %.1f  median %.1f  MAD %.1f", mean(values), stddev(values), median(values), mad(values)))
+puts
+
+puts("Robust outliers (|x - median| > 3.5 * 1.4826 * MAD):")
+med = median(values)
+spread = mad(values) * 1.4826
+Array.each(points) do |pt|
+  score = (Point.get_value(pt) - med) / spread
+  next if Float.abs(score) <= 3.5
+  puts(format("  %s %5d  score %+6.2f  %s", label(Point.get_day(pt)), Point.get_value(pt), score, score > 0 ? "spike" : "drop"))
+end
+puts
+
+puts("3-day moving average:")
+ma = moving_average(values, 3)
+Array.each_with_index(ma) do |avg, i|
+  pt = Array.fetch(points, i + 2)
+  v = Point.get_value(pt)
+  marker = Float.abs(v - avg) > avg * 0.4 ? " <-- deviates" : ""
+  puts(format("  %s %5d %8.1f%s", label(Point.get_day(pt)), v, avg, marker))
+end
+puts
+
+puts("Weekday vs weekend:")
+weekend, weekday = Array.partition(points) { |pt| Time.saturday?(Point.get_day(pt)) || Time.sunday?(Point.get_day(pt)) }
+we = Array.map(weekend) { Point.get_value(it) }
+wd = Array.map(weekday) { Point.get_value(it) }
+puts(format("  weekday n=%2d median %.1f", Array.size(wd), median(wd)))
+puts(format("  weekend n=%2d median %.1f", Array.size(we), median(we)))
+
+puts
+puts("Weekly totals (ISO week):")
+weeks = Array.group_by(points) { Time.strftime(Point.get_day(it), "%G-W%V") }
+Hash.each(weeks) do |wk, pts|
+  vals = Array.map(pts) { Point.get_value(it) }
+  puts(format("  %s days=%d total=%5d max=%4d", wk, Array.size(vals), Array.sum(vals), Array.max(vals)))
+end

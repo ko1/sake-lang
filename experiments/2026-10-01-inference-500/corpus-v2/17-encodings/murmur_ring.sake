@@ -1,0 +1,90 @@
+# MurmurHash3 (x86, 32-bit) implemented with explicit 32-bit masking, checked against
+# known vectors, then used for a consistent-hashing ring with virtual nodes.
+
+def mask32 = 0xFFFFFFFF
+
+def rotl32(x, r) = ((x << r) | (x >> (32 - r))) & mask32
+
+def mul32(a, b) = (a * b) & mask32
+
+def fmix32(h)
+  h ^= h >> 16
+  h = mul32(h, 0x85EBCA6B)
+  h ^= h >> 13
+  h = mul32(h, 0xC2B2AE35)
+  h ^ (h >> 16)
+end
+
+def murmur3(bytes, seed)
+  c1 = 0xCC9E2D51
+  c2 = 0x1B873593
+  h = seed & mask32
+  n = Array.size(bytes)
+  blocks = n / 4
+  Integer.times(blocks) do |i|
+    j = i * 4
+    k = bytes[j] | (bytes[j + 1] << 8) | (bytes[j + 2] << 16) | (bytes[j + 3] << 24)
+    k = mul32(rotl32(mul32(k, c1), 15), c2)
+    h ^= k
+    h = (mul32(rotl32(h, 13), 5) + 0xE6546B64) & mask32
+  end
+  tail = blocks * 4
+  k = 0
+  rest = n & 3
+  k ^= bytes[tail + 2] << 16 if rest >= 3
+  k ^= bytes[tail + 1] << 8 if rest >= 2
+  if rest >= 1
+    k ^= bytes[tail]
+    k = mul32(rotl32(mul32(k, c1), 15), c2)
+    h ^= k
+  end
+  fmix32(h ^ n)
+end
+
+def hash_str(s) = murmur3(String.bytes(s), 0)
+
+Ring = Struct.new(:points, :owners)
+
+class Ring
+  def build(nodes, replicas)
+    owners = Hash[]
+    Array.each(nodes) do |node|
+      Integer.times(replicas) { |r| owners[hash_str("#{node}##{r}")] = node }
+    end
+    Ring.new(Array.sort(Hash.keys(owners)), owners)
+  end
+
+  def lookup(ring, key)
+    h = hash_str(key)
+    point = Array.bsearch(@points) { |p| p >= h } || Array.first(@points)
+    @owners[point]
+  end
+end
+
+puts("== test vectors ==")
+vectors = Array[["", 0, 0x00000000], ["", 1, 0x514E28B7], ["", 0xFFFFFFFF, 0x81F16F39],
+                ["a", 0x9747B28C, 0x7FA09EA6], ["abc", 0, 0xB3DD93FA], ["Hello, world!", 0x9747B28C, 0x24884CBA],
+                ["The quick brown fox jumps over the lazy dog", 0x9747B28C, 0x2FA826CD]]
+Array.each(vectors) do |text, seed, want|
+  got = murmur3(String.bytes(text), seed)
+  puts(format("%-45s seed=%08x %08x %s", Kernel.inspect(text), seed, got, got == want ? "ok" : "MISMATCH want #{format("%08x", want)}"))
+end
+
+puts("== ring ==")
+nodes = Array["cache-a", "cache-b", "cache-c"]
+keys = Array.map(Range.to_a(1..120)) { |i| "session:#{i}" }
+ring = Ring.build(nodes, 16)
+before = Hash[]
+Array.each(keys) { |k| before[k] = Ring.lookup(ring, k) }
+load = Array.tally(Hash.values(before))
+Array.each(nodes) { |n| puts(format("  %-8s %3d keys", n, Hash.fetch(load, n, 0))) }
+
+bigger = Ring.build(Array["cache-a", "cache-b", "cache-c", "cache-d"], 16)
+moved = Array.count(keys) { |k| Ring.lookup(bigger, k) != before[k] }
+to_new = Array.count(keys) { |k| Ring.lookup(bigger, k) == "cache-d" }
+puts("adding cache-d moved #{moved} of #{Array.size(keys)} keys (#{to_new} now on cache-d)")
+only_to_new = Array.all?(keys) { |k| Ring.lookup(bigger, k) == before[k] || Ring.lookup(bigger, k) == "cache-d" }
+puts("every moved key went to the new node: #{only_to_new}")
+
+naive_moved = Array.count(keys) { |k| hash_str(k) % 3 != hash_str(k) % 4 }
+puts("modulo hashing would have moved #{naive_moved}")

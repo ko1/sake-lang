@@ -1,0 +1,1 @@
+../../corpus/06-linked/monotonic_stack_prices.rb

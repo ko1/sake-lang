@@ -1,0 +1,119 @@
+Table = Struct.new(:headers, :aligns, :rows)
+TableError = Exception.new(:line_no)
+
+def split_row(line)
+  s = String.strip(line)
+  s = s[1..] if String.start_with?(s, "|")
+  s = s[0...-1] if String.end_with?(s, "|")
+  Array.map(String.split(s, "|")) { |c| String.strip(c) }
+end
+
+def parse_align(spec)
+  left = String.start_with?(spec, ":")
+  right = String.end_with?(spec, ":")
+  raise ArgumentError, "bad alignment spec '#{spec}'" unless String.match?(spec, /\A:?-+:?\z/)
+  if left && right
+    :center
+  elsif right
+    :right
+  else
+    :left
+  end
+end
+
+def parse_table(text)
+  lines = Array.reject(String.lines(text)) { |l| String.empty?(String.strip(l)) }
+  raise TableError.new("need a header and a separator", 0) if Array.size(lines) < 2
+  headers = split_row(lines[0])
+  aligns = Array.map(split_row(lines[1])) { |spec| parse_align(spec) }
+  if Array.size(aligns) != Array.size(headers)
+    raise TableError.new("separator has #{Array.size(aligns)} cells, header has #{Array.size(headers)}", 2)
+  end
+  rows = Array[]
+  Array.each_with_index(Array.drop(lines, 2)) do |l, i|
+    cells = split_row(l)
+    if Array.size(cells) > Array.size(headers)
+      raise TableError.new("row has #{Array.size(cells)} cells", i + 3)
+    end
+    Array.push(cells, "") while Array.size(cells) < Array.size(headers)
+    Array.push(rows, cells)
+  end
+  Table.new(headers, aligns, rows)
+end
+
+def column_widths(t)
+  ws = Array.map(Table.get_headers(t)) { |h| Integer.clamp(String.size(h), 3, 100) }
+  Array.each(Table.get_rows(t)) do |r|
+    Array.each_with_index(r) { |c, i| ws[i] = String.size(c) if String.size(c) > ws[i] }
+  end
+  ws
+end
+
+def cell(text, width, align)
+  case align
+  in :left then String.ljust(text, width)
+  in :right then String.rjust(text, width)
+  in :center then String.center(text, width)
+  end
+end
+
+def rule(width, align)
+  case align
+  in :left then ":" + "-" * (width - 1)
+  in :right then "-" * (width - 1) + ":"
+  in :center then ":" + "-" * (width - 2) + ":"
+  end
+end
+
+def render_row(cells, ws, aligns)
+  parts = Array[]
+  Array.each_with_index(cells) { |c, i| Array.push(parts, cell(c, ws[i], aligns[i])) }
+  "| " + Array.join(parts, " | ") + " |"
+end
+
+def render(t)
+  ws = column_widths(t)
+  aligns = Table.get_aligns(t)
+  out = Array[]
+  Array.push(out, render_row(Table.get_headers(t), ws, aligns))
+  rs = Array.map(Array.zip(ws, aligns)) { |w, a| rule(w, a) }
+  Array.push(out, "| " + Array.join(rs, " | ") + " |")
+  Array.each(Table.get_rows(t)) do |r|
+    Array.push(out, render_row(r, ws, aligns))
+  end
+  Array.join(out, "\n")
+end
+
+def sort_by_column(t, name)
+  idx = Array.index(Table.get_headers(t), name)
+  raise ArgumentError, "no column #{name}" if idx == nil
+  rows = Array.sort_by(Table.get_rows(t)) { |r| -String.to_f(String.delete(r[idx], ",$")) }
+  Table.new(Table.get_headers(t), Table.get_aligns(t), rows)
+end
+
+def inputs
+  Array[
+    "| Language | Year |Typing| Users ($k) |\n|:--|:-:|---|--:|\n|Ruby|1995|dynamic|1,200|\n| Sake | 2026 | per-operation | 3\n|OCaml|1996|static|  410 |\n",
+    "|a|b|\n|---|:-:|\n|1|2|3|\n",
+    "|x|y|\n|--|-|\n|only|\n",
+    "|a|b|\n|---|\n",
+    "|name|\n|=?=|\n|bad|\n",
+    "just one line\n"
+  ]
+end
+
+Array.each_with_index(inputs) do |text, i|
+  puts("== input #{i + 1}")
+  begin
+    t = parse_table(text)
+    puts(render(t))
+    if Array.include?(Table.get_headers(t), "Users ($k)")
+      puts("-- sorted by users")
+      puts(render(sort_by_column(t, "Users ($k)")))
+    end
+  rescue TableError => e
+    puts("table error at line #{TableError.get_line_no(e)}: #{Exception.message(e)}")
+  rescue ArgumentError => e
+    puts("argument error: #{Exception.message(e)}")
+  end
+end

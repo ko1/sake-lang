@@ -1,0 +1,112 @@
+class Money < {reader: [cents]}
+  include Arithmetic
+  include Comparable
+
+  def +(a, b) = Money.new(@cents + Money.get_cents(b))
+  def -(a, b) = Money.new(@cents - Money.get_cents(b))
+  def *(a, k) = Money.new((Integer|Float).round(@cents * k))
+  def <=>(a, b) = @cents <=> Money.get_cents(b)
+  def zero = Money.new(0)
+  def to_s(m)
+    sign = @cents < 0 ? "-" : ""
+    c = Integer.abs(@cents)
+    "#{sign}#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+  end
+end
+
+LineItem = Struct.new(:sku, :description, :qty, :unit_price)
+
+class LineItem
+  def total(item) = @unit_price * @qty
+end
+
+Invoice = Struct.new(:number, :customer, :region, :items, :coupon)
+
+def tax_rate(region)
+  rates = Hash["CA" => 0.0725, "NY" => 0.04, "TX" => 0.0625, "OR" => 0.0]
+  rates[region]
+end
+
+def volume_discount(subtotal)
+  c = Money.get_cents(subtotal)
+  if c >= 100_000 then 0.10
+  elsif c >= 50_000 then 0.05
+  else 0.0
+  end
+end
+
+def coupon_value(code, subtotal)
+  case code
+  in nil then Money.zero
+  in "FLAT20" then Money.new(2000)
+  in "HALFSHIP" then Money.new(750)
+  in String then subtotal * 0.0
+  end
+end
+
+def invoices
+  Invoice[
+    Invoice.new("INV-001", "Northwind", "CA", LineItem[
+      LineItem.new("KB-1", "Keyboard", 3, Money.new(4999)),
+      LineItem.new("MS-2", "Mouse", 3, Money.new(1999)),
+      LineItem.new("MN-7", "Monitor 27in", 2, Money.new(28900))
+    ], nil),
+    Invoice.new("INV-002", "Contoso", "NY", LineItem[
+      LineItem.new("CB-9", "USB-C cable", 10, Money.new(899)),
+      LineItem.new("HD-4", "Headset", 1, Money.new(7450))
+    ], "FLAT20"),
+    Invoice.new("INV-003", "Fabrikam", "OR", LineItem[
+      LineItem.new("LT-3", "Laptop", 2, Money.new(129900)),
+      LineItem.new("DK-1", "Dock", 2, Money.new(18900)),
+      LineItem.new("CB-9", "USB-C cable", 4, Money.new(899))
+    ], "BOGUS"),
+    Invoice.new("INV-004", "Tailspin", "WA", LineItem[
+      LineItem.new("MS-2", "Mouse", 1, Money.new(1999))
+    ], "HALFSHIP")
+  ]
+end
+
+def compute(inv)
+  items = Invoice.get_items(inv)
+  subtotal = Array.reduce(items, Money.zero) { |acc, it| acc + LineItem.total(it) }
+  discount = subtotal * volume_discount(subtotal)
+  coupon = coupon_value(Invoice.get_coupon(inv), subtotal)
+  coupon = subtotal - discount if coupon > subtotal - discount
+  taxable = subtotal - discount - coupon
+  rate = tax_rate(Invoice.get_region(inv))
+  tax = rate ? taxable * rate : Money.zero
+  {subtotal: subtotal, discount: discount, coupon: coupon, tax: tax, total: taxable + tax, known_region: rate != nil}
+end
+
+def print_invoice(inv, r)
+  r => {subtotal:, discount:, coupon:, tax:, total:, known_region:}
+  puts("#{Invoice.get_number(inv)}  #{Invoice.get_customer(inv)} (#{Invoice.get_region(inv)})")
+  Array.each(Invoice.get_items(inv)) do |it|
+    puts(format("  %-6s %-14s %3d x %9s %10s", LineItem.get_sku(it), LineItem.get_description(it),
+                LineItem.get_qty(it), LineItem.get_unit_price(it), LineItem.total(it)))
+  end
+  puts(format("  %38s %10s", "subtotal", subtotal))
+  puts(format("  %38s %10s", "volume discount", Money.zero - discount)) if discount > Money.zero
+  code = Invoice.get_coupon(inv)
+  puts(format("  %38s %10s", "coupon #{code}", Money.zero - coupon)) if code && coupon > Money.zero
+  puts(format("  %38s", "coupon #{code} not recognized")) if code && coupon == Money.zero
+  puts(format("  %38s %10s", known_region ? "tax" : "tax (no rate on file)", tax))
+  puts(format("  %38s %10s", "TOTAL", total))
+  puts
+end
+
+all = invoices
+results = Array.map(all) { |inv| [inv, compute(inv)] }
+Array.each(results) { |inv, r| print_invoice(inv, r) }
+
+totals = Array.map(results) { |inv, r| r => {total:}; total }
+grand = Array.reduce(totals, Money.zero) { |a, b| a + b }
+largest = Array.max(totals)
+puts("Invoices: #{Array.size(all)}  grand total: #{grand}  largest: #{largest}")
+sku_qty = Hash.new(0)
+Array.each(all) { |inv| Array.each(Invoice.get_items(inv)) { |it| sku_qty[LineItem.get_sku(it)] += LineItem.get_qty(it) } }
+best = Hash.max_by(sku_qty) { |sku, q| q }
+if best
+  sku, q = best
+  puts("Most units: #{sku} (#{q})")
+end

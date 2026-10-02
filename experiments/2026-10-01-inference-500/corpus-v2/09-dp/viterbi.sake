@@ -1,0 +1,91 @@
+Model = Struct.new(:states, :start, :trans, :emit)
+
+class Model
+  def emission(m, state, obs) = Hash.fetch(@emit[state], obs, 0.0)
+end
+
+def viterbi(model, observations)
+  states = Model.get_states(model)
+  start = Model.get_start(model)
+  trans = Model.get_trans(model)
+  columns = Array[]
+  back = Array[]
+  first = Array.map(states) { |s| [s, start[s] * Model.emission(model, s, observations[0])] }.Array.to_h
+  Array.push(columns, first)
+  Array.each(Array.drop(observations, 1)) do |obs|
+    prev = Array.last(columns)
+    col = Hash[]
+    ptr = Hash[]
+    Array.each(states) do |s|
+      best_state = Array.max_by(states) { |r| prev[r] * trans[r][s] }
+      col[s] = prev[best_state] * trans[best_state][s] * Model.emission(model, s, obs)
+      ptr[s] = best_state
+    end
+    Array.push(columns, col)
+    Array.push(back, ptr)
+  end
+  last = Array.last(columns)
+  state = Array.max_by(states) { |s| last[s] }
+  prob = last[state]
+  path = Array[state]
+  Array.reverse_each(back) do |ptr|
+    state = ptr[state]
+    Array.unshift(path, state)
+  end
+  [path, prob]
+end
+
+def forward(model, observations)
+  states = Model.get_states(model)
+  alpha = Array.map(states) { |s| [s, Model.get_start(model)[s] * Model.emission(model, s, observations[0])] }
+    .Array.to_h
+  Array.each(Array.drop(observations, 1)) do |obs|
+    alpha = Array.map(states) do |s|
+      total = Array.sum(states) { |r| alpha[r] * Model.get_trans(model)[r][s] }
+      [s, total * Model.emission(model, s, obs)]
+    end.Array.to_h
+  end
+  Array.sum(Hash.values(alpha))
+end
+
+weather = Model.new(
+  Array["Rainy", "Sunny"],
+  Hash["Rainy" => 0.6, "Sunny" => 0.4],
+  Hash["Rainy" => Hash["Rainy" => 0.7, "Sunny" => 0.3], "Sunny" => Hash["Rainy" => 0.4, "Sunny" => 0.6]],
+  Hash["Rainy" => Hash["walk" => 0.1, "shop" => 0.4, "clean" => 0.5],
+       "Sunny" => Hash["walk" => 0.6, "shop" => 0.3, "clean" => 0.1]]
+)
+
+diaries = Array[
+  "walk shop clean",
+  "walk walk walk",
+  "clean clean shop walk walk",
+  "shop clean walk clean clean shop walk",
+  "walk swim"
+]
+Array.each(diaries) do |line|
+  obs = String.split(line, " ")
+  path, prob = viterbi(weather, obs)
+  total = forward(weather, obs)
+  share = total > 0 ? prob / total * 100 : 0.0
+  puts(line)
+  puts(format("  best: %s  p=%.6f", Array.join(Array.map(path) { |s| s[0] }, ""), prob))
+  puts(format("  all paths p=%.6f, best explains %.1f%%", total, share))
+end
+
+tagger = Model.new(
+  Array["DET", "NOUN", "VERB"],
+  Hash["DET" => 0.6, "NOUN" => 0.3, "VERB" => 0.1],
+  Hash["DET" => Hash["DET" => 0.05, "NOUN" => 0.9, "VERB" => 0.05],
+       "NOUN" => Hash["DET" => 0.1, "NOUN" => 0.3, "VERB" => 0.6],
+       "VERB" => Hash["DET" => 0.6, "NOUN" => 0.3, "VERB" => 0.1]],
+  Hash["DET" => Hash["the" => 0.7, "a" => 0.3],
+       "NOUN" => Hash["dog" => 0.3, "duck" => 0.3, "park" => 0.2, "walk" => 0.2],
+       "VERB" => Hash["duck" => 0.3, "walk" => 0.4, "saw" => 0.3]]
+)
+Array.each(Array["the dog saw a duck", "a duck walk the park", "the walk saw the duck"]) do |sentence|
+  words = String.split(sentence, " ")
+  tags, prob = viterbi(tagger, words)
+  pairs = Array.map(Array.zip(words, tags)) { |w, t| "#{w}/#{t}" }
+  puts(format("%-40s %.2e", Array.join(pairs, " "), prob))
+end

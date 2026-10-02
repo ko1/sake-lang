@@ -1,0 +1,107 @@
+Car = Struct.new(:plate, :klass, :branch, :odometer, :bookings)
+Rental = Struct.new(:id, :customer, :car, :from_day, :to_day, :pickup, :dropoff, :upgraded)
+NoCarAvailable = Exception.new(:klass)
+
+def classes = Array[:economy, :compact, :suv, :van]
+def daily_rate(klass) = Hash.fetch(Hash[economy: 39, compact: 49, suv: 79, van: 95], klass)
+def included_km_per_day = 200
+def extra_km_cents = 25
+def one_way_fee = 60
+
+def weekend?(day) = day % 7 == 5 || day % 7 == 6
+
+def price(klass, from_day, to_day, one_way)
+  days = to_day - from_day
+  weeks, rest = Integer.divmod(days, 7)
+  base = weeks * 6 * daily_rate(klass) + Array.min(Array[rest, 6]) * daily_rate(klass)
+  weekend_days = Range.count(from_day...to_day) { |d| weekend?(d) }
+  surcharge = weeks > 0 ? 0 : weekend_days * 10
+  base + surcharge + (one_way ? one_way_fee : 0)
+end
+
+class Fleet < {reader: [cars, rentals], accessor: [next_id]}
+  def free?(f, car, from_day, to_day)
+    Array.none?(Car.get_bookings(car)) { |b| Range.overlap?(b, from_day...to_day) }
+  end
+
+  # the requested class first, then one class up at the same price
+  def reserve(f, customer, klass, branch, from_day, to_day, dropoff)
+    start = Array.index(classes, klass)
+    Array.each(Array.drop(classes, start)) do |k|
+      car = Array.find(@cars) do |c|
+        Car.get_klass(c) == k && Car.get_branch(c) == branch && free?(f, c, from_day, to_day)
+      end
+      next unless car
+      next if k != klass && Array.index(classes, k) > start + 1
+      Array.push(Car.get_bookings(car), from_day...to_day)
+      @next_id += 1
+      r = Rental.new(@next_id, customer, car, from_day, to_day, branch, dropoff, k != klass)
+      Array.push(@rentals, r)
+      return r
+    end
+    raise NoCarAvailable.new("no #{klass} at #{branch} for days #{from_day}-#{to_day}", klass)
+  end
+
+  def return_car(f, r, km)
+    car = Rental.get_car(r)
+    days = Rental.get_to_day(r) - Rental.get_from_day(r)
+    klass = Rental.get_upgraded(r) ? classes[Array.index(classes, Car.get_klass(car)) - 1] : Car.get_klass(car)
+    charge = price(klass, Rental.get_from_day(r), Rental.get_to_day(r), Rental.get_pickup(r) != Rental.get_dropoff(r))
+    extra_km = Array.max(Array[0, km - days * included_km_per_day])
+    Car.set_odometer(car, Car.get_odometer(car) + km)
+    Car.set_branch(car, Rental.get_dropoff(r))
+    [charge, extra_km * extra_km_cents / 100.0]
+  end
+end
+
+fleet = Fleet.new(Array[
+  Car.new("E-101", :economy, "airport", 41200, Array[]),
+  Car.new("E-102", :economy, "downtown", 18050, Array[]),
+  Car.new("C-201", :compact, "airport", 30020, Array[]),
+  Car.new("S-301", :suv, "airport", 9900, Array[]),
+  Car.new("S-302", :suv, "downtown", 61000, Array[]),
+  Car.new("V-401", :van, "downtown", 22000, Array[])
+], Array[], 1000)
+
+requests = Array[
+  ["Ono", :economy, "airport", 1, 4, "airport"],
+  ["Lam", :economy, "airport", 2, 5, "downtown"],
+  ["Ruiz", :economy, "airport", 3, 6, "airport"],
+  ["Kaur", :suv, "downtown", 4, 15, "downtown"],
+  ["Berg", :compact, "downtown", 5, 7, "downtown"],
+  ["Sato", :van, "airport", 1, 3, "airport"],
+  ["Ngo", :economy, "airport", 4, 6, "airport"]
+]
+
+rentals = Array[]
+Array.each(requests) do |customer, klass, branch, from_day, to_day, dropoff|
+  begin
+    r = Fleet.reserve(fleet, customer, klass, branch, from_day, to_day, dropoff)
+    car = Rental.get_car(r)
+    up = Rental.get_upgraded(r) ? " (upgrade)" : ""
+    puts("##{Rental.get_id(r)} #{customer}: #{Car.get_plate(car)} #{Car.get_klass(car)}#{up}, days #{from_day}-#{to_day}")
+    Array.push(rentals, r)
+  rescue NoCarAvailable => e
+    puts("#{customer}: #{Exception.message(e)}")
+  end
+end
+
+puts
+distances = Hash["Ono" => 450, "Lam" => 700, "Kaur" => 2900, "Berg" => 310, "Ruiz" => 120]
+income = 0.0
+Array.each(rentals) do |r|
+  km = Hash.fetch(distances, Rental.get_customer(r), 0)
+  charge, extra = Fleet.return_car(fleet, r, km)
+  total = charge + extra
+  income += total
+  puts(format("%-5s %4d km  rental %4d  extra km %6.2f  total %7.2f", Rental.get_customer(r), km, charge, extra, total))
+end
+puts(format("Income: %.2f", income))
+
+puts
+Array.each(Array.sort_by(Fleet.get_cars(fleet)) { |c| Car.get_plate(c) }) do |c|
+  booked = Array.sum(Car.get_bookings(c)) { |b| Range.size(b) }
+  puts(format("%-6s %-8s %-9s %6d km  booked %2d days", Car.get_plate(c), Car.get_klass(c), Car.get_branch(c), Car.get_odometer(c), booked))
+end
+idle = Array.select(Fleet.get_cars(fleet)) { |c| Array.empty?(Car.get_bookings(c)) }
+puts("Idle: #{Array.join(Array.map(idle) { |c| Car.get_plate(c) }, ", ")}")

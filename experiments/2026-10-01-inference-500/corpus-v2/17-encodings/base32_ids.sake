@@ -1,0 +1,117 @@
+# Base32 in two flavours sharing one bit-packing core: RFC 4648 (padded, for bytes) and
+# Crockford (for integer IDs, with ambiguous-letter normalisation and a mod-37 check symbol).
+
+module Base32
+  def encode_bytes(codec, bytes)
+    alphabet = chars(codec)
+    out = ""
+    buffer = 0
+    bits = 0
+    Array.each(bytes) do |b|
+      buffer = (buffer << 8) | b
+      bits += 8
+      while bits >= 5
+        bits -= 5
+        out += alphabet[(buffer >> bits) & 31]
+      end
+    end
+    out += alphabet[(buffer << (5 - bits)) & 31] if bits > 0
+    pad(codec, out)
+  end
+
+  def decode_bytes(codec, text)
+    bytes = Integer[]
+    buffer = 0
+    bits = 0
+    Array.each(String.chars(normalize(codec, text))) do |c|
+      v = value_of(codec, c)
+      raise ArgumentError, "invalid symbol #{Kernel.inspect(c)}" if v == nil
+      buffer = (buffer << 5) | v
+      bits += 5
+      if bits >= 8
+        bits -= 8
+        Array.push(bytes, (buffer >> bits) & 0xFF)
+      end
+    end
+    bytes
+  end
+
+  def value_of(codec, c) = String.index(chars(codec), c)
+end
+
+class Rfc4648 < {reader: [name]}
+  include Base32
+  def chars(c) = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+  def pad(c, s) = String.size(s) % 8 == 0 ? s : s + "=" * (8 - String.size(s) % 8)
+  def normalize(c, s) = String.delete(String.upcase(s), "=")
+end
+
+class Crockford < {reader: [name]}
+  include Base32
+  def chars(c) = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+  def check_chars(c) = "0123456789ABCDEFGHJKMNPQRSTVWXYZ*~$=U"
+  def pad(c, s) = s
+  def normalize(c, s) = String.tr(String.delete(String.upcase(s), "-"), "ILO", "110")
+
+  def encode_id(c, n)
+    digits = ""
+    v = n
+    while true
+      digits = chars(c)[v % 32] + digits
+      v /= 32
+      break if v == 0
+    end
+    digits + check_chars(c)[n % 37]
+  end
+
+  def decode_id(c, text)
+    clean = normalize(c, text)
+    body = clean[0...(String.size(clean) - 1)]
+    check = clean[-1]
+    n = 0
+    String.each_char(body) do |ch|
+      v = value_of(c, ch)
+      raise ArgumentError, "invalid symbol #{Kernel.inspect(ch)}" if v == nil
+      n = n * 32 + v
+    end
+    expected = check_chars(c)[n % 37]
+    raise ArgumentError, "check symbol #{check} should be #{expected}" if check != expected
+    n
+  end
+end
+
+def text_of(bytes) = Array.join(Array.map(bytes) { |b| Integer.chr(b) }, "")
+
+rfc = Rfc4648.new("rfc4648")
+crock = Crockford.new("crockford")
+
+puts("== RFC 4648 ==")
+Array.each(Array["", "f", "fo", "foo", "foob", "fooba", "foobar"]) do |s|
+  enc = Base32.encode_bytes(rfc, String.bytes(s))
+  back = text_of(Base32.decode_bytes(rfc, enc))
+  puts(format("%-8s %-18s %s", Kernel.inspect(s), enc, back == s ? "ok" : "MISMATCH"))
+end
+
+puts("== same bytes, both codecs ==")
+data = String.bytes("Sake!")
+Array.each(Array[rfc, crock]) do |codec|
+  enc = Base32.encode_bytes(codec, data)
+  name = (Rfc4648|Crockford).get_name(codec)
+  puts("#{name}: #{enc} -> #{text_of(Base32.decode_bytes(codec, enc))}")
+end
+
+puts("== Crockford IDs ==")
+ids = Integer[0, 1, 31, 32, 1234, 987654321, 18446744073709551615]
+Array.each(ids) do |id|
+  code = Crockford.encode_id(crock, id)
+  puts(format("%20d -> %-16s -> %d", id, code, Crockford.decode_id(crock, code)))
+end
+
+puts("== typed by hand ==")
+Array.each(Array["16JD", "16jd", "1-6-J-D", "I6JD", "16JE", "1U6JD", "O0", "l0*"]) do |typed|
+  begin
+    puts("#{typed} -> #{Crockford.decode_id(crock, typed)}")
+  rescue ArgumentError => e
+    puts("#{typed} -> rejected: #{Exception.message(e)}")
+  end
+end

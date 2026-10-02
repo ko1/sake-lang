@@ -1,0 +1,81 @@
+def samples
+  Hash[
+    "english" => "the quick brown fox jumps over the lazy dog and then the dog runs away from the house " +
+                 "while the children are watching through the window with their mother and father",
+    "german" => "der schnelle braune fuchs springt ueber den faulen hund und dann laeuft der hund " +
+                "weg von dem haus waehrend die kinder durch das fenster mit ihrer mutter schauen",
+    "spanish" => "el rapido zorro marron salta sobre el perro perezoso y luego el perro corre lejos " +
+                 "de la casa mientras los ninos miran por la ventana con su madre y su padre",
+    "dutch" => "de snelle bruine vos springt over de luie hond en dan rent de hond weg van het huis " +
+               "terwijl de kinderen door het raam kijken met hun moeder en vader"
+  ]
+end
+
+def trigrams(text)
+  counts = Hash.new(0)
+  Array.each(String.split(String.downcase(text), /[^a-z]+/)) do |w|
+    next if String.empty?(w)
+    padded = "_#{w}_"
+    Integer.times(String.size(padded) - 2) { |i| counts[padded[i..(i + 2)]] += 1 }
+  end
+  counts
+end
+
+def profile(text, size)
+  ranked = Array.sort_by(Hash.to_a(trigrams(text))) { |g, n| [-n, g] }
+  ranks = Hash[]
+  Array.each_with_index(Array.take(ranked, size)) do |pair, i|
+    g, _ = pair
+    ranks[g] = i
+  end
+  ranks
+end
+
+def out_of_place(doc, lang, penalty)
+  total = 0
+  Hash.each(doc) do |g, rank|
+    other = lang[g]
+    total += other ? Integer.abs(rank - other) : penalty
+  end
+  total
+end
+
+def tests
+  Array[
+    ["english", "the dog and the cat are in the house"],
+    ["german", "die katze und der hund sind in dem haus"],
+    ["spanish", "el gato y el perro estan en la casa"],
+    ["dutch", "de kat en de hond zijn in het huis"],
+    ["english", "watching their window"],
+    ["dutch", "snelle vader"]
+  ]
+end
+
+profiles = Hash.transform_values(samples) { |t| profile(t, 60) }
+Hash.each(profiles) do |lang, prof|
+  top = Array.map(Array.sort_by(Hash.keys(prof)) { |g| prof[g] }) { |g| g }
+  puts(format("%-8s %2d trigrams, top: %s", lang, Hash.size(prof), Array.join(Array.take(top, 8), " ")))
+end
+
+langs = Array.sort(Hash.keys(profiles))
+puts("shared trigrams:")
+Array.each(langs) do |a|
+  cells = Array.map(langs) do |b|
+    shared = Array.to_set(Hash.keys(profiles[a])) & Array.to_set(Hash.keys(profiles[b]))
+    format("%4d", Set.size(shared))
+  end
+  puts(format("  %-8s", a) + Array.join(cells))
+end
+
+right = 0
+Array.each(tests) do |want, text|
+  doc = profile(text, 60)
+  dists = Hash.map(profiles) { |lang, prof| [lang, out_of_place(doc, prof, 60)] }
+  ordered = Array.sort_by(dists) { |lang, d| [d, Array.index(langs, lang)] }
+  best_lang, best = ordered[0]
+  _, second = ordered[1]
+  right += 1 if best_lang == want
+  mark = best_lang == want ? "ok  " : "MISS"
+  puts(format("%s %-8s margin %4d  %s", mark, best_lang, second - best, text))
+end
+puts("#{right}/#{Array.size(tests)} correct")

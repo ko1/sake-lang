@@ -1,0 +1,199 @@
+LispError = Exception.new
+Env = Struct.new(:vars, :parent)
+Lambda = Struct.new(:params, :body, :env, :name)
+Prim = Struct.new(:name)
+
+class Env
+  def find(e, sym)
+    cur = e
+    while cur
+      return cur if Hash.key?(Env.get_vars(cur), sym)
+      cur = Env.get_parent(cur)
+    end
+    raise LispError.new("unbound symbol: #{sym}")
+  end
+
+  def lookup(e, sym) = Env.get_vars(find(e, sym))[sym]
+  def define(e, sym, v) = @vars[sym] = v
+  def assign(e, sym, v) = Env.get_vars(find(e, sym))[sym] = v
+end
+
+def tokenize(src) = String.scan(String.gsub(src, /;[^\n]*/, ""), /[()']|[^\s()']+/)
+
+def read_form(tokens)
+  t = Array.shift(tokens)
+  raise LispError.new("unexpected end of input") if t == nil
+  if t == "("
+    list = Array[]
+    while true
+      nt = Array.first(tokens)
+      raise LispError.new("missing ')'") if nt == nil
+      if nt == ")"
+        Array.shift(tokens)
+        return list
+      end
+      Array.push(list, read_form(tokens))
+    end
+  elsif t == ")"
+    raise LispError.new("unexpected ')'")
+  elsif t == "'"
+    Array[:quote, read_form(tokens)]
+  elsif String.match?(t, /\A-?\d+\z/)
+    String.to_i(t)
+  elsif t == "#t"
+    true
+  elsif t == "#f"
+    false
+  else
+    String.to_sym(t)
+  end
+end
+
+def show(v)
+  case v
+  in Array then "(" + Array.join(Array.map(v) { |x| show(x) }, " ") + ")"
+  in true then "#t"
+  in false then "#f"
+  in Lambda then "#<lambda #{Lambda.get_name(v) || "anonymous"}>"
+  in Prim then "#<primitive #{Prim.get_name(v)}>"
+  in Integer | Symbol then Kernel.to_s(v)
+  end
+end
+
+def truthy?(v) = !(v in false)
+
+def lisp_eval(x, env)
+  case x
+  in Symbol then Env.lookup(env, x)
+  in Integer | true | false then x
+  in Array
+    return x if Array.empty?(x)
+    head = x[0]
+    case head
+    in :quote then x[1]
+    in :if
+      truthy?(lisp_eval(x[1], env)) ? lisp_eval(x[2], env) : (Array.size(x) > 3 ? lisp_eval(x[3], env) : false)
+    in :define
+      target = x[1]
+      if target in Array
+        name = target[0]
+        Env.define(env, name, Lambda.new(Array.drop(target, 1), Array.drop(x, 2), env, name))
+      else
+        Env.define(env, target, lisp_eval(x[2], env))
+      end
+      (target in Array) ? target[0] : target
+    in :set!
+      Env.assign(env, x[1], lisp_eval(x[2], env))
+    in :lambda then Lambda.new(x[1], Array.drop(x, 2), env, nil)
+    in :let
+      inner = Env.new(Hash[], env)
+      Array.each(x[1]) { |name, expr| Env.define(inner, name, lisp_eval(expr, env)) }
+      eval_body(Array.drop(x, 2), inner)
+    in :begin then eval_body(Array.drop(x, 1), env)
+    in :cond
+      Array.each(Array.drop(x, 1)) do |clause|
+        test = clause[0]
+        return eval_body(Array.drop(clause, 1), env) if (test in :else) || truthy?(lisp_eval(test, env))
+      end
+      false
+    else
+      f = lisp_eval(head, env)
+      args = Array.map(Array.drop(x, 1)) { |a| lisp_eval(a, env) }
+      apply(f, args)
+    end
+  end
+end
+
+def eval_body(forms, env)
+  result = false
+  Array.each(forms) { |form| result = lisp_eval(form, env) }
+  result
+end
+
+def apply(f, args)
+  case f
+  in Prim then primitive(Prim.get_name(f), args)
+  in Lambda
+    params = Lambda.get_params(f)
+    if Array.size(params) != Array.size(args)
+      raise LispError.new("#{show(f)} expects #{Array.size(params)} args, got #{Array.size(args)}")
+    end
+    env = Env.new(Hash[], Lambda.get_env(f))
+    Array.each_with_index(params) { |p, i| Env.define(env, p, args[i]) }
+    eval_body(Lambda.get_body(f), env)
+  else
+    raise LispError.new("not a procedure: #{show(f)}")
+  end
+end
+
+def primitive(name, args)
+  case name
+  in :+ then Array.sum(args)
+  in :* then Array.reduce(args, 1) { |a, b| a * b }
+  in :- then Array.size(args) == 1 ? -args[0] : Array.reduce(Array.drop(args, 1), args[0]) { |a, b| a - b }
+  in :/ then args[0] / args[1]
+  in :< then args[0] < args[1]
+  in :"=" then args[0] == args[1]
+  in :car
+    l = args[0]
+    raise LispError.new("car of empty list") if Array.empty?(l)
+    l[0]
+  in :cdr then Array.drop(args[0], 1)
+  in :cons then Array.unshift(Array.dup(args[1]), args[0])
+  in :list then args
+  in :"null?" then Array.empty?(args[0])
+  end
+end
+
+def global_env
+  env = Env.new(Hash[], nil)
+  Array.each(Array[:+, :-, :*, :/, :<, :"=", :car, :cdr, :cons, :list, :"null?"]) { |n| Env.define(env, n, Prim.new(n)) }
+  env
+end
+
+def programs
+  Array[
+    "(define (fact n) (if (< n 2) 1 (* n (fact (- n 1)))))
+     (fact 10)
+     (fact 20)",
+    "(define (fib n) (cond ((< n 2) n) (else (+ (fib (- n 1)) (fib (- n 2))))))
+     (fib 12)",
+    "(define (map f xs) (if (null? xs) '() (cons (f (car xs)) (map f (cdr xs)))))
+     (define (filter p xs) (cond ((null? xs) '()) ((p (car xs)) (cons (car xs) (filter p (cdr xs)))) (else (filter p (cdr xs)))))
+     (define (foldl f acc xs) (if (null? xs) acc (foldl f (f acc (car xs)) (cdr xs))))
+     (map (lambda (x) (* x x)) '(1 2 3 4 5))
+     (filter (lambda (x) (< 2 x)) (list 5 1 4 2 3))
+     (foldl + 0 (map (lambda (x) (* 2 x)) '(1 2 3)))
+     (foldl (lambda (acc x) (cons x acc)) '() '(a b c d))",
+    "(define (make-counter)
+       (let ((n 0))
+         (lambda () (set! n (+ n 1)) n)))
+     (define c1 (make-counter))
+     (define c2 (make-counter))
+     (c1) (c1) (c2) (c1)
+     (list (c1) (c2))
+     make-counter
+     car",
+    "(define x 5)
+     (+ x y)",
+    "(car '())",
+    "(define (f a b) a)
+     (f 1)",
+    "(1 2 3)",
+    "(+ 1 (* 2 3)"
+  ]
+end
+
+Array.each_with_index(programs) do |src, i|
+  puts("-- program #{i + 1}")
+  env = global_env
+  begin
+    tokens = tokenize(src)
+    until Array.empty?(tokens)
+      form = read_form(tokens)
+      puts("#{show(form)} => #{show(lisp_eval(form, env))}")
+    end
+  rescue LispError => e
+    puts("error: #{Exception.message(e)}")
+  end
+end

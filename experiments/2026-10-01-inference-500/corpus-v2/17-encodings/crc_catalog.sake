@@ -1,0 +1,105 @@
+# Parameterised CRC engine (Rocksoft model) checked against the catalogue "check" values,
+# plus a table-driven CRC-32 used to detect corruption in a list of frames.
+
+CrcModel = Struct.new(:name, :width, :poly, :init, :refin, :refout, :xorout, :check)
+
+def reflect(value, width)
+  r = 0
+  Integer.times(width) do |i|
+    r |= 1 << (width - 1 - i) if (value >> i) & 1 == 1
+  end
+  r
+end
+
+class CrcModel
+  def mask(m) = (1 << @width) - 1
+
+  def compute(m, bytes)
+    top = 1 << (@width - 1)
+    crc = @init
+    Array.each(bytes) do |b|
+      b = reflect(b, 8) if @refin
+      if @width >= 8
+        crc ^= b << (@width - 8)
+        Integer.times(8) do
+          crc = crc & top != 0 ? (crc << 1) ^ @poly : crc << 1
+          crc &= mask(m)
+        end
+      else
+        Integer.times(8) do |i|
+          bit = (b >> (7 - i)) & 1
+          fb = ((crc >> (@width - 1)) & 1) ^ bit
+          crc = (crc << 1) & mask(m)
+          crc ^= @poly if fb == 1
+        end
+      end
+    end
+    crc = reflect(crc, @width) if @refout
+    (crc ^ @xorout) & mask(m)
+  end
+
+  def hex_digits(m) = (@width + 3) / 4
+end
+
+def catalogue
+  CrcModel[
+    CrcModel.new("CRC-8", 8, 0x07, 0x00, false, false, 0x00, 0xF4),
+    CrcModel.new("CRC-8/MAXIM", 8, 0x31, 0x00, true, true, 0x00, 0xA1),
+    CrcModel.new("CRC-5/USB", 5, 0x05, 0x1F, true, true, 0x1F, 0x19),
+    CrcModel.new("CRC-16/CCITT-FALSE", 16, 0x1021, 0xFFFF, false, false, 0x0000, 0x29B1),
+    CrcModel.new("CRC-16/ARC", 16, 0x8005, 0x0000, true, true, 0x0000, 0xBB3D),
+    CrcModel.new("CRC-16/XMODEM", 16, 0x1021, 0x0000, false, false, 0x0000, 0x31C3),
+    CrcModel.new("CRC-32", 32, 0x04C11DB7, 0xFFFFFFFF, true, true, 0xFFFFFFFF, 0xCBF43926),
+    CrcModel.new("CRC-32/BZIP2", 32, 0x04C11DB7, 0xFFFFFFFF, false, false, 0xFFFFFFFF, 0xFC891918)
+  ]
+end
+
+def crc32_table
+  table = Integer[]
+  Integer.times(256) do |n|
+    c = n
+    Integer.times(8) { c = c & 1 == 1 ? 0xEDB88320 ^ (c >> 1) : c >> 1 }
+    Array.push(table, c)
+  end
+  table
+end
+
+def crc32_fast(table, bytes)
+  crc = 0xFFFFFFFF
+  Array.each(bytes) { |b| crc = table[(crc ^ b) & 0xFF] ^ (crc >> 8) }
+  crc ^ 0xFFFFFFFF
+end
+
+check_input = String.bytes("123456789")
+puts("model                 result     check      ok")
+Array.each(catalogue) do |m|
+  got = CrcModel.compute(m, check_input)
+  digits = CrcModel.hex_digits(m)
+  ok = got == CrcModel.get_check(m)
+  puts(format("%-20s  %-10s %-10s %s", CrcModel.get_name(m),
+              format("0x%0*X", digits, got), format("0x%0*X", digits, CrcModel.get_check(m)),
+              ok ? "yes" : "NO"))
+end
+
+table = crc32_table
+puts(format("table[1]=%08x table[128]=%08x table[255]=%08x", table[1], table[128], table[255]))
+
+frames = Array[
+  ["hello world", 0x0D4A1185],
+  ["The quick brown fox jumps over the lazy dog", 0x414FA339],
+  ["frame-0003 payload", 0],
+  ["corrupted paylaod", 0x12345678]
+]
+frames[2] = ["frame-0003 payload", crc32_fast(table, String.bytes("frame-0003 payload"))]
+
+slow = Array.find(catalogue) { |m| CrcModel.get_name(m) == "CRC-32" }
+good = 0
+Array.each(frames) do |text, expected|
+  bytes = String.bytes(text)
+  fast = crc32_fast(table, bytes)
+  agree = slow ? CrcModel.compute(slow, bytes) == fast : false
+  status = fast == expected ? "OK" : "BAD"
+  good += 1 if status == "OK"
+  puts(format("%-45s %08x %s engines-agree=%s", text, fast, status, agree))
+end
+puts("#{good}/#{Array.size(frames)} frames intact")

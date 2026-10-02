@@ -1,0 +1,1 @@
+../../corpus/19-statemachines/vending_machine.rb

@@ -1,0 +1,1 @@
+../../corpus/13-polymorphism/bitset_permissions.rb

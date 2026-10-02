@@ -1,0 +1,119 @@
+Event = Struct.new(:user, :at, :kind, :page)
+Session = Struct.new(:user, :events)
+
+class Session
+  def start(s) = Event.get_at(Array.fetch(@events, 0))
+  def finish(s) = Event.get_at(Array.fetch(@events, Array.size(@events) - 1))
+  def duration(s) = finish(s) - start(s)
+  def bounce?(s) = Array.size(@events) == 1
+  def reached?(s, kind) = Array.any?(@events) { Event.get_kind(it) == kind }
+end
+
+def raw_events
+  <<~TXT
+    09:00:05 u1 view /home
+    09:01:10 u1 view /tea/sencha
+    09:02:30 u2 view /home
+    09:03:00 u1 cart /tea/sencha
+    09:05:45 u1 checkout /checkout
+    09:06:00 u3 view /tea/matcha
+    09:10:12 u2 view /ware/kyusu
+    09:12:40 u2 cart /ware/kyusu
+    09:15:00 u4 view /home
+    09:41:00 u2 view /home
+    09:42:15 u2 checkout /checkout
+    10:20:00 u1 view /home
+    10:21:30 u3 view /tea/matcha
+    10:22:00 u3 cart /tea/matcha
+    10:40:05 u5 view /ware/cups
+    10:41:00 u5 view /ware/kyusu
+    10:44:20 u5 cart /ware/cups
+    10:44:50 u5 cart /ware/kyusu
+    bad line here
+    11:30:00 u4 view /tea/sencha
+  TXT
+end
+
+def seconds(hms)
+  h, m, s = Array.map(String.split(hms, ":")) { String.to_i(it) }
+  h * 3600 + m * 60 + s
+end
+
+def clock(sec) = format("%02d:%02d", sec / 3600, sec % 3600 / 60)
+
+def parse(text)
+  events = Event[]
+  skipped = 0
+  Array.each(String.lines(text)) do |line|
+    m = String.match(line, /\A(\d\d:\d\d:\d\d) (\w+) (view|cart|checkout) (\S+)\s*\z/)
+    if m
+      Array.push(events, Event.new(m[2], seconds(m[1]), String.to_sym(m[3]), m[4]))
+    else
+      skipped += 1
+    end
+  end
+  [events, skipped]
+end
+
+def sessionize(events, gap)
+  sessions = Session[]
+  by_user = Array.group_by(Array.sort_by(events) { Event.get_at(it) }) { Event.get_user(it) }
+  Hash.each(by_user) do |user, list|
+    current = nil
+    Array.each(list) do |e|
+      if current == nil || Event.get_at(e) - Session.finish(current) > gap
+        current = Session.new(user, Event[])
+        Array.push(sessions, current)
+      end
+      Array.push(Session.get_events(current), e)
+    end
+  end
+  Array.sort_by(sessions) { Session.start(it) }
+end
+
+def step_code(kind)
+  case kind
+  in :view then "v"
+  in :cart then "c"
+  in :checkout then "$"
+  else "?"
+  end
+end
+
+def pct(n, d) = d == 0 ? "n/a" : format("%.0f%%", n * 100.0 / d)
+
+events, skipped = parse(raw_events)
+sessions = sessionize(events, 30 * 60)
+puts("#{Array.size(events)} events (#{skipped} skipped), #{Array.size(sessions)} sessions")
+puts
+Array.each(sessions) do |s|
+  path = Array.join(Array.map(Session.get_events(s)) { |e| step_code(Event.get_kind(e)) }, "")
+  mins = Session.duration(s) / 60.0
+  puts(format("  %-3s %s-%s %5.1f min %2d events %-6s%s", Session.get_user(s), clock(Session.start(s)), clock(Session.finish(s)),
+              mins, Array.size(Session.get_events(s)), path, Session.bounce?(s) ? "  bounce" : ""))
+end
+puts
+
+total = Array.size(sessions)
+carted = Array.count(sessions) { Session.reached?(it, :cart) }
+bought = Array.count(sessions) { Session.reached?(it, :checkout) }
+puts("Funnel (sessions):")
+puts(format("  %-9s %3d %5s", "view", total, "100%"))
+puts(format("  %-9s %3d %5s", "cart", carted, pct(carted, total)))
+puts(format("  %-9s %3d %5s  (%s of carts)", "checkout", bought, pct(bought, total), pct(bought, carted)))
+bounces = Array.count(sessions) { Session.bounce?(it) }
+puts(format("Bounce rate: %s", pct(bounces, total)))
+long = Array.reject(sessions) { Session.bounce?(it) }
+avg = Array.empty?(long) ? 0.0 : Array.sum(long) { Session.duration(it) } / 60.0 / Array.size(long)
+puts(format("Average non-bounce session: %.1f min", avg))
+puts
+
+abandoned = Array.select(sessions) { Session.reached?(it, :cart) && !Session.reached?(it, :checkout) }
+puts("Abandoned carts:")
+Array.each(abandoned) do |s|
+  items = Array.uniq(Array.filter_map(Session.get_events(s)) { |e| Event.get_page(e) if Event.get_kind(e) == :cart })
+  puts("  #{Session.get_user(s)} at #{clock(Session.finish(s))}: #{Array.join(items, ", ")}")
+end
+pages = Array.tally(Array.filter_map(events) { |e| Event.get_page(e) if Event.get_kind(e) == :view })
+top = Array.take(Hash.sort_by(pages) { |page, n| [-n, page] }, 3)
+puts("Top viewed: #{Array.join(Array.map(top) { |page, n| "#{page} (#{n})" }, ", ")}")

@@ -1,0 +1,1 @@
+../../corpus/15-data/inventory_diff.rb

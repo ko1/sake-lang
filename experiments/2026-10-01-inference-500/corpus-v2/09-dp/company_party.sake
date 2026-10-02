@@ -1,0 +1,109 @@
+Employee = Struct.new(:name, :fun, :reports)
+OrgError = Exception.new(:name)
+
+def parse_org(text)
+  staff = Hash[]
+  boss_of = Hash[]
+  Array.each(String.lines(text)) do |line|
+    line = String.strip(line)
+    next if String.empty?(line) || String.start_with?(line, "#")
+    m = String.match(line, /\A(\w+)\s+(\d+)(?:\s+<\s+(\w+))?\z/)
+    raise OrgError.new("cannot parse #{Kernel.inspect(line)}", "?") if m == nil
+    name = m[1]
+    raise OrgError.new("duplicate employee", name) if Hash.key?(staff, name)
+    staff[name] = Employee.new(name, String.to_i(m[2]), Employee[])
+    boss_of[name] = m[3]
+  end
+  root = nil
+  Hash.each(boss_of) do |name, boss|
+    if boss == nil
+      raise OrgError.new("two people at the top", name) if root
+      root = staff[name]
+    else
+      manager = staff[boss]
+      raise OrgError.new("unknown manager #{boss}", name) if manager == nil
+      Array.push(Employee.get_reports(manager), staff[name])
+    end
+  end
+  raise OrgError.new("nobody at the top", "-") if root == nil
+  root
+end
+
+# best fun of the subtree, with and without inviting its root
+def party(emp, memo)
+  key = Employee.get_name(emp)
+  cached = memo[key]
+  return cached if cached
+  with_me = Employee.get_fun(emp)
+  without_me = 0
+  Array.each(Employee.get_reports(emp)) do |r|
+    party(r, memo) => {with:, without:}
+    with_me += without
+    without_me += with > without ? with : without
+  end
+  result = {with: with_me, without: without_me}
+  memo[key] = result
+  result
+end
+
+def guests(emp, may_invite, memo, out)
+  party(emp, memo) => {with:, without:}
+  invite = may_invite && with > without
+  Array.push(out, Employee.get_name(emp)) if invite
+  Array.each(Employee.get_reports(emp)) { |r| guests(r, !invite, memo, out) }
+  out
+end
+
+def print_tree(emp, depth, invited)
+  mark = Array.include?(invited, Employee.get_name(emp)) ? "*" : " "
+  puts("  #{mark} #{"  " * depth}#{Employee.get_name(emp)} (#{Employee.get_fun(emp)})")
+  Array.each(Employee.get_reports(emp)) { |r| print_tree(r, depth + 1, invited) }
+end
+
+def headcount(emp) = 1 + Array.sum(Array.map(Employee.get_reports(emp)) { |r| headcount(r) })
+
+org = <<~ORG
+  # name fun < manager
+  Grace 2
+  Alan 5 < Grace
+  Ada 7 < Grace
+  Linus 3 < Grace
+  Barbara 9 < Alan
+  Ken 4 < Alan
+  Dennis 6 < Ken
+  Edsger 8 < Ada
+  Tony 1 < Ada
+  Niklaus 5 < Tony
+  Donald 10 < Linus
+  John 2 < Linus
+  Frances 4 < John
+ORG
+
+root = parse_org(org)
+memo = Hash[]
+party(root, memo) => {with:, without:}
+best = with > without ? with : without
+invited = guests(root, true, memo, Array[])
+puts("#{headcount(root)} employees, best total fun #{best} with #{Array.size(invited)} guests")
+print_tree(root, 0, invited)
+
+puts("best party per department:")
+Array.each(Employee.get_reports(root)) do |dept|
+  party(dept, memo) => {with:, without:}
+  puts(format("  %-8s %3d (head %s)", Employee.get_name(dept), with > without ? with : without, with > without ? "invited" : "stays home"))
+end
+
+broken = Array[
+  "A 1\nB 2 < A\nC 3 < Z",
+  "A 1\nB 2",
+  "A 1\nA 2 < A",
+  "A one"
+]
+Array.each(broken) do |text|
+  begin
+    parse_org(text)
+    puts("parsed")
+  rescue OrgError => e
+    puts("org error at #{OrgError.get_name(e)}: #{Exception.message(e)}")
+  end
+end

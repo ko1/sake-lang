@@ -1,0 +1,94 @@
+# Repeating-key XOR: encrypt, guess the key length from normalised Hamming distances,
+# then recover each key byte by scoring single-byte XOR candidates as English text.
+
+def xor_with_key(bytes, key)
+  k = String.bytes(key)
+  out = Integer[]
+  Array.each_with_index(bytes) { |b, i| Array.push(out, b ^ k[i % Array.size(k)]) }
+  out
+end
+
+def popcount(n)
+  c = 0
+  while n > 0
+    c += n & 1
+    n >>= 1
+  end
+  c
+end
+
+def hamming(a, b)
+  d = 0
+  Array.each_with_index(a) { |x, i| d += popcount(x ^ b[i]) }
+  d
+end
+
+def key_size_scores(bytes, max_size)
+  scores = Array[]
+  Range.each(2..max_size) do |size|
+    blocks = Array.min(Array[4, Array.size(bytes) / size])
+    total = 0.0
+    pairs = 0
+    Range.each(0...(blocks - 1)) do |i|
+      a = bytes[(i * size)...((i + 1) * size)]
+      b = bytes[((i + 1) * size)...((i + 2) * size)]
+      total += Integer.fdiv(hamming(a, b), size)
+      pairs += 1
+    end
+    Array.push(scores, [size, pairs == 0 ? 99.0 : total / pairs])
+  end
+  Array.sort_by(scores) { |_, s| s }
+end
+
+def english_score(bytes)
+  score = 0
+  Array.each(bytes) do |b|
+    if b == 32
+      score += 3
+    elsif (b >= 97 && b <= 122)
+      score += 2
+      score += 1 if Integer.chr(b) =~ /[etaoinshr]/
+    elsif b >= 65 && b <= 90
+      score += 1
+    elsif b < 32 && b != 10
+      score -= 10
+    elsif b >= 127
+      score -= 10
+    end
+  end
+  score
+end
+
+def best_single_byte(column)
+  # keys are printable text
+  Range.max_by(32..126) { |k| english_score(Array.map(column) { |b| b ^ k }) }
+end
+
+def transpose(bytes, size)
+  columns = Array[]
+  Integer.times(size) { Array.push(columns, Integer[]) }
+  Array.each_with_index(bytes) { |b, i| Array.push(columns[i % size], b) }
+  columns
+end
+
+def to_text(bytes) = Array.join(Array.map(bytes) { |b| Integer.chr(b) }, "")
+
+plain = "Burning them they found a trail of tears, and the night was cold and the wind " \
+        "blew over the hills. Nobody spoke of it again, but every one of them remembered."
+key = "CODEX"
+cipher = xor_with_key(String.bytes(plain), key)
+puts("cipher head: #{Array.join(Array.map(Array.take(cipher, 16)) { |b| format("%02x", b) }, "")}")
+puts("hamming('this is a test', 'wokka wokka!!!') = #{hamming(String.bytes("this is a test"), String.bytes("wokka wokka!!!"))}")
+
+ranked = key_size_scores(cipher, 8)
+Array.each(Array.take(ranked, 3)) { |size, s| puts(format("key size %d: %.3f", size, s)) }
+
+found = nil
+Array.each(Array.take(ranked, 3)) do |size, _|
+  guess_bytes = Array.map(transpose(cipher, size)) { |col| best_single_byte(col) }
+  guess = to_text(guess_bytes)
+  text = to_text(xor_with_key(cipher, guess))
+  puts("size #{size}: key=#{Kernel.inspect(guess)} -> #{text[0...40]}")
+  found ||= guess if guess == key
+end
+puts(found ? "recovered key: #{found}" : "key not recovered")

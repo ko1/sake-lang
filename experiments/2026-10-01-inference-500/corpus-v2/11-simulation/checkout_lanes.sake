@@ -1,0 +1,99 @@
+Lane = Struct.new(:name, :kind, :secs_per_item, :overhead, :queue, :busy_until, :served, :open)
+
+class Lane
+  def accepts?(l, items) = @open && (@kind != :express || items <= 10)
+
+  def service_time(l, items) = @overhead + items * @secs_per_item
+
+  def expected_wait(l, now)
+    pending = Array.sum(Array.map(@queue) { |c| c => {items:}; service_time(l, items) })
+    rest = @busy_until > now ? @busy_until - now : 0
+    rest + pending
+  end
+
+  def tick(l, now, waits)
+    return if @busy_until > now
+    c = Array.shift(@queue)
+    return if c == nil
+    c => {id:, arrive:, items:}
+    @busy_until = now + service_time(l, items)
+    @served += 1
+    waits[id] = [@name, now - arrive, @busy_until]
+  end
+
+  def idle?(l, now) = @busy_until <= now && Array.empty?(@queue)
+end
+
+def build_customers
+  specs = Array[[0, 23], [15, 4], [20, 8], [32, 41], [40, 2], [41, 12], [55, 6], [60, 30],
+    [62, 3], [70, 9], [71, 15], [85, 1], [90, 27], [92, 5], [100, 7], [104, 11],
+    [110, 2], [118, 19], [125, 4], [131, 8], [140, 35], [142, 3], [150, 6], [151, 10]]
+  list = Array[]
+  Array.each_with_index(specs) do |spec, i|
+    at, items = spec
+    Array.push(list, {id: i + 1, arrive: at, items: items})
+  end
+  list
+end
+
+def simulate(lanes, close_lane, close_at, balk_limit)
+  arrivals = build_customers
+  waits = Hash[]
+  balked = Array[]
+  now = 0
+  last_arrival = Array.max(Array.map(arrivals) { |c| c => {arrive:}; arrive })
+  while now < 2000
+    lane = close_lane ? Array.find(lanes) { Lane.get_name(it) == close_lane } : nil
+    Lane.set_open(lane, false) if lane && now == close_at
+    Array.each(arrivals) do |c|
+      c => {id:, arrive:, items:}
+      next unless arrive == now
+      options = Array.select(lanes) { |l| Lane.accepts?(l, items) }
+      best = Array.min_by(options) { |l| Lane.expected_wait(l, now) }
+      if best == nil || Lane.expected_wait(best, now) > balk_limit
+        Array.push(balked, id)
+      else
+        Array.push(Lane.get_queue(best), c)
+      end
+    end
+    Array.each(lanes) { |l| Lane.tick(l, now, waits) }
+    break if now > last_arrival && Array.all?(lanes) { |l| Lane.idle?(l, now) }
+    now += 1
+  end
+  {waits: waits, balked: balked, finished: now}
+end
+
+def make_lanes
+  Lane[
+    Lane.new("L1", :regular, 3, 30, Array[], 0, 0, true),
+    Lane.new("L2", :regular, 4, 25, Array[], 0, 0, true),
+    Lane.new("EX", :express, 3, 20, Array[], 0, 0, true),
+    Lane.new("SC", :self, 6, 15, Array[], 0, 0, true)
+  ]
+end
+
+def report(title, close_lane, balk_limit)
+  lanes = make_lanes
+  result = simulate(lanes, close_lane, 90, balk_limit)
+  result => {waits:, balked:, finished:}
+  puts("== #{title}")
+  Hash.each(waits) do |id, info|
+    lane, wait, done = info
+    puts(format("  #%-2d %-2s waited %3ds done at %4d", id, lane, wait, done)) if wait >= 150
+  end
+  per_lane = Array.group_by(Hash.values(waits)) { |lane, wait, done| lane }
+  Array.each(lanes) do |l|
+    rows = per_lane[Lane.get_name(l)] || Array[]
+    avg = Array.empty?(rows) ? 0.0 : Array.sum(Array.map(rows) { |lane, wait, done| wait }) / Integer.to_f(Array.size(rows))
+    puts(format("  %-2s %-7s served %2d avg wait %6.1fs", Lane.get_name(l), Lane.get_kind(l), Lane.get_served(l), avg))
+  end
+  all = Array.map(Hash.values(waits)) { |lane, wait, done| wait }
+  puts(format("  served %d, balked %d %s, all done at %ds, worst wait %ds",
+    Hash.size(waits), Array.size(balked), Kernel.inspect(balked), finished, Array.max(all) || 0))
+  Array.sum(all)
+end
+
+base = report("all lanes open", nil, 400)
+closed = report("L2 closes at 90s", "L2", 400)
+strict = report("impatient shoppers", nil, 120)
+puts(format("total wait: %d / %d / %d", base, closed, strict))

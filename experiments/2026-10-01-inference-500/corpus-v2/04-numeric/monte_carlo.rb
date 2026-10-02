@@ -1,0 +1,1 @@
+../../corpus/04-numeric/monte_carlo.rb

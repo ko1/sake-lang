@@ -1,0 +1,114 @@
+Job = Struct.new(:pid, :arrival, :burst, :priority, :remaining, :finished, :first_run)
+
+module Scheduler
+  def run(policy, specs)
+    jobs = Array.map(specs) { |pid, arr, burst, prio| Job.new(pid, arr, burst, prio, burst, nil, nil) }
+    ready = Job[]
+    timeline = String[]
+    clock = 0
+    current = nil
+    slice_used = 0
+    while Array.any?(jobs) { Job.get_finished(it) == nil }
+      Array.each(jobs) { |j| Array.push(ready, j) if Job.get_arrival(j) == clock }
+      if current && preempt?(policy, current, ready, slice_used)
+        Array.push(ready, current)
+        current = nil
+      end
+      if current == nil
+        current = pick(policy, ready)
+        Array.delete(ready, current) if current
+        slice_used = 0
+      end
+      if current == nil
+        Array.push(timeline, ".")
+      else
+        Job.set_first_run(current, clock) if Job.get_first_run(current) == nil
+        Job.set_remaining(current, Job.get_remaining(current) - 1)
+        Array.push(timeline, Job.get_pid(current))
+        slice_used += 1
+      end
+      clock += 1
+      if current && Job.get_remaining(current) == 0
+        Job.set_finished(current, clock)
+        current = nil
+      end
+    end
+    [jobs, timeline]
+  end
+
+  def report(policy, specs)
+    jobs, timeline = run(policy, specs)
+    puts("== #{label(policy)}")
+    puts("  |#{Array.join(timeline, "")}|")
+    switches = 0
+    Array.each_cons(timeline, 2) { |a, b| switches += 1 if a != b }
+    total_turn = 0
+    total_wait = 0
+    total_resp = 0
+    Array.each(jobs) do |j|
+      turnaround = Job.get_finished(j) - Job.get_arrival(j)
+      wait = turnaround - Job.get_burst(j)
+      total_turn += turnaround
+      total_wait += wait
+      total_resp += Job.get_first_run(j) - Job.get_arrival(j)
+      puts(format("  %s arrive %2d burst %2d prio %d -> done %2d turnaround %2d wait %2d",
+        Job.get_pid(j), Job.get_arrival(j), Job.get_burst(j), Job.get_priority(j), Job.get_finished(j), turnaround, wait))
+    end
+    n = Integer.to_f(Array.size(jobs))
+    puts(format("  avg turnaround %.2f  avg wait %.2f  avg response %.2f  switches %d",
+      total_turn / n, total_wait / n, total_resp / n, switches))
+    total_wait / n
+  end
+end
+
+class Fcfs < {reader: []}
+  include Scheduler
+  def label(p) = "FCFS"
+  def pick(p, ready) = Array.first(ready)
+  def preempt?(p, current, ready, used) = false
+end
+
+class RoundRobin < {reader: [quantum]}
+  include Scheduler
+  def label(p) = "Round robin (q=#{@quantum})"
+  def pick(p, ready) = Array.first(ready)
+  def preempt?(p, current, ready, used) = used >= @quantum && !Array.empty?(ready)
+end
+
+class Srtf < {reader: []}
+  include Scheduler
+  def label(p) = "Shortest remaining time first"
+  def pick(p, ready) = Array.min_by(ready) { [Job.get_remaining(it), Job.get_arrival(it)] }
+  def preempt?(p, current, ready, used)
+    best = pick(p, ready)
+    best != nil && Job.get_remaining(best) < Job.get_remaining(current)
+  end
+end
+
+class PriorityPreemptive < {reader: []}
+  include Scheduler
+  def label(p) = "Priority, preemptive"
+  def pick(p, ready) = Array.min_by(ready) { [Job.get_priority(it), Job.get_arrival(it)] }
+  def preempt?(p, current, ready, used)
+    best = pick(p, ready)
+    best != nil && Job.get_priority(best) < Job.get_priority(current)
+  end
+end
+
+specs = Array[
+  ["A", 0, 7, 3], ["B", 1, 4, 1], ["C", 2, 9, 4], ["D", 3, 2, 2],
+  ["E", 6, 5, 1], ["F", 10, 3, 5], ["G", 12, 1, 2]
+]
+
+results = Array[]
+Array.push(results, ["FCFS", Scheduler.report(Fcfs.new, specs)])
+Array.push(results, ["RR2", Scheduler.report(RoundRobin.new(2), specs)])
+Array.push(results, ["RR4", Scheduler.report(RoundRobin.new(4), specs)])
+Array.push(results, ["SRTF", Scheduler.report(Srtf.new, specs)])
+Array.push(results, ["PRIO", Scheduler.report(PriorityPreemptive.new, specs)])
+
+puts("--- ranking by average wait")
+Array.each_with_index(Array.sort_by(results) { |name, w| w }) do |pair, i|
+  name, w = pair
+  puts(format("%d. %-5s %6.2f", i + 1, name, w))
+end

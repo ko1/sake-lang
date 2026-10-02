@@ -1,0 +1,91 @@
+Frame = Struct.new(:name, :line, :col, :parent)
+Issue = Struct.new(:line, :col, :text)
+
+class Frame
+  def path(f)
+    parts = Array[]
+    node = f
+    while node
+      Array.unshift(parts, Frame.get_name(node))
+      node = Frame.get_parent(node)
+    end
+    Array.join(parts, ">")
+  end
+end
+
+def void_tags = Set["br", "img", "hr", "input"]
+
+def check(doc)
+  issues = Array[]
+  top = nil
+  max_depth = 0
+  depth = 0
+  Array.each_with_index(String.lines(doc)) do |line, li|
+    pos = 0
+    while (m = String.match(line[pos..], /<(\/?)([a-z][a-z0-9]*)[^>]*?(\/?)>/))
+      col = pos + MatchData.begin(m, 0) + 1
+      closing = m[1] == "/"
+      name = m[2]
+      self_closing = m[3] == "/" || Set.include?(void_tags, name)
+      if closing
+        if top == nil
+          Array.push(issues, Issue.new(li + 1, col, "stray </#{name}>"))
+        elsif Frame.get_name(top) == name
+          top = Frame.get_parent(top)
+          depth -= 1
+        else
+          opener = top
+          found = nil
+          while opener
+            if Frame.get_name(opener) == name
+              found = opener
+              break
+            end
+            opener = Frame.get_parent(opener)
+          end
+          if found
+            while top != found
+              Array.push(issues, Issue.new(Frame.get_line(top), Frame.get_col(top), "<#{Frame.get_name(top)}> not closed before </#{name}>"))
+              top = Frame.get_parent(top)
+              depth -= 1
+            end
+            top = Frame.get_parent(found)
+            depth -= 1
+          else
+            Array.push(issues, Issue.new(li + 1, col, "</#{name}> does not match <#{Frame.get_name(top)}>"))
+          end
+        end
+      elsif !self_closing
+        top = Frame.new(name, li + 1, col, top)
+        depth += 1
+        max_depth = depth if depth > max_depth
+      end
+      pos = pos + MatchData.end(m, 0)
+    end
+  end
+  while top
+    Array.push(issues, Issue.new(Frame.get_line(top), Frame.get_col(top), "unclosed <#{Frame.get_name(top)}> (path #{Frame.path(top)})"))
+    top = Frame.get_parent(top)
+  end
+  [issues, max_depth]
+end
+
+docs = Array[
+  ["good", "<html>\n<body><p>Hello <b>world</b></p>\n<img src=x><br/>\n</body>\n</html>\n"],
+  ["unclosed", "<div>\n  <ul><li>one</li><li>two\n  </ul>\n"],
+  ["stray", "<p>text</p></span>\n<em>ok</em>\n"],
+  ["crossed", "<a><b>bold link</a></b>\n"],
+  ["deep", "<a><b><c><d><e>x</e></d></c></b></a><hr>\n"],
+  ["mismatch", "<section>\n<h1>Title</h2>\n</section>\n"]
+]
+
+Array.each(docs) do |label, doc|
+  issues, depth = check(doc)
+  if Array.empty?(issues)
+    puts("#{label}: ok (max depth #{depth})")
+  else
+    puts("#{label}: #{Array.size(issues)} issue(s), max depth #{depth}")
+    sorted = Array.sort_by(issues) { |i| [Issue.get_line(i), Issue.get_col(i)] }
+    Array.each(sorted) { |i| puts("  #{Issue.get_line(i)}:#{Issue.get_col(i)} #{Issue.get_text(i)}") }
+  end
+end

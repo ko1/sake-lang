@@ -1,0 +1,117 @@
+StackError = Exception.new(:needed, :had)
+UnknownWord = Exception.new(:word)
+
+Calc = Struct.new(:stack, :regs)
+
+class Calc
+  def need(c, n)
+    raise StackError.new("stack underflow", n, Array.size(@stack)) if Array.size(@stack) < n
+  end
+
+  def push(c, v) = Array.push(@stack, v)
+
+  def pop(c)
+    need(c, 1)
+    Array.pop(@stack)
+  end
+
+  def divide(a, b)
+    if (a in Integer) && (b in Integer)
+      return a / b if b != 0 && a % b == 0
+      return Integer.to_f(a) / b
+    end
+    a / b
+  end
+
+  def word(c, w)
+    m = String.match(w, /\A(sto|rcl):([a-z])\z/)
+    if m
+      if m[1] == "sto"
+        need(c, 1)
+        @regs[m[2]] = Array.last(@stack)
+      else
+        v = @regs[m[2]]
+        raise UnknownWord.new("empty register", w) if v == nil
+        push(c, v)
+      end
+    elsif String.match?(w, /\A-?\d+\z/)
+      push(c, Integer(w))
+    elsif String.match?(w, /\A-?\d+\.\d+\z/)
+      push(c, Float(w))
+    elsif w == "+" || w == "-" || w == "*" || w == "/"
+      need(c, 2)
+      b = pop(c)
+      a = pop(c)
+      v = if w == "+"
+            a + b
+          elsif w == "-"
+            a - b
+          elsif w == "*"
+            a * b
+          else
+            divide(a, b)
+          end
+      push(c, v)
+    elsif w == "neg"
+      push(c, -pop(c))
+    elsif w == "sqrt"
+      push(c, Math.sqrt(pop(c)))
+    elsif w == "dup"
+      need(c, 1)
+      push(c, Array.last(@stack))
+    elsif w == "drop"
+      pop(c)
+    elsif w == "swap"
+      need(c, 2)
+      b = pop(c)
+      a = pop(c)
+      push(c, b)
+      push(c, a)
+    elsif w == "over"
+      need(c, 2)
+      push(c, @stack[-2])
+    elsif w == "sum"
+      total = Array.sum(@stack)
+      Array.clear(@stack)
+      push(c, total)
+    elsif w == "clear"
+      Array.clear(@stack)
+    else
+      raise UnknownWord.new("unknown word", w)
+    end
+  end
+
+  def show(c) = "[" + Array.join(Array.map(@stack) { |v| Kernel.to_s(v) }, " ") + "]"
+end
+
+calc = Calc.new(Array[], Hash[])
+lines = Array[
+  "3 4 + 2 *",
+  "dup * sto:a",
+  "clear 10 4 /",
+  "9 3 / 2.5 *",
+  "drop 2 sqrt",
+  "1 2 3 4 5 sum",
+  "rcl:a swap -",
+  "neg 7 over",
+  "+ +",
+  "drop drop drop",
+  "rcl:b",
+  "1 0 /",
+  "1 2 frob 3",
+  "clear 1.5 2 * rcl:a +"
+]
+Array.each(lines) do |line|
+  begin
+    Array.each(String.split(line, " ")) { |w| Calc.word(calc, w) }
+    puts(format("%-24s %s", line, Calc.show(calc)))
+  rescue StackError => e
+    puts(format("%-24s %s  error: %s (need %d, have %d)", line, Calc.show(calc), Exception.message(e), StackError.get_needed(e), StackError.get_had(e)))
+  rescue UnknownWord => e
+    puts(format("%-24s %s  error: %s '%s'", line, Calc.show(calc), Exception.message(e), UnknownWord.get_word(e)))
+  rescue ZeroDivisionError
+    puts(format("%-24s %s  error: divided by 0", line, Calc.show(calc)))
+  end
+end
+regs = Calc.get_regs(calc)
+puts("registers: #{Array.join(Array.map(Array.sort(Hash.keys(regs))) { |k| "#{k}=#{regs[k]}" }, ", ")}")

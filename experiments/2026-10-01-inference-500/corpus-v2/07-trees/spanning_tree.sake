@@ -1,0 +1,140 @@
+class DisjointSet < {reader: [parent, rank], accessor: [sets]}
+  def create(n) = DisjointSet.new(Range.to_a(0...n), Range.map(0...n) { 0 }, n)
+
+  def find(ds, x)
+    root = x
+    root = @parent[root] while @parent[root] != root
+    while @parent[x] != root
+      nxt = @parent[x]
+      @parent[x] = root
+      x = nxt
+    end
+    root
+  end
+
+  def union(ds, a, b)
+    ra = find(ds, a)
+    rb = find(ds, b)
+    return false if ra == rb
+    ra, rb = rb, ra if @rank[ra] < @rank[rb]
+    @parent[rb] = ra
+    @rank[ra] += 1 if @rank[ra] == @rank[rb]
+    @sets -= 1
+    true
+  end
+end
+
+Edge = Struct.new(:a, :b, :km)
+
+def kruskal(n, edges)
+  ds = DisjointSet.create(n)
+  chosen = Array[]
+  Array.each(Array.sort_by(edges) { |e| Edge.get_km(e) }) do |e|
+    Array.push(chosen, e) if DisjointSet.union(ds, Edge.get_a(e), Edge.get_b(e))
+  end
+  [chosen, DisjointSet.get_sets(ds)]
+end
+
+def adjacency(n, edges)
+  adj = Range.map(0...n) { Array[] }
+  Array.each(edges) do |e|
+    Array.push(adj[Edge.get_a(e)], [Edge.get_b(e), Edge.get_km(e)])
+    Array.push(adj[Edge.get_b(e)], [Edge.get_a(e), Edge.get_km(e)])
+  end
+  adj
+end
+
+# root the tree with BFS: parent index and edge weight to the parent
+def root_tree(n, adj, root)
+  parent = Range.map(0...n) { -1 }
+  up_km = Range.map(0...n) { 0 }
+  depth = Range.map(0...n) { 0 }
+  seen = Set[root]
+  queue = Array[root]
+  until Array.empty?(queue)
+    u = Array.shift(queue)
+    Array.each(Array.sort_by(adj[u]) { |v, _km| v }) do |v, km|
+      next if Set.include?(seen, v)
+      Set.add(seen, v)
+      parent[v] = u
+      up_km[v] = km
+      depth[v] = depth[u] + 1
+      Array.push(queue, v)
+    end
+  end
+  {parent: parent, up_km: up_km, depth: depth}
+end
+
+def tree_path(rooted, a, b)
+  rooted => {parent:, up_km:, depth:}
+  left = Array[a]
+  right = Array[b]
+  worst = 0
+  while a != b
+    if depth[a] >= depth[b]
+      worst = up_km[a] if up_km[a] > worst
+      a = parent[a]
+      Array.push(left, a)
+    else
+      worst = up_km[b] if up_km[b] > worst
+      b = parent[b]
+      Array.push(right, b)
+    end
+  end
+  Array.pop(right)
+  [Array.concat(left, Array.reverse(right)), worst]
+end
+
+def print_tree(names, adj_tree, rooted, u, indent)
+  rooted => {parent:, up_km:}
+  label = parent[u] == -1 ? names[u] : "#{names[u]} (#{up_km[u]} km)"
+  puts("#{indent}#{label}")
+  kids = Array.select(Array.map(adj_tree[u]) { |v, _km| v }) { |v| parent[v] == u }
+  Array.each(Array.sort_by(kids) { |v| names[v] }) { |v| print_tree(names, adj_tree, rooted, v, indent + "  ") }
+end
+
+names = Array["Aachen", "Bonn", "Cologne", "Dortmund", "Essen", "Frankfurt", "Giessen", "Hagen"]
+idx = Hash[]
+Array.each_with_index(names) { |c, i| idx[c] = i }
+roads = <<~R
+  Aachen Cologne 70
+  Aachen Bonn 91
+  Bonn Cologne 28
+  Cologne Dortmund 94
+  Cologne Essen 72
+  Dortmund Essen 37
+  Dortmund Hagen 27
+  Essen Hagen 50
+  Hagen Giessen 130
+  Bonn Frankfurt 175
+  Cologne Frankfurt 190
+  Frankfurt Giessen 66
+  Dortmund Giessen 170
+R
+edges = Array[]
+String.each_line(roads) do |line|
+  a, b, km = String.split(line, " ")
+  Array.push(edges, Edge.new(idx[a], idx[b], String.to_i(km)))
+end
+
+mst, components = kruskal(Array.size(names), edges)
+total_all = Array.sum(Array.map(edges) { |e| Edge.get_km(e) })
+total_mst = Array.sum(Array.map(mst) { |e| Edge.get_km(e) })
+puts("roads: #{Array.size(edges)} (#{total_all} km), spanning tree: #{Array.size(mst)} roads (#{total_mst} km), components: #{components}")
+Array.each(mst) { |e| puts("  #{names[Edge.get_a(e)]} - #{names[Edge.get_b(e)]}: #{Edge.get_km(e)}") }
+
+adj_tree = adjacency(Array.size(names), mst)
+rooted = root_tree(Array.size(names), adj_tree, idx["Cologne"])
+print_tree(names, adj_tree, rooted, idx["Cologne"], "")
+
+Array.each(Array[["Aachen", "Giessen"], ["Hagen", "Bonn"], ["Essen", "Essen"]]) do |from, to|
+  path, worst = tree_path(rooted, idx[from], idx[to])
+  puts("#{from} -> #{to}: #{Array.join(Array.map(path) { |i| names[i] }, " > ")} (longest leg #{worst} km)")
+end
+
+closed = Array.reject(edges) { |e| Edge.get_km(e) < 60 }
+_m, parts = kruskal(Array.size(names), closed)
+puts("roads >= 60 km only: #{parts} component(s)")
+short = Array.select(edges) { |e| Edge.get_km(e) < 60 }
+_m2, parts2 = kruskal(Array.size(names), short)
+puts("roads < 60 km only: #{parts2} component(s)")

@@ -1,0 +1,97 @@
+# A friendship graph as a Hash of Sets: components, BFS distances, mutual friends, suggestions.
+
+def build_graph(edges)
+  g = Hash[]
+  Array.each(edges) do |a, b|
+    g[a] = Set[] unless Hash.key?(g, a)
+    g[b] = Set[] unless Hash.key?(g, b)
+    Set.add(g[a], b)
+    Set.add(g[b], a)
+  end
+  g
+end
+
+def bfs(g, start)
+  dist = Hash[start => 0]
+  queue = Array[start]
+  until Array.empty?(queue)
+    node = Array.shift(queue)
+    Array.each(Set.sort(g[node])) do |nb|
+      next if Hash.key?(dist, nb)
+      dist[nb] = dist[node] + 1
+      Array.push(queue, nb)
+    end
+  end
+  dist
+end
+
+def components(g)
+  seen = Set[]
+  comps = Array[]
+  Array.each(Array.sort(Hash.keys(g))) do |node|
+    next if Set.include?(seen, node)
+    comp = Array.to_set(Hash.keys(bfs(g, node)))
+    Set.merge(seen, comp)
+    Array.push(comps, comp)
+  end
+  comps
+end
+
+def suggestions(g, person)
+  friends = g[person]
+  counts = Hash.new(0)
+  Set.each(friends) do |f|
+    Set.each(g[f]) { |ff| counts[ff] += 1 unless ff == person || Set.include?(friends, ff) }
+  end
+  Hash.sort_by(counts) { |name, n| [-n, name] }
+end
+
+edges = Array[
+  ["ana", "ben"], ["ana", "cai"], ["ben", "cai"], ["ben", "dee"], ["cai", "eli"],
+  ["dee", "eli"], ["eli", "fox"], ["fox", "gil"], ["dee", "fox"],
+  ["hana", "ivo"], ["ivo", "jun"], ["kit", "kit2"]
+]
+g = build_graph(edges)
+
+puts("people: #{Hash.size(g)}, friendships: #{Array.size(edges)}")
+degree = Hash.transform_values(g) { |s| Set.size(s) }
+most = Hash.max_by(degree) { |n, d| d }
+puts("most connected: #{most[0]} (#{most[1]})")
+hist = Array.tally(Hash.values(degree))
+puts("degree histogram: #{Array.join(Array.map(Array.sort(Hash.keys(hist))) { |d| "#{d}:#{hist[d]}" }, " ")}")
+
+comps = components(g)
+puts("components: #{Array.size(comps)}")
+Array.each(Array.sort_by(comps) { |c| -Set.size(c) }) { |c| puts("  #{Array.join(Set.sort(c), " ")}") }
+
+dist = bfs(g, "ana")
+puts("distances from ana:")
+by_d = Array.group_by(Hash.keys(dist)) { |n| dist[n] }
+Array.each(Array.sort(Hash.keys(by_d))) { |d| puts("  #{d}: #{Array.join(Array.sort(by_d[d]), ", ")}") }
+unreachable = Array.to_set(Hash.keys(g)) - Array.to_set(Hash.keys(dist))
+puts("  unreachable: #{Set.size(unreachable)}")
+p(dist["hana"])
+
+puts("mutual friends:")
+Array.each(Array[["ana", "dee"], ["cai", "fox"], ["ana", "hana"]]) do |a, b|
+  m = Set.sort(g[a] & g[b])
+  puts("  #{a}/#{b}: #{Array.empty?(m) ? "-" : Array.join(m, ",")}")
+end
+
+puts("suggestions:")
+Array.each(Array["ana", "gil", "jun"]) do |who|
+  s = Array.take(suggestions(g, who), 3)
+  puts("  #{who}: #{Array.join(Array.map(s) { |name, n| "#{name}(#{n})" }, " ")}")
+end
+
+triangles = Set[]
+Hash.each(g) do |a, ns|
+  Array.each(Array.combination(Set.sort(ns), 2)) do |b, c|
+    if Set.include?(g[b], c)
+      Set.add(triangles, Array.join(Array.sort(Array[a, b, c]), "-"))
+    end
+  end
+end
+puts("triangles: #{Array.join(Set.sort(triangles), " ")}")
+leaves = Array.sort(Hash.keys(Hash.select(degree) { |n, d| d == 1 }))
+puts("leaves: #{Array.join(leaves, " ")}")

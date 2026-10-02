@@ -1,0 +1,95 @@
+# Role-based access control: roles grant permission Sets and include other roles.
+
+UnknownRole = Exception.new(:role)
+RoleCycle = Exception.new(:path)
+
+Role = Struct.new(:name, :grants, :includes)
+User = Struct.new(:name, :roles, :denied)
+
+def define_roles
+  roles = Hash[]
+  defs = Array[
+    ["viewer", "doc.read comment.read", ""],
+    ["commenter", "comment.write", "viewer"],
+    ["editor", "doc.write doc.create", "commenter"],
+    ["publisher", "doc.publish", "editor"],
+    ["auditor", "log.read", "viewer"],
+    ["admin", "user.manage role.manage", "publisher auditor"]
+  ]
+  Array.each(defs) do |name, grants, incl|
+    roles[name] = Role.new(name, Array.to_set(String.split(grants, " ")), String.split(incl, " "))
+  end
+  roles
+end
+
+def effective(roles, name, path)
+  raise RoleCycle.new("cycle through #{name}", Array.push(Array.dup(path), name)) if Array.include?(path, name)
+  role = roles[name]
+  raise UnknownRole.new("no role #{name}", name) unless role
+  perms = Set.union(Role.get_grants(role), Set[])
+  Array.each(Role.get_includes(role)) do |inc|
+    Set.merge(perms, effective(roles, inc, Array.push(Array.dup(path), name)))
+  end
+  perms
+end
+
+def user_perms(roles, user)
+  all = Array.reduce(User.get_roles(user), Set[]) { |acc, r| acc | effective(roles, r, Array[]) }
+  all - User.get_denied(user)
+end
+
+roles = define_roles
+puts("== Roles ==")
+Array.each(Hash.keys(roles)) do |name|
+  perms = effective(roles, name, Array[])
+  own = Role.get_grants(roles[name])
+  inherited = perms - own
+  puts(format("%-10s %2d perms (own %d, inherited %d)", name, Set.size(perms), Set.size(own), Set.size(inherited)))
+end
+
+users = Array[
+  User.new("alice", Array["admin"], Set[]),
+  User.new("bob", Array["editor", "auditor"], Set["comment.write"]),
+  User.new("carol", Array["commenter"], Set[]),
+  User.new("dan", Array["publisher"], Set["doc.publish"])
+]
+perms_of = Hash[]
+Array.each(users) { |u| perms_of[User.get_name(u)] = user_perms(roles, u) }
+
+puts("== Users ==")
+Hash.each(perms_of) { |name, ps| puts("#{name}: #{Array.join(Set.sort(ps), " ")}") }
+
+puts("== Who can... ==")
+Array.each(Array["doc.publish", "log.read", "comment.write", "user.delete"]) do |perm|
+  who = Array.sort(Hash.keys(Hash.select(perms_of) { |n, ps| Set.include?(ps, perm) }))
+  puts(format("%-14s %s", perm, Array.empty?(who) ? "(nobody)" : Array.join(who, ", ")))
+end
+
+puts("== Comparisons ==")
+a = perms_of["bob"]
+b = perms_of["dan"]
+puts("bob only: #{Array.join(Set.sort(a - b), " ")}")
+puts("dan only: #{Array.join(Set.sort(b - a), " ")}")
+puts("carol within bob? #{Set.subset?(perms_of["carol"], a)}")
+puts("alice strictly above dan? #{Set.proper_superset?(perms_of["alice"], b)}")
+puts("bob and carol disjoint? #{Set.disjoint?(a, perms_of["carol"])}")
+
+everything = Array.reduce(Hash.values(perms_of), Set[]) { |acc, ps| acc | ps }
+unused = Array.select(Hash.values(roles)) { |r| Set.disjoint?(Role.get_grants(r), everything) }
+puts("roles granting nothing in use: #{Array.empty?(unused) ? "none" : Array.join(Array.map(unused) { |r| Role.get_name(r) }, ",")}")
+by_area = Array.group_by(Set.sort(everything)) { |p| String.split(p, ".")[0] }
+puts("areas: #{Array.join(Array.map(Hash.to_a(by_area)) { |area, ps| "#{area}(#{Array.size(ps)})" }, " ")}")
+
+puts("== Bad configurations ==")
+broken = define_roles
+broken["viewer"] = Role.new("viewer", Set["doc.read"], Array["admin"])
+broken["guest"] = Role.new("guest", Set[], Array["visitor"])
+Array.each(Array["editor", "guest", "auditor"]) do |name|
+  begin
+    puts("#{name}: #{Set.size(effective(broken, name, Array[]))} perms")
+  rescue RoleCycle => e
+    puts("#{name}: #{Exception.message(e)} (#{Array.join(RoleCycle.get_path(e), " > ")})")
+  rescue UnknownRole => e
+    puts("#{name}: missing role '#{UnknownRole.get_role(e)}'")
+  end
+end

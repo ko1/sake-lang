@@ -1,0 +1,96 @@
+FormulaError = Exception.new(:formula)
+
+def masses
+  Hash["H" => 1.008, "C" => 12.011, "N" => 14.007, "O" => 15.999, "Na" => 22.990, "Mg" => 24.305,
+       "S" => 32.06, "Cl" => 35.45, "K" => 39.098, "Ca" => 40.078, "Fe" => 55.845, "Cu" => 63.546, "P" => 30.974]
+end
+
+def read_count(s, pos)
+  m = String.match(s[pos..] || "", /\A\d+/)
+  return [1, pos] unless m
+  [String.to_i(MatchData.to_s(m)), pos + String.size(MatchData.to_s(m))]
+end
+
+def merge_into(target, counts, times)
+  Hash.each(counts) { |el, n| target[el] = Hash.fetch(target, el, 0) + n * times }
+end
+
+def parse_group(s, pos, close)
+  counts = Hash[]
+  while pos < String.size(s)
+    c = s[pos]
+    if c == close
+      return [counts, pos + 1]
+    elsif c == "(" || c == "["
+      inner, pos = parse_group(s, pos + 1, c == "(" ? ")" : "]")
+      n, pos = read_count(s, pos)
+      merge_into(counts, inner, n)
+    elsif String.match?(c, /[A-Z]/)
+      m = String.match(s[pos..], /\A[A-Z][a-z]?/)
+      el = MatchData.to_s(m)
+      raise FormulaError.new("unknown element #{el}", s) unless Hash.key?(masses, el)
+      n, pos = read_count(s, pos + String.size(el))
+      counts[el] = Hash.fetch(counts, el, 0) + n
+    else
+      raise FormulaError.new("unexpected '#{c}' at #{pos}", s)
+    end
+  end
+  raise FormulaError.new("missing '#{close}'", s) if close != ""
+  [counts, pos]
+end
+
+def parse_formula(text)
+  total = Hash[]
+  Array.each(String.split(text, "*")) do |part|
+    n, pos = read_count(part, 0)
+    counts, _rest = parse_group(part, pos, "")
+    raise FormulaError.new("empty formula", text) if Hash.empty?(counts)
+    merge_into(total, counts, n)
+  end
+  total
+end
+
+def molar_mass(counts) = Hash.sum(counts) { |el, n| masses[el] * n }
+
+def show_counts(counts)
+  Array.join(Array.map(Hash.sort_by(counts) { |el, n| el }) { |el, n| n == 1 ? el : "#{el}#{n}" }, " ")
+end
+
+def side_counts(side)
+  total = Hash[]
+  Array.each(String.split(side, "+")) do |term|
+    t = String.strip(term)
+    m = String.match(t, /\A(\d*)\s*(.+)\z/)
+    coef = String.empty?(m[1]) ? 1 : String.to_i(m[1])
+    merge_into(total, parse_formula(m[2]), coef)
+  end
+  total
+end
+
+def check_reaction(eq)
+  lhs, rhs = String.split(eq, "->")
+  left = side_counts(lhs)
+  right = side_counts(rhs)
+  elements = Array.sort(Array.union(Hash.keys(left), Hash.keys(right)))
+  bad = Array.reject(elements) { |el| Hash.fetch(left, el, 0) == Hash.fetch(right, el, 0) }
+  if Array.empty?(bad)
+    "balanced"
+  else
+    "unbalanced: " + Array.join(Array.map(bad) { |el| "#{el} #{Hash.fetch(left, el, 0)}->#{Hash.fetch(right, el, 0)}" }, ", ")
+  end
+end
+
+formulas = Array["H2O", "C6H12O6", "Mg(OH)2", "K4[Fe(CN)6]", "CuSO4*5H2O", "Ca3(PO4)2", "NaCl",
+                 "Xy2", "H2(O", "2", "Fe2O3)"]
+Array.each(formulas) do |f|
+  begin
+    counts = parse_formula(f)
+    puts(format("%-12s %-22s %9.3f g/mol", f, show_counts(counts), molar_mass(counts)))
+  rescue FormulaError => e
+    puts(format("%-12s error: %s", f, Exception.message(e)))
+  end
+end
+
+reactions = Array["2H2 + O2 -> 2H2O", "CH4 + 2O2 -> CO2 + 2H2O", "Fe + O2 -> Fe2O3",
+                  "4Fe + 3O2 -> 2Fe2O3", "C6H12O6 + 6O2 -> 6CO2 + 6H2O", "NaOH + HCl -> NaCl + H2O + O"]
+Array.each(reactions) { |r| puts("#{r}: #{check_reaction(r)}") }

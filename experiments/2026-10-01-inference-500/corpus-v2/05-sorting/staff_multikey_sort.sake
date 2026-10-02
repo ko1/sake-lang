@@ -1,0 +1,95 @@
+# Sort a staff directory by a user-supplied list of sort keys (field + direction)
+# with a stable merge sort driven by a comparator block.
+
+Employee = Struct.new(:name, :dept, :salary, :hired)
+
+def field(e, f)
+  case f
+  in :name then Employee.get_name(e)
+  in :dept then Employee.get_dept(e)
+  in :salary then Employee.get_salary(e)
+  in :hired then Employee.get_hired(e)
+  end
+end
+
+def compare(a, b, spec)
+  Array.each(spec) do |key|
+    key => {field: f, dir:}
+    c = field(a, f) <=> field(b, f)
+    next if c == 0
+    return dir == :desc ? -c : c
+  end
+  0
+end
+
+def merge_sort(a)
+  return Array.dup(a) if Array.size(a) <= 1
+  mid = Array.size(a) / 2
+  left = merge_sort(Array.take(a, mid)) { |x, y| yield(x, y) }
+  right = merge_sort(Array.drop(a, mid)) { |x, y| yield(x, y) }
+  out = Array[]
+  i = 0
+  j = 0
+  while i < Array.size(left) && j < Array.size(right)
+    if yield(right[j], left[i]) < 0
+      Array.push(out, right[j])
+      j += 1
+    else
+      Array.push(out, left[i])
+      i += 1
+    end
+  end
+  Array.concat(out, Array.drop(left, i))
+  Array.concat(out, Array.drop(right, j))
+end
+
+def parse_spec(text)
+  Array.map(String.split(text, ",")) do |part|
+    words = String.split(String.strip(part), " ")
+    name = words[0]
+    dir = words[1]
+    f = String.to_sym(name)
+    raise ArgumentError, "unknown field #{name}" unless Array.include?(Array[:name, :dept, :salary, :hired], f)
+    {field: f, dir: dir == "desc" ? :desc : :asc}
+  end
+end
+
+def show(staff)
+  Array.each(staff) do |e|
+    puts(format("  %-8s %-6s %6d %d", Employee.get_name(e), Employee.get_dept(e),
+                Employee.get_salary(e), Employee.get_hired(e)))
+  end
+end
+
+staff = Array[
+  Employee.new("Mori", "eng", 92000, 2019), Employee.new("Abe", "ops", 61000, 2021),
+  Employee.new("Kudo", "eng", 105000, 2015), Employee.new("Sano", "sales", 58000, 2022),
+  Employee.new("Ueda", "eng", 92000, 2017), Employee.new("Iwai", "ops", 61000, 2018),
+  Employee.new("Oka", "sales", 75000, 2016), Employee.new("Endo", "eng", 78000, 2023),
+  Employee.new("Hara", "ops", 70000, 2020), Employee.new("Noda", "sales", 58000, 2019)
+]
+
+Array.each(Array["dept, salary desc, name", "hired desc", "salary, hired", "dept desc, name desc"]) do |text|
+  spec = parse_spec(text)
+  puts("sort by #{text}:")
+  show(merge_sort(staff) { |a, b| compare(a, b, spec) })
+end
+
+begin
+  parse_spec("dept, age desc")
+rescue ArgumentError => e
+  puts("bad spec: #{Exception.message(e)}")
+end
+
+# Stability check: sorting by name first and then by dept alone keeps names ordered within a dept.
+by_name = merge_sort(staff) { |a, b| compare(a, b, parse_spec("name")) }
+two_pass = merge_sort(by_name) { |a, b| compare(a, b, parse_spec("dept")) }
+one_pass = merge_sort(staff) { |a, b| compare(a, b, parse_spec("dept, name")) }
+two_names = Array.map(two_pass) { |e| Employee.get_name(e) }
+one_names = Array.map(one_pass) { |e| Employee.get_name(e) }
+puts("two stable passes == one two-key sort: #{two_names == one_names}")
+
+payroll = Hash.new(0)
+Array.each(staff) { |e| payroll[Employee.get_dept(e)] += Employee.get_salary(e) }
+top, total = Hash.max_by(payroll) { |_, v| v }
+puts("largest payroll: #{top} #{total}")

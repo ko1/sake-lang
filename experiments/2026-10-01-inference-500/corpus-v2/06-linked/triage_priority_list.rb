@@ -1,0 +1,1 @@
+../../corpus/06-linked/triage_priority_list.rb

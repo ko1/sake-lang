@@ -1,0 +1,101 @@
+def english_freq
+  Float[8.2, 1.5, 2.8, 4.3, 12.7, 2.2, 2.0, 6.1, 7.0, 0.15, 0.77, 4.0, 2.4,
+        6.7, 7.5, 1.9, 0.095, 6.0, 6.3, 9.1, 2.8, 0.98, 2.4, 0.15, 2.0, 0.074]
+end
+
+def shift_char(c, k)
+  if c >= "a" && c <= "z"
+    Integer.chr((String.ord(c) - 97 + k) % 26 + 97)
+  elsif c >= "A" && c <= "Z"
+    Integer.chr((String.ord(c) - 65 + k) % 26 + 65)
+  else
+    c
+  end
+end
+
+def caesar(text, k) = Array.join(Array.map(String.chars(text)) { |c| shift_char(c, k) }, "")
+
+def atbash(text)
+  Array.join(Array.map(String.chars(text)) do |c|
+    if c >= "a" && c <= "z"
+      Integer.chr(122 - (String.ord(c) - 97))
+    elsif c >= "A" && c <= "Z"
+      Integer.chr(90 - (String.ord(c) - 65))
+    else
+      c
+    end
+  end, "")
+end
+
+def vigenere(text, key, direction)
+  shifts = Array.map(String.chars(String.downcase(key))) { |c| String.ord(c) - 97 }
+  i = 0
+  out = ""
+  String.each_char(text) do |c|
+    if String.match?(c, /[A-Za-z]/)
+      out += shift_char(c, shifts[i % Array.size(shifts)] * direction)
+      i += 1
+    else
+      out += c
+    end
+  end
+  out
+end
+
+def letter_counts(text)
+  counts = Array.map(Range.to_a(0...26)) { |_| 0 }
+  String.each_char(String.downcase(text)) do |c|
+    counts[String.ord(c) - 97] += 1 if c >= "a" && c <= "z"
+  end
+  counts
+end
+
+def chi_squared(text)
+  counts = letter_counts(text)
+  total = Array.sum(counts)
+  return 1.0e9 if total == 0
+  score = 0.0
+  Array.each_with_index(english_freq) do |pct, i|
+    expected = total * pct / 100.0
+    diff = counts[i] - expected
+    score += diff * diff / expected
+  end
+  score
+end
+
+def crack_caesar(cipher)
+  scored = Range.map(0...26) { |k| [k, chi_squared(caesar(cipher, 26 - k))] }
+  best = Array.min_by(scored) { |_, s| s }
+  ranked = Array.sort_by(scored) { |_, s| s }
+  [best[0], Array.take(ranked, 3)]
+end
+
+def top_letters(text, n)
+  counts = letter_counts(text)
+  idx = Array.sort_by(Range.to_a(0...26)) { |i| [-counts[i], i] }
+  Array.join(Array.map(Array.take(idx, n)) { |i| Integer.chr(97 + i) }, "")
+end
+
+plain = "Defend the east wall of the castle. Reinforcements arrive at dawn; hold the gate until then!"
+puts("plain:    #{plain}")
+rot13 = caesar(plain, 13)
+puts("rot13:    #{rot13}")
+puts("rot13 x2 round-trips: #{caesar(rot13, 13) == plain}")
+puts("atbash:   #{atbash(plain)}")
+puts("atbash x2 round-trips: #{atbash(atbash(plain)) == plain}")
+v = vigenere(plain, "Lemon", 1)
+puts("vigenere: #{v}")
+puts("decoded:  #{vigenere(v, "Lemon", -1)}")
+puts("top letters plain/vigenere: #{top_letters(plain, 5)} / #{top_letters(v, 5)}")
+puts
+
+Array.each(Integer[3, 11, 22]) do |k|
+  secret = caesar(plain, k)
+  guess, ranked = crack_caesar(secret)
+  candidates = Array.join(Array.map(ranked) { |shift, score| format("%d:%.1f", shift, score) }, " ")
+  status = guess == k ? "ok" : "WRONG"
+  puts("shift #{String.rjust(Integer.to_s(k), 2)} -> guessed #{String.rjust(Integer.to_s(guess), 2)} #{status}  [#{candidates}]")
+end
+short = caesar("zzz", 4)
+guess, _ranked = crack_caesar(short)
+puts("short text #{Kernel.inspect(short)}: guessed #{guess} (too little text)")

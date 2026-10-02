@@ -1,0 +1,101 @@
+# Transposition ciphers: rail fence (zigzag) and keyed columnar transposition,
+# plus a double transposition built from the columnar one, and a brute-force rail search.
+
+def rail_pattern(n, rails)
+  pattern = Integer[]
+  rail = 0
+  step = 1
+  Integer.times(n) do
+    Array.push(pattern, rail)
+    if rails > 1
+      step = 1 if rail == 0
+      step = -1 if rail == rails - 1
+      rail += step
+    end
+  end
+  pattern
+end
+
+def rail_encrypt(text, rails)
+  pattern = rail_pattern(String.size(text), rails)
+  chars = String.chars(text)
+  out = ""
+  Integer.times(rails) do |r|
+    Array.each_with_index(chars) { |c, i| out += c if pattern[i] == r }
+  end
+  out
+end
+
+def rail_decrypt(cipher, rails)
+  n = String.size(cipher)
+  pattern = rail_pattern(n, rails)
+  order = Array.sort_by(Range.to_a(0...n)) { |i| [pattern[i], i] }
+  result = Array.map(Range.to_a(0...n)) { "" }
+  Array.each_with_index(order) { |pos, k| result[pos] = cipher[k] }
+  Array.join(result, "")
+end
+
+def column_order(key)
+  Array.sort_by(Range.to_a(0...String.size(key))) { |i| [key[i], i] }   # stable for repeated letters
+end
+
+def columnar_encrypt(text, key)
+  cols = String.size(key)
+  out = ""
+  Array.each(column_order(key)) do |c|
+    i = c
+    while i < String.size(text)
+      out += text[i]
+      i += cols
+    end
+  end
+  out
+end
+
+def columnar_decrypt(cipher, key)
+  cols = String.size(key)
+  n = String.size(cipher)
+  full_rows = n / cols
+  extra = n % cols
+  result = Array.map(Range.to_a(0...n)) { "" }
+  pos = 0
+  Array.each(column_order(key)) do |c|
+    height = full_rows + (c < extra ? 1 : 0)
+    Integer.times(height) do |r|
+      result[r * cols + c] = cipher[pos]
+      pos += 1
+    end
+  end
+  Array.join(result, "")
+end
+
+def common_words = Array["THE", "AND", "ATTACK", "DAWN", "ARE", "WE"]
+
+def score(text) = Array.count(common_words) { |w| String.include?(text, w) }
+
+plain = "WEAREDISCOVEREDFLEEATONCE"
+Array.each(Integer[2, 3, 4]) do |rails|
+  enc = rail_encrypt(plain, rails)
+  puts("rails=#{rails}: #{enc} -> #{rail_decrypt(enc, rails)}")
+end
+puts("pattern: #{Array.join(rail_pattern(12, 4), "")}")
+
+key = "ZEBRAS"
+puts("order for #{key}: #{Array.join(column_order(key), ",")}")
+enc = columnar_encrypt(plain, key)
+puts("columnar: #{enc}")
+puts("back    : #{columnar_decrypt(enc, key)}")
+
+double = columnar_encrypt(columnar_encrypt("ATTACKATDAWNXX", "SECRET"), "KEY")
+puts("double  : #{double}")
+puts("undone  : #{columnar_decrypt(columnar_decrypt(double, "KEY"), "SECRET")}")
+
+intercepted = rail_encrypt("WEATTACKTHEFORTATDAWNANDHOLDTHERIDGE", 5)
+puts("intercepted: #{intercepted}")
+candidates = Array.map(Range.to_a(2..8)) { |r| [r, rail_decrypt(intercepted, r)] }
+best = Array.max_by(candidates) { |r, text| score(text) }
+Array.each(candidates) { |r, text| puts(format("  %d rails: %s (%d)", r, text, score(text))) }
+if best
+  r, text = best
+  puts("best guess: #{r} rails -> #{text}")
+end

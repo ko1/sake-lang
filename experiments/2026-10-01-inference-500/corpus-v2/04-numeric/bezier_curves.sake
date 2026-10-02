@@ -1,0 +1,124 @@
+def lerp(p, q, t)
+  px, py = p
+  qx, qy = q
+  [px + (qx - px) * t, py + (qy - py) * t]
+end
+
+def dist(p, q)
+  px, py = p
+  qx, qy = q
+  Math.hypot(qx - px, qy - py)
+end
+
+def de_casteljau(ctrl, t)
+  pts = ctrl
+  while Array.size(pts) > 1
+    pts = Range.map(0...(Array.size(pts) - 1)) { |i| lerp(pts[i], pts[i + 1], t) }
+  end
+  pts[0]
+end
+
+def binomial(n, k)
+  return 1 if k == 0 || k == n
+  Range.reduce(1..k, 1) { |acc, i| acc * (n - k + i) / i }
+end
+
+def bernstein_point(ctrl, t)
+  n = Array.size(ctrl) - 1
+  x = 0.0
+  y = 0.0
+  Array.each_with_index(ctrl) do |pt, i|
+    b = binomial(n, i) * t ** i * (1.0 - t) ** (n - i)
+    px, py = pt
+    x += b * px
+    y += b * py
+  end
+  [x, y]
+end
+
+def split_curve(ctrl, t)
+  left = Array[Array.first(ctrl)]
+  right = Array[Array.last(ctrl)]
+  pts = ctrl
+  while Array.size(pts) > 1
+    pts = Range.map(0...(Array.size(pts) - 1)) { |i| lerp(pts[i], pts[i + 1], t) }
+    Array.push(left, Array.first(pts))
+    Array.unshift(right, Array.last(pts))
+  end
+  [left, right]
+end
+
+def polyline_length(ctrl, segments)
+  prev = de_casteljau(ctrl, 0.0)
+  total = 0.0
+  Range.each(1..segments) do |i|
+    cur = de_casteljau(ctrl, i * 1.0 / segments)
+    total += dist(prev, cur)
+    prev = cur
+  end
+  total
+end
+
+def adaptive_length(ctrl, tol, depth)
+  chord = dist(Array.first(ctrl), Array.last(ctrl))
+  net = Range.reduce(0...(Array.size(ctrl) - 1), 0.0) { |acc, i| acc + dist(ctrl[i], ctrl[i + 1]) }
+  return (chord + net) / 2.0 if net - chord < tol || depth == 0
+  l, r = split_curve(ctrl, 0.5)
+  adaptive_length(l, tol / 2.0, depth - 1) + adaptive_length(r, tol / 2.0, depth - 1)
+end
+
+def bounding_box(ctrl, samples)
+  pts = Range.map(0..samples) { |i| de_casteljau(ctrl, i * 1.0 / samples) }
+  xs = Array.map(pts) { |x, y| x }
+  ys = Array.map(pts) { |x, y| y }
+  {min_x: Array.min(xs), max_x: Array.max(xs), min_y: Array.min(ys), max_y: Array.max(ys)}
+end
+
+def closest_t(ctrl, target)
+  best = Array.min_by(Range.to_a(0..20)) { |i| dist(de_casteljau(ctrl, i / 20.0), target) }
+  lo = Array.max(Float[0.0, (best - 1) / 20.0])
+  hi = Array.min(Float[1.0, (best + 1) / 20.0])
+  Integer.times(30) do
+    m1 = lo + (hi - lo) / 3.0
+    m2 = hi - (hi - lo) / 3.0
+    if dist(de_casteljau(ctrl, m1), target) < dist(de_casteljau(ctrl, m2), target)
+      hi = m2
+    else
+      lo = m1
+    end
+  end
+  (lo + hi) / 2.0
+end
+
+def fmt_pt(p)
+  x, y = p
+  format("(%.4f, %.4f)", x, y)
+end
+
+curves = Array[
+  ["quadratic", Array[[0.0, 0.0], [1.0, 2.0], [2.0, 0.0]]],
+  ["cubic S", Array[[0.0, 0.0], [1.0, 3.0], [2.0, -3.0], [3.0, 0.0]]],
+  ["quartic loop", Array[[0.0, 0.0], [4.0, 4.0], [-1.0, 4.0], [3.0, 0.0], [2.0, 2.0]]],
+  ["straight cubic", Array[[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]]
+]
+
+Array.each(curves) do |name, ctrl|
+  puts("== #{name} (degree #{Array.size(ctrl) - 1})")
+  mid = de_casteljau(ctrl, 0.5)
+  diff = dist(mid, bernstein_point(ctrl, 0.5))
+  puts("  B(0.5) = #{fmt_pt(mid)}, Bernstein agrees to #{format("%.1e", diff)}")
+  l16 = polyline_length(ctrl, 16)
+  l128 = polyline_length(ctrl, 128)
+  la = adaptive_length(ctrl, 1e-4, 12)
+  puts(format("  length: 16 segs %.6f, 128 segs %.6f, adaptive %.6f", l16, l128, la))
+  bounding_box(ctrl, 100) => {min_x:, max_x:, min_y:, max_y:}
+  puts(format("  bbox x [%.4f, %.4f] y [%.4f, %.4f]", min_x, max_x, min_y, max_y))
+  left, right = split_curve(ctrl, 0.3)
+  joined = dist(Array.last(left), Array.first(right))
+  check = dist(de_casteljau(left, 0.5), de_casteljau(ctrl, 0.15))
+  puts(format("  split at 0.3: joint gap %.1e, left(0.5) vs B(0.15) %.1e", joined, check))
+  t = closest_t(ctrl, [1.5, 1.0])
+  puts(format("  closest to (1.5, 1.0): t=%.5f at %s, distance %.5f", t, fmt_pt(de_casteljau(ctrl, t)), dist(de_casteljau(ctrl, t), [1.5, 1.0])))
+end
+
+puts("binomial row 6: #{Range.map(0..6) { |k| binomial(6, k) }}")

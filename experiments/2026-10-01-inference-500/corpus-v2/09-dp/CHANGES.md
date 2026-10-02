@@ -1,0 +1,27 @@
+# CHANGES (09-dp, corpus-v2)
+
+- coin_change: unchanged
+- company_party: `invite == false` -> `!invite` (unary `!`)
+- critical_path: unchanged
+- decode_ways: unchanged
+- dice_odds: unchanged
+- digit_counting: `no_repeat?` index-walking `while` loop -> `Array.each_cons(ds, 2) { |a, b| return false if a == b }` (block destructuring of the Array window)
+- edit_distance: `String.start_with?(st, "=") == false` -> `!String.start_with?(st, "=")` (unary `!`)
+- egg_drop: unchanged
+- floyd_warshall: unchanged
+- grid_paths: unchanged
+- held_karp: `each_cons ... |pair|` with `pair[0]`, `pair[1]` -> `|a, b|` (block destructuring of the Array window)
+- house_robber: `take == false` -> `!take` (unary `!`)
+- interval_scheduling: `fields[0]`/`fields[1]`/`span[0]`... indexing -> `client, span, fee = String.split(line, ",")` and `from, to = String.split(span, "-")` (multiple assignment from an Array)
+- knapsack_01: unchanged
+- lcs_diff: unchanged
+- line_breaking: unchanged
+- longest_increasing: packed sort key `w * 10000 - h` -> Tuple key `[w, -h]` (ordered Tuples, unary `-`)
+- matrix_chain: unchanged
+- optimal_bst: unchanged
+- palindromes: unchanged
+- sequence_alignment: sort key `0 - score` -> `-score` (unary `-`); traceback `done` flag with `while done == false` -> `while true` with `break` in the `in :stop` branch
+- stock_trading: `0 - prices[0]` -> `-prices[0]` (unary `-`)
+- subset_partition: `reachable[s] == false` -> `!reachable[s]` (unary `!`); `target -= 1 while reachable[target] == false` -> `target -= 1 until reachable[target]`
+- viterbi: Hash filled in an `Array.each` loop -> `Array.map(states) { |s| [s, ...] }.Array.to_h` (chain), in `viterbi` (first column) and `forward` (both columns); `Array.sum(Array.map(...))` -> `Array.sum(states) { ... }` there
+- word_break: unchanged

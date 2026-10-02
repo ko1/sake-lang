@@ -1,0 +1,86 @@
+# Import CSV product rows against a column schema; collect cell-level errors as Records.
+def csv_data
+  "sku,name,price,qty,category,released
+A-100,Desk lamp,19.99,12,home,2025-03-14
+A-101,,4.50,3,home,2025-13-01
+B-200,USB cable,abc,40,electronics,2024-11-30
+B-201,Charger,24.00,-5,electronics,2024-02-30
+C-300,Notebook,3.25,100,stationery
+C-301,Pen set,7.80,25,office,2023-07-07
+A-1x2,Mug,8.00,7,home,2025-01-20
+D-400,Headphones,89.90,4,electronics,2025-06-01"
+end
+
+def categories = Array["home", "electronics", "stationery"]
+
+def days_in_month(y, m)
+  return 29 if m == 2 && (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0))
+  Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+end
+
+def check_cell(column, raw)
+  case column
+  in "sku"
+    return "bad SKU format" unless String.match?(raw, /\A[A-Z]-\d{3}\z/)
+  in "name"
+    return "required" if String.empty?(raw)
+  in "price"
+    return "not a decimal" unless String.match?(raw, /\A\d+\.\d{2}\z/)
+  in "qty"
+    n = Integer(raw) rescue nil
+    return "not an integer" if n == nil
+    return "negative" if n < 0
+  in "category"
+    return "unknown category #{raw}" unless Array.include?(categories, raw)
+  in "released"
+    m = String.match(raw, /\A(\d{4})-(\d{2})-(\d{2})\z/)
+    return "not a date" if m == nil
+    y = String.to_i(m[1])
+    mo = String.to_i(m[2])
+    d = String.to_i(m[3])
+    return "month #{mo} out of range" unless mo >= 1 && mo <= 12
+    return "day #{d} out of range" unless d >= 1 && d <= days_in_month(y, mo)
+  else
+    return "unexpected column"
+  end
+  nil
+end
+
+def import(text)
+  lines = String.lines(text)
+  header = String.split(String.chomp(lines[0]), ",")
+  good = Array[]
+  errors = Array[]
+  Array.each_with_index(Array.drop(lines, 1)) do |line, i|
+    row_no = i + 2
+    cells = String.split(String.chomp(line), ",")
+    if Array.size(cells) != Array.size(header)
+      Array.push(errors, {row: row_no, column: "*", message: "expected #{Array.size(header)} cells, got #{Array.size(cells)}"})
+      next
+    end
+    row_errors = 0
+    Array.each_with_index(header) do |col, j|
+      msg = check_cell(col, cells[j])
+      if msg
+        row_errors += 1
+        Array.push(errors, {row: row_no, column: col, message: msg})
+      end
+    end
+    Array.push(good, cells) if row_errors == 0
+  end
+  [good, errors]
+end
+
+good, errors = import(csv_data)
+puts("imported #{Array.size(good)} row(s):")
+Array.each(good) do |cells|
+  value = Float(cells[2]) * Integer(cells[3])
+  puts(format("  %-6s %-11s %8.2f", cells[0], cells[1], value))
+end
+puts("rejected cells: #{Array.size(errors)}")
+Array.each(errors) do |err|
+  err => {row:, column:, message:}
+  puts("  row #{row} [#{column}] #{message}")
+end
+rows_with_errors = Array.uniq(Array.map(errors) { |err| err => {row:}; row })
+puts("rows with errors: #{Array.join(rows_with_errors, " ")}")

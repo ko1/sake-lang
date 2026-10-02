@@ -1,0 +1,27 @@
+# Changes: 18-collections (corpus -> corpus-v2)
+
+- access_log: top-paths sort key `[-n, p]` (ordered Tuple, unary minus) via `Hash.sort_by` replaces the packed `format("%03d%s", 999 - n, p)` String key.
+- build_order: earliest-finish sort key `[t, s]` via `Hash.sort_by` replaces the packed `format("%03d%s", t, s)` key. (`target, rest = String.split(line, ":")` kept as indexing: `"fetch:"` splits into one element, see NOTES.)
+- cart_discounts: `money(-c)` (unary minus) replaces `money(0 - c)`.
+- contact_dedupe: unchanged.
+- course_overlap: `sort_by { -Course.size(c) }` replaces `0 - ...`; Tuple sort key `[-j, x, y]` replaces `format("%.4f %s %s", 1.0 - j, x, y)`; `Array.combination` blocks take `|a, b|` instead of `pair[0]`/`pair[1]`.
+- friend_graph: block destructuring `|a, b|` for edges, the mutual-friend pairs and triangle pairs (no more `a, b = edge` / `pair[0]`); suggestion order `[-n, name]` via `Hash.sort_by` replaces `format("%03d%s", 999 - n, name)`; `-Set.size(c)` replaces `0 - ...`.
+- grade_book: `sort_by { -r[0] }` replaces `100.0 - r[0]`; `Array.count(all, 0)` replaces the block form.
+- inventory_diff: unchanged.
+- ip_ranges: `addr, bits = String.split(text, "/")` (multiple assignment from an Array) replaces the double split with indexing; combination blocks take `|x, y|`; share order `-n` via `Hash.sort_by` replaces `0 - n`.
+- latency_buckets: `verb, path, ms = String.split(entry, " ")` replaces `parts[0..2]`; `-worst` replaces `0 - worst`.
+- leaderboard: ranking order `[-pts, name]` via `Hash.sort_by` replaces `format("%05d%s", 99999 - pts, name)`.
+- library_loans: unchanged (`Report.summary` mixin dispatch is already the natural form).
+- lottery: `a == b` on Sets replaces `Set.subset? && Set.superset?`; `|draw, _|` destructuring in `flat_map` / `Array.sum { }` replaces `pair[0]`.
+- paginate: `sku, name, cat, price, stock = String.split(r, " ")` replaces `f[0..4]`.
+- prime_sets: `Array.each_cons(primes, 2) { |a, b| }` replaces `pair[0]`/`pair[1]`.
+- range_set: unchanged.
+- role_permissions: union of all users' permissions reduces over `Hash.values` with `|acc, ps|` instead of `kv[1]`.
+- room_bookings: `h, m = String.split(s, ":")` and `room, who, from, to = String.split(line, " ")` replace indexing; combination block takes `|a, b|`.
+- sales_pivot: `-revenue` replaces `0.0 - revenue` (and `Hash.sort_by`); `each_cons(..., 2) { |w1, w2| }` replaces `win[0]`/`win[1]`; best cell taken apart with `region, month = k`; `Array.reject(product) { |key| Hash.key?(pivot, key) }` replaces `[pair[0], pair[1]]` and `== false`; `|r, m|` in the label map.
+- sensor_merge: `t, v = String.split(..., "=")` replaces the double split; `filter_map { |m, v, avg| }` and `select/count { |t, h| }` replace `row[0]`/`row[1]`.
+- sparse_vectors: `Hash.sort_by` for `to_s`; top words by `[-n, w]` replaces `format("%03d%s", 999 - n, w)`; `combination { |x, y| }` replaces `pr[0]`/`pr[1]`.
+- survey_venn: `combination` select takes `|a, b|`; popularity order `[-n, f]` via `Hash.sort_by` replaces `format("%02d%s", 99 - n, f)`.
+- tag_recommender: interest ranking `[-n, Article.get_id(a)]` replaces `(10 - n) * 100 + id`; tag pairs `|x, y|`; common pairs sorted by the Tuple key `k` (was `k[0] + "/" + k[1]`) and printed via `x, y = k`.
+- word_pipeline: top-n order `[-c, w]` via `Hash.sort_by` replaces `format("%05d %s", 100000 - c, w)`; combination `|a, b|`; the "others" reduce takes `n, s = kv` instead of `kv[0]`/`kv[1]`.
+- word_rack: anagram classes `[-Array.size(ws), sig]`, best word `max_by { [score, size] }`, top scores `[-score, w]` replace packed String/Integer keys.

@@ -1,0 +1,106 @@
+Suggestion = Struct.new(:word, :distance, :frequency)
+
+class Suggestion
+  include Comparable
+  def <=>(a, b)
+    [@distance, -@frequency, @word] <=> [Suggestion.get_distance(b), -Suggestion.get_frequency(b), Suggestion.get_word(b)]
+  end
+  def to_s(s) = "#{@word}(#{@distance})"
+end
+
+def dictionary_text
+  "the of and to in is it that was for on are with as they be at one have this from " +
+  "word but what we all there when your how said each she which their time if will " +
+  "write like long make see two has more day go come number no people who first " +
+  "receive believe separate definitely occurred language program writing here fine everything"
+end
+
+def frequencies
+  words = String.split(dictionary_text, " ")
+  freq = Hash[]
+  Array.each_with_index(words) { |w, i| freq[w] = Array.size(words) - i }
+  freq
+end
+
+def distance(a, b)
+  m = String.size(a)
+  n = String.size(b)
+  prev2 = nil
+  prev = Range.to_a(0..n)
+  Integer.upto(1, m) do |i|
+    cur = Integer[i]
+    Integer.upto(1, n) do |j|
+      cost = a[i - 1] == b[j - 1] ? 0 : 1
+      best = Array.min(Array[prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost])
+      if prev2 != nil && i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]
+        t = prev2[j - 2] + 1
+        best = t if t < best
+      end
+      Array.push(cur, best)
+    end
+    prev2 = prev
+    prev = cur
+  end
+  prev[n]
+end
+
+def suggest(word, freq, max_dist)
+  list = Suggestion[]
+  Hash.each(freq) do |cand, f|
+    next if Integer.abs(String.size(cand) - String.size(word)) > max_dist
+    d = distance(word, cand)
+    Array.push(list, Suggestion.new(cand, d, f)) if d <= max_dist
+  end
+  Array.take(Array.sort(list), 3)
+end
+
+def match_case(original, replacement)
+  first = original[0]
+  first != nil && first == String.upcase(first) && first != String.downcase(first) ? String.capitalize(replacement) : replacement
+end
+
+def check(sentence, freq)
+  corrected = Array[]
+  report = Array[]
+  Array.each(String.split(sentence, " ")) do |token|
+    m = String.match(token, /\A([A-Za-z]+)(.*)\z/)
+    if m == nil
+      Array.push(corrected, token)
+      next
+    end
+    word = m[1]
+    tail = m[2]
+    lower = String.downcase(word)
+    if Hash.key?(freq, lower)
+      Array.push(corrected, token)
+      next
+    end
+    options = suggest(lower, freq, 2)
+    if Array.empty?(options)
+      Array.push(corrected, "[#{word}?]" + tail)
+      Array.push(report, "#{word}: no suggestion")
+    else
+      best = Suggestion.get_word(Array.first(options))
+      Array.push(corrected, match_case(word, best) + tail)
+      Array.push(report, "#{word}: " + Array.join(options, ", "))
+    end
+  end
+  [Array.join(corrected, " "), report]
+end
+
+freq = frequencies
+puts("dictionary: #{Hash.size(freq)} words")
+pairs = Array[["kitten", "sitting"], ["recieve", "receive"], ["teh", "the"], ["flaw", "lawn"], ["", "abc"]]
+Array.each(pairs) { |a, b| puts("distance(#{Kernel.inspect(a)}, #{Kernel.inspect(b)}) = #{distance(a, b)}") }
+sentences = Array[
+  "Teh peopel who wrtie definately recieve wierd errors.",
+  "Thier frist nubmer was seperate!",
+  "Everything here is fine."
+]
+Array.each(sentences) do |s|
+  fixed, report = check(s, freq)
+  puts
+  puts("in:  #{s}")
+  puts("out: #{fixed}")
+  Array.each(report) { |r| puts("     #{r}") }
+end

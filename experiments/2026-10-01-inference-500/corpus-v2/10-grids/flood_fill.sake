@@ -1,0 +1,106 @@
+Canvas = Struct.new(:pixels, :height, :width)
+Region = Struct.new(:color, :size, :top, :left)
+
+class Region
+  def to_s(r) = "#{@color}x#{@size}@(#{@top},#{@left})"
+end
+
+class Canvas
+  def parse(rows) = Canvas.new(Array.map(rows) { String.chars(it) }, Array.size(rows), String.size(rows[0]))
+
+  def inside?(cv, r, c) = r >= 0 && r < @height && c >= 0 && c < @width
+
+  def neighbours(cv, r, c)
+    out = Array[]
+    Array.each(Array[[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]) do |nr, nc|
+      Array.push(out, [nr, nc]) if inside?(cv, nr, nc)
+    end
+    out
+  end
+
+  # paint bucket: returns how many pixels changed
+  def fill(cv, r, c, color)
+    target = @pixels[r][c]
+    return 0 if target == color
+    stack = Array[[r, c]]
+    changed = 0
+    while Array.size(stack) > 0
+      cr, cc = Array.pop(stack)
+      next if @pixels[cr][cc] != target
+      @pixels[cr][cc] = color
+      changed += 1
+      Array.each(neighbours(cv, cr, cc)) { |cell| Array.push(stack, cell) }
+    end
+    changed
+  end
+
+  def regions(cv)
+    seen = Set[]
+    found = Array[]
+    Integer.times(@height) do |r|
+      Integer.times(@width) do |c|
+        next if Set.include?(seen, [r, c])
+        color = @pixels[r][c]
+        size = 0
+        queue = Array[[r, c]]
+        Set.add(seen, [r, c])
+        until Array.empty?(queue)
+          cell = Array.shift(queue)
+          size += 1
+          cr, cc = cell
+          Array.each(neighbours(cv, cr, cc)) do |n|
+            nr, nc = n
+            if @pixels[nr][nc] == color && !Set.include?(seen, n)
+              Set.add(seen, n)
+              Array.push(queue, n)
+            end
+          end
+        end
+        Array.push(found, Region.new(color, size, r, c))
+      end
+    end
+    found
+  end
+
+  def to_s(cv) = Array.join(Array.map(@pixels) { |row| Array.join(row) }, "\n")
+end
+
+def summarize(cv)
+  regs = Canvas.regions(cv)
+  by_color = Array.group_by(regs) { Region.get_color(it) }
+  parts = Array.map(Array.sort(Hash.keys(by_color))) do |color|
+    list = by_color[color]
+    "#{color}:#{Array.size(list)}"
+  end
+  biggest = Array.max_by(regs) { Region.get_size(it) }
+  puts("  regions #{Array.size(regs)} (#{Array.join(parts, " ")}); largest #{biggest}")
+  singles = Array.select(regs) { Region.get_size(it) == 1 }
+  puts("  single-pixel regions: #{Array.join(singles, ", ")}") unless Array.empty?(singles)
+end
+
+canvas = Canvas.parse(Array[
+  "....##....",
+  "...#..#...",
+  "..#....#..",
+  "..#....#..",
+  "...#..#...",
+  "....##....",
+  "oo......oo",
+  "o.o....o.o",
+])
+
+puts(canvas)
+summarize(canvas)
+ops = Array[[2, 4, "~"], [0, 0, "-"], [7, 1, "*"], [0, 4, "@"], [2, 4, "~"], [6, 0, "-"]]
+Array.each(ops) do |r, c, color|
+  n = Canvas.fill(canvas, r, c, color)
+  puts("fill (#{r},#{c}) with #{color}: #{n} pixels")
+  summarize(canvas)
+end
+puts(canvas)
+counts = Hash.new(0)
+Array.each(Canvas.get_pixels(canvas)) { |row| Array.each(row) { |ch| counts[ch] += 1 } }
+Hash.sort_by(counts) { |ch, n| [-n, ch] }
+  .Array.map { |ch, n| "#{ch}=#{n}" }
+  .Array.join(" ")
+puts(_)

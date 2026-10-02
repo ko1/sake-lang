@@ -1,0 +1,91 @@
+Pile = Struct.new(:size, :grid, :lost, :topples)
+
+class Pile
+  def create(n)
+    rows = Array[]
+    Integer.times(n) do
+      row = Integer[]
+      Integer.times(n) { Array.push(row, 0) }
+      Array.push(rows, row)
+    end
+    Pile.new(n, rows, 0, 0)
+  end
+
+  def get(p, x, y) = @grid[y][x]
+
+  def add(p, x, y, k)
+    if x < 0 || y < 0 || x >= @size || y >= @size
+      @lost += k
+      return false
+    end
+    row = @grid[y]
+    row[x] += k
+    row[x] >= 4
+  end
+
+  def drop(p, x, y)
+    unstable = Array[]
+    Array.push(unstable, [x, y]) if add(p, x, y, 1)
+    toppled = Set[]
+    count = 0
+    until Array.empty?(unstable)
+      cx, cy = Array.shift(unstable)
+      next if get(p, cx, cy) < 4
+      @grid[cy][cx] -= 4
+      count += 1
+      Set.add(toppled, [cx, cy])
+      Array.each(Array[[1, 0], [-1, 0], [0, 1], [0, -1]]) do |dx, dy|
+        nx = cx + dx
+        ny = cy + dy
+        Array.push(unstable, [nx, ny]) if add(p, nx, ny, 1)
+      end
+      Array.push(unstable, [cx, cy]) if get(p, cx, cy) >= 4
+    end
+    @topples += count
+    [count, Set.size(toppled)]
+  end
+
+  def grains(p) = Array.sum(Array.map(@grid) { |row| Array.sum(row) })
+
+  def render(p)
+    Array.each(@grid) { |row| puts(Array.join(Array.map(row) { |v| " .:*#"[v] }, "")) }
+  end
+end
+
+def bucket(n)
+  return "0" if n == 0
+  return "1" if n == 1
+  b = 2
+  b *= 2 while b < n
+  "#{b / 2 + 1}-#{b}"
+end
+
+pile = Pile.create(9)
+sizes = Integer[]
+area_max = 0
+seed = 17
+Integer.times(320) do |i|
+  seed = (seed * 75 + 74) % 65537
+  x = i % 5 == 0 ? 4 : seed % 9
+  y = i % 5 == 0 ? 4 : (seed / 9) % 9
+  count, area = Pile.drop(pile, x, y)
+  Array.push(sizes, count)
+  area_max = area if area > area_max
+  if (i + 1) % 80 == 0
+    puts("after #{i + 1} grains: on table #{Pile.grains(pile)}, fell off #{Pile.get_lost(pile)}, topples #{Pile.get_topples(pile)}")
+  end
+end
+
+puts("--- final configuration")
+Pile.render(pile)
+counts = Array.tally(Array.flatten(Pile.get_grid(pile)))
+puts("cell heights: #{Array.join(Array.map(Array.sort(Hash.keys(counts))) { |h| "#{h}:#{counts[h]}" }, " ")}")
+puts("--- avalanche sizes")
+hist = Hash.new(0)
+Array.each(sizes) { |s| hist[bucket(s)] += 1 }
+order = Array.sort_by(Hash.keys(hist)) { |k| String.to_i(String.split(k, "-")[0]) }
+Array.each(order) { |k| puts(format("%7s %4d %s", k, hist[k], "#" * Integer.ceildiv(hist[k], 4))) }
+biggest = Array.max(sizes)
+puts("largest avalanche: #{biggest} topples (grain #{Array.index(sizes, biggest) + 1}), widest area #{area_max} cells")
+quiet = Array.count(sizes) { |s| s == 0 }
+puts(format("quiet drops: %d (%.1f%%)", quiet, 100.0 * quiet / Array.size(sizes)))

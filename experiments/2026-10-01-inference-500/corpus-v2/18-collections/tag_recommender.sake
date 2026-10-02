@@ -1,0 +1,90 @@
+# Recommend articles by tag overlap; ranking uses a Match type that is Comparable.
+
+Article = Struct.new(:id, :title, :tags)
+
+class Match < {reader: [article, score, shared]}
+  include Comparable
+  # higher score first, then lower id
+  def <=>(a, b)
+    c = Match.get_score(b) <=> @score
+    c == 0 ? Article.get_id(@article) <=> Article.get_id(Match.get_article(b)) : c
+  end
+  def to_s(m) = format("#%d %-24s %.2f [%s]", Article.get_id(@article), Article.get_title(@article), @score, Array.join(Set.sort(@shared), ","))
+end
+
+def catalog
+  rows = Array[
+    [1, "Intro to Ruby", "ruby beginner programming"],
+    [2, "Ruby Performance", "ruby performance vm"],
+    [3, "Garbage Collectors", "vm gc memory performance"],
+    [4, "Writing a Parser", "parsing compilers programming"],
+    [5, "Type Inference 101", "types compilers inference"],
+    [6, "Gradual Typing in Ruby", "ruby types inference"],
+    [7, "Memory Profiling", "memory performance tools"],
+    [8, "Your First Program", "beginner programming"],
+    [9, "Static Analysis Tools", "tools types compilers"]
+  ]
+  Array.map(rows) { |id, title, tags| Article.new(id, title, Array.to_set(String.split(tags, " "))) }
+end
+
+def similarity(a, b)
+  ta = Article.get_tags(a)
+  tb = Article.get_tags(b)
+  inter = Set.size(Set.intersection(ta, tb))
+  inter == 0 ? 0.0 : inter / Integer.to_f(Set.size(Set.union(ta, tb)))
+end
+
+def recommend(articles, target, n)
+  matches = Array.filter_map(articles) do |a|
+    next nil if Article.get_id(a) == Article.get_id(target)
+    s = similarity(target, a)
+    s > 0 ? Match.new(a, s, Article.get_tags(target) & Article.get_tags(a)) : nil
+  end
+  Array.take(Array.sort(matches), n)
+end
+
+def by_interest(articles, interests, read)
+  pool = Array.reject(articles) { |a| Set.include?(read, Article.get_id(a)) }
+  scored = Array.map(pool) { |a| [a, Set.size(Article.get_tags(a) & interests)] }
+  best = Array.select(scored) { |a, n| n > 0 }
+  Array.map(Array.sort_by(best) { |a, n| [-n, Article.get_id(a)] }) { |a, n| a }
+end
+
+articles = catalog
+Array.each(Array[1, 5, 7]) do |id|
+  target = Array.find(articles) { |a| Article.get_id(a) == id }
+  puts("Because you read \"#{Article.get_title(target)}\":")
+  Array.each(recommend(articles, target, 3)) { |m| puts("  #{m}") }
+end
+
+all_tags = Array.reduce(articles, Set[]) { |acc, a| Set.merge(acc, Article.get_tags(a)) }
+puts("tags (#{Set.size(all_tags)}): #{Array.join(Set.sort(all_tags), " ")}")
+
+pair_counts = Hash.new(0)
+Array.each(articles) do |a|
+  Array.each(Array.combination(Set.sort(Article.get_tags(a)), 2)) { |x, y| pair_counts[[x, y]] += 1 }
+end
+common_pairs = Hash.sort_by(Hash.select(pair_counts) { |k, n| n > 1 }) { |k, n| k }
+puts("tags that go together:")
+Array.each(common_pairs) do |k, n|
+  x, y = k
+  puts("  #{x} + #{y}: #{n}")
+end
+
+tag_index = Hash[]
+Array.each(articles) do |a|
+  Set.each(Article.get_tags(a)) do |t|
+    tag_index[t] = Set[] unless Hash.key?(tag_index, t)
+    Set.add(tag_index[t], Article.get_id(a))
+  end
+end
+puts("articles with both 'types' and 'ruby': #{Array.join(Set.sort(tag_index["types"] & tag_index["ruby"]), ",")}")
+puts("'performance' but not 'ruby': #{Array.join(Set.sort(tag_index["performance"] - tag_index["ruby"]), ",")}")
+lonely = Array.sort(Hash.keys(Hash.select(tag_index) { |t, ids| Set.size(ids) == 1 }))
+puts("single-use tags: #{Array.join(lonely, " ")}")
+p(tag_index["haskell"])
+
+puts("For a reader of 2 and 6 interested in types, memory:")
+read = Set[2, 6]
+interests = Set["types", "memory"]
+Array.each(by_interest(articles, interests, read)) { |a| puts("  #{Article.get_id(a)} #{Article.get_title(a)}") }

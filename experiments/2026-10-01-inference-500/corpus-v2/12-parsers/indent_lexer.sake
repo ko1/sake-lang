@@ -1,0 +1,85 @@
+Tok = Struct.new(:kind, :text, :line)
+Outline = Struct.new(:header, :children)
+IndentError = Exception.new(:line)
+
+def lex(src)
+  tokens = Tok[]
+  levels = Integer[0]
+  Array.each_with_index(String.lines(src)) do |raw, i|
+    line = String.chomp(raw)
+    lineno = i + 1
+    next if String.strip(line) == "" || String.start_with?(String.lstrip(line), "#")
+    lead = String.size(line) - String.size(String.lstrip(line))
+    raise IndentError.new("tab in indentation", lineno) if String.include?(line[0...lead], "\t")
+    if lead > Array.last(levels)
+      Array.push(levels, lead)
+      Array.push(tokens, Tok.new(:indent, "", lineno))
+    else
+      while lead < Array.last(levels)
+        Array.pop(levels)
+        Array.push(tokens, Tok.new(:dedent, "", lineno))
+      end
+      raise IndentError.new("dedent to column #{lead} matches no outer level", lineno) if lead != Array.last(levels)
+    end
+    Array.push(tokens, Tok.new(:line, String.strip(line), lineno))
+  end
+  Integer.times(Array.size(levels) - 1) { Array.push(tokens, Tok.new(:dedent, "", 0)) }
+  tokens
+end
+
+def build(tokens)
+  root = Outline.new("<root>", Outline[])
+  stack = Array[root]
+  last = nil
+  Array.each(tokens) do |t|
+    case Tok.get_kind(t)
+    in :line
+      node = Outline.new(Tok.get_text(t), Outline[])
+      Array.push(Outline.get_children(Array.last(stack)), node)
+      last = node
+    in :indent
+      raise IndentError.new("unexpected indent", Tok.get_line(t)) if last == nil
+      Array.push(stack, last)
+      last = nil
+    in :dedent
+      Array.pop(stack)
+    end
+  end
+  root
+end
+
+def print_outline(node, depth)
+  Array.each(Outline.get_children(node)) do |child|
+    n = Array.size(Outline.get_children(child))
+    puts("#{"  " * depth}- #{Outline.get_header(child)}#{n > 0 ? " (#{n})" : ""}")
+    print_outline(child, depth + 1)
+  end
+end
+
+class Outline
+  def depth(node) = Array.empty?(@children) ? 0 : 1 + Array.max(Array.map(@children) { |k| depth(k) })
+end
+
+def sources
+  Array[
+    ["config", "server:\n  host: example.org\n  ports:\n    - 80\n    - 443\n  # comment\n\nclient:\n  retries: 3\n"],
+    ["code", "def main():\n    for x in xs:\n        if x:\n            print(x)\n    return 0\nmain()\n"],
+    ["bad dedent", "a:\n    b\n  c\n"],
+    ["tabs", "a:\n\tb\n"],
+    ["orphan", "  starts indented\nnext\n"]
+  ]
+end
+
+Array.each(sources) do |name, src|
+  puts("== #{name}")
+  begin
+    tokens = lex(src)
+    kinds = Array.map(tokens) { |t| Tok.get_kind(t) == :line ? "L#{Tok.get_line(t)}" : Symbol.to_s(Tok.get_kind(t)) }
+    puts("tokens: #{Array.join(kinds, " ")}")
+    root = build(tokens)
+    print_outline(root, 0)
+    puts("depth: #{Outline.depth(root)}")
+  rescue IndentError => e
+    puts("indent error on line #{IndentError.get_line(e)}: #{Exception.message(e)}")
+  end
+end

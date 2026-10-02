@@ -1,0 +1,116 @@
+# Answer time-window queries over a sorted event log with lower/upper bound
+# binary searches, and locate the rotation point of a ring buffer dump.
+
+Event = Struct.new(:ts, :level, :msg)
+
+def lower_bound(a, key)
+  lo = 0
+  hi = Array.size(a)
+  while lo < hi
+    mid = (lo + hi) / 2
+    if yield(a[mid]) < key
+      lo = mid + 1
+    else
+      hi = mid
+    end
+  end
+  lo
+end
+
+def upper_bound(a, key)
+  lo = 0
+  hi = Array.size(a)
+  while lo < hi
+    mid = (lo + hi) / 2
+    if yield(a[mid]) <= key
+      lo = mid + 1
+    else
+      hi = mid
+    end
+  end
+  lo
+end
+
+def window(log, from, to)
+  i = lower_bound(log, from) { |e| Event.get_ts(e) }
+  j = upper_bound(log, to) { |e| Event.get_ts(e) }
+  log[i...j]
+end
+
+def parse_ts(s)
+  m = String.match(s, /\A(\d\d):(\d\d):(\d\d)\z/)
+  raise ArgumentError, "bad time #{s}" unless m
+  String.to_i(m[1]) * 3600 + String.to_i(m[2]) * 60 + String.to_i(m[3])
+end
+
+def fmt_ts(t) = format("%02d:%02d:%02d", t / 3600, t / 60 % 60, t % 60)
+
+# Smallest index of a rotated ascending array (the oldest entry in a ring buffer).
+def rotation_point(a)
+  lo = 0
+  hi = Array.size(a) - 1
+  while lo < hi
+    mid = (lo + hi) / 2
+    if a[mid] > a[hi]
+      lo = mid + 1
+    else
+      hi = mid
+    end
+  end
+  lo
+end
+
+def search_rotated(a, x)
+  k = rotation_point(a)
+  n = Array.size(a)
+  lo = 0
+  hi = n - 1
+  while lo <= hi
+    mid = (lo + hi) / 2
+    real = (mid + k) % n
+    v = a[real]
+    return real if v == x
+    if v < x
+      lo = mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  nil
+end
+
+raw = Array[
+  ["08:59:58", :info, "boot"], ["09:00:00", :info, "listen"], ["09:00:00", :warn, "slow disk"],
+  ["09:00:07", :info, "req /"], ["09:01:13", :error, "db timeout"], ["09:01:13", :info, "retry"],
+  ["09:01:14", :info, "req /api"], ["09:05:00", :warn, "gc pause"], ["09:12:30", :info, "req /"],
+  ["09:12:30", :error, "500 /api"], ["09:30:00", :info, "cron"], ["10:00:00", :info, "shutdown"]
+]
+log = Array.map(raw) { |t, lvl, msg| Event.new(parse_ts(t), lvl, msg) }
+
+queries = Array[["09:00:00", "09:01:13"], ["09:01:15", "09:04:59"], ["09:12:30", "23:59:59"],
+                ["00:00:00", "08:59:58"], ["09:00:00", "09:00:00"]]
+Array.each(queries) do |from, to|
+  hits = window(log, parse_ts(from), parse_ts(to))
+  errors = Array.count(hits) { |e| Event.get_level(e) == :error }
+  msgs = Array.map(hits) { |e| Event.get_msg(e) }
+  puts("#{from}..#{to}: #{Array.size(hits)} events, #{errors} errors #{msgs}")
+end
+
+first_error = Array.find(log) { |e| Event.get_level(e) == :error }
+puts("first error at #{fmt_ts(Event.get_ts(first_error))}") if first_error
+same_second = upper_bound(log, 32473) { |e| Event.get_ts(e) } - lower_bound(log, 32473) { |e| Event.get_ts(e) }
+puts("events at #{fmt_ts(32473)}: #{same_second}")
+
+begin
+  parse_ts("9:5")
+rescue ArgumentError => e
+  puts("rejected: #{Exception.message(e)}")
+end
+
+ring = Array[512, 530, 611, 700, 702, 15, 40, 88, 130, 245, 301]
+k = rotation_point(ring)
+puts("ring oldest at #{k}: #{ring[k]}, newest #{ring[(k - 1) % Array.size(ring)]}")
+Array.each(Array[88, 700, 512, 301, 5, 999]) do |x|
+  idx = search_rotated(ring, x)
+  puts(idx ? "#{x} found at #{idx}" : "#{x} missing")
+end

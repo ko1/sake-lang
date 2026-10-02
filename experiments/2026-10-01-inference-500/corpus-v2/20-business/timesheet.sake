@@ -1,0 +1,86 @@
+Shift = Struct.new(:day, :start, :finish)
+EntryError = Exception.new(:employee, :day)
+
+def rates = Hash["Aiko" => 24.0, "Ben" => 19.5, "Cleo" => 31.0]
+
+# clock times are rounded to the nearest quarter hour
+def round_quarter(min) = (min + 7) / 15 * 15
+
+def parse_clock(s)
+  m = String.match(String.strip(s), /\A(\d{1,2}):(\d\d)\z/)
+  raise ArgumentError, "unreadable time '#{String.strip(s)}'" unless m
+  String.to_i(m[1]) * 60 + String.to_i(m[2])
+end
+
+def fmt_hours(min) = format("%d:%02d", min / 60, min % 60)
+
+def parse_day(employee, line)
+  day, _sep, rest = String.partition(line, " ")
+  shifts = Array.map(String.split(rest, ",")) do |part|
+    a, b = String.split(part, "-")
+    start = round_quarter(parse_clock(a))
+    finish = round_quarter(parse_clock(b))
+    raise EntryError.new("#{String.strip(part)} ends before it starts", employee, day) if finish <= start
+    Shift.new(day, start, finish)
+  end
+  sorted = Array.sort_by(shifts) { |s| Shift.get_start(s) }
+  Array.each_cons(sorted, 2) do |a, b|
+    raise EntryError.new("overlapping shifts", employee, day) if Shift.get_start(b) < Shift.get_finish(a)
+  end
+  sorted
+end
+
+# a day over 6 hours needs a 30-minute break; if none was taken, 30 minutes are deducted
+def paid_minutes(shifts)
+  worked = Array.sum(shifts) { |s| Shift.get_finish(s) - Shift.get_start(s) }
+  longest_gap = 0
+  Array.each_cons(shifts, 2) do |a, b|
+    gap = Shift.get_start(b) - Shift.get_finish(a)
+    longest_gap = gap if gap > longest_gap
+  end
+  worked > 360 && longest_gap < 30 ? worked - 30 : worked
+end
+
+timesheets = Hash[
+  "Aiko" => "Mon 08:55-12:31, 13:02-17:40\nTue 09:00-17:10\nWed 08:50-12:00\nThu 09:05-13:00, 13:30-19:20\nFri 09:00-15:00",
+  "Ben" => "Mon 10:00-18:00\nTue 10:00-14:00, 13:30-18:00\nWed 10:00-18:30\nThu 18:00-10:00\nFri 10:00-1x:00",
+  "Cleo" => "Mon 07:00-11:00\nWed 07:00-11:00, 11:30-15:45\nSat 08:00-12:07"
+]
+
+payroll = Array[]
+Hash.each(timesheets) do |employee, text|
+  puts("#{employee}:")
+  week = 0
+  daily_overtime = 0
+  Array.each(String.lines(text)) do |line|
+    begin
+      shifts = parse_day(employee, String.chomp(line))
+    rescue EntryError => e
+      puts("  #{EntryError.get_day(e)}: REJECTED #{Exception.message(e)}")
+      next
+    rescue ArgumentError => e
+      puts("  #{String.chomp(line)}: REJECTED #{Exception.message(e)}")
+      next
+    end
+    paid = paid_minutes(shifts)
+    over = Array.max(Array[paid - 480, 0])
+    week += paid
+    daily_overtime += over
+    spans = Array.map(shifts) { |s| "#{fmt_hours(Shift.get_start(s))}-#{fmt_hours(Shift.get_finish(s))}" }
+    note = over > 0 ? "  (+#{fmt_hours(over)} OT)" : ""
+    puts(format("  %s %-24s %6s%s", Shift.get_day(Array.first(shifts)), Array.join(spans, " "), fmt_hours(paid), note))
+  end
+  weekly_overtime = Array.max(Array[week - 2400, 0])
+  overtime = Array.max(Array[daily_overtime, weekly_overtime])
+  rate = Hash.fetch(rates, employee)
+  pay = (week - overtime) / 60.0 * rate + overtime / 60.0 * rate * 1.5
+  puts("  total #{fmt_hours(week)}, overtime #{fmt_hours(overtime)}, pay #{format("%.2f", pay)}")
+  Array.push(payroll, [employee, week, pay])
+end
+
+puts
+total_pay = Array.sum(payroll) { |e, w, p| p }
+Array.each(payroll) do |e, w, p|
+  puts(format("%-5s %6s %8.2f %5.1f%%", e, fmt_hours(w), p, p * 100 / total_pay))
+end
+puts(format("%-5s %6s %8.2f", "all", fmt_hours(Array.sum(payroll) { |e, w, p| w }), total_pay))

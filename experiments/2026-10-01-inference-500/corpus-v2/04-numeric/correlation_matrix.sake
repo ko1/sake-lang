@@ -1,0 +1,114 @@
+def dataset
+  Hash[
+    "hours" => Array[2.0, 4.5, 3.0, 6.0, 1.0, 5.5, 7.0, 3.5, 4.0, nil, 8.0, 2.5],
+    "sleep" => Array[8.0, 7.0, 7.5, 6.0, 9.0, 6.5, 5.5, 7.0, nil, 8.5, 5.0, 8.0],
+    "score" => Array[55.0, 71.0, 62.0, 85.0, 48.0, 80.0, 88.0, 66.0, 70.0, 52.0, 91.0, 58.0],
+    "coffee" => Array[1.0, 2.0, 1.0, 3.0, 0.0, 3.0, 4.0, 2.0, 2.0, 0.0, 5.0, 1.0],
+    "commute" => Array[30.0, 25.0, 40.0, 35.0, 20.0, 45.0, 30.0, 25.0, 50.0, 35.0, 40.0, 30.0]
+  ]
+end
+
+def pairwise(xs, ys)
+  pairs = Array.select(Array.zip(xs, ys)) { |x, y| x != nil && y != nil }
+  [Array.map(pairs) { |x, y| x }, Array.map(pairs) { |x, y| y }]
+end
+
+def pearson(xs, ys)
+  n = Array.size(xs)
+  return nil if n < 3
+  mx = Array.sum(xs) / n
+  my = Array.sum(ys) / n
+  sxy = 0.0
+  sxx = 0.0
+  syy = 0.0
+  Array.each_with_index(xs) do |x, i|
+    dx = x - mx
+    dy = ys[i] - my
+    sxy += dx * dy
+    sxx += dx * dx
+    syy += dy * dy
+  end
+  return nil if sxx == 0.0 || syy == 0.0
+  sxy / Math.sqrt(sxx * syy)
+end
+
+# average ranks, ties share the mean rank
+def ranks(xs)
+  order = Array.sort_by(Range.to_a(0...Array.size(xs))) { |i| xs[i] }
+  result = Array.map(xs) { 0.0 }
+  i = 0
+  while i < Array.size(order)
+    j = i
+    j += 1 while j + 1 < Array.size(order) && xs[order[j + 1]] == xs[order[i]]
+    avg = (i + j) / 2.0 + 1.0
+    Range.each(i..j) { |k| result[order[k]] = avg }
+    i = j + 1
+  end
+  result
+end
+
+def spearman(xs, ys) = pearson(ranks(xs), ranks(ys))
+
+def fmt_r(r) = r == nil ? "     n/a" : format("%8.3f", r)
+
+data = dataset
+names = Hash.keys(data)
+puts("missing values: " + Array.join(Array.map(names) { |n| "#{n}=#{Array.count(data[n]) { |v| v == nil }}" }, " "))
+
+pearson_m = Hash[]
+spearman_m = Hash[]
+Array.each(names) do |a|
+  Array.each(names) do |b|
+    xs, ys = pairwise(data[a], data[b])
+    pearson_m[[a, b]] = pearson(xs, ys)
+    spearman_m[[a, b]] = spearman(xs, ys)
+  end
+end
+
+Array.each(Array[["Pearson", pearson_m], ["Spearman", spearman_m]]) do |title, m|
+  puts("#{title}:")
+  puts(format("%-8s", "") + Array.join(Array.map(names) { |n| format("%8s", n) }, ""))
+  Array.each(names) do |a|
+    puts(format("%-8s", a) + Array.join(Array.map(names) { |b| fmt_r(m[[a, b]]) }, ""))
+  end
+end
+
+strongest = nil
+Array.each_with_index(names) do |a, i|
+  Array.each_with_index(names) do |b, j|
+    next unless i < j
+    r = pearson_m[[a, b]]
+    next if r == nil
+    strongest = [a, b, r] if strongest == nil || Float.abs(r) > Float.abs(strongest[2])
+  end
+end
+if strongest
+  a, b, r = strongest
+  puts(format("strongest pair: %s ~ %s (r=%.3f)", a, b, r))
+end
+
+# partial correlation of hours and score controlling for coffee
+r_hs = pearson_m[["hours", "score"]]
+r_hc = pearson_m[["hours", "coffee"]]
+r_sc = pearson_m[["score", "coffee"]]
+if r_hs && r_hc && r_sc
+  partial = (r_hs - r_hc * r_sc) / Math.sqrt((1.0 - r_hc ** 2) * (1.0 - r_sc ** 2))
+  puts(format("partial r(hours, score | coffee) = %.3f", partial))
+end
+
+# Fisher z confidence interval for hours ~ score
+hx, sy = pairwise(data["hours"], data["score"])
+n = Array.size(hx)
+z = 0.5 * Math.log((1.0 + r_hs) / (1.0 - r_hs))
+se = 1.0 / Math.sqrt(n - 3)
+lo = z - 1.96 * se
+hi = z + 1.96 * se
+back_lo = (Math.exp(2.0 * lo) - 1.0) / (Math.exp(2.0 * lo) + 1.0)
+back_hi = (Math.exp(2.0 * hi) - 1.0) / (Math.exp(2.0 * hi) + 1.0)
+puts(format("hours~score n=%d r=%.3f 95%% CI [%.3f, %.3f]", n, r_hs, back_lo, back_hi))
+
+const = Array[3.0, 3.0, 3.0, 3.0]
+p(pearson(const, Array[1.0, 2.0, 3.0, 4.0]))
+puts("ranks with ties: #{ranks(Array[10.0, 20.0, 10.0, 30.0, 20.0, 10.0])}")
+weak = Array.select(Hash.to_a(pearson_m)) { |key, r| r != nil && Float.abs(r) < 0.2 }
+puts("weak pairs: #{Array.size(weak)}")

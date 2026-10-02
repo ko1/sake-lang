@@ -1,0 +1,141 @@
+RLeaf = Struct.new(:text)
+RNode = Struct.new(:left, :right, :weight, :length)
+
+def chunk = 8
+
+def len(r)
+  case r
+  in RLeaf then String.size(RLeaf.get_text(r))
+  in RNode then RNode.get_length(r)
+  in nil then 0
+  end
+end
+
+def concat(a, b)
+  return b if a == nil || len(a) == 0
+  return a if b == nil || len(b) == 0
+  RNode.new(a, b, len(a), len(a) + len(b))
+end
+
+def from_string(s)
+  return RLeaf.new(s) if String.size(s) <= chunk
+  mid = String.size(s) / 2
+  concat(from_string(s[0...mid]), from_string(s[mid..]))
+end
+
+def char_at(r, i)
+  raise IndexError, "index #{i} outside rope of length #{len(r)}" if i < 0 || i >= len(r)
+  while r in RNode
+    w = RNode.get_weight(r)
+    if i < w
+      r = RNode.get_left(r)
+    else
+      i -= w
+      r = RNode.get_right(r)
+    end
+  end
+  RLeaf.get_text(r)[i]
+end
+
+# returns [first i characters, the rest]
+def split(r, i)
+  case r
+  in nil then [nil, nil]
+  in RLeaf
+    t = RLeaf.get_text(r)
+    return [r, nil] if i >= String.size(t)
+    return [nil, r] if i <= 0
+    [RLeaf.new(t[0...i]), RLeaf.new(t[i..])]
+  in RNode
+    w = RNode.get_weight(r)
+    if i < w
+      a, b = split(RNode.get_left(r), i)
+      [a, concat(b, RNode.get_right(r))]
+    else
+      a, b = split(RNode.get_right(r), i - w)
+      [concat(RNode.get_left(r), a), b]
+    end
+  end
+end
+
+def insert(r, i, s)
+  a, b = split(r, i)
+  concat(concat(a, from_string(s)), b)
+end
+
+def delete(r, from, count)
+  a, rest = split(r, from)
+  _gone, b = split(rest, count)
+  concat(a, b)
+end
+
+def each_leaf(r)
+  case r
+  in nil then nil
+  in RLeaf then yield(RLeaf.get_text(r))
+  in RNode
+    each_leaf(RNode.get_left(r)) { |t| yield(t) }
+    each_leaf(RNode.get_right(r)) { |t| yield(t) }
+  end
+end
+
+def to_text(r)
+  parts = Array[]
+  each_leaf(r) { |t| Array.push(parts, t) }
+  Array.join(parts)
+end
+
+def depth(r) = (r in RNode) ? 1 + Array.max(Array[depth(RNode.get_left(r)), depth(RNode.get_right(r))]) : 0
+
+def leaf_count(r)
+  n = 0
+  each_leaf(r) { |_t| n += 1 }
+  n
+end
+
+def rebalance(r) = from_string(to_text(r))
+
+def index_of(r, needle)
+  text = to_text(r)
+  String.index(text, needle)
+end
+
+doc = from_string("The quick brown fox jumps over the lazy dog.")
+puts("start: #{Kernel.inspect(to_text(doc))} len #{len(doc)} depth #{depth(doc)} leaves #{leaf_count(doc)}")
+
+edits = Array[
+  [:insert, 10, "and very red "], [:delete, 4, 6], [:insert, 0, ">> "], [:replace, "lazy", "sleepy"],
+  [:insert, 999, "!"], [:delete, 3, 1000], [:replace, "cat", "tiger"]
+]
+Array.each(edits) do |kind, a, b|
+  begin
+    case kind
+    in :insert
+      raise IndexError, "insert position #{a} beyond end #{len(doc)}" if a > len(doc)
+      doc = insert(doc, a, b)
+    in :delete
+      doc = delete(doc, a, b)
+    else
+      at = index_of(doc, a)
+      raise IndexError, "#{Kernel.inspect(a)} not found" if at == nil
+      doc = insert(delete(doc, at, String.size(a)), at, b)
+    end
+    puts("#{Symbol.to_s(kind)} #{Kernel.inspect(a)} #{Kernel.inspect(b)}: #{Kernel.inspect(to_text(doc))} (depth #{depth(doc)})")
+  rescue IndexError => e
+    puts("#{Symbol.to_s(kind)} failed: #{Exception.message(e)}")
+  end
+end
+
+doc = from_string(">> The very red fox jumps over the sleepy dog.")
+Integer.times(6) { |i| doc = insert(doc, len(doc) - 1, " #{i}") }
+puts("after appends: depth #{depth(doc)}, leaves #{leaf_count(doc)}, len #{len(doc)}")
+doc = rebalance(doc)
+puts("rebalanced:    depth #{depth(doc)}, leaves #{leaf_count(doc)}, len #{len(doc)}")
+puts("text: #{to_text(doc)}")
+picks = Array.map(Array[0, 3, 7, len(doc) - 1]) { |i| "#{i}=#{char_at(doc, i)}" }
+puts("chars: #{Array.join(picks, " ")}")
+begin
+  char_at(doc, len(doc))
+rescue IndexError => e
+  puts("error: #{Exception.message(e)}")
+end

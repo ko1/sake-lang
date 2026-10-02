@@ -1,0 +1,104 @@
+# Parse an INI-like config, type-check each setting against a schema, and report all problems.
+ParseError = Exception.new(:line)
+SchemaError = Exception.new(:key)
+
+def config_text
+  "# server settings
+[server]
+host = example.org
+port = 80800
+workers = 4
+debug = maybe
+
+[database]
+url = postgres://db/main
+pool = 10
+timeout = 2.5s
+retries 3
+
+[cache]
+ttl = 300
+[broken
+enabled = yes
+"
+end
+
+# kind, min, max
+def schema
+  Hash[
+    "server.host" => [:string, 0, 0],
+    "server.port" => [:int, 1, 65535],
+    "server.workers" => [:int, 1, 64],
+    "server.debug" => [:bool, 0, 0],
+    "database.url" => [:string, 0, 0],
+    "database.pool" => [:int, 1, 100],
+    "database.timeout" => [:float, 0, 60],
+    "cache.ttl" => [:int, 0, 86400],
+    "cache.enabled" => [:bool, 0, 0]
+  ]
+end
+
+def parse_line(line, lineno, section)
+  stripped = String.strip(line)
+  return [:blank, section, "", ""] if String.empty?(stripped) || String.start_with?(stripped, "#")
+  if String.start_with?(stripped, "[")
+    m = String.match(stripped, /\A\[([a-z_]+)\]\z/)
+    raise ParseError.new("bad section header #{stripped}", lineno) if m == nil
+    return [:section, m[1], "", ""]
+  end
+  key, eq, value = String.partition(stripped, "=")
+  raise ParseError.new("expected key = value", lineno) if String.empty?(eq)
+  [:pair, section, String.strip(key), String.strip(value)]
+end
+
+def convert(raw, rule, key)
+  kind, lo, hi = rule
+  case kind
+  in :string
+    raise SchemaError.new("must not be empty", key) if String.empty?(raw)
+    raw
+  in :bool
+    return true if Array.include?(Array["true", "yes", "on"], raw)
+    return false if Array.include?(Array["false", "no", "off"], raw)
+    raise SchemaError.new("not a boolean: #{raw}", key)
+  in :int
+    n = Integer(raw) rescue raise(SchemaError.new("not an integer: #{raw}", key))
+    raise SchemaError.new("#{n} outside #{lo}..#{hi}", key) unless n >= lo && n <= hi
+    n
+  in :float
+    f = Float(raw) rescue raise(SchemaError.new("not a number: #{raw}", key))
+    raise SchemaError.new("#{f} outside #{lo}..#{hi}", key) unless f >= lo && f <= hi
+    f
+  end
+end
+
+def load(text)
+  settings = Hash[]
+  problems = Array[]
+  section = "global"
+  Array.each_with_index(String.lines(text)) do |line, i|
+    begin
+      kind, sec, key, value = parse_line(line, i + 1, section)
+      section = sec
+      next unless kind == :pair
+      full = "#{section}.#{key}"
+      rule = schema[full]
+      raise SchemaError.new("unknown setting", full) if rule == nil
+      settings[full] = convert(value, rule, full)
+    rescue ParseError => e
+      Array.push(problems, "line #{ParseError.get_line(e)}: #{Exception.message(e)}")
+    rescue SchemaError => e
+      Array.push(problems, "line #{i + 1}: #{SchemaError.get_key(e)}: #{Exception.message(e)}")
+    end
+  end
+  Hash.each(schema) do |k, rule|
+    Array.push(problems, "missing: #{k}") unless Hash.key?(settings, k)
+  end
+  [settings, problems]
+end
+
+settings, problems = load(config_text)
+puts("loaded #{Hash.size(settings)} of #{Hash.size(schema)} settings")
+Hash.each(settings) { |k, v| puts("  #{k} = #{Kernel.inspect(v)}") }
+puts("#{Array.size(problems)} problem(s):")
+Array.each(problems) { |msg| puts("  #{msg}") }

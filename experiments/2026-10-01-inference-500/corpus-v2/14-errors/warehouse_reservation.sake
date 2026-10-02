@@ -1,0 +1,94 @@
+# Reserve stock for orders across warehouses; all-or-nothing per order, with locks released in ensure.
+OutOfStock = Exception.new(:sku, :requested, :available)
+UnknownItem = Exception.new(:sku)
+LockBusy = Exception.new(:warehouse)
+
+class Warehouse < {reader: [code, stock], accessor: [locked, lock_count]}
+  def lock(w)
+    raise LockBusy.new("#{@code} is locked", @code) if @locked
+    @locked = true
+    @lock_count += 1
+  end
+  def unlock(w) = @locked = false
+  def available(w, sku) = Hash.fetch(@stock, sku, 0)
+end
+
+def total_available(warehouses, sku)
+  Array.sum(Array.map(warehouses) { Warehouse.available(it, sku) })
+end
+
+# Take from the warehouse with most stock first; returns [[code, qty], ...]
+def plan(warehouses, sku, qty, known)
+  raise UnknownItem.new("no such item #{sku}", sku) unless Set.include?(known, sku)
+  have = total_available(warehouses, sku)
+  raise OutOfStock.new("not enough #{sku}", sku, qty, have) if have < qty
+  remaining = qty
+  picks = Array[]
+  Array.each(Array.sort_by(warehouses) { -Warehouse.available(it, sku) }) do |w|
+    next if remaining == 0
+    take = Integer.clamp(Warehouse.available(w, sku), 0, remaining)
+    next if take == 0
+    Array.push(picks, [w, take])
+    remaining -= take
+  end
+  picks
+end
+
+def reserve(warehouses, order, known)
+  locked = Array[]
+  begin
+    Array.each(warehouses) do |w|
+      Warehouse.lock(w)
+      Array.push(locked, w)
+    end
+    all_picks = Array.flat_map(order) { |sku, qty| Array.map(plan(warehouses, sku, qty, known)) { |w, n| [sku, w, n] } }
+    Array.each(all_picks) do |sku, w, n|
+      Warehouse.get_stock(w)[sku] = Warehouse.available(w, sku) - n
+    end
+    Array.map(all_picks) { |sku, w, n| "#{sku}:#{Warehouse.get_code(w)}x#{n}" }
+  ensure
+    Array.each(locked) { Warehouse.unlock(it) }
+  end
+end
+
+warehouses = Warehouse[
+  Warehouse.new("OSA", Hash["bolt" => 40, "nut" => 100, "gear" => 3], false, 0),
+  Warehouse.new("TYO", Hash["bolt" => 15, "gear" => 8, "belt" => 2], false, 0),
+  Warehouse.new("FUK", Hash["nut" => 20, "belt" => 1], false, 0)
+]
+known = Set["bolt", "nut", "gear", "belt", "chain"]
+
+orders = Array[
+  ["o1", Array[["bolt", 45], ["nut", 10]]],
+  ["o2", Array[["gear", 5], ["belt", 4]]],
+  ["o3", Array[["gear", 11], ["chain", 1]]],
+  ["o4", Array[["nut", 110], ["spring", 2]]],
+  ["o5", Array[["belt", 3], ["gear", 6]]],
+  ["o6", Array[["bolt", 10]]]
+]
+
+backorders = Array[]
+Array.each(orders) do |id, lines|
+  Warehouse.set_locked(warehouses[2], true) if id == "o6"
+  begin
+    picks = reserve(warehouses, lines, known)
+    puts("#{id}: reserved #{Array.join(picks, ", ")}")
+  rescue OutOfStock => e
+    short = OutOfStock.get_requested(e) - OutOfStock.get_available(e)
+    Array.push(backorders, [id, OutOfStock.get_sku(e), short])
+    puts("#{id}: #{Exception.message(e)} (want #{OutOfStock.get_requested(e)}, have #{OutOfStock.get_available(e)})")
+  rescue UnknownItem => e
+    puts("#{id}: rejected, #{Exception.message(e)}")
+  rescue LockBusy => e
+    puts("#{id}: retry later, #{Exception.message(e)}")
+  end
+end
+Warehouse.set_locked(warehouses[2], false)
+
+puts("stock:")
+Array.each(warehouses) do |w|
+  items = Array.map(Array.sort(Hash.keys(Warehouse.get_stock(w)))) { |k| "#{k}=#{Warehouse.get_stock(w)[k]}" }
+  puts("  #{Warehouse.get_code(w)} #{Array.join(items, " ")} (locked #{Warehouse.get_lock_count(w)} times)")
+end
+puts("backorders: #{Array.join(Array.map(backorders) { |id, sku, n| "#{id}/#{sku}/#{n}" }, " ")}")
+puts("any lock left: #{Array.any?(warehouses) { Warehouse.get_locked(it) }}")

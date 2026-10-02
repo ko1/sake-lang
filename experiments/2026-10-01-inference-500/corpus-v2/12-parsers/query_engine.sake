@@ -1,0 +1,210 @@
+QueryError = Exception.new
+Query = Struct.new(:columns, :table, :where, :group_by, :order_by, :desc, :limit)
+Cmp = Struct.new(:column, :op, :value)
+Logic = Struct.new(:op, :left, :right)
+Agg = Struct.new(:fn, :column)
+Cursor = Struct.new(:tokens, :pos)
+
+class Cursor
+  def peek(c) = @tokens[@pos]
+
+  def next!(c)
+    t = @tokens[@pos]
+    raise QueryError.new("unexpected end of query") if t == nil
+    @pos += 1
+    t
+  end
+
+  def keyword?(c, kw)
+    t = peek(c)
+    t != nil && String.upcase(t) == kw
+  end
+
+  def accept(c, kw)
+    return false unless keyword?(c, kw)
+    @pos += 1
+    true
+  end
+
+  def expect(c, kw)
+    raise QueryError.new("expected #{kw} but got #{peek(c) || "end"}") unless accept(c, kw)
+  end
+end
+
+def tokenize(sql) = String.scan(sql, /'[^']*'|\d+|\w+|<=|>=|!=|[=<>,*()]/)
+
+def literal(tok)
+  return String.to_i(tok) if String.match?(tok, /\A\d+\z/)
+  return tok[1...-1] if String.start_with?(tok, "'")
+  raise QueryError.new("expected a literal, got #{tok}")
+end
+
+def parse_column(c)
+  name = Cursor.next!(c)
+  up = String.upcase(name)
+  if (up == "COUNT" || up == "SUM" || up == "AVG" || up == "MAX") && Cursor.accept(c, "(")
+    arg = Cursor.next!(c)
+    Cursor.expect(c, ")")
+    return Agg.new(String.downcase(up), arg)
+  end
+  name
+end
+
+def parse_condition(c)
+  left = parse_comparison(c)
+  while Cursor.keyword?(c, "AND") || Cursor.keyword?(c, "OR")
+    op = String.upcase(Cursor.next!(c))
+    right = parse_comparison(c)
+    left = Logic.new(op, left, right)
+  end
+  left
+end
+
+def parse_comparison(c)
+  col = Cursor.next!(c)
+  op = Cursor.next!(c)
+  raise QueryError.new("bad operator #{op}") unless Array.include?(Array["=", "!=", "<", ">", "<=", ">="], op)
+  Cmp.new(col, op, literal(Cursor.next!(c)))
+end
+
+def parse_query(sql)
+  c = Cursor.new(tokenize(sql), 0)
+  Cursor.expect(c, "SELECT")
+  columns = Array[parse_column(c)]
+  Array.push(columns, parse_column(c)) while Cursor.accept(c, ",")
+  Cursor.expect(c, "FROM")
+  q = Query.new(columns, Cursor.next!(c), nil, nil, nil, false, nil)
+  Query.set_where(q, parse_condition(c)) if Cursor.accept(c, "WHERE")
+  if Cursor.accept(c, "GROUP")
+    Cursor.expect(c, "BY")
+    Query.set_group_by(q, Cursor.next!(c))
+  end
+  if Cursor.accept(c, "ORDER")
+    Cursor.expect(c, "BY")
+    Query.set_order_by(q, Cursor.next!(c))
+    Query.set_desc(q, true) if Cursor.accept(c, "DESC")
+    Cursor.accept(c, "ASC")
+  end
+  Query.set_limit(q, literal(Cursor.next!(c))) if Cursor.accept(c, "LIMIT")
+  raise QueryError.new("unexpected #{Cursor.peek(c)}") if Cursor.peek(c) != nil
+  q
+end
+
+def field(row, col)
+  raise QueryError.new("no such column: #{col}") unless Hash.key?(row, col)
+  row[col]
+end
+
+def matches?(cond, row)
+  case cond
+  in nil then true
+  in Logic
+    l = matches?(Logic.get_left(cond), row)
+    Logic.get_op(cond) == "AND" ? l && matches?(Logic.get_right(cond), row) : l || matches?(Logic.get_right(cond), row)
+  in Cmp
+    a = field(row, Cmp.get_column(cond))
+    b = Cmp.get_value(cond)
+    raise QueryError.new("type mismatch on #{Cmp.get_column(cond)}") unless (a in Integer) == (b in Integer)
+    case Cmp.get_op(cond)
+    in "=" then a == b
+    in "!=" then a != b
+    in "<" then a < b
+    in ">" then a > b
+    in "<=" then a <= b
+    in ">=" then a >= b
+    end
+  end
+end
+
+def label(col)
+  case col
+  in Agg then "#{Agg.get_fn(col)}(#{Agg.get_column(col)})"
+  in String then col
+  end
+end
+
+def aggregate(agg, rows)
+  fn = Agg.get_fn(agg)
+  return Array.size(rows) if fn == "count"
+  values = Array.map(rows) { |r| field(r, Agg.get_column(agg)) }
+  raise QueryError.new("#{fn} needs numbers") unless Array.all?(values) { |v| v in Integer }
+  case fn
+  in "sum" then Array.sum(values)
+  in "max" then Array.max(values)
+  in "avg" then Array.empty?(values) ? 0 : Float.round(Array.sum(values) / Integer.to_f(Array.size(values)), 2)
+  end
+end
+
+def execute(q, tables)
+  rows = tables[Query.get_table(q)]
+  raise QueryError.new("no such table: #{Query.get_table(q)}") if rows == nil
+  rows = Array.select(rows) { |r| matches?(Query.get_where(q), r) }
+  columns = Query.get_columns(q)
+  group = Query.get_group_by(q)
+  order = Query.get_order_by(q)
+  if group != nil || Array.any?(columns) { |col| col in Agg }
+    groups = group == nil ? Hash["all" => rows] : Array.group_by(rows) { |r| field(r, group) }
+    result = Hash.map(groups) do |key, members|
+      out = Hash[]
+      Array.each(columns) { |col| out[label(col)] = (col in Agg) ? aggregate(col, members) : field(Array.first(members), col) }
+      out
+    end
+    if order != nil
+      raise QueryError.new("cannot order by #{order}") unless Array.all?(result) { |r| Hash.key?(r, order) }
+      result = Array.sort_by(result) { |r| r[order] }
+    end
+  else
+    rows = Array.sort_by(rows) { |r| field(r, order) } if order != nil
+    result = Array.map(rows) do |r|
+      out = Hash[]
+      Array.each(columns) { |col| out[label(col)] = col == "*" ? r : field(r, col) }
+      out
+    end
+  end
+  result = Array.reverse(result) if Query.get_desc(q)
+  limit = Query.get_limit(q)
+  limit == nil ? result : Array.take(result, limit)
+end
+
+def format_row(r)
+  Array.join(Hash.map(r) { |k, v| (v in Hash) ? Array.join(Hash.map(v) { |k2, v2| "#{k2}=#{v2}" }, " ") : "#{k}=#{v}" }, ", ")
+end
+
+def tables
+  people = Array[
+    Hash["name" => "ann", "age" => 34, "city" => "Tokyo", "salary" => 610],
+    Hash["name" => "bob", "age" => 27, "city" => "Osaka", "salary" => 480],
+    Hash["name" => "cy", "age" => 45, "city" => "Tokyo", "salary" => 720],
+    Hash["name" => "dee", "age" => 31, "city" => "Kyoto", "salary" => 530],
+    Hash["name" => "eve", "age" => 22, "city" => "Osaka", "salary" => 350],
+    Hash["name" => "fay", "age" => 39, "city" => "Tokyo", "salary" => 655]
+  ]
+  Hash["people" => people]
+end
+
+queries = Array[
+  "SELECT name, age FROM people WHERE age > 30 ORDER BY age DESC",
+  "select name from people where city = 'Tokyo' and salary >= 650 or name = 'eve'",
+  "SELECT city, COUNT(*), AVG(salary), MAX(age) FROM people GROUP BY city ORDER BY city",
+  "SELECT SUM(salary) FROM people WHERE city != 'Osaka'",
+  "SELECT * FROM people WHERE age < 30 ORDER BY name LIMIT 1",
+  "SELECT city, COUNT(*) FROM people GROUP BY city ORDER BY age",
+  "SELECT name FROM people ORDER BY salary LIMIT 3",
+  "SELECT name FROM people WHERE age > 'old'",
+  "SELECT name FROM pets",
+  "SELECT height FROM people",
+  "SELECT name people",
+  "SELECT name FROM people WHERE age ~ 3",
+  "SELECT AVG(city) FROM people"
+]
+t = tables
+Array.each(queries) do |sql|
+  puts("sql> #{sql}")
+  begin
+    rows = execute(parse_query(sql), t)
+    Array.each(rows) { |r| puts("  #{format_row(r)}") }
+    puts("  (#{Array.size(rows)} rows)")
+  rescue QueryError => e
+    puts("  error: #{Exception.message(e)}")
+  end
+end

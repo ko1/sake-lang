@@ -1,0 +1,132 @@
+Patient = Struct.new(:name, :severity, :arrival, :complaint)
+Slot = Struct.new(:patient, :next)
+UnknownPatient = Exception.new(:name)
+
+class Patient
+  include Comparable
+  def <=>(a, b)
+    by_sev = Patient.get_severity(b) <=> @severity
+    by_sev == 0 ? @arrival <=> Patient.get_arrival(b) : by_sev
+  end
+  def to_s(pt) = "#{@name}(sev #{@severity}, t#{@arrival})"
+end
+
+class WaitList < {reader: [first, count]}
+  def create = WaitList.new(nil, 0)
+
+  def add(w, patient)
+    slot = Slot.new(patient, nil)
+    head = @first
+    if head == nil || patient < Slot.get_patient(head)
+      Slot.set_next(slot, head)
+      @first = slot
+    else
+      cur = head
+      while (nxt = Slot.get_next(cur)) && Slot.get_patient(nxt) <= patient
+        cur = nxt
+      end
+      Slot.set_next(slot, Slot.get_next(cur))
+      Slot.set_next(cur, slot)
+    end
+    @count += 1
+    w
+  end
+
+  def take(w)
+    head = @first
+    return nil unless head
+    @first = Slot.get_next(head)
+    @count -= 1
+    Slot.get_patient(head)
+  end
+
+  def remove_named(w, name)
+    prev = nil
+    cur = @first
+    while cur
+      pt = Slot.get_patient(cur)
+      if Patient.get_name(pt) == name
+        nxt = Slot.get_next(cur)
+        prev ? Slot.set_next(prev, nxt) : @first = nxt
+        @count -= 1
+        return pt
+      end
+      prev = cur
+      cur = Slot.get_next(cur)
+    end
+    raise UnknownPatient.new("no patient named #{name}", name)
+  end
+
+  def escalate(w, name, severity)
+    pt = remove_named(w, name)
+    Patient.set_severity(pt, severity)
+    add(w, pt)
+    pt
+  end
+
+  def names(w)
+    out = Array[]
+    cur = @first
+    while cur
+      Array.push(out, Patient.get_name(Slot.get_patient(cur)))
+      cur = Slot.get_next(cur)
+    end
+    out
+  end
+end
+
+events = Array[
+  "0 arrive Ann 2 sprained ankle",
+  "1 arrive Ben 4 chest pain",
+  "2 arrive Cat 2 fever",
+  "3 arrive Dov 5 not breathing",
+  "4 treat",
+  "5 arrive Eli 3 deep cut",
+  "6 escalate Cat 4",
+  "7 treat",
+  "8 arrive Fay 1 cough",
+  "9 leave Ann",
+  "10 leave Zed",
+  "11 treat",
+  "12 treat",
+  "13 arrive Gus 3 burn",
+  "14 treat",
+  "15 treat",
+  "16 treat"
+]
+
+wl = WaitList.create
+waits = Array[]
+arrived_at = Hash[]
+Array.each(events) do |line|
+  words = String.split(line, " ")
+  t = String.to_i(words[0])
+  begin
+    case words[1]
+    in "arrive"
+      pt = Patient.new(words[2], String.to_i(words[3]), t, Array.join(Array.drop(words, 4), " "))
+      WaitList.add(wl, pt)
+      arrived_at[words[2]] = t
+      puts("t=#{t} arrive #{pt} for #{Patient.get_complaint(pt)}")
+    in "treat"
+      pt = WaitList.take(wl)
+      if pt
+        wait = t - arrived_at[Patient.get_name(pt)]
+        Array.push(waits, wait)
+        puts("t=#{t} treat  #{pt} waited #{wait}")
+      else
+        puts("t=#{t} treat  nobody waiting")
+      end
+    in "escalate"
+      pt = WaitList.escalate(wl, words[2], String.to_i(words[3]))
+      puts("t=#{t} escal. #{pt}")
+    in "leave"
+      pt = WaitList.remove_named(wl, words[2])
+      puts("t=#{t} leave  #{pt}")
+    end
+  rescue UnknownPatient => e
+    puts("t=#{t} error  #{Exception.message(e)}")
+  end
+  puts("       queue: #{Array.join(WaitList.names(wl), ", ")}") if WaitList.get_count(wl) > 0
+end
+puts(format("treated %d, mean wait %.2f, longest %d", Array.size(waits), Array.sum(waits) / Integer.to_f(Array.size(waits)), Array.max(waits)))

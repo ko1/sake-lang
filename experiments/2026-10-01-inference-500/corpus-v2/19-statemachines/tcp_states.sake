@@ -1,0 +1,101 @@
+InvalidTransition = Exception.new(:state, :event)
+Conn = Struct.new(:name, :state, :history)
+
+def transitions
+  Hash[
+    [:closed, :passive_open] => [:listen, nil],
+    [:closed, :active_open] => [:syn_sent, :syn],
+    [:listen, :rcv_syn] => [:syn_received, :syn_ack],
+    [:listen, :close] => [:closed, nil],
+    [:listen, :send] => [:syn_sent, :syn],
+    [:syn_sent, :rcv_syn] => [:syn_received, :ack],
+    [:syn_sent, :rcv_syn_ack] => [:established, :ack],
+    [:syn_sent, :close] => [:closed, nil],
+    [:syn_received, :rcv_ack] => [:established, nil],
+    [:syn_received, :close] => [:fin_wait_1, :fin],
+    [:syn_received, :rcv_rst] => [:listen, nil],
+    [:established, :close] => [:fin_wait_1, :fin],
+    [:established, :rcv_fin] => [:close_wait, :ack],
+    [:fin_wait_1, :rcv_ack] => [:fin_wait_2, nil],
+    [:fin_wait_1, :rcv_fin] => [:closing, :ack],
+    [:fin_wait_1, :rcv_fin_ack] => [:time_wait, :ack],
+    [:fin_wait_2, :rcv_fin] => [:time_wait, :ack],
+    [:closing, :rcv_ack] => [:time_wait, nil],
+    [:close_wait, :close] => [:last_ack, :fin],
+    [:last_ack, :rcv_ack] => [:closed, nil],
+    [:time_wait, :timeout] => [:closed, nil]
+  ]
+end
+
+class Conn
+  def open(name) = Conn.new(name, :closed, Array[:closed])
+
+  def fire(c, event)
+    entry = transitions[[@state, event]]
+    raise InvalidTransition.new("#{@name}: #{event} not allowed in #{@state}", @state, event) unless entry
+    next_state, reply = entry
+    @state = next_state
+    Array.push(@history, next_state)
+    reply
+  end
+
+  def run(c, events)
+    sent = Array[]
+    Array.each(events) do |ev|
+      reply = fire(c, ev)
+      Array.push(sent, reply) if reply
+    end
+    sent
+  end
+end
+
+def reachable_from(start)
+  seen = Set[start]
+  queue = Array[start]
+  until Array.empty?(queue)
+    s = Array.shift(queue)
+    Hash.each(transitions) do |key, value|
+      from, _ev = key
+      to, _reply = value
+      if from == s && !Set.include?(seen, to)
+        Set.add(seen, to)
+        Array.push(queue, to)
+      end
+    end
+  end
+  seen
+end
+
+scenarios = Array[
+  ["client", Array[:active_open, :rcv_syn_ack, :close, :rcv_ack, :rcv_fin, :timeout]],
+  ["server", Array[:passive_open, :rcv_syn, :rcv_ack, :rcv_fin, :close, :rcv_ack]],
+  ["simul", Array[:active_open, :rcv_syn, :rcv_ack, :close, :rcv_fin, :rcv_ack, :timeout]],
+  ["broken", Array[:passive_open, :rcv_syn, :rcv_fin]],
+  ["reset", Array[:passive_open, :rcv_syn, :rcv_rst, :close]]
+]
+
+Array.each(scenarios) do |name, events|
+  c = Conn.open(name)
+  begin
+    sent = Conn.run(c, events)
+    puts("#{name}: ok, sent #{Array.join(Array.map(sent) { Symbol.to_s(it) }, ",")}")
+  rescue InvalidTransition => e
+    puts("#{name}: FAILED #{Exception.message(e)} (state=#{InvalidTransition.get_state(e)})")
+  end
+  puts("  path: #{Array.join(Array.map(Conn.get_history(c)) { Symbol.upcase(it) }, " > ")}")
+end
+
+states = Set[]
+Hash.each(transitions) do |key, value|
+  from, _ev = key
+  to, _r = value
+  Set.add(states, from)
+  Set.add(states, to)
+end
+puts("states: #{Set.size(states)}, transitions: #{Hash.size(transitions)}")
+r = reachable_from(:listen)
+puts("reachable from listen: #{Array.join(Array.sort(Set.map(r) { Symbol.to_s(it) }), " ")}")
+by_event = Hash.new(0)
+Hash.each_key(transitions) { |k| by_event[k[1]] += 1 }
+top = Hash.max_by(by_event) { |ev, n| n }
+puts("most used event: #{top[0]} (#{top[1]})") if top

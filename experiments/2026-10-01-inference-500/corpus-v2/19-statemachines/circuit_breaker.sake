@@ -1,0 +1,107 @@
+ServiceError = Exception.new(:status)
+CircuitOpen = Exception.new(:retry_at)
+
+Breaker = Struct.new(:state, :failures, :threshold, :cooldown, :opened_at, :trial_ok, :log)
+Service = Struct.new(:outcomes, :calls)
+
+class Service
+  def request(s, now, req)
+    @calls += 1
+    status = Hash.fetch(@outcomes, now, 200)
+    raise ServiceError.new("#{req} failed with #{status}", status) if status >= 500
+    "#{req}:ok"
+  end
+end
+
+class Breaker
+  def create(threshold, cooldown) = Breaker.new(:closed, 0, threshold, cooldown, 0, 0, Array[])
+
+  def move(b, now, to)
+    Array.push(@log, "t=#{now} #{@state} -> #{to}")
+    @state = to
+  end
+
+  def guard(b, now)
+    return if @state != :open
+    if now - @opened_at >= @cooldown
+      move(b, now, :half_open)
+      @trial_ok = 0
+    else
+      raise CircuitOpen.new("circuit open", @opened_at + @cooldown)
+    end
+  end
+
+  def success(b, now)
+    case @state
+    in :half_open
+      @trial_ok += 1
+      if @trial_ok >= 2
+        @failures = 0
+        move(b, now, :closed)
+      end
+    in :closed then @failures = 0
+    in :open then nil
+    end
+  end
+
+  def failure(b, now)
+    case @state
+    in :half_open
+      @opened_at = now
+      move(b, now, :open)
+    in :closed
+      @failures += 1
+      if @failures >= @threshold
+        @opened_at = now
+        move(b, now, :open)
+      end
+    in :open then nil
+    end
+  end
+
+  def run(b, svc, now, req)
+    guard(b, now)
+    begin
+      result = Service.request(svc, now, req)
+    rescue ServiceError => e
+      failure(b, now)
+      raise
+    end
+    success(b, now)
+    result
+  end
+end
+
+def call_with_retry(b, svc, now, req, stats)
+  attempts = 0
+  begin
+    attempts += 1
+    Breaker.run(b, svc, now + attempts - 1, req)
+  rescue ServiceError => e
+    if attempts < 2 && ServiceError.get_status(e) == 503
+      stats[:retried] += 1
+      retry
+    end
+    stats[:failed] += 1
+    "#{req}:error #{ServiceError.get_status(e)}"
+  rescue CircuitOpen => e
+    stats[:rejected] += 1
+    "#{req}:rejected until t=#{CircuitOpen.get_retry_at(e)}"
+  end
+end
+
+outcomes = Hash[3 => 500, 4 => 503, 5 => 503, 6 => 500, 7 => 502, 14 => 500, 22 => 503, 30 => 500, 31 => 500, 32 => 500]
+svc = Service.new(outcomes, 0)
+b = Breaker.create(3, 6)
+stats = Hash[ok: 0, failed: 0, rejected: 0, retried: 0]
+t = 0
+while t < 40
+  res = call_with_retry(b, svc, t, "req#{t}", stats)
+  stats[:ok] += 1 if String.end_with?(res, ":ok")
+  puts(format("t=%02d %-10s %s", t, Breaker.get_state(b), res)) unless String.end_with?(res, ":ok") && t % 5 != 0
+  t += 2
+end
+puts("transitions:")
+Array.each(Breaker.get_log(b)) { puts("  #{it}") }
+puts("service calls: #{Service.get_calls(svc)}")
+puts(Array.join(Array.map(Hash.to_a(stats)) { |k, v| "#{k}=#{v}" }, " "))

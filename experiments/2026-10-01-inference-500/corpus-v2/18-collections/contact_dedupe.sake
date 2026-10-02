@@ -1,0 +1,104 @@
+# Deduplicate contacts: normalize emails and phones, link records that share either (union-find), merge.
+
+Contact = Struct.new(:id, :name, :emails, :phones, :tags)
+
+class UnionFind < {reader: [parent]}
+  def find(u, x)
+    root = x
+    root = @parent[root] while @parent[root] != root
+    while @parent[x] != root
+      nxt = @parent[x]
+      @parent[x] = root
+      x = nxt
+    end
+    root
+  end
+
+  def union(u, a, b)
+    ra = find(u, a)
+    rb = find(u, b)
+    return if ra == rb
+    if ra < rb
+      @parent[rb] = ra
+    else
+      @parent[ra] = rb
+    end
+  end
+end
+
+def normalize_email(e)
+  e = String.downcase(String.strip(e))
+  at = String.index(e, "@")
+  return nil unless at
+  local = String.split(e[0...at], "+")[0]
+  domain = e[(at + 1)..]
+  local = String.delete(local, ".") if domain == "gmail.com"
+  "#{local}@#{domain}"
+end
+
+def normalize_phone(p)
+  digits = String.delete(p, "^0-9")
+  digits = digits[1..] if String.size(digits) == 11 && String.start_with?(digits, "1")
+  String.size(digits) == 10 ? digits : nil
+end
+
+def raw_contacts
+  Array[
+    "1|Ann Lee|ann.lee@gmail.com; ann@work.io|555-010-2000|friend",
+    "2|Ann  Lee|AnnLee@Gmail.com|(555) 010 2000|",
+    "3|Bob Stone|bob@stone.dev|+1 555 777 1234|work",
+    "4|Robert Stone|bob+news@stone.dev|555.777.9999|work; golf",
+    "5|Cy Twombly|cy@art.org|12345|",
+    "6|Dee Park|dee@park.kr; d.park@mail.kr||friend",
+    "7|D. Park|d.park@mail.kr|555 222 3333|family",
+    "8|Eve|eve@example.com|555-222-3333|"
+  ]
+end
+
+def parse(line)
+  f = String.split(line, "|")
+  emails = Array.to_set(Array.compact(Array.map(split_list(f[2])) { |e| normalize_email(e) }))
+  phones = Array.to_set(Array.compact(Array.map(split_list(f[3] || "")) { |p| normalize_phone(p) }))
+  tags = Array.to_set(split_list(f[4] || ""))
+  Contact.new(String.to_i(f[0]), String.gsub(f[1], / +/, " "), emails, phones, tags)
+end
+
+def split_list(s) = Array.reject(Array.map(String.split(s, ";")) { |x| String.strip(x) }) { |x| String.empty?(x) }
+
+contacts = Array.map(raw_contacts) { |l| parse(l) }
+bad_phones = Array.select(raw_contacts) { |l| Array.any?(split_list(String.split(l, "|")[3] || "")) { |p| normalize_phone(p) == nil } }
+puts("unparseable phones in: #{Array.join(Array.map(bad_phones) { |l| String.split(l, "|")[0] }, ",")}")
+
+uf = UnionFind.new(Hash[])
+Array.each(contacts) { |c| UnionFind.get_parent(uf)[Contact.get_id(c)] = Contact.get_id(c) }
+owner = Hash[]
+Array.each(contacts) do |c|
+  keys = Array.map(Set.to_a(Contact.get_emails(c))) { |e| "e:#{e}" }
+  Array.concat(keys, Array.map(Set.to_a(Contact.get_phones(c))) { |p| "p:#{p}" })
+  Array.each(keys) do |k|
+    prev = owner[k]
+    if prev
+      UnionFind.union(uf, prev, Contact.get_id(c))
+    else
+      owner[k] = Contact.get_id(c)
+    end
+  end
+end
+
+groups = Array.group_by(contacts) { |c| UnionFind.find(uf, Contact.get_id(c)) }
+puts("#{Array.size(contacts)} records -> #{Hash.size(groups)} people")
+Hash.each(groups) do |root, members|
+  names = Array.uniq(Array.map(members) { |c| Contact.get_name(c) })
+  best = Array.max_by(names) { |n| String.size(n) }
+  emails = Array.reduce(members, Set[]) { |acc, c| acc | Contact.get_emails(c) }
+  phones = Array.reduce(members, Set[]) { |acc, c| acc | Contact.get_phones(c) }
+  tags = Array.reduce(members, Set[]) { |acc, c| acc | Contact.get_tags(c) }
+  ids = Array.map(members) { |c| Contact.get_id(c) }
+  puts("#{best} [#{Array.join(ids, ",")}]")
+  puts("  aka: #{Array.join(Array.sort(Array.difference(names, Array[best])), "; ")}") if Array.size(names) > 1
+  puts("  emails: #{Array.join(Set.sort(emails), ", ")}")
+  puts("  phones: #{Set.empty?(phones) ? "-" : Array.join(Array.map(Set.sort(phones)) { |p| "#{p[0..2]}-#{p[3..5]}-#{p[6..]}" }, ", ")}")
+  puts("  tags: #{Array.join(Set.sort(tags), ", ")}") unless Set.empty?(tags)
+end
+shared = Hash.select(Array.tally(Array.flat_map(contacts) { |c| Set.to_a(Contact.get_phones(c)) })) { |p, n| n > 1 }
+puts("shared phones: #{Array.join(Array.sort(Hash.keys(shared)), ", ")}")

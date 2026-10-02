@@ -1,0 +1,164 @@
+# A small calculator: tokenize, parse and evaluate lines like `x = 3 * (y + 2)`, reporting errors by column.
+ExprSyntaxError = Exception.new(:column)
+EvalError = Exception.new(:name)
+
+Token = Struct.new(:kind, :text, :column)
+
+def tokenize(src)
+  tokens = Token[]
+  i = 0
+  n = String.length(src)
+  while i < n
+    c = src[i]
+    if c == " "
+      i += 1
+    elsif String.match?(c, /\d/)
+      start = i
+      i += 1 while i < n && String.match?(src[i], /\d/)
+      Array.push(tokens, Token.new(:num, src[start...i], start + 1))
+    elsif String.match?(c, /[a-z]/)
+      start = i
+      i += 1 while i < n && String.match?(src[i], /[a-z0-9]/)
+      Array.push(tokens, Token.new(:ident, src[start...i], start + 1))
+    elsif String.include?("+-*/()=%", c)
+      Array.push(tokens, Token.new(:op, c, i + 1))
+      i += 1
+    else
+      raise ExprSyntaxError.new("unexpected character '#{c}'", i + 1)
+    end
+  end
+  Array.push(tokens, Token.new(:eof, "", n + 1))
+  tokens
+end
+
+class Parser < {reader: [tokens], accessor: [pos]}
+  def peek(ps) = Array.fetch(@tokens, @pos)
+  def advance(ps)
+    t = peek(ps)
+    @pos += 1
+    t
+  end
+  def accept(ps, text)
+    t = peek(ps)
+    return false unless Token.get_kind(t) == :op && Token.get_text(t) == text
+    @pos += 1
+    true
+  end
+  def expect(ps, text)
+    t = peek(ps)
+    unless accept(ps, text)
+      raise ExprSyntaxError.new("expected '#{text}' but found #{describe(Token.get_text(t))}", Token.get_column(t))
+    end
+  end
+  def describe(text) = String.empty?(text) ? "end of input" : "'#{text}'"
+
+  # expr := term (('+'|'-') term)* ; term := factor (('*'|'/'|'%') factor)* ; factor := num | ident | '(' expr ')'
+  def expr(ps)
+    node = term(ps)
+    while true
+      if accept(ps, "+") then node = [:add, node, term(ps)]
+      elsif accept(ps, "-") then node = [:sub, node, term(ps)]
+      else break
+      end
+    end
+    node
+  end
+  def term(ps)
+    node = factor(ps)
+    while true
+      if accept(ps, "*") then node = [:mul, node, factor(ps)]
+      elsif accept(ps, "/") then node = [:div, node, factor(ps)]
+      elsif accept(ps, "%") then node = [:mod, node, factor(ps)]
+      else break
+      end
+    end
+    node
+  end
+  def factor(ps)
+    t = advance(ps)
+    case Token.get_kind(t)
+    in :num then [:num, String.to_i(Token.get_text(t)), Token.get_column(t)]
+    in :ident then [:var, Token.get_text(t), Token.get_column(t)]
+    else
+      if Token.get_text(t) == "("
+        inner = expr(ps)
+        expect(ps, ")")
+        return inner
+      end
+      raise ExprSyntaxError.new("unexpected #{describe(Token.get_text(t))}", Token.get_column(t))
+    end
+  end
+end
+
+def evaluate(node, env)
+  kind, a, b = node
+  case kind
+  in :num then a
+  in :var
+    value = env[a]
+    raise EvalError.new("undefined variable #{a}", a) if value == nil
+    value
+  else
+    l = evaluate(a, env)
+    r = evaluate(b, env)
+    case kind
+    in :add then l + r
+    in :sub then l - r
+    in :mul then l * r
+    in :div | :mod
+      raise EvalError.new("division by zero", "") if r == 0
+      kind == :div ? l / r : l % r
+    end
+  end
+end
+
+def run_line(src, env)
+  tokens = tokenize(src)
+  target = nil
+  start = 0
+  if Array.size(tokens) > 2 && Token.get_kind(tokens[0]) == :ident && Token.get_text(tokens[1]) == "="
+    target = Token.get_text(tokens[0])
+    start = 2
+  end
+  ps = Parser.new(tokens, start)
+  tree = Parser.expr(ps)
+  last = Parser.peek(ps)
+  if Token.get_kind(last) != :eof
+    raise ExprSyntaxError.new("unexpected '#{Token.get_text(last)}' after expression", Token.get_column(last))
+  end
+  value = evaluate(tree, env)
+  env[target] = value if target
+  [target, value]
+end
+
+program = Array[
+  "x = 6 * 7",
+  "y = (x - 2) / 4",
+  "x + y * 2",
+  "z = x / (y - 10)",
+  "w = 3 +",
+  "q = (1 + 2",
+  "total = x + unknown",
+  "a = 5 $ 3",
+  "b = x % 5 + y % 3",
+  "4 4",
+  "c = ((b + 1) * (b - 1)) / 2"
+]
+
+env = Hash[]
+ok = 0
+Array.each(program) do |line|
+  begin
+    target, value = run_line(line, env)
+    ok += 1
+    puts(target ? "#{target} = #{value}" : "=> #{value}")
+  rescue ExprSyntaxError => e
+    col = ExprSyntaxError.get_column(e)
+    puts(line)
+    puts("#{" " * (col - 1)}^ syntax error: #{Exception.message(e)}")
+  rescue EvalError => e
+    puts("#{line}  !! #{Exception.message(e)}")
+  end
+end
+puts("#{ok}/#{Array.size(program)} lines evaluated")
+puts(Array.join(Array.map(Array.sort(Hash.keys(env))) { |k| "#{k}=#{env[k]}" }, " "))

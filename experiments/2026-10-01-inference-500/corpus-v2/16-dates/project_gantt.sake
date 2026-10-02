@@ -1,0 +1,135 @@
+# Schedules project tasks with dependencies in working days (topological
+# order, earliest start/finish, slack, critical path) and draws a text Gantt chart.
+
+Task = Struct.new(:id, :name, :days, :deps, :start, :finish, :late_start)
+CycleError = Exception.new(:path)
+
+def days_from_civil(y, m, d)
+  y -= 1 if m <= 2
+  era = y / 400
+  yoe = y - era * 400
+  doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+end
+
+def civil_from_days(z)
+  z += 719468
+  era = z / 146097
+  doe = z - era * 146097
+  yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  mp = (5 * doy + 2) / 153
+  m = mp < 10 ? mp + 3 : mp - 9
+  [yoe + era * 400 + (m <= 2 ? 1 : 0), m, doy - (153 * mp + 2) / 5 + 1]
+end
+
+def wday(z) = (z + 4) % 7
+
+# Calendar date of working day number n (0-based) counted from a Monday.
+def workday_date(monday, n) = monday + (n / 5) * 7 + n % 5
+
+def show(z)
+  y, m, d = civil_from_days(z)
+  format("%02d/%02d", m, d)
+end
+
+def topo_order(tasks)
+  by_id = Hash[]
+  Array.each(tasks) { |t| by_id[Task.get_id(t)] = t }
+  state = Hash.new(:new)
+  order = Task[]
+  stack = Array[]
+  Array.each(tasks) { |t| visit(by_id, state, order, stack, Task.get_id(t)) }
+  order
+end
+
+def visit(by_id, state, order, stack, id)
+  return if state[id] == :done
+  if state[id] == :active
+    raise CycleError.new("dependency cycle", Array.join(stack, " -> ") + " -> " + id)
+  end
+  t = by_id[id]
+  raise KeyError, "unknown task #{id}" if t == nil
+  state[id] = :active
+  Array.push(stack, id)
+  Array.each(Task.get_deps(t)) { |d| visit(by_id, state, order, stack, d) }
+  Array.pop(stack)
+  state[id] = :done
+  Array.push(order, t)
+end
+
+def schedule(tasks)
+  order = topo_order(tasks)
+  finish_of = Hash[]
+  Array.each(order) do |t|
+    start = Array.max(Array.map(Task.get_deps(t)) { |d| Hash.fetch(finish_of, d) }) || 0
+    Task.set_start(t, start)
+    Task.set_finish(t, start + Task.get_days(t))
+    finish_of[Task.get_id(t)] = Task.get_finish(t)
+  end
+  project_end = Array.max(Hash.values(finish_of))
+  late_start = Hash[]
+  Array.each(Array.reverse(order)) do |t|
+    succ = Array.select(order) { |s| Array.include?(Task.get_deps(s), Task.get_id(t)) }
+    late_finish = Array.empty?(succ) ? project_end : Array.min(Array.map(succ) { |s| Hash.fetch(late_start, Task.get_id(s)) })
+    late_start[Task.get_id(t)] = late_finish - Task.get_days(t)
+    Task.set_late_start(t, late_finish - Task.get_days(t))
+  end
+  [order, project_end]
+end
+
+def new_task(id, name, days, deps) = Task.new(id, name, days, deps, 0, 0, 0)
+
+def plan
+  Task[
+    new_task("req", "Requirements", 4, String[]),
+    new_task("ux", "UX design", 6, String["req"]),
+    new_task("api", "API design", 3, String["req"]),
+    new_task("be", "Backend", 12, String["api"]),
+    new_task("fe", "Frontend", 10, String["ux", "api"]),
+    new_task("int", "Integration", 4, String["be", "fe"]),
+    new_task("doc", "Docs", 5, String["api"]),
+    new_task("qa", "QA", 6, String["int"]),
+    new_task("rel", "Release", 1, String["qa", "doc"])
+  ]
+end
+
+kickoff = days_from_civil(2026, 10, 5)
+order, total = schedule(plan)
+puts("Project starts Mon #{show(kickoff)}, #{total} working days, ends #{show(workday_date(kickoff, total - 1))}")
+puts
+width = total
+Array.each(order) do |t|
+  s = Task.get_start(t)
+  f = Task.get_finish(t)
+  slack = Task.get_late_start(t) - s
+  bar = " " * s + (slack == 0 ? "=" : "-") * (f - s) + " " * (width - f)
+  puts(format("%-13s %s..%s |%s| slack %d", Task.get_name(t), show(workday_date(kickoff, s)), show(workday_date(kickoff, f - 1)), bar, slack))
+end
+
+critical = Array.select(order) { |t| Task.get_late_start(t) == Task.get_start(t) }
+puts
+puts("Critical path: #{Array.join(Array.map(critical) { |t| Task.get_id(t) }, " > ")}")
+weekends = Range.count(kickoff..workday_date(kickoff, total - 1)) { |z| wday(z) == 0 || wday(z) == 6 }
+puts("Calendar days: #{workday_date(kickoff, total - 1) - kickoff + 1}, of which weekend days: #{weekends}")
+
+# What if the backend slips by 3 days?
+slipped = plan
+be = Array.find(slipped) { |t| Task.get_id(t) == "be" }
+Task.set_days(be, Task.get_days(be) + 3) if be
+o2, total2 = schedule(slipped)
+puts("Backend +3 days: project #{total2 - total >= 0 ? "+" : ""}#{total2 - total} days")
+
+# A broken plan with a cycle and one with a missing dependency.
+broken = Task[new_task("a", "A", 1, String["c"]), new_task("b", "B", 1, String["a"]), new_task("c", "C", 1, String["b"])]
+begin
+  schedule(broken)
+rescue CycleError => e
+  puts("Rejected: #{Exception.message(e)}: #{CycleError.get_path(e)}")
+end
+missing = Task[new_task("x", "X", 2, String["y"])]
+begin
+  schedule(missing)
+rescue KeyError => e
+  puts("Rejected: #{Exception.message(e)}")
+end

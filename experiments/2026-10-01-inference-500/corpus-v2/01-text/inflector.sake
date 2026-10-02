@@ -1,0 +1,103 @@
+Rule = Struct.new(:pattern, :replacement)
+Inflections = Struct.new(:plurals, :singulars, :irregular, :uncountable)
+
+def build_inflections
+  plurals = Rule[
+    Rule.new(/(quiz)\z/i, "\\1zes"),
+    Rule.new(/(matr|vert|ind)(?:ix|ex)\z/i, "\\1ices"),
+    Rule.new(/(x|ch|ss|sh)\z/i, "\\1es"),
+    Rule.new(/([^aeiouy]|qu)y\z/i, "\\1ies"),
+    Rule.new(/(?:([^f])fe|([lr])f)\z/i, "\\1\\2ves"),
+    Rule.new(/(buffal|tomat|potat)o\z/i, "\\1oes"),
+    Rule.new(/(octop|vir)us\z/i, "\\1i"),
+    Rule.new(/(alias|status|bus)\z/i, "\\1es"),
+    Rule.new(/s\z/i, "s"),
+    Rule.new(/\z/, "s")
+  ]
+  singulars = Rule[
+    Rule.new(/(quiz)zes\z/i, "\\1"),
+    Rule.new(/(matr)ices\z/i, "\\1ix"),
+    Rule.new(/(vert|ind)ices\z/i, "\\1ex"),
+    Rule.new(/(x|ch|ss|sh)es\z/i, "\\1"),
+    Rule.new(/([^aeiouy]|qu)ies\z/i, "\\1y"),
+    Rule.new(/([lr])ves\z/i, "\\1f"),
+    Rule.new(/([^f])ves\z/i, "\\1fe"),
+    Rule.new(/(buffal|tomat|potat)oes\z/i, "\\1o"),
+    Rule.new(/(octop|vir)i\z/i, "\\1us"),
+    Rule.new(/(alias|status|bus)es\z/i, "\\1"),
+    Rule.new(/ss\z/i, "ss"),
+    Rule.new(/s\z/i, "")
+  ]
+  irregular = Hash["person" => "people", "man" => "men", "child" => "children",
+                   "mouse" => "mice", "goose" => "geese", "ox" => "oxen"]
+  uncountable = Set["equipment", "information", "rice", "money", "species", "series", "fish", "sheep"]
+  Inflections.new(plurals, singulars, irregular, uncountable)
+end
+
+def keep_case(original, word)
+  return word if String.empty?(original)
+  first = original[0]
+  first == String.upcase(first) && first != String.downcase(first) ? String.capitalize(word) : word
+end
+
+def apply_rules(word, rules)
+  rule = Array.find(rules) { |r| String.match?(word, Rule.get_pattern(r)) }
+  return word if rule == nil
+  String.sub(word, Rule.get_pattern(rule), Rule.get_replacement(rule))
+end
+
+class Inflections
+  def pluralize(inf, word)
+    lower = String.downcase(word)
+    return word if Set.include?(@uncountable, lower)
+    irregular = @irregular[lower]
+    return keep_case(word, irregular) if irregular != nil
+    return word if Hash.value?(@irregular, lower)
+    apply_rules(word, @plurals)
+  end
+
+  def singularize(inf, word)
+    lower = String.downcase(word)
+    return word if Set.include?(@uncountable, lower)
+    single = Hash.key(@irregular, lower)
+    return keep_case(word, single) if single != nil
+    return word if Hash.key?(@irregular, lower)
+    apply_rules(word, @singulars)
+  end
+
+  def count_phrase(inf, n, word)
+    noun = n == 1 ? word : pluralize(inf, word)
+    amount = n == 0 ? "no" : Integer.to_s(n)
+    "#{amount} #{noun}"
+  end
+end
+
+def to_sentence(items)
+  case Array.size(items)
+  in 0 then ""
+  in 1 then items[0]
+  in 2 then "#{items[0]} and #{items[1]}"
+  else "#{Array.join(Array.take(items, Array.size(items) - 1), ", ")}, and #{Array.last(items)}"
+  end
+end
+
+inf = build_inflections
+words = String.split("cat box church query day knife wolf leaf tomato octopus status quiz matrix vertex " +
+                     "person Child mouse sheep rice bus alias Category hero", " ")
+failures = 0
+Array.each(words) do |w|
+  pl = Inflections.pluralize(inf, w)
+  back = Inflections.singularize(inf, pl)
+  ok = back == w
+  failures += 1 unless ok
+  puts("#{String.ljust(w, 10)} -> #{String.ljust(pl, 12)} -> #{String.ljust(back, 10)}#{ok ? "" : "  (round trip fails)"}")
+end
+puts("round-trip failures: #{failures}")
+puts
+
+inventory = Array[["apple", 3], ["box", 1], ["mouse", 2], ["fish", 5], ["person", 0], ["knife", 12]]
+phrases = Array.map(inventory) { |name, n| Inflections.count_phrase(inf, n, name) }
+puts("In stock: #{to_sentence(phrases)}.")
+Array.each(Integer[0, 1, 2, 3]) do |k|
+  puts("#{k}: #{Kernel.inspect(to_sentence(Array.take(Array["red", "green", "blue"], k)))}")
+end

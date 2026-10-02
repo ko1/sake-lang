@@ -1,0 +1,122 @@
+Terrain = Struct.new(:tiles, :rows, :cols)
+Route = Struct.new(:cost, :cells)
+
+def tile_cost(ch)
+  case ch
+  in "." | "S" | "G" then 1.0
+  in "=" then 0.5
+  in "~" then 3.5
+  in "^" then 5.0
+  in "#" then nil
+  in String then nil
+  end
+end
+
+class Terrain
+  def parse(lines) = Terrain.new(Array.map(lines) { String.chars(it) }, Array.size(lines), String.size(lines[0]))
+
+  def cost_at(t, r, c)
+    return nil if r < 0 || r >= @rows || c < 0 || c >= @cols
+    tile_cost(@tiles[r][c])
+  end
+
+  def find(t, ch)
+    Array.each_with_index(@tiles) do |row, r|
+      c = Array.index(row, ch)
+      return [r, c] if c
+    end
+    nil
+  end
+
+  def cheapest(t, from, to)
+    dist = Hash[from => 0.0]
+    prev = Hash[]
+    done = Set[]
+    frontier = Array[from]
+    until Array.empty?(frontier)
+      best_i = 0
+      Array.each_with_index(frontier) { |cell, i| best_i = i if dist[cell] < dist[frontier[best_i]] }
+      cur = Array.delete_at(frontier, best_i)
+      next if Set.include?(done, cur)
+      Set.add(done, cur)
+      break if cur == to
+      r, c = cur
+      Array.each(Array[[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]) do |nxt|
+        nr, nc = nxt
+        step = cost_at(t, nr, nc)
+        next unless step
+        nd = dist[cur] + step
+        old = dist[nxt]
+        if old == nil || nd < old
+          dist[nxt] = nd
+          prev[nxt] = cur
+          Array.push(frontier, nxt)
+        end
+      end
+    end
+    total = dist[to]
+    return nil unless total
+    cells = Array[to]
+    while prev[Array.first(cells)]
+      Array.unshift(cells, prev[Array.first(cells)])
+    end
+    Route.new(total, cells)
+  end
+
+  def draw(t, route)
+    canvas = Array.map(@tiles) { Array.dup(it) }
+    Array.each(Route.get_cells(route)) do |r, c|
+      canvas[r][c] = "*" if canvas[r][c] != "S" && canvas[r][c] != "G"
+    end
+    Array.join(Array.map(canvas) { Array.join(it) }, "\n")
+  end
+end
+
+def describe(t, route)
+  kinds = Hash.new(0)
+  Array.each(Array.drop(Route.get_cells(route), 1)) do |r, c|
+    kinds[Terrain.get_tiles(t)[r][c]] += 1
+  end
+  Array.join(Array.map(Array.sort(Hash.keys(kinds))) { |k| "#{k}x#{kinds[k]}" }, " ")
+end
+
+def survey(name, lines)
+  puts("== #{name} ==")
+  t = Terrain.parse(lines)
+  s = Terrain.find(t, "S")
+  g = Terrain.find(t, "G")
+  unless s && g
+    puts("map needs S and G")
+    return
+  end
+  route = Terrain.cheapest(t, s, g)
+  if route
+    puts(format("cost %.1f over %d steps (%s)", Route.get_cost(route), Array.size(Route.get_cells(route)) - 1, describe(t, route)))
+    puts(Terrain.draw(t, route))
+  else
+    puts("G is unreachable from S")
+  end
+end
+
+def tiles_legend = "S/G=1.0 .=1.0 ==0.5 ~=3.5 ^=5.0 #=wall"
+
+puts("legend: #{tiles_legend}")
+survey("river crossing", Array[
+  "S...~~~....",
+  "....~~~.^^.",
+  ".##.~~~.^^.",
+  ".#..===....",
+  ".#..~~~..#G",
+])
+survey("mountain pass", Array[
+  "S^^^^^^",
+  ".^^.^^.",
+  ".^....^",
+  "...^^.G",
+])
+survey("blocked", Array[
+  "S.#..",
+  "..#..",
+  "###.G",
+])
+survey("no goal", Array["S...."])

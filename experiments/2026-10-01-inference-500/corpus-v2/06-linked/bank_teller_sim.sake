@@ -1,0 +1,118 @@
+QNode = Struct.new(:value, :next)
+Customer = Struct.new(:id, :arrive, :work, :started)
+Teller = Struct.new(:name, :speed, :line, :busy_with, :busy_until, :served, :idle)
+
+module Walkable
+  def size(q)
+    n = 0
+    each(q) { n += 1 }
+    n
+  end
+
+  def to_list(q)
+    out = Array[]
+    each(q) { |x| Array.push(out, x) }
+    out
+  end
+end
+
+class WaitQueue < {accessor: [head, tail]}
+  include Walkable
+
+  def create = WaitQueue.new(nil, nil)
+
+  def enqueue(q, v)
+    node = QNode.new(v, nil)
+    t = @tail
+    t ? QNode.set_next(t, node) : @head = node
+    @tail = node
+  end
+
+  def dequeue(q)
+    h = @head
+    return nil unless h
+    @head = QNode.get_next(h)
+    @tail = nil if @head == nil
+    QNode.get_value(h)
+  end
+
+  def each(q)
+    n = @head
+    while n
+      yield(QNode.get_value(n))
+      n = QNode.get_next(n)
+    end
+  end
+end
+
+module Stats
+  module_function
+  def mean(xs) = Array.empty?(xs) ? 0.0 : Array.sum(xs) / Integer.to_f(Array.size(xs))
+  def percentile(xs, pct)
+    return 0 if Array.empty?(xs)
+    sorted = Array.sort(xs)
+    sorted[Integer.clamp((Array.size(sorted) * pct + 99) / 100 - 1, 0, Array.size(sorted) - 1)]
+  end
+end
+
+def arrivals
+  out = Array[]
+  t = 0
+  Range.each(1..24) do |i|
+    t += (i * 7) % 5 + 1
+    Array.push(out, Customer.new(i, t, (i * 13) % 9 + 2, nil))
+  end
+  out
+end
+
+def simulate(teller_specs)
+  tellers = Array.map(teller_specs) { |name, speed| Teller.new(name, speed, WaitQueue.create, nil, 0, 0, 0) }
+  pending = arrivals
+  waits = Array[]
+  max_line = 0
+  clock = 0
+  done = 0
+  total = Array.size(pending)
+  while done < total
+    Array.each(tellers) do |t|
+      c = Teller.get_busy_with(t)
+      if c && Teller.get_busy_until(t) <= clock
+        Teller.set_busy_with(t, nil)
+        Teller.set_served(t, Teller.get_served(t) + 1)
+        done += 1
+      end
+    end
+    while (first = Array.first(pending)) && Customer.get_arrive(first) == clock
+      Array.shift(pending)
+      best = Array.min_by(tellers) { |t| Walkable.size(Teller.get_line(t)) * 100 + (Teller.get_busy_with(t) ? 50 : 0) + Teller.get_speed(t) }
+      WaitQueue.enqueue(Teller.get_line(best), first)
+    end
+    Array.each(tellers) do |t|
+      if Teller.get_busy_with(t) == nil
+        c = WaitQueue.dequeue(Teller.get_line(t))
+        if c
+          Customer.set_started(c, clock)
+          Array.push(waits, clock - Customer.get_arrive(c))
+          Teller.set_busy_with(t, c)
+          Teller.set_busy_until(t, clock + (Customer.get_work(c) * Teller.get_speed(t) + 1) / 2)
+        else
+          Teller.set_idle(t, Teller.get_idle(t) + 1)
+        end
+      end
+      max_line = Integer.clamp(WaitQueue.size(Teller.get_line(t)), max_line, 1000)
+    end
+    clock += 1
+  end
+  {tellers: tellers, waits: waits, clock: clock, max_line: max_line}
+end
+
+Array.each(Array[Array[["Ana", 2]], Array[["Ana", 2], ["Raj", 3]], Array[["Ana", 2], ["Raj", 3], ["Kim", 1]]]) do |specs|
+  result = simulate(specs)
+  result => {tellers:, waits:, clock:, max_line:}
+  puts("#{Array.size(tellers)} teller(s): finished at t=#{clock}, longest line #{max_line}")
+  puts(format("  wait mean %.2f  p50 %d  p90 %d  max %d", Stats.mean(waits), Stats.percentile(waits, 50), Stats.percentile(waits, 90), Array.max(waits)))
+  Array.each(tellers) do |t|
+    left = WaitQueue.to_list(Teller.get_line(t))
+    puts(format("  %-4s speed %d served %2d idle %3d left %d", Teller.get_name(t), Teller.get_speed(t), Teller.get_served(t), Teller.get_idle(t), Array.size(left)))
+  end
+end

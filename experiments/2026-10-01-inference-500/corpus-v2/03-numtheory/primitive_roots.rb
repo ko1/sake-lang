@@ -1,0 +1,1 @@
+../../corpus/03-numtheory/primitive_roots.rb

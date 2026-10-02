@@ -1,0 +1,139 @@
+# Polynomials with Integer or Rational coefficients, lowest degree first.
+class Poly < {reader: [coeffs]}
+  include Arithmetic
+
+  def make(cs)
+    out = Array.dup(cs)
+    Array.pop(out) while Array.size(out) > 1 && Array.last(out) == 0
+    out = Array[0] if Array.empty?(out)
+    Poly.new(out)
+  end
+
+  def const(c) = Poly.new(Array[c])
+  def x = Poly.new(Array[0, 1])
+  def degree(a) = Array.size(@coeffs) - 1
+  def lead(a) = Array.last(@coeffs)
+  def zero?(a) = degree(a) == 0 && @coeffs[0] == 0
+  def coef(a, i) = i < Array.size(@coeffs) ? @coeffs[i] : 0
+
+  def lift(b) = (b in Poly) ? b : const(b)
+
+  def +(a, b)
+    b = lift(b)
+    n = Array.max(Array[Array.size(@coeffs), Array.size(Poly.get_coeffs(b))])
+    make(Range.map(0...n) { |i| coef(a, i) + coef(b, i) })
+  end
+
+  def -(a, b)
+    b = lift(b)
+    n = Array.max(Array[Array.size(@coeffs), Array.size(Poly.get_coeffs(b))])
+    make(Range.map(0...n) { |i| coef(a, i) - coef(b, i) })
+  end
+
+  def *(a, b)
+    b = lift(b)
+    bc = Poly.get_coeffs(b)
+    out = Range.map(0..(Array.size(@coeffs) + Array.size(bc) - 2)) { 0 }
+    Array.each_with_index(@coeffs) do |ca, i|
+      Array.each_with_index(bc) { |cb, j| out[i + j] += ca * cb }
+    end
+    make(out)
+  end
+
+  def **(a, n)
+    result = const(1)
+    Integer.times(n) { result = result * a }
+    result
+  end
+
+  def divmod(a, b)
+    raise ZeroDivisionError, "division by zero polynomial" if zero?(b)
+    q = const(0)
+    r = make(Array.map(@coeffs) { |c| Rational(c, 1) })
+    while !zero?(r) && degree(r) >= degree(b)
+      shift = degree(r) - degree(b)
+      factor = lead(r) / Rational(lead(b), 1)
+      term_cs = Range.map(0..shift) { 0 }
+      term_cs[shift] = factor
+      term = make(term_cs)
+      q = q + term
+      r = r - term * b
+    end
+    [q, r]
+  end
+
+  def evaluate(a, x) = Array.reduce(Array.reverse(@coeffs), 0) { |acc, c| acc * x + c }
+  def compose(a, inner) = Array.reduce(Array.reverse(@coeffs), const(0)) { |acc, c| acc * inner + c }
+  def derivative(a) = make(Range.map(1...Array.size(@coeffs)) { |i| @coeffs[i] * i })
+
+  def num_s(c)
+    case c
+    in Rational then Rational.denominator(c) == 1 ? Integer.to_s(Rational.numerator(c)) : "(#{c})"
+    in Integer then Integer.to_s(c)
+    end
+  end
+
+  def to_s(a)
+    return num_s(@coeffs[0]) if degree(a) == 0
+    parts = Array[]
+    Integer.downto(degree(a), 0) do |i|
+      c = @coeffs[i]
+      next if c == 0
+      neg = c < 0
+      mag = neg ? -c : c
+      body = if i == 0
+        num_s(mag)
+      else
+        pre = mag == 1 ? "" : num_s(mag)
+        pre + (i == 1 ? "x" : "x^#{i}")
+      end
+      if Array.empty?(parts)
+        Array.push(parts, neg ? "-#{body}" : body)
+      else
+        Array.push(parts, neg ? "- #{body}" : "+ #{body}")
+      end
+    end
+    Array.join(parts, " ")
+  end
+end
+
+x = Poly.x
+p1 = x ** 2 * 3 - x * 2 + 1
+p2 = x - 1
+p3 = (x + 1) ** 3
+
+puts("p1 = #{p1}")
+puts("p2 = #{p2}")
+puts("p3 = #{p3}")
+puts("p1 + p2 = #{p1 + p2}")
+puts("p1 - p1 = #{p1 - p1}")
+puts("p1 * p2 = #{p1 * p2}")
+puts("p3 + 5 = #{p3 + 5}")
+puts("deg(p1 * p3) = #{Poly.degree(p1 * p3)}")
+
+q, r = Poly.divmod(p3, p2)
+puts("p3 / p2 = #{q} rem #{r}")
+q2, r2 = Poly.divmod(p1, x * 2 + 1)
+puts("p1 / (2x + 1) = #{q2} rem #{r2}")
+check = q2 * (x * 2 + 1) + r2
+puts("check: #{check} == p1? #{check == Poly.make(Array.map(Poly.get_coeffs(p1)) { |c| Rational(c, 1) })}")
+
+puts("p1' = #{Poly.derivative(p1)}")
+puts("p3'' = #{Poly.derivative(Poly.derivative(p3))}")
+puts("p1(p2) = #{Poly.compose(p1, p2)}")
+
+puts("table:")
+Range.each(-2..3) do |v|
+  puts(format("  x=%2d p1=%4d p3=%4d", v, Poly.evaluate(p1, v), Poly.evaluate(p3, v)))
+end
+puts("p1(1/2) = #{Poly.evaluate(p1, Rational(1, 2))}")
+puts("p1(0.5) = #{Poly.evaluate(p1, 0.5)}")
+
+roots = Range.select(-10..10) { |v| Poly.evaluate(x ** 3 - x * 7 - 6, v) == 0 }
+puts("integer roots of x^3 - 7x - 6: #{Array.join(roots, ", ")}")
+
+begin
+  Poly.divmod(p1, Poly.const(0))
+rescue ZeroDivisionError => e
+  puts("error: #{Exception.message(e)}")
+end

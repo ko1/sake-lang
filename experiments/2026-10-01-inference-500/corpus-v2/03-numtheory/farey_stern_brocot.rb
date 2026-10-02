@@ -1,0 +1,1 @@
+../../corpus/03-numtheory/farey_stern_brocot.rb

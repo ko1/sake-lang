@@ -1,0 +1,100 @@
+# Playfair cipher: build the 5x5 key square, split text into digraphs (X padding),
+# encrypt and decrypt using the row / column / rectangle rules.
+
+Square = Struct.new(:cells, :where)
+
+class Square
+  def build(keyword)
+    seen = Set[]
+    cells = String[]
+    letters = String.chars(String.upcase(keyword) + "ABCDEFGHIKLMNOPQRSTUVWXYZ")
+    Array.each(letters) do |c|
+      c = "I" if c == "J"
+      next unless String.match?(c, /[A-Z]/)
+      next if Set.include?(seen, c)
+      Set.add(seen, c)
+      Array.push(cells, c)
+    end
+    where = Hash[]
+    Array.each_with_index(cells) { |c, i| where[c] = [i / 5, i % 5] }
+    Square.new(cells, where)
+  end
+
+  def at(sq, row, col) = Array.fetch(@cells, (row % 5) * 5 + col % 5)
+
+  def pos(sq, c)
+    p = @where[c]
+    raise ArgumentError, "letter #{c} not in square" if p == nil
+    p
+  end
+
+  def rows(sq) = Array.map(Range.to_a(0..4)) { |r| Array.join(Array.take(Array.drop(@cells, r * 5), 5), " ") }
+end
+
+def prepare(text)
+  letters = Array.map(String.chars(String.gsub(String.upcase(text), /[^A-Z]/, ""))) { |c| c == "J" ? "I" : c }
+  pairs = Array[]
+  i = 0
+  while i < Array.size(letters)
+    a = letters[i]
+    b = letters[i + 1]
+    if b == nil || a == b
+      Array.push(pairs, [a, a == "X" ? "Q" : "X"])
+      i += 1
+    else
+      Array.push(pairs, [a, b])
+      i += 2
+    end
+  end
+  pairs
+end
+
+def transform(sq, pairs, shift)
+  out = ""
+  Array.each(pairs) do |a, b|
+    ra, ca = Square.pos(sq, a)
+    rb, cb = Square.pos(sq, b)
+    if ra == rb
+      out += Square.at(sq, ra, ca + shift) + Square.at(sq, rb, cb + shift)
+    elsif ca == cb
+      out += Square.at(sq, ra + shift, ca) + Square.at(sq, rb + shift, cb)
+    else
+      out += Square.at(sq, ra, cb) + Square.at(sq, rb, ca)
+    end
+  end
+  out
+end
+
+def encrypt(sq, text) = transform(sq, prepare(text), 1)
+
+def decrypt(sq, cipher)
+  pairs = Array.map(String.scan(cipher, /../)) { |d| [d[0] || "", d[1] || ""] }
+  transform(sq, pairs, 4)
+end
+
+def groups(s) = Array.join(String.scan(s, /.{1,5}/), " ")
+
+sq = Square.build("playfair example")
+Array.each(Square.rows(sq)) { |r| puts(r) }
+
+messages = Array["Hide the gold in the tree stump", "Jazz balloon", "Meet me at noon x"]
+Array.each(messages) do |msg|
+  pairs = prepare(msg)
+  enc = encrypt(sq, msg)
+  dec = decrypt(sq, enc)
+  puts("plain : #{msg}")
+  puts("pairs : #{Array.join(Array.map(pairs) { |a, b| a + b }, " ")}")
+  puts("cipher: #{groups(enc)}")
+  puts("back  : #{groups(dec)}")
+end
+
+other = Square.build("Monarchy")
+puts("-- keyword MONARCHY --")
+Array.each(Square.rows(other)) { |r| puts(r) }
+puts(groups(encrypt(other, "instruments")))
+
+begin
+  Square.pos(other, "J")
+rescue ArgumentError => e
+  puts("lookup failed: #{Exception.message(e)}")
+end

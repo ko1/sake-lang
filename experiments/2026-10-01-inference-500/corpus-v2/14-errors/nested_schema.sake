@@ -1,0 +1,87 @@
+# Validate nested JSON-like documents against a recursive schema, reporting errors with paths.
+Rule = Struct.new(:kind, :required, :fields, :item, :min, :max)
+
+def str(required) = Rule.new(:string, required, nil, nil, nil, nil)
+def int(required, min, max) = Rule.new(:integer, required, nil, nil, min, max)
+def obj(required, fields) = Rule.new(:object, required, fields, nil, nil, nil)
+def list(required, item, min) = Rule.new(:array, required, nil, item, min, nil)
+
+def order_schema
+  obj(true, Hash[
+    "id" => int(true, 1, 999999),
+    "customer" => obj(true, Hash[
+      "name" => str(true),
+      "email" => str(false),
+      "address" => obj(true, Hash["city" => str(true), "zip" => str(true)])
+    ]),
+    "lines" => list(true, obj(true, Hash["sku" => str(true), "qty" => int(true, 1, 99)]), 1),
+    "note" => str(false)
+  ])
+end
+
+def type_name(v)
+  case v
+  in Hash then "object"
+  in Array then "array"
+  in String then "string"
+  in Integer then "integer"
+  in nil then "null"
+  else "other"
+  end
+end
+
+def check(value, rule, path, errors)
+  if value == nil
+    Array.push(errors, [path, "is required"]) if Rule.get_required(rule)
+    return
+  end
+  case Rule.get_kind(rule)
+  in :string
+    return Array.push(errors, [path, "expected string, got #{type_name(value)}"]) unless value in String
+    Array.push(errors, [path, "must not be blank"]) if String.empty?(String.strip(value))
+  in :integer
+    return Array.push(errors, [path, "expected integer, got #{type_name(value)}"]) unless value in Integer
+    lo = Rule.get_min(rule)
+    hi = Rule.get_max(rule)
+    Array.push(errors, [path, "must be >= #{lo}"]) if lo && value < lo
+    Array.push(errors, [path, "must be <= #{hi}"]) if hi && value > hi
+  in :object
+    return Array.push(errors, [path, "expected object, got #{type_name(value)}"]) unless value in Hash
+    fields = Rule.get_fields(rule)
+    Hash.each(fields) { |name, sub| check(value[name], sub, "#{path}.#{name}", errors) }
+    Array.each(Hash.keys(value)) do |k|
+      Array.push(errors, [path, "unexpected field #{k}"]) unless Hash.key?(fields, k)
+    end
+  in :array
+    return Array.push(errors, [path, "expected array, got #{type_name(value)}"]) unless value in Array
+    min = Rule.get_min(rule)
+    Array.push(errors, [path, "needs at least #{min} item(s)"]) if min && Array.size(value) < min
+    Array.each_with_index(value) { |x, i| check(x, Rule.get_item(rule), "#{path}[#{i}]", errors) }
+  end
+end
+
+docs = Array[
+  Hash["id" => 17, "customer" => Hash["name" => "Ann", "address" => Hash["city" => "Kyoto", "zip" => "600"]],
+       "lines" => Array[Hash["sku" => "PEN", "qty" => 2]]],
+  Hash["id" => 0, "customer" => Hash["name" => " ", "email" => 42, "address" => Hash["city" => "Oslo"]],
+       "lines" => Array[Hash["sku" => "INK", "qty" => 120], Hash["qty" => 1], "PAD"]],
+  Hash["id" => "18", "customer" => "Bob", "lines" => Array[], "gift" => true],
+  Hash["customer" => Hash["name" => "Cy", "address" => Hash["city" => "Lima", "zip" => "15001", "floor" => 3]],
+       "lines" => Hash["sku" => "BAG"], "note" => "rush"]
+]
+
+totals = Hash.new(0)
+Array.each_with_index(docs) do |doc, i|
+  errors = Array[]
+  check(doc, order_schema, "$", errors)
+  if Array.empty?(errors)
+    puts("doc #{i}: valid")
+  else
+    puts("doc #{i}: #{Array.size(errors)} error(s)")
+    Array.each(errors) do |path, msg|
+      puts("  #{path}: #{msg}")
+      totals[String.split(msg, " ")[0]] += 1
+    end
+  end
+end
+puts(Array.join(Array.map(Hash.sort_by(totals) { |w, n| w }) { |w, n| "#{w}=#{n}" }, ", "))

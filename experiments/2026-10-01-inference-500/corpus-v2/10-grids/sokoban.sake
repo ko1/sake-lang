@@ -1,0 +1,115 @@
+Level = Struct.new(:walls, :goals, :boxes, :player, :width, :height, :history, :pushes)
+Snapshot = Struct.new(:boxes, :player, :pushes)
+
+def delta(move)
+  case move
+  in "u" then [-1, 0]
+  in "d" then [1, 0]
+  in "l" then [0, -1]
+  in "r" then [0, 1]
+  end
+end
+
+class Level
+  def parse(text)
+    walls = Set[]
+    goals = Set[]
+    boxes = Set[]
+    player = nil
+    rows = String.lines(text)
+    Array.each_with_index(rows) do |line, r|
+      Array.each_with_index(String.chars(String.chomp(line))) do |ch, c|
+        pos = [r, c]
+        Set.add(walls, pos) if ch == "#"
+        Set.add(goals, pos) if ch == "." || ch == "*" || ch == "+"
+        Set.add(boxes, pos) if ch == "$" || ch == "*"
+        player = pos if ch == "@" || ch == "+"
+      end
+    end
+    raise ArgumentError, "level has no player" unless player
+    if Set.size(boxes) != Set.size(goals)
+      raise ArgumentError, "#{Set.size(boxes)} boxes but #{Set.size(goals)} goals"
+    end
+    width = Array.max(Array.map(rows) { String.size(String.chomp(it)) }) || 0
+    Level.new(walls, goals, boxes, player, width, Array.size(rows), Array[], 0)
+  end
+
+  def move(lv, m)
+    dr, dc = delta(m)
+    r, c = @player
+    target = [r + dr, c + dc]
+    return :blocked if Set.include?(@walls, target)
+    if Set.include?(@boxes, target)
+      beyond = [r + 2 * dr, c + 2 * dc]
+      return :stuck if Set.include?(@walls, beyond) || Set.include?(@boxes, beyond)
+      Array.push(@history, Snapshot.new(Set.to_a(@boxes), @player, @pushes))
+      Set.delete(@boxes, target)
+      Set.add(@boxes, beyond)
+      @pushes += 1
+      @player = target
+      return :pushed
+    end
+    Array.push(@history, Snapshot.new(Set.to_a(@boxes), @player, @pushes))
+    @player = target
+    :moved
+  end
+
+  def undo(lv)
+    snap = Array.pop(@history)
+    return false unless snap
+    @pushes = Snapshot.get_pushes(snap)
+    @boxes = Array.to_set(Snapshot.get_boxes(snap))
+    @player = Snapshot.get_player(snap)
+    true
+  end
+
+  def solved?(lv) = Set.subset?(@boxes, @goals)
+
+  def to_s(lv)
+    lines = Range.map(0...@height) do |r|
+      row = Range.map(0...@width) do |c|
+        pos = [r, c]
+        box = Set.include?(@boxes, pos)
+        goal = Set.include?(@goals, pos)
+        if pos == @player
+          goal ? "+" : "@"
+        elsif box
+          goal ? "*" : "$"
+        elsif Set.include?(@walls, pos)
+          "#"
+        else
+          goal ? "." : " "
+        end
+      end
+      String.rstrip(Array.join(row))
+    end
+    Array.join(lines, "\n")
+  end
+end
+
+def play(name, rows, moves)
+  puts("### #{name}")
+  lv = Level.parse(Array.join(rows, "\n"))
+  puts(lv)
+  counts = Hash.new(0)
+  Array.each(String.chars(moves)) do |m|
+    if m == "z"
+      counts[:undone] += 1 if Level.undo(lv)
+      next
+    end
+    counts[Level.move(lv, m)] += 1
+  end
+  stats = Array.map(Array.sort_by(Hash.keys(counts)) { Symbol.to_s(it) }) { |k| "#{k}=#{counts[k]}" }
+  puts("moves: #{String.size(moves)} (#{Array.join(stats, ", ")}), pushes kept: #{Level.get_pushes(lv)}")
+  puts(lv)
+  on_goal = Set.size(Level.get_boxes(lv) & Level.get_goals(lv))
+  puts(Level.solved?(lv) ? "SOLVED" : "unsolved: #{on_goal}/#{Set.size(Level.get_goals(lv))} boxes on goals")
+rescue ArgumentError => e
+  puts("cannot load: #{Exception.message(e)}")
+end
+
+play("first steps", Array['#######', '#     #', '# $@. #', '#     #', '#######'], "uulldrr")
+play("two boxes", Array['########', '#  .   #', '# $$ @ #', '#  .   #', '########'], "lzulldullddrulur")
+play("corner trap", Array['#####', '#@$.#', '# $ #', '#.  #', '#####'], "rdlddrzzdrr")
+play("no player", Array['####', '#$.#', '####'], "r")
+play("mismatch", Array['#####', '#@$$#', '#. ##', '#####'], "")

@@ -1,0 +1,1 @@
+../../corpus/18-collections/word_pipeline.rb

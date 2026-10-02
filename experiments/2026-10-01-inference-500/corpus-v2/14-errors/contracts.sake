@@ -1,0 +1,93 @@
+# Design-by-contract helpers shared through a mixin: preconditions, postconditions and invariants on two types.
+ContractViolation = Exception.new(:kind, :subject)
+
+module Contract
+  def require!(x, cond, what)
+    raise ContractViolation.new("precondition failed: #{what}", :pre, describe(x)) unless cond
+  end
+
+  def ensure!(x, cond, what)
+    raise ContractViolation.new("postcondition failed: #{what}", :post, describe(x)) unless cond
+  end
+
+  def check_invariant!(x)
+    problem = invariant_problem(x)
+    raise ContractViolation.new("invariant broken: #{problem}", :invariant, describe(x)) if problem
+    x
+  end
+end
+
+class Stack < {reader: [capacity, items]}
+  include Contract
+  def describe(s) = "Stack(#{Array.size(@items)}/#{@capacity})"
+  def invariant_problem(s) = Array.size(@items) > @capacity ? "size exceeds capacity" : nil
+
+  def push(s, v)
+    require!(s, Array.size(@items) < @capacity, "stack not full")
+    before = Array.size(@items)
+    Array.push(@items, v)
+    ensure!(s, Array.size(@items) == before + 1, "size grew by one")
+    check_invariant!(s)
+  end
+
+  def pop(s)
+    require!(s, !Array.empty?(@items), "stack not empty")
+    v = Array.pop(@items)
+    check_invariant!(s)
+    v
+  end
+end
+
+class Range2 < {accessor: [lo, hi]}
+  include Contract
+  def describe(r) = "Range2(#{@lo}, #{@hi})"
+  def invariant_problem(r) = @lo > @hi ? "lo > hi" : nil
+
+  def shift(r, d)
+    require!(r, d != 0, "non-zero shift")
+    @lo += d
+    @hi += d
+    check_invariant!(r)
+  end
+
+  def set_bounds(r, lo, hi)
+    @lo = lo
+    @hi = hi
+    check_invariant!(r)
+  end
+
+  def width(r)
+    w = @hi - @lo
+    ensure!(r, w >= 0, "width is non-negative")
+    w
+  end
+end
+
+def attempt(log, label)
+  yield
+  Array.push(log, [label, "ok", ""])
+rescue ContractViolation => e
+  Array.push(log, [label, Symbol.to_s(ContractViolation.get_kind(e)), "#{Exception.message(e)} on #{ContractViolation.get_subject(e)}"])
+end
+
+s = Stack.new(2, Array[])
+r = Range2.new(1, 5)
+log = Array[]
+attempt(log, "push 10") { Stack.push(s, 10) }
+attempt(log, "push 20") { Stack.push(s, 20) }
+attempt(log, "push 30") { Stack.push(s, 30) }
+attempt(log, "pop") { Stack.pop(s) }
+attempt(log, "pop") { Stack.pop(s) }
+attempt(log, "pop") { Stack.pop(s) }
+Array.push(Stack.get_items(s), 1, 2, 3)
+attempt(log, "check stack") { Contract.check_invariant!(s) }
+attempt(log, "shift 3") { Range2.shift(r, 3) }
+attempt(log, "shift 0") { Range2.shift(r, 0) }
+attempt(log, "bounds 9..2") { Range2.set_bounds(r, 9, 2) }
+attempt(log, "width") { Range2.width(r) }
+attempt(log, "bounds 0..4") { Range2.set_bounds(r, 0, 4) }
+attempt(log, "check range") { Contract.check_invariant!(r) }
+
+Array.each(log) { |label, status, detail| puts(format("%-12s %-9s %s", label, status, detail)) }
+counts = Array.tally(Array.map(log) { |label, status, detail| status })
+puts(Array.join(Array.map(Array.sort(Hash.keys(counts))) { |k| "#{k}=#{counts[k]}" }, " "))

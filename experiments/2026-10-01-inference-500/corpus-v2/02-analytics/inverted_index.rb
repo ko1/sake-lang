@@ -1,0 +1,1 @@
+../../corpus/02-analytics/inverted_index.rb

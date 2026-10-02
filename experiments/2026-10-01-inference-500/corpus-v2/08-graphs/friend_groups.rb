@@ -1,0 +1,1 @@
+../../corpus/08-graphs/friend_groups.rb

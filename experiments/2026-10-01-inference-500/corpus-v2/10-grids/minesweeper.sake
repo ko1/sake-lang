@@ -1,0 +1,113 @@
+Cell = Struct.new(:mine, :adjacent, :state)
+Field = Struct.new(:rows, :cols, :cells, :status)
+MineHit = Exception.new(:row, :col)
+
+class Field
+  def build(rows, cols, mines)
+    cells = Range.map(0...rows) { Range.map(0...cols) { Cell.new(false, 0, :hidden) } }
+    f = Field.new(rows, cols, cells, :playing)
+    Array.each(mines) do |r, c|
+      Cell.set_mine(cells[r][c], true)
+      Array.each(around(f, r, c)) do |nr, nc|
+        cell = cells[nr][nc]
+        Cell.set_adjacent(cell, Cell.get_adjacent(cell) + 1)
+      end
+    end
+    f
+  end
+
+  def around(f, r, c)
+    out = Array[]
+    Range.each(-1..1) do |dr|
+      Range.each(-1..1) do |dc|
+        next if dr == 0 && dc == 0
+        nr = r + dr
+        nc = c + dc
+        Array.push(out, [nr, nc]) if nr >= 0 && nr < @rows && nc >= 0 && nc < @cols
+      end
+    end
+    out
+  end
+
+  def at(f, r, c) = @cells[r][c]
+
+  def reveal(f, r, c)
+    start = at(f, r, c)
+    return 0 if Cell.get_state(start) != :hidden
+    raise MineHit.new("boom", r, c) if Cell.get_mine(start)
+    opened = 0
+    stack = Array[[r, c]]
+    until Array.empty?(stack)
+      cr, cc = Array.pop(stack)
+      cell = at(f, cr, cc)
+      next if Cell.get_state(cell) != :hidden || Cell.get_mine(cell)
+      Cell.set_state(cell, :open)
+      opened += 1
+      if Cell.get_adjacent(cell) == 0
+        Array.each(around(f, cr, cc)) { |pos| Array.push(stack, pos) }
+      end
+    end
+    opened
+  end
+
+  def toggle_flag(f, r, c)
+    cell = at(f, r, c)
+    case Cell.get_state(cell)
+    in :hidden then Cell.set_state(cell, :flagged)
+    in :flagged then Cell.set_state(cell, :hidden)
+    in :open then nil
+    end
+  end
+
+  def won?(f) = Array.all?(@cells) { |row| Array.all?(row) { |cell| Cell.get_mine(cell) || Cell.get_state(cell) == :open } }
+
+  def glyph(cell, show_all)
+    state = Cell.get_state(cell)
+    state = :open if show_all && Cell.get_mine(cell)
+    case state
+    in :hidden then "#"
+    in :flagged then "F"
+    in :open
+      if Cell.get_mine(cell)
+        "*"
+      else
+        n = Cell.get_adjacent(cell)
+        n == 0 ? "." : Integer.to_s(n)
+      end
+    end
+  end
+
+  def render(f, show_all)
+    Array.join(Array.map(@cells) { |row| Array.join(Array.map(row) { |cell| glyph(cell, show_all) }) }, "\n")
+  end
+end
+
+def play(title, rows, cols, mines, moves)
+  puts("=== #{title} ===")
+  f = Field.build(rows, cols, mines)
+  Array.each(moves) do |kind, r, c|
+    next if Field.get_status(f) != :playing
+    if kind == :flag
+      Field.toggle_flag(f, r, c)
+      puts("flag #{r},#{c} -> #{Cell.get_state(Field.at(f, r, c))}")
+    else
+      begin
+        n = Field.reveal(f, r, c)
+        puts("open #{r},#{c} -> #{n} cells")
+        Field.set_status(f, :won) if Field.won?(f)
+      rescue MineHit => e
+        puts("open #{r},#{c} -> #{Exception.message(e)} at #{MineHit.get_row(e)},#{MineHit.get_col(e)}")
+        Field.set_status(f, :lost)
+      end
+    end
+  end
+  puts(Field.render(f, Field.get_status(f) == :lost))
+  flags = Array.sum(Array.map(Field.get_cells(f)) { |row| Array.count(row) { Cell.get_state(it) == :flagged } })
+  puts("status: #{Field.get_status(f)}, flags: #{flags}/#{Array.size(mines)}")
+end
+
+mines = Array[[0, 3], [1, 6], [3, 1], [4, 4], [5, 7], [6, 0]]
+play("careful", 7, 8, mines, Array[[:open, 0, 0], [:flag, 0, 3], [:open, 6, 7], [:open, 3, 7], [:open, 2, 3],
+  [:open, 6, 3], [:open, 3, 0], [:open, 5, 0], [:open, 0, 7], [:open, 4, 0], [:open, 6, 1], [:open, 0, 4], [:open, 0, 5], [:open, 0, 6], [:open, 1, 7], [:open, 6, 0]])
+play("reckless", 7, 8, mines, Array[[:open, 3, 4], [:flag, 4, 4], [:flag, 4, 4], [:open, 4, 4], [:open, 0, 0]])
+play("tiny", 2, 2, Array[[1, 1]], Array[[:open, 0, 0], [:open, 0, 1], [:open, 1, 0]])

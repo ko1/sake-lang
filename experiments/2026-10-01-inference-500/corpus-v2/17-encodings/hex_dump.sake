@@ -1,0 +1,84 @@
+# xxd-style hex dump of a byte buffer, the reverse operation (parsing a dump back into
+# bytes), and a byte-level comparison of two buffers.
+
+def printable(b) = b >= 32 && b < 127 ? Integer.chr(b) : "."
+
+def dump_lines(bytes, width)
+  lines = String[]
+  offset = 0
+  Array.each_slice(bytes, width) do |row|
+    groups = Array[]
+    Array.each_slice(row, 2) { |pair| Array.push(groups, Array.join(Array.map(pair) { |b| format("%02x", b) }, "")) }
+    hex = Array.join(groups, " ")
+    full = width / 2 * 5 - 1
+    ascii = Array.join(Array.map(row) { |b| printable(b) }, "")
+    Array.push(lines, format("%08x: %s  %s", offset, String.ljust(hex, full), ascii))
+    offset += width
+  end
+  lines
+end
+
+def parse_dump(lines)
+  bytes = Integer[]
+  expected = 0
+  Array.each(lines) do |line|
+    m = String.match(line, /\A([0-9a-f]{8}): ((?:[0-9a-f]{2,4} ?)+)/)
+    raise ArgumentError, "unparseable line: #{line}" if m == nil
+    offset = String.hex(m[1])
+    raise ArgumentError, format("offset %x, expected %x", offset, expected) if offset != expected
+    Array.each(String.split(String.strip(m[2]), " ")) do |group|
+      Array.each(String.scan(group, /../)) { |h| Array.push(bytes, String.hex(h)) }
+    end
+    expected = Array.size(bytes)
+  end
+  bytes
+end
+
+def compare(a, b)
+  diffs = Array[]
+  n = Array.size(a) > Array.size(b) ? Array.size(a) : Array.size(b)
+  Integer.times(n) do |i|
+    x = a[i]
+    y = b[i]
+    Array.push(diffs, [i, x, y]) if x != y
+  end
+  diffs
+end
+
+def show(v) = v == nil ? "--" : format("%02x", v)
+
+text = "Sake-lang\x00\x01\x02 dumps bytes: \x7f\xff\xfe and tabs\tand\nnewlines.\r\n"
+bytes = String.bytes(text)
+lines = dump_lines(bytes, 16)
+Array.each(lines) { |l| puts(l) }
+
+back = parse_dump(lines)
+puts("parsed back #{Array.size(back)} bytes, identical=#{back == bytes}")
+
+puts("-- 8 wide --")
+Array.each(dump_lines(Array.take(bytes, 20), 8)) { |l| puts(l) }
+
+puts("-- compare --")
+patched = Array.dup(bytes)
+patched[0] = 0x73
+patched[12] = 0x41
+Array.push(patched, 0x00, 0x2a)
+diffs = compare(bytes, patched)
+Array.each(diffs) do |i, x, y|
+  puts(format("  @%04x  %s -> %s", i, show(x), show(y)))
+end
+puts("#{Array.size(diffs)} differences")
+
+puts("-- bad dumps --")
+bad_dumps = Array[
+  Array["00000000: 4142 4344  ABCD", "00000010: 4546  EF"],
+  Array["00000000: 4142  AB", "garbage"]
+]
+Array.each(bad_dumps) do |dump|
+  begin
+    parse_dump(dump)
+    puts("ok")
+  rescue ArgumentError => e
+    puts("error: #{Exception.message(e)}")
+  end
+end

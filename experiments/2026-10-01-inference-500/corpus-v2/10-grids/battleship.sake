@@ -1,0 +1,137 @@
+PlacementError = Exception.new(:ship)
+BadCoordinate = Exception.new(:text)
+
+module Coord
+  module_function
+
+  def parse(text, size)
+    m = String.match(String.upcase(String.strip(text)), /\A([A-Z])(\d+)\z/)
+    raise BadCoordinate.new("cannot read coordinate", text) unless m
+    row = String.ord(m[1]) - String.ord("A")
+    col = String.to_i(m[2]) - 1
+    raise BadCoordinate.new("off the board", text) if row >= size || col < 0 || col >= size
+    [row, col]
+  end
+
+  def name(pos)
+    r, c = pos
+    "#{Integer.chr(String.ord("A") + r)}#{c + 1}"
+  end
+end
+
+Ship = Struct.new(:name, :cells, :hits)
+
+class Ship
+  def sunk?(s) = Set.size(@hits) == Array.size(@cells)
+
+  def occupies?(s, pos) = Array.include?(@cells, pos)
+end
+
+Ocean = Struct.new(:size, :ships, :shots)
+
+class Ocean
+  def create(size) = Ocean.new(size, Ship[], Hash[])
+
+  def place(o, name, start, length, dir)
+    r, c = Coord.parse(start, @size)
+    dr, dc = dir == :across ? [0, 1] : [1, 0]
+    cells = Range.map(0...length) { |i| [r + dr * i, c + dc * i] }
+    Array.each(cells) do |cell|
+      cr, cc = cell
+      raise PlacementError.new("runs off the board at #{Coord.name(cell)}", name) if cr >= @size || cc >= @size
+      clash = ship_at(o, cell)
+      raise PlacementError.new("overlaps #{Ship.get_name(clash)} at #{Coord.name(cell)}", name) if clash
+    end
+    Array.push(@ships, Ship.new(name, cells, Set[]))
+  end
+
+  def fire(o, text)
+    pos = Coord.parse(text, @size)
+    return :repeat if Hash.key?(@shots, pos)
+    target = ship_at(o, pos)
+    unless target
+      @shots[pos] = :miss
+      return :miss
+    end
+    @shots[pos] = :hit
+    Set.add(Ship.get_hits(target), pos)
+    Ship.sunk?(target) ? :sunk : :hit
+  end
+
+  def ship_at(o, pos) = Array.find(@ships) { |s| Ship.occupies?(s, pos) }
+
+  def defeated?(o) = Array.all?(@ships) { Ship.sunk?(it) }
+
+  def to_s(o)
+    header = "   #{Array.join(Range.map(1..@size) { String.ljust(Integer.to_s(it), 2) })}"
+    rows = Range.map(0...@size) do |r|
+      cells = Range.map(0...@size) do |c|
+        mark = @shots[[r, c]]
+        if mark == :hit
+          "X "
+        elsif mark == :miss
+          "o "
+        else
+          ship_at(o, [r, c]) ? "# " : ". "
+        end
+      end
+      "#{Integer.chr(String.ord("A") + r)}  #{String.rstrip(Array.join(cells))}"
+    end
+    Array.unshift(rows, header)
+    Array.join(rows, "\n")
+  end
+end
+
+def setup(o, fleet)
+  Array.each(fleet) do |name, start, length, dir|
+    Ocean.place(o, name, start, length, dir)
+    puts("placed #{name} at #{start} #{dir}")
+  rescue PlacementError => e
+    puts("cannot place #{PlacementError.get_ship(e)}: #{Exception.message(e)}")
+  rescue BadCoordinate => e
+    puts("cannot place #{name}: #{Exception.message(e)} (#{BadCoordinate.get_text(e)})")
+  end
+end
+
+ocean = Ocean.create(8)
+setup(ocean, Array[
+  ["carrier", "B2", 5, :across],
+  ["battleship", "A8", 4, :down],
+  ["cruiser", "D4", 3, :down],
+  ["submarine", "C3", 3, :down],
+  ["destroyer", "G6", 2, :across],
+  ["patrol", "H1", 3, :across],
+  ["raft", "A4", 2, :down],
+  ["dinghy", "Z9", 1, :across],
+  ["sloop", "F7", 4, :across],
+])
+puts(ocean)
+
+shots = Array["b2", "B3", "C5", "d4", "E4", "F4", "a8", "B8", "C8", "D8", "G6", "g7", "q1", "B4", "B5", "B6", "B2", "H1", "H2", "H3", "A1", "C3", "D3", "E3", "A2"]
+tally = Hash.new(0)
+finished = false
+Array.each(shots) do |shot|
+  next if finished
+  begin
+    result = Ocean.fire(ocean, shot)
+    tally[result] += 1
+    if result == :sunk
+      pos = Coord.parse(shot, Ocean.get_size(ocean))
+      sunk = Ocean.ship_at(ocean, pos)
+      puts("#{shot}: sunk #{sunk ? Ship.get_name(sunk) : "?"}")
+    else
+      puts("#{shot}: #{result}")
+    end
+  rescue BadCoordinate => e
+    tally[:invalid] += 1
+    puts("#{shot}: #{Exception.message(e)}")
+  end
+  if Ocean.defeated?(ocean)
+    puts("fleet destroyed")
+    finished = true
+  end
+end
+puts(ocean)
+afloat = Array.map(Array.reject(Ocean.get_ships(ocean)) { Ship.sunk?(it) }) { Ship.get_name(it) }
+puts("afloat: #{Array.join(afloat, ", ")}")
+puts(Array.join(Array.map(Array.sort_by(Hash.keys(tally)) { Symbol.to_s(it) }) { |k| "#{k}=#{tally[k]}" }, " "))

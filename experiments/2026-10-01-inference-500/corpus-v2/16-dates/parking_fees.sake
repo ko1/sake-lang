@@ -1,0 +1,122 @@
+# Parking fees from entry/exit timestamps: a grace period, day and night
+# tariffs charged per started block, a daily cap per calendar day, weekend
+# rates, and monthly pass holders.
+
+Tariff = Struct.new(:day_block, :day_rate, :night_block, :night_rate, :daily_cap, :grace)
+Visit = Struct.new(:plate, :entry, :exit)
+BadVisit = Exception.new(:plate)
+
+def days_from_civil(y, m, d)
+  y -= 1 if m <= 2
+  era = y / 400
+  yoe = y - era * 400
+  doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+end
+
+def ts(s)
+  m = String.match(s, /\A(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})\z/)
+  raise ArgumentError, "bad timestamp: #{s}" unless m
+  y, mo, d, h, mi = Array.map(MatchData.captures(m)) { |x| String.to_i(x) }
+  raise ArgumentError, "no such time: #{s}" if h > 23 || mi > 59
+  (days_from_civil(y, mo, d) * 24 + h) * 60 + mi
+end
+
+def weekend?(minute) = (minute / 1440 + 4) % 7 >= 5
+
+def night?(minute)
+  h = (minute % 1440) / 60
+  h >= 20 || h < 7
+end
+
+def weekday_tariff = Tariff.new(30, 250, 60, 150, 2400, 15)
+def weekend_tariff = Tariff.new(60, 300, 60, 150, 1800, 15)
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+class Tariff
+  # Charge one calendar day's portion [from, to): blocks start at `from` and
+  # take the rate of the period they start in.
+  def charge_day(t, from, to)
+    cents = 0
+    at = from
+    while at < to
+      if night?(at)
+        cents += @night_rate
+        at += @night_block
+      else
+        cents += @day_rate
+        at += @day_block
+      end
+    end
+    Array.min(Array[cents, @daily_cap])
+  end
+end
+
+def fee(visit, passes)
+  entry = Visit.get_entry(visit)
+  leave = Visit.get_exit(visit)
+  raise BadVisit.new("exit before entry", Visit.get_plate(visit)) if leave < entry
+  return [0, "pass"] if Set.include?(passes, Visit.get_plate(visit))
+  return [0, "grace"] if leave - entry <= Tariff.get_grace(weekday_tariff)
+  total = 0
+  parts = Array[]
+  day_start = entry
+  while day_start < leave
+    midnight = (day_start / 1440 + 1) * 1440
+    day_end = Array.min(Array[midnight, leave])
+    tariff = weekend?(day_start) ? weekend_tariff : weekday_tariff
+    c = Tariff.charge_day(tariff, day_start, day_end)
+    total += c
+    Array.push(parts, money(c))
+    day_start = day_end
+  end
+  [total, Array.join(parts, "+")]
+end
+
+def raw_visits
+  Array[
+    ["KA-101", "2026-09-28 08:10", "2026-09-28 08:20"],
+    ["KA-102", "2026-09-28 08:10", "2026-09-28 09:45"],
+    ["KA-103", "2026-09-28 18:30", "2026-09-28 22:10"],
+    ["KA-104", "2026-09-28 07:00", "2026-09-28 19:00"],
+    ["KA-105", "2026-09-29 22:00", "2026-09-30 08:30"],
+    ["KA-106", "2026-10-02 17:00", "2026-10-05 09:00"],
+    ["KA-107", "2026-10-03 10:00", "2026-10-03 13:00"],
+    ["PASS-1", "2026-09-28 06:00", "2026-09-28 23:00"],
+    ["KA-108", "2026-09-30 12:00", "2026-09-30 11:00"],
+    ["KA-109", "2026-09-30 25:00", "2026-09-30 26:00"]
+  ]
+end
+
+passes = Set["PASS-1"]
+revenue = Hash.new(0)
+stays = Array[]
+Array.each(raw_visits) do |plate, a, b|
+  begin
+    visit = Visit.new(plate, ts(a), ts(b))
+    cents, how = fee(visit, passes)
+    mins = Visit.get_exit(visit) - Visit.get_entry(visit)
+    Array.push(stays, [plate, mins, cents])
+    revenue[String.split(a, " ")[0]] += cents
+    puts(format("%-7s %s -> %s  %3dh%02dm  %7s  %s", plate, a, String.split(b, " ")[1], mins / 60, mins % 60, money(cents), how))
+  rescue BadVisit => e
+    puts(format("%-7s rejected: %s", BadVisit.get_plate(e), Exception.message(e)))
+  rescue ArgumentError => e
+    puts(format("%-7s rejected: %s", plate, Exception.message(e)))
+  end
+end
+
+puts
+puts("Revenue by entry day:")
+Array.each(Array.sort(Hash.keys(revenue))) { |day| puts("  #{day}  #{money(revenue[day])}") }
+paying = Array.select(stays) { |plate, mins, cents| cents > 0 }
+total = Array.sum(Array.map(paying) { |plate, mins, cents| cents })
+hours = Array.sum(Array.map(paying) { |plate, mins, cents| mins })
+puts("Paying visits: #{Array.size(paying)}, total #{money(total)}, average #{money(total / Array.size(paying))}")
+puts("Average per hour parked: #{money(total * 60 / hours)}")
+longest = Array.max_by(stays) { |plate, mins, cents| mins }
+if longest
+  plate, mins, cents = longest
+  puts("Longest stay: #{plate} #{mins / 1440}d #{mins % 1440 / 60}h, paid #{money(cents)}")
+end

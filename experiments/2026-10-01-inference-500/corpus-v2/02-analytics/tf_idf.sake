@@ -1,0 +1,102 @@
+def corpus
+  Hash[
+    "apples" => "apples and oranges are fruit. apples grow on trees and apples are sweet.",
+    "trees" => "oak trees and pine trees grow tall. trees need water and sun.",
+    "juice" => "orange juice and apple juice are sweet drinks made from fruit.",
+    "garden" => "a garden needs water, sun and care. fruit trees in the garden grow slowly.",
+    "market" => "the market sells fruit, juice and fresh bread every morning."
+  ]
+end
+
+def stop?(w) = Array.include?(Array["a", "and", "are", "the", "on", "in", "from", "every"], w)
+
+def terms(text)
+  ws = String.split(String.downcase(text), /[^a-z]+/)
+  Array.reject(ws) { |w| String.empty?(w) || stop?(w) }
+end
+
+def term_freqs(words)
+  tf = Hash.new(0)
+  Array.each(words) { |w| tf[w] += 1 }
+  total = Array.size(words)
+  Hash.transform_values(tf) { |c| c * 1.0 / total }
+end
+
+def doc_freqs(docs)
+  df = Hash.new(0)
+  Hash.each(docs) { |name, words| Array.each(Array.uniq(words)) { |w| df[w] += 1 } }
+  df
+end
+
+def tfidf_vectors(docs)
+  n = Hash.size(docs)
+  df = doc_freqs(docs)
+  idf = Hash.transform_values(df) { |c| Math.log(n * 1.0 / c) }
+  vectors = Hash[]
+  Hash.each(docs) do |name, words|
+    vec = Hash[]
+    Hash.each(term_freqs(words)) { |w, f| vec[w] = f * idf[w] }
+    vectors[name] = vec
+  end
+  [vectors, idf]
+end
+
+def norm(vec) = Math.sqrt(Hash.sum(vec) { |w, x| x * x })
+
+def cosine(a, b)
+  dot = 0.0
+  Hash.each(a) do |w, x|
+    y = b[w]
+    dot += x * y if y
+  end
+  na = norm(a)
+  nb = norm(b)
+  return 0.0 if na == 0.0 || nb == 0.0
+  dot / (na * nb)
+end
+
+def top_terms(vec, k)
+  sorted = Hash.sort_by(vec) { |w, x| [-x, w] }
+  Array.take(Array.select(sorted) { |w, x| x > 0.0 }, k)
+end
+
+docs = Hash.transform_values(corpus) { |text| terms(text) }
+vectors, idf = tfidf_vectors(docs)
+
+puts("documents: #{Hash.size(docs)}, vocabulary: #{Hash.size(idf)}")
+everywhere = Array.sort(Hash.keys(Hash.select(idf) { |w, v| v < 0.6 }))
+puts("common terms (idf < 0.6): #{Array.join(everywhere, ", ")}")
+
+Hash.each(vectors) do |name, vec|
+  parts = Array.map(top_terms(vec, 3)) { |w, x| format("%s(%.3f)", w, x) }
+  puts(format("%-7s %s", name, Array.join(parts, " ")))
+end
+
+names = Array.sort(Hash.keys(vectors))
+puts("cosine similarity:")
+puts("        " + Array.join(Array.map(names) { |n| format("%7s", n) }))
+Array.each(names) do |a|
+  row = Array.map(names) { |b| format("%7.3f", cosine(vectors[a], vectors[b])) }
+  puts(format("%-8s", a) + Array.join(row))
+end
+
+best = nil
+best_score = -1.0
+Array.each_with_index(names) do |a, i|
+  Array.each(Array.drop(names, i + 1)) do |b|
+    s = cosine(vectors[a], vectors[b])
+    if s > best_score
+      best_score = s
+      best = [a, b]
+    end
+  end
+end
+if best
+  a, b = best
+  puts(format("most similar pair: %s / %s (%.3f)", a, b, best_score))
+end
+
+query = terms("sweet fruit juice")
+scores = Hash.map(vectors) { |name, vec| [name, Array.sum(query) { |w| vec[w] || 0.0 }] }
+ranked = Array.sort_by(scores) { |n, s| [-s, n] }
+puts("query 'sweet fruit juice': " + Array.join(Array.map(ranked) { |n, s| format("%s=%.3f", n, s) }, " "))

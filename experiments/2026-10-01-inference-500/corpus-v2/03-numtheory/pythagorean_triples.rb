@@ -1,0 +1,1 @@
+../../corpus/03-numtheory/pythagorean_triples.rb

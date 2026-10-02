@@ -1,0 +1,1 @@
+../../corpus/06-linked/skip_list_index.rb

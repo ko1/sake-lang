@@ -1,0 +1,1 @@
+../../corpus/10-grids/chess_attacks.rb

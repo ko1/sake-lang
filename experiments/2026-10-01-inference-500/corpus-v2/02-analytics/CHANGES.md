@@ -1,0 +1,27 @@
+# CHANGES (02-analytics, corpus-v2)
+
+- access_log_urls: `Array.join(out)` without the `""` separator; search terms sorted by the Tuple key `[-n, t]` instead of the packed String key `format("%03d %s", 100 - n, t)`.
+- anagram_groups: `signature` uses `Array.join(...)` without the `""` separator.
+- autocomplete: suggestions sorted by `[-c, w]` instead of `format("%04d%s", 9999 - c, w)`; widest prefix picked by `[Array.size(v), -String.size(k)]` instead of the packed number `size * 10 - len`.
+- caesar_crack: histogram sorted by `[-n, c]` instead of the packed number `0 - n * 100 + String.ord(c)`; `Array.join` without `""`.
+- cooccurrence_pmi: the two-pass sort (`a + " " + b`, then `0.0 - s`) became one Tuple sort key `[-s, a, b]`.
+- csv_pivot: `Array.join` without `""` (2 places).
+- email_domains: unchanged.
+- hashtag_trends: trend ranking sorted by `[-s, t]` instead of `format("%08.3f %s", 100.0 - s, t)`; `Array.join` without `""` (2 places).
+- inverted_index: unary minus `-Hash.size(...)` instead of `0 - Hash.size(...)`.
+- kwic_concordance: collocates sorted by `[-n, w]` instead of `format("%03d %s", 999 - n, w)`; `!Set.include?(...)` instead of `== false`; unused position bound to `_`.
+- language_guess: profile ranked by `[-n, g]` instead of `format("%04d%s", 9999 - n, g)`; tie-break key `[d, Array.index(langs, lang)]` instead of the packed `d * 100 + index`; ranked pair destructured (`g, _ = pair`) instead of `pair[0]`; `Array.join(cells)` without `""`; unused `second_lang` became `_`.
+- log_summary: `Array.join` without `""` (2 places).
+- markov_text: unchanged.
+- naive_bayes: indicative words sorted by `[-r, w]` instead of `format("%09.4f %s", 100.0 - r, w)`; misses filtered by destructuring the confusion key (`want, got = pair`) instead of `pair[0] != pair[1]`.
+- near_duplicates: `Array.first(g)` instead of `g[0]` (as Ruby's `map(&:first)`).
+- ngram_counts: the `Gram` Struct with a hand-written `<=>` removed; ranking is `Hash.sort_by(counts) { |k, c| [-c, k] }`; `Array.each_cons(tokens, 2) do |a, b|` instead of `window[0]`, `window[1]`.
+- rake_keywords: `Array.each_cons(words, 3) do |a, mid, b|` instead of `tri[0..2]`; `!Set.include?(...)` instead of `== false`; word scores sorted by `[-Scoring.ratio(...), w]` instead of `format("%08.3f %s", 100.0 - ratio, w)`. `Keyword`'s `<=>` is kept (a real data type sorted in four places; the Ruby version defines it too).
+- readability: most-syllables word picked by `[n, String.size(w)]` instead of the packed `n * 100 + size`.
+- rhyme_scheme: unchanged.
+- sentiment_lexicon: unary minus (`value = -value`, `-Array.sum(scores) / ...`) instead of `0.0 - ...`; `Array.join(cells)` without `""`.
+- soundex_index: unchanged.
+- spell_suggest: `known` is `Set.select(words) { ... }` (an Array, as in Ruby) instead of `Set.each` + `Set.add`; `best` takes a Set or an Array with `(Set|Array).sort(cands)`; `Array.empty?(one)`.
+- tf_idf: the two-pass sorts (`w` then `0.0 - x`; `n` then `0.0 - s`) became Tuple keys `[-x, w]` and `[-s, n]`; `Array.join` without `""` (2 places).
+- vocabulary_growth: Zipf ranking sorted by `[-c, w]` instead of `format("%04d %s", 1000 - c, w)`.
+- word_frequency: the `Rank` Struct with a hand-written `<=>` (and its `to_s`) removed; `top_n` is `Hash.sort_by(counts) { |w, c| [-c, w] }`, with the line formatted at the print site.

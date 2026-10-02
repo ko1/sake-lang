@@ -1,0 +1,113 @@
+# Validate user registration submissions and accumulate every error per form.
+Submission = Struct.new(:username, :email, :age, :password, :confirm, :country)
+FieldError = Struct.new(:field, :message)
+
+def allowed_countries = Set["JP", "US", "DE", "FR", "BR"]
+def reserved_names = Array["admin", "root", "system"]
+
+module Rules
+  module_function
+
+  def username(s, errors)
+    name = Submission.get_username(s)
+    if String.empty?(String.strip(name))
+      Array.push(errors, FieldError.new("username", "is required"))
+      return
+    end
+    len = String.length(name)
+    if len < 3 || len > 12
+      Array.push(errors, FieldError.new("username", "must be 3-12 characters (got #{len})"))
+    end
+    unless String.match?(name, /\A[a-z][a-z0-9_]*\z/)
+      Array.push(errors, FieldError.new("username", "may contain only lowercase letters, digits and _"))
+    end
+    if Array.include?(reserved_names, String.downcase(name))
+      Array.push(errors, FieldError.new("username", "is reserved"))
+    end
+  end
+
+  def email(s, errors)
+    mail = Submission.get_email(s)
+    parts = String.split(mail, "@")
+    if Array.size(parts) != 2
+      Array.push(errors, FieldError.new("email", "must contain exactly one @"))
+      return
+    end
+    local, domain = parts
+    Array.push(errors, FieldError.new("email", "local part is empty")) if String.empty?(local)
+    unless String.include?(domain, ".")
+      Array.push(errors, FieldError.new("email", "domain needs a dot"))
+    end
+  end
+
+  def age(s, errors)
+    raw = Submission.get_age(s)
+    value = Integer(raw) rescue nil
+    if value == nil
+      Array.push(errors, FieldError.new("age", "is not a number: #{raw}"))
+    elsif value < 13
+      Array.push(errors, FieldError.new("age", "must be at least 13"))
+    elsif value > 120
+      Array.push(errors, FieldError.new("age", "looks wrong (#{value})"))
+    end
+  end
+
+  def password(s, errors)
+    pw = Submission.get_password(s)
+    missing = Array[]
+    Array.push(missing, "a digit") unless String.match?(pw, /\d/)
+    Array.push(missing, "an uppercase letter") unless String.match?(pw, /[A-Z]/)
+    Array.push(missing, "8 characters") if String.length(pw) < 8
+    if !Array.empty?(missing)
+      Array.push(errors, FieldError.new("password", "needs #{Array.join(missing, ", ")}"))
+    end
+    if pw != Submission.get_confirm(s)
+      Array.push(errors, FieldError.new("confirm", "does not match password"))
+    end
+  end
+
+  def country(s, errors)
+    c = String.upcase(Submission.get_country(s))
+    unless Set.include?(allowed_countries, c)
+      Array.push(errors, FieldError.new("country", "#{c} is not supported"))
+    end
+  end
+end
+
+def validate(s)
+  errors = Array[]
+  Rules.username(s, errors)
+  Rules.email(s, errors)
+  Rules.age(s, errors)
+  Rules.password(s, errors)
+  Rules.country(s, errors)
+  errors
+end
+
+submissions = Array[
+  Submission.new("alice_01", "alice@example.com", "29", "Secret123", "Secret123", "jp"),
+  Submission.new("Bob", "bob-at-example.com", "x9", "short", "shorter", "uk"),
+  Submission.new("admin", "admin@localhost", "8", "Password1", "Password1", "us"),
+  Submission.new("   ", "@example.org", "130", "lowercase1", "lowercase1", "de"),
+  Submission.new("carol", "carol@mail.example", "45", "Carol2026!", "Carol2026!", "br")
+]
+
+by_field = Hash.new(0)
+accepted = 0
+Array.each_with_index(submissions) do |s, i|
+  errors = validate(s)
+  if Array.empty?(errors)
+    accepted += 1
+    puts("##{i + 1} #{Submission.get_username(s)}: OK")
+  else
+    puts("##{i + 1} #{String.strip(Submission.get_username(s))}: #{Array.size(errors)} error(s)")
+    Array.each(errors) do |e|
+      puts("    #{FieldError.get_field(e)} #{FieldError.get_message(e)}")
+      by_field[FieldError.get_field(e)] += 1
+    end
+  end
+end
+puts("accepted #{accepted}/#{Array.size(submissions)}")
+Array.each(Hash.sort_by(by_field) { |f, n| [-n, f] }) do |f, n|
+  puts(format("%-9s %d", f, n))
+end

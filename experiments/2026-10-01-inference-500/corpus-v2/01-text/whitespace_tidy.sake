@@ -1,0 +1,106 @@
+Change = Struct.new(:kind, :line_no, :detail)
+
+def expand_tabs(line, tab)
+  out = ""
+  String.each_char(line) do |c|
+    if c == "\t"
+      out += " " * (tab - String.size(out) % tab)
+    else
+      out += c
+    end
+  end
+  out
+end
+
+def leading(line) = String.size(line) - String.size(String.lstrip(line))
+
+def blank?(line) = String.empty?(String.strip(line))
+
+def dedent(lines)
+  indents = Array.map(Array.reject(lines) { |l| blank?(l) }) { |l| leading(l) }
+  cut = Array.min(indents)
+  cut = 0 if cut == nil
+  [Array.map(lines) { |l| blank?(l) ? "" : l[cut..] }, cut]
+end
+
+def guess_unit(lines)
+  steps = Hash.new(0)
+  prev = 0
+  Array.each(lines) do |l|
+    next if blank?(l)
+    ind = leading(l)
+    steps[ind - prev] += 1 if ind > prev
+    prev = ind
+  end
+  return 0 if Hash.empty?(steps)
+  unit, _ = Hash.max_by(steps) { |step, count| [count, -step] }
+  unit
+end
+
+def reindent(lines, from_unit, to_unit)
+  return lines if from_unit == 0
+  Array.map(lines) do |l|
+    ind = leading(l)
+    level, extra = Integer.divmod(ind, from_unit)
+    " " * (level * to_unit + extra) + String.lstrip(l)
+  end
+end
+
+def collapse_blank_runs(lines)
+  out = Array[]
+  Array.each(lines) do |l|
+    next if String.empty?(l) && (Array.empty?(out) || Array.last(out) == "")
+    Array.push(out, l)
+  end
+  Array.pop(out) while !Array.empty?(out) && Array.last(out) == ""
+  out
+end
+
+def tidy(text, tab, to_unit)
+  changes = Change[]
+  raw = String.split(text, "\n")
+  expanded = Array[]
+  Array.each_with_index(raw) do |l, i|
+    e = expand_tabs(l, tab)
+    Array.push(changes, Change.new(:tabs, i + 1, "#{String.count(l, "\t")} tab(s)")) if e != l
+    stripped = String.rstrip(e)
+    if stripped != e && !blank?(e)
+      Array.push(changes, Change.new(:trailing, i + 1, "#{String.size(e) - String.size(stripped)} space(s)"))
+    end
+    Array.push(expanded, stripped)
+  end
+  lines, cut = dedent(expanded)
+  Array.push(changes, Change.new(:dedent, 0, "removed #{cut} columns")) if cut > 0
+  unit = guess_unit(lines)
+  lines = reindent(lines, unit, to_unit)
+  Array.push(changes, Change.new(:reindent, 0, "#{unit} -> #{to_unit}")) if unit != to_unit && unit > 0
+  before = Array.size(lines)
+  lines = collapse_blank_runs(lines)
+  removed = before - Array.size(lines)
+  Array.push(changes, Change.new(:blank, 0, "dropped #{removed} blank line(s)")) if removed > 0
+  [lines, changes]
+end
+
+def samples
+  Array[
+    "        def greet(name)\n            if name   \n\t\tputs \"hi \" + name\n            end\n\n\n\n        end\n\n",
+    "\tlist:\n\t\t- one\n\t\t- two  \n\t\t\t- two.a\n",
+    "already\n  tidy\n    text\n"
+  ]
+end
+
+Array.each_with_index(samples) do |text, i|
+  lines, changes = tidy(text, 8, 2)
+  puts("=== sample #{i + 1}: #{Array.size(String.split(text, "\n"))} -> #{Array.size(lines)} lines")
+  Array.each(lines) { |l| puts("  |" + l) }
+  if Array.empty?(changes)
+    puts("  (no changes)")
+  else
+    Array.each(changes) do |c|
+      where = Change.get_line_no(c) > 0 ? "line #{Change.get_line_no(c)}" : "file"
+      puts("  * #{String.ljust(Symbol.to_s(Change.get_kind(c)), 9)} #{String.ljust(where, 8)} #{Change.get_detail(c)}")
+    end
+  end
+  counts = Array.tally(Array.map(changes) { |c| Change.get_kind(c) })
+  puts("  summary: " + Array.join(Hash.map(counts) { |k, v| "#{k}=#{v}" }, " "))
+end

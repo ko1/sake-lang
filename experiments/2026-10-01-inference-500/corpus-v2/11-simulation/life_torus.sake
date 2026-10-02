@@ -1,0 +1,107 @@
+World = Struct.new(:width, :height, :alive, :generation)
+
+class World
+  def parse(rows)
+    alive = Set[]
+    Array.each_with_index(rows) do |row, y|
+      Array.each_with_index(String.chars(row)) do |ch, x|
+        Set.add(alive, [x, y]) if ch == "#"
+      end
+    end
+    World.new(String.size(Array.fetch(rows, 0)), Array.size(rows), alive, 0)
+  end
+
+  def wrap(w, x, y) = [(x + @width) % @width, (y + @height) % @height]
+
+  def neighbor_counts(w)
+    counts = Hash.new(0)
+    Set.each(@alive) do |x, y|
+      Array.each(Array[-1, 0, 1]) do |dy|
+        Array.each(Array[-1, 0, 1]) do |dx|
+          next if dx == 0 && dy == 0
+          counts[wrap(w, x + dx, y + dy)] += 1
+        end
+      end
+    end
+    counts
+  end
+
+  def step(w)
+    nxt = Set[]
+    Hash.each(neighbor_counts(w)) do |cell, n|
+      Set.add(nxt, cell) if n == 3 || (n == 2 && Set.include?(@alive, cell))
+    end
+    @alive = nxt
+    @generation += 1
+    w
+  end
+
+  def signature(w)
+    cells = Array.sort_by(Set.to_a(@alive)) { |x, y| y * @width + x }
+    Array.join(Array.map(cells) { |x, y| "#{x}.#{y}" }, ",")
+  end
+
+  def bounding_box(w)
+    return nil if Set.empty?(@alive)
+    xs = Set.map(@alive) { |x, y| x }
+    ys = Set.map(@alive) { |x, y| y }
+    {x0: Array.min(xs), y0: Array.min(ys), x1: Array.max(xs), y1: Array.max(ys)}
+  end
+
+  def render(w)
+    Range.each(0...@height) do |y|
+      line = Range.map(0...@width) { |x| Set.include?(@alive, [x, y]) ? "#" : "." }
+      puts(Array.join(line, ""))
+    end
+  end
+end
+
+def run(name, rows, limit)
+  w = World.parse(rows)
+  seen = Hash[]
+  seen[World.signature(w)] = 0
+  populations = Integer[Set.size(World.get_alive(w))]
+  outcome = "still running after #{limit}"
+  while World.get_generation(w) < limit
+    World.step(w)
+    Array.push(populations, Set.size(World.get_alive(w)))
+    sig = World.signature(w)
+    if Set.empty?(World.get_alive(w))
+      outcome = "died out at generation #{World.get_generation(w)}"
+      break
+    end
+    first = seen[sig]
+    if first != nil
+      period = World.get_generation(w) - first
+      outcome = period == 1 ? "still life from generation #{first}" : "cycle of period #{period} from generation #{first}"
+      break
+    end
+    seen[sig] = World.get_generation(w)
+  end
+  puts("== #{name}: #{outcome}")
+  puts("population: #{Array.join(Array.take(populations, 16), " ")}#{Array.size(populations) > 16 ? " ..." : ""}")
+  box = World.bounding_box(w)
+  if box
+    box => {x0:, y0:, x1:, y1:}
+    puts("bounding box: (#{x0},#{y0})-(#{x1},#{y1})")
+  else
+    puts("bounding box: none")
+  end
+  World.render(w)
+  Array.max(populations)
+end
+
+patterns = Array[
+  ["blinker", Array[".....", "..#..", "..#..", "..#..", "....."]],
+  ["glider", Array[".#......", "..#.....", "###.....", "........", "........", "........", "........", "........"]],
+  ["toad", Array["......", "......", "..###.", ".###..", "......", "......"]],
+  ["diehard", Array["..........", "......#...", "##........", ".#...###..", "..........", ".........."]],
+  ["block", Array["....", ".##.", ".##.", "...."]]
+]
+
+peaks = Hash[]
+Array.each(patterns) do |name, rows|
+  peaks[name] = run(name, rows, 40)
+end
+puts("peak populations:")
+Array.each(Array.sort_by(Hash.to_a(peaks)) { |name, n| [-n, name] }) { |name, n| puts("  #{String.ljust(name, 8)} #{n}") }

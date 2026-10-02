@@ -1,0 +1,27 @@
+# Changes for 11-simulation (corpus-v2)
+
+- bakery_shift: order queue `sort_by` key `due * 100 + id` -> Tuple key `[due, id]` (ordered Tuples; packed key removed).
+- bank_ledger: owner ranking `sort_by { 0 - bal }` -> `-bal` (unary minus).
+- car_rental: `Array.empty?(...) == false` -> `!Array.empty?(...)` (`!x`).
+- checkout_lanes: unchanged (the remaining `|spec, i|` / `|id, info|` + multiple assignment needs nested block destructuring, still unsupported).
+- cpu_scheduler: SRTF/priority `min_by` packed keys `x * 100 + arrival` -> Tuple keys `[remaining, arrival]` / `[priority, arrival]`; `each_cons(timeline, 2) { |pair| pair[0] != pair[1] }` -> `{ |a, b| a != b }` (block params take an Array apart); `== false` -> `!`.
+- ecosystem_patches: unchanged.
+- elevator_scan: dispatcher `min_by` keyed on cost only -> `[cost, id]` as in Ruby (ordered Tuples); `== false` -> `!`; top-level `select` + `delete_if` on `pending` -> `arriving, pending = Array.partition(...)` as in Ruby (the `@riders` one stays: multiple assignment cannot target a field).
+- epidemic_network: degree ranking String key `format("%03d %s", 100 - deg, name)` -> `[-deg, name]` (ordered Tuples, unary minus).
+- forest_fire: unchanged.
+- hotel_bookings: waitlist `find_index { |w| guest, k, first, nights = w ... }` -> `find_index { |guest, k, first, nights| ... }` (block destructuring, as in Ruby).
+- inventory_reorder: unchanged.
+- langton_ants: unchanged.
+- library_loans: `Array.empty?(holds) == false` -> `!Array.empty?(holds)` (`!x`).
+- life_torus: peak ranking String key `format("%06d %s", 100000 - n, name)` -> `[-n, name]` (ordered Tuples, unary minus).
+- order_book: `crosses?(...) == false` -> `!crosses?(...)` (`!x`).
+- packet_network: `select` + `delete_if` on `in_flight` -> `arrived, in_flight = Array.partition(...)` as in Ruby.
+- parking_garage: spot choice Integer key `rank * 1000 + level * 100 + number` -> `[rank, level, number]` (ordered Tuples).
+- ring_road_traffic: leader/last `min_by`/`max_by` key `laps * 100 + pos` -> `[laps, pos]` (ordered Tuples).
+- runway_ops: `Flight#<=>` hand-chained over three fields -> `[urgency, scheduled, callsign] <=> [...]` as in Ruby (Tuple `<=>`); three `== false` -> `!`.
+- sandpile: unchanged.
+- teller_queue_des: `Array.empty?(free) == false && Array.empty?(line) == false` -> `!... && !...` (`!x`). `Event#<=>` stays chained, as in the Ruby version.
+- thermostat_house: `Room.get_heating(r) == false` -> `!Room.get_heating(r)` (`!x`).
+- traffic_intersection: `@in_yellow == false` -> `!@in_yellow` (`!x`).
+- vending_machine: unchanged.
+- water_tanks: `Pump.get_running(pm) == false` -> `!Pump.get_running(pm)` (`!x`).

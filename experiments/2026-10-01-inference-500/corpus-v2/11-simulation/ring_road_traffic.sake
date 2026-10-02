@@ -1,0 +1,89 @@
+Vehicle = Struct.new(:id, :pos, :speed, :max_speed, :laps, :stops)
+Road = Struct.new(:length, :cars, :rng, :p_slow)
+
+class Road
+  def setup(length, n, seed, p_slow)
+    road = Road.new(length, Vehicle[], seed, p_slow)
+    spacing = length / n
+    Integer.times(n) do |i|
+      vmax = i % 4 == 3 ? 3 : 5
+      Array.push(get_cars(road), Vehicle.new(i, i * spacing, 0, vmax, 0, 0))
+    end
+    road
+  end
+
+  def chance(r)
+    @rng = (@rng * 69069 + 1) % 4294967296
+    @rng / 4294967296.0
+  end
+
+  def step(r)
+    sorted = Array.sort_by(@cars) { Vehicle.get_pos(it) }
+    n = Array.size(sorted)
+    gaps = Array.map(Range.to_a(0...n)) do |i|
+      me = sorted[i]
+      ahead = sorted[(i + 1) % n]
+      (Vehicle.get_pos(ahead) - Vehicle.get_pos(me) - 1 + @length) % @length
+    end
+    Array.each_with_index(sorted) do |car, i|
+      v = Vehicle.get_speed(car)
+      v += 1 if v < Vehicle.get_max_speed(car)
+      v = gaps[i] if v > gaps[i]
+      v -= 1 if v > 0 && chance(r) < @p_slow
+      Vehicle.set_stops(car, Vehicle.get_stops(car) + 1) if v == 0 && Vehicle.get_speed(car) > 0
+      Vehicle.set_speed(car, v)
+    end
+    flow = 0
+    Array.each(sorted) do |car|
+      np = Vehicle.get_pos(car) + Vehicle.get_speed(car)
+      if np >= @length
+        Vehicle.set_laps(car, Vehicle.get_laps(car) + 1)
+        flow += 1
+        np -= @length
+      end
+      Vehicle.set_pos(car, np)
+    end
+    flow
+  end
+
+  def picture(r)
+    cells = Array[]
+    Integer.times(@length) { Array.push(cells, ".") }
+    Array.each(@cars) { |c| cells[Vehicle.get_pos(c)] = Integer.to_s(Vehicle.get_speed(c)) }
+    Array.join(cells, "")
+  end
+
+  def mean_speed(r) = Array.sum(Array.map(@cars) { Vehicle.get_speed(it) }) / Integer.to_f(Array.size(@cars))
+end
+
+def run(n, p_slow, steps, show)
+  road = Road.setup(60, n, 12345, p_slow)
+  passed = 0
+  speeds = Float[]
+  Integer.times(steps) do |t|
+    passed += Road.step(road)
+    Array.push(speeds, Road.mean_speed(road))
+    puts(format("%3d %s", t, Road.picture(road))) if show && t >= steps - 12
+  end
+  jams = Array.sum(Array.map(Road.get_cars(road)) { Vehicle.get_stops(it) })
+  tail = Array.drop(speeds, steps / 2)
+  {passed: passed, avg_speed: Array.sum(tail) / Array.size(tail), jams: jams, cars: Road.get_cars(road)}
+end
+
+puts("space-time diagram, 15 cars, p=0.25 (last 12 steps)")
+detail = run(15, 0.25, 60, true)
+detail => {cars:}
+slowest = Array.min_by(cars) { |c| [Vehicle.get_laps(c), Vehicle.get_pos(c)] }
+fastest = Array.max_by(cars) { |c| [Vehicle.get_laps(c), Vehicle.get_pos(c)] }
+puts("leader: car #{Vehicle.get_id(fastest)} (#{Vehicle.get_laps(fastest)} laps), last: car #{Vehicle.get_id(slowest)} (#{Vehicle.get_laps(slowest)} laps)")
+
+puts("--- fundamental diagram")
+puts("cars density  p=0.00              p=0.25              p=0.50")
+Array.each(Array[5, 15, 25, 40]) do |n|
+  cols = Array.map(Array[0.0, 0.25, 0.5]) do |p|
+    r = run(n, p, 40, false)
+    r => {passed:, avg_speed:, jams:}
+    format("flow %3d v %4.2f j%3d", passed, avg_speed, jams)
+  end
+  puts(format("%4d %6.2f  %s", n, n / 60.0, Array.join(cols, " | ")))
+end

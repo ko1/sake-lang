@@ -1,0 +1,161 @@
+class Money < {reader: [cents]}
+  include Arithmetic
+  include Comparable
+  def zero = Money.new(0)
+  def +(a, b) = Money.new(@cents + Money.get_cents(b))
+  def -(a, b) = Money.new(@cents - Money.get_cents(b))
+  def *(a, k) = Money.new((Integer|Float).round(@cents * k))
+  def <=>(a, b) = @cents <=> Money.get_cents(b)
+  def to_s(m)
+    sign = @cents < 0 ? "-" : ""
+    c = Integer.abs(@cents)
+    "#{sign}$#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+  end
+end
+
+Product = Struct.new(:sku, :name, :category, :price)
+Line = Struct.new(:product, :qty)
+CartError = Exception.new(:sku)
+
+def tax_rate(category)
+  case category
+  in :food then 0.08
+  in :books then 0.0
+  else 0.1
+  end
+end
+
+class Cart < {reader: [catalog, lines], accessor: [coupon]}
+  def create(catalog) = Cart.new(catalog, Line[], nil)
+
+  def add(cart, sku, qty)
+    product = @catalog[sku]
+    raise CartError.new("unknown product", sku) unless product
+    raise CartError.new("quantity must be positive", sku) if qty <= 0
+    line = Array.find(@lines) { |l| Product.get_sku(Line.get_product(l)) == sku }
+    if line
+      Line.set_qty(line, Line.get_qty(line) + qty)
+    else
+      Array.push(@lines, Line.new(product, qty))
+    end
+  end
+
+  def remove(cart, sku, qty)
+    line = Array.find(@lines) { |l| Product.get_sku(Line.get_product(l)) == sku }
+    raise CartError.new("not in cart", sku) unless line
+    left = Line.get_qty(line) - qty
+    if left > 0
+      Line.set_qty(line, left)
+    else
+      Array.delete(@lines, line)
+    end
+  end
+
+  def subtotal(cart)
+    Array.reduce(@lines, Money.zero) { |sum, l| sum + Product.get_price(Line.get_product(l)) * Line.get_qty(l) }
+  end
+
+  # every third unit of a "3for2" product is free
+  def discounts(cart, promos)
+    result = Array[]
+    Array.each(@lines) do |l|
+      prod = Line.get_product(l)
+      promo = promos[Product.get_sku(prod)]
+      next unless promo
+      promo => {kind:}
+      case kind
+      in :three_for_two
+        free = Line.get_qty(l) / 3
+        Array.push(result, ["3 for 2 #{Product.get_name(prod)}", Product.get_price(prod) * free]) if free > 0
+      in :percent
+        promo => {rate:}
+        Array.push(result, ["#{rate}% off #{Product.get_name(prod)}", Product.get_price(prod) * Line.get_qty(l) * (rate / 100.0)])
+      end
+    end
+    result
+  end
+end
+
+def coupon_value(code, amount)
+  case code
+  in "SAVE5"
+    raise CartError.new("SAVE5 needs $30.00", code) if amount < Money.new(3000)
+    Money.new(500)
+  in "TENOFF"
+    amount * 0.1
+  in nil
+    Money.zero
+  else
+    raise CartError.new("unknown coupon", code)
+  end
+end
+
+def receipt(cart, promos)
+  puts("Receipt")
+  Array.each(Cart.get_lines(cart)) do |l|
+    prod = Line.get_product(l)
+    total = Product.get_price(prod) * Line.get_qty(l)
+    puts(format("  %-18s %2d x %8s %9s", Product.get_name(prod), Line.get_qty(l), Product.get_price(prod), total))
+  end
+  sub = Cart.subtotal(cart)
+  puts(format("  %-32s %9s", "Subtotal", sub))
+  disc = Money.zero
+  Array.each(Cart.discounts(cart, promos)) do |label, amount|
+    puts(format("  %-32s %9s", label, Money.zero - amount))
+    disc = disc + amount
+  end
+  after = sub - disc
+  coupon = Money.zero
+  begin
+    coupon = coupon_value(Cart.get_coupon(cart), after)
+    puts(format("  %-32s %9s", "Coupon #{Cart.get_coupon(cart)}", Money.zero - coupon)) if coupon > Money.zero
+  rescue CartError => e
+    puts("  (coupon #{CartError.get_sku(e)} rejected: #{Exception.message(e)})")
+  end
+  # tax is computed on the discounted price of each line, proportionally
+  ratio = Money.get_cents(sub) == 0 ? 0.0 : Money.get_cents(after - coupon) * 1.0 / Money.get_cents(sub)
+  tax = Array.reduce(Cart.get_lines(cart), Money.zero) do |acc, l|
+    prod = Line.get_product(l)
+    acc + Product.get_price(prod) * Line.get_qty(l) * (ratio * tax_rate(Product.get_category(prod)))
+  end
+  puts(format("  %-32s %9s", "Tax", tax))
+  total = after - coupon + tax
+  puts(format("  %-32s %9s", "TOTAL", total))
+  total
+end
+
+catalog = Hash[]
+Array.each(Array[
+  ["A100", "Coffee beans", :food, 1299],
+  ["A200", "Green tea", :food, 650],
+  ["B300", "Ruby book", :books, 3999],
+  ["C400", "Mug", :kitchen, 899],
+  ["C500", "Kettle", :kitchen, 4550]
+]) do |sku, name, cat, cents|
+  catalog[sku] = Product.new(sku, name, cat, Money.new(cents))
+end
+promos = Hash["A200" => {kind: :three_for_two}, "C500" => {kind: :percent, rate: 15}]
+
+cart = Cart.create(catalog)
+ops = Array[
+  [:add, "A100", 2], [:add, "A200", 4], [:add, "Z999", 1], [:add, "C400", 0],
+  [:add, "B300", 1], [:add, "C400", 2], [:remove, "C400", 1], [:add, "C500", 1],
+  [:remove, "B300", 5], [:remove, "B300", 1], [:add, "A200", 2]
+]
+Array.each(ops) do |op, sku, qty|
+  begin
+    op == :add ? Cart.add(cart, sku, qty) : Cart.remove(cart, sku, qty)
+  rescue CartError => e
+    puts("! #{op} #{sku}: #{Exception.message(e)}")
+  end
+end
+
+totals = Array[]
+Array.each(Array[nil, "SAVE5", "TENOFF", "BOGUS"]) do |code|
+  Cart.set_coupon(cart, code)
+  Array.push(totals, [code, receipt(cart, promos)])
+  puts
+end
+best_code, best_total = Array.min_by(totals) { |c, t| Money.get_cents(t) }
+puts("Best coupon: #{best_code || "none"} (#{best_total})")
+puts("Most expensive item: #{Product.get_name(Array.max_by(Hash.values(catalog)) { |p| Product.get_price(p) })}")

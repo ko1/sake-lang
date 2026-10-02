@@ -1,0 +1,100 @@
+City = Struct.new(:name, :x, :y)
+
+class City
+  def distance(a, b) = Integer.abs(@x - City.get_x(b)) + Integer.abs(@y - City.get_y(b))
+end
+
+# best[mask][j]: shortest path from city 0 visiting exactly `mask`, ending at j
+def held_karp(cities)
+  n = Array.size(cities)
+  d = Array.map(cities) { |a| Array.map(cities) { |b| City.distance(a, b) } }
+  full = (1 << n) - 1
+  best = Range.map(0..full) { Range.map(0...n) { nil } }
+  prev = Range.map(0..full) { Range.map(0...n) { nil } }
+  best[1][0] = 0
+  Range.each(1..full) do |mask|
+    next if mask & 1 == 0
+    Integer.times(n) do |j|
+      here = best[mask][j]
+      next if here == nil
+      Integer.upto(1, n - 1) do |k|
+        bit = 1 << k
+        next if mask & bit != 0
+        nxt = mask | bit
+        cand = here + d[j][k]
+        old = best[nxt][k]
+        if old == nil || cand < old
+          best[nxt][k] = cand
+          prev[nxt][k] = j
+        end
+      end
+    end
+  end
+  tour_len = nil
+  last = nil
+  Integer.upto(1, n - 1) do |j|
+    v = best[full][j]
+    next if v == nil
+    total = v + d[j][0]
+    if tour_len == nil || total < tour_len
+      tour_len = total
+      last = j
+    end
+  end
+  order = Array[]
+  mask = full
+  j = last
+  while j != nil
+    Array.unshift(order, j)
+    pj = prev[mask][j]
+    mask = mask ^ (1 << j)
+    j = pj
+  end
+  [tour_len, order, d]
+end
+
+def nearest_neighbour(cities, d)
+  n = Array.size(cities)
+  seen = Set[0]
+  order = Array[0]
+  total = 0
+  cur = 0
+  while Set.size(seen) < n
+    cand = Array.reject(Range.to_a(0...n)) { |k| Set.include?(seen, k) }
+    nxt = Array.min_by(cand) { |k| d[cur][k] * 100 + k }
+    total += d[cur][nxt]
+    Set.add(seen, nxt)
+    Array.push(order, nxt)
+    cur = nxt
+  end
+  [total + d[cur][0], order]
+end
+
+def names(cities, order)
+  stops = Array.map(order) { |i| City.get_name(cities[i]) }
+  Array.push(stops, City.get_name(cities[0]))
+  Array.join(stops, " -> ")
+end
+
+depots = City[
+  City.new("Depot", 0, 0), City.new("Ash", 4, 7), City.new("Birch", 9, 2), City.new("Cedar", 3, 3),
+  City.new("Dogwood", 8, 8), City.new("Elm", 1, 9), City.new("Fir", 6, 4), City.new("Gum", 10, 6)
+]
+
+Array.each(Array[4, 6, 8]) do |k|
+  cities = Array.take(depots, k)
+  len, order, d = held_karp(cities)
+  greedy_len, greedy_order = nearest_neighbour(cities, d)
+  puts("#{k} stops:")
+  puts("  optimal #{len}: #{names(cities, order)}")
+  puts("  greedy  #{greedy_len}: #{names(cities, greedy_order)}")
+  gap = Float.round(100.0 * (greedy_len - len) / len, 1)
+  puts("  greedy is #{gap}% longer")
+end
+
+cities = depots
+len, order, d = held_karp(cities)
+puts("leg lengths of the optimal 8-stop tour:")
+Array.each_cons(Array.push(Array.dup(order), 0), 2) do |a, b|
+  puts(format("  %-8s %-8s %3d", City.get_name(cities[a]), City.get_name(cities[b]), d[a][b]))
+end

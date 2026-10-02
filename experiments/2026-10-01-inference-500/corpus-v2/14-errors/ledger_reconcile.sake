@@ -1,0 +1,88 @@
+# Reconcile a bank statement against the internal ledger; classify each discrepancy and fail loudly on bad data.
+CorruptRecord = Exception.new(:source, :index)
+DuplicateRef = Exception.new(:ref)
+
+Txn = Struct.new(:ref, :date, :cents, :memo)
+
+def parse_amount(s)
+  m = String.match(s, /\A(-?)(\d+)\.(\d\d)\z/)
+  return nil if m == nil
+  cents = String.to_i(m[2]) * 100 + String.to_i(m[3])
+  m[1] == "-" ? -cents : cents
+end
+
+def load_txns(source, rows)
+  by_ref = Hash[]
+  Array.each_with_index(rows) do |row, i|
+    fields = String.split(row, "|")
+    raise CorruptRecord.new("#{source} row #{i}: expected 4 fields", source, i) if Array.size(fields) != 4
+    ref, date, amount, memo = fields
+    cents = parse_amount(amount)
+    raise CorruptRecord.new("#{source} row #{i}: bad amount #{amount}", source, i) if cents == nil
+    raise DuplicateRef.new("#{source}: duplicate ref #{ref}", ref) if Hash.key?(by_ref, ref)
+    by_ref[ref] = Txn.new(ref, date, cents, memo)
+  end
+  by_ref
+end
+
+def money(cents)
+  sign = cents < 0 ? "-" : ""
+  a = Integer.abs(cents)
+  "#{sign}#{a / 100}.#{String.rjust(Integer.to_s(a % 100), 2, "0")}"
+end
+
+def reconcile(ledger, bank)
+  issues = Array[]
+  Hash.each(ledger) do |ref, l|
+    b = bank[ref]
+    if b == nil
+      Array.push(issues, [:missing_in_bank, ref, "#{money(Txn.get_cents(l))} #{Txn.get_memo(l)}"])
+      next
+    end
+    diff = Txn.get_cents(b) - Txn.get_cents(l)
+    if diff != 0
+      Array.push(issues, [:amount_mismatch, ref, "ledger #{money(Txn.get_cents(l))}, bank #{money(Txn.get_cents(b))} (#{money(diff)})"])
+    elsif Txn.get_date(b) != Txn.get_date(l)
+      Array.push(issues, [:date_mismatch, ref, "#{Txn.get_date(l)} vs #{Txn.get_date(b)}"])
+    end
+  end
+  Hash.each(bank) do |ref, b|
+    Array.push(issues, [:missing_in_ledger, ref, "#{money(Txn.get_cents(b))} #{Txn.get_memo(b)}"]) unless Hash.key?(ledger, ref)
+  end
+  issues
+end
+
+def run(name, ledger_rows, bank_rows)
+  puts("== #{name}")
+  ledger = load_txns("ledger", ledger_rows)
+  bank = load_txns("bank", bank_rows)
+  issues = reconcile(ledger, bank)
+  if Array.empty?(issues)
+    puts("balanced: #{Hash.size(ledger)} transactions")
+    return
+  end
+  Hash.each(Array.group_by(issues) { |kind, ref, detail| kind }) do |kind, list|
+    puts("#{kind} (#{Array.size(list)})")
+    Array.each(list) { |k, ref, detail| puts("  #{ref}: #{detail}") }
+  end
+  net = Array.sum(Array.map(Hash.values(bank)) { Txn.get_cents(it) }) - Array.sum(Array.map(Hash.values(ledger)) { Txn.get_cents(it) })
+  puts("net difference #{money(net)}")
+rescue CorruptRecord => e
+  puts("cannot reconcile: #{Exception.message(e)} (fix #{CorruptRecord.get_source(e)} first)")
+rescue DuplicateRef => e
+  puts("cannot reconcile: #{Exception.message(e)}")
+end
+
+ledger = Array[
+  "R1|2026-09-01|1200.00|invoice 17", "R2|2026-09-02|-45.10|stationery", "R3|2026-09-03|-300.00|rent share",
+  "R4|2026-09-05|89.99|refund", "R5|2026-09-07|-12.00|bank fee", "R6|2026-09-08|560.40|invoice 18"
+]
+bank = Array[
+  "R1|2026-09-01|1200.00|INV17", "R2|2026-09-02|-45.01|STATIONERY", "R3|2026-09-04|-300.00|RENT",
+  "R4|2026-09-05|89.99|REFUND", "R6|2026-09-08|560.40|INV18", "R7|2026-09-09|-0.50|INTEREST ADJ"
+]
+run("september", ledger, bank)
+run("clean", Array["A|2026-10-01|10.00|x", "B|2026-10-01|-2.50|y"], Array["B|2026-10-01|-2.50|Y", "A|2026-10-01|10.00|X"])
+run("corrupt", ledger, Array["R1|2026-09-01|1200.00|INV17", "R2|2026-09-02|-45,10|STATIONERY"])
+run("short", Array["R1|2026-09-01|1.00"], bank)
+run("dup", ledger, Array["R1|2026-09-01|1.00|a", "R1|2026-09-01|1.00|b"])

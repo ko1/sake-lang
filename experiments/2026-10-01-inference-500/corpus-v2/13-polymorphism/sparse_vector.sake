@@ -1,0 +1,121 @@
+class SparseVec < {reader: [entries]}
+  include Arithmetic
+  include Indexable
+
+  def empty = SparseVec.new(Hash[])
+
+  def [](v, k) = Hash.fetch(@entries, k, 0)
+
+  def []=(v, k, x)
+    if x == 0
+      Hash.delete(@entries, k)
+    else
+      @entries[k] = x
+    end
+  end
+
+  def keys(v) = Hash.keys(@entries)
+  def nnz(v) = Hash.size(@entries)
+
+  def +(a, b)
+    out = SparseVec.new(Hash.merge(Hash[], @entries))
+    Hash.each(SparseVec.get_entries(b)) { |k, x| out[k] += x }
+    out
+  end
+
+  def -(a, b)
+    out = SparseVec.new(Hash.merge(Hash[], @entries))
+    Hash.each(SparseVec.get_entries(b)) { |k, x| out[k] -= x }
+    out
+  end
+
+  def *(a, s)
+    out = empty
+    Hash.each(@entries) { |k, x| out[k] = x * s }
+    out
+  end
+
+  def dot(a, b)
+    small, big = nnz(a) <= nnz(b) ? [a, b] : [b, a]
+    Hash.sum(SparseVec.get_entries(small)) { |k, x| x * big[k] }
+  end
+
+  def norm(a) = Math.sqrt(dot(a, a))
+
+  def cosine(a, b)
+    d = norm(a) * norm(b)
+    d == 0 ? 0.0 : dot(a, b) / d
+  end
+
+  def top(a, n)
+    Array.take(Hash.sort_by(@entries) { |k, x| [-x, k] }, n)
+  end
+
+  def to_s(a)
+    parts = Array.map(Array.sort(keys(a))) { |k| "#{k}:#{a[k]}" }
+    "{#{Array.join(parts, ", ")}}"
+  end
+end
+
+def stopwords = Set["the", "a", "and", "of", "to", "in", "is", "on", "for", "with"]
+
+def term_vector(text)
+  v = SparseVec.empty
+  words = String.scan(String.downcase(text), /[a-z]+/)
+  Array.each(words) do |w|
+    next if Set.include?(stopwords, w)
+    v[w] += 1
+  end
+  v
+end
+
+docs = Array[
+  ["ruby", "Ruby is a dynamic language with a focus on simplicity and productivity"],
+  ["python", "Python is a dynamic language with a focus on readability"],
+  ["types", "Static types catch errors early; types document the program for the reader"],
+  ["sake", "Sake writes types on operations; the program stays dynamic and simple in Ruby syntax"],
+  ["bread", "Knead the dough, let it rise, and bake the bread in a hot oven"],
+  ["pizza", "Pizza dough must rise slowly; bake it in a very hot oven"]
+]
+
+vectors = Hash[]
+Array.each(docs) { |name, text| vectors[name] = term_vector(text) }
+
+Hash.each(vectors) do |name, v|
+  tops = Array.map(SparseVec.top(v, 3)) { |k, x| "#{k}(#{x})" }
+  puts(format("%-7s nnz=%2d norm=%.3f top: %s", name, SparseVec.nnz(v), SparseVec.norm(v), Array.join(tops, " ")))
+end
+
+puts("== most similar pairs ==")
+names = Hash.keys(vectors)
+pairs = Array.map(Array.combination(names, 2)) { |a, b| [a, b, SparseVec.cosine(vectors[a], vectors[b])] }
+ranked = Array.sort_by(pairs) { |a, b, s| -s }
+Array.each(Array.take(ranked, 5)) { |a, b, s| puts(format("%-7s ~ %-7s %.3f", a, b, s)) }
+
+puts("== query ==")
+queries = Array["dynamic language simplicity", "hot oven dough", "types for the program", "quantum chromodynamics"]
+Array.each(queries) do |q|
+  qv = term_vector(q)
+  best = Array.max_by(names) { |n| SparseVec.cosine(qv, vectors[n]) }
+  score = best ? SparseVec.cosine(qv, vectors[best]) : 0.0
+  if best && score > 0
+    puts(format("%-30s -> %s (%.3f)", q, best, score))
+  else
+    puts(format("%-30s -> no match", q))
+  end
+end
+
+puts("== arithmetic ==")
+a = term_vector("dough rise bake bake")
+b = term_vector("bake oven dough")
+puts("a = #{a}")
+puts("b = #{b}")
+puts("a + b = #{a + b}")
+puts("a - b = #{a - b}")
+puts("a * 3 = #{a * 3}")
+puts("a . b = #{SparseVec.dot(a, b)}")
+c = a - a
+puts("a - a = #{c} (nnz #{SparseVec.nnz(c)})")
+puts("a[missing] = #{a["missing"]}")
+centroid = Array.reduce(Hash.values(vectors), SparseVec.empty) { |acc, v| acc + v }
+puts("corpus top terms: #{Array.join(Array.map(SparseVec.top(centroid, 4)) { |k, x| "#{k}=#{x}" }, ", ")}")

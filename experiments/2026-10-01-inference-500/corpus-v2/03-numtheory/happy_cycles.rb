@@ -1,0 +1,1 @@
+../../corpus/03-numtheory/happy_cycles.rb

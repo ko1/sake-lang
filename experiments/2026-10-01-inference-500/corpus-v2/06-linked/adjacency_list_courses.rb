@@ -1,0 +1,1 @@
+../../corpus/06-linked/adjacency_list_courses.rb

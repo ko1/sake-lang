@@ -1,0 +1,103 @@
+# Sales roll-up: parse CSV-like rows into records, pivot region x month, and rank products.
+
+def raw_sales
+  <<~CSV
+    region,month,product,units,unit_price
+    north,2026-01,widget,12,2.50
+    north,2026-01,gadget,3,10.00
+    south,2026-01,widget,7,2.50
+    east,2026-01,gizmo,4,6.75
+    north,2026-02,widget,9,2.50
+    south,2026-02,gadget,6,10.00
+    south,2026-02,gizmo,2,6.75
+    east,2026-02,widget,15,2.40
+    east,2026-02,gadget,1,10.00
+    north,2026-03,gizmo,5,6.75
+    south,2026-03,widget,11,2.50
+    east,2026-03,widget,8,2.40
+    east,2026-03,gizmo,6,6.50
+    west,2026-03,gadget,2,9.50
+  CSV
+end
+
+def parse(text)
+  lines = String.lines(String.strip(text))
+  header = Array.map(String.split(String.chomp(Array.first(lines)), ",")) { |h| String.to_sym(h) }
+  rows = Array.map(Array.drop(lines, 1)) do |line|
+    cols = String.split(String.chomp(line), ",")
+    {region: cols[0], month: cols[1], product: cols[2], units: String.to_i(cols[3]), price: String.to_f(cols[4])}
+  end
+  [header, rows]
+end
+
+def revenue(r)
+  r => {units:, price:}
+  units * price
+end
+
+def pad_table(header, rows)
+  widths = Array.map(Range.to_a(0...Array.size(header))) do |i|
+    Array.max(Array.map(Array.unshift(Array.dup(rows), header)) { |row| String.size(row[i]) })
+  end
+  fmt = format_row(widths, header)
+  puts(fmt)
+  puts(Array.join(Array.map(widths) { |w| "-" * w }, "-+-"))
+  Array.each(rows) { |row| puts(format_row(widths, row)) }
+end
+
+def format_row(widths, cells)
+  parts = Array[]
+  Array.each_with_index(cells) do |c, i|
+    Array.push(parts, i == 0 ? String.ljust(c, widths[i]) : String.rjust(c, widths[i]))
+  end
+  Array.join(parts, " | ")
+end
+
+header, sales = parse(raw_sales)
+puts("columns: #{Array.join(Array.map(header) { |h| Symbol.to_s(h) }, ", ")}")
+puts("rows: #{Array.size(sales)}")
+
+months = Array.sort(Array.uniq(Array.map(sales) { |r| r => {month:}; month }))
+regions = Array.sort(Array.uniq(Array.map(sales) { |r| r => {region:}; region }))
+
+pivot = Hash.new(0.0)
+Array.each(sales) do |r|
+  r => {region:, month:}
+  pivot[[region, month]] += revenue(r)
+end
+
+rows = Array.map(regions) do |reg|
+  cells = Array.map(months) { |m| format("%.2f", pivot[[reg, m]]) }
+  total = Array.sum(Array.map(months) { |m| pivot[[reg, m]] })
+  Array.push(Array.concat(Array[reg], cells), format("%.2f", total))
+end
+month_totals = Array.map(months) { |m| Array.sum(Array.map(regions) { |reg| pivot[[reg, m]] }) }
+grand = Array.sum(month_totals)
+Array.push(rows, Array.push(Array.concat(Array["total"], Array.map(month_totals) { |t| format("%.2f", t) }), format("%.2f", grand)))
+pad_table(Array.push(Array.concat(Array["region"], months), "total"), rows)
+
+puts
+by_product = Array.group_by(sales) { |r| r => {product:}; product }
+stats = Hash.transform_values(by_product) do |rs|
+  units = Array.sum(Array.map(rs) { |r| r => {units:}; units })
+  rev = Array.sum(Array.map(rs) { |r| revenue(r) })
+  {units: units, revenue: rev, avg_price: rev / units}
+end
+ranked = Hash.sort_by(stats) { |name, s| s => {revenue:}; -revenue }
+Array.each_with_index(ranked) do |pair, i|
+  name, s = pair
+  s => {units:, revenue:, avg_price:}
+  puts(format("%d. %-7s units=%3d revenue=%7.2f avg=%.3f", i + 1, name, units, revenue, avg_price))
+end
+
+puts
+Array.each_cons(Array.zip(months, month_totals), 2) do |w1, w2|
+  m1, t1 = w1
+  m2, t2 = w2
+  puts(format("%s -> %s: %+.1f%%", m1, m2, (t2 - t1) / t1 * 100.0))
+end
+k, v = Hash.max_by(pivot) { |k, v| v }
+region, month = k
+puts("best cell: #{region} #{month} #{format("%.2f", v)}")
+quiet = Array.reject(Array.product(regions, months)) { |key| Hash.key?(pivot, key) }
+puts("no sales: #{Array.join(Array.map(quiet) { |r, m| "#{r}/#{m}" }, ", ")}")

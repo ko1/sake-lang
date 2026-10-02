@@ -1,0 +1,117 @@
+SoldOut = Exception.new(:slot)
+NoChange = Exception.new(:owed)
+
+Slot = Struct.new(:code, :name, :price, :count)
+
+class Machine < {reader: [slots, coins, sales], accessor: [state, credit, inserted]}
+  def describe(m) = "#{@state} credit=#{@credit} coins=#{coin_summary(m)}"
+
+  def coin_summary(m)
+    Array.join(Array.map(Array.sort(Hash.keys(@coins))) { |c| "#{c}x#{@coins[c]}" }, ",")
+  end
+
+  def insert(m, coin)
+    unless Array.include?(Array[5, 10, 25, 100], coin)
+      return "rejected coin #{coin}"
+    end
+    @coins[coin] += 1
+    Array.push(@inserted, coin)
+    @credit += coin
+    @state = :collecting
+    "credit #{@credit}"
+  end
+
+  def make_change(m, amount)
+    plan = Hash.new(0)
+    left = amount
+    Array.each(Array.reverse(Array.sort(Hash.keys(@coins)))) do |c|
+      while left >= c && @coins[c] - plan[c] > 0
+        plan[c] += 1
+        left -= c
+      end
+    end
+    raise NoChange.new("cannot make change for #{amount}", amount) if left > 0
+    Hash.each(plan) { |c, n| @coins[c] -= n }
+    plan
+  end
+
+  def choose(m, code)
+    slot = Array.find(@slots) { Slot.get_code(it) == code }
+    return "no slot #{code}" if slot == nil
+    raise SoldOut.new("#{Slot.get_name(slot)} is sold out", code) if Slot.get_count(slot) == 0
+    price = Slot.get_price(slot)
+    return "need #{price - @credit} more for #{Slot.get_name(slot)}" if @credit < price
+    @state = :dispensing
+    change = make_change(m, @credit - price)
+    Slot.set_count(slot, Slot.get_count(slot) - 1)
+    Array.push(@sales, [code, price])
+    @credit = 0
+    Array.clear(@inserted)
+    @state = :idle
+    parts = Array.map(Array.select(Hash.to_a(change)) { |c, n| n > 0 }) { |c, n| "#{n}x#{c}" }
+    "vend #{Slot.get_name(slot)}, change #{Array.empty?(parts) ? "none" : Array.join(parts, " ")}"
+  end
+
+  def cancel(m)
+    returned = Array.sum(@inserted)
+    Array.each(@inserted) { |c| @coins[c] -= 1 }
+    Array.clear(@inserted)
+    @credit = 0
+    @state = :idle
+    "returned #{returned}"
+  end
+
+  def handle(m, event)
+    case event
+    in {insert: coin} then insert(m, coin)
+    in {select: code}
+      begin
+        choose(m, code)
+      rescue SoldOut => e
+        "sold out: #{SoldOut.get_slot(e)}"
+      rescue NoChange => e
+        @state = :collecting
+        "exact change only (owed #{NoChange.get_owed(e)}); #{cancel(m)}"
+      end
+    in {cancel:} then cancel(m)
+    in {restock:, count:}
+      slot = Array.find(@slots) { Slot.get_code(it) == restock }
+      if slot
+        Slot.set_count(slot, Slot.get_count(slot) + count)
+        "restocked #{restock} to #{Slot.get_count(slot)}"
+      else
+        "no slot #{restock}"
+      end
+    end
+  end
+end
+
+slots = Slot[
+  Slot.new("A1", "cola", 125, 2), Slot.new("A2", "water", 90, 5),
+  Slot.new("B1", "chips", 65, 1), Slot.new("B2", "gum", 35, 0)
+]
+m = Machine.new(slots, Hash[5 => 0, 10 => 1, 25 => 2, 100 => 0], Array[], :idle, 0, Array[])
+
+events = Array[
+  {insert: 100}, {insert: 25}, {select: "A1"},
+  {insert: 100}, {select: "B1"},
+  {insert: 25}, {insert: 3}, {select: "A2"}, {insert: 100}, {select: "A2"},
+  {insert: 100}, {insert: 100}, {select: "A1"},
+  {select: "B2"}, {restock: "B2", count: 10}, {insert: 25}, {insert: 10}, {select: "B2"},
+  {insert: 100}, {select: "B1"}, {insert: 100}, {select: "C9"}, {cancel: true},
+  {insert: 100}, {select: "A2"}, {insert: 5}, {insert: 5}, {cancel: true}
+]
+
+Array.each_with_index(events) do |ev, i|
+  msg = Machine.handle(m, ev)
+  puts(format("%2d %-36s | %s", i + 1, Machine.describe(m), msg))
+end
+
+puts("--- sales")
+totals = Hash.new(0)
+Array.each(Machine.get_sales(m)) { |code, price| totals[code] += price }
+Hash.each(totals) { |code, amount| puts("#{code}: #{amount}") }
+puts("revenue: #{Array.sum(Array.map(Machine.get_sales(m)) { |code, price| price })}")
+cash = Hash.sum(Machine.get_coins(m)) { |c, n| c * n }
+puts("cash in machine: #{cash}")
+Array.each(slots) { |s| puts("#{Slot.get_code(s)} #{String.ljust(Slot.get_name(s), 6)} left #{Slot.get_count(s)}") }

@@ -1,0 +1,27 @@
+# Changes (03-numtheory, corpus -> corpus-v2)
+
+- base_conversion: unary minus (`neg ? -value : value` instead of `0 - value`).
+- calendar_congruences: `Hash.max_by` key is the Tuple `[v, -k]` (Ruby's form) instead of the packed Integer `v * 100 - k`.
+- check_digits: unchanged (the Array swap, `s[0, 9]` and String `[]=` workarounds are still needed).
+- collatz_stats: `Array.each_cons(chains, 2) do |a, b|` destructures instead of `w[0]`, `w[1]`.
+- continued_fractions: unchanged.
+- digit_curiosities: unchanged.
+- egyptian_fractions: unchanged (`Array.concat(Array.dup(...))` stays: no `Array + Array`).
+- factor_functions: `Hash.reduce` blocks take the pair apart with `p, e = pe` instead of `pe[0]`/`pe[1]`; sort key `[-c, p]` Tuple instead of `0 - c * 1000 + p`.
+- farey_stern_brocot: `Array.each_cons(seq, 2) do |x, y|` instead of `w[0]`, `w[1]`.
+- fibonacci_numbers: `Array.each_cons(idx, 2) { |x, y| ... }` instead of `w[0]`, `w[1]`.
+- goldbach: sort key `[c, n]` Tuple instead of the packed Integer `c * 1000 + n`.
+- happy_cycles: `until Hash.key?(seen, n)` instead of `while ... == false`; sort key `[-c, first member]` Tuple instead of the packed Integer (the cycle is still keyed by its joined String: an Array cannot be a Hash key).
+- integer_partitions: Array `==` (`pn == pent`, `distinct == odd`) instead of `Range.all?` over indexes.
+- linear_diophantine: unary minus (`-x0 / dx`).
+- linear_sieve: unary minus (`-mu[i]`).
+- miller_rabin: `!trial_division?(n)` instead of `trial_division?(n) == false`.
+- modular_crt: unchanged.
+- perfect_amicable: unchanged.
+- pollard_rho: the squaring loop in `prime?` is `Range.any?(1...s) { x = x * x % n; x == n - 1 }` (Ruby's `(s - 1).times.any?`) instead of a `while` loop with a `found == false` flag.
+- primitive_roots: unchanged.
+- pythagorean_triples: unary minus (`-a + 2 * b ...`); `Array.max_by` key `[size, -p]` Tuple instead of `size * 10000 - p`.
+- quadratic_residues: unary minus (`result = -result`); Array `==` (`squares == qr`) instead of comparing joined Strings; `Array.minmax(Array[b, c])` instead of two ternaries.
+- repeating_decimals: `!Hash.key?(seen, rem)` instead of `== false`.
+- rsa_toy: unchanged.
+- sieve_primes: `Array.each_cons(primes, 2) { |a, b| ... }` (twice) instead of `w[0]`, `w[1]`; gap sort key `[-size, from]` Tuple instead of `(0 - size) * 1_000_000 + from`.

@@ -1,0 +1,104 @@
+Grid = Struct.new(:size, :bits)
+
+class Grid
+  def parse(rows)
+    bits = 0
+    n = Array.size(rows)
+    Array.each_with_index(rows) do |row, r|
+      Array.each_with_index(String.chars(row)) do |ch, c|
+        bits |= 1 << (r * n + c) if ch == "*"
+      end
+    end
+    Grid.new(n, bits)
+  end
+
+  def bit(g, r, c) = 1 << (r * @size + c)
+
+  def lit?(g, r, c) = (@bits & bit(g, r, c)) != 0
+
+  def press_mask(g, r, c)
+    mask = bit(g, r, c)
+    mask |= bit(g, r - 1, c) if r > 0
+    mask |= bit(g, r + 1, c) if r < @size - 1
+    mask |= bit(g, r, c - 1) if c > 0
+    mask |= bit(g, r, c + 1) if c < @size - 1
+    mask
+  end
+
+  def press(g, r, c)
+    @bits ^= press_mask(g, r, c)
+    g
+  end
+
+  def dark?(g) = @bits == 0
+
+  def lit_count(g)
+    n = 0
+    b = @bits
+    while b != 0
+      n += b & 1
+      b >>= 1
+    end
+    n
+  end
+
+  def to_s(g)
+    Array.join(Range.map(0...@size) { |r| Array.join(Range.map(0...@size) { |c| lit?(g, r, c) ? "*" : "." }) }, "\n")
+  end
+end
+
+# light chasing: choose the first row, then each press below clears the light above it
+def solve(rows)
+  start = Grid.parse(rows)
+  n = Grid.get_size(start)
+  best = nil
+  Integer.times(1 << n) do |first|
+    g = Grid.new(n, Grid.get_bits(start))
+    presses = Array[]
+    Integer.times(n) do |c|
+      if (first >> c) & 1 == 1
+        Grid.press(g, 0, c)
+        Array.push(presses, [0, c])
+      end
+    end
+    Range.each(1...n) do |r|
+      Integer.times(n) do |c|
+        if Grid.lit?(g, r - 1, c)
+          Grid.press(g, r, c)
+          Array.push(presses, [r, c])
+        end
+      end
+    end
+    next unless Grid.dark?(g)
+    best = presses if best == nil || Array.size(presses) < Array.size(best)
+  end
+  best
+end
+
+def verify(rows, presses)
+  g = Grid.parse(rows)
+  Array.each(presses) { |r, c| Grid.press(g, r, c) }
+  Grid.dark?(g)
+end
+
+puzzles = Array[
+  ["plus", Array[".....", "..*..", ".***.", "..*..", "....."]],
+  ["corners", Array["*...*", ".....", ".....", ".....", "*...*"]],
+  ["row", Array["*****", ".....", ".....", ".....", "....."]],
+  ["single", Array["*....", ".....", ".....", ".....", "....."]],
+  ["three", Array["*.*", ".*.", "*.*"]],
+  ["four", Array["*..*", ".**.", ".**.", "*..*"]],
+]
+
+Array.each(puzzles) do |name, rows|
+  g = Grid.parse(rows)
+  puts("#{name} (#{Grid.lit_count(g)} lit):")
+  puts(g)
+  presses = solve(rows)
+  if presses
+    names = Array.map(presses) { |r, c| "#{Integer.chr(97 + c)}#{r + 1}" }
+    puts("  #{Array.size(presses)} presses: #{Array.join(names, " ")} (verified: #{verify(rows, presses)})")
+  else
+    puts("  no solution")
+  end
+end

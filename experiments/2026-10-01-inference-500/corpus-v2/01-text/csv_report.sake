@@ -1,0 +1,125 @@
+CsvError = Exception.new(:line)
+Sale = Struct.new(:region, :rep, :product, :units, :price, :note)
+
+class Sale
+  def amount(s) = @units * @price
+end
+
+def parse_csv(text)
+  rows = Array[]
+  row = Array[]
+  field = ""
+  state = :start
+  line = 1
+  chars = String.chars(text)
+  i = 0
+  while i < Array.size(chars)
+    c = chars[i]
+    case state
+    in :quoted
+      if c == "\""
+        if chars[i + 1] == "\""
+          field += "\""
+          i += 1
+        else
+          state = :after_quote
+        end
+      else
+        line += 1 if c == "\n"
+        field += c
+      end
+    else
+      if c == "," then
+        Array.push(row, field)
+        field = ""
+        state = :start
+      elsif c == "\n"
+        Array.push(row, field)
+        Array.push(rows, row)
+        row = Array[]
+        field = ""
+        state = :start
+        line += 1
+      elsif c == "\"" && state == :start
+        state = :quoted
+      elsif state == :after_quote
+        raise CsvError.new("unexpected '#{c}' after closing quote", line)
+      else
+        field += c
+        state = :plain
+      end
+    end
+    i += 1
+  end
+  raise CsvError.new("unterminated quoted field", line) if state == :quoted
+  unless String.empty?(field) && Array.empty?(row)
+    Array.push(row, field)
+    Array.push(rows, row)
+  end
+  rows
+end
+
+def to_sales(rows)
+  header = Array.shift(rows)
+  idx = Hash[]
+  Array.each_with_index(header) { |h, i| idx[String.downcase(String.strip(h))] = i }
+  Array.map(rows) do |r|
+    Sale.new(r[idx["region"]], r[idx["rep"]], r[idx["product"]],
+             String.to_i(r[idx["units"]]), String.to_f(r[idx["price"]]), r[idx["note"]])
+  end
+end
+
+def money(x)
+  whole = Float.round(x * 100)
+  s = Integer.to_s(whole / 100)
+  s = String.gsub(s, /(\d)(?=(\d{3})+\z)/, "\\1,")
+  format("%s.%02d", s, whole % 100)
+end
+
+def report(sales)
+  by_region = Array.group_by(sales) { |s| Sale.get_region(s) }
+  grand = 0.0
+  Array.each(Array.sort(Hash.keys(by_region))) do |region|
+    list = by_region[region]
+    total = Array.sum(list) { |s| Sale.amount(s) }
+    grand += total
+    puts("#{region} (#{Array.size(list)} sales)")
+    Array.each(Array.sort_by(list) { |s| Sale.get_rep(s) }) do |s|
+      note = Sale.get_note(s)
+      note_text = note == nil || String.empty?(note) ? "" : "  # " + String.gsub(note, "\n", " / ")
+      puts(format("  %-8s %-14s %4d x %8s = %10s%s", Sale.get_rep(s), Sale.get_product(s),
+                  Sale.get_units(s), money(Sale.get_price(s)), money(Sale.amount(s)), note_text))
+    end
+    puts(format("  %-38s %10s", "subtotal", money(total)))
+  end
+  puts(format("%-40s %10s", "GRAND TOTAL", money(grand)))
+  best = Array.max_by(sales) { |s| Sale.amount(s) }
+  puts("largest sale: #{Sale.get_rep(best)} / #{Sale.get_product(best)}") if best != nil
+end
+
+def data
+  "Region,Rep,Product,Units,Price,Note\n" +
+  "West,Ito,\"Desk, oak\",3,1250.00,\n" +
+  "East,Brown,Chair,12,89.5,\"bulk order\"\n" +
+  "West,Abe,Lamp,40,19.99,\"customer said \"\"rush\"\"\"\n" +
+  "North,Chen,\"Shelf\",5,240,\"two lines:\nassemble on site\"\n" +
+  "East,Adams,Desk,1,1300,\n" +
+  "North,Baker,Chair,200,85.25,\"largest, by far\"\n"
+end
+
+begin
+  rows = parse_csv(data)
+  puts("parsed #{Array.size(rows)} rows, #{Array.size(rows[0])} columns")
+  report(to_sales(rows))
+rescue CsvError => e
+  puts("csv error on line #{CsvError.get_line(e)}: #{Exception.message(e)}")
+end
+
+Array.each(Array["a,\"b\"x,c\n", "a,\"never closed\n", "x,y\n1,2"]) do |bad|
+  begin
+    rows = parse_csv(bad)
+    puts("ok: #{Array.size(rows)} rows, last = #{Array.join(Array.last(rows), "|")}")
+  rescue CsvError => e
+    puts("csv error on line #{CsvError.get_line(e)}: #{Exception.message(e)}")
+  end
+end

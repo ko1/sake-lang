@@ -1,0 +1,111 @@
+# Textbook RSA with small primes: key generation, encrypting text in blocks,
+# signatures, and breaking a weak key by factoring the modulus.
+
+BadExponent = Exception.new(:e)
+
+Key = Struct.new(:n, :e, :d, :p, :q)
+
+class Key
+  def public_part(k) = "(n=#{@n}, e=#{@e})"
+  def encrypt(k, m) = Integer.pow(m, @e, @n)
+  def decrypt(k, c) = Integer.pow(c, @d, @n)
+  def sign(k, h) = Integer.pow(h, @d, @n)
+  def verify(k, h, s) = Integer.pow(s, @e, @n) == h % @n
+end
+
+def inverse(a, m)
+  old_r, r = a, m
+  old_s, s = 1, 0
+  while r != 0
+    q = old_r / r
+    old_r, r = r, old_r - q * r
+    old_s, s = s, old_s - q * s
+  end
+  raise BadExponent.new("e=#{a} is not invertible mod #{m}", a) if old_r != 1
+  old_s % m
+end
+
+def make_key(p, q, e)
+  phi = (p - 1) * (q - 1)
+  Key.new(p * q, e, inverse(e, phi), p, q)
+end
+
+# pack text into blocks of `width` bytes, each block a base-256 number
+def to_blocks(text, width)
+  out = Integer[]
+  Array.each_slice(String.bytes(text), width) do |chunk|
+    Array.push(out, Array.reduce(chunk, 0) { |acc, b| acc * 256 + b })
+  end
+  out
+end
+
+def from_blocks(blocks, width)
+  s = ""
+  Array.each(blocks) do |v|
+    chars = Array[]
+    while v > 0
+      Array.unshift(chars, Integer.chr(v % 256))
+      v /= 256
+    end
+    s += Array.join(chars, "")
+  end
+  s
+end
+
+def toy_hash(text) = Array.reduce(String.bytes(text), 7) { |h, b| (h * 31 + b) % 1000003 }
+
+def factor_modulus(n)
+  f = 3
+  while f * f <= n
+    return [f, n / f] if n % f == 0
+    f += 2
+  end
+  nil
+end
+
+key = make_key(1000003, 1000033, 65537)
+puts("public key: #{Key.public_part(key)}")
+puts("d * e mod phi = #{Key.get_d(key) * Key.get_e(key) % ((Key.get_p(key) - 1) * (Key.get_q(key) - 1))}")
+
+msg = "Number theory is useful!"
+blocks = to_blocks(msg, 4)
+cipher = Array.map(blocks) { |m| Key.encrypt(key, m) }
+plain = Array.map(cipher) { |c| Key.decrypt(key, c) }
+puts("blocks:  #{blocks}")
+puts("cipher:  #{Array.take(cipher, 3)} ...")
+puts("decoded: #{from_blocks(plain, 4)}")
+puts("round trip ok: #{from_blocks(plain, 4) == msg}")
+
+h = toy_hash(msg)
+sig = Key.sign(key, h)
+puts("signature of hash #{h}: #{sig}")
+puts("verify original: #{Key.verify(key, h, sig)}")
+puts("verify tampered: #{Key.verify(key, toy_hash(msg + "?"), sig)}")
+
+puts("bad exponents:")
+Array.each(Integer[3, 5, 17]) do |e|
+  begin
+    k = make_key(61, 53, e)
+    puts("  e=#{e}: d=#{Key.get_d(k)}")
+  rescue BadExponent => err
+    puts("  e=#{e}: #{Exception.message(err)}")
+  end
+end
+
+puts("breaking a weak key:")
+weak = make_key(1009, 3001, 17)
+secret = Array.map(to_blocks("hi!", 1)) { |m| Key.encrypt(weak, m) }
+n = Key.get_n(weak)
+pq = factor_modulus(n)
+if pq
+  p, q = pq
+  cracked = make_key(p, q, Key.get_e(weak))
+  puts("  n=#{n} = #{p} * #{q}, recovered d=#{Key.get_d(cracked)}")
+  puts("  message: #{from_blocks(Array.map(secret) { |c| Key.decrypt(cracked, c) }, 1)}")
+end
+
+puts("homomorphic property: E(a)*E(b) = E(a*b)")
+a = 1234
+b = 5678
+lhs = Key.encrypt(key, a) * Key.encrypt(key, b) % Key.get_n(key)
+puts("  #{lhs == Key.encrypt(key, a * b)}")

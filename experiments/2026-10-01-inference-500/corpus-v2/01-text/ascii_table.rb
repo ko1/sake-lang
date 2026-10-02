@@ -1,0 +1,1 @@
+../../corpus/01-text/ascii_table.rb

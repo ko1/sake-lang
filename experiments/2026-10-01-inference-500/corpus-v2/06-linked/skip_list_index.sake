@@ -1,0 +1,130 @@
+SkipNode = Struct.new(:key, :value, :forward)
+
+class SkipList < {reader: [head, max_level], accessor: [level, seed, size, steps]}
+  def create(max_level)
+    forward = Array[]
+    Integer.times(max_level) { Array.push(forward, nil) }
+    SkipList.new(SkipNode.new(nil, nil, forward), max_level, 1, 12345, 0, 0)
+  end
+
+  def random_level(s)
+    lvl = 1
+    loop_on = true
+    while loop_on
+      @seed = (@seed * 1103515245 + 12345) % 2147483648
+      if (@seed >> 16) % 4 == 0 && lvl < @max_level
+        lvl += 1
+      else
+        loop_on = false
+      end
+    end
+    lvl
+  end
+
+  def predecessors(s, key)
+    update = Array[]
+    Integer.times(@max_level) { Array.push(update, @head) }
+    x = @head
+    i = @level - 1
+    while i >= 0
+      while (nxt = SkipNode.get_forward(x)[i]) && SkipNode.get_key(nxt) < key
+        x = nxt
+        @steps += 1
+      end
+      update[i] = x
+      i -= 1
+    end
+    update
+  end
+
+  def find(s, key)
+    update = predecessors(s, key)
+    cand = SkipNode.get_forward(update[0])[0]
+    cand && SkipNode.get_key(cand) == key ? SkipNode.get_value(cand) : nil
+  end
+
+  def insert(s, key, value)
+    update = predecessors(s, key)
+    cand = SkipNode.get_forward(update[0])[0]
+    if cand && SkipNode.get_key(cand) == key
+      SkipNode.set_value(cand, value)
+      return false
+    end
+    lvl = random_level(s)
+    @level = lvl if lvl > @level
+    forward = Array[]
+    Integer.times(lvl) { Array.push(forward, nil) }
+    node = SkipNode.new(key, value, forward)
+    Integer.times(lvl) do |i|
+      prev = update[i]
+      forward[i] = SkipNode.get_forward(prev)[i]
+      SkipNode.get_forward(prev)[i] = node
+    end
+    @size += 1
+    true
+  end
+
+  def delete(s, key)
+    update = predecessors(s, key)
+    target = SkipNode.get_forward(update[0])[0]
+    return nil unless target && SkipNode.get_key(target) == key
+    Array.each_with_index(SkipNode.get_forward(target)) do |nxt, i|
+      SkipNode.get_forward(update[i])[i] = nxt
+    end
+    while @level > 1 && SkipNode.get_forward(@head)[@level - 1] == nil
+      @level -= 1
+    end
+    @size -= 1
+    SkipNode.get_value(target)
+  end
+
+  def range(s, lo, hi)
+    out = Array[]
+    x = SkipNode.get_forward(predecessors(s, lo)[0])[0]
+    while x && SkipNode.get_key(x) <= hi
+      Array.push(out, [SkipNode.get_key(x), SkipNode.get_value(x)])
+      x = SkipNode.get_forward(x)[0]
+    end
+    out
+  end
+
+  def level_counts(s)
+    counts = Array[]
+    Integer.times(@level) do |i|
+      n = 0
+      x = SkipNode.get_forward(@head)[i]
+      while x
+        n += 1
+        x = SkipNode.get_forward(x)[i]
+      end
+      Array.push(counts, n)
+    end
+    counts
+  end
+end
+
+prices = SkipList.create(6)
+Range.each(1..60) do |i|
+  key = (i * 37) % 101
+  SkipList.insert(prices, key, "item#{key}")
+end
+puts("size=#{SkipList.get_size(prices)} level=#{SkipList.get_level(prices)} per-level=#{Kernel.inspect(SkipList.level_counts(prices))}")
+SkipList.set_steps(prices, 0)
+Array.each(Array[37, 50, 74, 100, 0]) do |k|
+  puts("find #{k}: #{Kernel.inspect(SkipList.find(prices, k))}")
+end
+puts("steps for 5 lookups: #{SkipList.get_steps(prices)}")
+puts("update 37: #{SkipList.insert(prices, 37, "special")} -> #{SkipList.find(prices, 37)}")
+puts("range 30..45: #{Array.join(Array.map(SkipList.range(prices, 30, 45)) { |k, v| "#{k}=#{v}" }, " ")}")
+removed = Array.map(Array[37, 38, 39, 40]) { |k| SkipList.delete(prices, k) }
+puts("delete 37..40: #{Kernel.inspect(removed)}")
+puts("range 30..45: #{Array.join(Array.map(SkipList.range(prices, 30, 45)) { |k, v| Integer.to_s(k) }, ",")}")
+puts("size=#{SkipList.get_size(prices)} per-level=#{Kernel.inspect(SkipList.level_counts(prices))}")
+
+names = SkipList.create(4)
+Array.each(String.split("pear fig apple kiwi banana cherry date grape", " ")) do |w|
+  SkipList.insert(names, w, String.size(w))
+end
+puts(Array.join(Array.map(SkipList.range(names, "b", "g")) { |k, v| "#{k}(#{v})" }, " "))
+Array.each(String.split("fig kiwi zzz", " ")) { |w| SkipList.delete(names, w) }
+puts(Array.join(Array.map(SkipList.range(names, "a", "z")) { |k, v| k }, " "))

@@ -1,0 +1,115 @@
+Model = Struct.new(:class_docs, :word_counts, :totals, :vocab)
+
+def training
+  Array[
+    [:sports, "the team won the match with a late goal"],
+    [:sports, "the striker scored twice and the fans cheered"],
+    [:sports, "a tense final set decided the tennis match"],
+    [:sports, "the coach praised the defence after the win"],
+    [:tech, "the new phone has a faster chip and better battery"],
+    [:tech, "developers released a patch for the security bug"],
+    [:tech, "the laptop battery lasts all day with the new chip"],
+    [:tech, "the app update fixes a crash on startup"],
+    [:food, "slow roast the lamb with garlic and rosemary"],
+    [:food, "the chef added fresh basil to the tomato sauce"],
+    [:food, "bake the bread until the crust is golden"],
+    [:food, "a pinch of salt makes the sauce better"]
+  ]
+end
+
+def tests
+  Array[
+    [:sports, "the fans cheered the late winner in the final"],
+    [:tech, "a security patch for the phone app"],
+    [:food, "garlic bread with fresh tomato"],
+    [:tech, "the battery update"],
+    [:sports, "the goal of the new chip is a faster laptop"],
+    [:food, "the team ate pasta with basil sauce"]
+  ]
+end
+
+def stop = Set["the", "a", "and", "with", "for", "of", "to", "is", "in", "on", "all", "after", "until"]
+
+def words(text) = Array.reject(String.split(text, " ")) { |w| Set.include?(stop, w) }
+
+class Model
+  def train(examples)
+    m = Model.new(Hash.new(0), Hash[], Hash.new(0), Set[])
+    Array.each(examples) do |label, text|
+      get_class_docs(m)[label] += 1
+      counts = get_word_counts(m)[label] ||= Hash.new(0)
+      Array.each(words(text)) do |w|
+        counts[w] += 1
+        get_totals(m)[label] += 1
+        Set.add(get_vocab(m), w)
+      end
+    end
+    m
+  end
+
+  def log_prob(m, label, w)
+    v = Set.size(get_vocab(m))
+    Math.log((get_word_counts(m)[label][w] + 1.0) / (get_totals(m)[label] + v))
+  end
+
+  def scores(m, text)
+    n_docs = Array.sum(Hash.values(get_class_docs(m)))
+    result = Hash[]
+    Hash.each(get_class_docs(m)) do |label, docs|
+      s = Math.log(docs * 1.0 / n_docs)
+      Array.each(words(text)) do |w|
+        s += log_prob(m, label, w) if Set.include?(get_vocab(m), w)
+      end
+      result[label] = s
+    end
+    result
+  end
+
+  def classify(m, text)
+    best = Hash.max_by(scores(m, text)) { |label, s| s }
+    return nil unless best
+    label, s = best
+    label
+  end
+
+  def indicative(m, label, k)
+    others = Array.reject(Hash.keys(get_class_docs(m))) { |l| l == label }
+    ratios = Set.map(get_vocab(m)) do |w|
+      mine = log_prob(m, label, w)
+      rest = Array.max(Array.map(others) { |o| log_prob(m, o, w) })
+      [w, mine - rest]
+    end
+    ranked = Array.sort_by(ratios) { |w, r| [-r, w] }
+    Array.map(Array.take(ranked, k)) { |w, r| w }
+  end
+end
+
+model = Model.train(training)
+puts("classes: #{Array.join(Array.map(Hash.keys(Model.get_class_docs(model))) { |c| Symbol.to_s(c) }, ", ")}")
+puts("vocabulary: #{Set.size(Model.get_vocab(model))}")
+Hash.each(Model.get_totals(model)) { |label, n| puts("  #{label}: #{n} words") }
+
+correct = 0
+confusion = Hash.new(0)
+Array.each(tests) do |want, text|
+  got = Model.classify(model, text)
+  sc = Model.scores(model, text)
+  correct += 1 if got == want
+  confusion[[want, got]] += 1
+  detail = Array.join(Array.map(Hash.keys(sc)) { |l| format("%s=%.2f", l, sc[l]) }, " ")
+  mark = got == want ? "ok" : "MISS"
+  puts(format("%-4s %-7s %-45s %s", mark, got, text, detail))
+end
+puts(format("accuracy: %d/%d = %.1f%%", correct, Array.size(tests), 100.0 * correct / Array.size(tests)))
+misses = Hash.select(confusion) do |pair, n|
+  want, got = pair
+  want != got
+end
+Hash.each(misses) do |pair, n|
+  want, got = pair
+  puts("  confused #{want} as #{got}: #{n}")
+end
+
+Array.each(Array[:sports, :tech, :food]) do |label|
+  puts("#{label} words: #{Array.join(Model.indicative(model, label, 4), ", ")}")
+end

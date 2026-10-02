@@ -1,0 +1,120 @@
+# A Duration type in whole seconds with arithmetic and ordering, parsed from
+# "1h30m", "2d4h", "1:30:00", "45:10" or "90s", and printed in several styles.
+
+Duration = Struct.new(:secs)
+BadDuration = Exception.new(:text)
+
+class Duration
+  include Arithmetic
+  include Comparable
+
+  def +(a, b) = Duration.new(@secs + Duration.get_secs(b))
+  def -(a, b) = Duration.new(@secs - Duration.get_secs(b))
+
+  def *(a, k)
+    case k
+    in Integer then Duration.new(@secs * k)
+    in Float then Duration.new(Float.round(@secs * k))
+    end
+  end
+
+  def /(a, k) = Duration.new(@secs / k)
+
+  def <=>(a, b) = @secs <=> Duration.get_secs(b)
+
+  def parse(text)
+    s = String.strip(text)
+    if (m = String.match(s, /\A(\d+):(\d{2}):(\d{2})\z/))
+      return Duration.new(String.to_i(m[1]) * 3600 + String.to_i(m[2]) * 60 + String.to_i(m[3]))
+    end
+    if (m = String.match(s, /\A(\d+):(\d{2})\z/))
+      return Duration.new(String.to_i(m[1]) * 60 + String.to_i(m[2]))
+    end
+    raise BadDuration.new("unparseable duration", text) unless String.match?(s, /\A(\d+[dhms])+\z/)
+    units = Hash["d" => 86400, "h" => 3600, "m" => 60, "s" => 1]
+    total = 0
+    Array.each(String.scan(s, /(\d+)([dhms])/)) do |num, unit|
+      total += String.to_i(num) * Hash.fetch(units, unit)
+    end
+    Duration.new(total)
+  end
+
+  def clock(a)
+    h = @secs / 3600
+    format("%d:%02d:%02d", h, (@secs % 3600) / 60, @secs % 60)
+  end
+
+  def human(a)
+    return "0s" if @secs == 0
+    parts = Array[]
+    rest = @secs
+    Array.each(Array[["d", 86400], ["h", 3600], ["m", 60], ["s", 1]]) do |unit, size|
+      n = rest / size
+      rest = rest % size
+      Array.push(parts, "#{n}#{unit}") if n > 0
+    end
+    Array.join(parts, " ")
+  end
+
+  def to_s(a) = human(a)
+end
+
+def zero = Duration.new(0)
+
+puts("Parsing:")
+inputs = Array["1h30m", "2d4h", "1:30:00", "45:10", "90s", "3m", "1h1h", "  10m5s ", "1.5h", "4:7", "0s"]
+good = Duration[]
+Array.each(inputs) do |text|
+  begin
+    d = Duration.parse(text)
+    Array.push(good, d)
+    puts(format("  %-10s %8d s  %-12s %s", "'#{text}'", Duration.get_secs(d), Duration.clock(d), Duration.human(d)))
+  rescue BadDuration => e
+    puts(format("  %-10s rejected: %s", "'#{BadDuration.get_text(e)}'", Exception.message(e)))
+  end
+end
+
+total = Array.reduce(good, zero) { |acc, d| acc + d }
+puts("Sum: #{total}, longest: #{Array.max(good)}, shortest: #{Array.min(good)}")
+
+# An album: track lengths, running total, and the side split nearest half.
+tracks = Array[["Overture", "4:12"], ["Slow Tide", "6:45"], ["Glass", "3:58"], ["Northbound", "5:31"],
+               ["Interlude", "1:20"], ["Harbor Lights", "7:02"], ["Coda", "2:49"]]
+puts
+puts("Album:")
+running = zero
+Array.each_with_index(tracks) do |pair, i|
+  name, len = pair
+  d = Duration.parse(len)
+  running += d
+  puts(format("  %d. %-14s %s  ends at %s", i + 1, name, Duration.clock(d), Duration.clock(running)))
+end
+half = running / 2
+acc = zero
+split = 0
+best_gap = nil
+Array.each_with_index(tracks) do |pair, i|
+  name, len = pair
+  acc += Duration.parse(len)
+  gap = Integer.abs(Duration.get_secs(acc - half))
+  if best_gap == nil || gap < best_gap
+    best_gap = gap
+    split = i + 1
+  end
+end
+puts("Total #{Duration.clock(running)}; side A gets #{split} tracks (#{best_gap}s from half)")
+
+# Lap times: average, best, and laps slower than 105% of the best.
+laps = Array.map(Array["1:32:10", "1:31:58", "1:33:40", "1:31:12", "1:36:05", "1:31:50"]) { |s| Duration.parse(s) }
+avg = Array.reduce(laps, zero) { |a, b| a + b } / Array.size(laps)
+best = Array.min(laps)
+if best
+  limit = best * 1.05
+  slow = Array.select(laps) { |l| l > limit }
+  puts
+  puts("Laps: avg #{Duration.clock(avg)}, best #{Duration.clock(best)}, 105% #{Duration.clock(limit)}, slow laps: #{Array.size(slow)}")
+  deltas = Array.map(laps) { |l| "+#{Duration.get_secs(l - best)}" }
+  puts("Deltas: #{Array.join(deltas, " ")}")
+end
+week = Duration.parse("37h30m") * 4
+puts("Four 37.5h weeks: #{week} = #{Duration.clock(week)}")

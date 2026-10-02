@@ -1,0 +1,103 @@
+Sale = Struct.new(:region, :rep, :product, :units, :unit_price)
+
+class Sale
+  def amount(s) = @units * @unit_price
+end
+
+def raw_sales
+  <<~CSV
+    North,Alice,Widget,12,250
+    North,Bob,Gadget,3,1200
+    South,Carol,Widget,20,240
+    East,Dave,Gizmo,7,560
+    South,Carol,Gadget,1,1250
+    North,Alice,Gizmo,4,575
+    West,Erin,Widget,9,260
+    East,Dave,Widget,15,245
+    West,Frank,Gadget,2,1190
+    South,Gina,Gizmo,6,550
+    East,Hank,Gadget,5,1210
+    West,Erin,Gizmo,3,580
+  CSV
+end
+
+def parse_sales(text)
+  sales = Sale[]
+  Array.each(String.lines(text)) do |line|
+    fields = String.split(String.chomp(line), ",")
+    next if Array.size(fields) != 5
+    region, rep, product, units, price = fields
+    Array.push(sales, Sale.new(region, rep, product, String.to_i(units), String.to_i(price)))
+  end
+  sales
+end
+
+def money(cents)
+  digits = String.reverse(Integer.to_s(cents))
+  "$" + String.reverse(Array.join(String.scan(digits, /\d{1,3}/), ","))
+end
+
+def region_summary(sales)
+  by_region = Array.group_by(sales) { Sale.get_region(it) }
+  rows = Array.map(Hash.keys(by_region)) do |region|
+    list = Hash.fetch(by_region, region)
+    total = Array.sum(list) { Sale.amount(it) }
+    units = Array.sum(list) { Sale.get_units(it) }
+    best = Array.max_by(list) { Sale.amount(it) }
+    {region: region, total: total, units: units, count: Array.size(list), best: best}
+  end
+  Array.sort_by(rows) do |r|
+    r => {total:}
+    -total
+  end
+end
+
+def print_region_table(rows, grand)
+  puts(format("%-8s %6s %6s %12s %7s  %s", "Region", "Orders", "Units", "Revenue", "Share", "Top sale"))
+  puts("-" * 64)
+  Array.each(rows) do |r|
+    r => {region:, total:, units:, count:, best:}
+    share = total * 100.0 / grand
+    top = best ? "#{Sale.get_rep(best)}/#{Sale.get_product(best)}" : "-"
+    puts(format("%-8s %6d %6d %12s %6.1f%%  %s", region, count, units, money(total), share, top))
+  end
+  puts("-" * 64)
+end
+
+def rep_leaderboard(sales)
+  totals = Hash.new(0)
+  Array.each(sales) { |s| totals[Sale.get_rep(s)] += Sale.amount(s) }
+  ranked = Hash.sort_by(totals) { |rep, amt| [-amt, rep] }
+  Array.take(ranked, 3)
+end
+
+def product_mix(sales)
+  mix = Hash[]
+  Array.each(sales) do |s|
+    key = Sale.get_product(s)
+    entry = (mix[key] ||= [0, 0])
+    entry[0] += Sale.get_units(s)
+    entry[1] += Sale.amount(s)
+  end
+  mix
+end
+
+sales = parse_sales(raw_sales)
+grand = Array.sum(sales) { Sale.amount(it) }
+puts("Sales report (#{Array.size(sales)} orders)")
+puts
+print_region_table(region_summary(sales), grand)
+puts(format("%-8s %6d %6s %12s", "Total", Array.size(sales), "", money(grand)))
+puts
+puts("Top reps:")
+Array.each_with_index(rep_leaderboard(sales)) do |pair, i|
+  rep, amt = pair
+  puts(format("  %d. %-6s %10s", i + 1, rep, money(amt)))
+end
+puts
+puts("Product mix:")
+Hash.each(product_mix(sales)) do |product, entry|
+  units, amt = entry
+  avg = amt / units
+  puts(format("  %-7s units=%3d revenue=%10s avg=%s", product, units, money(amt), money(avg)))
+end

@@ -1,0 +1,100 @@
+# Huffman compression: build the tree from symbol frequencies, derive the code table,
+# encode a text to a bit string, pack it into bytes, and decode it back.
+
+HNode = Struct.new(:weight, :order, :symbol, :left, :right)
+
+class HNode
+  include Comparable
+  def <=>(a, b) = [@weight, @order] <=> [HNode.get_weight(b), HNode.get_order(b)]
+  def leaf?(n) = @symbol != nil
+end
+
+def insert_sorted(queue, node)
+  i = Array.find_index(queue) { |q| node < q }
+  if i
+    Array.insert(queue, i, node)
+  else
+    Array.push(queue, node)
+  end
+end
+
+def build_tree(text)
+  freq = Array.tally(String.chars(text))
+  queue = HNode[]
+  order = 0
+  Array.each(Array.sort_by(Hash.to_a(freq)) { |sym, n| [n, sym] }) do |sym, n|
+    insert_sorted(queue, HNode.new(n, order, sym, nil, nil))
+    order += 1
+  end
+  while Array.size(queue) > 1
+    a = Array.shift(queue)
+    b = Array.shift(queue)
+    insert_sorted(queue, HNode.new(HNode.get_weight(a) + HNode.get_weight(b), order, nil, a, b))
+    order += 1
+  end
+  Array.first(queue)
+end
+
+def assign_codes(node, prefix, table)
+  return table if node == nil
+  if HNode.leaf?(node)
+    table[HNode.get_symbol(node)] = String.empty?(prefix) ? "0" : prefix
+  else
+    assign_codes(HNode.get_left(node), prefix + "0", table)
+    assign_codes(HNode.get_right(node), prefix + "1", table)
+  end
+  table
+end
+
+def decode_bits(root, bits)
+  out = ""
+  node = root
+  String.each_char(bits) do |b|
+    node = b == "0" ? HNode.get_left(node) : HNode.get_right(node)
+    if HNode.leaf?(node)
+      out += HNode.get_symbol(node)
+      node = root
+    end
+  end
+  out
+end
+
+def pack(bits)
+  bytes = Integer[]
+  i = 0
+  while i < String.size(bits)
+    chunk = String.ljust(bits[i...(i + 8)], 8, "0")
+    v = 0
+    String.each_char(chunk) { |c| v = v * 2 + (c == "1" ? 1 : 0) }
+    Array.push(bytes, v)
+    i += 8
+  end
+  bytes
+end
+
+def show_char(c) = c == " " ? "' '" : c
+
+texts = Array["abracadabra", "mississippi river", "this is an example of a huffman tree"]
+Array.each(texts) do |text|
+  root = build_tree(text)
+  next if root == nil
+  codes = assign_codes(root, "", Hash[])
+  bits = Array.join(Array.map(String.chars(text)) { |c| codes[c] }, "")
+  packed = pack(bits)
+  back = decode_bits(root, bits)
+  puts("text: #{text}")
+  rows = Array.sort_by(Hash.to_a(codes)) { |sym, code| [String.size(code), sym] }
+  Array.each(rows) do |sym, code|
+    puts(format("  %-4s %-8s", show_char(sym), code))
+  end
+  avg = Integer.fdiv(String.size(bits), String.size(text))
+  puts(format("  bits=%d bytes=%d (raw %d) avg=%.3f bits/char", String.size(bits),
+              Array.size(packed), String.size(text), avg))
+  puts("  packed: #{Array.join(Array.map(packed) { |b| format("%02X", b) }, "")}")
+  puts("  roundtrip: #{back == text}")
+end
+
+single = build_tree("aaaa")
+if single
+  puts("single-symbol code: #{assign_codes(single, "", Hash[])["a"]}")
+end

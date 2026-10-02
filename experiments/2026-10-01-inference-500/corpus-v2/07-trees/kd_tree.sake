@@ -1,0 +1,120 @@
+Place = Struct.new(:name, :x, :y)
+KdNode = Struct.new(:place, :axis, :left, :right)
+Search = Struct.new(:best, :best_d2, :visited)
+
+class Place
+  def coord(p, axis) = axis == 0 ? @x : @y
+  def dist2(p, x, y) = (@x - x) ** 2 + (@y - y) ** 2
+end
+
+def build(places, depth)
+  return nil if Array.empty?(places)
+  axis = depth % 2
+  sorted = Array.sort_by(places) { |p| Place.coord(p, axis) }
+  mid = Array.size(sorted) / 2
+  KdNode.new(sorted[mid], axis,
+             build(Array.take(sorted, mid), depth + 1),
+             build(Array.drop(sorted, mid + 1), depth + 1))
+end
+
+def nearest(node, x, y, st)
+  return if node == nil
+  Search.set_visited(st, Search.get_visited(st) + 1)
+  p = KdNode.get_place(node)
+  d2 = Place.dist2(p, x, y)
+  if Search.get_best(st) == nil || d2 < Search.get_best_d2(st)
+    Search.set_best(st, p)
+    Search.set_best_d2(st, d2)
+  end
+  axis = KdNode.get_axis(node)
+  diff = (axis == 0 ? x : y) - Place.coord(p, axis)
+  near, far = diff < 0 ? [KdNode.get_left(node), KdNode.get_right(node)] : [KdNode.get_right(node), KdNode.get_left(node)]
+  nearest(near, x, y, st)
+  nearest(far, x, y, st) if diff * diff < Search.get_best_d2(st)
+end
+
+def k_nearest(node, x, y, k, found)
+  return found if node == nil
+  p = KdNode.get_place(node)
+  d2 = Place.dist2(p, x, y)
+  i = Array.find_index(found) { |_q, qd| d2 < qd }
+  if i == nil
+    Array.push(found, [p, d2]) if Array.size(found) < k
+  else
+    Array.insert(found, i, [p, d2])
+    Array.pop(found) if Array.size(found) > k
+  end
+  axis = KdNode.get_axis(node)
+  diff = (axis == 0 ? x : y) - Place.coord(p, axis)
+  near, far = diff < 0 ? [KdNode.get_left(node), KdNode.get_right(node)] : [KdNode.get_right(node), KdNode.get_left(node)]
+  k_nearest(near, x, y, k, found)
+  worst = Array.size(found) < k ? nil : Array.last(found)[1]
+  k_nearest(far, x, y, k, found) if worst == nil || diff * diff < worst
+  found
+end
+
+def in_box(node, x0, y0, x1, y1, out)
+  return out if node == nil
+  p = KdNode.get_place(node)
+  px = Place.get_x(p)
+  py = Place.get_y(p)
+  Array.push(out, Place.get_name(p)) if x0 <= px && px <= x1 && y0 <= py && py <= y1
+  axis = KdNode.get_axis(node)
+  c = Place.coord(p, axis)
+  lo, hi = axis == 0 ? [x0, x1] : [y0, y1]
+  in_box(KdNode.get_left(node), x0, y0, x1, y1, out) if lo <= c
+  in_box(KdNode.get_right(node), x0, y0, x1, y1, out) if hi >= c
+  out
+end
+
+def height(node) = node == nil ? 0 : 1 + Array.max(Array[height(KdNode.get_left(node)), height(KdNode.get_right(node))])
+
+data = <<~CSV
+  Lisbon,-9.14,38.72
+  Madrid,-3.70,40.42
+  Paris,2.35,48.86
+  London,-0.13,51.51
+  Dublin,-6.26,53.35
+  Brussels,4.35,50.85
+  Amsterdam,4.90,52.37
+  Berlin,13.40,52.52
+  Prague,14.42,50.08
+  Vienna,16.37,48.21
+  Rome,12.50,41.90
+  Warsaw,21.01,52.23
+  Budapest,19.04,47.50
+  Copenhagen,12.57,55.68
+  Stockholm,18.07,59.33
+  Oslo,10.75,59.91
+  Athens,23.73,37.98
+  Zurich,8.54,47.37
+CSV
+places = Array[]
+String.each_line(data) do |line|
+  name, x, y = String.split(String.chomp(line), ",")
+  Array.push(places, Place.new(name, String.to_f(x), String.to_f(y)))
+end
+tree = build(places, 0)
+puts("#{Array.size(places)} places, tree height #{height(tree)}, root #{Place.get_name(KdNode.get_place(tree))}")
+
+queries = Array[["Lyon", 4.84, 45.76], ["Hamburg", 9.99, 53.55], ["Milan", 9.19, 45.46], ["Porto", -8.61, 41.15], ["Helsinki", 24.94, 60.17]]
+Array.each(queries) do |name, x, y|
+  st = Search.new(nil, 0.0, 0)
+  nearest(tree, x, y, st)
+  brute = Array.min_by(places) { |p| Place.dist2(p, x, y) }
+  best = Search.get_best(st)
+  ok = Place.get_name(best) == Place.get_name(brute) ? "agrees" : "DIFFERS"
+  puts(format("%-9s -> %-10s dist %.2f  (visited %d of %d, brute force %s)",
+              name, Place.get_name(best), Math.sqrt(Search.get_best_d2(st)), Search.get_visited(st), Array.size(places), ok))
+end
+
+puts("-- 3 nearest to Frankfurt (8.68, 50.11) --")
+Array.each(k_nearest(tree, 8.68, 50.11, 3, Array[])) do |p, d2|
+  puts(format("  %-10s %.2f", Place.get_name(p), Math.sqrt(d2)))
+end
+
+puts("-- inside box lon 0..15, lat 47..53 --")
+puts("  #{Array.join(Array.sort(in_box(tree, 0.0, 47.0, 15.0, 53.0, Array[])), ", ")}")
+puts("-- inside box lon 20..30, lat 30..40 --")
+found = in_box(tree, 20.0, 30.0, 30.0, 40.0, Array[])
+puts("  #{Array.empty?(found) ? "(none)" : Array.join(found, ", ")}")

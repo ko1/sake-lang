@@ -1,0 +1,27 @@
+# Changes (12-parsers, corpus -> corpus-v2)
+
+- tokenizer: unchanged
+- calc_rd: unary minus `-unary(c)` replaces `0 - unary(c)`; `abs` is `(Integer|Float).abs(args[0])` instead of the hand-written `a < 0 ? 0 - a : a`
+- shunting_yard: `!right` replaces `right == false`
+- stack_vm: Tuple sort key `[-n, Symbol.to_s(op)]` replaces the packed String key `format("%08d %s", 99999999 - n, op)`
+- rpn_calc: unary minus `-pop(c)` replaces `0 - pop(c)`; the two nested `if a in Integer` / `if b in Integer` become one `if (a in Integer) && (b in Integer)`
+- json_parser: `!(x in Hash | Array)` replaces `(x in Hash | Array) == false`
+- ini_parser: unchanged
+- csv_parser: `unless String.empty?(field) && Array.empty?(row)` (as in Ruby) replaces `if ... == false || ... == false`
+- lisp_interp: `!(v in false)` replaces `(v in false) == false`; unary minus `-args[0]`; `let` bindings are taken apart by the block parameters `|name, expr|` (Array destructuring) instead of `binding[0]`, `binding[1]`
+- regex_matcher: span comparison is `found == builtin(pat, s)` (Tuple/nil equality); the helper `same_span?` is removed
+- brainfuck: `Array.join` without the separator (the interpreter crash is fixed), as Ruby's `.join`
+- forth: `!String.end_with?(...)` replaces `... == false`; loop counter `frame[0] += 1` replaces `frame[0] = frame[0] + 1`
+- symbolic_diff: unchanged
+- pratt_parser: unary minus `-int!(...)`; `!` replaces four `x == false` (`not`, `and` short-circuit, `!=` result)
+- assembler: `mn, _, rest = String.partition(src, /\s+/)` (Tuple destructuring) replaces the regexp match read with `parts[1]`, `parts[2]`
+- template_engine: `elsif !blank?(v)` replaces `blank?(v) == false`; `Array.join` without the separator
+- query_engine: unchanged
+- markdown: compound index assignment `Block.get_lines(current)[-1] += ...` (as in Ruby) replaces the read-then-write through a local
+- truth_table: `!holds?(neg, env)` and `!a || ...` replace `== false`; `Array.count(table) { |_, value| value }` (destructuring) replaces `pair[1]`; `Array.join` without `""`
+- chem_formula: `lhs, rhs = String.split(eq, "->")` (multiple assignment from an Array) replaces `sides[0]`, `sides[1]`
+- turing_machine: `Range.map(lo..hi)` and `Array.join` without `""` (as Ruby's `(lo..hi).map { }.join`) replace `Array.map(Range.to_a(...))` and `join(..., "")`
+- tiny_basic: unary minus `-atom(b, t)`; `v = @vars[name] += step` as one expression, as in Ruby
+- cmdline_parser: `!String.start_with?(arg, "-")` and `!negated` replace `== false` and `negated ? false : true`; changed options are printed with `v != d[k]` (Array `!=` by contents), as in Ruby, replacing the `Array.empty?` special case for the list option
+- type_checker: each `case` branch over the tagged Tuples takes its node apart with multiple assignment (`_, name, value, body = e`) instead of reading `e[1]`, `e[2]`, `e[3]`; `!` replaces two `== false` (`not` builtin, keyword check)
+- indent_lexer: unchanged

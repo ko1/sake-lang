@@ -1,0 +1,1 @@
+../../corpus/10-grids/lights_out.rb

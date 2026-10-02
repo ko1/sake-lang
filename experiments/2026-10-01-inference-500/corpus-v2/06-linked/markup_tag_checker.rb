@@ -1,0 +1,1 @@
+../../corpus/06-linked/markup_tag_checker.rb

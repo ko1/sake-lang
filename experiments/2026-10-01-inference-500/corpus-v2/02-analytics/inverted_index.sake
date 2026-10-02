@@ -1,0 +1,117 @@
+Doc = Struct.new(:id, :title, :body)
+QueryError = Exception.new(:query)
+
+def documents
+  Doc[
+    Doc.new(1, "Intro to Ruby", "Ruby is a dynamic language. Ruby code is concise and readable."),
+    Doc.new(2, "Static types", "A static type checker reads code before it runs and reports type errors."),
+    Doc.new(3, "Type inference", "Type inference finds the type of each expression without annotations."),
+    Doc.new(4, "Hash tables", "A hash table maps keys to values. Ruby hashes keep insertion order."),
+    Doc.new(5, "Search engines", "An inverted index maps each word to the documents that contain the word.")
+  ]
+end
+
+def tokens(text) = Array.reject(String.split(String.downcase(text), /[^a-z]+/)) { |w| String.empty?(w) }
+
+def build_index(docs)
+  index = Hash[]
+  Array.each(docs) do |d|
+    Array.each_with_index(tokens(Doc.get_body(d))) do |w, pos|
+      index[w] ||= Hash[]
+      postings = index[w]
+      postings[Doc.get_id(d)] ||= Array[]
+      Array.push(postings[Doc.get_id(d)], pos)
+    end
+  end
+  index
+end
+
+def doc_ids(index, word)
+  postings = index[word]
+  postings ? Array.to_set(Hash.keys(postings)) : Set[]
+end
+
+def all_ids(docs) = Array.to_set(Array.map(docs) { |d| Doc.get_id(d) })
+
+def search(index, docs, query)
+  words = String.split(String.downcase(query), " ")
+  raise QueryError.new("empty query", query) if Array.empty?(words)
+  result = nil
+  mode = :and
+  Array.each(words) do |w|
+    if w == "or"
+      mode = :or
+    elsif w == "not"
+      mode = :not
+    else
+      ids = doc_ids(index, w)
+      if result == nil
+        result = mode == :not ? all_ids(docs) - ids : ids
+      elsif mode == :or
+        result = result | ids
+      elsif mode == :not
+        result = result - ids
+      else
+        result = result & ids
+      end
+      mode = :and
+    end
+  end
+  raise QueryError.new("query has no terms", query) if result == nil
+  Array.sort(Set.to_a(result))
+end
+
+def phrase_at?(index, words, id, start)
+  Array.each_with_index(words) do |w, offset|
+    postings = index[w]
+    return false unless postings
+    positions = postings[id]
+    return false unless positions
+    return false unless Array.include?(positions, start + offset)
+  end
+  true
+end
+
+def phrase_search(index, phrase)
+  words = String.split(String.downcase(phrase), " ")
+  first = index[words[0]]
+  return Array[] unless first
+  hits = Array[]
+  Hash.each(first) do |id, positions|
+    Array.push(hits, id) if Array.any?(positions) { |start| phrase_at?(index, words, id, start) }
+  end
+  Array.sort(hits)
+end
+
+def titles(docs, ids)
+  Array.map(ids) do |id|
+    d = Array.find(docs) { |x| Doc.get_id(x) == id }
+    d ? Doc.get_title(d) : "?"
+  end
+end
+
+docs = documents
+index = build_index(docs)
+puts("vocabulary: #{Hash.size(index)} words")
+
+common = Array.sort_by(Hash.keys(index)) { |w| -Hash.size(index[w]) }
+top = Array.select(common) { |w| Hash.size(index[w]) >= 2 }
+Array.each(Array.sort(top)) do |w|
+  postings = index[w]
+  desc = Array.map(Array.sort(Hash.keys(postings))) { |id| "#{id}:#{Array.join(postings[id], ",")}" }
+  puts("  #{w} -> #{Array.join(desc, " ")}")
+end
+
+queries = Array["ruby", "type code", "ruby or type", "maps not ruby", "not ruby", "zebra", "", "or"]
+Array.each(queries) do |q|
+  begin
+    ids = search(index, docs, q)
+    puts("[#{q}] => #{ids} #{Array.join(titles(docs, ids), " | ")}")
+  rescue QueryError => e
+    puts("[#{q}] error: #{QueryError.get_message(e)} (#{Kernel.inspect(QueryError.get_query(e))})")
+  end
+end
+
+Array.each(Array["type inference", "the word", "ruby code", "static code"]) do |ph|
+  puts("\"#{ph}\" => #{phrase_search(index, ph)}")
+end

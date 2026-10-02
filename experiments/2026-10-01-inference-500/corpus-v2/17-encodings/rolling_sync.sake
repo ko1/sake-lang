@@ -1,0 +1,134 @@
+# rsync-style delta: Adler-32 and Fletcher-16 checksums, a rolling weak checksum over a
+# sliding window, and a block-matching delta between an old and a new file.
+
+BlockSig = Struct.new(:index, :weak, :strong)
+
+def adler32(bytes)
+  a = 1
+  b = 0
+  Array.each(bytes) do |x|
+    a = (a + x) % 65521
+    b = (b + a) % 65521
+  end
+  (b << 16) | a
+end
+
+def fletcher16(bytes)
+  s1 = 0
+  s2 = 0
+  Array.each(bytes) do |x|
+    s1 = (s1 + x) % 255
+    s2 = (s2 + s1) % 255
+  end
+  (s2 << 8) | s1
+end
+
+# rsync's weak checksum: a = sum of bytes, b = weighted sum; both mod 2^16
+def weak_parts(bytes)
+  a = 0
+  b = 0
+  n = Array.size(bytes)
+  Array.each_with_index(bytes) do |x, i|
+    a += x
+    b += (n - i) * x
+  end
+  [a & 0xFFFF, b & 0xFFFF]
+end
+
+def roll(a, b, out_byte, in_byte, n)
+  a2 = (a - out_byte + in_byte) & 0xFFFF
+  b2 = (b - n * out_byte + a2) & 0xFFFF
+  [a2, b2]
+end
+
+def signatures(old, size)
+  sigs = Hash[]
+  index = 0
+  Array.each_slice(old, size) do |block|
+    a, b = weak_parts(block)
+    weak = (b << 16) | a
+    list = sigs[weak]
+    if list == nil
+      list = BlockSig[]
+      sigs[weak] = list
+    end
+    Array.push(list, BlockSig.new(index, weak, adler32(block)))
+    index += 1
+  end
+  sigs
+end
+
+def delta(new_bytes, sigs, size)
+  ops = Array[]
+  literal = Integer[]
+  i = 0
+  n = Array.size(new_bytes)
+  a, b = weak_parts(Array.take(new_bytes, size))
+  while i + size <= n
+    window = new_bytes[i...(i + size)]
+    candidates = sigs[(b << 16) | a]
+    strong = candidates ? adler32(window) : 0
+    hit = candidates ? Array.find(candidates) { |s| BlockSig.get_strong(s) == strong } : nil
+    if hit
+      Array.push(ops, [:literal, literal]) unless Array.empty?(literal)
+      literal = Integer[]
+      Array.push(ops, [:copy, BlockSig.get_index(hit)])
+      i += size
+      a, b = weak_parts(new_bytes[i...(i + size)] || Integer[]) if i + size <= n
+    else
+      Array.push(literal, new_bytes[i])
+      a, b = roll(a, b, new_bytes[i], new_bytes[i + size] || 0, size) if i + size < n
+      i += 1
+    end
+  end
+  Array.concat(literal, new_bytes[i...n] || Integer[])
+  Array.push(ops, [:literal, literal]) unless Array.empty?(literal)
+  ops
+end
+
+def text_of(bytes) = Array.join(Array.map(bytes) { |x| Integer.chr(x) }, "")
+
+puts("adler32(Wikipedia)   = #{format("%08x", adler32(String.bytes("Wikipedia")))}")
+puts("fletcher16(abcde)    = #{fletcher16(String.bytes("abcde"))}")
+puts("fletcher16(abcdef)   = #{fletcher16(String.bytes("abcdef"))}")
+
+sample = String.bytes("the rolling checksum slides one byte at a time")
+a, b = weak_parts(Array.take(sample, 8))
+ok = true
+Range.each(1..(Array.size(sample) - 8)) do |i|
+  a, b = roll(a, b, sample[i - 1], sample[i + 7], 8)
+  direct_a, direct_b = weak_parts(sample[i...(i + 8)])
+  ok = false if direct_a != a || direct_b != b
+end
+puts("rolling agrees with direct computation: #{ok}")
+
+old_text = "The quick brown fox jumps over the lazy dog. Pack my box with five dozen jugs."
+new_text = "The quick brown cat jumps over the lazy dog. Pack my box with five dozen liquor jugs!"
+size = 8
+sigs = signatures(String.bytes(old_text), size)
+ops = delta(String.bytes(new_text), sigs, size)
+copied = 0
+sent = 0
+Array.each(ops) do |kind, arg|
+  case kind
+  in :copy
+    copied += size
+    puts("  copy block #{arg}")
+  in :literal
+    sent += Array.size(arg)
+    puts("  literal #{Kernel.inspect(text_of(arg))}")
+  end
+end
+puts("new file #{String.size(new_text)} bytes: #{copied} copied, #{sent} sent literally")
+
+
+old_blocks = Array[]
+Array.each_slice(String.bytes(old_text), size) { |blk| Array.push(old_blocks, blk) }
+rebuilt = Integer[]
+Array.each(ops) do |kind, arg|
+  case kind
+  in :copy then Array.concat(rebuilt, Array.fetch(old_blocks, arg))
+  in :literal then Array.concat(rebuilt, arg)
+  end
+end
+puts("rebuilt matches new file: #{text_of(rebuilt) == new_text}")

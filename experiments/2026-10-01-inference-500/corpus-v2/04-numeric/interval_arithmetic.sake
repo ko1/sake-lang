@@ -1,0 +1,142 @@
+DivideByZeroInterval = Exception.new(:divisor)
+
+class Interval < {reader: [lo, hi]}
+  include Arithmetic
+
+  def point(x) = Interval.new(x, x)
+
+  def lift(v)
+    case v
+    in Interval then v
+    in Float then point(v)
+    in Integer then point(Integer.to_f(v))
+    end
+  end
+
+  def +(a, b)
+    o = lift(b)
+    Interval.new(@lo + Interval.get_lo(o), @hi + Interval.get_hi(o))
+  end
+
+  def -(a, b)
+    o = lift(b)
+    Interval.new(@lo - Interval.get_hi(o), @hi - Interval.get_lo(o))
+  end
+
+  def *(a, b)
+    o = lift(b)
+    ps = Float[@lo * Interval.get_lo(o), @lo * Interval.get_hi(o), @hi * Interval.get_lo(o), @hi * Interval.get_hi(o)]
+    Interval.new(Array.min(ps), Array.max(ps))
+  end
+
+  def /(a, b)
+    o = lift(b)
+    if Interval.get_lo(o) <= 0.0 && Interval.get_hi(o) >= 0.0
+      raise DivideByZeroInterval.new("divisor contains zero", o)
+    end
+    a * Interval.new(1.0 / Interval.get_hi(o), 1.0 / Interval.get_lo(o))
+  end
+
+  def sqr(a)
+    return Interval.new(@lo * @lo, @hi * @hi) if @lo >= 0.0
+    return Interval.new(@hi * @hi, @lo * @lo) if @hi <= 0.0
+    Interval.new(0.0, Array.max(Float[@lo * @lo, @hi * @hi]))
+  end
+
+  def exp(a) = Interval.new(Math.exp(@lo), Math.exp(@hi))
+  def width(a) = @hi - @lo
+  def mid(a) = (@lo + @hi) / 2.0
+  def contains?(a, x) = @lo <= x && x <= @hi
+  def split(a) = [Interval.new(@lo, mid(a)), Interval.new(mid(a), @hi)]
+  def to_s(a) = format("[%.6f, %.6f]", @lo, @hi)
+end
+
+# f(x) = x^4 - 3x^2 + x, written once with operations that work on Float and Interval
+def poly_f(x, sq) = sq * sq - sq * 3.0 + x
+
+def f_float(x) = poly_f(x, x * x)
+def f_interval(iv) = poly_f(iv, Interval.sqr(iv))
+
+def global_min(domain, tol)
+  best_upper = f_float(Interval.mid(domain))
+  queue = Array[domain]
+  boxes = 0
+  pruned = 0
+  result = domain
+  until Array.empty?(queue)
+    box = Array.shift(queue)
+    boxes += 1
+    range = f_interval(box)
+    if Interval.get_lo(range) > best_upper
+      pruned += 1
+      next
+    end
+    m = Interval.mid(box)
+    fm = f_float(m)
+    if fm < best_upper
+      best_upper = fm
+      result = box
+    end
+    if Interval.width(box) > tol
+      left, right = Interval.split(box)
+      Array.push(queue, left, right)
+    end
+  end
+  {value: best_upper, box: result, boxes: boxes, pruned: pruned}
+end
+
+def roots_in(domain, tol)
+  found = Array[]
+  stack = Array[domain]
+  while (box = Array.pop(stack))
+    r = f_interval(box)
+    next unless Interval.contains?(r, 0.0)
+    if Interval.width(box) < tol
+      last = Array.last(found)
+      if last == nil || Interval.get_lo(box) - Interval.get_hi(last) > tol
+        Array.push(found, box)
+      else
+        Array.pop(found)
+        Array.push(found, Interval.new(Interval.get_lo(last), Interval.get_hi(box)))
+      end
+      next
+    end
+    left, right = Interval.split(box)
+    Array.push(stack, right, left)
+  end
+  found
+end
+
+a = Interval.new(1.0, 2.0)
+b = Interval.new(-0.5, 3.0)
+puts("a = #{a}, b = #{b}")
+puts("a + b = #{a + b}")
+puts("a - b = #{a - b}")
+puts("a * b = #{a * b}")
+puts("a / a = #{a / a}")
+puts("a + 1 = #{a + 1}, a * 0.5 = #{a * 0.5}")
+puts("sqr(b) = #{Interval.sqr(b)} but b * b = #{b * b}")
+
+begin
+  puts(a / b)
+rescue DivideByZeroInterval => e
+  puts("a / b: #{Exception.message(e)} #{DivideByZeroInterval.get_divisor(e)}")
+end
+
+x = Interval.new(0.9, 1.1)
+puts("f over #{x} = #{f_interval(x)}")
+samples = Range.map(0..20) { |i| f_float(0.9 + i * 0.01) }
+puts(format("sampled range: [%.6f, %.6f]", Array.min(samples), Array.max(samples)))
+
+res = global_min(Interval.new(-3.0, 3.0), 1e-4)
+res => {value:, box:, boxes:, pruned:}
+puts(format("global minimum ~ %.8f in %s (%d boxes, %d pruned)", value, box, boxes, pruned))
+
+rs = roots_in(Interval.new(-3.0, 3.0), 1e-7)
+puts("root enclosures:")
+Array.each(rs) { |r| puts("  #{r} width #{format("%.1e", Interval.width(r))}") }
+
+growth = Interval.new(1.0, 1.0)
+rate = Interval.new(1.04, 1.06)
+Range.each(1..10) { growth = growth * rate }
+puts("10 years at 4-6%: #{growth}")

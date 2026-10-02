@@ -1,0 +1,1 @@
+../../corpus/14-errors/http_error_mapping.rb

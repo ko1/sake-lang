@@ -1,0 +1,77 @@
+# Tournament leaderboard: merge per-round score Hashes, competition ranking with ties, movers, streaks.
+
+def rounds
+  Array[
+    Hash["ana" => 12, "bo" => 9, "cy" => 15, "dee" => 9],
+    Hash["ana" => 8, "bo" => 14, "cy" => 7, "eli" => 20],
+    Hash["ana" => 10, "bo" => 10, "cy" => 13, "dee" => 18, "eli" => 2],
+    Hash["bo" => 11, "cy" => 9, "dee" => 4, "eli" => 12, "fay" => 25]
+  ]
+end
+
+def add_scores(total, round)
+  out = Hash.merge(total, Hash[])
+  Hash.each(round) { |name, pts| out[name] = Hash.fetch(out, name, 0) + pts }
+  out
+end
+
+# competition ranking: equal scores share a rank, the next rank skips
+def ranking(totals)
+  sorted = Hash.sort_by(totals) { |name, pts| [-pts, name] }
+  ranks = Array[]
+  prev = nil
+  rank = 0
+  Array.each_with_index(sorted) do |pair, i|
+    name, pts = pair
+    rank = i + 1 if prev == nil || pts != prev
+    prev = pts
+    Array.push(ranks, [rank, name, pts])
+  end
+  ranks
+end
+
+def rank_of(ranks, name)
+  row = Array.find(ranks) { |r, n, p| n == name }
+  row ? row[0] : nil
+end
+
+totals = Hash[]
+history = Array[]
+Array.each_with_index(rounds) do |round, i|
+  totals = add_scores(totals, round)
+  Array.push(history, ranking(totals))
+  winner = Hash.max_by(round) { |n, p| p }
+  puts("round #{i + 1}: #{Hash.size(round)} players, best #{winner[0]} (#{winner[1]})")
+end
+
+puts("== Final standings ==")
+final = Array.last(history)
+Array.each(final) do |rank, name, pts|
+  played = Array.count(rounds) { |r| Hash.key?(r, name) }
+  avg = pts / Integer.to_f(played)
+  puts(format("%2d. %-4s %3d  (%d rounds, %.1f avg)", rank, name, pts, played, avg))
+end
+ties = Array.select(Hash.to_a(Array.group_by(final) { |r, n, p| r })) { |r, rows| Array.size(rows) > 1 }
+Array.each(ties) { |r, rows| puts("tied at #{r}: #{Array.join(Array.map(rows) { |x, n, p| n }, ", ")}") }
+
+puts("== Movers (last round) ==")
+before = history[Array.size(history) - 2]
+Array.each(final) do |rank, name, pts|
+  old = rank_of(before, name)
+  move = old == nil ? "new" : (old == rank ? "=" : format("%+d", old - rank))
+  puts(format("  %-4s %s", name, move))
+end
+
+puts("== Streaks ==")
+everyone = Array.reduce(rounds, Set[]) { |acc, r| acc | Array.to_set(Hash.keys(r)) }
+Array.each(Set.sort(everyone)) do |name|
+  flags = Array.map(rounds) { |r| Hash.key?(r, name) }
+  runs = Array.chunk_while(flags) { |a, b| a == b }
+  longest = Array.max(Array.map(Array.select(runs) { |run| Array.first(run) }) { |run| Array.size(run) })
+  missed = Range.filter_map(1..Array.size(flags)) { |i| flags[i - 1] ? nil : i }
+  puts(format("  %-4s played %s longest run %d%s", name, Array.join(Array.map(flags) { |f| f ? "x" : "." }, ""), longest || 0, Array.empty?(missed) ? "" : " missed #{Array.join(missed, ",")}"))
+end
+always = Array.reduce(rounds, nil) { |acc, r| s = Array.to_set(Hash.keys(r)); acc == nil ? s : acc & s }
+puts("played every round: #{Array.join(Set.sort(always), ", ")}")
+round_best = Array.map(rounds) { |r| Array.max(Hash.values(r)) }
+puts("best single round: #{Array.max(round_best)} in round #{Array.index(round_best, Array.max(round_best)) + 1}")

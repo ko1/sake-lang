@@ -1,0 +1,1 @@
+../../corpus/04-numeric/float_accuracy.rb

@@ -1,0 +1,111 @@
+Query = Struct.new(:title, :where, :group_by, :aggregates, :order_by, :limit)
+QueryError = Exception.new(:query)
+
+def rows
+  text = <<~TXT
+    region=EU product=laptop channel=web units=3 price=1199.0 returned=no
+    region=EU product=phone channel=store units=5 price=699.0 returned=no
+    region=US product=laptop channel=web units=7 price=1099.0 returned=yes
+    region=US product=tablet channel=web units=2 price=449.0 returned=no
+    region=APAC product=phone channel=web units=9 price=649.0 returned=no
+    region=APAC product=laptop channel=store units=1 price=1249.0 returned=no
+    region=EU product=tablet channel=web units=4 price=479.0 returned=yes
+    region=US product=phone channel=store units=6 price=679.0 returned=no
+    region=APAC product=tablet channel=store units=3 price=429.0 returned=no
+    region=US product=laptop channel=store units=2 price=1149.0 returned=no
+  TXT
+  Array.map(String.lines(text)) do |line|
+    row = Hash[]
+    Array.each(String.split(line)) do |pair|
+      k, _eq, v = String.partition(pair, "=")
+      row[k] = if String.match?(v, /\A\d+\z/) then String.to_i(v)
+               elsif String.match?(v, /\A\d+\.\d+\z/) then String.to_f(v)
+               else v
+               end
+    end
+    row["revenue"] = row["units"] * row["price"]
+    row
+  end
+end
+
+def matches?(row, cond)
+  field, op, expected = cond
+  actual = row[field]
+  case op
+  in :eq then actual == expected
+  in :ne then actual != expected
+  in :gt then actual > expected
+  in :lt then actual < expected
+  end
+end
+
+def aggregate(values, fn)
+  case fn
+  in :count then Array.size(values)
+  in :sum then Array.sum(values)
+  in :avg then Array.empty?(values) ? nil : Array.sum(values) / Float(Array.size(values))
+  in :min then Array.min(values)
+  in :max then Array.max(values)
+  end
+end
+
+def run(q, data)
+  Array.each(Query.get_aggregates(q)) do |field, fn|
+    raise QueryError.new("unknown column #{field}", Query.get_title(q)) unless Array.all?(data) { Hash.key?(it, field) }
+  end
+  selected = Array.select(data) { |r| Array.all?(Query.get_where(q)) { |c| matches?(r, c) } }
+  groups = Array.group_by(selected) { |r| Array.join(Array.map(Query.get_group_by(q)) { |g| Kernel.to_s(r[g]) }, "/") }
+  result = Array.map(Hash.to_a(groups)) do |key, members|
+    out = Hash["key" => key]
+    Array.each(Query.get_aggregates(q)) do |field, fn|
+      out["#{fn}(#{field})"] = aggregate(Array.map(members) { it[field] }, fn)
+    end
+    out
+  end
+  sort_col = Query.get_order_by(q)
+  result = Array.reverse(Array.sort_by(result) { it[sort_col] }) if sort_col
+  Array.take(result, Query.get_limit(q))
+end
+
+def cell(v)
+  case v
+  in Float then format("%12.2f", v)
+  in Integer then format("%12d", v)
+  in nil then format("%12s", "-")
+  in String then format("%-14s", v)
+  end
+end
+
+def print_result(q, result)
+  puts("== #{Query.get_title(q)}")
+  if Array.empty?(result)
+    puts("  (no rows)")
+    return
+  end
+  cols = Hash.keys(Array.fetch(result, 0))
+  puts("  " + Array.join(Array.map(cols) { |c| c == "key" ? format("%-14s", Array.join(Query.get_group_by(q), "/")) : format("%12s", c) }, " "))
+  Array.each(result) { |r| puts("  " + Array.join(Array.map(cols) { |c| cell(r[c]) }, " ")) }
+end
+
+def queries
+  Query[
+    Query.new("revenue by region", Array[], Array["region"], Array[["revenue", :sum], ["units", :sum], ["price", :avg]], "sum(revenue)", 10),
+    Query.new("web sales by product", Array[["channel", :eq, "web"]], Array["product"], Array[["units", :sum], ["price", :max]], "sum(units)", 10),
+    Query.new("big orders not returned", Array[["units", :gt, 2], ["returned", :ne, "yes"]], Array["region", "channel"], Array[["units", :count], ["revenue", :sum]], "sum(revenue)", 3),
+    Query.new("cheap laptops", Array[["product", :eq, "laptop"], ["price", :lt, 1000.0]], Array["region"], Array[["price", :min]], nil, 5),
+    Query.new("discount report", Array[], Array["product"], Array[["discount", :avg]], nil, 5)
+  ]
+end
+
+data = rows
+puts("#{Array.size(data)} rows loaded")
+puts
+Array.each(queries) do |q|
+  begin
+    print_result(q, run(q, data))
+  rescue QueryError => e
+    puts("== #{QueryError.get_query(e)}")
+    puts("  error: #{Exception.message(e)}")
+  end
+  puts
+end

@@ -1,0 +1,1 @@
+../../corpus/07-trees/lazy_seat_inventory.rb

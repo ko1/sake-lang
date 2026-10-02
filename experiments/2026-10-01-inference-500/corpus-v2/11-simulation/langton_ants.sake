@@ -1,0 +1,90 @@
+Ant = Struct.new(:name, :x, :y, :dir, :steps)
+
+def dx(dir) = Integer[0, 1, 0, -1][dir]
+def dy(dir) = Integer[-1, 0, 1, 0][dir]
+
+class Ant
+  def turn(a, rule)
+    case rule
+    in "R" then @dir = (@dir + 1) % 4
+    in "L" then @dir = (@dir + 3) % 4
+    in "U" then @dir = (@dir + 2) % 4
+    in "N" then @dir
+    end
+  end
+
+  def forward(a)
+    @x += dx(@dir)
+    @y += dy(@dir)
+    @steps += 1
+  end
+end
+
+def simulate(rules, ants, steps)
+  grid = Hash.new(0)
+  n = String.size(rules)
+  collisions = 0
+  Integer.times(steps) do
+    Array.each(ants) do |ant|
+      pos = [Ant.get_x(ant), Ant.get_y(ant)]
+      color = grid[pos]
+      Ant.turn(ant, rules[color])
+      grid[pos] = (color + 1) % n
+      Ant.forward(ant)
+    end
+    spots = Array.map(ants) { |a| [Ant.get_x(a), Ant.get_y(a)] }
+    collisions += 1 if Array.size(Array.uniq(spots)) < Array.size(spots)
+  end
+  [grid, collisions]
+end
+
+def bounds(grid)
+  painted = Array.select(Hash.keys(grid)) { |pos| grid[pos] != 0 }
+  return nil if Array.empty?(painted)
+  xs = Array.map(painted) { |x, y| x }
+  ys = Array.map(painted) { |x, y| y }
+  [Array.min(xs), Array.min(ys), Array.max(xs), Array.max(ys)]
+end
+
+def render(grid, ants, limit)
+  box = bounds(grid)
+  return puts("(empty)") if box == nil
+  x0, y0, x1, y1 = box
+  if x1 - x0 >= limit || y1 - y0 >= limit
+    puts("(#{x1 - x0 + 1}x#{y1 - y0 + 1}, too large to draw)")
+    return
+  end
+  glyphs = ".#o+*%@&="
+  Range.each(y0..y1) do |y|
+    row = Range.map(x0..x1) do |x|
+      ant = Array.find(ants) { |a| Ant.get_x(a) == x && Ant.get_y(a) == y }
+      ant ? String.downcase(String.chars(Ant.get_name(ant))[0]) : glyphs[grid[[x, y]]]
+    end
+    puts(Array.join(row, ""))
+  end
+end
+
+def run(title, rules, specs, steps)
+  ants = Array.map(specs) { |name, x, y, dir| Ant.new(name, x, y, dir, 0) }
+  grid, collisions = simulate(rules, ants, steps)
+  painted = Hash.count(grid) { |pos, c| c != 0 }
+  histogram = Array.tally(Hash.values(grid))
+  puts("== #{title} rules=#{rules} steps=#{steps}")
+  puts("painted cells: #{painted}, visited: #{Hash.size(grid)}, collisions: #{collisions}")
+  puts("colors: #{Array.join(Array.map(Array.sort(Hash.keys(histogram))) { |c| "#{c}:#{histogram[c]}" }, " ")}")
+  Array.each(ants) do |a|
+    dist = Integer.abs(Ant.get_x(a)) + Integer.abs(Ant.get_y(a))
+    puts("  #{Ant.get_name(a)} at (#{Ant.get_x(a)}, #{Ant.get_y(a)}) facing #{"NESW"[Ant.get_dir(a)]}, #{dist} from origin")
+  end
+  render(grid, ants, 24)
+  painted
+end
+
+results = Hash[]
+results["classic"] = run("classic", "RL", Array[["Alice", 0, 0, 0]], 400)
+results["pair"] = run("two ants", "RL", Array[["Alice", 0, 0, 0], ["Bob", 3, 1, 2]], 250)
+results["triangle"] = run("turmite", "RLR", Array[["Cleo", 0, 0, 1]], 300)
+results["square"] = run("filler", "LRRRRRLLR", Array[["Dex", 0, 0, 0]], 300)
+results["long"] = run("highway", "RL", Array[["Eve", 0, 0, 0]], 10200)
+best = Hash.max_by(results) { |k, v| v }
+puts("most painted: #{best[0]} (#{best[1]})") if best

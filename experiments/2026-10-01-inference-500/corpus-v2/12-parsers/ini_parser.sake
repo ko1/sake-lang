@@ -1,0 +1,125 @@
+Section = Struct.new(:name, :entries, :line)
+Entry = Struct.new(:key, :raw, :line)
+IniError = Exception.new(:line)
+
+def parse_ini(text)
+  sections = Section[Section.new("", Hash[], 0)]
+  errors = Array[]
+  last = nil
+  Array.each_with_index(String.lines(text)) do |raw, idx|
+    lineno = idx + 1
+    line = String.rstrip(raw)
+    if String.match?(line, /\A\s+\S/) && last != nil
+      Entry.set_raw(last, Entry.get_raw(last) + " " + String.strip(line))
+      next
+    end
+    line = String.strip(line)
+    last = nil
+    next if String.empty?(line) || String.start_with?(line, "#") || String.start_with?(line, ";")
+    m = String.match(line, /\A\[([A-Za-z0-9_.]+)\]\z/)
+    if m
+      name = m[1]
+      if Array.any?(sections) { |s| Section.get_name(s) == name }
+        Array.push(errors, IniError.new("duplicate section [#{name}]", lineno))
+      end
+      Array.push(sections, Section.new(name, Hash[], lineno))
+      next
+    end
+    m = String.match(line, /\A([A-Za-z_][\w.]*)\s*[=:]\s*(.*)\z/)
+    if m
+      entry = Entry.new(String.downcase(m[1]), String.sub(m[2], /\s+[#;].*\z/, ""), lineno)
+      Section.get_entries(Array.last(sections))[Entry.get_key(entry)] = entry
+      last = entry
+    else
+      Array.push(errors, IniError.new("cannot parse: #{line}", lineno))
+    end
+  end
+  [sections, errors]
+end
+
+def convert(raw, type)
+  if type == :int
+    raise ArgumentError, "not an integer: #{raw}" unless String.match?(raw, /\A-?\d+\z/)
+    String.to_i(raw)
+  elsif type == :bool
+    v = String.downcase(raw)
+    return true if Array.include?(Array["yes", "true", "on", "1"], v)
+    return false if Array.include?(Array["no", "false", "off", "0"], v)
+    raise ArgumentError, "not a boolean: #{raw}"
+  elsif type == :list
+    Array.reject(Array.map(String.split(raw, ",")) { |s| String.strip(s) }) { |s| String.empty?(s) }
+  else
+    m = String.match(raw, /\A"(.*)"\z/)
+    m ? m[1] : raw
+  end
+end
+
+def schema
+  Array[
+    {section: "server", key: "host", type: :string, default: "localhost"},
+    {section: "server", key: "port", type: :int, default: 8080},
+    {section: "server", key: "debug", type: :bool, default: false},
+    {section: "server", key: "workers", type: :int, default: 4},
+    {section: "db", key: "url", type: :string, default: nil},
+    {section: "db", key: "pool", type: :int, default: 5},
+    {section: "db", key: "replicas", type: :list, default: Array[]},
+    {section: "log", key: "level", type: :string, default: "info"}
+  ]
+end
+
+def load_config(text)
+  sections, errors = parse_ini(text)
+  config = Hash[]
+  Array.each(schema) do |rule|
+    rule => {section:, key:, type:, default:}
+    sec = Array.find(sections) { |s| Section.get_name(s) == section }
+    entry = sec ? Section.get_entries(sec)[key] : nil
+    if entry == nil
+      if default == nil
+        Array.push(errors, IniError.new("missing required #{section}.#{key}", 0))
+      else
+        config["#{section}.#{key}"] = default
+      end
+      next
+    end
+    begin
+      config["#{section}.#{key}"] = convert(Entry.get_raw(entry), type)
+    rescue ArgumentError => e
+      Array.push(errors, IniError.new(Exception.message(e), Entry.get_line(entry)))
+    end
+  end
+  known = Array.to_set(Array.map(schema) { |r| r => {section:, key:}; "#{section}.#{key}" })
+  Array.each(sections) do |s|
+    Hash.each(Section.get_entries(s)) do |k, entry|
+      full = "#{Section.get_name(s)}.#{k}"
+      Array.push(errors, IniError.new("unknown key #{full}", Entry.get_line(entry))) unless Set.include?(known, full)
+    end
+  end
+  [config, Array.sort_by(errors) { |e| IniError.get_line(e) }]
+end
+
+def show(v)
+  if v in Array
+    "[" + Array.join(Array.map(v) { |x| Kernel.inspect(x) }, ", ") + "]"
+  else
+    Kernel.inspect(v)
+  end
+end
+
+def files
+  Array[
+    ["good.ini", "# main server\n[server]\nhost = example.org\nport=9000\ndebug = yes ; temporary\n\n[db]\nurl: \"postgres://db/app\"\nreplicas = r1.local,\n    r2.local, r3.local\n[log]\nlevel = warn\n"],
+    ["bad.ini", "[server]\nport = eighty\ndebug = maybe\ncolour = blue\n[db]\npool = 10\nthis line is junk\n[server]\nWorkers = 2\n"]
+  ]
+end
+
+Array.each(files) do |name, text|
+  puts("== #{name}")
+  config, errors = load_config(text)
+  Array.each(Array.sort(Hash.keys(config))) { |k| puts("  #{String.ljust(k, 14)} = #{show(config[k])}") }
+  Array.each(errors) do |e|
+    line = IniError.get_line(e)
+    puts("  #{line > 0 ? "line #{line}" : "config"}: #{Exception.message(e)}")
+  end
+  puts("  #{Array.size(errors)} error(s)")
+end

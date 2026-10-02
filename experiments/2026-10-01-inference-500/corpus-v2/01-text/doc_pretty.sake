@@ -1,0 +1,119 @@
+Doc = Struct.new(:kind, :text, :indent, :parts)
+
+class Doc
+  include Arithmetic
+  def +(a, b) = Doc.new(:concat, "", 0, Doc[a, b])
+end
+
+def text(s) = Doc.new(:text, s, 0, Doc[])
+def line = Doc.new(:line, " ", 0, Doc[])
+def softline = Doc.new(:line, "", 0, Doc[])
+def nest(n, d) = Doc.new(:nest, "", n, Doc[d])
+def group(d) = Doc.new(:group, "", 0, Doc[d])
+
+def join(docs, sep)
+  out = nil
+  Array.each(docs) { |d| out = out == nil ? d : out + sep + d }
+  out == nil ? text("") : out
+end
+
+def bracket(open, docs, close)
+  group(text(open) + nest(2, softline + join(docs, text(",") + line)) + softline + text(close))
+end
+
+def fits?(width, items)
+  stack = Array.reverse(items)
+  remaining = width
+  while remaining >= 0
+    item = Array.pop(stack)
+    return true if item == nil
+    indent, flat, doc = item
+    case Doc.get_kind(doc)
+    in :text
+      remaining -= String.size(Doc.get_text(doc))
+    in :line
+      return true unless flat
+      remaining -= String.size(Doc.get_text(doc))
+    in :concat
+      Array.reverse_each(Doc.get_parts(doc)) { |p| Array.push(stack, [indent, flat, p]) }
+    in :nest
+      Array.push(stack, [indent + Doc.get_indent(doc), flat, Doc.get_parts(doc)[0]])
+    in :group
+      Array.push(stack, [indent, true, Doc.get_parts(doc)[0]])
+    end
+  end
+  false
+end
+
+def render(doc, width)
+  out = ""
+  col = 0
+  stack = Array[[0, false, doc]]
+  until Array.empty?(stack)
+    indent, flat, d = Array.pop(stack)
+    case Doc.get_kind(d)
+    in :text
+      out += Doc.get_text(d)
+      col += String.size(Doc.get_text(d))
+    in :line
+      if flat
+        out += Doc.get_text(d)
+        col += String.size(Doc.get_text(d))
+      else
+        out += "\n" + " " * indent
+        col = indent
+      end
+    in :concat
+      Array.reverse_each(Doc.get_parts(d)) { |p| Array.push(stack, [indent, flat, p]) }
+    in :nest
+      Array.push(stack, [indent + Doc.get_indent(d), flat, Doc.get_parts(d)[0]])
+    in :group
+      inner = Doc.get_parts(d)[0]
+      rest = Array.reverse(stack)
+      fit = flat || fits?(width - col, Array.unshift(rest, [indent, true, inner]))
+      Array.push(stack, [indent, fit, inner])
+    end
+  end
+  out
+end
+
+def to_doc(value)
+  case value
+  in Integer | Float | true | false | nil then text(Kernel.inspect(value))
+  in String then text(Kernel.inspect(value))
+  in Symbol then text(Symbol.to_s(value))
+  in Array then bracket("[", Array.map(value) { |v| to_doc(v) }, "]")
+  in Hash
+    pairs = Hash.map(value) { |k, v| group(text("#{k}:") + nest(2, line + to_doc(v))) }
+    bracket("{", pairs, "}")
+  end
+end
+
+def call_doc(name, args) = group(text(name) + bracket("(", args, ")"))
+
+def sample_data
+  Hash[
+    "name" => "sake",
+    "version" => Array[0, 4, 1],
+    "authors" => Array["ko1", "a very long contributor name that will not fit", "third"],
+    "deps" => Hash["prism" => ">= 1.0", "racc" => nil],
+    "flags" => Array[true, false, nil],
+    "matrix" => Array[Array[1, 2, 3], Array[4, 5, 6], Array[7, 8, 9]]
+  ]
+end
+
+data = to_doc(sample_data)
+Array.each(Integer[120, 60, 30]) do |w|
+  puts("=" * w)
+  puts(render(data, w))
+end
+puts("=" * 40)
+expr = call_doc("assert_equal", Array[
+  call_doc("String.upcase", Array[call_doc("String.strip", Array[text("name")])]),
+  text("\"SAKE\""),
+  call_doc("format", Array[text("\"%s at %d\""), text("where"), text("line_number")])
+])
+Array.each(Integer[100, 40, 24]) do |w|
+  puts("-- width #{w}")
+  puts(render(expr, w))
+end

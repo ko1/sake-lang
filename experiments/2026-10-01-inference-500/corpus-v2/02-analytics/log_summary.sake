@@ -1,0 +1,97 @@
+Entry = Struct.new(:hour, :minute, :level, :component, :message)
+
+def raw_log
+  "09:01 INFO  [auth] user 1042 logged in
+09:03 INFO  [db] query took 12 ms
+09:07 WARN  [db] query took 340 ms
+09:15 ERROR [payment] card 4411 declined: insufficient funds
+09:22 INFO  [auth] user 2001 logged in
+garbage line without structure
+10:02 ERROR [db] connection 7 reset by peer
+10:05 INFO  [auth] user 1042 logged out
+10:11 ERROR [payment] card 9902 declined: insufficient funds
+10:30 WARN  [cache] miss rate 41 percent
+10:45 ERROR [db] connection 3 reset by peer
+11:00 INFO  [db] query took 8 ms
+11:20 DEBUG [cache] evicted 120 keys
+11:21 ERROR [payment] gateway timeout after 30 s
+11:40 INFO  [auth] user 3333 logged in
+11:59 WARN  [auth] 5 failed logins for user 3333
+"
+end
+
+def parse_line(line)
+  m = String.match(line, /^(\d\d):(\d\d) (\w+)\s+\[(\w+)\] (.*)$/)
+  return nil unless m
+  Entry.new(String.to_i(m[1]), String.to_i(m[2]), m[3], m[4], m[5])
+end
+
+def normalize(message) = String.gsub(message, /\d+/, "N")
+
+def count_by(entries)
+  counts = Hash.new(0)
+  Array.each(entries) { |e| counts[yield(e)] += 1 }
+  counts
+end
+
+def print_counts(title, counts)
+  puts("#{title}:")
+  keys = Array.sort(Hash.keys(counts))
+  Array.each(keys) { |k| puts(format("  %-10s %3d", k, counts[k])) }
+end
+
+entries = Array[]
+malformed = 0
+Array.each(String.lines(raw_log)) do |line|
+  e = parse_line(String.chomp(line))
+  if e
+    Array.push(entries, e)
+  else
+    malformed += 1
+  end
+end
+puts("parsed #{Array.size(entries)} entries, #{malformed} malformed")
+
+print_counts("by level", count_by(entries) { |e| Entry.get_level(e) })
+print_counts("by component", count_by(entries) { |e| Entry.get_component(e) })
+
+matrix = Hash[]
+Array.each(entries) do |e|
+  row = matrix[Entry.get_component(e)] ||= Hash.new(0)
+  row[Entry.get_level(e)] += 1
+end
+levels = Array["DEBUG", "INFO", "WARN", "ERROR"]
+puts("component  " + Array.join(Array.map(levels) { |l| format("%6s", l) }))
+Array.each(Array.sort(Hash.keys(matrix))) do |comp|
+  row = matrix[comp]
+  puts(format("%-10s ", comp) + Array.join(Array.map(levels) { |l| format("%6d", row[l]) }))
+end
+
+errors = Array.select(entries) { |e| Entry.get_level(e) == "ERROR" }
+patterns = Array.group_by(errors) { |e| normalize(Entry.get_message(e)) }
+puts("error patterns:")
+Array.each(Array.sort_by(Hash.keys(patterns)) { |k| k }) do |pat|
+  times = Array.map(patterns[pat]) { |e| format("%02d:%02d", Entry.get_hour(e), Entry.get_minute(e)) }
+  puts("  #{Array.size(patterns[pat])}x #{pat} [#{Array.join(times, ", ")}]")
+end
+
+per_hour = count_by(entries) { |e| Entry.get_hour(e) }
+puts("per hour:")
+Hash.each(per_hour) { |h, n| puts(format("  %02d:00 %s %d", h, "#" * n, n)) }
+
+users = Hash.new(0)
+Array.each(entries) do |e|
+  m = String.match(Entry.get_message(e), /user (\d+)/)
+  users[m[1]] += 1 if m
+end
+active = Hash.max_by(users) { |u, n| n }
+if active
+  u, n = active
+  puts("most mentioned user: #{u} (#{n} lines)")
+end
+
+slow = Array.filter_map(entries) do |e|
+  m = String.match(Entry.get_message(e), /took (\d+) ms/)
+  m ? String.to_i(m[1]) : nil
+end
+puts("query times: #{slow}, max #{Array.max(slow)} ms, mean #{Array.sum(slow) / Array.size(slow)} ms")

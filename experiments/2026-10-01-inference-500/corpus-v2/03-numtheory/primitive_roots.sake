@@ -1,0 +1,123 @@
+# Multiplicative orders and primitive roots modulo n, index (discrete log) tables,
+# and baby-step giant-step for discrete logarithms.
+
+NoPrimitiveRoot = Exception.new(:n)
+
+def phi(n)
+  result = n
+  m = n
+  p = 2
+  while p * p <= m
+    if m % p == 0
+      m /= p while m % p == 0
+      result -= result / p
+    end
+    p += 1
+  end
+  result -= result / m if m > 1
+  result
+end
+
+def prime_factors(n)
+  fs = Integer[]
+  p = 2
+  while p * p <= n
+    if n % p == 0
+      Array.push(fs, p)
+      n /= p while n % p == 0
+    end
+    p += 1
+  end
+  Array.push(fs, n) if n > 1
+  fs
+end
+
+def order(a, n)
+  return nil if Integer.gcd(a, n) != 1
+  k = 1
+  x = a % n
+  while x != 1 % n
+    x = x * a % n
+    k += 1
+  end
+  k
+end
+
+def primitive_root(n)
+  t = phi(n)
+  fs = prime_factors(t)
+  g = Range.find(1..(n - 1)) do |c|
+    Integer.gcd(c, n) == 1 && Array.all?(fs) { |q| Integer.pow(c, t / q, n) != 1 }
+  end
+  raise NoPrimitiveRoot.new("no primitive root modulo #{n}", n) unless g
+  g
+end
+
+def all_primitive_roots(n)
+  g = primitive_root(n)
+  t = phi(n)
+  roots = Array.map(Array.select(Range.to_a(1..t)) { |k| Integer.gcd(k, t) == 1 }) { |k| Integer.pow(g, k, n) }
+  Array.sort(roots)
+end
+
+# smallest x >= 0 with g^x = h (mod p), or nil
+def bsgs(g, h, p)
+  m = Integer.sqrt(p - 1) + 1
+  table = Hash[]
+  e = 1
+  Range.each(0..(m - 1)) do |j|
+    table[e] = j unless Hash.key?(table, e)
+    e = e * g % p
+  end
+  factor = Integer.pow(g, p - 1 - m, p)
+  gamma = h % p
+  Range.each(0..(m - 1)) do |i|
+    j = table[gamma]
+    return i * m + j if j
+    gamma = gamma * factor % p
+  end
+  nil
+end
+
+puts("orders modulo 13:")
+Range.each(1..12) { |a| print(format("%3d", order(a, 13))) }
+puts
+
+puts("primitive roots:")
+Array.each(Integer[7, 9, 10, 12, 18, 23, 25, 41, 50]) do |n|
+  begin
+    roots = all_primitive_roots(n)
+    shown = Array.size(roots) > 8 ? "#{Array.join(Array.take(roots, 8), " ")} ..." : Array.join(roots, " ")
+    puts(format("  n=%-3d phi=%-3d count=%-3d %s", n, phi(n), Array.size(roots), shown))
+  rescue NoPrimitiveRoot => e
+    puts(format("  n=%-3d %s", NoPrimitiveRoot.get_n(e), Exception.message(e)))
+  end
+end
+
+p = 31
+g = primitive_root(p)
+index = Hash[]
+Range.each(0..(p - 2)) { |k| index[Integer.pow(g, k, p)] = k }
+puts("index table mod #{p} (base #{g}):")
+Array.each_slice(Range.to_a(1..(p - 1)), 10) do |row|
+  puts("  " + Array.join(Array.map(row) { |a| format("%2d:%-2d", a, index[a]) }, " "))
+end
+# x^5 = 5 mod 31  <=>  5*ind(x) = ind(5) mod 30
+sols = Array.select(Range.to_a(1..(p - 1))) { |x| (5 * index[x] - index[5]) % (p - 1) == 0 }
+puts("solutions of x^5 = 5 (mod 31): #{sols}")
+puts("check: #{Array.map(sols) { |x| Integer.pow(x, 5, p) }}")
+
+puts("baby-step giant-step:")
+Array.each(Array[[2, 1, 1019], [5, 1234, 10007], [3, 13, 17], [2, 3, 7], [6, 1, 1000003], [2, 999, 1000003]]) do |b, h, q|
+  x = bsgs(b, h, q)
+  if x
+    puts("  #{b}^x = #{h} (mod #{q}): x = #{x}  check #{Integer.pow(b, x, q)}")
+  else
+    puts("  #{b}^x = #{h} (mod #{q}): no solution")
+  end
+end
+
+artin = Array.select(Range.to_a(3..200)) { |q| Range.none?(2..Integer.sqrt(q)) { |d| q % d == 0 } }
+with2 = Array.select(artin) { |q| order(2, q) == q - 1 }
+puts("primes < 200 with 2 as a primitive root: #{Array.size(with2)}/#{Array.size(artin)}")
+puts("  #{Array.join(with2, " ")}")

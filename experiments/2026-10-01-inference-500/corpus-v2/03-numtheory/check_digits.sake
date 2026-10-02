@@ -1,0 +1,131 @@
+# Check-digit schemes: Luhn (cards), ISBN-10 (mod 11 with X), ISBN-13 / EAN (weights 1,3),
+# and mod 97 (IBAN-style). Validates, computes, and detects typos.
+
+def luhn_sum(digits)
+  total = 0
+  Array.each_with_index(Array.reverse(digits)) do |d, i|
+    if Integer.odd?(i)
+      d *= 2
+      d -= 9 if d > 9
+    end
+    total += d
+  end
+  total
+end
+
+def luhn_valid?(s)
+  ds = digits_of(s)
+  ds != nil && luhn_sum(ds) % 10 == 0
+end
+
+def luhn_complete(s)
+  ds = digits_of(s)
+  Array.push(ds, 0)
+  check = (10 - luhn_sum(ds) % 10) % 10
+  "#{s}#{check}"
+end
+
+def digits_of(s)
+  clean = String.delete(s, " -")
+  return nil unless String.match?(clean, /\A\d+\z/)
+  Array.map(String.chars(clean)) { |c| String.to_i(c) }
+end
+
+def isbn10_check(s)
+  clean = String.delete(s, "-")
+  return :bad_length if String.length(clean) != 10
+  total = 0
+  Array.each_with_index(String.chars(clean)) do |c, i|
+    v = if c == "X" && i == 9
+      10
+    elsif String.match?(c, /\d/)
+      String.to_i(c)
+    else
+      return :bad_char
+    end
+    total += v * (10 - i)
+  end
+  total % 11 == 0 ? :ok : :bad_check
+end
+
+def isbn13_check(s)
+  ds = digits_of(s)
+  return :bad_char unless ds
+  return :bad_length if Array.size(ds) != 13
+  total = 0
+  Array.each_with_index(ds) { |d, i| total += Integer.even?(i) ? d : 3 * d }
+  total % 10 == 0 ? :ok : :bad_check
+end
+
+def isbn10_to_13(s)
+  core = "978" + String.delete(s, "-")[0...9]
+  ds = digits_of(core)
+  total = 0
+  Array.each_with_index(ds) { |d, i| total += Integer.even?(i) ? d : 3 * d }
+  "#{core}#{(10 - total % 10) % 10}"
+end
+
+def mod97_valid?(s)
+  digits = String.delete(s, " ")
+  rem = 0
+  String.each_char(digits) { |c| rem = (rem * 10 + String.to_i(c)) % 97 }
+  rem == 1
+end
+
+def describe(result)
+  case result
+  in :ok then "valid"
+  in :bad_check then "check digit mismatch"
+  in :bad_length then "wrong length"
+  in :bad_char then "invalid character"
+  end
+end
+
+puts("Luhn:")
+Array.each(Array["4539 1488 0343 6467", "8273 1232 7352 0569", "79927398713", "1234-5678-9012-3456", "12a4"]) do |s|
+  puts(format("  %-22s %s", s, luhn_valid?(s) ? "valid" : "invalid"))
+end
+Array.each(Array["7992739871", "4111111111111"]) { |s| puts("  complete #{s} -> #{luhn_complete(s)}") }
+
+puts("ISBN:")
+Array.each(Array["0-306-40615-2", "0-306-40615-3", "0-8044-2957-X", "123456789", "0-30A-40615-2"]) do |s|
+  puts(format("  %-16s %s", s, describe(isbn10_check(s))))
+end
+Array.each(Array["978-0-306-40615-7", "978-0-306-40615-8", "978-3-16-148410-0", "97803064061"]) do |s|
+  puts(format("  %-20s %s", s, describe(isbn13_check(s))))
+end
+puts("  0-306-40615-2 as ISBN-13: #{isbn10_to_13("0-306-40615-2")}")
+
+puts("single-digit typo detection on 79927398713:")
+base = "79927398713"
+caught = 0
+total = 0
+Range.each(0..(String.length(base) - 1)) do |i|
+  Range.each(0..9) do |d|
+    orig = String.to_i(base[i])
+    next if d == orig
+    typo = String.chars(base)
+    typo[i] = Integer.to_s(d)
+    total += 1
+    caught += 1 unless luhn_valid?(Array.join(typo, ""))
+  end
+end
+puts("  #{caught}/#{total} caught")
+
+swaps = 0
+missed = Array[]
+Range.each(0..(String.length(base) - 2)) do |i|
+  cs = String.chars(base)
+  next if cs[i] == cs[i + 1]
+  a = cs[i]
+  cs[i] = cs[i + 1]
+  cs[i + 1] = a
+  swaps += 1
+  Array.push(missed, "#{cs[i + 1]}#{cs[i]}") if luhn_valid?(Array.join(cs, ""))
+end
+puts("  adjacent swaps: #{swaps}, missed: #{missed}")
+
+puts("mod 97:")
+Array.each(Array["3214282912345698765432161182", "3214282912345698765432161183"]) do |s|
+  puts("  #{s}: #{mod97_valid?(s) ? "valid" : "invalid"}")
+end

@@ -1,0 +1,1 @@
+../../corpus/03-numtheory/check_digits.rb

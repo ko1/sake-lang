@@ -1,0 +1,176 @@
+LogicError = Exception.new(:pos)
+Reader = Struct.new(:src, :pos)
+
+class Reader
+  def skip(r)
+    @pos += 1 while @src[@pos] == " "
+  end
+
+  def peek_is?(r, s)
+    skip(r)
+    String.start_with?(@src[@pos..] || "", s)
+  end
+
+  def take(r, s)
+    return false unless peek_is?(r, s)
+    @pos += String.size(s)
+    true
+  end
+
+  def equiv(r)
+    left = implies(r)
+    left = {op: :iff, l: left, r: implies(r)} while take(r, "<->")
+    left
+  end
+
+  def implies(r)
+    left = disj(r)
+    return {op: :imp, l: left, r: implies(r)} if take(r, "->")
+    left
+  end
+
+  def disj(r)
+    left = conj(r)
+    left = {op: :or, l: left, r: conj(r)} while take(r, "|")
+    left
+  end
+
+  def conj(r)
+    left = unary(r)
+    left = {op: :and, l: left, r: unary(r)} while take(r, "&")
+    left
+  end
+
+  def unary(r)
+    return {neg: unary(r)} if take(r, "!")
+    if take(r, "(")
+      e = equiv(r)
+      raise LogicError.new("expected ')'", @pos) unless take(r, ")")
+      return e
+    end
+    skip(r)
+    c = @src[@pos]
+    raise LogicError.new("expected a variable", @pos) unless c != nil && String.match?(c, /\A[a-z]\z/)
+    @pos += 1
+    {var: c}
+  end
+end
+
+def parse(src)
+  r = Reader.new(src, 0)
+  e = Reader.equiv(r)
+  Reader.skip(r)
+  raise LogicError.new("unexpected input", Reader.get_pos(r)) if Reader.get_pos(r) < String.size(src)
+  e
+end
+
+def variables(e, acc)
+  case e
+  in {var:} then Set.add(acc, var)
+  in {neg:} then variables(neg, acc)
+  in {op:, l:, r:}
+    variables(l, acc)
+    variables(r, acc)
+  end
+  acc
+end
+
+def holds?(e, env)
+  case e
+  in {var:} then env[var]
+  in {neg:} then !holds?(neg, env)
+  in {op:, l:, r:}
+    a = holds?(l, env)
+    case op
+    in :and then a && holds?(r, env)
+    in :or then a || holds?(r, env)
+    in :imp then !a || holds?(r, env)
+    in :iff then a == holds?(r, env)
+    end
+  end
+end
+
+def show(e)
+  case e
+  in {var:} then var
+  in {neg:} then "!" + show(neg)
+  in {op:, l:, r:}
+    sym = case op
+          in :and then "&"
+          in :or then "|"
+          in :imp then "->"
+          in :iff then "<->"
+          end
+    "(#{show(l)} #{sym} #{show(r)})"
+  end
+end
+
+def rows(vars)
+  n = Array.size(vars)
+  Array.map(Range.to_a(0...(1 << n))) do |bits|
+    env = Hash[]
+    Array.each_with_index(vars) { |v, i| env[v] = ((bits >> (n - 1 - i)) & 1) == 1 }
+    env
+  end
+end
+
+def bit(b) = b ? "T" : "F"
+
+def analyze(src, print_table)
+  e = parse(src)
+  vars = Array.sort(Set.to_a(variables(e, Set[])))
+  table = Array.map(rows(vars)) { |env| [env, holds?(e, env)] }
+  puts("#{src}  ==>  #{show(e)}")
+  if print_table
+    puts("  #{Array.join(vars, " ")} | value")
+    Array.each(table) do |env, value|
+      puts("  #{Array.join(Array.map(vars) { |v| bit(env[v]) }, " ")} | #{bit(value)}")
+    end
+  end
+  trues = Array.count(table) { |_, value| value }
+  kind = if trues == Array.size(table)
+           "tautology"
+         elsif trues == 0
+           "contradiction"
+         else
+           "satisfiable (#{trues}/#{Array.size(table)})"
+         end
+  minterms = Array.filter_map(table) do |env, value|
+    next nil unless value
+    Array.join(Array.map(vars) { |v| env[v] ? v : "!#{v}" }, "&")
+  end
+  puts("  #{kind}")
+  puts("  dnf: #{Array.empty?(minterms) ? "false" : Array.join(minterms, " | ")}") unless trues == Array.size(table)
+  table
+end
+
+def signature(src)
+  e = parse(src)
+  vars = Array.sort(Set.to_a(variables(e, Set[])))
+  Array.join(Array.map(rows(vars)) { |env| bit(holds?(e, env)) }) + "/" + Array.join(vars)
+end
+
+inputs = Array[
+  ["p -> q", true],
+  ["!(p & q) <-> (!p | !q)", true],
+  ["p & !p", false],
+  ["(p -> q) & (q -> r) -> (p -> r)", false],
+  ["a | b & c", false],
+  ["p -> q -> p", false],
+  ["p -> ", false],
+  ["p & (q", false],
+  ["p ^ q", false]
+]
+Array.each(inputs) do |src, show_table|
+  begin
+    analyze(src, show_table)
+  rescue LogicError => e
+    puts("#{src}  ==>  error at #{LogicError.get_pos(e)}: #{Exception.message(e)}")
+  end
+end
+
+pairs = Array[["p -> q", "!q -> !p"], ["p -> q", "q -> p"], ["!(a | b)", "!a & !b"], ["a & (b | c)", "a & b | a & c"]]
+Array.each(pairs) do |x, y|
+  same = signature(x) == signature(y)
+  puts("#{x}  #{same ? "==" : "!="}  #{y}")
+end

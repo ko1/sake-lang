@@ -1,0 +1,1 @@
+../../corpus/03-numtheory/egyptian_fractions.rb

@@ -1,0 +1,27 @@
+# Changes for 05-sorting (corpus-v2)
+
+- autocomplete_msd: `sorted == Array.sort(words)` replaces comparing `Array.join` strings (Array `==`); most frequent word by `Hash.min_by { |w, n| [-n, w] }` with `best, count = ...` (Tuple ordering, unary minus, multiple assignment) replaces the hand-written scan with a tie-break; neighbour prefixes via `Array.each_cons(sorted, 2) { |a, b| }` instead of an index loop.
+- bisect_on_answer: unchanged
+- bucket_sort_ratings: `scores == check` replaces comparing `Array.join` strings (Array `==`).
+- external_sort_sim: unchanged
+- gift_two_pointers: unchanged
+- gradebook_insertion: unchanged
+- hashtag_trends: climbers sorted with `sort_by { |tag, _, d| [-d, tag] }` (Tuple ordering, unary minus) replaces the encoded key `0 - d * 1000 + String.ord(tag[1])`.
+- heap_scheduler: `desc == Array.reverse(Array.sort(latencies))` replaces comparing `Array.join` strings (Array `==`).
+- kway_log_merge: `ts, _, text = String.partition(line, " ")` (multiple assignment from an Array) replaces split + indexing + `Array.drop` + `Array.join` for Ruby's `split(" ", 2)`.
+- leaderboard_insert: `Array.each_cons(entries, 2) { |a, b| }` (block destructures the Array) replaces `pair[0]`/`pair[1]`.
+- library_catalog: unchanged
+- log_time_bisect: unchanged
+- meeting_intervals: `h, m = String.split(s, ":").Array.map { ... }` (chain, multiple assignment from an Array) replaces indexing the split parts; double-booking check uses `Array.each_cons(ms, 2) { |a, b| }` instead of `pair[0]`/`pair[1]`.
+- merge_sort_inversions: consensus board sorted with `sort_by { |name, total| [total, name] }` (Tuple ordering) replaces the encoded key `total * 100 + String.ord(name)`; the row is taken apart with `name, total = pair` instead of `pair[0]`/`pair[1]`.
+- natural_runs_sort: `sorted == Array.sort(data)` replaces comparing `Array.join` strings (Array `==`).
+- probe_count_search: unchanged
+- quicksort_median3: `sorted?` uses `Array.each_cons(a, 2) { |x, y| }` instead of `pair[0]`/`pair[1]`; descending key `{ |n| -n }` (unary minus) replaces `0 - n`.
+- radix_order_ids: `sorted == Array.sort(ids)` replaces comparing `Array.join` strings (Array `==`); largest gap via `Array.each_cons(sorted, 2) { |a, b| }` instead of `pair[0]`/`pair[1]`.
+- sensor_quickselect: grouping is `Array.push(by_sensor[name] ||= Array[], value)` instead of `Hash.key?` + assignment + push.
+- shell_sort_gaps: `expected = Array.sort(data)` and `sorted == expected` replace comparing `Array.join` strings (Array `==`).
+- sorted_matrix_search: the `in Tuple` branch takes the hit apart with `row, pos = hit` instead of `hit[0]`/`hit[1]`.
+- staff_multikey_sort: `-c` (unary minus) replaces `0 - c`; the stability check compares the two name lists with `==` (Array `==`) instead of an index-wise `Array.all?`; the largest payroll is `top, total = Hash.max_by(payroll) { |_, v| v }` as in Ruby, instead of `max_by` over the keys plus a lookup.
+- trail_peak_search: `Math.exp(-price / 18.0)` (unary minus) replaces `Math.exp(0.0 - price / 18.0)`.
+- triage_partition: the three "is it sorted" checks use `times == Array.sort(times)`, `!=`, and `sorted == Array.sort(arrivals)` (Array `==`) instead of comparing `Array.join` strings.
+- version_resolver: `op, text = String.split(constraint, " ")` (multiple assignment from an Array) replaces indexing `words[0]`/`words[1]`.

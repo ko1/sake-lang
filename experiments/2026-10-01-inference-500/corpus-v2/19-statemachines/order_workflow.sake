@@ -1,0 +1,103 @@
+class Money < {reader: [cents]}
+  include Arithmetic
+  include Comparable
+  def +(a, b) = Money.new(@cents + Money.get_cents(b))
+  def -(a, b) = Money.new(@cents - Money.get_cents(b))
+  def <=>(a, b) = @cents <=> Money.get_cents(b)
+  def to_s(m) = format("$%d.%02d", @cents / 100, @cents % 100)
+end
+
+LineItem = Struct.new(:sku, :qty, :unit)
+Order = Struct.new(:id, :items, :state, :paid, :audit)
+WorkflowError = Exception.new(:order_id, :from, :event)
+
+def allowed
+  Hash[
+    :pending => Array[:pay, :cancel],
+    :paid => Array[:ship, :cancel, :refund],
+    :shipped => Array[:deliver, :lose],
+    :delivered => Array[:refund],
+    :lost => Array[:refund],
+    :cancelled => Array[],
+    :refunded => Array[]
+  ]
+end
+
+class Order
+  def total(o) = Array.reduce(@items, Money.new(0)) { |acc, li| acc + Money.new(LineItem.get_qty(li) * LineItem.get_unit(li)) }
+
+  def target(o, event)
+    case event
+    in :pay then :paid
+    in :cancel then :cancelled
+    in :ship then :shipped
+    in :deliver then :delivered
+    in :lose then :lost
+    in :refund then :refunded
+    end
+  end
+
+  def apply(o, time, event, amount)
+    ok = allowed[@state]
+    if ok == nil || !Array.include?(ok, event)
+      raise WorkflowError.new("order #{@id}: cannot #{event} when #{@state}", @id, @state, event)
+    end
+    if event == :pay
+      due = total(o)
+      if amount < due
+        raise WorkflowError.new("order #{@id}: paid #{amount} < #{due}", @id, @state, event)
+      end
+      @paid = amount
+    end
+    if event == :refund
+      Array.push(@audit, [time, "refund #{@paid}"])
+      @paid = Money.new(0)
+    end
+    from = @state
+    @state = target(o, event)
+    Array.push(@audit, [time, "#{from} -> #{@state}"])
+  end
+end
+
+orders = Hash[]
+def add_order(orders, id, items) = orders[id] = Order.new(id, items, :pending, Money.new(0), Array[])
+
+add_order(orders, 101, Array[LineItem.new("pen", 3, 150), LineItem.new("pad", 1, 499)])
+add_order(orders, 102, Array[LineItem.new("ink", 2, 1299)])
+add_order(orders, 103, Array[LineItem.new("desk", 1, 18900), LineItem.new("lamp", 2, 2450)])
+add_order(orders, 104, Array[LineItem.new("clip", 10, 15)])
+
+events = Array[
+  [1, 101, :pay, 949], [2, 102, :ship, 0], [3, 102, :pay, 2000], [4, 102, :pay, 2598],
+  [5, 103, :pay, 23800], [6, 101, :ship, 0], [7, 104, :cancel, 0], [8, 103, :ship, 0],
+  [9, 101, :deliver, 0], [10, 104, :pay, 150], [11, 103, :lose, 0], [12, 103, :refund, 0],
+  [13, 102, :refund, 0], [14, 105, :pay, 100], [15, 101, :ship, 0], [16, 102, :cancel, 0]
+]
+
+errors = Array[]
+Array.each(events) do |time, id, event, cents|
+  order = orders[id]
+  if order == nil
+    Array.push(errors, "t=#{time}: no order #{id}")
+    next
+  end
+  begin
+    Order.apply(order, time, event, Money.new(cents))
+  rescue WorkflowError => e
+    Array.push(errors, "t=#{time}: #{Exception.message(e)} [#{WorkflowError.get_from(e)}/#{WorkflowError.get_event(e)}]")
+  end
+end
+
+Hash.each(orders) do |id, o|
+  puts("order #{id}: #{Order.get_state(o)} total=#{Order.total(o)} paid=#{Order.get_paid(o)}")
+  Array.each(Order.get_audit(o)) { |t, msg| puts(format("  t=%-3d %s", t, msg)) }
+end
+puts("errors:")
+Array.each(errors) { puts("  #{it}") }
+
+by_state = Array.group_by(Hash.values(orders)) { Order.get_state(it) }
+Hash.each(by_state) { |st, os| puts("#{st}: #{Array.join(Array.map(os) { Order.get_id(it) }, ",")}") }
+revenue = Array.reduce(Hash.values(orders), Money.new(0)) { |acc, o| acc + Order.get_paid(o) }
+puts("revenue held: #{revenue}")
+biggest = Array.max_by(Hash.values(orders)) { Order.total(it) }
+puts("largest order: #{Order.get_id(biggest)} (#{Order.total(biggest)})") if biggest
