@@ -1,0 +1,239 @@
+diff --git a/lib/sake/typer.rb b/lib/sake/typer.rb
+index 95eae3b..2a77613 100644
+--- a/lib/sake/typer.rb
++++ b/lib/sake/typer.rb
+@@ -52,6 +52,7 @@ module Sake
+         @passes += 1
+         before = snapshot
+         @checks = {}
++        @check_ctx = {}
+         @results = {}.compare_by_identity
+         @done = {}
+         @in_progress = {}
+@@ -246,11 +247,18 @@ module Sake
+       key = [node.location.start_line, node.location.start_column, op, arg]
+       prev = @checks[key]
+       if prev
++        return if op == "rescue" && prev.verdict == :proven
+         prev.actual = u(prev.actual, actual)
+-        prev.verdict = worse(prev.verdict, verdict)
++        # Evaluations along the same calls are loop iterations and passes towards the fixpoint: a check that
++        # fails in some and passes in others may fail. Different call paths keep the worse verdict.
++        return prev.verdict = :proven if op == "rescue" && verdict == :proven
++        ctx = (@check_ctx[key] ||= {})
++        ctx[@callers] = (c = ctx[@callers]).nil? || c == verdict ? verdict : (([c, verdict] & %i[unknown]).empty? ? :partial : :unknown)
++        prev.verdict = ctx.values.reduce { worse(_1, _2) }
+         prev.failing = (prev.failing + failing).uniq
+         prev.via ||= @callers.dup unless failing.empty?
+       else
++        (@check_ctx[key] = {})[@callers.dup] = verdict
+         @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing,
+                                  failing.empty? ? nil : @callers.dup)
+       end
+@@ -583,35 +591,33 @@ module Sake
+     end
+ 
+     # The Ruby methods behind a built-in (sort, max, include?, uniq, Hash keys, ...) call a Struct
+-    # type's own <=> and ==; analyze those for every Struct value the arguments can reach.
++    # type's own <=> and ==. Each is analyzed with the values it can be compared with: the arguments and
++    # their elements with each other, then, level by level, values at the same place (the same field,
++    # Tuple position, Record key, or element of nested collections).
+     def struct_hooks(tys)
+-      atoms = []
+-      tys.each { reachable_structs(_1, atoms, {}) }
+-      return if atoms.empty?
+-      other = u(*atoms.map { [_1] })
+-      atoms.uniq.each do |x|
+-        %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [[x].freeze, other], nil) }
++      top = u(*tys, *tys.map { |ty| u(elem_of(ty), set_elem(ty), *hash_kv(ty)) })
++      groups = []
++      compared_groups(top, groups, {})
++      groups.each do |g|
++        other = u(*g.map { [_1] })
++        g.each do |x|
++          %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [[x].freeze, other], nil) }
++        end
+       end
+     end
+ 
+-    def reachable_structs(ty, out, seen)
+-      ty.each do |a|
+-        next if seen[a]
+-        seen[a] = true
+-        if struct_atom?(a)
+-          out << a
+-          @fields[a].each_value { reachable_structs(_1, out, seen) } # the default == compares fields
+-          next
+-        end
+-        next unless a.is_a?(Array)
+-        case a[0]
+-        when :tuple then a[1].each { reachable_structs(_1, out, seen) }
+-        when :record then a[1].each { |_, t| reachable_structs(t, out, seen) }
+-        when :array then reachable_structs(@sites[a[1]].elem, out, seen)
+-        when :set then reachable_structs(set_sites[a[1]].elem, out, seen)
+-        when :hash then hash_kv([a]).each { reachable_structs(_1, out, seen) }
+-        end
+-      end
++    def compared_groups(ty, out, seen)
++      return if ty.empty? || seen[ty]
++      seen[ty] = true
++      structs = ty.select { struct_atom?(_1) }
++      out << structs unless structs.empty?
++      structs.each { |a| @fields[a].each_value { compared_groups(_1, out, seen) } } # the default == compares fields
++      tuples = atoms_of(ty, :tuple).map { _1[1] }
++      (0...(tuples.map(&:size).max || 0)).each { |i| compared_groups(u(*tuples.filter_map { _1[i] }), out, seen) }
++      records = atoms_of(ty, :record).flat_map { _1[1] }
++      records.map(&:first).uniq.each { |k| compared_groups(u(*records.select { _1[0] == k }.map(&:last)), out, seen) }
++      compared_groups(u(elem_of(ty), set_elem(ty)), out, seen)
++      hash_kv(ty).each { compared_groups(_1, out, seen) }
+     end
+ 
+     def data_op(dt, name, args, node)
+diff --git a/lib/sake/typer_eval.rb b/lib/sake/typer_eval.rb
+index a60dac2..219a7bd 100644
+--- a/lib/sake/typer_eval.rb
++++ b/lib/sake/typer_eval.rb
+@@ -6,7 +6,8 @@ module Sake
+     include AST
+ 
+     # The variables of a function (own = nil: every slot it reaches is its own) or of a block run
+-    # (own = the block's parameters and locals; other slots belong to the enclosing levels).
++    # (own = the block's parameters and locals; other slots belong to the enclosing levels). A block run's
++    # vars may also hold an enclosing variable narrowed (or assigned) on this path only.
+     class Env
+       attr_reader :vars, :parent, :frame, :own
+       attr_accessor :dead # control left via return/next/break; this path does not fall through
+@@ -26,6 +27,18 @@ module Sake
+         e
+       end
+ 
++      def lookup(slot)
++        e = self
++        until e.owns?(slot)
++          return e.vars[slot] if e.vars.key?(slot)
++          e = e.parent
++        end
++        e.vars[slot]
++      end
++
++      # A variable's type on this path when a branch did not touch it.
++      def outside(slot) = (owns?(slot) ? nil : parent.lookup(slot)) || ["Nil"].freeze
++
+       def dup_level = Env.new(@parent, @frame, @own, @vars.dup)
+ 
+       def chain_snapshot
+@@ -51,7 +64,7 @@ module Sake
+         r = t("Nil")
+         n.body.each { r = ev(_1, env) }
+         r
+-      when LVarGet then env.level(n.slot).vars[n.slot] || t("Nil")
++      when LVarGet then env.lookup(n.slot) || t("Nil")
+       when LVarSet then assign(env, n.slot, ev(n.value, env))
+       when MultiWrite then multi_write(n, env)
+       when IndexUpdate then index_update(n, env)
+@@ -141,14 +154,20 @@ module Sake
+     # Writes from inside a block to an outer variable are weak (the block may run zero or more times).
+     def assign(env, slot, ty)
+       lv = env.level(slot)
+-      lv.vars[slot] = lv.equal?(env) ? ty : u(lv.vars[slot] || t("Nil"), ty)
+-      ty
++      return lv.vars[slot] = ty if lv.equal?(env)
++      e = env
++      until e.equal?(lv) # narrowings of the enclosing levels no longer hold
++        e.vars.delete(slot)
++        e = e.parent
++      end
++      lv.vars[slot] = u(lv.vars[slot] || t("Nil"), ty)
++      env.vars[slot] = ty
+     end
+ 
+     # `x ||= v`
+     def or_assign(n, env)
+       slot = n.left.slot
+-      cur = env.level(slot).vars[slot] || t("Nil")
++      cur = env.lookup(slot) || t("Nil")
+       assign(env, slot, u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(n.right.value, env)))
+     end
+ 
+@@ -175,7 +194,7 @@ module Sake
+         live = [a, b]
+       end
+       (a.vars.keys | b.vars.keys).each do |k|
+-        env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") })
++        env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } })
+       end
+     end
+ 
+@@ -236,8 +255,8 @@ module Sake
+       when LVarGet then restrict(env, pred.slot, truthy ? :non_nil : :falsy)
+       when MatchP
+         var = pred.value
+-        return unless var.is_a?(LVarGet) && env.owns?(var.slot) && env.vars[var.slot]
+-        m, rest = match_atoms(env.vars[var.slot], pred.pattern)
++        return unless var.is_a?(LVarGet) && (ty = env.lookup(var.slot))
++        m, rest = match_atoms(ty, pred.pattern)
+         env.vars[var.slot] = u(*(truthy ? m : rest).map { [_1] })
+       when IsNil, BinOp
+         return if pred.is_a?(BinOp) && !%w[== !=].include?(pred.op)
+@@ -299,10 +318,12 @@ module Sake
+       end
+     end
+ 
++    def alternatives(pat) = pat.is_a?(PAlt) ? [*alternatives(pat.left), *alternatives(pat.right)] : [pat]
++
+     # Each `in` sees what earlier branches left; whatever no branch takes is reported (the set is closed).
+     def case_match(n, env)
+       v = ev(n.subject, env)
+-      var = n.subject.is_a?(LVarGet) && env.owns?(n.subject.slot) ? n.subject.slot : nil
++      var = n.subject.is_a?(LVarGet) ? n.subject.slot : nil
+       remaining = v
+       results = []
+       envs = []
+@@ -323,8 +344,9 @@ module Sake
+       elsif !remaining.empty? && !unknown?(v)
+         # Values a literal pattern may leave (some String, any Symbol not written as a literal) are not
+         # a type problem: the type's set of values is open. Both true and false cover Boolean.
+-        lits = n.clauses.filter_map { |pat, _| pat.is_a?(PValue) && pat.value.is_a?(Lit) ? pat.value.value : nil }
+-        lits += n.clauses.filter_map { |pat, _| pat.is_a?(PValue) && pat.value.is_a?(Str) ? "" : nil }
++        alts = n.clauses.flat_map { |pat, _| alternatives(pat) }
++        lits = alts.filter_map { |pat| pat.is_a?(PValue) && pat.value.is_a?(Lit) ? pat.value.value : nil }
++        lits += alts.filter_map { |pat| pat.is_a?(PValue) && pat.value.is_a?(Str) ? "" : nil }
+         remaining -= ["Boolean"] if lits.include?(true) && lits.include?(false)
+         lit_types = lits.map { LIT_TYPES.fetch(_1.class) { "String" } }
+         open, closed = remaining.partition { _1.is_a?(String) && lit_types.include?(atom_type_name(_1)) }
+@@ -343,12 +365,11 @@ module Sake
+         env.dead = true
+         live = envs
+       end
+-      live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") }) }
++      live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } }) }
+     end
+ 
+     def restrict(env, slot, how)
+-      return unless env.owns?(slot)
+-      ty = env.vars[slot] or return
++      ty = env.lookup(slot) or return
+       atoms =
+         case how
+         when :non_nil then ty - NILS
+@@ -509,7 +530,7 @@ module Sake
+       arg_nodes.each_with_index do |arg, i|
+         want = wants[i]
+         next if want.nil? || want == "Any"
+-        next unless arg.is_a?(LVarGet) && env.owns?(arg.slot) && (ty = env.vars[arg.slot])
++        next unless arg.is_a?(LVarGet) && (ty = env.lookup(arg.slot))
+         next if unknown?(ty)
+         kept = ty.select { |a| Array(want).any? { atom_matches?(a, _1) } }
+         env.vars[arg.slot] = u(*kept.map { [_1] })
+@@ -542,8 +563,9 @@ module Sake
+           caught = raised.keys + Resolver::BUILTIN_EXCEPTIONS
+         else
+           names.each do |name|
+-            next if !user_raised?(name) || raised.key?(name)
+-            add_check(clause.origin, "rescue", name, "raised in the begin body", [], :error, [name])
++            next unless user_raised?(name)
++            # Reported when no evaluation (call, block given) of the begin body raises it.
++            add_check(clause.origin, "rescue", name, "raised in the begin body", [], raised.key?(name) ? :proven : :error, raised.key?(name) ? [] : [name])
+           end
+           caught = names
+         end

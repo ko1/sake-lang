@@ -116,7 +116,7 @@ footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.85re
   <div class="eyebrow">experiments/2026-10-01-inference-500 · Sake-lang</div>
   <h1>Sake 型推論 500 本</h1>
   <p class="col muted">型を一切書かない Sake のプログラム 500 本に、操作に書いた型だけからの推論がどこまで届くかを測った。同じ課題を Ruby で書いたものに対する TypeProf とも比べた。</p>
-  <p class="answer col">結論：<em>ほぼ全部（99% 以上）の式と関数の型が決まり、8 割は 1 つの型に決まる。</em>TypeProf より決まり具合は高い。ただし、そこに至るまでに推論器の健全性の穴を 7 つ見つけて直した。また、実行前の検査をそのまま使うと、正しいプログラムの 36% を止めていた（8 節の決定を入れた後は 22%）。</p>
+  <p class="answer col">結論：<em>ほぼ全部（99% 以上）の式と関数の型が決まり、8 割は 1 つの型に決まる。</em>TypeProf より決まり具合は高い。ただし、そこに至るまでに推論器の健全性の穴を 7 つ見つけて直した。また、実行前の検査をそのまま使うと、正しいプログラムの 36% を止めていた（8 節の決定を入れた後は 22%、誤報を 1 件ずつ解析して推論器の誤りを直した後は 12%。10 節）。</p>
 </header>
 
 <section>
@@ -138,9 +138,9 @@ footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.85re
       <p>実行時の型を推論した型と突き合わせると、元の推論器は 585 件の取りこぼしがあった。7 つの穴を直して 0 件。壊した推論器では 1,734 件出るので、確認の仕組みは働いている。</p>
     </div>
     <div class="finding">
-      <div class="big c-warn">180 <small>→</small> 108<small> / 500</small></div>
+      <div class="big c-warn">180 <small>→</small> <span class="c-ok">58</span><small> / 500</small></div>
       <h3>正しいのに止められた</h3>
-      <p>実行前の検査（strict level 1）で止められた正しいプログラム。最大の原因は、Symbol の値に対する <code>case/in</code> に <code>else</code> が無いこと（112 件）。決定を入れた後は 108 本（8 節）。</p>
+      <p>実行前の検査（strict level 1）で止められた正しいプログラム。最大の原因は、Symbol の値に対する <code>case/in</code> に <code>else</code> が無いこと（112 件）。決定を入れた後は 108 本（8 節）、推論器の誤り 6 つを直した後は 58 本（10 節）。</p>
     </div>
   </div>
 </section>
@@ -332,6 +332,41 @@ footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.85re
 </section>
 
 <section class="col">
+  <div class="eyebrow">10 · 誤報を 1 件ずつ解析した（2026-10-02 に追記）</div>
+  <h2>level 1 の誤報 280 件の出どころと、推論器の修正</h2>
+  <p>v4 で level 1 に止められた 106 本・280 件の診断を、1 件ずつコードを読んで「実行時には来ない型がどこから来たか」で分けた。プログラムはどれも正しいので、全部が誤報。</p>
+  <div class="tbl">
+  <table>
+    <tr><th>出どころ</th><th class="n">v4</th><th class="n">修正後</th><th>例</th></tr>
+    <tr><td>推論器の誤り</td><td class="n">94</td><td class="n"><b>5</b></td><td>下の 6 つ</td></tr>
+    <tr><td>生成箇所の共有</td><td class="n">68</td><td class="n">68</td><td>関数の中の 1 つの <code>Array[]</code> に、Integer のヒープと Task のヒープの両方が入る</td></tr>
+    <tr><td>型の混ざった容器</td><td class="n">68</td><td class="n">67</td><td>JSON・Lisp の値、<code>[:copy, n]</code> と <code>[:literal, xs]</code> のタグ付き Tuple</td></tr>
+    <tr><td>別の変数との相関</td><td class="n">27</td><td class="n">19</td><td>フラグが立っていれば非 nil、<code>i &gt; 0</code> なら prev がある</td></tr>
+    <tr><td>数値の混在</td><td class="n">23</td><td class="n">23</td><td>Float の Array の <code>sum</code> は、空なら Integer の 0（Ruby と同じで推論は正しい）</td></tr>
+  </table>
+  </div>
+  <div class="decide">
+    <h3>直した推論器の誤り（それぞれ小さな再現で確かめてから直した）</h3>
+    <ul class="plain">
+      <li><b>ブロックの中で外側の変数を狭めていなかった</b>（57 件減）。<code>Array.each</code> の中の <code>best == nil || x &lt; best</code> が nil の報告になった。<code>while</code> の中なら狭まる。</li>
+      <li><b>Struct の自前の <code>&lt;=&gt;</code> を、無関係な型を相手に解析していた</b>（26 件減）。<code>p(L.new(1, Money.new(1)))</code> だけで <code>Money#&lt;=&gt;(Money, L)</code> を解析し、<code>Money.get_cents</code> に L が来ると報告した。</li>
+      <li><b>ループの初回の「必ず失敗」が残っていた</b>（7 件減）。変数がちょうど nil の初回の判定を、収束後の <code>T | nil</code> より優先していた。同じ呼び出し経路なら「失敗しうる」（level 2）にまとめる。</li>
+      <li><b><code>in true | false</code> が Boolean を網羅しない</b>、<b>rescue の「送出されない」を呼び出しごとに判定</b>（あわせて 8 件減）。</li>
+    </ul>
+  </div>
+  <div class="tbl">
+  <table>
+    <tr><th></th><th class="n">v4</th><th class="n">v6（修正後）</th></tr>
+    <tr><td>level 1 で止められた正しいプログラム</td><td class="n">106 本（280 件）</td><td class="n"><b>58 本（182 件）</b></td></tr>
+    <tr><td>level 2 / 3 / 4</td><td class="n">321 / 457 / 464</td><td class="n">300 / 450 / 458</td></tr>
+    <tr><td>健全性の違反（負の対照）</td><td class="n">0（1,701）</td><td class="n">0（1,733）</td></tr>
+  </table>
+  </div>
+  <p>修正で新しく出た診断は 0 件。外側の変数を狭める修正は、狭めた後に内側のブロックで nil を代入する例などが、修正後も報告されることで確かめた。</p>
+  <p class="muted">残り 182 件への提案（未着手）：関数の中で作る Array / Hash を関数の具体化ごとに分ける（68 件）、タグ付き Tuple を混ぜずに保ち <code>case kind in :copy</code> で絞る、<code>Array.sum(xs, 0.0)</code> を入れる（23 件）。相関の 19 件と、JSON・Lisp の値の多くは書き方の問題として残す。</p>
+</section>
+
+<section class="col">
   <div class="eyebrow">制限と訂正</div>
   <ul class="plain">
     <li>書き手は 1 種類の AI。人が書いたプログラムではなく、課題も書き手が選んだ。</li>
@@ -342,7 +377,7 @@ footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.85re
 
 <footer>
   <div>Sake-lang リポジトリ <span class="mono">experiments/2026-10-01-inference-500/</span>（README.md、results-*/results.md、notes-tally.md）</div>
-  <div>推論器：SakeAST 版（Prism から作った解決済みの AST の上で動く）。Ruby 4.0.2、TypeProf 0.31.1。2026-10-01（9 節は 2026-10-02、commit b5156d3）。</div>
+  <div>推論器：SakeAST 版（Prism から作った解決済みの AST の上で動く）。Ruby 4.0.2、TypeProf 0.31.1。2026-10-01（9 節は 2026-10-02、commit b5156d3。10 節は 206394c）。</div>
 </footer>
 </main>
 
