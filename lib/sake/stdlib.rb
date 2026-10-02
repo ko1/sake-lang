@@ -173,7 +173,7 @@ module Sake
       %i[include? start_with? end_with?].each do |m|
         reg.define("String", m, %w[String String]) { |s, t| s.public_send(m, t) }
       end
-      reg.define("String", :split, ["String"], optional: ["String"]) { |s, sep = nil| s.split(sep) }
+      reg.define("String", :split, ["String"], optional: %w[String Integer]) { |s, sep = nil, limit = 0| s.split(sep, limit) }
       reg.define("String", :sub, %w[String String String]) { |s, a, b| s.sub(a, b) }
       reg.define("String", :gsub, %w[String String String]) { |s, a, b| s.gsub(a, b) }
       reg.define("String", :count, %w[String String]) { |s, t| s.count(t) }
