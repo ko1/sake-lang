@@ -583,35 +583,33 @@ module Sake
     end
 
     # The Ruby methods behind a built-in (sort, max, include?, uniq, Hash keys, ...) call a Struct
-    # type's own <=> and ==; analyze those for every Struct value the arguments can reach.
+    # type's own <=> and ==. Each is analyzed with the values it can be compared with: the arguments and
+    # their elements with each other, then, level by level, values at the same place (the same field,
+    # Tuple position, Record key, or element of nested collections).
     def struct_hooks(tys)
-      atoms = []
-      tys.each { reachable_structs(_1, atoms, {}) }
-      return if atoms.empty?
-      other = u(*atoms.map { [_1] })
-      atoms.uniq.each do |x|
-        %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [[x].freeze, other], nil) }
+      top = u(*tys, *tys.map { |ty| u(elem_of(ty), set_elem(ty), *hash_kv(ty)) })
+      groups = []
+      compared_groups(top, groups, {})
+      groups.each do |g|
+        other = u(*g.map { [_1] })
+        g.each do |x|
+          %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [[x].freeze, other], nil) }
+        end
       end
     end
 
-    def reachable_structs(ty, out, seen)
-      ty.each do |a|
-        next if seen[a]
-        seen[a] = true
-        if struct_atom?(a)
-          out << a
-          @fields[a].each_value { reachable_structs(_1, out, seen) } # the default == compares fields
-          next
-        end
-        next unless a.is_a?(Array)
-        case a[0]
-        when :tuple then a[1].each { reachable_structs(_1, out, seen) }
-        when :record then a[1].each { |_, t| reachable_structs(t, out, seen) }
-        when :array then reachable_structs(@sites[a[1]].elem, out, seen)
-        when :set then reachable_structs(set_sites[a[1]].elem, out, seen)
-        when :hash then hash_kv([a]).each { reachable_structs(_1, out, seen) }
-        end
-      end
+    def compared_groups(ty, out, seen)
+      return if ty.empty? || seen[ty]
+      seen[ty] = true
+      structs = ty.select { struct_atom?(_1) }
+      out << structs unless structs.empty?
+      structs.each { |a| @fields[a].each_value { compared_groups(_1, out, seen) } } # the default == compares fields
+      tuples = atoms_of(ty, :tuple).map { _1[1] }
+      (0...(tuples.map(&:size).max || 0)).each { |i| compared_groups(u(*tuples.filter_map { _1[i] }), out, seen) }
+      records = atoms_of(ty, :record).flat_map { _1[1] }
+      records.map(&:first).uniq.each { |k| compared_groups(u(*records.select { _1[0] == k }.map(&:last)), out, seen) }
+      compared_groups(u(elem_of(ty), set_elem(ty)), out, seen)
+      hash_kv(ty).each { compared_groups(_1, out, seen) }
     end
 
     def data_op(dt, name, args, node)
