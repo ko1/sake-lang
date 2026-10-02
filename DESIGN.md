@@ -325,6 +325,7 @@ AI 向けの話と最適化の話は、同じ結論に収束する: **操作に�
   - Regexp はリテラル（`/re/`）。`$1` などのグローバル変数は無いので、MatchData を変数に入れて `m[1]` で読む。
   - **Claude が暫定で決めたもの（要確認）:**
     - Hash のキーと Set の要素は「値型」に限る。値型とは、Integer / Float / String / Symbol / true / false / nil と、それらからなる Tuple / Record のこと。Struct・Array・Hash・Set は、等価性（protocol）が未決なので入れられない。
+      → 2026-10-02 に ko1 の決定で変更：キーは `==` と同じ規則で比べ、Struct・Array・Hash・Set もキーにできる。自分の等価性（`==`、または `Comparable` と `<=>`）を持つ Struct 型の値はキーにできない（`hash` と食い違うため）。キーにした後で書き換えると見つからなくなるのは Ruby と同じ。
     - Tuple / Record のキーは、格納するときにコピーする（中身が可変なので、後から書き換わってキーが壊れるのを防ぐ）。
     - `Hash.new { ... }`（ブロックで既定値を作る形）は入れない。ブロックを値として保存することになり、second-class の決定に反するため。
     - `format` の引数は、基本の型（数・文字列・Symbol・nil・真偽）に限る。

@@ -33,8 +33,11 @@ module Sake
 
     def key!(x)
       return Values.key_copy(x) if Values.key_value?(x)
+      if x.is_a?(StructValue) && x.type.own_equality
+        raise Fail.new("TypeError", "#{x.type.name} cannot be a Hash key or Set element: it defines its own equality (== or <=>)")
+      end
       raise Fail.new("TypeError", "#{Values.describe(x)} cannot be a Hash key or Set element " \
-                                  "(only Integer, Float, String, Symbol, true, false, nil, and Tuples and Records of them)")
+                                  "(it contains a value that cannot: a Regexp, a Range, or a Struct value with its own equality)")
     end
 
     def pair(k, v) = Tuple.new([k, v])

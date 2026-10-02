@@ -48,6 +48,10 @@ module Sake
     def run
       Thread.current[:sake_show_hooks] = method(:show_hook)
       Thread.current[:sake_struct_ops] = method(:struct_ruby_op)
+      @program.struct_types.each_value do |dt|
+        dt.own_equality = !!own_fn(dt.name, "==") ||
+                          (Operators.includes?(@program.includes, dt.name, "Comparable") && !!own_fn(dt.name, "<=>"))
+      end
       main = @ast.main
       ev(main.body, Frame.new("<main>", Array.new(main.nslots), nil))
       nil

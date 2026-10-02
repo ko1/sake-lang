@@ -32,7 +32,8 @@ module Sake
   # exception: made by Exception.new (or built in); its first field is message and it can be raised.
   # field_types: field => type name fixed by a default value. getters / setters: field => Builtin, used by
   # `@x` inside the type's functions whether or not the field is public.
-  StructType = Struct.new(:name, :fields, :exception, :field_types, :getters, :setters)
+  # own_equality: the type defines == (or Comparable with <=>); its values cannot be Hash keys or Set elements.
+  StructType = Struct.new(:name, :fields, :exception, :field_types, :getters, :setters, :own_equality)
 
   # The type of a Record: its set of (field, type) pairs, sorted by field and interned.
   Shape = Struct.new(:fields, :types) do
@@ -79,6 +80,11 @@ module Sake
     end
 
     def <=>(other) = Thread.current[:sake_struct_ops]&.call(:<=>, self, other)
+
+    # As Hash keys and Set elements: by type and fields, like the default == (types with their own
+    # equality are refused as keys, see Values.key_value?).
+    def eql?(other) = other.is_a?(StructValue) && other.type.equal?(@type) && @values.eql?(other.values)
+    def hash = [StructValue, @type.name, @values].hash
 
     def initialize(type, values)
       @type = type
@@ -134,6 +140,9 @@ module Sake
       when Integer, Float, Rational, Complex, String, Symbol, Time, true, false, nil then true
       when Tuple then v.elems.all? { key_value?(_1) }
       when RecordValue then v.values.all? { key_value?(_1) }
+      when ::Array, ::Set then v.all? { key_value?(_1) }
+      when ::Hash then v.all? { |k, x| key_value?(k) && key_value?(x) }
+      when StructValue then !v.type.own_equality && v.values.all? { key_value?(_1) }
       else false
       end
     end
