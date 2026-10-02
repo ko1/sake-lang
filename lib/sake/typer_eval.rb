@@ -6,7 +6,8 @@ module Sake
     include AST
 
     # The variables of a function (own = nil: every slot it reaches is its own) or of a block run
-    # (own = the block's parameters and locals; other slots belong to the enclosing levels).
+    # (own = the block's parameters and locals; other slots belong to the enclosing levels). A block run's
+    # vars may also hold an enclosing variable narrowed (or assigned) on this path only.
     class Env
       attr_reader :vars, :parent, :frame, :own
       attr_accessor :dead # control left via return/next/break; this path does not fall through
@@ -25,6 +26,18 @@ module Sake
         e = e.parent until e.owns?(slot)
         e
       end
+
+      def lookup(slot)
+        e = self
+        until e.owns?(slot)
+          return e.vars[slot] if e.vars.key?(slot)
+          e = e.parent
+        end
+        e.vars[slot]
+      end
+
+      # A variable's type on this path when a branch did not touch it.
+      def outside(slot) = (owns?(slot) ? nil : parent.lookup(slot)) || ["Nil"].freeze
 
       def dup_level = Env.new(@parent, @frame, @own, @vars.dup)
 
@@ -51,7 +64,7 @@ module Sake
         r = t("Nil")
         n.body.each { r = ev(_1, env) }
         r
-      when LVarGet then env.level(n.slot).vars[n.slot] || t("Nil")
+      when LVarGet then env.lookup(n.slot) || t("Nil")
       when LVarSet then assign(env, n.slot, ev(n.value, env))
       when MultiWrite then multi_write(n, env)
       when IndexUpdate then index_update(n, env)
@@ -141,14 +154,20 @@ module Sake
     # Writes from inside a block to an outer variable are weak (the block may run zero or more times).
     def assign(env, slot, ty)
       lv = env.level(slot)
-      lv.vars[slot] = lv.equal?(env) ? ty : u(lv.vars[slot] || t("Nil"), ty)
-      ty
+      return lv.vars[slot] = ty if lv.equal?(env)
+      e = env
+      until e.equal?(lv) # narrowings of the enclosing levels no longer hold
+        e.vars.delete(slot)
+        e = e.parent
+      end
+      lv.vars[slot] = u(lv.vars[slot] || t("Nil"), ty)
+      env.vars[slot] = ty
     end
 
     # `x ||= v`
     def or_assign(n, env)
       slot = n.left.slot
-      cur = env.level(slot).vars[slot] || t("Nil")
+      cur = env.lookup(slot) || t("Nil")
       assign(env, slot, u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(n.right.value, env)))
     end
 
@@ -175,7 +194,7 @@ module Sake
         live = [a, b]
       end
       (a.vars.keys | b.vars.keys).each do |k|
-        env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") })
+        env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } })
       end
     end
 
@@ -236,8 +255,8 @@ module Sake
       when LVarGet then restrict(env, pred.slot, truthy ? :non_nil : :falsy)
       when MatchP
         var = pred.value
-        return unless var.is_a?(LVarGet) && env.owns?(var.slot) && env.vars[var.slot]
-        m, rest = match_atoms(env.vars[var.slot], pred.pattern)
+        return unless var.is_a?(LVarGet) && (ty = env.lookup(var.slot))
+        m, rest = match_atoms(ty, pred.pattern)
         env.vars[var.slot] = u(*(truthy ? m : rest).map { [_1] })
       when IsNil, BinOp
         return if pred.is_a?(BinOp) && !%w[== !=].include?(pred.op)
@@ -304,7 +323,7 @@ module Sake
     # Each `in` sees what earlier branches left; whatever no branch takes is reported (the set is closed).
     def case_match(n, env)
       v = ev(n.subject, env)
-      var = n.subject.is_a?(LVarGet) && env.owns?(n.subject.slot) ? n.subject.slot : nil
+      var = n.subject.is_a?(LVarGet) ? n.subject.slot : nil
       remaining = v
       results = []
       envs = []
@@ -346,12 +365,11 @@ module Sake
         env.dead = true
         live = envs
       end
-      live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars[k] || t("Nil") }) }
+      live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } }) }
     end
 
     def restrict(env, slot, how)
-      return unless env.owns?(slot)
-      ty = env.vars[slot] or return
+      ty = env.lookup(slot) or return
       atoms =
         case how
         when :non_nil then ty - NILS
@@ -512,7 +530,7 @@ module Sake
       arg_nodes.each_with_index do |arg, i|
         want = wants[i]
         next if want.nil? || want == "Any"
-        next unless arg.is_a?(LVarGet) && env.owns?(arg.slot) && (ty = env.vars[arg.slot])
+        next unless arg.is_a?(LVarGet) && (ty = env.lookup(arg.slot))
         next if unknown?(ty)
         kept = ty.select { |a| Array(want).any? { atom_matches?(a, _1) } }
         env.vars[arg.slot] = u(*kept.map { [_1] })
