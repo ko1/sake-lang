@@ -11,12 +11,16 @@ module Sake
     class Env
       attr_reader :vars, :parent, :frame, :own
       attr_accessor :dead # control left via return/next/break; this path does not fall through
+      # slot => [tuple variants, position]: the variable was taken from position of a value whose Tuple
+      # variants are known (`|kind, arg|`); narrowing one such variable narrows the others. Own slots only.
+      attr_accessor :links
 
-      def initialize(parent, frame, own = nil, vars = {})
+      def initialize(parent, frame, own = nil, vars = {}, links = {})
         @parent = parent
         @frame = frame
         @own = own
         @vars = vars
+        @links = links
       end
 
       def owns?(slot) = @own.nil? || @own.include?(slot)
@@ -39,7 +43,7 @@ module Sake
       # A variable's type on this path when a branch did not touch it.
       def outside(slot) = (owns?(slot) ? nil : parent.lookup(slot)) || ["Nil"].freeze
 
-      def dup_level = Env.new(@parent, @frame, @own, @vars.dup)
+      def dup_level = Env.new(@parent, @frame, @own, @vars.dup, @links.dup)
 
       def chain_snapshot
         e = self
@@ -154,6 +158,7 @@ module Sake
     # Writes from inside a block to an outer variable are weak (the block may run zero or more times).
     def assign(env, slot, ty)
       lv = env.level(slot)
+      lv.links.delete(slot)
       return lv.vars[slot] = ty if lv.equal?(env)
       e = env
       until e.equal?(lv) # narrowings of the enclosing levels no longer hold
@@ -196,6 +201,7 @@ module Sake
       (a.vars.keys | b.vars.keys).each do |k|
         env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } })
       end
+      env.links = common_links(live)
     end
 
     def branch(env, pred, then_node, else_node)
@@ -257,10 +263,11 @@ module Sake
         var = pred.value
         return unless var.is_a?(LVarGet) && (ty = env.lookup(var.slot))
         m, rest = match_atoms(ty, pred.pattern)
-        env.vars[var.slot] = u(*(truthy ? m : rest).map { [_1] })
+        set_narrowed(env, var.slot, u(*(truthy ? m : rest).map { [_1] }))
       when IsNil, BinOp
         return if pred.is_a?(BinOp) && !%w[== !=].include?(pred.op)
         return if pred.origin.receiver.is_a?(Prism::ConstantReadNode) # `Kernel.==(x, nil)` is not a test form
+        return if narrow_symbol_eq(env, pred, truthy)
         if pred.is_a?(IsNil)
           var = pred.value
           is_nil = !pred.negate == truthy
@@ -271,6 +278,39 @@ module Sake
         end
         restrict(env, var.slot, is_nil ? :nil : :non_nil) if var.is_a?(LVarGet)
       end
+    end
+
+    # `x == :sym` / `x != :sym` (either side): x is that Symbol on one path, any other value on the other.
+    # `t[k] == :sym` narrows the Tuple variants of t. Returns true when pred is such a test.
+    def narrow_symbol_eq(env, pred, truthy)
+      return false unless pred.is_a?(BinOp)
+      lit, other = [pred.left, pred.right].partition { _1.is_a?(Lit) && _1.value.is_a?(Symbol) }
+      return false unless lit.size == 1
+      eq = (pred.op == "==") == truthy
+      subject = other[0]
+      if subject.is_a?(LVarGet) && (ty = env.lookup(subject.slot))
+        m, rest = match_atoms(ty, PValue.new(value: lit[0]))
+        set_narrowed(env, subject.slot, u(*(eq ? m : rest).map { [_1] }))
+      elsif (var, pos = indexed_var(subject)) && var
+        ty = (env.lookup(var) || []).filter_map { |a| a[1][pos] if a.is_a?(Array) && a[0] == :tuple }
+        m, rest = match_atoms(u(*ty), PValue.new(value: lit[0]))
+        narrow_by_position(env, var, pos, eq ? m : rest)
+      end
+      true
+    end
+
+    # `t[k]` with t a local variable and k an Integer literal: [slot of t, k].
+    def indexed_var(n)
+      return nil unless n.is_a?(IndexGet) && n.extra.nil? && n.recv.is_a?(LVarGet) && n.key.is_a?(Lit) && n.key.value.is_a?(Integer)
+      [n.recv.slot, n.key.value]
+    end
+
+    # Keeps t's Tuple variants whose position pos may hold one of atoms (other atoms of t stay).
+    def narrow_by_position(env, slot, pos, atoms)
+      ty = env.lookup(slot) or return
+      return if unknown?(ty) || unknown?(atoms)
+      kept = ty.reject { |a| a.is_a?(Array) && a[0] == :tuple && a[1][pos] && a[1][pos].none? { atoms.include?(_1) } }
+      set_narrowed(env, slot, u(*kept.map { [_1] })) unless kept.empty? || kept.size == ty.size
     end
 
     # [atoms that may match the pattern, atoms that may not]. An unknown atom may be anything: it goes
@@ -324,6 +364,7 @@ module Sake
     def case_match(n, env)
       v = ev(n.subject, env)
       var = n.subject.is_a?(LVarGet) ? n.subject.slot : nil
+      tuple_var, pos = indexed_var(n.subject)
       remaining = v
       results = []
       envs = []
@@ -331,14 +372,16 @@ module Sake
         m, remaining = match_atoms(remaining, pat)
         next if m.empty? && !v.empty?
         e = env.dup_level
-        e.vars[var] = u(*m.map { [_1] }) if var
+        set_narrowed(e, var, u(*m.map { [_1] })) if var
+        narrow_by_position(e, tuple_var, pos, m) if tuple_var
         bind_pattern(e, pat, m)
         results << ev(body, e)
         envs << e
       end
       if n.else_
         e = env.dup_level
-        e.vars[var] = u(*remaining.map { [_1] }) if var
+        set_narrowed(e, var, u(*remaining.map { [_1] })) if var
+        narrow_by_position(e, tuple_var, pos, remaining) if tuple_var
         results << ev(n.else_, e)
         envs << e
       elsif !remaining.empty? && !unknown?(v)
@@ -366,6 +409,7 @@ module Sake
         live = envs
       end
       live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } }) }
+      env.links = common_links(live)
     end
 
     def restrict(env, slot, how)
@@ -376,7 +420,7 @@ module Sake
         when :nil then ty & NILS
         when :falsy then ty & (NILS + ["Boolean"])
         end
-      env.vars[slot] = u(*atoms.map { [_1] })
+      set_narrowed(env, slot, u(*atoms.map { [_1] }))
     end
 
     def match_record(n, env)
@@ -413,7 +457,37 @@ module Sake
         when TField then call_builtin(t.fn, [places[i], ty], nil, t.origin)
         end
       end
+      link_spread(env, n.targets.map { _1.is_a?(TLocal) ? _1.slot : nil }, v) unless ri
       v
+    end
+
+    # After `a, b = v` (or `|a, b|`): when v is one of several Tuple variants, remember where each
+    # variable came from, so that narrowing one narrows the others (`case a in :copy` decides b).
+    def link_spread(env, slots, v)
+      return unless @narrow && v.size > 1 && v.all? { _1.is_a?(Array) && _1[0] == :tuple }
+      slots.each_with_index { |s, i| env.links[s] = [v, i].freeze if s && env.owns?(s) }
+    end
+
+    def common_links(envs)
+      envs.map(&:links).reduce { |a, b| a.select { |k, l| b[k] == l } }
+    end
+
+    # Sets a narrowed type of a local variable on this path (an enclosing variable's is kept in this
+    # env's vars), then narrows the variables taken from the same Tuple variants.
+    def set_narrowed(env, slot, ty, follow: true)
+      env.vars[slot] = ty
+      return unless follow && (link = env.level(slot).links[slot])
+      variants, pos = link
+      return if unknown?(ty)
+      alive = variants.select { |tp| tp[1][pos].nil? || tp[1][pos].any? { ty.include?(_1) } }
+      return if alive.size == variants.size
+      env.level(slot).links.each do |other, (vs, i)|
+        next if other == slot || !vs.equal?(variants)
+        cur = env.lookup(other) or next
+        allowed = u(*alive.map { _1[1][i] || t("Nil") })
+        kept = cur.select { allowed.include?(_1) }
+        set_narrowed(env, other, u(*kept.map { [_1] }), follow: false) unless kept.empty? || kept.size == cur.size
+      end
     end
 
     # The types of n variables taken from a Tuple or an Array (as Ruby: missing elements are nil). A Tuple's
@@ -629,6 +703,7 @@ module Sake
         before = blk.env.chain_snapshot
         env = Env.new(blk.env, blk.env.frame, own)
         params.each_with_index { |s, i| env.vars[s] = args[i] || t("Nil") }
+        link_spread(env, params, a) if spread && !rest
         result = u(result, ev(blk.node.body, env))
         break if blk.env.chain_snapshot == before
       end

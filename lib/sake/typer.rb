@@ -75,7 +75,9 @@ module Sake
     def self.union(*tys)
       atoms = tys.flatten(1).uniq
       tuples, rest = atoms.partition { _1.is_a?(Array) && _1[0] == :tuple }
-      merged = tuples.group_by { _1[1].size }.map do |_, ts|
+      # Tuples of one length merge position by position, except that a position holding a single Symbol
+      # literal tags its variant (`[:copy, Integer]` and `[:literal, Array]` stay apart).
+      merged = tuples.group_by { |tp| [tp[1].size, tp[1].each_with_index.filter_map { |e, i| [i, e[0]] if e.size == 1 && e[0].is_a?(Array) && e[0][0] == :sym }] }.map do |_, ts|
         [:tuple, ts.map { _1[1] }.transpose.map { |es| union(*es) }]
       end
       (normalize_symbols(rest) + merged).uniq.sort_by(&:inspect).freeze
