@@ -448,23 +448,23 @@ module Sake
         end
       end
       pairs.reject { |x, _| struct_atom?(x) }.each do |x, y|
-        if %w[== !=].include?(op) && ([x, y].all? { _1.is_a?(Array) && _1[0] == :record } || struct_atom?(y))
+        if %w[== !=].include?(op) # any two values can be compared for equality
           hits += 1
           results << t("Boolean")
           next
         end
         key = [x, y].map { atom_type_name(_1) }
-        if %w[== !=].include?(op) && key.include?("Nil")
-          hits += 1
-          results << t("Boolean")
-          next
-        end
         unless rows.key?(key)
           failing << [x, y]
           next
         end
         hits += 1
         # Set | & - give a new Set: its elements come from the operands (a plain "Set" would have none).
+        if key[0] == "Array" && %w[+ - *].include?(op)
+          elems = op == "+" ? u(elem_of([x]), elem_of([y])) : elem_of([x])
+          results << site_for(node, " Array#{op}").tap { |ty| write_elems(ty, [elems], node, "") }
+          next
+        end
         results << (key == %w[Set Set] ? set_site(node, " #{op}").tap { |r| set_sites[r[0][1]].elem = u(set_sites[r[0][1]].elem, set_elem([x]), *(op == "|" ? [set_elem([y])] : [])) } : binop_result(op, *key))
       end
       verdict = hits == pairs.size ? :proven : (hits.zero? ? :error : :partial)
@@ -682,6 +682,9 @@ module Sake
         record(node, "Array.sum", "elem", Stdlib::NUMERIC, e)
         # An empty Array sums to 0, an Integer, whatever its elements would be.
         u(t("Integer"), *e.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] })
+      when "Array.new"
+        elem = blk ? call_block(blk, [t("Integer")]) : (args[1] || t("Nil"))
+        new_site(node, " #{name}", elem)
       when "Array.reverse", "Array.sort", "Array.take", "Array.drop"
         new_site(node, " #{name}", elem_of(a0))
       when "Array.select", "Array.filter", "Array.reject", "Array.sort_by"

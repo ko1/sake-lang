@@ -368,6 +368,7 @@ module Sake
       rows = @registry.binary_ops[op]
       key = [Values.type_of(a), Values.type_of(b)]
       impl = rows[key]
+      return op == "!=" if !impl && %w[== !=].include?(op) # values of different types are not equal (Ruby)
       unless impl
         nil_rows, plain = rows.keys.partition { |r| r.include?("Nil") && r.uniq.size == 2 }
         # Pairs of numbers are listed once, as one entry naming the number types involved.

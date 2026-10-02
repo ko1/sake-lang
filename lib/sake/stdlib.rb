@@ -61,6 +61,11 @@ module Sake
       %w[Integer Float String Boolean Tuple Array].each { define_nil_equality(reg, _1) }
       %w[Integer Float Rational Complex].each { |t| %i[-@ +@].each { |op| reg.define_unary(op, t) { |a| a.public_send(op) } } }
       reg.define_unary(:~, "Integer") { |a| ~a }
+      # Array + Array, Array - Array (Ruby's difference), Array * Integer: new Arrays.
+      reg.define_binary(:+, "Array", "Array") { |a, b| a + b }
+      reg.define_binary(:-, "Array", "Array") { |a, b| a - b }
+      reg.define_binary(:*, "Array", "Integer") { |a, n| nonneg(n) && a * n }
+      %i[< <= > >= <=>].each { |op| reg.define_binary(op, "Symbol", "Symbol") { |a, b| a.public_send(op, b) } }
       # Collections compare by their contents; Tuple and Array also in dictionary order.
       %w[Tuple Array Set Hash].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
       %w[Tuple Array].each do |t|
@@ -189,6 +194,11 @@ module Sake
       reg.define("Array", :include?, %w[Array Any]) { |a, x| a.include?(x) }
       reg.define("Array", :join, ["Array"], optional: ["String"]) { |a, sep = ""| a.map { Values.to_s(_1) }.join(sep) }
       reg.define("Array", :reverse, ["Array"], &:reverse)
+      # Array.new(n) (nils), Array.new(n, v) (the same v n times), Array.new(n) { |i| ... }.
+      reg.define("Array", :new, ["Integer"], optional: ["Any"], block: :optional) do |n, v = nil, &b|
+        nonneg(n)
+        b ? Array.new(n) { |i| b.(i) } : Array.new(n, v)
+      end
       reg.define("Array", :sum, ["Array"]) do |a|
         a.each { |x| raise Fail.new("TypeError", "Array.sum: element must be Integer or Float, got #{Values.describe(x)}") unless NUM.include?(Values.type_of(x)) }
         a.sum

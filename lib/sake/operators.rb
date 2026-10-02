@@ -20,8 +20,8 @@ module Sake
       "Integer" => %w[Arithmetic Comparable Bitwise], "Float" => %w[Arithmetic Comparable],
       "Rational" => %w[Arithmetic Comparable], "Complex" => %w[Arithmetic],
       "String" => %w[Arithmetic Comparable Indexable], "Time" => %w[Arithmetic Comparable],
-      "Set" => %w[Arithmetic Bitwise], "Array" => %w[Indexable], "Hash" => %w[Indexable],
-      "Tuple" => %w[Indexable], "MatchData" => %w[Indexable]
+      "Set" => %w[Arithmetic Bitwise], "Array" => %w[Arithmetic Comparable Indexable], "Hash" => %w[Indexable],
+      "Tuple" => %w[Comparable Indexable], "MatchData" => %w[Indexable], "Symbol" => %w[Comparable]
     }.freeze
 
     # `a OP b` / `x[k]` / `Arithmetic.+(a, b)`: dispatch op of mod on the first argument's type.

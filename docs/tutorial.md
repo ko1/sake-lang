@@ -186,7 +186,7 @@ ahead, and the same mistake stops when it runs:
 
 ```
 $ sake --strict=0 binop_error.sake
-binop_error.sake:3: in <main>: TypeError: Arithmetic.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Time, Integer), (Time, Float), (Time, Rational)
+binop_error.sake:3: in <main>: TypeError: Arithmetic.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Array, Array), (Time, Integer), (Time, Float), (Time, Rational)
 (exit status 1)
 ```
 

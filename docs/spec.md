@@ -346,7 +346,10 @@ table**:
 | `-` `*` `/` `%` `**` | numeric pairs as for `+` |
 | `*` | also (String, Integer) → String |
 | `<` `<=` `>` `>=` `<=>` | numeric pairs, (String, String), (Tuple, Tuple), (Array, Array) → true/false (`<=>`: -1, 0, 1, or nil) |
-| `==` `!=` | numeric pairs, (String, String), (Symbol, Symbol), (true/false, true/false), (nil, nil), (Tuple, Tuple), (Array, Array), (Set, Set), (Hash, Hash), two Records; and (T, nil), (nil, T) for **any** T |
+| `==` `!=` | **any two values**: equal values of the same type (numbers compare across Integer, Float, Rational); values of different types are not equal, as in Ruby |
+| `+` `-` | also (Array, Array) → Array (concatenation; difference) |
+| `*` | also (Array, Integer) → Array (repetition) |
+| `<` `<=` `>` `>=` `<=>` | also (Symbol, Symbol) |
 | unary `-` `+` | Integer, Float, Rational, Complex → the same type |
 | unary `~` | Integer → Integer |
 | `&` `\|` `^` `<<` `>>` | (Integer, Integer) → Integer |
@@ -362,8 +365,8 @@ table**:
   `a ** b` does not depend on the value of `b`. Write `2r ** -1` for a Rational.
 - **Complex.** A Complex has no ordering, so `<` and the like are not defined for it.
 - **Time.** `Time ± number` gives a Time; `Time - Time` gives a Float of seconds; two Times compare.
-- **Struct values and other types.** A Struct value is never equal to a value of another type;
-  `struct == other` and `other == struct` both give false (unless the type defines its own `==`).
+- **Values of different types** are never equal: `1 == :a` and `struct == "x"` are false, as in Ruby
+  (a Struct type's own `==` decides for its values).
 - **Collections.** Tuples, Arrays, Sets, Hashes, and Records are equal when their contents are
   (two Records also need the same fields). Tuples and Arrays are ordered element by element, as
   Ruby's Arrays are; when two elements cannot be compared, `<` and the like raise `ArgumentError`
@@ -762,6 +765,7 @@ one.
 | Operation | Result |
 |---|---|
 | `Array[...]` | a new Array |
+| `Array.new(n)` · `Array.new(n, v)` · `Array.new(n) { \|i\| ... }` | n nils · n times the same v (as in Ruby, one object) · the block's values |
 | `length`, `size` | Integer |
 | `empty?`, `include?(a, x)` | true/false |
 | `push(a, *xs)`, `append(a, *xs)`, `concat(a, b)` | a, modified in place |
@@ -903,7 +907,6 @@ create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 Each of these is rejected statically. Most wait on a design decision.
 
 - **Writing to Record fields.**
-- **`Array.new`.**
 - **`hash` defined by a type**, so that Struct values used as Hash keys or Set elements compare by their own `==` (a type can already define `==` and `<=>`, [§8.1](#81-binary-operators)).
 - **The type scope `Integer.(a + b)`.**
 - **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**

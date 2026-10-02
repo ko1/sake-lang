@@ -9,6 +9,9 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 ## Array
 
 - `Array.!=(x, Any)`
+- `Array.*(x, Any)`
+- `Array.+(x, Any)`
+- `Array.-(x, Any)`
 - `Array.<(x, Any)`
 - `Array.<=(x, Any)`
 - `Array.<=>(x, Any)`
@@ -73,6 +76,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.min_by(x) { }`
 - `Array.minmax(x)`
 - `Array.minmax_by(x) { }`
+- `Array.new(Integer, [Any]) [{ }]`
 - `Array[*Any]`
 - `Array.none?(x) { }`
 - `Array.one?(x) { }`
@@ -582,7 +586,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 ## Symbol
 
 - `Symbol.!=(x, Any)`
+- `Symbol.<(x, Any)`
+- `Symbol.<=(x, Any)`
+- `Symbol.<=>(x, Any)`
 - `Symbol.==(x, Any)`
+- `Symbol.>(x, Any)`
+- `Symbol.>=(x, Any)`
 - `Symbol.capitalize(x)`
 - `Symbol.casecmp?(x, Symbol)`
 - `Symbol.downcase(x)`
