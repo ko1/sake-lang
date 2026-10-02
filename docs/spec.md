@@ -304,7 +304,7 @@ Integer.times(3) { p it }
   `proc`, `lambda`, and `->` are not available.
 - **Parameters.** `|a, b|` lists plain names. `it` and `_1` … `_9` work as in Ruby.
 - **Destructuring.** If a block declares two or more parameters and receives a single Tuple or
-  Array, its elements become the parameters. The counts must match (`ArgumentError` otherwise).
+  Array, its elements become the parameters (missing ones are nil, extra ones are dropped, as in Ruby).
   A parameter can also be taken apart itself: `|(name, n), i|`, `|acc, (k, v)|`.
 - **Parameter count.** A block with no parameters ignores its arguments. Otherwise, a block called
   with the wrong number of arguments raises `ArgumentError`.
@@ -551,8 +551,9 @@ shape fixes its type at creation. A growable collection is made by an operation 
 **Tuple.** The literal `[a, b, ...]` is a Tuple.
 
 - Its elements are read by multiple assignment, `x, y = t`, and the counts must match. Multiple
-  assignment also takes an Array apart (`key, value = String.split(s, "=")`); its length must
-  match too, so a variable never receives a nil that was not in the Array. The targets may also be
+  assignment also takes an Array apart (`key, value = String.split(s, "=")`). As in Ruby, missing
+  elements are nil and extra elements are dropped; a variable that may get a missing element has the
+  type `nil | T` from `x[k]` (the `index-nil` item, level 3). The targets may also be
   elements and fields: `a[i], a[j] = a[j], a[i]` swaps, `@done, @rest = Array.partition(xs) { ... }`.
   Their receivers and indexes are evaluated first, then the right side.
 - `t[0]` reads a position and `t[0] = v` replaces it with a value of the same type

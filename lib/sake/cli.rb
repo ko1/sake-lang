@@ -143,7 +143,7 @@ module Sake
             ["raise: #{c.arg} may reach the top level without being rescued", ["rescue it, or check with a level below 4"]]
           when "nil" then ["#{c.op}: #{what} may be nil (#{typer.show(c.actual)})", [NIL_CHECK_HINT, *typer.nil_sources(wants)]]
           else
-            ["#{c.op}: #{what} may be nil, because x[k] gives nil when the index or key is missing",
+            ["#{c.op}: #{what} may be nil, because x[k] (or `a, b = array`) gives nil when the element is missing",
              [NIL_CHECK_HINT, "or use Array.fetch / Hash.fetch, which raise instead"]]
           end
         hints += ["reached by the call at line #{c.via.join(" → line ")}"] if c.via&.any?

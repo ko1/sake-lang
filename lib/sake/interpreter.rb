@@ -306,12 +306,9 @@ module Sake
         end
       end
       v = ev(n.value, f)
-      # From an Array the lengths must match too: the variables never get a nil that was not there.
+      # As Ruby: missing elements are nil, extra elements are dropped.
       elems = v.is_a?(Tuple) ? v.elems : (v.is_a?(Array) ? v : nil)
       fail_at(n, "TypeError", "multiple assignment needs a Tuple or an Array, got #{Values.describe(v)}") unless elems
-      if elems.size != n.targets.size
-        fail_at(n, "ArgumentError", "multiple assignment of #{n.targets.size} variables from #{Values.describe(v)} of size #{elems.size}")
-      end
       n.targets.each_with_index do |t, i|
         case t
         when TLocal then f.slots[t.slot] = elems[i]
@@ -480,9 +477,9 @@ module Sake
       params = b.params
       # A Tuple passed to a block with several parameters is destructured.
       if params.size > 1 && args.size == 1
-        if args.first.is_a?(Tuple) then args = args.first.elems
-        elsif args.first.is_a?(Array) then args = args.first.to_a # an Array of exactly that length, checked below
-        end
+        # As Ruby: a Tuple or an Array is spread over the parameters, nil for missing elements.
+        elems = args.first.is_a?(Tuple) ? args.first.elems : (args.first.is_a?(Array) ? args.first.to_a : nil)
+        args = Array.new(params.size) { elems[_1] } if elems
       end
       if !params.empty? && params.size != args.size
         raise RunError.new("ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}",

@@ -375,12 +375,10 @@ module Sake
         end
       end
       v = ev(n.value, env)
-      size = n.targets.size
-      tuples = v.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == size }
-      elems = elem_of(v) # an Array gives each variable its element type (its length is checked at run time)
       record(n.origin, "multiple assignment", 1, %w[Tuple Array], v)
+      spread = spread_types(v, n.targets.size)
       n.targets.each_with_index do |t, i|
-        ty = unknown?(v) ? unknown("destructure") : u(*tuples.map { _1[1][i] }, elems)
+        ty = unknown?(v) ? unknown("destructure") : spread[i]
         case t
         when TLocal then assign(env, t.slot, ty)
         when TIndex then index_set(t.origin, places[i][0], places[i][1], lit_of(t.key), ty)
@@ -388,6 +386,15 @@ module Sake
         end
       end
       v
+    end
+
+    # The types of n variables taken from a Tuple or an Array (as Ruby: missing elements are nil). A Tuple's
+    # missing positions are nil for certain; an Array's elements may be missing, like `x[k]`'s (IndexNil).
+    def spread_types(v, n)
+      tuples = v.select { _1.is_a?(Array) && _1[0] == :tuple }
+      arrays = v.select { _1.is_a?(Array) && _1[0] == :array }
+      from_arrays = arrays.empty? ? [] : u(elem_of(arrays), t("IndexNil"))
+      Array.new(n) { |i| u(*tuples.map { |tp| tp[1][i] || t("Nil") }, from_arrays) }
     end
 
     def call(n, env)
@@ -532,10 +539,8 @@ module Sake
       if params.size > 1 && args.size == 1
         a = args.first
         return unknown("block destructure") if unknown?(a)
-        # A Tuple of that size is spread over the parameters; any other value fails the block's arity.
-        tuples = a.select { _1.is_a?(Array) && _1[0] == :tuple && _1[1].size == params.size }
-        elems = elem_of(a) # an Array is spread too (its length must match the parameters)
-        args = params.each_index.map { |i| u(*tuples.map { _1[1][i] }, elems) } unless tuples.empty? && elems.empty?
+        spreads = a.any? { _1.is_a?(Array) && %i[tuple array].include?(_1[0]) }
+        args = spread_types(a, params.size) if spreads
       end
       own = (params + blk.node.locals).to_set
       (@next_acc ||= []).push([])
