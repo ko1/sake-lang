@@ -853,7 +853,7 @@ module Sake
         end
         ps.requireds.map do |r|
           next r.name.to_s if r.is_a?(Prism::RequiredParameterNode)
-          error(r, "nested destructuring `#{r.slice}` is not supported; `|a, b|` already destructures a Tuple")
+          error(r, "nested destructuring `#{r.slice}` is not supported", ["take the parameter whole (`|pair, i|`) and write `#{r.slice.delete_prefix("(").delete_suffix(")")} = pair` in the block"])
           "_"
         end
       when Prism::ItParametersNode then ["it"]
