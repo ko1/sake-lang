@@ -247,9 +247,11 @@ module Sake
       key = [node.location.start_line, node.location.start_column, op, arg]
       prev = @checks[key]
       if prev
+        return if op == "rescue" && prev.verdict == :proven
         prev.actual = u(prev.actual, actual)
         # Evaluations along the same calls are loop iterations and passes towards the fixpoint: a check that
         # fails in some and passes in others may fail. Different call paths keep the worse verdict.
+        return prev.verdict = :proven if op == "rescue" && verdict == :proven
         ctx = (@check_ctx[key] ||= {})
         ctx[@callers] = (c = ctx[@callers]).nil? || c == verdict ? verdict : (([c, verdict] & %i[unknown]).empty? ? :partial : :unknown)
         prev.verdict = ctx.values.reduce { worse(_1, _2) }

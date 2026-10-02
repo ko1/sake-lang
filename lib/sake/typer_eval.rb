@@ -563,8 +563,9 @@ module Sake
           caught = raised.keys + Resolver::BUILTIN_EXCEPTIONS
         else
           names.each do |name|
-            next if !user_raised?(name) || raised.key?(name)
-            add_check(clause.origin, "rescue", name, "raised in the begin body", [], :error, [name])
+            next unless user_raised?(name)
+            # Reported when no evaluation (call, block given) of the begin body raises it.
+            add_check(clause.origin, "rescue", name, "raised in the begin body", [], raised.key?(name) ? :proven : :error, raised.key?(name) ? [] : [name])
           end
           caught = names
         end
