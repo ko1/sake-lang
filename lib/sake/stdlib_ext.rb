@@ -170,7 +170,7 @@ module Sake
       %i[reduce inject].each do |m|
         reg.define("Range", m, %w[Range Any], block: :required) { |r, init, &b| int_range!(r); finite!(r); r.reduce(init) { |acc, x| b.(acc, x) } }
       end
-      reg.define("Range", :sum, ["Range"]) { |r| int_range!(r); finite!(r); r.sum }
+      reg.define("Range", :sum, ["Range"], block: :optional) { |r, &b| int_range!(r); finite!(r); b ? r.sum { b.(_1) } : r.sum }
       reg.define("Range", :size, ["Range"]) { |r| int_range!(r); finite!(r); r.size }
       reg.define("Range", :count, ["Range"], block: :optional) do |r, &b|
         int_range!(r)

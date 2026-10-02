@@ -671,6 +671,11 @@ module Sake
         e = elem_of(a0)
         call_block(blk, [e]) unless e.empty?
         u(t("Integer"), t("Nil"))
+      when "Range.sum"
+        e = range_elem(a0)
+        e = call_block(blk, [e]) if blk && !e.empty?
+        record(node, "Range.sum", "elem", Stdlib::NUMERIC, e) if blk
+        u(t("Integer"), *e.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] }) # an empty Range sums to 0
       when "Array.sum"
         e = elem_of(a0)
         e = call_block(blk, [e]) if blk && !e.empty?

@@ -75,7 +75,7 @@ module Sake
     end
 
     FIXED_EXT = {
-      "Integer" => %w[Symbol.length Symbol.size Hash.length Hash.size Set.length Set.size Range.sum Range.size
+      "Integer" => %w[Symbol.length Symbol.size Hash.length Hash.size Set.length Set.size Range.size
                       Integer.gcd Integer.lcm Integer.pow Integer.bit_length Integer.sqrt Integer.clamp
                       Float.truncate String.ord String.hex String.oct MatchData.begin MatchData.end
                       Kernel.Integer File.write Array.count Range.count Hash.count

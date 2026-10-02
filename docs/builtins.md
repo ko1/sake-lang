@@ -398,7 +398,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Range.size(x)`
 - `Range.sort_by(x) { }`
 - `Range.step(x, Integer) { }`
-- `Range.sum(x)`
+- `Range.sum(x) [{ }]`
 - `Range.take(x, Integer)`
 - `Range.take_while(x) { }`
 - `Range.tally(x)`
