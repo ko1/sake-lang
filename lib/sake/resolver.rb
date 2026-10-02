@@ -8,7 +8,8 @@ module Sake
   # in the including namespace.
   # module_function: callable as M.f (static). Other functions of a module are mixin functions:
   # M.f(x) dispatches to the f of x's type, which must include M.
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function) do
+  # abstract: the body is only `raise NotImplementedError`: each type that includes the module defines it.
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
   end
 
@@ -44,7 +45,7 @@ module Sake
     # running report, so they cannot be rescued.
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError
                             RegexpError FloatDomainError Math::DomainError].freeze
-    NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError].freeze
+    NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError NotImplementedError].freeze
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
     def initialize(path, root, registry)
@@ -368,6 +369,7 @@ module Sake
       fn = UserFunction.new(ns, name, collect_params(node), node.body, node, yields?(node.body))
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
       fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
+      fn.abstract = abstract_body?(node.body)
       if (prev = @functions.dig(ns, name))
         error(node, "`#{fn.full_name}` is already defined at line #{prev.node.location.start_line}")
       elsif ns && @registry.lookup(ns, name)
@@ -687,10 +689,14 @@ module Sake
     # raise; raise "message"; raise exception_value; raise ExceptionType, "message"
     def check_raise(node, ctx)
       args = node.arguments&.arguments || []
-      args.each_with_index { |a, i| check(a, ctx) unless i.zero? && args.size == 2 }
+      type_only = args.size == 1 && args[0].is_a?(Prism::ConstantReadNode) # `raise T`, as Ruby: the message is T's name
+      args.each_with_index { |a, i| check(a, ctx) unless i.zero? && (args.size == 2 || type_only) }
       case args.size
       when 0 then error(node, "a bare `raise` re-raises, so it is only allowed in a rescue clause") unless ctx.in_rescue
-      when 1 then nil
+      when 1
+        if type_only && !@struct_types[args[0].name.to_s]&.exception
+          error(args[0], "`raise T` needs an exception type, got `#{args[0].slice}`")
+        end
       when 2
         name = exception_name(args[0])
         dt = name && @struct_types[name]
@@ -817,6 +823,7 @@ module Sake
         error(node, "#{target.module}.#{target.op} takes #{want.join(" or ")} arguments (given #{argc})") unless want.include?(argc)
       when Dispatch
         fn = @functions.dig(target.module, target.name)
+        fn = target.table.values.find { _1.is_a?(UserFunction) && !_1.abstract } || fn if fn&.abstract
         check_arity(node, fn, argc, has_block) if fn
       when UserFunction
         if argc != target.params.size
@@ -1007,6 +1014,13 @@ module Sake
     end
 
     # M.f(x) for a mixin function: dispatch on the type of x among the types that include M.
+    # `raise NotImplementedError` or `raise NotImplementedError, "..."`, alone.
+    def abstract_body?(body)
+      st = body.is_a?(Prism::StatementsNode) && body.body.size == 1 ? body.body[0] : body
+      st.is_a?(Prism::CallNode) && st.name == :raise && st.receiver.nil? &&
+        st.arguments&.arguments&.first.is_a?(Prism::ConstantReadNode) && st.arguments.arguments.first.name == :NotImplementedError
+    end
+
     def mixin_call(node, mod, name, fn, argc = nil)
       if (argc || (node.arguments&.arguments || []).size).zero?
         return error(node, "#{mod}.#{name} is a mixin function: it has no subject to dispatch on",
@@ -1018,8 +1032,11 @@ module Sake
                      ["to call it as #{mod}.#{name}(...), mark it with `module_function`"])
       end
       table = types.to_h { |t| [t, lookup(t, name)] }
+      # A required function's block comes from the types' definitions, which must agree.
+      defined = table.values.select { _1.is_a?(UserFunction) && !_1.abstract }
+      yields = fn.abstract && defined.any? ? defined.first.yields : fn.yields
       table.each do |t, impl|
-        next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && impl.yields == fn.yields
+        next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && (impl.abstract || impl.yields == yields)
         error(node, "#{mod}.#{name} dispatches to #{t}.#{name}, whose arguments or block differ from #{mod}.#{name}")
       end
       Dispatch.new(mod, name, table)

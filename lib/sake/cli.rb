@@ -92,6 +92,10 @@ module Sake
         tuples, others = c.failing.partition { _1.is_a?(Array) && _1[0] == :tuple }
         return ["#{c.op}: the index is outside the Tuple #{typer.show(tuples)}", []] if others.empty?
         ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{Stdlib::INDEX_ROWS}", []]
+      when ->(_) { c.arg == "required" }
+        mod, f = c.op.split(".", 2)
+        t = typer.show_failing(c)
+        ["#{c.op}: #{t} includes #{mod} but does not define #{f}, which #{mod} requires (`raise NotImplementedError`)", ["define `def #{f}(...)` in class #{t}"]]
       when ->(_) { c.arg == "operand" }
         mod, op = c.op.split(".", 2)
         if (t = c.failing.find { _1.is_a?(String) && program.struct_types.key?(_1) })

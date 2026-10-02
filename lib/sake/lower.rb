@@ -286,6 +286,9 @@ module Sake
       nodes = n.arguments&.arguments || []
       return ReRaise.new(origin: n) if nodes.empty?
       return Raise.new(type: nodes[0].slice, args: [lower(nodes[1])], origin: n) if nodes.size == 2
+      if nodes[0].is_a?(Prism::ConstantReadNode) # `raise T`: the message is the type's name
+        return Raise.new(type: nodes[0].slice, args: [Str.new(string: nodes[0].slice.freeze, origin: nodes[0])], origin: n)
+      end
       Raise.new(type: nil, args: [lower(nodes[0])], origin: n)
     end
 

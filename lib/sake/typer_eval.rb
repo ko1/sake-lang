@@ -405,6 +405,10 @@ module Sake
         record(o, "#{d.module}.#{d.name}", "subject", d.table.keys, args[0])
         rs = args[0].filter_map do |a|
           fn = d.table[atom_type_name(a)] or next
+          if fn.abstract # the type includes the module but does not define the function
+            add_check(o, "#{d.module}.#{d.name}", "required", "a definition", [a].freeze, :error, [a])
+            next
+          end
           @callers.push(o.location.start_line)
           begin
             call_user(fn, [[a].freeze, *args.drop(1)], blk)

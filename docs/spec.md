@@ -235,6 +235,13 @@ A module's functions are of two kinds, as in Ruby:
   type's own `to_s` and `inspect`, or use the built-in form. `"#{x}"`, `puts`, and `p` are
   shorthands for them.
 
+**Required functions.** A module function whose body is only `raise NotImplementedError` (with or
+without a message) is required: each type that includes the module defines it, and `M.f(x)`
+dispatches to that definition. Whether it takes a block comes from the types' definitions. A type
+that includes the module without defining it is a `type` problem wherever a call can reach it, and
+`NotImplementedError` while running. `NotImplementedError` is a program error and cannot be rescued.
+(`raise T` with an exception type and no message gives the type's name as the message.)
+
 ### 5.7 Listing the types: `(A|B).f(x)`
 
 `(A|B).f(x, args...)` lists, on the operation itself, the types that `x` may have. While running, the
