@@ -461,8 +461,23 @@ module Sake
         error(node, "operator `#{node.binary_operator}=` is not supported") unless binary_op?(node.binary_operator)
         check(node.value, ctx)
       when Prism::MultiWriteNode
-        unless node.rest.nil? && node.rights.empty? && node.lefts.all?(Prism::LocalVariableTargetNode)
-          error(node, "only `a, b = tuple` (local variables, no splat) is supported")
+        unless node.rest.nil? && node.rights.empty?
+          error(node, "splat in multiple assignment is not supported")
+        end
+        node.lefts.each do |t|
+          case t
+          when Prism::LocalVariableTargetNode then nil
+          when Prism::InstanceVariableTargetNode then check_field_shorthand(t, ctx)
+          when Prism::IndexTargetNode
+            if (t.arguments&.arguments || []).size != 1 || t.block
+              error(t, "`#{first_line(t.slice)}` takes one index")
+            else
+              set_call(t, ctx, Operators::Call.new("Indexable", "[]="))
+            end
+            check(t.receiver, ctx)
+            check_args(t.arguments, ctx)
+          else error(t, "`#{first_line(t.slice)}` cannot be assigned here; use local variables, `x[i]`, or `@field`")
+          end
         end
         check(node.value, ctx)
       when Prism::IfNode then check_each(ctx, node.predicate, node.statements, node.subsequent)

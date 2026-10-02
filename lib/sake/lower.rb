@@ -110,7 +110,7 @@ module Sake
         s = slot(n.depth, n.name)
         Or.new(left: get(s, n), right: LVarSet.new(slot: s, value: lower(n.value), origin: n), origin: n)
       when Prism::MultiWriteNode
-        MultiWrite.new(slots: n.lefts.map { slot(_1.depth, _1.name) }, value: lower(n.value), origin: n)
+        MultiWrite.new(targets: n.lefts.map { mw_target(_1) }, value: lower(n.value), origin: n)
       when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode then index_update(n)
       when Prism::IfNode then If.new(cond: lower(n.predicate), then_: lower(n.statements), else_: lower(n.subsequent), origin: n)
       when Prism::UnlessNode then If.new(cond: lower(n.predicate), then_: lower(n.else_clause), else_: lower(n.statements), origin: n)
@@ -151,6 +151,16 @@ module Sake
         fa = target(n) or return unresolved(n)
         Or.new(left: field_get(fa.getter, get(0, n), n), right: field_set(fa.setter, get(0, n), lower(n.value), n), origin: n)
       else raise "BUG: unlowered node #{n.type} at line #{n.location.start_line}"
+      end
+    end
+
+    def mw_target(t)
+      case t
+      when Prism::LocalVariableTargetNode then TLocal.new(slot: slot(t.depth, t.name), origin: t)
+      when Prism::IndexTargetNode then TIndex.new(recv: lower(t.receiver), key: lower(t.arguments.arguments[0]), origin: t)
+      when Prism::InstanceVariableTargetNode
+        fa = target(t) or return unresolved(t)
+        TField.new(type: fa.setter.namespace, field: field_name(fa.setter), fn: fa.setter, subject: get(0, t), origin: t)
       end
     end
 

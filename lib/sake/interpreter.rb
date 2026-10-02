@@ -294,14 +294,27 @@ module Sake
     end
 
     def multi_write(n, f)
+      # The targets' receivers, indexes and subjects are evaluated first, left to right (as Ruby does).
+      places = n.targets.map do |t|
+        case t
+        when TIndex then [ev(t.recv, f), ev(t.key, f)]
+        when TField then ev(t.subject, f)
+        end
+      end
       v = ev(n.value, f)
       # From an Array the lengths must match too: the variables never get a nil that was not there.
       elems = v.is_a?(Tuple) ? v.elems : (v.is_a?(Array) ? v : nil)
       fail_at(n, "TypeError", "multiple assignment needs a Tuple or an Array, got #{Values.describe(v)}") unless elems
-      if elems.size != n.slots.size
-        fail_at(n, "ArgumentError", "multiple assignment of #{n.slots.size} variables from #{Values.describe(v)} of size #{elems.size}")
+      if elems.size != n.targets.size
+        fail_at(n, "ArgumentError", "multiple assignment of #{n.targets.size} variables from #{Values.describe(v)} of size #{elems.size}")
       end
-      n.slots.zip(elems) { |s, x| f.slots[s] = x }
+      n.targets.each_with_index do |t, i|
+        case t
+        when TLocal then f.slots[t.slot] = elems[i]
+        when TIndex then index_op(t.origin, "[]=", [*places[i], elems[i]])
+        when TField then call_builtin(t.fn, [places[i], elems[i]], nil, t.origin)
+        end
+      end
       v
     end
 

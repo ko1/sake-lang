@@ -541,7 +541,9 @@ shape fixes its type at creation. A growable collection is made by an operation 
 
 - Its elements are read by multiple assignment, `x, y = t`, and the counts must match. Multiple
   assignment also takes an Array apart (`key, value = String.split(s, "=")`); its length must
-  match too, so a variable never receives a nil that was not in the Array.
+  match too, so a variable never receives a nil that was not in the Array. The targets may also be
+  elements and fields: `a[i], a[j] = a[j], a[i]` swaps, `@done, @rest = Array.partition(xs) { ... }`.
+  Their receivers and indexes are evaluated first, then the right side.
 - `t[0]` reads a position and `t[0] = v` replaces it with a value of the same type
   ([§8.2](#82-indexing)).
 - `Tuple.size` and `Tuple.length` give the number of elements.

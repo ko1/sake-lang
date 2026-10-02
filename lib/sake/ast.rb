@@ -55,7 +55,10 @@ module Sake
     node :Begin, :body, :rescues, :else_, :ensure_
     node :Rescue, :names, :slot, :body      # names: [] catches every rescuable error; slot: nil or `=> e`
     node :RescueMod, :expr, :rescue_
-    node :MultiWrite, :slots, :value
+    node :MultiWrite, :targets, :value      # targets: TLocal / TIndex / TField, assigned left to right
+    node :TLocal, :slot
+    node :TIndex, :recv, :key               # recv and key are evaluated before the right side
+    node :TField, :type, :field, :fn, :subject
     node :CaseIn, :subject, :clauses, :else_ # clauses: [[pattern, body]]
     node :MatchP, :value, :pattern
     node :MatchRecord, :value, :keys, :slots
