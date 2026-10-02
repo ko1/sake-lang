@@ -969,6 +969,7 @@ module Sake
       end
 
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
+      hints.unshift("Sake has no Array.new: write `Array[...]`, or `Range.map(0...n) { v }` for n copies of v") if ns == "Array" && name == "new"
       others = namespaces_defining(name) - [ns]
       hints << "`#{name}` is defined in #{others.map { "`#{_1}.#{name}`" }.join(", ")}" unless others.empty?
       if (dt = @struct_types[ns]) && name =~ /\A(get|set)_(.+)\z/ && dt.fields.include?($2)
@@ -1005,7 +1006,7 @@ module Sake
     end
 
     def lookup(ns, name) = @functions.fetch(ns, {})[name] || @registry.lookup(ns, name)
-    def names_in(ns) = @functions.fetch(ns, {}).keys | @registry.names(ns)
+    def names_in(ns) = (@functions.fetch(ns, {}).keys | @registry.names(ns)) - [CTOR] # `T[...]` is syntax, not a name
 
     def namespaces_defining(name)
       (@registry.namespaces_defining(name) | @functions.select { |ns, fs| ns && fs.key?(name) }.keys) - Operators::MODULES
