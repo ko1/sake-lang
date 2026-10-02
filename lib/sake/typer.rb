@@ -586,7 +586,7 @@ module Sake
       end
       # `Integer.+(a, b)`: the operator rows whose left operand is the type.
       return binop(node, name, args[0], args[1]) if @registry.binary_ops.key?(name) && fn.params.size == 2 && fn.params[1] == "Any"
-      struct_hooks(args)
+      struct_hooks(args, name)
       builtin_result(fn.full_name, args, blk, node)
     end
 
@@ -594,10 +594,12 @@ module Sake
     # type's own <=> and ==. Each is analyzed with the values it can be compared with: the arguments and
     # their elements with each other, then, level by level, values at the same place (the same field,
     # Tuple position, Record key, or element of nested collections).
-    def struct_hooks(tys)
-      top = u(*tys, *tys.map { |ty| u(elem_of(ty), set_elem(ty), *hash_kv(ty)) })
+    def struct_hooks(tys, name)
+      tops = tys.map { |ty| u(ty, elem_of(ty), set_elem(ty), *hash_kv(ty)) }
+      tops = [u(*tops)] if MEETS_ARGUMENTS.include?(name) # an argument against a collection's elements or keys
       groups = []
-      compared_groups(top, groups, {})
+      seen = {}
+      tops.each { compared_groups(_1, groups, seen) }
       groups.each do |g|
         other = u(*g.map { [_1] })
         g.each do |x|
@@ -605,6 +607,11 @@ module Sake
         end
       end
     end
+
+    # Built-ins that compare one argument with another's elements or keys (`Array.include?(xs, x)`).
+    MEETS_ARGUMENTS = %w[include? member? index find_index rindex count delete delete? key? has_key? value? has_value? key
+                         fetch fetch_values values_at dig [] []= store add add? union difference intersection intersect?
+                         subset? superset? disjoint? - + & | ==].freeze
 
     def compared_groups(ty, out, seen)
       return if ty.empty? || seen[ty]
