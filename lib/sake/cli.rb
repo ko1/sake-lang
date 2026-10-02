@@ -132,7 +132,7 @@ module Sake
           return
         end
       diags = typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.line, c.column] }.map do |c, item|
-        what = { "pair" => "the operands", "index" => "the index" }.fetch(c.arg) { "argument #{c.arg}" }
+        what = { "pair" => "the operands", "index" => "the index", "value" => "the value" }.fetch(c.arg) { "argument #{c.arg}" }
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item

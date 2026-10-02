@@ -32,6 +32,7 @@ module Sake
     node :Interp, :parts                    # String parts; ToS around embedded values
     node :ToS, :value                       # Kernel.to_s (a type's own to_s)
     node :ToSym, :value
+    node :Splat, :value                     # `*xs` among a built-in's rest arguments (a Tuple or an Array)
     node :CallBuiltin, :fn, :args, :block
     node :CallUser, :fn, :args, :block
     node :CallDispatch, :dispatch, :args, :block
@@ -44,7 +45,7 @@ module Sake
     node :IndexGet, :recv, :key, :extra        # extra: a second index (`s[i, n]`, `m[r, c]`) or nil
     node :IndexSet, :recv, :key, :extra, :value
     node :IndexUpdate, :recv, :key, :op, :value # `x[k] OP= v` (op: "||" for ||=); x and k evaluated once
-    node :Block, :params, :locals, :body    # params/locals: slots; locals are cleared on entry
+    node :Block, :params, :locals, :body, :rest # params/locals: slots; locals are cleared on entry; rest: `|a, *r|`'s index in params
     node :Yield, :args
     node :Return, :value
     node :Next, :value
@@ -57,6 +58,7 @@ module Sake
     node :RescueMod, :expr, :rescue_
     node :MultiWrite, :targets, :value      # targets: TLocal / TIndex / TField, assigned left to right
     node :TLocal, :slot
+    node :TRest, :slot                      # `*r` (slot nil for a bare `*`): an Array of the elements between
     node :TIndex, :recv, :key               # recv and key are evaluated before the right side
     node :TField, :type, :field, :fn, :subject
     node :CaseIn, :subject, :clauses, :else_ # clauses: [[pattern, body]]

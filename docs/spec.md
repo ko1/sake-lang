@@ -268,6 +268,14 @@ The following are checked statically:
 - for a user function, a block must be passed **iff** the function contains `yield`;
 - a built-in operation either requires a block or rejects one.
 
+**Splat arguments.** `*xs` spreads a Tuple or an Array (anything else raises `TypeError`), but only
+into a built-in's rest parameter: `puts(*lines)`, `format(fmt, *row)`, `Array[*xs, 0]`,
+`Set[*xs]`, `Array.push(a, *xs)`. The arguments before it are written out, so their count is still
+checked. A user function takes a fixed number of arguments, so `f(*args)` is a static error, as
+are splats into `Array.zip`/`Range.zip` (their Tuples are as long as the argument list) and
+`Hash[...]`. In the typer, a Tuple spreads position by position; an Array stands for any number of
+arguments of its element types.
+
 ## 6. Functions
 
 ```ruby
@@ -306,8 +314,12 @@ Integer.times(3) { p it }
 - **Destructuring.** If a block declares two or more parameters and receives a single Tuple or
   Array, its elements become the parameters (missing ones are nil, extra ones are dropped, as in Ruby).
   A parameter can also be taken apart itself: `|(name, n), i|`, `|acc, (k, v)|`.
+- **Rest parameter.** `|a, *rest|` (and `|a, *rest, z|`, `|*all|`) collects the remaining arguments,
+  or the remaining elements of a destructured Tuple or Array, in a new Array, as `a, *rest = x` does.
+  `|*all|` alone does not destructure.
 - **Parameter count.** A block with no parameters ignores its arguments. Otherwise, a block called
-  with the wrong number of arguments raises `ArgumentError`.
+  with the wrong number of arguments (fewer than its other parameters, with a rest parameter) raises
+  `ArgumentError`.
 - **Scope.** A block sees and can assign the enclosing local variables.
 - **`next [v]`.** Ends the current block call with value `v` (default `nil`).
 - **`return`.** Inside a block, `return` returns from the enclosing **function**, as in Ruby.
@@ -553,12 +565,15 @@ shape fixes its type at creation. A growable collection is made by an operation 
 
 **Tuple.** The literal `[a, b, ...]` is a Tuple.
 
-- Its elements are read by multiple assignment, `x, y = t`, and the counts must match. Multiple
+- Its elements are read by multiple assignment, `x, y = t`. Multiple
   assignment also takes an Array apart (`key, value = String.split(s, "=")`). As in Ruby, missing
   elements are nil and extra elements are dropped; a variable that may get a missing element has the
   type `nil | T` from `x[k]` (the `index-nil` item, level 3). The targets may also be
   elements and fields: `a[i], a[j] = a[j], a[i]` swaps, `@done, @rest = Array.partition(xs) { ... }`.
   Their receivers and indexes are evaluated first, then the right side.
+- `first, *rest = xs` puts the remaining elements in a new Array, as in Ruby (`a, *mid, z = xs`
+  too; `x, * = xs` drops them). Only a local variable takes the rest. A splat inside `[...]` is
+  rejected, since a Tuple's length must be known; `Array[*xs, 1]` makes an Array.
 - `t[0]` reads a position and `t[0] = v` replaces it with a value of the same type
   ([§8.2](#82-indexing)).
 - `Tuple.size` and `Tuple.length` give the number of elements.

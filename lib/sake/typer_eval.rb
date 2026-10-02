@@ -381,11 +381,13 @@ module Sake
       end
       v = ev(n.value, env)
       record(n.origin, "multiple assignment", 1, %w[Tuple Array], v)
-      spread = spread_types(v, n.targets.size)
+      ri = n.targets.index { _1.is_a?(TRest) }
+      spread = ri ? spread_rest_types(v, ri, n.targets.size - ri - 1, n.targets[ri].origin) : spread_types(v, n.targets.size)
       n.targets.each_with_index do |t, i|
         ty = unknown?(v) ? unknown("destructure") : spread[i]
         case t
         when TLocal then assign(env, t.slot, ty)
+        when TRest then assign(env, t.slot, ty) if t.slot
         when TIndex then index_set(t.origin, places[i][0], places[i][1], lit_of(t.key), ty)
         when TField then call_builtin(t.fn, [places[i], ty], nil, t.origin)
         end
@@ -402,6 +404,35 @@ module Sake
       Array.new(n) { |i| u(*tuples.map { |tp| tp[1][i] || t("Nil") }, from_arrays) }
     end
 
+    # `a, *r, z = v`: as spread_types, with r an Array (a site at node) of the elements between.
+    def spread_rest_types(v, nleft, npost, node)
+      tuples = v.select { _1.is_a?(Array) && _1[0] == :tuple }.map { _1[1] }
+      arrays = v.select { _1.is_a?(Array) && _1[0] == :array }
+      from_arrays = arrays.empty? ? [] : u(elem_of(arrays), t("IndexNil"))
+      lefts = Array.new(nleft) { |i| u(*tuples.map { |tp| tp[i] || t("Nil") }, from_arrays) }
+      posts = Array.new(npost) do |j|
+        u(*tuples.map { |tp| tp[[nleft, tp.size - npost].max + j] || t("Nil") }, from_arrays)
+      end
+      middle = u(*tuples.flat_map { |tp| tp[nleft...[nleft, tp.size - npost].max] || [] }, elem_of(arrays))
+      [*lefts, new_site(node, "", middle), *posts]
+    end
+
+    # The argument types, a splat's spread: a Tuple's positions, or one argument standing for an Array's
+    # elements (none when it has no element types).
+    def arg_types(nodes, env)
+      nodes.flat_map do |a|
+        next [ev(a, env)] unless a.is_a?(Splat)
+        v = ev(a.value, env)
+        record(a.origin, "splat", "value", %w[Tuple Array], v)
+        next [v] if unknown?(v)
+        tuples = v.select { _1.is_a?(Array) && _1[0] == :tuple }.map { _1[1] }
+        arrays = v.select { _1.is_a?(Array) && _1[0] == :array }
+        next tuples[0].each_index.map { |i| u(*tuples.map { _1[i] }) } if arrays.empty? && tuples.map(&:size).uniq.size == 1
+        elems = u(*tuples.flatten(1), elem_of(arrays))
+        elems.empty? ? [] : [elems]
+      end
+    end
+
     def call(n, env)
       o = n.origin
       if n.is_a?(CallBuiltin) && %w[[] []=].include?(n.fn.name)
@@ -409,7 +440,7 @@ module Sake
         lit = lit_of(n.args[1])
         return n.fn.name == "[]" ? index_get(o, xs[0], xs[1], lit) : index_set(o, xs[0], xs[1], lit, xs[2])
       end
-      args = n.args.map { ev(_1, env) }
+      args = arg_types(n.args, env)
       blk = n.block && BlockCtx.new(n.block, n.block.params, env, [])
       r = call_with(n, env, args, blk)
       return r unless blk && !blk.breaks.empty?
@@ -460,7 +491,7 @@ module Sake
         ensure
           @callers.pop
         end
-      when CallBuiltin then builtin_call(n, n.fn, n.args, args, blk, env)
+      when CallBuiltin then builtin_call(n, n.fn, n.args.take_while { !_1.is_a?(Splat) }, args, blk, env)
       end
     end
 
@@ -547,14 +578,25 @@ module Sake
       u(ev(@ast.functions.fetch(fn).body, env), frame.ret)
     end
 
+    def rest_origin(b) = b.origin.parameters.parameters.rest
+
     def call_block(blk, args)
       return unknown("no block") unless blk
       params = blk.params
-      if params.size > 1 && args.size == 1
+      rest = blk.node.rest
+      fixed = params.size - (rest ? 1 : 0)
+      spread = false
+      if (params.size > 1 || (rest && fixed >= 1)) && args.size == 1
         a = args.first
         return unknown("block destructure") if unknown?(a)
-        spreads = a.any? { _1.is_a?(Array) && %i[tuple array].include?(_1[0]) }
-        args = spread_types(a, params.size) if spreads
+        spread = a.any? { _1.is_a?(Array) && %i[tuple array].include?(_1[0]) }
+        args = rest ? spread_rest_types(a, rest, fixed - rest, rest_origin(blk.node)) : spread_types(a, params.size) if spread
+      end
+      if rest && !spread
+        npost = fixed - rest
+        post = [rest, args.size - npost].max
+        args = [*Array.new(rest) { args[_1] || t("Nil") }, new_site(rest_origin(blk.node), "", u(*args[rest...post] || [])),
+                *Array.new(npost) { args[post + _1] || t("Nil") }]
       end
       own = (params + blk.node.locals).to_set
       (@next_acc ||= []).push([])

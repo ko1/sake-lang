@@ -85,6 +85,18 @@ ARGV.each do |path|
   unchecked = 0
   interp.observed.each do |key, seen|
     c = static_by_loc[key]
+    # A splat spreads into a built-in's rest parameter, which the typer checks as one argument standing for
+    # all the elements: compare the rest positions as a whole.
+    fn = program.registry.lookup(*key[2].split(".", 2)) if key[2].include?(".") && key[3].is_a?(Integer)
+    if fn&.rest && key[3] > fn.params.size + fn.optional.size
+      rest = static_by_loc.select { |k, _| k[0, 3] == key[0, 3] && k[3].is_a?(Integer) && k[3] > fn.params.size + fn.optional.size }.values
+      unless rest.empty?
+        names = rest.map { static_names(_1) }.reduce(:|)
+        next if names.include?(["?"]) || seen.subset?(names)
+        bad << "L#{key[0]} #{key[2]} rest #{key[3]}: observed #{seen.to_a.inspect}, static #{rest.map { typer.show(_1.actual) }.join(" | ")}"
+        next
+      end
+    end
     if c.nil?
       # "Any" parameters are not recorded statically; anything else missing means the typer never reached it.
       fn = program.registry.lookup(*key[2].split(".", 2)) if key[2].include?(".")

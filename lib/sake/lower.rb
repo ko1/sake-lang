@@ -110,7 +110,8 @@ module Sake
         s = slot(n.depth, n.name)
         Or.new(left: get(s, n), right: LVarSet.new(slot: s, value: lower(n.value), origin: n), origin: n)
       when Prism::MultiWriteNode
-        MultiWrite.new(targets: n.lefts.map { mw_target(_1) }, value: lower(n.value), origin: n)
+        rest = n.rest.is_a?(Prism::SplatNode) ? [TRest.new(slot: (e = n.rest.expression) && slot(e.depth, e.name), origin: n.rest)] : []
+        MultiWrite.new(targets: [*n.lefts.map { mw_target(_1) }, *rest, *n.rights.map { mw_target(_1) }], value: lower(n.value), origin: n)
       when Prism::IndexOperatorWriteNode, Prism::IndexOrWriteNode then index_update(n)
       when Prism::IfNode then If.new(cond: lower(n.predicate), then_: lower(n.statements), else_: lower(n.subsequent), origin: n)
       when Prism::UnlessNode then If.new(cond: lower(n.predicate), then_: lower(n.else_clause), else_: lower(n.statements), origin: n)
@@ -196,7 +197,9 @@ module Sake
       Interp.new(parts:, origin: n)
     end
 
-    def args(args_node) = (args_node&.arguments || []).map { lower(_1) }
+    def args(args_node)
+      (args_node&.arguments || []).map { _1.is_a?(Prism::SplatNode) ? Splat.new(value: lower(_1.expression), origin: _1) : lower(_1) }
+    end
 
     def jump_value(n, tuple: false)
       vals = args(n.arguments)
@@ -317,8 +320,11 @@ module Sake
       begin
         # `(a, b)` parameters get a hidden slot, taken apart at the start of the body like `a, b = x`.
         prologue = []
-        params = @program.blocks.fetch(b).each_with_index.map do |name, i|
+        names = @program.blocks.fetch(b)
+        rest = names.index { _1.is_a?(RestParam) }
+        params = names.each_with_index.map do |name, i|
           next sc.slot(name.to_sym) if name.is_a?(String)
+          next sc.slot(name.name ? name.name.to_sym : :"(rest #{i})") if name.is_a?(RestParam)
           hidden = sc.slot(:"(param #{i})")
           destructure(sc, name, hidden, b, prologue)
           hidden
@@ -331,7 +337,7 @@ module Sake
         end
         body = Seq.new(body: [*prologue, body], origin: b.body || b) unless prologue.empty?
         locals = sc.vars.values - params
-        Block.new(params:, locals:, body:, origin: b)
+        Block.new(params:, locals:, body:, rest:, origin: b)
       ensure
         @scopes.pop
       end

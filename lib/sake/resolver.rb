@@ -18,6 +18,8 @@ module Sake
 
   # `M.f(x, ...)` for a mixin function f of module M: table maps each type including M to its f.
   Dispatch = Struct.new(:module, :name, :table)
+  # `|a, *rest|`: the rest parameter among a block's parameters (name nil for a bare `*`).
+  RestParam = Struct.new(:name)
 
   # `(A|B).f(x, ...)`: table maps each listed type to its f; x's type picks one.
   UnionCall = Struct.new(:types, :name, :table) do
@@ -463,10 +465,14 @@ module Sake
         error(node, "operator `#{node.binary_operator}=` is not supported") unless binary_op?(node.binary_operator)
         check(node.value, ctx)
       when Prism::MultiWriteNode
-        unless node.rest.nil? && node.rights.empty?
-          error(node, "splat in multiple assignment is not supported")
+        case (r = node.rest)
+        when nil, Prism::ImplicitRestNode then nil
+        when Prism::SplatNode
+          unless r.expression.nil? || r.expression.is_a?(Prism::LocalVariableTargetNode)
+            error(r, "`#{r.slice}`: only a local variable can take the rest (`first, *rest = xs`)")
+          end
         end
-        node.lefts.each do |t|
+        (node.lefts + node.rights).each do |t|
           case t
           when Prism::LocalVariableTargetNode then nil
           when Prism::InstanceVariableTargetNode then check_field_shorthand(t, ctx)
@@ -496,7 +502,10 @@ module Sake
         if node.opening_loc&.slice&.start_with?("%")
           error(node, "`#{node.opening_loc.slice}...]` is not supported yet (whether it is a Tuple or an Array is undecided)")
         end
-        node.elements.each { _1.is_a?(Prism::SplatNode) ? error(_1, "splat is not supported") : check(_1, ctx) }
+        node.elements.each do |el|
+          next check(el, ctx) unless el.is_a?(Prism::SplatNode)
+          error(el, "splat in `[...]` is not supported (a Tuple's size must be known)", ["Array[#{node.elements.map(&:slice).join(", ")}] makes an Array"])
+        end
       when Prism::ReturnNode
         error(node, "`return` outside a function") unless ctx.fn
         check_args(node.arguments, ctx)
@@ -718,10 +727,13 @@ module Sake
       check_args(node.arguments, ctx)
     end
 
-    def check_args(args_node, ctx, hash_pairs: false)
+    def check_args(args_node, ctx, hash_pairs: false, splat: false)
       (args_node&.arguments || []).each do |a|
         case a
-        when Prism::SplatNode then error(a, "splat arguments are not supported")
+        when Prism::SplatNode
+          next error(a, "splat arguments are not supported here") unless splat
+          next error(a, "`*` without a value is not supported") unless a.expression
+          check(a.expression, ctx)
         when Prism::KeywordHashNode
           if hash_pairs
             a.elements.each do |el|
@@ -761,10 +773,11 @@ module Sake
         # `x.T.f(args)` is `T.f(x, args)`.
         target = resolve_qualified(node, recv.name.to_s, node.name.to_s, argc: args.size + 1)
         check(subject, ctx)
-        check_args(node.arguments, ctx)
+        check_args(node.arguments, ctx, splat: true)
         check_block(blk, ctx) if blk
         return unless target
         set_call(node, ctx, target)
+        return if check_splat(node, target, args, 1)
         return check_arity(node, target, args.size + 1, !blk.nil?)
       end
       if recv.nil?
@@ -807,14 +820,44 @@ module Sake
       if hash_ctor && !(args.empty? || (args.size == 1 && args[0].is_a?(Prism::KeywordHashNode)))
         error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
       end
-      check_args(node.arguments, ctx, hash_pairs: hash_ctor)
+      check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true)
       check_block(blk, ctx) if blk
       return unless target
 
       set_call(node, ctx, target)
+      return if check_splat(node, target, args, 0)
       check_arity(node, target, args.size, !blk.nil?)
       check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == CTOR && !%w[Array Hash Set].include?(target.namespace)
     end
+
+    # The built-ins whose result depends on how many rest arguments there are (zip makes Tuples that long).
+    NO_SPLAT = %w[Array.zip Range.zip Hash[]].freeze
+
+    # `*xs` may fill only a built-in's rest parameter: the arguments before it are then counted statically.
+    # Returns true when the call has a splat (its arity is checked here).
+    def check_splat(node, target, args, offset)
+      i = args.index { _1.is_a?(Prism::SplatNode) }
+      return false unless i
+      if target.is_a?(Builtin) && NO_SPLAT.include?(target.full_name)
+        error(args[i], "`#{args[i].slice}`: #{target.full_name} takes its arguments written out (#{target.full_name == "Hash[]" ? "`key => value` pairs" : "it makes Tuples as long as the number of arguments"})")
+        return true
+      end
+      unless target.is_a?(Builtin) && target.rest
+        error(args[i], "`#{args[i].slice}`: splat arguments go only to built-ins that take any number of arguments " \
+                       "(puts, format, Array[...], Set[...], Array.push, ...)",
+              target.is_a?(Builtin) || target.is_a?(Operators::Call) ? [] : ["#{target_name(target)} takes a fixed number of arguments; pass them one by one"])
+        return true
+      end
+      fixed = target.params.size + target.optional.size
+      if i + offset < fixed
+        error(args[i], "`#{args[i].slice}`: the first #{fixed} argument(s) of #{target.full_name} are written out; a splat fills only the rest")
+      else
+        check_arity(node, target, args.size + offset, !node.block.nil?)
+      end
+      true
+    end
+
+    def target_name(t) = t.respond_to?(:full_name) ? t.full_name : "#{t.module}.#{t.name}"
 
     def check_arity(node, target, argc, has_block)
       case target
@@ -880,10 +923,11 @@ module Sake
       when Prism::BlockParametersNode
         ps = pn.parameters
         return [] unless ps
-        if ps.optionals.any? || ps.posts.any? || ps.keywords.any? || ps.rest || ps.keyword_rest || ps.block
-          error(ps, "only plain block parameters `|a, b|` are supported")
+        rest = ps.rest.is_a?(Prism::RestParameterNode) ? ps.rest : nil
+        if ps.optionals.any? || ps.keywords.any? || (ps.rest && !rest) || ps.keyword_rest || ps.block
+          error(ps, "only plain block parameters `|a, b|` and `|a, *rest|` are supported")
         end
-        ps.requireds.map { nested_param(_1) }
+        [*ps.requireds.map { nested_param(_1) }, *(rest ? [RestParam.new(rest.name&.to_s)] : []), *ps.posts.map { nested_param(_1) }]
       when Prism::ItParametersNode then ["it"]
       when Prism::NumberedParametersNode then (1..pn.maximum).map { "_#{_1}" }
       else

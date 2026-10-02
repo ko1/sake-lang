@@ -170,7 +170,13 @@ module Sake
     def block_val(b, f) = b && BlockVal.new(b, f)
 
     def call_node(n, f, blk)
-      args = n.args.map { ev(_1, f) }
+      args = n.args.flat_map do |a|
+        next [ev(a, f)] unless a.is_a?(Splat)
+        v = ev(a.value, f)
+        next v.elems if v.is_a?(Tuple)
+        next v if v.is_a?(Array)
+        fail_at(a, "TypeError", "splat needs a Tuple or an Array, got #{Values.describe(v)}", nil_value: v.nil?)
+      end
       case n
       when CallBuiltin then call_builtin(n.fn, args, blk, n.origin)
       when CallUser then call_user(n.fn, args, blk, n.origin)
@@ -339,14 +345,23 @@ module Sake
       # As Ruby: missing elements are nil, extra elements are dropped.
       elems = v.is_a?(Tuple) ? v.elems : (v.is_a?(Array) ? v : nil)
       fail_at(n, "TypeError", "multiple assignment needs a Tuple or an Array, got #{Values.describe(v)}") unless elems
+      ri = n.targets.index { _1.is_a?(TRest) }
+      elems = Interpreter.spread_rest(elems, ri, n.targets.size - ri - 1) if ri
       n.targets.each_with_index do |t, i|
         case t
         when TLocal then f.slots[t.slot] = elems[i]
+        when TRest then f.slots[t.slot] = elems[i] if t.slot
         when TIndex then index_op(t.origin, "[]=", [*places[i], elems[i]])
         when TField then call_builtin(t.fn, [places[i], elems[i]], nil, t.origin)
         end
       end
       v
+    end
+
+    # As Ruby's `a, *r, z = elems`: the values of the targets, the rest (at index nleft) an Array.
+    def self.spread_rest(elems, nleft, npost)
+      post = [nleft, elems.size - npost].max
+      [*Array.new(nleft) { elems[_1] }, elems[nleft...post] || [], *Array.new(npost) { elems[post + _1] }]
     end
 
     # origin: the Prism node of the call, for the line in messages and the stack.
@@ -505,13 +520,20 @@ module Sake
     def call_block(blk, args, node)
       b = blk.node
       params = b.params
+      fixed = params.size - (b.rest ? 1 : 0)
       # A Tuple passed to a block with several parameters is destructured.
-      if params.size > 1 && args.size == 1
+      if (params.size > 1 || (b.rest && fixed >= 1)) && args.size == 1
         # As Ruby: a Tuple or an Array is spread over the parameters, nil for missing elements.
         elems = args.first.is_a?(Tuple) ? args.first.elems : (args.first.is_a?(Array) ? args.first.to_a : nil)
-        args = Array.new(params.size) { elems[_1] } if elems
+        args = b.rest ? elems : Array.new(params.size) { elems[_1] } if elems
       end
-      if !params.empty? && params.size != args.size
+      if b.rest
+        if !elems && args.size < fixed
+          raise RunError.new("ArgumentError", "block takes at least #{fixed} parameter(s) but was given #{args.size}",
+                             b.origin.location.start_line, @stack.dup)
+        end
+        args = Interpreter.spread_rest(args, b.rest, fixed - b.rest)
+      elsif !params.empty? && params.size != args.size
         raise RunError.new("ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}",
                            b.origin.location.start_line, @stack.dup)
       end
