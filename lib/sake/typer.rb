@@ -52,6 +52,7 @@ module Sake
         @passes += 1
         before = snapshot
         @checks = {}
+        @check_ctx = {}
         @results = {}.compare_by_identity
         @done = {}
         @in_progress = {}
@@ -247,10 +248,15 @@ module Sake
       prev = @checks[key]
       if prev
         prev.actual = u(prev.actual, actual)
-        prev.verdict = worse(prev.verdict, verdict)
+        # Evaluations along the same calls are loop iterations and passes towards the fixpoint: a check that
+        # fails in some and passes in others may fail. Different call paths keep the worse verdict.
+        ctx = (@check_ctx[key] ||= {})
+        ctx[@callers] = (c = ctx[@callers]).nil? || c == verdict ? verdict : (([c, verdict] & %i[unknown]).empty? ? :partial : :unknown)
+        prev.verdict = ctx.values.reduce { worse(_1, _2) }
         prev.failing = (prev.failing + failing).uniq
         prev.via ||= @callers.dup unless failing.empty?
       else
+        (@check_ctx[key] = {})[@callers.dup] = verdict
         @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing,
                                  failing.empty? ? nil : @callers.dup)
       end
