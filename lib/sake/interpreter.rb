@@ -104,11 +104,15 @@ module Sake
       when FieldSet
         s = ev(n.subject, f)
         call_builtin(n.fn, [s, ev(n.value, f)], nil, n.origin)
-      when IndexGet then index_op(n.origin, "[]", [ev(n.recv, f), ev(n.key, f)])
+      when IndexGet
+        r = ev(n.recv, f)
+        k = ev(n.key, f)
+        index_op(n.origin, "[]", [r, k, *(n.extra ? [ev(n.extra, f)] : [])])
       when IndexSet
         r = ev(n.recv, f)
         k = ev(n.key, f)
-        index_op(n.origin, "[]=", [r, k, ev(n.value, f)])
+        e = n.extra ? [ev(n.extra, f)] : []
+        index_op(n.origin, "[]=", [r, k, *e, ev(n.value, f)])
       when IndexUpdate then index_update(n, f)
       when Yield then call_block(f.block, n.args.map { ev(_1, f) }, n.origin)
       when Interp then n.parts.map { ev(_1, f) }.join

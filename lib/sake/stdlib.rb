@@ -289,9 +289,15 @@ module Sake
     def install_index(reg)
       %w[Array Hash String Tuple MatchData].each do |t|
         reg.add_namespace(t)
-        reg.define(t, :[], [t, "Any"]) { |x, k| index_get(x, k) }
+        reg.define(t, :[], [t, "Any"], optional: (%w[Array String].include?(t) ? ["Integer"] : [])) { |x, k, n = nil| n ? slice(x, k, n) : index_get(x, k) }
         reg.define(t, :[]=, [t, "Any", "Any"]) { |x, k, v| index_set(x, k, v) } unless %w[String MatchData].include?(t)
       end
+    end
+
+    # `s[start, length]` / `a[start, length]`: a slice, or nil when start is past the end.
+    def slice(x, k, n)
+      raise Fail.new("TypeError", "the start must be Integer, got #{Values.describe(k)}") unless k.is_a?(Integer)
+      x[k, n]
     end
 
     def index_get(x, k)

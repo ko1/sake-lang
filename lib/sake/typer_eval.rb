@@ -111,11 +111,15 @@ module Sake
       when BinOp then binop(n.origin, n.op, ev(n.left, env), ev(n.right, env))
       when UnOp then unop(n.origin, n.op, ev(n.value, env))
       when IsNil then binop(n.origin, n.negate ? "!=" : "==", ev(n.value, env), t("Nil"))
-      when IndexGet then index_get(n.origin, ev(n.recv, env), ev(n.key, env), lit_of(n.key))
+      when IndexGet
+        r = ev(n.recv, env)
+        k = ev(n.key, env)
+        index_get(n.origin, r, k, lit_of(n.key), n.extra && ev(n.extra, env))
       when IndexSet
         r = ev(n.recv, env)
         k = ev(n.key, env)
-        index_set(n.origin, r, k, lit_of(n.key), ev(n.value, env))
+        e = n.extra && ev(n.extra, env)
+        index_set(n.origin, r, k, lit_of(n.key), ev(n.value, env), e)
       when FieldGet, FieldSet
         nodes = n.is_a?(FieldSet) ? [n.subject, n.value] : [n.subject]
         args = nodes.map { ev(_1, env) }

@@ -41,8 +41,8 @@ module Sake
     node :UnOp, :op, :value                 # `-x` / `+x` / `~x`, dispatched on x (`!x` is an If)
     node :FieldGet, :type, :field, :fn, :subject # `@x` / `T.get_x(s)`; fn: the getter (it checks the subject)
     node :FieldSet, :type, :field, :fn, :subject, :value
-    node :IndexGet, :recv, :key
-    node :IndexSet, :recv, :key, :value
+    node :IndexGet, :recv, :key, :extra        # extra: a second index (`s[i, n]`, `m[r, c]`) or nil
+    node :IndexSet, :recv, :key, :extra, :value
     node :IndexUpdate, :recv, :key, :op, :value # `x[k] OP= v` (op: "||" for ||=); x and k evaluated once
     node :Block, :params, :locals, :body    # params/locals: slots; locals are cleared on entry
     node :Yield, :args

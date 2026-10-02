@@ -18,7 +18,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.==(x, Any)`
 - `Array.>(x, Any)`
 - `Array.>=(x, Any)`
-- `Array.[](x, Any)`
+- `Array.[](x, Any, [Integer])`
 - `Array.[]=(x, Any, Any)`
 - `Array.all?(x) { }`
 - `Array.any?(x) { }`
@@ -516,7 +516,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.=~(x, Any)`
 - `String.>(x, Any)`
 - `String.>=(x, Any)`
-- `String.[](x, Any)`
+- `String.[](x, Any, [Integer])`
 - `String.ascii_only?(x)`
 - `String.between?(x, String, String)`
 - `String.bytes(x)`

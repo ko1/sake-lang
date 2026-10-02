@@ -380,7 +380,7 @@ table**:
 
 `x[k]` means `Indexable.[](x, k)`, and `x[k] = v` means `Indexable.[]=(x, k, v)`: they run the
 `[]` and `[]=` of `x`'s type. A Struct type joins with `include Indexable` and `def [](x, k)` /
-`def []=(x, k, v)`. The built-in types behave as follows:
+`def []=(x, k, v)`; with two indexes, `m[r, c]` calls `def [](m, r, c)` and `m[r, c] = v` calls `def []=(m, r, c, v)`. The built-in types behave as follows:
 
 | Receiver, index | `x[k]` | `x[k] = v` |
 |---|---|---|
@@ -388,6 +388,7 @@ table**:
 | String, Integer | a one-character String, or nil outside the String | not available |
 | Tuple, Integer | the element; outside the Tuple, `IndexError` | stores `v` if it has the type of that position |
 | Array, Range / String, Range | the slice, or nil | not available |
+| Array, Integer, Integer / String, Integer, Integer (`s[start, length]`) | the slice, or nil | not available |
 | Hash, any key | the value, or the default (nil unless made by `Hash.new(default)`) | stores `v`; the key must be a value type |
 | MatchData, Integer / String | the group, or nil | not available |
 

@@ -251,8 +251,8 @@ module Sake
           else [lower(n.receiver), *args(n.arguments)]
           end
         return UnOp.new(op: t.op, value: xs[0], origin: n) if Operators::UNARY.include?(t.op)
-        return IndexGet.new(recv: xs[0], key: xs[1], origin: n) if t.module == "Indexable" && t.op == "[]"
-        return IndexSet.new(recv: xs[0], key: xs[1], value: xs[2], origin: n) if t.module == "Indexable"
+        return IndexGet.new(recv: xs[0], key: xs[1], extra: xs[2], origin: n) if t.module == "Indexable" && t.op == "[]"
+        return IndexSet.new(recv: xs[0], key: xs[1], extra: (xs[2] if xs.size == 4), value: xs[-1], origin: n) if t.module == "Indexable"
         return IsNil.new(value: xs[0], negate: t.op == "!=", origin: n) if %w[== !=].include?(t.op) && xs[1].is_a?(Lit) && xs[1].value.nil?
         return BinOp.new(op: t.op, left: xs[0], right: xs[1], origin: n)
       end

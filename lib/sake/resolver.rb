@@ -781,9 +781,9 @@ module Sake
         set_call(node, ctx, Operators::Call.new(Operators::MODULE_OF[node.name.to_s], node.name.to_s)) unless node.name == :!
         return check(recv, ctx)
       elsif node.call_operator_loc.nil? && %i[[] []=].include?(node.name)
-        want = node.name == :[] ? 1 : 2
-        if args.size != want
-          error(node, "`#{first_line(node.slice)}` takes #{want == 1 ? "one index" : "one index and a value"}")
+        want = node.name == :[] ? [1, 2] : [2, 3]
+        unless want.include?(args.size)
+          error(node, "`#{first_line(node.slice)}` takes #{node.name == :[] ? "one or two indexes" : "one or two indexes and a value"}")
         else
           set_call(node, ctx, Operators::Call.new("Indexable", node.name.to_s))
         end
@@ -813,8 +813,8 @@ module Sake
     def check_arity(node, target, argc, has_block)
       case target
       when Operators::Call
-        want = target.op == "[]=" ? 3 : (Operators::UNARY.include?(target.op) ? 1 : 2)
-        error(node, "#{target.module}.#{target.op} takes #{want} arguments (given #{argc})") if argc != want
+        want = { "[]=" => [3, 4], "[]" => [2, 3] }.fetch(target.op) { [Operators::UNARY.include?(target.op) ? 1 : 2] }
+        error(node, "#{target.module}.#{target.op} takes #{want.join(" or ")} arguments (given #{argc})") unless want.include?(argc)
       when Dispatch
         fn = @functions.dig(target.module, target.name)
         check_arity(node, fn, argc, has_block) if fn

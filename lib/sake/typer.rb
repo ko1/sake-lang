@@ -334,15 +334,24 @@ module Sake
     # Index.[]: a miss gives nil for Array and String; a Tuple has a fixed length, so a literal index
     # selects one position and any other index gives the union of all positions.
     # lit: the index when it is an Integer literal.
-    def index_get(node, recv, key, lit)
-      return [] if recv.empty? || key.empty?
-      return unknown("index") if unknown?(recv) || unknown?(key)
+    # extra: the type of a second index (`s[i, n]`, `m[r, c]`), or nil.
+    def index_get(node, recv, key, lit, extra = nil)
+      return [] if recv.empty? || key.empty? || extra&.empty?
+      return unknown("index") if unknown?(recv) || unknown?(key) || (extra && unknown?(extra))
       results = []
       failing = []
       recv.each do |a|
         if struct_atom?(a)
           fn = Operators.includes?(@program.includes || {}, a, "Indexable") && @program.functions.dig(a, "[]")
-          fn ? results << call_user(fn, [[a].freeze, key], nil) : failing << a
+          fn ? results << call_user(fn, [[a].freeze, key, *[extra].compact], nil) : failing << a
+          next
+        end
+        if extra # `s[start, length]` on a String or an Array: a slice, or nil
+          if a == "String" then results << t("String") << t("IndexNil")
+          elsif a.is_a?(Array) && a[0] == :array then results << [a].freeze << t("IndexNil")
+          else failing << a
+          end
+          record(node, "Indexable.[]", "length", "Integer", extra) unless struct_atom?(a)
           next
         end
         if (ext = index_get_ext(node, a, key))
@@ -377,13 +386,14 @@ module Sake
       u(*results)
     end
 
-    def index_set(node, recv, key, lit, val)
-      return [] if recv.empty? || key.empty? || val.empty?
+    def index_set(node, recv, key, lit, val, extra = nil)
+      return [] if recv.empty? || key.empty? || val.empty? || extra&.empty?
       recv.each do |a|
         if struct_atom?(a) && Operators.includes?(@program.includes || {}, a, "Indexable") && (fn = @program.functions.dig(a, "[]="))
-          call_user(fn, [[a].freeze, key, val], nil)
+          call_user(fn, [[a].freeze, key, *[extra].compact, val], nil)
           next
         end
+        next if extra # built-in types take one index when writing
         next unless a.is_a?(Array)
         if a[0] == :hash
           s = hash_sites[a[1]]
