@@ -856,6 +856,16 @@ module Sake
       check(blk.body, ctx.dup.tap { _1.in_block = true; _1.in_loop = false })
     end
 
+    # A block parameter: its name, or for `(a, (b, c))` the nested names, taken apart like `a, b = x`.
+    def nested_param(r)
+      return r.name.to_s if r.is_a?(Prism::RequiredParameterNode)
+      if r.is_a?(Prism::MultiTargetNode) && r.rest.nil? && r.rights.empty?
+        return r.lefts.map { nested_param(_1) }
+      end
+      error(r, "unsupported block parameter `#{r.slice}` (only names and `(a, b)` are supported)")
+      "_"
+    end
+
     def block_params(blk)
       pn = blk.parameters
       case pn
@@ -866,11 +876,7 @@ module Sake
         if ps.optionals.any? || ps.posts.any? || ps.keywords.any? || ps.rest || ps.keyword_rest || ps.block
           error(ps, "only plain block parameters `|a, b|` are supported")
         end
-        ps.requireds.map do |r|
-          next r.name.to_s if r.is_a?(Prism::RequiredParameterNode)
-          error(r, "nested destructuring `#{r.slice}` is not supported", ["take the parameter whole (`|pair, i|`) and write `#{r.slice.delete_prefix("(").delete_suffix(")")} = pair` in the block"])
-          "_"
-        end
+        ps.requireds.map { nested_param(_1) }
       when Prism::ItParametersNode then ["it"]
       when Prism::NumberedParametersNode then (1..pn.maximum).map { "_#{_1}" }
       else

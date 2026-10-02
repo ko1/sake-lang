@@ -272,7 +272,7 @@ end
 ```
 
 - **Parameters.** Only required positional parameters are allowed. Optional, rest, keyword, and
-  block parameters (`&b`) are rejected, as are destructuring parameters.
+  block parameters (`&b`) are rejected.
 - **Return value.** The value of the last expression, or of `return expr`. `return a, b` returns
   the Tuple `[a, b]`.
 - **Polymorphism.** Functions are polymorphic. A function works on any arguments its operations
@@ -298,6 +298,7 @@ Integer.times(3) { p it }
 - **Parameters.** `|a, b|` lists plain names. `it` and `_1` … `_9` work as in Ruby.
 - **Destructuring.** If a block declares two or more parameters and receives a single Tuple or
   Array, its elements become the parameters. The counts must match (`ArgumentError` otherwise).
+  A parameter can also be taken apart itself: `|(name, n), i|`, `|acc, (k, v)|`.
 - **Parameter count.** A block with no parameters ignores its arguments. Otherwise, a block called
   with the wrong number of arguments raises `ArgumentError`.
 - **Scope.** A block sees and can assign the enclosing local variables.

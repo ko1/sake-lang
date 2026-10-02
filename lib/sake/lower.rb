@@ -289,12 +289,33 @@ module Sake
       Raise.new(type: nil, args: [lower(nodes[0])], origin: n)
     end
 
+    # names: the targets of one `(a, (b, c))` level; nested levels are taken apart after this one.
+    def destructure(sc, names, from, origin, out)
+      nested = []
+      targets = names.each_with_index.map do |nm, j|
+        next TLocal.new(slot: sc.slot(nm.to_sym), origin:) if nm.is_a?(String)
+        inner = sc.slot(:"(param #{from}.#{j})")
+        nested << [nm, inner]
+        TLocal.new(slot: inner, origin:)
+      end
+      out << MultiWrite.new(targets:, value: get(from, origin), origin:)
+      nested.each { |nm, inner| destructure(sc, nm, inner, origin, out) }
+    end
+
     def block(b)
       sc = Scope.new({}, @scopes[0].frame)
       @scopes.push(sc)
       begin
-        params = @program.blocks.fetch(b).map { sc.slot(_1.to_sym) }
+        # `(a, b)` parameters get a hidden slot, taken apart at the start of the body like `a, b = x`.
+        prologue = []
+        params = @program.blocks.fetch(b).each_with_index.map do |name, i|
+          next sc.slot(name.to_sym) if name.is_a?(String)
+          hidden = sc.slot(:"(param #{i})")
+          destructure(sc, name, hidden, b, prologue)
+          hidden
+        end
         body = lower(b.body)
+        body = Seq.new(body: [*prologue, body], origin: b.body || b) unless prologue.empty?
         locals = sc.vars.values - params
         Block.new(params:, locals:, body:, origin: b)
       ensure
