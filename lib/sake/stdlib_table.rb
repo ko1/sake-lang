@@ -96,7 +96,7 @@ module Sake
       ["Set", :merge, ["Set"], :recv], ["Set", :proper_subset?, ["Set"], :bool], ["Set", :proper_superset?, ["Set"], :bool],
       ["Set", :any?, [], :bool, { block: :required, yields: :one }], ["Set", :all?, [], :bool, { block: :required, yields: :one }],
       ["Set", :none?, [], :bool, { block: :required, yields: :one }],
-      ["Set", :count, [], I, { block: :optional, yields: :one }], ["Set", :sum, [], :elem_sum],
+      ["Set", :count, [], I, { block: :optional, yields: :one }], ["Set", :sum, [], :elem_sum, { opt: [%w[Integer Float Rational Complex]] }],
       ["Set", :min, [], :elem_nil, { compare: true }], ["Set", :max, [], :elem_nil, { compare: true }],
       ["Set", :sort, [], :array, { compare: true }], ["Set", :sort_by, [], :array, { block: :required, yields: :one, compare: true }],
       ["Set", :join, [], S, { opt: [S] }], ["Set", :first, [], :elem_nil],

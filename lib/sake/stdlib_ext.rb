@@ -173,7 +173,7 @@ module Sake
       %i[reduce inject].each do |m|
         reg.define("Range", m, %w[Range Any], block: :required) { |r, init, &b| int_range!(r); finite!(r); r.reduce(init) { |acc, x| b.(acc, x) } }
       end
-      reg.define("Range", :sum, ["Range"], block: :optional) { |r, &b| int_range!(r); finite!(r); b ? r.sum { b.(_1) } : r.sum }
+      reg.define("Range", :sum, ["Range"], optional: [NUMERIC], block: :optional) { |r, init = 0, &b| int_range!(r); finite!(r); b ? r.sum(init) { b.(_1) } : r.sum(init) }
       reg.define("Range", :size, ["Range"]) { |r| int_range!(r); finite!(r); r.size }
       reg.define("Range", :count, ["Range"], block: :optional) do |r, &b|
         int_range!(r)
@@ -246,7 +246,7 @@ module Sake
         ks = []
         sort_checked(h.values, ks) { h.sort_by { |k, v| ks << b.(pair(k, v)); ks[-1] } }.map { |k, v| pair(k, v) }
       end
-      reg.define("Hash", :sum, ["Hash"], block: :required) { |h, &b| h.sum { |k, v| b.(pair(k, v)) } }
+      reg.define("Hash", :sum, ["Hash"], optional: [NUMERIC], block: :required) { |h, init = 0, &b| h.sum(init) { |k, v| b.(pair(k, v)) } }
       reg.define("Hash", :transform_values, ["Hash"], block: :required) { |h, &b| h.transform_values { b.(_1) } }
       reg.define("Hash", :transform_keys, ["Hash"], block: :required) { |h, &b| h.each_with_object({}) { |(k, v), r| r[key!(b.(k))] = v } }
     end
@@ -384,9 +384,12 @@ module Sake
         end
       end
       reg.define("Array", :each_with_object, %w[Array Any], block: :required) { |a, memo, &b| a.each { b.(_1, memo) }; memo }
-      reg.lookup("Array", "sum").block = :optional
-      sum = reg.lookup("Array", "sum").impl
-      reg.lookup("Array", "sum").impl = ->(a, &b) { b ? sum.(a.map { b.(_1) }) : sum.(a) }
+      # `sum(xs, 0.0)`: as Ruby, the initial value (default 0) is the result for an empty collection.
+      reg.define("Array", :sum, ["Array"], optional: [NUMERIC], block: :optional) do |a, init = 0, &b|
+        xs = b ? a.map { b.(_1) } : a
+        xs.each { |x| raise Fail.new("TypeError", "element must be a number, got #{Values.describe(x)}") unless NUMERIC.include?(Values.type_of(x)) }
+        xs.sum(init)
+      end
       reg.define("Array", :rotate, ["Array"], optional: ["Integer"]) { |a, n = 1| a.rotate(n) }
       reg.define("Array", :sample, ["Array"], &:sample)
       reg.define("Array", :shuffle, ["Array"], &:shuffle)

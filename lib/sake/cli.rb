@@ -117,6 +117,9 @@ module Sake
         if c.expected.split("|").include?("Array") && c.failing.any? { _1.is_a?(Array) && _1[0] == :tuple }
           hint = ["`[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`"]
         end
+        if c.failing == ["Integer"] && c.actual.include?("Float") && c.expected.split("|").include?("Float")
+          hint += ["if the value comes from `sum`, an empty collection sums to the Integer 0; give the start: `Array.sum(xs, 0.0)`"]
+        end
         subject = c.arg == "elem" ? "an element" : what
         ["#{c.op}: #{subject} must be #{c.expected}, but #{c.verdict == :error ? "is" : "can be"} #{got}", hint]
       end

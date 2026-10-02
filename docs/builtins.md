@@ -99,7 +99,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.slice_when(x) { }`
 - `Array.sort(x)`
 - `Array.sort_by(x) { }`
-- `Array.sum(x) [{ }]`
+- `Array.sum(x, [Integer|Float|Rational|Complex]) [{ }]`
 - `Array.take(x, Integer)`
 - `Array.take_while(x) { }`
 - `Array.tally(x)`
@@ -239,7 +239,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.slice(x, *Any)`
 - `Hash.sort_by(x) { }`
 - `Hash.store(x, Any, Any)`
-- `Hash.sum(x) { }`
+- `Hash.sum(x, [Integer|Float|Rational|Complex]) { }`
 - `Hash.take(x, Integer)`
 - `Hash.to_a(x)`
 - `Hash.transform_keys(x) { }`
@@ -402,7 +402,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Range.size(x)`
 - `Range.sort_by(x) { }`
 - `Range.step(x, Integer) { }`
-- `Range.sum(x) [{ }]`
+- `Range.sum(x, [Integer|Float|Rational|Complex]) [{ }]`
 - `Range.take(x, Integer)`
 - `Range.take_while(x) { }`
 - `Range.tally(x)`
@@ -496,7 +496,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Set.sort_by(x) { }`
 - `Set.subset?(x, Set)`
 - `Set.subtract(x, Any)`
-- `Set.sum(x)`
+- `Set.sum(x, [Integer|Float|Rational|Complex])`
 - `Set.superset?(x, Set)`
 - `Set.to_a(x)`
 - `Set.union(x, Set)`

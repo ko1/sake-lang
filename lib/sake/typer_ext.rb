@@ -224,7 +224,7 @@ module Sake
         k.empty? ? t("Nil") : u(pair_type(k, v), t("Nil"))
       when "Hash.sum"
         k, v = hash_kv(a0)
-        k.empty? ? t("Integer") : u(t("Integer"), call_block(blk, [pair_type(k, v)])) # an empty Hash sums to 0
+        k.empty? ? (args[1] || t("Integer")) : sum_type(args[1], call_block(blk, [pair_type(k, v)]))
       when "Hash.transform_values"
         k, v = hash_kv(a0)
         hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = k; s.val = v.empty? ? [] : call_block(blk, [v]) }
@@ -343,7 +343,7 @@ module Sake
       when :recv then a0
       when :recv_nil then u(a0, t("Nil"))
       when :elem_nil then u(elem, t("Nil"))
-      when :elem_sum then u(t("Integer"), *elem.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] }) # empty: 0
+      when :elem_sum then sum_type(args[1], elem)
       when :array then new_site(node, " #{name}", elem)
       when :array_block then new_site(node, " #{name}", bres)
       when :array_block_truthy then new_site(node, " #{name}", without_nil(bres))

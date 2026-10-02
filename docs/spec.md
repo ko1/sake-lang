@@ -804,7 +804,7 @@ one.
 | `empty?`, `include?(a, x)` | true/false |
 | `push(a, *xs)`, `append(a, *xs)`, `concat(a, b)` | a, modified in place |
 | `join(a, [sep])` | String |
-| `sum(a)` | Integer or Float; elements must be numbers; 0 for an empty Array |
+| `sum(a, [init])` | the sum; elements must be numbers. An empty Array gives `init` (default 0, an Integer), so a Float sum that may be empty is `Integer \| Float` unless written `sum(a, 0.0)` (as Ruby) |
 | `reverse`, `sort`, `take(a, n)`, `drop(a, n)` | a new Array |
 | `each(a) { \|x\| }`, `each_with_index(a) { \|x, i\| }` | a (block) |
 | `map`, `select`, `filter`, `reject`, `sort_by` | a new Array (block) |
@@ -825,7 +825,7 @@ one.
 | `partition` | `[matching, rest]` Tuple of Arrays (block) |
 | `flat_map` | Array; the block returns an Array |
 | `each_with_object(a, memo) { \|x, memo\| }` | memo (block) |
-| `sum(a) { \|x\| }`, `count(a, [x])` | the block is optional |
+| `sum(a, [init]) { \|x\| }`, `count(a, [x])` | the block is optional |
 
 ### Tuple
 
@@ -868,7 +868,7 @@ Range raise `RangeError` on an endless one.
 |---|---|
 | `each`, `each_with_index`, `step(r, n)` | r (block) |
 | `to_a`, `map`, `select`, `filter`, `reject` | Array (block for `map` and the filters) |
-| `reduce(r, init)`, `inject` · `sum` · `size` · `count` | accumulated value · Integer · Integer · Integer (block optional) |
+| `reduce(r, init)`, `inject` · `sum(r, [init])` · `size` · `count` | accumulated value · Integer · Integer · Integer (block optional) |
 | `any?`, `all?`, `none?` · `find`, `detect` | true/false · an element or nil (block) |
 | `include?`, `cover?`, `member?` · `exclude_end?` | true/false |
 | `first`, `last`, `min`, `max`, `begin`, `end` | an element or nil (`first(r, n)`, `last(r, n)` give an Array) |
@@ -887,7 +887,7 @@ Range raise `RangeError` on an endless one.
 | `each`, `each_pair` · `each_key` · `each_value` | h (block) |
 | `map` · `sort_by` | Array · Array of `[k, v]` (block) |
 | `select`, `filter`, `reject` · `transform_values` · `transform_keys` | a new Hash (block) |
-| `any?`, `all?`, `none?` · `count` · `sum` | true/false · Integer (block optional) · sum of block values |
+| `any?`, `all?`, `none?` · `count` · `sum(h, [init])` | true/false · Integer (block optional) · sum of block values |
 | `find`, `detect`, `min_by`, `max_by` | `[k, v]` or nil (block) |
 
 ### Set

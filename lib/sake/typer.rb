@@ -550,6 +550,13 @@ module Sake
       u(*results)
     end
 
+    # `sum(xs[, init])`: an empty collection gives init (default 0, an Integer); otherwise init + the elements.
+    def sum_type(init, elems)
+      init ||= t("Integer")
+      nums = elems.select { Stdlib::NUMERIC.include?(_1) }
+      u(init, *init.product(nums).map { |a, b| binop_result("+", a, b) })
+    end
+
     # Result types of the BinaryOp rows (Ruby's numeric tower).
     def binop_result(op, t1, t2)
       return u(t("Integer"), t("Nil")) if op == "<=>"
@@ -701,13 +708,12 @@ module Sake
         e = range_elem(a0)
         e = call_block(blk, [e]) if blk && !e.empty?
         record(node, "Range.sum", "elem", Stdlib::NUMERIC, e) if blk
-        u(t("Integer"), *e.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] }) # an empty Range sums to 0
+        sum_type(args[1], e)
       when "Array.sum"
         e = elem_of(a0)
         e = call_block(blk, [e]) if blk && !e.empty?
         record(node, "Array.sum", "elem", Stdlib::NUMERIC, e)
-        # An empty Array sums to 0, an Integer, whatever its elements would be.
-        u(t("Integer"), *e.select { Stdlib::NUMERIC.include?(_1) }.map { [_1] })
+        sum_type(args[1], e)
       when "Array.new"
         elem = blk ? call_block(blk, [t("Integer")]) : (args[1] || t("Nil"))
         new_site(node, " #{name}", elem)
