@@ -299,6 +299,8 @@ module Sake
       end
     end
 
+    def alternatives(pat) = pat.is_a?(PAlt) ? [*alternatives(pat.left), *alternatives(pat.right)] : [pat]
+
     # Each `in` sees what earlier branches left; whatever no branch takes is reported (the set is closed).
     def case_match(n, env)
       v = ev(n.subject, env)
@@ -323,8 +325,9 @@ module Sake
       elsif !remaining.empty? && !unknown?(v)
         # Values a literal pattern may leave (some String, any Symbol not written as a literal) are not
         # a type problem: the type's set of values is open. Both true and false cover Boolean.
-        lits = n.clauses.filter_map { |pat, _| pat.is_a?(PValue) && pat.value.is_a?(Lit) ? pat.value.value : nil }
-        lits += n.clauses.filter_map { |pat, _| pat.is_a?(PValue) && pat.value.is_a?(Str) ? "" : nil }
+        alts = n.clauses.flat_map { |pat, _| alternatives(pat) }
+        lits = alts.filter_map { |pat| pat.is_a?(PValue) && pat.value.is_a?(Lit) ? pat.value.value : nil }
+        lits += alts.filter_map { |pat| pat.is_a?(PValue) && pat.value.is_a?(Str) ? "" : nil }
         remaining -= ["Boolean"] if lits.include?(true) && lits.include?(false)
         lit_types = lits.map { LIT_TYPES.fetch(_1.class) { "String" } }
         open, closed = remaining.partition { _1.is_a?(String) && lit_types.include?(atom_type_name(_1)) }
