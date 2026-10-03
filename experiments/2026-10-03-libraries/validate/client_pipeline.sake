@@ -1,0 +1,86 @@
+# A pipeline of parsing steps, written twice:
+#   with Results chained by Result.and_then / Result.map
+#   with exceptions (each step raises, one rescue at the end)
+# Input: "WxH@x,y" such as "40x30@5,10" -> the area and the far corner.
+
+StepError = Exception.new(:step)
+
+def step_split(s)
+  size, at = String.split(s, "@")
+  return Result.err("split: missing '@' in #{Kernel.inspect(s)}") unless at
+  Result.ok([size, at])
+end
+
+def step_pair(s, sep, what)
+  a, b = String.split(s, sep)
+  return Result.err("#{what}: expected two numbers in #{Kernel.inspect(s)}") unless a && b
+  return Result.err("#{what}: not a number in #{Kernel.inspect(s)}") unless String.match?(a, /\A\d+\z/) && String.match?(b, /\A\d+\z/)
+  Result.ok([String.to_i(a), String.to_i(b)])
+end
+
+def step_positive(wh)
+  w, h = wh
+  return Result.err("size: zero area") if w * h == 0
+  Result.ok(wh)
+end
+
+def parse_box(s)
+  Result.and_then(step_split(s)) do |size, at|
+    Result.and_then(Result.and_then(step_pair(size, "x", "size")) { |wh| step_positive(wh) }) do |wh|
+      Result.map(step_pair(at, ",", "at")) do |xy|
+        w, h = wh
+        x, y = xy
+        {area: w * h, corner: [x + w, y + h]}
+      end
+    end
+  end
+end
+
+# The same steps with exceptions.
+def parse_box_raise(s)
+  size, at = String.split(s, "@")
+  raise StepError.new("missing '@'", "split") unless at
+  w, h = pair_or_raise(size, "x", "size")
+  raise StepError.new("zero area", "size") if w * h == 0
+  x, y = pair_or_raise(at, ",", "at")
+  {area: w * h, corner: [x + w, y + h]}
+end
+
+def pair_or_raise(s, sep, what)
+  a, b = String.split(s, sep)
+  raise StepError.new("expected two numbers", what) unless a && b
+  [Integer(a), Integer(b)]
+rescue ArgumentError
+  raise StepError.new("not a number in #{Kernel.inspect(s)}", what)
+end
+
+inputs = Array["40x30@5,10", "40x30", "40x@1,1", "0x9@1,1", "4x3@1,y"]
+
+puts("== Result")
+results = Array.map(inputs) { |s| parse_box(s) }
+Array.each_with_index(results) do |r, i|
+  puts(format("%-12s %s", inputs[i], Result.to_s(r)))
+end
+areas = Array.map(results) { |r| Result.unwrap_or(Result.map(r) { |b| b => {area:}; area }, 0) }
+p(areas)
+p(Result.all(results))
+p(Result.all(Array.select(results) { |r| Result.ok?(r) }))
+
+puts("== exceptions")
+Array.each(inputs) do |s|
+  begin
+    b = parse_box_raise(s)
+    puts(format("%-12s %s", s, b))
+  rescue StepError => e
+    puts(format("%-12s failed at %s: %s", s, StepError.get_step(e), Exception.message(e)))
+  end
+end
+
+puts("== the bridge: an exception turned into a Result")
+p(Result.attempt { raise ValidationError.new("too big", "n") })
+p(Result.attempt { 42 })
+begin
+  puts(Result.unwrap(Result.err("boom")))
+rescue UnwrapError => e
+  puts("rescued: #{Exception.message(e)}")
+end

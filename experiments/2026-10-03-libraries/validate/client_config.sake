@@ -1,0 +1,88 @@
+# A config loader. Two versions of the same loader:
+#   load_all      reports every problem (Checker + Result)
+#   load_strict   stops at the first problem (exceptions)
+
+def config_text
+  "# server config
+host = example.org
+port = 80800
+workers = four
+mode = turbo
+timeout = 30
+garbage line
+"
+end
+
+def bad_values_text
+  "host = Bad_Host!\nport = 0\nmode = prod\n"
+end
+
+def good_text
+  "host = localhost\nport = 8080\nworkers = 4\nmode = dev\n"
+end
+
+ConfigSyntaxError = Exception.new(:line)
+
+# Parse "key = value" lines into a Hash. Bad lines become Err in the Result list.
+def parse_lines(text)
+  h = Hash[]
+  problems = String[]
+  Array.each_with_index(String.lines(text)) do |line, i|
+    s = String.strip(line)
+    next if String.empty?(s) || String.start_with?(s, "#")
+    m = String.match(s, /\A(\w+)\s*=\s*(.*)\z/)
+    if m
+      h[MatchData.[](m, 1)] = MatchData.[](m, 2)
+    else
+      Array.push(problems, "line #{i + 1}: cannot parse #{Kernel.inspect(s)}")
+    end
+  end
+  [h, problems]
+end
+
+def check_config(c)
+  host = Checker.matches(c, "host", Checker.required(c, "host"), /\A[a-z0-9.\-]+\z/, "a host name")
+  port = Checker.integer(c, "port", Checker.required(c, "port"), 1, 65535)
+  workers = Checker.integer(c, "workers", Checker.optional(c, "workers") || "1", 1, 64)
+  mode = Checker.one_of(c, "mode", Checker.required(c, "mode"), Array["dev", "prod"])
+  timeout = Checker.integer(c, "timeout", Checker.optional(c, "timeout") || "10", 1, 600)
+  {host: host, port: port, workers: workers, mode: mode, timeout: timeout}
+end
+
+def load_all(text)
+  h, problems = parse_lines(text)
+  c = Checker.start(h)
+  Array.each(problems) { |p| Checker.add(c, "syntax", p) }
+  cfg = check_config(c)
+  Checker.result(c, cfg)
+end
+
+# Exception style: the first problem raises.
+def load_strict(text)
+  h, problems = parse_lines(text)
+  raise ConfigSyntaxError.new(Array.first(problems), 0) unless Array.empty?(problems)
+  c = Checker.start(h)
+  cfg = check_config(c)
+  Checker.raise_first(c)
+  cfg
+end
+
+Array.each(Array[config_text, bad_values_text, good_text]) do |text|
+  puts("== report every problem")
+  r = load_all(text)
+  case r
+  in {ok:} then puts("loaded: #{ok}")
+  in {err:} then Array.each(err) { |m| puts("  #{m}") }
+  end
+
+  puts("== stop at the first problem")
+  begin
+    cfg = load_strict(text)
+    cfg => {host:, port:}
+    puts("loaded: #{host}:#{port}")
+  rescue ConfigSyntaxError => e
+    puts("  syntax: #{Exception.message(e)}")
+  rescue ValidationError => e
+    puts("  #{ValidationError.get_field(e)}: #{Exception.message(e)}")
+  end
+end

@@ -1,0 +1,111 @@
+# A stress test: many subscribers of several handler types, handlers that unsubscribe
+# themselves while an event is being delivered, handlers that emit more events (a chain
+# reaction through the queue), and two kinds of state machine on one bus.
+
+# Fires once, then removes itself from the bus (unsubscribing during delivery).
+class Once < {reader: [label, fired, sub]}
+  include Handler
+  def subscribe(o, bus, pattern) = @sub = Bus.on(bus, pattern, o)
+  def handle(o, bus, ev)
+    @fired += 1
+    Bus.off(bus, @sub)
+  end
+end
+
+# Re-emits :tick with a smaller count until it reaches 0: a chain of queued events.
+class Ticker < {reader: [seen]}
+  include Handler
+  def handle(t, bus, ev)
+    name, data = ev
+    case name
+    in :tick
+      @seen += 1
+      Bus.publish(bus, :tick, data - 1) if data > 0
+    else nil
+    end
+  end
+end
+
+# Sums the Integer payloads it sees; ignores the others.
+class Summer < {reader: [total]}
+  include Handler
+  def handle(s, bus, ev)
+    name, data = ev
+    @total += data if data in Integer
+  end
+end
+
+# A traffic light (timed by :tick events) and a counter machine, on one bus.
+class Light < {reader: [ticks]}
+  include Hooks
+  def guard?(l, name, fsm, data)
+    case name
+    in :long_enough then @ticks >= 3
+    end
+  end
+  def act(l, name, fsm, data)
+    case name
+    in :count then @ticks += 1
+    in :reset then @ticks = 0
+    end
+  end
+end
+
+class Parity < {reader: [flips]}
+  include Hooks
+  def enter(p, state, fsm, data) = @flips += 1
+end
+
+# Drives both machines from bus events.
+class Driver < {reader: [light, parity]}
+  include Handler
+  def handle(d, bus, ev)
+    name, data = ev
+    case name
+    in :tick
+      Fsm.fire(@light, :tick, data)
+      Fsm.fire(@parity, :flip, data)
+    else nil
+    end
+  end
+end
+
+bus = Bus.create
+onces = Once[]
+Integer.times(200) do |i|
+  o = Once.new("once#{i}", 0, 0)
+  Array.push(onces, o)
+  Once.subscribe(o, bus, :*)
+end
+ticker = Ticker.new(0)
+summer = Summer.new(0)
+Bus.on(bus, :tick, ticker)
+Bus.on(bus, :*, summer)
+
+light = Fsm.create("light", :red, Light.new(0))
+Fsm.allow(light, :red, :tick, :green, :long_enough, :reset)
+Fsm.allow(light, :green, :tick, :yellow, :long_enough, :reset)
+Fsm.allow(light, :yellow, :tick, :red, :none, :reset)
+Fsm.allow(light, :*, :tick, :*, :none, :count)        # :* as target: stay
+parity_hooks = Parity.new(0)   # kept in a local: Fsm.get_hooks would be Light | Parity
+parity = Fsm.create("parity", :even, parity_hooks)
+Fsm.allow(parity, :even, :flip, :odd, :none, :none)
+Fsm.allow(parity, :odd, :flip, :even, :none, :none)
+Fsm.attach(light, bus)          # the light's moves go on the bus too
+Bus.on(bus, :tick, Driver.new(light, parity))
+recorder = Recorder.create
+Bus.on(bus, :fsm_moved, recorder)
+
+t0 = Time.now
+n = Bus.publish(bus, :tick, 2000)
+Integer.times(3000) { |i| n += Bus.publish(bus, :ping, i) }
+secs = Time.now - t0
+
+fired = Array.sum(Array.map(onces) { Once.get_fired(it) })
+puts("deliveries: #{n} (bus says #{Bus.get_delivered(bus)})")
+puts("once handlers fired: #{fired} of 200; subscribers left: #{Array.size(Bus.get_subs(bus))}")
+puts("ticker saw #{Ticker.get_seen(ticker)} ticks; summer total #{Summer.get_total(summer)}")
+puts("light: #{Fsm.get_state(light)} after #{Array.size(Fsm.get_history(light))} moves; parity #{Fsm.get_state(parity)} (#{Parity.get_flips(parity_hooks)} flips)")
+moves = Array.tally(Array.map(Recorder.get_events(recorder)) { |name, data| data })
+puts("light moves recorded: #{Array.size(Recorder.get_events(recorder))}, distinct #{Hash.size(moves)}")
+puts(format("time: %.2fs", secs))

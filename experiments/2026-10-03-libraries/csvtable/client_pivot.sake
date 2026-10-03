@@ -1,0 +1,73 @@
+# Stress / unusual use: generate a large CSV, parse it back, and build a pivot table
+# (region x quarter, summed revenue) on top of the library's Table.
+
+def regions = Array["North", "South", "East", "West"]
+def products = Array["Widget", "Gadget", "Gizmo, deluxe", "Thing \"X\""]
+
+# Deterministic pseudo-random numbers, so the output is stable.
+def next_seed(s) = (s * 1103515245 + 12345) % 2147483648
+def pick(s, n) = (s / 65536) % n
+
+def generate(n)
+  rows = Array[Array["month", "region", "product", "units", "price"]]
+  seed = 42
+  Integer.times(n) do |i|
+    seed = next_seed(seed)
+    month = pick(seed, 12) + 1
+    seed = next_seed(seed)
+    region = regions[pick(seed, 4)]
+    seed = next_seed(seed)
+    product = products[pick(seed, 4)]
+    seed = next_seed(seed)
+    units = pick(seed, 50) + 1
+    price = pick(seed, 2000) / 100.0 + 1.0
+    Array.push(rows, Array[month, region, product, units, price])
+  end
+  Csv.generate(rows)
+end
+
+# region x quarter -> summed revenue; the result is a new Table.
+def pivot(t)
+  sums = Hash.new(0.0)
+  Array.each(Table.get_rows(t)) do |r|
+    q = (Float.to_i(Table.number_at(t, r, "month")) - 1) / 3 + 1
+    rev = Table.number_at(t, r, "units") * Table.number_at(t, r, "price")
+    sums[[Table.string_at(t, r, "region"), q]] += rev
+  end
+  rows = Array[]
+  Array.each(Array.sort(regions)) do |region|
+    cells = Array[region]
+    total = 0.0
+    Integer.upto(1, 4) do |q|
+      v = sums[[region, q]]
+      Array.push(cells, v)
+      total += v
+    end
+    Array.push(cells, total)
+    Array.push(rows, cells)
+  end
+  Table.new(Array["region", "Q1", "Q2", "Q3", "Q4", "total"], rows)
+end
+
+text = generate(2000)
+puts("generated #{String.size(text)} bytes of CSV")
+t = Table.from_csv(text)
+Array.each(Array["month", "units", "price"]) do |col|
+  Table.map_column!(t, col) { |s| (s in String) ? Num.parse(s) : s }
+end
+puts("parsed #{Table.size(t)} rows")
+puts
+
+puts("== revenue by region and quarter ==")
+puts(Table.render(pivot(t), 2))
+puts
+
+puts("== units by product (quoted names survive the round trip) ==")
+by_product = Table.group_sum(t, "product", Array["units"])
+puts(Table.render(Table.sort_by_column(by_product, "product", false), 0))
+puts
+
+puts("== top 3 single sales over 900 ==")
+big = Table.filter(t) { |r| Table.number_at(t, r, "units") * Table.number_at(t, r, "price") > 900.0 }
+top = Table.sort_by_column(big, "units", true)
+puts(Table.render(Table.new(Table.get_headers(top), Array.take(Table.get_rows(top), 3)), 2))

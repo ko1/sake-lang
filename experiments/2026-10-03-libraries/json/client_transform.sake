@@ -1,0 +1,85 @@
+# Transform a document: rename keys (snake_case -> camelCase), sum numbers, drop nulls.
+def camel(s)
+  head, *rest = String.split(s, "_")
+  return s unless head
+  "#{head}#{Array.join(Array.map(rest) { String.capitalize(it) }, "")}"
+end
+
+# Rebuild a value with every object key renamed; nulls inside objects are dropped.
+def rename_keys(v)
+  case v
+  in Hash
+    out = Hash[]
+    Hash.each(v) do |k, x|
+      out[camel(k)] = rename_keys(x) unless x == nil
+    end
+    out
+  in Array then Array.map(v) { rename_keys(it) }
+  else v
+  end
+end
+
+# Sum of every number anywhere in the document.
+def sum_numbers(v)
+  case v
+  in Integer | Float then v
+  in Hash then Array.sum(Array.map(Hash.values(v)) { sum_numbers(it) })
+  in Array then Array.sum(Array.map(v) { sum_numbers(it) })
+  else 0
+  end
+end
+
+# Count values by JSON kind.
+def kind(v)
+  case v
+  in nil then "null"
+  in true | false then "boolean"
+  in Integer | Float then "number"
+  in String then "string"
+  in Array then "array"
+  in Hash then "object"
+  end
+end
+
+def count_kinds(v, counts)
+  counts[kind(v)] += 1
+  case v
+  in Hash then Hash.each(v) { |_k, x| count_kinds(x, counts) }
+  in Array then Array.each(v) { count_kinds(it, counts) }
+  else nil
+  end
+  counts
+end
+
+doc = Json.parse(<<~JSON)
+  {
+    "order_id": 1042,
+    "customer_name": "Ann Lee",
+    "shipping_address": {"zip_code": "100-0001", "street_line": null},
+    "line_items": [
+      {"item_name": "tea", "unit_price": 4.5, "qty": 2},
+      {"item_name": "cup", "unit_price": 12, "qty": 1, "gift_wrap": true}
+    ],
+    "discount_rate": 0.1
+  }
+JSON
+
+renamed = rename_keys(doc)
+puts(Json.pretty(renamed))
+puts("sum of all numbers: #{sum_numbers(doc)}")
+p(count_kinds(doc, Hash.new(0)))
+
+# Order total from the line items: typed getters at the leaves.
+total = 0.0
+Array.each(Json.arr(doc, Array["line_items"])) do |li|
+  total += Json.num(li, Array["unit_price"]) * Json.int(li, Array["qty"])
+end
+total *= 1.0 - Json.num(doc, Array["discount_rate"])
+puts("order total: #{Float.round(total, 2)}")
+
+# Add a computed field and emit compactly.
+if renamed in Hash
+  renamed["total"] = Float.round(total, 2)
+  renamed["itemCount"] = Array.size(Json.arr(renamed, Array["lineItems"]))
+end
+puts(Json.generate(renamed))

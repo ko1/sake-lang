@@ -1,0 +1,56 @@
+# Sliding-window statistics with the deque: a moving average over Floats, the window maximum
+# with a monotonic deque of indexes, and the last 3 log lines (Strings).
+
+readings = Float[3.0, 5.5, 2.0, 8.25, 7.0, 1.5, 9.0, 4.0]
+k = 3
+
+# Moving average: the ready-made Deque, holding Floats .
+win = Deque.create
+sum = 0.0
+avgs = Float[]
+Array.each(readings) do |x|
+  Deque.push_back(win, x)
+  sum += x
+  if Deque.size(win) > k
+    old = Deque.pop_front(win)
+    sum -= old if old
+  end
+  Array.push(avgs, Float.round(sum / Deque.size(win), 2)) if Deque.size(win) == k
+end
+p(avgs)
+
+# Window maximum: a deque of indexes whose readings decrease from front to back.
+class IndexDeque < {reader: [buf], accessor: [start, count]}
+  include DequeOps
+end
+
+def window_max(xs, k)
+  q = IndexDeque.with_buf(Integer[])
+  out = Float[]
+  Array.each_with_index(xs) do |x, i|
+    b = IndexDeque.back(q)
+    while b && Array.fetch(xs, b) <= x
+      IndexDeque.pop_back(q)
+      b = IndexDeque.back(q)
+    end
+    IndexDeque.push_back(q, i)
+    f = IndexDeque.front(q)
+    IndexDeque.pop_front(q) if f && f <= i - k
+    f = IndexDeque.front(q)
+    Array.push(out, Array.fetch(xs, f)) if f && i >= k - 1
+  end
+  out
+end
+p(window_max(readings, k))
+
+# The last 3 log lines, newest pushed at the front.
+class LineDeque < {reader: [buf], accessor: [start, count]}
+  include DequeOps
+end
+recent = LineDeque.with_buf(String[])
+Array.each(String.split("boot,load config,listen :80,accept,accept,shutdown", ",")) do |line|
+  LineDeque.push_front(recent, line)
+  LineDeque.pop_back(recent) if LineDeque.size(recent) > 3
+end
+LineDeque.each(recent) { |s| puts("  #{String.upcase(s)}") }
+puts("capacity grew to #{LineDeque.capacity(recent)}; at(1) = #{LineDeque.at(recent, 1)}")

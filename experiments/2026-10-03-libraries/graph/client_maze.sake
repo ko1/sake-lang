@@ -1,0 +1,91 @@
+# Grid maze: nodes are [row, col] Tuples. '#' wall, '~' mud (cost 3.5), '.' floor (cost 1.0).
+def maze_text
+  "S..#......\n" +
+  ".#.#.####.\n" +
+  ".#...#..#.\n" +
+  ".####.#.#.\n" +
+  "...~~~#...\n" +
+  "#.#~#~###.\n" +
+  "..#~..~..G"
+end
+
+def cost(ch) = ch == "~" ? 3.5 : 1.0
+
+def parse(text)
+  rows = String.split(text, "\n")
+  g = Graph.directed_graph            # directed: entering a cell costs that cell's terrain
+  start = [0, 0]
+  goal = [0, 0]
+  Array.each_with_index(rows) do |row, r|
+    Array.each_with_index(String.chars(row)) do |ch, c|
+      next if ch == "#"
+      start = [r, c] if ch == "S"
+      goal = [r, c] if ch == "G"
+      Graph.add_node(g, [r, c])
+      Array.each(Array[[-1, 0], [1, 0], [0, -1], [0, 1]]) do |dr, dc|
+        nr = r + dr
+        nc = c + dc
+        next if nr < 0 || nc < 0 || nr >= Array.size(rows)
+        line = rows[nr]
+        next unless line
+        nch = line[nc]
+        next if nch == nil || nch == "#"
+        Graph.add_edge(g, [r, c], [nr, nc], cost(nch))
+      end
+    end
+  end
+  [g, rows, start, goal]
+end
+
+def draw(rows, path, mark)
+  on_path = Array.to_set(path)
+  Array.each_with_index(rows) do |row, r|
+    line = ""
+    Array.each_with_index(String.chars(row)) do |ch, c|
+      line += (Set.include?(on_path, [r, c]) && ch != "S" && ch != "G") ? mark : ch
+    end
+    puts("  " + line)
+  end
+end
+
+g, rows, start, goal = parse(maze_text)
+puts("#{Graph.size(g)} open cells, start #{start}, goal #{goal}")
+
+steps = Graph.bfs_path(g, start, goal)
+if steps
+  puts("fewest steps: #{Array.size(steps) - 1}")
+  draw(rows, steps, "o")
+end
+
+best = Graph.shortest_path(g, start, goal)
+if best
+  c, path = best
+  puts("cheapest: cost #{c} in #{Array.size(path) - 1} steps")
+  draw(rows, path, "*")
+end
+
+far = Array[]
+Graph.each_bfs(g, start) { |cell, d| far = Array[cell, d] }
+puts("farthest cell from start: #{far}")
+puts("regions: #{Array.size(Graph.components(g))}")
+
+# The same maze without building a Graph: Grid includes Implicit and says what a neighbor is.
+class Grid < {reader: [rows]}
+  include Implicit
+  def open?(g, r, c)
+    return false if r < 0 || c < 0
+    line = @rows[r]
+    return false unless line
+    ch = line[c]
+    ch != nil && ch != "#"
+  end
+  def each_neighbor(g, v)
+    r, c = v
+    Array.each(Array[[-1, 0], [1, 0], [0, -1], [0, 1]]) do |dr, dc|
+      yield([r + dr, c + dc], 1) if open?(g, r + dr, c + dc)
+    end
+  end
+end
+grid = Grid.new(rows)
+via_mixin = Grid.bfs_path(grid, start, goal)
+puts("implicit grid agrees: #{via_mixin == steps}") if via_mixin

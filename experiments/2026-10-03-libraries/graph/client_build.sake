@@ -1,0 +1,73 @@
+# Build-order resolver: nodes are Task values (a Struct type), edges point from a
+# prerequisite to the task that needs it. Also: critical path, and cycle reports.
+class Task < {reader: [name, secs]}
+  def to_s(t) = Symbol.to_s(@name)
+end
+
+def tasks
+  Task[Task.new(:fetch, 3), Task.new(:configure, 2), Task.new(:compile_lib, 20),
+       Task.new(:compile_app, 15), Task.new(:test, 12), Task.new(:docs, 6),
+       Task.new(:package, 4), Task.new(:lint, 1)]
+end
+
+def needs
+  Array[[:configure, :fetch], [:compile_lib, :configure], [:compile_app, :compile_lib],
+        [:test, :compile_app], [:docs, :configure], [:package, :test], [:package, :docs],
+        [:lint, :fetch], [:test, :lint]]
+end
+
+def build_graph(ts, deps)
+  by_name = Hash[]
+  Array.each(ts) { |t| by_name[Task.get_name(t)] = t }
+  g = Graph.directed_graph
+  Array.each(ts) { |t| Graph.add_node(g, t) }
+  Array.each(deps) do |task, prereq|
+    Graph.add_edge(g, Hash.fetch(by_name, prereq), Hash.fetch(by_name, task), Task.get_secs(Hash.fetch(by_name, prereq)))
+  end
+  g
+end
+
+# Earliest finish time of each task when independent tasks run in parallel.
+def critical_path(g)
+  finish = Hash[]
+  from = Hash[]
+  Array.each(Graph.topo_sort(g)) do |t|
+    start = 0
+    Array.each(Graph.predecessors(g, t)) do |p|
+      if finish[p] > start
+        start = finish[p]
+        from[t] = p
+      end
+    end
+    finish[t] = start + Task.get_secs(t)
+  end
+  best = Hash.max_by(finish) { |t, f| f }
+  return [0, Array[]] unless best
+  last, total = best
+  path = Array[last]
+  while Hash.key?(from, path[0])
+    Array.unshift(path, from[path[0]])
+  end
+  [total, path]
+end
+
+g = build_graph(tasks, needs)
+order = Graph.topo_sort(g)
+puts("build order: #{Array.join(order, " ")}")
+puts("sequential: #{Array.sum(Array.map(order) { Task.get_secs(it) })}s")
+total, path = critical_path(g)
+puts("parallel:   #{total}s, critical path #{Array.join(path, " > ")}")
+
+# What must be rebuilt when configure changes: everything reachable from it.
+changed = Array.find(tasks) { Task.get_name(it) == :configure }
+puts("rebuild after configure: #{Array.join(Graph.bfs(g, changed), ", ")}") if changed
+
+# A cycle: package -> fetch closes the loop.
+bad = build_graph(tasks, Array[*needs, [:fetch, :package]])
+begin
+  Graph.topo_sort(bad)
+rescue CycleError => e
+  puts("rejected: #{Exception.message(e)}")
+  puts("cycle length #{Array.size(CycleError.get_cycle(e)) - 1}")
+end
+puts("acyclic? #{Graph.acyclic?(g)} / #{Graph.acyclic?(bad)}")

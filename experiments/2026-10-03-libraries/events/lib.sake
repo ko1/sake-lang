@@ -1,0 +1,132 @@
+# ==== events: an event bus and a finite state machine ====
+#
+# Sake has no first-class blocks, so a "callback" is a value of a Struct type that includes
+# a library module and defines the module's required functions. The library calls them by
+# dispatch (`Handler.handle(h, ...)`), which runs the `handle` of h's own type.
+#
+# An event is a Tuple [name, data]: name is a Symbol, data is anything (often a Record).
+
+# ---- the handler interface ----
+module Handler
+  def handle(h, bus, ev) = raise(NotImplementedError)
+end
+
+# A ready-made handler: records every event it gets (also keeps Handler included by some
+# type, which a program that never subscribes anything still needs).
+class Recorder < {reader: [events]}
+  include Handler
+  def create = Recorder.new(Tuple[])
+  def handle(r, bus, ev) = Array.push(@events, ev)
+  def names(r) = Array.map(@events) { |name, data| name }
+end
+
+# ---- the bus ----
+# subs: Array of [id, pattern Symbol, handler]; the pattern :* matches every event.
+# queue: events emitted while a publish is running, delivered after it (no re-entrancy).
+# Unsubscribing is by the id `on` returns: handlers are Struct values, and `==` on them
+# compares contents, so two equal handlers could not be told apart.
+class Bus < {reader: [subs, queue, busy, delivered, last_id]}
+  def create = Bus.new(Tuple[], Tuple[], false, 0, 0)
+
+  def on(bus, pattern, handler)
+    @last_id += 1
+    Array.push(@subs, [@last_id, pattern, handler])
+    @last_id
+  end
+
+  def off(bus, id)
+    before = Array.size(@subs)
+    Array.delete_if(@subs) { |i, pat, h| i == id }
+    before - Array.size(@subs)
+  end
+
+  def subscribers(bus, name) = Array.count(@subs) { |i, pat, h| pat == name || pat == :* }
+
+  # Deliver ev now, then every event the handlers emitted, in order. Returns deliveries made.
+  def publish(bus, name, data)
+    Array.push(@queue, [name, data])
+    return 0 if @busy
+    @busy = true
+    n = 0
+    while true
+      ev = Array.shift(@queue)
+      break unless ev
+      ev_name, _ = ev
+      # A snapshot: a handler may subscribe or unsubscribe while this event is delivered.
+      Array.each(Array.dup(@subs)) do |i, pat, h|
+        if pat == ev_name || pat == :*
+          Handler.handle(h, bus, ev)
+          n += 1
+        end
+      end
+    end
+    @busy = false
+    @delivered += n
+    n
+  end
+end
+
+# ---- the state machine ----
+# A transition is [from, event, to, guard, action]; from may be :* (any state), to may be :*
+# (stay), guard/action may be :none.
+# The hooks value includes Hooks; it overrides only what it needs (defaults below).
+module Hooks
+  def guard?(hk, name, fsm, data) = true
+  def act(hk, name, fsm, data) = nil
+  def enter(hk, state, fsm, data) = nil
+  def leave(hk, state, fsm, data) = nil
+  def rejected(hk, event, fsm, data) = nil
+end
+
+# Hooks that do nothing: for a machine that is only a transition table (also keeps Hooks
+# included by some type, which a program without hooks of its own still needs).
+class NoHooks < {reader: [label]}
+  include Hooks
+end
+
+class Fsm < {reader: [name, table, hooks, history, state, bus]}
+  def create(name, initial, hooks) = Fsm.new(name, Tuple[], hooks, Array[], initial, nil)
+  def plain(name, initial) = create(name, initial, NoHooks.new(name))
+
+  def allow(fsm, from, event, to, guard, action)
+    Array.push(@table, [from, event, to, guard, action])
+    fsm
+  end
+
+  def attach(fsm, bus) = @bus = bus
+
+  def events_from(fsm, state)
+    Array.select(@table) { |from, e, to, g, a| from == state || from == :* }
+    Array.map(_) { |from, e, to, g, a| e }
+    Array.uniq(_)
+  end
+
+  # Fire event: the first matching transition whose guard passes wins.
+  # Returns the new state, or nil when no transition applies.
+  def fire(fsm, event, data)
+    cur = @state
+    hk = @hooks
+    found = Array.find(@table) do |from, e, to, g, a|
+      (from == cur || from == :*) && e == event && (g == :none || Hooks.guard?(hk, g, fsm, data))
+    end
+    unless found
+      Hooks.rejected(hk, event, fsm, data)
+      notify(fsm, :fsm_rejected, {machine: @name, state: cur, event: event})
+      return nil
+    end
+    from, e, target, g, action = found
+    to = target == :* ? cur : target
+    Hooks.leave(hk, cur, fsm, data) if to != cur
+    Hooks.act(hk, action, fsm, data) if action != :none
+    @state = to
+    Array.push(@history, to)
+    Hooks.enter(hk, to, fsm, data) if to != cur
+    notify(fsm, :fsm_moved, {machine: @name, from: cur, to: to, event: event})
+    to
+  end
+
+  def notify(fsm, name, data)
+    b = @bus
+    Bus.publish(b, name, data) if b
+  end
+end

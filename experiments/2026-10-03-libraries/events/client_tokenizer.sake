@@ -1,0 +1,61 @@
+# An unusual use: the Fsm as a tokenizer. Each character is an event (:digit, :alpha, :space,
+# :op); actions build the current token, and leaving a state emits the token.
+# No bus here: the hooks value collects the tokens itself.
+
+class Lexer < {reader: [tokens, buf]}
+  include Hooks
+  def act(lx, name, fsm, ch)
+    case name
+    in :push_char then @buf = @buf + ch
+    in :emit_op then Array.push(@tokens, [:op, ch])
+    end
+  end
+  def leave(lx, state, fsm, ch)
+    case state
+    in :in_num
+      Array.push(@tokens, [:num, String.to_i(@buf)])
+      @buf = ""
+    in :in_word
+      Array.push(@tokens, [:word, @buf])
+      @buf = ""
+    in :idle
+      nil
+    end
+  end
+end
+
+def char_kind(ch)
+  if String.match?(ch, /\d/) then :digit
+  elsif String.match?(ch, /[A-Za-z_]/) then :alpha
+  elsif ch == " " then :space
+  else :op
+  end
+end
+
+def lexer_machine(lx)
+  m = Fsm.create("lexer", :idle, lx)
+  Fsm.allow(m, :idle, :digit, :in_num, :none, :push_char)
+  Fsm.allow(m, :idle, :alpha, :in_word, :none, :push_char)
+  Fsm.allow(m, :in_num, :digit, :in_num, :none, :push_char)
+  Fsm.allow(m, :in_word, :alpha, :in_word, :none, :push_char)
+  Fsm.allow(m, :in_word, :digit, :in_word, :none, :push_char)
+  Fsm.allow(m, :in_num, :alpha, :in_word, :none, :push_char)   # "3x" -> 3, x (leave emits 3)
+  Fsm.allow(m, :*, :space, :idle, :none, :none)
+  Fsm.allow(m, :*, :op, :idle, :none, :emit_op)
+  Fsm.allow(m, :*, :eof, :idle, :none, :none)
+  m
+end
+
+def tokenize(src)
+  lx = Lexer.new(Tuple[], "")
+  m = lexer_machine(lx)
+  Array.each(String.chars(src)) { |ch| Fsm.fire(m, char_kind(ch), ch) }
+  Fsm.fire(m, :eof, "")
+  Lexer.get_tokens(lx)
+end
+
+Array.each(Array["x1 = 42 + y*3", "total=price*qty-7", "3x+  10"]) do |src|
+  toks = tokenize(src)
+  shown = Array.map(toks) { |kind, v| "#{kind}:#{v}" }
+  puts("#{Kernel.inspect(src)} -> #{Array.join(shown, " ")}")
+end

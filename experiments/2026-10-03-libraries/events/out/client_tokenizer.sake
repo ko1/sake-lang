@@ -1,0 +1,194 @@
+# ==== events: an event bus and a finite state machine ====
+#
+# Sake has no first-class blocks, so a "callback" is a value of a Struct type that includes
+# a library module and defines the module's required functions. The library calls them by
+# dispatch (`Handler.handle(h, ...)`), which runs the `handle` of h's own type.
+#
+# An event is a Tuple [name, data]: name is a Symbol, data is anything (often a Record).
+
+# ---- the handler interface ----
+module Handler
+  def handle(h, bus, ev) = raise(NotImplementedError)
+end
+
+# A ready-made handler: records every event it gets (also keeps Handler included by some
+# type, which a program that never subscribes anything still needs).
+class Recorder < {reader: [events]}
+  include Handler
+  def create = Recorder.new(Tuple[])
+  def handle(r, bus, ev) = Array.push(@events, ev)
+  def names(r) = Array.map(@events) { |name, data| name }
+end
+
+# ---- the bus ----
+# subs: Array of [id, pattern Symbol, handler]; the pattern :* matches every event.
+# queue: events emitted while a publish is running, delivered after it (no re-entrancy).
+# Unsubscribing is by the id `on` returns: handlers are Struct values, and `==` on them
+# compares contents, so two equal handlers could not be told apart.
+class Bus < {reader: [subs, queue, busy, delivered, last_id]}
+  def create = Bus.new(Tuple[], Tuple[], false, 0, 0)
+
+  def on(bus, pattern, handler)
+    @last_id += 1
+    Array.push(@subs, [@last_id, pattern, handler])
+    @last_id
+  end
+
+  def off(bus, id)
+    before = Array.size(@subs)
+    Array.delete_if(@subs) { |i, pat, h| i == id }
+    before - Array.size(@subs)
+  end
+
+  def subscribers(bus, name) = Array.count(@subs) { |i, pat, h| pat == name || pat == :* }
+
+  # Deliver ev now, then every event the handlers emitted, in order. Returns deliveries made.
+  def publish(bus, name, data)
+    Array.push(@queue, [name, data])
+    return 0 if @busy
+    @busy = true
+    n = 0
+    while true
+      ev = Array.shift(@queue)
+      break unless ev
+      ev_name, _ = ev
+      # A snapshot: a handler may subscribe or unsubscribe while this event is delivered.
+      Array.each(Array.dup(@subs)) do |i, pat, h|
+        if pat == ev_name || pat == :*
+          Handler.handle(h, bus, ev)
+          n += 1
+        end
+      end
+    end
+    @busy = false
+    @delivered += n
+    n
+  end
+end
+
+# ---- the state machine ----
+# A transition is [from, event, to, guard, action]; from may be :* (any state), to may be :*
+# (stay), guard/action may be :none.
+# The hooks value includes Hooks; it overrides only what it needs (defaults below).
+module Hooks
+  def guard?(hk, name, fsm, data) = true
+  def act(hk, name, fsm, data) = nil
+  def enter(hk, state, fsm, data) = nil
+  def leave(hk, state, fsm, data) = nil
+  def rejected(hk, event, fsm, data) = nil
+end
+
+# Hooks that do nothing: for a machine that is only a transition table (also keeps Hooks
+# included by some type, which a program without hooks of its own still needs).
+class NoHooks < {reader: [label]}
+  include Hooks
+end
+
+class Fsm < {reader: [name, table, hooks, history, state, bus]}
+  def create(name, initial, hooks) = Fsm.new(name, Tuple[], hooks, Array[], initial, nil)
+  def plain(name, initial) = create(name, initial, NoHooks.new(name))
+
+  def allow(fsm, from, event, to, guard, action)
+    Array.push(@table, [from, event, to, guard, action])
+    fsm
+  end
+
+  def attach(fsm, bus) = @bus = bus
+
+  def events_from(fsm, state)
+    Array.select(@table) { |from, e, to, g, a| from == state || from == :* }
+    Array.map(_) { |from, e, to, g, a| e }
+    Array.uniq(_)
+  end
+
+  # Fire event: the first matching transition whose guard passes wins.
+  # Returns the new state, or nil when no transition applies.
+  def fire(fsm, event, data)
+    cur = @state
+    hk = @hooks
+    found = Array.find(@table) do |from, e, to, g, a|
+      (from == cur || from == :*) && e == event && (g == :none || Hooks.guard?(hk, g, fsm, data))
+    end
+    unless found
+      Hooks.rejected(hk, event, fsm, data)
+      notify(fsm, :fsm_rejected, {machine: @name, state: cur, event: event})
+      return nil
+    end
+    from, e, target, g, action = found
+    to = target == :* ? cur : target
+    Hooks.leave(hk, cur, fsm, data) if to != cur
+    Hooks.act(hk, action, fsm, data) if action != :none
+    @state = to
+    Array.push(@history, to)
+    Hooks.enter(hk, to, fsm, data) if to != cur
+    notify(fsm, :fsm_moved, {machine: @name, from: cur, to: to, event: event})
+    to
+  end
+
+  def notify(fsm, name, data)
+    b = @bus
+    Bus.publish(b, name, data) if b
+  end
+end
+# ---- client_tokenizer.sake (client line N = out line N+133) ----
+# An unusual use: the Fsm as a tokenizer. Each character is an event (:digit, :alpha, :space,
+# :op); actions build the current token, and leaving a state emits the token.
+# No bus here: the hooks value collects the tokens itself.
+
+class Lexer < {reader: [tokens, buf]}
+  include Hooks
+  def act(lx, name, fsm, ch)
+    case name
+    in :push_char then @buf = @buf + ch
+    in :emit_op then Array.push(@tokens, [:op, ch])
+    end
+  end
+  def leave(lx, state, fsm, ch)
+    case state
+    in :in_num
+      Array.push(@tokens, [:num, String.to_i(@buf)])
+      @buf = ""
+    in :in_word
+      Array.push(@tokens, [:word, @buf])
+      @buf = ""
+    in :idle
+      nil
+    end
+  end
+end
+
+def char_kind(ch)
+  if String.match?(ch, /\d/) then :digit
+  elsif String.match?(ch, /[A-Za-z_]/) then :alpha
+  elsif ch == " " then :space
+  else :op
+  end
+end
+
+def lexer_machine(lx)
+  m = Fsm.create("lexer", :idle, lx)
+  Fsm.allow(m, :idle, :digit, :in_num, :none, :push_char)
+  Fsm.allow(m, :idle, :alpha, :in_word, :none, :push_char)
+  Fsm.allow(m, :in_num, :digit, :in_num, :none, :push_char)
+  Fsm.allow(m, :in_word, :alpha, :in_word, :none, :push_char)
+  Fsm.allow(m, :in_word, :digit, :in_word, :none, :push_char)
+  Fsm.allow(m, :in_num, :alpha, :in_word, :none, :push_char)   # "3x" -> 3, x (leave emits 3)
+  Fsm.allow(m, :*, :space, :idle, :none, :none)
+  Fsm.allow(m, :*, :op, :idle, :none, :emit_op)
+  Fsm.allow(m, :*, :eof, :idle, :none, :none)
+  m
+end
+
+def tokenize(src)
+  lx = Lexer.new(Tuple[], "")
+  m = lexer_machine(lx)
+  Array.each(String.chars(src)) { |ch| Fsm.fire(m, char_kind(ch), ch) }
+  Fsm.fire(m, :eof, "")
+  Lexer.get_tokens(lx)
+end
+
+Array.each(Array["x1 = 42 + y*3", "total=price*qty-7", "3x+  10"]) do |src|
+  toks = tokenize(src)
+  shown = Array.map(toks) { |kind, v| "#{kind}:#{v}" }
+  puts("#{Kernel.inspect(src)} -> #{Array.join(shown, " ")}")
+end

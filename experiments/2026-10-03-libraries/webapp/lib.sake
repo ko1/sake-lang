@@ -1,0 +1,376 @@
+# ==== webapp: a CGI-style web framework for Sake ====
+# One process per request: read the HTTP request from stdin, route it, write the response to stdout.
+
+# An exception a handler raises to stop with an error page (Sinatra's `halt 404`).
+HttpError = Exception.new(:status)
+
+# verb: "GET"/"POST"; query, headers, cookies, form, params: Hash of String => String.
+class Request < {reader: [verb, path, query, headers, cookies, form, body], accessor: [params]}
+  # A route parameter, then a form field, then a query parameter; nil if none.
+  def param(r, name)
+    v = @params[name]
+    v = @form[name] if v == nil
+    v = @query[name] if v == nil
+    v
+  end
+
+  def param_or(r, name, default)
+    v = param(r, name)
+    v ? v : default
+  end
+
+  def header(r, name) = @headers[String.downcase(name)]
+  def cookie(r, name) = @cookies[name]
+
+  # The request data are all Strings; this is where one becomes an Integer, or the request fails.
+  def int_param(r, name)
+    v = param(r, name)
+    raise HttpError.new("#{name} is missing", 400) unless v
+    raise HttpError.new("#{name} must be an integer: #{v}", 404) unless String.match?(v, /\A\d+\z/)
+    String.to_i(v)
+  end
+end
+
+# headers: Array of [name, value] Tuples (a name may repeat, as Set-Cookie does).
+class Response < {reader: [headers], accessor: [status, body]}
+  def add_header(r, name, value)
+    Array.push(@headers, [name, value])
+    r
+  end
+
+  def set_cookie(r, name, value)
+    add_header(r, "Set-Cookie", "#{name}=#{Web.url_encode(value)}; Path=/; HttpOnly")
+  end
+
+  def delete_cookie(r, name)
+    add_header(r, "Set-Cookie", "#{name}=; Path=/; Max-Age=0")
+  end
+
+  def to_http(r)
+    lines = String["HTTP/1.1 #{@status} #{Web.status_text(@status)}"]
+    Array.each(@headers) { |k, v| Array.push(lines, "#{k}: #{v}") }
+    Array.push(lines, "Content-Length: #{String.bytesize(@body)}")
+    Array.push(lines, "Connection: close")
+    Array.join(lines, "\r\n") + "\r\n\r\n" + @body
+  end
+end
+
+# HTML that is already safe to emit. A plain String is always escaped before it becomes HTML.
+class SafeHtml < {reader: [source]}
+  def to_s(h) = @source
+  def +(a, b) = SafeHtml.new(@source + SafeHtml.get_source(b))
+  include Arithmetic
+end
+
+module Html
+  module_function
+
+  def escape(x)
+    Array.join(Array.map(String.chars("#{x}")) do |c|
+      case c
+      in "&" then "&amp;"
+      in "<" then "&lt;"
+      in ">" then "&gt;"
+      in "\"" then "&quot;"
+      in "'" then "&#39;"
+      else c
+      end
+    end, "")
+  end
+
+  def raw(s) = SafeHtml.new(s)
+
+  # A value placed in HTML: SafeHtml as is, anything else escaped.
+  def fragment(v) = (v in SafeHtml) ? SafeHtml.get_source(v) : escape(v)
+
+  # "{{name}}" is replaced by vars["name"], escaped unless it is SafeHtml.
+  def render(tmpl, vars)
+    out = String[]
+    rest = tmpl
+    while true
+      before, open, after = String.partition(rest, "{{")
+      Array.push(out, before)
+      rest = after
+      break if String.empty?(open)
+      inner, close, after = String.partition(rest, "}}")
+      raise ArgumentError.new("template: unclosed {{") if String.empty?(close)
+      name = String.strip(inner)
+      rest = after
+      raise ArgumentError.new("template: no value for {{#{name}}}") unless Hash.key?(vars, name)
+      Array.push(out, fragment(vars[name]))
+    end
+    SafeHtml.new(Array.join(out, ""))
+  end
+
+  # The block makes the SafeHtml for one element; the results are joined.
+  def each(xs)
+    out = String[]
+    Array.each(xs) { |x| Array.push(out, SafeHtml.get_source(yield(x))) }
+    SafeHtml.new(Array.join(out, ""))
+  end
+
+  def page(title, body)
+    render(<<~HTML, Hash["title" => title, "body" => body])
+      <!doctype html>
+      <html><head><meta charset="utf-8"><title>{{title}}</title></head>
+      <body>
+      {{body}}
+      </body></html>
+    HTML
+  end
+end
+
+module Json
+  module_function
+
+  def string(s)
+    out = String.chars(s).Array.map do |c|
+      case c
+      in "\"" then "\\\""
+      in "\\" then "\\\\"
+      in "\n" then "\\n"
+      in "\r" then "\\r"
+      in "\t" then "\\t"
+      else String.ord(c) < 32 ? format("\\u%04x", String.ord(c)) : c
+      end
+    end
+    "\"" + Array.join(out, "") + "\""
+  end
+
+  def encode(v)
+    case v
+    in nil then "null"
+    in true then "true"
+    in false then "false"
+    in Integer | Float then "#{v}"
+    in String then string(v)
+    in Symbol then string(Symbol.to_s(v))
+    in Array then "[" + Array.join(Array.map(v) { |x| encode(x) }, ",") + "]"
+    in Hash then "{" + Array.join(Hash.map(v) { |k, x| string("#{k}") + ":" + encode(x) }, ",") + "}"
+    else raise ArgumentError.new("json: cannot encode #{Kernel.inspect(v)}")   # also quiets a level-3 false report (bug_bool_exhaustive.sake)
+    end
+  end
+end
+
+# A table in a file: one row per line, fields separated by tabs.
+module Tsv
+  module_function
+
+  def esc(s) = Array.join(Array.map(String.chars(s)) { |c| c == "\t" ? "\\t" : (c == "\n" ? "\\n" : (c == "\\" ? "\\\\" : c)) }, "")
+
+  def unesc(s)
+    out = String[]
+    chars = String.chars(s)
+    i = 0
+    while i < Array.size(chars)
+      c = Array.fetch(chars, i)
+      if c == "\\" && i + 1 < Array.size(chars)
+        d = Array.fetch(chars, i + 1)
+        Array.push(out, d == "t" ? "\t" : (d == "n" ? "\n" : d))
+        i += 2
+      else
+        Array.push(out, c)
+        i += 1
+      end
+    end
+    Array.join(out, "")
+  end
+
+  def load(path)
+    rows = Array[]
+    return rows unless File.exist?(path)
+    Array.each(File.readlines(path)) do |line|
+      line = String.chomp(line)
+      next if String.empty?(line)
+      Array.push(rows, Array.map(String.split(line, "\t", -1)) { |f| unesc(f) })
+    end
+    rows
+  end
+
+  def save(path, rows)
+    File.write(path, Array.join(Array.map(rows) { |r| Array.join(Array.map(r) { |f| esc(f) }, "\t") + "\n" }, ""))
+  end
+end
+
+module Web
+  module_function
+
+  def status_text(code)
+    case code
+    in 200 then "OK"
+    in 201 then "Created"
+    in 303 then "See Other"
+    in 400 then "Bad Request"
+    in 404 then "Not Found"
+    in 405 then "Method Not Allowed"
+    in 422 then "Unprocessable Content"
+    in 500 then "Internal Server Error"
+    else "Unknown"
+    end
+  end
+
+  # ---- percent-encoding ----
+
+  def hex_digit?(b) = (b >= 48 && b <= 57) || (b >= 65 && b <= 70) || (b >= 97 && b <= 102)
+
+  # Bytes to a UTF-8 String. Integer.chr gives BINARY Strings, so each code point goes through format("%c").
+  def utf8(bytes)
+    out = String[]
+    i = 0
+    n = Array.size(bytes)
+    while i < n
+      b = Array.fetch(bytes, i)
+      len = b < 128 ? 1 : (b >= 240 ? 4 : (b >= 224 ? 3 : (b >= 192 ? 2 : 0)))
+      cp = len == 1 ? b : (len == 4 ? b & 7 : (len == 3 ? b & 15 : b & 31))
+      ok = len > 0 && i + len <= n
+      k = 1
+      while ok && k < len
+        c = Array.fetch(bytes, i + k)
+        ok = false unless c >= 128 && c < 192
+        cp = (cp << 6) | (c & 63)
+        k += 1
+      end
+      if ok
+        Array.push(out, format("%c", cp))
+        i += len
+      else
+        Array.push(out, "\u{fffd}")
+        i += 1
+      end
+    end
+    Array.join(out, "")
+  end
+
+  def url_decode(s)
+    src = String.bytes(String.tr(s, "+", " "))
+    bytes = Integer[]
+    i = 0
+    n = Array.size(src)
+    while i < n
+      b = Array.fetch(src, i)
+      if b == 37 && i + 2 < n &&hex_digit?(Array.fetch(src, i + 1)) && hex_digit?(Array.fetch(src, i + 2))
+        Array.push(bytes, String.hex(Integer.chr(Array.fetch(src, i + 1)) + Integer.chr(Array.fetch(src, i + 2))))
+        i += 3
+      else
+        Array.push(bytes, b)
+        i += 1
+      end
+    end
+    utf8(bytes)
+  end
+
+  def url_encode(s)
+    Array.join(Array.map(String.bytes(s)) do |b|
+      unreserved = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 45 || b == 46 || b == 95 || b == 126
+      unreserved ? Integer.chr(b) : format("%%%02X", b)
+    end, "")
+  end
+
+  # "a=1&b=2" (or "a=1; b=2" for cookies) to a Hash of decoded Strings.
+  def parse_pairs(s, sep)
+    h = Hash[]
+    Array.each(String.split(s, sep)) do |pair|
+      pair = String.strip(pair)
+      next if String.empty?(pair)
+      k, eq, v = String.partition(pair, "=")
+      h[url_decode(k)] = url_decode(v)
+    end
+    h
+  end
+
+  # ---- reading the request from stdin ----
+
+  def read_request
+    line = gets
+    raise HttpError.new("empty request", 400) unless line
+    verb, target, version = String.split(String.chomp(line), " ")
+    raise HttpError.new("bad request line", 400) unless verb && target && version
+    path, q, query = String.partition(target, "?")
+    headers = Hash[]
+    while true
+      l = gets
+      break unless l
+      l = String.chomp(l)
+      break if String.empty?(l)
+      k, colon, v = String.partition(l, ":")
+      headers[String.downcase(k)] = String.strip(v)
+    end
+    len_s = headers["content-length"]
+    len = len_s ? String.to_i(len_s) : 0
+    body = ""
+    while String.bytesize(body) < len
+      l = gets
+      break unless l
+      body = body + l
+    end
+    ctype = headers["content-type"]
+    form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash[]
+    cookie = headers["cookie"]
+    cookies = cookie ? parse_pairs(cookie, ";") : Hash[]
+    Request.new(verb, path, parse_pairs(query, "&"), headers, cookies, form, body, Hash[])
+  end
+
+  # ---- routing ----
+
+  # "/todos/:id" against "/todos/3" gives {"id" => "3"}; no match gives nil.
+  def match_path(pattern, path)
+    ps = String.split(pattern, "/")
+    xs = String.split(path, "/")
+    return nil unless Array.size(ps) == Array.size(xs)
+    params = Hash[]
+    Array.each_with_index(ps) do |seg, i|
+      x = Array.fetch(xs, i)
+      if String.start_with?(seg, ":")
+        params[String.delete_prefix(seg, ":")] = url_decode(x)
+      elsif seg != x
+        return nil
+      end
+    end
+    params
+  end
+
+  # routes: Array of [verb, pattern, handler]. Gives the handler of the first match and stores the
+  # route parameters in req; :not_found or :method_not_allowed otherwise.
+  def dispatch(routes, req)
+    path_seen = false
+    Array.each(routes) do |verb, pattern, handler|
+      params = match_path(pattern, Request.get_path(req))
+      next unless params
+      path_seen = true
+      if verb == Request.get_verb(req)
+        Request.set_params(req, params)
+        return [:ok, handler]
+      end
+    end
+    [path_seen ? :method_not_allowed : :not_found, nil]
+  end
+
+  # ---- responses ----
+
+  def html(status, page) = Response.new(Tuple[["Content-Type", "text/html; charset=utf-8"]], status, SafeHtml.get_source(page))
+  def text(status, s) = Response.new(Tuple[["Content-Type", "text/plain; charset=utf-8"]], status, s)
+  def json(status, v) = Response.new(Tuple[["Content-Type", "application/json"]], status, Json.encode(v) + "\n")
+  def redirect(location) = Response.new(Tuple[["Location", location]], 303, "")
+
+  def error_page(status, message)
+    html(status, Html.page("#{status} #{status_text(status)}",
+      Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash["s" => status, "t" => status_text(status), "m" => message])))
+  end
+
+  # The whole request cycle. The block gets (handler, request) for a matched route and gives a Response.
+  def run(routes)
+    res = begin
+      req = read_request
+      status, handler = dispatch(routes, req)
+      case status
+      in :ok then yield(handler, req)
+      in :not_found then error_page(404, "no route for #{Request.get_verb(req)} #{Request.get_path(req)}")
+      in :method_not_allowed then error_page(405, "#{Request.get_verb(req)} is not allowed for #{Request.get_path(req)}")
+      end
+    rescue HttpError => e
+      error_page(HttpError.get_status(e), Exception.message(e))
+    end
+    print(Response.to_http(res))
+  end
+end
+# ==== end of webapp ====

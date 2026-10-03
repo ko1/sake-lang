@@ -1,0 +1,49 @@
+# The library without a server: decoding, routing, escaping, JSON, templates, the TSV store.
+def check(label, got, want)
+  puts("#{got == want ? "ok  " : "FAIL"} #{label}: #{Kernel.inspect(got)}")
+end
+
+check("url_decode +", Web.url_decode("a+b%20c"), "a b c")
+check("url_decode utf8", Web.url_decode("%E3%81%82%E3%81%84"), "あい")
+check("url_decode raw utf8", Web.url_decode("あ%21"), "あ!")
+check("url_decode bad %", Web.url_decode("100%zz%4"), "100%zz%4")
+check("url_decode bad utf8", Web.url_decode("%E3%81"), "\u{fffd}\u{fffd}")
+check("url_encode", Web.url_encode("a b&c=あ"), "a%20b%26c%3D%E3%81%82")
+check("round trip", Web.url_decode(Web.url_encode("x/y?z=1&ä")), "x/y?z=1&ä")
+check("pairs", Web.parse_pairs("a=1&b=x+y&c&a=2", "&"), Hash["a" => "2", "b" => "x y", "c" => ""])
+check("cookies", Web.parse_pairs("sid=abc; theme=dark", ";"), Hash["sid" => "abc", "theme" => "dark"])
+
+check("match /", Web.match_path("/", "/"), Hash[])
+check("match :id", Web.match_path("/todos/:id", "/todos/42"), Hash["id" => "42"])
+check("match miss", Web.match_path("/todos/:id", "/todos/42/x"), nil)
+check("match encoded", Web.match_path("/tags/:t", "/tags/a%2Fb"), Hash["t" => "a/b"])
+
+check("escape", Html.escape("<a href=\"x\">'&'</a>"), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;")
+check("render", Html.render("<b>{{ x }}</b>{{y}}", Hash["x" => "<i>", "y" => Html.raw("<i>ok</i>")]).SafeHtml.get_source, "<b>&lt;i&gt;</b><i>ok</i>")
+check("render number", Html.render("{{n}}", Hash["n" => 3]).SafeHtml.get_source, "3")
+check("each", Html.each(String["a", "<"]) { |s| Html.render("<li>{{s}}</li>", Hash["s" => s]) }.SafeHtml.get_source, "<li>a</li><li>&lt;</li>")
+check("safe +", (Html.raw("<p>") + Html.raw("</p>")).SafeHtml.get_source, "<p></p>")
+begin
+  Html.render("{{nope}}", Hash["x" => 1])
+rescue ArgumentError => e
+  check("render missing", Exception.message(e), "template: no value for {{nope}}")
+end
+
+check("json", Json.encode(Hash["a" => Array[1, 2.5, nil, true], "b" => "q\"\n\\", "c" => :sym]), "{\"a\":[1,2.5,null,true],\"b\":\"q\\\"\\n\\\\\",\"c\":\"sym\"}")
+
+path = "selftest.tsv"
+Tsv.save(path, Array[String["1", "tab\there", "back\\slash"], String["2", "new\nline", ""]])
+check("tsv", Tsv.load(path), Array[Array["1", "tab\there", "back\\slash"], Array["2", "new\nline", ""]])
+
+routes = Tuple[["GET", "/", :index], ["GET", "/todos/:id", :show], ["POST", "/todos/:id", :update]]
+req = Request.new("POST", "/todos/7", Hash[], Hash[], Hash[], Hash["title" => "x"], "", Hash[])
+check("dispatch", Web.dispatch(routes, req), [:ok, :update])
+check("params", Request.int_param(req, "id"), 7)
+check("param form", Request.param(req, "title"), "x")
+req2 = Request.new("DELETE", "/todos/7", Hash[], Hash[], Hash[], Hash[], "", Hash[])
+check("405", Web.dispatch(routes, req2), [:method_not_allowed, nil])
+req3 = Request.new("GET", "/nope", Hash[], Hash[], Hash[], Hash[], "", Hash[])
+check("404", Web.dispatch(routes, req3), [:not_found, nil])
+res = Web.redirect("/")
+Response.set_cookie(res, "flash", "Added: あ")
+puts(String.gsub(Response.to_http(res), "\r\n", "|"))

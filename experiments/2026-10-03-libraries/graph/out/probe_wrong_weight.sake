@@ -1,0 +1,289 @@
+# graph library: nodes can be any value usable as a Hash key.
+# A Graph holds adj: node => Tuple[] of [neighbor, weight].
+
+CycleError = Exception.new(:cycle)
+
+# A binary min-heap of Tuples; Tuples order element by element.
+class Heap < {reader: [items]}
+  def make = Heap.new(Tuple[])
+  def empty?(h) = Array.empty?(@items)
+  def size(h) = Array.size(@items)
+
+  def push(h, x)
+    a = @items
+    Array.push(a, x)
+    i = Array.size(a) - 1
+    while i > 0
+      parent = (i - 1) / 2
+      break if a[parent] <= a[i]
+      a[parent], a[i] = a[i], a[parent]
+      i = parent
+    end
+    h
+  end
+
+  def pop(h)
+    a = @items
+    top = a[0]
+    last = Array.pop(a)
+    return top if last == nil || Array.empty?(a)
+    a[0] = last
+    i = 0
+    n = Array.size(a)
+    while true
+      l = 2 * i + 1
+      r = l + 1
+      m = i
+      m = l if l < n && a[l] < a[m]
+      m = r if r < n && a[r] < a[m]
+      break if m == i
+      a[m], a[i] = a[i], a[m]
+      i = m
+    end
+    top
+  end
+end
+
+class Graph < {reader: [directed, adj]}
+  def directed_graph = Graph.new(true, Hash[])
+  def undirected_graph = Graph.new(false, Hash[])
+
+  def add_node(g, v)
+    Hash.store(@adj, v, Tuple[]) unless Hash.key?(@adj, v)
+    g
+  end
+
+  def add_edge(g, a, b, w)
+    add_node(g, a)
+    add_node(g, b)
+    Array.push(@adj[a], [b, w])
+    Array.push(@adj[b], [a, w]) unless @directed
+    g
+  end
+
+  def connect(g, a, b) = add_edge(g, a, b, 1)
+
+  def nodes(g) = Hash.keys(@adj)
+  def size(g) = Hash.size(@adj)
+  def has_node?(g, v) = Hash.key?(@adj, v)
+  def out_edges(g, v) = Hash.fetch(@adj, v, Tuple[])
+  def neighbors(g, v) = Array.map(out_edges(g, v)) { |n, w| n }
+  def predecessors(g, v) = Array.select(nodes(g)) { |p| has_edge?(g, p, v) }
+  def has_edge?(g, a, b) = Array.any?(out_edges(g, a)) { |n, w| n == b }
+
+  def weight(g, a, b)
+    e = Array.find(out_edges(g, a)) { |n, w| n == b }
+    return nil unless e
+    _, w = e
+    w
+  end
+
+  # Each edge once, as [from, to, weight].
+  def edges(g)
+    out = Tuple[]
+    seen = Set[]
+    Hash.each(@adj) do |a, es|
+      Array.each(es) do |b, w|
+        next if !@directed && Set.include?(seen, [b, a])
+        Set.add(seen, [a, b])
+        Array.push(out, [a, b, w])
+      end
+    end
+    out
+  end
+
+  # Visits nodes reachable from start in BFS order; yields (node, depth).
+  def each_bfs(g, start)
+    depth = Hash[start => 0]
+    queue = Array[start]
+    until Array.empty?(queue)
+      v = Array.shift(queue)
+      d = depth[v]
+      yield(v, d)
+      Array.each(neighbors(g, v)) do |n|
+        next if Hash.key?(depth, n)
+        depth[n] = d + 1
+        Array.push(queue, n)
+      end
+    end
+    g
+  end
+
+  def bfs(g, start)
+    out = Array[]
+    each_bfs(g, start) { |v, d| Array.push(out, v) }
+    out
+  end
+
+  # Visits nodes reachable from start in DFS preorder.
+  def each_dfs(g, start)
+    seen = Set[]
+    stack = Array[start]
+    until Array.empty?(stack)
+      v = Array.pop(stack)
+      next if Set.include?(seen, v)
+      Set.add(seen, v)
+      yield(v)
+      Array.reverse_each(neighbors(g, v)) { |n| Array.push(stack, n) unless Set.include?(seen, n) }
+    end
+    g
+  end
+
+  def dfs(g, start)
+    out = Array[]
+    each_dfs(g, start) { |v| Array.push(out, v) }
+    out
+  end
+
+  # Fewest edges from a to b: an Array of nodes, or nil.
+  def bfs_path(g, a, b)
+    prev = Hash[a => a]
+    each_bfs(g, a) do |v, d|
+      break if v == b
+      Array.each(neighbors(g, v)) { |n| prev[n] = v unless Hash.key?(prev, n) }
+    end
+    return nil unless Hash.key?(prev, b)
+    trace(prev, a, b)
+  end
+
+  def trace(prev, a, b)
+    path = Array[b]
+    v = b
+    while v != a
+      v = prev[v]
+      Array.unshift(path, v)
+    end
+    path
+  end
+
+  # Dijkstra from src: [dist, prev], both Hashes keyed by node.
+  # The heap holds [dist, seq] only: nodes are never compared, so any key type works.
+  def dijkstra(g, src)
+    dist = Hash[src => 0]
+    prev = Hash[]
+    done = Set[]
+    heap = Heap.make
+    queued = Array[src]
+    Heap.push(heap, [0, 0])
+    until Heap.empty?(heap)
+      d, seq = Heap.pop(heap)
+      v = queued[seq]
+      next if Set.include?(done, v)
+      Set.add(done, v)
+      Array.each(out_edges(g, v)) do |n, w|
+        raise ArgumentError, "negative weight" if w < 0
+        nd = d + w
+        old = dist[n]
+        if old == nil || nd < old
+          dist[n] = nd
+          prev[n] = v
+          Heap.push(heap, [nd, Array.size(queued)])
+          Array.push(queued, n)
+        end
+      end
+    end
+    [dist, prev]
+  end
+
+  # Cheapest path from a to b: [cost, nodes], or nil.
+  def shortest_path(g, a, b)
+    dist, prev = dijkstra(g, a)
+    cost = dist[b]
+    return nil if cost == nil
+    prev[a] = a
+    [cost, trace(prev, a, b)]
+  end
+
+  # Nodes so that every edge goes forward; raises CycleError with the cycle.
+  def topo_sort(g)
+    raise ArgumentError, "topo_sort needs a directed graph" unless @directed
+    state = Hash.new(0)
+    out = Array[]
+    Array.each(nodes(g)) { |v| topo_visit(g, v, state, Array[], out) if state[v] == 0 }
+    Array.reverse(out)
+  end
+
+  def topo_visit(g, v, state, path, out)
+    state[v] = 1
+    Array.push(path, v)
+    Array.each(neighbors(g, v)) do |n|
+      if state[n] == 1
+        i = Array.index(path, n) || 0
+        cycle = Array.drop(path, i)
+        Array.push(cycle, n)
+        raise CycleError.new("cycle: #{Array.join(cycle, " -> ")}", cycle)
+      elsif state[n] == 0
+        topo_visit(g, n, state, path, out)
+      end
+    end
+    Array.pop(path)
+    state[v] = 2
+    Array.push(out, v)
+  end
+
+  def acyclic?(g)
+    topo_sort(g)
+    true
+  rescue CycleError
+    false
+  end
+
+  # Connected components (weakly connected for a directed graph), by union-find.
+  def components(g)
+    parent = Hash[]
+    Array.each(nodes(g)) { |v| parent[v] = v }
+    Array.each(edges(g)) do |a, b, w|
+      ra = find_root(parent, a)
+      rb = find_root(parent, b)
+      parent[ra] = rb if ra != rb
+    end
+    groups = Hash[]
+    Array.each(nodes(g)) do |v|
+      r = find_root(parent, v)
+      groups[r] = Array[] unless Hash.key?(groups, r)
+      Array.push(groups[r], v)
+    end
+    Hash.values(groups)
+  end
+
+  def find_root(parent, v)
+    while parent[v] != v
+      parent[v] = parent[parent[v]]
+      v = parent[v]
+    end
+    v
+  end
+end
+
+# Search over a graph that is never stored: the includer defines
+# `each_neighbor(s, v) { |n, w| ... }`, the place a callback would go in Ruby.
+module Implicit
+  # The stub needs the dead yield: without it, calls with a block are rejected
+  # (bug_required_block_function.sake), and without a stub at all, a program that
+  # includes Implicit nowhere is rejected (bug_unused_mixin_undefined.sake).
+  def each_neighbor(s, v)
+    raise(NotImplementedError)
+    yield(v, 0)
+  end
+
+  def bfs_path(s, a, b)
+    prev = Hash[a => a]
+    queue = Array[a]
+    until Array.empty?(queue)
+      v = Array.shift(queue)
+      next unless v
+      return Graph.trace(prev, a, b) if v == b
+      each_neighbor(s, v) do |n, w|
+        next if Hash.key?(prev, n)
+        prev[n] = v
+        Array.push(queue, n)
+      end
+    end
+    nil
+  end
+end
+# ---- probe_wrong_weight.sake starts at line 286 (client line = line - 285)
+# Deliberate client mistake: a String weight. Caught before running, reported inside lib.sake.
+g = Graph.undirected_graph
+Graph.add_edge(g, "a", "b", "5")
+p(Graph.shortest_path(g, "a", "b"))
