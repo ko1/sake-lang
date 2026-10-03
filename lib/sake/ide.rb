@@ -56,7 +56,8 @@ module Sake
       res[:ast] = [AST.dump(code.main), *code.functions.each_value.map { AST.dump(_1) }].join("\n")
       typer = Recorder.new(program).run
       items = CLI::STRICT_LEVELS.fetch(level)
-      res[:diagnostics] = CLI.strict_diagnostics(program, CLI::STRICT_ITEMS, typer).map do |d|
+      # Only the editor's file: a required library's own warnings are not the program's to fix.
+      res[:diagnostics] = CLI.strict_diagnostics(program, CLI::STRICT_ITEMS, typer).select { _1.path == PATH }.map do |d|
         item = d.message[/\[([\w-]+)\]\z/, 1]
         diagnostic(d, src, items.include?(item) ? "error" : "warning", level: CLI::STRICT_LEVELS.index { _1.include?(item) })
       end
@@ -69,6 +70,9 @@ module Sake
     end
 
     def diagnostic(d, src, severity, level: nil)
+      # An error in a required file shows on the first line, naming the file.
+      return { line: 1, col: 0, message: "#{File.basename(d.path)}:#{d.line}: #{d.message}", hints: d.hints, severity:, level: } if d.path != PATH
+
       { line: d.line, col: char_column(src, d.line, d.column), message: d.message, hints: d.hints, severity:, level: }
     end
 
@@ -174,7 +178,7 @@ module Sake
       def hovers
         reset_records unless @rec
         @rec.filter_map do |o, ty|
-          next if ty.empty?
+          next if ty.empty? || Sake.file_of(@program, o) != PATH
           loc = hover_location(o)
           { from: [loc.start_line, loc.start_character_column], to: [loc.end_line, loc.end_character_column], type: show(ty) }
         end
@@ -189,7 +193,7 @@ module Sake
 
       def signatures
         reset_records unless @rec
-        @fn_args.keys.map do |fn|
+        @fn_args.keys.select { Sake.file_of(@program, _1.node) == PATH }.map do |fn|
           { name: fn.full_name, line: fn.node.location.start_line,
             params: fn.params.each_with_index.map { |p, i| [p.to_s, show(@fn_args[fn][i] || [])] },
             returns: show(@fn_rets[fn] || []) }

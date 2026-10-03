@@ -944,7 +944,8 @@ Strings of incompatible encodings meeting (a byte from `Integer.chr(227)` next t
 ### Program arguments, exit, warn
 
 - `ARGV` is the Array of the program's arguments (`bin/sake prog.sake a b` gives `["a", "b"]`). It is
-  written like Ruby's constant, but it is an operation (`Kernel.ARGV`): Sake has no value constants.
+  written like Ruby's constant, but it is an operation (`Kernel.ARGV`): Sake has no value constants. Every use gives the same
+  Array, so `Array.shift(ARGV)` (or an option parser's `parse!`) removes an argument for later uses, as in Ruby.
 - `exit(status)` (Integer, or true for 0 / false for 1; default 0) ends the program with that exit
   status; `ensure` clauses run on the way out. Code after a call to `exit` is not reached, for the
   checks before running too.

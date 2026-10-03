@@ -23,6 +23,13 @@ class TestIDE < Minitest::Test
     assert(r["hovers"].any? { _1["type"] == "nil | Node" })
   end
 
+  def test_analyze_shows_only_the_editor_file
+    r = call(cmd: "analyze", src: "require \"json\"\np(JSON.generate(Hash[a: 1]))\n", level: 4)
+    assert(r["diagnostics"].all? { _1["line"] <= 2 })
+    assert(r["hovers"].all? { _1["from"][0] <= 2 })
+    assert_empty r["functions"]
+  end
+
   def test_analyze_static_errors_and_symbols
     r = call(cmd: "analyze", src: "Point = Struct.new(:x, :y)\nputs(String.upcse(\"a\"))\n", level: 1)
     assert_equal ["error", 2, 12], r["diagnostics"].first.values_at("severity", "line", "col")

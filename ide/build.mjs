@@ -16,6 +16,10 @@ const sources = { "/sake/lib/sake.rb": await fs.readFile(path.join(lib, "sake.rb
 for (const f of (await fs.readdir(path.join(lib, "sake"))).filter((f) => f.endsWith(".rb")).sort()) {
   sources[`/sake/lib/sake/${f}`] = await fs.readFile(path.join(lib, "sake", f), "utf8");
 }
+// sakelib/*.sake, which `require "json"` reads; the loader writes them into the VM's file system.
+for (const f of (await fs.readdir(path.join(root, "sakelib"))).filter((f) => f.endsWith(".sake")).sort()) {
+  sources[`/sake/sakelib/${f}`] = await fs.readFile(path.join(root, "sakelib", f), "utf8");
+}
 const loader = await fs.readFile(path.join(here, "src/sake_loader.rb"), "utf8");
 await fs.writeFile(path.join(here, "src/sake_sources.gen.js"),
   `export const SOURCES = ${JSON.stringify(sources)};\nexport const LOADER = ${JSON.stringify(loader)};\n`);

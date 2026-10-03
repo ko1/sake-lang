@@ -421,6 +421,10 @@ module Sake
       raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     rescue ::EncodingError => e
       raise RunError.new("EncodingError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
+    rescue ::ArgumentError => e
+      # Broken UTF-8 (a byteslice cut mid-character) reaching a regexp or a scan: Ruby's ArgumentError.
+      raise unless e.message.start_with?("invalid byte sequence")
+      raise RunError.new("ArgumentError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     end
 
     # once { ... }: one value per place in the program, shared by threads (copies of this interpreter

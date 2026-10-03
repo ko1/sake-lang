@@ -3,9 +3,11 @@
 module Sake
   # A program's command-line arguments (ARGV) and `exit`, set and caught by the CLI.
   class << self
-    attr_writer :argv
-
     def argv = @argv ||= []
+
+    def argv=(xs)
+      @argv = xs.map { _1.dup.freeze }
+    end
   end
 
   # Raised by Kernel.exit: ends the program with status (ensure clauses run on the way out).
@@ -57,7 +59,7 @@ module Sake
       reg.define("Kernel", :exit, [], optional: [%w[Integer Boolean]]) do |st = 0|
         raise Exit.new(st == true ? 0 : st == false ? 1 : st)
       end
-      reg.define("Kernel", :ARGV, []) { Sake.argv.map { _1.dup.freeze } }
+      reg.define("Kernel", :ARGV, []) { Sake.argv } # one Array for the program: parse! can shorten it, as in Ruby
       reg.define("File", :delete, ["String"]) { |path| io_error { File.delete(path) } }
       # once { ... }: the block's value, computed the first time this place runs and kept for the whole
       # program (the interpreter keys it by the call; see Interpreter#call_builtin).
