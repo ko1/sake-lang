@@ -368,8 +368,12 @@ module Sake
       remaining = v
       results = []
       envs = []
+      bools = []
       n.clauses.each do |pat, body|
         m, remaining = match_atoms(remaining, pat)
+        # `in true` and `in false` (in any branches) together take every Boolean.
+        bools |= alternatives(pat).select { |a| a.is_a?(PValue) && a.value.is_a?(Lit) && [true, false].include?(a.value.value) }.map { _1.value.value }
+        remaining -= ["Boolean"] if bools.size == 2
         next if m.empty? && !v.empty?
         e = env.dup_level
         set_narrowed(e, var, u(*m.map { [_1] })) if var
@@ -378,13 +382,13 @@ module Sake
         results << ev(body, e)
         envs << e
       end
-      if n.else_
+      if n.else_ && (!remaining.empty? || v.empty?) # an else no value reaches is not analyzed
         e = env.dup_level
         set_narrowed(e, var, u(*remaining.map { [_1] })) if var
         narrow_by_position(e, tuple_var, pos, remaining) if tuple_var
         results << ev(n.else_, e)
         envs << e
-      elsif !remaining.empty? && !unknown?(v)
+      elsif !n.else_ && !remaining.empty? && !unknown?(v)
         # Values a literal pattern may leave (some String, any Symbol not written as a literal) are not
         # a type problem: the type's set of values is open. Both true and false cover Boolean.
         alts = n.clauses.flat_map { |pat, _| alternatives(pat) }
