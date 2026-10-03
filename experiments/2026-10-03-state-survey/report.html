@@ -1,0 +1,158 @@
+<title>状態の型づけサーベイ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600;700&display=swap">
+<style>
+/* Layout: one reading column; the problem, a map of approaches, each family, then what fits Sake. */
+:root {
+  --bg: #f6f6f2; --surface: #ffffff; --ink: #1c2027; --muted: #5d6471; --rule: #dedfd8;
+  --accent: #2b4d86; --accent-soft: #e5ebf6; --good: #2f7a4f; --warn: #a86a10; --bad: #b3322f;
+  --good-bg: #e3f0e7; --warn-bg: #f6ead4; --bad-bg: #f7e1df;
+  --sans: "IBM Plex Sans JP", "Hiragino Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171d; --surface: #1b1f27; --ink: #e3e6ec; --muted: #a3aab7; --rule: #2c323d;
+    --accent: #8fb2f0; --accent-soft: #223050; --good: #6cc495; --warn: #e2b05a; --bad: #f08a83;
+    --good-bg: #1c3127; --warn-bg: #352a17; --bad-bg: #3a1f1e; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171d; --surface: #1b1f27; --ink: #e3e6ec; --muted: #a3aab7; --rule: #2c323d;
+  --accent: #8fb2f0; --accent-soft: #223050; --good: #6cc495; --warn: #e2b05a; --bad: #f08a83;
+  --good-bg: #1c3127; --warn-bg: #352a17; --bad-bg: #3a1f1e; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font: 15.5px/1.8 var(--sans); padding-inline: 16px; }
+main { max-width: 840px; margin: 0 auto; padding-block: 36px 80px; display: grid; gap: 40px; }
+h1 { font-size: clamp(26px, 5vw, 36px); line-height: 1.3; margin: 0; text-wrap: balance; }
+h2 { font-size: 22px; margin: 0 0 10px; text-wrap: balance; }
+h3 { font-size: 16.5px; margin: 18px 0 4px; }
+p { margin: 0 0 10px; }
+.eyebrow { font: 600 12px/1 var(--sans); letter-spacing: .1em; color: var(--accent); margin-bottom: 10px; }
+.lede { font-size: 17px; }
+code, pre { font-family: var(--mono); }
+:not(pre) > code { font-size: .88em; background: var(--accent-soft); padding: .05em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; margin: 8px 0 12px; }
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.fit { font-size: 12px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.fit.good { background: var(--good-bg); color: var(--good); } .fit.warn { background: var(--warn-bg); color: var(--warn); } .fit.bad { background: var(--bad-bg); color: var(--bad); }
+.family { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px 6px; }
+.family + .family { margin-top: 14px; }
+.refs { font-size: 13px; color: var(--muted); }
+.refs a { color: var(--accent); }
+.proposal { border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 10px 10px 0; padding: 12px 16px 4px; }
+ul, ol { margin: 0 0 10px; padding-left: 1.3em; display: grid; gap: 4px; }
+.muted { color: var(--muted); font-size: 14px; }
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">experiments/2026-10-03-state-survey · Sake-lang</div>
+  <h1>変更できる状態に、注釈なしで型を付ける</h1>
+  <p class="lede">Sake のフィールドの型をどう決めるかについて、言語理論・プログラム解析の先行研究を調べた。<strong>結論：「値と一緒に動く型」と「生成箇所ごとの型」の 2 つを組み合わせる方向に、確立した手がある。</strong>前者は、作った後に変えないフィールドの型を値の型に含める（ML の型引数を、宣言なしでやる形）。後者は、変えるフィールドの型を、生成箇所と 1 段の文脈で分ける（Self と Java で研究された「データの多相」）。Sake の推論器はすでに関数について後者と同じ形（CPA）をしているので、データにも同じ形を広げるのが自然だ。</p>
+</header>
+
+<section>
+  <div class="eyebrow">1 · 問題</div>
+  <h2>getter の結果の型は、どこにも書かれていない</h2>
+<pre>class Box &lt; {reader: [item]}
+end
+a = Box.new("text")
+b = Box.new(42)
+String.upcase(Box.get_item(a))     # 正しいが、今は「Integer かもしれない」と報告される</pre>
+  <p>組み込みの操作は、結果の型を操作自身が決めている（<code>String.upcase</code> は String）。<code>Box.get_item</code> の結果の型は書かれておらず、推論器はフィールドの型をプログラム全体で 1 つに集めている。だから、同じ型を中身を変えて使い回すと union にぼやける。ライブラリ試作で一番多かった誤報がこれだった。</p>
+  <p>理論の言葉に直すと、問いは 3 つになる。<strong>(1)</strong> フィールドの型を、型ごとではなく値ごとに区別できるか（データの多相）。<strong>(2)</strong> 型が時間とともに変わるフィールド（nil で始めて後で埋める）を扱えるか（強い更新）。<strong>(3)</strong> 分からないところで何を報告するか。</p>
+</section>
+
+<section>
+  <div class="eyebrow">2 · 地図</div>
+  <h2>6 つの系統</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>系統</th><th>書くもの</th><th>汎用の入れ物</th><th>変更できる状態</th><th>Sake との相性</th></tr></thead>
+    <tbody>
+      <tr><td>A. 型引数を宣言し、具体化は推論（ML、Crystal）</td><td>フィールドが型引数であること</td><td>正確</td><td>型は変わらない</td><td><span class="fit warn">書く場所が宣言</span></td></tr>
+      <tr><td>B. 生成箇所と文脈で分ける（データの多相）</td><td>なし</td><td>ほぼ正確（文脈の深さ次第）</td><td>箇所ごとの和</td><td><span class="fit good">推論器の延長</span></td></tr>
+      <tr><td>C. 強い更新・typestate・別名の制御</td><td>所有や状態の宣言（方式による）</td><td>—</td><td>型が変わってよい</td><td><span class="fit warn">一部だけ</span></td></tr>
+      <tr><td>D. 状態を限る（不変のデータ＋明示のセル）</td><td>どこが変わるか</td><td>不変部分は正確</td><td>セルだけ</td><td><span class="fit good">実態に合う</span></td></tr>
+      <tr><td>E. 報告の方針（soft typing、success typing）</td><td>なし</td><td>—</td><td>—</td><td><span class="fit good">すでに近い</span></td></tr>
+      <tr><td>F. Ruby・動的言語での先例</td><td>方式による</td><td>多くは注釈で</td><td>型ごとの和</td><td><span class="fit warn">参考</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">3 · 各系統</div>
+  <h2>何が分かっているか</h2>
+
+  <div class="family">
+    <h3>A. 型引数を宣言し、具体化は推論する</h3>
+    <p>ML 系では <code>type 'a box = {mutable item: 'a}</code> のように、フィールドが型引数であることだけを宣言する。具体化は推論するので、<code>{item = "text"}</code> は <code>string box</code>、<code>{item = 42}</code> は <code>int box</code> になる。変更できる参照と多相が同居すると不健全になるので、値の制限（value restriction）で一般化を止める。Crystal は Ruby に近い構文で同じことをしていて、<code>class MyBox(T)</code> と宣言すれば <code>MyBox.new(1)</code> は <code>MyBox(Int32)</code> と推論される。</p>
+    <p>Sake から見ると、getter の型が <code>Box(T) → T</code> と操作の側で決まり、「型は操作に書く」と揃う。代わりに、型引数を型の宣言に書くことになる。</p>
+    <p class="refs">Wright, "Simple Imperative Polymorphism", <i>Lisp and Symbolic Computation</i> 8(4), 1995（値の制限）。<a href="https://crystal-lang.org/reference/1.13/syntax_and_semantics/type_inference.html">Crystal: Type inference</a>、<a href="https://oprypin.github.io/crystal-book/syntax_and_semantics/generics.html">Crystal: Generics</a>。</p>
+  </div>
+
+  <div class="family">
+    <h3>B. 生成箇所と文脈で分ける（データの多相）</h3>
+    <p>型注釈の無い言語の型推論で、まさにこの問題が研究されてきた。関数の多相は「引数の型の組ごとに関数を解析する」で解ける。Agesen の Cartesian Product Algorithm（CPA）がそれで、<strong>Sake の推論器は今この形をしている</strong>。データの多相（入れ物が中身によって違う型になること）は、CPA だけでは解けない。そこで次の研究がある。</p>
+    <ul>
+      <li><strong>Plevyak と Chien（1994）</strong>: オブジェクトを生成箇所で分け、中身の型が混ざるところだけを繰り返し分割して精度を上げた。</li>
+      <li><strong>Wang と Smith の DCPA（2001）</strong>: CPA にデータの多相を足した。生成箇所に、それを作った呼び出しの文脈を加えて区別する。<code>Box.make</code> のような作る関数を経由しても、呼び出しごとに別の Box になる。</li>
+      <li><strong>Java の points-to 解析</strong>: 同じ考えが「オブジェクト感応（object sensitivity）」として成熟した。Milanova、Rountev、Ryder（2002、2005）が提案した。Smaragdakis らの "Pick your contexts well"（2011）は、どの文脈を何段持つかで精度と費用がどう変わるかを整理した。1〜2 段の文脈で、汎用の入れ物の多くを区別できる。</li>
+    </ul>
+    <p>Sake では、Array が生成箇所ごとに要素型を持つので、半分はもう入っている。Struct のフィールドにも同じ扱いを広げ、作る関数の呼び出し 1 段を文脈に加えるのが、DCPA に当たる。注釈は要らない。代わりに、解析の費用と、再帰的な構造（連結リスト）での打ち切りが課題になる。</p>
+    <p class="refs">Agesen, <a href="https://dl.acm.org/doi/10.5555/646153.679533">"The Cartesian Product Algorithm"</a>, ECOOP '95。Plevyak &amp; Chien, "Precise Concrete Type Inference for Object-Oriented Languages", OOPSLA '94（<a href="https://dl.acm.org/doi/10.1145/217838.217847">関連</a>）。Wang &amp; Smith, <a href="https://link.springer.com/content/pdf/10.1007/3-540-45337-7_6">"Precise Constraint-Based Type Inference for Java"</a>, ECOOP 2001。Milanova, Rountev, Ryder, "Parameterized Object Sensitivity for Points-to Analysis for Java", TOSEM 14(1), 2005。Smaragdakis, Bravenboer, Lhoták, "Pick Your Contexts Well: Understanding Object-Sensitivity", POPL 2011。</p>
+  </div>
+
+  <div class="family">
+    <h3>C. 型が変わる状態：強い更新、typestate、別名の制御</h3>
+    <p>「nil で作って、後で埋める」フィールドは、時間とともに型が変わる。これを正確に扱うには、ある時点でそのオブジェクトを指しているのが 1 つだけだと分かる必要がある（強い更新）。</p>
+    <ul>
+      <li><strong>typestate</strong>（Strom と Yemini 1986、DeLine と Fähndrich 2004）: オブジェクトの状態を型に含める。</li>
+      <li><strong>alias types</strong>（Smith、Walker、Morrisett 2000）と Rust の所有権: 別名を型で制御して、強い更新を可能にする。</li>
+      <li><strong>recency abstraction</strong>（Balakrishnan と Reps 2006）: 注釈なしの解析の側の手。生成箇所の「最新の 1 個」だけを別に持ち、作った直後の初期化を強い更新で扱う。</li>
+    </ul>
+    <p>Sake の誤報の分類で「nil で初期化して後で埋める」に当たる部分には、recency abstraction が効く見込みがある。所有権の型は、言語を大きく変えるので候補から外す。</p>
+    <p class="refs">Strom &amp; Yemini, "Typestate", IEEE TSE 12(1), 1986。DeLine &amp; Fähndrich, "Typestates for Objects", ECOOP 2004。Smith, Walker, Morrisett, "Alias Types", ESOP 2000。Balakrishnan &amp; Reps, "Recency-Abstraction for Heap-Allocated Storage", SAS 2006。</p>
+  </div>
+
+  <div class="family">
+    <h3>D. 状態を限る：不変のデータと、明示の可変セル</h3>
+    <p>ML の流儀では、レコードは基本的に不変で、変わるものは <code>ref</code> セルとして明示する。Erlang や Elixir では、状態はプロセスのループの引数に置く。Clojure では、不変のデータに atom を足す。どれも「変わる場所を少なく、明示する」ことで、型も推論も単純にしている。</p>
+    <p>Sake の実測とよく合う。<code>Struct.new</code> のフィールドの 82% は、作った後に書き換えられていなかった。<strong>変わらないフィールドの型は、値の型そのものに含められる。</strong>Sake の Tuple や Record がすでにそうしていて、<code>[1, "a"]</code> の型は位置ごとの型を持つ。試作で validate の書き手が「Record にしたら汎用の入れ物の問題が消えた」と書いていたのは、このためだ。Struct の変わらないフィールドを同じように扱えば、宣言なしで A の精度が手に入る。<code>Box.new("text")</code> の型は、<code>item</code> が String の Box になる。</p>
+    <p class="refs">Leroy 他, The OCaml system（可変フィールドと <code>ref</code>）。Elixir、Clojure の言語資料。</p>
+  </div>
+
+  <div class="family">
+    <h3>E. 分からないところで何を報告するか</h3>
+    <p><strong>soft typing</strong>（Cartwright と Fagan 1991、Wright と Cartwright の Soft Scheme 1997）は、動的型の言語に推論をかけ、証明できない箇所には実行時の検査を残す。Sake の「各操作が実行時に検査し、推論が証明できたところだけ省ける」は、この系譜にある。</p>
+    <p>Erlang の Dialyzer が使う <strong>success typing</strong>（Lindahl と Sagonas 2006）は逆に、「必ず失敗する」と言えるときだけ報告して、誤報を出さない。Sake の level 1（型が確実に合わないときに止める）は、この考えに近い。精度を上げきれない場所では、level の設計で受け止める道がすでにある。</p>
+    <p class="refs">Cartwright &amp; Fagan, "Soft Typing", PLDI 1991。Wright &amp; Cartwright, "A Practical Soft Type System for Scheme", TOPLAS 19(1), 1997。Lindahl &amp; Sagonas, "Practical Type Inference Based on Success Typings", PPDP 2006。</p>
+  </div>
+
+  <div class="family">
+    <h3>F. Ruby・動的言語での先例</h3>
+    <p><strong>DRuby</strong>（Furr ほか 2009）は、インスタンス変数の型をクラスごとに 1 つ推論した。汎用のコンテナは注釈で型引数を書かせた。TypeProf もフィールドをクラスごとに扱う（今の Sake と同じ）。<strong>Crystal</strong> は A の形で、型引数を宣言し、<code>new</code> の引数から推論する。どれも「型ごとに 1 つ」か「宣言した型引数」のどちらかで、宣言なしに値ごとに分ける例は、B・D の研究側にしか見当たらなかった。</p>
+    <p class="refs">Furr, An, Foster, Hicks, "Static Type Inference for Ruby", SAC 2009。</p>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">4 · Sake への提案</div>
+  <h2>変わらない部分は値の型に、変わる部分は生成箇所に</h2>
+  <div class="proposal">
+    <ol>
+      <li><strong>変わらないフィールドを、値の型に含める（D）。</strong>作った後に誰も書き換えないフィールドの型を、Tuple や Record の位置の型と同じように、値の型に持たせる。<code>Box.new("text")</code> は item が String の Box、<code>Box.new(42)</code> は item が Integer の Box になる。getter の結果の型は、渡された値の型から決まる。宣言は要らない。「変わらない」ことを言語で保証するなら、作った後に書き換えられない設定（たとえば <code>value: [item]</code>）を足すか、<code>reader:</code> の意味をそこまで強める。後者なら、今のクラス内での <code>@x = v</code> を禁じることになる。</li>
+      <li><strong>変わるフィールドは、生成箇所と 1 段の文脈で分ける（B）。</strong><code>accessor:</code> や、クラス内で書き換えるフィールドの型は、<code>new</code> を書いた場所に、作る関数の呼び出し 1 段を加えて区別する（DCPA と 1 段のオブジェクト感応に当たる）。Array の要素型とも揃う。</li>
+      <li><strong>作った直後の初期化は、最新の 1 個で扱う（C の recency abstraction）。</strong>nil で作ってすぐ埋める形の誤報を減らす。2 の後に効き目を測ってから決める。</li>
+      <li><strong>宣言（A）は、どうしても書きたい人のための逃げ道に回す。</strong>型引数を書かせる仕組みは、1 と 2 で足りないことが測定で分かってから考える。</li>
+    </ol>
+  </div>
+  <p><strong>確かめ方</strong>: 1 と 2 を推論器に入れ、ライブラリ試作 8 本の誤報（汎用の入れ物に由来するもの）と、コーパス 500 本の level 1・2 の本数、健全性の違反（0 のままか）、解析時間を、今の推論器と比べる。1 は推論器の変更が小さく、Tuple の扱いを流用できるので先に試せる。</p>
+  <p class="muted">文献の書誌は、Agesen（CPA）、Plevyak と Chien、Wang と Smith（DCPA）、Crystal を検索で確かめた。ほかは記憶に基づく書誌で、本文の要約は各論文の主張を短くまとめたもの。</p>
+</section>
+</main>
