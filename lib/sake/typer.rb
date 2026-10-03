@@ -201,7 +201,7 @@ module Sake
 
       [(@raises ||= {}).transform_values(&:dup), @sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
        hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] },
-       thread_sites.transform_values { [_1.elem] }, queue_sites.transform_values { [_1.elem] }]
+       thread_sites.transform_values { [_1.elem] }, queue_sites.transform_values { [_1.elem] }, (@once_types || {}).dup]
     end
 
     # --- array sites and fields ---

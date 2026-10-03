@@ -948,6 +948,16 @@ Strings of incompatible encodings meeting (a byte from `Integer.chr(227)` next t
 - `warn(x, ...)` prints to the error stream, as `puts` does to the output.
 - `File.delete(path)` removes a file.
 
+### once
+
+`once { ... }` gives the block's value. The block runs the first time that place in the program is
+reached, and later calls there give the same value, for the whole program and every thread. It is
+Sake's way to compute a table or a named value once, since there are no value constants:
+`def crc_table = once { ... }`. The value is shared, as Ruby's constants are (an Array kept by
+`once` can still be changed). A block that reaches its own `once` again while computing it is a
+program error (`SystemStackError`). For the checks before running, its type is the union of the
+block's results over every call that may compute it.
+
 ### Positions, bytes, replacements
 
 | Operation | Result |

@@ -327,6 +327,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.format(String, *Any)`
 - `Kernel.gets()`
 - `Kernel.inspect(Any)`
+- `Kernel.once() { }`
 - `Kernel.p(Any)`
 - `Kernel.pp(Any)`
 - `Kernel.print(*Any)`

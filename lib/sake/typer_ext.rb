@@ -185,6 +185,10 @@ module Sake
       when "Kernel.warn" then t("Nil")
       when "Kernel.exit" then [] # never returns
       when "Kernel.ARGV" then new_site(node, " ARGV", t("String"))
+      when "Kernel.once"
+        # One value for the place, whichever call computes it first: the union over every evaluation.
+        site = (@once_types ||= {}.compare_by_identity)
+        site[node] = u(site[node] || [], call_block(blk, []))
       when "File.delete" then t("Integer")
       else :none
       end

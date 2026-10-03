@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "monitor"
 require_relative "lower"
 
 module Sake
@@ -412,12 +413,33 @@ module Sake
         raise RunError.new("TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
                            node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
       end
+      return once_value(blk, node) if fn.full_name == "Kernel.once"
       ruby_blk = blk && (fn.full_name == "Thread.new" ? thread_body(blk, node) : ->(*xs) { call_block(blk, xs, node) })
       fn.impl.call(*args, &ruby_blk)
     rescue Fail => e
       raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     rescue ::EncodingError => e
       raise RunError.new("EncodingError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
+    end
+
+    # once { ... }: one value per place in the program, shared by threads (copies of this interpreter
+    # share @once). A block that reaches its own once again while computing it is an error.
+    def once_value(blk, node)
+      @once ||= { lock: Monitor.new, values: {}.compare_by_identity, running: {}.compare_by_identity }
+      @once[:lock].synchronize do
+        values = @once[:values]
+        return values[node] if values.key?(node)
+        if @once[:running][node]
+          raise RunError.new("SystemStackError", "once: the block reached its own once again while computing it",
+                             node.location.start_line, @stack.dup, file: where_file(node))
+        end
+        @once[:running][node] = true
+        begin
+          values[node] = call_block(blk, [], node)
+        ensure
+          @once[:running].delete(node)
+        end
+      end
     end
 
     # Thread.new's block runs on a copy of this interpreter with its own stack: the program, the
