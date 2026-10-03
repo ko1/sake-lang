@@ -938,6 +938,26 @@ Range raise `RangeError` on an endless one.
 Strings of incompatible encodings meeting (a byte from `Integer.chr(227)` next to UTF-8 text) raise
 `EncodingError`, which can be rescued.
 
+### Program arguments, exit, warn
+
+- `ARGV` is the Array of the program's arguments (`bin/sake prog.sake a b` gives `["a", "b"]`). It is
+  written like Ruby's constant, but it is an operation (`Kernel.ARGV`): Sake has no value constants.
+- `exit(status)` (Integer, or true for 0 / false for 1; default 0) ends the program with that exit
+  status; `ensure` clauses run on the way out. Code after a call to `exit` is not reached, for the
+  checks before running too.
+- `warn(x, ...)` prints to the error stream, as `puts` does to the output.
+- `File.delete(path)` removes a file.
+
+### Positions, bytes, replacements
+
+| Operation | Result |
+|---|---|
+| `String.index(s, t, [start])` · `String.rindex(s, t, [start])` | Integer or nil (t a String or a Regexp) |
+| `Regexp.match(re, s, [pos])` · `String.match(s, re, [pos])` · `match?` likewise | MatchData or nil · true/false; `\G` anchors at pos |
+| `String.byteindex(s, t, [start])` · `String.byteslice(s, i, [n])` · `String.b(s)` | byte positions as Ruby |
+| `String.unpack(s, fmt)` · `String.unpack1(s, fmt)` | an Array · one value; the element type follows a literal format (`"N*"`: Integer, `"a*"`: String) |
+| `String.sub(s, pat, repl)` · `String.gsub(...)` | repl: a String (with `\1`), a Hash (match => replacement), or a block `{ \|m\| ... }` giving the replacement |
+
 ### Threads and sockets
 
 | Operation | Result |

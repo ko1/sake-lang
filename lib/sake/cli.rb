@@ -6,7 +6,7 @@ require_relative "../sake"
 module Sake
   module CLI
     USAGE = <<~TEXT
-      usage: sake [-c] [--strict[=SPEC]] [--types] [--dump=ast] FILE.sake
+      usage: sake [-c] [--strict[=SPEC]] [--types] [--dump=ast] FILE.sake [ARGS...]
 
         -c               check only: report problems, do not run
         --strict[=SPEC]  how strictly to check before running (default: level 1)
@@ -191,7 +191,13 @@ module Sake
       ast = false
       items = STRICT_LEVELS[DEFAULT_LEVEL]
       files = []
-      argv.each do |arg|
+      args = argv.dup
+      until args.empty?
+        arg = args.shift
+        unless files.empty? # after FILE: the program's own arguments (ARGV)
+          args.unshift(arg)
+          break
+        end
         case arg
         when "-c" then check_only = true
         when "--types" then types = true
@@ -207,6 +213,7 @@ module Sake
       end
       raise UsageError, "give one FILE.sake" unless files.size == 1
 
+      Sake.argv = args
       path = files.first
       run_source(File.read(path), path, check_only:, types:, ast:, items:, out:, err:)
     rescue UsageError => e
@@ -234,13 +241,22 @@ module Sake
       if check_only
         out.puts "#{path}: OK"
       else
-        Sake.execute(program, thread:)
+        begin
+          saved = $stderr
+          $stderr = err # Kernel.warn writes to the program's error stream
+          Sake.execute(program, thread:)
+        ensure
+          $stderr = saved
+        end
       end
       0
     rescue StaticErrors => e
       out.flush
       err.puts e.message
       2
+    rescue Exit => e # Kernel.exit
+      out.flush
+      e.status
     rescue RunError => e
       out.flush
       add_nil_hints(e, source, path) if e.nil_value?

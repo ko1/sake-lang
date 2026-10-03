@@ -30,6 +30,7 @@ module Sake
       install_more_numeric(reg)
       install_more_string(reg)
       install_more_array(reg)
+      install_text(reg, out)
       install_ext_binary_ops(reg)
     end
 

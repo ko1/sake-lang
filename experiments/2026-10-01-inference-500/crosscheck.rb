@@ -77,8 +77,8 @@ ARGV.each do |path|
   interp.result_types = {}.compare_by_identity
   begin
     interp.run
-  rescue Sake::RunError
-    nil # observations up to the failure still count
+  rescue Sake::RunError, Sake::Exit
+    nil # observations up to the failure (or exit) still count
   end
 
   bad = []

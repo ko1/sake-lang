@@ -156,6 +156,40 @@ module Sake
       u(t("String"), unknown("scan groups"))
     end
 
+    UNPACK_INT = "cCsSlLqQjJnNvVUwiI"
+    UNPACK_STR = "aAZbBhHmMuP"
+    UNPACK_FLOAT = "dDfFeEgG"
+
+    # The element type of String.unpack's result, from its format when it is a literal.
+    def unpack_elem(node)
+      fmt = node.respond_to?(:arguments) && node.arguments&.arguments&.[](1)
+      kinds = fmt.is_a?(Prism::StringNode) ? fmt.unescaped.scan(/[a-zA-Z]/).uniq : nil
+      return u(t("Integer"), t("String"), t("Float")) unless kinds && !kinds.empty?
+      u(*([t("Integer")] if kinds.any? { UNPACK_INT.include?(_1) }), *([t("String")] if kinds.any? { UNPACK_STR.include?(_1) }),
+        *([t("Float")] if kinds.any? { UNPACK_FLOAT.include?(_1) }))
+    end
+
+    # Positions, bytes, replacement blocks, the program's arguments (stdlib_text.rb).
+    def text_result(name, args, blk, node)
+      case name
+      when "String.index", "String.rindex", "String.byteindex" then u(t("Integer"), t("Nil"))
+      when "String.byteslice" then u(t("String"), t("Nil"))
+      when "String.b" then t("String")
+      when "String.unpack" then new_site(node, " String.unpack", unpack_elem(node))
+      when "String.unpack1" then u(unpack_elem(node), t("Nil"))
+      when "String.sub", "String.gsub"
+        call_block(blk, [t("String")]) if blk
+        t("String")
+      when "Regexp.match", "String.match" then u(t("MatchData"), t("Nil"))
+      when "Regexp.match?", "String.match?" then t("Boolean")
+      when "Kernel.warn" then t("Nil")
+      when "Kernel.exit" then [] # never returns
+      when "Kernel.ARGV" then new_site(node, " ARGV", t("String"))
+      when "File.delete" then t("Integer")
+      else :none
+      end
+    end
+
     # Threads, Queue, Mutex, sockets (stdlib_net.rb).
     def io_result(name, args, blk, node)
       a0 = args[0]
@@ -191,6 +225,8 @@ module Sake
       a0 = args[0]
       io = io_result(name, args, blk, node)
       return io unless io == :none
+      text = text_result(name, args, blk, node)
+      return text unless text == :none
       if (ty = FIXED_EXT[name])
         call_block(blk, [each_elem(a0)]) if blk && !each_elem(a0).empty?
         return t(ty)

@@ -567,6 +567,8 @@ module Sake
       when Prism::ClassNode, Prism::ModuleNode then error(node, "class/module must be at the top level")
       when Prism::ConstantWriteNode then error(node, "constant assignment must be at the top level")
       when Prism::ConstantReadNode
+        # ARGV: the program's arguments (an operation, Kernel.ARGV; Sake has no value constants).
+        return set_call(node, ctx, @registry.lookup("Kernel", "ARGV")) if node.name == :ARGV
         if (fn = @value_constants[node.name])
           error(node, "`#{node.name}` is not defined (Sake has no value constants)", ["call the function instead: `#{fn}`"])
         else

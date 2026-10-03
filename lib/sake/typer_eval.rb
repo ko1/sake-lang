@@ -130,7 +130,8 @@ module Sake
         env.dead = true
         []
       when Yield then call_block(env.frame.block, n.args.map { ev(_1, env) })
-      when CallBuiltin then call(n, env)
+      when CallBuiltin
+        call(n, env).tap { env.dead = true if n.fn.full_name == "Kernel.exit" } # exit ends the path
       when CallUser, CallDispatch, CallUnion
         # A call that never returns (the function always raises) ends this path, as `raise` does.
         call(n, env).tap { |r| env.dead = true if r.empty? }

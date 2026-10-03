@@ -134,6 +134,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## File
 
+- `File.delete(String)`
 - `File.exist?(String)`
 - `File.read(String)`
 - `File.readlines(String)`
@@ -317,10 +318,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Kernel
 
+- `Kernel.ARGV()`
 - `Kernel.Complex(Integer|Float|Rational, [Integer|Float|Rational])`
 - `Kernel.Float(String|Integer|Float)`
 - `Kernel.Integer(String|Integer|Float)`
 - `Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
+- `Kernel.exit([Integer|Boolean])`
 - `Kernel.format(String, *Any)`
 - `Kernel.gets()`
 - `Kernel.inspect(Any)`
@@ -332,6 +335,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.sleep([Integer|Float|Rational])`
 - `Kernel.sprintf(String, *Any)`
 - `Kernel.to_s(Any)`
+- `Kernel.warn(*Any)`
 
 ## MatchData
 
@@ -461,8 +465,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 - `Regexp.=~(x, Any)`
 - `Regexp.escape(String)`
-- `Regexp.match(x, String)`
-- `Regexp.match?(x, String)`
+- `Regexp.match(x, String, [Integer])`
+- `Regexp.match?(x, String, [Integer])`
 - `Regexp.new(String)`
 - `Regexp.source(x)`
 
@@ -545,9 +549,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.>=(x, Any)`
 - `String.[](x, Any, [Integer])`
 - `String.ascii_only?(x)`
+- `String.b(x)`
 - `String.between?(x, String, String)`
+- `String.byteindex(x, String|Regexp, [Integer])`
 - `String.bytes(x)`
 - `String.bytesize(x)`
+- `String.byteslice(x, Integer, [Integer])`
 - `String.capitalize(x)`
 - `String.casecmp(x, String)`
 - `String.casecmp?(x, String)`
@@ -571,24 +578,24 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.end_with?(x, String)`
 - `String.force_encoding(x, String)`
 - `String.getbyte(x, Integer)`
-- `String.gsub(x, String|Regexp, String)`
+- `String.gsub(x, String|Regexp, [String|Hash]) [{ }]`
 - `String.hex(x)`
 - `String.include?(x, String)`
-- `String.index(x, String|Regexp)`
+- `String.index(x, String|Regexp, [Integer])`
 - `String.intern(x)`
 - `String.length(x)`
 - `String.lines(x)`
 - `String.ljust(x, Integer, [String])`
 - `String.lstrip(x)`
-- `String.match(x, String|Regexp)`
-- `String.match?(x, String|Regexp)`
+- `String.match(x, String|Regexp, [Integer])`
+- `String.match?(x, String|Regexp, [Integer])`
 - `String[*Any]`
 - `String.next(x)`
 - `String.oct(x)`
 - `String.ord(x)`
 - `String.partition(x, String|Regexp)`
 - `String.reverse(x)`
-- `String.rindex(x, String|Regexp)`
+- `String.rindex(x, String|Regexp, [Integer])`
 - `String.rjust(x, Integer, [String])`
 - `String.rpartition(x, String|Regexp)`
 - `String.rstrip(x)`
@@ -598,7 +605,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.squeeze(x)`
 - `String.start_with?(x, String)`
 - `String.strip(x)`
-- `String.sub(x, String|Regexp, String)`
+- `String.sub(x, String|Regexp, [String|Hash]) [{ }]`
 - `String.succ(x)`
 - `String.swapcase(x)`
 - `String.to_c(x)`
@@ -609,6 +616,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.to_sym(x)`
 - `String.tr(x, String, String)`
 - `String.tr_s(x, String, String)`
+- `String.unpack(x, String)`
+- `String.unpack1(x, String)`
 - `String.upcase(x)`
 - `String.upto(x, String) { }`
 - `String.valid_encoding?(x)`

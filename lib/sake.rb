@@ -9,6 +9,7 @@ require_relative "sake/stdlib"
 require_relative "sake/stdlib_ext"
 require_relative "sake/stdlib_table"
 require_relative "sake/stdlib_net"
+require_relative "sake/stdlib_text"
 require_relative "sake/resolver"
 require_relative "sake/interpreter"
 
