@@ -359,6 +359,21 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Math.sqrt(Integer|Float|Rational)`
 - `Math.tan(Integer|Float|Rational)`
 
+## Mutex
+
+- `Mutex.new()`
+- `Mutex.synchronize(x) { }`
+
+## Queue
+
+- `Queue.close(x)`
+- `Queue.closed?(x)`
+- `Queue.empty?(x)`
+- `Queue.new()`
+- `Queue.pop(x)`
+- `Queue.push(x, Any)`
+- `Queue.size(x)`
+
 ## Range
 
 - `Range.all?(x) { }`
@@ -502,6 +517,15 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Set.union(x, Set)`
 - `Set.|(x, Any)`
 
+## Socket
+
+- `Socket.close(x)`
+- `Socket.close_write(x)`
+- `Socket.connect(String, Integer)`
+- `Socket.gets(x)`
+- `Socket.read(x, Integer)`
+- `Socket.write(x, String)`
+
 ## String
 
 - `String.!=(x, Any)`
@@ -605,6 +629,20 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Symbol.to_s(x)`
 - `Symbol.to_sym(x)`
 - `Symbol.upcase(x)`
+
+## TCPServer
+
+- `TCPServer.accept(x)`
+- `TCPServer.close(x)`
+- `TCPServer.new(String, Integer)`
+- `TCPServer.port(x)`
+
+## Thread
+
+- `Thread.alive?(x)`
+- `Thread.join(x)`
+- `Thread.new() { }`
+- `Thread.value(x)`
 
 ## Time
 

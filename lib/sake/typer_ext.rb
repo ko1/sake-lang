@@ -10,6 +10,23 @@ module Sake
 
     def hash_sites = (@hash_sites ||= {})
     def set_sites = (@set_sites ||= {})
+    # Thread.new's site keeps the block's value type; Queue.new's the types pushed (like a Set's elements).
+    def thread_sites = (@thread_sites ||= {})
+    def queue_sites = (@queue_sites ||= {})
+
+    def thread_site(node)
+      id = (@site_ids[node] ||= @site_ids.size + 1)
+      thread_sites[id] ||= SetSite.new(id, "L#{node.location.start_line}", [])
+      [[:thread, id]].freeze
+    end
+
+    def queue_site(node)
+      id = (@site_ids[node] ||= @site_ids.size + 1)
+      queue_sites[id] ||= SetSite.new(id, "L#{node.location.start_line}", [])
+      [[:queue, id]].freeze
+    end
+
+    def queue_elem(ty) = u(*atoms_of(ty, :queue).map { queue_sites[_1[1]].elem })
 
     def hash_site(node, label = "")
       id = (@site_ids[node] ||= @site_ids.size + 1)
@@ -139,6 +156,32 @@ module Sake
       u(t("String"), unknown("scan groups"))
     end
 
+    # Threads, Queue, Mutex, sockets (stdlib_net.rb).
+    def io_result(name, args, blk, node)
+      a0 = args[0]
+      case name
+      when "Thread.new"
+        thread_site(node).tap { |s| site = thread_sites[s[0][1]]; site.elem = u(site.elem, call_block(blk, [])) }
+      when "Thread.value" then u(*atoms_of(a0, :thread).map { thread_sites[_1[1]].elem })
+      when "Thread.join" then a0
+      when "Thread.alive?", "Queue.empty?", "Queue.closed?" then t("Boolean")
+      when "Mutex.new" then t("Mutex")
+      when "Mutex.synchronize" then call_block(blk, [])
+      when "Queue.new" then queue_site(node)
+      when "Queue.push"
+        atoms_of(a0, :queue).each { |a| s = queue_sites[a[1]]; s.elem = u(s.elem, args[1]) }
+        a0
+      when "Queue.pop" then u(queue_elem(a0), t("Nil")) # nil once closed and empty
+      when "Queue.close" then a0
+      when "Queue.size", "TCPServer.port", "Socket.write" then t("Integer")
+      when "TCPServer.new" then t("TCPServer")
+      when "TCPServer.accept", "Socket.connect" then t("Socket")
+      when "TCPServer.close", "Socket.close", "Socket.close_write" then t("Nil")
+      when "Socket.gets", "Socket.read" then u(t("String"), t("Nil"))
+      else :none
+      end
+    end
+
     def builtin_result_ext(name, args, blk, node)
       if (kind = SHOWS[name])
         (name == "Kernel.format" || name == "Kernel.sprintf" ? args.drop(1) : args).each { show_deep(_1, kind, node) }
@@ -146,6 +189,8 @@ module Sake
       table = table_result(name, args, blk, node)
       return table unless table == :none
       a0 = args[0]
+      io = io_result(name, args, blk, node)
+      return io unless io == :none
       if (ty = FIXED_EXT[name])
         call_block(blk, [each_elem(a0)]) if blk && !each_elem(a0).empty?
         return t(ty)

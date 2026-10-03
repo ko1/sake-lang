@@ -141,6 +141,8 @@ module Sake
       when :range then "Range"
       when :hash then "Hash"
       when :set then "Set"
+      when :thread then "Thread"
+      when :queue then "Queue"
       when :sym then "Symbol"
       else "?"
       end
@@ -176,6 +178,10 @@ module Sake
         when :set
           s = set_sites[a[1]]
           seen[a] ? "Set@#{s.label}" : "Set@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
+        when :thread then "Thread@#{thread_sites[a[1]].label}"
+        when :queue
+          s = queue_sites[a[1]]
+          seen[a] ? "Queue@#{s.label}" : "Queue@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
         when :pairs then "pairs"
         when :sym then ":#{a[1]}"
         end
@@ -185,7 +191,8 @@ module Sake
     def snapshot
 
       [(@raises ||= {}).transform_values(&:dup), @sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
-       hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] }]
+       hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] },
+       thread_sites.transform_values { [_1.elem] }, queue_sites.transform_values { [_1.elem] }]
     end
 
     # --- array sites and fields ---

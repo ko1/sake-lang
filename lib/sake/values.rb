@@ -33,6 +33,9 @@ module Sake
   # field_types: field => type name fixed by a default value. getters / setters: field => Builtin, used by
   # `@x` inside the type's functions whether or not the field is public.
   # own_equality: the type defines == (or Comparable with <=>); its values cannot be Hash keys or Set elements.
+  # A Sake thread: Thread.new's value, around Ruby's Thread.
+  ThreadValue = Struct.new(:thread)
+
   StructType = Struct.new(:name, :fields, :exception, :field_types, :getters, :setters, :own_equality)
 
   # The type of a Record: its set of (field, type) pairs, sorted by field and interned.
@@ -115,7 +118,11 @@ module Sake
       when Range then "Range"
       when Regexp then "Regexp"
       when MatchData then "MatchData"
-      else raise "BUG: not a Sake value: #{v.inspect}"
+      when ThreadValue then "Thread"
+      else
+        # Ruby's own objects for the concurrency and network operations (stdlib_net.rb).
+        name = { "Thread::Queue" => "Queue", "Thread::Mutex" => "Mutex", "TCPServer" => "TCPServer", "TCPSocket" => "Socket" }[v.class.name]
+        name or raise "BUG: not a Sake value: #{v.inspect}"
       end
     end
 
@@ -177,7 +184,8 @@ module Sake
         "{#{v.map { |k, x| k.is_a?(Symbol) && k.inspect.match?(/\A:\w+[?!]?\z/) ? "#{k}: #{inspect(x)}" : "#{inspect(k)} => #{inspect(x)}" }.join(", ")}}"
       when Set then "Set[#{v.map { inspect(_1) }.join(", ")}]"
       when Range then "#{v.begin.nil? ? "" : inspect(v.begin)}#{v.exclude_end? ? "..." : ".."}#{v.end.nil? ? "" : inspect(v.end)}"
-      else v.inspect
+      when ThreadValue, ::Thread::Queue, ::Thread::Mutex then "#<#{type_of(v)}>"
+      else v.class.name.to_s.match?(/\A(TCPServer|TCPSocket)\z/) ? "#<#{type_of(v)}>" : v.inspect
       end
     end
 

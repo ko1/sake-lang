@@ -924,6 +924,34 @@ Range raise `RangeError` on an endless one.
 | `File.read(path)` · `File.readlines(path)` | String · Array of String (lines keep their newline) |
 | `File.write(path, s)` · `File.exist?(path)` | Integer · true/false |
 
+### Threads and sockets
+
+| Operation | Result |
+|---|---|
+| `Thread.new { ... }` | a Thread running the block concurrently |
+| `Thread.value(t)` · `Thread.join(t)` · `Thread.alive?(t)` | the block's value (waits; an error in the thread is raised here) · t (waits) · true/false |
+| `Mutex.new` · `Mutex.synchronize(m) { ... }` | a Mutex · the block's value, run while holding m |
+| `Queue.new` · `Queue.push(q, x)` · `Queue.pop(q)` | a Queue · q · the oldest element (waits; nil once the queue is closed and empty) |
+| `Queue.close(q)` · `Queue.size(q)` · `Queue.empty?(q)` · `Queue.closed?(q)` | q · Integer · true/false · true/false |
+| `TCPServer.new(host, port)` · `TCPServer.accept(s)` · `TCPServer.port(s)` · `TCPServer.close(s)` | a TCPServer (port 0 picks a free one) · a Socket (waits) · Integer · nil |
+| `Socket.connect(host, port)` · `Socket.gets(s)` · `Socket.read(s, n)` | a Socket · String or nil · String or nil (at most n bytes) |
+| `Socket.write(s, str)` · `Socket.close_write(s)` · `Socket.close(s)` | Integer · nil · nil |
+
+- **Variables in a thread.** A block shares the variables around it, as every block does. For a
+  thread, the variables of the blocks around `Thread.new` (their parameters and locals), and the
+  thread block's own, are copied when the thread starts; the function's variables stay shared. So
+  `Array.map(xs) { |w| Thread.new { ... w ... } }` gives each thread its own `w`, and a shared
+  counter is a function variable updated inside `Mutex.synchronize`.
+- **Leaving a thread block.** `break` and `return` out of a `Thread.new` block are errors
+  (`LocalJumpError`); `next v` ends it with `v`.
+- **Errors.** An error inside a thread is raised by `Thread.value` or `Thread.join`. A thread that is
+  never joined ends silently when it fails, and every thread stops when the main program ends.
+- **Checking.** The typer runs a thread's block once, at `Thread.new`: its value is the type of
+  `Thread.value`; a Queue's element type is the union of what is pushed (`Queue.pop` adds nil).
+  Interleavings are not analyzed; each operation still checks its arguments while running.
+- **Where.** Not available in the browser playground (ruby.wasm has neither threads nor sockets).
+- Socket errors (refused, reset, unknown host) raise `IOError`.
+
 ### Math
 
 | Operation | Result |

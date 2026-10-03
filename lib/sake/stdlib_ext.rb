@@ -24,6 +24,8 @@ module Sake
       install_set(reg)
       install_regexp(reg)
       install_io(reg, input)
+      install_concurrency(reg)
+      install_net(reg)
       install_more_kernel(reg)
       install_more_numeric(reg)
       install_more_string(reg)

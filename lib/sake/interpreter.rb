@@ -9,6 +9,20 @@ module Sake
 
     # slots: the function's locals (its blocks' too); block: the block passed to the function.
     Frame = Struct.new(:name, :slots, :block)
+
+    # A thread's view of a frame: the variables of blocks (parameters and locals) are its own, copied
+    # when the thread starts; the function's own variables stay shared with the frame.
+    class ThreadSlots
+      def initialize(shared, own)
+        @shared = shared
+        @own = own.to_h { [_1, shared[_1]] }
+      end
+
+      def [](i) = @own.key?(i) ? @own[i] : @shared[i]
+      def []=(i, v)
+        @own.key?(i) ? @own[i] = v : @shared[i] = v
+      end
+    end
     BlockVal = Struct.new(:node, :frame)
 
     class ReturnSignal < StandardError
@@ -392,10 +406,50 @@ module Sake
         raise RunError.new("TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
                            node.location.start_line, @stack.dup, expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
       end
-      ruby_blk = blk && ->(*xs) { call_block(blk, xs, node) }
+      ruby_blk = blk && (fn.full_name == "Thread.new" ? thread_body(blk, node) : ->(*xs) { call_block(blk, xs, node) })
       fn.impl.call(*args, &ruby_blk)
     rescue Fail => e
       raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup)
+    end
+
+    # Thread.new's block runs on a copy of this interpreter with its own stack: the program, the
+    # frames and so the variables around the block are shared.
+    def thread_body(blk, node)
+      child = clone
+      child.instance_variable_set(:@stack, @stack.dup)
+      child.instance_variable_set(:@handling, [])
+      child.instance_variable_set(:@running_blocks, [])
+      hooks = [Thread.current[:sake_show_hooks], Thread.current[:sake_struct_ops]]
+      path = @program.path
+      f = blk.frame
+      own = block_slots(f.name)
+      thread_blk = BlockVal.new(blk.node, Frame.new(f.name, ThreadSlots.new(f.slots, own), f.block))
+      lambda do
+        Thread.current[:sake_show_hooks], Thread.current[:sake_struct_ops] = hooks
+        child.send(:call_block, thread_blk, [], node)
+      rescue JumpSignal, ReturnSignal
+        raise RunError.new("LocalJumpError", "break or return out of a Thread.new block", line(node), @stack.dup)
+      rescue RunError => e
+        e.path ||= path
+        raise
+      end
+    end
+
+    # The slots of a function's blocks (their parameters and locals).
+    def block_slots(name)
+      (@block_slots ||= {})[name] ||= begin
+        fn = name == "<main>" ? @ast.main : @ast.functions.values.find { _1.name == name }
+        slots = []
+        walk = lambda do |x|
+          case x
+          when AST::Block then slots.concat(x.params, x.locals)
+          when Array then x.each { walk.(_1) }
+          end
+          x.each { |v| walk.(v) } if x.is_a?(Struct) && !x.is_a?(AST::Function)
+        end
+        walk.(fn.body)
+        slots.uniq
+      end
     end
 
     # Ruby habits: `result = []` / `{}` used as a growable collection.
