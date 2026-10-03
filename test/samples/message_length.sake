@@ -1,0 +1,265 @@
+# sake: -c
+# A type that refers to the same Arrays many times is shown once per message, and cut when long.
+# ---- validate: Result values and record validation ------------------------
+
+# Result: a value is either Ok or Err. There is no Result type to name, so the
+# union is `Ok | Err` and every helper lists both.
+class Ok < {reader: [value]}
+  def to_s(r) = "Ok(#{@value})"
+end
+
+class Err < {reader: [error]}
+  def to_s(r) = "Err(#{@error})"
+end
+
+module Result
+  module_function
+  def ok(v) = Ok.new(v)
+  def err(e) = Err.new(e)
+  def ok?(r) = (r in Ok)
+  def err?(r) = (r in Err)
+
+  # The value, or raise UnwrapError carrying the error's text.
+  def unwrap(r)
+    case r
+    in Ok then Ok.get_value(r)
+    in Err then raise UnwrapError.new("unwrap on Err: #{Err.get_error(r)}")
+    end
+  end
+
+  def unwrap_or(r, default)
+    case r
+    in Ok then Ok.get_value(r)
+    in Err then default
+    end
+  end
+
+  # map: the block turns an Ok value into a new value; an Err passes through.
+  def map(r)
+    case r
+    in Ok then Ok.new(yield(Ok.get_value(r)))
+    in Err then r
+    end
+  end
+
+  # and_then: the block returns a Result itself.
+  def and_then(r)
+    case r
+    in Ok then yield(Ok.get_value(r))
+    in Err then r
+    end
+  end
+
+  def map_err(r)
+    case r
+    in Ok then r
+    in Err then Err.new(yield(Err.get_error(r)))
+    end
+  end
+
+  # all: Ok of every value, or Err of every error (not just the first).
+  def all(results)
+    values = Array[]
+    errors = Array[]
+    Array.each(results) do |r|
+      case r
+      in Ok then Array.push(values, Ok.get_value(r))
+      in Err then Array.push(errors, Err.get_error(r))
+      end
+    end
+    Array.empty?(errors) ? Ok.new(values) : Err.new(errors)
+  end
+
+  # attempt: run the block, turning a raised ValidationError into Err.
+  def attempt
+    Ok.new(yield)
+  rescue ValidationError => e
+    Err.new(Exception.message(e))
+  end
+end
+
+UnwrapError = Exception.new
+ValidationError = Exception.new(:field)
+
+# ---- Validation: check a Hash of String inputs, collect every problem -------
+
+class FieldError < {reader: [field, message]}
+  def to_s(e) = "#{@field}: #{@message}"
+end
+
+# A Checker holds the input and the errors found so far.
+class Checker < {reader: [input, errors]}
+  def start(input) = Checker.new(input, FieldError[])
+
+  def add(c, field, message)
+    Array.push(@errors, FieldError.new(field, message))
+    nil
+  end
+
+  def ok?(c) = Array.empty?(@errors)
+  def messages(c) = Array.map(@errors) { |e| FieldError.to_s(e) }
+
+  # The raw String for a field, or nil (after recording an error) when missing or blank.
+  def required(c, field)
+    v = Hash.fetch(@input, field, nil)
+    if v == nil || String.empty?(String.strip(v))
+      add(c, field, "is required")
+      return nil
+    end
+    String.strip(v)
+  end
+
+  # Missing is fine; blank counts as missing.
+  def optional(c, field)
+    v = Hash.fetch(@input, field, nil)
+    return nil if v == nil || String.empty?(String.strip(v))
+    String.strip(v)
+  end
+
+  def length(c, field, s, min, max)
+    return nil unless s
+    n = String.size(s)
+    if n < min || n > max
+      add(c, field, "must be #{min}..#{max} characters (got #{n})")
+      return nil
+    end
+    s
+  end
+
+  def matches(c, field, s, re, what)
+    return nil unless s
+    unless String.match?(s, re)
+      add(c, field, "must be #{what}")
+      return nil
+    end
+    s
+  end
+
+  def integer(c, field, s, lo, hi)
+    return nil unless s
+    unless String.match?(s, /\A-?\d+\z/)
+      add(c, field, "must be an integer (got #{Kernel.inspect(s)})")
+      return nil
+    end
+    n = String.to_i(s)
+    if n < lo || n > hi
+      add(c, field, "must be in #{lo}..#{hi} (got #{n})")
+      return nil
+    end
+    n
+  end
+
+  def one_of(c, field, s, choices)
+    return nil unless s
+    unless Array.include?(choices, s)
+      add(c, field, "must be one of #{Array.join(choices, ", ")}")
+      return nil
+    end
+    s
+  end
+
+  # A custom rule: the block says whether v is acceptable.
+  def check(c, field, v, message)
+    return nil unless v
+    unless yield(v)
+      add(c, field, message)
+      return nil
+    end
+    v
+  end
+
+  # The value as a Result: Ok(value) when no error was recorded, else Err(messages).
+  def result(c, value) = ok?(c) ? Ok.new(value) : Err.new(messages(c))
+
+  # The exception style: raise the first problem.
+  def raise_first(c)
+    e = Array.first(@errors)
+    return nil unless e          # level 2 does not know ok?(c) means non-empty
+    raise ValidationError.new(FieldError.get_message(e), FieldError.get_field(e))
+  end
+end
+
+# ---- end of validate ----------------------------------------------------
+# A pipeline of parsing steps, written twice:
+#   with Results chained by Result.and_then / Result.map
+#   with exceptions (each step raises, one rescue at the end)
+# Input: "WxH@x,y" such as "40x30@5,10" -> the area and the far corner.
+
+StepError = Exception.new(:step)
+
+def step_split(s)
+  size, at = String.split(s, "@")
+  return Err.new("split: missing '@' in #{Kernel.inspect(s)}") unless at
+  Ok.new([size, at])
+end
+
+def step_pair(s, sep, what)
+  a, b = String.split(s, sep)
+  return Err.new("#{what}: expected two numbers in #{Kernel.inspect(s)}") unless a && b
+  return Err.new("#{what}: not a number in #{Kernel.inspect(s)}") unless String.match?(a, /\A\d+\z/) && String.match?(b, /\A\d+\z/)
+  Ok.new([String.to_i(a), String.to_i(b)])
+end
+
+def step_positive(wh)
+  w, h = wh
+  return Err.new("size: zero area") if w * h == 0
+  Ok.new(wh)
+end
+
+def parse_box(s)
+  Result.and_then(step_split(s)) do |size, at|
+    Result.and_then(Result.and_then(step_pair(size, "x", "size")) { |wh| step_positive(wh) }) do |wh|
+      Result.map(step_pair(at, ",", "at")) do |xy|
+        w, h = wh
+        x, y = xy
+        {area: w * h, corner: [x + w, y + h]}
+      end
+    end
+  end
+end
+
+# The same steps with exceptions.
+def parse_box_raise(s)
+  size, at = String.split(s, "@")
+  raise StepError.new("missing '@'", "split") unless at
+  w, h = pair_or_raise(size, "x", "size")
+  raise StepError.new("zero area", "size") if w * h == 0
+  x, y = pair_or_raise(at, ",", "at")
+  {area: w * h, corner: [x + w, y + h]}
+end
+
+def pair_or_raise(s, sep, what)
+  a, b = String.split(s, sep)
+  raise StepError.new("expected two numbers", what) unless a && b
+  [Integer(a), Integer(b)]
+rescue ArgumentError
+  raise StepError.new("not a number in #{Kernel.inspect(s)}", what)
+end
+
+inputs = Array["40x30@5,10", "40x30", "40x@1,1", "0x9@1,1", "4x3@1,y"]
+
+puts("== Result")
+results = Array.map(inputs) { |s| parse_box(s) }
+Array.each_with_index(results) do |r, i|
+  puts(format("%-12s %s", inputs[i], r))
+end
+areas = Array.map(results) { |r| Result.unwrap_or(Result.map(r) { |b| b => {area:}; area }, 0) }
+p(areas)
+p(Result.all(results))
+p(Result.all(Array.select(results) { |r| Result.ok?(r) }))
+
+puts("== exceptions")
+Array.each(inputs) do |s|
+  begin
+    b = parse_box_raise(s)
+    puts(format("%-12s %s", s, b))
+  rescue StepError => e
+    puts(format("%-12s failed at %s: %s", s, StepError.get_step(e), Exception.message(e)))
+  end
+end
+
+begin
+  puts(Result.unwrap(Err.new("boom")))
+rescue UnwrapError => e
+  puts("rescued: #{Exception.message(e)}")
+end
