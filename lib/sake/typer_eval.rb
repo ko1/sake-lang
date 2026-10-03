@@ -129,7 +129,10 @@ module Sake
         env.dead = true
         []
       when Yield then call_block(env.frame.block, n.args.map { ev(_1, env) })
-      when CallBuiltin, CallUser, CallDispatch, CallUnion then call(n, env)
+      when CallBuiltin then call(n, env)
+      when CallUser, CallDispatch, CallUnion
+        # A call that never returns (the function always raises) ends this path, as `raise` does.
+        call(n, env).tap { |r| env.dead = true if r.empty? }
       when BinOp then binop(n.origin, n.op, ev(n.left, env), ev(n.right, env))
       when UnOp then unop(n.origin, n.op, ev(n.value, env))
       when IsNil then binop(n.origin, n.negate ? "!=" : "==", ev(n.value, env), t("Nil"))
@@ -258,7 +261,8 @@ module Sake
           narrow(env, pred.left, false)
           narrow(env, pred.right, false)
         end
-      when LVarGet then restrict(env, pred.slot, truthy ? :non_nil : :falsy)
+      when LVarGet, LVarSet then restrict(env, pred.slot, truthy ? :non_nil : :falsy) # `while (x = f)` tests x
+      when Seq then narrow(env, pred.body.last, truthy) unless pred.body.empty?
       when MatchP
         var = pred.value
         return unless var.is_a?(LVarGet) && (ty = env.lookup(var.slot))
@@ -368,8 +372,12 @@ module Sake
       remaining = v
       results = []
       envs = []
+      bools = []
       n.clauses.each do |pat, body|
         m, remaining = match_atoms(remaining, pat)
+        # `in true` and `in false` (in any branches) together take every Boolean.
+        bools |= alternatives(pat).select { |a| a.is_a?(PValue) && a.value.is_a?(Lit) && [true, false].include?(a.value.value) }.map { _1.value.value }
+        remaining -= ["Boolean"] if bools.size == 2
         next if m.empty? && !v.empty?
         e = env.dup_level
         set_narrowed(e, var, u(*m.map { [_1] })) if var
@@ -378,13 +386,13 @@ module Sake
         results << ev(body, e)
         envs << e
       end
-      if n.else_
+      if n.else_ && (!remaining.empty? || v.empty?) # an else no value reaches is not analyzed
         e = env.dup_level
         set_narrowed(e, var, u(*remaining.map { [_1] })) if var
         narrow_by_position(e, tuple_var, pos, remaining) if tuple_var
         results << ev(n.else_, e)
         envs << e
-      elsif !remaining.empty? && !unknown?(v)
+      elsif !n.else_ && !remaining.empty? && !unknown?(v)
         # Values a literal pattern may leave (some String, any Symbol not written as a literal) are not
         # a type problem: the type's set of values is open. Both true and false cover Boolean.
         alts = n.clauses.flat_map { |pat, _| alternatives(pat) }
@@ -580,6 +588,12 @@ module Sake
         end
         u(*rs)
       when CallUser
+        # A required function reached directly (its includer does not define it).
+        if n.fn.abstract
+          atoms = args[0] || []
+          add_check(o, "#{n.fn.origin || n.fn.namespace}.#{n.fn.name}", "required", "a definition", atoms, :error, atoms) unless atoms.empty?
+          return []
+        end
         @callers.push(o.location.start_line)
         begin
           call_user(n.fn, args, blk)

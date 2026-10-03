@@ -1,0 +1,305 @@
+# ---- validate: Result values and record validation ------------------------
+
+# Result: a Record, {ok: value} or {err: error}.
+# Not a Struct type: a Struct field has one type for the whole program, so an
+# Ok(String) and an Ok(Integer) would blur together. A Record's type is its
+# shape, so each {ok: T} keeps its own T.
+module Result
+  module_function
+  def ok(v) = {ok: v}
+  def err(e) = {err: e}
+  def ok?(r) = (r in {ok:})
+  def err?(r) = (r in {err:})
+
+  # The value, or raise UnwrapError carrying the error's text.
+  def unwrap(r)
+    case r
+    in {ok:} then ok
+    in {err:} then raise UnwrapError.new("unwrap on Err: #{err}")
+    end
+  end
+
+  def unwrap_or(r, default)
+    case r
+    in {ok:} then ok
+    in {err:} then default
+    end
+  end
+
+  # map: the block turns an ok value into a new value; an err passes through.
+  def map(r)
+    case r
+    in {ok:} then {ok: yield(ok)}
+    in {err:} then r
+    end
+  end
+
+  # and_then: the block returns a Result itself.
+  def and_then(r)
+    case r
+    in {ok:} then yield(ok)
+    in {err:} then r
+    end
+  end
+
+  def map_err(r)
+    case r
+    in {ok:} then r
+    in {err:} then {err: yield(err)}
+    end
+  end
+
+  # all: {ok: every value}, or {err: every error} (not just the first).
+  def all(results)
+    values = Array[]
+    errors = Array[]
+    Array.each(results) do |r|
+      case r
+      in {ok:} then Array.push(values, ok)
+      in {err:} then Array.push(errors, err)
+      end
+    end
+    Array.empty?(errors) ? {ok: values} : {err: errors}
+  end
+
+  def to_s(r)
+    case r
+    in {ok:} then "Ok(#{ok})"
+    in {err:} then "Err(#{err})"
+    end
+  end
+
+  # attempt: run the block, turning a raised ValidationError into an err.
+  def attempt
+    {ok: yield}
+  rescue ValidationError => e
+    {err: Exception.message(e)}
+  end
+end
+
+UnwrapError = Exception.new
+ValidationError = Exception.new(:field)
+
+# ---- Validation: check a Hash of String inputs, collect every problem -------
+
+class FieldError < {reader: [field, message]}
+  def to_s(e) = "#{@field}: #{@message}"
+end
+
+# A Checker holds the input and the errors found so far.
+class Checker < {reader: [input, errors]}
+  def start(input) = Checker.new(input, FieldError[])
+
+  def add(c, field, message)
+    Array.push(@errors, FieldError.new(field, message))
+    nil
+  end
+
+  def ok?(c) = Array.empty?(@errors)
+  def messages(c) = Array.map(@errors) { |e| FieldError.to_s(e) }
+
+  # The raw String for a field, or nil (after recording an error) when missing or blank.
+  def required(c, field)
+    v = Hash.fetch(@input, field, nil)
+    if v == nil || String.empty?(String.strip(v))
+      add(c, field, "is required")
+      return nil
+    end
+    String.strip(v)
+  end
+
+  # Missing is fine; blank counts as missing.
+  def optional(c, field)
+    v = Hash.fetch(@input, field, nil)
+    return nil if v == nil || String.empty?(String.strip(v))
+    String.strip(v)
+  end
+
+  def length(c, field, s, min, max)
+    return nil unless s
+    n = String.size(s)
+    if n < min || n > max
+      add(c, field, "must be #{min}..#{max} characters (got #{n})")
+      return nil
+    end
+    s
+  end
+
+  def matches(c, field, s, re, what)
+    return nil unless s
+    unless String.match?(s, re)
+      add(c, field, "must be #{what}")
+      return nil
+    end
+    s
+  end
+
+  def integer(c, field, s, lo, hi)
+    return nil unless s
+    unless String.match?(s, /\A-?\d+\z/)
+      add(c, field, "must be an integer (got #{Kernel.inspect(s)})")
+      return nil
+    end
+    n = String.to_i(s)
+    if n < lo || n > hi
+      add(c, field, "must be in #{lo}..#{hi} (got #{n})")
+      return nil
+    end
+    n
+  end
+
+  def one_of(c, field, s, choices)
+    return nil unless s
+    unless Array.include?(choices, s)
+      add(c, field, "must be one of #{Array.join(choices, ", ")}")
+      return nil
+    end
+    s
+  end
+
+  # A custom rule: the block says whether v is acceptable.
+  def check(c, field, v, message)
+    return nil unless v
+    unless yield(v)
+      add(c, field, message)
+      return nil
+    end
+    v
+  end
+
+  # The value as a Result: {ok: value} when no error was recorded, else {err: messages}.
+  def result(c, value) = ok?(c) ? {ok: value} : {err: messages(c)}
+
+  # The exception style: raise the first problem.
+  def raise_first(c)
+    e = Array.first(@errors)
+    return nil unless e          # level 2 does not know ok?(c) means non-empty
+    raise ValidationError.new(FieldError.get_message(e), FieldError.get_field(e))
+  end
+end
+
+# ---- Rules as values: blocks cannot be stored, so a stored rule is a Struct
+# value whose type includes Rule; Rule.check dispatches on that type.
+
+module Rule
+  # The error message for v, or nil when v passes.
+  def check(rule, v) = raise(NotImplementedError)
+end
+
+class MinLen < {reader: [n]}
+  include Rule
+  def check(r, v) = String.size(v) < @n ? "must be at least #{@n} characters" : nil
+end
+
+class MaxLen < {reader: [n]}
+  include Rule
+  def check(r, v) = String.size(v) > @n ? "must be at most #{@n} characters" : nil
+end
+
+class Pattern < {reader: [re, what]}
+  include Rule
+  def check(r, v) = String.match?(v, @re) ? nil : "must be #{@what}"
+end
+
+class IntRange < {reader: [lo, hi]}
+  include Rule
+  def check(r, v)
+    return "must be an integer" unless String.match?(v, /\A-?\d+\z/)
+    n = String.to_i(v)
+    n < @lo || n > @hi ? "must be in #{@lo}..#{@hi}" : nil
+  end
+end
+
+# A schema: field name => [required?, rules]. Rules run in order; the first failing one is reported.
+class Schema < {reader: [fields]}
+  def build = Schema.new(Hash[])
+  def field(s, name, required, rules)
+    @fields[name] = [required, rules]
+    s
+  end
+
+  def validate(s, input)
+    c = Checker.start(input)
+    Hash.each(@fields) do |name, spec|
+      required, rules = spec
+      v = required ? Checker.required(c, name) : Checker.optional(c, name)
+      next unless v
+      Array.each(rules) do |rule|
+        msg = Rule.check(rule, v)
+        if msg
+          Checker.add(c, name, msg)
+          break
+        end
+      end
+    end
+    c
+  end
+end
+
+# ---- end of validate ----------------------------------------------------
+# Stress: 2000 generated orders, validated in a batch; errors counted per field;
+# Results nested (a Result whose value is a Result), and map_err into FieldError.
+
+def make_order(i)
+  h = Hash["id" => Integer.to_s(i), "qty" => Integer.to_s(i % 7 - 1), "sku" => "SKU-#{i % 13}"]
+  h["sku"] = "sku#{i}" if i % 11 == 0
+  h["email"] = "u#{i}@shop.test" unless i % 17 == 0
+  h["coupon"] = "SAVE#{i % 40}" if i % 5 == 0
+  h
+end
+
+def check_order(h)
+  c = Checker.start(h)
+  id = Checker.integer(c, "id", Checker.required(c, "id"), 0, 1_000_000)
+  qty = Checker.integer(c, "qty", Checker.required(c, "qty"), 1, 99)
+  sku = Checker.matches(c, "sku", Checker.required(c, "sku"), /\ASKU-\d+\z/, "like SKU-123")
+  Checker.matches(c, "email", Checker.required(c, "email"), /@/, "an email address")
+  coupon = Checker.optional(c, "coupon")
+  Checker.check(c, "coupon", coupon, "is expired") { |s| String.to_i(String.delete_prefix(s, "SAVE")) >= 10 }
+  [c, {id: id, qty: qty, sku: sku}]
+end
+
+per_field = Hash.new(0)
+good = 0
+total_qty = 0
+Integer.times(2000) do |i|
+  c, order = check_order(make_order(i))
+  if Checker.ok?(c)
+    good += 1
+    order => {qty:}
+    total_qty += qty if qty
+  else
+    Array.each(Checker.get_errors(c)) { |e| per_field[FieldError.get_field(e)] += 1 }
+  end
+end
+puts("good orders: #{good} / 2000, total qty #{total_qty}")
+Array.each(Hash.sort_by(per_field) { |f, n| -n }) { |f, n| puts(format("  %-7s %4d errors", f, n)) }
+
+# Nested: parse a quantity, then look the sku up in a price table (a second Result).
+def price_of(sku)
+  table = Hash["SKU-1" => 250, "SKU-2" => 990]
+  v = table[sku]
+  v ? Result.ok(v) : Result.err("no price for #{sku}")
+end
+
+def line_total(h)
+  c, order = check_order(h)
+  r = Checker.result(c, order)
+  r = Result.map_err(r) { |msgs| Array.join(msgs, "; ") }
+  # qty is nil | Integer even inside ok: the checker cannot tie "no errors" to "no nils".
+  nested = Result.map(r) { |o| o => {sku:, qty:}; [price_of(sku), qty || 0] }
+  Result.and_then(nested) do |pr, qty|
+    Result.map(pr) { |price| price * qty }
+  end
+end
+
+Array.each(Array[1, 2, 3, 0, 15]) do |i|
+  puts("order #{i}: #{Result.to_s(line_total(make_order(i)))}")
+end
+
+# A deep chain of and_then: 200 steps, each may fail.
+r = Result.ok(1)
+Integer.times(200) do |k|
+  r = Result.and_then(r) { |v| v > 10_000 ? Result.err("overflow at step #{k}") : Result.ok(v * 3 / 2 + 1) }
+end
+puts("chain: #{Result.to_s(r)}")

@@ -1,0 +1,36 @@
+# Unusual use: the rules are data. A schema is built once, then applied to many inputs,
+# and printed (a rule is a value here, which a block could not be).
+
+def user_schema
+  s = Schema.build
+  Schema.field(s, "login", true, Array[MinLen.new(3), MaxLen.new(12), Pattern.new(/\A[a-z][a-z0-9_]*\z/, "lowercase letters, digits, _")])
+  Schema.field(s, "pin", true, Array[Pattern.new(/\A\d{4}\z/, "4 digits")])
+  Schema.field(s, "floor", false, Array[IntRange.new(-2, 40)])
+  s
+end
+
+def describe_rule(rule)
+  case rule
+  in MinLen then ">= #{MinLen.get_n(rule)} chars"
+  in MaxLen then "<= #{MaxLen.get_n(rule)} chars"
+  in Pattern then "matches #{Regexp.source(Pattern.get_re(rule))}"
+  in IntRange then "integer in #{IntRange.get_lo(rule)}..#{IntRange.get_hi(rule)}"
+  end
+end
+
+s = user_schema
+Hash.each(Schema.get_fields(s)) do |name, spec|
+  required, rules = spec
+  puts("#{name}#{required ? "" : " (optional)"}: #{Array.join(Array.map(rules) { |r| describe_rule(r) }, ", ")}")
+end
+
+inputs = Array[
+  Hash["login" => "ko1", "pin" => "1234"],
+  Hash["login" => "Root", "pin" => "12a4", "floor" => "99"],
+  Hash["login" => "a_very_long_login_name", "floor" => "-1"],
+]
+Array.each(inputs) do |h|
+  c = Schema.validate(s, h)
+  r = Checker.result(c, h)
+  puts(Result.to_s(Result.map(r) { |v| Hash.size(v) }))
+end

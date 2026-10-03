@@ -1,0 +1,265 @@
+# ==== events: an event bus and a finite state machine ====
+#
+# Sake has no first-class blocks, so a "callback" is a value of a Struct type that includes
+# a library module and defines the module's required functions. The library calls them by
+# dispatch (`Handler.handle(h, ...)`), which runs the `handle` of h's own type.
+#
+# An event is a Tuple [name, data]: name is a Symbol, data is anything (often a Record).
+
+# ---- the handler interface ----
+module Handler
+  def handle(h, bus, ev) = raise(NotImplementedError)
+end
+
+# A ready-made handler: records every event it gets (also keeps Handler included by some
+# type, which a program that never subscribes anything still needs).
+class Recorder < {reader: [events]}
+  include Handler
+  def create = Recorder.new(Tuple[])
+  def handle(r, bus, ev) = Array.push(@events, ev)
+  def names(r) = Array.map(@events) { |name, data| name }
+end
+
+# ---- the bus ----
+# subs: Array of [id, pattern Symbol, handler]; the pattern :* matches every event.
+# queue: events emitted while a publish is running, delivered after it (no re-entrancy).
+# Unsubscribing is by the id `on` returns: handlers are Struct values, and `==` on them
+# compares contents, so two equal handlers could not be told apart.
+class Bus < {reader: [subs, queue, busy, delivered, last_id]}
+  def create = Bus.new(Tuple[], Tuple[], false, 0, 0)
+
+  def on(bus, pattern, handler)
+    @last_id += 1
+    Array.push(@subs, [@last_id, pattern, handler])
+    @last_id
+  end
+
+  def off(bus, id)
+    before = Array.size(@subs)
+    Array.delete_if(@subs) { |i, pat, h| i == id }
+    before - Array.size(@subs)
+  end
+
+  def subscribers(bus, name) = Array.count(@subs) { |i, pat, h| pat == name || pat == :* }
+
+  # Deliver ev now, then every event the handlers emitted, in order. Returns deliveries made.
+  def publish(bus, name, data)
+    Array.push(@queue, [name, data])
+    return 0 if @busy
+    @busy = true
+    n = 0
+    while true
+      ev = Array.shift(@queue)
+      break unless ev
+      ev_name, _ = ev
+      # A snapshot: a handler may subscribe or unsubscribe while this event is delivered.
+      Array.each(Array.dup(@subs)) do |i, pat, h|
+        if pat == ev_name || pat == :*
+          Handler.handle(h, bus, ev)
+          n += 1
+        end
+      end
+    end
+    @busy = false
+    @delivered += n
+    n
+  end
+end
+
+# ---- the state machine ----
+# A transition is [from, event, to, guard, action]; from may be :* (any state), to may be :*
+# (stay), guard/action may be :none.
+# The hooks value includes Hooks; it overrides only what it needs (defaults below).
+module Hooks
+  def guard?(hk, name, fsm, data) = true
+  def act(hk, name, fsm, data) = nil
+  def enter(hk, state, fsm, data) = nil
+  def leave(hk, state, fsm, data) = nil
+  def rejected(hk, event, fsm, data) = nil
+end
+
+# Hooks that do nothing: for a machine that is only a transition table (also keeps Hooks
+# included by some type, which a program without hooks of its own still needs).
+class NoHooks < {reader: [label]}
+  include Hooks
+end
+
+class Fsm < {reader: [name, table, hooks, history, state, bus]}
+  def create(name, initial, hooks) = Fsm.new(name, Tuple[], hooks, Array[], initial, nil)
+  def plain(name, initial) = create(name, initial, NoHooks.new(name))
+
+  def allow(fsm, from, event, to, guard, action)
+    Array.push(@table, [from, event, to, guard, action])
+    fsm
+  end
+
+  def attach(fsm, bus) = @bus = bus
+
+  def events_from(fsm, state)
+    Array.select(@table) { |from, e, to, g, a| from == state || from == :* }
+    Array.map(_) { |from, e, to, g, a| e }
+    Array.uniq(_)
+  end
+
+  # Fire event: the first matching transition whose guard passes wins.
+  # Returns the new state, or nil when no transition applies.
+  def fire(fsm, event, data)
+    cur = @state
+    hk = @hooks
+    found = Array.find(@table) do |from, e, to, g, a|
+      (from == cur || from == :*) && e == event && (g == :none || Hooks.guard?(hk, g, fsm, data))
+    end
+    unless found
+      Hooks.rejected(hk, event, fsm, data)
+      notify(fsm, :fsm_rejected, {machine: @name, state: cur, event: event})
+      return nil
+    end
+    from, e, target, g, action = found
+    to = target == :* ? cur : target
+    Hooks.leave(hk, cur, fsm, data) if to != cur
+    Hooks.act(hk, action, fsm, data) if action != :none
+    @state = to
+    Array.push(@history, to)
+    Hooks.enter(hk, to, fsm, data) if to != cur
+    notify(fsm, :fsm_moved, {machine: @name, from: cur, to: to, event: event})
+    to
+  end
+
+  def notify(fsm, name, data)
+    b = @bus
+    Bus.publish(b, name, data) if b
+  end
+end
+# ---- client_orders.sake (client line N = out line N+133) ----
+# An order workflow: one Fsm per order, and services (stock, billing, mail) that react to
+# events on a shared Bus and emit follow-up events. Events emitted by a handler are queued
+# and delivered after the current one.
+
+# Rules for one order: guards look at the order's data.
+class OrderRules < {reader: [id, total, items, paid_amount]}
+  include Hooks
+  def guard?(r, name, fsm, data)
+    case name
+    in :fully_paid then @paid_amount + data >= @total
+    in :refundable then @paid_amount > 0
+    end
+  end
+  def act(r, name, fsm, data)
+    case name
+    in :record_payment then @paid_amount += data
+    in :refund then @paid_amount = 0
+    end
+  end
+  def enter(r, state, fsm, data) = puts("    order #{@id} -> #{state}")
+  def rejected(r, event, fsm, data) = puts("    order #{@id}: #{event} not allowed in #{Fsm.get_state(fsm)}")
+end
+
+def order_machine(rules)
+  m = Fsm.create("order #{OrderRules.get_id(rules)}", :new, rules)
+  Fsm.allow(m, :new, :pay, :paid, :fully_paid, :record_payment)
+  Fsm.allow(m, :new, :pay, :new, :none, :record_payment)          # partial payment
+  Fsm.allow(m, :paid, :ship, :shipped, :none, :none)
+  Fsm.allow(m, :shipped, :deliver, :done, :none, :none)
+  Fsm.allow(m, :paid, :cancel, :cancelled, :refundable, :refund)
+  Fsm.allow(m, :new, :cancel, :cancelled, :none, :none)
+  m
+end
+
+class Stock < {reader: [counts]}
+  include Handler
+  def handle(s, bus, ev)
+    name, data = ev
+    case name
+    in :placed
+      data => {id:, items:}
+      need = Array.tally(items)
+      short = Array.select(Hash.keys(need)) { |sku| Hash.fetch(@counts, sku, 0) < need[sku] }
+      if Array.empty?(short)
+        Array.each(items) { |sku| @counts[sku] = Hash.fetch(@counts, sku, 0) - 1 }
+        Bus.publish(bus, :reserved, {id: id})
+      else
+        Bus.publish(bus, :short, {id: id, skus: short})
+      end
+    else nil   # never reached: Stock is subscribed to :placed only, but the checker cannot see that
+    end
+  end
+end
+
+class Mailer < {reader: [sent]}
+  include Handler
+  def handle(m, bus, ev)
+    name, data = ev
+    text = case name
+           in :short
+             data => {id:, skus:}
+             "order #{id}: sorry, #{Array.join(skus, ", ")} out of stock"
+           in :fsm_moved
+             data => {machine:, to:}
+             "#{machine} is now #{to}"
+           else nil
+           end
+    Array.push(@sent, text) if text
+  end
+end
+
+# Closes an order whose stock is short: a handler that drives the order's state machine,
+# whose move is published back on the same bus (queued, not nested).
+class Canceller < {reader: [orders]}
+  include Handler
+  def handle(c, bus, ev)
+    name, data = ev
+    case name
+    in :short
+      data => {id:}
+      m = @orders[id]
+      Fsm.fire(m, :cancel, 0) if m
+    else nil
+    end
+  end
+end
+
+class Counter < {reader: [by_name]}
+  include Handler
+  def handle(c, bus, ev)
+    name, _ = ev
+    @by_name[name] = Hash.fetch(@by_name, name, 0) + 1
+  end
+end
+
+bus = Bus.create
+stock = Stock.new(Hash["apple" => 2, "pear" => 0, "fig" => 5])
+mailer = Mailer.new(String[])
+counter = Counter.new(Hash[])
+Bus.on(bus, :placed, stock)
+Bus.on(bus, :short, mailer)
+Bus.on(bus, :fsm_moved, mailer)
+Bus.on(bus, :*, counter)
+orders = Hash[]
+Bus.on(bus, :short, Canceller.new(orders))
+def place(bus, orders, id, items, total)
+  rules = OrderRules.new(id, total, items, 0)
+  m = order_machine(rules)
+  Fsm.attach(m, bus)
+  orders[id] = m
+  Bus.publish(bus, :placed, {id: id, items: items})
+end
+
+puts("placing:")
+place(bus, orders, 1, Array["apple", "fig"], 300)
+place(bus, orders, 2, Array["pear"], 120)
+place(bus, orders, 3, Array["apple", "apple"], 500)
+
+steps = Array[[1, :pay, 100], [1, :pay, 200], [1, :ship, 0], [2, :cancel, 0], [3, :pay, 500],
+              [3, :cancel, 0], [1, :cancel, 0], [1, :deliver, 0]]
+puts("running:")
+Array.each(steps) do |id, event, amount|
+  m = orders[id]
+  Fsm.fire(m, event, amount) if m
+end
+
+puts("states:")
+Hash.each(orders) { |id, m| puts("  #{id}: #{Fsm.get_state(m)} via #{Fsm.get_history(m)}") }
+puts("stock left: #{Stock.get_counts(stock)}")
+puts("mail:")
+Array.each(Mailer.get_sent(mailer)) { puts("  #{it}") }
+puts("event counts: #{Counter.get_by_name(counter)}  (bus delivered #{Bus.get_delivered(bus)})")

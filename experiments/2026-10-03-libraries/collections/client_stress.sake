@@ -1,0 +1,115 @@
+# Stress: thousands of pseudo-random operations on each container, checked against a plain
+# Array/Hash reference; plus Dijkstra on a grid with a heap of [distance, cell] Tuples.
+
+class Rng < {accessor: [state]}
+  def next_int(r, n)
+    @state = (@state * 1103515245 + 12345) % 2147483648
+    (@state / 65536) % n
+  end
+end
+
+class IntHeap < {reader: [items], accessor: [seq]}
+  include HeapOps
+end
+class CellHeap < {reader: [items], accessor: [seq]}
+  include HeapOps
+end
+class IntDeque < {reader: [buf], accessor: [start, count]}
+  include DequeOps
+end
+
+rng = Rng.new(42)
+
+# 1. Heap sort against Array.sort.
+xs = Integer[]
+Integer.times(5000) { Array.push(xs, Rng.next_int(rng, 100000)) }
+h = IntHeap.with_items(Integer[])
+Array.each(xs) { |x| IntHeap.push(h, x) }
+sorted = Integer[]
+IntHeap.drain(h) { |x| Array.push(sorted, x) }
+puts("heap sort of #{Array.size(xs)}: #{sorted == Array.sort(xs) ? "ok" : "MISMATCH"}")
+
+# 2. Dijkstra on a 40x40 grid; entering a cell costs 1..9.
+n = 40
+cost = Array.new(n * n) { Rng.next_int(rng, 9) + 1 }
+dist = Array.new(n * n, 1000000)
+dist[0] = 0
+q = CellHeap.with_items(Tuple[])
+CellHeap.push(q, [0, 0])
+pops = 0
+e = CellHeap.pop(q)
+while e
+  d, cell = e
+  pops += 1
+  if d == Array.fetch(dist, cell)
+    r = cell / n
+    c = cell % n
+    Array.each(Array[[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]) do |nr, nc|
+      next if nr < 0 || nr >= n || nc < 0 || nc >= n
+      nb = nr * n + nc
+      nd = d + Array.fetch(cost, nb)
+      if nd < Array.fetch(dist, nb)
+        dist[nb] = nd
+        CellHeap.push(q, [nd, nb])
+      end
+    end
+  end
+  e = CellHeap.pop(q)
+end
+puts("dijkstra #{n}x#{n}: shortest = #{Array.fetch(dist, n * n - 1)}, heap pops = #{pops}")
+
+# 3. LRU against a reference: an Array of keys, least recent first.
+cache = LRU.create(50)
+ref_keys = Integer[]
+ref_vals = Hash[]
+bad = 0
+Integer.times(20000) do
+  key = Rng.next_int(rng, 120)
+  if Rng.next_int(rng, 3) == 0
+    v = Rng.next_int(rng, 1000)
+    LRU.put(cache, key, v)
+    Array.delete(ref_keys, key)
+    Array.push(ref_keys, key)
+    ref_vals[key] = v
+    if Array.size(ref_keys) > 50
+      gone = Array.shift(ref_keys)
+      Hash.delete(ref_vals, gone)
+    end
+  else
+    got = LRU.get(cache, key)
+    want = nil
+    if Array.include?(ref_keys, key)
+      Array.delete(ref_keys, key)
+      Array.push(ref_keys, key)
+      want = ref_vals[key]
+    end
+    bad += 1 unless got == want
+  end
+end
+order = Integer[]
+LRU.each(cache) { |k, v| Array.unshift(order, k) }
+bad += 1 unless order == ref_keys
+puts("lru 20000 ops: #{bad == 0 ? "ok" : "#{bad} MISMATCHES"}  #{LRU.stats(cache)}")
+
+# 4. Deque against an Array.
+dq = IntDeque.with_buf(Integer[])
+ref = Integer[]
+bad = 0
+Integer.times(20000) do |i|
+  case Rng.next_int(rng, 4)
+  in 0
+    IntDeque.push_back(dq, i)
+    Array.push(ref, i)
+  in 1
+    IntDeque.push_front(dq, i)
+    Array.unshift(ref, i)
+  in 2
+    bad += 1 unless IntDeque.pop_back(dq) == Array.pop(ref)
+  in 3
+    bad += 1 unless IntDeque.pop_front(dq) == Array.shift(ref)
+  end
+end
+all = Integer[]
+IntDeque.each(dq) { |x| Array.push(all, x) }
+bad += 1 unless all == ref
+puts("deque 20000 ops: #{bad == 0 ? "ok" : "#{bad} MISMATCHES"}, size #{IntDeque.size(dq)}, capacity #{IntDeque.capacity(dq)}")

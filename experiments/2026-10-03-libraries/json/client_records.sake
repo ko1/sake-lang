@@ -1,0 +1,36 @@
+# Unusual use: Struct values <-> JSON. Each type converts itself to plain JSON values.
+class Point < {reader: [x, y]}
+  def to_json_value(p) = Hash["x" => @x, "y" => @y]
+  def to_s(p) = "(#{@x}, #{@y})"
+end
+class Shape < {reader: [kind, points], accessor: [label]}
+  def to_json_value(s) =
+    Hash["kind" => @kind, "label" => @label, "points" => Array.map(@points) { Point.to_json_value(it) }]
+end
+
+shapes = Shape[Shape.new("tri", Point[Point.new(0, 0), Point.new(4, 0), Point.new(0, 3)], "A"),
+               Shape.new("seg", Point[Point.new(1, 1), Point.new(2, 2)], nil)]
+encoded = Array.map(shapes) { Shape.to_json_value(it) }
+text = Json.pretty(Hash["shapes" => encoded, "meta" => JsonRaw.new('{"version":2}')])
+puts(text)
+
+# Decode back into Structs: the type of every field is fixed here, at the boundary.
+def decode_point(v) = Point.new(Json.int(v, Array["x"]), Json.int(v, Array["y"]))
+def decode_shape(v)
+  pts = Point[]
+  Array.each(Json.arr(v, Array["points"])) { Array.push(pts, decode_point(it)) }
+  Shape.new(Json.str(v, Array["kind"]), pts, Json.str_or(v, Array["label"], "-"))
+end
+doc = Json.parse(text)
+back = Shape[]
+Array.each(Json.arr(doc, Array["shapes"])) { Array.push(back, decode_shape(it)) }
+Array.each(back) do |s|
+  puts("#{Shape.get_label(s)} #{Shape.get_kind(s)}: #{Array.join(Shape.get_points(s), " ")}")
+end
+puts("version: #{Json.int(doc, Array["meta", "version"])}")
+
+# Relabel through the Struct and re-encode compactly; compare with the decoded document.
+Shape.set_label(Array.fetch(back, 1), "B")
+again = Array.map(back) { Shape.to_json_value(it) }
+puts(Json.generate(again))
+puts("first shape unchanged by the round trip: #{Array.fetch(again, 0) == Json.dig(doc, Array["shapes", 0])}")

@@ -59,6 +59,10 @@ module Sake
       if c.arg == "subject" && c.op.start_with?("(")
         return ["#{c.op}: argument 1 must be #{c.expected.split("|").join(" or ")}, but #{c.verdict == :error ? "is" : "can be"} #{typer.show_failing(c)}", []]
       end
+      if c.arg == "subject" && c.expected.empty?
+        mod = c.op.split(".").first
+        return ["#{c.op} is a mixin function, and no type includes #{mod}", ["to call it as #{c.op}(...), mark it with `module_function`"]]
+      end
       if c.arg == "subject"
         mod = c.op.split(".").first
         return ["#{c.op} dispatches on its first argument, which #{c.verdict == :error ? "is" : "can be"} #{typer.show_failing(c)}; " \

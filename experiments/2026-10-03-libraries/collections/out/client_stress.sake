@@ -1,0 +1,403 @@
+# collections: generic containers for Sake.
+#
+# Each container is a mixin module plus a ready-made type that includes it:
+#
+#   HeapOps  / Heap          binary min-heap ordered by `<`; push_with(h, key, v) orders by key only
+#   LruOps   / LRU, LruNode  least-recently-used cache: Hash key -> node, doubly linked recency list
+#   DequeOps / Deque         growable ring buffer, push/pop at both ends
+#
+# A Struct field has one type per program, so a ready-made type used with two element types
+# sees the union of both. For a second element type, declare your own type with the same
+# fields and `include` the module (see the client programs): each includer gets its own types.
+# Allocate the Arrays/Hashes in the includer (`new(Integer[], 0)`), not in a shared function.
+
+# ---------------------------------------------------------------- Heap
+# Includer fields: items (an Array), seq (an Integer, for push_with).
+
+module HeapOps
+  # Make an includer's heap around an Array made by the caller (Integer[], Task[], Array[]).
+  def with_items(items) = new(items, 0)
+
+  def size(h) = Array.size(@items)
+  def empty?(h) = Array.empty?(@items)
+  def peek(h) = Array.first(@items)
+
+  def push(h, x)
+    Array.push(@items, x)
+    sift_up(h, Array.size(@items) - 1)
+    h
+  end
+
+  # Order by key and never compare the values: stores [key, seq, v]; seq keeps ties FIFO.
+  def push_with(h, key, v)
+    @seq += 1
+    push(h, [key, @seq, v])
+  end
+
+  def pop(h)
+    items = @items
+    return nil if Array.empty?(items)
+    top = Array.fetch(items, 0)
+    last = Array.fetch(items, -1)
+    Array.pop(items)
+    unless Array.empty?(items)
+      items[0] = last
+      sift_down(h, 0)
+    end
+    top
+  end
+
+  # pop for an entry made by push_with: its value.
+  def pop_value(h)
+    e = pop(h)
+    return nil unless e
+    _k, _s, v = e
+    v
+  end
+
+  # Yields the elements in order, emptying the heap.
+  def drain(h)
+    x = pop(h)
+    while x != nil          # pop's nil means empty; checking it keeps nil out of the block
+      yield(x)
+      x = pop(h)
+    end
+    h
+  end
+
+  def sift_up(h, i)
+    items = @items
+    while i > 0
+      parent = (i - 1) / 2
+      break unless Array.fetch(items, i) < Array.fetch(items, parent)
+      items[i], items[parent] = Array.fetch(items, parent), Array.fetch(items, i)
+      i = parent
+    end
+  end
+
+  def sift_down(h, i)
+    items = @items
+    n = Array.size(items)
+    while true
+      l = 2 * i + 1
+      r = l + 1
+      m = i
+      m = l if l < n && Array.fetch(items, l) < Array.fetch(items, m)
+      m = r if r < n && Array.fetch(items, r) < Array.fetch(items, m)
+      break if m == i
+      items[i], items[m] = Array.fetch(items, m), Array.fetch(items, i)
+      i = m
+    end
+  end
+end
+
+class Heap < {reader: [items], accessor: [seq]}
+  include HeapOps
+  def create = Heap.new(Array[], 0)
+end
+
+# ---------------------------------------------------------------- LRU
+# Node includer fields: key, value, prev, nxt.
+# Cache includer fields: capacity, index (a Hash), head, tail, hits, misses;
+# and a function make_node(c, key, value) that makes a node of its node type.
+
+module LruNodeOps
+  def node_key(n) = @key
+  def node_value(n) = @value
+  def node_prev(n) = @prev
+  def node_next(n) = @nxt
+  def set_node_value(n, v) = @value = v
+  def set_node_prev(n, m) = @prev = m
+  def set_node_next(n, m) = @nxt = m
+end
+
+module LruOps
+  def make_node(c, key, value) = raise(NotImplementedError)
+
+  # Make an includer's cache around a Hash made by the caller.
+  def with_index(index, capacity) = new(capacity, index, nil, nil, 0, 0)
+
+  def size(c) = Hash.size(@index)
+
+  def unlink(c, node)
+    pr = LruNodeOps.node_prev(node)
+    nx = LruNodeOps.node_next(node)
+    if pr
+      LruNodeOps.set_node_next(pr, nx)
+    else
+      @head = nx
+    end
+    if nx
+      LruNodeOps.set_node_prev(nx, pr)
+    else
+      @tail = pr
+    end
+    LruNodeOps.set_node_prev(node, nil)
+    LruNodeOps.set_node_next(node, nil)
+  end
+
+  def push_front(c, node)
+    old = @head
+    LruNodeOps.set_node_next(node, old)
+    LruNodeOps.set_node_prev(old, node) if old
+    @head = node
+    @tail = node unless @tail
+  end
+
+  def touch(c, node)
+    unlink(c, node)
+    push_front(c, node)
+    LruNodeOps.node_value(node)
+  end
+
+  # The value for key (now the most recent), or nil.
+  def get(c, key)
+    node = @index[key]
+    unless node
+      @misses += 1
+      return nil
+    end
+    @hits += 1
+    touch(c, node)
+  end
+
+  def put(c, key, value)
+    node = @index[key]
+    if node
+      LruNodeOps.set_node_value(node, value)
+      touch(c, node)
+      return value
+    end
+    node = LruOps.make_node(c, key, value)   # qualified: a missing make_node is then reported
+    @index[key] = node
+    push_front(c, node)
+    evict(c) if Hash.size(@index) > @capacity
+    value
+  end
+
+  def evict(c)
+    old = @tail
+    return nil unless old
+    unlink(c, old)
+    Hash.delete(@index, LruNodeOps.node_key(old))
+    old
+  end
+
+  # The cached value, or the block's value for key (then cached).
+  def fetch(c, key)
+    node = @index[key]
+    if node
+      @hits += 1
+      return touch(c, node)
+    end
+    @misses += 1
+    put(c, key, yield(key))
+  end
+
+  # Yields key and value, most recent first.
+  def each(c)
+    node = @head
+    while node
+      yield(LruNodeOps.node_key(node), LruNodeOps.node_value(node))
+      node = LruNodeOps.node_next(node)
+    end
+    c
+  end
+
+  def stats(c) = "hits=#{@hits} misses=#{@misses} size=#{Hash.size(@index)}/#{@capacity}"
+end
+
+class LruNode < {reader: [key], accessor: [value, prev, nxt]}
+  include LruNodeOps
+end
+
+class LRU < {reader: [capacity, index], accessor: [head, tail, hits, misses]}
+  include LruOps
+  def create(capacity) = LRU.new(capacity, Hash[], nil, nil, 0, 0)
+  def make_node(c, key, value) = LruNode.new(key, value, nil, nil)
+end
+
+# ---------------------------------------------------------------- Deque
+# Includer fields: buf (an Array, usually empty at first: Integer[], String[]), start, count.
+
+module DequeOps
+  # Make an includer's deque around an Array made by the caller (Integer[], String[]).
+  def with_buf(buf) = new(buf, 0, 0)
+
+  def size(d) = @count
+  def empty?(d) = @count == 0
+  def capacity(d) = Array.size(@buf)
+  def slot(d, i) = (@start + i) % Array.size(@buf)
+
+  def grow(d, x)
+    old = @buf
+    cap = Array.size(old)
+    return Array.push(old, x) if cap == 0
+    # Append a copy: the wrapped run [0, start) reappears at [cap, cap+start), right after
+    # [start, cap), so start stays valid. Grows in place, so no new Array is allocated here.
+    Integer.times(cap) { |i| Array.push(old, Array.fetch(old, i)) }
+  end
+
+  def push_back(d, x)
+    grow(d, x) if @count == Array.size(@buf)
+    @buf[slot(d, @count)] = x
+    @count += 1
+    d
+  end
+
+  def push_front(d, x)
+    grow(d, x) if @count == Array.size(@buf)
+    @start = (@start - 1) % Array.size(@buf)
+    @buf[@start] = x
+    @count += 1
+    d
+  end
+
+  def pop_front(d)
+    return nil if @count == 0
+    x = Array.fetch(@buf, @start)
+    @start = (@start + 1) % Array.size(@buf)
+    @count -= 1
+    x
+  end
+
+  def pop_back(d)
+    return nil if @count == 0
+    @count -= 1
+    Array.fetch(@buf, slot(d, @count))
+  end
+
+  def front(d) = @count == 0 ? nil : Array.fetch(@buf, @start)
+  def back(d) = @count == 0 ? nil : Array.fetch(@buf, slot(d, @count - 1))
+
+  def at(d, i)
+    raise IndexError.new("deque index #{i} outside 0...#{@count}") if i < 0 || i >= @count
+    Array.fetch(@buf, slot(d, i))
+  end
+
+  def each(d)
+    Integer.times(@count) { |i| yield(Array.fetch(@buf, slot(d, i))) }
+    d
+  end
+end
+
+class Deque < {reader: [buf], accessor: [start, count]}
+  include DequeOps
+  def create = Deque.new(Array[], 0, 0)
+end
+# ---- client_stress.sake (line 1 of the client is line 289 here)
+# Stress: thousands of pseudo-random operations on each container, checked against a plain
+# Array/Hash reference; plus Dijkstra on a grid with a heap of [distance, cell] Tuples.
+
+class Rng < {accessor: [state]}
+  def next_int(r, n)
+    @state = (@state * 1103515245 + 12345) % 2147483648
+    (@state / 65536) % n
+  end
+end
+
+class IntHeap < {reader: [items], accessor: [seq]}
+  include HeapOps
+end
+class CellHeap < {reader: [items], accessor: [seq]}
+  include HeapOps
+end
+class IntDeque < {reader: [buf], accessor: [start, count]}
+  include DequeOps
+end
+
+rng = Rng.new(42)
+
+# 1. Heap sort against Array.sort.
+xs = Integer[]
+Integer.times(5000) { Array.push(xs, Rng.next_int(rng, 100000)) }
+h = IntHeap.with_items(Integer[])
+Array.each(xs) { |x| IntHeap.push(h, x) }
+sorted = Integer[]
+IntHeap.drain(h) { |x| Array.push(sorted, x) }
+puts("heap sort of #{Array.size(xs)}: #{sorted == Array.sort(xs) ? "ok" : "MISMATCH"}")
+
+# 2. Dijkstra on a 40x40 grid; entering a cell costs 1..9.
+n = 40
+cost = Array.new(n * n) { Rng.next_int(rng, 9) + 1 }
+dist = Array.new(n * n, 1000000)
+dist[0] = 0
+q = CellHeap.with_items(Tuple[])
+CellHeap.push(q, [0, 0])
+pops = 0
+e = CellHeap.pop(q)
+while e
+  d, cell = e
+  pops += 1
+  if d == Array.fetch(dist, cell)
+    r = cell / n
+    c = cell % n
+    Array.each(Array[[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]) do |nr, nc|
+      next if nr < 0 || nr >= n || nc < 0 || nc >= n
+      nb = nr * n + nc
+      nd = d + Array.fetch(cost, nb)
+      if nd < Array.fetch(dist, nb)
+        dist[nb] = nd
+        CellHeap.push(q, [nd, nb])
+      end
+    end
+  end
+  e = CellHeap.pop(q)
+end
+puts("dijkstra #{n}x#{n}: shortest = #{Array.fetch(dist, n * n - 1)}, heap pops = #{pops}")
+
+# 3. LRU against a reference: an Array of keys, least recent first.
+cache = LRU.create(50)
+ref_keys = Integer[]
+ref_vals = Hash[]
+bad = 0
+Integer.times(20000) do
+  key = Rng.next_int(rng, 120)
+  if Rng.next_int(rng, 3) == 0
+    v = Rng.next_int(rng, 1000)
+    LRU.put(cache, key, v)
+    Array.delete(ref_keys, key)
+    Array.push(ref_keys, key)
+    ref_vals[key] = v
+    if Array.size(ref_keys) > 50
+      gone = Array.shift(ref_keys)
+      Hash.delete(ref_vals, gone)
+    end
+  else
+    got = LRU.get(cache, key)
+    want = nil
+    if Array.include?(ref_keys, key)
+      Array.delete(ref_keys, key)
+      Array.push(ref_keys, key)
+      want = ref_vals[key]
+    end
+    bad += 1 unless got == want
+  end
+end
+order = Integer[]
+LRU.each(cache) { |k, v| Array.unshift(order, k) }
+bad += 1 unless order == ref_keys
+puts("lru 20000 ops: #{bad == 0 ? "ok" : "#{bad} MISMATCHES"}  #{LRU.stats(cache)}")
+
+# 4. Deque against an Array.
+dq = IntDeque.with_buf(Integer[])
+ref = Integer[]
+bad = 0
+Integer.times(20000) do |i|
+  case Rng.next_int(rng, 4)
+  in 0
+    IntDeque.push_back(dq, i)
+    Array.push(ref, i)
+  in 1
+    IntDeque.push_front(dq, i)
+    Array.unshift(ref, i)
+  in 2
+    bad += 1 unless IntDeque.pop_back(dq) == Array.pop(ref)
+  in 3
+    bad += 1 unless IntDeque.pop_front(dq) == Array.shift(ref)
+  end
+end
+all = Integer[]
+IntDeque.each(dq) { |x| Array.push(all, x) }
+bad += 1 unless all == ref
+puts("deque 20000 ops: #{bad == 0 ? "ok" : "#{bad} MISMATCHES"}, size #{IntDeque.size(dq)}, capacity #{IntDeque.capacity(dq)}")

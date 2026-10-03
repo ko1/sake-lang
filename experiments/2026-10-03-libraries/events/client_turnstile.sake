@@ -1,0 +1,62 @@
+# A coin turnstile: an Fsm whose moves are published on a Bus, which an audit log
+# and an alarm subscribe to.
+
+class Turnstile < {reader: [fare, credit, passed]}
+  include Hooks
+  def guard?(t, name, fsm, data)
+    case name
+    in :paid then @credit + data >= @fare
+    in :has_credit then @credit >= @fare
+    end
+  end
+  def act(t, name, fsm, data)
+    case name
+    in :take_coin then @credit += data
+    in :charge
+      @credit -= @fare
+      @passed += 1
+    end
+  end
+  def enter(t, state, fsm, data) = puts("  [turnstile] now #{state}")
+end
+
+class Audit < {reader: [lines]}
+  include Handler
+  def handle(a, bus, ev)
+    name, data = ev
+    Array.push(@lines, "#{name} #{data}")
+  end
+end
+
+class Alarm < {reader: [rings]}
+  include Handler
+  def handle(al, bus, ev)
+    @rings += 1
+    puts("  [alarm] #{ev}")
+  end
+end
+
+ts = Turnstile.new(50, 0, 0)
+fsm = Fsm.create("gate", :locked, ts)
+Fsm.allow(fsm, :locked, :coin, :unlocked, :paid, :take_coin)
+Fsm.allow(fsm, :locked, :coin, :locked, :none, :take_coin)       # not enough yet
+Fsm.allow(fsm, :unlocked, :push, :locked, :has_credit, :charge)
+Fsm.allow(fsm, :unlocked, :coin, :unlocked, :none, :take_coin)   # extra coins kept as credit
+
+bus = Bus.create
+audit = Audit.new(String[])
+alarm = Alarm.new(0)
+Bus.on(bus, :*, audit)
+Bus.on(bus, :fsm_rejected, alarm)
+Fsm.attach(fsm, bus)
+
+inputs = Array[[:push, 0], [:coin, 20], [:coin, 30], [:push, 0], [:push, 0], [:coin, 100], [:push, 0], [:push, 0]]
+Array.each(inputs) do |event, amount|
+  puts("#{event} #{amount}:")
+  Fsm.fire(fsm, event, amount)
+end
+
+puts("state=#{Fsm.get_state(fsm)} credit=#{Turnstile.get_credit(ts)} passed=#{Turnstile.get_passed(ts)} alarms=#{Alarm.get_rings(alarm)}")
+puts("next events from :locked: #{Fsm.events_from(fsm, :locked)}")
+puts("audit trail (#{Array.size(Audit.get_lines(audit))} lines):")
+Array.each(Audit.get_lines(audit)) { puts("  #{it}") }

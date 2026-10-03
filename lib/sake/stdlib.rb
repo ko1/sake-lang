@@ -21,7 +21,7 @@ module Sake
       install_tuple(reg)
       install_math(reg)
       install_index(reg)
-      %w[Integer Float String Tuple].each { install_typed_array(reg, _1) }
+      %w[Integer Float Rational Complex String Symbol Tuple].each { install_typed_array(reg, _1) }
     end
 
     def int_pow(a, b)

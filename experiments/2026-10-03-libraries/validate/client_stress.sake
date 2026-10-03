@@ -1,0 +1,66 @@
+# Stress: 2000 generated orders, validated in a batch; errors counted per field;
+# Results nested (a Result whose value is a Result), and map_err into FieldError.
+
+def make_order(i)
+  h = Hash["id" => Integer.to_s(i), "qty" => Integer.to_s(i % 7 - 1), "sku" => "SKU-#{i % 13}"]
+  h["sku"] = "sku#{i}" if i % 11 == 0
+  h["email"] = "u#{i}@shop.test" unless i % 17 == 0
+  h["coupon"] = "SAVE#{i % 40}" if i % 5 == 0
+  h
+end
+
+def check_order(h)
+  c = Checker.start(h)
+  id = Checker.integer(c, "id", Checker.required(c, "id"), 0, 1_000_000)
+  qty = Checker.integer(c, "qty", Checker.required(c, "qty"), 1, 99)
+  sku = Checker.matches(c, "sku", Checker.required(c, "sku"), /\ASKU-\d+\z/, "like SKU-123")
+  Checker.matches(c, "email", Checker.required(c, "email"), /@/, "an email address")
+  coupon = Checker.optional(c, "coupon")
+  Checker.check(c, "coupon", coupon, "is expired") { |s| String.to_i(String.delete_prefix(s, "SAVE")) >= 10 }
+  [c, {id: id, qty: qty, sku: sku}]
+end
+
+per_field = Hash.new(0)
+good = 0
+total_qty = 0
+Integer.times(2000) do |i|
+  c, order = check_order(make_order(i))
+  if Checker.ok?(c)
+    good += 1
+    order => {qty:}
+    total_qty += qty if qty
+  else
+    Array.each(Checker.get_errors(c)) { |e| per_field[FieldError.get_field(e)] += 1 }
+  end
+end
+puts("good orders: #{good} / 2000, total qty #{total_qty}")
+Array.each(Hash.sort_by(per_field) { |f, n| -n }) { |f, n| puts(format("  %-7s %4d errors", f, n)) }
+
+# Nested: parse a quantity, then look the sku up in a price table (a second Result).
+def price_of(sku)
+  table = Hash["SKU-1" => 250, "SKU-2" => 990]
+  v = table[sku]
+  v ? Result.ok(v) : Result.err("no price for #{sku}")
+end
+
+def line_total(h)
+  c, order = check_order(h)
+  r = Checker.result(c, order)
+  r = Result.map_err(r) { |msgs| Array.join(msgs, "; ") }
+  # qty is nil | Integer even inside ok: the checker cannot tie "no errors" to "no nils".
+  nested = Result.map(r) { |o| o => {sku:, qty:}; [price_of(sku), qty || 0] }
+  Result.and_then(nested) do |pr, qty|
+    Result.map(pr) { |price| price * qty }
+  end
+end
+
+Array.each(Array[1, 2, 3, 0, 15]) do |i|
+  puts("order #{i}: #{Result.to_s(line_total(make_order(i)))}")
+end
+
+# A deep chain of and_then: 200 steps, each may fail.
+r = Result.ok(1)
+Integer.times(200) do |k|
+  r = Result.and_then(r) { |v| v > 10_000 ? Result.err("overflow at step #{k}") : Result.ok(v * 3 / 2 + 1) }
+end
+puts("chain: #{Result.to_s(r)}")

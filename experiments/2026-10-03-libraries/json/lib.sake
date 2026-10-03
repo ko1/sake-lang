@@ -1,0 +1,346 @@
+# ---- json library (lib.sake) ----
+# JSON values are plain Sake values:
+#   object -> Hash (String keys), array -> Array, string -> String,
+#   number -> Integer or Float, true/false, null -> nil.
+
+class JsonError < {exception: true, reader: [pos]}
+end
+
+# Parser state: the source, its length, and the current position.
+class JsonParser < {reader: [src, len], accessor: [pos]}
+  def peek(ps) = @pos < @len ? @src[@pos] : nil
+
+  def fail(ps, msg) = raise(JsonError.new("#{msg} at #{@pos}", @pos))
+
+  def skip_ws(ps)
+    while @pos < @len
+      c = @src[@pos]
+      break unless c == " " || c == "\n" || c == "\t" || c == "\r"
+      @pos += 1
+    end
+    ps
+  end
+
+  def expect(ps, ch)
+    skip_ws(ps)
+    fail(ps, "expected '#{ch}'") unless peek(ps) == ch
+    @pos += 1
+    ps
+  end
+
+  def value(ps)
+    skip_ws(ps)
+    c = peek(ps)
+    fail(ps, "unexpected end of input") unless c
+    case c
+    in "{" then object(ps)
+    in "[" then array(ps)
+    in "\"" then string(ps)
+    in "t" then literal(ps, "true", true)
+    in "f" then literal(ps, "false", false)
+    in "n" then literal(ps, "null", nil)
+    else number(ps)
+    end
+  end
+
+  def literal(ps, word, v)
+    n = String.size(word)
+    fail(ps, "invalid literal") unless @src[@pos, n] == word
+    @pos += n
+    v
+  end
+
+  def object(ps)
+    h = Hash[]
+    @pos += 1
+    skip_ws(ps)
+    if peek(ps) == "}"
+      @pos += 1
+      return h
+    end
+    while true
+      skip_ws(ps)
+      fail(ps, "expected string key") unless peek(ps) == "\""
+      k = string(ps)
+      expect(ps, ":")
+      h[k] = value(ps)
+      skip_ws(ps)
+      c = peek(ps)
+      @pos += 1
+      break if c == "}"
+      fail(ps, "expected ',' or '}'") unless c == ","
+    end
+    h
+  end
+
+  def array(ps)
+    a = Array[]
+    @pos += 1
+    skip_ws(ps)
+    if peek(ps) == "]"
+      @pos += 1
+      return a
+    end
+    while true
+      Array.push(a, value(ps))
+      skip_ws(ps)
+      c = peek(ps)
+      @pos += 1
+      break if c == "]"
+      fail(ps, "expected ',' or ']'") unless c == ","
+    end
+    a
+  end
+
+  def hex4(ps)
+    h = @src[@pos, 4]
+    fail(ps, "bad \\u escape") unless h && String.match?(h, /\A[0-9a-fA-F]{4}\z/)
+    @pos += 4
+    String.hex(h)
+  end
+
+  def string(ps)
+    @pos += 1
+    out = String[]
+    start = @pos
+    while @pos < @len
+      c = @src[@pos]
+      if c == "\""
+        Array.push(out, @src[start, @pos - start]) if @pos > start
+        @pos += 1
+        return Array.join(out, "")
+      elsif c == "\\"
+        Array.push(out, @src[start, @pos - start]) if @pos > start
+        @pos += 1
+        e = peek(ps)
+        @pos += 1
+        case e
+        in "\"" then Array.push(out, "\"")
+        in "\\" then Array.push(out, "\\")
+        in "/" then Array.push(out, "/")
+        in "b" then Array.push(out, "\b")
+        in "f" then Array.push(out, "\f")
+        in "n" then Array.push(out, "\n")
+        in "r" then Array.push(out, "\r")
+        in "t" then Array.push(out, "\t")
+        in "u"
+          cp = hex4(ps)
+          if cp >= 0xD800 && cp <= 0xDBFF && @src[@pos, 2] == "\\u"
+            @pos += 2
+            lo = hex4(ps)
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
+          end
+          Array.push(out, format("%c", cp))
+        else fail(ps, "bad escape")
+        end
+        start = @pos
+      else
+        @pos += 1
+      end
+    end
+    fail(ps, "unterminated string")
+  end
+
+  def number(ps)
+    start = @pos
+    while @pos < @len && String.include?("+-0123456789.eE", @src[@pos])
+      @pos += 1
+    end
+    text = @src[start, @pos - start]
+    fail(ps, "unexpected character") unless text && String.match?(text, /\A-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?\z/)
+    if String.match?(text, /[.eE]/)
+      Float(text)
+    else
+      Integer(text)
+    end
+  end
+end
+
+# Pre-encoded JSON text, emitted as is by generate/pretty.
+# (A JsonEncodable mixin hook for user Structs was tried and dropped: see NOTES.md.)
+class JsonRaw < {reader: [text]}
+end
+
+module Json
+  module_function
+
+  # ---- parsing ----
+  def parse(s)
+    ps = JsonParser.new(s, String.size(s), 0)
+    v = JsonParser.value(ps)
+    JsonParser.skip_ws(ps)
+    JsonParser.fail(ps, "trailing characters") if JsonParser.get_pos(ps) < String.size(s)
+    v
+  end
+
+  # ---- generating ----
+  def escape(s)
+    out = String[]
+    String.each_char(s) do |c|
+      case c
+      in "\"" then Array.push(out, "\\\"")
+      in "\\" then Array.push(out, "\\\\")
+      in "\n" then Array.push(out, "\\n")
+      in "\r" then Array.push(out, "\\r")
+      in "\t" then Array.push(out, "\\t")
+      else
+        if String.ord(c) < 0x20
+          Array.push(out, format("\\u%04x", String.ord(c)))
+        else
+          Array.push(out, c)
+        end
+      end
+    end
+    "\"#{Array.join(out, "")}\""
+  end
+
+  def generate(v) = emit(v, nil, 0)
+  def pretty(v) = emit(v, "  ", 0)
+
+  # indent: nil for compact, a String for pretty output
+  def emit(v, indent, depth)
+    case v
+    in nil then "null"
+    in true then "true"
+    in false then "false"
+    in Integer then Integer.to_s(v)
+    in Float
+      raise JsonError.new("cannot encode #{v}", 0) unless Float.finite?(v)
+      Float.to_s(v)
+    in String then escape(v)
+    in Array
+      return "[]" if Array.empty?(v)
+      parts = Array.map(v) { |x| emit(x, indent, depth + 1) }
+      wrap("[", parts, "]", indent, depth)
+    in Hash
+      return "{}" if Hash.empty?(v)
+      sep = indent ? ": " : ":"
+      parts = Hash.map(v) do |k, x|
+        raise JsonError.new("object key must be a String", 0) unless k in String
+        "#{escape(k)}#{sep}#{emit(x, indent, depth + 1)}"
+      end
+      wrap("{", parts, "}", indent, depth)
+    in JsonRaw then JsonRaw.get_text(v)
+    end
+  end
+
+  def wrap(open, parts, close, indent, depth)
+    if indent
+      inner = indent * (depth + 1)
+      "#{open}\n#{inner}#{Array.join(parts, ",\n#{inner}")}\n#{indent * depth}#{close}"
+    else
+      "#{open}#{Array.join(parts, ",")}#{close}"
+    end
+  end
+
+  # ---- access ----
+  # path: an Array of String (object key) and Integer (array index); nil when missing.
+  def dig(v, path)
+    cur = v
+    Array.each(path) do |k|
+      case cur
+      in Hash
+        return nil unless k in String
+        cur = cur[k]
+      in Array
+        return nil unless k in Integer
+        cur = cur[k]
+      else
+        return nil
+      end
+    end
+    cur
+  end
+
+  def path_s(path) = Array.join(Array.map(path) { |k| Kernel.to_s(k) }, ".")
+
+  def type_error(path, want, v) =
+    raise(JsonError.new("#{path_s(path)}: expected #{want}, got #{generate(v)}", 0))
+
+  # Typed getters: the value at path, or a JsonError naming the path.
+  def str(v, path)
+    x = dig(v, path)
+    return x if x in String
+    type_error(path, "string", x)
+  end
+
+  def int(v, path)
+    x = dig(v, path)
+    return x if x in Integer
+    type_error(path, "integer", x)
+  end
+
+  def num(v, path)
+    x = dig(v, path)
+    return Integer.to_f(x) if x in Integer
+    return x if x in Float
+    type_error(path, "number", x)
+  end
+
+  def bool(v, path)
+    x = dig(v, path)
+    return x if x == true || x == false
+    type_error(path, "boolean", x)
+  end
+
+  def arr(v, path)
+    x = dig(v, path)
+    return x if x in Array
+    type_error(path, "array", x)
+  end
+
+  def obj(v, path)
+    x = dig(v, path)
+    return x if x in Hash
+    type_error(path, "object", x)
+  end
+
+  # An array of strings / integers, as a typed Array (String[] / Integer[]).
+  def strs(v, path)
+    out = String[]
+    Array.each_with_index(arr(v, path)) do |x, i|
+      # `type_error(...) unless x in String` does not narrow x: type_error always raises,
+      # but only a literal raise/return/next counts as an exit for narrowing.
+      if x in String
+        Array.push(out, x)
+      else
+        type_error(Array[*path, i], "string", x)
+      end
+    end
+    out
+  end
+
+  def ints(v, path)
+    out = Integer[]
+    Array.each_with_index(arr(v, path)) do |x, i|
+      # `type_error(...) unless x in Integer` does not narrow x: type_error always raises,
+      # but only a literal raise/return/next counts as an exit for narrowing.
+      if x in Integer
+        Array.push(out, x)
+      else
+        type_error(Array[*path, i], "integer", x)
+      end
+    end
+    out
+  end
+
+  # Getters with a default for a missing (null) value; a wrong type is still an error.
+  def str_or(v, path, d)
+    x = dig(v, path)
+    return d if x == nil
+    str(v, path)
+  end
+
+  def int_or(v, path, d)
+    x = dig(v, path)
+    return d if x == nil
+    int(v, path)
+  end
+
+  def bool_or(v, path, d)
+    x = dig(v, path)
+    return d if x == nil
+    bool(v, path)
+  end
+end
+# ---- end of json library ----

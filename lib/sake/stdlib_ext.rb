@@ -345,6 +345,11 @@ module Sake
     end
 
     def install_more_string(reg)
+      # Bytes and encodings, as Ruby: Array.pack(bytes, "C*") is binary, force_encoding relabels it.
+      reg.define("Array", :pack, %w[Array String]) { |a, fmt| ruby_error("ArgumentError") { a.pack(fmt) }.then { _1.frozen? ? _1 : _1 } }
+      reg.define("String", :force_encoding, %w[String String]) { |s, enc| ruby_error("ArgumentError") { s.dup.force_encoding(enc) } }
+      reg.define("String", :valid_encoding?, ["String"], &:valid_encoding?)
+      reg.define("String", :encoding, ["String"]) { |s| s.encoding.name }
       reg.define("String", :center, %w[String Integer], optional: ["String"]) { |s, n, pad = " "| s.center(n, pad) }
       reg.define("String", :tr, %w[String String String]) { |s, a, b| s.tr(a, b) }
       reg.define("String", :delete, %w[String String]) { |s, t| s.delete(t) }

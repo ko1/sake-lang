@@ -1,0 +1,61 @@
+# Stress: round-trip many documents, reject bad input, a deep and a large document.
+def cases = String[
+  'null', 'true', 'false', '0', '-12', '3.25', '1e3', '-0.5E-2', '""',
+  '"tab\there"', '"quote \" backslash \\\\ slash \/"', '"\u00e9\u3042 \ud83c\udf63\u0001"',
+  '[]', '{}', '[1, [2, [3, []]], {"a": {}}]',
+  '{"k": [true, false, null], "n": -1.5, "s": "x"}',
+  '  { "spaced" :  [ 1 , 2 ] }  '
+]
+
+ok = 0
+Array.each(cases) do |src|
+  v = Json.parse(src)
+  compact = Json.generate(v)
+  pretty = Json.pretty(v)
+  same = Json.parse(compact) == v && Json.parse(pretty) == v && Json.generate(Json.parse(compact)) == compact
+  ok += 1 if same
+  puts(format("%-5s %-40s -> %s", same ? "ok" : "DIFF", src, compact))
+end
+puts("round-trip: #{ok}/#{Array.size(cases)}")
+
+def bad_cases = String['', '[1, 2', '{"a" 1}', '{"a": 1,}', 'tru', '01', '"abc', '[1] x', '{1: 2}', '"\x"', '-']
+Array.each(bad_cases) do |src|
+  begin
+    v = Json.parse(src)
+    puts("ACCEPTED (bug): #{src} -> #{Json.generate(v)}")
+  rescue JsonError => e
+    puts(format("%-10s rejected: %s (pos %d)", src, Exception.message(e), JsonError.get_pos(e)))
+  end
+end
+
+# Values Sake has but JSON does not.
+Array.each(Array[Hash[1 => 2], 0.0 / 0.0]) do |v|
+  begin
+    puts(Json.generate(v))
+  rescue JsonError => e
+    puts("cannot generate: #{Exception.message(e)}")
+  end
+end
+
+# Deep nesting: 200 levels of arrays.
+depth = 200
+deep = "#{"[" * depth}42#{"]" * depth}"
+dv = Json.parse(deep)
+puts("deep: #{Json.generate(dv) == deep}, innermost via dig: #{Json.dig(dv, Array.new(depth, 0))}")
+
+# A large document: 3000 records, built as Sake values, generated, parsed back.
+rows = Array[]
+Integer.times(3000) do |i|
+  Array.push(rows, Hash["id" => i, "name" => "user#{i}", "score" => i * 0.5, "tags" => Array["a", "b#{i % 7}"], "active" => Integer.even?(i)])
+end
+doc = Hash["rows" => rows, "count" => 3000]
+t0 = Time.now
+text = Json.generate(doc)
+t1 = Time.now
+back = Json.parse(text)
+t2 = Time.now
+puts("large: #{String.size(text)} bytes, equal after round-trip: #{back == doc}")
+puts(format("generate %.2fs, parse %.2fs", t1 - t0, t2 - t1))
+active = 0
+Array.each(Json.arr(back, Array["rows"])) { |r| active += 1 if Json.bool(r, Array["active"]) }
+puts("active rows: #{active}, score of row 2999: #{Json.num(back, Array["rows", 2999, "score"])}")

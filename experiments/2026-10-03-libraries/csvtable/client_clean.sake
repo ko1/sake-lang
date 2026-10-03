@@ -1,0 +1,86 @@
+# Data cleaning: trim every cell, convert numeric columns, report bad rows, write clean CSV.
+
+def messy_csv
+  "id , name , age , score\n" \
+  "1,  Alice  , 34, 88.5\n" \
+  "2,Bob,thirty,91\n" \
+  "3,\"  Carol, Jr. \",29,\n" \
+  "4,Dan,41,\"  1,204.0 \"\n" \
+  "5,Gus,38\n" \
+  "6,Eve,,77\n" \
+  "7,\"Fay \"\"FF\"\" O\",52,x9\n"
+end
+
+Issue = Struct.new(:row, :column, :text)
+
+# Header names are trimmed too.
+def clean_headers(t) = Array.map(Table.get_headers(t)) { |h| String.strip(h) }
+
+def trim_all(t)
+  rows = Array.map(Table.get_rows(t)) do |r|
+    Array.map(r) { |v| (v in String) ? String.strip(v) : v }
+  end
+  Table.new(clean_headers(t), rows)
+end
+
+# Converts the named columns; an empty cell becomes nil, a non-number is recorded as an Issue.
+def convert(t, cols, issues)
+  Array.each(cols) do |name|
+    i = Table.index_of(t, name)
+    Array.each_with_index(Table.get_rows(t)) do |r, n|
+      v = r[i]
+      next unless v in String
+      if String.empty?(v)
+        r[i] = nil
+      else
+        x = Num.parse(v)
+        Array.push(issues, Issue.new(n + 1, name, v)) unless x
+        r[i] = x
+      end
+    end
+  end
+end
+
+# A malformed file is reported, not crashed on.
+begin
+  Table.from_csv("a,b\n1,\"oops\n")
+rescue CsvError => e
+  puts("malformed input rejected: #{Exception.message(e)} (line #{CsvError.get_line(e)})")
+end
+begin
+  Table.from_csv("a,b\n1,2,3\n")
+rescue CsvError => e
+  puts("malformed input rejected: #{Exception.message(e)} (line #{CsvError.get_line(e)})")
+end
+puts
+
+problems = Tuple[]
+t = trim_all(Table.from_csv_lenient(messy_csv, problems))
+puts("== #{Array.size(problems)} malformed rows skipped ==")
+Array.each(problems) { |line, msg| puts("line #{line}: #{msg}") }
+puts
+
+issues = Issue[]
+convert(t, Array["id", "age", "score"], issues)
+
+puts("== #{Array.size(issues)} bad cells ==")
+Array.each(issues) do |is|
+  puts(format("data row %d, %-5s: %p", Issue.get_row(is), Issue.get_column(is), Issue.get_text(is)))
+end
+puts
+
+bad_rows = Set[]
+Array.each(issues) { |is| Set.add(bad_rows, Issue.get_row(is)) }
+kept = Array[]
+Array.each_with_index(Table.get_rows(t)) { |r, n| Array.push(kept, r) unless Set.include?(bad_rows, n + 1) }
+good = Table.new(Table.get_headers(t), kept)
+
+puts("== #{Table.size(good)} clean rows ==")
+puts(Table.render(good, 1))
+puts
+
+puts("== clean CSV (round-trips through the parser) ==")
+out = Table.to_csv(good)
+print(out)
+again = Table.from_csv(out)
+puts("re-parsed: #{Table.size(again)} rows, name of row 2 = #{Table.string_at(again, Table.get_rows(again)[1], "name")}")

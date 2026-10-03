@@ -1,0 +1,244 @@
+# ==== events: an event bus and a finite state machine ====
+#
+# Sake has no first-class blocks, so a "callback" is a value of a Struct type that includes
+# a library module and defines the module's required functions. The library calls them by
+# dispatch (`Handler.handle(h, ...)`), which runs the `handle` of h's own type.
+#
+# An event is a Tuple [name, data]: name is a Symbol, data is anything (often a Record).
+
+# ---- the handler interface ----
+module Handler
+  def handle(h, bus, ev) = raise(NotImplementedError)
+end
+
+# A ready-made handler: records every event it gets (also keeps Handler included by some
+# type, which a program that never subscribes anything still needs).
+class Recorder < {reader: [events]}
+  include Handler
+  def create = Recorder.new(Tuple[])
+  def handle(r, bus, ev) = Array.push(@events, ev)
+  def names(r) = Array.map(@events) { |name, data| name }
+end
+
+# ---- the bus ----
+# subs: Array of [id, pattern Symbol, handler]; the pattern :* matches every event.
+# queue: events emitted while a publish is running, delivered after it (no re-entrancy).
+# Unsubscribing is by the id `on` returns: handlers are Struct values, and `==` on them
+# compares contents, so two equal handlers could not be told apart.
+class Bus < {reader: [subs, queue, busy, delivered, last_id]}
+  def create = Bus.new(Tuple[], Tuple[], false, 0, 0)
+
+  def on(bus, pattern, handler)
+    @last_id += 1
+    Array.push(@subs, [@last_id, pattern, handler])
+    @last_id
+  end
+
+  def off(bus, id)
+    before = Array.size(@subs)
+    Array.delete_if(@subs) { |i, pat, h| i == id }
+    before - Array.size(@subs)
+  end
+
+  def subscribers(bus, name) = Array.count(@subs) { |i, pat, h| pat == name || pat == :* }
+
+  # Deliver ev now, then every event the handlers emitted, in order. Returns deliveries made.
+  def publish(bus, name, data)
+    Array.push(@queue, [name, data])
+    return 0 if @busy
+    @busy = true
+    n = 0
+    while true
+      ev = Array.shift(@queue)
+      break unless ev
+      ev_name, _ = ev
+      # A snapshot: a handler may subscribe or unsubscribe while this event is delivered.
+      Array.each(Array.dup(@subs)) do |i, pat, h|
+        if pat == ev_name || pat == :*
+          Handler.handle(h, bus, ev)
+          n += 1
+        end
+      end
+    end
+    @busy = false
+    @delivered += n
+    n
+  end
+end
+
+# ---- the state machine ----
+# A transition is [from, event, to, guard, action]; from may be :* (any state), to may be :*
+# (stay), guard/action may be :none.
+# The hooks value includes Hooks; it overrides only what it needs (defaults below).
+module Hooks
+  def guard?(hk, name, fsm, data) = true
+  def act(hk, name, fsm, data) = nil
+  def enter(hk, state, fsm, data) = nil
+  def leave(hk, state, fsm, data) = nil
+  def rejected(hk, event, fsm, data) = nil
+end
+
+# Hooks that do nothing: for a machine that is only a transition table (also keeps Hooks
+# included by some type, which a program without hooks of its own still needs).
+class NoHooks < {reader: [label]}
+  include Hooks
+end
+
+class Fsm < {reader: [name, table, hooks, history, state, bus]}
+  def create(name, initial, hooks) = Fsm.new(name, Tuple[], hooks, Array[], initial, nil)
+  def plain(name, initial) = create(name, initial, NoHooks.new(name))
+
+  def allow(fsm, from, event, to, guard, action)
+    Array.push(@table, [from, event, to, guard, action])
+    fsm
+  end
+
+  def attach(fsm, bus) = @bus = bus
+
+  def events_from(fsm, state)
+    Array.select(@table) { |from, e, to, g, a| from == state || from == :* }
+    Array.map(_) { |from, e, to, g, a| e }
+    Array.uniq(_)
+  end
+
+  # Fire event: the first matching transition whose guard passes wins.
+  # Returns the new state, or nil when no transition applies.
+  def fire(fsm, event, data)
+    cur = @state
+    hk = @hooks
+    found = Array.find(@table) do |from, e, to, g, a|
+      (from == cur || from == :*) && e == event && (g == :none || Hooks.guard?(hk, g, fsm, data))
+    end
+    unless found
+      Hooks.rejected(hk, event, fsm, data)
+      notify(fsm, :fsm_rejected, {machine: @name, state: cur, event: event})
+      return nil
+    end
+    from, e, target, g, action = found
+    to = target == :* ? cur : target
+    Hooks.leave(hk, cur, fsm, data) if to != cur
+    Hooks.act(hk, action, fsm, data) if action != :none
+    @state = to
+    Array.push(@history, to)
+    Hooks.enter(hk, to, fsm, data) if to != cur
+    notify(fsm, :fsm_moved, {machine: @name, from: cur, to: to, event: event})
+    to
+  end
+
+  def notify(fsm, name, data)
+    b = @bus
+    Bus.publish(b, name, data) if b
+  end
+end
+# ---- client_stress.sake (client line N = out line N+133) ----
+# A stress test: many subscribers of several handler types, handlers that unsubscribe
+# themselves while an event is being delivered, handlers that emit more events (a chain
+# reaction through the queue), and two kinds of state machine on one bus.
+
+# Fires once, then removes itself from the bus (unsubscribing during delivery).
+class Once < {reader: [label, fired, sub]}
+  include Handler
+  def subscribe(o, bus, pattern) = @sub = Bus.on(bus, pattern, o)
+  def handle(o, bus, ev)
+    @fired += 1
+    Bus.off(bus, @sub)
+  end
+end
+
+# Re-emits :tick with a smaller count until it reaches 0: a chain of queued events.
+class Ticker < {reader: [seen]}
+  include Handler
+  def handle(t, bus, ev)
+    name, data = ev
+    case name
+    in :tick
+      @seen += 1
+      Bus.publish(bus, :tick, data - 1) if data > 0
+    else nil
+    end
+  end
+end
+
+# Sums the Integer payloads it sees; ignores the others.
+class Summer < {reader: [total]}
+  include Handler
+  def handle(s, bus, ev)
+    name, data = ev
+    @total += data if data in Integer
+  end
+end
+
+# A traffic light (timed by :tick events) and a counter machine, on one bus.
+class Light < {reader: [ticks]}
+  include Hooks
+  def guard?(l, name, fsm, data)
+    case name
+    in :long_enough then @ticks >= 3
+    end
+  end
+  def act(l, name, fsm, data)
+    case name
+    in :count then @ticks += 1
+    in :reset then @ticks = 0
+    end
+  end
+end
+
+class Parity < {reader: [flips]}
+  include Hooks
+  def enter(p, state, fsm, data) = @flips += 1
+end
+
+# Drives both machines from bus events.
+class Driver < {reader: [light, parity]}
+  include Handler
+  def handle(d, bus, ev)
+    name, data = ev
+    case name
+    in :tick
+      Fsm.fire(@light, :tick, data)
+      Fsm.fire(@parity, :flip, data)
+    else nil
+    end
+  end
+end
+
+bus = Bus.create
+onces = Once[]
+Integer.times(200) do |i|
+  o = Once.new("once#{i}", 0, 0)
+  Array.push(onces, o)
+  Once.subscribe(o, bus, :*)
+end
+ticker = Ticker.new(0)
+summer = Summer.new(0)
+Bus.on(bus, :tick, ticker)
+Bus.on(bus, :*, summer)
+
+light = Fsm.create("light", :red, Light.new(0))
+Fsm.allow(light, :red, :tick, :green, :long_enough, :reset)
+Fsm.allow(light, :green, :tick, :yellow, :long_enough, :reset)
+Fsm.allow(light, :yellow, :tick, :red, :none, :reset)
+Fsm.allow(light, :*, :tick, :*, :none, :count)        # :* as target: stay
+parity_hooks = Parity.new(0)   # kept in a local: Fsm.get_hooks would be Light | Parity
+parity = Fsm.create("parity", :even, parity_hooks)
+Fsm.allow(parity, :even, :flip, :odd, :none, :none)
+Fsm.allow(parity, :odd, :flip, :even, :none, :none)
+Fsm.attach(light, bus)          # the light's moves go on the bus too
+Bus.on(bus, :tick, Driver.new(light, parity))
+recorder = Recorder.create
+Bus.on(bus, :fsm_moved, recorder)
+
+t0 = Time.now
+n = Bus.publish(bus, :tick, 2000)
+Integer.times(3000) { |i| n += Bus.publish(bus, :ping, i) }
+secs = Time.now - t0
+
+fired = Array.sum(Array.map(onces) { Once.get_fired(it) })
+puts("deliveries: #{n} (bus says #{Bus.get_delivered(bus)})")
+puts("once handlers fired: #{fired} of 200; subscribers left: #{Array.size(Bus.get_subs(bus))}")
+puts("ticker saw #{Ticker.get_seen(ticker)} ticks; summer total #{Summer.get_total(summer)}")
+puts("light: #{Fsm.get_state(light)} after #{Array.size(Fsm.get_history(light))} moves; parity #{Fsm.get_state(parity)} (#{Parity.get_flips(parity_hooks)} flips)")
+moves = Array.tally(Array.map(Recorder.get_events(recorder)) { |name, data| data })
+puts("light moves recorded: #{Array.size(Recorder.get_events(recorder))}, distinct #{Hash.size(moves)}")
+puts(format("time: %.2fs", secs))

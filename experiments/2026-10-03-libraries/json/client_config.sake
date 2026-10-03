@@ -1,0 +1,71 @@
+# Typical use: read a config document and use typed values from it.
+def config_text = <<~JSON
+  {
+    "service": "inventory",
+    "server": {"host": "0.0.0.0", "port": 8080, "workers": 4},
+    "timeouts": {"connect": 1.5, "read": 30},
+    "features": {"cache": true, "audit": false},
+    "admins": ["ann", "bob"],
+    "retry_backoff_ms": [100, 200, 400],
+    "upstreams": [
+      {"name": "db",    "url": "postgres://db:5432/inv", "weight": 3},
+      {"name": "cache", "url": "redis://cache:6379",     "weight": 1}
+    ]
+  }
+JSON
+
+cfg = Json.parse(config_text)
+
+name = Json.str(cfg, Array["service"])
+port = Json.int(cfg, Array["server", "port"])
+workers = Json.int(cfg, Array["server", "workers"])
+connect = Json.num(cfg, Array["timeouts", "connect"])
+read = Json.num(cfg, Array["timeouts", "read"])          # an Integer in the document, a Float here
+cache = Json.bool(cfg, Array["features", "cache"])
+debug = Json.bool_or(cfg, Array["features", "debug"], false)   # absent: default
+log_level = Json.str_or(cfg, Array["log", "level"], "info")
+
+puts("#{String.upcase(name)} on #{Json.str(cfg, Array["server", "host"])}:#{port + 1} (admin port)")
+puts("threads: #{workers * 2}, total timeout: #{Float.round(connect + read, 1)}s")
+puts("cache=#{cache} debug=#{debug} log=#{log_level}")
+
+# Arrays of one element type come out as String[] / Integer[].
+admins = Json.strs(cfg, Array["admins"])
+puts("admins: #{Array.join(Array.map(admins) { String.capitalize(it) }, ", ")}")
+backoff = Json.ints(cfg, Array["retry_backoff_ms"])
+puts("total backoff: #{Array.sum(backoff)}ms over #{Array.size(backoff)} retries")
+
+# Records built from the document: each field typed once, at the boundary.
+class Upstream < {reader: [name, url, weight]}
+  def to_s(u) = format("%-6s %-26s w=%d", @name, @url, @weight)
+end
+
+ups = Upstream[]
+Array.each(Json.arr(cfg, Array["upstreams"])) do |u|
+  Array.push(ups, Upstream.new(Json.str(u, Array["name"]), Json.str(u, Array["url"]), Json.int(u, Array["weight"])))
+end
+total = Array.sum(Array.map(ups) { Upstream.get_weight(it) })
+Array.each(ups) do |u|
+  share = Upstream.get_weight(u) * 100 / total
+  puts("  #{u}  #{share}%")
+end
+
+# The second upstream through an index path.
+puts("second upstream: #{Json.str(cfg, Array["upstreams", 1, "name"])}")
+
+# A wrong type in the document is reported with its path.
+begin
+  Json.int(cfg, Array["timeouts", "connect"])
+rescue JsonError => e
+  puts("error: #{Exception.message(e)}")
+end
+begin
+  Json.ints(Json.parse('{"xs": [1, 2, "three"]}'), Array["xs"])
+rescue JsonError => e
+  puts("error: #{Exception.message(e)}")
+end
+begin
+  Json.str(cfg, Array["server", "missing"])
+rescue JsonError => e
+  puts("error: #{Exception.message(e)}")
+end

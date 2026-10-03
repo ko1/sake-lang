@@ -149,9 +149,15 @@ module Sake
     end
 
     # seen: the sites being shown; a site inside itself (a recursive structure) is shown by its label only.
-    def show(ty, seen = {})
+    SHOW_LIMIT = 400
+
+    # seen: the sites already shown in this text; each is spelled out once, then named by its label,
+    # so a type that refers to the same sites many times stays short. Long types are cut.
+    def show(ty, seen = nil)
       return "(none)" if ty.empty?
-      ty.map { show_atom(_1, seen) }.uniq.join(" | ")
+      top = seen.nil?
+      s = ty.map { show_atom(_1, seen ||= {}) }.uniq.join(" | ")
+      top && s.size > SHOW_LIMIT ? "#{s[0, SHOW_LIMIT]}…" : s
     end
 
     def show_atom(a, seen = {})
@@ -167,21 +173,21 @@ module Sake
           s = @sites[a[1]]
           return "#{s.declared}[]@#{s.label}" if s.declared
           return "Array@#{s.label}" if seen[a]
-          "Array@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
+          "Array@#{s.label}[#{show(s.elem, seen.tap { _1[a] = true })}]"
         when :unknown then "?(#{a[1]})"
         when :range then "Range[#{show(a[1], seen)}]"
         when :hash
           s = hash_sites[a[1]]
           return "Hash@#{s.label}" if seen[a]
-          inner = seen.merge(a => true)
+          inner = seen.tap { _1[a] = true }
           "Hash@#{s.label}[#{show(s.key, inner)} => #{show(s.val, inner)}]"
         when :set
           s = set_sites[a[1]]
-          seen[a] ? "Set@#{s.label}" : "Set@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
+          seen[a] ? "Set@#{s.label}" : "Set@#{s.label}[#{show(s.elem, seen.tap { _1[a] = true })}]"
         when :thread then "Thread@#{thread_sites[a[1]].label}"
         when :queue
           s = queue_sites[a[1]]
-          seen[a] ? "Queue@#{s.label}" : "Queue@#{s.label}[#{show(s.elem, seen.merge(a => true))}]"
+          seen[a] ? "Queue@#{s.label}" : "Queue@#{s.label}[#{show(s.elem, seen.tap { _1[a] = true })}]"
         when :pairs then "pairs"
         when :sym then ":#{a[1]}"
         end
@@ -292,8 +298,13 @@ module Sake
     def operand_pair?(c) = c.arg == "pair" && !c.op.start_with?("Indexable.")
 
     def show_failing(c)
-      return c.failing.map { |x, y| "(#{show([x])}, #{show([y])})" }.uniq.join(", ") if operand_pair?(c) || c.arg == "elements"
-      c.failing.map { show([_1]) }.uniq.join(" | ")
+      seen = {}
+      s = if operand_pair?(c) || c.arg == "elements"
+            c.failing.map { |x, y| "(#{show([x], seen)}, #{show([y], seen)})" }.uniq.join(", ")
+          else
+            c.failing.map { show([_1], seen) }.uniq.join(" | ")
+          end
+      s.size > SHOW_LIMIT ? "#{s[0, SHOW_LIMIT]}…" : s
     end
 
     # "Struct.field (nil written at line N)" for fields that may hold nil next to a type in `wants`.
@@ -771,9 +782,10 @@ end
 
 module Sake
   class Typer
+    # Verdicts of the run-time checks; rescue clauses and unrescued raises are not checks of a value.
     def summary
       counts = Hash.new(0)
-      @checks.each_value { counts[_1.verdict] += 1 }
+      @checks.each_value { counts[_1.verdict] += 1 unless %w[raise rescue].include?(_1.op) }
       counts
     end
 
@@ -783,6 +795,10 @@ module Sake
       out << "checks: #{%i[proven partial error unknown].map { "#{_1}=#{summary[_1]}" }.join(" ")}\n"
       @checks.values.sort_by { [_1.line, _1.op] }.each do |c|
         next if c.verdict == :proven
+        if c.op == "raise" # not a failing check: an exception nothing rescues (the `unrescued` item, level 4)
+          out << "  unrescued L#{c.line} raise #{c.arg}\n"
+          next
+        end
         out << "  #{c.verdict.to_s.ljust(7)} L#{c.line} #{c.op} arg #{c.arg}: want #{c.expected}, got #{show(c.actual)}\n"
       end
       out << "arrays:\n"

@@ -130,7 +130,7 @@ module Sake
         index_op(n.origin, "[]=", [r, k, *e, ev(n.value, f)])
       when IndexUpdate then index_update(n, f)
       when Yield then call_block(f.block, n.args.map { ev(_1, f) }, n.origin)
-      when Interp then n.parts.map { ev(_1, f) }.join
+      when Interp then encoding_error(n) { n.parts.map { ev(_1, f) }.join }
       when ToS then Values.to_s(ev(n.value, f))
       when ToSym then ev(n.value, f).to_sym
       when MakeTuple then Tuple.new(n.elems.map { ev(_1, f) })
@@ -410,6 +410,8 @@ module Sake
       fn.impl.call(*args, &ruby_blk)
     rescue Fail => e
       raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup)
+    rescue ::EncodingError => e
+      raise RunError.new("EncodingError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup)
     end
 
     # Thread.new's block runs on a copy of this interpreter with its own stack: the program, the
@@ -497,6 +499,15 @@ module Sake
       impl.call(a, b)
     rescue Fail => e
       raise RunError.new(e.kind, "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup)
+    rescue ::EncodingError => e
+      raise RunError.new("EncodingError", "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup)
+    end
+
+    # Strings of incompatible encodings (a byte from Integer.chr(227) next to UTF-8 text) meeting.
+    def encoding_error(n)
+      yield
+    rescue ::EncodingError => e
+      fail_at(n, "EncodingError", e.message)
     end
 
     # `-x` / `+x` / `~x`: a Struct value runs its type's own operator; built-in types use their table.

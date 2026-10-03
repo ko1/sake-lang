@@ -1,0 +1,44 @@
+# Memoizing with the LRU cache: an Integer -> Integer cache for a recursive count, and a
+# String -> Tuple cache for a slow parse, in one program.
+
+# Number of ways to climb n stairs taking 1, 2 or 3 steps; the LRU (capacity 8) keeps the
+# recent sub-results, so the recursion reuses them.
+def ways(cache, n)
+  return 1 if n == 0
+  return 0 if n < 0
+  LRU.fetch(cache, n) { |k| ways(cache, k - 1) + ways(cache, k - 2) + ways(cache, k - 3) }
+end
+
+c = LRU.create(8)
+puts("ways(30) = #{ways(c, 30)}")
+puts(LRU.stats(c))
+keys = Integer[]
+LRU.each(c) { |k, v| Array.push(keys, k) }
+p(keys)
+
+# A second cache with other key/value types gets its own node and cache types.
+class ParseNode < {reader: [key], accessor: [value, prev, nxt]}
+  include LruNodeOps
+end
+class ParseCache < {reader: [capacity, index], accessor: [head, tail, hits, misses]}
+  include LruOps
+  def make_node(c, key, value) = ParseNode.new(key, value, nil, nil)
+end
+
+def parse_point(cache, s)
+  ParseCache.fetch(cache, s) do |text|
+    xs = String.split(text, ",")
+    [String.to_i(Array.fetch(xs, 0)), String.to_i(Array.fetch(xs, 1))]
+  end
+end
+
+pc = ParseCache.with_index(Hash[], 2)
+inputs = String.split("1,2 3,4 1,2 5,6 3,4 1,2", " ")
+sum_x = 0
+Array.each(inputs) do |s|
+  x, y = parse_point(pc, s)
+  sum_x += x
+  puts("#{s} -> x+y=#{x + y}")
+end
+puts("sum_x=#{sum_x}  #{ParseCache.stats(pc)}")
+ParseCache.each(pc) { |k, v| puts("  cached #{k} => #{v}") }

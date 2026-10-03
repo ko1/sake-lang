@@ -1,0 +1,416 @@
+# csvtable: CSV parse/write, column operations, and a text-table formatter.
+#
+# A cell is a String, an Integer, a Float, or nil (empty after conversion).
+# A row is an Array of cells; a Table has a String[] header and an Array of rows.
+
+CsvError = Exception.new(:line)
+
+module Csv
+  module_function
+
+  # Parses CSV text into an Array of rows, each a String[] of fields.
+  # Quoted fields may contain commas, newlines, and "" for a quote.
+  # A record without quotes is split directly; only quoted ones go through the char loop.
+  def parse(text)
+    rows = Array[]
+    pending = ""
+    start = 1
+    lineno = 0
+    Array.each(String.lines(text)) do |ln|
+      lineno += 1
+      pending = pending + ln
+      next if Integer.odd?(String.count(pending, "\""))
+      if String.include?(pending, "\"")
+        Array.concat(rows, parse_chars(pending, start))
+      else
+        rec = String.chomp(pending)
+        fields = String.empty?(rec) ? String[""] : String[*String.split(rec, ",", -1)]
+        Array.push(rows, fields)
+      end
+      pending = ""
+      start = lineno + 1
+    end
+    Array.concat(rows, parse_chars(pending, start)) unless String.empty?(pending)
+    rows
+  end
+
+  # The general parser: a state machine over the characters, line numbers counted from `line`.
+  def parse_chars(text, first_line)
+    line = first_line
+    rows = Array[]
+    row = String[]
+    field = ""
+    in_quotes = false
+    after_quote = false
+    chars = String.chars(text)
+    i = 0
+    n = Array.size(chars)
+    while i < n
+      c = chars[i]
+      if in_quotes
+        if c == "\""
+          if i + 1 < n && chars[i + 1] == "\""
+            field = field + "\""
+            i += 1
+          else
+            in_quotes = false
+            after_quote = true
+          end
+        else
+          line += 1 if c == "\n"
+          field = field + c
+        end
+      elsif c == "\""
+        raise CsvError.new("quote inside an unquoted field", line) unless String.empty?(field)
+        in_quotes = true
+      elsif c == ","
+        Array.push(row, field)
+        field = ""
+        after_quote = false
+      elsif c == "\n" || c == "\r"
+        i += 1 if c == "\r" && i + 1 < n && chars[i + 1] == "\n"
+        Array.push(row, field)
+        Array.push(rows, row)
+        row = String[]
+        field = ""
+        after_quote = false
+        line += 1
+      else
+        raise CsvError.new("text after a closing quote", line) if after_quote
+        field = field + c
+      end
+      i += 1
+    end
+    raise CsvError.new("unterminated quoted field", line) if in_quotes
+    if !String.empty?(field) || !Array.empty?(row) || after_quote
+      Array.push(row, field)
+      Array.push(rows, row)
+    end
+    rows
+  end
+
+  def needs_quote?(s)
+    String.include?(s, ",") || String.include?(s, "\"") || String.include?(s, "\n") || String.include?(s, "\r")
+  end
+
+  def quote(s)
+    return s unless needs_quote?(s)
+    "\"" + String.gsub(s, "\"", "\"\"") + "\""
+  end
+
+  def cell_text(v)
+    case v
+    in nil then ""
+    in String then v
+    in Integer then Integer.to_s(v)
+    in Float then Float.to_s(v)
+    end
+  end
+
+  # Writes rows (Arrays of cells) back to CSV text.
+  def generate(rows)
+    lines = String[]
+    Array.each(rows) do |row|
+      Array.push(lines, Array.join(Array.map(row) { |v| quote(cell_text(v)) }, ","))
+    end
+    Array.join(lines, "\n") + "\n"
+  end
+end
+
+module Num
+  module_function
+
+  # Integer, Float, or nil when s is not a number. Accepts "1,234" and "$12.50".
+  def parse(s)
+    t = String.delete(String.delete(String.strip(s), ","), "$")
+    if String.match?(t, /\A[-+]?\d+\z/)
+      String.to_i(t)
+    elsif String.match?(t, /\A[-+]?(\d+\.\d*|\.\d+)\z/)
+      String.to_f(t)
+    else
+      nil
+    end
+  end
+
+  # 1234567 -> "1,234,567"
+  def group_digits(digits)
+    out = ""
+    k = 0
+    Array.each(Array.reverse(String.chars(digits))) do |ch|
+      out = "," + out if k > 0 && k % 3 == 0
+      out = ch + out
+      k += 1
+    end
+    out
+  end
+
+  def format_int(n)
+    s = group_digits(Integer.to_s(Integer.abs(n)))
+    n < 0 ? "-" + s : s
+  end
+
+  def format_float(x, digits)
+    s = format("%.#{digits}f", Float.abs(x))
+    whole, frac = String.split(s, ".")
+    body = group_digits(whole)
+    body = body + "." + frac if frac
+    x < 0 ? "-" + body : body
+  end
+end
+
+class Table < {reader: [headers, rows]}
+  # A Table from CSV text whose first line is the header. Every cell is a String.
+  def from_csv(text)
+    all = Csv.parse(text)
+    raise CsvError.new("no header line", 1) if Array.empty?(all)
+    header = Array.shift(all)
+    raise CsvError.new("no header line", 1) unless header
+    width = Array.size(header)
+    Array.each_with_index(all) do |r, i|
+      if Array.size(r) != width
+        raise CsvError.new("row has #{Array.size(r)} fields, header has #{width}", i + 2)
+      end
+    end
+    # Csv.parse gives String[] rows; a Table's cells may become numbers, so copy to plain Arrays.
+    Table.new(header, Array.map(all) { |r| Array.map(r) { it } })
+  end
+
+  # Like from_csv, but a row of the wrong width is skipped and recorded in
+  # problems (a Tuple[] of [line, message]) instead of raising.
+  def from_csv_lenient(text, problems)
+    all = Csv.parse(text)
+    header = Array.shift(all)
+    raise CsvError.new("no header line", 1) unless header
+    width = Array.size(header)
+    kept = Array[]
+    Array.each_with_index(all) do |r, i|
+      if Array.size(r) == width
+        Array.push(kept, Array.map(r) { it })
+      else
+        Array.push(problems, [i + 2, "row has #{Array.size(r)} fields, header has #{width}"])
+      end
+    end
+    Table.new(header, kept)
+  end
+
+  def index_of(t, name)
+    i = Array.index(@headers, name)
+    raise KeyError.new("no column #{name}") unless i
+    i
+  end
+
+  def cell(t, row, name) = row[index_of(t, name)]
+
+  # The cell as a String; raises TypeError when it is not one.
+  def string_at(t, row, name)
+    v = row[index_of(t, name)]
+    raise TypeError.new("#{name}: not a String: #{inspect(v)}") unless v in String
+    v
+  end
+
+  # The cell as a Float (Integer cells are converted); raises TypeError otherwise.
+  def number_at(t, row, name)
+    v = row[index_of(t, name)]
+    case v
+    in Integer then Integer.to_f(v)
+    in Float then v
+    else raise TypeError.new("#{name}: not a number: #{inspect(v)}")
+    end
+  end
+
+  def size(t) = Array.size(@rows)
+
+  def column(t, name)
+    i = index_of(t, name)
+    Array.map(@rows) { |r| r[i] }
+  end
+
+  def to_csv(t)
+    all = Array[@headers]
+    Array.concat(all, @rows)
+    Csv.generate(all)
+  end
+
+  # --- column operations: each returns a new Table ---
+
+  def select(t, names)
+    idx = Array.map(names) { |nm| index_of(t, nm) }
+    Table.new(names, Array.map(@rows) { |r| Array.map(idx) { |i| r[i] } })
+  end
+
+  def filter(t)
+    Table.new(@headers, Array.select(@rows) { |r| yield(r) })
+  end
+
+  def sort_by_column(t, name, descending)
+    i = index_of(t, name)
+    sorted = Array.sort_by(@rows) { |r| sort_key(r[i]) }
+    sorted = Array.reverse(sorted) if descending
+    Table.new(@headers, sorted)
+  end
+
+  # nil first, then numbers, then Strings, so mixed columns still sort.
+  def sort_key(v)
+    case v
+    in nil then [0, 0.0, ""]
+    in Integer then [1, Integer.to_f(v), ""]
+    in Float then [1, v, ""]
+    in String then [2, 0.0, v]
+    end
+  end
+
+  # Applies the block to every cell of a column, in place.
+  def map_column!(t, name)
+    i = index_of(t, name)
+    Array.each(@rows) { |r| r[i] = yield(r[i]) }
+    t
+  end
+
+  # Groups by key column and sums each value column. Non-numbers count as 0.
+  def group_sum(t, key, value_cols)
+    k = index_of(t, key)
+    vis = Array.map(value_cols) { |nm| index_of(t, nm) }
+    order = Array[]
+    sums = Hash[]
+    Array.each(@rows) do |r|
+      kv = r[k]
+      unless Hash.key?(sums, kv)
+        Array.push(order, kv)
+        sums[kv] = Array.map(vis) { 0 }
+      end
+      acc = sums[kv]
+      Array.each_with_index(vis) do |ci, j|
+        v = r[ci]
+        acc[j] = acc[j] + v if v in Integer | Float
+      end
+    end
+    rows = Array.map(order) { |kv| Array[kv, *sums[kv]] }
+    Table.new(Array[key, *value_cols], rows)
+  end
+
+  # --- formatting ---
+
+  def format_cell(v, digits)
+    case v
+    in nil then ""
+    in String then v
+    in Integer then Num.format_int(v)
+    in Float then Num.format_float(v, digits)
+    end
+  end
+
+  # A column is right-aligned when every non-nil cell is a number.
+  def numeric_column?(t, i)
+    Array.all?(@rows) { |r| r[i] == nil || (r[i] in Integer | Float) }
+  end
+
+  def render(t, digits)
+    ncol = Array.size(@headers)
+    texts = Array.map(@rows) { |r| Array.map(r) { |v| format_cell(v, digits) } }
+    widths = Array.map(Range.to_a(0...ncol)) do |i|
+      w = String.size(@headers[i])
+      Array.each(texts) { |cells| n = String.size(cells[i]); w = n if n > w }
+      w
+    end
+    right = Array.map(Range.to_a(0...ncol)) { |i| numeric_column?(t, i) }
+    out = String[]
+    Array.push(out, render_line(@headers, widths, right))
+    Array.push(out, Array.join(Array.map(widths) { |w| "-" * w }, "-+-"))
+    Array.each(texts) { |cells| Array.push(out, render_line(cells, widths, right)) }
+    Array.join(out, "\n")
+  end
+
+  def render_line(cells, widths, right)
+    parts = Array.map(Range.to_a(0...Array.size(cells))) do |i|
+      right[i] ? String.rjust(cells[i], widths[i]) : String.ljust(cells[i], widths[i])
+    end
+    String.rstrip(Array.join(parts, " | "))
+  end
+end
+# ---- client_clean.sake ----
+# Data cleaning: trim every cell, convert numeric columns, report bad rows, write clean CSV.
+
+def messy_csv
+  "id , name , age , score\n" \
+  "1,  Alice  , 34, 88.5\n" \
+  "2,Bob,thirty,91\n" \
+  "3,\"  Carol, Jr. \",29,\n" \
+  "4,Dan,41,\"  1,204.0 \"\n" \
+  "5,Gus,38\n" \
+  "6,Eve,,77\n" \
+  "7,\"Fay \"\"FF\"\" O\",52,x9\n"
+end
+
+Issue = Struct.new(:row, :column, :text)
+
+# Header names are trimmed too.
+def clean_headers(t) = Array.map(Table.get_headers(t)) { |h| String.strip(h) }
+
+def trim_all(t)
+  rows = Array.map(Table.get_rows(t)) do |r|
+    Array.map(r) { |v| (v in String) ? String.strip(v) : v }
+  end
+  Table.new(clean_headers(t), rows)
+end
+
+# Converts the named columns; an empty cell becomes nil, a non-number is recorded as an Issue.
+def convert(t, cols, issues)
+  Array.each(cols) do |name|
+    i = Table.index_of(t, name)
+    Array.each_with_index(Table.get_rows(t)) do |r, n|
+      v = r[i]
+      next unless v in String
+      if String.empty?(v)
+        r[i] = nil
+      else
+        x = Num.parse(v)
+        Array.push(issues, Issue.new(n + 1, name, v)) unless x
+        r[i] = x
+      end
+    end
+  end
+end
+
+# A malformed file is reported, not crashed on.
+begin
+  Table.from_csv("a,b\n1,\"oops\n")
+rescue CsvError => e
+  puts("malformed input rejected: #{Exception.message(e)} (line #{CsvError.get_line(e)})")
+end
+begin
+  Table.from_csv("a,b\n1,2,3\n")
+rescue CsvError => e
+  puts("malformed input rejected: #{Exception.message(e)} (line #{CsvError.get_line(e)})")
+end
+puts
+
+problems = Tuple[]
+t = trim_all(Table.from_csv_lenient(messy_csv, problems))
+puts("== #{Array.size(problems)} malformed rows skipped ==")
+Array.each(problems) { |line, msg| puts("line #{line}: #{msg}") }
+puts
+
+issues = Issue[]
+convert(t, Array["id", "age", "score"], issues)
+
+puts("== #{Array.size(issues)} bad cells ==")
+Array.each(issues) do |is|
+  puts(format("data row %d, %-5s: %p", Issue.get_row(is), Issue.get_column(is), Issue.get_text(is)))
+end
+puts
+
+bad_rows = Set[]
+Array.each(issues) { |is| Set.add(bad_rows, Issue.get_row(is)) }
+kept = Array[]
+Array.each_with_index(Table.get_rows(t)) { |r, n| Array.push(kept, r) unless Set.include?(bad_rows, n + 1) }
+good = Table.new(Table.get_headers(t), kept)
+
+puts("== #{Table.size(good)} clean rows ==")
+puts(Table.render(good, 1))
+puts
+
+puts("== clean CSV (round-trips through the parser) ==")
+out = Table.to_csv(good)
+print(out)
+again = Table.from_csv(out)
+puts("re-parsed: #{Table.size(again)} rows, name of row 2 = #{Table.string_at(again, Table.get_rows(again)[1], "name")}")

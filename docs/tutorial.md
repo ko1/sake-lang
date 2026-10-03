@@ -494,17 +494,69 @@ block_errors.sake:6:7: error: Array.each requires a block
 (exit status 2)
 ```
 
-## 7. Struct types
+## 7. Types and instances
 
-`Struct.new` creates a named type together with its operations. Ruby's `Data.define` is not used: Ruby's
-`Data` is immutable, while Sake's named types are mutable, like Ruby's `Struct`.
+A `class` declares a type with fields; its values are **instances**. The fields and how they can
+be reached are written as settings after `<` (a Record of settings, not a superclass: there is no
+inheritance). The type's operations are its own functions, called with the type's name and the
+instance first:
 
-`Struct.new` gives the type these operations: `Point.new`, a `get_` operation
-for each field, and a `set_` operation for each field. Fields are **mutable**.
+```ruby
+class Point < {reader: [x, y]}               # a type with two fields, read-only from outside
+  def add(a, b) = Point.new(@x + Point.get_x(b), @y + Point.get_y(b))
+  def norm2(p) = @x * @x + @y * @y           # @x: field x of the first argument, Point.get_x(p)
+  def to_s(p) = "(#{@x}, #{@y})"             # used by puts and "#{...}"
+end
 
-To add your own operations to a type, put them inside `class Point`. Inside that body, unqualified
-names such as `get_x` refer to `Point`'s operations. `def Point.f` is shorthand for a `def f`
-inside `class Point`.
+class Counter < {reader: [name], accessor: [count], default: {count: 0}}
+  def bump(c) = @count += 1                  # inside the class, @count += 1 writes the field
+end
+
+a = Point.new(1, 2)                          # an instance: one argument per field
+b = Point.add(a, Point.new(3, 4))
+puts(b)
+p(b)                                         # p shows the fields
+p([Point.norm2(b), Point.get_x(b)])
+p(a == Point.new(1, 2))                      # == compares the fields
+
+c = Counter.new("hits")                      # count takes its default
+d = c                                        # the same instance: values are shared, not copied
+Counter.bump(d)
+Counter.set_count(c, Counter.get_count(c) + 10)   # accessor: writable from outside too
+p(c)
+```
+
+```
+$ sake instances.sake
+(4, 6)
+#<struct Point x=4, y=6>
+[52, 4]
+true
+#<struct Counter name="hits", count=11>
+```
+
+| Setting | Fields it declares |
+|---|---|
+| `reader: [x, y]` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
+| `accessor: [n]` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
+| `writer: [w]` | `C.set_w(c, v)` from anywhere; read only inside the class |
+| `default: {n: 0}` | a default value; trailing fields with defaults may be left out of `new`; a non-nil default also fixes the field's type |
+| `exception: true` | an exception type: `message` comes first |
+
+Use `reader:` for every field that is not changed from outside, which is most of them: every write
+to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)` is
+shorthand for `class C < {accessor: [x, y]}`.
+
+- **Instances.** `C.new(a, b)` takes one argument per field. Fields are **mutable**, and instances
+  are **shared**, not copied: after `d = c`, a change through `d` is seen through `c`.
+- **Equality.** `==` compares the fields, unless the type defines `==` (or `Comparable` with `<=>`).
+- **Showing.** `p` shows `#<struct Point x=4, y=6>`, as Ruby does. A type's own `to_s(c)` is used
+  by `puts` and `"#{...}"`, and its own `inspect(c)` by `p`.
+- **Functions of a type.** Inside `class C`, `@x`, `@x = v`, and `@x += v` read and write field `x`
+  of the function's **first argument**; there is no `self`. Unqualified names refer to C's
+  operations first. `def C.f(c)` outside the class is shorthand for a `def f(c)` inside it.
+
+The same with `Struct.new` and `get_`/`set_` spelled out:
 
 ```ruby
 Point = Struct.new(:x, :y)
@@ -537,69 +589,7 @@ sum: (15, 25)
 10
 ```
 
-A type can also be declared with its settings after `<`:
-
-- `reader:`, `writer:`, and `accessor:` choose which fields have `get_` and `set_` outside the
-  class.
-- `default:` gives default values, which also fix the type of a field.
-- `exception: true` makes an exception type.
-
-Writing `Account.set_owner(a, "eve")` outside the class would be a static error, because `owner` is
-read-only there.
-
-Prefer this form, with `reader:` for every field that is not changed from outside: most fields are
-never changed after `new`, and with `reader:` every write to a field is in its own class, where the
-checker finds its type. List a field under `accessor:` only when code outside the class must change
-it. `Struct.new(:x, :y)` is shorthand for `accessor:` on every field.
-
-```ruby
-class Account < {reader: [owner], accessor: [balance], default: {balance: 0}}
-  def deposit(a, n) = @balance += n
-  def rename(a, s) = @owner = s          # a reader field is writable inside the class
-end
-
-a = Account.new("ann")                   # balance takes its default
-Account.deposit(a, 50)
-Account.rename(a, "bob")
-p(a)
-p(Account.get_owner(a))
-```
-
-```
-$ sake class_settings.sake
-#<struct Account owner="bob", balance=50>
-"bob"
-```
-
-There is no `p.x`. Field access is an operation with a type, like everything else:
-
-```ruby
-Point = Struct.new(:x, :y)
-pt = Point.new(1, 2)
-puts(pt.x)
-pt.y = 5
-puts(Point.get_z(pt))
-puts(Point.new(1))
-```
-
-```
-$ sake data_errors.sake
-data_errors.sake:3:9: error: method call on a value `pt.x` is not allowed
-  hint: Point.get_x(pt)
-  hint: pt.Point.get_x
-data_errors.sake:4:4: error: method call on a value `pt.y = ...` is not allowed
-  hint: Point.set_y(pt, 5)
-data_errors.sake:5:12: error: undefined function `Point.get_z`
-  hint: did you mean `Point.get_y`?
-  hint: did you mean `Point.get_x`?
-data_errors.sake:6:12: error: wrong number of arguments for Point.new (given 1, expected 2)
-(exit status 2)
-```
-
-Inside a function of a Struct type, `@x` is shorthand for field `x` of the function's **first
-argument**, which is the subject by convention. `@x` reads the field, `@x = v` writes it, and
-`@x += v` updates it. The type comes from the enclosing `class Point`, so `@x` is still an
-operation with a type:
+`@x` refers to the first argument, whatever it is; passing something else is reported:
 
 ```ruby
 Point = Struct.new(:x, :y)
@@ -633,8 +623,36 @@ data_shorthand.sake:4:33: error: Point.get_y: argument 1 must be Point, but is I
 (exit status 2)
 ```
 
-Passing the wrong record is reported before running. The error is inside `length`, and the hint
-points back to the call that passes a Point:
+There is no `p.x`, a read-only field is not written from outside, a field that does not exist is
+not read, and `new` takes every field:
+
+```ruby
+class Point < {reader: [x, y]}
+end
+pt = Point.new(1, 2)
+puts(pt.x)
+Point.set_x(pt, 5)
+puts(Point.get_z(pt))
+puts(Point.new(1))
+```
+
+```
+$ sake instance_errors.sake
+instance_errors.sake:4:9: error: method call on a value `pt.x` is not allowed
+  hint: Point.get_x(pt)
+  hint: pt.Point.get_x
+instance_errors.sake:5:7: error: field `x` of Point is read-only (reader)
+  hint: inside `class Point`, use `@x = value`; or list it under `accessor:`
+instance_errors.sake:6:12: error: undefined function `Point.get_z`
+  hint: did you mean `Point.get_y`?
+  hint: did you mean `Point.get_x`?
+instance_errors.sake:7:12: error: wrong number of arguments for Point.new (given 1, expected 2)
+(exit status 2)
+```
+
+Passing the wrong instance is reported before running. The error is inside `length`, and the hint
+points back to the call that passes a Point. While running, the same check stops at the exact
+operation and prints the call chain:
 
 ```ruby
 Point = Struct.new(:x, :y)
@@ -657,8 +675,6 @@ data_runtime_error.sake:5:20: error: Line.get_to: argument 1 must be Line, but i
 (exit status 2)
 ```
 
-While running, the same check stops at the exact operation and prints the call chain:
-
 ```
 $ sake --strict=0 data_runtime_error.sake
 5.0
@@ -667,47 +683,159 @@ data_runtime_error.sake:5: in length: TypeError: Line.get_to: argument 1 must be
 (exit status 1)
 ```
 
-## 8. Where unqualified names go
+## 8. Modules
 
-An unqualified call is resolved statically, from the inside out:
+A `module` is a namespace of functions with no type and no instances. It is used in two ways: as a
+home for plain functions (`module_function`), and as a **mixin** that types include.
 
-1. the enclosing class or module
-2. the top-level functions
-3. `Kernel`
-
-The inner definition wins, so common names such as `open` stay usable. To reach an outer
-definition, write its namespace, as in `Kernel.puts(...)`.
+| | `class C < {...}` | `module M` |
+|---|---|---|
+| Is a type | Yes: `C.new`, fields, `x in C` | No |
+| Functions | C's operations, instance first | module functions, or mixin functions for the types that include M |
+| Called as | `C.f(c)` | `M.f(x)`: directly (`module_function`), or dispatched to `x`'s type |
+| Combined by | `include M` (no inheritance) | `include` of other modules |
 
 ```ruby
-def label(x) = "top: #{x}"
-
-module Door
+module Geometry                              # a module: functions only, no instances
   module_function
-  def open(d) = label("door")              # Door.label wins over the top-level label
-  def label(x) = "door: #{x}"
-  def show(d) = puts(open(d))              # Door.open wins over the top-level open
+  def dist2(ax, ay, bx, by) = (ax - bx) ** 2 + (ay - by) ** 2
 end
 
-def open(x) = label("top")
+module Shape                                 # a mixin: what includers share, and what they must define
+  def area(s) = raise(NotImplementedError)
+  def describe(s) = "area #{area(s)}"        # area: the includer's own
+end
 
-Door.show(1)
-puts(open(1))
-puts(Door.open(1))
+class Square < {reader: [side]}              # a class: a type, with instances
+  include Shape
+  def area(q) = @side * @side
+end
+
+class Disc < {reader: [r]}
+  include Shape
+  def area(d) = 3 * @r * @r
+end
+
+p(Geometry.dist2(0, 0, 3, 4))
+puts(Square.describe(Square.new(2)))         # Square's describe, borrowed from Shape
+puts(Shape.describe(Disc.new(1)))            # dispatch: the describe of the argument's type
 ```
 
 ```
-$ sake scope.sake
-door: door
-top: top
-door: door
+$ sake class_module.sake
+25
+area 4
+area 3
+```
+
+- **Module functions.** Functions after `module_function` are called directly, as
+  `Geometry.dist2(...)`, like Ruby's `Math`.
+- **Mixins.** `include M` borrows M's functions, as Ruby's modules do, but statically. Inside a
+  borrowed function, unqualified names are looked up in the class that includes it, so
+  `Shape.describe` uses the `area` of Square or of Disc.
+- **Dispatch.** Calling a mixin function through its module, as `Shape.describe(x)`, runs the
+  function of `x`'s type, which must include the module. This is the one place besides operators
+  where the function is picked while running, and the module name says so.
+
+```ruby
+module Summary                       # mixin functions: they need `each` and `count` from the includer
+  def total(c)
+    sum = 0
+    each(c) { |x| sum += x }
+    sum
+  end
+  def average(c) = total(c) / count(c)
+end
+
+class Basket < {reader: [items]}     # `class` adds operations to a type
+  include Summary
+  def each(b) = Array.each(@items) { |x| yield(x) }
+  def count(b) = Array.size(@items)
+end
+
+class Countdown < {reader: [n]}
+  include Summary
+  def each(c) = Integer.downto(@n, 1) { |i| yield(i) }
+  def count(c) = @n
+end
+
+module Units                         # `module_function`: called directly, as Units.km
+  module_function
+  def km(m) = m / 1000.0
+end
+
+b = Basket.new(Array[3, 4, 5])
+puts(Basket.total(b))                # static: Basket's total (borrowed from Summary)
+puts(Summary.total(Countdown.new(4)))  # dispatch: the total of the argument's type
+puts(Units.km(2500))
+```
+
+```
+$ sake modules.sake
+12
+10
+2.5
+```
+
+A module states what each includer must define with a function whose body is only
+`raise NotImplementedError`. A missing definition, a `class` that is not a type, and a direct call
+to a function that needs its includer are reported before running:
+
+```ruby
+module Shape                             # a body of only `raise NotImplementedError`: each includer defines it
+  def area(s) = raise(NotImplementedError)
+  def describe(s) = "area #{Shape.area(s)}"
+end
+Square = Struct.new(:side)
+class Square
+  include Shape
+  def area(q) = @side * @side
+end
+Circle = Struct.new(:r)
+class Circle
+  include Shape                          # forgot area
+end
+puts(Shape.describe(Square.new(2)))
+puts(Shape.describe(Circle.new(1)))
+```
+
+```
+$ sake required_errors.sake
+required_errors.sake:3:29: error: Shape.area: Circle includes Shape but does not define area, which Shape requires (`raise NotImplementedError`) [type]
+  hint: define `def area(...)` in class Circle
+  hint: reached by the call at line 15
+(exit status 2)
+```
+
+```ruby
+module Summary
+  def total(c) = each(c) + 1
+end
+module Empty
+  include Summary
+end
+class Helpers
+  def twice(x) = x * 2
+end
+puts(Summary.total(1))
+```
+
+```
+$ sake module_errors.sake
+module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)
+module_errors.sake:7:7: error: `class Helpers`: Helpers is not a type; a namespace of functions is a module
+  hint: module Helpers
+module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary
+  hint: to call it as Summary.total(...), mark it with `module_function`
+(exit status 2)
 ```
 
 ### Operators for your own types
 
-An operator belongs to a module: `Arithmetic` (`+ - * / % **`), `Comparable` (`<=>` and
-`< <= > >=`), `Bitwise`, and `Indexable` (`[]`, `[]=`). A type joins by including the module and
-defining the operator. With `Comparable`, `<=>` alone gives the comparisons and makes `Array.sort`
-work:
+An operator belongs to a module: `Arithmetic` (`+ - * / % **`, unary `-` and `+`), `Comparable`
+(`<=>` and `< <= > >=`), `Bitwise`, and `Indexable` (`[]`, `[]=`). A type joins by including the
+module and defining the operator. With `Comparable`, `<=>` alone gives the comparisons, `==`, and
+`Array.sort`:
 
 ```ruby
 class Money < {reader: [cents]}
@@ -785,116 +913,39 @@ union_call.sake:6: in size_of: TypeError: (String|Array).size: argument 1 must b
 (exit status 1)
 ```
 
-### Sharing functions with `include`
+### Unqualified names
 
-`class` adds operations to a type, and `module` is a namespace with no type.
+An unqualified call is resolved statically, from the inside out:
 
-`include M` borrows `M`'s functions, as Ruby's modules do, but statically. Inside a borrowed
-function, unqualified names are looked up in the namespace that includes it. So `Summary` below
-can use the `each` that `Basket` or `Countdown` provides.
+1. the enclosing class or module (and what it includes)
+2. the top-level functions
+3. `Kernel`
 
-There are two ways to call a module's functions:
-
-- **Module functions.** Functions after `module_function` are called directly, as `Units.km(x)`.
-- **Mixin functions.** Calling any other function through the module, as `Summary.total(x)`,
-  **dispatches**: it runs the `total` of `x`'s type, which must include `Summary`. This is the one
-  place besides operators where the function is picked while running, and the module name says
-  so.
+The inner definition wins, so common names such as `open` stay usable. To reach an outer
+definition, write its namespace, as in `Kernel.puts(...)`.
 
 ```ruby
-module Summary                       # mixin functions: they need `each` and `count` from the includer
-  def total(c)
-    sum = 0
-    each(c) { |x| sum += x }
-    sum
-  end
-  def average(c) = total(c) / count(c)
-end
+def label(x) = "top: #{x}"
 
-class Basket < {reader: [items]}     # `class` adds operations to a type
-  include Summary
-  def each(b) = Array.each(@items) { |x| yield(x) }
-  def count(b) = Array.size(@items)
-end
-
-class Countdown < {reader: [n]}
-  include Summary
-  def each(c) = Integer.downto(@n, 1) { |i| yield(i) }
-  def count(c) = @n
-end
-
-module Units                         # `module_function`: called directly, as Units.km
+module Door
   module_function
-  def km(m) = m / 1000.0
+  def open(d) = label("door")              # Door.label wins over the top-level label
+  def label(x) = "door: #{x}"
+  def show(d) = puts(open(d))              # Door.open wins over the top-level open
 end
 
-b = Basket.new(Array[3, 4, 5])
-puts(Basket.total(b))                # static: Basket's total (borrowed from Summary)
-puts(Summary.total(Countdown.new(4)))  # dispatch: the total of the argument's type
-puts(Units.km(2500))
+def open(x) = label("top")
+
+Door.show(1)
+puts(open(1))
+puts(Door.open(1))
 ```
 
 ```
-$ sake modules.sake
-12
-10
-2.5
-```
-
-A missing requirement is found before running. So are a `class` that is not a type, and a direct
-call to a function that needs its includer:
-
-```ruby
-module Summary
-  def total(c) = each(c) + 1
-end
-module Empty
-  include Summary
-end
-class Helpers
-  def twice(x) = x * 2
-end
-puts(Summary.total(1))
-```
-
-```
-$ sake module_errors.sake
-module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)
-module_errors.sake:7:7: error: `class Helpers`: Helpers is not a type; a namespace of functions is a module
-  hint: module Helpers
-module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary
-  hint: to call it as Summary.total(...), mark it with `module_function`
-(exit status 2)
-```
-
-A module states what each includer must define with a function whose body is only
-`raise NotImplementedError`. A type that includes the module but lacks it is reported where the
-function is reached:
-
-```ruby
-module Shape                             # a body of only `raise NotImplementedError`: each includer defines it
-  def area(s) = raise(NotImplementedError)
-  def describe(s) = "area #{Shape.area(s)}"
-end
-Square = Struct.new(:side)
-class Square
-  include Shape
-  def area(q) = @side * @side
-end
-Circle = Struct.new(:r)
-class Circle
-  include Shape                          # forgot area
-end
-puts(Shape.describe(Square.new(2)))
-puts(Shape.describe(Circle.new(1)))
-```
-
-```
-$ sake required_errors.sake
-required_errors.sake:3:29: error: Shape.area: Circle includes Shape but does not define area, which Shape requires (`raise NotImplementedError`) [type]
-  hint: define `def area(...)` in class Circle
-  hint: reached by the call at line 15
-(exit status 2)
+$ sake scope.sake
+door: door
+top: top
+door: door
 ```
 
 ## 9. Tuples, Records, and arrays

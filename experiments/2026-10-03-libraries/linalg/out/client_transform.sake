@@ -1,0 +1,295 @@
+# linalg: vectors and matrices over Integer, Float, Rational (and mixes).
+
+# A numeric element's absolute value, whatever its numeric type.
+def la_abs(x) = (Integer|Float|Rational).abs(x)
+
+# Exact conversion: Integer/Rational -> Rational (Float stays Float).
+def la_exact(x) = x + 0r
+
+class Vec < {reader: [elems]}
+  include Arithmetic
+  include Indexable
+
+  def of(xs) = Vec.new(xs)
+  def zero(n) = Vec.new(Array.new(n, 0))
+  def size(v) = Array.size(@elems)
+  def [](v, i) = Array.fetch(@elems, i)
+  def []=(v, i, x)
+    Array.[]=(@elems, i, x)
+  end
+  def to_a(v) = Array.dup(@elems)
+
+  def +(a, b) = Vec.zip_with(a, b) { |x, y| x + y }
+  def -(a, b) = Vec.zip_with(a, b) { |x, y| x - y }
+  def zip_with(a, b)
+    raise ArgumentError, "Vec: sizes differ" if Vec.size(a) != Vec.size(b)
+    bs = Vec.get_elems(b)
+    Vec.new(Array.new(Array.size(@elems)) { |i| yield(Array.fetch(@elems, i), Array.fetch(bs, i)) })
+  end
+  def -@(a) = Vec.new(Array.map(@elems) { |x| -x })
+  # v * k scales; v * w is the dot product.
+  def *(a, k)
+    case k
+    in Vec then Vec.dot(a, k)
+    in Integer | Float | Rational then Vec.new(Array.map(@elems) { |x| x * k })
+    end
+  end
+  def /(a, k) = Vec.new(Array.map(@elems) { |x| x / k })
+
+  def dot(a, b)
+    raise ArgumentError, "Vec.dot: sizes differ" if Vec.size(a) != Vec.size(b)
+    bs = Vec.get_elems(b)
+    s = 0
+    Array.each_with_index(@elems) { |x, i| s += x * Array.fetch(bs, i) }
+    s
+  end
+  def exact(v) = Vec.new(Array.map(@elems) { |x| la_exact(x) })
+  def to_s(v) = "(#{Array.join(Array.map(@elems) { |x| la_fmt(x) }, ", ")})"
+end
+
+def la_fmt(x)
+  case x
+  in Rational
+    Rational.denominator(x) == 1 ? Integer.to_s(Rational.numerator(x)) : Rational.to_s(x)
+  in Float then format("%.4g", x)
+  in Integer then Integer.to_s(x)
+  end
+end
+
+class Mat < {reader: [nrows, ncols, rows]}
+  include Arithmetic
+  include Indexable
+
+  # rows: an Array of row Arrays, all of the same length.
+  def of(rows)
+    n = Array.size(rows)
+    raise ArgumentError, "Mat.of: no rows" if n == 0
+    m = Array.size(Array.fetch(rows, 0))
+    Array.each(rows) { |r| raise ArgumentError, "Mat.of: ragged rows" if Array.size(r) != m }
+    Mat.new(n, m, Array.map(rows) { |r| Array.dup(r) })
+  end
+  def build(n, m) = Mat.new(n, m, Array.new(n) { |i| Array.new(m) { |j| yield(i, j) } })
+  def identity(n) = Mat.build(n, n) { |i, j| i == j ? 1 : 0 }
+  def zero(n, m) = Mat.build(n, m) { |i, j| 0 }
+
+  def [](a, i, j) = Array.fetch(Array.fetch(@rows, i), j)
+  def []=(a, i, j, x)
+    Array.[]=(Array.fetch(@rows, i), j, x)
+  end
+  def row(a, i) = Vec.new(Array.dup(Array.fetch(@rows, i)))
+  def col(a, j) = Vec.new(Array.map(@rows) { |r| Array.fetch(r, j) })
+  def square?(a) = @nrows == @ncols
+  def dup(a) = Mat.of(@rows)
+
+  def map(a) = Mat.new(@nrows, @ncols, Array.map(@rows) { |r| Array.map(r) { |x| yield(x) } })
+  def exact(a) = Mat.map(a) { |x| la_exact(x) }
+  def to_float(a) = Mat.map(a) { |x| x * 1.0 }
+
+  def transpose(a) = Mat.build(@ncols, @nrows) { |i, j| Mat.at(a, j, i) }
+  def at(a, i, j) = Array.fetch(Array.fetch(@rows, i), j)
+
+  def +(a, b)
+    Mat.same_shape!(a, b)
+    Mat.build(@nrows, @ncols) { |i, j| Mat.at(a, i, j) + Mat.at(b, i, j) }
+  end
+  def -(a, b)
+    Mat.same_shape!(a, b)
+    Mat.build(@nrows, @ncols) { |i, j| Mat.at(a, i, j) - Mat.at(b, i, j) }
+  end
+  def -@(a) = Mat.map(a) { |x| -x }
+  def same_shape!(a, b)
+    if @nrows != Mat.get_nrows(b) || @ncols != Mat.get_ncols(b)
+      raise ArgumentError, "Mat: shapes differ"
+    end
+  end
+
+  # m * n (matrix), m * v (vector), m * k (scalar)
+  def *(a, b)
+    case b
+    in Mat then Mat.mul(a, b)
+    in Vec then Mat.apply(a, b)
+    in Integer | Float | Rational then Mat.map(a) { |x| x * b }
+    end
+  end
+  def mul(a, b)
+    raise ArgumentError, "Mat.mul: shapes differ" if @ncols != Mat.get_nrows(b)
+    Mat.build(@nrows, Mat.get_ncols(b)) do |i, j|
+      s = 0
+      Integer.times(@ncols) { |k| s += Mat.at(a, i, k) * Mat.at(b, k, j) }
+      s
+    end
+  end
+  def apply(a, v)
+    raise ArgumentError, "Mat.apply: sizes differ" if @ncols != Vec.size(v)
+    Vec.new(Array.map(@rows) { |r| Vec.dot(Vec.new(r), v) })
+  end
+
+  # m ** k by repeated squaring; k >= 0.
+  def **(a, k)
+    raise ArgumentError, "Mat.**: not square" unless Mat.square?(a)
+    raise ArgumentError, "Mat.**: negative exponent" if k < 0
+    result = Mat.identity(@nrows)
+    base = a
+    e = k
+    while e > 0
+      result = Mat.mul(result, base) if Integer.odd?(e)
+      base = Mat.mul(base, base)
+      e = e / 2
+    end
+    result
+  end
+
+  # Determinant. Integer matrices use Bareiss (fraction-free, exact);
+  # others use Gaussian elimination with partial pivoting.
+  def det(a)
+    raise ArgumentError, "Mat.det: not square" unless Mat.square?(a)
+    return Mat.det_bareiss(a) if Array.all?(@rows) { |r| Array.all?(r) { |x| x in Integer } }
+    lu = Mat.dup(a)
+    n = @nrows
+    sign = 1
+    d = 1
+    Integer.times(n) do |k|
+      p = Mat.pivot(lu, k)
+      return 0 if p == nil
+      if p != k
+        Mat.swap_rows!(lu, p, k)
+        sign = -sign
+      end
+      pv = Mat.at(lu, k, k)
+      d *= pv
+      Integer.upto(k + 1, n - 1) do |i|
+        f = Mat.at(lu, i, k) / pv
+        Integer.upto(k, n - 1) { |j| lu[i, j] = Mat.at(lu, i, j) - f * Mat.at(lu, k, j) }
+      end
+    end
+    d * sign
+  end
+
+  def det_bareiss(a)
+    m = Mat.dup(a)
+    n = @nrows
+    sign = 1
+    prev = 1
+    Integer.times(n - 1) do |k|
+      if Mat.at(m, k, k) == 0
+        p = Mat.pivot(m, k)
+        return 0 if p == nil
+        Mat.swap_rows!(m, p, k)
+        sign = -sign
+      end
+      Integer.upto(k + 1, n - 1) do |i|
+        Integer.upto(k + 1, n - 1) do |j|
+          m[i, j] = (Mat.at(m, i, j) * Mat.at(m, k, k) - Mat.at(m, i, k) * Mat.at(m, k, j)) / prev
+        end
+      end
+      prev = Mat.at(m, k, k)
+    end
+    sign * Mat.at(m, n - 1, n - 1)
+  end
+
+  # Row index (>= k) with the largest |entry| in column k, or nil if all are zero.
+  def pivot(a, k)
+    best = nil
+    bestv = 0
+    Integer.upto(k, @nrows - 1) do |i|
+      v = la_abs(Mat.at(a, i, k))
+      if v != 0 && (best == nil || v > bestv)
+        best = i
+        bestv = v
+      end
+    end
+    best
+  end
+  def swap_rows!(a, i, j)
+    ri = Array.fetch(@rows, i)
+    @rows[i] = Array.fetch(@rows, j)
+    @rows[j] = ri
+  end
+
+  # Solve a x = b by Gauss-Jordan on [a | b]. Returns a Vec, or nil if a is singular.
+  # Integer entries are made Rational first, so the answer is exact.
+  def solve(a, b)
+    raise ArgumentError, "Mat.solve: not square" unless Mat.square?(a)
+    n = @nrows
+    aug = Mat.build(n, n + 1) { |i, j| la_promote(j < n ? Mat.at(a, i, j) : Array.fetch(Vec.get_elems(b), i)) }
+    return nil unless Mat.eliminate!(aug, n)
+    Vec.new(Array.new(n) { |i| Mat.at(aug, i, n) })
+  end
+
+  # Inverse by Gauss-Jordan on [a | I]; nil if singular.
+  def inverse(a)
+    raise ArgumentError, "Mat.inverse: not square" unless Mat.square?(a)
+    n = @nrows
+    aug = Mat.build(n, 2 * n) { |i, j| la_promote(j < n ? Mat.at(a, i, j) : (j - n == i ? 1 : 0)) }
+    return nil unless Mat.eliminate!(aug, n)
+    Mat.build(n, n) { |i, j| Mat.at(aug, i, j + n) }
+  end
+
+  # Reduce the first n columns of m to the identity in place; false if singular.
+  def eliminate!(m, n)
+    w = Mat.get_ncols(m)
+    Integer.times(n) do |k|
+      p = Mat.pivot(m, k)
+      return false if p == nil
+      Mat.swap_rows!(m, p, k) if p != k
+      pv = Mat.at(m, k, k)
+      Integer.upto(k, w - 1) { |j| m[k, j] = Mat.at(m, k, j) / pv }
+      Integer.times(n) do |i|
+        next if i == k
+        f = Mat.at(m, i, k)
+        next if f == 0
+        Integer.upto(k, w - 1) { |j| m[i, j] = Mat.at(m, i, j) - f * Mat.at(m, k, j) }
+      end
+    end
+    true
+  end
+
+  def to_s(a)
+    cells = Array.map(@rows) { |r| Array.map(r) { |x| la_fmt(x) } }
+    width = Array.max(Array.map(Array.flatten(cells)) { |s| String.size(s) }) || 0
+    Array.join(Array.map(cells) { |r| "[ " + Array.join(Array.map(r) { |s| String.rjust(s, width) }, " ") + " ]" }, "\n")
+  end
+end
+
+# Integer -> Rational so division stays exact; Float and Rational unchanged.
+def la_promote(x)
+  case x
+  in Integer then Integer.to_r(x)
+  else x
+  end
+end
+# 2D transform pipeline with Floats, in homogeneous coordinates (3x3).
+def rotate(deg)
+  t = deg * Math.atan(1) * 4 / 180.0
+  c = Math.cos(t)
+  s = Math.sin(t)
+  Mat.of(Array[Array[c, -s, 0.0], Array[s, c, 0.0], Array[0.0, 0.0, 1.0]])
+end
+def translate(dx, dy) = Mat.of(Array[Array[1.0, 0.0, dx * 1.0], Array[0.0, 1.0, dy * 1.0], Array[0.0, 0.0, 1.0]])
+def scale(sx, sy) = Mat.of(Array[Array[sx * 1.0, 0.0, 0.0], Array[0.0, sy * 1.0, 0.0], Array[0.0, 0.0, 1.0]])
+def pt(x, y) = Vec.of(Array[x * 1.0, y * 1.0, 1.0])
+
+square = Vec[pt(0, 0), pt(1, 0), pt(1, 1), pt(0, 1)]
+# Applied right to left: scale by 2, rotate 90 degrees, then move by (5, 0).
+pipeline = translate(5, 0) * rotate(90) * scale(2, 2)
+puts("pipeline =")
+puts(pipeline)
+Array.each(square) { |v| puts("#{v} -> #{pipeline * v}") }
+
+back = Mat.inverse(pipeline)
+if back
+  Array.each(square) do |v|
+    w = back * (pipeline * v)
+    d = w - v
+    puts("round trip #{v}: error #{format("%.2e", Math.sqrt(d * d))}")
+  end
+end
+puts("det(pipeline) = #{la_fmt(Mat.det(pipeline))}  (area scale 4)")
+
+# Rotating 360 degrees in 1-degree steps drifts away from the identity in Floats.
+step = rotate(1)
+full = step ** 360
+drift = full - Mat.identity(3)
+worst = 0.0
+Integer.times(3) { |i| Integer.times(3) { |j| e = la_abs(Mat.at(drift, i, j)); worst = e if e > worst } }
+puts("rotate(1)**360 - I: largest entry #{format("%.2e", worst)}")

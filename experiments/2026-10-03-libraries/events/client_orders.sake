@@ -1,0 +1,132 @@
+# An order workflow: one Fsm per order, and services (stock, billing, mail) that react to
+# events on a shared Bus and emit follow-up events. Events emitted by a handler are queued
+# and delivered after the current one.
+
+# Rules for one order: guards look at the order's data.
+class OrderRules < {reader: [id, total, items, paid_amount]}
+  include Hooks
+  def guard?(r, name, fsm, data)
+    case name
+    in :fully_paid then @paid_amount + data >= @total
+    in :refundable then @paid_amount > 0
+    end
+  end
+  def act(r, name, fsm, data)
+    case name
+    in :record_payment then @paid_amount += data
+    in :refund then @paid_amount = 0
+    end
+  end
+  def enter(r, state, fsm, data) = puts("    order #{@id} -> #{state}")
+  def rejected(r, event, fsm, data) = puts("    order #{@id}: #{event} not allowed in #{Fsm.get_state(fsm)}")
+end
+
+def order_machine(rules)
+  m = Fsm.create("order #{OrderRules.get_id(rules)}", :new, rules)
+  Fsm.allow(m, :new, :pay, :paid, :fully_paid, :record_payment)
+  Fsm.allow(m, :new, :pay, :new, :none, :record_payment)          # partial payment
+  Fsm.allow(m, :paid, :ship, :shipped, :none, :none)
+  Fsm.allow(m, :shipped, :deliver, :done, :none, :none)
+  Fsm.allow(m, :paid, :cancel, :cancelled, :refundable, :refund)
+  Fsm.allow(m, :new, :cancel, :cancelled, :none, :none)
+  m
+end
+
+class Stock < {reader: [counts]}
+  include Handler
+  def handle(s, bus, ev)
+    name, data = ev
+    case name
+    in :placed
+      data => {id:, items:}
+      need = Array.tally(items)
+      short = Array.select(Hash.keys(need)) { |sku| Hash.fetch(@counts, sku, 0) < need[sku] }
+      if Array.empty?(short)
+        Array.each(items) { |sku| @counts[sku] = Hash.fetch(@counts, sku, 0) - 1 }
+        Bus.publish(bus, :reserved, {id: id})
+      else
+        Bus.publish(bus, :short, {id: id, skus: short})
+      end
+    else nil   # never reached: Stock is subscribed to :placed only, but the checker cannot see that
+    end
+  end
+end
+
+class Mailer < {reader: [sent]}
+  include Handler
+  def handle(m, bus, ev)
+    name, data = ev
+    text = case name
+           in :short
+             data => {id:, skus:}
+             "order #{id}: sorry, #{Array.join(skus, ", ")} out of stock"
+           in :fsm_moved
+             data => {machine:, to:}
+             "#{machine} is now #{to}"
+           else nil
+           end
+    Array.push(@sent, text) if text
+  end
+end
+
+# Closes an order whose stock is short: a handler that drives the order's state machine,
+# whose move is published back on the same bus (queued, not nested).
+class Canceller < {reader: [orders]}
+  include Handler
+  def handle(c, bus, ev)
+    name, data = ev
+    case name
+    in :short
+      data => {id:}
+      m = @orders[id]
+      Fsm.fire(m, :cancel, 0) if m
+    else nil
+    end
+  end
+end
+
+class Counter < {reader: [by_name]}
+  include Handler
+  def handle(c, bus, ev)
+    name, _ = ev
+    @by_name[name] = Hash.fetch(@by_name, name, 0) + 1
+  end
+end
+
+bus = Bus.create
+stock = Stock.new(Hash["apple" => 2, "pear" => 0, "fig" => 5])
+mailer = Mailer.new(String[])
+counter = Counter.new(Hash[])
+Bus.on(bus, :placed, stock)
+Bus.on(bus, :short, mailer)
+Bus.on(bus, :fsm_moved, mailer)
+Bus.on(bus, :*, counter)
+orders = Hash[]
+Bus.on(bus, :short, Canceller.new(orders))
+def place(bus, orders, id, items, total)
+  rules = OrderRules.new(id, total, items, 0)
+  m = order_machine(rules)
+  Fsm.attach(m, bus)
+  orders[id] = m
+  Bus.publish(bus, :placed, {id: id, items: items})
+end
+
+puts("placing:")
+place(bus, orders, 1, Array["apple", "fig"], 300)
+place(bus, orders, 2, Array["pear"], 120)
+place(bus, orders, 3, Array["apple", "apple"], 500)
+
+steps = Array[[1, :pay, 100], [1, :pay, 200], [1, :ship, 0], [2, :cancel, 0], [3, :pay, 500],
+              [3, :cancel, 0], [1, :cancel, 0], [1, :deliver, 0]]
+puts("running:")
+Array.each(steps) do |id, event, amount|
+  m = orders[id]
+  Fsm.fire(m, event, amount) if m
+end
+
+puts("states:")
+Hash.each(orders) { |id, m| puts("  #{id}: #{Fsm.get_state(m)} via #{Fsm.get_history(m)}") }
+puts("stock left: #{Stock.get_counts(stock)}")
+puts("mail:")
+Array.each(Mailer.get_sent(mailer)) { puts("  #{it}") }
+puts("event counts: #{Counter.get_by_name(counter)}  (bus delivered #{Bus.get_delivered(bus)})")
