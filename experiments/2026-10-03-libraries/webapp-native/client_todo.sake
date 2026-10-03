@@ -1,0 +1,111 @@
+# ==== client: a todo list (routes table -> Symbols, dispatched with case/in) ====
+
+class Todo < {reader: [id, title, created_at], accessor: [done]}
+  def to_json(t) = Hash["id" => @id, "title" => @title, "done" => @done, "created_at" => @created_at]
+end
+
+module Todos
+  module_function
+
+  def path = "data/todos.tsv"
+
+  def all
+    out = Todo[]
+    Array.each(Tsv.load(path)) do |row|
+      id, done, title, created = row
+      next unless id && done && title && created
+      Array.push(out, Todo.new(String.to_i(id), title, created, done == "1"))
+    end
+    out
+  end
+
+  def save(todos)
+    Tsv.save(path, Array.map(todos) { |t| String[Integer.to_s(Todo.get_id(t)), Todo.get_done(t) ? "1" : "0", Todo.get_title(t), Todo.get_created_at(t)] })
+  end
+
+  def find(todos, id)
+    t = Array.find(todos) { Todo.get_id(it) == id }
+    raise HttpError.new("no todo with id #{id}", 404) unless t
+    t
+  end
+
+  def next_id(todos) = Array.reduce(todos, 0) { |m, t| m > Todo.get_id(t) ? m : Todo.get_id(t) } + 1
+
+  # The error messages for a title; empty when it is valid.
+  def validate(title)
+    errors = String[]
+    Array.push(errors, "Title can't be blank") if String.empty?(title)
+    Array.push(errors, "Title is too long (#{String.size(title)} > 60)") if String.size(title) > 60
+    Array.push(errors, "Title must not contain a tab") if String.include?(title, "\t")
+    errors
+  end
+end
+
+def routes = Tuple[
+  ["GET", "/", :index],
+  ["POST", "/todos", :create],
+  ["GET", "/todos/:id", :show],
+  ["POST", "/todos/:id/toggle", :toggle],
+  ["POST", "/todos/:id/delete", :delete],
+  ["GET", "/api/todos", :api_index],
+  ["GET", "/api/todos/:id", :api_show],
+]
+
+def index_page(todos, title, errors, flash)
+  items = Html.each(todos) do |t|
+    Html.render(<<~HTML, Hash["id" => Todo.get_id(t), "title" => Todo.get_title(t), "mark" => Todo.get_done(t) ? "[x]" : "[ ]", "label" => Todo.get_done(t) ? "undo" : "done"])
+      <li>{{mark}} <a href="/todos/{{id}}">{{title}}</a>
+        <form method="post" action="/todos/{{id}}/toggle" style="display:inline"><button>{{label}}</button></form>
+        <form method="post" action="/todos/{{id}}/delete" style="display:inline"><button>delete</button></form></li>
+    HTML
+  end
+  error_list = Html.each(errors) { |e| Html.render("<li>{{e}}</li>", Hash["e" => e]) }
+  Html.page("Todos", Html.render(<<~HTML, Hash["flash" => flash, "items" => items, "errors" => error_list, "title" => title, "n" => Array.size(todos)]))
+    <h1>Todos ({{n}})</h1>
+    <p class="flash">{{flash}}</p>
+    <ul>{{items}}</ul>
+    <ul class="errors">{{errors}}</ul>
+    <form method="post" action="/todos">
+      <input name="title" value="{{title}}"><button>add</button>
+    </form>
+  HTML
+end
+
+def show_page(t)
+  Html.page(Todo.get_title(t), Html.render(<<~HTML, Hash["id" => Todo.get_id(t), "title" => Todo.get_title(t), "state" => Todo.get_done(t) ? "done" : "open", "at" => Todo.get_created_at(t)]))
+    <h1>{{id}}: {{title}}</h1>
+    <p>state: {{state}}, created {{at}}</p>
+    <p><a href="/">back</a></p>
+  HTML
+end
+
+Web.serve(routes, 18441, 4) do |route, req|
+  todos = Todos.all
+  case route
+  in :index
+    res = Web.html(200, index_page(todos, "", String[], Request.cookie(req, "flash") || ""))
+    Response.delete_cookie(res, "flash")
+  in :create
+    title = String.strip(Request.param_or(req, "title", ""))
+    errors = Todos.validate(title)
+    if Array.empty?(errors)
+      Array.push(todos, Todo.new(Todos.next_id(todos), title, Time.strftime(Time.now, "%Y-%m-%d %H:%M"), false))
+      Todos.save(todos)
+      Response.set_cookie(Web.redirect("/"), "flash", "Added: #{title}")
+    else
+      Web.html(422, index_page(todos, title, errors, ""))
+    end
+  in :show then Web.html(200, show_page(Todos.find(todos, Request.int_param(req, "id"))))
+  in :toggle
+    t = Todos.find(todos, Request.int_param(req, "id"))
+    Todo.set_done(t, !Todo.get_done(t))
+    Todos.save(todos)
+    Web.redirect("/todos/#{Todo.get_id(t)}")
+  in :delete
+    t = Todos.find(todos, Request.int_param(req, "id"))
+    Todos.save(Array.reject(todos) { it == t })
+    Response.set_cookie(Web.redirect("/"), "flash", "Deleted: #{Todo.get_title(t)}")
+  in :api_index then Web.json(200, Array.map(todos) { Todo.to_json(it) })
+  in :api_show then Web.json(200, Todo.to_json(Todos.find(todos, Request.int_param(req, "id"))))
+  end
+end

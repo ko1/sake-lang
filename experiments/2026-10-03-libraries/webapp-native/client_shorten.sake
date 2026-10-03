@@ -1,0 +1,131 @@
+# ==== client: a URL shortener (routes table -> handler values, dispatched through a mixin) ====
+# Each handler is a value of its own Struct type that includes Handler; Handler.call(h, req) runs the
+# `call` of h's type. This is the nearest thing to Rack's "an object that responds to call".
+
+class Link < {reader: [code, url], accessor: [hits]}
+  def to_json(l) = Hash["code" => @code, "url" => @url, "hits" => @hits, "short" => "/s/#{@code}"]
+end
+
+class Store < {reader: [path]}
+  def links(s)
+    out = Link[]
+    Array.each(Tsv.load(@path)) do |row|
+      code, url, hits = row
+      Array.push(out, Link.new(code, url, String.to_i(hits))) if code && url && hits
+    end
+    out
+  end
+
+  def save(s, links) = Tsv.save(@path, Array.map(links) { |l| String[Link.get_code(l), Link.get_url(l), Integer.to_s(Link.get_hits(l))] })
+
+  def find(s, links, code)
+    l = Array.find(links) { Link.get_code(it) == code }
+    raise HttpError.new("no link /s/#{code}", 404) unless l
+    l
+  end
+end
+
+module Handler
+  def call(h, req) = raise(NotImplementedError)
+end
+
+def alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+def base62(n)
+  digits = String[]
+  while true
+    Array.unshift(digits, String.[](alphabet, n % 62, 1) || "?")
+    n = n / 62
+    break if n == 0
+  end
+  Array.join(digits, "")
+end
+
+# The codes of "my links" live in a cookie: "a1,b2".
+def my_codes(req) = String.split(Request.cookie(req, "mine") || "", ",")
+
+def home_page(links, mine, url, code, errors)
+  rows = Html.each(Array.select(links) { Array.include?(mine, Link.get_code(it)) }) do |l|
+    Html.render("<tr><td><a href=\"/s/{{c}}/info\">/s/{{c}}</a></td><td>{{u}}</td><td>{{h}}</td></tr>",
+      Hash["c" => Link.get_code(l), "u" => Link.get_url(l), "h" => Link.get_hits(l)])
+  end
+  errs = Html.each(errors) { |e| Html.render("<li>{{e}}</li>", Hash["e" => e]) }
+  Html.page("Shorten", Html.render(<<~HTML, Hash["rows" => rows, "errs" => errs, "url" => url, "code" => code, "total" => Array.size(links)]))
+    <h1>Shorten a URL</h1>
+    <ul class="errors">{{errs}}</ul>
+    <form method="post" action="/links">
+      URL <input name="url" value="{{url}}"> code (optional) <input name="code" value="{{code}}"><button>shorten</button>
+    </form>
+    <h2>Your links ({{total}} in all)</h2>
+    <table>{{rows}}</table>
+  HTML
+end
+
+class Home < {reader: [store]}
+  include Handler
+  def call(h, req) = Web.html(200, home_page(Store.links(@store), my_codes(req), "", "", String[]))
+end
+
+class Shorten < {reader: [store]}
+  include Handler
+  def call(h, req)
+    links = Store.links(@store)
+    url = String.strip(Request.param_or(req, "url", ""))
+    code = String.strip(Request.param_or(req, "code", ""))
+    errors = String[]
+    Array.push(errors, "URL must start with http:// or https://") unless String.match?(url, /\Ahttps?:\/\/\S+\z/)
+    if String.empty?(code)
+      code = base62(Array.size(links) + 3844)   # 3844 = 62**2: codes start at three characters
+    elsif !String.match?(code, /\A[0-9A-Za-z]{3,16}\z/)
+      Array.push(errors, "Code must be 3-16 letters or digits")
+    end
+    Array.push(errors, "Code #{code} is taken") if Array.any?(links) { Link.get_code(it) == code }
+    unless Array.empty?(errors)
+      return Web.html(422, home_page(links, my_codes(req), url, code, errors))
+    end
+    Array.push(links, Link.new(code, url, 0))
+    Store.save(@store, links)
+    res = Web.redirect("/s/#{code}/info")
+    Response.set_cookie(res, "mine", Array.join(my_codes(req) + String[code], ","))
+  end
+end
+
+class Follow < {reader: [store]}
+  include Handler
+  def call(h, req)
+    links = Store.links(@store)
+    l = Store.find(@store, links, Request.param_or(req, "code", ""))
+    Link.set_hits(l, Link.get_hits(l) + 1)
+    Store.save(@store, links)
+    Web.redirect(Link.get_url(l))
+  end
+end
+
+class Info < {reader: [store]}
+  include Handler
+  def call(h, req)
+    l = Store.find(@store, Store.links(@store), Request.param_or(req, "code", ""))
+    Web.html(200, Html.page("/s/#{Link.get_code(l)}", Html.render("<h1>/s/{{c}}</h1><p>&rarr; <a href=\"{{u}}\">{{u}}</a></p><p>{{h}} hits</p><p><a href=\"/\">home</a></p>",
+      Hash["c" => Link.get_code(l), "u" => Link.get_url(l), "h" => Link.get_hits(l)])))
+  end
+end
+
+class ApiLinks < {reader: [store]}
+  include Handler
+  def call(h, req)
+    links = Store.links(@store)
+    min = Request.param(req, "min_hits")
+    links = Array.select(links) { Link.get_hits(it) >= String.to_i(min) } if min
+    Web.json(200, Hash["count" => Array.size(links), "links" => Array.map(links) { Link.to_json(it) }])
+  end
+end
+
+store = Store.new("data/links.tsv")
+routes = Tuple[
+  ["GET", "/", Home.new(store)],
+  ["POST", "/links", Shorten.new(store)],
+  ["GET", "/s/:code", Follow.new(store)],
+  ["GET", "/s/:code/info", Info.new(store)],
+  ["GET", "/api/links", ApiLinks.new(store)],
+]
+Web.serve(routes, 18442, 4) { |h, req| Handler.call(h, req) }
