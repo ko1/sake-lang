@@ -72,6 +72,17 @@ log.formatter = nil
 
 p(log << "raw text\n")
 
+# optional arguments: no message, add/log without message or progname
+log.info
+log.add(Logger::WARN)
+log.add(Logger::INFO, "add with a message")
+log.log(Logger::ERROR, "log with a message")
+log.unknown
+
+# stderr as the device (not compared: the test reads stdout)
+elog = Logger.new($stderr)
+elog.info("to stderr")
+
 quiet = Logger.new(nil)
 p(quiet.info("nothing"))
 

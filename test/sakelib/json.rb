@@ -37,7 +37,9 @@ bad = ["", " ", "[1,]", "{\"a\":1,}", "[01]", "[.5]", "[1.]", "[NaN]", "[-Infini
             "[1 ", "[1 2]", "{\"a\" 1}", "{\"a\":1, \"b\" 2}", "{1:2}", "{", "[", "{\"a\":", "{\"a\"",
             "\"abc", "\"a\nb\"", "\"\\x\"", "\"ab\\\n\"", "\"\\u12\"", "\"\\ud800\"", "\"ab\\ud800x\"",
             "\"\\ud800\\u0041\"", "[1]]", "nulx", "tru", "[truex]", "-", "--1", "1.5e", "-a",
-            "/x", "/*", "é", "[1,\n  éa]", " [1,2]  \n x", "x" * 40, "{\"a\":1 x}"]
+            "/x", "/*", "é", "[1,\n  éa]", " [1,2]  \n x", "x" * 40, "{\"a\":1 x}",
+            "[\"日本\", tru]", "{\"é\": \"\\é\"}", "[\"あ\\", "[\"日\t本\"]", "[\"日本\" // c\n, 1 /* x */, \"\\u00e9\\ud83d\\ude00\"]",
+            "\"日本\\u12\"", "/* 日本 */ [1] x", "[\"日本語のとても長い文字列がここにあります\" x]"]
 bad.each do |s|
   begin
     v = JSON.parse(s)
@@ -118,3 +120,10 @@ puts 1.5.to_json
 src = "{\"a\":[1,2.5,\"x\",null,true,{\"b\":[]}],\"c\":\"\\u00e9\\n\"}"
 puts JSON.generate(JSON.parse(src))
 p JSON.parse(JSON.pretty_generate(JSON.parse(src))) == JSON.parse(src)
+
+# the optional options argument of load_file and fast_generate
+path = "json_test_tmp.json"
+File.write(path, "{\"k\": [1, 2,]}")
+p JSON.load_file(path, {symbolize_names: true, allow_trailing_comma: true})
+File.delete(path)
+puts JSON.fast_generate([1, 2], {array_nl: " "})

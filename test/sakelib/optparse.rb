@@ -79,3 +79,23 @@ plain = OptionParser.new
 plain.program_name = "plain"
 plain.on("-a")
 print(plain.help)
+
+# defaults: parse(argv) without a Hash, ARGV when argv is left out, getopts without long options
+p(op.parse(["-v", "a", "-n", "x", "b"]))
+p(plain.parse)
+p(plain.parse!)
+args = ["-a", "x", "-b"]
+p(OptionParser.new.getopts(args, "ab"))
+p(args)
+plain.warn("a warning on stderr")
+plain.version = "1.2"
+p(plain.ver)
+p(op.ver)
+
+# --help that was not declared: prints the help and exits 0 (abbreviated, as Ruby)
+begin
+  plain.parse(["-a", "--he"])
+ensure
+  puts("ensure ran")
+end
+puts("not reached")

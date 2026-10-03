@@ -17,20 +17,20 @@ order of checks and messages.
 | Ruby | Sake | |
 |---|---|---|
 | `JSON.parse(s)` | `JSON.parse(s)` | same |
-| `JSON.parse(s, symbolize_names: true, allow_nan:, allow_trailing_comma:, max_nesting:)` | `JSON.parse_with(s, {symbolize_names: true, ...})` | differs (no keyword arguments) |
+| `JSON.parse(s, symbolize_names: true, allow_nan:, allow_trailing_comma:, max_nesting:)`, `JSON.parse(s, {...})` | `JSON.parse(s, {symbolize_names: true, ...})` | same name; the options are a Record (Ruby's `opts = nil` positional Hash form reads the same) |
 | `JSON.parse(s, object_class:, array_class:, decimal_class:, create_additions:, freeze:)` | | missing |
 | `JSON.parse(s, allow_control_characters:, allow_invalid_escape:, allow_duplicate_key:)` | | missing (easy to add) |
 | `JSON.parse!(s)` | | missing |
 | `JSON.generate(obj)` | `JSON.generate(obj)` | same |
-| `JSON.generate(obj, indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)` | `JSON.generate_with(obj, {...})` | differs |
+| `JSON.generate(obj, indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)` | `JSON.generate(obj, {...})` | same name; options as a Record |
 | `JSON.generate(obj, script_safe:, ascii_only:, strict:)` | | missing |
-| `JSON.fast_generate(obj)` | `JSON.fast_generate(obj)` | same |
+| `JSON.fast_generate(obj)`, `(obj, opts)` | `JSON.fast_generate(obj)`, `(obj, {...})` | same |
 | `JSON.pretty_generate(obj)` | `JSON.pretty_generate(obj)` | same |
-| `JSON.pretty_generate(obj, opts)` | `JSON.pretty_generate_with(obj, {...})` | differs |
+| `JSON.pretty_generate(obj, opts)` | `JSON.pretty_generate(obj, {...})` | same name; options as a Record |
 | `JSON.dump(obj)` | `JSON.dump(obj)` | same (NaN allowed, no nesting limit) |
 | `JSON.dump(obj, io)` | | missing (no IO values) |
 | `JSON.load(s)` | `JSON.load(s)` | same for a String or nil (blank input gives nil, NaN allowed); no proc, no IO |
-| `JSON.load_file(path)` | `JSON.load_file(path)` | same |
+| `JSON.load_file(path)`, `(path, opts)` | `JSON.load_file(path)`, `(path, {...})` | same |
 | `obj.to_json` | `Hash.to_json(h)`, `Array.to_json(a)`, `String.to_json(s)`, `Integer.to_json(n)`, `Float.to_json(f)` | differs; `nil.to_json`, `true.to_json` missing (nil and true/false have no namespace) |
 | `JSON[s]`, `JSON(s)` | | missing (`JSON[...]` would be a typed-Array literal) |
 | `JSON::ParserError` | `JSONParserError` | differs (no nested names) |
@@ -48,9 +48,9 @@ raises with Ruby's message.
 
 ## What differs from Ruby, and why
 
-- **Options.** Sake has no keyword arguments and no optional parameters, so each option-taking call
-  is a separate `_with` operation that takes a Record, as `csv` does. A missing field takes Ruby's
-  default. The fields are read with `(o in {allow_nan: x}) ? x == true : d`.
+- **Options.** Sake has no keyword arguments, so options are a Record in the optional second
+  argument (`o = nil`, as Ruby's `opts = nil`). A missing field takes Ruby's default. A misspelled
+  field is ignored silently, as before. The fields are read with `(o in {allow_nan: x}) ? x == true : d`.
 - **Exception names.** `JSON::ParserError` cannot be written, because namespaces do not nest. Sake also
   has no exception hierarchy, so `NestingError` is not its own type: it is raised as
   `JSONParserError`, which is what `rescue JSON::ParserError` catches in Ruby anyway.
@@ -62,12 +62,13 @@ raises with Ruby's message.
 - **Floats.** json 2.20 prints floats with its own fpconv/grisu2 code, not `Float#to_s`. The port takes
   the shortest digits from `Float.to_s` and applies fpconv's layout rules. grisu2 is not always
   shortest, so a rare float may print differently.
-- **Speed.** The test (about 60 parses and 30 generates of small documents) runs in about 6 s, most of it
-  in checking.
+- **Speed.** The parser works in byte positions (phase 2), so reading at a position does not
+  re-count characters on non-ASCII text, but each token still costs dozens of interpreted operations:
+  parsing 15 KB takes about 3 s of CPU (see Phase 2).
 
 ## Typing note
 
-`parse` and `parse_with` share one parser, so even `JSON.parse(s)` is inferred as `Hash[String | Symbol
+`parse` with and without options is one parser, so even `JSON.parse(s)` is inferred as `Hash[String | Symbol
 => ...]`: the Symbol keys of `symbolize_names` leak into every call. A caller that treats a key as a
 String must narrow it first. Avoiding this would take two copies of the parser, because a flag value
 cannot select a type. As with the earlier library, a parsed value is the full recursive union, and
@@ -75,15 +76,10 @@ callers narrow with `if v in Hash`. The test's config example does this.
 
 ## Built-ins needed but missing
 
-- `String.index(s, t, start)` (Ruby's optional start offset): scanning for `*/` and `\n` from a
-  position needs it. I used `String.index(src[pos, len - pos], t)` plus the offset, which copies the
-  rest of the string.
 - `Float::NAN` / `Float::INFINITY` (or `Float.nan` / `Float.infinity`): needed for `allow_nan`. I
   used `0.0 / 0.0` and `1.0 / 0.0`.
 - A way to list a Record's fields (`Record.to_h`): without it, `JSON.generate({a: 1})` cannot work.
   Ruby code writes `{a: 1}` for a Hash, and in Sake that is a Record.
-- `String.b(s)` (a binary copy): checking a binary String as UTF-8 needed a copy first, which I wrote
-  as `String[s].Array.join("")`.
 - `Integer.chr(cp, "UTF-8")`: I used `format("%c", cp)` instead, as the earlier library did.
 
 ## Friction
@@ -112,3 +108,31 @@ callers narrow with `if v in Hash`. The test's config example does this.
    `while (c = @src[@pos]) && c != "\""`, and `String.partition` (a Tuple) instead of `split`. The
    library is now clean at `--strict=3`. At `--strict=4`, the expected `[unrescued]` reports for its
    raises remain.
+
+## Phase 2
+
+- Names restored: `parse_with` → `parse(s, o = nil)`, `generate_with` → `generate(v, o = nil)`,
+  `pretty_generate_with` → `pretty_generate(v, o = nil)`; `load_file(path, o = nil)` and
+  `fast_generate(v, o = nil)` gained Ruby's options argument. The old names are removed; the test
+  calls `JSON.parse(s, {symbolize_names: true})` exactly as `json.rb` does, and also
+  `load_file(path, {...})` (with `File.delete`) and `fast_generate(v, {...})`.
+- The parser now keeps byte positions (`String.byteslice`, `String.getbyte`, `String.byteindex`):
+  whitespace, `//` and `/* */` comments, string bodies (to the next `"`, `\`, or control
+  character), escapes (to the next `\`), and digit runs are each one `byteindex` instead of a loop
+  over characters, with no copies of the rest of the source. A number whose run of number
+  characters matches the JSON grammar is converted at once; anything else takes the old checks, so
+  the messages are unchanged. `hex4` matches `\G\h{4}` at the position.
+- Generator: the per-character escape loop is one `String.gsub(s, re, escapes)` with a Hash built
+  once (`def escapes = once { ... }`); `String[s].Array.join("")` became `String.b(s)`.
+- The test gained 8 malformed and commented inputs with non-ASCII text before the error, to check
+  the byte columns and fragments; output is identical to `json.rb`.
+- Speed (`phase2/bench_json.sake`: parse and generate a 15 KB document of 150 objects with escaped
+  and Japanese strings; CPU s of the whole `bin/sake --strict` run, about 1.0 s of it checking;
+  3 runs, load about 37 on 16 cores): before 4.76 / 5.05 / 4.98, after 4.67 / 4.70 / 4.62. Only
+  about 5%: the time is the interpreter's cost per operation (about 20-30 µs per call or loop step
+  measured on this machine), and a token still takes dozens of them; the old per-character reads were
+  not the main cost at this size.
+- Found: `String.match` on a String cut inside a character by `String.byteslice` crashes the
+  interpreter with Ruby's internal backtrace instead of raising a catchable `ArgumentError`
+  (`sakelib/notes/json_bug_match_broken_string.sake`). The parser avoids matching byte slices that may
+  cut a character.

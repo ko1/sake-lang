@@ -5,48 +5,29 @@
 module CGI
   module_function
 
-  # Every byte of the pieces matched by `unsafe` becomes %XX.
+  # Each run of bytes matched by `unsafe` becomes %XX%XX..., as Ruby's pure-Ruby fallback does.
   def _percent_encode(s, unsafe)
-    out = String[]
-    Array.each(String.split(s, unsafe)) do |piece|
-      if Regexp.match?(unsafe, piece)
-        Array.each(String.bytes(piece)) { |b| Array.push(out, format("%%%02X", b)) }
-      else
-        Array.push(out, piece)
-      end
-    end
-    Array.join(out)
+    e = String.gsub(String.b(s), unsafe) { |m| Array.join(Array.map(String.bytes(m)) { |b| format("%%%02X", b) }) }
+    String.force_encoding(e, "UTF-8")
   end
 
-  # %XX becomes its byte (a lone % stays); with plus, + becomes a space. The result is UTF-8.
-  def _percent_decode(s, plus)
-    bytes = Integer[]
-    Array.each(String.split(s, /(%\h\h)/)) do |piece|
-      if Regexp.match?(/\A%\h\h\z/, piece)
-        Array.push(bytes, String.hex(String.delete_prefix(piece, "%")))
-      elsif plus
-        Array.push(bytes, *String.bytes(String.tr(piece, "+", " ")))
-      else
-        Array.push(bytes, *String.bytes(piece))
-      end
-    end
-    String.force_encoding(Array.pack(bytes, "C*"), "UTF-8")
+  # %XX becomes its byte (a lone % stays); with plus, + becomes a space first.
+  def _percent_decode(s, plus, encoding)
+    str = String.b(plus ? String.tr(s, "+", " ") : s)
+    d = String.gsub(str, /(?:%\h\h)+/) { |m| Array.pack(Array[String.delete(m, "%")], "H*") }
+    String.force_encoding(d, encoding)
   end
 
-  def escape(s) = String.tr(_percent_encode(s, /([^ a-zA-Z0-9_.\-~]+)/), " ", "+")
-  def unescape(s) = _percent_decode(s, true)
-  def escapeURIComponent(s) = _percent_encode(s, /([^a-zA-Z0-9_.\-~]+)/)
-  def unescapeURIComponent(s) = _percent_decode(s, false)
+  def escape(s) = String.tr(_percent_encode(s, /[^ a-zA-Z0-9_.\-~]+/), " ", "+")
+  def unescape(s, encoding = "UTF-8") = _percent_decode(s, true, encoding)
+  def escapeURIComponent(s) = _percent_encode(s, /[^a-zA-Z0-9_.\-~]+/)
+  def unescapeURIComponent(s, encoding = "UTF-8") = _percent_decode(s, false, encoding)
   def escape_uri_component(s) = escapeURIComponent(s)
-  def unescape_uri_component(s) = unescapeURIComponent(s)
+  def unescape_uri_component(s, encoding = "UTF-8") = unescapeURIComponent(s, encoding)
 
-  def escapeHTML(s)
-    String.gsub(s, "&", "&amp;")
-      .String.gsub("<", "&lt;")
-      .String.gsub(">", "&gt;")
-      .String.gsub("\"", "&quot;")
-      .String.gsub("'", "&#39;")
-  end
+  def html_table = once { Hash["'" => "&#39;", "&" => "&amp;", "\"" => "&quot;", "<" => "&lt;", ">" => "&gt;"] }
+
+  def escapeHTML(s) = String.gsub(s, /['&"<>]/, html_table)
   def escape_html(s) = escapeHTML(s)
 
   # A numeric reference decodes only below U+10FFFF, as Ruby's C implementation does.
@@ -56,26 +37,19 @@ module CGI
   end
 
   def unescapeHTML(s)
-    pieces = String.split(s, /(&(?:amp|quot|gt|lt|apos|#[0-9]+|#[xX]\h+);)/)
-    Array.map(pieces) do |piece|
-      case piece
+    String.gsub(s, /&(?:amp|quot|gt|lt|apos|#[0-9]+|#[xX]\h+);/) do |m|
+      case m
       in "&amp;" then "&"
       in "&quot;" then "\""
       in "&gt;" then ">"
       in "&lt;" then "<"
       in "&apos;" then "'"
       else
-        m = String.match(piece, /\A&#([xX]?)(\h+);\z/)
-        if m == nil
-          piece
-        elsif m[1] == ""
-          _char_ref(String.to_i("#{m[2]}"), piece)
-        else
-          _char_ref(String.hex("#{m[2]}"), piece)
-        end
+        n = String.size(m)
+        x = m[2] == "x" || m[2] == "X"
+        _char_ref(x ? String.hex(m[3, n] || "") : String.to_i(m[2, n] || ""), m)
       end
     end
-    Array.join(_)
   end
   def unescape_html(s) = unescapeHTML(s)
 end

@@ -55,3 +55,18 @@ p(s)
 # a small use: Euler's totient from the factorization
 def phi(n) = Prime.prime_division(n).inject(n) { |acc, (q, _)| acc / q * (q - 1) }
 p((1..20).map { |n| phi(n) })
+
+ys = []
+Prime.each do |q|
+  break if q > 60
+  ys << q
+end
+p ys
+Prime.each_with_index do |q, i|
+  break if i >= 5
+  print(i, ":", q, " ")
+end
+puts
+p Prime.first(3000).last
+p Prime.each(30000).to_a.size
+p Prime.first(5)

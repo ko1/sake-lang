@@ -1,8 +1,8 @@
 # csv: Ruby's CSV library (csv 3.3) in Sake.
 #
-# Keyword options become one Record argument of a `_with` operation:
+# Keyword options become one optional Record argument:
 #   Ruby  CSV.parse(s, col_sep: ";", headers: true)
-#   Sake  CSV.parse_with(s, {col_sep: ";", headers: true})
+#   Sake  CSV.parse(s, {col_sep: ";", headers: true})
 # A row is an Array of String | nil (nil for an empty unquoted field, as in Ruby).
 # With `headers:` in the options, the result is a CSVTable of CSVRow (Ruby's CSV::Table / CSV::Row).
 
@@ -62,97 +62,70 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
     f
   end
 
-  # One record (row_sep removed, except inside quotes) -> Array of String | nil.
-  # nil when a quoted field is still open at the end (the record continues on the next line).
-  def parse_record(rec, col_sep, quote, line)
-    return Array[] if String.empty?(rec)
-    unless String.include?(rec, quote)
-      return Array.map(String.split(rec, Regexp.new(Regexp.escape(col_sep)), -1)) { |f| unquoted(f, line) }
-    end
-    row = Array[]
-    chars = String.chars(rec)
-    sep_first = String.chars(col_sep)[0]
-    sep_len = String.size(col_sep)
-    n = Array.size(chars)
-    field = ""
-    quoted = false
-    in_q = false
-    i = 0
-    while i < n
-      c = chars[i]
-      if in_q
-        if c == quote
-          if i + 1 < n && chars[i + 1] == quote
-            field = field + quote
-            i += 1
-          else
-            in_q = false
-          end
-        else
-          field = field + c
-        end
-      elsif c == sep_first && (sep_len == 1 || Array.join(Array.take(Array.drop(chars, i), sep_len)) == col_sep)
-        Array.push(row, quoted ? field : unquoted(field, line))
-        field = ""
-        quoted = false
-        i += sep_len
-        next
-      elsif c == quote
-        raise malformed("Any value after quoted field isn't allowed", line) if quoted
-        raise malformed("Illegal quoting", line) unless String.empty?(field)
-        in_q = true
-        quoted = true
-      else
-        raise malformed("Any value after quoted field isn't allowed", line) if quoted
-        field = field + c
-      end
-      i += 1
-    end
-    return nil if in_q
-    Array.push(row, quoted ? field : unquoted(field, line))
-    row
+  # One field at the position, then its delimiter: 1 the quoted text (with doubled quotes), 2 the
+  # unquoted text, 3 the col_sep, the row_sep, or "" at the end; 3 is nil when something else
+  # follows (an error).
+  def field_regexp(col_sep, quote, row_sep)
+    q = Regexp.escape(quote)
+    sep = "#{Regexp.escape(col_sep)}|#{Regexp.escape(row_sep)}"
+    Regexp.new("\\G(?:#{q}((?:[^#{q}]++|#{q}#{q})*+)#{q}|((?:(?!#{sep})[^#{q}])*+))(#{sep}|\\z)?")
   end
 
-  # Text -> Array of rows of String | nil, no conversion.
-  def raw_rows(text, o)
+  # Text -> Array of rows of String | nil, no conversion; only the first row when `first`.
+  # Each field is one Regexp.match at the position; a quoted field may span row_seps. `line` counts
+  # records, as Ruby's lineno does (the old split-based parser counted row_seps).
+  def raw_rows(text, o, first = false)
     rows = Array[]
     return rows if String.empty?(text)
     col_sep = opt_col_sep(o)
     quote = opt_quote_char(o)
     rs = opt_row_sep(o)
     row_sep = rs == :auto ? detect_row_sep(text) : rs
-    pieces = String.split(text, Regexp.new(Regexp.escape(row_sep)), -1)
-    Array.pop(pieces) if Array.last(pieces) == ""
+    re = field_regexp(col_sep, quote, row_sep)
+    qq = quote + quote
     skip_blanks = opt_skip_blanks(o)
-    pending = ""
-    open = false
-    start = 1
-    line = 0
-    Array.each(pieces) do |piece|
+    n = String.length(text)
+    pos = 0
+    line = 1
+    while pos < n
+      start = pos
+      start_line = line
+      row = Array[]
+      delim = nil
+      at_end = false
+      until at_end
+        m = Regexp.match(re, text, pos)
+        raise malformed("Unclosed quoted field", start_line) unless m   # not reached: group 2 matches ""
+        delim = m[3]
+        qtext = m[1]
+        if delim == nil
+          raise malformed("Any value after quoted field isn't allowed", start_line) if qtext
+          raise malformed("Illegal quoting", start_line) unless String.empty?(m[2] || "")
+          raise malformed("Unclosed quoted field", start_line)
+        end
+        if qtext
+          Array.push(row, String.include?(qtext, qq) ? String.gsub(qtext, qq, quote) : qtext)
+        else
+          Array.push(row, unquoted(m[2] || "", start_line))
+        end
+        pos = MatchData.end(m, 0)
+        at_end = delim != col_sep
+      end
       line += 1
-      if open
-        pending = pending + row_sep + piece
-      else
-        pending = piece
-        start = line
-      end
-      row = parse_record(pending, col_sep, quote, start)
-      if row == nil
-        open = true
-        next
-      end
-      open = false
+      # a record of nothing is an empty row, not [nil]
+      row = Array[] if Array.size(row) == 1 && row[0] == nil && pos - start <= String.length(row_sep)
       next if skip_blanks && Array.empty?(row)
-      next if skip_line?(o, pending)
+      next if skip_line?(o, text, start, pos - String.length(delim || ""))
       Array.push(rows, row)
+      return rows if first
     end
-    raise malformed("Unclosed quoted field", start) if open
     rows
   end
 
-  def skip_line?(o, rec)
+  # The record's text (characters start...stop, without its row_sep) matches skip_lines.
+  def skip_line?(o, text, start, stop)
     case o
-    in {skip_lines:} then String.match?(rec, skip_lines)
+    in {skip_lines:} then String.match?(String.[](text, start, stop - start) || "", skip_lines)
     else false
     end
   end
@@ -234,10 +207,9 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
 
   # ---- parsing API ----
 
-  def parse(text) = raw_rows(text, {col_sep: ","})
-
-  # Without `headers:` -> Array of rows; with `headers:` -> CSVTable.
-  def parse_with(text, o)
+  # Options are a Record (Ruby's keyword arguments) or nil. Without `headers:` -> Array of rows;
+  # with `headers:` -> CSVTable.
+  def parse(text, o = nil)
     rows = raw_rows(text, o)
     case o
     in {headers:} then make_table(rows, o, headers)
@@ -245,27 +217,18 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
     end
   end
 
-  # The first row, or nil for empty text.
-  def parse_line(line) = Array.first(raw_rows(line, {col_sep: ","}))
+  # The first row, or nil for empty text; the rest of the text is not parsed, as Ruby's.
+  def parse_line(line, o = nil) = Array.first(Array.map(raw_rows(line, o, true)) { |r| convert_row(r, o) })
 
-  def parse_line_with(line, o) = Array.first(Array.map(raw_rows(line, o)) { |r| convert_row(r, o) })
-
-  def read(path) = parse(File.read(path))
-  def read_with(path, o) = parse_with(File.read(path), o)
-  def readlines(path) = read(path)
-  def readlines_with(path, o) = read_with(path, o)
+  def read(path, o = nil) = parse(File.read(path), o)
+  def readlines(path, o = nil) = read(path, o)
 
   # Ruby's CSV.table: headers, numeric converters, Symbol headers.
-  def table(path) = parse_with(File.read(path), {headers: true, converters: :numeric, header_converters: :symbol})
-
-  def foreach(path)
-    Array.each(read(path)) { |r| yield(r) }
-    nil
-  end
+  def table(path) = parse(File.read(path), {headers: true, converters: :numeric, header_converters: :symbol})
 
   # Yields CSVRows when `headers:` is given, otherwise Arrays.
-  def foreach_with(path, o)
-    result = read_with(path, o)
+  def foreach(path, o = nil)
+    result = read(path, o)
     case result
     in CSVTable then CSVTable.each(result) { |r| yield(r) }
     in Array then Array.each(result) { |r| yield(r) }
@@ -275,7 +238,7 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
 
   # ---- generating ----
 
-  def field_text(c, f, i)
+  def field_text(c, f)
     q = @quote_char
     return q + q if @force_quotes && f == nil
     return "" if f == nil
@@ -302,7 +265,7 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
 
   def line_of(c, row)
     fs = row_fields(c, row)
-    Array.join(Array.map(Range.to_a(0...Array.size(fs))) { |i| field_text(c, fs[i], i) }, @col_sep) + @row_sep
+    Array.join(Array.map(fs) { |f| field_text(c, f) }, @col_sep) + @row_sep
   end
 
   def <<(c, row)
@@ -342,32 +305,18 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
     c
   end
 
-  def generate
-    c = writer({col_sep: ","})
-    yield(c)
-    string(c)
-  end
-
-  def generate_with(o)
+  # Ruby's generate(str = nil, **options) appends to str; here only the options.
+  def generate(o = nil)
     c = writer(o)
     yield(c)
     string(c)
   end
 
-  def generate_line(row) = line_of(writer({col_sep: ","}), row)
-  def generate_line_with(row, o) = line_of(writer(o), row)
-
-  def generate_lines(rows) = Array.join(Array.map(rows) { |r| generate_line(r) })
-  def generate_lines_with(rows, o) = Array.join(Array.map(rows) { |r| generate_line_with(r, o) })
+  def generate_line(row, o = nil) = line_of(writer(o), row)
+  def generate_lines(rows, o = nil) = Array.join(Array.map(rows) { |r| generate_line(r, o) })
 
   # mode "w" (write) or "a" (append); yields a writer.
-  def open(path, mode)
-    c = writer({col_sep: ","})
-    yield(c)
-    write_out(path, mode, string(c))
-  end
-
-  def open_with(path, mode, o)
+  def open(path, mode, o = nil)
     c = writer(o)
     yield(c)
     write_out(path, mode, string(c))

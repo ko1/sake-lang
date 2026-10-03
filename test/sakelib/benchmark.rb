@@ -55,3 +55,14 @@ list = Benchmark.benchmark("", 0, "%n.\n") do |x|
   x.report("ü") { 1 }
 end
 p(list.size)
+
+# optional arguments
+p(Benchmark.measure("named") { 1 }.label)
+p(a.format == a.format(Benchmark::FORMAT))
+print(Benchmark::Tms.new(1.0, 2.0, 0.0, 0.0, 3.0, "lab%u").format)
+p(Benchmark.benchmark { |x| 1 })
+list = Benchmark.benchmark("C\n", 2, "[%n]\n") { |x| x.report { 1 } }
+p(list.size)
+Benchmark.bm { |x| 1 }
+Benchmark.bmbm { |x| 1 }
+print(Benchmark::Tms.new(1.0, 2.0, 0.0, 0.0, 3.0, "lab%u").format("%n\n"))

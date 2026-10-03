@@ -1,6 +1,6 @@
 # OptionParser: Ruby's optparse with options declared as data.
 # Blocks are not values, so `on` stores no block: parse(op, argv, into) fills the Hash `into`
-# (Ruby's `parse(argv, into: h)`) and returns the remaining arguments.
+# (Ruby's `parse(argv, into: h)`) and returns the remaining arguments. argv defaults to ARGV.
 
 class OptionParserError < {exception: true, reader: [kind, args]}
   # Ruby's ParseError#reason: "invalid option" for InvalidOption, ...
@@ -28,8 +28,9 @@ class OptionParserSwitch < {reader: [short, long, arg, kind, negatable, conv, ch
   def key(sw) = String.to_sym(@long != "" ? @long : @short)
 end
 
-class OptionParser < {reader: [list], accessor: [banner, program_name, summary_width, summary_indent],
-                      default: {list: nil, banner: nil, program_name: "sake", summary_width: 32, summary_indent: "    "}}
+class OptionParser < {reader: [list], accessor: [banner, program_name, version, summary_width, summary_indent],
+                      default: {list: nil, banner: nil, program_name: "sake", version: nil, summary_width: 32,
+                                summary_indent: "    "}}
   def items(op)
     l = @list
     if l == nil
@@ -39,24 +40,40 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
     l
   end
 
-  def on(op, short, long, desc) = add_switch(op, short, long, :String, String[], desc, false)
+  # Ruby's on("-v", "--[no-]verbose", Integer, "desc"): each argument is sorted by its content,
+  # "-x" short, "--xx" long, a Symbol type (:Integer, :Float, :String) or an Array of allowed
+  # Strings, and anything else the description.
+  def on(op, a, b = "", c = "", d = "") = declare(op, Array[a, b, c, d], false)
+  def on_tail(op, a, b = "", c = "", d = "") = declare(op, Array[a, b, c, d], true)
 
-  # type: :String, :Integer, :Float, or an Array of String (the allowed values, as Ruby's Array acceptor)
-  def on_type(op, short, long, type, desc)
-    case type
-    in Symbol
-      unless type == :String || type == :Integer || type == :Float
-        raise ArgumentError, "unsupported argument type: #{type}"
+  def declare(op, args, tail)
+    short = ""
+    long = ""
+    conv = :String
+    choices = String[]
+    desc = ""
+    Array.each(args) do |x|
+      case x
+      in String
+        if String.start_with?(x, "--")
+          long = x
+        elsif String.start_with?(x, "-")
+          short = x
+        elsif x != ""
+          desc = desc == "" ? x : desc
+        end
+      in Symbol
+        unless x == :String || x == :Integer || x == :Float
+          raise ArgumentError, "unsupported argument type: #{x}"
+        end
+        conv = x
+      in Array
+        conv = :choice
+        Array.each(x) { |c| Array.push(choices, c) }
       end
-      add_switch(op, short, long, type, String[], desc, false)
-    in Array
-      choices = String[]
-      Array.each(type) { |c| Array.push(choices, c) }
-      add_switch(op, short, long, :choice, choices, desc, false)
     end
+    add_switch(op, short, long, conv, choices, desc, tail)
   end
-
-  def on_tail(op, short, long, desc) = add_switch(op, short, long, :String, String[], desc, true)
 
   def separator(op, text)
     Array.push(items(op), text)
@@ -141,13 +158,29 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
     end
   end
 
-  def parse(op, argv, into) = run(op, argv, into, false)
-  def order(op, argv, into) = run(op, argv, into, true)
-  def permute(op, argv, into) = run(op, argv, into, false)
+  def parse(op, argv = ARGV, into = Hash[]) = run(op, argv, into, false)
+  def order(op, argv = ARGV, into = Hash[]) = run(op, argv, into, true)
+  def permute(op, argv = ARGV, into = Hash[]) = run(op, argv, into, false)
 
-  def parse!(op, argv, into) = replace_args(argv, run(op, argv, into, false))
-  def order!(op, argv, into) = replace_args(argv, run(op, argv, into, true))
-  def permute!(op, argv, into) = replace_args(argv, run(op, argv, into, false))
+  def parse!(op, argv = ARGV, into = Hash[]) = replace_args(argv, run(op, argv, into, false))
+  def order!(op, argv = ARGV, into = Hash[]) = replace_args(argv, run(op, argv, into, true))
+  def permute!(op, argv = ARGV, into = Hash[]) = replace_args(argv, run(op, argv, into, false))
+
+  # Ruby's OptionParser#warn and #abort: the message after the program name, on stderr.
+  def warn(op, msg)
+    Kernel.warn("#{@program_name}: #{msg}")
+  end
+
+  def abort(op, msg)
+    Kernel.warn("#{@program_name}: #{msg}")
+    exit(1)
+  end
+
+  # Ruby's ver: the program name and version, or nil without a version.
+  def ver(op)
+    v = @version
+    v == nil ? nil : "#{@program_name} #{v}"
+  end
 
   def replace_args(argv, rest)
     Array.clear(argv)
@@ -157,7 +190,7 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
 
   # Ruby's getopts("ab:", "long", "name:"): a Hash from each option name (a String) to true/false
   # for a flag and a String or nil for an option with ":"; argv keeps the remaining arguments.
-  def getopts(op, argv, short_spec, long_specs)
+  def getopts(op, argv, short_spec, long_specs = String[])
     g = OptionParser.new
     result = Hash[]
     chars = String.chars(short_spec)
@@ -186,7 +219,7 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
       end
     end
     got = Hash[]
-    OptionParser.parse!(g, argv, got)
+    OptionParser.order!(g, argv, got)   # Ruby stops at the first non-option
     Hash.each(got) { |k, v| result[Symbol.to_s(k)] = v }
     result
   end
@@ -203,7 +236,7 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
         Array.concat(rest, Array.drop(argv, i))
         return rest
       elsif String.start_with?(a, "--")
-        i = parse_long(sws, argv, i, a, into)
+        i = parse_long(op, sws, argv, i, a, into)
       elsif String.start_with?(a, "-") && String.size(a) > 1
         i = parse_short(sws, argv, i, a, into)
       elsif in_order
@@ -221,10 +254,10 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
     raise OptionParserError.make(kind, args)
   end
 
-  def parse_long(sws, argv, i, a, into)
+  def parse_long(op, sws, argv, i, a, into)
     name, eq, val = String.partition(String.delete_prefix(a, "--"), "=")
     has_eq = eq != ""
-    sw, neg = find_long(sws, name, a)
+    sw, neg = find_long(op, sws, name, a)
     kind = OptionParserSwitch.get_kind(sw)
     if kind == :none
       fail("NeedlessArgument", String[a]) if has_eq
@@ -283,7 +316,7 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
   end
 
   # [switch, negated?] for a long name: an exact name, or else a prefix of exactly one name.
-  def find_long(sws, name, a)
+  def find_long(op, sws, name, a)
     cands = Array[]
     Array.each(sws) do |sw|
       l = OptionParserSwitch.get_long(sw)
@@ -297,10 +330,27 @@ class OptionParser < {reader: [list], accessor: [banner, program_name, summary_w
       return [sw, neg]
     end
     hits = Array.select(cands) { |(nm, _, _)| String.start_with?(nm, name) }
+    officious(op, name) if Array.empty?(hits)
     fail("InvalidOption", String[a]) if Array.empty?(hits)
     fail("AmbiguousOption", String[a]) if Array.size(hits) > 1
     _, sw, neg = Array.fetch(hits, 0)
     [sw, neg]
+  end
+
+  # Ruby's built-in --help and --version, used when no declared long option matches.
+  def officious(op, name)
+    return nil if name == ""
+    if String.start_with?("help", name)
+      print(help(op))
+      exit(0)
+    end
+    if String.start_with?("version", name)
+      v = ver(op)
+      abort(op, "version unknown") if v == nil
+      puts(v)
+      exit(0)
+    end
+    nil
   end
 
   def convert(sw, v, args)

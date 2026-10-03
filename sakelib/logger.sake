@@ -1,4 +1,4 @@
-# Logger: Ruby's logger. The device is :stdout, a file path (String, appended to), or nil (no output).
+# Logger: Ruby's logger. The device is :stdout, :stderr, a file path (String, appended to), or nil (no output).
 # The formatter is a format string over the keys severity, datetime, progname, msg
 # (`Kernel.format` with a Hash), since a block cannot be stored.
 
@@ -53,31 +53,29 @@ class Logger < {reader: [logdev, level, closed],
   def error!(l) = @level = 3
   def fatal!(l) = @level = 4
 
-  # Ruby's info(msg): the argument is the message, logged with the logger's progname.
-  def debug(l, msg) = add(l, 0, nil, msg)
-  def info(l, msg) = add(l, 1, nil, msg)
-  def warn(l, msg) = add(l, 2, nil, msg)
-  def error(l, msg) = add(l, 3, nil, msg)
-  def fatal(l, msg) = add(l, 4, nil, msg)
-  def unknown(l, msg) = add(l, 5, nil, msg)
+  # Ruby's info(progname = nil): without a block the argument is the message, logged with the logger's progname.
+  def debug(l, msg = nil) = add(l, 0, nil, msg)
+  def info(l, msg = nil) = add(l, 1, nil, msg)
+  def warn(l, msg = nil) = add(l, 2, nil, msg)
+  def error(l, msg = nil) = add(l, 3, nil, msg)
+  def fatal(l, msg = nil) = add(l, 4, nil, msg)
+  def unknown(l, msg = nil) = add(l, 5, nil, msg)
 
-  # Ruby's add(severity, message, progname): with message nil, progname is the message.
-  def add(l, severity, message, progname)
+  # Ruby's add(severity, message = nil, progname = nil): with message nil, progname is the message.
+  def add(l, severity, message = nil, progname = nil)
     sev = severity == nil ? 5 : severity
     return true if sev < @level
-    prog = progname
+    prog = progname == nil ? @progname : progname
     msg = message
-    if msg == nil
+    if msg == nil   # as Ruby: the progname is the message, and the logger's progname is shown
       msg = prog
-      prog = @progname
-    elsif prog == nil
       prog = @progname
     end
     write(l, format_message(l, format_severity(sev), now(l), prog, msg))
     true
   end
 
-  def log(l, severity, message, progname) = add(l, severity, message, progname)
+  def log(l, severity, message = nil, progname = nil) = add(l, severity, message, progname)
 
   # Ruby's <<: writes msg as is.
   def <<(l, msg)
@@ -124,19 +122,27 @@ class Logger < {reader: [logdev, level, closed],
 
   def format_message(l, severity, time, progname, msg)
     f = @formatter
-    fmt = f == nil ? Logger.default_format : f
     text = (msg in String) ? msg : Kernel.inspect(msg)
-    Kernel.format(fmt, Hash[severity: severity, datetime: format_datetime(l, time), progname: progname, msg: text])
+    dt = format_datetime(l, time)
+    Kernel.format(f == nil ? Logger.default_format : f, Hash[severity: severity, datetime: dt, progname: progname, msg: text])
   end
 
   def write(l, s)
-    return nil if @closed
+    if @closed
+      Kernel.warn("log writing failed. closed stream")   # Ruby's message, on stderr
+      return nil
+    end
     dev = @logdev
     case dev
     in nil then nil
     in Symbol
-      raise ArgumentError, "unsupported log device: #{dev} (only :stdout)" unless dev == :stdout
-      print(s)
+      if dev == :stdout
+        print(s)
+      elsif dev == :stderr
+        Kernel.warn(s)   # adds a newline when s has none (Sake has no stderr print)
+      else
+        raise ArgumentError, "unsupported log device: #{dev} (:stdout or :stderr)"
+      end
     in String
       # No append mode in Sake: read the file and write it back.
       # Ruby writes the header when it creates the file (here at the first write).

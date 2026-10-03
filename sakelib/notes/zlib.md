@@ -8,10 +8,10 @@
 | Ruby | Sake | |
 |---|---|---|
 | `Zlib.crc32(s)` | `Zlib.crc32(s)` | same |
-| `Zlib.crc32(s, crc)` | `Zlib.crc32_with(s, crc)` | differs: another name (no optional parameters) |
+| `Zlib.crc32(s, crc)` | `Zlib.crc32(s, crc)` | same (phase 2; was `crc32_with`) |
 | `Zlib.adler32(s)` | `Zlib.adler32(s)` | same |
-| `Zlib.adler32(s, adler)` | `Zlib.adler32_with(s, adler)` | differs: another name |
-| `Zlib.crc32`, `Zlib.adler32` (no argument: the initial value) | | missing: write 0 and 1 |
+| `Zlib.adler32(s, adler)` | `Zlib.adler32(s, adler)` | same (phase 2; was `adler32_with`) |
+| `Zlib.crc32`, `Zlib.adler32`, `Zlib.crc32(nil, crc)` (the initial value) | same | same: 0 and 1, whatever the running value |
 | `Zlib.crc32_combine(crc1, crc2, len2)` | `Zlib.crc32_combine(crc1, crc2, len2)` | same for len2 >= 0; a negative len2 raises ArgumentError (Ruby passes it to zlib, whose result depends on the zlib version) |
 | `Zlib.adler32_combine(a1, a2, len2)` | `Zlib.adler32_combine(a1, a2, len2)` | same for len2 >= 0 |
 | `Zlib.crc_table` | `Zlib.crc_table` | same (an `Integer[]` of 256) |
@@ -26,9 +26,8 @@ and 2**48-1.
 
 ## What differs from Ruby, and why
 
-- **Optional running value.** Sake functions take only required parameters, and a name is defined
-  once per namespace, so `Zlib.crc32(s, crc)` is `Zlib.crc32_with(s, crc)`.
-- **crc_table** is built from a literal on each call to `crc32_with` (no value constants).
+- **crc_table** is computed once per program (`once`) and shared, as Ruby's; the Array can be
+  changed by a caller, which Ruby's (a fresh Array per call) cannot.
 - `crc32_combine` uses zlib's older GF(2) matrix method; results are the same as Ruby's (zlib
   1.3.1) for len2 >= 0, including len2 = 0 (`crc1 ^ crc2`).
 
@@ -55,8 +54,6 @@ KB per second", about 10x the digests (one table lookup or two additions per byt
 
 ## Built-ins that would help
 
-- Optional parameters (or another way to keep Ruby's `crc32(s, crc = 0)` under one name).
-- Value constants, for `crc_table`.
 - `Zlib.crc32` / `adler32` as built-ins, for anything larger than a few hundred KB.
 
 ## Friction
@@ -65,3 +62,30 @@ KB per second", about 10x the digests (one table lookup or two additions per byt
   `crc32_with(s, crc)`.
 - `module_function :crc32, ...` listing nine names → a bare `module_function` at the top of the
   module does the same.
+
+## Phase 2
+
+- `crc32(s = nil, crc = 0)` and `adler32(s = nil, adler = 1)` with optional parameters, under Ruby's
+  names; `crc32_with` / `adler32_with` are removed (the tests now call Ruby's form, and also the
+  no-argument and `nil` forms).
+- `crc_table` is `once do ... end`, computed from the polynomial instead of a 256-entry literal
+  (36 lines shorter).
+- The byte loop stays `String.each_byte`: an index loop over `String.unpack(s, "C*")` was 1.5x
+  slower (7.3 s against 4.9 s CPU for 128 KiB), and `Array.each(String.bytes(s))` the same as
+  `each_byte`.
+
+Speed (`experiments/2026-10-03-sakelib-port/phase2/bench_zlib.sake`, run by
+`run_digest_zlib_prime_matrix.sh`; CPU s user+sys of one `bin/sake --strict` process, 3 runs; local
+16-core machine shared with other sessions, load average 33-38 throughout; "before" is commit
+af197cd):
+
+| CPU s, 3 runs | before (af197cd) | after |
+|---|---|---|
+| 0 KiB (start-up, checking) | 0.62 0.63 0.65 | 0.67 0.66 0.67 |
+| crc32, 128 KiB | 4.90 4.82 5.00 | 5.08 4.97 5.09 |
+| adler32, 128 KiB | 4.08 4.08 3.97 | 4.17 4.12 4.08 |
+
+No change beyond the spread (+2-3%, partly the start-up rows): the per-byte block call is the
+cost, and the table was already built once per call before.
+
+Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matrix.txt`.

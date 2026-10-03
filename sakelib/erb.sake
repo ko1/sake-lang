@@ -5,6 +5,8 @@
 #   erb = ERB.new("Hello, <%= h(name) %>!")       # or ERB.new(text, "-"), Ruby's trim_mode: "-"
 #   ERB.result_with_hash(erb, Hash[name: "<you>"])  # => "Hello, &lt;you&gt;!"
 
+require "cgi"
+
 # A template that Sake's ERB does not accept, or a name it cannot find (Ruby: SyntaxError,
 # NameError, NoMethodError).
 class ERBError < {exception: true}
@@ -21,27 +23,11 @@ class ERBFrame < {reader: [node, chained], accessor: [in_alt]}
 end
 
 class ERB < {reader: [template, trim_mode], default: {trim_mode: nil}}
-  # --- ERB::Util ---
-  def html_escape(s)
-    String.gsub("#{s}", "&", "&amp;")
-      .String.gsub("<", "&lt;")
-      .String.gsub(">", "&gt;")
-      .String.gsub("\"", "&quot;")
-      .String.gsub("'", "&#39;")
-  end
+  # --- ERB::Util (Ruby's calls CGI's escapers too) ---
+  def html_escape(s) = CGI.escapeHTML("#{s}")
   def h(s) = html_escape(s)
 
-  def url_encode(s)
-    out = String[]
-    Array.each(String.split("#{s}", /([^a-zA-Z0-9_\-.~]+)/)) do |piece|
-      if piece == "" || Regexp.match?(/\A[a-zA-Z0-9_\-.~]/, piece)
-        Array.push(out, piece)
-      else
-        Array.each(String.bytes(piece)) { |b| Array.push(out, format("%%%02X", b)) }
-      end
-    end
-    Array.join(out)
-  end
+  def url_encode(s) = CGI.escapeURIComponent("#{s}")
   def u(s) = url_encode(s)
 
   # --- scanning: the template becomes a list of [kind, text]: :text, :out, :code ---
@@ -243,28 +229,30 @@ class ERB < {reader: [template, trim_mode], default: {trim_mode: nil}}
     end
   end
 
+  # A quote, a bracket, or an operator (longest first, so `<=` and `=>` are not `<` or `>`).
+  def _op_re = /["'()\[\]]|\|\||&&|==|!=|<=|>=|=>|[<>]/
+
   # The position of the first `op` outside quotes, parentheses, and brackets, or nil.
   def _find_op(e, op)
     depth = 0
-    quote = nil
-    chars = String.chars(e)
-    n = Array.size(chars)
     i = 0
-    while i < n
-      c = Array.fetch(chars, i)
-      if quote
-        quote = nil if c == quote
-      elsif c == "\"" || c == "'"
-        quote = c
-      elsif c == "(" || c == "["
-        depth += 1
-      elsif c == ")" || c == "]"
-        depth -= 1
-      elsif depth == 0 && e[i, String.size(op)] == op
-        # `<` and `>` must not be part of `<=`, `>=`, or `=>`
-        return i unless (op == "<" || op == ">") && (e[i + 1, 1] == "=" || e[i - 1, 1] == "=")
+    while (m = Regexp.match(_op_re, e, i))
+      t = m[0] || ""
+      at = MatchData.begin(m, 0) || i
+      if t == "\"" || t == "'"
+        close = String.index(e, t, at + 1)
+        return nil unless close
+        i = close + 1
+        next
       end
-      i += 1
+      if t == "(" || t == "["
+        depth += 1
+      elsif t == ")" || t == "]"
+        depth -= 1
+      elsif depth == 0 && t == op
+        return at
+      end
+      i = at + String.size(t)
     end
     nil
   end
@@ -327,20 +315,21 @@ class ERB < {reader: [template, trim_mode], default: {trim_mode: nil}}
     m = String.match(e, /\A[a-z_][A-Za-z0-9_]*/)
     raise ERBError, "unsupported expression in template: #{e}" unless m
     v = _lookup(env, MatchData.to_s(m))
-    rest = MatchData.post_match(m)
-    while rest != ""
-      if (m = String.match(rest, /\A\[\s*:(\w+)\s*\]/))
+    pos = MatchData.end(m, 0) || 0
+    n = String.size(e)
+    while pos < n
+      if (m = String.match(e, /\G\[\s*:(\w+)\s*\]/, pos))
         v = _index(v, String.to_sym("#{m[1]}"))
-      elsif (m = String.match(rest, /\A\[\s*(?:"([^"\\#]*)"|'([^'\\]*)')\s*\]/))
+      elsif (m = String.match(e, /\G\[\s*(?:"([^"\\#]*)"|'([^'\\]*)')\s*\]/, pos))
         v = _index(v, m[1] || m[2])
-      elsif (m = String.match(rest, /\A\[\s*(-?\d+)\s*\]/))
+      elsif (m = String.match(e, /\G\[\s*(-?\d+)\s*\]/, pos))
         v = _index(v, String.to_i("#{m[1]}"))
-      elsif (m = String.match(rest, /\A\.(\w+[?]?)(?:\(\s*(?:"([^"\\#]*)"|'([^'\\]*)')\s*\))?/))
+      elsif (m = String.match(e, /\G\.(\w+[?]?)(?:\(\s*(?:"([^"\\#]*)"|'([^'\\]*)')\s*\))?/, pos))
         v = _call(v, "#{m[1]}", m[2] || m[3])
       else
         raise ERBError, "unsupported expression in template: #{e}"
       end
-      rest = MatchData.post_match(m)
+      pos = MatchData.end(m, 0) || n
     end
     v
   end

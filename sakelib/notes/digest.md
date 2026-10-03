@@ -25,27 +25,26 @@ type includes, as Ruby's `Digest::Instance`.
 | `Digest::MD5.file(path)` | `MD5.file(path)` | same; a missing file raises `IOError`, not `Errno::ENOENT` |
 | `Digest.hexencode(s)` | `Digest.hexencode(s)` | same |
 | `md.file(path)` (instance) | | missing: the name is taken by `MD5.file(path)` |
-| `md.digest(s)`, `md.hexdigest(s)` (instance, with a String: reset, then digest s) | | missing: `MD5.hexdigest(s)` gives the same value |
+| `md.digest(s)`, `md.hexdigest(s)`, `md.base64digest(s)` (reset, digest s, reset) | `MD5.digest(md, s)`, ... | same (phase 2) |
 | `md.dup`, `md.clone` | | missing |
 | `Digest::SHA2.new(bitlen)`, `Digest::RMD160`, `Digest(:MD5)` | | missing |
 
 Also visible, though Ruby has no such names: the functions each algorithm defines for the mixin
-(`state`, `store_state`, `initial_state`, `compress`, `word_bytes`, `little_endian?`, `name`), the
-mixin's `finish`, `finish_hex`, `finish_base64`, the tables `MD5.k`, `MD5.shifts`, `SHA256.k`, and
+(`state`, `store_state`, `initial_state`, `compress`, `word_bytes`, `little_endian?`, `words`,
+`pack_words`, `name`), the mixin's `finish`, `finish_hex`, `compress_words`, `digest_of`, the tables `MD5.k`, `MD5.shifts`, `SHA256.k`, and
 the module `SHA2_64` (the compression shared by SHA384 and SHA512). Sake has no private functions.
 
 ## What differs from Ruby, and why
 
 - **One name for Ruby's class method and instance method.** Ruby has `Digest::MD5.hexdigest(str)`
-  and `md.hexdigest`; in Sake both are `MD5.hexdigest(x)`, one function with `case x in String ...
-  in MD5 ...`. The checker still rejects any other argument type before running (the `case` has no
-  `else`). The cost is three repeated `case` functions per algorithm.
+  and `md.hexdigest(str = nil)`; in Sake both are `MD5.hexdigest(x, s = nil)`, one function that
+  passes a fresh `MD5.new` to the mixin's `digest_of(fresh, x, s)`, which does `case x in String
+  ... else` (x a digest). Another argument type is still rejected before running, by `finish(x)`.
 - **State as separate fields.** `MD5.new` takes no arguments only when every field has a literal
   `default:`. An Array cannot be a default, so the chaining words are fields `h0`..`h7` (Integer)
   and `pending` is a String, not an `Integer[]`. `state(md)` / `store_state(md, h)` convert to an
   `Integer[]` for each update.
-- **Tables are functions.** Sake has no value constants, so `def k = Integer[...]` builds the 64 (or
-  80) constants again on each call; `compress` calls it once per block.
+- **Tables are functions** computed once: `def k = once { Integer[...] }` (phase 2).
 - **Equality** is Struct equality (same type, same fields: same digest so far and same pending
   bytes). Ruby compares the hex digests, and also accepts a String.
 - `SHA384`/`SHA512` work on 64-bit words with arbitrary-precision Integers, masked to 64 bits.
@@ -111,3 +110,41 @@ arithmetic, because it does 80 rounds per 128 bytes against 64 per 64 bytes.
 - At `--strict=3`, each byte read `x[j]` is reported (`index-nil`, 161 reports); level 2 (the test
   level) is clean. Indexes are in range by construction (whole blocks only); `Array.fetch` would
   silence it at a cost per byte.
+
+## Phase 2
+
+- `hexdigest(x, s = nil)` (and `digest`, `base64digest`): Ruby's instance form with a String
+  (`md.hexdigest(str)`: reset, digest str, reset) is restored. The three 6-line `case` functions per
+  algorithm became one-liners over the mixin's `digest_of`, so the five classes lost 75 lines.
+- Words are read with `String.unpack`: whole blocks of the input go through one
+  `String.unpack(chunk, "V*" | "N*" | "Q>*")` per `update`, and `compress` takes the word Array
+  and an offset instead of assembling each word from 4 or 8 bytes. The state is written back with
+  `Array.pack(h, ...)`, and the padding and length are a packed String rather than pushed bytes.
+  The format must be a literal for the checker to type the words as Integer, so each class has
+  `words(md, s)` / `pack_words(md, ws)` with its own format.
+- The pending bytes stay a binary String (`String.b`, `String.byteslice`) instead of being
+  converted to an Array and back on every update.
+- The round constants (`MD5.k`, `MD5.shifts`, `SHA256.k`, `SHA2_64.k`) are `once { ... }`.
+- `Digest.hexencode(s)` is `String.unpack1(s, "H*")`.
+- Checked again against Ruby after the rewrite: random binary Strings of every length 0..140 and of
+  255, 256, 257, 1000 bytes, all five algorithms, `Zlib.crc32` / `adler32(s, 7)`, and SHA512/MD5 fed
+  in two pieces: 1305 lines, all equal (generator not kept, as in phase 1).
+- `String.byteslice` and `String.unpack1` are typed `String | nil` (Ruby's nil when the start is out
+  of range); the slices here are in range by construction, so they end in `|| ""`.
+
+Speed (`experiments/2026-10-03-sakelib-port/phase2/bench_digest.sake`, run by
+`run_digest_zlib_prime_matrix.sh`; CPU s user+sys of one `bin/sake --strict` process hashing 16 KiB,
+3 runs; local 16-core machine shared with other sessions, load average 33-38 throughout; "before" is
+commit af197cd; the "0 KiB" row is start-up and checking alone):
+
+| CPU s, 3 runs | before (af197cd) | after | net of start-up, median before → after |
+|---|---|---|---|
+| 0 KiB (start-up, checking) | 1.48 1.33 1.32 | 1.13 1.13 1.11 | (smaller library to check) |
+| MD5, 16 KiB | 4.40 4.33 4.35 | 3.80 3.70 3.75 | 3.02 → 2.62 (-13%) |
+| SHA1 | 6.20 6.24 6.19 | 5.54 5.83 5.86 | 4.87 → 4.70 (-3%, within the spread) |
+| SHA256 | 8.56 8.97 9.04 | 7.96 8.25 8.02 | 7.64 → 6.89 (-10%) |
+| SHA512 | 7.05 6.94 6.93 | 6.01 5.91 6.08 | 5.61 → 4.88 (-13%) |
+
+The rounds dominate; word reading was a smaller part than phase 1 guessed. Still about 2-6 KB/s.
+
+Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matrix.txt`.

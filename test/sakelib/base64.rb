@@ -5,6 +5,7 @@ require "base64"
   p Base64.strict_encode64(s)
   p Base64.urlsafe_encode64(s)
   p Base64.urlsafe_encode64(s, padding: false)
+  p Base64.urlsafe_encode64(s, padding: true)
   p Base64.decode64(Base64.encode64(s)) == s.b
 end
 

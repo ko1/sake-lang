@@ -13,8 +13,8 @@ class Matrix < {reader: [rows, column_count]}
 
   # --- constructors ---
 
-  def rows(rows)
-    rs = Array.map(rows) { |r| Array.dup(r) }
+  def rows(rows, copy = true)
+    rs = copy ? Array.map(rows) { |r| Array.dup(r) } : rows
     first = Array.first(rs)
     size = first == nil ? 0 : Array.size(first)
     Array.each(rs) do |r|
@@ -23,7 +23,7 @@ class Matrix < {reader: [rows, column_count]}
     Matrix.new(rs, size)
   end
   def columns(columns) = Matrix.transpose(Matrix.rows(columns))
-  def build(row_count, column_count)
+  def build(row_count, column_count = row_count)
     raise ArgumentError if row_count < 0 || column_count < 0
     Matrix.new(Array.new(row_count) { |i| Array.new(column_count) { |j| yield(i, j) } }, column_count)
   end
@@ -40,10 +40,12 @@ class Matrix < {reader: [rows, column_count]}
   def scalar(n, value) = Matrix.diagonal(Array.new(n, value))
   def identity(n) = Matrix.scalar(n, 1)
   def unit(n) = Matrix.identity(n)
-  def zero(n) = Matrix.new(Array.new(n) { Array.new(n, 0) }, n)
+  def zero(row_count, column_count = row_count)
+    Matrix.new(Array.new(row_count) { Array.new(column_count, 0) }, column_count)
+  end
   def row_vector(row) = Matrix.new(Array[Matrix.to_array(row)], Matrix.to_array(row).Array.size)
   def column_vector(column) = Matrix.new(Array.map(Matrix.to_array(column)) { |e| Array[e] }, 1)
-  def empty(row_count, column_count)
+  def empty(row_count = 0, column_count = 0)
     raise ArgumentError, "One size must be 0" if column_count != 0 && row_count != 0
     raise ArgumentError, "Negative size" if column_count < 0 || row_count < 0
     Matrix.new(Array.new(row_count) { Array[] }, column_count)
@@ -92,16 +94,46 @@ class Matrix < {reader: [rows, column_count]}
   def column_vectors(m) = Array.new(@column_count) { |j| Vector.new(Array.map(@rows) { |r| Array.fetch(r, j) }) }
   def to_a(m) = Array.map(@rows) { |r| Array.dup(r) }
 
-  def each(m)
-    Array.each(@rows) { |r| Array.each(r) { |e| yield(e) } }
+  # which: :all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper, or :upper, as Ruby's.
+  def each(m, which = :all)
+    Matrix.each_with_index(m, which) { |e, _, _| yield(e) }
+  end
+  def each_with_index(m, which = :all)
+    Matrix.check_which(which)
+    Array.each_with_index(@rows) do |r, i|
+      Array.each_with_index(r) { |e, j| yield(e, i, j) if Matrix.which?(which, i, j) }
+    end
     m
   end
-  def each_with_index(m)
-    Array.each_with_index(@rows) { |r, i| Array.each_with_index(r) { |e, j| yield(e, i, j) } }
-    m
+  # Elements outside which are kept, as Ruby's.
+  def collect(m, which = :all)
+    Matrix.check_which(which)
+    rs = Array.new(Array.size(@rows)) do |i|
+      r = Array.fetch(@rows, i)
+      Array.new(Array.size(r)) do |j|
+        e = Array.fetch(r, j)
+        Matrix.which?(which, i, j) ? yield(e) : e
+      end
+    end
+    Matrix.new(rs, @column_count)
   end
-  def collect(m) = Matrix.new(Array.map(@rows) { |r| Array.map(r) { |e| yield(e) } }, @column_count)
-  def map(m) = Matrix.collect(m) { |e| yield(e) }
+  def map(m, which = :all) = Matrix.collect(m, which) { |e| yield(e) }
+  def which?(which, i, j)
+    case which
+    in :all then true
+    in :diagonal then i == j
+    in :off_diagonal then i != j
+    in :lower then i >= j
+    in :strict_lower then i > j
+    in :strict_upper then i < j
+    in :upper then i <= j
+    else false                                # check_which raised already
+    end
+  end
+  def check_which(which)
+    return if Array.include?(Array[:all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper, :upper], which)
+    raise ArgumentError, "expected #{Kernel.inspect(which)} to be one of :all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper or :upper"
+  end
 
   # Ruby's minor(start_row, nrows, start_col, ncols); the Range form is not ported.
   def minor(m, from_row, size_row, from_col, size_col)
@@ -444,11 +476,11 @@ class Matrix < {reader: [rows, column_count]}
   end
   def abs(x) = (Integer|Float|Rational|Complex).abs(x)
 
-  def round(m, ndigits)
+  def round(m, ndigits = 0)
     Matrix.collect(m) do |e|
       case e
       in Integer then Integer.round(e, ndigits)
-      in Float then Float.round(e, ndigits)
+      in Float then ndigits > 0 ? Float.round(e, ndigits) : Float.to_i(Float.round(e, ndigits))  # notes/matrix_bug_float_round_digits.sake
       in Rational then Matrix.round_rational(e, ndigits)
       in Complex then raise ArgumentError, "Complex can't be rounded"
       end
@@ -611,7 +643,7 @@ class Vector < {reader: [elements]}
   # Math.acos is not a Sake built-in; atan2 gives it within an ulp or so.
   def acos(x) = Math.atan2(Math.sqrt(1 - x * x), x)
 
-  def round(v, ndigits) = Vector.new(Matrix.get_rows(Matrix.round(Matrix.column_vector(v), ndigits)).Array.map { |r| Array.fetch(r, 0) })
+  def round(v, ndigits = 0) = Vector.new(Matrix.get_rows(Matrix.round(Matrix.column_vector(v), ndigits)).Array.map { |r| Array.fetch(r, 0) })
   def covector(v) = Matrix.row_vector(v)
   def to_matrix(v) = Matrix.column_vector(v)
   def to_s(v) = "Vector[" + Array.join(@elements, ", ") + "]"

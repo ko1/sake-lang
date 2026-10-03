@@ -144,7 +144,7 @@ show("read", CSV.read(path))
 show("readlines", CSV.readlines(path))
 CSV.foreach(path) { |row| show("foreach", row) }
 CSV.foreach(path, headers: true, converters: :numeric) { |row| show("foreach h", row) }
-show("read_with", CSV.read(path, converters: :integer))
+show("read opts", CSV.read(path, converters: :integer))
 tab = CSV.table(path)
 show("table", tab)
 show("table scores", tab[:score])
@@ -154,3 +154,14 @@ begin
 rescue SystemCallError => e
   puts "IOError"
 end
+
+puts "== phase 2: options as the last argument"
+show("parse_line rest unparsed", CSV.parse_line("a,b\n\"c"))
+show("generate_lines opts", CSV.generate_lines([["a", "b"], ["c", nil]], col_sep: "\t"))
+show("readlines opts", CSV.readlines(path, converters: :numeric))
+show("multi-line quoted", CSV.parse("\"a\nb\",c\nd,\"e\n\nf\"\ng"))
+try_parse("\"a\nb\",c\nd,\"e\n\nf\"x\ng")
+try_parse("x\n\"a\nb\"\nc,\"d")
+show("|| with quotes", CSV.parse("\"a||b\"||c||\"\"", col_sep: "||"))
+show("quote_char |", CSV.parse("|a,b|,|c||d|", quote_char: "|"))
+show("skip_lines crlf", CSV.parse("#a\r\nb\r\n#c\r\n\"d\r\ne\"\r\nf", skip_lines: /\A#/))

@@ -239,3 +239,28 @@ fib = Matrix[[1, 1], [1, 0]]
 show("fib(90)", (fib ** 90)[0, 1])
 sys = Matrix[[2, 1, -1], [-3, -1, 2], [-2, 1, 2]]
 show("solve", sys.inverse * Vector[8, -11, -3])
+
+show("zero r c", Matrix.zero(2, 3))
+show("build n", Matrix.build(2) { |i, j| i - j })
+show("empty()", Matrix.empty)
+show("empty(2)", Matrix.empty(2))
+show("round()", Matrix[[1.5, 2.25], [-0.5, 3]].round)
+show("v.round()", Vector[1.5, 2.25].round)
+rr = [[1, 2], [3, 4]]
+shared = Matrix.rows(rr, false)
+copied = Matrix.rows(rr)
+rr[0][0] = 9
+show("rows no copy", shared)
+show("rows copy", copied)
+rect3 = Matrix[[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]
+[:all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper, :upper].each do |w|
+  zs = []
+  rect3.each(w) { |e| zs << e }
+  ix = []
+  rect3.each_with_index(w) { |e, i, j| ix << [i, j] }
+  show("each #{w}", zs)
+  show("each_with_index #{w}", ix)
+  show("collect #{w}", rect3.collect(w) { |e| -e })
+  show("map #{w}", rect3.t.map(w) { |e| e * 10 })
+end
+try("each :foo") { rect3.each(:foo) { |e| e } }

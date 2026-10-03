@@ -50,24 +50,25 @@ defined): Sake has no nested names.
 
 ## How it works, and what differs
 
-- **Matching at the pointer.** Sake has no "match at position" (`Regexp#match(s, pos)` with `\G`, or
-  Onigmo's `onig_match`). Each scan slices the rest of the String and matches it unanchored; for
-  `scan`/`skip`/`check`/`match?` the match is accepted only if it starts at 0. This is exact
-  (the leftmost match starts at 0 whenever any match there exists, and the engine tries position 0
-  first, so it is the same match), and `\A` and `^` match at the pointer as in Ruby's default
-  (`fixed_anchor: false`). Look-behind cannot see before the pointer, also as Ruby's default.
-  Cost: each call copies the rest (O(n)), and a failed anchored scan searches the whole rest.
-  Single runs of a two-token-per-"ab " loop, on a machine at load ~38 (so noisy): 2000 / 4000 / 8000 /
-  16000 repetitions took 6.4 / 8.4 / 15.6 / 26.8 s (startup ~1.8 s). That is about linear at this
-  size: interpreter overhead per call (~0.8 ms) hides the copy. Not measured further.
+- **Matching at the pointer** (phase 2). `scan`/`skip`/`check`/`match?` match
+  `\G(?flags:source)` with `Regexp.match(re, string, charpos)`; the `_until` forms match the pattern
+  itself from charpos. The wrapped Regexp is built once per pattern (a table made by `once`, keyed by
+  `Kernel.inspect(pattern)`, since a Regexp cannot be a Hash key; flags are rebuilt from the inspect,
+  and `x` gets a newline before the `)` so a trailing comment does not swallow it). No copy, and a
+  failing anchored scan stops at the pointer instead of searching the rest.
+  A pattern that looks before the pointer (`\A`, `^`, `\b`, `\B`, `\G`, look-behind; found by a
+  conservative test of its source) must see the String as starting at the pointer, as in Ruby's
+  default (`fixed_anchor: false`); `Regexp.match` with a position sees the whole String, so those
+  patterns still go the phase 1 way: match a copy of the rest, accept a match starting at 0.
 - **Bytes vs characters.** Ruby's `pos`, `skip`'s result, `matched_size`, `rest_size` count bytes.
-  Sake's String slicing counts characters, and there is no `byteslice`. The scanner keeps both a
-  character position (for slicing) and a byte position (to report), updated together. So:
+  Sake's String slicing and `Regexp.match` positions count characters. The scanner keeps both a
+  character position (for matching) and a byte position (to report), updated together. So:
   - `set_pos` must land on a character boundary (Ruby allows a position inside a character and then
     scans broken bytes); otherwise `ArgumentError`.
   - `get_byte` and `scan_byte` are not ported: they move the pointer inside a character.
-  - `peek(n)` is built from `String.bytes` + `Array.pack("C*")` + `String.force_encoding("UTF-8")`,
-    which gives Ruby's result, including a cut character.
+  - `peek(n)` is `String.byteslice` (phase 1: `String.bytes` + `Array.pack` + `force_encoding`), which
+    gives Ruby's result, including a cut character. `rest` is a byteslice too, and `eos?`/`rest_size`
+    compare byte counts instead of measuring the String in characters.
 - **inspect.** Shows 5 characters on each side with `Kernel.inspect`; Ruby shows 5 bytes with
   `String#dump`. Same for ASCII text, differs for multibyte text.
 - **Setters.** `ss.pos = n` cannot be written: there are no calls on values, and an operation named
@@ -76,10 +77,11 @@ defined): Sake has no nested names.
 
 ## Built-ins Sake lacks (requests)
 
-- `Regexp.match(re, s, pos)` (or `match_at`, anchored at `pos`): scanning without copying the rest
-  and without searching past the pointer. This is the one strscan is built around.
-- `String.byteslice(s, start, len)` (and `String.byteindex`): byte positions as Ruby defines them;
-  would allow `set_pos` inside a character, `get_byte`, `scan_byte`, and a simpler `peek`.
+- ~~`Regexp.match(re, s, pos)`~~ and ~~`String.byteslice`~~: added, used in phase 2.
+- A byte-position `Regexp.match` (or MatchData byte offsets): would let the scanner keep only the
+  byte position, allow `set_pos` inside a character, `get_byte`, and `scan_byte`.
+- A Regexp usable as a Hash key (or `Regexp.to_s`, Ruby's `(?flags:source)`): the `\G` table is keyed
+  by `Kernel.inspect`, and the flags are parsed out of it.
 - `MatchData.byteoffset(m, i)`: byte offsets of a match without re-measuring the matched text.
 - (Language) optional and keyword parameters: `new(s, fixed_anchor:)`, `scan_integer(base:)`.
 
@@ -107,3 +109,25 @@ defined): Sake has no nested names.
   pattern gets `case/in: no in branch matches Integer [type]` before running (at the library line,
   with the user's line in the hint chain). The first draft ran under `--strict` with only the
   `getstr` problem above.
+
+## Phase 2
+
+- **No names to restore**: Ruby's strscan has no optional positional arguments in use (`new`'s `dup`
+  is obsolete; `fixed_anchor:` and `scan_integer(base:)` are keywords).
+- **Scans** use `Regexp.match(re, s, pos)` with `\G`-wrapped patterns built once (`once` table), as
+  above; `String` patterns compare a `byteslice` at the pointer (anchored) or use
+  `String.index(s, t, charpos)`. `set_pos` finds the character index with `byteslice` + `length`
+  (phase 1 walked `each_char`). `peek` and `rest` are byteslices. `matched_ok` and `mbeg` fields are
+  gone (derived from `mstr` and `mend`).
+- **Tests added**: flags `i`, `x` (with a comment), `m`; a negated class (anchored path);
+  `\b`, `^`, `\A`, look-behind at a pointer > 0 (copy path); `scan_until` with a String over
+  multibyte text.
+- **Speed** (`bin/sake --strict`, CPU user+sys, 3 runs, shared machine at load ~35 on 16 cores):
+  - `phase2/bench_strscan.sake` (tokenize `"ab 12 "` x 4000, 24 KB, ~36,000 scan calls): before
+    11.84 / 11.78 / 11.86 s, after 11.72 / 11.37 / 11.72 s. **No gain**: each call costs ~0.3 ms of interpreter
+    work (user calls, built-in calls and field writes at ~10 µs each), and the copy of at most 24 KB
+    is noise beside that. At 4x the size (`bench_strscan_16k.sake`, 1 run each) both are linear:
+    44.7 s before, 46.2 s after.
+  - `phase2/bench_strscan_long.sake` (the copy-sensitive case: 3000 steps at the head of a 1 MB
+    String, each a failing `check(/b/)` and a `scan(/a/)`): before 5.60 / 5.41 / 5.64 s, after
+    2.43 / 2.49 / 2.46 s.

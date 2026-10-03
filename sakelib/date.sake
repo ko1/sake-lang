@@ -15,19 +15,20 @@ class Date < {reader: [jd, year, month, day]}
 
   # ---- constructors ----
 
-  def civil(y, m, d)
+  # Ruby's Date.new(y = -4712, m = 1, d = 1).
+  def civil(y = -4712, m = 1, d = 1)
     jd = DateCore.valid_civil_jd(y, m, d)
     raise DateError, "invalid date" if jd == nil
     jd(jd)
   end
 
-  def ordinal(y, yd)
+  def ordinal(y = -4712, yd = 1)
     jd = DateCore.valid_ordinal_jd(y, yd)
     raise DateError, "invalid date" if jd == nil
     jd(jd)
   end
 
-  def commercial(y, w, wd)
+  def commercial(y = -4712, w = 1, wd = 1)
     jd = DateCore.valid_commercial_jd(y, w, wd)
     raise DateError, "invalid date" if jd == nil
     jd(jd)
@@ -69,12 +70,12 @@ class Date < {reader: [jd, year, month, day]}
     end
   end
 
-  # ---- names (Ruby's Date::MONTHNAMES and friends, which are constants there) ----
+  # ---- names (Ruby's Date::MONTHNAMES and friends; shared like Ruby's constants) ----
 
-  def monthnames = Array[nil, *DateCore.month_names]
-  def abbr_monthnames = Array[nil, *Array.map(DateCore.month_names) { |s| String.[](s, 0, 3) || "" }]
-  def daynames = Array[*DateCore.day_names]
-  def abbr_daynames = Array.map(DateCore.day_names) { |s| String.[](s, 0, 3) || "" }
+  def monthnames = once { Array[nil, *DateCore.month_names] }
+  def abbr_monthnames = once { Array[nil, *DateCore.abbr_month_names] }
+  def daynames = DateCore.day_names
+  def abbr_daynames = DateCore.abbr_day_names
 
   # ---- fields ----
 
@@ -121,31 +122,23 @@ class Date < {reader: [jd, year, month, day]}
   # d >> n: n months later; a day past the month's end becomes its last day.
   def >>(d, n)
     t = @year * 12 + (@month - 1) + n
-    y = t / 12
-    m = t % 12 + 1
-    dd = @day
-    while true
-      jd = DateCore.valid_civil_jd(y, m, dd)
-      return jd(jd) if jd != nil
-      dd -= 1
-      raise DateError, "invalid date" if dd < 1
-    end
+    jd(DateCore.clamped_jd(t / 12, t % 12 + 1, @day))
   end
 
   def <<(d, n) = d >> -n
 
-  def next_day(d) = d + 1
-  def prev_day(d) = d - 1
+  def next_day(d, n = 1) = d + n
+  def prev_day(d, n = 1) = d - n
   def succ(d) = d + 1
   def next(d) = d + 1
-  def next_month(d) = d >> 1
-  def prev_month(d) = d << 1
-  def next_year(d) = d >> 12
-  def prev_year(d) = d << 12
+  def next_month(d, n = 1) = d >> n
+  def prev_month(d, n = 1) = d << n
+  def next_year(d, n = 1) = d >> n * 12
+  def prev_year(d, n = 1) = d << n * 12
 
   # ---- iteration ----
 
-  def step(d, limit, by)
+  def step(d, limit, by = 1)
     raise ArgumentError, "step can't be 0" if by == 0
     cur = d
     if by > 0
@@ -200,38 +193,39 @@ class Date < {reader: [jd, year, month, day]}
   def to_date(d) = d
   def to_time(d) = Time.new(@year, @month, @day)
 
-  def strftime(d, fmt)
+  def strftime(d, fmt = "%F")
     out = ""
-    rest = fmt
-    while true
-      i = String.index(rest, "%")
+    pos = 0
+    n = String.size(fmt)
+    while pos < n
+      i = String.index(fmt, "%", pos)
       if i == nil
-        out += rest
+        out += String.[](fmt, pos, n - pos) || ""
         break
       end
-      out += String.[](rest, 0, i) || ""
-      rest = String.[](rest, i, String.size(rest) - i) || ""
-      m = String.match(rest, /\A%([-_0^#]*)(\d*)(:{0,2}[a-zA-Z+%])/)
+      out += String.[](fmt, pos, i - pos) || "" if i > pos
+      m = Regexp.match(/\G%([-_0^#]*)(\d*)(:{0,2}[a-zA-Z+%])/, fmt, i)
       if m == nil
         out += "%"
-        rest = String.[](rest, 1, String.size(rest) - 1) || ""
+        pos = i + 1
         next
       end
+      pos = MatchData.end(m, 0)
       flags = m[1]
       width = m[2]
       conv = m[3]
       next if flags == nil || width == nil || conv == nil
       out += DateCore.directive(d, flags, width == "" ? -1 : String.to_i(width), conv)
-      rest = MatchData.post_match(m)
     end
     out
   end
 
   # ---- parsing ----
 
-  def parse(s) = DateCore.parse(s)
+  # comp: a two-digit year becomes 19xx/20xx, as Ruby.
+  def parse(s = "-4712-01-01", comp = true) = DateCore.parse(s, comp)
 
-  def strptime(s, fmt)
+  def strptime(s = "-4712-01-01", fmt = "%F")
     st = DateCore.scan_format(s, fmt, [0], Hash[])
     raise DateError, "invalid date" if st == nil
     DateCore.from_fields(st)
@@ -244,9 +238,23 @@ module DateCore
 
   def italy = 2299161
 
-  def month_names = String["January", "February", "March", "April", "May", "June", "July",
-                           "August", "September", "October", "November", "December"]
-  def day_names = String["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+  def month_names = once { String["January", "February", "March", "April", "May", "June", "July",
+                                  "August", "September", "October", "November", "December"] }
+  def day_names = once { String["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] }
+  def abbr_month_names = once { Array.map(month_names) { |s| String.[](s, 0, 3) || "" } }
+  def abbr_day_names = once { Array.map(day_names) { |s| String.[](s, 0, 3) || "" } }
+  # "jan" => 1 ... "dec" => 12
+  def month_index_table = once {
+    h = Hash[]
+    Array.each_with_index(abbr_month_names) { |s, i| h[String.downcase(s)] = i + 1 }
+    h
+  }
+  # "sun" => 0 ... "sat" => 6
+  def day_index_table = once {
+    h = Hash[]
+    Array.each_with_index(abbr_day_names) { |s, i| h[String.downcase(s)] = i }
+    h
+  }
 
   def pad2(n) = String.rjust(Integer.to_s(n), 2, "0")
 
@@ -297,6 +305,14 @@ module DateCore
     return nil if d < 1
     jd = civil_to_jd(y, m, d)
     jd_to_civil(jd) == [y, m, d] ? jd : nil
+  end
+
+  # The jd of y-m-d, with d lowered until valid (Ruby's >>).
+  def clamped_jd(y, m, d)
+    jd = valid_civil_jd(y, m, d)
+    return jd if jd != nil
+    raise DateError, "invalid date" if d <= 1
+    clamped_jd(y, m, d - 1)
   end
 
   def last_day(y, m)
@@ -392,9 +408,9 @@ module DateCore
     in "G" then year_num(Date.cwyear(d), flags, width)
     in "g" then num(Date.cwyear(d) % 100, flags, width, 2, "0")
     in "A" then text(day_names[Date.wday(d)] || "", flags, width)
-    in "a" then text(String.[](day_names[Date.wday(d)] || "", 0, 3) || "", flags, width)
+    in "a" then text(abbr_day_names[Date.wday(d)] || "", flags, width)
     in "B" then text(month_names[Date.get_month(d) - 1] || "", flags, width)
-    in "b" | "h" then text(String.[](month_names[Date.get_month(d) - 1] || "", 0, 3) || "", flags, width)
+    in "b" | "h" then text(abbr_month_names[Date.get_month(d) - 1] || "", flags, width)
     in "p" then text(String.include?(flags, "#") ? "am" : "AM", "", width)
     in "P" then text("am", flags, width)
     in "z" then text("+0000", flags, width)
@@ -418,44 +434,39 @@ module DateCore
 
   # ---- parsing ----
 
-  def month_index(name)
-    key = String.downcase(String.[](name, 0, 3) || "")
-    i = Array.index(Array.map(month_names) { |s| String.downcase(String.[](s, 0, 3) || "") }, key)
-    i == nil ? nil : i + 1
-  end
-
-  def day_index(name)
-    key = String.downcase(String.[](name, 0, 3) || "")
-    Array.index(Array.map(day_names) { |s| String.downcase(String.[](s, 0, 3) || "") }, key)
-  end
+  def month_index(name) = month_index_table[String.downcase(String.[](name, 0, 3) || "")]
+  def day_index(name) = day_index_table[String.downcase(String.[](name, 0, 3) || "")]
 
   # Two-digit years in Date.parse: 69..99 are 1900s, 00..68 are 2000s (Ruby's comp: true).
-  def comp_year(ys)
+  def comp_year(ys, comp)
     y = String.to_i(ys)
-    return y if String.size(ys) > 2 || String.start_with?(ys, "-") || String.start_with?(ys, "+")
+    return y if !comp || String.size(ys) > 2 || String.start_with?(ys, "-") || String.start_with?(ys, "+")
     y >= 69 ? y + 1900 : y + 2000
   end
 
   def month_re = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?"
+  def day_month_re = once { Regexp.new("(?i)\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+#{month_re},?(?:\\s+([-+]?\\d+))?") }
+  def month_day_re = once { Regexp.new("(?i)\\b#{month_re}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?(?:\\s+([-+]?\\d+))?") }
+  def month_scan_re = once { Regexp.new("\\G(?i)" + month_re) }
 
-  def parse(s)
+  def parse(s, comp)
     m = String.match(s, /([-+]?\d{4,})-(\d{1,2})-(\d{1,2})/)
     return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
     m = String.match(s, /(\d{4})\/(\d{1,2})\/(\d{1,2})/)
     return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
     m = String.match(s, /\b(\d{4})(\d{2})(\d{2})\b/)
     return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
-    m = String.match(s, Regexp.new("(?i)\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+#{month_re},?(?:\\s+([-+]?\\d+))?"))
-    return civil_named(m[3], m[2] || "", m[1] || "") if m
-    m = String.match(s, Regexp.new("(?i)\\b#{month_re}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?(?:\\s+([-+]?\\d+))?"))
-    return civil_named(m[3], m[1] || "", m[2] || "") if m
+    m = String.match(s, day_month_re)
+    return civil_named(m[3], m[2] || "", m[1] || "", comp) if m
+    m = String.match(s, month_day_re)
+    return civil_named(m[3], m[1] || "", m[2] || "", comp) if m
     raise DateError, "invalid date"
   end
 
-  def civil_named(ys, mon, ds)
+  def civil_named(ys, mon, ds, comp)
     mi = month_index(mon)
     raise DateError, "invalid date" if mi == nil
-    y = ys == nil ? Date.year(Date.today) : comp_year(ys)
+    y = ys == nil ? Date.year(Date.today) : comp_year(ys, comp)
     Date.civil(y, mi, String.to_i(ds))
   end
 
@@ -486,51 +497,49 @@ module DateCore
         return nil unless ok
       elsif String.match?(c, /\s/)
         i += 1
-        skip(s, st, /\A\s*/)
+        skip(s, st, /\G\s*/)
       else
         i += 1
-        return nil unless skip(s, st, Regexp.new("\\A" + Regexp.escape(c)))
+        return nil unless s[st[0]] == c
+        st[0] += 1
       end
     end
     h
   end
 
-  # Advances st[0] past a match of `re` (anchored); the matched text, or nil.
+  # Advances st[0] past a match of `re` (anchored with \G); the matched text, or nil.
   def skip(s, st, re)
-    pos = st[0]
-    rest = String.[](s, pos, String.size(s) - pos) || ""
-    m = String.match(rest, re)
+    m = Regexp.match(re, s, st[0])
     return nil if m == nil
-    t = MatchData.to_s(m)
-    st[0] = pos + String.size(t)
-    t
+    st[0] = MatchData.end(m, 0)
+    MatchData.to_s(m)
   end
 
   def scan_directive(s, conv, st, h)
     case conv
-    in "Y" then put(h, :year, skip(s, st, /\A[-+]?\d+/))
+    in "Y" then put(h, :year, skip(s, st, /\G[-+]?\d+/))
     in "y"
-      t = skip(s, st, /\A\d{1,2}/)
+      t = skip(s, st, /\G\d{1,2}/)
       return false if t == nil
       y = String.to_i(t)
       h[:year] = y >= 69 ? y + 1900 : y + 2000
       true
-    in "m" then put(h, :mon, skip(s, st, /\A\d{1,2}/))
-    in "d" | "e" then put(h, :mday, skip(s, st, /\A ?\d{1,2}/))
-    in "j" then put(h, :yday, skip(s, st, /\A\d{1,3}/))
+    in "m" then put(h, :mon, skip(s, st, /\G\d{1,2}/))
+    in "d" | "e" then put(h, :mday, skip(s, st, /\G ?\d{1,2}/))
+    in "j" then put(h, :yday, skip(s, st, /\G\d{1,3}/))
     in "b" | "B" | "h"
-      t = skip(s, st, Regexp.new("\\A(?i)" + month_re))
+      t = skip(s, st, month_scan_re)
       return false if t == nil
       h[:mon] = month_index(t) || 0
       true
     in "a" | "A"
-      t = skip(s, st, /\A(?i)(sun|mon|tue|wed|thu|fri|sat)[a-z]*/)
+      t = skip(s, st, /\G(?i)(sun|mon|tue|wed|thu|fri|sat)[a-z]*/)
       t != nil
-    in "u" | "w" then skip(s, st, /\A\d/) != nil
+    in "u" | "w" then skip(s, st, /\G\d/) != nil
     in "F" then scan_format(s, "%Y-%m-%d", st, h) != nil
     in "D" | "x" then scan_format(s, "%m/%d/%y", st, h) != nil
-    in "n" | "t" then skip(s, st, /\A\s*/) != nil
-    in "%" then skip(s, st, /\A%/) != nil
+    in "n" | "t" then skip(s, st, /\G\s*/) != nil
+    in "%" then skip(s, st, /\G%/) != nil
     else
       false
     end

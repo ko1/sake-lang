@@ -38,17 +38,18 @@ Field order for `URI.new` is scheme, userinfo, opaque, host, port, path, query, 
 | `u.request_uri` | `URI.request_uri(u)` | differs: available for every scheme (Ruby: HTTP/HTTPS only) |
 | `u.default_port` | `URI.default_port(u)` | same |
 | `u.merge(ref)`, `u + ref` | `URI.merge(u, ref)`, `u + ref` | same; `ref` is a String or a URI |
-| `URI.join(base, ref, ...)` | `URI.join(base, ref)` | differs: exactly two arguments (Sake functions have a fixed arity); nest for more: `URI.join(URI.join(a, b), c)` (`base` may be a URI) |
+| `URI.join(base, ref, ...)` | `URI.join(base, ref, ...)` | same for one base and up to three references (optional parameters; Sake has no rest parameters); nest for more (`base` may be a URI) |
 | `u.normalize` | `URI.normalize(u)` | same (host lower-cased, empty path → "/") |
 | `u == v` | `u == v` | differs: Sake compares the fields as they are; Ruby compares normalized forms (so `http://H` == `http://h/` in Ruby only) |
 | `u.dup` | `URI.dup(u)` | same |
 | `URI.split(s)` | `URI.split(s)` | same (9 elements, Strings or nil; a Tuple instead of an Array) |
 | `URI.encode_www_form(enum)` | `URI.encode_www_form(form)` | same; `form` is a Hash or an Array of `[k, v]`; nil value → key alone; Array value → repeated key (a nil inside it gives an empty part, as Ruby) |
-| `URI.decode_www_form(s)` | `URI.decode_www_form(s)` | same, but returns an Array of `[k, v]` Tuples; invalid UTF-8 is not scrubbed (see requests) |
+| `URI.decode_www_form(s)`, `decode_www_form(s, enc)` | same | same, but returns an Array of `[k, v]` Tuples; invalid UTF-8 is not scrubbed (see requests); `enc` is an encoding name |
 | `URI.encode_www_form_component(s)` | same | same (`*-._` and alphanumerics kept, space → `+`) |
-| `URI.decode_www_form_component(s)` | same | same (`ArgumentError: invalid %-encoding (s)`) |
-| `URI.encode_uri_component(s)`, `decode_uri_component(s)` | same | same (space ↔ `%20`) |
-| `encode_www_form(enum, enc)`, `decode_www_form(s, enc, separator:, ...)` | — | missing: optional and keyword arguments; UTF-8 and `&` only |
+| `URI.decode_www_form_component(s)`, `(s, enc)` | same | same (`ArgumentError: invalid %-encoding (s)`); `enc` is an encoding name (default `"UTF-8"`) |
+| `URI.encode_uri_component(s)`, `decode_uri_component(s)`, `(s, enc)` | same | same (space ↔ `%20`) |
+| `encode_www_form(enum, enc)`, `encode_www_form_component(s, enc)` | — | missing: converting to another encoding (Sake has no `String#encode`) |
+| `decode_www_form(s, enc, separator:, use__charset_:, isindex:)` | — | missing: keyword arguments; `&` only |
 | `URI::HTTP.build(host: ..., path: ...)` | — | missing: keyword arguments; use `URI.parse("http://#{host}#{path}")` |
 | `u.route_to`, `route_from`, `URI.extract`, `URI.regexp`, `URI.open`, `URI.for`, `URI.register_scheme`, `find_proxy`, `hierarchical?`, `select`, `component` | — | missing (rarely used; `register_scheme` needs classes as values) |
 | `URI::MailTo#to`, `headers`; `URI::FTP#typecode`; `URI::LDAP#dn` ...; `URI::File` host rules | — | missing: scheme-specific parts. FTP's path drops its leading "/" as Ruby's does. MailTo is not validated (Ruby raises `InvalidComponentError` for a bad address) |
@@ -67,10 +68,10 @@ private functions.
 
 ## Built-ins Sake lacks (requests)
 
-- `String.dump(s)`: Ruby's error message for a non-ASCII URI uses it; written by hand (`URI._dump`,
-  UTF-8 only).
+- `String.dump(s)`: Ruby's error message for a non-ASCII URI uses it; `URI._dump` builds it as
+  `inspect` plus a `gsub` block for non-ASCII characters (UTF-8 only).
 - `String.scrub(s)`: `decode_www_form` scrubs invalid bytes in Ruby; not done here.
-- `String.gsub(s, re, Hash)` / with a block: form encoding is a table-driven gsub in Ruby.
+- Rest parameters (`def join(*refs)`), for Ruby's `URI.join(*str)`.
 
 ## Friction
 
@@ -91,3 +92,19 @@ private functions.
   eight URI fields as "may be nil", which were unrelated) → `x = Array.shift(tmp); while x ... end`.
 - Absolute `require "/path/x"` is joined to the requiring file's directory unless that file is in
   the current directory (`bin/sake dir/f.sake` → `cannot read dir/path/x.sake`). Repro: `sakelib/notes/uri_bug_absolute_require.sake`.
+
+## Phase 2
+
+- `URI.join(base, r1 = nil, r2 = nil, r3 = nil)`: Ruby's several references, up to three (the test
+  now calls `URI.join(a, b, c)` and `URI.join(a, b, c, d)` as `uri.rb` does, and `URI.join(a)`).
+- Restored the optional encoding: `decode_www_form_component(s, enc = "UTF-8")`,
+  `decode_uri_component(s, enc = "UTF-8")`, `decode_www_form(s, enc = "UTF-8")`; tested with
+  `"ASCII-8BIT"`.
+- Tables with `once`: the two RFC 3986 Regexps (`_absolute_re`, `_relative_re`) were built with
+  `Regexp.new` from strings on every parse; now once. Ruby's `TBLENCWWWCOMP_` / `TBLENCURICOMP_`
+  (256 entries each) are built once and used with `String.gsub(String.b(s), re, table)`, as
+  `uri/common.rb` does; decoding is a `gsub` block over runs of `%XX`. `_dump` is a `gsub` block
+  instead of a loop over characters. The test gained `http://h/😀\u0085` for it.
+- Speed (`phase2/bench_uri.sake`: parse + merge + to_s of 300 URIs, encode/decode a 300-pair form;
+  CPU s of the whole `bin/sake --strict` run, 3 runs, load about 37 on 16 cores): before
+  2.58 / 2.64 / 2.58, after 1.57 / 1.51 / 1.64.

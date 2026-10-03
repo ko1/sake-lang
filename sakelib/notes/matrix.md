@@ -18,22 +18,22 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | Ruby | Sake | |
 |---|---|---|
 | `Matrix[[1, 2], [3, 4]]` | `Matrix.rows(Array[Array[1, 2], Array[3, 4]])` | differs: `T[...]` is "Array of T" in Sake |
-| `Matrix.rows(rows)` / `Matrix.columns(cols)` | `Matrix.rows(rows)` / `Matrix.columns(cols)` | same (the `copy` flag is missing; rows are always copied) |
-| `Matrix.build(r, c) { \|i, j\| }` | `Matrix.build(r, c) { \|i, j\| }` | same (no default for `c`, no Enumerator form) |
+| `Matrix.rows(rows, copy = true)` / `Matrix.columns(cols)` | same | same (phase 2: the `copy` flag) |
+| `Matrix.build(r, c = r) { \|i, j\| }` | same | same (phase 2: `c` defaults to `r`); no Enumerator form |
 | `Matrix.identity(n)`, `unit(n)` | same | same (`Matrix.I` is missing) |
-| `Matrix.zero(n)` | `Matrix.zero(n)` | same; `Matrix.zero(r, c)` is missing (no optional parameters): use `Matrix.build(r, c) { 0 }` |
+| `Matrix.zero(r, c = r)` | same | same (phase 2) |
 | `Matrix.scalar(n, v)` | same | same |
 | `Matrix.diagonal(1, 2, 3)` | `Matrix.diagonal(Array[1, 2, 3])` | differs: user functions take no rest parameter |
 | `Matrix.row_vector(a)`, `column_vector(a)` | same | same (Array or Vector) |
-| `Matrix.empty(r, c)` | `Matrix.empty(r, c)` | same (both arguments are required) |
+| `Matrix.empty(r = 0, c = 0)` | same | same (phase 2) |
 | `Matrix.vstack(a, b, ...)`, `hstack` | `Matrix.vstack(a, b)`, `hstack(a, b)` | differs: exactly two |
 | `m[i, j]`, `element`, `component` | `m[i, j]`, `Matrix.element(m, i, j)`, `component` | same (nil outside the matrix) |
 | `m[i, j] = v` | `m[i, j] = v` | same for Integer indexes; the Range forms are missing |
 | `row_count`, `row_size`, `column_count`, `column_size` | `Matrix.row_count(m)`, ... | same |
 | `row(i)`, `column(j)` | `Matrix.row(m, i)`, `Matrix.column(m, j)` | same (Vector, or nil outside); the block forms are missing |
 | `row_vectors`, `column_vectors`, `to_a` | same | same |
-| `each { }`, `each_with_index { \|e, i, j\| }` | `Matrix.each(m) { }`, `Matrix.each_with_index(m) { }` | same for `:all`; the `which` argument (`:diagonal`, `:strict_upper`, ...) is missing |
-| `map { }`, `collect { }` | `Matrix.map(m) { }`, `Matrix.collect(m) { }` | same (no `which`) |
+| `each(which = :all) { }`, `each_with_index(which = :all) { \|e, i, j\| }` | `Matrix.each(m, which) { }`, `Matrix.each_with_index(m, which) { }` | same (phase 2: `which` is `:all`, `:diagonal`, `:off_diagonal`, `:lower`, `:strict_lower`, `:strict_upper`, `:upper`; another Symbol raises Ruby's ArgumentError) |
+| `map(which = :all) { }`, `collect(which = :all) { }` | `Matrix.map(m, which) { }`, `Matrix.collect(m, which) { }` | same (phase 2; elements outside `which` are kept) |
 | `minor(r, nr, c, nc)` | `Matrix.minor(m, r, nr, c, nc)` | same; the Range form `minor(0..1, 0..1)` is missing |
 | `first_minor`, `cofactor`, `adjugate` | same | same |
 | `+ - *` (Matrix, Vector, number), `/` (number, Matrix) | same operators | same |
@@ -45,7 +45,7 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `determinant`, `det` | same | same |
 | `inverse`, `inv` | same | same (Integer entries give Rationals, as in Ruby) |
 | `rank`, `trace`, `tr` | same | same |
-| `round(n)` | `Matrix.round(m, n)` | same (n is required); Rational entries are rounded in Sake, because `Rational.round` takes no digits |
+| `round(n = 0)` | `Matrix.round(m, n)` | same (phase 2: n defaults to 0, and Floats then become Integers, as in Ruby); Rational entries are rounded in Sake, because `Rational.round` takes no digits |
 | `square?`, `empty?`, `zero?`, `diagonal?`, `upper_triangular?`, `lower_triangular?`, `symmetric?`, `antisymmetric?`, `orthogonal?`, `permutation?`, `singular?`, `regular?` | same | same |
 | `==`, `!=` | same | same |
 | `to_s`, `inspect` | `puts(m)`, `p(m)` | same text |
@@ -63,7 +63,7 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `cross_product(w)`, `cross` | `Vector.cross_product(v, w)` | same for 3 dimensions; Ruby's `cross_product(*vs)` for other sizes is missing |
 | `magnitude`, `norm`, `r`, `normalize` | same | same |
 | `angle_with(w)` | same | same, except within about 1 ulp: Sake has no `Math.acos`, so it uses `atan2(sqrt(1 - x²), x)` |
-| `zero?`, `covector`, `to_matrix`, `round(n)`, `==` | same | same |
+| `zero?`, `covector`, `to_matrix`, `round(n = 0)`, `==` | same | same |
 | `Vector.independent?`, `independent?`, `collect!`, `hash`, `coerce` | | missing |
 
 ## Differences and their reasons
@@ -71,9 +71,9 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 - **No `Matrix[...]` or `Vector[...]`.** `T[...]` builds an Array of T, which is a static meaning of the
   syntax, so `Matrix[[1, 2]]` reports `Matrix[]: an element must be Matrix, but is Array`. Construction
   goes through `Matrix.rows` and `Vector.elements`, which Ruby also has.
-- **Fixed arity.** Sake functions take no optional, rest, or keyword parameters. So `Matrix.zero(r, c)`,
-  `Matrix.build(n)`, `Matrix.diagonal(*vs)`, `vstack(*ms)`, `Vector.basis(size:, index:)`, and `each(which)`
-  each use one fixed form, chosen as the most common one.
+- **No rest or keyword parameters.** `Matrix.diagonal(*vs)`, `vstack(*ms)`, `hstack(*ms)`, and
+  `Vector.basis(size:, index:)` each use one fixed form. (Optional positional parameters are there
+  since phase 2: `zero`, `build`, `empty`, `rows`, `round`, `each`, `collect` take Ruby's.)
 - **Scalars go on the right.** `2 * m` is `Integer.*(2, m)`. Integer's `*` does not take a Matrix, and
   there is no `coerce`, so only `m * 2` works.
 - **Exceptions are top-level names.** Ruby's `Matrix::ErrDimensionMismatch` and
@@ -125,3 +125,32 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
   `(Integer|Float).round(x, 10)` instead.
 - Not friction: the earlier author's `case ... else` bug (experiments/.../bug_case_else_not_pruned.sake)
   is fixed now, so `m * v` has the type Vector and `m * m` the type Matrix.
+
+## Phase 2
+
+- Optional parameters restore Ruby's signatures: `Matrix.zero(r, c = r)`, `Matrix.build(r, c = r)`,
+  `Matrix.empty(r = 0, c = 0)`, `Matrix.rows(rows, copy = true)`, `Matrix.round(m, n = 0)`,
+  `Vector.round(v, n = 0)`, and `which = :all` for `each`, `each_with_index`, `collect`, `map`
+  (helpers `Matrix.which?`, `Matrix.check_which`). Tests cover each `which` on a 4x3 matrix
+  (`each`, `each_with_index`, `collect`, and `map` on the transposed 3x4), the bad Symbol, the
+  `copy` flag, and the new defaults.
+- Built-in bug found: `Float.round(x, n)` with `n <= 0` returns a Float where Ruby returns an
+  Integer (`notes/matrix_bug_float_round_digits.sake`). `Matrix.round` works around it with
+  `Float.to_i(Float.round(e, n))` for `n <= 0`.
+- No constant tables or string scans here, so `once` and the position built-ins do not apply.
+  `Math.acos` is still not a built-in (`angle_with` keeps its `atan2` form).
+
+Speed (`experiments/2026-10-03-sakelib-port/phase2/bench_matrix.sake 16`: determinant, inverse, and
+square of a 16x16 Integer matrix; run by `run_digest_zlib_prime_matrix.sh`; CPU s user+sys of one
+`bin/sake --strict` process, 3 runs; local 16-core machine shared with other sessions, load average
+33-38 throughout; "before" is commit af197cd). The changed code is not on this path, so this checks
+only that nothing got slower:
+
+| CPU s, 3 runs | before (af197cd) | after |
+|---|---|---|
+| 0 (start-up, checking) | 0.94 0.91 1.00 | 0.99 0.99 1.02 |
+| 16x16 det, inverse, square | 1.64 1.57 1.56 | 1.66 1.57 1.61 |
+
+Same within the spread.
+
+Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matrix.txt`.

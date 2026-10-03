@@ -1,89 +1,110 @@
 # strscan: StringScanner, a lexical scanner over a String (Ruby's strscan).
 #
-# Positions: `pos` is in bytes, as in Ruby; `charpos` is in characters. Internally both are kept,
-# and the String is sliced by characters, so `set_pos` must land on a character boundary.
-# Matching at the scan pointer: the rest of the String is matched unanchored and the match is
-# accepted only if it starts at 0 (the leftmost match starts at 0 whenever one there exists).
+# Positions: `pos` is in bytes, as in Ruby; `charpos` is in characters. Both are kept, updated
+# together, so `set_pos` must land on a character boundary.
+# Matching at the scan pointer: Regexp.match(re, string, charpos) with re wrapped as \G(?:re) for the
+# anchored scans; a pattern that looks before the pointer (\A, ^, \b, look-behind) is matched on a
+# copy of the rest instead, where it sees the pointer as the start, as in Ruby.
 
 ScanError = Exception.new                # Ruby: StringScanner::Error (alias ScanError)
 
-class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, mend, md, mstr, matched_ok],
-                       default: {cpos: 0, bpos: 0, prev_cpos: 0, prev_bpos: 0, mbeg: 0, mend: 0,
-                                 md: nil, mstr: nil, matched_ok: false}}
+# The last match: its text `mstr` (nil: none), MatchData `md` (nil for a String pattern), end `mend`.
+class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mend, md, mstr],
+                       default: {cpos: 0, bpos: 0, prev_cpos: 0, prev_bpos: 0, mend: 0, md: nil, mstr: nil}}
   include Indexable
   include Bitwise                          # for <<
 
   # --- internal ---
 
   def clear_match(ss)
-    @matched_ok = false
     @md = nil
     @mstr = nil
     nil
   end
 
-  def rest_string(ss) = String.[](@string, @cpos..) || ""
+  def rest_string(ss) = String.byteslice(@string, @bpos, String.bytesize(@string) - @bpos) || ""
 
-  # Record a match found in the rest: `b`/`e` are character offsets in the rest.
-  def set_match(ss, rest, b, e, m, succptr)
+  # Record the match `mstr` spanning characters b...e of the String (absolute); returns the text
+  # from the pointer to e, the result of scan and scan_until.
+  def set_match(ss, b, e, mstr, m, succptr)
     @prev_cpos = @cpos
     @prev_bpos = @bpos
-    @mbeg = @cpos + b
-    @mend = @cpos + e
+    @mend = e
     @md = m
-    @mstr = String.[](rest, b, e - b) || ""
-    @matched_ok = true
-    consumed = String.[](rest, 0, e) || ""
+    @mstr = mstr
+    consumed = b == @cpos ? mstr : String.[](@string, @cpos, e - @cpos) || ""
     if succptr
-      @cpos = @cpos + e
+      @cpos = e
       @bpos = @bpos + String.bytesize(consumed)
     end
     consumed
   end
 
+  # A pattern that looks before the pointer (\A, ^, \b, \G, look-behind) must see the String as
+  # starting at the pointer, as Ruby's does: it is matched on a copy of the rest.
+  def sees_before?(src) = String.match?(src, /\\[AbBG]|(?<!\[)\^|\\\[\^|\(\?<[=!]/)
+
+  # inspect of a pattern => \G(?flags:source), or false: match on the rest instead.
+  def anchored_table = once { Hash[] }
+
+  def anchored(pattern)
+    key = Kernel.inspect(pattern)
+    table = anchored_table
+    found = table[key]
+    return found if found != nil
+    src = Regexp.source(pattern)
+    re = false
+    unless sees_before?(src)
+      flags = String.[](key, (String.rindex(key, "/") || 0) + 1..) || ""
+      on = Array.join(Array.select(String["m", "i", "x"]) { |f| String.include?(flags, f) })
+      off = Array.join(Array.reject(String["m", "i", "x"]) { |f| String.include?(flags, f) })
+      nl = String.include?(flags, "x") ? "\n" : ""
+      re = Regexp.new("\\G(?#{on}#{off == "" ? "" : "-" + off}:#{src}#{nl})")
+    end
+    table[key] = re
+    re
+  end
+
   # Ruby's strscan_do_scan: headonly anchors at the pointer. Returns the String up to the match
   # end; `len` turns it into the byte length (a getstr flag would type every result String | Integer).
   def do_scan(ss, pattern, succptr, headonly)
-    rest = rest_string(ss)
     b = nil
     e = 0
     m = nil
     case pattern
     in String
       if headonly
-        b = 0 if String.start_with?(rest, pattern)
+        b = @cpos if String.byteslice(@string, @bpos, String.bytesize(pattern)) == pattern
       else
-        b = String.index(rest, pattern)
+        b = String.index(@string, pattern, @cpos)
       end
       e = b + String.length(pattern) if b
     in Regexp
-      m = Regexp.match(pattern, rest)
-      if m
-        b = MatchData.begin(m, 0)
-        e = MatchData.end(m, 0)
-        b = nil if headonly && b != 0
+      re = anchored(pattern)
+      if re in Regexp
+        m = Regexp.match(headonly ? re : pattern, @string, @cpos)
+        if m
+          b = headonly ? @cpos : MatchData.begin(m, 0)
+          e = MatchData.end(m, 0)
+        end
+      else
+        # matched on the rest: offsets are moved by the pointer
+        m = Regexp.match(pattern, rest_string(ss))
+        if m
+          b = @cpos + MatchData.begin(m, 0)
+          e = @cpos + MatchData.end(m, 0)
+          b = nil if headonly && b != @cpos
+        end
       end
     end
     if b == nil
       clear_match(ss)
       return nil
     end
-    set_match(ss, rest, b, e, m, succptr)
+    set_match(ss, b, e, m ? MatchData.to_s(m) : String.[](@string, b, e - b) || "", m, succptr)
   end
 
   def len(s) = s ? String.bytesize(s) : nil
-
-  def char_index_of_byte(ss, n)
-    return nil if n < 0
-    i = 0
-    acc = 0
-    String.each_char(@string) do |c|
-      break if acc >= n
-      acc += String.bytesize(c)
-      i += 1
-    end
-    acc == n ? i : nil
-  end
 
   # --- scanning ---
 
@@ -108,12 +129,11 @@ class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, 
   end
 
   def getch(ss)
-    rest = rest_string(ss)
-    if String.empty?(rest)
+    if eos?(ss)
       clear_match(ss)
       return nil
     end
-    set_match(ss, rest, 0, 1, nil, true)
+    set_match(ss, @cpos, @cpos + 1, String.[](@string, @cpos, 1) || "", nil, true)
   end
 
   # Ruby 3.4: an optionally signed decimal Integer at the pointer, or nil.
@@ -124,14 +144,13 @@ class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, 
 
   def peek(ss, len)
     raise ArgumentError, "negative string size (or size too big)" if len < 0
-    bytes = Array.drop(String.bytes(@string), @bpos)
-    Array.pack(Array.take(bytes, len), "C*").String.force_encoding("UTF-8")
+    String.byteslice(@string, @bpos, len) || ""
   end
 
   def peek_byte(ss) = String.getbyte(@string, @bpos)
 
   def unscan(ss)
-    raise ScanError, "unscan failed: previous match record not exist" unless @matched_ok
+    raise ScanError, "unscan failed: previous match record not exist" if @mstr == nil
     @cpos = @prev_cpos
     @bpos = @prev_bpos
     clear_match(ss)
@@ -150,14 +169,15 @@ class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, 
     size = String.bytesize(@string)
     b = n < 0 ? n + size : n
     raise RangeError, "index out of range" if b < 0 || b > size
-    i = char_index_of_byte(ss, b)
-    raise ArgumentError, "position #{b} is inside a character" unless i
+    # a prefix cut inside a character counts its broken bytes as characters, so i chars are longer
+    i = String.length(String.byteslice(@string, 0, b) || "")
+    raise ArgumentError, "position #{b} is inside a character" unless String.bytesize(String.[](@string, 0, i) || "") == b
     @cpos = i
     @bpos = b
     n
   end
 
-  def eos?(ss) = @cpos >= String.length(@string)
+  def eos?(ss) = @bpos >= String.bytesize(@string)
   def rest?(ss) = !eos?(ss)
   def beginning_of_line?(ss) = @cpos == 0 || String.[](@string, @cpos - 1) == "\n"
   def bol?(ss) = beginning_of_line?(ss)
@@ -196,11 +216,11 @@ class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, 
   def <<(ss, s) = concat(ss, s)
 
   def rest(ss) = rest_string(ss)
-  def rest_size(ss) = String.bytesize(rest_string(ss))
+  def rest_size(ss) = String.bytesize(@string) - @bpos
 
   # --- the last match ---
 
-  def matched?(ss) = @matched_ok
+  def matched?(ss) = @mstr != nil
   def matched(ss) = @mstr
 
   def matched_size(ss)
@@ -208,11 +228,14 @@ class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, 
     s ? String.bytesize(s) : nil
   end
 
-  def pre_match(ss) = @matched_ok ? String.[](@string, 0, @mbeg) : nil
-  def post_match(ss) = @matched_ok ? String.[](@string, @mend..) : nil
+  def pre_match(ss)
+    s = @mstr
+    s ? String.[](@string, 0, @mend - String.length(s)) : nil
+  end
+  def post_match(ss) = @mstr != nil ? String.[](@string, @mend..) : nil
 
   def [](ss, i)
-    return nil unless @matched_ok
+    return nil if @mstr == nil
     m = @md
     if m
       MatchData.[](m, i)
@@ -224,13 +247,13 @@ class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, 
   end
 
   def captures(ss)
-    return nil unless @matched_ok
+    return nil if @mstr == nil
     m = @md
     m ? MatchData.captures(m) : Array[]
   end
 
   def size(ss)
-    return nil unless @matched_ok
+    return nil if @mstr == nil
     m = @md
     m ? Array.size(MatchData.to_a(m)) : 1
   end

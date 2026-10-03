@@ -1,0 +1,553 @@
+# date: Ruby's Date (require "date"), ported to Sake.
+#
+# A Date is a day number (the Julian Day Number, `jd`) with its civil year, month and day cached.
+# The calendar is Ruby's default (Date::ITALY): Julian before 1582-10-15, Gregorian from then on.
+# `Date.civil(y, m, d)` is Ruby's `Date.new(y, m, d)`: `Date.new` is the Struct's raw constructor
+# (jd, year, month, day), which a Sake type cannot redefine.
+# Date - Date is a Rational of days, as in Ruby.
+
+DateError = Exception.new
+
+class Date < {reader: [jd, year, month, day]}
+  include Arithmetic
+  include Comparable
+  include Bitwise
+
+  # ---- constructors ----
+
+  def civil(y, m, d)
+    jd = DateCore.valid_civil_jd(y, m, d)
+    raise DateError, "invalid date" if jd == nil
+    jd(jd)
+  end
+
+  def ordinal(y, yd)
+    jd = DateCore.valid_ordinal_jd(y, yd)
+    raise DateError, "invalid date" if jd == nil
+    jd(jd)
+  end
+
+  def commercial(y, w, wd)
+    jd = DateCore.valid_commercial_jd(y, w, wd)
+    raise DateError, "invalid date" if jd == nil
+    jd(jd)
+  end
+
+  # Date.jd(n) makes a Date; Date.jd(date) reads its day number (Ruby's Date#jd).
+  def jd(x)
+    case x
+    in Integer
+      y, m, d = DateCore.jd_to_civil(x)
+      Date.new(x, y, m, d)
+    in Date then Date.get_jd(x)
+    end
+  end
+
+  def today
+    t = Time.now
+    civil(Time.year(t), Time.month(t), Time.day(t))
+  end
+
+  # ---- validity ----
+
+  def valid_date?(y, m, d) = DateCore.valid_civil_jd(y, m, d) != nil
+  def valid_civil?(y, m, d) = DateCore.valid_civil_jd(y, m, d) != nil
+  def valid_ordinal?(y, yd) = DateCore.valid_ordinal_jd(y, yd) != nil
+  def valid_commercial?(y, w, wd) = DateCore.valid_commercial_jd(y, w, wd) != nil
+  def valid_jd?(n) = (n in Integer)
+
+  def gregorian_leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+  def julian_leap?(y) = y % 4 == 0
+
+  # Date.leap?(year) is proleptic Gregorian; Date.leap?(date) follows the date's calendar.
+  def leap?(x)
+    case x
+    in Integer then gregorian_leap?(x)
+    in Date
+      y = Date.get_year(x)
+      Date.get_jd(x) < DateCore.italy ? julian_leap?(y) : gregorian_leap?(y)
+    end
+  end
+
+  # ---- names (Ruby's Date::MONTHNAMES and friends, which are constants there) ----
+
+  def monthnames = Array[nil, *DateCore.month_names]
+  def abbr_monthnames = Array[nil, *Array.map(DateCore.month_names) { |s| String.[](s, 0, 3) || "" }]
+  def daynames = Array[*DateCore.day_names]
+  def abbr_daynames = Array.map(DateCore.day_names) { |s| String.[](s, 0, 3) || "" }
+
+  # ---- fields ----
+
+  def year(d) = @year
+  def month(d) = @month
+  def mon(d) = @month
+  def day(d) = @day
+  def mday(d) = @day
+  def wday(d) = (@jd + 1) % 7
+  def yday(d) = @jd - DateCore.civil_to_jd(@year, 1, 1) + 1
+  def mjd(d) = @jd - 2400001
+  def ajd(d) = Rational(@jd * 2 - 1, 2)
+  def ld(d) = @jd - 2299160
+  def start(d) = 2299161.0
+  def cwyear(d) = DateCore.jd_to_commercial(@jd)[0]
+  def cweek(d) = DateCore.jd_to_commercial(@jd)[1]
+  def cwday(d)
+    w = wday(d)
+    w == 0 ? 7 : w
+  end
+  def julian?(d) = @jd < DateCore.italy
+  def gregorian?(d) = @jd >= DateCore.italy
+  def sunday?(d) = wday(d) == 0
+  def monday?(d) = wday(d) == 1
+  def tuesday?(d) = wday(d) == 2
+  def wednesday?(d) = wday(d) == 3
+  def thursday?(d) = wday(d) == 4
+  def friday?(d) = wday(d) == 5
+  def saturday?(d) = wday(d) == 6
+
+  # ---- arithmetic ----
+
+  def +(a, n) = jd(@jd + n)
+
+  def -(a, b)
+    case b
+    in Integer then jd(@jd - b)
+    in Date then Rational(@jd - Date.get_jd(b), 1)
+    end
+  end
+
+  def <=>(a, b) = @jd <=> Date.get_jd(b)
+
+  # d >> n: n months later; a day past the month's end becomes its last day.
+  def >>(d, n)
+    t = @year * 12 + (@month - 1) + n
+    y = t / 12
+    m = t % 12 + 1
+    dd = @day
+    while true
+      jd = DateCore.valid_civil_jd(y, m, dd)
+      return jd(jd) if jd != nil
+      dd -= 1
+      raise DateError, "invalid date" if dd < 1
+    end
+  end
+
+  def <<(d, n) = d >> -n
+
+  def next_day(d) = d + 1
+  def prev_day(d) = d - 1
+  def succ(d) = d + 1
+  def next(d) = d + 1
+  def next_month(d) = d >> 1
+  def prev_month(d) = d << 1
+  def next_year(d) = d >> 12
+  def prev_year(d) = d << 12
+
+  # ---- iteration ----
+
+  def step(d, limit, by)
+    raise ArgumentError, "step can't be 0" if by == 0
+    cur = d
+    if by > 0
+      while cur <= limit
+        yield(cur)
+        cur = cur + by
+      end
+    else
+      while cur >= limit
+        yield(cur)
+        cur = cur + by
+      end
+    end
+    d
+  end
+
+  def upto(d, max)
+    cur = d
+    while cur <= max
+      yield(cur)
+      cur = cur + 1
+    end
+    d
+  end
+
+  def downto(d, min)
+    cur = d
+    while cur >= min
+      yield(cur)
+      cur = cur - 1
+    end
+    d
+  end
+
+  # ---- formatting ----
+
+  def to_s(d) = "#{DateCore.year_str(@year)}-#{DateCore.pad2(@month)}-#{DateCore.pad2(@day)}"
+  def inspect(d) = "#<Date: #{to_s(d)} ((#{@jd}j,0s,0n),+0s,2299161j)>"
+
+  # Date.iso8601(string) parses; Date.iso8601(date) formats (Ruby's Date#iso8601).
+  def iso8601(x)
+    case x
+    in String then DateCore.parse_iso8601(x)
+    in Date then to_s(x)
+    end
+  end
+
+  def xmlschema(d) = to_s(d)
+  def rfc3339(d) = "#{to_s(d)}T00:00:00+00:00"
+  def httpdate(d) = strftime(d, "%a, %d %b %Y 00:00:00 GMT")
+  def rfc2822(d) = strftime(d, "%a, %-d %b %Y 00:00:00 +0000")
+  def to_date(d) = d
+  def to_time(d) = Time.new(@year, @month, @day)
+
+  def strftime(d, fmt)
+    out = ""
+    rest = fmt
+    while true
+      i = String.index(rest, "%")
+      if i == nil
+        out += rest
+        break
+      end
+      out += String.[](rest, 0, i) || ""
+      rest = String.[](rest, i, String.size(rest) - i) || ""
+      m = String.match(rest, /\A%([-_0^#]*)(\d*)(:{0,2}[a-zA-Z+%])/)
+      if m == nil
+        out += "%"
+        rest = String.[](rest, 1, String.size(rest) - 1) || ""
+        next
+      end
+      flags = m[1]
+      width = m[2]
+      conv = m[3]
+      next if flags == nil || width == nil || conv == nil
+      out += DateCore.directive(d, flags, width == "" ? -1 : String.to_i(width), conv)
+      rest = MatchData.post_match(m)
+    end
+    out
+  end
+
+  # ---- parsing ----
+
+  def parse(s) = DateCore.parse(s)
+
+  def strptime(s, fmt)
+    st = DateCore.scan_format(s, fmt, [0], Hash[])
+    raise DateError, "invalid date" if st == nil
+    DateCore.from_fields(st)
+  end
+end
+
+# Helpers of Date (Ruby keeps them in C); not part of Ruby's API.
+module DateCore
+  module_function
+
+  def italy = 2299161
+
+  def month_names = String["January", "February", "March", "April", "May", "June", "July",
+                           "August", "September", "October", "November", "December"]
+  def day_names = String["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+  def pad2(n) = String.rjust(Integer.to_s(n), 2, "0")
+
+  def year_str(y)
+    s = String.rjust(Integer.to_s(Integer.abs(y)), 4, "0")
+    y < 0 ? "-" + s : s
+  end
+
+  # Ruby's c_civil_to_jd with integer arithmetic (Ruby's floor of 365.25 and 30.6001 products).
+  def civil_to_jd(y, m, d)
+    if m <= 2
+      y -= 1
+      m += 12
+    end
+    a = y / 100
+    b = 2 - a + a / 4
+    jd = (1461 * (y + 4716)) / 4 + (306001 * (m + 1)) / 10000 + d + b - 1524
+    jd -= b if jd < italy
+    jd
+  end
+
+  def jd_to_civil(jd)
+    a = jd
+    if jd >= italy
+      x = (4 * jd - 7468865) / 146097
+      a = jd + 1 + x - x / 4
+    end
+    b = a + 1524
+    c = (20 * b - 2442) / 7305
+    dd = (1461 * c) / 4
+    e = ((b - dd) * 10000) / 306001
+    dom = b - dd - (306001 * e) / 10000
+    if e <= 13
+      [c - 4716, e - 1, dom]
+    else
+      [c - 4715, e - 13, dom]
+    end
+  end
+
+  # The jd of y-m-d, or nil. Negative m and d count from the end, as in Ruby.
+  def valid_civil_jd(y, m, d)
+    m += 13 if m < 0
+    return nil if m < 1 || m > 12
+    if d < 0
+      ld = last_day(y, m)
+      d = ld + d + 1
+    end
+    return nil if d < 1
+    jd = civil_to_jd(y, m, d)
+    jd_to_civil(jd) == [y, m, d] ? jd : nil
+  end
+
+  def last_day(y, m)
+    d = 31
+    d -= 1 while jd_to_civil(civil_to_jd(y, m, d)) != [y, m, d]
+    d
+  end
+
+  def valid_ordinal_jd(y, yd)
+    first = civil_to_jd(y, 1, 1)
+    last = civil_to_jd(y, 12, 31)
+    yd = last - first + 2 + yd if yd < 0
+    return nil if yd < 1
+    jd = first + yd - 1
+    jd <= last ? jd : nil
+  end
+
+  def commercial_to_jd(y, w, d)
+    rjd2 = civil_to_jd(y, 1, 1) + 3
+    rjd2 - (rjd2 % 7) + 7 * (w - 1) + (d - 1)
+  end
+
+  def jd_to_commercial(jd)
+    a = jd_to_civil(jd - 3)[0]
+    y = jd >= commercial_to_jd(a + 1, 1, 1) ? a + 1 : a
+    w = 1 + (jd - commercial_to_jd(y, 1, 1)) / 7
+    d = (jd + 1) % 7
+    [y, w, d == 0 ? 7 : d]
+  end
+
+  def valid_commercial_jd(y, w, d)
+    d += 8 if d < 0
+    return nil if d < 1 || d > 7
+    if w < 0
+      nw = jd_to_commercial(commercial_to_jd(y + 1, 1, 1) - 7)[1]
+      w = nw + w + 1
+    end
+    jd = commercial_to_jd(y, w, d)
+    jd_to_commercial(jd) == [y, w, d] ? jd : nil
+  end
+
+  # ---- strftime ----
+
+  def num(v, flags, width, defw, defpad)
+    s = Integer.to_s(Integer.abs(v))
+    return (v < 0 ? "-" + s : s) if String.include?(flags, "-")
+    pad = defpad
+    pad = " " if String.include?(flags, "_")
+    pad = "0" if String.include?(flags, "0")
+    w = width < 0 ? defw : width
+    if v < 0
+      "-" + String.rjust(s, w - 1, pad)
+    else
+      String.rjust(s, w, pad)
+    end
+  end
+
+  # %Y and %G: four digits after the sign by default ("-0001"), as Ruby.
+  def year_num(y, flags, width)
+    return "-" + String.rjust(Integer.to_s(-y), 4, "0") if width < 0 && y < 0 && !String.include?(flags, "-")
+    num(y, flags, width, 4, "0")
+  end
+
+  def text(s, flags, width)
+    s = String.upcase(s) if String.include?(flags, "^") || String.include?(flags, "#")
+    return s if String.include?(flags, "-") || width < 0
+    String.rjust(s, width, String.include?(flags, "0") ? "0" : " ")
+  end
+
+  def directive(d, flags, width, conv)
+    y = Date.get_year(d)
+    jd = Date.get_jd(d)
+    case conv
+    in "Y" then year_num(y, flags, width)
+    in "C" then num(y / 100, flags, width, 2, "0")
+    in "y" then num(y % 100, flags, width, 2, "0")
+    in "m" then num(Date.get_month(d), flags, width, 2, "0")
+    in "d" then num(Date.get_day(d), flags, width, 2, "0")
+    in "e" then num(Date.get_day(d), flags, width, 2, " ")
+    in "j" then num(Date.yday(d), flags, width, 3, "0")
+    in "H" | "M" | "S" then num(0, flags, width, 2, "0")
+    in "I" then num(12, flags, width, 2, "0")
+    in "l" then num(12, flags, width, 2, " ")
+    in "L" then num(0, flags, width, width < 0 ? 3 : width, "0")
+    in "N" then num(0, flags, width, width < 0 ? 9 : width, "0")
+    in "s" then num((jd - 2440588) * 86400, flags, width, 1, "0")
+    in "Q" then num((jd - 2440588) * 86400000, flags, width, 1, "0")
+    in "u" then num(Date.cwday(d), flags, width, 1, "0")
+    in "w" then num(Date.wday(d), flags, width, 1, "0")
+    in "U" then num((Date.yday(d) - 1 + 7 - Date.wday(d)) / 7, flags, width, 2, "0")
+    in "W" then num((Date.yday(d) - 1 + 7 - (Date.wday(d) + 6) % 7) / 7, flags, width, 2, "0")
+    in "V" then num(Date.cweek(d), flags, width, 2, "0")
+    in "G" then year_num(Date.cwyear(d), flags, width)
+    in "g" then num(Date.cwyear(d) % 100, flags, width, 2, "0")
+    in "A" then text(day_names[Date.wday(d)] || "", flags, width)
+    in "a" then text(String.[](day_names[Date.wday(d)] || "", 0, 3) || "", flags, width)
+    in "B" then text(month_names[Date.get_month(d) - 1] || "", flags, width)
+    in "b" | "h" then text(String.[](month_names[Date.get_month(d) - 1] || "", 0, 3) || "", flags, width)
+    in "p" then text(String.include?(flags, "#") ? "am" : "AM", "", width)
+    in "P" then text("am", flags, width)
+    in "z" then text("+0000", flags, width)
+    in ":z" | "Z" then text("+00:00", flags, width)
+    in "::z" then text("+00:00:00", flags, width)
+    in "n" then "\n"
+    in "t" then "\t"
+    in "%" then text("%", flags, width)
+    in "F" then text(Date.strftime(d, "%Y-%m-%d"), flags, width)
+    in "D" | "x" then text(Date.strftime(d, "%m/%d/%y"), flags, width)
+    in "T" | "X" then text("00:00:00", flags, width)
+    in "R" then text("00:00", flags, width)
+    in "r" then text("12:00:00 AM", flags, width)
+    in "c" then text(Date.strftime(d, "%a %b %e %H:%M:%S %Y"), flags, width)
+    in "v" then text(Date.strftime(d, "%e-%^b-%Y"), flags, width)
+    in "+" then text(Date.strftime(d, "%a %b %e %H:%M:%S %Z %Y"), flags, width)
+    else
+      "%#{flags}#{width < 0 ? "" : Integer.to_s(width)}#{conv}"
+    end
+  end
+
+  # ---- parsing ----
+
+  def month_index(name)
+    key = String.downcase(String.[](name, 0, 3) || "")
+    i = Array.index(Array.map(month_names) { |s| String.downcase(String.[](s, 0, 3) || "") }, key)
+    i == nil ? nil : i + 1
+  end
+
+  def day_index(name)
+    key = String.downcase(String.[](name, 0, 3) || "")
+    Array.index(Array.map(day_names) { |s| String.downcase(String.[](s, 0, 3) || "") }, key)
+  end
+
+  # Two-digit years in Date.parse: 69..99 are 1900s, 00..68 are 2000s (Ruby's comp: true).
+  def comp_year(ys)
+    y = String.to_i(ys)
+    return y if String.size(ys) > 2 || String.start_with?(ys, "-") || String.start_with?(ys, "+")
+    y >= 69 ? y + 1900 : y + 2000
+  end
+
+  def month_re = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?"
+
+  def parse(s)
+    m = String.match(s, /([-+]?\d{4,})-(\d{1,2})-(\d{1,2})/)
+    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    m = String.match(s, /(\d{4})\/(\d{1,2})\/(\d{1,2})/)
+    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    m = String.match(s, /\b(\d{4})(\d{2})(\d{2})\b/)
+    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    m = String.match(s, Regexp.new("(?i)\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+#{month_re},?(?:\\s+([-+]?\\d+))?"))
+    return civil_named(m[3], m[2] || "", m[1] || "") if m
+    m = String.match(s, Regexp.new("(?i)\\b#{month_re}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?(?:\\s+([-+]?\\d+))?"))
+    return civil_named(m[3], m[1] || "", m[2] || "") if m
+    raise DateError, "invalid date"
+  end
+
+  def civil_named(ys, mon, ds)
+    mi = month_index(mon)
+    raise DateError, "invalid date" if mi == nil
+    y = ys == nil ? Date.year(Date.today) : comp_year(ys)
+    Date.civil(y, mi, String.to_i(ds))
+  end
+
+  def parse_iso8601(s)
+    m = String.match(s, /\A\s*([-+]?\d{4,})-(\d{2})-(\d{2})(?:T\S*)?\s*\z/)
+    m ||= String.match(s, /\A\s*([-+]?\d{4})(\d{2})(\d{2})(?:T\S*)?\s*\z/)
+    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    m = String.match(s, /\A\s*([-+]?\d{4,})-?(\d{3})\s*\z/)
+    return Date.ordinal(String.to_i(m[1] || ""), String.to_i(m[2] || "")) if m
+    m = String.match(s, /\A\s*([-+]?\d{4,})-W(\d{2})-(\d)\s*\z/)
+    m ||= String.match(s, /\A\s*([-+]?\d{4})W(\d{2})(\d)\s*\z/)
+    return Date.commercial(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    raise DateError, "invalid date"
+  end
+
+  # ---- strptime ----
+
+  # Reads `s` from st[0] (the position) along `fmt`, storing fields in `h`; returns h, or nil on a mismatch.
+  def scan_format(s, fmt, st, h)
+    i = 0
+    n = String.size(fmt)
+    while i < n
+      c = fmt[i] || ""
+      if c == "%" && i + 1 < n
+        conv = fmt[i + 1] || ""
+        i += 2
+        ok = scan_directive(s, conv, st, h)
+        return nil unless ok
+      elsif String.match?(c, /\s/)
+        i += 1
+        skip(s, st, /\A\s*/)
+      else
+        i += 1
+        return nil unless skip(s, st, Regexp.new("\\A" + Regexp.escape(c)))
+      end
+    end
+    h
+  end
+
+  # Advances st[0] past a match of `re` (anchored); the matched text, or nil.
+  def skip(s, st, re)
+    pos = st[0]
+    rest = String.[](s, pos, String.size(s) - pos) || ""
+    m = String.match(rest, re)
+    return nil if m == nil
+    t = MatchData.to_s(m)
+    st[0] = pos + String.size(t)
+    t
+  end
+
+  def scan_directive(s, conv, st, h)
+    case conv
+    in "Y" then put(h, :year, skip(s, st, /\A[-+]?\d+/))
+    in "y"
+      t = skip(s, st, /\A\d{1,2}/)
+      return false if t == nil
+      y = String.to_i(t)
+      h[:year] = y >= 69 ? y + 1900 : y + 2000
+      true
+    in "m" then put(h, :mon, skip(s, st, /\A\d{1,2}/))
+    in "d" | "e" then put(h, :mday, skip(s, st, /\A ?\d{1,2}/))
+    in "j" then put(h, :yday, skip(s, st, /\A\d{1,3}/))
+    in "b" | "B" | "h"
+      t = skip(s, st, Regexp.new("\\A(?i)" + month_re))
+      return false if t == nil
+      h[:mon] = month_index(t) || 0
+      true
+    in "a" | "A"
+      t = skip(s, st, /\A(?i)(sun|mon|tue|wed|thu|fri|sat)[a-z]*/)
+      t != nil
+    in "u" | "w" then skip(s, st, /\A\d/) != nil
+    in "F" then scan_format(s, "%Y-%m-%d", st, h) != nil
+    in "D" | "x" then scan_format(s, "%m/%d/%y", st, h) != nil
+    in "n" | "t" then skip(s, st, /\A\s*/) != nil
+    in "%" then skip(s, st, /\A%/) != nil
+    else
+      false
+    end
+  end
+
+  def put(h, key, t)
+    return false if t == nil
+    h[key] = String.to_i(t)
+    true
+  end
+
+  def from_fields(h)
+    raise DateError, "invalid date" if Hash.empty?(h)
+    y = Hash.fetch(h, :year, nil)
+    y = Date.year(Date.today) if y == nil
+    yd = Hash.fetch(h, :yday, nil)
+    return Date.ordinal(y, yd) if yd != nil
+    Date.civil(y, Hash.fetch(h, :mon, 1), Hash.fetch(h, :mday, 1))
+  end
+end

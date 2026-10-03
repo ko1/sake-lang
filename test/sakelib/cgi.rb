@@ -28,3 +28,11 @@ p(CGI.unescapeHTML("&amp &AMP; &am; &#; &#x; &#xg; &#-1; &nbsp; & alone"))
 p(CGI.unescapeHTML("&#x10FFFE;|&#x10FFFF;|&#1114111;|&#x110000;|&#99999999999999999999;"))
 p(CGI.unescapeHTML("&amp;lt;"))
 p(CGI.unescape_html(CGI.escapeHTML("<&>\"'")))
+
+# the optional encoding of the result
+b = CGI.unescape("%E6%97%A5+x", "ASCII-8BIT")
+p(b)
+p(b.encoding.to_s)
+p(CGI.unescape("%E6%97%A5", "UTF-8"))
+p(CGI.unescapeURIComponent("%E6%97%A5+", "ASCII-8BIT"))
+p(CGI.unescape_uri_component("%41", "UTF-8"))

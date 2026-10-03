@@ -51,7 +51,7 @@ includes TSort is fine.
 | `obj.tsort_each { }` | `T.tsort_each(obj) { }` | same |
 | `obj.strongly_connected_components` | `T.strongly_connected_components(obj)` | same |
 | `obj.each_strongly_connected_component { }` | `T.each_strongly_connected_component(obj) { }` | same |
-| `obj.each_strongly_connected_component_from(n, id_map = {}, stack = []) { }` | `T.each_strongly_connected_component_from(obj, n) { }` | differs: no id_map/stack arguments (no optional parameters); returns the minimum id as Ruby |
+| `obj.each_strongly_connected_component_from(n, id_map = {}, stack = []) { }` | `T.each_strongly_connected_component_from(obj, n, id_map = Hash[], stack = Array[]) { }` | same (returns the minimum id as Ruby) |
 | `obj.tsort_each` (no block → Enumerator) | — | missing (no Enumerator, no `block_given?`) |
 | `TSort::Cyclic` | `TSortCyclic` | differs: name (no nested names) |
 | `TSort.tsort(each_node, each_child)` and the other module functions on callables | `TSort.tsort_hash(h)`, `strongly_connected_components_hash`, `tsort_each_hash`, `each_strongly_connected_component_hash` | differs: a Hash graph instead of two callables |
@@ -63,15 +63,21 @@ includes TSort is fine.
 
 - A self-loop (`{a: [:a]}`) is a one-node component, so `tsort` does not raise for it: Ruby's
   behavior, kept (the test checks it).
-- Recursion: a 3000-deep chain works; 5000 raises `SystemStackError` (Sake's limit of 10,000 calls,
+- **When components are yielded** (phase 2): after the traversal from each start node ends, not the
+  moment each is found as in Ruby. Ruby passes `{ |c| yield c }` down every recursion level, so each
+  component climbs back up through all of them; Sake does the same (blocks are not values) at ~10 µs a
+  level, which made a 3000-node DAG take 24 s. Components are now collected in an Array and yielded by
+  the outer loop. Same components, same order; differs only if `tsort_each_child` has side effects
+  that the yield block observes, or the block stops the traversal early (`break`).
+- Recursion: a 3000-deep chain works (4500 too after phase 2); 5000 raises `SystemStackError` (Sake's limit of 10,000 calls,
   ~3 calls per level). Ruby 4.0.2's own TSort already fails at 3000 (`stack level too deep`), so
   this is no worse than Ruby. An iterative version would need the children of a node as an Array
   (one `tsort_each_child` call per node), which is possible but was not needed.
 
 ## Built-ins Sake lacks
 
-None for the algorithm. Language-level: first-class blocks (Ruby's callable form), optional
-parameters, and Enumerators (`tsort_each` without a block).
+None for the algorithm. Language-level: first-class blocks (Ruby's callable form) and Enumerators
+(`tsort_each` without a block). (Optional parameters: added, used in phase 2.)
 
 ## Friction
 
@@ -89,3 +95,15 @@ parameters, and Enumerators (`tsort_each` without a block).
 - What felt good: the required-function stubs (`def tsort_each_child(g, node) =
   raise(NotImplementedError)`) worked with yielding includers, and `class Hash; include TSort`
   worked, so Ruby's documented usage carried over directly. The first version ran under `--strict`.
+
+## Phase 2
+
+- `each_strongly_connected_component_from(g, node, id_map = Hash[], stack = Array[])` as in Ruby
+  (phase 1 had no id_map/stack). The test calls it twice with a shared `id_map`/`stack` and prints them.
+- The recursion collects components into an Array instead of chaining a yield block through every
+  level (see "When components are yielded").
+- No tables, no string scans.
+- **Speed** (`experiments/2026-10-03-sakelib-port/phase2/bench_tsort.sake`: `TSort.tsort_hash` of a
+  3000-node DAG, each node pointing at the next 3 (depth 3000); `bin/sake --strict`, CPU user+sys,
+  3 runs, shared machine at load ~35 on 16 cores): before 24.36 / 24.00 / 23.91 s, after 2.44 / 2.43 / 2.53 s.
+  The before time was the O(depth) yield chain: each of the 3000 components went up ~3000 block levels.

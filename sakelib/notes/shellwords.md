@@ -19,17 +19,15 @@ join-then-split round trips. Its output is identical to `shellwords.rb`.
 
 ## What differs from Ruby, and why
 
-- **Scanning.** Ruby uses `line.scan(re)` with `\G` and `$~.begin(0)`. Sake has no `\G` position and
-  no `$~`, and `String.scan` returns only the groups. Each step matches the same pattern, anchored with
-  `\A`, against `line[pos, n - pos]` and advances by the length of the match. The result is the same,
-  but each step copies the rest of the line.
+- **Scanning.** Ruby uses `line.scan(re)` with `\G` and `$~.begin(0)`. Sake's `String.scan` returns
+  only the groups and there is no `$~`, so the loop calls `String.match(line, re, pos)` with Ruby's
+  `\G` pattern unchanged and moves to `MatchData.end(m, 0)`.
 - `Shellwords.split` returns a `String[]` (an Array of String), so callers get Strings with no checks.
 
 ## Built-ins needed but missing
 
-- `String.match(s, re, pos)` or `Regexp.match(re, s, pos)` with a start position (Ruby's optional
-  `pos`), or `String.scan` with a block that receives the MatchData. Either would avoid copying the
-  rest of the line at every word, and the first would keep Ruby's `\G` pattern unchanged.
+- None (`String.match(s, re, pos)`, requested in phase 1, now exists). `String.scan` with a block
+  receiving the MatchData would make the loop Ruby's exactly.
 
 ## Friction
 
@@ -37,3 +35,13 @@ join-then-split round trips. Its output is identical to `shellwords.rb`.
    `"foo\\\nbar"` split to `["foo\nbar"]` instead of Ruby's `["foo\\\nbar"]`. Comparing the outputs
    caught it.
 2. No static reports. The library passed `--strict=3` on the first run.
+
+## Phase 2
+
+- No names to restore (Ruby's Shellwords has no optional arguments).
+- `shellsplit` matches Ruby's `\G` pattern at a position (`String.match(line, re, pos)`) instead of
+  an `\A` pattern on a copy of the rest of the line; the five-way `if` for the piece became Ruby's
+  `word || sq || (dq && ...) || esc.gsub(...)`.
+- Speed (`phase2/bench_shellwords.sake`: split a 2000-word line, join, split again; CPU s of the
+  whole `bin/sake --strict` run, 3 runs, load about 37 on 16 cores): before 2.76 / 2.74 / 2.86,
+  after 2.35 / 2.29 / 2.33. The copies were cheap next to the interpreter's cost per word.

@@ -3,9 +3,9 @@
 # JSON values are plain Sake values, as in Ruby: object -> Hash (String keys, or Symbol keys with
 # symbolize_names), array -> Array, string -> String, number -> Integer or Float, true/false, null -> nil.
 #
-# Keyword options become one Record argument of a `_with` operation:
+# Options are a Record as the optional second argument (Ruby's opts Hash):
 #   Ruby  JSON.parse(s, symbolize_names: true)
-#   Sake  JSON.parse_with(s, {symbolize_names: true})
+#   Sake  JSON.parse(s, {symbolize_names: true})
 # Ruby's JSON::ParserError / JSON::GeneratorError are JSONParserError / JSONGeneratorError (no nested
 # names). JSON::NestingError is raised as JSONParserError / JSONGeneratorError with Ruby's message.
 #
@@ -20,7 +20,10 @@ end
 # ---- parser ----
 
 class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_nesting], accessor: [pos, depth]}
-  def peek(ps) = @pos < @len ? @src[@pos] : nil
+  # Positions are byte offsets (`len` is the byte size), so reading at a position costs O(1) on
+  # non-ASCII text. A read gives one byte as a String, or nil past the end.
+  def byte_at(ps, i) = i < @len ? String.byteslice(@src, i, 1) : nil
+  def peek(ps) = byte_at(ps, @pos)
 
   def ws?(c) = c == " " || c == "\n" || c == "\t" || c == "\r"
 
@@ -29,21 +32,18 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
   def fail_at(ps, msg, at)
     frag = "EOF"
     if at < @len
-      c0 = @src[at]
-      if ws?(c0)
-        frag = @src[at, @len - at] || ""
+      rest = String.byteslice(@src, at, @len - at) || ""
+      if ws?(byte_at(ps, at))
+        frag = rest
       else
         chars = String[]
         bytes = 0
-        i = at
-        while i < @len
-          c = @src[i]
-          break if c == nil || ws?(c) || c == "\0"
+        Array.each(String.chars(rest[0, 33] || "")) do |c|
+          break if ws?(c) || c == "\0"
           b = String.bytesize(c)
           break if bytes + b > 32
           Array.push(chars, c)
           bytes += b
-          i += 1
         end
         last = Array.last(chars)
         Array.pop(chars) if last && String.bytesize(last) > 1
@@ -54,11 +54,11 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
     k = String.index(msg, "%s")
     text = k ? "#{msg[0, k]}#{frag}#{msg[k + 2, String.size(msg)]}" : msg
     # Ruby counts bytes back from the cursor; a cursor on "\n" is column 0 of the next line
-    prefix = @src[0, at] || ""
+    prefix = String.byteslice(@src, 0, at) || ""
     line = String.count(prefix, "\n") + 1
     nl = String.rindex(prefix, "\n")
     column = String.bytesize(nl ? prefix[nl + 1, String.size(prefix)] || "" : prefix) + 1
-    if @src[at] == "\n"
+    if byte_at(ps, at) == "\n"
       line += 1
       column = 0
     end
@@ -70,29 +70,23 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
   # Whitespace and comments (json 2.20 still accepts /* */ and // comments by default).
   def skip_ws(ps)
     while @pos < @len
-      c = @src[@pos]
-      if ws?(c)
-        @pos += 1
-      elsif c == "/"
-        skip_comment(ps)
-      else
-        break
-      end
+      @pos = String.byteindex(@src, /[^ \t\r\n]/, @pos) || @len
+      break unless byte_at(ps, @pos) == "/"
+      skip_comment(ps)
     end
     ps
   end
 
   def skip_comment(ps)
     start = @pos
-    n = @src[@pos + 1]
+    n = byte_at(ps, @pos + 1)
     if n == "/"
-      # String.index has no start offset: search the rest
-      nl = String.index(@src[@pos, @len - @pos] || "", "\n")
-      @pos = nl ? @pos + nl + 1 : @len
+      nl = String.byteindex(@src, "\n", @pos)
+      @pos = nl ? nl + 1 : @len
     elsif n == "*"
-      close = String.index(@src[@pos + 2, @len - @pos - 2] || "", "*/")
+      close = String.byteindex(@src, "*/", @pos + 2)
       fail_at(ps, "unterminated comment, expected closing '*/'", start) unless close
-      @pos += close + 4
+      @pos = close + 2
     else
       fail_at(ps, "unexpected token %s", start)
     end
@@ -123,13 +117,14 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
       fail(ps, "unexpected token %s") unless @allow_nan
       keyword(ps, "Infinity", 1.0 / 0.0)
     in "-"
-      if @allow_nan && @src[@pos + 1] == "I"
+      if @allow_nan && byte_at(ps, @pos + 1) == "I"
         keyword(ps, "-Infinity", -1.0 / 0.0)
       else
         number(ps)
       end
     else
-      if String.match?(c, /\A[0-9]\z/)
+      b = String.getbyte(@src, @pos) || 0
+      if b >= 48 && b <= 57
         number(ps)
       elsif c == "\0"
         fail(ps, "unexpected NULL byte: %s")
@@ -141,7 +136,7 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
 
   def keyword(ps, word, v)
     n = String.size(word)
-    fail(ps, "unexpected token %s") unless @src[@pos, n] == word
+    fail(ps, "unexpected token %s") unless String.byteslice(@src, @pos, n) == word
     @pos += n
     v
   end
@@ -234,9 +229,8 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
 
   # Four hex digits at i, or nil.
   def hex4(ps, i)
-    h = @src[i, 4]
-    return nil unless h && String.match?(h, /\A[0-9a-fA-F]{4}\z/)
-    String.hex(h)
+    return nil unless String.byteindex(@src, /\G\h{4}/, i) == i
+    String.hex(String.byteslice(@src, i, 4) || "")
   end
 
   # UTF-8 of a code point; a lone surrogate gives its 3 bytes, as Ruby's parser does.
@@ -248,38 +242,43 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
     format("%c", cp)
   end
 
+  # The byte length of the UTF-8 character whose first byte is b.
+  def char_len(b) = b < 0x80 ? 1 : (b < 0xE0 ? 2 : (b < 0xF0 ? 3 : 4))
+
   # First scan to the closing quote (control characters, end of input), then unescape, as Ruby does.
   def string(ps)
     @pos += 1
     start = @pos
-    while (c = @src[@pos]) && c != "\""
-      if c == "\\"
-        @pos += 2
-      elsif String.ord(c) < 0x20
-        fail(ps, "invalid ASCII control character in string: %s")
-      else
-        @pos += 1
+    while true
+      i = String.byteindex(@src, /["\\\x00-\x1f]/, @pos)
+      unless i
+        @pos = @len
+        fail(ps, "unexpected end of input, expected closing \"")
       end
+      @pos = i
+      c = byte_at(ps, i)
+      break if c == "\""
+      fail(ps, "invalid ASCII control character in string: %s") unless c == "\\"
+      b = String.getbyte(@src, i + 1)
+      @pos = i + 1 + (b ? char_len(b) : 1)
     end
-    fail(ps, "unexpected end of input, expected closing \"") if @pos >= @len
     finish = @pos
     @pos += 1
     unescape(ps, start, finish)
   end
 
   def unescape(ps, start, finish)
-    body = @src[start, finish - start] || ""
+    body = String.byteslice(@src, start, finish - start) || ""
     return body unless String.include?(body, "\\")
     out = String[]
     seg = start
     i = start
-    while i < finish
-      if @src[i] != "\\"
-        i += 1
-        next
-      end
-      Array.push(out, @src[seg, i - seg] || "") if i > seg
-      e = @src[i + 1] || ""
+    while true
+      j = String.byteindex(@src, "\\", i)
+      break unless j && j < finish
+      i = j
+      Array.push(out, String.byteslice(@src, seg, i - seg) || "") if i > seg
+      e = byte_at(ps, i + 1) || ""
       case e
       in "\"" then Array.push(out, "\"")
       in "/" then Array.push(out, "/")
@@ -293,7 +292,7 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
         cp = hex4(ps, i + 2)
         fail_at(ps, "incomplete unicode character escape sequence at %s", i) unless cp
         if (cp & 0xFC00) == 0xD800
-          lo = @src[i + 6, 2] == "\\u" && i + 12 <= finish ? hex4(ps, i + 8) : nil
+          lo = String.byteslice(@src, i + 6, 2) == "\\u" && i + 12 <= finish ? hex4(ps, i + 8) : nil
           fail_at(ps, "incomplete surrogate pair at %s", seg) unless lo
           fail_at(ps, "invalid surrogate pair at %s", seg) unless (lo & 0xFC00) == 0xDC00
           cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
@@ -303,31 +302,38 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
         i += 4
       else
         fail_at(ps, "Invalid unescaped newline character (\\n) in string: %s", i) if e == "\n"
-        fail_at(ps, "invalid ASCII control character in string: %s", i) if e != "" && String.ord(e) < 0x20
+        eb = String.getbyte(@src, i + 1)
+        fail_at(ps, "invalid ASCII control character in string: %s", i) if eb && eb < 0x20
         fail_at(ps, "invalid escape character in string: %s", i)
       end
       i += 2
       seg = i
     end
-    Array.push(out, @src[seg, finish - seg] || "") if finish > seg
+    Array.push(out, String.byteslice(@src, seg, finish - seg) || "") if finish > seg
     Array.join(out, "")
   end
 
   def digits(ps)
-    n = 0
-    while @pos < @len && String.include?("0123456789", @src[@pos] || "x")
-      @pos += 1
-      n += 1
-    end
+    j = String.byteindex(@src, /[^0-9]/, @pos) || @len
+    n = j - @pos
+    @pos = j
     n
   end
 
   # Ruby's json_parse_number: "01", "-", "1.", "1e" are invalid numbers.
   def number(ps)
     start = @pos
-    neg = @src[@pos] == "-"
+    # Fast path: the run of number characters is one valid number; otherwise the checks below.
+    j = String.byteindex(@src, /[^\-+0-9.eE]/, @pos) || @len
+    text = String.byteslice(@src, @pos, j - @pos) || ""
+    m = String.match(text, /\A-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?\z/)
+    if m
+      @pos = j
+      return m[1] || m[2] ? Float(text) : Integer(text)
+    end
+    neg = peek(ps) == "-"
     @pos += 1 if neg
-    first = @src[@pos]
+    first = peek(ps)
     n = digits(ps)
     fail_at(ps, "invalid number: %s", start) if (first == "0" && n > 1) || n == 0
     float = false
@@ -342,7 +348,7 @@ class JSONParserState < {reader: [src, len, symbolize, allow_nan, trailing, max_
       @pos += 1 if peek(ps) == "+" || peek(ps) == "-"
       fail_at(ps, "invalid number: %s", start) if digits(ps) == 0
     end
-    text = @src[start, @pos - start] || ""
+    text = String.byteslice(@src, start, @pos - start) || ""
     float ? Float(text) : Integer(text)
   end
 end
@@ -350,11 +356,18 @@ end
 # ---- generator ----
 
 class JSONGeneratorState < {reader: [indent, space, space_before, object_nl, array_nl, allow_nan, max_nesting]}
+  # What each character that JSON escapes becomes.
+  def escapes = once do
+    t = Hash["\"" => "\\\"", "\\" => "\\\\", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t", "\b" => "\\b", "\f" => "\\f"]
+    Integer.times(0x20) { |o| t[format("%c", o)] = format("\\u%04x", o) unless Hash.key?(t, format("%c", o)) }
+    t
+  end
+
   def escape(gs, str)
     s = str
     if String.encoding(s) == "ASCII-8BIT"
       # json 2.20 takes a binary String that is valid UTF-8 (with a deprecation warning)
-      u = String.force_encoding(String[s].Array.join(""), "UTF-8")
+      u = String.force_encoding(String.b(s), "UTF-8")
       unless String.valid_encoding?(u)
         bad = Array.find(String.bytes(s)) { |b| b >= 0x80 } || 0
         raise JSONGeneratorError, format("\"\\x%02X\" from ASCII-8BIT to UTF-8", bad)
@@ -362,23 +375,7 @@ class JSONGeneratorState < {reader: [indent, space, space_before, object_nl, arr
       s = u
     end
     raise JSONGeneratorError, "source sequence is illegal/malformed utf-8" unless String.valid_encoding?(s)
-    return "\"#{s}\"" unless String.match?(s, /["\\\x00-\x1f]/)
-    out = String[]
-    String.each_char(s) do |c|
-      case c
-      in "\"" then Array.push(out, "\\\"")
-      in "\\" then Array.push(out, "\\\\")
-      in "\n" then Array.push(out, "\\n")
-      in "\r" then Array.push(out, "\\r")
-      in "\t" then Array.push(out, "\\t")
-      in "\b" then Array.push(out, "\\b")
-      in "\f" then Array.push(out, "\\f")
-      else
-        o = String.ord(c)
-        Array.push(out, o < 0x20 ? format("\\u%04x", o) : c)
-      end
-    end
-    "\"#{Array.join(out, "")}\""
+    "\"#{String.gsub(s, /["\\\x00-\x1f]/, escapes)}\""
   end
 
   def key(gs, k)
@@ -473,45 +470,42 @@ module JSON
 
   # ---- parsing ----
 
-  def parse(s) = parse_with(s, {symbolize_names: false})
-
   # Options: symbolize_names, allow_nan, allow_trailing_comma, max_nesting (default 100).
-  def parse_with(s, o)
-    ps = JSONParserState.new(s, String.size(s), opt_bool(o, :symbolize_names, false),
+  def parse(s, o = nil)
+    n = String.bytesize(s)
+    ps = JSONParserState.new(s, n, opt_bool(o, :symbolize_names, false),
                              opt_bool(o, :allow_nan, false), opt_bool(o, :allow_trailing_comma, false),
                              opt_nesting(o, 100), 0, 0)
     JSONParserState.skip_ws(ps)
-    JSONParserState.end_of_input(ps) if JSONParserState.get_pos(ps) >= String.size(s)
+    JSONParserState.end_of_input(ps) if JSONParserState.get_pos(ps) >= n
     v = JSONParserState.value(ps)
     JSONParserState.skip_ws(ps)
-    JSONParserState.fail(ps, "unexpected token at end of stream %s") if JSONParserState.get_pos(ps) < String.size(s)
+    JSONParserState.fail(ps, "unexpected token at end of stream %s") if JSONParserState.get_pos(ps) < n
     v
   end
 
-  def load_file(path) = parse(File.read(path))
+  def load_file(path, o = nil) = parse(File.read(path), o)
 
   # Ruby's JSON.load (without create_additions): nil or blank input gives nil; NaN is allowed.
   def load(s)
     return nil if s == nil || String.strip(s) == ""
-    parse_with(s, {allow_nan: true, max_nesting: false})
+    parse(s, {allow_nan: true, max_nesting: false})
   end
 
   # ---- generating ----
 
-  def generate(v) = generate_with(v, {indent: ""})
-  def fast_generate(v) = generate(v)
-
   # Options: indent, space, space_before, object_nl, array_nl, allow_nan, max_nesting (default 100).
-  def generate_with(v, o)
+  def generate(v, o = nil)
     gs = JSONGeneratorState.new(opt_str(o, :indent, ""), opt_str(o, :space, ""), opt_str(o, :space_before, ""),
                                 opt_str(o, :object_nl, ""), opt_str(o, :array_nl, ""),
                                 opt_bool(o, :allow_nan, false), opt_nesting(o, 100))
     JSONGeneratorState.emit(gs, v, 0)
   end
 
-  def pretty_generate(v) = generate_with(v, {indent: "  ", space: " ", object_nl: "\n", array_nl: "\n"})
+  def fast_generate(v, o = nil) = generate(v, o)
 
-  def pretty_generate_with(v, o)
+  # generate with pretty defaults; options as generate's.
+  def pretty_generate(v, o = nil)
     gs = JSONGeneratorState.new(opt_str(o, :indent, "  "), opt_str(o, :space, " "), opt_str(o, :space_before, ""),
                                 opt_str(o, :object_nl, "\n"), opt_str(o, :array_nl, "\n"),
                                 opt_bool(o, :allow_nan, false), opt_nesting(o, 100))
@@ -519,7 +513,7 @@ module JSON
   end
 
   # Ruby's JSON.dump: no nesting limit, NaN allowed.
-  def dump(v) = generate_with(v, {allow_nan: true, max_nesting: false})
+  def dump(v) = generate(v, {allow_nan: true, max_nesting: false})
 
   # json 2.20's float form (its fpconv): shortest digits, plain notation for exponents in
   # [-6, 15) (and below 10 when there is a fraction), scientific otherwise ("1e+20").

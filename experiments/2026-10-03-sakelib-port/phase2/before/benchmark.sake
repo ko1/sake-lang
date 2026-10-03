@@ -1,0 +1,179 @@
+# Benchmark: Ruby's benchmark. Times come from Time.now; the CPU times (utime, stime, cutime, cstime)
+# are always 0.0, since Sake has no Process.times.
+
+# Ruby's Benchmark::Tms.
+class BenchmarkTms < {reader: [utime, stime, cutime, cstime, real, label],
+                      default: {utime: 0.0, stime: 0.0, cutime: 0.0, cstime: 0.0, real: 0.0, label: ""}}
+  include Arithmetic
+
+  def total(t) = @utime + @stime + @cutime + @cstime
+
+  def +(a, b) = memberwise(a, :+, b)
+  def -(a, b) = memberwise(a, :-, b)
+  def *(a, b) = memberwise(a, :*, b)
+  def /(a, b) = memberwise(a, :/, b)
+
+  def apply(op, x, y)
+    case op
+    in :+ then x + y
+    in :- then x - y
+    in :* then x * y
+    in :/ then x / y
+    end
+  end
+
+  # Ruby's memberwise: the result has an empty label.
+  def memberwise(t, op, x)
+    case x
+    in BenchmarkTms
+      BenchmarkTms.new(apply(op, @utime, BenchmarkTms.get_utime(x)), apply(op, @stime, BenchmarkTms.get_stime(x)),
+                       apply(op, @cutime, BenchmarkTms.get_cutime(x)), apply(op, @cstime, BenchmarkTms.get_cstime(x)),
+                       apply(op, @real, BenchmarkTms.get_real(x)), "")
+    in Integer | Float
+      BenchmarkTms.new(apply(op, @utime, x), apply(op, @stime, x), apply(op, @cutime, x), apply(op, @cstime, x),
+                       apply(op, @real, x), "")
+    end
+  end
+
+  # %u %y %U %Y %t %r (the real time in parentheses) %n (the label), each with optional flags
+  # such as %10.6u, as Ruby's Tms#format.
+  def format(t, fmt)
+    out = ""
+    cs = String.chars(fmt)
+    n = Array.size(cs)
+    i = 0
+    while i < n
+      c = Array.fetch(cs, i)
+      if c != "%"
+        out += c
+        i += 1
+        next
+      end
+      j = i + 1
+      j += 1 while j < n && String.match?(Array.fetch(cs, j), /[-+.\d]/)
+      d = j < n ? Array.fetch(cs, j) : ""
+      flags = Array.join(Array.take(Array.drop(cs, i + 1), j - i - 1))
+      piece = case d
+              in "n" then Kernel.format("%#{flags}s", @label)
+              in "u" then Kernel.format("%#{flags}f", @utime)
+              in "y" then Kernel.format("%#{flags}f", @stime)
+              in "U" then Kernel.format("%#{flags}f", @cutime)
+              in "Y" then Kernel.format("%#{flags}f", @cstime)
+              in "t" then Kernel.format("%#{flags}f", BenchmarkTms.total(t))
+              in "r" then "(" + Kernel.format("%#{flags}f", @real) + ")"
+              else nil
+              end
+      if piece == nil
+        out += "%"
+        i += 1
+      else
+        out += piece
+        i = j + 1
+      end
+    end
+    Kernel.format(out)   # Ruby's `str % args`: %% becomes %, a stray % raises ArgumentError
+  end
+
+  def to_s(t) = BenchmarkTms.format(t, Benchmark.FORMAT)
+  def to_a(t) = Array[@label, @utime, @stime, @cutime, @cstime, @real]
+  def to_h(t) = Hash[label: @label, utime: @utime, stime: @stime, cutime: @cutime, cstime: @cstime, real: @real]
+
+  # Ruby's add { }: a new Tms, this one plus the block's measure.
+  def add(t)
+    m = Benchmark.measure { yield }
+    t + m
+  end
+
+  def add!(t)
+    m = Benchmark.measure { yield }
+    @utime += BenchmarkTms.get_utime(m)
+    @stime += BenchmarkTms.get_stime(m)
+    @cutime += BenchmarkTms.get_cutime(m)
+    @cstime += BenchmarkTms.get_cstime(m)
+    @real += BenchmarkTms.get_real(m)
+    t
+  end
+end
+
+# Ruby's Benchmark::Report and Benchmark::Job in one: `report` measures and records, as Ruby's
+# report; in bmbm, the block given to bmbm runs once per mode (:collect, :rehearsal, :real).
+class BenchmarkReport < {reader: [width, format, list, mode], default: {mode: :report}}
+  def report(r, label)
+    w = String.length(label)
+    @width = w if @width < w
+    return BenchmarkTms.new if @mode == :collect
+    print(String.ljust(label, @width)) unless @mode == :report
+    t = Benchmark.measure_label(label) { yield }
+    Array.push(@list, t)
+    print(t) unless @mode == :report
+    t
+  end
+
+  def item(r, label) = report(r, label) { yield }
+end
+
+module Benchmark
+  module_function
+
+  def CAPTION = "      user     system      total        real\n"
+  def FORMAT = "%10.6u %10.6y %10.6t %10.6r\n"
+
+  # Seconds the block takes (Ruby uses the monotonic clock; Sake has Time.now only).
+  def realtime
+    t0 = Time.now
+    yield
+    Time.now - t0
+  end
+
+  def ms
+    t0 = Time.now
+    yield
+    (Time.now - t0) * 1000.0
+  end
+
+  def measure
+    measure_label("") { yield }
+  end
+
+  def measure_label(label)
+    t0 = Time.now
+    yield
+    BenchmarkTms.new(0.0, 0.0, 0.0, 0.0, Time.now - t0, label)
+  end
+
+  # Prints after the block returns, as Ruby does: caption, then each report's line.
+  def benchmark(caption, label_width, format)
+    r = BenchmarkReport.new(label_width + 1, format, BenchmarkTms[], :report)
+    yield(r)
+    print(" " * BenchmarkReport.get_width(r) + caption) unless String.empty?(caption)
+    list = BenchmarkReport.get_list(r)
+    Array.each(list) do |t|
+      print(String.ljust(BenchmarkTms.get_label(t), BenchmarkReport.get_width(r)))
+      print(BenchmarkTms.format(t, format))
+    end
+    list
+  end
+
+  def bm(label_width)
+    benchmark(Benchmark.CAPTION, label_width, Benchmark.FORMAT) { |r| yield(r) }
+  end
+
+  # Ruby's bmbm stores the blocks and runs each twice; Sake cannot store blocks, so the block given
+  # to bmbm runs three times: to collect the labels, for the rehearsal, and for the real run.
+  def bmbm(width)
+    r = BenchmarkReport.new(width, Benchmark.FORMAT, BenchmarkTms[], :collect)
+    yield(r)
+    w = BenchmarkReport.get_width(r) + 1
+    cap = Benchmark.CAPTION
+    puts(String.ljust("Rehearsal ", w + String.length(cap), "-"))
+    reh = BenchmarkReport.new(w, Benchmark.FORMAT, BenchmarkTms[], :rehearsal)
+    yield(reh)
+    sum = Array.inject(BenchmarkReport.get_list(reh), BenchmarkTms.new) { |acc, t| acc + t }
+    ets = BenchmarkTms.format(sum, "total: %tsec")
+    print(String.rjust(" #{ets}\n\n", w + String.length(cap) + 2, "-"))
+    print(" " * w + cap)
+    real = BenchmarkReport.new(w, Benchmark.FORMAT, BenchmarkTms[], :real)
+    yield(real)
+    BenchmarkReport.get_list(real)
+  end
+end

@@ -16,7 +16,7 @@ inputs = ["HTTP://User:Pw@Example.COM:8080/a/b?x=1#Frag", "https://example.com",
 inputs.each { |s| show(URI.parse(s)) }
 
 puts("-- errors")
-bad = ["http://a b", "http://h/é", "http://h:x/", "1http://h", "http://h/<", "http://h/%zz", "日本"]
+bad = ["http://a b", "http://h/é", "http://h:x/", "1http://h", "http://h/<", "http://h/%zz", "日本", "http://h/😀\u0085"]
 bad.each do |s|
   begin
     URI.parse(s)
@@ -41,6 +41,8 @@ refs.each { |r| puts("#{r} -> #{URI.join(base, r)}") }
 p(URI.join("http://example.com/docs/", "api/v1"))
 p(URI.join(URI.parse("http://example.com/a/b"), "c?d#e"))
 p(URI.join("http://example.com/a/", "b/", "c"))
+p(URI.join("http://example.com/a/", "b/", "c/", "../d"))
+p(URI.join("http://example.com/a"))
 p(URI.join("http://example.com:8080/a", "//other.org/x"))
 
 puts("-- merge and +")
@@ -105,3 +107,9 @@ p(URI.decode_www_form_component(""))
   end
 end
 p(URI.decode_www_form_component(URI.encode_www_form_component("round trip 日本 & =")))
+
+puts("-- the optional encoding of decoded values")
+b = URI.decode_www_form_component("%E6%97%A5+x", "ASCII-8BIT")
+p(b)
+p(URI.decode_uri_component("%E6%97%A5+x", "ASCII-8BIT"))
+p(URI.decode_www_form("k=%E6%97%A5&x=1", "ASCII-8BIT").map { |k, v| [k, v] })

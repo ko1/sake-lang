@@ -13,6 +13,11 @@ p({1 => [2], 2 => [3, 4], 3 => [2], 4 => []}.strongly_connected_components)
 g = {1 => [2], 2 => [3, 4], 3 => [2], 4 => []}
 g.each_strongly_connected_component { |c| p(c) }
 p(g.each_strongly_connected_component_from(2) { |c| p(c) })
+id_map = {}
+stack = []
+p(g.each_strongly_connected_component_from(4, id_map, stack) { |c| p(c) })
+p(g.each_strongly_connected_component_from(1, id_map, stack) { |c| p(c) })
+p([id_map, stack])
 {1 => [2, 3], 2 => [3], 3 => [], 4 => []}.tsort_each { |n| puts("node #{n}") }
 p({}.tsort)
 begin

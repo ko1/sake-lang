@@ -127,6 +127,17 @@ show("strptime", [try_strptime("2024-01-05", "%Y-%m-%d"), try_strptime("05/01/20
 show("strptime bad", [try_strptime("x", "%Y"), try_strptime("2024-02-30", "%Y-%m-%d"),
                       try_strptime("2024/01/05", "%Y-%m-%d"), try_strptime("", "%Y")])
 
+
+# optional arguments (Ruby's defaults)
+show("defaults", [Date.new, Date.new(2024), Date.new(2024, 3), Date.ordinal(2024), Date.commercial(2024), Date.commercial(2024, 10)])
+show("next/prev n", [d.next_day(3), d.prev_day(31), d.next_month(13), d.prev_month(2), Date.new(2024, 2, 29).next_year(4), d.prev_year(2), d.next_day(0)])
+xs = []
+Date.new(2024, 2, 27).step(Date.new(2024, 3, 1)) { |x| xs.push(x.day) }
+show("step default", xs)
+show("strftime default", d.strftime)
+show("strptime default", [Date.strptime("2024-03-04").to_s, Date.strptime.to_s, try_strptime("03/04/2024", "%F")])
+show("parse comp", [Date.parse("5 Jan 24", false), Date.parse("5 Jan 24", true), Date.parse("Jan 5 99", false), Date.parse])
+
 # today
 t = Time.now
 today = Date.today

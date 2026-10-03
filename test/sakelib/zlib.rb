@@ -32,3 +32,10 @@ p Zlib.adler32_combine(Zlib.adler32(a), Zlib.adler32(""), 0)
 p Zlib.crc_table.size
 p Zlib.crc_table.take(4)
 p Zlib.crc_table.last
+
+p Zlib.crc32
+p Zlib.adler32
+p Zlib.crc32(nil, 5)
+p Zlib.adler32(nil, 5)
+p Zlib.crc32("a", -1)
+p Zlib.crc32("a", 2 ** 32 + 5)

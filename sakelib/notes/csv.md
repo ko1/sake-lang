@@ -7,12 +7,12 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 
 ## Conventions
 
-- **Keyword options become a Record argument of a `_with` operation.** Sake has neither keyword
-  arguments nor optional parameters, so each Ruby method that takes options has two names:
-  `CSV.parse(s)` and `CSV.parse_with(s, {col_sep: ";", headers: true})`. A field left out of the
-  Record takes Ruby's default. The library reads the Record with `case o in {col_sep:} ... else ","`;
+- **Keyword options become an optional last Record argument** (phase 2; phase 1 had `_with` names).
+  Sake has no keyword arguments, so `CSV.parse(s, col_sep: ";", headers: true)` is
+  `CSV.parse(s, {col_sep: ";", headers: true})`; the parameter is `o = nil` (an empty Record `{}`
+  cannot be written). A field left out of the Record takes Ruby's default. The library reads the Record with `case o in {col_sep:} ... else ","`;
   the checker specializes this per Record type, so the type of the result follows the options given.
-- **`headers:` decides the result type by its presence.** `CSV.parse_with(s, {headers: ...})` returns
+- **`headers:` decides the result type by its presence.** `CSV.parse(s, {headers: ...})` returns
   a `CSVTable`; without the field it returns an Array of rows. Both are known before running (the
   Record's type picks the branch), so there is no `Array | CSVTable` union at the call site.
 - **Cells.** An unquoted empty field is `nil`, as in Ruby, so a row is an Array of `String | nil`
@@ -30,19 +30,20 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | Ruby | Sake | |
 |---|---|---|
 | `CSV.parse(s)` | `CSV.parse(s)` | same |
-| `CSV.parse(s, **opts)` | `CSV.parse_with(s, {opts})` | differs (Record) |
-| `CSV.parse(s, headers: true)` | `CSV.parse_with(s, {headers: true})` → CSVTable | differs (Record) |
+| `CSV.parse(s, **opts)` | `CSV.parse(s, {opts})` | same (options in a Record) |
+| `CSV.parse(s, headers: true)` | `CSV.parse(s, {headers: true})` → CSVTable | same (options in a Record) |
 | `CSV.parse(s) { \|row\| }` | — | missing (use `Array.each(CSV.parse(s))`) |
-| `CSV.parse_line(s[, **opts])` | `CSV.parse_line(s)`, `CSV.parse_line_with(s, o)` | same / differs |
-| `CSV.read(path[, **opts])`, `readlines` | `CSV.read(p)`, `read_with(p, o)`, `readlines`, `readlines_with` | same / differs |
-| `CSV.foreach(path[, **opts]) { }` | `CSV.foreach(p) { }`, `CSV.foreach_with(p, o) { }` | same / differs |
+| `CSV.parse_line(s[, **opts])` | `CSV.parse_line(s[, o])` | same (only the first row is parsed, as Ruby) |
+| `CSV.read(path[, **opts])`, `readlines` | `CSV.read(p[, o])`, `readlines(p[, o])` | same |
+| `CSV.foreach(path[, **opts]) { }` | `CSV.foreach(p[, o]) { }` | same |
+| `CSV.foreach(path, mode, **opts) { }` | — | differs: no mode argument (reading is the only mode) |
 | `CSV.table(path)` | `CSV.table(path)` | same |
 | `CSV.generate { \|csv\| csv << row }` | same | same |
-| `CSV.generate(**opts) { }` | `CSV.generate_with(o) { }` | differs |
-| `CSV.generate(str) { }` (append to str) | — | missing |
-| `CSV.generate_line(row[, **opts])` | `generate_line(row)`, `generate_line_with(row, o)` | same / differs |
-| `CSV.generate_lines(rows[, **opts])` | `generate_lines`, `generate_lines_with` | same / differs |
-| `CSV.open(path, "w"/"a") { \|csv\| }` | `CSV.open(path, mode) { }`, `open_with(path, mode, o) { }` | same (write modes only) |
+| `CSV.generate(**opts) { }` | `CSV.generate(o) { }` | same |
+| `CSV.generate(str) { }` (append to str) | — | missing (the first optional argument is the options) |
+| `CSV.generate_line(row[, **opts])` | `CSV.generate_line(row[, o])` | same |
+| `CSV.generate_lines(rows[, **opts])` | `CSV.generate_lines(rows[, o])` | same |
+| `CSV.open(path, "w"/"a"[, **opts]) { \|csv\| }` | `CSV.open(path, mode[, o]) { }` | same (write modes only; mode required) |
 | `CSV.open(path, "r")`, `CSV.new(io)`, `#shift`, `#gets`, `#each`, `#lineno` | — | missing |
 | `csv << row`, `add_row`, `puts` | `csv << row`, `CSV.add_row(c, r)`, `CSV.puts(c, r)` | same |
 | `"a,b".parse_csv`, `[..].to_csv` | `String.parse_csv(s)`, `Array.to_csv(a)`, `Tuple.to_csv(t)` | same |
@@ -65,8 +66,8 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 
 ## What differs from Ruby, and why
 
-- `_with` names and Record options: no keyword arguments, no optional parameters (one name, one
-  arity).
+- Options are a Record argument, not keywords (no keyword arguments). `CSV.generate(str)` and
+  `CSV.foreach(path, mode)` lose their leading optional String: there the options come first.
 - **A misspelled option is silently ignored** (`{colsep: ";"}` parses with `,`). Ruby raises
   `ArgumentError: unknown keyword`. A function cannot list a Record's fields, so the library cannot
   check them.
@@ -94,10 +95,8 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 
 - **A way to list a Record's fields** (or a checked "Record of these optional fields" type): an
   options Record with a misspelled field is silently ignored; Ruby rejects unknown keywords.
-- **`String.index(s, t, start)` (or a StringScanner)**: the quoted-field parser walks `String.chars`
-  one by one because there is no "find from position". 2000 rows with quoted fields parse in ~1.2 s
-  (2000 plain rows, which take the `String.split` path, in ~0.2 s), on a shared machine (load ~16), so rough.
-- **`File.delete`**: the test leaves `/tmp/sakelib_csv_test.csv` behind.
+- ~~`String.index(s, t, start)`~~: added; phase 2 parses with `Regexp.match(re, s, pos)`.
+- ~~`File.delete`~~: added (the test still leaves `/tmp/sakelib_csv_test.csv`: the .rb must print the same).
 - **Typed Arrays with a union element type** (`(String|nil)[]`): rows are untyped Arrays because nil
   must fit; the previous CSV library in `experiments/2026-10-03-libraries/csvtable/` asked the same.
 
@@ -130,3 +129,22 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
   it is given.
 - A user-defined `[]` that returns a row for an Integer and a column for a String is typed per call
   (`t[0]` is a CSVRow, `t["age"]` an Array), with no union.
+
+## Phase 2
+
+- **Names.** The `_with` operations are gone: `parse`, `parse_line`, `read`, `readlines`, `foreach`,
+  `generate`, `generate_line`, `generate_lines`, `open` take the options as an optional last Record
+  (`o = nil`). The test now calls the Ruby-shaped forms and adds `generate_lines`/`readlines` with
+  options.
+- **Parser.** The record splitter (`String.split` by row_sep, re-joining pieces while a quote is open,
+  re-parsing the joined text) and the per-character quoted-field loop (`String.chars`, `field + c`)
+  are replaced by one pass over the text: per field one `Regexp.match(re, text, pos)` with
+  `\G(?:"((?:[^"]++|"")*+)"|((?:(?!SEP|ROWSEP)[^"])*+))(SEP|ROWSEP|\z)?`, built from the options. A
+  missing delimiter group names the error (quoted field followed by text, quote inside an unquoted
+  field, unclosed quote).
+- **Fixed on the way.** Error line numbers now count records, as Ruby's lineno (phase 1 counted
+  row_seps, so an error after a multi-line quoted field was off; new tests). `parse_line` stops after
+  the first row, as Ruby (a malformed second line no longer raises).
+- **Speed** (`experiments/2026-10-03-sakelib-port/phase2/bench_csv.sake`: `CSV.parse` of 2000 rows of
+  5 fields, 3 quoted, one with `""` and a comma; `bin/sake --strict`, CPU user+sys, 3 runs, shared
+  machine at load ~35 on 16 cores): before 5.36 / 5.87 / 5.94 s, after 2.61 / 2.50 / 2.44 s. Startup is ~0.7 s.

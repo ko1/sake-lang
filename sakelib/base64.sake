@@ -2,140 +2,32 @@
 #
 # Encoding works on the bytes of any String; decoding gives a binary (ASCII-8BIT) String, as Ruby's
 # does (relabel it with String.force_encoding(s, "UTF-8") for text).
-# Ruby's keyword option becomes a `_with` operation with a Record:
+# Ruby's keyword option becomes a Record as the optional second argument:
 #   Ruby  Base64.urlsafe_encode64(s, padding: false)
-#   Sake  Base64.urlsafe_encode64_with(s, {padding: false})
+#   Sake  Base64.urlsafe_encode64(s, {padding: false})
 
 module Base64
   module_function
 
-  def alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  def encode64(bin) = Array.pack(Array[bin], "m")
 
-  # byte -> 6-bit value, or -1 (Ruby's b64_xtable)
-  def table
-    t = Integer[]
-    Integer.times(256) { Array.push(t, -1) }
-    String.chars(alphabet).Array.each_with_index { |c, i| t[String.ord(c)] = i }
-    t
+  # unpack1("m") always gives a String; the `|| ""` is for the checker.
+  def decode64(str) = String.unpack1(str, "m") || ""
+
+  def strict_encode64(bin) = Array.pack(Array[bin], "m0")
+
+  # Ruby's message, without the built-in's "String.unpack1: " prefix.
+  def strict_decode64(str)
+    String.unpack1(str, "m0") || ""
+  rescue ArgumentError
+    raise ArgumentError, "invalid base64"
   end
-
-  def table_of(t, b) = b == nil ? -1 : Array.fetch(t, b)
-
-  # Ruby's [bin].pack("m0") with `line` false, pack("m") (60 characters a line) with `line` true.
-  def encode(bin, line)
-    a = alphabet
-    bytes = String.bytes(bin)
-    n = Array.size(bytes)
-    out = String[]
-    i = 0
-    while i < n
-      b0 = Array.fetch(bytes, i)
-      b1 = i + 1 < n ? Array.fetch(bytes, i + 1) : 0
-      b2 = i + 2 < n ? Array.fetch(bytes, i + 2) : 0
-      v = (b0 << 16) | (b1 << 8) | b2
-      c2 = i + 1 < n ? a[(v >> 6) & 63] || "" : "="
-      c3 = i + 2 < n ? a[v & 63] || "" : "="
-      Array.push(out, "#{a[v >> 18]}#{a[(v >> 12) & 63]}#{c2}#{c3}")
-      i += 3
-      Array.push(out, "\n") if line && (i % 45 == 0 || i >= n)
-    end
-    Array.join(out, "")
-  end
-
-  def encode64(bin) = encode(bin, true)
-
-  def strict_encode64(bin) = encode(bin, false)
-
-  def urlsafe_encode64(bin) = String.tr(strict_encode64(bin), "+/", "-_")
 
   # Option: padding (default true).
-  def urlsafe_encode64_with(bin, o)
-    s = urlsafe_encode64(bin)
+  def urlsafe_encode64(bin, o = {padding: true})
+    s = String.tr(strict_encode64(bin), "+/", "-_")
     padding = (o in {padding: x}) ? x : true
     padding ? s : String.delete_suffix(String.delete_suffix(s, "="), "=")
-  end
-
-  def binary(out) = Array.pack(out, "C*")
-
-  # Ruby's str.unpack1("m"): characters outside the alphabet are skipped; "=" ends the data.
-  def decode64(str)
-    t = table
-    s = String.bytes(str)
-    n = Array.size(s)
-    out = Integer[]
-    i = 0
-    a = -1
-    b = -1
-    c = -1
-    d = -1
-    eq = 61
-    while i < n
-      a = -1
-      b = -1
-      c = -1
-      d = -1
-      i += 1 while i < n && (a = table_of(t, s[i])) == -1
-      break if i >= n
-      i += 1
-      i += 1 while i < n && (b = table_of(t, s[i])) == -1
-      break if i >= n
-      i += 1
-      while i < n && (c = table_of(t, s[i])) == -1
-        break if s[i] == eq
-        i += 1
-      end
-      break if i >= n || s[i] == eq
-      i += 1
-      while i < n && (d = table_of(t, s[i])) == -1
-        break if s[i] == eq
-        i += 1
-      end
-      break if i >= n || s[i] == eq
-      i += 1
-      Array.push(out, ((a << 2) | (b >> 4)) & 255, ((b << 4) | (c >> 2)) & 255, ((c << 6) | d) & 255)
-      a = -1
-    end
-    if a != -1 && b != -1
-      Array.push(out, ((a << 2) | (b >> 4)) & 255)
-      Array.push(out, ((b << 4) | (c >> 2)) & 255) if c != -1
-    end
-    binary(out)
-  end
-
-  # Ruby's str.unpack1("m0"): the length must be a multiple of 4, every character in the alphabet,
-  # padding only at the end, and the unused bits zero; ArgumentError otherwise.
-  def strict_decode64(str)
-    t = table
-    s = String.bytes(str)
-    n = Array.size(s)
-    raise ArgumentError, "invalid base64" if n % 4 != 0
-    out = Integer[]
-    eq = 61
-    i = 0
-    while i < n
-      a = table_of(t, s[i])
-      b = table_of(t, s[i + 1])
-      raise ArgumentError, "invalid base64" if a == -1 || b == -1
-      if s[i + 2] == eq
-        raise ArgumentError, "invalid base64" unless i + 4 == n && s[i + 3] == eq
-        raise ArgumentError, "invalid base64" if (b & 15) != 0
-        Array.push(out, ((a << 2) | (b >> 4)) & 255)
-        break
-      end
-      c = table_of(t, s[i + 2])
-      raise ArgumentError, "invalid base64" if c == -1
-      if s[i + 3] == eq
-        raise ArgumentError, "invalid base64" unless i + 4 == n
-        raise ArgumentError, "invalid base64" if (c & 3) != 0
-        Array.push(out, ((a << 2) | (b >> 4)) & 255, ((b << 4) | (c >> 2)) & 255)
-        break
-      end
-      d = table_of(t, s[i + 3])
-      raise ArgumentError, "invalid base64" if d == -1
-      Array.push(out, ((a << 2) | (b >> 4)) & 255, ((b << 4) | (c >> 2)) & 255, ((c << 6) | d) & 255)
-      i += 4
-    end
-    binary(out)
   end
 
   # Missing padding is accepted, as in Ruby.

@@ -83,8 +83,8 @@ values in the program and pass them in the Hash.
 
 ## Built-ins Sake lacks (requests)
 
-- None strictly needed. A `String.index(s, t, pos)` with an offset, or `StringScanner` as a built-in,
-  would make the tag scanner simpler; I split the template with a capturing Regexp instead.
+- None strictly needed. The tag scanner still splits the template with a capturing Regexp, which
+  is short and fast enough.
 
 ## Friction
 
@@ -101,3 +101,17 @@ values in the program and pass them in the Hash.
   my mistake, but templates are easiest as `<<~T` heredocs (which Sake supports).
 - Splitting with a capturing Regexp gives `""` between adjacent tags (as in Ruby); the newline
   trimming first missed `-%>` followed by `\n` because of it → `Array.reject(...) { |t| t == "" }`.
+
+## Phase 2
+
+- No names to restore: `ERB.new(str, trim_mode)` already takes the mode as an optional field.
+- `html_escape` / `url_encode` call `CGI.escapeHTML` / `CGI.escapeURIComponent` (`require "cgi"`),
+  as Ruby's `ERB::Util` does, instead of five chained `gsub`s and a split-and-rebuild loop.
+- `_find_op` (finding `||`, `==`, `<` ... outside quotes and brackets) walked `String.chars(e)` one
+  character at a time for each of the 8 operators; it now jumps between quotes, brackets and
+  operators with `Regexp.match(re, e, pos)` and skips a quoted string with `String.index(e, q, pos)`.
+  The `[...]` / `.method` chain after a name is read with `\G` patterns at a position instead of
+  `post_match` copies.
+- Speed (`phase2/bench_erb.sake`: an 80-row table template with a loop, if/else, `&&`, `>=`,
+  `h`, `u`, `upcase`, `join`; CPU s of the whole `bin/sake --strict` run, 3 runs, load about 37 on
+  16 cores): before 5.06 / 5.31 / 5.23, after 3.20 / 3.25 / 3.24.

@@ -6,42 +6,28 @@
 module Shellwords
   module_function
 
-  # One word of Ruby's pattern, anchored at the start of the rest of the line:
-  # leading space, then a bare word | 'single' | "double" | \escape | garbage, then a separator.
-  def word_re = /\A\s*(?>([^\0\s\\'"]+)|'([^\0']*)'|"((?:[^\0"\\]|\\[^\0])*)"|(\\[^\0]?)|(\S))(\s|\z)?/m
+  # Ruby's pattern, unchanged: one word at pos (\G), then a separator.
+  def word_re = /\G\s*(?>([^\0\s\\'"]+)|'([^\0']*)'|"((?:[^\0"\\]|\\[^\0])*)"|(\\[^\0]?)|(\S))(\s|\z)?/m
 
+  # Ruby's line.scan(word_re) { ... }, with the position passed to String.match.
   def shellsplit(line)
     words = String[]
     field = ""
     pos = 0
-    n = String.size(line)
-    while pos < n
-      m = String.match(line[pos, n - pos] || "", word_re)
-      break unless m
+    while (m = String.match(line, word_re, pos))
       whole = m[0] || ""
       garbage = m[5]
       if garbage
         shown = pos > 0 ? "..." + whole : whole
         raise ArgumentError, "#{garbage == "\0" ? "Nul character" : "Unmatched quote"} at #{pos}: #{shown}"
       end
-      word = m[1]
-      sq = m[2]
       dq = m[3]
-      esc = m[4]
-      piece =
-        if word then word
-        elsif sq then sq
-        elsif dq then String.gsub(dq, /\\([$`"\\\n])/, "\\1")
-        elsif esc then String.gsub(esc, /\\(.)/, "\\1")
-        else ""
-        end
-      field += piece
+      field += m[1] || m[2] || (dq && String.gsub(dq, /\\([$`"\\\n])/, "\\1")) || String.gsub(m[4] || "", /\\(.)/, "\\1")
       if m[6]
         Array.push(words, field)
         field = ""
       end
-      break if whole == ""
-      pos += String.size(whole)
+      pos = MatchData.end(m, 0) || pos
     end
     words
   end

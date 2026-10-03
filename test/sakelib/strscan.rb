@@ -186,3 +186,26 @@ rescue IndexError => e
   p(e.message.end_with?("undefined group name reference: x"))
 end
 p([StringScanner.new("a").rest?, StringScanner.new("").rest?])
+
+# phase 2: flags and look-before patterns at the pointer
+ss = StringScanner.new("abCD efg\nhi日本x")
+ss.skip(/ab/)
+p(ss.scan(/cd/i))
+ss.skip(/ /)
+p(ss.scan(/ e # a comment
+                          f/x))
+p(ss.scan(/g.h/m))
+p(ss.scan(/[^\s]+/))
+p([ss.pos, ss.charpos])
+p(ss.scan_until(/x/))
+ss.pos = 2
+p(ss.scan(/\bC/))
+p(ss.scan(/^D/))
+p(ss.scan(/\A /))
+p(ss.scan_until(/(?<=e)f/))
+p(ss.scan(/(?<=b)C/))
+p(ss.scan(/\bD/))
+p(ss.check_until(/\bf/))
+p(ss.scan("D e"))
+p(ss.scan_until("本"))
+p(ss.rest)

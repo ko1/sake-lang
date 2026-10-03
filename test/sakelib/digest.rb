@@ -64,3 +64,11 @@ begin
 rescue SystemCallError
   puts "no file"
 end
+
+m1 = Digest::SHA1.new
+m1 << "zzz"
+puts(m1.hexdigest("abc"))
+puts(m1.hexdigest)
+p(Digest::MD5.new.digest("abc") == Digest::MD5.digest("abc"))
+puts(Digest::SHA512.new.base64digest("x"))
+puts(Digest::SHA384.new.update("q").hexdigest("日本語"))

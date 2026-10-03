@@ -1,0 +1,81 @@
+# CGI: escaping for URLs and HTML (Ruby's cgi/escape).
+# CGI.escape(s), CGI.unescape(s), CGI.escapeURIComponent(s), CGI.unescapeURIComponent(s),
+# CGI.escapeHTML(s), CGI.unescapeHTML(s); snake_case aliases as in Ruby (CGI.escape_html, ...).
+
+module CGI
+  module_function
+
+  # Every byte of the pieces matched by `unsafe` becomes %XX.
+  def _percent_encode(s, unsafe)
+    out = String[]
+    Array.each(String.split(s, unsafe)) do |piece|
+      if Regexp.match?(unsafe, piece)
+        Array.each(String.bytes(piece)) { |b| Array.push(out, format("%%%02X", b)) }
+      else
+        Array.push(out, piece)
+      end
+    end
+    Array.join(out)
+  end
+
+  # %XX becomes its byte (a lone % stays); with plus, + becomes a space. The result is UTF-8.
+  def _percent_decode(s, plus)
+    bytes = Integer[]
+    Array.each(String.split(s, /(%\h\h)/)) do |piece|
+      if Regexp.match?(/\A%\h\h\z/, piece)
+        Array.push(bytes, String.hex(String.delete_prefix(piece, "%")))
+      elsif plus
+        Array.push(bytes, *String.bytes(String.tr(piece, "+", " ")))
+      else
+        Array.push(bytes, *String.bytes(piece))
+      end
+    end
+    String.force_encoding(Array.pack(bytes, "C*"), "UTF-8")
+  end
+
+  def escape(s) = String.tr(_percent_encode(s, /([^ a-zA-Z0-9_.\-~]+)/), " ", "+")
+  def unescape(s) = _percent_decode(s, true)
+  def escapeURIComponent(s) = _percent_encode(s, /([^a-zA-Z0-9_.\-~]+)/)
+  def unescapeURIComponent(s) = _percent_decode(s, false)
+  def escape_uri_component(s) = escapeURIComponent(s)
+  def unescape_uri_component(s) = unescapeURIComponent(s)
+
+  def escapeHTML(s)
+    String.gsub(s, "&", "&amp;")
+      .String.gsub("<", "&lt;")
+      .String.gsub(">", "&gt;")
+      .String.gsub("\"", "&quot;")
+      .String.gsub("'", "&#39;")
+  end
+  def escape_html(s) = escapeHTML(s)
+
+  # A numeric reference decodes only below U+10FFFF, as Ruby's C implementation does.
+  def _char_ref(code, ref)
+    return ref if code >= 0x10FFFF
+    Array.pack(Integer[code], "U*")
+  end
+
+  def unescapeHTML(s)
+    pieces = String.split(s, /(&(?:amp|quot|gt|lt|apos|#[0-9]+|#[xX]\h+);)/)
+    Array.map(pieces) do |piece|
+      case piece
+      in "&amp;" then "&"
+      in "&quot;" then "\""
+      in "&gt;" then ">"
+      in "&lt;" then "<"
+      in "&apos;" then "'"
+      else
+        m = String.match(piece, /\A&#([xX]?)(\h+);\z/)
+        if m == nil
+          piece
+        elsif m[1] == ""
+          _char_ref(String.to_i("#{m[2]}"), piece)
+        else
+          _char_ref(String.hex("#{m[2]}"), piece)
+        end
+      end
+    end
+    Array.join(_)
+  end
+  def unescape_html(s) = unescapeHTML(s)
+end

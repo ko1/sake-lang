@@ -31,7 +31,7 @@ class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, qu
   def _seg_nc_re = "(?:%\\h\\h|[!$&-.0-9;=@A-Z_a-z~])"
   def _fragment_re = "(?:%\\h\\h|[!$&-.0-9:;=@A-Z_a-z~/?])*+"
 
-  def _absolute_re
+  def _absolute_re = once do
     Regexp.new("\\A(?<seg>#{_seg_re}){0}(?<URI>(?<scheme>[A-Za-z][+\\-.0-9A-Za-z]*+):" +
       "(?<hier-part>//(?<authority>(?:(?<userinfo>#{_userinfo_re})@)?(?<host>#{_host_re})" +
       "(?::(?<port>\\d*+))?)(?<path-abempty>(?:/\\g<seg>*+)?)" +
@@ -39,7 +39,7 @@ class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, qu
       "(?:\\?(?<query>[^\\#]*+))?(?:\\#(?<fragment>#{_fragment_re}))?)\\z")
   end
 
-  def _relative_re
+  def _relative_re = once do
     Regexp.new("\\A(?<seg>#{_seg_re}){0}(?<relative-ref>(?<relative-part>//(?<authority>" +
       "(?:(?<userinfo>#{_userinfo_re})@)?(?<host>#{_host_re}(?<!/))?(?::(?<port>\\d*+))?)" +
       "(?<path-abempty>(?:/\\g<seg>*+)?)|(?<path-absolute>/\\g<seg>*+)" +
@@ -60,21 +60,12 @@ class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, qu
     u
   end
 
-  # Ruby's String#dump for a UTF-8 String (no other encodings).
+  # Ruby's String#dump for a UTF-8 String: inspect, with each non-ASCII character as \uXXXX.
   def _dump(s)
-    out = String["\""]
-    String.each_char(s) do |c|
+    String.gsub(Kernel.inspect(s), /[^\x00-\x7f]/) do |c|
       o = String.ord(c)
-      if o < 128
-        Array.push(out, String.delete_suffix(String.delete_prefix(Kernel.inspect(c), "\""), "\""))
-      elsif o < 0x10000
-        Array.push(out, format("\\u%04X", o))
-      else
-        Array.push(out, format("\\u{%X}", o))
-      end
+      o < 0x10000 ? format("\\u%04X", o) : format("\\u{%X}", o)
     end
-    Array.push(out, "\"")
-    Array.join(out)
   end
 
   # Ruby's URI.split: [scheme, userinfo, host, port, registry, path, opaque, query, fragment],
@@ -300,51 +291,45 @@ class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, qu
   include Arithmetic
   def +(u, other) = merge(u, other)
 
-  # URI.join(base, ref): `base` is a String or a URI. Ruby's takes any number of arguments.
-  def join(base, rel)
-    merge(_to_uri(base), rel)
+  # URI.join(base, ref, ...): `base` is a String or a URI. Ruby's takes any number of references;
+  # this one up to three (no rest parameters).
+  def join(base, r1 = nil, r2 = nil, r3 = nil)
+    u = _to_uri(base)
+    u = merge(u, r1) if r1
+    u = merge(u, r2) if r2
+    u = merge(u, r3) if r3
+    u
   end
 
   # --- form encoding (application/x-www-form-urlencoded) ---
-  def _encode(s, space)
-    out = String[]
-    Array.each(String.split(s, /([^*\-.0-9A-Z_a-z]+)/)) do |piece|
-      if Regexp.match?(/\A[*\-.0-9A-Z_a-z]/, piece) || piece == ""
-        Array.push(out, piece)
-      else
-        Array.each(String.bytes(piece)) do |b|
-          Array.push(out, b == 32 ? space : format("%%%02X", b))
-        end
-      end
-    end
-    Array.join(out)
+  # Ruby's TBLENCWWWCOMP_ / TBLENCURICOMP_: every byte but *-.0-9A-Z_a-z to %XX, space to `space`.
+  def _enc_table(space)
+    t = Hash[]
+    Integer.times(256) { |b| t[Array.pack(Integer[b], "C")] = b == 32 ? space : format("%%%02X", b) }
+    t
+  end
+  def _www_table = once { _enc_table("+") }
+  def _uri_table = once { _enc_table("%20") }
+
+  def _encode(s, table) = String.force_encoding(String.gsub(String.b(s), /[^*\-.0-9A-Z_a-z]/, table), "UTF-8")
+
+  # Each run of %XX becomes its bytes; with plus, + becomes a space first.
+  def _decode(s, plus, enc)
+    str = String.b(plus ? String.tr(s, "+", " ") : s)
+    String.force_encoding(String.gsub(str, /(?:%\h\h)+/) { |m| Array.pack(Array[String.delete(m, "%")], "H*") }, enc)
   end
 
-  def _decode(s, plus)
-    bytes = Integer[]
-    Array.each(String.split(s, /(%\h\h)/)) do |piece|
-      if Regexp.match?(/\A%\h\h\z/, piece)
-        Array.push(bytes, String.hex(String.delete_prefix(piece, "%")))
-      elsif plus
-        Array.push(bytes, *String.bytes(String.tr(piece, "+", " ")))
-      else
-        Array.push(bytes, *String.bytes(piece))
-      end
-    end
-    String.force_encoding(Array.pack(bytes, "C*"), "UTF-8")
-  end
+  def encode_www_form_component(s) = _encode("#{s}", _www_table)
+  def encode_uri_component(s) = _encode("#{s}", _uri_table)
 
-  def encode_www_form_component(s) = _encode("#{s}", "+")
-  def encode_uri_component(s) = _encode("#{s}", "%20")
-
-  def decode_www_form_component(s)
+  def decode_www_form_component(s, enc = "UTF-8")
     raise ArgumentError, "invalid %-encoding (#{s})" if Regexp.match?(/%(?!\h\h)/, s)
-    _decode(s, true)
+    _decode(s, true, enc)
   end
 
-  def decode_uri_component(s)
+  def decode_uri_component(s, enc = "UTF-8")
     raise ArgumentError, "invalid %-encoding (#{s})" if Regexp.match?(/%(?!\h\h)/, s)
-    _decode(s, false)
+    _decode(s, false, enc)
   end
 
   # `form` is a Hash or an Array of [key, value]; a nil value gives the key alone, and an Array
@@ -367,7 +352,7 @@ class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, qu
   end
 
   # An Array of [key, value] Tuples; "&" separates pairs.
-  def decode_www_form(s)
+  def decode_www_form(s, enc = "UTF-8")
     raise ArgumentError, "the input of URI.decode_www_form must be ASCII only string" unless String.ascii_only?(s)
     pairs = Array[]
     return pairs if s == ""
@@ -375,7 +360,7 @@ class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, qu
     Array.pop(parts) if Array.last(parts) == ""
     Array.each(parts) do |part|
       key, _sep, val = String.partition(part, "=")
-      Array.push(pairs, [_decode(key, true), _decode(val, true)])
+      Array.push(pairs, [_decode(key, true, enc), _decode(val, true, enc)])
     end
     pairs
   end

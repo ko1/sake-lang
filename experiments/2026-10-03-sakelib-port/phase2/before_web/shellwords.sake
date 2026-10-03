@@ -1,0 +1,75 @@
+# shellwords: Ruby's Shellwords module in Sake (Bourne shell word splitting and escaping).
+#
+# Shellwords.split / shellsplit / shellwords, escape / shellescape, join / shelljoin, and Ruby's
+# String#shellsplit, String#shellescape, Array#shelljoin as String.shellsplit(s) and so on.
+
+module Shellwords
+  module_function
+
+  # One word of Ruby's pattern, anchored at the start of the rest of the line:
+  # leading space, then a bare word | 'single' | "double" | \escape | garbage, then a separator.
+  def word_re = /\A\s*(?>([^\0\s\\'"]+)|'([^\0']*)'|"((?:[^\0"\\]|\\[^\0])*)"|(\\[^\0]?)|(\S))(\s|\z)?/m
+
+  def shellsplit(line)
+    words = String[]
+    field = ""
+    pos = 0
+    n = String.size(line)
+    while pos < n
+      m = String.match(line[pos, n - pos] || "", word_re)
+      break unless m
+      whole = m[0] || ""
+      garbage = m[5]
+      if garbage
+        shown = pos > 0 ? "..." + whole : whole
+        raise ArgumentError, "#{garbage == "\0" ? "Nul character" : "Unmatched quote"} at #{pos}: #{shown}"
+      end
+      word = m[1]
+      sq = m[2]
+      dq = m[3]
+      esc = m[4]
+      piece =
+        if word then word
+        elsif sq then sq
+        elsif dq then String.gsub(dq, /\\([$`"\\\n])/, "\\1")
+        elsif esc then String.gsub(esc, /\\(.)/, "\\1")
+        else ""
+        end
+      field += piece
+      if m[6]
+        Array.push(words, field)
+        field = ""
+      end
+      break if whole == ""
+      pos += String.size(whole)
+    end
+    words
+  end
+
+  def shellwords(line) = shellsplit(line)
+  def split(line) = shellsplit(line)
+
+  # Any value, as Ruby's str.to_s; an empty String gives "''".
+  def shellescape(x)
+    str = Kernel.to_s(x)
+    return "''" if str == ""
+    raise ArgumentError, "NUL character" if String.include?(str, "\0")
+    String.gsub(str, /[^A-Za-z0-9_\-.,:+\/@\n]/, "\\\\\\&")
+      .String.gsub(/\n/, "'\n'")
+  end
+
+  def escape(x) = shellescape(x)
+
+  def shelljoin(a) = Array.join(Array.map(a) { |x| shellescape(x) }, " ")
+
+  def join(a) = shelljoin(a)
+end
+
+class String
+  def shellsplit(s) = Shellwords.shellsplit(s)
+  def shellescape(s) = Shellwords.shellescape(s)
+end
+
+class Array
+  def shelljoin(a) = Shellwords.shelljoin(a)
+end
