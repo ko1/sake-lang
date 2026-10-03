@@ -159,76 +159,94 @@ running:
 
 @@example block_errors
 
-## 7. Struct types
+## 7. Types and instances
 
-`Struct.new` creates a named type together with its operations. Ruby's `Data.define` is not used: Ruby's
-`Data` is immutable, while Sake's named types are mutable, like Ruby's `Struct`.
+A `class` declares a type with fields; its values are **instances**. The fields and how they can
+be reached are written as settings after `<` (a Record of settings, not a superclass: there is no
+inheritance). The type's operations are its own functions, called with the type's name and the
+instance first:
 
-`Struct.new` gives the type these operations: `Point.new`, a `get_` operation
-for each field, and a `set_` operation for each field. Fields are **mutable**.
+@@example instances
 
-To add your own operations to a type, put them inside `class Point`. Inside that body, unqualified
-names such as `get_x` refer to `Point`'s operations. `def Point.f` is shorthand for a `def f`
-inside `class Point`.
+| Setting | Fields it declares |
+|---|---|
+| `reader: [x, y]` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
+| `accessor: [n]` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
+| `writer: [w]` | `C.set_w(c, v)` from anywhere; read only inside the class |
+| `default: {n: 0}` | a default value; trailing fields with defaults may be left out of `new`; a non-nil default also fixes the field's type |
+| `exception: true` | an exception type: `message` comes first |
+
+Use `reader:` for every field that is not changed from outside, which is most of them: every write
+to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)` is
+shorthand for `class C < {accessor: [x, y]}`.
+
+- **Instances.** `C.new(a, b)` takes one argument per field. Fields are **mutable**, and instances
+  are **shared**, not copied: after `d = c`, a change through `d` is seen through `c`.
+- **Equality.** `==` compares the fields, unless the type defines `==` (or `Comparable` with `<=>`).
+- **Showing.** `p` shows `#<struct Point x=4, y=6>`, as Ruby does. A type's own `to_s(c)` is used
+  by `puts` and `"#{...}"`, and its own `inspect(c)` by `p`.
+- **Functions of a type.** Inside `class C`, `@x`, `@x = v`, and `@x += v` read and write field `x`
+  of the function's **first argument**; there is no `self`. Unqualified names refer to C's
+  operations first. `def C.f(c)` outside the class is shorthand for a `def f(c)` inside it.
+
+The same with `Struct.new` and `get_`/`set_` spelled out:
 
 @@example data
 
-A type can also be declared with its settings after `<`:
-
-- `reader:`, `writer:`, and `accessor:` choose which fields have `get_` and `set_` outside the
-  class.
-- `default:` gives default values, which also fix the type of a field.
-- `exception: true` makes an exception type.
-
-Writing `Account.set_owner(a, "eve")` outside the class would be a static error, because `owner` is
-read-only there.
-
-Prefer this form, with `reader:` for every field that is not changed from outside: most fields are
-never changed after `new`, and with `reader:` every write to a field is in its own class, where the
-checker finds its type. List a field under `accessor:` only when code outside the class must change
-it. `Struct.new(:x, :y)` is shorthand for `accessor:` on every field.
-
-@@example class_settings
-
-There is no `p.x`. Field access is an operation with a type, like everything else:
-
-@@example data_errors
-
-Inside a function of a Struct type, `@x` is shorthand for field `x` of the function's **first
-argument**, which is the subject by convention. `@x` reads the field, `@x = v` writes it, and
-`@x += v` updates it. The type comes from the enclosing `class Point`, so `@x` is still an
-operation with a type:
+`@x` refers to the first argument, whatever it is; passing something else is reported:
 
 @@example data_shorthand
 
-Passing the wrong record is reported before running. The error is inside `length`, and the hint
-points back to the call that passes a Point:
+There is no `p.x`, a read-only field is not written from outside, a field that does not exist is
+not read, and `new` takes every field:
+
+@@example instance_errors
+
+Passing the wrong instance is reported before running. The error is inside `length`, and the hint
+points back to the call that passes a Point. While running, the same check stops at the exact
+operation and prints the call chain:
 
 @@example data_runtime_error
-
-While running, the same check stops at the exact operation and prints the call chain:
-
 @@run data_runtime_error --strict=0
 
-## 8. Where unqualified names go
+## 8. Modules
 
-An unqualified call is resolved statically, from the inside out:
+A `module` is a namespace of functions with no type and no instances. It is used in two ways: as a
+home for plain functions (`module_function`), and as a **mixin** that types include.
 
-1. the enclosing class or module
-2. the top-level functions
-3. `Kernel`
+| | `class C < {...}` | `module M` |
+|---|---|---|
+| Is a type | Yes: `C.new`, fields, `x in C` | No |
+| Functions | C's operations, instance first | module functions, or mixin functions for the types that include M |
+| Called as | `C.f(c)` | `M.f(x)`: directly (`module_function`), or dispatched to `x`'s type |
+| Combined by | `include M` (no inheritance) | `include` of other modules |
 
-The inner definition wins, so common names such as `open` stay usable. To reach an outer
-definition, write its namespace, as in `Kernel.puts(...)`.
+@@example class_module
 
-@@example scope
+- **Module functions.** Functions after `module_function` are called directly, as
+  `Geometry.dist2(...)`, like Ruby's `Math`.
+- **Mixins.** `include M` borrows M's functions, as Ruby's modules do, but statically. Inside a
+  borrowed function, unqualified names are looked up in the class that includes it, so
+  `Shape.describe` uses the `area` of Square or of Disc.
+- **Dispatch.** Calling a mixin function through its module, as `Shape.describe(x)`, runs the
+  function of `x`'s type, which must include the module. This is the one place besides operators
+  where the function is picked while running, and the module name says so.
+
+@@example modules
+
+A module states what each includer must define with a function whose body is only
+`raise NotImplementedError`. A missing definition, a `class` that is not a type, and a direct call
+to a function that needs its includer are reported before running:
+
+@@example required_errors
+@@example module_errors
 
 ### Operators for your own types
 
-An operator belongs to a module: `Arithmetic` (`+ - * / % **`), `Comparable` (`<=>` and
-`< <= > >=`), `Bitwise`, and `Indexable` (`[]`, `[]=`). A type joins by including the module and
-defining the operator. With `Comparable`, `<=>` alone gives the comparisons and makes `Array.sort`
-work:
+An operator belongs to a module: `Arithmetic` (`+ - * / % **`, unary `-` and `+`), `Comparable`
+(`<=>` and `< <= > >=`), `Bitwise`, and `Indexable` (`[]`, `[]=`). A type joins by including the
+module and defining the operator. With `Comparable`, `<=>` alone gives the comparisons, `==`, and
+`Array.sort`:
 
 @@example operators
 
@@ -243,34 +261,18 @@ Without the check before running, the same value stops at the call:
 
 @@run union_call --strict=0
 
-### Sharing functions with `include`
+### Unqualified names
 
-`class` adds operations to a type, and `module` is a namespace with no type.
+An unqualified call is resolved statically, from the inside out:
 
-`include M` borrows `M`'s functions, as Ruby's modules do, but statically. Inside a borrowed
-function, unqualified names are looked up in the namespace that includes it. So `Summary` below
-can use the `each` that `Basket` or `Countdown` provides.
+1. the enclosing class or module (and what it includes)
+2. the top-level functions
+3. `Kernel`
 
-There are two ways to call a module's functions:
+The inner definition wins, so common names such as `open` stay usable. To reach an outer
+definition, write its namespace, as in `Kernel.puts(...)`.
 
-- **Module functions.** Functions after `module_function` are called directly, as `Units.km(x)`.
-- **Mixin functions.** Calling any other function through the module, as `Summary.total(x)`,
-  **dispatches**: it runs the `total` of `x`'s type, which must include `Summary`. This is the one
-  place besides operators where the function is picked while running, and the module name says
-  so.
-
-@@example modules
-
-A missing requirement is found before running. So are a `class` that is not a type, and a direct
-call to a function that needs its includer:
-
-@@example module_errors
-
-A module states what each includer must define with a function whose body is only
-`raise NotImplementedError`. A type that includes the module but lacks it is reported where the
-function is reached:
-
-@@example required_errors
+@@example scope
 
 ## 9. Tuples, Records, and arrays
 
