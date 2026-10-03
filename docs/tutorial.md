@@ -547,6 +547,11 @@ A type can also be declared with its settings after `<`:
 Writing `Account.set_owner(a, "eve")` outside the class would be a static error, because `owner` is
 read-only there.
 
+Prefer this form, with `reader:` for every field that is not changed from outside: most fields are
+never changed after `new`, and with `reader:` every write to a field is in its own class, where the
+checker finds its type. List a field under `accessor:` only when code outside the class must change
+it. `Struct.new(:x, :y)` is shorthand for `accessor:` on every field.
+
 ```ruby
 class Account < {reader: [owner], accessor: [balance], default: {balance: 0}}
   def deposit(a, n) = @balance += n
@@ -1424,37 +1429,37 @@ fields:
 
 ## 15. Putting it together
 
-A bank account with a transaction history. The history starts as an empty `Array[]` and is filled
-with `[kind, amount]` Tuples, which a `do |kind, amount|` block destructures.
+A bank account with a transaction history. Its fields are read-only from outside (`reader:`); the
+functions in its class change them through `@balance` and `@history`. The history is made with
+`Tuple[]` and holds `[kind, amount]` Tuples tagged by a Symbol, which a `do |kind, amount|` block
+takes apart.
 
 ```ruby
-Account = Struct.new(:owner, :balance, :history)
-
-class Account
-  def open(owner) = Account.new(owner, 0, Array[])
+class Account < {reader: [owner, balance, history]}   # read-only from outside; changed only below
+  def open(owner) = Account.new(owner, 0, Tuple[])     # the history holds Tuples
 
   def deposit(acct, amount)
-    set_balance(acct, get_balance(acct) + amount)
-    Array.push(get_history(acct), ["deposit", amount])
+    @balance += amount
+    Array.push(@history, [:deposit, amount])
     acct
   end
 
   def withdraw(acct, amount)
-    if get_balance(acct) < amount
-      Array.push(get_history(acct), ["refused", amount])
+    if @balance < amount
+      Array.push(@history, [:refused, amount])
       return false
     end
-    set_balance(acct, get_balance(acct) - amount)
-    Array.push(get_history(acct), ["withdraw", amount])
+    @balance -= amount
+    Array.push(@history, [:withdraw, amount])
     true
   end
 
   def statement(acct)
-    puts("Statement for #{get_owner(acct)}")
-    Array.each(get_history(acct)) do |kind, amount|
+    puts("Statement for #{@owner}")
+    Array.each(@history) do |kind, amount|
       puts(format("  %-10s%6d", kind, amount))
     end
-    puts(format("  %-10s%6d", "balance", get_balance(acct)))
+    puts(format("  %-10s%6d", "balance", @balance))
   end
 end
 

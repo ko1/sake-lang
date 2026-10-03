@@ -183,6 +183,11 @@ A type can also be declared with its settings after `<`:
 Writing `Account.set_owner(a, "eve")` outside the class would be a static error, because `owner` is
 read-only there.
 
+Prefer this form, with `reader:` for every field that is not changed from outside: most fields are
+never changed after `new`, and with `reader:` every write to a field is in its own class, where the
+checker finds its type. List a field under `accessor:` only when code outside the class must change
+it. `Struct.new(:x, :y)` is shorthand for `accessor:` on every field.
+
 @@example class_settings
 
 There is no `p.x`. Field access is an operation with a type, like everything else:
@@ -413,8 +418,10 @@ In the `strict` program from section 11, the inference finds the one unchecked u
 
 ## 15. Putting it together
 
-A bank account with a transaction history. The history starts as an empty `Array[]` and is filled
-with `[kind, amount]` Tuples, which a `do |kind, amount|` block destructures.
+A bank account with a transaction history. Its fields are read-only from outside (`reader:`); the
+functions in its class change them through `@balance` and `@history`. The history is made with
+`Tuple[]` and holds `[kind, amount]` Tuples tagged by a Symbol, which a `do |kind, amount|` block
+takes apart.
 
 @@example bank
 
