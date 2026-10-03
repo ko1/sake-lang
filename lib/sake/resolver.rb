@@ -412,7 +412,12 @@ module Sake
       end
       traits = @includes.values.flatten(1).map(&:first).to_set
       @functions.each_value do |fs|
-        fs.each_value { |f| check(f.body, Ctx.new(f.namespace, f, false, false, !f.origin && traits.include?(f.namespace))) }
+        # A module's mixin function is checked as a trait even before any type includes the module (a library
+        # module its program does not use yet): the names it lacks are what includers must define.
+        fs.each_value do |f|
+          trait = !f.origin && (traits.include?(f.namespace) || (f.namespace && !@struct_types.key?(f.namespace) && !f.module_function))
+          check(f.body, Ctx.new(f.namespace, f, false, false, trait))
+        end
       end
       # `_` after a definition has no value to read: only an expression statement counts as previous.
       body = @root.statements.body
@@ -824,6 +829,10 @@ module Sake
       check_block(blk, ctx) if blk
       return unless target
 
+      if target.is_a?(Dispatch) && target.table.empty? && ctx.fn.nil? # reached for sure: the top level runs
+        return error(node, "#{target.module}.#{target.name} is a mixin function, and no type includes #{target.module}",
+                     ["to call it as #{target.module}.#{target.name}(...), mark it with `module_function`"])
+      end
       set_call(node, ctx, target)
       return if check_splat(node, target, args, 0)
       check_arity(node, target, args.size, !blk.nil?)
@@ -872,6 +881,7 @@ module Sake
         if argc != target.params.size
           error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{target.params.size})")
         end
+        return if target.abstract # a required function: its includers' definitions say whether it takes a block
         if target.yields && !has_block
           error(node, "#{target.full_name} uses `yield` but no block is given")
         elsif !target.yields && has_block
@@ -1071,10 +1081,8 @@ module Sake
                      ["call it on a type that includes #{mod}, or mark it with `module_function`"])
       end
       types = @linearized.select { |t, mods| (@struct_types.key?(t) || BUILTIN_TYPES.include?(t)) && mods.any? { _1[0] == mod } }.keys
-      if types.empty?
-        return error(node, "#{mod}.#{name} is a mixin function, and no type includes #{mod}",
-                     ["to call it as #{mod}.#{name}(...), mark it with `module_function`"])
-      end
+      # No type includes mod (yet): a call that is reached is reported by the type checker.
+      return Dispatch.new(mod, name, {}) if types.empty?
       table = types.to_h { |t| [t, lookup(t, name)] }
       # A required function's block comes from the types' definitions, which must agree.
       defined = table.values.select { _1.is_a?(UserFunction) && !_1.abstract }

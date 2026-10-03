@@ -588,6 +588,12 @@ module Sake
         end
         u(*rs)
       when CallUser
+        # A required function reached directly (its includer does not define it).
+        if n.fn.abstract
+          atoms = args[0] || []
+          add_check(o, "#{n.fn.origin || n.fn.namespace}.#{n.fn.name}", "required", "a definition", atoms, :error, atoms) unless atoms.empty?
+          return []
+        end
         @callers.push(o.location.start_line)
         begin
           call_user(n.fn, args, blk)
