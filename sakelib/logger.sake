@@ -1,0 +1,148 @@
+# Logger: Ruby's logger. The device is :stdout, a file path (String, appended to), or nil (no output).
+# The formatter is a format string over the keys severity, datetime, progname, msg
+# (`Kernel.format` with a Hash), since a block cannot be stored.
+
+class Logger < {reader: [logdev, level, closed],
+                accessor: [progname, datetime_format, formatter, fixed_time],
+                default: {level: 0, closed: false, progname: nil, datetime_format: nil, formatter: nil,
+                          fixed_time: nil}}
+  # Ruby's Logger::DEBUG ... Logger::UNKNOWN (Sake has no value constants).
+  def DEBUG = 0
+  def INFO = 1
+  def WARN = 2
+  def ERROR = 3
+  def FATAL = 4
+  def UNKNOWN = 5
+
+  # Ruby's Logger::Formatter::Format without the pid (Sake has no Process.pid).
+  def default_format = "%.1<severity>s, [%<datetime>s] %5<severity>s -- %<progname>s: %<msg>s\n"
+  def default_datetime_format = "%Y-%m-%dT%H:%M:%S.%6N"
+  def prog_name = "logger.sake/v1.7.0"
+
+  # Accepts an Integer, or a Symbol or String naming a level (:warn, "WARN"), as Ruby's level=.
+  def set_level(l, v)
+    @level = Logger.coerce_level(v)
+  end
+
+  def coerce_level(v)
+    case v
+    in Integer then v
+    in Symbol then Logger.coerce_level(Symbol.to_s(v))
+    in String
+      case String.downcase(v)
+      in "debug" then 0
+      in "info" then 1
+      in "warn" then 2
+      in "error" then 3
+      in "fatal" then 4
+      in "unknown" then 5
+      else raise ArgumentError, "invalid log level: #{v}"
+      end
+    end
+  end
+
+  def debug?(l) = @level <= 0
+  def info?(l) = @level <= 1
+  def warn?(l) = @level <= 2
+  def error?(l) = @level <= 3
+  def fatal?(l) = @level <= 4
+
+  def debug!(l) = @level = 0
+  def info!(l) = @level = 1
+  def warn!(l) = @level = 2
+  def error!(l) = @level = 3
+  def fatal!(l) = @level = 4
+
+  # Ruby's info(msg): the argument is the message, logged with the logger's progname.
+  def debug(l, msg) = add(l, 0, nil, msg)
+  def info(l, msg) = add(l, 1, nil, msg)
+  def warn(l, msg) = add(l, 2, nil, msg)
+  def error(l, msg) = add(l, 3, nil, msg)
+  def fatal(l, msg) = add(l, 4, nil, msg)
+  def unknown(l, msg) = add(l, 5, nil, msg)
+
+  # Ruby's add(severity, message, progname): with message nil, progname is the message.
+  def add(l, severity, message, progname)
+    sev = severity == nil ? 5 : severity
+    return true if sev < @level
+    prog = progname
+    msg = message
+    if msg == nil
+      msg = prog
+      prog = @progname
+    elsif prog == nil
+      prog = @progname
+    end
+    write(l, format_message(l, format_severity(sev), now(l), prog, msg))
+    true
+  end
+
+  def log(l, severity, message, progname) = add(l, severity, message, progname)
+
+  # Ruby's <<: writes msg as is.
+  def <<(l, msg)
+    write(l, msg)
+    String.bytesize(msg)
+  end
+
+  # Ruby's with_level(level) { }: the level is changed only while the block runs.
+  def with_level(l, v)
+    saved = @level
+    @level = Logger.coerce_level(v)
+    begin
+      yield
+    ensure
+      @level = saved
+    end
+  end
+
+  def close(l)
+    @closed = true
+    nil
+  end
+
+  def format_severity(sev)
+    case sev
+    in 0 then "DEBUG"
+    in 1 then "INFO"
+    in 2 then "WARN"
+    in 3 then "ERROR"
+    in 4 then "FATAL"
+    else "ANY"
+    end
+  end
+
+  def now(l)
+    t = @fixed_time
+    t == nil ? Time.now : t
+  end
+
+  def format_datetime(l, time)
+    f = @datetime_format
+    Time.strftime(time, f == nil ? Logger.default_datetime_format : f)
+  end
+
+  def format_message(l, severity, time, progname, msg)
+    f = @formatter
+    fmt = f == nil ? Logger.default_format : f
+    text = (msg in String) ? msg : Kernel.inspect(msg)
+    Kernel.format(fmt, Hash[severity: severity, datetime: format_datetime(l, time), progname: progname, msg: text])
+  end
+
+  def write(l, s)
+    return nil if @closed
+    dev = @logdev
+    case dev
+    in nil then nil
+    in Symbol
+      raise ArgumentError, "unsupported log device: #{dev} (only :stdout)" unless dev == :stdout
+      print(s)
+    in String
+      # No append mode in Sake: read the file and write it back.
+      # Ruby writes the header when it creates the file (here at the first write).
+      old = File.exist?(dev) ? File.read(dev) : "# Logfile created on #{Time.now} by #{Logger.prog_name}\n"
+      File.write(dev, old + s)
+    end
+    nil
+  end
+end

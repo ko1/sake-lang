@@ -1,0 +1,102 @@
+require "erb"
+
+page = <<~T
+  <h1><%= h(title) %></h1>
+  <%# a comment %>
+  <p>Hello, <%= h(user[:name]) %>!<% if user[:admin] %> (admin)<% end %></p>
+  <% unless items.empty? %>
+  <ul>
+  <% items.each do |item| %>
+    <li><%= h(item[:name]) %>: <%= item[:price] %> yen<% if item[:tags].any? %> [<%= item[:tags].join(", ") %>]<% end %></li>
+  <% end %>
+  </ul>
+  <% else %>
+  <p>no items</p>
+  <% end %>
+  <p><%= items.size %> items<% if items.any? %>, first: <%= items.first[:name] %><% end %></p>
+  <%% literal %> and <%= "str" %> <%= 'single' %> <%= 42 %> <%= nil %>|<%= ratio %> <%= list %>
+  <a href="/search?q=<%= u(query) %>">search</a>
+T
+
+data = Hash[
+  title: "Tom & Jerry's <Shop>",
+  user: Hash[name: "<script>alert(1)</script>", admin: true],
+  items: Array[
+    Hash[name: "Apple", price: 120, tags: Array["fruit", "red"]],
+    Hash[name: "Bread \"fresh\"", price: 250, tags: Array[]],
+    Hash[name: "日本酒", price: 1800, tags: Array["drink"]]
+  ],
+  query: "sake & rice/日本",
+  ratio: 0.5,
+  list: Array[1, "two", :three, nil]
+]
+puts(ERB.result_with_hash(ERB.new(page), data))
+
+puts("-- empty list")
+puts(ERB.result_with_hash(ERB.new(page), Hash[title: "", user: Hash[name: "x", admin: false],
+  items: Array[], query: "", ratio: 1, list: Array[]]))
+
+puts("-- each_with_index, Hash each, elsif, nesting, operators")
+t = <<~T
+  <% rows.each_with_index do |row, i| %><%= i %>:<% row.each do |cell| %> <%= cell %><% end %>
+  <% end %><% scores.each do |name, score| %><%= name %>=<% if score >= 90 %>A<% elsif score >= 70 %>B<% elsif score >= 50 %>C<% else %>F<% end %> <% end %>
+  <% if !hidden && word != "" %>shown<% end %> <% pairs.each do |a, b| %>(<%= a %>,<%= b %>)<% end %> <%= nested[:a]["b"][-1] %>
+  <%= word.upcase %> <%= word.size %> <%= word[0] %> <%= hidden || "fallback" %> <%= word == "sake" %> <%= 1 < 2 %>
+T
+puts(ERB.result_with_hash(ERB.new(t), Hash[
+  rows: Array[Array[1, 2], Array["a"], Array[]],
+  scores: Hash["ann" => 95, "bob" => 70, "cy" => 55, "dee" => 10],
+  hidden: false, word: "sake",
+  pairs: Array[[1, "one"], [2, "two"]],
+  nested: Hash[a: Hash["b" => Array[10, 20, 30]]]
+]))
+
+puts("-- trim_mode -")
+t = <<~T
+  <ul>
+    <%- items.each do |x| -%>
+    <li><%= x %></li>
+    <%- end -%>
+  </ul>
+  a <%- if true -%> b <%- end -%>
+  <%# comment -%>
+  end
+T
+p(ERB.result_with_hash(ERB.new(t, "-"), Hash[items: Array["a", "b"]]))
+
+puts("-- trim_mode >")
+t = <<~T
+  <% items.each do |x| %>
+  <%= x %>
+  <% end %>
+  tail
+T
+p(ERB.result_with_hash(ERB.new(t, ">"), Hash[items: Array["a", "b"]]))
+
+puts("-- trim_mode <>")
+p(ERB.result_with_hash(ERB.new(t, "<>"), Hash[items: Array["a", "b"]]))
+p(ERB.result_with_hash(ERB.new("x <%= 1 %>\n<%= 2 %>\ny\n", "<>"), Hash[]))
+
+puts("-- no trim_mode")
+p(ERB.result_with_hash(ERB.new(t), Hash[items: Array["a", "b"]]))
+p(ERB.result_with_hash(ERB.new(""), Hash[]))
+p(ERB.result_with_hash(ERB.new("no tags, %> and %%> stay"), Hash[]))
+p(ERB.result_with_hash(ERB.new("<%= '%%>' %>"), Hash[]))
+
+puts("-- ERB::Util")
+p(ERB.h("<a href='x'>&\"</a>"))
+p(ERB.html_escape(1))
+p(ERB.url_encode("a b&c/~é"))
+p(ERB.u(""))
+
+puts("-- errors")
+begin
+  ERB.result_with_hash(ERB.new("<%= missing %>"), Hash[])
+rescue ERBError
+  puts("error: undefined name")
+end
+begin
+  ERB.result_with_hash(ERB.new("<% if x %>open"), Hash[x: true])
+rescue ERBError
+  puts("error: missing end")
+end

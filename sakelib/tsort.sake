@@ -1,0 +1,98 @@
+# tsort: topological sort and strongly connected components (Tarjan), as Ruby's TSort.
+#
+# Two forms:
+# - Mixin (Ruby's form). A type includes TSort and defines
+#     def tsort_each_node(g) ... yield(node) ... end
+#     def tsort_each_child(g, node) ... yield(child) ... end
+#   then gets T.tsort(g), T.strongly_connected_components(g), ...; TSort.tsort(g) dispatches on g.
+#   A built-in type can include it too: `class Hash; include TSort; ...; end` (Ruby's doc example).
+# - A Hash graph, node => Array of children: TSort.tsort_hash(h) and friends. Ruby's module
+#   functions take each_node/each_child as callables, which Sake does not have; a Hash stands in.
+#   A child that is not a key has no children.
+
+TSortCyclic = Exception.new                     # Ruby: TSort::Cyclic
+
+module TSort
+  def tsort_each_node(g) = raise(NotImplementedError)
+  def tsort_each_child(g, node) = raise(NotImplementedError)
+
+  def tsort(g)
+    out = Array[]
+    tsort_each(g) { |n| Array.push(out, n) }
+    out
+  end
+
+  def tsort_each(g)
+    each_strongly_connected_component(g) do |component|
+      if Array.size(component) == 1
+        yield(Array.first(component))
+      else
+        raise TSortCyclic, "topological sort failed: #{Kernel.inspect(component)}"
+      end
+    end
+    nil
+  end
+
+  def strongly_connected_components(g)
+    out = Array[]
+    each_strongly_connected_component(g) { |c| Array.push(out, c) }
+    out
+  end
+
+  def each_strongly_connected_component(g)
+    id_map = Hash[]
+    stack = Array[]
+    tsort_each_node(g) do |node|
+      tsort_scc_from(g, node, id_map, stack) { |c| yield(c) } unless Hash.key?(id_map, node)
+    end
+    nil
+  end
+
+  # Ruby's optional id_map/stack arguments are left out; the result is the minimum id, as Ruby's.
+  def each_strongly_connected_component_from(g, node)
+    tsort_scc_from(g, node, Hash[], Array[]) { |c| yield(c) }
+  end
+
+  # Tarjan's algorithm, recursive as Ruby's (so the order of the results is Ruby's).
+  def tsort_scc_from(g, node, id_map, stack)
+    node_id = Hash.size(id_map)
+    id_map[node] = node_id
+    minimum_id = node_id
+    stack_length = Array.size(stack)
+    Array.push(stack, node)
+    tsort_each_child(g, node) do |child|
+      if Hash.key?(id_map, child)
+        child_id = id_map[child]
+        minimum_id = child_id if child_id && child_id < minimum_id
+      else
+        sub_minimum_id = tsort_scc_from(g, child, id_map, stack) { |c| yield(c) }
+        minimum_id = sub_minimum_id if sub_minimum_id < minimum_id
+      end
+    end
+    if node_id == minimum_id
+      component = Array.drop(stack, stack_length)
+      Array.pop(stack) while Array.size(stack) > stack_length
+      Array.each(component) { |n| id_map[n] = nil }
+      yield(component)
+    end
+    minimum_id
+  end
+end
+
+# Module functions over a Hash graph (outside the module body: there `def TSort.f` is rejected).
+def TSort.tsort_hash(h) = TSortHashGraph.tsort(TSortHashGraph.new(h))
+def TSort.strongly_connected_components_hash(h) = TSortHashGraph.strongly_connected_components(TSortHashGraph.new(h))
+def TSort.tsort_each_hash(h) = TSortHashGraph.tsort_each(TSortHashGraph.new(h)) { |n| yield(n) }
+def TSort.each_strongly_connected_component_hash(h) = TSortHashGraph.each_strongly_connected_component(TSortHashGraph.new(h)) { |c| yield(c) }
+
+# The includer behind the Hash-graph functions.
+class TSortHashGraph < {reader: [h]}
+  include TSort
+  def tsort_each_node(g) = Hash.each_key(@h) { |n| yield(n) }
+
+  def tsort_each_child(g, node)
+    children = @h[node]
+    Array.each(children) { |c| yield(c) } if children
+    nil
+  end
+end

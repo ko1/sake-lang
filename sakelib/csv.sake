@@ -1,0 +1,590 @@
+# csv: Ruby's CSV library (csv 3.3) in Sake.
+#
+# Keyword options become one Record argument of a `_with` operation:
+#   Ruby  CSV.parse(s, col_sep: ";", headers: true)
+#   Sake  CSV.parse_with(s, {col_sep: ";", headers: true})
+# A row is an Array of String | nil (nil for an empty unquoted field, as in Ruby).
+# With `headers:` in the options, the result is a CSVTable of CSVRow (Ruby's CSV::Table / CSV::Row).
+
+MalformedCSVError = Exception.new(:line_number)
+
+# A writer (Ruby's CSV object for output): `csv << row` appends a line.
+class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_empty, headers]}
+  include Bitwise
+
+  # ---- options (a Record; a missing field takes Ruby's default) ----
+
+  def opt_col_sep(o)
+    case o
+    in {col_sep:} then col_sep
+    else ","
+    end
+  end
+
+  def opt_quote_char(o)
+    case o
+    in {quote_char:} then quote_char
+    else "\""
+    end
+  end
+
+  # :auto (Ruby's default) or a String.
+  def opt_row_sep(o)
+    case o
+    in {row_sep:} then row_sep
+    else :auto
+    end
+  end
+
+  def opt_skip_blanks(o)
+    case o
+    in {skip_blanks:} then skip_blanks
+    else false
+    end
+  end
+
+  # ---- parsing ----
+
+  # Ruby's :auto: the first "\r\n", "\n", or "\r" in the data, else "\n".
+  def detect_row_sep(text)
+    m = String.match(text, /\r\n|\n|\r/)
+    m ? MatchData.to_s(m) : "\n"
+  end
+
+  def malformed(msg, line)
+    MalformedCSVError.new("#{msg} in line #{line}.", line)
+  end
+
+  def unquoted(f, line)
+    return nil if String.empty?(f)
+    m = String.match(f, /[\r\n]/)
+    raise malformed("Unquoted fields do not allow new line <#{Kernel.inspect(MatchData.to_s(m))}>", line) if m
+    f
+  end
+
+  # One record (row_sep removed, except inside quotes) -> Array of String | nil.
+  # nil when a quoted field is still open at the end (the record continues on the next line).
+  def parse_record(rec, col_sep, quote, line)
+    return Array[] if String.empty?(rec)
+    unless String.include?(rec, quote)
+      return Array.map(String.split(rec, Regexp.new(Regexp.escape(col_sep)), -1)) { |f| unquoted(f, line) }
+    end
+    row = Array[]
+    chars = String.chars(rec)
+    sep_first = String.chars(col_sep)[0]
+    sep_len = String.size(col_sep)
+    n = Array.size(chars)
+    field = ""
+    quoted = false
+    in_q = false
+    i = 0
+    while i < n
+      c = chars[i]
+      if in_q
+        if c == quote
+          if i + 1 < n && chars[i + 1] == quote
+            field = field + quote
+            i += 1
+          else
+            in_q = false
+          end
+        else
+          field = field + c
+        end
+      elsif c == sep_first && (sep_len == 1 || Array.join(Array.take(Array.drop(chars, i), sep_len)) == col_sep)
+        Array.push(row, quoted ? field : unquoted(field, line))
+        field = ""
+        quoted = false
+        i += sep_len
+        next
+      elsif c == quote
+        raise malformed("Any value after quoted field isn't allowed", line) if quoted
+        raise malformed("Illegal quoting", line) unless String.empty?(field)
+        in_q = true
+        quoted = true
+      else
+        raise malformed("Any value after quoted field isn't allowed", line) if quoted
+        field = field + c
+      end
+      i += 1
+    end
+    return nil if in_q
+    Array.push(row, quoted ? field : unquoted(field, line))
+    row
+  end
+
+  # Text -> Array of rows of String | nil, no conversion.
+  def raw_rows(text, o)
+    rows = Array[]
+    return rows if String.empty?(text)
+    col_sep = opt_col_sep(o)
+    quote = opt_quote_char(o)
+    rs = opt_row_sep(o)
+    row_sep = rs == :auto ? detect_row_sep(text) : rs
+    pieces = String.split(text, Regexp.new(Regexp.escape(row_sep)), -1)
+    Array.pop(pieces) if Array.last(pieces) == ""
+    skip_blanks = opt_skip_blanks(o)
+    pending = ""
+    open = false
+    start = 1
+    line = 0
+    Array.each(pieces) do |piece|
+      line += 1
+      if open
+        pending = pending + row_sep + piece
+      else
+        pending = piece
+        start = line
+      end
+      row = parse_record(pending, col_sep, quote, start)
+      if row == nil
+        open = true
+        next
+      end
+      open = false
+      next if skip_blanks && Array.empty?(row)
+      next if skip_line?(o, pending)
+      Array.push(rows, row)
+    end
+    raise malformed("Unclosed quoted field", start) if open
+    rows
+  end
+
+  def skip_line?(o, rec)
+    case o
+    in {skip_lines:} then String.match?(rec, skip_lines)
+    else false
+    end
+  end
+
+  # ---- converters ----
+
+  # One named converter on a String field; Ruby's `Integer(f) rescue f` and `Float(f) rescue f`.
+  def convert_named(f, name)
+    case name
+    in :integer then (Integer(f) rescue f)
+    in :float then (Float(f) rescue f)
+    in :numeric | :all
+      v = (Integer(f) rescue f)
+      (v in String) ? (Float(v) rescue v) : v
+    else raise ArgumentError, "unknown converter name: #{Kernel.inspect(name)}"
+    end
+  end
+
+  # converters: a Symbol, or a Tuple / Array of Symbols applied in order while the field is a String.
+  def convert_field(f, conv)
+    case conv
+    in Symbol then convert_named(f, conv)
+    in Tuple | Array
+      v = f
+      names = (conv in Tuple) ? Tuple.to_a(conv) : conv
+      Array.each(names) do |name|
+        v = convert_named(v, name) if v in String
+      end
+      v
+    end
+  end
+
+  def convert_row(row, o)
+    case o
+    in {nil_value:} then row = Array.map(row) { |f| f == nil ? nil_value : f }
+    else row
+    end
+    case o
+    in {empty_value:} then row = Array.map(row) { |f| f == "" ? empty_value : f }
+    else row
+    end
+    case o
+    in {converters:} then Array.map(row) { |f| (f in String) ? convert_field(f, converters) : f }
+    else row
+    end
+  end
+
+  def convert_header(h, conv)
+    case conv
+    in :downcase then String.downcase(h)
+    in :symbol
+      String.downcase(h).String.gsub(/[^\s\w]+/, "").String.strip.String.gsub(/\s+/, "_").String.to_sym
+    in :symbol_raw then String.to_sym(h)
+    else raise ArgumentError, "unknown header converter name: #{Kernel.inspect(conv)}"
+    end
+  end
+
+  def convert_headers(hs, o)
+    case o
+    in {header_converters:} then Array.map(hs) { |h| (h in String) ? convert_header(h, header_converters) : h }
+    else hs
+    end
+  end
+
+  def make_table(rows, o, headers)
+    hs = case headers
+         in true
+           first = Array.shift(rows)
+           first ? first : Array[]
+         in String then parse_line(headers)
+         in Tuple then Tuple.to_a(headers)
+         in Array then headers
+         in false then raise ArgumentError, "headers: false makes Arrays: use CSV.parse"
+         end
+    hs = Array.map(hs ? hs : Array[]) { it }
+    hs = convert_headers(hs, o)
+    CSVTable.new(hs, Array.map(rows) { |r| CSVRow.pad(Array.dup(hs), convert_row(r, o)) })
+  end
+
+  # ---- parsing API ----
+
+  def parse(text) = raw_rows(text, {col_sep: ","})
+
+  # Without `headers:` -> Array of rows; with `headers:` -> CSVTable.
+  def parse_with(text, o)
+    rows = raw_rows(text, o)
+    case o
+    in {headers:} then make_table(rows, o, headers)
+    else Array.map(rows) { |r| convert_row(r, o) }
+    end
+  end
+
+  # The first row, or nil for empty text.
+  def parse_line(line) = Array.first(raw_rows(line, {col_sep: ","}))
+
+  def parse_line_with(line, o) = Array.first(Array.map(raw_rows(line, o)) { |r| convert_row(r, o) })
+
+  def read(path) = parse(File.read(path))
+  def read_with(path, o) = parse_with(File.read(path), o)
+  def readlines(path) = read(path)
+  def readlines_with(path, o) = read_with(path, o)
+
+  # Ruby's CSV.table: headers, numeric converters, Symbol headers.
+  def table(path) = parse_with(File.read(path), {headers: true, converters: :numeric, header_converters: :symbol})
+
+  def foreach(path)
+    Array.each(read(path)) { |r| yield(r) }
+    nil
+  end
+
+  # Yields CSVRows when `headers:` is given, otherwise Arrays.
+  def foreach_with(path, o)
+    result = read_with(path, o)
+    case result
+    in CSVTable then CSVTable.each(result) { |r| yield(r) }
+    in Array then Array.each(result) { |r| yield(r) }
+    end
+    nil
+  end
+
+  # ---- generating ----
+
+  def field_text(c, f, i)
+    q = @quote_char
+    return q + q if @force_quotes && f == nil
+    return "" if f == nil
+    s = Kernel.to_s(f)
+    if @force_quotes || (@quote_empty && String.empty?(s)) ||
+       String.match?(s, /[\r\n]/) || String.include?(s, @col_sep) || String.include?(s, q)
+      q + String.gsub(s, q, q + q) + q
+    else
+      s
+    end
+  end
+
+  def row_fields(c, row)
+    case row
+    in Array then row
+    in Tuple then Tuple.to_a(row)
+    in CSVRow then CSVRow.get_fields(row)
+    in Hash
+      hs = @headers
+      raise ArgumentError, "a Hash row needs headers:" unless hs
+      Array.map(hs) { |h| row[h] }
+    end
+  end
+
+  def line_of(c, row)
+    fs = row_fields(c, row)
+    Array.join(Array.map(Range.to_a(0...Array.size(fs))) { |i| field_text(c, fs[i], i) }, @col_sep) + @row_sep
+  end
+
+  def <<(c, row)
+    Array.push(@lines, line_of(c, row))
+    c
+  end
+
+  def add_row(c, row) = c << row
+  def puts(c, row) = c << row
+
+  def string(c) = Array.join(@lines)
+
+  def writer(o)
+    rs = opt_row_sep(o)
+    hs = case o
+         in {headers:}
+           case headers
+           in String then parse_line(headers)
+           in Tuple then Tuple.to_a(headers)
+           in Array then headers
+           end
+         else nil
+         end
+    fq = case o
+         in {force_quotes:} then force_quotes
+         else false
+         end
+    qe = case o
+         in {quote_empty:} then quote_empty
+         else true
+         end
+    c = CSV.new(String[], opt_col_sep(o), rs == :auto ? "\n" : rs, opt_quote_char(o), fq, qe, hs)
+    case o
+    in {write_headers:} then c << hs if write_headers && hs
+    else nil
+    end
+    c
+  end
+
+  def generate
+    c = writer({col_sep: ","})
+    yield(c)
+    string(c)
+  end
+
+  def generate_with(o)
+    c = writer(o)
+    yield(c)
+    string(c)
+  end
+
+  def generate_line(row) = line_of(writer({col_sep: ","}), row)
+  def generate_line_with(row, o) = line_of(writer(o), row)
+
+  def generate_lines(rows) = Array.join(Array.map(rows) { |r| generate_line(r) })
+  def generate_lines_with(rows, o) = Array.join(Array.map(rows) { |r| generate_line_with(r, o) })
+
+  # mode "w" (write) or "a" (append); yields a writer.
+  def open(path, mode)
+    c = writer({col_sep: ","})
+    yield(c)
+    write_out(path, mode, string(c))
+  end
+
+  def open_with(path, mode, o)
+    c = writer(o)
+    yield(c)
+    write_out(path, mode, string(c))
+  end
+
+  def write_out(path, mode, s)
+    case mode
+    in "w" then File.write(path, s)
+    in "a" then File.write(path, (File.exist?(path) ? File.read(path) : "") + s)
+    else raise ArgumentError, "CSV.open: mode must be \"w\" or \"a\", got #{Kernel.inspect(mode)}"
+    end
+    nil
+  end
+
+  def inspect(c) = "#<CSV io_type:StringIO lineno:#{Array.size(@lines)} col_sep:#{Kernel.inspect(@col_sep)} row_sep:#{Kernel.inspect(@row_sep)} quote_char:#{Kernel.inspect(@quote_char)}>"
+end
+
+# Ruby's CSV::Row: headers and fields of the same length.
+class CSVRow < {reader: [headers, fields]}
+  include Indexable
+  include Bitwise
+
+  # Ruby's Row.new(headers, fields): pads the shorter side with nil.
+  def pad(hs, fs)
+    Array.push(fs, nil) while Array.size(fs) < Array.size(hs)
+    Array.push(hs, nil) while Array.size(hs) < Array.size(fs)
+    CSVRow.new(hs, fs)
+  end
+
+  def headers(r) = Array.dup(@headers)
+  def fields(r) = Array.dup(@fields)
+  def to_a(r) = Array.zip(@headers, @fields)
+
+  # An Integer is a position; anything else is a header.
+  def [](r, k)
+    case k
+    in Integer then @fields[k]
+    else
+      i = Array.index(@headers, k)
+      i ? @fields[i] : nil
+    end
+  end
+
+  def field(r, k) = r[k]
+
+  def []=(r, k, v)
+    case k
+    in Integer
+      @fields[k] = v
+    else
+      i = Array.index(@headers, k)
+      if i
+        @fields[i] = v
+      else
+        Array.push(@headers, k)
+        Array.push(@fields, v)
+      end
+    end
+    v
+  end
+
+  def fetch(r, h)
+    i = Array.index(@headers, h)
+    raise KeyError, "key not found: #{h}" unless i
+    @fields[i]
+  end
+
+  def has_key?(r, h) = Array.include?(@headers, h)
+  def header?(r, h) = has_key?(r, h)
+  def include?(r, h) = has_key?(r, h)
+  def key?(r, h) = has_key?(r, h)
+  def member?(r, h) = has_key?(r, h)
+  def field?(r, v) = Array.include?(@fields, v)
+  def index(r, h) = Array.index(@headers, h)
+  def size(r) = Array.size(@fields)
+  def length(r) = size(r)
+  def empty?(r) = Array.empty?(@fields)
+  def header_row?(r) = false
+  def field_row?(r) = true
+  def values_at(r, hs) = Array.map(hs) { |h| r[h] }
+
+  # Appends a field (with a nil header), or a [header, field] Tuple.
+  def <<(r, x)
+    case x
+    in Tuple
+      h, v = x
+      Array.push(@headers, h)
+      Array.push(@fields, v)
+    else
+      Array.push(@headers, nil)
+      Array.push(@fields, x)
+    end
+    r
+  end
+
+  # Removes the field of header h (or at position h); returns [header, field] or nil.
+  def delete(r, h)
+    i = (h in Integer) ? h : Array.index(@headers, h)
+    return nil unless i
+    return nil unless i < Array.size(@fields)
+    [Array.delete_at(@headers, i), Array.delete_at(@fields, i)]
+  end
+
+  def to_h(r)
+    h = Hash[]
+    Array.each(Array.zip(@headers, @fields)) { |k, v| h[k] = v unless Hash.key?(h, k) }
+    h
+  end
+  def to_hash(r) = to_h(r)
+
+  def each(r)
+    Array.each(Array.zip(@headers, @fields)) { |h, v| yield(h, v) }
+    r
+  end
+
+  def to_csv(r) = CSV.generate_line(@fields)
+  def to_s(r) = to_csv(r)
+
+  def ==(a, b) = (b in CSVRow) && CSVRow.get_headers(a) == CSVRow.get_headers(b) && CSVRow.get_fields(a) == CSVRow.get_fields(b)
+
+  def inspect(r)
+    parts = Array.map(Array.zip(@headers, @fields)) do |h, v|
+      hs = (h in Symbol) ? Symbol.to_s(h) : Kernel.inspect(h)
+      " #{hs}:#{Kernel.inspect(v)}"
+    end
+    "#<CSV::Row#{Array.join(parts)}>"
+  end
+end
+
+# Ruby's CSV::Table (row mode only): rows sharing the headers.
+class CSVTable < {reader: [header_list, rows]}
+  include Indexable
+  include Bitwise
+
+  # The first row's headers, or those it was made with when it has no rows.
+  def headers(t)
+    first = Array.first(@rows)
+    first ? CSVRow.headers(first) : Array.dup(@header_list)
+  end
+
+  # An Integer gives a row; a header gives the column (an Array of fields).
+  def [](t, k)
+    case k
+    in Integer then @rows[k]
+    else Array.map(@rows) { |r| r[k] }
+    end
+  end
+
+  def []=(t, k, v)
+    case k
+    in Integer then @rows[k] = v
+    else
+      Array.each_with_index(@rows) { |r, i| r[k] = (v in Array) ? v[i] : v }
+    end
+    v
+  end
+
+  def size(t) = Array.size(@rows)
+  def length(t) = size(t)
+  def empty?(t) = Array.empty?(@rows)
+
+  def each(t)
+    Array.each(@rows) { |r| yield(r) }
+    t
+  end
+
+  def map(t) = Array.map(@rows) { |r| yield(r) }
+  def select(t) = Array.select(@rows) { |r| yield(r) }
+  def find(t) = Array.find(@rows) { |r| yield(r) }
+
+  def <<(t, row)
+    case row
+    in CSVRow then Array.push(@rows, row)
+    in Tuple then Array.push(@rows, CSVRow.pad(headers(t), Tuple.to_a(row)))
+    in Array then Array.push(@rows, CSVRow.pad(headers(t), Array.dup(row)))
+    end
+    t
+  end
+  def push(t, row) = t << row
+
+  # Deletes a row (Integer) or a column (header); returns what was removed.
+  def delete(t, k)
+    case k
+    in Integer then Array.delete_at(@rows, k)
+    else Array.map(@rows) { |r| (x = CSVRow.delete(r, k)) ? x[1] : nil }
+    end
+  end
+
+  def values_at(t, is) = Array.map(is) { |i| @rows[i] }
+
+  def to_a(t)
+    out = Array[headers(t)]
+    Array.each(@rows) { |r| Array.push(out, CSVRow.fields(r)) }
+    out
+  end
+
+  def to_csv(t)
+    CSV.generate_line(headers(t)) + Array.join(Array.map(@rows) { |r| CSVRow.to_csv(r) })
+  end
+  def to_s(t) = to_csv(t)
+
+  # Ruby's: a summary line, then the CSV of the headers and the first 5 rows.
+  def inspect(t)
+    first = CSVTable.new(@header_list, Array.take(@rows, 5))
+    "#<CSV::Table mode:col_or_row row_count:#{Array.size(@rows) + 1}>\n#{to_csv(first)}"
+  end
+end
+
+# Ruby's core extensions from csv.
+class String
+  def parse_csv(s) = CSV.parse_line(s)
+end
+
+class Array
+  def to_csv(a) = CSV.generate_line(a)
+end
+
+class Tuple
+  def to_csv(t) = CSV.generate_line(t)
+end

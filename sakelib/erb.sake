@@ -1,0 +1,419 @@
+# ERB: templates. Ruby's ERB evaluates embedded Ruby; Sake has no eval, so a template here is a
+# small language of its own whose syntax is a subset of Ruby's, and its values come from a Hash
+# (as Ruby's ERB#result_with_hash). See sakelib/notes/erb.md for exactly what is accepted.
+#
+#   erb = ERB.new("Hello, <%= h(name) %>!")       # or ERB.new(text, "-"), Ruby's trim_mode: "-"
+#   ERB.result_with_hash(erb, Hash[name: "<you>"])  # => "Hello, &lt;you&gt;!"
+
+# A template that Sake's ERB does not accept, or a name it cannot find (Ruby: SyntaxError,
+# NameError, NoMethodError).
+class ERBError < {exception: true}
+end
+
+# One piece of a template. kind: :text, :out, :if, :unless, :each, :each_with_index.
+# `text` is the text or the expression; `vars` the block's parameters; `alt` the else branch.
+class ERBNode < {reader: [kind, text, vars, body, alt]}
+end
+
+# A block being parsed: the node, whether its else branch is being filled, and whether it came
+# from an elsif (closed by the same `end` as the if it continues).
+class ERBFrame < {reader: [node, chained], accessor: [in_alt]}
+end
+
+class ERB < {reader: [template, trim_mode], default: {trim_mode: nil}}
+  # --- ERB::Util ---
+  def html_escape(s)
+    String.gsub("#{s}", "&", "&amp;")
+      .String.gsub("<", "&lt;")
+      .String.gsub(">", "&gt;")
+      .String.gsub("\"", "&quot;")
+      .String.gsub("'", "&#39;")
+  end
+  def h(s) = html_escape(s)
+
+  def url_encode(s)
+    out = String[]
+    Array.each(String.split("#{s}", /([^a-zA-Z0-9_\-.~]+)/)) do |piece|
+      if piece == "" || Regexp.match?(/\A[a-zA-Z0-9_\-.~]/, piece)
+        Array.push(out, piece)
+      else
+        Array.each(String.bytes(piece)) { |b| Array.push(out, format("%%%02X", b)) }
+      end
+    end
+    Array.join(out)
+  end
+  def u(s) = url_encode(s)
+
+  # --- scanning: the template becomes a list of [kind, text]: :text, :out, :code ---
+  def _scan(erb)
+    mode = @trim_mode
+    re = /(<%%|<%=|<%#|<%|%%>|%>|\n)/
+    re = /(<%%|<%=|<%#|<%-|<%|%%>|-%>|%>|\n)/ if mode == "-"
+    tokens = Array.reject(String.split(@template, re)) { |t| t == "" }
+    out = Array[]
+    pending_ws = ""        # spaces at the start of a line, dropped by a following <%-
+    line_start = true
+    tag_at_bol = false     # this line began with a tag (trim mode "<>")
+    kind = nil
+    code = String[]
+    skip_newline = false
+    Array.each(tokens) do |tok|
+      if skip_newline
+        skip_newline = false
+        next if tok == "\n"
+      end
+      if kind == nil
+        if tok == "<%=" || tok == "<%#" || tok == "<%" || tok == "<%-"
+          tag_at_bol = true if line_start && pending_ws == ""
+          if tok == "<%-"
+            pending_ws = ""
+          elsif pending_ws != ""
+            Array.push(out, [:text, pending_ws])
+            pending_ws = ""
+          end
+          kind = tok == "<%=" ? :out : (tok == "<%#" ? :comment : :code)
+          code = String[]
+        elsif tok == ""
+          next
+        else
+          if line_start && Regexp.match?(/\A[ \t]+\z/, tok)
+            pending_ws = tok
+          else
+            if pending_ws != ""
+              Array.push(out, [:text, pending_ws])
+              pending_ws = ""
+            end
+            Array.push(out, [:text, tok == "<%%" ? "<%" : tok])
+          end
+          line_start = tok == "\n"
+          tag_at_bol = false if tok == "\n"
+        end
+        line_start = false if kind != nil
+      else
+        if tok == "%>" || tok == "-%>"
+          Array.push(out, [kind, Array.join(code)]) if kind != :comment
+          kind = nil
+          if tok == "-%>" || mode == ">" || (mode == "<>" && tag_at_bol)
+            skip_newline = true
+            line_start = true
+            tag_at_bol = false
+          end
+        else
+          Array.push(code, tok == "%%>" ? "%>" : tok)
+        end
+      end
+    end
+    raise ERBError, "unterminated tag in template" if kind != nil
+    Array.push(out, [:text, pending_ws]) if pending_ws != ""
+    out
+  end
+
+  # --- parsing: tokens become a tree of ERBNode ---
+  def _node(kind, text) = ERBNode.new(kind, text, String[], ERBNode[], ERBNode[])
+
+  def _add(stack, n)
+    f = Array.last(stack)
+    raise ERBError, "template stack is empty" unless f
+    nd = ERBFrame.get_node(f)
+    if ERBFrame.get_in_alt(f)
+      Array.push(ERBNode.get_alt(nd), n)
+    else
+      Array.push(ERBNode.get_body(nd), n)
+    end
+  end
+
+  def _top_kind(stack)
+    f = Array.last(stack)
+    return nil unless f
+    ERBNode.get_kind(ERBFrame.get_node(f))
+  end
+
+  def _compile(erb)
+    root = _node(:root, "")
+    stack = ERBFrame[ERBFrame.new(root, false, false)]
+    Array.each(_scan(erb)) do |kind, text|
+      case kind
+      in :text then _add(stack, _node(:text, text))
+      in :out then _add(stack, _node(:out, String.strip(text)))
+      else
+        stmt = String.strip(text)
+        m_if = String.match(stmt, /\A(if|unless|elsif)\s+(.+?)(?:\s+then)?\z/m)
+        m_each = String.match(stmt, /\A(.+?)\.(each|each_with_index)\s*(?:do\s*\|([^|]*)\||\{\s*\|([^|]*)\|)\z/m)
+        if stmt == ""
+          next
+        elsif m_if && m_if[1] == "elsif"
+          raise ERBError, "elsif without if" unless _top_kind(stack) == :if
+          f = Array.last(stack)
+          next unless f
+          n = _node(:if, "#{m_if[2]}")
+          Array.push(ERBNode.get_alt(ERBFrame.get_node(f)), n)
+          ERBFrame.set_in_alt(f, true)
+          Array.push(stack, ERBFrame.new(n, true, false))
+        elsif m_if
+          n = _node(m_if[1] == "if" ? :if : :unless, "#{m_if[2]}")
+          _add(stack, n)
+          Array.push(stack, ERBFrame.new(n, false, false))
+        elsif m_each
+          n = _node(m_each[2] == "each" ? :each : :each_with_index, "#{m_each[1]}")
+          params = m_each[3] || m_each[4] || ""
+          Array.each(String.split(params, ",")) { |v| Array.push(ERBNode.get_vars(n), String.strip(v)) }
+          _add(stack, n)
+          Array.push(stack, ERBFrame.new(n, false, false))
+        elsif stmt == "else"
+          k = _top_kind(stack)
+          raise ERBError, "else without if" unless k == :if || k == :unless
+          f = Array.last(stack)
+          ERBFrame.set_in_alt(f, true) if f
+        elsif stmt == "end" || stmt == "}"
+          raise ERBError, "unexpected end" if Array.size(stack) <= 1
+          f = Array.pop(stack)
+          while f && ERBFrame.get_chained(f)
+            f = Array.pop(stack)
+          end
+        else
+          raise ERBError, "unsupported code in template: #{stmt}"
+        end
+      end
+    end
+    raise ERBError, "missing end in template" if Array.size(stack) != 1
+    root
+  end
+
+  # --- evaluating expressions ---
+  def _lookup(env, name)
+    key = String.to_sym(name)
+    raise ERBError, "undefined local variable or method '#{name}'" unless Hash.key?(env, key)
+    env[key]
+  end
+
+  def _index(v, k)
+    case v
+    in Hash then v[k]
+    in Array
+      raise ERBError, "no implicit conversion into Integer" unless k in Integer
+      v[k]
+    in String
+      raise ERBError, "no implicit conversion into Integer" unless k in Integer
+      v[k]
+    else raise ERBError, "undefined method '[]' for #{Kernel.inspect(v)}"
+    end
+  end
+
+  def _call(v, meth, arg)
+    case meth
+    in "nil?" then return v == nil
+    in "to_s" then return "#{v}"
+    in "inspect" then return Kernel.inspect(v)
+    else
+    end
+    case v
+    in String
+      case meth
+      in "size" | "length" then String.size(v)
+      in "empty?" then String.empty?(v)
+      in "upcase" then String.upcase(v)
+      in "downcase" then String.downcase(v)
+      in "capitalize" then String.capitalize(v)
+      in "strip" then String.strip(v)
+      in "reverse" then String.reverse(v)
+      else raise ERBError, "undefined method '#{meth}' for a String"
+      end
+    in Array
+      case meth
+      in "size" | "length" | "count" then Array.size(v)
+      in "empty?" then Array.empty?(v)
+      in "any?" then !Array.empty?(v)
+      in "first" then Array.first(v)
+      in "last" then Array.last(v)
+      in "reverse" then Array.reverse(v)
+      in "sort" then Array.sort(v)
+      in "join" then Array.join(v, arg || "")
+      else raise ERBError, "undefined method '#{meth}' for an Array"
+      end
+    in Hash
+      case meth
+      in "size" | "length" | "count" then Hash.size(v)
+      in "empty?" then Hash.empty?(v)
+      in "any?" then !Hash.empty?(v)
+      in "keys" then Hash.keys(v)
+      in "values" then Hash.values(v)
+      else raise ERBError, "undefined method '#{meth}' for a Hash"
+      end
+    else raise ERBError, "undefined method '#{meth}' for #{Kernel.inspect(v)}"
+    end
+  end
+
+  # The position of the first `op` outside quotes, parentheses, and brackets, or nil.
+  def _find_op(e, op)
+    depth = 0
+    quote = nil
+    chars = String.chars(e)
+    n = Array.size(chars)
+    i = 0
+    while i < n
+      c = Array.fetch(chars, i)
+      if quote
+        quote = nil if c == quote
+      elsif c == "\"" || c == "'"
+        quote = c
+      elsif c == "(" || c == "["
+        depth += 1
+      elsif c == ")" || c == "]"
+        depth -= 1
+      elsif depth == 0 && e[i, String.size(op)] == op
+        # `<` and `>` must not be part of `<=`, `>=`, or `=>`
+        return i unless (op == "<" || op == ">") && (e[i + 1, 1] == "=" || e[i - 1, 1] == "=")
+      end
+      i += 1
+    end
+    nil
+  end
+
+  def _compare(op, a, b)
+    return a == b if op == "=="
+    return a != b if op != "<" && op != "<=" && op != ">" && op != ">="
+    case a
+    in Integer | Float
+      case b
+      in Integer | Float
+        c = a <=> b
+        return _order(op, c) if c
+      else
+      end
+    in String
+      case b
+      in String
+        c = a <=> b
+        return _order(op, c) if c
+      else
+      end
+    else
+    end
+    raise ERBError, "comparison of #{Kernel.inspect(a)} with #{Kernel.inspect(b)} failed"
+  end
+
+  def _order(op, c)
+    case op
+    in "<" then c < 0
+    in "<=" then c <= 0
+    in ">" then c > 0
+    else c >= 0
+    end
+  end
+
+  def _eval(expr, env)
+    e = String.strip(expr)
+    Array.each(String["||", "&&", "==", "!=", "<=", ">=", "<", ">"]) do |op|
+      i = _find_op(e, op)
+      next unless i
+      left = e[0, i] || ""
+      right = e[i + String.size(op), String.size(e)] || ""
+      return _eval(left, env) || _eval(right, env) if op == "||"
+      return _eval(left, env) && _eval(right, env) if op == "&&"
+      return _compare(op, _eval(left, env), _eval(right, env))
+    end
+    m = String.match(e, /\A(?:ERB::Util\.)?(h|html_escape|u|url_encode)\((.*)\)\z/m)
+    if m
+      v = _eval("#{m[2]}", env)
+      return m[1] == "h" || m[1] == "html_escape" ? html_escape(v) : url_encode(v)
+    end
+    return !_eval(String.delete_prefix(e, "!"), env) if String.start_with?(e, "!")
+    return nil if e == "nil"
+    return true if e == "true"
+    return false if e == "false"
+    return String.to_i(e) if Regexp.match?(/\A-?\d+\z/, e)
+    m = String.match(e, /\A"([^"\\#]*)"\z|\A'([^'\\]*)'\z/)
+    return m[1] || m[2] if m
+    m = String.match(e, /\A[a-z_][A-Za-z0-9_]*/)
+    raise ERBError, "unsupported expression in template: #{e}" unless m
+    v = _lookup(env, MatchData.to_s(m))
+    rest = MatchData.post_match(m)
+    while rest != ""
+      if (m = String.match(rest, /\A\[\s*:(\w+)\s*\]/))
+        v = _index(v, String.to_sym("#{m[1]}"))
+      elsif (m = String.match(rest, /\A\[\s*(?:"([^"\\#]*)"|'([^'\\]*)')\s*\]/))
+        v = _index(v, m[1] || m[2])
+      elsif (m = String.match(rest, /\A\[\s*(-?\d+)\s*\]/))
+        v = _index(v, String.to_i("#{m[1]}"))
+      elsif (m = String.match(rest, /\A\.(\w+[?]?)(?:\(\s*(?:"([^"\\#]*)"|'([^'\\]*)')\s*\))?/))
+        v = _call(v, "#{m[1]}", m[2] || m[3])
+      else
+        raise ERBError, "unsupported expression in template: #{e}"
+      end
+      rest = MatchData.post_match(m)
+    end
+    v
+  end
+
+  # --- rendering ---
+  def _bind(env, vars, item)
+    if Array.size(vars) == 1
+      env[String.to_sym(Array.fetch(vars, 0))] = item
+      return env
+    end
+    parts = case item
+            in Tuple then Tuple.to_a(item)
+            in Array then item
+            else Array[item]
+            end
+    Array.each_with_index(vars) { |name, i| env[String.to_sym(name)] = parts[i] }
+    env
+  end
+
+  def _render(nodes, env, out)
+    Array.each(nodes) do |n|
+      text = ERBNode.get_text(n)
+      case ERBNode.get_kind(n)
+      in :text then Array.push(out, text)
+      in :out then Array.push(out, "#{_eval(text, env)}")
+      in :if
+        if _eval(text, env)
+          _render(ERBNode.get_body(n), env, out)
+        else
+          _render(ERBNode.get_alt(n), env, out)
+        end
+      in :unless
+        if _eval(text, env)
+          _render(ERBNode.get_alt(n), env, out)
+        else
+          _render(ERBNode.get_body(n), env, out)
+        end
+      in :each | :each_with_index
+        coll = _eval(text, env)
+        items = case coll
+                in Array then coll
+                in Hash then Hash.to_a(coll)
+                else raise ERBError, "undefined method 'each' for #{Kernel.inspect(coll)}"
+                end
+        vars = ERBNode.get_vars(n)
+        Array.each_with_index(items) do |item, i|
+          inner = Hash.merge(env, Hash[])
+          if ERBNode.get_kind(n) == :each
+            _bind(inner, vars, item)
+          else
+            _bind(inner, Array.take(vars, 1), item)
+            v2 = vars[1]
+            inner[String.to_sym(v2)] = i if v2
+          end
+          _render(ERBNode.get_body(n), inner, out)
+        end
+      else raise ERBError, "unknown template node"
+      end
+    end
+    out
+  end
+
+  # Ruby's ERB#result_with_hash: the Hash's keys (Symbols) are the names the template reads.
+  def result_with_hash(erb, vars)
+    root = _compile(erb)
+    Array.join(_render(ERBNode.get_body(root), Hash.merge(vars, Hash[]), String[]))
+  end
+
+  # Checks the template without rendering it (Ruby compiles in ERB.new).
+  def check(erb)
+    _compile(erb)
+    erb
+  end
+
+  def src(erb) = @template
+end

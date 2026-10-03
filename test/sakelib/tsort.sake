@@ -1,0 +1,70 @@
+require "tsort"
+
+# 1. Ruby's doc example: Hash includes TSort
+class Hash
+  include TSort
+  def tsort_each_node(h) = Hash.each_key(h) { |n| yield(n) }
+  def tsort_each_child(h, node) = Array.each(Hash.fetch(h, node)) { |c| yield(c) }
+end
+
+p(Hash.tsort(Hash[1 => Array[2, 3], 2 => Array[3], 3 => Array[], 4 => Array[]]))
+p(TSort.tsort(Hash[1 => Array[2, 3], 2 => Array[3], 3 => Array[], 4 => Array[]]))
+p(Hash.strongly_connected_components(Hash[1 => Array[2], 2 => Array[3, 4], 3 => Array[2], 4 => Array[]]))
+g = Hash[1 => Array[2], 2 => Array[3, 4], 3 => Array[2], 4 => Array[]]
+Hash.each_strongly_connected_component(g) { |c| p(c) }
+p(Hash.each_strongly_connected_component_from(g, 2) { |c| p(c) })
+Hash.tsort_each(Hash[1 => Array[2, 3], 2 => Array[3], 3 => Array[], 4 => Array[]]) { |n| puts("node #{n}") }
+p(Hash.tsort(Hash[]))
+begin
+  Hash.tsort(Hash[1 => Array[2], 2 => Array[3, 4], 3 => Array[2], 4 => Array[]])
+rescue TSortCyclic => e
+  puts("Cyclic: #{Exception.message(e)}")
+end
+begin
+  Hash.tsort(Hash[:a => Array[:a]])
+rescue TSortCyclic => e
+  puts("Cyclic: #{Exception.message(e)}")
+end
+p(Hash.strongly_connected_components(Hash[:a => Array[:a]]))
+begin
+  Hash.tsort(Hash[1 => Array[9]])
+rescue KeyError => e
+  p(String.end_with?(Exception.message(e), "key not found: 9"))   # Sake prefixes "Hash.fetch: "
+end
+
+# 2. A type of your own includes TSort
+class Build < {reader: [names, deps]}
+  include TSort
+  def tsort_each_node(b) = Array.each(@names) { |n| yield(n) }
+
+  def tsort_each_child(b, name)
+    ds = @deps[name]
+    Array.each(ds) { |d| yield(d) } if ds
+    nil
+  end
+end
+
+b = Build.new(String["app", "lib", "test", "util", "docs"],
+              Hash["app" => String["lib", "util"], "lib" => String["util"], "test" => String["app", "lib"]])
+p(Build.tsort(b))
+p(TSort.strongly_connected_components(b))
+puts(Array.join(Build.tsort(b), " -> "))
+
+# 3. A Hash graph without including anything
+p(TSort.tsort_hash(Hash["c" => Array["b"], "b" => Array["a"], "a" => Array[]]))
+p(TSort.tsort_hash(Hash["c" => Array["b"], "b" => Array["a"]]))
+p(TSort.strongly_connected_components_hash(Hash[1 => Array[2], 2 => Array[1, 3], 3 => Array[4], 4 => Array[3], 5 => Array[]]))
+TSort.tsort_each_hash(Hash[[0, 0] => Array[[0, 1]], [0, 1] => Array[]]) { |n| p(n) }
+TSort.each_strongly_connected_component_hash(Hash[:x => Array[:y], :y => Array[:x]]) { |c| p(c) }
+begin
+  TSort.tsort_hash(Hash["a" => Array["b"], "b" => Array["c"], "c" => Array["a"]])
+rescue TSortCyclic => e
+  puts("Cyclic: #{Exception.message(e)}")
+end
+p(TSort.tsort_hash(Hash[]))
+
+# a long chain
+h = Hash[]
+Range.each(0...1000) { |i| h[i] = Array[i + 1] }
+order = TSort.tsort_hash(h)
+p([Array.size(order), Array.first(order), Array.last(order)])

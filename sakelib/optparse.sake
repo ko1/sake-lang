@@ -1,0 +1,331 @@
+# OptionParser: Ruby's optparse with options declared as data.
+# Blocks are not values, so `on` stores no block: parse(op, argv, into) fills the Hash `into`
+# (Ruby's `parse(argv, into: h)`) and returns the remaining arguments.
+
+class OptionParserError < {exception: true, reader: [kind, args]}
+  # Ruby's ParseError#reason: "invalid option" for InvalidOption, ...
+  def reason(e)
+    case OptionParserError.get_kind(e)
+    in "InvalidOption" then "invalid option"
+    in "MissingArgument" then "missing argument"
+    in "InvalidArgument" then "invalid argument"
+    in "NeedlessArgument" then "needless argument"
+    in "AmbiguousOption" then "ambiguous option"
+    in "AmbiguousArgument" then "ambiguous argument"
+    else "parse error"
+    end
+  end
+
+  def make(kind, args)
+    e = OptionParserError.new("", kind, args)
+    OptionParserError.set_message(e, "#{OptionParserError.reason(e)}: #{Array.join(args, " ")}")
+    e
+  end
+end
+
+# One declared option. kind: :none, :required, :optional. conv: :String, :Integer, :Float, :choice.
+class OptionParserSwitch < {reader: [short, long, arg, kind, negatable, conv, choices, desc, tail]}
+  def key(sw) = String.to_sym(@long != "" ? @long : @short)
+end
+
+class OptionParser < {reader: [list], accessor: [banner, program_name, summary_width, summary_indent],
+                      default: {list: nil, banner: nil, program_name: "sake", summary_width: 32, summary_indent: "    "}}
+  def items(op)
+    l = @list
+    if l == nil
+      l = Array[]
+      @list = l
+    end
+    l
+  end
+
+  def on(op, short, long, desc) = add_switch(op, short, long, :String, String[], desc, false)
+
+  # type: :String, :Integer, :Float, or an Array of String (the allowed values, as Ruby's Array acceptor)
+  def on_type(op, short, long, type, desc)
+    case type
+    in Symbol
+      unless type == :String || type == :Integer || type == :Float
+        raise ArgumentError, "unsupported argument type: #{type}"
+      end
+      add_switch(op, short, long, type, String[], desc, false)
+    in Array
+      choices = String[]
+      Array.each(type) { |c| Array.push(choices, c) }
+      add_switch(op, short, long, :choice, choices, desc, false)
+    end
+  end
+
+  def on_tail(op, short, long, desc) = add_switch(op, short, long, :String, String[], desc, true)
+
+  def separator(op, text)
+    Array.push(items(op), text)
+    op
+  end
+
+  def add_switch(op, short, long, conv, choices, desc, tail)
+    s = ""
+    l = ""
+    arg = ""
+    neg = false
+    if short != ""
+      m = Regexp.match(/\A-([^-\s])(.*)\z/, short)
+      raise ArgumentError, "bad short option: #{short}" unless m
+      s = m[1]
+      sarg = m[2]
+      arg = sarg if sarg
+    end
+    if long != ""
+      m = Regexp.match(/\A--(\[no-\])?([^\s=\[]+)(.*)\z/, long)
+      raise ArgumentError, "bad long option: #{long}" unless m
+      neg = m[1] != nil
+      l = m[2]
+      larg = m[3]
+      arg = larg if larg && larg != ""
+    end
+    raise ArgumentError, "no option name" if s == "" && l == ""
+    s = "" if s == nil
+    l = "" if l == nil
+    kind = :none
+    if arg != ""
+      kind = String.include?(arg, "[") ? :optional : :required
+    end
+    sw = OptionParserSwitch.new(s, l, arg, kind, neg, conv, choices, desc, tail)
+    Array.push(items(op), sw)
+    op
+  end
+
+  def help(op)
+    b = @banner
+    head = b == nil ? "Usage: #{@program_name} [options]" : b
+    out = String.sub(head, /\n?\z/, "\n")
+    Array.each(items(op)) do |it|
+      case it
+      in String
+        out += String.end_with?(it, "\n") ? it : it + "\n"
+      in OptionParserSwitch
+        out += summarize(op, it) unless OptionParserSwitch.get_tail(it)
+      end
+    end
+    Array.each(items(op)) do |it|
+      if it in OptionParserSwitch
+        out += summarize(op, it) if OptionParserSwitch.get_tail(it)
+      end
+    end
+    out
+  end
+
+  def to_s(op) = help(op)
+
+  # One switch's lines in the help, as Ruby's Switch#summarize.
+  def summarize(op, sw)
+    width = @summary_width
+    indent = @summary_indent
+    s = OptionParserSwitch.get_short(sw)
+    l = OptionParserSwitch.get_long(sw)
+    left = s != "" ? "-" + s : ""
+    if l != ""
+      ldisp = "--" + (OptionParserSwitch.get_negatable(sw) ? "[no-]" : "") + l
+      left = left == "" ? "    " + ldisp : left + ", " + ldisp
+    end
+    left += OptionParserSwitch.get_arg(sw)
+    desc = OptionParserSwitch.get_desc(sw)
+    if String.size(left) > width
+      out = indent + left + "\n"
+      out += indent + String.ljust("", width) + " " + desc + "\n" if desc != ""
+      out
+    elsif desc == ""
+      indent + left + "\n"
+    else
+      indent + String.ljust(left, width) + " " + desc + "\n"
+    end
+  end
+
+  def parse(op, argv, into) = run(op, argv, into, false)
+  def order(op, argv, into) = run(op, argv, into, true)
+  def permute(op, argv, into) = run(op, argv, into, false)
+
+  def parse!(op, argv, into) = replace_args(argv, run(op, argv, into, false))
+  def order!(op, argv, into) = replace_args(argv, run(op, argv, into, true))
+  def permute!(op, argv, into) = replace_args(argv, run(op, argv, into, false))
+
+  def replace_args(argv, rest)
+    Array.clear(argv)
+    Array.concat(argv, rest)
+    argv
+  end
+
+  # Ruby's getopts("ab:", "long", "name:"): a Hash from each option name (a String) to true/false
+  # for a flag and a String or nil for an option with ":"; argv keeps the remaining arguments.
+  def getopts(op, argv, short_spec, long_specs)
+    g = OptionParser.new
+    result = Hash[]
+    chars = String.chars(short_spec)
+    i = 0
+    while i < Array.size(chars)
+      c = Array.fetch(chars, i)
+      takes = Array.fetch(chars, i + 1) == ":" rescue false
+      if takes
+        OptionParser.on(g, "-#{c} VALUE", "", "")
+        result[c] = nil
+        i += 2
+      else
+        OptionParser.on(g, "-#{c}", "", "")
+        result[c] = false
+        i += 1
+      end
+    end
+    Array.each(long_specs) do |spec|
+      if String.end_with?(spec, ":")
+        name = String.delete_suffix(spec, ":")
+        OptionParser.on(g, "", "--#{name} VALUE", "")
+        result[name] = nil
+      else
+        OptionParser.on(g, "", "--#{spec}", "")
+        result[spec] = false
+      end
+    end
+    got = Hash[]
+    OptionParser.parse!(g, argv, got)
+    Hash.each(got) { |k, v| result[Symbol.to_s(k)] = v }
+    result
+  end
+
+  def run(op, argv, into, in_order)
+    rest = String[]
+    sws = Array.filter_map(items(op)) { |it| (it in OptionParserSwitch) ? it : nil }
+    n = Array.size(argv)
+    i = 0
+    while i < n
+      a = Array.fetch(argv, i)
+      i += 1
+      if a == "--"
+        Array.concat(rest, Array.drop(argv, i))
+        return rest
+      elsif String.start_with?(a, "--")
+        i = parse_long(sws, argv, i, a, into)
+      elsif String.start_with?(a, "-") && String.size(a) > 1
+        i = parse_short(sws, argv, i, a, into)
+      elsif in_order
+        Array.push(rest, a)
+        Array.concat(rest, Array.drop(argv, i))
+        return rest
+      else
+        Array.push(rest, a)
+      end
+    end
+    rest
+  end
+
+  def fail(kind, args)
+    raise OptionParserError.make(kind, args)
+  end
+
+  def parse_long(sws, argv, i, a, into)
+    name, eq, val = String.partition(String.delete_prefix(a, "--"), "=")
+    has_eq = eq != ""
+    sw, neg = find_long(sws, name, a)
+    kind = OptionParserSwitch.get_kind(sw)
+    if kind == :none
+      fail("NeedlessArgument", String[a]) if has_eq
+      into[OptionParserSwitch.key(sw)] = !neg
+      return i
+    end
+    v = nil
+    args = String[a]
+    if has_eq
+      v = val
+    elsif kind == :required
+      fail("MissingArgument", String[a]) if i >= Array.size(argv)
+      v = Array.fetch(argv, i)
+      i += 1
+      args = String[a, v]
+    elsif i < Array.size(argv) && !String.start_with?(Array.fetch(argv, i), "-")
+      v = Array.fetch(argv, i)
+      i += 1
+      args = String[a, v]
+    end
+    into[OptionParserSwitch.key(sw)] = convert(sw, v, args)
+    i
+  end
+
+  def parse_short(sws, argv, i, a, into)
+    len = String.size(a)
+    j = 1
+    while j < len
+      c = String.[](a, j)
+      sw = Array.find(sws) { |x| OptionParserSwitch.get_short(x) == c }
+      fail("InvalidOption", String["-#{c}"]) unless sw
+      j += 1
+      kind = OptionParserSwitch.get_kind(sw)
+      if kind == :none
+        into[OptionParserSwitch.key(sw)] = true
+        next
+      end
+      v = nil
+      args = String[a]
+      if j < len
+        v = String.[](a, j, len - j)
+        j = len
+      elsif kind == :required
+        fail("MissingArgument", String["-#{c}"]) if i >= Array.size(argv)
+        v = Array.fetch(argv, i)
+        i += 1
+        args = String["-#{c}", v]
+      elsif i < Array.size(argv) && !String.start_with?(Array.fetch(argv, i), "-")
+        v = Array.fetch(argv, i)
+        i += 1
+        args = String["-#{c}", v]
+      end
+      into[OptionParserSwitch.key(sw)] = convert(sw, v, args)
+    end
+    i
+  end
+
+  # [switch, negated?] for a long name: an exact name, or else a prefix of exactly one name.
+  def find_long(sws, name, a)
+    cands = Array[]
+    Array.each(sws) do |sw|
+      l = OptionParserSwitch.get_long(sw)
+      next if l == ""
+      Array.push(cands, [l, sw, false])
+      Array.push(cands, ["no-" + l, sw, true]) if OptionParserSwitch.get_negatable(sw)
+    end
+    exact = Array.find(cands) { |(nm, _, _)| nm == name }
+    if exact
+      _, sw, neg = exact
+      return [sw, neg]
+    end
+    hits = Array.select(cands) { |(nm, _, _)| String.start_with?(nm, name) }
+    fail("InvalidOption", String[a]) if Array.empty?(hits)
+    fail("AmbiguousOption", String[a]) if Array.size(hits) > 1
+    _, sw, neg = Array.fetch(hits, 0)
+    [sw, neg]
+  end
+
+  def convert(sw, v, args)
+    return nil if v == nil
+    case OptionParserSwitch.get_conv(sw)
+    in :String then v
+    in :Integer
+      re = /\A[-+]?(?:0(?:[0-7]+(?:_[0-7]+)*|b[01]+(?:_[01]+)*|x[\da-f]+(?:_[\da-f]+)*)?|\d+(?:_\d+)*)\z/i
+      fail("InvalidArgument", args) unless Regexp.match?(re, v)
+      begin
+        Integer(v)
+      rescue ArgumentError
+        fail("InvalidArgument", args)
+      end
+    in :Float
+      re = /\A[-+]?(?:\d+(?:_\d+)*(?:\.(?:\d+(?:_\d+)*)?)?|\.\d+(?:_\d+)*)(?:e[-+]?\d+(?:_\d+)*)?\z/i
+      fail("InvalidArgument", args) unless Regexp.match?(re, v)
+      String.to_f(v)
+    in :choice
+      choices = OptionParserSwitch.get_choices(sw)
+      return v if Array.include?(choices, v)
+      hits = Array.select(choices) { |c| String.start_with?(c, v) }
+      fail("InvalidArgument", args) if Array.empty?(hits)
+      fail("AmbiguousArgument", args) if Array.size(hits) > 1
+      Array.fetch(hits, 0)
+    end
+  end
+end

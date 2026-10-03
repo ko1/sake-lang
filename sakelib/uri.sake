@@ -1,0 +1,382 @@
+# URI: parsing (RFC 3986, as Ruby's URI::RFC3986_Parser), building, and form encoding.
+# Ruby's classes URI::Generic, URI::HTTP, ... are one Sake type, URI; its scheme decides the default
+# port and the class name that `inspect` shows. URI::InvalidURIError is InvalidURIError, and
+# URI::BadURIError is BadURIError (Sake has no nested names).
+
+class InvalidURIError < {exception: true}
+end
+
+class BadURIError < {exception: true}
+end
+
+# Field order (for URI.new): scheme, userinfo, opaque, host, port, path, query, fragment.
+class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, query, fragment]}
+  # --- the RFC 3986 grammar, from Ruby's uri/rfc3986_parser.rb ---
+  def _host_re
+    "(?<IP-literal>\\[(?:(?<IPv6address>(?:\\h{1,4}:){6}(?<ls32>\\h{1,4}:\\h{1,4}" \
+    "|(?<IPv4address>(?<dec-octet>[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5]|\\d)" \
+    "\\.\\g<dec-octet>\\.\\g<dec-octet>\\.\\g<dec-octet>))" \
+    "|::(?:\\h{1,4}:){5}\\g<ls32>|\\h{1,4}?::(?:\\h{1,4}:){4}\\g<ls32>" \
+    "|(?:(?:\\h{1,4}:)?\\h{1,4})?::(?:\\h{1,4}:){3}\\g<ls32>" \
+    "|(?:(?:\\h{1,4}:){,2}\\h{1,4})?::(?:\\h{1,4}:){2}\\g<ls32>" \
+    "|(?:(?:\\h{1,4}:){,3}\\h{1,4})?::\\h{1,4}:\\g<ls32>" \
+    "|(?:(?:\\h{1,4}:){,4}\\h{1,4})?::\\g<ls32>" \
+    "|(?:(?:\\h{1,4}:){,5}\\h{1,4})?::\\h{1,4}" \
+    "|(?:(?:\\h{1,4}:){,6}\\h{1,4})?::)" \
+    "|(?<IPvFuture>v\\h++\\.[!$&-.0-9:;=A-Z_a-z~]++))\\])" \
+    "|\\g<IPv4address>|(?<reg-name>(?:%\\h\\h|[!$&-.0-9;=A-Z_a-z~])*+)"
+  end
+  def _userinfo_re = "(?:%\\h\\h|[!$&-.0-9:;=A-Z_a-z~])*+"
+  def _seg_re = "(?:%\\h\\h|[!$&-.0-9:;=@A-Z_a-z~/])"
+  def _seg_nc_re = "(?:%\\h\\h|[!$&-.0-9;=@A-Z_a-z~])"
+  def _fragment_re = "(?:%\\h\\h|[!$&-.0-9:;=@A-Z_a-z~/?])*+"
+
+  def _absolute_re
+    Regexp.new("\\A(?<seg>#{_seg_re}){0}(?<URI>(?<scheme>[A-Za-z][+\\-.0-9A-Za-z]*+):" +
+      "(?<hier-part>//(?<authority>(?:(?<userinfo>#{_userinfo_re})@)?(?<host>#{_host_re})" +
+      "(?::(?<port>\\d*+))?)(?<path-abempty>(?:/\\g<seg>*+)?)" +
+      "|(?<path-absolute>/((?!/)\\g<seg>++)?)|(?<path-rootless>(?!/)\\g<seg>++)|(?<path-empty>))" +
+      "(?:\\?(?<query>[^\\#]*+))?(?:\\#(?<fragment>#{_fragment_re}))?)\\z")
+  end
+
+  def _relative_re
+    Regexp.new("\\A(?<seg>#{_seg_re}){0}(?<relative-ref>(?<relative-part>//(?<authority>" +
+      "(?:(?<userinfo>#{_userinfo_re})@)?(?<host>#{_host_re}(?<!/))?(?::(?<port>\\d*+))?)" +
+      "(?<path-abempty>(?:/\\g<seg>*+)?)|(?<path-absolute>/\\g<seg>*+)" +
+      "|(?<path-noscheme>#{_seg_nc_re}++(?:/\\g<seg>*+)?)|(?<path-empty>))" +
+      "(?:\\?(?<query>[^#]*+))?(?:\\#(?<fragment>#{_fragment_re}))?)\\z")
+  end
+
+  # --- parsing ---
+  def _new(scheme, userinfo, host, port_s, path, opaque, query, fragment)
+    scheme = String.downcase(scheme) if scheme
+    port = nil
+    port = String.to_i(port_s) if port_s && port_s != ""
+    path = "" if path == nil && opaque == nil
+    # URI::FTP keeps the path without its leading "/" (RFC 1738)
+    path = String.delete_prefix(path, "/") if scheme == "ftp" && path
+    u = URI.new(scheme, userinfo, opaque, host, port, path, query, fragment)
+    URI.set_port(u, default_port(u)) if port == nil
+    u
+  end
+
+  # Ruby's String#dump for a UTF-8 String (no other encodings).
+  def _dump(s)
+    out = String["\""]
+    String.each_char(s) do |c|
+      o = String.ord(c)
+      if o < 128
+        Array.push(out, String.delete_suffix(String.delete_prefix(Kernel.inspect(c), "\""), "\""))
+      elsif o < 0x10000
+        Array.push(out, format("\\u%04X", o))
+      else
+        Array.push(out, format("\\u{%X}", o))
+      end
+    end
+    Array.push(out, "\"")
+    Array.join(out)
+  end
+
+  # Ruby's URI.split: [scheme, userinfo, host, port, registry, path, opaque, query, fragment],
+  # each a String or nil.
+  def split(s)
+    unless String.ascii_only?(s)
+      raise InvalidURIError, "URI must be ascii only #{_dump(s)}"
+    end
+    m = Regexp.match(_absolute_re, s)
+    if m
+      query = m["query"]
+      opaque = m["path-rootless"]
+      if opaque
+        opaque = "#{opaque}?#{query}" if query
+        return [m["scheme"], nil, nil, nil, nil, nil, opaque, nil, m["fragment"]]
+      end
+      path = m["path-abempty"] || m["path-absolute"] || m["path-empty"]
+      return [m["scheme"], m["userinfo"], m["host"], m["port"], nil, path, nil, query, m["fragment"]]
+    end
+    m = Regexp.match(_relative_re, s)
+    if m
+      path = m["path-abempty"] || m["path-absolute"] || m["path-noscheme"] || m["path-empty"]
+      return [nil, m["userinfo"], m["host"], m["port"], nil, path, nil, m["query"], m["fragment"]]
+    end
+    raise InvalidURIError, "bad URI (is not URI?): #{Kernel.inspect(s)}"
+  end
+
+  def parse(s)
+    scheme, userinfo, host, port, _registry, path, opaque, query, fragment = split(s)
+    _new(scheme, userinfo, host, port, path, opaque, query, fragment)
+  end
+
+  # --- reading ---
+  def default_port(u)
+    case @scheme
+    in "http" | "ws" then 80
+    in "https" | "wss" then 443
+    in "ftp" then 21
+    in "ldap" then 389
+    in "ldaps" then 636
+    else nil
+    end
+  end
+
+  # The class Ruby would use for this URI (shown by inspect).
+  def class_name(u)
+    case @scheme
+    in "http" then "URI::HTTP"
+    in "https" then "URI::HTTPS"
+    in "ftp" then "URI::FTP"
+    in "file" then "URI::File"
+    in "ldap" then "URI::LDAP"
+    in "ldaps" then "URI::LDAPS"
+    in "mailto" then "URI::MailTo"
+    in "ws" then "URI::WS"
+    in "wss" then "URI::WSS"
+    else "URI::Generic"
+    end
+  end
+
+  def scheme(u) = @scheme
+  def userinfo(u) = @userinfo
+  def host(u) = @host
+  def port(u) = @port
+  def path(u) = @path
+  def opaque(u) = @opaque
+  def query(u) = @query
+  def fragment(u) = @fragment
+
+  def user(u)
+    ui = @userinfo
+    return nil unless ui
+    String.split(ui, ":", 2)[0]
+  end
+
+  def password(u)
+    ui = @userinfo
+    return nil unless ui
+    String.split(ui, ":", 2)[1]
+  end
+
+  # The host without the brackets of an IPv6 address.
+  def hostname(u)
+    h = @host
+    return nil unless h
+    return String.delete_suffix(String.delete_prefix(h, "["), "]") if String.start_with?(h, "[") && String.end_with?(h, "]")
+    h
+  end
+
+  def absolute?(u) = @scheme != nil
+  def relative?(u) = @scheme == nil
+
+  # path?query, always starting with "/" (Ruby has it on URI::HTTP only).
+  def request_uri(u)
+    path = @path
+    return nil unless path
+    q = @query
+    url = q ? "#{path}?#{q}" : path
+    String.start_with?(url, "/") ? url : "/#{url}"
+  end
+
+  def to_s(u)
+    out = String[]
+    scheme = @scheme
+    Array.push(out, scheme, ":") if scheme
+    opaque = @opaque
+    host = @host
+    port = @port
+    path = @path || ""
+    if opaque
+      Array.push(out, opaque)
+    else
+      Array.push(out, "//") if host || scheme == "file" || scheme == "postgres"
+      ui = @userinfo
+      Array.push(out, ui, "@") if ui
+      Array.push(out, host) if host
+      Array.push(out, ":", Integer.to_s(port)) if port && port != default_port(u)
+      Array.push(out, "/") if (host || port) && path != "" && !String.start_with?(path, "/")
+      Array.push(out, path)
+      q = @query
+      Array.push(out, "?", q) if q
+    end
+    f = @fragment
+    Array.push(out, "#", f) if f
+    Array.join(out)
+  end
+
+  def inspect(u) = "#<#{class_name(u)} #{to_s(u)}>"
+
+  def dup(u) = URI.new(@scheme, @userinfo, @opaque, @host, @port, @path, @query, @fragment)
+
+  # Lower-case scheme and host; an empty path becomes "/".
+  def normalize(u)
+    v = dup(u)
+    URI.set_path(v, "/") if @path == ""
+    h = @host
+    URI.set_host(v, String.downcase(h)) if h
+    v
+  end
+
+  # --- resolving a reference (Ruby's URI::Generic#merge) ---
+  def _merge_path(base, rel)
+    base_path = String.split(base, "/", -1)
+    rel_path = String.split(rel, "/", -1)
+    Array.push(base_path, "") if Array.last(base_path) == ".."
+    i = Array.index(base_path, "..")
+    while i
+      Array.delete_at(base_path, i - 1)
+      Array.delete_at(base_path, i - 1)
+      i = Array.index(base_path, "..")
+    end
+    if Array.first(rel_path) == ""
+      Array.clear(base_path)
+      Array.shift(rel_path)
+    end
+    Array.push(rel_path, "") if Array.last(rel_path) == "." || Array.last(rel_path) == ".."
+    Array.delete(rel_path, ".")
+    tmp = String[]
+    Array.each(rel_path) do |x|
+      if x == ".." && !(Array.empty?(tmp) || Array.last(tmp) == "..")
+        Array.pop(tmp)
+      else
+        Array.push(tmp, x)
+      end
+    end
+    add_trailer_slash = !Array.empty?(tmp)
+    if Array.empty?(base_path)
+      base_path = String[""]
+    elsif add_trailer_slash
+      Array.pop(base_path)
+    end
+    x = Array.shift(tmp)
+    while x
+      if x == ".."
+        Array.pop(base_path) if Array.size(base_path) > 1
+      else
+        Array.push(base_path, x)
+        Array.concat(base_path, tmp)
+        add_trailer_slash = false
+        break
+      end
+      x = Array.shift(tmp)
+    end
+    Array.push(base_path, "") if add_trailer_slash
+    Array.join(base_path, "/")
+  end
+
+  def _to_uri(x)
+    case x
+    in String then parse(x)
+    in URI then x
+    end
+  end
+
+  # `other` is a URI or a String.
+  def merge(u, other)
+    rel = _to_uri(other)
+    return rel if absolute?(rel)
+    raise BadURIError, "both URI are relative" unless absolute?(u)
+    base = dup(u)
+    rel_path = URI.get_path(rel)
+    has_authority = URI.get_userinfo(rel) || URI.get_host(rel) || URI.get_port(rel)
+    if (rel_path == nil || rel_path == "") && !has_authority && !URI.get_query(rel)
+      f = URI.get_fragment(rel)
+      URI.set_fragment(base, f) if f
+      return base
+    end
+    URI.set_query(base, nil)
+    URI.set_fragment(base, nil)
+    base_path = @path
+    if has_authority
+      base = URI.new(@scheme, URI.get_userinfo(rel), nil, URI.get_host(rel), URI.get_port(rel) || default_port(u), rel_path, nil, nil)
+    elsif base_path && rel_path
+      URI.set_path(base, _merge_path(base_path, rel_path))
+    end
+    q = URI.get_query(rel)
+    URI.set_query(base, q) if q
+    f = URI.get_fragment(rel)
+    URI.set_fragment(base, f) if f
+    base
+  end
+
+  include Arithmetic
+  def +(u, other) = merge(u, other)
+
+  # URI.join(base, ref): `base` is a String or a URI. Ruby's takes any number of arguments.
+  def join(base, rel)
+    merge(_to_uri(base), rel)
+  end
+
+  # --- form encoding (application/x-www-form-urlencoded) ---
+  def _encode(s, space)
+    out = String[]
+    Array.each(String.split(s, /([^*\-.0-9A-Z_a-z]+)/)) do |piece|
+      if Regexp.match?(/\A[*\-.0-9A-Z_a-z]/, piece) || piece == ""
+        Array.push(out, piece)
+      else
+        Array.each(String.bytes(piece)) do |b|
+          Array.push(out, b == 32 ? space : format("%%%02X", b))
+        end
+      end
+    end
+    Array.join(out)
+  end
+
+  def _decode(s, plus)
+    bytes = Integer[]
+    Array.each(String.split(s, /(%\h\h)/)) do |piece|
+      if Regexp.match?(/\A%\h\h\z/, piece)
+        Array.push(bytes, String.hex(String.delete_prefix(piece, "%")))
+      elsif plus
+        Array.push(bytes, *String.bytes(String.tr(piece, "+", " ")))
+      else
+        Array.push(bytes, *String.bytes(piece))
+      end
+    end
+    String.force_encoding(Array.pack(bytes, "C*"), "UTF-8")
+  end
+
+  def encode_www_form_component(s) = _encode("#{s}", "+")
+  def encode_uri_component(s) = _encode("#{s}", "%20")
+
+  def decode_www_form_component(s)
+    raise ArgumentError, "invalid %-encoding (#{s})" if Regexp.match?(/%(?!\h\h)/, s)
+    _decode(s, true)
+  end
+
+  def decode_uri_component(s)
+    raise ArgumentError, "invalid %-encoding (#{s})" if Regexp.match?(/%(?!\h\h)/, s)
+    _decode(s, false)
+  end
+
+  # `form` is a Hash or an Array of [key, value]; a nil value gives the key alone, and an Array
+  # value repeats the key.
+  def encode_www_form(form)
+    out = String[]
+    (Hash|Array).each(form) do |k, v|
+      if v == nil
+        Array.push(out, encode_www_form_component(k))
+      elsif v in Array
+        Array.each(v) do |w|
+          # A nil in the Array gives an empty part, as in Ruby.
+          Array.push(out, w == nil ? "" : "#{encode_www_form_component(k)}=#{encode_www_form_component(w)}")
+        end
+      else
+        Array.push(out, "#{encode_www_form_component(k)}=#{encode_www_form_component(v)}")
+      end
+    end
+    Array.join(out, "&")
+  end
+
+  # An Array of [key, value] Tuples; "&" separates pairs.
+  def decode_www_form(s)
+    raise ArgumentError, "the input of URI.decode_www_form must be ASCII only string" unless String.ascii_only?(s)
+    pairs = Array[]
+    return pairs if s == ""
+    parts = String.split(s, "&", -1)
+    Array.pop(parts) if Array.last(parts) == ""
+    Array.each(parts) do |part|
+      key, _sep, val = String.partition(part, "=")
+      Array.push(pairs, [_decode(key, true), _decode(val, true)])
+    end
+    pairs
+  end
+end

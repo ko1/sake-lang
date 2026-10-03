@@ -1,0 +1,156 @@
+require "csv"
+
+def show(label, v)
+  puts "#{label}: #{Kernel.inspect(v)}"
+end
+
+def try_parse(s)
+  show("parse #{Kernel.inspect(s)}", CSV.parse(s))
+rescue MalformedCSVError => e
+  puts "MalformedCSVError: #{Exception.message(e)} (#{MalformedCSVError.get_line_number(e)})"
+end
+
+puts "== parse"
+show("basic", CSV.parse("a,b,c\n1,2,3\n"))
+show("empty fields", CSV.parse("a,,b\n\"\",x\n\nc"))
+show("empty", CSV.parse(""))
+show("newline only", CSV.parse("\n"))
+show("trailing blank", CSV.parse("a\n\n"))
+show("quotes", CSV.parse("\"a,b\",\"say \"\"hi\"\"\",\"multi\nline\"\nnext,row"))
+show("crlf", CSV.parse("a,b\r\nc,d\r\n"))
+show("cr", CSV.parse("a,b\rc,d"))
+show("unicode", CSV.parse("名前,値\n日本,\"東京, 大阪\"\n"))
+show("spaces kept", CSV.parse(" a , b "))
+try_parse("\"a")
+try_parse("a\"b,c")
+try_parse("\"a\"b")
+try_parse("a,b\r\nc\nd")
+try_parse("x\n\"a\nb")
+try_parse("a\nb\"c")
+
+puts "== options"
+show("col_sep ;", CSV.parse_with("a;b\nc;d", {col_sep: ";"}))
+show("col_sep tab", CSV.parse_with("a\tb c\td", {col_sep: "\t"}))
+show("col_sep space", CSV.parse_with("a b  c", {col_sep: " "}))
+show("col_sep ||", CSV.parse_with("a||b|c", {col_sep: "||"}))
+show("quote_char", CSV.parse_with("'a,b',c", {quote_char: "'"}))
+show("row_sep", CSV.parse_with("a,b|c,d|", {row_sep: "|"}))
+show("skip_blanks", CSV.parse_with("a\n\nb\n", {skip_blanks: true}))
+show("skip_lines", CSV.parse_with("a,b\n#x\nc", {skip_lines: /\A#/}))
+show("numeric", CSV.parse_with("1,2.5,\"3\", 4 ,0x1A,1_000,1e3,abc,,-7", {converters: :numeric}))
+show("integer", CSV.parse_with("1,2.5,x", {converters: :integer}))
+show("float", CSV.parse_with("1,2.5,x", {converters: :float}))
+show("list", CSV.parse_with("1,2.5,x", {converters: [:float, :integer]}))
+show("nil/empty value", CSV.parse_with("x,,\"\"", {nil_value: "N", empty_value: "E"}))
+rows = CSV.parse_with("10,20\n30,x", {converters: :numeric})
+total = 0
+Array.each(rows) do |r|
+  Array.each(r) { |v| total += v if v in Integer }
+end
+show("sum", total)
+
+puts "== parse_line"
+show("line", CSV.parse_line("a,\"b,c\",,d"))
+show("line empty", CSV.parse_line(""))
+show("line two rows", CSV.parse_line("a,b\nc,d"))
+show("line opts", CSV.parse_line_with("1;x", {col_sep: ";", converters: :numeric}))
+show("parse_csv", String.parse_csv("x,y"))
+
+puts "== headers"
+t = CSV.parse_with("name,age,city\nAlice,30,Tokyo\nBob,25\n\nCarol,41,Osaka,extra\n", {headers: true})
+show("table", t)
+show("headers", CSVTable.headers(t))
+show("size", CSVTable.size(t))
+CSVTable.each(t) do |row|
+  show("row", row)
+  show("  to_h", CSVRow.to_h(row))
+  show("  fields", CSVRow.fields(row))
+end
+r = t[0]
+show("r[name]", r["name"])
+show("r[1]", r[1])
+show("r[zz]", r["zz"])
+show("fetch", CSVRow.fetch(r, "city"))
+begin
+  CSVRow.fetch(r, "zz")
+rescue KeyError => e
+  puts "KeyError: #{Exception.message(e)}"
+end
+show("header?", CSVRow.header?(r, "age"))
+show("field?", CSVRow.field?(r, "Tokyo"))
+show("index", CSVRow.index(r, "city"))
+show("values_at", CSVRow.values_at(r, Array["city", "name"]))
+r["age"] = "31"
+r["zip"] = "100"
+show("set", r)
+show("row size", CSVRow.size(r))
+show("row to_s", CSVRow.to_s(r))
+show("delete", CSVRow.delete(r, "zip"))
+CSVRow.each(r) { |h, v| puts "  #{h}=#{v}" }
+show("column", t["age"])
+show("to_a", CSVTable.to_a(t))
+show("to_csv", CSVTable.to_csv(t))
+show("names", CSVTable.map(t) { |row| row["name"] })
+show("select", Array.map(CSVTable.select(t) { |row| row["city"] != nil }) { |row| row["name"] })
+show("find", CSVTable.find(t) { |row| row["name"] == "Bob" })
+show("only header", CSVTable.headers(CSV.parse_with("a,b", {headers: true})))
+show("only header to_a", CSVTable.to_a(CSV.parse_with("a,b", {headers: true})))
+show("empty headers", CSVTable.headers(CSV.parse_with("", {headers: true})))
+show("given headers", CSVTable.to_a(CSV.parse_with("1,2\n3,4", {headers: ["x", "y"]})))
+show("string headers", CSVTable.to_a(CSV.parse_with("1,2", {headers: "p,q"})))
+nums = CSV.parse_with("A b,C-d,n\n1,x,2.5\n", {headers: true, converters: :numeric, header_converters: :symbol})
+show("symbol headers", nums[0])
+show("num col", nums[:n])
+show("downcase", CSVTable.headers(CSV.parse_with("Ab,CD\n1,2", {headers: true, header_converters: :downcase})))
+t << ["Dave", "50", "Nagoya"]
+show("pushed", CSVTable.to_a(t))
+show("delete col", CSVTable.delete(t, "city"))
+show("after delete", CSVTable.headers(t))
+t["age"] = "0"
+show("set col", t["age"])
+
+puts "== generate"
+show("line", CSV.generate_line(Array["a", nil, "", "x,y", "q\"", 1, 2.5, "l\nb", :sym]))
+show("tuple line", CSV.generate_line(["a", 1]))
+show("to_csv", Array.to_csv(Array["a", nil]))
+show("line opts", CSV.generate_line_with(Array["a", "b;c"], {col_sep: ";", row_sep: "\r\n"}))
+show("force_quotes", CSV.generate_line_with(Array[nil, "x"], {force_quotes: true}))
+show("quote_empty", CSV.generate_line_with(Array["", "a b", " x"], {quote_empty: false}))
+show("unicode", CSV.generate_line(Array["日本", "東京, 大阪"]))
+s = CSV.generate do |csv|
+  csv << [1, "a,b"]
+  csv << Array["x"]
+  csv << Array[]
+end
+show("generate", s)
+s2 = CSV.generate_with({headers: ["h1", "h2"], write_headers: true}) do |csv|
+  csv << Hash["h2" => 2, "h1" => 1]
+  csv << CSVRow.new(Array["a", "b"], Array[3, 4])
+end
+show("generate headers", s2)
+show("generate_lines", CSV.generate_lines(Array[["a", "b"], ["c", nil]]))
+show("roundtrip", CSV.parse(CSV.generate_line(Array["a\"b", "c,d", "e\nf", ""])))
+
+puts "== files"
+path = "/tmp/sakelib_csv_test.csv"
+CSV.open(path, "w") do |csv|
+  csv << ["id", "name", "score"]
+  csv << [1, "Alice", 90.5]
+  csv << [2, "Bob, Jr.", 72]
+end
+CSV.open(path, "a") { |csv| csv << [3, "Carol", 88] }
+show("file", File.read(path))
+show("read", CSV.read(path))
+show("readlines", CSV.readlines(path))
+CSV.foreach(path) { |row| show("foreach", row) }
+CSV.foreach_with(path, {headers: true, converters: :numeric}) { |row| show("foreach h", row) }
+show("read_with", CSV.read_with(path, {converters: :integer}))
+tab = CSV.table(path)
+show("table", tab)
+show("table scores", tab[:score])
+show("table sum", Array.sum(Array.map(tab[:score]) { |v| (v in Integer | Float) ? v : 0 }))
+begin
+  CSV.read("/nonexistent/x.csv")
+rescue IOError => e
+  puts "IOError"
+end

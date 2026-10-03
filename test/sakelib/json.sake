@@ -1,0 +1,120 @@
+require "json"
+
+# parse: every kind of value
+doc = JSON.parse("{\"name\": \"Sake\", \"tags\": [\"a\", \"b\"], \"n\": 3, \"f\": 2.5, \"ok\": true, \"no\": false, \"x\": null}")
+p doc
+p JSON.parse("[1, -0, -0.0, 1e2, 1E-2, 12345678901234567890, 0.1]")
+p JSON.parse("\"a\\u00e9\\n\\t\\\"\\\\\\/\\ud83d\\ude00\"")
+p JSON.parse(" \t\n 2 ")
+p JSON.parse("null")
+p JSON.parse("[]")
+p JSON.parse("{}")
+p JSON.parse("{\"a\": 1, \"a\": 2}")
+p JSON.parse("/* comment */ [1, // line\n 2]")
+p JSON.parse("\"日本語\"")
+
+# options
+p JSON.parse_with("{\"a\": {\"b\": [1, {\"c\": 2}]}}", {symbolize_names: true})
+p JSON.parse_with("[NaN, Infinity, -Infinity]", {allow_nan: true})
+p JSON.parse_with("[1, 2,]", {allow_trailing_comma: true})
+p JSON.parse_with("{\"a\": 1,}", {allow_trailing_comma: true})
+p JSON.parse_with("[[[1]]]", {max_nesting: 3})
+
+# a typical use: read a config and use its values
+cfg = JSON.parse("{\"server\": {\"host\": \"localhost\", \"port\": 8080}, \"users\": [\"ko1\", \"matz\"]}")
+if cfg in Hash
+  server = cfg["server"]
+  if server in Hash
+    port = server["port"]
+    puts "port + 1 = #{port + 1}" if port in Integer
+  end
+  users = cfg["users"]
+  puts Array.join(users, ", ") if users in Array
+end
+
+# errors
+bad = Array["", " ", "[1,]", "{\"a\":1,}", "[01]", "[.5]", "[1.]", "[NaN]", "[-Infinity]", "x",
+            "[1 ", "[1 2]", "{\"a\" 1}", "{\"a\":1, \"b\" 2}", "{1:2}", "{", "[", "{\"a\":", "{\"a\"",
+            "\"abc", "\"a\nb\"", "\"\\x\"", "\"ab\\\n\"", "\"\\u12\"", "\"\\ud800\"", "\"ab\\ud800x\"",
+            "\"\\ud800\\u0041\"", "[1]]", "nulx", "tru", "[truex]", "-", "--1", "1.5e", "-a",
+            "/x", "/*", "é", "[1,\n  éa]", " [1,2]  \n x", "x" * 40, "{\"a\":1 x}"]
+Array.each(bad) do |s|
+  begin
+    v = JSON.parse(s)
+    puts "parsed: #{Kernel.inspect(v)}"
+  rescue JSONParserError => e
+    puts "ParserError: #{Exception.message(e)}"
+  end
+end
+begin
+  JSON.parse("[" * 102 + "]" * 102)
+rescue JSONParserError => e
+  puts "NestingError: #{Exception.message(e)}"
+end
+deep_ok = JSON.parse("[" * 101 + "]" * 101)
+p Array.size(deep_ok) if deep_ok in Array
+begin
+  JSON.parse_with("[[[1]]]", {max_nesting: 2})
+rescue JSONParserError => e
+  puts "NestingError: #{Exception.message(e)}"
+end
+
+# generate
+puts JSON.generate(doc)
+puts JSON.generate(Array[1.0, 1e20, 1.5e-7, 123456789.123, 0.1, -0.0, 1e16, 1e15, 1e-5, 0.000123, 2.5e-10, 1.0e100, 12.5, 2 ** 70, -3])
+puts JSON.generate(Array["a/b", "\u0001\u001f\b\f\n\r\t\"\\", "\u007f", "é日本", "\u2028"])
+puts JSON.generate(Hash[1 => 2, nil => 3, a: 4, "s" => :sym])
+puts JSON.generate(1..3)
+puts JSON.generate(Array[Array[], Hash[], [1, "tuple"]])
+puts JSON.generate(nil)
+puts JSON.fast_generate(Array[1, Hash["a" => "b"]])
+puts JSON.generate("plain")
+begin
+  JSON.generate(Array[0.0 / 0.0])
+rescue JSONGeneratorError => e
+  puts "GeneratorError: #{Exception.message(e)}"
+end
+begin
+  JSON.generate(Hash["x" => 1.0 / 0.0])
+rescue JSONGeneratorError => e
+  puts "GeneratorError: #{Exception.message(e)}"
+end
+puts JSON.generate_with(Array[0.0 / 0.0, -1.0 / 0.0], {allow_nan: true})
+begin
+  JSON.generate(Array[Integer.chr(255)])
+rescue JSONGeneratorError => e
+  puts "GeneratorError: #{Exception.message(e)}"
+end
+puts JSON.generate(Array.pack(Integer[227, 129, 130], "C*"))
+deep = Array[1]
+Integer.times(100) { deep = Array[deep] }
+begin
+  JSON.generate(deep)
+rescue JSONParserError => e
+  puts "NestingError: #{Exception.message(e)}"
+end
+puts JSON.generate_with(Hash["a" => Array[1, 2]], {space: " ", object_nl: " "})
+
+# pretty_generate
+puts JSON.pretty_generate(Hash["a" => Array[], "b" => Hash[], "c" => Array[1, Hash["d" => nil, "e" => "x"]]])
+puts JSON.pretty_generate(Array[])
+puts JSON.pretty_generate(1)
+puts JSON.pretty_generate_with(Hash["a" => 1, "b" => Array[2]], {indent: "\t", space_before: " "})
+
+# dump / load
+puts JSON.dump(Hash["n" => 0.0 / 0.0])
+p JSON.load("[1, NaN]")
+p JSON.load(nil)
+p JSON.load("")
+
+# to_json
+puts Hash.to_json(Hash["k" => Array[1, 2]])
+puts Array.to_json(Array["x", nil])
+puts String.to_json("q\"")
+puts Integer.to_json(42)
+puts Float.to_json(1.5)
+
+# round trip
+src = "{\"a\":[1,2.5,\"x\",null,true,{\"b\":[]}],\"c\":\"\\u00e9\\n\"}"
+puts JSON.generate(JSON.parse(src))
+p JSON.parse(JSON.pretty_generate(JSON.parse(src))) == JSON.parse(src)

@@ -1,0 +1,257 @@
+# strscan: StringScanner, a lexical scanner over a String (Ruby's strscan).
+#
+# Positions: `pos` is in bytes, as in Ruby; `charpos` is in characters. Internally both are kept,
+# and the String is sliced by characters, so `set_pos` must land on a character boundary.
+# Matching at the scan pointer: the rest of the String is matched unanchored and the match is
+# accepted only if it starts at 0 (the leftmost match starts at 0 whenever one there exists).
+
+ScanError = Exception.new                # Ruby: StringScanner::Error (alias ScanError)
+
+class StringScanner < {reader: [string, cpos, bpos, prev_cpos, prev_bpos, mbeg, mend, md, mstr, matched_ok],
+                       default: {cpos: 0, bpos: 0, prev_cpos: 0, prev_bpos: 0, mbeg: 0, mend: 0,
+                                 md: nil, mstr: nil, matched_ok: false}}
+  include Indexable
+  include Bitwise                          # for <<
+
+  # --- internal ---
+
+  def clear_match(ss)
+    @matched_ok = false
+    @md = nil
+    @mstr = nil
+    nil
+  end
+
+  def rest_string(ss) = String.[](@string, @cpos..) || ""
+
+  # Record a match found in the rest: `b`/`e` are character offsets in the rest.
+  def set_match(ss, rest, b, e, m, succptr)
+    @prev_cpos = @cpos
+    @prev_bpos = @bpos
+    @mbeg = @cpos + b
+    @mend = @cpos + e
+    @md = m
+    @mstr = String.[](rest, b, e - b) || ""
+    @matched_ok = true
+    consumed = String.[](rest, 0, e) || ""
+    if succptr
+      @cpos = @cpos + e
+      @bpos = @bpos + String.bytesize(consumed)
+    end
+    consumed
+  end
+
+  # Ruby's strscan_do_scan: headonly anchors at the pointer. Returns the String up to the match
+  # end; `len` turns it into the byte length (a getstr flag would type every result String | Integer).
+  def do_scan(ss, pattern, succptr, headonly)
+    rest = rest_string(ss)
+    b = nil
+    e = 0
+    m = nil
+    case pattern
+    in String
+      if headonly
+        b = 0 if String.start_with?(rest, pattern)
+      else
+        b = String.index(rest, pattern)
+      end
+      e = b + String.length(pattern) if b
+    in Regexp
+      m = Regexp.match(pattern, rest)
+      if m
+        b = MatchData.begin(m, 0)
+        e = MatchData.end(m, 0)
+        b = nil if headonly && b != 0
+      end
+    end
+    if b == nil
+      clear_match(ss)
+      return nil
+    end
+    set_match(ss, rest, b, e, m, succptr)
+  end
+
+  def len(s) = s ? String.bytesize(s) : nil
+
+  def char_index_of_byte(ss, n)
+    return nil if n < 0
+    i = 0
+    acc = 0
+    String.each_char(@string) do |c|
+      break if acc >= n
+      acc += String.bytesize(c)
+      i += 1
+    end
+    acc == n ? i : nil
+  end
+
+  # --- scanning ---
+
+  def scan(ss, pattern) = do_scan(ss, pattern, true, true)
+  def scan_until(ss, pattern) = do_scan(ss, pattern, true, false)
+  def skip(ss, pattern) = len(do_scan(ss, pattern, true, true))
+  def skip_until(ss, pattern) = len(do_scan(ss, pattern, true, false))
+  def match?(ss, pattern) = len(do_scan(ss, pattern, false, true))
+  def check(ss, pattern) = do_scan(ss, pattern, false, true)
+  def check_until(ss, pattern) = do_scan(ss, pattern, false, false)
+  def exist?(ss, pattern) = len(do_scan(ss, pattern, false, false))
+
+  # Ruby's result type depends on the flag getstr: String if true, Integer if false.
+  def scan_full(ss, pattern, advance, getstr)
+    s = do_scan(ss, pattern, advance, true)
+    getstr ? s : len(s)
+  end
+
+  def search_full(ss, pattern, advance, getstr)
+    s = do_scan(ss, pattern, advance, false)
+    getstr ? s : len(s)
+  end
+
+  def getch(ss)
+    rest = rest_string(ss)
+    if String.empty?(rest)
+      clear_match(ss)
+      return nil
+    end
+    set_match(ss, rest, 0, 1, nil, true)
+  end
+
+  # Ruby 3.4: an optionally signed decimal Integer at the pointer, or nil.
+  def scan_integer(ss)
+    s = do_scan(ss, /[+-]?\d+/, true, true)
+    s ? String.to_i(s) : nil
+  end
+
+  def peek(ss, len)
+    raise ArgumentError, "negative string size (or size too big)" if len < 0
+    bytes = Array.drop(String.bytes(@string), @bpos)
+    Array.pack(Array.take(bytes, len), "C*").String.force_encoding("UTF-8")
+  end
+
+  def peek_byte(ss) = String.getbyte(@string, @bpos)
+
+  def unscan(ss)
+    raise ScanError, "unscan failed: previous match record not exist" unless @matched_ok
+    @cpos = @prev_cpos
+    @bpos = @prev_bpos
+    clear_match(ss)
+    ss
+  end
+
+  # --- position ---
+
+  def pos(ss) = @bpos
+  def pointer(ss) = @bpos
+  def charpos(ss) = @cpos
+
+  # Ruby: ss.pos = n (bytes; negative counts from the end).
+  # Returns n as given, as Ruby's assignment does.
+  def set_pos(ss, n)
+    size = String.bytesize(@string)
+    b = n < 0 ? n + size : n
+    raise RangeError, "index out of range" if b < 0 || b > size
+    i = char_index_of_byte(ss, b)
+    raise ArgumentError, "position #{b} is inside a character" unless i
+    @cpos = i
+    @bpos = b
+    n
+  end
+
+  def eos?(ss) = @cpos >= String.length(@string)
+  def rest?(ss) = !eos?(ss)
+  def beginning_of_line?(ss) = @cpos == 0 || String.[](@string, @cpos - 1) == "\n"
+  def bol?(ss) = beginning_of_line?(ss)
+
+  def reset(ss)
+    @cpos = 0
+    @bpos = 0
+    clear_match(ss)
+    ss
+  end
+
+  def terminate(ss)
+    @cpos = String.length(@string)
+    @bpos = String.bytesize(@string)
+    clear_match(ss)
+    ss
+  end
+
+  # --- the String ---
+
+  def string(ss) = @string
+
+  # Ruby: ss.string = s
+  def set_string(ss, s)
+    @string = s
+    reset(ss)
+    s
+  end
+
+  # Ruby: ss.concat(s) / ss << s (Ruby appends to the same String object; here a new String).
+  def concat(ss, s)
+    @string = @string + s
+    ss
+  end
+
+  def <<(ss, s) = concat(ss, s)
+
+  def rest(ss) = rest_string(ss)
+  def rest_size(ss) = String.bytesize(rest_string(ss))
+
+  # --- the last match ---
+
+  def matched?(ss) = @matched_ok
+  def matched(ss) = @mstr
+
+  def matched_size(ss)
+    s = @mstr
+    s ? String.bytesize(s) : nil
+  end
+
+  def pre_match(ss) = @matched_ok ? String.[](@string, 0, @mbeg) : nil
+  def post_match(ss) = @matched_ok ? String.[](@string, @mend..) : nil
+
+  def [](ss, i)
+    return nil unless @matched_ok
+    m = @md
+    if m
+      MatchData.[](m, i)
+    elsif i in String | Symbol
+      raise IndexError, "undefined group name reference: #{i}"
+    else
+      i == 0 ? @mstr : nil
+    end
+  end
+
+  def captures(ss)
+    return nil unless @matched_ok
+    m = @md
+    m ? MatchData.captures(m) : Array[]
+  end
+
+  def size(ss)
+    return nil unless @matched_ok
+    m = @md
+    m ? Array.size(MatchData.to_a(m)) : 1
+  end
+
+  def named_captures(ss)
+    m = @md
+    m ? MatchData.named_captures(m) : Hash[]
+  end
+
+  def fixed_anchor?(ss) = false
+
+  # #<StringScanner 4/11 "test" @ " stri..."> (5 characters each side; Ruby counts bytes).
+  def inspect(ss)
+    return "#<StringScanner fin>" if eos?(ss)
+    after = rest_string(ss)
+    after = String.[](after, 0, 5) + "..." if String.length(after) > 5
+    head = "#<StringScanner #{@bpos}/#{String.bytesize(@string)}"
+    return "#{head} @ #{Kernel.inspect(after)}>" if @cpos == 0
+    before = String.[](@string, 0, @cpos) || ""
+    before = "..." + (String.[](before, -5, 5) || "") if String.length(before) > 5
+    "#{head} #{Kernel.inspect(before)} @ #{Kernel.inspect(after)}>"
+  end
+
+end

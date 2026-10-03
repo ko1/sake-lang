@@ -1,0 +1,619 @@
+# matrix: Ruby's Matrix and Vector (matrix-0.4.3) in Sake.
+# Algorithms (determinant, inverse, rank, **) are ported line by line, so Float results match Ruby's.
+# `Matrix[[1, 2], [3, 4]]` means "an Array of Matrix" in Sake: build with Matrix.rows(...) instead.
+
+ErrDimensionMismatch = Exception.new
+ErrNotRegular = Exception.new
+ErrOperationNotDefined = Exception.new
+ZeroVectorError = Exception.new
+
+class Matrix < {reader: [rows, column_count]}
+  include Arithmetic
+  include Indexable
+
+  # --- constructors ---
+
+  def rows(rows)
+    rs = Array.map(rows) { |r| Array.dup(r) }
+    first = Array.first(rs)
+    size = first == nil ? 0 : Array.size(first)
+    Array.each(rs) do |r|
+      raise ErrDimensionMismatch, "row size differs (#{Array.size(r)} should be #{size})" unless Array.size(r) == size
+    end
+    Matrix.new(rs, size)
+  end
+  def columns(columns) = Matrix.transpose(Matrix.rows(columns))
+  def build(row_count, column_count)
+    raise ArgumentError if row_count < 0 || column_count < 0
+    Matrix.new(Array.new(row_count) { |i| Array.new(column_count) { |j| yield(i, j) } }, column_count)
+  end
+  def diagonal(values)
+    size = Array.size(values)
+    return Matrix.empty(0, 0) if size == 0
+    rs = Array.new(size) do |j|
+      row = Array.new(size, 0)
+      row[j] = Array.fetch(values, j)
+      row
+    end
+    Matrix.new(rs, size)
+  end
+  def scalar(n, value) = Matrix.diagonal(Array.new(n, value))
+  def identity(n) = Matrix.scalar(n, 1)
+  def unit(n) = Matrix.identity(n)
+  def zero(n) = Matrix.new(Array.new(n) { Array.new(n, 0) }, n)
+  def row_vector(row) = Matrix.new(Array[Matrix.to_array(row)], Matrix.to_array(row).Array.size)
+  def column_vector(column) = Matrix.new(Array.map(Matrix.to_array(column)) { |e| Array[e] }, 1)
+  def empty(row_count, column_count)
+    raise ArgumentError, "One size must be 0" if column_count != 0 && row_count != 0
+    raise ArgumentError, "Negative size" if column_count < 0 || row_count < 0
+    Matrix.new(Array.new(row_count) { Array[] }, column_count)
+  end
+  def vstack(x, y)
+    raise ErrDimensionMismatch, "The given matrices must have #{Matrix.column_count(x)} columns, but one has #{Matrix.column_count(y)}" if Matrix.column_count(x) != Matrix.column_count(y)
+    Matrix.new(Matrix.to_a(x) + Matrix.to_a(y), Matrix.column_count(x))
+  end
+  def hstack(x, y)
+    raise ErrDimensionMismatch, "The given matrices must have #{Matrix.row_count(x)} rows, but one has #{Matrix.row_count(y)}" if Matrix.row_count(x) != Matrix.row_count(y)
+    yr = Matrix.get_rows(y)
+    rs = Array.new(Matrix.row_count(x)) { |i| Array.fetch(Matrix.get_rows(x), i) + Array.fetch(yr, i) }
+    Matrix.new(rs, Matrix.column_count(x) + Matrix.column_count(y))
+  end
+
+  # An Array, or a Vector's elements (Ruby's convert_to_array).
+  def to_array(x)
+    case x
+    in Vector then Vector.to_a(x)
+    in Array then Array.dup(x)
+    end
+  end
+
+  # --- access ---
+
+  # nil outside, as Ruby; the nil comes from indexing only, so --strict treats it as `x[k]` (level 3).
+  def [](m, i, j) = (@rows[i] || Array[])[j]
+  def element(m, i, j) = m[i, j]
+  def component(m, i, j) = m[i, j]
+  def []=(m, i, j, v)
+    Array.fetch(@rows, i)[j] = v
+  end
+  def row_count(m) = Array.size(@rows)
+  def row_size(m) = Array.size(@rows)
+  def column_count(m) = @column_count
+  def column_size(m) = @column_count
+  def row(m, i)
+    r = @rows[i]
+    r == nil ? nil : Vector.new(Array.dup(r))
+  end
+  def column(m, j)
+    return nil if j >= @column_count || j < -@column_count
+    Vector.new(Array.map(@rows) { |r| Array.fetch(r, j) })
+  end
+  def row_vectors(m) = Array.new(Matrix.row_count(m)) { |i| Vector.new(Array.dup(Array.fetch(@rows, i))) }
+  def column_vectors(m) = Array.new(@column_count) { |j| Vector.new(Array.map(@rows) { |r| Array.fetch(r, j) }) }
+  def to_a(m) = Array.map(@rows) { |r| Array.dup(r) }
+
+  def each(m)
+    Array.each(@rows) { |r| Array.each(r) { |e| yield(e) } }
+    m
+  end
+  def each_with_index(m)
+    Array.each_with_index(@rows) { |r, i| Array.each_with_index(r) { |e, j| yield(e, i, j) } }
+    m
+  end
+  def collect(m) = Matrix.new(Array.map(@rows) { |r| Array.map(r) { |e| yield(e) } }, @column_count)
+  def map(m) = Matrix.collect(m) { |e| yield(e) }
+
+  # Ruby's minor(start_row, nrows, start_col, ncols); the Range form is not ported.
+  def minor(m, from_row, size_row, from_col, size_col)
+    return nil if size_row < 0 || size_col < 0
+    from_row += Matrix.row_count(m) if from_row < 0
+    from_col += @column_count if from_col < 0
+    return nil if from_row > Matrix.row_count(m) || from_col > @column_count || from_row < 0 || from_col < 0
+    rs = Array.map(@rows[from_row, size_row] || Array[]) { |r| r[from_col, size_col] || Array[] }
+    Matrix.new(rs, Integer.clamp(@column_count - from_col, 0, size_col))
+  end
+  def first_minor(m, row, column)
+    raise RuntimeError, "first_minor of empty matrix is not defined" if Matrix.empty?(m)
+    unless 0 <= row && row < Matrix.row_count(m)
+      raise ArgumentError, "invalid row (#{row} for 0..#{Matrix.row_count(m) - 1})"
+    end
+    unless 0 <= column && column < @column_count
+      raise ArgumentError, "invalid column (#{column} for 0..#{@column_count - 1})"
+    end
+    arrays = Matrix.to_a(m)
+    Array.delete_at(arrays, row)
+    Array.each(arrays) { |a| Array.delete_at(a, column) }
+    Matrix.new(arrays, @column_count - 1)
+  end
+  def cofactor(m, row, column)
+    raise RuntimeError, "cofactor of empty matrix is not defined" if Matrix.empty?(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    Matrix.determinant(Matrix.first_minor(m, row, column)) * (-1) ** (row + column)
+  end
+  def adjugate(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    Matrix.build(Matrix.row_count(m), @column_count) { |row, column| Matrix.cofactor(m, column, row) }
+  end
+
+  # --- properties ---
+
+  def square?(m) = @column_count == Matrix.row_count(m)
+  def empty?(m) = @column_count == 0 || Matrix.row_count(m) == 0
+  def zero?(m) = Array.all?(@rows) { |r| Array.all?(r) { |e| e == 0 } }
+  def diagonal?(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    Matrix.all_with_index?(m) { |e, i, j| i == j || e == 0 }
+  end
+  def upper_triangular?(m) = Matrix.all_with_index?(m) { |e, i, j| i <= j || e == 0 }
+  def lower_triangular?(m) = Matrix.all_with_index?(m) { |e, i, j| i >= j || e == 0 }
+  def symmetric?(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    Matrix.all_with_index?(m) { |e, i, j| j <= i || e == Matrix.at(m, j, i) }
+  end
+  def antisymmetric?(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    Matrix.all_with_index?(m) { |e, i, j| j < i || e == -Matrix.at(m, j, i) }
+  end
+  def orthogonal?(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    n = Matrix.row_count(m)
+    Integer.times(n) do |i|
+      Integer.times(n) do |j|
+        s = 0
+        Integer.times(n) { |k| s += Matrix.at(m, i, k) * Matrix.at(m, j, k) }
+        return false unless s == (i == j ? 1 : 0)
+      end
+    end
+    true
+  end
+  def permutation?(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    cols = Array.new(@column_count, false)
+    Array.each(@rows) do |row|
+      found = false
+      Array.each_with_index(row) do |e, j|
+        if e == 1
+          return false if found || Array.fetch(cols, j)
+          found = true
+          cols[j] = true
+        elsif e != 0
+          return false
+        end
+      end
+      return false unless found
+    end
+    true
+  end
+  def singular?(m) = Matrix.determinant(m) == 0
+  def regular?(m) = !Matrix.singular?(m)
+  def all_with_index?(m)
+    Array.each_with_index(@rows) do |r, i|
+      Array.each_with_index(r) { |e, j| return false unless yield(e, i, j) }
+    end
+    true
+  end
+  # The element at (i, j), which must exist (`m[i, j]` gives nil outside).
+  def at(m, i, j) = Array.fetch(Array.fetch(@rows, i), j)
+
+  # --- arithmetic ---
+
+  def *(m, x)
+    case x
+    in Integer | Float | Rational | Complex
+      Matrix.new(Array.map(@rows) { |row| Array.map(row) { |e| e * x } }, @column_count)
+    in Vector
+      r = m * Matrix.column_vector(x)
+      Vector.new(Array.map(Matrix.get_rows(r)) { |row| Array.fetch(row, 0) })
+    in Matrix
+      raise ErrDimensionMismatch, "Dimension mismatch" if @column_count != Matrix.row_count(x)
+      m_rows = Matrix.get_rows(x)
+      xc = Matrix.column_count(x)
+      new_rows = Array.map(@rows) do |row_i|
+        Array.new(xc) do |j|
+          vij = 0
+          Integer.times(@column_count) { |k| vij += Array.fetch(row_i, k) * Array.fetch(Array.fetch(m_rows, k), j) }
+          vij
+        end
+      end
+      Matrix.new(new_rows, xc)
+    end
+  end
+
+  def +(m, x) = Matrix.entrywise(m, x, "+") { |a, b| a + b }
+  def -(m, x) = Matrix.entrywise(m, x, "-") { |a, b| a - b }
+  def entrywise(m, x, op)
+    other = Matrix.as_matrix(x, op)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.row_count(m) == Matrix.row_count(other) && @column_count == Matrix.column_count(other)
+    rs = Array.new(Matrix.row_count(m)) { |i| Array.new(@column_count) { |j| yield(Matrix.at(m, i, j), Matrix.at(other, i, j)) } }
+    Matrix.new(rs, @column_count)
+  end
+  # A Vector as a column Matrix; a number cannot be added to a Matrix.
+  def as_matrix(x, op)
+    case x
+    in Matrix then x
+    in Vector then Matrix.column_vector(x)
+    in Integer | Float | Rational | Complex
+      raise ErrOperationNotDefined, "Operation(#{op}) can't be defined: Matrix op #{Matrix.class_name(x)}"
+    end
+  end
+  def class_name(x)
+    case x
+    in Integer then "Integer"
+    in Float then "Float"
+    in Rational then "Rational"
+    in Complex then "Complex"
+    in Vector then "Vector"
+    in Matrix then "Matrix"
+    end
+  end
+
+  def /(m, x)
+    case x
+    in Integer | Float | Rational | Complex
+      Matrix.new(Array.map(@rows) { |row| Array.map(row) { |e| e / x } }, @column_count)
+    in Matrix then m * Matrix.inverse(x)
+    end
+  end
+
+  def hadamard_product(m, x)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.row_count(m) == Matrix.row_count(x) && @column_count == Matrix.column_count(x)
+    Matrix.build(Matrix.row_count(m), @column_count) { |i, j| Matrix.at(m, i, j) * Matrix.at(x, i, j) }
+  end
+  def entrywise_product(m, x) = Matrix.hadamard_product(m, x)
+
+  def -@(m) = Matrix.collect(m) { |e| -e }
+  def +@(m) = m
+
+  # Integer powers only; Ruby's non-Integer powers need eigensystem, which is not ported.
+  def **(m, exp)
+    if exp == 0
+      raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+      Matrix.identity(@column_count)
+    elsif exp < 0
+      Matrix.power_int(Matrix.inverse(m), -exp)
+    else
+      Matrix.power_int(m, exp)
+    end
+  end
+  def power_int(m, exp)
+    if exp == 1
+      m
+    elsif Integer.odd?(exp)
+      m * Matrix.power_int(m, exp - 1)
+    else
+      sqrt = Matrix.power_int(m, exp / 2)
+      sqrt * sqrt
+    end
+  end
+
+  # --- algebra ---
+
+  def transpose(m)
+    return Matrix.empty(@column_count, 0) if Matrix.row_count(m) == 0
+    Matrix.new(Array.transpose(@rows), Matrix.row_count(m))
+  end
+  def t(m) = Matrix.transpose(m)
+
+  def trace(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    Range.inject(0...@column_count, 0) { |tr, i| tr + Matrix.at(m, i, i) }
+  end
+  def tr(m) = Matrix.trace(m)
+
+  def determinant(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    case Matrix.row_count(m)
+    in 0 then 1
+    in 1 then Matrix.at(m, 0, 0)
+    in 2 then Matrix.at(m, 0, 0) * Matrix.at(m, 1, 1) - Matrix.at(m, 0, 1) * Matrix.at(m, 1, 0)
+    in 3
+      m0 = Array.fetch(@rows, 0)
+      m1 = Array.fetch(@rows, 1)
+      m2 = Array.fetch(@rows, 2)
+      a0, a1, a2 = Array.fetch(m0, 0), Array.fetch(m0, 1), Array.fetch(m0, 2)
+      b0, b1, b2 = Array.fetch(m1, 0), Array.fetch(m1, 1), Array.fetch(m1, 2)
+      c0, c1, c2 = Array.fetch(m2, 0), Array.fetch(m2, 1), Array.fetch(m2, 2)
+      a0 * b1 * c2 - a0 * b2 * c1 - a1 * b0 * c2 + a1 * b2 * c0 + a2 * b0 * c1 - a2 * b1 * c0
+    in 4 then Matrix.determinant4(m)
+    else Matrix.determinant_bareiss(m)
+    end
+  end
+  def det(m) = Matrix.determinant(m)
+
+  # Ruby's 24-term expansion, in Ruby's order (Float results then match).
+  def determinant4(m)
+    a = Matrix.to_a(m)
+    m0, m1, m2, m3 = Array.fetch(a, 0), Array.fetch(a, 1), Array.fetch(a, 2), Array.fetch(a, 3)
+    f = Array.fetch(m0, 0); g = Array.fetch(m0, 1); h = Array.fetch(m0, 2); k = Array.fetch(m0, 3)
+    b0 = Array.fetch(m1, 0); b1 = Array.fetch(m1, 1); b2 = Array.fetch(m1, 2); b3 = Array.fetch(m1, 3)
+    c0 = Array.fetch(m2, 0); c1 = Array.fetch(m2, 1); c2 = Array.fetch(m2, 2); c3 = Array.fetch(m2, 3)
+    d0 = Array.fetch(m3, 0); d1 = Array.fetch(m3, 1); d2 = Array.fetch(m3, 2); d3 = Array.fetch(m3, 3)
+    f * b1 * c2 * d3 - f * b1 * c3 * d2 \
+    - f * b2 * c1 * d3 + f * b2 * c3 * d1 \
+    + f * b3 * c1 * d2 - f * b3 * c2 * d1 \
+    - g * b0 * c2 * d3 + g * b0 * c3 * d2 \
+    + g * b2 * c0 * d3 - g * b2 * c3 * d0 \
+    - g * b3 * c0 * d2 + g * b3 * c2 * d0 \
+    + h * b0 * c1 * d3 - h * b0 * c3 * d1 \
+    - h * b1 * c0 * d3 + h * b1 * c3 * d0 \
+    + h * b3 * c0 * d1 - h * b3 * c1 * d0 \
+    - k * b0 * c1 * d2 + k * b0 * c2 * d1 \
+    + k * b1 * c0 * d2 - k * b1 * c2 * d0 \
+    - k * b2 * c0 * d1 + k * b2 * c1 * d0
+  end
+
+  def determinant_bareiss(m)
+    size = Matrix.row_count(m)
+    last = size - 1
+    a = Matrix.to_a(m)
+    sign = 1
+    pivot = 1
+    Integer.times(size) do |k|
+      previous_pivot = pivot
+      pivot = Array.fetch(Array.fetch(a, k), k)
+      if pivot == 0
+        switch = Range.find((k + 1)...size) { |row| Array.fetch(Array.fetch(a, row), k) != 0 }
+        return 0 if switch == nil
+        a[switch], a[k] = Array.fetch(a, k), Array.fetch(a, switch)
+        pivot = Array.fetch(Array.fetch(a, k), k)
+        sign = -sign
+      end
+      ak = Array.fetch(a, k)
+      Integer.upto(k + 1, last) do |i|
+        ai = Array.fetch(a, i)
+        Integer.upto(k + 1, last) do |j|
+          ai[j] = (pivot * Array.fetch(ai, j) - Array.fetch(ai, k) * Array.fetch(ak, j)) / previous_pivot
+        end
+      end
+    end
+    sign * pivot
+  end
+
+  def rank(m)
+    a = Matrix.to_a(m)
+    last_column = @column_count - 1
+    last_row = Matrix.row_count(m) - 1
+    pivot_row = 0
+    previous_pivot = 1
+    Integer.upto(0, last_column) do |k|
+      switch_row = Range.find(pivot_row..last_row) { |row| Array.fetch(Array.fetch(a, row), k) != 0 }
+      if switch_row != nil
+        a[switch_row], a[pivot_row] = Array.fetch(a, pivot_row), Array.fetch(a, switch_row) unless pivot_row == switch_row
+        ap = Array.fetch(a, pivot_row)
+        pivot = Array.fetch(ap, k)
+        Integer.upto(pivot_row + 1, last_row) do |i|
+          ai = Array.fetch(a, i)
+          Integer.upto(k + 1, last_column) do |j|
+            ai[j] = (pivot * Array.fetch(ai, j) - Array.fetch(ai, k) * Array.fetch(ap, j)) / previous_pivot
+          end
+        end
+        pivot_row += 1
+        previous_pivot = pivot
+      end
+    end
+    pivot_row
+  end
+
+  # Gauss-Jordan with partial pivoting, as Ruby's inverse_from; Integer entries become Rational (quo).
+  def inverse(m)
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
+    n = Matrix.row_count(m)
+    last = n - 1
+    a = Matrix.to_a(m)
+    res = Matrix.get_rows(Matrix.identity(n))
+    Integer.upto(0, last) do |k|
+      i = k
+      akk = Matrix.abs(Array.fetch(Array.fetch(a, k), k))
+      Integer.upto(k + 1, last) do |j|
+        v = Matrix.abs(Array.fetch(Array.fetch(a, j), k))
+        if v > akk
+          i = j
+          akk = v
+        end
+      end
+      raise ErrNotRegular, "Not Regular Matrix" if akk == 0
+      if i != k
+        a[i], a[k] = Array.fetch(a, k), Array.fetch(a, i)
+        res[i], res[k] = Array.fetch(res, k), Array.fetch(res, i)
+      end
+      ak = Array.fetch(a, k)
+      rk = Array.fetch(res, k)
+      akk2 = Array.fetch(ak, k)
+      Integer.upto(0, last) do |ii|
+        next if ii == k
+        aii = Array.fetch(a, ii)
+        rii = Array.fetch(res, ii)
+        q = Matrix.quo(Array.fetch(aii, k), akk2)
+        aii[k] = 0
+        Integer.upto(k + 1, last) { |j| aii[j] = Array.fetch(aii, j) - Array.fetch(ak, j) * q }
+        Integer.upto(0, last) { |j| rii[j] = Array.fetch(rii, j) - Array.fetch(rk, j) * q }
+      end
+      Integer.upto(k + 1, last) { |j| ak[j] = Matrix.quo(Array.fetch(ak, j), akk2) }
+      Integer.upto(0, last) { |j| rk[j] = Matrix.quo(Array.fetch(rk, j), akk2) }
+    end
+    Matrix.new(res, n)
+  end
+  def inv(m) = Matrix.inverse(m)
+
+  # Ruby's Numeric#quo: Integer / Integer gives a Rational.
+  def quo(a, b)
+    case a
+    in Integer then Integer.to_r(a) / b
+    in Float | Rational | Complex then a / b
+    end
+  end
+  def abs(x) = (Integer|Float|Rational|Complex).abs(x)
+
+  def round(m, ndigits)
+    Matrix.collect(m) do |e|
+      case e
+      in Integer then Integer.round(e, ndigits)
+      in Float then Float.round(e, ndigits)
+      in Rational then Matrix.round_rational(e, ndigits)
+      in Complex then raise ArgumentError, "Complex can't be rounded"
+      end
+    end
+  end
+  # Rational#round(n): Sake's Rational.round takes no digits.
+  def round_rational(r, ndigits)
+    return Rational.round(r) if ndigits == 0
+    s = 10r ** ndigits
+    Rational.round(r * s) / s
+  end
+
+  # --- conversion ---
+
+  def to_matrix(m) = m
+  def to_s(m)
+    return "Matrix.empty(#{Matrix.row_count(m)}, #{@column_count})" if Matrix.empty?(m)
+    "Matrix[" + Array.join(Array.map(@rows) { |row| "[" + Array.join(row, ", ") + "]" }, ", ") + "]"
+  end
+  def inspect(m)
+    return "Matrix.empty(#{Matrix.row_count(m)}, #{@column_count})" if Matrix.empty?(m)
+    "Matrix#{Kernel.inspect(@rows)}"
+  end
+end
+
+class Vector < {reader: [elements]}
+  include Arithmetic
+  include Indexable
+
+  # Vector[1, 2] is an Array of Vector in Sake: use Vector.elements(Array[1, 2]).
+  def elements(array) = Vector.new(Array.dup(array))
+  def basis(size, index)
+    raise ArgumentError, "invalid size (#{size} for 1..)" if size < 1
+    raise ArgumentError, "invalid index (#{index} for 0...#{size})" unless 0 <= index && index < size
+    array = Array.new(size, 0)
+    array[index] = 1
+    Vector.new(array)
+  end
+  def zero(size)
+    raise ArgumentError, "invalid size (#{size} for 0..)" if size < 0
+    Vector.new(Array.new(size, 0))
+  end
+
+  def [](v, i) = @elements[i]
+  def element(v, i) = @elements[i]
+  def component(v, i) = @elements[i]
+  def []=(v, i, x)
+    raise IndexError, "given index #{i} is outside of -#{Vector.size(v)}...#{Vector.size(v)}" if i >= Vector.size(v) || i < -Vector.size(v)
+    @elements[i] = x
+  end
+  def size(v) = Array.size(@elements)
+  def to_a(v) = Array.dup(@elements)
+  def each(v)
+    Array.each(@elements) { |e| yield(e) }
+    v
+  end
+  def each2(v, w)
+    raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
+    ws = Vector.get_elements(w)
+    Array.each_with_index(@elements) { |e, i| yield(e, Array.fetch(ws, i)) }
+    v
+  end
+  def collect(v) = Vector.new(Array.map(@elements) { |e| yield(e) })
+  def map(v) = Vector.collect(v) { |e| yield(e) }
+  def collect2(v, w)
+    raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
+    ws = Vector.get_elements(w)
+    Array.new(Array.size(@elements)) { |i| yield(Array.fetch(@elements, i), Array.fetch(ws, i)) }
+  end
+  def map2(v, w) = Vector.new(Vector.collect2(v, w) { |a, b| yield(a, b) })
+
+  def zero?(v) = Array.all?(@elements) { |e| e == 0 }
+
+  def *(v, x)
+    case x
+    in Integer | Float | Rational | Complex then Vector.new(Array.map(@elements) { |e| e * x })
+    in Matrix then Matrix.column_vector(v) * x
+    in Vector then raise ErrOperationNotDefined, "Operation(*) can't be defined: Vector op Vector"
+    end
+  end
+  def +(v, x)
+    case x
+    in Vector
+      raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(x)
+      Vector.new(Vector.collect2(v, x) { |a, b| a + b })
+    in Matrix then Matrix.column_vector(v) + x
+    end
+  end
+  def -(v, x)
+    case x
+    in Vector
+      raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(x)
+      Vector.new(Vector.collect2(v, x) { |a, b| a - b })
+    in Matrix then Matrix.column_vector(v) - x
+    end
+  end
+  def /(v, x)
+    case x
+    in Integer | Float | Rational | Complex then Vector.new(Array.map(@elements) { |e| e / x })
+    in Matrix | Vector then raise ErrOperationNotDefined, "Operation(/) can't be defined: Vector op #{Matrix.class_name(x)}"
+    end
+  end
+  def -@(v) = Vector.collect(v) { |e| -e }
+  def +@(v) = v
+
+  def inner_product(v, w)
+    raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
+    p = 0
+    Vector.each2(v, w) { |v1, v2| p += v1 * Vector.conj(v2) }
+    p
+  end
+  def dot(v, w) = Vector.inner_product(v, w)
+  def conj(x)
+    case x
+    in Complex then Complex.conjugate(x)
+    in Integer | Float | Rational then x
+    end
+  end
+
+  # Ruby's cross_product(*vs) takes size - 2 vectors; here the 3-dimensional form only.
+  def cross_product(v, w)
+    raise ErrOperationNotDefined, "cross product is not defined on vectors of dimension #{Vector.size(v)}" unless Vector.size(v) == 3
+    raise ErrDimensionMismatch, "Dimension mismatch" unless Vector.size(w) == 3
+    a0, a1, a2 = Array.fetch(@elements, 0), Array.fetch(@elements, 1), Array.fetch(@elements, 2)
+    b0, b1, b2 = Vector.at(w, 0), Vector.at(w, 1), Vector.at(w, 2)
+    Vector.new(Array[b2 * a1 - b1 * a2, b0 * a2 - b2 * a0, b1 * a0 - b0 * a1])
+  end
+  def cross(v, w) = Vector.cross_product(v, w)
+  def at(v, i) = Array.fetch(@elements, i)
+
+  def magnitude(v) = Math.sqrt(Array.inject(@elements, 0) { |s, e| s + Vector.abs2(e) })
+  def norm(v) = Vector.magnitude(v)
+  def r(v) = Vector.magnitude(v)
+  def abs2(e)
+    case e
+    in Complex then Complex.real(e) * Complex.real(e) + Complex.imaginary(e) * Complex.imaginary(e)
+    in Integer | Float | Rational then e * e
+    end
+  end
+  def normalize(v)
+    n = Vector.magnitude(v)
+    raise ZeroVectorError, "Zero vectors can not be normalized" if n == 0
+    v / n
+  end
+  def angle_with(v, w)
+    raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
+    prod = Vector.magnitude(v) * Vector.magnitude(w)
+    raise ZeroVectorError, "Can't get angle of zero vector" if prod == 0
+    dot = Vector.inner_product(v, w)
+    case dot
+    in Complex then raise ArgumentError, "angle_with needs real vectors"
+    in Integer | Float | Rational
+      if Matrix.abs(dot) >= prod
+        dot > 0 ? 0 : Math.atan(1) * 4
+      else
+        Vector.acos(dot / prod)
+      end
+    end
+  end
+  # Math.acos is not a Sake built-in; atan2 gives it within an ulp or so.
+  def acos(x) = Math.atan2(Math.sqrt(1 - x * x), x)
+
+  def round(v, ndigits) = Vector.new(Matrix.get_rows(Matrix.round(Matrix.column_vector(v), ndigits)).Array.map { |r| Array.fetch(r, 0) })
+  def covector(v) = Matrix.row_vector(v)
+  def to_matrix(v) = Matrix.column_vector(v)
+  def to_s(v) = "Vector[" + Array.join(@elements, ", ") + "]"
+  def inspect(v) = "Vector#{Kernel.inspect(@elements)}"
+end
