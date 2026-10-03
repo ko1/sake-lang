@@ -23,7 +23,8 @@ bin/sake FILE.sake
 ```
 
 `bin/sake -c FILE.sake` only checks the program. Exit status is 0 on success, 1 for an error while
-running, and 2 for a problem found before running.
+running, and 2 for a problem found before running. To try Sake in a browser, with completion and the
+inferred types on hover, build the playground in [ide/](../ide/README.md).
 
 How much is checked before running is set with `--strict`:
 
@@ -92,10 +93,18 @@ type:
 
 @@example typed_op_error
 
+`==` compares any two values: by content for Tuples, Arrays, Hashes, Sets, Records and Structs, and
+`false` between different types. Tuples and Arrays are ordered element by element, so a Tuple makes a
+sort key of several parts. `-x` runs the `-@` of `x`'s type, and `!x` is `x ? false : true`:
+
+@@example comparing
+
 ## 4. Functions
 
-Functions have no type annotations. A function that does not pin down a type works with any type
-its operations accept. In the example below, `square` works on both Integer and Float.
+Functions have no type annotations, and do not need them: what a function accepts follows from its
+operations (`String.upcase(s)` needs a String), and each call is checked with the types it is given. A
+function that does not pin down a type works with any type its operations accept. In the example
+below, `square` works on both Integer and Float.
 
 @@example functions
 
@@ -136,10 +145,13 @@ argument. Inside a block, you can name the single parameter `it` or `_1`, as in 
 Your own functions receive a block through `yield`.
 
 - When a block has several parameters and receives one Tuple or Array, it is destructured.
-- `next` gives the block's value.
+- `next` gives the block's value; `break` ends the call the block was given to, whose value it becomes.
 - `return` inside a block leaves the enclosing function.
+- A parameter can be taken apart, `|(name, n), i|`, and `|head, *rest|` collects the rest.
 
 @@example yield
+
+@@example blocks_more
 
 Blocks are not values. You cannot store a block in a variable or pass `&blk`. In return, the
 interpreter knows statically which block every `yield` runs, so it can check block use before
@@ -249,12 +261,19 @@ call to a function that needs its includer:
 
 @@example module_errors
 
+A module states what each includer must define with a function whose body is only
+`raise NotImplementedError`. A type that includes the module but lacks it is reported where the
+function is reached:
+
+@@example required_errors
+
 ## 9. Tuples, Records, and arrays
 
 A literal has no operation with a type, so its shape fixes its type when it is created. A growable
 collection is made by an operation with a type:
 
-- **Tuple.** A literal `[a, b]` is a Tuple of fixed size. Take it apart with multiple assignment.
+- **Tuple.** A literal `[a, b]` is a Tuple of fixed size. Take it apart with multiple assignment
+  (`a, b = t`; an Array too, where missing elements are nil, as in Ruby).
 - **Record.** A literal `{x: a, y: b}` is a Record. Its type is its set of fields and their
   types. Take it apart with a pattern.
 - **Array.** `Array[...]` builds an Array with no declared element type.
@@ -286,6 +305,33 @@ When the mistake is visible in the source, it is reported before running:
 
 @@example typed_array_errors
 
+More on Arrays: `Array.new(n, v)` and `Array.new(n) { |i| ... }`, `+ - *` as in Ruby, element
+assignment as a multiple-assignment target (a swap), two indexes `s[start, length]`, and a start
+value for `sum`, which an empty Array gives instead of the Integer 0:
+
+@@example arrays_more
+
+### Tuples tagged by a Symbol
+
+An Array of Tuples whose first element is a Symbol tag keeps each kind apart. Testing the tag, after
+`|kind, arg|` takes a Tuple apart (or with `case t[0]`), tells the type of the rest:
+
+@@example tagged
+
+### Where a type is worth writing
+
+A function needs no type: its operations say what it accepts. A Struct's field needs none either:
+its type comes from the values written to it, which `T.new` and `T.set_x` show. The one place a type
+pays is an Array that is filled later. Made with `Array[]`, its element type is whatever gets pushed,
+so a wrong value is reported where the elements are used, far from where it went in:
+
+@@example elements_untyped
+
+Made with its element type, `Integer[]` (or `Float[]`, `Point[]`, `Tuple[]`), every push is checked
+where it happens. The type is written on the operation that makes the Array, not on a variable:
+
+@@example elements_typed
+
 ## 10. Ruby's other types
 
 Hash, Set, Symbol, Range, and Regexp work as in Ruby. Their operations carry the type like
@@ -298,8 +344,10 @@ everything else (`Hash.each`, `Range.to_a`, `String.match`), while `h[k]`, `1..5
 
 @@example ruby_types
 
-Hash keys and Set elements must be values compared by content: numbers, Strings, Symbols, `true`,
-`false`, `nil`, and Tuples and Records of them. Equality of Structs and Arrays is not decided yet.
+Hash keys and Set elements compare as `==` does: numbers, Strings, Symbols, `true`, `false`, `nil`,
+Time, and Tuples, Records, Arrays, Hashes, Sets and Struct values made of these. A Struct type that
+defines its own `==` (or `<=>` with `Comparable`) cannot be a key, since its keys could disagree with
+it.
 
 ## 11. nil
 
@@ -353,7 +401,8 @@ operation that checks its argument, one of the following:
 - **unknown**: the inference could not tell.
 
 It also prints the element type of every Array and the type of every field. No types were written
-anywhere:
+anywhere. The playground ([ide/](../ide/README.md)) shows the same results in its Types tab and on
+hover:
 
 @@example types
 @@run types --types

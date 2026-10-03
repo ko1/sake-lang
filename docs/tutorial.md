@@ -25,7 +25,8 @@ bin/sake FILE.sake
 ```
 
 `bin/sake -c FILE.sake` only checks the program. Exit status is 0 on success, 1 for an error while
-running, and 2 for a problem found before running.
+running, and 2 for a problem found before running. To try Sake in a browser, with completion and the
+inferred types on hover, build the playground in [ide/](../ide/README.md).
 
 How much is checked before running is set with `--strict`:
 
@@ -202,10 +203,36 @@ $ sake typed_op_error.sake
 3.5
 ```
 
+`==` compares any two values: by content for Tuples, Arrays, Hashes, Sets, Records and Structs, and
+`false` between different types. Tuples and Arrays are ordered element by element, so a Tuple makes a
+sort key of several parts. `-x` runs the `-@` of `x`'s type, and `!x` is `x ? false : true`:
+
+```ruby
+# == compares by content, and is false between different types (as in Ruby)
+p([1, "a"] == [1, "a"])             # Tuples, Arrays, Hashes, Sets and Records: by content
+p(1 == "1")
+p([2, "b"] < [2, "c"])               # Tuples and Arrays are ordered element by element
+scores = Array[["ann", 90], ["bob", 72], ["cy", 90]]
+p(Array.sort_by(scores) { |name, s| [-s, name] })   # a Tuple as the sort key: score down, name up
+x = 5
+p([-x, !(x > 3)])                    # -x runs the -@ of x's type; !x is `x ? false : true`
+```
+
+```
+$ sake comparing.sake
+true
+false
+true
+[["ann", 90], ["cy", 90], ["bob", 72]]
+[-5, false]
+```
+
 ## 4. Functions
 
-Functions have no type annotations. A function that does not pin down a type works with any type
-its operations accept. In the example below, `square` works on both Integer and Float.
+Functions have no type annotations, and do not need them: what a function accepts follows from its
+operations (`String.upcase(s)` needs a String), and each call is checked with the types it is given. A
+function that does not pin down a type works with any type its operations accept. In the example
+below, `square` works on both Integer and Float.
 
 ```ruby
 def square(x) = x * x
@@ -392,8 +419,9 @@ b1
 Your own functions receive a block through `yield`.
 
 - When a block has several parameters and receives one Tuple or Array, it is destructured.
-- `next` gives the block's value.
+- `next` gives the block's value; `break` ends the call the block was given to, whose value it becomes.
 - `return` inside a block leaves the enclosing function.
+- A parameter can be taken apart, `|(name, n), i|`, and `|head, *rest|` collects the rest.
 
 ```ruby
 def twice(x) = yield(yield(x))
@@ -423,6 +451,24 @@ $ sake yield.sake
 3 -> 9
 5
 [1, 0, 3, 0]
+```
+
+```ruby
+nums = Array[3, 8, 12, 5]
+found = Array.each(nums) { |n| break n if n > 10 }    # break ends the call; its value is the call's
+p(found)
+pairs = Array[["a", 1], ["b", 2]]
+Array.each_with_index(pairs) { |(name, n), i| puts("#{i}: #{name}=#{n}") }  # a parameter taken apart
+Array.each(Array[[1, 2, 3], [4, 5, 6]]) { |head, *rest| p([head, rest]) }  # the rest, as an Array
+```
+
+```
+$ sake blocks_more.sake
+12
+0: a=1
+1: b=2
+[1, [2, 3]]
+[4, [5, 6]]
 ```
 
 Blocks are not values. You cannot store a block in a variable or pass `&blk`. In return, the
@@ -814,12 +860,43 @@ module_errors.sake:10:14: error: Summary.total is a mixin function, and no type 
 (exit status 2)
 ```
 
+A module states what each includer must define with a function whose body is only
+`raise NotImplementedError`. A type that includes the module but lacks it is reported where the
+function is reached:
+
+```ruby
+module Shape                             # a body of only `raise NotImplementedError`: each includer defines it
+  def area(s) = raise(NotImplementedError)
+  def describe(s) = "area #{Shape.area(s)}"
+end
+Square = Struct.new(:side)
+class Square
+  include Shape
+  def area(q) = @side * @side
+end
+Circle = Struct.new(:r)
+class Circle
+  include Shape                          # forgot area
+end
+puts(Shape.describe(Square.new(2)))
+puts(Shape.describe(Circle.new(1)))
+```
+
+```
+$ sake required_errors.sake
+required_errors.sake:3:29: error: Shape.area: Circle includes Shape but does not define area, which Shape requires (`raise NotImplementedError`) [type]
+  hint: define `def area(...)` in class Circle
+  hint: reached by the call at line 15
+(exit status 2)
+```
+
 ## 9. Tuples, Records, and arrays
 
 A literal has no operation with a type, so its shape fixes its type when it is created. A growable
 collection is made by an operation with a type:
 
-- **Tuple.** A literal `[a, b]` is a Tuple of fixed size. Take it apart with multiple assignment.
+- **Tuple.** A literal `[a, b]` is a Tuple of fixed size. Take it apart with multiple assignment
+  (`a, b = t`; an Array too, where missing elements are nil, as in Ruby).
 - **Record.** A literal `{x: a, y: b}` is a Record. Its type is its set of fields and their
   types. Take it apart with a pattern.
 - **Array.** `Array[...]` builds an Array with no declared element type.
@@ -953,6 +1030,103 @@ typed_array_errors.sake:2:12: error: Point[]: element 1 must be Point, got Integ
 (exit status 2)
 ```
 
+More on Arrays: `Array.new(n, v)` and `Array.new(n) { |i| ... }`, `+ - *` as in Ruby, element
+assignment as a multiple-assignment target (a swap), two indexes `s[start, length]`, and a start
+value for `sum`, which an empty Array gives instead of the Integer 0:
+
+```ruby
+grid = Array.new(3, 0)                 # three zeros; Array.new(3) { |i| i * i } computes each
+squares = Array.new(4) { |i| i * i }
+p([grid, squares])
+p([Array[1, 2] + Array[3], Array[1, 2, 2, 3] - Array[2], Array[0] * 3])
+a = Array[1, 2, 3]
+a[0], a[2] = a[2], a[0]                # swap: elements (and fields) can be assignment targets
+p(a)
+p("sake-lang"[0, 4])                   # two indexes: start and length
+key, value, extra = String.split("lang=sake", "=")   # missing elements are nil, as in Ruby
+p([key, value, extra])
+prices = Float[1.25, 2.5]
+p(Array.sum(prices, 0.0))              # the start value: an empty Array sums to 0.0, not 0
+```
+
+```
+$ sake arrays_more.sake
+[[0, 0, 0], [0, 1, 4, 9]]
+[[1, 2, 3], [1, 3], [0, 0, 0]]
+[3, 2, 1]
+"sake"
+["lang", "sake", nil]
+3.75
+```
+
+### Tuples tagged by a Symbol
+
+An Array of Tuples whose first element is a Symbol tag keeps each kind apart. Testing the tag, after
+`|kind, arg|` takes a Tuple apart (or with `case t[0]`), tells the type of the rest:
+
+```ruby
+events = Tuple[]                         # an Array of Tuples, filled below
+Array.push(events, [:deposit, 500])
+Array.push(events, [:note, "rent due"])
+Array.push(events, [:withdraw, 120])
+balance = 0
+Array.each(events) do |kind, arg|
+  case kind                              # the Symbol tag tells which Tuple it is,
+  in :deposit then balance += arg        # so here arg is an Integer
+  in :withdraw then balance -= arg
+  in :note then puts("note: #{String.upcase(arg)}")  # and here a String
+  end
+end
+p(balance)
+```
+
+```
+$ sake tagged.sake
+note: RENT DUE
+380
+```
+
+### Where a type is worth writing
+
+A function needs no type: its operations say what it accepts. A Struct's field needs none either:
+its type comes from the values written to it, which `T.new` and `T.set_x` show. The one place a type
+pays is an Array that is filled later. Made with `Array[]`, its element type is whatever gets pushed,
+so a wrong value is reported where the elements are used, far from where it went in:
+
+```ruby
+def labels(n)
+  out = Array[]                          # any element type: it is whatever gets pushed
+  Integer.times(n) { |i| Array.push(out, "#{i}") }
+  out
+end
+p(Array.sum(labels(3)))                  # the mistake shows up here, far from the push
+```
+
+```
+$ sake elements_untyped.sake
+elements_untyped.sake:6:3: error: Array.sum: an element must be Integer|Float|Rational|Complex, but is String [type]
+(exit status 2)
+```
+
+Made with its element type, `Integer[]` (or `Float[]`, `Point[]`, `Tuple[]`), every push is checked
+where it happens. The type is written on the operation that makes the Array, not on a variable:
+
+```ruby
+def labels(n)
+  out = Integer[]                        # an Array of Integer
+  Integer.times(n) { |i| Array.push(out, "#{i}") }  # the mistake shows up where it is made
+  out
+end
+p(Array.sum(labels(3)))
+```
+
+```
+$ sake elements_typed.sake
+elements_typed.sake:3:26: error: Array.push: an element must be Integer, but is String [type]
+  hint: reached by the call at line 6
+(exit status 2)
+```
+
 ## 10. Ruby's other types
 
 Hash, Set, Symbol, Range, and Regexp work as in Ruby. Their operations carry the type like
@@ -1011,8 +1185,10 @@ Set[3, 1, 2]
 :ok
 ```
 
-Hash keys and Set elements must be values compared by content: numbers, Strings, Symbols, `true`,
-`false`, `nil`, and Tuples and Records of them. Equality of Structs and Arrays is not decided yet.
+Hash keys and Set elements compare as `==` does: numbers, Strings, Symbols, `true`, `false`, `nil`,
+Time, and Tuples, Records, Arrays, Hashes, Sets and Struct values made of these. A Struct type that
+defines its own `==` (or `<=>` with `Comparable`) cannot be a key, since its keys could disagree with
+it.
 
 ## 11. nil
 
@@ -1197,7 +1373,8 @@ operation that checks its argument, one of the following:
 - **unknown**: the inference could not tell.
 
 It also prints the element type of every Array and the type of every field. No types were written
-anywhere:
+anywhere. The playground ([ide/](../ide/README.md)) shows the same results in its Types tab and on
+hover:
 
 ```ruby
 Item = Struct.new(:name, :price, :qty)
