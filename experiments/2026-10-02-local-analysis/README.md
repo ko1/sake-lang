@@ -82,6 +82,25 @@ Correction during C: the first count of fields (4,850) included four built-in ex
 from `Resolver::BUILTIN_EXCEPTIONS` (TypeError, NoMatchingPatternError, SystemStackError,
 NotImplementedError); built-in types are now those of an empty program.
 
+## D. Where fields are written (ko1: "Struct is used a lot; would the attributes form be better?")
+
+`field_access.rb` reads the syntax: each field of each user type (exception types left out) is never
+written after `new`, written only inside its own class (`@x = v`, `set_x` there), or written from
+outside (`T.set_x(...)` elsewhere). Checked: no field writes in modules, none through `(A|B).set_x`.
+
+| fields | all | Struct.new | class settings |
+|---|---|---|---|
+| never written after new | 1,872 (80.9%) | 1,539 | 333 |
+| written only inside its class | 221 (9.6%) | 123 | 98 |
+| written from outside | 221 (9.6%) | 207 | 14 |
+| total | 2,314 | 1,869 | 445 |
+
+`Struct.new` (506 types) gives every field a setter, but 82% of its fields are never written after
+`new` and 7% only inside the class: 89% could be `reader:`. With `reader:`, every write is in the
+class body or in `new`, so C's per-definition inference holds by construction, and a write from
+outside is a static error instead of a whole-program dependency. `default:` (used by 5 types) is the
+existing way to fix a field's type.
+
 ## Conclusion
 
 - Parameters do not need written types: three quarters get a requirement from the body alone (most a
