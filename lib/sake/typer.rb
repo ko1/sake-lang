@@ -21,7 +21,7 @@ module Sake
     MAX_TUPLE_DEPTH = 3
 
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
-    Frame = Struct.new(:fn, :ret, :block)
+    Frame = Struct.new(:fn, :ret, :block, :argc)
     # breaks: the types of the block's `break` values, which become results of the call it was given to.
     BlockCtx = Struct.new(:node, :params, :env, :breaks)
     # via: lines of the calls that led to the first failing instantiation, outermost first.

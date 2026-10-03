@@ -9,7 +9,7 @@ module Sake
     include AST
 
     # slots: the function's locals (its blocks' too); block: the block passed to the function.
-    Frame = Struct.new(:name, :slots, :block)
+    Frame = Struct.new(:name, :slots, :block, :argc) # argc: how many arguments the call gave
 
     # A thread's view of a frame: the variables of blocks (parameters and locals) are its own, copied
     # when the thread starts; the function's own variables stay shared with the frame.
@@ -138,6 +138,7 @@ module Sake
       when IndexUpdate then index_update(n, f)
       when Yield then call_block(f.block, n.args.map { ev(_1, f) }, n.origin)
       when Interp then encoding_error(n) { n.parts.map { ev(_1, f) }.join }
+      when ArgDefault then f.argc <= n.index ? f.slots[n.slot] = ev(n.value, f) : nil
       when ToS then Values.to_s(ev(n.value, f))
       when ToSym then ev(n.value, f).to_sym
       when MakeTuple then Tuple.new(n.elems.map { ev(_1, f) })
@@ -391,7 +392,7 @@ module Sake
       ast = @ast.functions.fetch(fn)
       slots = Array.new(ast.nslots)
       args.each_with_index { |v, i| slots[i] = v }
-      frame = Frame.new(fn.full_name, slots, blk)
+      frame = Frame.new(fn.full_name, slots, blk, args.size)
       @stack.push([fn.full_name, origin.location.start_line, where_file(origin)])
       begin
         ev(ast.body, frame)

@@ -9,8 +9,10 @@ module Sake
   # module_function: callable as M.f (static). Other functions of a module are mixin functions:
   # M.f(x) dispatches to the f of x's type, which must include M.
   # abstract: the body is only `raise NotImplementedError`: each type that includes the module defines it.
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract) do
+  # params: every parameter's name; defaults: the default expressions of the trailing optional ones.
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
+    def min_arity = params.size - (defaults || []).size
   end
 
   # `@x` inside a function of a Struct type: field x of the function's first parameter.
@@ -377,6 +379,7 @@ module Sake
 
       name = node.name.to_s
       fn = UserFunction.new(ns, name, collect_params(node), node.body, node, yields?(node.body))
+      fn.defaults = node.parameters ? node.parameters.optionals.map(&:value) : []
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
       fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
       fn.abstract = abstract_body?(node.body)
@@ -394,12 +397,12 @@ module Sake
       return [] unless pn
       return error(pn.block, "block parameter `#{pn.block.slice}` is not supported; use `yield`") || [] if pn.block
 
-      if pn.optionals.any? || pn.posts.any? || pn.keywords.any? || pn.rest || pn.keyword_rest
-        error(pn, "only required positional parameters are supported (got `#{pn.slice}`)")
+      if pn.posts.any? || pn.keywords.any? || pn.rest || pn.keyword_rest
+        error(pn, "only positional parameters, required ones then optional ones (`b = 1`), are supported (got `#{pn.slice}`)")
       end
       pn.requireds.map do |r|
         r.is_a?(Prism::RequiredParameterNode) ? r.name.to_s : (error(r, "parameter destructuring is not supported"); "_")
-      end
+      end + pn.optionals.map { _1.name.to_s }
     end
 
     def yields?(node)
@@ -424,7 +427,9 @@ module Sake
         # module its program does not use yet): the names it lacks are what includers must define.
         fs.each_value do |f|
           trait = !f.origin && (traits.include?(f.namespace) || (f.namespace && !@struct_types.key?(f.namespace) && !f.module_function))
-          check(f.body, Ctx.new(f.namespace, f, false, false, trait))
+          ctx = Ctx.new(f.namespace, f, false, false, trait)
+          (f.defaults || []).each { check(_1, ctx) }
+          check(f.body, ctx)
         end
       end
       # `_` after a definition has no value to read: only an expression statement counts as previous.
@@ -892,8 +897,9 @@ module Sake
         fn = target.table.values.find { _1.is_a?(UserFunction) && !_1.abstract } || fn if fn&.abstract
         check_arity(node, fn, argc, has_block) if fn
       when UserFunction
-        if argc != target.params.size
-          error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{target.params.size})")
+        unless (target.min_arity..target.params.size).cover?(argc)
+          expected = target.min_arity == target.params.size ? target.params.size : "#{target.min_arity}..#{target.params.size}"
+          error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{expected})")
         end
         return if target.abstract # a required function: its includers' definitions say whether it takes a block
         if target.yields && !has_block
@@ -1106,7 +1112,7 @@ module Sake
       defined = table.values.select { _1.is_a?(UserFunction) && !_1.abstract }
       yields = fn.abstract && defined.any? ? defined.first.yields : fn.yields
       table.each do |t, impl|
-        next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && (impl.abstract || impl.yields == yields)
+        next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && impl.min_arity == fn.min_arity && (impl.abstract || impl.yields == yields)
         error(node, "#{mod}.#{name} dispatches to #{t}.#{name}, whose arguments or block differ from #{mod}.#{name}")
       end
       Dispatch.new(mod, name, table)

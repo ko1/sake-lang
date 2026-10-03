@@ -295,8 +295,11 @@ def describe(n)
 end
 ```
 
-- **Parameters.** Only required positional parameters are allowed. Optional, rest, keyword, and
-  block parameters (`&b`) are rejected.
+- **Parameters.** Required positional parameters, then optional ones with a default
+  (`def f(a, b = 1, c = b + 1)`), as in Ruby: a default is evaluated at the call, after the earlier
+  parameters, when the call gives fewer arguments. Rest, keyword, and block parameters (`&b`) are
+  rejected. A call gives between the required count and all of them; a mixin function's definitions
+  must agree on both counts.
 - **Return value.** The value of the last expression, or of `return expr`. `return a, b` returns
   the Tuple `[a, b]`.
 - **Polymorphism.** Functions are polymorphic. A function works on any arguments its operations

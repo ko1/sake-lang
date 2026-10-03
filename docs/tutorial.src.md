@@ -112,8 +112,8 @@ below, `square` works on both Integer and Float.
 
 - `def f(x) = expr` is the one-line form.
 - `return a, b` and the literal `[a, b]` both make a **Tuple**. `x, y = t` takes it apart.
-- Only required positional parameters are supported. Default values, keyword arguments, and
-  rest parameters are not.
+- Parameters may have defaults, as in Ruby: `def greet(name, greeting = "Hello")`. Keyword
+  arguments and rest parameters are not supported.
 - `first, *rest = xs` and `|a, *rest|` collect the rest in an Array. `*xs` in arguments spreads
   only into built-ins that take any number of them: `puts(*lines)`, `format(fmt, *row)`,
   `Array[*xs, 0]`.

@@ -46,7 +46,13 @@ module Sake
       @scopes = [Scope.new({}, frame)]
       params.each { @scopes[0].slot(_1.to_sym) }
       @prev = nil
+      # Optional parameters: `b = 1` is set from its default when the call gave fewer arguments.
+      required = params.size - (fn&.defaults || []).size
+      defaults = (fn&.defaults || []).each_with_index.map do |d, j|
+        ArgDefault.new(index: required + j, slot: required + j, value: lower(d), origin: d)
+      end
       body = statements(stmts.compact, stmts.first)
+      body = Seq.new(body: [*defaults, body], origin: fn.node) unless defaults.empty?
       AST::Function.new(name:, fn:, nparams: params.size, nslots: frame.names.size, slot_names: frame.names, body:)
     end
 

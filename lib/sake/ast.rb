@@ -45,6 +45,7 @@ module Sake
     node :IndexGet, :recv, :key, :extra        # extra: a second index (`s[i, n]`, `m[r, c]`) or nil
     node :IndexSet, :recv, :key, :extra, :value
     node :IndexUpdate, :recv, :key, :op, :value # `x[k] OP= v` (op: "||" for ||=); x and k evaluated once
+    node :ArgDefault, :index, :slot, :value  # an optional parameter's default, when the call gave fewer arguments
     node :Block, :params, :locals, :body, :rest # params/locals: slots; locals are cleared on entry; rest: `|a, *r|`'s index in params
     node :Yield, :args
     node :Return, :value
