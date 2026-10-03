@@ -596,7 +596,7 @@ shape fixes its type at creation. A growable collection is made by an operation 
 to it.
 
 **Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type
-(`Integer`, `Float`, `String`, `Tuple`) or a Struct type.
+(`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`) or a Struct type.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and
   `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer
@@ -923,6 +923,11 @@ Range raise `RangeError` on an endless one.
 | `gets` (Kernel) | String or nil |
 | `File.read(path)` · `File.readlines(path)` | String · Array of String (lines keep their newline) |
 | `File.write(path, s)` · `File.exist?(path)` | Integer · true/false |
+| `Array.pack(a, fmt)` · `String.force_encoding(s, enc)` | String (as Ruby: `"C*"` bytes give a binary String, `"U*"` codepoints UTF-8) · s's bytes as enc |
+| `String.valid_encoding?(s)` · `String.encoding(s)` | true/false · the encoding's name |
+
+Strings of incompatible encodings meeting (a byte from `Integer.chr(227)` next to UTF-8 text) raise
+`EncodingError`, which can be rescued.
 
 ### Math
 
@@ -933,8 +938,8 @@ Range raise `RangeError` on an endless one.
 
 ### Typed arrays
 
-`Integer[...]`, `Float[...]`, `String[...]`, `Tuple[...]`, and `D[...]` for each Struct type `D`
-create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
+`Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`,
+`Tuple[...]`, and `D[...]` for each Struct type `D` create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 
 ## 16. Not yet supported
 

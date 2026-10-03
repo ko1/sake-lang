@@ -45,7 +45,7 @@ module Sake
     Ctx = Struct.new(:ns, :fn, :in_block, :in_loop, :trait, :in_rescue, :prev)
     # Raised by operations, and rescuable by name. Program errors (NOT_RESCUABLE) are what the checks before
     # running report, so they cannot be rescued.
-    BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError
+    BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
                             RegexpError FloatDomainError Math::DomainError].freeze
     NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError NotImplementedError].freeze
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
@@ -1050,6 +1050,10 @@ module Sake
         return found
       end
 
+      if name == CTOR # `T[...]` for a T without a typed Array
+        typed = @registry.namespaces.select { |t| @registry.lookup(t, CTOR) && !@struct_types.key?(t) && !%w[Array Hash Set].include?(t) }
+        return error(node, "`#{ns}[...]`: #{ns} has no typed Array", ["Array[...] holds any values; typed Arrays: #{typed.sort.map { "#{_1}[]" }.join(", ")}, and T[] for your own types"])
+      end
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
       others = namespaces_defining(name) - [ns]
       hints << "`#{name}` is defined in #{others.map { "`#{_1}.#{name}`" }.join(", ")}" unless others.empty?

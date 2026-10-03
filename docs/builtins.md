@@ -80,6 +80,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array[*Any]`
 - `Array.none?(x) { }`
 - `Array.one?(x) { }`
+- `Array.pack(x, String)`
 - `Array.partition(x) { }`
 - `Array.permutation(x, [Integer])`
 - `Array.pop(x)`
@@ -125,6 +126,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Complex.arg(x)`
 - `Complex.conjugate(x)`
 - `Complex.imaginary(x)`
+- `Complex[*Any]`
 - `Complex.polar(x)`
 - `Complex.real(x)`
 - `Complex.rectangular(x)`
@@ -430,6 +432,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Rational.denominator(x)`
 - `Rational.floor(x)`
 - `Rational.negative?(x)`
+- `Rational[*Any]`
 - `Rational.numerator(x)`
 - `Rational.positive?(x)`
 - `Rational.round(x)`
@@ -540,7 +543,9 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.each_char(x) { }`
 - `String.each_line(x) { }`
 - `String.empty?(x)`
+- `String.encoding(x)`
 - `String.end_with?(x, String)`
+- `String.force_encoding(x, String)`
 - `String.getbyte(x, Integer)`
 - `String.gsub(x, String|Regexp, String)`
 - `String.hex(x)`
@@ -582,6 +587,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.tr_s(x, String, String)`
 - `String.upcase(x)`
 - `String.upto(x, String) { }`
+- `String.valid_encoding?(x)`
 
 ## Symbol
 
@@ -598,6 +604,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Symbol.empty?(x)`
 - `Symbol.end_with?(x, String)`
 - `Symbol.length(x)`
+- `Symbol[*Any]`
 - `Symbol.size(x)`
 - `Symbol.start_with?(x, String)`
 - `Symbol.succ(x)`
@@ -670,4 +677,4 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Exception types
 
-Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `RegexpError`, `FloatDomainError` has `T.new(message)`, `T.get_message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception; `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError` can only be named in `rescue`.
+Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError` has `T.new(message)`, `T.get_message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception; `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError` can only be named in `rescue`.
