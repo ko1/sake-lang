@@ -191,16 +191,18 @@ binop_error.sake:3: in <main>: TypeError: Arithmetic.+: no implementation for (S
 (exit status 1)
 ```
 
-Writing the operator with a type, as in `Integer.+(a, b)`, requires both operands to be of that
-type:
+Writing the operator with a type, as in `Integer.+(a, b)`, runs Integer's `+` directly: the left
+operand must be an Integer, and the right one any type that `+` takes with it:
 
 ```ruby
-puts(Integer.+(1, 2.5))
+puts(Integer.+(1, 2.5))        # Integer's +: a Float on the right is fine
+puts(Integer.+(2.5, 1))        # but the left operand must be an Integer
 ```
 
 ```
 $ sake typed_op_error.sake
-3.5
+typed_op_error.sake:2:6: error: Integer.+: argument 1 must be Integer, but is Float [type]
+(exit status 2)
 ```
 
 `==` compares any two values: by content for Tuples, Arrays, Hashes, Sets, Records and Structs, and

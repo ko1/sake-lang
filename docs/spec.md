@@ -719,7 +719,7 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 |---|---|
 | `TypeError` | an operation received a value of the wrong type; an operator not supported by the left operand's type; a typed Array write; multiple assignment from a value other than a Tuple or an Array |
 | `IndexError` | a Tuple index outside the Tuple; `Array.fetch` outside the Array; writing past the end of an Array of T |
-| `ArgumentError` | size mismatch in multiple assignment; block parameter count; negative sizes; comparing incomparable values in `sort` |
+| `ArgumentError` | block parameter count; negative sizes; `Integer ** negative`; comparing incomparable values in `sort` |
 | `ZeroDivisionError` | Integer `/` or `%` by zero |
 | `KeyError` | `Hash.fetch` of a missing key; a Record pattern naming a missing field |
 | `RangeError` | an operation that needs a finite Range, given an endless one |

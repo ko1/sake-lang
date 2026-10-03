@@ -88,8 +88,8 @@ ahead, and the same mistake stops when it runs:
 
 @@run binop_error --strict=0
 
-Writing the operator with a type, as in `Integer.+(a, b)`, requires both operands to be of that
-type:
+Writing the operator with a type, as in `Integer.+(a, b)`, runs Integer's `+` directly: the left
+operand must be an Integer, and the right one any type that `+` takes with it:
 
 @@example typed_op_error
 

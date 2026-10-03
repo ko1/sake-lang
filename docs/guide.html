@@ -150,6 +150,7 @@ footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
       <li><a href="#data">Struct types</a></li>
       <li><a href="#names">Where names resolve</a></li>
       <li><a href="#collections">Tuples, Records, arrays</a></li>
+      <li><a href="#where-types">Where a type is worth writing</a></li>
       <li><a href="#ruby-types">Hash, Set, Range, Regexp</a></li>
       <li><a href="#nil">nil</a></li>
       <li><a href="#exceptions">Exceptions</a></li>
@@ -178,7 +179,7 @@ Point.get_x(pt)</code></pre></div>
   </div>
   <ul class="facts">
     <li>Parsed by Prism</li>
-    <li>No type annotations anywhere</li>
+    <li>No types on variables, parameters, or fields</li>
     <li>All names checked before running</li>
     <li>Every operation checks its arguments</li>
   </ul>
@@ -222,10 +223,11 @@ OPERATIONS CARRY THEIR TYPE</pre></figure>
 <tr><td>0</td><td><code>--strict=0</code></td><td>only syntax, names, argument counts, calls on values, and the like</td></tr>
 <tr><td>1</td><td>(the default)</td><td><strong>type</strong>: a value whose type (other than nil) does not fit the operation; <strong>rescue</strong>: a rescue of an exception never raised</td></tr>
 <tr><td>2</td><td><code>--strict</code></td><td><strong>nil</strong>: a value that may be nil, used without a check</td></tr>
-<tr><td>3</td><td><code>--strict=3</code></td><td><strong>index-nil</strong>: the result of <code>x[k]</code>, used without a check</td></tr>
+<tr><td>3</td><td><code>--strict=3</code></td><td><strong>index-nil</strong>: the result of <code>x[k]</code>, used without a check; <strong>exhaustive</strong>: a <code>case</code> whose literal branches may miss some value</td></tr>
 <tr><td>4</td><td><code>--strict=4</code></td><td><strong>unrescued</strong>: a <code>raise</code> that may reach the top level</td></tr>
 </tbody></table></div>
 <p>Items can also be named: <code>--strict=type,nil</code>, or <code>--strict=3,-index-nil</code>. Whatever is not checked before running is still checked while running, by each operation.</p>
+<p>To try Sake in a browser, with completion and the inferred types on hover, build the playground in <code>ide/</code> (see its README).</p>
 <p>The exit status is <strong>0</strong> on success, <strong>1</strong> for an error while running, and <strong>2</strong> for an error found before running (nothing ran).</p>
 </section>
 
@@ -255,6 +257,22 @@ puts(<span class="tc">Integer</span>.to_string(<span class="tn">42</span>))
 <span class="ohint">  hint: did you mean `String`?</span>
 <span class="oerr">typo.sake:3:14: error: undefined function `Integer.to_string`</span>
 <span class="odim">(exit status 2)</span></pre></figure>
+<p>Nested calls read inside out. Two forms let them read in order, with every step still naming its type: <code>x.T.f(…)</code> is <code>T.f(x, …)</code>, and <code>_</code> is the value of the previous statement.</p>
+<figure class="ex"><pre class="src"><code>line = <span class="ts">&quot;</span><span class="ts">pear, Apple ,fig</span><span class="ts">&quot;</span>
+
+<span class="tm"># Left to right: each step names its type, and the value on its left is the first argument.</span>
+puts(<span class="tc">String</span>.split(line, <span class="ts">&quot;</span><span class="ts">,</span><span class="ts">&quot;</span>)
+  .<span class="tc">Array</span>.map { |s| <span class="tc">String</span>.downcase(<span class="tc">String</span>.strip(s)) }
+  .<span class="tc">Array</span>.sort
+  .<span class="tc">Array</span>.join(<span class="ts">&quot;</span><span class="ts"> &lt; </span><span class="ts">&quot;</span>))
+
+<span class="tm"># Top to bottom: `_` is the previous statement&#39;s value.</span>
+<span class="tc">String</span>.split(line, <span class="ts">&quot;</span><span class="ts">,</span><span class="ts">&quot;</span>)
+<span class="tc">Array</span>.map(_) { |s| <span class="tc">String</span>.size(<span class="tc">String</span>.strip(s)) }
+puts(<span class="ts">&quot;</span><span class="ts">longest: </span><span class="ts">#{</span><span class="tc">Array</span>.max(_)<span class="ts">}</span><span class="ts">&quot;</span>)
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake chains.sake</span>
+apple &lt; fig &lt; pear
+longest: 5</pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li>Built-in names follow Ruby's core library: <code>Integer.to_s</code>, <code>String.include?</code>, <code>Array.each</code>. Names from other languages, such as <code>Integer.to_string</code>, do not exist.</li>
   <li>Calls on values are always rejected, including on literals such as <code>3.times</code> and <code>"a".upcase</code>. For a literal, the hint names its type.</li>
@@ -309,24 +327,40 @@ puts(label + total)
 <figure class="ex"><pre class="out" aria-label="output"><span class="oprompt">$ sake --strict=0 binop_error.sake</span>
 <span class="oerr">binop_error.sake:3: in &lt;main&gt;: TypeError: Arithmetic.+: no implementation for (String, Integer); defined for (any two of Integer, Float, Rational, Complex), (String, String), (Array, Array), (Time, Integer), (Time, Float), (Time, Rational)</span>
 <span class="odim">(exit status 1)</span></pre></figure>
-<p>Writing the operator with a type, as in <code>Integer.+(a, b)</code>, requires both operands to be of that type:</p>
-<figure class="ex"><pre class="src"><code>puts(<span class="tc">Integer</span>.+(<span class="tn">1</span>, <span class="tn">2.5</span>))
+<p>Writing the operator with a type, as in <code>Integer.+(a, b)</code>, runs Integer's <code>+</code> directly: the left operand must be an Integer, and the right one any type that <code>+</code> takes with it:</p>
+<figure class="ex"><pre class="src"><code>puts(<span class="tc">Integer</span>.+(<span class="tn">1</span>, <span class="tn">2.5</span>))        # Integer&#39;s +: a Float on the right is fine
+puts(<span class="tc">Integer</span>.+(<span class="tn">2.5</span>, <span class="tn">1</span>))        # but the left operand must be an Integer
 </code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake typed_op_error.sake</span>
-3.5</pre></figure>
+<span class="oerr">typed_op_error.sake:2:6: error: Integer.+: argument 1 must be Integer, but is Float [type]</span>
+<span class="odim">(exit status 2)</span></pre></figure>
+<p><code>==</code> compares any two values: by content for Tuples, Arrays, Hashes, Sets, Records and Structs, and <code>false</code> between different types. Tuples and Arrays are ordered element by element, so a Tuple makes a sort key of several parts. <code>-x</code> runs the <code>-@</code> of <code>x</code>'s type, and <code>!x</code> is <code>x ? false : true</code>:</p>
+<figure class="ex"><pre class="src"><code><span class="tm"># == compares by content, and is false between different types (as in Ruby)</span>
+p([<span class="tn">1</span>, <span class="ts">&quot;</span><span class="ts">a</span><span class="ts">&quot;</span>] == [<span class="tn">1</span>, <span class="ts">&quot;</span><span class="ts">a</span><span class="ts">&quot;</span>])             <span class="tm"># Tuples, Arrays, Hashes, Sets and Records: by content</span>
+p(<span class="tn">1</span> == <span class="ts">&quot;</span><span class="ts">1</span><span class="ts">&quot;</span>)
+p([<span class="tn">2</span>, <span class="ts">&quot;</span><span class="ts">b</span><span class="ts">&quot;</span>] &lt; [<span class="tn">2</span>, <span class="ts">&quot;</span><span class="ts">c</span><span class="ts">&quot;</span>])               <span class="tm"># Tuples and Arrays are ordered element by element</span>
+scores = <span class="tc">Array</span>[[<span class="ts">&quot;</span><span class="ts">ann</span><span class="ts">&quot;</span>, <span class="tn">90</span>], [<span class="ts">&quot;</span><span class="ts">bob</span><span class="ts">&quot;</span>, <span class="tn">72</span>], [<span class="ts">&quot;</span><span class="ts">cy</span><span class="ts">&quot;</span>, <span class="tn">90</span>]]
+p(<span class="tc">Array</span>.sort_by(scores) { |name, s| [-s, name] })   <span class="tm"># a Tuple as the sort key: score down, name up</span>
+x = <span class="tn">5</span>
+p([-x, !(x &gt; <span class="tn">3</span>)])                    # -x runs the -@ of x&#39;s type; !x is `x ? false : true`
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake comparing.sake</span>
+true
+false
+true
+[[&quot;ann&quot;, 90], [&quot;cy&quot;, 90], [&quot;bob&quot;, 72]]
+[-5, false]</pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
-  <li><code>- * / % **</code> take the same numeric pairs as <code>+</code>. <code>*</code> also takes (String, Integer).</li>
-  <li><code>&lt; &lt;= &gt; &gt;=</code> compare two numbers or two Strings.</li>
-  <li><code>== !=</code> compare two numbers, two Strings, two booleans, or anything with <code>nil</code>. Comparing Tuples, Arrays, or Struct values is not defined yet.</li>
+  <li><code>- * / % **</code> take the same numeric pairs as <code>+</code> (Integer, Float, Rational, Complex). <code>*</code> also takes (String, Integer); Arrays have <code>+ - *</code> as in Ruby.</li>
+  <li><code>&lt; &lt;= &gt; &gt;=</code> compare two numbers, two Strings, two Symbols, or two Tuples or Arrays element by element.</li>
+  <li><code>== !=</code> compare any two values. A Struct type with <code>Comparable</code> and <code>&lt;=&gt;</code> is equal where <code>&lt;=&gt;</code> gives 0.</li>
   <li>Integer <code>/</code> and <code>%</code> follow Ruby: <code>-7 / 2 == -4</code>. Dividing an Integer by zero raises <code>ZeroDivisionError</code>.</li>
-  <li><code>Integer ** negative</code> raises <code>ArgumentError</code>, because there is no Rational.</li>
+  <li><code>Integer ** negative</code> raises <code>ArgumentError</code>; for a Rational, write <code>2r ** -1</code>.</li>
   <li><code>x += 1</code> means <code>x = x + 1</code>. <code>&amp;&amp;</code> and <code>||</code> short-circuit as in Ruby.</li>
-  <li>Unary operators (<code>!x</code>, <code>-x</code>) are not available yet. Write <code>x == false</code> or <code>0 - x</code>.</li>
 </ul></div>
 </section>
 
 <section id="functions">
 <h2>Functions</h2>
-<p>Functions have no type annotations. A function works with any type its operations accept, so <code>square</code> below works on both Integer and Float.</p>
+<p>Functions have no type annotations, and do not need them: what a function accepts follows from its operations (<code>String.upcase(s)</code> needs a String), and each call is checked with the types it is given. A function works with any type its operations accept, so <code>square</code> below works on both Integer and Float.</p>
 <figure class="ex"><pre class="src"><code><span class="tk">def</span> square(x) = x * x
 
 <span class="tk">def</span> fib(n)
@@ -360,7 +394,7 @@ p(min_max(<span class="tn">1</span>, <span class="tn">2</span>))
   <li>The forms are <code>def f(a, b) … end</code> and <code>def f(x) = expr</code>.</li>
   <li>Only required positional parameters are allowed. Default values, keyword arguments, rest parameters, and <code>&amp;blk</code> are not.</li>
   <li><code>first, *rest = xs</code> and <code>|a, *rest|</code> collect the rest in an Array. <code>*xs</code> in arguments spreads only into built-ins that take any number of them: <code>puts(*lines)</code>, <code>format(fmt, *row)</code>, <code>Array[*xs, 0]</code>.</li>
-  <li><code>return a, b</code> and the literal <code>[a, b]</code> both make a Tuple. <code>x, y = t</code> takes it apart.</li>
+  <li><code>return a, b</code> and the literal <code>[a, b]</code> both make a Tuple. <code>x, y = t</code> takes it apart, and an Array too: missing elements are nil, extra ones dropped, as in Ruby.</li>
   <li>Definitions are collected before anything runs, so a function may be called above its definition.</li>
   <li>Recursion is limited to a depth of 10,000. Deeper calls raise <code>SystemStackError</code>.</li>
 </ul></div>
@@ -516,10 +550,23 @@ puts(add(<span class="tn">1</span>, <span class="tn">2</span>) { |x| x })
 <span class="oerr">block_errors.sake:5:6: error: add does not take a block (it has no `yield`)</span>
 <span class="oerr">block_errors.sake:6:7: error: Array.each requires a block</span>
 <span class="odim">(exit status 2)</span></pre></figure>
+<p><code>break</code> ends the call the block was given to, which then gives the break's value. A parameter can be taken apart, <code>|(name, n), i|</code>, and <code>|head, *rest|</code> collects the rest:</p>
+<figure class="ex"><pre class="src"><code>nums = <span class="tc">Array</span>[<span class="tn">3</span>, <span class="tn">8</span>, <span class="tn">12</span>, <span class="tn">5</span>]
+found = <span class="tc">Array</span>.each(nums) { |n| <span class="tk">break</span> n <span class="tk">if</span> n &gt; <span class="tn">10</span> }    <span class="tm"># break ends the call; its value is the call&#39;s</span>
+p(found)
+pairs = <span class="tc">Array</span>[[<span class="ts">&quot;</span><span class="ts">a</span><span class="ts">&quot;</span>, <span class="tn">1</span>], [<span class="ts">&quot;</span><span class="ts">b</span><span class="ts">&quot;</span>, <span class="tn">2</span>]]
+<span class="tc">Array</span>.each_with_index(pairs) { |(name, n), i| puts(<span class="ts">&quot;</span><span class="ts">#{</span>i<span class="ts">}</span><span class="ts">: </span><span class="ts">#{</span>name<span class="ts">}</span><span class="ts">=</span><span class="ts">#{</span>n<span class="ts">}</span><span class="ts">&quot;</span>) }  # a parameter taken apart
+<span class="tc">Array</span>.each(<span class="tc">Array</span>[[<span class="tn">1</span>, <span class="tn">2</span>, <span class="tn">3</span>], [<span class="tn">4</span>, <span class="tn">5</span>, <span class="tn">6</span>]]) { |head, *rest| p([head, rest]) }  # the rest, as an Array
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake blocks_more.sake</span>
+12
+0: a=1
+1: b=2
+[1, [2, 3]]
+[4, [5, 6]]</pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li>A user function takes a block if and only if its body contains <code>yield</code>. A built-in operation either requires a block or rejects one.</li>
-  <li>A block with no parameters ignores its arguments. Otherwise, the number of arguments must match.</li>
-  <li><code>next v</code> gives the block's value. <code>break</code> is not allowed inside a block.</li>
+  <li>A block with no parameters ignores its arguments. Otherwise, the number of arguments must match. A block with several parameters takes one Tuple or Array apart.</li>
+  <li><code>next v</code> gives the block's value; <code>break v</code> the value of the call it was given to.</li>
   <li>A block can read and assign the variables around it.</li>
   <li><code>proc</code>, <code>lambda</code>, <code>-&gt;</code>, and <code>&amp;blk</code> are not available.</li>
 </ul></div>
@@ -708,6 +755,22 @@ true
 true
 true
 [1, 20, 4]</pre></figure>
+<h3>Listing the types on the operation</h3>
+<p>When a value may be one of a few types that have an operation of the same name, list them on the operation: <code>(A|B).f(x)</code> runs the <code>f</code> of <code>x</code>'s type. The list is checked before running:</p>
+<figure class="ex"><pre class="src"><code><span class="tc">Leaf</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">weight</span>)
+<span class="tc">Node</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">weight</span>, <span class="ts">:</span><span class="ts">left</span>, <span class="ts">:</span><span class="ts">right</span>)
+
+<span class="tm"># The operation lists the types its argument may have.</span>
+<span class="tk">def</span> weight(t) = (<span class="tc">Leaf</span>|<span class="tc">Node</span>).get_weight(t)
+<span class="tk">def</span> size_of(x) = (<span class="tc">String</span>|<span class="tc">Array</span>).size(x)
+
+puts(weight(<span class="tc">Leaf</span>.new(<span class="tn">3</span>)) + weight(<span class="tc">Node</span>.new(<span class="tn">5</span>, <span class="tc">Leaf</span>.new(<span class="tn">1</span>), <span class="tc">Leaf</span>.new(<span class="tn">1</span>))))
+puts(size_of(<span class="ts">&quot;</span><span class="ts">sake</span><span class="ts">&quot;</span>) + size_of(<span class="tc">Array</span>[<span class="tn">1</span>, <span class="tn">2</span>]))
+puts(size_of(<span class="tn">42</span>))
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake union_call.sake</span>
+<span class="oerr">union_call.sake:6:18: error: (String|Array).size: argument 1 must be String or Array, but is Integer [type]</span>
+<span class="ohint">  hint: reached by the call at line 10</span>
+<span class="odim">(exit status 2)</span></pre></figure>
 <h3>Sharing functions with <code>include</code></h3>
 <p><code>class</code> adds operations to a type, and <code>module</code> is a namespace with no type. <code>include M</code> borrows <code>M</code>'s functions, as Ruby's modules do, but statically. Inside a borrowed function, unqualified names are looked up in the namespace that includes it, so <code>Summary</code> can use the <code>each</code> that <code>Basket</code> or <code>Countdown</code> provides.</p>
 <p>A module's functions are called in one of two ways. Functions after <code>module_function</code> are called directly (<code>Units.km(x)</code>). Calling any other function through its module (<code>Summary.total(x)</code>) <strong>dispatches</strong> to the function of <code>x</code>'s type, which must include the module. Like Elixir's protocols, the module name on the call says that the function is picked while running.</p>
@@ -762,6 +825,27 @@ puts(<span class="tc">Summary</span>.total(<span class="tn">1</span>))
 <span class="ohint">  hint: module Helpers</span>
 <span class="oerr">module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary</span>
 <span class="ohint">  hint: to call it as Summary.total(...), mark it with `module_function`</span>
+<span class="odim">(exit status 2)</span></pre></figure>
+<p>A module states what each includer must define with a function whose body is only <code>raise NotImplementedError</code>. A type that includes the module but lacks it is reported where the function is reached:</p>
+<figure class="ex"><pre class="src"><code><span class="tk">module</span> <span class="tc">Shape</span>                             <span class="tm"># a body of only `raise NotImplementedError`: each includer defines it</span>
+  <span class="tk">def</span> area(s) = raise(<span class="tc">NotImplementedError</span>)
+  <span class="tk">def</span> describe(s) = <span class="ts">&quot;</span><span class="ts">area </span><span class="ts">#{</span><span class="tc">Shape</span>.area(s)<span class="ts">}</span><span class="ts">&quot;</span>
+<span class="tk">end</span>
+<span class="tc">Square</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">side</span>)
+<span class="tk">class</span> <span class="tc">Square</span>
+  include <span class="tc">Shape</span>
+  <span class="tk">def</span> area(q) = <span class="te">@side</span> * <span class="te">@side</span>
+<span class="tk">end</span>
+<span class="tc">Circle</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">r</span>)
+<span class="tk">class</span> <span class="tc">Circle</span>
+  include <span class="tc">Shape</span>                          <span class="tm"># forgot area</span>
+<span class="tk">end</span>
+puts(<span class="tc">Shape</span>.describe(<span class="tc">Square</span>.new(<span class="tn">2</span>)))
+puts(<span class="tc">Shape</span>.describe(<span class="tc">Circle</span>.new(<span class="tn">1</span>)))
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake required_errors.sake</span>
+<span class="oerr">required_errors.sake:3:29: error: Shape.area: Circle includes Shape but does not define area, which Shape requires (`raise NotImplementedError`) [type]</span>
+<span class="ohint">  hint: define `def area(...)` in class Circle</span>
+<span class="ohint">  hint: reached by the call at line 15</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li>The includer's own definition wins over a borrowed one. Modules included by a module are borrowed too.</li>
@@ -867,11 +951,74 @@ ps = <span class="tc">Point</span>[<span class="tn">1</span>, <span class="tn">2
 <span class="oerr">typed_array_errors.sake:2:12: error: Point[]: element 1 must be Point, got Integer</span>
 <span class="ohint">  hint: Point.new(1, 2) creates one Point; Point[...] is an Array of Point</span>
 <span class="odim">(exit status 2)</span></pre></figure>
+<p>More on Arrays: <code>Array.new(n, v)</code> and <code>Array.new(n) { |i| … }</code>, <code>+ - *</code>, element assignment as a multiple-assignment target (a swap), two indexes <code>s[start, length]</code>, and a start value for <code>sum</code>, which an empty Array gives instead of the Integer 0:</p>
+<figure class="ex"><pre class="src"><code>grid = <span class="tc">Array</span>.new(<span class="tn">3</span>, <span class="tn">0</span>)                 <span class="tm"># three zeros; Array.new(3) { |i| i * i } computes each</span>
+squares = <span class="tc">Array</span>.new(<span class="tn">4</span>) { |i| i * i }
+p([grid, squares])
+p([<span class="tc">Array</span>[<span class="tn">1</span>, <span class="tn">2</span>] + <span class="tc">Array</span>[<span class="tn">3</span>], <span class="tc">Array</span>[<span class="tn">1</span>, <span class="tn">2</span>, <span class="tn">2</span>, <span class="tn">3</span>] - <span class="tc">Array</span>[<span class="tn">2</span>], <span class="tc">Array</span>[<span class="tn">0</span>] * <span class="tn">3</span>])
+a = <span class="tc">Array</span>[<span class="tn">1</span>, <span class="tn">2</span>, <span class="tn">3</span>]
+a[<span class="tn">0</span>], a[<span class="tn">2</span>] = a[<span class="tn">2</span>], a[<span class="tn">0</span>]                # swap: elements (and fields) can be assignment targets
+p(a)
+p(<span class="ts">&quot;</span><span class="ts">sake-lang</span><span class="ts">&quot;</span>[<span class="tn">0</span>, <span class="tn">4</span>])                   # two indexes: start and length
+key, value, extra = <span class="tc">String</span>.split(<span class="ts">&quot;</span><span class="ts">lang=sake</span><span class="ts">&quot;</span>, <span class="ts">&quot;</span><span class="ts">=</span><span class="ts">&quot;</span>)   # missing elements are nil, as in Ruby
+p([key, value, extra])
+prices = <span class="tc">Float</span>[<span class="tn">1.25</span>, <span class="tn">2.5</span>]
+p(<span class="tc">Array</span>.sum(prices, <span class="tn">0.0</span>))              # the start value: an empty Array sums to 0.0, not 0
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake arrays_more.sake</span>
+[[0, 0, 0], [0, 1, 4, 9]]
+[[1, 2, 3], [1, 3], [0, 0, 0]]
+[3, 2, 1]
+&quot;sake&quot;
+[&quot;lang&quot;, &quot;sake&quot;, nil]
+3.75</pre></figure>
+<h3>Tuples tagged by a Symbol</h3>
+<p>An Array of Tuples whose first element is a Symbol tag keeps each kind apart. Testing the tag, after <code>|kind, arg|</code> takes a Tuple apart (or with <code>case t[0]</code>), tells the type of the rest:</p>
+<figure class="ex"><pre class="src"><code>events = <span class="tc">Tuple</span>[]                         <span class="tm"># an Array of Tuples, filled below</span>
+<span class="tc">Array</span>.push(events, [<span class="ts">:</span><span class="ts">deposit</span>, <span class="tn">500</span>])
+<span class="tc">Array</span>.push(events, [<span class="ts">:</span><span class="ts">note</span>, <span class="ts">&quot;</span><span class="ts">rent due</span><span class="ts">&quot;</span>])
+<span class="tc">Array</span>.push(events, [<span class="ts">:</span><span class="ts">withdraw</span>, <span class="tn">120</span>])
+balance = <span class="tn">0</span>
+<span class="tc">Array</span>.each(events) <span class="tk">do</span> |kind, arg|
+  <span class="tk">case</span> kind                              <span class="tm"># the Symbol tag tells which Tuple it is,</span>
+  <span class="tk">in</span> <span class="ts">:</span><span class="ts">deposit</span> <span class="tk">then</span> balance += arg        # so here arg is an Integer
+  <span class="tk">in</span> <span class="ts">:</span><span class="ts">withdraw</span> <span class="tk">then</span> balance -= arg
+  <span class="tk">in</span> <span class="ts">:</span><span class="ts">note</span> <span class="tk">then</span> puts(<span class="ts">&quot;</span><span class="ts">note: </span><span class="ts">#{</span><span class="tc">String</span>.upcase(arg)<span class="ts">}</span><span class="ts">&quot;</span>)  <span class="tm"># and here a String</span>
+  <span class="tk">end</span>
+<span class="tk">end</span>
+p(balance)
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake tagged.sake</span>
+note: RENT DUE
+380</pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li>An Array of T checks each element on creation and on <code>push</code>, <code>append</code>, and <code>concat</code>. There is no conversion, so an Integer cannot go into <code>Float[]</code>.</li>
   <li><code>map</code>, <code>select</code>, <code>sort</code>, and similar operations return an Array with no declared element type.</li>
   <li>The contents of a Tuple or Record may be replaced by values of the same type. A Tuple is written with <code>t[i] = v</code>; a Record has no write syntax yet. The length is part of the type.</li>
 </ul></div>
+</section>
+
+<section id="where-types">
+<h2>Where a type is worth writing</h2>
+<p>A function needs no type: its operations say what it accepts. A Struct's field needs none either: its type comes from the values written to it, which <code>T.new</code> and <code>T.set_x</code> show. The one place a type pays is an Array that is filled later. Made with <code>Array[]</code>, its element type is whatever gets pushed, so a wrong value is reported where the elements are used, far from where it went in:</p>
+<figure class="ex"><pre class="src"><code><span class="tk">def</span> labels(n)
+  out = <span class="tc">Array</span>[]                          <span class="tm"># any element type: it is whatever gets pushed</span>
+  <span class="tc">Integer</span>.times(n) { |i| <span class="tc">Array</span>.push(out, <span class="ts">&quot;</span><span class="ts">#{</span>i<span class="ts">}</span><span class="ts">&quot;</span>) }
+  out
+<span class="tk">end</span>
+p(<span class="tc">Array</span>.sum(labels(<span class="tn">3</span>)))                  # the mistake shows up here, far from the push
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake elements_untyped.sake</span>
+<span class="oerr">elements_untyped.sake:6:3: error: Array.sum: an element must be Integer|Float|Rational|Complex, but is String [type]</span>
+<span class="odim">(exit status 2)</span></pre></figure>
+<p>Made with its element type, <code>Integer[]</code> (or <code>Float[]</code>, <code>Point[]</code>, <code>Tuple[]</code>), every push is checked where it happens. The type is written on the operation that makes the Array, not on a variable:</p>
+<figure class="ex"><pre class="src"><code><span class="tk">def</span> labels(n)
+  out = <span class="tc">Integer</span>[]                        <span class="tm"># an Array of Integer</span>
+  <span class="tc">Integer</span>.times(n) { |i| <span class="tc">Array</span>.push(out, <span class="ts">&quot;</span><span class="ts">#{</span>i<span class="ts">}</span><span class="ts">&quot;</span>) }  <span class="tm"># the mistake shows up where it is made</span>
+  out
+<span class="tk">end</span>
+p(<span class="tc">Array</span>.sum(labels(<span class="tn">3</span>)))
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake elements_typed.sake</span>
+<span class="oerr">elements_typed.sake:3:26: error: Array.push: an element must be Integer, but is String [type]</span>
+<span class="ohint">  hint: reached by the call at line 6</span>
+<span class="odim">(exit status 2)</span></pre></figure>
 </section>
 
 <section id="ruby-types">
@@ -925,7 +1072,7 @@ Set[3, 1, 2]
 [&quot;1&quot;, &quot;22&quot;, &quot;333&quot;]
 :ok</pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
-  <li>Hash keys and Set elements must be values compared by content: numbers, Strings, Symbols, <code>true</code>, <code>false</code>, <code>nil</code>, and Tuples and Records of them. A Tuple or Record key is copied when stored.</li>
+  <li>Hash keys and Set elements compare as <code>==</code> does: numbers, Strings, Symbols, <code>true</code>, <code>false</code>, <code>nil</code>, Time, and Tuples, Records, Arrays, Hashes, Sets and Struct values made of these. A Struct type that defines its own <code>==</code> (or <code>&lt;=&gt;</code> with <code>Comparable</code>) cannot be a key. A Tuple or Record key is copied when stored.</li>
   <li>There are no globals such as <code>$1</code>. Keep the MatchData: <code>m = String.match(s, re)</code>, then <code>m[1]</code>.</li>
   <li><code>Hash.new { … }</code> is not available, because blocks are not values.</li>
   <li><code>a[1..2]</code> and <code>s[1..3]</code> slice an Array or a String.</li>
@@ -1073,7 +1220,6 @@ eval(<span class="ts">&quot;</span><span class="ts">1 + 1</span><span class="ts"
 <span class="odim">(exit status 2)</span></pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li><strong>Never allowed:</strong> <code>self</code>, <code>@x</code> outside a function of a Struct type, <code>send</code>, <code>method_missing</code>, <code>define_method</code>, the <code>eval</code> family, <code>instance_variable_get</code>/<code>set</code>, <code>const_get</code>/<code>set</code>, and class inheritance.</li>
-  <li><strong>Not yet:</strong> unary operators.</li>
   <li><strong>By design:</strong> there are no value constants. Define a function instead: <code>def pi = 3.14159</code>, then call <code>pi</code>.</li>
 </ul></div>
 </section>
@@ -1087,7 +1233,7 @@ eval(<span class="ts">&quot;</span><span class="ts">1 + 1</span><span class="ts"
   <li><strong>error</strong>: the check always fails;</li>
   <li><strong>unknown</strong>: the inference could not tell.</li>
 </ul>
-<p>It also lists the element type of each Array and the type of each field. None of these types were written in the program.</p>
+<p>It also lists the element type of each Array and the type of each field. None of these types were written in the program. The playground (<code>ide/</code>) shows the same results in its Types tab and on hover.</p>
 <figure class="ex"><pre class="src"><code><span class="tc">Item</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">name</span>, <span class="ts">:</span><span class="ts">price</span>, <span class="ts">:</span><span class="ts">qty</span>)
 
 <span class="tk">def</span> total(items) = <span class="tc">Array</span>.reduce(items, <span class="tn">0</span>) { |acc, it| acc + <span class="tc">Item</span>.get_price(it) * <span class="tc">Item</span>.get_qty(it) }
@@ -1218,7 +1364,8 @@ Statement for Alice
 <tr><td><code>empty?</code> · <code>include?(a, x)</code></td><td>true / false</td></tr>
 <tr><td><code>push(a, *xs)</code> · <code>append(a, *xs)</code> · <code>concat(a, b)</code></td><td>a, changed in place</td></tr>
 <tr><td><code>join(a, [sep])</code></td><td>String</td></tr>
-<tr><td><code>sum(a)</code></td><td>Integer or Float (elements must be numbers; 0 when empty)</td></tr>
+<tr><td><code>sum(a, [start])</code></td><td>the sum (elements must be numbers); <code>start</code>, default the Integer 0, when empty</td></tr>
+<tr><td><code>Array.new(n, [v])</code> · <code>Array.new(n) { |i| }</code></td><td>a new Array of n elements</td></tr>
 <tr><td><code>reverse</code> · <code>sort</code> · <code>take(a, n)</code> · <code>drop(a, n)</code></td><td>a new Array</td></tr>
 <tr><td><code>each(a) { |x| }</code> · <code>each_with_index(a) { |x, i| }</code></td><td>a (block)</td></tr>
 <tr><td><code>map</code> · <code>select</code> · <code>filter</code> · <code>reject</code> · <code>sort_by</code></td><td>a new Array (block)</td></tr>
@@ -1271,16 +1418,16 @@ Statement for Alice
   <li>a literal of the wrong type in <code>T[…]</code>;</li>
   <li>by default (level 1), a value whose type does not fit the operation, such as <code>"" + 1</code>;</li>
   <li>with <code>--strict</code> (level 2), a value that may be <code>nil</code> used without a check;</li>
-  <li>with <code>--strict=3</code>, the result of <code>x[k]</code> used without a check.</li>
+  <li>with <code>--strict=3</code>, the result of <code>x[k]</code> used without a check, and a <code>case</code> whose literal branches may miss a value.</li>
 </ul>
 <h3>While running (exit status 1)</h3>
 <pre class="out"><span class="oerr">FILE:LINE: in FUNCTION: KIND: MESSAGE</span>
 <span class="odim">  from FILE:LINE: in CALLER</span>
 <span class="ohint">  hint: SUGGESTION</span></pre>
 <div class="tbl"><table><thead><tr><th>Kind</th><th>When</th></tr></thead><tbody>
-<tr><td><code>TypeError</code></td><td>An operation got the wrong type, an operator the left operand's type does not support, a write to an Array of T has the wrong type, or a multiple assignment is not from a Tuple</td></tr>
+<tr><td><code>TypeError</code></td><td>An operation got the wrong type, an operator the left operand's type does not support, a write to an Array of T has the wrong type, or a multiple assignment is not from a Tuple or an Array</td></tr>
 <tr><td><code>IndexError</code></td><td>A Tuple index outside the Tuple, <code>Array.fetch</code> outside the Array, or a write past the end of an Array of T</td></tr>
-<tr><td><code>ArgumentError</code></td><td>A Tuple size mismatch, a block parameter count mismatch, a negative size, or <code>sort</code> on values that cannot be compared</td></tr>
+<tr><td><code>ArgumentError</code></td><td>A block parameter count mismatch, a negative size, <code>Integer ** negative</code>, or <code>sort</code> on values that cannot be compared</td></tr>
 <tr><td><code>ZeroDivisionError</code></td><td>Integer <code>/</code> or <code>%</code> by zero</td></tr>
 <tr><td><code>FloatDomainError</code> · <code>Math::DomainError</code></td><td>NaN or Infinity converted to Integer; for example, <code>Math.sqrt(-1)</code></td></tr>
 <tr><td><code>SystemStackError</code></td><td>Recursion deeper than 10,000</td></tr>
@@ -1291,15 +1438,14 @@ Statement for Alice
 <h2>Not yet supported</h2>
 <p>Each of these is rejected before running. Most are waiting on a design decision.</p>
 <ul>
-  <li><code>Array.new</code></li>
-  <li>Unary operators, and <code>case</code>/<code>when</code> (use <code>case</code>/<code>in</code>)</li>
-  <li>Generic operations over all types (<code>to_s</code>, <code>==</code> on records): the protocol design</li>
-  <li>The type scope <code>Integer.(a + b)</code></li>
-  <li><code>case</code>/<code>when</code>, <code>for</code>, <code>%w[]</code></li>
-  <li>Built-in constants such as <code>Math::PI</code>; Rational, Complex, Time</li>
   <li>Writing to Record fields</li>
+  <li>The type scope <code>Integer.(a + b)</code></li>
+  <li><code>case</code>/<code>when</code> (use <code>case</code>/<code>in</code>), <code>%w[]</code>, <code>%i[]</code></li>
+  <li><code>for</code>: not planned; iterate with an operation such as <code>Range.each(1..3) { |i| … }</code></li>
+  <li>Patterns other than types, literals, alternatives, and Record shapes (array and find patterns, pins, guards)</li>
+  <li>Built-in constants such as <code>Math::PI</code> and <code>Float::INFINITY</code></li>
   <li>Blocks as values</li>
-  <li><code>require</code></li>
+  <li>Several files (<code>require</code>)</li>
 </ul>
 </section>
 
