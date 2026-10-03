@@ -61,7 +61,16 @@ whole-program type inference; whatever is not reported is still checked while ru
 
 ## 3. Program structure
 
-A program is a single file. Its top level may contain:
+A program is a file and the files it requires. Its top level may contain:
+
+- **`require "path"`**: reads `path.sake` (the extension may be left out), relative to the
+  directory of the file that requires it. The argument must be a **string literal**, and `require`
+  must be a statement at the **top level** of a file: the files of a program are decided before
+  running. Each file is read once, whatever requires it, and a cycle stops at a file already read.
+  A required file's top-level statements run before those of the file that requires it (all
+  `require`s of a file are read first). Definitions of every file are collected together, so names
+  may be used across files in any order; defining a name in two files is an error, as in one file.
+  Messages name the file of each line (`lib/units.sake:4`, `from lib/broken.sake:3`).
 
 - **Function definitions**: `def name(params) ... end` and `def name(params) = expr`.
 - **Namespaced function definitions**: `def Type.name(params) ...`. This is equivalent to defining
@@ -980,4 +989,3 @@ Each of these is rejected statically. Most wait on a design decision.
 - **Patterns other than those in [§9.1](#91-pattern-matching)**: arrays, find patterns, pins, guards.
 - **Built-in constants** such as `Math::PI` and `Float::INFINITY`.
 - **First-class blocks.**
-- **Several files** (`require`).

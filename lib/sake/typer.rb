@@ -25,7 +25,9 @@ module Sake
     # breaks: the types of the block's `break` values, which become results of the call it was given to.
     BlockCtx = Struct.new(:node, :params, :env, :breaks)
     # via: lines of the calls that led to the first failing instantiation, outermost first.
-    Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing, :via)
+    # file: the check's file (nil for the main file); via: the call sites leading to it, each a line
+    # in the main file or "file:line".
+    Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing, :via, :file)
 
     attr_reader :checks, :sites, :fields, :dead_functions, :passes
 
@@ -259,7 +261,7 @@ module Sake
     end
 
     def add_check(node, op, arg, expected, actual, verdict, failing = [])
-      key = [node.location.start_line, node.location.start_column, op, arg]
+      key = [node.location.start_line, node.location.start_column, op, arg, other_file(node)]
       prev = @checks[key]
       if prev
         return if op == "rescue" && prev.verdict == :proven
@@ -275,9 +277,18 @@ module Sake
       else
         (@check_ctx[key] = {})[@callers.dup] = verdict
         @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing,
-                                 failing.empty? ? nil : @callers.dup)
+                                 failing.empty? ? nil : @callers.dup, other_file(node))
       end
     end
+
+    # The file of a node when it is not the main file (the checks of required files say where they are).
+    def other_file(node)
+      f = @program.sources&.[](node.location.send(:source))
+      f == @program.path ? nil : f
+    end
+
+    # A call site for `via`: its line, or "file:line" in a required file.
+    def call_site(node) = (f = other_file(node)) ? "#{f}:#{node.location.start_line}" : node.location.start_line
 
     # [check, item] for every check that may fail, where item is a strict item name:
     # "type" (surely fails, or may fail for a non-nil type), "nil", or "index-nil" (a nil from x[k]).

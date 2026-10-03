@@ -24,11 +24,13 @@ module Sake
   # An error raised while running a Sake program: by `raise` (value is the exception) or by an
   # operation (value is built from kind and message when a rescue needs it).
   class RunError < Error
-    attr_reader :kind, :line, :frames, :expected
+    attr_reader :kind, :line, :frames, :expected, :file
     attr_accessor :path, :hints
 
-    def initialize(kind, message, line, frames = [], expected: nil, nil_value: false, hints: [])
+    # file: the file of line when it is not the main file (path). frames: [callee, call line, file].
+    def initialize(kind, message, line, frames = [], expected: nil, nil_value: false, hints: [], file: nil)
       @kind = kind
+      @file = file
       @line = line
       @frames = frames
       @expected = expected
@@ -46,14 +48,14 @@ module Sake
     # frames: [callee, call line], outermost first.
     def report
       callers = ["<main>", *frames.map(&:first)]
-      s = +"#{path}:#{line}: in #{callers.last}: #{kind}: #{message}"
+      s = +"#{file || path}:#{line}: in #{callers.last}: #{kind}: #{message}"
       shown = frames.each_with_index.reverse_each.to_a
       if shown.size > MAX_FRAMES
         omitted = shown.size - MAX_FRAMES
         shown = shown.first(MAX_FRAMES - 2) + [nil] + shown.last(2)
       end
-      shown.each do |(_, l), i|
-        s << (i ? "\n  from #{path}:#{l}: in #{callers[i]}" : "\n  ... #{omitted} frames omitted ...")
+      shown.each do |(_, l, f), i|
+        s << (i ? "\n  from #{f || path}:#{l}: in #{callers[i]}" : "\n  ... #{omitted} frames omitted ...")
       end
       hints.each { |h| s << "\n  hint: #{h}" }
       s

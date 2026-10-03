@@ -144,7 +144,7 @@ module Sake
 
     # The typer's findings for the chosen items, as diagnostics.
     def strict_diagnostics(program, items, typer)
-      typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.line, c.column] }.map do |c, item|
+      typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.file ? 0 : 1, c.file.to_s, c.line, c.column] }.map do |c, item|
         what = { "pair" => "the operands", "index" => "the index", "value" => "the value" }.fetch(c.arg) { "argument #{c.arg}" }
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
@@ -159,8 +159,8 @@ module Sake
             ["#{c.op}: #{what} may be nil, because x[k] (or `a, b = array`) gives nil when the element is missing",
              [NIL_CHECK_HINT, "or use Array.fetch / Hash.fetch, which raise instead"]]
           end
-        hints += ["reached by the call at line #{c.via.join(" → line ")}"] if c.via&.any?
-        Diagnostic.new(program.path, c.line, c.column, "#{msg} [#{item}]", hints)
+        hints += ["reached by the call at #{c.via.map { _1.is_a?(Integer) ? "line #{_1}" : _1 }.join(" → ")}"] if c.via&.any?
+        Diagnostic.new(c.file || program.path, c.line, c.column, "#{msg} [#{item}]", hints)
       end
     end
 

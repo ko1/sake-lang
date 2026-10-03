@@ -30,7 +30,8 @@ module Sake
   # calls: node => {namespace (nil = top level) => target}, because a function body included into several
   # namespaces resolves once per namespace. blocks: node => parameter names.
   # includes: namespace => names of the modules it includes (for dispatch through modules and operators).
-  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, keyword_init: true)
+  # path: the main file; sources: Prism source => file (for the file of a node, see Sake.file_of).
+  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -50,9 +51,14 @@ module Sake
     NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError NotImplementedError].freeze
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
-    def initialize(path, root, registry)
+    # `require "x"`: a call with no receiver, read by Sake.load before resolving.
+    def self.require_call?(node) = node.is_a?(Prism::CallNode) && node.name == :require && node.receiver.nil?
+
+    # files: [path, ProgramNode], in the order their top-level statements run.
+    def initialize(path, files, registry, sources = {}.compare_by_identity)
       @path = path
-      @root = root
+      @files = files
+      @sources = sources
       @registry = registry
       @functions = {} # namespace (nil = top level) => name => UserFunction
       @struct_types = {}
@@ -77,8 +83,10 @@ module Sake
       collect
       check_all
       # A function included into several namespaces is checked once per namespace; report each problem once.
-      raise StaticErrors.new(@diags.uniq { [_1.line, _1.column, _1.message] }.sort_by { [_1.line, _1.column] }) unless @diags.empty?
-      Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks,
+      order = @files.each_with_index.to_h { |(f, _), i| [f, i] }
+      diags = @diags.uniq { [_1.path, _1.line, _1.column, _1.message] }.sort_by { [order.fetch(_1.path, 0), _1.line, _1.column] }
+      raise StaticErrors.new(diags) unless @diags.empty?
+      Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks, sources: @sources,
                   functions: @functions, struct_types: @struct_types,
                   includes: @linearized.transform_values { |l| l.map(&:first) })
     end
@@ -87,14 +95,14 @@ module Sake
 
     def error(node, message, hints = [])
       loc = node.respond_to?(:message_loc) && node.message_loc ? node.message_loc : node.location
-      @diags << Diagnostic.new(@path, loc.start_line, loc.start_column, message, hints)
+      @diags << Diagnostic.new(@sources[node.location.send(:source)] || @path, loc.start_line, loc.start_column, message, hints)
       nil
     end
 
     # --- collect definitions ---
 
     def collect
-      stmts = @root.statements.body
+      stmts = @files.flat_map { |_, root| root.statements.body }.reject { Resolver.require_call?(_1) }
       # Struct types first so that `class Point` bodies can see their accessors.
       stmts.grep(Prism::ConstantWriteNode).each { collect_constant(_1) }
       stmts.grep(Prism::ClassNode).select { _1.superclass.is_a?(Prism::HashNode) }.each { collect_class_config(_1) }
@@ -420,10 +428,10 @@ module Sake
         end
       end
       # `_` after a definition has no value to read: only an expression statement counts as previous.
-      body = @root.statements.body
       @toplevel.each do |st|
+        body = @files.map { |_, root| root.statements.body }.find { |b| b.any? { _1.equal?(st) } }
         i = body.index { _1.equal?(st) }
-        prev = i.positive? && !definition?(body[i - 1])
+        prev = i.positive? && !definition?(body[i - 1]) && !Resolver.require_call?(body[i - 1])
         check(st, Ctx.new(nil, nil, false, false, false, false, prev))
       end
       @direct_calls.each do |node, fn|
@@ -758,6 +766,10 @@ module Sake
     def binary_op?(name) = Operators::MODULE_OF.key?(name.to_s)
 
     def check_call(node, ctx)
+      if Resolver.require_call?(node)
+        return error(node, "require must be a statement at the top level of a file",
+                     ["the files of a program are decided before running; put `require \"...\"` at the top"])
+      end
       args = node.arguments&.arguments || []
       blk = node.block
       if blk.is_a?(Prism::BlockArgumentNode)

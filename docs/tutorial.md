@@ -24,7 +24,9 @@ Run a program with:
 bin/sake FILE.sake
 ```
 
-`bin/sake -c FILE.sake` only checks the program. Exit status is 0 on success, 1 for an error while
+A program can be split into files: `require "lib/web"` at the top of a file reads `lib/web.sake`
+next to it, once. The argument is a string literal, so the files are known before running, and
+messages name the file of each line. `bin/sake -c FILE.sake` only checks the program. Exit status is 0 on success, 1 for an error while
 running, and 2 for a problem found before running. To try Sake in a browser, with completion and the
 inferred types on hover, build the playground in [ide/](../ide/README.md).
 

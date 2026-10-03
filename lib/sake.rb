@@ -15,19 +15,58 @@ require_relative "sake/interpreter"
 module Sake
   module_function
 
-  # Parses and resolves; raises StaticErrors with every problem found.
+  # Parses and resolves; raises StaticErrors with every problem found. `require "lib/x"` (a string
+  # literal, at the top level of a file) reads lib/x.sake next to the requiring file, once; the
+  # required files come first, as their top-level statements run before the requiring file's.
   def load(source, path, out: $stdout, input: $stdin)
-    result = Prism.parse(source, filepath: path)
-    unless result.errors.empty?
-      diags = result.errors.map do |e|
-        Diagnostic.new(path, e.location.start_line, e.location.start_column, "syntax error: #{e.message}", [])
+    files = [] # [path, ProgramNode], required files before the files that require them
+    sources = {}.compare_by_identity # Prism source => path, to name the file of any node
+    diags = []
+    seen = { File.expand_path(path) => true }
+    visit = lambda do |file, src|
+      result = Prism.parse(src, filepath: file)
+      unless result.errors.empty?
+        result.errors.each { |e| diags << Diagnostic.new(file, e.location.start_line, e.location.start_column, "syntax error: #{e.message}", []) }
+        next
       end
-      raise StaticErrors.new(diags)
+      root = result.value
+      sources[root.location.send(:source)] = file
+      root.statements.body.each do |st|
+        next unless Resolver.require_call?(st)
+        loc = st.location
+        arg = st.arguments&.arguments
+        unless arg&.size == 1 && arg[0].is_a?(Prism::StringNode)
+          diags << Diagnostic.new(file, loc.start_line, loc.start_column, "require takes one string literal, as in `require \"lib/web\"`",
+                                  ["the file is decided before running, so it cannot be a variable or an expression"])
+          next
+        end
+        name = arg[0].unescaped
+        name += ".sake" if File.extname(name).empty?
+        target = File.dirname(file) == "." ? name : File.join(File.dirname(file), name)
+        next if seen[File.expand_path(target)]
+        seen[File.expand_path(target)] = true
+        text = begin
+          File.read(target)
+        rescue SystemCallError => e
+          diags << Diagnostic.new(file, loc.start_line, loc.start_column, "require: cannot read #{target} (#{e.class.name.split("::").last})", [])
+          next
+        end
+        visit.(target, text)
+      end
+      files << [file, root]
     end
+    visit.(path, source)
+    raise StaticErrors.new(diags) unless diags.empty?
     registry = Registry.new
     Stdlib.install(registry, out)
     Stdlib.install_ext(registry, out, input)
-    Resolver.new(path, result.value, registry).resolve
+    Resolver.new(path, files, registry, sources).resolve
+  end
+
+  # The file a Prism node (or a SakeAST node) comes from.
+  def file_of(program, node)
+    node = node.origin if node.respond_to?(:origin)
+    program.sources[node.location.send(:source)] || program.path
   end
 
   # The program runs in its own thread: bin/sake sizes thread stacks (RUBY_THREAD_*_STACK_SIZE)

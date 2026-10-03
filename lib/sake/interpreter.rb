@@ -86,8 +86,14 @@ module Sake
 
     def line(node) = node.origin.location.start_line
 
+    # The file of a node when it is not the main file (nil: the main file).
+    def where_file(node)
+      f = Sake.file_of(@program, node)
+      f == @program.path ? nil : f
+    end
+
     def fail_at(node, kind, message, **opts)
-      raise RunError.new(kind, message, line(node), @stack.dup, **opts)
+      raise RunError.new(kind, message, line(node), @stack.dup, file: where_file(node), **opts)
     end
 
     def ev(n, f)
@@ -240,7 +246,7 @@ module Sake
         else
           fail_at(n, "TypeError", "raise needs a String or an exception, got #{Values.describe(arg)}")
         end
-      err = RunError.new(value.type.name, Values.to_s(value.values[0]), line(n), @stack.dup)
+      err = RunError.new(value.type.name, Values.to_s(value.values[0]), line(n), @stack.dup, file: where_file(n))
       err.value = value
       raise err
     end
@@ -304,7 +310,7 @@ module Sake
       end
       n.keys.each_with_index do |field, i|
         unless v.field?(field)
-          raise RunError.new("KeyError", "Record #{v.shape.display} has no field `#{field}`", pat.elements[i].location.start_line, @stack.dup)
+          raise RunError.new("KeyError", "Record #{v.shape.display} has no field `#{field}`", pat.elements[i].location.start_line, @stack.dup, file: where_file(pat.elements[i]))
         end
         f.slots[n.slots[i]] = v[field]
       end
@@ -316,7 +322,7 @@ module Sake
       fn = @program.functions.dig(v.type.name, kind.to_s) or return nil
       s = call_user(fn, [v], nil, fn.node)
       return s if s.is_a?(String)
-      raise RunError.new("TypeError", "#{fn.full_name} must return a String, got #{Values.describe(s)}", fn.node.location.start_line, @stack.dup)
+      raise RunError.new("TypeError", "#{fn.full_name} must return a String, got #{Values.describe(s)}", fn.node.location.start_line, @stack.dup, file: where_file(fn.node))
     end
 
     RANGE_ENDS = [Integer, Float, String, NilClass].freeze
@@ -380,12 +386,12 @@ module Sake
 
     # origin: the Prism node of the call, for the line in messages and the stack.
     def call_user(fn, args, blk, origin)
-      raise RunError.new("SystemStackError", "stack level too deep", origin.location.start_line, @stack.dup) if @stack.size >= MAX_DEPTH
+      raise RunError.new("SystemStackError", "stack level too deep", origin.location.start_line, @stack.dup, file: where_file(origin)) if @stack.size >= MAX_DEPTH
       ast = @ast.functions.fetch(fn)
       slots = Array.new(ast.nslots)
       args.each_with_index { |v, i| slots[i] = v }
       frame = Frame.new(fn.full_name, slots, blk)
-      @stack.push([fn.full_name, origin.location.start_line])
+      @stack.push([fn.full_name, origin.location.start_line, where_file(origin)])
       begin
         ev(ast.body, frame)
       rescue ReturnSignal => e
@@ -393,7 +399,7 @@ module Sake
         e.value
       rescue ::SystemStackError
         raise RunError.new("SystemStackError", "stack level too deep (the interpreter's Ruby stack is exhausted)",
-                           origin.location.start_line, @stack.dup)
+                           origin.location.start_line, @stack.dup, file: where_file(origin))
       ensure
         @stack.pop
       end
@@ -404,14 +410,14 @@ module Sake
         want = fn.param_type(i)
         next if type_ok?(want, v)
         raise RunError.new("TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
-                           node.location.start_line, @stack.dup, expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
+                           node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
       end
       ruby_blk = blk && (fn.full_name == "Thread.new" ? thread_body(blk, node) : ->(*xs) { call_block(blk, xs, node) })
       fn.impl.call(*args, &ruby_blk)
     rescue Fail => e
-      raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup)
+      raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     rescue ::EncodingError => e
-      raise RunError.new("EncodingError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup)
+      raise RunError.new("EncodingError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     end
 
     # Thread.new's block runs on a copy of this interpreter with its own stack: the program, the
@@ -430,7 +436,7 @@ module Sake
         Thread.current[:sake_show_hooks], Thread.current[:sake_struct_ops] = hooks
         child.send(:call_block, thread_blk, [], node)
       rescue JumpSignal, ReturnSignal
-        raise RunError.new("LocalJumpError", "break or return out of a Thread.new block", line(node), @stack.dup)
+        raise RunError.new("LocalJumpError", "break or return out of a Thread.new block", line(node), @stack.dup, file: where_file(node))
       rescue RunError => e
         e.path ||= path
         raise
@@ -494,13 +500,13 @@ module Sake
         defined << "(any, nil), (nil, any)" unless nil_rows.empty?
         defined = defined.join(", ")
         raise RunError.new("TypeError", "#{mod}.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
-                           node.location.start_line, @stack.dup, nil_value: a.nil? || b.nil?)
+                           node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil? || b.nil?)
       end
       impl.call(a, b)
     rescue Fail => e
-      raise RunError.new(e.kind, "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup)
+      raise RunError.new(e.kind, "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     rescue ::EncodingError => e
-      raise RunError.new("EncodingError", "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup)
+      raise RunError.new("EncodingError", "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     end
 
     # Strings of incompatible encodings (a byte from Integer.chr(227) next to UTF-8 text) meeting.
@@ -518,7 +524,7 @@ module Sake
       unless impl
         defined = @registry.unary_ops[op].keys.join(", ")
         raise RunError.new("TypeError", "#{mod}.#{op}: no implementation for #{Values.describe(a)}; defined for #{defined}",
-                           node.location.start_line, @stack.dup, nil_value: a.nil?)
+                           node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil?)
       end
       impl.call(a)
     end
@@ -530,7 +536,7 @@ module Sake
       fn = @registry.lookup(Values.type_of(recv), op)
       unless fn
         raise RunError.new("TypeError", "Indexable.#{op}: #{Values.describe(recv)} cannot be indexed#{op == "[]=" ? " for writing" : ""}",
-                           node.location.start_line, @stack.dup, nil_value: recv.nil?)
+                           node.location.start_line, @stack.dup, file: where_file(node), nil_value: recv.nil?)
       end
       call_builtin(fn, xs, nil, node)
     end
@@ -546,7 +552,7 @@ module Sake
         eq = struct_equal?(recv, args[1])
         return op == "==" ? eq : !eq
       end
-      fail_node = ->(msg, kind = "TypeError") { raise RunError.new(kind, msg, node.location.start_line, @stack.dup) }
+      fail_node = ->(msg, kind = "TypeError") { raise RunError.new(kind, msg, node.location.start_line, @stack.dup, file: where_file(node)) }
       fail_node.("#{mod}.#{op}: #{type} does not include #{mod}") unless Operators.includes?(@program.includes, type, mod)
       if (fn = own_fn(type, op))
         return call_user(fn, args, nil, node)
@@ -595,12 +601,12 @@ module Sake
       if b.rest
         if !elems && args.size < fixed
           raise RunError.new("ArgumentError", "block takes at least #{fixed} parameter(s) but was given #{args.size}",
-                             b.origin.location.start_line, @stack.dup)
+                             b.origin.location.start_line, @stack.dup, file: where_file(b.origin))
         end
         args = Interpreter.spread_rest(args, b.rest, fixed - b.rest)
       elsif !params.empty? && params.size != args.size
         raise RunError.new("ArgumentError", "block takes #{params.size} parameter(s) but was given #{args.size}",
-                           b.origin.location.start_line, @stack.dup)
+                           b.origin.location.start_line, @stack.dup, file: where_file(b.origin))
       end
       slots = blk.frame.slots
       b.locals.each { slots[_1] = nil }
