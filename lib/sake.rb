@@ -13,6 +13,9 @@ require_relative "sake/resolver"
 require_relative "sake/interpreter"
 
 module Sake
+  # Libraries that `require "name"` finds when no file of that name is next to the requiring file.
+  SAKELIB = File.expand_path("../sakelib", __dir__)
+
   module_function
 
   # Parses and resolves; raises StaticErrors with every problem found. `require "lib/x"` (a string
@@ -43,6 +46,8 @@ module Sake
         name = arg[0].unescaped
         name += ".sake" if File.extname(name).empty?
         target = File.dirname(file) == "." ? name : File.join(File.dirname(file), name)
+        # Not next to the requiring file: Sake's own library (sakelib/), as Ruby's standard library.
+        target = File.join(SAKELIB, name) if !File.exist?(target) && File.exist?(File.join(SAKELIB, name))
         next if seen[File.expand_path(target)]
         seen[File.expand_path(target)] = true
         text = begin
