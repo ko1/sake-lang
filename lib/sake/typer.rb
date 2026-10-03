@@ -775,9 +775,10 @@ end
 
 module Sake
   class Typer
+    # Verdicts of the run-time checks; rescue clauses and unrescued raises are not checks of a value.
     def summary
       counts = Hash.new(0)
-      @checks.each_value { counts[_1.verdict] += 1 }
+      @checks.each_value { counts[_1.verdict] += 1 unless %w[raise rescue].include?(_1.op) }
       counts
     end
 
@@ -787,6 +788,10 @@ module Sake
       out << "checks: #{%i[proven partial error unknown].map { "#{_1}=#{summary[_1]}" }.join(" ")}\n"
       @checks.values.sort_by { [_1.line, _1.op] }.each do |c|
         next if c.verdict == :proven
+        if c.op == "raise" # not a failing check: an exception nothing rescues (the `unrescued` item, level 4)
+          out << "  unrescued L#{c.line} raise #{c.arg}\n"
+          next
+        end
         out << "  #{c.verdict.to_s.ljust(7)} L#{c.line} #{c.op} arg #{c.arg}: want #{c.expected}, got #{show(c.actual)}\n"
       end
       out << "arrays:\n"
