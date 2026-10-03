@@ -51,8 +51,36 @@ The whole-program typer, with every field read and every Array/Hash/Set element 
 | correct programs rejected, level 1 / 2 | 52 / 299 | 51 / 115 |
 
 Fewer rejections here mean less checking: unknown is never reported. Declarations that would stop the
-fixpoint are rare: 11 of 4,850 fields have a declared type, 562 of 6,908 Array sites are `T[...]`, and
+fixpoint are rare: 11 of 2,850 fields have a declared type, 562 of 6,908 Array sites are `T[...]`, and
 Hash (1,018 sites) and Set (335) have no way to declare elements.
+
+## C. Struct fields per definition (ko1: "Struct has attributes, so fields may not need much")
+
+A Struct names its fields, and every write is a typed operation (`T.new`, `T.set_x`, `@x = v` in its
+class), so a field's write sites are known syntactically. Its type is the union of the values written
+there, which needs the fixpoint only when a written value itself comes from a field or an element.
+`field_writes.rb` (writes whose value type is still known with fields and elements unknown):
+
+- write sites: 5,611 of 6,782 (82.7%) write a value known without fields and elements;
+- fields: 1,619 of 2,296 written fields (70.5%) have only such writes (2,850 fields in all; the rest are
+  written nowhere the typer reaches).
+
+Proven checks, separating the two parts (`split.rb`, `struct_fields.rb`; whole program: 50,562):
+
+| | proven checks | vs whole program |
+|---|---|---|
+| fields unknown | 38,786 | −23% |
+| elements unknown | 32,827 | −35% |
+| both unknown | 27,716 | −45% |
+| elements unknown, fields inferred per definition when all writes are local | 31,270 | −38% |
+
+Inferring fields per definition recovers 3,554 of the 5,111 proven checks that fields add when elements
+are unknown (70%). Fields are mostly fine without declarations; collection elements are the larger,
+harder part: an Array is anonymous, and where it is filled (push, `[]=`) follows wherever it flows.
+
+Correction during C: the first count of fields (4,850) included four built-in exception types missing
+from `Resolver::BUILTIN_EXCEPTIONS` (TypeError, NoMatchingPatternError, SystemStackError,
+NotImplementedError); built-in types are now those of an empty program.
 
 ## Conclusion
 
@@ -60,7 +88,9 @@ Hash (1,018 sites) and Set (335) have no way to declare elements.
   single type), and the rest are genuinely polymorphic. With per-argument-type evaluation of calls
   (cached by the callee), function signatures are modular without annotations.
 - The global part is data: about 45% of the proven checks depend on field and element types collected
-  over the whole program. If the boundary must be typed, it is the data definitions (field types,
-  element types), as Rust and OCaml always require for struct and record fields, not the functions.
-- Not measured yet: whether field types could be inferred per type definition (are fields written only
-  by their own type's functions?), which would keep even data undeclared.
+  over the whole program.
+- Struct fields mostly do not need declarations (C): 70% of written fields get their type from their
+  write sites alone. Collection elements are the part that needs the whole program (−35% alone); if
+  anything is to be written, it is element types (`T[...]` exists for Arrays; Hash and Set have none).
+- Not measured yet: how many Arrays are created and filled within one function (local) versus filled
+  after being passed or stored.
