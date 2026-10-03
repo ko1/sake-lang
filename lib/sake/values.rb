@@ -181,7 +181,8 @@ module Sake
         end
       when RecordValue then "{#{v.shape.fields.zip(v.values).map { |f, x| "#{f}: #{inspect(x)}" }.join(", ")}}"
       when Hash
-        "{#{v.map { |k, x| k.is_a?(Symbol) && k.inspect.match?(/\A:\w+[?!]?\z/) ? "#{k}: #{inspect(x)}" : "#{inspect(k)} => #{inspect(x)}" }.join(", ")}}"
+        # Ruby 3.4: a Symbol key is `k: v`, quoted when it is not a plain name (`"dry-run": v`).
+        "{#{v.map { |k, x| k.is_a?(Symbol) ? "#{k.inspect.match?(/\A:\w+[?!]?\z/) ? k : k.to_s.inspect}: #{inspect(x)}" : "#{inspect(k)} => #{inspect(x)}" }.join(", ")}}"
       when Set then "Set[#{v.map { inspect(_1) }.join(", ")}]"
       when Range then "#{v.begin.nil? ? "" : inspect(v.begin)}#{v.exclude_end? ? "..." : ".."}#{v.end.nil? ? "" : inspect(v.end)}"
       when ThreadValue, ::Thread::Queue, ::Thread::Mutex then "#<#{type_of(v)}>"

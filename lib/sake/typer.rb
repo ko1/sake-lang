@@ -27,7 +27,8 @@ module Sake
     # via: lines of the calls that led to the first failing instantiation, outermost first.
     # file: the check's file (nil for the main file); via: the call sites leading to it, each a line
     # in the main file or "file:line".
-    Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing, :via, :file)
+    # node: the Prism node of the operation (for messages).
+    Check = Struct.new(:line, :column, :op, :arg, :expected, :actual, :verdict, :failing, :via, :file, :node)
 
     attr_reader :checks, :sites, :fields, :dead_functions, :passes
 
@@ -277,7 +278,7 @@ module Sake
       else
         (@check_ctx[key] = {})[@callers.dup] = verdict
         @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing,
-                                 failing.empty? ? nil : @callers.dup, other_file(node))
+                                 failing.empty? ? nil : @callers.dup, other_file(node), node)
       end
     end
 

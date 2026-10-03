@@ -11,6 +11,7 @@ module Sake
     class Env
       attr_reader :vars, :parent, :frame, :own
       attr_accessor :dead # control left via return/next/break; this path does not fall through
+      attr_accessor :void # a narrowing left a variable no type: no value takes this path
       # slot => [tuple variants, position]: the variable was taken from position of a value whose Tuple
       # variants are known (`|kind, arg|`); narrowing one such variable narrows the others. Own slots only.
       attr_accessor :links
@@ -213,7 +214,13 @@ module Sake
       e2 = env.dup_level
       narrow(e1, pred, true)
       narrow(e2, pred, false)
-      r = u(ev(then_node, e1), ev(else_node, e2))
+      # A branch the test leaves no value for (`if x in String` when x is a String: the else) adds no result.
+      # Its body is still analyzed: in an early pass of a fixpoint, "no value yet" looks the same.
+      d1 = e1.void
+      d2 = e2.void
+      r1 = ev(then_node, e1)
+      r2 = ev(else_node, e2)
+      r = u(d1 ? [] : r1, d2 ? [] : r2)
       join_into(env, e1, e2)
       r
     end
@@ -483,6 +490,9 @@ module Sake
     # Sets a narrowed type of a local variable on this path (an enclosing variable's is kept in this
     # env's vars), then narrows the variables taken from the same Tuple variants.
     def set_narrowed(env, slot, ty, follow: true)
+      # No type is left on this path (`if x in String` when x is an Integer): no value takes it, so its
+      # result is left out. Not `dead`: joins keep its variables (in an early pass, "no value yet" looks the same).
+      env.void = true if ty.empty? && !(env.lookup(slot) || []).empty?
       env.vars[slot] = ty
       return unless follow && (link = env.level(slot).links[slot])
       variants, pos = link
@@ -541,7 +551,9 @@ module Sake
       if n.is_a?(CallBuiltin) && %w[[] []=].include?(n.fn.name)
         xs = n.args.map { ev(_1, env) }
         lit = lit_of(n.args[1])
-        return n.fn.name == "[]" ? index_get(o, xs[0], xs[1], lit) : index_set(o, xs[0], xs[1], lit, xs[2])
+        # `T.[](x, k)`, `T.[](x, start, length)`, `T.[]=(x, k, v)`, `T.[]=(x, i, j, v)`: as written with brackets.
+        return index_get(o, xs[0], xs[1], lit, xs[2]) if n.fn.name == "[]"
+        return xs.size == 4 ? index_set(o, xs[0], xs[1], lit, xs[3], xs[2]) : index_set(o, xs[0], xs[1], lit, xs[2])
       end
       args = arg_types(n.args, env)
       blk = n.block && BlockCtx.new(n.block, n.block.params, env, [])

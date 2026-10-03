@@ -154,7 +154,10 @@ module Sake
             ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]
           when "unrescued"
             ["raise: #{c.arg} may reach the top level without being rescued", ["rescue it, or check with a level below 4"]]
-          when "nil" then ["#{c.op}: #{what} may be nil (#{typer.show(c.actual)})", [NIL_CHECK_HINT, *typer.nil_sources(wants)]]
+          when "nil"
+            # Fields that may hold nil are named only when the function around the operation reads a field.
+            reads_field = c.node && field_reading_region(program, c.node).match?(/@\w|\.get_\w/)
+            ["#{c.op}: #{what} may be nil (#{typer.show(c.actual)})", [NIL_CHECK_HINT, *(reads_field ? typer.nil_sources(wants) : [])]]
           else
             ["#{c.op}: #{what} may be nil, because x[k] (or `a, b = array`) gives nil when the element is missing",
              [NIL_CHECK_HINT, "or use Array.fetch / Hash.fetch, which raise instead"]]
@@ -162,6 +165,15 @@ module Sake
         hints += ["reached by the call at #{c.via.map { _1.is_a?(Integer) ? "line #{_1}" : _1 }.join(" → ")}"] if c.via&.any?
         Diagnostic.new(c.file || program.path, c.line, c.column, "#{msg} [#{item}]", hints)
       end
+    end
+
+    # The source of the function whose body holds node (the node itself at the top level).
+    def field_reading_region(program, node)
+      line = node.location.start_line
+      fns = program.functions.values.flat_map(&:values).map(&:node).compact
+      fn = fns.select { |d| d.location.send(:source).equal?(node.location.send(:source)) && d.location.start_line <= line && line <= d.location.end_line }
+              .min_by { _1.location.end_line - _1.location.start_line }
+      (fn || node).slice
     end
 
     # Runs only on the error path: static analysis tells where the nil may have come from.

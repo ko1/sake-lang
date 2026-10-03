@@ -45,7 +45,7 @@ module Sake
         end
         name = arg[0].unescaped
         name += ".sake" if File.extname(name).empty?
-        target = File.dirname(file) == "." ? name : File.join(File.dirname(file), name)
+        target = File.dirname(file) == "." || File.absolute_path?(name) ? name : File.join(File.dirname(file), name)
         # Not next to the requiring file: Sake's own library (sakelib/), as Ruby's standard library.
         # The requiring file itself is never the one meant (test/sakelib/csv.sake requiring "csv").
         if (!File.exist?(target) || File.expand_path(target) == File.expand_path(file)) && File.exist?(File.join(SAKELIB, name))

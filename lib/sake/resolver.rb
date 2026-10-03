@@ -1137,7 +1137,13 @@ module Sake
       check(inner, ctx)
 
       suggestions = node.name == :nil? ? ["#{node.receiver.slice} == nil"] : suggest(node)
-      hints = suggestions.empty? ? ["Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"] : suggestions
+      generic =
+        if node.name.end_with?("=") # `x.pos = v`: a setter is an operation named set_pos
+          "Sake has no method calls on values; a setter is an operation named set_x: `Type.set_#{node.name.to_s.delete_suffix("=")}(#{node.receiver.slice}, value)`"
+        else
+          "Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"
+        end
+      hints = suggestions.empty? ? [generic] : suggestions
       # The chain form of the first suggestion, for a single step: `x.T.f(args)`.
       if suggestions.any? && !lowercase_call?(node.receiver) && !node.attribute_write? && (op = suggestions.first[/\A[A-Z][\w:]*\.[^(\s]+/])
         args = (node.arguments&.arguments || []).map(&:slice)

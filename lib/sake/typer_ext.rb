@@ -106,9 +106,9 @@ module Sake
       "String" => %w[Kernel.to_s Kernel.inspect Symbol.to_s Regexp.source Regexp.escape MatchData.to_s MatchData.pre_match MatchData.post_match
                      String.center String.tr String.delete String.squeeze String.succ String.next
                      Kernel.format Kernel.sprintf Integer.chr File.read Rational.to_s Complex.to_s
-                     Time.to_s Time.strftime],
+                     Time.to_s Time.strftime Array.pack String.force_encoding String.encoding],
       "Symbol" => %w[Symbol.to_sym String.to_sym String.intern],
-      "Boolean" => %w[Hash.empty? Hash.key? Hash.has_key? Hash.include? Hash.member? Hash.value? Hash.has_value?
+      "Boolean" => %w[String.valid_encoding? Hash.empty? Hash.key? Hash.has_key? Hash.include? Hash.member? Hash.value? Hash.has_value?
                       Set.empty? Set.include? Set.member? Set.subset? Set.superset? Set.disjoint? Set.intersect?
                       Range.include? Range.cover? Range.member? Range.exclude_end? Range.any? Range.all? Range.none?
                       Hash.any? Hash.all? Hash.none? Regexp.match? String.match? String.casecmp? File.exist?
