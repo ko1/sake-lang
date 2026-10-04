@@ -255,6 +255,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## IO
 
+- `IO.!=(x, Any)`
+- `IO.==(x, Any)`
 - `IO.close(x)`
 - `IO.closed?(x)`
 - `IO.each_line(x) { }`

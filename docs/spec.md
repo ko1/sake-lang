@@ -332,7 +332,8 @@ Integer.times(3) { p it }
   `->` are not available.
 - **Passing on.** `def f(xs, &b) = Array.map(xs, &b)` passes the function's own block to another
   call (`&` alone works too). `b` is used only as `&b`; a `break` in the block ends the call the
-  block was written for.
+  block was written for. As in Ruby, a function that only passes its block on may be called without
+  one; passing none to a call that needs a block is then an error at the `type` level.
 - **Optional blocks.** `block_given?` tells whether the current function got a block. A function
   that checks it may be called without one: `def info(msg = nil) = puts(block_given? ? yield : msg)`.
   The checker knows for each call whether a block was given, so it analyzes only the branch taken;
@@ -964,7 +965,8 @@ no `$stdout` or `STDOUT`; as with `ARGV`, a value comes from an operation). `IO.
 `puts` does; writing to `IO.stderr` flushes stdout first, so their lines keep their order.
 `File.open(path, mode = "r")` gives an `IO` too; with a block it gives the block's value and closes
 the file after the block. There is one type, `IO`, for files and streams, so one function can write
-to either.
+to either. `IO` can be matched (`in IO`), and two IO values are `==` when they are the same stream or
+file.
 
 | Operation | Result |
 |---|---|

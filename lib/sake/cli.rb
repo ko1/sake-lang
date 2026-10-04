@@ -151,6 +151,7 @@ module Sake
           case item
           when "type", "exhaustive"
             next_msg = ["yield: no block is given on this call", ["check `block_given?` before `yield`"]] if c.op == "yield"
+            next_msg = ["the block passed on is missing here, and this call needs one", ["check `block_given?` first"]] if c.op == "&block"
             next_msg || type_message(c, what, typer, program)
           when "rescue"
             ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]

@@ -388,7 +388,8 @@ module Sake
         fn.yields = true
       end
       fn.defaults = node.parameters ? node.parameters.optionals.map(&:value) : []
-      fn.block_optional = fn.yields && calls_block_given?(node.body)
+      # `&b` only passed on is optional, as in Ruby: passing none to a call that needs one is caught there.
+      fn.block_optional = fn.yields && (calls_block_given?(node.body) || !yields?(node.body))
       fn.keywords = (node.parameters&.keywords || []).to_h { [_1.name.to_s, _1.is_a?(Prism::OptionalKeywordParameterNode) ? _1.value : nil] }
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
       fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
@@ -677,7 +678,7 @@ module Sake
 
     def pattern_target(v) = v.is_a?(Prism::ImplicitNode) ? v.value : v
 
-    PATTERN_TYPES = (BUILTIN_TYPES + %w[Record]).freeze
+    PATTERN_TYPES = (BUILTIN_TYPES + %w[Record IO]).freeze
 
     # Patterns of `x in P` and `case x in P`: a type name, a literal, `P | Q`, or a Record pattern.
     def check_pattern(pat, ctx)

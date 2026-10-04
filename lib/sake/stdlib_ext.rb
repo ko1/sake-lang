@@ -58,7 +58,7 @@ module Sake
       end
       %i[& | ^ << >>].each { |op| reg.define_binary(op, "Integer", "Integer") { |a, b| a.public_send(op, b) } }
       %i[| & -].each { |op| reg.define_binary(op, "Set", "Set") { |a, b| a.public_send(op, b) } }
-      %w[Symbol].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
+      %w[Symbol IO].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
       reg.define_binary(:=~, "String", "Regexp") { |s, r| s =~ r }
       reg.define_binary(:=~, "Regexp", "String") { |r, s| r =~ s }
       reg.define_binary(:!~, "String", "Regexp") { |s, r| s !~ r }

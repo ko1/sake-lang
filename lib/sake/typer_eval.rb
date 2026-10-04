@@ -67,7 +67,11 @@ module Sake
       when Str then t("String")
       when Seq
         r = t("Nil")
-        n.body.each { r = ev(_1, env) }
+        n.body.each do |st|
+          # After return/next/break (or a branch block_given? rules out), the rest does not run.
+          break r = [] if env.dead
+          r = ev(st, env)
+        end
         r
       when LVarGet then env.lookup(n.slot) || t("Nil")
       when LVarSet then assign(env, n.slot, ev(n.value, env))
@@ -574,7 +578,7 @@ module Sake
       if n.block.is_a?(BlockPass) # its breaks go to its own call
         given = env.frame&.block
         return call_with(n, env, args, given) if given || !Sake.needs_block?(n)
-        add_check(o, "yield", "block", "a block", t("no block"), :error, ["no block"]) unless unreachable?(env)
+        add_check(o, "&block", "block", "a block", t("no block"), :error, ["no block"]) unless unreachable?(env)
         return []
       end
       blk = n.block && BlockCtx.new(n.block, n.block.params, env, [])
@@ -711,7 +715,12 @@ module Sake
       @raised.push({})
       r = ev(n.expr, env)
       @raised.pop
-      u(r, ev(n.rescue_, env))
+      # The rescue part is another path: `x = f rescue raise(...)` ends only that path.
+      done = env.dup_level
+      rescued = env.dup_level
+      r2 = ev(n.rescue_, rescued)
+      join_into(env, done, rescued)
+      u(r, r2)
     end
 
     # A path after return/next/break, in this block or around it.
