@@ -464,6 +464,7 @@ module Sake
 
     def check(node, ctx)
       case node
+      when Prism::ImplicitNode then check(node.value, ctx) # `k:` in `f(k:)` or `{k:}`: the variable (or function) k
       when Prism::LocalVariableReadNode
         if node.name == :_
           error(node, "`_` is the previous statement's value, but here it names a local variable", ["give the variable another name"])

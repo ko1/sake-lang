@@ -101,6 +101,7 @@ module Sake
       when Prism::InterpolatedRegularExpressionNode then MakeRegexp.new(parts: interp(n).parts, options: regexp_options(n), origin: n)
       when Prism::RegularExpressionNode then lit(Regexp.new(n.unescaped, regexp_options(n)), n)
       when Prism::RangeNode then MakeRange.new(left: lower(n.left), right: lower(n.right), exclusive: n.exclude_end?, origin: n)
+      when Prism::ImplicitNode then lower(n.value)
       when Prism::KeywordHashNode
         MakePairs.new(keys: n.elements.map { lower(_1.key) }, values: n.elements.map { lower(_1.value) }, origin: n)
       when Prism::TrueNode then lit(true, n)
