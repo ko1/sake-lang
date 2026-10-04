@@ -39,11 +39,11 @@ and compares the help text and the errors with Ruby's.
 | `op.on_head(...)` | — | missing |
 | `op.separator(s)` | `OptionParser.separator(op, s)` | same |
 | `op.help`, `op.to_s`, `puts op` | `OptionParser.help(op)`, `to_s`, `puts(op)` | same |
-| `op.parse(argv, into: h)` | `OptionParser.parse(op, argv, h)` | same; `into` is positional |
+| `op.parse(argv, into: h)` | `OptionParser.parse(op, argv, into: h)` | same |
 | `op.parse` / `op.parse(argv)` (ARGV, no `into`) | `OptionParser.parse(op)` / `OptionParser.parse(op, argv)` | same for the rest; without `into` or blocks the values are dropped (phase 2) |
-| `op.parse!(argv, into: h)` | `OptionParser.parse!(op, argv, h)` | same (argv keeps the rest) |
-| `op.order(argv, into:)`, `order!` | `OptionParser.order`, `order!` | same (stops at the first non-option) |
-| `op.permute`, `permute!` | `OptionParser.permute`, `permute!` | same |
+| `op.parse!(argv, into: h)` | `OptionParser.parse!(op, argv, into: h)` | same (argv keeps the rest) |
+| `op.order(argv, into: h)`, `order!` | `OptionParser.order(op, argv, into: h)`, `order!` | same (stops at the first non-option) |
+| `op.permute(argv, into: h)`, `permute!` | `OptionParser.permute(op, argv, into: h)`, `permute!` | same |
 | `op.getopts(argv, "ab:", "foo", "bar:")` | `OptionParser.getopts(op, argv, "ab:", String["foo", "bar:"])` | same (long options as an optional Array; no rest parameters). Stops at the first non-option, as Ruby (fixed in phase 2; phase 1 permuted) |
 | `op.getopts("ab:")` (ARGV) | — | differs: argv is required here (it comes before the short spec) |
 | `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | one type `OptionParserError`, with `get_kind(e)` = `"InvalidOption"`, ... | differs: no hierarchy, so `rescue OptionParserError` stands for `rescue OptionParser::ParseError` |
@@ -60,6 +60,12 @@ and compares the help text and the errors with Ruby's.
 - **Blocks.** These are not values in Sake ([spec §7](../../docs/spec.md)), so `on` cannot keep one.
   Ruby's `into:` is the form that needs no block, and it becomes the only form. A value that a
   Ruby block would convert (for example `{ |v| v.split(",") }`) is converted after `parse` returns.
+- **Keyword arguments.** `into:` is a keyword parameter, as in Ruby (it was a third positional
+  argument in phase 2). Ruby's `parse(*argv, into:)` also takes the arguments spread out; Sake takes
+  one Array (no rest parameters). A misspelled keyword is a static error:
+  `OptionParser.parse(op, argv, in: h)` → `error: OptionParser.parse has no keyword parameter `in``,
+  and the old positional form `parse(op, argv, h)` → `wrong number of arguments ... (given 3,
+  expected 1..2)`.
 - **Up to four arguments.** Ruby's `on(*args)` sorts its arguments by their content (`-x`,
   `--xx`, a class, an Array, a description). Sake has optional parameters but no rest parameters, so
   `on` takes up to four (`on(op, a, b = "", c = "", d = "")`) and sorts them the same way. One switch
@@ -124,3 +130,9 @@ Speed (600 parses of 12 arguments, 30 help texts). CPU s (user+sys) of `bin/sake
 | after | 3.35 | 3.35 | 3.33 |
 
 Result: about 5% slower, outside the spread; nothing on the parse path changed except calls through functions with optional parameters, so that is the likely cost (not isolated).
+
+## Keyword arguments
+
+- `parse`, `order`, `permute` and their `!` forms take `argv = ARGV, into: Hash[]`; the internal
+  call in `getopts` and the test use `into: h`, as `optparse.rb` does. New test cases:
+  `permute`, `order`, `permute!` with `into:`.

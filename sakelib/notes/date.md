@@ -43,6 +43,7 @@
 | `jisx0301`, `rfc822`, `asctime`, `ctime` | — | missing (asctime is `strftime(d, "%c")`) |
 | `strftime(fmt = "%F")` | `Date.strftime(d, fmt = "%F")` | same for `Y C y m d e j H M S I l L N s Q u w U W V G g A a B b h p P z :z ::z Z n t % F D x T X R r c v +` with flags `- _ 0 ^ #` and width; `E`/`O` modifiers missing (output verbatim) |
 | `Date.parse(s = "-4712-01-01", comp = true)` | same | differs: only these forms: `Y-M-D` (anywhere, so ISO date-times), `Y/M/D`, `YYYYMMDD`, `D Mon [Y]`, `Mon D[,] [Y]` (with optional weekday, ordinal suffix, two-digit year: 69-99 → 19xx, else 20xx; no year → this year). Ruby's heuristic parser accepts far more (times, `M/D/Y`, era names, ...). `comp = false` keeps two-digit years as is (phase 2) |
+| `Date.parse(s, comp, limit: 128)` | `Date.parse(s, comp, limit: 128)` | same (`limit: nil` for none; `ArgumentError: string length (N) exceeds the limit L`). Ruby's `start` (third positional) is missing |
 | `Date._parse`, `Date._iso8601` (hashes) | — | missing |
 | `Date.iso8601(s)` | same | same for `YYYY-MM-DD`, `YYYYMMDD`, ordinal `YYYY-DDD` / `YYYYDDD`, week `YYYY-Www-D` / `YYYYWwwD`, an optional trailing `T...` |
 | `Date.strptime(s = "-4712-01-01", fmt = "%F")` | same | same for directives `Y y m d e j b B h a A u w F D x n t %`; missing year → this year, month/day → 1; text after the format is ignored, as Ruby. No `%G/%V/%U/%W` |
@@ -118,3 +119,12 @@ Speed (400 days × strftime, strptime, parse, `>>`). CPU s (user+sys) of `bin/sa
 | after | 4.68 | 4.87 | 4.74 |
 
 Result: about 3% faster, at the edge of the spread: the per-directive `case` and the interpreter dominate, not the string copies.
+
+## Keyword arguments
+
+- `Date.parse(s = "-4712-01-01", comp = true, limit: 128)` gained Ruby's `limit:` keyword (it had no
+  stand-in before; the check was missing). Test cases: `limit: 10` with `comp`, `limit: nil` on a
+  140-character string, and both error messages. A misspelled keyword is a static error
+  (`Date.parse(s, limt: 5)` → `error: Date.parse has no keyword parameter `limt``).
+  `Date.iso8601` (also `limit:` in Ruby) is not changed: here it also formats a Date.
+- Nothing else in date (or in benchmark) has a Ruby keyword.

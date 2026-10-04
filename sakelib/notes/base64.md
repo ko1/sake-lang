@@ -17,14 +17,17 @@ lenient and strict decoding of 22 malformed inputs, and UTF-8 text. Its output i
 | `Base64.strict_encode64(s)` | `Base64.strict_encode64(s)` | same |
 | `Base64.strict_decode64(s)` | `Base64.strict_decode64(s)` | same (`ArgumentError: invalid base64`) |
 | `Base64.urlsafe_encode64(s)` | `Base64.urlsafe_encode64(s)` | same |
-| `Base64.urlsafe_encode64(s, padding: false)` | `Base64.urlsafe_encode64(s, {padding: false})` | same name; the option is a Record (no keyword arguments) |
+| `Base64.urlsafe_encode64(s, padding: false)` | `Base64.urlsafe_encode64(s, padding: false)` | same |
 | `Base64.urlsafe_decode64(s)` | `Base64.urlsafe_decode64(s)` | same |
 | `include Base64` then `encode64(s)` | | missing (Base64's functions are module functions; a Sake type can `include Base64` but gains nothing it needs) |
 
 ## What differs from Ruby, and why
 
-- **The padding option** is a Record as an optional second argument, because Sake has no keyword
-  arguments (`urlsafe_encode64_with` was removed in phase 2).
+- **Keyword arguments.** `padding:` is a keyword parameter, as in Ruby. Since the callee is known
+  when the program is checked, a misspelling is a static error instead of being ignored, as the
+  former Record option (`{paddin: false}`) was:
+  `Base64.urlsafe_encode64("a", paddin: false)` → `error: Base64.urlsafe_encode64 has no keyword
+  parameter `paddin`` with `hint: did you mean `padding:`?`.
 - **Encodings.** Ruby's encoders return US-ASCII Strings. Sake's return UTF-8 Strings with the same
   ASCII content, and they compare equal. Decoders return ASCII-8BIT, as Ruby's do.
 - **Error message.** `String.unpack1(s, "m0")` raises `String.unpack1: invalid base64`;

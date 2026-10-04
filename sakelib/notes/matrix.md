@@ -55,7 +55,7 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `laplace_expansion(row:)`, `rotate_entries`, `combine`, `index`, `freeze`, `collect!`, `coerce`, `hash`, `eql?`, `abs`, `elements_to_*` | | missing |
 | `Vector[1, 2]` | `Vector.elements(Array[1, 2])` | differs (as for Matrix) |
 | `Vector.elements(a)`, `Vector.zero(n)` | same | same |
-| `Vector.basis(size: 3, index: 1)` | `Vector.basis(3, 1)` | differs: no keyword arguments |
+| `Vector.basis(size: 3, index: 1)` | `Vector.basis(size: 3, index: 1)` | same |
 | `v[i]`, `v[i] = x`, `element`, `component` | same | same for Integer indexes (no Ranges) |
 | `size`, `to_a`, `each`, `each2`, `map`/`collect`, `map2`, `collect2` | same | same |
 | `+ - * /`, `-v`, `+v` | same | same (Vector * Vector raises ErrOperationNotDefined, as in Ruby) |
@@ -71,8 +71,8 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 - **No `Matrix[...]` or `Vector[...]`.** `T[...]` builds an Array of T, which is a static meaning of the
   syntax, so `Matrix[[1, 2]]` reports `Matrix[]: an element must be Matrix, but is Array`. Construction
   goes through `Matrix.rows` and `Vector.elements`, which Ruby also has.
-- **No rest or keyword parameters.** `Matrix.diagonal(*vs)`, `vstack(*ms)`, `hstack(*ms)`, and
-  `Vector.basis(size:, index:)` each use one fixed form. (Optional positional parameters are there
+- **No rest parameters.** `Matrix.diagonal(*vs)`, `vstack(*ms)`, and `hstack(*ms)` each use one
+  fixed form. `Vector.basis(size:, index:)` takes Ruby's required keywords. (Optional positional parameters are there
   since phase 2: `zero`, `build`, `empty`, `rows`, `round`, `each`, `collect` take Ruby's.)
 - **Scalars go on the right.** `2 * m` is `Integer.*(2, m)`. Integer's `*` does not take a Matrix, and
   there is no `coerce`, so only `m * 2` works.
@@ -154,3 +154,11 @@ only that nothing got slower:
 Same within the spread.
 
 Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matrix.txt`.
+
+## Keyword arguments
+
+- `Vector.basis(size:, index:)` takes Ruby's two required keywords instead of two positional
+  arguments; the test calls it as `matrix.rb` does, and in the other order. The checker reports a
+  missing or misspelled one: `Vector.basis(size: 3, idx: 1)` → `error: Vector.basis needs keyword
+  argument `index:`` and `error: Vector.basis has no keyword parameter `idx``; the old
+  `Vector.basis(3, 1)` → `needs keyword arguments `size:`, `index:``.

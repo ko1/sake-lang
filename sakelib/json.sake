@@ -3,9 +3,8 @@
 # JSON values are plain Sake values, as in Ruby: object -> Hash (String keys, or Symbol keys with
 # symbolize_names), array -> Array, string -> String, number -> Integer or Float, true/false, null -> nil.
 #
-# Options are a Record as the optional second argument (Ruby's opts Hash):
-#   Ruby  JSON.parse(s, symbolize_names: true)
-#   Sake  JSON.parse(s, {symbolize_names: true})
+# Options are Ruby's keyword arguments: JSON.parse(s, symbolize_names: true),
+# JSON.generate(v, space: " "). (Ruby's positional opts Hash is not taken.)
 # Ruby's JSON::ParserError / JSON::GeneratorError are JSONParserError / JSONGeneratorError (no nested
 # names). JSON::NestingError is raised as JSONParserError / JSONGeneratorError with Ruby's message.
 #
@@ -439,43 +438,15 @@ end
 module JSON
   module_function
 
-  # ---- options ----
-
-  def opt_bool(o, name, d)
-    case name
-    in :symbolize_names then (o in {symbolize_names: x}) ? x == true : d
-    in :allow_nan then (o in {allow_nan: x}) ? x == true : d
-    in :allow_trailing_comma then (o in {allow_trailing_comma: x}) ? x == true : d
-    end
-  end
-
   # max_nesting: an Integer, or false/nil/0 for no limit
-  def opt_nesting(o, d)
-    case o
-    in {max_nesting:}
-      (max_nesting in Integer) ? max_nesting : 0
-    else d
-    end
-  end
-
-  def opt_str(o, name, d)
-    case name
-    in :indent then (o in {indent: x}) ? x : d
-    in :space then (o in {space: x}) ? x : d
-    in :space_before then (o in {space_before: x}) ? x : d
-    in :object_nl then (o in {object_nl: x}) ? x : d
-    in :array_nl then (o in {array_nl: x}) ? x : d
-    end
-  end
+  def nesting(n) = (n in Integer) ? n : 0
 
   # ---- parsing ----
 
-  # Options: symbolize_names, allow_nan, allow_trailing_comma, max_nesting (default 100).
-  def parse(s, o = nil)
+  def parse(s, symbolize_names: false, allow_nan: false, allow_trailing_comma: false, max_nesting: 100)
     n = String.bytesize(s)
-    ps = JSONParserState.new(s, n, opt_bool(o, :symbolize_names, false),
-                             opt_bool(o, :allow_nan, false), opt_bool(o, :allow_trailing_comma, false),
-                             opt_nesting(o, 100), 0, 0)
+    ps = JSONParserState.new(s, n, symbolize_names == true, allow_nan == true, allow_trailing_comma == true,
+                             nesting(max_nesting), 0, 0)
     JSONParserState.skip_ws(ps)
     JSONParserState.end_of_input(ps) if JSONParserState.get_pos(ps) >= n
     v = JSONParserState.value(ps)
@@ -484,36 +455,41 @@ module JSON
     v
   end
 
-  def load_file(path, o = nil) = parse(File.read(path), o)
+  def load_file(path, symbolize_names: false, allow_nan: false, allow_trailing_comma: false, max_nesting: 100)
+    parse(File.read(path), symbolize_names: symbolize_names, allow_nan: allow_nan,
+                           allow_trailing_comma: allow_trailing_comma, max_nesting: max_nesting)
+  end
 
   # Ruby's JSON.load (without create_additions): nil or blank input gives nil; NaN is allowed.
   def load(s)
     return nil if s == nil || String.strip(s) == ""
-    parse(s, {allow_nan: true, max_nesting: false})
+    parse(s, allow_nan: true, max_nesting: false)
   end
 
   # ---- generating ----
 
-  # Options: indent, space, space_before, object_nl, array_nl, allow_nan, max_nesting (default 100).
-  def generate(v, o = nil)
-    gs = JSONGeneratorState.new(opt_str(o, :indent, ""), opt_str(o, :space, ""), opt_str(o, :space_before, ""),
-                                opt_str(o, :object_nl, ""), opt_str(o, :array_nl, ""),
-                                opt_bool(o, :allow_nan, false), opt_nesting(o, 100))
+  def generate(v, indent: "", space: "", space_before: "", object_nl: "", array_nl: "", allow_nan: false,
+               max_nesting: 100)
+    gs = JSONGeneratorState.new(indent, space, space_before, object_nl, array_nl, allow_nan == true,
+                                nesting(max_nesting))
     JSONGeneratorState.emit(gs, v, 0)
   end
 
-  def fast_generate(v, o = nil) = generate(v, o)
+  def fast_generate(v, indent: "", space: "", space_before: "", object_nl: "", array_nl: "", allow_nan: false,
+                    max_nesting: 100)
+    generate(v, indent: indent, space: space, space_before: space_before, object_nl: object_nl,
+                array_nl: array_nl, allow_nan: allow_nan, max_nesting: max_nesting)
+  end
 
-  # generate with pretty defaults; options as generate's.
-  def pretty_generate(v, o = nil)
-    gs = JSONGeneratorState.new(opt_str(o, :indent, "  "), opt_str(o, :space, " "), opt_str(o, :space_before, ""),
-                                opt_str(o, :object_nl, "\n"), opt_str(o, :array_nl, "\n"),
-                                opt_bool(o, :allow_nan, false), opt_nesting(o, 100))
-    JSONGeneratorState.emit(gs, v, 0)
+  # generate with pretty defaults
+  def pretty_generate(v, indent: "  ", space: " ", space_before: "", object_nl: "\n", array_nl: "\n",
+                      allow_nan: false, max_nesting: 100)
+    generate(v, indent: indent, space: space, space_before: space_before, object_nl: object_nl,
+                array_nl: array_nl, allow_nan: allow_nan, max_nesting: max_nesting)
   end
 
   # Ruby's JSON.dump: no nesting limit, NaN allowed.
-  def dump(v) = generate(v, {allow_nan: true, max_nesting: false})
+  def dump(v) = generate(v, allow_nan: true, max_nesting: false)
 
   # json 2.20's float form (its fpconv): shortest digits, plain notation for exponents in
   # [-6, 15) (and below 10 when there is a fraction), scientific otherwise ("1e+20").

@@ -1,8 +1,6 @@
 # csv: Ruby's CSV library (csv 3.3) in Sake.
 #
-# Keyword options become one optional Record argument:
-#   Ruby  CSV.parse(s, col_sep: ";", headers: true)
-#   Sake  CSV.parse(s, {col_sep: ";", headers: true})
+# Options are Ruby's keyword arguments: CSV.parse(s, col_sep: ";", headers: true).
 # A row is an Array of String | nil (nil for an empty unquoted field, as in Ruby).
 # With `headers:` in the options, the result is a CSVTable of CSVRow (Ruby's CSV::Table / CSV::Row).
 
@@ -11,37 +9,6 @@ MalformedCSVError = Exception.new(:line_number)
 # A writer (Ruby's CSV object for output): `csv << row` appends a line.
 class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_empty, headers]}
   include Bitwise
-
-  # ---- options (a Record; a missing field takes Ruby's default) ----
-
-  def opt_col_sep(o)
-    case o
-    in {col_sep:} then col_sep
-    else ","
-    end
-  end
-
-  def opt_quote_char(o)
-    case o
-    in {quote_char:} then quote_char
-    else "\""
-    end
-  end
-
-  # :auto (Ruby's default) or a String.
-  def opt_row_sep(o)
-    case o
-    in {row_sep:} then row_sep
-    else :auto
-    end
-  end
-
-  def opt_skip_blanks(o)
-    case o
-    in {skip_blanks:} then skip_blanks
-    else false
-    end
-  end
 
   # ---- parsing ----
 
@@ -74,16 +41,13 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
   # Text -> Array of rows of String | nil, no conversion; only the first row when `first`.
   # Each field is one Regexp.match at the position; a quoted field may span row_seps. `line` counts
   # records, as Ruby's lineno does (the old split-based parser counted row_seps).
-  def raw_rows(text, o, first = false)
+  # rs is :auto or a String; skip_lines is nil or a Regexp.
+  def raw_rows(text, col_sep, rs, quote, skip_blanks, skip_lines, first = false)
     rows = Array[]
     return rows if String.empty?(text)
-    col_sep = opt_col_sep(o)
-    quote = opt_quote_char(o)
-    rs = opt_row_sep(o)
     row_sep = rs == :auto ? detect_row_sep(text) : rs
     re = field_regexp(col_sep, quote, row_sep)
     qq = quote + quote
-    skip_blanks = opt_skip_blanks(o)
     n = String.length(text)
     pos = 0
     line = 1
@@ -115,7 +79,7 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
       # a record of nothing is an empty row, not [nil]
       row = Array[] if Array.size(row) == 1 && row[0] == nil && pos - start <= String.length(row_sep)
       next if skip_blanks && Array.empty?(row)
-      next if skip_line?(o, text, start, pos - String.length(delim || ""))
+      next if skip_lines && skip_line?(skip_lines, text, start, pos - String.length(delim || ""))
       Array.push(rows, row)
       return rows if first
     end
@@ -123,12 +87,7 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
   end
 
   # The record's text (characters start...stop, without its row_sep) matches skip_lines.
-  def skip_line?(o, text, start, stop)
-    case o
-    in {skip_lines:} then String.match?(String.[](text, start, stop - start) || "", skip_lines)
-    else false
-    end
-  end
+  def skip_line?(re, text, start, stop) = String.match?(String.[](text, start, stop - start) || "", re)
 
   # ---- converters ----
 
@@ -158,18 +117,13 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
     end
   end
 
-  def convert_row(row, o)
-    case o
-    in {nil_value:} then row = Array.map(row) { |f| f == nil ? nil_value : f }
-    else row
-    end
-    case o
-    in {empty_value:} then row = Array.map(row) { |f| f == "" ? empty_value : f }
-    else row
-    end
-    case o
-    in {converters:} then Array.map(row) { |f| (f in String) ? convert_field(f, converters) : f }
-    else row
+  # c: Ruby's nil_value, empty_value, and converters, as a Record.
+  def convert_row(row, c)
+    case c
+    in {nil_value:, empty_value:, converters:}
+      row = Array.map(row) { |f| f == nil ? nil_value : f } if nil_value != nil
+      row = Array.map(row) { |f| f == "" ? empty_value : f } if empty_value != ""
+      converters ? Array.map(row) { |f| (f in String) ? convert_field(f, converters) : f } : row
     end
   end
 
@@ -183,14 +137,11 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
     end
   end
 
-  def convert_headers(hs, o)
-    case o
-    in {header_converters:} then Array.map(hs) { |h| (h in String) ? convert_header(h, header_converters) : h }
-    else hs
-    end
+  def convert_headers(hs, conv)
+    conv ? Array.map(hs) { |h| (h in String) ? convert_header(h, conv) : h } : hs
   end
 
-  def make_table(rows, o, headers)
+  def make_table(rows, c, headers, header_converters)
     hs = case headers
          in true
            first = Array.shift(rows)
@@ -198,37 +149,61 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
          in String then parse_line(headers)
          in Tuple then Tuple.to_a(headers)
          in Array then headers
-         in false then raise ArgumentError, "headers: false makes Arrays: use CSV.parse"
+         in false then raise ArgumentError, "headers: false makes Arrays: omit headers:"
          end
     hs = Array.map(hs ? hs : Array[]) { it }
-    hs = convert_headers(hs, o)
-    CSVTable.new(hs, Array.map(rows) { |r| CSVRow.pad(Array.dup(hs), convert_row(r, o)) })
+    hs = convert_headers(hs, header_converters)
+    CSVTable.new(hs, Array.map(rows) { |r| CSVRow.pad(Array.dup(hs), convert_row(r, c)) })
   end
 
   # ---- parsing API ----
 
-  # Options are a Record (Ruby's keyword arguments) or nil. Without `headers:` -> Array of rows;
-  # with `headers:` -> CSVTable.
-  def parse(text, o = nil)
-    rows = raw_rows(text, o)
-    case o
-    in {headers:} then make_table(rows, o, headers)
-    else Array.map(rows) { |r| convert_row(r, o) }
+  # Without `headers:` (or with nil) -> Array of rows; with `headers:` -> CSVTable.
+  def parse(text, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
+            header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
+    rows = raw_rows(text, col_sep, row_sep, quote_char, skip_blanks, skip_lines)
+    c = {nil_value: nil_value, empty_value: empty_value, converters: converters}
+    # nil (the default) is its own type, so a call without headers: is typed an Array of rows;
+    # false would share true's type, so it is rejected in make_table
+    case headers
+    in nil then Array.map(rows) { |r| convert_row(r, c) }
+    else make_table(rows, c, headers, header_converters)
     end
   end
 
   # The first row, or nil for empty text; the rest of the text is not parsed, as Ruby's.
-  def parse_line(line, o = nil) = Array.first(Array.map(raw_rows(line, o, true)) { |r| convert_row(r, o) })
+  def parse_line(line, col_sep: ",", row_sep: :auto, quote_char: "\"", converters: nil, skip_blanks: false,
+                 skip_lines: nil, nil_value: nil, empty_value: "")
+    rows = raw_rows(line, col_sep, row_sep, quote_char, skip_blanks, skip_lines, true)
+    c = {nil_value: nil_value, empty_value: empty_value, converters: converters}
+    Array.first(Array.map(rows) { |r| convert_row(r, c) })
+  end
 
-  def read(path, o = nil) = parse(File.read(path), o)
-  def readlines(path, o = nil) = read(path, o)
+  def read(path, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
+           header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
+    parse(File.read(path), col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
+                           converters: converters, header_converters: header_converters,
+                           skip_blanks: skip_blanks, skip_lines: skip_lines, nil_value: nil_value,
+                           empty_value: empty_value)
+  end
+
+  def readlines(path, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
+                header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
+    read(path, col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
+               converters: converters, header_converters: header_converters, skip_blanks: skip_blanks,
+               skip_lines: skip_lines, nil_value: nil_value, empty_value: empty_value)
+  end
 
   # Ruby's CSV.table: headers, numeric converters, Symbol headers.
-  def table(path) = parse(File.read(path), {headers: true, converters: :numeric, header_converters: :symbol})
+  def table(path) = read(path, headers: true, converters: :numeric, header_converters: :symbol)
 
   # Yields CSVRows when `headers:` is given, otherwise Arrays.
-  def foreach(path, o = nil)
-    result = read(path, o)
+  def foreach(path, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
+              header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
+    result = read(path, col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
+                        converters: converters, header_converters: header_converters,
+                        skip_blanks: skip_blanks, skip_lines: skip_lines, nil_value: nil_value,
+                        empty_value: empty_value)
     case result
     in CSVTable then CSVTable.each(result) { |r| yield(r) }
     in Array then Array.each(result) { |r| yield(r) }
@@ -278,46 +253,42 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
 
   def string(c) = Array.join(@lines)
 
-  def writer(o)
-    rs = opt_row_sep(o)
-    hs = case o
-         in {headers:}
-           case headers
-           in String then parse_line(headers)
-           in Tuple then Tuple.to_a(headers)
-           in Array then headers
-           end
+  # headers: nil / false, a String of the header line, or an Array (or Tuple) of headers.
+  def writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers)
+    hs = case headers
+         in String then parse_line(headers)
+         in Tuple then Tuple.to_a(headers)
+         in Array then headers
          else nil
          end
-    fq = case o
-         in {force_quotes:} then force_quotes
-         else false
-         end
-    qe = case o
-         in {quote_empty:} then quote_empty
-         else true
-         end
-    c = CSV.new(String[], opt_col_sep(o), rs == :auto ? "\n" : rs, opt_quote_char(o), fq, qe, hs)
-    case o
-    in {write_headers:} then c << hs if write_headers && hs
-    else nil
-    end
+    c = CSV.new(String[], col_sep, row_sep == :auto ? "\n" : row_sep, quote_char, force_quotes, quote_empty, hs)
+    c << hs if write_headers && hs
     c
   end
 
-  # Ruby's generate(str = nil, **options) appends to str; here only the options.
-  def generate(o = nil)
-    c = writer(o)
+  # Ruby's generate(str = nil, **options) appends to str; here str is not changed.
+  def generate(str = "", col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
+               quote_empty: true, write_headers: false)
+    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers)
     yield(c)
-    string(c)
+    str + string(c)
   end
 
-  def generate_line(row, o = nil) = line_of(writer(o), row)
-  def generate_lines(rows, o = nil) = Array.join(Array.map(rows) { |r| generate_line(r, o) })
+  def generate_line(row, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
+                    quote_empty: true)
+    line_of(writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, false), row)
+  end
+
+  def generate_lines(rows, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
+                     quote_empty: true)
+    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, false)
+    Array.join(Array.map(rows) { |r| line_of(c, r) })
+  end
 
   # mode "w" (write) or "a" (append); yields a writer.
-  def open(path, mode, o = nil)
-    c = writer(o)
+  def open(path, mode, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
+           quote_empty: true, write_headers: false)
+    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers)
     yield(c)
     write_out(path, mode, string(c))
   end

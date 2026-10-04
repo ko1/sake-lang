@@ -209,3 +209,21 @@ p(ss.check_until(/\bf/))
 p(ss.scan("D e"))
 p(ss.scan_until("本"))
 p(ss.rest)
+
+# scan_integer(base: 16): a keyword, as in Ruby
+ss = StringScanner.new("0xFFz -1aG +0x 0XF")
+p(ss.scan_integer(base: 16))
+ss.skip(/z /)
+p(ss.scan_integer(base: 16))
+p(ss.pos)
+ss.skip(/G /)
+p(ss.scan_integer(base: 16))
+p(ss.matched)
+ss.skip(/x /)
+p(ss.scan_integer(base: 16))
+p(ss.scan_integer(base: 10))
+begin
+  ss.scan_integer(base: 8)
+rescue ArgumentError => e
+  puts("ArgumentError: #{e.message}")
+end

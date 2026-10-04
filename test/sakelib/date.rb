@@ -137,6 +137,14 @@ show("step default", xs)
 show("strftime default", d.strftime)
 show("strptime default", [Date.strptime("2024-03-04").to_s, Date.strptime.to_s, try_strptime("03/04/2024", "%F")])
 show("parse comp", [Date.parse("5 Jan 24", false), Date.parse("5 Jan 24", true), Date.parse("Jan 5 99", false), Date.parse])
+show("parse limit", [Date.parse("2020-01-03", true, limit: 10), Date.parse("2020-01-01" + " " * 130, limit: nil)])
+[["2020-01-01" + " " * 130, 128], ["2020-01-02", 5]].each do |s, n|
+  begin
+    Date.parse(s, limit: n)
+  rescue ArgumentError => e
+    show("parse limit error", e.message)
+  end
+end
 
 # today
 t = Time.now

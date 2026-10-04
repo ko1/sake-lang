@@ -49,8 +49,9 @@ Field order for `URI.new` is scheme, userinfo, opaque, host, port, path, query, 
 | `URI.decode_www_form_component(s)`, `(s, enc)` | same | same (`ArgumentError: invalid %-encoding (s)`); `enc` is an encoding name (default `"UTF-8"`) |
 | `URI.encode_uri_component(s)`, `decode_uri_component(s)`, `(s, enc)` | same | same (space ↔ `%20`) |
 | `encode_www_form(enum, enc)`, `encode_www_form_component(s, enc)` | — | missing: converting to another encoding (Sake has no `String#encode`) |
-| `decode_www_form(s, enc, separator:, use__charset_:, isindex:)` | — | missing: keyword arguments; `&` only |
-| `URI::HTTP.build(host: ..., path: ...)` | — | missing: keyword arguments; use `URI.parse("http://#{host}#{path}")` |
+| `decode_www_form(s, enc, separator: ";")` | `URI.decode_www_form(s, enc, separator: ";")` | same |
+| `decode_www_form(s, enc, use__charset_:, isindex:)` | — | missing |
+| `URI::HTTP.build(host: ..., path: ...)` | — | missing: Ruby's argument is a Hash (not keywords), and `URI::HTTP` cannot be named; use `URI.parse("http://#{host}#{path}")` |
 | `u.route_to`, `route_from`, `URI.extract`, `URI.regexp`, `URI.open`, `URI.for`, `URI.register_scheme`, `find_proxy`, `hierarchical?`, `select`, `component` | — | missing (rarely used; `register_scheme` needs classes as values) |
 | `URI::MailTo#to`, `headers`; `URI::FTP#typecode`; `URI::LDAP#dn` ...; `URI::File` host rules | — | missing: scheme-specific parts. FTP's path drops its leading "/" as Ruby's does. MailTo is not validated (Ruby raises `InvalidComponentError` for a bad address) |
 
@@ -108,3 +109,11 @@ private functions.
 - Speed (`phase2/bench_uri.sake`: parse + merge + to_s of 300 URIs, encode/decode a 300-pair form;
   CPU s of the whole `bin/sake --strict` run, 3 runs, load about 37 on 16 cores): before
   2.58 / 2.64 / 2.58, after 1.57 / 1.51 / 1.64.
+
+## Keyword arguments
+
+- `decode_www_form(s, enc = "UTF-8", separator: "&")` takes Ruby's `separator:` keyword after the
+  optional encoding. New test cases: `separator: ";"` (empty pairs and a trailing separator, as
+  Ruby), `"&"` not splitting under `";"`, and `enc` with `separator:` together. A misspelled
+  keyword is a static error: `URI.decode_www_form(s, sep: ";")` → `error: URI.decode_www_form has
+  no keyword parameter `sep``.

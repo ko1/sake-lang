@@ -7,14 +7,14 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 
 ## Conventions
 
-- **Keyword options become an optional last Record argument** (phase 2; phase 1 had `_with` names).
-  Sake has no keyword arguments, so `CSV.parse(s, col_sep: ";", headers: true)` is
-  `CSV.parse(s, {col_sep: ";", headers: true})`; the parameter is `o = nil` (an empty Record `{}`
-  cannot be written). A field left out of the Record takes Ruby's default. The library reads the Record with `case o in {col_sep:} ... else ","`;
-  the checker specializes this per Record type, so the type of the result follows the options given.
-- **`headers:` decides the result type by its presence.** `CSV.parse(s, {headers: ...})` returns
-  a `CSVTable`; without the field it returns an Array of rows. Both are known before running (the
-  Record's type picks the branch), so there is no `Array | CSVTable` union at the call site.
+- **Keyword arguments**, as in Ruby: `CSV.parse(s, col_sep: ";", headers: true)`. Each option is a
+  keyword parameter with Ruby's default (phase 1 had `_with` names, phase 2 an optional Record).
+  A misspelled keyword is a static error (see "Keyword arguments" below).
+- **`headers:` decides the result type.** Its default is nil (Ruby's is false; both mean "no
+  headers"), and nil is a type of its own, so `case headers in nil` selects the branch when the
+  program is checked: `CSV.parse(s)` is an Array of rows, `CSV.parse(s, headers: true)` a
+  `CSVTable`, with no `Array | CSVTable` union at the call site. `true` and `false` share one type,
+  so `headers: false` cannot select Arrays; it raises ArgumentError ("omit headers:").
 - **Cells.** An unquoted empty field is `nil`, as in Ruby, so a row is an Array of `String | nil`
   (`String[]` cannot hold nil). With `converters:`, cells become `String | Integer | Float | nil`,
   and `--strict` asks for a `case`/`in` before arithmetic, which is the honest type.
@@ -30,20 +30,20 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | Ruby | Sake | |
 |---|---|---|
 | `CSV.parse(s)` | `CSV.parse(s)` | same |
-| `CSV.parse(s, **opts)` | `CSV.parse(s, {opts})` | same (options in a Record) |
-| `CSV.parse(s, headers: true)` | `CSV.parse(s, {headers: true})` → CSVTable | same (options in a Record) |
+| `CSV.parse(s, col_sep: ";", ...)` | `CSV.parse(s, col_sep: ";", ...)` | same |
+| `CSV.parse(s, headers: true)` | `CSV.parse(s, headers: true)` → CSVTable | same |
 | `CSV.parse(s) { \|row\| }` | — | missing (use `Array.each(CSV.parse(s))`) |
-| `CSV.parse_line(s[, **opts])` | `CSV.parse_line(s[, o])` | same (only the first row is parsed, as Ruby) |
-| `CSV.read(path[, **opts])`, `readlines` | `CSV.read(p[, o])`, `readlines(p[, o])` | same |
-| `CSV.foreach(path[, **opts]) { }` | `CSV.foreach(p[, o]) { }` | same |
+| `CSV.parse_line(s, **opts)` | `CSV.parse_line(s, **opts)` | same (only the first row is parsed, as Ruby); no `headers:` / `header_converters:` |
+| `CSV.read(path, **opts)`, `readlines` | `CSV.read(p, **opts)`, `readlines(p, **opts)` | same |
+| `CSV.foreach(path, **opts) { }` | `CSV.foreach(p, **opts) { }` | same |
 | `CSV.foreach(path, mode, **opts) { }` | — | differs: no mode argument (reading is the only mode) |
 | `CSV.table(path)` | `CSV.table(path)` | same |
 | `CSV.generate { \|csv\| csv << row }` | same | same |
-| `CSV.generate(**opts) { }` | `CSV.generate(o) { }` | same |
-| `CSV.generate(str) { }` (append to str) | — | missing (the first optional argument is the options) |
-| `CSV.generate_line(row[, **opts])` | `CSV.generate_line(row[, o])` | same |
-| `CSV.generate_lines(rows[, **opts])` | `CSV.generate_lines(rows[, o])` | same |
-| `CSV.open(path, "w"/"a"[, **opts]) { \|csv\| }` | `CSV.open(path, mode[, o]) { }` | same (write modes only; mode required) |
+| `CSV.generate(**opts) { }` | `CSV.generate(**opts) { }` | same |
+| `CSV.generate(str, **opts) { }` | `CSV.generate(str, **opts) { }` | same result; `str` itself is not changed |
+| `CSV.generate_line(row, **opts)` | `CSV.generate_line(row, **opts)` | same |
+| `CSV.generate_lines(rows, **opts)` | `CSV.generate_lines(rows, **opts)` | same |
+| `CSV.open(path, "w"/"a", **opts) { \|csv\| }` | `CSV.open(path, mode, **opts) { }` | same (write modes only; mode required) |
 | `CSV.open(path, "r")`, `CSV.new(io)`, `#shift`, `#gets`, `#each`, `#lineno` | — | missing |
 | `csv << row`, `add_row`, `puts` | `csv << row`, `CSV.add_row(c, r)`, `CSV.puts(c, r)` | same |
 | `"a,b".parse_csv`, `[..].to_csv` | `String.parse_csv(s)`, `Array.to_csv(a)`, `Tuple.to_csv(t)` | same |
@@ -66,13 +66,16 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 
 ## What differs from Ruby, and why
 
-- Options are a Record argument, not keywords (no keyword arguments). `CSV.generate(str)` and
-  `CSV.foreach(path, mode)` lose their leading optional String: there the options come first.
-- **A misspelled option is silently ignored** (`{colsep: ";"}` parses with `,`). Ruby raises
-  `ArgumentError: unknown keyword`. A function cannot list a Record's fields, so the library cannot
-  check them.
-- `headers: false` raises ArgumentError ("use CSV.parse"): the result type is chosen by the presence of
-  the field, so `{headers: false}` would have to return a table.
+- **Keyword arguments.** In the table, `**opts` stands for the keywords listed above, not a rest
+  parameter. Each function takes the keywords that apply to it: parsing ones for `parse`, `read`,
+  `readlines`, `foreach` (and `parse_line`, without `headers:`/`header_converters:`), writing ones
+  for `generate*` and `open`. Ruby accepts every option everywhere. An unknown keyword is a static
+  error, where Ruby raises `ArgumentError: unknown keyword` while running and the former Record
+  argument ignored it: `CSV.parse(s, col_seps: ";")` → `error: CSV.parse has no keyword parameter
+  `col_seps`` / `hint: did you mean `col_sep:`?`.
+- `headers: false` raises ArgumentError ("omit headers:"): `true` and `false` are one type, so a
+  `false` could not give an Array where `true` gives a table.
+- `CSV.foreach(path, mode)` has no mode argument.
 - `CSVRow.new` is the Struct constructor and does not pad; `CSVRow.pad` does what Ruby's `Row.new` does.
 - `CSV.read` of a missing file raises `IOError` (Ruby: `Errno::ENOENT`), as Sake's `File.read` does.
 - `values_at` takes one Array (user functions have no rest parameters).
@@ -93,8 +96,7 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 
 ## Built-ins I would have used
 
-- **A way to list a Record's fields** (or a checked "Record of these optional fields" type): an
-  options Record with a misspelled field is silently ignored; Ruby rejects unknown keywords.
+- ~~A way to list a Record's fields~~: keyword parameters now check option names.
 - ~~`String.index(s, t, start)`~~: added; phase 2 parses with `Regexp.match(re, s, pos)`.
 - ~~`File.delete`~~: added (the test still leaves `/tmp/sakelib_csv_test.csv`: the .rb must print the same).
 - **Typed Arrays with a union element type** (`(String|nil)[]`): rows are untyped Arrays because nil
@@ -148,3 +150,13 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - **Speed** (`experiments/2026-10-03-sakelib-port/phase2/bench_csv.sake`: `CSV.parse` of 2000 rows of
   5 fields, 3 quoted, one with `""` and a comma; `bin/sake --strict`, CPU user+sys, 3 runs, shared
   machine at load ~35 on 16 cores): before 5.36 / 5.87 / 5.94 s, after 2.61 / 2.50 / 2.44 s. Startup is ~0.7 s.
+
+## Keyword arguments
+
+- `parse`, `parse_line`, `read`, `readlines`, `foreach`, `generate`, `generate_line`,
+  `generate_lines`, `open` take Ruby's keywords instead of `o = nil`; `generate` gained Ruby's
+  leading `str`. The `opt_*` readers are gone: the API passes the values to the helpers, with one
+  internal Record `{nil_value:, empty_value:, converters:}` for the per-row conversion. The test and
+  `csv.rb` write the same calls, plus a "keyword arguments" section (keywords in another order,
+  `open`/`foreach` with `col_sep: ";"` and headers, `generate(str, ...)`).
+- The default `headers: nil` (not false) is what keeps the result type static; see Conventions.

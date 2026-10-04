@@ -92,6 +92,15 @@ plain.version = "1.2"
 p(plain.ver)
 p(op.ver)
 
+# into: as a keyword, as in Ruby
+h3 = {}
+p(op.permute(["a", "-v", "b"], into: h3))
+p(op.order(["-n", "z", "a", "-v"], into: h3))
+puts(show(h3))
+args = ["x", "--count", "2"]
+p(op.permute!(args, into: h3))
+puts(show(h3))
+
 # --help that was not declared: prints the help and exits 0 (abbreviated, as Ruby)
 begin
   plain.parse(["-a", "--he"])

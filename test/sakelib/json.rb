@@ -14,11 +14,11 @@ p JSON.parse("/* comment */ [1, // line\n 2]")
 p JSON.parse("\"日本語\"")
 
 # options
-p JSON.parse("{\"a\": {\"b\": [1, {\"c\": 2}]}}", {symbolize_names: true})
-p JSON.parse("[NaN, Infinity, -Infinity]", {allow_nan: true})
-p JSON.parse("[1, 2,]", {allow_trailing_comma: true})
-p JSON.parse("{\"a\": 1,}", {allow_trailing_comma: true})
-p JSON.parse("[[[1]]]", {max_nesting: 3})
+p JSON.parse("{\"a\": {\"b\": [1, {\"c\": 2}]}}", symbolize_names: true)
+p JSON.parse("[NaN, Infinity, -Infinity]", allow_nan: true)
+p JSON.parse("[1, 2,]", allow_trailing_comma: true)
+p JSON.parse("{\"a\": 1,}", allow_trailing_comma: true)
+p JSON.parse("[[[1]]]", max_nesting: 3)
 
 # a typical use: read a config and use its values
 cfg = JSON.parse("{\"server\": {\"host\": \"localhost\", \"port\": 8080}, \"users\": [\"ko1\", \"matz\"]}")
@@ -56,7 +56,7 @@ end
 deep_ok = JSON.parse("[" * 101 + "]" * 101)
 p deep_ok.size if deep_ok in Array
 begin
-  JSON.parse("[[[1]]]", {max_nesting: 2})
+  JSON.parse("[[[1]]]", max_nesting: 2)
 rescue JSON::ParserError => e
   puts "NestingError: #{e.message}"
 end
@@ -81,7 +81,7 @@ begin
 rescue JSON::GeneratorError => e
   puts "GeneratorError: #{e.message}"
 end
-puts JSON.generate([0.0 / 0.0, -1.0 / 0.0], {allow_nan: true})
+puts JSON.generate([0.0 / 0.0, -1.0 / 0.0], allow_nan: true)
 begin
   JSON.generate([255.chr])
 rescue JSON::GeneratorError => e
@@ -95,13 +95,13 @@ begin
 rescue JSON::ParserError => e
   puts "NestingError: #{e.message}"
 end
-puts JSON.generate({"a" => [1, 2]}, {space: " ", object_nl: " "})
+puts JSON.generate({"a" => [1, 2]}, space: " ", object_nl: " ")
 
 # pretty_generate
 puts JSON.pretty_generate({"a" => [], "b" => {}, "c" => [1, {"d" => nil, "e" => "x"}]})
 puts JSON.pretty_generate([])
 puts JSON.pretty_generate(1)
-puts JSON.pretty_generate({"a" => 1, "b" => [2]}, {indent: "\t", space_before: " "})
+puts JSON.pretty_generate({"a" => 1, "b" => [2]}, indent: "\t", space_before: " ")
 
 # dump / load
 puts JSON.dump({"n" => 0.0 / 0.0})
@@ -121,9 +121,19 @@ src = "{\"a\":[1,2.5,\"x\",null,true,{\"b\":[]}],\"c\":\"\\u00e9\\n\"}"
 puts JSON.generate(JSON.parse(src))
 p JSON.parse(JSON.pretty_generate(JSON.parse(src))) == JSON.parse(src)
 
-# the optional options argument of load_file and fast_generate
+# keyword arguments of load_file and fast_generate
 path = "json_test_tmp.json"
 File.write(path, "{\"k\": [1, 2,]}")
-p JSON.load_file(path, {symbolize_names: true, allow_trailing_comma: true})
+p JSON.load_file(path, symbolize_names: true, allow_trailing_comma: true)
 File.delete(path)
-puts JSON.fast_generate([1, 2], {array_nl: " "})
+puts JSON.fast_generate([1, 2], array_nl: " ")
+
+# keyword arguments: any order, defaults kept, max_nesting: false for no limit
+puts JSON.pretty_generate({"a" => [1]}, array_nl: "", indent: "")
+puts JSON.generate([[[1]]], max_nesting: false, space: " ")
+p JSON.parse("[[[[1]]]]", max_nesting: nil, symbolize_names: false)
+begin
+  JSON.generate([[1]], max_nesting: 1)
+rescue JSON::NestingError => e
+  puts "NestingError: #{e.message}"
+end

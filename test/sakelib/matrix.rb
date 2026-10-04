@@ -161,6 +161,7 @@ puts
 show("zero", Vector.zero(3))
 show("zero?", Vector.zero(2).zero?)
 show("basis", Vector.basis(size: 3, index: 1))
+show("basis kw order", Vector.basis(index: 0, size: 2))
 show("covector", v.covector)
 show("to_matrix", v.to_matrix)
 show("v * matrix", v * Matrix.row_vector([1, 2]))

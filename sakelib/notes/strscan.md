@@ -12,7 +12,7 @@ defined): Sake has no nested names.
 | Ruby | Sake | |
 |---|---|---|
 | `StringScanner.new(s)` | `StringScanner.new(s)` | same |
-| `StringScanner.new(s, fixed_anchor: true)` | — | missing (no keyword arguments) |
+| `StringScanner.new(s, fixed_anchor: true)` | — | missing (`StringScanner.new` is the constructor generated from the fields, which takes no keywords) |
 | `ss.scan(re_or_str)` | `StringScanner.scan(ss, p)` | same |
 | `ss.scan_until(p)` | `StringScanner.scan_until(ss, p)` | same |
 | `ss.skip(p)` / `ss.skip_until(p)` | `StringScanner.skip(ss, p)` / `skip_until` | same (byte lengths) |
@@ -22,8 +22,8 @@ defined): Sake has no nested names.
 | `ss.scan_full(p, adv, str)` / `search_full` | `StringScanner.scan_full(ss, p, adv, str)` / `search_full` | same (result type is `String \| Integer \| nil`) |
 | `ss.getch` | `StringScanner.getch(ss)` | same |
 | `ss.get_byte` / `ss.scan_byte` | — | missing (see below) |
-| `ss.scan_integer` | `StringScanner.scan_integer(ss)` | same (base 10 only) |
-| `ss.scan_integer(base: 16)` | — | missing (no keyword arguments) |
+| `ss.scan_integer` | `StringScanner.scan_integer(ss)` | same |
+| `ss.scan_integer(base: 16)` | `StringScanner.scan_integer(ss, base: 16)` | same (optional `0x`; other bases raise Ruby's ArgumentError) |
 | `ss.peek(n)` | `StringScanner.peek(ss, n)` | same (n bytes, may cut a character, as Ruby) |
 | `ss.peek_byte` | `StringScanner.peek_byte(ss)` | same |
 | `ss.unscan` | `StringScanner.unscan(ss)` | same (raises `ScanError`) |
@@ -83,7 +83,8 @@ defined): Sake has no nested names.
 - A Regexp usable as a Hash key (or `Regexp.to_s`, Ruby's `(?flags:source)`): the `\G` table is keyed
   by `Kernel.inspect`, and the flags are parsed out of it.
 - `MatchData.byteoffset(m, i)`: byte offsets of a match without re-measuring the matched text.
-- (Language) optional and keyword parameters: `new(s, fixed_anchor:)`, `scan_integer(base:)`.
+- (Language) ~~keyword parameters~~: `scan_integer(base:)` now takes one. `new(s, fixed_anchor:)`
+  remains: `T.new` is the constructor generated from the fields and cannot take keywords.
 
 ## Friction
 
@@ -131,3 +132,12 @@ defined): Sake has no nested names.
   - `phase2/bench_strscan_long.sake` (the copy-sensitive case: 3000 steps at the head of a 1 MB
     String, each a failing `check(/b/)` and a `scan(/a/)`): before 5.60 / 5.41 / 5.64 s, after
     2.43 / 2.49 / 2.46 s.
+
+## Keyword arguments
+
+- `scan_integer(ss, base: 10)` takes Ruby's keyword; `base: 16` scans `[+-]?(0x)?\h+` and converts
+  with `String.hex` (`String.to_i` has no base argument). New test cases: hex with and without
+  `0x`, a sign, `"+0x"` backing off to `"+0"`, and `base: 8` → `Unsupported integer base: 8,
+  expected 10 or 16`. A misspelled keyword is a static error:
+  `StringScanner.scan_integer(ss, bas: 16)` → `error: StringScanner.scan_integer has no keyword
+  parameter `bas`` / `hint: did you mean `base:`?`.

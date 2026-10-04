@@ -165,3 +165,13 @@ try_parse("x\n\"a\nb\"\nc,\"d")
 show("|| with quotes", CSV.parse("\"a||b\"||c||\"\"", col_sep: "||"))
 show("quote_char |", CSV.parse("|a,b|,|c||d|", quote_char: "|"))
 show("skip_lines crlf", CSV.parse("#a\r\nb\r\n#c\r\n\"d\r\ne\"\r\nf", skip_lines: /\A#/))
+
+puts "== keyword arguments"
+show("kw order", CSV.parse("1|'a|b'", quote_char: "'", converters: :integer, col_sep: "|"))
+show("kw generate_line", CSV.generate_line(["a|b", nil], quote_char: "'", col_sep: "|", force_quotes: true))
+show("kw generate", CSV.generate(col_sep: "\t", row_sep: "\r\n") { |csv| csv << ["a", "b c"] })
+CSV.open(path, "w", col_sep: ";", headers: ["k", "v"], write_headers: true) { |csv| csv << ["x", "1;2"] }
+show("kw open", File.read(path))
+CSV.foreach(path, col_sep: ";", headers: true) { |row| show("kw foreach", row) }
+show("kw readlines", CSV.readlines(path, col_sep: ";", skip_lines: /\Ak/))
+show("kw generate str", CSV.generate("h\n", col_sep: ";") { |csv| csv << ["a", "b"] })
