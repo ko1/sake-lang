@@ -30,8 +30,8 @@ order of checks and messages.
 | `JSON.pretty_generate(obj)` | `JSON.pretty_generate(obj)` | same |
 | `JSON.pretty_generate(obj, indent: "\t", ...)` | `JSON.pretty_generate(obj, indent: "\t", ...)` | same |
 | `JSON.dump(obj)` | `JSON.dump(obj)` | same (NaN allowed, no nesting limit) |
-| `JSON.dump(obj, io)` | | missing (no IO values) |
-| `JSON.load(s)` | `JSON.load(s)` | same for a String or nil (blank input gives nil, NaN allowed); no proc, no IO |
+| `JSON.dump(obj, io)` | `JSON.dump(obj, io)` | same: writes to the IO and returns it (phase 3) |
+| `JSON.load(s)`, `JSON.load(io)` | `JSON.load(s)`, `JSON.load(io)` | same for a String, an IO (read to its end), or nil; `""` gives nil, blank `"  "` raises ParserError, NaN allowed; no proc |
 | `JSON.load_file(path)`, `(path, symbolize_names: true, ...)` | `JSON.load_file(path)`, `(path, symbolize_names: true, ...)` | same |
 | `obj.to_json` | `Hash.to_json(h)`, `Array.to_json(a)`, `String.to_json(s)`, `Integer.to_json(n)`, `Float.to_json(f)` | differs; `nil.to_json`, `true.to_json` missing (nil and true/false have no namespace) |
 | `JSON[s]`, `JSON(s)` | | missing (`JSON[...]` would be a typed-Array literal) |
@@ -149,3 +149,16 @@ callers narrow with `if v in Hash`. The test's config example does this.
   `json.rb` now write the same calls (`JSON.parse(s, symbolize_names: true)`), and add cases for
   keywords in another order, `max_nesting: false` / `nil`, and `generate(..., max_nesting: 1)`.
 - Passing keywords on needs `k: k` (Ruby 3.1's shorthand `k:` is `unsupported syntax: implicit `k:``).
+
+## IO and optional blocks (phase 3)
+
+- `JSON.dump(obj, io = nil)`: with an IO (`IO.stdout`, a `File.open`), writes the text and returns
+  the IO, as Ruby; without, returns the String.
+- `JSON.load(source)` takes a String, an IO, or nil. Fix found by the test: `JSON.load("  ")` gave
+  nil (the input was stripped); Ruby's json 2.20 gives nil only for `""` and raises ParserError for
+  blank text, and now so does the port.
+- Two IO problems found, worked around: `in IO` is rejected ("`IO` is not a type",
+  `json_bug_io_not_a_pattern_type.sake`), so `load` matches `nil` and `String` and treats the rest as
+  an IO; and an IO is not `==` to itself (`json_bug_io_equality.sake`), so the test prints the IO
+  `dump` returns (`#<File:...>`) instead of comparing it.
+- No optional block: Ruby's `JSON.load(s, proc)` takes a proc, not a block.

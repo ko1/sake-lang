@@ -70,3 +70,8 @@ puts
 p Prime.first(3000).last
 p Prime.each(30000).to_a.size
 p Prime.first(5)
+
+# without a block: the primes as an Array (Ruby: an Enumerator, here turned into one with to_a)
+p(Prime.each(30).to_a)
+p(Integer.each_prime(20).to_a)
+p(Prime.each(1).to_a)

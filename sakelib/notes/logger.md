@@ -3,10 +3,11 @@
 `require "logger"`. A `Logger` is a Sake type whose operations take the logger first:
 
 ```ruby
-log = Logger.new(:stdout)              # or :stderr, a file path, or nil for no output
+log = Logger.new(IO.stdout)            # or IO.stderr, a File.open IO, a file path, or nil
 Logger.set_level(log, :warn)           # or Logger.WARN, or "WARN"
 Logger.set_progname(log, "app")
 Logger.warn(log, "disk almost full")   # W, [2026-10-03T12:34:56.123456]  WARN -- app: disk almost full
+Logger.debug(log) { expensive_dump }   # the block runs only when the level passes
 Logger.set_formatter(log, "%<severity>s %<progname>s: %<msg>s\n")
 ```
 
@@ -17,14 +18,15 @@ Ruby redefines `Time.now`. Ruby's formatter is also patched to drop the pid (see
 
 | Ruby | Sake | |
 |---|---|---|
-| `Logger.new($stdout)` / `Logger.new($stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | `Logger.new(:stdout)` / `Logger.new(:stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | differs: there is no IO value, so the streams are Symbols. `:stderr` writes with `warn`, which adds a newline to text without one (only `<<` can give such text) (phase 2) |
-| an IO, `File::NULL` | — | missing: Sake has no IO values |
+| `Logger.new($stdout)` / `Logger.new($stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | `Logger.new(IO.stdout)` / `Logger.new(IO.stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | same (phase 3; phase 2 had `:stdout`/`:stderr`) |
+| `Logger.new(io)` (a `File.open`) | `Logger.new(io)` | same; `Logger.close` leaves an IO it was given open (Ruby closes it) |
+| `File::NULL` | `nil` | differs: no `File::NULL` constant |
 | `Logger.new(dev, level: ..., progname: ..., formatter: ...)` | `new`, then the setters | differs: no keyword arguments |
 | `Logger::DEBUG` ... `Logger::UNKNOWN` | `Logger.DEBUG` ... `Logger.UNKNOWN` | differs: Sake has no value constants, so these are functions |
 | `log.level` / `log.level = x` | `Logger.get_level(log)` / `Logger.set_level(log, x)` | same (Integer, Symbol, or String; anything else raises `ArgumentError`, "invalid log level: ...") |
 | `log.debug(msg = nil)` ... `log.unknown(msg = nil)` | `Logger.debug(log, msg = nil)` ... `Logger.unknown(log, msg = nil)` | same (phase 2: the argument is optional; with none, the progname is logged, as Ruby) |
-| `log.info { "msg" }`, `log.info("prog") { "msg" }` | — | missing: a function that `yield`s must always be given a block, so the block form would need separate names |
-| `log.add(sev, msg = nil, prog = nil)`, `log.log` | `Logger.add(log, sev, msg = nil, prog = nil)`, `Logger.log` | same (with msg nil, prog, or else the logger's progname, is the message; severity nil is UNKNOWN; above 5 prints `ANY`) |
+| `log.info { "msg" }`, `log.info("prog") { "msg" }` | `Logger.info(log) { "msg" }`, `Logger.info(log, "prog") { "msg" }` | same (phase 3, `block_given?`): the block gives the message and runs only when the level passes; the argument is then the progname |
+| `log.add(sev, msg = nil, prog = nil) { }`, `log.log` | `Logger.add(log, sev, msg = nil, prog = nil) { }`, `Logger.log` | same (with msg nil, the block's value, or else prog, or else the logger's progname, is the message; severity nil is UNKNOWN; above 5 prints `ANY`) |
 | `log << "raw"` | `Logger.<<(log, "raw")` | same (returns the bytesize) |
 | `log.debug?` ... `log.fatal?` | `Logger.debug?(log)` ... | same |
 | `log.debug!` ... `log.fatal!` | `Logger.debug!(log)` ... | same |
@@ -44,19 +46,18 @@ Ruby redefines `Time.now`. Ruby's formatter is also patched to drop the pid (see
 - **Formatter.** Ruby's formatter is a proc, and Sake's blocks cannot be stored. A format string over
   named fields (`Kernel.format` with a Hash) covers the usual layouts. A formatter that computes
   something, such as JSON escaping, cannot be expressed.
-- **Devices.** Sake has no IO values, so the device is `:stdout`, a path, or nil.
-- **Files are appended by reading and rewriting.** Sake's `File.write` replaces the whole file, so
-  each entry reads the file and writes it back. This is O(n²) in the file's size. The header
-  (`# Logfile created on ...`) is written when the file does not exist. Ruby writes it when
-  `Logger.new` creates the file; the Sake port writes it at the first entry.
+- **Devices.** An IO (`IO.stdout`, `IO.stderr`, a `File.open`), a path, or nil.
+- **Path devices are opened for appending** (`File.open(path, "a")`) at the first entry, and each
+  entry is flushed (Ruby's log file is `sync = true`). The header (`# Logfile created on ...`) is
+  written when the file does not exist. Ruby writes it when `Logger.new` creates the file; the Sake
+  port writes it at the first entry (`new` is the Struct's constructor).
 - **Constants.** `Logger::INFO` cannot be written. `Logger.INFO` is a function with an uppercase
   name, and Sake accepts that.
 
 ## Built-ins requested
 
-- **Appending to a file** (`File.open(path, "a")`, or `File.append(path, s)`): log files are
-  append-only, and rewriting the whole file per line is quadratic.
-- ~~`$stderr` / `warn`~~: added; `:stderr` uses `warn`. A stderr `print` (no added newline) is still missing.
+- ~~**Appending to a file**~~: `File.open(path, "a")` (phase 3); the quadratic rewrite is gone.
+- ~~`$stderr` / `warn`~~: `IO.stderr` (phase 3), which also writes text without a newline as is.
 - **`Process.pid`**: Ruby's default log line includes it.
 - ~~`File.delete`~~: added.
 
@@ -87,3 +88,16 @@ Speed (15000 formatted entries to a nil device, 2000 below the level). CPU s (us
 | after | 5.23 | 5.60 | 6.02 |
 
 Result: no difference beyond the spread.
+
+## IO and optional blocks (phase 3)
+
+- The device is an `IO` value: `Logger.new(IO.stdout)`, `Logger.new(IO.stderr)`, or a `File.open`
+  IO; a path is opened with `File.open(path, "a")`. The `:stdout`/`:stderr` Symbols are gone.
+- `debug` ... `unknown`, `add`, and `log` check `block_given?`, so Ruby's block forms work:
+  `Logger.info(log) { "msg" }`, `Logger.info(log, "prog") { "msg" }`. The test checks that the block
+  does not run below the level.
+- Passing the block on had to be written `block_given? ? add(l, 1, nil, p, &b) : add(l, 1, nil, p)`:
+  `add(..., &b)` alone makes `info` need a block, although `add` checks `block_given?`
+  (`logger_bug_pass_on_optional_block.sake`; the error also says `info` "uses `yield`").
+- `test/sakelib/logger.{sake,rb}` add the block forms, a `File.open` IO as the device, and a new
+  path (the header line); the temporary files (`logger_test_*.tmp`) are deleted by both.

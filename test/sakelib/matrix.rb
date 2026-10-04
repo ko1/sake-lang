@@ -265,3 +265,16 @@ rect3 = Matrix[[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]
   show("map #{w}", rect3.t.map(w) { |e| e * 10 })
 end
 try("each :foo") { rect3.each(:foo) { |e| e } }
+
+# optional blocks: row/column with a block yield the elements and return the matrix; each
+# without a block gives the elements (Ruby: an Enumerator, turned into an Array with to_a)
+ob = Matrix[[1, 2], [3, 4]]
+rs = []
+p(ob.row(1) { |e| rs.push(e) })
+p(ob.column(0) { |e| rs.push(e * 10) })
+p(ob.row(5) { |e| rs.push(e) })
+p(ob.column(2) { |e| rs.push(e) })
+p(rs)
+p(ob.each.to_a)
+p(ob.each(:diagonal).to_a)
+p(Vector[1, 2].each.to_a)

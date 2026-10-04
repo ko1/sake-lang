@@ -16,7 +16,7 @@ division by the wheel of 30, then deterministic Miller-Rabin with Ruby's base ta
 |---|---|---|
 | `Prime.each(30) { \|p\| }` | `Prime.each(30) { \|p\| }` | same (returns the last block value, as in Ruby) |
 | `Prime.each { \|p\| ... break ... }` | `Prime.each { \|p\| ... break ... }` | same (phase 2; the bound was required) |
-| `Prime.each(30)` without a block (an Enumerator), `.to_a` | `Prime.to_a(30)` | differs: Sake has no Enumerators |
+| `Prime.each(30)` without a block (an Enumerator), `.to_a` | `Prime.each(30)` (an Array), or `Prime.to_a(30)` | differs: an Array, not an Enumerator; `Prime.each` without a block and without a bound raises ArgumentError |
 | `Prime.each(n).each_with_index { \|p, i\| }` | `Prime.each_with_index(n) { \|p, i\| }` | differs (same reason) |
 | `Prime.each_with_index { \|p, i\| ... break ... }` | same | same (phase 2) |
 | `Prime.first(n)`, `Prime.take(n)` | same | same |
@@ -25,7 +25,7 @@ division by the wheel of 30, then deterministic Miller-Rabin with Ruby's base ta
 | `n.prime?` | `Integer.prime?(n)` | same |
 | `Prime.prime_division(n)`, `n.prime_division` | `Prime.prime_division(n)`, `Integer.prime_division(n)` | same: `[[p, e], ...]`, an Array of Tuples, which prints as Ruby's; negative n gives `[-1, 1]` first, and 0 raises ZeroDivisionError |
 | `Prime.int_from_prime_division(pd)`, `Integer.from_prime_division(pd)` | same | same |
-| `Integer.each_prime(ub) { }` | same | same |
+| `Integer.each_prime(ub) { }`, without a block | same; without a block an Array | same / differs (Array, not an Enumerator) |
 | `Prime.prime?(n, generator)`, `prime_division(n, generator)` | | missing: no generator objects |
 | `Prime::EratosthenesGenerator`, `TrialDivisionGenerator`, `Generator23`, `PseudoPrimeGenerator` (`succ`, `next`, `rewind`, `upper_bound=`) | | missing (see below) |
 | `Prime.lazy`, and other Enumerable methods on `Prime` (`select`, `each_slice`, ...) | | missing: no Enumerators or lazy sequences; `each(nil)` with `break` covers most uses |
@@ -96,3 +96,16 @@ sessions, load average 33-38 throughout; "before" is commit af197cd):
 times; now the sieve runs once per doubling for the whole program.
 
 Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matrix.txt`.
+
+## IO and optional blocks
+
+`Prime.each(ub)` and `Integer.each_prime(ub)` check `block_given?`: with a block they are as
+before; without one they give the Array of primes <= ub, which is what Ruby's Enumerator gives with
+`.to_a`. `Integer.each_prime` passes its block on with `&b` (written as
+`block_given? ? Prime.each(ub, &b) : Prime.each(ub)`, because `&b` alone makes the block required:
+[logger_bug_pass_on_optional_block.sake](logger_bug_pass_on_optional_block.sake)).
+
+Bug found: a `yield` inside a `while` loop is reported as "no block is given" even after
+`return ... unless block_given?`; the same guard without the loop passes
+([prime_bug_yield_in_loop_after_guard.sake](prime_bug_yield_in_loop_after_guard.sake)).
+`Prime.each` puts the loop in the `if block_given?` branch instead.

@@ -32,19 +32,22 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | `CSV.parse(s)` | `CSV.parse(s)` | same |
 | `CSV.parse(s, col_sep: ";", ...)` | `CSV.parse(s, col_sep: ";", ...)` | same |
 | `CSV.parse(s, headers: true)` | `CSV.parse(s, headers: true)` → CSVTable | same |
-| `CSV.parse(s) { \|row\| }` | — | missing (use `Array.each(CSV.parse(s))`) |
+| `CSV.parse(s, **opts) { \|row\| }` | `CSV.parse(s, **opts) { \|row\| }` | same (phase 3, `block_given?`): yields Arrays, or CSVRows with `headers:`, and gives nil |
 | `CSV.parse_line(s, **opts)` | `CSV.parse_line(s, **opts)` | same (only the first row is parsed, as Ruby); no `headers:` / `header_converters:` |
 | `CSV.read(path, **opts)`, `readlines` | `CSV.read(p, **opts)`, `readlines(p, **opts)` | same |
 | `CSV.foreach(path, **opts) { }` | `CSV.foreach(p, **opts) { }` | same |
-| `CSV.foreach(path, mode, **opts) { }` | — | differs: no mode argument (reading is the only mode) |
+| `CSV.foreach(path, mode, **opts) { }` | `CSV.foreach(path, mode, **opts) { }` | same (phase 3); the file is read whole, not streamed |
+| `CSV.foreach(path)` without a block (Enumerator) | — | missing (no Enumerators) |
 | `CSV.table(path)` | `CSV.table(path)` | same |
 | `CSV.generate { \|csv\| csv << row }` | same | same |
 | `CSV.generate(**opts) { }` | `CSV.generate(**opts) { }` | same |
 | `CSV.generate(str, **opts) { }` | `CSV.generate(str, **opts) { }` | same result; `str` itself is not changed |
 | `CSV.generate_line(row, **opts)` | `CSV.generate_line(row, **opts)` | same |
 | `CSV.generate_lines(rows, **opts)` | `CSV.generate_lines(rows, **opts)` | same |
-| `CSV.open(path, "w"/"a", **opts) { \|csv\| }` | `CSV.open(path, mode, **opts) { }` | same (write modes only; mode required) |
-| `CSV.open(path, "r")`, `CSV.new(io)`, `#shift`, `#gets`, `#each`, `#lineno` | — | missing |
+| `CSV.open(path, "w"/"a", **opts) { \|csv\| }` | `CSV.open(path, mode, **opts) { }` | same (phase 3): rows go to the file's IO as they are added; the file is closed after the block, whose value is returned |
+| `csv = CSV.open(path, "w")`, `csv.close` | `c = CSV.open(path, "w")`, `CSV.close(c)` | same (phase 3) |
+| `CSV.open(path, "r")`, `CSV.new(io)`, `#shift`, `#gets`, `#each` | — | missing: `CSV.open` with a read mode raises ArgumentError; read with `CSV.read`/`foreach`/`parse` |
+| `csv.lineno`, `csv.inspect` | `CSV.get_lineno(c)`, `CSV.inspect(c)` | same for writers (the StringIO's `encoding:` is not shown) |
 | `csv << row`, `add_row`, `puts` | `csv << row`, `CSV.add_row(c, r)`, `CSV.puts(c, r)` | same |
 | `"a,b".parse_csv`, `[..].to_csv` | `String.parse_csv(s)`, `Array.to_csv(a)`, `Tuple.to_csv(t)` | same |
 | `Row.new(headers, fields)` | `CSVRow.new(hs, fs)` (no padding), `CSVRow.pad(hs, fs)` (Ruby's padding) | differs |
@@ -75,7 +78,7 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
   `col_seps`` / `hint: did you mean `col_sep:`?`.
 - `headers: false` raises ArgumentError ("omit headers:"): `true` and `false` are one type, so a
   `false` could not give an Array where `true` gives a table.
-- `CSV.foreach(path, mode)` has no mode argument.
+- ~~`CSV.foreach(path, mode)` has no mode argument.~~ It has one (phase 3).
 - `CSVRow.new` is the Struct constructor and does not pad; `CSVRow.pad` does what Ruby's `Row.new` does.
 - `CSV.read` of a missing file raises `IOError` (Ruby: `Errno::ENOENT`), as Sake's `File.read` does.
 - `values_at` takes one Array (user functions have no rest parameters).
@@ -87,9 +90,10 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - **`:date`, `:date_time`, `:time` converters**: no Date/DateTime type, and no `Time.parse`.
 - **Reader objects** (`CSV.new(io)`, `shift`, `each`, `lineno`, `CSV.open(path, "r")`): the
   instance `read`/`readlines` would collide with the module functions `CSV.read(path)` of the same
-  name in one namespace (it could dispatch on String vs CSV, but there is no IO type to read from
-  either). `CSV.parse` / `CSV.foreach` cover the use.
-- **Block form of `CSV.parse`**: a user function either always or never takes a block.
+  name in one namespace (it could dispatch on String vs CSV; an IO type exists since phase 3, but
+  `CSV.new` is the Struct's constructor). `CSV.parse` / `CSV.foreach` cover the use.
+- ~~**Block form of `CSV.parse`**: a user function either always or never takes a block.~~ Ported
+  in phase 3 with `block_given?`.
 - `strip:`, `liberal_parsing:`, `field_size_limit:`, `return_headers:`, `write_converters:`,
   `write_nil_value:`, encodings, `CSV.instance`, `CSV.filter`, table column mode: not common enough
   for the time budget.
@@ -160,3 +164,21 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
   `csv.rb` write the same calls, plus a "keyword arguments" section (keywords in another order,
   `open`/`foreach` with `col_sep: ";"` and headers, `generate(str, ...)`).
 - The default `headers: nil` (not false) is what keeps the result type static; see Conventions.
+
+## IO and optional blocks (phase 3)
+
+- `CSV.open(path, mode = "r", **opts)` opens the file with `File.open(path, mode)`, and `csv << row`
+  (or `CSV.add_row`, `CSV.puts`) writes each line to that IO; phase 2 collected the lines and wrote
+  them after the block, and appended by reading and rewriting the file. With a block the file is
+  closed after it and the block's value is returned; without one the writer is returned, to be
+  closed with `CSV.close`. Any mode starting with "w" or "a" is accepted.
+- `CSV.parse(s) { |row| }` and `CSV.foreach(path, mode = "r", ...)`: `parse` checks `block_given?`.
+  `foreach` reads through `File.open` + `IO.read`, not `IO.each_line`: a quoted field may span lines
+  and the error messages count lines over the whole text, so line-by-line reading would need a
+  resumable parser.
+- `return result unless block_given?` left the rest of the function typed for the block-less call
+  (result `nil | Array`, and a `yield` there "no block is given"); `if block_given? ... else ... end`
+  works (`csv_bug_return_unless_block_given.sake`).
+- Not done: reading through a CSV object (`CSV.new(io)`, `CSV.open(path, "r")`, `shift`, `each`).
+  `CSV.new` is the Struct's constructor, so it cannot take an IO and options.
+- The test's new section uses `csv_test_io.tmp` in the test directory, deleted by both programs.

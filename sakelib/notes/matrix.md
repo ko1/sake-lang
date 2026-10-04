@@ -30,7 +30,7 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `m[i, j]`, `element`, `component` | `m[i, j]`, `Matrix.element(m, i, j)`, `component` | same (nil outside the matrix) |
 | `m[i, j] = v` | `m[i, j] = v` | same for Integer indexes; the Range forms are missing |
 | `row_count`, `row_size`, `column_count`, `column_size` | `Matrix.row_count(m)`, ... | same |
-| `row(i)`, `column(j)` | `Matrix.row(m, i)`, `Matrix.column(m, j)` | same (Vector, or nil outside); the block forms are missing |
+| `row(i)`, `column(j)`, `row(i) { }`, `column(j) { }` | `Matrix.row(m, i)`, `Matrix.column(m, j)`, with or without a block | same (Vector, or nil outside; with a block, yields each element and returns m) |
 | `row_vectors`, `column_vectors`, `to_a` | same | same |
 | `each(which = :all) { }`, `each_with_index(which = :all) { \|e, i, j\| }` | `Matrix.each(m, which) { }`, `Matrix.each_with_index(m, which) { }` | same (phase 2: `which` is `:all`, `:diagonal`, `:off_diagonal`, `:lower`, `:strict_lower`, `:strict_upper`, `:upper`; another Symbol raises Ruby's ArgumentError) |
 | `map(which = :all) { }`, `collect(which = :all) { }` | `Matrix.map(m, which) { }`, `Matrix.collect(m, which) { }` | same (phase 2; elements outside `which` are kept) |
@@ -162,3 +162,11 @@ Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matri
   missing or misspelled one: `Vector.basis(size: 3, idx: 1)` → `error: Vector.basis needs keyword
   argument `index:`` and `error: Vector.basis has no keyword parameter `idx``; the old
   `Vector.basis(3, 1)` → `needs keyword arguments `size:`, `index:``.
+
+## IO and optional blocks
+
+`Matrix.row` and `Matrix.column` take Ruby's optional block (`block_given?`): with one, each
+element is yielded and the matrix is returned (also when the index is outside). `Matrix.each(m,
+which = :all)` and `Vector.each(v)` without a block give the Array of the elements, what Ruby's
+Enumerator gives with `.to_a`; there is no Enumerator. `build`, `collect`/`map`,
+`each_with_index`, and the Vector iterators still need their block.

@@ -93,3 +93,9 @@ Speed (1000 `Tms#format` calls (default and a custom format)). CPU s (user+sys) 
 | after | 1.15 | 1.24 | 1.14 |
 
 Result: about 2.7x faster in total, about 5x after subtracting startup: seven native `gsub` passes instead of a character loop.
+
+## IO and optional blocks
+
+Output goes through `IO.print(IO.stdout, ...)`, as Ruby's `benchmark` prints to `$stdout`; the
+result is the same as `print` (which also writes to stdout). Every block of the library is
+required in Ruby too, so `block_given?` is not used.

@@ -109,6 +109,22 @@ p JSON.load("[1, NaN]")
 p JSON.load(nil)
 p JSON.load("")
 
+# dump to an IO, load from an IO
+JSON.dump({"io" => [1, nil]}, $stdout)
+puts
+iopath = "json_test_io.tmp"
+File.open(iopath, "w") { |f| p(JSON.dump(["x", 2.5], f)) }
+p File.open(iopath) { |f| JSON.load(f) }
+p File.read(iopath)
+File.open(iopath, "w") { |f| f.write("") }
+p File.open(iopath) { |f| JSON.load(f) }
+File.delete(iopath)
+begin
+  JSON.load("  ")
+rescue JSON::ParserError => e
+  puts "ParserError: #{e.message}"
+end
+
 # to_json
 puts({"k" => [1, 2]}.to_json)
 puts ["x", nil].to_json

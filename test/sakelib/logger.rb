@@ -72,6 +72,16 @@ log.formatter = nil
 
 p(log << "raw text\n")
 
+# block forms: the block gives the message (run only when the level passes); the argument is the progname
+log.info { "from a block" }
+log.warn("blockprog") { "block with progname" }
+log.add(Logger::ERROR, nil, "addprog") { "add with a block" }
+log.add(Logger::ERROR, "message wins", "addprog") { "unused block" }
+log.level = Logger::WARN
+log.info { puts("never run"); "hidden" }
+log.level = Logger::DEBUG
+log.progname = "myapp"
+
 # optional arguments: no message, add/log without message or progname
 log.info
 log.add(Logger::WARN)
@@ -85,6 +95,16 @@ elog.info("to stderr")
 
 quiet = Logger.new(nil)
 p(quiet.info("nothing"))
+
+# an IO as the device: a file opened by the program, left open by Logger.close
+iopath = "logger_test_io.tmp"
+File.open(iopath, "w") do |f|
+  ilog = Logger.new(f)
+  ilog.info("into an IO")
+  ilog.error { "block into an IO" }
+end
+print(File.read(iopath))
+File.delete(iopath)
 
 path = "/tmp/sakelib-logger-test.log"
 File.write(path, "")
@@ -102,3 +122,13 @@ first = lines.fetch(0)
 p(first[0, 21])
 lines.drop(1).each { |l| print(l) }
 File.write(path, "")
+
+# a path that does not exist yet: the file starts with a header line
+newpath = "logger_test_new.tmp"
+nlog = Logger.new(newpath)
+nlog.info { "first entry" }
+nlog.close
+nlines = File.readlines(newpath)
+p(nlines.fetch(0)[0, 20])
+print(nlines.fetch(1))
+File.delete(newpath)

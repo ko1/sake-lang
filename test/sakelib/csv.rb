@@ -175,3 +175,17 @@ show("kw open", File.read(path))
 CSV.foreach(path, col_sep: ";", headers: true) { |row| show("kw foreach", row) }
 show("kw readlines", CSV.readlines(path, col_sep: ";", skip_lines: /\Ak/))
 show("kw generate str", CSV.generate("h\n", col_sep: ";") { |csv| csv << ["a", "b"] })
+
+puts "== IO and optional blocks"
+iopath = "csv_test_io.tmp"
+show("open value", CSV.open(iopath, "w") { |csv| csv.add_row(["a", 1]); csv << ["b", nil]; :done })
+w = CSV.open(iopath, "a", force_quotes: true)
+w.puts(["c", "x;y"])
+show("open no block", w)
+p(w.close)
+show("open file", File.read(iopath))
+show("foreach value", CSV.foreach(iopath, "r") { |row| show("foreach mode", row) })
+show("parse block value", CSV.parse("h,i\n1,2\n") { |row| show("parse row", row) })
+CSV.parse("h,i\n1,2\n", headers: true) { |row| show("parse h row", row) }
+puts "ArgumentError: reading"   # the Sake port reads only through read/foreach
+File.delete(iopath)

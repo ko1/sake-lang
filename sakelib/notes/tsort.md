@@ -52,7 +52,7 @@ includes TSort is fine.
 | `obj.strongly_connected_components` | `T.strongly_connected_components(obj)` | same |
 | `obj.each_strongly_connected_component { }` | `T.each_strongly_connected_component(obj) { }` | same |
 | `obj.each_strongly_connected_component_from(n, id_map = {}, stack = []) { }` | `T.each_strongly_connected_component_from(obj, n, id_map = Hash[], stack = Array[]) { }` | same (returns the minimum id as Ruby) |
-| `obj.tsort_each` (no block → Enumerator) | — | missing (no Enumerator, no `block_given?`) |
+| `obj.tsort_each` (no block → Enumerator) | — | missing (no Enumerator; its `.to_a` is `tsort`, so an Array stand-in would only repeat that) |
 | `TSort::Cyclic` | `TSortCyclic` | differs: name (no nested names) |
 | `TSort.tsort(each_node, each_child)` and the other module functions on callables | `TSort.tsort_hash(h)`, `strongly_connected_components_hash`, `tsort_each_hash`, `each_strongly_connected_component_hash` | differs: a Hash graph instead of two callables |
 | `TSort.each_strongly_connected_component_from(node, each_child, ...)` | — | missing (use the mixin) |

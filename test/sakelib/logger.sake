@@ -2,7 +2,7 @@ require "logger"
 
 def fixed = Time.new(2026, 10, 3, 12, 34, 56)
 
-log = Logger.new(:stdout)
+log = Logger.new(IO.stdout)
 Logger.set_fixed_time(log, fixed)
 p(Logger.get_level(log))
 Logger.debug(log, "debug message")
@@ -44,7 +44,7 @@ p(Logger.get_level(log))
 Logger.error!(log)
 p(Logger.error?(log))
 # A logger of its own: Ruby's logger 1.7.0 keeps the with_level level after the block when the old level was set
-wl = Logger.new(:stdout)
+wl = Logger.new(IO.stdout)
 Logger.set_fixed_time(wl, fixed)
 Logger.error!(wl)
 Logger.with_level(wl, :debug) do
@@ -68,6 +68,16 @@ Logger.set_datetime_format(log, nil)
 
 p(Logger.<<(log, "raw text\n"))
 
+# block forms: the block gives the message (run only when the level passes); the argument is the progname
+Logger.info(log) { "from a block" }
+Logger.warn(log, "blockprog") { "block with progname" }
+Logger.add(log, Logger.ERROR, nil, "addprog") { "add with a block" }
+Logger.add(log, Logger.ERROR, "message wins", "addprog") { "unused block" }
+Logger.set_level(log, Logger.WARN)
+Logger.info(log) { puts("never run"); "hidden" }
+Logger.set_level(log, Logger.DEBUG)
+Logger.set_progname(log, "myapp")
+
 # optional arguments: no message, add/log without message or progname
 Logger.info(log)
 Logger.add(log, Logger.WARN)
@@ -76,12 +86,23 @@ Logger.log(log, Logger.ERROR, "log with a message")
 Logger.unknown(log)
 
 # stderr as the device (not compared: the test reads stdout)
-elog = Logger.new(:stderr)
+elog = Logger.new(IO.stderr)
 Logger.info(elog, "to stderr")
 
 quiet = Logger.new(nil)
 p(Logger.info(quiet, "nothing"))
 
+
+# an IO as the device: a file opened by the program, left open by Logger.close
+iopath = "logger_test_io.tmp"
+File.open(iopath, "w") do |f|
+  ilog = Logger.new(f)
+  Logger.set_fixed_time(ilog, fixed)
+  Logger.info(ilog, "into an IO")
+  Logger.error(ilog) { "block into an IO" }
+end
+print(File.read(iopath))
+File.delete(iopath)
 
 path = "/tmp/sakelib-logger-test.log"
 File.write(path, "")
@@ -99,3 +120,14 @@ first = Array.fetch(lines, 0)
 p(String.[](first, 0, 21))
 Array.each(Array.drop(lines, 1)) { |l| print(l) }
 File.write(path, "")
+
+# a path that does not exist yet: the file starts with a header line
+newpath = "logger_test_new.tmp"
+nlog = Logger.new(newpath)
+Logger.set_fixed_time(nlog, fixed)
+Logger.info(nlog) { "first entry" }
+Logger.close(nlog)
+nlines = File.readlines(newpath)
+p(String.[](Array.fetch(nlines, 0), 0, 20))
+print(Array.fetch(nlines, 1))
+File.delete(newpath)

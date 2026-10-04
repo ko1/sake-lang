@@ -1,11 +1,12 @@
-# Logger: Ruby's logger. The device is :stdout, :stderr, a file path (String, appended to), or nil (no output).
+# Logger: Ruby's logger. The device is an IO (IO.stdout, IO.stderr, a File.open), a file path (String,
+# opened for appending at the first entry), or nil (no output).
 # The formatter is a format string over the keys severity, datetime, progname, msg
 # (`Kernel.format` with a Hash), since a block cannot be stored.
 
 class Logger < {reader: [logdev, level, closed],
-                accessor: [progname, datetime_format, formatter, fixed_time],
+                accessor: [progname, datetime_format, formatter, fixed_time, io],
                 default: {level: 0, closed: false, progname: nil, datetime_format: nil, formatter: nil,
-                          fixed_time: nil}}
+                          fixed_time: nil, io: nil}}
   # Ruby's Logger::DEBUG ... Logger::UNKNOWN (Sake has no value constants).
   def DEBUG = 0
   def INFO = 1
@@ -53,29 +54,38 @@ class Logger < {reader: [logdev, level, closed],
   def error!(l) = @level = 3
   def fatal!(l) = @level = 4
 
-  # Ruby's info(progname = nil): without a block the argument is the message, logged with the logger's progname.
-  def debug(l, msg = nil) = add(l, 0, nil, msg)
-  def info(l, msg = nil) = add(l, 1, nil, msg)
-  def warn(l, msg = nil) = add(l, 2, nil, msg)
-  def error(l, msg = nil) = add(l, 3, nil, msg)
-  def fatal(l, msg = nil) = add(l, 4, nil, msg)
-  def unknown(l, msg = nil) = add(l, 5, nil, msg)
+  # Ruby's info(progname = nil) { msg }: without a block the argument is the message, logged with the
+  # logger's progname; with one, the block (run only when the level passes) gives the message.
+  # (`&b` alone would make the block required: notes/logger_bug_pass_on_optional_block.sake)
+  def debug(l, progname = nil, &b) = block_given? ? add(l, 0, nil, progname, &b) : add(l, 0, nil, progname)
+  def info(l, progname = nil, &b) = block_given? ? add(l, 1, nil, progname, &b) : add(l, 1, nil, progname)
+  def warn(l, progname = nil, &b) = block_given? ? add(l, 2, nil, progname, &b) : add(l, 2, nil, progname)
+  def error(l, progname = nil, &b) = block_given? ? add(l, 3, nil, progname, &b) : add(l, 3, nil, progname)
+  def fatal(l, progname = nil, &b) = block_given? ? add(l, 4, nil, progname, &b) : add(l, 4, nil, progname)
+  def unknown(l, progname = nil, &b) = block_given? ? add(l, 5, nil, progname, &b) : add(l, 5, nil, progname)
 
-  # Ruby's add(severity, message = nil, progname = nil): with message nil, progname is the message.
+  # Ruby's add(severity, message = nil, progname = nil) { msg }: with message nil, the block's value,
+  # or else progname, is the message.
   def add(l, severity, message = nil, progname = nil)
     sev = severity == nil ? 5 : severity
     return true if sev < @level
     prog = progname == nil ? @progname : progname
     msg = message
-    if msg == nil   # as Ruby: the progname is the message, and the logger's progname is shown
-      msg = prog
-      prog = @progname
+    if msg == nil
+      if block_given?
+        msg = yield
+      else   # as Ruby: the progname is the message, and the logger's progname is shown
+        msg = prog
+        prog = @progname
+      end
     end
     write(l, format_message(l, format_severity(sev), now(l), prog, msg))
     true
   end
 
-  def log(l, severity, message = nil, progname = nil) = add(l, severity, message, progname)
+  def log(l, severity, message = nil, progname = nil, &b)
+    block_given? ? add(l, severity, message, progname, &b) : add(l, severity, message, progname)
+  end
 
   # Ruby's <<: writes msg as is.
   def <<(l, msg)
@@ -94,7 +104,10 @@ class Logger < {reader: [logdev, level, closed],
     end
   end
 
+  # Closes the file the logger opened for a path; an IO given to new is left open.
   def close(l)
+    f = @io
+    IO.close(f) if f != nil
     @closed = true
     nil
   end
@@ -135,20 +148,23 @@ class Logger < {reader: [logdev, level, closed],
     dev = @logdev
     case dev
     in nil then nil
-    in Symbol
-      if dev == :stdout
-        print(s)
-      elsif dev == :stderr
-        Kernel.warn(s)   # adds a newline when s has none (Sake has no stderr print)
-      else
-        raise ArgumentError, "unsupported log device: #{dev} (:stdout or :stderr)"
-      end
     in String
-      # No append mode in Sake: read the file and write it back.
-      # Ruby writes the header when it creates the file (here at the first write).
-      old = File.exist?(dev) ? File.read(dev) : "# Logfile created on #{Time.now} by #{Logger.prog_name}\n"
-      File.write(dev, old + s)
+      f = file(l, dev)
+      IO.write(f, s)
+      IO.flush(f)   # Ruby's log file is sync = true
+    else IO.write(dev, s)
     end
     nil
+  end
+
+  # The file of a path device, opened for appending at the first entry. As Ruby, a new file starts
+  # with a header line.
+  def file(l, path)
+    f = @io
+    return f if f != nil
+    created = !File.exist?(path)
+    f = File.open(path, "a")
+    IO.write(f, "# Logfile created on #{Time.now} by #{Logger.prog_name}\n") if created
+    @io = f
   end
 end

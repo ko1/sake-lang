@@ -6,8 +6,10 @@
 
 MalformedCSVError = Exception.new(:line_number)
 
-# A writer (Ruby's CSV object for output): `csv << row` appends a line.
-class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_empty, headers]}
+# A writer (Ruby's CSV object for output): `csv << row` appends a line, to a String (generate) or to
+# the IO of a file (open).
+class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_empty, headers, io, path],
+             accessor: [lineno], default: {io: nil, path: nil, lineno: 0}}
   include Bitwise
 
   # ---- parsing ----
@@ -159,15 +161,26 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
   # ---- parsing API ----
 
   # Without `headers:` (or with nil) -> Array of rows; with `headers:` -> CSVTable.
+  # With a block, as Ruby: yields each row (a CSVRow with headers:) and gives nil.
   def parse(text, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
             header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
     rows = raw_rows(text, col_sep, row_sep, quote_char, skip_blanks, skip_lines)
     c = {nil_value: nil_value, empty_value: empty_value, converters: converters}
     # nil (the default) is its own type, so a call without headers: is typed an Array of rows;
     # false would share true's type, so it is rejected in make_table
-    case headers
-    in nil then Array.map(rows) { |r| convert_row(r, c) }
-    else make_table(rows, c, headers, header_converters)
+    result = case headers
+             in nil then Array.map(rows) { |r| convert_row(r, c) }
+             else make_table(rows, c, headers, header_converters)
+             end
+    # if/else, not `return result unless block_given?`: notes/csv_bug_return_unless_block_given.sake
+    if block_given?
+      case result
+      in CSVTable then CSVTable.each(result) { |r| yield(r) }
+      in Array then Array.each(result) { |r| yield(r) }
+      end
+      nil
+    else
+      result
     end
   end
 
@@ -197,18 +210,14 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
   # Ruby's CSV.table: headers, numeric converters, Symbol headers.
   def table(path) = read(path, headers: true, converters: :numeric, header_converters: :symbol)
 
-  # Yields CSVRows when `headers:` is given, otherwise Arrays.
-  def foreach(path, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
+  # Ruby's foreach(path, mode = "r", **opts): yields CSVRows when `headers:` is given, otherwise Arrays.
+  # The file is read whole through File.open (a quoted field may span lines).
+  def foreach(path, mode = "r", col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
               header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
-    result = read(path, col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
-                        converters: converters, header_converters: header_converters,
-                        skip_blanks: skip_blanks, skip_lines: skip_lines, nil_value: nil_value,
-                        empty_value: empty_value)
-    case result
-    in CSVTable then CSVTable.each(result) { |r| yield(r) }
-    in Array then Array.each(result) { |r| yield(r) }
-    end
-    nil
+    text = File.open(path, mode) { |f| IO.read(f) }
+    parse(text, col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
+                converters: converters, header_converters: header_converters, skip_blanks: skip_blanks,
+                skip_lines: skip_lines, nil_value: nil_value, empty_value: empty_value) { |r| yield(r) }
   end
 
   # ---- generating ----
@@ -244,7 +253,14 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
   end
 
   def <<(c, row)
-    Array.push(@lines, line_of(c, row))
+    line = line_of(c, row)
+    f = @io
+    if f == nil
+      Array.push(@lines, line)
+    else
+      IO.write(f, line)
+    end
+    @lineno = @lineno + 1
     c
   end
 
@@ -254,14 +270,14 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
   def string(c) = Array.join(@lines)
 
   # headers: nil / false, a String of the header line, or an Array (or Tuple) of headers.
-  def writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers)
+  def writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers, io = nil, path = nil)
     hs = case headers
          in String then parse_line(headers)
          in Tuple then Tuple.to_a(headers)
          in Array then headers
          else nil
          end
-    c = CSV.new(String[], col_sep, row_sep == :auto ? "\n" : row_sep, quote_char, force_quotes, quote_empty, hs)
+    c = CSV.new(String[], col_sep, row_sep == :auto ? "\n" : row_sep, quote_char, force_quotes, quote_empty, hs, io, path)
     c << hs if write_headers && hs
     c
   end
@@ -285,24 +301,40 @@ class CSV < {reader: [lines, col_sep, row_sep, quote_char, force_quotes, quote_e
     Array.join(Array.map(rows) { |r| line_of(c, r) })
   end
 
-  # mode "w" (write) or "a" (append); yields a writer.
-  def open(path, mode, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
+  # Ruby's open(path, mode = "r", **opts) for writing: mode "w" or "a" (and their "b"/"+" forms).
+  # With a block, yields the writer, closes the file after it, and gives the block's value; without
+  # one, gives the writer (close it with CSV.close). Reading ("r") is not supported.
+  def open(path, mode = "r", col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
            quote_empty: true, write_headers: false)
-    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers)
-    yield(c)
-    write_out(path, mode, string(c))
+    unless String.start_with?(mode, "w") || String.start_with?(mode, "a")
+      raise ArgumentError, "CSV.open: only writing (\"w\" or \"a\") is supported, got #{Kernel.inspect(mode)}"
+    end
+    f = File.open(path, mode)
+    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers, f, path)
+    if block_given?
+      begin
+        yield(c)
+      ensure
+        IO.close(f)
+      end
+    else
+      c
+    end
   end
 
-  def write_out(path, mode, s)
-    case mode
-    in "w" then File.write(path, s)
-    in "a" then File.write(path, (File.exist?(path) ? File.read(path) : "") + s)
-    else raise ArgumentError, "CSV.open: mode must be \"w\" or \"a\", got #{Kernel.inspect(mode)}"
-    end
+  # Closes the file of a writer from open; a generate writer has none.
+  def close(c)
+    f = @io
+    IO.close(f) if f != nil
     nil
   end
 
-  def inspect(c) = "#<CSV io_type:StringIO lineno:#{Array.size(@lines)} col_sep:#{Kernel.inspect(@col_sep)} row_sep:#{Kernel.inspect(@row_sep)} quote_char:#{Kernel.inspect(@quote_char)}>"
+  def io_desc(c)
+    path = @path
+    path == nil ? "io_type:StringIO" : "io_type:File io_path:#{Kernel.inspect(path)} encoding:UTF-8"
+  end
+
+  def inspect(c) = "#<CSV #{io_desc(c)} lineno:#{@lineno} col_sep:#{Kernel.inspect(@col_sep)} row_sep:#{Kernel.inspect(@row_sep)} quote_char:#{Kernel.inspect(@quote_char)}>"
 end
 
 # Ruby's CSV::Row: headers and fields of the same length.

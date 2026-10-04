@@ -49,7 +49,7 @@ and compares the help text and the errors with Ruby's.
 | `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | one type `OptionParserError`, with `get_kind(e)` = `"InvalidOption"`, ... | differs: no hierarchy, so `rescue OptionParserError` stands for `rescue OptionParser::ParseError` |
 | `e.message`, `e.args`, `e.reason` | `Exception.message(e)`, `OptionParserError.get_args(e)`, `OptionParserError.reason(e)` | same text |
 | `--help`, `--version` handled by OptionParser itself (prints and exits) | same | same (phase 2): an undeclared `--help` (or a prefix, `--he`) prints the help and exits 0; `--version` prints `ver` and exits, or aborts with `prog: version unknown`. Declared options win, as Ruby |
-| `op.warn(msg)`, `op.abort(msg)` | `OptionParser.warn(op, msg)`, `OptionParser.abort(op, msg)` | same: `prog: msg` on stderr; abort exits 1. The message is required (Ruby defaults to `$!`) |
+| `op.warn(msg)`, `op.abort(msg)` | `OptionParser.warn(op, msg)`, `OptionParser.abort(op, msg)` | same: `prog: msg` on stderr (`IO.stderr`); abort exits 1. The message is required (Ruby defaults to `$!`) |
 | `ARGV` as the default argv | `parse(op)`, `parse!(op)`, ... | same, but `parse!(op)` cannot shorten ARGV: Sake's `ARGV` gives a new Array at each use ([optparse_bug_argv_copy.sake](optparse_bug_argv_copy.sake)). Write `args = ARGV; OptionParser.parse!(op, args)` |
 | `ARGV.options`, `ARGV.getopts` | — | missing |
 | acceptors `Numeric`, `DecimalInteger`, `OctalInteger`, `TrueClass`, `Array` (comma lists), `Regexp` patterns, `OptionParser#accept` | — | missing |
@@ -136,3 +136,11 @@ Result: about 5% slower, outside the spread; nothing on the parse path changed e
 - `parse`, `order`, `permute` and their `!` forms take `argv = ARGV, into: Hash[]`; the internal
   call in `getopts` and the test use `into: h`, as `optparse.rb` does. New test cases:
   `permute`, `order`, `permute!` with `into:`.
+
+## IO and optional blocks
+
+`warn` and `abort` write `prog: msg` with `IO.puts(IO.stderr, ...)` (Ruby: `Kernel#warn`, so
+`$stderr`); the built-in `--help` and `--version` print with `IO.print(IO.stdout, ...)` (Ruby:
+`puts`, so `$stdout`). Writing to `IO.stderr` flushes stdout first, so the order of the lines is
+kept. Blocks for `on` and `OptionParser.new { }` are still missing: `block_given?` makes a block
+optional, but a block still cannot be stored for `parse` to call later.
