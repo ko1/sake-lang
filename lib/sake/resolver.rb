@@ -110,7 +110,10 @@ module Sake
       stmts = @files.flat_map { |_, root| root.statements.body }.reject { Resolver.require_call?(_1) }
       # Struct types first so that `class Point` bodies can see their accessors.
       stmts.grep(Prism::ConstantWriteNode).each { collect_constant(_1) }
-      stmts.grep(Prism::ClassNode).select { _1.superclass.is_a?(Prism::HashNode) }.each { collect_class_config(_1) }
+      @class_nodes = stmts.grep(Prism::ClassNode).select { _1.constant_path.is_a?(Prism::ConstantReadNode) }.group_by { _1.constant_path.name.to_s }
+      @class_specs = {}
+      @module_names = stmts.grep(Prism::ModuleNode).map { _1.constant_path.slice }.to_set | Operators::MODULES
+      @class_nodes.each_key { class_spec(_1, []) }
       stmts.each do |st|
         case st
         when Prism::ConstantWriteNode then nil
@@ -119,8 +122,27 @@ module Sake
         else @toplevel << st
         end
       end
+      apply_pastes
       apply_module_function_names
       apply_includes
+    end
+
+    # `class B < A`: A's definitions written again in B (its fields first, its functions, its includes).
+    # Nothing relates A and B afterwards. B's own definitions win over the pasted ones.
+    def apply_pastes
+      done = {}
+      paste = lambda do |name|
+        next if done[name]
+        done[name] = true
+        parent = @class_specs.dig(name, :parent) or next
+        paste.(parent)
+        (@functions[parent] || {}).each do |fname, fn|
+          next if fn.origin || @functions.dig(name, fname)
+          (@functions[name] ||= {})[fname] = fn.dup.tap { _1.namespace = name }
+        end
+        @includes[name] = [*@includes.fetch(parent, []), *@includes.fetch(name, [])] if @includes.key?(parent)
+      end
+      @class_specs.each_key { paste.(_1) }
     end
 
     # Copies each included module's functions into the including namespace (own definitions win).
@@ -234,54 +256,97 @@ module Sake
       end
     end
 
-    CONFIG_KEYS = %w[accessor reader writer default exception].freeze
     DEFAULT_LITERALS = [Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::StringNode, Prism::SymbolNode,
                         Prism::TrueNode, Prism::FalseNode, Prism::NilNode].freeze
+    ATTRS = { attr_reader: [true, false], attr_accessor: [true, true], attr_writer: [false, true] }.freeze
+    EXCEPTION_PARENTS = %w[Exception StandardError].freeze
 
-    # `class C < {accessor: [x], reader: [y], writer: [z], default: {y: 0}, exception: true}`
-    def collect_class_config(node)
-      cp = node.constant_path
-      return unless cp.is_a?(Prism::ConstantReadNode)
-      name = cp.name.to_s
-      return error(cp, "`#{name}` is already defined") if @struct_types[name] || @registry.namespace?(name)
+    def attr_call?(st) = st.is_a?(Prism::CallNode) && st.receiver.nil? && ATTRS.key?(st.name)
 
-      fields = []
-      readers = []
-      writers = []
-      defaults = {}
-      exception = false
-      node.superclass.elements.each do |el|
-        key = el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) ? el.key.unescaped : nil
-        unless CONFIG_KEYS.include?(key)
-          hints = spell(key.to_s, CONFIG_KEYS).map { "did you mean `#{_1}`?" }
-          error(el, "unknown class setting `#{key || el.slice}`", hints + ["settings: #{CONFIG_KEYS.join(", ")}"])
-          next
+    # The type a `class C` declares: `< A` pastes A's fields (or makes an exception type), then the
+    # `attr_reader x, y` / `attr_accessor n = 0` / `attr_writer w` lines of C's first class body.
+    def class_spec(name, seen)
+      return @class_specs[name] if @class_specs.key?(name)
+      nodes = @class_nodes[name]
+      first = nodes.first
+      if BUILTIN_TYPES.include?(name) || @struct_types.key?(name) || @registry.namespace?(name)
+        nodes.each do |n|
+          error(n.superclass, "`class #{name}` adds functions to #{name}; `<` goes on a new class") if n.superclass
+          attr_lines(n).each { error(_1, "#{name}'s fields are already declared#{@struct_types.key?(name) ? " by Struct.new" : ""}") }
         end
-        case key
-        when "accessor", "reader", "writer"
-          names = config_field_names(el.value) or next
-          fields |= names
-          readers |= names if key != "writer"
-          writers |= names if key != "reader"
-        when "default"
-          next error(el.value, "default: takes a Record, like `default: {port: 80}`") unless el.value.is_a?(Prism::HashNode)
-          el.value.elements.each do |d|
-            next error(d, "write a default as `field: value`") unless d.is_a?(Prism::AssocNode) && d.key.is_a?(Prism::SymbolNode)
-            next error(d.value, "a default must be a literal number, String, Symbol, true, false, or nil") unless DEFAULT_LITERALS.any? { d.value.is_a?(_1) }
-            defaults[d.key.unescaped] = literal_value(d.value)
-          end
-        when "exception"
-          exception = el.value.is_a?(Prism::TrueNode)
-          error(el.value, "exception: takes true or false") unless exception || el.value.is_a?(Prism::FalseNode)
+        return @class_specs[name] = nil
+      end
+      nodes.drop(1).each do |n|
+        error(n.superclass, "`<` goes on the first `class #{name}` (line #{first.location.start_line})") if n.superclass
+        attr_lines(n).each { error(_1, "the fields of #{name} are declared in its first `class #{name}` (line #{first.location.start_line})") }
+      end
+      spec = { fields: [], readers: [], writers: [], defaults: {}, exception: false, parent: nil }
+      if (sup = first.superclass)
+        if sup.is_a?(Prism::HashNode)
+          error(sup, "`class #{name} < {...}` is the old form of declaring fields", ["write them in the body: #{old_settings_hint(sup)}"])
+        elsif !sup.is_a?(Prism::ConstantReadNode)
+          error(sup, "`class #{name} < X` takes a class name: B < A writes A's definitions into B")
+        elsif EXCEPTION_PARENTS.include?(pname = sup.name.to_s)
+          spec[:exception] = true
+          spec.merge!(fields: ["message"], readers: ["message"], writers: ["message"])
+        elsif seen.include?(pname) || pname == name
+          error(sup, "`class #{name} < #{pname}` makes a cycle")
+        elsif @class_nodes.key?(pname) && (ps = class_spec(pname, seen + [name]))
+          spec = ps.transform_values { _1.dup }.merge(parent: pname)
+        elsif (dt = @struct_types[pname]) && !@class_nodes.key?(pname)
+          spec.merge!(fields: dt.fields.dup, readers: dt.fields.dup, writers: dt.fields.dup, exception: dt.exception, parent: pname)
+        else
+          error(sup, "`class #{name} < #{pname}`: #{pname} is not a class of this program",
+                @module_names.include?(pname) ? ["to borrow a module's functions, write `include #{pname}` in the body"] : [])
         end
       end
-      (defaults.keys - fields).each { error(node.superclass, "default for `#{_1}`, which is not a field") }
-      if exception && fields.first != "message"
-        fields.unshift("message")
-        readers |= ["message"]
-        writers |= ["message"]
+      attr_lines(first).each do |st|
+        reader, writer = ATTRS.fetch(st.name)
+        (st.arguments&.arguments || []).each do |a|
+          fname, default = attr_field(a)
+          next unless fname
+          next error(a, "field `#{fname}` is declared twice in #{name}") if spec[:fields].include?(fname)
+          spec[:fields] << fname
+          spec[:readers] << fname if reader
+          spec[:writers] << fname if writer
+          spec[:defaults][fname] = default if a.is_a?(Prism::LocalVariableWriteNode)
+        end
       end
-      define_struct(name, fields, exception:, readers:, writers:, defaults:)
+      d = spec[:fields].reverse.take_while { spec[:defaults].key?(_1) }.size
+      (spec[:defaults].keys - spec[:fields].last(d)).each do |f|
+        error(first, "field `#{f}` has a default, so the fields after it need defaults too (they may be left out of #{name}.new)")
+      end
+      define_struct(name, spec[:fields], exception: spec[:exception], readers: spec[:readers], writers: spec[:writers], defaults: spec[:defaults])
+      @class_specs[name] = spec
+    end
+
+    def attr_lines(node)
+      node.body.is_a?(Prism::StatementsNode) ? node.body.body.select { attr_call?(_1) } : []
+    end
+
+    # `x` (a field) or `n = 0` (a field with a default, a literal): [name, default].
+    def attr_field(a)
+      case a
+      when Prism::CallNode then return [a.name.to_s, nil] if a.receiver.nil? && a.arguments.nil? && a.block.nil?
+      when Prism::LocalVariableReadNode then return [a.name.to_s, nil]
+      when Prism::LocalVariableWriteNode
+        return [a.name.to_s, literal_value(a.value)] if DEFAULT_LITERALS.any? { a.value.is_a?(_1) }
+        error(a.value, "a default must be a literal number, String, Symbol, true, false, or nil")
+        return nil
+      when Prism::SymbolNode
+        error(a, "write the field's name without `:`: `#{a.unescaped}`")
+        return [a.unescaped, nil]
+      end
+      error(a, "a field name, like `x`, or a field with a default, like `n = 0`")
+      nil
+    end
+
+    # The body lines for an old `< {reader: [...], ...}` (for the error's hint).
+    def old_settings_hint(hash)
+      hash.elements.filter_map do |el|
+        next unless el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) && el.value.is_a?(Prism::ArrayNode)
+        "attr_#{el.key.unescaped} #{el.value.elements.map { _1.slice.delete_prefix(":") }.join(", ")}"
+      end.join("; ")
     end
 
     def literal_value(n)
@@ -295,37 +360,13 @@ module Sake
       end
     end
 
-    def config_field_names(list)
-      unless list.is_a?(Prism::ArrayNode)
-        error(list, "list the fields, like `[x, y]`")
-        return nil
-      end
-      list.elements.filter_map do |e|
-        case e
-        when Prism::SymbolNode then e.unescaped
-        when Prism::CallNode then e.receiver.nil? && e.arguments.nil? ? e.name.to_s : error(e, "a field name, like `x`")
-        when Prism::LocalVariableReadNode then e.name.to_s
-        else error(e, "a field name, like `x`")
-        end
-      end
-    end
-
     def collect_namespace(node)
       cp = node.constant_path
       return error(cp, "nested namespace `#{cp.slice}` is not supported") unless cp.is_a?(Prism::ConstantReadNode)
 
       ns = cp.name.to_s
-      if node.is_a?(Prism::ClassNode) && node.superclass && !node.superclass.is_a?(Prism::HashNode)
-        child = node.constant_path.slice
-        parent = node.superclass.slice
-        field = parent.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
-        error(node.superclass, "Sake has no class inheritance; reuse a type by composition",
-              ["#{child} = Struct.new(:#{field}, ...), then #{parent}.f(#{child}.get_#{field}(x))"])
-      end
       type = @struct_types.key?(ns) || BUILTIN_TYPES.include?(ns)
-      if node.is_a?(Prism::ClassNode) && !type
-        error(cp, "`class #{ns}`: #{ns} is not a type; a namespace of functions is a module", ["module #{ns}"])
-      elsif node.is_a?(Prism::ModuleNode) && type
+      if node.is_a?(Prism::ModuleNode) && type
         error(cp, "`module #{ns}`: #{ns} is a type; add operations to a type with class", ["class #{ns}"])
       end
       @modules[ns] = node if node.is_a?(Prism::ModuleNode)
@@ -351,8 +392,11 @@ module Sake
             next error(a, "include takes module names") unless a.is_a?(Prism::ConstantReadNode)
             (@includes[ns] ||= []) << [a.name.to_s, st]
           end
+        elsif attr_call?(st)
+          error(st, "a module has no fields; `#{st.name}` is for a class") if node.is_a?(Prism::ModuleNode)
         elsif !st.is_a?(Prism::DefNode)
-          error(st, "only `def` and `include` are allowed in a class/module body")
+          hint = st.is_a?(Prism::CallNode) && st.name.start_with?("attr") ? spell(st.name.to_s, ATTRS.keys.map(&:to_s)).map { "did you mean `#{_1}`?" } : []
+          error(st, "only `def`, `include`, and (in a class) `attr_reader`/`attr_accessor`/`attr_writer` are allowed in a class/module body", hint)
         elsif st.receiver
           error(st, "`def #{st.receiver.slice}.#{st.name}` inside `#{cp.slice}`: write `def #{st.name}` (it defines #{ns}.#{st.name})")
         else
@@ -1139,9 +1183,9 @@ module Sake
       others = namespaces_defining(name) - [ns]
       hints << "`#{name}` is defined in #{others.map { "`#{_1}.#{name}`" }.join(", ")}" unless others.empty?
       if (dt = @struct_types[ns]) && name =~ /\A(get|set)_(.+)\z/ && dt.fields.include?($2)
-        kind = $1 == "set" ? "read-only (reader)" : "write-only (writer)"
+        kind = $1 == "set" ? "read-only (attr_reader)" : "write-only (attr_writer)"
         return error(node, "field `#{$2}` of #{ns} is #{kind}",
-                     ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`; or list it under `accessor:`"])
+                     ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`; or declare it with `attr_accessor #{$2}`"])
       end
       if (dt = @struct_types[ns])
         field = name.delete_suffix("=")

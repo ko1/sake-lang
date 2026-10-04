@@ -12,7 +12,9 @@ Ruby's `URI::Generic`, `URI::HTTP`, `URI::HTTPS`, `URI::FTP`, `URI::File`, `URI:
 ... are one Sake type, `URI`:
 
 ```ruby
-class URI < {reader: [scheme, userinfo, opaque], accessor: [host, port, path, query, fragment]}
+class URI
+  attr_reader scheme, userinfo, opaque
+  attr_accessor host, port, path, query, fragment
 ```
 
 The scheme decides the default port (http/ws 80, https/wss 443, ftp 21, ldap 389, ldaps 636) and the

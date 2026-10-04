@@ -2,7 +2,7 @@
 
 `require "strscan"` → `sakelib/strscan.sake`. Test: `test/sakelib/strscan.{sake,rb}` (identical output).
 
-`StringScanner` is a Struct type (`class StringScanner < {reader: [...]}`); every Ruby instance method
+`StringScanner` is a Struct type (`class StringScanner` with `attr_reader ...`); every Ruby instance method
 is an operation with the scanner first. It includes `Indexable` (for `ss[1]`) and `Bitwise` (for
 `ss << "x"`). Ruby's `StringScanner::Error` is `ScanError` (Ruby's old top-level alias, still
 defined): Sake has no nested names.

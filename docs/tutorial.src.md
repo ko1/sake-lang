@@ -166,24 +166,28 @@ check block use before running:
 
 ## 7. Types and instances
 
-A `class` declares a type with fields; its values are **instances**. The fields and how they can
-be reached are written as settings after `<` (a Record of settings, not a superclass: there is no
-inheritance). The type's operations are its own functions, called with the type's name and the
+A `class` declares a type with fields; its values are **instances**. The fields are declared in
+the body with `attr_reader`, `attr_accessor`, and `attr_writer`, as in Ruby but with the names
+written bare. The type's operations are its own functions, called with the type's name and the
 instance first:
 
 @@example instances
 
-| Setting | Fields it declares |
+| In the body | Fields it declares |
 |---|---|
-| `reader: [x, y]` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
-| `accessor: [n]` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
-| `writer: [w]` | `C.set_w(c, v)` from anywhere; read only inside the class |
-| `default: {n: 0}` | a default value; trailing fields with defaults may be left out of `new`; a non-nil default also fixes the field's type |
-| `exception: true` | an exception type: `message` comes first |
+| `attr_reader x, y` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
+| `attr_accessor n` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
+| `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
+| `attr_accessor n = 0` | a default value (a literal); trailing fields with defaults may be left out of `new`; a non-nil default also fixes the field's type |
+| `class E < Exception` | an exception type: `message` comes first |
 
-Use `reader:` for every field that is not changed from outside, which is most of them: every write
-to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)` is
-shorthand for `class C < {accessor: [x, y]}`.
+Use `attr_reader` for every field that is not changed from outside, which is most of them: every
+write to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)`
+is shorthand for a `class C` with `attr_accessor x, y`.
+
+`class B < A` is shorthand for writing A's definitions in B: A's fields first, A's functions as B's
+(where unqualified names and `@x` mean B's), B's own definitions winning. It is not inheritance:
+afterwards a B is not an A.
 
 - **Instances.** `C.new(a, b)` takes one argument per field. Fields are **mutable**, and instances
   are **shared**, not copied: after `d = c`, a change through `d` is seen through `c`.
@@ -219,7 +223,7 @@ operation and prints the call chain:
 A `module` is a namespace of functions with no type and no instances. It is used in two ways: as a
 home for plain functions (`module_function`), and as a **mixin** that types include.
 
-| | `class C < {...}` | `module M` |
+| | `class C` | `module M` |
 |---|---|---|
 | Is a type | Yes: `C.new`, fields, `x in C` | No |
 | Functions | C's operations, instance first | module functions, or mixin functions for the types that include M |

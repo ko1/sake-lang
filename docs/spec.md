@@ -76,11 +76,12 @@ A program is a file and the files it requires. Its top level may contain:
 - **Namespaced function definitions**: `def Type.name(params) ...`. This is equivalent to defining
   `name` inside `class Type`.
 - **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only
-  `def name(...)` (no receiver) and `include Module`.
-  - `class` adds operations to a **type**: a Struct type or a built-in type such as `String`.
-  - `module` is a namespace with **no type**.
-  - Using the other one is a static error with a hint.
-- **Struct types**: `Name = Struct.new(:field, ...)`.
+  `def name(...)` (no receiver), `include Module`, and in a class `attr_reader`/`attr_accessor`/
+  `attr_writer` lines (§10.1).
+  - `class` declares a **type** (a Struct type) or adds operations to one, or to a built-in type
+    such as `String`.
+  - `module` is a namespace with **no type**; `module` on a type is a static error with a hint.
+- **Struct types**: `class Name` with `attr_*` lines, or `Name = Struct.new(:field, ...)`.
 - **Statements**: any other expression. Statements run in order.
 
 All definitions are collected before anything runs. A function may be called on a line above its
@@ -89,9 +90,8 @@ definition.
 Rules:
 
 - Namespaces cannot be nested (`A::B` is rejected).
-- Classes cannot inherit. Reuse a type by composition: `Circle = Struct.new(:shape, :r)`, then
-  `Shape.describe(Circle.get_shape(c))`. If inheritance comes later, it will be static: `Shape.f`
-  always runs Shape's `f`.
+- Classes do not inherit. `class B < A` is shorthand for writing A's definitions in B (§10.1);
+  afterwards A and B are unrelated types, and `A.f` takes only A's.
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
@@ -491,31 +491,40 @@ the first branch whose pattern matches. If no branch matches and there is no `el
 
 ## 10. Struct types
 
-### 10.1 Declaring a type with settings
+### 10.1 Declaring a type: class and attr_*
 
 ```ruby
-class Account < {reader: [owner], accessor: [balance], default: {balance: 0}}
+class Account
+  attr_reader owner
+  attr_accessor balance = 0
   ...
 end
 ```
 
-The Record after `<` holds the settings of the type. It is not a superclass, since there is no
-inheritance.
+Every `class` is a type. Its fields are declared in the body of its first `class` (a later
+`class Account` adds functions only), with the field names written bare:
 
-| Setting | Meaning |
+| Line | Meaning |
 |---|---|
-| `accessor: [x, ...]` | fields with `get_x` and `set_x` |
-| `reader: [x, ...]` | fields with `get_x` only; inside the type's functions, `@x = v` still writes them |
-| `writer: [x, ...]` | fields with `set_x` only; inside the type's functions, `@x` still reads them |
-| `default: {x: v, ...}` | default values, which must be literal numbers, Strings, Symbols, true, false, or nil; trailing fields with defaults may be omitted in `new`; a non-nil default fixes the field's type, and each write is checked |
-| `exception: true` | an exception type: `message` is added as the first field |
+| `attr_accessor x, ...` | fields with `get_x` and `set_x` |
+| `attr_reader x, ...` | fields with `get_x` only; inside the type's functions, `@x = v` still writes them |
+| `attr_writer x, ...` | fields with `set_x` only; inside the type's functions, `@x` still reads them |
+| `attr_... x = v` | a default value, a literal number, String, Symbol, true, false, or nil; trailing fields with defaults may be omitted in `new`; a non-nil default fixes the field's type, and each write is checked |
 
-- **Field order.** Fields are in order of first appearance, across the settings.
+- **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
 - **`new`.** `C.new` takes every field positionally, whatever its access.
-- **`Struct.new(:x, :y)`.** Shorthand for `class C < {accessor: [x, y]}`.
-- **`Exception.new(:line)`.** Shorthand for `{exception: true, accessor: [line]}`.
-- **Errors.** An unknown setting is a static error with a spelling hint. So is a write from
-  outside to a read-only field.
+- **`class B < A`.** Shorthand for writing A's definitions in B: A's fields come first (then B's),
+  A's functions are B's too (with unqualified names and `@x` inside them meaning B's), and A's
+  `include`s are B's. B's own definition of a function wins over A's. Nothing relates A and B
+  afterwards: a B is not an A, and `A.f(b)` is a type error. `<` takes a class of the program (or a
+  `Struct.new` type); a module is included with `include`.
+- **`class E < Exception`** (or `< StandardError`) declares an exception type: `message` is its first
+  field, then the fields of its `attr_*` lines.
+- **`Struct.new(:x, :y)`.** Shorthand for `class C` with `attr_accessor x, y`.
+- **`Exception.new(:line)`.** Shorthand for `class C < Exception` with `attr_accessor line`.
+- **Errors.** `attr_reader :x` (a Symbol), fields in a later `class C`, a default before a field
+  without one, and a write from outside to a read-only field are static errors. The old form
+  `class C < {reader: [...]}` is an error whose hint gives the `attr_*` lines.
 
 ### 10.2 Struct.new
 
@@ -679,9 +688,10 @@ ensure
 end
 ```
 
-- **Exception types.** `Name = Exception.new(:field, ...)` declares an exception type. It is a
-  Struct type whose first field is `message`, so `Name.new("msg", ...)`, `Name.get_message`,
-  `Name.get_field`, and `@field` work as for other Struct types. There is no inheritance.
+- **Exception types.** `class Name < Exception` with `attr_reader field` (or
+  `Name = Exception.new(:field, ...)`) declares an exception type. It is a Struct type whose first
+  field is `message`, so `Name.new("msg", ...)`, `Name.get_message`, `Name.get_field`, and `@field`
+  work as for other Struct types. Exception types have no hierarchy.
 - **Built-in exception types.** These are raised by operations, each with only `message`:
   `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`,
   `IOError`, `RegexpError`, `FloatDomainError`, `Math::DomainError`.

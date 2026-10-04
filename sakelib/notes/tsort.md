@@ -8,7 +8,8 @@ Tarjan's algorithm as Ruby's `tsort.rb` writes it (recursive), so components com
 1. **Mixin, Ruby's form.** A type includes `TSort` and defines the two required functions:
 
    ```ruby
-   class Build < {reader: [names, deps]}
+   class Build
+     attr_reader names, deps
      include TSort
      def tsort_each_node(b) = Array.each(@names) { |n| yield(n) }
      def tsort_each_child(b, name) = Array.each(@deps[name] || String[]) { |d| yield(d) }

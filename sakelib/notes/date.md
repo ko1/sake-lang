@@ -5,7 +5,7 @@
 
 ## Representation
 
-- `class Date < {reader: [jd, year, month, day]}`: the Julian Day Number plus the civil date, cached.
+- `class Date` with `attr_reader jd, year, month, day`: the Julian Day Number plus the civil date, cached.
 - **Calendar: Ruby's default `Date::ITALY`.** Julian before 1582-10-15 and Gregorian from then on, as
   Ruby does, so `Date.civil(1582, 10, 4) + 1` is 1582-10-15, 1582-10-10 is invalid, and 1000-02-29
   exists. The algorithms are Ruby's `c_civil_to_jd` / `c_jd_to_civil` in integer arithmetic. Other

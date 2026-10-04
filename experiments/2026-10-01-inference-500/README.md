@@ -303,3 +303,9 @@ v4 の level 1 の診断 280 件（106 本。どれも正しいプログラム�
 - `union-receiver-prior-art.md`：`(A|B).op(x)` の先行例の調査
 - `report.html`：結論の解説ページ（上の artifact の元）
 - `typeprof-analysis/`：TypeProf の結果の詳しい解析（完走できなかった原因、誤報の原因、untyped の原因。最小の再現例と診断用パッチ）。開発者向けの解説ページ <https://claude.ai/artifact/UUxaeKVUa9HAC95CS7hpzN>（`typeprof-analysis/report.html`）
+
+## 2026-10-04: class declarations converted
+
+The corpus `.sake` files were rewritten from `class C < {reader: [...]}` to the body form (`attr_reader ...`)
+by `tools/convert_class_settings.rb` when the old form was removed. The crosscheck table over corpus-v2
+is identical before and after the conversion (0 lines differ).

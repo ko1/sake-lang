@@ -502,19 +502,22 @@ block_errors.sake:6:7: error: Array.each requires a block
 
 ## 7. Types and instances
 
-A `class` declares a type with fields; its values are **instances**. The fields and how they can
-be reached are written as settings after `<` (a Record of settings, not a superclass: there is no
-inheritance). The type's operations are its own functions, called with the type's name and the
+A `class` declares a type with fields; its values are **instances**. The fields are declared in
+the body with `attr_reader`, `attr_accessor`, and `attr_writer`, as in Ruby but with the names
+written bare. The type's operations are its own functions, called with the type's name and the
 instance first:
 
 ```ruby
-class Point < {reader: [x, y]}               # a type with two fields, read-only from outside
+class Point               # a type with two fields, read-only from outside
+  attr_reader x, y
   def add(a, b) = Point.new(@x + Point.get_x(b), @y + Point.get_y(b))
   def norm2(p) = @x * @x + @y * @y           # @x: field x of the first argument, Point.get_x(p)
   def to_s(p) = "(#{@x}, #{@y})"             # used by puts and "#{...}"
 end
 
-class Counter < {reader: [name], accessor: [count], default: {count: 0}}
+class Counter
+  attr_reader name
+  attr_accessor count = 0
   def bump(c) = @count += 1                  # inside the class, @count += 1 writes the field
 end
 
@@ -541,17 +544,21 @@ true
 #<struct Counter name="hits", count=11>
 ```
 
-| Setting | Fields it declares |
+| In the body | Fields it declares |
 |---|---|
-| `reader: [x, y]` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
-| `accessor: [n]` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
-| `writer: [w]` | `C.set_w(c, v)` from anywhere; read only inside the class |
-| `default: {n: 0}` | a default value; trailing fields with defaults may be left out of `new`; a non-nil default also fixes the field's type |
-| `exception: true` | an exception type: `message` comes first |
+| `attr_reader x, y` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
+| `attr_accessor n` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
+| `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
+| `attr_accessor n = 0` | a default value (a literal); trailing fields with defaults may be left out of `new`; a non-nil default also fixes the field's type |
+| `class E < Exception` | an exception type: `message` comes first |
 
-Use `reader:` for every field that is not changed from outside, which is most of them: every write
-to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)` is
-shorthand for `class C < {accessor: [x, y]}`.
+Use `attr_reader` for every field that is not changed from outside, which is most of them: every
+write to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)`
+is shorthand for a `class C` with `attr_accessor x, y`.
+
+`class B < A` is shorthand for writing A's definitions in B: A's fields first, A's functions as B's
+(where unqualified names and `@x` mean B's), B's own definitions winning. It is not inheritance:
+afterwards a B is not an A.
 
 - **Instances.** `C.new(a, b)` takes one argument per field. Fields are **mutable**, and instances
   are **shared**, not copied: after `d = c`, a change through `d` is seen through `c`.
@@ -633,7 +640,8 @@ There is no `p.x`, a read-only field is not written from outside, a field that d
 not read, and `new` takes every field:
 
 ```ruby
-class Point < {reader: [x, y]}
+class Point
+  attr_reader x, y
 end
 pt = Point.new(1, 2)
 puts(pt.x)
@@ -644,15 +652,15 @@ puts(Point.new(1))
 
 ```
 $ sake instance_errors.sake
-instance_errors.sake:4:9: error: method call on a value `pt.x` is not allowed
+instance_errors.sake:5:9: error: method call on a value `pt.x` is not allowed
   hint: Point.get_x(pt)
   hint: pt.Point.get_x
-instance_errors.sake:5:7: error: field `x` of Point is read-only (reader)
-  hint: inside `class Point`, use `@x = value`; or list it under `accessor:`
-instance_errors.sake:6:12: error: undefined function `Point.get_z`
+instance_errors.sake:6:7: error: field `x` of Point is read-only (attr_reader)
+  hint: inside `class Point`, use `@x = value`; or declare it with `attr_accessor x`
+instance_errors.sake:7:12: error: undefined function `Point.get_z`
   hint: did you mean `Point.get_y`?
   hint: did you mean `Point.get_x`?
-instance_errors.sake:7:12: error: wrong number of arguments for Point.new (given 1, expected 2)
+instance_errors.sake:8:12: error: wrong number of arguments for Point.new (given 1, expected 2)
 (exit status 2)
 ```
 
@@ -694,7 +702,7 @@ data_runtime_error.sake:5: in length: TypeError: Line.get_to: argument 1 must be
 A `module` is a namespace of functions with no type and no instances. It is used in two ways: as a
 home for plain functions (`module_function`), and as a **mixin** that types include.
 
-| | `class C < {...}` | `module M` |
+| | `class C` | `module M` |
 |---|---|---|
 | Is a type | Yes: `C.new`, fields, `x in C` | No |
 | Functions | C's operations, instance first | module functions, or mixin functions for the types that include M |
@@ -712,12 +720,14 @@ module Shape                                 # a mixin: what includers share, an
   def describe(s) = "area #{area(s)}"        # area: the includer's own
 end
 
-class Square < {reader: [side]}              # a class: a type, with instances
+class Square              # a class: a type, with instances
+  attr_reader side
   include Shape
   def area(q) = @side * @side
 end
 
-class Disc < {reader: [r]}
+class Disc
+  attr_reader r
   include Shape
   def area(d) = 3 * @r * @r
 end
@@ -753,13 +763,15 @@ module Summary                       # mixin functions: they need `each` and `co
   def average(c) = total(c) / count(c)
 end
 
-class Basket < {reader: [items]}     # `class` adds operations to a type
+class Basket     # `class` adds operations to a type
+  attr_reader items
   include Summary
   def each(b) = Array.each(@items) { |x| yield(x) }
   def count(b) = Array.size(@items)
 end
 
-class Countdown < {reader: [n]}
+class Countdown
+  attr_reader n
   include Summary
   def each(c) = Integer.downto(@n, 1) { |i| yield(i) }
   def count(c) = @n
@@ -829,8 +841,6 @@ puts(Summary.total(1))
 ```
 $ sake module_errors.sake
 module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)
-module_errors.sake:7:7: error: `class Helpers`: Helpers is not a type; a namespace of functions is a module
-  hint: module Helpers
 module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary
   hint: to call it as Summary.total(...), mark it with `module_function`
 (exit status 2)
@@ -844,7 +854,8 @@ module and defining the operator. With `Comparable`, `<=>` alone gives the compa
 `Array.sort`:
 
 ```ruby
-class Money < {reader: [cents]}
+class Money
+  attr_reader cents
   include Arithmetic
   include Comparable
   def +(a, b) = Money.new(@cents + Money.get_cents(b))
@@ -859,7 +870,8 @@ p(Array.sort(Array[b, a]))
 p(Array.max(Array[a, b]))
 p(a == Money.new(150))
 p(Array.include?(Array[a], Money.new(150)))
-class Grid < {reader: [cells]}
+class Grid
+  attr_reader cells
   include Indexable
   def [](g, k) = Array.at(@cells, k)
   def []=(g, k, v)
@@ -1492,7 +1504,8 @@ functions in its class change them through `@balance` and `@history`. The histor
 takes apart.
 
 ```ruby
-class Account < {reader: [owner, balance, history]}   # read-only from outside; changed only below
+class Account   # read-only from outside; changed only below
+  attr_reader owner, balance, history
   def open(owner) = Account.new(owner, 0, Tuple[])     # the history holds Tuples
 
   def deposit(acct, amount)

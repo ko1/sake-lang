@@ -650,18 +650,21 @@ abab</pre></figure>
 
 <section id="data">
 <h2>Types and instances</h2>
-<p>A <code>class</code> declares a type with fields; its values are <strong>instances</strong>. The fields and how they can be reached are written as settings after <code>&lt;</code> (a Record of settings, not a superclass: there is no inheritance). The type's operations are its own functions, called with the type's name, the instance first.</p>
-<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Point</span> &lt; {reader: [x, y]}               <span class="tm"># a type with two fields, read-only from outside</span>
+<p>A <code>class</code> declares a type with fields; its values are <strong>instances</strong>. The fields are declared in the body with <code>attr_reader</code>, <code>attr_accessor</code>, and <code>attr_writer</code>, as in Ruby but with the names written bare. The type's operations are its own functions, called with the type's name, the instance first.</p>
+<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Point</span>               <span class="tm"># a type with two fields, read-only from outside</span>
+  attr_reader x, y
   <span class="tk">def</span> add(a, b) = <span class="tc">Point</span>.new(<span class="te">@x</span> + <span class="tc">Point</span>.get_x(b), <span class="te">@y</span> + <span class="tc">Point</span>.get_y(b))
   <span class="tk">def</span> norm2(p) = <span class="te">@x</span> * <span class="te">@x</span> + <span class="te">@y</span> * <span class="te">@y</span>           <span class="tm"># @x: field x of the first argument, Point.get_x(p)</span>
   <span class="tk">def</span> to_s(p) = <span class="ts">&quot;</span><span class="ts">(</span><span class="ts">#{</span><span class="te">@x</span><span class="ts">}</span><span class="ts">, </span><span class="ts">#{</span><span class="te">@y</span><span class="ts">}</span><span class="ts">)</span><span class="ts">&quot;</span>             # used by puts and &quot;#{...}&quot;
 <span class="tk">end</span>
 
-<span class="tk">class</span> <span class="tc">Counter</span> &lt; {reader: [name], accessor: [count], default: {count: <span class="tn">0</span>}}
+<span class="tk">class</span> <span class="tc">Counter</span>
+  attr_reader name
+  attr_accessor count = <span class="tn">0</span>
   <span class="tk">def</span> bump(c) = <span class="te">@count</span> += <span class="tn">1</span>                  <span class="tm"># inside the class, @count += 1 writes the field</span>
 <span class="tk">end</span>
 
-a = <span class="tc">Point</span>.new(<span class="tn">1</span>, <span class="tn">2</span>)                          # an instance: one argument per field
+a = <span class="tc">Point</span>.new(<span class="tn">1</span>, <span class="tn">2</span>)                          <span class="tm"># an instance: one argument per field</span>
 b = <span class="tc">Point</span>.add(a, <span class="tc">Point</span>.new(<span class="tn">3</span>, <span class="tn">4</span>))
 puts(b)
 p(b)                                         # p shows the fields
@@ -681,18 +684,48 @@ true
 #&lt;struct Counter name=&quot;hits&quot;, count=11&gt;</pre></figure>
 <h3>Declaring a type</h3>
 <div class="tbl"><table>
-<thead><tr><th>Setting</th><th>Fields it declares</th></tr></thead>
+<thead><tr><th>In the body</th><th>Fields it declares</th></tr></thead>
 <tbody>
-<tr><td><code>reader: [x, y]</code></td><td><code>C.get_x(c)</code> from anywhere; written only inside <code>class C</code> (with <code>@x = v</code>)</td></tr>
-<tr><td><code>accessor: [n]</code></td><td><code>C.get_n(c)</code> and <code>C.set_n(c, v)</code> from anywhere</td></tr>
-<tr><td><code>writer: [w]</code></td><td><code>C.set_w(c, v)</code> from anywhere; read only inside the class</td></tr>
-<tr><td><code>default: {n: 0}</code></td><td>a default value; trailing fields with defaults may be left out of <code>new</code>; a non-nil default also fixes the field's type</td></tr>
-<tr><td><code>exception: true</code></td><td>an exception type: <code>message</code> comes first</td></tr>
+<tr><td><code>attr_reader x, y</code></td><td><code>C.get_x(c)</code> from anywhere; written only inside <code>class C</code> (with <code>@x = v</code>)</td></tr>
+<tr><td><code>attr_accessor n</code></td><td><code>C.get_n(c)</code> and <code>C.set_n(c, v)</code> from anywhere</td></tr>
+<tr><td><code>attr_writer w</code></td><td><code>C.set_w(c, v)</code> from anywhere; read only inside the class</td></tr>
+<tr><td><code>attr_accessor n = 0</code></td><td>a default value (a literal); trailing fields with defaults may be left out of <code>new</code>; a non-nil default also fixes the field's type</td></tr>
+<tr><td><code>class E &lt; Exception</code></td><td>an exception type: <code>message</code> comes first</td></tr>
 </tbody></table></div>
-<p>Use <code>reader:</code> for every field that is not changed from outside, which is most of them: every write to a field is then in its own class, where the checker finds its type. <code>C = Struct.new(:x, :y)</code> is shorthand for <code>class C &lt; {accessor: [x, y]}</code>, and <code>E = Exception.new(:line)</code> for an exception type.</p>
+<p>Use <code>attr_reader</code> for every field that is not changed from outside, which is most of them: every write to a field is then in its own class, where the checker finds its type. <code>C = Struct.new(:x, :y)</code> is shorthand for a <code>class C</code> with <code>attr_accessor x, y</code>, and <code>E = Exception.new(:line)</code> for an exception type.</p>
+<h3>Writing one class's definitions into another</h3>
+<p><code>class B &lt; A</code> is shorthand for writing A's definitions in B: A's fields come first, then B's own; A's functions become B's, with unqualified names and <code>@x</code> inside them meaning B's; B's own definition of a function wins. It is not inheritance: afterwards A and B are unrelated, and a B is not an A.</p>
+<figure class="ex"><pre class="src"><code><span class="tm"># B &lt; A: A&#39;s definitions written again in B. Point3 is not a Point.</span>
+<span class="tk">class</span> <span class="tc">Point</span>
+  attr_reader x, y
+  <span class="tk">def</span> sum(pt) = <span class="te">@x</span> + <span class="te">@y</span>
+  <span class="tk">def</span> describe(pt) = <span class="ts">&quot;</span><span class="ts">#{</span>name(pt)<span class="ts">}</span><span class="ts">(</span><span class="ts">#{</span><span class="te">@x</span><span class="ts">}</span><span class="ts">, </span><span class="ts">#{</span><span class="te">@y</span><span class="ts">}</span><span class="ts">) sum=</span><span class="ts">#{</span>sum(pt)<span class="ts">}</span><span class="ts">&quot;</span>
+  <span class="tk">def</span> name(pt) = <span class="ts">&quot;</span><span class="ts">Point</span><span class="ts">&quot;</span>
+<span class="tk">end</span>
+<span class="tk">class</span> <span class="tc">Point3</span> &lt; <span class="tc">Point</span>
+  attr_accessor z = <span class="tn">0</span>
+  <span class="tk">def</span> sum(pt) = <span class="te">@x</span> + <span class="te">@y</span> + <span class="te">@z</span>
+  <span class="tk">def</span> name(pt) = <span class="ts">&quot;</span><span class="ts">Point3</span><span class="ts">&quot;</span>
+<span class="tk">end</span>
+<span class="tk">class</span> <span class="tc">ParseError</span> &lt; <span class="tc">Exception</span>
+  attr_reader line
+<span class="tk">end</span>
+puts(<span class="tc">Point</span>.describe(<span class="tc">Point</span>.new(<span class="tn">1</span>, <span class="tn">2</span>)))
+puts(<span class="tc">Point3</span>.describe(<span class="tc">Point3</span>.new(<span class="tn">1</span>, <span class="tn">2</span>, <span class="tn">3</span>)))
+p(<span class="tc">Point3</span>.new(<span class="tn">4</span>, <span class="tn">5</span>))
+<span class="tk">begin</span>
+  raise <span class="tc">ParseError</span>.new(<span class="ts">&quot;</span><span class="ts">bad</span><span class="ts">&quot;</span>, <span class="tn">3</span>)
+<span class="tk">rescue</span> <span class="tc">ParseError</span> =&gt; e
+  p([<span class="tc">Exception</span>.message(e), e.<span class="tc">ParseError</span>.get_line])
+<span class="tk">end</span>
+</code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake class_paste.sake</span>
+Point(1, 2) sum=3
+Point3(1, 2) sum=6
+#&lt;struct Point3 x=4, y=5, z=0&gt;
+[&quot;bad&quot;, 3]</pre></figure>
 <h3>Instances</h3>
 <ul>
-  <li><code>C.new(a, b)</code> takes one positional argument per field, in the order the fields first appear in the settings.</li>
+  <li><code>C.new(a, b)</code> takes one positional argument per field, in the order the fields are declared.</li>
   <li>Fields are <strong>mutable</strong> and instances are <strong>shared</strong>, not copied: after <code>d = c</code>, a change through <code>d</code> is seen through <code>c</code>. (Ruby's <code>Data</code> is immutable, which is why Sake's types follow Ruby's <code>Struct</code>.)</li>
   <li><code>==</code> compares the fields, unless the type defines <code>==</code> (or <code>Comparable</code> with <code>&lt;=&gt;</code>). Instances can be Hash keys and Set elements, except for a type with its own equality.</li>
   <li><code>p</code> shows <code>#&lt;struct Point x=4, y=6&gt;</code>, as Ruby does. A type's own <code>to_s(c)</code> is used by <code>puts</code>, <code>"#{…}"</code>, <code>Array.join</code>, and <code>%s</code>; its own <code>inspect(c)</code> by <code>p</code>. Each returns a String.</li>
@@ -760,7 +793,8 @@ puts(<span class="tc">Point</span>.norm2(<span class="tn">7</span>))
 <span class="odim">(exit status 2)</span></pre></figure>
 <h3>Mistakes</h3>
 <p>There is no <code>p.x</code>. A read-only field is not written from outside, a field that does not exist is not read, and <code>new</code> takes every field:</p>
-<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Point</span> &lt; {reader: [x, y]}
+<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Point</span>
+  attr_reader x, y
 <span class="tk">end</span>
 pt = <span class="tc">Point</span>.new(<span class="tn">1</span>, <span class="tn">2</span>)
 puts(pt.x)
@@ -768,15 +802,15 @@ puts(pt.x)
 puts(<span class="tc">Point</span>.get_z(pt))
 puts(<span class="tc">Point</span>.new(<span class="tn">1</span>))
 </code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake instance_errors.sake</span>
-<span class="oerr">instance_errors.sake:4:9: error: method call on a value `pt.x` is not allowed</span>
+<span class="oerr">instance_errors.sake:5:9: error: method call on a value `pt.x` is not allowed</span>
 <span class="ohint">  hint: Point.get_x(pt)</span>
 <span class="ohint">  hint: pt.Point.get_x</span>
-<span class="oerr">instance_errors.sake:5:7: error: field `x` of Point is read-only (reader)</span>
-<span class="ohint">  hint: inside `class Point`, use `@x = value`; or list it under `accessor:`</span>
-<span class="oerr">instance_errors.sake:6:12: error: undefined function `Point.get_z`</span>
+<span class="oerr">instance_errors.sake:6:7: error: field `x` of Point is read-only (attr_reader)</span>
+<span class="ohint">  hint: inside `class Point`, use `@x = value`; or declare it with `attr_accessor x`</span>
+<span class="oerr">instance_errors.sake:7:12: error: undefined function `Point.get_z`</span>
 <span class="ohint">  hint: did you mean `Point.get_y`?</span>
 <span class="ohint">  hint: did you mean `Point.get_x`?</span>
-<span class="oerr">instance_errors.sake:7:12: error: wrong number of arguments for Point.new (given 1, expected 2)</span>
+<span class="oerr">instance_errors.sake:8:12: error: wrong number of arguments for Point.new (given 1, expected 2)</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <p>Passing the wrong instance is reported before running, with a hint pointing back to the call. While running, the same check stops at the exact operation and prints the call chain:</p>
 <figure class="ex"><pre class="src"><code><span class="tc">Point</span> = <span class="tc">Struct</span>.new(<span class="ts">:</span><span class="ts">x</span>, <span class="ts">:</span><span class="ts">y</span>)
@@ -804,12 +838,12 @@ puts(length(<span class="tc">Point</span>.new(<span class="tn">3</span>, <span c
 <h2>Modules</h2>
 <p>A <code>module</code> is a namespace of functions with no type and no instances. It is used in two ways: as a home for plain functions, and as a <strong>mixin</strong> that types include.</p>
 <div class="tbl"><table>
-<thead><tr><th></th><th><code>class C &lt; {…}</code></th><th><code>module M</code></th></tr></thead>
+<thead><tr><th></th><th><code>class C</code></th><th><code>module M</code></th></tr></thead>
 <tbody>
 <tr><td>Is a type</td><td>Yes: <code>C.new</code>, fields, <code>x in C</code></td><td>No</td></tr>
 <tr><td>Functions</td><td>C's operations, instance first</td><td>Module functions, or mixin functions for the types that include M</td></tr>
 <tr><td>Called as</td><td><code>C.f(c)</code></td><td><code>M.f(x)</code>: directly (<code>module_function</code>), or dispatched to <code>x</code>'s type</td></tr>
-<tr><td>Combined by</td><td><code>include M</code> (no inheritance)</td><td><code>include</code> of other modules</td></tr>
+<tr><td>Combined by</td><td><code>include M</code>; <code>class C &lt; A</code> writes A's definitions in C</td><td><code>include</code> of other modules</td></tr>
 </tbody></table></div>
 <figure class="ex"><pre class="src"><code><span class="tk">module</span> <span class="tc">Geometry</span>                              <span class="tm"># a module: functions only, no instances</span>
   module_function
@@ -821,12 +855,14 @@ puts(length(<span class="tc">Point</span>.new(<span class="tn">3</span>, <span c
   <span class="tk">def</span> describe(s) = <span class="ts">&quot;</span><span class="ts">area </span><span class="ts">#{</span>area(s)<span class="ts">}</span><span class="ts">&quot;</span>        # area: the includer&#39;s own
 <span class="tk">end</span>
 
-<span class="tk">class</span> <span class="tc">Square</span> &lt; {reader: [side]}              <span class="tm"># a class: a type, with instances</span>
+<span class="tk">class</span> <span class="tc">Square</span>              # a class: a type, with instances
+  attr_reader side
   include <span class="tc">Shape</span>
   <span class="tk">def</span> area(q) = <span class="te">@side</span> * <span class="te">@side</span>
 <span class="tk">end</span>
 
-<span class="tk">class</span> <span class="tc">Disc</span> &lt; {reader: [r]}
+<span class="tk">class</span> <span class="tc">Disc</span>
+  attr_reader r
   include <span class="tc">Shape</span>
   <span class="tk">def</span> area(d) = <span class="tn">3</span> * <span class="te">@r</span> * <span class="te">@r</span>
 <span class="tk">end</span>
@@ -851,13 +887,15 @@ area 3</pre></figure>
   <span class="tk">def</span> average(c) = total(c) / count(c)
 <span class="tk">end</span>
 
-<span class="tk">class</span> <span class="tc">Basket</span> &lt; {reader: [items]}     <span class="tm"># `class` adds operations to a type</span>
+<span class="tk">class</span> <span class="tc">Basket</span>     <span class="tm"># `class` adds operations to a type</span>
+  attr_reader items
   include <span class="tc">Summary</span>
   <span class="tk">def</span> each(b) = <span class="tc">Array</span>.each(<span class="te">@items</span>) { |x| <span class="tk">yield</span>(x) }
   <span class="tk">def</span> count(b) = <span class="tc">Array</span>.size(<span class="te">@items</span>)
 <span class="tk">end</span>
 
-<span class="tk">class</span> <span class="tc">Countdown</span> &lt; {reader: [n]}
+<span class="tk">class</span> <span class="tc">Countdown</span>
+  attr_reader n
   include <span class="tc">Summary</span>
   <span class="tk">def</span> each(c) = <span class="tc">Integer</span>.downto(<span class="te">@n</span>, <span class="tn">1</span>) { |i| <span class="tk">yield</span>(i) }
   <span class="tk">def</span> count(c) = <span class="te">@n</span>
@@ -909,14 +947,13 @@ puts(<span class="tc">Shape</span>.describe(<span class="tc">Circle</span>.new(<
 puts(<span class="tc">Summary</span>.total(<span class="tn">1</span>))
 </code></pre><pre class="out" aria-label="output"><span class="oprompt">$ sake module_errors.sake</span>
 <span class="oerr">module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)</span>
-<span class="oerr">module_errors.sake:7:7: error: `class Helpers`: Helpers is not a type; a namespace of functions is a module</span>
-<span class="ohint">  hint: module Helpers</span>
 <span class="oerr">module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary</span>
 <span class="ohint">  hint: to call it as Summary.total(...), mark it with `module_function`</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <h3>Operators for your own types</h3>
 <p>An operator belongs to a module: <code>Arithmetic</code> (<code>+ - * / % **</code>, unary <code>-</code> and <code>+</code>), <code>Comparable</code> (<code>&lt;=&gt;</code> and <code>&lt; &lt;= &gt; &gt;=</code>), <code>Bitwise</code>, and <code>Indexable</code> (<code>[]</code>, <code>[]=</code>). A type joins by including the module and defining the operator. With <code>Comparable</code>, <code>&lt;=&gt;</code> alone gives the comparisons, <code>==</code>, and <code>Array.sort</code>.</p>
-<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Money</span> &lt; {reader: [cents]}
+<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Money</span>
+  attr_reader cents
   include <span class="tc">Arithmetic</span>
   include <span class="tc">Comparable</span>
   <span class="tk">def</span> +(a, b) = <span class="tc">Money</span>.new(<span class="te">@cents</span> + <span class="tc">Money</span>.get_cents(b))
@@ -931,7 +968,8 @@ p(<span class="tc">Array</span>.sort(<span class="tc">Array</span>[b, a]))
 p(<span class="tc">Array</span>.max(<span class="tc">Array</span>[a, b]))
 p(a == <span class="tc">Money</span>.new(<span class="tn">150</span>))
 p(<span class="tc">Array</span>.include?(<span class="tc">Array</span>[a], <span class="tc">Money</span>.new(<span class="tn">150</span>)))
-<span class="tk">class</span> <span class="tc">Grid</span> &lt; {reader: [cells]}
+<span class="tk">class</span> <span class="tc">Grid</span>
+  attr_reader cells
   include <span class="tc">Indexable</span>
   <span class="tk">def</span> [](g, k) = <span class="tc">Array</span>.at(<span class="te">@cells</span>, k)
   <span class="tk">def</span> []=(g, k, v)
@@ -994,7 +1032,7 @@ top: top
 door: door</pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
   <li>The includer's own definition wins over a borrowed one. Modules included by a module are borrowed too.</li>
-  <li><code>include</code> is not inheritance: <code>M.f(x)</code> always runs M's own <code>f</code> or dispatches to <code>x</code>'s type. There is no <code>class A &lt; B</code>; reuse a type by composition.</li>
+  <li><code>include</code> is not inheritance: <code>M.f(x)</code> always runs M's own <code>f</code> or dispatches to <code>x</code>'s type. <code>class B &lt; A</code> is not inheritance either: it only writes A's definitions in B.</li>
   <li>Only modules can be included. A <code>class</code> without fields is an error: it is a type with nothing in it; write a <code>module</code>.</li>
 </ul></div>
 </section>
@@ -1538,7 +1576,8 @@ fields:
 <section id="bank">
 <h2>A complete program</h2>
 <p>A bank account with a history. Its fields are read-only from outside (<code>reader:</code>); the functions in its class change them through <code>@balance</code> and <code>@history</code>. The history is made with <code>Tuple[]</code> and holds <code>[kind, amount]</code> Tuples tagged by a Symbol, which a <code>do |kind, amount|</code> block takes apart.</p>
-<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Account</span> &lt; {reader: [owner, balance, history]}   <span class="tm"># read-only from outside; changed only below</span>
+<figure class="ex"><pre class="src"><code><span class="tk">class</span> <span class="tc">Account</span>   <span class="tm"># read-only from outside; changed only below</span>
+  attr_reader owner, balance, history
   <span class="tk">def</span> open(owner) = <span class="tc">Account</span>.new(owner, <span class="tn">0</span>, <span class="tc">Tuple</span>[])     <span class="tm"># the history holds Tuples</span>
 
   <span class="tk">def</span> deposit(acct, amount)
@@ -1596,8 +1635,10 @@ Statement for Alice
 <tr><td><code>f(x)</code></td><td>The enclosing class or module's <code>f</code>, else a top-level function, else <code>Kernel</code>'s</td></tr>
 <tr><td><code>a + b</code>, <code>-a</code>, <code>a[k]</code></td><td>The operator of <code>a</code>'s type; your own type joins with <code>include Arithmetic</code> (<code>Comparable</code>, <code>Bitwise</code>, <code>Indexable</code>) and <code>def +(a, b)</code></td></tr>
 <tr><td><code>!x</code></td><td><code>x ? false : true</code></td></tr>
-<tr><td><code>class C &lt; {reader: [a], accessor: [b], default: {b: 0}}</code></td><td>A type with fields: <code>C.new(a, b)</code>, <code>C.get_a(c)</code>, <code>C.set_b(c, v)</code>; settings, not a superclass</td></tr>
-<tr><td><code>C = Struct.new(:a, :b)</code></td><td>Shorthand for <code>class C &lt; {accessor: [a, b]}</code></td></tr>
+<tr><td><code>class C</code> · <code>attr_reader a</code> · <code>attr_accessor b = 0</code></td><td>A type with fields: <code>C.new(a, b)</code>, <code>C.get_a(c)</code>, <code>C.set_b(c, v)</code>; field names are written bare</td></tr>
+<tr><td><code>class B &lt; A</code></td><td>A's definitions written again in B (fields, functions, includes); not inheritance, a B is not an A</td></tr>
+<tr><td><code>class E &lt; Exception</code></td><td>An exception type: <code>message</code> is its first field</td></tr>
+<tr><td><code>C = Struct.new(:a, :b)</code></td><td>Shorthand for <code>class C</code> with <code>attr_accessor a, b</code></td></tr>
 <tr><td><code>E = Exception.new(:line)</code></td><td>An exception type with fields <code>message</code> and <code>line</code></td></tr>
 <tr><td><code>@a</code> · <code>@a = v</code> · <code>@a += v</code></td><td>Inside a function of <code>class C</code>: field <code>a</code> of the function's first argument (<code>C.get_a(c)</code>, <code>C.set_a(c, v)</code>)</td></tr>
 <tr><td><code>def C.f(c)</code></td><td>Shorthand for <code>def f(c)</code> inside <code>class C</code></td></tr>
@@ -1630,7 +1671,7 @@ eval(<span class="ts">&quot;</span><span class="ts">1 + 1</span><span class="ts"
 <span class="oerr">forbidden.sake:6:1: error: `eval` is not allowed in Sake (it defeats static analysis)</span>
 <span class="odim">(exit status 2)</span></pre></figure>
 <div class="rules"><h4>Rules</h4><ul>
-  <li><strong>Never allowed:</strong> <code>self</code>, <code>@x</code> outside a function of a Struct type, <code>send</code>, <code>method_missing</code>, <code>define_method</code>, the <code>eval</code> family, <code>instance_variable_get</code>/<code>set</code>, <code>const_get</code>/<code>set</code>, and class inheritance.</li>
+  <li><strong>Never allowed:</strong> <code>self</code>, <code>@x</code> outside a function of a Struct type, <code>send</code>, <code>method_missing</code>, <code>define_method</code>, the <code>eval</code> family, <code>instance_variable_get</code>/<code>set</code>, <code>const_get</code>/<code>set</code>, and subtypes: a value has exactly one type.</li>
   <li><strong>By design:</strong> there are no value constants, and no globals. Define a function instead (<code>def pi = 3.14159</code>), with <code>once { … }</code> for a value built once (<a href="#once">Values computed once</a>); <code>ARGV</code> and <code>IO.stdout</code> are operations.</li>
 </ul></div>
 </section>

@@ -6,7 +6,7 @@ Vector operations. Determinant (the expanded forms for sizes up to 4, then Barei
 results match Ruby, including the last bits of Float. Test: `test/sakelib/matrix.sake` and `.rb`, about 190
 lines of output that match Ruby's at `--strict`. The test also passes at `--strict=3`.
 
-Types: `class Matrix < {reader: [rows, column_count]}` and `class Vector < {reader: [elements]}`. Both
+Types: `class Matrix` (`attr_reader rows, column_count`) and `class Vector` (`attr_reader elements`). Both
 include `Arithmetic` (so `+ - * / ** -@ +@` work) and `Indexable` (so `m[i, j]`, `m[i, j] = x`, `v[i]`,
 and `v[i] = x` work). `==` is the built-in Struct equality, which compares the same fields as Ruby's
 `Matrix#==` (`rows` and `column_count`), so 1 == 1.0 holds element by element. Matrices therefore stay

@@ -111,10 +111,10 @@ module Sake
         when Prism::ClassNode, Prism::ModuleNode
           name = n.constant_path.slice
           t = add_type.(name, n.is_a?(Prism::ModuleNode) ? "module" : "class")
-          if n.is_a?(Prism::ClassNode) && n.superclass.is_a?(Prism::HashNode) # class C < {accessor: [x, y]}
-            n.superclass.elements.each do |el|
-              next unless el.respond_to?(:value) && el.value.is_a?(Prism::ArrayNode)
-              el.value.elements.each { |f| t[:fields] |= [f.slice.delete_prefix(":")] }
+          if n.is_a?(Prism::ClassNode) && n.body.is_a?(Prism::StatementsNode) # attr_reader x, y / attr_accessor n = 0
+            n.body.body.each do |st|
+              next unless st.is_a?(Prism::CallNode) && st.receiver.nil? && %i[attr_reader attr_accessor attr_writer].include?(st.name)
+              (st.arguments&.arguments || []).each { |a| t[:fields] |= [a.respond_to?(:name) ? a.name.to_s : a.slice.delete_prefix(":")] }
             end
           end
           return walk.(n.body, name)
