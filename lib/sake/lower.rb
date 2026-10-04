@@ -46,10 +46,10 @@ module Sake
       @scopes = [Scope.new({}, frame)]
       params.each { @scopes[0].slot(_1.to_sym) }
       @prev = nil
-      # Optional parameters: `b = 1` is set from its default when the call gave fewer arguments.
-      required = params.size - (fn&.defaults || []).size
-      defaults = (fn&.defaults || []).each_with_index.map do |d, j|
-        ArgDefault.new(index: required + j, slot: required + j, value: lower(d), origin: d)
+      # Optional parameters (`b = 1`, `d: 2`) are set from their defaults when the call did not give them.
+      required = fn ? fn.min_arity : 0
+      defaults = [*(fn&.defaults || []), *(fn&.keywords || {}).values].each_with_index.filter_map do |d, j|
+        ArgDefault.new(slot: required + j, value: lower(d), origin: d) if d
       end
       body = statements(stmts.compact, stmts.first)
       body = Seq.new(body: [*defaults, body], origin: fn.node) unless defaults.empty?
@@ -276,7 +276,38 @@ module Sake
 
       subject = chain_subject(n)
       xs = [*(subject ? [lower(subject)] : []), *args(n.arguments)]
+      temps = []
+      xs = keyword_args(t, n, xs, temps) if t.is_a?(UserFunction) || t.is_a?(Dispatch)
       blk = n.block && block(n.block)
+      call = user_call(t, n, xs, blk)
+      temps.empty? ? call : Seq.new(body: [*temps, call], origin: n)
+    end
+
+    # `f(x, d: 5)` to `def f(a, b = 1, c: 2, d: 3)`: the arguments in parameter order, Missing where the
+    # call gives none. Keyword values written out of order are evaluated first, in written order.
+    def keyword_args(t, n, xs, temps)
+      fn = t.is_a?(Dispatch) ? (@program.functions.dig(t.module, t.name) || t.table.values.first) : t
+      return xs unless fn.is_a?(UserFunction) && fn.keywords&.any?
+      kw = n.arguments&.arguments&.last
+      given = {}
+      if kw.is_a?(Prism::KeywordHashNode)
+        xs = xs[0...-1]
+        kw.elements.each { given[_1.key.unescaped] = _1.value }
+      end
+      names = fn.keywords.keys
+      in_order = given.keys == names.select { given.key?(_1) }
+      temp = lambda do |x, o|
+        tmp = @scopes[-1].slot(:"(argument #{@arg_temps = (@arg_temps || 0) + 1})")
+        temps << LVarSet.new(slot: tmp, value: x, origin: o)
+        get(tmp, o)
+      end
+      xs = xs.map { |x| [Lit, Str].include?(x.class) ? x : temp.(x, x.origin) } unless in_order
+      vals = given.transform_values { |v| in_order ? lower(v) : temp.(lower(v), v) }
+      pad = Array.new(fn.positional - xs.size) { Missing.new(origin: nil) }
+      [*xs, *pad, *names.map { vals[_1] || Missing.new(origin: nil) }]
+    end
+
+    def user_call(t, n, xs, blk)
       case t
       when UserFunction then CallUser.new(fn: t, args: xs, block: blk, origin: n)
       when Dispatch then CallDispatch.new(dispatch: t, args: xs, block: blk, origin: n)

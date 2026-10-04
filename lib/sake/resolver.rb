@@ -9,10 +9,13 @@ module Sake
   # module_function: callable as M.f (static). Other functions of a module are mixin functions:
   # M.f(x) dispatches to the f of x's type, which must include M.
   # abstract: the body is only `raise NotImplementedError`: each type that includes the module defines it.
-  # params: every parameter's name; defaults: the default expressions of the trailing optional ones.
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults) do
+  # params: every parameter's name, positional ones first; defaults: the default expressions of the
+  # trailing optional positional ones; keywords: keyword parameter name => default expression (nil: required).
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
-    def min_arity = params.size - (defaults || []).size
+    def positional = params.size - (keywords || {}).size
+    def min_arity = positional - (defaults || []).size
+    def keyword_shape = (keywords || {}).transform_values(&:nil?)
   end
 
   # `@x` inside a function of a Struct type: field x of the function's first parameter.
@@ -380,6 +383,7 @@ module Sake
       name = node.name.to_s
       fn = UserFunction.new(ns, name, collect_params(node), node.body, node, yields?(node.body))
       fn.defaults = node.parameters ? node.parameters.optionals.map(&:value) : []
+      fn.keywords = (node.parameters&.keywords || []).to_h { [_1.name.to_s, _1.is_a?(Prism::OptionalKeywordParameterNode) ? _1.value : nil] }
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
       fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
       fn.abstract = abstract_body?(node.body)
@@ -397,12 +401,12 @@ module Sake
       return [] unless pn
       return error(pn.block, "block parameter `#{pn.block.slice}` is not supported; use `yield`") || [] if pn.block
 
-      if pn.posts.any? || pn.keywords.any? || pn.rest || pn.keyword_rest
-        error(pn, "only positional parameters, required ones then optional ones (`b = 1`), are supported (got `#{pn.slice}`)")
+      if pn.posts.any? || pn.rest || pn.keyword_rest
+        error(pn, "only required, optional (`b = 1`) and keyword (`c:`, `d: 2`) parameters, in that order, are supported (got `#{pn.slice}`)")
       end
       pn.requireds.map do |r|
         r.is_a?(Prism::RequiredParameterNode) ? r.name.to_s : (error(r, "parameter destructuring is not supported"); "_")
-      end + pn.optionals.map { _1.name.to_s }
+      end + pn.optionals.map { _1.name.to_s } + pn.keywords.map { _1.name.to_s }
     end
 
     def yields?(node)
@@ -428,7 +432,7 @@ module Sake
         fs.each_value do |f|
           trait = !f.origin && (traits.include?(f.namespace) || (f.namespace && !@struct_types.key?(f.namespace) && !f.module_function))
           ctx = Ctx.new(f.namespace, f, false, false, trait)
-          (f.defaults || []).each { check(_1, ctx) }
+          [*f.defaults, *(f.keywords || {}).values].compact.each { check(_1, ctx) }
           check(f.body, ctx)
         end
       end
@@ -747,7 +751,8 @@ module Sake
       check_args(node.arguments, ctx)
     end
 
-    def check_args(args_node, ctx, hash_pairs: false, splat: false)
+    # keywords: the callee's keyword parameters (name => default or nil), when `k: v` arguments are its.
+    def check_args(args_node, ctx, hash_pairs: false, splat: false, keywords: nil)
       (args_node&.arguments || []).each do |a|
         case a
         when Prism::SplatNode
@@ -761,8 +766,13 @@ module Sake
               check(el.key, ctx)
               check(el.value, ctx)
             end
+          elsif keywords
+            a.elements.each do |el|
+              next error(el, "`**` is not supported") unless el.is_a?(Prism::AssocNode)
+              check(el.value, ctx)
+            end
           else
-            error(a, "keyword arguments are not supported")
+            error(a, "keyword arguments go only to functions with keyword parameters (`def f(x, k: 1)`)")
           end
         when Prism::ForwardingArgumentsNode then error(a, "argument forwarding is not supported")
         else check(a, ctx)
@@ -797,12 +807,13 @@ module Sake
         # `x.T.f(args)` is `T.f(x, args)`.
         target = resolve_qualified(node, recv.name.to_s, node.name.to_s, argc: args.size + 1)
         check(subject, ctx)
-        check_args(node.arguments, ctx, splat: true)
+        kws = target_keywords(target)
+        check_args(node.arguments, ctx, splat: true, keywords: kws)
         check_block(blk, ctx) if blk
         return unless target
         set_call(node, ctx, target)
         return if check_splat(node, target, args, 1)
-        return check_arity(node, target, args.size + 1, !blk.nil?)
+        return check_arity(node, target, check_keywords(node, target, args, kws) + 1, !blk.nil?)
       end
       if recv.nil?
         return error(node, "`#{node.name}` is not allowed in Sake (it defeats static analysis)") if FORBIDDEN.include?(node.name.to_s)
@@ -844,7 +855,8 @@ module Sake
       if hash_ctor && !(args.empty? || (args.size == 1 && args[0].is_a?(Prism::KeywordHashNode)))
         error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
       end
-      check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true)
+      kws = target_keywords(target)
+      check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws)
       check_block(blk, ctx) if blk
       return unless target
 
@@ -854,7 +866,7 @@ module Sake
       end
       set_call(node, ctx, target)
       return if check_splat(node, target, args, 0)
-      check_arity(node, target, args.size, !blk.nil?)
+      check_arity(node, target, check_keywords(node, target, args, kws), !blk.nil?)
       check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == CTOR && !%w[Array Hash Set].include?(target.namespace)
     end
 
@@ -885,6 +897,34 @@ module Sake
       true
     end
 
+    # The keyword parameters of a call's target: a user function's, or (a dispatch) the module function's.
+    def target_keywords(target)
+      fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
+      fn.is_a?(UserFunction) && fn.keywords&.any? ? fn.keywords : nil
+    end
+
+    # `k: v` arguments go to keyword parameters by name, decided here since the callee is known.
+    # Returns the number of positional arguments.
+    def check_keywords(node, target, args, kws)
+      kw = kws && args.last.is_a?(Prism::KeywordHashNode) ? args.last : nil
+      return args.size unless kws
+      seen = {}
+      (kw&.elements || []).each do |el|
+        next unless el.is_a?(Prism::AssocNode)
+        name = el.key.is_a?(Prism::SymbolNode) && el.key.value ? el.key.unescaped : nil
+        next error(el.key, "a keyword argument is written `name: value`") unless name
+        if !kws.key?(name)
+          error(el.key, "#{target_name(target)} has no keyword parameter `#{name}`", spell(name, kws.keys).map { "did you mean `#{_1}:`?" })
+        elsif seen[name]
+          error(el.key, "keyword argument `#{name}` is given twice")
+        end
+        seen[name] = true
+      end
+      missing = kws.select { |k, d| d.nil? && !seen[k] }.keys
+      error(node, "#{target_name(target)} needs keyword argument#{"s" if missing.size > 1} #{missing.map { "`#{_1}:`" }.join(", ")}") if missing.any?
+      args.size - (kw ? 1 : 0)
+    end
+
     def target_name(t) = t.respond_to?(:full_name) ? t.full_name : "#{t.module}.#{t.name}"
 
     def check_arity(node, target, argc, has_block)
@@ -897,8 +937,8 @@ module Sake
         fn = target.table.values.find { _1.is_a?(UserFunction) && !_1.abstract } || fn if fn&.abstract
         check_arity(node, fn, argc, has_block) if fn
       when UserFunction
-        unless (target.min_arity..target.params.size).cover?(argc)
-          expected = target.min_arity == target.params.size ? target.params.size : "#{target.min_arity}..#{target.params.size}"
+        unless (target.min_arity..target.positional).cover?(argc)
+          expected = target.min_arity == target.positional ? target.positional : "#{target.min_arity}..#{target.positional}"
           error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{expected})")
         end
         return if target.abstract # a required function: its includers' definitions say whether it takes a block
@@ -1112,7 +1152,7 @@ module Sake
       defined = table.values.select { _1.is_a?(UserFunction) && !_1.abstract }
       yields = fn.abstract && defined.any? ? defined.first.yields : fn.yields
       table.each do |t, impl|
-        next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && impl.min_arity == fn.min_arity && (impl.abstract || impl.yields == yields)
+        next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && impl.min_arity == fn.min_arity && impl.keyword_shape == fn.keyword_shape && (impl.abstract || impl.yields == yields)
         error(node, "#{mod}.#{name} dispatches to #{t}.#{name}, whose arguments or block differ from #{mod}.#{name}")
       end
       Dispatch.new(mod, name, table)

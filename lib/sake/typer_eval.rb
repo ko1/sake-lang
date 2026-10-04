@@ -72,9 +72,10 @@ module Sake
       when LVarGet then env.lookup(n.slot) || t("Nil")
       when LVarSet then assign(env, n.slot, ev(n.value, env))
       when MultiWrite then multi_write(n, env)
-      when ArgDefault # the call gave fewer arguments than parameters: the default's type
-        assign(env, n.slot, ev(n.value, env)) if env.frame.argc && env.frame.argc <= n.index
+      when ArgDefault # the call did not give this parameter: the default's type
+        assign(env, n.slot, ev(n.value, env)) if env.lookup(n.slot) == MISSING
         t("Nil")
+      when Missing then MISSING
       when IndexUpdate then index_update(n, env)
       when If then branch(env, n.cond, n.then_, n.else_)
       when While then loop_node(n, env)
@@ -698,9 +699,10 @@ module Sake
     end
 
     def run_body(fn, args, blk)
-      frame = Frame.new(fn, [], blk, args.size)
+      frame = Frame.new(fn, [], blk)
       env = Env.new(nil, frame)
       args.each_index { |i| env.vars[i] = args[i] }
+      (args.size...fn.params.size).each { env.vars[_1] = MISSING }
       u(ev(@ast.functions.fetch(fn).body, env), frame.ret)
     end
 

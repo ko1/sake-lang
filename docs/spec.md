@@ -297,9 +297,15 @@ end
 
 - **Parameters.** Required positional parameters, then optional ones with a default
   (`def f(a, b = 1, c = b + 1)`), as in Ruby: a default is evaluated at the call, after the earlier
-  parameters, when the call gives fewer arguments. Rest, keyword, and block parameters (`&b`) are
-  rejected. A call gives between the required count and all of them; a mixin function's definitions
-  must agree on both counts.
+  parameters, when the call gives fewer arguments. Keyword parameters come last, required (`w:`) or
+  with a default (`h: w`), and mix freely with optional positional ones:
+  `def greet(name, greeting = "Hello", punct: "!")` is called as `greet("Ruby", punct: "?")`. Since
+  every call's callee is known before running, `k: v` goes to its parameter by name when the program
+  is checked: an unknown or repeated keyword, or a missing required one, is an error, and `k: v` to a
+  function without keyword parameters is an error (there is no implicit Hash argument; write
+  `Hash[k: v]` or a Record `{k: v}`). Arguments are evaluated in the order written. Rest (`*a`, `**o`)
+  and block parameters (`&b`) are rejected. A call gives between the required positional count and
+  all of them; a mixin function's definitions must agree on both counts and on the keyword names.
 - **Return value.** The value of the last expression, or of `return expr`. `return a, b` returns
   the Tuple `[a, b]`.
 - **Polymorphism.** Functions are polymorphic. A function works on any arguments its operations

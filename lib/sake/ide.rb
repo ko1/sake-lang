@@ -163,7 +163,9 @@ module Sake
       def call_user(fn, args, blk)
         reset_records if @rec_pass != @passes
         r = super
-        (@fn_args[fn] ||= Array.new(args.size) { [] }).each_index { |i| @fn_args[fn][i] = Typer.union(@fn_args[fn][i], args[i] || []) }
+        (@fn_args[fn] ||= Array.new(fn.params.size) { [] }).each_index do |i|
+          @fn_args[fn][i] = Typer.union(@fn_args[fn][i], args[i] && args[i] != MISSING ? args[i] : [])
+        end
         @fn_rets[fn] = Typer.union(@fn_rets[fn] || [], r)
         r
       end
