@@ -119,6 +119,7 @@ module Sake
       when Regexp then "Regexp"
       when MatchData then "MatchData"
       when ThreadValue then "Thread"
+      when IOValue then "IO"
       else
         # Ruby's own objects for the concurrency and network operations (stdlib_net.rb).
         name = { "Thread::Queue" => "Queue", "Thread::Mutex" => "Mutex", "TCPServer" => "TCPServer", "TCPSocket" => "Socket" }[v.class.name]

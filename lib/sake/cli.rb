@@ -149,7 +149,9 @@ module Sake
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item
-          when "type", "exhaustive" then type_message(c, what, typer, program)
+          when "type", "exhaustive"
+            next_msg = ["yield: no block is given on this call", ["check `block_given?` before `yield`"]] if c.op == "yield"
+            next_msg || type_message(c, what, typer, program)
           when "rescue"
             ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]
           when "unrescued"

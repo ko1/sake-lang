@@ -119,6 +119,7 @@ module Sake
 
     # Built-ins that show values run each type's own to_s / inspect, so the typer analyzes those too.
     SHOWS = { "Kernel.to_s" => :to_s, "Kernel.inspect" => :inspect, "Kernel.puts" => :to_s, "Kernel.print" => :to_s, "Kernel.p" => :inspect, "Kernel.pp" => :inspect,
+              "IO.puts" => :to_s, "IO.print" => :to_s,
               "Kernel.format" => :to_s, "Kernel.sprintf" => :to_s, "Array.join" => :to_s }.freeze
 
     def show_deep(ty, kind, node, seen = {})
@@ -215,14 +216,24 @@ module Sake
       when "TCPServer.new" then t("TCPServer")
       when "TCPServer.accept", "Socket.connect" then t("Socket")
       when "TCPServer.close", "Socket.close", "Socket.close_write" then t("Nil")
-      when "Socket.gets", "Socket.read" then u(t("String"), t("Nil"))
+      when "Socket.gets", "Socket.read", "IO.gets" then u(t("String"), t("Nil"))
+      when "IO.stdin", "IO.stdout", "IO.stderr", "IO.flush" then t("IO")
+      when "IO.puts", "IO.print", "IO.close" then t("Nil")
+      when "IO.write" then t("Integer")
+      when "IO.read" then t("String")
+      when "IO.eof?", "IO.closed?" then t("Boolean")
+      when "IO.readlines" then new_site(node, " IO.readlines", t("String"))
+      when "IO.each_line"
+        call_block(blk, [t("String")])
+        a0
+      when "File.open" then blk ? call_block(blk, [t("IO")]) : t("IO")
       else :none
       end
     end
 
     def builtin_result_ext(name, args, blk, node)
       if (kind = SHOWS[name])
-        (name == "Kernel.format" || name == "Kernel.sprintf" ? args.drop(1) : args).each { show_deep(_1, kind, node) }
+        (%w[Kernel.format Kernel.sprintf IO.puts IO.print].include?(name) ? args.drop(1) : args).each { show_deep(_1, kind, node) }
       end
       table = table_result(name, args, blk, node)
       return table unless table == :none

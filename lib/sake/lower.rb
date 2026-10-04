@@ -314,6 +314,7 @@ module Sake
       when Dispatch then CallDispatch.new(dispatch: t, args: xs, block: blk, origin: n)
       when UnionCall then CallUnion.new(union: t, args: xs, block: blk, origin: n)
       when Builtin
+        return BlockGiven.new(origin: n) if t.full_name == "Kernel.block_given?"
         if (dt = @program.struct_types[t.namespace]) && blk.nil?
           f = field_name(t)
           return field_get(t, xs[0], n) if t.name == "get_#{f}" && dt.fields.include?(f) && xs.size == 1
@@ -354,6 +355,7 @@ module Sake
     end
 
     def block(b)
+      return BlockPass.new(origin: b) if b.is_a?(Prism::BlockArgumentNode)
       sc = Scope.new({}, @scopes[0].frame)
       @scopes.push(sc)
       begin

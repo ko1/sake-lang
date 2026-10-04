@@ -10,6 +10,7 @@ require_relative "sake/stdlib_ext"
 require_relative "sake/stdlib_table"
 require_relative "sake/stdlib_net"
 require_relative "sake/stdlib_text"
+require_relative "sake/stdlib_io"
 require_relative "sake/resolver"
 require_relative "sake/interpreter"
 
@@ -73,6 +74,16 @@ module Sake
   end
 
   # The file a Prism node (or a SakeAST node) comes from.
+  # Whether a call's target must get a block (a passed-on `&b` may carry none).
+  def needs_block?(call)
+    case call
+    when AST::CallBuiltin then call.fn.block == :required
+    when AST::CallUser then !call.fn.block_optional
+    when AST::CallDispatch then call.dispatch.table.values.any? { _1.is_a?(UserFunction) ? !_1.block_optional : _1.block == :required }
+    when AST::CallUnion then call.union.table.values.any? { _1.is_a?(UserFunction) ? !_1.block_optional : _1.block == :required }
+    end
+  end
+
   def file_of(program, node)
     node = node.origin if node.respond_to?(:origin)
     program.sources[node.location.send(:source)] || program.path

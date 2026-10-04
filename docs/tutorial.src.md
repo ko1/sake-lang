@@ -157,9 +157,10 @@ Your own functions receive a block through `yield`.
 
 @@example blocks_more
 
-Blocks are not values. You cannot store a block in a variable or pass `&blk`. In return, the
-interpreter knows statically which block every `yield` runs, so it can check block use before
-running:
+Blocks are not values. You cannot store a block in a variable; `&blk` only passes a function's
+block on (`def f(xs, &b) = Array.map(xs, &b)`), and `block_given?` lets a function be called with or
+without one. In return, the interpreter knows statically which block every `yield` runs, so it can
+check block use before running:
 
 @@example block_errors
 

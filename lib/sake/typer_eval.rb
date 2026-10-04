@@ -76,6 +76,7 @@ module Sake
         assign(env, n.slot, ev(n.value, env)) if env.lookup(n.slot) == MISSING
         t("Nil")
       when Missing then MISSING
+      when BlockGiven then t("Boolean")
       when IndexUpdate then index_update(n, env)
       when If then branch(env, n.cond, n.then_, n.else_)
       when While then loop_node(n, env)
@@ -133,7 +134,14 @@ module Sake
         end
         env.dead = true
         []
-      when Yield then call_block(env.frame.block, n.args.map { ev(_1, env) })
+      when Yield
+        args = n.args.map { ev(_1, env) }
+        # A function that checks block_given? may be called without one: a yield it reaches then fails.
+        if env.frame&.fn&.block_optional && !unreachable?(env)
+          given = !env.frame.block.nil?
+          add_check(n.origin, "yield", "block", "a block", given ? t("Block") : t("no block"), given ? :proven : :error, given ? [] : ["no block"])
+        end
+        call_block(env.frame.block, args)
       when CallBuiltin
         call(n, env).tap { env.dead = true if n.fn.full_name == "Kernel.exit" } # exit ends the path
       when CallUser, CallDispatch, CallUnion
@@ -214,6 +222,8 @@ module Sake
     end
 
     def branch(env, pred, then_node, else_node)
+      # Whether a block was given is known for each call (a yielding function is analyzed per call).
+      return ev(env.frame.block ? then_node : else_node, env) if pred.is_a?(BlockGiven) && env.frame
       ev(pred, env)
       e1 = env.dup_level
       e2 = env.dup_level
@@ -561,6 +571,12 @@ module Sake
         return xs.size == 4 ? index_set(o, xs[0], xs[1], lit, xs[3], xs[2]) : index_set(o, xs[0], xs[1], lit, xs[2])
       end
       args = arg_types(n.args, env)
+      if n.block.is_a?(BlockPass) # its breaks go to its own call
+        given = env.frame&.block
+        return call_with(n, env, args, given) if given || !Sake.needs_block?(n)
+        add_check(o, "yield", "block", "a block", t("no block"), :error, ["no block"]) unless unreachable?(env)
+        return []
+      end
       blk = n.block && BlockCtx.new(n.block, n.block.params, env, [])
       r = call_with(n, env, args, blk)
       return r unless blk && !blk.breaks.empty?
@@ -696,6 +712,13 @@ module Sake
       r = ev(n.expr, env)
       @raised.pop
       u(r, ev(n.rescue_, env))
+    end
+
+    # A path after return/next/break, in this block or around it.
+    def unreachable?(env)
+      e = env
+      e = e.parent until e.nil? || e.dead
+      !e.nil?
     end
 
     def run_body(fn, args, blk)

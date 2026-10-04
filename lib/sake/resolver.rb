@@ -11,7 +11,7 @@ module Sake
   # abstract: the body is only `raise NotImplementedError`: each type that includes the module defines it.
   # params: every parameter's name, positional ones first; defaults: the default expressions of the
   # trailing optional positional ones; keywords: keyword parameter name => default expression (nil: required).
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords) do
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords, :block_optional, :block_param) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
     def positional = params.size - (keywords || {}).size
     def min_arity = positional - (defaults || []).size
@@ -53,7 +53,7 @@ module Sake
     # running report, so they cannot be rescued.
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
                             RegexpError FloatDomainError Math::DomainError].freeze
-    NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError NotImplementedError].freeze
+    NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError NotImplementedError LocalJumpError].freeze
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
     # `require "x"`: a call with no receiver, read by Sake.load before resolving.
@@ -382,7 +382,13 @@ module Sake
 
       name = node.name.to_s
       fn = UserFunction.new(ns, name, collect_params(node), node.body, node, yields?(node.body))
+      # `&b` (or `&`): the function's block, which it may pass on as `&b`; it then takes a block too.
+      if (bp = node.parameters&.block)
+        fn.block_param = bp.name&.to_s || "&"
+        fn.yields = true
+      end
       fn.defaults = node.parameters ? node.parameters.optionals.map(&:value) : []
+      fn.block_optional = fn.yields && calls_block_given?(node.body)
       fn.keywords = (node.parameters&.keywords || []).to_h { [_1.name.to_s, _1.is_a?(Prism::OptionalKeywordParameterNode) ? _1.value : nil] }
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
       fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
@@ -399,14 +405,18 @@ module Sake
     def collect_params(node)
       pn = node.parameters
       return [] unless pn
-      return error(pn.block, "block parameter `#{pn.block.slice}` is not supported; use `yield`") || [] if pn.block
-
       if pn.posts.any? || pn.rest || pn.keyword_rest
         error(pn, "only required, optional (`b = 1`) and keyword (`c:`, `d: 2`) parameters, in that order, are supported (got `#{pn.slice}`)")
       end
       pn.requireds.map do |r|
         r.is_a?(Prism::RequiredParameterNode) ? r.name.to_s : (error(r, "parameter destructuring is not supported"); "_")
       end + pn.optionals.map { _1.name.to_s } + pn.keywords.map { _1.name.to_s }
+    end
+
+    def calls_block_given?(node)
+      return false if node.nil?
+      return true if node.is_a?(Prism::CallNode) && node.name == :block_given? && node.receiver.nil?
+      node.compact_child_nodes.any? { calls_block_given?(_1) }
     end
 
     def yields?(node)
@@ -466,6 +476,10 @@ module Sake
       case node
       when Prism::ImplicitNode then check(node.value, ctx) # `k:` in `f(k:)` or `{k:}`: the variable (or function) k
       when Prism::LocalVariableReadNode
+        if ctx.fn&.block_param == node.name.to_s
+          error(node, "the block parameter `#{node.name}` can only be passed on as `&#{node.name}`",
+                ["call the block with `yield`; Sake has no block values"])
+        end
         if node.name == :_
           error(node, "`_` is the previous statement's value, but here it names a local variable", ["give the variable another name"])
         end
@@ -791,8 +805,12 @@ module Sake
       args = node.arguments&.arguments || []
       blk = node.block
       if blk.is_a?(Prism::BlockArgumentNode)
-        error(blk, "`&block` arguments are not supported; pass a block `{ |x| ... }`")
-        blk = nil
+        e = blk.expression
+        name = e.nil? ? "&" : (e.name.to_s if e.is_a?(Prism::LocalVariableReadNode))
+        unless ctx.fn&.block_param && name == ctx.fn.block_param
+          error(blk, "`#{blk.slice}`: only the function's own block parameter can be passed on (`def f(x, &b) = g(x, &b)`)",
+                ["or pass a block `{ |x| ... }`"]) # blk still counts as a block for the arity check
+        end
       end
       recv = node.receiver
 
@@ -810,7 +828,7 @@ module Sake
         check(subject, ctx)
         kws = target_keywords(target)
         check_args(node.arguments, ctx, splat: true, keywords: kws)
-        check_block(blk, ctx) if blk
+        check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
         return unless target
         set_call(node, ctx, target)
         return if check_splat(node, target, args, 1)
@@ -858,7 +876,7 @@ module Sake
       end
       kws = target_keywords(target)
       check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws)
-      check_block(blk, ctx) if blk
+      check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
       return unless target
 
       if target.is_a?(Dispatch) && target.table.empty? && ctx.fn.nil? # reached for sure: the top level runs
@@ -943,8 +961,9 @@ module Sake
           error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{expected})")
         end
         return if target.abstract # a required function: its includers' definitions say whether it takes a block
-        if target.yields && !has_block
-          error(node, "#{target.full_name} uses `yield` but no block is given")
+        if target.yields && !has_block && !target.block_optional
+          error(node, "#{target.full_name} uses `yield` but no block is given",
+                target.block_param ? [] : ["a function that checks `block_given?` may be called without a block"])
         elsif !target.yields && has_block
           error(node, "#{target.full_name} does not take a block (it has no `yield`)")
         end
@@ -1051,7 +1070,7 @@ module Sake
     # `(A|B).f(x, ...)`: f of each listed type; at run time x's type picks one.
     def check_union_call(node, type_nodes, args, blk, ctx)
       check_args(node.arguments, ctx)
-      check_block(blk, ctx) if blk
+      check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
       if (n = type_nodes.find { _1.is_a?(Prism::NilNode) })
         return error(n, "nil cannot be listed in `(...)`: check for nil first (`if x`), then call the operation")
       end

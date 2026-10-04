@@ -64,6 +64,8 @@ module Sake
       # once { ... }: the block's value, computed the first time this place runs and kept for the whole
       # program (the interpreter keys it by the call; see Interpreter#call_builtin).
       reg.define("Kernel", :once, [], block: :required) { |&b| b.call }
+      # block_given?: lowered to AST::BlockGiven, as it reads the calling function's frame.
+      reg.define("Kernel", :block_given?, []) { raise "BUG: block_given? is lowered" }
     end
   end
 end

@@ -274,7 +274,8 @@ def size_of(x) = (String|Array|Hash).size(x)
 The following are checked statically:
 
 - the number of arguments, for both user functions and built-in operations;
-- for a user function, a block must be passed **iff** the function contains `yield`;
+- for a user function, a block must be passed **iff** the function contains `yield` (or takes `&b`),
+  except that a function that checks `block_given?` may be called without one;
 - a built-in operation either requires a block or rejects one.
 
 **Splat arguments.** `*xs` spreads a Tuple or an Array (anything else raises `TypeError`), but only
@@ -303,8 +304,9 @@ end
   every call's callee is known before running, `k: v` goes to its parameter by name when the program
   is checked: an unknown or repeated keyword, or a missing required one, is an error, and `k: v` to a
   function without keyword parameters is an error (there is no implicit Hash argument; write
-  `Hash[k: v]` or a Record `{k: v}`). `f(k:)` passes the variable `k`, as in Ruby. Arguments are evaluated in the order written. Rest (`*a`, `**o`)
-  and block parameters (`&b`) are rejected. A call gives between the required positional count and
+  `Hash[k: v]` or a Record `{k: v}`). `f(k:)` passes the variable `k`, as in Ruby. Arguments are
+  evaluated in the order written. A block parameter `&b` (or `&`) may only be passed on (§7). Rest
+  parameters (`*a`, `**o`) are rejected. A call gives between the required positional count and
   all of them; a mixin function's definitions must agree on both counts and on the keyword names.
 - **Return value.** The value of the last expression, or of `return expr`. `return a, b` returns
   the Tuple `[a, b]`.
@@ -326,8 +328,16 @@ Array.each(pairs) do |k, v| ... end
 Integer.times(3) { p it }
 ```
 
-- **Not values.** Blocks are second-class. They cannot be stored, returned, or passed with `&`.
-  `proc`, `lambda`, and `->` are not available.
+- **Not values.** Blocks are second-class. They cannot be stored or returned. `proc`, `lambda`, and
+  `->` are not available.
+- **Passing on.** `def f(xs, &b) = Array.map(xs, &b)` passes the function's own block to another
+  call (`&` alone works too). `b` is used only as `&b`; a `break` in the block ends the call the
+  block was written for.
+- **Optional blocks.** `block_given?` tells whether the current function got a block. A function
+  that checks it may be called without one: `def info(msg = nil) = puts(block_given? ? yield : msg)`.
+  The checker knows for each call whether a block was given, so it analyzes only the branch taken;
+  a `yield` (or `&b` to a call that needs a block) reached without a block is an error at the
+  `type` level, and raises `LocalJumpError` (not rescuable) when it runs.
 - **Parameters.** `|a, b|` lists plain names. `it` and `_1` … `_9` work as in Ruby.
 - **Destructuring.** If a block declares two or more parameters and receives a single Tuple or
   Array, its elements become the parameters (missing ones are nil, extra ones are dropped, as in Ruby).
@@ -947,6 +957,24 @@ Range raise `RangeError` on an endless one.
 Strings of incompatible encodings meeting (a byte from `Integer.chr(227)` next to UTF-8 text) raise
 `EncodingError`, which can be rescued.
 
+### IO values
+
+`IO.stdin`, `IO.stdout`, and `IO.stderr` give the program's streams as values of type `IO` (Sake has
+no `$stdout` or `STDOUT`; as with `ARGV`, a value comes from an operation). `IO.stdout` writes where
+`puts` does; writing to `IO.stderr` flushes stdout first, so their lines keep their order.
+`File.open(path, mode = "r")` gives an `IO` too; with a block it gives the block's value and closes
+the file after the block. There is one type, `IO`, for files and streams, so one function can write
+to either.
+
+| Operation | Result |
+|---|---|
+| `IO.puts(io, ...)` · `IO.print(io, ...)` · `IO.write(io, s)` | nil · nil · Integer |
+| `IO.gets(io)` · `IO.read(io)` · `IO.readlines(io)` | String or nil · String · Array of String |
+| `IO.each_line(io) { \|line\| }` · `IO.eof?(io)` · `IO.flush(io)` | io · true/false · io |
+| `IO.close(io)` · `IO.closed?(io)` | nil · true/false |
+
+Reading from or writing to a closed IO, or one not opened for it, raises `IOError`.
+
 ### Program arguments, exit, warn
 
 - `ARGV` is the Array of the program's arguments (`bin/sake prog.sake a b` gives `["a", "b"]`). It is
@@ -1028,4 +1056,4 @@ Each of these is rejected statically. Most wait on a design decision.
 - **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.
 - **Patterns other than those in [§9.1](#91-pattern-matching)**: arrays, find patterns, pins, guards.
 - **Built-in constants** such as `Math::PI` and `Float::INFINITY`.
-- **First-class blocks.**
+- **First-class blocks** (storing a block, `proc`, `lambda`): see §7 for what blocks can do.

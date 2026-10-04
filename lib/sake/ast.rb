@@ -49,6 +49,8 @@ module Sake
     node :Missing                           # an argument the call does not give (an omitted keyword, ...)
     node :Block, :params, :locals, :body, :rest # params/locals: slots; locals are cleared on entry; rest: `|a, *r|`'s index in params
     node :Yield, :args
+    node :BlockPass                         # `&b`: the function's own block, passed on to a call
+    node :BlockGiven                        # `block_given?`: whether the function was given a block
     node :Return, :value
     node :Next, :value
     node :Break, :value, :target           # target: :loop (the innermost while) or :block

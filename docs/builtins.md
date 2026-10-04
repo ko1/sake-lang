@@ -136,6 +136,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 - `File.delete(String)`
 - `File.exist?(String)`
+- `File.open(String, [String]) [{ }]`
 - `File.read(String)`
 - `File.readlines(String)`
 - `File.write(String, String)`
@@ -252,6 +253,23 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.values(x)`
 - `Hash.values_at(x, *Any)`
 
+## IO
+
+- `IO.close(x)`
+- `IO.closed?(x)`
+- `IO.each_line(x) { }`
+- `IO.eof?(x)`
+- `IO.flush(x)`
+- `IO.gets(x)`
+- `IO.print(x, *Any)`
+- `IO.puts(x, *Any)`
+- `IO.read(x)`
+- `IO.readlines(x)`
+- `IO.stderr()`
+- `IO.stdin()`
+- `IO.stdout()`
+- `IO.write(x, String)`
+
 ## Integer
 
 - `Integer.!=(x, Any)`
@@ -323,6 +341,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.Float(String|Integer|Float)`
 - `Kernel.Integer(String|Integer|Float)`
 - `Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
+- `Kernel.block_given?()`
 - `Kernel.exit([Integer|Boolean])`
 - `Kernel.format(String, *Any)`
 - `Kernel.gets()`

@@ -117,7 +117,9 @@ module Sake
       when Or
         l = ev(n.left, f)
         Values.truthy?(l) ? l : ev(n.right, f)
-      when CallBuiltin, CallUser, CallDispatch, CallUnion then n.block ? call_catching_break(n, f) : call_node(n, f, nil)
+      when CallBuiltin, CallUser, CallDispatch, CallUnion
+        # A passed-on block's break ends the call it was written for, so it is not caught here.
+        n.block.is_a?(BlockPass) ? call_node(n, f, pass_block(n, f)) : (n.block ? call_catching_break(n, f) : call_node(n, f, nil))
       when BinOp then binary_op(n.origin, n.op, ev(n.left, f), ev(n.right, f))
       when UnOp then unary_op(n.origin, n.op, ev(n.value, f))
       when IsNil
@@ -142,6 +144,7 @@ module Sake
       when Interp then encoding_error(n) { n.parts.map { ev(_1, f) }.join }
       when ArgDefault then f.slots[n.slot].equal?(MISSING) ? f.slots[n.slot] = ev(n.value, f) : nil
       when Missing then MISSING
+      when BlockGiven then !f.block.nil?
       when ToS then Values.to_s(ev(n.value, f))
       when ToSym then ev(n.value, f).to_sym
       when MakeTuple then Tuple.new(n.elems.map { ev(_1, f) })
@@ -193,6 +196,12 @@ module Sake
     end
 
     def block_val(b, f) = b && BlockVal.new(b, f)
+
+    # `&b` when the function was called without a block: fine for a callee that checks block_given?.
+    def pass_block(n, f)
+      return f.block if f.block || !Sake.needs_block?(n)
+      raise RunError.new("LocalJumpError", "no block given (#{n.block.origin.slice} passes none)", line(n), @stack.dup, file: where_file(n.origin))
+    end
 
     def call_node(n, f, blk)
       args = n.args.flat_map do |a|
@@ -620,6 +629,7 @@ module Sake
 
     # node: the Prism node of the call or yield that runs the block.
     def call_block(blk, args, node)
+      raise RunError.new("LocalJumpError", "no block given (yield)", node.location.start_line, @stack.dup, file: where_file(node)) unless blk
       b = blk.node
       params = b.params
       fixed = params.size - (b.rest ? 1 : 0)

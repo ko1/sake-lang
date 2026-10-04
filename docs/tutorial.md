@@ -477,9 +477,10 @@ $ sake blocks_more.sake
 [4, [5, 6]]
 ```
 
-Blocks are not values. You cannot store a block in a variable or pass `&blk`. In return, the
-interpreter knows statically which block every `yield` runs, so it can check block use before
-running:
+Blocks are not values. You cannot store a block in a variable; `&blk` only passes a function's
+block on (`def f(xs, &b) = Array.map(xs, &b)`), and `block_given?` lets a function be called with or
+without one. In return, the interpreter knows statically which block every `yield` runs, so it can
+check block use before running:
 
 ```ruby
 def twice(x) = yield(yield(x))
@@ -493,6 +494,7 @@ Array.each(Array[1, 2])
 ```
 $ sake block_errors.sake
 block_errors.sake:4:6: error: twice uses `yield` but no block is given
+  hint: a function that checks `block_given?` may be called without a block
 block_errors.sake:5:6: error: add does not take a block (it has no `yield`)
 block_errors.sake:6:7: error: Array.each requires a block
 (exit status 2)
