@@ -58,7 +58,7 @@ module Sake
       end
       %i[& | ^ << >>].each { |op| reg.define_binary(op, "Integer", "Integer") { |a, b| a.public_send(op, b) } }
       %i[| & -].each { |op| reg.define_binary(op, "Set", "Set") { |a, b| a.public_send(op, b) } }
-      %w[Symbol IO].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
+      %w[Symbol IO Regexp Range].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
       reg.define_binary(:=~, "String", "Regexp") { |s, r| s =~ r }
       reg.define_binary(:=~, "Regexp", "String") { |r, s| r =~ s }
       reg.define_binary(:!~, "String", "Regexp") { |s, r| s !~ r }
@@ -150,9 +150,10 @@ module Sake
       reg.define("String", :intern, ["String"], &:to_sym)
     end
 
-    def int_range!(r)
-      return if r.begin.is_a?(Integer)
-      raise Fail.new("TypeError", "this operation needs a Range that starts with an Integer, got #{Values.inspect(r)}")
+    # Iteration goes through Integer or String ranges (String#succ), as Ruby's.
+    def int_range!(r, string: true)
+      return if r.begin.is_a?(Integer) || (string && r.begin.is_a?(String))
+      raise Fail.new("TypeError", "this operation needs a Range that starts with an Integer#{string ? " or a String" : ""}, got #{Values.inspect(r)}")
     end
 
     def finite!(r)
@@ -162,7 +163,7 @@ module Sake
     def install_range(reg)
       reg.define("Range", :each, ["Range"], block: :required) { |r, &b| int_range!(r); r.each { b.(_1) }; r }
       reg.define("Range", :each_with_index, ["Range"], block: :required) { |r, &b| int_range!(r); r.each_with_index { b.(_1, _2) }; r }
-      reg.define("Range", :step, %w[Range Integer], block: :required) { |r, n, &b| int_range!(r); r.step(n) { b.(_1) }; r }
+      reg.define("Range", :step, %w[Range Integer], block: :required) { |r, n, &b| int_range!(r, string: false); r.step(n) { b.(_1) }; r }
       reg.define("Range", :to_a, ["Range"]) { |r| int_range!(r); finite!(r); r.to_a }
       reg.define("Range", :map, ["Range"], block: :required) { |r, &b| int_range!(r); finite!(r); r.map { b.(_1) } }
       %i[select filter reject].each do |m|
@@ -177,8 +178,8 @@ module Sake
       %i[reduce inject].each do |m|
         reg.define("Range", m, %w[Range Any], block: :required) { |r, init, &b| int_range!(r); finite!(r); r.reduce(init) { |acc, x| b.(acc, x) } }
       end
-      reg.define("Range", :sum, ["Range"], optional: [NUMERIC], block: :optional) { |r, init = 0, &b| int_range!(r); finite!(r); b ? r.sum(init) { b.(_1) } : r.sum(init) }
-      reg.define("Range", :size, ["Range"]) { |r| int_range!(r); finite!(r); r.size }
+      reg.define("Range", :sum, ["Range"], optional: [NUMERIC], block: :optional) { |r, init = 0, &b| int_range!(r, string: false); finite!(r); b ? r.sum(init) { b.(_1) } : r.sum(init) }
+      reg.define("Range", :size, ["Range"]) { |r| int_range!(r, string: false); finite!(r); r.size }
       reg.define("Range", :count, ["Range"], block: :optional) do |r, &b|
         int_range!(r)
         finite!(r)

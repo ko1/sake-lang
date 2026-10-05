@@ -11,7 +11,7 @@ module Sake
   # abstract: the body is only `raise NotImplementedError`: each type that includes the module defines it.
   # params: every parameter's name, positional ones first; defaults: the default expressions of the
   # trailing optional positional ones; keywords: keyword parameter name => default expression (nil: required).
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords, :block_optional, :block_param, :rest_param, :kwrest_param) do
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords, :block_optional, :block_param, :rest_param, :kwrest_param, :pasted) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
     # params: required, optional, `*rest`, keywords, `**opts`, in that order.
     def positional = params.size - (keywords || {}).size - (rest_param ? 1 : 0) - (kwrest_param ? 1 : 0)
@@ -139,7 +139,7 @@ module Sake
         paste.(parent)
         (@functions[parent] || {}).each do |fname, fn|
           next if fn.origin || @functions.dig(name, fname)
-          (@functions[name] ||= {})[fname] = fn.dup.tap { _1.namespace = name }
+          (@functions[name] ||= {})[fname] = fn.dup.tap { _1.namespace = name; _1.pasted = true }
         end
         @includes[name] = [*@includes.fetch(parent, []), *@includes.fetch(name, [])] if @includes.key?(parent)
       end
@@ -1019,10 +1019,17 @@ module Sake
         error(args[i], "`#{args[i].slice}`: #{target.full_name} takes its arguments written out (#{target.full_name == "Hash[]" ? "`key => value` pairs" : "it makes Tuples as long as the number of arguments"})")
         return true
       end
+      fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
+      if fn.is_a?(UserFunction) && fn.rest_param
+        if i + offset < fn.positional
+          error(args[i], "`#{args[i].slice}`: the first #{fn.positional} argument(s) of #{fn.full_name} must be written out; a splat fills only its `*rest` parameter")
+        end
+        return true
+      end
       unless target.is_a?(Builtin) && target.rest
-        error(args[i], "`#{args[i].slice}`: splat arguments go only to built-ins that take any number of arguments " \
+        error(args[i], "`#{args[i].slice}`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments " \
                        "(puts, format, Array[...], Set[...], Array.push, ...)",
-              target.is_a?(Builtin) || target.is_a?(Operators::Call) ? [] : ["#{target_name(target)} takes a fixed number of arguments; pass them one by one"])
+              target.is_a?(Builtin) || target.is_a?(Operators::Call) ? [] : ["#{target_name(target)} has no `*rest` parameter; pass the arguments one by one"])
         return true
       end
       fixed = target.params.size + target.optional.size

@@ -135,6 +135,9 @@ module Sake
   end
 
   module Stdlib
+    # Range operations that walk the values (TypeError unless the Range starts with an Integer or a String).
+    RANGE_ITERATING = (%w[each each_with_index step to_a map select filter reject any? all? none? find detect reduce inject sum size count] +
+                       StdlibTable::ROWS.filter_map { |r| r[1].to_s if r[0] == "Range" && r[4]&.[](:int_range) }).map { "Range.#{_1}" }.freeze
     module_function
 
     def install_table(reg)

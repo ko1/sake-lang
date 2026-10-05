@@ -221,6 +221,10 @@ module Sake
     def site_id(node)
       inst = @inst_stack&.last
       ctx = site_context(inst)
+      # a pasted copy (class B < A) shares A's nodes but not A's containers
+      init, depth = @init_fns&.last
+      fn = init && depth == (@inst_stack&.size || 0) ? init : inst&.first
+      ctx = [:paste, fn.namespace, ctx] if fn&.pasted
       id = ctx ? (((@ctx_site_ids ||= {}.compare_by_identity)[node] ||= {})[ctx] ||= next_site_id(node, ctx)) : (@site_ids[node] ||= next_site_id(node))
       (@site_fns ||= {})[id] ||= inst&.first # the function whose code made it
       id
@@ -776,6 +780,7 @@ module Sake
       @init_depth[init] += 1
       @instantiated[init] = true
       @callers.push(call_site(node))
+      (@init_fns ||= []).push([init, @inst_stack&.size || 0])
       frame = Frame.new(init, [], nil)
       env = Env.new(nil, frame)
       env.vars[0] = t(dt.name)
@@ -791,6 +796,7 @@ module Sake
         exits ? given.keys.to_h { |f| [f, exits[f] || given[f]] } : given
       ensure
         @init_frames&.delete(frame)
+        @init_fns.pop
         @callers.pop
         @init_depth[init] -= 1
       end
@@ -847,7 +853,12 @@ module Sake
 
     def new_site(node, label, elem) = site_for(node, label, init: elem).tap { |ty| write_elems(ty, [elem], node, "") }
 
+    RANGE_INT_ONLY = %w[Range.step Range.sum Range.size].freeze
+
     def builtin_result(name, args, blk, node)
+      if Stdlib::RANGE_ITERATING.include?(name)
+        record(node, name, "range", RANGE_INT_ONLY.include?(name) ? "Integer" : %w[Integer String], range_elem(args[0]))
+      end
       ext = builtin_result_ext(name, args, blk, node)
       return ext unless ext == :none
       a0 = args[0]

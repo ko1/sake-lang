@@ -425,6 +425,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Range
 
+- `Range.!=(x, Any)`
+- `Range.==(x, Any)`
 - `Range.all?(x) { }`
 - `Range.any?(x) { }`
 - `Range.begin(x)`
@@ -506,6 +508,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Regexp
 
+- `Regexp.!=(x, Any)`
+- `Regexp.==(x, Any)`
 - `Regexp.=~(x, Any)`
 - `Regexp.escape(String)`
 - `Regexp.match(x, String, [Integer])`

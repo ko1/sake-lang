@@ -286,11 +286,11 @@ The following are checked statically:
 - a built-in operation either requires a block or rejects one.
 
 **Splat arguments.** `*xs` spreads a Tuple or an Array (anything else raises `TypeError`), but only
-into a built-in's rest parameter: `puts(*lines)`, `format(fmt, *row)`, `Array[*xs, 0]`,
-`Set[*xs]`, `Array.push(a, *xs)`. The arguments before it are written out, so their count is still
-checked. A user function takes a fixed number of arguments, so `f(*args)` is a static error, as
-are splats into `Array.zip`/`Range.zip` (their Tuples are as long as the argument list) and
-`Hash[...]`. In the typer, a Tuple spreads position by position; an Array stands for any number of
+into a rest parameter: a built-in's (`puts(*lines)`, `format(fmt, *row)`, `Array[*xs, 0]`,
+`Set[*xs]`, `Array.push(a, *xs)`) or a user function's `*rest` (`join(*parts)`, §6). The arguments
+before it are written out, so their count is still checked. A splat into a function without
+`*rest`, or one that would fill a required or optional parameter, is a static error, as are splats
+into `Array.zip`/`Range.zip` (their Tuples are as long as the argument list) and `Hash[...]`. In the typer, a Tuple spreads position by position; an Array stands for any number of
 arguments of its element types.
 
 ## 6. Functions
@@ -499,8 +499,8 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
   holds those literals. When literal branches may leave some **values** of an open type (some
   String, Integer, or a Symbol made at run time), the report is the `exhaustive` item (level 3):
   the program may well be correct, and `NoMatchingPatternError` still stops it if not.
-- **Assertion.** After `x => P`, a local `x` is narrowed to the matching types, as in an `in`
-  branch. A value that surely does not match is reported as `type` (level 1); one that may not match
+- **Assertion.** After `x => P`, a local `x` (and, inside `initialize`, a field `@x` of the new
+  instance) is narrowed to the matching types, as in an `in` branch. A value that surely does not match is reported as `type` (level 1); one that may not match
   (another type may come) is checked when it runs, and reported only as `exhaustive` (level 3).
   The failure is `NoMatchingPatternError`, which can be rescued, as in Ruby. `x => P` is itself a check for nil, like `Array.fetch` for a
   missing index, so a value that may be nil is not reported. It is how a fact such as "a port is an
@@ -614,6 +614,7 @@ Option wrapper.
   |---|---|
   | `if x` / `while x` / `x && …` | non-nil in the branch taken when `x` is truthy |
   | `x != nil` / `x == nil` | nil or non-nil in the matching branch |
+  | `!x` / `unless x` | the same, with the branches swapped (`if !x … else` is non-nil in the else) |
   | `return unless x`, `next unless x`, `break unless x`, and other early exits | non-nil after the statement |
   | `String.size(x)`, or any built-in operation taking `x` as an argument | after the call, a type that the operation accepts (it checks its arguments while running) |
 
@@ -948,7 +949,10 @@ without digits gives an Integer). `Float.round` names a Float only.
 
 ### Range
 
-Operations that iterate need a Range that starts with an Integer. Operations that need a finite
+Operations that iterate need a Range that starts with an Integer or a String (`"A".."Z"` walks
+with `String#succ`, as Ruby's); `step`, `sum` and `size` need an Integer. The checker reports a
+Range of another type (`1.0..2.0`) at `type`. Two Ranges are `==` when their ends and
+`exclude_end?` are; two Regexps when their source and options are. Operations that need a finite
 Range raise `RangeError` on an endless one.
 
 | Operation | Result |

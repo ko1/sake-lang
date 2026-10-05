@@ -310,6 +310,8 @@ module Sake
       when LVarGet, LVarSet then restrict(env, pred.slot, truthy ? :non_nil : :falsy) # `while (x = f)` tests x
       when FieldGet then (slot = narrow_slot(env, pred)) && restrict(env, slot, truthy ? :non_nil : :falsy)
       when Seq then narrow(env, pred.body.last, truthy) unless pred.body.empty?
+      when If # `!x`
+        narrow(env, pred.cond, !truthy) if [pred.then_, pred.else_].map { _1.is_a?(Lit) && _1.value } == [false, true]
       when MatchP
         slot = narrow_slot(env, pred.value)
         return unless slot && (ty = env.lookup(slot))
@@ -414,7 +416,7 @@ module Sake
     # Each `in` sees what earlier branches left; whatever no branch takes is reported (the set is closed).
     def case_match(n, env)
       v = ev(n.subject, env)
-      var = n.subject.is_a?(LVarGet) ? n.subject.slot : nil
+      var = narrow_slot(env, n.subject)
       tuple_var, pos = indexed_var(n.subject)
       remaining = v
       results = []
