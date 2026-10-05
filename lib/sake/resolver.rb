@@ -230,7 +230,9 @@ module Sake
     # defaults: field => default value (a literal): only the value `new` stores when the argument is left
     # out. It does not fix the field's type: types come from operations, as for every other variable.
     def define_struct(name, fields, exception: false, readers: fields, writers: fields, defaults: {})
-      dt = @struct_types[name] = StructType.new(name, fields, exception, defaults.transform_values { Values.type_of(_1) }, {}, {})
+      literal = defaults.reject { |_, v| v.is_a?(ExprDefault) }
+      dt = @struct_types[name] = StructType.new(name, fields, exception, literal.transform_values { Values.type_of(_1) }, {}, {})
+      defaults = defaults.transform_values { _1.is_a?(ExprDefault) ? DEFAULT_PENDING : _1 }
       return if name.include?("::")
       required = fields.size - fields.reverse.take_while { defaults.key?(_1) }.size
       @registry.define(name, :new, fields.take(required).map { "Any" }, optional: fields.drop(required).map { "Any" }) do |*vs|
@@ -248,12 +250,23 @@ module Sake
       end
     end
 
+    # `attr_reader items = Array[]`: an expression default, evaluated by `new` each time (as Ruby's
+    # `@items = []` in initialize), by the function DEFAULT_PREFIX + field of the type.
+    ExprDefault = Struct.new(:expr)
+    DEFAULT_PREFIX = "(default) "
+
     DEFAULT_LITERALS = [Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::StringNode, Prism::SymbolNode,
                         Prism::TrueNode, Prism::FalseNode, Prism::NilNode].freeze
     ATTRS = { attr_reader: [true, false], attr_accessor: [true, true], attr_writer: [false, true] }.freeze
     EXCEPTION_PARENTS = %w[Exception StandardError].freeze
 
-    def attr_call?(st) = st.is_a?(Prism::CallNode) && st.receiver.nil? && ATTRS.key?(st.name)
+    def attr_call?(st) = st.is_a?(Prism::CallNode) && st.receiver.nil? && (ATTRS.key?(st.name) || private_attr?(st))
+
+    # `private attr_reader pos`: a field with no get_/set_ outside its class (`@pos` inside); new still takes it.
+    def private_attr?(st)
+      st.name == :private && st.arguments&.arguments&.size == 1 && (a = st.arguments.arguments[0]).is_a?(Prism::CallNode) &&
+        a.receiver.nil? && ATTRS.key?(a.name)
+    end
 
     # The type a `class C` declares: `< A` pastes A's fields (or makes an exception type), then the
     # `attr_reader x, y` / `attr_accessor n = 0` / `attr_writer w` lines of C's first class body.
@@ -293,7 +306,10 @@ module Sake
         end
       end
       attr_lines(first).each do |st|
+        priv = st.name == :private
+        st = st.arguments.arguments[0] if priv
         reader, writer = ATTRS.fetch(st.name)
+        reader = writer = false if priv
         (st.arguments&.arguments || []).each do |a|
           fname, default = attr_field(a)
           next unless fname
@@ -309,6 +325,13 @@ module Sake
         error(first, "field `#{f}` has a default, so the fields after it need defaults too (they may be left out of #{name}.new)")
       end
       define_struct(name, spec[:fields], exception: spec[:exception], readers: spec[:readers], writers: spec[:writers], defaults: spec[:defaults])
+      spec[:defaults].each do |f, d|
+        next unless d.is_a?(ExprDefault)
+        fn = UserFunction.new(name, "#{DEFAULT_PREFIX}#{f}", [], d.expr, d.expr, yields?(d.expr))
+        fn.defaults = []
+        fn.keywords = {}
+        (@functions[name] ||= {})["#{DEFAULT_PREFIX}#{f}"] = fn
+      end
       @class_specs[name] = spec
     end
 
@@ -323,8 +346,7 @@ module Sake
       when Prism::LocalVariableReadNode then return [a.name.to_s, nil]
       when Prism::LocalVariableWriteNode
         return [a.name.to_s, literal_value(a.value)] if DEFAULT_LITERALS.any? { a.value.is_a?(_1) }
-        error(a.value, "a default must be a literal number, String, Symbol, true, false, or nil")
-        return nil
+        return [a.name.to_s, ExprDefault.new(a.value)] # evaluated at each new that leaves the field out
       when Prism::SymbolNode
         error(a, "write the field's name without `:`: `#{a.unescaped}`")
         return [a.unescaped, nil]
@@ -633,6 +655,12 @@ module Sake
       when Prism::DefNode then error(node, "`def` must be at the top level or directly in a class/module body")
       when Prism::ClassNode, Prism::ModuleNode then error(node, "class/module must be at the top level")
       when Prism::ConstantWriteNode then error(node, "constant assignment must be at the top level")
+      when Prism::ConstantPathNode
+        # Math::PI, Float::INFINITY: read as operations (Math.PI), as ARGV is; no other nested names.
+        par = node.parent
+        fn = par.is_a?(Prism::ConstantReadNode) && BUILTIN_CONSTANTS.fetch(par.name.to_s, []).include?(node.name.to_s) && @registry.lookup(par.name.to_s, node.name.to_s)
+        return set_call(node, ctx, fn) if fn
+        error(node, "`#{node.slice}` (nested constants) is not supported", ["built-in constants: #{BUILTIN_CONSTANTS.flat_map { |ns, cs| cs.map { "#{ns}::#{_1}" } }.join(", ")}"])
       when Prism::ConstantReadNode
         # ARGV: the program's arguments (an operation, Kernel.ARGV; Sake has no value constants).
         return set_call(node, ctx, @registry.lookup("Kernel", "ARGV")) if node.name == :ARGV
@@ -722,6 +750,12 @@ module Sake
     def pattern_target(v) = v.is_a?(Prism::ImplicitNode) ? v.value : v
 
     PATTERN_TYPES = (BUILTIN_TYPES + %w[Record IO]).freeze
+    BUILTIN_CONSTANTS = { "Math" => %w[PI E], "Float" => %w[INFINITY NAN EPSILON MAX MIN] }.freeze
+
+    def builtin_constant?(n)
+      n.is_a?(Prism::ConstantPathNode) && n.parent.is_a?(Prism::ConstantReadNode) &&
+        BUILTIN_CONSTANTS.fetch(n.parent.name.to_s, []).include?(n.name.to_s)
+    end
 
     # Patterns of `x in P` and `case x in P`: a type name, a literal, `P | Q`, or a Record pattern.
     def check_pattern(pat, ctx)
@@ -885,7 +919,7 @@ module Sake
       elsif recv.is_a?(Prism::ConstantReadNode) && (node.call_operator_loc || node.name == :[])
         # `T[...]` is the constructor syntax; `T.[](x, k)` is T's index operation.
         target = resolve_qualified(node, recv.name.to_s, node.call_operator_loc ? node.name.to_s : CTOR)
-      elsif recv.is_a?(Prism::ConstantPathNode)
+      elsif recv.is_a?(Prism::ConstantPathNode) && !builtin_constant?(recv)
         return error(recv, "`#{recv.slice}` (nested constants) is not supported")
       elsif node.call_operator_loc.nil? && BINARY_OPS.include?(node.name) && args.size == 1
         error(node, "operator `#{node.name}` is not supported") unless binary_op?(node.name)
@@ -1185,9 +1219,10 @@ module Sake
       others = namespaces_defining(name) - [ns]
       hints << "`#{name}` is defined in #{others.map { "`#{_1}.#{name}`" }.join(", ")}" unless others.empty?
       if (dt = @struct_types[ns]) && name =~ /\A(get|set)_(.+)\z/ && dt.fields.include?($2)
-        kind = $1 == "set" ? "read-only (attr_reader)" : "write-only (attr_writer)"
+        priv = !@registry.lookup(ns, "get_#{$2}") && !@registry.lookup(ns, "set_#{$2}")
+        kind = priv ? "private (private attr_*)" : ($1 == "set" ? "read-only (attr_reader)" : "write-only (attr_writer)")
         return error(node, "field `#{$2}` of #{ns} is #{kind}",
-                     ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`; or declare it with `attr_accessor #{$2}`"])
+                     ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`#{priv ? "" : "; or declare it with `attr_accessor #{$2}`"}"])
       end
       if (dt = @struct_types[ns])
         field = name.delete_suffix("=")

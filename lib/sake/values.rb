@@ -37,6 +37,9 @@ module Sake
   # A Sake thread: Thread.new's value, around Ruby's Thread.
   ThreadValue = Struct.new(:thread)
 
+  # What T.new stores for a field whose default is an expression, until that expression runs.
+  DEFAULT_PENDING = Object.new.freeze
+
   StructType = Struct.new(:name, :fields, :exception, :default_types, :getters, :setters, :own_equality)
 
   # The type of a Record: its set of (field, type) pairs, sorted by field and interned.

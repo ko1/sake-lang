@@ -515,7 +515,8 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 | `attr_accessor x, ...` | fields with `get_x` and `set_x` |
 | `attr_reader x, ...` | fields with `get_x` only; inside the type's functions, `@x = v` still writes them |
 | `attr_writer x, ...` | fields with `set_x` only; inside the type's functions, `@x` still reads them |
-| `attr_... x = v` | a default value, a literal number, String, Symbol, true, false, or nil; trailing fields with defaults may be omitted in `new`. A default is only an initial value: it does not fix the field's type, which, as for every variable, is what is written to it, checked by the operations that use it |
+| `attr_... x = v` | a default value: any expression, evaluated by each `new` that leaves the field out (`items = Array[]` makes a new Array each time, as Ruby's `@items = []` in initialize); trailing fields with defaults may be omitted in `new`. A default is only an initial value: it does not fix the field's type, which, as for every variable, is what is written to it, checked by the operations that use it |
+| `private attr_... x` | a field with no `get_x` / `set_x` outside the class (`@x` inside); `new` still takes it |
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
 - **`new`.** `C.new` takes every field positionally, whatever its access.
@@ -795,6 +796,14 @@ one.
 | `format(fmt, *xs)`, `sprintf` | String | Ruby's format; arguments are Integer, Float, String, Symbol, nil, true, false |
 | `Integer(x)`, `Float(x)` | Integer, Float | Ruby's strict conversions; `ArgumentError` on bad input |
 | `rand`, `rand(n)` | Float, or Integer/Float below n | |
+| `loop { }` | the value of a `break` | runs the block until a `break` |
+
+`Math::PI`, `Math::E`, `Float::INFINITY`, `Float::NAN`, `Float::EPSILON`, `Float::MAX`, `Float::MIN` are read as
+operations (`Math.PI`), as `ARGV` is: Sake has no value constants, and no other nested names.
+
+`Arithmetic.round(x)`, `floor`, `ceil`, `truncate` (with an optional digit count), `abs`, `to_f`, `to_i`, `zero?`
+take any real number (Integer, Float, Rational), as Ruby's `x.round` does; the result's type follows x's (round
+without digits gives an Integer). `Float.round` names a Float only.
 
 ### Integer
 
@@ -849,6 +858,8 @@ one.
 | Operation | Result |
 |---|---|
 | `Array[...]` | a new Array |
+| `first(a, n)` · `last(a, n)` · `fetch(a, i, default)` | the first / last n elements (a new Array) · the element, or default |
+| `each_cons(a, n)` · `each_slice(a, n)` · `each_with_index(a)` without a block | an Array of the slices, or of `[element, index]` Tuples (Ruby's enumerators, as Arrays: `Array.map(Array.each_cons(xs, 2)) { \|a, b\| ... }`) |
 | `Array.new(n)` · `Array.new(n, v)` · `Array.new(n) { \|i\| ... }` | n nils · n times the same v (as in Ruby, one object) · the block's values |
 | `length`, `size` | Integer |
 | `empty?`, `include?(a, x)` | true/false |
@@ -1080,5 +1091,5 @@ Each of these is rejected statically. Most wait on a design decision.
 - **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**
 - **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.
 - **Patterns other than those in [§9.1](#91-pattern-matching)**: arrays, find patterns, pins, guards.
-- **Built-in constants** such as `Math::PI` and `Float::INFINITY`.
+- **Nested names** such as `URI::HTTP` (only the built-in constants `Math::PI` & co. are read).
 - **First-class blocks** (storing a block, `proc`, `lambda`): see §7 for what blocks can do.

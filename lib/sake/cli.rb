@@ -119,6 +119,10 @@ module Sake
         if c.expected.split("|").include?("Array") && c.failing.any? { _1.is_a?(Array) && _1[0] == :tuple }
           hint = ["`[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`"]
         end
+        if (m = c.op.match(/\A(?:Integer|Float|Rational)\.(round|floor|ceil|truncate|abs|to_f|to_i)\z/)) &&
+           c.failing.all? { %w[Integer Float Rational].include?(_1) }
+          hint += ["for any of Integer, Float, Rational, write `Arithmetic.#{m[1]}(x)`, as Ruby's `x.#{m[1]}`"]
+        end
         if c.failing == ["Integer"] && c.actual.include?("Float") && c.expected.split("|").include?("Float")
           hint += ["if the value comes from `sum`, an empty collection sums to the Integer 0; give the start: `Array.sum(xs, 0.0)`"]
         end

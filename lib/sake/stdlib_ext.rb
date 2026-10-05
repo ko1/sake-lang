@@ -371,8 +371,15 @@ module Sake
 
     def install_more_array(reg)
       reg.define("Array", :zip, ["Array"], rest: "Array") { |a, *bs| a.zip(*bs).map { Tuple.new(_1) } }
-      reg.define("Array", :each_slice, %w[Array Integer], block: :required) { |a, n, &b| nonneg(n) && a.each_slice(n) { b.(_1) }; a }
-      reg.define("Array", :each_cons, %w[Array Integer], block: :required) { |a, n, &b| nonneg(n) && a.each_cons(n) { b.(_1) }; a }
+      # Without a block, the slices as an Array of Arrays (Ruby's each_slice(2).map ...).
+      %i[each_slice each_cons].each do |m|
+        reg.define("Array", m, %w[Array Integer], block: :optional) do |a, n, &b|
+          nonneg(n)
+          next a.to_a.public_send(m, n).to_a unless b
+          a.public_send(m, n) { b.(_1) }
+          a
+        end
+      end
       reg.define("Array", :flatten, ["Array"], &:flatten)
       reg.define("Array", :compact, ["Array"], &:compact)
       # Struct values compare by their type's == (fields by default), not by Ruby's hash/eql?.

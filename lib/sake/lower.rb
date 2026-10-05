@@ -155,7 +155,7 @@ module Sake
       when Prism::BreakNode then Break.new(value: jump_value(n), target: (@jump_targets || []).last || :loop, origin: n)
       when Prism::YieldNode then Yield.new(args: args(n.arguments), origin: n)
       when Prism::CallNode then call(n)
-      when Prism::ConstantReadNode then CallBuiltin.new(fn: target(n), args: [], block: nil, origin: n) # ARGV
+      when Prism::ConstantReadNode, Prism::ConstantPathNode then CallBuiltin.new(fn: target(n), args: [], block: nil, origin: n) # ARGV, Math::PI
       when Prism::InstanceVariableReadNode
         fa = target(n) or return unresolved(n)
         field_get(fa.getter, get(0, n), n)

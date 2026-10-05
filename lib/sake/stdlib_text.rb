@@ -64,6 +64,26 @@ module Sake
       # once { ... }: the block's value, computed the first time this place runs and kept for the whole
       # program (the interpreter keys it by the call; see Interpreter#call_builtin).
       reg.define("Kernel", :once, [], block: :required) { |&b| b.call }
+      # Arithmetic.round(x) and friends: one operation for any real number, as `x.round` in Ruby
+      # (Float.round names a Float); the result's type follows x's (Stdlib table in typer_ext).
+      real = %w[Integer Float Rational]
+      %i[round floor ceil truncate].each do |m|
+        reg.define("Arithmetic", m, [real], optional: ["Integer"]) do |x, n = nil|
+          ruby_error("FloatDomainError") { n ? x.public_send(m, n) : x.public_send(m) }
+        end
+      end
+      reg.define("Arithmetic", :abs, [real], &:abs)
+      reg.define("Arithmetic", :to_f, [real], &:to_f)
+      reg.define("Arithmetic", :to_i, [real]) { |x| ruby_error("FloatDomainError") { x.to_i } }
+      reg.define("Arithmetic", :zero?, [real], &:zero?)
+      reg.define("Hash", :dup, ["Hash"], &:dup)
+      # loop { ... }: until a break (Ruby's loop; StopIteration is not a Sake exception).
+      reg.define("Kernel", :loop, [], block: :required) { |&b| loop { b.call } }
+      # Math::PI and friends, read as operations (as ARGV is): Sake has no value constants.
+      { "Math" => { PI: Math::PI, E: Math::E },
+        "Float" => { INFINITY: Float::INFINITY, NAN: Float::NAN, EPSILON: Float::EPSILON, MAX: Float::MAX, MIN: Float::MIN } }.each do |ns, cs|
+        cs.each { |name, v| reg.define(ns, name, []) { v } }
+      end
       # block_given?: lowered to AST::BlockGiven, as it reads the calling function's frame.
       reg.define("Kernel", :block_given?, []) { raise "BUG: block_given? is lowered" }
     end

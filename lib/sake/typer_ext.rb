@@ -186,6 +186,11 @@ module Sake
       when "Kernel.warn" then t("Nil")
       when "Kernel.exit" then [] # never returns
       when "Kernel.ARGV" then new_site(node, " ARGV", t("String"))
+      when "Kernel.loop"
+        call_block(blk, [])
+        [] # only a break leaves it (its values are added to the call's result)
+      when "Hash.dup" then args[0]
+      when "Math.PI", "Math.E", "Float.INFINITY", "Float.NAN", "Float.EPSILON", "Float.MAX", "Float.MIN" then t("Float")
       when "Kernel.once"
         # One value for the place, whichever call computes it first: the union over every evaluation.
         site = (@once_types ||= {}.compare_by_identity)
@@ -231,6 +236,21 @@ module Sake
       end
     end
 
+    # Arithmetic.round(x) etc.: per number type, as Ruby's methods give (round without digits: Integer).
+    def arithmetic_result(name, args)
+      return :none unless name.start_with?("Arithmetic.")
+      op = name.delete_prefix("Arithmetic.")
+      return t("Float") if op == "to_f"
+      return t("Integer") if op == "to_i"
+      return t("Boolean") if op == "zero?"
+      return :none unless %w[round floor ceil truncate abs].include?(op)
+      u(*args[0].map do |a|
+        n = atom_type_name(a)
+        next unknown("number") unless %w[Integer Float Rational].include?(n)
+        op != "abs" && args.size == 1 ? t("Integer") : t(n)
+      end)
+    end
+
     def builtin_result_ext(name, args, blk, node)
       if (kind = SHOWS[name])
         (%w[Kernel.format Kernel.sprintf IO.puts IO.print].include?(name) ? args.drop(1) : args).each { show_deep(_1, kind, node) }
@@ -242,6 +262,8 @@ module Sake
       return io unless io == :none
       text = text_result(name, args, blk, node)
       return text unless text == :none
+      real = arithmetic_result(name, args)
+      return real unless real == :none
       if (ty = FIXED_EXT[name])
         call_block(blk, [each_elem(a0)]) if blk && !each_elem(a0).empty?
         return t(ty)
@@ -346,8 +368,13 @@ module Sake
       when "Array.zip"
         new_site(node, " #{name}", tuple([elem_of(a0), *args.drop(1).map { u(elem_of(_1), t("Nil")) }]))
       when "Array.each_slice", "Array.each_cons"
-        call_block(blk, [new_site(node, " #{name} slice", elem_of(a0))]) unless elem_of(a0).empty?
-        a0
+        slice = new_site(node, " #{name} slice", elem_of(a0))
+        if blk
+          call_block(blk, [slice]) unless elem_of(a0).empty?
+          a0
+        else
+          aux_site(node, "#{name} slices", slice)
+        end
       when "Array.flatten" then new_site(node, " #{name}", u(*elem_of(a0).map { |e| e.is_a?(Array) && e[0] == :array ? elem_of([e]) : [e] }))
       when "Array.compact" then new_site(node, " #{name}", without_nil(elem_of(a0)))
       when "Array.uniq", "Array.rotate", "Array.shuffle" then new_site(node, " #{name}", elem_of(a0))

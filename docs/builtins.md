@@ -6,6 +6,17 @@ Every built-in operation, by namespace. `x` is the subject (an argument of the n
 `[T]` an optional argument, `*T` any number of them, `{ }` a required block, and `[{ }]` an optional one.
 The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names follow Ruby's core library.
 
+## Arithmetic
+
+- `Arithmetic.abs(Integer|Float|Rational)`
+- `Arithmetic.ceil(Integer|Float|Rational, [Integer])`
+- `Arithmetic.floor(Integer|Float|Rational, [Integer])`
+- `Arithmetic.round(Integer|Float|Rational, [Integer])`
+- `Arithmetic.to_f(Integer|Float|Rational)`
+- `Arithmetic.to_i(Integer|Float|Rational)`
+- `Arithmetic.truncate(Integer|Float|Rational, [Integer])`
+- `Arithmetic.zero?(Integer|Float|Rational)`
+
 ## Array
 
 - `Array.!=(x, Any)`
@@ -41,21 +52,21 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.drop_while(x) { }`
 - `Array.dup(x)`
 - `Array.each(x) { }`
-- `Array.each_cons(x, Integer) { }`
+- `Array.each_cons(x, Integer) [{ }]`
 - `Array.each_entry(x) { }`
 - `Array.each_index(x) { }`
-- `Array.each_slice(x, Integer) { }`
-- `Array.each_with_index(x) { }`
+- `Array.each_slice(x, Integer) [{ }]`
+- `Array.each_with_index(x) [{ }]`
 - `Array.each_with_object(x, Any) { }`
 - `Array.empty?(x)`
-- `Array.fetch(x, Integer)`
+- `Array.fetch(x, Integer, [Any])`
 - `Array.fill(x, Any)`
 - `Array.filter(x) { }`
 - `Array.filter_map(x) { }`
 - `Array.find(x) { }`
 - `Array.find_all(x) { }`
 - `Array.find_index(x) { }`
-- `Array.first(x)`
+- `Array.first(x, [Integer])`
 - `Array.flat_map(x) { }`
 - `Array.flatten(x)`
 - `Array.group_by(x) { }`
@@ -67,7 +78,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.intersection(x, *Array)`
 - `Array.join(x, [String])`
 - `Array.keep_if(x) { }`
-- `Array.last(x)`
+- `Array.last(x, [Integer])`
 - `Array.length(x)`
 - `Array.map(x) { }`
 - `Array.max(x)`
@@ -156,6 +167,11 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Float.==(x, Any)`
 - `Float.>(x, Any)`
 - `Float.>=(x, Any)`
+- `Float.EPSILON()`
+- `Float.INFINITY()`
+- `Float.MAX()`
+- `Float.MIN()`
+- `Float.NAN()`
 - `Float.abs(x)`
 - `Float.between?(x, Float, Float)`
 - `Float.ceil(x)`
@@ -200,6 +216,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.detect(x) { }`
 - `Hash.dig(x, Any)`
 - `Hash.drop(x, Integer)`
+- `Hash.dup(x)`
 - `Hash.each(x) { }`
 - `Hash.each_key(x) { }`
 - `Hash.each_pair(x) { }`
@@ -348,6 +365,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.format(String, *Any)`
 - `Kernel.gets()`
 - `Kernel.inspect(Any)`
+- `Kernel.loop() { }`
 - `Kernel.once() { }`
 - `Kernel.p(Any)`
 - `Kernel.pp(Any)`
@@ -374,6 +392,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Math
 
+- `Math.E()`
+- `Math.PI()`
 - `Math.atan(Integer|Float|Rational)`
 - `Math.atan2(Integer|Float, Integer|Float)`
 - `Math.cbrt(Integer|Float|Rational)`

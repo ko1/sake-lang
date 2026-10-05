@@ -208,7 +208,12 @@ module Sake
       reg.define("Array", :take, %w[Array Integer]) { |a, n| nonneg(n) && a.take(n) }
       reg.define("Array", :drop, %w[Array Integer]) { |a, n| nonneg(n) && a.drop(n) }
       reg.define("Array", :each, ["Array"], block: :required) { |a, &b| a.each { b.(_1) }; a }
-      reg.define("Array", :each_with_index, ["Array"], block: :required) { |a, &b| a.each_with_index { b.(_1, _2) }; a }
+      # Without a block, [element, index] Tuples (Ruby's enumerator, made an Array: each_with_index.map).
+      reg.define("Array", :each_with_index, ["Array"], block: :optional) do |a, &b|
+        next a.each_with_index.map { |x, i| Tuple.new([x, i]) } unless b
+        a.each_with_index { b.(_1, _2) }
+        a
+      end
       reg.define("Array", :map, ["Array"], block: :required) { |a, &b| a.map { b.(_1) } }
       %i[select filter reject].each do |m|
         reg.define("Array", m, ["Array"], block: :required) { |a, &b| a.public_send(m) { Values.truthy?(b.(_1)) } }
@@ -218,13 +223,14 @@ module Sake
       end
       # These return nil on a miss, as in Ruby.
       reg.define("Array", :at, %w[Array Integer]) { |a, i| a[i] }
-      reg.define("Array", :fetch, %w[Array Integer]) do |a, i|
-        a.fetch(i)
+      reg.define("Array", :fetch, %w[Array Integer], optional: ["Any"]) do |a, i, *default|
+        a.fetch(i, *default)
       rescue IndexError => e
         raise Fail.new("IndexError", e.message)
       end
-      reg.define("Array", :first, ["Array"], &:first)
-      reg.define("Array", :last, ["Array"], &:last)
+      # first(a, n) / last(a, n): the first or last n elements, as a new Array.
+      reg.define("Array", :first, ["Array"], optional: ["Integer"]) { |a, n = nil| n ? (nonneg(n) && a.to_a.first(n)) : a.first }
+      reg.define("Array", :last, ["Array"], optional: ["Integer"]) { |a, n = nil| n ? (nonneg(n) && a.to_a.last(n)) : a.last }
       reg.define("Array", :pop, ["Array"], &:pop)
       reg.define("Array", :shift, ["Array"], &:shift)
       reg.define("Array", :unshift, ["Array"], rest: "Any") { |a, *xs| a.unshift(*check_elems(a, xs)) }

@@ -799,7 +799,12 @@ module Sake
     def data_op(dt, name, args, node)
       case name
       when "new"
-        given = dt.fields.each_with_index.to_h { |f, i| [f, args[i] || (dt.default_types.key?(f) ? t(dt.default_types[f]) : t("Nil"))] }
+        given = dt.fields.each_with_index.to_h do |f, i|
+          ty = args[i]
+          ty ||= (fn = @program.functions.dig(dt.name, "#{Resolver::DEFAULT_PREFIX}#{f}")) && call_user(fn, [], nil)
+          ty ||= dt.default_types.key?(f) ? t(dt.default_types[f]) : t("Nil")
+          [f, ty]
+        end
         # A construction whose initialize cannot finish (`@port => Integer` on a String) stores nothing;
         # otherwise the fields hold what initialize leaves in them.
         stored = run_initialize(dt, given, node) or return []
@@ -852,9 +857,11 @@ module Sake
         write_elems(a0, [elem_of(args[1])], node, name)
         a0
       when "Array.join" then t("String")
-      when "Array.at", "Array.first", "Array.last", "Array.pop", "Array.shift", "Array.min", "Array.max"
+      when "Array.first", "Array.last"
+        args.size == 2 ? new_site(node, " #{name}", elem_of(a0)) : u(elem_of(a0), t("Nil"))
+      when "Array.at", "Array.pop", "Array.shift", "Array.min", "Array.max"
         u(elem_of(a0), t("Nil"))
-      when "Array.fetch" then elem_of(a0)
+      when "Array.fetch" then args.size == 3 ? u(elem_of(a0), args[2]) : elem_of(a0)
       when "Tuple.max", "Tuple.min", "Tuple.minmax"
         e = tuple_elems(a0)
         name == "Tuple.minmax" ? tuple([e, e]) : e
@@ -899,6 +906,7 @@ module Sake
         a0
       when "Array.each_with_index"
         e = elem_of(a0)
+        return new_site(node, " #{name}", e.empty? ? [] : tuple([e, t("Integer")])) unless blk
         call_block(blk, [e, t("Integer")]) unless e.empty?
         a0
       when "Array.any?", "Array.all?", "Array.none?"
