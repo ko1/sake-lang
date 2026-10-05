@@ -2,6 +2,8 @@
 
 レポート（artifact）: <https://claude.ai/artifact/ECqbNMNQgc5MFmiDk8JZKX>（`report.html`）
 
+課題と対策（artifact）: <https://claude.ai/artifact/5enSj3SpKQQSYB9vEoQNiH>（`remedies.html`）
+
 ## 問い
 
 2026-10-03〜05 の仕様変更（下表）のあとで、既存のコードはどう書き直せるか。書き直したコードで、
