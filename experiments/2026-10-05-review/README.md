@@ -147,6 +147,35 @@
 | `next` という名前のフィールドが書けない（`attr_reader next` は構文エラー。名前をコロン無しにした代償） | 2 | 06-linked |
 | sakelib：`**opts`・`*args` が無い、`x => T` の失敗を rescue できない、`class B < A` の写しの中の配列が写し先全部で 1 つの生成地点になる | — | sakelib-review.md |
 
+### 補足（2026-10-05）：AI のトークン数と level 1 の誤報の内訳
+
+**AI のトークン数**（`ai_tokens.mjs` → `ai-tokens-v2.md`、`ai-tokens-v3.md`）。上の「トークン数」は Prism の字句（コメント・改行を除く）で、AI のトークンではない。
+現行の Claude のトークナイザは公開されていないので、公開されている 2 系統で数えた（コメント行と空行を除いたコード）：
+
+| トークナイザ | v2 Sake/Ruby | v3 Sake/Ruby |
+|---|---|---|
+| Anthropic の旧世代（Claude 2 時代、`@anthropic-ai/tokenizer`） | 1.129 | 1.118 |
+| OpenAI o200k_base（`js-tiktoken`） | 1.074 | 1.065 |
+| OpenAI cl100k_base | 1.076 | 1.067 |
+
+v3 のプログラムごとの比（o200k）：中央値 1.07、四分位 1.04〜1.10、範囲 0.92〜1.26。文字数の比は 1.115。
+字句の比（1.16）より小さいのは、型名（`String.`）が少ない AI トークンにまとまるため。正確な値は API の count_tokens でしか取れない（未実施）。
+
+**level 1 の誤報の内訳**（v3、53 本 164 件、`level1-causes.txt`。報告の文面から機械的に分類）：
+
+| 原因 | 件数 | 本数 |
+|---|---|---|
+| 容器・フィールドで別々の用途の値が混ざる | 126 | 31 |
+| 数の型の取り違え（`Float.round` に `Integer \| Float`、`Rational.to_f` に `Integer \| Rational`） | 26 | 18 |
+| `case/in` で合わない値があると判定（フィールドの型が型ごとに 1 つなので、別の所で作った値が混ざる） | 7 | 7 |
+| 通らない経路の nil、数と nil の演算 | 5 | 4 |
+
+最大の原因は、容器の要素の型を「作った場所」ごとに、フィールドの型を「型」ごとに 1 つにまとめること：
+`def index_by_id(rows) = (idx = Hash[]; …)` を部署と社員の両方に使うと値が `Employee | Department` になる（employee_dept_join）、
+`class Heap` の `initialize` の `@items = Array[]` を 3 種類のヒープで共有する（heap_scheduler）。ほかに、本当に型の混ざる配列
+（行を `Array["Tokyo", 13_960_000, 2194.07, true, nil]` で持つ、インタプリタや JSON の値：lisp_interp・stack_vm・json_parser で 39 件）。
+状態の型付けのサーベイ（`../2026-10-03-state-survey/`）で扱った汎用コンテナの問題そのもの。
+
 ## 結論
 
 1. **仕様変更で、宣言は Ruby の形になった**（`attr_reader`、例外クラス、`initialize`、`once`）。見直しで 500 本中 465 本が書き換わり、行数は Ruby の 0.95 倍のまま。
@@ -172,4 +201,5 @@
 - `brief.md`：見直し役への指示。`corpus-v3/`：見直した 500 本（`*/REVIEW.md` に分野ごとの記録）。
 - `sakelib-review.md`、`bug_initialize_conditional_field.sake`：sakelib とライブラリ実験の見直し。
 - `results-v2/`、`results-v3/`：計測結果（`results.md` が要約）。`run-v2.log`、`run-v3.log`。
+- `ai_tokens.mjs` → `ai-tokens-v2.md`、`ai-tokens-v3.md`。`level1-causes.txt`。
 - `compare.rb` → `compare-v2.md`、`compare-v3.md`。`union_kinds.rb` → `union-v2.md`、`union-v3.md`。`qualified-kinds.txt`、`strict-diff.txt`。
