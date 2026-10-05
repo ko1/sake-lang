@@ -464,9 +464,10 @@ table**:
 
 ### 9.1 Pattern matching
 
-`x in P` is true when `x` matches the pattern `P`. `case x` followed by `in P then ...` branches runs
-the first branch whose pattern matches. If no branch matches and there is no `else`, it raises
-`NoMatchingPatternError`.
+`x in P` is true when `x` matches the pattern `P`. `x => P` asserts it: it raises
+`NoMatchingPatternError` when `x` does not match, and binds a Record pattern's fields. `case x`
+followed by `in P then ...` branches runs the first branch whose pattern matches. If no branch
+matches and there is no `else`, it raises `NoMatchingPatternError`.
 
 | Pattern | Matches |
 |---|---|
@@ -486,6 +487,11 @@ the first branch whose pattern matches. If no branch matches and there is no `el
   holds those literals. When literal branches may leave some **values** of an open type (some
   String, Integer, or a Symbol made at run time), the report is the `exhaustive` item (level 3):
   the program may well be correct, and `NoMatchingPatternError` still stops it if not.
+- **Assertion.** After `x => P`, a local `x` is narrowed to the matching types, as in an `in`
+  branch. A value that surely does not match, or may not match because of another type, is
+  reported as `type` (level 1). `x => P` is itself a check for nil, like `Array.fetch` for a
+  missing index, so a value that may be nil is not reported. It is how a fact such as "a port is an
+  Integer" is written where the value is stored: `p => Integer`, then `@port = p`.
 - **Parentheses.** As in Ruby, `x in P` must be in parentheses when it is an argument:
   `p((x in Integer))`.
 

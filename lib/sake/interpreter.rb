@@ -297,7 +297,8 @@ module Sake
       clause = n.clauses.find { |pat, _| pattern_match?(v, pat, f) }
       return ev(clause[1], f) if clause
       return ev(n.else_, f) if n.else_
-      fail_at(n, "NoMatchingPatternError", "no `in` branch matches #{Values.describe(v)}")
+      what = n.origin.is_a?(Prism::MatchRequiredNode) ? "`=> #{n.origin.pattern.slice}` does not match" : "no `in` branch matches"
+      fail_at(n, "NoMatchingPatternError", "#{what} #{Values.describe(v)}")
     end
 
     def pattern_match?(v, pat, f)

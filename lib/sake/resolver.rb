@@ -704,6 +704,7 @@ module Sake
     def check_record_pattern(node, ctx)
       check(node.value, ctx)
       pat = node.pattern
+      return check_pattern(pat, ctx) unless pat.is_a?(Prism::HashPatternNode) # `x => Integer`, `x => A | B`
       ok = pat.is_a?(Prism::HashPatternNode) && pat.constant.nil? && pat.rest.nil? && !pat.elements.empty? &&
            pat.elements.all? do |el|
              el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) &&

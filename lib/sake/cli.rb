@@ -106,6 +106,9 @@ module Sake
         ["#{c.op}: elements compared in order #{maybe}#{typer.show_failing(c)}, which cannot be compared", []]
       when ->(op) { op == "case/in" && c.arg == "value" }
         ["case/in: no `in` branch matches some values of #{typer.show_failing(c)}", ["add an `else`, or `in` branches for the other values"]]
+      when "=>"
+        pat = c.node.respond_to?(:pattern) ? c.node.pattern.slice : "the pattern"
+        ["`=> #{pat}`: the value #{maybe.sub("are", "is")}#{typer.show_failing(c)}, which does not match", []]
       when "case/in"
         ["case/in: no `in` branch matches #{typer.show_failing(c)}", ["add an `in` branch for it, or an `else`"]]
       when "pattern"

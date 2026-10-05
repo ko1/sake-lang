@@ -371,6 +371,36 @@ true
 false
 ```
 
+`x => Integer` asserts the type (it raises `NoMatchingPatternError` otherwise); after it, `x` is an
+Integer. Since types are never written on variables or fields, this is the way to state "a port is
+an Integer" where the value is stored:
+
+```ruby
+# `x => T` asserts a type: after it, x is a T; a value that does not match raises
+# NoMatchingPatternError, and is reported before running when the checker sees it.
+class Config
+  attr_reader host, port = 80
+  def set_port(c, p)
+    p => Integer              # the knowledge "a port is an Integer", on the write
+    @port = p
+  end
+end
+c = Config.new("example.com")
+Config.set_port(c, 8080)
+p(c)
+v = Array.first(Array[3, 4])  # Integer or nil
+v => Integer                  # also a check for nil: v + 1 needs none
+p(v + 1)
+Config.set_port(c, "eighty")
+```
+
+```
+$ sake pattern_assert.sake
+pattern_assert.sake:6:5: error: `=> Integer`: the value is String, which does not match [type]
+  hint: reached by the call at line 16
+(exit status 2)
+```
+
 The set of types is closed, so a `case` that may match nothing is found before running:
 
 ```ruby

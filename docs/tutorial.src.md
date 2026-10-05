@@ -135,6 +135,12 @@ be an Integer or a String can be used without a type report:
 
 @@example patterns
 
+`x => Integer` asserts the type (it raises `NoMatchingPatternError` otherwise); after it, `x` is an
+Integer. Since types are never written on variables or fields, this is the way to state "a port is
+an Integer" where the value is stored:
+
+@@example pattern_assert
+
 The set of types is closed, so a `case` that may match nothing is found before running:
 
 @@example patterns_exhaustive

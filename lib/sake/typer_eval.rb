@@ -427,12 +427,19 @@ module Sake
         remaining -= ["Boolean"] if lits.include?(true) && lits.include?(false)
         lit_types = lits.map { LIT_TYPES.fetch(_1.class) { "String" } }
         open, closed = remaining.partition { _1.is_a?(String) && lit_types.include?(atom_type_name(_1)) }
+        # `x => T` is itself a check for nil (it raises), as Array.fetch is for a missing index.
+        closed = closed.reject { nil_atom?(_1) } if n.origin.is_a?(Prism::MatchRequiredNode)
         unless closed.empty?
-          add_check(n.origin, "case/in", "branch", "a matching `in` branch", v, closed.size == v.size ? :error : :partial, closed)
+          op = n.origin.is_a?(Prism::MatchRequiredNode) ? "=>" : "case/in"
+          add_check(n.origin, op, "branch", "a matching `in` branch", v, closed.size == v.size ? :error : :partial, closed)
         end
         add_check(n.origin, "case/in", "value", "a matching `in` branch", v, :partial, open) unless open.empty?
       end
-      join_many(env, envs) unless envs.empty?
+      if envs.empty? && !n.else_ && !v.empty? && !unknown?(v)
+        env.dead = true # no branch matches and there is no else: NoMatchingPatternError
+      else
+        join_many(env, envs) unless envs.empty?
+      end
       u(*results)
     end
 

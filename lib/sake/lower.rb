@@ -137,8 +137,12 @@ module Sake
       when Prism::ArrayNode then MakeTuple.new(elems: n.elements.map { lower(_1) }, origin: n)
       when Prism::HashNode then MakeRecord.new(keys: n.elements.map { _1.key.unescaped }, values: n.elements.map { lower(_1.value) }, origin: n)
       when Prism::MatchRequiredNode
-        keys, slots = record_targets(n.pattern)
-        MatchRecord.new(value: lower(n.value), keys:, slots:, origin: n)
+        if n.pattern.is_a?(Prism::HashPatternNode)
+          keys, slots = record_targets(n.pattern)
+          MatchRecord.new(value: lower(n.value), keys:, slots:, origin: n)
+        else # `x => Integer`: a case/in with one branch and no else (NoMatchingPatternError otherwise)
+          CaseIn.new(subject: lower(n.value), clauses: [[pattern(n.pattern), lit(nil, n)]], else_: nil, origin: n)
+        end
       when Prism::BeginNode then begin_node(n)
       when Prism::RescueModifierNode then RescueMod.new(expr: lower(n.expression), rescue_: lower(n.rescue_expression), origin: n)
       when Prism::RetryNode then Retry.new(origin: n)
