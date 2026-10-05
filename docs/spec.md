@@ -883,6 +883,8 @@ one.
 |---|---|
 | `length`, `size` | Integer |
 | `to_a` | Array |
+| `max`, `min` | the largest / smallest element: `Tuple.max([a, b])` is Ruby's `[a, b].max`. A Tuple's length is known, so the result is never nil (except for `[]`); its type is the union of the element types |
+| `minmax` | `[min, max]` |
 
 ### Rational, Complex
 

@@ -740,6 +740,9 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Tuple.[](x, Any)`
 - `Tuple.[]=(x, Any, Any)`
 - `Tuple.length(x)`
+- `Tuple.max(x)`
+- `Tuple.min(x)`
+- `Tuple.minmax(x)`
 - `Tuple[*Any]`
 - `Tuple.size(x)`
 - `Tuple.to_a(x)`

@@ -731,6 +731,14 @@ module Sake
       n.class.fields.any? { |f| (v = n[f]).is_a?(Array) ? v.flatten.any? { assigns_slot?(_1, slot) } : assigns_slot?(v, slot) }
     end
 
+    # Every element type of the Tuples in ty (nil for an empty Tuple; unknown for anything else).
+    def tuple_elems(ty)
+      u(*ty.map do |a|
+        next unknown("tuple elements") unless a.is_a?(Array) && a[0] == :tuple
+        a[1].empty? ? t("Nil") : u(*a[1])
+      end)
+    end
+
     def data_op(dt, name, args, node)
       case name
       when "new"
@@ -790,6 +798,9 @@ module Sake
       when "Array.at", "Array.first", "Array.last", "Array.pop", "Array.shift", "Array.min", "Array.max"
         u(elem_of(a0), t("Nil"))
       when "Array.fetch" then elem_of(a0)
+      when "Tuple.max", "Tuple.min", "Tuple.minmax"
+        e = tuple_elems(a0)
+        name == "Tuple.minmax" ? tuple([e, e]) : e
       when "Array.unshift"
         write_elems(a0, args.drop(1), node, name)
         a0

@@ -345,6 +345,10 @@ module Sake
     def install_tuple(reg)
       reg.define("Tuple", :length, ["Tuple"]) { _1.elems.length }
       reg.define("Tuple", :size, ["Tuple"]) { _1.elems.size }
+      # Ruby's [a, b].max: a Tuple's length is known, so the result is never nil unless it is [].
+      reg.define("Tuple", :max, ["Tuple"]) { |t| sort_checked(t.elems) { t.elems.max } }
+      reg.define("Tuple", :min, ["Tuple"]) { |t| sort_checked(t.elems) { t.elems.min } }
+      reg.define("Tuple", :minmax, ["Tuple"]) { |t| sort_checked(t.elems) { Tuple.new(t.elems.minmax) } }
     end
 
     def install_math(reg)
