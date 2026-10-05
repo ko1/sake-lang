@@ -348,6 +348,8 @@ module Sake
         next [c, "rescue"] if c.op == "rescue"
         next [c, "unrescued"] if c.op == "raise"
         next [c, "exhaustive"] if c.op == "case/in" && c.arg == "value"
+        # `x => T` that may not match is a check at run time (rescuable); one that surely fails is a type error.
+        next [c, "exhaustive"] if c.op == "=>" && c.verdict != :error
         next [c, "type"] if c.verdict == :error
         parts = c.failing.map { |f| operand_pair?(c) ? f : [f] }
         next [c, "type"] unless parts.all? { |p| p.any? { nil_atom?(_1) } }
@@ -821,7 +823,7 @@ module Sake
       case name
       when "new"
         given = dt.fields.each_with_index.to_h do |f, i|
-          ty = args[i]
+          ty = args[i] == MISSING ? nil : args[i]
           ty ||= (fn = @program.functions.dig(dt.name, "#{Resolver::DEFAULT_PREFIX}#{f}")) && call_user(fn, [], nil)
           ty ||= dt.default_types.key?(f) ? t(dt.default_types[f]) : t("Nil")
           [f, ty]

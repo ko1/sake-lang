@@ -278,7 +278,8 @@ $ sake functions.sake
 - Parameters may have defaults, and keyword parameters come last, as in Ruby:
   `def greet(name, greeting = "Hello", punct: "!")`, called as `greet("Ruby", punct: "?")`. The callee
   of every call is known when the program is checked, so a misspelled or missing keyword is an error
-  before running. Rest parameters are not supported.
+  before running. `*rest` and `**opts` collect the remaining positional arguments (an Array) and the
+  other keywords (a Hash). `T.new` takes fields by keyword too: `Logger.new(io, level: :warn)`.
 - `first, *rest = xs` and `|a, *rest|` collect the rest in an Array. `*xs` in arguments spreads
   only into built-ins that take any number of them: `puts(*lines)`, `format(fmt, *row)`,
   `Array[*xs, 0]`.

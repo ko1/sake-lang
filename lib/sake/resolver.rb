@@ -11,11 +11,12 @@ module Sake
   # abstract: the body is only `raise NotImplementedError`: each type that includes the module defines it.
   # params: every parameter's name, positional ones first; defaults: the default expressions of the
   # trailing optional positional ones; keywords: keyword parameter name => default expression (nil: required).
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords, :block_optional, :block_param) do
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords, :block_optional, :block_param, :rest_param, :kwrest_param) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
-    def positional = params.size - (keywords || {}).size
+    # params: required, optional, `*rest`, keywords, `**opts`, in that order.
+    def positional = params.size - (keywords || {}).size - (rest_param ? 1 : 0) - (kwrest_param ? 1 : 0)
     def min_arity = positional - (defaults || []).size
-    def keyword_shape = (keywords || {}).transform_values(&:nil?)
+    def keyword_shape = [(keywords || {}).transform_values(&:nil?), !rest_param.nil?, !kwrest_param.nil?]
   end
 
   # `@x` inside a function of a Struct type: field x of the function's first parameter.
@@ -52,8 +53,8 @@ module Sake
     # Raised by operations, and rescuable by name. Program errors (NOT_RESCUABLE) are what the checks before
     # running report, so they cannot be rescued.
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
-                            RegexpError FloatDomainError Math::DomainError].freeze
-    NOT_RESCUABLE = %w[TypeError NoMatchingPatternError SystemStackError NotImplementedError LocalJumpError].freeze
+                            RegexpError FloatDomainError Math::DomainError NoMatchingPatternError].freeze
+    NOT_RESCUABLE = %w[TypeError SystemStackError NotImplementedError LocalJumpError].freeze
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
     # `require "x"`: a call with no receiver, read by Sake.load before resolving.
@@ -237,7 +238,8 @@ module Sake
       return if name.include?("::")
       required = fields.size - fields.reverse.take_while { defaults.key?(_1) }.size
       @registry.define(name, :new, fields.take(required).map { "Any" }, optional: fields.drop(required).map { "Any" }) do |*vs|
-        StructValue.new(dt, fields.each_with_index.map { |f, i| i < vs.size ? vs[i] : defaults[f] })
+        # A field left out (beyond the arguments, or skipped for a later keyword: MISSING) gets its default.
+        StructValue.new(dt, fields.each_with_index.map { |f, i| i < vs.size && !vs[i].equal?(Interpreter::MISSING) ? vs[i] : defaults[f] })
       end
       Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
@@ -254,6 +256,9 @@ module Sake
     # `attr_reader items = Array[]`: an expression default, evaluated by `new` each time (as Ruby's
     # `@items = []` in initialize), by the function DEFAULT_PREFIX + field of the type.
     ExprDefault = Struct.new(:expr)
+    RESERVED_WORDS = %w[alias and begin break case class def defined? do else elsif end ensure false for if in module next nil
+                        not or redo rescue retry return self super then true undef unless until when while yield
+                        __FILE__ __LINE__ __ENCODING__ BEGIN END].freeze
     DEFAULT_PREFIX = "(default) "
 
     DEFAULT_LITERALS = [Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::StringNode, Prism::SymbolNode,
@@ -350,7 +355,8 @@ module Sake
         return [a.name.to_s, literal_value(a.value)] if DEFAULT_LITERALS.any? { a.value.is_a?(_1) }
         return [a.name.to_s, ExprDefault.new(a.value)] # evaluated at each new that leaves the field out
       when Prism::SymbolNode
-        error(a, "write the field's name without `:`: `#{a.unescaped}`")
+        # `attr_reader :next`: a reserved word cannot be written bare, so it may be a Symbol.
+        error(a, "write the field's name without `:`: `#{a.unescaped}`") unless RESERVED_WORDS.include?(a.unescaped)
         return [a.unescaped, nil]
       end
       error(a, "a field name, like `x`, or a field with a default, like `n = 0`")
@@ -450,6 +456,8 @@ module Sake
       fn.defaults = node.parameters ? node.parameters.optionals.map(&:value) : []
       # `&b` only passed on is optional, as in Ruby: passing none to a call that needs one is caught there.
       fn.block_optional = fn.yields && (calls_block_given?(node.body) || !yields?(node.body))
+      fn.rest_param = node.parameters&.rest.is_a?(Prism::RestParameterNode) ? node.parameters.rest.name&.to_s : nil
+      fn.kwrest_param = node.parameters&.keyword_rest.is_a?(Prism::KeywordRestParameterNode) ? node.parameters.keyword_rest.name&.to_s : nil
       fn.keywords = (node.parameters&.keywords || []).to_h { [_1.name.to_s, _1.is_a?(Prism::OptionalKeywordParameterNode) ? _1.value : nil] }
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
       fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
@@ -470,12 +478,16 @@ module Sake
     def collect_params(node)
       pn = node.parameters
       return [] unless pn
-      if pn.posts.any? || pn.rest || pn.keyword_rest
-        error(pn, "only required, optional (`b = 1`) and keyword (`c:`, `d: 2`) parameters, in that order, are supported (got `#{pn.slice}`)")
+      if pn.posts.any?
+        error(pn, "parameters after `*#{pn.rest&.name}` are not supported: required, optional, `*rest`, keywords, `**opts`, in that order")
       end
+      rest = pn.rest.is_a?(Prism::RestParameterNode) ? pn.rest : nil
+      kwrest = pn.keyword_rest.is_a?(Prism::KeywordRestParameterNode) ? pn.keyword_rest : nil
+      error(pn.rest, "`*` without a name is not supported") if rest && rest.name.nil?
+      error(pn.keyword_rest, "`**` without a name is not supported") if (kwrest && kwrest.name.nil?) || (pn.keyword_rest && !kwrest)
       pn.requireds.map do |r|
         r.is_a?(Prism::RequiredParameterNode) ? r.name.to_s : (error(r, "parameter destructuring is not supported"); "_")
-      end + pn.optionals.map { _1.name.to_s } + pn.keywords.map { _1.name.to_s }
+      end + pn.optionals.map { _1.name.to_s } + [rest&.name&.to_s].compact + pn.keywords.map { _1.name.to_s } + [kwrest&.name&.to_s].compact
     end
 
     def calls_block_given?(node)
@@ -990,6 +1002,7 @@ module Sake
       end
       set_call(node, ctx, target)
       return if check_splat(node, target, args, 0)
+      return check_new_keywords(node, target, args) if struct_new_target?(target) && args.last.is_a?(Prism::KeywordHashNode)
       check_arity(node, target, check_keywords(node, target, args, kws), !blk.nil?)
       check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == CTOR && !%w[Array Hash Set].include?(target.namespace)
     end
@@ -1023,8 +1036,37 @@ module Sake
 
     # The keyword parameters of a call's target: a user function's, or (a dispatch) the module function's.
     def target_keywords(target)
+      return struct_new_keywords(target) if struct_new_target?(target)
       fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
-      fn.is_a?(UserFunction) && fn.keywords&.any? ? fn.keywords : nil
+      fn.is_a?(UserFunction) && (fn.keywords&.any? || fn.kwrest_param) ? fn.keywords : nil
+    end
+
+    def struct_new_target?(t) = t.is_a?(Builtin) && t.name == "new" && @struct_types.key?(t.namespace)
+
+    # T.new(a, level: :warn): any field by name (field => nil; whether it is required is checked apart).
+    def struct_new_keywords(t) = @struct_types[t.namespace].fields.to_h { [_1, nil] }
+
+    # Fields given positionally, then by keyword: none twice, and every field without a default given.
+    def check_new_keywords(node, target, args)
+      dt = @struct_types[target.namespace]
+      kw = args.last.is_a?(Prism::KeywordHashNode) ? args.last : nil
+      npos = args.size - (kw ? 1 : 0)
+      return npos unless kw
+      given = {}
+      kw.elements.each do |el|
+        next error(el, "a keyword argument is written `name: value`") unless el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode)
+        name = el.key.unescaped
+        i = dt.fields.index(name)
+        next error(el.key, "#{dt.name} has no field `#{name}`", spell(name, dt.fields).map { "did you mean `#{_1}:`?" }) unless i
+        next error(el.key, "field `#{name}` is given twice") if given[name]
+        next error(el.key, "field `#{name}` is already given as argument #{i + 1}") if i < npos
+        given[name] = true
+      end
+      required = target.params.size
+      missing = dt.fields.each_with_index.select { |f, i| i >= npos && i < required && !given[f] }.map(&:first)
+      error(node, "#{dt.name}.new needs #{missing.map { "`#{_1}`" }.join(", ")}") if missing.any?
+      error(node, "wrong number of arguments for #{dt.name}.new (given #{npos}, expected at most #{dt.fields.size})") if npos > dt.fields.size
+      nil
     end
 
     # `k: v` arguments go to keyword parameters by name, decided here since the callee is known.
@@ -1032,12 +1074,16 @@ module Sake
     def check_keywords(node, target, args, kws)
       kw = kws && args.last.is_a?(Prism::KeywordHashNode) ? args.last : nil
       return args.size unless kws
+      return args.size if struct_new_target?(target) # T.new with keywords: check_new_keywords
       seen = {}
       (kw&.elements || []).each do |el|
         next unless el.is_a?(Prism::AssocNode)
         name = el.key.is_a?(Prism::SymbolNode) && el.key.value ? el.key.unescaped : nil
         next error(el.key, "a keyword argument is written `name: value`") unless name
-        if !kws.key?(name)
+        fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
+        if !kws.key?(name) && fn.is_a?(UserFunction) && fn.kwrest_param
+          nil # goes into **opts
+        elsif !kws.key?(name)
           error(el.key, "#{target_name(target)} has no keyword parameter `#{name}`", spell(name, kws.keys).map { "did you mean `#{_1}:`?" })
         elsif seen[name]
           error(el.key, "keyword argument `#{name}` is given twice")
@@ -1061,8 +1107,9 @@ module Sake
         fn = target.table.values.find { _1.is_a?(UserFunction) && !_1.abstract } || fn if fn&.abstract
         check_arity(node, fn, argc, has_block) if fn
       when UserFunction
-        unless (target.min_arity..target.positional).cover?(argc)
-          expected = target.min_arity == target.positional ? target.positional : "#{target.min_arity}..#{target.positional}"
+        max = target.rest_param ? Float::INFINITY : target.positional
+        unless (target.min_arity..max).cover?(argc)
+          expected = target.min_arity == max ? max : "#{target.min_arity}..#{max == Float::INFINITY ? "" : max}"
           error(node, "wrong number of arguments for #{target.full_name} (given #{argc}, expected #{expected})")
         end
         return if target.abstract # a required function: its includers' definitions say whether it takes a block

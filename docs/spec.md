@@ -312,9 +312,14 @@ end
   is checked: an unknown or repeated keyword, or a missing required one, is an error, and `k: v` to a
   function without keyword parameters is an error (there is no implicit Hash argument; write
   `Hash[k: v]` or a Record `{k: v}`). `f(k:)` passes the variable `k`, as in Ruby. Arguments are
-  evaluated in the order written. A block parameter `&b` (or `&`) may only be passed on (§7). Rest
-  parameters (`*a`, `**o`) are rejected. A call gives between the required positional count and
-  all of them; a mixin function's definitions must agree on both counts and on the keyword names.
+  evaluated in the order written. A block parameter `&b` (or `&`) may only be passed on (§7).
+  `*rest` after the optional parameters collects the remaining positional arguments in a new Array,
+  and `**opts` at the end the keywords that are not parameters in a Hash of Symbol keys; both are
+  built at the call, since the callee is known (a function with `**opts` accepts any keyword, so a
+  misspelled one is no longer an error there). Parameters after `*rest` and nameless `*` / `**` are
+  rejected. A call gives between the required positional count and all of them (any number with
+  `*rest`); a mixin function's definitions must agree on the counts, the keyword names, and on having
+  `*rest` / `**opts`.
 - **Return value.** The value of the last expression, or of `return expr`. `return a, b` returns
   the Tuple `[a, b]`.
 - **Polymorphism.** Functions are polymorphic. A function works on any arguments its operations
@@ -495,8 +500,9 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
   String, Integer, or a Symbol made at run time), the report is the `exhaustive` item (level 3):
   the program may well be correct, and `NoMatchingPatternError` still stops it if not.
 - **Assertion.** After `x => P`, a local `x` is narrowed to the matching types, as in an `in`
-  branch. A value that surely does not match, or may not match because of another type, is
-  reported as `type` (level 1). `x => P` is itself a check for nil, like `Array.fetch` for a
+  branch. A value that surely does not match is reported as `type` (level 1); one that may not match
+  (another type may come) is checked when it runs, and reported only as `exhaustive` (level 3).
+  The failure is `NoMatchingPatternError`, which can be rescued, as in Ruby. `x => P` is itself a check for nil, like `Array.fetch` for a
   missing index, so a value that may be nil is not reported. It is how a fact such as "a port is an
   Integer" is written where the value is stored: `p => Integer`, then `@port = p`.
 - **Parentheses.** As in Ruby, `x in P` must be in parentheses when it is an argument:
@@ -526,7 +532,12 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 | `private attr_... x` | a field with no reader or writer outside the class (`@x` inside); `new` still takes it |
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
-- **`new`.** `C.new` takes every field positionally, whatever its access.
+- **`new`.** `C.new` takes every field positionally, whatever its access, or by name:
+  `Logger.new(io, level: :warn)` gives the first field by position and `level` by keyword; a field given
+  neither way gets its default (a field without one is an error, as are an unknown name and a field
+  given twice).
+- **Reserved words.** A field named like a reserved word is declared as a Symbol, `attr_accessor :next`
+  (written bare it would not parse); its reader is `Node.next(n)` and `@next` as usual.
 - **`initialize`.** `def initialize(c)` in a class runs after `C.new` has stored the fields, with the
   new instance: the place for checks (`@port => Integer`) and conversions (`@celsius = Float(@celsius)`),
   as in Ruby. It takes exactly that one parameter, and calling `C.initialize` directly is an error.
@@ -726,7 +737,7 @@ end
   `rescue => e` catches every rescuable exception; `e` is a union, so narrow it with
   `case e in A ...`.
 - **Reading the message.** `Exception.message(e)` reads the message of any exception value.
-- **Program errors.** `TypeError`, `NoMatchingPatternError`, and `SystemStackError` cannot be
+- **Program errors.** `TypeError`, `SystemStackError`, and `LocalJumpError` cannot be
   rescued, and naming them in `rescue` is a static error. They are what the checks before running
   report ([§2.1](#21-strictness)).
 - **Other forms.** `def f ... rescue ... end`, `expr rescue fallback`, and `retry` work as in Ruby.

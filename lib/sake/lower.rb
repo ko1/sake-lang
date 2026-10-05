@@ -48,9 +48,9 @@ module Sake
       @prev = nil
       # Optional parameters (`b = 1`, `d: 2`) are set from their defaults when the call did not give them.
       required = fn ? fn.min_arity : 0
-      defaults = [*(fn&.defaults || []), *(fn&.keywords || {}).values].each_with_index.filter_map do |d, j|
-        ArgDefault.new(slot: required + j, value: lower(d), origin: d) if d
-      end
+      kw_base = fn ? fn.positional + (fn.rest_param ? 1 : 0) : 0 # keywords come after `*rest`
+      defaults = (fn&.defaults || []).each_with_index.filter_map { |d, j| ArgDefault.new(slot: required + j, value: lower(d), origin: d) if d }
+      defaults += (fn&.keywords || {}).values.each_with_index.filter_map { |d, j| ArgDefault.new(slot: kw_base + j, value: lower(d), origin: d) if d }
       body = statements(stmts.compact, stmts.first)
       body = Seq.new(body: [*defaults, body], origin: fn.node) unless defaults.empty?
       AST::Function.new(name:, fn:, nparams: params.size, nslots: frame.names.size, slot_names: frame.names, body:)
@@ -301,6 +301,7 @@ module Sake
       xs = [*(subject ? [lower(subject)] : []), *args(n.arguments)]
       temps = []
       xs = keyword_args(t, n, xs, temps) if t.is_a?(UserFunction) || t.is_a?(Dispatch)
+      xs = new_keyword_args(t, n, xs, temps) if t.is_a?(Builtin) && t.name == "new" && (dt = @program.struct_types[t.namespace]) && n.arguments&.arguments&.last.is_a?(Prism::KeywordHashNode)
       blk = n.block && block(n.block)
       call = user_call(t, n, xs, blk)
       temps.empty? ? call : Seq.new(body: [*temps, call], origin: n)
@@ -310,13 +311,13 @@ module Sake
     # call gives none. Keyword values written out of order are evaluated first, in written order.
     def keyword_args(t, n, xs, temps)
       fn = t.is_a?(Dispatch) ? (@program.functions.dig(t.module, t.name) || t.table.values.first) : t
-      return xs unless fn.is_a?(UserFunction) && fn.keywords&.any?
+      return xs unless fn.is_a?(UserFunction) && (fn.keywords&.any? || fn.rest_param || fn.kwrest_param)
       kw = n.arguments&.arguments&.last
       given = {}
       if kw.is_a?(Prism::KeywordHashNode)
         xs = xs[0...-1]
         kw.elements.each { given[_1.key.unescaped] = _1.value }
-      end
+      end if fn.keywords&.any? || fn.kwrest_param
       names = fn.keywords.keys
       in_order = given.keys == names.select { given.key?(_1) }
       temp = lambda do |x, o|
@@ -326,8 +327,44 @@ module Sake
       end
       xs = xs.map { |x| [Lit, Str].include?(x.class) ? x : temp.(x, x.origin) } unless in_order
       vals = given.transform_values { |v| in_order ? lower(v) : temp.(lower(v), v) }
-      pad = Array.new(fn.positional - xs.size) { Missing.new(origin: nil) }
-      [*xs, *pad, *names.map { vals[_1] || Missing.new(origin: nil) }]
+      fixed = xs.take(fn.positional)
+      pad = Array.new(fn.positional - fixed.size) { Missing.new(origin: nil) }
+      # `*rest`: the positional arguments after the fixed ones, as a new Array
+      rest = fn.rest_param ? [CallBuiltin.new(fn: @program.registry.lookup("Array", CTOR), args: xs.drop(fn.positional), block: nil, origin: n)] : []
+      # `**opts`: the keywords that are not parameters, as a Hash of Symbol keys
+      extra = given.keys - names
+      opts = fn.kwrest_param ? [CallBuiltin.new(fn: @program.registry.lookup("Hash", CTOR), block: nil, origin: kw || n,
+                                                args: [MakePairs.new(keys: extra.map { lit(_1.to_sym, n) }, values: extra.map { vals[_1] }, origin: n)])] : []
+      [*fixed, *pad, *rest, *names.map { vals[_1] || Missing.new(origin: nil) }, *opts]
+    end
+
+    # T.new(a, level: :warn): the fields in order, Missing where neither a position nor a keyword gives one
+    # (T.new then stores the default). Keyword values written out of order are evaluated in written order.
+    def new_keyword_args(t, n, xs, temps)
+      fields = @program.struct_types[t.namespace].fields
+      kw = n.arguments.arguments.last
+      xs = xs[0...-1]
+      given = kw.elements.to_h { [_1.key.unescaped, _1.value] }
+      names = fields.drop(xs.size)
+      in_order = given.keys == names.select { given.key?(_1) }
+      vals = given.transform_values do |v|
+        next lower(v) if in_order
+        tmp = @scopes[-1].slot(:"(argument #{@arg_temps = (@arg_temps || 0) + 1})")
+        temps << LVarSet.new(slot: tmp, value: lower(v), origin: v)
+        get(tmp, v)
+      end
+      unless in_order # positional arguments are evaluated before the keywords, as written
+        pos = []
+        xs = xs.map do |x|
+          next x if [Lit, Str].include?(x.class)
+          tmp = @scopes[-1].slot(:"(argument #{@arg_temps = (@arg_temps || 0) + 1})")
+          pos << LVarSet.new(slot: tmp, value: x, origin: x.origin)
+          get(tmp, x.origin)
+        end
+        temps.unshift(*pos)
+      end
+      last = names.rindex { given.key?(_1) }
+      [*xs, *names.take(last + 1).map { vals[_1] || Missing.new(origin: nil) }]
     end
 
     def user_call(t, n, xs, blk)
