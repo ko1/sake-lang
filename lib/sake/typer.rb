@@ -835,8 +835,7 @@ module Sake
       when "new"
         given = dt.fields.each_with_index.to_h do |f, i|
           ty = args[i] == MISSING ? nil : args[i]
-          ty ||= (fn = @program.functions.dig(dt.name, "#{Resolver::DEFAULT_PREFIX}#{f}")) && call_user(fn, [], nil)
-          ty ||= dt.default_types.key?(f) ? t(dt.default_types[f]) : t("Nil")
+          ty ||= t("Nil") # left out: nil until initialize sets it
           [f, ty]
         end
         # A construction whose initialize cannot finish (`@port => Integer` on a String) stores nothing;

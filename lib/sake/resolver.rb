@@ -127,6 +127,20 @@ module Sake
       apply_pastes
       apply_module_function_names
       apply_includes
+      apply_initialize_arity
+    end
+
+    # A type with initialize: C.new may leave out trailing fields (or skip them for a later keyword);
+    # they are nil when initialize starts, and initialize sets them. Without one, C.new takes every field,
+    # except an exception type's (`raise E, "msg"` gives the message only): its other fields may be nil.
+    def apply_initialize_arity
+      @struct_types.each do |name, dt|
+        next if name.include?("::") || !(@functions.dig(name, "initialize") || (dt.exception && dt.fields.size > 1))
+        fields = dt.fields
+        @registry.define(name, :new, [], optional: fields.map { "Any" }) do |*vs|
+          StructValue.new(dt, fields.each_index.map { |i| i < vs.size && !vs[i].equal?(Interpreter::MISSING) ? vs[i] : nil })
+        end
+      end
     end
 
     # `class B < A`: A's definitions written again in B (its fields first, its functions, its includes).
@@ -230,18 +244,10 @@ module Sake
     end
 
     # readers / writers: the fields with a public reader `T.x` / writer `T.set_x` (all of them by default).
-    # defaults: field => default value (a literal): only the value `new` stores when the argument is left
-    # out. It does not fix the field's type: types come from operations, as for every other variable.
-    def define_struct(name, fields, exception: false, readers: fields, writers: fields, defaults: {})
-      literal = defaults.reject { |_, v| v.is_a?(ExprDefault) }
-      dt = @struct_types[name] = StructType.new(name, fields, exception, literal.transform_values { Values.type_of(_1) }, {}, {})
-      defaults = defaults.transform_values { _1.is_a?(ExprDefault) ? DEFAULT_PENDING : _1 }
+    def define_struct(name, fields, exception: false, readers: fields, writers: fields)
+      dt = @struct_types[name] = StructType.new(name, fields, exception, {}, {})
       return if name.include?("::")
-      required = fields.size - fields.reverse.take_while { defaults.key?(_1) }.size
-      @registry.define(name, :new, fields.take(required).map { "Any" }, optional: fields.drop(required).map { "Any" }) do |*vs|
-        # A field left out (beyond the arguments, or skipped for a later keyword: MISSING) gets its default.
-        StructValue.new(dt, fields.each_with_index.map { |f, i| i < vs.size && !vs[i].equal?(Interpreter::MISSING) ? vs[i] : defaults[f] })
-      end
+      @registry.define(name, :new, fields.map { "Any" }) { |*vs| StructValue.new(dt, vs) }
       Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
       fields.each_with_index do |f, i|
@@ -254,16 +260,9 @@ module Sake
       end
     end
 
-    # `attr_reader items = Array[]`: an expression default, evaluated by `new` each time (as Ruby's
-    # `@items = []` in initialize), by the function DEFAULT_PREFIX + field of the type.
-    ExprDefault = Struct.new(:expr)
     RESERVED_WORDS = %w[alias and begin break case class def defined? do else elsif end ensure false for if in module next nil
                         not or redo rescue retry return self super then true undef unless until when while yield
                         __FILE__ __LINE__ __ENCODING__ BEGIN END].freeze
-    DEFAULT_PREFIX = "(default) "
-
-    DEFAULT_LITERALS = [Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::StringNode, Prism::SymbolNode,
-                        Prism::TrueNode, Prism::FalseNode, Prism::NilNode].freeze
     ATTRS = { attr_reader: [true, false], attr_accessor: [true, true], attr_writer: [false, true] }.freeze
     EXCEPTION_PARENTS = %w[Exception StandardError].freeze
 
@@ -292,7 +291,7 @@ module Sake
         error(n.superclass, "`<` goes on the first `class #{name}` (line #{first.location.start_line})") if n.superclass
         attr_lines(n).each { error(_1, "the fields of #{name} are declared in its first `class #{name}` (line #{first.location.start_line})") }
       end
-      spec = { fields: [], readers: [], writers: [], defaults: {}, exception: false, parent: nil }
+      spec = { fields: [], readers: [], writers: [], exception: false, parent: nil }
       if (sup = first.superclass)
         if sup.is_a?(Prism::HashNode)
           error(sup, "`class #{name} < {...}` is the old form of declaring fields", ["write them in the body: #{old_settings_hint(sup)}"])
@@ -318,7 +317,7 @@ module Sake
         st = st.arguments.arguments[0] if priv
         reader, writer = ATTRS.fetch(st.name)
         (st.arguments&.arguments || []).each do |a|
-          fname, default = attr_field(a)
+          fname = attr_field(a, name, st.name)
           next unless fname
           next error(a, "field `#{fname}` is declared twice in #{name}") if spec[:fields].include?(fname)
           next error(a, "a field cannot be named `new`: #{name}.new makes a #{name}, and a field's reader has its name", ["rename it, e.g. `new_value`"]) if fname == "new"
@@ -326,21 +325,9 @@ module Sake
           spec[:readers] << fname if reader
           spec[:writers] << fname if writer
           (@private_fields[name] ||= []) << fname if priv
-          spec[:defaults][fname] = default if a.is_a?(Prism::LocalVariableWriteNode)
         end
       end
-      d = spec[:fields].reverse.take_while { spec[:defaults].key?(_1) }.size
-      (spec[:defaults].keys - spec[:fields].last(d)).each do |f|
-        error(first, "field `#{f}` has a default, so the fields after it need defaults too (they may be left out of #{name}.new)")
-      end
-      define_struct(name, spec[:fields], exception: spec[:exception], readers: spec[:readers], writers: spec[:writers], defaults: spec[:defaults])
-      spec[:defaults].each do |f, d|
-        next unless d.is_a?(ExprDefault)
-        fn = UserFunction.new(name, "#{DEFAULT_PREFIX}#{f}", [], d.expr, d.expr, yields?(d.expr))
-        fn.defaults = []
-        fn.keywords = {}
-        (@functions[name] ||= {})["#{DEFAULT_PREFIX}#{f}"] = fn
-      end
+      define_struct(name, spec[:fields], exception: spec[:exception], readers: spec[:readers], writers: spec[:writers])
       @class_specs[name] = spec
     end
 
@@ -348,20 +335,21 @@ module Sake
       node.body.is_a?(Prism::StatementsNode) ? node.body.body.select { attr_call?(_1) } : []
     end
 
-    # `x` (a field) or `n = 0` (a field with a default, a literal): [name, default].
-    def attr_field(a)
+    # `x` (a field), or `:next` for a reserved word: the field's name.
+    def attr_field(a, cls, attr)
       case a
-      when Prism::CallNode then return [a.name.to_s, nil] if a.receiver.nil? && a.arguments.nil? && a.block.nil?
-      when Prism::LocalVariableReadNode then return [a.name.to_s, nil]
+      when Prism::CallNode then return a.name.to_s if a.receiver.nil? && a.arguments.nil? && a.block.nil?
+      when Prism::LocalVariableReadNode then return a.name.to_s
       when Prism::LocalVariableWriteNode
-        return [a.name.to_s, literal_value(a.value)] if DEFAULT_LITERALS.any? { a.value.is_a?(_1) }
-        return [a.name.to_s, ExprDefault.new(a.value)] # evaluated at each new that leaves the field out
+        error(a, "a field has no default value; set it in initialize, which runs after #{cls}.new",
+              ["`#{attr} #{a.name}` and `def initialize(#{cls[0].downcase}) = @#{a.name} = #{first_line(a.value.slice)}`; #{cls}.new may then leave `#{a.name}` out"])
+        return a.name.to_s
       when Prism::SymbolNode
         # `attr_reader :next`: a reserved word cannot be written bare, so it may be a Symbol.
         error(a, "write the field's name without `:`: `#{a.unescaped}`") unless RESERVED_WORDS.include?(a.unescaped)
-        return [a.unescaped, nil]
+        return a.unescaped
       end
-      error(a, "a field name, like `x`, or a field with a default, like `n = 0`")
+      error(a, "a field name, like `x`")
       nil
     end
 

@@ -172,7 +172,10 @@ module Sake
         args = nodes.map { ev(_1, env) }
         # Inside initialize run for a construction: the instance's fields are the values that `new` gave.
         own = init_field?(env, n)
-        assign(env, [:field, n.field], args[1]) if own && n.is_a?(FieldSet)
+        if own && n.is_a?(FieldSet) # stored when initialize returns (init_exit), not at each write
+          assign(env, [:field, n.field], args[1])
+          return args[1]
+        end
         if own && n.is_a?(FieldGet)
           record(n.origin, n.fn.full_name, 1, n.fn.param_type(0), args[0]) # the getter's subject check, as call_builtin does
           env.lookup([:field, n.field]) || []
@@ -225,12 +228,14 @@ module Sake
     end
 
     # Paths that ended in return/next/break do not reach the join point.
+    # A void path (no value takes it) adds no variable types either, unless every path is void.
     def join_into(env, a, b)
       live = [a, b].reject(&:dead)
       if live.empty?
         env.dead = true
         live = [a, b]
       end
+      live = live.reject(&:void) if live.any?(&:void) && !live.all?(&:void)
       (a.vars.keys | b.vars.keys).each do |k|
         env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } })
       end
@@ -301,9 +306,13 @@ module Sake
         if truthy
           narrow(env, pred.left, true)
           narrow(env, pred.right, true)
+        else
+          narrow_either(env, pred, false)
         end
       when Or
-        unless truthy
+        if truthy
+          narrow_either(env, pred, true)
+        else
           narrow(env, pred.left, false)
           narrow(env, pred.right, false)
         end
@@ -333,6 +342,17 @@ module Sake
       end
     end
 
+    # `a || b` truthy: a was truthy, or a falsy and b truthy (`a && b` falsy: the same with falsy).
+    def narrow_either(env, pred, truthy)
+      e1 = env.dup_level
+      narrow(e1, pred.left, truthy)
+      e2 = env.dup_level
+      narrow(e2, pred.left, !truthy)
+      narrow(e2, pred.right, truthy)
+      join_into(env, e1, e2)
+      env.void = true if e1.void && e2.void
+    end
+
     # `x == :sym` / `x != :sym` (either side): x is that Symbol on one path, any other value on the other.
     # `t[k] == :sym` narrows the Tuple variants of t. Returns true when pred is such a test.
     def narrow_symbol_eq(env, pred, truthy)
@@ -341,9 +361,9 @@ module Sake
       return false unless lit.size == 1
       eq = (pred.op == "==") == truthy
       subject = other[0]
-      if subject.is_a?(LVarGet) && (ty = env.lookup(subject.slot))
+      if (slot = narrow_slot(env, subject)) && (ty = env.lookup(slot))
         m, rest = match_atoms(ty, PValue.new(value: lit[0]))
-        set_narrowed(env, subject.slot, u(*(eq ? m : rest).map { [_1] }))
+        set_narrowed(env, slot, u(*(eq ? m : rest).map { [_1] }))
       elsif (var, pos = indexed_var(subject)) && var
         ty = (env.lookup(var) || []).filter_map { |a| a[1][pos] if a.is_a?(Array) && a[0] == :tuple }
         m, rest = match_atoms(u(*ty), PValue.new(value: lit[0]))

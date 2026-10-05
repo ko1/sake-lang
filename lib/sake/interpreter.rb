@@ -435,10 +435,6 @@ module Sake
       ruby_blk = blk && (fn.full_name == "Thread.new" ? thread_body(blk, node) : ->(*xs) { call_block(blk, xs, node) })
       v = fn.impl.call(*args, &ruby_blk)
       if fn.name == "new" && v.is_a?(StructValue)
-        v.values.each_with_index do |x, i| # expression defaults, evaluated for each new
-          next unless x.equal?(DEFAULT_PENDING)
-          v.values[i] = call_user(@program.functions.dig(fn.namespace, "#{Resolver::DEFAULT_PREFIX}#{v.type.fields[i]}"), [], nil, node)
-        end
         init = @program.functions.dig(fn.namespace, "initialize")
         call_user(init, [v], nil, node) if init # after the fields are stored, as Ruby's initialize
       end

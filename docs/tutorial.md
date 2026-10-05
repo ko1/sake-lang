@@ -380,7 +380,8 @@ an Integer" where the value is stored:
 # `x => T` asserts a type: after it, x is a T; a value that does not match raises
 # NoMatchingPatternError, and is reported before running when the checker sees it.
 class Config
-  attr_reader host, port = 80
+  attr_reader host, port
+  def initialize(c) = @port = 80
   def set_port(c, p)
     p => Integer              # the knowledge "a port is an Integer", on the write
     @port = p
@@ -397,8 +398,8 @@ Config.set_port(c, "eighty")
 
 ```
 $ sake pattern_assert.sake
-pattern_assert.sake:6:5: error: `=> Integer`: the value is String, which does not match [type]
-  hint: reached by the call at line 16
+pattern_assert.sake:7:5: error: `=> Integer`: the value is String, which does not match [type]
+  hint: reached by the call at line 17
 (exit status 2)
 ```
 
@@ -548,7 +549,8 @@ end
 
 class Counter
   attr_reader name
-  attr_accessor count = 0
+  attr_accessor count
+  def initialize(c) = @count = 0
   def bump(c) = @count += 1                  # inside the class, @count += 1 writes the field
 end
 
@@ -580,7 +582,7 @@ true
 | `attr_reader x, y` | `C.x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
 | `attr_accessor n` | `C.n(c)` and `C.set_n(c, v)` from anywhere |
 | `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
-| `attr_accessor n = 0` · `items = Array[]` | a default: any expression, evaluated by each `new` that leaves the field out (like Ruby's `def initialize(items = [])`, not once when the class is defined); trailing fields with defaults may be left out of `new`; it does not fix the field's type |
+| `def initialize(c)` | runs after `new` stored the fields: set the others there (`@items = Array[]`); with it, `new` may leave out trailing fields, which are nil until initialize sets them. Fields have no default values |
 | `private attr_reader pos` | no `C.pos` outside the class (inside: `@pos`, or `C.pos(other)` for another C); `new` still takes it |
 | `class E < Exception` | an exception type: `message` comes first |
 
@@ -595,8 +597,9 @@ call with that call's values:
 ```ruby
 # initialize(c) runs after T.new has stored the fields: checks and conversions on every construction.
 class Config
-  attr_reader host, port = 80
+  attr_reader host, port
   def initialize(c)
+    @port = 80 if @port == nil
     @port => Integer
     @host = String.downcase(@host)
   end
@@ -616,8 +619,8 @@ Config.new("h", "eighty")      # reported for this call
 
 ```
 $ sake initialize.sake
-initialize.sake:5:5: error: `=> Integer`: the value is String, which does not match [type]
-  hint: reached by the call at line 19
+initialize.sake:6:5: error: `=> Integer`: the value is String, which does not match [type]
+  hint: reached by the call at line 20
 (exit status 2)
 ```
 

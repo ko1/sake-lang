@@ -528,19 +528,25 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 | `attr_accessor x, ...` | fields with a reader `C.x(c)` and a writer `C.set_x(c, v)` |
 | `attr_reader x, ...` | fields with the reader only; inside the type's functions, `@x = v` still writes them |
 | `attr_writer x, ...` | fields with the writer only; inside the type's functions, `@x` still reads them |
-| `attr_... x = v` | a default value: any expression, evaluated by each `new` that leaves the field out, like a parameter default `def initialize(name, items = [])` in Ruby, not once when the class is defined (a class body holds only declarations, never statements), so `items = Array[]` makes a new Array each time; trailing fields with defaults may be omitted in `new`. A default is only an initial value: it does not fix the field's type, which, as for every variable, is what is written to it, checked by the operations that use it |
 | `private attr_... x` | the reader and writer are for the class's own functions only (on any of its values: `@x`, or `T.x(other)`); `new` still takes it |
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
-- **`new`.** `C.new` takes every field positionally, whatever its access, or by name:
-  `Logger.new(io, level: :warn)` gives the first field by position and `level` by keyword; a field given
-  neither way gets its default (a field without one is an error, as are an unknown name and a field
-  given twice).
+- **`new`.** `C.new` takes the fields positionally, whatever their access, or by name:
+  `Logger.new(io, level: :warn)` gives the first field by position and `level` by keyword (an unknown
+  name and a field given twice are errors). Without `initialize`, every field must be given. With it,
+  trailing fields may be left out (or skipped for a later keyword): they are nil when initialize
+  starts, and initialize sets them, as Ruby's `@items = []` (`@level = :info if @level == nil` keeps a
+  value `new` gave). An exception type's fields after `message` may always be left out (`raise E,
+  "msg"` gives the message only).
+- **No default values.** `attr_reader items = Array[]` is an error: a field's first value is set in
+  `initialize`, the one place that runs for each new instance, where it can read the other fields
+  (`@len = String.bytesize(@src)`). The checker follows the fields through initialize, so a field it
+  always sets is not nil afterwards.
 - **Reserved words.** A field named like a reserved word is declared as a Symbol, `attr_accessor :next`
   (written bare it would not parse); its reader is `Node.next(n)` and `@next` as usual.
 - **`initialize`.** `def initialize(c)` in a class runs after `C.new` has stored the fields, with the
-  new instance: the place for checks (`@port => Integer`) and conversions (`@celsius = Float(@celsius)`),
-  as in Ruby. It takes exactly that one parameter, and calling `C.initialize` directly is an error.
+  new instance: the place for first values (`@items = Array[]`), checks (`@port => Integer`) and
+  conversions (`@celsius = Float(@celsius)`), as in Ruby. It takes exactly that one parameter, and calling `C.initialize` directly is an error.
   The checker analyzes it for each `C.new` call, where `@x` reads the value that call gave, so a
   wrong argument is reported for that call; the fields hold what initialize leaves in them.
 - **`class B < A`.** Shorthand for writing A's definitions in B: A's fields come first (then B's),
@@ -552,8 +558,7 @@ Every `class` is a type. Its fields are declared in the body of its first `class
   field, then the fields of its `attr_*` lines.
 - **`Struct.new(:x, :y)`.** Shorthand for `class C` with `attr_accessor x, y`.
 - **`Exception.new(:line)`.** Shorthand for `class C < Exception` with `attr_accessor line`.
-- **Errors.** `attr_reader :x` (a Symbol), fields in a later `class C`, a default before a field
-  without one, and a write from outside to a read-only field are static errors. The old form
+- **Errors.** `attr_reader :x` (a Symbol), fields in a later `class C`, a default value, and a write from outside to a read-only field are static errors. The old form
   `class C < {reader: [...]}` is an error whose hint gives the `attr_*` lines.
 
 ### 10.2 Struct.new
