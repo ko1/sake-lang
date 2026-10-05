@@ -113,6 +113,7 @@ module Sake
       stmts.grep(Prism::ConstantWriteNode).each { collect_constant(_1) }
       @class_nodes = stmts.grep(Prism::ClassNode).select { _1.constant_path.is_a?(Prism::ConstantReadNode) }.group_by { _1.constant_path.name.to_s }
       @class_specs = {}
+      @private_fields = {} # type name => fields declared with private attr_*
       @module_names = stmts.grep(Prism::ModuleNode).map { _1.constant_path.slice }.to_set | Operators::MODULES
       @class_nodes.each_key { class_spec(_1, []) }
       stmts.each do |st|
@@ -304,6 +305,7 @@ module Sake
           error(sup, "`class #{name} < #{pname}` makes a cycle")
         elsif @class_nodes.key?(pname) && (ps = class_spec(pname, seen + [name]))
           spec = ps.transform_values { _1.dup }.merge(parent: pname)
+          @private_fields[name] = @private_fields[pname].dup if @private_fields.key?(pname)
         elsif (dt = @struct_types[pname]) && !@class_nodes.key?(pname)
           spec.merge!(fields: dt.fields.dup, readers: dt.fields.dup, writers: dt.fields.dup, exception: dt.exception, parent: pname)
         else
@@ -315,7 +317,6 @@ module Sake
         priv = st.name == :private
         st = st.arguments.arguments[0] if priv
         reader, writer = ATTRS.fetch(st.name)
-        reader = writer = false if priv
         (st.arguments&.arguments || []).each do |a|
           fname, default = attr_field(a)
           next unless fname
@@ -324,6 +325,7 @@ module Sake
           spec[:fields] << fname
           spec[:readers] << fname if reader
           spec[:writers] << fname if writer
+          (@private_fields[name] ||= []) << fname if priv
           spec[:defaults][fname] = default if a.is_a?(Prism::LocalVariableWriteNode)
         end
       end
@@ -764,6 +766,7 @@ module Sake
       end
       check(recv.receiver, ctx)
       check(node.value, ctx)
+      return private_field_error(node, dt.name, field) if private_access?(dt.name, field, ctx.ns)
       reader = lookup(dt.name, field)
       writer = @registry.lookup(dt.name, "set_#{field}")
       return error(node, "field `#{field}` of #{dt.name} has no reader") unless reader
@@ -941,7 +944,7 @@ module Sake
         name = node.name.to_s
         # `x.T.f = v` is T.set_f(x, v)
         name = "set_#{name.delete_suffix("=")}" if name.end_with?("=") && @struct_types[recv.name.to_s]&.fields&.include?(name.delete_suffix("="))
-        target = resolve_qualified(node, recv.name.to_s, name, argc: args.size + 1)
+        target = resolve_qualified(node, recv.name.to_s, name, argc: args.size + 1, from: ctx.ns)
         check(subject, ctx)
         kws = target_keywords(target)
         check_args(node.arguments, ctx, splat: true, keywords: kws)
@@ -957,7 +960,7 @@ module Sake
         target = resolve_unqualified(node, ctx)
       elsif recv.is_a?(Prism::ConstantReadNode) && (node.call_operator_loc || node.name == :[])
         # `T[...]` is the constructor syntax; `T.[](x, k)` is T's index operation.
-        target = resolve_qualified(node, recv.name.to_s, node.call_operator_loc ? node.name.to_s : CTOR)
+        target = resolve_qualified(node, recv.name.to_s, node.call_operator_loc ? node.name.to_s : CTOR, from: ctx.ns)
       elsif recv.is_a?(Prism::ConstantPathNode) && !builtin_constant?(recv)
         return error(recv, "`#{recv.slice}` (nested constants) is not supported")
       elsif node.call_operator_loc.nil? && BINARY_OPS.include?(node.name) && args.size == 1
@@ -1265,7 +1268,18 @@ module Sake
     end
 
     # argc: the number of arguments when node's own count is not it (a chain adds its subject).
-    def resolve_qualified(node, ns, name = node.name.to_s, argc: nil)
+    # A private field's reader and writer are for the functions of its class (on any of its values).
+    def private_access?(ns, name, from)
+      field = name.delete_prefix("set_")
+      from != ns && @private_fields[ns]&.include?(field) && @struct_types[ns]&.fields&.include?(field)
+    end
+
+    def private_field_error(node, ns, name)
+      field = name.delete_prefix("set_")
+      error(node, "field `#{field}` of #{ns} is private (private attr_*)", ["only the functions of `class #{ns}` read or write it"])
+    end
+
+    def resolve_qualified(node, ns, name = node.name.to_s, argc: nil, from: nil)
       if (ns == "Struct" && name == "new") || (ns == "Data" && name == "define")
         return error(node, "Struct.new must be assigned to a top-level constant: `Point = Struct.new(:x, :y)`")
       end
@@ -1287,6 +1301,7 @@ module Sake
       end
       found = lookup(ns, name)
       return mixin_call(node, ns, name, found, argc) if found.is_a?(UserFunction) && @modules.key?(ns) && !found.module_function
+      return private_field_error(node, ns, name) if found.is_a?(Builtin) && private_access?(ns, name, from)
       if found
         @direct_calls << [node, found] if found.is_a?(UserFunction)
         return found
@@ -1303,10 +1318,9 @@ module Sake
         return error(node, "`#{ns}.#{name}` is now `#{ns}.#{$1}`: a field's reader has the field's name", ["#{ns}.#{$1}(obj), or obj.#{ns}.#{$1}"])
       end
       if (dt = @struct_types[ns]) && (name =~ /\A(set)_(.+)\z/ || (dt.fields.include?(name) && name =~ /\A()(.+)\z/)) && dt.fields.include?($2)
-        priv = !@registry.lookup(ns, $2) && !@registry.lookup(ns, "set_#{$2}")
-        kind = priv ? "private (private attr_*)" : ($1 == "set" ? "read-only (attr_reader)" : "write-only (attr_writer)")
+        kind = $1 == "set" ? "read-only (attr_reader)" : "write-only (attr_writer)"
         return error(node, "field `#{$2}` of #{ns} is #{kind}",
-                     ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`#{priv ? "" : "; or declare it with `attr_accessor #{$2}`"}"])
+                     ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`; or declare it with `attr_accessor #{$2}`"])
       end
       if (dt = @struct_types[ns])
         field = name.delete_suffix("=")

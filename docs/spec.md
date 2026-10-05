@@ -529,7 +529,7 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 | `attr_reader x, ...` | fields with the reader only; inside the type's functions, `@x = v` still writes them |
 | `attr_writer x, ...` | fields with the writer only; inside the type's functions, `@x` still reads them |
 | `attr_... x = v` | a default value: any expression, evaluated by each `new` that leaves the field out, like a parameter default `def initialize(name, items = [])` in Ruby, not once when the class is defined (a class body holds only declarations, never statements), so `items = Array[]` makes a new Array each time; trailing fields with defaults may be omitted in `new`. A default is only an initial value: it does not fix the field's type, which, as for every variable, is what is written to it, checked by the operations that use it |
-| `private attr_... x` | a field with no reader or writer outside the class (`@x` inside); `new` still takes it |
+| `private attr_... x` | the reader and writer are for the class's own functions only (on any of its values: `@x`, or `T.x(other)`); `new` still takes it |
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
 - **`new`.** `C.new` takes every field positionally, whatever its access, or by name:
