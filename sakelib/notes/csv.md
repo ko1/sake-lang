@@ -50,7 +50,7 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | `csv.lineno`, `csv.inspect` | `CSV.get_lineno(c)`, `CSV.inspect(c)` | same for writers (the StringIO's `encoding:` is not shown) |
 | `csv << row`, `add_row`, `puts` | `csv << row`, `CSV.add_row(c, r)`, `CSV.puts(c, r)` | same |
 | `"a,b".parse_csv`, `[..].to_csv` | `String.parse_csv(s)`, `Array.to_csv(a)`, `Tuple.to_csv(t)` | same |
-| `Row.new(headers, fields)` | `CSVRow.new(hs, fs)` (no padding), `CSVRow.pad(hs, fs)` (Ruby's padding) | differs |
+| `Row.new(headers, fields)` | `CSVRow.new(hs, fs)` | same (2026-10-05: copies and pads in `initialize`; `CSVRow.pad` is gone) |
 | `row[h]`, `row[i]`, `row[h] = v`, `row.field(h)` | same with `CSVRow.` / indexing | same |
 | `row.fetch(h)` | `CSVRow.fetch(r, h)` (KeyError "key not found: h") | same |
 | `row.fetch(h, default)`, `row.fetch(h) { }`, `row.dig` | — | missing |
@@ -79,7 +79,7 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - `headers: false` raises ArgumentError ("omit headers:"): `true` and `false` are one type, so a
   `false` could not give an Array where `true` gives a table.
 - ~~`CSV.foreach(path, mode)` has no mode argument.~~ It has one (phase 3).
-- `CSVRow.new` is the Struct constructor and does not pad; `CSVRow.pad` does what Ruby's `Row.new` does.
+- ~~`CSVRow.new` is the Struct constructor and does not pad.~~ It pads in `initialize` (2026-10-05).
 - `CSV.read` of a missing file raises `IOError` (Ruby: `Errno::ENOENT`), as Sake's `File.read` does.
 - `values_at` takes one Array (user functions have no rest parameters).
 
@@ -182,3 +182,15 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - Not done: reading through a CSV object (`CSV.new(io)`, `CSV.open(path, "r")`, `shift`, `each`).
   `CSV.new` is the Struct's constructor, so it cannot take an IO and options.
 - The test's new section uses `csv_test_io.tmp` in the test directory, deleted by both programs.
+
+## Review against the 2026-10-05 language
+
+- `MalformedCSVError` is `class MalformedCSVError < Exception` with `attr_reader line_number` (was
+  `Exception.new(:line_number)`), as Ruby's class.
+- `CSVRow.new(headers, fields)` copies both Arrays and pads the shorter with nil in `initialize`, as
+  Ruby's `Row.new`; `CSVRow.pad` and the callers' `Array.dup` are gone.
+- Keywords passed on with the `k:` shorthand (`read`, `readlines`, `foreach`); `foreach` and
+  `CSVTable.each/map/select/find` pass their block on with `&b`.
+- Still unlike Ruby: no `**opts`, so `read`/`readlines`/`foreach` repeat the 11 keywords
+  (csv.sake:199-220); `CSV.new` is the Struct constructor (9 positional fields), so `writer`
+  (csv.sake:273) stands in for Ruby's `CSV.new(io, **opts)`.

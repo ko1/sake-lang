@@ -5,7 +5,8 @@
 
 ## Representation
 
-- `class Date` with `attr_reader jd, year, month, day`: the Julian Day Number plus the civil date, cached.
+- `class Date` with `attr_reader year = -4712, month = 1, day = 1, jd = nil`: the civil date plus its Julian
+  Day Number, which `initialize` computes (and checks) for every `Date.new`.
 - **Calendar: Ruby's default `Date::ITALY`.** Julian before 1582-10-15 and Gregorian from then on, as
   Ruby does, so `Date.civil(1582, 10, 4) + 1` is 1582-10-15, 1582-10-10 is invalid, and 1000-02-29
   exists. The algorithms are Ruby's `c_civil_to_jd` / `c_jd_to_civil` in integer arithmetic. Other
@@ -18,9 +19,9 @@
 
 | Ruby | Sake | |
 |---|---|---|
-| `Date.new(y = -4712, m = 1, d = 1)`, `Date.civil(...)` | `Date.civil(y = -4712, m = 1, d = 1)` | differs: `Date.new` is the Struct's raw constructor `(jd, year, month, day)`, which a type cannot redefine. `Date.new(2024, 1, 31)` is a static arity error (given 3, expected 4), so it is not silently wrong |
-| `Date.new(y, -1, -1)` (negative month/day) | `Date.civil(y, -1, -1)` | same |
-| `Date.new`, `Date.new(y)`, `Date.new(y, m)` (defaults) | `Date.civil`, `Date.civil(y)`, `Date.civil(y, m)` | same (phase 2) |
+| `Date.new(y = -4712, m = 1, d = 1)`, `Date.civil(...)` | same | same (since 2026-10-05: field defaults + `initialize`, which raises `DateError` for an invalid date). A fourth argument fills the `jd` field and is ignored, like Ruby's `start`. A non-Integer year/month/day is a `type` report at the call (`@year => Integer` in initialize); Ruby raises `TypeError` |
+| `Date.new(y, -1, -1)` (negative month/day) | same | same |
+| `Date.new`, `Date.new(y)`, `Date.new(y, m)` (defaults) | same | same |
 | `Date::Error` | `DateError` | differs: no nested names (`A::B`). In Ruby it is an `ArgumentError` subclass; Sake has no hierarchy, so `rescue ArgumentError` does not catch it. Message `invalid date`, same |
 | `Date.valid_date?` / `valid_civil?` / `valid_ordinal?` / `valid_commercial?` / `valid_jd?` | same names | same |
 | `Date.leap?(y)`, `Date.gregorian_leap?(y)`, `Date.julian_leap?(y)` | same | same |
@@ -62,7 +63,9 @@
   operation that branches on the argument type with `case x in Integer ... in Date ...`. The checker gives
   the precise result type per call (`Date.jd(2460341)` is a Date), and `Date.jd(1.5)` is reported before
   running (as `case/in: no in branch matches Float`, pointing into date.sake).
-- **`Date.new`** cannot validate (see the table). A Sake type cannot hide or replace its constructor.
+- **`Date.new` validates in `initialize`**, so every Date is built through the check: `Date.jd(n)` computes
+  the civil date and then `Date.new` converts it back to check it (about 7% slower on `phase2/bench_date.sake`,
+  1.61-1.66 s → 1.74-1.89 s user, 3 runs each, load 5.5). Ruby has a private raw constructor for this.
 - **Helpers live in `module DateCore`** (module functions), since Sake has no private methods; they are
   visible to user code.
 
@@ -70,8 +73,8 @@
 
 - **Hash keys for types with `<=>`** (or a declared `hash`/key function): Dates and similar value types are
   natural keys; today every Comparable type is excluded.
-- **A replaceable `new`** (or a way to make a Struct's raw constructor private), so `Date.new(y, m, d)` can
-  validate like Ruby.
+- ~~A replaceable `new`~~: `initialize` (2026-10-05) does it. Still missing: a constructor that skips
+  `initialize` for internal use (Ruby's `new!`/`allocate`), see above.
 - **Writable Record fields** (spec §16): the strptime cursor is a one-element Tuple `[pos]` instead of `{pos: 0}`.
 - **`String#[]` with a start only** / `String.slice` with a Range is there, but a `rest_from(s, i)` idiom
   needs `String.[](s, i, String.size(s) - i) || ""` each time; a non-nil substring op would cut noise.
@@ -128,3 +131,14 @@ Result: about 3% faster, at the edge of the spread: the per-directive `case` and
   (`Date.parse(s, limt: 5)` → `error: Date.parse has no keyword parameter `limt``).
   `Date.iso8601` (also `limit:` in Ruby) is not changed: here it also formats a Date.
 - Nothing else in date (or in benchmark) has a Ruby keyword.
+
+## Review against the current language (2026-10-05)
+
+- `Date.new(y, m, d)` is Ruby's validating constructor: fields reordered to `year = -4712, month = 1, day = 1,
+  jd = nil`, and `def initialize(d)` asserts Integers (`@year => Integer`), computes `@jd` with
+  `DateCore.valid_civil_jd`, raises `DateError` when invalid, and resolves negative month/day.
+  `Date.civil` is now `= Date.new(y, m, d)`, as in Ruby (an alias). The test uses `Date.new` like `date.rb`.
+- `DateError = Exception.new` → `class DateError < Exception`.
+- Remaining frictions: `DateError` for `Date::Error` (no nested names; no `ArgumentError` parent);
+  Date as a Hash key; one operation for Ruby's class and instance methods of the same name
+  (`Date.jd`, `leap?`, `iso8601`, by `case x in Integer`); the strptime cursor as a Tuple `[pos]`.

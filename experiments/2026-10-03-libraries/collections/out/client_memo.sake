@@ -1,22 +1,23 @@
 # collections: generic containers for Sake.
 #
-# Each container is a mixin module plus a ready-made type that includes it:
+# Each container is a class:
 #
-#   HeapOps  / Heap          binary min-heap ordered by `<`; push_with(h, key, v) orders by key only
-#   LruOps   / LRU, LruNode  least-recently-used cache: Hash key -> node, doubly linked recency list
-#   DequeOps / Deque         growable ring buffer, push/pop at both ends
+#   Heap          binary min-heap ordered by `<`; push_with(h, key, v) orders by key only
+#   LRU, LruNode  least-recently-used cache: Hash key -> node, doubly linked recency list
+#   Deque         growable ring buffer, push/pop at both ends
 #
 # A Struct field has one type per program, so a ready-made type used with two element types
-# sees the union of both. For a second element type, declare your own type with the same
-# fields and `include` the module (see the client programs): each includer gets its own types.
-# Allocate the Arrays/Hashes in the includer (`new(Integer[], 0)`), not in a shared function.
+# sees the union of both. For a second element type, declare your own type as a copy of the
+# ready-made one (`class IntHeap < Heap`, see the client programs): each copy gets its own
+# field types. Allocate the Arrays/Hashes at the call (`IntHeap.new(Integer[])`), not in a
+# shared function.
 
 # ---------------------------------------------------------------- Heap
-# Includer fields: items (an Array), seq (an Integer, for push_with).
-
-module HeapOps
-  # Make an includer's heap around an Array made by the caller (Integer[], Task[], Array[]).
-  def with_items(items) = new(items, 0)
+# Fields: items (an Array), seq (an Integer, for push_with).
+class Heap
+  attr_reader items
+  attr_accessor seq = 0
+  def create = Heap.new(Array[])
 
   def size(h) = Array.size(@items)
   def empty?(h) = Array.empty?(@items)
@@ -91,17 +92,9 @@ module HeapOps
   end
 end
 
-class Heap
-  attr_reader items
-  attr_accessor seq
-  include HeapOps
-  def create = Heap.new(Array[], 0)
-end
-
 # ---------------------------------------------------------------- LRU
-# Node includer fields: key, value, prev, nxt.
-# Cache includer fields: capacity, index (a Hash), head, tail, hits, misses;
-# and a function make_node(c, key, value) that makes a node of its node type.
+# A node type includes LruNodeOps (fields key, value, prev, nxt), so a copy of LRU can
+# link its own node type: `class PNode < LruNode`, and `class PCache < LRU` with its make_node.
 
 module LruNodeOps
   def node_key(n) = @key
@@ -113,11 +106,19 @@ module LruNodeOps
   def set_node_next(n, m) = @nxt = m
 end
 
-module LruOps
-  def make_node(c, key, value) = raise(NotImplementedError)
+class LruNode
+  attr_reader key
+  attr_accessor value, prev = nil, nxt = nil
+  include LruNodeOps
+end
 
-  # Make an includer's cache around a Hash made by the caller.
-  def with_index(index, capacity) = new(capacity, index, nil, nil, 0, 0)
+class LRU
+  attr_reader capacity, index
+  attr_accessor head = nil, tail = nil, hits = 0, misses = 0
+  def create(capacity) = LRU.new(capacity, Hash[])
+
+  # A copy (class C < LRU) redefines make_node to make its own node type.
+  def make_node(c, key, value) = LruNode.new(key, value)
 
   def size(c) = Hash.size(@index)
 
@@ -170,7 +171,7 @@ module LruOps
       touch(c, node)
       return value
     end
-    node = LruOps.make_node(c, key, value)   # qualified: a missing make_node is then reported
+    node = make_node(c, key, value)
     @index[key] = node
     push_front(c, node)
     evict(c) if Hash.size(@index) > @capacity
@@ -209,26 +210,12 @@ module LruOps
   def stats(c) = "hits=#{@hits} misses=#{@misses} size=#{Hash.size(@index)}/#{@capacity}"
 end
 
-class LruNode
-  attr_reader key
-  attr_accessor value, prev, nxt
-  include LruNodeOps
-end
-
-class LRU
-  attr_reader capacity, index
-  attr_accessor head, tail, hits, misses
-  include LruOps
-  def create(capacity) = LRU.new(capacity, Hash[], nil, nil, 0, 0)
-  def make_node(c, key, value) = LruNode.new(key, value, nil, nil)
-end
-
 # ---------------------------------------------------------------- Deque
-# Includer fields: buf (an Array, usually empty at first: Integer[], String[]), start, count.
-
-module DequeOps
-  # Make an includer's deque around an Array made by the caller (Integer[], String[]).
-  def with_buf(buf) = new(buf, 0, 0)
+# Fields: buf (an Array, usually empty at first: Integer[], String[]), start, count.
+class Deque
+  attr_reader buf
+  attr_accessor start = 0, count = 0
+  def create = Deque.new(Array[])
 
   def size(d) = @count
   def empty?(d) = @count == 0
@@ -286,14 +273,7 @@ module DequeOps
     d
   end
 end
-
-class Deque
-  attr_reader buf
-  attr_accessor start, count
-  include DequeOps
-  def create = Deque.new(Array[], 0, 0)
-end
-# ---- client_memo.sake (line 1 of the client is line 289 here)
+# ---- client_memo.sake (line 1 of the client is line 277 here)
 # Memoizing with the LRU cache: an Integer -> Integer cache for a recursive count, and a
 # String -> Tuple cache for a slow parse, in one program.
 
@@ -313,16 +293,10 @@ LRU.each(c) { |k, v| Array.push(keys, k) }
 p(keys)
 
 # A second cache with other key/value types gets its own node and cache types.
-class ParseNode
-  attr_reader key
-  attr_accessor value, prev, nxt
-  include LruNodeOps
+class ParseNode < LruNode
 end
-class ParseCache
-  attr_reader capacity, index
-  attr_accessor head, tail, hits, misses
-  include LruOps
-  def make_node(c, key, value) = ParseNode.new(key, value, nil, nil)
+class ParseCache < LRU
+  def make_node(c, key, value) = ParseNode.new(key, value)
 end
 
 def parse_point(cache, s)
@@ -332,7 +306,7 @@ def parse_point(cache, s)
   end
 end
 
-pc = ParseCache.with_index(Hash[], 2)
+pc = ParseCache.new(2, Hash[])
 inputs = String.split("1,2 3,4 1,2 5,6 3,4 1,2", " ")
 sum_x = 0
 Array.each(inputs) do |s|

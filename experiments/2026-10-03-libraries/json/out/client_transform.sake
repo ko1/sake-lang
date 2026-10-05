@@ -4,13 +4,15 @@
 #   number -> Integer or Float, true/false, null -> nil.
 
 class JsonError < Exception
-  attr_reader pos
+  attr_reader pos = 0
 end
 
 # Parser state: the source, its length, and the current position.
 class JsonParser
-  attr_reader src, len
-  attr_accessor pos
+  attr_reader src, len = 0
+  attr_accessor pos = 0
+  def initialize(ps) = @len = String.size(@src)
+
   def peek(ps) = @pos < @len ? @src[@pos] : nil
 
   def fail(ps, msg) = raise(JsonError.new("#{msg} at #{@pos}", @pos))
@@ -170,7 +172,7 @@ module Json
 
   # ---- parsing ----
   def parse(s)
-    ps = JsonParser.new(s, String.size(s), 0)
+    ps = JsonParser.new(s)
     v = JsonParser.value(ps)
     JsonParser.skip_ws(ps)
     JsonParser.fail(ps, "trailing characters") if JsonParser.get_pos(ps) < String.size(s)
@@ -198,18 +200,18 @@ module Json
     "\"#{Array.join(out, "")}\""
   end
 
-  def generate(v) = emit(v, nil, 0)
-  def pretty(v) = emit(v, "  ", 0)
+  def generate(v) = emit(v)
+  def pretty(v) = emit(v, "  ")
 
   # indent: nil for compact, a String for pretty output
-  def emit(v, indent, depth)
+  def emit(v, indent = nil, depth = 0)
     case v
     in nil then "null"
     in true then "true"
     in false then "false"
     in Integer then Integer.to_s(v)
     in Float
-      raise JsonError.new("cannot encode #{v}", 0) unless Float.finite?(v)
+      raise JsonError.new("cannot encode #{v}") unless Float.finite?(v)
       Float.to_s(v)
     in String then escape(v)
     in Array
@@ -220,7 +222,7 @@ module Json
       return "{}" if Hash.empty?(v)
       sep = indent ? ": " : ":"
       parts = Hash.map(v) do |k, x|
-        raise JsonError.new("object key must be a String", 0) unless k in String
+        raise JsonError.new("object key must be a String") unless k in String
         "#{escape(k)}#{sep}#{emit(x, indent, depth + 1)}"
       end
       wrap("{", parts, "}", indent, depth)
@@ -259,7 +261,7 @@ module Json
   def path_s(path) = Array.join(Array.map(path) { |k| Kernel.to_s(k) }, ".")
 
   def type_error(path, want, v) =
-    raise(JsonError.new("#{path_s(path)}: expected #{want}, got #{generate(v)}", 0))
+    raise(JsonError.new("#{path_s(path)}: expected #{want}, got #{generate(v)}"))
 
   # Typed getters: the value at path, or a JsonError naming the path.
   def str(v, path)
@@ -391,7 +393,7 @@ def kind(v)
   end
 end
 
-def count_kinds(v, counts)
+def count_kinds(v, counts = Hash.new(0))
   counts[kind(v)] += 1
   case v
   in Hash then Hash.each(v) { |_k, x| count_kinds(x, counts) }
@@ -417,7 +419,7 @@ JSON
 renamed = rename_keys(doc)
 puts(Json.pretty(renamed))
 puts("sum of all numbers: #{sum_numbers(doc)}")
-p(count_kinds(doc, Hash.new(0)))
+p(count_kinds(doc))
 
 # Order total from the line items: typed getters at the leaves.
 total = 0.0

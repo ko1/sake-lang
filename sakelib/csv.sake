@@ -4,7 +4,10 @@
 # A row is an Array of String | nil (nil for an empty unquoted field, as in Ruby).
 # With `headers:` in the options, the result is a CSVTable of CSVRow (Ruby's CSV::Table / CSV::Row).
 
-MalformedCSVError = Exception.new(:line_number)
+# Ruby's CSV::MalformedCSVError: the message and the line number.
+class MalformedCSVError < Exception
+  attr_reader line_number
+end
 
 # A writer (Ruby's CSV object for output): `csv << row` appends a line, to a String (generate) or to
 # the IO of a file (open).
@@ -156,7 +159,7 @@ class CSV
          end
     hs = Array.map(hs ? hs : Array[]) { it }
     hs = convert_headers(hs, header_converters)
-    CSVTable.new(hs, Array.map(rows) { |r| CSVRow.pad(Array.dup(hs), convert_row(r, c)) })
+    CSVTable.new(hs, Array.map(rows) { |r| CSVRow.new(hs, convert_row(r, c)) })
   end
 
   # ---- parsing API ----
@@ -195,17 +198,14 @@ class CSV
 
   def read(path, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
            header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
-    parse(File.read(path), col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
-                           converters: converters, header_converters: header_converters,
-                           skip_blanks: skip_blanks, skip_lines: skip_lines, nil_value: nil_value,
-                           empty_value: empty_value)
+    parse(File.read(path), col_sep:, row_sep:, quote_char:, headers:, converters:, header_converters:,
+                           skip_blanks:, skip_lines:, nil_value:, empty_value:)
   end
 
   def readlines(path, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
                 header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
-    read(path, col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
-               converters: converters, header_converters: header_converters, skip_blanks: skip_blanks,
-               skip_lines: skip_lines, nil_value: nil_value, empty_value: empty_value)
+    read(path, col_sep:, row_sep:, quote_char:, headers:, converters:, header_converters:, skip_blanks:,
+               skip_lines:, nil_value:, empty_value:)
   end
 
   # Ruby's CSV.table: headers, numeric converters, Symbol headers.
@@ -214,11 +214,10 @@ class CSV
   # Ruby's foreach(path, mode = "r", **opts): yields CSVRows when `headers:` is given, otherwise Arrays.
   # The file is read whole through File.open (a quoted field may span lines).
   def foreach(path, mode = "r", col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
-              header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
+              header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "", &b)
     text = File.open(path, mode) { |f| IO.read(f) }
-    parse(text, col_sep: col_sep, row_sep: row_sep, quote_char: quote_char, headers: headers,
-                converters: converters, header_converters: header_converters, skip_blanks: skip_blanks,
-                skip_lines: skip_lines, nil_value: nil_value, empty_value: empty_value) { |r| yield(r) }
+    parse(text, col_sep:, row_sep:, quote_char:, headers:, converters:, header_converters:, skip_blanks:,
+                skip_lines:, nil_value:, empty_value:, &b)
   end
 
   # ---- generating ----
@@ -344,11 +343,12 @@ class CSVRow
   include Indexable
   include Bitwise
 
-  # Ruby's Row.new(headers, fields): pads the shorter side with nil.
-  def pad(hs, fs)
-    Array.push(fs, nil) while Array.size(fs) < Array.size(hs)
-    Array.push(hs, nil) while Array.size(hs) < Array.size(fs)
-    CSVRow.new(hs, fs)
+  # As Ruby's Row.new(headers, fields): copies both and pads the shorter side with nil.
+  def initialize(r)
+    @headers = Array.dup(@headers)
+    @fields = Array.dup(@fields)
+    Array.push(@fields, nil) while Array.size(@fields) < Array.size(@headers)
+    Array.push(@headers, nil) while Array.size(@headers) < Array.size(@fields)
   end
 
   def headers(r) = Array.dup(@headers)
@@ -484,20 +484,20 @@ class CSVTable
   def length(t) = size(t)
   def empty?(t) = Array.empty?(@rows)
 
-  def each(t)
-    Array.each(@rows) { |r| yield(r) }
+  def each(t, &b)
+    Array.each(@rows, &b)
     t
   end
 
-  def map(t) = Array.map(@rows) { |r| yield(r) }
-  def select(t) = Array.select(@rows) { |r| yield(r) }
-  def find(t) = Array.find(@rows) { |r| yield(r) }
+  def map(t, &b) = Array.map(@rows, &b)
+  def select(t, &b) = Array.select(@rows, &b)
+  def find(t, &b) = Array.find(@rows, &b)
 
   def <<(t, row)
     case row
     in CSVRow then Array.push(@rows, row)
-    in Tuple then Array.push(@rows, CSVRow.pad(headers(t), Tuple.to_a(row)))
-    in Array then Array.push(@rows, CSVRow.pad(headers(t), Array.dup(row)))
+    in Tuple then Array.push(@rows, CSVRow.new(headers(t), Tuple.to_a(row)))
+    in Array then Array.push(@rows, CSVRow.new(headers(t), row))
     end
     t
   end

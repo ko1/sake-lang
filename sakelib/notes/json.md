@@ -162,3 +162,14 @@ callers narrow with `if v in Hash`. The test's config example does this.
   an IO; and an IO is not `==` to itself (`json_bug_io_equality.sake`), so the test prints the IO
   `dump` returns (`#<File:...>`) instead of comparing it.
 - No optional block: Ruby's `JSON.load(s, proc)` takes a proc, not a block.
+
+## Review against the 2026-10-05 language
+
+- `JSONParserState` / `JSONGeneratorState` convert their options in `initialize` (flags to
+  true/false, `max_nesting` false/nil to 0, the source's byte size), as Ruby's `JSON::Parser.new` /
+  `JSON::State.new`; `pos`/`depth` have defaults, so `JSON.parse` passes only the source and options.
+- `JSON.load` matches `in IO` (the workaround for `json_bug_io_not_a_pattern_type.sake`, fixed, is
+  gone). The test still prints the IO `dump` returns rather than comparing it (the .rb does the same).
+- Keywords passed on with the `k:` shorthand (`load_file`, `fast_generate`, `pretty_generate`).
+- Still unlike Ruby: no `**opts`, so `fast_generate`/`pretty_generate` repeat all keywords
+  (json.sake:501, 507); `nil.to_json` / `true.to_json` have no namespace (json.sake:565-583).

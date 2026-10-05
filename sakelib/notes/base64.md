@@ -59,3 +59,7 @@ lenient and strict decoding of 22 malformed inputs, and UTF-8 text. Its output i
   and urlsafe round trips of 6 KB; CPU s of the whole `bin/sake --strict` run, 3 runs, machine load
   about 37 on 16 cores): before 4.31 / 4.69 / 4.31, after 0.71 / 0.72 / 0.73. The work itself went
   from about 4 s to under 10 ms; what is left is startup and checking.
+
+## Review 2026-10-05
+
+No change: `urlsafe_encode64(bin, padding: true)` is already Ruby's keyword; every function is one pack/unpack, as Ruby's. No class, no initialize, no type check Ruby does by hand. `--strict=1`/`2`: 0 reports before and after.

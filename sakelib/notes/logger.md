@@ -21,7 +21,7 @@ Ruby redefines `Time.now`. Ruby's formatter is also patched to drop the pid (see
 | `Logger.new($stdout)` / `Logger.new($stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | `Logger.new(IO.stdout)` / `Logger.new(IO.stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | same (phase 3; phase 2 had `:stdout`/`:stderr`) |
 | `Logger.new(io)` (a `File.open`) | `Logger.new(io)` | same; `Logger.close` leaves an IO it was given open (Ruby closes it) |
 | `File::NULL` | `nil` | differs: no `File::NULL` constant |
-| `Logger.new(dev, level: ..., progname: ..., formatter: ...)` | `new`, then the setters | differs: no keyword arguments |
+| `Logger.new(dev, level: ..., progname: ..., formatter: ..., datetime_format: ...)` | `Logger.new(dev, level, progname, formatter, datetime_format)` | differs: positional, in the order of Ruby's keywords (`new` takes the fields positionally); `initialize` coerces the level and checks the device (phase 4) |
 | `Logger::DEBUG` ... `Logger::UNKNOWN` | `Logger.DEBUG` ... `Logger.UNKNOWN` | differs: Sake has no value constants, so these are functions |
 | `log.level` / `log.level = x` | `Logger.get_level(log)` / `Logger.set_level(log, x)` | same (Integer, Symbol, or String; anything else raises `ArgumentError`, "invalid log level: ...") |
 | `log.debug(msg = nil)` ... `log.unknown(msg = nil)` | `Logger.debug(log, msg = nil)` ... `Logger.unknown(log, msg = nil)` | same (phase 2: the argument is optional; with none, the progname is logged, as Ruby) |
@@ -101,3 +101,16 @@ Result: no difference beyond the spread.
   (`logger_bug_pass_on_optional_block.sake`; the error also says `info` "uses `yield`").
 - `test/sakelib/logger.{sake,rb}` add the block forms, a `File.open` IO as the device, and a new
   path (the header line); the temporary files (`logger_test_*.tmp`) are deleted by both.
+
+## Phase 4 (2026-10-05 review)
+
+- `def initialize(l)`: `@logdev => IO | String | nil` (another device is a `type` report before
+  running, `NoMatchingPatternError` while running; Ruby fails later, when it opens it) and
+  `@level = Logger.coerce_level(@level)`, as Ruby's `initialize` calls `level=`.
+- Fields reordered so that `new` takes Ruby's keyword arguments in their order:
+  `logdev, level, progname, formatter, datetime_format`, then the internal `closed`, `fixed_time`,
+  `io` (`io` and `closed` are readers now).
+- `debug` ... `unknown` and `log` pass their block on with `&b` alone (the pass-on bug,
+  `logger_bug_pass_on_optional_block.sake`, is fixed).
+- Still differs: `Logger.new(dev, level: :warn)` cannot be written; `new` is the Struct's
+  constructor and takes no keywords (`sakelib/logger.sake:6`).

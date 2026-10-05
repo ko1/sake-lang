@@ -2,7 +2,7 @@
 # and an alarm subscribe to.
 
 class Turnstile
-  attr_reader fare, credit, passed
+  attr_reader fare, credit = 0, passed = 0
   include Hooks
   def guard?(t, name, fsm, data)
     case name
@@ -22,8 +22,9 @@ class Turnstile
 end
 
 class Audit
-  attr_reader lines
+  attr_reader lines = nil
   include Handler
+  def initialize(a) = @lines = String[]
   def handle(a, bus, ev)
     name, data = ev
     Array.push(@lines, "#{name} #{data}")
@@ -31,7 +32,7 @@ class Audit
 end
 
 class Alarm
-  attr_reader rings
+  attr_reader rings = 0
   include Handler
   def handle(al, bus, ev)
     @rings += 1
@@ -39,16 +40,16 @@ class Alarm
   end
 end
 
-ts = Turnstile.new(50, 0, 0)
-fsm = Fsm.create("gate", :locked, ts)
-Fsm.allow(fsm, :locked, :coin, :unlocked, :paid, :take_coin)
-Fsm.allow(fsm, :locked, :coin, :locked, :none, :take_coin)       # not enough yet
-Fsm.allow(fsm, :unlocked, :push, :locked, :has_credit, :charge)
-Fsm.allow(fsm, :unlocked, :coin, :unlocked, :none, :take_coin)   # extra coins kept as credit
+ts = Turnstile.new(50)
+fsm = Fsm.new("gate", :locked, ts)
+Fsm.allow(fsm, :locked, :coin, :unlocked, guard: :paid, action: :take_coin)
+Fsm.allow(fsm, :locked, :coin, :locked, action: :take_coin)   # not enough yet
+Fsm.allow(fsm, :unlocked, :push, :locked, guard: :has_credit, action: :charge)
+Fsm.allow(fsm, :unlocked, :coin, :unlocked, action: :take_coin)   # extra coins kept as credit
 
-bus = Bus.create
-audit = Audit.new(String[])
-alarm = Alarm.new(0)
+bus = Bus.new
+audit = Audit.new
+alarm = Alarm.new
 Bus.on(bus, :*, audit)
 Bus.on(bus, :fsm_rejected, alarm)
 Fsm.attach(fsm, bus)

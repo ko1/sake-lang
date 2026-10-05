@@ -41,3 +41,7 @@ None: the first draft ran under `--strict` and matched Ruby's output. `seen[abbr
 - **Speed** (`experiments/2026-10-03-sakelib-port/phase2/bench_abbrev.sake`: 300 words; `bin/sake
   --strict`, CPU user+sys, 3 runs, shared machine at load ~35 on 16 cores): before 0.82 / 0.85 / 0.78 s,
   after 0.83 / 0.82 / 0.85 s. Mostly startup (~0.7 s); no change expected.
+
+## Review 2026-10-05
+
+No change: `abbrev(words, pattern = nil)` is Ruby's signature. `pattern` is `nil | Regexp | String` by Ruby's API, taken apart with `case`/`in` (`abbrev.sake:35`). `--strict=1`/`2`: 0 reports before and after.

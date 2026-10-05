@@ -309,3 +309,11 @@ v4 の level 1 の診断 280 件（106 本。どれも正しいプログラム�
 The corpus `.sake` files were rewritten from `class C < {reader: [...]}` to the body form (`attr_reader ...`)
 by `tools/convert_class_settings.rb` when the old form was removed. The crosscheck table over corpus-v2
 is identical before and after the conversion (0 lines differ).
+
+## 2026-10-05: measure.rb and optional parameters
+
+measure.rb recorded a parameter's type from the arguments of each call, one entry per argument; a call that
+leaves out an optional or keyword parameter (possible since 2026-10-03) crashed it (`truth_table` of
+`../2026-10-05-review/corpus-v3`). It now keeps one entry per parameter and skips arguments the call did not
+give, so an omitted parameter adds no type (its default's type is not counted). Programs without optional
+parameters measure the same as before.

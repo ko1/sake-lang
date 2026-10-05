@@ -170,3 +170,19 @@ element is yielded and the matrix is returned (also when the index is outside). 
 which = :all)` and `Vector.each(v)` without a block give the Array of the elements, what Ruby's
 Enumerator gives with `.to_a`; there is no Enumerator. `build`, `collect`/`map`,
 `each_with_index`, and the Vector iterators still need their block.
+
+## Phase 4 (2026-10-05 review)
+
+- `def initialize(m)` checks that every row has `column_count` elements (`ErrDimensionMismatch`,
+  Ruby's "row size differs" message). Ruby checks in `Matrix.rows` because its `new` is private;
+  Sake's `Matrix.new` is public, so the check is where every matrix is made. `Matrix.rows` only
+  copies and measures. (No measurable cost on the test: 0.33-0.35 s CPU before and after.)
+- Exceptions are `class ErrDimensionMismatch < StandardError` (and the other three) instead of
+  `Exception.new`, as Ruby declares them.
+- `Vector.elements(array, copy = true)`, as Ruby.
+- Blocks passed on with `&b`: `Matrix.map(m, which, &b) = collect(m, which, &b)`, `Vector.map`,
+  `Vector.map2(v, w, &b) = Vector.new(collect2(v, w, &b))`.
+- `Matrix.selectors` is Ruby's `SELECTORS` constant, kept with `once`.
+- Still differs: `Matrix[...]`/`Vector[...]` (Array-of-T syntax), scalars on the left (`2 * m`), rest
+  parameters (`diagonal(*vs)`, `vstack(*ms)`), and `Float.round(x, 0)` giving a Float
+  (`matrix.sake` `round`, by design).

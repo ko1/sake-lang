@@ -77,6 +77,13 @@ module Digest
 
   def finish_hex(md) = Digest.hexencode(finish(md))
 
+  # Ruby's class methods (given a String) and instance methods (given a digest) share these names;
+  # `new` is the including type's.
+  def digest(x, s = nil) = digest_of(new, x, s)
+  def hexdigest(x, s = nil) = Digest.hexencode(digest(x, s))
+  def base64digest(x, s = nil) = Array.pack(Array[digest(x, s)], "m0")
+  def file(path) = update(new, File.read(path))
+
   def reset(md)
     store_state(md, initial_state(md))
     @pending = ""
@@ -102,14 +109,10 @@ module Digest
 end
 
 class MD5
-  attr_reader h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, pending = "", len = 0
+  attr_reader h0 = 0, h1 = 0, h2 = 0, h3 = 0, pending = "", len = 0
   include Digest
 
-  # Ruby's class methods (given a String) and instance methods (given an MD5) share these names.
-  def digest(x, s = nil) = digest_of(MD5.new, x, s)
-  def hexdigest(x, s = nil) = Digest.hexencode(digest(x, s))
-  def base64digest(x, s = nil) = Array.pack(Array[digest(x, s)], "m0")
-  def file(path) = update(MD5.new, File.read(path))
+  def initialize(md) = reset(md)            # the field defaults are placeholders
   def block_length(md) = 64
   def digest_length(md) = 16
   def word_bytes(md) = 4
@@ -178,13 +181,10 @@ class MD5
 end
 
 class SHA1
-  attr_reader h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0, pending = "", len = 0
+  attr_reader h0 = 0, h1 = 0, h2 = 0, h3 = 0, h4 = 0, pending = "", len = 0
   include Digest
 
-  def digest(x, s = nil) = digest_of(SHA1.new, x, s)
-  def hexdigest(x, s = nil) = Digest.hexencode(digest(x, s))
-  def base64digest(x, s = nil) = Array.pack(Array[digest(x, s)], "m0")
-  def file(path) = update(SHA1.new, File.read(path))
+  def initialize(md) = reset(md)
   def block_length(md) = 64
   def digest_length(md) = 20
   def word_bytes(md) = 4
@@ -242,13 +242,10 @@ class SHA1
 end
 
 class SHA256
-  attr_reader h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19, pending = "", len = 0
+  attr_reader h0 = 0, h1 = 0, h2 = 0, h3 = 0, h4 = 0, h5 = 0, h6 = 0, h7 = 0, pending = "", len = 0
   include Digest
 
-  def digest(x, s = nil) = digest_of(SHA256.new, x, s)
-  def hexdigest(x, s = nil) = Digest.hexencode(digest(x, s))
-  def base64digest(x, s = nil) = Array.pack(Array[digest(x, s)], "m0")
-  def file(path) = update(SHA256.new, File.read(path))
+  def initialize(md) = reset(md)
   def block_length(md) = 64
   def digest_length(md) = 32
   def word_bytes(md) = 4
@@ -320,9 +317,29 @@ class SHA256
   end
 end
 
-# SHA512 and SHA384 share the compression function (64-bit words); SHA384 starts from other words
-# and keeps 48 bytes.
-module SHA2_64
+class SHA512
+  attr_reader h0 = 0, h1 = 0, h2 = 0, h3 = 0, h4 = 0, h5 = 0, h6 = 0, h7 = 0, pending = "", len = 0
+  include Digest
+
+  def initialize(md) = reset(md)
+  def block_length(md) = 128
+  def digest_length(md) = 64
+  def word_bytes(md) = 8
+  def little_endian?(md) = false
+  def words(md, s) = String.unpack(s, "Q>*")
+  def pack_words(md, ws) = Array.pack(ws, "Q>*")
+  def name(md) = "SHA512"
+  def state(md) = Integer[@h0, @h1, @h2, @h3, @h4, @h5, @h6, @h7]
+  def initial_state(md) = Integer[
+    0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+    0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179
+]
+
+  def store_state(md, h)
+    @h0, @h1, @h2, @h3, @h4, @h5, @h6, @h7 = h
+    md
+  end
+
   def k = once { Integer[
     0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc,
     0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b, 0xab1c5ed5da6d8118,
@@ -346,9 +363,9 @@ module SHA2_64
     0x4cc5d4becb3e42b6, 0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817
 ] }
 
-  def compress64(h, x, o)
+  def compress(md, h, x, o)
     m = 0xffffffffffffffff
-    kk = SHA2_64.k
+    kk = k
     w = Array.new(16) { |j| x[o + j] }
     i = 16
     while i < 80
@@ -388,64 +405,15 @@ module SHA2_64
     h[7] = (h[7] + hh) & m
     h
   end
-  module_function :k, :compress64
 end
 
-class SHA512
-  attr_reader h0 = 0x6a09e667f3bcc908, h1 = 0xbb67ae8584caa73b, h2 = 0x3c6ef372fe94f82b, h3 = 0xa54ff53a5f1d36f1, h4 = 0x510e527fade682d1, h5 = 0x9b05688c2b3e6c1f, h6 = 0x1f83d9abfb41bd6b, h7 = 0x5be0cd19137e2179, pending = "", len = 0
-  include Digest
-
-  def digest(x, s = nil) = digest_of(SHA512.new, x, s)
-  def hexdigest(x, s = nil) = Digest.hexencode(digest(x, s))
-  def base64digest(x, s = nil) = Array.pack(Array[digest(x, s)], "m0")
-  def file(path) = update(SHA512.new, File.read(path))
-  def block_length(md) = 128
-  def digest_length(md) = 64
-  def word_bytes(md) = 8
-  def little_endian?(md) = false
-  def words(md, s) = String.unpack(s, "Q>*")
-  def pack_words(md, ws) = Array.pack(ws, "Q>*")
-  def name(md) = "SHA512"
-  def state(md) = Integer[@h0, @h1, @h2, @h3, @h4, @h5, @h6, @h7]
-  def initial_state(md) = Integer[
-    0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
-    0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179
-]
-
-  def store_state(md, h)
-    @h0, @h1, @h2, @h3, @h4, @h5, @h6, @h7 = h
-    md
-  end
-
-  def compress(md, h, x, o) = SHA2_64.compress64(h, x, o)
-end
-
-class SHA384
-  attr_reader h0 = 0xcbbb9d5dc1059ed8, h1 = 0x629a292a367cd507, h2 = 0x9159015a3070dd17, h3 = 0x152fecd8f70e5939, h4 = 0x67332667ffc00b31, h5 = 0x8eb44a8768581511, h6 = 0xdb0c2e0d64f98fa7, h7 = 0x47b5481dbefa4fa4, pending = "", len = 0
-  include Digest
-
-  def digest(x, s = nil) = digest_of(SHA384.new, x, s)
-  def hexdigest(x, s = nil) = Digest.hexencode(digest(x, s))
-  def base64digest(x, s = nil) = Array.pack(Array[digest(x, s)], "m0")
-  def file(path) = update(SHA384.new, File.read(path))
-  def block_length(md) = 128
+# SHA384 is SHA512 from other initial words, keeping 48 bytes (written over SHA512's definitions;
+# as in Ruby, a SHA384 is not a SHA512).
+class SHA384 < SHA512
   def digest_length(md) = 48
-  def word_bytes(md) = 8
-  def little_endian?(md) = false
-  def words(md, s) = String.unpack(s, "Q>*")
-  def pack_words(md, ws) = Array.pack(ws, "Q>*")
   def name(md) = "SHA384"
-  def state(md) = Integer[@h0, @h1, @h2, @h3, @h4, @h5, @h6, @h7]
   def initial_state(md) = Integer[
     0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17, 0x152fecd8f70e5939,
     0x67332667ffc00b31, 0x8eb44a8768581511, 0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4
 ]
-
-  def store_state(md, h)
-    @h0, @h1, @h2, @h3, @h4, @h5, @h6, @h7 = h
-    md
-  end
-
-  def compress(md, h, x, o) = SHA2_64.compress64(h, x, o)
 end
-

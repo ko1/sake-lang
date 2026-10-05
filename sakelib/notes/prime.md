@@ -109,3 +109,11 @@ Bug found: a `yield` inside a `while` loop is reported as "no block is given" ev
 `return ... unless block_given?`; the same guard without the loop passes
 ([prime_bug_yield_in_loop_after_guard.sake](prime_bug_yield_in_loop_after_guard.sake)).
 `Prime.each` puts the loop in the `if block_given?` branch instead.
+
+## Phase 4 (2026-10-05 review)
+
+- `Prime.prime?(n)` asserts `n => Integer`, where Ruby raises `ArgumentError` ("Expected an integer");
+  a Float argument is now a `type` report before running (`NoMatchingPatternError` while running,
+  which cannot be rescued, unlike Ruby's `ArgumentError`).
+- Both bugs above are fixed: `Prime.each` has Ruby's shape again (`return Prime.to_a(ub) unless
+  block_given?`, then the loop), and `Integer.each_prime(ub, &b) = Prime.each(ub, &b)`.

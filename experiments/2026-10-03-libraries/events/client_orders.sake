@@ -4,7 +4,7 @@
 
 # Rules for one order: guards look at the order's data.
 class OrderRules
-  attr_reader id, total, items, paid_amount
+  attr_reader id, total, items, paid_amount = 0
   include Hooks
   def guard?(r, name, fsm, data)
     case name
@@ -23,13 +23,13 @@ class OrderRules
 end
 
 def order_machine(rules)
-  m = Fsm.create("order #{OrderRules.get_id(rules)}", :new, rules)
-  Fsm.allow(m, :new, :pay, :paid, :fully_paid, :record_payment)
-  Fsm.allow(m, :new, :pay, :new, :none, :record_payment)          # partial payment
-  Fsm.allow(m, :paid, :ship, :shipped, :none, :none)
-  Fsm.allow(m, :shipped, :deliver, :done, :none, :none)
-  Fsm.allow(m, :paid, :cancel, :cancelled, :refundable, :refund)
-  Fsm.allow(m, :new, :cancel, :cancelled, :none, :none)
+  m = Fsm.new("order #{OrderRules.get_id(rules)}", :new, rules)
+  Fsm.allow(m, :new, :pay, :paid, guard: :fully_paid, action: :record_payment)
+  Fsm.allow(m, :new, :pay, :new, action: :record_payment)   # partial payment
+  Fsm.allow(m, :paid, :ship, :shipped)
+  Fsm.allow(m, :shipped, :deliver, :done)
+  Fsm.allow(m, :paid, :cancel, :cancelled, guard: :refundable, action: :refund)
+  Fsm.allow(m, :new, :cancel, :cancelled)
   m
 end
 
@@ -55,8 +55,9 @@ class Stock
 end
 
 class Mailer
-  attr_reader sent
+  attr_reader sent = nil
   include Handler
+  def initialize(m) = @sent = String[]
   def handle(m, bus, ev)
     name, data = ev
     text = case name
@@ -90,18 +91,19 @@ class Canceller
 end
 
 class Counter
-  attr_reader by_name
+  attr_reader by_name = nil
   include Handler
+  def initialize(c) = @by_name = Hash.new(0)
   def handle(c, bus, ev)
     name, _ = ev
-    @by_name[name] = Hash.fetch(@by_name, name, 0) + 1
+    @by_name[name] += 1
   end
 end
 
-bus = Bus.create
+bus = Bus.new
 stock = Stock.new(Hash["apple" => 2, "pear" => 0, "fig" => 5])
-mailer = Mailer.new(String[])
-counter = Counter.new(Hash[])
+mailer = Mailer.new
+counter = Counter.new
 Bus.on(bus, :placed, stock)
 Bus.on(bus, :short, mailer)
 Bus.on(bus, :fsm_moved, mailer)
@@ -109,7 +111,7 @@ Bus.on(bus, :*, counter)
 orders = Hash[]
 Bus.on(bus, :short, Canceller.new(orders))
 def place(bus, orders, id, items, total)
-  rules = OrderRules.new(id, total, items, 0)
+  rules = OrderRules.new(id, total, items)
   m = order_machine(rules)
   Fsm.attach(m, bus)
   orders[id] = m

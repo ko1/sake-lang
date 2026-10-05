@@ -144,3 +144,14 @@ Result: about 5% slower, outside the spread; nothing on the parse path changed e
 `puts`, so `$stdout`). Writing to `IO.stderr` flushes stdout first, so the order of the lines is
 kept. Blocks for `on` and `OptionParser.new { }` are still missing: `block_given?` makes a block
 optional, but a block still cannot be stored for `parse` to call later.
+
+## Review 2026-10-05 (class body, initialize)
+
+- Fields reordered to Ruby's `OptionParser.new(banner = nil, width = 32, indent = " " * 4)`, so
+  `OptionParser.new("Usage: x")` sets the banner as in Ruby. `def initialize(op)` creates the list of
+  switches (was: `list = nil` and a lazy `items(op)`); `--types` now shows `OptionParser.list` as an
+  Array, no longer `nil | Array`.
+- `getopts` declares its switches with the optional arguments left out (`on(g, "-#{c}")`).
+- Still missing: `OptionParser.new { |o| ... }` (`new` takes no block); the exception hierarchy
+  (`InvalidOption < ParseError`) is one type with a `kind`, built by `OptionParserError.make`
+  because `message` is the first field and is computed from the others.

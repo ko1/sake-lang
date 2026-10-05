@@ -2,23 +2,20 @@
 # One process per request: read the HTTP request from stdin, route it, write the response to stdout.
 
 # An exception a handler raises to stop with an error page (Sinatra's `halt 404`).
-HttpError = Exception.new(:status)
+class HttpError < StandardError
+  attr_reader status
+end
 
 # verb: "GET"/"POST"; query, headers, cookies, form, params: Hash of String => String.
 class Request
   attr_reader verb, path, query, headers, cookies, form, body
   attr_accessor params
-  # A route parameter, then a form field, then a query parameter; nil if none.
-  def param(r, name)
+  # A route parameter, then a form field, then a query parameter; default if none.
+  def param(r, name, default = nil)
     v = @params[name]
     v = @form[name] if v == nil
     v = @query[name] if v == nil
-    v
-  end
-
-  def param_or(r, name, default)
-    v = param(r, name)
-    v ? v : default
+    v == nil ? default : v
   end
 
   def header(r, name) = @headers[String.downcase(name)]
@@ -70,18 +67,8 @@ end
 module Html
   module_function
 
-  def escape(x)
-    Array.join(Array.map(String.chars("#{x}")) do |c|
-      case c
-      in "&" then "&amp;"
-      in "<" then "&lt;"
-      in ">" then "&gt;"
-      in "\"" then "&quot;"
-      in "'" then "&#39;"
-      else c
-      end
-    end, "")
-  end
+  def escapes = once { Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"] }
+  def escape(x) = String.gsub("#{x}", /[&<>"']/, escapes)
 
   def raw(s) = SafeHtml.new(s)
 
@@ -129,17 +116,17 @@ module Json
   module_function
 
   def string(s)
-    out = String.chars(s).Array.map do |c|
+    out = String.gsub(s, /["\\\x00-\x1f]/) do |c|
       case c
       in "\"" then "\\\""
       in "\\" then "\\\\"
       in "\n" then "\\n"
       in "\r" then "\\r"
       in "\t" then "\\t"
-      else String.ord(c) < 32 ? format("\\u%04x", String.ord(c)) : c
+      else format("\\u%04x", String.ord(c))
       end
     end
-    "\"" + Array.join(out, "") + "\""
+    "\"" + out + "\""
   end
 
   def encode(v)
@@ -161,25 +148,8 @@ end
 module Tsv
   module_function
 
-  def esc(s) = Array.join(Array.map(String.chars(s)) { |c| c == "\t" ? "\\t" : (c == "\n" ? "\\n" : (c == "\\" ? "\\\\" : c)) }, "")
-
-  def unesc(s)
-    out = String[]
-    chars = String.chars(s)
-    i = 0
-    while i < Array.size(chars)
-      c = Array.fetch(chars, i)
-      if c == "\\" && i + 1 < Array.size(chars)
-        d = Array.fetch(chars, i + 1)
-        Array.push(out, d == "t" ? "\t" : (d == "n" ? "\n" : d))
-        i += 2
-      else
-        Array.push(out, c)
-        i += 1
-      end
-    end
-    Array.join(out, "")
-  end
+  def esc(s) = String.gsub(s, /[\t\n\\]/, Hash["\t" => "\\t", "\n" => "\\n", "\\" => "\\\\"])
+  def unesc(s) = String.gsub(s, /\\(.)/m) { |m| Hash.fetch(Hash["t" => "\t", "n" => "\n"], m[1], m[1]) }
 
   def load(path)
     rows = Array[]
@@ -264,12 +234,7 @@ module Web
     utf8(bytes)
   end
 
-  def url_encode(s)
-    Array.join(Array.map(String.bytes(s)) do |b|
-      unreserved = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 45 || b == 46 || b == 95 || b == 126
-      unreserved ? Integer.chr(b) : format("%%%02X", b)
-    end, "")
-  end
+  def url_encode(s) = String.gsub(s, /[^0-9A-Za-z\-._~]/) { |c| Array.join(Array.map(String.bytes(c)) { |b| format("%%%02X", b) }, "") }
 
   # "a=1&b=2" (or "a=1; b=2" for cookies) to a Hash of decoded Strings.
   def parse_pairs(s, sep)
@@ -283,9 +248,9 @@ module Web
     h
   end
 
-  # ---- reading the request: from stdin (CGI) or from a connection (io, a Socket) ----
+  # ---- reading the request: from stdin (CGI, IO.stdin) or from a connection (a Socket) ----
 
-  def next_line(io) = io ? Socket.gets(io) : gets
+  def next_line(io) = (io in IO) ? IO.gets(io) : Socket.gets(io)   # (Socket|IO).gets: neither is listable
 
   def read_request(io)
     line = next_line(io)
@@ -305,13 +270,14 @@ module Web
     len_s = headers["content-length"]
     len = len_s ? String.to_i(len_s) : 0
     body = ""
-    if io && len > 0
-      body = Socket.read(io, len) || ""             # a socket's body has no newline to wait for
-    end
-    while !io && String.bytesize(body) < len
-      l = gets
-      break unless l
-      body = body + l
+    if io in IO
+      while String.bytesize(body) < len
+        l = IO.gets(io)
+        break unless l
+        body = body + l
+      end
+    elsif len > 0
+      body = Socket.read(io, len) || ""   # a socket's body has no newline to wait for
     end
     ctype = headers["content-type"]
     form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash[]
@@ -367,7 +333,7 @@ module Web
       Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash["s" => status, "t" => status_text(status), "m" => message])))
   end
 
-  # One request cycle: read from io (nil: stdin), route, and give the Response. The block gets
+  # One request cycle: read from io (IO.stdin or a Socket), route, and give the Response. The block gets
   # (handler, request) for a matched route and gives a Response.
   def respond(routes, io)
     req = read_request(io)
@@ -382,18 +348,16 @@ module Web
   end
 
   # CGI: one request from stdin, the response to stdout.
-  def run(routes)
-    print(Response.to_http(respond(routes, nil) { |h, r| yield(h, r) }))
-  end
+  def run(routes, &b) = print(Response.to_http(respond(routes, IO.stdin, &b)))
 
   # A server: accepted connections go to a Queue, and `workers` threads take them. The handlers run
   # one at a time (a Mutex), since the apps keep their state in files.
-  def serve(routes, port, workers)
+  def serve(routes, port, workers: 4)
     server = TCPServer.new("127.0.0.1", port)
     puts("serving on http://127.0.0.1:#{TCPServer.port(server)}/ with #{workers} worker threads")
     conns = Queue.new
     lock = Mutex.new
-    Array.each(Range.to_a(1..workers)) do |w|
+    Range.each(1..workers) do |w|
       Thread.new do
         while (c = Queue.pop(conns))
           begin

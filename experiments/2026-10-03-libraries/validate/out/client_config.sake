@@ -77,8 +77,12 @@ module Result
   end
 end
 
-UnwrapError = Exception.new
-ValidationError = Exception.new(:field)
+class UnwrapError < StandardError
+end
+
+class ValidationError < StandardError
+  attr_reader field
+end
 
 # ---- Validation: check a Hash of String inputs, collect every problem -------
 
@@ -89,8 +93,8 @@ end
 
 # A Checker holds the input and the errors found so far.
 class Checker
-  attr_reader input, errors
-  def start(input) = Checker.new(input, FieldError[])
+  attr_reader input, errors = nil
+  def initialize(c) = @errors = FieldError[]
 
   def add(c, field, message)
     Array.push(@errors, FieldError.new(field, message))
@@ -218,15 +222,15 @@ end
 
 # A schema: field name => [required?, rules]. Rules run in order; the first failing one is reported.
 class Schema
-  attr_reader fields
-  def build = Schema.new(Hash[])
-  def field(s, name, required, rules)
+  attr_reader fields = nil
+  def initialize(s) = @fields = Hash[]
+  def field(s, name, rules, required: true)
     @fields[name] = [required, rules]
     s
   end
 
   def validate(s, input)
-    c = Checker.start(input)
+    c = Checker.new(input)
     Hash.each(@fields) do |name, spec|
       required, rules = spec
       v = required ? Checker.required(c, name) : Checker.optional(c, name)
@@ -267,7 +271,9 @@ def good_text
   "host = localhost\nport = 8080\nworkers = 4\nmode = dev\n"
 end
 
-ConfigSyntaxError = Exception.new(:line)
+class ConfigSyntaxError < StandardError
+  attr_reader line
+end
 
 # Parse "key = value" lines into a Hash. Bad lines become Err in the Result list.
 def parse_lines(text)
@@ -297,7 +303,7 @@ end
 
 def load_all(text)
   h, problems = parse_lines(text)
-  c = Checker.start(h)
+  c = Checker.new(h)
   Array.each(problems) { |p| Checker.add(c, "syntax", p) }
   cfg = check_config(c)
   Checker.result(c, cfg)
@@ -307,7 +313,7 @@ end
 def load_strict(text)
   h, problems = parse_lines(text)
   raise ConfigSyntaxError.new(Array.first(problems), 0) unless Array.empty?(problems)
-  c = Checker.start(h)
+  c = Checker.new(h)
   cfg = check_config(c)
   Checker.raise_first(c)
   cfg

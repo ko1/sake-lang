@@ -99,3 +99,14 @@ Result: about 2.7x faster in total, about 5x after subtracting startup: seven na
 Output goes through `IO.print(IO.stdout, ...)`, as Ruby's `benchmark` prints to `$stdout`; the
 result is the same as `print` (which also writes to stdout). Every block of the library is
 required in Ruby too, so `block_given?` is not used.
+
+## Phase 4 (2026-10-05 review)
+
+- `print`/`puts` instead of `IO.print(IO.stdout, ...)`: Ruby's `benchmark.rb` calls `print` too.
+- Blocks are passed on with `&b`, as Ruby's code does: `bm(width = 0, &b) = benchmark(..., &b)`,
+  `Tms#add(&b) = t + Benchmark.measure(&b)`, `add!`, `Report#report`, `item = report`.
+- `BenchmarkReport.new(width = 0, format = nil, mode = :report)`: `initialize` starts the list
+  empty, as Ruby's `Report#initialize`, so callers no longer pass `BenchmarkTms[]`.
+- The array-slice checker bug (`benchmark_bug_array_slice_type.sake`) is fixed.
+- Still differs: `Benchmark::Tms` is `BenchmarkTms` (no nested names); `total` is a function, where
+  Ruby's `initialize` stores it in a field; the CPU times are 0.0 (no `Process.times`).

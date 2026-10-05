@@ -52,7 +52,10 @@ module Measure
   def call_user(fn, args, blk)
     reset_rec if @rec_pass != @passes
     r = super
-    (@fn_args[fn] ||= Array.new(args.size) { [] }).each_index { |i| @fn_args[fn][i] = Sake::Typer.union(@fn_args[fn][i], args[i]) }
+    # One entry per parameter; an argument the call left out (an optional or keyword parameter) adds nothing.
+    (@fn_args[fn] ||= Array.new(fn.params.size) { [] }).each_index do |i|
+      @fn_args[fn][i] = Sake::Typer.union(@fn_args[fn][i], args[i]) if args[i] && args[i] != Sake::Typer::MISSING
+    end
     @fn_rets[fn] = Sake::Typer.union(@fn_rets[fn] || [], r)
     r
   end

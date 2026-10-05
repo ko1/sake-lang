@@ -51,3 +51,7 @@ private functions); the leading `_` marks them internal.
 - Speed (`phase2/bench_cgi.sake`: escape/unescape, URI component, HTML escape/unescape of 20 KB; CPU s
   of the whole `bin/sake --strict` run, 3 runs, load about 37 on 16 cores): before 3.97 / 4.11 / 4.19,
   after 1.83 / 1.85 / 1.76.
+
+## Review 2026-10-05
+
+No change: optional `encoding` arguments, `once` table and block `gsub` were done in phase 2. Ruby's `to_str` conversion of the argument has no Sake counterpart (each operation checks for a String). `--strict=1`/`2`: 0 reports before and after.

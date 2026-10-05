@@ -2,26 +2,33 @@
 # Algorithms (determinant, inverse, rank, **) are ported line by line, so Float results match Ruby's.
 # `Matrix[[1, 2], [3, 4]]` means "an Array of Matrix" in Sake: build with Matrix.rows(...) instead.
 
-ErrDimensionMismatch = Exception.new
-ErrNotRegular = Exception.new
-ErrOperationNotDefined = Exception.new
-ZeroVectorError = Exception.new
+class ErrDimensionMismatch < StandardError
+end
+class ErrNotRegular < StandardError
+end
+class ErrOperationNotDefined < StandardError
+end
+class ZeroVectorError < StandardError
+end
 
 class Matrix
   attr_reader rows, column_count
   include Arithmetic
   include Indexable
 
+  # Every row has column_count elements (Ruby checks this in Matrix.rows; Sake's `new` is public).
+  def initialize(m)
+    Array.each(@rows) do |r|
+      raise ErrDimensionMismatch, "row size differs (#{Array.size(r)} should be #{@column_count})" unless Array.size(r) == @column_count
+    end
+  end
+
   # --- constructors ---
 
   def rows(rows, copy = true)
     rs = copy ? Array.map(rows) { |r| Array.dup(r) } : rows
     first = Array.first(rs)
-    size = first == nil ? 0 : Array.size(first)
-    Array.each(rs) do |r|
-      raise ErrDimensionMismatch, "row size differs (#{Array.size(r)} should be #{size})" unless Array.size(r) == size
-    end
-    Matrix.new(rs, size)
+    Matrix.new(rs, first == nil ? 0 : Array.size(first))
   end
   def columns(columns) = Matrix.transpose(Matrix.rows(columns))
   def build(row_count, column_count = row_count)
@@ -136,7 +143,7 @@ class Matrix
     end
     Matrix.new(rs, @column_count)
   end
-  def map(m, which = :all) = Matrix.collect(m, which) { |e| yield(e) }
+  def map(m, which = :all, &b) = Matrix.collect(m, which, &b)
   def which?(which, i, j)
     case which
     in :all then true
@@ -149,8 +156,10 @@ class Matrix
     else false                                # check_which raised already
     end
   end
+  # Ruby's SELECTORS.
+  def selectors = once { Symbol[:all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper, :upper] }
   def check_which(which)
-    return if Array.include?(Array[:all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper, :upper], which)
+    return if Array.include?(Matrix.selectors, which)
     raise ArgumentError, "expected #{Kernel.inspect(which)} to be one of :all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper or :upper"
   end
 
@@ -531,7 +540,7 @@ class Vector
   include Indexable
 
   # Vector[1, 2] is an Array of Vector in Sake: use Vector.elements(Array[1, 2]).
-  def elements(array) = Vector.new(Array.dup(array))
+  def elements(array, copy = true) = Vector.new(copy ? Array.dup(array) : array)
   def basis(size:, index:)
     raise ArgumentError, "invalid size (#{size} for 1..)" if size < 1
     raise ArgumentError, "invalid index (#{index} for 0...#{size})" unless 0 <= index && index < size
@@ -566,13 +575,13 @@ class Vector
     v
   end
   def collect(v) = Vector.new(Array.map(@elements) { |e| yield(e) })
-  def map(v) = Vector.collect(v) { |e| yield(e) }
+  def map(v, &b) = Vector.collect(v, &b)
   def collect2(v, w)
     raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
     ws = Vector.get_elements(w)
     Array.new(Array.size(@elements)) { |i| yield(Array.fetch(@elements, i), Array.fetch(ws, i)) }
   end
-  def map2(v, w) = Vector.new(Vector.collect2(v, w) { |a, b| yield(a, b) })
+  def map2(v, w, &b) = Vector.new(Vector.collect2(v, w, &b))
 
   def zero?(v) = Array.all?(@elements) { |e| e == 0 }
 

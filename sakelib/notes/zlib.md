@@ -89,3 +89,7 @@ No change beyond the spread (+2-3%, partly the start-up rows): the per-byte bloc
 cost, and the table was already built once per call before.
 
 Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matrix.txt`.
+
+## Review 2026-10-05
+
+No change: `crc32(s = nil, crc = 0)` / `adler32` already take Ruby's optional arguments, `crc_table` is `once`. `s` is `nil | String` by Ruby's API (nil gives the initial value). `--strict=1`/`2`: 0 reports before and after.

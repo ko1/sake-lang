@@ -13,15 +13,20 @@ Ruby's `URI::Generic`, `URI::HTTP`, `URI::HTTPS`, `URI::FTP`, `URI::File`, `URI:
 
 ```ruby
 class URI
-  attr_reader scheme, userinfo, opaque
-  attr_accessor host, port, path, query, fragment
+  attr_reader scheme, userinfo
+  attr_accessor host, port
+  attr_reader registry
+  attr_accessor path
+  attr_reader opaque
+  attr_accessor query, fragment
 ```
 
 The scheme decides the default port (http/ws 80, https/wss 443, ftp 21, ldap 389, ldaps 636) and the
 class name that `inspect` prints (`#<URI::HTTP http://...>`, as Ruby). Sake has no subclasses, and
 the differences between Ruby's classes are small enough to be a `case` on the scheme.
-Field order for `URI.new` is scheme, userinfo, opaque, host, port, path, query, fragment (use
-`URI.parse` instead).
+Field order for `URI.new` is Ruby's `URI::Generic.new`: scheme, userinfo, host, port, registry, path,
+opaque, query, fragment (since 2026-10-05). `initialize` does what Ruby's does: lower-cases the scheme,
+turns a String port into an Integer (`""` → the default), and sets the default port.
 
 ## API
 
@@ -119,3 +124,17 @@ private functions.
   Ruby), `"&"` not splitting under `";"`, and `enc` with `separator:` together. A misspelled
   keyword is a static error: `URI.decode_www_form(s, sep: ";")` → `error: URI.decode_www_form has
   no keyword parameter `sep``.
+
+## Review against the current language (2026-10-05)
+
+- `URI.new` takes Ruby's `URI::Generic.new(scheme, userinfo, host, port, registry, path, opaque, query,
+  fragment)` order (fields reordered; `registry` added, always nil, with `URI.registry(u)` as Ruby's reader),
+  and `def initialize(u)` does Ruby's `Generic#initialize` work (scheme downcase, String port → Integer,
+  default port, `path = ""` unless opaque). `URI._new` became `URI._for`, Ruby's `URI.for`, which only keeps
+  FTP's path rule (Ruby's `URI::FTP#initialize`; kept out of `initialize` because `URI.dup` runs
+  initialize again and would strip a second "/"). `merge` and `dup` call `URI.new` directly.
+- Checker gap found: a field written by `initialize` on some paths only is typed as the written values
+  (`--types`: `URI.scheme: String`, `URI.path: String`, before: `nil | String`), so a nil scheme of a
+  relative URI is no longer reported at `--strict`. Repro: `notes/uri_bug_initialize_conditional_write.sake`.
+- Remaining frictions: setters (`set_port`, `set_host`, ...) do not go through `initialize`'s conversions
+  (Ruby's `port = "81"` converts); `URI(s)` cannot be a function; `URI.join` up to three references.

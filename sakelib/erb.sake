@@ -15,14 +15,20 @@ end
 # One piece of a template. kind: :text, :out, :if, :unless, :each, :each_with_index.
 # `text` is the text or the expression; `vars` the block's parameters; `alt` the else branch.
 class ERBNode
-  attr_reader kind, text, vars, body, alt
+  attr_reader kind, text, vars = nil, body = nil, alt = nil
+
+  def initialize(n)
+    @vars = String[]
+    @body = ERBNode[]
+    @alt = ERBNode[]
+  end
 end
 
 # A block being parsed: the node, whether its else branch is being filled, and whether it came
 # from an elsif (closed by the same `end` as the if it continues).
 class ERBFrame
-  attr_reader node, chained
-  attr_accessor in_alt
+  attr_reader node, chained = false
+  attr_accessor in_alt = false
 end
 
 class ERB
@@ -99,8 +105,6 @@ class ERB
   end
 
   # --- parsing: tokens become a tree of ERBNode ---
-  def _node(kind, text) = ERBNode.new(kind, text, String[], ERBNode[], ERBNode[])
-
   def _add(stack, n)
     f = Array.last(stack)
     raise ERBError, "template stack is empty" unless f
@@ -119,12 +123,12 @@ class ERB
   end
 
   def _compile(erb)
-    root = _node(:root, "")
-    stack = ERBFrame[ERBFrame.new(root, false, false)]
+    root = ERBNode.new(:root, "")
+    stack = ERBFrame[ERBFrame.new(root)]
     Array.each(_scan(erb)) do |kind, text|
       case kind
-      in :text then _add(stack, _node(:text, text))
-      in :out then _add(stack, _node(:out, String.strip(text)))
+      in :text then _add(stack, ERBNode.new(:text, text))
+      in :out then _add(stack, ERBNode.new(:out, String.strip(text)))
       else
         stmt = String.strip(text)
         m_if = String.match(stmt, /\A(if|unless|elsif)\s+(.+?)(?:\s+then)?\z/m)
@@ -135,20 +139,20 @@ class ERB
           raise ERBError, "elsif without if" unless _top_kind(stack) == :if
           f = Array.last(stack)
           next unless f
-          n = _node(:if, "#{m_if[2]}")
+          n = ERBNode.new(:if, "#{m_if[2]}")
           Array.push(ERBNode.get_alt(ERBFrame.get_node(f)), n)
           ERBFrame.set_in_alt(f, true)
-          Array.push(stack, ERBFrame.new(n, true, false))
+          Array.push(stack, ERBFrame.new(n, true))
         elsif m_if
-          n = _node(m_if[1] == "if" ? :if : :unless, "#{m_if[2]}")
+          n = ERBNode.new(m_if[1] == "if" ? :if : :unless, "#{m_if[2]}")
           _add(stack, n)
-          Array.push(stack, ERBFrame.new(n, false, false))
+          Array.push(stack, ERBFrame.new(n))
         elsif m_each
-          n = _node(m_each[2] == "each" ? :each : :each_with_index, "#{m_each[1]}")
+          n = ERBNode.new(m_each[2] == "each" ? :each : :each_with_index, "#{m_each[1]}")
           params = m_each[3] || m_each[4] || ""
           Array.each(String.split(params, ",")) { |v| Array.push(ERBNode.get_vars(n), String.strip(v)) }
           _add(stack, n)
-          Array.push(stack, ERBFrame.new(n, false, false))
+          Array.push(stack, ERBFrame.new(n))
         elsif stmt == "else"
           k = _top_kind(stack)
           raise ERBError, "else without if" unless k == :if || k == :unless

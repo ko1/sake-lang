@@ -45,3 +45,7 @@ join-then-split round trips. Its output is identical to `shellwords.rb`.
 - Speed (`phase2/bench_shellwords.sake`: split a 2000-word line, join, split again; CPU s of the
   whole `bin/sake --strict` run, 3 runs, load about 37 on 16 cores): before 2.76 / 2.74 / 2.86,
   after 2.35 / 2.29 / 2.33. The copies were cheap next to the interpreter's cost per word.
+
+## Review 2026-10-05
+
+No change: module functions only, as Ruby's. `shellescape(x)` takes any value (Ruby's `str.to_s`), so its parameter is a union of whatever callers pass (Integer | String | Symbol in the test). `--strict=1`/`2`: 0 reports before and after.

@@ -141,3 +141,10 @@ defined): Sake has no nested names.
   expected 10 or 16`. A misspelled keyword is a static error:
   `StringScanner.scan_integer(ss, bas: 16)` → `error: StringScanner.scan_integer has no keyword
   parameter `bas`` / `hint: did you mean `base:`?`.
+
+## Review 2026-10-05 (initialize, `=>`, exception class)
+
+- `def initialize(ss)`: `@string => String` (Ruby raises TypeError for `StringScanner.new(1)`; Sake
+  raises NoMatchingPatternError) and resets the pointer, so the internal fields given to `new` by
+  mistake cannot start the scanner elsewhere. `set_string` asserts `s => String` likewise.
+- `ScanError` is `class ScanError < Exception` (was `ScanError = Exception.new`).

@@ -1,12 +1,14 @@
 # graph library: nodes can be any value usable as a Hash key.
 # A Graph holds adj: node => Tuple[] of [neighbor, weight].
 
-CycleError = Exception.new(:cycle)
+class CycleError < StandardError
+  attr_reader cycle
+end
 
 # A binary min-heap of Tuples; Tuples order element by element.
 class Heap
-  attr_reader items
-  def make = Heap.new(Tuple[])
+  attr_reader items = nil
+  def initialize(h) = @items = Tuple[]
   def empty?(h) = Array.empty?(@items)
   def size(h) = Array.size(@items)
 
@@ -46,24 +48,23 @@ class Heap
 end
 
 class Graph
-  attr_reader directed, adj
-  def directed_graph = Graph.new(true, Hash[])
-  def undirected_graph = Graph.new(false, Hash[])
+  attr_reader directed = false, adj = nil
+  def initialize(g) = @adj = Hash[]
+  def directed_graph = Graph.new(true)
+  def undirected_graph = Graph.new
 
   def add_node(g, v)
     Hash.store(@adj, v, Tuple[]) unless Hash.key?(@adj, v)
     g
   end
 
-  def add_edge(g, a, b, w)
+  def add_edge(g, a, b, w = 1)
     add_node(g, a)
     add_node(g, b)
     Array.push(@adj[a], [b, w])
     Array.push(@adj[b], [a, w]) unless @directed
     g
   end
-
-  def connect(g, a, b) = add_edge(g, a, b, 1)
 
   def nodes(g) = Hash.keys(@adj)
   def size(g) = Hash.size(@adj)
@@ -164,7 +165,7 @@ class Graph
     dist = Hash[src => 0]
     prev = Hash[]
     done = Set[]
-    heap = Heap.make
+    heap = Heap.new
     queued = Array[src]
     Heap.push(heap, [0, 0])
     until Heap.empty?(heap)
@@ -260,13 +261,7 @@ end
 # Search over a graph that is never stored: the includer defines
 # `each_neighbor(s, v) { |n, w| ... }`, the place a callback would go in Ruby.
 module Implicit
-  # The stub needs the dead yield: without it, calls with a block are rejected
-  # (bug_required_block_function.sake), and without a stub at all, a program that
-  # includes Implicit nowhere is rejected (bug_unused_mixin_undefined.sake).
-  def each_neighbor(s, v)
-    raise(NotImplementedError)
-    yield(v, 0)
-  end
+  def each_neighbor(s, v) = raise(NotImplementedError)
 
   def bfs_path(s, a, b)
     prev = Hash[a => a]
@@ -284,7 +279,7 @@ module Implicit
     nil
   end
 end
-# ---- client_stress.sake starts at line 286 (client line = line - 285)
+# ---- client_stress.sake starts at line 283 (client line = line - 282)
 # Stress: one program, several node types (Integer, Symbol, String, Tuple), and a large graph.
 
 # 1. Integer nodes: a 60x60 grid-like graph with pseudo-random weights (LCG, reproducible).
@@ -317,7 +312,7 @@ puts("  bfs visits #{Array.size(Graph.bfs(big, 0))}, dfs visits #{Array.size(Gra
 
 # 2. Symbol nodes: a long chain, topologically sorted (deep recursion in topo_visit).
 chain = Graph.directed_graph
-Integer.times(3000) { |i| Graph.connect(chain, String.to_sym("s#{i}"), String.to_sym("s#{i + 1}")) }
+Integer.times(3000) { |i| Graph.add_edge(chain, String.to_sym("s#{i}"), String.to_sym("s#{i + 1}")) }
 order = Graph.topo_sort(chain)
 puts("symbol chain: #{Array.size(order)} nodes, first #{order[0]}, last #{order[-1]}")
 
@@ -327,7 +322,7 @@ dict = Array["cold", "cord", "card", "ward", "warm", "word", "worm", "wore", "co
 Array.each(dict) do |a|
   Array.each(dict) do |b|
     diff = Array.count(Array.zip(String.chars(a), String.chars(b))) { |x, y| x != y }
-    Graph.connect(words, a, b) if diff == 1 && a < b
+    Graph.add_edge(words, a, b) if diff == 1 && a < b
   end
 end
 ladder = Graph.bfs_path(words, "cold", "warm")
@@ -339,7 +334,7 @@ Integer.times(8) do |r|
     Array.each(Array[[1, 2], [2, 1], [2, -1], [1, -2]]) do |dr, dc|
       nr = r + dr
       nc = c + dc
-      Graph.connect(knight, [r, c], [nr, nc]) if nr < 8 && nc >= 0 && nc < 8
+      Graph.add_edge(knight, [r, c], [nr, nc]) if nr < 8 && nc >= 0 && nc < 8
     end
   end
 end
@@ -348,8 +343,8 @@ puts("knight a1 -> h8: #{Array.size(moves) - 1} moves via #{Array.join(Array.map
 
 # 4. Mixed node types in ONE graph: Ruby would allow it; does Sake?
 mixed = Graph.directed_graph
-Graph.connect(mixed, 1, "one")
-Graph.connect(mixed, "one", :one)
-Graph.connect(mixed, :one, [1, 1])
+Graph.add_edge(mixed, 1, "one")
+Graph.add_edge(mixed, "one", :one)
+Graph.add_edge(mixed, :one, [1, 1])
 p(Graph.topo_sort(mixed))
 p(Graph.components(mixed))

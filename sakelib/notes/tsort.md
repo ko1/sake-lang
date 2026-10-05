@@ -108,3 +108,10 @@ None for the algorithm. Language-level: first-class blocks (Ruby's callable form
   3000-node DAG, each node pointing at the next 3 (depth 3000); `bin/sake --strict`, CPU user+sys,
   3 runs, shared machine at load ~35 on 16 cores): before 24.36 / 24.00 / 23.91 s, after 2.44 / 2.43 / 2.53 s.
   The before time was the O(depth) yield chain: each of the 3000 components went up ~3000 block levels.
+
+## Review 2026-10-05 (passing blocks on, exception class)
+
+- `TSortCyclic` is `class TSortCyclic < Exception` (was `Exception.new`).
+- The Hash-graph `tsort_each_hash` / `each_strongly_connected_component_hash` and the internal
+  `tsort_each_node` pass their block on with `&b` (`Hash.each_key(@h, &b)`, as Ruby's
+  `each_key(&block)`), instead of `{ |n| yield(n) }`.

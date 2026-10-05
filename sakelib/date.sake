@@ -1,27 +1,34 @@
 # date: Ruby's Date (require "date"), ported to Sake.
 #
-# A Date is a day number (the Julian Day Number, `jd`) with its civil year, month and day cached.
+# A Date is a civil date with its Julian Day Number (`jd`) cached.
 # The calendar is Ruby's default (Date::ITALY): Julian before 1582-10-15, Gregorian from then on.
-# `Date.civil(y, m, d)` is Ruby's `Date.new(y, m, d)`: `Date.new` is the Struct's raw constructor
-# (jd, year, month, day), which a Sake type cannot redefine.
 # Date - Date is a Rational of days, as in Ruby.
 
-DateError = Exception.new
+# Ruby's Date::Error.
+class DateError < Exception
+end
 
 class Date
-  attr_reader jd, year, month, day
+  # Date.new(y = -4712, m = 1, d = 1) as Ruby; a fourth argument (Ruby's `start`) is ignored.
+  attr_reader year = -4712, month = 1, day = 1, jd = nil
   include Arithmetic
   include Comparable
   include Bitwise
 
+  # Ruby's Date#initialize: checks the date and resolves a negative month or day.
+  def initialize(d)
+    @year => Integer
+    @month => Integer
+    @day => Integer
+    jd = DateCore.valid_civil_jd(@year, @month, @day)
+    raise DateError, "invalid date" if jd == nil
+    @jd = jd
+    @year, @month, @day = DateCore.jd_to_civil(jd) if @month < 0 || @day < 0
+  end
+
   # ---- constructors ----
 
-  # Ruby's Date.new(y = -4712, m = 1, d = 1).
-  def civil(y = -4712, m = 1, d = 1)
-    jd = DateCore.valid_civil_jd(y, m, d)
-    raise DateError, "invalid date" if jd == nil
-    jd(jd)
-  end
+  def civil(y = -4712, m = 1, d = 1) = Date.new(y, m, d)
 
   def ordinal(y = -4712, yd = 1)
     jd = DateCore.valid_ordinal_jd(y, yd)
@@ -40,14 +47,14 @@ class Date
     case x
     in Integer
       y, m, d = DateCore.jd_to_civil(x)
-      Date.new(x, y, m, d)
+      Date.new(y, m, d)
     in Date then Date.get_jd(x)
     end
   end
 
   def today
     t = Time.now
-    civil(Time.year(t), Time.month(t), Time.day(t))
+    Date.new(Time.year(t), Time.month(t), Time.day(t))
   end
 
   # ---- validity ----
@@ -457,11 +464,11 @@ module DateCore
 
   def parse(s, comp)
     m = String.match(s, /([-+]?\d{4,})-(\d{1,2})-(\d{1,2})/)
-    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    return Date.new(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
     m = String.match(s, /(\d{4})\/(\d{1,2})\/(\d{1,2})/)
-    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    return Date.new(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
     m = String.match(s, /\b(\d{4})(\d{2})(\d{2})\b/)
-    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    return Date.new(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
     m = String.match(s, day_month_re)
     return civil_named(m[3], m[2] || "", m[1] || "", comp) if m
     m = String.match(s, month_day_re)
@@ -473,13 +480,13 @@ module DateCore
     mi = month_index(mon)
     raise DateError, "invalid date" if mi == nil
     y = ys == nil ? Date.year(Date.today) : comp_year(ys, comp)
-    Date.civil(y, mi, String.to_i(ds))
+    Date.new(y, mi, String.to_i(ds))
   end
 
   def parse_iso8601(s)
     m = String.match(s, /\A\s*([-+]?\d{4,})-(\d{2})-(\d{2})(?:T\S*)?\s*\z/)
     m ||= String.match(s, /\A\s*([-+]?\d{4})(\d{2})(\d{2})(?:T\S*)?\s*\z/)
-    return Date.civil(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
+    return Date.new(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || "")) if m
     m = String.match(s, /\A\s*([-+]?\d{4,})-?(\d{3})\s*\z/)
     return Date.ordinal(String.to_i(m[1] || ""), String.to_i(m[2] || "")) if m
     m = String.match(s, /\A\s*([-+]?\d{4,})-W(\d{2})-(\d)\s*\z/)
@@ -563,6 +570,6 @@ module DateCore
     y = Date.year(Date.today) if y == nil
     yd = Hash.fetch(h, :yday, nil)
     return Date.ordinal(y, yd) if yd != nil
-    Date.civil(y, Hash.fetch(h, :mon, 1), Hash.fetch(h, :mday, 1))
+    Date.new(y, Hash.fetch(h, :mon, 1), Hash.fetch(h, :mday, 1))
   end
 end

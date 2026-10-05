@@ -18,9 +18,19 @@ end
 
 # ---- parser ----
 
+# Ruby's JSON::Parser.new(source, opts): the options become flags, max_nesting an Integer (0: no limit).
 class JSONParserState
-  attr_reader src, len, symbolize, allow_nan, trailing, max_nesting
-  attr_accessor pos, depth
+  attr_reader src, symbolize, allow_nan, trailing, max_nesting, len = 0
+  attr_accessor pos = 0, depth = 0
+
+  def initialize(ps)
+    @len = String.bytesize(@src)
+    @symbolize = @symbolize == true
+    @allow_nan = @allow_nan == true
+    @trailing = @trailing == true
+    @max_nesting = JSON.nesting(@max_nesting)
+  end
+
   # Positions are byte offsets (`len` is the byte size), so reading at a position costs O(1) on
   # non-ASCII text. A read gives one byte as a String, or nil past the end.
   def byte_at(ps, i) = i < @len ? String.byteslice(@src, i, 1) : nil
@@ -356,8 +366,15 @@ end
 
 # ---- generator ----
 
+# Ruby's JSON::State.new(opts).
 class JSONGeneratorState
   attr_reader indent, space, space_before, object_nl, array_nl, allow_nan, max_nesting
+
+  def initialize(gs)
+    @allow_nan = @allow_nan == true
+    @max_nesting = JSON.nesting(@max_nesting)
+  end
+
   # What each character that JSON escapes becomes.
   def escapes = once do
     t = Hash["\"" => "\\\"", "\\" => "\\\\", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t", "\b" => "\\b", "\f" => "\\f"]
@@ -447,9 +464,8 @@ module JSON
   # ---- parsing ----
 
   def parse(s, symbolize_names: false, allow_nan: false, allow_trailing_comma: false, max_nesting: 100)
-    n = String.bytesize(s)
-    ps = JSONParserState.new(s, n, symbolize_names == true, allow_nan == true, allow_trailing_comma == true,
-                             nesting(max_nesting), 0, 0)
+    ps = JSONParserState.new(s, symbolize_names, allow_nan, allow_trailing_comma, max_nesting)
+    n = JSONParserState.get_len(ps)
     JSONParserState.skip_ws(ps)
     JSONParserState.end_of_input(ps) if JSONParserState.get_pos(ps) >= n
     v = JSONParserState.value(ps)
@@ -459,17 +475,16 @@ module JSON
   end
 
   def load_file(path, symbolize_names: false, allow_nan: false, allow_trailing_comma: false, max_nesting: 100)
-    parse(File.read(path), symbolize_names: symbolize_names, allow_nan: allow_nan,
-                           allow_trailing_comma: allow_trailing_comma, max_nesting: max_nesting)
+    parse(File.read(path), symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:)
   end
 
   # Ruby's JSON.load (without create_additions): a String or an IO (read to its end); nil or ""
-  # gives nil; NaN is allowed. (`in IO` is not accepted yet: notes/json_bug_io_not_a_pattern_type.sake)
+  # gives nil; NaN is allowed.
   def load(source)
     case source
     in nil then nil
     in String then load_string(source)
-    else load_string(IO.read(source))
+    in IO then load_string(IO.read(source))
     end
   end
 
@@ -479,22 +494,19 @@ module JSON
 
   def generate(v, indent: "", space: "", space_before: "", object_nl: "", array_nl: "", allow_nan: false,
                max_nesting: 100)
-    gs = JSONGeneratorState.new(indent, space, space_before, object_nl, array_nl, allow_nan == true,
-                                nesting(max_nesting))
+    gs = JSONGeneratorState.new(indent, space, space_before, object_nl, array_nl, allow_nan, max_nesting)
     JSONGeneratorState.emit(gs, v, 0)
   end
 
   def fast_generate(v, indent: "", space: "", space_before: "", object_nl: "", array_nl: "", allow_nan: false,
                     max_nesting: 100)
-    generate(v, indent: indent, space: space, space_before: space_before, object_nl: object_nl,
-                array_nl: array_nl, allow_nan: allow_nan, max_nesting: max_nesting)
+    generate(v, indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)
   end
 
   # generate with pretty defaults
   def pretty_generate(v, indent: "  ", space: " ", space_before: "", object_nl: "\n", array_nl: "\n",
                       allow_nan: false, max_nesting: 100)
-    generate(v, indent: indent, space: space, space_before: space_before, object_nl: object_nl,
-                array_nl: array_nl, allow_nan: allow_nan, max_nesting: max_nesting)
+    generate(v, indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)
   end
 
   # Ruby's JSON.dump(obj, io = nil): no nesting limit, NaN allowed; with an IO, writes to it and returns it.

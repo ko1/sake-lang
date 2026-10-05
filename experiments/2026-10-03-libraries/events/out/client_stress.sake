@@ -14,9 +14,9 @@ end
 # A ready-made handler: records every event it gets (also keeps Handler included by some
 # type, which a program that never subscribes anything still needs).
 class Recorder
-  attr_reader events
+  attr_reader events = nil
   include Handler
-  def create = Recorder.new(Tuple[])
+  def initialize(r) = @events = Tuple[]
   def handle(r, bus, ev) = Array.push(@events, ev)
   def names(r) = Array.map(@events) { |name, data| name }
 end
@@ -27,8 +27,11 @@ end
 # Unsubscribing is by the id `on` returns: handlers are Struct values, and `==` on them
 # compares contents, so two equal handlers could not be told apart.
 class Bus
-  attr_reader subs, queue, busy, delivered, last_id
-  def create = Bus.new(Tuple[], Tuple[], false, 0, 0)
+  attr_reader subs = nil, queue = nil, busy = false, delivered = 0, last_id = 0
+  def initialize(bus)
+    @subs = Tuple[]
+    @queue = Tuple[]
+  end
 
   def on(bus, pattern, handler)
     @last_id += 1
@@ -70,7 +73,7 @@ end
 
 # ---- the state machine ----
 # A transition is [from, event, to, guard, action]; from may be :* (any state), to may be :*
-# (stay), guard/action may be :none.
+# (stay), guard/action are :none when not given.
 # The hooks value includes Hooks; it overrides only what it needs (defaults below).
 module Hooks
   def guard?(hk, name, fsm, data) = true
@@ -87,12 +90,15 @@ class NoHooks
   include Hooks
 end
 
+# Fsm.new(name, initial_state, hooks); a machine without hooks of its own passes NoHooks.new(name).
 class Fsm
-  attr_reader name, table, hooks, history, state, bus
-  def create(name, initial, hooks) = Fsm.new(name, Tuple[], hooks, Array[], initial, nil)
-  def plain(name, initial) = create(name, initial, NoHooks.new(name))
+  attr_reader name, state, hooks, table = nil, history = nil, bus = nil
+  def initialize(fsm)
+    @table = Tuple[]
+    @history = Array[]
+  end
 
-  def allow(fsm, from, event, to, guard, action)
+  def allow(fsm, from, event, to, guard: :none, action: :none)
     Array.push(@table, [from, event, to, guard, action])
     fsm
   end
@@ -134,14 +140,14 @@ class Fsm
     Bus.publish(b, name, data) if b
   end
 end
-# ---- client_stress.sake (client line N = out line N+133) ----
+# ---- client_stress.sake (client line N = out line N+143) ----
 # A stress test: many subscribers of several handler types, handlers that unsubscribe
 # themselves while an event is being delivered, handlers that emit more events (a chain
 # reaction through the queue), and two kinds of state machine on one bus.
 
 # Fires once, then removes itself from the bus (unsubscribing during delivery).
 class Once
-  attr_reader label, fired, sub
+  attr_reader label, fired = 0, sub = nil
   include Handler
   def subscribe(o, bus, pattern) = @sub = Bus.on(bus, pattern, o)
   def handle(o, bus, ev)
@@ -152,7 +158,7 @@ end
 
 # Re-emits :tick with a smaller count until it reaches 0: a chain of queued events.
 class Ticker
-  attr_reader seen
+  attr_reader seen = 0
   include Handler
   def handle(t, bus, ev)
     name, data = ev
@@ -167,7 +173,7 @@ end
 
 # Sums the Integer payloads it sees; ignores the others.
 class Summer
-  attr_reader total
+  attr_reader total = 0
   include Handler
   def handle(s, bus, ev)
     name, data = ev
@@ -177,7 +183,7 @@ end
 
 # A traffic light (timed by :tick events) and a counter machine, on one bus.
 class Light
-  attr_reader ticks
+  attr_reader ticks = 0
   include Hooks
   def guard?(l, name, fsm, data)
     case name
@@ -193,7 +199,7 @@ class Light
 end
 
 class Parity
-  attr_reader flips
+  attr_reader flips = 0
   include Hooks
   def enter(p, state, fsm, data) = @flips += 1
 end
@@ -213,30 +219,30 @@ class Driver
   end
 end
 
-bus = Bus.create
+bus = Bus.new
 onces = Once[]
 Integer.times(200) do |i|
-  o = Once.new("once#{i}", 0, 0)
+  o = Once.new("once#{i}")
   Array.push(onces, o)
   Once.subscribe(o, bus, :*)
 end
-ticker = Ticker.new(0)
-summer = Summer.new(0)
+ticker = Ticker.new
+summer = Summer.new
 Bus.on(bus, :tick, ticker)
 Bus.on(bus, :*, summer)
 
-light = Fsm.create("light", :red, Light.new(0))
-Fsm.allow(light, :red, :tick, :green, :long_enough, :reset)
-Fsm.allow(light, :green, :tick, :yellow, :long_enough, :reset)
-Fsm.allow(light, :yellow, :tick, :red, :none, :reset)
-Fsm.allow(light, :*, :tick, :*, :none, :count)        # :* as target: stay
-parity_hooks = Parity.new(0)   # kept in a local: Fsm.get_hooks would be Light | Parity
-parity = Fsm.create("parity", :even, parity_hooks)
-Fsm.allow(parity, :even, :flip, :odd, :none, :none)
-Fsm.allow(parity, :odd, :flip, :even, :none, :none)
+light = Fsm.new("light", :red, Light.new)
+Fsm.allow(light, :red, :tick, :green, guard: :long_enough, action: :reset)
+Fsm.allow(light, :green, :tick, :yellow, guard: :long_enough, action: :reset)
+Fsm.allow(light, :yellow, :tick, :red, action: :reset)
+Fsm.allow(light, :*, :tick, :*, action: :count)        # :* as target: stay
+parity_hooks = Parity.new   # kept in a local: Fsm.get_hooks would be Light | Parity
+parity = Fsm.new("parity", :even, parity_hooks)
+Fsm.allow(parity, :even, :flip, :odd)
+Fsm.allow(parity, :odd, :flip, :even)
 Fsm.attach(light, bus)          # the light's moves go on the bus too
 Bus.on(bus, :tick, Driver.new(light, parity))
-recorder = Recorder.create
+recorder = Recorder.new
 Bus.on(bus, :fsm_moved, recorder)
 
 t0 = Time.now

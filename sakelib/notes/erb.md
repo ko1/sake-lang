@@ -115,3 +115,12 @@ values in the program and pass them in the Hash.
 - Speed (`phase2/bench_erb.sake`: an 80-row table template with a loop, if/else, `&&`, `>=`,
   `h`, `u`, `upcase`, `join`; CPU s of the whole `bin/sake --strict` run, 3 runs, load about 37 on
   16 cores): before 5.06 / 5.31 / 5.23, after 3.20 / 3.25 / 3.24.
+
+## Review against the 2026-10-05 language
+
+- `ERBFrame`'s `chained` and `in_alt` default to false (`ERBFrame.new(node)`).
+- `ERBNode.new(kind, text)`: `vars`, `body`, `alt` default to nil and `initialize` makes them empty
+  typed Arrays, as Ruby's initialize would; the `_node` helper is gone.
+- Kept: compiling at render time (Ruby's `ERB.new` does not raise for a bad template either).
+- Still unlike Ruby: `ERB.new(str, trim_mode: "-")` is `ERB.new(str, "-")`: `new` is the Struct
+  constructor and takes fields positionally, so it cannot take Ruby's keyword (erb.sake:29).  Helpers are `_`-prefixed for want of `private`.

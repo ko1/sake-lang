@@ -31,8 +31,8 @@ type includes, as Ruby's `Digest::Instance`.
 
 Also visible, though Ruby has no such names: the functions each algorithm defines for the mixin
 (`state`, `store_state`, `initial_state`, `compress`, `word_bytes`, `little_endian?`, `words`,
-`pack_words`, `name`), the mixin's `finish`, `finish_hex`, `compress_words`, `digest_of`, the tables `MD5.k`, `MD5.shifts`, `SHA256.k`, and
-the module `SHA2_64` (the compression shared by SHA384 and SHA512). Sake has no private functions.
+`pack_words`, `name`), the mixin's `finish`, `finish_hex`, `compress_words`, `digest_of`, and the tables
+`MD5.k`, `MD5.shifts`, `SHA256.k`, `SHA512.k`. Sake has no private functions.
 
 ## What differs from Ruby, and why
 
@@ -148,3 +148,18 @@ commit af197cd; the "0 KiB" row is start-up and checking alone):
 The rounds dominate; word reading was a smaller part than phase 1 guessed. Still about 2-6 KB/s.
 
 Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matrix.txt`.
+
+## Review 2026-10-05 (initialize, class B < A)
+
+- `def initialize(md) = reset(md)` in each class, as Ruby's `Digest::Base#initialize` resets: the
+  field defaults are placeholders (`h0 = 0`), and the initial words are written once, in
+  `initial_state`, instead of twice (defaults and `initial_state`).
+- `digest`, `hexdigest`, `base64digest`, `file` moved from the five classes into the mixin; the fresh
+  digest is the unqualified `new`, which is the including type's (`MD5.new` in MD5).
+- `class SHA384 < SHA512`: SHA384 writes only `digest_length`, `name`, `initial_state`; the module
+  `SHA2_64` is gone (its `k` and compression are SHA512's). As in Ruby, a SHA384 is not a SHA512.
+  451 → 419 lines. `--strict=1`/`2`: 0 reports before and after.
+- `initialize` could also go in the mixin (it works through `include`), but the spec names it only
+  for a class, so each class repeats the one line.
+- Fields `h0`..`h7` are `nil | Integer` in `--types`: `@h0, @h1, ... = h` destructures an
+  `Integer[]` whose length is not known statically (same before the review).
