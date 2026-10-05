@@ -184,7 +184,7 @@ instance first:
 | `attr_reader x, y` | `C.x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
 | `attr_accessor n` | `C.n(c)` and `C.set_n(c, v)` from anywhere |
 | `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
-| `attr_accessor n = 0` · `items = Array[]` | a default: any expression, evaluated by each `new` that leaves the field out; trailing fields with defaults may be left out of `new`; it does not fix the field's type |
+| `attr_accessor n = 0` · `items = Array[]` | a default: any expression, evaluated by each `new` that leaves the field out (like Ruby's `def initialize(items = [])`, not once when the class is defined); trailing fields with defaults may be left out of `new`; it does not fix the field's type |
 | `private attr_reader pos` | no `C.pos` outside the class (`@pos` inside); `new` still takes it |
 | `class E < Exception` | an exception type: `message` comes first |
 
