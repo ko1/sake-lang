@@ -1,0 +1,87 @@
+# Access-log pipeline: regexp parsing with named groups, status classes, hourly unique visitors, error bursts.
+
+class Entry
+  attr_reader ip, user, hour, minute, method, path, status, bytes
+end
+
+def log_text
+  <<~LOG
+    10.0.0.1 - ann [01/Oct/2026:09:01:12] "GET /index.html" 200 5120
+    10.0.0.2 - - [01/Oct/2026:09:02:40] "GET /about.html" 200 2048
+    10.0.0.1 - ann [01/Oct/2026:09:15:03] "POST /login" 302 0
+    10.0.0.3 - bob [01/Oct/2026:09:47:55] "GET /admin" 403 128
+    garbage line that does not parse
+    10.0.0.4 - - [01/Oct/2026:10:00:01] "GET /missing" 404 64
+    10.0.0.4 - - [01/Oct/2026:10:00:02] "GET /missing2" 404 64
+    10.0.0.4 - - [01/Oct/2026:10:00:05] "GET /missing3" 404 64
+    10.0.0.2 - cy [01/Oct/2026:10:12:30] "GET /index.html" 200 5120
+    10.0.0.5 - dee [01/Oct/2026:10:30:00] "GET /api/data" 500 0
+    10.0.0.5 - dee [01/Oct/2026:10:30:09] "GET /api/data" 500 0
+    10.0.0.1 - ann [01/Oct/2026:11:05:44] "GET /api/data" 200 9000
+    10.0.0.6 - - [01/Oct/2026:11:59:59] "HEAD /index.html" 200 0
+    10.0.0.3 - bob [01/Oct/2026:11:20:00] "GET /index.html" 304 0
+  LOG
+end
+
+def line_re = /\A(?<ip>\S+) - (?<user>\S+) \[\d+\/\w+\/\d+:(?<h>\d\d):(?<m>\d\d):\d\d\] "(?<method>[A-Z]+) (?<path>\S+)" (?<status>\d{3}) (?<bytes>\d+)\z/
+
+def parse(line)
+  m = String.match(line, line_re)
+  return nil unless m
+  user = m["user"] == "-" ? nil : m["user"]
+  Entry.new(m["ip"], user, String.to_i(m["h"]), String.to_i(m["m"]), m["method"], m["path"], String.to_i(m["status"]), String.to_i(m["bytes"]))
+end
+
+def status_class(code)
+  case code / 100
+  in 2 then :success
+  in 3 then :redirect
+  in 4 then :client_error
+  in 5 then :server_error
+  else :unknown
+  end
+end
+
+lines = String.lines(log_text)
+entries = Array.filter_map(lines) { |l| parse(String.chomp(l)) }
+rejected = Array.size(lines) - Array.size(entries)
+puts("parsed #{Array.size(entries)} entries, rejected #{rejected}")
+
+classes = Array.tally(Array.map(entries) { |e| status_class(Entry.get_status(e)) })
+Array.each(Array[:success, :redirect, :client_error, :server_error]) do |k|
+  puts(format("  %-13s %d", Symbol.to_s(k), Hash.fetch(classes, k, 0)))
+end
+
+puts("== Per hour ==")
+by_hour = Array.group_by(entries) { |e| Entry.get_hour(e) }
+Array.each(Array.sort(Hash.keys(by_hour))) do |h|
+  es = by_hour[h]
+  ips = Array.to_set(Array.map(es) { |e| Entry.get_ip(e) })
+  users = Array.to_set(Array.compact(Array.map(es) { |e| Entry.get_user(e) }))
+  bytes = Array.sum(Array.map(es) { |e| Entry.get_bytes(e) })
+  puts(format("  %02d:00 requests=%d ips=%d users=%s bytes=%d", h, Array.size(es), Set.size(ips), Set.empty?(users) ? "-" : Array.join(Set.sort(users), ","), bytes))
+end
+
+puts("== Top paths ==")
+paths = Array.tally(Array.map(entries) { |e| Entry.get_path(e) })
+Array.each(Array.take(Hash.sort_by(paths) { |p, n| [-n, p] }, 3)) { |p, n| puts("  #{n} #{p}") }
+
+puts("== Error bursts ==")
+errors = Array.select(entries) { |e| Entry.get_status(e) >= 400 }
+bursts = Array.chunk_while(errors) do |a, b|
+  Entry.get_ip(a) == Entry.get_ip(b) && Entry.get_hour(a) * 60 + Entry.get_minute(a) + 1 >= Entry.get_hour(b) * 60 + Entry.get_minute(b)
+end
+Array.each(bursts) do |run|
+  next if Array.size(run) < 2
+  first = Array.first(run)
+  puts("  #{Entry.get_ip(first)} x#{Array.size(run)} status #{Array.join(Array.uniq(Array.map(run) { |e| Entry.get_status(e) }), "/")}")
+end
+
+anon_ips = Array.to_set(Array.map(Array.select(entries) { |e| Entry.get_user(e) == nil }) { |e| Entry.get_ip(e) })
+auth_ips = Array.to_set(Array.map(Array.reject(entries) { |e| Entry.get_user(e) == nil }) { |e| Entry.get_ip(e) })
+puts("ips seen both anonymous and logged in: #{Array.join(Set.sort(anon_ips & auth_ips), ", ")}")
+puts("anonymous only: #{Array.join(Set.sort(anon_ips - auth_ips), ", ")}")
+methods = Array.uniq(Array.map(entries) { |e| Entry.get_method(e) })
+puts("methods: #{Array.join(methods, " ")}")
+big = Array.max_by(entries) { |e| Entry.get_bytes(e) }
+puts("largest response: #{Entry.get_path(big)} (#{Entry.get_bytes(big)} bytes, user #{Entry.get_user(big) || "anonymous"})")

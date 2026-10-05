@@ -1,0 +1,27 @@
+# Tasks: state machines and event processing
+
+- turnstile: Coin-operated turnstile (locked/unlocked) driven by an event list, with counters and an action tally.
+- vending_machine: Coin-op vending machine handling coin/select/cancel events, greedy change from a coin inventory, and error codes via an exception type.
+- tcp_states: TCP connection state machine driven by a (state, event) => (next state, reply) Hash table, with scenario runs, invalid-transition exceptions, and BFS reachability.
+- expr_lexer: Character-class driven lexer (start/int/frac/ident states) for an expression language, with two-char operators, keywords, and positioned lex errors.
+- order_workflow: E-commerce order lifecycle (pending/paid/shipped/...) with an allowed-events table, payment checks with a Money type, audit trail, and grouped reporting.
+- regex_nfa: Thompson construction of an NFA from a small regex language (concat, |, *, +, ?) via shunting-yard postfix, and set-based NFA simulation.
+- dfa_minimize: Moore partition-refinement minimization of DFAs stored as Hash[(state, symbol)] tables, with reachability pruning and an exhaustive equivalence check on short words.
+- elevator: Tick-driven single-car elevator controller (direction/door/dwell states, SCAN-style stop selection) with timed calls and per-passenger wait report.
+- keypad_lock: Door keypad with code entry, clear/submit keys, three-strike timed lockout, relock, and an in-place code-change mode.
+- csv_parser: Character-level CSV parser state machine (field start / unquoted / quoted / quote-seen) handling escaped quotes, CRLF and embedded newlines, with a formatted table report.
+- event_sourcing: Bank ledger rebuilt by replaying typed events (opened/deposited/withdrawn/transferred/closed) with rejection rules, plus snapshots and replay-from-snapshot consistency checks.
+- button_debounce: Two cascaded machines: a sample-level debouncer producing down/up edges, then a gesture recognizer classifying click, double-click and long-press.
+- http_parser: Incremental HTTP/1.x request parser fed in arbitrary chunks (request line, headers, Content-Length body, chunked transfer encoding, trailers) with error states.
+- markdown_blocks: Line-oriented Markdown block renderer (paragraph, lists, quote, fenced code, headings) as a state machine emitting HTML with inline formatting.
+- morse_decoder: Morse encoder producing jittered on/off pulse timings and a timing-classifying decoder state machine that estimates the unit length and splits letters and words.
+- machine_mixin: A reusable StateMachine mixin (fire/can?/events_available) shared by Door, Light and Ticket types, each supplying its own transition table and on-enter hook; a mixed script is dispatched across them.
+- bank_queue_sim: Discrete-event simulation of a bank with k tellers: a binary-heap event queue ordered by a Comparable Event type, idle/busy teller states, LCG-generated arrivals, and wait/utilization stats.
+- smtp_session: Server side of an SMTP dialogue (HELO/MAIL/RCPT/DATA/RSET/QUIT) as a session state machine with reply codes, relay rules, dot-unstuffing, and delivered-message capture.
+- shell_words: POSIX-shell-like word splitter (normal/single/double/escape/variable states) with $VAR expansion, operators like | && >> ;, pipeline staging, and quote errors.
+- bracket_checker: Pushdown-style bracket matcher for source text with code/string/escape/comment states, reporting mismatched, unexpected and unclosed brackets with positions.
+- enemy_ai: Game enemy AI (patrol/chase/attack/flee/recover/dead) over a grid with a Vec type using user-defined + and -, driven by a scripted player path.
+- circuit_breaker: Circuit breaker (closed/open/half-open) around a scripted flaky service, with failure threshold, cooldown, half-open trials, `retry` on 503, and exception-typed outcomes.
+- divisibility_dfa: Builds remainder DFAs for divisibility in a given base, runs them on number strings, and combines them with a product construction (and / or / and-not) over Tuple states.
+- traffic_light: Four-way intersection controller with green/yellow/all-red phases, min/max green with vehicle-sensor extension, pedestrian WALK requests, and siren preemption, rendered as a timeline.
+- job_pipeline: CI-style job DAG runner: DFS cycle check / topological order, then a tick-driven scheduler moving jobs through pending/ready/running/succeeded/failed/skipped with limited slots and retries.

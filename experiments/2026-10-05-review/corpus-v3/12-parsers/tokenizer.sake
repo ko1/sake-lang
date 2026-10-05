@@ -1,0 +1,102 @@
+class Token
+  attr_reader kind, text, line, col
+
+  def to_s(t) = "#{@line}:#{@col} #{String.ljust(Symbol.to_s(@kind), 8)} #{Kernel.inspect(@text)}"
+end
+
+def keywords = once { Set["if", "else", "while", "return", "let", "fn"] }
+def two_char_ops = once { Array["==", "!=", "<=", ">=", "&&", "||", "->"] }
+def one_char_ops = "+-*/%<>=!(){},;"
+
+def digit?(c) = c != nil && String.match?(c, /\A[0-9]\z/)
+def ident_start?(c) = c != nil && String.match?(c, /\A[A-Za-z_]\z/)
+def ident_char?(c) = c != nil && String.match?(c, /\A[A-Za-z0-9_]\z/)
+
+def tokenize(src)
+  tokens = Token[]
+  errors = Array[]
+  i = 0
+  line = 1
+  col = 1
+  n = String.size(src)
+  while i < n
+    c = src[i]
+    if c == "\n"
+      line += 1
+      col = 1
+      i += 1
+    elsif c == " " || c == "\t"
+      i += 1
+      col += 1
+    elsif c == "/" && src[i + 1] == "/"
+      i += 1 while i < n && src[i] != "\n"
+    elsif digit?(c)
+      start = i
+      i += 1 while digit?(src[i])
+      kind = :int
+      if src[i] == "." && digit?(src[i + 1])
+        i += 1
+        i += 1 while digit?(src[i])
+        kind = :float
+      end
+      Array.push(tokens, Token.new(kind, src[start...i], line, col))
+      col += i - start
+    elsif ident_start?(c)
+      start = i
+      i += 1 while ident_char?(src[i])
+      text = src[start...i]
+      kind = Set.include?(keywords, text) ? :keyword : :ident
+      Array.push(tokens, Token.new(kind, text, line, col))
+      col += i - start
+    elsif c == "\""
+      start = i
+      i += 1
+      i += 1 while i < n && src[i] != "\"" && src[i] != "\n"
+      if src[i] == "\""
+        i += 1
+        Array.push(tokens, Token.new(:string, src[(start + 1)...(i - 1)], line, col))
+      else
+        Array.push(errors, "#{line}:#{col}: unterminated string")
+      end
+      col += i - start
+    else
+      pair = src[i..(i + 1)]
+      if Array.include?(two_char_ops, pair)
+        Array.push(tokens, Token.new(:op, pair, line, col))
+        i += 2
+        col += 2
+      elsif String.include?(one_char_ops, c)
+        Array.push(tokens, Token.new(:op, c, line, col))
+        i += 1
+        col += 1
+      else
+        Array.push(errors, "#{line}:#{col}: unexpected character #{Kernel.inspect(c)}")
+        i += 1
+        col += 1
+      end
+    end
+  end
+  Array.push(tokens, Token.new(:eof, "", line, col))
+  [tokens, errors]
+end
+
+def report(name, src)
+  puts("== #{name}")
+  tokens, errors = tokenize(src)
+  Array.each(tokens) { |t| puts("  #{t}") }
+  Array.each(errors) { |e| puts("  error #{e}") }
+  kinds = Array.tally(Array.map(tokens) { |t| Token.get_kind(t) })
+  summary = Array.map(Hash.sort_by(kinds) { |k, v| Symbol.to_s(k) }) { |k, v| "#{k}=#{v}" }
+  puts("  summary: #{Array.join(summary, " ")}")
+end
+
+def sources = once do
+  Array[
+    ["assign", "let x = 42;\nlet y = x * 3.14; // area\n"],
+    ["function", "fn max(a, b) {\n  if (a >= b) { return a; } else { return b; }\n}"],
+    ["strings", "let s = \"hello\";\nlet t = \"oops\nlet u = s;"],
+    ["junk", "x = 1 @ 2 # 3\nwhile (x != 0 && y) -> z"]
+  ]
+end
+
+Array.each(sources) { |name, src| report(name, src) }

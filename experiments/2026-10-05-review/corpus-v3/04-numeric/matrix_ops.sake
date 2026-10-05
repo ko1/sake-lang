@@ -1,0 +1,157 @@
+class DimensionError < StandardError
+  attr_reader left, right
+end
+
+class Matrix
+  attr_reader rows, cols, data
+  include Arithmetic
+  include Indexable
+
+  def zeros(r, c) = Matrix.new(r, c, Array.new(r * c, 0.0))
+
+  def identity(n)
+    m = zeros(n, n)
+    Range.each(0...n) { |i| m[i, i] = 1.0 }
+    m
+  end
+
+  def from_rows(rows)
+    Matrix.new(Array.size(rows), Array.size(rows[0]), Array.flatten(rows))
+  end
+
+  def [](m, i, j)
+    @data[i * @cols + j]
+  end
+
+  def []=(m, i, j, v)
+    @data[i * @cols + j] = v
+  end
+
+  def shape(m) = "#{@rows}x#{@cols}"
+
+  def check_same(a, b)
+    if @rows != Matrix.get_rows(b) || @cols != Matrix.get_cols(b)
+      raise DimensionError.new("shape mismatch", shape(a), shape(b))
+    end
+  end
+
+  def +(a, b)
+    check_same(a, b)
+    Matrix.new(@rows, @cols, Array.map(Array.zip(@data, Matrix.get_data(b))) { |x, y| x + y })
+  end
+
+  def -(a, b)
+    check_same(a, b)
+    Matrix.new(@rows, @cols, Array.map(Array.zip(@data, Matrix.get_data(b))) { |x, y| x - y })
+  end
+
+  def *(a, b)
+    case b
+    in Float | Integer
+      Matrix.new(@rows, @cols, Array.map(@data) { |x| x * b })
+    in Matrix
+      raise DimensionError.new("inner dimensions differ", shape(a), shape(b)) if @cols != Matrix.get_rows(b)
+      out = zeros(@rows, Matrix.get_cols(b))
+      Range.each(0...@rows) do |i|
+        Range.each(0...Matrix.get_cols(b)) do |j|
+          s = 0.0
+          Range.each(0...@cols) { |k| s += a[i, k] * b[k, j] }
+          out[i, j] = s
+        end
+      end
+      out
+    end
+  end
+
+  def transpose(m)
+    t = zeros(@cols, @rows)
+    Range.each(0...@rows) { |i| Range.each(0...@cols) { |j| t[j, i] = m[i, j] } }
+    t
+  end
+
+  def trace(m) = Range.sum(0...@rows) { |i| m[i, i] }
+
+  def minor(m, skip_r, skip_c)
+    rows = Array[]
+    Range.each(0...@rows) do |i|
+      next if i == skip_r
+      row = Float[]
+      Range.each(0...@cols) { |j| Array.push(row, m[i, j]) if j != skip_c }
+      Array.push(rows, row)
+    end
+    from_rows(rows)
+  end
+
+  def det(m)
+    raise DimensionError.new("determinant needs a square matrix", shape(m), shape(m)) if @rows != @cols
+    return m[0, 0] if @rows == 1
+    return m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0] if @rows == 2
+    total = 0.0
+    Range.each(0...@cols) do |j|
+      sign = Integer.even?(j) ? 1.0 : -1.0
+      total += sign * m[0, j] * det(minor(m, 0, j))
+    end
+    total
+  end
+
+  def power(m, n)
+    result = identity(@rows)
+    base = m
+    while n > 0
+      result = result * base if Integer.odd?(n)
+      base = base * base
+      n = n / 2
+    end
+    result
+  end
+
+  def frobenius(m) = Math.sqrt(Array.sum(Array.map(@data) { |x| x * x }))
+
+  def to_s(m)
+    lines = Range.map(0...@rows) do |i|
+      cells = Range.map(0...@cols) { |j| format("%9.3f", m[i, j]) }
+      "[" + Array.join(cells, " ") + " ]"
+    end
+    Array.join(lines, "\n")
+  end
+end
+
+a = Matrix.from_rows(Array[Float[2.0, -1.0, 0.0], Float[-1.0, 2.0, -1.0], Float[0.0, -1.0, 2.0]])
+b = Matrix.from_rows(Array[Float[1.0, 2.0], Float[0.5, -1.0], Float[3.0, 0.25]])
+
+puts("A =")
+puts(a)
+puts("A * B =")
+puts(a * b)
+puts("B^T * B =")
+puts(Matrix.transpose(b) * b)
+puts("2A - I =")
+puts(a * 2 - Matrix.identity(3))
+puts(format("trace(A)=%.3f det(A)=%.3f |A|_F=%.4f", Matrix.trace(a), Matrix.det(a), Matrix.frobenius(a)))
+
+r = Matrix.from_rows(Array[Float[0.0, -1.0], Float[1.0, 0.0]])
+puts("rotation^4 is identity: #{Matrix.frobenius(Matrix.power(r, 4) - Matrix.identity(2)) < 1e-12}")
+fib = Matrix.from_rows(Array[Float[1.0, 1.0], Float[1.0, 0.0]])
+puts(format("fib(30) via matrix power: %.0f", Matrix.power(fib, 30)[0, 1]))
+
+h = Matrix.zeros(4, 4)
+Range.each(0...4) { |i| Range.each(0...4) { |j| h[i, j] = 1.0 / (i + j + 1) } }
+puts(format("det(Hilbert 4) = %.6e", Matrix.det(h)))
+h[3, 3] = h[3, 3] + 0.001
+puts(format("after perturbing: %.6e", Matrix.det(h)))
+
+tests = Array[[a, b], [b, a], [b, b]]
+Array.each(tests) do |x, y|
+  begin
+    s = x + y
+    puts("sum shape #{Matrix.shape(s)}")
+  rescue DimensionError => e
+    puts("cannot add: #{Exception.message(e)} (#{DimensionError.get_left(e)} vs #{DimensionError.get_right(e)})")
+  end
+end
+
+begin
+  b * b
+rescue DimensionError => e
+  puts("cannot multiply: #{Exception.message(e)} (#{DimensionError.get_left(e)} vs #{DimensionError.get_right(e)})")
+end

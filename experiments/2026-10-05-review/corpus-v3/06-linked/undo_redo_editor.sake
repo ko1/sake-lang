@@ -1,0 +1,120 @@
+class Cell
+  attr_reader item, under
+end
+
+class Insert
+  attr_reader pos, text
+end
+
+class Delete
+  attr_reader pos, removed
+end
+
+class Replace
+  attr_reader pos, old, new
+end
+
+class NothingToUndo < Exception
+  attr_reader which
+end
+
+class Editor
+  attr_reader text, undos = nil, redos = nil, saved_depth = 0, depth = 0
+
+  def splice(ed, pos, len, s) = @text = @text[0...pos] + s + @text[(pos + len)..]
+
+  def apply(ed, cmd)
+    case cmd
+    in Insert then splice(ed, Insert.get_pos(cmd), 0, Insert.get_text(cmd))
+    in Delete then splice(ed, Delete.get_pos(cmd), String.size(Delete.get_removed(cmd)), "")
+    in Replace then splice(ed, Replace.get_pos(cmd), String.size(Replace.get_old(cmd)), Replace.get_new(cmd))
+    end
+  end
+
+  def inverse(cmd)
+    case cmd
+    in Insert then Delete.new(Insert.get_pos(cmd), Insert.get_text(cmd))
+    in Delete then Insert.new(Delete.get_pos(cmd), Delete.get_removed(cmd))
+    in Replace then Replace.new(Replace.get_pos(cmd), Replace.get_new(cmd), Replace.get_old(cmd))
+    end
+  end
+
+  def run(ed, cmd)
+    apply(ed, cmd)
+    @undos = Cell.new(cmd, @undos)
+    @redos = nil
+    @depth += 1
+  end
+
+  def insert(ed, pos, s) = run(ed, Insert.new(pos, s))
+  def delete(ed, pos, len) = run(ed, Delete.new(pos, @text[pos...(pos + len)]))
+
+  def replace_all(ed, from, to)
+    start = 0
+    while (j = String.index(@text[start..], from))
+      i = start + j
+      run(ed, Replace.new(i, from, to))
+      start = i + String.size(to)
+    end
+  end
+
+  def undo!(ed)
+    top = @undos
+    raise NothingToUndo.new("nothing to undo", "undo") unless top
+    cmd = Cell.get_item(top)
+    apply(ed, inverse(cmd))
+    @undos = Cell.get_under(top)
+    @redos = Cell.new(cmd, @redos)
+    @depth -= 1
+  end
+
+  def redo!(ed)
+    top = @redos
+    raise NothingToUndo.new("nothing to redo", "redo") unless top
+    cmd = Cell.get_item(top)
+    apply(ed, cmd)
+    @redos = Cell.get_under(top)
+    @undos = Cell.new(cmd, @undos)
+    @depth += 1
+  end
+
+  def save(ed) = @saved_depth = @depth
+  def dirty?(ed) = @depth != @saved_depth
+
+  def stack_size(cell)
+    n = 0
+    while cell
+      n += 1
+      cell = Cell.get_under(cell)
+    end
+    n
+  end
+
+  def status(ed) = format("%-34s undo=%d redo=%d%s", Kernel.inspect(@text), stack_size(@undos), stack_size(@redos), dirty?(ed) ? " *" : "")
+end
+
+ed = Editor.new("hello world")
+puts(Editor.status(ed))
+script = Array[
+  [:insert, 5, ","], [:insert, 12, "!"], [:save, 0, ""], [:delete, 0, "1"], [:insert, 0, "H"],
+  [:undo, 0, ""], [:undo, 0, ""], [:redo, 0, ""], [:replace, 0, "o|0"], [:undo, 0, ""],
+  [:undo, 0, ""], [:insert, 6, " big"], [:redo, 0, ""], [:undo, 0, ""], [:undo, 0, ""],
+  [:undo, 0, ""], [:undo, 0, ""], [:undo, 0, ""], [:redo, 0, ""]
+]
+Array.each(script) do |op, pos, arg|
+  begin
+    case op
+    in :insert then Editor.insert(ed, pos, arg)
+    in :delete then Editor.delete(ed, pos, String.to_i(arg))
+    in :replace
+      from, to = String.split(arg, "|")
+      Editor.replace_all(ed, from, to)
+    in :undo then Editor.undo!(ed)
+    in :redo then Editor.redo!(ed)
+    in :save then Editor.save(ed)
+    end
+    puts(format("%-8s %s", op, Editor.status(ed)))
+  rescue NothingToUndo => e
+    puts(format("%-8s error: %s (%s)", op, Exception.message(e), NothingToUndo.get_which(e)))
+  end
+end

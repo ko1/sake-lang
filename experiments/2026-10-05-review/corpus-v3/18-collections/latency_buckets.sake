@@ -1,0 +1,79 @@
+# Response-time histogram: bucket latencies into Ranges (one endless), percentiles, and per-endpoint stats.
+
+def buckets
+  Array[
+    ["fast", 0...50],
+    ["ok", 50...200],
+    ["slow", 200...1000],
+    ["very slow", 1000..]
+  ]
+end
+
+def samples
+  text = "GET /home 12, GET /home 48, GET /home 51, POST /login 230, GET /search 180, " +
+         "GET /search 950, GET /search 1200, POST /login 75, GET /home 9, GET /api/items 33, " +
+         "GET /api/items 41, GET /api/items 260, POST /api/items 410, GET /search 199, " +
+         "GET /home 3000, POST /login 88, GET /api/items 50, GET /search 640"
+  Array.map(String.split(text, ", ")) do |entry|
+    verb, path, ms = String.split(entry, " ")
+    {verb: verb, path: path, ms: String.to_i(ms)}
+  end
+end
+
+def bucket_for(ms)
+  found = Array.find(buckets) { |label, r| Range.cover?(r, ms) }
+  found ? found[0] : "?"
+end
+
+def percentile(sorted, pct)
+  return nil if Array.empty?(sorted)
+  rank = Float.ceil(pct / 100.0 * Array.size(sorted)) - 1
+  rank = 0 if rank < 0
+  sorted[rank]
+end
+
+def range_label(r)
+  hi = Range.end(r)
+  if hi == nil
+    ">= #{Range.begin(r)}"
+  elsif Range.exclude_end?(r)
+    "#{Range.begin(r)}-#{hi - 1}"
+  else
+    "#{Range.begin(r)}-#{hi}"
+  end
+end
+
+data = samples
+times = Array.sort(Array.map(data) { |s| s => {ms:}; ms })
+puts("samples: #{Array.size(times)}, min #{Array.first(times)}, max #{Array.last(times)}")
+puts(format("mean: %.1f ms", Array.sum(times) / Integer.to_f(Array.size(times))))
+Array.each(Array[50, 90, 99]) { |pc| puts("p#{pc}: #{percentile(times, pc)} ms") }
+
+counts = Array.tally(Array.map(times) { |t| bucket_for(t) })
+widest = Array.max(Array.map(buckets) { |label, r| String.size(label) })
+puts("histogram:")
+Array.each(buckets) do |label, r|
+  n = Hash.fetch(counts, label, 0)
+  bar = "#" * n
+  puts(format("  %-*s %-10s %2d %s", widest, label, range_label(r), n, bar))
+end
+
+puts("per endpoint:")
+groups = Array.group_by(data) { |s| s => {verb:, path:}; "#{verb} #{path}" }
+rows = Array.map(Hash.to_a(groups)) do |key, list|
+  ms = Array.sort(Array.map(list) { |s| s => {ms:}; ms })
+  [key, Array.size(ms), percentile(ms, 50), Array.last(ms)]
+end
+Array.each(Array.sort_by(rows) { |key, n, med, worst| -worst }) do |key, n, med, worst|
+  puts(format("  %-16s n=%d median=%4d worst=%4d [%s]", key, n, med, worst, bucket_for(worst)))
+end
+
+slo = 0...200
+within = Array.count(times) { |t| Range.include?(slo, t) }
+puts(format("within SLO %s: %d/%d (%.0f%%)", range_label(slo), within, Array.size(times), within * 100.0 / Array.size(times)))
+offenders = Array.uniq(Array.filter_map(data) { |s| s => {path:, ms:}; Range.cover?(slo, ms) ? nil : path })
+puts("paths breaking SLO: #{Array.join(Array.sort(offenders), ", ")}")
+p(percentile(Array[], 50))
+step_hist = Hash.new(0)
+Array.each(times) { |t| step_hist[t / 250 * 250] += 1 if t < 1000 }
+Range.step(0...1000, 250) { |lo| puts("  #{String.rjust(Integer.to_s(lo), 3)}..#{lo + 249}: #{step_hist[lo]}") }

@@ -1,0 +1,27 @@
+# Changes in corpus-v2/17-encodings
+
+- ascii85: `Array.empty?(group) == false` (twice) -> `!Array.empty?(group)` (unary `!`).
+- base32_ids: `(codec in Rfc4648) ? Rfc4648.get_name(codec) : Crockford.get_name(codec)` -> `(Rfc4648|Crockford).get_name(codec)` (type list on the operation).
+- base64_codec: unchanged
+- bitset: `n & (0 - n)` -> `n & -n` (unary `-`).
+- bloom_filter: `Math.exp(0.0 - ...)` -> `Math.exp(-(...))` (unary `-`); `Bloom.include?(bf, m) == false` -> `!Bloom.include?(bf, m)` (unary `!`).
+- caesar_cracker: unchanged
+- check_digits: unchanged
+- crc_catalog: unchanged
+- frame_parser: unchanged
+- hamming_secded: `|pair|` + `pair[0]`/`pair[1]` -> `each_slice(nibbles, 2) do |hi, lo|` (block parameters take an Array apart).
+- hex_dump: size check + `Array.empty?(compare(back, bytes))` -> `back == bytes` (Array equality).
+- huffman: packed sort keys `format("%06d %s", n, sym)` and `format("%04d %s", size, sym)` -> Tuple keys `[n, sym]`, `[String.size(code), sym]`; HNode's two-step `<=>` -> `[@weight, @order] <=> [...]` (ordered Tuples).
+- lzw: `if String.empty?(w) == false` -> `unless String.empty?(w)`.
+- morse: `if Set.empty?(unknown) == false` -> `unless Set.empty?(unknown)`.
+- murmur_ring: unchanged
+- percent_encoding: Hash-of-Arrays comparison by sizes and joined values per key -> `parse_query(rebuilt) == params` (Hash/Array equality).
+- playfair: unchanged
+- protobuf_wire: `(0 - n) * 2 - 1` and `0 - (z + 1) / 2` -> `-n * 2 - 1`, `-(z + 1) / 2` (unary `-`); the `if wire == 0 / elsif` chain in `decode` -> `case wire in 0 / in 5 / in 2 / else`, matching `encode_field`.
+- raid5_parity: unchanged
+- rolling_sync: `if Array.empty?(literal) == false` (twice) -> `unless Array.empty?(literal)`.
+- run_length: `r[0]`/`r[1]` -> block destructuring `|x, n|` of the run Arrays; joined-String comparison of bitmap rows -> `back == bits` (Array equality); `== false` -> `unless`.
+- transposition: packed sort keys `pattern[i] * n + i` and `format("%s%03d", key[i], i)` -> Tuple keys `[pattern[i], i]`, `[key[i], i]`.
+- utf8_codec: comparing hex strings of the byte arrays -> `again == host` (Array equality).
+- vigenere: unchanged
+- xor_breaker: unchanged

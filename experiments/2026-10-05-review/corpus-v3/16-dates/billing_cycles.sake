@@ -1,0 +1,137 @@
+# Subscription billing: monthly and yearly cycles anchored to the signup day
+# (clamped at month ends), mid-cycle plan changes with day-based proration,
+# cancellations, and the invoices issued up to a cut-off date.
+
+class Plan
+  attr_reader code, cents, months
+end
+
+class Subscription
+  attr_reader customer, anchor, plan, changes, cancelled
+end
+
+class Invoice
+  attr_reader customer, date, cents, note
+end
+
+class BadAnchor < StandardError
+  attr_reader customer
+end
+
+def days_from_civil(y, m, d)
+  y -= 1 if m <= 2
+  era = y / 400
+  yoe = y - era * 400
+  doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+end
+
+def leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+def dim(y, m) = m == 2 ? (leap?(y) ? 29 : 28) : Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+
+def ymd(s)
+  m = String.match(s, /\A(\d{4})-(\d{2})-(\d{2})\z/)
+  raise ArgumentError, "malformed date #{s}" if m == nil
+  Array.map(MatchData.captures(m)) { |x| String.to_i(x) }
+end
+
+def day_of(s)
+  y, m, d = ymd(s)
+  days_from_civil(y, m, d)
+end
+
+def iso(y, m, d) = format("%04d-%02d-%02d", y, m, d)
+
+# The n-th cycle start after the anchor, keeping the anchor day where possible.
+def cycle_start(anchor, n, months)
+  y, m, d = ymd(anchor)
+  total = m - 1 + n * months
+  ny = y + total / 12
+  nm = total % 12 + 1
+  iso(ny, nm, Array.min(Array[d, dim(ny, nm)]))
+end
+
+def money(cents) = format("%s$%d.%02d", cents < 0 ? "-" : "", Integer.abs(cents) / 100, Integer.abs(cents) % 100)
+
+def plans = once do
+  Hash[
+    "basic" => Plan.new("basic", 900, 1),
+    "pro" => Plan.new("pro", 2900, 1),
+    "pro-annual" => Plan.new("pro-annual", 29000, 12)
+  ]
+end
+
+# Prorated amount for the unused/used part of a cycle, rounded half up.
+def prorate(cents, days_used, days_total) = (cents * days_used * 2 + days_total) / (days_total * 2)
+
+def bill(sub, cutoff)
+  invoices = Invoice[]
+  plan = Hash.fetch(plans, Subscription.get_plan(sub))
+  anchor = Subscription.get_anchor(sub)
+  ay, am, ad = ymd(anchor)
+  raise BadAnchor.new("no such day #{anchor}", Subscription.get_customer(sub)) if ad > dim(ay, am)
+  changes = Subscription.get_changes(sub)
+  cancelled = Subscription.get_cancelled(sub)
+  n = 0
+  while true
+    start = cycle_start(anchor, n, Plan.get_months(plan))
+    finish = cycle_start(anchor, n + 1, Plan.get_months(plan))
+    break if day_of(start) > day_of(cutoff)
+    break if cancelled && day_of(start) >= day_of(cancelled)
+    Array.push(invoices, Invoice.new(Subscription.get_customer(sub), start, Plan.get_cents(plan), "#{Plan.get_code(plan)} #{start}..#{finish}"))
+    total_days = day_of(finish) - day_of(start)
+    change = Array.find(changes) { |date, code| day_of(date) > day_of(start) && day_of(date) < day_of(finish) }
+    if change
+      date, code = change
+      new_plan = Hash.fetch(plans, code)
+      left = day_of(finish) - day_of(date)
+      credit = prorate(Plan.get_cents(plan), left, total_days)
+      Array.push(invoices, Invoice.new(Subscription.get_customer(sub), date, -credit, "credit #{left}/#{total_days} days of #{Plan.get_code(plan)}"))
+      plan = new_plan
+      anchor = date
+      n = 0
+      next
+    end
+    if cancelled && day_of(cancelled) < day_of(finish)
+      left = day_of(finish) - day_of(cancelled)
+      refund = prorate(Plan.get_cents(plan), left, total_days)
+      Array.push(invoices, Invoice.new(Subscription.get_customer(sub), cancelled, -refund, "refund #{left}/#{total_days} days"))
+    end
+    n += 1
+  end
+  invoices
+end
+
+subs = Array[
+  Subscription.new("acme", "2026-01-31", "basic", Array[], nil),
+  Subscription.new("bolt", "2026-03-15", "basic", Array[["2026-05-01", "pro"]], nil),
+  Subscription.new("cora", "2026-02-29", "pro", Array[], nil),
+  Subscription.new("dune", "2025-11-30", "pro-annual", Array[], "2026-06-15"),
+  Subscription.new("echo", "2026-06-10", "pro", Array[["2026-08-20", "pro-annual"]], nil)
+]
+
+cutoff = "2026-10-01"
+all = Invoice[]
+Array.each(subs) do |sub|
+  Array.concat(all, bill(sub, cutoff))
+rescue BadAnchor => e
+  puts("skip #{BadAnchor.get_customer(e)}: #{Exception.message(e)}")
+end
+
+by_customer = Array.group_by(all) { |inv| Invoice.get_customer(inv) }
+Hash.each(by_customer) do |customer, invs|
+  puts("#{customer}:")
+  Array.each(invs) do |inv|
+    puts(format("  %s %10s  %s", Invoice.get_date(inv), money(Invoice.get_cents(inv)), Invoice.get_note(inv)))
+  end
+  puts(format("  %-10s %10s", "total", money(Array.sum(Array.map(invs) { |inv| Invoice.get_cents(inv) }))))
+end
+
+puts
+monthly = Hash.new(0)
+Array.each(all) { |inv| monthly[Invoice.get_date(inv)[0...7]] += Invoice.get_cents(inv) }
+Array.each(Array.sort(Hash.keys(monthly))) { |month| puts(format("%s %10s", month, money(monthly[month]))) }
+credits = Array.select(all) { |inv| Invoice.get_cents(inv) < 0 }
+puts("Credits and refunds: #{Array.size(credits)}, worth #{money(-Array.sum(Array.map(credits) { |inv| Invoice.get_cents(inv) }))}")
+puts("Anchor-day clamping for 01-31: #{Array.join(Range.map(0..5) { |n| cycle_start("2026-01-31", n, 1)[5..] }, " ")}")

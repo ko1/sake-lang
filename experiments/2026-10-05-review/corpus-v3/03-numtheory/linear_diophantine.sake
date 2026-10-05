@@ -1,0 +1,100 @@
+# Extended Euclid, Bezout coefficients, and solving a*x + b*y = c,
+# including non-negative solutions for coin/stamp style problems.
+
+class NoSolution < Exception
+  attr_reader a, b, c
+end
+
+class Step
+  attr_reader q, r, s, t
+end
+
+def ext_gcd(a, b)
+  old_r, r = a, b
+  old_s, s = 1, 0
+  old_t, t = 0, 1
+  steps = Step[]
+  while r != 0
+    q = old_r / r
+    old_r, r = r, old_r - q * r
+    old_s, s = s, old_s - q * s
+    old_t, t = t, old_t - q * t
+    Array.push(steps, Step.new(q, r, s, t))
+  end
+  {g: old_r, x: old_s, y: old_t, steps: steps}
+end
+
+def solve(a, b, c)
+  ext_gcd(a, b) => {g:, x:, y:}
+  raise NoSolution.new("#{g} does not divide #{c}", a, b, c) if c % g != 0
+  k = c / g
+  {x0: x * k, y0: y * k, dx: b / g, dy: a / g}
+end
+
+# smallest x >= 0 in the family x0 + n*dx, with the matching y
+def smallest_nonneg(sol)
+  sol => {x0:, y0:, dx:, dy:}
+  n = -x0 / dx
+  n += 1 if x0 + n * dx < 0
+  n -= 1 while x0 + (n - 1) * dx >= 0
+  [x0 + n * dx, y0 - n * dy]
+end
+
+def nonneg_solutions(a, b, c)
+  x, y = smallest_nonneg(solve(a, b, c))
+  g = Integer.gcd(a, b)
+  dx = b / g
+  dy = a / g
+  out = Array[]
+  while y >= 0
+    Array.push(out, [x, y])
+    x += dx
+    y -= dy
+  end
+  out
+end
+
+def frobenius(a, b) = a * b - a - b
+
+puts("== extended Euclid ==")
+Array.each(Array[[240, 46], [1071, 462], [17, 5], [99, 78]]) do |a, b|
+  r = ext_gcd(a, b)
+  r => {g:, x:, y:, steps:}
+  qs = Array.map(steps) { |st| Step.get_q(st) }
+  puts("gcd(#{a}, #{b}) = #{g} = #{a}*(#{x}) + #{b}*(#{y})  quotients #{qs}")
+  raise "Bezout check failed" if a * x + b * y != g
+end
+
+puts("== lcm of 1..n ==")
+acc = 1
+Range.each(1..20) do |n|
+  acc = Integer.lcm(acc, n)
+  puts("  lcm(1..#{n}) = #{acc}") if n % 4 == 0
+end
+
+puts("== a*x + b*y = c ==")
+problems = Array[[12, 18, 30], [12, 18, 31], [7, 11, 100], [35, 15, 5], [6, 10, 7]]
+Array.each(problems) do |a, b, c|
+  begin
+    sol = solve(a, b, c)
+    sol => {x0:, y0:, dx:, dy:}
+    puts("#{a}x + #{b}y = #{c}: x = #{x0} + #{dx}n, y = #{y0} - #{dy}n")
+  rescue NoSolution => e
+    puts("#{NoSolution.get_a(e)}x + #{NoSolution.get_b(e)}y = #{NoSolution.get_c(e)}: no solution (#{Exception.message(e)})")
+  end
+end
+
+puts("== stamps of 5 and 7 cents ==")
+Array.each(Array[24, 35, 23, 74]) do |amount|
+  ways = nonneg_solutions(5, 7, amount)
+  if Array.empty?(ways)
+    puts("  #{amount}: impossible")
+  else
+    desc = Array.map(ways) { |x, y| "#{x}x5+#{y}x7" }
+    puts("  #{amount}: #{Array.join(desc, ", ")}")
+  end
+end
+f = frobenius(5, 7)
+puts("largest impossible amount: #{f}")
+unreachable = Range.select(1..f) { |n| Array.empty?(nonneg_solutions(5, 7, n)) }
+puts("unreachable count: #{Array.size(unreachable)} = (5-1)(7-1)/2 = #{(5 - 1) * (7 - 1) / 2}")

@@ -1,0 +1,112 @@
+class Assignment
+  attr_reader name, category, max_points
+end
+
+class Student
+  attr_reader name, scores
+end
+
+def weights = Hash["homework" => 0.3, "quiz" => 0.2, "exam" => 0.5]
+
+def assignments
+  Assignment[
+    Assignment.new("HW1", "homework", 20), Assignment.new("HW2", "homework", 20),
+    Assignment.new("HW3", "homework", 25), Assignment.new("Q1", "quiz", 10),
+    Assignment.new("Q2", "quiz", 10), Assignment.new("Midterm", "exam", 100),
+    Assignment.new("Final", "exam", 150)
+  ]
+end
+
+def students
+  Student[
+    Student.new("Avery", Hash["HW1" => 18, "HW2" => 20, "HW3" => 22, "Q1" => 9, "Q2" => 8, "Midterm" => 88, "Final" => 131]),
+    Student.new("Blake", Hash["HW1" => 15, "HW2" => 12, "Q1" => 6, "Q2" => 7, "Midterm" => 71, "Final" => 102]),
+    Student.new("Casey", Hash["HW1" => 20, "HW2" => 19, "HW3" => 25, "Q1" => 10, "Q2" => 10, "Midterm" => 95, "Final" => 144]),
+    Student.new("Devon", Hash["HW1" => 10, "HW2" => 14, "HW3" => 12, "Q1" => 5, "Midterm" => 58, "Final" => 80]),
+    Student.new("Emery", Hash["HW1" => 19, "HW2" => 17, "HW3" => 21, "Q1" => 8, "Q2" => 9, "Midterm" => 79, "Final" => 120]),
+    Student.new("Finley", Hash["HW1" => 20, "HW2" => 20, "HW3" => 24, "Q1" => 9, "Q2" => 10, "Midterm" => 91, "Final" => 139]),
+    Student.new("Gray", Hash["HW2" => 8, "Q1" => 3, "Q2" => 4, "Midterm" => 42])
+  ]
+end
+
+def category_percent(student, category, items)
+  in_cat = Array.select(items) { Assignment.get_category(it) == category }
+  earned = Array.sum(in_cat) { |a| Hash.fetch(Student.get_scores(student), Assignment.get_name(a), 0) }
+  possible = Array.sum(in_cat) { Assignment.get_max_points(it) }
+  earned * 100.0 / possible
+end
+
+def weighted(student, items)
+  Hash.sum(weights) { |cat, w| category_percent(student, cat, items) * w }
+end
+
+def letter(pct)
+  if pct >= 90 then "A"
+  elsif pct >= 80 then "B"
+  elsif pct >= 70 then "C"
+  elsif pct >= 60 then "D"
+  else "F"
+  end
+end
+
+def mean(xs) = Array.sum(xs) / Array.size(xs)
+
+def stddev(xs)
+  m = mean(xs)
+  Math.sqrt(Array.sum(xs) { |x| (x - m) ** 2 } / Array.size(xs))
+end
+
+def competition_ranks(scores)
+  sorted = Array.sort_by(scores) { |name, s| -s }
+  ranks = Hash[]
+  prev = nil
+  rank = 0
+  Array.each_with_index(sorted) do |(name, s), i|
+    rank = i + 1 if prev == nil || Float.round(s, 1) != Float.round(prev, 1)
+    ranks[name] = rank
+    prev = s
+  end
+  ranks
+end
+
+items = assignments
+roster = students
+finals = Array.map(roster) { |s| [Student.get_name(s), weighted(s, items)] }
+ranks = competition_ranks(finals)
+
+puts(format("%-7s %8s %8s %8s %8s  %s  %s", "Student", "HW", "Quiz", "Exam", "Final", "Grade", "Rank"))
+Array.each(roster) do |s|
+  name = Student.get_name(s)
+  hw = category_percent(s, "homework", items)
+  qz = category_percent(s, "quiz", items)
+  ex = category_percent(s, "exam", items)
+  total = weighted(s, items)
+  puts(format("%-7s %7.1f%% %7.1f%% %7.1f%% %7.1f%%    %s    %d", name, hw, qz, ex, total, letter(total), ranks[name]))
+end
+
+puts
+totals = Array.map(finals) { |n, t| t }
+puts(format("class mean %.2f, stddev %.2f, high %.2f, low %.2f", mean(totals), stddev(totals), Array.max(totals), Array.min(totals)))
+dist = Array.tally(Array.map(totals) { letter(it) })
+Array.each(String.chars("ABCDF")) do |g|
+  n = Hash.fetch(dist, g, 0)
+  puts(format("  %s %-8s %d", g, "*" * n, n))
+end
+
+puts
+puts("Missing work:")
+Array.each(roster) do |s|
+  missing = Array.reject(items) { |a| Hash.key?(Student.get_scores(s), Assignment.get_name(a)) }
+  next if Array.empty?(missing)
+  puts("  #{Student.get_name(s)}: #{Array.join(Array.map(missing) { Assignment.get_name(it) }, ", ")}")
+end
+
+puts
+puts("Hardest assignment by average percent:")
+avg_by = Array.map(items) do |a|
+  got = Array.filter_map(roster) { |s| Student.get_scores(s)[Assignment.get_name(a)] }
+  [Assignment.get_name(a), mean(got) * 100.0 / Assignment.get_max_points(a), Array.size(got)]
+end
+Array.each(Array.take(Array.sort_by(avg_by) { |n, pct, c| pct }, 3)) do |n, pct, c|
+  puts(format("  %-8s %5.1f%% (%d submitted)", n, pct, c))
+end

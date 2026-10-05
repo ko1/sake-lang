@@ -1,0 +1,126 @@
+def brackets = once { Array[[100_000, 0.0], [300_000, 0.1], [600_000, 0.2], [nil, 0.3]] }
+
+def cents(c) = format("%d.%02d", c / 100, c % 100)
+
+module Payable
+  def gross(e, period) = raise("gross not implemented")
+  def name(e) = raise("name not implemented")
+  def dept(e) = raise("dept not implemented")
+  def kind(e) = "employee"
+  def taxable?(e) = true
+  def benefits(e) = 0
+
+  def withholding(e, period)
+    return 0 unless taxable?(e)
+    income = gross(e, period)
+    tax = 0.0
+    lower = 0
+    Array.each(brackets) do |limit, rate|
+      top = limit == nil ? income : Array.min(Array[income, limit])
+      tax += (top - lower) * rate if top > lower
+      break if limit == nil || income <= limit
+      lower = limit
+    end
+    Float.round(tax)
+  end
+
+  def net(e, period) = gross(e, period) - withholding(e, period) - benefits(e)
+
+  def stub(e, period)
+    g = gross(e, period)
+    format("%-6s %-12s gross %10s tax %9s benefits %7s net %10s",
+           name(e), kind(e), cents(g), cents(withholding(e, period)), cents(benefits(e)), cents(net(e, period)))
+  end
+end
+
+class Salaried
+  attr_reader name, dept, annual
+  include Payable
+  def name(e) = @name
+  def dept(e) = @dept
+  def kind(e) = "salaried"
+  def gross(e, period) = @annual / 12
+  def benefits(e) = 25_000
+end
+
+class Hourly
+  attr_reader name, dept, rate
+  include Payable
+  def name(e) = @name
+  def dept(e) = @dept
+  def kind(e) = "hourly"
+  def gross(e, period)
+    hours = period[@name] || 0
+    regular = Array.min(Array[hours, 160])
+    overtime = hours - regular
+    Float.round(regular * @rate + overtime * @rate * 1.5)
+  end
+  def benefits(e) = 8_000
+end
+
+class Commissioned
+  attr_reader name, dept, base, pct
+  include Payable
+  def name(e) = @name
+  def dept(e) = @dept
+  def kind(e) = "commission"
+  def gross(e, period)
+    sales = period["sales:#{@name}"] || 0
+    @base + Float.round(sales * @pct)
+  end
+  def benefits(e) = 15_000
+end
+
+class Contractor
+  attr_reader name, dept, invoice
+  include Payable
+  def name(e) = @name
+  def dept(e) = @dept
+  def kind(e) = "contractor"
+  def gross(e, period) = @invoice
+  def taxable?(e) = false
+end
+
+staff = Array[
+  Salaried.new("alice", "eng", 9_600_000),
+  Salaried.new("bruno", "ops", 5_400_000),
+  Hourly.new("chen", "ops", 2_850),
+  Hourly.new("dana", "eng", 4_200),
+  Commissioned.new("eli", "sales", 200_000, 0.08),
+  Commissioned.new("fay", "sales", 250_000, 0.05),
+  Contractor.new("gus", "eng", 720_000),
+  Hourly.new("hana", "support", 2_400)
+]
+
+months = Array[
+  ["2026-08", Hash["chen" => 172, "dana" => 150, "sales:eli" => 4_500_000, "sales:fay" => 9_100_000, "hana" => 0]],
+  ["2026-09", Hash["chen" => 160, "dana" => 181, "sales:eli" => 2_800_000, "hana" => 96]]
+]
+
+ytd = Hash.new(0)
+Array.each(months) do |label, period|
+  puts("== payroll #{label} ==")
+  Array.each(staff) { |e| puts(Payable.stub(e, period)) }
+  total_gross = Array.sum(staff) { |e| Payable.gross(e, period) }
+  total_tax = Array.sum(staff) { |e| Payable.withholding(e, period) }
+  puts("total gross #{cents(total_gross)}, withheld #{cents(total_tax)}")
+  Array.each(staff) { |e| ytd[Payable.name(e)] += Payable.net(e, period) }
+
+  by_dept = Hash.new(0)
+  Array.each(staff) do |e|
+    by_dept[Payable.dept(e)] += Payable.gross(e, period)
+  end
+  Array.each(Array.sort(Hash.keys(by_dept))) { |d| puts(format("  %-8s %12s", d, cents(by_dept[d]))) }
+
+  top = Array.max_by(staff) { |e| Payable.net(e, period) }
+  puts("top earner: #{Payable.name(top)}") if top
+  idle = Array.select(staff) { |e| Payable.gross(e, period) == 0 }
+  puts("no pay this month: #{Array.join(Array.map(idle) { |e| Payable.name(e) }, ", ")}") unless Array.empty?(idle)
+end
+
+puts("== year to date (net) ==")
+Array.each(Hash.sort_by(ytd) { |name, amount| -amount }) do |name, amount|
+  puts(format("%-6s %12s", name, cents(amount)))
+end
+kinds = Array.tally(Array.map(staff) { |e| Payable.kind(e) })
+puts("headcount: #{Array.join(Hash.map(kinds) { |k, n| "#{k}=#{n}" }, " ")}")

@@ -1,0 +1,92 @@
+class Worker
+  attr_reader name, rate, exempt
+end
+
+class Shift
+  attr_reader worker, week, day, minutes
+end
+
+def workers
+  Hash[
+    "kim" => Worker.new("Kim", 22.50, false),
+    "raj" => Worker.new("Raj", 31.00, false),
+    "zoe" => Worker.new("Zoe", 27.75, false),
+    "bo" => Worker.new("Bo", 45.00, true)
+  ]
+end
+
+def timesheet
+  <<~TXT
+    W14 kim Mon 08:00-16:30 Tue 08:00-17:00 Wed 08:00-16:30 Thu 08:00-18:15 Fri 08:00-16:00
+    W14 raj Mon 09:00-17:00 Tue 09:00-17:00 Wed 09:00-21:00 Thu 09:00-17:00 Fri 09:00-17:00 Sat 10:00-14:00
+    W14 zoe Mon 12:00-20:00 Wed 12:00-20:00 Fri 12:00-16:45
+    W14 bo Mon 07:00-19:00 Tue 07:00-19:00 Wed 07:00-19:00 Thu 07:00-15:00
+    W15 kim Mon 08:00-16:00 Tue 08:00-16:00 Wed 08:00-16:00 Thu 08:00-16:00 Fri 08:00-16:00
+    W15 raj Mon 09:00-17:30 Tue 09:00-17:30 Wed 09:00-17:30 Thu 09:00-17:30 Fri 09:00-17:30
+    W15 zoe Mon 12:00-23:30 Tue 12:00-22:00 Thu 22:00-06:00 Sat 12:00-20:00
+    W15 lee Mon 09:00-17:00
+  TXT
+end
+
+def to_minutes(hhmm)
+  h, m = String.split(hhmm, ":")
+  String.to_i(h) * 60 + String.to_i(m)
+end
+
+def parse_shifts(text)
+  shifts = Shift[]
+  Array.each(String.lines(text)) do |line|
+    week, who, *rest = String.split(line)
+    Array.each_slice(rest, 2) do |day, span|
+      from, to = String.split(span, "-")
+      start = to_minutes(from)
+      stop = to_minutes(to)
+      stop += 24 * 60 if stop <= start
+      Array.push(shifts, Shift.new(who, week, day, stop - start))
+    end
+  end
+  shifts
+end
+
+def hours(min) = format("%5.2f", min / 60.0)
+
+def split_overtime(day_minutes)
+  daily_regular = Array.map(day_minutes) { Array.min(Array[it, 8 * 60]) }
+  daily_ot = Array.sum(day_minutes) - Array.sum(daily_regular)
+  regular = Array.sum(daily_regular)
+  weekly_ot = regular > 40 * 60 ? regular - 40 * 60 : 0
+  [regular - weekly_ot, daily_ot + weekly_ot]
+end
+
+staff = workers
+shifts = parse_shifts(timesheet)
+unknown = Array.uniq(Array.filter_map(shifts) { |s| Shift.get_worker(s) unless Hash.key?(staff, Shift.get_worker(s)) })
+known = Array.select(shifts) { Hash.key?(staff, Shift.get_worker(it)) }
+
+grand = 0.0
+Hash.each(Array.group_by(known) { Shift.get_worker(it) }) do |id, list|
+  w = Hash.fetch(staff, id)
+  rate = Worker.get_rate(w)
+  puts("#{Worker.get_name(w)} (#{Worker.get_exempt(w) ? "exempt" : format("$%.2f/h", rate)})")
+  total_pay = 0.0
+  Hash.each(Array.group_by(list) { Shift.get_week(it) }) do |week, ws|
+    mins = Array.map(ws) { Shift.get_minutes(it) }
+    if Worker.get_exempt(w)
+      reg = Array.sum(mins)
+      ot = 0
+      pay = rate * 40
+    else
+      reg, ot = split_overtime(mins)
+      pay = reg / 60.0 * rate + ot / 60.0 * rate * 1.5
+    end
+    long = Array.select(ws) { Shift.get_minutes(it) > 10 * 60 }
+    warn = Array.empty?(long) ? "" : "  long shift: #{Array.join(Array.map(long) { Shift.get_day(it) }, ",")}"
+    puts(format("  %s days=%d regular=%s overtime=%s pay=%9.2f%s", week, Array.size(ws), hours(reg), hours(ot), pay, warn))
+    total_pay += pay
+  end
+  puts(format("  total %.2f", total_pay))
+  grand += total_pay
+end
+puts
+puts(format("Payroll total: %.2f", grand))
+puts("Unknown worker ids: #{Array.join(unknown, ", ")}") unless Array.empty?(unknown)

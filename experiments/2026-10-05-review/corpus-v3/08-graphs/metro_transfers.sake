@@ -1,0 +1,106 @@
+class Line
+  attr_reader name, stops, loop
+end
+
+def network
+  Line[
+    Line.new("Red", String.split("Airport Docks Central Museum Park Zoo", " "), false),
+    Line.new("Blue", String.split("Harbor Docks Market Central Library", " "), false),
+    Line.new("Green", String.split("Library Museum Stadium Harbor", " "), true),
+    Line.new("Gold", String.split("Zoo University Stadium", " "), false)
+  ]
+end
+
+# state = [station, line]; riding to the next stop costs 0 transfers, changing lines costs 1.
+def moves(lines, by_station, station, line_name)
+  out = Array[]
+  line = Array.find(lines) { |l| Line.get_name(l) == line_name }
+  stops = Line.get_stops(line)
+  i = Array.index(stops, station)
+  Array.each(Array[i - 1, i + 1]) do |j|
+    if Line.get_loop(line)
+      j = j % Array.size(stops)
+    elsif j < 0 || j >= Array.size(stops)
+      next
+    end
+    Array.push(out, [[stops[j], line_name], 0])
+  end
+  Array.each(by_station[station]) do |other|
+    Array.push(out, [[station, other], 1]) if other != line_name
+  end
+  out
+end
+
+def route(lines, from, to)
+  by_station = Hash[]
+  Array.each(lines) do |l|
+    Array.each(Line.get_stops(l)) do |s|
+      by_station[s] ||= Array[]
+      Array.push(by_station[s], Line.get_name(l))
+    end
+  end
+  return nil unless Hash.key?(by_station, from) && Hash.key?(by_station, to)
+  cost = Hash[]
+  prev = Hash[]
+  deque = Array[]
+  Array.each(by_station[from]) do |ln|
+    cost[[from, ln]] = [0, 0]
+    Array.push(deque, [from, ln])
+  end
+  until Array.empty?(deque)
+    state = Array.shift(deque)
+    station, ln = state
+    transfers, rides = cost[state]
+    if station == to
+      path = Array[state]
+      while (back = prev[Array.first(path)])
+        Array.unshift(path, back)
+      end
+      return [transfers, rides, path]
+    end
+    Array.each(moves(lines, by_station, station, ln)) do |nxt, w|
+      t2 = transfers + w
+      r2 = rides + 1 - w
+      old = cost[nxt]
+      if old
+        ot, orr = old
+        next if ot < t2 || (ot == t2 && orr <= r2)
+      end
+      cost[nxt] = [t2, r2]
+      prev[nxt] = state
+      if w == 0
+        Array.unshift(deque, nxt)
+      else
+        Array.push(deque, nxt)
+      end
+    end
+  end
+  nil
+end
+
+def describe(path)
+  legs = Array[]
+  Array.each(path) do |station, ln|
+    last = Array.last(legs)
+    if last && last[0] == ln
+      Array.push(last[1], station)
+    else
+      Array.push(legs, [ln, Array[station]])
+    end
+  end
+  legs = Array.reject(legs) { |ln, stations| Array.size(stations) < 2 }
+  Array.map(legs) { |ln, stations| "#{ln}: #{Array.first(stations)}->#{Array.last(stations)}" }
+end
+
+lines = network
+Array.each(Array[["Airport", "Library"], ["Zoo", "Harbor"], ["Market", "University"],
+                 ["Park", "Park"], ["Airport", "Moon"]]) do |from, to|
+  found = route(lines, from, to)
+  if found == nil
+    puts("#{from} -> #{to}: no route")
+    next
+  end
+  transfers, rides, path = found
+  puts("#{from} -> #{to}: #{transfers} transfer(s), #{rides} stop(s)")
+  Array.each(describe(path)) { |leg| puts("    #{leg}") }
+end

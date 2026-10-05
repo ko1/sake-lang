@@ -1,0 +1,101 @@
+# Egyptian fractions: greedy (Fibonacci-Sylvester) and splitting expansions of
+# Rationals into distinct unit fractions, harmonic numbers, and Erdos-Straus 4/n.
+
+def greedy(r)
+  units = Integer[]
+  while Rational.numerator(r) != 0
+    d = Integer.ceildiv(Rational.denominator(r), Rational.numerator(r))
+    Array.push(units, d)
+    r -= Rational(1, d)
+  end
+  units
+end
+
+# replace duplicates 1/d + 1/d by 1/d + 1/(d+1) + 1/(d(d+1)) until all are distinct
+def split_duplicates(units)
+  counts = Hash.new(0)
+  Array.each(units) { |d| counts[d] += 1 }
+  while (dup = Array.find(Array.sort(Hash.keys(counts))) { |d| counts[d] > 1 })
+    counts[dup] -= 1
+    counts[dup + 1] += 1
+    counts[dup * (dup + 1)] += 1
+  end
+  Array.sort(Array.select(Hash.keys(counts)) { |d| counts[d] > 0 })
+end
+
+def total(units) = Array.sum(units, 0r) { |d| Rational(1, d) }
+
+def show(units) = Array.join(Array.map(units) { |d| "1/#{d}" }, " + ")
+
+# 4/n = 1/x + 1/y + 1/z with x <= y <= z, smallest x then y
+def erdos_straus(n)
+  target = Rational(4, n)
+  Range.each(Integer.ceildiv(n, 4)..(3 * n)) do |x|
+    r1 = target - Rational(1, x)
+    next unless r1 > 0
+    y_lo = Array.max(Array[Integer.ceildiv(Rational.denominator(r1), Rational.numerator(r1)), x])
+    y_hi = 2 * Rational.denominator(r1) / Rational.numerator(r1)
+    Range.each(y_lo..y_hi) do |y|
+      r2 = r1 - Rational(1, y)
+      return [x, y, Rational.denominator(r2)] if r2 > 0 && Rational.numerator(r2) == 1 && Rational.denominator(r2) >= y
+    end
+  end
+  nil
+end
+
+puts("greedy expansions:")
+Array.each(Array[Rational(4, 13), Rational(5, 121), Rational(7, 15), Rational(3, 7), Rational(13, 17)]) do |r|
+  units = greedy(r)
+  puts("  #{r} = #{show(units)}")
+  raise "bad expansion of #{r}" if total(units) != r
+end
+big = greedy(Rational(5, 121))
+puts("  largest denominator for 5/121 has #{String.length(Integer.to_s(Array.max(big)))} digits")
+
+puts("improper fractions via harmonic prefix + splitting:")
+Array.each(Array[Rational(3, 2), Rational(2, 1), Rational(9, 4)]) do |r|
+  prefix = Integer[]
+  rest = r
+  d = 1
+  while rest >= Rational(1, d)
+    Array.push(prefix, d)
+    rest -= Rational(1, d)
+    d += 1
+  end
+  units = rest == 0 ? prefix : split_duplicates(prefix + greedy(rest))
+  puts("  #{r} = #{show(units)} (#{Array.size(units)} terms, ok=#{total(units) == r})")
+end
+
+puts("splitting 2/n as duplicates:")
+Array.each(Integer[3, 5, 7]) do |n|
+  units = split_duplicates(Integer[n, n])
+  puts("  2/#{n} = #{show(units)}")
+end
+
+puts("harmonic numbers:")
+h = 0r
+Range.each(1..20) do |n|
+  h += Rational(1, n)
+  if n % 5 == 0
+    puts(format("  H(%2d) = %-28s ~ %.6f", n, Rational.to_s(h), Rational.to_f(h)))
+  end
+end
+n = 1
+s = 0.0
+while s < 5.0
+  s += 1.0 / n
+  n += 1
+end
+puts("  harmonic sum first exceeds 5 at n = #{n - 1}")
+
+puts("Erdos-Straus 4/n = 1/x + 1/y + 1/z:")
+fails = Array[]
+Range.each(2..60) do |k|
+  if (sol = erdos_straus(k))
+    x, y, z = sol
+    puts("  4/#{k} = 1/#{x} + 1/#{y} + 1/#{z}") if k % 10 == 3 || k == 2
+  else
+    Array.push(fails, k)
+  end
+end
+puts("  no decomposition found for: #{Array.empty?(fails) ? "none" : Array.join(fails, " ")}")

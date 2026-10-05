@@ -1,0 +1,105 @@
+class NotSupported < StandardError
+  attr_reader n
+end
+
+module Build
+  module_function
+
+  def blank(n) = Array.new(n) { Array.new(n, 0) }
+
+  # Siamese method: start top middle, move up-right, drop down when blocked
+  def odd(n)
+    sq = blank(n)
+    r = 0
+    c = n / 2
+    Range.each(1..(n * n)) do |k|
+      sq[r][c] = k
+      nr = (r - 1) % n
+      nc = (c + 1) % n
+      if sq[nr][nc] != 0
+        nr = (r + 1) % n
+        nc = c
+      end
+      r = nr
+      c = nc
+    end
+    sq
+  end
+
+  # doubly even: keep k where the 4x4 pattern says so, otherwise n*n+1-k
+  def doubly_even(n)
+    sq = blank(n)
+    Integer.times(n) do |r|
+      Integer.times(n) do |c|
+        k = r * n + c + 1
+        diagonal = (r % 4 == c % 4) || ((r % 4) + (c % 4) == 3)
+        sq[r][c] = diagonal ? n * n + 1 - k : k
+      end
+    end
+    sq
+  end
+
+  def square(n)
+    if Integer.odd?(n)
+      odd(n)
+    elsif n % 4 == 0
+      doubly_even(n)
+    else
+      raise NotSupported.new("singly even sizes are not built here", n)
+    end
+  end
+end
+
+module Check
+  module_function
+
+  def lines(sq)
+    n = Array.size(sq)
+    out = Array[]
+    Array.each_with_index(sq) { |row, r| Array.push(out, ["row #{r + 1}", Array.sum(row)]) }
+    Integer.times(n) { |c| Array.push(out, ["col #{c + 1}", Array.sum(sq) { |row| row[c] }]) }
+    Array.push(out, ["diag", Range.sum(0...n) { |i| sq[i][i] }])
+    Array.push(out, ["anti", Range.sum(0...n) { |i| sq[i][n - 1 - i] }])
+    out
+  end
+
+  def magic_constant(n) = n * (n * n + 1) / 2
+
+  def normal?(sq)
+    n = Array.size(sq)
+    values = Array.flatten(sq)
+    Array.size(Array.uniq(values)) == n * n && Array.all?(values) { |v| Integer.between?(v, 1, n * n) }
+  end
+
+  def report(sq)
+    target = magic_constant(Array.size(sq))
+    wrong = Array.reject(lines(sq)) { |_name, sum| sum == target }
+    {magic: Array.empty?(wrong), normal: normal?(sq), target: target, wrong: wrong}
+  end
+end
+
+def show(sq)
+  width = String.size(Integer.to_s(Array.size(sq) * Array.size(sq)))
+  Array.each(sq) { |row| puts(Array.join(Array.map(row) { String.rjust(Integer.to_s(it), width) }, " ")) }
+end
+
+Array.each(Array[3, 4, 5, 6, 8]) do |n|
+  sq = Build.square(n)
+  Check.report(sq) => {magic:, normal:, target:}
+  puts("n=#{n}: magic=#{magic} normal=#{normal} constant=#{target}")
+  show(sq) if n <= 5
+rescue NotSupported => e
+  puts("n=#{NotSupported.get_n(e)}: #{Exception.message(e)}")
+end
+
+candidates = Hash[
+  "lo shu" => Array[Array[4, 9, 2], Array[3, 5, 7], Array[8, 1, 6]],
+  "swapped" => Array[Array[4, 9, 2], Array[3, 5, 7], Array[8, 6, 1]],
+  "all fives" => Array[Array[5, 5, 5], Array[5, 5, 5], Array[5, 5, 5]],
+  "durer" => Array[Array[16, 3, 2, 13], Array[5, 10, 11, 8], Array[9, 6, 7, 12], Array[4, 15, 14, 1]],
+]
+Hash.each(candidates) do |name, sq|
+  Check.report(sq) => {magic:, normal:, wrong:}
+  detail = Array.join(Array.map(wrong) { |line, sum| "#{line}=#{sum}" }, ", ")
+  puts("#{name}: #{magic ? "magic" : "not magic"}#{normal ? "" : " (not normal)"}#{Array.empty?(wrong) ? "" : " [#{detail}]"}")
+end

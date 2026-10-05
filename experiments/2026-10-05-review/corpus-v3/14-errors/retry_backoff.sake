@@ -1,0 +1,89 @@
+# Call a flaky (scripted) service with retries, exponential backoff and a per-call budget.
+class TransientError < StandardError
+  attr_reader code
+end
+
+class FatalError < StandardError
+  attr_reader code
+end
+
+class GiveUpError < StandardError
+  attr_reader attempts, last_code
+end
+
+class Service
+  attr_reader name, script
+  attr_accessor calls
+  # The script says what each successive call does: "ok", "timeout", "busy", "denied".
+  def request(svc, payload)
+    step = @script[@calls] || "ok"
+    @calls += 1
+    case step
+    in "ok" then "#{@name}:#{String.upcase(payload)}"
+    in "timeout" then raise TransientError.new("#{@name} timed out", 504)
+    in "busy" then raise TransientError.new("#{@name} is busy", 503)
+    in "denied" then raise FatalError.new("#{@name} denied access", 403)
+    end
+  end
+end
+
+def backoff_ms(attempt, base, cap)
+  delay = base * (2 ** (attempt - 1))
+  delay > cap ? cap : delay
+end
+
+def with_retry(max_attempts, base, cap, log)
+  attempt = 0
+  waited = 0
+  begin
+    attempt += 1
+    result = yield(attempt)
+    Array.push(log, "  attempt #{attempt}: ok")
+    [result, waited]
+  rescue TransientError => e
+    code = TransientError.get_code(e)
+    if attempt >= max_attempts
+      Array.push(log, "  attempt #{attempt}: #{code}, giving up")
+      raise GiveUpError.new("gave up after #{attempt} attempts", attempt, code)
+    end
+    delay = backoff_ms(attempt, base, cap)
+    waited += delay
+    Array.push(log, "  attempt #{attempt}: #{code} #{Exception.message(e)}, waiting #{delay}ms")
+    retry
+  end
+end
+
+services = Array[
+  Service.new("alpha", Array["ok"], 0),
+  Service.new("beta", Array["timeout", "busy", "ok"], 0),
+  Service.new("gamma", Array["busy", "busy", "busy", "busy", "busy", "ok"], 0),
+  Service.new("delta", Array["timeout", "denied"], 0),
+  Service.new("eps", Array["busy", "timeout", "busy", "timeout", "ok"], 0)
+]
+
+stats = Hash["ok" => 0, "gave_up" => 0, "fatal" => 0]
+total_wait = 0
+Array.each(services) do |svc|
+  log = Array[]
+  puts("#{Service.get_name(svc)}:")
+  begin
+    value, waited = with_retry(4, 100, 500, log) { |n| Service.request(svc, "req#{n}") }
+    total_wait += waited
+    stats["ok"] += 1
+    Array.each(log) { puts(it) }
+    puts("  => #{value} (waited #{waited}ms)")
+  rescue GiveUpError => e
+    stats["gave_up"] += 1
+    Array.each(log) { puts(it) }
+    puts("  => #{Exception.message(e)}; last code #{GiveUpError.get_last_code(e)}")
+  rescue FatalError => e
+    stats["fatal"] += 1
+    Array.each(log) { puts(it) }
+    puts("  => fatal #{FatalError.get_code(e)}: #{Exception.message(e)}")
+  ensure
+    puts("  calls made: #{Service.get_calls(svc)}")
+  end
+end
+
+puts("summary: #{Array.join(Hash.map(stats) { |k, v| "#{k}=#{v}" }, " ")}")
+puts("total backoff: #{total_wait}ms")

@@ -1,0 +1,131 @@
+class Task
+  attr_reader id, days, deps
+end
+
+class CycleError < StandardError
+  attr_reader path
+end
+
+def parse_plan(text)
+  tasks = Hash[]
+  Array.each(String.lines(text)) do |line|
+    parts = String.split(String.strip(line), /\s+/)
+    next if Array.empty?(parts)
+    id = String.delete_suffix(parts[0], ":")
+    tasks[id] = Task.new(id, String.to_i(parts[1]), Array.drop(parts, 2))
+  end
+  tasks
+end
+
+def visit(tasks, id, state, order, trail)
+  st = state[id]
+  return if st == :done
+  if st == :active
+    Array.push(trail, id)
+    start = Array.index(trail, id)
+    raise CycleError.new("dependency cycle", Array.join(Array.drop(trail, start), " -> "))
+  end
+  state[id] = :active
+  Array.push(trail, id)
+  task = tasks[id]
+  raise KeyError, "unknown task #{id}" if task == nil
+  Array.each(Task.get_deps(task)) { |d| visit(tasks, d, state, order, trail) }
+  Array.pop(trail)
+  state[id] = :done
+  Array.push(order, id)
+end
+
+def topo_order(tasks)
+  state = Hash[]
+  order = Array[]
+  Array.each(Hash.keys(tasks)) { |id| visit(tasks, id, state, order, Array[]) }
+  order
+end
+
+# finish[id] = earliest finish; via[id] = the dependency that finishes last
+def schedule(tasks)
+  order = topo_order(tasks)
+  finish = Hash[]
+  via = Hash[]
+  chains = Hash[]
+  Array.each(order) do |id|
+    task = tasks[id]
+    start = 0
+    Array.each(Task.get_deps(task)) do |d|
+      if finish[d] > start
+        start = finish[d]
+        via[id] = d
+      end
+    end
+    finish[id] = start + Task.get_days(task)
+    chains[id] = Array.empty?(Task.get_deps(task)) ? 1 : Array.sum(Task.get_deps(task)) { |d| chains[d] }
+  end
+  {order: order, finish: finish, via: via, chains: chains}
+end
+
+def critical_path(sched)
+  sched => {finish:, via:}
+  cur = Hash.max_by(finish) { |_, f| f }[0]
+  path = Array[]
+  while cur
+    Array.unshift(path, cur)
+    cur = via[cur]
+  end
+  path
+end
+
+def slack(tasks, sched)
+  sched => {order:, finish:}
+  total = Array.max(Hash.values(finish))
+  latest = Array.map(order) { |id| [id, total] }.Array.to_h
+  Array.reverse_each(order) do |id|
+    task = tasks[id]
+    start_by = latest[id] - Task.get_days(task)
+    Array.each(Task.get_deps(task)) do |d|
+      latest[d] = start_by if start_by < latest[d]
+    end
+  end
+  Array.map(order) { |id| [id, latest[id] - finish[id]] }.Array.to_h
+end
+
+plan = <<~PLAN
+  design: 5
+  schema: 3 design
+  api: 8 schema
+  ui: 10 design
+  auth: 4 schema
+  tests: 6 api auth
+  docs: 3 api ui
+  beta: 2 tests ui docs
+  launch: 1 beta
+PLAN
+
+tasks = parse_plan(plan)
+sched = schedule(tasks)
+sched => {order:, finish:, chains:}
+puts("order: #{Array.join(order, ", ")}")
+puts("project takes #{Array.max(Hash.values(finish))} days")
+puts("critical path: #{Array.join(critical_path(sched), " -> ")}")
+puts("dependency chains ending at launch: #{chains["launch"]}")
+float = slack(tasks, sched)
+puts("task     start finish slack")
+Array.each(order) do |id|
+  f = finish[id]
+  s = f - Task.get_days(tasks[id])
+  puts(format("%-8s %5d %6d %5d%s", id, s, f, float[id], float[id] == 0 ? "  *" : ""))
+end
+
+bad_plans = Array[
+  "a: 1 c\nb: 2 a\nc: 3 b",
+  "a: 1\nb: 2 a zz"
+]
+Array.each(bad_plans) do |text|
+  begin
+    schedule(parse_plan(text))
+    puts("ok")
+  rescue CycleError => e
+    puts("#{Exception.message(e)}: #{CycleError.get_path(e)}")
+  rescue KeyError => e
+    puts("bad plan: #{Exception.message(e)}")
+  end
+end

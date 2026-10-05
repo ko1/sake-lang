@@ -1,0 +1,90 @@
+# Validate payment card entries: brand by prefix, length, Luhn checksum, expiry and CVV.
+class CardError < StandardError
+  attr_reader code
+end
+
+def brands = once do
+  Array[
+    {name: "visa", prefixes: Array["4"], lengths: Array[13, 16], cvv: 3},
+    {name: "mastercard", prefixes: Array["51", "52", "53", "54", "55"], lengths: Array[16], cvv: 3},
+    {name: "amex", prefixes: Array["34", "37"], lengths: Array[15], cvv: 4}
+  ]
+end
+
+def luhn_valid?(digits)
+  sum = 0
+  Array.each_with_index(Array.reverse(String.chars(digits))) do |ch, i|
+    d = String.to_i(ch)
+    if Integer.odd?(i)
+      d *= 2
+      d -= 9 if d > 9
+    end
+    sum += d
+  end
+  sum % 10 == 0
+end
+
+def detect_brand(digits)
+  b = Array.find(brands) do |brand|
+    brand => {prefixes:}
+    Array.any?(prefixes) { |pre| String.start_with?(digits, pre) }
+  end
+  raise CardError.new("unknown card brand", :brand) if b == nil
+  b
+end
+
+# today is given as [year, month]
+def check_expiry(text, today)
+  m = String.match(text, /\A(\d{2})\/(\d{2})\z/)
+  raise CardError.new("expiry must be MM/YY", :expiry_format) if m == nil
+  month = String.to_i(m[1])
+  year = 2000 + String.to_i(m[2])
+  raise CardError.new("month #{month} is invalid", :expiry_format) unless Integer.between?(month, 1, 12)
+  if [year, month] < today
+    raise CardError.new("card expired #{String.rjust(Integer.to_s(month), 2, "0")}/#{year}", :expired)
+  end
+  [year, month]
+end
+
+def validate_card(number, expiry, cvv, today)
+  digits = String.delete(number, " -")
+  raise CardError.new("card number has non-digits", :chars) unless String.match?(digits, /\A\d+\z/)
+  brand = detect_brand(digits)
+  brand => {name:, lengths:, cvv: cvv_len}
+  unless Array.include?(lengths, String.length(digits))
+    raise CardError.new("#{name} numbers have #{Array.join(lengths, " or ")} digits, got #{String.length(digits)}", :length)
+  end
+  raise CardError.new("checksum failed", :luhn) unless luhn_valid?(digits)
+  check_expiry(expiry, today)
+  unless String.length(cvv) == cvv_len && String.match?(cvv, /\A\d+\z/)
+    raise CardError.new("#{name} CVV has #{cvv_len} digits", :cvv)
+  end
+  masked = "#{"*" * (String.length(digits) - 4)}#{digits[-4..]}"
+  [name, masked]
+end
+
+entries = Array[
+  ["4111 1111 1111 1111", "12/27", "123"],
+  ["4111-1111-1111-1112", "12/27", "123"],
+  ["5500 0000 0000 0004", "01/26", "999"],
+  ["3782 822463 10005", "08/29", "1234"],
+  ["3782 822463 10005", "08/29", "123"],
+  ["6011 0000 0000 0004", "05/28", "321"],
+  ["4111 1111 1111", "05/28", "321"],
+  ["4012 8888 8888 1881", "13/27", "555"],
+  ["4012 8888 8888 1881", "1227", "555"],
+  ["4O12 8888 8888 1881", "12/27", "555"],
+  ["5105 1051 0510 5100", "10/26", "042"]
+]
+
+today = [2026, 10]
+tally = Hash.new(0)
+Array.each(entries) do |number, expiry, cvv|
+  brand, masked = validate_card(number, expiry, cvv, today)
+  tally[:ok] += 1
+  puts(format("%-22s ok    %-10s %s", number, brand, masked))
+rescue CardError => e
+  tally[CardError.get_code(e)] += 1
+  puts(format("%-22s ERROR %s", number, Exception.message(e)))
+end
+puts(Array.join(Array.map(Hash.to_a(tally)) { |code, n| "#{code}:#{n}" }, " "))

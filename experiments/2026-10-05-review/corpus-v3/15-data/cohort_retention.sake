@@ -1,0 +1,97 @@
+class User
+  attr_reader id, signup, plan
+end
+
+def users
+  User[
+    User.new("u01", "2026-01-05", :free), User.new("u02", "2026-01-12", :pro),
+    User.new("u03", "2026-01-20", :free), User.new("u04", "2026-01-28", :free),
+    User.new("u05", "2026-02-02", :pro), User.new("u06", "2026-02-14", :free),
+    User.new("u07", "2026-02-21", :team), User.new("u08", "2026-03-03", :free),
+    User.new("u09", "2026-03-09", :pro), User.new("u10", "2026-03-15", :free),
+    User.new("u11", "2026-03-30", :team), User.new("u12", "2026-04-04", :free)
+  ]
+end
+
+def activity_log
+  <<~TXT
+    u01 2026-01-06 u01 2026-02-10 u01 2026-03-02 u01 2026-04-11
+    u02 2026-01-13 u02 2026-02-01 u02 2026-02-20 u02 2026-03-18 u02 2026-04-02
+    u03 2026-01-21
+    u04 2026-02-15 u04 2026-04-20
+    u05 2026-02-03 u05 2026-03-04 u05 2026-04-05
+    u06 2026-02-15
+    u07 2026-02-22 u07 2026-03-01 u07 2026-04-30
+    u08 2026-03-04 u08 2026-04-09
+    u09 2026-03-10
+    u10 2026-03-16 u10 2026-03-17
+    u11 2026-03-31 u11 2026-04-01
+    u12 2026-04-05
+    u99 2026-02-02
+  TXT
+end
+
+def month_index(date)
+  m = String.match(date, /\A(\d{4})-(\d{2})/)
+  raise ArgumentError, "bad date #{date}" unless m
+  String.to_i(m[1]) * 12 + String.to_i(m[2]) - 1
+end
+
+def month_label(idx) = format("%04d-%02d", idx / 12, idx % 12 + 1)
+
+def parse_activity(text)
+  active = Hash[]
+  tokens = String.split(text)
+  Array.each_slice(tokens, 2) do |uid, date|
+    Set.add(active[uid] ||= Set[], month_index(date))
+  end
+  active
+end
+
+def pct(n, d) = d == 0 ? "   -" : format("%3d%%", n * 100 / d)
+
+all_users = users
+active = parse_activity(activity_log)
+known = Array.to_set(Array.map(all_users) { User.get_id(it) })
+unknown = Array.reject(Hash.keys(active)) { Set.include?(known, it) }
+last_month = Array.max(Array.flat_map(Hash.values(active)) { Set.to_a(it) })
+
+cohorts = Array.group_by(all_users) { month_index(User.get_signup(it)) }
+puts("Monthly retention by signup cohort")
+max_offset = 3
+head = format("%-8s %5s", "cohort", "users")
+Integer.upto(0, max_offset) { |k| head += format(" %5s", "M#{k}") }
+puts(head)
+Array.each(Array.sort(Hash.keys(cohorts))) do |start|
+  members = Hash.fetch(cohorts, start)
+  row = format("%-8s %5d", month_label(start), Array.size(members))
+  Integer.upto(0, max_offset) do |k|
+    if start + k > last_month
+      row += format(" %5s", "")
+      next
+    end
+    retained = Array.count(members) { |u| Set.include?(Hash.fetch(active, User.get_id(u), Set[]), start + k) }
+    row += format(" %5s", pct(retained, Array.size(members)))
+  end
+  puts(row)
+end
+
+puts
+puts("Retention after one month, by plan:")
+by_plan = Array.group_by(all_users) { User.get_plan(it) }
+Array.each(Array.sort_by(Hash.keys(by_plan)) { Symbol.to_s(it) }) do |plan|
+  members = Array.select(Hash.fetch(by_plan, plan)) { month_index(User.get_signup(it)) + 1 <= last_month }
+  kept = Array.count(members) do |u|
+    months = active[User.get_id(u)]
+    months != nil && Set.include?(months, month_index(User.get_signup(u)) + 1)
+  end
+  puts(format("  %-5s %d/%d %s", Symbol.to_s(plan), kept, Array.size(members), pct(kept, Array.size(members))))
+end
+
+puts
+dormant = Array.select(all_users) do |u|
+  months = active[User.get_id(u)]
+  months == nil || Set.max(months) < last_month - 1
+end
+puts("Dormant (no activity in last 2 months): #{Array.join(Array.map(dormant) { User.get_id(it) }, " ")}")
+puts("Activity from unknown users: #{Array.join(unknown, " ")}") unless Array.empty?(unknown)

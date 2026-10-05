@@ -1,0 +1,115 @@
+class MissingTarget < StandardError
+  attr_reader name, wanted_by
+end
+
+module Target
+  def label(t) = "#{get_name(t)}#{kind(t)}"
+  def kind(t) = ""
+  def stale?(t, dep_times, rebuilt) = true
+end
+
+class FileTarget
+  include Target
+  attr_reader name, deps, mtime
+
+  # A file target is stale when a dependency is newer, or is itself rebuilt.
+  def stale?(t, dep_times, rebuilt)
+    return true if @mtime == nil
+    Array.any?(@deps) { |d| Set.include?(rebuilt, d) || (dep_times[d] || 0) > @mtime }
+  end
+end
+
+class PhonyTarget
+  include Target
+  attr_reader name, deps
+
+  def kind(t) = " (phony)"
+end
+
+def parse_makefile(text, mtimes)
+  targets = Hash[]
+  phony = Set[]
+  Array.each(String.lines(text)) do |line|
+    line = String.chomp(line)
+    next if String.empty?(String.strip(line)) || String.start_with?(line, "#")
+    if (m = String.match(line, /^\.PHONY:\s*(.*)$/))
+      Array.each(String.split(m[1], " ")) { |n| Set.add(phony, n) }
+      next
+    end
+    name, _, rest = String.partition(line, ":")
+    deps = String.split(rest, " ")
+    targets[String.strip(name)] = deps
+  end
+  result = Hash[]
+  Hash.each(targets) do |name, deps|
+    if Set.include?(phony, name)
+      result[name] = PhonyTarget.new(name, deps)
+    else
+      result[name] = FileTarget.new(name, deps, mtimes[name])
+    end
+  end
+  result
+end
+
+def build_order(targets, goal, mtimes, order, seen, wanted_by)
+  return if Set.include?(seen, goal)
+  t = targets[goal]
+  if t == nil
+    raise MissingTarget.new("no rule to make #{goal}", goal, wanted_by) unless Hash.key?(mtimes, goal)
+    Set.add(seen, goal)
+    return
+  end
+  Set.add(seen, goal)
+  Array.each((FileTarget|PhonyTarget).get_deps(t)) { |d| build_order(targets, d, mtimes, order, seen, goal) }
+  Array.push(order, goal)
+end
+
+def make(title, text, mtimes, goal)
+  puts("== #{title}: make #{goal}")
+  targets = parse_makefile(text, mtimes)
+  order = Array[]
+  build_order(targets, goal, mtimes, order, Set[], "(command line)")
+  rebuilt = Set[]
+  clock = Array.max(Hash.values(mtimes)) + 1
+  times = Hash.merge(mtimes, Hash[])
+  Array.each(order) do |name|
+    t = targets[name]
+    if Target.stale?(t, times, rebuilt)
+      puts("  build #{Target.label(t)}")
+      Set.add(rebuilt, name)
+      if t in FileTarget
+        times[name] = clock
+        clock += 1
+      end
+    else
+      puts("  up to date: #{name}")
+    end
+  end
+  puts("  #{Set.size(rebuilt)} of #{Array.size(order)} targets rebuilt")
+rescue MissingTarget => e
+  puts("  error: #{Exception.message(e)} (needed by #{MissingTarget.get_wanted_by(e)})")
+end
+
+makefile = <<~MK
+  # tiny C project
+  .PHONY: all clean test
+  all: app docs
+  app: main.o util.o net.o
+  main.o: main.c util.h
+  util.o: util.c util.h
+  net.o: net.c net.h util.h
+  docs: manual.md
+  test: app
+  clean:
+MK
+
+fresh = Hash["main.c" => 10, "util.c" => 11, "util.h" => 9, "net.c" => 12, "net.h" => 9,
+             "manual.md" => 5, "main.o" => 20, "util.o" => 21, "net.o" => 22, "app" => 30, "docs" => 31]
+make("nothing changed", makefile, fresh, "app")
+
+touched = Hash.merge(fresh, Hash["util.h" => 40])
+make("header touched", makefile, touched, "all")
+
+make("object deleted", makefile, Hash.reject(fresh) { |k, v| k == "net.o" }, "test")
+
+make("missing source", makefile, Hash.reject(fresh) { |k, v| k == "net.h" }, "app")

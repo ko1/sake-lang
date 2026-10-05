@@ -1,0 +1,27 @@
+# 08-graphs tasks
+
+- maze_bfs: parse ASCII mazes, find the shortest path from S to G with BFS, and draw it.
+- dijkstra_routes: Dijkstra over a road network with a hand-written binary heap; prints distances and routes from one city.
+- course_schedule: parse a course catalog, plan terms with Kahn's topological sort, and report cycles and unknown prerequisites as exceptions.
+- kruskal_network: parse weighted links with a regexp and build a minimum spanning tree with Kruskal and a union-find; Edge is Comparable.
+- friend_groups: find friend groups (connected components) with an explicit DFS stack over Sets, group density, and friend suggestions.
+- rival_teams: split people into two teams by BFS 2-coloring of a rivalry graph, or report an odd cycle that makes it impossible.
+- bellman_ford: Bellman-Ford over parsed arcs with negative weights, early exit, route reconstruction, and negative-cycle detection raised as an exception.
+- floyd_transit: all-pairs shortest travel times on a transit map with Floyd-Warshall (nil for no route), hub and diameter, and route reconstruction.
+- tarjan_scc: find dependency cycles between modules with recursive Tarjan SCC (state in a Struct) and list the links of the condensed DAG.
+- critical_links: find articulation points and bridges of a power grid with a recursive low-link DFS, with a Struct holding the scan state.
+- astar_terrain: A* over a weighted terrain grid (Indexable by [x, y] position, Comparable open-list nodes) and draws the cheapest path.
+- word_ladder: BFS word ladders over a dictionary indexed by wildcard patterns, plus reachability depth.
+- pipeline_flow: Edmonds-Karp maximum flow through a pipe network keyed by [from, to] Tuples, with the minimum cut found from the residual graph.
+- intern_matching: assign interns to projects by skills and wishes with augmenting-path bipartite matching (Kuhn).
+- euler_itinerary: reconstruct a flight itinerary that uses every ticket once (Hierholzer), with degree checks raising a custom exception.
+- exam_slots: schedule exams into time slots by greedy (Welsh-Powell) coloring of the student-conflict graph built with Set intersection.
+- critical_path: parse task lines with a regexp, order the DAG by DFS, compute earliest/latest starts, slack, the critical chain, and a text Gantt chart.
+- land_islands: count islands online as land cells appear (union-find over a sparse Hash with union by size), drawn with labels and checked by flood fill.
+- dot_stats: parse a small DOT-like digraph language (regexps, line-numbered ParseError) into Record edges and report sources, sinks, loops, parallel and mutual edges.
+- org_chart_lca: build an org chart from "emp < boss" lines and answer lowest-common-manager queries with binary lifting (bit operations), team sizes, and chains.
+- currency_paths: exchange-rate graph with exact Rational rates; convert by DFS multiplying rates along the path and find inconsistent triangles.
+- make_rebuild: a tiny make: parse rules and .PHONY, order targets by DFS over dependencies, and rebuild stale targets; file and phony targets share a Target mixin dispatched through the module.
+- prim_cables: lay cable between sites with O(n^2) Prim on Euclidean distances; Point has its own + and - (Arithmetic).
+- centrality: degree, closeness (Wasserman-Faust), Brandes betweenness, and clustering coefficients for a small social graph.
+- metro_transfers: plan metro trips minimizing transfers then stops with 0-1 BFS over [station, line] states, including a loop line, and print the legs.

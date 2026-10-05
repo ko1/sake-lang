@@ -1,0 +1,114 @@
+class Vec
+  attr_reader x, y
+  include Arithmetic
+  def +(a, b) = Vec.new(@x + Vec.get_x(b), @y + Vec.get_y(b))
+  def -(a, b) = Vec.new(@x - Vec.get_x(b), @y - Vec.get_y(b))
+  def manhattan(a) = Integer.abs(@x) + Integer.abs(@y)
+  def sign(a) = Vec.new(Integer.clamp(@x, -1, 1), Integer.clamp(@y, -1, 1))
+  def to_s(a) = "(#{@x},#{@y})"
+end
+
+def sight_range = 5
+def attack_range = 1
+def flee_hp = 30
+
+class Enemy
+  attr_reader name, pos, patrol, hp = 100, state = :patrol, waypoint = 0, transitions = 0
+
+  def step_toward(e, target)
+    d = Vec.sign(target - @pos)
+    d = Vec.new(Vec.get_x(d), 0) if Vec.get_x(d) != 0
+    @pos += d
+  end
+
+  def step_away(e, target)
+    d = Vec.sign(@pos - target)
+    d = Vec.new(1, 0) if Vec.manhattan(d) == 0
+    @pos += d
+  end
+
+  def next_state(e, player, player_hits)
+    dist = Vec.manhattan(player - @pos)
+    case @state
+    in :dead then :dead
+    in :patrol then dist <= sight_range ? :chase : :patrol
+    in :chase
+      if @hp <= flee_hp then :flee
+      elsif dist <= attack_range then :attack
+      elsif dist > sight_range + 2 then :patrol
+      else :chase
+      end
+    in :attack
+      if @hp <= 0 then :dead
+      elsif @hp <= flee_hp then :flee
+      elsif dist > attack_range then :chase
+      else :attack
+      end
+    in :flee
+      if @hp <= 0 then :dead
+      elsif dist > sight_range + 3 then :recover
+      else :flee
+      end
+    in :recover
+      if dist <= sight_range then :flee
+      elsif @hp >= 80 then :patrol
+      else :recover
+      end
+    end
+  end
+
+  def act(e, player, player_hits)
+    case @state
+    in :patrol
+      target = @patrol[@waypoint]
+      if @pos == target
+        @waypoint = (@waypoint + 1) % Array.size(@patrol)
+      else
+        step_toward(e, target)
+      end
+      "patrols to #{@pos}"
+    in :chase
+      step_toward(e, player)
+      "chases to #{@pos}"
+    in :attack
+      @hp -= player_hits ? 25 : 5
+      "attacks (hp #{@hp})"
+    in :flee
+      step_away(e, player)
+      "flees to #{@pos}"
+    in :recover
+      @hp = Array.min(Array[@hp + 15, 100])
+      "recovers (hp #{@hp})"
+    in :dead then "is dead"
+    end
+  end
+
+  def tick(e, player, player_hits)
+    before = @state
+    @state = next_state(e, player, player_hits)
+    @transitions += 1 if before != @state
+    act(e, player, player_hits)
+  end
+end
+
+player_path = Array[
+  [0, 0], [1, 0], [2, 0], [3, 0], [4, 1], [5, 1], [6, 2], [7, 2], [7, 2], [7, 2],
+  [7, 2], [7, 2], [7, 2], [7, 2], [7, 2], [7, 2], [7, 2], [6, 2], [5, 2], [4, 2],
+  [3, 2], [2, 2], [1, 2], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], [1, 6], [2, 6],
+  [3, 7], [3, 7], [3, 7], [3, 7], [3, 7]
+]
+enemies = Array[
+  Enemy.new("grunt", Vec.new(9, 2), Array[Vec.new(9, 2), Vec.new(9, 6)]),
+  Enemy.new("scout", Vec.new(2, 8), Array[Vec.new(2, 8), Vec.new(8, 8), Vec.new(8, 9)])
+]
+Array.each_with_index(player_path) do |(px, py), t|
+  player = Vec.new(px, py)
+  hits = t % 3 != 0
+  lines = Array.map(enemies) do |e|
+    "#{Enemy.get_name(e)} #{Enemy.tick(e, player, hits)} [#{Enemy.get_state(e)}]"
+  end
+  puts(format("t=%02d player=%-6s %s", t, Vec.to_s(player), Array.join(lines, " | ")))
+end
+Array.each(enemies) do |e|
+  puts("#{Enemy.get_name(e)}: hp=#{Enemy.get_hp(e)} state=#{Enemy.get_state(e)} pos=#{Enemy.get_pos(e)} transitions=#{Enemy.get_transitions(e)}")
+end

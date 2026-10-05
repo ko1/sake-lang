@@ -1,0 +1,115 @@
+# Finds common free time for a group of people from their busy intervals,
+# then books a list of meeting requests greedily.
+
+class Slot
+  attr_accessor start, finish
+
+  def parse(text)
+    a, b = String.split(text, "-")
+    Slot.new(minutes(a), minutes(b))
+  end
+
+  def minutes(hhmm)
+    h, m = String.split(hhmm, ":")
+    String.to_i(h) * 60 + String.to_i(m)
+  end
+
+  def clock(t) = format("%02d:%02d", t / 60, t % 60)
+
+  def length(s) = @finish - @start
+
+  def overlaps?(s, other) = @start < Slot.get_finish(other) && Slot.get_start(other) < @finish
+
+  def to_s(s) = "#{clock(@start)}-#{clock(@finish)}"
+end
+
+def merge_busy(slots)
+  merged = Slot[]
+  Array.each(Array.sort_by(slots) { |s| Slot.get_start(s) }) do |s|
+    last = Array.last(merged)
+    if last && Slot.get_start(s) <= Slot.get_finish(last)
+      Slot.set_finish(last, Slot.get_finish(s)) if Slot.get_finish(s) > Slot.get_finish(last)
+    else
+      Array.push(merged, Slot.new(Slot.get_start(s), Slot.get_finish(s)))
+    end
+  end
+  merged
+end
+
+def free_slots(busy, day)
+  free = Slot[]
+  cursor = Slot.get_start(day)
+  Array.each(merge_busy(busy)) do |b|
+    if Slot.get_start(b) > cursor
+      Array.push(free, Slot.new(cursor, Integer.clamp(Slot.get_start(b), cursor, Slot.get_finish(day))))
+    end
+    cursor = Slot.get_finish(b) if Slot.get_finish(b) > cursor
+  end
+  Array.push(free, Slot.new(cursor, Slot.get_finish(day))) if cursor < Slot.get_finish(day)
+  Array.select(free) { |s| Slot.length(s) > 0 }
+end
+
+def first_fit(free, duration)
+  found = Array.find(free) { |s| Slot.length(s) >= duration }
+  return nil if found == nil
+  Slot.new(Slot.get_start(found), Slot.get_start(found) + duration)
+end
+
+calendars = Hash[
+  "ana" => Array["09:00-10:30", "12:00-13:00", "15:00-16:00"],
+  "ben" => Array["09:30-11:00", "13:30-14:00", "16:30-17:30"],
+  "cho" => Array["08:00-09:15", "11:00-11:30", "12:30-13:15", "14:45-15:15"],
+  "dev" => Array["10:00-10:45", "16:00-18:00"]
+]
+day = Slot.parse("09:00-17:30")
+
+busy = Hash.transform_values(calendars) { |list| Array.map(list) { |t| Slot.parse(t) } }
+
+Hash.each(busy) do |name, slots|
+  free = free_slots(slots, day)
+  minutes = Array.sum(free) { |s| Slot.length(s) }
+  puts(format("%-4s free %3d min: %s", name, minutes, Array.join(Array.map(free) { |s| Slot.to_s(s) }, " ")))
+end
+
+requests = Array[
+  [Array["ana", "ben"], 30, "design review"],
+  [Array["ana", "ben", "cho", "dev"], 45, "all hands"],
+  [Array["cho", "dev"], 60, "pairing"],
+  [Array["ana", "dev"], 90, "planning"],
+  [Array["ben", "cho"], 120, "workshop"],
+  [Array["ana", "cho"], 15, "check-in"]
+]
+
+puts
+puts("Bookings:")
+booked = 0
+Array.each(requests) do |people, duration, title|
+  all_busy = Array.flat_map(people) { |n| Hash.fetch(busy, n) }
+  slot = first_fit(free_slots(all_busy, day), duration)
+  if slot == nil
+    puts(format("  %-14s %3d min  no common slot for %s", title, duration, Array.join(people, ", ")))
+  else
+    puts(format("  %-14s %3d min  %s  %s", title, duration, Slot.to_s(slot), Array.join(people, ", ")))
+    Array.each(people) { |n| Array.push(Hash.fetch(busy, n), slot) }
+    booked += 1
+  end
+end
+puts("Booked #{booked} of #{Array.size(requests)}")
+
+# Who is most loaded after booking?
+load = Hash.map(busy) do |name, slots|
+  inside = Array.map(merge_busy(slots)) do |s|
+    Slot.new(Array.max(Array[Slot.get_start(s), Slot.get_start(day)]), Array.min(Array[Slot.get_finish(s), Slot.get_finish(day)]))
+  end
+  [name, Array.sum(inside) { |s| Slot.length(s) }]
+end
+Array.each(Array.sort_by(load) { |name, mins| -mins }) do |name, mins|
+  puts(format("  %-4s busy %3d min (%d%%)", name, mins, mins * 100 / Slot.length(day)))
+end
+
+conflicts = Array[]
+Array.each(Array.combination(Hash.keys(busy), 2)) do |a, b|
+  n = Array.count(Hash.fetch(busy, a)) { |s| Array.any?(Hash.fetch(busy, b)) { |t| Slot.overlaps?(s, t) } }
+  Array.push(conflicts, "#{a}/#{b}:#{n}") if n > 0
+end
+puts("Overlapping busy blocks: #{Array.join(conflicts, " ")}")

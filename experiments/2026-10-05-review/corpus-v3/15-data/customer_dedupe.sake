@@ -1,0 +1,126 @@
+class Contact
+  attr_reader id, name, email, phone, city, updated
+end
+
+class UnionFind
+  attr_reader parent = nil, size = nil
+
+  def initialize(uf)
+    @parent = Hash[]
+    @size = Hash[]
+  end
+
+  def find(uf, x)
+    @parent[x] = x unless Hash.key?(@parent, x)
+    @size[x] = 1 unless Hash.key?(@size, x)
+    root = x
+    root = Hash.fetch(@parent, root) while Hash.fetch(@parent, root) != root
+    while x != root
+      nxt = Hash.fetch(@parent, x)
+      @parent[x] = root
+      x = nxt
+    end
+    root
+  end
+
+  def union(uf, a, b)
+    ra = find(uf, a)
+    rb = find(uf, b)
+    return ra if ra == rb
+    ra, rb = rb, ra if Hash.fetch(@size, ra) < Hash.fetch(@size, rb)
+    @parent[rb] = ra
+    @size[ra] = Hash.fetch(@size, ra) + Hash.fetch(@size, rb)
+    ra
+  end
+end
+
+def contacts
+  Contact[
+    Contact.new(1, "Maria  Lopez", "Maria.Lopez@Example.com", "(555) 010-2233", "Austin", "2025-11-02"),
+    Contact.new(2, "maria lopez", "mlopez@work.example", "555.010.2233", nil, "2026-01-15"),
+    Contact.new(3, "Tom O'Neil", "tom@oneil.example", "", "Boston", "2025-06-30"),
+    Contact.new(4, "Thomas ONeil", "TOM@ONEIL.EXAMPLE ", "617-555-0199", "Boston", "2026-02-01"),
+    Contact.new(5, "Priya Natarajan", "priya.n@example.com", "555-777-1000", "Seattle", "2025-12-12"),
+    Contact.new(6, "Lee Wong", "lee@wong.example", "555-123-4567", "Denver", "2024-03-03"),
+    Contact.new(7, "M. Lopez", "mlopez@work.example", "", "Austin TX", "2025-08-08"),
+    Contact.new(8, "Lee  Wong", "", "+1 555 123 4567", "Denver", "2025-01-20"),
+    Contact.new(9, "Ana Silva", "ana@silva.example", "555-999-0000", "Miami", "2025-05-05")
+  ]
+end
+
+def norm_email(e)
+  e = String.downcase(String.strip(e))
+  String.empty?(e) ? nil : e
+end
+
+def norm_phone(p)
+  digits = String.delete(p, "^0-9")
+  digits = digits[1..] || "" if String.size(digits) == 11 && String.start_with?(digits, "1")
+  String.size(digits) == 10 ? digits : nil
+end
+
+def norm_name(n) = String.gsub(String.delete(String.downcase(n), "'."), /\s+/, " ")
+
+def best_value(records)
+  ordered = Array.reverse(Array.sort_by(records) { Contact.get_updated(it) })
+  Array.each(ordered) do |c|
+    v = yield(c)
+    return v if v && v != ""
+  end
+  nil
+end
+
+people = contacts
+uf = UnionFind.new
+by_key = Hash[]
+Array.each(people) do |c|
+  id = Contact.get_id(c)
+  UnionFind.find(uf, id)
+  keys = Array[]
+  email = norm_email(Contact.get_email(c))
+  phone = norm_phone(Contact.get_phone(c))
+  Array.push(keys, "email:" + email) if email
+  Array.push(keys, "phone:" + phone) if phone
+  Array.push(keys, "name:" + norm_name(Contact.get_name(c)))
+  Array.each(keys) do |k|
+    other = by_key[k]
+    if other
+      UnionFind.union(uf, other, id)
+    else
+      by_key[k] = id
+    end
+  end
+end
+
+clusters = Array.group_by(people) { UnionFind.find(uf, Contact.get_id(it)) }
+merged = Array.map(Hash.values(clusters)) do |group|
+  emails = Array.uniq(Array.filter_map(group) { norm_email(Contact.get_email(it)) })
+  {
+    ids: Array.sort(Array.map(group) { Contact.get_id(it) }),
+    name: best_value(group) { |c| Contact.get_name(c) },
+    emails: emails,
+    phone: best_value(group) { |c| norm_phone(Contact.get_phone(c)) },
+    city: best_value(group) { |c| Contact.get_city(c) },
+    last: Array.max(Array.map(group) { Contact.get_updated(it) })
+  }
+end
+
+def fmt_phone(p)
+  return "-" if p == nil
+  "(#{p[0..2]}) #{p[3..5]}-#{p[6..]}"
+end
+
+puts("#{Array.size(people)} records -> #{Array.size(merged)} customers")
+puts
+Array.each(Array.sort_by(merged) { |m| m => {ids:}; Array.fetch(ids, 0) }) do |m|
+  m => {ids:, name:, emails:, phone:, city:, last:}
+  tag = Array.size(ids) > 1 ? "merged #{Array.join(ids, "+")}" : "single #{Array.fetch(ids, 0)}"
+  puts(format("%-14s %-16s %-14s %-9s %s", tag, name, fmt_phone(phone), city || "-", last))
+  Array.each(emails) { |e| puts("               <#{e}>") }
+end
+puts
+dups = Array.count(merged) { |m| m => {ids:}; Array.size(ids) > 1 }
+removed = Array.size(people) - Array.size(merged)
+puts(format("duplicate clusters: %d, records folded: %d (%.0f%%)", dups, removed, removed * 100.0 / Array.size(people)))
+no_contact = Array.select(merged) { |m| m => {emails:, phone:}; Array.empty?(emails) && phone == nil }
+puts("customers without email or phone: #{Array.size(no_contact)}")

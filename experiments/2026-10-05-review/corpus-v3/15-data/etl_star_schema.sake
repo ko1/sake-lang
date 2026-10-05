@@ -1,0 +1,183 @@
+class Fact
+  attr_reader date_key, store_key, product_key, qty, net_cents
+end
+
+class Dimension
+  attr_reader name, by_natural = nil, rows = nil
+
+  def initialize(d)
+    @by_natural = Hash[]
+    @rows = Array[]
+  end
+
+  def key_for(d, natural, attrs)
+    existing = @by_natural[natural]
+    return existing if existing
+    key = Array.size(@rows) + 1
+    @by_natural[natural] = key
+    Array.push(@rows, [key, natural, attrs])
+    key
+  end
+
+  def attrs(d, key)
+    _k, _natural, a = Array.fetch(@rows, key - 1)
+    a
+  end
+end
+
+class LoadError_ < Exception
+  attr_reader source, line_no
+end
+
+def pos_feed
+  <<~TXT
+    2026-07-01|S01|SKU-1|2|3.50
+    2026-07-01|S01|SKU-2|1|12.00
+    2026-07-01|S02|SKU-1|5|3.50
+    2026-07-02|S02|SKU-3|1|45.00
+    2026-07-02|S03|SKU-2|2|12.00
+    2026-07-03|S01|SKU-4|3|7.25
+    2026-07-03|S9X|SKU-1|1|3.50
+    2026-07-04|S03|SKU-1|4|3.50
+    2026-07-04|S03|SKU-3|1|42.00
+  TXT
+end
+
+def web_feed
+  <<~TXT
+    {"day":"2026-07-01","sku":"sku-2","qty":3,"total_cents":3600,"coupon":"SUMMER"}
+    {"day":"2026-07-02","sku":"sku-4","qty":1,"total_cents":725}
+    {"day":"2026-07-03","sku":"sku-1","qty":10,"total_cents":3150,"coupon":"BULK"}
+    {"day":"2026-07-04","sku":"sku-5","qty":1,"total_cents":999}
+    {"day":"2026-07-04","sku":"sku-3","qty":"two","total_cents":9000}
+  TXT
+end
+
+def stores = Hash["S01" => ["Downtown", "north"], "S02" => ["Harbor", "south"], "S03" => ["Airport", "north"], "WEB" => ["Online", "online"]]
+def products = Hash["SKU-1" => ["Croissant", "bakery"], "SKU-2" => ["Coffee beans", "grocery"], "SKU-3" => ["Espresso cup set", "homeware"], "SKU-4" => ["Jam", "grocery"]]
+
+def to_cents(s)
+  whole, _dot, frac = String.partition(s, ".")
+  String.to_i(whole) * 100 + String.to_i(String.ljust(frac, 2, "0"))
+end
+
+def json_field(line, name)
+  m = String.match(line, Regexp.new("\"#{name}\":(\"([^\"]*)\"|(-?\\d+))"))
+  return nil if m == nil
+  m[2] || String.to_i(m[3] || "0")
+end
+
+def extract_pos(text)
+  records = Array[]
+  Array.each_with_index(String.lines(text)) do |line, i|
+    parts = String.split(String.chomp(line), "|")
+    raise LoadError_.new("expected 5 fields", "pos", i + 1) if Array.size(parts) != 5
+    day, store, sku, qty_s, price = parts
+    qty = String.to_i(qty_s)
+    Array.push(records, {day: day, store: store, sku: sku, qty: qty, cents: to_cents(price) * qty})
+  end
+  records
+end
+
+def extract_web(text, rejects)
+  records = Array[]
+  Array.each_with_index(String.lines(text)) do |line, i|
+    day = json_field(line, "day")
+    sku = json_field(line, "sku")
+    qty = json_field(line, "qty")
+    cents = json_field(line, "total_cents")
+    raise LoadError_.new("qty is not a number", "web", i + 1) unless qty in Integer
+    raise LoadError_.new("missing fields", "web", i + 1) unless (day in String) && (sku in String) && (cents in Integer)
+    Array.push(records, {day: day, store: "WEB", sku: String.upcase(sku), qty: qty, cents: cents})
+  rescue LoadError_ => e
+    Array.push(rejects, e)
+  end
+  records
+end
+
+def load(records, dims, facts, rejects)
+  dates, store_dim, product_dim = dims
+  Array.each(records) do |r|
+    r => {day:, store:, sku:, qty:, cents:}
+    store_info = stores[store]
+    product_info = products[sku]
+    if store_info == nil || product_info == nil
+      what = store_info == nil ? "store #{store}" : "product #{sku}"
+      Array.push(rejects, LoadError_.new("unknown #{what}", "load", 0))
+      next
+    end
+    sname, region = store_info
+    pname, category = product_info
+    t = Time.new(String.to_i(day[0..3]), String.to_i(day[5..6]), String.to_i(day[8..9]))
+    dk = Dimension.key_for(dates, day, [Time.strftime(t, "%a"), Time.saturday?(t) || Time.sunday?(t)])
+    sk = Dimension.key_for(store_dim, store, [sname, region])
+    pk = Dimension.key_for(product_dim, sku, [pname, category])
+    Array.push(facts, Fact.new(dk, sk, pk, qty, cents))
+  end
+end
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def rollup(facts, header)
+  totals = Hash.new(0)
+  units = Hash.new(0)
+  Array.each(facts) do |f|
+    k = yield(f)
+    totals[k] += Fact.get_net_cents(f)
+    units[k] += Fact.get_qty(f)
+  end
+  grand = Array.sum(Hash.values(totals))
+  puts(header)
+  Array.each(Hash.sort_by(totals) { |k, v| -v }) do |k, v|
+    puts(format("  %-18s %4d units %9s %5.1f%%", k, units[k], money(v), v * 100.0 / grand))
+  end
+end
+
+rejects = Array[]
+records = Array[]
+begin
+  Array.concat(records, extract_pos(pos_feed))
+rescue LoadError_ => e
+  Array.push(rejects, e)
+end
+Array.concat(records, extract_web(web_feed, rejects))
+
+dates = Dimension.new("date")
+store_dim = Dimension.new("store")
+product_dim = Dimension.new("product")
+facts = Fact[]
+load(records, [dates, store_dim, product_dim], facts, rejects)
+
+puts("Extracted #{Array.size(records)} records, loaded #{Array.size(facts)} facts, rejected #{Array.size(rejects)}")
+Array.each(Array[dates, store_dim, product_dim]) do |d|
+  puts(format("  dim_%-8s %d rows", Dimension.get_name(d), Array.size(Dimension.get_rows(d))))
+end
+puts
+rollup(facts, "Revenue by store") { |f| Dimension.attrs(store_dim, Fact.get_store_key(f))[0] }
+puts
+rollup(facts, "Revenue by category") { |f| Dimension.attrs(product_dim, Fact.get_product_key(f))[1] }
+puts
+rollup(facts, "Revenue by day") do |f|
+  a = Dimension.attrs(dates, Fact.get_date_key(f))
+  "#{a[0]}#{a[1] ? " (weekend)" : ""}"
+end
+puts
+puts("Region x category units:")
+cross = Hash.new(0)
+Array.each(facts) do |f|
+  region = Dimension.attrs(store_dim, Fact.get_store_key(f))[1]
+  category = Dimension.attrs(product_dim, Fact.get_product_key(f))[1]
+  cross[[region, category]] += Fact.get_qty(f)
+end
+regions = Array.sort(Array.uniq(Array.map(Hash.keys(cross)) { |r, c| r }))
+categories = Array.sort(Array.uniq(Array.map(Hash.keys(cross)) { |r, c| c }))
+puts(format("  %-8s", "") + Array.join(Array.map(categories) { format("%10s", it) }, ""))
+Array.each(regions) do |r|
+  puts(format("  %-8s", r) + Array.join(Array.map(categories) { |c| format("%10d", cross[[r, c]]) }, ""))
+end
+puts
+puts("Rejected:")
+Array.each(rejects) do |e|
+  where = LoadError_.get_line_no(e) > 0 ? "#{LoadError_.get_source(e)}:#{LoadError_.get_line_no(e)}" : LoadError_.get_source(e)
+  puts("  #{where} #{Exception.message(e)}")
+end

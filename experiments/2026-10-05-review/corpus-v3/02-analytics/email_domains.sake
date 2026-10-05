@@ -1,0 +1,83 @@
+class Address
+  attr_reader user, domain
+
+  def to_s(a) = "#{@user}@#{@domain}"
+  def tld(a) = Array.last(String.split(@domain, "."))
+  def base_domain(a)
+    parts = String.split(@domain, ".")
+    keep = Array.include?(Array["co", "ac"], parts[-2]) ? 3 : 2
+    keep = Array.size(parts) if keep > Array.size(parts)
+    Array.join(Array.drop(parts, Array.size(parts) - keep), ".")
+  end
+end
+
+class InvalidAddress < Exception
+  attr_reader raw
+end
+
+def inbox_text
+  "From: Alice <alice@example.com>, cc bob.smith@Example.com and carol@mail.example.org.
+Please reply to support@shop.co.uk or sales@shop.co.uk; also ALICE@EXAMPLE.COM again.
+Dave (dave@gmail.com) forwarded this to erin@gmail.com, frank@yahoo.com and dave@gmail.com.
+Broken ones: grace@localhost, @nouser.com, heidi@@double.com, ivan@example..com
+Newsletter: news-letter+weekly@lists.example.org, judy_99@uni.edu"
+end
+
+def candidates(text) = String.scan(text, /[\w.+@-]*@[\w.@-]*/)
+
+def parse_address(raw)
+  m = String.match(raw, /\A(?<user>[\w.+-]+)@(?<domain>[a-z0-9-]+(?:\.[a-z0-9-]+)+)\z/i)
+  raise InvalidAddress.new("not an address", raw) unless m
+  Address.new(String.downcase(m["user"]), String.downcase(m["domain"]))
+end
+
+def clean(raw) = String.sub(raw, /[.,;)]+\z/, "")
+
+valid = Array[]
+invalid = Array[]
+seen = Set[]
+dupes = 0
+Array.each(candidates(inbox_text)) do |raw|
+  begin
+    addr = parse_address(clean(raw))
+    key = Address.to_s(addr)
+    if Set.include?(seen, key)
+      dupes += 1
+    else
+      Set.add(seen, key)
+      Array.push(valid, addr)
+    end
+  rescue InvalidAddress => e
+    Array.push(invalid, InvalidAddress.get_raw(e))
+  end
+end
+puts("found #{Array.size(valid)} unique addresses, #{dupes} duplicates, #{Array.size(invalid)} invalid")
+puts("invalid: #{Array.join(invalid, " ")}")
+
+by_domain = Array.group_by(valid) { |a| Address.get_domain(a) }
+puts("by domain:")
+Array.each(Array.sort(Hash.keys(by_domain))) do |d|
+  users = Array.sort(Array.map(by_domain[d]) { |a| Address.get_user(a) })
+  puts(format("  %-20s %d  %s", d, Array.size(users), Array.join(users, ", ")))
+end
+
+tlds = Hash.new(0)
+Array.each(valid) { |a| tlds[Address.tld(a)] += 1 }
+puts("tlds: " + Array.join(Array.map(Array.sort(Hash.keys(tlds))) { |t| "#{t}=#{tlds[t]}" }, " "))
+
+orgs = Hash.new(0)
+Array.each(valid) { |a| orgs[Address.base_domain(a)] += 1 }
+top = Hash.max_by(orgs) { |_, n| n }
+if top
+  d, n = top
+  puts("busiest organisation: #{d} (#{n} addresses)")
+end
+roles = Array.select(valid) { |a| Array.include?(Array["support", "sales", "info", "admin"], Address.get_user(a)) }
+puts("role accounts: #{Array.join(Array.map(roles) { |a| Address.to_s(a) }, ", ")}")
+tagged = Array.select(valid) { |a| String.include?(Address.get_user(a), "+") }
+Array.each(tagged) do |a|
+  base, _, tag = String.partition(Address.get_user(a), "+")
+  puts("plus-address: #{base} tagged '#{tag}' at #{Address.get_domain(a)}")
+end
+redacted = String.gsub(String.lines(inbox_text)[0], /(\w)[\w.+-]*@/, "\\1***@")
+puts("redacted: #{String.chomp(redacted)}")

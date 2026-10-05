@@ -1,0 +1,114 @@
+class SegTree
+  attr_reader n, sums, mins, maxs
+  def build(values)
+    n = Array.size(values)
+    t = SegTree.new(n, Array.new(4 * n, 0), Array.new(4 * n, 0), Array.new(4 * n, 0))
+    build_rec(t, values, 1, 0, n - 1)
+    t
+  end
+
+  def build_rec(t, values, node, lo, hi)
+    if lo == hi
+      @sums[node] = values[lo]
+      @mins[node] = values[lo]
+      @maxs[node] = values[lo]
+      return
+    end
+    mid = (lo + hi) / 2
+    build_rec(t, values, 2 * node, lo, mid)
+    build_rec(t, values, 2 * node + 1, mid + 1, hi)
+    pull(t, node)
+  end
+
+  def pull(t, node)
+    l = 2 * node
+    r = l + 1
+    @sums[node] = @sums[l] + @sums[r]
+    @mins[node] = @mins[l] < @mins[r] ? @mins[l] : @mins[r]
+    @maxs[node] = @maxs[l] > @maxs[r] ? @maxs[l] : @maxs[r]
+  end
+
+  def update(t, idx, value) = update_rec(t, 1, 0, @n - 1, idx, value)
+
+  def update_rec(t, node, lo, hi, idx, value)
+    if lo == hi
+      @sums[node] = value
+      @mins[node] = value
+      @maxs[node] = value
+      return
+    end
+    mid = (lo + hi) / 2
+    if idx <= mid
+      update_rec(t, 2 * node, lo, mid, idx, value)
+    else
+      update_rec(t, 2 * node + 1, mid + 1, hi, idx, value)
+    end
+    pull(t, node)
+  end
+
+  def query(t, from, to)
+    raise ArgumentError, "bad range #{from}..#{to}" if from > to || from < 0 || to >= @n
+    query_rec(t, 1, 0, @n - 1, from, to)
+  end
+
+  def query_rec(t, node, lo, hi, from, to)
+    return {sum: @sums[node], min: @mins[node], max: @maxs[node]} if from <= lo && hi <= to
+    mid = (lo + hi) / 2
+    return query_rec(t, 2 * node, lo, mid, from, to) if to <= mid
+    return query_rec(t, 2 * node + 1, mid + 1, hi, from, to) if from > mid
+    a = query_rec(t, 2 * node, lo, mid, from, to)
+    b = query_rec(t, 2 * node + 1, mid + 1, hi, from, to)
+    a => {sum: s1, min: m1, max: x1}
+    b => {sum: s2, min: m2, max: x2}
+    {sum: s1 + s2, min: m1 < m2 ? m1 : m2, max: x1 > x2 ? x1 : x2}
+  end
+end
+
+def days = once { Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+
+def day_name(i) = days[i % 7]
+
+def report(tree, label, from, to)
+  r = SegTree.query(tree, from, to)
+  r => {sum:, min:, max:}
+  days = to - from + 1
+  puts(format("%-14s days %2d-%2d (%s..%s): total %5d  avg %7.2f  min %4d  max %4d",
+              label, from, to, day_name(from), day_name(to), sum, sum / Float(days), min, max))
+end
+
+sales = Array[120, 95, 143, 80, 210, 305, 288, 101, 99, 150, 77, 230, 310, 295,
+              130, 90, 160, 85, 220, 330, 301, 118, 104, 149, 92, 240, 299, 280]
+tree = SegTree.build(sales)
+report(tree, "all", 0, Array.size(sales) - 1)
+Integer.times(4) { |w| report(tree, "week #{w + 1}", w * 7, w * 7 + 6) }
+report(tree, "weekend 1", 5, 6)
+report(tree, "single day", 10, 10)
+
+puts("-- corrections --")
+corrections = Array[[3, 180], [10, 0], [27, 500]]
+Array.each(corrections) do |day, amount|
+  old = sales[day]
+  sales[day] = amount
+  SegTree.update(tree, day, amount)
+  puts("day #{day}: #{old} -> #{amount}")
+end
+report(tree, "all", 0, Array.size(sales) - 1)
+report(tree, "week 2", 7, 13)
+report(tree, "week 4", 21, 27)
+
+best_start = 0
+best_total = 0
+Range.each(0..(Array.size(sales) - 7)) do |s|
+  SegTree.query(tree, s, s + 6) => {sum:}
+  if sum > best_total
+    best_total = sum
+    best_start = s
+  end
+end
+puts("best 7-day window starts day #{best_start} (#{day_name(best_start)}): #{best_total}")
+
+Array.each(Array[[5, 2], [0, 40]]) do |from, to|
+  SegTree.query(tree, from, to)
+rescue ArgumentError => e
+  puts("error: #{Exception.message(e)}")
+end

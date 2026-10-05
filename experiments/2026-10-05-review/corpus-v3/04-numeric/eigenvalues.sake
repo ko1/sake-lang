@@ -1,0 +1,127 @@
+class NotConverged < StandardError
+  attr_reader iterations
+end
+
+def mat_vec(a, v) = Array.map(a) { |row| Array.sum(Array.map(Array.zip(row, v)) { |x, y| x * y }) }
+def dot(u, v) = Array.sum(Array.map(Array.zip(u, v)) { |x, y| x * y })
+def norm(v) = Math.sqrt(dot(v, v))
+def scale(v, k) = Array.map(v) { |x| x * k }
+
+def power_iteration(a, tol, max_iter)
+  v = Array.new(Array.size(a), 1.0)
+  Range.each(1..max_iter) do |it|
+    w = mat_vec(a, v)
+    v = scale(w, 1.0 / norm(w))
+    av = mat_vec(a, v)
+    lambda = dot(v, av)
+    resid = norm(Array.map(Array.zip(av, v)) { |x, y| x - lambda * y })
+    return {value: lambda, vector: v, iterations: it} if resid < tol
+  end
+  raise NotConverged.new("power iteration did not converge", max_iter)
+end
+
+def solve(a, b)
+  n = Array.size(a)
+  m = Array.map(Array.zip(a, b)) { |row, bi| Array.push(Array.dup(row), bi) }
+  Range.each(0...n) do |c|
+    p = Array.max_by(Range.to_a(c...n)) { |r| Float.abs(m[r][c]) }
+    m[c], m[p] = m[p], m[c]
+    Range.each((c + 1)...n) do |r|
+      f = m[r][c] / m[c][c]
+      Range.each(c..n) { |k| m[r][k] -= f * m[c][k] }
+    end
+  end
+  x = Array.new(n, 0.0)
+  Integer.downto(n - 1, 0) do |i|
+    s = m[i][n]
+    Range.each((i + 1)...n) { |j| s -= m[i][j] * x[j] }
+    x[i] = s / m[i][i]
+  end
+  x
+end
+
+def inverse_iteration(a, shift, iters)
+  n = Array.size(a)
+  shifted = Range.map(0...n) { |i| Range.map(0...n) { |j| a[i][j] - (i == j ? shift : 0.0) } }
+  v = Range.map(0...n) { |i| 1.0 + i * 0.1 }
+  Integer.times(iters) do
+    w = solve(shifted, v)
+    v = scale(w, 1.0 / norm(w))
+  end
+  [dot(v, mat_vec(a, v)), v]
+end
+
+def jacobi_eigenvalues(a)
+  n = Array.size(a)
+  m = Array.map(a) { |row| Array.dup(row) }
+  sweeps = 0
+  while true
+    off = 0.0
+    Range.each(0...n) { |i| Range.each(0...n) { |j| off += m[i][j] ** 2 if i != j } }
+    break if off < 1e-20 || sweeps >= 50
+    sweeps += 1
+    Range.each(0...n) do |p|
+      Range.each((p + 1)...n) do |q|
+        next if Float.abs(m[p][q]) < 1e-30
+        theta = (m[q][q] - m[p][p]) / (2.0 * m[p][q])
+        t = (theta >= 0.0 ? 1.0 : -1.0) / (Float.abs(theta) + Math.sqrt(theta * theta + 1.0))
+        c = 1.0 / Math.sqrt(t * t + 1.0)
+        s = t * c
+        Range.each(0...n) do |k|
+          mkp = m[k][p]
+          mkq = m[k][q]
+          m[k][p] = c * mkp - s * mkq
+          m[k][q] = s * mkp + c * mkq
+        end
+        Range.each(0...n) do |k|
+          mpk = m[p][k]
+          mqk = m[q][k]
+          m[p][k] = c * mpk - s * mqk
+          m[q][k] = s * mpk + c * mqk
+        end
+      end
+    end
+  end
+  [Array.sort(Range.map(0...n) { |i| m[i][i] }), sweeps]
+end
+
+def symmetric?(a)
+  Array.all?(Range.to_a(0...Array.size(a))) { |i| Range.all?(0...i) { |j| a[i][j] == a[j][i] } }
+end
+
+def fmt(v) = Array.join(Array.map(v) { |x| format("%8.5f", x) }, " ")
+
+matrices = Array[
+  ["symmetric 3x3", Array[Float[4.0, 1.0, 2.0], Float[1.0, 3.0, 0.0], Float[2.0, 0.0, 5.0]]],
+  ["tridiagonal 5x5", Range.map(0...5) { |i| Range.map(0...5) { |j| i == j ? 2.0 : (Integer.abs(i - j) == 1 ? -1.0 : 0.0) } }],
+  ["rotation-ish", Array[Float[0.0, -1.0], Float[1.0, 0.0]]]
+]
+
+Array.each(matrices) do |name, a|
+  puts("== #{name}")
+  begin
+    r = power_iteration(a, 1e-9, 500)
+    r => {value:, vector:, iterations:}
+    puts(format("  dominant eigenvalue %.8f after %d iterations", value, iterations))
+    puts("  eigenvector #{fmt(vector)}")
+    resid = norm(Array.map(Array.zip(mat_vec(a, vector), scale(vector, value))) { |x, y| x - y })
+    puts(format("  |Av - lv| = %.2e", resid))
+  rescue NotConverged => e
+    puts("  #{Exception.message(e)} (#{NotConverged.get_iterations(e)} iterations)")
+  end
+  unless symmetric?(a)
+    puts("  not symmetric: skipping Jacobi")
+    next
+  end
+  eig, sweeps = jacobi_eigenvalues(a)
+  puts("  jacobi (#{sweeps} sweeps): #{fmt(eig)}")
+  smallest = Array.first(eig)
+  val, vec = inverse_iteration(a, smallest - 0.01, 8)
+  puts(format("  inverse iteration near %.4f -> %.8f", smallest - 0.01, val))
+  trace = Range.sum(0...Array.size(a)) { |i| a[i][i] }
+  puts(format("  trace %.6f vs sum of eigenvalues %.6f", trace, Array.sum(eig)))
+end
+
+n = 5
+exact = Range.map(1..n) { |k| 2.0 - 2.0 * Math.cos(k * 3.141592653589793 / (n + 1)) }
+puts("exact tridiagonal eigenvalues: #{fmt(exact)}")

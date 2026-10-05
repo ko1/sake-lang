@@ -1,0 +1,116 @@
+# Emergency-room triage board: in-place three-way (Dutch national flag)
+# partition of patients by urgency colour, a stable partition for comparison,
+# and a three-way quicksort for arrival times with many duplicates.
+
+class Patient
+  attr_reader name, colour, arrived
+end
+
+def urgency(colour)
+  case colour
+  in :red then 0
+  in :yellow then 1
+  in :green then 2
+  end
+end
+
+def swap(a, i, j)
+  a[i], a[j] = a[j], a[i]
+end
+
+# Dutch national flag: one pass, in place, not stable.
+def flag_partition!(a)
+  low = 0
+  mid = 0
+  high = Array.size(a) - 1
+  swaps = 0
+  while mid <= high
+    case urgency(Patient.get_colour(a[mid]))
+    in 0
+      swap(a, low, mid)
+      low += 1
+      mid += 1
+      swaps += 1
+    in 1
+      mid += 1
+    in 2
+      swap(a, mid, high)
+      high -= 1
+      swaps += 1
+    end
+  end
+  [low, high + 1, swaps]
+end
+
+def stable_partition(a)
+  groups = Array[Array[], Array[], Array[]]
+  Array.each(a) { |pt| Array.push(groups[urgency(Patient.get_colour(pt))], pt) }
+  Array.flatten(groups)
+end
+
+def quicksort3!(a, lo, hi)
+  return a if lo >= hi
+  pivot = a[lo + (hi - lo) / 2]
+  lt = lo
+  gt = hi
+  i = lo
+  while i <= gt
+    if a[i] < pivot
+      swap(a, lt, i)
+      lt += 1
+      i += 1
+    elsif a[i] > pivot
+      swap(a, i, gt)
+      gt -= 1
+    else
+      i += 1
+    end
+  end
+  quicksort3!(a, lo, lt - 1)
+  quicksort3!(a, gt + 1, hi)
+  a
+end
+
+def names(list) = Array.join(Array.map(list) { |pt| Patient.get_name(pt) }, " ")
+
+waiting = Array[
+  Patient.new("Ann", :green, 905), Patient.new("Ben", :red, 911), Patient.new("Cal", :yellow, 912),
+  Patient.new("Dee", :green, 914), Patient.new("Eve", :yellow, 920), Patient.new("Fay", :red, 921),
+  Patient.new("Gil", :green, 925), Patient.new("Hal", :yellow, 930), Patient.new("Ivy", :red, 931),
+  Patient.new("Jon", :green, 940)
+]
+
+board = Array.dup(waiting)
+red_end, green_start, swaps = flag_partition!(board)
+puts("in place (#{swaps} swaps): #{names(board)}")
+puts("  red: #{names(board[0...red_end])} | yellow: #{names(board[red_end...green_start])} | green: #{names(board[green_start..])}")
+
+stable = stable_partition(waiting)
+puts("stable:              #{names(stable)}")
+fair = Array.all?(Array[:red, :yellow, :green]) do |c|
+  in_group = Array.select(stable) { |pt| Patient.get_colour(pt) == c }
+  times = Array.map(in_group) { |pt| Patient.get_arrived(pt) }
+  times == Array.sort(times)
+end
+puts("stable keeps arrival order within colour: #{fair}")
+unfair = Array.select(Array[:red, :yellow, :green]) do |c|
+  times = Array.map(Array.select(board) { |pt| Patient.get_colour(pt) == c }) { |pt| Patient.get_arrived(pt) }
+  times != Array.sort(times)
+end
+puts("in-place order broken for: #{unfair}")
+
+counts = Array.tally(Array.map(waiting) { |pt| Patient.get_colour(pt) })
+puts("counts: #{counts}")
+next_up = Array.first(stable)
+puts("next: #{Patient.get_name(next_up)} (#{Patient.get_colour(next_up)}, since #{Patient.get_arrived(next_up)})") if next_up
+
+# minute-of-arrival buckets for the whole day: lots of duplicates
+arrivals = Array[]
+m = 3
+Integer.times(60) do
+  m = (m * 31 + 7) % 23
+  Array.push(arrivals, 900 + m % 8 * 15)
+end
+sorted = quicksort3!(Array.dup(arrivals), 0, Array.size(arrivals) - 1)
+puts("3-way quicksort ok: #{sorted == Array.sort(arrivals)}")
+Array.each(Array.chunk_while(sorted) { |a, b| a == b }) { |run| puts("  #{run[0]}: #{"*" * Array.size(run)}") }

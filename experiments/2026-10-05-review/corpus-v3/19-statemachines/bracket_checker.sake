@@ -1,0 +1,85 @@
+class Frame
+  attr_reader open, line, col
+end
+
+class Problem
+  attr_reader line, col, message
+  def to_s(p) = "#{@line}:#{@col}: #{@message}"
+end
+
+def closer_for(open)
+  case open
+  in "(" then ")"
+  in "[" then "]"
+  in "{" then "}"
+  end
+end
+
+def check(src)
+  stack = Array[]
+  problems = Array[]
+  state = :code
+  quote = ""
+  line = 1
+  col = 0
+  max_depth = 0
+  String.each_char(src) do |c|
+    col += 1
+    case state
+    in :code
+      if c == "\"" || c == "'"
+        state = :string
+        quote = c
+        Array.push(stack, Frame.new(c, line, col))
+      elsif c == "#"
+        state = :comment
+      elsif c == "(" || c == "[" || c == "{"
+        Array.push(stack, Frame.new(c, line, col))
+        max_depth = Array.size(stack) if Array.size(stack) > max_depth
+      elsif c == ")" || c == "]" || c == "}"
+        top = Array.last(stack)
+        if top == nil
+          Array.push(problems, Problem.new(line, col, "unexpected #{c}"))
+        elsif closer_for(Frame.get_open(top)) != c
+          Array.push(problems, Problem.new(line, col, "#{c} closes #{Frame.get_open(top)} from #{Frame.get_line(top)}:#{Frame.get_col(top)}"))
+          Array.pop(stack)
+        else
+          Array.pop(stack)
+        end
+      end
+    in :string
+      if c == "\\"
+        state = :escape
+      elsif c == quote
+        Array.pop(stack)
+        state = :code
+      elsif c == "\n"
+        Array.push(problems, Problem.new(line, col, "newline in string"))
+        Array.pop(stack)
+        state = :code
+      end
+    in :escape then state = :string
+    in :comment then state = :code if c == "\n"
+    end
+    if c == "\n"
+      line += 1
+      col = 0
+    end
+  end
+  Array.each(stack) { |f| Array.push(problems, Problem.new(Frame.get_line(f), Frame.get_col(f), "unclosed #{Frame.get_open(f)}")) }
+  [problems, max_depth]
+end
+
+samples = Array[
+  ["balanced", "def f(a, b)\n  x = [a, {k: (b + 1)}]\n  puts(\"(not a paren\")\nend\n"],
+  ["mismatch", "foo(bar[1)]\nbaz{ qux }\n"],
+  ["unclosed", "list = [1, 2, (3\n# comment with ) and ]\nmore = {a: 1\n"],
+  ["strings", "s = 'it\\'s' + \"x\\\"(y\"\nt = \"broken\nu = (1)\n"],
+  ["extra", "a = (1))\n] }\n"]
+]
+Array.each(samples) do |name, src|
+  problems, depth = check(src)
+  status = Array.empty?(problems) ? "ok" : "#{Array.size(problems)} problem(s)"
+  puts(format("%-9s lines=%d depth=%d %s", name, Array.size(String.lines(src)), depth, status))
+  Array.each(problems) { |pr| puts("    #{pr}") }
+end

@@ -1,0 +1,101 @@
+class Call
+  attr_reader tick, floor, passenger
+end
+
+def top_floor = 9
+
+class Elevator
+  attr_reader floor = 0, direction = :idle, door = :closed, dwell = 0, stops = nil, moved = 0, served = nil
+  def initialize(e)
+    @stops = Set[]
+    @served = Array[]
+  end
+
+  def request(e, floor)
+    raise ArgumentError, "no floor #{floor}" unless Integer.between?(floor, 0, top_floor)
+    Set.add(@stops, floor)
+  end
+
+  def above?(e) = Set.any?(@stops) { it > @floor }
+  def below?(e) = Set.any?(@stops) { it < @floor }
+
+  def choose_direction(e)
+    case @direction
+    in :up then above?(e) ? :up : (below?(e) ? :down : :idle)
+    in :down then below?(e) ? :down : (above?(e) ? :up : :idle)
+    in :idle
+      if Set.empty?(@stops)
+        :idle
+      else
+        nearest = Array.min_by(Set.to_a(@stops)) { |f| [Integer.abs(f - @floor), f] }
+        nearest > @floor ? :up : :down
+      end
+    end
+  end
+
+  def tick(e, t)
+    if @door == :open
+      @dwell -= 1
+      if @dwell == 0
+        @door = :closed
+        return "doors close at #{@floor}"
+      end
+      return "doors open at #{@floor}"
+    end
+    if Set.include?(@stops, @floor)
+      Set.delete(@stops, @floor)
+      Array.push(@served, [t, @floor])
+      @door = :open
+      @dwell = 2
+      return "arrive #{@floor}, doors open"
+    end
+    @direction = choose_direction(e)
+    case @direction
+    in :idle then "idle at #{@floor}"
+    in :up
+      @floor += 1
+      @moved += 1
+      "up to #{@floor}"
+    in :down
+      @floor -= 1
+      @moved += 1
+      "down to #{@floor}"
+    end
+  end
+end
+
+calls = Array[
+  Call.new(0, 5, "ann"), Call.new(1, 2, "bob"), Call.new(3, 8, "cy"),
+  Call.new(6, 1, "dee"), Call.new(9, 12, "eve"), Call.new(10, 7, "fay"),
+  Call.new(14, 0, "gus"), Call.new(22, 3, "hal")
+]
+e = Elevator.new
+pending = Array.dup(calls)
+waits = Hash[]
+t = 0
+while t < 40
+  while !Array.empty?(pending) && Call.get_tick(Array.first(pending)) == t
+    c = Array.shift(pending)
+    begin
+      Elevator.request(e, Call.get_floor(c))
+      waits[Call.get_passenger(c)] = [t, Call.get_floor(c)]
+    rescue ArgumentError => err
+      puts(format("t=%02d  rejected %s: %s", t, Call.get_passenger(c), Exception.message(err)))
+    end
+  end
+  msg = Elevator.tick(e, t)
+  stops = Array.sort(Set.to_a(Elevator.get_stops(e)))
+  puts(format("t=%02d  %-22s dir=%-5s stops=%s", t, msg, Elevator.get_direction(e), stops))
+  break if Array.empty?(pending) && Set.empty?(Elevator.get_stops(e)) && Elevator.get_door(e) == :closed
+  t += 1
+end
+
+puts("moved #{Elevator.get_moved(e)} floors, finished at t=#{t}")
+Hash.each(waits) do |who, (at, floor)|
+  served = Array.find(Elevator.get_served(e)) { |st, f| f == floor && st >= at }
+  if served
+    puts(format("  %-4s floor %d waited %d", who, floor, served[0] - at))
+  else
+    puts(format("  %-4s floor %d never served", who, floor))
+  end
+end

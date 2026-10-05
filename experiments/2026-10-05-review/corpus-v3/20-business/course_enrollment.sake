@@ -1,0 +1,143 @@
+class Course
+  attr_reader code, title, credits, capacity, prereqs, slot, roster = nil, waitlist = nil
+  def initialize(c)
+    @roster = Array[]
+    @waitlist = Array[]
+  end
+end
+
+class Student
+  attr_reader id, name, completed, max_credits
+end
+
+class EnrollError < StandardError
+  attr_reader course, reason
+end
+
+class Registrar
+  attr_reader courses, students
+  def course(r, code)
+    c = @courses[code]
+    raise EnrollError.new("no course #{code}", code, :unknown) unless c
+    c
+  end
+
+  def schedule_of(r, sid) = Array.select(Hash.values(@courses)) { |c| Array.include?(Course.get_roster(c), sid) }
+
+  def credits_of(r, sid) = Array.sum(schedule_of(r, sid)) { |c| Course.get_credits(c) }
+
+  def enroll(r, sid, code)
+    c = course(r, code)
+    s = Hash.fetch(@students, sid)
+    raise EnrollError.new("already enrolled", code, :duplicate) if Array.include?(Course.get_roster(c), sid)
+    missing = Array.reject(Course.get_prereqs(c)) { |p| Set.include?(Student.get_completed(s), p) }
+    raise EnrollError.new("missing #{Array.join(missing, ", ")}", code, :prereq) unless Array.empty?(missing)
+    clash = Array.find(schedule_of(r, sid)) { |o| Course.get_slot(o) == Course.get_slot(c) }
+    raise EnrollError.new("time clash with #{Course.get_code(clash)}", code, :clash) if clash
+    if credits_of(r, sid) + Course.get_credits(c) > Student.get_max_credits(s)
+      raise EnrollError.new("over #{Student.get_max_credits(s)} credits", code, :credits)
+    end
+    if Array.size(Course.get_roster(c)) >= Course.get_capacity(c)
+      Array.push(Course.get_waitlist(c), sid)
+      return :waitlisted
+    end
+    Array.push(Course.get_roster(c), sid)
+    :enrolled
+  end
+
+  # dropping frees a seat for the first waitlisted student who can still take it
+  def drop(r, sid, code)
+    c = course(r, code)
+    raise EnrollError.new("not enrolled", code, :not_enrolled) unless Array.delete(Course.get_roster(c), sid)
+    promoted = nil
+    while promoted == nil && !Array.empty?(Course.get_waitlist(c))
+      candidate = Array.shift(Course.get_waitlist(c))
+      begin
+        promoted = candidate if enroll(r, candidate, code) == :enrolled
+      rescue EnrollError => e
+        puts("    #{Student.get_name(Hash.fetch(@students, candidate))} skipped: #{Exception.message(e)}")
+      end
+    end
+    promoted
+  end
+end
+
+# order courses so that every prerequisite comes first
+def study_plan(courses, goal, done, seen, plan)
+  return plan if Set.include?(done, goal) || Array.include?(plan, goal)
+  raise EnrollError.new("prerequisite cycle at #{goal}", goal, :cycle) if Set.include?(seen, goal)
+  Set.add(seen, goal)
+  Array.each(Course.get_prereqs(Hash.fetch(courses, goal))) { |p| study_plan(courses, p, done, seen, plan) }
+  Array.push(plan, goal)
+end
+
+courses = Hash[]
+Array.each(Array[
+  ["CS101", "Intro to Programming", 4, 3, Array[], "MWF9"],
+  ["CS201", "Data Structures", 4, 2, Array["CS101"], "MWF10"],
+  ["CS301", "Algorithms", 4, 2, Array["CS201", "MA201"], "TR9"],
+  ["MA101", "Calculus I", 4, 3, Array[], "TR9"],
+  ["MA201", "Discrete Math", 3, 2, Array["MA101"], "MWF11"],
+  ["BU110", "Accounting Basics", 3, 2, Array[], "MWF10"],
+  ["CS999", "Thesis", 6, 1, Array["CS998"], "TR1"],
+  ["CS998", "Research Methods", 3, 1, Array["CS999"], "TR3"]
+]) do |code, title, credits, cap, pre, slot|
+  courses[code] = Course.new(code, title, credits, cap, pre, slot)
+end
+students = Hash[
+  1 => Student.new(1, "Ada", Set["CS101", "MA101"], 12),
+  2 => Student.new(2, "Bao", Set["CS101"], 10),
+  3 => Student.new(3, "Cyd", Set[], 16),
+  4 => Student.new(4, "Dov", Set["CS101", "MA101", "CS201"], 12),
+  5 => Student.new(5, "Eun", Set["CS101", "MA101", "MA201"], 8)
+]
+reg = Registrar.new(courses, students)
+
+requests = Array[
+  [:add, 1, "CS201"], [:add, 2, "CS201"], [:add, 4, "CS201"], [:add, 5, "CS201"],
+  [:add, 1, "MA201"], [:add, 1, "BU110"], [:add, 3, "CS101"], [:add, 3, "MA101"],
+  [:add, 3, "CS301"], [:add, 4, "CS301"], [:add, 2, "MA201"], [:add, 4, "MA201"],
+  [:add, 3, "BU110"], [:add, 5, "MA201"], [:add, 2, "PH100"], [:add, 1, "CS201"],
+  [:drop, 1, "CS201"], [:drop, 3, "CS201"], [:add, 2, "BU110"], [:add, 5, "BU110"],
+  [:drop, 1, "BU110"], [:drop, 4, "CS201"]
+]
+Array.each(requests) do |op, sid, code|
+  name = Student.get_name(Hash.fetch(students, sid))
+  begin
+    if op == :add
+      puts("#{name} + #{code}: #{Registrar.enroll(reg, sid, code)}")
+    else
+      promoted = Registrar.drop(reg, sid, code)
+      who = promoted ? Student.get_name(Hash.fetch(students, promoted)) : "nobody"
+      puts("#{name} - #{code}: dropped, seat goes to #{who}")
+    end
+  rescue EnrollError => e
+    puts("#{name} #{op == :add ? "+" : "-"} #{code}: refused (#{EnrollError.get_reason(e)}: #{Exception.message(e)})")
+  end
+end
+
+puts
+Hash.each_value(courses) do |c|
+  roster = Array.map(Course.get_roster(c)) { |sid| Student.get_name(Hash.fetch(students, sid)) }
+  wait = Array.map(Course.get_waitlist(c)) { |sid| Student.get_name(Hash.fetch(students, sid)) }
+  next if Array.empty?(roster) && Array.empty?(wait)
+  w = Array.empty?(wait) ? "" : "  waitlist: #{Array.join(wait, ", ")}"
+  puts(format("%-6s %-22s %d/%d %s%s", Course.get_code(c), Course.get_title(c), Array.size(roster), Course.get_capacity(c), Array.join(roster, ", "), w))
+end
+
+puts
+Hash.each_value(students) do |s|
+  sid = Student.get_id(s)
+  puts(format("%-4s %2d credits: %s", Student.get_name(s), Registrar.credits_of(reg, sid), Array.join(Array.map(Registrar.schedule_of(reg, sid)) { |c| Course.get_code(c) }, " ")))
+end
+
+puts
+Array.each(Array[[3, "CS301"], [2, "CS301"], [1, "CS999"]]) do |sid, goal|
+  s = Hash.fetch(students, sid)
+  begin
+    plan = study_plan(courses, goal, Student.get_completed(s), Set[], Array[])
+    puts("#{Student.get_name(s)} -> #{goal}: #{Array.join(plan, " > ")}")
+  rescue EnrollError => e
+    puts("#{Student.get_name(s)} -> #{goal}: #{Exception.message(e)}")
+  end
+end

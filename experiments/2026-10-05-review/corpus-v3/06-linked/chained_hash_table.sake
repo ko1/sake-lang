@@ -1,0 +1,126 @@
+Chain = Struct.new(:key, :value, :next)
+
+class Table
+  attr_reader buckets, size = 0, resizes = 0
+  attr_accessor probes = 0
+  include Indexable
+
+  def create(n) = Table.new(Array.new(n))
+
+  def hash_of(key)
+    h = 5381
+    String.each_byte(key) { |b| h = (h * 33 + b) % 4294967296 }
+    h
+  end
+
+  def slot(t, key) = hash_of(key) % Array.size(@buckets)
+
+  def [](t, key)
+    node = @buckets[slot(t, key)]
+    while node
+      @probes += 1
+      return Chain.get_value(node) if Chain.get_key(node) == key
+      node = Chain.get_next(node)
+    end
+    nil
+  end
+
+  def []=(t, key, value)
+    i = slot(t, key)
+    node = @buckets[i]
+    while node
+      if Chain.get_key(node) == key
+        Chain.set_value(node, value)
+        return value
+      end
+      node = Chain.get_next(node)
+    end
+    @buckets[i] = Chain.new(key, value, @buckets[i])
+    @size += 1
+    grow(t) if @size > Array.size(@buckets) * 2
+    value
+  end
+
+  def delete(t, key)
+    i = slot(t, key)
+    prev = nil
+    node = @buckets[i]
+    while node
+      if Chain.get_key(node) == key
+        nxt = Chain.get_next(node)
+        prev ? Chain.set_next(prev, nxt) : @buckets[i] = nxt
+        @size -= 1
+        return Chain.get_value(node)
+      end
+      prev = node
+      node = Chain.get_next(node)
+    end
+    nil
+  end
+
+  def grow(t)
+    old = @buckets
+    fresh = Array.new(Array.size(old) * 2 + 1)
+    Array.each(old) do |node|
+      while node
+        nxt = Chain.get_next(node)
+        j = hash_of(Chain.get_key(node)) % Array.size(fresh)
+        Chain.set_next(node, fresh[j])
+        fresh[j] = node
+        node = nxt
+      end
+    end
+    @buckets = fresh
+    @resizes += 1
+  end
+
+  def chain_lengths(t)
+    Array.map(@buckets) do |node|
+      n = 0
+      while node
+        n += 1
+        node = Chain.get_next(node)
+      end
+      n
+    end
+  end
+
+  def each_pair(t)
+    Array.each(@buckets) do |node|
+      while node
+        yield(Chain.get_key(node), Chain.get_value(node))
+        node = Chain.get_next(node)
+      end
+    end
+  end
+end
+
+text = "it was the best of times it was the worst of times it was the age of wisdom it was the age of foolishness it was the epoch of belief it was the epoch of incredulity it was the season of light it was the season of darkness"
+counts = Table.create(3)
+Array.each(String.split(text, " ")) do |w|
+  c = counts[w]
+  counts[w] = c ? c + 1 : 1
+end
+lengths = Table.chain_lengths(counts)
+puts("distinct=#{Table.get_size(counts)} buckets=#{Array.size(lengths)} resizes=#{Table.get_resizes(counts)}")
+puts("longest chain=#{Array.max(lengths)} empty buckets=#{Array.count(lengths, 0)}")
+pairs = Array[]
+Table.each_pair(counts) { |k, v| Array.push(pairs, [k, v]) }
+top = Array.take(Array.sort_by(pairs) { |k, v| [-v, k] }, 5)
+puts("top: #{Array.join(Array.map(top) { |k, v| "#{k}=#{v}" }, ", ")}")
+Table.set_probes(counts, 0)
+Array.each(Array["was", "age", "wisdom", "zebra", ""]) do |w|
+  puts("#{Kernel.inspect(w)} -> #{Kernel.inspect(counts[w])}")
+end
+puts("probes for 5 lookups: #{Table.get_probes(counts)}")
+removed = Array.map(Array["it", "of", "nope"]) { |w| Table.delete(counts, w) }
+puts("deleted: #{Kernel.inspect(removed)} size now #{Table.get_size(counts)}")
+total = 0
+Table.each_pair(counts) { |k, v| total += v }
+puts("remaining word total: #{total}")
+
+ids = Table.create(2)
+Range.each(1..40) { |i| ids["user#{i}"] = i * i }
+ids["user7"] = -1
+puts("ids: size=#{Table.get_size(ids)} buckets=#{Array.size(Table.get_buckets(ids))} resizes=#{Table.get_resizes(ids)} user7=#{ids["user7"]} user40=#{ids["user40"]} user41=#{Kernel.inspect(ids["user41"])}")
+puts("hash(\"abc\")=#{Table.hash_of("abc")}")

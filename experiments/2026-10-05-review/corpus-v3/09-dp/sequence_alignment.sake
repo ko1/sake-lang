@@ -1,0 +1,103 @@
+class Scoring
+  attr_reader match, mismatch, gap
+end
+
+class Alignment
+  attr_reader score, top, bottom, start
+
+  def identity(a)
+    same = Range.count(0...String.size(@top)) { |i| @top[i] == @bottom[i] && @top[i] != "-" }
+    String.empty?(@top) ? 0.0 : 100.0 * same / String.size(@top)
+  end
+
+  def marker(a)
+    Range.map(0...String.size(@top)) do |i|
+      t = @top[i]
+      b = @bottom[i]
+      t == b ? "|" : (t == "-" || b == "-" ? " " : ".")
+    end.Array.join
+  end
+end
+
+def pair_score(sc, a, b) = a == b ? Scoring.get_match(sc) : Scoring.get_mismatch(sc)
+
+# local = true gives Smith-Waterman, otherwise Needleman-Wunsch
+def align(s, t, sc, local)
+  gap = Scoring.get_gap(sc)
+  n = String.size(s)
+  m = String.size(t)
+  h = Array.new(n + 1) { |i| Array.new(m + 1) { |j| local ? 0 : (i + j) * gap } }
+  move = Array.new(n + 1) { |i| Array.new(m + 1) { |j| i == 0 ? (j == 0 ? :stop : :left) : (j == 0 ? :up : :diag) } }
+  Array.each(move) { |row| Array.fill(row, :stop) } if local
+  best = [0, n, m]
+  Integer.upto(1, n) do |i|
+    Integer.upto(1, m) do |j|
+      diag = h[i - 1][j - 1] + pair_score(sc, s[i - 1], t[j - 1])
+      up = h[i - 1][j] + gap
+      left = h[i][j - 1] + gap
+      v = diag
+      dir = :diag
+      if up > v
+        v = up
+        dir = :up
+      end
+      if left > v
+        v = left
+        dir = :left
+      end
+      if local && v <= 0
+        v = 0
+        dir = :stop
+      end
+      h[i][j] = v
+      move[i][j] = dir
+      best = [v, i, j] if local && v > best[0]
+    end
+  end
+  score, i, j = local ? best : [h[n][m], n, m]
+  top = ""
+  bottom = ""
+  while true
+    case move[i][j]
+    in :diag
+      top = s[i - 1] + top
+      bottom = t[j - 1] + bottom
+      i -= 1
+      j -= 1
+    in :up
+      top = s[i - 1] + top
+      bottom = "-" + bottom
+      i -= 1
+    in :left
+      top = "-" + top
+      bottom = t[j - 1] + bottom
+      j -= 1
+    in :stop
+      break
+    end
+  end
+  Alignment.new(score, top, bottom, i)
+end
+
+def report(title, a)
+  puts(format("%s: score %d, identity %.1f%%, starts at %d", title, Alignment.get_score(a), Alignment.identity(a), Alignment.get_start(a)))
+  puts("  " + Alignment.get_top(a))
+  puts("  " + Alignment.marker(a))
+  puts("  " + Alignment.get_bottom(a))
+end
+
+dna = Scoring.new(1, -1, -2)
+Array.each(Array[["GATTACA", "GCATGCU"], ["AGTACGCA", "TATGC"], ["ACCGTTGACC", "ACGTTGAC"]]) do |s, t|
+  report("global #{s}/#{t}", align(s, t, dna, false))
+  report("local  #{s}/#{t}", align(s, t, dna, true))
+end
+
+protein = Scoring.new(3, -1, -2)
+query = "HEAGAWGHEE"
+library = Array["PAWHEAE", "HEAGAW", "WGHEEPAW", "QQQQ"]
+hits = Array.map(library) { |seq| [seq, align(query, seq, protein, true)] }
+ranked = Array.sort_by(hits) { |_, a| -Alignment.get_score(a) }
+puts("library search for #{query}:")
+Array.each(ranked) do |seq, a|
+  puts(format("  %-9s score %2d  %s", seq, Alignment.get_score(a), Alignment.get_bottom(a)))
+end

@@ -1,0 +1,113 @@
+class Conflict < StandardError
+  attr_reader row, col
+end
+
+class Entry
+  attr_reader number, direction, row, col, length
+
+  def cells(e)
+    Range.map(0...@length) { |i| @direction == :across ? [@row, @col + i] : [@row + i, @col] }
+  end
+
+  def label(e) = "#{@number}#{@direction == :across ? "A" : "D"}"
+end
+
+class Crossword
+  attr_reader blocks, rows, cols, entries, letters
+
+  def parse(lines)
+    blocks = Set[]
+    Array.each_with_index(lines) do |line, r|
+      Array.each_with_index(String.chars(line)) { |ch, c| Set.add(blocks, [r, c]) if ch == "#" }
+    end
+    cw = Crossword.new(blocks, Array.size(lines), String.size(lines[0]), Entry[], Hash[])
+    number(cw)
+    cw
+  end
+
+  def open?(cw, r, c) = r >= 0 && r < @rows && c >= 0 && c < @cols && !Set.include?(@blocks, [r, c])
+
+  def run_length(cw, r, c, dr, dc)
+    n = 0
+    n += 1 while open?(cw, r + dr * n, c + dc * n)
+    n
+  end
+
+  def number(cw)
+    n = 0
+    Integer.times(@rows) do |r|
+      Integer.times(@cols) do |c|
+        next unless open?(cw, r, c)
+        across = !open?(cw, r, c - 1) && run_length(cw, r, c, 0, 1) >= 2
+        down = !open?(cw, r - 1, c) && run_length(cw, r, c, 1, 0) >= 2
+        next unless across || down
+        n += 1
+        Array.push(@entries, Entry.new(n, :across, r, c, run_length(cw, r, c, 0, 1))) if across
+        Array.push(@entries, Entry.new(n, :down, r, c, run_length(cw, r, c, 1, 0))) if down
+      end
+    end
+  end
+
+  def entry(cw, label) = Array.find(@entries) { Entry.label(it) == label }
+
+  def fill(cw, label, word)
+    e = entry(cw, label)
+    raise ArgumentError, "no entry #{label}" unless e
+    raise ArgumentError, "#{label} needs #{Entry.get_length(e)} letters, got #{word}" if String.size(word) != Entry.get_length(e)
+    cells = Entry.cells(e)
+    Array.each_with_index(cells) do |cell, i|
+      have = @letters[cell]
+      want = word[i]
+      if have && have != want
+        r, c = cell
+        raise Conflict.new("#{label} puts #{want} where #{have} is", r, c)
+      end
+    end
+    Array.each_with_index(cells) { |cell, i| @letters[cell] = word[i] }
+    e
+  end
+
+  def pattern(cw, e) = Array.join(Array.map(Entry.cells(e)) { |cell| @letters[cell] || "_" })
+
+  def to_s(cw)
+    lines = Range.map(0...@rows) do |r|
+      Array.join(Range.map(0...@cols) { |c| open?(cw, r, c) ? (@letters[[r, c]] || ".") : "#" })
+    end
+    Array.join(lines, "\n")
+  end
+end
+
+cw = Crossword.parse(Array[
+  "...#....",
+  "...#....",
+  "........",
+  "##...###",
+  "....#...",
+  "....#...",
+])
+
+Array.each(Array[:across, :down]) do |dir|
+  list = Array.select(Crossword.get_entries(cw)) { Entry.get_direction(it) == dir }
+  puts("#{dir}: #{Array.join(Array.map(list) { |e| "#{Entry.label(e)}(#{Entry.get_length(e)})" }, " ")}")
+end
+
+answers = Array[
+  ["1A", "CAT"], ["1D", "COW"], ["4A", "RUBY"], ["2D", "AXE"], ["9A", "WEST"], ["9D", "WINE"],
+  ["4D", "ROPE"], ["3D", "TEN"], ["5D", "UNIT"], ["7A", "ERA"], ["12A", "IDLE"], ["2D", "ACE"], ["6A", "SAKE"],
+  ["3D", "TENANT"], ["10A", "WENTOVER"], ["10A", "WEREWOLF"],
+]
+Array.each(answers) do |label, word|
+  Crossword.fill(cw, label, word)
+  puts("#{label} = #{word}")
+rescue Conflict => err
+  puts("#{label} = #{word}: conflict at (#{Conflict.get_row(err)},#{Conflict.get_col(err)}): #{Exception.message(err)}")
+rescue ArgumentError => err
+  puts("#{label} = #{word}: #{Exception.message(err)}")
+end
+
+puts(cw)
+open_entries = Array.select(Crossword.get_entries(cw)) { |e| String.include?(Crossword.pattern(cw, e), "_") }
+puts("still open: #{Array.join(Array.map(open_entries) { |e| "#{Entry.label(e)} #{Crossword.pattern(cw, e)}" }, ", ")}")
+filled = Hash.size(Crossword.get_letters(cw))
+total = Crossword.get_rows(cw) * Crossword.get_cols(cw) - Set.size(Crossword.get_blocks(cw))
+puts("filled #{filled}/#{total} cells")

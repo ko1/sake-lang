@@ -1,0 +1,108 @@
+class Employee
+  attr_reader id, name, dept_id, manager_id, salary
+end
+
+class Department
+  attr_reader id, name, location
+end
+
+def employees
+  Employee[
+    Employee.new(1, "Ada", 10, nil, 185000),
+    Employee.new(2, "Brian", 10, 1, 132000),
+    Employee.new(3, "Chloe", 20, 1, 141000),
+    Employee.new(4, "Dmitri", 20, 3, 98000),
+    Employee.new(5, "Elena", 20, 3, 101500),
+    Employee.new(6, "Farid", 30, 1, 120000),
+    Employee.new(7, "Grace", 30, 6, 123000),
+    Employee.new(8, "Hiro", 40, 6, 126000),
+    Employee.new(9, "Ines", 10, 2, 115000),
+    Employee.new(10, "Jonas", 50, 42, 66000)
+  ]
+end
+
+def departments
+  Department[
+    Department.new(10, "Engineering", "Berlin"),
+    Department.new(20, "Data", "Lisbon"),
+    Department.new(30, "Sales", "Madrid"),
+    Department.new(60, "Legal", "Paris")
+  ]
+end
+
+def index_by_id(rows)
+  idx = Hash[]
+  Array.each(rows) { |r| idx[yield(r)] = r }
+  idx
+end
+
+def median(values)
+  sorted = Array.sort(values)
+  n = Array.size(sorted)
+  return nil if n == 0
+  if Integer.odd?(n)
+    sorted[n / 2]
+  else
+    (Array.fetch(sorted, n / 2 - 1) + Array.fetch(sorted, n / 2)) / 2.0
+  end
+end
+
+def fmt_k(amount)
+  return "-" if amount == nil
+  format("%.1fk", amount / 1000.0)
+end
+
+emps = employees
+depts = index_by_id(departments) { Department.get_id(it) }
+by_emp = index_by_id(emps) { Employee.get_id(it) }
+
+puts("== Directory (inner join employees x departments) ==")
+joined = Array.filter_map(emps) do |e|
+  d = depts[Employee.get_dept_id(e)]
+  next nil if d == nil
+  [e, d]
+end
+Array.each(Array.sort_by(joined) { |e, d| Department.get_name(d) + "/" + Employee.get_name(e) }) do |e, d|
+  mid = Employee.get_manager_id(e)
+  boss = mid ? by_emp[mid] : nil
+  boss_name = boss ? Employee.get_name(boss) : (mid ? "?#{mid}" : "(none)")
+  puts(format("%-12s %-8s %-7s reports to %s", Department.get_name(d), Department.get_location(d), Employee.get_name(e), boss_name))
+end
+
+puts
+puts("== Unmatched ==")
+orphans = Array.reject(emps) { Hash.key?(depts, Employee.get_dept_id(it)) }
+Array.each(orphans) { |e| puts("employee #{Employee.get_name(e)} has unknown dept #{Employee.get_dept_id(e)}") }
+used = Array.to_set(Array.map(emps) { Employee.get_dept_id(it) })
+Hash.each_value(depts) do |d|
+  puts("department #{Department.get_name(d)} has no employees") unless Set.include?(used, Department.get_id(d))
+end
+
+puts
+puts("== Salary by department ==")
+puts(format("%-12s %3s %9s %9s %9s %9s", "Dept", "n", "min", "median", "max", "total"))
+groups = Array.group_by(joined) { |e, d| Department.get_name(d) }
+Array.each(Array.sort(Hash.keys(groups))) do |name|
+  salaries = Array.map(Hash.fetch(groups, name)) { |e, d| Employee.get_salary(e) }
+  puts(format("%-12s %3d %9s %9s %9s %9s", name, Array.size(salaries), fmt_k(Array.min(salaries)),
+              fmt_k(median(salaries)), fmt_k(Array.max(salaries)), fmt_k(Array.sum(salaries))))
+end
+
+puts
+puts("== Managers and span of control ==")
+reports = Hash.new(0)
+Array.each(emps) do |e|
+  mid = Employee.get_manager_id(e)
+  reports[mid] += 1 if mid && Hash.key?(by_emp, mid)
+end
+Array.each(Hash.sort_by(reports) { |id, n| -n * 100 + id }) do |id, n|
+  m = Hash.fetch(by_emp, id)
+  team = Array.select(emps) { Employee.get_manager_id(it) == id }
+  over = Array.select(team) { Employee.get_salary(it) > Employee.get_salary(m) }
+  note = Array.empty?(over) ? "" : "  (earns less than #{Array.join(Array.map(over) { Employee.get_name(it) }, ", ")})"
+  puts("#{Employee.get_name(m)}: #{n} direct report(s)#{note}")
+end
+
+top = Array.max_by(emps) { Employee.get_salary(it) }
+puts
+puts("Highest paid: #{Employee.get_name(top)}") if top

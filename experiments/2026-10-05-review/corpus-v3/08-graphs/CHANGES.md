@@ -1,0 +1,27 @@
+# 08-graphs changes (corpus-v2)
+
+- astar_terrain: `break if cur == start` with Tuple `==` (component-wise comparison removed); `Array.join(r)` without the `""` separator.
+- bellman_ford: unchanged
+- centrality: `Array.count(Array.combination(ns, 2)) { |a, b| ... }` destructures the Array pairs (was `pair[0]`, `pair[1]`).
+- course_schedule: `code, rest = String.split(line, ":")` multiple assignment from an Array (was `parts[0]`, `parts[1]`); the `credits | prereqs` split stays indexed (see NOTES).
+- critical_links: unchanged
+- critical_path: unchanged
+- currency_paths: unchanged
+- dijkstra_routes: `Array.sort_by` with a Tuple key `[dist, name]` (packed `format("%08d %s", ...)` String key removed).
+- dot_stats: unchanged
+- euler_itinerary: `!Array.empty?(dests)` (was `== false`).
+- exam_slots: `Array.sort_by { |n| [-Set.size(graph[n]), n] }` with unary minus and a Tuple key (packed `format("%03d %s", 999 - size, n)` key removed); `Array.join(ss)` without `""`.
+- floyd_transit: `Array.join(...)` without the `""` separator (two places).
+- friend_groups: unchanged
+- intern_matching: `name, skills, wishes = Array.map(String.split(line, ";")) { ... }` multiple assignment from an Array (was `fields[0]` ... `fields[2]`).
+- kruskal_network: unchanged
+- land_islands: `Array.each_cons(history, 2) { |a, b| drops += 1 if b < a }` destructures the window (index loop removed).
+- make_rebuild: `(FileTarget|PhonyTarget).get_deps(t)` lists the types on the operation; the placeholder `Target.deps` and both `deps(t) = @deps` wrappers removed.
+- maze_bfs: `break if cur == goal` with Tuple `==` (`same_pos?` helper removed); `Array.join(r)` without `""`.
+- metro_transfers: unchanged
+- org_chart_lca: unchanged (`"founder"` has no `<`, so the split cannot be destructured; see NOTES)
+- pipeline_flow: `!Set.include?(side, b)` (was `== false`).
+- prim_cables: unchanged
+- rival_teams: unchanged
+- tarjan_scc: `if !Hash.key?(@index, w)` (was `== false`).
+- word_ladder: unchanged

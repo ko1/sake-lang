@@ -1,0 +1,115 @@
+# Run-length encoding for text ("3A2B") and for monochrome bitmap rows, with a decoder
+# that reports malformed input.
+
+class RleError < StandardError
+  attr_reader offset
+end
+
+def runs(items)
+  result = Array[]
+  Array.each(items) do |x|
+    last = Array.last(result)
+    if last != nil && Array.first(last) == x
+      last[1] += 1
+    else
+      Array.push(result, Array[x, 1])
+    end
+  end
+  result
+end
+
+def encode_text(s)
+  Array.join(Array.map(runs(String.chars(s))) { |x, n| n == 1 ? x : "#{n}#{x}" }, "")
+end
+
+def decode_text(s)
+  out = ""
+  count = ""
+  Array.each_with_index(String.chars(s)) do |c, i|
+    if String.match?(c, /\d/)
+      count += c
+    else
+      n = String.empty?(count) ? 1 : String.to_i(count)
+      raise RleError.new("zero-length run", i) if n == 0
+      out += c * n
+      count = ""
+    end
+  end
+  raise RleError.new("trailing count #{count}", String.size(s)) unless String.empty?(count)
+  out
+end
+
+def encode_row(bits)
+  # rows start with a white run (possibly 0), then alternate
+  lengths = Integer[]
+  current = 0
+  len = 0
+  Array.each(bits) do |b|
+    if b == current
+      len += 1
+    else
+      Array.push(lengths, len)
+      current = b
+      len = 1
+    end
+  end
+  Array.push(lengths, len)
+  lengths
+end
+
+def decode_row(lengths)
+  bits = Array[]
+  color = 0
+  Array.each(lengths) do |n|
+    Integer.times(n) { Array.push(bits, color) }
+    color = 1 - color
+  end
+  bits
+end
+
+def bitmap
+  Array[
+    "................",
+    "....######......",
+    "...#......#.....",
+    "..#..#..#..#....",
+    "..#........#....",
+    "..#..####..#....",
+    "...#......#.....",
+    "....######......"
+  ]
+end
+
+puts("== text ==")
+Array.each(Array["WWWWWWWWWWWWBWWWWWWWWWWWWBBBWWWWWWWWWWWWWWWWWWWWWWWWBWWWWWWWWWWWWWW",
+                 "abc", "aabcccccaaa", "", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"]) do |s|
+  enc = encode_text(s)
+  dec = decode_text(enc)
+  puts(format("%3d -> %3d  %s  %s", String.size(s), String.size(enc), enc,
+              dec == s ? "ok" : "FAIL"))
+end
+
+puts("== bitmap ==")
+total_raw = 0
+total_enc = 0
+rows = Array.map(bitmap) { |line| Array.map(String.chars(line)) { |c| c == "#" ? 1 : 0 } }
+Array.each_with_index(rows) do |bits, y|
+  lengths = encode_row(bits)
+  back = decode_row(lengths)
+  same = back == bits
+  total_raw += Array.size(bits)
+  total_enc += Array.size(lengths)
+  puts(format("row %d: %-24s %s", y, Array.join(lengths, ","), same ? "" : "MISMATCH"))
+end
+puts(format("raw %d pixels, %d run lengths, ratio %.2f", total_raw, total_enc,
+            Integer.fdiv(total_enc, total_raw)))
+
+longest = Array.max_by(rows) { |bits| Array.count(bits, 1) }
+puts("darkest row has #{Array.count(longest, 1)} dark pixels") if longest
+
+puts("== errors ==")
+Array.each(Array["3a0b", "12", "4x2y1"]) do |bad|
+  puts("#{bad} -> #{decode_text(bad)}")
+rescue RleError => e
+  puts("#{bad} -> error at #{RleError.get_offset(e)}: #{Exception.message(e)}")
+end

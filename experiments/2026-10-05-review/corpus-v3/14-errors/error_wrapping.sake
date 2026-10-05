@@ -1,0 +1,94 @@
+# Layered loading of user profiles: low-level errors are wrapped into higher-level ones, keeping a cause chain.
+class StorageError < StandardError
+  attr_reader key
+end
+
+class DecodeError < StandardError
+  attr_reader field, cause = nil
+end
+
+class ProfileError < StandardError
+  attr_reader user_id, cause
+end
+
+def storage = once do
+  Hash[
+    "user:1" => "name=Ann;age=34;langs=ruby,c",
+    "user:2" => "name=Ben;age=x7;langs=go",
+    "user:3" => "name=;age=41;langs=",
+    "user:4" => "corrupted-bytes",
+    "user:6" => "name=Eve;age=29;langs=rust,ocaml,sql",
+    "user:7" => "name=Gus;langs=c"
+  ]
+end
+
+def read_raw(key)
+  raw = storage[key]
+  raise StorageError.new("key #{key} not found", key) if raw == nil
+  raw
+end
+
+def decode(raw)
+  fields = Hash[]
+  Array.each(String.split(raw, ";")) do |part|
+    k, sep, v = String.partition(part, "=")
+    raise DecodeError.new("malformed pair '#{part}'", "*") if String.empty?(sep)
+    fields[k] = v
+  end
+  name = fields["name"]
+  raise DecodeError.new("name is missing", "name") if name == nil || String.empty?(name)
+  age = begin
+    Integer(Hash.fetch(fields, "age"))
+  rescue ArgumentError, KeyError => e
+    raise DecodeError.new("age is not a number", "age", e)
+  end
+  langs = Array.reject(String.split(Hash.fetch(fields, "langs", ""), ",")) { String.empty?(it) }
+  {name: name, age: age, langs: langs}
+end
+
+def load_profile(id)
+  decode(read_raw("user:#{id}"))
+rescue StorageError => e
+  raise ProfileError.new("profile #{id} unavailable", id, e)
+rescue DecodeError => e
+  raise ProfileError.new("profile #{id} is invalid", id, e)
+end
+
+def chain(e)
+  links = Array[]
+  current = e
+  while current != nil
+    case current
+    in ProfileError
+      Array.push(links, "ProfileError: #{Exception.message(current)}")
+      current = ProfileError.get_cause(current)
+    in DecodeError
+      Array.push(links, "DecodeError(#{DecodeError.get_field(current)}): #{Exception.message(current)}")
+      current = DecodeError.get_cause(current)
+    in StorageError
+      Array.push(links, "StorageError: #{Exception.message(current)}")
+      current = nil
+    in ArgumentError
+      Array.push(links, "ArgumentError")
+      current = nil
+    in KeyError
+      Array.push(links, "KeyError")
+      current = nil
+    end
+  end
+  links
+end
+
+loaded = Array[]
+Range.each(1..7) do |id|
+  profile = load_profile(id)
+  profile => {name:, age:, langs:}
+  Array.push(loaded, profile)
+  puts("#{id}: #{name} (#{age}) #{Array.empty?(langs) ? "no languages" : Array.join(langs, "/")}")
+rescue ProfileError => e
+  first, *rest = chain(e)
+  puts("#{id}: #{first}")
+  Array.each(rest) { |l| puts("     caused by #{l}") }
+end
+ages = Array.map(loaded) { |r| r => {age:}; age }
+puts("loaded #{Array.size(loaded)}; mean age #{Array.sum(ages) / Array.size(ages)}")

@@ -1,0 +1,25 @@
+- knapsack_01: 0/1 knapsack over Item structs with table-based reconstruction of the chosen items for several capacities.
+- coin_change: fewest-coins and number-of-ways DP for several coin systems, greedy-failure search, and input validation with a custom exception.
+- lcs_diff: line-based diff via an LCS table (Edit structs with keep/del/add) plus character LCS strings.
+- edit_distance: Levenshtein distance with an edit script, spelling suggestions from a dictionary, and a distance matrix.
+- grid_paths: counting monotone paths around obstacles and the cheapest weighted path with reconstruction and rendering.
+- longest_increasing: longest increasing subsequence in O(n^2) and O(n log n) with reconstruction, applied to prices and nesting envelopes.
+- matrix_chain: matrix-chain ordering DP with parenthesization, checked by multiplying Shape values through a user-defined `*` that raises on mismatched dimensions.
+- word_break: word segmentation against a Set dictionary: feasibility table, all segmentations with a memo Hash, fewest-words split, and hashtag splitting.
+- palindromes: palindrome table, longest palindromic substring and subsequence, and minimum-cut palindrome partitioning for words and phrases.
+- stock_trading: stock profit DPs: at most k transactions with trade reconstruction (returned as a Record), cooldown, and per-trade fee.
+- house_robber: non-adjacent maximum sum on a street, a circle, and a binary tree of House structs (with nil children), with plan reconstruction.
+- egg_drop: egg-dropping worst-case table with first-drop strategy, strategy simulation against critical floors, and the floors-covered formulation for large buildings.
+- line_breaking: minimum-raggedness paragraph filling (cubic slack) compared with greedy filling, with a custom exception for words wider than the line.
+- optimal_bst: Knuth's optimal binary search tree over keyword frequencies (Float weights), compared with a balanced tree, with tree drawing and lookup counts.
+- held_karp: bitmask DP for the travelling-salesman tour over City structs (Manhattan distances) with tour reconstruction, compared with nearest-neighbour.
+- interval_scheduling: weighted interval scheduling of studio bookings parsed from CSV text, with a Comparable Clock type, binary search for the compatible predecessor, and parse errors.
+- subset_partition: subset-sum table to split loads into two balanced groups, counting subsets with a Hash DP, and reachable sums with a Set.
+- dice_odds: exact (Rational) distributions of dice totals by convolution DP, histograms, tail probabilities, and dice-pool success odds.
+- floyd_warshall: all-pairs shortest paths over named cities with next-hop path reconstruction, unreachable pairs as nil, a hub choice, and negative-cycle detection by exception.
+- viterbi: hidden Markov model decoding (Viterbi with back-pointers) and the forward probability over nested Hashes of Floats, for weather diaries and part-of-speech tagging.
+- sequence_alignment: global (Needleman-Wunsch) and local (Smith-Waterman) alignment with traceback over symbol moves, identity statistics, and a ranked library search.
+- company_party: maximum-fun party on an org chart parsed from text (no employee with their direct manager), memoized Records per subtree, guest list, and org-chart validation errors.
+- digit_counting: digit DP with Tuple-keyed memo Hashes counting numbers up to a limit by digit sum, no equal neighbours, and even digits divisible by k, checked by brute force.
+- decode_ways: counting and listing letter readings of digit strings (A=1..Z=26), encoding words back, and the wildcard variant modulo a prime.
+- critical_path: project scheduling on a dependency DAG parsed from text: DFS topological order with cycle detection, earliest finish, critical path, chain counts, and slack.

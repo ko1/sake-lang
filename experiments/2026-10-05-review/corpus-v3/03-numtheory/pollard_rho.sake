@@ -1,0 +1,113 @@
+# Factoring with Pollard's rho (Floyd and Brent cycle finding) and Pollard's p-1,
+# compared by iteration counts on semiprimes and larger composites.
+
+class Result
+  attr_reader factor, iterations, method
+end
+
+def isqrt_exact?(n)
+  r = Integer.sqrt(n)
+  r * r == n
+end
+
+def prime?(n)
+  return false if n < 2
+  bases = Integer[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+  Array.each(bases) { |p| return n == p if n % p == 0 }
+  d = n - 1
+  s = 0
+  while Integer.even?(d)
+    d /= 2
+    s += 1
+  end
+  Array.all?(bases) do |a|
+    x = Integer.pow(a, d, n)
+    next true if x == 1 || x == n - 1
+    Range.any?(1...s) do
+      x = x * x % n
+      x == n - 1
+    end
+  end
+end
+
+def rho_floyd(n, c)
+  x = 2
+  y = 2
+  d = 1
+  steps = 0
+  while d == 1
+    x = (x * x + c) % n
+    y = (y * y + c) % n
+    y = (y * y + c) % n
+    d = Integer.gcd(Integer.abs(x - y), n)
+    steps += 1
+  end
+  d == n ? nil : Result.new(d, steps, "floyd")
+end
+
+def rho_brent(n, c)
+  y = 2
+  r = 1
+  d = 1
+  steps = 0
+  while d == 1
+    x = y
+    Integer.times(r) { y = (y * y + c) % n }
+    k = 0
+    while k < r && d == 1
+      y = (y * y + c) % n
+      d = Integer.gcd(Integer.abs(x - y), n)
+      steps += 1
+      k += 1
+    end
+    r *= 2
+  end
+  d == n ? nil : Result.new(d, steps, "brent")
+end
+
+def pollard_p1(n, bound)
+  a = 2
+  Range.each(2..bound) do |j|
+    a = Integer.pow(a, j, n)
+    g = Integer.gcd(a - 1, n)
+    return Result.new(g, j, "p-1") if g > 1 && g < n
+    return nil if g == n
+  end
+  nil
+end
+
+def find_factor(n)
+  Range.each(1...20) do |c|
+    r = rho_brent(n, c)
+    return Result.get_factor(r) if r
+  end
+  raise "no factor found for #{n}"
+end
+
+def factorize(n)
+  return Integer[] if n == 1
+  return Integer[n] if prime?(n)
+  return Integer[2] + factorize(n / 2) if Integer.even?(n)
+  if isqrt_exact?(n)
+    half = factorize(Integer.sqrt(n))
+    return Array.sort(half + half)
+  end
+  f = find_factor(n)
+  Array.sort(factorize(f) + factorize(n / f))
+end
+
+def show(r) = r ? "#{Result.get_factor(r)} in #{Result.get_iterations(r)}" : "failed"
+
+semiprimes = Integer[8051, 10403, 455459, 1022117, 999962000357, 600851475143]
+puts(format("%-14s %-16s %-16s %-16s", "n", "floyd", "brent", "p-1 (B=200)"))
+Array.each(semiprimes) do |n|
+  puts(format("%-14d %-16s %-16s %-16s", n, show(rho_floyd(n, 1)), show(rho_brent(n, 1)), show(pollard_p1(n, 200))))
+end
+
+puts("full factorizations:")
+Array.each(Integer[600851475143, 2 ** 32 + 1, 2 ** 48 - 1, 1000036000099, 3 ** 20 * 7, 123456789012]) do |n|
+  fs = factorize(n)
+  prod = Array.reduce(fs, 1) { |a, b| a * b }
+  grouped = Array.map(Hash.to_a(Array.tally(fs))) { |p, e| e > 1 ? "#{p}^#{e}" : Integer.to_s(p) }
+  puts("  #{n} = #{Array.join(grouped, " * ")}#{prod == n ? "" : "  MISMATCH"}")
+end

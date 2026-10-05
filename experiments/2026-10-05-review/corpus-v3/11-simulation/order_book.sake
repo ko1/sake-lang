@@ -1,0 +1,134 @@
+class Order
+  attr_reader id, trader, side, price
+  attr_accessor qty
+  attr_reader seq
+end
+
+class Trade
+  attr_reader buy_id, sell_id, price, qty
+end
+
+class InvalidOrder < StandardError
+  attr_reader order_id
+end
+
+class Book
+  attr_reader bids = nil, asks = nil, trades = nil, seq = 0
+
+  def initialize(b)
+    @bids = Order[]
+    @asks = Order[]
+    @trades = Trade[]
+  end
+
+  def better?(b, side, p1, p2) = side == :buy ? p1 > p2 : p1 < p2
+
+  def rest(b, o)
+    queue = Order.get_side(o) == :buy ? @bids : @asks
+    idx = Array.find_index(queue) { |x| better?(b, Order.get_side(o), Order.get_price(o), Order.get_price(x)) }
+    if idx
+      Array.insert(queue, idx, o)
+    else
+      Array.push(queue, o)
+    end
+  end
+
+  def crosses?(b, o, best)
+    price = Order.get_price(o)
+    return true if price == nil
+    Order.get_side(o) == :buy ? price >= Order.get_price(best) : price <= Order.get_price(best)
+  end
+
+  def submit(b, id, trader, side, price, qty)
+    raise InvalidOrder.new("order #{id}: quantity must be positive", id) if qty <= 0
+    raise InvalidOrder.new("order #{id}: bad price", id) if price && price <= 0
+    @seq += 1
+    o = Order.new(id, trader, side, price, qty, @seq)
+    opposite = side == :buy ? @asks : @bids
+    filled = 0
+    while Order.get_qty(o) > 0
+      best = Array.first(opposite)
+      break if best == nil || !crosses?(b, o, best)
+      if Order.get_trader(best) == trader
+        Array.shift(opposite)
+        next
+      end
+      q = Array.min(Array[Order.get_qty(o), Order.get_qty(best)])
+      buy_id = side == :buy ? id : Order.get_id(best)
+      sell_id = side == :sell ? id : Order.get_id(best)
+      Array.push(@trades, Trade.new(buy_id, sell_id, Order.get_price(best), q))
+      Order.set_qty(o, Order.get_qty(o) - q)
+      Order.set_qty(best, Order.get_qty(best) - q)
+      filled += q
+      Array.shift(opposite) if Order.get_qty(best) == 0
+    end
+    rest(b, o) if Order.get_qty(o) > 0 && price
+    [filled, Order.get_qty(o)]
+  end
+
+  def cancel(b, id)
+    Array.each(Array[@bids, @asks]) do |queue|
+      idx = Array.find_index(queue) { Order.get_id(it) == id }
+      return Array.delete_at(queue, idx) if idx
+    end
+    nil
+  end
+
+  def depth(b, queue)
+    levels = Hash.new(0)
+    Array.each(queue) { |o| levels[Order.get_price(o)] += Order.get_qty(o) }
+    levels
+  end
+
+  def spread(b)
+    bid = Array.first(@bids)
+    ask = Array.first(@asks)
+    return nil if bid == nil || ask == nil
+    Order.get_price(ask) - Order.get_price(bid)
+  end
+end
+
+def show_price(p) = p == nil ? "MKT" : format("%d.%02d", p / 100, p % 100)
+
+book = Book.new
+orders = Array[
+  [:new, 1, "alpha", :sell, 10150, 100], [:new, 2, "bravo", :sell, 10100, 50],
+  [:new, 3, "carol", :buy, 10000, 80], [:new, 4, "delta", :buy, 10050, 40],
+  [:new, 5, "alpha", :sell, 10100, 30], [:new, 6, "echo", :buy, 10100, 60],
+  [:cancel, 3, "", :buy, 0, 0], [:new, 7, "bravo", :buy, nil, 120],
+  [:new, 8, "carol", :sell, 9900, 0], [:new, 9, "delta", :sell, 10050, 70],
+  [:new, 10, "echo", :buy, 10200, 90], [:new, 11, "alpha", :buy, 10180, 25],
+  [:new, 12, "alpha", :sell, 10180, 40], [:cancel, 99, "", :buy, 0, 0],
+  [:new, 13, "fox", :sell, nil, 10], [:new, 14, "gus", :buy, 9950, 15]
+]
+
+Array.each(orders) do |action, id, trader, side, price, qty|
+  if action == :cancel
+    removed = Book.cancel(book, id)
+    puts(removed ? "cancel ##{id}: removed #{Order.get_qty(removed)} left" : "cancel ##{id}: not found")
+    next
+  end
+  begin
+    filled, left = Book.submit(book, id, trader, side, price, qty)
+    status = left == 0 ? "filled" : (price == nil ? "unfilled #{left} dropped" : "resting #{left}")
+    puts(format("#%-2d %-5s %-4s %3d @ %-6s -> traded %3d, %s", id, trader, side, qty, show_price(price), filled, status))
+  rescue InvalidOrder => e
+    puts("rejected: #{Exception.message(e)}")
+  end
+end
+
+puts("--- trades")
+trades = Book.get_trades(book)
+Array.each(trades) do |t|
+  puts(format("buy #%-2d sell #%-2d %3d @ %s", Trade.get_buy_id(t), Trade.get_sell_id(t), Trade.get_qty(t), show_price(Trade.get_price(t))))
+end
+volume = Array.sum(trades) { Trade.get_qty(it) }
+notional = Array.sum(trades) { |t| Trade.get_qty(t) * Trade.get_price(t) }
+puts(format("volume %d, vwap %.4f", volume, notional / 100.0 / volume)) if volume > 0
+puts("--- book")
+asks = Book.depth(book, Book.get_asks(book))
+Array.reverse_each(Array.sort(Hash.keys(asks))) { |p| puts(format("  ask %s x %d", show_price(p), asks[p])) }
+bids = Book.depth(book, Book.get_bids(book))
+Array.reverse_each(Array.sort(Hash.keys(bids))) { |p| puts(format("  bid %s x %d", show_price(p), bids[p])) }
+sp = Book.spread(book)
+puts(sp ? "spread #{show_price(sp)}" : "spread n/a (one side empty)")

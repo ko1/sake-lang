@@ -1,0 +1,89 @@
+# Bucket sort of normalized product ratings in [0, 1), then nearest-neighbour
+# lookups with binary search and a rank-to-percentile table.
+
+class Rating
+  attr_reader product, stars, votes
+
+  # Wilson-like lower bound, squeezed into [0, 1).
+  def score(r)
+    mean = (@stars - 1.0) / 4.0
+    z = 1.5
+    denom = 1.0 + z * z / @votes
+    centre = mean + z * z / (2.0 * @votes)
+    margin = z * Math.sqrt(mean * (1.0 - mean) / @votes + z * z / (4.0 * @votes * @votes))
+    v = (centre - margin) / denom
+    Float.clamp(v, 0.0, 0.9999)
+  end
+end
+
+def insertion_sort!(a)
+  Integer.upto(1, Array.size(a) - 1) do |i|
+    x = a[i]
+    j = i - 1
+    while j >= 0 && yield(a[j]) > yield(x)
+      a[j + 1] = a[j]
+      j -= 1
+    end
+    a[j + 1] = x
+  end
+  a
+end
+
+def bucket_sort(items, nbuckets, &key)
+  buckets = Array.new(nbuckets) { Array[] }
+  Array.each(items) do |x|
+    Array.push(buckets[Float.floor(yield(x) * nbuckets)], x)
+  end
+  sizes = Array.map(buckets) { |b| Array.size(b) }
+  out = Array.flat_map(buckets) { |b| insertion_sort!(b, &key) }
+  [out, sizes]
+end
+
+def nearest(sorted, target)
+  lo = 0
+  hi = Array.size(sorted) - 1
+  return nil if hi < 0
+  while lo < hi
+    mid = (lo + hi) / 2
+    if sorted[mid] < target
+      lo = mid + 1
+    else
+      hi = mid
+    end
+  end
+  return sorted[lo] if lo == 0
+  before = sorted[lo - 1]
+  after = sorted[lo]
+  target - before <= after - target ? before : after
+end
+
+ratings = Array[
+  Rating.new("lamp", 4.6, 210), Rating.new("desk", 4.1, 35), Rating.new("chair", 3.2, 480),
+  Rating.new("rug", 4.9, 8), Rating.new("shelf", 2.4, 60), Rating.new("sofa", 4.4, 1200),
+  Rating.new("stool", 3.9, 15), Rating.new("bed", 4.7, 950), Rating.new("vase", 1.8, 22),
+  Rating.new("clock", 3.6, 140), Rating.new("mirror", 4.0, 3), Rating.new("bench", 4.2, 77)
+]
+
+sorted, sizes = bucket_sort(ratings, 5) { |r| Rating.score(r) }
+puts("bucket sizes: #{sizes}")
+Array.each(Array.reverse(sorted)) do |r|
+  puts(format("  %-7s %.1f stars %5d votes  score=%.4f", Rating.get_product(r), Rating.get_stars(r),
+              Rating.get_votes(r), Rating.score(r)))
+end
+
+scores = Array.map(sorted) { |r| Rating.score(r) }
+check = Array.sort(Array.map(ratings) { |r| Rating.score(r) })
+puts("bucket order agrees with sort: #{scores == check}")
+
+Array.each(Array[0.0, 0.5, 0.62, 0.95]) do |t|
+  v = nearest(scores, t)
+  owner = Array.find(sorted) { |r| Rating.score(r) == v }
+  puts(format("nearest to %.2f: %s (%.4f)", t, Rating.get_product(owner), v)) if owner
+end
+p(nearest(Array[], 0.5))
+
+n = Array.size(sorted)
+Array.each_with_index(sorted) do |r, i|
+  pct = 100.0 * (i + 1) / n
+  puts("#{Rating.get_product(r)} is top #{Float.round(100.0 - pct + 100.0 / n, 1)}%") if pct > 75.0
+end

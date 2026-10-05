@@ -1,0 +1,110 @@
+def dirs = once { Array[[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]] }
+
+def opponent(color) = color == :black ? :white : :black
+
+def symbol(color)
+  case color
+  in :black then "X"
+  in :white then "O"
+  in nil then "."
+  end
+end
+
+class Board
+  attr_reader size, cells
+
+  def initial(size)
+    cells = Array.new(size) { Array.new(size) }
+    m = size / 2
+    cells[m - 1][m - 1] = :white
+    cells[m][m] = :white
+    cells[m - 1][m] = :black
+    cells[m][m - 1] = :black
+    Board.new(size, cells)
+  end
+
+  def inside?(b, r, c) = r >= 0 && r < @size && c >= 0 && c < @size
+
+  def flips(b, r, c, color)
+    return Array[] unless @cells[r][c] == nil
+    Array.flat_map(dirs) do |dr, dc|
+      line = Array[]
+      rr = r + dr
+      cc = c + dc
+      while inside?(b, rr, cc) && @cells[rr][cc] == opponent(color)
+        Array.push(line, [rr, cc])
+        rr += dr
+        cc += dc
+      end
+      !Array.empty?(line) && inside?(b, rr, cc) && @cells[rr][cc] == color ? line : Array[]
+    end
+  end
+
+  def legal_moves(b, color)
+    moves = Array[]
+    Integer.times(@size) do |r|
+      Integer.times(@size) do |c|
+        f = flips(b, r, c, color)
+        Array.push(moves, {row: r, col: c, gain: Array.size(f)}) unless Array.empty?(f)
+      end
+    end
+    moves
+  end
+
+  def apply(b, r, c, color)
+    f = flips(b, r, c, color)
+    raise ArgumentError, "illegal move #{r},#{c}" if Array.empty?(f)
+    @cells[r][c] = color
+    Array.each(f) { |fr, fc| @cells[fr][fc] = color }
+    Array.size(f)
+  end
+
+  def count(b, color) = Array.sum(@cells) { |row| Array.count(row, color) }
+
+  def to_s(b)
+    header = "  #{Array.join(Range.map(0...@size) { Integer.chr(97 + it) }, " ")}"
+    rows = Range.map(0...@size) { |r| "#{r + 1} #{Array.join(Array.map(@cells[r]) { symbol(it) }, " ")}" }
+    Array.join(Array[header, *rows], "\n")
+  end
+end
+
+def corner?(size, r, c) = (r == 0 || r == size - 1) && (c == 0 || c == size - 1)
+
+# greedy with a corner bonus; ties go to the first move in reading order
+def choose(b, color)
+  moves = Board.legal_moves(b, color)
+  return nil if Array.empty?(moves)
+  Array.max_by(moves) do |m|
+    m => {row:, col:, gain:}
+    gain + (corner?(Board.get_size(b), row, col) ? 10 : 0)
+  end
+end
+
+b = Board.initial(6)
+color = :black
+passes = 0
+turn = 0
+while passes < 2
+  move = choose(b, color)
+  if move
+    passes = 0
+    move => {row:, col:}
+    gained = Board.apply(b, row, col, color)
+    turn += 1
+    puts("#{turn}. #{symbol(color)} #{Integer.chr(97 + col)}#{row + 1} flips #{gained}")
+  else
+    passes += 1
+    puts("   #{symbol(color)} passes")
+  end
+  color = opponent(color)
+end
+puts(b)
+black = Board.count(b, :black)
+white = Board.count(b, :white)
+puts("black #{black}, white #{white}, empty #{36 - black - white}")
+puts(black == white ? "draw" : "#{black > white ? "black" : "white"} wins")
+begin
+  Board.apply(b, 0, 0, :black)
+rescue ArgumentError => e
+  puts("check: #{Exception.message(e)}")
+end

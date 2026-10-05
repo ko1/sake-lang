@@ -1,0 +1,94 @@
+# URL percent escapes for path segments and form values, decoding with validation,
+# and parsing / rebuilding query strings with repeated keys.
+
+def unreserved?(b)
+  (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) ||
+    b == 45 || b == 46 || b == 95 || b == 126
+end
+
+def escape(s, form)
+  out = ""
+  Array.each(String.bytes(s)) do |b|
+    if unreserved?(b)
+      out += Integer.chr(b)
+    elsif form && b == 32
+      out += "+"
+    else
+      out += format("%%%02X", b)
+    end
+  end
+  out
+end
+
+def unescape(s, form)
+  bytes = Integer[]
+  i = 0
+  chars = String.chars(s)
+  while i < Array.size(chars)
+    c = chars[i]
+    if c == "%"
+      hex = Array.join(Array.take(Array.drop(chars, i + 1), 2), "")
+      raise ArgumentError, "bad escape at #{i}: %#{hex}" unless String.match?(hex, /\A[0-9A-Fa-f]{2}\z/)
+      Array.push(bytes, String.hex(hex))
+      i += 3
+    else
+      Array.push(bytes, form && c == "+" ? 32 : String.ord(c))
+      i += 1
+    end
+  end
+  utf8 = Array.join(Array.map(bytes) { |b| format("%02x", b) }, "")
+  [bytes, utf8]
+end
+
+def decode_text(s, form)
+  bytes, _hex = unescape(s, form)
+  Array.join(Array.map(bytes) { |b| Integer.chr(b) }, "")
+end
+
+def parse_query(q)
+  params = Hash[]
+  Array.each(String.split(q, "&")) do |pair|
+    next if String.empty?(pair)
+    k, sep, v = String.partition(pair, "=")
+    Array.push(params[decode_text(k, true)] ||= String[], String.empty?(sep) ? "" : decode_text(v, true))
+  end
+  params
+end
+
+def build_query(params)
+  parts = String[]
+  Array.each(Array.sort(Hash.keys(params))) do |k|
+    Array.each(Hash.fetch(params, k)) { |v| Array.push(parts, "#{escape(k, true)}=#{escape(v, true)}") }
+  end
+  Array.join(parts, "&")
+end
+
+puts("== escaping ==")
+samples = Array["hello world", "a+b=c&d", "50% off!", "~user/path_name.txt", "naïve/日本"]
+Array.each(samples) do |s|
+  path = escape(s, false)
+  form = escape(s, true)
+  _bytes, hex = unescape(path, false)
+  puts(format("%-22s path=%-36s form=%s", s, path, form))
+  puts("  utf-8 bytes: #{hex}")
+end
+
+puts("== query strings ==")
+query = "q=sake+lang&tag=ruby&tag=types%2Finference&empty=&flag&page=2&note=100%25+sure&q=again"
+params = parse_query(query)
+Hash.each(params) { |k, vs| puts("  #{k}: #{Kernel.inspect(vs)}") }
+page = params["page"]
+page_no = page ? String.to_i(Array.first(page) || "1") : 1
+puts("page number: #{page_no}")
+missing = params["sort"]
+puts("sort given: #{missing != nil}")
+rebuilt = build_query(params)
+puts("rebuilt: #{rebuilt}")
+puts("stable after rebuild: #{parse_query(rebuilt) == params}")
+
+puts("== bad input ==")
+Array.each(Array["100%", "%zz", "ok%2", "fine%20here"]) do |s|
+  puts("#{s} -> #{Kernel.inspect(decode_text(s, false))}")
+rescue ArgumentError => e
+  puts("#{s} -> #{Exception.message(e)}")
+end

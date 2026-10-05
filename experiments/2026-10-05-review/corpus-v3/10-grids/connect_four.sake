@@ -1,0 +1,105 @@
+class ColumnFull < StandardError
+  attr_reader column
+end
+
+def rows = 6
+def cols = 7
+
+class Board
+  attr_reader grid, heights, moves
+
+  def fresh = Board.new(Array.new(rows) { Array.new(cols, ".") }, Array.new(cols, 0), 0)
+
+  def copy(b) = Board.new(Array.map(@grid) { Array.dup(it) }, Array.dup(@heights), @moves)
+
+  def drop(b, col, piece)
+    raise ArgumentError, "no column #{col}" if col < 0 || col >= cols
+    h = @heights[col]
+    raise ColumnFull.new("column #{col} is full", col) if h >= rows
+    @grid[h][col] = piece
+    @heights[col] = h + 1
+    @moves += 1
+    h
+  end
+
+  def count_dir(b, r, c, dr, dc, piece)
+    n = 0
+    rr = r + dr
+    cc = c + dc
+    while rr >= 0 && rr < rows && cc >= 0 && cc < cols && @grid[rr][cc] == piece
+      n += 1
+      rr += dr
+      cc += dc
+    end
+    n
+  end
+
+  def wins_at?(b, r, c)
+    piece = @grid[r][c]
+    Array.any?(Array[[0, 1], [1, 0], [1, 1], [1, -1]]) do |dr, dc|
+      1 + count_dir(b, r, c, dr, dc, piece) + count_dir(b, r, c, -dr, -dc, piece) >= 4
+    end
+  end
+
+  def legal(b) = Range.select(0...cols) { |c| @heights[c] < rows }
+
+  def full?(b) = @moves == rows * cols
+
+  def to_s(b)
+    lines = Array.map(Array.reverse(@grid)) { |row| "|#{Array.join(row)}|" }
+    Array.push(lines, "+#{"-" * cols}+", " #{Array.join(Range.to_a(0...cols))}")
+    Array.join(lines, "\n")
+  end
+end
+
+def other(piece) = piece == "X" ? "O" : "X"
+
+def winning_column(b, piece)
+  Array.find(Board.legal(b)) do |c|
+    trial = Board.copy(b)
+    r = Board.drop(trial, c, piece)
+    Board.wins_at?(trial, r, c)
+  end
+end
+
+def choose(b, piece)
+  win = winning_column(b, piece)
+  return [win, "win"] if win
+  block = winning_column(b, other(piece))
+  return [block, "block"] if block
+  [Array.min_by(Board.legal(b)) { |c| Integer.abs(c - 3) * 10 + c }, "centre"]
+end
+
+def play(title, script)
+  puts("== #{title} ==")
+  b = Board.fresh
+  piece = "X"
+  queue = Array.map(String.chars(script)) { String.to_i(it) }
+  result = nil
+  until result
+    if Board.full?(b)
+      result = "draw"
+      next
+    end
+    col = Array.shift(queue)
+    reason = "scripted"
+    col, reason = choose(b, piece) if col == nil
+    begin
+      r = Board.drop(b, col, piece)
+    rescue ColumnFull => e
+      puts("  #{piece}: #{Exception.message(e)}, choosing instead")
+      col, reason = choose(b, piece)
+      r = Board.drop(b, col, piece)
+    end
+    puts("  #{piece} -> #{col} (#{reason})") if reason != "scripted"
+    result = "#{piece} wins after #{Board.get_moves(b)} moves" if Board.wins_at?(b, r, col)
+    piece = other(piece)
+  end
+  puts(b)
+  puts(result)
+end
+
+play("vertical race", "3434343")
+play("scripted start, AI finish", "33332")
+play("full column", "0000000")
+play("diagonal", "0112232335")

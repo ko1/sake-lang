@@ -1,0 +1,108 @@
+# Matrix arithmetic with operators on a Matrix type; shape mismatches and singular inversions raise errors.
+class DimensionError < StandardError
+  attr_reader left, right
+end
+
+class SingularMatrix < StandardError
+  attr_reader det
+end
+
+class Matrix
+  attr_reader rows
+  include Arithmetic
+  include Indexable
+
+  def shape(m) = [Array.size(@rows), Array.size(Array.first(@rows))]
+  def [](m, pos)
+    i, j = pos
+    Array.fetch(Array.fetch(@rows, i), j)
+  end
+  def []=(m, pos, v)
+    i, j = pos
+    Array.fetch(@rows, i)[j] = v
+  end
+
+  def +(a, b)
+    check_same(a, b, "+")
+    Matrix.new(Array.map(Array.zip(@rows, Matrix.get_rows(b))) { |r, s| Array.map(Array.zip(r, s)) { |x, y| x + y } })
+  end
+
+  def -(a, b)
+    check_same(a, b, "-")
+    Matrix.new(Array.map(Array.zip(@rows, Matrix.get_rows(b))) { |r, s| Array.map(Array.zip(r, s)) { |x, y| x - y } })
+  end
+
+  def *(a, b)
+    n, k = shape(a)
+    k2, m = shape(b)
+    raise DimensionError.new("cannot multiply #{n}x#{k} by #{k2}x#{m}", shape(a), shape(b)) if k != k2
+    Matrix.new(Array.map(Range.to_a(0...n)) do |i|
+      Array.map(Range.to_a(0...m)) do |j|
+        Range.sum(0...k) { |t| a[[i, t]] * b[[t, j]] }
+      end
+    end)
+  end
+
+  def check_same(a, b, op)
+    sa = shape(a)
+    sb = shape(b)
+    return if sa == sb
+    raise DimensionError.new("#{op}: shapes #{sa[0]}x#{sa[1]} and #{sb[0]}x#{sb[1]} differ", sa, sb)
+  end
+
+  def det2(m)
+    raise DimensionError.new("det2 needs 2x2", shape(m), [2, 2]) unless shape(m) == [2, 2]
+    m[[0, 0]] * m[[1, 1]] - m[[0, 1]] * m[[1, 0]]
+  end
+
+  # exact inverse of a 2x2 matrix with Rational entries
+  def inverse2(m)
+    d = det2(m)
+    raise SingularMatrix.new("matrix is singular", d) if d == 0
+    r = Rational(1, d)
+    Matrix.new(Array[Array[m[[1, 1]] * r, -m[[0, 1]] * r], Array[-m[[1, 0]] * r, m[[0, 0]] * r]])
+  end
+
+  def to_s(m) = Array.join(Array.map(@rows) { |r| "[#{Array.join(Array.map(r) { Kernel.to_s(it) }, " ")}]" }, " ")
+end
+
+def m(rows) = Matrix.new(rows)
+
+a = m(Array[Array[1, 2], Array[3, 4]])
+b = m(Array[Array[5, 6], Array[7, 8]])
+c = m(Array[Array[1, 0, 2], Array[0, 1, 3]])
+s = m(Array[Array[2, 4], Array[1, 2]])
+
+def attempt(label)
+  result = yield
+  puts("#{label} = #{result}")
+rescue DimensionError => e
+  puts("#{label}: dimension error: #{Exception.message(e)}")
+rescue SingularMatrix => e
+  puts("#{label}: #{Exception.message(e)} (det #{SingularMatrix.get_det(e)})")
+rescue IndexError
+  puts("#{label}: index out of range")
+end
+
+attempt("a + b") { a + b }
+attempt("b - a") { b - a }
+attempt("a * c") { a * c }
+attempt("c * a") { c * a }
+attempt("a + c") { a + c }
+attempt("det(a)") { Matrix.det2(a) }
+attempt("det(c)") { Matrix.det2(c) }
+attempt("inv(a)") { Matrix.inverse2(a) }
+attempt("inv(s)") { Matrix.inverse2(s) }
+attempt("a * inv(a)") { a * Matrix.inverse2(a) }
+attempt("a[2,0]") { a[[2, 0]] }
+attempt("c[1,2]") { c[[1, 2]] }
+b[[0, 1]] = 60
+attempt("b") { b }
+
+total = 0
+Array.each(Array[[a, b], [c, a], [a, c], [s, s]]) do |x, y|
+  total += Array.sum(Matrix.get_rows(x * y)) { Array.sum(it) }
+rescue DimensionError
+  total += 0
+end
+puts("sum of all valid products: #{total}")

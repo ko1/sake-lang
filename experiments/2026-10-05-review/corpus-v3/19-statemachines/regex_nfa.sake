@@ -1,0 +1,165 @@
+class NState
+  attr_accessor kind, ch, out1 = nil, out2 = nil
+end
+
+class Frag
+  attr_reader start, holes
+end
+
+class RegexSyntaxError < StandardError
+  attr_reader pattern
+end
+
+def insert_concat(re)
+  out = ""
+  chars = String.chars(re)
+  Array.each_with_index(chars) do |c, i|
+    out += c
+    nxt = chars[i + 1]
+    next if nxt == nil
+    out += "." if !String.include?("(|", c) && !String.include?(")|*+?", nxt)
+  end
+  out
+end
+
+def prec(op)
+  case op
+  in "|" then 1
+  in "." then 2
+  else 0
+  end
+end
+
+def to_postfix(re)
+  output = ""
+  ops = Array[]
+  String.each_char(insert_concat(re)) do |c|
+    if c == "("
+      Array.push(ops, c)
+    elsif c == ")"
+      while Array.last(ops) != "("
+        raise RegexSyntaxError.new("unbalanced )", re) if Array.empty?(ops)
+        output += Array.pop(ops)
+      end
+      Array.pop(ops)
+    elsif c == "*" || c == "+" || c == "?"
+      output += c
+    elsif c == "." || c == "|"
+      output += Array.pop(ops) while !Array.empty?(ops) && prec(Array.last(ops)) >= prec(c)
+      Array.push(ops, c)
+    else
+      output += c
+    end
+  end
+  until Array.empty?(ops)
+    op = Array.pop(ops)
+    raise RegexSyntaxError.new("unbalanced (", re) if op == "("
+    output += op
+  end
+  output
+end
+
+class Nfa
+  attr_reader states, start
+  def add(states, kind, ch)
+    Array.push(states, NState.new(kind, ch))
+    Array.size(states) - 1
+  end
+
+  def patch(states, holes, target)
+    Array.each(holes) do |id, slot|
+      st = states[id]
+      if slot == 1
+        NState.set_out1(st, target)
+      else
+        NState.set_out2(st, target)
+      end
+    end
+  end
+
+  def compile(re)
+    states = Array[]
+    stack = Array[]
+    String.each_char(to_postfix(re)) do |c|
+      case c
+      in "."
+        e2 = Array.pop(stack)
+        e1 = Array.pop(stack)
+        patch(states, Frag.get_holes(e1), Frag.get_start(e2))
+        Array.push(stack, Frag.new(Frag.get_start(e1), Frag.get_holes(e2)))
+      in "|"
+        e2 = Array.pop(stack)
+        e1 = Array.pop(stack)
+        s = add(states, :split, nil)
+        NState.set_out1(states[s], Frag.get_start(e1))
+        NState.set_out2(states[s], Frag.get_start(e2))
+        Array.push(stack, Frag.new(s, Frag.get_holes(e1) + Frag.get_holes(e2)))
+      in "*" | "+" | "?"
+        e = Array.pop(stack)
+        raise RegexSyntaxError.new("nothing to repeat", re) if e == nil
+        s = add(states, :split, nil)
+        NState.set_out1(states[s], Frag.get_start(e))
+        if c == "?"
+          Array.push(stack, Frag.new(s, Frag.get_holes(e) + Array[[s, 2]]))
+        else
+          patch(states, Frag.get_holes(e), s)
+          start = c == "*" ? s : Frag.get_start(e)
+          Array.push(stack, Frag.new(start, Array[[s, 2]]))
+        end
+      else
+        s = add(states, :char, c)
+        Array.push(stack, Frag.new(s, Array[[s, 1]]))
+      end
+    end
+    raise RegexSyntaxError.new("empty or dangling operator", re) if Array.size(stack) != 1
+    e = Array.pop(stack)
+    m = add(states, :match, nil)
+    patch(states, Frag.get_holes(e), m)
+    Nfa.new(states, Frag.get_start(e))
+  end
+
+  def closure(n, set, id)
+    return if id == nil || Set.include?(set, id)
+    Set.add(set, id)
+    st = @states[id]
+    if NState.get_kind(st) == :split
+      closure(n, set, NState.get_out1(st))
+      closure(n, set, NState.get_out2(st))
+    end
+  end
+
+  def matches?(n, text)
+    current = Set[]
+    closure(n, current, @start)
+    String.each_char(text) do |c|
+      following = Set[]
+      Set.each(current) do |id|
+        st = @states[id]
+        if NState.get_kind(st) == :char && NState.get_ch(st) == c
+          closure(n, following, NState.get_out1(st))
+        end
+      end
+      current = following
+    end
+    Set.any?(current) { |id| NState.get_kind(@states[id]) == :match }
+  end
+end
+
+tests = Array[
+  ["ab*c", Array["ac", "abbbc", "abd", "a"]],
+  ["(a|b)*abb", Array["abb", "babb", "aabab", "bbbabb"]],
+  ["colou?r", Array["color", "colour", "colouur"]],
+  ["(ab)+(c|d)?", Array["ab", "ababd", "abc", "abcd", ""]],
+  ["x(y|z)*", Array["x", "xyzzy", "xa"]],
+  ["a(b|c", Array["ab"]],
+  ["*a", Array["a"]]
+]
+Array.each(tests) do |re, inputs|
+  begin
+    nfa = Nfa.compile(re)
+    puts("#{re}  postfix=#{to_postfix(re)} states=#{Array.size(Nfa.get_states(nfa))}")
+    Array.each(inputs) { |s| puts(format("  %-8s %s", Kernel.inspect(s), Nfa.matches?(nfa, s) ? "match" : "no")) }
+  rescue RegexSyntaxError => e
+    puts("#{RegexSyntaxError.get_pattern(e)}  error: #{Exception.message(e)}")
+  end
+end

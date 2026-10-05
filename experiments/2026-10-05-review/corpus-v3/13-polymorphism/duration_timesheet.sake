@@ -1,0 +1,152 @@
+class ParseError < Exception
+  attr_reader input
+end
+
+class Duration
+  attr_reader secs
+  include Arithmetic
+  include Comparable
+
+  def zero = Duration.new(0)
+
+  def parse(s)
+    total = 0
+    rest = String.strip(s)
+    raise ParseError.new("empty duration", s) if String.empty?(rest)
+    until String.empty?(rest)
+      m = String.match(rest, /\A(\d+)\s*(h|m|s)\s*/)
+      raise ParseError.new("bad duration #{Kernel.inspect(s)}", s) unless m
+      n = String.to_i(m[1])
+      total += case m[2]
+               in "h" then n * 3600
+               in "m" then n * 60
+               in "s" then n
+               end
+      rest = MatchData.post_match(m)
+    end
+    Duration.new(total)
+  end
+
+  def +(a, b) = Duration.new(@secs + Duration.get_secs(b))
+  def -(a, b) = Duration.new(@secs - Duration.get_secs(b))
+  def *(a, k) = Duration.new(Float.round(@secs * k * 1.0))
+
+  def /(a, b)
+    case b
+    in Duration then @secs / (Duration.get_secs(b) * 1.0)
+    in Integer then Duration.new(@secs / b)
+    end
+  end
+
+  def <=>(a, b) = @secs <=> Duration.get_secs(b)
+  def hours(a) = @secs / 3600.0
+
+  def to_s(a)
+    sign = @secs < 0 ? "-" : ""
+    s = Integer.abs(@secs)
+    h, rem = Integer.divmod(s, 3600)
+    m, sec = Integer.divmod(rem, 60)
+    if h > 0
+      format("%s%dh %02dm %02ds", sign, h, m, sec)
+    elsif m > 0
+      format("%s%dm %02ds", sign, m, sec)
+    else
+      format("%s%ds", sign, sec)
+    end
+  end
+end
+
+class Clock
+  attr_reader mins
+  include Arithmetic
+  include Comparable
+
+  def at(text)
+    h, m = Array.map(String.split(text, ":")) { |x| String.to_i(x) }
+    Clock.new(h * 60 + m)
+  end
+
+  def +(a, d) = Clock.new((@mins + Duration.get_secs(d) / 60) % 1440)
+
+  def -(a, b)
+    case b
+    in Clock
+      diff = @mins - Clock.get_mins(b)
+      diff += 1440 if diff < 0
+      Duration.new(diff * 60)
+    in Duration then Clock.new((@mins - Duration.get_secs(b) / 60) % 1440)
+    end
+  end
+
+  def <=>(a, b) = @mins <=> Clock.get_mins(b)
+  def to_s(a) = format("%02d:%02d", @mins / 60, @mins % 60)
+end
+
+class Entry
+  attr_accessor who, project, start, spent
+end
+
+log = Array[
+  ["ann", "billing", "09:00", "1h 30m"],
+  ["ann", "infra", "10:45", "45m"],
+  ["bob", "billing", "08:30", "2h"],
+  ["bob", "billing", "13:00", "1h15m 30s"],
+  ["cy", "docs", "22:30", "3h"],
+  ["ann", "docs", "14:00", "50 m"],
+  ["bob", "infra", "16:00", "ten minutes"],
+  ["cy", "infra", "11:00", "25m 10s"],
+  ["ann", "billing", "15:10", "2h 5m"],
+  ["cy", "billing", "09:15", ""]
+]
+
+entries = Entry[]
+Array.each(log) do |who, project, start, spent|
+  begin
+    Array.push(entries, Entry.new(who, project, Clock.at(start), Duration.parse(spent)))
+  rescue ParseError => e
+    puts("skipped #{who}/#{project}: #{Exception.message(e)}")
+  end
+end
+
+puts("== entries ==")
+Array.each(entries) do |e|
+  start = Entry.get_start(e)
+  finish = start + Entry.get_spent(e)
+  puts(format("%-4s %-8s %s-%s %12s", Entry.get_who(e), Entry.get_project(e), start, finish, Entry.get_spent(e)))
+end
+
+total = Array.reduce(entries, Duration.zero) { |acc, e| acc + Entry.get_spent(e) }
+puts("total: #{total} (#{format("%.2f", Duration.hours(total))} h)")
+
+puts("== per project ==")
+by_project = Hash.new(Duration.zero)
+Array.each(entries) { |e| by_project[Entry.get_project(e)] += Entry.get_spent(e) }
+Array.each(Hash.sort_by(by_project) { |p, d| -Duration.get_secs(d) }) do |project, d|
+  share = d / total
+  puts(format("%-8s %12s %5.1f%%", project, d, share * 100))
+end
+
+puts("== per person ==")
+people = Array.group_by(entries) { |e| Entry.get_who(e) }
+budget = Duration.parse("4h")
+Hash.each(people) do |who, es|
+  spent = Array.reduce(es, Duration.zero) { |acc, e| acc + Entry.get_spent(e) }
+  avg = spent / Array.size(es)
+  status = spent > budget ? "over by #{spent - budget}" : "#{budget - spent} left"
+  puts(format("%-4s %d entries, %s, avg %s, %s", who, Array.size(es), spent, avg, status))
+end
+
+longest = Array.max_by(entries) { |e| Duration.get_secs(Entry.get_spent(e)) }
+puts("longest: #{Entry.get_who(longest)} on #{Entry.get_project(longest)} (#{Entry.get_spent(longest)})") if longest
+earliest = Array.min_by(entries) { |e| Clock.get_mins(Entry.get_start(e)) }
+puts("earliest start: #{Entry.get_start(earliest)} by #{Entry.get_who(earliest)}") if earliest
+
+puts("== clock arithmetic ==")
+late = Clock.at("23:20")
+puts("23:20 + 1h 5m = #{late + Duration.parse("1h 5m")}")
+puts("00:10 - 30m = #{Clock.at("00:10") - Duration.parse("30m")}")
+puts("from 22:30 to 01:15 = #{Clock.at("01:15") - Clock.at("22:30")}")
+puts("09:00 < 17:30? #{Clock.at("09:00") < Clock.at("17:30")}")
+standup = Duration.parse("15m")
+puts("standups per week: #{standup * 5}, a third: #{standup / 3}, 1.5x: #{standup * 1.5}")
+puts("sorted: #{Array.join(Array.sort(Array.map(entries) { |e| Entry.get_spent(e) }), ", ")}")

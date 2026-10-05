@@ -1,0 +1,101 @@
+class OrgTree
+  attr_reader names, ids, depth, up, levels, children
+
+  def build(reports)
+    names = Array[]
+    ids = Hash[]
+    boss_of = Hash[]
+    Array.each(reports) do |line|
+      emp, boss = Array.map(String.split(line, "<")) { |s| String.strip(s) }
+      Array.each(Array[emp, boss]) do |n|
+        next if n == nil || Hash.key?(ids, n)
+        ids[n] = Array.size(names)
+        Array.push(names, n)
+      end
+      boss_of[ids[emp]] = ids[boss] if boss
+    end
+    n = Array.size(names)
+    levels = 1
+    levels += 1 while (1 << levels) < n
+    children = Array.new(n) { Array[] }
+    Hash.each(boss_of) { |e, b| Array.push(children[b], e) }
+    roots = Range.reject(0...n) { |i| Hash.key?(boss_of, i) }
+    depth = Array.new(n, 0)
+    up = Array.new(levels) { Array.new(n) { |i| Hash.fetch(boss_of, i, i) } }
+    queue = Array.dup(roots)
+    until Array.empty?(queue)
+      v = Array.shift(queue)
+      Array.each(children[v]) do |c|
+        depth[c] = depth[v] + 1
+        Array.push(queue, c)
+      end
+    end
+    Range.each(1...levels) do |k|
+      Integer.times(n) { |i| up[k][i] = up[k - 1][up[k - 1][i]] }
+    end
+    OrgTree.new(names, ids, depth, up, levels, children)
+  end
+
+  def lift(t, v, steps)
+    Integer.times(@levels) do |k|
+      v = @up[k][v] if (steps >> k) & 1 == 1
+    end
+    v
+  end
+
+  def lca(t, a, b)
+    a, b = b, a if @depth[a] < @depth[b]
+    a = lift(t, a, @depth[a] - @depth[b])
+    return a if a == b
+    Integer.downto(@levels - 1, 0) do |k|
+      if @up[k][a] != @up[k][b]
+        a = @up[k][a]
+        b = @up[k][b]
+      end
+    end
+    return nil if @up[0][a] == a
+    @up[0][a]
+  end
+
+  def team_size(t, v) = 1 + Array.sum(@children[v]) { |c| team_size(t, c) }
+
+  def chain(t, v)
+    out = Array[@names[v]]
+    while @up[0][v] != v
+      v = @up[0][v]
+      Array.push(out, @names[v])
+    end
+    out
+  end
+end
+
+def query(t, x, y)
+  ids = OrgTree.get_ids(t)
+  a = ids[x]
+  b = ids[y]
+  return "#{x} / #{y}: unknown person" if a == nil || b == nil
+  c = OrgTree.lca(t, a, b)
+  return "#{x} / #{y}: different organizations" if c == nil
+  depth = OrgTree.get_depth(t)
+  hops = depth[a] + depth[b] - 2 * depth[c]
+  "#{x} / #{y}: meet at #{OrgTree.get_names(t)[c]}, #{hops} hops"
+end
+
+reports = Array[
+  "cto < ceo", "cfo < ceo", "vp_eng < cto", "vp_ops < cto", "lead_web < vp_eng",
+  "lead_db < vp_eng", "ana < lead_web", "raj < lead_web", "lin < lead_db", "olu < lead_db",
+  "max < vp_ops", "ivy < max", "controller < cfo", "pia < controller",
+  "founder", "intern < ana", "zoe < partner_ceo"
+]
+t = OrgTree.build(reports)
+names = OrgTree.get_names(t)
+puts("#{Array.size(names)} people, #{OrgTree.get_levels(t)} lifting levels")
+deepest = Range.max_by(0...Array.size(names)) { |i| OrgTree.get_depth(t)[i] }
+puts("deepest: #{Array.join(OrgTree.chain(t, deepest), " < ")}")
+Array.each(Array["ceo", "cto", "vp_eng", "cfo", "founder"]) do |n|
+  puts(format("  team of %-8s %2d", n, OrgTree.team_size(t, OrgTree.get_ids(t)[n])))
+end
+Array.each(Array[["ana", "raj"], ["ana", "lin"], ["intern", "ivy"], ["pia", "olu"],
+                 ["cto", "lin"], ["ceo", "ceo"], ["zoe", "ceo"], ["ana", "bob"]]) do |x, y|
+  puts(query(t, x, y))
+end

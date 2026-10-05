@@ -1,0 +1,115 @@
+# RAID-5 style striping with rotating XOR parity: write a message across four disks,
+# lose one disk, rebuild it from the others, and detect a silently corrupted block.
+
+Disk = Struct.new(:name, :blocks, :failed)
+
+def block_size = 4
+
+def zero_block = Array.new(block_size, 0)
+
+def xor_blocks(a, b)
+  out = Integer[]
+  Array.each_with_index(a) { |x, i| Array.push(out, x ^ b[i]) }
+  out
+end
+
+def parity_disk(stripe, disks) = (disks - 1) - stripe % disks
+
+def write_array(data, disks)
+  array = Array.map(Range.to_a(0...disks)) { |i| Disk.new("disk#{i}", Array[], false) }
+  chunks = Array[]
+  Array.each_slice(String.bytes(data), block_size) do |c|
+    padded = Array.dup(c)
+    Array.push(padded, 0) while Array.size(padded) < block_size
+    Array.push(chunks, padded)
+  end
+  per_stripe = disks - 1
+  stripes = (Array.size(chunks) + per_stripe - 1) / per_stripe
+  Integer.times(stripes) do |s|
+    data_blocks = Array.map(Range.to_a(0...per_stripe)) do |j|
+      chunks[s * per_stripe + j] || zero_block
+    end
+    parity = Array.reduce(data_blocks, zero_block) { |acc, b| xor_blocks(acc, b) }
+    p_disk = parity_disk(s, disks)
+    k = 0
+    Array.each_with_index(array) do |d, i|
+      if i == p_disk
+        Array.push(Disk.get_blocks(d), parity)
+      else
+        Array.push(Disk.get_blocks(d), data_blocks[k])
+        k += 1
+      end
+    end
+  end
+  array
+end
+
+def read_data(array)
+  disks = Array.size(array)
+  stripes = Array.size(Disk.get_blocks(Array.fetch(array, 0)))
+  bytes = Integer[]
+  Integer.times(stripes) do |s|
+    p_disk = parity_disk(s, disks)
+    Array.each_with_index(array) do |d, i|
+      next if i == p_disk
+      raise IOError, "#{Disk.get_name(d)} has failed" if Disk.get_failed(d)
+      Array.concat(bytes, Array.fetch(Disk.get_blocks(d), s))
+    end
+  end
+  Array.join(Array.map(Array.select(bytes) { |b| b != 0 }) { |b| Integer.chr(b) }, "")
+end
+
+def rebuild(array, lost)
+  survivors = Array.reject(array) { |d| Disk.get_failed(d) }
+  stripes = Array.size(Disk.get_blocks(Array.fetch(survivors, 0)))
+  blocks = Array[]
+  Integer.times(stripes) do |s|
+    acc = zero_block
+    Array.each(survivors) { |d| acc = xor_blocks(acc, Array.fetch(Disk.get_blocks(d), s)) }
+    Array.push(blocks, acc)
+  end
+  Disk.set_blocks(lost, blocks)
+  Disk.set_failed(lost, false)
+  stripes
+end
+
+def scrub(array)
+  bad = Integer[]
+  stripes = Array.size(Disk.get_blocks(Array.fetch(array, 0)))
+  Integer.times(stripes) do |s|
+    acc = zero_block
+    Array.each(array) { |d| acc = xor_blocks(acc, Array.fetch(Disk.get_blocks(d), s)) }
+    Array.push(bad, s) if Array.any?(acc) { |x| x != 0 }
+  end
+  bad
+end
+
+def show(array)
+  Array.each(array) do |d|
+    cells = Array.map(Disk.get_blocks(d)) { |b| Array.join(Array.map(b) { |x| format("%02x", x) }, "") }
+    puts(format("  %-6s %s%s", Disk.get_name(d), Array.join(cells, " "), Disk.get_failed(d) ? "  (FAILED)" : ""))
+  end
+end
+
+message = "Parity lets one disk die quietly."
+array = write_array(message, 4)
+show(array)
+puts("read: #{read_data(array)}")
+puts("scrub: #{Array.size(scrub(array))} inconsistent stripes")
+
+victim = Array.fetch(array, 2)
+Disk.set_failed(victim, true)
+begin
+  read_data(array)
+rescue IOError => e
+  puts("degraded read: #{Exception.message(e)}")
+end
+n = rebuild(array, victim)
+puts("rebuilt #{Disk.get_name(victim)}: #{n} stripes")
+puts("read: #{read_data(array)}")
+
+blk = Array.fetch(Disk.get_blocks(Array.fetch(array, 1)), 1)
+blk[2] ^= 0x20
+bad = scrub(array)
+puts("after bit rot, scrub flags stripes #{Kernel.inspect(bad)}")
+puts("read: #{read_data(array)}")

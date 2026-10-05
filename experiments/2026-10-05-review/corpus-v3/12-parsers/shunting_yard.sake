@@ -1,0 +1,116 @@
+class ExprSyntaxError < Exception
+  attr_reader token
+end
+
+class EvalError < Exception
+end
+
+def operators = once do
+  Hash[
+    "+" => {prec: 1, right: false},
+    "-" => {prec: 1, right: false},
+    "*" => {prec: 2, right: false},
+    "/" => {prec: 2, right: false},
+    "^" => {prec: 3, right: true}
+  ]
+end
+
+def number?(t) = String.match?(t, /\A\d+\z/)
+
+def tokenize(src) = String.scan(src, /\d+|[-+*\/^()]|\S+/)
+
+def to_rpn(tokens)
+  out = Array[]
+  stack = Array[]
+  Array.each(tokens) do |t|
+    if number?(t)
+      Array.push(out, t)
+    elsif Hash.key?(operators, t)
+      operators[t] => {prec:, right:}
+      while (top = Array.last(stack)) && top != "("
+        operators[top] => {prec: top_prec}
+        break unless top_prec > prec || (top_prec == prec && !right)
+        Array.push(out, Array.pop(stack))
+      end
+      Array.push(stack, t)
+    elsif t == "("
+      Array.push(stack, t)
+    elsif t == ")"
+      while true
+        top = Array.pop(stack)
+        raise ExprSyntaxError.new("unbalanced ')'", t) if top == nil
+        break if top == "("
+        Array.push(out, top)
+      end
+    else
+      raise ExprSyntaxError.new("unknown token", t)
+    end
+  end
+  until Array.empty?(stack)
+    top = Array.pop(stack)
+    raise ExprSyntaxError.new("unbalanced '('", top) if top == "("
+    Array.push(out, top)
+  end
+  out
+end
+
+def apply(op, a, b)
+  case op
+  in "+" then a + b
+  in "-" then a - b
+  in "*" then a * b
+  in "/" then a / b
+  else a ** b
+  end
+end
+
+def eval_rpn(rpn)
+  stack = Array[]
+  Array.each(rpn) do |t|
+    if number?(t)
+      Array.push(stack, Rational(Integer(t), 1))
+    else
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      raise EvalError, "missing operand for '#{t}'" if a == nil || b == nil
+      Array.push(stack, apply(t, a, b))
+    end
+  end
+  raise EvalError, "expected one result, got #{Array.size(stack)}" unless Array.size(stack) == 1
+  Array.first(stack)
+end
+
+def show(r) = Rational.denominator(r) == 1 ? Integer.to_s(Rational.numerator(r)) : Rational.to_s(r)
+
+exprs = Array[
+  "3 + 4 * 2 / ( 1 - 5 ) ^ 2 ^ 3",
+  "1 / 3 + 1 / 6",
+  "2 ^ 10 / 3",
+  "(2 + 3) * (7 - 4) / 5",
+  "10 - 4 - 3",
+  "2 ^ 3 ^ 2",
+  "(1 + 2",
+  "1 + 2)",
+  "7 / (3 - 3)",
+  "1 +",
+  "4 $ 2",
+  "12 34"
+]
+
+ok = 0
+Array.each(exprs) do |src|
+  puts("expr:  #{src}")
+  begin
+    rpn = to_rpn(tokenize(src))
+    puts("rpn:   #{Array.join(rpn, " ")}")
+    puts("value: #{show(eval_rpn(rpn))}")
+    ok += 1
+  rescue ExprSyntaxError => e
+    puts("syntax error: #{Exception.message(e)} (#{ExprSyntaxError.get_token(e)})")
+  rescue EvalError => e
+    puts("eval error: #{Exception.message(e)}")
+  rescue ZeroDivisionError
+    puts("eval error: division by zero")
+  end
+end
+puts("#{ok}/#{Array.size(exprs)} evaluated")

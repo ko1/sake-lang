@@ -1,0 +1,121 @@
+# Library catalog lookups: books kept sorted by ISBN for binary search (with a
+# retry after normalizing the query), an author/title ordering for shelf
+# listings, and a sorted word index for title searches. Queries are Records.
+
+class Book
+  include Comparable
+  attr_reader isbn, title, author, year, copies
+
+  # shelf order: author surname, then title
+  def <=>(a, b)
+    c = surname(a) <=> surname(b)
+    c == 0 ? @title <=> Book.get_title(b) : c
+  end
+  def surname(b) = Array.last(String.split(@author, " "))
+  def to_s(b) = "#{@title} (#{@author}, #{@year})"
+end
+
+class NotFound < Exception
+  attr_reader query
+end
+
+def find_isbn(by_isbn, isbn)
+  lo = 0
+  hi = Array.size(by_isbn) - 1
+  while lo <= hi
+    mid = (lo + hi) / 2
+    k = Book.get_isbn(by_isbn[mid])
+    return by_isbn[mid] if k == isbn
+    if k < isbn
+      lo = mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  raise NotFound.new("no book with ISBN #{isbn}", isbn)
+end
+
+def lookup(by_isbn, raw)
+  query = raw
+  begin
+    find_isbn(by_isbn, query)
+  rescue NotFound
+    cleaned = String.delete(String.strip(query), "- ")
+    if cleaned != query
+      query = cleaned
+      retry
+    end
+    raise
+  end
+end
+
+def build_index(books)
+  pairs = Array[]
+  Array.each(books) do |b|
+    Array.each(Array.uniq(String.split(String.downcase(Book.get_title(b)), /[^a-z]+/))) do |w|
+      Array.push(pairs, [w, Book.get_isbn(b)]) if String.size(w) > 2
+    end
+  end
+  index = Hash[]
+  Array.each(Array.sort(Array.uniq(Array.map(pairs) { |w, _| w }))) { |w| index[w] = Array[] }
+  Array.each(pairs) { |w, isbn| Array.push(index[w], isbn) }
+  index
+end
+
+def words_with_prefix(words, prefix)
+  lo = 0
+  hi = Array.size(words)
+  while lo < hi
+    mid = (lo + hi) / 2
+    if words[mid] < prefix
+      lo = mid + 1
+    else
+      hi = mid
+    end
+  end
+  Array.take_while(Array.drop(words, lo)) { |w| String.start_with?(w, prefix) }
+end
+
+def run_query(q, by_isbn, index, words)
+  case q
+  in {isbn:}
+    b = lookup(by_isbn, isbn)
+    "#{b} - #{Book.get_copies(b)} on shelf"
+  in {word:}
+    hits = Array.flat_map(words_with_prefix(words, word)) { |w| index[w] }
+    titles = Array.map(Array.uniq(hits)) { |i| Book.get_title(find_isbn(by_isbn, i)) }
+    Array.empty?(titles) ? "nothing matches #{word}*" : Array.join(Array.sort(titles), "; ")
+  in {before:}
+    old = Array.select(by_isbn) { |b| Book.get_year(b) < before }
+    "#{Array.size(old)} books before #{before}"
+  end
+end
+
+books = Array[
+  Book.new("9780262033848", "Introduction to Algorithms", "Thomas Cormen", 2009, 3),
+  Book.new("9780201896831", "The Art of Computer Programming", "Donald Knuth", 1997, 1),
+  Book.new("9780321573513", "Algorithms", "Robert Sedgewick", 2011, 2),
+  Book.new("9781593279509", "Eloquent JavaScript", "Marijn Haverbeke", 2018, 4),
+  Book.new("9780131103627", "The C Programming Language", "Brian Kernighan", 1988, 2),
+  Book.new("9780134685991", "Effective Java", "Joshua Bloch", 2017, 1),
+  Book.new("9781680500882", "Programming Elixir", "Dave Thomas", 2016, 0),
+  Book.new("9780596516178", "The Ruby Programming Language", "David Flanagan", 2008, 2),
+  Book.new("9780201633610", "Design Patterns", "Erich Gamma", 1994, 1)
+]
+
+by_isbn = Array.sort_by(books) { |b| Book.get_isbn(b) }
+index = build_index(books)
+words = Hash.keys(index)
+puts("#{Array.size(books)} books, #{Array.size(words)} indexed words")
+puts("shelf order:")
+Array.each(Array.sort(books)) { |b| puts("  #{Book.surname(b)}: #{Book.get_title(b)}") }
+
+queries = Array[{isbn: "9780321573513"}, {isbn: "978-0-13-468599-1"}, {isbn: "9999999999999"},
+                {word: "prog"}, {word: "algo"}, {word: "haskell"}, {before: 2000}]
+Array.each(queries) do |q|
+  puts("#{q} => #{run_query(q, by_isbn, index, words)}")
+rescue NotFound => e
+  puts("#{q} => not found (#{NotFound.get_query(e)})")
+end
+out = Array.select(books) { |b| Book.get_copies(b) == 0 }
+puts("checked out everywhere: #{Array.join(out, ", ")}")

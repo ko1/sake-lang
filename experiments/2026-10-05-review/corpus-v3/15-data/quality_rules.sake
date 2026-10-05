@@ -1,0 +1,111 @@
+module Rule
+  def run(rule, record)
+    value = record[get_field(rule)]
+    return nil if value == nil && optional?(rule)
+    return "#{get_field(rule)} is missing" if value == nil || value == ""
+    check(rule, value)
+  end
+
+  def describe(rule) = "#{get_field(rule)} rule"
+end
+
+class RequiredRule
+  attr_reader field
+  include Rule
+  def optional?(r) = false
+  def check(r, v) = nil
+  def describe(r) = "#{@field} required"
+end
+
+class RangeRule
+  attr_reader field, min, max
+  include Rule
+  def optional?(r) = true
+  def check(r, v)
+    n = Float(v) rescue nil
+    return "#{@field}=#{v} is not a number" if n == nil
+    return "#{@field}=#{v} outside #{@min}..#{@max}" if n < @min || n > @max
+    nil
+  end
+  def describe(r) = "#{@field} in #{@min}..#{@max}"
+end
+
+class PatternRule
+  attr_reader field, regexp, label
+  include Rule
+  def optional?(r) = true
+  def check(r, v) = String.match?(v, @regexp) ? nil : "#{@field}=#{inspect(v)} is not a valid #{@label}"
+  def describe(r) = "#{@field} looks like #{@label}"
+end
+
+class OneOfRule
+  attr_reader field, choices
+  include Rule
+  def optional?(r) = false
+  def check(r, v) = Array.include?(@choices, v) ? nil : "#{@field}=#{v} not in #{Array.join(@choices, "/")}"
+  def describe(r) = "#{@field} one of #{Array.size(@choices)}"
+end
+
+def rules
+  Array[
+    RequiredRule.new("id"),
+    PatternRule.new("email", /\A[^@\s]+@[^@\s]+\.[a-z]{2,}\z/, "email"),
+    RangeRule.new("age", 0, 120),
+    OneOfRule.new("country", String.split("DE FR JP US BR", " ")),
+    PatternRule.new("zip", /\A\d{5}\z/, "zip code"),
+    RangeRule.new("score", 0.0, 1.0)
+  ]
+end
+
+def records
+  text = <<~TXT
+    id=1;email=ana@example.com;age=34;country=BR;zip=01310;score=0.82
+    id=2;email=bob(at)example.com;age=27;country=US;zip=9410;score=0.4
+    id=;email=chen@example.cn;age=41;country=CN;score=0.91
+    id=4;email=dora@example.de;age=-3;country=DE;zip=10115;score=1.7
+    id=5;age=fifty;country=FR;zip=75001
+    id=6;email=eve@example.jp;age=22;country=JP;zip=10000;score=0.55
+  TXT
+  Array.map(String.lines(text)) do |line|
+    h = Hash[]
+    Array.each(String.split(String.chomp(line), ";")) do |pair|
+      k, _sep, v = String.partition(pair, "=")
+      h[k] = v
+    end
+    h
+  end
+end
+
+all_rules = rules
+violations = Array[]
+Array.each_with_index(records) do |rec, i|
+  Array.each(all_rules) do |rule|
+    msg = Rule.run(rule, rec)
+    Array.push(violations, [i + 1, rule, msg]) if msg
+  end
+end
+
+data = records
+puts("Checked #{Array.size(data)} records against #{Array.size(all_rules)} rules: #{Array.size(violations)} violations")
+puts
+by_record = Array.group_by(violations) { |row, rule, msg| row }
+Integer.upto(1, Array.size(data)) do |row|
+  list = by_record[row]
+  id = Array.fetch(data, row - 1)["id"]
+  label = id == nil || id == "" ? "(no id)" : "id #{id}"
+  if list == nil
+    puts("record #{row} #{label}: ok")
+  else
+    puts("record #{row} #{label}: #{Array.size(list)} problem(s)")
+    Array.each(list) { |r, rule, msg| puts("    - #{msg}") }
+  end
+end
+puts
+puts("By rule:")
+Array.each(all_rules) do |rule|
+  n = Array.count(violations) { |r, ru, m| ru == rule }
+  rate = n * 100.0 / Array.size(data)
+  puts(format("  %-28s %2d failing (%3.0f%%)", Rule.describe(rule), n, rate))
+end
+clean = Array.size(data) - Hash.size(by_record)
+puts(format("Clean records: %d of %d", clean, Array.size(data)))

@@ -1,0 +1,173 @@
+class VMError < Exception
+  attr_reader pc
+end
+class AsmError < Exception
+  attr_reader line_no
+end
+
+class VM
+  attr_accessor stack, vars, pc, out, steps, halted
+
+  def fresh = VM.new(Array[], Hash[], 0, Array[], 0, false)
+  def push(vm, x) = Array.push(@stack, x)
+  def pop(vm)
+    raise VMError.new("stack underflow at pc #{@pc}", @pc) if Array.empty?(@stack)
+    Array.pop(@stack)
+  end
+  def advance(vm) = @pc += 1
+end
+
+module Instr
+  def exec(ins, vm) = raise("exec not implemented")
+  def show(ins) = "?"
+  def to_s(ins) = show(ins)
+end
+
+class Push
+  attr_reader value
+  include Instr
+  def exec(ins, vm)
+    VM.push(vm, @value)
+    VM.advance(vm)
+  end
+  def show(ins) = "push #{@value}"
+end
+
+class BinOp
+  attr_reader op
+  include Instr
+  def exec(ins, vm)
+    b = VM.pop(vm)
+    a = VM.pop(vm)
+    r = case @op
+        in :add then a + b
+        in :sub then a - b
+        in :mul then a * b
+        in :mod
+          raise VMError.new("modulo by zero at pc #{VM.get_pc(vm)}", VM.get_pc(vm)) if b == 0
+          a % b
+        in :lt then a < b ? 1 : 0
+        in :eq then a == b ? 1 : 0
+        end
+    VM.push(vm, r)
+    VM.advance(vm)
+  end
+  def show(ins) = Symbol.to_s(@op)
+end
+
+class Load
+  attr_reader name
+  include Instr
+  def exec(ins, vm)
+    v = VM.get_vars(vm)[@name]
+    raise VMError.new("undefined variable #{@name}", VM.get_pc(vm)) if v == nil
+    VM.push(vm, v)
+    VM.advance(vm)
+  end
+  def show(ins) = "load #{@name}"
+end
+
+class Store
+  attr_reader name
+  include Instr
+  def exec(ins, vm)
+    VM.get_vars(vm)[@name] = VM.pop(vm)
+    VM.advance(vm)
+  end
+  def show(ins) = "store #{@name}"
+end
+
+class Jump
+  attr_reader target, cond
+  include Instr
+  def exec(ins, vm)
+    take = @cond == :always || (@cond == :zero && VM.pop(vm) == 0)
+    take ? VM.set_pc(vm, @target) : VM.advance(vm)
+  end
+  def show(ins) = @cond == :always ? "jmp #{@target}" : "jz #{@target}"
+end
+
+class Print
+  attr_reader label
+  include Instr
+  def exec(ins, vm)
+    Array.push(VM.get_out(vm), "#{@label}#{VM.pop(vm)}")
+    VM.advance(vm)
+  end
+  def show(ins) = "print"
+end
+
+class Halt
+  attr_reader code
+  include Instr
+  def exec(ins, vm) = VM.set_halted(vm, true)
+  def show(ins) = "halt"
+end
+
+def assemble(source)
+  labels = Hash[]
+  lines = Array.reject(Array.map(String.lines(source)) { |l| String.strip(l) }) { |l| String.empty?(l) || String.start_with?(l, "#") }
+  addr = 0
+  Array.each(lines) do |l|
+    if String.end_with?(l, ":")
+      labels[String.delete_suffix(l, ":")] = addr
+    else
+      addr += 1
+    end
+  end
+  program = Array[]
+  Array.each_with_index(Array.reject(lines) { |l| String.end_with?(l, ":") }) do |l, i|
+    op, arg = String.split(l, " ")
+    ins = case op
+          in "push" then Push.new(String.to_i(arg))
+          in "add" | "sub" | "mul" | "mod" | "lt" | "eq" then BinOp.new(String.to_sym(op))
+          in "load" then Load.new(arg)
+          in "store" then Store.new(arg)
+          in "jmp" | "jz"
+            target = labels[arg]
+            raise AsmError.new("unknown label #{arg}", i) if target == nil
+            Jump.new(target, op == "jmp" ? :always : :zero)
+          in "print" then Print.new(arg ? "#{arg} " : "")
+          in "halt" then Halt.new(0)
+          else raise AsmError.new("unknown instruction #{op}", i)
+          end
+    Array.push(program, ins)
+  end
+  program
+end
+
+def run(name, source, limit)
+  puts("== #{name} ==")
+  program = assemble(source)
+  vm = VM.fresh
+  while !VM.get_halted(vm) && VM.get_pc(vm) < Array.size(program)
+    raise VMError.new("step limit #{limit} exceeded", VM.get_pc(vm)) if VM.get_steps(vm) >= limit
+    Instr.exec(program[VM.get_pc(vm)], vm)
+    VM.set_steps(vm, VM.get_steps(vm) + 1)
+  end
+  Array.each(VM.get_out(vm)) { |line| puts(line) }
+  puts("(#{Array.size(program)} instructions, #{VM.get_steps(vm)} steps, stack #{VM.get_stack(vm)})")
+rescue AsmError => e
+  puts("assembly error at instruction #{AsmError.get_line_no(e)}: #{Exception.message(e)}")
+rescue VMError => e
+  puts("runtime error at pc #{VMError.get_pc(e)}: #{Exception.message(e)}")
+end
+
+factorial = "push 1\nstore acc\npush 10\nstore n\nloop:\nload n\njz done\nload acc\nload n\nmul\nstore acc\nload n\npush 1\nsub\nstore n\njmp loop\ndone:\nload acc\nprint 10!=\nhalt\n"
+gcd = "# Euclid\npush 1071\nstore a\npush 462\nstore b\ntop:\nload b\njz end\nload a\nload b\nmod\nload b\nstore a\nstore b\njmp top\nend:\nload a\nprint gcd=\n"
+primes = "push 2\nstore n\nnext:\nload n\npush 30\nlt\njz stop\npush 2\nstore d\ntry:\nload d\nload d\nmul\nload n\npush 1\nadd\nlt\njz prime\nload n\nload d\nmod\njz skip\nload d\npush 1\nadd\nstore d\njmp try\nprime:\nload n\nprint\nskip:\nload n\npush 1\nadd\nstore n\njmp next\nstop:\nhalt\n"
+
+run("factorial", factorial, 1000)
+run("gcd", gcd, 1000)
+run("primes", primes, 5000)
+run("underflow", "push 1\nadd\n", 100)
+run("bad label", "push 1\njz nowhere\n", 100)
+run("bad op", "push 1\nfrobnicate\n", 100)
+run("forever", "spin:\njmp spin\n", 50)
+run("unset var", "load ghost\nprint\n", 10)
+
+listing = assemble(gcd)
+puts("== gcd listing ==")
+Array.each_with_index(listing) { |ins, i| puts(format("%3d  %s", i, ins)) }
+kinds = Array.tally(Array.map(listing) { |ins| Kernel.to_s(ins) })
+puts("counts: #{Array.join(Array.map(Array.sort(Hash.keys(kinds))) { |k| "#{k} x#{kinds[k]}" }, ", ")}")

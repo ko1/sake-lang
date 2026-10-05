@@ -1,0 +1,27 @@
+# Tasks: 01-text (text processing and formatting)
+
+- word_wrap: greedy word wrap of bulleted and indented paragraphs at two widths, splitting over-long words.
+- justify_text: breaks a passage into lines and renders it left/right/centered/fully justified in a frame, with a raggedness score.
+- template_render: renders `{{path | filter:arg}}` templates against a nested Hash context, with filters and TemplateError reporting.
+- case_convert: splits identifiers in any case style (camel, snake, kebab, acronyms, digits) into words and converts them to six styles.
+- ascii_table: renders mixed-type rows (String, Integer, Float, bool, nil) as a bordered table with type-based alignment, truncation and a totals row.
+- markdown_table: parses Markdown pipe tables (alignment row, ragged rows), re-renders them aligned, sorts by a numeric column, and reports malformed tables.
+- text_stats: sentence/word/syllable counts, Flesch reading ease, top non-stopwords and a word-length histogram for a passage.
+- line_diff: LCS-based unified diff with context hunks and insertion/deletion counts.
+- number_words: spells integers in English (scales, "and", negatives), ordinals, Roman numerals and cheque amounts.
+- csv_report: state-machine CSV parser (quotes, escaped quotes, embedded newlines, errors) feeding a grouped sales report.
+- slugify: turns post titles into URL slugs (transliteration table, stopword dropping, length limit at word boundaries, collision suffixes).
+- text_box: draws wrapped text inside bordered boxes (four border styles as Records, titles, padding, alignment, drop shadow) and lays two boxes side by side.
+- columnize: `ls`-style layout that finds the fewest rows fitting a width, column-major or row-major, with per-column widths.
+- whitespace_tidy: expands tabs, strips trailing spaces, dedents, guesses and normalizes the indent unit, collapses blank runs, and logs each change.
+- json_pretty: recursive-descent JSON parser (a Parser Struct with position) and a width-aware pretty printer, with positioned parse errors.
+- ini_config: INI parser with sections, comments, continuation lines and `${section.key}` interpolation, coercing values to int/float/bool/list/string.
+- spell_suggest: Damerau-Levenshtein spelling suggestions ranked by distance then word frequency, applied to sentences while preserving capitalization and punctuation.
+- classic_ciphers: Caesar/ROT13, Atbash and Vigenere ciphers, plus Caesar cracking by chi-squared letter frequencies.
+- inflector: regex-rule English pluralization/singularization with irregular and uncountable words, count phrases and Oxford-comma lists.
+- human_format: humanizes numbers: digit grouping, currency with parentheses, percentages, byte sizes (SI/binary), durations, relative times, significant figures.
+- markdown_html: converts a Markdown subset (headings, paragraphs, lists, quotes, fenced code, inline code/emphasis/links) to HTML with escaping.
+- bwt_rle: run-length encoding with two-digit counts, Burrows-Wheeler transform and its inverse, and move-to-front codes, compared on sample texts.
+- date_format: parses dates in three textual formats with validation and formats them with a hand-written strftime (weekday by Zeller, day of year, ordinals).
+- outline_number: parses an indented outline into a tree and prints tables of contents with decimal, classic (I/A/1/a) and legal numbering, dot leaders and page numbers.
+- doc_pretty: Wadler-style pretty-printer (text/line/nest/group documents joined with a user-defined `+`) laying out nested data and call expressions at several widths.

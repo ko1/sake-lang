@@ -1,0 +1,138 @@
+class Txn
+  attr_reader date, merchant, amount, category
+end
+
+class Rule
+  attr_reader pattern, category
+end
+
+def rules = once {
+  Rule[
+    Rule.new(/coffee|cafe|bakery/i, :meals),
+    Rule.new(/air|hotel|taxi|uber|rail/i, :travel),
+    Rule.new(/aws|github|slack|zoom/i, :software),
+    Rule.new(/staples|office/i, :supplies),
+    Rule.new(/restaurant|bistro|grill/i, :meals)
+  ]
+}
+
+def budgets = once { Hash[meals: 300.0, travel: 1200.0, software: 450.0, supplies: 150.0, other: 100.0] }
+
+def categorize(merchant)
+  rule = Array.find(rules) { |r| Regexp.match?(Rule.get_pattern(r), merchant) }
+  rule ? Rule.get_category(rule) : :other
+end
+
+def month_of(date) = date[0...7]
+
+def parse(csv)
+  txns = Txn[]
+  bad = Array[]
+  Array.each_with_index(String.lines(csv)) do |line, i|
+    fields = String.split(String.chomp(line), ",")
+    if Array.size(fields) != 3 || !String.match?(fields[0], /\A\d{4}-\d\d-\d\d\z/)
+      Array.push(bad, i + 1)
+      next
+    end
+    date = fields[0]
+    merchant = String.strip(fields[1])
+    amount = Kernel.Float(fields[2]) rescue nil
+    if amount == nil
+      Array.push(bad, i + 1)
+      next
+    end
+    Array.push(txns, Txn.new(date, merchant, amount, categorize(merchant)))
+  end
+  [txns, bad]
+end
+
+csv = <<~CSV
+  2026-07-02,Blue Bottle Coffee,6.50
+  2026-07-03,AWS,212.40
+  2026-07-05,United Air,489.00
+  2026-07-05,Hotel Marlowe,612.30
+  2026-07-09,Staples,48.99
+  2026-07-15,GitHub,44.00
+  2026-07-18,Corner Bakery,12.75
+  2026-07-21,Uber,23.10
+  2026-07-30,Nopa Restaurant,182.00
+  2026-08-01,Blue Bottle Coffee,7.25
+  2026-08-03,AWS,231.95
+  2026-08-07,City Locksmith,95.00
+  2026-08-11,Zoom,15.99
+  2026-08-15,GitHub,44.00
+  2026-08-16,Office Depot,129.50
+  2026-08-16,Office Depot,-20.00
+  2026-08-22,Amtrak Rail,96.00
+  2026-08-29,Tartine Bakery,18.40
+  2026-08-30,Bistro Jeanty,231.80
+  oops this line is broken
+  2026-09-01,AWS,240.10
+  2026-09-02,Blue Bottle Coffee,six
+  2026-09-04,Slack,87.50
+  2026-09-10,United Air,1022.00
+  2026-09-12,Marriott Hotel,418.00
+  2026-09-15,GitHub,44.00
+  2026-09-19,Staples,31.20
+  2026-09-24,Uber,41.75
+  2026-09-28,Plumber Bros,150.00
+CSV
+
+txns, bad = parse(csv)
+puts("Parsed #{Array.size(txns)} transactions; bad lines: #{Array.join(bad, ", ")}")
+
+by_month = Array.group_by(txns) { |t| month_of(Txn.get_date(t)) }
+months = Array.sort(Hash.keys(by_month))
+cats = Hash.keys(budgets)
+
+def row(label, cells) = format("%-9s", label) + Array.join(Array.map(cells) { |c| String.rjust(c, 10) }, "")
+
+totals = Hash[]
+Array.each(months) do |m|
+  sums = Hash.new(0.0)
+  Array.each(Hash.fetch(by_month, m)) { |t| sums[Txn.get_category(t)] += Txn.get_amount(t) }
+  totals[m] = sums
+end
+
+puts
+puts(row("category", months) + String.rjust("budget", 10))
+Array.each(cats) do |c|
+  cells = Array.map(months) { |m| format("%.2f", Hash.fetch(totals, m)[c]) }
+  puts(row(Symbol.to_s(c), cells) + format("%10.2f", Hash.fetch(budgets, c)))
+end
+puts(row("total", Array.map(months) { |m| format("%.2f", Array.sum(Hash.values(Hash.fetch(totals, m)))) }))
+
+puts
+puts("Over budget:")
+Array.each(months) do |m|
+  Array.each(cats) do |c|
+    spent = Hash.fetch(totals, m)[c]
+    limit = Hash.fetch(budgets, c)
+    next if spent <= limit
+    puts(format("  %s %-8s %8.2f over (%3.0f%%)", m, c, spent - limit, spent * 100 / limit))
+  end
+end
+
+# a merchant seen in every month is treated as a subscription
+puts
+puts("Recurring:")
+by_merchant = Array.group_by(txns) { |t| Txn.get_merchant(t) }
+Hash.each(by_merchant) do |merchant, ts|
+  seen = Array.uniq(Array.map(ts) { |t| month_of(Txn.get_date(t)) })
+  next if Array.size(seen) < Array.size(months)
+  amounts = Array.map(ts) { |t| Txn.get_amount(t) }
+  lo, hi = Array.minmax(amounts)
+  kind = hi - lo < 0.01 ? "fixed" : format("varies %.2f-%.2f", lo, hi)
+  puts(format("  %-20s %s", merchant, kind))
+end
+
+puts
+uncategorized = Array.select(txns) { |t| Txn.get_category(t) == :other }
+puts("Uncategorized: #{Array.join(Array.uniq(Array.map(uncategorized) { |t| Txn.get_merchant(t) }), ", ")}")
+refunds = Array.select(txns) { |t| Txn.get_amount(t) < 0 }
+Array.each(refunds) { |t| puts(format("Refund %s %s %.2f", Txn.get_date(t), Txn.get_merchant(t), Txn.get_amount(t))) }
+biggest = Array.max_by(txns) { |t| Txn.get_amount(t) }
+puts(format("Largest: %s %s %.2f", Txn.get_date(biggest), Txn.get_merchant(biggest), Txn.get_amount(biggest)))
+first_total = Array.sum(Hash.values(Hash.fetch(totals, Array.first(months))))
+last_total = Array.sum(Hash.values(Hash.fetch(totals, Array.last(months))))
+puts(format("Change %s -> %s: %+.1f%%", Array.first(months), Array.last(months), (last_total - first_total) * 100 / first_total))

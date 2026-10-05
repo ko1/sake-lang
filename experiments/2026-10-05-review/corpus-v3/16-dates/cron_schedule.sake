@@ -1,0 +1,158 @@
+# A cron-expression evaluator: parses "min hour dom month dow" fields with
+# lists, ranges and steps, then finds the next firing times after a moment.
+
+class CronError < StandardError
+  attr_reader field
+end
+
+def days_from_civil(y, m, d)
+  y -= 1 if m <= 2
+  era = y / 400
+  yoe = y - era * 400
+  doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+end
+
+def civil_from_days(z)
+  z += 719468
+  era = z / 146097
+  doe = z - era * 146097
+  yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  mp = (5 * doy + 2) / 153
+  m = mp < 10 ? mp + 3 : mp - 9
+  [yoe + era * 400 + (m <= 2 ? 1 : 0), m, doy - (153 * mp + 2) / 5 + 1]
+end
+
+def wday(z) = (z + 4) % 7
+
+def aliases = once do
+  Hash["mon" => 1, "tue" => 2, "wed" => 3, "thu" => 4, "fri" => 5, "sat" => 6, "sun" => 0,
+       "jan" => 1, "feb" => 2, "mar" => 3, "apr" => 4, "may" => 5, "jun" => 6,
+       "jul" => 7, "aug" => 8, "sep" => 9, "oct" => 10, "nov" => 11, "dec" => 12]
+end
+
+def value(token, name)
+  v = aliases[String.downcase(token)]
+  return v if v
+  raise CronError.new("not a number: #{token}", name) unless String.match?(token, /\A\d+\z/)
+  String.to_i(token)
+end
+
+def parse_field(text, name, lo, hi)
+  out = Set[]
+  Array.each(String.split(text, ",")) do |part|
+    range_text, step_text = String.split(part, "/", 2)
+    step = step_text == nil ? 1 : value(step_text, name)
+    raise CronError.new("step must be positive", name) if step < 1
+    if range_text == "*"
+      a = lo
+      b = hi
+    elsif String.include?(range_text, "-")
+      x, y = String.split(range_text, "-", 2)
+      a = value(x, name)
+      b = value(y, name)
+    else
+      a = value(range_text, name)
+      b = step_text == nil ? a : hi
+    end
+    raise CronError.new("#{a}-#{b} outside #{lo}-#{hi}", name) if a < lo || b > hi || a > b
+    Range.step(a..b, step) { |v| Set.add(out, name == "dow" ? v % 7 : v) }
+  end
+  out
+end
+
+class Cron
+  attr_reader text, fields
+  attr_reader minutes = nil, hours = nil, doms = nil, months = nil, dows = nil, dom_any = false, dow_any = false
+
+  def parse(text)
+    fields = String.split(text, " ")
+    raise CronError.new("expected 5 fields, got #{Array.size(fields)}", "all") if Array.size(fields) != 5
+    Cron.new(text, fields)
+  end
+
+  def initialize(c)
+    minute, hour, dom, month, dow = @fields
+    @minutes = Set.sort(parse_field(minute, "minute", 0, 59))
+    @hours = Set.sort(parse_field(hour, "hour", 0, 23))
+    @doms = parse_field(dom, "dom", 1, 31)
+    @months = parse_field(month, "month", 1, 12)
+    @dows = parse_field(dow, "dow", 0, 7)
+    @dom_any = dom == "*"
+    @dow_any = dow == "*"
+  end
+
+  def day_matches?(c, z)
+    y, m, d = civil_from_days(z)
+    return false unless Set.include?(@months, m)
+    dom_ok = Set.include?(@doms, d)
+    dow_ok = Set.include?(@dows, wday(z))
+    return dow_ok if @dom_any
+    return dom_ok if @dow_any
+    dom_ok || dow_ok
+  end
+
+  # Next firing strictly after t (minutes since epoch), searching up to a few years.
+  def next_after(c, t)
+    t += 1
+    day = t / 1440
+    limit = day + 366 * 5
+    while day < limit
+      if day_matches?(c, day)
+        from = day == t / 1440 ? t % 1440 : 0
+        Array.each(@hours) do |h|
+          Array.each(@minutes) do |mi|
+            return day * 1440 + h * 60 + mi if h * 60 + mi >= from
+          end
+        end
+      end
+      day += 1
+    end
+    nil
+  end
+end
+
+def show(t)
+  y, m, d = civil_from_days(t / 1440)
+  format("%04d-%02d-%02d %s %02d:%02d", y, m, d, Array["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wday(t / 1440)], (t % 1440) / 60, t % 60)
+end
+
+now = days_from_civil(2026, 10, 1) * 1440 + 9 * 60 + 41
+puts("Now: #{show(now)}")
+exprs = Array[
+  "*/15 9-17 * * mon-fri",
+  "0 0 1 * *",
+  "30 2 * * 0",
+  "0 12 13 * 5",
+  "0 9 29 2 *",
+  "5,35 */6 * jan,oct *",
+  "0 18 L * *",
+  "0 8 * * 1-5/2",
+  "61 * * * *",
+  "* * *"
+]
+Array.each(exprs) do |text|
+  cron = Cron.parse(text)
+  times = Array[]
+  t = now
+  Integer.times(4) do
+    t = Cron.next_after(cron, t) if t
+    Array.push(times, t) if t
+  end
+  puts(format("%-22s %s", text, Array.join(Array.map(times) { |x| show(x) }, " | ")))
+rescue CronError => e
+  puts(format("%-22s error in %s: %s", text, CronError.get_field(e), Exception.message(e)))
+end
+
+# Count firings of a weekday business-hours job in October 2026.
+job = Cron.parse("*/15 9-17 * * mon-fri")
+t = days_from_civil(2026, 10, 1) * 1440 - 1
+stop = days_from_civil(2026, 10, 15) * 1440
+count = 0
+per_day = Hash.new(0)
+while (t = Cron.next_after(job, t)) && t < stop
+  count += 1
+  per_day[t / 1440] += 1
+end
+puts("Firings in the first two weeks of October 2026 of '#{Cron.get_text(job)}': #{count} on #{Hash.size(per_day)} days, #{Array.max(Hash.values(per_day))} per day")

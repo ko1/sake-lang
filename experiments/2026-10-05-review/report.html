@@ -1,0 +1,200 @@
+<title>Sake 全コード見直し</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Shippori+Mincho+B1:wght@600;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column with wide tables and charts allowed to scroll inside their own boxes; a sake-label red as the single accent. */
+:root {
+  --bg: #f7f6f2; --panel: #ffffff; --fg: #23211d; --muted: #6c675d; --line: #dedad0;
+  --accent: #a3262a; --accent-soft: #f3e2df; --mono: #3d6b5a; --nil: #c99a2e; --union: #6f7fa8; --unk: #9b9488;
+  --display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --code: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #1b1a18; --panel: #24221f; --fg: #ebe7de; --muted: #a59f92; --line: #3a3732;
+  --accent: #e0645f; --accent-soft: #3a2422; --mono: #6fb39a; --nil: #d9b25a; --union: #95a3cc; --unk: #8a8478; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #1b1a18; --panel: #24221f; --fg: #ebe7de; --muted: #a59f92; --line: #3a3732;
+  --accent: #e0645f; --accent-soft: #3a2422; --mono: #6fb39a; --nil: #d9b25a; --union: #95a3cc; --unk: #8a8478; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 16px/1.85 var(--body); }
+.wrap { max-width: 860px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 80px; }
+h1 { font-family: var(--display); font-weight: 800; font-size: clamp(30px, 5vw, 44px); line-height: 1.25; margin: 0 0 8px; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 800; font-size: 25px; margin: 56px 0 12px; padding-top: 14px; border-top: 3px solid var(--fg); text-wrap: balance; }
+h3 { font-size: 17px; margin: 28px 0 6px; }
+.eyebrow { font: 600 12px/1 var(--code); letter-spacing: .12em; color: var(--accent); text-transform: uppercase; }
+.lede { font-size: 18px; color: var(--fg); max-width: 40em; }
+p, li { max-width: 42em; }
+code { font: 0.88em var(--code); background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; }
+.verdict { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin: 28px 0 8px; }
+.verdict div { background: var(--panel); border: 1px solid var(--line); padding: 16px 18px; min-width: 0; }
+.verdict b { display: block; font: 800 30px/1.1 var(--display); color: var(--accent); font-variant-numeric: tabular-nums; }
+.verdict span { font-size: 14px; color: var(--muted); }
+.tbl { overflow-x: auto; margin: 14px 0; }
+table { border-collapse: collapse; font-size: 14.5px; min-width: 100%; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 700; color: var(--muted); font-size: 13px; letter-spacing: .03em; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.hl td { background: var(--accent-soft); }
+.chart { background: var(--panel); border: 1px solid var(--line); padding: 14px; margin: 16px 0; overflow-x: auto; }
+.chart svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.chart text { fill: var(--fg); font-family: var(--body); font-size: 12px; }
+.chart .muted { fill: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.legend i { display: inline-block; width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px; }
+.note { font-size: 14px; color: var(--muted); }
+.side { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; margin: 18px 0; }
+footer { margin-top: 60px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+
+<div class="wrap">
+<p class="eyebrow">Sake-lang · experiments/2026-10-05-review</p>
+<h1>仕様変更のあと、全部のコードを書き直してみた</h1>
+<p class="lede">500 本のコーパスと sakelib を、この 3 日の仕様変更（<code>attr_reader</code>、<code>initialize</code>、<code>once</code>、キーワード引数、<code>x =&gt; T</code> …）で見直し、Ruby とどれだけ同じ形になったか、型を書かずに型がどれだけ決まるかを測った。</p>
+
+<div class="verdict">
+  <div><b>465 / 500</b><span>書き換わったプログラム。全部が書き換え前と同じ出力</span></div>
+  <div><b>0.95 × / 1.16 ×</b><span>Ruby 版に対する行数 / トークン数</span></div>
+  <div><b>99.0〜99.9%</b><span>型が決まった割合（関数の引数・返り値・フィールド）。Ruby 版の TypeProf は約 91%</span></div>
+  <div><b>0</b><span>健全性の違反（500 本、実行時に見た型が推論の外に出ない）</span></div>
+</div>
+
+<h2>何をしたか</h2>
+<ul>
+  <li>2026-10-01 のコーパス（各課題に Sake 版・慣用的な Ruby 版・期待出力）を写し、5 体の書き手エージェントが 4 分野ずつ見直した。基準は Ruby 版：新しい機能で Ruby の書き方に近づく所だけ直す。</li>
+  <li>見直しは <code>--strict=0</code>（型の検査なし）で行い、検査の結果は見せていない。検査器に合わせたコードにしないため。</li>
+  <li>sakelib（18 ライブラリ）と 2026-10-03 のライブラリ実験は別の 1 体が見直した（こちらは検査を見てよい）。</li>
+  <li>v2（見直し前）と v3（見直し後）を同じ処理系で測った：出力の一致、strict の各レベルの報告、型の分類、健全性（負の対照つき）、Ruby 版との大きさと型名の数。</li>
+</ul>
+
+<h2>見直しで使われた機能</h2>
+<div class="tbl"><table>
+<thead><tr><th>機能</th><th class="n">v2</th><th class="n">v3</th><th class="n">使ったプログラム</th></tr></thead>
+<tbody>
+<tr><td><code>attr_reader</code> などの行</td><td class="n">204</td><td class="n">981</td><td class="n">414</td></tr>
+<tr><td><code>Struct.new</code></td><td class="n">748</td><td class="n">28</td><td class="n">22</td></tr>
+<tr><td><code>class E &lt; Exception</code></td><td class="n">1</td><td class="n">243</td><td class="n">190</td></tr>
+<tr><td><code>once { }</code></td><td class="n">0</td><td class="n">156</td><td class="n">112</td></tr>
+<tr><td><code>initialize</code></td><td class="n">0</td><td class="n">85</td><td class="n">75</td></tr>
+<tr><td><code>&amp;b</code>（ブロックを渡す）</td><td class="n">0</td><td class="n">39</td><td class="n">15</td></tr>
+<tr><td>省略できる引数</td><td class="n">0</td><td class="n">1</td><td class="n">1</td></tr>
+<tr><td>キーワード引数・<code>x =&gt; T</code>・<code>class B &lt; A</code>・<code>block_given?</code>・IO</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+</tbody></table></div>
+<p>使われたのは「Ruby 版に対応するものがある」機能だけだった。コーパスの Ruby 版は 1 本 40〜250 行の慣用的なスクリプトで、キーワード引数や型の検査や継承をほとんど使わない。<strong>このコーパスは、それらの機能を評価する材料にならない。</strong>それらは sakelib の見直しで使われた（<code>Date</code> の <code>initialize</code> での検査、<code>Logger</code> の段階の変換、<code>class SHA384 &lt; SHA512</code> など）。</p>
+
+<h2>Ruby との比較</h2>
+<div class="tbl"><table>
+<thead><tr><th></th><th class="n">Sake v2</th><th class="n">Sake v3</th><th class="n">Ruby</th></tr></thead>
+<tbody>
+<tr><td>行数（空行・コメント除く）</td><td class="n">50,089</td><td class="n">50,221</td><td class="n">53,059</td></tr>
+<tr><td>トークン数</td><td class="n">524,282</td><td class="n">515,388</td><td class="n">444,372</td></tr>
+<tr><td>型名を書いた呼び出し <code>T.op(…)</code>（100 行あたり）</td><td class="n">47.7</td><td class="n">46.7</td><td class="n">0</td></tr>
+<tr><td>その型名の文字がソースに占める割合</td><td class="n">9.8%</td><td class="n">9.6%</td><td class="n">—</td></tr>
+</tbody></table></div>
+<p>行は Ruby より 5% 少なく、語は 16% 多い。例外クラスは Ruby の <code>initialize(msg, x); super(msg); @x = x</code> が <code>attr_reader x</code> 1 行になり、Ruby より短い。増えた語のほとんどは型名だ。</p>
+
+<h3>型名を書いた呼び出し 23,433 個の内訳（v3）</h3>
+<div class="chart" role="img" aria-label="型名を書いた呼び出しの内訳の横棒グラフ">
+<svg viewBox="0 0 640 150">
+  <!-- scale: 15921 calls = 420px, starting at x=170 -->
+  <text x="160" y="27" text-anchor="end">組み込みの型の操作</text>
+  <rect x="170" y="14" width="420.0" height="18" fill="var(--union)"/>
+  <text x="160" y="57" text-anchor="end">フィールドの読み</text>
+  <rect x="170" y="44" width="129.3" height="18" fill="var(--accent)"/>
+  <text x="305" y="57">4,900（20.9%）  Node.get_left(node)</text>
+  <text x="160" y="87" text-anchor="end">自前の型・モジュール</text>
+  <rect x="170" y="74" width="59.8" height="18" fill="var(--mono)"/>
+  <text x="236" y="87">2,267（9.7%）</text>
+  <text x="160" y="117" text-anchor="end">フィールドの書き</text>
+  <rect x="170" y="104" width="9.1" height="18" fill="var(--accent)"/>
+  <text x="186" y="117">345（1.5%）  Item.set_qty(i, 3)</text>
+</svg>
+<div class="legend"><span>組み込みの型の操作 15,921（67.9%）：Array 9,951、String 2,190、Hash 1,292、Integer 732、Range 627 …</span></div>
+</div>
+<div class="side">
+<p>見直した 5 体が「Ruby の人が最初に気づく違い」として<strong>全員</strong>挙げたのは同じ点だった：<code>node.left</code> が <code>Node.get_left(node)</code> になる。宣言は Ruby と同じ形になったが、使う側は変わらない。属性を読む連鎖が多い木やリストのプログラムでは、本体が 2〜3 倍に伸びる。</p>
+</div>
+<p>その次に挙がった違い：インスタンスが明示の第 1 引数になる（<code>def +(a, b)</code>）、クラスメソッドとインスタンスの関数の見分けがつかない、<code>Array[…]</code>／<code>Hash[…]</code>（<code>[]</code> は Tuple、<code>{}</code> は Record）、<code>case/when</code> が無い、<code>&amp;:sym</code> と列挙子の連鎖が無い。</p>
+
+<h2>型がどれくらい曖昧なく決まるか</h2>
+<div class="chart" role="img" aria-label="単位ごとの型の分類の積み上げ棒グラフ">
+<svg viewBox="0 0 640 200">
+  <!-- scale: 100% = 440px, starting at x=150 -->
+  <text x="140" y="31" text-anchor="end">式（変数の読み）</text>
+  <rect x="150" y="18" width="354.6" height="20" fill="var(--mono)"/><rect x="504.6" y="18" width="58.5" height="20" fill="var(--nil)"/><rect x="563.1" y="18" width="23.3" height="20" fill="var(--union)"/><rect x="586.4" y="18" width="3.6" height="20" fill="var(--unk)"/>
+  <text x="140" y="66" text-anchor="end">式（呼び出しの結果）</text>
+  <rect x="150" y="53" width="355.5" height="20" fill="var(--mono)"/><rect x="505.5" y="53" width="59.4" height="20" fill="var(--nil)"/><rect x="564.9" y="53" width="17.2" height="20" fill="var(--union)"/><rect x="582.1" y="53" width="7.9" height="20" fill="var(--unk)"/>
+  <text x="140" y="101" text-anchor="end">関数の引数</text>
+  <rect x="150" y="88" width="350.2" height="20" fill="var(--mono)"/><rect x="500.2" y="88" width="53.7" height="20" fill="var(--nil)"/><rect x="553.9" y="88" width="33.9" height="20" fill="var(--union)"/><rect x="587.8" y="88" width="2.2" height="20" fill="var(--unk)"/>
+  <text x="140" y="136" text-anchor="end">関数の返り値</text>
+  <rect x="150" y="123" width="337.9" height="20" fill="var(--mono)"/><rect x="487.9" y="123" width="66.9" height="20" fill="var(--nil)"/><rect x="554.8" y="123" width="30.4" height="20" fill="var(--union)"/><rect x="585.2" y="123" width="4.8" height="20" fill="var(--unk)"/>
+  <text x="140" y="171" text-anchor="end">フィールド</text>
+  <rect x="150" y="158" width="360.4" height="20" fill="var(--mono)"/><rect x="510.4" y="158" width="61.2" height="20" fill="var(--nil)"/><rect x="571.6" y="158" width="17.6" height="20" fill="var(--union)"/><rect x="589.2" y="158" width="0.8" height="20" fill="var(--unk)"/>
+  <line x1="150" y1="190" x2="590" y2="190" stroke="var(--line)"/>
+  <text x="150" y="199" class="muted" font-size="10">0%</text><text x="590" y="199" class="muted" font-size="10" text-anchor="end">100%</text>
+</svg>
+<div class="legend"><span><i style="background:var(--mono)"></i>1 つの型</span><span><i style="background:var(--nil)"></i>nil | T</span><span><i style="background:var(--union)"></i>2 つ以上の型</span><span><i style="background:var(--unk)"></i>不明、または到達しない式</span></div>
+</div>
+<div class="tbl"><table>
+<thead><tr><th>単位（v3）</th><th class="n">1 つの型</th><th class="n">nil | T</th><th class="n">和</th><th class="n">決まった</th><th class="n">v2 決まった</th><th class="n">TypeProf</th></tr></thead>
+<tbody>
+<tr><td>式（変数の読み）</td><td class="n">80.6%</td><td class="n">13.3%</td><td class="n">5.3%</td><td class="n">99.4%</td><td class="n">99.4%</td><td class="n">—</td></tr>
+<tr><td>式（呼び出しの結果）</td><td class="n">80.8%</td><td class="n">13.5%</td><td class="n">3.9%</td><td class="n">99.6%</td><td class="n">99.6%</td><td class="n">—</td></tr>
+<tr><td>関数の引数</td><td class="n">79.6%</td><td class="n">12.2%</td><td class="n">7.7%</td><td class="n">99.5%</td><td class="n">99.5%</td><td class="n">90.5%</td></tr>
+<tr><td>関数の返り値</td><td class="n">76.8%</td><td class="n">15.2%</td><td class="n">6.9%</td><td class="n">99.0%</td><td class="n">99.0%</td><td class="n">91.5%</td></tr>
+<tr><td>フィールド</td><td class="n">81.9%</td><td class="n">13.9%</td><td class="n">4.0%</td><td class="n">99.9%</td><td class="n">99.9%</td><td class="n">92.0%</td></tr>
+</tbody></table></div>
+<p><strong>書き直しても、型の決まり方はほとんど動かなかった</strong>（差は 0.5 ポイント以内）。新しい機能は書き方を Ruby に近づけたが、推論に情報を足すもの（<code>initialize</code> での変換、<code>x =&gt; T</code>）はコーパスではほとんど使われていない。型の決まり方は書き方より、プログラムがどう値を流すかで決まる。</p>
+<p>実行時の検査箇所 53,733 のうち、静的に必ず通ると分かったものは 49,950（93.0%）。</p>
+
+<h3>和になった型の中身（シグネチャの 801 個）</h3>
+<div class="tbl"><table>
+<thead><tr><th>種類</th><th class="n">個数</th><th>例と性質</th></tr></thead>
+<tbody>
+<tr><td>スカラーの混在</td><td class="n">437</td><td><code>Integer | String</code> 49、JSON 風の値。解析中の値や設定値で、多くは和が正しい答え</td></tr>
+<tr><td>数の混在</td><td class="n">156</td><td><code>Float | Integer</code> 108。型の無い関数を整数と小数で呼んだもの。呼び出しの型の組ごとには 1 つの型</td></tr>
+<tr><td>自前の型の和</td><td class="n">147</td><td><code>Bin | Fn | Num | Var</code> などの構文木。代数的データ型として意図した和</td></tr>
+<tr><td>容器の要素の和</td><td class="n">60</td><td>要素が上のどれかの和になった Array や Hash</td></tr>
+</tbody></table></div>
+
+<h3>誤報（全プログラムは正しく動くので、止めた分は全部誤り）</h3>
+<div class="tbl"><table>
+<thead><tr><th>レベル</th><th class="n">v2</th><th class="n">v3</th></tr></thead>
+<tbody>
+<tr><td>1（型）</td><td class="n">52 本 / 162 件</td><td class="n">53 本 / 164 件</td></tr>
+<tr class="hl"><td>2（+ nil）</td><td class="n">286 本 / 1,226 件</td><td class="n">294 本 / 1,267 件</td></tr>
+</tbody></table></div>
+<p>v3 で新しく level 2 に止まった 11 本のうち 5 本は、2 つの値の大きい方を <code>Array.max(Array[a, b])</code> と書いたもの（Ruby の <code>[a, b].max</code> の直訳）。空かもしれない Array の max は <code>nil | T</code> になる。<strong>2 値の max/min が組み込みに無いことが、nil の誤報を生んでいる</strong>。残りは <code>= nil</code> で宣言したフィールドを <code>initialize</code> から呼ぶ関数で埋めたもの 2 本、新しい組み込みが <code>nil | T</code> を返すもの 3 本。逆に 3 本は止まらなくなった。</p>
+
+<h2>見直しで見つかった処理系の問題</h2>
+<ul>
+  <li><strong><code>initialize</code> の健全性の穴</strong>（sakelib の見直しで 2 か所から報告）。<code>@h = A.new unless @h</code> のように一部の経路だけで書くと、<code>new</code> が入れた値が型から消えていた（<code>URI.scheme</code> が nil にならない）。フィールドを局所変数と同じく経路ごとに追い、全部の出口を合わせるように直した。インスタンスを関数に渡した後の扱いも安全側に直した。</li>
+  <li><strong><code>@x ||= Hash[]</code> が <code>nil | Hash</code> のまま</strong>。<code>||</code> の右を飛ばす経路を絞り込んでいなかった。v2 の結果は変わらない。</li>
+  <li>計測スクリプトが省略された引数で落ちた。直して README に記録した。</li>
+</ul>
+
+<h2>まだ Ruby より書きにくい所</h2>
+<div class="tbl"><table>
+<thead><tr><th>摩擦</th><th class="n">言及</th></tr></thead>
+<tbody>
+<tr><td>既定値がリテラルだけ。<code>[]</code> やオブジェクトで始まるフィールドは <code>= nil</code> と <code>initialize</code></td><td class="n">27</td></tr>
+<tr><td><code>Math::PI</code> のような組み込みの定数が無い</td><td class="n">27</td></tr>
+<tr><td>列挙子の連鎖（<code>each_cons(2).map</code>）が無い</td><td class="n">24</td></tr>
+<tr><td>外からフィールドに <code>+=</code> できない</td><td class="n">23</td></tr>
+<tr><td><code>new</code> がフィールドを位置で取るだけ（キーワードも不可）</td><td class="n">21</td></tr>
+<tr><td><code>@x</code> は第 1 引数だけ。二項演算子の相手は <code>T.get_x(b)</code></td><td class="n">13</td></tr>
+<tr><td><code>dup</code>、<code>loop do</code>、<code>&amp;:sym</code>、2 値の max/min、<code>private</code> が無い</td><td class="n">6〜12</td></tr>
+<tr><td><code>attr_reader next</code> が構文エラー（名前をコロン無しにした代償）</td><td class="n">2</td></tr>
+</tbody></table></div>
+<p class="note">言及は、見直し役の記録の Friction 節でその話題に触れた行数（目安）。</p>
+
+<h2>結論</h2>
+<ol>
+  <li>宣言は Ruby の形になった。使う側は変わらず、Ruby の人に一番目立つ違い（<code>Node.get_left(node)</code>）はそこに残る。</li>
+  <li>型を書かずに、型は 99% 以上決まる。1 つに決まらないものの大部分は、数の多相や構文木のように和が正しい答えのもの。書き直しはこの数字をほとんど動かさない。</li>
+  <li>誤報の主因は nil で、増えた分の半分は組み込みの品揃え（2 値の max/min）で減らせる。</li>
+  <li>キーワード引数・<code>x =&gt; T</code>・<code>class B &lt; A</code> などは、このコーパスでは試されていない。それらを使う Ruby のコードを材料にした別のコーパスが要る。</li>
+</ol>
+
+<footer>計測：Sake 84263e9（lib）、Ruby 4.0.2、TypeProf 0.31.1。方法と生データは リポジトリの experiments/2026-10-05-review/（README.md、results-v2/、results-v3/、compare.rb、union_kinds.rb）。</footer>
+</div>

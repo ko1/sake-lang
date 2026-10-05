@@ -1,0 +1,105 @@
+# Apply a batch of transfers between accounts; failed transfers roll back and are reported.
+class InsufficientFunds < StandardError
+  attr_reader account, needed
+end
+
+class AccountNotFound < StandardError
+  attr_reader id
+end
+
+class AccountFrozen < StandardError
+  attr_reader id
+end
+
+class LimitExceeded < StandardError
+  attr_reader limit
+end
+
+class Account
+  attr_reader id, owner
+  attr_accessor balance, frozen
+  def withdraw(a, amount)
+    raise AccountFrozen.new("account #{@id} is frozen", @id) if @frozen
+    if @balance < amount
+      raise InsufficientFunds.new("#{@owner} is short by #{amount - @balance}", @id, amount - @balance)
+    end
+    @balance -= amount
+  end
+
+  def deposit(a, amount)
+    raise AccountFrozen.new("account #{@id} is frozen", @id) if @frozen
+    @balance += amount
+  end
+end
+
+class Bank
+  attr_reader accounts, journal
+  attr_accessor daily_limit
+  def find(b, id)
+    acct = @accounts[id]
+    raise AccountNotFound.new("no account #{id}", id) if acct == nil
+    acct
+  end
+
+  def transfer(b, from_id, to_id, amount)
+    raise ArgumentError, "amount must be positive" if amount <= 0
+    raise LimitExceeded.new("#{amount} exceeds limit #{@daily_limit}", @daily_limit) if amount > @daily_limit
+    src = find(b, from_id)
+    dst = find(b, to_id)
+    withdrawn = false
+    begin
+      Account.withdraw(src, amount)
+      withdrawn = true
+      Account.deposit(dst, amount)
+      Array.push(@journal, [from_id, to_id, amount])
+    rescue AccountFrozen => e
+      Account.set_balance(src, Account.get_balance(src) + amount) if withdrawn
+      raise
+    end
+  end
+end
+
+def describe_error(e)
+  case e
+  in InsufficientFunds then "insufficient funds (#{InsufficientFunds.get_needed(e)} more needed)"
+  in AccountNotFound then "unknown account #{AccountNotFound.get_id(e)}"
+  in AccountFrozen then "frozen account #{AccountFrozen.get_id(e)}"
+  in LimitExceeded then "over the limit of #{LimitExceeded.get_limit(e)}"
+  in ArgumentError then "invalid amount"
+  end
+end
+
+accounts = Hash[]
+Array.each(Array[["A1", "ann", 500], ["B2", "ben", 120], ["C3", "cid", 0], ["D4", "dee", 900]]) do |id, owner, bal|
+  accounts[id] = Account.new(id, owner, bal, false)
+end
+Account.set_frozen(accounts["C3"], true)
+bank = Bank.new(accounts, Array[], 1000)
+
+requests = Array[
+  ["A1", "B2", 200], ["B2", "A1", 500], ["A1", "C3", 50], ["Z9", "A1", 10],
+  ["D4", "A1", 1500], ["D4", "B2", 0], ["D4", "B2", 300], ["B2", "D4", 620]
+]
+
+failures = Hash.new(0)
+Array.each_with_index(requests) do |(from, to, amount), i|
+  label = format("%2d. %s -> %s %5d", i + 1, from, to, amount)
+  begin
+    Bank.transfer(bank, from, to, amount)
+    puts("#{label}  ok")
+  rescue InsufficientFunds, AccountNotFound, AccountFrozen, LimitExceeded, ArgumentError => e
+    reason = describe_error(e)
+    failures[String.split(reason, " ")[0]] += 1
+    puts("#{label}  FAILED: #{reason}")
+  end
+end
+
+puts("balances:")
+total = 0
+Hash.each(accounts) do |id, acct|
+  total += Account.get_balance(acct)
+  flag = Account.get_frozen(acct) ? " (frozen)" : ""
+  puts(format("  %s %-4s %6d%s", id, Account.get_owner(acct), Account.get_balance(acct), flag))
+end
+puts("total #{total}, journal entries #{Array.size(Bank.get_journal(bank))}")
+puts("failure kinds: #{Array.join(Array.map(Array.sort(Hash.keys(failures))) { |k| "#{k}=#{failures[k]}" }, ", ")}")

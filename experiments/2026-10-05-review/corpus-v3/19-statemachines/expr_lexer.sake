@@ -1,0 +1,121 @@
+class LexError < StandardError
+  attr_reader pos
+end
+
+class Token
+  attr_reader kind, text, pos
+  def to_s(t) = "#{@kind}(#{@text})"
+end
+
+def char_class(c)
+  if c == nil
+    :eof
+  elsif String.match?(c, /[0-9]/)
+    :digit
+  elsif String.match?(c, /[A-Za-z_]/)
+    :alpha
+  elsif c == "."
+    :dot
+  elsif String.include?("+-*/^%=<>!", c)
+    :op
+  elsif c == "(" || c == ")"
+    :paren
+  elsif c == " " || c == "\t"
+    :space
+  else
+    :other
+  end
+end
+
+def two_char_ops = once { Array["<=", ">=", "==", "!=", "**"] }
+
+def lex(src)
+  tokens = Array[]
+  state = :start
+  start = 0
+  i = 0
+  while i <= String.size(src)
+    c = src[i]
+    cls = char_class(c)
+    case state
+    in :start
+      start = i
+      case cls
+      in :digit then state = :int
+      in :alpha then state = :ident
+      in :dot then state = :frac
+      in :op
+        pair = src[i..i + 1]
+        if pair != nil && Array.include?(two_char_ops, pair)
+          Array.push(tokens, Token.new(:op, pair, i))
+          i += 1
+        else
+          Array.push(tokens, Token.new(:op, c, i))
+        end
+      in :paren then Array.push(tokens, Token.new(c == "(" ? :lparen : :rparen, c, i))
+      in :space then nil
+      in :eof then Array.push(tokens, Token.new(:eof, "", i))
+      in :other then raise LexError.new("unexpected #{Kernel.inspect(c)}", i)
+      end
+      i += 1
+    in :int
+      if cls == :digit
+        i += 1
+      elsif cls == :dot
+        state = :frac
+        i += 1
+      elsif cls == :alpha
+        raise LexError.new("letter in number", i)
+      else
+        Array.push(tokens, Token.new(:int, src[start...i], start))
+        state = :start
+      end
+    in :frac
+      if cls == :digit
+        i += 1
+      elsif cls == :dot || cls == :alpha
+        raise LexError.new("malformed number", i)
+      else
+        text = src[start...i]
+        raise LexError.new("lonely dot", start) if text == "."
+        Array.push(tokens, Token.new(:float, text, start))
+        state = :start
+      end
+    in :ident
+      if cls == :alpha || cls == :digit
+        i += 1
+      else
+        text = src[start...i]
+        kind = Array.include?(Array["and", "or", "not"], text) ? :keyword : :ident
+        Array.push(tokens, Token.new(kind, text, start))
+        state = :start
+      end
+    end
+  end
+  tokens
+end
+
+inputs = Array[
+  "x1 = 3.25 * (rate + 12)",
+  "a<=b and c!=d",
+  "2**10 % 7",
+  "count_2 >= .5",
+  "1.2.3",
+  "total = 4x",
+  "price # comment",
+  "  ( ( y ) )  "
+]
+kinds = Hash.new(0)
+Array.each(inputs) do |src|
+  begin
+    toks = lex(src)
+    Array.each(toks) { |t| kinds[Token.get_kind(t)] += 1 }
+    puts("#{Kernel.inspect(src)} => #{Array.join(toks, " ")}")
+  rescue LexError => e
+    puts("#{Kernel.inspect(src)} => error at #{LexError.get_pos(e)}: #{Exception.message(e)}")
+    puts("  #{src}")
+    puts("  #{" " * LexError.get_pos(e)}^")
+  end
+end
+puts("token kinds:")
+Array.each(Array.sort_by(Hash.keys(kinds)) { Symbol.to_s(it) }) { |k| puts(format("  %-8s %2d", k, kinds[k])) }

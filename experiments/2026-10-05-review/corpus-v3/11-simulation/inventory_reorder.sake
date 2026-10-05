@@ -1,0 +1,142 @@
+class Item
+  attr_reader sku, name
+  attr_accessor on_hand
+  attr_reader reorder_point, reorder_qty, lead_days, unit_cost
+end
+
+class PurchaseOrder
+  attr_reader sku, qty, arrives, cost
+end
+
+class Backorder
+  attr_reader customer, sku
+  attr_accessor qty
+  attr_reader day
+end
+
+class Warehouse
+  attr_reader items, pending = nil, backorders = nil, log = nil
+  attr_accessor spent = 0, revenue = 0, lost = 0
+
+  def initialize(w)
+    @pending = PurchaseOrder[]
+    @backorders = Backorder[]
+    @log = String[]
+  end
+
+  def item(w, sku) = Array.find(@items) { Item.get_sku(it) == sku }
+
+  def on_order(w, sku)
+    Array.select(@pending) { PurchaseOrder.get_sku(it) == sku }.Array.sum { PurchaseOrder.get_qty(it) }
+  end
+
+  def receive(w, day)
+    arrived = Array.select(@pending) { PurchaseOrder.get_arrives(it) <= day }
+    Array.each(arrived) do |po|
+      itm = item(w, PurchaseOrder.get_sku(po))
+      Item.set_on_hand(itm, Item.get_on_hand(itm) + PurchaseOrder.get_qty(po))
+      Array.push(@log, "day #{day}: received #{PurchaseOrder.get_qty(po)} #{Item.get_name(itm)}")
+    end
+    Array.delete_if(@pending) { PurchaseOrder.get_arrives(it) <= day }
+    fill_backorders(w, day)
+  end
+
+  def fill_backorders(w, day)
+    Array.each(@backorders) do |bo|
+      itm = item(w, Backorder.get_sku(bo))
+      want = Backorder.get_qty(bo)
+      have = Item.get_on_hand(itm)
+      next if have == 0
+      give = Array.min(Array[want, have])
+      Item.set_on_hand(itm, have - give)
+      Backorder.set_qty(bo, want - give)
+      @revenue += give * price(Item.get_unit_cost(itm))
+      Array.push(@log, "day #{day}: backorder #{Backorder.get_customer(bo)} +#{give} #{Item.get_name(itm)}")
+    end
+    Array.delete_if(@backorders) { Backorder.get_qty(it) == 0 }
+  end
+
+  def sell(w, day, customer, sku, qty)
+    itm = item(w, sku)
+    if itm == nil
+      Array.push(@log, "day #{day}: #{customer} asked for unknown #{sku}")
+      return
+    end
+    have = Item.get_on_hand(itm)
+    sold = Array.min(Array[qty, have])
+    Item.set_on_hand(itm, have - sold)
+    @revenue += sold * price(Item.get_unit_cost(itm))
+    short = qty - sold
+    if short > 0
+      if short <= 10
+        Array.push(@backorders, Backorder.new(customer, sku, short, day))
+      else
+        @lost += short
+        Array.push(@log, "day #{day}: lost sale #{short} #{Item.get_name(itm)} to #{customer}")
+      end
+    end
+  end
+
+  def review(w, day)
+    Array.each(@items) do |itm|
+      position = Item.get_on_hand(itm) + on_order(w, Item.get_sku(itm))
+      Array.each(@backorders) { |bo| position -= Backorder.get_qty(bo) if Backorder.get_sku(bo) == Item.get_sku(itm) }
+      if position <= Item.get_reorder_point(itm)
+        qty = Item.get_reorder_qty(itm)
+        cost = qty * Item.get_unit_cost(itm)
+        Array.push(@pending, PurchaseOrder.new(Item.get_sku(itm), qty, day + Item.get_lead_days(itm), cost))
+        @spent += cost
+        Array.push(@log, "day #{day}: ordered #{qty} #{Item.get_name(itm)} (pos #{position})")
+      end
+    end
+  end
+end
+
+def price(cost) = cost * 3 / 2
+
+items = Item[
+  Item.new("W1", "widget", 40, 15, 50, 3, 200),
+  Item.new("G7", "gadget", 12, 8, 20, 5, 1250),
+  Item.new("S3", "sprocket", 100, 30, 80, 2, 35)
+]
+wh = Warehouse.new(items)
+
+demand = Hash[
+  1 => Array[["acme", "W1", 12], ["bolt", "S3", 30]],
+  2 => Array[["acme", "G7", 5], ["core", "W1", 20]],
+  3 => Array[["dyna", "S3", 45], ["bolt", "X9", 1]],
+  4 => Array[["core", "G7", 9], ["acme", "W1", 15]],
+  6 => Array[["dyna", "W1", 25], ["bolt", "S3", 40]],
+  7 => Array[["acme", "G7", 30]],
+  8 => Array[["core", "S3", 10], ["dyna", "W1", 4]],
+  10 => Array[["bolt", "G7", 3], ["acme", "W1", 18]]
+]
+
+stock_history = Hash[]
+Range.each(1..12) do |day|
+  Warehouse.receive(wh, day)
+  orders = demand[day]
+  if orders
+    Array.each(orders) { |customer, sku, qty| Warehouse.sell(wh, day, customer, sku, qty) }
+  end
+  Warehouse.review(wh, day)
+  stock_history[day] = Array.map(items) { Item.get_on_hand(it) }
+end
+
+Array.each(Warehouse.get_log(wh)) { puts(it) }
+puts("--- stock by day")
+Hash.each(stock_history) do |day, levels|
+  bar = Array.join(Array.map(levels) { |n| String.rjust(Integer.to_s(n), 4) }, "")
+  puts("#{String.rjust(Integer.to_s(day), 3)}:#{bar}")
+end
+puts("--- summary")
+puts("spent:   #{Warehouse.get_spent(wh)}")
+puts("revenue: #{Warehouse.get_revenue(wh)}")
+puts("lost units: #{Warehouse.get_lost(wh)}")
+puts("open backorders: #{Array.size(Warehouse.get_backorders(wh))}")
+Array.each(Warehouse.get_backorders(wh)) do |bo|
+  puts("  #{Backorder.get_customer(bo)} #{Backorder.get_sku(bo)} x#{Backorder.get_qty(bo)} since day #{Backorder.get_day(bo)}")
+end
+puts("pending POs: #{Array.size(Warehouse.get_pending(wh))}")
+low = Array.min_by(items) { Item.get_on_hand(it) }
+puts("lowest stock: #{Item.get_name(low)}") if low

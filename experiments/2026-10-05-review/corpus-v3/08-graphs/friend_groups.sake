@@ -1,0 +1,106 @@
+def parse_friendships(text)
+  adj = Hash[]
+  Array.each(String.split(text, "\n")) do |line|
+    line = String.strip(line)
+    next if String.empty?(line) || String.start_with?(line, "#")
+    person, _, friends = String.partition(line, ":")
+    person = String.strip(person)
+    adj[person] ||= Set[]
+    Array.each(String.split(friends, ",")) do |f|
+      f = String.strip(f)
+      next if String.empty?(f)
+      adj[f] ||= Set[]
+      Set.add(adj[person], f)
+      Set.add(adj[f], person)
+    end
+  end
+  adj
+end
+
+def components(adj)
+  seen = Set[]
+  groups = Array[]
+  Array.each(Array.sort(Hash.keys(adj))) do |start|
+    next if Set.include?(seen, start)
+    group = Array[]
+    stack = Array[start]
+    Set.add(seen, start)
+    until Array.empty?(stack)
+      cur = Array.pop(stack)
+      Array.push(group, cur)
+      Set.each(adj[cur]) do |nb|
+        Array.push(stack, nb) if Set.add?(seen, nb)
+      end
+    end
+    Array.push(groups, Array.sort(group))
+  end
+  groups
+end
+
+def edge_count(adj, group)
+  Array.sum(Array.map(group) { |p| Set.size(adj[p]) }) / 2
+end
+
+def density(adj, group)
+  n = Array.size(group)
+  return 0.0 if n < 2
+  edge_count(adj, group) * 2.0 / (n * (n - 1))
+end
+
+def most_connected(adj, group)
+  Array.max_by(group) { |p| Set.size(adj[p]) }
+end
+
+def suggest(adj, person)
+  counts = Hash.new(0)
+  Set.each(adj[person]) do |f|
+    Set.each(adj[f]) do |ff|
+      next if ff == person || Set.include?(adj[person], ff)
+      counts[ff] += 1
+    end
+  end
+  return nil if Hash.empty?(counts)
+  name = Array.max_by(Array.sort(Hash.keys(counts))) { |n| counts[n] }
+  [name, counts[name]]
+end
+
+text = <<~NET
+  # who knows whom
+  alice: bob, carol, dave
+  bob: carol, erin
+  carol: frank
+  dave: erin
+  gina: hank
+  hank: ivan, judy
+  judy: ivan
+  kim:
+  leo: mona
+  erin: frank
+NET
+
+adj = parse_friendships(text)
+groups = components(adj)
+puts("people: #{Hash.size(adj)}, groups: #{Array.size(groups)}")
+Array.each_with_index(groups) do |g, i|
+  hub = most_connected(adj, g)
+  puts(format("group %d: %-35s edges=%d density=%.2f hub=%s",
+              i + 1, Array.join(g, ","), edge_count(adj, g), density(adj, g), hub))
+end
+loners = Array.select(groups) { |g| Array.size(g) == 1 }
+puts("loners: #{Array.join(Array.map(loners) { |g| g[0] }, ", ")}")
+largest = Array.max_by(groups) { |g| Array.size(g) }
+puts("largest group size: #{Array.size(largest)}")
+
+Array.each(Array["alice", "gina", "kim", "zed"]) do |who|
+  unless Hash.key?(adj, who)
+    puts("#{who}: not in network")
+    next
+  end
+  s = suggest(adj, who)
+  if s
+    name, common = s
+    puts("#{who}: suggest #{name} (#{common} mutual)")
+  else
+    puts("#{who}: no suggestion")
+  end
+end

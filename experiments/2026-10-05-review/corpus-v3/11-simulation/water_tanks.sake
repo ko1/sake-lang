@@ -1,0 +1,103 @@
+class Tank
+  attr_reader name, area, height, elevation, level, overflowed = 0.0
+  attr_accessor drawn = 0.0
+
+  def volume(t) = @area * @level
+  def head(t) = @elevation + @level
+  def add(t, v)
+    @level += v / @area
+    if @level > @height
+      spill = (@level - @height) * @area
+      @level = @height
+      @overflowed += spill
+    end
+    @level = 0.0 if @level < 0.0
+  end
+  def take(t, v)
+    got = Array.min(Array[v, volume(t)])
+    @level -= got / @area
+    @level = 0.0 if @level < 0.0
+    got
+  end
+end
+
+class Pipe
+  attr_reader from, to, conductance
+  attr_accessor open
+end
+
+class Pump
+  attr_reader from, to, rate, on_below, off_above
+  attr_accessor running = false
+end
+
+def storms = once { Array[{from: 2, to: 5, mm: 12.0}, {from: 9, to: 10, mm: 30.0}, {from: 16, to: 19, mm: 6.0}] }
+
+def rain(hour)
+  s = Array.find(storms) { |st| st => {from:, to:}; hour >= from && hour < to }
+  return 0.0 unless s
+  s => {mm:}
+  mm
+end
+
+def demand(hour) = (hour >= 6 && hour < 9) || (hour >= 18 && hour < 22) ? 1.2 : 0.3
+
+def step(tanks, pipes, pumps, hour, dt)
+  Tank.add(tanks["roof"], rain(hour) * 0.04 * dt)
+  Array.each(pipes) do |p|
+    next unless Pipe.get_open(p)
+    a = tanks[Pipe.get_from(p)]
+    b = tanks[Pipe.get_to(p)]
+    head = Tank.head(a) - Tank.head(b)
+    next if head <= 0.0
+    flow = Pipe.get_conductance(p) * Math.sqrt(head) * dt
+    Tank.add(b, Tank.take(a, flow))
+  end
+  Array.each(pumps) do |pm|
+    src = tanks[Pump.get_from(pm)]
+    dst = tanks[Pump.get_to(pm)]
+    if Pump.get_running(pm) && Tank.get_level(dst) >= Pump.get_off_above(pm)
+      Pump.set_running(pm, false)
+    elsif !Pump.get_running(pm) && Tank.get_level(dst) <= Pump.get_on_below(pm)
+      Pump.set_running(pm, true)
+    end
+    Tank.add(dst, Tank.take(src, Pump.get_rate(pm) * dt)) if Pump.get_running(pm)
+  end
+  house = tanks["header"]
+  got = Tank.take(house, demand(hour) * dt)
+  Tank.set_drawn(house, Tank.get_drawn(house) + got)
+  demand(hour) * dt - got
+end
+
+tanks = Hash[]
+Array.each(Array[["roof", 4.0, 0.5, 3.0, 0.1], ["cistern", 6.0, 2.0, 0.0, 0.8], ["well", 3.0, 3.0, -0.5, 2.5], ["header", 1.5, 1.2, 4.0, 0.6]]) do |name, area, h, elev, level|
+  tanks[name] = Tank.new(name, area, h, elev, level)
+end
+pipes = Pipe[Pipe.new("roof", "cistern", 1.2, true), Pipe.new("well", "cistern", 0.3, false)]
+pumps = Pump[Pump.new("cistern", "header", 1.5, 0.4, 1.1)]
+events = Hash[8 => ["open", 1], 14 => ["close", 1], 20 => ["open", 1]]
+
+shortfall = 0.0
+short_hours = Integer[]
+dt = 0.25
+Integer.times(24) do |hour|
+  if (ev = events[hour])
+    action, idx = ev
+    Pipe.set_open(Array.fetch(pipes, idx), action == "open")
+    puts("#{String.rjust(Integer.to_s(hour), 2, "0")}:00 #{action} pipe well->cistern")
+  end
+  missing = 0.0
+  Integer.times(4) { missing += step(tanks, pipes, pumps, hour, dt) }
+  shortfall += missing
+  Array.push(short_hours, hour) if missing > 0.001
+  levels = Array.map(Hash.values(tanks)) { |t| format("%s %.2f", Tank.get_name(t), Tank.get_level(t)) }
+  pump = Pump.get_running(Array.fetch(pumps, 0)) ? "P" : "-"
+  puts(format("%02d:59 %s %s rain %4.1f", hour, pump, Array.join(levels, " | "), rain(hour)))
+end
+
+puts("--- totals")
+Hash.each_value(tanks) do |t|
+  puts(format("%-8s final %5.2f m (%.2f m3), overflow %.2f m3", Tank.get_name(t), Tank.get_level(t), Tank.volume(t), Tank.get_overflowed(t)))
+end
+puts(format("delivered %.2f m3, shortfall %.2f m3", Tank.get_drawn(tanks["header"]), shortfall))
+puts(Array.empty?(short_hours) ? "no shortages" : "short in hours #{Array.join(short_hours, ",")}")

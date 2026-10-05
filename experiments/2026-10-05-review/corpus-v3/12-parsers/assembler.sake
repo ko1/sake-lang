@@ -1,0 +1,195 @@
+class AsmError < Exception
+  attr_reader line
+end
+
+class Stmt
+  attr_reader line, mnemonic, operands, addr
+end
+
+def opcodes = once do
+  Hash["halt" => 0, "mov" => 1, "add" => 2, "sub" => 3, "mul" => 4, "mod" => 5, "cmp" => 6,
+       "jmp" => 7, "jeq" => 8, "jne" => 9, "jlt" => 10, "call" => 11, "ret" => 12,
+       "push" => 13, "pop" => 14, "out" => 15]
+end
+def names = once { Hash.invert(opcodes) }
+
+def kind_of(mn)
+  case mn
+  in "mov" | "add" | "sub" | "mul" | "mod" | "cmp" then :binary
+  in "jmp" | "jeq" | "jne" | "jlt" | "call" then :jump
+  in "push" | "pop" | "out" then :unary
+  else :none
+  end
+end
+
+def register(s, line)
+  m = String.match(s, /\Ar([0-7])\z/)
+  raise AsmError.new("bad register '#{s}'", line) unless m
+  String.to_i(m[1])
+end
+
+def first_pass(text)
+  stmts = Stmt[]
+  labels = Hash[]
+  Array.each_with_index(String.lines(text)) do |raw, i|
+    line = i + 1
+    src = String.strip(String.sub(raw, /;.*/, ""))
+    if (m = String.match(src, /\A(\w+):\s*(.*)\z/))
+      raise AsmError.new("duplicate label '#{m[1]}'", line) if Hash.key?(labels, m[1])
+      labels[m[1]] = Array.size(stmts)
+      src = m[2]
+    end
+    next if String.empty?(src)
+    mn, rest = String.split(src, /\s+/, 2)
+    raise AsmError.new("unknown mnemonic '#{mn}'", line) unless Hash.key?(opcodes, mn)
+    operands = rest ? Array.map(String.split(rest, ",")) { |o| String.strip(o) } : Array[]
+    Array.push(stmts, Stmt.new(line, mn, operands, Array.size(stmts)))
+  end
+  [stmts, labels]
+end
+
+def encode(stmt, labels)
+  mn = Stmt.get_mnemonic(stmt)
+  ops = Stmt.get_operands(stmt)
+  line = Stmt.get_line(stmt)
+  word = opcodes[mn] << 20
+  want = Hash[binary: 2, jump: 1, unary: 1, none: 0][kind_of(mn)]
+  raise AsmError.new("#{mn} takes #{want} operand(s)", line) unless Array.size(ops) == want
+  case kind_of(mn)
+  in :binary
+    word |= register(ops[0], line) << 16
+    src = ops[1]
+    if String.start_with?(src, "#")
+      v = String.to_i(src[1..])
+      raise AsmError.new("immediate out of range: #{v}", line) unless Integer.between?(v, -32768, 32767)
+      word |= (1 << 19) | (v & 0xFFFF)
+    else
+      word |= register(src, line)
+    end
+  in :jump
+    target = labels[ops[0]]
+    raise AsmError.new("undefined label '#{ops[0]}'", line) if target == nil
+    word |= target
+  in :unary then word |= register(ops[0], line) << 16
+  in :none then nil
+  end
+  word
+end
+
+def assemble(text)
+  stmts, labels = first_pass(text)
+  Array.map(stmts) { |s| encode(s, labels) }
+end
+
+def decode(word)
+  op = (word >> 20) & 0x3F
+  imm = word & 0xFFFF
+  imm -= 0x10000 if imm >= 0x8000
+  {op: op, immediate: ((word >> 19) & 1) == 1, dst: (word >> 16) & 7, src: word & 7, imm: imm, addr: word & 0xFFFF}
+end
+
+def disassemble(word)
+  decode(word) => {op:, immediate:, dst:, src:, imm:, addr:}
+  mn = names[op]
+  case kind_of(mn)
+  in :binary then "#{mn} r#{dst}, #{immediate ? "##{imm}" : "r#{src}"}"
+  in :jump then "#{mn} #{addr}"
+  in :unary then "#{mn} r#{dst}"
+  else mn
+  end
+end
+
+def simulate(code, limit)
+  regs = Array[0] * 8
+  stack = Array[]
+  out = Array[]
+  flag = 0
+  pc = 0
+  steps = 0
+  while steps < limit
+    decode(code[pc]) => {op:, immediate:, dst:, src:, imm:, addr:}
+    steps += 1
+    pc += 1
+    value = immediate ? imm : regs[src]
+    case op
+    in 0 then return [out, steps]
+    in 1 then regs[dst] = value
+    in 2 then regs[dst] += value
+    in 3 then regs[dst] -= value
+    in 4 then regs[dst] *= value
+    in 5 then regs[dst] %= value
+    in 6 then flag = regs[dst] <=> value
+    in 7 then pc = addr
+    in 8 then pc = addr if flag == 0
+    in 9 then pc = addr if flag != 0
+    in 10 then pc = addr if flag < 0
+    in 11
+      Array.push(stack, pc)
+      pc = addr
+    in 12 then pc = Array.pop(stack)
+    in 13 then Array.push(stack, regs[dst])
+    in 14 then regs[dst] = Array.pop(stack)
+    in 15 then Array.push(out, regs[dst])
+    end
+  end
+  [out, steps]
+end
+
+def primes_program
+  <<~ASM
+    ; print primes below 40 by trial division
+            mov r1, #2          ; candidate
+    next:   cmp r1, #40
+            jeq done
+            call isprime
+            cmp r0, #1
+            jne skip
+            out r1
+    skip:   add r1, #1
+            jmp next
+    done:   halt
+    isprime:
+            push r2
+            mov r2, #2          ; divisor
+    loop:   mov r3, r2
+            mul r3, r2
+            cmp r1, r3
+            jlt yes             ; divisor^2 > candidate
+            mov r3, r1
+            mod r3, r2
+            cmp r3, #0
+            jeq no
+            add r2, #1
+            jmp loop
+    yes:    mov r0, #1
+            pop r2
+            ret
+    no:     mov r0, #0
+            pop r2
+            ret
+  ASM
+end
+
+def broken_programs = once do
+  Array[
+    "mov r1, #5\nadd r9, r1\n",
+    "loop: add r1, #1\njmp lop\n",
+    "mov r1, #40000\n",
+    "a: halt\na: halt\n",
+    "push r1, r2\n",
+    "fly r1\n"
+  ]
+end
+
+code = assemble(primes_program)
+puts("#{Array.size(code)} words")
+Array.each_with_index(code) { |w, i| puts(format("%04x  %08x  %s", i, w, disassemble(w))) }
+out, steps = simulate(code, 100000)
+puts("output: #{Array.join(out, " ")}")
+puts("steps: #{steps}")
+Array.each(broken_programs) do |text|
+  assemble(text)
+  puts("assembled?")
+rescue AsmError => e
+  puts("line #{AsmError.get_line(e)}: #{Exception.message(e)}")
+end

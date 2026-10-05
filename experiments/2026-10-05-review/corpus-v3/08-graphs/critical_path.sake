@@ -1,0 +1,114 @@
+class Task
+  attr_reader id, title, days, deps
+  attr_accessor early, late
+
+  def slack(t) = @late - @early
+  def finish(t) = @early + @days
+  def critical?(t) = slack(t) == 0
+end
+
+class CycleFound < StandardError
+  attr_reader at
+end
+
+def load_tasks(rows)
+  tasks = Hash[]
+  Array.each(rows) do |row|
+    m = String.match(row, /^(\w+)\s+(\d+)d\s+"([^"]+)"(?:\s+after\s+(.*))?$/)
+    next unless m
+    deps = m[4] ? String.split(m[4], ",") : Array[]
+    tasks[m[1]] = Task.new(m[1], m[3], String.to_i(m[2]), Array.map(deps) { |d| String.strip(d) }, 0, 0)
+  end
+  tasks
+end
+
+def topo_order(tasks)
+  state = Hash[]
+  order = Array[]
+  Array.each(Hash.keys(tasks)) { |id| visit(tasks, id, state, order) }
+  order
+end
+
+def visit(tasks, id, state, order)
+  return if state[id] == :done
+  raise CycleFound.new("dependency cycle", id) if state[id] == :active
+  state[id] = :active
+  Array.each(Task.get_deps(tasks[id])) { |d| visit(tasks, d, state, order) }
+  state[id] = :done
+  Array.push(order, id)
+end
+
+def schedule(tasks)
+  order = topo_order(tasks)
+  Array.each(order) do |id|
+    t = tasks[id]
+    Task.set_early(t, Array.max(Array.map(Task.get_deps(t)) { |d| Task.finish(tasks[d]) }) || 0)
+  end
+  project_end = Array.max(Array.map(Hash.values(tasks)) { |t| Task.finish(t) })
+  successors = Hash[]
+  Hash.each(tasks) do |id, t|
+    Array.each(Task.get_deps(t)) do |d|
+      successors[d] ||= Array[]
+      Array.push(successors[d], id)
+    end
+  end
+  Array.each(Array.reverse(order)) do |id|
+    t = tasks[id]
+    succ = Hash.fetch(successors, id, Array[])
+    latest_finish = Array.empty?(succ) ? project_end : Array.min(Array.map(succ) { |s| Task.get_late(tasks[s]) })
+    Task.set_late(t, latest_finish - Task.get_days(t))
+  end
+  [order, project_end]
+end
+
+def chain(tasks, order)
+  crit = Array.select(order) { |id| Task.critical?(tasks[id]) }
+  Array.sort_by(crit) { |id| Task.get_early(tasks[id]) }
+end
+
+def gantt(t)
+  pad = " " * Task.get_early(t)
+  bar = (Task.critical?(t) ? "#" : "=") * Task.get_days(t)
+  slack = "." * Task.slack(t)
+  "|#{pad}#{bar}#{slack}"
+end
+
+def plan(title, rows)
+  puts("== #{title}")
+  tasks = load_tasks(rows)
+  order, total = schedule(tasks)
+  puts("tasks: #{Hash.size(tasks)}, duration: #{total} days")
+  Array.each(order) do |id|
+    t = tasks[id]
+    puts(format("%-5s %-12s %2d-%2d slack %2d %s", id, Task.get_title(t), Task.get_early(t),
+                Task.finish(t), Task.slack(t), gantt(t)))
+  end
+  puts("critical: #{Array.join(chain(tasks, order), " -> ")}")
+  flex = Array.max_by(Hash.values(tasks)) { |t| Task.slack(t) }
+  puts("most flexible: #{Task.get_title(flex)} (#{Task.slack(flex)} days)")
+rescue CycleFound => e
+  puts("#{Exception.message(e)} at #{CycleFound.get_at(e)}")
+end
+
+plan("house", Array[
+  'site 3d "clear site"',
+  'fdn 5d "foundation" after site',
+  'frame 7d "framing" after fdn',
+  'roof 4d "roofing" after frame',
+  'plumb 4d "plumbing" after frame',
+  'elec 3d "wiring" after frame',
+  'wall 5d "drywall" after plumb, elec',
+  'paint 3d "painting" after wall, roof',
+  'yard 2d "landscaping" after site',
+  'move 1d "move in" after paint, yard'
+])
+plan("release", Array[
+  'spec 2d "write spec"',
+  'api 4d "build api" after spec',
+  'ui 6d "build ui" after spec',
+  'docs 2d "docs" after api',
+  'qa 3d "testing" after api, ui',
+  'ship 1d "ship it" after qa, docs',
+  'note this line is ignored'
+])
+plan("broken", Array['a 1d "first" after c', 'b 1d "second" after a', 'c 1d "third" after b'])

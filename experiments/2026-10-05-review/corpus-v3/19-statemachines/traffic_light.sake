@@ -1,0 +1,102 @@
+class Phase
+  attr_reader name, ns, ew, walk, min_time, max_time
+end
+
+def phases = once do
+  Hash[
+    ns_green: Phase.new("NS green", :green, :red, false, 4, 10),
+    ns_yellow: Phase.new("NS yellow", :yellow, :red, false, 2, 2),
+    all_red_1: Phase.new("all red", :red, :red, false, 1, 1),
+    ew_green: Phase.new("EW green", :red, :green, false, 4, 8),
+    ew_yellow: Phase.new("EW yellow", :red, :yellow, false, 2, 2),
+    all_red_2: Phase.new("all red", :red, :red, false, 1, 1),
+    walk: Phase.new("WALK", :red, :red, true, 5, 5),
+    emergency: Phase.new("EMERGENCY", :red, :red, false, 1, 99)
+  ]
+end
+
+def cycle_next(phase, ped_waiting)
+  case phase
+  in :ns_green then :ns_yellow
+  in :ns_yellow then :all_red_1
+  in :all_red_1 then :ew_green
+  in :ew_green then :ew_yellow
+  in :ew_yellow then :all_red_2
+  in :all_red_2 then ped_waiting ? :walk : :ns_green
+  in :walk then :ns_green
+  in :emergency then :all_red_2
+  end
+end
+
+class Controller
+  attr_reader phase = :ns_green, elapsed = 0, ped_waiting = false, preempt = false, history = nil
+  def initialize(c) = @history = Array[]
+
+  def current(c) = phases[@phase]
+
+  def switch_to(c, t, nxt)
+    Array.push(@history, [t, nxt])
+    @phase = nxt
+    @elapsed = 0
+    @ped_waiting = false if nxt == :walk
+  end
+
+  def tick(c, t, input)
+    @ped_waiting = true if Set.include?(input, :button)
+    if Set.include?(input, :siren)
+      @preempt = true
+    elsif Set.include?(input, :clear)
+      @preempt = false
+    end
+    @elapsed += 1
+    ph = current(c)
+    if @preempt && @phase != :emergency
+      if Phase.get_ns(ph) == :green || Phase.get_ew(ph) == :green
+        switch_to(c, t, @phase == :ns_green ? :ns_yellow : :ew_yellow)
+      elsif Phase.get_ns(ph) == :red && Phase.get_ew(ph) == :red && !Phase.get_walk(ph)
+        switch_to(c, t, :emergency)
+      elsif @elapsed >= Phase.get_min_time(ph)
+        switch_to(c, t, Phase.get_walk(ph) ? :emergency : cycle_next(@phase, false))
+      end
+      return
+    end
+    return if @phase == :emergency && @preempt
+    return if @elapsed < Phase.get_min_time(ph)
+    green_dir = Phase.get_ns(ph) == :green ? :ns_car : (Phase.get_ew(ph) == :green ? :ew_car : nil)
+    hold = green_dir != nil && Set.include?(input, green_dir) && !@ped_waiting
+    return if hold && @elapsed < Phase.get_max_time(ph)
+    switch_to(c, t, cycle_next(@phase, @ped_waiting))
+  end
+end
+
+def lamp(color)
+  case color
+  in :green then "G"
+  in :yellow then "Y"
+  in :red then "R"
+  end
+end
+
+inputs = Hash[
+  2 => Set[:ns_car], 3 => Set[:ns_car], 4 => Set[:ns_car], 5 => Set[:ns_car, :button],
+  12 => Set[:ew_car], 13 => Set[:ew_car], 14 => Set[:ew_car], 15 => Set[:ew_car], 16 => Set[:ew_car],
+  30 => Set[:siren], 31 => Set[:siren], 35 => Set[:clear], 41 => Set[:button]
+]
+c = Controller.new
+line = ""
+Range.each(0..59) do |t|
+  Controller.tick(c, t, Hash.fetch(inputs, t, Set[]))
+  ph = Controller.current(c)
+  cell = Phase.get_walk(ph) ? "W" : (Controller.get_phase(c) == :emergency ? "!" : lamp(Phase.get_ns(ph)) + lamp(Phase.get_ew(ph)))
+  line += String.ljust(cell, 3)
+  if t % 20 == 19
+    puts(format("t=%02d-%02d %s", t - 19, t, line))
+    line = ""
+  end
+end
+puts("phase changes:")
+Array.each(Controller.get_history(c)) do |t, ph|
+  puts(format("  t=%02d %s", t, Phase.get_name(phases[ph])))
+end
+counts = Array.tally(Array.map(Controller.get_history(c)) { |t, ph| ph })
+puts(Array.join(Array.map(Array.sort_by(Hash.keys(counts)) { Symbol.to_s(it) }) { |k| "#{k}=#{counts[k]}" }, " "))

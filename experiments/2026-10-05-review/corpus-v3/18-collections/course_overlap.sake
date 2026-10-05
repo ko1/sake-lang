@@ -1,0 +1,108 @@
+# Course enrollment analysis with set algebra: who takes what, overlaps, and conflicts.
+
+class Course
+  attr_reader code, title, slot, students
+
+  def enroll(c, name) = Set.add(@students, name)
+  def size(c) = Set.size(@students)
+  def to_s(c) = "#{@code} (#{@title})"
+end
+
+def build_courses
+  courses = Array[
+    Course.new("CS101", "Intro Programming", :mon_am, Set[]),
+    Course.new("CS201", "Data Structures", :tue_pm, Set[]),
+    Course.new("MA110", "Calculus I", :mon_am, Set[]),
+    Course.new("MA220", "Linear Algebra", :wed_am, Set[]),
+    Course.new("PH100", "Physics", :tue_pm, Set[]),
+    Course.new("EN105", "Writing", :fri_am, Set[])
+  ]
+  roster = Array[
+    ["ann", "CS101 MA110 EN105"],
+    ["bob", "CS101 CS201 MA220"],
+    ["cho", "MA110 MA220 PH100"],
+    ["dev", "CS201 PH100"],
+    ["eve", "CS101 MA110 MA220 EN105"],
+    ["fay", "EN105"],
+    ["gus", "CS201 MA220 PH100 EN105"],
+    ["hal", "CS101 CS201"]
+  ]
+  by_code = Hash[]
+  Array.each(courses) { |c| by_code[Course.get_code(c)] = c }
+  Array.each(roster) do |name, codes|
+    Array.each(String.split(codes, " ")) do |code|
+      course = by_code[code]
+      if course
+        Course.enroll(course, name)
+      else
+        puts("unknown course #{code} for #{name}")
+      end
+    end
+  end
+  courses
+end
+
+def find_course(courses, code)
+  Array.find(courses) { |c| Course.get_code(c) == code }
+end
+
+def jaccard(a, b)
+  union = Set.size(a | b)
+  return 0.0 if union == 0
+  Set.size(a & b) / Integer.to_f(union)
+end
+
+courses = build_courses
+puts("== Enrollment ==")
+Array.each(Array.sort_by(courses) { |c| -Course.size(c) }) do |c|
+  names = Array.join(Set.sort(Course.get_students(c)), ", ")
+  puts(format("%-28s %d: %s", Course.to_s(c), Course.size(c), names))
+end
+
+everyone = Array.reduce(courses, Set[]) { |acc, c| acc | Course.get_students(c) }
+puts("students: #{Set.size(everyone)}")
+
+cs = Array.select(courses) { |c| String.start_with?(Course.get_code(c), "CS") }
+ma = Array.select(courses) { |c| String.start_with?(Course.get_code(c), "MA") }
+cs_students = Array.reduce(cs, Set[]) { |acc, c| Set.union(acc, Course.get_students(c)) }
+ma_students = Array.reduce(ma, Set[]) { |acc, c| Set.union(acc, Course.get_students(c)) }
+puts("== Departments ==")
+puts("CS and MA: #{Array.join(Set.sort(cs_students & ma_students), " ")}")
+puts("CS only:   #{Array.join(Set.sort(cs_students - ma_students), " ")}")
+puts("MA only:   #{Array.join(Set.sort(Set.difference(ma_students, cs_students)), " ")}")
+neither = everyone - (cs_students | ma_students)
+puts("neither:   #{Array.join(Set.sort(neither), " ")}")
+
+puts("== Slot conflicts ==")
+by_slot = Array.group_by(courses) { |c| Course.get_slot(c) }
+Hash.each(by_slot) do |slot, group|
+  next if Array.size(group) < 2
+  Array.each(Array.combination(group, 2)) do |a, b|
+    clash = Course.get_students(a) & Course.get_students(b)
+    unless Set.empty?(clash)
+      puts("#{slot}: #{Course.get_code(a)}/#{Course.get_code(b)} -> #{Array.join(Set.sort(clash), ", ")}")
+    end
+  end
+end
+
+puts("== Similar courses ==")
+pairs = Array.map(Array.combination(courses, 2)) do |a, b|
+  [Course.get_code(a), Course.get_code(b), jaccard(Course.get_students(a), Course.get_students(b))]
+end
+top = Array.take(Array.sort_by(pairs) { |x, y, j| [-j, x, y] }, 3)
+Array.each(top) { |x, y, j| puts(format("%s ~ %s  %.2f", x, y, j)) }
+
+puts("== Lookups ==")
+Array.each(Array["MA220", "BIO1"]) do |code|
+  c = find_course(courses, code)
+  if c
+    puts("#{code}: subset of CS201+PH100+MA110? #{Set.subset?(Course.get_students(c), Set.union(Set.union(Course.get_students(find_course(courses, "CS201")), Course.get_students(find_course(courses, "PH100"))), Course.get_students(find_course(courses, "MA110"))))}")
+  else
+    puts("#{code}: no such course")
+  end
+end
+loads = Hash.new(0)
+Array.each(courses) { |c| Set.each(Course.get_students(c)) { |s| loads[s] += 1 } }
+heavy = Hash.select(loads) { |s, n| n >= 4 }
+puts("heavy load: #{Array.join(Array.sort(Hash.keys(heavy)), ", ")}")
+p(Hash.max_by(loads) { |s, n| n })

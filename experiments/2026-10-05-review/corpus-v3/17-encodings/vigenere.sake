@@ -1,0 +1,94 @@
+# Vigenere and autokey ciphers, with key-length estimation by the index of coincidence
+# and key recovery by per-column frequency matching.
+
+def letters_only(s) = String.gsub(String.upcase(s), /[^A-Z]/, "")
+
+def shift(c, k, dir) = Integer.chr((String.ord(c) - 65 + dir * (String.ord(k) - 65) + 26) % 26 + 65)
+
+def vigenere(text, key, dir)
+  out = ""
+  Array.each_with_index(String.chars(text)) { |c, i| out += shift(c, key[i % String.size(key)], dir) }
+  out
+end
+
+def autokey_encrypt(text, key)
+  stream = key + text
+  out = ""
+  Array.each_with_index(String.chars(text)) { |c, i| out += shift(c, stream[i], 1) }
+  out
+end
+
+def autokey_decrypt(cipher, key)
+  stream = key
+  out = ""
+  Array.each_with_index(String.chars(cipher)) do |c, i|
+    p = shift(c, stream[i], -1)
+    out += p
+    stream += p
+  end
+  out
+end
+
+def index_of_coincidence(s)
+  n = String.size(s)
+  return 0.0 if n < 2
+  counts = Array.tally(String.chars(s))
+  total = Hash.sum(counts) { |_, f| f * (f - 1) }
+  Integer.fdiv(total, n * (n - 1))
+end
+
+def columns(s, period)
+  cols = Array.new(period) { "" }
+  Array.each_with_index(String.chars(s)) { |c, i| cols[i % period] += c }
+  cols
+end
+
+def guess_period(cipher, max)
+  scored = Array.map(Range.to_a(1..max)) do |p|
+    ics = Array.map(columns(cipher, p)) { |col| index_of_coincidence(col) }
+    {period: p, ic: Array.sum(ics) / Array.size(ics)}
+  end
+  Array.find(scored) { |r| r => {ic:}; ic > 0.058 } || Array.max_by(scored) { |r| r => {ic:}; ic }
+end
+
+def english = once { Float[8.2, 1.5, 2.8, 4.3, 12.7, 2.2, 2.0, 6.1, 7.0, 0.15, 0.77, 4.0, 2.4,
+                           6.7, 7.5, 1.9, 0.095, 6.0, 6.3, 9.1, 2.8, 0.98, 2.4, 0.15, 2.0, 0.074] }
+
+def best_shift(col)
+  counts = Array.tally(String.chars(col))
+  n = String.size(col)
+  best = Range.min_by(0..25) do |k|
+    chi = 0.0
+    Array.each_with_index(english) do |pct, j|
+      letter = Integer.chr((j + k) % 26 + 65)
+      expected = n * pct / 100.0
+      d = Hash.fetch(counts, letter, 0) - expected
+      chi += d * d / expected
+    end
+    chi
+  end
+  Integer.chr((best || 0) + 65)
+end
+
+plain = letters_only("It was the best of times, it was the worst of times, it was the age of wisdom, " \
+                     "it was the age of foolishness, it was the epoch of belief, it was the epoch " \
+                     "of incredulity, it was the season of light, it was the season of darkness")
+key = "DICKENS"
+cipher = vigenere(plain, key, 1)
+puts("cipher: #{cipher[0...60]}...")
+puts(format("IC plain=%.4f cipher=%.4f", index_of_coincidence(plain), index_of_coincidence(cipher)))
+
+guess = guess_period(cipher, 10)
+if guess
+  guess => {period:, ic:}
+  puts(format("guessed period %d (IC %.4f)", period, ic))
+  recovered = Array.join(Array.map(columns(cipher, period)) { |col| best_shift(col) }, "")
+  puts("recovered key: #{recovered}")
+  puts("decrypted: #{vigenere(cipher, recovered, -1)[0...60]}...")
+  puts("correct: #{recovered == key}")
+end
+
+puts("-- autokey --")
+ak = autokey_encrypt("ATTACKATDAWN", "QUEENLY")
+puts("#{ak} -> #{autokey_decrypt(ak, "QUEENLY")}")
+puts("vigenere with same key: #{vigenere("ATTACKATDAWN", "QUEENLY", 1)}")

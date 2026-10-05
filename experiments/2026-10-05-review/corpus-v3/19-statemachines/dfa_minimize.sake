@@ -1,0 +1,101 @@
+
+class Dfa
+  attr_reader states, alphabet, delta, start, accepting
+  def step(d, s, c) = @delta[[s, c]]
+
+  def accepts?(d, word)
+    s = @start
+    String.each_char(word) { |c| s = step(d, s, c) }
+    Set.include?(@accepting, s)
+  end
+
+  def reachable(d)
+    seen = Set[@start]
+    work = Array[@start]
+    until Array.empty?(work)
+      s = Array.pop(work)
+      Array.each(@alphabet) do |c|
+        t = step(d, s, c)
+        unless Set.include?(seen, t)
+          Set.add(seen, t)
+          Array.push(work, t)
+        end
+      end
+    end
+    Array.select(@states) { Set.include?(seen, it) }
+  end
+
+  def minimize(d)
+    live = reachable(d)
+    block_of = Hash[]
+    Array.each(live) { |s| block_of[s] = Set.include?(@accepting, s) ? 1 : 0 }
+    rounds = 0
+    loop_again = true
+    while loop_again
+      rounds += 1
+      signatures = Hash[]
+      next_block = Hash[]
+      Array.each(live) do |s|
+        sig = Array.join(Array.map(@alphabet) { |c| Integer.to_s(block_of[step(d, s, c)]) }, ",")
+        key = "#{block_of[s]}|#{sig}"
+        signatures[key] = Hash.size(signatures) unless Hash.key?(signatures, key)
+        next_block[s] = signatures[key]
+      end
+      loop_again = Hash.size(signatures) != Array.size(Array.uniq(Hash.values(block_of)))
+      block_of = next_block
+    end
+    groups = Array.group_by(live) { block_of[it] }
+    new_delta = Hash[]
+    accepting = Set[]
+    Hash.each(groups) do |b, members|
+      rep = Array.first(members)
+      Array.each(@alphabet) { |c| new_delta[[b, c]] = block_of[step(d, rep, c)] }
+      Set.add(accepting, b) if Set.include?(@accepting, rep)
+    end
+    min = Dfa.new(Array.sort(Hash.keys(groups)), @alphabet, new_delta, block_of[@start], accepting)
+    [min, groups, rounds]
+  end
+end
+
+def words_upto(alphabet, n)
+  result = Array[""]
+  frontier = Array[""]
+  Integer.times(n) do
+    frontier = Array.flat_map(frontier) { |w| Array.map(alphabet) { |c| w + c } }
+    Array.concat(result, frontier)
+  end
+  result
+end
+
+def describe(name, d)
+  puts("#{name}: #{Array.size(Dfa.get_states(d))} states, accepting #{Array.sort(Set.to_a(Dfa.get_accepting(d)))}")
+end
+
+def check(label, d, words)
+  min, groups, rounds = Dfa.minimize(d)
+  describe(label, d)
+  describe("  minimized", min)
+  puts("  refinement rounds: #{rounds}")
+  Hash.each(groups) { |b, members| puts("  block #{b}: #{Array.join(members, " ")}") }
+  bad = Array.reject(words) { |w| Dfa.accepts?(d, w) == Dfa.accepts?(min, w) }
+  puts("  checked #{Array.size(words)} words, mismatches: #{Array.size(bad)}")
+  sample = Array.take(Array.select(words) { |w| Dfa.accepts?(min, w) && String.size(w) > 0 }, 6)
+  puts("  accepted sample: #{Array.join(sample, " ")}")
+end
+
+ab = Array["a", "b"]
+delta1 = Hash[]
+Array.each(Array[[0, 1, 2], [1, 1, 3], [2, 1, 2], [3, 1, 4], [4, 1, 2], [5, 4, 0]]) do |s, on_a, on_b|
+  delta1[[s, "a"]] = on_a
+  delta1[[s, "b"]] = on_b
+end
+ends_abb = Dfa.new(Array[0, 1, 2, 3, 4, 5], ab, delta1, 0, Set[4])
+check("ends-with-abb", ends_abb, words_upto(ab, 6))
+
+digits = Array["0", "1"]
+delta2 = Hash[]
+Integer.times(6) do |s|
+  Array.each(digits) { |c| delta2[[s, c]] = (s * 2 + String.to_i(c)) % 6 }
+end
+mod3 = Dfa.new(Array[0, 1, 2, 3, 4, 5], digits, delta2, 0, Set[0, 3])
+check("binary-div-by-3 (mod 6 states)", mod3, words_upto(digits, 7))

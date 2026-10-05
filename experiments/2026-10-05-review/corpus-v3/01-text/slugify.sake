@@ -1,0 +1,98 @@
+class Post
+  attr_reader title, slug, words_dropped
+end
+
+def transliterations
+  Hash["á" => "a", "à" => "a", "ä" => "ae", "â" => "a", "é" => "e", "è" => "e", "ê" => "e",
+       "í" => "i", "ó" => "o", "ö" => "oe", "ô" => "o", "ú" => "u", "û" => "u", "ü" => "ue", "ñ" => "n",
+       "ç" => "c", "ß" => "ss", "ø" => "o", "å" => "a", "&" => " and ", "@" => " at ", "+" => " plus "]
+end
+
+def drop_words = Set["a", "an", "the", "of", "in", "on", "to", "for"]
+
+def transliterate(s)
+  table = transliterations
+  out = ""
+  String.each_char(String.downcase(s)) do |c|
+    replacement = table[c]
+    out += replacement == nil ? c : replacement
+  end
+  out
+end
+
+def words_of(s)
+  cleaned = String.gsub(transliterate(s), /[^a-z0-9]+/, " ")
+  String.split(String.strip(cleaned), " ")
+end
+
+def shorten(words, max_len)
+  kept = Array[]
+  len = 0
+  Array.each(words) do |w|
+    extra = Array.empty?(kept) ? String.size(w) : String.size(w) + 1
+    break if len + extra > max_len
+    Array.push(kept, w)
+    len += extra
+  end
+  first = Array.first(words)
+  kept = Array[first[0...max_len]] if Array.empty?(kept) && first != nil
+  kept
+end
+
+def slugify(title, max_len)
+  all = words_of(title)
+  meaningful = Array.reject(all) { |w| Set.include?(drop_words, w) }
+  meaningful = all if Array.empty?(meaningful)
+  kept = shorten(meaningful, max_len)
+  [Array.join(kept, "-"), Array.size(all) - Array.size(kept)]
+end
+
+def unique_slug(base, taken)
+  return base unless Set.include?(taken, base)
+  n = 2
+  n += 1 while Set.include?(taken, "#{base}-#{n}")
+  "#{base}-#{n}"
+end
+
+def publish(titles, max_len)
+  taken = Set[]
+  posts = Post[]
+  Array.each(titles) do |t|
+    base, dropped = slugify(t, max_len)
+    if String.empty?(base)
+      base = "untitled"
+    end
+    slug = unique_slug(base, taken)
+    Set.add(taken, slug)
+    Array.push(posts, Post.new(t, slug, dropped))
+  end
+  posts
+end
+
+def titles
+  Array[
+    "Hello, World!",
+    "The Quick Brown Fox & the Lazy Dog",
+    "Crème Brûlée: A Café Classic",
+    "Über-fast Straße Rendering in Ruby 4.0",
+    "hello world",
+    "Hello  --  World???",
+    "Ten Tips for Writing Better Commit Messages (and Why They Matter to Your Team)",
+    "!!!",
+    "C++ @ Scale",
+    "Año Nuevo en Málaga",
+    "The The"
+  ]
+end
+
+posts = publish(titles, 32)
+width = Array.max(Array.map(posts) { |p| String.size(Post.get_slug(p)) })
+Array.each(posts) do |p|
+  dropped = Post.get_words_dropped(p)
+  note = dropped > 0 ? " (-#{dropped} words)" : ""
+  puts("#{String.ljust(Post.get_slug(p), width)}  <- #{Post.get_title(p)}#{note}")
+end
+collisions = Array.count(posts) { |p| String.match?(Post.get_slug(p), /-\d+\z/) }
+puts("#{Array.size(posts)} posts, #{collisions} renamed to avoid collisions")
+lengths = Array.map(posts) { |p| String.size(Post.get_slug(p)) }
+puts("slug length: min #{Array.min(lengths)}, max #{Array.max(lengths)}, mean #{format("%.1f", Integer.to_f(Array.sum(lengths)) / Array.size(lengths))}")

@@ -1,0 +1,27 @@
+# 11-simulation: stateful simulations
+
+- bank_ledger: Bank accounts with deposits, withdrawals, transfers, overdraft limits, frozen accounts, month-end interest and fees, driven by an operation script with exceptions.
+- inventory_reorder: Warehouse stock simulation over 12 days with customer demand, reorder-point purchase orders with lead times, backorders and lost sales.
+- elevator_scan: Two elevator cars serve timed hall calls with a cost-based dispatcher and SCAN-style direction keeping; reports per-rider wait and ride times.
+- teller_queue_des: Discrete-event simulation of a bank with 1-3 tellers, a binary-heap event queue over Comparable events, an LCG for arrivals, and wait-time statistics.
+- traffic_intersection: Actuated two-phase traffic signal with yellow intervals, per-approach vehicle queues, permissive left turns yielding to oncoming traffic, compared across timing plans.
+- ecosystem_patches: Seasonal grass/rabbit/fox population model over four habitat patches with logistic growth, predation, starvation and rabbit migration between neighbouring patches.
+- life_torus: Conway's Game of Life on a wrapping grid using a Set of cell Tuples, with cycle/still-life detection via state signatures, for five classic patterns.
+- vending_machine: Coin-operated vending machine state machine driven by Record events (insert/select/cancel/restock), with greedy change-making from a limited coin box and SoldOut/NoChange exceptions.
+- parking_garage: Multi-level garage assigning the smallest fitting free spot per vehicle kind, Time-stamped tickets, duration-based fees with daily caps, refusals via exception, and occupancy reports.
+- epidemic_network: SIR epidemic on a contact graph with an LCG for transmission, epidemic curve, infection chains and top spreaders, comparing no vaccination with vaccinating hubs.
+- cpu_scheduler: Tick-based CPU scheduling of seven jobs under FCFS, round robin (two quanta), SRTF and preemptive priority, via a Scheduler mixin dispatching to each policy type; Gantt strip and wait/turnaround stats.
+- library_loans: Library circulation over ~50 days with copies, FIFO hold queues, tier-based loan limits and periods, renewals, late fines and payments; refusals raised as exceptions.
+- order_book: Limit order book matching engine with price-time priority, partial fills, market orders, self-trade prevention, cancellations, invalid-order exceptions, VWAP and depth display.
+- thermostat_house: Four-room house heat model over 24 hours with an outdoor temperature profile, inter-room heat flow, per-room hysteresis thermostats following a Record-based schedule, and energy/comfort totals.
+- forest_fire: Forest-fire cellular automaton on a grid of Symbols with wind-biased spread, regrowth and an LCG, comparing three wind directions.
+- checkout_lanes: Supermarket checkout with regular, express and self-service lanes; Record customers pick the lane with the least expected wait, may balk, and a lane can close mid-run.
+- langton_ants: Langton's ant and multi-colour turmites on a Hash grid keyed by Tuples, with several ants, collision counting, colour histograms and ASCII rendering.
+- water_tanks: Rainwater/well/cistern/header tank network over 24 hours with gravity pipes driven by head differences, a hysteresis pump, scheduled valve events, overflow and supply shortfall accounting.
+- car_rental: Car rental fleet across two branches with date-Range bookings, overlap checks, car location tracking for one-way rentals, Comparable car classes for upgrades, service-due mileage and refusals.
+- runway_ops: Single-runway airport sequencing of landings and takeoffs with Comparable flight priority, wake separation, fuel countdown, emergencies, diversions and runway closures.
+- bakery_shift: Bakery morning shift planning orders by due time through a shared mixer and two ovens, consuming recipe ingredients from stock, taking deliveries with `retry` on OutOfStock, and cancelling or flagging late orders.
+- sandpile: Abelian sandpile on a 9x9 grid of Integer rows, dropping 320 grains at pseudo-random spots with a toppling work-queue, avalanche size histogram and final configuration.
+- hotel_bookings: Hotel reservations over Time-valued nights with weekend/holiday rate factors, overlap checks, waitlist promotion on cancellation, cancellation penalties, a ledger and an occupancy chart.
+- ring_road_traffic: Nagel-Schreckenberg cellular traffic on a ring road with mixed vehicle top speeds and random slowdowns, a space-time diagram, and a flow/speed/jam table over densities and slowdown probabilities.
+- packet_network: Six-router packet network with Dijkstra routing tables (module_function), per-router bounded queues, link delays, TTL expiry, a link failure and restoration with re-routing, and per-flow path statistics.

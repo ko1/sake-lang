@@ -1,0 +1,130 @@
+class Stay
+  attr_reader guest, room_type, arrive, nights, adults, company
+end
+
+class Charge
+  attr_reader night, category, text, amount, payer
+end
+
+class BillingError < StandardError
+  attr_reader guest
+end
+
+def day_seconds = 86400
+def base_rate = once { Hash[single: 120.0, double: 160.0, suite: 340.0] }
+def city_tax_per_adult = 3.5
+
+# season multiplier by month
+def season(t)
+  m = Time.month(t)
+  if m == 7 || m == 8 then 1.35
+  elsif m == 12 then 1.2
+  elsif m <= 2 then 0.85
+  else 1.0
+  end
+end
+
+class Folio
+  attr_reader stay, charges = nil, payments = nil
+  include Indexable
+
+  def initialize(f)
+    @charges = Array[]
+    @payments = Array[]
+  end
+
+  # folio[:minibar] sums one category
+  def [](f, category) = Array.sum(Array.select(@charges) { |c| Charge.get_category(c) == category }) { |c| Charge.get_amount(c) }
+
+  def post(f, night, category, text, amount)
+    nights = Stay.get_nights(@stay)
+    raise BillingError.new("night #{night} is outside the stay", Stay.get_guest(@stay)) unless Range.cover?(1..nights, night)
+    payer = category == :room && Stay.get_company(@stay) ? Stay.get_company(@stay) : Stay.get_guest(@stay)
+    Array.push(@charges, Charge.new(night, category, text, Float.round(amount, 2), payer))
+  end
+
+  def post_rooms(f)
+    Integer.times(Stay.get_nights(@stay)) do |i|
+      t = Stay.get_arrive(@stay) + i * day_seconds
+      rate = Hash.fetch(base_rate, Stay.get_room_type(@stay)) * season(t)
+      rate *= 1.15 if Time.friday?(t) || Time.saturday?(t)
+      post(f, i + 1, :room, "Room #{Time.strftime(t, "%a %b %d")}", rate)
+      post(f, i + 1, :tax, "City tax", city_tax_per_adult * Stay.get_adults(@stay))
+    end
+  end
+
+  def pay(f, who, amount) = Array.push(@payments, [who, amount])
+
+  def owed_by(f, who)
+    charged = Array.sum(Array.select(@charges) { |c| Charge.get_payer(c) == who }) { |c| Charge.get_amount(c) }
+    paid = Array.sum(Array.select(@payments) { |w, a| w == who }) { |w, a| a }
+    Float.round(charged - paid, 2)
+  end
+
+  def payers(f) = Array.uniq(Array.map(@charges) { |c| Charge.get_payer(c) })
+end
+
+def print_folio(f)
+  s = Folio.get_stay(f)
+  depart = Stay.get_arrive(s) + Stay.get_nights(s) * day_seconds
+  puts("Folio: #{Stay.get_guest(s)} (#{Stay.get_room_type(s)}, #{Stay.get_adults(s)} adults) #{Time.strftime(Stay.get_arrive(s), "%Y-%m-%d")} to #{Time.strftime(depart, "%Y-%m-%d")}")
+  Array.each(Folio.get_charges(f)) do |c|
+    next if Charge.get_category(c) == :tax
+    puts(format("  n%-2d %-22s %8.2f  %s", Charge.get_night(c), Charge.get_text(c), Charge.get_amount(c), Charge.get_payer(c)))
+  end
+  Array.each(Array[:room, :tax, :minibar, :restaurant, :spa]) do |cat|
+    total = f[cat]
+    puts(format("  %-27s %8.2f", "total #{cat}", total)) if total > 0
+  end
+  Array.each(Folio.payers(f)) do |who|
+    owed = Folio.owed_by(f, who)
+    status = owed > 0 ? format("owes %.2f", owed) : (owed < 0 ? format("refund %.2f", -owed) : "settled")
+    puts("  #{who}: #{status}")
+  end
+end
+
+stays = Array[
+  Stay.new("M. Rossi", :double, Time.new(2026, 7, 30), 4, 2, "Acme GmbH"),
+  Stay.new("K. Tanaka", :single, Time.new(2026, 2, 26), 3, 1, nil),
+  Stay.new("L. Okafor", :suite, Time.new(2026, 12, 23), 2, 3, nil)
+]
+folios = Hash[]
+Array.each(stays) do |s|
+  f = Folio.new(s)
+  Folio.post_rooms(f)
+  folios[Stay.get_guest(s)] = f
+end
+
+extras = Array[
+  ["M. Rossi", 1, :minibar, "Minibar", 14.5], ["M. Rossi", 2, :restaurant, "Dinner", 86.0],
+  ["M. Rossi", 4, :spa, "Massage", 95.0], ["M. Rossi", 6, :minibar, "Minibar", 7.0],
+  ["K. Tanaka", 2, :restaurant, "Breakfast", 18.0], ["L. Okafor", 1, :restaurant, "Christmas dinner", 240.0],
+  ["L. Okafor", 2, :minibar, "Champagne", 89.0], ["J. Doe", 1, :minibar, "Water", 3.0]
+]
+Array.each(extras) do |guest, night, cat, text, amount|
+  f = folios[guest]
+  if f == nil
+    puts("no folio for #{guest}")
+    next
+  end
+  begin
+    Folio.post(f, night, cat, text, amount)
+  rescue BillingError => e
+    puts("#{BillingError.get_guest(e)}: #{Exception.message(e)}")
+  end
+end
+
+Folio.pay(Hash.fetch(folios, "M. Rossi"), "M. Rossi", 100.0)
+Folio.pay(Hash.fetch(folios, "K. Tanaka"), "K. Tanaka", 400.0)
+Folio.pay(Hash.fetch(folios, "L. Okafor"), "L. Okafor", 500.0)
+
+Hash.each_value(folios) do |f|
+  puts
+  print_folio(f)
+end
+
+puts
+room_revenue = Array.sum(Hash.values(folios)) { |f| f[:room] }
+nights = Array.sum(stays) { |s| Stay.get_nights(s) }
+puts(format("Room nights %d, ADR %.2f, extras %.2f", nights, room_revenue / nights,
+  Array.sum(Hash.values(folios)) { |f| f[:minibar] + f[:restaurant] + f[:spa] }))

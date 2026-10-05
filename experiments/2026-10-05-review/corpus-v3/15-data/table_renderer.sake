@@ -1,0 +1,101 @@
+class Column
+  attr_reader key, title, align, kind, width
+end
+
+def columns
+  Column[
+    Column.new(:city, "City", :left, :text, 0),
+    Column.new(:country, "Country", :center, :text, 0),
+    Column.new(:population, "Population", :right, :int, 0),
+    Column.new(:area, "Area km2", :right, :float1, 0),
+    Column.new(:density, "Density", :right, :float1, 0),
+    Column.new(:notes, "Notes", :left, :wrap, 18)
+  ]
+end
+
+def cities
+  Array[
+    Hash[city: "Tokyo", country: "JP", population: 13_960_000, area: 2194.07, notes: "capital; largest metro economy"],
+    Hash[city: "Osaka", country: "JP", population: 2_750_000, area: 225.21, notes: nil],
+    Hash[city: "Lagos", country: "NG", population: 15_388_000, area: 1171.28, notes: "fast growth"],
+    Hash[city: "Zurich", country: "CH", population: 421_878, area: 87.88, notes: "finance"],
+    Hash[city: "Reykjavik", country: "IS", population: 139_875, area: 273.0, notes: "northernmost capital of a sovereign state"],
+    Hash[city: "Montevideo", country: "UY", population: 1_319_108, area: 201.0, notes: ""]
+  ]
+end
+
+def group_digits(n)
+  s = Integer.to_s(Integer.abs(n))
+  out = String.reverse(Array.join(String.scan(String.reverse(s), /\d{1,3}/), ","))
+  n < 0 ? "-" + out : out
+end
+
+def wrap(text, width)
+  lines = Array[]
+  current = ""
+  Array.each(String.split(text, " ")) do |word|
+    if String.empty?(current)
+      current = word
+    elsif String.size(current) + 1 + String.size(word) <= width
+      current = current + " " + word
+    else
+      Array.push(lines, current)
+      current = word
+    end
+  end
+  Array.push(lines, current) unless String.empty?(current)
+  Array.empty?(lines) ? Array[""] : lines
+end
+
+def render_cell(col, value)
+  return Array["-"] if value == nil || value == ""
+  case Column.get_kind(col)
+  in :int then Array[group_digits(value)]
+  in :float1 then Array[format("%.1f", value)]
+  in :text then Array[Kernel.to_s(value)]
+  in :wrap then wrap(value, Column.get_width(col))
+  end
+end
+
+def pad(text, width, align)
+  case align
+  in :left then String.ljust(text, width)
+  in :right then String.rjust(text, width)
+  in :center then String.center(text, width)
+  end
+end
+
+def with_index(a) = Array.zip(a, Range.to_a(0...Array.size(a)))
+
+def render(cols, rows, totals)
+  body = Array.map(rows) { |r| Array.map(cols) { |c| render_cell(c, r[Column.get_key(c)]) } }
+  all_cells = body + Array[Array.map(cols) { |c| render_cell(c, totals[Column.get_key(c)]) }]
+  widths = Array.map(with_index(cols)) do |c, i|
+    longest = Array.max(Array.map(Array.flat_map(all_cells) { |row| Array.fetch(row, i) }) { String.size(it) }) || 0
+    Array.max(Array[longest, String.size(Column.get_title(c))])
+  end
+  sep = "+" + Array.join(Array.map(widths) { |w| "-" * (w + 2) }, "+") + "+"
+  out = Array[sep]
+  header = Array.map(with_index(cols)) { |c, i| " " + pad(Column.get_title(c), Array.fetch(widths, i), :center) + " " }
+  Array.push(out, "|" + Array.join(header, "|") + "|", String.tr(sep, "-", "="))
+  Array.each(all_cells) do |row|
+    height = Array.max(Array.map(row) { Array.size(it) }) || 1
+    Integer.times(height) do |k|
+      parts = Array.map(with_index(cols)) do |c, i|
+        text = Array.fetch(row, i)[k] || ""
+        " " + pad(text, Array.fetch(widths, i), Column.get_align(c)) + " "
+      end
+      Array.push(out, "|" + Array.join(parts, "|") + "|")
+    end
+    Array.push(out, sep)
+  end
+  out
+end
+
+rows = cities
+Array.each(rows) { |r| r[:density] = r[:population] / r[:area] }
+pop = Array.sum(rows) { it[:population] }
+area = Array.sum(rows) { it[:area] }
+totals = Hash[city: "TOTAL", country: "#{Array.size(Array.uniq(Array.map(rows) { it[:country] }))} countries", population: pop, area: area, density: pop / area, notes: nil]
+sorted = Array.sort_by(rows) { -it[:density] }
+puts(render(columns, sorted, totals))

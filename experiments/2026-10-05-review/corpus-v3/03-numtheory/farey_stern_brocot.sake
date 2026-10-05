@@ -1,0 +1,118 @@
+# Farey sequences and the Stern-Brocot tree: generating F_n, checking neighbour
+# properties, paths to fractions, and best rational approximations.
+
+def farey(n)
+  a, b, c, d = 0, 1, 1, n
+  seq = Array[Rational(a, b)]
+  while c <= n
+    k = (n + b) / d
+    a, b, c, d = c, d, k * c - a, k * d - b
+    Array.push(seq, Rational(a, b))
+  end
+  seq
+end
+
+def neighbours_ok?(seq)
+  ok = true
+  Array.each_cons(seq, 2) do |x, y|
+    det = Rational.numerator(y) * Rational.denominator(x) - Rational.numerator(x) * Rational.denominator(y)
+    ok = false if det != 1
+  end
+  ok
+end
+
+def mediant(x, y)
+  Rational(Rational.numerator(x) + Rational.numerator(y), Rational.denominator(x) + Rational.denominator(y))
+end
+
+# path from 1/1 to the target in the Stern-Brocot tree, as L/R letters
+def sb_path(target)
+  lo = [0, 1]
+  hi = [1, 0]
+  path = ""
+  Integer.times(200) do
+    ln, ld = lo
+    hn, hd = hi
+    m = Rational(ln + hn, ld + hd)
+    return path if m == target
+    if target < m
+      path += "L"
+      hi = [ln + hn, ld + hd]
+    else
+      path += "R"
+      lo = [ln + hn, ld + hd]
+    end
+  end
+  raise "path too long for #{target}"
+end
+
+def from_path(path)
+  lo = [0, 1]
+  hi = [1, 0]
+  String.each_char(path) do |c|
+    ln, ld = lo
+    hn, hd = hi
+    if c == "L"
+      hi = [ln + hn, ld + hd]
+    else
+      lo = [ln + hn, ld + hd]
+    end
+  end
+  ln, ld = lo
+  hn, hd = hi
+  Rational(ln + hn, ld + hd)
+end
+
+# closest fraction to x with denominator <= max_den, by walking the tree
+def best_approx(x, max_den)
+  lo = [0, 1]
+  hi = [1, 0]
+  best = Rational(0, 1)
+  while true
+    ln, ld = lo
+    hn, hd = hi
+    break if ld + hd > max_den
+    m = Rational(ln + hn, ld + hd)
+    best = m if Float.abs(Rational.to_f(m) - x) < Float.abs(Rational.to_f(best) - x)
+    if x < Rational.to_f(m)
+      hi = [ln + hn, ld + hd]
+    else
+      lo = [ln + hn, ld + hd]
+    end
+  end
+  best
+end
+
+Range.each(1..6) do |n|
+  puts("F#{n}: #{Array.join(Array.map(farey(n)) { |r| Rational.to_s(r) }, " ")}")
+end
+
+puts("sizes |F_n| = 1 + sum phi(k):")
+sizes = Array.map(Range.to_a(1..12)) { |n| Array.size(farey(n)) }
+puts("  #{Array.join(sizes, " ")}")
+puts("neighbour determinant = 1 for F_1..F_12: #{Range.all?(1..12) { |n| neighbours_ok?(farey(n)) }}")
+
+f7 = farey(7)
+idx = Array.index(f7, Rational(3, 7))
+left = f7[idx - 1]
+right = f7[idx + 1]
+puts("neighbours of 3/7 in F7: #{left} and #{right}, mediant #{mediant(left, right)}")
+
+puts("Stern-Brocot paths:")
+Array.each(Array[Rational(3, 7), Rational(5, 2), Rational(13, 8), Rational(1, 1), Rational(22, 7)]) do |r|
+  path = sb_path(r)
+  shown = String.empty?(path) ? "(root)" : path
+  puts(format("  %-6s %-12s back: %s", Rational.to_s(r), shown, Rational.to_s(from_path(path))))
+end
+
+puts("best approximations of pi:")
+Array.each(Integer[1, 7, 57, 106, 113, 1000, 33102]) do |den|
+  r = best_approx(3.141592653589793, den)
+  puts(format("  den <= %-6d %-12s err %.3e", den, Rational.to_s(r), Float.abs(Rational.to_f(r) - 3.141592653589793)))
+end
+
+puts("best approximations of sqrt(2) and e:")
+Array.each(Array[["sqrt2", Math.sqrt(2)], ["e", Math.exp(1)]]) do |name, x|
+  rs = Array.map(Integer[10, 100, 1000]) { |d| Rational.to_s(best_approx(x, d)) }
+  puts("  #{name}: #{Array.join(rs, ", ")}")
+end

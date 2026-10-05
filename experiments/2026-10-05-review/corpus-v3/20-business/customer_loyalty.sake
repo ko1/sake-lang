@@ -1,0 +1,107 @@
+class Lot
+  attr_accessor points
+  attr_reader earned_day, expires_day
+end
+
+class NotEnoughPoints < StandardError
+  attr_reader needed, available
+end
+
+def tiers = once { Array[[:gold, 2000], [:silver, 800], [:bronze, 0]] }
+def multiplier = once { Hash[gold: 2.0, silver: 1.5, bronze: 1.0] }
+def lifetime_days = 180
+def rewards = once { Hash["coffee" => 150, "tote bag" => 900, "gift card" => 2500] }
+
+class Customer
+  attr_reader id, name, tier = :bronze, spend = 0.0, lots = nil, history = nil
+  def initialize(c)
+    @lots = Array[]
+    @history = Array[]
+  end
+
+  def balance(c, today) = Array.sum(Array.select(@lots) { |l| Lot.get_expires_day(l) >= today }) { |l| Lot.get_points(l) }
+
+  def log(c, day, text) = Array.push(@history, "day #{String.rjust(Integer.to_s(day), 3)}: #{text}")
+
+  def earn(c, day, amount)
+    pts = Float.floor(amount * Hash.fetch(multiplier, @tier))
+    Array.push(@lots, Lot.new(pts, day, day + lifetime_days))
+    @spend += amount
+    log(c, day, format("spent %.2f, +%d pts", amount, pts))
+    name, _min = Array.find(tiers) { |t, min| @spend >= min }
+    if name != @tier
+      log(c, day, "tier #{@tier} -> #{name}")
+      @tier = name
+    end
+    pts
+  end
+
+  # oldest points are used first
+  def redeem(c, day, pts)
+    avail = balance(c, day)
+    raise NotEnoughPoints.new("#{@name} cannot redeem #{pts}", pts, avail) if pts > avail
+    left = pts
+    live = Array.sort_by(Array.select(@lots) { |l| Lot.get_expires_day(l) >= day && Lot.get_points(l) > 0 }) { |l| Lot.get_earned_day(l) }
+    Array.each(live) do |lot|
+      break if left == 0
+      take = Array.min(Array[left, Lot.get_points(lot)])
+      Lot.set_points(lot, Lot.get_points(lot) - take)
+      left -= take
+    end
+    log(c, day, "redeemed #{pts} pts")
+    pts
+  end
+
+  def expire(c, day)
+    gone = Array.select(@lots) { |l| Lot.get_expires_day(l) < day && Lot.get_points(l) > 0 }
+    lost = Array.sum(gone) { |l| Lot.get_points(l) }
+    Array.each(gone) { |l| Lot.set_points(l, 0) }
+    log(c, day, "#{lost} pts expired") if lost > 0
+    lost
+  end
+end
+
+customers = Hash[]
+Array.each(Array[[1, "Mia"], [2, "Noah"], [3, "Zoe"]]) do |id, name|
+  customers[id] = Customer.new(id, name)
+end
+
+activity = Array[
+  [3, 1, :buy, 120.0], [5, 2, :buy, 45.5], [10, 1, :buy, 760.0], [12, 3, :buy, 15.0],
+  [20, 1, :redeem, "coffee"], [33, 2, :redeem, "coffee"], [40, 1, :buy, 1300.0], [41, 1, :redeem, "gift card"],
+  [60, 2, :buy, 220.0], [61, 2, :redeem, "coffee"], [75, 3, :refer, 2], [200, 1, :buy, 50.0],
+  [201, 1, :redeem, "tote bag"], [230, 2, :buy, 600.0], [231, 3, :redeem, "tote bag"]
+]
+
+Array.each(activity) do |day, id, kind, arg|
+  c = Hash.fetch(customers, id)
+  Hash.each_value(customers) { |x| Customer.expire(x, day) }
+  begin
+    case kind
+    in :buy then Customer.earn(c, day, arg)
+    in :redeem then Customer.redeem(c, day, Hash.fetch(rewards, arg))
+    in :refer
+      Array.push(Customer.get_lots(c), Lot.new(250, day, day + lifetime_days))
+      Customer.log(c, day, "+250 pts for referring #{Customer.get_name(Hash.fetch(customers, arg))}")
+    end
+  rescue NotEnoughPoints => e
+    Customer.log(c, day, "#{Exception.message(e)}: has #{NotEnoughPoints.get_available(e)}, needs #{NotEnoughPoints.get_needed(e)}")
+  end
+end
+
+today = 240
+Hash.each_value(customers) do |c|
+  puts("#{Customer.get_name(c)} (#{Customer.get_tier(c)}, spent #{format("%.2f", Customer.get_spend(c))}, balance #{Customer.balance(c, today)})")
+  Array.each(Customer.get_history(c)) { |h| puts("  #{h}") }
+end
+
+puts
+soon = Array.flat_map(Hash.values(customers)) do |c|
+  Array.filter_map(Customer.get_lots(c)) do |l|
+    left = Lot.get_expires_day(l) - today
+    [Customer.get_name(c), Lot.get_points(l), left] if Lot.get_points(l) > 0 && Integer.between?(left, 0, 30)
+  end
+end
+Array.each(soon) { |name, pts, left| puts("#{name}: #{pts} pts expire in #{left} days") }
+by_tier = Array.tally(Array.map(Hash.values(customers)) { |c| Customer.get_tier(c) })
+puts("Tiers: #{Array.join(Array.map(tiers) { |t, min| "#{t}=#{by_tier[t] || 0}" }, " ")}")

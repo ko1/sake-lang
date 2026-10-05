@@ -1,0 +1,115 @@
+# A rail timetable: trains with stop times (some stations skipped), journey
+# queries "next train from A to B after T", and a per-station departure board.
+
+
+module Clock
+  module_function
+
+  def parse(s)
+    return nil if s == "--"
+    h, m = String.split(s, ":")
+    String.to_i(h) * 60 + String.to_i(m)
+  end
+
+  # Times past midnight are stored as 24:xx and shown as 00:xx.
+  def show(t) = format("%02d:%02d", (t / 60) % 24, t % 60)
+
+  def span(mins) = mins >= 60 ? "#{mins / 60}h#{format("%02d", mins % 60)}" : "#{mins}m"
+end
+
+def stations = once { Array["Harbor", "Central", "Museum", "Airport", "Lakeside", "Summit"] }
+
+def raw_table = once do
+  Array[
+    ["101", "local",   "06:10 06:22 06:30 06:45 07:05 07:40"],
+    ["201", "express", "06:40 06:50 -- 07:08 -- 07:50"],
+    ["103", "local",   "07:15 07:27 07:35 07:50 08:10 08:45"],
+    ["203", "express", "08:05 08:15 -- 08:33 -- 09:15"],
+    ["105", "local",   "09:30 09:42 09:50 10:05 10:25 --"],
+    ["301", "night",   "23:20 23:32 23:40 23:55 24:15 24:50"],
+    ["107", "local",   "12:00 12:12 12:20 12:35 12:55 13:30"]
+  ]
+end
+
+def load_trains
+  Array.map(raw_table) do |number, kind, times|
+    Train.new(number, kind, Array.map(String.split(times, " ")) { |s| Clock.parse(s) })
+  end
+end
+
+class Train
+  attr_reader number, kind, stops
+
+  def stop_at(t, station) = @stops[Array.index(stations, station)]
+
+  def serves?(t, from, to)
+    dep = stop_at(t, from)
+    arr = stop_at(t, to)
+    dep != nil && arr != nil && dep < arr
+  end
+
+  def to_s(t) = "#{@number} (#{@kind})"
+end
+
+def next_journey(trains, from, to, after)
+  candidates = Array.select(trains) { |t| Train.serves?(t, from, to) && Train.stop_at(t, from) >= after }
+  Array.min_by(candidates) { |t| Train.stop_at(t, to) }
+end
+
+trains = load_trains
+
+queries = Array[
+  ["Harbor", "Summit", "06:00"],
+  ["Harbor", "Museum", "06:35"],
+  ["Central", "Airport", "08:00"],
+  ["Museum", "Summit", "09:40"],
+  ["Lakeside", "Harbor", "07:00"],
+  ["Airport", "Summit", "23:00"],
+  ["Harbor", "Summit", "13:00"]
+]
+
+puts("Journeys:")
+Array.each(queries) do |from, to, at|
+  after = Clock.parse(at)
+  t = after ? next_journey(trains, from, to, after) : nil
+  if t == nil
+    puts(format("  %-8s -> %-8s after %s: no train", from, to, at))
+  else
+    dep = Train.stop_at(t, from)
+    arr = Train.stop_at(t, to)
+    wait = dep - after
+    puts(format("  %-8s -> %-8s after %s: %-13s %s-%s  wait %s, ride %s", from, to, at, Train.to_s(t),
+                Clock.show(dep), Clock.show(arr), Clock.span(wait), Clock.span(arr - dep)))
+  end
+end
+
+puts
+puts("Departures from Central:")
+board = Array.filter_map(trains) do |t|
+  dep = Train.stop_at(t, "Central")
+  dep ? [dep, t] : nil
+end
+Array.each(Array.sort_by(board) { |dep, t| dep }) do |dep, t|
+  last = Array.rindex(Array.map(Train.get_stops(t)) { |s| s != nil }, true)
+  puts(format("  %s  %-4s %-8s to %s", Clock.show(dep), Train.get_number(t), Train.get_kind(t), stations[last]))
+end
+
+puts
+puts("Average end-to-end time by kind:")
+by_kind = Array.group_by(Array.select(trains) { |t| Train.serves?(t, "Harbor", "Summit") }) { |t| Train.get_kind(t) }
+Hash.each(by_kind) do |kind, list|
+  total = Array.sum(list) { |t| Train.stop_at(t, "Summit") - Train.stop_at(t, "Harbor") }
+  puts(format("  %-8s %d trains, %s", kind, Array.size(list), Clock.span(total / Array.size(list))))
+end
+
+# Longest gap between consecutive departures from Harbor.
+deps = Array.sort(Array.compact(Array.map(trains) { |t| Train.stop_at(t, "Harbor") }))
+widest = nil
+Array.each_cons(deps, 2) do |a, b|
+  gap = b - a
+  widest = [gap, a] if widest == nil || gap > widest[0]
+end
+if widest
+  gap, from = widest
+  puts("Longest gap at Harbor: #{Clock.span(gap)} after #{Clock.show(from)}")
+end

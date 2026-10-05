@@ -1,0 +1,107 @@
+class PoolExhausted < Exception
+  attr_reader capacity
+end
+
+class BadHandle < Exception
+  attr_reader handle
+end
+
+class Pool
+  attr_reader capacity
+  attr_reader names = nil, links = nil, prevs = nil, live = nil
+  attr_reader free_head = 0, used_head = -1, in_use = 0, peak = 0
+
+  def initialize(pool)
+    n = @capacity
+    @names = Array.new(n, "")
+    @links = Array.new(n) { |i| i + 1 < n ? i + 1 : -1 }
+    @prevs = Array.new(n, -1)
+    @live = Array.new(n, false)
+  end
+
+  def acquire(pool, name)
+    slot = @free_head
+    raise PoolExhausted.new("pool exhausted acquiring #{name}", @capacity) if slot == -1
+    @free_head = @links[slot]
+    @names[slot] = name
+    @live[slot] = true
+    @links[slot] = @used_head
+    @prevs[slot] = -1
+    @prevs[@used_head] = slot if @used_head != -1
+    @used_head = slot
+    @in_use += 1
+    @peak = @in_use if @in_use > @peak
+    slot
+  end
+
+  def release(pool, slot)
+    raise BadHandle.new("bad handle #{slot}", slot) if slot < 0 || slot >= @capacity || !@live[slot]
+    nxt = @links[slot]
+    prv = @prevs[slot]
+    if prv == -1
+      @used_head = nxt
+    else
+      @links[prv] = nxt
+    end
+    @prevs[nxt] = prv if nxt != -1
+    @live[slot] = false
+    @names[slot] = ""
+    @links[slot] = @free_head
+    @free_head = slot
+    @in_use -= 1
+    pool
+  end
+
+  def each_used(pool)
+    i = @used_head
+    while i != -1
+      yield(i, @names[i])
+      i = @links[i]
+    end
+  end
+
+  def free_slots(pool)
+    out = Array[]
+    i = @free_head
+    while i != -1
+      Array.push(out, i)
+      i = @links[i]
+    end
+    out
+  end
+
+  def describe(pool)
+    used = Array[]
+    each_used(pool) { |i, n| Array.push(used, "#{i}:#{n}") }
+    "used[#{Array.join(used, " ")}] free#{Kernel.inspect(free_slots(pool))}"
+  end
+end
+
+pool = Pool.new(5)
+handles = Hash[]
+script = String.split("+db1 +db2 +cache +db3 -db2 +web -cache +db4 +db5 +db6 -db1 -db1 +db7 -web -nobody", " ")
+Array.each(script) do |cmd|
+  name = cmd[1..]
+  begin
+    if String.start_with?(cmd, "+")
+      slot = Pool.acquire(pool, name)
+      handles[name] = slot
+      puts(format("%-7s -> slot %d   %s", cmd, slot, Pool.describe(pool)))
+    else
+      slot = Hash.fetch(handles, name, -1)
+      Pool.release(pool, slot)
+      Hash.delete(handles, name)
+      puts(format("%-7s <- slot %d   %s", cmd, slot, Pool.describe(pool)))
+    end
+  rescue PoolExhausted => e
+    puts(format("%-7s !! %s (capacity %d)", cmd, Exception.message(e), PoolExhausted.get_capacity(e)))
+  rescue BadHandle => e
+    puts(format("%-7s !! %s", cmd, Exception.message(e)))
+  end
+end
+puts("in use #{Pool.get_in_use(pool)}, peak #{Pool.get_peak(pool)}, capacity #{Pool.get_capacity(pool)}")
+by_prefix = Hash.new(0)
+Pool.each_used(pool) { |i, n| by_prefix[String.delete(n, "0123456789")] += 1 }
+puts(Kernel.inspect(by_prefix))
+Array.each(Array.sort(Hash.keys(handles))) { |k| Pool.release(pool, handles[k]) }
+puts("after releasing all: #{Pool.describe(pool)}")

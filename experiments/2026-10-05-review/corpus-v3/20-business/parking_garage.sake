@@ -1,0 +1,116 @@
+class Spot
+  attr_reader id, level, size
+  attr_accessor plate
+end
+
+class Ticket
+  attr_reader number, plate, spot_id, entered
+  attr_accessor charged_kwh
+end
+
+class GarageFull < StandardError
+  attr_reader plate
+end
+
+class TicketError < StandardError
+end
+
+# smaller sizes fit fewer vehicles: a motorcycle fits anywhere, a van only in a large spot
+def size_rank = once { Hash[moto: 0, compact: 1, regular: 2, large: 3] }
+def size_codes = once { Hash["m" => :moto, "c" => :compact, "r" => :regular, "L" => :large] }
+
+def minutes(hhmm)
+  h, m = Array.map(String.split(hhmm, ":")) { |x| String.to_i(x) }
+  h * 60 + m
+end
+
+def fee(mins, kwh, lost)
+  return 2500 if lost
+  billable = mins <= 30 ? 0 : Integer.ceildiv(mins, 60)
+  parking = Array.min(Array[billable * 300, 2000])
+  parking + Float.round(kwh * 35.0)
+end
+
+class Garage
+  attr_reader spots, tickets, seq = 100
+  def build(layout)
+    spots = Array[]
+    Array.each_with_index(layout) do |row, level|
+      Array.each_with_index(String.chars(row)) do |c, i|
+        Array.push(spots, Spot.new("#{level}#{String.rjust(Integer.to_s(i + 1), 2, "0")}", level, Hash.fetch(size_codes, c), nil))
+      end
+    end
+    Garage.new(spots, Hash[])
+  end
+
+  def enter(g, plate, kind, at)
+    raise TicketError, "#{plate} is already inside" if Array.any?(@spots) { |s| Spot.get_plate(s) == plate }
+    fits = Array.select(@spots) { |s| Spot.get_plate(s) == nil && size_rank[Spot.get_size(s)] >= size_rank[kind] }
+    raise GarageFull.new("no #{kind} spot", plate) if Array.empty?(fits)
+    spot = Array.min_by(fits) { |s| [size_rank[Spot.get_size(s)], Spot.get_level(s), Array.index(@spots, s)] }
+    Spot.set_plate(spot, plate)
+    @seq += 1
+    t = Ticket.new(@seq, plate, Spot.get_id(spot), minutes(at), 0.0)
+    @tickets[@seq] = t
+    t
+  end
+
+  def charge(g, number, kwh)
+    t = @tickets[number]
+    raise TicketError, "unknown ticket #{number}" unless t
+    Ticket.set_charged_kwh(t, Ticket.get_charged_kwh(t) + kwh)
+  end
+
+  def leave(g, number, plate, at)
+    t = number ? @tickets[number] : Array.find(Hash.values(@tickets)) { |x| Ticket.get_plate(x) == plate }
+    raise TicketError, "no car #{plate} inside" unless t
+    spot = Array.find(@spots) { |s| Spot.get_id(s) == Ticket.get_spot_id(t) }
+    Spot.set_plate(spot, nil)
+    Hash.delete(@tickets, Ticket.get_number(t))
+    mins = minutes(at) - Ticket.get_entered(t)
+    [mins, fee(mins, Ticket.get_charged_kwh(t), number == nil)]
+  end
+
+  def occupancy(g)
+    by_level = Array.group_by(@spots) { |s| Spot.get_level(s) }
+    Hash.map(by_level) { |level, ss| [level, Array.count(ss) { |s| Spot.get_plate(s) != nil }, Array.size(ss)] }
+  end
+end
+
+garage = Garage.build(Array["mcrrL", "ccrr"])
+tickets = Hash[]
+revenue = 0
+events = Array[
+  ["07:55", :in, "VAN-1", :large], ["08:02", :in, "CAR-1", :regular], ["08:05", :in, "MOTO-1", :moto],
+  ["08:10", :in, "CAR-2", :compact], ["08:11", :in, "CAR-3", :regular], ["08:20", :in, "VAN-2", :large],
+  ["08:30", :in, "CAR-4", :regular], ["08:31", :in, "CAR-5", :compact], ["08:40", :in, "CAR-6", :compact],
+  ["09:00", :charge, "CAR-1", 18.5], ["09:15", :out, "MOTO-1", :ticket], ["09:20", :in, "CAR-6", :compact],
+  ["11:47", :out, "CAR-1", :ticket], ["12:00", :out, "CAR-3", :lost], ["13:30", :out, "CAR-9", :lost],
+  ["18:40", :out, "VAN-1", :ticket], ["19:05", :out, "CAR-2", :ticket]
+]
+Array.each(events) do |at, kind, plate, arg|
+  case kind
+  in :in
+    t = Garage.enter(garage, plate, arg, at)
+    tickets[plate] = Ticket.get_number(t)
+    puts("#{at} #{plate} -> spot #{Ticket.get_spot_id(t)} (ticket #{Ticket.get_number(t)})")
+  in :charge
+    Garage.charge(garage, Hash.fetch(tickets, plate), arg)
+    puts("#{at} #{plate} charged #{arg} kWh")
+  in :out
+    number = arg == :lost ? nil : tickets[plate]
+    mins, cents = Garage.leave(garage, number, plate, at)
+    revenue += cents
+    puts(format("%s %s leaves after %dh%02dm, pays $%.2f%s", at, plate, mins / 60, mins % 60, cents / 100.0, number ? "" : " (lost ticket)"))
+  end
+rescue GarageFull => e
+  puts("#{at} #{GarageFull.get_plate(e)} turned away: #{Exception.message(e)}")
+rescue TicketError => e
+  puts("#{at} error: #{Exception.message(e)}")
+end
+
+puts
+Array.each(Garage.occupancy(garage)) do |level, used, total|
+  puts("Level #{level}: #{used}/#{total} #{"#" * used}#{"." * (total - used)}")
+end
+puts(format("Revenue: $%.2f", revenue / 100.0))

@@ -1,0 +1,27 @@
+# Changes in 16-dates (corpus -> corpus-v2)
+
+- activity_heatmap: unchanged
+- age_calculator: `leap?(y) == false` -> `!leap?(y)` (unary `!`)
+- billing_cycles: `ymd` takes the MatchData apart as `Array.map(MatchData.captures(m)) { String.to_i }` (as Ruby does) instead of indexing `m[1]`..`m[3]`, and the callers destructure the Array; `0 - credit`/`0 - refund`/`0 - Array.sum(...)` -> unary `-`
+- business_days: `Set.include?(...) == false && ... == false` -> `!Set.include?(...) && !...` (unary `!`); `0 - between(...)` -> `-between(...)` (unary `-`)
+- calendar_systems: `0 - drift` -> `-drift` (unary `-`)
+- cron_schedule: `x, _s, y = String.partition(range_text, "-")` -> `x, y = String.split(range_text, "-")` (Array destructuring); `fields[0]`..`fields[4]` -> `minute, hour, dom, month, dow = fields` once the field count is checked
+- date_arith: `0 - diff` -> `-diff` (unary `-`)
+- date_parser: unchanged (indexes `m[1]` and so on, as the Ruby version does)
+- day_of_week: `parse_date` returns the mapped Array directly instead of repacking `parts[0..2]` into a Tuple (callers destructure the Array)
+- durations: `gap = 0 - gap if gap < 0` -> `Integer.abs(...)`, as in Ruby; `running = running + d` -> `running += d` (also for `acc`)
+- easter: the Orthodox/Western comparison is Tuple equality, `orthodox_easter(yy) == [m, d]`, instead of comparing the components; the packed sort key `(0 - n) * 10000 + k` -> the Tuple key `[-n, k]`
+- fiscal_quarters: `ymd` returns the mapped Array directly (callers destructure it); `fields[0..2]` -> `date, region, amount = String.split(...)`; `sort_by { fy * 10 + q }` on Tuple keys -> `Array.sort` (Tuples are ordered)
+- iso_week: the round-trip check is `from_iso_week(...) == [y, m, d]` (Tuple equality); `parts[0..2]` -> `y, m, d = Array.map(...)` (Array destructuring); `sort_by { year * 100 + week }` -> `Array.sort` of the Tuple keys
+- meeting_scheduler: `String.partition` + `_sep` -> `a, b = String.split(...)` (twice, Array destructuring); `0 - mins` -> `-mins`; `Array.combination` block takes `|a, b|` instead of indexing `pair[0]`/`pair[1]`
+- month_calendar: unchanged
+- moon_phases: unchanged
+- parking_fees: `ts` destructures `y, mo, d, h, mi = Array.map(MatchData.captures(m)) {...}` (as Ruby does) instead of repeating `String.to_i(m[i])`
+- project_gantt: unchanged
+- public_holidays: unchanged
+- recurring_events: `parts[0..2]` -> `y, m, d = Array.map(...)` (Array destructuring); packed sort key `z * 100 + String.size(title)` -> Tuple key `[z, String.size(title)]`
+- room_booking: `String.partition` + `_sep` -> `h, m = String.split(hhmm, ":")` (Array destructuring)
+- shift_rota: packed `min_by` key `hours * 100 + index` -> Tuple key `[hours, index]`; `Array.each_cons` block takes `|a, b|` instead of indexing `pair`
+- time_zones: unchanged (the packed `max_by` key `n * 100 - h` is the Ruby version's own)
+- timesheet: `parse_time` destructures `Array.map(MatchData.captures(m)) {...}` (as Ruby does); `f[0..3]` -> `who, kind, date, time = String.split(...)`
+- timetable: `String.partition` + `_sep` -> `h, m = String.split(s, ":")`; `Array.each_cons` block takes `|a, b|` instead of indexing `pair`

@@ -1,0 +1,25 @@
+- day_of_week: weekday of historic dates by Sakamoto and Zeller, cross-checked, plus Friday-the-13th counts and the Jan-1 weekday distribution over 400 years.
+- month_calendar: renders `cal`-style month grids three across, marking special days, and reports week-row counts.
+- date_arith: a Julian-Day-Number Date type with validation, `+` days, `-` date/days, ordering, and event countdowns.
+- iso_week: converts between calendar dates and ISO-8601 week dates, lists 53-week years, and totals a work log per ISO week.
+- easter: Western and Orthodox Easter by Meeus's algorithms, the movable feasts of one year, and statistics over 1900-2099.
+- meeting_scheduler: merges people's busy intervals into free slots within a work day and greedily books meeting requests.
+- timetable: a rail timetable with skipped stops and an after-midnight train; answers next-train queries, prints a departure board and gap statistics.
+- room_booking: books meeting rooms for a week, rejecting conflicts, bad hours and unknown rooms with typed exceptions, then reports utilisation.
+- recurring_events: expands recurrence rules (every N days, weekdays, month day with clamping, nth/last weekday, yearly) into an agenda.
+- public_holidays: computes holidays from fixed/nth/last-weekday/Easter rules with weekend observance, long weekends and weekend-hit statistics.
+- business_days: working-day calendars (weekend sets, holiday sets) for adding/counting business days and checking ticket SLAs.
+- age_calculator: exact y/m/d ages with month-end borrowing, next-birthday countdowns including Feb-29 birthdays, zodiac signs and roster stats.
+- date_parser: parses dates in ISO, US, European, compact, month-name and relative forms into ISO strings, reporting failures as ParseError.
+- shift_rota: greedily builds a four-week three-shift rota under rest-time, weekly-cap and days-off rules, then reports fairness and verifies the rest rule.
+- time_zones: converts UTC call times to local times in zones with EU/US daylight-saving rules and half-hour offsets, and finds the best common hour.
+- durations: a Duration type with + - * / and ordering, parsed from several notations, used for album running times and lap statistics.
+- activity_heatmap: renders half a year of deterministic daily activity as a weekday-by-week glyph grid with quartile levels, streaks and totals.
+- cron_schedule: parses cron expressions (lists, ranges, steps, names) with typed errors and computes upcoming firing times with the dom/dow OR rule.
+- fiscal_quarters: assigns sales to calendar, April- and October-start fiscal quarters and to a 4-4-5 retail calendar, with growth and regional shares.
+- billing_cycles: issues subscription invoices on month-end-clamped anniversaries, with prorated credits on plan changes and refunds on cancellation.
+- project_gantt: schedules dependent tasks in working days via DFS topological sort, computes slack and the critical path, draws a Gantt chart and rejects cycles.
+- timesheet: pairs clock IN/OUT punches into shifts across midnight, reports broken sequences, and computes night minutes, daily/weekly overtime and pay.
+- moon_phases: fixed-point (micro-day) moon ages and phases, a glyph calendar for one month, 2026 full moons with names and blue moon, and sexagenary years.
+- calendar_systems: Gregorian, Julian, tabular Islamic and Maya Long Count types sharing a dispatching mixin, converted through Julian Day Numbers with round-trip checks.
+- parking_fees: computes parking charges per calendar day with day/night block tariffs, daily caps, weekend rates, grace periods and pass holders.

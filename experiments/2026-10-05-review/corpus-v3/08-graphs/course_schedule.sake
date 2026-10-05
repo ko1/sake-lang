@@ -1,0 +1,109 @@
+class CycleError < StandardError
+  attr_reader remaining
+end
+
+class UnknownCourse < StandardError
+  attr_reader course
+end
+
+class Course
+  attr_reader code, credits, prereqs
+end
+
+def catalog(entries)
+  courses = Hash[]
+  Array.each(entries) do |line|
+    code, rest = String.split(line, ":")
+    credits_s, prereq_s = String.split(rest, "|")
+    prereqs = Array.map(String.split(String.strip(prereq_s || ""), ",")) { |s| String.strip(s) }
+    prereqs = Array.reject(prereqs) { |s| String.empty?(s) }
+    courses[String.strip(code)] = Course.new(String.strip(code), String.to_i(credits_s), prereqs)
+  end
+  courses
+end
+
+def check_known(courses)
+  Hash.each_value(courses) do |c|
+    Array.each(Course.get_prereqs(c)) do |pre|
+      unless Hash.key?(courses, pre)
+        raise UnknownCourse.new("#{Course.get_code(c)} needs unknown #{pre}", pre)
+      end
+    end
+  end
+end
+
+# Kahn's algorithm; courses that become available together form one term.
+def plan_terms(courses)
+  check_known(courses)
+  indeg = Hash.new(0)
+  dependents = Hash[]
+  Hash.each(courses) do |code, c|
+    indeg[code] += 0
+    Array.each(Course.get_prereqs(c)) do |pre|
+      indeg[code] += 1
+      dependents[pre] ||= Array[]
+      Array.push(dependents[pre], code)
+    end
+  end
+  ready = Array.sort(Array.select(Hash.keys(indeg)) { |k| indeg[k] == 0 })
+  terms = Array[]
+  placed = 0
+  until Array.empty?(ready)
+    Array.push(terms, ready)
+    placed += Array.size(ready)
+    nxt = Array[]
+    Array.each(ready) do |code|
+      Array.each(Hash.fetch(dependents, code, Array[])) do |d|
+        indeg[d] -= 1
+        Array.push(nxt, d) if indeg[d] == 0
+      end
+    end
+    ready = Array.sort(nxt)
+  end
+  if placed < Hash.size(courses)
+    left = Array.sort(Array.select(Hash.keys(indeg)) { |k| indeg[k] > 0 })
+    raise CycleError.new("cyclic prerequisites", left)
+  end
+  terms
+end
+
+def report(name, entries)
+  puts("== #{name}")
+  courses = catalog(entries)
+  begin
+    terms = plan_terms(courses)
+    Array.each_with_index(terms) do |term, i|
+      credits = Array.sum(Array.map(term) { |c| Course.get_credits(courses[c]) })
+      puts(format("term %d (%2d cr): %s", i + 1, credits, Array.join(term, ", ")))
+    end
+    heavy = Array.max_by(terms) { |t| Array.size(t) }
+    puts("widest term has #{Array.size(heavy)} courses")
+  rescue CycleError => e
+    puts("error: #{Exception.message(e)}: #{Array.join(CycleError.get_remaining(e), " ")}")
+  rescue UnknownCourse => e
+    puts("error: #{Exception.message(e)} (#{UnknownCourse.get_course(e)})")
+  end
+end
+
+cs = Array[
+  "CS101: 4 |",
+  "CS102: 4 | CS101",
+  "MATH1: 3 |",
+  "MATH2: 3 | MATH1",
+  "CS201: 4 | CS102, MATH1",
+  "CS202: 4 | CS102",
+  "CS301: 3 | CS201, CS202",
+  "CS310: 3 | CS201, MATH2",
+  "CS350: 3 | CS202",
+  "CS401: 6 | CS301, CS310, CS350",
+  "ART1: 2"
+]
+report("computer science", cs)
+
+loopy = Array[
+  "A1: 3 |", "B1: 3 | A1, C1", "C1: 3 | D1", "D1: 3 | B1", "E1: 3 | A1"
+]
+report("loopy", loopy)
+
+typo = Array["X1: 3 |", "X2: 3 | X1, X9"]
+report("typo", typo)

@@ -1,0 +1,80 @@
+# Parse quantities like "12.5 kg" or "3ft", convert between compatible units, and reject bad input.
+class QuantityFormatError < StandardError
+  attr_reader input
+end
+
+class UnknownUnit < StandardError
+  attr_reader unit
+end
+
+class IncompatibleUnits < StandardError
+  attr_reader from, to
+end
+
+class Quantity
+  attr_reader value, unit
+end
+
+# unit => [dimension, factor to the base unit]
+def units = once do
+  Hash[
+    "mm" => [:length, 0.001], "cm" => [:length, 0.01], "m" => [:length, 1.0], "km" => [:length, 1000.0],
+    "in" => [:length, 0.0254], "ft" => [:length, 0.3048],
+    "g" => [:mass, 0.001], "kg" => [:mass, 1.0], "lb" => [:mass, 0.45359237],
+    "s" => [:time, 1.0], "min" => [:time, 60.0], "h" => [:time, 3600.0]
+  ]
+end
+
+def aliases = once { Hash["meter" => "m", "meters" => "m", "feet" => "ft", "foot" => "ft", "hr" => "h", "sec" => "s"] }
+
+def parse_quantity(text)
+  m = String.match(String.strip(text), /\A(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)\z/)
+  raise QuantityFormatError.new("cannot parse '#{text}'", text) if m == nil
+  unit = String.downcase(m[2])
+  unit = Hash.fetch(aliases, unit, unit)
+  raise UnknownUnit.new("unknown unit '#{m[2]}'", m[2]) unless Hash.key?(units, unit)
+  Quantity.new(Float(m[1]), unit)
+end
+
+def convert(q, to)
+  raise UnknownUnit.new("unknown unit '#{to}'", to) unless Hash.key?(units, to)
+  from_dim, from_factor = units[Quantity.get_unit(q)]
+  to_dim, to_factor = units[to]
+  if from_dim != to_dim
+    raise IncompatibleUnits.new("cannot convert #{from_dim} to #{to_dim}", Quantity.get_unit(q), to)
+  end
+  raise ArgumentError, "negative #{from_dim}" if Quantity.get_value(q) < 0
+  Quantity.new(Quantity.get_value(q) * from_factor / to_factor, to)
+end
+
+def fmt(q) = "#{Float.round(Quantity.get_value(q), 3)} #{Quantity.get_unit(q)}"
+
+requests = Array[
+  ["12.5 kg", "lb"], ["3ft", "cm"], ["90 min", "h"], ["2 meters", "in"],
+  ["5 parsecs", "m"], ["abc kg", "g"], ["10 kg", "m"], ["7 m", "yd"],
+  ["-4 s", "min"], ["1500 g", "kg"], ["  42 Feet ", "m"], ["1.5.2 m", "cm"]
+]
+
+errors = Hash[]
+converted = Array[]
+Array.each(requests) do |text, target|
+  q = parse_quantity(text)
+  r = convert(q, target)
+  Array.push(converted, r)
+  puts(format("%-12s -> %s", fmt(q), fmt(r)))
+rescue QuantityFormatError, UnknownUnit => e
+  kind = (e in QuantityFormatError) ? "format" : "unit"
+  errors[kind] = Hash.fetch(errors, kind, 0) + 1
+  puts(format("%-12s !! %s", String.strip(text), Exception.message(e)))
+rescue IncompatibleUnits => e
+  errors["dimension"] = Hash.fetch(errors, "dimension", 0) + 1
+  puts(format("%-12s !! %s (%s -> %s)", String.strip(text), Exception.message(e), IncompatibleUnits.get_from(e), IncompatibleUnits.get_to(e)))
+rescue ArgumentError
+  errors["value"] = Hash.fetch(errors, "value", 0) + 1
+  puts(format("%-12s !! rejected", String.strip(text)))
+end
+
+lengths = Array.select(converted) { units[Quantity.get_unit(it)][0] == :length }
+total_m = Array.sum(lengths) { Quantity.get_value(convert(it, "m")) }
+puts("#{Array.size(converted)} converted; total length #{Float.round(total_m, 2)} m")
+puts("errors: #{Array.join(Array.map(Array.sort(Hash.keys(errors))) { |k| "#{k}=#{errors[k]}" }, " ")}")

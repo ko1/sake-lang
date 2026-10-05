@@ -1,0 +1,146 @@
+class BadFraction < Exception
+  attr_reader text
+end
+
+class Frac
+  attr_reader num, den
+  include Arithmetic
+  include Comparable
+
+  def of(n, d)
+    raise ZeroDivisionError, "zero denominator" if d == 0
+    g = Integer.gcd(n, d)
+    g = -g if d < 0
+    Frac.new(n / g, d / g)
+  end
+
+  def parse(s)
+    m = String.match(String.strip(s), /\A(-?\d+)(?:\/(\d+))?\z/)
+    raise BadFraction.new("cannot parse #{Kernel.inspect(s)}", s) if m == nil
+    d = m[2]
+    of(String.to_i(m[1]), d ? String.to_i(d) : 1)
+  end
+
+  def lift(b) = (b in Integer) ? Frac.new(b, 1) : b
+
+  def +(a, b)
+    b = lift(b)
+    of(@num * Frac.get_den(b) + Frac.get_num(b) * @den, @den * Frac.get_den(b))
+  end
+  def -(a, b)
+    b = lift(b)
+    of(@num * Frac.get_den(b) - Frac.get_num(b) * @den, @den * Frac.get_den(b))
+  end
+  def *(a, b)
+    b = lift(b)
+    of(@num * Frac.get_num(b), @den * Frac.get_den(b))
+  end
+  def /(a, b)
+    b = lift(b)
+    of(@num * Frac.get_den(b), @den * Frac.get_num(b))
+  end
+  def **(a, n) = of(@num ** n, @den ** n)
+  def <=>(a, b)
+    b = lift(b)
+    (@num * Frac.get_den(b)) <=> (Frac.get_num(b) * @den)
+  end
+
+  def reciprocal(a) = of(@den, @num)
+  def floor(a) = @num / @den
+  def to_f(a) = @num / (@den * 1.0)
+  def to_s(a) = @den == 1 ? Integer.to_s(@num) : "#{@num}/#{@den}"
+
+  def mixed(a)
+    whole = floor(a)
+    rest = a - whole
+    return to_s(a) if whole == 0 || Frac.get_num(rest) == 0
+    "#{whole} #{rest}"
+  end
+
+  def egyptian(a)
+    parts = Array[]
+    rest = a
+    while Frac.get_num(rest) > 0
+      d = Integer.ceildiv(Frac.get_den(rest), Frac.get_num(rest))
+      unit = Frac.new(1, d)
+      Array.push(parts, unit)
+      rest -= unit
+    end
+    parts
+  end
+
+  def continued(a)
+    terms = Array[]
+    cur = a
+    while true
+      f = floor(cur)
+      Array.push(terms, f)
+      rest = cur - f
+      break if Frac.get_num(rest) == 0
+      cur = reciprocal(rest)
+    end
+    terms
+  end
+end
+
+def harmonic(n) = Range.reduce(1..n, Frac.of(0, 1)) { |acc, k| acc + Frac.new(1, k) }
+
+def farey(n)
+  seen = Array[]
+  Range.each(1..n) do |d|
+    Range.each(0..d) do |k|
+      f = Frac.of(k, d)
+      Array.push(seen, f) unless Array.include?(seen, f)
+    end
+  end
+  Array.sort(seen)
+end
+
+inputs = Array["3/4", "-2/6", "7", "10/4", " 22/7 ", "5/0", "x/2", "355/113"]
+fracs = Array[]
+Array.each(inputs) do |s|
+  begin
+    f = Frac.parse(s)
+    Array.push(fracs, f)
+    puts(format("%-9s -> %-7s mixed %-8s %.5f", "'#{s}'", f, Frac.mixed(f), Frac.to_f(f)))
+  rescue BadFraction => e
+    puts("'#{s}' -> error: #{Exception.message(e)}")
+  rescue ZeroDivisionError => e
+    puts("'#{s}' -> error: #{Exception.message(e)}")
+  end
+end
+
+puts("sorted: #{Array.join(Array.sort(fracs), " < ")}")
+puts("min #{Array.min(fracs)}, max #{Array.max(fracs)}")
+total = Array.reduce(fracs, Frac.of(0, 1)) { |acc, f| acc + f }
+puts("sum: #{total} = #{Frac.mixed(total)}")
+product = Array.reduce(fracs, Frac.of(1, 1)) { |acc, f| acc * f }
+puts("product: #{product}")
+
+a = Frac.of(3, 4)
+b = Frac.of(5, 6)
+puts("#{a} + #{b} = #{a + b}")
+puts("#{a} - #{b} = #{a - b}")
+puts("#{a} * #{b} = #{a * b}")
+puts("#{a} / #{b} = #{a / b}")
+puts("#{a} ^ 3 = #{a ** 3}")
+puts("#{a} + 2 = #{a + 2}, #{a} * 4 = #{a * 4}")
+puts("#{a} < #{b}: #{a < b}; #{a} == 6/8: #{a == Frac.of(6, 8)}; #{b} >= 1: #{b >= 1}")
+
+puts("== egyptian ==")
+Array.each(Array[Frac.of(4, 13), Frac.of(5, 6), Frac.of(7, 15)]) do |f|
+  puts("#{f} = #{Array.join(Frac.egyptian(f), " + ")}")
+end
+
+puts("== continued fractions ==")
+Array.each(Array[Frac.of(355, 113), Frac.of(415, 93), Frac.of(-7, 3)]) do |f|
+  puts("#{f} = [#{Array.join(Frac.continued(f), "; ")}]")
+end
+
+puts("== harmonic ==")
+Array.each(Array[1, 2, 5, 10]) { |n| puts("H(#{n}) = #{harmonic(n)}") }
+first_over_2 = Range.find(1..20) { |n| harmonic(n) > 2 }
+puts("first H(n) > 2: n = #{first_over_2}")
+
+puts("== Farey F5 ==")
+puts(Array.join(farey(5), " "))

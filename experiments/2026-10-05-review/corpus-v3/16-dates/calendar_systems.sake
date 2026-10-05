@@ -1,0 +1,143 @@
+# Converts between calendar systems through the Julian Day Number:
+# Gregorian, Julian, the tabular Islamic calendar and the Maya Long Count.
+# Each calendar is its own type; shared behaviour lives in a mixin module.
+
+module CalendarDate
+  def weekdays = once { Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+
+  # Needs `to_jdn` and `to_s` from the including type.
+  def jdn(x) = to_jdn(x)
+  def weekday(x) = weekdays[to_jdn(x) % 7]
+  def days_until(x, other_jdn) = other_jdn - to_jdn(x)
+  def describe(x) = "#{to_s(x)} (#{weekday(x)}, JDN #{to_jdn(x)})"
+end
+
+class Gregorian
+  include CalendarDate
+  attr_reader year, month, day
+
+  def to_jdn(g)
+    a = (14 - @month) / 12
+    y = @year + 4800 - a
+    m = @month + 12 * a - 3
+    @day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045
+  end
+
+  def from_jdn(j)
+    a = j + 32044
+    b = (4 * a + 3) / 146097
+    c = a - 146097 * b / 4
+    d = (4 * c + 3) / 1461
+    e = c - 1461 * d / 4
+    m = (5 * e + 2) / 153
+    Gregorian.new(100 * b + d - 4800 + m / 10, m + 3 - 12 * (m / 10), e - (153 * m + 2) / 5 + 1)
+  end
+
+  def to_s(g) = format("%04d-%02d-%02d", @year, @month, @day)
+end
+
+class Julian
+  include CalendarDate
+  attr_reader year, month, day
+
+  def to_jdn(g)
+    a = (14 - @month) / 12
+    y = @year + 4800 - a
+    m = @month + 12 * a - 3
+    @day + (153 * m + 2) / 5 + 365 * y + y / 4 - 32083
+  end
+
+  def from_jdn(j)
+    c = j + 32082
+    d = (4 * c + 3) / 1461
+    e = c - 1461 * d / 4
+    m = (5 * e + 2) / 153
+    Julian.new(d - 4800 + m / 10, m + 3 - 12 * (m / 10), e - (153 * m + 2) / 5 + 1)
+  end
+
+  def to_s(g) = format("%04d-%02d-%02d Julian", @year, @month, @day)
+end
+
+class Islamic
+  include CalendarDate
+  attr_reader year, month, day
+
+  def epoch = 1948440
+  def months = once do
+    Array["Muharram", "Safar", "Rabi I", "Rabi II", "Jumada I", "Jumada II",
+          "Rajab", "Shaban", "Ramadan", "Shawwal", "Dhu al-Qadah", "Dhu al-Hijjah"]
+  end
+
+  def to_jdn(h)
+    @day + (59 * (@month - 1) + 1) / 2 + (@year - 1) * 354 + (3 + 11 * @year) / 30 + epoch - 1
+  end
+
+  def from_jdn(j)
+    year = (30 * (j - epoch) + 10646) / 10631
+    month = Array.min(Array[12, (2 * (j - (29 + Islamic.to_jdn(Islamic.new(year, 1, 1)))) + 58) / 59 + 1])
+    day = j - Islamic.to_jdn(Islamic.new(year, month, 1)) + 1
+    Islamic.new(year, month, day)
+  end
+
+  def to_s(h) = "#{@day} #{months[@month - 1]} #{@year} AH"
+end
+
+class LongCount
+  include CalendarDate
+  attr_reader baktun, katun, tun, uinal, kin
+
+  def correlation = 584283
+
+  def to_jdn(l) = correlation + @baktun * 144000 + @katun * 7200 + @tun * 360 + @uinal * 20 + @kin
+
+  def from_jdn(j)
+    n = j - correlation
+    baktun, n = Integer.divmod(n, 144000)
+    katun, n = Integer.divmod(n, 7200)
+    tun, n = Integer.divmod(n, 360)
+    uinal, kin = Integer.divmod(n, 20)
+    LongCount.new(baktun, katun, tun, uinal, kin)
+  end
+
+  def to_s(l) = "#{@baktun}.#{@katun}.#{@tun}.#{@uinal}.#{@kin}"
+end
+
+dates = Array[
+  ["Experiment day", Gregorian.new(2026, 10, 1)],
+  ["Gregorian reform", Gregorian.new(1582, 10, 15)],
+  ["Day before reform", Julian.new(1582, 10, 4)],
+  ["Hijra epoch", Islamic.new(1, 1, 1)],
+  ["Ramadan 1448 starts", Islamic.new(1448, 9, 1)],
+  ["13th baktun", LongCount.new(13, 0, 0, 0, 0)],
+  ["Unix epoch", Gregorian.new(1970, 1, 1)]
+]
+
+today_jdn = Gregorian.to_jdn(Gregorian.new(2026, 10, 1))
+Array.each(dates) do |label, date|
+  j = CalendarDate.jdn(date)
+  puts("#{label}: #{CalendarDate.describe(date)}")
+  puts("    = #{Gregorian.from_jdn(j)} | #{Julian.from_jdn(j)} | #{Islamic.from_jdn(j)} | #{LongCount.from_jdn(j)}")
+  puts("    #{CalendarDate.days_until(date, today_jdn)} days before 2026-10-01") if j < today_jdn
+end
+
+# Julian-Gregorian drift by century.
+puts
+puts("Drift (Julian date behind Gregorian):")
+Array.each(Array[1500, 1700, 1800, 1900, 2100]) do |y|
+  g = Gregorian.new(y, 3, 1)
+  jl = Julian.from_jdn(Gregorian.to_jdn(g))
+  drift = Gregorian.to_jdn(Gregorian.new(y, Julian.get_month(jl), Julian.get_day(jl))) - Gregorian.to_jdn(g)
+  puts(format("  %d: Gregorian %s is Julian %s (%d days)", y, Gregorian.to_s(g), Julian.to_s(jl), -drift))
+end
+
+# Round trips and the start of each Islamic month of 1448.
+bad = 0
+Range.step(2400000..2500000, 997) do |j|
+  bad += 1 if Gregorian.to_jdn(Gregorian.from_jdn(j)) != j
+  bad += 1 if Julian.to_jdn(Julian.from_jdn(j)) != j
+  bad += 1 if Islamic.to_jdn(Islamic.from_jdn(j)) != j
+  bad += 1 if LongCount.to_jdn(LongCount.from_jdn(j)) != j
+end
+puts("Round-trip failures: #{bad}")
+starts = Range.map(1..12) { |m| Gregorian.from_jdn(Islamic.to_jdn(Islamic.new(1448, m, 1))) }
+puts("1448 AH month starts: #{Array.join(Array.map(starts) { |g| Gregorian.to_s(g)[5..] }, " ")}")

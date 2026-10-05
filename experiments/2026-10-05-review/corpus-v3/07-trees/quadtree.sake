@@ -1,0 +1,115 @@
+class Rect
+  attr_reader x, y, w, h
+
+  def contains?(r, p) = @x <= Pt.get_x(p) && Pt.get_x(p) < @x + @w && @y <= Pt.get_y(p) && Pt.get_y(p) < @y + @h
+  def intersects?(r, o) = @x < Rect.get_x(o) + Rect.get_w(o) && Rect.get_x(o) < @x + @w && @y < Rect.get_y(o) + Rect.get_h(o) && Rect.get_y(o) < @y + @h
+  def to_s(r) = "(#{@x},#{@y} #{@w}x#{@h})"
+end
+
+class Pt
+  attr_reader x, y, label
+end
+
+class OutOfBounds < StandardError
+  attr_reader point
+end
+
+def capacity = 3
+def max_depth = 5
+
+class Quad
+  attr_reader bounds, depth, points = nil, kids = nil
+
+  def initialize(q)
+    @points = Array[]
+    @kids = Array[]
+  end
+
+  def subdivide(q)
+    b = @bounds
+    hw = Rect.get_w(b) / 2
+    hh = Rect.get_h(b) / 2
+    x = Rect.get_x(b)
+    y = Rect.get_y(b)
+    Array.push(@kids, Quad.new(Rect.new(x, y, hw, hh), @depth + 1), Quad.new(Rect.new(x + hw, y, hw, hh), @depth + 1),
+               Quad.new(Rect.new(x, y + hh, hw, hh), @depth + 1), Quad.new(Rect.new(x + hw, y + hh, hw, hh), @depth + 1))
+    old = @points
+    @points = Array[]
+    Array.each(old) { |p| insert(q, p) }
+  end
+
+  def insert(q, p)
+    raise OutOfBounds.new("#{Pt.get_label(p)} at (#{Pt.get_x(p)},#{Pt.get_y(p)}) is outside #{@bounds}", p) unless Rect.contains?(@bounds, p)
+    if Array.empty?(@kids)
+      if Array.size(@points) < capacity || @depth == max_depth
+        Array.push(@points, p)
+        return q
+      end
+      subdivide(q)
+    end
+    kid = Array.find(@kids) { |k| Rect.contains?(Quad.get_bounds(k), p) }
+    insert(kid, p)
+  end
+
+  def query(q, area, out, stats)
+    stats[:visited] += 1
+    return out unless Rect.intersects?(@bounds, area)
+    Array.each(@points) { |p| Array.push(out, p) if Rect.contains?(area, p) }
+    Array.each(@kids) { |k| query(k, area, out, stats) }
+    out
+  end
+
+  def count(q) = Array.size(@points) + Array.sum(Array.map(@kids) { |k| count(k) })
+  def nodes(q) = 1 + Array.sum(Array.map(@kids) { |k| nodes(k) })
+  def height(q) = Array.empty?(@kids) ? 1 : 1 + Array.max(Array.map(@kids) { |k| height(k) })
+
+  def dump(q, indent)
+    if Array.empty?(@kids)
+      labels = Array.map(@points) { |p| Pt.get_label(p) }
+      puts("#{indent}#{@bounds} #{Array.empty?(labels) ? "-" : Array.join(labels, " ")}")
+    else
+      puts("#{indent}#{@bounds}")
+      Array.each(@kids) { |k| dump(k, indent + "  ") }
+    end
+  end
+end
+
+world = Quad.new(Rect.new(0, 0, 64, 64), 0)
+readings = <<~TXT
+  a 3 4
+  b 60 2
+  c 10 12
+  d 12 10
+  e 33 40
+  f 35 41
+  g 34 44
+  h 36 46
+  i 50 50
+  j 8 9
+  k 11 11
+  l 70 5
+  m 9 13
+  n 62 62
+TXT
+String.each_line(readings) do |line|
+  label, x, y = String.split(line, " ")
+  begin
+    Quad.insert(world, Pt.new(String.to_i(x), String.to_i(y), label))
+  rescue OutOfBounds => e
+    puts("skip: #{Exception.message(e)}")
+  end
+end
+puts("points #{Quad.count(world)}, nodes #{Quad.nodes(world)}, height #{Quad.height(world)}")
+Quad.dump(world, "")
+
+areas = Array[Rect.new(0, 0, 16, 16), Rect.new(30, 38, 8, 8), Rect.new(40, 0, 24, 24), Rect.new(0, 0, 64, 64)]
+Array.each(areas) do |area|
+  stats = Hash[visited: 0]
+  hits = Quad.query(world, area, Array[], stats)
+  names = Array.sort(Array.map(hits) { |p| Pt.get_label(p) })
+  puts("query #{area}: #{Array.size(hits)} hit(s) [#{Array.join(names, ",")}] visiting #{stats[:visited]} of #{Quad.nodes(world)} nodes")
+end
+
+dense = Quad.new(Rect.new(0, 0, 64, 64), 0)
+Integer.times(6) { |i| Quad.insert(dense, Pt.new(1, 1, "p#{i}")) }
+puts("same spot x6: nodes #{Quad.nodes(dense)}, height #{Quad.height(dense)} (depth capped at #{max_depth})")

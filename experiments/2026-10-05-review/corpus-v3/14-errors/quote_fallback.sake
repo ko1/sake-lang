@@ -1,0 +1,86 @@
+# Fetch currency quotes from providers in priority order under a time budget, falling back to a stale cache.
+class DeadlineExceeded < StandardError
+  attr_reader elapsed
+end
+
+class ProviderDown < StandardError
+  attr_reader provider
+end
+
+class BadQuote < StandardError
+  attr_reader provider, value
+end
+
+class Provider
+  attr_reader name, latency, rates
+  attr_accessor down
+end
+
+class Clock
+  attr_accessor now
+end
+
+def fetch_quote(provider, pair, clock, deadline)
+  Clock.set_now(clock, Clock.get_now(clock) + Provider.get_latency(provider))
+  if Clock.get_now(clock) > deadline
+    raise DeadlineExceeded.new("#{Provider.get_name(provider)} too slow", Clock.get_now(clock))
+  end
+  raise ProviderDown.new("#{Provider.get_name(provider)} unavailable", Provider.get_name(provider)) if Provider.get_down(provider)
+  rate = Provider.get_rates(provider)[pair]
+  raise KeyError, "#{pair} not quoted" if rate == nil
+  raise BadQuote.new("non-positive rate", Provider.get_name(provider), rate) if rate <= 0
+  rate
+end
+
+def quote_with_fallback(providers, pair, budget, cache, trail)
+  clock = Clock.new(0)
+  Array.each(providers) do |prov|
+    rate = fetch_quote(prov, pair, clock, budget)
+    Array.push(trail, "#{Provider.get_name(prov)}:ok")
+    cache[pair] = rate
+    return [rate, Provider.get_name(prov)]
+  rescue DeadlineExceeded => e
+    Array.push(trail, "#{Provider.get_name(prov)}:timeout@#{DeadlineExceeded.get_elapsed(e)}")
+    return fallback(cache, pair, trail)
+  rescue ProviderDown, KeyError
+    Array.push(trail, "#{Provider.get_name(prov)}:skip")
+  rescue BadQuote => e
+    Array.push(trail, "#{Provider.get_name(prov)}:bad(#{BadQuote.get_value(e)})")
+  end
+  fallback(cache, pair, trail)
+end
+
+def fallback(cache, pair, trail)
+  rate = Hash.fetch(cache, pair)
+  Array.push(trail, "cache")
+  [rate, "cache"]
+end
+
+providers = Array[
+  Provider.new("fastfx", 40, Hash["USD/JPY" => 149.2, "EUR/USD" => 1.071, "GBP/USD" => 0.0], false),
+  Provider.new("bankfeed", 120, Hash["USD/JPY" => 149.25, "EUR/JPY" => 159.8, "GBP/USD" => 1.262], false),
+  Provider.new("slowcorp", 300, Hash["CHF/JPY" => 168.4, "AUD/USD" => 0.655], false)
+]
+cache = Hash["USD/JPY" => 148.9, "CHF/JPY" => 167.0]
+
+requests = Array[["USD/JPY", 500], ["EUR/JPY", 500], ["GBP/USD", 500], ["CHF/JPY", 200],
+                 ["AUD/USD", 200], ["AUD/USD", 1000], ["NZD/USD", 1000]]
+
+def run(providers, requests, cache)
+  Array.each(requests) do |pair, budget|
+    trail = Array[]
+    begin
+      rate, source = quote_with_fallback(providers, pair, budget, cache, trail)
+      puts(format("%-8s %5dms %9.3f from %-9s [%s]", pair, budget, rate, source, Array.join(trail, " ")))
+    rescue KeyError
+      puts(format("%-8s %5dms       n/a no quote    [%s]", pair, budget, Array.join(trail, " ")))
+    end
+  end
+end
+
+run(providers, requests, cache)
+puts("-- fastfx goes down")
+Provider.set_down(providers[0], true)
+run(providers, Array[["USD/JPY", 100], ["EUR/USD", 500], ["USD/JPY", 500]], cache)
+spread = (cache["USD/JPY"] rescue 0.0) - Hash.fetch(cache, "EUR/JPY", 0.0)
+puts("cached pairs: #{Array.join(Array.sort(Hash.keys(cache)), " ")}; spread #{Float.round(spread, 2)}")

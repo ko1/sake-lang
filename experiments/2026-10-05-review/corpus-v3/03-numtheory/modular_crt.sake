@@ -1,0 +1,122 @@
+# Modular arithmetic with a Mod type (operators + - * / **), modular inverses,
+# and the Chinese Remainder Theorem for systems of congruences.
+
+class NotInvertible < Exception
+  attr_reader value, modulus
+end
+
+class ModulusMismatch < Exception
+end
+
+class Mod
+  attr_reader v, m
+  include Arithmetic
+  include Comparable
+
+  def make(v, m) = Mod.new(v % m, m)
+
+  def check(a, b)
+    raise ModulusMismatch, "moduli #{@m} and #{Mod.get_m(b)} differ" if @m != Mod.get_m(b)
+  end
+
+  def +(a, b)
+    check(a, b)
+    make(@v + Mod.get_v(b), @m)
+  end
+
+  def -(a, b)
+    check(a, b)
+    make(@v - Mod.get_v(b), @m)
+  end
+
+  def *(a, b)
+    check(a, b)
+    make(@v * Mod.get_v(b), @m)
+  end
+
+  def /(a, b) = a * inverse(b)
+
+  def **(a, e) = Mod.new(Integer.pow(@v, e, @m), @m)
+
+  def <=>(a, b) = @v <=> Mod.get_v(b)
+
+  def inverse(a)
+    old_r, r = @v, @m
+    old_s, s = 1, 0
+    while r != 0
+      q = old_r / r
+      old_r, r = r, old_r - q * r
+      old_s, s = s, old_s - q * s
+    end
+    raise NotInvertible.new("#{@v} has no inverse mod #{@m}", @v, @m) if old_r != 1
+    make(old_s, @m)
+  end
+
+  def to_s(a) = "#{@v} (mod #{@m})"
+end
+
+# x = r_i (mod m_i) for each [r, m]; moduli need not be coprime
+def crt(congruences)
+  x = 0
+  m = 1
+  Array.each(congruences) do |r, mi|
+    g = Integer.gcd(m, mi)
+    return nil if (r - x) % g != 0
+    lcm = m / g * mi
+    step = Mod.inverse(Mod.make(m / g, mi / g))
+    t = ((r - x) / g * Mod.get_v(step)) % (mi / g)
+    x = (x + m * t) % lcm
+    m = lcm
+  end
+  [x, m]
+end
+
+a = Mod.make(17, 23)
+b = Mod.make(9, 23)
+puts("a = #{a}, b = #{b}")
+puts("a + b = #{a + b}")
+puts("a - b = #{a - b}")
+puts("a * b = #{a * b}")
+puts("a / b = #{a / b}")
+puts("a ** 22 = #{a ** 22}")
+puts("(a / b) * b == a: #{(a / b) * b == a}")
+puts("a > b: #{a > b}")
+
+puts("inverses mod 26:")
+Range.each(1..12) do |k|
+  begin
+    inv = Mod.inverse(Mod.make(k, 26))
+    puts("  #{k} -> #{Mod.get_v(inv)}")
+  rescue NotInvertible => e
+    puts("  #{k} -> none (gcd #{Integer.gcd(NotInvertible.get_value(e), NotInvertible.get_modulus(e))})")
+  end
+end
+
+begin
+  puts(Mod.make(3, 7) + Mod.make(3, 11))
+rescue ModulusMismatch => e
+  puts("error: #{Exception.message(e)}")
+end
+
+residues = Range.map(0..10) { |k| Mod.make(k * k, 11) }
+qr = Array.uniq(Array.map(Array.sort(residues)) { |r| Mod.get_v(r) })
+puts("quadratic residues mod 11: #{qr}")
+puts("largest: #{Array.max(residues)}")
+
+systems = Array[
+  Array[[2, 3], [3, 5], [2, 7]],
+  Array[[1, 4], [3, 6]],
+  Array[[1, 4], [2, 6]],
+  Array[[0, 7], [3, 11], [9, 13], [1, 2]]
+]
+puts("CRT:")
+Array.each(systems) do |sys|
+  desc = Array.join(Array.map(sys) { |r, m| "x=#{r} (#{m})" }, ", ")
+  if (res = crt(sys))
+    x, m = res
+    ok = Array.all?(sys) { |r, mi| x % mi == r % mi }
+    puts("  #{desc} => x = #{x} mod #{m} #{ok ? "ok" : "WRONG"}")
+  else
+    puts("  #{desc} => no solution")
+  end
+end

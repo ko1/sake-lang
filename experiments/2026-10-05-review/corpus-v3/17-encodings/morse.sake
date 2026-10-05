@@ -1,0 +1,92 @@
+# Morse code: text -> dots/dashes -> on/off keying signal, and back again.
+# Unknown characters are collected; a damaged signal decodes to "?" where needed.
+
+def morse_table
+  Hash["A" => ".-", "B" => "-...", "C" => "-.-.", "D" => "-..", "E" => ".", "F" => "..-.",
+       "G" => "--.", "H" => "....", "I" => "..", "J" => ".---", "K" => "-.-", "L" => ".-..",
+       "M" => "--", "N" => "-.", "O" => "---", "P" => ".--.", "Q" => "--.-", "R" => ".-.",
+       "S" => "...", "T" => "-", "U" => "..-", "V" => "...-", "W" => ".--", "X" => "-..-",
+       "Y" => "-.--", "Z" => "--..", "0" => "-----", "1" => ".----", "2" => "..---",
+       "3" => "...--", "4" => "....-", "5" => ".....", "6" => "-....", "7" => "--...",
+       "8" => "---..", "9" => "----.", "." => ".-.-.-", "," => "--..--", "?" => "..--.."]
+end
+
+def to_morse(text, table, unknown)
+  words = String.split(String.upcase(text), " ")
+  coded = Array.map(words) do |word|
+    letters = Array.filter_map(String.chars(word)) do |c|
+      code = table[c]
+      Set.add(unknown, c) if code == nil
+      code
+    end
+    Array.join(letters, " ")
+  end
+  Array.join(coded, " / ")
+end
+
+# timing: dot = 1 unit on, dash = 3 on, gap inside letter 1 off, between letters 3, words 7
+def to_signal(morse)
+  out = ""
+  Array.each_with_index(String.split(morse, " / ")) do |word, wi|
+    out += "_______" if wi > 0
+    Array.each_with_index(String.split(word, " ")) do |letter, li|
+      out += "___" if li > 0
+      Array.each_with_index(String.chars(letter)) do |sym, si|
+        out += "_" if si > 0
+        out += sym == "." ? "=" : "==="
+      end
+    end
+  end
+  out
+end
+
+def from_signal(signal)
+  morse = ""
+  Array.each(String.scan(signal, /=+|_+/)) do |run|
+    n = String.size(run)
+    if String.start_with?(run, "=")
+      morse += n >= 2 ? "-" : "."
+    elsif n >= 6
+      morse += " / "
+    elsif n >= 2
+      morse += " "
+    end
+  end
+  morse
+end
+
+def from_morse(morse, table)
+  inverse = Hash.invert(table)
+  words = Array.map(String.split(morse, " / ")) do |word|
+    Array.join(Array.map(String.split(word, " ")) { |code| inverse[code] || "?" }, "")
+  end
+  Array.join(words, " ")
+end
+
+table = morse_table
+messages = Array["SOS", "Hello, World", "What hath God wrought?", "Meet at 1030 sharp", "Café #9"]
+Array.each(messages) do |msg|
+  unknown = Set[]
+  morse = to_morse(msg, table, unknown)
+  signal = to_signal(morse)
+  back = from_morse(from_signal(signal), table)
+  puts(msg)
+  puts("  morse : #{morse}")
+  puts("  units : #{String.size(signal)} (#{String.count(signal, "=")} on)")
+  puts("  decode: #{back}")
+  puts("  skipped: #{Array.join(Array.sort(Set.to_a(unknown)), " ")}") unless Set.empty?(unknown)
+end
+
+puts("signal sample: #{to_signal(to_morse("PARIS", table, Set[]))}")
+
+# a noisy line: one dash stretched, one gap dropped, one unknown pattern
+noisy = "===_===_===___=_=_=____=====_=====_=====___=_=_=_=_=_=_="
+puts("noisy decode: #{from_morse(from_signal(noisy), table)}")
+
+lengths = Hash.transform_values(table) { |code| String.size(code) }
+longest = Hash.max_by(lengths) { |_, n| n }
+if longest
+  ch, n = longest
+  puts("longest code: #{ch} (#{n} symbols)")
+end
+puts("letters with 4 symbols: #{Array.join(Array.sort(Hash.keys(Hash.select(lengths) { |c, n| n == 4 && String.match?(c, /[A-Z]/) })), "")}")

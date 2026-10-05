@@ -1,0 +1,81 @@
+def text
+  "In the beginning the universe was created. This has made a lot of people very angry " +
+  "and been widely regarded as a bad move. Many races believe that it was created by " +
+  "some sort of god, though the Jatravartid people of Viltvodle Six believe that the " +
+  "entire universe was in fact sneezed out of the nose of a being called the Great Green " +
+  "Arkleseizure. The Jatravartids, who live in perpetual fear of the time they call The " +
+  "Coming of the Great White Handkerchief, are small blue creatures with more than fifty " +
+  "arms each, who are therefore unique in being the only race in history to have invented " +
+  "the aerosol deodorant before the wheel. However, the Great Green Arkleseizure Theory is " +
+  "not widely accepted outside Viltvodle Six and so, the universe being the puzzling place " +
+  "it is, other explanations are constantly being sought."
+end
+
+def tokens(t) = Array.reject(String.split(String.downcase(t), /[^a-z]+/)) { |w| String.empty?(w) }
+
+def growth_curve(words, step)
+  seen = Set[]
+  points = Array[]
+  Array.each_with_index(words) do |w, i|
+    Set.add(seen, w)
+    n = i + 1
+    Array.push(points, [n, Set.size(seen)]) if n % step == 0 || n == Array.size(words)
+  end
+  points
+end
+
+def fit_loglog(points)
+  xs = Array.map(points) { |n, _| Math.log(n) }
+  ys = Array.map(points) { |_, v| Math.log(v) }
+  m = Array.size(points)
+  mx = Array.sum(xs) / m
+  my = Array.sum(ys) / m
+  num = 0.0
+  den = 0.0
+  Array.each_with_index(xs) do |x, i|
+    num += (x - mx) * (ys[i] - my)
+    den += (x - mx) * (x - mx)
+  end
+  beta = num / den
+  k = Math.exp(my - beta * mx)
+  [k, beta]
+end
+
+def frequency_spectrum(counts)
+  spectrum = Hash.new(0)
+  Hash.each_value(counts) { |c| spectrum[c] += 1 }
+  spectrum
+end
+
+words = tokens(text)
+counts = Array.tally(words)
+puts("tokens: #{Array.size(words)}, types: #{Hash.size(counts)}")
+puts(format("type/token ratio: %.3f", Hash.size(counts) * 1.0 / Array.size(words)))
+
+curve = growth_curve(words, 20)
+puts("growth:")
+Array.each(curve) do |n, v|
+  puts(format("  %3d tokens %3d types  ttr %.2f  %s", n, v, v * 1.0 / n, "*" * (v / 5)))
+end
+k, beta = fit_loglog(curve)
+puts(format("Heaps' law fit: V = %.2f * N^%.3f", k, beta))
+predicted = k * (1000.0 ** beta)
+puts(format("predicted types at 1000 tokens: %.0f", predicted))
+
+spectrum = frequency_spectrum(counts)
+puts("frequency spectrum:")
+Array.each(Array.sort(Hash.keys(spectrum))) { |c| puts(format("  %2d occurrence(s): %3d types", c, spectrum[c])) }
+hapax = spectrum[1]
+dis = spectrum[2]
+puts(format("hapax %d, dis %d, hapax ratio %.2f", hapax, dis, hapax * 1.0 / Hash.size(counts)))
+
+ranked = Array.sort_by(Hash.to_a(counts)) { |w, c| [-c, w] }
+puts("zipf check (rank * freq):")
+Array.each_with_index(Array.take(ranked, 8)) do |(w, c), i|
+  puts(format("  %d %-10s %2d %3d", i + 1, w, c, (i + 1) * c))
+end
+
+first_seen = Hash[]
+Array.each_with_index(words) { |w, i| first_seen[w] ||= i }
+late = Array.select(Hash.keys(first_seen)) { |w| first_seen[w] > Array.size(words) * 3 / 4 && counts[w] == 1 }
+puts("new words in last quarter: #{Array.size(late)} (#{Array.join(Array.take(late, 6), ", ")}...)")

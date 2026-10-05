@@ -1,0 +1,109 @@
+class Rng
+  attr_accessor seed
+  # xorshift32, kept in 32 bits
+  def next_u32(r)
+    s = @seed
+    s = s ^ ((s << 13) & 4294967295)
+    s = s ^ (s >> 17)
+    s = s ^ ((s << 5) & 4294967295)
+    @seed = s
+    s
+  end
+
+  def uniform(r) = next_u32(r) / 4294967296.0
+  def range(r, lo, hi) = lo + (hi - lo) * uniform(r)
+end
+
+class Welford
+  attr_accessor n = 0, mean = 0.0, m2 = 0.0
+  def add(w, x)
+    @n += 1
+    delta = x - @mean
+    @mean += delta / @n
+    @m2 += delta * (x - @mean)
+    w
+  end
+
+  def variance(w) = @n > 1 ? @m2 / (@n - 1) : 0.0
+  def stderr(w) = Math.sqrt(variance(w) / @n)
+  def ci95(w) = [@mean - 1.96 * stderr(w), @mean + 1.96 * stderr(w)]
+end
+
+def pi = 3.141592653589793
+
+def estimate_pi(rng, n)
+  inside = 0
+  Integer.times(n) do
+    x = Rng.uniform(rng)
+    y = Rng.uniform(rng)
+    inside += 1 if x * x + y * y <= 1.0
+  end
+  4.0 * inside / n
+end
+
+def mc_integral(rng, a, b, n)
+  w = Welford.new
+  Integer.times(n) { Welford.add(w, (b - a) * yield(Rng.range(rng, a, b))) }
+  w
+end
+
+def antithetic_integral(rng, a, b, n)
+  w = Welford.new
+  Integer.times(n / 2) do
+    u = Rng.uniform(rng)
+    x1 = a + (b - a) * u
+    x2 = b - (b - a) * u
+    Welford.add(w, (b - a) * (yield(x1) + yield(x2)) / 2.0)
+  end
+  w
+end
+
+rng = Rng.new(2463534242)
+puts("pi estimates:")
+Array.each(Integer[100, 500, 2000]) do |n|
+  est = estimate_pi(rng, n)
+  puts(format("  n=%5d pi~%.5f error=%.5f", n, est, Float.abs(est - pi)))
+end
+
+puts("integral of exp(-x^2) on [0, 2]:")
+reference = 0.8820813907624215
+plain = mc_integral(rng, 0.0, 2.0, 1500) { |x| Math.exp(-x * x) }
+anti = antithetic_integral(rng, 0.0, 2.0, 1500) { |x| Math.exp(-x * x) }
+Array.each(Array[["plain", plain], ["antithetic", anti]]) do |label, w|
+  lo, hi = Welford.ci95(w)
+  covered = lo <= reference && reference <= hi
+  puts(format("  %-10s mean=%.5f se=%.5f ci=[%.5f, %.5f] covers=%s", label, Welford.get_mean(w), Welford.stderr(w), lo, hi, covered))
+end
+ratio = Welford.variance(plain) / (2.0 * Welford.variance(anti))
+puts(format("  variance reduction factor ~ %.2f", ratio))
+
+puts("1-D random walks, 30 steps, 500 walkers:")
+ends = Hash.new(0)
+max_dist = Welford.new
+Integer.times(500) do
+  pos = 0
+  far = 0
+  Integer.times(30) do
+    pos += Rng.uniform(rng) < 0.5 ? -1 : 1
+    far = Integer.abs(pos) if Integer.abs(pos) > far
+  end
+  ends[pos] += 1
+  Welford.add(max_dist, far * 1.0)
+end
+Array.each(Array.sort(Hash.keys(ends))) do |k|
+  next if Integer.abs(k) > 12
+  puts(format("  %+3d %4d %s", k, ends[k], "*" * (ends[k] / 3)))
+end
+msd = Hash.sum(ends) { |k, c| k * k * c } / 500.0
+puts(format("  mean squared displacement %.3f (theory 30)", msd))
+puts(format("  mean max distance %.3f", Welford.get_mean(max_dist)))
+
+puts("buffon's needle (l = 0.8, d = 1):")
+hits = 0
+trials = 1500
+Integer.times(trials) do
+  center = Rng.range(rng, 0.0, 0.5)
+  theta = Rng.range(rng, 0.0, pi / 2.0)
+  hits += 1 if center <= 0.4 * Math.sin(theta)
+end
+puts(format("  hits=%d, pi~%.4f", hits, 2.0 * 0.8 * trials / (hits * 1.0)))

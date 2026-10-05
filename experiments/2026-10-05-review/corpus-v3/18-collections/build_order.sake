@@ -1,0 +1,117 @@
+# Build-step scheduling: dependencies as a Hash of Sets, Kahn's algorithm in parallel stages, cycle reports.
+
+class CycleError < StandardError
+  attr_reader nodes
+end
+
+class MissingDependency < StandardError
+  attr_reader step, dependency
+end
+
+def parse_rules(text)
+  deps = Hash[]
+  Array.each(String.lines(text)) do |line|
+    line = String.strip(line)
+    next if String.empty?(line)
+    target, rest = String.split(line, ":")
+    deps[String.strip(target)] = Array.to_set(String.split(rest || "", " "))
+  end
+  deps
+end
+
+def check_missing(deps)
+  known = Array.to_set(Hash.keys(deps))
+  Hash.each(deps) do |step, ds|
+    Set.each(ds) { |d| raise MissingDependency.new("#{step} needs #{d}", step, d) unless Set.include?(known, d) }
+  end
+end
+
+def stages(deps)
+  check_missing(deps)
+  remaining = Hash.transform_values(deps) { |ds| Set.union(ds, Set[]) }
+  result = Array[]
+  until Hash.empty?(remaining)
+    ready = Array.sort(Hash.keys(Hash.select(remaining) { |step, ds| Set.empty?(ds) }))
+    if Array.empty?(ready)
+      raise CycleError.new("dependency cycle", Array.sort(Hash.keys(remaining)))
+    end
+    Array.push(result, ready)
+    done = Array.to_set(ready)
+    Array.each(ready) { |s| Hash.delete(remaining, s) }
+    Hash.each_value(remaining) { |ds| Set.subtract(ds, done) }
+  end
+  result
+end
+
+def dependents(deps, step)
+  out = Set[]
+  frontier = Array[step]
+  until Array.empty?(frontier)
+    cur = Array.pop(frontier)
+    Hash.each(deps) do |s, ds|
+      if Set.include?(ds, cur) && Set.add?(out, s)
+        Array.push(frontier, s)
+      end
+    end
+  end
+  out
+end
+
+def durations = Hash["fetch" => 3, "configure" => 2, "codegen" => 4, "compile_core" => 9, "compile_ext" => 6,
+                     "link" => 2, "docs" => 5, "test" => 8, "package" => 1, "lint" => 2]
+
+rules = <<~RULES
+  fetch:
+  configure: fetch
+  codegen: configure
+  lint: fetch
+  compile_core: configure codegen
+  compile_ext: configure
+  link: compile_core compile_ext
+  docs: codegen
+  test: link
+  package: link docs test lint
+RULES
+
+deps = parse_rules(rules)
+plan = stages(deps)
+puts("== Stages ==")
+finish = Hash[]
+Array.each_with_index(plan) do |steps, i|
+  puts("#{i + 1}: #{Array.join(steps, ", ")}")
+  Array.each(steps) do |s|
+    start = Set.empty?(deps[s]) ? 0 : Array.max(Array.map(Set.to_a(deps[s])) { |d| finish[d] })
+    finish[s] = start + durations[s]
+  end
+end
+puts("== Earliest finish ==")
+Array.each(Hash.sort_by(finish) { |s, t| [t, s] }) { |s, t| puts(format("  %-13s %2d", s, t)) }
+last_step, makespan = Hash.max_by(finish) { |s, t| t }
+puts("makespan: #{makespan} (ends with #{last_step})")
+serial = Array.sum(Hash.values(durations))
+puts(format("serial time: %d, speedup %.2fx", serial, serial / Integer.to_f(makespan)))
+
+path = Array[last_step]
+cur = last_step
+until Set.empty?(deps[cur])
+  cur = Array.max_by(Set.to_a(deps[cur])) { |d| finish[d] }
+  Array.unshift(path, cur)
+end
+puts("critical path: #{Array.join(path, " -> ")}")
+
+puts("== Impact of a change ==")
+Array.each(Array["codegen", "compile_ext", "package"]) do |s|
+  affected = dependents(deps, s)
+  puts("#{s}: #{Set.empty?(affected) ? "nothing" : Array.join(Set.sort(affected), ", ")}")
+end
+
+puts("== Broken rule sets ==")
+cyclic = parse_rules("a: c\nb: a\nc: b\nd:\ne: d\n")
+missing = parse_rules("a:\nb: a zed\n")
+Array.each(Array[["cyclic", cyclic], ["missing", missing]]) do |name, rs|
+  p(stages(rs))
+rescue CycleError => e
+  puts("#{name}: #{Exception.message(e)} among #{Array.join(CycleError.get_nodes(e), ", ")}")
+rescue MissingDependency => e
+  puts("#{name}: step '#{MissingDependency.get_step(e)}' depends on unknown '#{MissingDependency.get_dependency(e)}'")
+end

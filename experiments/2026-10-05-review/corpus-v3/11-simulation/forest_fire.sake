@@ -1,0 +1,92 @@
+def glyphs = once { Hash[tree: "T", fire: "*", ash: "~", empty: "."] }
+def neighbors = once { Array[[1, 0], [-1, 0], [0, 1], [0, -1]] }
+
+class Forest
+  attr_reader width, height, density, rng, burned = 0, fires_started = 0, cells = nil
+
+  def initialize(f)
+    @cells = Array.new(@height) { Array.new(@width) { rand100(f) < @density ? :tree : :empty } }
+  end
+
+  def rand100(f)
+    @rng = (@rng * 1103515245 + 12345) % 2147483648
+    (@rng / 65536) % 100
+  end
+
+  def at(f, x, y)
+    return :edge if x < 0 || y < 0 || x >= @width || y >= @height
+    @cells[y][x]
+  end
+
+  def ignite(f, x, y)
+    return false unless at(f, x, y) == :tree
+    @cells[y][x] = :fire
+    @fires_started += 1
+    true
+  end
+
+  def count(f, kind) = Array.sum(@cells) { |row| Array.count(row, kind) }
+
+  def step(f, wind)
+    wx, wy = wind
+    nxt = Array.map(@cells) { |row| Array.dup(row) }
+    Integer.times(@height) do |y|
+      Integer.times(@width) do |x|
+        case @cells[y][x]
+        in :fire
+          nxt[y][x] = :ash
+          @burned += 1
+          Array.each(neighbors) do |dx, dy|
+            nx = x + dx
+            ny = y + dy
+            next unless at(f, nx, ny) == :tree
+            chance = (dx == wx && dy == wy) ? 90 : ((dx + wx == 0 && dy + wy == 0) ? 15 : 55)
+            nxt[ny][nx] = :fire if rand100(f) < chance
+          end
+        in :ash
+          nxt[y][x] = :empty if rand100(f) < 10
+        in :empty
+          nxt[y][x] = :tree if rand100(f) < 2
+        else
+        end
+      end
+    end
+    @cells = nxt
+  end
+
+  def render(f)
+    Array.each(@cells) { |row| puts(Array.join(Array.map(row) { |c| Hash.fetch(glyphs, c) }, "")) }
+  end
+end
+
+def run(title, wind, seed)
+  f = Forest.new(24, 10, 78, seed)
+  trees0 = Forest.count(f, :tree)
+  Forest.ignite(f, 8, 5) || Forest.ignite(f, 9, 5) || Forest.ignite(f, 8, 4)
+  puts("== #{title}: #{trees0} trees, wind #{wind}")
+  history = Integer[]
+  t = 0
+  while Forest.count(f, :fire) > 0 && t < 40
+    Forest.step(f, wind)
+    t += 1
+    Array.push(history, Forest.count(f, :fire))
+    if t == 6
+      puts("after #{t} steps:")
+      Forest.render(f)
+    end
+  end
+  puts("burned out after #{t} steps") if Forest.count(f, :fire) == 0
+  puts("fire front: #{Array.join(history, " ")}")
+  burned = Forest.get_burned(f)
+  puts(format("burned %d of %d trees (%.1f%%), peak front %d at step %d",
+    burned, trees0, 100.0 * burned / trees0, Array.max(history), Array.index(history, Array.max(history)) + 1))
+  Forest.render(f)
+  burned
+end
+
+results = Hash[]
+Array.each(Array[["calm east wind", [1, 0]], ["west wind", [-1, 0]], ["south wind", [0, 1]]]) do |title, wind|
+  results[title] = run(title, wind, 3)
+end
+worst = Hash.max_by(results) { |k, v| v }
+puts("worst case: #{worst[0]}") if worst

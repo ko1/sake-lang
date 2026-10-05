@@ -1,0 +1,102 @@
+class Vec3
+  attr_reader x, y, z
+  include Arithmetic
+  include Comparable
+
+  def +(a, b) = Vec3.new(@x + Vec3.get_x(b), @y + Vec3.get_y(b), @z + Vec3.get_z(b))
+  def -(a, b) = Vec3.new(@x - Vec3.get_x(b), @y - Vec3.get_y(b), @z - Vec3.get_z(b))
+  def *(a, k) = Vec3.new(@x * k, @y * k, @z * k)
+  def /(a, k) = Vec3.new(@x / k, @y / k, @z / k)
+  def <=>(a, b) = norm(a) <=> norm(b)
+
+  def dot(a, b) = @x * Vec3.get_x(b) + @y * Vec3.get_y(b) + @z * Vec3.get_z(b)
+
+  def cross(a, b)
+    bx = Vec3.get_x(b)
+    by = Vec3.get_y(b)
+    bz = Vec3.get_z(b)
+    Vec3.new(@y * bz - @z * by, @z * bx - @x * bz, @x * by - @y * bx)
+  end
+
+  def norm(a) = Math.sqrt(dot(a, a))
+
+  def unit(a)
+    n = norm(a)
+    return nil if n < 1e-12
+    a / n
+  end
+
+  def angle_deg(a, b)
+    Math.atan2(norm(cross(a, b)), dot(a, b)) * 180.0 / 3.141592653589793
+  end
+
+  def project(a, onto) = onto * (dot(a, onto) / dot(onto, onto))
+
+  def to_s(v) = format("(%.4f, %.4f, %.4f)", @x, @y, @z)
+end
+
+def gram_schmidt(vs)
+  basis = Array[]
+  Array.each(vs) do |v|
+    w = v
+    Array.each(basis) { |e| w = w - Vec3.project(w, e) }
+    u = Vec3.unit(w)
+    if u
+      Array.push(basis, u)
+    else
+      puts("  dropped dependent vector #{v}")
+    end
+  end
+  basis
+end
+
+class Triangle
+  attr_reader name, a, b, c
+
+  def normal(t) = Vec3.cross(@b - @a, @c - @a)
+  def area(t) = Vec3.norm(normal(t)) / 2.0
+  def centroid(t) = (@a + @b + @c) / 3.0
+end
+
+a = Vec3.new(1.0, 2.0, 2.0)
+b = Vec3.new(3.0, 0.0, -4.0)
+puts("a = #{a}, |a| = #{format("%.4f", Vec3.norm(a))}")
+puts("b = #{b}, |b| = #{format("%.4f", Vec3.norm(b))}")
+puts("a + b = #{a + b}")
+puts("a x b = #{Vec3.cross(a, b)}")
+puts(format("a . b = %.4f, angle = %.3f deg", Vec3.dot(a, b), Vec3.angle_deg(a, b)))
+puts("proj_b a = #{Vec3.project(a, b)}")
+puts("a < b: #{a < b}, longest: #{Array.max(Array[a, b, a + b])}")
+
+puts("Gram-Schmidt:")
+vs = Array[Vec3.new(1.0, 1.0, 0.0), Vec3.new(1.0, 0.0, 1.0), Vec3.new(2.0, 1.0, 1.0), Vec3.new(0.0, 1.0, 1.0)]
+basis = gram_schmidt(vs)
+Array.each(basis) { |e| puts("  #{e}") }
+max_off = 0.0
+Array.each_with_index(basis) do |e, i|
+  Array.each_with_index(basis) do |f, j|
+    next if i >= j
+    max_off = Array.max(Float[max_off, Float.abs(Vec3.dot(e, f))])
+  end
+end
+puts(format("  max |e_i . e_j| = %.2e", max_off))
+
+mesh = Triangle[
+  Triangle.new("base1", Vec3.new(0.0, 0.0, 0.0), Vec3.new(1.0, 0.0, 0.0), Vec3.new(0.0, 1.0, 0.0)),
+  Triangle.new("side", Vec3.new(0.0, 0.0, 0.0), Vec3.new(0.0, 0.0, 1.0), Vec3.new(1.0, 0.0, 0.0)),
+  Triangle.new("slant", Vec3.new(1.0, 0.0, 0.0), Vec3.new(0.0, 0.0, 1.0), Vec3.new(0.0, 1.0, 0.0)),
+  Triangle.new("sliver", Vec3.new(0.0, 0.0, 0.0), Vec3.new(1.0, 1.0, 1.0), Vec3.new(2.0, 2.0, 2.0))
+]
+total = 0.0
+Array.each(mesh) do |t|
+  ar = Triangle.area(t)
+  total += ar
+  n = Vec3.unit(Triangle.normal(t))
+  shown = n ? Kernel.to_s(n) : "degenerate"
+  puts(format("%-7s area=%.6f centroid=%s normal=%s", Triangle.get_name(t), ar, Triangle.centroid(t), shown))
+end
+puts(format("total area = %.6f", total))
+biggest = Array.max_by(mesh) { |t| Triangle.area(t) }
+puts("largest: #{Triangle.get_name(biggest)}")
+sorted = Array.sort(Array.map(mesh) { |t| Triangle.normal(t) })
+puts("normals by length: #{Array.join(Array.map(sorted) { |v| format("%.3f", Vec3.norm(v)) }, " < ")}")

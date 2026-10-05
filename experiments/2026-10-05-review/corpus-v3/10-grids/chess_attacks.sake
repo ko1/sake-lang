@@ -1,0 +1,141 @@
+class Piece
+  attr_reader kind, white
+
+  def letters = once { Hash[king: "k", queen: "q", rook: "r", bishop: "b", knight: "n", pawn: "p"] }
+  def values = once { Hash[queen: 9, rook: 5, bishop: 3, knight: 3, pawn: 1, king: 0] }
+
+  def letter(p)
+    ch = Hash.fetch(letters, @kind)
+    @white ? String.upcase(ch) : ch
+  end
+
+  def value(p) = Hash.fetch(values, @kind)
+end
+
+def kinds = once { Hash["k" => :king, "q" => :queen, "r" => :rook, "b" => :bishop, "n" => :knight, "p" => :pawn] }
+
+# board: Hash from [rank, file] (0-based, rank 0 = rank 1) to Piece
+def parse_fen(fen)
+  board = Hash[]
+  Array.each_with_index(String.split(fen, "/")) do |row, i|
+    rank = 7 - i
+    file = 0
+    Array.each(String.chars(row)) do |ch|
+      if String.match?(ch, /\d/)
+        file += String.to_i(ch)
+      else
+        kind = kinds[String.downcase(ch)]
+        raise ArgumentError, "bad piece #{ch}" unless kind
+        board[[rank, file]] = Piece.new(kind, ch == String.upcase(ch))
+        file += 1
+      end
+    end
+  end
+  board
+end
+
+def square_name(sq)
+  rank, file = sq
+  "#{Integer.chr(97 + file)}#{rank + 1}"
+end
+
+def on_board?(rank, file) = Integer.between?(rank, 0, 7) && Integer.between?(file, 0, 7)
+
+def straight = once { Array[[1, 0], [-1, 0], [0, 1], [0, -1]] }
+def diagonal = once { Array[[1, 1], [1, -1], [-1, 1], [-1, -1]] }
+
+def rays(kind)
+  case kind
+  in :rook then straight
+  in :bishop then diagonal
+  in :queen then straight + diagonal
+  else Array[]
+  end
+end
+
+def steps(kind, white)
+  case kind
+  in :knight then Array[[2, 1], [1, 2], [-1, 2], [-2, 1], [-2, -1], [-1, -2], [1, -2], [2, -1]]
+  in :king then straight + diagonal
+  in :pawn then white ? Array[[1, -1], [1, 1]] : Array[[-1, -1], [-1, 1]]
+  else Array[]
+  end
+end
+
+def attacks_from(board, sq, piece)
+  rank, file = sq
+  out = steps(Piece.get_kind(piece), Piece.get_white(piece))
+    .Array.map { |dr, df| [rank + dr, file + df] }
+    .Array.select { |r, f| on_board?(r, f) }
+  Array.each(rays(Piece.get_kind(piece))) do |dr, df|
+    r = rank + dr
+    f = file + df
+    while on_board?(r, f)
+      Array.push(out, [r, f])
+      break if board[[r, f]]
+      r += dr
+      f += df
+    end
+  end
+  out
+end
+
+def attacked_by(board, white)
+  seen = Set[]
+  Hash.each(board) do |sq, piece|
+    next if Piece.get_white(piece) != white
+    Array.each(attacks_from(board, sq, piece)) { |t| Set.add(seen, t) }
+  end
+  seen
+end
+
+def king_square(board, white)
+  found = Hash.find(board) { |_sq, piece| Piece.get_kind(piece) == :king && Piece.get_white(piece) == white }
+  found && found[0]
+end
+
+def analyse(name, fen)
+  puts("== #{name} ==")
+  board = parse_fen(fen)
+  Integer.downto(7, 0) do |rank|
+    line = Range.map(0..7) do |file|
+      piece = board[[rank, file]]
+      piece ? Piece.letter(piece) : "."
+    end
+    puts("#{rank + 1} #{Array.join(line)}")
+  end
+  material = Array.map(Array[true, false]) do |white|
+    Array.sum(Array.select(Hash.values(board)) { |pc| Piece.get_white(pc) == white }) { Piece.value(it) }
+  end
+  puts("material: white #{material[0]}, black #{material[1]}")
+  Array.each(Array[true, false]) do |white|
+    side = white ? "white" : "black"
+    king = king_square(board, white)
+    unless king
+      puts("#{side}: no king!")
+      next
+    end
+    enemy = attacked_by(board, !white)
+    in_check = Set.include?(enemy, king)
+    kr, kf = king
+    escapes = Array.select(steps(:king, white)) do |dr, df|
+      r = kr + dr
+      f = kf + df
+      target = board[[r, f]]
+      on_board?(r, f) && !Set.include?(enemy, [r, f]) && (target == nil || Piece.get_white(target) != white)
+    end
+    names = Array.map(escapes) { |dr, df| square_name([kr + dr, kf + df]) }
+    status = if in_check && Array.empty?(escapes) then "in check, no king moves"
+             elsif in_check then "in check"
+             else "safe"
+             end
+    puts("#{side} king #{square_name(king)}: #{status}; moves #{Array.join(Array.sort(names), " ")}; controls #{Set.size(attacked_by(board, white))} squares")
+  end
+rescue ArgumentError => e
+  puts("bad position: #{Exception.message(e)}")
+end
+
+analyse("start", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+analyse("scholar's mate", "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR")
+analyse("rook endgame", "8/8/8/4k3/8/8/1R6/R3K3")
+analyse("typo", "8/8/8/4x3/8/8/8/4K3")

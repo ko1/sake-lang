@@ -1,0 +1,117 @@
+# Check-digit schemes: Luhn (cards), ISBN-10, ISBN-13/EAN-13, and generating missing digits.
+
+module CheckDigit
+  module_function
+
+  def digits_of(s) = Array.map(String.chars(String.delete(s, " -"))) { |c| c == "X" ? 10 : String.to_i(c) }
+
+  def luhn_sum(digits)
+    sum = 0
+    Array.each_with_index(Array.reverse(digits)) do |d, i|
+      if Integer.odd?(i)
+        d2 = d * 2
+        sum += d2 > 9 ? d2 - 9 : d2
+      else
+        sum += d
+      end
+    end
+    sum
+  end
+
+  def luhn_valid?(s) = luhn_sum(digits_of(s)) % 10 == 0
+
+  def luhn_complete(partial)
+    ds = digits_of(partial)
+    Array.push(ds, 0)
+    c = (10 - luhn_sum(ds) % 10) % 10
+    "#{partial}#{c}"
+  end
+
+  def isbn10_valid?(s)
+    ds = digits_of(s)
+    return false if Array.size(ds) != 10
+    return false if Array.any?(Array.take(ds, 9)) { |d| d == 10 }
+    total = 0
+    Array.each_with_index(ds) { |d, i| total += d * (10 - i) }
+    total % 11 == 0
+  end
+
+  def ean13_valid?(s)
+    ds = digits_of(s)
+    return false if Array.size(ds) != 13
+    total = 0
+    Array.each_with_index(ds) { |d, i| total += Integer.even?(i) ? d : d * 3 }
+    total % 10 == 0
+  end
+
+  def isbn10_to_13(s)
+    ds = Array.take(digits_of(s), 9)
+    body = Array.concat(Array[9, 7, 8], ds)
+    total = 0
+    Array.each_with_index(body) { |d, i| total += Integer.even?(i) ? d : d * 3 }
+    Array.push(body, (10 - total % 10) % 10)
+    Array.join(body, "")
+  end
+
+  def card_brand(s)
+    clean = String.delete(s, " -")
+    if String.start_with?(clean, "4")
+      :visa
+    elsif String.match?(clean, /\A5[1-5]/)
+      :mastercard
+    elsif String.match?(clean, /\A3[47]/)
+      :amex
+    else
+      nil
+    end
+  end
+end
+
+def classify(code)
+  kind, value = code
+  case kind
+  in :card
+    brand = CheckDigit.card_brand(value)
+    {ok: CheckDigit.luhn_valid?(value), label: brand ? Symbol.to_s(brand) : "unknown"}
+  in :isbn10
+    {ok: CheckDigit.isbn10_valid?(value), label: "isbn-10"}
+  in :ean13
+    {ok: CheckDigit.ean13_valid?(value), label: "ean-13"}
+  end
+end
+
+codes = Array[
+  [:card, "4539 1488 0343 6467"],
+  [:card, "4539 1488 0343 6468"],
+  [:card, "5555-5555-5555-4444"],
+  [:card, "3782 822463 10005"],
+  [:card, "6011 1111 1111 1117"],
+  [:isbn10, "0-306-40615-2"],
+  [:isbn10, "0-8044-2957-X"],
+  [:isbn10, "0-306-40615-3"],
+  [:ean13, "978-0-306-40615-7"],
+  [:ean13, "4006381333931"],
+  [:ean13, "4006381333932"]
+]
+
+valid = 0
+by_label = Hash.new(0)
+Array.each(codes) do |code|
+  r = classify(code)
+  r => {ok:, label:}
+  valid += 1 if ok
+  by_label[label] += 1
+  puts(format("%-7s %-22s %-10s %s", Symbol.to_s(code[0]), code[1], label, ok ? "valid" : "INVALID"))
+end
+puts("#{valid} of #{Array.size(codes)} valid")
+Hash.each(by_label) { |label, n| puts("  #{label}: #{n}") }
+
+puts("-- completing --")
+Array.each(Array["7992739871", "453914880343646", "37828224631000"]) do |partial|
+  full = CheckDigit.luhn_complete(partial)
+  puts("#{partial} -> #{full} (#{CheckDigit.luhn_valid?(full)})")
+end
+Array.each(Array["0-306-40615-2", "0-8044-2957-X", "1-56619-909-3"]) do |isbn|
+  converted = CheckDigit.isbn10_to_13(isbn)
+  puts("#{isbn} -> #{converted} (#{CheckDigit.ean13_valid?(converted)})")
+end

@@ -1,0 +1,27 @@
+# Tasks: 13-polymorphism (polymorphism and user operators)
+
+- shapes_area: shape catalogue (circle, rect, triangle, regular polygon) sharing a Shape mixin; areas, perimeters, compactness, scaling and grouping through module dispatch.
+- vector_polygon: 2D vector type with + - * / and lexicographic <=>; convex hull (monotone chain), shoelace area, centroid, point-in-polygon.
+- money_ledger: Money type with currency-checked + - <=> and scaling; multi-currency ledger, conversion with a rate table that may miss, allocation, per-person totals.
+- matrix_ops: Matrix type with + - * (matrix or scalar) ** and two-index []/[]=; exact determinant and inverse over Rational, Fibonacci by matrix power, dimension errors.
+- expr_tree: symbolic expression nodes (Num, Var, Add, Sub, Mul, Pow) sharing an Expr mixin that supplies the operators; evaluation with an environment, printing with precedence, simplification, differentiation.
+- polynomial: polynomial type with + - * ** mixing Poly and scalars, long division over Rational, Horner evaluation at Integer/Rational/Float, composition, derivative, pretty printing.
+- fraction_math: hand-written fraction type (normalized by gcd) with + - * / ** <=> against fractions and Integers; parsing with errors, Egyptian and continued fractions, harmonic numbers, Farey sequence.
+- version_constraints: semantic Version type with <=> (including prerelease ordering) and requirement objects (=, >, >=, <, <=, ~>); picks the best version for each constraint.
+- interval_arith: interval arithmetic type (+ - * / ** with scalars lifted), intersection that may be empty, merging bookings into busy/free slots, and root bracketing of one function used on numbers and intervals alike.
+- life_grid: toroidal Game of Life grid with [r, c] indexing and a CellSet mixin (population, bounding box) built on the grid's each_cell; detects still lifes and oscillators.
+- sparse_vector: Hash-backed sparse vector with + - * and [] / []= (zero deletes); bag-of-words document vectors, cosine similarity ranking and query matching.
+- temperature_units: Temp values in C/F/K and Delta differences (Temp - Temp -> Delta, Temp ± Delta -> Temp) with cross-unit <=>; station readings parsed from text, per-station stats, ranking, alerts.
+- duration_timesheet: Duration (parse "1h 15m 30s", + - * /, <=>) and wall-clock Clock (Clock ± Duration, Clock - Clock -> Duration, wrapping midnight); a timesheet with per-project shares and per-person budgets.
+- notify_channels: notification channels (email, SMS, push, webhook) behind a Channel mixin with cost/availability/deliver; routing by cost or priority, retries on retryable failures, cost accounting.
+- payroll: salaried, hourly (overtime), commissioned and contractor staff sharing a Payable mixin (progressive tax brackets, net pay, pay stubs); two monthly runs with department totals and year-to-date.
+- bitset_permissions: 8-bit flag set with & | ^ - << and bit []/[]=; role-based permissions with grants and revocations, permission checks with unknown-flag errors, set algebra.
+- quaternion_rotation: Vec3 and quaternion types (Quat * Quat or scalar, conjugate, normalize, rotate, slerp); orients rigid bodies, composes rotations, checks normals and numeric drift.
+- physical_quantities: quantities with SI dimension exponents (Tuple), parsed from text with prefixed units; * / ** combine dimensions, + - <=> require equal dimensions; physics calculations and mismatch errors.
+- stack_vm: assembler with labels and a stack machine whose instructions (push, binop, load, store, jump, print, halt) are separate types dispatched through an Instr mixin; runs factorial, gcd and a prime sieve, with assembly and runtime errors.
+- collision_check: circles, boxes and points with pairwise collision tests chosen by both operand types (double dispatch); moving bodies over ticks, first-contact detection, contact counts.
+- task_heap: binary min-heap that orders anything with < (Integers, Strings, and a Task type with a three-key <=>); k-smallest, and a single-worker scheduler with arrivals, deadlines and lateness.
+- modint_combinatorics: modular integer type (+ - * / ** with Integers lifted, inverse by extended Euclid, modulus checks); binomials and Catalan numbers mod a prime, Lucas' theorem, CRT, rolling string hashes.
+- calendar_dates: civil Date type (Date + days, Date - Date -> days, Date - days -> Date, <=>) via day ordinals; parsing with validation, month arithmetic with clamping, business days around holidays, recurring meetings, weekday counts.
+- color_palette: RGB Color with clamped + - and * (by a number or another Color); hex parsing, HSL, luminance and WCAG contrast grades, hue sorting, multi-stop gradients.
+- doc_render: document blocks (heading, paragraph, bullet list, table, code) behind a Block mixin (render to a width, word count, height); table of contents, rendering at two widths with word wrap, statistics.

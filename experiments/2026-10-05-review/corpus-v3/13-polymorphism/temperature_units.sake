@@ -1,0 +1,143 @@
+class UnitError < Exception
+  attr_reader unit
+end
+
+# A difference between two temperatures, always in kelvin (= Celsius degrees).
+class Delta
+  attr_reader k
+  include Arithmetic
+  include Comparable
+  def +(a, b) = Delta.new(@k + Delta.get_k(b))
+  def *(a, s) = Delta.new(@k * s)
+  def /(a, s) = Delta.new(@k / s)
+  def <=>(a, b) = @k <=> Delta.get_k(b)
+  def in_unit(a, unit) = unit == :f ? @k * 9.0 / 5.0 : @k
+  def to_s(a) = format("%+.1f K", @k)
+end
+
+class Temp
+  attr_reader value, unit
+  include Arithmetic
+  include Comparable
+
+  def of(value, unit)
+    raise UnitError.new("unknown unit #{unit}", unit) unless Array.include?(Array[:c, :f, :k], unit)
+    Temp.new(value * 1.0, unit)
+  end
+
+  def parse(s)
+    m = String.match(s, /\A(-?\d+(?:\.\d+)?)\s*°?([CFK])\z/)
+    raise UnitError.new("cannot read #{s}", :unknown) unless m
+    of(String.to_f(m[1]), String.to_sym(String.downcase(m[2])))
+  end
+
+  def kelvin(t)
+    case @unit
+    in :k then @value
+    in :c then @value + 273.15
+    in :f then (@value - 32) * 5.0 / 9.0 + 273.15
+    end
+  end
+
+  def to(t, unit)
+    k = kelvin(t)
+    v = case unit
+        in :k then k
+        in :c then k - 273.15
+        in :f then (k - 273.15) * 9.0 / 5.0 + 32
+        end
+    Temp.new(v, unit)
+  end
+
+  def -(a, b)
+    case b
+    in Temp then Delta.new(kelvin(a) - Temp.kelvin(b))
+    in Delta then Temp.new(@value - Delta.in_unit(b, @unit), @unit)
+    end
+  end
+
+  def +(a, d) = Temp.new(@value + Delta.in_unit(d, @unit), @unit)
+
+  def <=>(a, b) = Float.round(kelvin(a), 6) <=> Float.round(Temp.kelvin(b), 6)
+
+  def to_s(t)
+    sym = @unit == :k ? "K" : (@unit == :c ? "°C" : "°F")
+    format("%.1f%s", @value, sym)
+  end
+end
+
+class Reading
+  attr_accessor station, hour, temp
+end
+
+raw = Array[
+  ["oslo", 6, "-3.5C"], ["oslo", 12, "2.0C"], ["oslo", 18, "-1C"],
+  ["denver", 6, "28F"], ["denver", 12, "61.5F"], ["denver", 18, "45F"],
+  ["lab", 6, "293.15K"], ["lab", 12, "294.6K"], ["lab", 18, "293.9K"],
+  ["mars", 12, "-80R"], ["cairo", 12, "35.2C"], ["cairo", 18, "29.5C"]
+]
+
+readings = Reading[]
+Array.each(raw) do |station, hour, text|
+  begin
+    Array.push(readings, Reading.new(station, hour, Temp.parse(text)))
+  rescue UnitError => e
+    puts("skip #{station}: #{Exception.message(e)}")
+  end
+end
+
+puts("== readings in Celsius ==")
+Array.each(readings) do |r|
+  t = Reading.get_temp(r)
+  puts(format("%-7s %02d:00 %10s = %8s", Reading.get_station(r), Reading.get_hour(r), t, Temp.to(t, :c)))
+end
+
+puts("== per station ==")
+by_station = Array.group_by(readings) { |r| Reading.get_station(r) }
+Hash.each(by_station) do |station, rs|
+  temps = Array.map(rs) { |r| Reading.get_temp(r) }
+  lo = Array.min(temps)
+  hi = Array.max(temps)
+  swing = hi - lo
+  unit = Temp.get_unit(temps[0])
+  mean_k = Array.sum(temps) { |t| Temp.kelvin(t) } / Array.size(temps)
+  mean = Temp.to(Temp.new(mean_k, :k), unit)
+  puts(format("%-7s min %-8s max %-8s swing %-9s mean %s", station, lo, hi, swing, mean))
+end
+
+puts("== ranking at noon ==")
+noon = Array.select(readings) { |r| Reading.get_hour(r) == 12 }
+ranked = Array.sort_by(noon) { |r| -Temp.kelvin(Reading.get_temp(r)) }
+Array.each_with_index(ranked) do |r, i|
+  puts("#{i + 1}. #{Reading.get_station(r)} #{Temp.to(Reading.get_temp(r), :c)}")
+end
+hottest = Array.max_by(readings) { |r| Temp.kelvin(Reading.get_temp(r)) }
+puts("hottest overall: #{Reading.get_station(hottest)} at #{Reading.get_hour(hottest)}:00") if hottest
+
+puts("== alerts ==")
+freezing = Temp.of(0, :c)
+heat = Temp.of(95, :f)
+Array.each(readings) do |r|
+  t = Reading.get_temp(r)
+  if t <= freezing
+    puts("frost: #{Reading.get_station(r)} #{t} is #{freezing - t} below freezing")
+  elsif t >= Temp.to(heat, :c) - Delta.new(5)
+    puts("heat: #{Reading.get_station(r)} #{t} within 5 K of #{heat}")
+  end
+end
+
+puts("== arithmetic ==")
+a = Temp.of(20, :c)
+b = Temp.of(68, :f)
+puts("#{a} == #{b}? #{a == b}  (<=> says #{(a <=> b) == 0})")
+puts("#{a} + 10 K = #{a + Delta.new(10)}")
+puts("#{b} + 10 K = #{b + Delta.new(10)}")
+puts("#{b} - 10 K = #{b - Delta.new(10)}")
+puts("boiling - body = #{Temp.of(100, :c) - Temp.of(98.6, :f)}")
+d = Delta.new(3) + Delta.new(4.5) * 2
+puts("3 K + 2 * 4.5 K = #{d}, halved #{d / 2}, bigger than 10 K? #{d > Delta.new(10)}")
+begin
+  Temp.of(10, :r)
+rescue UnitError => e
+  puts("error: #{Exception.message(e)} (#{UnitError.get_unit(e)})")
+end

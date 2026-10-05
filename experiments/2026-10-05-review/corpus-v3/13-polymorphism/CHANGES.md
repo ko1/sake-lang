@@ -1,0 +1,26 @@
+# Changes: 13-polymorphism (corpus -> corpus-v2)
+
+- bitset_permissions: unchanged (`^ 255` masks match the Ruby version; nothing worked around).
+- calendar_dates: `business_day?` uses `!x` instead of `x == false` (twice).
+- collision_check: `bounds_of`/`move` are `(Circle|Box|Dot).bounds(s)` / `.moved(s, dx, dy)` instead of `case s in Circle ... in Box ... in Dot` calling same-named operations.
+- color_palette: unchanged.
+- doc_render: `Hash.map(kinds)` instead of `Array.map(Hash.to_a(kinds))`.
+- duration_timesheet: `h, m = Array.map(String.split(text, ":")) {...}` (Array destructuring) instead of `parts[0]`/`parts[1]`; `until String.empty?(rest)` instead of `while ... == false`; sort key `-Duration.get_secs(d)` (unary minus) with `Hash.sort_by` instead of `* -1` over `Hash.to_a`.
+- expr_tree: unchanged (the raising stubs in `Expr` are still needed for `Expr.evaluate`/`show`/`derive` dispatch).
+- fraction_math: `g = -g` instead of `g * -1`.
+- interval_arith: `Array.each_cons(busy, 2) { |prev, nxt| }` (block destructuring of the Array) instead of `pair[0]`/`pair[1]`; `unless Array.empty?(roots)` instead of `if ... == false`.
+- life_grid: unchanged (still `g[[r, c]]`, and `Range.map` for `Array.new`).
+- matrix_ops: `det = -det` instead of `det * -1`.
+- modint_combinatorics: extended Euclid uses parallel assignment `old_r, r = r, old_r - q * r` instead of temporaries.
+- money_ledger: unchanged.
+- notify_channels: unchanged.
+- payroll: tax brackets iterate with `Array.each(brackets) do |limit, rate|` and `return Float.round(tax) if ...` instead of a `while` loop with an index; YTD ranking uses `Hash.sort_by { -amount }` instead of `Array.sort_by(Hash.to_a(...)) { amount * -1 }`; `Hash.map(kinds)` instead of `Array.map(Hash.to_a(kinds))`.
+- physical_quantities: Tuple `==` (`@dims == Qty.get_dims(b)`) replaces the hand-written `same_dims?` helper; `num, unit = String.split(text, " ")` (Array destructuring) instead of indexing.
+- polynomial: `!zero?(r)` instead of `zero?(r) == false`; `-c` instead of `c * -1`.
+- quaternion_rotation: `-@x` instead of `0 - @x` in `conjugate`; `d = -d` instead of `d * -1`.
+- shapes_area: unchanged (the raising `area`/`perimeter`/`scale` stubs in `Shape` are still required for `Shape.area(s)`).
+- sparse_vector: `top` sorts with a Tuple key `Hash.sort_by(@entries) { |k, x| [-x, k] }`, removing the `Ranked` Comparable helper type; pairs come from `Array.map(Array.combination(names, 2)) { |a, b| }` (block destructuring of the Array pairs) instead of nested loops; sort key `-s` instead of `s * -1`.
+- stack_vm: `!VM.get_halted(vm)` instead of `== false`.
+- task_heap: `Task.<=>` compares Tuples `[@priority, @deadline, @id] <=> [...]` instead of a chain of `c == 0` checks; `unless Array.empty?(@items)` and `Array.push(out, pop(h)) until empty?(h)` instead of `== false`.
+- temperature_units: ranking key `-Temp.kelvin(...)` instead of `* -1`.
+- vector_polygon: `Vec.<=>` compares Tuples `[@x, @y] <=> [...]`; `Array.uniq` (now deduplicates equal Structs) replaces the `dedup` helper; `inside = !inside` instead of `inside == false`.

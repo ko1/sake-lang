@@ -1,0 +1,128 @@
+class CycleError < StandardError
+  attr_reader path
+end
+
+class UnknownPart < StandardError
+  attr_reader part
+end
+
+class Catalog
+  attr_reader assemblies, prices, memo
+  def parse(text)
+    cat = Catalog.new(Hash[], Hash[], Hash[])
+    String.each_line(text) do |line|
+      line = String.strip(line)
+      next if String.empty?(line)
+      if String.include?(line, "=")
+        name, rest = String.split(line, "=")
+        parts = Array.map(String.split(rest, "+")) do |item|
+          m = String.match(String.strip(item), /\A(\d+)\s*x\s*(.+)\z/)
+          raise ArgumentError, "bad item #{Kernel.inspect(item)}" if m == nil
+          [String.strip(m[2]), String.to_i(m[1])]
+        end
+        Catalog.get_assemblies(cat)[String.strip(name)] = parts
+      else
+        name, price = String.split(line, "$")
+        Catalog.get_prices(cat)[String.strip(name)] = String.to_f(price)
+      end
+    end
+    cat
+  end
+
+  def raw?(c, part) = Hash.key?(@prices, part)
+
+  def check(c, part, path)
+    raise CycleError.new("cycle: #{Array.join(path, " > ")} > #{part}", Array.join(path, ">")) if Array.include?(path, part)
+    return if raw?(c, part)
+    kids = @assemblies[part]
+    raise UnknownPart.new("#{part} is neither a raw part nor an assembly (in #{Array.last(path)})", part) if kids == nil
+    Array.push(path, part)
+    Array.each(kids) { |child, _qty| check(c, child, path) }
+    Array.pop(path)
+  end
+
+  def cost(c, part)
+    return @prices[part] if raw?(c, part)
+    @memo[part] ||= Array.sum(@assemblies[part]) { |child, qty| qty * cost(c, child) }
+  end
+
+  def explode(c, part, qty, depth, out)
+    Array.push(out, [depth, part, qty])
+    return out if raw?(c, part)
+    Array.each(@assemblies[part]) { |child, n| explode(c, child, qty * n, depth + 1, out) }
+    out
+  end
+
+  def requirements(c, part, qty, need)
+    if raw?(c, part)
+      need[part] += qty
+    else
+      Array.each(@assemblies[part]) { |child, n| requirements(c, child, qty * n, need) }
+    end
+    need
+  end
+
+  def where_used(c, part)
+    users = Array[]
+    Hash.each(@assemblies) do |name, parts|
+      Array.push(users, name) if Array.any?(parts) { |child, _n| child == part }
+    end
+    Array.sort(users)
+  end
+end
+
+catalog_text = <<~BOM
+  bicycle = 1 x frame set + 2 x wheel + 1 x drivetrain + 1 x saddle
+  frame set = 1 x frame + 1 x fork + 1 x headset
+  wheel = 1 x rim + 32 x spoke + 1 x hub + 1 x tire + 1 x tube
+  drivetrain = 1 x crankset + 1 x chain + 2 x pedal + 1 x cassette
+  crankset = 2 x crank arm + 1 x chainring + 1 x bottom bracket
+  frame $ 420.00
+  fork $ 150.00
+  headset $ 35.50
+  rim $ 48.00
+  spoke $ 0.65
+  hub $ 62.00
+  tire $ 29.90
+  tube $ 6.50
+  chain $ 24.00
+  pedal $ 18.75
+  cassette $ 55.00
+  crank arm $ 31.00
+  chainring $ 27.00
+  bottom bracket $ 22.00
+  saddle $ 44.00
+BOM
+cat = Catalog.parse(catalog_text)
+Catalog.check(cat, "bicycle", Array[])
+puts("-- exploded bill for 1 bicycle --")
+Array.each(Catalog.explode(cat, "bicycle", 1, 0, Array[])) do |depth, part, qty|
+  unit = Catalog.cost(cat, part)
+  puts(format("%-28s %4d  %9.2f", "#{"  " * depth}#{part}", qty, unit * qty))
+end
+puts(format("unit cost: %.2f", Catalog.cost(cat, "bicycle")))
+
+puts("-- raw parts for an order of 25 bicycles --")
+need = Catalog.requirements(cat, "bicycle", 25, Hash.new(0))
+rows = Array.sort_by(Hash.to_a(need)) { |part, qty| [-(qty * Catalog.cost(cat, part)), part] }
+Array.each(Array.take(rows, 5)) do |part, qty|
+  puts(format("  %-15s %5d  %10.2f", part, qty, qty * Catalog.cost(cat, part)))
+end
+puts("  ... #{Array.size(rows) - 5} more raw parts, #{Array.sum(Hash.values(need))} pieces in total")
+puts("where is 'pedal' used: #{Array.join(Catalog.where_used(cat, "pedal"), ", ")}")
+puts("where is 'spoke' used: #{Array.join(Catalog.where_used(cat, "spoke"), ", ")}")
+
+broken = Array["kit = 1 x box + 2 x widget\nwidget = 1 x gear + 1 x kit\ngear $ 1.0\nbox $ 2.0\n",
+               "kit = 1 x box + 3 x gizmo\nbox $ 2.0\n",
+               "kit = one x box\nbox $ 2.0\n"]
+Array.each(broken) do |text|
+  c = Catalog.parse(text)
+  Catalog.check(c, "kit", Array[])
+  puts("ok")
+rescue CycleError => e
+  puts("rejected: #{Exception.message(e)}")
+rescue UnknownPart => e
+  puts("rejected: #{Exception.message(e)} [part #{UnknownPart.get_part(e)}]")
+rescue ArgumentError => e
+  puts("rejected: #{Exception.message(e)}")
+end

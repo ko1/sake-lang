@@ -1,0 +1,101 @@
+# Builds a four-week shift rota greedily: three shifts a day, rest rules
+# (11 hours between shifts, at most 5 shifts per week), requested days off,
+# and fairness by fewest hours so far. Then prints the rota and per-person totals.
+
+class Shift
+  attr_reader name, start, hours
+end
+
+def shifts = once { Shift[Shift.new("E", 6, 8), Shift.new("L", 14, 8), Shift.new("N", 22, 8)] }
+def dow_names = once { Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+
+class Worker
+  attr_reader name, off, assigned = nil, hours = 0
+
+  def initialize(w) = @assigned = Array[]
+
+  # Absolute hour at which the worker's last shift ended, or nil.
+  def last_end(w)
+    last = Array.last(@assigned)
+    return nil if last == nil
+    day, shift = last
+    day * 24 + Shift.get_start(shift) + Shift.get_hours(shift)
+  end
+
+  def shifts_in_week(w, week) = Array.count(@assigned) { |day, shift| day / 7 == week }
+
+  def can_take?(w, day, shift)
+    return false if Set.include?(@off, day)
+    return false if Array.any?(@assigned) { |d, s| d == day }
+    return false if shifts_in_week(w, day / 7) >= 5
+    ended = last_end(w)
+    return true if ended == nil
+    day * 24 + Shift.get_start(shift) - ended >= 11
+  end
+
+  def take(w, day, shift)
+    Array.push(@assigned, [day, shift])
+    @hours += Shift.get_hours(shift)
+  end
+end
+
+def build_rota(workers, days)
+  rota = Array[]
+  gaps = Array[]
+  Integer.times(days) do |day|
+    row = Array.map(shifts) do |shift|
+      candidates = Array.select(workers) { |w| Worker.can_take?(w, day, shift) }
+      pick = Array.min_by(candidates) { |w| [Worker.get_hours(w), Array.index(workers, w)] }
+      if pick
+        Worker.take(pick, day, shift)
+        Worker.get_name(pick)
+      else
+        Array.push(gaps, [day, Shift.get_name(shift)])
+        "--"
+      end
+    end
+    Array.push(rota, row)
+  end
+  [rota, gaps]
+end
+
+workers = Array[
+  Worker.new("Ada", Set[5, 6]),
+  Worker.new("Bo", Set[0, 1, 2]),
+  Worker.new("Cy", Set[]),
+  Worker.new("Di", Set[12, 13, 19, 20]),
+  Worker.new("Ed", Set[7, 8, 9, 10, 11]),
+  Worker.new("Flo", Set[26, 27])
+]
+
+rota, gaps = build_rota(workers, 28)
+
+puts("Day        " + Array.join(Array.map(shifts) { |s| format("%-4s", "#{Shift.get_name(s)}#{format("%02d", Shift.get_start(s))}") }, " "))
+Array.each_with_index(rota) do |row, day|
+  sep = day % 7 == 6 ? "\n" : ""
+  puts(format("W%d %s %2d  %s%s", day / 7 + 1, dow_names[day % 7], day + 1, Array.join(Array.map(row) { |n| format("%-4s", n) }, " "), sep))
+end
+
+puts("Unfilled: #{Array.size(gaps)}#{Array.empty?(gaps) ? "" : " " + Array.join(Array.map(gaps) { |d, s| "day#{d + 1}/#{s}" }, ", ")}")
+puts
+puts("Who     hours  E  L  N  weekend  max-in-a-week")
+Array.each(workers) do |w|
+  kinds = Array.tally(Array.map(Worker.get_assigned(w)) { |day, shift| Shift.get_name(shift) })
+  weekend = Array.count(Worker.get_assigned(w)) { |day, shift| day % 7 >= 5 }
+  per_week = Range.map(0..3) { |wk| Worker.shifts_in_week(w, wk) }
+  puts(format("%-6s %6d %2d %2d %2d %8d %8d", Worker.get_name(w), Worker.get_hours(w),
+              Hash.fetch(kinds, "E", 0), Hash.fetch(kinds, "L", 0), Hash.fetch(kinds, "N", 0), weekend, Array.max(per_week)))
+end
+
+hours = Array.map(workers) { |w| Worker.get_hours(w) }
+puts("Spread between most and least hours: #{Array.max(hours) - Array.min(hours)}")
+
+# Verify the rest rule independently from the assignment code.
+violations = 0
+Array.each(workers) do |w|
+  ends = Array.map(Worker.get_assigned(w)) { |day, shift| [day * 24 + Shift.get_start(shift), day * 24 + Shift.get_start(shift) + Shift.get_hours(shift)] }
+  Array.each_cons(ends, 2) do |a, b|
+    violations += 1 if b[0] - a[1] < 11
+  end
+end
+puts("Rest-rule violations: #{violations}")

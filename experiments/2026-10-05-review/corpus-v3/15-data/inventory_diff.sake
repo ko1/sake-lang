@@ -1,0 +1,106 @@
+class Item
+  attr_reader sku, name, qty, price, bin
+end
+
+class Change
+  attr_reader sku, field, before, after
+end
+
+def parse_snapshot(text)
+  items = Hash[]
+  Array.each(String.lines(text)) do |line|
+    line = String.strip(line)
+    next if String.empty?(line) || String.start_with?(line, "#")
+    cols = Array.map(String.split(line, "|")) { String.strip(it) }
+    sku = Array.fetch(cols, 0)
+    items[sku] = Item.new(sku, Array.fetch(cols, 1), String.to_i(Array.fetch(cols, 2)), String.to_f(Array.fetch(cols, 3)), Array.fetch(cols, 4))
+  end
+  items
+end
+
+def before_text
+  <<~TXT
+    # sku   | name             | qty | price  | bin
+    A-100   | Hex bolt M6      | 500 | 0.12   | R1-04
+    A-101   | Hex bolt M8      | 320 | 0.18   | R1-05
+    B-200   | Washer 6mm       | 1000| 0.03   | R1-06
+    C-310   | Hinge, brass     | 45  | 3.75   | R4-01
+    D-420   | Cabinet handle   | 60  | 5.20   | R4-02
+    E-505   | Drawer slide 45cm| 18  | 12.90  | R5-11
+  TXT
+end
+
+def after_text
+  <<~TXT
+    # sku   | name             | qty | price  | bin
+    A-100   | Hex bolt M6      | 430 | 0.12   | R1-04
+    A-101   | Hex bolt M8      | 320 | 0.21   | R1-05
+    C-310   | Hinge, brass     | 45  | 3.75   | R2-09
+    D-420   | Cabinet handle   | 12  | 5.45   | R4-02
+    E-505   | Drawer slide 45cm| 18  | 12.90  | R5-11
+    F-600   | Shelf pin 5mm    | 800 | 0.05   | R1-07
+    F-601   | Shelf pin 3mm    | 250 | 0.04   | R1-08
+  TXT
+end
+
+def field_changes(a, b)
+  changes = Change[]
+  sku = Item.get_sku(a)
+  Array.push(changes, Change.new(sku, "name", Item.get_name(a), Item.get_name(b))) if Item.get_name(a) != Item.get_name(b)
+  Array.push(changes, Change.new(sku, "qty", Item.get_qty(a), Item.get_qty(b))) if Item.get_qty(a) != Item.get_qty(b)
+  Array.push(changes, Change.new(sku, "price", Item.get_price(a), Item.get_price(b))) if Item.get_price(a) != Item.get_price(b)
+  Array.push(changes, Change.new(sku, "bin", Item.get_bin(a), Item.get_bin(b))) if Item.get_bin(a) != Item.get_bin(b)
+  changes
+end
+
+def show(v)
+  case v
+  in Float then format("%.2f", v)
+  in Integer then Integer.to_s(v)
+  in String then v
+  end
+end
+
+def stock_value(items) = Hash.sum(items) { |sku, it| Item.get_qty(it) * Item.get_price(it) }
+
+old_items = parse_snapshot(before_text)
+new_items = parse_snapshot(after_text)
+
+added = Array.reject(Hash.keys(new_items)) { Hash.key?(old_items, it) }
+removed = Array.reject(Hash.keys(old_items)) { Hash.key?(new_items, it) }
+common = Array.select(Hash.keys(old_items)) { Hash.key?(new_items, it) }
+unchanged = Array.select(common) { |sku| Hash.fetch(old_items, sku) == Hash.fetch(new_items, sku) }
+changes = Array.flat_map(common) { |sku| field_changes(Hash.fetch(old_items, sku), Hash.fetch(new_items, sku)) }
+
+puts("Snapshot diff: #{Hash.size(old_items)} -> #{Hash.size(new_items)} items")
+puts("  added #{Array.size(added)}, removed #{Array.size(removed)}, changed #{Array.size(common) - Array.size(unchanged)}, unchanged #{Array.size(unchanged)}")
+puts
+
+Array.each(Array.sort(added)) do |sku|
+  it = Hash.fetch(new_items, sku)
+  puts(format("+ %-6s %-18s qty %4d @ %6.2f in %s", sku, Item.get_name(it), Item.get_qty(it), Item.get_price(it), Item.get_bin(it)))
+end
+Array.each(Array.sort(removed)) do |sku|
+  it = Hash.fetch(old_items, sku)
+  puts(format("- %-6s %-18s qty %4d (value %.2f written off)", sku, Item.get_name(it), Item.get_qty(it), Item.get_qty(it) * Item.get_price(it)))
+end
+Hash.each(Array.group_by(changes) { Change.get_sku(it) }) do |sku, list|
+  desc = Array.map(list) { |c| "#{Change.get_field(c)} #{show(Change.get_before(c))} -> #{show(Change.get_after(c))}" }
+  puts(format("~ %-6s %s", sku, Array.join(desc, "; ")))
+end
+puts
+
+qty_moves = Array.select(changes) { Change.get_field(it) == "qty" }
+Array.each(qty_moves) do |c|
+  before = Change.get_before(c)
+  after = Change.get_after(c)
+  pct = (after - before) * 100.0 / before
+  flag = pct <= -50 ? "  LOW STOCK" : ""
+  puts(format("qty %-6s %5d -> %5d (%+.1f%%)%s", Change.get_sku(c), before, after, pct, flag))
+end
+price_moves = Array.select(changes) { Change.get_field(it) == "price" }
+avg = Array.empty?(price_moves) ? 0.0 : Array.sum(price_moves) { |c| (Change.get_after(c) - Change.get_before(c)) / Change.get_before(c) } / Array.size(price_moves) * 100
+puts(format("average price change across %d items: %+.1f%%", Array.size(price_moves), avg))
+v0 = stock_value(old_items)
+v1 = stock_value(new_items)
+puts(format("stock value %.2f -> %.2f (%+.2f)", v0, v1, v1 - v0))

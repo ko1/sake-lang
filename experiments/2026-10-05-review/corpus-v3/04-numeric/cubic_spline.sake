@@ -1,0 +1,128 @@
+class OutOfRange < StandardError
+  attr_reader x
+end
+
+# Thomas algorithm for a tridiagonal system (sub, diag, sup, rhs)
+def solve_tridiagonal(sub, diag, sup, rhs)
+  n = Array.size(diag)
+  c = Float[]
+  d = Float[]
+  Array.push(c, sup[0] / diag[0])
+  Array.push(d, rhs[0] / diag[0])
+  Range.each(1...n) do |i|
+    denom = diag[i] - sub[i] * c[i - 1]
+    Array.push(c, i < n - 1 ? sup[i] / denom : 0.0)
+    Array.push(d, (rhs[i] - sub[i] * d[i - 1]) / denom)
+  end
+  x = Array.dup(d)
+  Integer.downto(n - 2, 0) { |i| x[i] = d[i] - c[i] * x[i + 1] }
+  x
+end
+
+class Spline
+  attr_reader xs, ys, m
+
+  def build(xs, ys)
+    n = Array.size(xs)
+    h = Range.map(0...(n - 1)) { |i| xs[i + 1] - xs[i] }
+    sub = Float[0.0]
+    diag = Float[1.0]
+    sup = Float[0.0]
+    rhs = Float[0.0]
+    Range.each(1...(n - 1)) do |i|
+      Array.push(sub, h[i - 1])
+      Array.push(diag, 2.0 * (h[i - 1] + h[i]))
+      Array.push(sup, h[i])
+      Array.push(rhs, 6.0 * ((ys[i + 1] - ys[i]) / h[i] - (ys[i] - ys[i - 1]) / h[i - 1]))
+    end
+    Array.push(sub, 0.0)
+    Array.push(diag, 1.0)
+    Array.push(sup, 0.0)
+    Array.push(rhs, 0.0)
+    Spline.new(xs, ys, solve_tridiagonal(sub, diag, sup, rhs))
+  end
+
+  def segment(s, x)
+    lo = 0
+    hi = Array.size(@xs) - 1
+    while hi - lo > 1
+      mid = (lo + hi) / 2
+      if @xs[mid] <= x
+        lo = mid
+      else
+        hi = mid
+      end
+    end
+    lo
+  end
+
+  def value_at(s, x)
+    raise OutOfRange.new("outside the knots", x) if x < Array.first(@xs) || x > Array.last(@xs)
+    i = segment(s, x)
+    h = @xs[i + 1] - @xs[i]
+    a = (@xs[i + 1] - x) / h
+    b = (x - @xs[i]) / h
+    a * @ys[i] + b * @ys[i + 1] + ((a ** 3 - a) * @m[i] + (b ** 3 - b) * @m[i + 1]) * h * h / 6.0
+  end
+
+  def slope(s, x)
+    i = segment(s, x)
+    h = @xs[i + 1] - @xs[i]
+    a = (@xs[i + 1] - x) / h
+    b = (x - @xs[i]) / h
+    (@ys[i + 1] - @ys[i]) / h - (3.0 * a * a - 1.0) * h * @m[i] / 6.0 + (3.0 * b * b - 1.0) * h * @m[i + 1] / 6.0
+  end
+end
+
+def lagrange(xs, ys, x)
+  total = 0.0
+  Array.each_with_index(xs) do |xi, i|
+    term = ys[i]
+    Array.each_with_index(xs) { |xj, j| term *= (x - xj) / (xi - xj) if i != j }
+    total += term
+  end
+  total
+end
+
+def linear(xs, ys, x)
+  i = Array.find_index(xs) { |v| v > x }
+  return Array.last(ys) if i == nil
+  return Array.first(ys) if i == 0
+  t = (x - xs[i - 1]) / (xs[i] - xs[i - 1])
+  ys[i - 1] + t * (ys[i] - ys[i - 1])
+end
+
+def runge(x) = 1.0 / (1.0 + 25.0 * x * x)
+
+knots = Range.map(0..10) { |i| -1.0 + i * 0.2 }
+values = Array.map(knots) { |x| runge(x) }
+sp = Spline.build(knots, values)
+
+puts("     x      exact     spline     linear   lagrange")
+probe = Range.map(0..8) { |i| -0.95 + i * 0.2375 }
+Array.each(probe) do |x|
+  puts(format("%6.3f %10.6f %10.6f %10.6f %10.6f", x, runge(x), Spline.value_at(sp, x), linear(knots, values, x), lagrange(knots, values, x)))
+end
+
+errs = Hash["spline" => 0.0, "linear" => 0.0, "lagrange" => 0.0]
+Range.each(0..200) do |k|
+  x = -1.0 + k * 0.01
+  e = runge(x)
+  errs["spline"] = Array.max(Float[errs["spline"], Float.abs(Spline.value_at(sp, x) - e)])
+  errs["linear"] = Array.max(Float[errs["linear"], Float.abs(linear(knots, values, x) - e)])
+  errs["lagrange"] = Array.max(Float[errs["lagrange"], Float.abs(lagrange(knots, values, x) - e)])
+end
+Hash.each(errs) { |name, e| puts(format("max error %-8s %.6f", name, e)) }
+best, best_err = Hash.min_by(errs) { |name, e| e }
+puts("best: #{best} (#{format("%.2e", best_err)})")
+
+puts(format("slope at 0.3: spline %.5f exact %.5f", Spline.slope(sp, 0.3), -50.0 * 0.3 / (1.0 + 25.0 * 0.09) ** 2))
+puts(format("second derivatives at ends: %.3f %.3f", Array.first(Spline.get_m(sp)), Array.last(Spline.get_m(sp))))
+
+Array.each(Float[0.5, 1.5, -1.2]) do |x|
+  begin
+    puts(format("spline(%.2f) = %.6f", x, Spline.value_at(sp, x)))
+  rescue OutOfRange => e
+    puts(format("spline(%.2f): %s", OutOfRange.get_x(e), Exception.message(e)))
+  end
+end

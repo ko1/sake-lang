@@ -1,0 +1,121 @@
+class MLeaf
+  attr_reader hash, index, data
+
+  def get_lo(l) = @index
+  def get_hi(l) = @index
+end
+
+class MNode
+  attr_reader hash, left, right, lo, hi
+end
+
+def fnv1a(s)
+  h = 2166136261
+  Array.each(String.bytes(s)) do |b|
+    h = h ^ b
+    h = (h * 16777619) & 0xffffffff
+  end
+  h
+end
+
+def hex(h) = format("%08x", h)
+
+def node_hash(n) = (MLeaf|MNode).get_hash(n)
+def lo_of(n) = (MLeaf|MNode).get_lo(n)
+def hi_of(n) = (MLeaf|MNode).get_hi(n)
+
+def combine(a, b) = fnv1a("#{hex(a)}|#{hex(b)}")
+
+def build(blocks)
+  raise ArgumentError, "no blocks" if Array.empty?(blocks)
+  level = Array[]
+  Array.each_with_index(blocks) { |data, i| Array.push(level, MLeaf.new(fnv1a(data), i, data)) }
+  while Array.size(level) > 1
+    up = Array[]
+    Array.each_slice(level, 2) do |a, b|
+      Array.push(up, b == nil ? a : MNode.new(combine(node_hash(a), node_hash(b)), a, b, lo_of(a), hi_of(b)))
+    end
+    level = up
+  end
+  level[0]
+end
+
+def height(n) = (n in MNode) ? 1 + Array.max(Array[height(MNode.get_left(n)), height(MNode.get_right(n))]) : 0
+
+# sibling hashes from the leaf up to the root
+def proof(root, index)
+  raise IndexError, "block #{index} out of range" if index < lo_of(root) || index > hi_of(root)
+  steps = Array[]
+  node = root
+  while node in MNode
+    l = MNode.get_left(node)
+    r = MNode.get_right(node)
+    if index <= hi_of(l)
+      Array.push(steps, [:right, node_hash(r)])
+      node = l
+    else
+      Array.push(steps, [:left, node_hash(l)])
+      node = r
+    end
+  end
+  Array.reverse(steps)
+end
+
+def verify(data, steps, root_hash)
+  h = Array.reduce(steps, fnv1a(data)) { |acc, (side, sib)| side == :right ? combine(acc, sib) : combine(sib, acc) }
+  h == root_hash
+end
+
+def diff(a, b, out, stats)
+  stats[:compared] += 1
+  return out if node_hash(a) == node_hash(b)
+  if (a in MNode) && (b in MNode)
+    diff(MNode.get_left(a), MNode.get_left(b), out, stats)
+    diff(MNode.get_right(a), MNode.get_right(b), out, stats)
+  else
+    Range.each(lo_of(a)..hi_of(a)) { |i| Array.push(out, i) }
+  end
+  out
+end
+
+def blocks_of(text, size)
+  out = Array[]
+  i = 0
+  while i < String.size(text)
+    Array.push(out, text[i...(i + size)])
+    i += size
+  end
+  out
+end
+
+original = "Merkle trees let two replicas find differing blocks by comparing a few hashes " \
+           "instead of shipping whole files. Each parent hashes its children, so the root " \
+           "summarizes everything below it."
+blocks = blocks_of(original, 16)
+tree = build(blocks)
+puts("blocks: #{Array.size(blocks)}, height: #{height(tree)}, root: #{hex(node_hash(tree))}")
+puts("hash('') = #{hex(fnv1a(""))}, hash('a') = #{hex(fnv1a("a"))}")
+
+Array.each(Array[0, 5, Array.size(blocks) - 1]) do |i|
+  pr = proof(tree, i)
+  good = verify(blocks[i], pr, node_hash(tree))
+  forged = verify("#{blocks[i]}!", pr, node_hash(tree))
+  sides = Array.join(Array.map(pr) { |side, _h| side == :left ? "L" : "R" })
+  puts("proof for block #{i}: #{Array.size(pr)} hashes (#{sides}), valid #{good}, forged #{forged}")
+end
+begin
+  proof(tree, 99)
+rescue IndexError => e
+  puts("proof error: #{Exception.message(e)}")
+end
+
+edits = Array[["shipping", "SHIPPING"], ["summarizes", "summarises"]]
+replica = Array.reduce(edits, original) { |text, (from, to)| String.sub(text, from, to) }
+other = build(blocks_of(replica, 16))
+stats = Hash[compared: 0]
+changed = diff(tree, other, Array[], stats)
+puts("replica root: #{hex(node_hash(other))}, differing blocks: #{Array.join(changed, ",")} (#{stats[:compared]} hash comparisons)")
+other_blocks = blocks_of(replica, 16)
+Array.each(changed) { |i| puts("  block #{i}: #{Kernel.inspect(blocks[i])} -> #{Kernel.inspect(other_blocks[i])}") }
+same = Hash[compared: 0]
+puts("identical copy differs in: #{Array.size(diff(tree, build(blocks_of(original, 16)), Array[], same))} blocks (#{same[:compared]} comparison)")

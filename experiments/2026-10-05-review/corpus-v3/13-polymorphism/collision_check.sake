@@ -1,0 +1,129 @@
+class Circle
+  attr_accessor cx, cy, r
+  def bounds(c) = [@cx - @r, @cy - @r, @cx + @r, @cy + @r]
+  def moved(c, dx, dy) = Circle.new(@cx + dx, @cy + dy, @r)
+  def to_s(c) = format("circle(%.1f,%.1f r%.1f)", @cx, @cy, @r)
+end
+
+class Box
+  attr_accessor x0, y0, x1, y1
+  def bounds(b) = [@x0, @y0, @x1, @y1]
+  def moved(b, dx, dy) = Box.new(@x0 + dx, @y0 + dy, @x1 + dx, @y1 + dy)
+  def to_s(b) = format("box(%.1f,%.1f..%.1f,%.1f)", @x0, @y0, @x1, @y1)
+end
+
+class Dot
+  attr_accessor px, py
+  def bounds(d) = [@px, @py, @px, @py]
+  def moved(d, dx, dy) = Dot.new(@px + dx, @py + dy)
+  def to_s(d) = format("dot(%.1f,%.1f)", @px, @py)
+end
+
+def clamp(v, lo, hi) = v < lo ? lo : (v > hi ? hi : v)
+
+def circle_circle(a, b)
+  dx = Circle.get_cx(a) - Circle.get_cx(b)
+  dy = Circle.get_cy(a) - Circle.get_cy(b)
+  rr = Circle.get_r(a) + Circle.get_r(b)
+  dx * dx + dy * dy <= rr * rr
+end
+
+def circle_box(c, b)
+  nx = clamp(Circle.get_cx(c), Box.get_x0(b), Box.get_x1(b))
+  ny = clamp(Circle.get_cy(c), Box.get_y0(b), Box.get_y1(b))
+  dx = Circle.get_cx(c) - nx
+  dy = Circle.get_cy(c) - ny
+  dx * dx + dy * dy <= Circle.get_r(c) * Circle.get_r(c)
+end
+
+def box_box(a, b)
+  Box.get_x0(a) <= Box.get_x1(b) && Box.get_x0(b) <= Box.get_x1(a) &&
+    Box.get_y0(a) <= Box.get_y1(b) && Box.get_y0(b) <= Box.get_y1(a)
+end
+
+def dot_in(d, s)
+  case s
+  in Circle then circle_circle(Circle.new(Dot.get_px(d), Dot.get_py(d), 0.0), s)
+  in Box then box_box(Box.new(Dot.get_px(d), Dot.get_py(d), Dot.get_px(d), Dot.get_py(d)), s)
+  in Dot then Dot.get_px(d) == Dot.get_px(s) && Dot.get_py(d) == Dot.get_py(s)
+  end
+end
+
+# Double dispatch on both shapes; Sake has no array patterns, so the cases nest.
+def collide?(a, b)
+  case a
+  in Circle
+    case b
+    in Circle then circle_circle(a, b)
+    in Box then circle_box(a, b)
+    in Dot then dot_in(b, a)
+    end
+  in Box
+    case b
+    in Circle then circle_box(b, a)
+    in Box then box_box(a, b)
+    in Dot then dot_in(b, a)
+    end
+  in Dot then dot_in(a, b)
+  end
+end
+
+def bounds_of(s) = (Circle|Box|Dot).bounds(s)
+def move(s, dx, dy) = (Circle|Box|Dot).moved(s, dx, dy)
+
+class Body
+  attr_accessor name, shape, vx, vy
+end
+
+bodies = Array[
+  Body.new("ball", Circle.new(0.0, 0.0, 1.0), 1.0, 0.5),
+  Body.new("crate", Box.new(6.0, 2.0, 8.0, 4.0), 0.0, 0.0),
+  Body.new("puck", Circle.new(10.0, 0.0, 0.5), -1.0, 0.0),
+  Body.new("bug", Dot.new(3.0, 6.0), 0.5, -0.75),
+  Body.new("wall", Box.new(-2.0, -3.0, 12.0, -2.5), 0.0, 0.0),
+  Body.new("seed", Dot.new(7.0, 3.0), 0.0, 0.0)
+]
+
+puts("== static checks ==")
+Array.each(Array[
+  [Circle.new(0.0, 0.0, 1.0), Circle.new(1.5, 0.0, 0.6)],
+  [Circle.new(0.0, 0.0, 1.0), Box.new(1.2, 1.2, 2.0, 2.0)],
+  [Box.new(0.0, 0.0, 2.0, 2.0), Circle.new(2.5, 1.0, 0.6)],
+  [Box.new(0.0, 0.0, 1.0, 1.0), Box.new(1.0, 1.0, 2.0, 2.0)],
+  [Dot.new(0.5, 0.5), Box.new(0.0, 0.0, 1.0, 1.0)],
+  [Circle.new(0.0, 0.0, 1.0), Dot.new(0.8, 0.8)],
+  [Dot.new(1.0, 1.0), Dot.new(1.0, 1.0)]
+]) do |a, b|
+  puts("#{a} x #{b}: #{collide?(a, b) ? "hit" : "miss"}")
+end
+
+puts("== simulation ==")
+hits = Hash.new(0)
+seen = Set[]
+Range.each(1..8) do |tick|
+  Array.each(bodies) { |bd| Body.set_shape(bd, move(Body.get_shape(bd), Body.get_vx(bd), Body.get_vy(bd))) }
+  events = Array[]
+  Array.each_with_index(bodies) do |a, i|
+    Array.each(Array.drop(bodies, i + 1)) do |b|
+      next unless collide?(Body.get_shape(a), Body.get_shape(b))
+      pair = [Body.get_name(a), Body.get_name(b)]
+      hits[pair] += 1
+      Array.push(events, "#{Body.get_name(a)}+#{Body.get_name(b)}")
+      Array.push(events, "(first contact)") if Set.add?(seen, pair)
+    end
+  end
+  puts(format("t=%d %s", tick, Array.empty?(events) ? "-" : Array.join(events, " ")))
+end
+
+puts("== final positions ==")
+Array.each(bodies) do |bd|
+  x0, y0, x1, y1 = bounds_of(Body.get_shape(bd))
+  puts(format("%-6s %-28s bbox %.1f..%.1f x %.1f..%.1f", Body.get_name(bd), Kernel.to_s(Body.get_shape(bd)), x0, x1, y0, y1))
+end
+
+puts("== contact counts ==")
+Hash.each(hits) { |pair, n| puts("#{pair[0]}/#{pair[1]}: #{n} tick(s)") }
+most = Hash.max_by(hits) { |pair, n| n }
+puts("longest contact: #{most[0][0]} & #{most[0][1]}") if most
+untouched = Array.select(bodies) { |bd| Hash.none?(hits) { |pair, n| pair[0] == Body.get_name(bd) || pair[1] == Body.get_name(bd) } }
+puts("never touched: #{Array.join(Array.map(untouched) { |bd| Body.get_name(bd) }, ", ")}")

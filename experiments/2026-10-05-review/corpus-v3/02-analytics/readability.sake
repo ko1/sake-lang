@@ -1,0 +1,94 @@
+class Stats
+  attr_reader sentences, words, syllables, complex
+
+  def reading_ease(s)
+    wps = @words * 1.0 / @sentences
+    spw = @syllables * 1.0 / @words
+    206.835 - 1.015 * wps - 84.6 * spw
+  end
+
+  def grade(s)
+    wps = @words * 1.0 / @sentences
+    spw = @syllables * 1.0 / @words
+    0.39 * wps + 11.8 * spw - 15.59
+  end
+
+  def merge(a, b)
+    Stats.new(@sentences + Stats.get_sentences(b), @words + Stats.get_words(b),
+              @syllables + Stats.get_syllables(b), Array.concat(Array.dup(@complex), Stats.get_complex(b)))
+  end
+end
+
+def paragraphs
+  Array[
+    "The cat sat on the mat. It was a sunny day. The cat was happy.",
+    "Photosynthesis is the biochemical process whereby chlorophyll-containing organisms convert electromagnetic radiation into chemical energy. Consequently, atmospheric carbon dioxide is incorporated into carbohydrates.",
+    "We walked to the park after lunch. Some children were playing football, and their parents watched from the benches. Later it started to rain, so everyone went home.",
+    "Readability formulas estimate difficulty. They count sentences, words, and syllables! Are they reliable? Only approximately."
+  ]
+end
+
+def syllables(word, cache)
+  cached = cache[word]
+  return cached if cached
+  w = String.downcase(word)
+  w = String.sub(w, /e$/, "") if String.size(w) > 2 && String.match?(w, /[^l]e$/)
+  groups = String.scan(w, /[aeiouy]+/)
+  n = Array.size(groups)
+  n = 1 if n < 1
+  cache[word] = n
+  n
+end
+
+def analyze(text, cache)
+  sents = Array.reject(String.split(text, /[.!?]+/)) { |s| String.empty?(String.strip(s)) }
+  words = String.scan(text, /[A-Za-z]+(?:-[A-Za-z]+)*/)
+  syl = 0
+  complex = Array[]
+  Array.each(words) do |w|
+    n = Array.sum(Array.map(String.split(w, "-")) { |part| syllables(part, cache) })
+    syl += n
+    Array.push(complex, w) if n >= 3
+  end
+  Stats.new(Array.size(sents), Array.size(words), syl, complex)
+end
+
+def band(score)
+  if score >= 80.0
+    "easy"
+  elsif score >= 60.0
+    "standard"
+  elsif score >= 30.0
+    "difficult"
+  else
+    "very difficult"
+  end
+end
+
+cache = Hash[]
+total = Stats.new(0, 0, 0, Array[])
+Array.each_with_index(paragraphs) do |para, i|
+  s = analyze(para, cache)
+  total = Stats.merge(total, s)
+  ease = Stats.reading_ease(s)
+  puts(format("P%d: %d sentences, %2d words, %3d syllables, ease %6.1f (%s), grade %5.1f",
+              i + 1, Stats.get_sentences(s), Stats.get_words(s), Stats.get_syllables(s), ease, band(ease), Stats.grade(s)))
+  cx = Stats.get_complex(s)
+  puts("    complex: #{Array.join(Array.take(cx, 5), ", ")}") unless Array.empty?(cx)
+end
+
+puts(format("overall: ease %.1f, grade %.1f", Stats.reading_ease(total), Stats.grade(total)))
+puts("syllable cache: #{Hash.size(cache)} words")
+
+by_syl = Hash.new(0)
+Hash.each(cache) { |_, n| by_syl[n] += 1 }
+Array.each(Array.sort(Hash.keys(by_syl))) { |n| puts(format("  %d syllable(s): %2d words", n, by_syl[n])) }
+
+longest = Hash.max_by(cache) { |w, n| [n, String.size(w)] }
+if longest
+  w, n = longest
+  puts("most syllables: #{w} (#{n})")
+end
+Array.each(Array["table", "little", "create", "the", "rhythm", "queue"]) do |w|
+  puts("  #{w}: #{syllables(w, cache)}")
+end

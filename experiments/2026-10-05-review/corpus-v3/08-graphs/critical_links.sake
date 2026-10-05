@@ -1,0 +1,97 @@
+class Grid
+  attr_reader names, adj
+
+  def build(names, wires)
+    adj = Array.new(Array.size(names)) { Array[] }
+    g = Grid.new(names, adj)
+    Array.each(wires) do |a, b|
+      i = id(g, a)
+      j = id(g, b)
+      Array.push(adj[i], j)
+      Array.push(adj[j], i)
+    end
+    g
+  end
+
+  def id(g, name)
+    i = Array.index(@names, name)
+    raise KeyError, "unknown station #{name}" unless i
+    i
+  end
+
+  def name(g, i) = @names[i]
+  def size(g) = Array.size(@names)
+end
+
+class Scan
+  attr_accessor disc, low, time, bridges, cut_points
+end
+
+def dfs(grid, scan, u, parent)
+  disc = Scan.get_disc(scan)
+  low = Scan.get_low(scan)
+  disc[u] = low[u] = Scan.get_time(scan)
+  Scan.set_time(scan, Scan.get_time(scan) + 1)
+  children = 0
+  Array.each(Grid.get_adj(grid)[u]) do |v|
+    next if v == parent
+    if disc[v] == nil
+      children += 1
+      dfs(grid, scan, v, u)
+      low[u] = low[v] if low[v] < low[u]
+      if low[v] > disc[u]
+        Array.push(Scan.get_bridges(scan), [u, v])
+      end
+      if parent != nil && low[v] >= disc[u]
+        Set.add(Scan.get_cut_points(scan), u)
+      end
+    elsif disc[v] < low[u]
+      low[u] = disc[v]
+    end
+  end
+  Set.add(Scan.get_cut_points(scan), u) if parent == nil && children > 1
+end
+
+def analyze(grid)
+  n = Grid.size(grid)
+  scan = Scan.new(Array.new(n), Array.new(n, 0), 0, Array[], Set[])
+  islands = 0
+  Integer.times(n) do |u|
+    next if Scan.get_disc(scan)[u]
+    islands += 1
+    dfs(grid, scan, u, nil)
+  end
+  [scan, islands]
+end
+
+def label(grid, pair)
+  a, b = pair
+  x = Grid.name(grid, a)
+  y = Grid.name(grid, b)
+  x < y ? "#{x}--#{y}" : "#{y}--#{x}"
+end
+
+def report(title, names, wires)
+  puts("== #{title}")
+  grid = Grid.build(names, wires)
+  scan, islands = analyze(grid)
+  bridges = Array.sort(Array.map(Scan.get_bridges(scan)) { |pr| label(grid, pr) })
+  cuts = Array.sort(Array.map(Set.to_a(Scan.get_cut_points(scan))) { |i| Grid.name(grid, i) })
+  puts("stations: #{Grid.size(grid)}, wires: #{Array.size(wires)}, islands: #{islands}")
+  puts("single points of failure: #{Array.empty?(cuts) ? "none" : Array.join(cuts, ", ")}")
+  puts("critical wires: #{Array.empty?(bridges) ? "none" : Array.join(bridges, ", ")}")
+  degrees = Array.map(Grid.get_adj(grid)) { |nbs| Array.size(nbs) }
+  leaf_count = Array.count(degrees) { |d| d == 1 }
+  puts("leaf stations: #{leaf_count}, max degree: #{Array.max(degrees)}")
+rescue KeyError => e
+  puts("bad input: #{Exception.message(e)}")
+end
+
+report("city grid",
+       Array["plant", "north", "south", "east", "west", "mall", "farm", "mine", "port"],
+       Array[["plant", "north"], ["plant", "south"], ["north", "south"], ["north", "east"],
+             ["east", "mall"], ["mall", "west"], ["west", "east"], ["south", "farm"],
+             ["farm", "mine"], ["port", "plant"]])
+report("ring", Array["a", "b", "c", "d"], Array[["a", "b"], ["b", "c"], ["c", "d"], ["d", "a"]])
+report("two parts", Array["p", "q", "r", "s", "t"], Array[["p", "q"], ["q", "r"], ["s", "t"]])
+report("typo", Array["x", "y"], Array[["x", "z"]])

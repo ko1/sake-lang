@@ -1,0 +1,99 @@
+class BufferFull < Exception
+  attr_reader capacity
+end
+
+class Ring
+  attr_reader capacity
+  attr_accessor overwrite, start = 0, count = 0, dropped = 0
+  attr_reader slots = nil
+
+  def initialize(r) = @slots = Array.new(@capacity, 0.0)
+
+  def full?(r) = @count == @capacity
+
+  def push(r, v)
+    if full?(r)
+      raise BufferFull.new("ring of #{@capacity} is full", @capacity) unless @overwrite
+      @slots[@start] = v
+      @start = (@start + 1) % @capacity
+      @dropped += 1
+    else
+      @slots[(@start + @count) % @capacity] = v
+      @count += 1
+    end
+    r
+  end
+
+  def shift(r)
+    return nil if @count == 0
+    v = @slots[@start]
+    @start = (@start + 1) % @capacity
+    @count -= 1
+    v
+  end
+
+  def each(r)
+    Integer.times(@count) { |i| yield(@slots[(@start + i) % @capacity]) }
+    r
+  end
+
+  def to_a(r)
+    out = Array[]
+    each(r) { |v| Array.push(out, v) }
+    out
+  end
+
+  def mean(r)
+    return nil if @count == 0
+    total = 0.0
+    each(r) { |v| total += v }
+    total / @count
+  end
+
+  def to_s(r) = "[" + Array.join(Array.map(to_a(r)) { |v| format("%.1f", v) }, " ") + "]"
+end
+
+def readings = once do
+  Array[
+    ["cpu", 12.0], ["cpu", 15.5], ["mem", 61.0], ["cpu", 80.25], ["cpu", 79.0],
+    ["mem", 62.5], ["cpu", 81.0], ["disk", 5.0], ["cpu", 20.0], ["mem", 90.0],
+    ["cpu", 18.5], ["mem", 91.5], ["mem", 92.0], ["cpu", 95.0], ["disk", 5.5]
+  ]
+end
+
+windows = Hash[]
+alerts = Array[]
+Array.each_with_index(readings) do |(name, value), t|
+  ring = (windows[name] ||= Ring.new(3, true))
+  Ring.push(ring, value)
+  avg = Ring.mean(ring)
+  if avg && Ring.full?(ring) && avg > 75.0
+    Array.push(alerts, format("t=%02d %-4s avg %.2f over %s", t, name, avg, Kernel.to_s(ring)))
+  end
+end
+
+Array.each(Array.sort(Hash.keys(windows))) do |name|
+  ring = windows[name]
+  m = Ring.mean(ring)
+  puts(format("%-4s window=%-18s mean=%6.2f dropped=%d", name, Kernel.to_s(ring), m, Ring.get_dropped(ring)))
+end
+puts("alerts:")
+Array.each(alerts) { |a| puts("  " + a) }
+
+strict = Ring.new(4, false)
+begin
+  Range.each(1..6) do |i|
+    Ring.push(strict, i * 1.5)
+    puts("pushed #{i * 1.5}, now #{strict}")
+  end
+rescue BufferFull => e
+  puts("#{Exception.message(e)} (capacity #{BufferFull.get_capacity(e)})")
+end
+drained = Array[]
+while (v = Ring.shift(strict))
+  Array.push(drained, v)
+  Ring.push(strict, v * 10) if v < 3.0
+end
+p(drained)
+p(Ring.shift(strict))
+p(Ring.mean(strict))

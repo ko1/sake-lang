@@ -1,0 +1,200 @@
+class JsonError < Exception
+  attr_reader pos
+end
+
+class Json
+  attr_reader src, pos = 0
+
+  def parse(text)
+    j = Json.new(text)
+    v = value(j)
+    skip_ws(j)
+    raise JsonError.new("trailing characters", Json.get_pos(j)) if Json.get_pos(j) < String.size(text)
+    v
+  end
+
+  def skip_ws(j)
+    @pos += 1 while @src[@pos] && String.include?(" \t\n\r", @src[@pos])
+  end
+
+  def error!(j, msg) = raise(JsonError.new(msg, @pos))
+
+  def value(j)
+    skip_ws(j)
+    c = @src[@pos]
+    if c == nil
+      error!(j, "unexpected end of input")
+    elsif c == "{"
+      object(j)
+    elsif c == "["
+      array(j)
+    elsif c == "\""
+      string(j)
+    elsif c == "-" || String.match?(c, /\d/)
+      number(j)
+    elsif String.start_with?(@src[@pos..], "true")
+      @pos += 4
+      true
+    elsif String.start_with?(@src[@pos..], "false")
+      @pos += 5
+      false
+    elsif String.start_with?(@src[@pos..], "null")
+      @pos += 4
+      nil
+    else
+      error!(j, "unexpected character '#{c}'")
+    end
+  end
+
+  def object(j)
+    @pos += 1
+    h = Hash[]
+    skip_ws(j)
+    if @src[@pos] == "}"
+      @pos += 1
+      return h
+    end
+    while true
+      skip_ws(j)
+      error!(j, "expected string key") unless @src[@pos] == "\""
+      key = string(j)
+      skip_ws(j)
+      error!(j, "expected ':'") unless @src[@pos] == ":"
+      @pos += 1
+      h[key] = value(j)
+      skip_ws(j)
+      c = @src[@pos]
+      @pos += 1
+      return h if c == "}"
+      error!(j, "expected ',' or '}'") unless c == ","
+    end
+  end
+
+  def array(j)
+    @pos += 1
+    a = Array[]
+    skip_ws(j)
+    if @src[@pos] == "]"
+      @pos += 1
+      return a
+    end
+    while true
+      Array.push(a, value(j))
+      skip_ws(j)
+      c = @src[@pos]
+      @pos += 1
+      return a if c == "]"
+      error!(j, "expected ',' or ']'") unless c == ","
+    end
+  end
+
+  def string(j)
+    @pos += 1
+    out = ""
+    while true
+      c = @src[@pos]
+      error!(j, "unterminated string") if c == nil
+      @pos += 1
+      return out if c == "\""
+      if c == "\\"
+        e = @src[@pos]
+        @pos += 1
+        case e
+        in "n" then out += "\n"
+        in "t" then out += "\t"
+        in "u"
+          out += Integer.chr(String.hex(@src[@pos, 4]))
+          @pos += 4
+        in "\"" | "\\" | "/" then out += e
+        else error!(j, "bad escape")
+        end
+      else
+        out += c
+      end
+    end
+  end
+
+  def number(j)
+    m = String.match(@src[@pos..], /\A-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?/)
+    error!(j, "bad number") unless m
+    text = MatchData.to_s(m)
+    @pos += String.size(text)
+    m[2] || m[3] ? Float(text) : Integer(text)
+  end
+end
+
+def quote(s) = "\"" + s.String.gsub("\\", "\\\\\\\\").String.gsub("\"", "\\\"").String.gsub("\n", "\\n") + "\""
+
+def dump(v, indent)
+  pad = "  " * indent
+  case v
+  in Hash
+    return "{}" if Hash.empty?(v)
+    items = Hash.map(v) { |k, x| "#{pad}  #{quote(k)}: #{dump(x, indent + 1)}" }
+    "{\n#{Array.join(items, ",\n")}\n#{pad}}"
+  in Array
+    return "[]" if Array.empty?(v)
+    if Array.none?(v) { |x| x in Hash | Array }
+      "[#{Array.join(Array.map(v) { |x| dump(x, 0) }, ", ")}]"
+    else
+      items = Array.map(v) { |x| "#{pad}  #{dump(x, indent + 1)}" }
+      "[\n#{Array.join(items, ",\n")}\n#{pad}]"
+    end
+  in String then quote(v)
+  in nil then "null"
+  else Kernel.to_s(v)
+  end
+end
+
+def lookup(v, path)
+  String.scan(path, /[^.\[\]]+|\[\d+\]/).Array.reduce(v) do |cur, seg|
+    if (m = String.match(seg, /\A\[(\d+)\]\z/))
+      return nil unless cur in Array
+      cur[String.to_i(m[1])]
+    else
+      return nil unless cur in Hash
+      cur[seg]
+    end
+  end
+end
+
+def document
+  <<~JSON
+    {
+      "store": {
+        "name": "Corner \\"Books\\"",
+        "open": true,
+        "rating": 4.5,
+        "books": [
+          {"title": "Dune", "price": 9.99, "tags": ["sf", "classic"], "stock": 3},
+          {"title": "Emma", "price": 4, "tags": [], "stock": 0},
+          {"title": "Neuromancer", "price": 7.5e0, "tags": ["sf", "cyber"], "stock": 12}
+        ],
+        "manager": null,
+        "note": "line1\\nline2 \\u0041",
+        "path": "C:\\\\tmp"
+      },
+      "version": -2
+    }
+  JSON
+end
+
+doc = Json.parse(document)
+puts(dump(doc, 0))
+Array.each(Array["store.name", "store.books[2].title", "store.books[0].tags[1]", "store.books[5].title",
+                 "store.manager", "version", "store.rating.x"]) do |path|
+  puts("#{path} -> #{dump(lookup(doc, path), 0)}")
+end
+books = lookup(doc, "store.books")
+if books in Array
+  total = Array.sum(books) { |b| b["price"] * b["stock"] }
+  puts("inventory value: #{Float.round(total, 2)}")
+  sf = Array.select(books) { |b| Array.include?(b["tags"], "sf") }
+  puts("sf titles: #{Array.join(Array.map(sf) { |b| b["title"] }, ", ")}")
+end
+
+Array.each(Array["[1, 2,]", "{\"a\" 1}", "[1, 2] x", "\"abc", "{\"k\": tru}", "[01]", "", "[[[]]]", "{\"e\": 1E3}"]) do |src|
+  puts("#{Kernel.inspect(src)} => #{dump(Json.parse(src), 0)}")
+rescue JsonError => e
+  puts("#{Kernel.inspect(src)} => error at #{JsonError.get_pos(e)}: #{Exception.message(e)}")
+end

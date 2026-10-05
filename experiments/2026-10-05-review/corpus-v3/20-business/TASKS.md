@@ -1,0 +1,27 @@
+# 20-business tasks
+
+- library_loans: Library with books, members and loans; checkouts/returns driven by an event list, late fines, limits, and LoanError with a code.
+- todo_list: A to-do list driven by a small command script (add/done/list), with priorities, due dates, tags, and per-line CommandError reporting.
+- shopping_cart: Shopping cart over a product catalog with a Money type (own `+ - * <=>`), per-product promotions, coupons, proportional tax, and receipts for several coupons.
+- grade_book: Grade book parsed from CSV with weighted categories, missing scores, dropped lowest homework, letter grades, class statistics, and a capped curve.
+- room_reservations: Meeting-room booking with time parsing, overlap detection via Ranges, capacity/feature checks, conflict suggestions, cancellation, day plans and utilization.
+- inventory_reorder: Stock movements with StockError, then safety stock / reorder point / EOQ from sales history, and purchase orders grouped by supplier with case packs and minimum order values.
+- payroll: Bi-weekly payroll for hourly and salaried employees (shared Employee mixin), overtime, retirement deduction, progressive tax brackets, skipped timecards, and year-to-date totals.
+- invoice_generator: Invoices from a parsed timesheet and expenses, per-client rate overrides and discounts, Rational money with thousands separators, due dates from payment terms.
+- expense_tracker: Card transactions parsed from CSV (bad lines reported), categorized by regex rules, monthly category table vs. budgets, over-budget alerts, recurring merchants, refunds.
+- restaurant_orders: Restaurant tables and seats ordering from a menu with modifiers and limited stock (SoldOut), a kitchen queue served per station, and bills split evenly or by seat.
+- gym_membership: Gym check-ins from a log for monthly/annual/punch-card members with AccessDenied, idle-member risk flags, cost per visit, and the busiest weekday.
+- parking_garage: Multi-level garage assigning the smallest fitting spot, tickets, EV charging, fees with a free period and daily cap, lost tickets, GarageFull/TicketError, and occupancy bars.
+- appointment_scheduler: Clinic scheduler over per-doctor day grids of 15-minute slots: earliest run of free slots by specialty and time-of-day preference, waitlist, cancellation, and a utilization chart.
+- customer_loyalty: Loyalty program with tier multipliers and upgrades, points kept in expiring lots redeemed oldest-first, referral bonuses, NotEnoughPoints, and an expiry forecast.
+- sales_report: Sales table parsed from a pipe-separated report, region x quarter pivot keyed by Tuples, product bars, tiered rep commissions, and below-average-price deals.
+- timesheet: Weekly timesheets parsed from text with quarter-hour rounding, validation (reversed/overlapping/unreadable shifts), automatic break deduction, daily vs. weekly overtime, and pay shares.
+- rental_fleet: Car rental with per-branch availability (booked day Ranges), one-class upgrades, weekly pricing and weekend surcharges, one-way fees, mileage overage, and a fleet status table.
+- ticket_helpdesk: Help-desk tickets with a status state machine (Hash of Sets, InvalidTransition), least-loaded agent assignment, per-priority SLA breach detection, and per-ticket logs.
+- bank_ledger: Double-entry bookkeeping: journal parsed from indented text, validation (unknown account, unbalanced entry) with LedgerError, trial balance, net income and the accounting equation.
+- course_enrollment: Course registration with prerequisites, time-slot clashes, credit limits, capacity and waitlists promoted on drop, and recursive study plans with cycle detection.
+- event_registration: Conference orders with early-bird and group pricing, per-ticket-type capacity (SoldOutError), name badges sorted by last name, catering tallies, and companies sending several people.
+- hotel_billing: Hotel folios with seasonal and weekend room rates over Time dates, city tax, extras posted per night, company-paid rooms vs. guest-paid extras, payments, and a folio type with its own `[]`.
+- warehouse_picking: Batch picking: bins parsed from text, first-expiry-first allocation with backorders, and a serpentine pick route ordered by a Comparable Location type.
+- subscription_billing: Four months of SaaS billing: per-seat plans with minimums, Rational mid-month proration, limited-duration coupons, declined cards with dunning states, collected revenue and MRR.
+- vendor_quotes: Request-for-quote comparison with quantity price tiers, currency conversion, lead-time deadlines, per-item awards with alternatives, and single-vendor consolidation totals.

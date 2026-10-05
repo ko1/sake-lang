@@ -1,0 +1,77 @@
+# Drive orders through a lifecycle state machine; illegal events raise InvalidTransition.
+class InvalidTransition < StandardError
+  attr_reader from, event
+end
+
+class GuardFailed < StandardError
+  attr_reader reason
+end
+
+def transitions = once do
+  Hash[
+    [:new, :pay] => :paid,
+    [:new, :cancel] => :cancelled,
+    [:paid, :ship] => :shipped,
+    [:paid, :cancel] => :refunded,
+    [:shipped, :deliver] => :delivered,
+    [:shipped, :lose] => :lost,
+    [:lost, :refund] => :refunded,
+    [:delivered, :return] => :returned,
+    [:returned, :refund] => :refunded
+  ]
+end
+
+class Order
+  attr_reader id, amount
+  attr_accessor state, history, paid
+  def fire(o, event, arg)
+    target = transitions[[@state, event]]
+    raise InvalidTransition.new("cannot #{event} when #{@state}", @state, event) unless target
+    case event
+    in :pay
+      raise GuardFailed.new("paid #{arg}, expected #{@amount}", "amount") if arg != @amount
+      @paid = arg
+    in :ship
+      raise GuardFailed.new("no tracking number", "tracking") if String.empty?(arg)
+    in :return
+      raise GuardFailed.new("return window is 14 days, got #{arg}", "window") if arg > 14
+    else
+      nil
+    end
+    Array.push(@history, "#{@state}->#{target}")
+    @state = target
+  end
+end
+
+def run(order, events)
+  errors = Array[]
+  Array.each(events) do |event, arg|
+    Order.fire(order, event, arg)
+  rescue InvalidTransition => e
+    Array.push(errors, "#{event}: #{Exception.message(e)}")
+  rescue GuardFailed => e
+    Array.push(errors, "#{event}: guard #{GuardFailed.get_reason(e)} failed (#{Exception.message(e)})")
+  end
+  errors
+end
+
+scenarios = Array[
+  [Order.new("A-1", 300, :new, Array[], 0), Array[[:pay, 300], [:ship, "TRK1"], [:deliver, 0]]],
+  [Order.new("A-2", 120, :new, Array[], 0), Array[[:ship, "TRK2"], [:pay, 100], [:pay, 120], [:cancel, 0]]],
+  [Order.new("A-3", 75, :new, Array[], 0), Array[[:pay, 75], [:ship, ""], [:ship, "TRK3"], [:lose, 0], [:deliver, 0], [:refund, 0]]],
+  [Order.new("A-4", 980, :new, Array[], 0), Array[[:pay, 980], [:ship, "TRK4"], [:deliver, 0], [:return, 20], [:return, 3], [:refund, 0], [:pay, 980]]],
+  [Order.new("A-5", 50, :new, Array[], 0), Array[[:cancel, 0], [:cancel, 0]]]
+]
+
+final_states = Hash.new(0)
+refunded_total = 0
+Array.each(scenarios) do |order, events|
+  errors = run(order, events)
+  state = Order.get_state(order)
+  final_states[state] += 1
+  refunded_total += Order.get_paid(order) if state == :refunded
+  puts("#{Order.get_id(order)}: #{state} via #{Array.join(Order.get_history(order), ", ")}")
+  Array.each(errors) { puts("    ! #{it}") }
+end
+puts("final: #{Array.join(Hash.map(final_states) { |s, n| "#{s}=#{n}" }, " ")}")
+puts("refunded #{refunded_total}")

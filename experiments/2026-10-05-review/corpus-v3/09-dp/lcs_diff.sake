@@ -1,0 +1,106 @@
+class Edit
+  attr_reader op, text, old_line, new_line
+
+  def to_s(e)
+    mark = @op == :keep ? " " : (@op == :del ? "-" : "+")
+    "#{mark} #{@text}"
+  end
+end
+
+def lcs_table(a, b)
+  n = Array.size(a)
+  m = Array.size(b)
+  t = Array.new(n + 1) { Array.new(m + 1, 0) }
+  Integer.downto(n - 1, 0) do |i|
+    Integer.downto(m - 1, 0) do |j|
+      if a[i] == b[j]
+        t[i][j] = t[i + 1][j + 1] + 1
+      else
+        t[i][j] = Array.max(Array[t[i + 1][j], t[i][j + 1]])
+      end
+    end
+  end
+  t
+end
+
+def diff(a, b)
+  t = lcs_table(a, b)
+  edits = Edit[]
+  i = 0
+  j = 0
+  while i < Array.size(a) && j < Array.size(b)
+    if a[i] == b[j]
+      Array.push(edits, Edit.new(:keep, a[i], i + 1, j + 1))
+      i += 1
+      j += 1
+    elsif t[i + 1][j] >= t[i][j + 1]
+      Array.push(edits, Edit.new(:del, a[i], i + 1, nil))
+      i += 1
+    else
+      Array.push(edits, Edit.new(:add, b[j], nil, j + 1))
+      j += 1
+    end
+  end
+  while i < Array.size(a)
+    Array.push(edits, Edit.new(:del, a[i], i + 1, nil))
+    i += 1
+  end
+  while j < Array.size(b)
+    Array.push(edits, Edit.new(:add, b[j], nil, j + 1))
+    j += 1
+  end
+  edits
+end
+
+def lcs_string(x, y)
+  a = String.chars(x)
+  b = String.chars(y)
+  t = lcs_table(a, b)
+  out = ""
+  i = 0
+  j = 0
+  while i < Array.size(a) && j < Array.size(b)
+    if a[i] == b[j]
+      out += a[i]
+      i += 1
+      j += 1
+    elsif t[i + 1][j] >= t[i][j + 1]
+      i += 1
+    else
+      j += 1
+    end
+  end
+  out
+end
+
+def show_diff(title, old_text, new_text)
+  a = String.split(old_text, "\n")
+  b = String.split(new_text, "\n")
+  edits = diff(a, b)
+  counts = Hash.new(0)
+  Array.each(edits) { |e| counts[Edit.get_op(e)] += 1 }
+  puts("--- #{title}: #{counts[:keep]} same, #{counts[:del]} removed, #{counts[:add]} added")
+  Array.each(edits) { |e| puts(e) }
+  first_change = Array.find(edits) { |e| Edit.get_op(e) != :keep }
+  if first_change
+    line = Edit.get_old_line(first_change) || Edit.get_new_line(first_change)
+    puts("first change near line #{line}")
+  else
+    puts("no changes")
+  end
+end
+
+old_src = "def greet(name)\n  puts \"hello\"\n  puts name\nend\n\ngreet(\"bob\")"
+new_src = "def greet(name, punct)\n  puts \"hello\"\n  puts name + punct\nend\n\ngreet(\"bob\", \"!\")\ngreet(\"amy\", \"?\")"
+show_diff("greet.rb", old_src, new_src)
+
+list_a = "apples\nbread\nbutter\neggs\nmilk\ntea"
+list_b = "bread\nbutter\ncheese\neggs\ntea\nyogurt"
+show_diff("groceries", list_a, list_b)
+show_diff("unchanged", list_a, list_a)
+
+pairs = Array[["AGGTAB", "GXTXAYB"], ["dynamic", "programming"], ["kitten", "sitting"], ["abc", "xyz"]]
+Array.each(pairs) do |x, y|
+  common = lcs_string(x, y)
+  puts(format("lcs(%s, %s) = %-6s len %d", x, y, Kernel.inspect(common), String.size(common)))
+end

@@ -1,0 +1,27 @@
+# Tasks: grids, boards and puzzles
+
+- game_of_life: Conway's Life on small toroidal boards, detecting still lifes and cycles via a Hash of seen states.
+- maze_bfs: parses text mazes, finds the shortest S-to-E path by BFS with a parent Hash keyed by cell Tuples, counts turns and draws the path.
+- sudoku_solver: parses 9x9 puzzles, validates the givens (custom exception with row/col), and solves by backtracking on the cell with the fewest candidates.
+- tic_tac_toe: minimax with a memo Hash over string-keyed positions; analyses several positions and plays two games against itself.
+- flood_fill: a paint-bucket canvas: stack-based fills, BFS region labelling with a Set of visited cells, region statistics grouped by colour.
+- minesweeper: builds a field from mine coordinates, plays scripted open/flag moves with cascading reveals, a MineHit exception, and win detection.
+- n_queens: counts N-queens solutions for n=1..8 with bitmask backtracking and prints the first array-based solution for some sizes.
+- knights_tour: Warnsdorff's heuristic knight's tours on 5x5 to 8x8 boards with a Pos type that defines `+`/`-`, plus a validity and closed-tour check.
+- connect_four: plays scripted then greedy-AI Connect Four games (win/block/centre), with a ColumnFull exception, board copies for look-ahead and four-in-a-row detection.
+- sliding_puzzle: A* over 8-puzzle states (Strings) with a hand-written binary heap of Comparable nodes, Manhattan heuristic, parity-based unsolvability check, and path reconstruction.
+- word_search: finds words in a letter grid in 8 directions (directions are Records), marks used letters, and reports hits, misses and leftover letters.
+- langtons_ant: generalized Langton's ant (turmite rules like RL, LLRR) on an unbounded grid stored as a Hash from coordinate Tuples to colours, with checkpoints and a picture.
+- sokoban: loads Sokoban levels into Sets of walls/goals/boxes, replays move strings with pushes, blocked/stuck moves and undo snapshots, and checks for a solution.
+- terrain_dijkstra: Dijkstra over a terrain map with Float tile costs (case/in on tile chars returning Float or nil), Hash distances keyed by Tuples, route drawing and terrain breakdown.
+- matrix_spiral: a flat-storage Matrix type with its own `[]`/`[]=`, spiral fill and spiral read-back, rotation, transpose, symmetry test and aligned printing.
+- battleship: places a fleet with overlap/bounds checks (two exception types), parses shot coordinates with a Regexp in a `module_function` module, tracks hits/sunk ships and draws the ocean.
+- nonogram: derives row/column clues from pictures and line-solves the puzzle by enumerating run arrangements and keeping the cells all consistent arrangements agree on.
+- game_2048: 2048 on a 4x4 board: row slide/merge with scoring, moves in four directions via rotations, deterministic tile spawning, and stuck detection on board copies.
+- othello: 6x6 Othello with flip detection in eight directions, move Records, a greedy corner-loving player for both sides, passes and final count.
+- chess_attacks: parses FEN placements into a Hash from square Tuples to Piece structs, computes attacked squares (steps and sliding rays), material, check status and safe king moves.
+- magic_square: builds odd (Siamese) and doubly-even magic squares in a `module_function` module, raises for singly-even sizes, and checks given squares, reporting the wrong lines via Records.
+- lights_out: Lights Out on an Integer bitmask (`|`, `^`, `<<`, `>>`), solved by light chasing over every first-row choice, keeping the shortest press list and verifying it.
+- falling_sand: a falling-sand cellular automaton (sand, water, walls) updated bottom-up with alternating side preference, a Set of moved cells, frames, settling detection and a conservation check.
+- crossword: numbers a crossword grid (across/down entries as Structs), fills answers with length and crossing checks (Conflict exception), and reports the grid and open patterns.
+- hex_game: axial hex coordinates with `+`/`-` on a Hex type (distance, rings), and the game of Hex with a union-find over a Hash of string keys and virtual edge nodes to detect a winner.

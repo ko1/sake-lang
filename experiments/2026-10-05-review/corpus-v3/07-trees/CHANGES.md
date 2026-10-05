@@ -1,0 +1,27 @@
+# Changes (07-trees, corpus-v2)
+
+- avl_tree: unchanged
+- bill_of_materials: `name, rest = String.split(...)` / `name, price = String.split(...)` (Array multiple assignment) instead of `f[0]`/`f[1]`; sort key `[-(qty * cost), part]` (Tuple ordering, unary minus) instead of the packed `format("%012.2f %s", 1.0e8 - ...)` String key
+- bst_basic: unchanged
+- btree: sortedness check `all == Array.sort(all)` (Array equality) instead of the `Range.all?` pairwise loop
+- decision_tree: unchanged (`0.0 - p * log2(p)` is kept: the Ruby version writes it the same way)
+- dom_tree: `tag, klass, id = MatchData.captures(m)` (Array multiple assignment) instead of `m[1]`..`m[3]`; `!` instead of `== false`; the descendant check is `Array.all?` (as in Ruby) instead of `Array.each` with an `ok` flag; sort key `[-n, t]` (Tuple ordering, unary minus) instead of `format("%03d%s", 100 - n, t)`; `Array.join(attrs)` without the separator (interpreter bug fixed)
+- expression_tree: operator dispatch in `evaluate`, `prec`, `derive` written as `case`/`in` on String literals (`in "+" | "-"`) instead of `if`/`elsif` chains
+- fenwick_ranks: `i & -i` (unary minus) instead of `i & (0 - i)`
+- filesystem_du: `path, size = String.split(...)` (Array multiple assignment) instead of `fields[0]`/`fields[1]`; descending sort keys `-x` (unary minus) instead of `0 - x`
+- heap_scheduler: `name, pri, arr, dur = String.split(line, ",")` (Array multiple assignment) instead of `f[0]`..`f[3]`; `!Array.empty?(...)` / `!MinHeap.empty?(...)` instead of `== false`
+- huffman: `(Leaf|Internal).get_weight` / `.get_order` (types listed on the operation) instead of the `case`/`in` helpers `weight` and `order`; sort key `[String.size(code), c]` (Tuple ordering) instead of `format("%03d%s", ...)`; `Array.join` without the separator
+- interval_bookings: `h, m = String.split(hhmm, ":")` (Array multiple assignment) instead of `parts[0]`/`parts[1]`
+- ip_route_trie: `addr, len = String.split(cidr, "/")` and `cidr, iface, metric = String.split(line, " ")` (Array multiple assignment) instead of indexing
+- kd_tree: `name, x, y = String.split(...)` (Array multiple assignment) instead of `f[0]`..`f[2]`; `lo, hi = axis == 0 ? [x0, x1] : [y0, y1]` as in Ruby instead of two ternaries
+- lazy_seat_inventory: `-count` (unary minus) instead of `0 - count`; `Array.join(row)` without the separator
+- merkle_sync: `node_hash` is now `(MLeaf|MNode).get_hash(n)` (types listed on the operation) instead of a `case`/`in`; `a, b = pair` (Array multiple assignment) instead of `pair[0]`/`pair[1]`; `Array.join` without the separator
+- org_chart: `id, name, title, mgr, salary = Array.map(String.split(...))` (Array multiple assignment) instead of `f[0]`..`f[4]`; `Array.reject { empty? }` as in Ruby instead of `select { empty? == false }`
+- quadtree: `label, x, y = String.split(line, " ")` (Array multiple assignment) instead of `f[0]`..`f[2]`
+- rope_editor: edit dispatch `case kind in :insert ... in :delete ... else` (Symbol literals) instead of `if kind == :insert ... elsif`; `Array.join(parts)` without the separator
+- segment_tree_stats: unchanged
+- spanning_tree: `a, b, km = String.split(line, " ")` (Array multiple assignment) instead of `f[0]`..`f[2]`
+- taxonomy_lca: unchanged
+- traversals: `!Array.empty?(stack)` instead of `== false`; iterator choice as `case order in :pre ... in :in ... else` (Symbol literals) instead of a nested ternary; `at_distance` frontier step written as the Ruby chain `Array.flat_map {...}.Array.compact.Array.select { Set.add?(...) }` (chain) instead of nested loops; `Array.join` without the separator
+- tree_codec: `String.strip(text).String.delete_prefix("[").String.delete_suffix("]")` (chain) instead of nested calls read inside out
+- trie_autocomplete: ranking `Array.sort_by(found) { |w, f| [-f, w] }.Array.take(limit).Array.map {...}` (Tuple ordering, unary minus, chain) instead of the `format("%08d %s", 99999999 - f, w)` key; `!TrieNode.get_terminal(node)` instead of `== false`; `c, child = Hash.first(...)` instead of `Array.first(Hash.to_a(...))`

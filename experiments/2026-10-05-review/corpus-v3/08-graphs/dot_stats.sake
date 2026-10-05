@@ -1,0 +1,107 @@
+class ParseError < StandardError
+  attr_reader line
+end
+
+class Graph
+  attr_reader name, nodes, edges
+
+  def add_node(g, n)
+    Array.push(@nodes, n) unless Array.include?(@nodes, n)
+  end
+end
+
+def parse_dot(src)
+  lines = String.lines(src)
+  header = String.match(lines[0] || "", /^\s*digraph\s+(\w+)\s*\{\s*$/)
+  raise ParseError.new("expected 'digraph NAME {'", 1) unless header
+  g = Graph.new(header[1], Array[], Array[])
+  closed = false
+  Array.each_with_index(Array.drop(lines, 1)) do |raw, i|
+    lineno = i + 2
+    line = String.strip(String.sub(raw, /\/\/.*$/, ""))
+    next if String.empty?(line)
+    if line == "}"
+      closed = true
+      next
+    end
+    raise ParseError.new("text after closing brace", lineno) if closed
+    if (m = String.match(line, /^(\w+)\s*->\s*(\w+)\s*(?:\[weight=(\d+)\])?\s*;$/))
+      w = m[3] ? String.to_i(m[3]) : 1
+      Array.push(Graph.get_edges(g), {from: m[1], to: m[2], weight: w})
+      Graph.add_node(g, m[1])
+      Graph.add_node(g, m[2])
+    elsif (m = String.match(line, /^(\w+)\s*;$/))
+      Graph.add_node(g, m[1])
+    else
+      raise ParseError.new("cannot parse '#{line}'", lineno)
+    end
+  end
+  raise ParseError.new("missing closing brace", Array.size(lines)) unless closed
+  g
+end
+
+def stats(g)
+  outdeg = Hash.new(0)
+  indeg = Hash.new(0)
+  pairs = Hash.new(0)
+  loops = 0
+  Array.each(Graph.get_edges(g)) do |e|
+    e => {from:, to:}
+    outdeg[from] += 1
+    indeg[to] += 1
+    pairs[[from, to]] += 1
+    loops += 1 if from == to
+  end
+  nodes = Graph.get_nodes(g)
+  {
+    sources: Array.select(nodes) { |n| indeg[n] == 0 },
+    sinks: Array.select(nodes) { |n| outdeg[n] == 0 },
+    loops: loops,
+    parallel: Hash.count(pairs) { |k, c| c > 1 },
+    mutual: Hash.count(pairs) { |(a, b), c| a < b && Hash.key?(pairs, [b, a]) },
+    hub: Array.max_by(nodes) { |n| indeg[n] + outdeg[n] },
+    total_weight: Array.sum(Graph.get_edges(g)) { |e| e => {weight:}; weight }
+  }
+end
+
+def describe(src)
+  g = parse_dot(src)
+  s = stats(g)
+  s => {sources:, sinks:, loops:, parallel:, mutual:, hub:, total_weight:}
+  puts("graph #{Graph.get_name(g)}: #{Array.size(Graph.get_nodes(g))} nodes, #{Array.size(Graph.get_edges(g))} edges, weight #{total_weight}")
+  puts("  sources: #{Array.join(sources, " ")}")
+  puts("  sinks:   #{Array.join(sinks, " ")}")
+  puts("  self-loops=#{loops} parallel=#{parallel} mutual=#{mutual} hub=#{hub}")
+rescue ParseError => e
+  puts("parse error on line #{ParseError.get_line(e)}: #{Exception.message(e)}")
+end
+
+describe(<<~DOT)
+  digraph pipeline {
+    fetch -> parse [weight=2];
+    parse -> check;
+    check -> parse;   // retry
+    check -> store [weight=5];
+    store -> store;
+    fetch -> parse;
+    report;
+    store -> notify [weight=1];
+  }
+DOT
+
+describe(<<~DOT)
+  digraph web {
+    home -> about;
+    home -> blog;
+    blog -> post1;
+    blog -> post2;
+    post1 -> post2;
+    post2 -> post1;
+    post2 -> home;
+  }
+DOT
+
+describe("graph bad {\n}\n")
+describe("digraph x {\n  a -> b;\n  a => c;\n}\n")
+describe("digraph y {\n  a -> b;\n")
+describe("digraph z {\n  a;\n}\n  b;\n")

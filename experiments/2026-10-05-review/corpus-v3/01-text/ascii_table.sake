@@ -1,0 +1,126 @@
+class Column
+  attr_reader title, align, max_width
+  attr_accessor width
+end
+
+def format_cell(value)
+  case value
+  in nil then "-"
+  in Integer then group_digits(value)
+  in Float then format("%.2f", value)
+  in String then value
+  in true then "yes"
+  in false then "no"
+  end
+end
+
+def group_digits(n)
+  sign = n < 0 ? "-" : ""
+  digits = String.reverse(Integer.to_s(Integer.abs(n)))
+  groups = Array[]
+  Array.each_slice(String.chars(digits), 3) { |g| Array.push(groups, Array.join(g, "")) }
+  sign + String.reverse(Array.join(groups, ","))
+end
+
+def default_align(values)
+  numeric = Array.all?(values) { |v| v == nil || (v in Integer | Float) }
+  numeric ? :right : :left
+end
+
+def truncate(s, width)
+  return s if String.size(s) <= width
+  return s[0...width] if width < 4
+  s[0...(width - 3)] + "..."
+end
+
+def pad(s, width, align)
+  case align
+  in :left then String.ljust(s, width)
+  in :right then String.rjust(s, width)
+  in :center then String.center(s, width)
+  end
+end
+
+def build_columns(titles, rows, limits)
+  cols = Column[]
+  Array.each_with_index(titles) do |t, i|
+    values = Array.map(rows) { |r| r[i] }
+    limit = limits[t]
+    Array.push(cols, Column.new(t, default_align(values), limit, 0))
+  end
+  cols
+end
+
+def measure(cols, cells)
+  Array.each_with_index(cols) do |c, i|
+    w = String.size(Column.get_title(c))
+    Array.each(cells) do |row|
+      len = String.size(row[i])
+      w = len if len > w
+    end
+    limit = Column.get_max_width(c)
+    w = limit if limit != nil && w > limit
+    Column.set_width(c, w)
+  end
+end
+
+def separator(cols, ch)
+  "+" + Array.join(Array.map(cols) { |c| ch * (Column.get_width(c) + 2) }, "+") + "+"
+end
+
+def row_line(cols, cells, header)
+  parts = Array[]
+  Array.each_with_index(cols) do |c, i|
+    align = header ? :center : Column.get_align(c)
+    text = truncate(cells[i], Column.get_width(c))
+    Array.push(parts, " " + pad(text, Column.get_width(c), align) + " ")
+  end
+  "|" + Array.join(parts, "|") + "|"
+end
+
+def totals(titles, rows)
+  out = Array[]
+  Array.each_with_index(titles) do |t, i|
+    nums = Array.select(Array.map(rows) { |r| r[i] }) { |v| v in Integer | Float }
+    if i == 0
+      Array.push(out, "TOTAL")
+    elsif Array.empty?(nums) || Array.size(nums) < Array.size(rows) / 2
+      Array.push(out, "")
+    else
+      Array.push(out, format_cell(Array.sum(nums)))
+    end
+  end
+  out
+end
+
+def print_table(titles, rows, limits)
+  cols = build_columns(titles, rows, limits)
+  cells = Array.map(rows) { |r| Array.map(r) { |v| format_cell(v) } }
+  footer = totals(titles, rows)
+  measure(cols, cells + Array[footer])
+  puts(separator(cols, "="))
+  puts(row_line(cols, titles, true))
+  puts(separator(cols, "="))
+  Array.each(cells) { |r| puts(row_line(cols, r, false)) }
+  puts(separator(cols, "-"))
+  puts(row_line(cols, footer, false))
+  puts(separator(cols, "="))
+end
+
+titles = Array["City", "Country", "Population", "Area km2", "Capital", "Density"]
+rows = Array[
+  Array["Tokyo", "Japan", 13_960_000, 2194.07, true, nil],
+  Array["Osaka", "Japan", 2_750_000, 225.21, false, nil],
+  Array["Sao Paulo", "Brazil", 12_330_000, 1521.11, false, nil],
+  Array["Llanfairpwllgwyngyll", "United Kingdom of Great Britain", 3_107, 7.0, false, nil],
+  Array["Reykjavik", "Iceland", 131_136, 273.0, true, nil],
+  Array["Nowhere", nil, nil, nil, false, nil]
+]
+Array.each(rows) do |r|
+  pop = r[2]
+  area = r[3]
+  r[5] = Float.round(pop / area, 1) if pop != nil && area != nil
+end
+print_table(titles, rows, Hash["City" => 12, "Country" => 14])
+puts
+print_table(Array["Code", "Count"], Array[Array["a1", 5], Array["b22", -12_345], Array["c333", 1_000_000]], Hash[])

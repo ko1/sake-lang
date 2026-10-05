@@ -1,0 +1,138 @@
+# Compare search strategies on sorted account numbers by how many array reads
+# they make: linear, binary, interpolation, exponential (galloping), and
+# jump search. Reads go through a counting wrapper type.
+
+class Table
+  include Indexable
+  attr_reader data, reads
+
+  def [](t, i)
+    @reads += 1
+    Array.fetch(@data, i)
+  end
+  def size(t) = Array.size(@data)
+  def reset(t) = @reads = 0
+end
+
+def linear(t, key)
+  i = 0
+  while i < Table.size(t)
+    v = t[i]
+    return i if v == key
+    return nil if v > key
+    i += 1
+  end
+  nil
+end
+
+def binary(t, key, lo, hi)
+  while lo <= hi
+    mid = (lo + hi) / 2
+    v = t[mid]
+    return mid if v == key
+    if v < key
+      lo = mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  nil
+end
+
+def interpolation(t, key)
+  lo = 0
+  hi = Table.size(t) - 1
+  while lo <= hi
+    a = t[lo]
+    b = t[hi]
+    return nil if key < a || key > b
+    return (a == key ? lo : nil) if a == b
+    pos = lo + (key - a) * (hi - lo) / (b - a)
+    v = t[pos]
+    return pos if v == key
+    if v < key
+      lo = pos + 1
+    else
+      hi = pos - 1
+    end
+  end
+  nil
+end
+
+def exponential(t, key)
+  n = Table.size(t)
+  return nil if n == 0
+  return 0 if t[0] == key
+  bound = 1
+  bound *= 2 while bound < n && t[bound] < key
+  binary(t, key, bound / 2, Integer.clamp(bound, 0, n - 1))
+end
+
+def jump(t, key)
+  n = Table.size(t)
+  step = Integer.sqrt(n)
+  prev = 0
+  cur = step
+  while cur < n && t[cur - 1] < key
+    prev = cur
+    cur += step
+  end
+  Integer.upto(prev, Integer.clamp(cur, 0, n) - 1) do |i|
+    v = t[i]
+    return i if v == key
+    return nil if v > key
+  end
+  nil
+end
+
+def run(method, t, key)
+  Table.reset(t)
+  idx = case method
+        in :linear then linear(t, key)
+        in :binary then binary(t, key, 0, Table.size(t) - 1)
+        in :interpolation then interpolation(t, key)
+        in :exponential then exponential(t, key)
+        in :jump then jump(t, key)
+        end
+  [idx, Table.get_reads(t)]
+end
+
+def build(n)
+  out = Integer[]
+  x = 1000
+  Integer.times(n) do |i|
+    x += yield(i)
+    Array.push(out, x)
+  end
+  out
+end
+
+methods = Array[:linear, :binary, :interpolation, :exponential, :jump]
+datasets = Hash[
+  "uniform" => build(500) { |i| 7 },
+  "skewed" => build(500) { |i| i * i / 50 + 1 },
+  "lumpy" => build(500) { |i| i % 50 == 0 ? 400 : 1 }
+]
+
+Hash.each(datasets) do |name, data|
+  t = Table.new(data, 0)
+  keys = Array[data[0], data[37], data[250], data[498], Array.last(data) + 3, data[100] + 1]
+  totals = Hash.new(0)
+  Array.each(keys) do |key|
+    expected = Array.index(data, key)
+    Array.each(methods) do |m|
+      idx, reads = run(m, t, key)
+      raise "#{m} returned #{Kernel.inspect(idx)} for #{key}" if idx != expected
+      totals[m] += reads
+    end
+  end
+  row = Array.map(methods) { |m| format("%s=%d", m, totals[m]) }
+  puts("#{name}: #{Array.join(row, " ")}")
+end
+
+t = Table.new(datasets["uniform"], 0)
+begin
+  t[500]
+rescue IndexError
+  puts("read past the end raises IndexError after #{Table.get_reads(t)} counted read(s)")
+end

@@ -1,0 +1,183 @@
+class JsonError < StandardError
+  attr_reader pos
+end
+
+class Parser
+  attr_reader src, pos
+
+  def peek(ps) = @src[@pos]
+
+  def skip_ws(ps)
+    @pos += 1 while @pos < String.size(@src) && String.include?(" \t\n\r", @src[@pos])
+  end
+
+  def expect(ps, ch)
+    skip_ws(ps)
+    raise JsonError.new("expected '#{ch}'", @pos) if peek(ps) != ch
+    @pos += 1
+  end
+
+  def parse_value(ps)
+    skip_ws(ps)
+    c = peek(ps)
+    raise JsonError.new("unexpected end of input", @pos) if c == nil
+    if c == "{"
+      parse_object(ps)
+    elsif c == "["
+      parse_array(ps)
+    elsif c == "\""
+      parse_string(ps)
+    elsif String.match?(c, /[-0-9]/)
+      parse_number(ps)
+    else
+      parse_word(ps)
+    end
+  end
+
+  def parse_object(ps)
+    expect(ps, "{")
+    h = Hash[]
+    skip_ws(ps)
+    if peek(ps) == "}"
+      @pos += 1
+      return h
+    end
+    while true
+      skip_ws(ps)
+      key = parse_string(ps)
+      expect(ps, ":")
+      h[key] = parse_value(ps)
+      skip_ws(ps)
+      c = peek(ps)
+      @pos += 1
+      break if c == "}"
+      raise JsonError.new("expected ',' or '}'", @pos - 1) if c != ","
+    end
+    h
+  end
+
+  def parse_array(ps)
+    expect(ps, "[")
+    a = Array[]
+    skip_ws(ps)
+    if peek(ps) == "]"
+      @pos += 1
+      return a
+    end
+    while true
+      Array.push(a, parse_value(ps))
+      skip_ws(ps)
+      c = peek(ps)
+      @pos += 1
+      break if c == "]"
+      raise JsonError.new("expected ',' or ']'", @pos - 1) if c != ","
+    end
+    a
+  end
+
+  def parse_string(ps)
+    raise JsonError.new("expected string", @pos) if peek(ps) != "\""
+    @pos += 1
+    out = ""
+    while true
+      c = peek(ps)
+      raise JsonError.new("unterminated string", @pos) if c == nil
+      @pos += 1
+      break if c == "\""
+      if c == "\\"
+        e = peek(ps)
+        @pos += 1
+        out += case e
+               in "n" then "\n"
+               in "t" then "\t"
+               in "u"
+                 code = String.hex(@src[@pos...(@pos + 4)])
+                 @pos += 4
+                 Integer.chr(code)
+               else e
+               end
+      else
+        out += c
+      end
+    end
+    out
+  end
+
+  def parse_number(ps)
+    m = String.match(@src[@pos..], /\A-?\d+(\.\d+)?([eE][-+]?\d+)?/)
+    raise JsonError.new("bad number", @pos) if m == nil
+    text = MatchData.to_s(m)
+    @pos += String.size(text)
+    m[1] == nil && m[2] == nil ? String.to_i(text) : String.to_f(text)
+  end
+
+  def parse_word(ps)
+    Array.each(Array[["true", true], ["false", false], ["null", nil]]) do |word, value|
+      if String.start_with?(@src[@pos..], word)
+        @pos += String.size(word)
+        return value
+      end
+    end
+    raise JsonError.new("unexpected '#{peek(ps)}'", @pos)
+  end
+end
+
+def parse_json(text)
+  ps = Parser.new(text, 0)
+  v = Parser.parse_value(ps)
+  Parser.skip_ws(ps)
+  raise JsonError.new("trailing data", Parser.get_pos(ps)) if Parser.get_pos(ps) < String.size(text)
+  v
+end
+
+def quote(s)
+  body = String.gsub(String.gsub(String.gsub(s, "\\", "\\\\\\\\"), "\"", "\\\""), "\n", "\\n")
+  "\"" + body + "\""
+end
+
+def scalar?(v) = !(v in Array | Hash)
+
+def compact(v)
+  case v
+  in nil then "null"
+  in String then quote(v)
+  in Integer | Float | true | false then Kernel.to_s(v)
+  in Array then "[" + Array.join(Array.map(v) { |x| compact(x) }, ", ") + "]"
+  in Hash then "{" + Array.join(Hash.map(v) { |k, x| quote(k) + ": " + compact(x) }, ", ") + "}"
+  end
+end
+
+def pretty(v, indent, width)
+  flat = compact(v)
+  return flat if String.size(flat) + indent <= width || scalar?(v)
+  pad = " " * (indent + 2)
+  case v
+  in Array
+    items = Array.map(v) { |x| pad + pretty(x, indent + 2, width) }
+    "[\n" + Array.join(items, ",\n") + "\n" + " " * indent + "]"
+  in Hash
+    items = Hash.map(v) { |k, x| pad + quote(k) + ": " + pretty(x, indent + 2, width) }
+    "{\n" + Array.join(items, ",\n") + "\n" + " " * indent + "}"
+  end
+end
+
+def inputs
+  Array[
+    "{\"name\":\"sake\",\"version\":[0,1,2],\"typed\":true,\"ratio\":0.75,\"owner\":null}",
+    "{\"servers\":[{\"host\":\"alpha.example\",\"ports\":[80,443],\"tags\":[\"edge\",\"tls\"]},{\"host\":\"beta\",\"ports\":[],\"note\":\"line1\\nline2 \\u0041\\u0042\"}],\"retries\":3,\"backoff\":1.5e2}",
+    "[1, 2,, 3]",
+    "{\"a\": tru}",
+    "\"unterminated",
+    "[1] 2"
+  ]
+end
+
+Array.each_with_index(inputs) do |text, i|
+  puts("--- input #{i + 1}")
+  begin
+    v = parse_json(text)
+    puts(pretty(v, 0, 40))
+  rescue JsonError => e
+    puts("error at #{JsonError.get_pos(e)}: #{Exception.message(e)}")
+  end
+end

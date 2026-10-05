@@ -1,0 +1,27 @@
+# Tasks: 18-collections (Set, Range, Hash pipelines)
+
+- course_overlap: course enrollments as Sets; department unions/differences, time-slot conflicts, Jaccard similarity between courses.
+- room_bookings: meeting-room bookings as minute Ranges; merge overlapping spans, list free gaps, clashes, who is in at given times, hourly load.
+- word_pipeline: tokenizes a few documents against a stopword Set; word and bigram frequencies, document frequency, shared and unique vocabulary, letter statistics.
+- inventory_diff: parses two inventory snapshots (heredocs, regexp) into Hashes of Item; reports added/removed/changed SKUs via key-Set algebra, stock value, per-category units; ParseError for bad or duplicate lines.
+- prime_sets: Set-based sieve over Ranges; twin primes, gap histogram via each_cons, Goldbach pairs with Range.step, residues, per-hundred groups, set relations among odd numbers.
+- tag_recommender: articles with tag Sets; Jaccard-ranked recommendations through a Comparable Match type, tag co-occurrence with Tuple keys, inverted tag index of Sets, interest-based picks.
+- sales_pivot: parses CSV-like sales rows into Records; region x month pivot with Tuple-keyed Hash, aligned table, product ranking, month-over-month change, empty cells via Array.product.
+- role_permissions: role-based access control; roles grant permission Sets and include other roles (recursive closure with cycle and unknown-role exceptions), per-user denials, who-can queries, subset/superset/disjoint comparisons.
+- friend_graph: undirected friendship graph as a Hash of Sets; degree histogram, connected components, BFS distances, mutual friends, friend-of-friend suggestions, triangles.
+- latency_buckets: response-time samples as Records bucketed into Ranges (including an endless `1000..`); percentiles that may be nil, histogram, per-endpoint stats, SLO coverage, Range.step bins.
+- contact_dedupe: normalizes contact emails/phones (String ranges, delete, nil for invalid), links records sharing a key with a union-find over a Hash, merges groups into Sets of emails/phones/tags.
+- ip_ranges: CIDR blocks parsed with bit operations into Integer Ranges; most-specific lookup with bsearch and cover?, InvalidAddress exceptions, nested/adjacent blocks via Range.overlap?, address share per label.
+- grade_book: nested Hash of category => score Arrays per student; weighted averages that may be nil (missing categories), letter grades from Float Ranges, partition into complete/incomplete, curve with clamp, per-category stats.
+- sparse_vectors: a SparseVec type over a Hash with Arithmetic (+, -, *) and Indexable ([] / []=, `v[w] += 1`) operators; dot product, norm, bag-of-words cosine similarity matrix, shared vocabulary by Set intersection.
+- build_order: build rules parsed into a Hash of dependency Sets; Kahn's algorithm in parallel stages, earliest-finish times and critical path, transitive dependents, CycleError/MissingDependency on broken rule sets.
+- word_rack: word-game helper; anagram classes by sorted-letter signature, letter racks as tally multisets (can_make?, leftovers), letter scores from a defaulted Hash, alphabet Set algebra.
+- access_log: parses an access log with a named-group regexp (nil for bad lines, nil user for anonymous), status classes via case/in, per-hour unique IPs/users, top paths, error bursts with chunk_while, anonymous vs logged-in IP Sets.
+- leaderboard: accumulates per-round score Hashes, competition ranking with shared ranks, tie groups, rank movement (nil for newcomers), attendance streaks with chunk_while, players present in every round.
+- paginate: filters and sorts a product catalog, pages it with Range slices (nil for out-of-range pages), Record page descriptors, navigation windows with clamp, cursor-based batches, each_slice per category.
+- survey_venn: survey responses turned into per-feature user Sets; all eight Venn regions by chained `-`/`&`/`|`, inclusion-exclusion check, exactly-k counts, per-plan percentages, api-user checks.
+- range_set: a RangeSet type of disjoint inclusive Integer Ranges with add/remove (merging and splitting) and `|` `&` `-` operators (Bitwise + Arithmetic); ticket sales minus refunds, admitted/rejected scans, unsold gaps.
+- sensor_merge: two minute-keyed sensor series with explicit nil gaps; key-Set union/difference, forward fill, 3-minute moving average with each_cons, spike detection over a 3-way zip, 5-minute resampling.
+- lottery: tickets and draws as Integer Sets; prize tier lookup by match count (nil when no prize) with a bonus-ball upgrade, number frequencies, never-drawn numbers from a Range, best ticket per player, identical-ticket detection.
+- cart_discounts: prices carts from a catalog Hash of Records; promotion rules of four Record shapes dispatched with case/in (BOGO, category percent, Set-subset bundle, spend threshold), coupons that may be invalid, UnknownItem rescued per cart.
+- library_loans: a lending library with a Library type (Hashes of Book/Member, loans with due-day Ranges, reservation queues), LoanRefused exceptions at the desk, overdue fines, a Report mixin dispatched for Library and Member, genre-Set summaries per member.

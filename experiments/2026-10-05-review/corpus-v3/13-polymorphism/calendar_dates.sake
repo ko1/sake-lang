@@ -1,0 +1,138 @@
+class InvalidDate < Exception
+  attr_reader text
+end
+
+def weekday_names = once { Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+
+class Date
+  attr_reader y, m, d
+  include Arithmetic
+  include Comparable
+
+  def leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+  def days_in_month(y, m)
+    return 29 if m == 2 && leap?(y)
+    Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+  end
+
+  def of(y, m, d)
+    raise InvalidDate.new("bad month in #{y}-#{m}-#{d}", "#{y}-#{m}-#{d}") unless m >= 1 && m <= 12
+    raise InvalidDate.new("bad day in #{y}-#{m}-#{d}", "#{y}-#{m}-#{d}") unless d >= 1 && d <= days_in_month(y, m)
+    Date.new(y, m, d)
+  end
+
+  def parse(s)
+    m = String.match(s, /\A(\d{4})-(\d{2})-(\d{2})\z/)
+    raise InvalidDate.new("not a date: #{s}", s) unless m
+    of(String.to_i(m[1]), String.to_i(m[2]), String.to_i(m[3]))
+  end
+
+  # days since 1970-01-01 (Howard Hinnant's days_from_civil)
+  def ordinal(a)
+    y = @m <= 2 ? @y - 1 : @y
+    era = y / 400
+    yoe = y - era * 400
+    mp = (@m + 9) % 12
+    doy = (153 * mp + 2) / 5 + @d - 1
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+  end
+
+  def from_ordinal(z)
+    z += 719468
+    era = z / 146097
+    doe = z - era * 146097
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    mp = (5 * doy + 2) / 153
+    d = doy - (153 * mp + 2) / 5 + 1
+    m = mp < 10 ? mp + 3 : mp - 9
+    Date.new(yoe + era * 400 + (m <= 2 ? 1 : 0), m, d)
+  end
+
+  def +(a, n) = from_ordinal(ordinal(a) + n)
+
+  def -(a, b)
+    case b
+    in Date then ordinal(a) - ordinal(b)
+    in Integer then from_ordinal(ordinal(a) - b)
+    end
+  end
+
+  def <=>(a, b) = ordinal(a) <=> ordinal(b)
+
+  def wday(a) = (ordinal(a) + 3) % 7
+  def weekend?(a) = wday(a) >= 5
+  def weekday_name(a) = weekday_names[wday(a)]
+
+  def add_months(a, n)
+    total = @y * 12 + (@m - 1) + n
+    ny = total / 12
+    nm = total % 12 + 1
+    Date.new(ny, nm, Array.min(Array[@d, days_in_month(ny, nm)]))
+  end
+
+  def to_s(a) = format("%04d-%02d-%02d", @y, @m, @d)
+end
+
+def holidays = once { Array.map(Array["2026-01-01", "2026-05-01", "2026-12-25", "2026-12-26", "2027-01-01"]) { |s| Date.parse(s) } }
+
+def business_day?(d) = !Date.weekend?(d) && !Array.include?(holidays, d)
+
+def add_business_days(d, n)
+  cur = d
+  while n > 0
+    cur += 1
+    n -= 1 if business_day?(cur)
+  end
+  cur
+end
+
+inputs = Array["2026-10-01", "2024-02-29", "2023-02-29", "2026-13-01", "2026/10/01", "1970-01-01", "2000-03-01"]
+dates = Array[]
+Array.each(inputs) do |s|
+  begin
+    d = Date.parse(s)
+    Array.push(dates, d)
+    puts(format("%s %s ordinal %6d", d, Date.weekday_name(d), Date.ordinal(d)))
+  rescue InvalidDate => e
+    puts("#{s}: #{Exception.message(e)}")
+  end
+end
+
+puts("sorted: #{Array.join(Array.sort(dates), " ")}")
+puts("span: #{Array.max(dates) - Array.min(dates)} days")
+today = Date.parse("2026-10-01")
+puts("today + 100 = #{today + 100}, today - 365 = #{today - 365}")
+puts("days until new year: #{Date.parse("2027-01-01") - today}")
+puts("round trip ok: #{Array.all?(dates) { |d| Date.from_ordinal(Date.ordinal(d)) == d }}")
+
+puts("== month arithmetic ==")
+jan31 = Date.parse("2026-01-31")
+Array.each(Array[1, 2, 13, -2]) { |n| puts("2026-01-31 + #{n} months = #{Date.add_months(jan31, n)}") }
+
+puts("== business days ==")
+Array.each(Array[["2026-12-23", 3], ["2026-10-01", 10], ["2026-04-30", 1]]) do |s, n|
+  start = Date.parse(s)
+  puts("#{start} (#{Date.weekday_name(start)}) + #{n} business days = #{add_business_days(start, n)}")
+end
+
+puts("== recurring: every 2nd Tuesday, Oct 2026 - Jan 2027 ==")
+d = Date.parse("2026-10-01")
+stop = Date.parse("2027-01-31")
+count = 0
+while d <= stop
+  if Date.weekday_name(d) == "Tue" && (Date.get_d(d) - 1) / 7 == 1
+    note = business_day?(d) ? "" : " (holiday)"
+    puts("  #{d}#{note}")
+    count += 1
+  end
+  d += 1
+end
+puts("meetings: #{count}")
+
+by_wday = Array.tally(Array.map(Range.map(0...31) { |i| Date.parse("2026-12-01") + i }) { |x| Date.weekday_name(x) })
+puts("December 2026 weekdays: #{Array.join(Array.map(weekday_names) { |n| "#{n}=#{by_wday[n]}" }, " ")}")
+leap_years = Range.select(1896..1912) { |y| Date.leap?(y) }
+puts("leap years 1896-1912: #{Array.join(leap_years, ", ")}")

@@ -1,0 +1,236 @@
+class Node
+  attr_reader kind, value, kids
+end
+
+class ParseError < Exception
+  attr_reader token
+end
+
+class EvalError < Exception
+end
+
+def infix_table = once do
+  Hash[
+    "or" => [1, 2], "and" => [3, 4],
+    "==" => [7, 8], "!=" => [7, 8],
+    "<" => [9, 10], ">" => [9, 10], "<=" => [9, 10], ">=" => [9, 10],
+    "+" => [11, 12], "-" => [11, 12],
+    "*" => [13, 14], "/" => [13, 14], "%" => [13, 14],
+    "^" => [16, 15]
+  ]
+end
+
+class Parser
+  attr_reader tokens, pos = 0
+
+  def peek(ps) = @tokens[@pos]
+
+  def advance(ps)
+    t = @tokens[@pos]
+    @pos += 1
+    t
+  end
+
+  def expect(ps, t)
+    got = advance(ps)
+    raise ParseError.new("expected '#{t}'", got || "end") unless got == t
+  end
+
+  def list_until(ps, close)
+    items = Node[]
+    if peek(ps) == close
+      advance(ps)
+      return items
+    end
+    while true
+      Array.push(items, expr(ps, 0))
+      t = advance(ps)
+      return items if t == close
+      raise ParseError.new("expected ',' or '#{close}'", t || "end") unless t == ","
+    end
+  end
+
+  def nud(ps, t)
+    raise ParseError.new("unexpected end", "end") if t == nil
+    if String.match?(t, /\A\d+\z/)
+      Node.new(:num, String.to_i(t), Node[])
+    elsif t == "true" || t == "false"
+      Node.new(:bool, t == "true", Node[])
+    elsif t == "-"
+      Node.new(:neg, nil, Node[expr(ps, 90)])
+    elsif t == "not"
+      Node.new(:not, nil, Node[expr(ps, 5)])
+    elsif t == "("
+      e = expr(ps, 0)
+      expect(ps, ")")
+      e
+    elsif t == "["
+      Node.new(:list, nil, list_until(ps, "]"))
+    elsif String.match?(t, /\A[A-Za-z_]\w*\z/)
+      Node.new(:var, t, Node[])
+    else
+      raise ParseError.new("unexpected token", t)
+    end
+  end
+
+  def expr(ps, min_bp)
+    lhs = nud(ps, advance(ps))
+    while (op = peek(ps))
+      if op == "(" || op == "["
+        break if 100 < min_bp
+        advance(ps)
+        if op == "("
+          lhs = Node.new(:call, nil, Node[lhs, *list_until(ps, ")")])
+        else
+          index = expr(ps, 0)
+          expect(ps, "]")
+          lhs = Node.new(:index, nil, Node[lhs, index])
+        end
+      elsif op == "?"
+        break if 5 < min_bp
+        advance(ps)
+        yes = expr(ps, 0)
+        expect(ps, ":")
+        no = expr(ps, 4)
+        lhs = Node.new(:cond, nil, Node[lhs, yes, no])
+      elsif Hash.key?(infix_table, op)
+        lbp, rbp = infix_table[op]
+        break if lbp < min_bp
+        advance(ps)
+        lhs = Node.new(:bin, op, Node[lhs, expr(ps, rbp)])
+      else
+        break
+      end
+    end
+    lhs
+  end
+end
+
+def parse(src)
+  ps = Parser.new(String.scan(src, /\d+|[A-Za-z_]\w*|==|!=|<=|>=|\S/))
+  e = Parser.expr(ps, 0)
+  rest = Parser.peek(ps)
+  raise ParseError.new("unexpected token", rest) if rest
+  e
+end
+
+def sexpr(n)
+  kids = Array.map(Node.get_kids(n)) { |k| sexpr(k) }
+  case Node.get_kind(n)
+  in :num | :var then Kernel.to_s(Node.get_value(n))
+  in :bool then Node.get_value(n) ? "#t" : "#f"
+  in :list then "[#{Array.join(kids, " ")}]"
+  in :bin then "(#{Node.get_value(n)} #{Array.join(kids, " ")})"
+  else "(#{Node.get_kind(n)} #{Array.join(kids, " ")})"
+  end
+end
+
+def size(n) = 1 + Array.sum(Node.get_kids(n)) { |k| size(k) }
+
+def int!(v, what)
+  raise EvalError, "#{what} needs an integer, got #{Kernel.inspect(v)}" unless v in Integer
+  v
+end
+
+def bool!(v, what)
+  raise EvalError, "#{what} needs a boolean, got #{Kernel.inspect(v)}" unless v == true || v == false
+  v
+end
+
+def call_builtin(name, args)
+  case name
+  in "max" then Array.map(args) { |a| int!(a, "max") }.Array.max
+  in "min" then Array.map(args) { |a| int!(a, "min") }.Array.min
+  in "len"
+    raise EvalError, "len needs a list" unless (args[0] in Array)
+    Array.size(args[0])
+  in "sum"
+    raise EvalError, "sum needs a list" unless (args[0] in Array)
+    Array.sum(args[0]) { |x| int!(x, "sum") }
+  else raise EvalError, "unknown function #{name}"
+  end
+end
+
+def evaluate(n, env)
+  kids = Node.get_kids(n)
+  case Node.get_kind(n)
+  in :num | :bool then Node.get_value(n)
+  in :var
+    raise EvalError, "undefined variable #{Node.get_value(n)}" unless Hash.key?(env, Node.get_value(n))
+    env[Node.get_value(n)]
+  in :list then Array.map(kids) { |k| evaluate(k, env) }
+  in :neg then -int!(evaluate(kids[0], env), "-")
+  in :not then !bool!(evaluate(kids[0], env), "not")
+  in :cond then bool!(evaluate(kids[0], env), "?:") ? evaluate(kids[1], env) : evaluate(kids[2], env)
+  in :index
+    list = evaluate(kids[0], env)
+    raise EvalError, "only lists can be indexed" unless list in Array
+    v = list[int!(evaluate(kids[1], env), "index")]
+    raise EvalError, "index out of range" if v == nil
+    v
+  in :call
+    f = kids[0]
+    raise EvalError, "only named functions can be called" unless Node.get_kind(f) == :var
+    call_builtin(Node.get_value(f), Array.map(Array.drop(kids, 1)) { |k| evaluate(k, env) })
+  in :bin
+    op = Node.get_value(n)
+    if op == "and" || op == "or"
+      left = bool!(evaluate(kids[0], env), op)
+      return left if (op == "and" && !left) || (op == "or" && left)
+      return bool!(evaluate(kids[1], env), op)
+    end
+    a = evaluate(kids[0], env)
+    b = evaluate(kids[1], env)
+    return op == "==" ? a == b : a != b if op == "==" || op == "!="
+    a = int!(a, op)
+    b = int!(b, op)
+    case op
+    in "+" then a + b
+    in "-" then a - b
+    in "*" then a * b
+    in "/" | "%"
+      raise EvalError, "division by zero" if b == 0
+      op == "/" ? a / b : a % b
+    in "^" then a ** b
+    in "<" then a < b
+    in ">" then a > b
+    in "<=" then a <= b
+    in ">=" then a >= b
+    end
+  end
+end
+
+def show(v) = (v in Array) ? "[" + Array.join(Array.map(v) { |x| show(x) }, ", ") + "]" : Kernel.to_s(v)
+
+env = Hash["x" => 3, "y" => 4, "xs" => Array[5, 1, 4], "ok" => true]
+sources = Array[
+  "1 + 2 * 3 - 4",
+  "2 ^ 3 ^ 2",
+  "-x ^ 2 + y",
+  "(x + y) * (x - y) % 5",
+  "x < y and not ok or y == 4",
+  "x > 2 ? xs[0] : xs[1] + 100",
+  "max(x, y, 10 - x) * len(xs)",
+  "sum([x, y, x * y]) / 2",
+  "ok ? 1 : 0 ? 2 : 3",
+  "xs[1 + 1] - xs[-1 + 1]",
+  "x + ok",
+  "xs[7]",
+  "10 / (y - 4)",
+  "nope(1)",
+  "(1 + 2",
+  "1 + * 2",
+  "[1, 2 3]"
+]
+Array.each(sources) do |src|
+  tree = parse(src)
+  line = "#{sexpr(tree)}  [#{size(tree)} nodes]"
+  begin
+    line += " => #{show(evaluate(tree, env))}"
+  rescue EvalError => e
+    line += " => error: #{Exception.message(e)}"
+  end
+  puts("#{src}\n    #{line}")
+rescue ParseError => e
+  puts("#{src}\n    parse error: #{Exception.message(e)} at '#{ParseError.get_token(e)}'")
+end

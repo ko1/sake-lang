@@ -1,0 +1,132 @@
+class Taxonomy
+  attr_reader names, index, children, parent, depth, up, tin, tout, levels
+  def build(pairs)
+    names = Array[]
+    index = Hash[]
+    Array.each(pairs) do |child, par|
+      Array.each(Array[par, child]) do |n|
+        next if Hash.key?(index, n)
+        index[n] = Array.size(names)
+        Array.push(names, n)
+      end
+    end
+    n = Array.size(names)
+    children = Array.new(n) { Array[] }
+    parent = Array.new(n, -1)
+    Array.each(pairs) do |child, par|
+      c = index[child]
+      raise ArgumentError, "#{child} has two parents" if parent[c] != -1
+      parent[c] = index[par]
+      Array.push(children[index[par]], c)
+    end
+    levels = 1
+    levels += 1 while (1 << levels) < n
+    t = Taxonomy.new(names, index, children, parent, Array.new(n, 0), Array[], Array.new(n, 0), Array.new(n, 0), levels)
+    roots = Array.select(Range.to_a(0...n)) { |v| parent[v] == -1 }
+    raise ArgumentError, "expected one root, found #{Array.size(roots)}" if Array.size(roots) != 1
+    number(t, Array.first(roots))
+    lift(t)
+    t
+  end
+
+  # iterative DFS assigning depth and entry/exit times
+  def number(t, root)
+    clock = 0
+    stack = Array[[root, false]]
+    until Array.empty?(stack)
+      v, leaving = Array.pop(stack)
+      if leaving
+        @tout[v] = clock
+        clock += 1
+        next
+      end
+      @tin[v] = clock
+      clock += 1
+      Array.push(stack, [v, true])
+      kids = Array.sort_by(@children[v]) { |c| @names[c] }
+      Array.each(Array.reverse(kids)) do |c|
+        @depth[c] = @depth[v] + 1
+        Array.push(stack, [c, false])
+      end
+    end
+  end
+
+  def lift(t)
+    first = Array.map(@parent) { |p| p == -1 ? Array.index(@parent, -1) : p }
+    Array.push(@up, first)
+    Range.each(1...@levels) do |k|
+      prev = @up[k - 1]
+      Array.push(@up, Array.map(prev) { |mid| prev[mid] })
+    end
+  end
+
+  def id(t, name)
+    i = @index[name]
+    raise KeyError, "unknown taxon: #{name}" if i == nil
+    i
+  end
+
+  def ancestor?(t, a, b) = @tin[a] <= @tin[b] && @tout[b] <= @tout[a]
+
+  def kth_ancestor(t, v, k)
+    return nil if k > @depth[v]
+    Range.each(0...@levels) { |j| v = @up[j][v] if (k >> j) & 1 == 1 }
+    v
+  end
+
+  def lca(t, a, b)
+    return a if ancestor?(t, a, b)
+    return b if ancestor?(t, b, a)
+    Integer.downto(@levels - 1, 0) do |k|
+      cand = @up[k][a]
+      a = cand unless ancestor?(t, cand, b)
+    end
+    @up[0][a]
+  end
+
+  def subtree_size(t, v) = (@tout[v] - @tin[v] + 1) / 2
+end
+
+pairs = Array[
+  ["Mammalia", "Chordata"], ["Aves", "Chordata"], ["Reptilia", "Chordata"],
+  ["Carnivora", "Mammalia"], ["Primates", "Mammalia"], ["Rodentia", "Mammalia"],
+  ["Felidae", "Carnivora"], ["Canidae", "Carnivora"], ["Ursidae", "Carnivora"],
+  ["Felis", "Felidae"], ["Panthera", "Felidae"], ["lion", "Panthera"], ["tiger", "Panthera"],
+  ["house cat", "Felis"], ["wolf", "Canidae"], ["fox", "Canidae"], ["brown bear", "Ursidae"],
+  ["Hominidae", "Primates"], ["human", "Hominidae"], ["chimpanzee", "Hominidae"],
+  ["mouse", "Rodentia"], ["Passeriformes", "Aves"], ["sparrow", "Passeriformes"],
+  ["crow", "Passeriformes"], ["eagle", "Aves"], ["Squamata", "Reptilia"], ["gecko", "Squamata"]
+]
+tax = Taxonomy.build(pairs)
+names = Taxonomy.get_names(tax)
+puts("#{Array.size(names)} taxa, #{Taxonomy.get_levels(tax)} lifting levels")
+Array.each(Array["Chordata", "Mammalia", "Carnivora", "Panthera", "wolf"]) do |n|
+  v = Taxonomy.id(tax, n)
+  puts(format("  %-10s depth %d, subtree %2d", n, Taxonomy.get_depth(tax)[v], Taxonomy.subtree_size(tax, v)))
+end
+
+queries = Array[["lion", "tiger"], ["lion", "house cat"], ["wolf", "brown bear"], ["human", "mouse"],
+                ["sparrow", "gecko"], ["crow", "eagle"], ["Felidae", "lion"], ["fox", "fox"], ["lion", "unicorn"]]
+Array.each(queries) do |x, y|
+  a = Taxonomy.id(tax, x)
+  b = Taxonomy.id(tax, y)
+  c = Taxonomy.lca(tax, a, b)
+  depth = Taxonomy.get_depth(tax)
+  dist = depth[a] + depth[b] - 2 * depth[c]
+  puts("#{x} / #{y}: common #{names[c]}, distance #{dist}")
+rescue KeyError => e
+  puts("#{x} / #{y}: #{Exception.message(e)}")
+end
+
+lion = Taxonomy.id(tax, "lion")
+lineage = Array.filter_map(Range.to_a(0..7)) do |k|
+  anc = Taxonomy.kth_ancestor(tax, lion, k)
+  anc == nil ? nil : names[anc]
+end
+puts("lion lineage: #{Array.join(lineage, " < ")}")
+
+Array.each(Array[Array[["b", "a"], ["c", "a"], ["c", "b"]], Array[["b", "a"], ["d", "c"]]]) do |bad|
+  Taxonomy.build(bad)
+rescue ArgumentError => e
+  puts("bad tree: #{Exception.message(e)}")
+end

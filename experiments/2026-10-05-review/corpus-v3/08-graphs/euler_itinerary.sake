@@ -1,0 +1,75 @@
+class NoItinerary < StandardError
+  attr_reader airport
+end
+
+def parse_tickets(text)
+  String.scan(text, /([A-Z]{3})-([A-Z]{3})/)
+end
+
+def degree_balance(tickets)
+  bal = Hash.new(0)
+  Array.each(tickets) do |from, to|
+    bal[from] += 1
+    bal[to] -= 1
+  end
+  bal
+end
+
+def pick_start(tickets)
+  bal = degree_balance(tickets)
+  starts = Array.select(Hash.keys(bal)) { |k| bal[k] == 1 }
+  ends = Array.select(Hash.keys(bal)) { |k| bal[k] == -1 }
+  odd = Array.find(Hash.keys(bal)) { |k| Integer.abs(bal[k]) > 1 }
+  raise NoItinerary.new("unbalanced airport", odd) if odd
+  if Array.size(starts) > 1 || Array.size(ends) > 1
+    raise NoItinerary.new("too many open ends", Array.join(Array.sort(starts), "/"))
+  end
+  return starts[0] if Array.size(starts) == 1
+  Array.min(Array.map(tickets) { |from, to| from })
+end
+
+# Hierholzer's algorithm; destinations are kept sorted so the result is the smallest itinerary.
+def itinerary(tickets, start)
+  out = Hash[]
+  Array.each(tickets) do |from, to|
+    out[from] ||= Array[]
+    Array.push(out[from], to)
+  end
+  out = Hash.transform_values(out) { |dests| Array.sort(dests) }
+  route = Array[]
+  stack = Array[start]
+  until Array.empty?(stack)
+    top = Array.last(stack)
+    dests = out[top]
+    if dests && !Array.empty?(dests)
+      Array.push(stack, Array.shift(dests))
+    else
+      Array.push(route, Array.pop(stack))
+    end
+  end
+  Array.reverse(route)
+end
+
+def plan(title, text)
+  puts("== #{title}")
+  tickets = parse_tickets(text)
+  puts("#{Array.size(tickets)} tickets")
+  start = pick_start(tickets)
+  route = itinerary(tickets, start)
+  if Array.size(route) != Array.size(tickets) + 1
+    raise NoItinerary.new("tickets are not connected", start)
+  end
+  puts("route: #{Array.join(route, " ")}")
+  visits = Array.tally(route)
+  hub, n = Hash.max_by(visits) { |k, v| v }
+  puts("busiest: #{hub} x#{n}")
+rescue NoItinerary => e
+  puts("cannot plan: #{Exception.message(e)} (#{NoItinerary.get_airport(e)})")
+end
+
+plan("round trip", "JFK-SFO, JFK-ATL, SFO-ATL, ATL-JFK, ATL-SFO")
+plan("one way", "MUC-LHR, JFK-MUC, SFO-SJC, LHR-SFO")
+plan("loop with detour", "AMS-CDG CDG-FCO FCO-AMS AMS-BCN BCN-AMS CDG-AMS AMS-CDG")
+plan("split", "AAA-BBB BBB-AAA CCC-DDD DDD-CCC")
+plan("hub overload", "XXX-YYY XXX-ZZZ XXX-WWW")
+plan("two chains", "AAA-BBB CCC-DDD")

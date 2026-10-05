@@ -1,0 +1,110 @@
+class FlowNet
+  attr_reader cap = nil, flow = nil, nodes = nil
+
+  def initialize(net)
+    @cap = Hash[]
+    @flow = Hash.new(0)
+    @nodes = Array[]
+  end
+
+  def add_node(net, v)
+    Array.push(@nodes, v) unless Array.include?(@nodes, v)
+  end
+
+  def add_pipe(net, a, b, c)
+    add_node(net, a)
+    add_node(net, b)
+    @cap[[a, b]] = Hash.fetch(@cap, [a, b], 0) + c
+    @cap[[b, a]] ||= 0
+  end
+
+  def residual(net, a, b) = Hash.fetch(@cap, [a, b], 0) - @flow[[a, b]]
+
+  def neighbors(net, a) = Array.select(@nodes) { |b| Hash.key?(@cap, [a, b]) }
+
+  def augmenting_path(net, s, t)
+    prev = Hash[s => s]
+    queue = Array[s]
+    until Array.empty?(queue)
+      u = Array.shift(queue)
+      Array.each(neighbors(net, u)) do |v|
+        next if Hash.key?(prev, v) || residual(net, u, v) <= 0
+        prev[v] = u
+        return prev if v == t
+        Array.push(queue, v)
+      end
+    end
+    nil
+  end
+
+  def max_flow(net, s, t)
+    total = 0
+    rounds = 0
+    while (prev = augmenting_path(net, s, t))
+      bottleneck = nil
+      v = t
+      while v != s
+        u = prev[v]
+        r = residual(net, u, v)
+        bottleneck = r if bottleneck == nil || r < bottleneck
+        v = u
+      end
+      v = t
+      while v != s
+        u = prev[v]
+        @flow[[u, v]] += bottleneck
+        @flow[[v, u]] -= bottleneck
+        v = u
+      end
+      total += bottleneck
+      rounds += 1
+    end
+    [total, rounds]
+  end
+
+  def min_cut(net, s)
+    side = Set[s]
+    stack = Array[s]
+    until Array.empty?(stack)
+      u = Array.pop(stack)
+      Array.each(neighbors(net, u)) do |v|
+        Array.push(stack, v) if residual(net, u, v) > 0 && Set.add?(side, v)
+      end
+    end
+    Hash.filter_map(@cap) do |(a, b), c|
+      [a, b, c] if c > 0 && Set.include?(side, a) && !Set.include?(side, b)
+    end
+  end
+end
+
+def run(title, pipes, s, t)
+  puts("== #{title}")
+  net = FlowNet.new
+  Array.each(pipes) { |a, b, c| FlowNet.add_pipe(net, a, b, c) }
+  total, rounds = FlowNet.max_flow(net, s, t)
+  puts("max flow #{s} -> #{t}: #{total} (#{rounds} augmenting paths)")
+  used = Array.select(pipes) { |a, b, c| FlowNet.get_flow(net)[[a, b]] > 0 }
+  Array.each(used) do |a, b, c|
+    f = FlowNet.get_flow(net)[[a, b]]
+    mark = f == c ? " FULL" : ""
+    puts(format("  %-8s -> %-8s %3d/%-3d%s", a, b, f, c, mark))
+  end
+  cut = FlowNet.min_cut(net, s)
+  cut_total = Array.sum(cut) { |a, b, c| c }
+  names = Array.map(cut) { |a, b, c| "#{a}->#{b}" }
+  puts("  min cut (#{cut_total}): #{Array.join(Array.sort(names), ", ")}")
+  puts("  check: #{cut_total == total ? "ok" : "MISMATCH"}")
+end
+
+run("water mains", Array[
+  ["reservoir", "pumpA", 50], ["reservoir", "pumpB", 40], ["pumpA", "pumpB", 10],
+  ["pumpA", "tower", 30], ["pumpB", "tower", 20], ["pumpB", "mixer", 35],
+  ["tower", "city", 45], ["mixer", "city", 30], ["mixer", "tower", 10]
+], "reservoir", "city")
+
+run("classic", Array[
+  ["s", "a", 10], ["s", "c", 10], ["a", "b", 4], ["a", "c", 2], ["a", "d", 8],
+  ["c", "d", 9], ["d", "b", 6], ["b", "t", 10], ["d", "t", 10]
+], "s", "t")
+
+run("disconnected", Array[["x", "y", 5], ["z", "w", 7]], "x", "w")

@@ -1,0 +1,111 @@
+# Fibonacci numbers: 2x2 matrix powers with a Mat2 type, fast doubling,
+# Pisano periods, Zeckendorf representations, and divisibility identities.
+
+class Mat2
+  attr_reader a, b, c, d
+  include Arithmetic
+
+  def *(x, y)
+    Mat2.new(@a * Mat2.get_a(y) + @b * Mat2.get_c(y), @a * Mat2.get_b(y) + @b * Mat2.get_d(y),
+             @c * Mat2.get_a(y) + @d * Mat2.get_c(y), @c * Mat2.get_b(y) + @d * Mat2.get_d(y))
+  end
+
+  def %(x, m) = Mat2.new(@a % m, @b % m, @c % m, @d % m)
+
+  def identity = Mat2.new(1, 0, 0, 1)
+
+  def power(x, n, m)
+    result = identity
+    base = x
+    while n > 0
+      result = result * base % m if Integer.odd?(n)
+      base = base * base % m
+      n /= 2
+    end
+    result
+  end
+
+  def to_s(x) = "[[#{@a}, #{@b}], [#{@c}, #{@d}]]"
+end
+
+def fib_matrix(n, m) = Mat2.get_b(Mat2.power(Mat2.new(1, 1, 1, 0), n, m))
+
+# returns [F(n), F(n+1)]
+def fib_pair(n)
+  return [0, 1] if n == 0
+  a, b = fib_pair(n / 2)
+  c = a * (2 * b - a)
+  d = a * a + b * b
+  Integer.even?(n) ? [c, d] : [d, c + d]
+end
+
+def fib(n)
+  f, x = fib_pair(n)
+  f
+end
+
+def pisano(m)
+  return 1 if m == 1
+  a, b = 0, 1
+  k = 0
+  while true
+    a, b = b, (a + b) % m
+    k += 1
+    return k if a == 0 && b == 1
+  end
+end
+
+def zeckendorf(n)
+  fibs = Integer[1, 2]
+  Array.push(fibs, fibs[-1] + fibs[-2]) while Array.last(fibs) <= n
+  parts = Integer[]
+  Array.reverse_each(fibs) do |f|
+    if f <= n
+      Array.push(parts, f)
+      n -= f
+    end
+  end
+  parts
+end
+
+puts("F(0..20): #{Array.join(Range.map(0..20) { |n| fib(n) }, " ")}")
+puts("F(100) = #{fib(100)}")
+puts("F(300) has #{String.length(Integer.to_s(fib(300)))} digits")
+m = Mat2.new(1, 1, 1, 0)
+puts("M^10 = #{Mat2.power(m, 10, 1_000_000_007)}")
+
+agree = Range.all?(0..200) { |n| fib_matrix(n, 1_000_000_007) == fib(n) % 1_000_000_007 }
+puts("matrix and doubling agree for n <= 200: #{agree}")
+puts("F(10^15) mod 1e9+7 = #{fib_matrix(10 ** 15, 1_000_000_007)}")
+
+puts("Pisano periods:")
+periods = Range.map(1..30) { |k| pisano(k) }
+Array.each_slice(Range.to_a(1..30), 10) do |row|
+  puts("  " + Array.join(Array.map(row) { |k| format("%2d:%-3d", k, periods[k - 1]) }, " "))
+end
+puts("  pi(10) = 60, so last digits repeat every 60: #{fib(7) % 10 == fib(67) % 10}")
+
+puts("Zeckendorf representations:")
+Array.each(Integer[10, 64, 100, 1000, 12345]) do |n|
+  parts = zeckendorf(n)
+  puts("  #{n} = #{Array.join(parts, " + ")}")
+end
+ok = Range.all?(1..150) do |n|
+  parts = zeckendorf(n)
+  idx = Array.map(parts) { |f| Range.find(2..30) { |i| fib(i) == f } }
+  sum_ok = Array.sum(parts) == n
+  gaps_ok = true
+  Array.each_cons(idx, 2) { |x, y| gaps_ok = false if x - y < 2 }
+  sum_ok && gaps_ok
+end
+puts("  1..150 all valid and non-consecutive: #{ok}")
+
+puts("identities:")
+gcd_ok = Range.all?(1..25) { |i| Range.all?(1..25) { |j| Integer.gcd(fib(i), fib(j)) == fib(Integer.gcd(i, j)) } }
+puts("  gcd(F(m), F(n)) = F(gcd(m, n)) for m, n <= 25: #{gcd_ok}")
+cassini = Range.all?(1..60) { |n| fib(n - 1) * fib(n + 1) - fib(n) * fib(n) == (Integer.even?(n) ? 1 : -1) }
+puts("  Cassini F(n-1)F(n+1) - F(n)^2 = (-1)^n for n <= 60: #{cassini}")
+entry = Range.map(1..15) { |k| Range.find(1..200) { |n| fib(n) % k == 0 } }
+puts("  rank of apparition for k = 1..15: #{Array.join(entry, " ")}")
+ratio = Rational.to_f(Rational(fib(40), fib(39)))
+puts(format("  F(40)/F(39) = %.12f, golden ratio = %.12f", ratio, (1 + Math.sqrt(5)) / 2))

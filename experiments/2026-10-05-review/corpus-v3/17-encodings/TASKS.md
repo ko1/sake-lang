@@ -1,0 +1,25 @@
+- caesar_cracker: Caesar/ROT13 encryption with a chi-squared letter-frequency cracker that ranks all 26 keys.
+- base64_codec: Hand-written Base64 encoder/decoder (standard and URL-safe alphabets, padding, whitespace) with a positioned DecodeError.
+- crc_catalog: Parameterised (Rocksoft-model) CRC engine for CRC-5/8/16/32 variants verified against catalogue check values, plus a table-driven CRC-32 frame checker.
+- run_length: Run-length encoding of text ("12W1B") and of bitmap rows as alternating run lengths, with a decoder raising RleError on malformed input.
+- check_digits: Luhn, ISBN-10 and EAN-13 check-digit validation, card-brand detection, and completing/convert codes via a module_function module.
+- hamming_secded: Extended Hamming(8,4) SECDED coding of a message through a channel with scripted bit flips, correcting single and detecting double errors.
+- huffman: Huffman tree built with a sorted priority queue of Comparable nodes, code table, bit-string encoding, byte packing and tree-walk decoding.
+- lzw: LZW compressor/decompressor with a capped dictionary, variable-width bit accounting, the KwKwK case, and corrupt-stream detection.
+- morse: Morse encoding to dots/dashes and to a timed on/off keying signal, decoding back from run lengths, with unknown characters and noise.
+- utf8_codec: UTF-8 encoder and validating decoder over byte arrays, reporting overlong, surrogate, truncated and bad-continuation sequences with offsets.
+- protobuf_wire: Protobuf-style wire format with LEB128 varints, zigzag ints, fixed32 and length-delimited fields; encodes records, decodes by field number, rejects damaged input.
+- hex_dump: xxd-style hex dump with ASCII column, parsing a dump back into bytes with offset validation, and a byte-level diff of two buffers.
+- xor_breaker: Repeating-key XOR encryption and its break: key length from normalised Hamming distance, then per-column single-byte key search by English scoring.
+- playfair: Playfair cipher with a 5x5 key-square Struct (cells + position Hash), digraph preparation with X padding, encryption and decryption.
+- transposition: Rail-fence and keyed columnar transposition ciphers (single and double), with a brute-force rail-count search scored by common words.
+- rolling_sync: Adler-32/Fletcher-16 checksums and an rsync-style rolling weak checksum used to compute and replay a block-copy/literal delta between two files.
+- bitset: Fixed-width BitSet type with [] / []= and & | ^ operators, plus popcount, bit reversal, Gray code and next-power-of-two tricks.
+- ascii85: Adobe Ascii85 encoder/decoder with <~ ~> delimiters, the z shortcut, partial final groups, whitespace skipping and positioned errors.
+- percent_encoding: URL percent-escaping for paths and forms, validating unescape, and parsing/rebuilding query strings with repeated keys into a Hash of lists.
+- bloom_filter: Bloom filter Struct over 32-bit words with FNV-1a/djb2 double hashing, measuring false positives against the theoretical rate.
+- raid5_parity: RAID-5 striping with rotating XOR parity across Disk structs; degraded read failure, rebuilding a lost disk, and scrubbing for corrupted stripes.
+- murmur_ring: MurmurHash3 x86-32 with explicit 32-bit masking checked against vectors, used for a consistent-hashing ring with virtual nodes and bsearch lookup.
+- vigenere: Vigenere and autokey ciphers; key length from the index of coincidence and key recovery by per-column chi-squared frequency matching.
+- frame_parser: Serial frame parser (sync byte, type, length, XOR checksum) that resynchronises after garbage and decodes payloads into Temperature/Position/Note records.
+- base32_ids: Base32 mixin module shared by RFC 4648 (padded byte encoding) and Crockford (integer IDs with ILO normalisation and a mod-37 check symbol) types, called through module dispatch.

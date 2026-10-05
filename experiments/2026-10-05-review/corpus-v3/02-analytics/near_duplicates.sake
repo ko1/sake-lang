@@ -1,0 +1,100 @@
+def documents
+  Hash[
+    "a" => "the quick brown fox jumps over the lazy dog near the river bank",
+    "b" => "the quick brown fox jumped over the lazy dog near the river bank",
+    "c" => "a quick brown fox jumps over a lazy dog by the river",
+    "d" => "stock markets fell sharply on monday as investors worried about rates",
+    "e" => "stock markets fell sharply on monday as investors fretted about rates",
+    "f" => "the recipe calls for two cups of flour and a pinch of salt",
+    "g" => "investors worried about rates as stock markets fell on monday",
+    "h" => "the lazy dog slept near the river bank all afternoon"
+  ]
+end
+
+def shingles(text, k)
+  words = String.split(text, " ")
+  result = Set[]
+  Array.each_cons(words, k) { |w| Set.add(result, Array.join(w, " ")) }
+  result
+end
+
+def jaccard(a, b)
+  union = Set.size(a | b)
+  return 0.0 if union == 0
+  Set.size(a & b) * 1.0 / union
+end
+
+def str_hash(s, seed)
+  h = seed
+  String.each_byte(s) { |b| h = (h * 31 + b) % 1000003 }
+  h
+end
+
+def minhash(set, seeds)
+  Array.map(seeds) do |seed|
+    Array.min(Set.map(set) { |sh| str_hash(sh, seed) })
+  end
+end
+
+def estimate(sig_a, sig_b)
+  same = 0
+  Array.each_with_index(sig_a) { |v, i| same += 1 if v == sig_b[i] }
+  same * 1.0 / Array.size(sig_a)
+end
+
+def find(parent, x)
+  while parent[x] != x
+    parent[x] = parent[parent[x]]
+    x = parent[x]
+  end
+  x
+end
+
+def union(parent, a, b)
+  ra = find(parent, a)
+  rb = find(parent, b)
+  return if ra == rb
+  if ra < rb
+    parent[rb] = ra
+  else
+    parent[ra] = rb
+  end
+end
+
+docs = documents
+sh2 = Hash.transform_values(docs) { |t| shingles(t, 2) }
+seeds = Array[7, 13, 101, 997, 4093, 65537, 3, 17, 29, 31, 37, 41]
+sigs = Hash.transform_values(sh2) { |s| minhash(s, seeds) }
+names = Array.sort(Hash.keys(docs))
+
+Array.each(names) { |n| puts("#{n}: #{Set.size(sh2[n])} shingles") }
+
+puts("pair   exact  minhash")
+parent = Hash[]
+Array.each(names) { |n| parent[n] = n }
+Array.each_with_index(names) do |a, i|
+  Array.each(Array.drop(names, i + 1)) do |b|
+    exact = jaccard(sh2[a], sh2[b])
+    est = estimate(sigs[a], sigs[b])
+    next if exact < 0.2 && est < 0.2
+    flag = exact >= 0.5 ? " DUP" : ""
+    puts(format("%s-%s  %5.3f  %5.3f%s", a, b, exact, est, flag))
+    union(parent, a, b) if exact >= 0.5
+  end
+end
+
+clusters = Hash[]
+Array.each(names) do |n|
+  root = find(parent, n)
+  clusters[root] ||= Array[]
+  Array.push(clusters[root], n)
+end
+groups = Array.select(Hash.values(clusters)) { |g| Array.size(g) > 1 }
+puts("duplicate clusters: #{Array.size(groups)}")
+Array.each(groups) { |g| puts("  #{Array.join(g, ", ")}") }
+singles = Array.select(Hash.values(clusters)) { |g| Array.size(g) == 1 }
+puts("unique documents: #{Array.join(Array.map(singles) { |g| Array.first(g) }, ", ")}")
+
+words_a = Array.to_set(String.split(docs["a"], " "))
+words_h = Array.to_set(String.split(docs["h"], " "))
+puts(format("a/h word jaccard %.3f vs shingle jaccard %.3f", jaccard(words_a, words_h), jaccard(sh2["a"], sh2["h"])))

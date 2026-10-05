@@ -1,0 +1,138 @@
+class Event
+  include Comparable
+  attr_reader time, seq, kind, customer, teller
+  def <=>(a, b)
+    c = @time <=> Event.get_time(b)
+    c == 0 ? @seq <=> Event.get_seq(b) : c
+  end
+end
+
+class Customer
+  attr_reader id, arrived, service
+  attr_accessor started = nil, teller = nil
+end
+
+class Rng
+  attr_reader state
+  def next_int(r, n)
+    @state = (@state * 1103515245 + 12345) % 2147483648
+    (@state / 65536) % n
+  end
+end
+
+class Heap
+  attr_reader items = nil
+  def initialize(h) = @items = Array[]
+
+  def push(h, x)
+    Array.push(@items, x)
+    i = Array.size(@items) - 1
+    while i > 0
+      parent = (i - 1) / 2
+      break if @items[parent] <= @items[i]
+      swap(h, i, parent)
+      i = parent
+    end
+  end
+
+  def pop(h)
+    return nil if Array.empty?(@items)
+    top = @items[0]
+    last = Array.pop(@items)
+    return top if Array.empty?(@items)
+    @items[0] = last
+    i = 0
+    n = Array.size(@items)
+    while true
+      l = 2 * i + 1
+      r = l + 1
+      m = i
+      m = l if l < n && @items[l] < @items[m]
+      m = r if r < n && @items[r] < @items[m]
+      break if m == i
+      swap(h, i, m)
+      i = m
+    end
+    top
+  end
+
+  def swap(h, i, j)
+    @items[i], @items[j] = @items[j], @items[i]
+  end
+
+  def size(h) = Array.size(@items)
+end
+
+def simulate(tellers, rng, n_customers, close_time)
+  events = Heap.new
+  seq = 0
+  free = Range.to_a(1..tellers)
+  line = Customer[]
+  served = Customer[]
+  busy_time = Hash.new(0)
+  max_line = 0
+  turned = 0
+  t = 0
+  Integer.times(n_customers) do |i|
+    t += 1 + Rng.next_int(rng, 6)
+    c = Customer.new(i + 1, t, 3 + Rng.next_int(rng, 10))
+    seq += 1
+    Heap.push(events, Event.new(t, seq, :arrive, c, 0))
+  end
+  now = 0
+  while (ev = Heap.pop(events))
+    now = Event.get_time(ev)
+    c = Event.get_customer(ev)
+    case Event.get_kind(ev)
+    in :arrive
+      if now > close_time
+        Customer.set_teller(c, 0)
+        turned += 1
+      else
+        Array.push(line, c)
+      end
+    in :depart
+      Array.push(free, Event.get_teller(ev))
+      Array.push(served, c)
+    end
+    while !Array.empty?(free) && !Array.empty?(line)
+      teller = Array.min(free)
+      Array.delete(free, teller)
+      nxt = Array.shift(line)
+      Customer.set_started(nxt, now)
+      Customer.set_teller(nxt, teller)
+      busy_time[teller] += Customer.get_service(nxt)
+      seq += 1
+      Heap.push(events, Event.new(now + Customer.get_service(nxt), seq, :depart, nxt, teller))
+    end
+    max_line = Array.size(line) if Array.size(line) > max_line
+  end
+  {served: served, end_time: now, busy: busy_time, max_line: max_line, turned: turned}
+end
+
+def report(tellers, seed)
+  result = simulate(tellers, Rng.new(seed), 40, 125)
+  result => {served:, end_time:, busy:, max_line:, turned:}
+  waits = Array.map(served) { |c| Customer.get_started(c) - Customer.get_arrived(c) }
+  avg = Array.sum(waits) / Integer.to_f(Array.size(waits))
+  longest = Array.max_by(served) { |c| Customer.get_started(c) - Customer.get_arrived(c) }
+  puts("tellers=#{tellers} seed=#{seed}: served #{Array.size(served)}, turned away #{turned}, closed at #{end_time}, max line #{max_line}")
+  puts(format("  avg wait %.2f, max wait %d (customer %d)", avg, Array.max(waits), Customer.get_id(longest)))
+  util = Array.map(Array.sort(Hash.keys(busy))) do |k|
+    format("T%d %.0f%%", k, 100.0 * busy[k] / end_time)
+  end
+  puts("  utilization: #{Array.join(util, ", ")}")
+  buckets = Array.group_by(waits) { |w| w < 5 ? "0-4" : (w < 15 ? "5-14" : "15+") }
+  Array.each(Array["0-4", "5-14", "15+"]) do |b|
+    n = Array.size(Hash.fetch(buckets, b, Array[]))
+    puts("  #{String.ljust(b, 5)}#{"#" * n} #{n}")
+  end
+  avg
+end
+
+averages = Hash[]
+Array.each(Array[1, 2, 3]) do |tellers|
+  averages[tellers] = report(tellers, 2024)
+end
+k, v = Hash.min_by(averages) { |k, avg| avg }
+puts(format("best: %d tellers (avg wait %.2f)", k, v))

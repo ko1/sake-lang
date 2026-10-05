@@ -1,0 +1,138 @@
+def pi = 3.141592653589793
+def deg(d) = d * pi / 180.0
+# Math.acos is not built in; acos via atan2.
+def acos(x) = Math.atan2(Math.sqrt(1 - x * x), x)
+def fmt(x) = format("%.3f", Float.abs(x) < 0.0005 ? 0.0 : x)
+
+class Vec3
+  attr_reader x, y, z
+  include Arithmetic
+  def +(a, b) = Vec3.new(@x + Vec3.get_x(b), @y + Vec3.get_y(b), @z + Vec3.get_z(b))
+  def -(a, b) = Vec3.new(@x - Vec3.get_x(b), @y - Vec3.get_y(b), @z - Vec3.get_z(b))
+  def *(a, k) = Vec3.new(@x * k, @y * k, @z * k)
+  def dot(a, b) = @x * Vec3.get_x(b) + @y * Vec3.get_y(b) + @z * Vec3.get_z(b)
+  def cross(a, b)
+    Vec3.new(@y * Vec3.get_z(b) - @z * Vec3.get_y(b),
+             @z * Vec3.get_x(b) - @x * Vec3.get_z(b),
+             @x * Vec3.get_y(b) - @y * Vec3.get_x(b))
+  end
+  def length(a) = Math.sqrt(dot(a, a))
+  def to_s(a) = "(#{fmt(@x)}, #{fmt(@y)}, #{fmt(@z)})"
+end
+
+class Quat
+  attr_reader w, x, y, z
+  include Arithmetic
+
+  def identity = Quat.new(1.0, 0.0, 0.0, 0.0)
+
+  def axis_angle(axis, angle)
+    n = Vec3.length(axis)
+    s = Math.sin(angle / 2.0) / n
+    Quat.new(Math.cos(angle / 2.0), Vec3.get_x(axis) * s, Vec3.get_y(axis) * s, Vec3.get_z(axis) * s)
+  end
+
+  def +(a, b) = Quat.new(@w + Quat.get_w(b), @x + Quat.get_x(b), @y + Quat.get_y(b), @z + Quat.get_z(b))
+  def -(a, b) = Quat.new(@w - Quat.get_w(b), @x - Quat.get_x(b), @y - Quat.get_y(b), @z - Quat.get_z(b))
+
+  def *(a, b)
+    case b
+    in Quat
+      bw = Quat.get_w(b)
+      bx = Quat.get_x(b)
+      by = Quat.get_y(b)
+      bz = Quat.get_z(b)
+      Quat.new(@w * bw - @x * bx - @y * by - @z * bz,
+               @w * bx + @x * bw + @y * bz - @z * by,
+               @w * by - @x * bz + @y * bw + @z * bx,
+               @w * bz + @x * by - @y * bx + @z * bw)
+    in Integer | Float
+      Quat.new(@w * b, @x * b, @y * b, @z * b)
+    end
+  end
+
+  def conjugate(a) = Quat.new(@w, -@x, -@y, -@z)
+  def dot(a, b) = @w * Quat.get_w(b) + @x * Quat.get_x(b) + @y * Quat.get_y(b) + @z * Quat.get_z(b)
+  def norm(a) = Math.sqrt(dot(a, a))
+  def normalize(a) = a * (1.0 / norm(a))
+  def vector(a) = Vec3.new(@x, @y, @z)
+
+  def rotate(q, v)
+    p = Quat.new(0.0, Vec3.get_x(v), Vec3.get_y(v), Vec3.get_z(v))
+    vector(q * p * conjugate(q))
+  end
+
+  def angle(q) = 2 * Math.atan2(Vec3.length(vector(q)), @w)
+
+  def slerp(a, b, t)
+    d = dot(a, b)
+    if d < 0
+      b = b * -1
+      d = -d
+    end
+    return normalize(a + (b - a) * t) if d > 0.9995
+    theta = acos(d)
+    sa = Math.sin((1 - t) * theta) / Math.sin(theta)
+    sb = Math.sin(t * theta) / Math.sin(theta)
+    a * sa + b * sb
+  end
+
+  def to_s(q) = "[#{fmt(@w)}; #{fmt(@x)}, #{fmt(@y)}, #{fmt(@z)}]"
+end
+
+class Body
+  attr_accessor name, points, orientation
+end
+
+def describe(body)
+  q = Body.get_orientation(body)
+  pts = Array.map(Body.get_points(body)) { |p| Quat.rotate(q, p) }
+  puts("#{Body.get_name(body)}: orientation #{q} (#{fmt(Quat.angle(q) * 180 / pi)} deg)")
+  Array.each(pts) { |p| puts("  #{p}") }
+  pts
+end
+
+x_axis = Vec3.new(1.0, 0.0, 0.0)
+y_axis = Vec3.new(0.0, 1.0, 0.0)
+z_axis = Vec3.new(0.0, 0.0, 1.0)
+
+qz = Quat.axis_angle(z_axis, deg(90))
+qx = Quat.axis_angle(x_axis, deg(90))
+puts("qz = #{qz}, |qz| = #{fmt(Quat.norm(qz))}")
+puts("qx = #{qx}")
+puts("rotate x by qz: #{Quat.rotate(qz, x_axis)}")
+puts("rotate y by qx: #{Quat.rotate(qx, y_axis)}")
+
+both = qx * qz
+puts("qx * qz = #{both}")
+puts("x by (qx * qz): #{Quat.rotate(both, x_axis)}")
+puts("x by qz then qx: #{Quat.rotate(qx, Quat.rotate(qz, x_axis))}")
+puts("x by (qz * qx): #{Quat.rotate(qz * qx, x_axis)}  (order matters)")
+puts("q * conj(q) = #{qz * Quat.conjugate(qz)}")
+puts("scaled: #{qz * 2}, normalized back: #{Quat.normalize(qz * 2)}")
+
+square = Array[Vec3.new(1.0, 1.0, 0.0), Vec3.new(-1.0, 1.0, 0.0), Vec3.new(-1.0, -1.0, 0.0), Vec3.new(1.0, -1.0, 0.0)]
+bodies = Array[
+  Body.new("flat", square, Quat.identity),
+  Body.new("tilted", square, Quat.axis_angle(Vec3.new(1.0, 1.0, 0.0), deg(60))),
+  Body.new("spun", square, Quat.axis_angle(z_axis, deg(45)) * Quat.axis_angle(x_axis, deg(30)))
+]
+
+Array.each(bodies) do |b|
+  pts = describe(b)
+  normal = Vec3.cross(pts[1] - pts[0], pts[2] - pts[1])
+  normal = normal * (1.0 / Vec3.length(normal))
+  top = Array.max_by(pts) { |p| Vec3.get_z(p) }
+  puts("  normal #{normal}, highest corner #{top}")
+end
+
+puts("slerp identity -> qz:")
+Array.each(Array[0.0, 0.25, 0.5, 0.75, 1.0]) do |t|
+  q = Quat.slerp(Quat.identity, qz, t)
+  puts("  t=#{t} #{Quat.rotate(q, x_axis)} angle #{fmt(Quat.angle(q) * 180 / pi)}")
+end
+
+steps = Range.reduce(1..12, Quat.identity) { |acc, i| Quat.axis_angle(z_axis, deg(30)) * acc }
+puts("12 x 30 deg about z: #{steps} -> x maps to #{Quat.rotate(steps, x_axis)}")
+drift = Float.abs(Quat.norm(steps) - 1.0)
+puts("norm drift < 1e-9: #{drift < 0.000000001}")

@@ -1,0 +1,98 @@
+class Node
+  attr_reader key, left, right
+end
+
+def optimal_tree(keys, freq)
+  n = Array.size(keys)
+  cost = Array.new(n + 1) { Array.new(n + 1, 0.0) }
+  root = Array.new(n + 1) { Array.new(n + 1, 0) }
+  weight = Array.new(n + 1) { Array.new(n + 1, 0.0) }
+  Integer.times(n) do |i|
+    weight[i][i + 1] = freq[i]
+    cost[i][i + 1] = freq[i]
+    root[i][i + 1] = i
+  end
+  Integer.upto(2, n) do |len|
+    Integer.upto(0, n - len) do |i|
+      j = i + len
+      weight[i][j] = weight[i][j - 1] + freq[j - 1]
+      best = nil
+      Integer.upto(i, j - 1) do |r|
+        c = cost[i][r] + cost[r + 1][j] + weight[i][j]
+        if best == nil || c < best - 1.0e-12
+          best = c
+          root[i][j] = r
+        end
+      end
+      cost[i][j] = best
+    end
+  end
+  [cost[0][n], build(keys, root, 0, n)]
+end
+
+def build(keys, root, i, j)
+  return nil if i >= j
+  r = root[i][j]
+  Node.new(keys[r], build(keys, root, i, r), build(keys, root, r + 1, j))
+end
+
+def balanced(keys, i, j)
+  return nil if i >= j
+  m = (i + j) / 2
+  Node.new(keys[m], balanced(keys, i, m), balanced(keys, m + 1, j))
+end
+
+def expected_cost(node, freq_of, depth)
+  return 0.0 if node == nil
+  here = freq_of[Node.get_key(node)] * depth
+  here + expected_cost(Node.get_left(node), freq_of, depth + 1) + expected_cost(Node.get_right(node), freq_of, depth + 1)
+end
+
+def lookups(node, key)
+  steps = 0
+  while node
+    steps += 1
+    k = Node.get_key(node)
+    return steps if k == key
+    node = key < k ? Node.get_left(node) : Node.get_right(node)
+  end
+  nil
+end
+
+def draw(node, indent, out)
+  return out if node == nil
+  draw(Node.get_right(node), indent + "    ", out)
+  Array.push(out, indent + Node.get_key(node))
+  draw(Node.get_left(node), indent + "    ", out)
+  out
+end
+
+def height(node)
+  return 0 if node == nil
+  1 + Array.max(Array[height(Node.get_left(node)), height(Node.get_right(node))])
+end
+
+# how often each keyword is looked up by a toy tokenizer
+counts = Hash["begin" => 12, "def" => 140, "do" => 95, "else" => 30, "end" => 260, "if" => 80, "return" => 45, "while" => 8, "yield" => 4]
+keys = Array.sort(Hash.keys(counts))
+total = Array.sum(Hash.values(counts))
+freq = Array.map(keys) { |k| counts[k] / Integer.to_f(total) }
+freq_of = Array.zip(keys, freq).Array.to_h
+
+best, tree = optimal_tree(keys, freq)
+plain = balanced(keys, 0, Array.size(keys))
+puts(format("optimal expected comparisons:  %.4f (dp %.4f), height %d", expected_cost(tree, freq_of, 1), best, height(tree)))
+puts(format("balanced expected comparisons: %.4f, height %d", expected_cost(plain, freq_of, 1), height(plain)))
+puts("optimal tree (rotated):")
+Array.each(draw(tree, "  ", Array[])) { |line| puts(line) }
+
+puts("comparisons per keyword (optimal / balanced):")
+Array.each(keys) do |k|
+  puts(format("  %-7s %5.3f  %d / %d", k, freq_of[k], lookups(tree, k), lookups(plain, k)))
+end
+missing = lookups(tree, "rescue")
+puts("rescue: #{missing == nil ? "not a key" : missing}")
+
+uniform = Array.map(keys) { 1.0 / Array.size(keys) }
+u_cost, u_tree = optimal_tree(keys, uniform)
+puts(format("uniform weights: optimal %.4f, root %s", u_cost, Node.get_key(u_tree)))

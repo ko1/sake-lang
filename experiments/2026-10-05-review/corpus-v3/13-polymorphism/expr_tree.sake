@@ -1,0 +1,187 @@
+class UnboundVariable < Exception
+  attr_reader name
+end
+
+module Expr
+  include Arithmetic
+
+  def +(a, b) = Add.new(a, lift(b))
+  def -(a, b) = Sub.new(a, lift(b))
+  def *(a, b) = Mul.new(a, lift(b))
+  def **(a, n) = Pow.new(a, n)
+
+  def lift(x) = (x in Integer) ? Num.new(x) : x
+
+  def evaluate(e, env) = raise("evaluate not implemented")
+  def show(e) = raise("show not implemented")
+  def prec(e) = 4
+  def simplify(e) = e
+  def derive(e, v) = raise("derive not implemented")
+  def size(e) = 1
+
+  def wrap(e, parent_prec) = prec(e) < parent_prec ? "(#{show(e)})" : show(e)
+  def to_s(e) = show(e)
+end
+
+class Num
+  attr_reader v
+  include Expr
+  def evaluate(e, env) = @v
+  def show(e) = Integer.to_s(@v)
+  def derive(e, v) = Num.new(0)
+end
+
+class Var
+  attr_reader name
+  include Expr
+  def evaluate(e, env)
+    val = env[@name]
+    raise UnboundVariable.new("unbound variable #{@name}", @name) if val == nil
+    val
+  end
+  def show(e) = @name
+  def derive(e, v) = Num.new(@name == v ? 1 : 0)
+end
+
+class Add
+  attr_reader l, r
+  include Expr
+  def evaluate(e, env) = Expr.evaluate(@l, env) + Expr.evaluate(@r, env)
+  def show(e) = "#{Expr.wrap(@l, 1)} + #{Expr.wrap(@r, 1)}"
+  def prec(e) = 1
+  def size(e) = 1 + Expr.size(@l) + Expr.size(@r)
+  def derive(e, v) = Expr.derive(@l, v) + Expr.derive(@r, v)
+  def simplify(e)
+    l = Expr.simplify(@l)
+    r = Expr.simplify(@r)
+    if (l in Num) && (r in Num)
+      Num.new(Num.get_v(l) + Num.get_v(r))
+    elsif l == Num.new(0)
+      r
+    elsif r == Num.new(0)
+      l
+    elsif l == r
+      Mul.new(Num.new(2), l)
+    else
+      Add.new(l, r)
+    end
+  end
+end
+
+class Sub
+  attr_reader l, r
+  include Expr
+  def evaluate(e, env) = Expr.evaluate(@l, env) - Expr.evaluate(@r, env)
+  def show(e) = "#{Expr.wrap(@l, 1)} - #{Expr.wrap(@r, 2)}"
+  def prec(e) = 1
+  def size(e) = 1 + Expr.size(@l) + Expr.size(@r)
+  def derive(e, v) = Expr.derive(@l, v) - Expr.derive(@r, v)
+  def simplify(e)
+    l = Expr.simplify(@l)
+    r = Expr.simplify(@r)
+    if (l in Num) && (r in Num)
+      Num.new(Num.get_v(l) - Num.get_v(r))
+    elsif r == Num.new(0)
+      l
+    elsif l == r
+      Num.new(0)
+    else
+      Sub.new(l, r)
+    end
+  end
+end
+
+class Mul
+  attr_reader l, r
+  include Expr
+  def evaluate(e, env) = Expr.evaluate(@l, env) * Expr.evaluate(@r, env)
+  def show(e) = "#{Expr.wrap(@l, 2)} * #{Expr.wrap(@r, 3)}"
+  def prec(e) = 2
+  def size(e) = 1 + Expr.size(@l) + Expr.size(@r)
+  def derive(e, v) = Expr.derive(@l, v) * @r + @l * Expr.derive(@r, v)
+  def simplify(e)
+    l = Expr.simplify(@l)
+    r = Expr.simplify(@r)
+    if (l in Num) && (r in Num)
+      Num.new(Num.get_v(l) * Num.get_v(r))
+    elsif l == Num.new(0) || r == Num.new(0)
+      Num.new(0)
+    elsif l == Num.new(1)
+      r
+    elsif r == Num.new(1)
+      l
+    elsif (r in Num) && (l in Var | Pow)
+      Mul.new(r, l)
+    elsif l == r
+      Pow.new(l, 2)
+    else
+      Mul.new(l, r)
+    end
+  end
+end
+
+class Pow
+  attr_reader base, n
+  include Expr
+  def evaluate(e, env) = Expr.evaluate(@base, env) ** @n
+  def show(e) = "#{Expr.wrap(@base, 4)}^#{@n}"
+  def prec(e) = 3
+  def size(e) = 1 + Expr.size(@base)
+  def derive(e, v) = Num.new(@n) * Pow.new(@base, @n - 1) * Expr.derive(@base, v)
+  def simplify(e)
+    b = Expr.simplify(@base)
+    if @n == 0
+      Num.new(1)
+    elsif @n == 1
+      b
+    elsif b in Num
+      Num.new(Num.get_v(b) ** @n)
+    else
+      Pow.new(b, @n)
+    end
+  end
+end
+
+def x = Var.new("x")
+def y = Var.new("y")
+
+def report(label, e, env)
+  s = Expr.simplify(e)
+  begin
+    value = Expr.evaluate(e, env)
+    puts("#{label}: #{e}  [size #{Expr.size(e)}]")
+    puts("   simplified: #{s}  [size #{Expr.size(s)}]")
+    puts("   value: #{value} (simplified: #{Expr.evaluate(s, env)})")
+  rescue UnboundVariable => err
+    puts("#{label}: #{e}")
+    puts("   cannot evaluate: #{Exception.message(err)}")
+  end
+end
+
+env = Hash["x" => 3, "y" => -2]
+exprs = Array[
+  ["poly", x ** 2 * 3 + x * 2 + 1],
+  ["zeros", x * 0 + y * 1 + Num.new(0)],
+  ["nested", (x + 1) * (x - 1) - (x ** 2 - 1)],
+  ["mixed", (x + y) ** 3 - x * y * 2],
+  ["consts", Num.new(2) * 3 + Num.new(4) ** 2],
+  ["same", x * x + y + y],
+  ["free", x + Var.new("z") * 2]
+]
+
+Array.each(exprs) { |label, e| report(label, e, env) }
+
+puts("== derivatives d/dx ==")
+Array.each(Array.take(exprs, 4)) do |label, e|
+  d = Expr.simplify(Expr.derive(e, "x"))
+  puts("#{label}: #{d}  at x=3,y=-2 -> #{Expr.evaluate(d, env)}")
+end
+
+puts("== table of poly ==")
+poly = exprs[0][1]
+Range.each(-2..2) do |v|
+  puts(format("x=%2d  f=%3d", v, Expr.evaluate(poly, Hash["x" => v])))
+end
+
+biggest = Array.max_by(exprs) { |label, e| Expr.size(e) }
+puts("largest tree: #{biggest[0]}") if biggest

@@ -1,0 +1,141 @@
+class Packet
+  attr_reader id, src, dst, born
+  attr_accessor ttl
+  attr_reader hops = nil
+  def initialize(p) = @hops = Array[@src]
+end
+
+class Link
+  attr_reader a, b, delay
+  attr_accessor up = true
+end
+
+class Router
+  attr_reader name, limit, queue = nil
+  attr_accessor dropped = 0, forwarded = 0
+  def initialize(r) = @queue = Packet[]
+
+  def accept(r, pkt)
+    if Array.size(@queue) < @limit
+      Array.push(@queue, pkt)
+    else
+      @dropped += 1
+    end
+  end
+end
+
+class InFlight
+  attr_reader packet, to, arrives
+end
+
+module Routing
+  module_function
+
+  def neighbors(links, node)
+    out = Array[]
+    Array.each(links) do |l|
+      next unless Link.get_up(l)
+      Array.push(out, [Link.get_b(l), Link.get_delay(l)]) if Link.get_a(l) == node
+      Array.push(out, [Link.get_a(l), Link.get_delay(l)]) if Link.get_b(l) == node
+    end
+    out
+  end
+
+  def next_hops(links, nodes, source)
+    dist = Hash[source => 0]
+    first = Hash[]
+    todo = Array.dup(nodes)
+    until Array.empty?(todo)
+      u = Array.select(todo) { |n| dist[n] }.Array.min_by { |n| dist[n] }
+      break if u == nil
+      Array.delete(todo, u)
+      Array.each(neighbors(links, u)) do |v, w|
+        alt = dist[u] + w
+        if dist[v] == nil || alt < dist[v]
+          dist[v] = alt
+          first[v] = u == source ? v : first[u]
+        end
+      end
+    end
+    first
+  end
+
+  def table(links, nodes) = Array.map(nodes) { |n| [n, next_hops(links, nodes, n)] }.Array.to_h
+end
+
+def link_between(links, a, b)
+  Array.find(links) { |l| (Link.get_a(l) == a && Link.get_b(l) == b) || (Link.get_a(l) == b && Link.get_b(l) == a) }
+end
+
+nodes = Array["A", "B", "C", "D", "E", "F"]
+links = Link[
+  Link.new("A", "B", 1), Link.new("B", "C", 1), Link.new("C", "D", 2),
+  Link.new("A", "E", 2), Link.new("E", "F", 2), Link.new("F", "D", 1),
+  Link.new("B", "E", 1), Link.new("C", "F", 3)
+]
+routers = Array.map(nodes) { |n| [n, Router.new(n, n == "C" ? 3 : 5)] }.Array.to_h
+routes = Routing.table(links, nodes)
+puts("A routes: #{Array.join(Array.map(Array.sort(Hash.keys(routes["A"]))) { |d| "#{d}->#{routes["A"][d]}" }, " ")}")
+
+flows = Array[["A", "D", 1], ["E", "C", 2], ["B", "F", 3], ["F", "A", 4], ["D", "B", 5]]
+events = Hash[12 => ["C", "D", false], 25 => ["C", "D", true]]
+in_flight = InFlight[]
+delivered = Array[]
+expired = Packet[]
+next_id = 1
+Integer.times(40) do |t|
+  if (ev = events[t])
+    a, b, up = ev
+    Link.set_up(link_between(links, a, b), up)
+    routes = Routing.table(links, nodes)
+    puts("t=#{t} link #{a}-#{b} #{up ? "restored" : "failed"}; A->D now via #{routes["A"]["D"]}")
+  end
+  if t < 30
+    Array.each(flows) do |src, dst, every|
+      next unless t % every == 0
+      Router.accept(routers[src], Packet.new(next_id, src, dst, t, 6))
+      next_id += 1
+    end
+  end
+  arrived, in_flight = Array.partition(in_flight) { InFlight.get_arrives(it) == t }
+  Array.each(arrived) do |f|
+    pkt = InFlight.get_packet(f)
+    here = InFlight.get_to(f)
+    Array.push(Packet.get_hops(pkt), here)
+    if here == Packet.get_dst(pkt)
+      Array.push(delivered, [pkt, t])
+    else
+      Router.accept(routers[here], pkt)
+    end
+  end
+  Hash.each(routers) do |name, r|
+    pkt = Array.shift(Router.get_queue(r))
+    next if pkt == nil
+    Packet.set_ttl(pkt, Packet.get_ttl(pkt) - 1)
+    if Packet.get_ttl(pkt) == 0
+      Array.push(expired, pkt)
+      next
+    end
+    hop = routes[name][Packet.get_dst(pkt)]
+    if hop == nil
+      Router.set_dropped(r, Router.get_dropped(r) + 1)
+      next
+    end
+    Router.set_forwarded(r, Router.get_forwarded(r) + 1)
+    Array.push(in_flight, InFlight.new(pkt, hop, t + Link.get_delay(link_between(links, name, hop))))
+  end
+end
+
+puts("--- routers")
+Hash.each(routers) do |name, r|
+  puts(format("%s forwarded %3d dropped %2d queued %d", name, Router.get_forwarded(r), Router.get_dropped(r), Array.size(Router.get_queue(r))))
+end
+latencies = Array.map(delivered) { |pkt, at| at - Packet.get_born(pkt) }
+puts(format("delivered %d, expired %d, in flight %d, avg latency %.2f, max %d",
+  Array.size(delivered), Array.size(expired), Array.size(in_flight), Array.sum(latencies) / Integer.to_f(Array.size(latencies)), Array.max(latencies)))
+by_flow = Array.group_by(delivered) { |pkt, at| "#{Packet.get_src(pkt)}->#{Packet.get_dst(pkt)}" }
+Array.each(Array.sort(Hash.keys(by_flow))) do |k|
+  rows = by_flow[k]
+  paths = Array.tally(Array.map(rows) { |pkt, at| Array.join(Packet.get_hops(pkt), "") })
+  puts("#{k}: #{Array.size(rows)} delivered, paths #{Array.join(Hash.map(paths) { |p, n| "#{p}x#{n}" }, " ")}")
+end

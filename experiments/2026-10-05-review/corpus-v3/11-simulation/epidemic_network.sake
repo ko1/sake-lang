@@ -1,0 +1,117 @@
+class Person
+  attr_reader name
+  attr_accessor state, days_sick = 0, infected_by = nil, infected_on = nil
+end
+
+class Lcg
+  attr_reader seed
+  def roll(r)
+    @seed = (@seed * 214013 + 2531011) % 4294967296
+    (@seed / 65536) % 1000
+  end
+end
+
+def build_graph(edges)
+  graph = Hash[]
+  Array.each(edges) do |a, b|
+    graph[a] = String[] if graph[a] == nil
+    graph[b] = String[] if graph[b] == nil
+    Array.push(graph[a], b)
+    Array.push(graph[b], a)
+  end
+  graph
+end
+
+def simulate(graph, patient_zero, vaccinated, beta, recover_days, seed)
+  rng = Lcg.new(seed)
+  people = Hash[]
+  Array.each(Array.sort(Hash.keys(graph))) do |name|
+    state = Array.include?(vaccinated, name) ? :recovered : :susceptible
+    people[name] = Person.new(name, state)
+  end
+  zero = people[patient_zero]
+  Person.set_state(zero, :infected)
+  Person.set_infected_on(zero, 0)
+  curve = Array[]
+  day = 0
+  while Hash.any?(people) { |n, p| Person.get_state(p) == :infected }
+    day += 1
+    sick = Array.select(Hash.values(people)) { Person.get_state(it) == :infected }
+    newly = Array[]
+    Array.each(sick) do |p|
+      Array.each(graph[Person.get_name(p)]) do |other_name|
+        other = people[other_name]
+        next unless Person.get_state(other) == :susceptible
+        next if Array.include?(newly, other)
+        if Lcg.roll(rng) < beta
+          Array.push(newly, other)
+          Person.set_infected_by(other, Person.get_name(p))
+        end
+      end
+    end
+    Array.each(sick) do |p|
+      Person.set_days_sick(p, Person.get_days_sick(p) + 1)
+      Person.set_state(p, :recovered) if Person.get_days_sick(p) >= recover_days
+    end
+    Array.each(newly) do |p|
+      Person.set_state(p, :infected)
+      Person.set_infected_on(p, day)
+    end
+    counts = Array.tally(Array.map(Hash.values(people)) { Person.get_state(it) })
+    Array.push(curve, [day, Hash.fetch(counts, :susceptible, 0), Hash.fetch(counts, :infected, 0), Hash.fetch(counts, :recovered, 0)])
+  end
+  [people, curve]
+end
+
+def chain(people, name)
+  links = String[name]
+  cur = people[name]
+  while cur
+    src = Person.get_infected_by(cur)
+    break if src == nil
+    Array.push(links, src)
+    cur = people[src]
+  end
+  Array.join(Array.reverse(links), " > ")
+end
+
+def report(title, graph, vaccinated)
+  people, curve = simulate(graph, "ann", vaccinated, 350, 3, 42)
+  puts("== #{title}")
+  Array.each(curve) do |day, s, i, r|
+    puts(format("day %2d  S %2d  I %2d  R %2d  %s", day, s, i, r, "*" * i))
+  end
+  infected = Array.select(Hash.values(people)) { Person.get_infected_on(it) }
+  peak = Array.max_by(curve) { |d, s, i, r| i }
+  if peak
+    pd, ps, pi, pr = peak
+    puts("peak: #{pi} infected on day #{pd}")
+  end
+  puts("total infected: #{Array.size(infected)} of #{Hash.size(people)}")
+  spreaders = Array.tally(Array.filter_map(infected) { Person.get_infected_by(it) })
+  top = Hash.max_by(spreaders) { |n, c| c }
+  if top
+    who, count = top
+    puts("top spreader: #{who} (#{count})")
+  end
+  last = Array.max_by(infected) { Person.get_infected_on(it) }
+  puts("longest chain: #{chain(people, Person.get_name(last))}") if last
+  Array.size(infected)
+end
+
+edges = Array[
+  ["ann", "bob"], ["ann", "cy"], ["ann", "dee"], ["bob", "cy"], ["bob", "eli"],
+  ["cy", "fay"], ["dee", "gil"], ["eli", "fay"], ["eli", "hal"], ["fay", "ivy"],
+  ["gil", "hal"], ["gil", "jo"], ["hal", "kai"], ["ivy", "kai"], ["jo", "kai"],
+  ["kai", "lee"], ["lee", "max"], ["max", "ned"], ["ned", "oz"], ["lee", "oz"],
+  ["fay", "pat"], ["pat", "quin"], ["quin", "ivy"], ["dee", "eli"]
+]
+graph = build_graph(edges)
+degrees = Hash.sort_by(graph) { |n, nbrs| [-Array.size(nbrs), n] }
+puts("most connected: #{Array.join(Array.map(Array.take(degrees, 3)) { |n, nbrs| "#{n}(#{Array.size(nbrs)})" }, " ")}")
+
+base = report("no vaccination", graph, String[])
+hubs = Array.map(Array.take(degrees, 3)) { |n, nbrs| n }
+Array.delete(hubs, "ann")
+targeted = report("vaccinate hubs #{Array.join(hubs, ",")}", graph, hubs)
+puts(format("infections avoided: %d (%.0f%%)", base - targeted, 100.0 * (base - targeted) / base))

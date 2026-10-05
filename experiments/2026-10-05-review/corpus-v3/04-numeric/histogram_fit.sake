@@ -1,0 +1,113 @@
+def two_pi = 6.283185307179586
+
+class Lcg
+  attr_reader state
+
+  def next_float(g)
+    @state = (@state * 1103515245 + 12345) % 2147483648
+    (@state + 0.5) / 2147483648.0
+  end
+
+  def gaussian(g, mu, sigma)
+    u1 = next_float(g)
+    u2 = next_float(g)
+    mu + sigma * Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(two_pi * u2)
+  end
+end
+
+class Bin
+  attr_accessor lo, hi, count
+end
+
+def erf(x)
+  # Abramowitz-Stegun 7.1.26
+  sign = x < 0.0 ? -1.0 : 1.0
+  ax = Float.abs(x)
+  t = 1.0 / (1.0 + 0.3275911 * ax)
+  poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t
+  sign * (1.0 - poly * Math.exp(-ax * ax))
+end
+
+def normal_cdf(x, mu, sigma) = 0.5 * (1.0 + erf((x - mu) / (sigma * Math.sqrt(2.0))))
+
+def make_bins(xs, nbins)
+  lo = Array.min(xs)
+  hi = Array.max(xs)
+  width = (hi - lo) / nbins
+  bins = Range.map(0...nbins) { |i| Bin.new(lo + i * width, lo + (i + 1) * width, 0) }
+  Array.each(xs) do |x|
+    idx = Integer.clamp(Float.floor((x - lo) / width), 0, nbins - 1)
+    b = bins[idx]
+    Bin.set_count(b, Bin.get_count(b) + 1)
+  end
+  bins
+end
+
+def sturges(n) = Float.ceil(Math.log2(n)) + 1
+
+def kde(xs, x, h)
+  coef = 1.0 / (Array.size(xs) * h * Math.sqrt(two_pi))
+  coef * Array.sum(Array.map(xs) { |xi| Math.exp(-0.5 * ((x - xi) / h) ** 2) })
+end
+
+def inverse_erf(y)
+  lo = -6.0
+  hi = 6.0
+  Integer.times(80) do
+    mid = (lo + hi) / 2.0
+    if erf(mid) < y
+      lo = mid
+    else
+      hi = mid
+    end
+  end
+  (lo + hi) / 2.0
+end
+
+gen = Lcg.new(20261001)
+sample = Range.map(0...150) { Lcg.gaussian(gen, 50.0, 8.0) }
+Range.each(0...12) { Array.push(sample, Lcg.gaussian(gen, 75.0, 2.0)) }
+
+n = Array.size(sample)
+mean = Array.sum(sample) / n
+sd = Math.sqrt(Array.sum(Array.map(sample) { |x| (x - mean) ** 2 }) / (n - 1))
+puts(format("n=%d mean=%.3f sd=%.3f min=%.3f max=%.3f", n, mean, sd, Array.min(sample), Array.max(sample)))
+
+nbins = sturges(n)
+bins = make_bins(sample, nbins)
+peak = Array.max(Array.map(bins) { |b| Bin.get_count(b) })
+chi2 = 0.0
+Array.each(bins) do |b|
+  c = Bin.get_count(b)
+  bar = "#" * (c * 40 / peak)
+  expected = n * (normal_cdf(Bin.get_hi(b), mean, sd) - normal_cdf(Bin.get_lo(b), mean, sd))
+  chi2 += (c - expected) ** 2 / expected if expected > 0.5
+  puts(format("[%6.2f, %6.2f) %3d %6.1f %s", Bin.get_lo(b), Bin.get_hi(b), c, expected, bar))
+end
+puts(format("chi-square vs fitted normal: %.2f over %d bins", chi2, nbins))
+
+h = 1.06 * sd * n ** -0.2
+puts(format("KDE bandwidth (Silverman): %.4f", h))
+grid = Range.map(0..30) { |i| 20.0 + i * 2.0 }
+dens = Array.map(grid) { |x| [x, kde(sample, x, h)] }
+modes = Array[]
+Range.each(1...(Array.size(dens) - 1)) do |i|
+  x, d = dens[i]
+  pd = dens[i - 1][1]
+  nd = dens[i + 1][1]
+  Array.push(modes, [x, d]) if d > pd && d > nd
+end
+Array.each(modes) { |x, d| puts(format("density mode near %.1f (%.5f)", x, d)) }
+puts(Array.size(modes) > 1 ? "distribution looks multimodal" : "distribution looks unimodal")
+
+area = 0.0
+Array.each_cons(dens, 2) do |(x0, d0), (x1, d1)|
+  area += (x1 - x0) * (d0 + d1) / 2.0
+end
+puts(format("KDE mass on [20, 80]: %.4f", area))
+
+Array.each(Float[0.5, 0.9, 0.99]) do |q|
+  sorted = Array.sort(sample)
+  idx = Float.floor(q * (n - 1))
+  puts(format("empirical q%.2f = %.3f, normal q via search = %.3f", q, sorted[idx], mean + sd * Math.sqrt(2.0) * inverse_erf(2.0 * q - 1.0)))
+end
