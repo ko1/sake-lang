@@ -275,7 +275,7 @@ module Sake
     end
 
     # The type a `class C` declares: `< A` pastes A's fields (or makes an exception type), then the
-    # `attr_reader x, y` / `attr_accessor n = 0` / `attr_writer w` lines of C's first class body.
+    # `attr_reader x, y` / `attr_accessor n` / `attr_writer w` lines of C's first class body.
     def class_spec(name, seen)
       return @class_specs[name] if @class_specs.key?(name)
       nodes = @class_nodes[name]
@@ -283,7 +283,10 @@ module Sake
       if BUILTIN_TYPES.include?(name) || @struct_types.key?(name) || @registry.namespace?(name)
         nodes.each do |n|
           error(n.superclass, "`class #{name}` adds functions to #{name}; `<` goes on a new class") if n.superclass
-          attr_lines(n).each { error(_1, "#{name}'s fields are already declared#{@struct_types.key?(name) ? " by Struct.new" : ""}") }
+          attr_lines(n).each do |a|
+            next error(a, "#{name}'s fields are already declared by Struct.new") if @struct_types.key?(name)
+            error(a, "`#{name}` is a built-in type, so `class #{name}` only adds functions to it", ["give your type another name, e.g. `#{name}Node`"])
+          end
         end
         return @class_specs[name] = nil
       end

@@ -1,4 +1,4 @@
-class Dir
+class DirNode
   attr_reader name, parent, subdirs, files
 
   def initialize(d)
@@ -16,7 +16,7 @@ class Dir
   end
 
   def mkdir_p(root, parts)
-    Array.reduce(parts, root) { |d, name| Dir.subdirs(d)[name] ||= Dir.new(name, d) }
+    Array.reduce(parts, root) { |d, name| DirNode.subdirs(d)[name] ||= DirNode.new(name, d) }
   end
 
   def total(d)
@@ -49,10 +49,10 @@ def resolve(root, cwd, path)
   Array.each(String.split(path, "/")) do |part|
     next if part == "" || part == "."
     if part == ".."
-      up = Dir.parent(d)
+      up = DirNode.parent(d)
       d = up if up != nil
     else
-      nxt = Dir.subdirs(d)[part]
+      nxt = DirNode.subdirs(d)[part]
       raise NotFound.new("no such directory: #{path}", path) if nxt == nil
       d = nxt
     end
@@ -61,12 +61,12 @@ def resolve(root, cwd, path)
 end
 
 def print_tree(d, indent, max_depth)
-  label = indent == "" ? "/" : "#{Dir.name(d)}/"
-  puts(format("%-28s %8s", indent + label, human(Dir.total(d))))
+  label = indent == "" ? "/" : "#{DirNode.name(d)}/"
+  puts(format("%-28s %8s", indent + label, human(DirNode.total(d))))
   return if String.size(indent) / 2 >= max_depth
-  subs = Array.sort_by(Hash.values(Dir.subdirs(d))) { |s| -Dir.total(s) }
+  subs = Array.sort_by(Hash.values(DirNode.subdirs(d))) { |s| -DirNode.total(s) }
   Array.each(subs) { |s| print_tree(s, indent + "  ", max_depth) }
-  files = Dir.files(d)
+  files = DirNode.files(d)
   puts(format("%-28s %8s", indent + "  (#{Array.size(files)} files)", "")) if Array.size(files) > 0
 end
 
@@ -90,14 +90,14 @@ listing = <<~LS
   /var/cache/apt/pkgcache.bin 31000000
 LS
 
-root = Dir.new("", nil)
+root = DirNode.new("", nil)
 all_files = Array[]
 String.each_line(listing) do |line|
   path, size = String.split(String.strip(line), " ")
   *parts, name = Array.drop(String.split(path, "/"), 1)
-  dir = Dir.mkdir_p(root, parts)
+  dir = DirNode.mkdir_p(root, parts)
   f = FileEntry.new(name, String.to_i(size), dir)
-  Array.push(Dir.files(dir), f)
+  Array.push(DirNode.files(dir), f)
   Array.push(all_files, f)
 end
 
@@ -105,12 +105,12 @@ print_tree(root, "", 3)
 
 puts("-- directories over 1M --")
 big = Array[]
-Dir.each_dir(root) { |d| Array.push(big, d) if Dir.total(d) > 1024 * 1024 }
-Array.each(Array.sort_by(big) { |d| Dir.path(d) }) { |d| puts(format("  %-24s %s", Dir.path(d), human(Dir.total(d)))) }
+DirNode.each_dir(root) { |d| Array.push(big, d) if DirNode.total(d) > 1024 * 1024 }
+Array.each(Array.sort_by(big) { |d| DirNode.path(d) }) { |d| puts(format("  %-24s %s", DirNode.path(d), human(DirNode.total(d)))) }
 
 puts("-- largest files --")
 top = Array.take(Array.sort_by(all_files) { |f| -FileEntry.size(f) }, 3)
-Array.each(top) { |f| puts("  #{Dir.path(FileEntry.dir(f))}/#{FileEntry.name(f)} #{human(FileEntry.size(f))}") }
+Array.each(top) { |f| puts("  #{DirNode.path(FileEntry.dir(f))}/#{FileEntry.name(f)} #{human(FileEntry.size(f))}") }
 
 puts("-- by extension --")
 by_ext = Hash.new(0)
@@ -126,7 +126,7 @@ puts("-- navigation --")
 cwd = resolve(root, root, "/home/bob/src")
 Array.each(Array["app/test", "../..", "../../ann/photos/raw", "/var/log/nginx", "lib/missing", "/../etc"]) do |p|
   target = resolve(root, cwd, p)
-  puts("  cd #{p} -> #{Dir.path(target)} (#{human(Dir.total(target))})")
+  puts("  cd #{p} -> #{DirNode.path(target)} (#{human(DirNode.total(target))})")
 rescue NotFound => e
   puts("  cd #{p} -> error: #{Exception.message(e)}")
 end

@@ -1,4 +1,4 @@
-class Dir
+class DirNode
   attr_reader :name, :parent, :subdirs, :files
 
   def initialize(name, parent)
@@ -15,7 +15,7 @@ class Dir
   end
 
   def mkdir_p(parts)
-    parts.reduce(self) { |d, name| d.subdirs[name] ||= Dir.new(name, d) }
+    parts.reduce(self) { |d, name| d.subdirs[name] ||= DirNode.new(name, d) }
   end
 
   def total
@@ -97,7 +97,7 @@ listing = <<~LS
   /var/cache/apt/pkgcache.bin 31000000
 LS
 
-root = Dir.new("", nil)
+root = DirNode.new("", nil)
 all_files = []
 listing.each_line do |line|
   path, size = line.strip.split(" ")
