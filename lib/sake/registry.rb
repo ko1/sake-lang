@@ -5,16 +5,19 @@ module Sake
   CTOR = "new[]"
 
   # A built-in operation `Namespace.name`. Each param is a type name, "Any", or an Array of type names.
-  Builtin = Struct.new(:namespace, :name, :params, :optional, :rest, :block, :impl, keyword_init: true) do
+  # keywords: name => type of each optional keyword argument (`Time.at(t, in: "+09:00")`).
+  Builtin = Struct.new(:namespace, :name, :params, :optional, :rest, :block, :impl, :keywords, keyword_init: true) do
     def full_name = name == CTOR ? "#{namespace}[]" : "#{namespace}.#{name}"
     def min_arity = params.size
     def max_arity = rest ? Float::INFINITY : params.size + optional.size
+    def keyword_types = keywords || {}
 
     # `Array.sum(x, [Integer|Float]) [{ }]`: x is the subject, [T] optional, *T rest, { } a block.
     def signature
       ps = params.each_with_index.map { |t, i| i.zero? && t == namespace ? "x" : Array(t).join("|") }
       ps += optional.map { "[#{Array(_1).join("|")}]" }
       ps << "*#{Array(rest).join("|")}" if rest
+      ps += keyword_types.map { |k, t| "[#{k}: #{Array(t).join("|")}]" }
       blk = { required: " { }", optional: " [{ }]" }.fetch(block, "")
       name == CTOR ? "#{namespace}[#{ps.join(", ")}]" : "#{full_name}(#{ps.join(", ")})#{blk}"
     end
@@ -47,8 +50,8 @@ module Sake
       @unary_ops = Hash.new { |h, k| h[k] = {} }
     end
 
-    def define(ns, name, params, optional: [], rest: nil, block: :none, &impl)
-      @ns[ns][name.to_s] = Builtin.new(namespace: ns, name: name.to_s, params:, optional:, rest:, block:, impl: strict(impl))
+    def define(ns, name, params, optional: [], rest: nil, block: :none, keywords: {}, &impl)
+      @ns[ns][name.to_s] = Builtin.new(namespace: ns, name: name.to_s, params:, optional:, rest:, block:, keywords:, impl: strict(impl))
     end
 
     # A proc with several parameters splats a lone Array argument (`|a, sep = ""|` given [1, 2] sees

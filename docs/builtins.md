@@ -143,14 +143,58 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Complex.rectangular(x)`
 - `Complex.to_s(x)`
 
+## Dir
+
+- `Dir.children(String)`
+- `Dir.each_child(String) { }`
+- `Dir.empty?(String)`
+- `Dir.entries(String)`
+- `Dir.exist?(String)`
+- `Dir.glob(String|Array, [base: String])`
+- `Dir.home([String])`
+- `Dir.mkdir(String, [Integer])`
+- `Dir.mktmpdir([String], [String]) [{ }]`
+- `Dir.pwd()`
+- `Dir.rmdir(String)`
+- `Dir.unlink(String)`
+
 ## File
 
+- `File.absolute_path(String, [String])`
+- `File.absolute_path?(String)`
+- `File.atime(String)`
+- `File.basename(String, [String])`
+- `File.chmod(Integer, *String)`
 - `File.delete(String)`
+- `File.directory?(String)`
+- `File.dirname(String, [Integer])`
+- `File.empty?(String)`
+- `File.executable?(String)`
 - `File.exist?(String)`
+- `File.expand_path(String, [String])`
+- `File.extname(String)`
+- `File.file?(String)`
+- `File.ftype(String)`
+- `File.identical?(String, String)`
+- `File.join(*String|Array)`
+- `File.link(String, String)`
+- `File.mtime(String)`
 - `File.open(String, [String]) [{ }]`
 - `File.read(String)`
+- `File.readable?(String)`
 - `File.readlines(String)`
+- `File.readlink(String)`
+- `File.realpath(String, [String])`
+- `File.rename(String, String)`
+- `File.size(String)`
+- `File.split(String)`
+- `File.symlink(String, String)`
+- `File.symlink?(String)`
+- `File.unlink(String, *String)`
+- `File.utime(Time|Nil, Time|Nil, *String)`
+- `File.writable?(String)`
 - `File.write(String, String)`
+- `File.zero?(String)`
 
 ## Float
 
@@ -718,20 +762,27 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Time.==(x, Any)`
 - `Time.>(x, Any)`
 - `Time.>=(x, Any)`
-- `Time.at(Integer|Float|Rational)`
+- `Time.at(Integer|Float|Rational|Time, [in: String|Integer])`
 - `Time.ceil(x, [Integer])`
 - `Time.day(x)`
 - `Time.floor(x, [Integer])`
 - `Time.friday?(x)`
+- `Time.getlocal(x, [String|Integer])`
+- `Time.getutc(x)`
+- `Time.gmt?(x)`
+- `Time.gmt_offset(x)`
+- `Time.gmtime(x)`
+- `Time.gmtoff(x)`
 - `Time.hour(x)`
 - `Time.iso8601(x, [Integer])`
+- `Time.localtime(x, [String|Integer])`
 - `Time.mday(x)`
 - `Time.min(x)`
 - `Time.mon(x)`
 - `Time.monday?(x)`
 - `Time.month(x)`
-- `Time.new(Integer, [Integer], [Integer], [Integer], [Integer], [Integer])`
-- `Time.now()`
+- `Time.new(Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational], [String|Integer], [in: String|Integer])`
+- `Time.now([in: String|Integer])`
 - `Time.nsec(x)`
 - `Time.round(x, [Integer])`
 - `Time.saturday?(x)`

@@ -311,7 +311,9 @@ end
   every call's callee is known before running, `k: v` goes to its parameter by name when the program
   is checked: an unknown or repeated keyword, or a missing required one, is an error, and `k: v` to a
   function without keyword parameters is an error (there is no implicit Hash argument; write
-  `Hash[k: v]` or a Record `{k: v}`). `f(k:)` passes the variable `k`, as in Ruby. Arguments are
+  `Hash[k: v]` or a Record `{k: v}`). A few built-ins take Ruby's keywords too, checked the same way
+  (`Time.at(t, in: "+09:00")`, `Dir.glob(pat, base: dir)`; builtins.md lists them as `[k: T]`).
+  `f(k:)` passes the variable `k`, as in Ruby. Arguments are
   evaluated in the order written. A block parameter `&b` (or `&`) may only be passed on (§7).
   `*rest` after the optional parameters collects the remaining positional arguments in a new Array,
   and `**opts` at the end the keywords that are not parameters in a Hash of Symbol keys; both are
@@ -804,7 +806,7 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 | `KeyError` | `Hash.fetch` of a missing key; a Record pattern naming a missing field |
 | `RangeError` | an operation that needs a finite Range, given an endless one |
 | `RegexpError` | `Regexp.new` with an invalid pattern |
-| `IOError` | `File.read` and the like failing |
+| `IOError` | `File.read`, `Dir.mkdir`, and the like failing (Ruby: `Errno::ENOENT` & co.; the message is Ruby's) |
 | `FloatDomainError` | converting NaN or Infinity to Integer |
 | `Math::DomainError` | e.g. `Math.sqrt(-1)` |
 | `SystemStackError` | recursion deeper than 10,000 |
@@ -941,9 +943,15 @@ without digits gives an Integer). `Float.round` names a Float only.
 
 | Operation | Result |
 |---|---|
-| `Time.now` · `Time.at(seconds)` · `Time.new(y, [m, d, h, min, s])` · `Time.utc(t)` | Time |
-| `year`, `month`, `day`, `hour`, `min`, `sec`, `wday`, `yday`, `to_i` | Integer |
-| `to_f` · `to_s` · `strftime(t, fmt)` | Float · String · String |
+| `Time.now` · `Time.at(seconds)` · `Time.new(y, [m, d, h, min, s, zone])` · `Time.utc(t)`, `getutc` | Time |
+| `Time.getlocal(t, [zone])`, `Time.localtime(t, [zone])` | Time (the same instant, local or at that offset) |
+| `year`, `month`, `day`, `hour`, `min`, `sec`, `wday`, `yday`, `to_i`, `utc_offset` | Integer |
+| `to_f` · `to_s` · `strftime(t, fmt)` · `zone` · `utc?` | Float · String · String · String or nil · true/false |
+
+A zone is a fixed UTC offset, as Ruby's: `"+09:00"`, `"-0500"`, `"Z"`, `"UTC"`, a military letter, or
+seconds (`3600`). `Time.new`, `Time.at`, and `Time.now` also take it as the keyword `in:`
+(`Time.at(0, in: "+09:00")`); `%z` and `%:z` show it. A bad zone raises `ArgumentError`. `Time.utc(t)`
+and `Time.localtime(t, zone)` give a converted copy (Ruby's `utc` and `localtime` change the receiver).
 
 ### Symbol
 
@@ -1019,6 +1027,13 @@ Range raise `RangeError` on an endless one.
 | `gets` (Kernel) | String or nil |
 | `File.read(path)` · `File.readlines(path)` | String · Array of String (lines keep their newline) |
 | `File.write(path, s)` · `File.exist?(path)` | Integer · true/false |
+| `File.directory?`, `file?`, `symlink?`, `zero?`, `empty?`, `readable?`, `writable?`, `executable?`, `absolute_path?` | true/false |
+| `File.size(path)` · `File.mtime(path)`, `atime` · `File.ftype(path)` | Integer · Time · String |
+| `File.rename(a, b)` · `File.symlink(a, b)`, `link` · `File.readlink(path)` · `File.unlink(*paths)` · `File.chmod(mode, *paths)` · `File.utime(atime, mtime, *paths)` | 0 · 0 · String · Integer · Integer · Integer |
+| `File.basename(p, [suffix])`, `dirname(p, [levels])`, `extname`, `join(*parts)`, `expand_path(p, [dir])`, `absolute_path`, `realpath` · `File.split(p)` | String · `[dir, base]` Tuple |
+| `Dir.children(path)`, `entries` · `Dir.glob(pattern or patterns, [base: dir])` | Array of String (glob's sorted, as Ruby's) |
+| `Dir.each_child(path) { \|name\| }` · `Dir.exist?`, `empty?` · `Dir.mkdir(path, [mode])`, `rmdir` · `Dir.pwd`, `home` | nil · true/false · 0 · String |
+| `Dir.mktmpdir([prefix, [dir]])` · `Dir.mktmpdir { \|dir\| }` | the new directory's path · the block's value (the directory and its contents removed after the block) |
 | `Array.pack(a, fmt)` · `String.force_encoding(s, enc)` | String (as Ruby: `"C*"` bytes give a binary String, `"U*"` codepoints UTF-8) · s's bytes as enc |
 | `String.valid_encoding?(s)` · `String.encoding(s)` | true/false · the encoding's name |
 

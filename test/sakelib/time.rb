@@ -1,7 +1,7 @@
 require "time"
 
-# A parsed Time is shown as its instant in UTC (Sake's Time has no fixed offset) and whether it is UTC.
-def show(t) = "#{t.getutc.iso8601(3)} utc=#{t.utc?}"
+# A parsed Time is shown with its own offset, whether it is UTC, and its zone name.
+def show(t) = "#{t.iso8601(3)} utc=#{t.utc?} zone=#{t.zone.inspect}"
 
 def try(label)
   puts "#{label} => #{yield}"
@@ -89,3 +89,19 @@ puts "-- Time.zone_offset"
 ["EST", "pdt", "+09:00", "-0530", "+05", "JST", "Z", "UTC", "A", "Y", "+1:00"].each do |z|
   p Time.zone_offset(z)
 end
+
+puts "-- fixed offsets"
+j = Time.new(2024, 1, 2, 3, 4, 5, "+09:00")
+p j
+p j.xmlschema
+p j.xmlschema(2)
+p j.rfc2822
+p j.httpdate
+p j.strftime("%Y-%m-%d %H:%M %z %:z")
+p Time.xmlschema(j.xmlschema) == j
+p Time.rfc2822(j.rfc2822) == j
+p Time.parse(j.to_s).utc_offset
+p Time.parse("2024-06-01 12:00 -0330").getlocal("+02:00")
+p Time.at(0, in: "-05:00").xmlschema
+p Time.strptime("2024-01-02 03:04 +0530", "%Y-%m-%d %H:%M %z").utc_offset
+p Time.strptime("1700000000 +0900", "%s %z").hour

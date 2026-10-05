@@ -1,93 +1,147 @@
 require "fileutils"
 require "pathname"
+require "tmpdir"
 
-# Sake cannot create directories, so the test works on files named _fu_* in this directory (and
-# one in "..", an existing directory), and removes each of them at the end.
-def show(names) = names.map { |n| [n, File.exist?(n)] }
-
-def try
+# The test works in a temporary directory and shows paths relative to it.
+def try(dir)
   yield
 rescue SystemCallError => e
   puts "error"
 rescue ArgumentError => e
-  puts "ArgumentError: #{e.message}"
+  puts "ArgumentError: #{e.message.gsub(dir, "")}"
 end
 
-all = ["_fu_a", "_fu_b", "_fu_c", "_fu_d", "_fu_bin", "_fu_bin2", "../_fu_a"]
-p show(all)
+Dir.mktmpdir do |dir|
+  f = ->(name) { File.join(dir, name) }
+  tree = -> { Dir.glob("**/*", base: dir).sort }
+  rel = ->(xs) { xs.map { |x| x.to_s.delete_prefix(dir) } }
 
-# touch
-p FileUtils.touch("_fu_a")
-p FileUtils.touch(["_fu_b", "_fu_c"])
-p FileUtils.touch("_fu_d", noop: true)
-p FileUtils.touch(Pathname.new("_fu_a"))
-try { FileUtils.touch("_fu_d", nocreate: true) }
-p show(all)
-p File.read("_fu_a")
+  # touch
+  p rel.(FileUtils.touch(f.("a")))
+  p rel.(FileUtils.touch([f.("b"), f.("c")]))
+  p FileUtils.touch(f.("d"), noop: true)
+  p rel.(FileUtils.touch(Pathname.new(f.("a"))))
+  try(dir) { FileUtils.touch(f.("d"), nocreate: true) }
+  p tree.()
+  p File.read(f.("a"))
+  FileUtils.touch(f.("a"), mtime: Time.at(1000000000))
+  p File.mtime(f.("a")).to_i
+  FileUtils.touch(f.("new"), mtime: Time.at(2000000000))
+  p File.mtime(f.("new")).to_i
+  FileUtils.touch(f.("a"))
+  p Time.now - File.mtime(f.("a")) < 3600
+  p FileUtils.uptodate?(f.("a"), [f.("new")])
+  p FileUtils.uptodate?(f.("new"), [f.("a")])
+  p FileUtils.uptodate?(f.("a"), [f.("missing")])
+  p FileUtils.uptodate?(f.("missing"), [f.("a")])
 
-# cp
-File.write("_fu_a", "alpha\n")
-p FileUtils.cp("_fu_a", "_fu_b")
-p File.read("_fu_b")
-p FileUtils.cp(Pathname.new("_fu_a"), Pathname.new("_fu_c"), verbose: false)
-p File.read("_fu_c")
-p FileUtils.cp("_fu_a", "..")
-p File.read("../_fu_a")
-try { FileUtils.cp("_fu_a", "_fu_a") }
-try { FileUtils.cp("_fu_a", "./_fu_a") }
-try { FileUtils.cp("_fu_missing", "_fu_d") }
-try { FileUtils.cp(["_fu_a", "_fu_b"], "_fu_c") }
-try { FileUtils.cp("..", "_fu_d") }
-FileUtils.rm_f("_fu_d")   # Ruby leaves an empty _fu_d; Sake checks first
-p FileUtils.cp("_fu_a", "_fu_d", noop: true)
-p File.exist?("_fu_d")
-p FileUtils.compare_file("_fu_a", "_fu_b")
-p FileUtils.identical?("_fu_a", "_fu_b")
-File.write("_fu_b", "beta\n")
-p FileUtils.cmp("_fu_a", "_fu_b")
-p FileUtils.copy("_fu_a", "_fu_c")
+  # cp
+  File.write(f.("a"), "alpha\n")
+  p FileUtils.cp(f.("a"), f.("b"))
+  p File.read(f.("b"))
+  p FileUtils.cp(Pathname.new(f.("a")), Pathname.new(f.("c")), verbose: false)
+  p File.read(f.("c"))
+  try(dir) { FileUtils.cp(f.("a"), f.("a")) }
+  try(dir) { FileUtils.cp(f.("missing"), f.("d")) }
+  try(dir) { FileUtils.cp([f.("a"), f.("b")], f.("c")) }
+  p FileUtils.cp(f.("a"), f.("d"), noop: true)
+  p File.exist?(f.("d"))
+  p FileUtils.compare_file(f.("a"), f.("b"))
+  p FileUtils.identical?(f.("a"), f.("b"))
+  File.write(f.("b"), "beta\n")
+  p FileUtils.cmp(f.("a"), f.("b"))
+  p FileUtils.copy(f.("a"), f.("c"))
+  FileUtils.touch(f.("a"), mtime: Time.at(1500000000))
+  FileUtils.cp(f.("a"), f.("pres"), preserve: true)
+  p File.mtime(f.("pres")).to_i
 
-# binary content survives a copy
-File.write("_fu_bin", [0, 255, 10, 13, 128, 65].pack("C*"))
-FileUtils.copy_file("_fu_bin", "_fu_bin2")
-p File.read("_fu_bin2").bytes
-p FileUtils.compare_file("_fu_bin", "_fu_bin2")
+  # binary content survives a copy
+  File.write(f.("bin"), [0, 255, 10, 13, 128, 65].pack("C*"))
+  FileUtils.copy_file(f.("bin"), f.("bin2"))
+  p File.read(f.("bin2")).bytes
+  p FileUtils.compare_file(f.("bin"), f.("bin2"))
 
-# mv
-p FileUtils.mv("_fu_b", "_fu_d")
-p show(["_fu_b", "_fu_d"])
-p File.read("_fu_d")
-FileUtils.move("_fu_d", "_fu_b")
-p File.read("_fu_b")
-try { FileUtils.mv("_fu_b", "./_fu_b") }
-try { FileUtils.mv("_fu_missing", "_fu_d") }
-p FileUtils.mv("_fu_b", "_fu_d", noop: true)
-p File.exist?("_fu_b")
+  # mkdir_p / mkdir / rmdir
+  p rel.(FileUtils.mkdir_p(f.("x/y/z")))
+  p rel.(FileUtils.mkdir_p([f.("x/y"), f.("w/")]))
+  p rel.(FileUtils.makedirs(f.("x")))
+  p rel.(FileUtils.mkpath(Pathname.new(f.("v/u"))))
+  p rel.(FileUtils.mkdir_p(f.("nodir"), noop: true))
+  p File.exist?(f.("nodir"))
+  try(dir) { FileUtils.mkdir_p(f.("a/sub")) }
+  p rel.(FileUtils.mkdir(f.("m")))
+  p rel.(FileUtils.mkdir([f.("m1"), f.("m2/")], mode: 0o755))
+  try(dir) { FileUtils.mkdir(f.("m")) }
+  try(dir) { FileUtils.mkdir(f.("q/r")) }
+  p tree.()
+  p rel.(FileUtils.rmdir(f.("m")))
+  p rel.(FileUtils.rmdir([f.("m1"), f.("m2/")]))
+  try(dir) { FileUtils.rmdir(f.("nodir")) }
+  try(dir) { FileUtils.rmdir(f.("x")) }
+  p FileUtils.rmdir(f.("nodir"), noop: true)
+  p rel.(FileUtils.rmdir(f.("v/u"), parents: true))
+  p File.exist?(f.("v"))
+  p File.exist?(dir)
 
-# mkdir_p / mkdir / rmdir on what Sake can see
-p FileUtils.mkdir_p(".")
-p FileUtils.mkdir_p([".", ".."])
-p FileUtils.makedirs("..")
-p FileUtils.mkpath(Pathname.new("."))
-p FileUtils.mkdir_p("_fu_newdir", noop: true)
-p File.exist?("_fu_newdir")
-try { FileUtils.mkdir_p("_fu_a") }
-try { FileUtils.mkdir(".") }
-try { FileUtils.rmdir("_fu_nodir") }
-p FileUtils.rmdir("_fu_nodir", noop: true)
+  # cp into a directory, cp_r, copy_entry
+  FileUtils.cp([f.("a"), f.("b")], f.("x"))
+  try(dir) { FileUtils.cp(f.("x"), f.("d")) }
+  FileUtils.rm_f(f.("d"))   # Ruby leaves an empty d; Sake checks first
+  p FileUtils.cp_r(f.("x"), f.("x2"))
+  p FileUtils.cp_r(f.("x"), f.("w"))
+  p FileUtils.copy_entry(f.("x/y"), f.("y2"))
+  p tree.()
 
-# rm / rm_f / rm_rf
-p FileUtils.rm("_fu_c")
-try { FileUtils.rm("_fu_c") }
-p FileUtils.rm_f("_fu_c")
-p FileUtils.rm_f(["_fu_c", "_fu_x"])
-p FileUtils.rm("_fu_d", force: true)
-p FileUtils.rm_rf("_fu_bin2")
-p FileUtils.rmtree(["_fu_bin"])
-p FileUtils.rm_r("_fu_b")
-try { FileUtils.rm_r("_fu_b") }
-p FileUtils.rm_rf("_fu_b")
-p FileUtils.remove("../_fu_a")
-p FileUtils.safe_unlink(["_fu_a"])
-p FileUtils.rm("_fu_newdir", noop: true)
-p show(all)
+  # mv
+  p FileUtils.mv(f.("b"), f.("d"))
+  p [File.exist?(f.("b")), File.exist?(f.("d"))]
+  p File.read(f.("d"))
+  FileUtils.move(f.("d"), f.("b"))
+  p File.read(f.("b"))
+  FileUtils.mv([f.("b"), f.("c")], f.("w"))
+  p FileUtils.mv(f.("x2"), f.("x3"))
+  p FileUtils.mv(f.("y2"), f.("x3"))
+  try(dir) { FileUtils.mv(f.("a"), f.("./a")) }
+  try(dir) { FileUtils.mv(f.("missing"), f.("d")) }
+  p FileUtils.mv(f.("a"), f.("d"), noop: true)
+  p File.exist?(f.("a"))
+  p tree.()
+
+  # ln / ln_s / chmod
+  p FileUtils.ln(f.("a"), f.("hard"))
+  p File.read(f.("hard"))
+  p FileUtils.ln_s("a", f.("soft"))
+  p File.symlink?(f.("soft"))
+  p File.readlink(f.("soft"))
+  p File.read(f.("soft"))
+  try(dir) { FileUtils.ln_s("b", f.("soft")) }
+  p FileUtils.ln_sf("bin", f.("soft"))
+  p File.readlink(f.("soft"))
+  p FileUtils.ln_s(f.("bin"), f.("x"))
+  p File.symlink?(f.("x/bin"))
+  p rel.(FileUtils.chmod(0o755, f.("a")))
+  p File.executable?(f.("a"))
+  p rel.(FileUtils.chmod(0o644, [f.("a")]))
+  p File.executable?(f.("a"))
+
+  # rm / rm_f / rm_r / rm_rf
+  p rel.(FileUtils.rm(f.("hard")))
+  try(dir) { FileUtils.rm(f.("hard")) }
+  p rel.(FileUtils.rm_f(f.("hard")))
+  p rel.(FileUtils.rm_f([f.("hard"), f.("zz")]))
+  p rel.(FileUtils.rm(f.("pres"), force: true))
+  try(dir) { FileUtils.rm(f.("x")) }
+  p rel.(FileUtils.rm_r(f.("x3")))
+  try(dir) { FileUtils.rm_r(f.("x3")) }
+  p rel.(FileUtils.rm_rf(f.("x3")))
+  p rel.(FileUtils.rm_rf([f.("x"), f.("bin2")]))
+  p rel.(FileUtils.rmtree(f.("w")))
+  FileUtils.remove_entry(f.("soft"))
+  FileUtils.remove_file(f.("bin"))
+  FileUtils.remove_dir(f.("new"), true)
+  p File.exist?(f.("new"))
+  p rel.(FileUtils.safe_unlink([f.("a")]))
+  p FileUtils.rm(f.("nofile"), noop: true)
+  p tree.()
+  p FileUtils.pwd == Dir.pwd
+end

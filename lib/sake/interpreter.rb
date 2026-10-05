@@ -422,6 +422,17 @@ module Sake
     end
 
     def call_builtin(fn, args, blk, node)
+      kw = {}
+      if fn.keyword_types.any? && args.last.is_a?(HashPairs)
+        kw = args.last.pairs.to_h
+        args = args[0...-1]
+        kw.each do |k, v|
+          want = fn.keyword_types.fetch(k.to_s)
+          next if type_ok?(want, v)
+          raise RunError.new("TypeError", "#{fn.full_name}: keyword `#{k}:` must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
+                             node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
+        end
+      end
       args.each_with_index do |v, i|
         want = fn.param_type(i)
         next if type_ok?(want, v)
@@ -433,7 +444,7 @@ module Sake
         return call_user(own, args, nil, node) # T.dup, when the type defines it
       end
       ruby_blk = blk && (fn.full_name == "Thread.new" ? thread_body(blk, node) : ->(*xs) { call_block(blk, xs, node) })
-      v = fn.impl.call(*args, &ruby_blk)
+      v = fn.impl.call(*args, **kw, &ruby_blk)
       if fn.name == "new" && v.is_a?(StructValue)
         init = @program.functions.dig(fn.namespace, "initialize")
         call_user(init, [v], nil, node) if init # after the fields are stored, as Ruby's initialize

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 module Sake
   # An IO value: the program's stdin/stdout/stderr, or a file from File.open. stdout is the
   # interpreter's output (a StringIO under tests and the IDE); stderr is $stderr when it is used.
@@ -51,6 +53,11 @@ module Sake
         ensure
           file.close
         end
+      end
+      # Dir.mktmpdir([prefix, [dir]]): a new directory's path; with a block, the block's value, the
+      # directory and everything in it removed after the block (Ruby's tmpdir).
+      reg.define("Dir", :mktmpdir, [], optional: %w[String String], block: :optional) do |prefix = nil, dir = nil, &b|
+        io_error { b ? Dir.mktmpdir(prefix, dir) { b.(_1) } : Dir.mktmpdir(prefix, dir) }
       end
     end
   end

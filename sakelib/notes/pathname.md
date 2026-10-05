@@ -1,10 +1,16 @@
-# pathname (Ruby's `require "pathname"`, plus File's path-string functions)
+# pathname (Ruby's `require "pathname"`)
 
-`sakelib/pathname.sake`: `class Pathname` (one field, `path`) with about 40 operations, and seven
-functions added to `File` that Sake lacks and Pathname is built on (`File.basename`, `dirname`, `extname`,
-`split`, `join`, `absolute_path?`, `directory?`, `file?`). Test: `test/sakelib/pathname.{sake,rb}`, identical
-output with `--strict` (also clean at `--strict=1 -c`, `--strict=2 -c`; `--strict=3` reports one
-`index-nil`, `a, b = r` in `relative_path_from`).
+`sakelib/pathname.sake`: `class Pathname` (one field, `path`) with about 65 operations. Test:
+`test/sakelib/pathname.{sake,rb}`, identical output with `--strict` (also clean at `--strict=1 -c`,
+`--strict=2 -c`; `--strict=3` reports one `index-nil`, `a, b = r` in `relative_path_from`). The file
+system part of the test works in a `Dir.mktmpdir` directory and shows paths relative to it.
+
+2026-10-05: the eight functions this library used to add to `File` (`basename`, `dirname`, `extname`,
+`split`, `join`, `absolute_path?`, `directory?`, `file?`) are built-ins now and were removed from it (a
+built-in cannot be redefined); the 16 edge cases of the test give the same results with them. With the
+new `Dir` / `File` built-ins, Pathname gained `children`, `each_child`, `entries`, `glob`, `Pathname.glob`,
+`Pathname.pwd`/`getwd`, `realpath`, `expand_path`, `mkdir`, `rmdir`, `mkpath`, `rmtree`, `rename`,
+`size`, `mtime`, `ftype`, `symlink?`, `zero?`, `empty?`; `delete` removes a directory too, as Ruby's.
 
 The path algorithms are Ruby's pathname.rb (3.x; in Ruby 4.0 Pathname is in C, same behaviour):
 `chop_basename`, `plus`, `cleanpath_aggressive` / `cleanpath_conservative`, `relative_path_from`,
@@ -28,11 +34,14 @@ The path algorithms are Ruby's pathname.rb (3.x; in Ruby 4.0 Pathname is in C, s
 | `==` | same | same (Struct equality on the path) |
 | `<=>` | `Pathname.<=>(a, b)` | differs: not an operator, Pathname does not include `Comparable`; see below |
 | Pathname as a Hash key | same | same |
-| `exist? file? directory? read readlines write delete unlink` | same | same, through File; errors are `IOError` (Ruby: `Errno::*`) |
+| `exist? file? directory? symlink? zero? empty? size mtime ftype read readlines write rename mkdir rmdir delete unlink` | same | same, through the built-in File and Dir; errors are `IOError` (Ruby: `Errno::*`) |
+| `expand_path(dir = nil)`, `realpath(dir = nil)` | same | same |
+| `children(with_directory = true)`, `each_child`, `entries` | same | same (the directory's own order, as Ruby); `each_child` without a block gives the Array |
+| `pn.glob(pattern)` · `Pathname.glob(pattern, base: nil)` | `Pathname.glob(pn, pattern)` · `Pathname.glob(pattern, base:)` | same; one function for both, told apart by the first argument's type (as `Time.xmlschema` in time.sake) |
+| `Pathname.pwd`, `getwd` · `mkpath` · `rmtree` | same | same (`mkpath` and `rmtree` give pn, as Ruby 3.1+; written here rather than through FileUtils) |
 | `find {}` | `Pathname.find(pn) {}` | in `find.sake` (as Ruby's pathname.rb defines it in the find part) |
-| `children entries glob opendir mkpath rmtree realpath expand_path stat mtime size symlink? ...`, `Pathname.pwd`, `Pathname.glob` | — | missing: Sake has no directory, stat, or cwd primitives |
-| `File.basename(p, suffix = "")`, `dirname`, `extname`, `split`, `join(*parts)`, `absolute_path?` | same | same (tested on 16 edge cases: `""`, `"//"`, `"a."`, `".a.b"`, `"a..b"`, ...); `File.dirname(p, level)` missing |
-| `File.directory?`, `File.file?` | same | same results; implemented as "exists, and reading it fails with EISDIR" (no stat) |
+| `opendir`, `stat`, `lstat`, `atime`/`ctime`, `chmod`, `make_link`, `make_symlink`, `readlink`, `realdirpath`, `truncate`, `open`, `each_line`, `binread`, `+@`... | — | missing (no stat or Dir value; not needed yet) |
+| `File.basename`, `dirname`, `extname`, `split`, `join`, `absolute_path?`, `directory?`, `file?` | built-ins | formerly defined here; now Sake's own (the test's 16 edge cases are unchanged) |
 
 ## Differences and why
 
@@ -44,8 +53,6 @@ The path algorithms are Ruby's pathname.rb (3.x; in Ruby 4.0 Pathname is in C, s
   (a field's type is what is written to it, and `new` writes the argument before `initialize` runs);
   `Pathname(x)` and the internal `Pathname.path_of(x)` convert instead.
 - **Without a block, `each_filename`/`ascend`/`descend` give an Array** (no Enumerators).
-- **File's path functions live in `pathname.sake`**, as operations added to `File`; a second library
-  defining `File.basename` would collide when both are required.
 - **Missing-file errors are `IOError`** (Sake's File raises it), not `Errno::ENOENT`; the Ruby test rescues
   `IOError, SystemCallError`.
 

@@ -2,9 +2,8 @@
 # Time.iso8601), Time.httpdate, Time.rfc2822 / rfc822, Time.zone_offset, and the formatters
 # Time.xmlschema(t, n), Time.httpdate(t), Time.rfc2822(t) on the built-in Time.
 #
-# A built-in Time is either local or UTC; it has no fixed offset of its own. A string with an offset
-# ("+09:00", "EST") gives the same instant, as a local Time, where Ruby keeps the offset. A UTC zone
-# ("Z", "UTC", "-00:00") gives a UTC Time, as in Ruby.
+# A string with an offset ("+09:00", "EST") gives a Time with that fixed offset (or a local Time when
+# the local zone has the same offset), and a UTC zone ("Z", "UTC", "-00:00") a UTC Time, as in Ruby.
 
 # The fields a parser found (nil: not in the string), as Ruby's Date._parse hash.
 class TimeParts
@@ -55,13 +54,22 @@ module TimeCore
     raise ArgumentError, "sec out of range" unless Integer.between?(sec, 0, 60) && (hour < 24 || sec == 0)
   end
 
+  # Ruby's force_zone!: UTC for a UTC zone; else local time when the local zone has that offset
+  # (a real zone, with its name), or a Time with the fixed offset.
+  def force_zone(t, zone, off)
+    return Time.utc(t) if zone_utc?(zone)
+    local = Time.localtime(t)
+    return local if off == nil || Time.utc_offset(local) == off
+    Time.localtime(t, off)
+  end
+
   # Ruby's Time.make_time: fields missing at the top are taken from `now`, the rest are the smallest.
   def make_time(pt, now)
     seconds = pt.TimeParts.seconds
     zone = pt.TimeParts.zone
     if seconds
       t = Time.at(seconds)
-      return zone && zone_utc?(zone) ? Time.utc(t) : t
+      return zone ? force_zone(t, zone, Time.zone_offset(zone)) : t
     end
     year = pt.TimeParts.year
     mon = pt.TimeParts.mon
@@ -73,7 +81,7 @@ module TimeCore
     if now
       # Ruby fills from `now` seen in the string's zone, or in local time.
       off = zone ? Time.zone_offset(zone) : nil
-      now = off != nil ? Time.utc(Time.at(Time.to_i(now) + off)) : Time.at(Time.to_i(now))
+      now = off != nil ? Time.getlocal(now, off) : Time.localtime(now)
       if year == nil
         year = Time.year(now)
         if yday == nil && mon == nil
@@ -114,7 +122,7 @@ module TimeCore
       return frac ? local + frac : local
     end
     t = Time.at(frac ? secs - off + frac : secs - off)
-    zone && zone_utc?(zone) ? Time.utc(t) : t
+    force_zone(t, zone || "", off)
   end
 
   # "123" after the decimal point as a Rational of a second.

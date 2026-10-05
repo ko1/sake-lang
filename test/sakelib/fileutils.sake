@@ -1,92 +1,146 @@
 require "fileutils"
 
-# Sake cannot create directories, so the test works on files named _fu_* in this directory (and
-# one in "..", an existing directory), and removes each of them at the end.
-def show(names) = Array.map(names) { |n| [n, File.exist?(n)] }
-
-def try
+# The test works in a temporary directory and shows paths relative to it.
+def try(dir)
   yield
 rescue IOError => e
   puts "error"
 rescue ArgumentError => e
-  puts "ArgumentError: #{Exception.message(e)}"
+  puts "ArgumentError: #{String.gsub(Exception.message(e), dir, "")}"
 end
 
-all = String["_fu_a", "_fu_b", "_fu_c", "_fu_d", "_fu_bin", "_fu_bin2", "../_fu_a"]
-p show(all)
+def tree(dir) = Array.sort(Dir.glob("**/*", base: dir))
+# The list functions give nil under noop:; the test passes only their lists.
+def rel(xs, dir) = xs == nil ? nil : Array.map(xs) { |x| String.delete_prefix(x, dir) }
 
-# touch
-p FileUtils.touch("_fu_a")
-p FileUtils.touch(Array["_fu_b", "_fu_c"])
-p FileUtils.touch("_fu_d", noop: true)
-p FileUtils.touch(Pathname.new("_fu_a"))
-try { FileUtils.touch("_fu_d", nocreate: true) }
-p show(all)
-p File.read("_fu_a")
+Dir.mktmpdir do |dir|
 
-# cp
-File.write("_fu_a", "alpha\n")
-p FileUtils.cp("_fu_a", "_fu_b")
-p File.read("_fu_b")
-p FileUtils.cp(Pathname.new("_fu_a"), Pathname.new("_fu_c"), verbose: false)
-p File.read("_fu_c")
-p FileUtils.cp("_fu_a", "..")
-p File.read("../_fu_a")
-try { FileUtils.cp("_fu_a", "_fu_a") }
-try { FileUtils.cp("_fu_a", "./_fu_a") }
-try { FileUtils.cp("_fu_missing", "_fu_d") }
-try { FileUtils.cp(Array["_fu_a", "_fu_b"], "_fu_c") }
-try { FileUtils.cp("..", "_fu_d") }
-FileUtils.rm_f("_fu_d")   # Ruby leaves an empty _fu_d; Sake checks first
-p FileUtils.cp("_fu_a", "_fu_d", noop: true)
-p File.exist?("_fu_d")
-p FileUtils.compare_file("_fu_a", "_fu_b")
-p FileUtils.identical?("_fu_a", "_fu_b")
-File.write("_fu_b", "beta\n")
-p FileUtils.cmp("_fu_a", "_fu_b")
-p FileUtils.copy("_fu_a", "_fu_c")
+  # touch
+  p rel(FileUtils.touch(File.join(dir, "a")), dir)
+  p rel(FileUtils.touch(Array[File.join(dir, "b"), File.join(dir, "c")]), dir)
+  p FileUtils.touch(File.join(dir, "d"), noop: true)
+  p rel(FileUtils.touch(Pathname.new(File.join(dir, "a"))), dir)
+  try(dir) { FileUtils.touch(File.join(dir, "d"), nocreate: true) }
+  p tree(dir)
+  p File.read(File.join(dir, "a"))
+  FileUtils.touch(File.join(dir, "a"), mtime: Time.at(1000000000))
+  p Time.to_i(File.mtime(File.join(dir, "a")))
+  FileUtils.touch(File.join(dir, "new"), mtime: Time.at(2000000000))
+  p Time.to_i(File.mtime(File.join(dir, "new")))
+  FileUtils.touch(File.join(dir, "a"))
+  p Time.now - File.mtime(File.join(dir, "a")) < 3600
+  p FileUtils.uptodate?(File.join(dir, "a"), Array[File.join(dir, "new")])
+  p FileUtils.uptodate?(File.join(dir, "new"), Array[File.join(dir, "a")])
+  p FileUtils.uptodate?(File.join(dir, "a"), Array[File.join(dir, "missing")])
+  p FileUtils.uptodate?(File.join(dir, "missing"), Array[File.join(dir, "a")])
 
-# binary content survives a copy
-File.write("_fu_bin", Array.pack(Array[0, 255, 10, 13, 128, 65], "C*"))
-FileUtils.copy_file("_fu_bin", "_fu_bin2")
-p String.bytes(File.read("_fu_bin2"))
-p FileUtils.compare_file("_fu_bin", "_fu_bin2")
+  # cp
+  File.write(File.join(dir, "a"), "alpha\n")
+  p FileUtils.cp(File.join(dir, "a"), File.join(dir, "b"))
+  p File.read(File.join(dir, "b"))
+  p FileUtils.cp(Pathname.new(File.join(dir, "a")), Pathname.new(File.join(dir, "c")), verbose: false)
+  p File.read(File.join(dir, "c"))
+  try(dir) { FileUtils.cp(File.join(dir, "a"), File.join(dir, "a")) }
+  try(dir) { FileUtils.cp(File.join(dir, "missing"), File.join(dir, "d")) }
+  try(dir) { FileUtils.cp(Array[File.join(dir, "a"), File.join(dir, "b")], File.join(dir, "c")) }
+  p FileUtils.cp(File.join(dir, "a"), File.join(dir, "d"), noop: true)
+  p File.exist?(File.join(dir, "d"))
+  p FileUtils.compare_file(File.join(dir, "a"), File.join(dir, "b"))
+  p FileUtils.identical?(File.join(dir, "a"), File.join(dir, "b"))
+  File.write(File.join(dir, "b"), "beta\n")
+  p FileUtils.cmp(File.join(dir, "a"), File.join(dir, "b"))
+  p FileUtils.copy(File.join(dir, "a"), File.join(dir, "c"))
+  FileUtils.touch(File.join(dir, "a"), mtime: Time.at(1500000000))
+  FileUtils.cp(File.join(dir, "a"), File.join(dir, "pres"), preserve: true)
+  p Time.to_i(File.mtime(File.join(dir, "pres")))
 
-# mv
-p FileUtils.mv("_fu_b", "_fu_d")
-p show(Array["_fu_b", "_fu_d"])
-p File.read("_fu_d")
-FileUtils.move("_fu_d", "_fu_b")
-p File.read("_fu_b")
-try { FileUtils.mv("_fu_b", "./_fu_b") }
-try { FileUtils.mv("_fu_missing", "_fu_d") }
-p FileUtils.mv("_fu_b", "_fu_d", noop: true)
-p File.exist?("_fu_b")
+  # binary content survives a copy
+  File.write(File.join(dir, "bin"), Array.pack(Array[0, 255, 10, 13, 128, 65], "C*"))
+  FileUtils.copy_file(File.join(dir, "bin"), File.join(dir, "bin2"))
+  p String.bytes(File.read(File.join(dir, "bin2")))
+  p FileUtils.compare_file(File.join(dir, "bin"), File.join(dir, "bin2"))
 
-# mkdir_p / mkdir / rmdir on what Sake can see
-p FileUtils.mkdir_p(".")
-p FileUtils.mkdir_p(Array[".", ".."])
-p FileUtils.makedirs("..")
-p FileUtils.mkpath(Pathname.new("."))
-p FileUtils.mkdir_p("_fu_newdir", noop: true)
-p File.exist?("_fu_newdir")
-try { FileUtils.mkdir_p("_fu_a") }
-try { FileUtils.mkdir(".") }
-try { FileUtils.rmdir("_fu_nodir") }
-p FileUtils.rmdir("_fu_nodir", noop: true)
+  # mkdir_p / mkdir / rmdir
+  p rel(FileUtils.mkdir_p(File.join(dir, "x/y/z")), dir)
+  p rel(FileUtils.mkdir_p(Array[File.join(dir, "x/y"), File.join(dir, "w/")]), dir)
+  p rel(FileUtils.makedirs(File.join(dir, "x")), dir)
+  p rel(FileUtils.mkpath(Pathname.new(File.join(dir, "v/u"))), dir)
+  p rel(FileUtils.mkdir_p(File.join(dir, "nodir"), noop: true), dir)
+  p File.exist?(File.join(dir, "nodir"))
+  try(dir) { FileUtils.mkdir_p(File.join(dir, "a/sub")) }
+  p rel(FileUtils.mkdir(File.join(dir, "m")), dir)
+  p rel(FileUtils.mkdir(Array[File.join(dir, "m1"), File.join(dir, "m2/")], mode: 0o755), dir)
+  try(dir) { FileUtils.mkdir(File.join(dir, "m")) }
+  try(dir) { FileUtils.mkdir(File.join(dir, "q/r")) }
+  p tree(dir)
+  p rel(FileUtils.rmdir(File.join(dir, "m")), dir)
+  p rel(FileUtils.rmdir(Array[File.join(dir, "m1"), File.join(dir, "m2/")]), dir)
+  try(dir) { FileUtils.rmdir(File.join(dir, "nodir")) }
+  try(dir) { FileUtils.rmdir(File.join(dir, "x")) }
+  p FileUtils.rmdir(File.join(dir, "nodir"), noop: true)
+  p rel(FileUtils.rmdir(File.join(dir, "v/u"), parents: true), dir)
+  p File.exist?(File.join(dir, "v"))
+  p File.exist?(dir)
 
-# rm / rm_f / rm_rf
-p FileUtils.rm("_fu_c")
-try { FileUtils.rm("_fu_c") }
-p FileUtils.rm_f("_fu_c")
-p FileUtils.rm_f(Array["_fu_c", "_fu_x"])
-p FileUtils.rm("_fu_d", force: true)
-p FileUtils.rm_rf("_fu_bin2")
-p FileUtils.rmtree(Array["_fu_bin"])
-p FileUtils.rm_r("_fu_b")
-try { FileUtils.rm_r("_fu_b") }
-p FileUtils.rm_rf("_fu_b")
-p FileUtils.remove("../_fu_a")
-p FileUtils.safe_unlink(Array["_fu_a"])
-p FileUtils.rm("_fu_newdir", noop: true)
-p show(all)
+  # cp into a directory, cp_r, copy_entry
+  FileUtils.cp(Array[File.join(dir, "a"), File.join(dir, "b")], File.join(dir, "x"))
+  try(dir) { FileUtils.cp(File.join(dir, "x"), File.join(dir, "d")) }
+  FileUtils.rm_f(File.join(dir, "d"))   # Ruby leaves an empty d; Sake checks first
+  p FileUtils.cp_r(File.join(dir, "x"), File.join(dir, "x2"))
+  p FileUtils.cp_r(File.join(dir, "x"), File.join(dir, "w"))
+  p FileUtils.copy_entry(File.join(dir, "x/y"), File.join(dir, "y2"))
+  p tree(dir)
+
+  # mv
+  p FileUtils.mv(File.join(dir, "b"), File.join(dir, "d"))
+  p [File.exist?(File.join(dir, "b")), File.exist?(File.join(dir, "d"))]
+  p File.read(File.join(dir, "d"))
+  FileUtils.move(File.join(dir, "d"), File.join(dir, "b"))
+  p File.read(File.join(dir, "b"))
+  FileUtils.mv(Array[File.join(dir, "b"), File.join(dir, "c")], File.join(dir, "w"))
+  p FileUtils.mv(File.join(dir, "x2"), File.join(dir, "x3"))
+  p FileUtils.mv(File.join(dir, "y2"), File.join(dir, "x3"))
+  try(dir) { FileUtils.mv(File.join(dir, "a"), File.join(dir, "./a")) }
+  try(dir) { FileUtils.mv(File.join(dir, "missing"), File.join(dir, "d")) }
+  p FileUtils.mv(File.join(dir, "a"), File.join(dir, "d"), noop: true)
+  p File.exist?(File.join(dir, "a"))
+  p tree(dir)
+
+  # ln / ln_s / chmod
+  p FileUtils.ln(File.join(dir, "a"), File.join(dir, "hard"))
+  p File.read(File.join(dir, "hard"))
+  p FileUtils.ln_s("a", File.join(dir, "soft"))
+  p File.symlink?(File.join(dir, "soft"))
+  p File.readlink(File.join(dir, "soft"))
+  p File.read(File.join(dir, "soft"))
+  try(dir) { FileUtils.ln_s("b", File.join(dir, "soft")) }
+  p FileUtils.ln_sf("bin", File.join(dir, "soft"))
+  p File.readlink(File.join(dir, "soft"))
+  p FileUtils.ln_s(File.join(dir, "bin"), File.join(dir, "x"))
+  p File.symlink?(File.join(dir, "x/bin"))
+  p rel(FileUtils.chmod(0o755, File.join(dir, "a")), dir)
+  p File.executable?(File.join(dir, "a"))
+  p rel(FileUtils.chmod(0o644, Array[File.join(dir, "a")]), dir)
+  p File.executable?(File.join(dir, "a"))
+
+  # rm / rm_f / rm_r / rm_rf
+  p rel(FileUtils.rm(File.join(dir, "hard")), dir)
+  try(dir) { FileUtils.rm(File.join(dir, "hard")) }
+  p rel(FileUtils.rm_f(File.join(dir, "hard")), dir)
+  p rel(FileUtils.rm_f(Array[File.join(dir, "hard"), File.join(dir, "zz")]), dir)
+  p rel(FileUtils.rm(File.join(dir, "pres"), force: true), dir)
+  try(dir) { FileUtils.rm(File.join(dir, "x")) }
+  p rel(FileUtils.rm_r(File.join(dir, "x3")), dir)
+  try(dir) { FileUtils.rm_r(File.join(dir, "x3")) }
+  p rel(FileUtils.rm_rf(File.join(dir, "x3")), dir)
+  p rel(FileUtils.rm_rf(Array[File.join(dir, "x"), File.join(dir, "bin2")]), dir)
+  p rel(FileUtils.rmtree(File.join(dir, "w")), dir)
+  FileUtils.remove_entry(File.join(dir, "soft"))
+  FileUtils.remove_file(File.join(dir, "bin"))
+  FileUtils.remove_dir(File.join(dir, "new"), true)
+  p File.exist?(File.join(dir, "new"))
+  p rel(FileUtils.safe_unlink(Array[File.join(dir, "a")]), dir)
+  p FileUtils.rm(File.join(dir, "nofile"), noop: true)
+  p tree(dir)
+  p FileUtils.pwd == Dir.pwd
+end

@@ -706,6 +706,13 @@ module Sake
     end
 
     def call_builtin(fn, args, blk, node)
+      if fn.keyword_types.any? && (pairs = args.last&.find { _1.is_a?(Array) && _1[0] == :pairs })
+        args = args[0...-1]
+        pairs[1].each do |k, v|
+          name = k.find { _1.is_a?(Array) && _1[0] == :sym }&.[](1)
+          record(node, fn.full_name, "#{name}:", fn.keyword_types[name], v) if fn.keyword_types.key?(name)
+        end
+      end
       args.each_with_index { |a, i| record(node, fn.full_name, i + 1, fn.param_type(i), a) }
       return [] if args.any?(&:empty?)
 

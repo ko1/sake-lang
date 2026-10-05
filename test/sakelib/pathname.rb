@@ -89,22 +89,72 @@ p sorted
 h = { Pathname.new("k") => 1 }
 p h[Pathname.new("k")]
 
-# through File
-tmp = Pathname.new("_pathname_test.txt")
-p tmp.exist?
-p tmp.write("one\ntwo\n")
-p tmp.exist?
-p tmp.file?
-p tmp.directory?
-p tmp.read
-p tmp.readlines
-tmp.delete
-p tmp.exist?
+# through File and Dir, in a temporary directory (shown relative to it)
+require "tmpdir"
+def rel(x, root) = x.relative_path_from(root).to_s
+def rels(xs, root) = xs.map { |x| rel(x, root) }.sort
+def names(xs) = xs.map(&:to_s).sort
+
+Dir.mktmpdir do |dir|
+  root = Pathname.new(dir)
+  tmp = root + "test.txt"
+  p tmp.exist?
+  p tmp.write("one\ntwo\n")
+  p tmp.exist?
+  p tmp.file?
+  p tmp.directory?
+  p tmp.symlink?
+  p tmp.size
+  p tmp.zero?
+  p tmp.empty?
+  p tmp.ftype
+  p Time.now - tmp.mtime < 3600
+  p tmp.read
+  p tmp.readlines
+  p tmp.rename(root + "moved.txt")
+  p tmp.exist?
+  p rel(tmp.expand_path, root)
+  p rel(Pathname.new("moved.txt").expand_path(dir), root)
+  p rel(Pathname.new("moved.txt").realpath(root), root)
+  p root.realpath == Pathname.new(File.realpath(dir))
+  p (root + "a/b/c").mkpath == root + "a/b/c"
+  p (root + "a/b/c").directory?
+  (root + "a/b/f.rb").write("x")
+  (root + "a/g.rb").write("y")
+  p (root + "a/b/c").empty?
+  p rels(root.children, root)
+  p names(root.children(false))
+  p rels((root + "a").each_child, root)
+  (root + "a").each_child(false) { |c| puts "child #{c}" if c.to_s == "g.rb" }
+  p names(root.entries)
+  p rels(root.glob("**/*.rb"), root)
+  p names(Pathname.glob("**/*.rb", base: dir))
+  p rels(Pathname.glob(File.join(dir, "a", "*")), root)
+  p rels(Pathname.glob([File.join(dir, "*.txt"), File.join(dir, "a/*.rb")]), root)
+  p Pathname.pwd == Pathname.new(Dir.pwd)
+  p Pathname.getwd.absolute?
+  p (root + "d").mkdir
+  p (root + "d").rmdir
+  p (root + "d").exist?
+  p (root + "moved.txt").delete
+  p (root + "moved.txt").exist?
+  begin
+    (root + "missing").read
+  rescue IOError, SystemCallError => e
+    puts "error"
+  end
+  begin
+    (root + "missing").mkdir
+    (root + "x/y").mkdir
+  rescue IOError, SystemCallError => e
+    puts "error"
+  end
+  p (root + "a").rmtree == root + "a"
+  p (root + "a").exist?
+  p (root + "a").rmtree.exist?
+  p rels(root.children, root)
+end
 p Pathname.new(".").directory?
 p Pathname.new(".").file?
 p Pathname.new("_no_such_dir").directory?
-begin
-  Pathname.new("_no_such_file").read
-rescue IOError, SystemCallError => e
-  puts "IOError"
-end
+

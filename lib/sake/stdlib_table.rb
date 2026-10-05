@@ -9,6 +9,8 @@ module Sake
   #   block: :required / :optional         yields: how a block receives values (see TABLE_YIELDS)
   #   conv: how to convert Ruby's result (see Stdlib.convert)
   #   ruby: the Ruby method when the name differs
+  #   on: a Ruby class whose class method it is (no subject: `Dir.children(path)`)
+  #   io: a failing system call is IOError, as File.read      keywords: name => type
   # result: a type name, or a symbol interpreted by Typer#table_result.
   module StdlibTable
     S = "String"
@@ -129,8 +131,32 @@ module Sake
       ["Time", :iso8601, [], S, { opt: [I] }], ["Time", :round, [], "Time", { opt: [I] }],
       ["Time", :floor, [], "Time", { opt: [I] }], ["Time", :ceil, [], "Time", { opt: [I] }],
       *%i[sunday? monday? tuesday? wednesday? thursday? friday? saturday?].map { ["Time", _1, [], :bool] },
+      ["Time", :getutc, [], "Time"], ["Time", :gmtime, [], "Time", { ruby: :getutc }],
+      ["Time", :getlocal, [], "Time", { opt: [[S, I]] }],
+      ["Time", :localtime, [], "Time", { opt: [[S, I]], ruby: :getlocal }],
+      ["Time", :gmt_offset, [], I], ["Time", :gmtoff, [], I], ["Time", :gmt?, [], :bool],
       # Kernel
       ["Kernel", :sleep, [], I, { opt: [REAL], kernel: true }],
+      # Dir and File: class methods of Ruby's Dir and File
+      *[[:children, [S], "Array<String>"], [:entries, [S], "Array<String>"], [:exist?, [S], :bool],
+        [:empty?, [S], :bool], [:mkdir, [S], I, { opt: [I] }], [:rmdir, [S], I], [:unlink, [S], I, { ruby: :rmdir }],
+        [:pwd, [], S], [:home, [], S, { opt: [S] }],
+        [:glob, [[S, A]], "Array<String>", { keywords: { "base" => S } }],
+        [:each_child, [S], "Nil", { block: :required, yields: :one, yield_type: S, conv: :nil }]].map do |name, ps, r, o = {}|
+        ["Dir", name, ps, r, { on: Dir, io: true, **o }]
+      end,
+      *[[:directory?, [S], :bool], [:file?, [S], :bool], [:symlink?, [S], :bool], [:zero?, [S], :bool],
+        [:empty?, [S], :bool], [:readable?, [S], :bool], [:writable?, [S], :bool], [:executable?, [S], :bool],
+        [:absolute_path?, [S], :bool], [:identical?, [S, S], :bool],
+        [:size, [S], I], [:mtime, [S], "Time"], [:atime, [S], "Time"], [:ftype, [S], S],
+        [:rename, [S, S], I], [:symlink, [S, S], I], [:link, [S, S], I], [:readlink, [S], S],
+        [:unlink, [S], I, { rest: S }], [:chmod, [I], I, { rest: S }],
+        [:utime, [%w[Time Nil], %w[Time Nil]], I, { rest: S }],
+        [:expand_path, [S], S, { opt: [S] }], [:absolute_path, [S], S, { opt: [S] }], [:realpath, [S], S, { opt: [S] }],
+        [:basename, [S], S, { opt: [S] }], [:dirname, [S], S, { opt: [I] }], [:extname, [S], S],
+        [:split, [S], :tuple_string2, { conv: :tuple }], [:join, [], S, { rest: [S, A] }]].map do |name, ps, r, o = {}|
+        ["File", name, ps, r, { on: File, io: true, **o }]
+      end,
     ].freeze
   end
 
@@ -143,16 +169,16 @@ module Sake
     def install_table(reg)
       StdlibTable::ROWS.each do |ns, name, params, _result, opts|
         opts ||= {}
-        subject = opts[:kernel] ? [] : [ns]
+        subject = opts[:kernel] || opts[:on] ? [] : [ns]
         reg.define(ns, name, subject + params, optional: opts[:opt] || [], rest: opts[:rest],
-                   block: opts[:block] || :none) do |*args, &b|
-          table_call(ns, name, args, b, opts)
+                   block: opts[:block] || :none, keywords: opts[:keywords] || {}) do |*args, **kw, &b|
+          opts[:io] ? io_error { table_call(ns, name, args, b, opts, kw) } : table_call(ns, name, args, b, opts, kw)
         end
       end
     end
 
-    def table_call(ns, name, args, b, opts)
-      recv = opts[:kernel] ? Kernel : args.shift
+    def table_call(ns, name, args, b, opts, kw = {})
+      recv = opts[:kernel] ? Kernel : opts[:on] || args.shift
       int_range!(recv) if opts[:int_range]
       finite!(recv) if opts[:finite]
       args[0] = Set.new(args[0].to_a.map { key!(_1) }) if opts[:set_arg] && !args[0].is_a?(Set)
@@ -160,7 +186,7 @@ module Sake
       blk = b && table_block(b, opts[:yields])
       result =
         begin
-          recv.public_send(opts[:ruby] || name, *args, &blk)
+          recv.public_send(opts[:ruby] || name, *args, **kw, &blk)
         rescue ::ZeroDivisionError
           raise Fail.new("ZeroDivisionError", "divided by 0")
         rescue ::KeyError => e
@@ -195,6 +221,7 @@ module Sake
       when nil then r
       when :tuple then Tuple.new(r.to_a)
       when :tuple_or_nil then r && Tuple.new(r)
+      when :nil then nil
       when :tuples then r.map { Tuple.new(_1) }
       when :to_a then r.to_a
       when :set then Set.new(r.to_a.map { key!(_1) })

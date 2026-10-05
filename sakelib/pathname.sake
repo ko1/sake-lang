@@ -1,85 +1,8 @@
-# pathname: Ruby's Pathname, and the path-string functions of File it is built on
-# (File.basename, dirname, extname, split, join, absolute_path?).
+# pathname: Ruby's Pathname.
 #
 # The path algorithms are those of Ruby's pathname.rb (chop_basename, plus, cleanpath,
-# relative_path_from), on "/" separators only. Sake has no directory primitives (no Dir, stat,
-# realpath, getcwd), so the operations that list, stat, or resolve are missing; exist?, file?,
-# directory?, read, write, readlines, delete go through File.
-
-class File
-  # Ruby's File.basename(path, suffix = ""), Unix rules; suffix ".*" drops any extension.
-  def basename(path, suffix = "")
-    path => String
-    m = String.match(path, /\A\/*\z/)
-    return (path == "" ? "" : "/") if m
-    base = String.sub(path, /\/+\z/, "")
-    i = String.rindex(base, "/")
-    base = String.[](base, i + 1, String.size(base) - i - 1) || "" if i != nil
-    if suffix == ".*"
-      ext = extname(base)
-      return String.[](base, 0, String.size(base) - String.size(ext)) || base if ext != ""
-    elsif suffix != "" && base != suffix && String.end_with?(base, suffix)
-      return String.[](base, 0, String.size(base) - String.size(suffix)) || base
-    end
-    base
-  end
-
-  # Ruby's File.dirname(path): "." for a bare name, "/" for the root.
-  def dirname(path)
-    path => String
-    abs = String.start_with?(path, "/")
-    rest = String.sub(path, /\/+\z/, "")
-    i = String.rindex(rest, "/")
-    return abs ? "/" : "." if i == nil
-    dir = String.sub(String.[](rest, 0, i) || "", /\/+\z/, "")
-    dir == "" ? (abs ? "/" : ".") : dir
-  end
-
-  # Ruby's File.extname(path): leading dots of the name do not start an extension; "a." gives ".".
-  def extname(path)
-    base = basename(path)
-    name = String.sub(base, /\A\.+/, "")
-    i = String.rindex(name, ".")
-    return "" if i == nil
-    String.[](name, i, String.size(name) - i) || ""
-  end
-
-  def split(path) = [dirname(path), basename(path)]
-
-  # Ruby's File.join(*parts): nested Arrays are flattened; one "/" between parts.
-  def join(*parts)
-    names = Array.flatten(parts)
-    result = ""
-    Array.each_with_index(names) do |x, i|
-      s = Kernel.to_s(x)
-      if i == 0
-        result = s
-      elsif String.end_with?(result, "/") && String.start_with?(s, "/")
-        result += String.sub(s, /\A\/+/, "")
-      elsif String.end_with?(result, "/") || String.start_with?(s, "/")
-        result += s
-      else
-        result += "/" + s
-      end
-    end
-    result
-  end
-
-  def absolute_path?(path) = String.start_with?(path, "/")
-
-  # A directory: File.exist? is true and reading it fails with EISDIR (no stat in Sake).
-  def directory?(path)
-    return false unless File.exist?(path)
-    begin
-      File.open(path, "r") { |io| IO.gets(io) }
-      false
-    rescue IOError => e
-      String.include?(Exception.message(e), "Is a directory")
-    end
-  end
-
-  def file?(path) = File.exist?(path) && !File.directory?(path)
-end
+# relative_path_from), on "/" separators only, over the built-in File.basename, dirname, join, ...
+# The operations that stat, list, create, or remove go through the built-in File and Dir.
 
 class Pathname
   attr_reader path
@@ -338,16 +261,93 @@ class Pathname
     Pathname.new(Array.empty?(names) ? "." : File.join(names))
   end
 
-  # --- through File ---
+  # --- through File and Dir ---
 
   def exist?(pn) = File.exist?(@path)
   def file?(pn) = File.file?(@path)
   def directory?(pn) = File.directory?(@path)
+  def symlink?(pn) = File.symlink?(@path)
+  def zero?(pn) = File.zero?(@path)
+  def empty?(pn) = File.directory?(@path) ? Dir.empty?(@path) : File.empty?(@path)
+  def size(pn) = File.size(@path)
+  def mtime(pn) = File.mtime(@path)
+  def ftype(pn) = File.ftype(@path)
   def read(pn) = File.read(@path)
   def readlines(pn) = File.readlines(@path)
   def write(pn, s) = File.write(@path, s)
-  def delete(pn) = File.delete(@path)
-  def unlink(pn) = File.delete(@path)
+  def rename(pn, to) = File.rename(@path, path_of(to))
+  def mkdir(pn) = Dir.mkdir(@path)
+  def rmdir(pn) = Dir.rmdir(@path)
+
+  # Ruby's Pathname#delete: rmdir for a directory, unlink for anything else.
+  def delete(pn) = File.directory?(@path) && !File.symlink?(@path) ? Dir.rmdir(@path) : File.delete(@path)
+  def unlink(pn) = delete(pn)
+
+  def expand_path(pn, dir = nil)
+    return Pathname.new(File.expand_path(@path)) if dir == nil
+    Pathname.new(File.expand_path(@path, path_of(dir)))
+  end
+
+  def realpath(pn, dir = nil)
+    return Pathname.new(File.realpath(@path)) if dir == nil
+    Pathname.new(File.realpath(@path, path_of(dir)))
+  end
+
+  def pwd = Pathname.new(Dir.pwd)
+  def getwd = Pathname.new(Dir.pwd)
+
+  # The entries but "." and "..", as Pathnames joined to pn (with_directory) or bare names, in the
+  # directory's own order (as Ruby; sort for a stable order).
+  def children(pn, with_directory = true)
+    Array.map(Dir.children(@path)) { |e| Pathname.new(with_directory ? File.join(@path, e) : e) }
+  end
+
+  def each_child(pn, with_directory = true)
+    list = children(pn, with_directory)
+    return list unless block_given?
+    Array.each(list) { |c| yield c }
+    list
+  end
+
+  def entries(pn) = Array.map(Dir.entries(@path)) { |e| Pathname.new(e) }
+
+  # Ruby's Pathname.glob(pattern, base: dir) given a pattern, and Pathname#glob(pattern) given a
+  # Pathname: the matches under it, joined to it. One name for both, as Time.xmlschema in time.sake.
+  def glob(x, pattern = "", base: nil)
+    case x
+    in Pathname
+      Array.map(Dir.glob(pattern, base: Pathname.path(x))) { |s| x + s }
+    in String | Array
+      found = base == nil ? Dir.glob(x) : Dir.glob(x, base: path_of(base))
+      Array.map(found) { |s| Pathname.new(s) }
+    end
+  end
+
+  # Ruby's mkpath (FileUtils.mkdir_p): each missing directory from the top; an existing file raises.
+  def mkpath(pn, mode: nil)
+    Array.each(descend(pn)) do |d|
+      s = Pathname.path(d)
+      Dir.mkdir(s) unless File.directory?(s)
+    end
+    pn
+  end
+
+  # Ruby's rmtree (FileUtils.rm_rf): a directory with everything in it; a missing path is no error.
+  def rmtree(pn, noop: nil, verbose: nil, secure: nil)
+    remove_tree(@path) if File.exist?(@path) || File.symlink?(@path)
+    pn
+  end
+
+  # Removes a file, or a directory after its contents; a symlink is removed, not followed.
+  def remove_tree(path)
+    if File.directory?(path) && !File.symlink?(path)
+      Array.each(Dir.children(path)) { |c| remove_tree(File.join(path, c)) }
+      Dir.rmdir(path)
+    else
+      File.delete(path)
+    end
+    nil
+  end
 end
 
 # Ruby's Kernel#Pathname(x): a Pathname given back as is, a String wrapped.
