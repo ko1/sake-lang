@@ -173,6 +173,7 @@ module Sake
         # Inside initialize run for a construction: the instance's fields are the values that `new` gave.
         own = init_field?(env, n)
         if own && n.is_a?(FieldSet) # stored when initialize returns (init_exit), not at each write
+          record(n.origin, n.fn.full_name, 1, n.fn.param_type(0), args[0]) # the setter's subject check
           assign(env, [:field, n.field], args[1])
           return args[1]
         end

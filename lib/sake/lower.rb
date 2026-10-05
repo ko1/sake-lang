@@ -301,7 +301,7 @@ module Sake
       xs = [*(subject ? [lower(subject)] : []), *args(n.arguments)]
       temps = []
       xs = keyword_args(t, n, xs, temps) if t.is_a?(UserFunction) || t.is_a?(Dispatch)
-      xs = new_keyword_args(t, n, xs, temps) if t.is_a?(Builtin) && t.name == "new" && (dt = @program.struct_types[t.namespace]) && n.arguments&.arguments&.last.is_a?(Prism::KeywordHashNode)
+      xs = new_keyword_args(t, n, xs, temps) if t.is_a?(Builtin) && t.name == "new" && @program.struct_types.key?(t.namespace) && n.arguments&.arguments&.last.is_a?(Prism::KeywordHashNode)
       blk = n.block && block(n.block)
       call = user_call(t, n, xs, blk)
       temps.empty? ? call : Seq.new(body: [*temps, call], origin: n)
