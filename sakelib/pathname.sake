@@ -1,0 +1,359 @@
+# pathname: Ruby's Pathname, and the path-string functions of File it is built on
+# (File.basename, dirname, extname, split, join, absolute_path?).
+#
+# The path algorithms are those of Ruby's pathname.rb (chop_basename, plus, cleanpath,
+# relative_path_from), on "/" separators only. Sake has no directory primitives (no Dir, stat,
+# realpath, getcwd), so the operations that list, stat, or resolve are missing; exist?, file?,
+# directory?, read, write, readlines, delete go through File.
+
+class File
+  # Ruby's File.basename(path, suffix = ""), Unix rules; suffix ".*" drops any extension.
+  def basename(path, suffix = "")
+    path => String
+    m = String.match(path, /\A\/*\z/)
+    return (path == "" ? "" : "/") if m
+    base = String.sub(path, /\/+\z/, "")
+    i = String.rindex(base, "/")
+    base = String.[](base, i + 1, String.size(base) - i - 1) || "" if i != nil
+    if suffix == ".*"
+      ext = extname(base)
+      return String.[](base, 0, String.size(base) - String.size(ext)) || base if ext != ""
+    elsif suffix != "" && base != suffix && String.end_with?(base, suffix)
+      return String.[](base, 0, String.size(base) - String.size(suffix)) || base
+    end
+    base
+  end
+
+  # Ruby's File.dirname(path): "." for a bare name, "/" for the root.
+  def dirname(path)
+    path => String
+    abs = String.start_with?(path, "/")
+    rest = String.sub(path, /\/+\z/, "")
+    i = String.rindex(rest, "/")
+    return abs ? "/" : "." if i == nil
+    dir = String.sub(String.[](rest, 0, i) || "", /\/+\z/, "")
+    dir == "" ? (abs ? "/" : ".") : dir
+  end
+
+  # Ruby's File.extname(path): leading dots of the name do not start an extension; "a." gives ".".
+  def extname(path)
+    base = basename(path)
+    name = String.sub(base, /\A\.+/, "")
+    i = String.rindex(name, ".")
+    return "" if i == nil
+    String.[](name, i, String.size(name) - i) || ""
+  end
+
+  def split(path) = [dirname(path), basename(path)]
+
+  # Ruby's File.join(*parts): nested Arrays are flattened; one "/" between parts.
+  def join(*parts)
+    names = Array.flatten(parts)
+    result = ""
+    Array.each_with_index(names) do |x, i|
+      s = Kernel.to_s(x)
+      if i == 0
+        result = s
+      elsif String.end_with?(result, "/") && String.start_with?(s, "/")
+        result += String.sub(s, /\A\/+/, "")
+      elsif String.end_with?(result, "/") || String.start_with?(s, "/")
+        result += s
+      else
+        result += "/" + s
+      end
+    end
+    result
+  end
+
+  def absolute_path?(path) = String.start_with?(path, "/")
+
+  # A directory: File.exist? is true and reading it fails with EISDIR (no stat in Sake).
+  def directory?(path)
+    return false unless File.exist?(path)
+    begin
+      File.open(path, "r") { |io| IO.gets(io) }
+      false
+    rescue IOError => e
+      String.include?(Exception.message(e), "Is a directory")
+    end
+  end
+
+  def file?(path) = File.exist?(path) && !File.directory?(path)
+end
+
+class Pathname
+  attr_reader path
+  include Arithmetic                       # for + and /
+
+  # Ruby: Pathname.new(s) takes a String (or a Pathname, see Kernel's Pathname()); NUL is an error.
+  def initialize(pn)
+    @path => String
+    raise ArgumentError, "path name contains null byte" if String.include?(@path, "\0")
+  end
+
+  def to_s(pn) = @path
+  def to_path(pn) = @path
+  def inspect(pn) = "#<Pathname:#{@path}>"
+
+  # A String or a Pathname, as the String of its path.
+  def path_of(x)
+    case x
+    in Pathname then Pathname.path(x)
+    in String then x
+    end
+  end
+
+  # Ruby compares paths with "/" sorted before every other character.
+  def <=>(a, b) = String.<=>(String.tr(Pathname.path(a), "/", "\0"), String.tr(Pathname.path(b), "/", "\0"))
+
+  # --- pathname.rb's internals, on Strings ---
+
+  # [the path before the last name, the last name], or nil when nothing is left but slashes.
+  def chop_basename(path)
+    base = File.basename(path)
+    return nil if String.match?(base, /\A\/?\z/)
+    i = String.rindex(path, base) || 0
+    [String.[](path, 0, i) || "", base]
+  end
+
+  def split_names(path)
+    names = String[]
+    while (r = chop_basename(path))
+      path, base = r
+      Array.unshift(names, base)
+    end
+    [path, names]
+  end
+
+  def prepend_prefix(prefix, relpath)
+    if relpath == ""
+      File.dirname(prefix)
+    elsif String.include?(prefix, "/")
+      prefix = File.dirname(prefix)
+      prefix = File.join(prefix, "") if File.basename(prefix + "a") != "a"
+      prefix + relpath
+    else
+      prefix + relpath
+    end
+  end
+
+  def has_trailing_separator?(path)
+    r = chop_basename(path)
+    return false unless r
+    pre, base = r
+    String.size(pre) + String.size(base) < String.size(path)
+  end
+
+  def add_trailing_separator(path) = File.basename(path + "a") == "a" ? path : File.join(path, "")
+
+  def del_trailing_separator(path)
+    r = chop_basename(path)
+    if r
+      pre, base = r
+      pre + base
+    elsif (m = String.match(path, /\/+\z/))
+      slashes = String.match(File.dirname(path), /\/*\z/)
+      MatchData.pre_match(m) + (slashes ? MatchData.to_s(slashes) : "")
+    else
+      path
+    end
+  end
+
+  def plus(path1, path2)
+    prefix2 = path2
+    index_list2 = Integer[]
+    basename_list2 = String[]
+    while (r2 = chop_basename(prefix2))
+      prefix2, basename2 = r2
+      Array.unshift(index_list2, String.size(prefix2))
+      Array.unshift(basename_list2, basename2)
+    end
+    return path2 if prefix2 != ""
+    prefix1 = path1
+    while true
+      while Array.first(basename_list2) == "."
+        Array.shift(index_list2)
+        Array.shift(basename_list2)
+      end
+      r1 = chop_basename(prefix1)
+      break unless r1
+      prefix1, basename1 = r1
+      next if basename1 == "."
+      if basename1 == ".." || Array.empty?(basename_list2) || Array.first(basename_list2) != ".."
+        prefix1 = prefix1 + basename1
+        break
+      end
+      Array.shift(index_list2)
+      Array.shift(basename_list2)
+    end
+    has_name = chop_basename(prefix1) != nil
+    if !has_name && String.include?(File.basename(prefix1), "/")
+      while Array.first(basename_list2) == ".."
+        Array.shift(index_list2)
+        Array.shift(basename_list2)
+      end
+    end
+    if Array.empty?(basename_list2)
+      has_name ? prefix1 : File.dirname(prefix1)
+    else
+      start = Array.fetch(index_list2, 0)
+      suffix2 = String.[](path2, start, String.size(path2) - start) || ""
+      has_name ? File.join(prefix1, suffix2) : prefix1 + suffix2
+    end
+  end
+
+  def cleanpath_aggressive(path)
+    names = String[]
+    pre = path
+    while (r = chop_basename(pre))
+      pre, base = r
+      if base == ".."
+        Array.unshift(names, base)
+      elsif base != "."
+        if Array.first(names) == ".."
+          Array.shift(names)
+        else
+          Array.unshift(names, base)
+        end
+      end
+    end
+    if String.include?(File.basename(pre), "/")
+      Array.shift(names) while Array.first(names) == ".."
+    end
+    prepend_prefix(pre, File.join(names))
+  end
+
+  def cleanpath_conservative(path)
+    names = String[]
+    pre = path
+    while (r = chop_basename(pre))
+      pre, base = r
+      Array.unshift(names, base) if base != "."
+    end
+    if String.include?(File.basename(pre), "/")
+      Array.shift(names) while Array.first(names) == ".."
+    end
+    return File.dirname(pre) if Array.empty?(names)
+    Array.push(names, ".") if Array.last(names) != ".." && File.basename(path) == "."
+    result = prepend_prefix(pre, File.join(names))
+    last = Array.last(names) || ""
+    if last != "." && last != ".." && has_trailing_separator?(path)
+      add_trailing_separator(result)
+    else
+      result
+    end
+  end
+
+  # --- the API ---
+
+  def +(pn, other) = Pathname.new(plus(@path, path_of(other)))
+  def /(pn, other) = pn + other
+
+  def join(pn, *args)
+    return pn if Array.empty?(args)
+    last = Array.pop(args)
+    last => Pathname | String
+    result = Pathname.new(path_of(last))
+    return result if absolute?(result)
+    Array.each(Array.reverse(args)) do |arg|
+      result = Pathname.new(path_of(arg)) + result
+      return result if absolute?(result)
+    end
+    pn + result
+  end
+
+  def parent(pn) = pn + ".."
+  def absolute?(pn) = String.start_with?(@path, "/")
+  def relative?(pn) = !absolute?(pn)
+  def root?(pn) = chop_basename(@path) == nil && String.include?(@path, "/")
+
+  def cleanpath(pn, consider_symlink = false)
+    Pathname.new(consider_symlink ? cleanpath_conservative(@path) : cleanpath_aggressive(@path))
+  end
+
+  def basename(pn, suffix = "") = Pathname.new(File.basename(@path, suffix))
+  def dirname(pn) = Pathname.new(File.dirname(@path))
+  def extname(pn) = File.extname(@path)
+  def split(pn) = [dirname(pn), basename(pn)]
+
+  def sub_ext(pn, repl)
+    ext = File.extname(@path)
+    Pathname.new(String.[](@path, 0, String.size(@path) - String.size(ext)) + repl)
+  end
+
+  def sub(pn, pattern, repl) = Pathname.new(String.sub(@path, pattern, repl))
+
+  # Without a block, an Array (Ruby: an Enumerator).
+  def each_filename(pn)
+    _, names = split_names(@path)
+    return names unless block_given?
+    Array.each(names) { |name| yield name }
+    nil
+  end
+
+  def ascend(pn)
+    list = Pathname[pn]
+    path = @path
+    while (r = chop_basename(path))
+      path, _ = r
+      break if path == ""
+      Array.push(list, Pathname.new(del_trailing_separator(path)))
+    end
+    return list unless block_given?
+    Array.each(list) { |v| yield v }
+    nil
+  end
+
+  def descend(pn)
+    list = Array.reverse(ascend(pn))
+    return list unless block_given?
+    Array.each(list) { |v| yield v }
+    nil
+  end
+
+  def relative_path_from(pn, base_directory)
+    dest_directory = Pathname.path(cleanpath(pn))
+    base_dir = Pathname.path(cleanpath(Pathname.new(path_of(base_directory))))
+    dest_prefix = dest_directory
+    dest_names = String[]
+    while (r = chop_basename(dest_prefix))
+      dest_prefix, base = r
+      Array.unshift(dest_names, base) if base != "."
+    end
+    base_prefix = base_dir
+    base_names = String[]
+    while (r = chop_basename(base_prefix))
+      base_prefix, base = r
+      Array.unshift(base_names, base) if base != "."
+    end
+    if dest_prefix != base_prefix
+      raise ArgumentError, "different prefix: #{Kernel.inspect(dest_prefix)} and #{Kernel.inspect(base_dir)}"
+    end
+    while !Array.empty?(dest_names) && !Array.empty?(base_names) && Array.first(dest_names) == Array.first(base_names)
+      Array.shift(dest_names)
+      Array.shift(base_names)
+    end
+    raise ArgumentError, "base_directory has ..: #{Kernel.inspect(base_dir)}" if Array.include?(base_names, "..")
+    names = Array.map(base_names) { ".." } + dest_names
+    Pathname.new(Array.empty?(names) ? "." : File.join(names))
+  end
+
+  # --- through File ---
+
+  def exist?(pn) = File.exist?(@path)
+  def file?(pn) = File.file?(@path)
+  def directory?(pn) = File.directory?(@path)
+  def read(pn) = File.read(@path)
+  def readlines(pn) = File.readlines(@path)
+  def write(pn, s) = File.write(@path, s)
+  def delete(pn) = File.delete(@path)
+  def unlink(pn) = File.delete(@path)
+end
+
+# Ruby's Kernel#Pathname(x): a Pathname given back as is, a String wrapped.
+def Pathname(x)
+  case x
+  in Pathname then x
+  in String then Pathname.new(x)
+  end
+end

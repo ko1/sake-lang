@@ -1,0 +1,411 @@
+# time: Ruby's `require "time"` in Sake: Time.parse, Time.strptime, Time.xmlschema (Ruby's
+# Time.iso8601), Time.httpdate, Time.rfc2822 / rfc822, Time.zone_offset, and the formatters
+# Time.xmlschema(t, n), Time.httpdate(t), Time.rfc2822(t) on the built-in Time.
+#
+# A built-in Time is either local or UTC; it has no fixed offset of its own. A string with an offset
+# ("+09:00", "EST") gives the same instant, as a local Time, where Ruby keeps the offset. A UTC zone
+# ("Z", "UTC", "-00:00") gives a UTC Time, as in Ruby.
+
+# The fields a parser found (nil: not in the string), as Ruby's Date._parse hash.
+class TimeParts
+  attr_accessor year = nil, mon = nil, mday = nil, yday = nil, hour = nil, min = nil, sec = nil
+  attr_accessor frac = nil, zone = nil, seconds = nil
+
+  def found_any?(pt) = @year || @mon || @mday || @yday || @hour || @min || @sec || @frac || @seconds
+end
+
+module TimeCore
+  module_function
+
+  def monthnames = once { String["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"] }
+  def month_re = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?"
+
+  # Ruby's Time::ZoneOffset (hours).
+  def zone_table = once do
+    h = Hash["UTC" => 0, "Z" => 0, "UT" => 0, "GMT" => 0, "EST" => -5, "EDT" => -4, "CST" => -6,
+             "CDT" => -5, "MST" => -7, "MDT" => -6, "PST" => -8, "PDT" => -7]
+    Array.each_with_index(String.chars("ABCDEFGHI")) { |c, i| h[c] = i + 1 }
+    Array.each_with_index(String.chars("KLM")) { |c, i| h[c] = i + 10 }
+    Array.each_with_index(String.chars("NOPQRSTUVWXY")) { |c, i| h[c] = -(i + 1) }
+    h
+  end
+
+  def month_number(name) = (Array.index(monthnames, String.downcase(name[0, 3] || "")) || 0) + 1
+
+  # Ruby's zone_utc?: these zones give a UTC Time; "GMT" and "+00:00" give a local one.
+  def zone_utc?(zone) = String.match?(zone, /\A(?:-00:00|-0000|-00|UTC|Z|UT)\z/i)
+
+  # Days since 1970-01-01 of a proleptic Gregorian date (month and day may overflow, as Time.local).
+  def days_from_civil(y, m, d)
+    y -= 1 if m <= 2
+    era = y / 400
+    yoe = y - era * 400
+    doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1
+    era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+  end
+
+  # Ruby's Time.new argument checks, with its messages.
+  def check_civil(mon, mday, hour, min, sec)
+    raise ArgumentError, "mon out of range" unless Integer.between?(mon, 1, 12)
+    raise ArgumentError, "mday out of range" if mday < 1
+    raise ArgumentError, "argument out of range" if mday > 31
+    raise ArgumentError, "hour out of range" unless Integer.between?(hour, 0, 24)
+    raise ArgumentError, "min out of range" unless Integer.between?(min, 0, 59) && (hour < 24 || min == 0)
+    raise ArgumentError, "sec out of range" unless Integer.between?(sec, 0, 60) && (hour < 24 || sec == 0)
+  end
+
+  # Ruby's Time.make_time: fields missing at the top are taken from `now`, the rest are the smallest.
+  def make_time(pt, now)
+    seconds = pt.TimeParts.seconds
+    zone = pt.TimeParts.zone
+    if seconds
+      t = Time.at(seconds)
+      return zone && zone_utc?(zone) ? Time.utc(t) : t
+    end
+    year = pt.TimeParts.year
+    mon = pt.TimeParts.mon
+    mday = pt.TimeParts.mday
+    hour = pt.TimeParts.hour
+    min = pt.TimeParts.min
+    sec = pt.TimeParts.sec
+    yday = pt.TimeParts.yday
+    if now
+      # Ruby fills from `now` seen in the string's zone, or in local time.
+      off = zone ? Time.zone_offset(zone) : nil
+      now = off != nil ? Time.utc(Time.at(Time.to_i(now) + off)) : Time.at(Time.to_i(now))
+      if year == nil
+        year = Time.year(now)
+        if yday == nil && mon == nil
+          mon = Time.mon(now)
+          if mday == nil
+            mday = Time.day(now)
+            if hour == nil
+              hour = Time.hour(now)
+              if min == nil
+                min = Time.min(now)
+                sec = Time.sec(now) if sec == nil
+              end
+            end
+          end
+        end
+      end
+    end
+    year ||= 1970
+    if yday
+      days = days_from_civil(year, 1, 1) + yday - 1
+    else
+      mon ||= 1
+      mday ||= 1
+      check_civil(mon, mday, hour || 0, min || 0, sec || 0)
+      days = days_from_civil(year, mon, mday)
+    end
+    hour ||= 0
+    min ||= 0
+    sec ||= 0
+    secs = days * 86400 + hour * 3600 + min * 60 + sec
+    frac = pt.TimeParts.frac
+    off = zone ? Time.zone_offset(zone) : nil
+    if off == nil
+      # Local time: the offset of the local zone at that moment (twice, across a DST change).
+      guess = Time.at(secs)
+      guess = Time.at(secs - Time.utc_offset(guess))
+      local = Time.at(secs - Time.utc_offset(guess))
+      return frac ? local + frac : local
+    end
+    t = Time.at(frac ? secs - off + frac : secs - off)
+    zone && zone_utc?(zone) ? Time.utc(t) : t
+  end
+
+  # "123" after the decimal point as a Rational of a second.
+  def fraction(digits) = Rational(String.to_i(digits), 10 ** String.size(digits))
+
+  def year2(y) = y < 50 ? y + 2000 : (y < 1000 ? y + 1900 : y)
+
+  # ---- Time.parse: the forms of Ruby's Date._parse that are common in practice ----
+
+  def time_re = once { /(?<!\d)(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?(?:\s*([ap])\.?m\.?\b)?(?:\s*(Z\b|[+-]\d{1,2}(?::?\d{2})?\b|[A-Za-z]{1,4}\b(?!\s*\d)))?/i }
+  def hour_ampm_re = once { /(?<![\d:])(\d{1,2})\s*([ap])\.?m\.?\b/i }
+  def iso_date_re = once { /(?<!\d)([-+]?\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/ }
+  def slash_date_re = once { /(?<!\d)(\d{4})\/(\d{1,2})\/(\d{1,2})(?!\d)/ }
+  def compact_re = once { /(?<!\d)(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?)?(Z|[+-]\d{2}(?::?\d{2})?)?(?![\d])/i }
+  def day_mon_re = once { Regexp.new("(?i)(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?[\\s-]+#{month_re}(?:[\\s-]+(\\d{2,4}))?(?![\\d:])") }
+  def mon_day_re = once { Regexp.new("(?i)\\b#{month_re}\\s+(\\d{1,2})(?:st|nd|rd|th)?(?![\\d:])(?:,?\\s+(?:\\d{1,2}:\\d{2}(?::\\d{2})?\\s+)?(\\d{4}))?") }
+
+  def parse_parts(str)
+    pt = TimeParts.new
+    s = str
+    if (m = String.match(s, compact_re))
+      pt.TimeParts.year = String.to_i(m[1] || "")
+      pt.TimeParts.mon = String.to_i(m[2] || "")
+      pt.TimeParts.mday = String.to_i(m[3] || "")
+      if (h = m[4])
+        pt.TimeParts.hour = String.to_i(h)
+        pt.TimeParts.min = String.to_i(m[5] || "")
+        pt.TimeParts.sec = String.to_i(m[6] || "0")
+      end
+      pt.TimeParts.zone = m[7]
+      return pt
+    end
+    if (m = String.match(s, time_re))
+      hour = String.to_i(m[1] || "")
+      ampm = m[5]
+      hour = Integer.%(hour, 12) + (String.downcase(ampm) == "p" ? 12 : 0) if ampm
+      pt.TimeParts.hour = hour
+      pt.TimeParts.min = String.to_i(m[2] || "")
+      if (sec = m[3])
+        pt.TimeParts.sec = String.to_i(sec)
+      end
+      if (fr = m[4])
+        pt.TimeParts.frac = fraction(fr)
+      end
+      zone = m[6]
+      pt.TimeParts.zone = zone if zone && Time.zone_offset(zone) != nil
+      s = String.sub(s, time_re, " ")
+    elsif (m = String.match(s, hour_ampm_re))
+      pt.TimeParts.hour = Integer.%(String.to_i(m[1] || ""), 12) + (String.downcase(m[2] || "") == "p" ? 12 : 0)
+      s = String.sub(s, hour_ampm_re, " ")
+    end
+    if (m = String.match(s, iso_date_re) || String.match(s, slash_date_re))
+      pt.TimeParts.year = String.to_i(m[1] || "")
+      pt.TimeParts.mon = String.to_i(m[2] || "")
+      pt.TimeParts.mday = String.to_i(m[3] || "")
+    elsif (m = String.match(s, day_mon_re))
+      pt.TimeParts.mday = String.to_i(m[1] || "")
+      pt.TimeParts.mon = month_number(m[2] || "")
+      if (y = m[3])
+        pt.TimeParts.year = String.size(y) == 4 ? String.to_i(y) : year2(String.to_i(y))
+      end
+    elsif (m = String.match(s, mon_day_re))
+      pt.TimeParts.mon = month_number(m[1] || "")
+      pt.TimeParts.mday = String.to_i(m[2] || "")
+      if (y = m[3])
+        pt.TimeParts.year = String.to_i(y)
+      end
+    end
+    # A year at the end, as in asctime "Tue Jan  2 03:04:05 2024".
+    if pt.TimeParts.year == nil && pt.TimeParts.mon != nil && (m = String.match(s, /\s(\d{4})\s*\z/))
+      pt.TimeParts.year = String.to_i(m[1] || "")
+    end
+    pt
+  end
+
+  # ---- Time.strptime ----
+
+  def strptime_error(str, fmt) = ArgumentError.new("invalid date or strptime format - '#{str}' '#{fmt}'")
+
+  # Expands the composite directives (%F, %T, ...) into the simple ones.
+  def expand_format(fmt)
+    table = composite_table
+    String.gsub(fmt, /%[FTDRrcxX+]/) { |m| Hash.fetch(table, m, m) }
+  end
+
+  def composite_table = once do
+    Hash["%F" => "%Y-%m-%d", "%T" => "%H:%M:%S", "%D" => "%m/%d/%y", "%R" => "%H:%M",
+           "%r" => "%I:%M:%S %p", "%c" => "%a %b %e %H:%M:%S %Y", "%x" => "%m/%d/%y",
+           "%X" => "%H:%M:%S", "%+" => "%a %b %e %H:%M:%S %Z %Y"]
+  end
+
+  # The pattern for one directive at the cursor, or nil for an unknown one.
+  def directive_re(c) = directive_table[c]
+
+  def directive_table = once do
+    Hash[
+      "Y" => /\G([-+]?\d+)/, "C" => /\G([-+]?\d{1,2})/, "y" => /\G(\d{1,2})/,
+      "m" => /\G(\d{1,2})/, "d" => /\G(\d{1,2})/, "e" => /\G\s?(\d{1,2})/, "j" => /\G(\d{1,3})/,
+      "H" => /\G(\d{1,2})/, "k" => /\G\s?(\d{1,2})/, "I" => /\G(\d{1,2})/, "l" => /\G\s?(\d{1,2})/,
+      "M" => /\G(\d{1,2})/, "S" => /\G(\d{1,2})/, "L" => /\G(\d+)/, "N" => /\G(\d+)/,
+      "s" => /\G(-?\d+)/, "Q" => /\G(-?\d+)/, "p" => /\G([ap])\.?m\.?/i, "P" => /\G([ap])\.?m\.?/i,
+      "z" => /\G(Z|[+-]\d{1,2}(?::?\d{2}(?::?\d{2})?)?|[A-Za-z]{1,4}\b)/i,
+      "Z" => /\G(Z|[+-]\d{1,2}(?::?\d{2})?|[A-Za-z]{1,4}\b)/i,
+      "b" => Regexp.new("(?i)\\G#{month_re}"), "B" => Regexp.new("(?i)\\G#{month_re}"),
+      "h" => Regexp.new("(?i)\\G#{month_re}"),
+      "a" => /\G(sun|mon|tue|wed|thu|fri|sat)[a-z]*/i, "A" => /\G(sun|mon|tue|wed|thu|fri|sat)[a-z]*/i,
+      "u" => /\G([1-7])/, "w" => /\G([0-6])/, "n" => /\G\s+/, "t" => /\G\s+/, "%" => /\G%/
+    ]
+  end
+
+  def strptime_parts(str, format)
+    fmt = expand_format(format)
+    pt = TimeParts.new
+    pos = 0
+    i = 0
+    pm = nil
+    century = nil
+    while i < String.size(fmt)
+      c = fmt[i] || ""
+      if c == "%" && i + 1 < String.size(fmt)
+        d = fmt[i + 1] || ""
+        i += 2
+        re = directive_re(d)
+        raise strptime_error(str, format) unless re
+        m = Regexp.match(re, str, pos)
+        raise strptime_error(str, format) unless m
+        pos = MatchData.end(m, 0)
+        v = m[1] || ""
+        n = String.to_i(v)
+        if d == "Y"
+          pt.TimeParts.year = n
+        elsif d == "C"
+          century = n
+        elsif d == "y"
+          pt.TimeParts.year = n < 69 ? n + 2000 : n + 1900
+        elsif d == "m"
+          raise strptime_error(str, format) unless Integer.between?(n, 1, 12)
+          pt.TimeParts.mon = n
+        elsif d == "d" || d == "e"
+          raise strptime_error(str, format) unless Integer.between?(n, 1, 31)
+          pt.TimeParts.mday = n
+        elsif d == "j"
+          raise strptime_error(str, format) unless Integer.between?(n, 1, 366)
+          pt.TimeParts.yday = n
+        elsif d == "H" || d == "k" || d == "I" || d == "l"
+          raise strptime_error(str, format) unless Integer.between?(n, 0, 24)
+          pt.TimeParts.hour = n
+        elsif d == "M"
+          raise strptime_error(str, format) unless Integer.between?(n, 0, 59)
+          pt.TimeParts.min = n
+        elsif d == "S"
+          raise strptime_error(str, format) unless Integer.between?(n, 0, 60)
+          pt.TimeParts.sec = n
+        elsif d == "L" || d == "N"
+          pt.TimeParts.frac = fraction(v)
+        elsif d == "s"
+          pt.TimeParts.seconds = n
+        elsif d == "Q"
+          pt.TimeParts.seconds = Rational(n, 1000)
+        elsif d == "p" || d == "P"
+          pm = String.downcase(v) == "p"
+        elsif d == "z" || d == "Z"
+          pt.TimeParts.zone = v
+        elsif d == "b" || d == "B" || d == "h"
+          pt.TimeParts.mon = month_number(v)
+        end
+      else
+        i += 1
+        if String.match?(c, /\s/)
+          m = Regexp.match(/\G\s*/, str, pos)
+          pos = m ? MatchData.end(m, 0) : pos
+        else
+          raise strptime_error(str, format) unless str[pos] == c
+          pos += 1
+        end
+      end
+    end
+    hour = pt.TimeParts.hour
+    pt.TimeParts.hour = Integer.%(hour, 12) + (pm ? 12 : 0) if hour && pm != nil
+    year = pt.TimeParts.year
+    pt.TimeParts.year = century * 100 + (year ? Integer.%(year, 100) : 0) if century
+    pt
+  end
+
+  # ---- the fixed formats ----
+
+  def parse_xmlschema(x)
+    re = /\A\s*(-?\d+)-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d+))?(Z|[+-]\d\d(?::?\d\d)?)?\s*\z/i
+    m = String.match(x, re)
+    raise ArgumentError, "invalid xmlschema format: #{Kernel.inspect(x)}" unless m
+    pt = TimeParts.new(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || ""), nil,
+                       String.to_i(m[4] || ""), String.to_i(m[5] || ""), String.to_i(m[6] || ""))
+    if (fr = m[7])
+      pt.TimeParts.frac = TimeCore.fraction(fr)
+    end
+    pt.TimeParts.zone = m[8]
+    TimeCore.make_time(pt, nil)
+  end
+
+  def parse_httpdate(x)
+    mon = TimeCore.month_re
+    m = String.match(x, Regexp.new("(?i)\\A\\s*(?:sun|mon|tue|wed|thu|fri|sat),\\x20(\\d{2})\\x20#{mon}\\x20(\\d{4})\\x20(\\d{2}):(\\d{2}):(\\d{2})\\x20GMT\\s*\\z"))
+    if m
+      y = String.to_i(m[3] || "")
+    else
+      m = String.match(x, Regexp.new("(?i)\\A\\s*(?:sun|mon|tues|wednes|thurs|fri|satur)day,\\x20(\\d\\d)-#{mon}-(\\d\\d)\\x20(\\d\\d):(\\d\\d):(\\d\\d)\\x20GMT\\s*\\z"))
+      if m
+        y = TimeCore.year2(String.to_i(m[3] || ""))
+      else
+        m = String.match(x, Regexp.new("(?i)\\A\\s*(?:sun|mon|tue|wed|thu|fri|sat)\\x20#{mon}\\x20{1,2}(\\d\\d?)\\x20(\\d\\d):(\\d\\d):(\\d\\d)\\x20(\\d{4})\\s*\\z"))
+        raise ArgumentError, "not RFC 2616 compliant date: #{Kernel.inspect(x)}" unless m
+        pt = TimeParts.new(String.to_i(m[6] || ""), TimeCore.month_number(m[1] || ""), String.to_i(m[2] || ""), nil,
+                           String.to_i(m[3] || ""), String.to_i(m[4] || ""), String.to_i(m[5] || ""), nil, "UTC")
+        return TimeCore.make_time(pt, nil)
+      end
+    end
+    pt = TimeParts.new(y, TimeCore.month_number(m[2] || ""), String.to_i(m[1] || ""), nil,
+                       String.to_i(m[4] || ""), String.to_i(m[5] || ""), String.to_i(m[6] || ""), nil, "UTC")
+    TimeCore.make_time(pt, nil)
+  end
+
+  def parse_rfc2822(x)
+    re = once { Regexp.new("(?i)\\A\\s*(?:(?:sun|mon|tue|wed|thu|fri|sat)\\s*,\\s*)?(\\d{1,2})\\s+#{TimeCore.month_re}\\s+(\\d{2,})\\s+(\\d{2})\\s*:\\s*(\\d{2})(?:\\s*:\\s*(\\d{2}))?\\s+([+-]\\d{4}|UT|GMT|EST|EDT|CST|CDT|MST|MDT|PST|PDT|[A-IK-Z])") }
+    m = String.match(x, re)
+    raise ArgumentError, "not RFC 2822 compliant date: #{Kernel.inspect(x)}" unless m
+    ys = m[3] || ""
+    y = String.to_i(ys)
+    y = String.size(ys) < 4 ? (String.size(ys) == 3 || y >= 50 ? y + 1900 : y + 2000) : y
+    pt = TimeParts.new(y, TimeCore.month_number(m[2] || ""), String.to_i(m[1] || ""), nil,
+                       String.to_i(m[4] || ""), String.to_i(m[5] || ""), String.to_i(m[6] || "0"), nil, m[7])
+    TimeCore.make_time(pt, nil)
+  end
+
+
+  def offset_string(t) = Time.utc?(t) ? "-0000" : Time.strftime(t, "%z")
+end
+
+class Time
+  # Ruby's Time.zone_offset(zone): seconds east of UTC, or nil for an unknown zone.
+  def zone_offset(zone)
+    z = String.upcase(zone)
+    hours = TimeCore.zone_table[z]
+    return hours * 3600 if hours
+    if (m = String.match(z, /\A([+-])(\d\d)(:?)(\d\d)(?:\3(\d\d))?\z/))
+      off = String.to_i(m[2] || "") * 3600 + String.to_i(m[4] || "") * 60 + String.to_i(m[5] || "0")
+      return m[1] == "-" ? -off : off
+    end
+    return String.to_i(z) * 3600 if String.match?(z, /\A[+-]\d\d\z/)
+    # The local zone's own abbreviation, in winter or in summer.
+    y = Time.year(Time.now)
+    Array.each(Array[Time.new(y, 1, 1), Time.new(y, 7, 1)]) do |t|
+      return Time.utc_offset(t) if String.upcase(Time.zone(t) || "") == z
+    end
+    nil
+  end
+
+  def parse(date, now = Time.now)
+    date => String
+    pt = TimeCore.parse_parts(date)
+    raise ArgumentError, "no time information in #{Kernel.inspect(date)}" unless TimeParts.found_any?(pt)
+    TimeCore.make_time(pt, now)
+  end
+
+  def strptime(date, format, now = Time.now)
+    date => String
+    TimeCore.make_time(TimeCore.strptime_parts(date, format), now)
+  end
+
+  # Ruby's Time.xmlschema(str) (= Time.iso8601(str)), and Time#xmlschema(n): the built-in
+  # Time.iso8601 formats, so the parser is reached by this name only.
+  def xmlschema(x, fraction_digits = 0)
+    case x
+    in Time then Time.iso8601(x, fraction_digits)
+    in String then TimeCore.parse_xmlschema(x)
+    end
+  end
+
+  # Ruby's Time.httpdate(str) (RFC 1123, RFC 850, asctime; always UTC), and Time#httpdate.
+  def httpdate(x)
+    case x
+    in Time then Time.strftime(Time.utc(x), "%a, %d %b %Y %T GMT")
+    in String then TimeCore.parse_httpdate(x)
+    end
+  end
+
+  # Ruby's Time.rfc2822(str) and Time#rfc2822 (a UTC Time shows "-0000").
+  def rfc2822(x)
+    case x
+    in Time then Time.strftime(x, "%a, %d %b %Y %T ") + TimeCore.offset_string(x)
+    in String then TimeCore.parse_rfc2822(x)
+    end
+  end
+
+  def rfc822(x) = rfc2822(x)
+end

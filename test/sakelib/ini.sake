@@ -1,0 +1,85 @@
+require "ini"
+
+text = <<~INI
+  ; a comment
+  name = top level
+  # another comment
+
+  [server]
+  host = example.com
+  port = 8080
+  ratio = 0.75
+  debug = true
+  quiet = false
+  path = "/var/www\\tdocs"
+  note = hello ; trailing comment
+  [ database ]
+  user=admin
+  pass = "s3cr;et"
+  empty =
+  version = -3
+INI
+
+ini = IniFile.new(content: text)
+p(IniFile.sections(ini))
+p(ini["global"])
+p(ini["server"])
+p(ini["database"])
+p(ini["server"]["port"])
+p(IniFile.has_section?(ini, "server"))
+p(IniFile.has_section?(ini, "nope"))
+p(ini["missing"])
+p(IniFile.has_section?(ini, "missing"))
+
+puts("== each")
+IniFile.each(ini) { |s, k, v| puts("#{s}.#{k} = #{Kernel.inspect(v)}") }
+IniFile.each_section(ini) { |s| puts("section #{s}") }
+
+puts("== match")
+p(Hash.keys(IniFile.match(ini, /^s/)))
+
+puts("== write")
+ini["new"] = Hash["a" => 1, "b" => "two\nlines"]
+ini["server"]["port"] = 9090
+p(IniFile.delete_section(ini, "missing"))
+puts(IniFile.to_s(ini))
+
+puts("== merge")
+other = IniFile.new(content: "[server]\nport = 1\nextra = yes\n[more]\nk = v\n")
+merged = IniFile.merge(ini, other)
+p(IniFile.sections(merged))
+p(merged["server"])
+p(ini["server"]["port"])
+p(IniFile.to_h(other))
+
+puts("== options")
+alt = IniFile.new(content: "x: 1\n// c\n[s]\ny: two\n", parameter: ":", comment: "/", default: "root")
+p(IniFile.to_h(alt))
+puts(IniFile.to_s(alt))
+
+puts("== files")
+path = "ini_test_tmp.ini"
+IniFile.write(ini, filename: path)
+back = IniFile.load(path)
+if back
+  p(IniFile.filename(back))
+  p(IniFile.to_h(back) == IniFile.to_h(ini))
+  IniFile.set_filename(back, path)
+  IniFile.write(back)
+end
+File.delete(path)
+p(IniFile.load("no_such_file.ini"))
+
+puts("== errors")
+Array.each(Array["just text", "= value", "[s]\nk = \"open"]) do |bad|
+  begin
+    IniFile.new(content: bad)
+  rescue IniFileError => e
+    puts("IniFileError: #{Exception.message(e)}")
+  end
+end
+begin
+  IniFile.write(IniFile.new(content: "a=1"))
+rescue IniFileError => e
+  puts("IniFileError: #{Exception.message(e)}")
+end

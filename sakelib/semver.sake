@@ -1,0 +1,163 @@
+# semver: Semantic Versioning 2.0.0 versions (parse, compare, bump) and requirements in the style of
+# Gem::Requirement ("~> 1.2", ">= 1.0, < 2") plus npm's caret ("^1.2.3").
+#
+# Ruby's SemVer (a class with Comparable) is the Struct type SemVer with `<=>`; a requirement is
+# SemVerRequirement (Ruby would nest it as SemVer::Requirement; Sake has no nested names).
+# Malformed input raises SemVerError.
+
+class SemVerError < Exception
+end
+
+class SemVer
+  attr_reader major, minor, patch, pre = String[], build = String[]
+  include Comparable
+
+  # SemVer.new(1, 2, 3, ["alpha", "1"]) as Ruby's: the numbers must be non-negative Integers.
+  def initialize(v)
+    raise SemVerError, "version numbers must be Integers" unless (@major in Integer) && (@minor in Integer) && (@patch in Integer)
+    raise SemVerError, "negative version number" if @major < 0 || @minor < 0 || @patch < 0
+    Array.each(@pre) do |id|
+      raise SemVerError, "invalid prerelease identifier: #{Kernel.inspect(id)}" unless String.match?(id, /\A(0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)\z/)
+    end
+  end
+
+  def pattern = /\A(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\z/
+
+  def parse(s)
+    raise SemVerError, "not a String: #{Kernel.inspect(s)}" unless s in String
+    m = String.match(String.strip(s), pattern)
+    raise SemVerError, "invalid version: #{Kernel.inspect(s)}" unless m
+    pre = m[4]
+    build = m[5]
+    SemVer.new(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || ""),
+               pre ? String.split(pre, ".") : String[], build ? String.split(build, ".") : String[])
+  end
+
+  def valid?(s)
+    SemVer.parse(s)
+    true
+  rescue SemVerError
+    false
+  end
+
+  def prerelease?(v) = !Array.empty?(@pre)
+
+  def <=>(a, b)
+    c = [@major, @minor, @patch] <=> [SemVer.major(b), SemVer.minor(b), SemVer.patch(b)]
+    return c unless c == 0
+    compare_pre(@pre, SemVer.pre(b))
+  end
+
+  # A version without a prerelease ranks above one with it; identifiers compare numerically when
+  # both are numeric, a numeric one ranks lower, otherwise as Strings; a longer list wins a tie.
+  def compare_pre(x, y)
+    return 0 if Array.empty?(x) && Array.empty?(y)
+    return 1 if Array.empty?(x)
+    return -1 if Array.empty?(y)
+    Array.each(Array.zip(x, y)) do |a, b|
+      break unless b
+      c = compare_ident(a, b)
+      return c unless c == 0
+    end
+    Array.size(x) <=> Array.size(y)
+  end
+
+  def compare_ident(a, b)
+    na = String.match?(a, /\A\d+\z/)
+    nb = String.match?(b, /\A\d+\z/)
+    if na && nb then String.to_i(a) <=> String.to_i(b)
+    elsif na then -1
+    elsif nb then 1
+    else a <=> b
+    end
+  end
+
+  def bump(v, part)
+    case part
+    in :major then SemVer.new(@major + 1, 0, 0)
+    in :minor then SemVer.new(@major, @minor + 1, 0)
+    in :patch then prerelease?(v) ? SemVer.new(@major, @minor, @patch) : SemVer.new(@major, @minor, @patch + 1)
+    in :pre
+      last = Array.last(@pre)
+      if last == nil
+        SemVer.new(@major, @minor, @patch + 1, String["0"])
+      elsif String.match?(last, /\A\d+\z/)
+        SemVer.new(@major, @minor, @patch, Array[*Array.take(@pre, Array.size(@pre) - 1), Integer.to_s(String.to_i(last) + 1)])
+      else
+        SemVer.new(@major, @minor, @patch, Array[*@pre, "0"])
+      end
+    else raise SemVerError, "unknown part: #{Kernel.inspect(part)}"
+    end
+  end
+
+  def to_s(v)
+    s = "#{@major}.#{@minor}.#{@patch}"
+    s += "-#{Array.join(@pre, ".")}" unless Array.empty?(@pre)
+    s += "+#{Array.join(@build, ".")}" unless Array.empty?(@build)
+    s
+  end
+
+  def inspect(v) = "#<SemVer #{to_s(v)}>"
+
+  def satisfies?(v, req) = SemVerRequirement.satisfied_by?(SemVerRequirement.parse(req), v)
+
+  def max_satisfying(versions, req)
+    r = SemVerRequirement.parse(req)
+    Array.max(Array.select(versions) { |v| SemVerRequirement.satisfied_by?(r, v) })
+  end
+end
+
+class SemVerRequirement
+  # Each constraint: [op, version, the number of segments written].
+  attr_reader constraints
+
+  def op_pattern = /\A(~>|>=|<=|!=|=|>|<|\^)?\s*(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*))?(?:-([0-9A-Za-z.-]+))?\z/
+
+  def parse(s)
+    raise SemVerError, "not a String: #{Kernel.inspect(s)}" unless s in String
+    parts = Array.map(String.split(s, ",")) { |x| String.strip(x) }
+    raise SemVerError, "empty requirement" if Array.empty?(parts) || Array.any?(parts) { |x| String.empty?(x) }
+    cs = Array.map(parts) do |part|
+      m = String.match(part, op_pattern)
+      raise SemVerError, "invalid requirement: #{Kernel.inspect(part)}" unless m
+      mi = m[3]
+      pa = m[4]
+      pre = m[5]
+      segs = pa ? 3 : (mi ? 2 : 1)
+      v = SemVer.new(String.to_i(m[2] || ""), String.to_i(mi || "0"), String.to_i(pa || "0"),
+                     pre ? String.split(pre, ".") : String[])
+      [m[1] || "=", v, segs]
+    end
+    SemVerRequirement.new(cs)
+  end
+
+  def upper(op, v, segs)
+    if op == "~>"
+      segs <= 2 ? SemVer.new(SemVer.major(v) + 1, 0, 0) : SemVer.new(SemVer.major(v), SemVer.minor(v) + 1, 0)
+    elsif SemVer.major(v) > 0 then SemVer.new(SemVer.major(v) + 1, 0, 0)
+    elsif SemVer.minor(v) > 0 then SemVer.new(0, SemVer.minor(v) + 1, 0)
+    else SemVer.new(0, 0, SemVer.patch(v) + 1)
+    end
+  end
+
+  def satisfied_by?(r, v)
+    Array.all?(@constraints) do |op, w, segs|
+      case op
+      in "=" then v == w
+      in "!=" then v != w
+      in ">" then v > w
+      in "<" then v < w
+      in ">=" then v >= w
+      in "<=" then v <= w
+      else v >= w && v < upper(op, w, segs)
+      end
+    end
+  end
+
+  def to_s(r)
+    Array.map(@constraints) do |op, v, segs|
+      nums = Array.join(Array.first(Array[SemVer.major(v), SemVer.minor(v), SemVer.patch(v)], segs), ".")
+      "#{op} #{nums}#{SemVer.prerelease?(v) ? "-#{Array.join(SemVer.pre(v), ".")}" : ""}"
+    end.Array.join(", ")
+  end
+end

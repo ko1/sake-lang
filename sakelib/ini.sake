@@ -1,0 +1,151 @@
+# ini: INI files, after the inifile gem's IniFile (sections, key = value, comments).
+#
+# IniFile.new(content: s) parses a String; IniFile.load(path) reads a file (nil when it does not exist).
+# A file is a Hash of sections, each a Hash of parameters: ini["section"]["key"].
+# Values are typecast as the gem does: true/false, Integer, Float, otherwise a String ("quoted" values
+# stay Strings, with \n \t \\ \" escapes).
+# Ruby's IniFile::Error is IniFileError (no nested names).
+
+class IniFileError < Exception
+end
+
+class IniFile
+  include Indexable
+
+  attr_accessor filename = nil
+  private attr_reader content = nil, comment = ";#", parameter = "=", default = "global"
+  private attr_reader ini = Hash[]
+
+  def initialize(ini)
+    @comment => String
+    @parameter => String
+    @default => String
+    c = @content
+    parse(ini, c) if c != nil
+  end
+
+  def load(path, comment: ";#", parameter: "=", default: "global")
+    return nil unless File.exist?(path)
+    IniFile.new(filename: path, content: File.read(path), comment:, parameter:, default:)
+  end
+
+  # ---- parsing ----
+
+  def parse(ini, text)
+    text => String
+    section = nil
+    lineno = 0
+    Array.each(String.lines(text)) do |raw|
+      lineno += 1
+      line = String.strip(raw)
+      next if line == "" || String.include?(@comment, line[0] || "")
+      m = String.match(line, /\A\[\s*([^\]]*?)\s*\]\z/)
+      if m
+        section = m[1] || ""
+        @ini[section] ||= Hash[]
+        next
+      end
+      k = String.index(line, @parameter)
+      raise IniFileError, "Could not parse line '#{line}'" unless k && k > 0
+      key = String.strip(line[0, k] || "")
+      value = String.strip(line[k + String.size(@parameter), String.size(line)] || "")
+      name = section || @default
+      sec = (@ini[name] ||= Hash[])
+      sec[key] = typecast(ini, value)
+    end
+    ini
+  end
+
+  # A value: "quoted" (escapes), or plain up to an inline comment, then typecast.
+  def typecast(ini, value)
+    if String.start_with?(value, "\"")
+      m = String.match(value, /\A"((?:[^"\\]|\\.)*)"/)
+      raise IniFileError, "Unterminated quoted value: #{value}" unless m
+      return unescape(m[1] || "")
+    end
+    v = value
+    cm = String.match(v, /\s[#{Regexp.escape(@comment)}]/)
+    v = String.rstrip(MatchData.pre_match(cm)) if cm
+    case v
+    in "true" then true
+    in "false" then false
+    else
+      if String.match?(v, /\A[-+]?\d+\z/)
+        String.to_i(v)
+      elsif String.match?(v, /\A[-+]?\d+\.\d+(?:[eE][-+]?\d+)?\z/)
+        String.to_f(v)
+      else
+        v
+      end
+    end
+  end
+
+  def escapes = once { Hash["n" => "\n", "t" => "\t", "r" => "\r", "0" => "\0", "\\" => "\\", "\"" => "\""] }
+  def unescape(s) = String.gsub(s, /\\(.)/) { |m| escapes[m[1]] || m }
+
+  # ---- access ----
+
+  # ini["s"]: the section's Hash, created empty when missing (the gem's Hash default).
+  def [](ini, section)
+    section => String
+    @ini[section] ||= Hash[]
+  end
+
+  def []=(ini, section, h)
+    section => String
+    h => Hash
+    @ini[section] = h
+  end
+
+  def sections(ini) = Hash.keys(@ini)
+  def has_section?(ini, section) = Hash.key?(@ini, section)
+  def delete_section(ini, section) = Hash.delete(@ini, section)
+  def to_h(ini) = Hash.transform_values(@ini) { |h| Hash.dup(h) }
+
+  def each(ini)
+    Hash.each(@ini) do |section, h|
+      Hash.each(h) { |k, v| yield(section, k, v) }
+    end
+    ini
+  end
+
+  def each_section(ini)
+    Hash.each_key(@ini) { |s| yield(s) }
+    ini
+  end
+
+  # Sections whose name matches re, as a Hash.
+  def match(ini, re) = Hash.select(@ini) { |s, _| String.match?(s, re) }
+
+  # A new IniFile with other's parameters added over this one's.
+  def merge(ini, other)
+    out = IniFile.new(filename: @filename, comment: @comment, parameter: @parameter, default: @default)
+    Array.each(Array[ini, other]) do |src|
+      IniFile.each(src) { |s, k, v| out[s][k] = v }
+    end
+    out
+  end
+
+  # ---- output ----
+
+  def escape_value(v)
+    s = Kernel.to_s(v)
+    String.gsub(s, /[\\\n\t\r\0]/, Hash["\\" => "\\\\", "\n" => "\\n", "\t" => "\\t", "\r" => "\\r", "\0" => "\\0"])
+  end
+
+  def to_s(ini)
+    lines = String[]
+    Hash.each(@ini) do |section, h|
+      Array.push(lines, "[#{section}]")
+      Hash.each(h) { |k, v| Array.push(lines, "#{k} #{@parameter} #{escape_value(v)}") }
+      Array.push(lines, "")
+    end
+    Array.join(lines, "\n")
+  end
+
+  def write(ini, filename: @filename)
+    raise IniFileError, "no filename to write to" unless filename
+    File.write(filename, to_s(ini))
+    ini
+  end
+end

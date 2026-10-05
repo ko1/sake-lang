@@ -1,0 +1,95 @@
+require "state_machine"
+
+class Job
+  attr_reader name
+  attr_accessor aasm_state = nil, ready = false, log = String[]
+  include AASM
+
+  def aasm(j) = once do
+    m = AASMMachine.new(:sleeping)
+    AASMMachine.state(m, :running, enter: :start_clock, exit: :stop_clock)
+    AASMMachine.state(m, :cleaning)
+    AASMMachine.state(m, :failed)
+    AASMMachine.event(m, :run, from: :sleeping, to: :running, guard: :ready?)
+    AASMMachine.event(m, :clean, from: :running, to: :cleaning, after: :notify)
+    AASMMachine.event(m, :sleep, from: Array[:running, :cleaning], to: :sleeping)
+    AASMMachine.event(m, :fail, from: Array[:sleeping, :running, :cleaning], to: :failed, after: :alert)
+    m
+  end
+
+  def aasm_guard(j, name)
+    case name
+    in :ready? then @ready
+    end
+  end
+
+  def aasm_callback(j, name)
+    Array.push(@log, "#{name} (#{current_state(j)})")
+    puts "  callback #{name} in #{current_state(j)}" if name == :alert
+  end
+end
+
+class TrafficLight
+  attr_accessor aasm_state = nil
+  include AASM
+  def aasm(t) = once do
+    m = AASMMachine.new(:green)
+    AASMMachine.state(m, :yellow)
+    AASMMachine.state(m, :red)
+    AASMMachine.event(m, :next, from: :green, to: :yellow)
+    AASMMachine.event(m, :next, from: :yellow, to: :red)
+    AASMMachine.event(m, :next, from: :red, to: :green)
+    m
+  end
+end
+
+j = Job.new("backup")
+p Job.current_state(j)
+p Job.states(j)
+p Job.events(j)
+p Job.permitted_events(j)
+p Job.may_fire_event?(j, :run)
+p Job.fire(j, :run)
+begin
+  Job.fire!(j, :run)
+rescue AASMInvalidTransition => e
+  puts Exception.message(e)
+  p [AASMInvalidTransition.event(e), AASMInvalidTransition.state(e)]
+end
+j.Job.ready = true
+p Job.permitted_events(j)
+p Job.fire!(j, :run)
+p Job.current_state(j)
+p Job.is?(j, :running)
+p Job.fire!(j, :clean)
+p Job.fire(j, :clean)
+p Job.fire!(j, :sleep)
+p Job.fire!(j, :run)
+p Job.fire!(j, :fail)
+p Job.current_state(j)
+p Job.permitted_events(j)
+p Job.log(j)
+begin
+  Job.fire(j, :explode)
+rescue ArgumentError => e
+  puts Exception.message(e)
+end
+
+# two machines through the module's dispatch
+light = TrafficLight.new
+Integer.times(4) do
+  AASM.fire!(light, :next)
+  print AASM.current_state(light), " "
+end
+puts
+p AASM.permitted_events(light)
+p AASM.permitted_events(Job.new("other"))
+p AASM.is?(light, :yellow)
+
+# a bad machine
+begin
+  m = AASMMachine.new(:a)
+  AASMMachine.event(m, :go, from: :a, to: :b)
+rescue ArgumentError => e
+  puts Exception.message(e)
+end

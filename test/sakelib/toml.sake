@@ -1,0 +1,136 @@
+require "toml"
+
+def show(label, v)
+  puts("#{label}: #{Kernel.inspect(v)}")
+end
+
+def try(src)
+  show(Kernel.inspect(src), TOML.parse(src))
+rescue TOMLParseError => e
+  puts("TOMLParseError: #{Exception.message(e)} (line #{TOMLParseError.line(e)})")
+end
+
+doc = <<~'TOML'
+  # This is a TOML document
+  title = "TOML Example"
+  "quoted key" = 'literal \n string'
+  site.name = "dotted"
+  site."sub key".x = 1
+
+  [owner]
+  name = "Tom Preston-Werner"
+  bio = """
+  Roses are red\
+     Violets are blue
+  Tab:\t Unicode: \u00e9 \U0001F600"""
+  raw = '''
+  C:\Users\nodejs\
+  ok'''
+
+  [database]
+  enabled = true
+  ports = [ 8000, 8001, 8002 ]
+  data = [ ["delta", "phi"], [3.14] ]
+  temp_targets = { cpu = 79.5, case = 72.0 }
+  multi = [
+    1, # one
+    2,
+  ]
+
+  [servers]
+
+  [servers.alpha]
+  ip = "10.0.0.1"
+  role = "frontend"
+
+  [servers.beta]
+  ip = "10.0.0.2"
+
+  [[products]]
+  name = "Hammer"
+  sku = 738594937
+
+  [[products]]
+
+  [[products]]
+  name = "Nail"
+  color = "gray"
+
+  [[fruits]]
+  name = "apple"
+  [fruits.physical]
+  color = "red"
+  [[fruits.varieties]]
+  name = "red delicious"
+  [[fruits]]
+  name = "banana"
+  [fruits.physical]
+  color = "yellow"
+TOML
+
+h = TOML.parse(doc)
+Hash.each(h) { |k, v| show(k, v) }
+
+puts("== numbers")
+try("a = 42\nb = -17\nc = +99\nd = 1_000_000\ne = 0xDEAD_beef\nf = 0o755\ng = 0b1101\nh = 0")
+try("a = 3.1415\nb = -0.01\nc = 5e+22\nd = 1e06\ne = -2E-2\nf = 6.626e-34\ng = 224_617.445_991")
+try("a = inf\nb = -inf\nc = +inf\nd = nan")
+try("bool = [true, false]\nempty = []\nnested = [[], [[1]]]\nmixed = [1, \"two\", 3.0]")
+try("t = {}\nu = { a = { b = 1 }, c.d = \"x\" }")
+try("a = \"\"\nb = ''\nc = \"\\\"q\\\" \\\\ \\b\"\nd = \"\"\"\"\"\"")
+try("[a.b.c]\nx = 1\n[a]\ny = 2")
+try("[ spaced . key ]\nk = 1")
+try("1234 = \"numeric key\"\n-_- = 1")
+
+puts("== symbolize_keys")
+show("sym", TOML.parse("a = 1\n[t]\nb = [{ c = 2 }]", symbolize_keys: true))
+
+puts("== errors")
+try("a = 1\na = 2")
+try("[t]\n[t]")
+try("a = 1\n[a]")
+try("a = \"open")
+try("a = 1 b = 2")
+try("a = ")
+try("= 1")
+try("a = 0x")
+try("a = 01")
+try("a = 1.")
+try("a = .5")
+try("a = 0b102")
+try("d = 1979-05-27")
+try("t = 07:32:00")
+try("a = [1 2]")
+try("a = { b = 1\n}")
+try("a = \"bad \\q escape\"")
+try("[[a]]\n[a]")
+try("a = [1]\n[[a]]")
+try("[x]\ny = 1\n[x.y]")
+
+puts("== dump")
+data = Hash[
+  "title" => "Example \"quoted\"\n",
+  "n" => 1, "f" => 2.5, "big" => 1.0e20, "inf" => Float.INFINITY, "ok" => true,
+  "list" => Array[1, 2, 3], "words" => Array["a", "b"], "empty" => Array[], "inline" => Array[Hash["x" => 1], 2],
+  "odd key" => "v",
+  "owner" => Hash["name" => "Tom", "dob" => "x", "deep" => Hash["deeper" => Hash["k" => 1]]],
+  "only_tables" => Hash["a" => Hash["z" => 0]],
+  "none" => Hash[],
+  "products" => Array[Hash["name" => "Hammer"], Hash[], Hash["name" => "Nail", "tags" => Hash["t" => true]]],
+]
+text = TOML.dump(data)
+print(text)
+p(TOML.parse(text) == data)
+p(TOML.dump(Hash[]))
+p(TOML.dump(Hash[a: 1, b: :sym]))
+begin
+  TOML.dump(Hash["t" => 1..2])
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+
+puts("== load_file")
+File.write("toml_test_tmp.toml", "[x]\ny = 'z'\n")
+p(TOML.load_file("toml_test_tmp.toml"))
+p(TOML.load_file("toml_test_tmp.toml", symbolize_keys: true))
+File.delete("toml_test_tmp.toml")

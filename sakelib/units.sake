@@ -1,0 +1,169 @@
+# units: quantities with units, after the ruby-units gem: length, mass, time, and units made of them
+# with `*`, `/` and `^n` ("km/h", "m/s^2", "kg*m/s^2").
+#
+#   Unit.new(5, "km/h") or Unit.parse("5 km/h"); Unit.convert_to(u, "m/s"); u + v, u * v, u / 2;
+#   Unit.compatible?(u, v); Unit.kind(u) (:length, :speed, ...); u < v (Comparable).
+#
+# Ruby's Unit.new("5 km/h") takes one String; here Unit.new takes the number and the units (fields of
+# the Struct type), and Unit.parse takes the String. Incompatible units raise ArgumentError with
+# ruby-units' message. Scalars are Floats, printed with %g (6 significant digits).
+# Temperatures (affine units), prefixes on every unit (only the listed ones exist), and Rational
+# scalars are not ported.
+
+class Unit
+  attr_reader scalar, units
+  # the unit names above and below the line; read from the other operand in * and /, so not
+  # private (Ruby would make them protected; a private field has no reader even inside the class)
+  attr_reader num = String[], den = String[]
+  include Comparable
+  include Arithmetic
+
+  # name => [factor to the base unit, [length, mass, time] exponents]
+  def table = once do
+    h = Hash[]
+    Array.each(Array[["m", 1.0], ["km", 1000.0], ["cm", 0.01], ["mm", 0.001], ["in", 0.0254], ["ft", 0.3048],
+                     ["yd", 0.9144], ["mi", 1609.344]]) { |n, f| h[n] = [f, [1, 0, 0]] }
+    Array.each(Array[["kg", 1.0], ["g", 0.001], ["mg", 0.000001], ["t", 1000.0], ["lb", 0.45359237],
+                     ["oz", 0.028349523125]]) { |n, f| h[n] = [f, [0, 1, 0]] }
+    Array.each(Array[["s", 1.0], ["ms", 0.001], ["min", 60.0], ["h", 3600.0], ["day", 86400.0]]) { |n, f| h[n] = [f, [0, 0, 1]] }
+    h["N"] = [1.0, [1, 1, -2]]
+    h["J"] = [1.0, [2, 1, -2]]
+    h["L"] = [0.001, [3, 0, 0]]
+    h
+  end
+
+  def kinds = once do
+    Hash[[0, 0, 0] => :unitless, [1, 0, 0] => :length, [0, 1, 0] => :mass, [0, 0, 1] => :time,
+         [2, 0, 0] => :area, [3, 0, 0] => :volume, [1, 0, -1] => :speed, [1, 0, -2] => :acceleration,
+         [1, 1, -2] => :force, [2, 1, -2] => :energy, [0, 0, -1] => :frequency]
+  end
+
+  # The checked locals are written back: `@x => T` alone does not narrow a field
+  # (notes/lru_cache_bug_initialize_assert_field.sake).
+  def initialize(u)
+    s = @scalar
+    s => Integer | Float
+    @scalar = Arithmetic.to_f(s)
+    text = @units
+    text => String
+    @num, @den = parse_units(text)
+    @units = format_units(@num, @den)
+  end
+
+  def parse(s)
+    m = String.match(String.strip(s), /\A(-?\d+(?:\.\d+)?(?:e-?\d+)?)\s*(.*)\z/)
+    raise ArgumentError, "'#{s}' Unit not recognized" unless m
+    Unit.new(Float(m[1] || ""), m[2] || "")
+  end
+
+  # "kg*m/s^2" -> [["kg", "m"], ["s", "s"]], canceled.
+  def parse_units(text)
+    parts = String.split(String.strip(text), "/", -1)
+    raise ArgumentError, "'#{text}' Unit not recognized" if Array.size(parts) > 2
+    num = names(Array.fetch(parts, 0, ""), text)
+    den = names(Array.fetch(parts, 1, ""), text)
+    cancel(num, den)
+  end
+
+  def names(part, text)
+    out = String[]
+    p = String.strip(part)
+    return out if p == "" || p == "1"
+    Array.each(String.split(p, "*")) do |tok|
+      m = String.match(String.strip(tok), /\A([A-Za-z]+)(?:\^(\d+))?\z/)
+      raise ArgumentError, "'#{text}' Unit not recognized" unless m
+      name = m[1] || ""
+      raise ArgumentError, "'#{name}' Unit not recognized" unless Hash.key?(table, name)
+      pow = m[2]
+      Integer.times(pow ? String.to_i(pow) : 1) { Array.push(out, name) }
+    end
+    out
+  end
+
+  def cancel(num, den)
+    n = Array.dup(num)
+    d = String[]
+    Array.each(den) do |x|
+      i = Array.index(n, x)
+      i ? Array.delete_at(n, i) : Array.push(d, x)
+    end
+    [n, d]
+  end
+
+  def format_units(num, den)
+    top = power_list(num)
+    bottom = power_list(den)
+    return top if bottom == ""
+    "#{top == "" ? "1" : top}/#{bottom}"
+  end
+
+  def power_list(names) = Array.map(Hash.to_a(Array.tally(names))) { |n, k| k == 1 ? n : "#{n}^#{k}" }.Array.join("*")
+
+  def factor(u)
+    f = 1.0
+    Array.each(@num) { |n| f *= Hash.fetch(table, n)[0] }
+    Array.each(@den) { |n| f /= Hash.fetch(table, n)[0] }
+    f
+  end
+
+  def dims(u)
+    l, ma, t = 0, 0, 0
+    Array.each(@num) do |n|
+      _, d = Hash.fetch(table, n)
+      l += d[0]
+      ma += d[1]
+      t += d[2]
+    end
+    Array.each(@den) do |n|
+      _, d = Hash.fetch(table, n)
+      l -= d[0]
+      ma -= d[1]
+      t -= d[2]
+    end
+    [l, ma, t]
+  end
+
+  def kind(u) = kinds[dims(u)] || :unknown
+  def base_scalar(u) = @scalar * factor(u)
+  def compatible?(a, b) = dims(a) == dims(b)
+
+  def convert_to(u, target)
+    t = Unit.new(1, target)
+    raise ArgumentError, "Incompatible Units ('#{to_s(u)}' not compatible with '#{target}')" unless compatible?(u, t)
+    Unit.new(base_scalar(u) / factor(t), Unit.units(t))
+  end
+
+  def to_base(u)
+    l, ma, t = dims(u)
+    num = String[]
+    den = String[]
+    Array.each(Array[["m", l], ["kg", ma], ["s", t]]) do |n, k|
+      Integer.times(Integer.abs(k)) { Array.push(k > 0 ? num : den, n) }
+    end
+    Unit.new(base_scalar(u), format_units(num, den))
+  end
+
+  def +(a, b) = Unit.new(@scalar + Unit.scalar(convert_to(b, @units)), @units)
+  def -(a, b) = Unit.new(@scalar - Unit.scalar(convert_to(b, @units)), @units)
+
+  def *(a, b)
+    return Unit.new(@scalar * b, @units) unless b in Unit
+    n, d = cancel(Array[*@num, *Unit.num(b)], Array[*@den, *Unit.den(b)])
+    Unit.new(@scalar * Unit.scalar(b), format_units(n, d))
+  end
+
+  def /(a, b)
+    return Unit.new(@scalar / b, @units) unless b in Unit
+    n, d = cancel(Array[*@num, *Unit.den(b)], Array[*@den, *Unit.num(b)])
+    Unit.new(@scalar / Unit.scalar(b), format_units(n, d))
+  end
+
+  def <=>(a, b)
+    raise ArgumentError, "Incompatible Units ('#{to_s(a)}' not compatible with '#{Unit.to_s(b)}')" unless compatible?(a, b)
+    base_scalar(a) <=> base_scalar(b)
+  end
+
+  def round(u, digits = 0) = Unit.new(Float.round(@scalar, digits), @units)
+  def to_s(u) = @units == "" ? format("%g", @scalar) : format("%g %s", @scalar, @units)
+  def inspect(u) = "#<Unit #{to_s(u)}>"
+end

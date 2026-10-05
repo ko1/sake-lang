@@ -1,0 +1,142 @@
+# terminal_table: render a table of rows as text, after the terminal-table gem.
+#
+#   t = TerminalTable.new(title: "Scores", headings: Array["Name", "Score"], rows: Array[Array["ann", 90]])
+#   TerminalTable.add_row(t, Array["bob", 72]); TerminalTable.add_separator(t)
+#   TerminalTable.align_column(t, 1, :right); puts t
+#
+# Ruby's Terminal::Table (a nested name) is TerminalTable; its `Terminal::Table.new(title:, headings:,
+# rows:, style: {border: ..., alignment: ...})` takes the style's two entries as keywords `border:`
+# (:ascii, :unicode, :markdown) and `alignment:` (:left, :right, :center), because they are fields of
+# the type and a `new` keyword names a field. Cells are shown with to_s; widths count characters, so
+# wide (CJK) characters are not measured as two columns. A cell is one line.
+
+class TerminalTable
+  attr_reader title = nil, headings = Array[], rows = Array[], border = :ascii, alignment = :left
+  private attr_reader aligns = Hash[]
+
+  def initialize(t)
+    raise ArgumentError, "unknown border style #{Kernel.inspect(@border)}" unless @border == :ascii || @border == :unicode || @border == :markdown
+    raise ArgumentError, "unknown alignment #{Kernel.inspect(@alignment)}" unless TerminalTable.alignment?(@alignment)
+    raise ArgumentError, "markdown tables have no title" if @border == :markdown && @title != nil
+    @rows = Array.dup(@rows)
+  end
+
+  def alignment?(a) = a == :left || a == :right || a == :center
+
+  def add_row(t, row)
+    Array.push(@rows, row)
+    t
+  end
+
+  def <<(t, row) = add_row(t, row)
+
+  # A line between two rows (the markdown style has none).
+  def add_separator(t)
+    Array.push(@rows, :separator)
+    t
+  end
+
+  def align_column(t, i, a)
+    raise ArgumentError, "unknown alignment #{Kernel.inspect(a)}" unless alignment?(a)
+    @aligns[i] = a
+    t
+  end
+
+  # (Array.reject { |r| r in Symbol } would not narrow the element type to Array)
+  def data_rows(t) = Array.filter_map(@rows) { |r| (r in Symbol) ? nil : r }
+
+  def number_of_columns(t)
+    Array.map(data_rows(t)) { |r| (r in Array) ? Array.size(r) : 0 }.Array.push(Array.size(@headings)).Array.max || 0
+  end
+
+  # [h, v, top (left, middle, right), middle, bottom]
+  def chars(b)
+    case b
+    in :ascii then {h: "-", v: "|", top: ["+", "+", "+"], mid: ["+", "+", "+"], bottom: ["+", "+", "+"]}
+    in :unicode then {h: "─", v: "│", top: ["┌", "┬", "┐"], mid: ["├", "┼", "┤"], bottom: ["└", "┴", "┘"]}
+    in :markdown then {h: "-", v: "|", top: ["|", "|", "|"], mid: ["|", "|", "|"], bottom: ["|", "|", "|"]}
+    end
+  end
+
+  def cells(t, row, n) = Array.map(Range.to_a(0...n)) { |i| Kernel.to_s(Array.fetch(row, i, "")) }
+
+  def widths(t, n)
+    ws = Array.new(n, 0)
+    Array.each(Array[@headings, *data_rows(t)]) do |r|
+      cells(t, r, n).Array.each_with_index { |c, i| ws[i] = Tuple.max([Array.fetch(ws, i), String.size(c)]) }
+    end
+    if @title != nil
+      inner = Array.sum(ws) + 3 * (n - 1)
+      extra = String.size(Kernel.to_s(@title)) - inner
+      ws[n - 1] = Array.fetch(ws, n - 1) + extra if extra > 0
+    end
+    ws
+  end
+
+  def align(s, w, a)
+    case a
+    in :left then String.ljust(s, w)
+    in :right then String.rjust(s, w)
+    in :center then String.center(s, w)
+    end
+  end
+
+  def column_alignment(t, i) = @aligns[i] || @alignment
+
+  def rule(t, ws, ends, h)
+    l, m, r = ends
+    "#{l}#{Array.join(Array.map(ws) { |w| h * (w + 2) }, m)}#{r}"
+  end
+
+  def line(t, ws, row, v)
+    parts = Array.map(cells(t, row, Array.size(ws)).Array.each_with_index) do |c, i|
+      " #{align(c, Array.fetch(ws, i), column_alignment(t, i))} "
+    end
+    "#{v}#{Array.join(parts, v)}#{v}"
+  end
+
+  # The markdown header rule: :--, --:, :-: by the column's alignment.
+  def markdown_rule(t, ws)
+    parts = Array.map(Array.each_with_index(ws)) do |w, i|
+      case column_alignment(t, i)
+      in :left then ":#{"-" * (w + 1)}"
+      in :right then "#{"-" * (w + 1)}:"
+      in :center then ":#{"-" * w}:"
+      end
+    end
+    "|#{Array.join(parts, "|")}|"
+  end
+
+  def render(t)
+    n = number_of_columns(t)
+    return "" if n == 0
+    ws = widths(t, n)
+    chars(@border) => {h:, v:, top:, mid:, bottom:}
+    out = String[]
+    markdown = @border == :markdown
+    if @title != nil
+      inner = Array.sum(ws) + 3 * (n - 1)
+      l, _, r = top
+      Array.push(out, "#{l}#{h * (inner + 2)}#{r}")
+      Array.push(out, "#{v} #{String.center(Kernel.to_s(@title), inner)} #{v}")
+      Array.push(out, rule(t, ws, mid, h))
+    elsif !markdown
+      Array.push(out, rule(t, ws, top, h))
+    end
+    unless Array.empty?(@headings)
+      Array.push(out, line(t, ws, @headings, v))
+      Array.push(out, markdown ? markdown_rule(t, ws) : rule(t, ws, mid, h))
+    end
+    Array.each(@rows) do |r|
+      if r in Symbol
+        Array.push(out, rule(t, ws, mid, h)) unless markdown
+      else
+        Array.push(out, line(t, ws, r, v))
+      end
+    end
+    Array.push(out, rule(t, ws, bottom, h)) unless markdown
+    Array.join(out, "\n")
+  end
+
+  def to_s(t) = render(t)
+end

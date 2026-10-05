@@ -1,0 +1,179 @@
+# mustache: a Mustache template engine after the mustache gem's Mustache.render(template, view).
+#
+# The view is a Hash (String or Symbol keys); sections take false/nil, Arrays, Hashes, or any other
+# value. Supported: {{name}} (HTML-escaped as CGI.escapeHTML), {{{name}}} and {{& name}} (raw),
+# {{a.b}} dotted names, {{.}}, {{#section}}, {{^inverted}}, {{! comment}}, {{> partial}} (from the
+# partials: keyword, a Hash of name => template), and standalone tag lines as in the Mustache spec.
+# Not supported: set delimiters ({{=<% %>=}}), lambdas, view classes.
+# Ruby's Mustache::Parser::SyntaxError is MustacheSyntaxError.
+
+class MustacheSyntaxError < Exception
+end
+
+class MustacheNode
+  attr_reader kind, name, text = "", indent = ""
+  attr_reader children = MustacheNode[]
+
+  def initialize(n)
+    @kind => Symbol
+    @name => String
+  end
+end
+
+class MustacheParser
+  attr_reader tmpl
+  private attr_accessor pos = 0
+
+  def sigils = once { Hash["&" => :raw, "#" => :section, "^" => :inverted, "/" => :close, "!" => :comment, ">" => :partial] }
+  def standalone_kind?(k) = k == :section || k == :inverted || k == :close || k == :comment || k == :partial
+
+  # The template as a tree: an Array of MustacheNode.
+  def parse(mp)
+    root = MustacheNode.new(:root, "")
+    stack = MustacheNode[root]
+    len = String.size(@tmpl)
+    while @pos < len
+      start = String.index(@tmpl, "{{", @pos)
+      unless start
+        add_text(stack, @tmpl[@pos, len - @pos] || "")
+        break
+      end
+      triple = String.start_with?(@tmpl[start, 3] || "", "{{{")
+      close = String.index(@tmpl, triple ? "}}}" : "}}", start + 2)
+      raise MustacheSyntaxError, "Unclosed tag at #{start}" unless close
+      finish = close + (triple ? 3 : 2)
+      inner = String.strip(@tmpl[start + 2, close - start - 2] || "")
+      kind = :var
+      name = inner
+      if triple
+        kind = :raw
+        name = String.strip(String.delete_prefix(inner, "{"))
+      else
+        sigil = inner[0] || ""
+        k = sigils[sigil]
+        if k
+          kind = k
+          name = String.strip(inner[1, String.size(inner)] || "")
+        end
+      end
+      text = @tmpl[@pos, start - @pos] || ""
+      indent = ""
+      @pos = finish
+      if standalone_kind?(kind)
+        before = String.match(text, /(?:\A|\n)([ \t]*)\z/)
+        line_start = String.include?(text, "\n") || line_begins?(mp, start - String.size(text))
+        after = String.match(@tmpl, /\G[ \t]*(?:\r?\n|\z)/, finish)
+        if before && line_start && after
+          indent = before[1] || ""
+          text = text[0, String.size(text) - String.size(indent)] || ""
+          @pos = finish + String.size(MatchData.to_s(after))
+        end
+      end
+      add_text(stack, text)
+      top = Array.last(stack)
+      top => MustacheNode
+      case kind
+      in :comment then nil
+      in :section | :inverted
+        node = MustacheNode.new(kind, name)
+        Array.push(MustacheNode.children(top), node)
+        Array.push(stack, node)
+      in :close
+        raise MustacheSyntaxError, "Unopened section '#{name}'" if top == root
+        raise MustacheSyntaxError, "Unclosed section '#{MustacheNode.name(top)}'" unless MustacheNode.name(top) == name
+        Array.pop(stack)
+      else
+        Array.push(MustacheNode.children(top), MustacheNode.new(kind, name, indent:))
+      end
+    end
+    last = Array.last(stack)
+    raise MustacheSyntaxError, "Unclosed section '#{MustacheNode.name(last)}'" if last && last != root
+    MustacheNode.children(root)
+  end
+
+  # Whether the text before i, back to a newline or the start, is the start of a line.
+  def line_begins?(mp, i) = i == 0 || @tmpl[i - 1] == "\n"
+
+  def add_text(stack, s)
+    return nil if s == ""
+    top = Array.last(stack)
+    top => MustacheNode
+    Array.push(MustacheNode.children(top), MustacheNode.new(:text, "", s))
+  end
+end
+
+module Mustache
+  module_function
+
+  def render(template, view = Hash[], partials: Hash[])
+    template => String
+    partials => Hash
+    nodes = MustacheParser.parse(MustacheParser.new(template))
+    out = String[]
+    render_nodes(out, nodes, Array[view], partials)
+    Array.join(out, "")
+  end
+
+  def escape_table = once { Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"] }
+  def escape(s) = String.gsub(s, /[&<>"']/, escape_table)
+
+  # The value of a name in a context value, or nil.
+  def fetch(ctx, key)
+    return nil unless ctx in Hash
+    return ctx[key] if Hash.key?(ctx, key)
+    sym = String.to_sym(key)
+    Hash.key?(ctx, sym) ? ctx[sym] : nil
+  end
+
+  def lookup(stack, name)
+    return Array.last(stack) if name == "."
+    first, *rest = String.split(name, ".")
+    first => String
+    v = nil
+    Array.reverse_each(stack) do |ctx|
+      if (ctx in Hash) && (Hash.key?(ctx, first) || Hash.key?(ctx, String.to_sym(first)))
+        v = fetch(ctx, first)
+        break
+      end
+    end
+    Array.each(rest) { |k| v = fetch(v, k) }
+    v
+  end
+
+  def falsy?(v) = v == nil || v == false || ((v in Array) && Array.empty?(v))
+
+  def render_nodes(out, nodes, stack, partials)
+    Array.each(nodes) do |node|
+      name = MustacheNode.name(node)
+      case MustacheNode.kind(node)
+      in :text then Array.push(out, MustacheNode.text(node))
+      in :var
+        v = lookup(stack, name)
+        Array.push(out, escape(Kernel.to_s(v))) if v != nil
+      in :raw
+        v = lookup(stack, name)
+        Array.push(out, Kernel.to_s(v)) if v != nil
+      in :section
+        v = lookup(stack, name)
+        next if falsy?(v)
+        items = (v in Array) ? v : Array[v]
+        Array.each(items) do |item|
+          Array.push(stack, item)
+          render_nodes(out, MustacheNode.children(node), stack, partials)
+          Array.pop(stack)
+        end
+      in :inverted
+        render_nodes(out, MustacheNode.children(node), stack, partials) if falsy?(lookup(stack, name))
+      in :partial
+        t = partials[name] || partials[String.to_sym(name)]
+        next unless t
+        t => String
+        indent = MustacheNode.indent(node)
+        t = String.gsub(t, /^(?=.)/, indent) if indent != ""
+        render_nodes(out, MustacheParser.parse(MustacheParser.new(t)), stack, partials)
+      else nil # :root, never a child
+      end
+    end
+    out
+  end
+end

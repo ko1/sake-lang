@@ -1,0 +1,132 @@
+require "yaml"
+
+def try(src)
+  p(YAML.load(src))
+rescue YAMLSyntaxError
+  puts("SyntaxError: #{Kernel.inspect(src)}")
+end
+
+puts("== block")
+doc = <<~Y
+  # config
+  name: Sake
+  version: 1.2
+  count: 42
+  enabled: yes
+  disabled: Off
+  nothing: ~
+  empty:
+  list:
+    - one
+    - 2
+    - 3.5
+    -
+    - true
+  same_indent:
+  - a
+  - b
+  nested:
+    deep:
+      deeper: value   # trailing comment
+    other: "quoted # not a comment"
+  people:
+    - name: Ann
+      age: 31
+      tags: [admin, dev]
+    - name: Bob
+      age: 25
+  matrix:
+    - - 1
+      - 2
+    - - 3
+  "quoted key": 1
+  'single': 'it''s'
+  1: integer key
+  true: bool key
+  url: http://example.com/a#frag
+  colon: a:b
+Y
+h = YAML.load(doc)
+p(h)
+
+puts("== scalars")
+try("a: yes\nb: No\nc: on\nd: OFF\ne: 012\nf: 0x1F\ng: 1e3\nh: 1_000\ni: .inf\nj: -.inf\nk: .nan\nl: 1.5e+3\nm: 0o17\nn: +5\no: 1.\np: .5\nq: -0\nr: 0.1\ns: y\nt: n\nu: NULL\nv: 0b101\nw: -012\nx: True\nz: -.5")
+try("plain text")
+try("42")
+try("")
+try("# only a comment\n")
+try("---\n- a\n...\nignored: yes")
+try("--- 12")
+try("--- [1, 2]")
+try("a: !!str 123\nb: 1:20\nc: -1:00:01")
+
+puts("== quoted")
+try("a: \"tab\\there\\nnew \\\"q\\\" \\\\ \\u00e9 \\x41 \\U0001F600\"\nb: 'single ''q'' \\n'\nc: \"\"\nd: ''")
+try("a: \"multi\n  line\n\n  text\"\nb: 'one\n  two'")
+try("\"quoted top\"")
+
+puts("== flow")
+try("a: [1, two, 'three', \"four\", [5, [6]], {x: 1}]\nb: {k: v, n: 1, e: [], f: {}}\nc: []\nd: {}")
+try("a: [\n  1,  # one\n  2\n]\nb: {x: 1,\n    y: 2}")
+try("[a, b, ]")
+try("{a, b: 1, c: }")
+try("- [1, 2]\n- {a: b}")
+try("a: {url: http://x.y/z, k: a b c}")
+
+puts("== block scalars")
+try("lit: |\n  line 1\n  line 2\n\n  line 4\nnext: x")
+try("strip: |-\n  a\n  b\n\nkeep: |+\n  a\n\n\nclip: |\n  a\n\n\nend: 1")
+try("fold: >\n  one\n  two\n\n  three\n    indented\n  four\nf2: >-\n  a\n  b")
+try("- |\n  in seq\n- >\n  folded\n  seq")
+try("indicator: |2\n    two extra\n  base")
+try("--- |\n  top\n  level")
+try("empty: |\nafter: 1")
+try("a:\n  b: |\n    deep\n    text\n  c: d")
+
+puts("== plain multi-line")
+try("a: one\n  two\n  three\nb: x")
+try("- word\n  more")
+
+puts("== symbolize_names")
+p(YAML.load("a: 1\nb: {c: [d: 2]}\n'e': 3\n4: 5", symbolize_names: true))
+p(YAML.safe_load("x: [1]", symbolize_names: true))
+
+puts("== errors")
+try("a: [1, 2")
+try("a: 'open")
+try("a: 1\n b: 2")
+try("- a\nb: 1")
+try("a: b: c")
+try("key: \"x\" y")
+try("a: {b: 1")
+try("a:\n  - 1\n  b: 2")
+try("a: \"bad \\q\"")
+
+puts("== dump")
+data = Hash[
+  "a" => nil, "b" => Array[1, Array[2, 3], Hash["x" => 1, "y" => Array[]]], "c" => Hash[],
+  "s" => Array["", "123", "true", "a: b", "x\ny", "multi\nline\n", "keep\n\n", "a\nb\n\n", "-\"x", "a\tb", "08", "019",
+               "1.0e3", "1e+3", "a:", "a:b", "#", "x #", "x#", "?x", "y", "Y", "N", "no", "Off", "0o7", ".5", "1.",
+               "+1", "-1", "~x", "<<", "a,b]", "end ", "1_0", "0.1.2", "1:20", "é", "éx\"", "日本", "plain words",
+               "o'k", "q\"", ":sym", "[a]", "{a}", "@x", "%x", "!x", "*x", "&x", "`x", "|", ">", "?", "a #b", "1e3",
+               "0x1F", "012", "1_000", ".inf", "null", "~", "\x01", "back\\slash", "\e[0m"],
+  "f" => Array[1.5, 1.0e20, 0.1, -0.0, Float.INFINITY, -Float.INFINITY, Float.NAN, 100.0, 1.0e-5],
+  "t" => true, "fa" => false, "sym" => :foo, 1 => 2, "nest" => Array[Array[], Array[nil], Hash[]],
+  "deep" => Hash["a" => Hash["b" => Array[Hash["c" => Array[Array[1, Hash["d" => 2]]]]]]],
+  "lit" => Hash["k" => "line1\nline2", "list" => Array["l1\nl2\n"]],
+]
+text = YAML.dump(data)
+print(text)
+back = YAML.load(text)
+back => Hash
+p(back["b"] == data["b"])
+p(back["s"] == data["s"])
+p(Array.map(Array[nil, "x", 1, 1.5, true, Array[], Hash[], "a\nb", "a\nb\n", "", "true", :s, Array[1], Hash["k" => "v"]]) { |v| YAML.dump(v) })
+p(Hash.to_yaml(Hash["k" => Array[1]]))
+p(Array.to_yaml(Array["a"]))
+
+puts("== files")
+File.write("yaml_test_tmp.yml", YAML.dump(Hash["saved" => Array[1, "two"]]))
+p(YAML.load_file("yaml_test_tmp.yml"))
+p(YAML.load_file("yaml_test_tmp.yml", symbolize_names: true))
+File.delete("yaml_test_tmp.yml")

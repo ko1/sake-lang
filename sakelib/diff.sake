@@ -1,0 +1,257 @@
+# diff: an LCS diff after the diff-lcs gem (Diff::LCS.lcs, diff, sdiff, patch, unpatch).
+#
+# Sequences are Arrays, or Strings (compared by character; patching a String gives a String).
+# Ruby's Diff::LCS is DiffLCS, Diff::LCS::Change is DiffChange, Diff::LCS::ContextChange is
+# DiffContextChange (no nested names); their inspect strings are the gem's.
+# The longest common subsequence is found by dynamic programming (O(n*m)); among several of the same
+# length, the one taken is not always the gem's (Hunt-Szymanski) choice.
+
+class DiffChange
+  attr_reader action, position, element
+
+  def initialize(c)
+    @action => String
+    @position => Integer
+  end
+
+  def to_a(c) = [@action, @position, @element]
+  def inspect(c) = "#<Diff::LCS::Change: #{Kernel.inspect(to_a(c))}>"
+  def adding?(c) = @action == "+"
+  def deleting?(c) = @action == "-"
+  def unchanged?(c) = @action == "="
+end
+
+class DiffContextChange
+  attr_reader action, old_position, old_element, new_position, new_element
+
+  def initialize(c)
+    @action => String
+    @old_position => Integer
+    @new_position => Integer
+  end
+
+  def to_a(c) = [@action, [@old_position, @old_element], [@new_position, @new_element]]
+  def inspect(c) = "#<Diff::LCS::ContextChange: #{Kernel.inspect(to_a(c))}>"
+  def adding?(c) = @action == "+"
+  def deleting?(c) = @action == "-"
+  def unchanged?(c) = @action == "="
+  def changed?(c) = @action == "!"
+end
+
+module DiffLCS
+  module_function
+
+  def seq(x) = (x in String) ? String.chars(x) : x
+
+  # The matching index pairs [i, j] of a longest common subsequence, in order.
+  def matches(a, b)
+    n = Array.size(a)
+    m = Array.size(b)
+    # len[i][j]: the LCS length of a[i..] and b[j..]
+    len = Array.new(n + 1) { Array.new(m + 1, 0) }
+    Integer.downto(n - 1, 0) do |i|
+      row = Array.fetch(len, i)
+      below = Array.fetch(len, i + 1)
+      Integer.downto(m - 1, 0) do |j|
+        row[j] =
+          if a[i] == b[j]
+            Array.fetch(below, j + 1) + 1
+          else
+            Tuple.max([Array.fetch(below, j), Array.fetch(row, j + 1)])
+          end
+      end
+    end
+    out = Tuple[]
+    i = 0
+    j = 0
+    while i < n && j < m
+      if a[i] == b[j]
+        Array.push(out, [i, j])
+        i += 1
+        j += 1
+      elsif Array.fetch(Array.fetch(len, i + 1), j) >= Array.fetch(Array.fetch(len, i), j + 1)
+        i += 1
+      else
+        j += 1
+      end
+    end
+    out
+  end
+
+  def lcs(a, b)
+    sa = seq(a)
+    Array.map(matches(sa, seq(b))) { |i, _| sa[i] }
+  end
+
+  # Yields [:match | :discard_a | :discard_b, i, j] for each step, as traverse_sequences.
+  def traverse_sequences(a, b)
+    sa = seq(a)
+    sb = seq(b)
+    i = 0
+    j = 0
+    Array.each(Array.push(matches(sa, sb), [Array.size(sa), Array.size(sb)])) do |mi, mj|
+      while i < mi
+        yield(:discard_a, i, j)
+        i += 1
+      end
+      while j < mj
+        yield(:discard_b, i, j)
+        j += 1
+      end
+      if mi < Array.size(sa)
+        yield(:match, i, j)
+        i += 1
+        j += 1
+      end
+    end
+    nil
+  end
+
+  # Like traverse_sequences, but pairs a discard from each side as one :change.
+  def traverse_balanced(a, b)
+    sa = seq(a)
+    sb = seq(b)
+    i = 0
+    j = 0
+    Array.each(Array.push(matches(sa, sb), [Array.size(sa), Array.size(sb)])) do |mi, mj|
+      while i < mi || j < mj
+        if i < mi && j < mj
+          yield(:change, i, j)
+          i += 1
+          j += 1
+        elsif i < mi
+          yield(:discard_a, i, j)
+          i += 1
+        else
+          yield(:discard_b, i, j)
+          j += 1
+        end
+      end
+      if mi < Array.size(sa)
+        yield(:match, i, j)
+        i += 1
+        j += 1
+      end
+    end
+    nil
+  end
+
+  # Hunks of changes: each an Array of DiffChange, deletions before additions.
+  def diff(a, b)
+    sa = seq(a)
+    sb = seq(b)
+    hunks = Array[]
+    hunk = DiffChange[]
+    traverse_sequences(sa, sb) do |kind, i, j|
+      case kind
+      in :match
+        Array.push(hunks, hunk) unless Array.empty?(hunk)
+        hunk = DiffChange[]
+      in :discard_a then Array.push(hunk, DiffChange.new("-", i, sa[i]))
+      in :discard_b then Array.push(hunk, DiffChange.new("+", j, sb[j]))
+      end
+    end
+    Array.push(hunks, hunk) unless Array.empty?(hunk)
+    hunks
+  end
+
+  def sdiff(a, b)
+    sa = seq(a)
+    sb = seq(b)
+    out = DiffContextChange[]
+    traverse_balanced(sa, sb) do |kind, i, j|
+      action = case kind
+               in :match then "="
+               in :change then "!"
+               in :discard_a then "-"
+               in :discard_b then "+"
+               end
+      old = kind == :discard_b ? nil : sa[i]
+      nw = kind == :discard_a ? nil : sb[j]
+      Array.push(out, DiffContextChange.new(action, i, old, j, nw))
+    end
+    out
+  end
+
+  # The flat list of changes in a patchset: diff's hunks, or sdiff's list.
+  def changes(patchset)
+    out = Array[]
+    Array.each(patchset) do |x|
+      if x in Array
+        Array.each(x) { |c| Array.push(out, c) }
+      else
+        Array.push(out, x)
+      end
+    end
+    out
+  end
+
+  def patch(src, patchset) = apply(src, patchset, false)
+  def unpatch(src, patchset) = apply(src, patchset, true)
+
+  # Applies the changes to src; reverse swaps the old and the new side of each.
+  def apply(src, patchset, reverse)
+    s = seq(src)
+    res = Array[]
+    ai = 0
+    bj = 0
+    Array.each(changes(patchset)) do |c|
+      case c
+      in DiffChange
+        action = DiffChange.action(c)
+        action = action == "+" ? "-" : "+" if reverse
+        pos = DiffChange.position(c)
+        if action == "-"
+          while ai < pos
+            Array.push(res, s[ai])
+            ai += 1
+            bj += 1
+          end
+          ai += 1
+        else
+          while bj < pos
+            Array.push(res, s[ai])
+            ai += 1
+            bj += 1
+          end
+          bj += 1
+          Array.push(res, DiffChange.element(c))
+        end
+      in DiffContextChange
+        action = DiffContextChange.action(c)
+        op = DiffContextChange.old_position(c)
+        np = DiffContextChange.new_position(c)
+        el = DiffContextChange.new_element(c)
+        if reverse
+          action = action == "+" ? "-" : (action == "-" ? "+" : action)
+          op, np = np, op
+          el = DiffContextChange.old_element(c)
+        end
+        while ai < op && bj < np
+          Array.push(res, s[ai])
+          ai += 1
+          bj += 1
+        end
+        case action
+        in "-" then ai += 1
+        in "+"
+          Array.push(res, el)
+          bj += 1
+        in "!"
+          Array.push(res, el)
+          ai += 1
+          bj += 1
+        else
+          Array.push(res, s[ai])
+          ai += 1
+          bj += 1
+        end
+      end
+    end
+    while ai < Array.size(s)
+      Array.push(res, s[ai])
+      ai += 1
+    end
+    (src in String) ? Array.join(res, "") : res
+  end
+end

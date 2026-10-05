@@ -1,0 +1,107 @@
+# securerandom: Ruby's SecureRandom (Random::Formatter) in Sake.
+#
+# Bytes come from /dev/urandom, as Ruby's do on Linux (Sake has no getrandom built-in; the device is
+# read line by line with IO.gets, the only bounded read an IO has).
+
+require "base64"
+
+module SecureRandom
+  module_function
+
+  def default_size = 16
+
+  # n bytes of /dev/urandom as a binary String.
+  def gen_random(n)
+    n => Integer
+    raise ArgumentError, "negative string size (or size too big)" if n < 0
+    buf = String.b("")
+    return buf if n == 0
+    File.open("/dev/urandom", "rb") do |io|
+      while String.bytesize(buf) < n
+        buf += IO.gets(io) || ""
+      end
+    end
+    String.byteslice(buf, 0, n) || ""
+  end
+
+  def random_bytes(n = nil) = gen_random(n || default_size)
+  def bytes(n) = gen_random(n)
+
+  def hex(n = nil) = String.unpack1(random_bytes(n), "H*") || ""
+
+  def base64(n = nil) = Base64.strict_encode64(random_bytes(n))
+
+  def urlsafe_base64(n = nil, padding = false) = Base64.urlsafe_encode64(random_bytes(n), padding:)
+
+  # A uniform Integer in 0...n, by rejection over just enough random bytes.
+  def random_int(n)
+    return 0 if n == 1
+    nbytes = (Integer.bit_length(n - 1) + 7) / 8
+    limit = (256 ** nbytes) / n * n
+    loop do
+      v = String.unpack1("\0" + random_bytes(nbytes), "H*") || "0"
+      x = String.hex(v)
+      break x % n if x < limit
+    end
+  end
+
+  # A Float in [0, 1) from 53 random bits, as Ruby's Random::Formatter#random_number.
+  def random_float = (random_int(2 ** 53) * 1.0) / (2 ** 53)
+
+  # Ruby's random_number(n = 0): Integer n > 0 gives 0...n, Float n > 0 gives [0, n), a Range gives a
+  # value in it; anything not positive or an empty Range gives a Float in [0, 1).
+  def random_number(n = 0)
+    case n
+    in Integer
+      n > 0 ? random_int(n) : random_float
+    in Float
+      n > 0 ? random_float * n : random_float
+    in Range
+      lo = Range.begin(n)
+      hi = Range.end(n)
+      if lo in Integer
+        hi => Integer
+        span = Range.exclude_end?(n) ? hi - lo : hi - lo + 1
+        span > 0 ? lo + random_int(span) : random_float
+      else
+        lo => Float
+        hi => Float | Integer
+        hi = Float(hi)
+        hi > lo ? lo + random_float * (hi - lo) : random_float
+      end
+    in nil
+      random_float
+    end
+  end
+
+  def rand(n = 0) = random_number(n)
+
+  # Ruby's Random::Formatter::ALPHANUMERIC.
+  def alphanumeric_chars = once { String.chars("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789") }
+
+  def alphanumeric(n = nil, chars: alphanumeric_chars)
+    size = n || default_size
+    # Ruby loops forever on an empty chars.
+    raise ArgumentError, "empty chars" if Array.empty?(chars)
+    Array.new(size) { Kernel.to_s(chars[random_int(Array.size(chars))]) }
+      .Array.join
+  end
+
+  # Version 4 (random) UUID, RFC 9562.
+  def uuid
+    h = hex(16)
+    variant = format("%x", (String.hex(h[16, 1] || "0") & 3) | 8)
+    "#{h[0, 8]}-#{h[8, 4]}-4#{h[13, 3]}-#{variant}#{h[17, 3]}-#{h[20, 12]}"
+  end
+
+  def uuid_v4 = uuid
+
+  # Version 7 UUID: 48-bit Unix milliseconds, then random bits.
+  def uuid_v7
+    ms = Arithmetic.to_i(Time.to_f(Time.now) * 1000)
+    t = format("%012x", ms)
+    h = hex(10)
+    variant = format("%x", (String.hex(h[3, 1] || "0") & 3) | 8)
+    "#{t[0, 8]}-#{t[8, 4]}-7#{h[0, 3]}-#{variant}#{h[4, 3]}-#{h[7, 12]}"
+  end
+end

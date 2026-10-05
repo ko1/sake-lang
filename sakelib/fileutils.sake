@@ -1,0 +1,162 @@
+# fileutils: the common subset of Ruby's FileUtils (cp, mv, rm, rm_f, rm_rf, touch, mkdir_p,
+# mkdir, rmdir, compare_file), on regular files.
+#
+# Sake has no directory primitives (no mkdir, rmdir, rename, stat, listing): a directory that exists
+# can be a destination (cp/mv into it) and mkdir_p of it is a no-op, but creating or removing one
+# raises IOError. Errors from the file system are IOError (Ruby: Errno::*).
+require "pathname"
+
+module FileUtils
+  module_function
+
+  # A path or a list of paths (String or Pathname), as Ruby's fu_list.
+  def fu_list(x)
+    case x
+    in Array then Array.map(x) { |e| Pathname.path_of(e) }
+    in String | Pathname then String[Pathname.path_of(x)]
+    end
+  end
+
+  def fu_output_message(verbose, msg)
+    IO.puts(IO.stderr, msg) if verbose
+  end
+
+  def fu_same?(a, b) = Pathname.cleanpath(Pathname.new(a)) == Pathname.cleanpath(Pathname.new(b))
+
+  # Each [src, dest] pair: into dest/basename(src) when dest is a directory.
+  def fu_each_src_dest(src, dest)
+    d0 = Pathname.path_of(dest)
+    list = fu_list(src)
+    if File.directory?(d0)
+      Array.each(list) do |s|
+        d = File.join(d0, File.basename(s))
+        raise ArgumentError, "same file: #{s} and #{d}" if fu_same?(s, d)
+        yield s, d
+      end
+    else
+      raise IOError, "Not a directory - #{d0}" if Array.size(list) != 1
+      s = Array.fetch(list, 0)
+      raise ArgumentError, "same file: #{s} and #{d0}" if fu_same?(s, d0)
+      yield s, d0
+    end
+  end
+
+  def mkdir_p(list, mode: nil, noop: false, verbose: false)
+    paths = fu_list(list)
+    fu_output_message(verbose, "mkdir -p #{Array.join(paths, " ")}")
+    return paths if noop
+    Array.each(paths) do |path|
+      next if File.directory?(path)
+      raise IOError, "File exists - #{path}" if File.exist?(path)
+      raise IOError, "mkdir is not available in Sake - #{path}"
+    end
+    paths
+  end
+
+  def makedirs(list, mode: nil, noop: false, verbose: false) = mkdir_p(list, mode:, noop:, verbose:)
+  def mkpath(list, mode: nil, noop: false, verbose: false) = mkdir_p(list, mode:, noop:, verbose:)
+
+  def mkdir(list, mode: nil, noop: false, verbose: false)
+    paths = fu_list(list)
+    fu_output_message(verbose, "mkdir #{Array.join(paths, " ")}")
+    return nil if noop
+    Array.each(paths) do |path|
+      raise IOError, "File exists - #{path}" if File.exist?(path)
+      raise IOError, "mkdir is not available in Sake - #{path}"
+    end
+    paths
+  end
+
+  def rmdir(list, parents: false, noop: false, verbose: false)
+    paths = fu_list(list)
+    fu_output_message(verbose, "rmdir #{parents ? "-p " : ""}#{Array.join(paths, " ")}")
+    return nil if noop
+    Array.each(paths) do |path|
+      raise IOError, "No such file or directory - #{path}" unless File.exist?(path)
+      raise IOError, "Not a directory - #{path}" unless File.directory?(path)
+      raise IOError, "rmdir is not available in Sake - #{path}"
+    end
+    paths
+  end
+
+  def rm(list, force: false, noop: false, verbose: false)
+    paths = fu_list(list)
+    fu_output_message(verbose, "rm#{force ? " -f" : ""} #{Array.join(paths, " ")}")
+    return nil if noop
+    Array.each(paths) do |path|
+      begin
+        File.delete(path)
+      rescue IOError
+        raise unless force
+      end
+    end
+    paths
+  end
+
+  def remove(list, force: false, noop: false, verbose: false) = rm(list, force:, noop:, verbose:)
+  def rm_f(list, noop: false, verbose: false) = rm(list, force: true, noop:, verbose:)
+  def safe_unlink(list, noop: false, verbose: false) = rm(list, force: true, noop:, verbose:)
+
+  # Files only: a directory raises IOError even with force, rather than being left silently.
+  def rm_r(list, force: false, noop: false, verbose: false, secure: nil)
+    paths = fu_list(list)
+    fu_output_message(verbose, "rm -r#{force ? "f" : ""} #{Array.join(paths, " ")}")
+    return nil if noop
+    Array.each(paths) do |path|
+      raise IOError, "removing a directory is not available in Sake - #{path}" if File.directory?(path)
+      begin
+        File.delete(path)
+      rescue IOError
+        raise unless force
+      end
+    end
+    paths
+  end
+
+  def rm_rf(list, noop: false, verbose: false, secure: nil) = rm_r(list, force: true, noop:, verbose:, secure:)
+  def rmtree(list, noop: false, verbose: false, secure: nil) = rm_r(list, force: true, noop:, verbose:, secure:)
+
+  # Creates missing files; an existing file is left as is (Sake cannot set mtime).
+  def touch(list, noop: false, verbose: false, nocreate: false)
+    paths = fu_list(list)
+    fu_output_message(verbose, "touch #{nocreate ? "-c " : ""}#{Array.join(paths, " ")}")
+    return nil if noop
+    Array.each(paths) do |path|
+      next if File.exist?(path)
+      raise IOError, "No such file or directory - #{path}" if nocreate
+      File.write(path, "")
+    end
+    paths
+  end
+
+  def cp(src, dest, preserve: nil, noop: false, verbose: false)
+    fu_output_message(verbose, "cp #{Array.join(fu_list(src), " ")} #{Pathname.path_of(dest)}")
+    return nil if noop
+    fu_each_src_dest(src, dest) do |s, d|
+      raise IOError, "Is a directory - #{s}" if File.directory?(s)
+      File.write(d, File.read(s))
+    end
+    nil
+  end
+
+  def copy(src, dest, preserve: nil, noop: false, verbose: false) = cp(src, dest, preserve:, noop:, verbose:)
+  def copy_file(src, dest) = File.write(Pathname.path_of(dest), File.read(Pathname.path_of(src)))
+
+  # A copy then a delete (Sake has no rename), so a failure in between leaves both files.
+  def mv(src, dest, force: nil, noop: false, verbose: false, secure: nil)
+    fu_output_message(verbose, "mv#{force ? " -f" : ""} #{Array.join(fu_list(src), " ")} #{Pathname.path_of(dest)}")
+    return nil if noop
+    fu_each_src_dest(src, dest) do |s, d|
+      raise IOError, "moving a directory is not available in Sake - #{s}" if File.directory?(s)
+      File.write(d, File.read(s))
+      File.delete(s)
+    end
+    0
+  end
+
+  def move(src, dest, force: nil, noop: false, verbose: false, secure: nil) = mv(src, dest, force:, noop:, verbose:, secure:)
+
+  def compare_file(a, b) = File.read(Pathname.path_of(a)) == File.read(Pathname.path_of(b))
+  def identical?(a, b) = compare_file(a, b)
+  def cmp(a, b) = compare_file(a, b)
+end

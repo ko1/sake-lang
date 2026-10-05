@@ -1,0 +1,114 @@
+# pqueue: a priority queue on a binary heap, after the pqueue gem.
+#
+# PQueue.new(elements = Array[], order: :max) as Ruby's PQueue.new(elements) { |a, b| a > b }: the gem
+# takes the order as a block it keeps, and Sake cannot keep a block. The order is a keyword instead
+# (:max pops the largest first, :min the smallest), over the elements' own `<=>`. A custom order is
+# the elements' type: a Struct type with `include Comparable` and its own `<=>`, or Tuples whose
+# first positions are the key (`[priority, seq, item]`).
+#
+# One program that keeps queues of different element types declares one queue type per element type,
+# `class JobQueue < PQueue; end`: the checker gives a field one type for all instances of a type, so
+# Integers and Jobs in the same PQueue type would meet in `<=>` (a `mixed` report at --strict).
+
+class PQueue
+  private attr_reader heap = Array[]
+  attr_reader order = :max
+
+  # The order is checked, as Ruby's initialize does. Unlike Ruby, the Array given to new becomes the
+  # queue's storage and is heapified in place: an Array made here would be one allocation site for
+  # PQueue and every `class X < PQueue`, where their element types would meet
+  # (notes/pqueue_bug_subclass_shares_array_site.sake).
+  def initialize(q)
+    raise ArgumentError, "order must be :max or :min, not #{Kernel.inspect(@order)}" unless @order == :max || @order == :min
+    Integer.downto(Array.size(@heap) / 2 - 1, 0) { |i| sift_down(q, i) }
+  end
+
+  def size(q) = Array.size(@heap)
+  def length(q) = Array.size(@heap)
+  def empty?(q) = Array.empty?(@heap)
+  def top(q) = Array.first(@heap)
+  def peek(q) = Array.first(@heap)
+
+  def push(q, *xs)
+    Array.each(xs) do |x|
+      Array.push(@heap, x)
+      sift_up(q, Array.size(@heap) - 1)
+    end
+    q
+  end
+
+  def <<(q, x) = push(q, x)
+
+  def pop(q) = empty?(q) ? nil : take_top(q)
+
+  # pop on a queue known not to be empty: the element, never nil.
+  def take_top(q)
+    top = Array.fetch(@heap, 0)
+    last = Array.fetch(@heap, -1)
+    Array.pop(@heap)
+    unless Array.empty?(@heap)
+      @heap[0] = last
+      sift_down(q, 0)
+    end
+    top
+  end
+
+  # The n first elements in pop order, removed.
+  def shift(q, n)
+    out = Array[]
+    Array.push(out, take_top(q)) while Array.size(out) < n && !empty?(q)
+    out
+  end
+
+  # The elements in pop order (sorted by <=>); the queue is unchanged.
+  def to_a(q)
+    sorted = Array.sort(@heap)
+    @order == :max ? Array.reverse(sorted) : sorted
+  end
+
+  def each_pop(q)
+    yield(take_top(q)) until empty?(q)
+    q
+  end
+
+  def merge(q, other)
+    Array.each(to_a(other)) { |x| push(q, x) }
+    q
+  end
+
+  def clear(q)
+    Array.clear(@heap)
+    q
+  end
+
+  def inspect(q) = "#<PQueue #{@order} #{Kernel.inspect(to_a(q))}>"
+
+  def before?(q, a, b)
+    c = a <=> b
+    raise ArgumentError, "comparison of #{Kernel.inspect(a)} with #{Kernel.inspect(b)} failed" unless c
+    @order == :max ? c > 0 : c < 0
+  end
+
+  def sift_up(q, i)
+    while i > 0
+      parent = (i - 1) / 2
+      break unless before?(q, Array.fetch(@heap, i), Array.fetch(@heap, parent))
+      @heap[i], @heap[parent] = Array.fetch(@heap, parent), Array.fetch(@heap, i)
+      i = parent
+    end
+  end
+
+  def sift_down(q, i)
+    n = Array.size(@heap)
+    loop do
+      l = 2 * i + 1
+      r = l + 1
+      best = i
+      best = l if l < n && before?(q, Array.fetch(@heap, l), Array.fetch(@heap, best))
+      best = r if r < n && before?(q, Array.fetch(@heap, r), Array.fetch(@heap, best))
+      break if best == i
+      @heap[i], @heap[best] = Array.fetch(@heap, best), Array.fetch(@heap, i)
+      i = best
+    end
+  end
+end

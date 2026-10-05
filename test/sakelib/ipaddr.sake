@@ -1,0 +1,128 @@
+require "ipaddr"
+
+def try(label)
+  puts "#{label} => #{yield}"
+rescue IPAddrInvalidPrefixError => e
+  puts "#{label} => InvalidPrefixError: #{Exception.message(e)}"
+rescue IPAddrInvalidAddressError => e
+  puts "#{label} => InvalidAddressError: #{Exception.message(e)}"
+rescue IPAddrAddressFamilyError => e
+  puts "#{label} => AddressFamilyError: #{Exception.message(e)}"
+end
+
+puts "-- parsing and printing"
+Array.each(Array[
+  "192.168.1.10", "192.168.1.0/24", "10.0.0.1/255.0.0.0", "0.0.0.0/0", "::", "::1", "1::",
+  "2001:db8::1", "2001:0db8:0000:0000:0000:ff00:0042:8329", "fe80::1%eth0", "[::1]", "::ffff:192.168.0.1",
+  "::192.168.0.1", "1:2:3:4:5:6:1.2.3.4", "2001:db8::/32", "2001:db8::1/64", "1:0:0:2::3", "1:0:0:2:0:0:0:3",
+  "256.1.1.1", "01.2.3.4", "1.2.3", "1:2:3:4:5:6:7:8:9", "::1::", "garbage", "192.168.1.0/33",
+  "192.168.1.0/024", "192.168.1.0/255.0.255.0", "192.168.1.0/ffff::", "2001:db8::/129", ""
+]) do |s|
+  try(Kernel.inspect(s)) do
+    ip = IPAddr.new(s)
+    "#{IPAddr.to_s(ip)} | #{IPAddr.to_string(ip)} | #{Kernel.inspect(ip)} | #{IPAddr.prefix(ip)} #{IPAddr.ipv4?(ip)} #{IPAddr.ipv6?(ip)} #{IPAddr.family(ip)}"
+  end
+end
+p IPAddr.new
+try("Integer AF_INET") { IPAddr.to_s(IPAddr.new(3232235777, Socket.AF_INET)) }
+try("Integer AF_INET6") { IPAddr.to_s(IPAddr.new(1, Socket.AF_INET6)) }
+try("Integer no family") { IPAddr.new(1) }
+try("Integer bad family") { IPAddr.new(1, 99) }
+try("too big") { IPAddr.new(2 ** 32, Socket.AF_INET) }
+try("family mismatch") { IPAddr.new("::1", Socket.AF_INET) }
+try("v4 as v6") { IPAddr.new("1.2.3.4", Socket.AF_INET6) }
+
+puts "-- conversions"
+v4 = IPAddr.new("192.168.2.130/26")
+v6 = IPAddr.new("2001:db8:85a3::8a2e:370:7334/48")
+Array.each(Array[v4, v6]) do |ip|
+  p IPAddr.to_i(ip)
+  p IPAddr.cidr(ip)
+  p IPAddr.netmask(ip)
+  p IPAddr.wildcard_mask(ip)
+  p IPAddr.hton(ip)
+  p IPAddr.new_ntoh(IPAddr.hton(ip))
+  p IPAddr.reverse(ip)
+  p IPAddr.as_json(ip)
+  p IPAddr.to_json(ip)
+  first, last = IPAddr.to_range(ip)
+  puts "#{IPAddr.to_s(first)}..#{IPAddr.to_s(last)}"
+  p IPAddr.succ(ip)
+end
+p IPAddr.as_json(IPAddr.new("1.2.3.4"))
+p IPAddr.ntop(String.b("\x7f\x00\x00\x01"))
+try("ntop 3 bytes") { IPAddr.ntop(String.b("abc")) }
+try("ntop utf-8") { IPAddr.ntop("abcd") }
+p IPAddr.ip6_arpa(IPAddr.new("2001:db8::1"))
+p IPAddr.ip6_int(IPAddr.new("::1"))
+try("ip6_arpa v4") { IPAddr.ip6_arpa(v4) }
+p IPAddr.ipv4_mapped(IPAddr.new("192.168.1.1"))
+p IPAddr.ipv4_compat(IPAddr.new("192.168.1.1"))
+p IPAddr.native(IPAddr.new("::ffff:10.1.2.3"))
+p IPAddr.native(IPAddr.new("::10.1.2.3"))
+p IPAddr.native(IPAddr.new("::1"))
+try("ipv4_mapped v6") { IPAddr.ipv4_mapped(v6) }
+p IPAddr.ipv4_mapped?(IPAddr.new("::ffff:1.2.3.4"))
+p IPAddr.ipv4_compat?(IPAddr.new("::1.2.3.4"))
+p IPAddr.ipv4_compat?(IPAddr.new("::1"))
+
+puts "-- masks and operators"
+ip = IPAddr.new("192.168.1.77")
+p IPAddr.mask(ip, 24)
+p IPAddr.mask(ip, "16")
+p IPAddr.mask(ip, "255.255.255.240")
+try("mask 40") { IPAddr.mask(ip, 40) }
+try("mask v6") { IPAddr.mask(ip, "ffff::") }
+p ip
+ip.IPAddr.prefix = 28
+p ip
+p IPAddr.prefix(ip)
+p ip & "255.255.0.0"
+p ip | 0xff
+p ~IPAddr.new("0.0.255.255")
+p IPAddr.new("1.2.3.4") << 8
+p IPAddr.new("1.2.3.4") >> 8
+p IPAddr.new("1.2.3.4") + 300
+p IPAddr.new("1.2.3.4") - 4
+try("- too far") { IPAddr.new("0.0.0.1") - 2 }
+p ~IPAddr.new("::")
+
+puts "-- comparison"
+net = IPAddr.new("192.168.1.0/24")
+p IPAddr.include?(net, IPAddr.new("192.168.1.200"))
+p IPAddr.include?(net, "192.168.2.1")
+p IPAddr.include?(net, IPAddr.new("192.168.1.0/25"))
+p IPAddr.include?(net, IPAddr.new("192.168.0.0/16"))
+p IPAddr.include?(net, IPAddr.new("::1"))
+p IPAddr.===(net, "192.168.1.9")
+p IPAddr.new("1.2.3.4") == "1.2.3.4"
+p IPAddr.new("1.2.3.4") == IPAddr.new("1.2.3.4/8")
+p IPAddr.new("1.0.0.0/8") == IPAddr.new("1.2.3.4/8")
+p IPAddr.new("1.2.3.4") == "nonsense"
+p IPAddr.new("::1") == IPAddr.new("0.0.0.1")
+p IPAddr.new("1.2.3.4") <=> IPAddr.new("1.2.3.5")
+p IPAddr.new("1.2.3.4") <=> IPAddr.new("::1")
+p IPAddr.new("1.2.3.4") <=> "junk"
+p IPAddr.new("10.0.0.1") < IPAddr.new("9.0.0.1")
+sorted = Array.sort(Array[IPAddr.new("10.0.0.2"), IPAddr.new("9.255.0.1"), IPAddr.new("10.0.0.1")])
+p Array.map(sorted) { |x| IPAddr.to_s(x) }
+p Array.max(sorted)
+
+puts "-- predicates"
+Array.each(Array["127.0.0.1", "10.1.1.1", "172.16.5.4", "172.32.0.1", "192.168.0.1", "169.254.1.1",
+                 "8.8.8.8", "::1", "fc00::1", "fe80::abcd", "::ffff:127.0.0.1", "::ffff:10.0.0.1",
+                 "::ffff:169.254.0.9", "2001:db8::1"]) do |s|
+  ip = IPAddr.new(s)
+  puts "#{s}: loopback=#{IPAddr.loopback?(ip)} private=#{IPAddr.private?(ip)} link_local=#{IPAddr.link_local?(ip)}"
+end
+
+puts "-- zone id"
+z = IPAddr.new("fe80::1%eth0")
+p IPAddr.zone_id(z)
+p IPAddr.to_s(z)
+z.IPAddr.zone_id = "%lo"
+p IPAddr.to_string(z)
+z.IPAddr.zone_id = nil
+p z
+try("bad zone") { z.IPAddr.zone_id = "eth0" }
+try("zone of v4") { IPAddr.zone_id(v4) }

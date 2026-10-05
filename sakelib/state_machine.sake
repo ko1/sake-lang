@@ -1,0 +1,122 @@
+# state_machine: an AASM-like finite state machine for Struct types.
+#
+#   class Job
+#     attr_accessor aasm_state = nil            # the current state (nil: the initial one)
+#     include AASM
+#     def aasm(j) = once do                     # the machine, built once for the type
+#       m = AASMMachine.new(:sleeping)          # the initial state
+#       AASMMachine.state(m, :running, enter: :start_clock)
+#       AASMMachine.event(m, :run, from: :sleeping, to: :running, guard: :ready?)
+#       m
+#     end
+#     def aasm_guard(j, name) = case name in :ready? then ... end   # guards, by name
+#     def aasm_callback(j, name) = ...                              # callbacks, by name
+#   end
+#   Job.fire!(j, :run); Job.current_state(j); Job.may_fire_event?(j, :run)
+#
+# AASM keeps the blocks of its DSL and calls guards and callbacks by name with `send`. Sake can keep
+# neither a block nor a method name to call, so the machine is data (states and events whose guards
+# and callbacks are Symbols), and the model gives one function per kind of hook, aasm_guard and
+# aasm_callback, that receives the Symbol and runs the code for it with `case name in :x`. The
+# module's defaults accept every guard and ignore every callback; the includer's own definitions win.
+# Ruby's generated methods (`job.run!`, `job.may_run?`, `job.sleeping?`) are AASM's own
+# `aasm.fire!(:run)`, `aasm.may_fire_event?(:run)`, `aasm.current_state == :sleeping`, here
+# `AASM.fire!(j, :run)` and so on (or `Job.fire!(j, :run)`).
+
+class AASMInvalidTransition < Exception
+  attr_reader event, state
+end
+
+class AASMTransition
+  attr_reader from, to, guard = nil, after = nil
+end
+
+class AASMMachine
+  attr_reader initial
+  attr_reader states = Symbol[], events = Hash[], enters = Hash[], exits = Hash[]
+
+  def initialize(m)
+    @initial => Symbol
+    Array.push(@states, @initial)
+  end
+
+  # A state, with the callbacks run when it is entered or left.
+  def state(m, name, enter: nil, exit: nil)
+    name => Symbol
+    Array.push(@states, name) unless Array.include?(@states, name)
+    @enters[name] = enter if enter
+    @exits[name] = exit if exit
+    m
+  end
+
+  # A transition of the event `name` (an event may have several, tried in order): from one state or
+  # an Array of them, to a state; `guard` names a guard that must pass, `after` a callback.
+  def event(m, name, from:, to:, guard: nil, after: nil)
+    froms = (from in Symbol) ? Symbol[from] : Symbol[*from]
+    Array.each(Array[*froms, to]) do |s|
+      raise ArgumentError, "unknown state #{Kernel.inspect(s)} in event #{Kernel.inspect(name)}" unless Array.include?(@states, s)
+    end
+    ts = @events[name] || (@events[name] = AASMTransition[])
+    Array.push(ts, AASMTransition.new(froms, to, guard, after))
+    m
+  end
+
+  def event_names(m) = Hash.keys(@events)
+end
+
+module AASM
+  def aasm(x) = raise(NotImplementedError)
+
+  # The hooks: the includer's own definitions win over these.
+  def aasm_guard(x, name) = true
+  def aasm_callback(x, name) = nil
+
+  def current_state(x) = @aasm_state || AASMMachine.initial(aasm(x))
+  def is?(x, state) = current_state(x) == state
+
+  def transitions_of(x, event)
+    ts = AASMMachine.events(aasm(x))[event]
+    raise ArgumentError, "unknown event #{Kernel.inspect(event)}" unless ts
+    ts
+  end
+
+  # The first transition of the event from the current state whose guard passes, or nil.
+  def find_transition(x, event)
+    st = current_state(x)
+    Array.find(transitions_of(x, event)) do |t|
+      g = AASMTransition.guard(t)
+      Array.include?(AASMTransition.from(t), st) && (g == nil || aasm_guard(x, g))
+    end
+  end
+
+  def may_fire_event?(x, event) = find_transition(x, event) != nil
+
+  # Fires the event: exit callback of the old state, the new state, its enter callback, the
+  # transition's after callback. false when no transition applies.
+  def fire(x, event)
+    t = find_transition(x, event)
+    return false unless t
+    m = aasm(x)
+    old = current_state(x)
+    new_state = AASMTransition.to(t)
+    ex = AASMMachine.exits(m)[old]
+    aasm_callback(x, ex) if ex
+    @aasm_state = new_state
+    en = AASMMachine.enters(m)[new_state]
+    aasm_callback(x, en) if en
+    af = AASMTransition.after(t)
+    aasm_callback(x, af) if af
+    true
+  end
+
+  # As fire, but raises AASMInvalidTransition, with AASM's message, when no transition applies.
+  def fire!(x, event)
+    return true if fire(x, event)
+    st = current_state(x)
+    raise AASMInvalidTransition.new("Event '#{event}' cannot transition from '#{st}'.", event, st)
+  end
+
+  def states(x) = AASMMachine.states(aasm(x))
+  def events(x) = AASMMachine.event_names(aasm(x))
+  def permitted_events(x) = Array.select(events(x)) { |e| may_fire_event?(x, e) }
+end

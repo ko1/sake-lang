@@ -1,0 +1,91 @@
+require "event_emitter"
+
+# Listeners: a type that includes Listener; its fields are what a block would have captured.
+class Printer
+  attr_reader prefix
+  include Listener
+  def call(l, args) = puts("#{@prefix}: #{Array.join(Array.map(args) { |a| Kernel.inspect(a) }, ", ")}")
+end
+
+class Counter
+  attr_reader name
+  attr_accessor count = 0
+  include Listener
+  def call(c, args)
+    @count += 1
+  end
+end
+
+class Summer
+  attr_accessor total = 0
+  include Listener
+  def call(s, args)
+    Array.each(args) { |a| @total += a if a in Integer }
+  end
+end
+
+# A listener that adds another one while the event is emitted.
+class Recruiter
+  attr_reader emitter
+  include Listener
+  def call(r, args)
+    puts "recruiting"
+    EventEmitter.on(@emitter, :data, Printer.new("recruit"))
+  end
+end
+
+e = EventEmitter.new
+counter = Counter.new("data")
+sum = Summer.new
+EventEmitter.on(e, :data, Printer.new("first"))
+EventEmitter.on(e, :data, counter)
+EventEmitter.on(e, :data, sum)
+EventEmitter.prepend_listener(e, :data, Printer.new("zeroth"))
+p EventEmitter.emit(e, :data, 1, 2)
+p EventEmitter.emit(e, :data, "x", :y, nil)
+p EventEmitter.emit(e, :nothing, 1)
+p [Counter.count(counter), Summer.total(sum)]
+p EventEmitter.listener_count(e, :data)
+p EventEmitter.listener_count(e, :nothing)
+p EventEmitter.event_names(e)
+
+# once
+EventEmitter.once(e, :ready, Printer.new("ready once"))
+EventEmitter.on(e, :ready, Printer.new("ready always"))
+EventEmitter.prepend_once_listener(e, :ready, Printer.new("ready first, once"))
+p EventEmitter.listener_count(e, :ready)
+EventEmitter.emit(e, :ready)
+EventEmitter.emit(e, :ready, 2)
+p EventEmitter.listener_count(e, :ready)
+
+# off: by ==, the most recently added one first
+EventEmitter.off(e, :data, Printer.new("first"))
+EventEmitter.off(e, :data, Printer.new("not there"))
+EventEmitter.emit(e, :data, 3)
+p EventEmitter.listeners(e, :data)
+EventEmitter.on(e, :tick, Counter.new("a"))
+EventEmitter.on(e, :tick, Counter.new("a"))
+EventEmitter.remove_listener(e, :tick, Counter.new("a"))
+p EventEmitter.listener_count(e, :tick)
+EventEmitter.remove_listener(e, :tick, Counter.new("a"))
+p EventEmitter.event_names(e)
+
+# adding while emitting takes effect from the next emit
+r = EventEmitter.new
+EventEmitter.once(r, :data, Recruiter.new(r))
+EventEmitter.emit(r, :data, "a")
+EventEmitter.emit(r, :data, "b")
+
+# remove all; an unhandled :error raises
+EventEmitter.remove_all_listeners(e, :ready)
+p EventEmitter.event_names(e)
+EventEmitter.remove_all_listeners(e)
+p EventEmitter.event_names(e)
+p EventEmitter.emit(e, :data, 1)
+begin
+  EventEmitter.emit(e, :error, "disk full")
+rescue RuntimeError => err
+  puts Exception.message(err)
+end
+EventEmitter.on(e, :error, Printer.new("handled"))
+p EventEmitter.emit(e, :error, "disk full")

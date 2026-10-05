@@ -1,0 +1,103 @@
+# lru_cache: a least-recently-used cache after the lru_redux gem (LruRedux::Cache), plus
+# hit/miss/eviction counters. A Hash keeps the order: its first key is the least recently used one.
+#
+# LRUCache.new(max_size); c[k], c[k] = v (Indexable); LRUCache.getset(c, k) { compute };
+# LRUCache.fetch(c, k) { default } (KeyError without a block); LRUCache.set_max_size(c, n) for
+# Ruby's max_size=, which evicts.
+
+class LRUCache
+  attr_reader max_size
+  private attr_reader data = Hash[], hits = 0, misses = 0, evictions = 0
+  include Indexable
+
+  # `@max_size => Integer` alone leaves a wrong type in the field for the checker
+  # (notes/lru_cache_bug_initialize_assert_field.sake), so the checked local is written back.
+  def initialize(c)
+    n = @max_size
+    n => Integer
+    raise ArgumentError, "max_size must be positive" unless n > 0
+    @max_size = n
+  end
+
+  def set_max_size(c, n)
+    n => Integer
+    raise ArgumentError, "max_size must be positive" unless n > 0
+    @max_size = n
+    evict(c)
+    n
+  end
+
+  # A hit moves the key to the most recent end.
+  def touch(c, key)
+    @hits += 1
+    v = Hash.fetch(@data, key)
+    Hash.delete(@data, key)
+    @data[key] = v
+  end
+
+  def [](c, key)
+    if Hash.key?(@data, key)
+      touch(c, key)
+    else
+      @misses += 1
+      nil
+    end
+  end
+
+  def []=(c, key, value)
+    Hash.delete(@data, key)
+    @data[key] = value
+    evict(c)
+    value
+  end
+
+  # The cached value, or the block's value, stored.
+  def getset(c, key)
+    if Hash.key?(@data, key)
+      touch(c, key)
+    else
+      @misses += 1
+      c[key] = yield(key)
+    end
+  end
+
+  # The cached value, or the block's value (not stored); KeyError without a block.
+  def fetch(c, key)
+    if Hash.key?(@data, key)
+      touch(c, key)
+    else
+      @misses += 1
+      raise KeyError, "key not found: #{Kernel.inspect(key)}" unless block_given?
+      yield(key)
+    end
+  end
+
+  def key?(c, key) = Hash.key?(@data, key)
+  def delete(c, key) = Hash.delete(@data, key)
+  def count(c) = Hash.size(@data)
+  def empty?(c) = Hash.empty?(@data)
+
+  # [key, value] pairs, the most recently used first.
+  def to_a(c) = Array.reverse(Hash.to_a(@data))
+  def keys(c) = Array.map(to_a(c)) { |k, _| k }
+
+  def each(c)
+    Array.each(to_a(c)) { |k, v| yield(k, v) }
+    c
+  end
+
+  def clear(c)
+    Hash.clear(@data)
+    c
+  end
+
+  def stats(c) = Hash[hits: @hits, misses: @misses, evictions: @evictions, size: Hash.size(@data)]
+  def hit_rate(c) = @hits + @misses == 0 ? 0.0 : Integer.fdiv(@hits, @hits + @misses)
+
+  def evict(c)
+    while Hash.size(@data) > @max_size
+      Hash.shift(@data)
+      @evictions += 1
+    end
+  end
+end

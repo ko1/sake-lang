@@ -1,0 +1,115 @@
+require "xml"
+
+src = <<~XML
+  <?xml version="1.0" encoding="UTF-8"?>
+  <!-- top comment -->
+  <library name="City" open='yes'>
+    <book id="b1" lang="en">
+      <title>Ruby &amp; Sake</title>
+      <author>Matz</author>
+      <year>1995</year>
+    </book>
+    <book id="b2">
+      <title><![CDATA[<Types> & Operations]]></title>
+      <author>Ko1</author>
+      <tags><tag>lang</tag><tag>types</tag></tags>
+    </book>
+    <!-- a note -->
+    <magazine id="m1"><title>Weekly &#65;&#x42;</title></magazine>
+    <empty/>
+  </library>
+XML
+
+doc = REXMLDocument.new(src)
+p(REXMLDocument.version(doc))
+p(REXMLDocument.encoding(doc))
+root = REXMLDocument.root(doc)
+root => REXMLElement
+p(REXMLElement.name(root))
+p(root["name"])
+p(REXMLElement.attributes(root)["open"])
+Hash.each(REXMLElement.attributes(root)) { |k, v| puts("#{k}=#{v}") }
+p(REXMLElement.has_attributes?(root))
+p(REXMLElement.has_elements?(root))
+
+puts("== elements")
+es = REXMLElement.elements(root)
+p(REXMLElements.size(es))
+p(Array.map(REXMLElements.to_a(es)) { |e| REXMLElement.name(e) })
+first = es[1]
+first => REXMLElement
+p(first["id"])
+p(REXMLElement.text(first, "title"))
+p(REXMLElement.text(first))
+b2 = es["book[@id='b2']"]
+b2 => REXMLElement
+p(REXMLElement.text(b2, "title"))
+p(Array.map(REXMLElement.cdatas(REXMLElements.[](REXMLElement.elements(b2), "title") || REXMLElement.new("x"))) { |c| REXMLCData.value(c) })
+mt = es["magazine/title"]
+p(mt ? REXMLElement.text(mt) : nil)
+p(es[9])
+p(es["nothing"])
+REXMLElements.each(es, "book") { |b| puts("book #{b["id"]}: #{REXMLElement.text(b, "author")}") }
+REXMLElement.each_element(root) { |e| print(REXMLElement.name(e), " ") }
+puts
+p(Array.map(REXMLElement.comments(root)) { |c| REXMLComment.string(c) })
+p(Array.size(REXMLElement.texts(root)))
+p(REXMLElement.has_text?(REXMLElement.new("x")))
+p(REXMLElement.text(REXMLElements.[](es, "empty") || REXMLElement.new("x")))
+
+puts("== xpath")
+def names(es) = Array.map(es) { |e| "#{REXMLElement.name(e)}#{e["id"] ? "#" + (e["id"] || "") : ""}" }
+p(names(REXMLXPath.match(doc, "/library/book")))
+p(names(REXMLXPath.match(doc, "//title")))
+p(names(REXMLXPath.match(doc, "//tag")))
+p(names(REXMLXPath.match(doc, "/library/*")))
+p(names(REXMLXPath.match(doc, "//book[2]/author")))
+p(names(REXMLXPath.match(doc, "//book[last()]")))
+p(names(REXMLXPath.match(doc, "//*[@id]")))
+p(names(REXMLXPath.match(doc, "//book[@lang='en']")))
+p(names(REXMLXPath.match(doc, "//book[tags]")))
+p(names(REXMLXPath.match(doc, "//tags/tag[1]")))
+p(names(REXMLXPath.match(root, "book/title")))
+p(names(REXMLXPath.match(root, "/library/magazine")))
+p(names(REXMLXPath.match(root, ".")))
+p(names(REXMLXPath.match(first, "..")))
+p(names(REXMLXPath.match(doc, "/nothing")))
+t = REXMLXPath.first(doc, "//tag[2]")
+p(t ? REXMLElement.text(t) : nil)
+REXMLXPath.each(doc, "//author") { |a| p(REXMLElement.text(a)) }
+p(names(REXMLElement.get_elements(root, "book")))
+
+puts("== children")
+p(Array.size(REXMLElement.children(root)))
+p(Array.map(REXMLDocument.children(doc)) { |c| Kernel.to_s(c) })
+
+puts("== to_s")
+puts(Kernel.to_s(first))
+puts(REXMLDocument.to_s(REXMLDocument.new("<a x=\"1\"><b>t &lt; u</b><c/><!--c--><![CDATA[d]]></a>")))
+p(REXMLDocument.to_s(REXMLDocument.new("<a><b/></a>")))
+p(REXMLElement.text(REXMLDocument.root(REXMLDocument.new("<a>\n<b>x</b>\n</a>")) || REXMLElement.new("x")))
+p(REXMLDocument.root(REXMLDocument.new("")))
+p(REXMLElement.text(REXMLDocument.root(REXMLDocument.new("<a>&foo; &lt;</a>")) || REXMLElement.new("x")))
+
+puts("== building")
+e = REXMLElement.new("new")
+REXMLElement.add_attribute(e, "k", "a&b<c\"d'e")
+REXMLElement.add_text(e, "x < y > z & w")
+c = REXMLElement.add_element(e, "child", Hash["a" => "1"])
+REXMLElement.add_attribute(c, "b", "2")
+puts(Kernel.to_s(e))
+p(REXMLElement.text(e))
+p(REXMLElement.attributes(e)["k"])
+p(REXMLElement.name(REXMLElement.parent(c) || REXMLElement.new("none")))
+p(REXMLElement.name(REXMLElement.root(c)))
+p(REXMLElement.name(REXMLElement.root(REXMLXPath.first(doc, "//tag") || e)))
+
+puts("== errors")
+Array.each(Array["<a><b></a>", "<a>", "<a/><b/>", "<a x=1/>", "<a x=\"1\" x=\"2\"/>", "text", "<a></b>", "<a><!-- x</a>", "</a>"]) do |s|
+  begin
+    REXMLDocument.new(s)
+    puts("ok: #{s}")
+  rescue REXMLParseException
+    puts("ParseException: #{s}")
+  end
+end
