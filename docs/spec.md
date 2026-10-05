@@ -737,9 +737,11 @@ end
   `rescue => e` catches every rescuable exception; `e` is a union, so narrow it with
   `case e in A ...`.
 - **Reading the message.** `Exception.message(e)` reads the message of any exception value.
-- **Program errors.** `TypeError`, `SystemStackError`, and `LocalJumpError` cannot be
-  rescued, and naming them in `rescue` is a static error. They are what the checks before running
-  report ([§2.1](#21-strictness)).
+- **Program errors.** `SystemStackError`, `LocalJumpError`, and `NotImplementedError` cannot be
+  rescued, and naming them in `rescue` is a static error. `TypeError` (an operation given a value of
+  the wrong type) and `NoMatchingPatternError` can be rescued, as in Ruby: the checks before running
+  stop the type mistakes they report (§2.1), and a run-time check that fails, for instance in a
+  program run with `--strict=0`, raises an exception like any other.
 - **Other forms.** `def f ... rescue ... end`, `expr rescue fallback`, and `retry` work as in Ruby.
   `ensure` runs once, when the begin block is left.
 - **Exception flow.** The type inference tracks which explicitly raised types may leave each

@@ -384,6 +384,11 @@ module Sake
 
     def type_names(atoms) = atoms.map { atom_type_name(_1) }.uniq
 
+    # The element type names of each Array holding two or more non-nil types (rows of mixed values).
+    def mixed_arrays
+      @mixed_arrays ||= @sites.values.filter_map { |s| (n = type_names(s.elem) - %w[Nil]).size >= 2 ? n : nil }
+    end
+
     # The type names each field holds (and the elements of the containers in it), for fields holding two
     # or more: where values of different types meet (instances of one type used for different values).
     def mixing_fields

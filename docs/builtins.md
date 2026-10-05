@@ -770,4 +770,4 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Exception types
 
-Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError` has `T.new(message)`, `T.get_message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception; `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError` can only be named in `rescue`.
+Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError`, `TypeError` has `T.new(message)`, `T.get_message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception; `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError` can only be named in `rescue`.

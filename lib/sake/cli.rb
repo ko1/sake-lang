@@ -163,6 +163,12 @@ module Sake
             if %w[type mixed].include?(item) && c.node && reads_field?(program, c.node)
               hints += typer.field_sources(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing)
             end
+            # Rows such as Array["Tokyo", 13_960_000, 2194.07]: each position has a type that the Array loses.
+            fails = typer.type_names(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing) - ["Nil"]
+            if %w[type mixed].include?(item) && c.node && !fails.empty? && field_reading_region(program, c.node).match?(/\w\[[^\]]+\]/) &&
+               typer.mixed_arrays.any? { |names| (fails - names).empty? && !(names - fails).empty? }
+              hints << "an Array here holds several types, one per position; to keep each position's type, make it a Tuple `[a, b]` (or a Record `{name: a}`)"
+            end
             [msg, hints]
           when "rescue"
             ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]
