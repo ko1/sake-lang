@@ -519,6 +519,11 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
 - **`new`.** `C.new` takes every field positionally, whatever its access.
+- **`initialize`.** `def initialize(c)` in a class runs after `C.new` has stored the fields, with the
+  new instance: the place for checks (`@port => Integer`) and conversions (`@celsius = Float(@celsius)`),
+  as in Ruby. It takes exactly that one parameter, and calling `C.initialize` directly is an error.
+  The checker analyzes it for each `C.new` call, where `@x` reads the value that call gave, so a
+  wrong argument is reported for that call; the fields hold what initialize leaves in them.
 - **`class B < A`.** Shorthand for writing A's definitions in B: A's fields come first (then B's),
   A's functions are B's too (with unqualified names and `@x` inside them meaning B's), and A's
   `include`s are B's. B's own definition of a function wins over A's. Nothing relates A and B

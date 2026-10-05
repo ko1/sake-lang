@@ -166,8 +166,16 @@ module Sake
       when FieldGet, FieldSet
         nodes = n.is_a?(FieldSet) ? [n.subject, n.value] : [n.subject]
         args = nodes.map { ev(_1, env) }
-        # Written as `T.get_x(s)`, it is a call like any other; `@x` reads the function's subject.
-        n.origin.is_a?(Prism::CallNode) ? builtin_call(n, n.fn, nodes, args, nil, env) : call_builtin(n.fn, args, nil, n.origin)
+        # Inside initialize run for a construction: the instance's fields are the values that `new` gave.
+        given = init_given(env, n)
+        given[n.field] = args[1] if given && n.is_a?(FieldSet)
+        if given && n.is_a?(FieldGet) && given.key?(n.field)
+          record(n.origin, n.fn.full_name, 1, n.fn.param_type(0), args[0]) # the getter's subject check, as call_builtin does
+          given[n.field]
+        else
+          # Written as `T.get_x(s)`, it is a call like any other; `@x` reads the function's subject.
+          n.origin.is_a?(Prism::CallNode) ? builtin_call(n, n.fn, nodes, args, nil, env) : call_builtin(n.fn, args, nil, n.origin)
+        end
       when Raise, ReRaise then typer_raise(n, env)
       when Unresolved then unknown("unresolved")
       else unknown("node #{n.class}")
@@ -728,6 +736,11 @@ module Sake
       r2 = ev(n.rescue_, rescued)
       join_into(env, done, rescued)
       u(r, r2)
+    end
+
+    def init_given(env, n)
+      init, given = @init_given&.last
+      init && env.frame&.fn.equal?(init) && n.subject.is_a?(LVarGet) && n.subject.slot.zero? ? given : nil
     end
 
     # A path after return/next/break, in this block or around it.

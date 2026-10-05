@@ -464,6 +464,12 @@ module Sake
     # --- check bodies ---
 
     def check_all
+      # initialize(c) runs after T.new has stored the fields: checks and conversions on every construction.
+      @struct_types.each_key do |type|
+        fn = @functions.dig(type, "initialize") or next
+        error(fn.node, "#{type}.initialize takes exactly one parameter, the new instance (T.new stores the fields first)") if fn.params.size != 1
+        error(fn.node, "#{type}.initialize cannot take a block") if fn.yields
+      end
       # to_s / inspect defined for a type are used by interpolation, puts, p, join, and format.
       @struct_types.each_key do |type|
         %w[to_s inspect].each do |name|
@@ -1147,6 +1153,9 @@ module Sake
     def resolve_qualified(node, ns, name = node.name.to_s, argc: nil)
       if (ns == "Struct" && name == "new") || (ns == "Data" && name == "define")
         return error(node, "Struct.new must be assigned to a top-level constant: `Point = Struct.new(:x, :y)`")
+      end
+      if name == "initialize" && @struct_types.key?(ns)
+        return error(node, "#{ns}.initialize is called by #{ns}.new; call #{ns}.new instead")
       end
       if name == "call" && node.respond_to?(:message_loc) && node.message_loc.nil? # `T.(...)`, not a function named call
         return error(node, "type scope `#{ns}.(...)` is not supported yet")

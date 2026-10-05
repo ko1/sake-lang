@@ -586,6 +586,39 @@ Use `attr_reader` for every field that is not changed from outside, which is mos
 write to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)`
 is shorthand for a `class C` with `attr_accessor x, y`.
 
+`def initialize(c)` runs after `C.new` has stored the fields, as in Ruby: the place to check
+(`@port => Integer`) or convert (`@celsius = Float(@celsius)`). The checker runs it for each `new`
+call with that call's values:
+
+```ruby
+# initialize(c) runs after T.new has stored the fields: checks and conversions on every construction.
+class Config
+  attr_reader host, port = 80
+  def initialize(c)
+    @port => Integer
+    @host = String.downcase(@host)
+  end
+  def next_port(c) = @port + 1
+end
+p(Config.new("EXAMPLE.com"))
+p(Config.next_port(Config.new("h", 8080)))
+
+class Temp
+  attr_reader celsius
+  def initialize(t) = @celsius = Float(@celsius)    # a conversion: the field is always a Float
+end
+p(Temp.new(20))
+p(Temp.new("21.5"))
+Config.new("h", "eighty")      # reported for this call
+```
+
+```
+$ sake initialize.sake
+initialize.sake:5:5: error: `=> Integer`: the value is String, which does not match [type]
+  hint: reached by the call at line 19
+(exit status 2)
+```
+
 `class B < A` is shorthand for writing A's definitions in B: A's fields first, A's functions as B's
 (where unqualified names and `@x` mean B's), B's own definitions winning. It is not inheritance:
 afterwards a B is not an A.

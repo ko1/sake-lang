@@ -191,6 +191,12 @@ Use `attr_reader` for every field that is not changed from outside, which is mos
 write to a field is then in its own class, where the checker finds its type. `C = Struct.new(:x, :y)`
 is shorthand for a `class C` with `attr_accessor x, y`.
 
+`def initialize(c)` runs after `C.new` has stored the fields, as in Ruby: the place to check
+(`@port => Integer`) or convert (`@celsius = Float(@celsius)`). The checker runs it for each `new`
+call with that call's values:
+
+@@example initialize
+
 `class B < A` is shorthand for writing A's definitions in B: A's fields first, A's functions as B's
 (where unqualified names and `@x` mean B's), B's own definitions winning. It is not inheritance:
 afterwards a B is not an A.

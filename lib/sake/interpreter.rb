@@ -430,7 +430,11 @@ module Sake
       end
       return once_value(blk, node) if fn.full_name == "Kernel.once"
       ruby_blk = blk && (fn.full_name == "Thread.new" ? thread_body(blk, node) : ->(*xs) { call_block(blk, xs, node) })
-      fn.impl.call(*args, &ruby_blk)
+      v = fn.impl.call(*args, &ruby_blk)
+      if fn.name == "new" && v.is_a?(StructValue) && (init = @program.functions.dig(fn.namespace, "initialize"))
+        call_user(init, [v], nil, node) # after the fields are stored, as Ruby's initialize
+      end
+      v
     rescue Fail => e
       raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
     rescue ::EncodingError => e

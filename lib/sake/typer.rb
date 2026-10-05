@@ -678,13 +678,48 @@ module Sake
       hash_kv(ty).each { compared_groups(_1, out, seen) }
     end
 
+    # T.initialize(c) after T.new: analyzed for each construction, where `@x` reads the value this `new`
+    # gave (the instance is the one just made), so a wrong argument is reported for this call.
+    # Returns the fields' types after initialize (field => type), or nil when it cannot finish normally.
+    def run_initialize(dt, given, node)
+      init = @program.functions.dig(dt.name, "initialize") or return given
+      @init_depth ||= Hash.new(0)
+      return given if @init_depth[init] >= 2 # an initialize that constructs its own type
+      @init_depth[init] += 1
+      @instantiated[init] = true
+      overlay = init_overlay?(init) ? given.dup : nil
+      (@init_given ||= []).push(overlay && [init, overlay])
+      @callers.push(call_site(node))
+      begin
+        run_body(init, [t(dt.name)], nil).empty? ? nil : (overlay || given)
+      ensure
+        @callers.pop
+        @init_given.pop
+        @init_depth[init] -= 1
+      end
+    end
+
+    # The construction's values stand for `@x` only if the instance parameter is never reassigned.
+    def init_overlay?(init)
+      (@init_overlay_ok ||= {}.compare_by_identity).fetch(init) do
+        @init_overlay_ok[init] = !assigns_slot?(@ast.functions.fetch(init).body, 0)
+      end
+    end
+
+    def assigns_slot?(n, slot)
+      return false unless n.is_a?(Struct) && n.class.respond_to?(:fields)
+      return true if n.is_a?(AST::LVarSet) && n.slot == slot
+      n.class.fields.any? { |f| (v = n[f]).is_a?(Array) ? v.flatten.any? { assigns_slot?(_1, slot) } : assigns_slot?(v, slot) }
+    end
+
     def data_op(dt, name, args, node)
       case name
       when "new"
-        dt.fields.each_with_index do |f, i|
-          ty = args[i] || (dt.default_types.key?(f) ? t(dt.default_types[f]) : t("Nil"))
-          field_write(dt.name, f, ty, node)
-        end
+        given = dt.fields.each_with_index.to_h { |f, i| [f, args[i] || (dt.default_types.key?(f) ? t(dt.default_types[f]) : t("Nil"))] }
+        # A construction whose initialize cannot finish (`@port => Integer` on a String) stores nothing;
+        # otherwise the fields hold what initialize leaves in them.
+        stored = run_initialize(dt, given, node) or return []
+        stored.each { |f, ty| field_write(dt.name, f, ty, node) }
         t(dt.name)
       when /\Aget_(.+)\z/ then @fields[dt.name][$1] || []
       when /\Aset_(.+)\z/
