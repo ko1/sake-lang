@@ -49,9 +49,9 @@ end
 def yen(n) = "¥" + String.reverse(Array.join(String.scan(String.reverse(Integer.to_s(n)), /\d{1,3}/), ","))
 
 def fulfillment(order, shipped_qty)
-  lines = Order.get_lines(order)
-  wanted = Array.sum(lines) { OrderLine.get_qty(it) }
-  sent = Array.sum(lines) { |l| shipped_qty[[Order.get_id(order), OrderLine.get_sku(l)]] }
+  lines = Order.lines(order)
+  wanted = Array.sum(lines) { OrderLine.qty(it) }
+  sent = Array.sum(lines) { |l| shipped_qty[[Order.id(order), OrderLine.sku(l)]] }
   if sent == 0 then :pending
   elsif sent < wanted then :partial
   else :complete
@@ -59,64 +59,64 @@ def fulfillment(order, shipped_qty)
 end
 
 catalog = Hash[]
-Array.each(products) { |p| catalog[Product.get_sku(p)] = p }
+Array.each(products) { |p| catalog[Product.sku(p)] = p }
 all_orders = orders
-order_ids = Array.to_set(Array.map(all_orders) { Order.get_id(it) })
+order_ids = Array.to_set(Array.map(all_orders) { Order.id(it) })
 
 shipped_qty = Hash.new(0)
 last_ship = Hash[]
 stray = Shipment[]
 all_shipments = shipments
 Array.each(all_shipments) do |s|
-  unless Set.include?(order_ids, Shipment.get_order_id(s))
+  unless Set.include?(order_ids, Shipment.order_id(s))
     Array.push(stray, s)
     next
   end
-  key = [Shipment.get_order_id(s), Shipment.get_sku(s)]
-  shipped_qty[key] += Shipment.get_qty(s)
-  prev = last_ship[Shipment.get_order_id(s)]
-  last_ship[Shipment.get_order_id(s)] = Shipment.get_shipped(s) if prev == nil || Shipment.get_shipped(s) > prev
+  key = [Shipment.order_id(s), Shipment.sku(s)]
+  shipped_qty[key] += Shipment.qty(s)
+  prev = last_ship[Shipment.order_id(s)]
+  last_ship[Shipment.order_id(s)] = Shipment.shipped(s) if prev == nil || Shipment.shipped(s) > prev
 end
 
 puts("Orders")
 revenue_by_cat = Hash.new(0)
 problems = Array[]
 Array.each(all_orders) do |o|
-  id = Order.get_id(o)
+  id = Order.id(o)
   total = 0
   weight = 0
-  Array.each(Order.get_lines(o)) do |l|
+  Array.each(Order.lines(o)) do |l|
     begin
-      p = Hash.fetch(catalog, OrderLine.get_sku(l))
+      p = Hash.fetch(catalog, OrderLine.sku(l))
     rescue KeyError
-      Array.push(problems, "order #{id}: unknown sku #{OrderLine.get_sku(l)}")
+      Array.push(problems, "order #{id}: unknown sku #{OrderLine.sku(l)}")
       next
     end
-    amount = Product.get_price(p) * OrderLine.get_qty(l)
+    amount = Product.price(p) * OrderLine.qty(l)
     total += amount
-    weight += Product.get_weight_g(p) * OrderLine.get_qty(l)
-    revenue_by_cat[Product.get_category(p)] += amount
+    weight += Product.weight_g(p) * OrderLine.qty(l)
+    revenue_by_cat[Product.category(p)] += amount
   end
   status = fulfillment(o, shipped_qty)
   done = last_ship[id]
   timing = case status
-           in :complete then done && done > Order.get_promised(o) ? "late by #{done - Order.get_promised(o)}d" : "on time"
+           in :complete then done && done > Order.promised(o) ? "late by #{done - Order.promised(o)}d" : "on time"
            in :partial then "waiting"
            in :pending then "not shipped"
            end
-  puts(format("  #%d %-5s %10s %5.2fkg  %-8s %s", id, Order.get_customer(o), yen(total), weight / 1000.0, Symbol.to_s(status), timing))
+  puts(format("  #%d %-5s %10s %5.2fkg  %-8s %s", id, Order.customer(o), yen(total), weight / 1000.0, Symbol.to_s(status), timing))
 end
 
 puts
 puts("Open lines")
 Array.each(all_orders) do |o|
-  Array.each(Order.get_lines(o)) do |l|
-    sent = shipped_qty[[Order.get_id(o), OrderLine.get_sku(l)]]
-    missing = OrderLine.get_qty(l) - sent
+  Array.each(Order.lines(o)) do |l|
+    sent = shipped_qty[[Order.id(o), OrderLine.sku(l)]]
+    missing = OrderLine.qty(l) - sent
     next if missing <= 0
-    p = catalog[OrderLine.get_sku(l)]
-    name = p ? Product.get_name(p) : "?"
-    puts(format("  #%d %-7s %-15s %d of %d outstanding", Order.get_id(o), OrderLine.get_sku(l), name, missing, OrderLine.get_qty(l)))
+    p = catalog[OrderLine.sku(l)]
+    name = p ? Product.name(p) : "?"
+    puts(format("  #%d %-7s %-15s %d of %d outstanding", Order.id(o), OrderLine.sku(l), name, missing, OrderLine.qty(l)))
   end
 end
 
@@ -129,11 +129,11 @@ end
 
 puts
 puts("Carriers")
-by_carrier = Array.group_by(Array.reject(all_shipments) { Array.include?(stray, it) }) { Shipment.get_carrier(it) }
+by_carrier = Array.group_by(Array.reject(all_shipments) { Array.include?(stray, it) }) { Shipment.carrier(it) }
 Hash.each(by_carrier) do |carrier, list|
   days = Array.map(list) do |s|
-    o = Array.find(all_orders) { Order.get_id(it) == Shipment.get_order_id(s) }
-    o ? Shipment.get_shipped(s) - Order.get_placed(o) : 0
+    o = Array.find(all_orders) { Order.id(it) == Shipment.order_id(s) }
+    o ? Shipment.shipped(s) - Order.placed(o) : 0
   end
   puts(format("  %-8s %d parcels, avg %.1f days after order", carrier, Array.size(list), Array.sum(days) * 1.0 / Array.size(days)))
 end
@@ -141,6 +141,6 @@ end
 puts
 puts("Problems")
 Array.each(problems) { puts("  #{it}") }
-Array.each(stray) { |s| puts("  shipment for unknown order #{Shipment.get_order_id(s)} (#{Shipment.get_sku(s)})") }
-never = Array.reject(products) { |p| Array.any?(all_orders) { |o| Array.any?(Order.get_lines(o)) { |l| OrderLine.get_sku(l) == Product.get_sku(p) } } }
-Array.each(never) { |p| puts("  #{Product.get_sku(p)} was never ordered") }
+Array.each(stray) { |s| puts("  shipment for unknown order #{Shipment.order_id(s)} (#{Shipment.sku(s)})") }
+never = Array.reject(products) { |p| Array.any?(all_orders) { |o| Array.any?(Order.lines(o)) { |l| OrderLine.sku(l) == Product.sku(p) } } }
+Array.each(never) { |p| puts("  #{Product.sku(p)} was never ordered") }

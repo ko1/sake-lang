@@ -11,9 +11,9 @@ class Score
   include Comparable
 
   def <=>(a, b)
-    c = Score.get_rating(b) <=> @rating
-    c = Score.get_votes(b) <=> @votes if c == 0
-    c = @title <=> Score.get_title(b) if c == 0
+    c = Score.rating(b) <=> @rating
+    c = Score.votes(b) <=> @votes if c == 0
+    c = @title <=> Score.title(b) if c == 0
     c
   end
 end
@@ -40,10 +40,10 @@ end
 def bayesian(sum, n, prior_mean, prior_weight) = (sum + prior_mean * prior_weight) / (n + prior_weight)
 
 products = catalog
-by_sku = Array.to_h(Array.map(products) { |p| [Product.get_sku(p), p] })
+by_sku = Array.to_h(Array.map(products) { |p| [Product.sku(p), p] })
 all_reviews = reviews
-global_mean = Array.sum(all_reviews) { Review.get_stars(it) } * 1.0 / Array.size(all_reviews)
-grouped = Array.group_by(all_reviews) { Review.get_sku(it) }
+global_mean = Array.sum(all_reviews) { Review.stars(it) } * 1.0 / Array.size(all_reviews)
+grouped = Array.group_by(all_reviews) { Review.sku(it) }
 
 orphans = Array.reject(Hash.keys(grouped)) { Hash.key?(by_sku, it) }
 puts(format("%d reviews, global mean %.2f", Array.size(all_reviews), global_mean))
@@ -51,16 +51,16 @@ puts("reviews for unknown products: #{Array.join(orphans, ", ")}") unless Array.
 puts
 
 scored = Array.map(products) do |p|
-  rs = grouped[Product.get_sku(p)] || Array[]
-  total = Array.sum(rs) { Review.get_stars(it) }
+  rs = grouped[Product.sku(p)] || Array[]
+  total = Array.sum(rs) { Review.stars(it) }
   rating = bayesian(total, Array.size(rs), global_mean, 3)
-  [p, Score.new(Float.round(rating, 3), Array.size(rs), Product.get_title(p))]
+  [p, Score.new(Float.round(rating, 3), Array.size(rs), Product.title(p))]
 end
 
-by_cat = Array.group_by(scored) { |p, s| Product.get_category(p) }
+by_cat = Array.group_by(scored) { |p, s| Product.category(p) }
 Array.each(Array.sort_by(Hash.keys(by_cat)) { Symbol.to_s(it) }) do |cat|
   entries = Hash.fetch(by_cat, cat)
-  rated = Array.select(entries) { |p, s| Score.get_votes(s) > 0 }
+  rated = Array.select(entries) { |p, s| Score.votes(s) > 0 }
   puts("#{Symbol.upcase(cat)} (#{Array.size(entries)} products, #{Array.size(rated)} rated)")
   if Array.size(rated) < 2
     puts("  not enough data")
@@ -68,15 +68,15 @@ Array.each(Array.sort_by(Hash.keys(by_cat)) { Symbol.to_s(it) }) do |cat|
   end
   top = Array.take(Array.sort_by(rated) { |p, s| s }, 3)
   Array.each_with_index(top) do |(p, s), i|
-    puts(format("  %d. %-15s %.2f  (%d votes)", i + 1, Product.get_title(p), Score.get_rating(s), Score.get_votes(s)))
+    puts(format("  %d. %-15s %.2f  (%d votes)", i + 1, Product.title(p), Score.rating(s), Score.votes(s)))
   end
 end
 
 puts
-unrated = Array.select(scored) { |p, s| Score.get_votes(s) == 0 }
-puts("No reviews yet: #{Array.join(Array.map(unrated) { |p, s| Product.get_title(p) }, ", ")}")
+unrated = Array.select(scored) { |p, s| Score.votes(s) == 0 }
+puts("No reviews yet: #{Array.join(Array.map(unrated) { |p, s| Product.title(p) }, ", ")}")
 best_pair = Array.min_by(scored) { |p, s| s }
 if best_pair
   bp, bs = best_pair
-  puts(format("Best overall: %s (%.2f)", Product.get_title(bp), Score.get_rating(bs)))
+  puts(format("Best overall: %s (%.2f)", Product.title(bp), Score.rating(bs)))
 end

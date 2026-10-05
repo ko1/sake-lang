@@ -108,18 +108,18 @@ class ERB
   def _add(stack, n)
     f = Array.last(stack)
     raise ERBError, "template stack is empty" unless f
-    nd = ERBFrame.get_node(f)
-    if ERBFrame.get_in_alt(f)
-      Array.push(ERBNode.get_alt(nd), n)
+    nd = ERBFrame.node(f)
+    if ERBFrame.in_alt(f)
+      Array.push(ERBNode.alt(nd), n)
     else
-      Array.push(ERBNode.get_body(nd), n)
+      Array.push(ERBNode.body(nd), n)
     end
   end
 
   def _top_kind(stack)
     f = Array.last(stack)
     return nil unless f
-    ERBNode.get_kind(ERBFrame.get_node(f))
+    ERBNode.kind(ERBFrame.node(f))
   end
 
   def _compile(erb)
@@ -140,7 +140,7 @@ class ERB
           f = Array.last(stack)
           next unless f
           n = ERBNode.new(:if, "#{m_if[2]}")
-          Array.push(ERBNode.get_alt(ERBFrame.get_node(f)), n)
+          Array.push(ERBNode.alt(ERBFrame.node(f)), n)
           ERBFrame.set_in_alt(f, true)
           Array.push(stack, ERBFrame.new(n, true))
         elsif m_if
@@ -150,7 +150,7 @@ class ERB
         elsif m_each
           n = ERBNode.new(m_each[2] == "each" ? :each : :each_with_index, "#{m_each[1]}")
           params = m_each[3] || m_each[4] || ""
-          Array.each(String.split(params, ",")) { |v| Array.push(ERBNode.get_vars(n), String.strip(v)) }
+          Array.each(String.split(params, ",")) { |v| Array.push(ERBNode.vars(n), String.strip(v)) }
           _add(stack, n)
           Array.push(stack, ERBFrame.new(n))
         elsif stmt == "else"
@@ -161,7 +161,7 @@ class ERB
         elsif stmt == "end" || stmt == "}"
           raise ERBError, "unexpected end" if Array.size(stack) <= 1
           f = Array.pop(stack)
-          while f && ERBFrame.get_chained(f)
+          while f && ERBFrame.chained(f)
             f = Array.pop(stack)
           end
         else
@@ -359,21 +359,21 @@ class ERB
 
   def _render(nodes, env, out)
     Array.each(nodes) do |n|
-      text = ERBNode.get_text(n)
-      case ERBNode.get_kind(n)
+      text = ERBNode.text(n)
+      case ERBNode.kind(n)
       in :text then Array.push(out, text)
       in :out then Array.push(out, "#{_eval(text, env)}")
       in :if
         if _eval(text, env)
-          _render(ERBNode.get_body(n), env, out)
+          _render(ERBNode.body(n), env, out)
         else
-          _render(ERBNode.get_alt(n), env, out)
+          _render(ERBNode.alt(n), env, out)
         end
       in :unless
         if _eval(text, env)
-          _render(ERBNode.get_alt(n), env, out)
+          _render(ERBNode.alt(n), env, out)
         else
-          _render(ERBNode.get_body(n), env, out)
+          _render(ERBNode.body(n), env, out)
         end
       in :each | :each_with_index
         coll = _eval(text, env)
@@ -382,17 +382,17 @@ class ERB
                 in Hash then Hash.to_a(coll)
                 else raise ERBError, "undefined method 'each' for #{Kernel.inspect(coll)}"
                 end
-        vars = ERBNode.get_vars(n)
+        vars = ERBNode.vars(n)
         Array.each_with_index(items) do |item, i|
           inner = Hash.merge(env, Hash[])
-          if ERBNode.get_kind(n) == :each
+          if ERBNode.kind(n) == :each
             _bind(inner, vars, item)
           else
             _bind(inner, Array.take(vars, 1), item)
             v2 = vars[1]
             inner[String.to_sym(v2)] = i if v2
           end
-          _render(ERBNode.get_body(n), inner, out)
+          _render(ERBNode.body(n), inner, out)
         end
       else raise ERBError, "unknown template node"
       end
@@ -403,7 +403,7 @@ class ERB
   # Ruby's ERB#result_with_hash: the Hash's keys (Symbols) are the names the template reads.
   def result_with_hash(erb, vars)
     root = _compile(erb)
-    Array.join(_render(ERBNode.get_body(root), Hash.merge(vars, Hash[]), String[]))
+    Array.join(_render(ERBNode.body(root), Hash.merge(vars, Hash[]), String[]))
   end
 
   # Checks the template without rendering it (Ruby compiles in ERB.new).

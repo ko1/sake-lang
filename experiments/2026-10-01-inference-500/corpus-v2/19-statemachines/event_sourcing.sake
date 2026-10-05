@@ -6,7 +6,7 @@ Closed = Struct.new(:seq, :account)
 Account = Struct.new(:id, :owner, :balance, :status)
 Rejected = Exception.new(:seq)
 
-def event_seq(ev) = (Opened|Deposited|Withdrawn|Transferred|Closed).get_seq(ev)
+def event_seq(ev) = (Opened|Deposited|Withdrawn|Transferred|Closed).seq(ev)
 
 class Account
   def to_s(a) = format("%-3s %-5s %7d %s", @id, @owner, @balance, @status)
@@ -16,7 +16,7 @@ end
 def open_account(state, id, seq)
   acct = state[id]
   raise Rejected.new("unknown account #{id}", seq) if acct == nil
-  raise Rejected.new("account #{id} is closed", seq) if Account.get_status(acct) == :closed
+  raise Rejected.new("account #{id} is closed", seq) if Account.status(acct) == :closed
   acct
 end
 
@@ -24,27 +24,27 @@ def apply(state, ev)
   seq = event_seq(ev)
   case ev
   in Opened
-    id = Opened.get_account(ev)
+    id = Opened.account(ev)
     raise Rejected.new("duplicate account #{id}", seq) if Hash.key?(state, id)
-    state[id] = Account.new(id, Opened.get_owner(ev), 0, :open)
+    state[id] = Account.new(id, Opened.owner(ev), 0, :open)
   in Deposited
-    acct = open_account(state, Deposited.get_account(ev), seq)
-    Account.set_balance(acct, Account.get_balance(acct) + Deposited.get_amount(ev))
+    acct = open_account(state, Deposited.account(ev), seq)
+    Account.set_balance(acct, Account.balance(acct) + Deposited.amount(ev))
   in Withdrawn
-    acct = open_account(state, Withdrawn.get_account(ev), seq)
-    amount = Withdrawn.get_amount(ev)
-    raise Rejected.new("insufficient funds in #{Account.get_id(acct)}", seq) if Account.get_balance(acct) < amount
-    Account.set_balance(acct, Account.get_balance(acct) - amount)
+    acct = open_account(state, Withdrawn.account(ev), seq)
+    amount = Withdrawn.amount(ev)
+    raise Rejected.new("insufficient funds in #{Account.id(acct)}", seq) if Account.balance(acct) < amount
+    Account.set_balance(acct, Account.balance(acct) - amount)
   in Transferred
-    src = open_account(state, Transferred.get_from(ev), seq)
-    dst = open_account(state, Transferred.get_to(ev), seq)
-    amount = Transferred.get_amount(ev)
-    raise Rejected.new("insufficient funds in #{Account.get_id(src)}", seq) if Account.get_balance(src) < amount
-    Account.set_balance(src, Account.get_balance(src) - amount)
-    Account.set_balance(dst, Account.get_balance(dst) + amount)
+    src = open_account(state, Transferred.from(ev), seq)
+    dst = open_account(state, Transferred.to(ev), seq)
+    amount = Transferred.amount(ev)
+    raise Rejected.new("insufficient funds in #{Account.id(src)}", seq) if Account.balance(src) < amount
+    Account.set_balance(src, Account.balance(src) - amount)
+    Account.set_balance(dst, Account.balance(dst) + amount)
   in Closed
-    acct = open_account(state, Closed.get_account(ev), seq)
-    raise Rejected.new("balance not zero in #{Account.get_id(acct)}", seq) if Account.get_balance(acct) != 0
+    acct = open_account(state, Closed.account(ev), seq)
+    raise Rejected.new("balance not zero in #{Account.id(acct)}", seq) if Account.balance(acct) != 0
     Account.set_status(acct, :closed)
   end
 end
@@ -62,7 +62,7 @@ def replay(events, start_state, after_seq, rejected)
     begin
       apply(state, ev)
     rescue Rejected => e
-      Array.push(rejected, "##{Rejected.get_seq(e)} #{Exception.message(e)}") if rejected
+      Array.push(rejected, "##{Rejected.seq(e)} #{Exception.message(e)}") if rejected
     end
   end
   state
@@ -96,6 +96,6 @@ Array.each(log) do |ev|
 end
 Hash.each(snapshots) do |at, snap|
   rebuilt = replay(log, snap, at, nil)
-  total = Hash.sum(rebuilt) { |id, acct| Account.get_balance(acct) }
+  total = Hash.sum(rebuilt) { |id, acct| Account.balance(acct) }
   puts(format("from snapshot @%-2d (%d accounts): total=%d consistent=%s", at, Hash.size(snap), total, same_state?(rebuilt, full)))
 end

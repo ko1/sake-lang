@@ -538,3 +538,4 @@ AI 向けの話と最適化の話は、同じ結論に収束する: **操作に�
   - B2：既定値は任意の式で、`new` が省略されたフィールドごとに評価する（`items = Array[]` は new ごとに新しい Array）。リテラルに限っていたのは値の共有を避けるためだった。
   - B3：`private attr_*` は外から get_/set_ が無いだけで、`new` の引数には入る（初期値を渡したいことのほうが多い）。
   - B5：ブロック無しの `each_cons` / `each_slice` / `each_with_index`（Array を返す）、`first(a, n)` / `last(a, n)`、`fetch(a, i, default)`、`Hash.dup`、`loop`、`Math::PI` などの定数（ARGV と同じく操作として読む。他の入れ子の名前は不可）。自前の型の `dup` は同名の関数と衝突するので見送り。
+- **フィールドの読み取りはフィールド名そのもの（`Node.left(n)` / `n.Node.left`）、書き込みは `n.Node.left = v` と `+=`・`||=`・`&&=` も**（2026-10-05、ko1「B1 いいよ」）。見直しで型名付きの呼び出しの 22% が `T.get_x(v)` で、Ruby との見た目の最大の差だった。`get_` を外し、書き込みは `T.set_x(v, w)` を残しつつ連鎖の形を足した（`x.T.f = v` は Ruby の構文としても正しい）。同名の関数を定義すると読み取りを置き換える（Ruby で attr_reader の後にメソッドを定義したのと同じ。`@x` は常にフィールド）。`T.get_x` は移行のエラーで新しい名前を案内する。全 .sake を `tools/convert_get_readers.rb` で変換。意味の違う同名の関数があった 2 か所（sakelib の `Matrix.rows` / `Vector.elements` は Ruby のクラスメソッド）はフィールド名を変え、`Date.jd` は自分の中の読み取りを `@jd` にした。

@@ -31,7 +31,7 @@ only the structure: result types, labels, `Tms` arithmetic and `format` on fixed
 | `x.report(label = "") { }`, `x.item` | `BenchmarkReport.report(x, label = "") { }`, `item` | same (the `*format` rest is missing) |
 | `Benchmark::CAPTION`, `Benchmark::FORMAT` | `Benchmark.CAPTION`, `Benchmark.FORMAT` | differs: functions, not constants |
 | `Benchmark::Tms.new(u, s, cu, cs, real, label)` | `BenchmarkTms.new(...)` | same (all fields have defaults) |
-| `tms.utime`, `stime`, `cutime`, `cstime`, `real`, `label`, `total` | `BenchmarkTms.get_utime(t)`, ..., `BenchmarkTms.total(t)` | same |
+| `tms.utime`, `stime`, `cutime`, `cstime`, `real`, `label`, `total` | `BenchmarkTms.utime(t)`, ..., `BenchmarkTms.total(t)` | same |
 | `tms + tms`, `-`, `*`, `/` (with a Tms or a number) | the same operators | same |
 | `tms.format(fmt = nil)` (`%u %y %U %Y %t %r %n` with flags) | `BenchmarkTms.format(t, fmt = nil)` | same: Ruby's seven `gsub` steps, then `str % args` when a format is given (`%%`, `ArgumentError` on a stray `%`); no `*args` |
 | `tms.format`, `to_s` | `BenchmarkTms.format(t)`, `BenchmarkTms.to_s(t)`, `puts(t)` | same |

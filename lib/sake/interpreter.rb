@@ -320,7 +320,7 @@ module Sake
       v = ev(n.value, f)
       pat = n.origin.pattern
       unless v.is_a?(RecordValue)
-        hints = v.is_a?(StructValue) ? ["for a Struct, read a field with `#{v.type.name}.get_#{n.keys.first}(value)`"] : []
+        hints = v.is_a?(StructValue) ? ["for a Struct, read a field with `#{v.type.name}.#{n.keys.first}(value)`"] : []
         fail_at(n, "TypeError", "pattern `#{pat.slice}` needs a Record, got #{Values.describe(v)}", hints:)
       end
       n.keys.each_with_index do |field, i|

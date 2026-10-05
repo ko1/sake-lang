@@ -14,11 +14,11 @@ class Dir
   end
 
   def mkdir_p(root, parts)
-    Array.reduce(parts, root) { |d, name| Dir.get_subdirs(d)[name] ||= Dir.new(name, d) }
+    Array.reduce(parts, root) { |d, name| Dir.subdirs(d)[name] ||= Dir.new(name, d) }
   end
 
   def total(d)
-    own = Array.sum(Array.map(@files) { |f| FileEntry.get_size(f) })
+    own = Array.sum(Array.map(@files) { |f| FileEntry.size(f) })
     Array.reduce(Hash.values(@subdirs), own) { |acc, s| acc + total(s) }
   end
 
@@ -47,10 +47,10 @@ def resolve(root, cwd, path)
   Array.each(String.split(path, "/")) do |part|
     next if part == "" || part == "."
     if part == ".."
-      up = Dir.get_parent(d)
+      up = Dir.parent(d)
       d = up if up != nil
     else
-      nxt = Dir.get_subdirs(d)[part]
+      nxt = Dir.subdirs(d)[part]
       raise NotFound.new("no such directory: #{path}", path) if nxt == nil
       d = nxt
     end
@@ -59,12 +59,12 @@ def resolve(root, cwd, path)
 end
 
 def print_tree(d, indent, max_depth)
-  label = indent == "" ? "/" : "#{Dir.get_name(d)}/"
+  label = indent == "" ? "/" : "#{Dir.name(d)}/"
   puts(format("%-28s %8s", indent + label, human(Dir.total(d))))
   return if String.size(indent) / 2 >= max_depth
-  subs = Array.sort_by(Hash.values(Dir.get_subdirs(d))) { |s| -Dir.total(s) }
+  subs = Array.sort_by(Hash.values(Dir.subdirs(d))) { |s| -Dir.total(s) }
   Array.each(subs) { |s| print_tree(s, indent + "  ", max_depth) }
-  files = Dir.get_files(d)
+  files = Dir.files(d)
   puts(format("%-28s %8s", indent + "  (#{Array.size(files)} files)", "")) if Array.size(files) > 0
 end
 
@@ -95,7 +95,7 @@ String.each_line(listing) do |line|
   *parts, name = Array.drop(String.split(path, "/"), 1)
   dir = Dir.mkdir_p(root, parts)
   f = FileEntry.new(name, String.to_i(size), dir)
-  Array.push(Dir.get_files(dir), f)
+  Array.push(Dir.files(dir), f)
   Array.push(all_files, f)
 end
 
@@ -107,16 +107,16 @@ Dir.each_dir(root) { |d| Array.push(big, d) if Dir.total(d) > 1024 * 1024 }
 Array.each(Array.sort_by(big) { |d| Dir.path(d) }) { |d| puts(format("  %-24s %s", Dir.path(d), human(Dir.total(d)))) }
 
 puts("-- largest files --")
-top = Array.take(Array.sort_by(all_files) { |f| -FileEntry.get_size(f) }, 3)
-Array.each(top) { |f| puts("  #{Dir.path(FileEntry.get_dir(f))}/#{FileEntry.get_name(f)} #{human(FileEntry.get_size(f))}") }
+top = Array.take(Array.sort_by(all_files) { |f| -FileEntry.size(f) }, 3)
+Array.each(top) { |f| puts("  #{Dir.path(FileEntry.dir(f))}/#{FileEntry.name(f)} #{human(FileEntry.size(f))}") }
 
 puts("-- by extension --")
 by_ext = Hash.new(0)
 Array.each(all_files) do |f|
-  name = FileEntry.get_name(f)
+  name = FileEntry.name(f)
   dot = String.rindex(name, ".")
   ext = dot == nil || dot == 0 ? "(none)" : name[(dot + 1)..]
-  by_ext[ext] += FileEntry.get_size(f)
+  by_ext[ext] += FileEntry.size(f)
 end
 Array.each(Array.sort_by(Hash.to_a(by_ext)) { |_e, s| -s }) { |e, s| puts(format("  %-7s %s", e, human(s))) }
 

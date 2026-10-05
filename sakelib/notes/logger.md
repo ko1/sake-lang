@@ -23,7 +23,7 @@ Ruby redefines `Time.now`. Ruby's formatter is also patched to drop the pid (see
 | `File::NULL` | `nil` | differs: no `File::NULL` constant |
 | `Logger.new(dev, level: ..., progname: ..., formatter: ..., datetime_format: ...)` | `Logger.new(dev, level, progname, formatter, datetime_format)` | differs: positional, in the order of Ruby's keywords (`new` takes the fields positionally); `initialize` coerces the level and checks the device (phase 4) |
 | `Logger::DEBUG` ... `Logger::UNKNOWN` | `Logger.DEBUG` ... `Logger.UNKNOWN` | differs: Sake has no value constants, so these are functions |
-| `log.level` / `log.level = x` | `Logger.get_level(log)` / `Logger.set_level(log, x)` | same (Integer, Symbol, or String; anything else raises `ArgumentError`, "invalid log level: ...") |
+| `log.level` / `log.level = x` | `Logger.level(log)` / `Logger.set_level(log, x)` | same (Integer, Symbol, or String; anything else raises `ArgumentError`, "invalid log level: ...") |
 | `log.debug(msg = nil)` ... `log.unknown(msg = nil)` | `Logger.debug(log, msg = nil)` ... `Logger.unknown(log, msg = nil)` | same (phase 2: the argument is optional; with none, the progname is logged, as Ruby) |
 | `log.info { "msg" }`, `log.info("prog") { "msg" }` | `Logger.info(log) { "msg" }`, `Logger.info(log, "prog") { "msg" }` | same (phase 3, `block_given?`): the block gives the message and runs only when the level passes; the argument is then the progname |
 | `log.add(sev, msg = nil, prog = nil) { }`, `log.log` | `Logger.add(log, sev, msg = nil, prog = nil) { }`, `Logger.log` | same (with msg nil, the block's value, or else prog, or else the logger's progname, is the message; severity nil is UNKNOWN; above 5 prints `ANY`) |

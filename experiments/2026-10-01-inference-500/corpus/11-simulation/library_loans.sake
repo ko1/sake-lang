@@ -19,72 +19,72 @@ class Library
     m = member(l, id)
     t = title(l, isbn)
     raise LoanRefused.new("unknown title #{isbn}", id, :unknown) if t == nil
-    raise LoanRefused.new("#{Member.get_name(m)} owes fines", id, :fines) if Member.get_fines(m) >= 500
-    raise LoanRefused.new("#{Member.get_name(m)} at limit", id, :limit) if Array.size(Member.get_loans(m)) >= loan_limit(Member.get_tier(m))
-    holds = Title.get_holds(t)
+    raise LoanRefused.new("#{Member.name(m)} owes fines", id, :fines) if Member.fines(m) >= 500
+    raise LoanRefused.new("#{Member.name(m)} at limit", id, :limit) if Array.size(Member.loans(m)) >= loan_limit(Member.tier(m))
+    holds = Title.holds(t)
     first_hold = Array.first(holds)
-    if Title.get_copies(t) == 0 || (first_hold != nil && first_hold != id)
+    if Title.copies(t) == 0 || (first_hold != nil && first_hold != id)
       Array.push(holds, id) unless Array.include?(holds, id)
-      note(l, day, "#{Member.get_name(m)} placed hold on #{Title.get_name(t)} (position #{Array.index(holds, id) + 1})")
+      note(l, day, "#{Member.name(m)} placed hold on #{Title.name(t)} (position #{Array.index(holds, id) + 1})")
       return nil
     end
     Array.shift(holds) if first_hold == id
-    Title.set_copies(t, Title.get_copies(t) - 1)
-    loan = Loan.new(isbn, id, day, day + loan_days(Member.get_tier(m)), 0)
-    Array.push(Member.get_loans(m), loan)
-    note(l, day, "#{Member.get_name(m)} borrowed #{Title.get_name(t)}, due d#{Loan.get_due_day(loan)}")
+    Title.set_copies(t, Title.copies(t) - 1)
+    loan = Loan.new(isbn, id, day, day + loan_days(Member.tier(m)), 0)
+    Array.push(Member.loans(m), loan)
+    note(l, day, "#{Member.name(m)} borrowed #{Title.name(t)}, due d#{Loan.due_day(loan)}")
     loan
   end
 
   def renew(l, day, id, isbn)
     m = member(l, id)
-    loan = Array.find(Member.get_loans(m)) { Loan.get_isbn(it) == isbn }
-    return note(l, day, "#{Member.get_name(m)} has no loan of #{isbn}") if loan == nil
+    loan = Array.find(Member.loans(m)) { Loan.isbn(it) == isbn }
+    return note(l, day, "#{Member.name(m)} has no loan of #{isbn}") if loan == nil
     t = title(l, isbn)
-    if Array.empty?(Title.get_holds(t)) == false || Loan.get_renewals(loan) >= 2
-      note(l, day, "renewal refused for #{Member.get_name(m)}: #{Title.get_name(t)}")
+    if Array.empty?(Title.holds(t)) == false || Loan.renewals(loan) >= 2
+      note(l, day, "renewal refused for #{Member.name(m)}: #{Title.name(t)}")
     else
-      Loan.set_renewals(loan, Loan.get_renewals(loan) + 1)
-      Loan.set_due_day(loan, Loan.get_due_day(loan) + 7)
-      note(l, day, "#{Member.get_name(m)} renewed #{Title.get_name(t)} to d#{Loan.get_due_day(loan)}")
+      Loan.set_renewals(loan, Loan.renewals(loan) + 1)
+      Loan.set_due_day(loan, Loan.due_day(loan) + 7)
+      note(l, day, "#{Member.name(m)} renewed #{Title.name(t)} to d#{Loan.due_day(loan)}")
     end
   end
 
   def checkin(l, day, id, isbn)
     m = member(l, id)
-    loans = Member.get_loans(m)
-    idx = Array.find_index(loans) { Loan.get_isbn(it) == isbn }
-    return note(l, day, "nothing to return for #{Member.get_name(m)}") if idx == nil
+    loans = Member.loans(m)
+    idx = Array.find_index(loans) { Loan.isbn(it) == isbn }
+    return note(l, day, "nothing to return for #{Member.name(m)}") if idx == nil
     loan = Array.delete_at(loans, idx)
-    late = day - Loan.get_due_day(loan)
+    late = day - Loan.due_day(loan)
     if late > 0
-      fine = late * daily_fine(Member.get_tier(m))
-      Member.set_fines(m, Member.get_fines(m) + fine)
-      note(l, day, "#{Member.get_name(m)} returned #{isbn} #{late} days late, fine #{fine}")
+      fine = late * daily_fine(Member.tier(m))
+      Member.set_fines(m, Member.fines(m) + fine)
+      note(l, day, "#{Member.name(m)} returned #{isbn} #{late} days late, fine #{fine}")
     else
-      note(l, day, "#{Member.get_name(m)} returned #{isbn}")
+      note(l, day, "#{Member.name(m)} returned #{isbn}")
     end
     t = title(l, isbn)
-    Title.set_copies(t, Title.get_copies(t) + 1)
-    nxt = Array.first(Title.get_holds(t))
-    note(l, day, "  #{Title.get_name(t)} is waiting for #{Member.get_name(member(l, nxt))}") if nxt
+    Title.set_copies(t, Title.copies(t) + 1)
+    nxt = Array.first(Title.holds(t))
+    note(l, day, "  #{Title.name(t)} is waiting for #{Member.name(member(l, nxt))}") if nxt
   end
 
   def pay(l, day, id, amount)
     m = member(l, id)
-    paid = Integer.clamp(amount, 0, Member.get_fines(m))
-    Member.set_fines(m, Member.get_fines(m) - paid)
+    paid = Integer.clamp(amount, 0, Member.fines(m))
+    Member.set_fines(m, Member.fines(m) - paid)
     @collected += paid
-    note(l, day, "#{Member.get_name(m)} paid #{paid}")
+    note(l, day, "#{Member.name(m)} paid #{paid}")
   end
 end
 
 lib = Library.new(Hash[], Hash[], String[], 0)
 Array.each(Array[["111", "Dune", 2], ["222", "Emma", 1], ["333", "Ulysses", 1], ["444", "Matilda", 3]]) do |isbn, name, n|
-  Library.get_titles(lib)[isbn] = Title.new(isbn, name, n, String[])
+  Library.titles(lib)[isbn] = Title.new(isbn, name, n, String[])
 end
 Array.each(Array[["m1", "Ana", :adult], ["m2", "Bo", :child], ["m3", "Cy", :staff], ["m4", "Di", :adult]]) do |id, name, tier|
-  Library.get_members(lib)[id] = Member.new(id, name, tier, 0, Loan[])
+  Library.members(lib)[id] = Member.new(id, name, tier, 0, Loan[])
 end
 
 script = Array[
@@ -106,20 +106,20 @@ Array.each(script) do |day, action, id, arg|
     in :pay then Library.pay(lib, day, id, arg)
     end
   rescue LoanRefused => e
-    refusals[LoanRefused.get_reason(e)] += 1
+    refusals[LoanRefused.reason(e)] += 1
     Library.note(lib, day, "refused: #{Exception.message(e)}")
   end
 end
 
-Array.each(Library.get_log(lib)) { puts(it) }
+Array.each(Library.log(lib)) { puts(it) }
 puts("--- members")
-Hash.each(Library.get_members(lib)) do |id, m|
-  out = Array.map(Member.get_loans(m)) { |ln| "#{Loan.get_isbn(ln)}(due d#{Loan.get_due_day(ln)})" }
-  puts(format("%-3s %-4s %-6s fines %4d  loans: %s", id, Member.get_name(m), Member.get_tier(m), Member.get_fines(m), Array.empty?(out) ? "-" : Array.join(out, " ")))
+Hash.each(Library.members(lib)) do |id, m|
+  out = Array.map(Member.loans(m)) { |ln| "#{Loan.isbn(ln)}(due d#{Loan.due_day(ln)})" }
+  puts(format("%-3s %-4s %-6s fines %4d  loans: %s", id, Member.name(m), Member.tier(m), Member.fines(m), Array.empty?(out) ? "-" : Array.join(out, " ")))
 end
 puts("--- titles")
-Hash.each_value(Library.get_titles(lib)) do |t|
-  puts("#{String.ljust(Title.get_name(t), 8)} on shelf #{Title.get_copies(t)} holds #{Array.size(Title.get_holds(t))}")
+Hash.each_value(Library.titles(lib)) do |t|
+  puts("#{String.ljust(Title.name(t), 8)} on shelf #{Title.copies(t)} holds #{Array.size(Title.holds(t))}")
 end
 puts("refusals: #{Array.join(Array.map(Hash.to_a(refusals)) { |r, n| "#{r}=#{n}" }, " ")}")
-puts("fines collected: #{Library.get_collected(lib)}, outstanding: #{Hash.sum(Library.get_members(lib)) { |id, m| Member.get_fines(m) }}")
+puts("fines collected: #{Library.collected(lib)}, outstanding: #{Hash.sum(Library.members(lib)) { |id, m| Member.fines(m) }}")

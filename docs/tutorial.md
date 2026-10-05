@@ -540,8 +540,8 @@ instance first:
 ```ruby
 class Point               # a type with two fields, read-only from outside
   attr_reader x, y
-  def add(a, b) = Point.new(@x + Point.get_x(b), @y + Point.get_y(b))
-  def norm2(p) = @x * @x + @y * @y           # @x: field x of the first argument, Point.get_x(p)
+  def add(a, b) = Point.new(@x + Point.x(b), @y + Point.y(b))
+  def norm2(p) = @x * @x + @y * @y           # @x: field x of the first argument, Point.x(p)
   def to_s(p) = "(#{@x}, #{@y})"             # used by puts and "#{...}"
 end
 
@@ -555,13 +555,13 @@ a = Point.new(1, 2)                          # an instance: one argument per fie
 b = Point.add(a, Point.new(3, 4))
 puts(b)
 p(b)                                         # p shows the fields
-p([Point.norm2(b), Point.get_x(b)])
+p([Point.norm2(b), Point.x(b)])
 p(a == Point.new(1, 2))                      # == compares the fields
 
 c = Counter.new("hits")                      # count takes its default
 d = c                                        # the same instance: values are shared, not copied
 Counter.bump(d)
-Counter.set_count(c, Counter.get_count(c) + 10)   # accessor: writable from outside too
+Counter.set_count(c, Counter.count(c) + 10)   # accessor: writable from outside too
 p(c)
 ```
 
@@ -576,11 +576,11 @@ true
 
 | In the body | Fields it declares |
 |---|---|
-| `attr_reader x, y` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
-| `attr_accessor n` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
+| `attr_reader x, y` | `C.x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
+| `attr_accessor n` | `C.n(c)` and `C.set_n(c, v)` from anywhere |
 | `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
 | `attr_accessor n = 0` · `items = Array[]` | a default: any expression, evaluated by each `new` that leaves the field out; trailing fields with defaults may be left out of `new`; it does not fix the field's type |
-| `private attr_reader pos` | no `C.get_pos` outside the class (`@pos` inside); `new` still takes it |
+| `private attr_reader pos` | no `C.pos` outside the class (`@pos` inside); `new` still takes it |
 | `class E < Exception` | an exception type: `message` comes first |
 
 Use `attr_reader` for every field that is not changed from outside, which is most of them: every
@@ -633,19 +633,19 @@ afterwards a B is not an A.
   of the function's **first argument**; there is no `self`. Unqualified names refer to C's
   operations first. `def C.f(c)` outside the class is shorthand for a `def f(c)` inside it.
 
-The same with `Struct.new` and `get_`/`set_` spelled out:
+The same with `Struct.new` and the reader `C.x(c)` / writer `C.set_x(c, v)` spelled out:
 
 ```ruby
 Point = Struct.new(:x, :y)
 
 class Point
-  def add(a, b) = Point.new(get_x(a) + get_x(b), get_y(a) + get_y(b))
-  def to_s(p) = "(#{get_x(p)}, #{get_y(p)})"       # used by puts and "#{...}"
+  def add(a, b) = Point.new(x(a) + x(b), y(a) + y(b))
+  def to_s(p) = "(#{x(p)}, #{y(p)})"       # used by puts and "#{...}"
 end
 
 def Point.scale!(p, k)           # same as defining `scale!` inside `class Point`
-  set_x(p, get_x(p) * k)
-  set_y(p, get_y(p) * k)
+  set_x(p, x(p) * k)
+  set_y(p, y(p) * k)
   p
 end
 
@@ -655,7 +655,7 @@ Point.scale!(b, 10)
 puts(a)                           # uses Point.to_s; the change through b is visible through a
 puts("sum: #{Point.add(a, Point.new(5, 5))}")
 p(a)
-puts(Point.get_x(a))
+puts(Point.x(a))
 ```
 
 ```
@@ -672,9 +672,9 @@ sum: (15, 25)
 Point = Struct.new(:x, :y)
 
 class Point
-  def norm2(p) = @x * @x + @y * @y           # @x is Point.get_x(p): p is the first argument
+  def norm2(p) = @x * @x + @y * @y           # @x is Point.x(p): p is the first argument
   def move(p, dx, dy)
-    @x += dx                                 # Point.set_x(p, Point.get_x(p) + dx)
+    @x += dx                                 # Point.set_x(p, Point.x(p) + dx)
     @y += dy
     p
   end
@@ -689,13 +689,13 @@ puts(Point.norm2(7))
 
 ```
 $ sake data_shorthand.sake
-data_shorthand.sake:4:18: error: Point.get_x: argument 1 must be Point, but is Integer [type]
+data_shorthand.sake:4:18: error: Point.x: argument 1 must be Point, but is Integer [type]
   hint: reached by the call at line 16
-data_shorthand.sake:4:23: error: Point.get_x: argument 1 must be Point, but is Integer [type]
+data_shorthand.sake:4:23: error: Point.x: argument 1 must be Point, but is Integer [type]
   hint: reached by the call at line 16
-data_shorthand.sake:4:28: error: Point.get_y: argument 1 must be Point, but is Integer [type]
+data_shorthand.sake:4:28: error: Point.y: argument 1 must be Point, but is Integer [type]
   hint: reached by the call at line 16
-data_shorthand.sake:4:33: error: Point.get_y: argument 1 must be Point, but is Integer [type]
+data_shorthand.sake:4:33: error: Point.y: argument 1 must be Point, but is Integer [type]
   hint: reached by the call at line 16
 (exit status 2)
 ```
@@ -710,20 +710,19 @@ end
 pt = Point.new(1, 2)
 puts(pt.x)
 Point.set_x(pt, 5)
-puts(Point.get_z(pt))
+puts(Point.z(pt))
 puts(Point.new(1))
 ```
 
 ```
 $ sake instance_errors.sake
 instance_errors.sake:5:9: error: method call on a value `pt.x` is not allowed
-  hint: Point.get_x(pt)
-  hint: pt.Point.get_x
+  hint: Point.x(pt)
+  hint: Point.x(pt)
+  hint: pt.Point.x
 instance_errors.sake:6:7: error: field `x` of Point is read-only (attr_reader)
   hint: inside `class Point`, use `@x = value`; or declare it with `attr_accessor x`
-instance_errors.sake:7:12: error: undefined function `Point.get_z`
-  hint: did you mean `Point.get_y`?
-  hint: did you mean `Point.get_x`?
+instance_errors.sake:7:12: error: undefined function `Point.z`
 instance_errors.sake:8:12: error: wrong number of arguments for Point.new (given 1, expected 2)
 (exit status 2)
 ```
@@ -737,8 +736,8 @@ Point = Struct.new(:x, :y)
 Line = Struct.new(:from, :to)
 
 def length(l)
-  dx = Point.get_x(Line.get_to(l)) - Point.get_x(Line.get_from(l))
-  dy = Point.get_y(Line.get_to(l)) - Point.get_y(Line.get_from(l))
+  dx = Point.x(Line.to(l)) - Point.x(Line.from(l))
+  dy = Point.y(Line.to(l)) - Point.y(Line.from(l))
   Math.sqrt(dx * dx + dy * dy)
 end
 
@@ -748,7 +747,7 @@ puts(length(Point.new(3, 4)))
 
 ```
 $ sake data_runtime_error.sake
-data_runtime_error.sake:5:20: error: Line.get_to: argument 1 must be Line, but is Point [type]
+data_runtime_error.sake:5:16: error: Line.to: argument 1 must be Line, but is Point [type]
   hint: reached by the call at line 11
 (exit status 2)
 ```
@@ -756,7 +755,7 @@ data_runtime_error.sake:5:20: error: Line.get_to: argument 1 must be Line, but i
 ```
 $ sake --strict=0 data_runtime_error.sake
 5.0
-data_runtime_error.sake:5: in length: TypeError: Line.get_to: argument 1 must be Line, got Point
+data_runtime_error.sake:5: in length: TypeError: Line.to: argument 1 must be Line, got Point
   from data_runtime_error.sake:11: in <main>
 (exit status 1)
 ```
@@ -922,8 +921,8 @@ class Money
   attr_reader cents
   include Arithmetic
   include Comparable
-  def +(a, b) = Money.new(@cents + Money.get_cents(b))
-  def <=>(a, b) = @cents <=> Money.get_cents(b)
+  def +(a, b) = Money.new(@cents + Money.cents(b))
+  def <=>(a, b) = @cents <=> Money.cents(b)
   def to_s(m) = "$#{@cents / 100}.#{String.rjust(Integer.to_s(@cents % 100), 2, "0")}"
 end
 a = Money.new(150)
@@ -969,7 +968,7 @@ Leaf = Struct.new(:weight)
 Node = Struct.new(:weight, :left, :right)
 
 # The operation lists the types its argument may have.
-def weight(t) = (Leaf|Node).get_weight(t)
+def weight(t) = (Leaf|Node).weight(t)
 def size_of(x) = (String|Array).size(x)
 
 puts(weight(Leaf.new(3)) + weight(Node.new(5, Leaf.new(1), Leaf.new(1))))
@@ -1348,23 +1347,23 @@ end
 def sum(node)
   total = 0
   while node                      # nil and false are the only falsy values
-    total += Node.get_value(node)
-    node = Node.get_next(node)
+    total += Node.value(node)
+    node = Node.next(node)
   end
   total
 end
 
 def second(node)
-  rest = Node.get_next(node)
+  rest = Node.next(node)
   return 0 if rest == nil
-  Node.get_value(rest)
+  Node.value(rest)
 end
 
 list = build(4)
 puts(sum(list))
 puts(second(list))
-puts(Node.get_next(list) == nil)
-puts(Node.get_value(Node.get_next(Node.get_next(Node.get_next(Node.get_next(list))))))
+puts(Node.next(list) == nil)
+puts(Node.value(Node.next(Node.next(Node.next(Node.next(list))))))
 ```
 
 ```
@@ -1372,7 +1371,7 @@ $ sake nil.sake
 10
 2
 false
-nil.sake:28: in <main>: TypeError: Node.get_value: argument 1 must be Node, got nil
+nil.sake:28: in <main>: TypeError: Node.value: argument 1 must be Node, got nil
   hint: Node.next may be nil (nil is stored at line 5)
   hint: check the value first: `if x`, `while x`, `return unless x`, or `x != nil`
 (exit status 1)
@@ -1385,11 +1384,11 @@ reports every unchecked use before running. A local variable you have tested cou
 ```ruby
 Node = Struct.new(:value, :next)
 
-def second(node) = Node.get_value(Node.get_next(node))
+def second(node) = Node.value(Node.next(node))
 
 def second_checked(node)
-  rest = Node.get_next(node)
-  rest ? Node.get_value(rest) : 0
+  rest = Node.next(node)
+  rest ? Node.value(rest) : 0
 end
 
 list = Node.new(1, Node.new(2, nil))
@@ -1405,7 +1404,7 @@ $ sake strict.sake
 
 ```
 $ sake --strict strict.sake
-strict.sake:3:20: error: Node.get_value: argument 1 may be nil (nil | Node) [nil]
+strict.sake:3:20: error: Node.value: argument 1 may be nil (nil | Node) [nil]
   hint: check the value first: `if x`, `while x`, `return unless x`, or `x != nil`
   hint: Node.next may be nil (nil is stored at line 10)
   hint: reached by the call at line 11
@@ -1431,7 +1430,7 @@ Array.each(Array["", "123456", "42"]) do |s|
   begin
     p(parse(s))
   rescue ParseError => e                 # list the types to rescue; there is no hierarchy
-    puts("line #{ParseError.get_line(e)}")
+    puts("line #{ParseError.line(e)}")
   rescue ArgumentError => e
     puts(Exception.message(e))
   ensure
@@ -1519,12 +1518,12 @@ hover:
 ```ruby
 Item = Struct.new(:name, :price, :qty)
 
-def total(items) = Array.reduce(items, 0) { |acc, it| acc + Item.get_price(it) * Item.get_qty(it) }
+def total(items) = Array.reduce(items, 0) { |acc, it| acc + Item.price(it) * Item.qty(it) }
 
 items = Item[Item.new("apple", 120, 3), Item.new("pear", 200, 1)]
 puts(total(items))
-cheap = Array.select(items) { Item.get_price(it) < 150 }
-puts(Array.join(Array.map(cheap) { Item.get_name(it) }, ", "))
+cheap = Array.select(items) { Item.price(it) < 150 }
+puts(Array.join(Array.map(cheap) { Item.name(it) }, ", "))
 ```
 
 ```
@@ -1553,7 +1552,7 @@ In the `strict` program from section 11, the inference finds the one unchecked u
 $ sake --types strict.sake
 passes: 2
 checks: proven=3 partial=1 error=0 unknown=0
-  partial L3 Node.get_value arg 1: want Node, got nil | Node
+  partial L3 Node.value arg 1: want Node, got nil | Node
 arrays:
 fields:
   Node.value: Integer

@@ -24,7 +24,7 @@ end
 class OrderLine
   attr_reader table, seat, item, mods, at
   attr_accessor status
-  def price(l) = MenuItem.get_price(@item) + Array.sum(@mods) { |m| modifier_price(m) }
+  def price(l) = MenuItem.price(@item) + Array.sum(@mods) { |m| modifier_price(m) }
 end
 
 def money(c) = format("%d.%02d", c / 100, c % 100)
@@ -43,41 +43,41 @@ class Restaurant
 
   def order(r, n, seat, code, mods, at)
     item = Hash.fetch(@menu, code)
-    raise SoldOut.new("#{MenuItem.get_name(item)} is sold out", code) if MenuItem.get_stock(item) == 0
-    MenuItem.set_stock(item, MenuItem.get_stock(item) - 1)
+    raise SoldOut.new("#{MenuItem.name(item)} is sold out", code) if MenuItem.stock(item) == 0
+    MenuItem.set_stock(item, MenuItem.stock(item) - 1)
     line = OrderLine.new(n, seat, item, mods, at, :queued)
-    Array.push(Table.get_lines(table(r, n)), line)
+    Array.push(Table.lines(table(r, n)), line)
     Array.push(@queue, line)
     line
   end
 
   # the kitchen cooks grill first, then fryer, then cold; older orders first
   def next_for(r, station)
-    waiting = Array.select(@queue) { |l| OrderLine.get_status(l) == :queued && MenuItem.get_station(OrderLine.get_item(l)) == station }
-    first = Array.min_by(waiting) { |l| OrderLine.get_at(l) }
+    waiting = Array.select(@queue) { |l| OrderLine.status(l) == :queued && MenuItem.station(OrderLine.item(l)) == station }
+    first = Array.min_by(waiting) { |l| OrderLine.at(l) }
     OrderLine.set_status(first, :served) if first
     first
   end
 end
 
 def bill(t, split)
-  lines = Table.get_lines(t)
+  lines = Table.lines(t)
   subtotal = Array.sum(lines) { |l| OrderLine.price(l) }
   tax = Float.round(subtotal * 0.0875)
   tip = Float.round(subtotal * 0.18)
   total = subtotal + tax + tip
-  puts("Table #{Table.get_number(t)}: subtotal #{money(subtotal)} tax #{money(tax)} tip #{money(tip)} total #{money(total)}")
+  puts("Table #{Table.number(t)}: subtotal #{money(subtotal)} tax #{money(tax)} tip #{money(tip)} total #{money(total)}")
   case split
   in :even
-    seats = Array.size(Array.uniq(Array.map(lines) { |l| OrderLine.get_seat(l) }))
+    seats = Array.size(Array.uniq(Array.map(lines) { |l| OrderLine.seat(l) }))
     share, extra = Integer.divmod(total, seats)
     Integer.times(seats) { |i| puts("  guest #{i + 1} pays #{money(share + (i < extra ? 1 : 0))}") }
   in :by_seat
-    by_seat = Array.group_by(lines) { |l| OrderLine.get_seat(l) }
+    by_seat = Array.group_by(lines) { |l| OrderLine.seat(l) }
     Array.each(Array.sort(Hash.keys(by_seat))) do |seat|
       own = Array.sum(Hash.fetch(by_seat, seat)) { |l| OrderLine.price(l) }
       part = Float.round(own * total * 1.0 / subtotal)
-      items = Array.map(Hash.fetch(by_seat, seat)) { |l| MenuItem.get_name(OrderLine.get_item(l)) }
+      items = Array.map(Hash.fetch(by_seat, seat)) { |l| MenuItem.name(OrderLine.item(l)) }
       puts("  seat #{seat} pays #{money(part)} (#{Array.join(items, ", ")})")
     end
   end
@@ -105,7 +105,7 @@ orders = Array[
 Array.each(orders) do |n, seat, code, mods, at|
   Restaurant.order(r, n, seat, code, mods, at)
 rescue SoldOut => e
-  puts("t#{n} s#{seat}: #{Exception.message(e)} (#{SoldOut.get_code(e)})")
+  puts("t#{n} s#{seat}: #{Exception.message(e)} (#{SoldOut.code(e)})")
 end
 
 puts
@@ -113,9 +113,9 @@ puts("Kitchen:")
 Array.each(Array[:grill, :fryer, :cold]) do |station|
   served = 0
   while (l = Restaurant.next_for(r, station))
-    mods = OrderLine.get_mods(l)
+    mods = OrderLine.mods(l)
     extra = Array.empty?(mods) ? "" : " [#{Array.join(mods, ", ")}]"
-    puts(format("  %-5s t%d s%d %s%s", station, OrderLine.get_table(l), OrderLine.get_seat(l), MenuItem.get_name(OrderLine.get_item(l)), extra))
+    puts(format("  %-5s t%d s%d %s%s", station, OrderLine.table(l), OrderLine.seat(l), MenuItem.name(OrderLine.item(l)), extra))
     served += 1
   end
   puts("  #{station}: #{served} plates")
@@ -128,7 +128,7 @@ Array.each(Array[[4, :by_seat], [7, :even], [9, :even]]) do |n, split|
 end
 puts
 puts("Takings: #{money(takings)}")
-low = Array.select(Hash.values(menu)) { |m| MenuItem.get_stock(m) < 3 }
-puts("Low stock: #{Array.join(Array.map(low) { |m| "#{MenuItem.get_name(m)}=#{MenuItem.get_stock(m)}" }, ", ")}")
-open_tables = Array.count(Hash.values(Restaurant.get_tables(r))) { |t| Table.get_open(t) }
+low = Array.select(Hash.values(menu)) { |m| MenuItem.stock(m) < 3 }
+puts("Low stock: #{Array.join(Array.map(low) { |m| "#{MenuItem.name(m)}=#{MenuItem.stock(m)}" }, ", ")}")
+open_tables = Array.count(Hash.values(Restaurant.tables(r))) { |t| Table.open(t) }
 puts("Open tables: #{open_tables}")

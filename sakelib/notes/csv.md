@@ -20,7 +20,7 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
   and `--strict` asks for a `case`/`in` before arithmetic, which is the honest type.
 - **Names.** `CSV::Row` → `CSVRow`, `CSV::Table` → `CSVTable`, `CSV::MalformedCSVError` →
   `MalformedCSVError` (no nested namespaces). Its `line_number` is a field:
-  `MalformedCSVError.get_line_number(e)`; the message is Ruby's (`"Illegal quoting in line 2."`).
+  `MalformedCSVError.line_number(e)`; the message is Ruby's (`"Illegal quoting in line 2."`).
 - `CSV` is a type: the writer that `CSV.generate { |csv| csv << row }` yields. `<<` is its operator
   (`include Bitwise`), so `csv << [1, "a"]` reads as in Ruby. Rows may be Arrays, Tuples, `CSVRow`s,
   or Hashes (with `headers:`).
@@ -47,7 +47,7 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | `CSV.open(path, "w"/"a", **opts) { \|csv\| }` | `CSV.open(path, mode, **opts) { }` | same (phase 3): rows go to the file's IO as they are added; the file is closed after the block, whose value is returned |
 | `csv = CSV.open(path, "w")`, `csv.close` | `c = CSV.open(path, "w")`, `CSV.close(c)` | same (phase 3) |
 | `CSV.open(path, "r")`, `CSV.new(io)`, `#shift`, `#gets`, `#each` | — | missing: `CSV.open` with a read mode raises ArgumentError; read with `CSV.read`/`foreach`/`parse` |
-| `csv.lineno`, `csv.inspect` | `CSV.get_lineno(c)`, `CSV.inspect(c)` | same for writers (the StringIO's `encoding:` is not shown) |
+| `csv.lineno`, `csv.inspect` | `CSV.lineno(c)`, `CSV.inspect(c)` | same for writers (the StringIO's `encoding:` is not shown) |
 | `csv << row`, `add_row`, `puts` | `csv << row`, `CSV.add_row(c, r)`, `CSV.puts(c, r)` | same |
 | `"a,b".parse_csv`, `[..].to_csv` | `String.parse_csv(s)`, `Array.to_csv(a)`, `Tuple.to_csv(t)` | same |
 | `Row.new(headers, fields)` | `CSVRow.new(hs, fs)` | same (2026-10-05: copies and pads in `initialize`; `CSVRow.pad` is gone) |
@@ -59,7 +59,7 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | `table.headers size length empty? each map select find to_a to_s to_csv delete values_at << push inspect` | `CSVTable.` same names (`values_at` takes an Array) | same |
 | `table[i]`, `table[h]`, `table[i] = row`, `table[h] = v / [vs]` | same | same |
 | `table.by_col`, `by_row`, `mode`, `dig`, `each` in column mode | — | missing |
-| Enumerable on Table (`sort_by`, `group_by`, ...) | via `CSVTable.get_rows(t)` + Array ops | differs |
+| Enumerable on Table (`sort_by`, `group_by`, ...) | via `CSVTable.rows(t)` + Array ops | differs |
 
 Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a String), `quote_char`,
 `headers` (`true`, Array/Tuple, or a header line String), `converters` (`:integer`, `:float`,
@@ -125,7 +125,7 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - Nothing in the library needed a change for `--strict` (level 2) once written. At `--strict=3` the
   test gets 16 `index-nil` reports, all located inside `sakelib/csv.sake`: 2 are the parser's
   `chars[i]` lookups, and 14 come from the test's `r = t[0]` (a CSVRow or nil) reaching
-  `CSVRow.get_fields` etc. Those 14 are the caller's nil, but the message points into the library
+  `CSVRow.fields` etc. Those 14 are the caller's nil, but the message points into the library
   (the "reached by" hint names the call).
 
 ## Surprises

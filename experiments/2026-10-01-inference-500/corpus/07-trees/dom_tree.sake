@@ -18,30 +18,30 @@ def parse(html)
     m = Regexp.match(/<(\/?)([a-z0-9]+)([^>]*)>/, html[pos..])
     if m == nil
       text = String.strip(html[pos..])
-      Array.push(Element.get_children(current), Text.new(text)) unless String.empty?(text)
+      Array.push(Element.children(current), Text.new(text)) unless String.empty?(text)
       break
     end
     before = String.strip(MatchData.pre_match(m))
-    Array.push(Element.get_children(current), Text.new(before)) unless String.empty?(before)
+    Array.push(Element.children(current), Text.new(before)) unless String.empty?(before)
     tag = m[2]
     if m[1] == "/"
-      if Element.get_tag(current) != tag
-        raise MarkupError.new("</#{tag}> does not close <#{Element.get_tag(current)}>", pos + MatchData.begin(m, 0))
+      if Element.tag(current) != tag
+        raise MarkupError.new("</#{tag}> does not close <#{Element.tag(current)}>", pos + MatchData.begin(m, 0))
       end
-      current = Element.get_parent(current)
+      current = Element.parent(current)
     else
       el = Element.new(tag, parse_attrs(m[3]), Array[], current)
-      Array.push(Element.get_children(current), el)
+      Array.push(Element.children(current), el)
       current = el unless void_tag?(tag) || String.end_with?(m[3], "/")
     end
     pos += MatchData.end(m, 0)
   end
-  raise MarkupError.new("unclosed <#{Element.get_tag(current)}>", String.size(html)) if current != root
+  raise MarkupError.new("unclosed <#{Element.tag(current)}>", String.size(html)) if current != root
   root
 end
 
 def classes(el)
-  c = Element.get_attrs(el)["class"]
+  c = Element.attrs(el)["class"]
   c == nil ? Array[] : String.split(c, " ")
 end
 
@@ -49,14 +49,14 @@ def matches?(el, simple)
   m = String.match(simple, /\A([a-z0-9]*)(?:\.([a-z-]+))?(?:#([a-z-]+))?\z/)
   raise ArgumentError, "bad selector #{simple}" if m == nil
   tag = m[1]
-  return false if tag != "" && Element.get_tag(el) != tag
+  return false if tag != "" && Element.tag(el) != tag
   return false if m[2] != nil && Array.include?(classes(el), m[2]) == false
-  return false if m[3] != nil && Element.get_attrs(el)["id"] != m[3]
+  return false if m[3] != nil && Element.attrs(el)["id"] != m[3]
   true
 end
 
 def each_element(node)
-  Array.each(Element.get_children(node)) do |c|
+  Array.each(Element.children(node)) do |c|
     next unless c in Element
     yield(c)
     each_element(c) { |x| yield(x) }
@@ -64,10 +64,10 @@ def each_element(node)
 end
 
 def has_ancestor?(el, simple)
-  p = Element.get_parent(el)
+  p = Element.parent(el)
   while p
     return true if matches?(p, simple)
-    p = Element.get_parent(p)
+    p = Element.parent(p)
   end
   false
 end
@@ -83,8 +83,8 @@ def select(root, selector)
     anchor = el
     Array.each(Array.reverse(parts)) do |part|
       next unless ok
-      p = Element.get_parent(anchor)
-      p = Element.get_parent(p) while p && matches?(p, part) == false
+      p = Element.parent(anchor)
+      p = Element.parent(p) while p && matches?(p, part) == false
       if p == nil
         ok = false
       else
@@ -98,19 +98,19 @@ end
 
 def text_of(node)
   case node
-  in Text then Text.get_content(node)
-  in Element then Array.join(Array.map(Element.get_children(node)) { |c| text_of(c) }, " ")
+  in Text then Text.content(node)
+  in Element then Array.join(Array.map(Element.children(node)) { |c| text_of(c) }, " ")
   end
 end
 
 def dump(node, depth)
   pad = "  " * depth
   case node
-  in Text then puts("#{pad}\"#{Text.get_content(node)}\"")
+  in Text then puts("#{pad}\"#{Text.content(node)}\"")
   in Element
-    attrs = Array.map(Array.sort(Hash.keys(Element.get_attrs(node)))) { |k| " #{k}=#{Element.get_attrs(node)[k]}" }
-    puts("#{pad}<#{Element.get_tag(node)}#{Array.join(attrs, "")}>")
-    Array.each(Element.get_children(node)) { |c| dump(c, depth + 1) }
+    attrs = Array.map(Array.sort(Hash.keys(Element.attrs(node)))) { |k| " #{k}=#{Element.attrs(node)[k]}" }
+    puts("#{pad}<#{Element.tag(node)}#{Array.join(attrs, "")}>")
+    Array.each(Element.children(node)) { |c| dump(c, depth + 1) }
   end
 end
 
@@ -131,34 +131,34 @@ page = <<~HTML
 HTML
 
 doc = parse(page)
-dump(Array.first(Element.get_children(doc)), 0)
+dump(Array.first(Element.children(doc)), 0)
 count = 0
 depth_max = 0
 each_element(doc) do |el|
   count += 1
   d = 0
-  p = Element.get_parent(el)
+  p = Element.parent(el)
   while p
     d += 1
-    p = Element.get_parent(p)
+    p = Element.parent(p)
   end
   depth_max = d if d > depth_max
 end
 puts("elements: #{count}, max depth: #{depth_max}")
 tags = Hash.new(0)
-each_element(doc) { |el| tags[Element.get_tag(el)] += 1 }
+each_element(doc) { |el| tags[Element.tag(el)] += 1 }
 puts("tags: #{Array.join(Array.map(Array.sort_by(Hash.to_a(tags)) { |t, n| format("%03d%s", 100 - n, t) }) { |t, n| "#{t}=#{n}" }, " ")}")
 
 Array.each(Array["a", "ul.menu li a", "div.content a", "li.active", "p.lead b", "#nav a", "div p", "span"]) do |sel|
   hits = select(doc, sel)
   desc = Array.map(hits) do |el|
-    href = Element.get_attrs(el)["href"]
+    href = Element.attrs(el)["href"]
     href ? "#{text_of(el)}->#{href}" : text_of(el)
   end
   puts(format("%-14s %d: %s", sel, Array.size(hits), Array.join(desc, " | ")))
 end
 links = select(doc, "a")
-external = Array.count(links) { |a| String.start_with?(Element.get_attrs(a)["href"], "http") }
+external = Array.count(links) { |a| String.start_with?(Element.attrs(a)["href"], "http") }
 puts("links: #{Array.size(links)}, external: #{external}, inside nav: #{Array.count(links) { |a| has_ancestor?(a, "#nav") }}")
 
 Array.each(Array["<div><p>x</div>", "<ul><li>a</li>", "<p>ok</p>"]) do |bad|
@@ -166,6 +166,6 @@ Array.each(Array["<div><p>x</div>", "<ul><li>a</li>", "<p>ok</p>"]) do |bad|
     d = parse(bad)
     puts("#{bad} -> ok (#{text_of(d)})")
   rescue MarkupError => e
-    puts("#{bad} -> error at #{MarkupError.get_offset(e)}: #{Exception.message(e)}")
+    puts("#{bad} -> error at #{MarkupError.offset(e)}: #{Exception.message(e)}")
   end
 end

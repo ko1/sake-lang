@@ -31,7 +31,7 @@ def users = once { Hash["1" => {name: "ann", role: "admin"}, "2" => {name: "ben"
 def tokens = once { Hash["t-ann" => "1", "t-ben" => "2"] }
 
 def current_user(req)
-  token = Request.get_token(req)
+  token = Request.token(req)
   raise Unauthorized.new("missing token", "api") if token == nil
   id = tokens[token]
   raise Unauthorized.new("invalid token", "api") if id == nil
@@ -39,9 +39,9 @@ def current_user(req)
 end
 
 def handle(req)
-  path = Request.get_path(req)
+  path = Request.path(req)
   m = String.match(path, /\A\/users\/(\w+)\z/)
-  case Request.get_method(req)
+  case Request.method(req)
   in "GET"
     raise NotFound.new("no route #{path}", path) if m == nil
     user = users[m[1]]
@@ -53,8 +53,8 @@ def handle(req)
     me => {role:}
     raise Forbidden.new("admins only", role) if role != "admin"
     raise NotFound.new("no route #{path}", path) if m == nil
-    bad = Hash.keys(Request.get_body(req)) - Array["name", "role"]
-    name = Request.get_body(req)["name"]
+    bad = Hash.keys(Request.body(req)) - Array["name", "role"]
+    name = Request.body(req)["name"]
     Array.push(bad, "name") if name && String.length(name) < 2
     raise ValidationFailed.new("invalid fields", bad) unless Array.empty?(bad)
     "updated #{m[1]}"
@@ -64,7 +64,7 @@ def handle(req)
 end
 
 def with_rate_limit(counts, req, limit)
-  key = Request.get_token(req) || "anonymous"
+  key = Request.token(req) || "anonymous"
   counts[key] += 1
   raise RateLimited.new("too many requests", counts[key] - limit) if counts[key] > limit
   yield
@@ -75,13 +75,13 @@ def with_error_mapping
 rescue NotFound => e
   Response.new(404, Exception.message(e))
 rescue Unauthorized => e
-  Response.new(401, "#{Exception.message(e)} (realm #{Unauthorized.get_realm(e)})")
+  Response.new(401, "#{Exception.message(e)} (realm #{Unauthorized.realm(e)})")
 rescue Forbidden => e
-  Response.new(403, "#{Exception.message(e)}; you are #{Forbidden.get_role(e)}")
+  Response.new(403, "#{Exception.message(e)}; you are #{Forbidden.role(e)}")
 rescue ValidationFailed => e
-  Response.new(422, "#{Exception.message(e)}: #{Array.join(ValidationFailed.get_fields(e), ", ")}")
+  Response.new(422, "#{Exception.message(e)}: #{Array.join(ValidationFailed.fields(e), ", ")}")
 rescue RateLimited => e
-  Response.new(429, "retry in #{RateLimited.get_retry_in(e)}s")
+  Response.new(429, "retry in #{RateLimited.retry_in(e)}s")
 rescue ArgumentError => e
   Response.new(405, Exception.message(e))
 end
@@ -105,10 +105,10 @@ by_status = Hash.new(0)
 log = Array[]
 Array.each(requests) do |req|
   res = with_error_mapping { with_rate_limit(counts, req, 4) { handle(req) } }
-  by_status[Response.get_status(res)] += 1
-  puts(format("%-6s %-10s %d %s", Request.get_method(req), Request.get_path(req), Response.get_status(res), Response.get_body(res)))
+  by_status[Response.status(res)] += 1
+  puts(format("%-6s %-10s %d %s", Request.method(req), Request.path(req), Response.status(res), Response.body(res)))
 ensure
-  Array.push(log, Request.get_method(req))
+  Array.push(log, Request.method(req))
 end
 puts("handled #{Array.size(log)} requests")
 Array.each(Array.sort(Hash.keys(by_status))) { |s| puts("  #{s}: #{by_status[s]}") }

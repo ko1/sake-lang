@@ -177,7 +177,7 @@ module Sake
           record(n.origin, n.fn.full_name, 1, n.fn.param_type(0), args[0]) # the getter's subject check, as call_builtin does
           env.lookup([:field, n.field]) || []
         else
-          # Written as `T.get_x(s)`, it is a call like any other; `@x` reads the function's subject.
+          # Written as `T.x(s)`, it is a call like any other; `@x` reads the function's subject.
           n.origin.is_a?(Prism::CallNode) ? builtin_call(n, n.fn, nodes, args, nil, env) : call_builtin(n.fn, args, nil, n.origin)
         end
       when Raise, ReRaise then typer_raise(n, env)

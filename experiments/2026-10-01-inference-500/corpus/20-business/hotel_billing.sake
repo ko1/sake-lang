@@ -31,43 +31,43 @@ class Folio
   def open(stay) = Folio.new(stay, Array[], Array[])
 
   # folio[:minibar] sums one category
-  def [](f, category) = Array.sum(Array.select(@charges) { |c| Charge.get_category(c) == category }) { |c| Charge.get_amount(c) }
+  def [](f, category) = Array.sum(Array.select(@charges) { |c| Charge.category(c) == category }) { |c| Charge.amount(c) }
 
   def post(f, night, category, text, amount)
-    nights = Stay.get_nights(@stay)
-    raise BillingError.new("night #{night} is outside the stay", Stay.get_guest(@stay)) unless Range.cover?(1..nights, night)
-    payer = category == :room && Stay.get_company(@stay) ? Stay.get_company(@stay) : Stay.get_guest(@stay)
+    nights = Stay.nights(@stay)
+    raise BillingError.new("night #{night} is outside the stay", Stay.guest(@stay)) unless Range.cover?(1..nights, night)
+    payer = category == :room && Stay.company(@stay) ? Stay.company(@stay) : Stay.guest(@stay)
     Array.push(@charges, Charge.new(night, category, text, Float.round(amount, 2), payer))
   end
 
   def post_rooms(f)
-    Integer.times(Stay.get_nights(@stay)) do |i|
-      t = Stay.get_arrive(@stay) + i * day_seconds
-      rate = base_rate(Stay.get_room_type(@stay)) * season(t)
+    Integer.times(Stay.nights(@stay)) do |i|
+      t = Stay.arrive(@stay) + i * day_seconds
+      rate = base_rate(Stay.room_type(@stay)) * season(t)
       rate *= 1.15 if Time.friday?(t) || Time.saturday?(t)
       post(f, i + 1, :room, "Room #{Time.strftime(t, "%a %b %d")}", rate)
-      post(f, i + 1, :tax, "City tax", city_tax_per_adult * Stay.get_adults(@stay))
+      post(f, i + 1, :tax, "City tax", city_tax_per_adult * Stay.adults(@stay))
     end
   end
 
   def pay(f, who, amount) = Array.push(@payments, [who, amount])
 
   def owed_by(f, who)
-    charged = Array.sum(Array.select(@charges) { |c| Charge.get_payer(c) == who }) { |c| Charge.get_amount(c) }
+    charged = Array.sum(Array.select(@charges) { |c| Charge.payer(c) == who }) { |c| Charge.amount(c) }
     paid = Array.sum(Array.select(@payments) { |w, a| w == who }) { |w, a| a }
     Float.round(charged - paid, 2)
   end
 
-  def payers(f) = Array.uniq(Array.map(@charges) { |c| Charge.get_payer(c) })
+  def payers(f) = Array.uniq(Array.map(@charges) { |c| Charge.payer(c) })
 end
 
 def print_folio(f)
-  s = Folio.get_stay(f)
-  depart = Stay.get_arrive(s) + Stay.get_nights(s) * day_seconds
-  puts("Folio: #{Stay.get_guest(s)} (#{Stay.get_room_type(s)}, #{Stay.get_adults(s)} adults) #{Time.strftime(Stay.get_arrive(s), "%Y-%m-%d")} to #{Time.strftime(depart, "%Y-%m-%d")}")
-  Array.each(Folio.get_charges(f)) do |c|
-    next if Charge.get_category(c) == :tax
-    puts(format("  n%-2d %-22s %8.2f  %s", Charge.get_night(c), Charge.get_text(c), Charge.get_amount(c), Charge.get_payer(c)))
+  s = Folio.stay(f)
+  depart = Stay.arrive(s) + Stay.nights(s) * day_seconds
+  puts("Folio: #{Stay.guest(s)} (#{Stay.room_type(s)}, #{Stay.adults(s)} adults) #{Time.strftime(Stay.arrive(s), "%Y-%m-%d")} to #{Time.strftime(depart, "%Y-%m-%d")}")
+  Array.each(Folio.charges(f)) do |c|
+    next if Charge.category(c) == :tax
+    puts(format("  n%-2d %-22s %8.2f  %s", Charge.night(c), Charge.text(c), Charge.amount(c), Charge.payer(c)))
   end
   Array.each(Array[:room, :tax, :minibar, :restaurant, :spa]) do |cat|
     total = f[cat]
@@ -89,7 +89,7 @@ folios = Hash[]
 Array.each(stays) do |s|
   f = Folio.open(s)
   Folio.post_rooms(f)
-  folios[Stay.get_guest(s)] = f
+  folios[Stay.guest(s)] = f
 end
 
 extras = Array[
@@ -107,7 +107,7 @@ Array.each(extras) do |guest, night, cat, text, amount|
   begin
     Folio.post(f, night, cat, text, amount)
   rescue BillingError => e
-    puts("#{BillingError.get_guest(e)}: #{Exception.message(e)}")
+    puts("#{BillingError.guest(e)}: #{Exception.message(e)}")
   end
 end
 
@@ -122,6 +122,6 @@ end
 
 puts
 room_revenue = Array.sum(Hash.values(folios)) { |f| f[:room] }
-nights = Array.sum(stays) { |s| Stay.get_nights(s) }
+nights = Array.sum(stays) { |s| Stay.nights(s) }
 puts(format("Room nights %d, ADR %.2f, extras %.2f", nights, room_revenue / nights,
   Array.sum(Hash.values(folios)) { |f| f[:minibar] + f[:restaurant] + f[:spa] }))

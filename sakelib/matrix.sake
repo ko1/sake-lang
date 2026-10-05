@@ -12,13 +12,13 @@ class ZeroVectorError < StandardError
 end
 
 class Matrix
-  attr_reader rows, column_count
+  attr_reader row_array, column_count
   include Arithmetic
   include Indexable
 
   # Every row has column_count elements (Ruby checks this in Matrix.rows; Sake's `new` is public).
   def initialize(m)
-    Array.each(@rows) do |r|
+    Array.each(@row_array) do |r|
       raise ErrDimensionMismatch, "row size differs (#{Array.size(r)} should be #{@column_count})" unless Array.size(r) == @column_count
     end
   end
@@ -64,8 +64,8 @@ class Matrix
   end
   def hstack(x, y)
     raise ErrDimensionMismatch, "The given matrices must have #{Matrix.row_count(x)} rows, but one has #{Matrix.row_count(y)}" if Matrix.row_count(x) != Matrix.row_count(y)
-    yr = Matrix.get_rows(y)
-    rs = Array.new(Matrix.row_count(x)) { |i| Array.fetch(Matrix.get_rows(x), i) + Array.fetch(yr, i) }
+    yr = Matrix.row_array(y)
+    rs = Array.new(Matrix.row_count(x)) { |i| Array.fetch(Matrix.row_array(x), i) + Array.fetch(yr, i) }
     Matrix.new(rs, Matrix.column_count(x) + Matrix.column_count(y))
   end
 
@@ -80,19 +80,19 @@ class Matrix
   # --- access ---
 
   # nil outside, as Ruby; the nil comes from indexing only, so --strict treats it as `x[k]` (level 3).
-  def [](m, i, j) = (@rows[i] || Array[])[j]
+  def [](m, i, j) = (@row_array[i] || Array[])[j]
   def element(m, i, j) = m[i, j]
   def component(m, i, j) = m[i, j]
   def []=(m, i, j, v)
-    Array.fetch(@rows, i)[j] = v
+    Array.fetch(@row_array, i)[j] = v
   end
-  def row_count(m) = Array.size(@rows)
-  def row_size(m) = Array.size(@rows)
+  def row_count(m) = Array.size(@row_array)
+  def row_size(m) = Array.size(@row_array)
   def column_count(m) = @column_count
   def column_size(m) = @column_count
   # With a block, each element of the row (column) is yielded and m is returned, as Ruby's.
   def row(m, i)
-    r = @rows[i]
+    r = @row_array[i]
     if block_given?
       Array.each(r) { |e| yield(e) } if r != nil
       m
@@ -103,15 +103,15 @@ class Matrix
   def column(m, j)
     out = j >= @column_count || j < -@column_count
     if block_given?
-      Array.each(@rows) { |r| yield(Array.fetch(r, j)) } unless out
+      Array.each(@row_array) { |r| yield(Array.fetch(r, j)) } unless out
       m
     else
-      out ? nil : Vector.new(Array.map(@rows) { |r| Array.fetch(r, j) })
+      out ? nil : Vector.new(Array.map(@row_array) { |r| Array.fetch(r, j) })
     end
   end
-  def row_vectors(m) = Array.new(Matrix.row_count(m)) { |i| Vector.new(Array.dup(Array.fetch(@rows, i))) }
-  def column_vectors(m) = Array.new(@column_count) { |j| Vector.new(Array.map(@rows) { |r| Array.fetch(r, j) }) }
-  def to_a(m) = Array.map(@rows) { |r| Array.dup(r) }
+  def row_vectors(m) = Array.new(Matrix.row_count(m)) { |i| Vector.new(Array.dup(Array.fetch(@row_array, i))) }
+  def column_vectors(m) = Array.new(@column_count) { |j| Vector.new(Array.map(@row_array) { |r| Array.fetch(r, j) }) }
+  def to_a(m) = Array.map(@row_array) { |r| Array.dup(r) }
 
   # which: :all, :diagonal, :off_diagonal, :lower, :strict_lower, :strict_upper, or :upper, as Ruby's.
   # Without a block, the Array of the elements (Ruby: an Enumerator, as each(which).to_a).
@@ -126,7 +126,7 @@ class Matrix
   end
   def each_with_index(m, which = :all)
     Matrix.check_which(which)
-    Array.each_with_index(@rows) do |r, i|
+    Array.each_with_index(@row_array) do |r, i|
       Array.each_with_index(r) { |e, j| yield(e, i, j) if Matrix.which?(which, i, j) }
     end
     m
@@ -134,8 +134,8 @@ class Matrix
   # Elements outside which are kept, as Ruby's.
   def collect(m, which = :all)
     Matrix.check_which(which)
-    rs = Array.new(Array.size(@rows)) do |i|
-      r = Array.fetch(@rows, i)
+    rs = Array.new(Array.size(@row_array)) do |i|
+      r = Array.fetch(@row_array, i)
       Array.new(Array.size(r)) do |j|
         e = Array.fetch(r, j)
         Matrix.which?(which, i, j) ? yield(e) : e
@@ -169,7 +169,7 @@ class Matrix
     from_row += Matrix.row_count(m) if from_row < 0
     from_col += @column_count if from_col < 0
     return nil if from_row > Matrix.row_count(m) || from_col > @column_count || from_row < 0 || from_col < 0
-    rs = Array.map(@rows[from_row, size_row] || Array[]) { |r| r[from_col, size_col] || Array[] }
+    rs = Array.map(@row_array[from_row, size_row] || Array[]) { |r| r[from_col, size_col] || Array[] }
     Matrix.new(rs, Integer.clamp(@column_count - from_col, 0, size_col))
   end
   def first_minor(m, row, column)
@@ -199,7 +199,7 @@ class Matrix
 
   def square?(m) = @column_count == Matrix.row_count(m)
   def empty?(m) = @column_count == 0 || Matrix.row_count(m) == 0
-  def zero?(m) = Array.all?(@rows) { |r| Array.all?(r) { |e| e == 0 } }
+  def zero?(m) = Array.all?(@row_array) { |r| Array.all?(r) { |e| e == 0 } }
   def diagonal?(m)
     raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
     Matrix.all_with_index?(m) { |e, i, j| i == j || e == 0 }
@@ -229,7 +229,7 @@ class Matrix
   def permutation?(m)
     raise ErrDimensionMismatch, "Dimension mismatch" unless Matrix.square?(m)
     cols = Array.new(@column_count, false)
-    Array.each(@rows) do |row|
+    Array.each(@row_array) do |row|
       found = false
       Array.each_with_index(row) do |e, j|
         if e == 1
@@ -247,28 +247,28 @@ class Matrix
   def singular?(m) = Matrix.determinant(m) == 0
   def regular?(m) = !Matrix.singular?(m)
   def all_with_index?(m)
-    Array.each_with_index(@rows) do |r, i|
+    Array.each_with_index(@row_array) do |r, i|
       Array.each_with_index(r) { |e, j| return false unless yield(e, i, j) }
     end
     true
   end
   # The element at (i, j), which must exist (`m[i, j]` gives nil outside).
-  def at(m, i, j) = Array.fetch(Array.fetch(@rows, i), j)
+  def at(m, i, j) = Array.fetch(Array.fetch(@row_array, i), j)
 
   # --- arithmetic ---
 
   def *(m, x)
     case x
     in Integer | Float | Rational | Complex
-      Matrix.new(Array.map(@rows) { |row| Array.map(row) { |e| e * x } }, @column_count)
+      Matrix.new(Array.map(@row_array) { |row| Array.map(row) { |e| e * x } }, @column_count)
     in Vector
       r = m * Matrix.column_vector(x)
-      Vector.new(Array.map(Matrix.get_rows(r)) { |row| Array.fetch(row, 0) })
+      Vector.new(Array.map(Matrix.row_array(r)) { |row| Array.fetch(row, 0) })
     in Matrix
       raise ErrDimensionMismatch, "Dimension mismatch" if @column_count != Matrix.row_count(x)
-      m_rows = Matrix.get_rows(x)
+      m_rows = Matrix.row_array(x)
       xc = Matrix.column_count(x)
-      new_rows = Array.map(@rows) do |row_i|
+      new_rows = Array.map(@row_array) do |row_i|
         Array.new(xc) do |j|
           vij = 0
           Integer.times(@column_count) { |k| vij += Array.fetch(row_i, k) * Array.fetch(Array.fetch(m_rows, k), j) }
@@ -310,7 +310,7 @@ class Matrix
   def /(m, x)
     case x
     in Integer | Float | Rational | Complex
-      Matrix.new(Array.map(@rows) { |row| Array.map(row) { |e| e / x } }, @column_count)
+      Matrix.new(Array.map(@row_array) { |row| Array.map(row) { |e| e / x } }, @column_count)
     in Matrix then m * Matrix.inverse(x)
     end
   end
@@ -350,7 +350,7 @@ class Matrix
 
   def transpose(m)
     return Matrix.empty(@column_count, 0) if Matrix.row_count(m) == 0
-    Matrix.new(Array.transpose(@rows), Matrix.row_count(m))
+    Matrix.new(Array.transpose(@row_array), Matrix.row_count(m))
   end
   def t(m) = Matrix.transpose(m)
 
@@ -367,9 +367,9 @@ class Matrix
     in 1 then Matrix.at(m, 0, 0)
     in 2 then Matrix.at(m, 0, 0) * Matrix.at(m, 1, 1) - Matrix.at(m, 0, 1) * Matrix.at(m, 1, 0)
     in 3
-      m0 = Array.fetch(@rows, 0)
-      m1 = Array.fetch(@rows, 1)
-      m2 = Array.fetch(@rows, 2)
+      m0 = Array.fetch(@row_array, 0)
+      m1 = Array.fetch(@row_array, 1)
+      m2 = Array.fetch(@row_array, 2)
       a0, a1, a2 = Array.fetch(m0, 0), Array.fetch(m0, 1), Array.fetch(m0, 2)
       b0, b1, b2 = Array.fetch(m1, 0), Array.fetch(m1, 1), Array.fetch(m1, 2)
       c0, c1, c2 = Array.fetch(m2, 0), Array.fetch(m2, 1), Array.fetch(m2, 2)
@@ -460,7 +460,7 @@ class Matrix
     n = Matrix.row_count(m)
     last = n - 1
     a = Matrix.to_a(m)
-    res = Matrix.get_rows(Matrix.identity(n))
+    res = Matrix.row_array(Matrix.identity(n))
     Integer.upto(0, last) do |k|
       i = k
       akk = Matrix.abs(Array.fetch(Array.fetch(a, k), k))
@@ -526,16 +526,16 @@ class Matrix
   def to_matrix(m) = m
   def to_s(m)
     return "Matrix.empty(#{Matrix.row_count(m)}, #{@column_count})" if Matrix.empty?(m)
-    "Matrix[" + Array.join(Array.map(@rows) { |row| "[" + Array.join(row, ", ") + "]" }, ", ") + "]"
+    "Matrix[" + Array.join(Array.map(@row_array) { |row| "[" + Array.join(row, ", ") + "]" }, ", ") + "]"
   end
   def inspect(m)
     return "Matrix.empty(#{Matrix.row_count(m)}, #{@column_count})" if Matrix.empty?(m)
-    "Matrix#{Kernel.inspect(@rows)}"
+    "Matrix#{Kernel.inspect(@row_array)}"
   end
 end
 
 class Vector
-  attr_reader elements
+  attr_reader elems
   include Arithmetic
   include Indexable
 
@@ -553,41 +553,41 @@ class Vector
     Vector.new(Array.new(size, 0))
   end
 
-  def [](v, i) = @elements[i]
-  def element(v, i) = @elements[i]
-  def component(v, i) = @elements[i]
+  def [](v, i) = @elems[i]
+  def element(v, i) = @elems[i]
+  def component(v, i) = @elems[i]
   def []=(v, i, x)
     raise IndexError, "given index #{i} is outside of -#{Vector.size(v)}...#{Vector.size(v)}" if i >= Vector.size(v) || i < -Vector.size(v)
-    @elements[i] = x
+    @elems[i] = x
   end
-  def size(v) = Array.size(@elements)
-  def to_a(v) = Array.dup(@elements)
+  def size(v) = Array.size(@elems)
+  def to_a(v) = Array.dup(@elems)
   # Without a block, the Array of the elements (Ruby: an Enumerator).
   def each(v)
-    return Array.dup(@elements) unless block_given?
-    Array.each(@elements) { |e| yield(e) }
+    return Array.dup(@elems) unless block_given?
+    Array.each(@elems) { |e| yield(e) }
     v
   end
   def each2(v, w)
     raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
-    ws = Vector.get_elements(w)
-    Array.each_with_index(@elements) { |e, i| yield(e, Array.fetch(ws, i)) }
+    ws = Vector.elems(w)
+    Array.each_with_index(@elems) { |e, i| yield(e, Array.fetch(ws, i)) }
     v
   end
-  def collect(v) = Vector.new(Array.map(@elements) { |e| yield(e) })
+  def collect(v) = Vector.new(Array.map(@elems) { |e| yield(e) })
   def map(v, &b) = Vector.collect(v, &b)
   def collect2(v, w)
     raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
-    ws = Vector.get_elements(w)
-    Array.new(Array.size(@elements)) { |i| yield(Array.fetch(@elements, i), Array.fetch(ws, i)) }
+    ws = Vector.elems(w)
+    Array.new(Array.size(@elems)) { |i| yield(Array.fetch(@elems, i), Array.fetch(ws, i)) }
   end
   def map2(v, w, &b) = Vector.new(Vector.collect2(v, w, &b))
 
-  def zero?(v) = Array.all?(@elements) { |e| e == 0 }
+  def zero?(v) = Array.all?(@elems) { |e| e == 0 }
 
   def *(v, x)
     case x
-    in Integer | Float | Rational | Complex then Vector.new(Array.map(@elements) { |e| e * x })
+    in Integer | Float | Rational | Complex then Vector.new(Array.map(@elems) { |e| e * x })
     in Matrix then Matrix.column_vector(v) * x
     in Vector then raise ErrOperationNotDefined, "Operation(*) can't be defined: Vector op Vector"
     end
@@ -610,7 +610,7 @@ class Vector
   end
   def /(v, x)
     case x
-    in Integer | Float | Rational | Complex then Vector.new(Array.map(@elements) { |e| e / x })
+    in Integer | Float | Rational | Complex then Vector.new(Array.map(@elems) { |e| e / x })
     in Matrix | Vector then raise ErrOperationNotDefined, "Operation(/) can't be defined: Vector op #{Matrix.class_name(x)}"
     end
   end
@@ -635,14 +635,14 @@ class Vector
   def cross_product(v, w)
     raise ErrOperationNotDefined, "cross product is not defined on vectors of dimension #{Vector.size(v)}" unless Vector.size(v) == 3
     raise ErrDimensionMismatch, "Dimension mismatch" unless Vector.size(w) == 3
-    a0, a1, a2 = Array.fetch(@elements, 0), Array.fetch(@elements, 1), Array.fetch(@elements, 2)
+    a0, a1, a2 = Array.fetch(@elems, 0), Array.fetch(@elems, 1), Array.fetch(@elems, 2)
     b0, b1, b2 = Vector.at(w, 0), Vector.at(w, 1), Vector.at(w, 2)
     Vector.new(Array[b2 * a1 - b1 * a2, b0 * a2 - b2 * a0, b1 * a0 - b0 * a1])
   end
   def cross(v, w) = Vector.cross_product(v, w)
-  def at(v, i) = Array.fetch(@elements, i)
+  def at(v, i) = Array.fetch(@elems, i)
 
-  def magnitude(v) = Math.sqrt(Array.inject(@elements, 0) { |s, e| s + Vector.abs2(e) })
+  def magnitude(v) = Math.sqrt(Array.inject(@elems, 0) { |s, e| s + Vector.abs2(e) })
   def norm(v) = Vector.magnitude(v)
   def r(v) = Vector.magnitude(v)
   def abs2(e)
@@ -674,9 +674,9 @@ class Vector
   # Math.acos is not a Sake built-in; atan2 gives it within an ulp or so.
   def acos(x) = Math.atan2(Math.sqrt(1 - x * x), x)
 
-  def round(v, ndigits = 0) = Vector.new(Matrix.get_rows(Matrix.round(Matrix.column_vector(v), ndigits)).Array.map { |r| Array.fetch(r, 0) })
+  def round(v, ndigits = 0) = Vector.new(Matrix.row_array(Matrix.round(Matrix.column_vector(v), ndigits)).Array.map { |r| Array.fetch(r, 0) })
   def covector(v) = Matrix.row_vector(v)
   def to_matrix(v) = Matrix.column_vector(v)
-  def to_s(v) = "Vector[" + Array.join(@elements, ", ") + "]"
-  def inspect(v) = "Vector#{Kernel.inspect(@elements)}"
+  def to_s(v) = "Vector[" + Array.join(@elems, ", ") + "]"
+  def inspect(v) = "Vector#{Kernel.inspect(@elems)}"
 end

@@ -7,26 +7,26 @@ class Money
   include Comparable
 
   def check_same(a, b)
-    if @currency != Money.get_currency(b)
-      raise CurrencyMismatch.new("cannot combine #{@currency} and #{Money.get_currency(b)}", @currency, Money.get_currency(b))
+    if @currency != Money.currency(b)
+      raise CurrencyMismatch.new("cannot combine #{@currency} and #{Money.currency(b)}", @currency, Money.currency(b))
     end
   end
 
   def +(a, b)
     check_same(a, b)
-    Money.new(@cents + Money.get_cents(b), @currency)
+    Money.new(@cents + Money.cents(b), @currency)
   end
 
   def -(a, b)
     check_same(a, b)
-    Money.new(@cents - Money.get_cents(b), @currency)
+    Money.new(@cents - Money.cents(b), @currency)
   end
 
   def *(a, k) = Money.new(Float.round(@cents * k * 1.0), @currency)
 
   def <=>(a, b)
     check_same(a, b)
-    @cents <=> Money.get_cents(b)
+    @cents <=> Money.cents(b)
   end
 
   def zero(cur) = Money.new(0, cur)
@@ -35,11 +35,11 @@ class Money
   def allocate(a, ratios)
     total = Array.sum(ratios)
     parts = Array.map(ratios) { |r| Money.new(@cents * r / total, @currency) }
-    remainder = @cents - Array.sum(Array.map(parts) { |m| Money.get_cents(m) })
+    remainder = @cents - Array.sum(Array.map(parts) { |m| Money.cents(m) })
     i = 0
     while remainder > 0
       m = parts[i]
-      parts[i] = Money.new(Money.get_cents(m) + 1, @currency)
+      parts[i] = Money.new(Money.cents(m) + 1, @currency)
       remainder -= 1
       i += 1
     end
@@ -56,11 +56,11 @@ end
 def rates = Hash[["USD", "EUR"] => 0.92, ["EUR", "USD"] => 1.09, ["USD", "JPY"] => 149.5, ["GBP", "USD"] => 1.27]
 
 def convert(m, to)
-  from = Money.get_currency(m)
+  from = Money.currency(m)
   return m if from == to
   rate = rates[[from, to]]
   raise UnknownRate.new("no rate #{from}->#{to}", from, to) if rate == nil
-  Money.new(Float.round(Money.get_cents(m) * rate), to)
+  Money.new(Float.round(Money.cents(m) * rate), to)
 end
 
 Txn = Struct.new(:who, :amount, :memo)
@@ -76,48 +76,48 @@ txns = Txn[
 ]
 
 puts("== ledger ==")
-Array.each(txns) { |t| puts(format("%-6s %-12s %14s", Txn.get_who(t), Txn.get_memo(t), Txn.get_amount(t))) }
+Array.each(txns) { |t| puts(format("%-6s %-12s %14s", Txn.who(t), Txn.memo(t), Txn.amount(t))) }
 
 puts("== balance per currency ==")
 by_cur = Hash[]
 Array.each(txns) do |t|
-  m = Txn.get_amount(t)
-  cur = Money.get_currency(m)
+  m = Txn.amount(t)
+  cur = Money.currency(m)
   by_cur[cur] = (by_cur[cur] || Money.zero(cur)) + m
 end
 Hash.each(by_cur) { |cur, m| puts("#{cur}: #{m}") }
 
 puts("== mixing currencies ==")
 begin
-  bad = Txn.get_amount(txns[0]) + Txn.get_amount(txns[2])
+  bad = Txn.amount(txns[0]) + Txn.amount(txns[2])
   puts("unexpected: #{bad}")
 rescue CurrencyMismatch => e
-  puts("error: #{Exception.message(e)} (#{CurrencyMismatch.get_left(e)}/#{CurrencyMismatch.get_right(e)})")
+  puts("error: #{Exception.message(e)} (#{CurrencyMismatch.left(e)}/#{CurrencyMismatch.right(e)})")
 end
 
 puts("== in USD ==")
 total_usd = Money.zero("USD")
 Array.each(txns) do |t|
   begin
-    usd = convert(Txn.get_amount(t), "USD")
+    usd = convert(Txn.amount(t), "USD")
     total_usd = total_usd + usd
-    puts(format("%-12s %12s", Txn.get_memo(t), usd))
+    puts(format("%-12s %12s", Txn.memo(t), usd))
   rescue UnknownRate => e
-    puts(format("%-12s %12s", Txn.get_memo(t), "n/a (#{UnknownRate.get_from(e)})"))
+    puts(format("%-12s %12s", Txn.memo(t), "n/a (#{UnknownRate.from(e)})"))
   end
 end
 puts("total: #{total_usd}")
 
 puts("== per person (USD only) ==")
-usd_txns = Array.select(txns) { |t| Money.get_currency(Txn.get_amount(t)) == "USD" }
-people = Array.group_by(usd_txns) { |t| Txn.get_who(t) }
+usd_txns = Array.select(txns) { |t| Money.currency(Txn.amount(t)) == "USD" }
+people = Array.group_by(usd_txns) { |t| Txn.who(t) }
 Hash.each(people) do |who, ts|
-  sum = Array.reduce(ts, Money.zero("USD")) { |acc, t| acc + Txn.get_amount(t) }
+  sum = Array.reduce(ts, Money.zero("USD")) { |acc, t| acc + Txn.amount(t) }
   flag = Money.negative?(sum) ? " (owes)" : ""
   puts("#{who}: #{sum}#{flag}")
 end
 
-usd_amounts = Array.map(usd_txns) { |t| Txn.get_amount(t) }
+usd_amounts = Array.map(usd_txns) { |t| Txn.amount(t) }
 puts("largest USD: #{Array.max(usd_amounts)}")
 puts("smallest USD: #{Array.min(usd_amounts)}")
 puts("sorted: #{Array.join(Array.sort(usd_amounts), ", ")}")

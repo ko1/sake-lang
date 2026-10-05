@@ -32,9 +32,9 @@ def write_array(data, disks)
     k = 0
     Array.each_with_index(array) do |d, i|
       if i == p_disk
-        Array.push(Disk.get_blocks(d), parity)
+        Array.push(Disk.blocks(d), parity)
       else
-        Array.push(Disk.get_blocks(d), data_blocks[k])
+        Array.push(Disk.blocks(d), data_blocks[k])
         k += 1
       end
     end
@@ -44,26 +44,26 @@ end
 
 def read_data(array)
   disks = Array.size(array)
-  stripes = Array.size(Disk.get_blocks(Array.fetch(array, 0)))
+  stripes = Array.size(Disk.blocks(Array.fetch(array, 0)))
   bytes = Integer[]
   Integer.times(stripes) do |s|
     p_disk = parity_disk(s, disks)
     Array.each_with_index(array) do |d, i|
       next if i == p_disk
-      raise IOError, "#{Disk.get_name(d)} has failed" if Disk.get_failed(d)
-      Array.concat(bytes, Array.fetch(Disk.get_blocks(d), s))
+      raise IOError, "#{Disk.name(d)} has failed" if Disk.failed(d)
+      Array.concat(bytes, Array.fetch(Disk.blocks(d), s))
     end
   end
   Array.join(Array.map(Array.select(bytes) { |b| b != 0 }) { |b| Integer.chr(b) }, "")
 end
 
 def rebuild(array, lost)
-  survivors = Array.reject(array) { |d| Disk.get_failed(d) }
-  stripes = Array.size(Disk.get_blocks(Array.fetch(survivors, 0)))
+  survivors = Array.reject(array) { |d| Disk.failed(d) }
+  stripes = Array.size(Disk.blocks(Array.fetch(survivors, 0)))
   blocks = Array[]
   Integer.times(stripes) do |s|
     acc = Array.map(Range.to_a(1..block_size)) { 0 }
-    Array.each(survivors) { |d| acc = xor_blocks(acc, Array.fetch(Disk.get_blocks(d), s)) }
+    Array.each(survivors) { |d| acc = xor_blocks(acc, Array.fetch(Disk.blocks(d), s)) }
     Array.push(blocks, acc)
   end
   Disk.set_blocks(lost, blocks)
@@ -73,10 +73,10 @@ end
 
 def scrub(array)
   bad = Integer[]
-  stripes = Array.size(Disk.get_blocks(Array.fetch(array, 0)))
+  stripes = Array.size(Disk.blocks(Array.fetch(array, 0)))
   Integer.times(stripes) do |s|
     acc = Array.map(Range.to_a(1..block_size)) { 0 }
-    Array.each(array) { |d| acc = xor_blocks(acc, Array.fetch(Disk.get_blocks(d), s)) }
+    Array.each(array) { |d| acc = xor_blocks(acc, Array.fetch(Disk.blocks(d), s)) }
     Array.push(bad, s) if Array.any?(acc) { |x| x != 0 }
   end
   bad
@@ -84,8 +84,8 @@ end
 
 def show(array)
   Array.each(array) do |d|
-    cells = Array.map(Disk.get_blocks(d)) { |b| Array.join(Array.map(b) { |x| format("%02x", x) }, "") }
-    puts(format("  %-6s %s%s", Disk.get_name(d), Array.join(cells, " "), Disk.get_failed(d) ? "  (FAILED)" : ""))
+    cells = Array.map(Disk.blocks(d)) { |b| Array.join(Array.map(b) { |x| format("%02x", x) }, "") }
+    puts(format("  %-6s %s%s", Disk.name(d), Array.join(cells, " "), Disk.failed(d) ? "  (FAILED)" : ""))
   end
 end
 
@@ -103,10 +103,10 @@ rescue IOError => e
   puts("degraded read: #{Exception.message(e)}")
 end
 n = rebuild(array, victim)
-puts("rebuilt #{Disk.get_name(victim)}: #{n} stripes")
+puts("rebuilt #{Disk.name(victim)}: #{n} stripes")
 puts("read: #{read_data(array)}")
 
-blk = Array.fetch(Disk.get_blocks(Array.fetch(array, 1)), 1)
+blk = Array.fetch(Disk.blocks(Array.fetch(array, 1)), 1)
 blk[2] ^= 0x20
 bad = scrub(array)
 puts("after bit rot, scrub flags stripes #{Kernel.inspect(bad)}")

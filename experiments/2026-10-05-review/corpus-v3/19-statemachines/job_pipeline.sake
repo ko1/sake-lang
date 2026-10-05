@@ -21,7 +21,7 @@ def dfs(jobs, name, marks, order, path)
   end
   marks[name] = :visiting
   Array.push(path, name)
-  Array.each(Job.get_deps(jobs[name])) { |d| dfs(jobs, d, marks, order, path) }
+  Array.each(Job.deps(jobs[name])) { |d| dfs(jobs, d, marks, order, path) }
   Array.pop(path)
   marks[name] = :done
   Array.push(order, name)
@@ -33,8 +33,8 @@ def run_pipeline(jobs, slots)
   log = Array[]
   while true
     Hash.each(jobs) do |name, job|
-      next if Job.get_state(job) != :pending
-      dep_states = Array.map(Job.get_deps(job)) { |d| Job.get_state(jobs[d]) }
+      next if Job.state(job) != :pending
+      dep_states = Array.map(Job.deps(job)) { |d| Job.state(jobs[d]) }
       if Array.any?(dep_states) { it == :failed || it == :skipped }
         Job.set_state(job, :skipped)
         Array.push(log, "t=#{clock} #{name} skipped")
@@ -42,32 +42,32 @@ def run_pipeline(jobs, slots)
         Job.set_state(job, :ready)
       end
     end
-    ready = Array.select(Hash.values(jobs)) { Job.get_state(it) == :ready }
-    Array.each(Array.sort_by(ready) { Job.get_name(it) }) do |job|
+    ready = Array.select(Hash.values(jobs)) { Job.state(it) == :ready }
+    Array.each(Array.sort_by(ready) { Job.name(it) }) do |job|
       next if Array.size(running) >= slots
       Job.set_state(job, :running)
-      Job.set_attempts(job, Job.get_attempts(job) + 1)
+      Job.set_attempts(job, Job.attempts(job) + 1)
       Job.set_started(job, clock)
       Array.push(running, job)
-      Array.push(log, "t=#{clock} #{Job.get_name(job)} start (attempt #{Job.get_attempts(job)})")
+      Array.push(log, "t=#{clock} #{Job.name(job)} start (attempt #{Job.attempts(job)})")
     end
     break if Array.empty?(running)
     clock += 1
     Array.each(Array.dup(running)) do |job|
-      next if clock - Job.get_started(job) < Job.get_duration(job)
+      next if clock - Job.started(job) < Job.duration(job)
       Array.delete(running, job)
-      if Job.get_attempts(job) <= Job.get_fail_times(job)
-        if Job.get_attempts(job) <= Job.get_max_retries(job)
+      if Job.attempts(job) <= Job.fail_times(job)
+        if Job.attempts(job) <= Job.max_retries(job)
           Job.set_state(job, :ready)
-          Array.push(log, "t=#{clock} #{Job.get_name(job)} failed, will retry")
+          Array.push(log, "t=#{clock} #{Job.name(job)} failed, will retry")
         else
           Job.set_state(job, :failed)
-          Array.push(log, "t=#{clock} #{Job.get_name(job)} FAILED")
+          Array.push(log, "t=#{clock} #{Job.name(job)} FAILED")
         end
       else
         Job.set_state(job, :succeeded)
         Job.set_finished(job, clock)
-        Array.push(log, "t=#{clock} #{Job.get_name(job)} done")
+        Array.push(log, "t=#{clock} #{Job.name(job)} done")
       end
     end
   end
@@ -105,9 +105,9 @@ Array.each(pipelines) do |title, slots, specs|
     puts("order: #{Array.join(order, " ")}")
     log, finished = run_pipeline(jobs, slots)
     Array.each(log) { puts("  #{it}") }
-    summary = Array.tally(Array.map(Hash.values(jobs)) { Job.get_state(it) })
+    summary = Array.tally(Array.map(Hash.values(jobs)) { Job.state(it) })
     puts("finished at t=#{finished}: #{Array.join(Array.map(Hash.to_a(summary)) { |k, v| "#{k}=#{v}" }, " ")}")
   rescue CycleError => e
-    puts("#{Exception.message(e)}: #{CycleError.get_path(e)}")
+    puts("#{Exception.message(e)}: #{CycleError.path(e)}")
   end
 end

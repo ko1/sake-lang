@@ -43,7 +43,7 @@ class Library
   end
 
   def open_loans_of(lib, member_id)
-    Array.select(@loans) { |l| Loan.get_member_id(l) == member_id && Loan.get_back_day(l) == nil }
+    Array.select(@loans) { |l| Loan.member_id(l) == member_id && Loan.back_day(l) == nil }
   end
 
   def checkout(lib, member_id, isbn, day)
@@ -51,16 +51,16 @@ class Library
     raise LoanError.new("no such member #{member_id}", :member) if member == nil
     book = @books[isbn]
     raise LoanError.new("no such book #{isbn}", :book) if book == nil
-    if Member.get_fines(member) > 0
-      raise LoanError.new("#{Member.get_name(member)} owes #{Member.get_fines(member)} cents", :fines)
+    if Member.fines(member) > 0
+      raise LoanError.new("#{Member.name(member)} owes #{Member.fines(member)} cents", :fines)
     end
-    if Array.size(open_loans_of(lib, member_id)) >= Member.get_limit(member)
-      raise LoanError.new("#{Member.get_name(member)} reached the limit", :limit)
+    if Array.size(open_loans_of(lib, member_id)) >= Member.limit(member)
+      raise LoanError.new("#{Member.name(member)} reached the limit", :limit)
     end
     if Book.available(book) <= 0
-      raise LoanError.new("'#{Book.get_title(book)}' is not available", :copies)
+      raise LoanError.new("'#{Book.title(book)}' is not available", :copies)
     end
-    Book.set_on_loan(book, Book.get_on_loan(book) + 1)
+    Book.set_on_loan(book, Book.on_loan(book) + 1)
     loan = Loan.new(isbn, member_id, day, day + loan_days, nil)
     Array.push(@loans, loan)
     loan
@@ -68,31 +68,31 @@ class Library
 
   def checkin(lib, member_id, isbn, day)
     loan = Array.find(@loans) do |l|
-      Loan.get_member_id(l) == member_id && Loan.get_isbn(l) == isbn && Loan.get_back_day(l) == nil
+      Loan.member_id(l) == member_id && Loan.isbn(l) == isbn && Loan.back_day(l) == nil
     end
     raise LoanError.new("#{member_id} has no open loan of #{isbn}", :loan) unless loan
     Loan.set_back_day(loan, day)
     book = Hash.fetch(@books, isbn)
-    Book.set_on_loan(book, Book.get_on_loan(book) - 1)
-    late = day - Loan.get_due_day(loan)
+    Book.set_on_loan(book, Book.on_loan(book) - 1)
+    late = day - Loan.due_day(loan)
     fine = 0
     if late > 0
       fine = Integer.clamp(late * fine_per_day, 0, fine_cap)
       member = Hash.fetch(@members, member_id)
-      Member.set_fines(member, Member.get_fines(member) + fine)
+      Member.set_fines(member, Member.fines(member) + fine)
     end
     fine
   end
 
   def pay(lib, member_id, amount)
     member = Hash.fetch(@members, member_id)
-    paid = Integer.clamp(amount, 0, Member.get_fines(member))
-    Member.set_fines(member, Member.get_fines(member) - paid)
+    paid = Integer.clamp(amount, 0, Member.fines(member))
+    Member.set_fines(member, Member.fines(member) - paid)
     paid
   end
 
   def overdue(lib, today)
-    Array.select(@loans) { |l| Loan.get_back_day(l) == nil && Loan.get_due_day(l) < today }
+    Array.select(@loans) { |l| Loan.back_day(l) == nil && Loan.due_day(l) < today }
   end
 end
 
@@ -102,7 +102,7 @@ def try(label)
   result = yield
   puts("ok   #{label}: #{result}")
 rescue LoanError => e
-  puts("FAIL #{label}: #{Exception.message(e)} [#{LoanError.get_code(e)}]")
+  puts("FAIL #{label}: #{Exception.message(e)} [#{LoanError.code(e)}]")
 end
 
 lib = Library.new
@@ -128,7 +128,7 @@ Array.each(events) do |day, kind, who, arg|
   label = "day #{day} #{kind} m#{who} #{arg}"
   case kind
   in :out
-    try(label) { "due day #{Loan.get_due_day(Library.checkout(lib, who, arg, day))}" }
+    try(label) { "due day #{Loan.due_day(Library.checkout(lib, who, arg, day))}" }
   in :in
     try(label) { "fine #{money(Library.checkin(lib, who, arg, day))}" }
   in :pay
@@ -139,27 +139,27 @@ end
 puts
 puts("Overdue on day 40:")
 Array.each(Library.overdue(lib, 40)) do |l|
-  book = Hash.fetch(Library.get_books(lib), Loan.get_isbn(l))
-  member = Hash.fetch(Library.get_members(lib), Loan.get_member_id(l))
-  days = 40 - Loan.get_due_day(l)
-  puts(format("  %-28s %-4s %3d days late", Book.get_title(book), Member.get_name(member), days))
+  book = Hash.fetch(Library.books(lib), Loan.isbn(l))
+  member = Hash.fetch(Library.members(lib), Loan.member_id(l))
+  days = 40 - Loan.due_day(l)
+  puts(format("  %-28s %-4s %3d days late", Book.title(book), Member.name(member), days))
 end
 
 puts
 puts("Shelf:")
-Hash.each_value(Library.get_books(lib)) do |b|
-  puts(format("  %-28s %-7s %d/%d available", Book.get_title(b), Book.get_author(b), Book.available(b), Book.get_copies(b)))
+Hash.each_value(Library.books(lib)) do |b|
+  puts(format("  %-28s %-7s %d/%d available", Book.title(b), Book.author(b), Book.available(b), Book.copies(b)))
 end
 
 puts
 puts("Members:")
-Hash.each_value(Library.get_members(lib)) do |m|
-  n = Array.size(Library.open_loans_of(lib, Member.get_id(m)))
-  puts(format("  %-4s loans=%d fines=%s", Member.get_name(m), n, money(Member.get_fines(m))))
+Hash.each_value(Library.members(lib)) do |m|
+  n = Array.size(Library.open_loans_of(lib, Member.id(m)))
+  puts(format("  %-4s loans=%d fines=%s", Member.name(m), n, money(Member.fines(m))))
 end
 
-counts = Array.tally(Array.map(Library.get_loans(lib)) { |l| Loan.get_isbn(l) })
+counts = Array.tally(Array.map(Library.loans(lib)) { |l| Loan.isbn(l) })
 top_n = Array.max(Hash.values(counts))
 tops = Hash.keys(Hash.select(counts) { |isbn, n| n == top_n })
-titles = Array.map(tops) { |isbn| Book.get_title(Hash.fetch(Library.get_books(lib), isbn)) }
+titles = Array.map(tops) { |isbn| Book.title(Hash.fetch(Library.books(lib), isbn)) }
 puts("Most borrowed (#{top_n} loans): #{Array.join(titles, ", ")}")

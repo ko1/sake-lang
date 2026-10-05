@@ -38,15 +38,15 @@ class Bank
 
   def deposit(b, id, amount)
     acct = find(b, id)
-    Account.set_balance(acct, Account.get_balance(acct) + amount)
+    Account.set_balance(acct, Account.balance(acct) + amount)
     record(b, "dep", id, amount)
   end
 
   def withdraw(b, id, amount)
     acct = find(b, id)
-    raise "account #{id} is frozen" if Account.get_frozen(acct)
-    limit = Account.get_kind(acct) == "checking" ? -5000 : 0
-    after = Account.get_balance(acct) - amount
+    raise "account #{id} is frozen" if Account.frozen(acct)
+    limit = Account.kind(acct) == "checking" ? -5000 : 0
+    after = Account.balance(acct) - amount
     raise InsufficientFunds.new("insufficient funds in #{id}", id, amount) if after < limit
     Account.set_balance(acct, after)
     record(b, "wd", id, amount)
@@ -60,13 +60,13 @@ class Bank
 
   def month_end(b)
     Hash.each(@accounts) do |id, acct|
-      bal = Account.get_balance(acct)
+      bal = Account.balance(acct)
       if bal < 0
         fee = 1500
         Account.set_balance(acct, bal - fee)
         record(b, "fee", id, fee)
       else
-        rate = Hash.fetch(@rates, Account.get_kind(acct), 0)
+        rate = Hash.fetch(@rates, Account.kind(acct), 0)
         interest = bal * rate / 10000
         if interest > 0
           Account.set_balance(acct, bal + interest)
@@ -76,7 +76,7 @@ class Bank
     end
   end
 
-  def total(b) = Array.sum(Hash.values(@accounts)) { Account.get_balance(it) }
+  def total(b) = Array.sum(Hash.values(@accounts)) { Account.balance(it) }
 end
 
 bank = Bank.new(Hash[], Array[], Hash["savings" => 125, "checking" => 5])
@@ -107,10 +107,10 @@ Array.each(ops) do |op, a, b, amount|
     in :freeze then Account.set_frozen(Bank.find(bank, a), true)
     end
   rescue InsufficientFunds => e
-    puts("step #{step}: #{Exception.message(e)} (needed #{cents(InsufficientFunds.get_needed(e))})")
+    puts("step #{step}: #{Exception.message(e)} (needed #{cents(InsufficientFunds.needed(e))})")
     failures["funds"] += 1
   rescue UnknownAccount => e
-    puts("step #{step}: unknown account #{UnknownAccount.get_id(e)}")
+    puts("step #{step}: unknown account #{UnknownAccount.id(e)}")
     failures["unknown"] += 1
   rescue RuntimeError => e
     puts("step #{step}: #{Exception.message(e)}")
@@ -119,11 +119,11 @@ Array.each(ops) do |op, a, b, amount|
 end
 
 puts("--- accounts")
-Hash.each_value(Bank.get_accounts(bank)) { |acct| puts(acct) }
+Hash.each_value(Bank.accounts(bank)) { |acct| puts(acct) }
 puts("total: #{cents(Bank.total(bank))}")
 
 puts("--- journal by kind")
-by_kind = Array.group_by(Bank.get_journal(bank)) { |kind, id, amount| kind }
+by_kind = Array.group_by(Bank.journal(bank)) { |kind, id, amount| kind }
 Hash.each(by_kind) do |kind, entries|
   sum = Array.sum(entries) { |k, id, amount| amount }
   puts(format("%-4s %3d entries %12s", kind, Array.size(entries), cents(sum)))
@@ -132,8 +132,8 @@ end
 puts("--- failures")
 Hash.each(failures) { |k, n| puts("#{k}: #{n}") }
 
-richest = Array.max_by(Hash.values(Bank.get_accounts(bank))) { Account.get_balance(it) }
-puts("richest: #{Account.get_owner(richest)} #{Account.get_id(richest)}") if richest
+richest = Array.max_by(Hash.values(Bank.accounts(bank))) { Account.balance(it) }
+puts("richest: #{Account.owner(richest)} #{Account.id(richest)}") if richest
 owners = Hash.new(0)
-Hash.each_value(Bank.get_accounts(bank)) { |acct| owners[Account.get_owner(acct)] += Account.get_balance(acct) }
+Hash.each_value(Bank.accounts(bank)) { |acct| owners[Account.owner(acct)] += Account.balance(acct) }
 Array.each(Hash.sort_by(owners) { |o, bal| -bal }) { |o, bal| puts("#{o}: #{cents(bal)}") }

@@ -90,22 +90,22 @@ end
 def parse(src)
   ps = Parser.new(String.scan(src, /\d+\.\d+|\d+|[a-z]+|\S/))
   e = Parser.expr(ps)
-  raise ParseError.new("trailing '#{Parser.peek(ps)}'", Parser.get_pos(ps)) if Parser.peek(ps)
+  raise ParseError.new("trailing '#{Parser.peek(ps)}'", Parser.pos(ps)) if Parser.peek(ps)
   e
 end
 
-def num?(e, v) = (e in Num) && Num.get_value(e) == v
+def num?(e, v) = (e in Num) && Num.value(e) == v
 
 def add(a, b)
   return b if num?(a, 0)
   return a if num?(b, 0)
-  return Num.new(Num.get_value(a) + Num.get_value(b)) if (a in Num) && (b in Num)
+  return Num.new(Num.value(a) + Num.value(b)) if (a in Num) && (b in Num)
   Bin.new("+", a, b)
 end
 
 def sub(a, b)
   return a if num?(b, 0)
-  return Num.new(Num.get_value(a) - Num.get_value(b)) if (a in Num) && (b in Num)
+  return Num.new(Num.value(a) - Num.value(b)) if (a in Num) && (b in Num)
   Bin.new("-", a, b)
 end
 
@@ -113,7 +113,7 @@ def mul(a, b)
   return Num.new(0) if num?(a, 0) || num?(b, 0)
   return b if num?(a, 1)
   return a if num?(b, 1)
-  return Num.new(Num.get_value(a) * Num.get_value(b)) if (a in Num) && (b in Num)
+  return Num.new(Num.value(a) * Num.value(b)) if (a in Num) && (b in Num)
   Bin.new("*", a, b)
 end
 
@@ -132,29 +132,29 @@ end
 def derive(e, x)
   case e
   in Num then Num.new(0)
-  in Var then Num.new(Var.get_name(e) == x ? 1 : 0)
+  in Var then Num.new(Var.name(e) == x ? 1 : 0)
   in Fn
-    u = Fn.get_arg(e)
+    u = Fn.arg(e)
     du = derive(u, x)
-    case Fn.get_name(e)
+    case Fn.name(e)
     in "sin" then mul(Fn.new("cos", u), du)
     in "cos" then mul(mul(Num.new(-1), Fn.new("sin", u)), du)
     in "exp" then mul(e, du)
     in "ln" then div(du, u)
     end
   in Bin
-    l = Bin.get_left(e)
-    r = Bin.get_right(e)
+    l = Bin.left(e)
+    r = Bin.right(e)
     dl = derive(l, x)
     dr = derive(r, x)
-    case Bin.get_op(e)
+    case Bin.op(e)
     in "+" then add(dl, dr)
     in "-" then sub(dl, dr)
     in "*" then add(mul(dl, r), mul(l, dr))
     in "/" then div(sub(mul(dl, r), mul(l, dr)), pow(r, Num.new(2)))
     in "^"
       if r in Num
-        mul(mul(r, pow(l, Num.new(Num.get_value(r) - 1))), dl)
+        mul(mul(r, pow(l, Num.new(Num.value(r) - 1))), dl)
       else
         mul(e, add(mul(dr, Fn.new("ln", l)), div(mul(r, dl), l)))
       end
@@ -167,15 +167,15 @@ def prec = once { Hash["+" => 1, "-" => 1, "*" => 2, "/" => 2, "^" => 3] }
 def show(e, outer)
   case e
   in Num
-    s = Kernel.to_s(Num.get_value(e))
-    Num.get_value(e) < 0 && outer > 0 ? "(#{s})" : s
-  in Var then Var.get_name(e)
-  in Fn then "#{Fn.get_name(e)}(#{show(Fn.get_arg(e), 0)})"
+    s = Kernel.to_s(Num.value(e))
+    Num.value(e) < 0 && outer > 0 ? "(#{s})" : s
+  in Var then Var.name(e)
+  in Fn then "#{Fn.name(e)}(#{show(Fn.arg(e), 0)})"
   in Bin
-    op = Bin.get_op(e)
+    op = Bin.op(e)
     p = prec[op]
-    left = show(Bin.get_left(e), op == "^" ? p + 1 : p)
-    right = show(Bin.get_right(e), op == "^" ? p : p + 1)
+    left = show(Bin.left(e), op == "^" ? p + 1 : p)
+    right = show(Bin.right(e), op == "^" ? p : p + 1)
     s = op == "^" ? "#{left}^#{right}" : "#{left} #{op} #{right}"
     p < outer ? "(#{s})" : s
   end
@@ -183,20 +183,20 @@ end
 
 def evaluate(e, env)
   case e
-  in Num then Num.get_value(e)
-  in Var then env[Var.get_name(e)]
+  in Num then Num.value(e)
+  in Var then env[Var.name(e)]
   in Fn
-    v = evaluate(Fn.get_arg(e), env)
-    case Fn.get_name(e)
+    v = evaluate(Fn.arg(e), env)
+    case Fn.name(e)
     in "sin" then Math.sin(v)
     in "cos" then Math.cos(v)
     in "exp" then Math.exp(v)
     in "ln" then Math.log(v)
     end
   in Bin
-    a = evaluate(Bin.get_left(e), env)
-    b = evaluate(Bin.get_right(e), env)
-    case Bin.get_op(e)
+    a = evaluate(Bin.left(e), env)
+    b = evaluate(Bin.right(e), env)
+    case Bin.op(e)
     in "+" then a + b
     in "-" then a - b
     in "*" then a * b
@@ -219,5 +219,5 @@ Array.each(inputs) do |src|
   puts("f'(x) = #{show(df, 0)}")
   puts("f'(#{x0}) = #{exact} (numeric #{numeric})#{Float.abs(exact - numeric) < 0.001 ? "" : " MISMATCH"}")
 rescue ParseError => e
-  puts("#{src}: parse error at token #{ParseError.get_pos(e)}: #{Exception.message(e)}")
+  puts("#{src}: parse error at token #{ParseError.pos(e)}: #{Exception.message(e)}")
 end

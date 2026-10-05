@@ -16,11 +16,11 @@ class Email
   include Channel
   def name(ch) = "email"
   def deliver(ch, msg, attempt)
-    domain = Array.last(String.split(Message.get_to(msg), "@"))
+    domain = Array.last(String.split(Message.to(msg), "@"))
     if Array.include?(@domain_blocklist, domain)
       raise DeliveryFailed.new("#{domain} rejects mail", "email", false)
     end
-    "mail to #{Message.get_to(msg)}: #{Message.get_subject(msg)}"
+    "mail to #{Message.to(msg)}: #{Message.subject(msg)}"
   end
 end
 
@@ -28,12 +28,12 @@ class Sms
   attr_reader per_segment
   include Channel
   def name(ch) = "sms"
-  def segments(ch, msg) = Integer.ceildiv(String.size(Message.get_body(msg)) + 1, 160)
+  def segments(ch, msg) = Integer.ceildiv(String.size(Message.body(msg)) + 1, 160)
   def cost_cents(ch, msg) = segments(ch, msg) * @per_segment
   def available?(ch, hour) = hour >= 8 && hour < 21
   def deliver(ch, msg, attempt)
-    raise DeliveryFailed.new("sms gateway timeout", "sms", true) if attempt == 1 && String.size(Message.get_body(msg)) > 150
-    "sms (#{segments(ch, msg)} seg) to #{Message.get_to(msg)}"
+    raise DeliveryFailed.new("sms gateway timeout", "sms", true) if attempt == 1 && String.size(Message.body(msg)) > 150
+    "sms (#{segments(ch, msg)} seg) to #{Message.to(msg)}"
   end
 end
 
@@ -43,9 +43,9 @@ class Push
   def name(ch) = "push"
   def cost_cents(ch, msg) = 1
   def deliver(ch, msg, attempt)
-    token = @devices[Message.get_to(msg)]
-    raise DeliveryFailed.new("no device for #{Message.get_to(msg)}", "push", false) if token == nil
-    "push to device #{token}: #{truncate(Message.get_subject(msg), 12)}"
+    token = @devices[Message.to(msg)]
+    raise DeliveryFailed.new("no device for #{Message.to(msg)}", "push", false) if token == nil
+    "push to device #{token}: #{truncate(Message.subject(msg), 12)}"
   end
 end
 
@@ -71,8 +71,8 @@ def send_with_retry(ch, msg, max_attempts, log)
     Array.push(log, "  ok   #{result}")
     true
   rescue DeliveryFailed => e
-    Array.push(log, "  fail #{DeliveryFailed.get_channel(e)} attempt #{attempt}: #{Exception.message(e)}")
-    if DeliveryFailed.get_retryable(e) && attempt < max_attempts
+    Array.push(log, "  fail #{DeliveryFailed.channel(e)} attempt #{attempt}: #{Exception.message(e)}")
+    if DeliveryFailed.retryable(e) && attempt < max_attempts
       attempt += 1
       retry
     end
@@ -82,7 +82,7 @@ end
 
 def route(channels, msg, hour, log)
   candidates = Array.select(channels) { |ch| Channel.available?(ch, hour) }
-  candidates = Array.sort_by(candidates) { |ch| Channel.cost_cents(ch, msg) } unless Message.get_urgent(msg)
+  candidates = Array.sort_by(candidates) { |ch| Channel.cost_cents(ch, msg) } unless Message.urgent(msg)
   Array.each(candidates) do |ch|
     return ch if send_with_retry(ch, msg, 3, log)
   end
@@ -113,7 +113,7 @@ spent = Hash.new(0)
 Array.each(messages) do |msg, hour|
   log = Array[]
   used = route(channels, msg, hour, log)
-  puts(format("[%02d:00] %s -> %s", hour, Message.get_subject(msg), Message.get_to(msg)))
+  puts(format("[%02d:00] %s -> %s", hour, Message.subject(msg), Message.to(msg)))
   Array.each(log) { |line| puts(line) }
   if used
     c = Channel.cost_cents(used, msg)

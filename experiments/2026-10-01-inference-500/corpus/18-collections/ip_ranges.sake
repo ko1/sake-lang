@@ -30,22 +30,22 @@ def table
     ["198.51.100.0/25", "docs-a"], ["198.51.100.128/25", "docs-b"], ["8.8.8.0/24", "dns"],
     ["100.64.0.0/10", "cgnat"], ["192.168.10.0/24", "lab"]
   ]
-  Array.sort_by(Array.map(rows) { |c, l| parse_cidr(c, l) }) { |b| Range.begin(Block.get_range(b)) }
+  Array.sort_by(Array.map(rows) { |c, l| parse_cidr(c, l) }) { |b| Range.begin(Block.range(b)) }
 end
 
 def lookup(blocks, ip)
-  idx = Array.bsearch(Range.to_a(0...Array.size(blocks))) { |i| Range.end(Block.get_range(blocks[i])) >= ip }
-  matches = Array.select(blocks) { |b| Range.cover?(Block.get_range(b), ip) }
+  idx = Array.bsearch(Range.to_a(0...Array.size(blocks))) { |i| Range.end(Block.range(blocks[i])) >= ip }
+  matches = Array.select(blocks) { |b| Range.cover?(Block.range(b), ip) }
   return nil if Array.empty?(matches)
-  best = Array.min_by(matches) { |b| Range.size(Block.get_range(b)) }
+  best = Array.min_by(matches) { |b| Range.size(Block.range(b)) }
   [best, idx]
 end
 
 blocks = table
 puts("blocks:")
 Array.each(blocks) do |b|
-  r = Block.get_range(b)
-  puts(format("  %-18s %-15s - %-15s %8d  %s", Block.get_cidr(b), ip_to_s(Range.begin(r)), ip_to_s(Range.end(r)), Range.size(r), Block.get_label(b)))
+  r = Block.range(b)
+  puts(format("  %-18s %-15s - %-15s %8d  %s", Block.cidr(b), ip_to_s(Range.begin(r)), ip_to_s(Range.end(r)), Range.size(r), Block.label(b)))
 end
 
 puts("lookups:")
@@ -55,32 +55,32 @@ Array.each(Array["10.1.2.3", "192.168.10.77", "192.168.3.4", "198.51.100.200", "
     found = lookup(blocks, ip)
     if found
       b, idx = found
-      puts(format("  %-16s %-8s (%s)", text, Block.get_label(b), Block.get_cidr(b)))
+      puts(format("  %-16s %-8s (%s)", text, Block.label(b), Block.cidr(b)))
     else
       puts(format("  %-16s unknown", text))
     end
   rescue InvalidAddress => e
-    puts(format("  %-16s invalid: %s", InvalidAddress.get_text(e), Exception.message(e)))
+    puts(format("  %-16s invalid: %s", InvalidAddress.text(e), Exception.message(e)))
   end
 end
 
 puts("nested or overlapping:")
 Array.each(Array.combination(blocks, 2)) do |pair|
-  a = Block.get_range(pair[0])
-  b = Block.get_range(pair[1])
+  a = Block.range(pair[0])
+  b = Block.range(pair[1])
   next unless Range.overlap?(a, b)
   kind = Range.cover?(a, Range.begin(b)) && Range.cover?(a, Range.end(b)) ? "contains" : "overlaps"
-  puts("  #{Block.get_cidr(pair[0])} #{kind} #{Block.get_cidr(pair[1])}")
+  puts("  #{Block.cidr(pair[0])} #{kind} #{Block.cidr(pair[1])}")
 end
 
-adjacent = Array.select(Array.combination(blocks, 2)) { |pair| Range.end(Block.get_range(pair[0])) + 1 == Range.begin(Block.get_range(pair[1])) }
-Array.each(adjacent) { |pair| puts("adjacent: #{Block.get_cidr(pair[0])} + #{Block.get_cidr(pair[1])}") }
+adjacent = Array.select(Array.combination(blocks, 2)) { |pair| Range.end(Block.range(pair[0])) + 1 == Range.begin(Block.range(pair[1])) }
+Array.each(adjacent) { |pair| puts("adjacent: #{Block.cidr(pair[0])} + #{Block.cidr(pair[1])}") }
 
-by_label = Hash.transform_values(Array.group_by(blocks) { |b| Block.get_label(b) }) { |bs| Array.sum(Array.map(bs) { |b| Range.size(Block.get_range(b)) }) }
+by_label = Hash.transform_values(Array.group_by(blocks) { |b| Block.label(b) }) { |bs| Array.sum(Array.map(bs) { |b| Range.size(Block.range(b)) }) }
 total = Array.sum(Hash.values(by_label))
 puts("address share:")
 Array.each(Array.sort_by(Hash.to_a(by_label)) { |l, n| 0 - n }) do |l, n|
   puts(format("  %-9s %5.2f%%", l, n * 100.0 / total))
 end
-first_octets = Array.to_set(Array.map(blocks) { |b| Range.begin(Block.get_range(b)) >> 24 })
+first_octets = Array.to_set(Array.map(blocks) { |b| Range.begin(Block.range(b)) >> 24 })
 puts("first octets used: #{Array.join(Set.sort(first_octets), " ")}")

@@ -56,27 +56,27 @@ def prorate(cents, days_used, days_total) = (cents * days_used * 2 + days_total)
 
 def bill(sub, cutoff)
   invoices = Invoice[]
-  plan = Hash.fetch(plans, Subscription.get_plan(sub))
-  anchor = Subscription.get_anchor(sub)
+  plan = Hash.fetch(plans, Subscription.plan(sub))
+  anchor = Subscription.anchor(sub)
   ay, am, ad = ymd(anchor)
-  raise BadAnchor.new("no such day #{anchor}", Subscription.get_customer(sub)) if ad > dim(ay, am)
-  changes = Subscription.get_changes(sub)
-  cancelled = Subscription.get_cancelled(sub)
+  raise BadAnchor.new("no such day #{anchor}", Subscription.customer(sub)) if ad > dim(ay, am)
+  changes = Subscription.changes(sub)
+  cancelled = Subscription.cancelled(sub)
   n = 0
   while true
-    start = cycle_start(anchor, n, Plan.get_months(plan))
-    finish = cycle_start(anchor, n + 1, Plan.get_months(plan))
+    start = cycle_start(anchor, n, Plan.months(plan))
+    finish = cycle_start(anchor, n + 1, Plan.months(plan))
     break if day_of(start) > day_of(cutoff)
     break if cancelled && day_of(start) >= day_of(cancelled)
-    Array.push(invoices, Invoice.new(Subscription.get_customer(sub), start, Plan.get_cents(plan), "#{Plan.get_code(plan)} #{start}..#{finish}"))
+    Array.push(invoices, Invoice.new(Subscription.customer(sub), start, Plan.cents(plan), "#{Plan.code(plan)} #{start}..#{finish}"))
     total_days = day_of(finish) - day_of(start)
     change = Array.find(changes) { |date, code| day_of(date) > day_of(start) && day_of(date) < day_of(finish) }
     if change
       date, code = change
       new_plan = Hash.fetch(plans, code)
       left = day_of(finish) - day_of(date)
-      credit = prorate(Plan.get_cents(plan), left, total_days)
-      Array.push(invoices, Invoice.new(Subscription.get_customer(sub), date, -credit, "credit #{left}/#{total_days} days of #{Plan.get_code(plan)}"))
+      credit = prorate(Plan.cents(plan), left, total_days)
+      Array.push(invoices, Invoice.new(Subscription.customer(sub), date, -credit, "credit #{left}/#{total_days} days of #{Plan.code(plan)}"))
       plan = new_plan
       anchor = date
       n = 0
@@ -84,8 +84,8 @@ def bill(sub, cutoff)
     end
     if cancelled && day_of(cancelled) < day_of(finish)
       left = day_of(finish) - day_of(cancelled)
-      refund = prorate(Plan.get_cents(plan), left, total_days)
-      Array.push(invoices, Invoice.new(Subscription.get_customer(sub), cancelled, -refund, "refund #{left}/#{total_days} days"))
+      refund = prorate(Plan.cents(plan), left, total_days)
+      Array.push(invoices, Invoice.new(Subscription.customer(sub), cancelled, -refund, "refund #{left}/#{total_days} days"))
     end
     n += 1
   end
@@ -106,23 +106,23 @@ Array.each(subs) do |sub|
   begin
     Array.concat(all, bill(sub, cutoff))
   rescue BadAnchor => e
-    puts("skip #{BadAnchor.get_customer(e)}: #{Exception.message(e)}")
+    puts("skip #{BadAnchor.customer(e)}: #{Exception.message(e)}")
   end
 end
 
-by_customer = Array.group_by(all) { |inv| Invoice.get_customer(inv) }
+by_customer = Array.group_by(all) { |inv| Invoice.customer(inv) }
 Hash.each(by_customer) do |customer, invs|
   puts("#{customer}:")
   Array.each(invs) do |inv|
-    puts(format("  %s %10s  %s", Invoice.get_date(inv), money(Invoice.get_cents(inv)), Invoice.get_note(inv)))
+    puts(format("  %s %10s  %s", Invoice.date(inv), money(Invoice.cents(inv)), Invoice.note(inv)))
   end
-  puts(format("  %-10s %10s", "total", money(Array.sum(Array.map(invs) { |inv| Invoice.get_cents(inv) }))))
+  puts(format("  %-10s %10s", "total", money(Array.sum(Array.map(invs) { |inv| Invoice.cents(inv) }))))
 end
 
 puts
 monthly = Hash.new(0)
-Array.each(all) { |inv| monthly[Invoice.get_date(inv)[0...7]] += Invoice.get_cents(inv) }
+Array.each(all) { |inv| monthly[Invoice.date(inv)[0...7]] += Invoice.cents(inv) }
 Array.each(Array.sort(Hash.keys(monthly))) { |month| puts(format("%s %10s", month, money(monthly[month]))) }
-credits = Array.select(all) { |inv| Invoice.get_cents(inv) < 0 }
-puts("Credits and refunds: #{Array.size(credits)}, worth #{money(-Array.sum(Array.map(credits) { |inv| Invoice.get_cents(inv) }))}")
+credits = Array.select(all) { |inv| Invoice.cents(inv) < 0 }
+puts("Credits and refunds: #{Array.size(credits)}, worth #{money(-Array.sum(Array.map(credits) { |inv| Invoice.cents(inv) }))}")
 puts("Anchor-day clamping for 01-31: #{Array.join(Range.map(0..5) { |n| cycle_start("2026-01-31", n, 1)[5..] }, " ")}")

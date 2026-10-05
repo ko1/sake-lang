@@ -33,21 +33,21 @@ class Schedule
 
   def conflict(sched, room, day, slot)
     Array.find(@bookings) do |b|
-      Booking.get_room(b) == room && Booking.get_day(b) == day && Range.overlap?(Booking.get_slot(b), slot)
+      Booking.room(b) == room && Booking.day(b) == day && Range.overlap?(Booking.slot(b), slot)
     end
   end
 
   def book(sched, room_name, who, day, from, to, people)
-    room = Array.find(@rooms) { |r| Room.get_name(r) == room_name }
+    room = Array.find(@rooms) { |r| Room.name(r) == room_name }
     raise RequestError, "no room #{room_name}" unless room
     slot = parse_time(from)...parse_time(to)
     raise RequestError, "empty slot #{from}-#{to}" if Range.size(slot) == 0
-    if people > Room.get_capacity(room)
-      raise RequestError, "#{room_name} holds #{Room.get_capacity(room)}, not #{people}"
+    if people > Room.capacity(room)
+      raise RequestError, "#{room_name} holds #{Room.capacity(room)}, not #{people}"
     end
     other = conflict(sched, room_name, day, slot)
     if other
-      raise ConflictError.new("#{room_name} is taken by #{Booking.get_who(other)} #{show_slot(Booking.get_slot(other))}", Booking.get_id(other))
+      raise ConflictError.new("#{room_name} is taken by #{Booking.who(other)} #{show_slot(Booking.slot(other))}", Booking.id(other))
     end
     @last_id += 1
     b = Booking.new(@last_id, room_name, who, day, slot, people)
@@ -56,7 +56,7 @@ class Schedule
   end
 
   def cancel(sched, id)
-    b = Array.find(@bookings) { |x| Booking.get_id(x) == id }
+    b = Array.find(@bookings) { |x| Booking.id(x) == id }
     raise RequestError, "no booking ##{id}" unless b
     Array.delete(@bookings, b)
   end
@@ -65,15 +65,15 @@ class Schedule
   def suggest(sched, day, from, to, people, needs)
     slot = parse_time(from)...parse_time(to)
     fits = Array.select(@rooms) do |r|
-      Room.get_capacity(r) >= people && Set.subset?(needs, Room.get_features(r)) &&
-        conflict(sched, Room.get_name(r), day, slot) == nil
+      Room.capacity(r) >= people && Set.subset?(needs, Room.features(r)) &&
+        conflict(sched, Room.name(r), day, slot) == nil
     end
-    Array.min_by(fits) { |r| Room.get_capacity(r) }
+    Array.min_by(fits) { |r| Room.capacity(r) }
   end
 
   def day_plan(sched, day)
-    todays = Array.select(@bookings) { |b| Booking.get_day(b) == day }
-    Array.sort_by(todays) { |b| [Range.begin(Booking.get_slot(b)), Booking.get_id(b)] }
+    todays = Array.select(@bookings) { |b| Booking.day(b) == day }
+    Array.sort_by(todays) { |b| [Range.begin(Booking.slot(b)), Booking.id(b)] }
   end
 end
 
@@ -103,11 +103,11 @@ requests = Array[
 Array.each(requests) do |room, who, day, from, to, people|
   begin
     b = Schedule.book(sched, room, who, day, from, to, people)
-    puts("##{Booking.get_id(b)} #{who}: #{room} #{day} #{show_slot(Booking.get_slot(b))}")
+    puts("##{Booking.id(b)} #{who}: #{room} #{day} #{show_slot(Booking.slot(b))}")
   rescue ConflictError => e
-    puts("conflict for #{who}: #{Exception.message(e)} (##{ConflictError.get_with_id(e)})")
+    puts("conflict for #{who}: #{Exception.message(e)} (##{ConflictError.with_id(e)})")
     alt = Schedule.suggest(sched, day, from, to, people, Set[])
-    puts("  try #{alt ? Room.get_name(alt) : "another time"}")
+    puts("  try #{alt ? Room.name(alt) : "another time"}")
   rescue RequestError => e
     puts("rejected #{who}: #{Exception.message(e)}")
   end
@@ -122,15 +122,15 @@ rescue RequestError => e
 end
 
 pick = Schedule.suggest(sched, "mon", "10:00", "11:00", 3, Set[:whiteboard])
-puts("whiteboard for 3 on mon 10-11: #{pick ? Room.get_name(pick) : "none"}")
+puts("whiteboard for 3 on mon 10-11: #{pick ? Room.name(pick) : "none"}")
 pick = Schedule.suggest(sched, "tue", "10:00", "11:00", 10, Set[:video])
-puts("video for 10 on tue 10-11: #{pick ? Room.get_name(pick) : "none"}")
+puts("video for 10 on tue 10-11: #{pick ? Room.name(pick) : "none"}")
 
 Array.each(Array["mon", "tue"]) do |day|
   puts
   puts("#{day}:")
   Array.each(Schedule.day_plan(sched, day)) do |b|
-    puts(format("  %s %-8s %-5s %2d people", show_slot(Booking.get_slot(b)), Booking.get_room(b), Booking.get_who(b), Booking.get_people(b)))
+    puts(format("  %s %-8s %-5s %2d people", show_slot(Booking.slot(b)), Booking.room(b), Booking.who(b), Booking.people(b)))
   end
 end
 
@@ -138,8 +138,8 @@ puts
 open_minutes = 9 * 60
 puts("Utilization (9 hours a day, 2 days):")
 Array.each(rooms) do |r|
-  mine = Array.select(Schedule.get_bookings(sched)) { |b| Booking.get_room(b) == Room.get_name(r) }
-  used = Array.sum(mine) { |b| Range.size(Booking.get_slot(b)) }
-  seat_use = Array.sum(mine) { |b| Booking.get_people(b) * 1.0 / Room.get_capacity(r) }
-  puts(format("  %-8s %4d min %5.1f%%  seats %.2f", Room.get_name(r), used, used * 100.0 / (open_minutes * 2), seat_use))
+  mine = Array.select(Schedule.bookings(sched)) { |b| Booking.room(b) == Room.name(r) }
+  used = Array.sum(mine) { |b| Range.size(Booking.slot(b)) }
+  seat_use = Array.sum(mine) { |b| Booking.people(b) * 1.0 / Room.capacity(r) }
+  puts(format("  %-8s %4d min %5.1f%%  seats %.2f", Room.name(r), used, used * 100.0 / (open_minutes * 2), seat_use))
 end

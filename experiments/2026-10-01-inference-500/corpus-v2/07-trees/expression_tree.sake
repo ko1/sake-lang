@@ -28,7 +28,7 @@ class Parser
   def parse(src)
     ps = tokenize(src)
     e = expr(ps)
-    raise ParseError.new("trailing #{peek(ps)}", Parser.get_pos(ps)) if peek(ps) != nil
+    raise ParseError.new("trailing #{peek(ps)}", Parser.pos(ps)) if peek(ps) != nil
     e
   end
 
@@ -80,15 +80,15 @@ end
 
 def evaluate(e, env)
   case e
-  in Num then Num.get_value(e)
+  in Num then Num.value(e)
   in Var
-    v = env[Var.get_name(e)]
-    raise UnboundError.new("unbound variable #{Var.get_name(e)}", Var.get_name(e)) if v == nil
+    v = env[Var.name(e)]
+    raise UnboundError.new("unbound variable #{Var.name(e)}", Var.name(e)) if v == nil
     v
   in BinOp
-    a = evaluate(BinOp.get_left(e), env)
-    b = evaluate(BinOp.get_right(e), env)
-    case BinOp.get_op(e)
+    a = evaluate(BinOp.left(e), env)
+    b = evaluate(BinOp.right(e), env)
+    case BinOp.op(e)
     in "+" then a + b
     in "-" then a - b
     in "*" then a * b
@@ -108,28 +108,28 @@ end
 
 def show(e)
   case e
-  in Num then Kernel.to_s(Num.get_value(e))
-  in Var then Var.get_name(e)
+  in Num then Kernel.to_s(Num.value(e))
+  in Var then Var.name(e)
   in BinOp
-    op = BinOp.get_op(e)
-    l = BinOp.get_left(e)
-    r = BinOp.get_right(e)
+    op = BinOp.op(e)
+    l = BinOp.left(e)
+    r = BinOp.right(e)
     ls = show(l)
     rs = show(r)
-    ls = "(#{ls})" if (l in BinOp) && prec(BinOp.get_op(l)) < prec(op)
-    rs = "(#{rs})" if (r in BinOp) && (prec(BinOp.get_op(r)) < prec(op) || (prec(BinOp.get_op(r)) == prec(op) && op != "^"))
+    ls = "(#{ls})" if (l in BinOp) && prec(BinOp.op(l)) < prec(op)
+    rs = "(#{rs})" if (r in BinOp) && (prec(BinOp.op(r)) < prec(op) || (prec(BinOp.op(r)) == prec(op) && op != "^"))
     "#{ls} #{op} #{rs}"
   end
 end
 
-def num?(e, v) = (e in Num) && Num.get_value(e) == v
+def num?(e, v) = (e in Num) && Num.value(e) == v
 
 def simplify(e)
   return e unless e in BinOp
-  op = BinOp.get_op(e)
-  l = simplify(BinOp.get_left(e))
-  r = simplify(BinOp.get_right(e))
-  if (l in Num) && (r in Num) && (op != "/" || Num.get_value(r) != 0)
+  op = BinOp.op(e)
+  l = simplify(BinOp.left(e))
+  r = simplify(BinOp.right(e))
+  if (l in Num) && (r in Num) && (op != "/" || Num.value(r) != 0)
     return Num.new(evaluate(BinOp.new(op, l, r), Hash[]))
   end
   return r if op == "+" && num?(l, 0)
@@ -144,11 +144,11 @@ end
 def derive(e, x)
   case e
   in Num then Num.new(0)
-  in Var then Num.new(Var.get_name(e) == x ? 1 : 0)
+  in Var then Num.new(Var.name(e) == x ? 1 : 0)
   in BinOp
-    op = BinOp.get_op(e)
-    u = BinOp.get_left(e)
-    v = BinOp.get_right(e)
+    op = BinOp.op(e)
+    u = BinOp.left(e)
+    v = BinOp.right(e)
     du = derive(u, x)
     dv = derive(v, x)
     case op
@@ -157,12 +157,12 @@ def derive(e, x)
     in "/" then BinOp.new("/", BinOp.new("-", BinOp.new("*", du, v), BinOp.new("*", u, dv)), BinOp.new("^", v, Num.new(2)))
     else
       raise ArgumentError, "cannot differentiate non-constant power" unless v in Num
-      BinOp.new("*", BinOp.new("*", v, BinOp.new("^", u, Num.new(Num.get_value(v) - 1))), du)
+      BinOp.new("*", BinOp.new("*", v, BinOp.new("^", u, Num.new(Num.value(v) - 1))), du)
     end
   end
 end
 
-def node_count(e) = (e in BinOp) ? 1 + node_count(BinOp.get_left(e)) + node_count(BinOp.get_right(e)) : 1
+def node_count(e) = (e in BinOp) ? 1 + node_count(BinOp.left(e)) + node_count(BinOp.right(e)) : 1
 
 env = Hash["x" => 3, "y" => 2.5, "n" => 4]
 sources = Array["1 + 2 * 3", "(1 + 2) * 3", "2 ^ 3 ^ 2", "x * x - 4 * x + 4", "10 - 4 - 3", "8 / (4 / 2)",
@@ -175,7 +175,7 @@ Array.each(sources) do |src|
     puts("    simplified: #{show(simp)}  [#{node_count(simp)} nodes]") if node_count(simp) < node_count(tree)
     puts("    value: #{evaluate(tree, env)}")
   rescue ParseError => e
-    puts("#{src}  =>  parse error at #{ParseError.get_pos(e)}: #{Exception.message(e)}")
+    puts("#{src}  =>  parse error at #{ParseError.pos(e)}: #{Exception.message(e)}")
   rescue UnboundError => e
     puts("    error: #{Exception.message(e)}")
   rescue ZeroDivisionError => e

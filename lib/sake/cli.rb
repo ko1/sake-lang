@@ -156,8 +156,8 @@ module Sake
             next_msg = ["the block passed on is missing here, and this call needs one", ["check `block_given?` first"]] if c.op == "&block"
             msg, hints = next_msg || type_message(c, what, typer, program)
             # Where a field got the wrong type, when the function around the operation reads a field.
-            if item == "type" && c.node && field_reading_region(program, c.node).match?(/@\w|\.get_\w/)
-              hints += typer.field_sources(c.arg == "pair" ? c.failing.map(&:first) : c.failing)
+            if item == "type" && c.node && reads_field?(program, c.node)
+              hints += typer.field_sources(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing)
             end
             [msg, hints]
           when "rescue"
@@ -166,7 +166,7 @@ module Sake
             ["raise: #{c.arg} may reach the top level without being rescued", ["rescue it, or check with a level below 4"]]
           when "nil"
             # Fields that may hold nil are named only when the function around the operation reads a field.
-            reads_field = c.node && field_reading_region(program, c.node).match?(/@\w|\.get_\w/)
+            reads_field = c.node && reads_field?(program, c.node)
             ["#{c.op}: #{what} may be nil (#{typer.show(c.actual)})", [NIL_CHECK_HINT, *(reads_field ? typer.nil_sources(wants) : [])]]
           else
             ["#{c.op}: #{what} may be nil, because x[k] (or `a, b = array`) gives nil when the element is missing",
@@ -175,6 +175,15 @@ module Sake
         hints += ["reached by the call at #{c.via.map { _1.is_a?(Integer) ? "line #{_1}" : _1 }.join(" → ")}"] if c.via&.any?
         Diagnostic.new(c.file || program.path, c.line, c.column, "#{msg} [#{item}]", hints)
       end
+    end
+
+    # Whether the function around node reads a field: `@x`, or a reader `T.x(...)` / `v.T.x` of a Struct type.
+    def reads_field?(program, node)
+      readers = (@readers ||= {}.compare_by_identity)[program] ||= begin
+        names = program.struct_types.flat_map { |t, dt| dt.fields.map { |f| "#{Regexp.escape(t)}\\.#{Regexp.escape(f)}\\b" } }
+        names.empty? ? /@\w/ : Regexp.new("@\\w|#{names.join("|")}")
+      end
+      field_reading_region(program, node).match?(readers)
     end
 
     # The source of the function whose body holds node (the node itself at the top level).

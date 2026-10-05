@@ -166,6 +166,24 @@ module Sake
         fa = target(n) or return unresolved(n)
         cur = field_get(fa.getter, get(0, n), n)
         field_set(fa.setter, get(0, n), BinOp.new(op: n.binary_operator.to_s, left: cur, right: lower(n.value), origin: n), n)
+      when Prism::CallOperatorWriteNode, Prism::CallOrWriteNode, Prism::CallAndWriteNode
+        pair = target(n) or return unresolved(n)
+        reader, writer = pair
+        tmp = @scopes[-1].slot(:"(subject #{n.location.start_offset})")
+        subj = get(tmp, n)
+        cur = reader.is_a?(UserFunction) ? CallUser.new(fn: reader, args: [subj], block: nil, origin: n) : field_get(reader, subj, n)
+        newv =
+          case n
+          when Prism::CallOperatorWriteNode then BinOp.new(op: n.binary_operator.to_s, left: cur, right: lower(n.value), origin: n)
+          else lower(n.value)
+          end
+        set = field_set(writer, subj, newv, n)
+        body = case n
+               when Prism::CallOrWriteNode then Or.new(left: cur, right: set, origin: n)
+               when Prism::CallAndWriteNode then And.new(left: cur, right: set, origin: n)
+               else set
+               end
+        Seq.new(body: [LVarSet.new(slot: tmp, value: lower(n.receiver.receiver), origin: n), body], origin: n)
       when Prism::InstanceVariableOrWriteNode
         fa = target(n) or return unresolved(n)
         Or.new(left: field_get(fa.getter, get(0, n), n), right: field_set(fa.setter, get(0, n), lower(n.value), n), origin: n)
@@ -185,7 +203,7 @@ module Sake
 
     def unresolved(n) = Unresolved.new(message: "#{n.slice} was not resolved in #{@ns || "the top level"}", origin: n)
 
-    def field_name(fn) = fn.name.sub(/\A[gs]et_/, "")
+    def field_name(fn) = fn.name.sub(/\Aset_/, "")
     def field_get(fn, subject, o) = FieldGet.new(type: fn.namespace, field: field_name(fn), fn:, subject:, origin: o)
     def field_set(fn, subject, value, o) = FieldSet.new(type: fn.namespace, field: field_name(fn), fn:, subject:, value:, origin: o)
 
@@ -321,7 +339,7 @@ module Sake
         return BlockGiven.new(origin: n) if t.full_name == "Kernel.block_given?"
         if (dt = @program.struct_types[t.namespace]) && blk.nil?
           f = field_name(t)
-          return field_get(t, xs[0], n) if t.name == "get_#{f}" && dt.fields.include?(f) && xs.size == 1
+          return field_get(t, xs[0], n) if t.name == f && dt.fields.include?(f) && xs.size == 1
           return field_set(t, xs[0], xs[1], n) if t.name == "set_#{f}" && dt.fields.include?(f) && xs.size == 2
         end
         CallBuiltin.new(fn: t, args: xs, block: blk, origin: n)

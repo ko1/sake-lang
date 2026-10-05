@@ -48,26 +48,26 @@ class Library
 
   def add_member(lib, id, name, kind) = @members[id] = Member.new(id, name, kind)
 
-  def loan_days(lib, member) = Member.get_kind(member) == :staff ? 28 : 14
+  def loan_days(lib, member) = Member.kind(member) == :staff ? 28 : 14
 
-  def active(lib) = Array.select(@loans) { |l| Loan.get_returned(l) == nil }
+  def active(lib) = Array.select(@loans) { |l| Loan.returned(l) == nil }
 
-  def out_count(lib, book_id) = Array.count(active(lib)) { |l| Loan.get_book_id(l) == book_id }
+  def out_count(lib, book_id) = Array.count(active(lib)) { |l| Loan.book_id(l) == book_id }
 
-  def available?(lib, book_id) = out_count(lib, book_id) < Book.get_copies(@books[book_id])
+  def available?(lib, book_id) = out_count(lib, book_id) < Book.copies(@books[book_id])
 
   def lend(lib, book_id, member_id, day)
     book = @books[book_id]
     member = @members[member_id]
     raise LoanRefused.new("cannot lend", "no such book #{book_id}") unless book
     raise LoanRefused.new("cannot lend", "no such member #{member_id}") unless member
-    mine = Array.count(active(lib)) { |l| Loan.get_member_id(l) == member_id }
-    raise LoanRefused.new("cannot lend", "#{Member.get_name(member)} has #{mine} books out") if mine >= 3
+    mine = Array.count(active(lib)) { |l| Loan.member_id(l) == member_id }
+    raise LoanRefused.new("cannot lend", "#{Member.name(member)} has #{mine} books out") if mine >= 3
     queue = Hash.fetch(@queues, book_id, Array[])
     unless Array.empty?(queue) || queue[0] == member_id
-      raise LoanRefused.new("cannot lend", "reserved for #{Member.get_name(@members[queue[0]])}")
+      raise LoanRefused.new("cannot lend", "reserved for #{Member.name(@members[queue[0]])}")
     end
-    raise LoanRefused.new("cannot lend", "no copy of #{Book.get_title(book)} left") unless available?(lib, book_id)
+    raise LoanRefused.new("cannot lend", "no copy of #{Book.title(book)} left") unless available?(lib, book_id)
     Array.shift(queue) if queue[0] == member_id
     loan = Loan.new(book_id, member_id, day...(day + loan_days(lib, member)), nil)
     Array.push(@loans, loan)
@@ -75,10 +75,10 @@ class Library
   end
 
   def give_back(lib, book_id, member_id, day)
-    loan = Array.find(active(lib)) { |l| Loan.get_book_id(l) == book_id && Loan.get_member_id(l) == member_id }
+    loan = Array.find(active(lib)) { |l| Loan.book_id(l) == book_id && Loan.member_id(l) == member_id }
     return nil unless loan
     Loan.set_returned(loan, day)
-    late = day - (Range.end(Loan.get_period(loan)) - 1)
+    late = day - (Range.end(Loan.period(loan)) - 1)
     late > 0 ? late : 0
   end
 
@@ -89,15 +89,15 @@ class Library
   end
 
   def overdue(lib)
-    Array.select(active(lib)) { |l| @today >= Range.end(Loan.get_period(l)) }
+    Array.select(active(lib)) { |l| @today >= Range.end(Loan.period(l)) }
   end
 
   def heading(lib) = "Overdue on day #{@today}"
 
   def lines(lib)
     Array.map(overdue(lib)) do |l|
-      days = @today - Range.end(Loan.get_period(l)) + 1
-      "#{Book.get_title(@books[Loan.get_book_id(l)])} - #{Member.get_name(@members[Loan.get_member_id(l)])}, #{days} days, fine #{fine(days)}"
+      days = @today - Range.end(Loan.period(l)) + 1
+      "#{Book.title(@books[Loan.book_id(l)])} - #{Member.name(@members[Loan.member_id(l)])}, #{days} days, fine #{fine(days)}"
     end
   end
 end
@@ -125,7 +125,7 @@ Array.each(requests) do |action, book, member, day|
   case action
   in "lend"
     loan = Library.lend(lib, book, member, day)
-    puts(format("day %2d lend   %s -> %s, due day %d", day, book, member, Range.end(Loan.get_period(loan)) - 1))
+    puts(format("day %2d lend   %s -> %s, due day %d", day, book, member, Range.end(Loan.period(loan)) - 1))
   in "return"
     late = Library.give_back(lib, book, member, day)
     if late == nil
@@ -138,34 +138,34 @@ Array.each(requests) do |action, book, member, day|
     puts(format("day %2d reserve %s for %s, position %d", day, book, member, pos))
   end
 rescue LoanRefused => e
-  puts(format("day %2d refused %s for %s: %s", day, book, member, LoanRefused.get_reason(e)))
+  puts(format("day %2d refused %s for %s: %s", day, book, member, LoanRefused.reason(e)))
 end
 
 puts
 puts(Report.summary(lib))
-puts(Report.summary(Library.get_members(lib)["m2"]))
+puts(Report.summary(Library.members(lib)["m2"]))
 
 puts("== Holdings ==")
-books = Hash.values(Library.get_books(lib))
+books = Hash.values(Library.books(lib))
 Array.each(books) do |b|
-  out = Library.out_count(lib, Book.get_id(b))
-  q = Hash.fetch(Library.get_queues(lib), Book.get_id(b), Array[])
-  puts(format("  %-12s %d/%d out%s", Book.get_title(b), out, Book.get_copies(b), Array.empty?(q) ? "" : ", queue #{Array.join(q, ",")}"))
+  out = Library.out_count(lib, Book.id(b))
+  q = Hash.fetch(Library.queues(lib), Book.id(b), Array[])
+  puts(format("  %-12s %d/%d out%s", Book.title(b), out, Book.copies(b), Array.empty?(q) ? "" : ", queue #{Array.join(q, ",")}"))
 end
 
-genres = Array.reduce(books, Set[]) { |acc, b| acc | Book.get_genres(b) }
+genres = Array.reduce(books, Set[]) { |acc, b| acc | Book.genres(b) }
 puts("genres: #{Array.join(Set.sort(genres), " ")}")
-loans = Library.get_loans(lib)
-by_member = Array.group_by(loans) { |l| Loan.get_member_id(l) }
+loans = Library.loans(lib)
+by_member = Array.group_by(loans) { |l| Loan.member_id(l) }
 Hash.each(by_member) do |mid, ls|
-  read = Array.reduce(ls, Set[]) { |acc, l| acc | Book.get_genres(Library.get_books(lib)[Loan.get_book_id(l)]) }
-  puts("  #{Member.get_name(Library.get_members(lib)[mid])} borrowed #{Array.size(ls)}, genres: #{Array.join(Set.sort(read), ",")}")
+  read = Array.reduce(ls, Set[]) { |acc, l| acc | Book.genres(Library.books(lib)[Loan.book_id(l)]) }
+  puts("  #{Member.name(Library.members(lib)[mid])} borrowed #{Array.size(ls)}, genres: #{Array.join(Set.sort(read), ",")}")
 end
 scifi_fans = Array.select(Hash.keys(by_member)) do |mid|
-  Array.all?(by_member[mid]) { |l| Set.include?(Book.get_genres(Library.get_books(lib)[Loan.get_book_id(l)]), "scifi") }
+  Array.all?(by_member[mid]) { |l| Set.include?(Book.genres(Library.books(lib)[Loan.book_id(l)]), "scifi") }
 end
 puts("only scifi: #{Array.join(scifi_fans, ", ")}")
-never = Array.reject(books) { |b| Array.any?(loans) { |l| Loan.get_book_id(l) == Book.get_id(b) } }
-puts("never borrowed: #{Array.empty?(never) ? "none" : Array.join(Array.map(never) { |b| Book.get_title(b) }, ", ")}")
-durations = Array.filter_map(loans) { |l| r = Loan.get_returned(l); r ? r - Range.begin(Loan.get_period(l)) : nil }
+never = Array.reject(books) { |b| Array.any?(loans) { |l| Loan.book_id(l) == Book.id(b) } }
+puts("never borrowed: #{Array.empty?(never) ? "none" : Array.join(Array.map(never) { |b| Book.title(b) }, ", ")}")
+durations = Array.filter_map(loans) { |l| r = Loan.returned(l); r ? r - Range.begin(Loan.period(l)) : nil }
 puts("returned loans: #{Array.size(durations)}, average #{format("%.1f", Array.sum(durations) / Integer.to_f(Array.size(durations)))} days")

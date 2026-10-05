@@ -10,7 +10,7 @@ end
 class CarClass
   attr_reader name, rank, daily
   include Comparable
-  def <=>(a, b) = @rank <=> CarClass.get_rank(b)
+  def <=>(a, b) = @rank <=> CarClass.rank(b)
   def to_s(c) = @name
 end
 
@@ -29,11 +29,11 @@ class Car
   attr_reader service_due, bookings = nil
   def initialize(c) = @bookings = Booking[]
 
-  def free?(c, days) = Array.none?(@bookings) { |b| Range.overlap?(Booking.get_days(b), days) }
+  def free?(c, days) = Array.none?(@bookings) { |b| Range.overlap?(Booking.days(b), days) }
 
   def located_at?(c, branch, day)
-    last = Array.max_by(Array.select(@bookings) { |b| Range.end(Booking.get_days(b)) < day }) { |b| Range.end(Booking.get_days(b)) }
-    where = last ? Booking.get_dropoff(last) : @branch
+    last = Array.max_by(Array.select(@bookings) { |b| Range.end(Booking.days(b)) < day }) { |b| Range.end(Booking.days(b)) }
+    where = last ? Booking.dropoff(last) : @branch
     where == branch
   end
 end
@@ -43,32 +43,32 @@ class Fleet
   def initialize(f) = @log = String[]
 
   def reserve(f, b)
-    wanted = classes[Booking.get_klass(b)]
-    days = Booking.get_days(b)
+    wanted = classes[Booking.klass(b)]
+    days = Booking.days(b)
     ranked = Array.select(Hash.values(classes)) { |k| k >= wanted }.Array.sort
     Array.each(ranked) do |k|
       car = Array.find(@cars) do |c|
-        Car.get_klass(c) == CarClass.get_name(k) &&
-          Car.free?(c, days) && Car.located_at?(c, Booking.get_pickup(b), Range.begin(days)) &&
-          Car.get_service_due(c) > Car.get_km(c)
+        Car.klass(c) == CarClass.name(k) &&
+          Car.free?(c, days) && Car.located_at?(c, Booking.pickup(b), Range.begin(days)) &&
+          Car.service_due(c) > Car.km(c)
       end
       next unless car
-      Booking.set_car(b, Car.get_plate(car))
+      Booking.set_car(b, Car.plate(car))
       Booking.set_upgraded(b, k > wanted)
-      fee = Booking.get_pickup(b) == Booking.get_dropoff(b) ? 0 : 60
-      Booking.set_price(b, Range.size(days) * CarClass.get_daily(wanted) + fee)
-      Array.push(Car.get_bookings(car), b)
-      Array.push(@log, "##{Booking.get_id(b)} #{Booking.get_customer(b)}: #{Car.get_plate(car)} (#{k})#{k > wanted ? " upgrade" : ""}")
+      fee = Booking.pickup(b) == Booking.dropoff(b) ? 0 : 60
+      Booking.set_price(b, Range.size(days) * CarClass.daily(wanted) + fee)
+      Array.push(Car.bookings(car), b)
+      Array.push(@log, "##{Booking.id(b)} #{Booking.customer(b)}: #{Car.plate(car)} (#{k})#{k > wanted ? " upgrade" : ""}")
       return car
     end
-    raise NoCarAvailable.new("no #{wanted} or better at #{Booking.get_pickup(b)} for days #{days}", Booking.get_id(b))
+    raise NoCarAvailable.new("no #{wanted} or better at #{Booking.pickup(b)} for days #{days}", Booking.id(b))
   end
 
   def complete(f, b, km)
-    car = Array.find(@cars) { Car.get_plate(it) == Booking.get_car(b) }
+    car = Array.find(@cars) { Car.plate(it) == Booking.car(b) }
     return unless car
-    Car.set_km(car, Car.get_km(car) + km)
-    Array.push(@log, "#{Car.get_plate(car)} needs service at #{Car.get_km(car)} km") if Car.get_km(car) >= Car.get_service_due(car)
+    Car.set_km(car, Car.km(car) + km)
+    Array.push(@log, "#{Car.plate(car)} needs service at #{Car.km(car)} km") if Car.km(car) >= Car.service_due(car)
   end
 end
 
@@ -104,20 +104,20 @@ Array.each(requests) do |id, who, klass, from, to, days, km|
     Array.push(bookings, b)
     Fleet.complete(fleet, b, km)
   rescue NoCarAvailable => e
-    Array.push(failed, NoCarAvailable.get_booking_id(e))
-    Array.push(Fleet.get_log(fleet), "##{id} #{who}: refused (#{Exception.message(e)})")
+    Array.push(failed, NoCarAvailable.booking_id(e))
+    Array.push(Fleet.log(fleet), "##{id} #{who}: refused (#{Exception.message(e)})")
   end
 end
 
-Array.each(Fleet.get_log(fleet)) { puts(it) }
+Array.each(Fleet.log(fleet)) { puts(it) }
 puts("--- utilization over days 1..10")
 Array.each(cars) do |c|
-  used = Array.sum(Car.get_bookings(c)) { Range.size(Booking.get_days(it)) }
-  strip = Array.join(Range.map(1..10) { |d| Array.any?(Car.get_bookings(c)) { |b| Range.include?(Booking.get_days(b), d) } ? "#" : "." }, "")
-  puts(format("%-6s %-8s %s %3d%% %6d km", Car.get_plate(c), Car.get_klass(c), strip, used * 10, Car.get_km(c)))
+  used = Array.sum(Car.bookings(c)) { Range.size(Booking.days(it)) }
+  strip = Array.join(Range.map(1..10) { |d| Array.any?(Car.bookings(c)) { |b| Range.include?(Booking.days(b), d) } ? "#" : "." }, "")
+  puts(format("%-6s %-8s %s %3d%% %6d km", Car.plate(c), Car.klass(c), strip, used * 10, Car.km(c)))
 end
-revenue = Array.sum(bookings) { Booking.get_price(it) }
-upgrades = Array.count(bookings) { Booking.get_upgraded(it) }
+revenue = Array.sum(bookings) { Booking.price(it) }
+upgrades = Array.count(bookings) { Booking.upgraded(it) }
 puts("bookings #{Array.size(bookings)}, refused #{Kernel.inspect(failed)}, upgrades #{upgrades}, revenue $#{revenue}")
-top = Array.max_by(Array.reject(cars) { Array.empty?(Car.get_bookings(it)) }) { |c| Array.size(Car.get_bookings(c)) }
-puts("busiest car: #{Car.get_plate(top)}") if top
+top = Array.max_by(Array.reject(cars) { Array.empty?(Car.bookings(it)) }) { |c| Array.size(Car.bookings(c)) }
+puts("busiest car: #{Car.plate(top)}") if top

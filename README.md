@@ -30,7 +30,7 @@ Japanese).
 Point = Struct.new(:x, :y)
 
 class Point
-  def norm2(p) = @x * @x + @y * @y        # @x is Point.get_x(p): p is the first argument
+  def norm2(p) = @x * @x + @y * @y        # @x is Point.x(p): p is the first argument
 end
 
 words = String.split("the cat and the hat", " ")

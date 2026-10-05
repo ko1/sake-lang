@@ -34,15 +34,15 @@ class RouteTable
     node = @root
     Range.each(0...len) do |i|
       if bit(prefix, i) == 0
-        BitNode.set_zero(node, BitNode.new(nil, nil, nil)) if BitNode.get_zero(node) == nil
-        node = BitNode.get_zero(node)
+        BitNode.set_zero(node, BitNode.new(nil, nil, nil)) if BitNode.zero(node) == nil
+        node = BitNode.zero(node)
       else
-        BitNode.set_one(node, BitNode.new(nil, nil, nil)) if BitNode.get_one(node) == nil
-        node = BitNode.get_one(node)
+        BitNode.set_one(node, BitNode.new(nil, nil, nil)) if BitNode.one(node) == nil
+        node = BitNode.one(node)
       end
     end
-    old = BitNode.get_route(node)
-    if old == nil || Route.get_metric(old) > metric
+    old = BitNode.route(node)
+    if old == nil || Route.metric(old) > metric
       @size += 1 if old == nil
       BitNode.set_route(node, Route.new(prefix, len, iface, metric))
     end
@@ -51,13 +51,13 @@ class RouteTable
   def lookup(t, text)
     addr = parse_ip(text)
     node = @root
-    best = BitNode.get_route(node)
+    best = BitNode.route(node)
     depth = 0
     while node != nil && depth < 32
-      node = bit(addr, depth) == 0 ? BitNode.get_zero(node) : BitNode.get_one(node)
+      node = bit(addr, depth) == 0 ? BitNode.zero(node) : BitNode.one(node)
       depth += 1
       if node
-        r = BitNode.get_route(node)
+        r = BitNode.route(node)
         best = r if r
       end
     end
@@ -70,10 +70,10 @@ class RouteTable
     prefix = parse_ip(f[0]) & mask(len)
     node = @root
     Range.each(0...len) do |i|
-      node = bit(prefix, i) == 0 ? BitNode.get_zero(node) : BitNode.get_one(node)
+      node = bit(prefix, i) == 0 ? BitNode.zero(node) : BitNode.one(node)
       return false if node == nil
     end
-    return false if BitNode.get_route(node) == nil
+    return false if BitNode.route(node) == nil
     BitNode.set_route(node, nil)
     @size -= 1
     true
@@ -83,14 +83,14 @@ class RouteTable
 
   def walk(node)
     return if node == nil
-    r = BitNode.get_route(node)
+    r = BitNode.route(node)
     yield(r) if r
-    walk(BitNode.get_zero(node)) { |x| yield(x) }
-    walk(BitNode.get_one(node)) { |x| yield(x) }
+    walk(BitNode.zero(node)) { |x| yield(x) }
+    walk(BitNode.one(node)) { |x| yield(x) }
   end
 
   def node_count(t) = count(@root)
-  def count(node) = node == nil ? 0 : 1 + count(BitNode.get_zero(node)) + count(BitNode.get_one(node))
+  def count(node) = node == nil ? 0 : 1 + count(BitNode.zero(node)) + count(BitNode.one(node))
 end
 
 table = RouteTable.create
@@ -115,14 +115,14 @@ String.each_line(routes) do |line|
     puts("skip: #{Exception.message(e)}")
   end
 end
-puts("#{RouteTable.get_size(table)} routes, #{RouteTable.node_count(table)} trie nodes")
+puts("#{RouteTable.size(table)} routes, #{RouteTable.node_count(table)} trie nodes")
 RouteTable.each_route(table) { |r| puts("  #{r}") }
 
 puts("-- lookups --")
 Array.each(Array["10.20.30.200", "10.20.30.5", "10.20.99.1", "10.1.2.3", "192.168.1.77", "192.168.1.78", "172.31.255.255", "8.8.8.8", "10.20.30"]) do |ip|
   begin
     r = RouteTable.lookup(table, ip)
-    puts(format("  %-15s -> %-8s (%s/%d)", ip, Route.get_iface(r), ip_to_s(Route.get_prefix(r)), Route.get_len(r)))
+    puts(format("  %-15s -> %-8s (%s/%d)", ip, Route.iface(r), ip_to_s(Route.prefix(r)), Route.len(r)))
   rescue BadAddress => e
     puts("  #{ip}: #{Exception.message(e)}")
   end
@@ -132,6 +132,6 @@ puts("-- withdraw 10.20.30.0/24 and 0.0.0.0/0 --")
 Array.each(Array["10.20.30.0/24", "0.0.0.0/0", "10.99.0.0/16"]) { |c| puts("  remove #{c}: #{RouteTable.remove(table, c)}") }
 Array.each(Array["10.20.30.5", "8.8.8.8"]) do |ip|
   r = RouteTable.lookup(table, ip)
-  puts("  #{ip} -> #{r == nil ? "unreachable" : Route.get_iface(r)}")
+  puts("  #{ip} -> #{r == nil ? "unreachable" : Route.iface(r)}")
 end
-puts("#{RouteTable.get_size(table)} routes left")
+puts("#{RouteTable.size(table)} routes left")

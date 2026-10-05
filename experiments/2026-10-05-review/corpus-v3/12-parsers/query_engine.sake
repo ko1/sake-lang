@@ -114,13 +114,13 @@ def matches?(cond, row)
   case cond
   in nil then true
   in Logic
-    l = matches?(Logic.get_left(cond), row)
-    Logic.get_op(cond) == "AND" ? l && matches?(Logic.get_right(cond), row) : l || matches?(Logic.get_right(cond), row)
+    l = matches?(Logic.left(cond), row)
+    Logic.op(cond) == "AND" ? l && matches?(Logic.right(cond), row) : l || matches?(Logic.right(cond), row)
   in Cmp
-    a = field(row, Cmp.get_column(cond))
-    b = Cmp.get_value(cond)
-    raise QueryError, "type mismatch on #{Cmp.get_column(cond)}" unless (a in Integer) == (b in Integer)
-    case Cmp.get_op(cond)
+    a = field(row, Cmp.column(cond))
+    b = Cmp.value(cond)
+    raise QueryError, "type mismatch on #{Cmp.column(cond)}" unless (a in Integer) == (b in Integer)
+    case Cmp.op(cond)
     in "=" then a == b
     in "!=" then a != b
     in "<" then a < b
@@ -134,10 +134,10 @@ end
 def label(col) = (col in Agg) ? Agg.label(col) : col
 
 def aggregate(agg, rows)
-  return Array.size(rows) if Agg.get_fn(agg) == "count"
-  values = Array.map(rows) { |r| field(r, Agg.get_column(agg)) }
-  raise QueryError, "#{Agg.get_fn(agg)} needs numbers" unless Array.all?(values) { |v| v in Integer }
-  case Agg.get_fn(agg)
+  return Array.size(rows) if Agg.fn(agg) == "count"
+  values = Array.map(rows) { |r| field(r, Agg.column(agg)) }
+  raise QueryError, "#{Agg.fn(agg)} needs numbers" unless Array.all?(values) { |v| v in Integer }
+  case Agg.fn(agg)
   in "sum" then Array.sum(values)
   in "max" then Array.max(values)
   in "avg" then Array.empty?(values) ? 0 : Float.round(Array.sum(values) / Integer.to_f(Array.size(values)), 2)
@@ -145,13 +145,13 @@ def aggregate(agg, rows)
 end
 
 def execute(q, tables)
-  rows = tables[Query.get_table(q)]
-  raise QueryError, "no such table: #{Query.get_table(q)}" if rows == nil
-  rows = Array.select(rows) { |r| matches?(Query.get_where(q), r) }
-  columns = Query.get_columns(q)
-  order = Query.get_order_by(q)
-  if Query.get_group_by(q) || Array.any?(columns) { |col| col in Agg }
-    groups = Query.get_group_by(q) == nil ? Hash["all" => rows] : Array.group_by(rows) { |r| field(r, Query.get_group_by(q)) }
+  rows = tables[Query.table(q)]
+  raise QueryError, "no such table: #{Query.table(q)}" if rows == nil
+  rows = Array.select(rows) { |r| matches?(Query.where(q), r) }
+  columns = Query.columns(q)
+  order = Query.order_by(q)
+  if Query.group_by(q) || Array.any?(columns) { |col| col in Agg }
+    groups = Query.group_by(q) == nil ? Hash["all" => rows] : Array.group_by(rows) { |r| field(r, Query.group_by(q)) }
     result = Hash.map(groups) do |_key, members|
       Array.map(columns) { |col| [label(col), (col in Agg) ? aggregate(col, members) : field(Array.first(members), col)] }.Array.to_h
     end
@@ -165,8 +165,8 @@ def execute(q, tables)
       Array.map(columns) { |col| [label(col), col == "*" ? r : field(r, col)] }.Array.to_h
     end
   end
-  result = Array.reverse(result) if Query.get_desc(q)
-  Query.get_limit(q) == nil ? result : Array.take(result, Query.get_limit(q))
+  result = Array.reverse(result) if Query.desc(q)
+  Query.limit(q) == nil ? result : Array.take(result, Query.limit(q))
 end
 
 def format_row(r)

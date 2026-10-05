@@ -12,13 +12,13 @@ def apply(items, mv)
   raise StockError.new("unknown sku", sku, 0) if item == nil
   case kind
   in :receive | :return
-    Item.set_on_hand(item, Item.get_on_hand(item) + qty)
+    Item.set_on_hand(item, Item.on_hand(item) + qty)
   in :sell
-    have = Item.get_on_hand(item)
+    have = Item.on_hand(item)
     raise StockError.new("only #{have} left", sku, qty - have) if have < qty
     Item.set_on_hand(item, have - qty)
   in :count
-    diff = qty - Item.get_on_hand(item)
+    diff = qty - Item.on_hand(item)
     Item.set_on_hand(item, qty)
     puts("  count #{sku}: adjusted by #{diff}") if diff != 0
   end
@@ -70,7 +70,7 @@ Array.each(movements) do |mv|
   begin
     apply(items, mv)
   rescue StockError => e
-    puts("  #{StockError.get_sku(e)}: #{Exception.message(e)} (short #{StockError.get_short(e)})")
+    puts("  #{StockError.sku(e)}: #{Exception.message(e)} (short #{StockError.short(e)})")
   end
 end
 
@@ -80,38 +80,38 @@ orders = Hash[]
 Hash.each(items) do |sku, item|
   history = Hash.fetch(sales, sku)
   daily = mean(history)
-  sup = Hash.fetch(suppliers, Item.get_supplier(item))
-  lead = Supplier.get_lead_days(sup)
+  sup = Hash.fetch(suppliers, Item.supplier(item))
+  lead = Supplier.lead_days(sup)
   safety = Float.ceil(service_z * stdev(history) * Math.sqrt(lead))
   rop = Float.ceil(daily * lead) + safety
   annual = daily * 365
-  holding = Item.get_unit_cost(item) * holding_rate
+  holding = Item.unit_cost(item) * holding_rate
   eoq = Float.round(Math.sqrt(2 * annual * order_cost / holding))
-  have = Item.get_on_hand(item)
-  puts(format("%-6s %-13s %4d %6.2f %6d %5d %5d", sku, Item.get_name(item), have, daily, safety, rop, eoq))
+  have = Item.on_hand(item)
+  puts(format("%-6s %-13s %4d %6.2f %6d %5d %5d", sku, Item.name(item), have, daily, safety, rop, eoq))
   next if have > rop
-  qty = round_up(Array.max(Array[eoq, rop - have]), Item.get_case_pack(item))
-  orders[Item.get_supplier(item)] ||= Array[]
-  Array.push(orders[Item.get_supplier(item)], [item, qty])
+  qty = round_up(Array.max(Array[eoq, rop - have]), Item.case_pack(item))
+  orders[Item.supplier(item)] ||= Array[]
+  Array.push(orders[Item.supplier(item)], [item, qty])
 end
 
 puts
 puts("Purchase orders:")
 Hash.each(orders) do |sup_name, lines|
   sup = Hash.fetch(suppliers, sup_name)
-  total = Array.sum(lines) { |item, qty| Item.get_unit_cost(item) * qty }
-  puts("  #{sup_name} (lead #{Supplier.get_lead_days(sup)} days)")
+  total = Array.sum(lines) { |item, qty| Item.unit_cost(item) * qty }
+  puts("  #{sup_name} (lead #{Supplier.lead_days(sup)} days)")
   Array.each(lines) do |item, qty|
-    puts(format("    %-13s %4d x %6.2f = %8.2f", Item.get_name(item), qty, Item.get_unit_cost(item), Item.get_unit_cost(item) * qty))
+    puts(format("    %-13s %4d x %6.2f = %8.2f", Item.name(item), qty, Item.unit_cost(item), Item.unit_cost(item) * qty))
   end
-  if total < Supplier.get_min_order(sup)
-    puts(format("    total %.2f is below the minimum %.2f: hold until next week", total, Supplier.get_min_order(sup)))
+  if total < Supplier.min_order(sup)
+    puts(format("    total %.2f is below the minimum %.2f: hold until next week", total, Supplier.min_order(sup)))
   else
     puts(format("    total %.2f", total))
   end
 end
 
-value = Hash.sum(items) { |sku, item| Item.get_unit_cost(item) * Item.get_on_hand(item) }
+value = Hash.sum(items) { |sku, item| Item.unit_cost(item) * Item.on_hand(item) }
 puts
 puts(format("Stock value: %.2f", value))
 slow = Hash.select(sales) { |sku, h| Array.count(h, 0) >= 10 }

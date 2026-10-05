@@ -36,7 +36,7 @@ turns a String port into an Integer (`""` → the default), and sets the default
 | `URI(s)` | — | missing: a function cannot be named like a type |
 | `URI::InvalidURIError` | `InvalidURIError` | differs: no nested names; same messages (`bad URI (is not URI?): "..."`, `URI must be ascii only "..."` with Ruby's `dump` form) |
 | `URI::BadURIError` | `BadURIError` | differs: name (`both URI are relative`) |
-| `u.scheme`, `userinfo`, `user`, `password`, `host`, `hostname`, `port`, `path`, `opaque`, `query`, `fragment` | `URI.scheme(u)` ... (also `URI.get_x(u)`) | same |
+| `u.scheme`, `userinfo`, `user`, `password`, `host`, `hostname`, `port`, `path`, `opaque`, `query`, `fragment` | `URI.scheme(u)` ... (also `URI.x(u)`) | same |
 | `u.host = v`, `port=`, `path=`, `query=`, `fragment=` | `URI.set_host(u, v)` ... | differs: no validation of the new value (Ruby checks it against the grammar); `port` must be an Integer |
 | `u.scheme=`, `userinfo=`, `user=`, `password=`, `opaque=` | — | missing (reader fields) |
 | `u.to_s`, `"#{u}"`, `puts u` | `URI.to_s(u)`, `"#{u}"`, `puts(u)` | same (default port omitted) |
@@ -93,7 +93,7 @@ private functions.
   in `to_s`, `Integer.to_s: argument 1 must be Integer, but can be String`) → reordered every
   `URI.new` call and wrote the order down. A static check that a struct's field gets values of
   several unrelated types at `new` sites, or naming fields at `new`, would point at the cause.
-- `rel = other` then `rel = parse(other) if other in String` → `URI.get_scheme: argument 1 must be
+- `rel = other` then `rel = parse(other) if other in String` → `URI.scheme: argument 1 must be
   URI, but can be String` (the reassigned local keeps the union) → a helper with `case x in String
   then parse(x) in URI then x end`.
 - `while !Array.empty?(tmp)` + `x = Array.shift(tmp)` → nil report on `x` (plus hints naming all

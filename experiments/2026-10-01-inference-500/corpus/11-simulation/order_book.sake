@@ -8,8 +8,8 @@ class Book
   def better?(b, side, p1, p2) = side == :buy ? p1 > p2 : p1 < p2
 
   def rest(b, o)
-    queue = Order.get_side(o) == :buy ? @bids : @asks
-    idx = Array.find_index(queue) { |x| better?(b, Order.get_side(o), Order.get_price(o), Order.get_price(x)) }
+    queue = Order.side(o) == :buy ? @bids : @asks
+    idx = Array.find_index(queue) { |x| better?(b, Order.side(o), Order.price(o), Order.price(x)) }
     if idx
       Array.insert(queue, idx, o)
     else
@@ -18,9 +18,9 @@ class Book
   end
 
   def crosses?(b, o, best)
-    price = Order.get_price(o)
+    price = Order.price(o)
     return true if price == nil
-    Order.get_side(o) == :buy ? price >= Order.get_price(best) : price <= Order.get_price(best)
+    Order.side(o) == :buy ? price >= Order.price(best) : price <= Order.price(best)
   end
 
   def submit(b, id, trader, side, price, qty)
@@ -30,31 +30,31 @@ class Book
     o = Order.new(id, trader, side, price, qty, @seq)
     opposite = side == :buy ? @asks : @bids
     filled = 0
-    while Order.get_qty(o) > 0
+    while Order.qty(o) > 0
       best = Array.first(opposite)
       break if best == nil || crosses?(b, o, best) == false
-      if Order.get_trader(best) == trader
+      if Order.trader(best) == trader
         Array.shift(opposite)
         next
       end
-      q = Integer.clamp(Order.get_qty(o), 0, Order.get_qty(best))
-      buy_id = side == :buy ? id : Order.get_id(best)
-      sell_id = side == :sell ? id : Order.get_id(best)
-      Array.push(@trades, Trade.new(buy_id, sell_id, Order.get_price(best), q))
-      Order.set_qty(o, Order.get_qty(o) - q)
-      Order.set_qty(best, Order.get_qty(best) - q)
+      q = Integer.clamp(Order.qty(o), 0, Order.qty(best))
+      buy_id = side == :buy ? id : Order.id(best)
+      sell_id = side == :sell ? id : Order.id(best)
+      Array.push(@trades, Trade.new(buy_id, sell_id, Order.price(best), q))
+      Order.set_qty(o, Order.qty(o) - q)
+      Order.set_qty(best, Order.qty(best) - q)
       filled += q
-      Array.shift(opposite) if Order.get_qty(best) == 0
+      Array.shift(opposite) if Order.qty(best) == 0
     end
-    if Order.get_qty(o) > 0 && price != nil
+    if Order.qty(o) > 0 && price != nil
       rest(b, o)
     end
-    [filled, Order.get_qty(o)]
+    [filled, Order.qty(o)]
   end
 
   def cancel(b, id)
     Array.each(Array[@bids, @asks]) do |queue|
-      idx = Array.find_index(queue) { Order.get_id(it) == id }
+      idx = Array.find_index(queue) { Order.id(it) == id }
       return Array.delete_at(queue, idx) if idx
     end
     nil
@@ -62,7 +62,7 @@ class Book
 
   def depth(b, queue)
     levels = Hash.new(0)
-    Array.each(queue) { |o| levels[Order.get_price(o)] += Order.get_qty(o) }
+    Array.each(queue) { |o| levels[Order.price(o)] += Order.qty(o) }
     levels
   end
 
@@ -70,7 +70,7 @@ class Book
     bid = Array.first(@bids)
     ask = Array.first(@asks)
     return nil if bid == nil || ask == nil
-    Order.get_price(ask) - Order.get_price(bid)
+    Order.price(ask) - Order.price(bid)
   end
 end
 
@@ -91,7 +91,7 @@ orders = Array[
 Array.each(orders) do |action, id, trader, side, price, qty|
   if action == :cancel
     removed = Book.cancel(book, id)
-    puts(removed ? "cancel ##{id}: removed #{Order.get_qty(removed)} left" : "cancel ##{id}: not found")
+    puts(removed ? "cancel ##{id}: removed #{Order.qty(removed)} left" : "cancel ##{id}: not found")
     next
   end
   begin
@@ -104,17 +104,17 @@ Array.each(orders) do |action, id, trader, side, price, qty|
 end
 
 puts("--- trades")
-trades = Book.get_trades(book)
+trades = Book.trades(book)
 Array.each(trades) do |t|
-  puts(format("buy #%-2d sell #%-2d %3d @ %s", Trade.get_buy_id(t), Trade.get_sell_id(t), Trade.get_qty(t), show_price(Trade.get_price(t))))
+  puts(format("buy #%-2d sell #%-2d %3d @ %s", Trade.buy_id(t), Trade.sell_id(t), Trade.qty(t), show_price(Trade.price(t))))
 end
-volume = Array.sum(Array.map(trades) { Trade.get_qty(it) })
-notional = Array.sum(Array.map(trades) { Trade.get_qty(it) * Trade.get_price(it) })
+volume = Array.sum(Array.map(trades) { Trade.qty(it) })
+notional = Array.sum(Array.map(trades) { Trade.qty(it) * Trade.price(it) })
 puts(format("volume %d, vwap %.4f", volume, notional / 100.0 / volume)) if volume > 0
 puts("--- book")
-asks = Book.depth(book, Book.get_asks(book))
+asks = Book.depth(book, Book.asks(book))
 Array.each(Array.reverse(Array.sort(Hash.keys(asks)))) { |p| puts(format("  ask %s x %d", show_price(p), asks[p])) }
-bids = Book.depth(book, Book.get_bids(book))
+bids = Book.depth(book, Book.bids(book))
 Array.each(Array.reverse(Array.sort(Hash.keys(bids)))) { |p| puts(format("  bid %s x %d", show_price(p), bids[p])) }
 sp = Book.spread(book)
 puts(sp ? "spread #{show_price(sp)}" : "spread n/a (one side empty)")

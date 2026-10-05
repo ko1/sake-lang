@@ -181,11 +181,11 @@ instance first:
 
 | In the body | Fields it declares |
 |---|---|
-| `attr_reader x, y` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
-| `attr_accessor n` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
+| `attr_reader x, y` | `C.x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
+| `attr_accessor n` | `C.n(c)` and `C.set_n(c, v)` from anywhere |
 | `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
 | `attr_accessor n = 0` · `items = Array[]` | a default: any expression, evaluated by each `new` that leaves the field out; trailing fields with defaults may be left out of `new`; it does not fix the field's type |
-| `private attr_reader pos` | no `C.get_pos` outside the class (`@pos` inside); `new` still takes it |
+| `private attr_reader pos` | no `C.pos` outside the class (`@pos` inside); `new` still takes it |
 | `class E < Exception` | an exception type: `message` comes first |
 
 Use `attr_reader` for every field that is not changed from outside, which is most of them: every
@@ -211,7 +211,7 @@ afterwards a B is not an A.
   of the function's **first argument**; there is no `self`. Unqualified names refer to C's
   operations first. `def C.f(c)` outside the class is shorthand for a `def f(c)` inside it.
 
-The same with `Struct.new` and `get_`/`set_` spelled out:
+The same with `Struct.new` and the reader `C.x(c)` / writer `C.set_x(c, v)` spelled out:
 
 @@example data
 

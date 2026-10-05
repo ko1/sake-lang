@@ -16,7 +16,7 @@ def coupon_off = 20
 def money(r) = format("%.2f", Rational.to_f(Rational.round(r * 100) / 100r))
 
 class Subscription
-  def monthly(sub) = Plan.get_per_seat(@plan) * Array.max(Array[@seats, Plan.get_min_seats(@plan)])
+  def monthly(sub) = Plan.per_seat(@plan) * Array.max(Array[@seats, Plan.min_seats(@plan)])
 end
 
 # switching plan or seats on `day`: credit the unused part of the old price, charge the new one
@@ -30,19 +30,19 @@ def change(sub, day, plan_name, seats)
 end
 
 def charge_card(sub, amount, attempt)
-  unless Subscription.get_card_ok(sub)
-    raise PaymentDeclined.new("card declined", Subscription.get_customer(sub), attempt)
+  unless Subscription.card_ok(sub)
+    raise PaymentDeclined.new("card declined", Subscription.customer(sub), attempt)
   end
   amount
 end
 
 def invoice(sub, adjustments)
-  lines = Array[["#{Plan.get_name(Subscription.get_plan(sub))} x#{Subscription.get_seats(sub)}", Subscription.monthly(sub)]]
+  lines = Array[["#{Plan.name(Subscription.plan(sub))} x#{Subscription.seats(sub)}", Subscription.monthly(sub)]]
   Array.concat(lines, adjustments)
-  if Subscription.get_coupon_months(sub) > 0
+  if Subscription.coupon_months(sub) > 0
     subtotal = Array.sum(lines) { |t, amt| amt }
     Array.push(lines, ["coupon -#{coupon_off}%", 0 - subtotal * coupon_off / 100])
-    Subscription.set_coupon_months(sub, Subscription.get_coupon_months(sub) - 1)
+    Subscription.set_coupon_months(sub, Subscription.coupon_months(sub) - 1)
   end
   lines
 end
@@ -55,7 +55,7 @@ subs = Array[
   Subscription.new("Globex", Hash.fetch(plans, "starter"), 3, 0, :active, 0, true)
 ]
 by_name = Hash[]
-Array.each(subs) { |s| by_name[Subscription.get_customer(s)] = s }
+Array.each(subs) { |s| by_name[Subscription.customer(s)] = s }
 
 # events per month: [month, customer, kind, arg...]
 events = Array[
@@ -86,29 +86,29 @@ Range.each(1..4) do |month|
     end
   end
   Array.each(subs) do |sub|
-    name = Subscription.get_customer(sub)
-    next if Subscription.get_status(sub) == :canceled
+    name = Subscription.customer(sub)
+    next if Subscription.status(sub) == :canceled
     lines = invoice(sub, pending[name] || Array[])
     total = Array.sum(lines) { |t, amt| amt }
     begin
-      paid = charge_card(sub, total, Subscription.get_failures(sub) + 1)
+      paid = charge_card(sub, total, Subscription.failures(sub) + 1)
       revenue[month] += paid
       Subscription.set_failures(sub, 0)
       Subscription.set_status(sub, :active)
       puts("  #{name}: " + Array.join(Array.map(lines) { |t, amt| "#{t} #{money(amt)}" }, "; ") + " = #{money(total)}")
     rescue PaymentDeclined => e
-      Subscription.set_failures(sub, PaymentDeclined.get_attempt(e))
-      Subscription.set_status(sub, Subscription.get_failures(sub) >= 2 ? :suspended : :past_due)
-      puts("  #{name}: #{Exception.message(e)} (attempt #{PaymentDeclined.get_attempt(e)}), now #{Subscription.get_status(sub)}")
+      Subscription.set_failures(sub, PaymentDeclined.attempt(e))
+      Subscription.set_status(sub, Subscription.failures(sub) >= 2 ? :suspended : :past_due)
+      puts("  #{name}: #{Exception.message(e)} (attempt #{PaymentDeclined.attempt(e)}), now #{Subscription.status(sub)}")
     end
   end
 end
 
 puts
 Range.each(1..4) { |m| puts("Month #{m} collected #{money(revenue[m])}") }
-active = Array.select(subs) { |s| Subscription.get_status(s) == :active }
+active = Array.select(subs) { |s| Subscription.status(s) == :active }
 mrr = Array.sum(active) { |s| Subscription.monthly(s) }
 puts("MRR #{money(mrr)} from #{Array.size(active)} active; " +
-  Array.join(Array.map(Array.reject(subs) { |s| Subscription.get_status(s) == :active }) { |s| "#{Subscription.get_customer(s)}=#{Subscription.get_status(s)}" }, ", "))
-seats = Array.sum(active) { |s| Subscription.get_seats(s) }
+  Array.join(Array.map(Array.reject(subs) { |s| Subscription.status(s) == :active }) { |s| "#{Subscription.customer(s)}=#{Subscription.status(s)}" }, ", "))
+seats = Array.sum(active) { |s| Subscription.seats(s) }
 puts("Average revenue per seat #{money(mrr / seats)}")

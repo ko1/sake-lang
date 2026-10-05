@@ -15,7 +15,7 @@ end
 def lifetime_days = 180
 
 class Customer
-  def balance(c, today) = Array.sum(Array.select(@lots) { |l| Lot.get_expires_day(l) >= today }) { |l| Lot.get_points(l) }
+  def balance(c, today) = Array.sum(Array.select(@lots) { |l| Lot.expires_day(l) >= today }) { |l| Lot.points(l) }
 
   def log(c, day, text) = Array.push(@history, "day #{String.rjust(Integer.to_s(day), 3)}: #{text}")
 
@@ -38,11 +38,11 @@ class Customer
     avail = balance(c, day)
     raise NotEnoughPoints.new("#{@name} cannot redeem #{pts}", pts, avail) if pts > avail
     left = pts
-    live = Array.sort_by(Array.select(@lots) { |l| Lot.get_expires_day(l) >= day && Lot.get_points(l) > 0 }) { |l| Lot.get_earned_day(l) }
+    live = Array.sort_by(Array.select(@lots) { |l| Lot.expires_day(l) >= day && Lot.points(l) > 0 }) { |l| Lot.earned_day(l) }
     Array.each(live) do |lot|
       next if left == 0
-      take = Array.min(Array[left, Lot.get_points(lot)])
-      Lot.set_points(lot, Lot.get_points(lot) - take)
+      take = Array.min(Array[left, Lot.points(lot)])
+      Lot.set_points(lot, Lot.points(lot) - take)
       left -= take
     end
     log(c, day, "redeemed #{pts} pts")
@@ -50,8 +50,8 @@ class Customer
   end
 
   def expire(c, day)
-    gone = Array.select(@lots) { |l| Lot.get_expires_day(l) < day && Lot.get_points(l) > 0 }
-    lost = Array.sum(gone) { |l| Lot.get_points(l) }
+    gone = Array.select(@lots) { |l| Lot.expires_day(l) < day && Lot.points(l) > 0 }
+    lost = Array.sum(gone) { |l| Lot.points(l) }
     Array.each(gone) { |l| Lot.set_points(l, 0) }
     log(c, day, "#{lost} pts expired") if lost > 0
     lost
@@ -82,27 +82,27 @@ Array.each(activity) do |day, id, kind, arg|
     in :buy then Customer.earn(c, day, arg)
     in :redeem then Customer.redeem(c, day, reward_cost(arg))
     in :refer
-      Array.push(Customer.get_lots(c), Lot.new(250, day, day + lifetime_days))
-      Customer.log(c, day, "+250 pts for referring #{Customer.get_name(Hash.fetch(customers, arg))}")
+      Array.push(Customer.lots(c), Lot.new(250, day, day + lifetime_days))
+      Customer.log(c, day, "+250 pts for referring #{Customer.name(Hash.fetch(customers, arg))}")
     end
   rescue NotEnoughPoints => e
-    Customer.log(c, day, "#{Exception.message(e)}: has #{NotEnoughPoints.get_available(e)}, needs #{NotEnoughPoints.get_needed(e)}")
+    Customer.log(c, day, "#{Exception.message(e)}: has #{NotEnoughPoints.available(e)}, needs #{NotEnoughPoints.needed(e)}")
   end
 end
 
 today = 240
 Hash.each_value(customers) do |c|
-  puts("#{Customer.get_name(c)} (#{Customer.get_tier(c)}, spent #{format("%.2f", Customer.get_spend(c))}, balance #{Customer.balance(c, today)})")
-  Array.each(Customer.get_history(c)) { |h| puts("  #{h}") }
+  puts("#{Customer.name(c)} (#{Customer.tier(c)}, spent #{format("%.2f", Customer.spend(c))}, balance #{Customer.balance(c, today)})")
+  Array.each(Customer.history(c)) { |h| puts("  #{h}") }
 end
 
 puts
 soon = Array.flat_map(Hash.values(customers)) do |c|
-  Array.filter_map(Customer.get_lots(c)) do |l|
-    left = Lot.get_expires_day(l) - today
-    [Customer.get_name(c), Lot.get_points(l), left] if Lot.get_points(l) > 0 && left >= 0 && left <= 30
+  Array.filter_map(Customer.lots(c)) do |l|
+    left = Lot.expires_day(l) - today
+    [Customer.name(c), Lot.points(l), left] if Lot.points(l) > 0 && left >= 0 && left <= 30
   end
 end
 Array.each(soon) { |name, pts, left| puts("#{name}: #{pts} pts expire in #{left} days") }
-by_tier = Array.tally(Array.map(Hash.values(customers)) { |c| Customer.get_tier(c) })
+by_tier = Array.tally(Array.map(Hash.values(customers)) { |c| Customer.tier(c) })
 puts("Tiers: #{Array.join(Array.map(tiers) { |t, min| "#{t}=#{by_tier[t] || 0}" }, " ")}")

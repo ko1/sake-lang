@@ -26,7 +26,7 @@ def recipes = once do
 end
 
 def consume(stock, recipe, batches)
-  needs = Hash.transform_values(Recipe.get_ingredients(recipe)) { |amt| amt * batches }
+  needs = Hash.transform_values(Recipe.ingredients(recipe)) { |amt| amt * batches }
   Hash.each(needs) do |ing, amt|
     have = Hash.fetch(stock, ing, 0)
     raise OutOfStock.new("short of #{ing}", ing, amt - have) if have < amt
@@ -40,18 +40,18 @@ def clock(min) = format("%02d:%02d", 4 + min / 60, min % 60)
 def plan(orders, stock, ovens, deliveries)
   mixer_free = 0
   log = String[]
-  queue = Array.sort_by(orders) { |o| [Order.get_due(o), Order.get_id(o)] }
+  queue = Array.sort_by(orders) { |o| [Order.due(o), Order.id(o)] }
   Array.each(queue) do |o|
-    recipe = recipes[Order.get_product(o)]
-    batches = Integer.ceildiv(Order.get_qty(o), Recipe.get_per_batch(recipe))
+    recipe = recipes[Order.product(o)]
+    batches = Integer.ceildiv(Order.qty(o), Recipe.per_batch(recipe))
     start = mixer_free
     begin
       consume(stock, recipe, batches)
     rescue OutOfStock => e
-      ing = OutOfStock.get_ingredient(e)
-      arrival = Array.find(deliveries) { |at, item, amount| item == ing && amount >= OutOfStock.get_short(e) }
+      ing = OutOfStock.ingredient(e)
+      arrival = Array.find(deliveries) { |at, item, amount| item == ing && amount >= OutOfStock.short(e) }
       if arrival == nil
-        Array.push(log, "#{clock(start)} order #{Order.get_id(o)} cancelled: no #{ing}")
+        Array.push(log, "#{clock(start)} order #{Order.id(o)} cancelled: no #{ing}")
         next
       end
       at, item, amount = arrival
@@ -62,18 +62,18 @@ def plan(orders, stock, ovens, deliveries)
       retry
     end
     Integer.times(batches) do
-      mix_done = start + Recipe.get_mix_min(recipe)
-      oven = Array.min_by(ovens) { |ov| Oven.get_busy_until(ov) }
-      bake_start = Array.max(Array[Oven.get_busy_until(oven), mix_done])
-      Oven.set_busy_until(oven, bake_start + Recipe.get_bake_min(recipe))
-      Oven.set_batches(oven, Oven.get_batches(oven) + 1)
-      Order.set_ready_at(o, Oven.get_busy_until(oven))
+      mix_done = start + Recipe.mix_min(recipe)
+      oven = Array.min_by(ovens) { |ov| Oven.busy_until(ov) }
+      bake_start = Array.max(Array[Oven.busy_until(oven), mix_done])
+      Oven.set_busy_until(oven, bake_start + Recipe.bake_min(recipe))
+      Oven.set_batches(oven, Oven.batches(oven) + 1)
+      Order.set_ready_at(o, Oven.busy_until(oven))
       start = mix_done
     end
     mixer_free = start
-    late = Order.get_ready_at(o) - Order.get_due(o)
-    Array.push(log, format("%s order %d %-9s x%-3d %d batch(es) ready %s%s", clock(start), Order.get_id(o), Order.get_product(o),
-      Order.get_qty(o), batches, clock(Order.get_ready_at(o)), late > 0 ? " LATE #{late}m" : ""))
+    late = Order.ready_at(o) - Order.due(o)
+    Array.push(log, format("%s order %d %-9s x%-3d %d batch(es) ready %s%s", clock(start), Order.id(o), Order.product(o),
+      Order.qty(o), batches, clock(Order.ready_at(o)), late > 0 ? " LATE #{late}m" : ""))
   end
   log
 end
@@ -91,12 +91,12 @@ ovens = Oven[Oven.new("deck"), Oven.new("rack")]
 log = plan(orders, stock, ovens, deliveries)
 Array.each(log) { puts(it) }
 puts("--- ovens")
-Array.each(ovens) { |ov| puts("#{Oven.get_name(ov)}: #{Oven.get_batches(ov)} batches, free at #{clock(Oven.get_busy_until(ov))}") }
+Array.each(ovens) { |ov| puts("#{Oven.name(ov)}: #{Oven.batches(ov)} batches, free at #{clock(Oven.busy_until(ov))}") }
 puts("--- leftover stock")
 Array.each(Array.sort(Hash.keys(stock))) { |ing| puts(format("%-7s %6d", ing, stock[ing])) }
-done = Array.select(orders) { Order.get_ready_at(it) != nil }
-late = Array.select(done) { Order.get_ready_at(it) > Order.get_due(it) }
+done = Array.select(orders) { Order.ready_at(it) != nil }
+late = Array.select(done) { Order.ready_at(it) > Order.due(it) }
 puts("orders done #{Array.size(done)}/#{Array.size(orders)}, late #{Array.size(late)}")
 by_customer = Hash.new(0)
-Array.each(done) { |o| by_customer[Order.get_customer(o)] += Order.get_qty(o) }
+Array.each(done) { |o| by_customer[Order.customer(o)] += Order.qty(o) }
 puts(Array.join(Array.map(Hash.sort_by(by_customer) { |c, n| c }) { |c, n| "#{c}=#{n}" }, " "))

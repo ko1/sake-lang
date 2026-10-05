@@ -810,7 +810,7 @@ module Sake
         stored = run_initialize(dt, given, node) or return []
         stored.each { |f, ty| field_write(dt.name, f, ty, node) }
         t(dt.name)
-      when /\Aget_(.+)\z/ then @fields[dt.name][$1] || []
+      when *dt.fields then @fields[dt.name][name] || [] # the reader `T.x(v)`
       when /\Aset_(.+)\z/
         field_write(dt.name, $1, args[1], node)
         args[1]

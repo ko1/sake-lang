@@ -199,7 +199,7 @@ function opsOf(ns) {
   if (u) {
     if (u.kind !== "module") out.set("new", { label: "new", type: "function", info: `${ns}.new(${u.fields.join(", ")})`, boost: 3 });
     for (const f of u.fields) {
-      out.set(`get_${f}`, { label: `get_${f}`, type: "property", info: `${ns}.get_${f}(x)`, boost: 2 });
+      out.set(f, { label: f, type: "property", info: `${ns}.${f}(x)`, boost: 2 });
       out.set(`set_${f}`, { label: `set_${f}`, type: "property", info: `${ns}.set_${f}(x, v)`, boost: 1 });
     }
     for (const fn of u.functions) {

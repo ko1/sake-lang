@@ -37,27 +37,27 @@ def step(tanks, pipes, pumps, hour, dt)
   roof = tanks["roof"]
   Tank.add(roof, rain(hour) * 0.04 * dt)
   Array.each(pipes) do |p|
-    next unless Pipe.get_open(p)
-    a = tanks[Pipe.get_from(p)]
-    b = tanks[Pipe.get_to(p)]
+    next unless Pipe.open(p)
+    a = tanks[Pipe.from(p)]
+    b = tanks[Pipe.to(p)]
     head = Tank.head(a) - Tank.head(b)
     next if head <= 0.0
-    flow = Pipe.get_conductance(p) * Math.sqrt(head) * dt
+    flow = Pipe.conductance(p) * Math.sqrt(head) * dt
     Tank.add(b, Tank.take(a, flow))
   end
   Array.each(pumps) do |pm|
-    src = tanks[Pump.get_from(pm)]
-    dst = tanks[Pump.get_to(pm)]
-    if Pump.get_running(pm) && Tank.get_level(dst) >= Pump.get_off_above(pm)
+    src = tanks[Pump.from(pm)]
+    dst = tanks[Pump.to(pm)]
+    if Pump.running(pm) && Tank.level(dst) >= Pump.off_above(pm)
       Pump.set_running(pm, false)
-    elsif !Pump.get_running(pm) && Tank.get_level(dst) <= Pump.get_on_below(pm)
+    elsif !Pump.running(pm) && Tank.level(dst) <= Pump.on_below(pm)
       Pump.set_running(pm, true)
     end
-    Tank.add(dst, Tank.take(src, Pump.get_rate(pm) * dt)) if Pump.get_running(pm)
+    Tank.add(dst, Tank.take(src, Pump.rate(pm) * dt)) if Pump.running(pm)
   end
   house = tanks["header"]
   got = Tank.take(house, demand(hour) * dt)
-  Tank.set_drawn(house, Tank.get_drawn(house) + got)
+  Tank.set_drawn(house, Tank.drawn(house) + got)
   demand(hour) * dt - got
 end
 
@@ -83,14 +83,14 @@ Integer.times(24) do |hour|
   Integer.times(4) { missing += step(tanks, pipes, pumps, hour, dt) }
   shortfall += missing
   Array.push(short_hours, hour) if missing > 0.001
-  levels = Array.map(Hash.values(tanks)) { |t| format("%s %.2f", Tank.get_name(t), Tank.get_level(t)) }
-  pump = Pump.get_running(Array.fetch(pumps, 0)) ? "P" : "-"
+  levels = Array.map(Hash.values(tanks)) { |t| format("%s %.2f", Tank.name(t), Tank.level(t)) }
+  pump = Pump.running(Array.fetch(pumps, 0)) ? "P" : "-"
   puts(format("%02d:59 %s %s rain %4.1f", hour, pump, Array.join(levels, " | "), rain(hour)))
 end
 
 puts("--- totals")
 Hash.each_value(tanks) do |t|
-  puts(format("%-8s final %5.2f m (%.2f m3), overflow %.2f m3", Tank.get_name(t), Tank.get_level(t), Tank.volume(t), Tank.get_overflowed(t)))
+  puts(format("%-8s final %5.2f m (%.2f m3), overflow %.2f m3", Tank.name(t), Tank.level(t), Tank.volume(t), Tank.overflowed(t)))
 end
-puts(format("delivered %.2f m3, shortfall %.2f m3", Tank.get_drawn(tanks["header"]), shortfall))
+puts(format("delivered %.2f m3, shortfall %.2f m3", Tank.drawn(tanks["header"]), shortfall))
 puts(Array.empty?(short_hours) ? "no shortages" : "short in hours #{Array.join(short_hours, ",")}")

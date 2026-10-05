@@ -47,7 +47,7 @@ and compares the help text and the errors with Ruby's.
 | `op.getopts(argv, "ab:", "foo", "bar:")` | `OptionParser.getopts(op, argv, "ab:", String["foo", "bar:"])` | same (long options as an optional Array; no rest parameters). Stops at the first non-option, as Ruby (fixed in phase 2; phase 1 permuted) |
 | `op.getopts("ab:")` (ARGV) | — | differs: argv is required here (it comes before the short spec) |
 | `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | one type `OptionParserError`, with `get_kind(e)` = `"InvalidOption"`, ... | differs: no hierarchy, so `rescue OptionParserError` stands for `rescue OptionParser::ParseError` |
-| `e.message`, `e.args`, `e.reason` | `Exception.message(e)`, `OptionParserError.get_args(e)`, `OptionParserError.reason(e)` | same text |
+| `e.message`, `e.args`, `e.reason` | `Exception.message(e)`, `OptionParserError.args(e)`, `OptionParserError.reason(e)` | same text |
 | `--help`, `--version` handled by OptionParser itself (prints and exits) | same | same (phase 2): an undeclared `--help` (or a prefix, `--he`) prints the help and exits 0; `--version` prints `ver` and exits, or aborts with `prog: version unknown`. Declared options win, as Ruby |
 | `op.warn(msg)`, `op.abort(msg)` | `OptionParser.warn(op, msg)`, `OptionParser.abort(op, msg)` | same: `prog: msg` on stderr (`IO.stderr`); abort exits 1. The message is required (Ruby defaults to `$!`) |
 | `ARGV` as the default argv | `parse(op)`, `parse!(op)`, ... | same, but `parse!(op)` cannot shorten ARGV: Sake's `ARGV` gives a new Array at each use ([optparse_bug_argv_copy.sake](optparse_bug_argv_copy.sake)). Write `args = ARGV; OptionParser.parse!(op, args)` |

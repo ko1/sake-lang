@@ -221,12 +221,13 @@ module Sake
       fields.unshift("message") if exception && fields.first != "message"
       dup = fields.find { fields.count(_1) > 1 }
       return error(v, "duplicate field `#{dup}` in #{v.receiver.name}.new") if dup
+      return error(v, "a field cannot be named `new`: #{name}.new makes a #{name}, and a field's reader has its name", ["rename it, e.g. `:new_value`"]) if fields.include?("new")
       return error(node, "`#{name}` is already defined") if @struct_types[name] || @registry.namespace?(name)
 
       define_struct(name, fields, exception:)
     end
 
-    # readers / writers: the fields with a public get_ / set_ (all of them by default).
+    # readers / writers: the fields with a public reader `T.x` / writer `T.set_x` (all of them by default).
     # defaults: field => default value (a literal): only the value `new` stores when the argument is left
     # out. It does not fix the field's type: types come from operations, as for every other variable.
     def define_struct(name, fields, exception: false, readers: fields, writers: fields, defaults: {})
@@ -241,11 +242,11 @@ module Sake
       Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
       fields.each_with_index do |f, i|
-        dt.getters[f] = Builtin.new(namespace: name, name: "get_#{f}", params: [name], optional: [], rest: nil, block: :none,
+        dt.getters[f] = Builtin.new(namespace: name, name: f, params: [name], optional: [], rest: nil, block: :none,
                                     impl: ->(r) { r.values[i] })
         dt.setters[f] = Builtin.new(namespace: name, name: "set_#{f}", params: [name, "Any"], optional: [], rest: nil, block: :none,
                                     impl: ->(r, x) { r.values[i] = x })
-        @registry.define(name, "get_#{f}", [name], &dt.getters[f].impl) if readers.include?(f)
+        @registry.define(name, f, [name], &dt.getters[f].impl) if readers.include?(f) # `T.x(v)`: the field's reader
         @registry.define(name, "set_#{f}", [name, "Any"], &dt.setters[f].impl) if writers.include?(f)
       end
     end
@@ -262,7 +263,7 @@ module Sake
 
     def attr_call?(st) = st.is_a?(Prism::CallNode) && st.receiver.nil? && (ATTRS.key?(st.name) || private_attr?(st))
 
-    # `private attr_reader pos`: a field with no get_/set_ outside its class (`@pos` inside); new still takes it.
+    # `private attr_reader pos`: a field with no reader/writer outside its class (`@pos` inside); new still takes it.
     def private_attr?(st)
       st.name == :private && st.arguments&.arguments&.size == 1 && (a = st.arguments.arguments[0]).is_a?(Prism::CallNode) &&
         a.receiver.nil? && ATTRS.key?(a.name)
@@ -314,6 +315,7 @@ module Sake
           fname, default = attr_field(a)
           next unless fname
           next error(a, "field `#{fname}` is declared twice in #{name}") if spec[:fields].include?(fname)
+          next error(a, "a field cannot be named `new`: #{name}.new makes a #{name}, and a field's reader has its name", ["rename it, e.g. `new_value`"]) if fname == "new"
           spec[:fields] << fname
           spec[:readers] << fname if reader
           spec[:writers] << fname if writer
@@ -454,6 +456,10 @@ module Sake
       fn.abstract = abstract_body?(node.body)
       if (prev = @functions.dig(ns, name))
         error(node, "`#{fn.full_name}` is already defined at line #{prev.node.location.start_line}")
+      elsif ns && @registry.lookup(ns, name) && @struct_types[ns]&.fields&.include?(name)
+        # A function named like a field replaces its reader, as a method after attr_reader in Ruby (`@x` still reads it).
+        @registry.undefine(ns, name)
+        (@functions[ns] ||= {})[name] = fn
       elsif ns && @registry.lookup(ns, name)
         error(node, "`#{fn.full_name}` is a built-in operation and cannot be redefined")
       else
@@ -623,6 +629,7 @@ module Sake
       when Prism::CallNode then check_call(node, ctx)
       when Prism::HashNode then check_record_literal(node, ctx)
       when Prism::MatchRequiredNode then check_record_pattern(node, ctx)
+      when Prism::CallOperatorWriteNode, Prism::CallOrWriteNode, Prism::CallAndWriteNode then check_field_op_write(node, ctx)
       when Prism::BeginNode then check_begin(node, ctx)
       when Prism::RescueModifierNode then check_each(ctx, node.expression, node.rescue_expression)
       when Prism::RetryNode then error(node, "`retry` is only allowed in a rescue clause") unless ctx.in_rescue
@@ -698,7 +705,7 @@ module Sake
       end
       unless ctx.fn && dt
         return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a Struct type",
-                     ["outside one, write the accessor: `Type.get_#{field}(obj)`"])
+                     ["outside one, write the reader: `Type.#{field}(obj)`"])
       end
       return error(node, "`#{node.name}` needs a first argument (the #{dt.name}) in #{ctx.fn.full_name}") if ctx.fn.params.empty?
       unless dt.fields.include?(field)
@@ -733,6 +740,23 @@ module Sake
         end
         check(el.value, ctx)
       end
+    end
+
+    # `x.T.f += v` (also ||=, &&=): T.set_f(x, T.f(x) + v), with x evaluated once.
+    def check_field_op_write(node, ctx)
+      recv = node.receiver
+      chain = recv.is_a?(Prism::CallNode) && recv.receiver && recv.call_operator_loc && recv.name.to_s.match?(/\A[A-Z]/) && recv.arguments.nil?
+      unless chain && (dt = @struct_types[recv.name.to_s]) && dt.fields.include?(field = node.read_name.to_s)
+        return error(node, "`#{first_line(node.slice)}`: write a field with its type, as `x.Point.count += 1`",
+                     ["(the left side is `value.Type.field`, a field of a Struct type)"])
+      end
+      check(recv.receiver, ctx)
+      check(node.value, ctx)
+      reader = lookup(dt.name, field)
+      writer = @registry.lookup(dt.name, "set_#{field}")
+      return error(node, "field `#{field}` of #{dt.name} has no reader") unless reader
+      return error(node, "field `#{field}` of #{dt.name} is read-only (attr_reader)", ["declare it with `attr_accessor #{field}`"]) unless writer
+      set_call(node, ctx, [reader, writer])
     end
 
     def check_record_pattern(node, ctx)
@@ -902,7 +926,10 @@ module Sake
       end
       if (subject = chain_subject(node))
         # `x.T.f(args)` is `T.f(x, args)`.
-        target = resolve_qualified(node, recv.name.to_s, node.name.to_s, argc: args.size + 1)
+        name = node.name.to_s
+        # `x.T.f = v` is T.set_f(x, v)
+        name = "set_#{name.delete_suffix("=")}" if name.end_with?("=") && @struct_types[recv.name.to_s]&.fields&.include?(name.delete_suffix("="))
+        target = resolve_qualified(node, recv.name.to_s, name, argc: args.size + 1)
         check(subject, ctx)
         kws = target_keywords(target)
         check_args(node.arguments, ctx, splat: true, keywords: kws)
@@ -1218,8 +1245,11 @@ module Sake
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
       others = namespaces_defining(name) - [ns]
       hints << "`#{name}` is defined in #{others.map { "`#{_1}.#{name}`" }.join(", ")}" unless others.empty?
-      if (dt = @struct_types[ns]) && name =~ /\A(get|set)_(.+)\z/ && dt.fields.include?($2)
-        priv = !@registry.lookup(ns, "get_#{$2}") && !@registry.lookup(ns, "set_#{$2}")
+      if (dt = @struct_types[ns]) && name =~ /\Aget_(.+)\z/ && dt.fields.include?($1)
+        return error(node, "`#{ns}.#{name}` is now `#{ns}.#{$1}`: a field's reader has the field's name", ["#{ns}.#{$1}(obj), or obj.#{ns}.#{$1}"])
+      end
+      if (dt = @struct_types[ns]) && (name =~ /\A(set)_(.+)\z/ || (dt.fields.include?(name) && name =~ /\A()(.+)\z/)) && dt.fields.include?($2)
+        priv = !@registry.lookup(ns, $2) && !@registry.lookup(ns, "set_#{$2}")
         kind = priv ? "private (private attr_*)" : ($1 == "set" ? "read-only (attr_reader)" : "write-only (attr_writer)")
         return error(node, "field `#{$2}` of #{ns} is #{kind}",
                      ["inside `class #{ns}`, use `@#{$2}#{$1 == "set" ? " = value" : ""}`#{priv ? "" : "; or declare it with `attr_accessor #{$2}`"}"])
@@ -1227,7 +1257,7 @@ module Sake
       if (dt = @struct_types[ns])
         field = name.delete_suffix("=")
         if dt.fields.include?(field)
-          hints << (name.end_with?("=") ? "#{ns}.set_#{field}(obj, value)" : "#{ns}.get_#{field}(obj)")
+          hints << (name.end_with?("=") ? "#{ns}.set_#{field}(obj, value)" : "#{ns}.#{field}(obj)")
         end
       end
       error(node, "undefined function `#{ns}.#{name}`", hints)
@@ -1289,7 +1319,7 @@ module Sake
       suggestions = node.name == :nil? ? ["#{node.receiver.slice} == nil"] : suggest(node)
       generic =
         if node.name.end_with?("=") # `x.pos = v`: a setter is an operation named set_pos
-          "Sake has no method calls on values; a setter is an operation named set_x: `Type.set_#{node.name.to_s.delete_suffix("=")}(#{node.receiver.slice}, value)`"
+          "Sake has no method calls on values; write the field with its type: `#{node.receiver.slice}.Type.#{node.name.to_s.delete_suffix("=")} = value`"
         else
           "Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"
         end
@@ -1319,7 +1349,7 @@ module Sake
           field = name.delete_suffix("=")
           @struct_types.values.select { _1.fields.include?(field) }.map { "#{_1.name}.set_#{field}" }
         else
-          getters = @struct_types.values.select { _1.fields.include?(name) }.map { "#{_1.name}.get_#{name}" }
+          getters = @struct_types.values.select { _1.fields.include?(name) }.map { "#{_1.name}.#{name}" }
           ops = namespaces_defining(name)
           if (lit = literal_type(node.receiver)) && ops.include?(lit)
             ops = [lit]
@@ -1329,8 +1359,11 @@ module Sake
             all = @registry.namespaces.flat_map { |ns| names_in(ns).map { "#{ns}.#{_1}" } }
             ops = all.select { |q| spell(name, [q.split(".", 2).last]).any? }
           end
-          getters + ops
+          (getters + ops).uniq
         end
+      if node.attribute_write? # `p.x = v`: the chain form `p.Point.x = v`
+        return candidates.map { |c| "#{recv}.#{c.split(".").first}.#{name.delete_suffix("=")} = #{args.join(", ")}" }
+      end
       candidates.map { "#{_1}(#{[recv, *args].join(", ")})#{blk}" }
     end
 

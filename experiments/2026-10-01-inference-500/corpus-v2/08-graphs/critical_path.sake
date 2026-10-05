@@ -29,7 +29,7 @@ def visit(tasks, id, state, order)
   return if state[id] == :done
   raise CycleFound.new("dependency cycle", id) if state[id] == :active
   state[id] = :active
-  Array.each(Task.get_deps(tasks[id])) { |d| visit(tasks, d, state, order) }
+  Array.each(Task.deps(tasks[id])) { |d| visit(tasks, d, state, order) }
   state[id] = :done
   Array.push(order, id)
 end
@@ -38,13 +38,13 @@ def schedule(tasks)
   order = topo_order(tasks)
   Array.each(order) do |id|
     t = tasks[id]
-    starts = Array.map(Task.get_deps(t)) { |d| Task.finish(tasks[d]) }
+    starts = Array.map(Task.deps(t)) { |d| Task.finish(tasks[d]) }
     Task.set_early(t, Array.max(starts) || 0)
   end
   project_end = Array.max(Array.map(Hash.values(tasks)) { |t| Task.finish(t) })
   successors = Hash[]
   Hash.each(tasks) do |id, t|
-    Array.each(Task.get_deps(t)) do |d|
+    Array.each(Task.deps(t)) do |d|
       successors[d] ||= Array[]
       Array.push(successors[d], id)
     end
@@ -52,20 +52,20 @@ def schedule(tasks)
   Array.each(Array.reverse(order)) do |id|
     t = tasks[id]
     succ = Hash.fetch(successors, id, Array[])
-    latest_finish = Array.empty?(succ) ? project_end : Array.min(Array.map(succ) { |s| Task.get_late(tasks[s]) })
-    Task.set_late(t, latest_finish - Task.get_days(t))
+    latest_finish = Array.empty?(succ) ? project_end : Array.min(Array.map(succ) { |s| Task.late(tasks[s]) })
+    Task.set_late(t, latest_finish - Task.days(t))
   end
   [order, project_end]
 end
 
 def chain(tasks, order)
   crit = Array.select(order) { |id| Task.critical?(tasks[id]) }
-  Array.sort_by(crit) { |id| Task.get_early(tasks[id]) }
+  Array.sort_by(crit) { |id| Task.early(tasks[id]) }
 end
 
 def gantt(t)
-  pad = " " * Task.get_early(t)
-  bar = (Task.critical?(t) ? "#" : "=") * Task.get_days(t)
+  pad = " " * Task.early(t)
+  bar = (Task.critical?(t) ? "#" : "=") * Task.days(t)
   slack = "." * Task.slack(t)
   "|#{pad}#{bar}#{slack}"
 end
@@ -77,14 +77,14 @@ def plan(title, rows)
   puts("tasks: #{Hash.size(tasks)}, duration: #{total} days")
   Array.each(order) do |id|
     t = tasks[id]
-    puts(format("%-5s %-12s %2d-%2d slack %2d %s", id, Task.get_title(t), Task.get_early(t),
+    puts(format("%-5s %-12s %2d-%2d slack %2d %s", id, Task.title(t), Task.early(t),
                 Task.finish(t), Task.slack(t), gantt(t)))
   end
   puts("critical: #{Array.join(chain(tasks, order), " -> ")}")
   flex = Array.max_by(Hash.values(tasks)) { |t| Task.slack(t) }
-  puts("most flexible: #{Task.get_title(flex)} (#{Task.slack(flex)} days)")
+  puts("most flexible: #{Task.title(flex)} (#{Task.slack(flex)} days)")
 rescue CycleFound => e
-  puts("#{Exception.message(e)} at #{CycleFound.get_at(e)}")
+  puts("#{Exception.message(e)} at #{CycleFound.at(e)}")
 end
 
 plan("house", Array[

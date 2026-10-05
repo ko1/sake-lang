@@ -38,22 +38,22 @@ def step(rooms, walls, hour, minutes)
   out = outdoor(hour)
   flows = Hash.new(0.0)
   Array.each(walls) do |a, b, k|
-    q = k * (Room.get_temp(rooms[a]) - Room.get_temp(rooms[b]))
+    q = k * (Room.temp(rooms[a]) - Room.temp(rooms[b]))
     flows[a] -= q
     flows[b] += q
   end
   Hash.each(rooms) do |name, r|
     target = setpoint(name, hour)
-    t = Room.get_temp(r)
-    if Room.get_heating(r) && t >= target + 0.5
+    t = Room.temp(r)
+    if Room.heating(r) && t >= target + 0.5
       Room.set_heating(r, false)
-    elsif !Room.get_heating(r) && t <= target - 0.5
+    elsif !Room.heating(r) && t <= target - 0.5
       Room.set_heating(r, true)
     end
-    gain = Room.get_heating(r) ? Room.get_heater_kw(r) : 0.0
-    Room.set_on_minutes(r, Room.get_on_minutes(r) + minutes) if Room.get_heating(r)
-    loss = Room.get_loss(r) * (t - out)
-    dt = (gain - loss + flows[name]) * minutes / 60.0 / Room.get_mass(r)
+    gain = Room.heating(r) ? Room.heater_kw(r) : 0.0
+    Room.set_on_minutes(r, Room.on_minutes(r) + minutes) if Room.heating(r)
+    loss = Room.loss(r) * (t - out)
+    dt = (gain - loss + flows[name]) * minutes / 60.0 / Room.mass(r)
     Room.set_temp(r, t + dt)
   end
 end
@@ -73,7 +73,7 @@ lows = Hash[]
 Integer.times(24) do |hour|
   Integer.times(60 / minutes) { step(rooms, walls, hour, minutes) }
   Hash.each(rooms) do |name, r|
-    t = Room.get_temp(r)
+    t = Room.temp(r)
     comfort_misses[name] += 1 if t < setpoint(name, hour) - 1.0
     lows[name] = t if lows[name] == nil || t < lows[name]
   end
@@ -85,10 +85,10 @@ end
 puts("--- daily summary")
 total_kwh = 0.0
 Hash.each(rooms) do |name, r|
-  kwh = Room.get_heater_kw(r) * Room.get_on_minutes(r) / 60.0
+  kwh = Room.heater_kw(r) * Room.on_minutes(r) / 60.0
   total_kwh += kwh
   puts(format("%-8s heater on %4d min, %5.2f kWh, low %5.2fC, hours below target %d",
-    name, Room.get_on_minutes(r), kwh, lows[name], comfort_misses[name]))
+    name, Room.on_minutes(r), kwh, lows[name], comfort_misses[name]))
 end
 puts(format("total %.2f kWh, cost %.2f", total_kwh, total_kwh * 0.31))
 coldest = Hash.min_by(lows) { |n, t| t }

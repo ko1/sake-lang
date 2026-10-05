@@ -19,8 +19,8 @@ def rules = once {
 def budgets = once { Hash[meals: 300.0, travel: 1200.0, software: 450.0, supplies: 150.0, other: 100.0] }
 
 def categorize(merchant)
-  rule = Array.find(rules) { |r| Regexp.match?(Rule.get_pattern(r), merchant) }
-  rule ? Rule.get_category(rule) : :other
+  rule = Array.find(rules) { |r| Regexp.match?(Rule.pattern(r), merchant) }
+  rule ? Rule.category(rule) : :other
 end
 
 def month_of(date) = date[0...7]
@@ -81,7 +81,7 @@ CSV
 txns, bad = parse(csv)
 puts("Parsed #{Array.size(txns)} transactions; bad lines: #{Array.join(bad, ", ")}")
 
-by_month = Array.group_by(txns) { |t| month_of(Txn.get_date(t)) }
+by_month = Array.group_by(txns) { |t| month_of(Txn.date(t)) }
 months = Array.sort(Hash.keys(by_month))
 cats = Hash.keys(budgets)
 
@@ -90,7 +90,7 @@ def row(label, cells) = format("%-9s", label) + Array.join(Array.map(cells) { |c
 totals = Hash[]
 Array.each(months) do |m|
   sums = Hash.new(0.0)
-  Array.each(Hash.fetch(by_month, m)) { |t| sums[Txn.get_category(t)] += Txn.get_amount(t) }
+  Array.each(Hash.fetch(by_month, m)) { |t| sums[Txn.category(t)] += Txn.amount(t) }
   totals[m] = sums
 end
 
@@ -116,23 +116,23 @@ end
 # a merchant seen in every month is treated as a subscription
 puts
 puts("Recurring:")
-by_merchant = Array.group_by(txns) { |t| Txn.get_merchant(t) }
+by_merchant = Array.group_by(txns) { |t| Txn.merchant(t) }
 Hash.each(by_merchant) do |merchant, ts|
-  seen = Array.uniq(Array.map(ts) { |t| month_of(Txn.get_date(t)) })
+  seen = Array.uniq(Array.map(ts) { |t| month_of(Txn.date(t)) })
   next if Array.size(seen) < Array.size(months)
-  amounts = Array.map(ts) { |t| Txn.get_amount(t) }
+  amounts = Array.map(ts) { |t| Txn.amount(t) }
   lo, hi = Array.minmax(amounts)
   kind = hi - lo < 0.01 ? "fixed" : format("varies %.2f-%.2f", lo, hi)
   puts(format("  %-20s %s", merchant, kind))
 end
 
 puts
-uncategorized = Array.select(txns) { |t| Txn.get_category(t) == :other }
-puts("Uncategorized: #{Array.join(Array.uniq(Array.map(uncategorized) { |t| Txn.get_merchant(t) }), ", ")}")
-refunds = Array.select(txns) { |t| Txn.get_amount(t) < 0 }
-Array.each(refunds) { |t| puts(format("Refund %s %s %.2f", Txn.get_date(t), Txn.get_merchant(t), Txn.get_amount(t))) }
-biggest = Array.max_by(txns) { |t| Txn.get_amount(t) }
-puts(format("Largest: %s %s %.2f", Txn.get_date(biggest), Txn.get_merchant(biggest), Txn.get_amount(biggest)))
+uncategorized = Array.select(txns) { |t| Txn.category(t) == :other }
+puts("Uncategorized: #{Array.join(Array.uniq(Array.map(uncategorized) { |t| Txn.merchant(t) }), ", ")}")
+refunds = Array.select(txns) { |t| Txn.amount(t) < 0 }
+Array.each(refunds) { |t| puts(format("Refund %s %s %.2f", Txn.date(t), Txn.merchant(t), Txn.amount(t))) }
+biggest = Array.max_by(txns) { |t| Txn.amount(t) }
+puts(format("Largest: %s %s %.2f", Txn.date(biggest), Txn.merchant(biggest), Txn.amount(biggest)))
 first_total = Array.sum(Hash.values(Hash.fetch(totals, Array.first(months))))
 last_total = Array.sum(Hash.values(Hash.fetch(totals, Array.last(months))))
 puts(format("Change %s -> %s: %+.1f%%", Array.first(months), Array.last(months), (last_total - first_total) * 100 / first_total))

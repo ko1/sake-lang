@@ -23,45 +23,45 @@ end
 
 def rate_for(client, person)
   role = Hash.fetch(staff_roles, person)
-  Hash.fetch(Client.get_rates(client), role, Hash.fetch(standard_rates, role))
+  Hash.fetch(Client.rates(client), role, Hash.fetch(standard_rates, role))
 end
 
 def build_lines(client, entries, expenses)
   lines = InvoiceLine[]
-  mine = Array.select(entries) { |e| Entry.get_client(e) == Client.get_code(client) }
-  by_person = Array.group_by(mine) { |e| Entry.get_person(e) }
+  mine = Array.select(entries) { |e| Entry.client(e) == Client.code(client) }
+  by_person = Array.group_by(mine) { |e| Entry.person(e) }
   Array.each(Array.sort(Hash.keys(by_person))) do |person|
     es = Hash.fetch(by_person, person)
-    hours = Array.sum(es) { |e| Entry.get_hours(e) }
+    hours = Array.sum(es) { |e| Entry.hours(e) }
     rate = rate_for(client, person)
-    notes = Array.join(Array.uniq(Array.map(es) { |e| Entry.get_note(e) }), "; ")
+    notes = Array.join(Array.uniq(Array.map(es) { |e| Entry.note(e) }), "; ")
     Array.push(lines, InvoiceLine.new("#{String.capitalize(person)} - #{notes}", hours, rate, hours * rate))
   end
-  Array.each(Array.select(expenses) { |x| Expense.get_client(x) == Client.get_code(client) }) do |x|
-    Array.push(lines, InvoiceLine.new("Expense: #{Expense.get_note(x)}", 1r, Expense.get_amount(x), Expense.get_amount(x)))
+  Array.each(Array.select(expenses) { |x| Expense.client(x) == Client.code(client) }) do |x|
+    Array.push(lines, InvoiceLine.new("Expense: #{Expense.note(x)}", 1r, Expense.amount(x), Expense.amount(x)))
   end
   lines
 end
 
 def print_invoice(number, client, lines, issued)
-  due = issued + Client.get_terms_days(client) * 86400
+  due = issued + Client.terms_days(client) * 86400
   puts("INVOICE #{number}")
-  puts("Bill to: #{Client.get_name(client)}")
+  puts("Bill to: #{Client.name(client)}")
   puts("Issued:  #{Time.strftime(issued, "%Y-%m-%d")}   Due: #{Time.strftime(due, "%Y-%m-%d (%a)")}")
   puts("-" * 64)
   Array.each(lines) do |l|
-    text = InvoiceLine.get_text(l)
+    text = InvoiceLine.text(l)
     text = text[0...37] + "..." if String.size(text) > 40
-    puts(format("%-40s %5.2f %8s %10s", text, Rational.to_f(InvoiceLine.get_qty(l)), money(InvoiceLine.get_unit(l)), money(InvoiceLine.get_amount(l))))
+    puts(format("%-40s %5.2f %8s %10s", text, Rational.to_f(InvoiceLine.qty(l)), money(InvoiceLine.unit(l)), money(InvoiceLine.amount(l))))
   end
-  subtotal = Array.sum(lines) { |l| InvoiceLine.get_amount(l) }
-  discount = subtotal * Client.get_discount_pct(client) / 100
+  subtotal = Array.sum(lines) { |l| InvoiceLine.amount(l) }
+  discount = subtotal * Client.discount_pct(client) / 100
   taxable = subtotal - discount
   tax = taxable * tax_rate
   total = taxable + tax
   puts("-" * 64)
   puts(format("%55s %8s", "Subtotal", money(subtotal)))
-  puts(format("%55s %8s", "Discount #{Client.get_discount_pct(client)}%", money(discount))) if discount > 0
+  puts(format("%55s %8s", "Discount #{Client.discount_pct(client)}%", money(discount))) if discount > 0
   puts(format("%55s %8s", "Tax 8.25%", money(tax)))
   puts(format("%55s %8s", "TOTAL", money(total)))
   puts
@@ -104,20 +104,20 @@ billed = Hash[]
 Array.each(clients) do |client|
   lines = build_lines(client, entries, expenses)
   if Array.empty?(lines)
-    puts("(nothing to bill for #{Client.get_name(client)})")
+    puts("(nothing to bill for #{Client.name(client)})")
     puts
     next
   end
   seq += 1
   number = "INV-#{Time.year(issued)}-#{String.rjust(Integer.to_s(seq), 4, "0")}"
-  billed[Client.get_code(client)] = print_invoice(number, client, lines, issued)
+  billed[Client.code(client)] = print_invoice(number, client, lines, issued)
 end
 
-total_hours = Array.sum(entries) { |e| Entry.get_hours(e) }
+total_hours = Array.sum(entries) { |e| Entry.hours(e) }
 puts("Billed hours: #{Rational.to_f(total_hours)}")
 grand = Hash.sum(billed) { |code, c| c }
 puts("Grand total: #{money(Rational(grand, 100))}")
-first = Array.min_by(entries) { |e| Entry.get_date(e) }
-last = Array.max_by(entries) { |e| Entry.get_date(e) }
-span = (Entry.get_date(last) - Entry.get_date(first)) / 86400
-puts("Work period: #{Time.strftime(Entry.get_date(first), "%b %-d")} - #{Time.strftime(Entry.get_date(last), "%b %-d")} (#{Float.to_i(span) + 1} days)")
+first = Array.min_by(entries) { |e| Entry.date(e) }
+last = Array.max_by(entries) { |e| Entry.date(e) }
+span = (Entry.date(last) - Entry.date(first)) / 86400
+puts("Work period: #{Time.strftime(Entry.date(first), "%b %-d")} - #{Time.strftime(Entry.date(last), "%b %-d")} (#{Float.to_i(span) + 1} days)")

@@ -26,7 +26,7 @@
 | `Date.valid_date?` / `valid_civil?` / `valid_ordinal?` / `valid_commercial?` / `valid_jd?` | same names | same |
 | `Date.leap?(y)`, `Date.gregorian_leap?(y)`, `Date.julian_leap?(y)` | same | same |
 | `d.leap?` | `Date.leap?(d)` | same (one op takes an Integer or a Date, by `case/in`) |
-| `Date.jd(n)` / `d.jd` | `Date.jd(n)` / `Date.jd(d)` | same (one op, Integer → Date, Date → Integer); `Date.get_jd(d)` also works |
+| `Date.jd(n)` / `d.jd` | `Date.jd(n)` / `Date.jd(d)` | same (one op, Integer → Date, Date → Integer); `Date.jd(d)` also works |
 | `Date.ordinal(y = -4712, yd = 1)`, `Date.commercial(y = -4712, w = 1, d = 1)` | same | same (negative yd/w/d count from the end; defaults since phase 2) |
 | `Date.today` | `Date.today` | same (from `Time.now`, local) |
 | `year month mon day mday wday yday mjd ajd ld start` | `Date.year(d)` ... | same |
@@ -86,10 +86,10 @@
 - `def valid_jd?(n) = n in Integer` → `only def and include are allowed in a class/module body` (Ruby parses
   it as `(def ... = n) in Integer`) → `def valid_jd?(n) = (n in Integer)`. The message does not hint at the
   parse.
-- `if x in Integer ... else ... end` in `Date.jd` → callers got `Date | Integer` (`Date.get_year: argument 1
+- `if x in Integer ... else ... end` in `Date.jd` → callers got `Date | Integer` (`Date.year: argument 1
   must be Date, but can be String`) → `case x in Integer ... in Date ...`, which the checker narrows per
   call. Repro: `notes/date_bug_if_in_else.sake`.
-- `jd = valid(...); while jd == nil ... end; jd(jd)` → `Date.get_jd: argument 1 must be Date, but is nil`
+- `jd = valid(...); while jd == nil ... end; jd(jd)` → `Date.jd: argument 1 must be Date, but is nil`
   (no narrowing after `while x == nil`) → `while true; jd = ...; return jd(jd) if jd != nil; ... end`.
 - `scan_format(s, fmt, {pos: 0}, ...)` then `st[:pos] = ...` → Records have no write → a Tuple `[0]`
   and `st[0] = ...`.

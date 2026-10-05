@@ -35,11 +35,11 @@ end
 
 def topo_order(tasks)
   by_id = Hash[]
-  Array.each(tasks) { |t| by_id[Task.get_id(t)] = t }
+  Array.each(tasks) { |t| by_id[Task.id(t)] = t }
   state = Hash.new(:new)
   order = Task[]
   stack = Array[]
-  Array.each(tasks) { |t| visit(by_id, state, order, stack, Task.get_id(t)) }
+  Array.each(tasks) { |t| visit(by_id, state, order, stack, Task.id(t)) }
   order
 end
 
@@ -52,7 +52,7 @@ def visit(by_id, state, order, stack, id)
   raise KeyError, "unknown task #{id}" if t == nil
   state[id] = :active
   Array.push(stack, id)
-  Array.each(Task.get_deps(t)) { |d| visit(by_id, state, order, stack, d) }
+  Array.each(Task.deps(t)) { |d| visit(by_id, state, order, stack, d) }
   Array.pop(stack)
   state[id] = :done
   Array.push(order, t)
@@ -62,18 +62,18 @@ def schedule(tasks)
   order = topo_order(tasks)
   finish_of = Hash[]
   Array.each(order) do |t|
-    start = Array.max(Array.map(Task.get_deps(t)) { |d| Hash.fetch(finish_of, d) }) || 0
+    start = Array.max(Array.map(Task.deps(t)) { |d| Hash.fetch(finish_of, d) }) || 0
     Task.set_start(t, start)
-    Task.set_finish(t, start + Task.get_days(t))
-    finish_of[Task.get_id(t)] = Task.get_finish(t)
+    Task.set_finish(t, start + Task.days(t))
+    finish_of[Task.id(t)] = Task.finish(t)
   end
   project_end = Array.max(Hash.values(finish_of))
   late_start = Hash[]
   Array.each(Array.reverse(order)) do |t|
-    succ = Array.select(order) { |s| Array.include?(Task.get_deps(s), Task.get_id(t)) }
-    late_finish = Array.empty?(succ) ? project_end : Array.min(Array.map(succ) { |s| Hash.fetch(late_start, Task.get_id(s)) })
-    late_start[Task.get_id(t)] = late_finish - Task.get_days(t)
-    Task.set_late_start(t, late_finish - Task.get_days(t))
+    succ = Array.select(order) { |s| Array.include?(Task.deps(s), Task.id(t)) }
+    late_finish = Array.empty?(succ) ? project_end : Array.min(Array.map(succ) { |s| Hash.fetch(late_start, Task.id(s)) })
+    late_start[Task.id(t)] = late_finish - Task.days(t)
+    Task.set_late_start(t, late_finish - Task.days(t))
   end
   [order, project_end]
 end
@@ -100,23 +100,23 @@ puts("Project starts Mon #{show(kickoff)}, #{total} working days, ends #{show(wo
 puts
 width = total
 Array.each(order) do |t|
-  s = Task.get_start(t)
-  f = Task.get_finish(t)
-  slack = Task.get_late_start(t) - s
+  s = Task.start(t)
+  f = Task.finish(t)
+  slack = Task.late_start(t) - s
   bar = " " * s + (slack == 0 ? "=" : "-") * (f - s) + " " * (width - f)
-  puts(format("%-13s %s..%s |%s| slack %d", Task.get_name(t), show(workday_date(kickoff, s)), show(workday_date(kickoff, f - 1)), bar, slack))
+  puts(format("%-13s %s..%s |%s| slack %d", Task.name(t), show(workday_date(kickoff, s)), show(workday_date(kickoff, f - 1)), bar, slack))
 end
 
-critical = Array.select(order) { |t| Task.get_late_start(t) == Task.get_start(t) }
+critical = Array.select(order) { |t| Task.late_start(t) == Task.start(t) }
 puts
-puts("Critical path: #{Array.join(Array.map(critical) { |t| Task.get_id(t) }, " > ")}")
+puts("Critical path: #{Array.join(Array.map(critical) { |t| Task.id(t) }, " > ")}")
 weekends = Range.count(kickoff..workday_date(kickoff, total - 1)) { |z| wday(z) == 0 || wday(z) == 6 }
 puts("Calendar days: #{workday_date(kickoff, total - 1) - kickoff + 1}, of which weekend days: #{weekends}")
 
 # What if the backend slips by 3 days?
 slipped = plan
-be = Array.find(slipped) { |t| Task.get_id(t) == "be" }
-Task.set_days(be, Task.get_days(be) + 3) if be
+be = Array.find(slipped) { |t| Task.id(t) == "be" }
+Task.set_days(be, Task.days(be) + 3) if be
 o2, total2 = schedule(slipped)
 puts("Backend +3 days: project #{total2 - total >= 0 ? "+" : ""}#{total2 - total} days")
 
@@ -125,7 +125,7 @@ broken = Task[new_task("a", "A", 1, String["c"]), new_task("b", "B", 1, String["
 begin
   schedule(broken)
 rescue CycleError => e
-  puts("Rejected: #{Exception.message(e)}: #{CycleError.get_path(e)}")
+  puts("Rejected: #{Exception.message(e)}: #{CycleError.path(e)}")
 end
 missing = Task[new_task("x", "X", 2, String["y"])]
 begin

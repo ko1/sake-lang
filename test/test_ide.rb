@@ -16,7 +16,7 @@ class TestIDE < Minitest::Test
   end
 
   def test_analyze_gives_errors_at_the_level_and_warnings_above_it
-    r = call(cmd: "analyze", src: "Node = Struct.new(:value, :next)\ndef second(n) = Node.get_value(Node.get_next(n))\np(second(Node.new(1, Node.new(2, nil))))\n", level: 1)
+    r = call(cmd: "analyze", src: "Node = Struct.new(:value, :next)\ndef second(n) = Node.value(Node.next(n))\np(second(Node.new(1, Node.new(2, nil))))\n", level: 1)
     d = r["diagnostics"].first
     assert_equal ["warning", 2, 2], d.values_at("severity", "level", "line")
     assert_equal [{ "name" => "second", "line" => 2, "params" => [%w[n Node]], "returns" => "Integer" }], r["functions"]

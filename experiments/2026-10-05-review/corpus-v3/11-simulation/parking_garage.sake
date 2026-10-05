@@ -22,12 +22,12 @@ class Garage
     @receipts = Array[]
   end
 
-  def free_spots(g) = Array.select(@spots) { Spot.get_plate(it) == nil }
+  def free_spots(g) = Array.select(@spots) { Spot.plate(it) == nil }
 
   def park(g, plate, kind, at)
     need = Hash.fetch(size_rank, Hash.fetch(needed_size, kind))
-    fits = Array.select(free_spots(g)) { |s| Hash.fetch(size_rank, Spot.get_size(s)) >= need }
-    spot = Array.min_by(fits) { |s| [Hash.fetch(size_rank, Spot.get_size(s)), Spot.get_level(s), Spot.get_number(s)] }
+    fits = Array.select(free_spots(g)) { |s| Hash.fetch(size_rank, Spot.size(s)) >= need }
+    spot = Array.min_by(fits) { |s| [Hash.fetch(size_rank, Spot.size(s)), Spot.level(s), Spot.number(s)] }
     raise GarageFull.new("no spot for #{plate}", plate, kind) if spot == nil
     Spot.set_plate(spot, plate)
     @tickets[plate] = Ticket.new(plate, spot, at, kind)
@@ -37,19 +37,19 @@ class Garage
   def leave(g, plate, at)
     ticket = Hash.delete(@tickets, plate)
     return nil if ticket == nil
-    spot = Ticket.get_spot(ticket)
+    spot = Ticket.spot(ticket)
     Spot.set_plate(spot, nil)
-    minutes = Float.to_i((at - Ticket.get_entered(ticket)) / 60.0)
-    amount = fee(minutes, Ticket.get_kind(ticket))
+    minutes = Float.to_i((at - Ticket.entered(ticket)) / 60.0)
+    amount = fee(minutes, Ticket.kind(ticket))
     Array.push(@receipts, [plate, minutes, amount])
     [minutes, amount]
   end
 
   def occupancy(g)
-    levels = Array.group_by(@spots) { Spot.get_level(it) }
+    levels = Array.group_by(@spots) { Spot.level(it) }
     Array.map(Array.sort(Hash.keys(levels))) do |lv|
       list = levels[lv]
-      used = Array.count(list) { Spot.get_plate(it) }
+      used = Array.count(list) { Spot.plate(it) }
       "L#{lv}:#{used}/#{Array.size(list)}"
     end
   end
@@ -100,10 +100,10 @@ Array.each(events) do |offset, action, plate, kind|
   if action == :in
     begin
       spot = Garage.park(g, plate, kind, at)
-      puts("#{stamp} #{String.ljust(plate, 7)} in  -> L#{Spot.get_level(spot)}-#{Spot.get_number(spot)} (#{Spot.get_size(spot)})")
+      puts("#{stamp} #{String.ljust(plate, 7)} in  -> L#{Spot.level(spot)}-#{Spot.number(spot)} (#{Spot.size(spot)})")
     rescue GarageFull => e
-      Array.push(refused, GarageFull.get_plate(e))
-      puts("#{stamp} #{String.ljust(plate, 7)} refused: full for #{GarageFull.get_kind(e)}")
+      Array.push(refused, GarageFull.plate(e))
+      puts("#{stamp} #{String.ljust(plate, 7)} refused: full for #{GarageFull.kind(e)}")
     end
   else
     result = Garage.leave(g, plate, at)
@@ -118,9 +118,9 @@ Array.each(events) do |offset, action, plate, kind|
 end
 
 puts("--- end of run")
-puts("still parked: #{Array.join(Array.sort(Hash.keys(Garage.get_tickets(g))), ", ")}")
+puts("still parked: #{Array.join(Array.sort(Hash.keys(Garage.tickets(g))), ", ")}")
 puts("refused: #{Array.join(refused, ", ")}")
-receipts = Garage.get_receipts(g)
+receipts = Garage.receipts(g)
 puts("revenue: #{money(Array.sum(receipts) { |p, m, a| a })}")
 longest = Array.max_by(receipts) { |p, m, a| m }
 if longest

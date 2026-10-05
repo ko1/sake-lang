@@ -11,8 +11,8 @@ class Flight
   def <=>(a, b)
     c = urgency(a) <=> Flight.urgency(b)
     return c if c != 0
-    c = @scheduled <=> Flight.get_scheduled(b)
-    c != 0 ? c : @callsign <=> Flight.get_callsign(b)
+    c = @scheduled <=> Flight.scheduled(b)
+    c != 0 ? c : @callsign <=> Flight.callsign(b)
   end
 
   def to_s(f) = "#{@callsign}(#{@op == :land ? "L" : "T"}#{@emergency ? "!" : ""})"
@@ -20,8 +20,8 @@ end
 
 def separation(prev, cur)
   return 0 if prev == nil
-  base = Flight.get_op(prev) == Flight.get_op(cur) ? 2 : 1
-  base += 2 if Flight.get_heavy(prev) && Flight.get_heavy(cur) == false
+  base = Flight.op(prev) == Flight.op(cur) ? 2 : 1
+  base += 2 if Flight.heavy(prev) && Flight.heavy(cur) == false
   base
 end
 
@@ -33,19 +33,19 @@ def simulate(flights, closed)
   free_at = 0
   t = 0
   while Array.size(done) + Array.size(diverted) < Array.size(flights) && t < 200
-    Array.each(flights) { |f| Array.push(waiting, f) if Flight.get_scheduled(f) == t }
+    Array.each(flights) { |f| Array.push(waiting, f) if Flight.scheduled(f) == t }
     Array.each(waiting) do |f|
-      next unless Flight.get_op(f) == :land
-      Flight.set_fuel(f, Flight.get_fuel(f) - 1)
-      if Flight.get_fuel(f) <= 5 && Flight.get_emergency(f) == false
+      next unless Flight.op(f) == :land
+      Flight.set_fuel(f, Flight.fuel(f) - 1)
+      if Flight.fuel(f) <= 5 && Flight.emergency(f) == false
         Flight.set_emergency(f, true)
-        puts(format("t=%3d %s declares fuel emergency", t, Flight.get_callsign(f)))
+        puts(format("t=%3d %s declares fuel emergency", t, Flight.callsign(f)))
       end
     end
-    out = Array.select(waiting) { |f| Flight.get_op(f) == :land && Flight.get_fuel(f) <= 0 }
+    out = Array.select(waiting) { |f| Flight.op(f) == :land && Flight.fuel(f) <= 0 }
     Array.each(out) do |f|
       Array.push(diverted, f)
-      puts(format("t=%3d %s diverts", t, Flight.get_callsign(f)))
+      puts(format("t=%3d %s diverts", t, Flight.callsign(f)))
     end
     Array.delete_if(waiting) { |f| Array.include?(out, f) }
     closed_now = Array.any?(closed) { |r| Range.include?(r, t) }
@@ -83,16 +83,16 @@ def report(title, closed)
   puts("== #{title}")
   flights = schedule
   done, diverted, finished = simulate(flights, closed)
-  delays = Array.map(done) { |f| Flight.get_done_at(f) - Flight.get_scheduled(f) }
-  puts("order: #{Array.join(Array.map(done) { |f| Flight.get_callsign(f) }, " ")}")
+  delays = Array.map(done) { |f| Flight.done_at(f) - Flight.scheduled(f) }
+  puts("order: #{Array.join(Array.map(done) { |f| Flight.callsign(f) }, " ")}")
   Array.each(Array[:land, :take]) do |op|
-    group = Array.select(done) { Flight.get_op(it) == op }
-    d = Array.map(group) { |f| Flight.get_done_at(f) - Flight.get_scheduled(f) }
+    group = Array.select(done) { Flight.op(it) == op }
+    d = Array.map(group) { |f| Flight.done_at(f) - Flight.scheduled(f) }
     avg = Array.empty?(d) ? 0.0 : Array.sum(d) / Integer.to_f(Array.size(d))
     puts(format("  %-4s %2d ops, avg delay %5.2f, max %2d", op, Array.size(group), avg, Array.max(d) || 0))
   end
-  worst = Array.max_by(done) { |f| Flight.get_done_at(f) - Flight.get_scheduled(f) }
-  puts("  worst: #{worst} delayed #{Flight.get_done_at(worst) - Flight.get_scheduled(worst)}") if worst
+  worst = Array.max_by(done) { |f| Flight.done_at(f) - Flight.scheduled(f) }
+  puts("  worst: #{worst} delayed #{Flight.done_at(worst) - Flight.scheduled(worst)}") if worst
   puts("  diverted: #{Array.empty?(diverted) ? "none" : Array.join(Array.map(diverted) { "#{it}" }, ", ")}")
   puts("  runway clear at t=#{finished}")
   Array.sum(delays)

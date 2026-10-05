@@ -25,7 +25,7 @@ class Room
   def free?(r, first, nights)
     wanted = Range.map(0...nights) { |i| first + i * day_secs }
     Array.none?(@stays) do |s|
-      Stay.get_status(s) == :booked && Array.any?(Stay.night_list(s)) { |n| Array.include?(wanted, n) }
+      Stay.status(s) == :booked && Array.any?(Stay.night_list(s)) { |n| Array.include?(wanted, n) }
     end
   end
 end
@@ -44,7 +44,7 @@ class Hotel
 
   def book(h, guest, kind, first, nights)
     raise BookingError.new("#{guest}: stay must be 1..14 nights", "") unless Range.cover?(1..14, nights)
-    room = Array.find(@rooms) { |r| Room.get_kind(r) == kind && Room.free?(r, first, nights) }
+    room = Array.find(@rooms) { |r| Room.kind(r) == kind && Room.free?(r, first, nights) }
     if room == nil
       Array.push(@waitlist, [guest, kind, first, nights])
       raise BookingError.new("#{guest}: no #{kind} free from #{Time.strftime(first, "%b %d")}, waitlisted", "")
@@ -52,14 +52,14 @@ class Hotel
     @next_ref += 1
     ref = "R#{@next_ref}"
     stay = Stay.new(ref, guest, first, nights, price(h, kind, first, nights))
-    Array.push(Room.get_stays(room), stay)
-    Array.push(@ledger, [ref, "charge", Stay.get_rate_total(stay)])
-    "#{ref} #{guest} room #{Room.get_number(room)} #{Time.strftime(first, "%b %d")} x#{nights} = #{Stay.get_rate_total(stay)}"
+    Array.push(Room.stays(room), stay)
+    Array.push(@ledger, [ref, "charge", Stay.rate_total(stay)])
+    "#{ref} #{guest} room #{Room.number(room)} #{Time.strftime(first, "%b %d")} x#{nights} = #{Stay.rate_total(stay)}"
   end
 
   def find_stay(h, ref)
     Array.each(@rooms) do |r|
-      s = Array.find(Room.get_stays(r)) { Stay.get_ref(it) == ref }
+      s = Array.find(Room.stays(r)) { Stay.ref(it) == ref }
       return [r, s] if s
     end
     nil
@@ -69,25 +69,25 @@ class Hotel
     found = find_stay(h, ref)
     raise BookingError.new("unknown booking #{ref}", ref) if found == nil
     room, stay = found
-    raise BookingError.new("#{ref} already #{Stay.get_status(stay)}", ref) if Stay.get_status(stay) != :booked
+    raise BookingError.new("#{ref} already #{Stay.status(stay)}", ref) if Stay.status(stay) != :booked
     Stay.set_status(stay, :cancelled)
-    days_before = Float.to_i((Stay.get_first_night(stay) - today) / day_secs)
+    days_before = Float.to_i((Stay.first_night(stay) - today) / day_secs)
     penalty = if days_before >= 7
                 0
               elsif days_before >= 2
-                Stay.get_rate_total(stay) / 4
+                Stay.rate_total(stay) / 4
               else
-                Stay.get_rate_total(stay) / 2
+                Stay.rate_total(stay) / 2
               end
-    Array.push(@ledger, [ref, "refund", penalty - Stay.get_rate_total(stay)])
+    Array.push(@ledger, [ref, "refund", penalty - Stay.rate_total(stay)])
     msg = "#{ref} cancelled #{days_before} days ahead, penalty #{penalty}"
-    promoted = promote(h, Room.get_kind(room))
+    promoted = promote(h, Room.kind(room))
     promoted ? "#{msg}; #{promoted}" : msg
   end
 
   def promote(h, kind)
     idx = Array.find_index(@waitlist) do |guest, k, first, nights|
-      k == kind && Array.any?(@rooms) { |r| Room.get_kind(r) == kind && Room.free?(r, first, nights) }
+      k == kind && Array.any?(@rooms) { |r| Room.kind(r) == kind && Room.free?(r, first, nights) }
     end
     return nil if idx == nil
     guest, k, first, nights = Array.delete_at(@waitlist, idx)
@@ -124,11 +124,11 @@ puts("--- occupancy")
 Range.each(0..12) do |i|
   night = d + i * day_secs
   marks = Array.map(rooms) do |r|
-    s = Array.find(Room.get_stays(r)) { |st| Stay.get_status(st) == :booked && Array.include?(Stay.night_list(st), night) }
-    s ? Stay.get_guest(s)[0] : "."
+    s = Array.find(Room.stays(r)) { |st| Stay.status(st) == :booked && Array.include?(Stay.night_list(st), night) }
+    s ? Stay.guest(s)[0] : "."
   end
   puts("#{Time.strftime(night, "%a %m-%d")} #{Array.join(marks, " ")}  x#{season_factor(night)}")
 end
-net = Array.sum(Hotel.get_ledger(hotel)) { |ref, kind, amount| amount }
-puts("ledger entries #{Array.size(Hotel.get_ledger(hotel))}, net revenue #{net}")
-puts("still waitlisted: #{Array.join(Array.map(Hotel.get_waitlist(hotel)) { |g, k, f, n| "#{g}(#{k})" }, ", ")}")
+net = Array.sum(Hotel.ledger(hotel)) { |ref, kind, amount| amount }
+puts("ledger entries #{Array.size(Hotel.ledger(hotel))}, net revenue #{net}")
+puts("still waitlisted: #{Array.join(Array.map(Hotel.waitlist(hotel)) { |g, k, f, n| "#{g}(#{k})" }, ", ")}")

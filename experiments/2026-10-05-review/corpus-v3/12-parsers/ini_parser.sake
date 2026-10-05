@@ -18,7 +18,7 @@ def parse_ini(text)
     lineno = idx + 1
     line = String.rstrip(raw)
     if String.match?(line, /\A\s+\S/) && last
-      Entry.set_raw(last, Entry.get_raw(last) + " " + String.strip(line))
+      Entry.set_raw(last, Entry.raw(last) + " " + String.strip(line))
       next
     end
     line = String.strip(line)
@@ -27,7 +27,7 @@ def parse_ini(text)
     m = String.match(line, /\A\[([A-Za-z0-9_.]+)\]\z/)
     if m
       name = m[1]
-      if Array.any?(sections) { |s| Section.get_name(s) == name }
+      if Array.any?(sections) { |s| Section.name(s) == name }
         Array.push(errors, IniError.new("duplicate section [#{name}]", lineno))
       end
       Array.push(sections, Section.new(name, Hash[], lineno))
@@ -36,7 +36,7 @@ def parse_ini(text)
     m = String.match(line, /\A([A-Za-z_][\w.]*)\s*[=:]\s*(.*)\z/)
     if m
       entry = Entry.new(String.downcase(m[1]), String.sub(m[2], /\s+[#;].*\z/, ""), lineno)
-      Section.get_entries(Array.last(sections))[Entry.get_key(entry)] = entry
+      Section.entries(Array.last(sections))[Entry.key(entry)] = entry
       last = entry
     else
       Array.push(errors, IniError.new("cannot parse: #{line}", lineno))
@@ -81,8 +81,8 @@ def load_config(text)
   config = Hash[]
   Array.each(schema) do |rule|
     rule => {section:, key:, type:, default:}
-    sec = Array.find(sections) { |s| Section.get_name(s) == section }
-    entry = sec ? Section.get_entries(sec)[key] : nil
+    sec = Array.find(sections) { |s| Section.name(s) == section }
+    entry = sec ? Section.entries(sec)[key] : nil
     if entry == nil
       if default == nil
         Array.push(errors, IniError.new("missing required #{section}.#{key}", 0))
@@ -92,19 +92,19 @@ def load_config(text)
       next
     end
     begin
-      config["#{section}.#{key}"] = convert(Entry.get_raw(entry), type)
+      config["#{section}.#{key}"] = convert(Entry.raw(entry), type)
     rescue ArgumentError => e
-      Array.push(errors, IniError.new(Exception.message(e), Entry.get_line(entry)))
+      Array.push(errors, IniError.new(Exception.message(e), Entry.line(entry)))
     end
   end
   known = Array.to_set(Array.map(schema) { |r| r => {section:, key:}; "#{section}.#{key}" })
   Array.each(sections) do |s|
-    Hash.each(Section.get_entries(s)) do |k, entry|
-      full = "#{Section.get_name(s)}.#{k}"
-      Array.push(errors, IniError.new("unknown key #{full}", Entry.get_line(entry))) unless Set.include?(known, full)
+    Hash.each(Section.entries(s)) do |k, entry|
+      full = "#{Section.name(s)}.#{k}"
+      Array.push(errors, IniError.new("unknown key #{full}", Entry.line(entry))) unless Set.include?(known, full)
     end
   end
-  [config, Array.sort_by(errors) { |e| IniError.get_line(e) }]
+  [config, Array.sort_by(errors) { |e| IniError.line(e) }]
 end
 
 def show(v)
@@ -127,7 +127,7 @@ Array.each(files) do |name, text|
   config, errors = load_config(text)
   Array.each(Array.sort(Hash.keys(config))) { |k| puts("  #{String.ljust(k, 14)} = #{show(config[k])}") }
   Array.each(errors) do |e|
-    line = IniError.get_line(e)
+    line = IniError.line(e)
     puts("  #{line > 0 ? "line #{line}" : "config"}: #{Exception.message(e)}")
   end
   puts("  #{Array.size(errors)} error(s)")

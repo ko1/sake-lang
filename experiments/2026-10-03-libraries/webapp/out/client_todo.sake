@@ -60,7 +60,7 @@ end
 class SafeHtml
   attr_reader source
   def to_s(h) = @source
-  def +(a, b) = SafeHtml.new(@source + SafeHtml.get_source(b))
+  def +(a, b) = SafeHtml.new(@source + SafeHtml.source(b))
   include Arithmetic
 end
 
@@ -73,7 +73,7 @@ module Html
   def raw(s) = SafeHtml.new(s)
 
   # A value placed in HTML: SafeHtml as is, anything else escaped.
-  def fragment(v) = (v in SafeHtml) ? SafeHtml.get_source(v) : escape(v)
+  def fragment(v) = (v in SafeHtml) ? SafeHtml.source(v) : escape(v)
 
   # "{{name}}" is replaced by vars["name"], escaped unless it is SafeHtml.
   def render(tmpl, vars)
@@ -97,7 +97,7 @@ module Html
   # The block makes the SafeHtml for one element; the results are joined.
   def each(xs)
     out = String[]
-    Array.each(xs) { |x| Array.push(out, SafeHtml.get_source(yield(x))) }
+    Array.each(xs) { |x| Array.push(out, SafeHtml.source(yield(x))) }
     SafeHtml.new(Array.join(out, ""))
   end
 
@@ -304,10 +304,10 @@ module Web
   def dispatch(routes, req)
     path_seen = false
     Array.each(routes) do |verb, pattern, handler|
-      params = match_path(pattern, Request.get_path(req))
+      params = match_path(pattern, Request.path(req))
       next unless params
       path_seen = true
-      if verb == Request.get_verb(req)
+      if verb == Request.verb(req)
         Request.set_params(req, params)
         return [:ok, handler]
       end
@@ -317,7 +317,7 @@ module Web
 
   # ---- responses ----
 
-  def html(status, page) = Response.new(Tuple[["Content-Type", "text/html; charset=utf-8"]], status, SafeHtml.get_source(page))
+  def html(status, page) = Response.new(Tuple[["Content-Type", "text/html; charset=utf-8"]], status, SafeHtml.source(page))
   def text(status, s) = Response.new(Tuple[["Content-Type", "text/plain; charset=utf-8"]], status, s)
   def json(status, v) = Response.new(Tuple[["Content-Type", "application/json"]], status, Json.encode(v) + "\n")
   def redirect(location) = Response.new(Tuple[["Location", location]], 303, "")
@@ -334,11 +334,11 @@ module Web
       status, handler = dispatch(routes, req)
       case status
       in :ok then yield(handler, req)
-      in :not_found then error_page(404, "no route for #{Request.get_verb(req)} #{Request.get_path(req)}")
-      in :method_not_allowed then error_page(405, "#{Request.get_verb(req)} is not allowed for #{Request.get_path(req)}")
+      in :not_found then error_page(404, "no route for #{Request.verb(req)} #{Request.path(req)}")
+      in :method_not_allowed then error_page(405, "#{Request.verb(req)} is not allowed for #{Request.path(req)}")
       end
     rescue HttpError => e
-      error_page(HttpError.get_status(e), Exception.message(e))
+      error_page(HttpError.status(e), Exception.message(e))
     end
     print(Response.to_http(res))
   end
@@ -368,16 +368,16 @@ module Todos
   end
 
   def save(todos)
-    Tsv.save(path, Array.map(todos) { |t| String[Integer.to_s(Todo.get_id(t)), Todo.get_done(t) ? "1" : "0", Todo.get_title(t), Todo.get_created_at(t)] })
+    Tsv.save(path, Array.map(todos) { |t| String[Integer.to_s(Todo.id(t)), Todo.done(t) ? "1" : "0", Todo.title(t), Todo.created_at(t)] })
   end
 
   def find(todos, id)
-    t = Array.find(todos) { Todo.get_id(it) == id }
+    t = Array.find(todos) { Todo.id(it) == id }
     raise HttpError.new("no todo with id #{id}", 404) unless t
     t
   end
 
-  def next_id(todos) = Array.reduce(todos, 0) { |m, t| m > Todo.get_id(t) ? m : Todo.get_id(t) } + 1
+  def next_id(todos) = Array.reduce(todos, 0) { |m, t| m > Todo.id(t) ? m : Todo.id(t) } + 1
 
   # The error messages for a title; empty when it is valid.
   def validate(title)
@@ -401,7 +401,7 @@ def routes = Tuple[
 
 def index_page(todos, title, errors, flash)
   items = Html.each(todos) do |t|
-    Html.render(<<~HTML, Hash["id" => Todo.get_id(t), "title" => Todo.get_title(t), "mark" => Todo.get_done(t) ? "[x]" : "[ ]", "label" => Todo.get_done(t) ? "undo" : "done"])
+    Html.render(<<~HTML, Hash["id" => Todo.id(t), "title" => Todo.title(t), "mark" => Todo.done(t) ? "[x]" : "[ ]", "label" => Todo.done(t) ? "undo" : "done"])
       <li>{{mark}} <a href="/todos/{{id}}">{{title}}</a>
         <form method="post" action="/todos/{{id}}/toggle" style="display:inline"><button>{{label}}</button></form>
         <form method="post" action="/todos/{{id}}/delete" style="display:inline"><button>delete</button></form></li>
@@ -420,7 +420,7 @@ def index_page(todos, title, errors, flash)
 end
 
 def show_page(t)
-  Html.page(Todo.get_title(t), Html.render(<<~HTML, Hash["id" => Todo.get_id(t), "title" => Todo.get_title(t), "state" => Todo.get_done(t) ? "done" : "open", "at" => Todo.get_created_at(t)]))
+  Html.page(Todo.title(t), Html.render(<<~HTML, Hash["id" => Todo.id(t), "title" => Todo.title(t), "state" => Todo.done(t) ? "done" : "open", "at" => Todo.created_at(t)]))
     <h1>{{id}}: {{title}}</h1>
     <p>state: {{state}}, created {{at}}</p>
     <p><a href="/">back</a></p>
@@ -446,13 +446,13 @@ Web.run(routes) do |route, req|
   in :show then Web.html(200, show_page(Todos.find(todos, Request.int_param(req, "id"))))
   in :toggle
     t = Todos.find(todos, Request.int_param(req, "id"))
-    Todo.set_done(t, !Todo.get_done(t))
+    Todo.set_done(t, !Todo.done(t))
     Todos.save(todos)
-    Web.redirect("/todos/#{Todo.get_id(t)}")
+    Web.redirect("/todos/#{Todo.id(t)}")
   in :delete
     t = Todos.find(todos, Request.int_param(req, "id"))
     Todos.save(Array.reject(todos) { it == t })
-    Response.set_cookie(Web.redirect("/"), "flash", "Deleted: #{Todo.get_title(t)}")
+    Response.set_cookie(Web.redirect("/"), "flash", "Deleted: #{Todo.title(t)}")
   in :api_index then Web.json(200, Array.map(todos) { Todo.to_json(it) })
   in :api_show then Web.json(200, Todo.to_json(Todos.find(todos, Request.int_param(req, "id"))))
   end

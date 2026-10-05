@@ -19,9 +19,9 @@ class JobQueue
   def enqueue(q, job) = Array.push(@pending, job)
 
   def next_due(q)
-    due = Array.select(@pending) { Job.get_run_at(it) <= @clock }
+    due = Array.select(@pending) { Job.run_at(it) <= @clock }
     return nil if Array.empty?(due)
-    job = Array.min_by(due) { |j| [Job.get_run_at(j), Job.get_id(j)] }
+    job = Array.min_by(due) { |j| [Job.run_at(j), Job.id(j)] }
     Array.delete(@pending, job)
     job
   end
@@ -29,9 +29,9 @@ end
 
 # Handlers succeed or fail depending on the payload and the attempt number.
 def perform(job)
-  payload = Job.get_payload(job)
-  attempt = Job.get_attempts(job)
-  case Job.get_kind(job)
+  payload = Job.payload(job)
+  attempt = Job.attempts(job)
+  case Job.kind(job)
   in :email
     raise PermanentFailure.new("bad address", "invalid") unless String.include?(payload, "@")
     raise TemporaryFailure.new("smtp busy", 3) if attempt < 2
@@ -49,32 +49,32 @@ def max_attempts = 4
 
 def run(q)
   ticks = 0
-  while !Array.empty?(JobQueue.get_pending(q)) && ticks < 50
+  while !Array.empty?(JobQueue.pending(q)) && ticks < 50
     job = JobQueue.next_due(q)
     if job == nil
-      JobQueue.set_clock(q, JobQueue.get_clock(q) + 1)
+      JobQueue.set_clock(q, JobQueue.clock(q) + 1)
       ticks += 1
       next
     end
-    Job.set_attempts(job, Job.get_attempts(job) + 1)
-    now = JobQueue.get_clock(q)
+    Job.set_attempts(job, Job.attempts(job) + 1)
+    now = JobQueue.clock(q)
     begin
       result = perform(job)
-      Array.push(JobQueue.get_done(q), job)
+      Array.push(JobQueue.done(q), job)
       puts("t=#{now} #{Job.describe(job)} ok: #{result}")
     rescue TemporaryFailure => e
-      Array.push(Job.get_errors(job), Exception.message(e))
-      if Job.get_attempts(job) >= max_attempts
-        Array.push(JobQueue.get_dead(q), job)
-        puts("t=#{now} #{Job.describe(job)} dead after #{Job.get_attempts(job)} attempts")
+      Array.push(Job.errors(job), Exception.message(e))
+      if Job.attempts(job) >= max_attempts
+        Array.push(JobQueue.dead(q), job)
+        puts("t=#{now} #{Job.describe(job)} dead after #{Job.attempts(job)} attempts")
       else
-        Job.set_run_at(job, now + TemporaryFailure.get_retry_after(e))
+        Job.set_run_at(job, now + TemporaryFailure.retry_after(e))
         JobQueue.enqueue(q, job)
-        puts("t=#{now} #{Job.describe(job)} retry at t=#{Job.get_run_at(job)}: #{Exception.message(e)}")
+        puts("t=#{now} #{Job.describe(job)} retry at t=#{Job.run_at(job)}: #{Exception.message(e)}")
       end
     rescue PermanentFailure => e
-      Array.push(Job.get_errors(job), "#{PermanentFailure.get_reason(e)}: #{Exception.message(e)}")
-      Array.push(JobQueue.get_dead(q), job)
+      Array.push(Job.errors(job), "#{PermanentFailure.reason(e)}: #{Exception.message(e)}")
+      Array.push(JobQueue.dead(q), job)
       puts("t=#{now} #{Job.describe(job)} failed permanently: #{Exception.message(e)}")
     end
   end
@@ -88,10 +88,10 @@ Array.each_with_index(specs) do |(kind, payload), i|
 end
 run(q)
 
-puts("done: #{Array.join(Array.map(JobQueue.get_done(q)) { Job.get_id(it) }, " ")}")
+puts("done: #{Array.join(Array.map(JobQueue.done(q)) { Job.id(it) }, " ")}")
 puts("dead letters:")
-Array.each(JobQueue.get_dead(q)) do |j|
-  puts("  #{Job.describe(j)} attempts=#{Job.get_attempts(j)} last=#{Array.last(Job.get_errors(j))}")
+Array.each(JobQueue.dead(q)) do |j|
+  puts("  #{Job.describe(j)} attempts=#{Job.attempts(j)} last=#{Array.last(Job.errors(j))}")
 end
-attempts = Array.sum(JobQueue.get_done(q) + JobQueue.get_dead(q)) { Job.get_attempts(it) }
-puts("total attempts #{attempts}, finished at t=#{JobQueue.get_clock(q)}")
+attempts = Array.sum(JobQueue.done(q) + JobQueue.dead(q)) { Job.attempts(it) }
+puts("total attempts #{attempts}, finished at t=#{JobQueue.clock(q)}")

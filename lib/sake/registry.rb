@@ -73,6 +73,7 @@ module Sake
     def namespace?(ns) = @ns.key?(ns)
     def add_namespace(ns) = @ns[ns]
     def lookup(ns, name) = @ns.fetch(ns, {})[name.to_s]
+    def undefine(ns, name) = @ns[ns].delete(name.to_s)
     def names(ns) = @ns.fetch(ns, {}).keys
     def namespaces = @ns.keys
 

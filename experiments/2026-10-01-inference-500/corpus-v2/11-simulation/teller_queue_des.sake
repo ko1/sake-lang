@@ -6,8 +6,8 @@ Heap = Struct.new(:items)
 class Event
   include Comparable
   def <=>(a, b)
-    c = @time <=> Event.get_time(b)
-    c == 0 ? @seq <=> Event.get_seq(b) : c
+    c = @time <=> Event.time(b)
+    c == 0 ? @seq <=> Event.seq(b) : c
   end
 end
 
@@ -79,9 +79,9 @@ def simulate(tellers, rng, n_customers, close_time)
   now = 0
   ev = Heap.pop(events)
   while ev
-    now = Event.get_time(ev)
-    c = Event.get_customer(ev)
-    case Event.get_kind(ev)
+    now = Event.time(ev)
+    c = Event.customer(ev)
+    case Event.kind(ev)
     in :arrive
       if now > close_time
         Customer.set_teller(c, 0)
@@ -90,7 +90,7 @@ def simulate(tellers, rng, n_customers, close_time)
         Array.push(line, c)
       end
     in :depart
-      Array.push(free, Event.get_teller(ev))
+      Array.push(free, Event.teller(ev))
       Array.push(served, c)
     end
     while !Array.empty?(free) && !Array.empty?(line)
@@ -99,9 +99,9 @@ def simulate(tellers, rng, n_customers, close_time)
       nxt = Array.shift(line)
       Customer.set_started(nxt, now)
       Customer.set_teller(nxt, teller)
-      busy_time[teller] += Customer.get_service(nxt)
+      busy_time[teller] += Customer.service(nxt)
       seq += 1
-      Heap.push(events, Event.new(now + Customer.get_service(nxt), seq, :depart, nxt, teller))
+      Heap.push(events, Event.new(now + Customer.service(nxt), seq, :depart, nxt, teller))
     end
     max_line = Array.size(line) if Array.size(line) > max_line
     ev = Heap.pop(events)
@@ -112,11 +112,11 @@ end
 def report(tellers, seed)
   result = simulate(tellers, Rng.new(seed), 40, 125)
   result => {served:, end_time:, busy:, max_line:, turned:}
-  waits = Array.map(served) { |c| Customer.get_started(c) - Customer.get_arrived(c) }
+  waits = Array.map(served) { |c| Customer.started(c) - Customer.arrived(c) }
   avg = Array.sum(waits) / Integer.to_f(Array.size(waits))
-  longest = Array.max_by(served) { |c| Customer.get_started(c) - Customer.get_arrived(c) }
+  longest = Array.max_by(served) { |c| Customer.started(c) - Customer.arrived(c) }
   puts("tellers=#{tellers} seed=#{seed}: served #{Array.size(served)}, turned away #{turned}, closed at #{end_time}, max line #{max_line}")
-  puts(format("  avg wait %.2f, max wait %d (customer %d)", avg, Array.max(waits), Customer.get_id(longest)))
+  puts(format("  avg wait %.2f, max wait %d (customer %d)", avg, Array.max(waits), Customer.id(longest)))
   util = Array.map(Array.sort(Hash.keys(busy))) do |k|
     format("T%d %.0f%%", k, 100.0 * busy[k] / end_time)
   end

@@ -37,8 +37,8 @@ def show(c)
 end
 
 def post(accounts, journal)
-  no = Journal.get_no(journal)
-  lines = Journal.get_lines(journal)
+  no = Journal.no(journal)
+  lines = Journal.lines(journal)
   raise LedgerError.new("needs at least two lines", no) if Array.size(lines) < 2
   Array.each(lines) do |code, side, cents|
     raise LedgerError.new("unknown account #{code}", no) unless Hash.key?(accounts, code)
@@ -50,9 +50,9 @@ def post(accounts, journal)
   Array.each(lines) do |code, side, cents|
     acct = Hash.fetch(accounts, code)
     if side == :dr
-      Account.set_debits(acct, Account.get_debits(acct) + cents)
+      Account.set_debits(acct, Account.debits(acct) + cents)
     else
-      Account.set_credits(acct, Account.get_credits(acct) + cents)
+      Account.set_credits(acct, Account.credits(acct) + cents)
     end
   end
   dr
@@ -65,8 +65,8 @@ def parse_journal(text)
     next if String.empty?(line)
     if String.start_with?(line, " ")
       m = String.match(line, /\A\s+(\d{4})\s+(dr|cr)\s+([\d.]+)\z/)
-      raise LedgerError.new("cannot read '#{String.strip(line)}'", Journal.get_no(Array.last(journals))) unless m
-      Array.push(Journal.get_lines(Array.last(journals)), [m[1], String.to_sym(m[2]), amount(m[3])])
+      raise LedgerError.new("cannot read '#{String.strip(line)}'", Journal.no(Array.last(journals))) unless m
+      Array.push(Journal.lines(Array.last(journals)), [m[1], String.to_sym(m[2]), amount(m[3])])
     else
       date, memo = String.split(line, " ", 2)
       Array.push(journals, Journal.new(Array.size(journals) + 1, date, memo, Array[]))
@@ -122,9 +122,9 @@ posted = 0
 Array.each(parse_journal(text)) do |j|
   total = post(accounts, j)
   posted += 1
-  puts(format("#%02d %s %-20s %10s", Journal.get_no(j), Journal.get_date(j), Journal.get_memo(j), show(total)))
+  puts(format("#%02d %s %-20s %10s", Journal.no(j), Journal.date(j), Journal.memo(j), show(total)))
 rescue LedgerError => e
-  puts(format("#%02d %s %-20s REJECTED: %s", LedgerError.get_entry_no(e), Journal.get_date(j), Journal.get_memo(j), Exception.message(e)))
+  puts(format("#%02d %s %-20s REJECTED: %s", LedgerError.entry_no(e), Journal.date(j), Journal.memo(j), Exception.message(e)))
 end
 
 puts
@@ -132,17 +132,17 @@ puts("Trial balance")
 tdr = 0
 tcr = 0
 Hash.each_value(accounts) do |a|
-  bal = Account.get_debits(a) - Account.get_credits(a)
-  next if Account.get_debits(a) == 0 && Account.get_credits(a) == 0
+  bal = Account.debits(a) - Account.credits(a)
+  next if Account.debits(a) == 0 && Account.credits(a) == 0
   dcol = bal > 0 ? show(bal) : ""
   ccol = bal < 0 ? show(-bal) : ""
   tdr += bal if bal > 0
   tcr -= bal if bal < 0
-  puts(format("  %s %-20s %10s %10s", Account.get_code(a), Account.get_name(a), dcol, ccol))
+  puts(format("  %s %-20s %10s %10s", Account.code(a), Account.name(a), dcol, ccol))
 end
 puts(format("  %-25s %10s %10s", "", show(tdr), show(tcr)))
 
-by_kind = Array.group_by(Hash.values(accounts)) { |a| Account.get_kind(a) }
+by_kind = Array.group_by(Hash.values(accounts)) { |a| Account.kind(a) }
 sum_kind = Hash.transform_values(by_kind) { |as| Array.sum(as) { |a| Account.balance(a) } }
 income = Hash.fetch(sum_kind, :income) - Hash.fetch(sum_kind, :expense)
 puts

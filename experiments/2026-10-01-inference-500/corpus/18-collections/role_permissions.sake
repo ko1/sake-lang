@@ -26,23 +26,23 @@ def effective(roles, name, path)
   raise RoleCycle.new("cycle through #{name}", Array.push(Array.dup(path), name)) if Array.include?(path, name)
   role = roles[name]
   raise UnknownRole.new("no role #{name}", name) unless role
-  perms = Set.union(Role.get_grants(role), Set[])
-  Array.each(Role.get_includes(role)) do |inc|
+  perms = Set.union(Role.grants(role), Set[])
+  Array.each(Role.includes(role)) do |inc|
     Set.merge(perms, effective(roles, inc, Array.push(Array.dup(path), name)))
   end
   perms
 end
 
 def user_perms(roles, user)
-  all = Array.reduce(User.get_roles(user), Set[]) { |acc, r| acc | effective(roles, r, Array[]) }
-  all - User.get_denied(user)
+  all = Array.reduce(User.roles(user), Set[]) { |acc, r| acc | effective(roles, r, Array[]) }
+  all - User.denied(user)
 end
 
 roles = define_roles
 puts("== Roles ==")
 Array.each(Hash.keys(roles)) do |name|
   perms = effective(roles, name, Array[])
-  own = Role.get_grants(roles[name])
+  own = Role.grants(roles[name])
   inherited = perms - own
   puts(format("%-10s %2d perms (own %d, inherited %d)", name, Set.size(perms), Set.size(own), Set.size(inherited)))
 end
@@ -54,7 +54,7 @@ users = Array[
   User.new("dan", Array["publisher"], Set["doc.publish"])
 ]
 perms_of = Hash[]
-Array.each(users) { |u| perms_of[User.get_name(u)] = user_perms(roles, u) }
+Array.each(users) { |u| perms_of[User.name(u)] = user_perms(roles, u) }
 
 puts("== Users ==")
 Hash.each(perms_of) { |name, ps| puts("#{name}: #{Array.join(Set.sort(ps), " ")}") }
@@ -75,8 +75,8 @@ puts("alice strictly above dan? #{Set.proper_superset?(perms_of["alice"], b)}")
 puts("bob and carol disjoint? #{Set.disjoint?(a, perms_of["carol"])}")
 
 everything = Hash.reduce(perms_of, Set[]) { |acc, kv| acc | kv[1] }
-unused = Array.select(Hash.values(roles)) { |r| Set.disjoint?(Role.get_grants(r), everything) }
-puts("roles granting nothing in use: #{Array.empty?(unused) ? "none" : Array.join(Array.map(unused) { |r| Role.get_name(r) }, ",")}")
+unused = Array.select(Hash.values(roles)) { |r| Set.disjoint?(Role.grants(r), everything) }
+puts("roles granting nothing in use: #{Array.empty?(unused) ? "none" : Array.join(Array.map(unused) { |r| Role.name(r) }, ",")}")
 by_area = Array.group_by(Set.sort(everything)) { |p| String.split(p, ".")[0] }
 puts("areas: #{Array.join(Array.map(Hash.to_a(by_area)) { |area, ps| "#{area}(#{Array.size(ps)})" }, " ")}")
 
@@ -88,8 +88,8 @@ Array.each(Array["editor", "guest", "auditor"]) do |name|
   begin
     puts("#{name}: #{Set.size(effective(broken, name, Array[]))} perms")
   rescue RoleCycle => e
-    puts("#{name}: #{Exception.message(e)} (#{Array.join(RoleCycle.get_path(e), " > ")})")
+    puts("#{name}: #{Exception.message(e)} (#{Array.join(RoleCycle.path(e), " > ")})")
   rescue UnknownRole => e
-    puts("#{name}: missing role '#{UnknownRole.get_role(e)}'")
+    puts("#{name}: missing role '#{UnknownRole.role(e)}'")
   end
 end

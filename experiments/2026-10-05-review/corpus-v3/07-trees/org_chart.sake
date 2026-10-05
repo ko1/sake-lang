@@ -18,7 +18,7 @@ def parse(text)
   String.each_line(text) do |line|
     id, name, title, mgr, salary = Array.map(String.split(String.chomp(line), "|")) { |x| String.strip(x) }
     e = Employee.new(String.to_i(id), name, title, mgr == "-" ? nil : String.to_i(mgr), String.to_i(salary))
-    staff[Employee.get_id(e)] = e
+    staff[Employee.id(e)] = e
   end
   staff
 end
@@ -26,17 +26,17 @@ end
 def link(staff)
   roots = Array[]
   Hash.each_value(staff) do |e|
-    mid = Employee.get_manager_id(e)
+    mid = Employee.manager_id(e)
     if mid == nil
       Array.push(roots, e)
     else
       boss = staff[mid]
-      raise OrgError.new("#{Employee.get_name(e)} reports to unknown id #{mid}", Employee.get_id(e)) if boss == nil
-      Array.push(Employee.get_reports(boss), e)
+      raise OrgError.new("#{Employee.name(e)} reports to unknown id #{mid}", Employee.id(e)) if boss == nil
+      Array.push(Employee.reports(boss), e)
     end
   end
   Hash.each_value(staff) do |e|
-    sorted = Array.sort_by(Employee.get_reports(e)) { |r| Employee.get_name(r) }
+    sorted = Array.sort_by(Employee.reports(e)) { |r| Employee.name(r) }
     Employee.set_reports(e, sorted)
   end
   roots
@@ -45,8 +45,8 @@ end
 def chain(staff, e)
   seen = Set[]
   path = Array[e]
-  while (mid = Employee.get_manager_id(Array.last(path)))
-    raise OrgError.new("reporting cycle at #{Employee.get_name(Array.last(path))}", mid) if Set.include?(seen, mid)
+  while (mid = Employee.manager_id(Array.last(path)))
+    raise OrgError.new("reporting cycle at #{Employee.name(Array.last(path))}", mid) if Set.include?(seen, mid)
     Set.add(seen, mid)
     Array.push(path, staff[mid])
   end
@@ -56,22 +56,22 @@ end
 def render(e, prefix, last, out)
   connector = prefix == nil ? "" : (last ? "`-- " : "|-- ")
   lead = prefix == nil ? "" : prefix
-  info = "#{Employee.get_name(e)} (#{Employee.get_title(e)})"
+  info = "#{Employee.name(e)} (#{Employee.title(e)})"
   n = Employee.headcount(e)
   info += " [#{n} under, $#{Employee.cost(e) / 1000}k]" if n > 0
   Array.push(out, lead + connector + info)
   child_prefix = prefix == nil ? "" : lead + (last ? "    " : "|   ")
-  reports = Employee.get_reports(e)
+  reports = Employee.reports(e)
   Array.each_with_index(reports) { |r, i| render(r, child_prefix, i == Array.size(reports) - 1, out) }
   out
 end
 
 def common_manager(staff, a, b)
-  up_a = Array.map(chain(staff, a)) { |e| Employee.get_id(e) }
-  Array.find(chain(staff, b)) { |e| Array.include?(up_a, Employee.get_id(e)) }
+  up_a = Array.map(chain(staff, a)) { |e| Employee.id(e) }
+  Array.find(chain(staff, b)) { |e| Array.include?(up_a, Employee.id(e)) }
 end
 
-def by_name(staff, name) = Array.find(Hash.values(staff)) { |e| Employee.get_name(e) == name }
+def by_name(staff, name) = Array.find(Hash.values(staff)) { |e| Employee.name(e) == name }
 
 data = <<~TXT
   1 | Grace   | CEO               | - | 310000
@@ -93,18 +93,18 @@ roots = link(staff)
 Array.each(roots) { |r| Array.each(render(r, nil, true, Array[])) { |l| puts(l) } }
 
 puts("-- stats --")
-managers = Array.reject(Hash.values(staff)) { |e| Array.empty?(Employee.get_reports(e)) }
-widest = Array.max_by(managers) { |e| Array.size(Employee.get_reports(e)) }
+managers = Array.reject(Hash.values(staff)) { |e| Array.empty?(Employee.reports(e)) }
+widest = Array.max_by(managers) { |e| Array.size(Employee.reports(e)) }
 puts("depth of org: #{Employee.depth(Array.first(roots))}")
-puts("managers: #{Array.size(managers)}, widest span: #{Employee.get_name(widest)} (#{Array.size(Employee.get_reports(widest))})")
-avg = Array.sum(Array.map(Hash.values(staff)) { |e| Employee.get_salary(e) }) / Hash.size(staff)
+puts("managers: #{Array.size(managers)}, widest span: #{Employee.name(widest)} (#{Array.size(Employee.reports(widest))})")
+avg = Array.sum(Array.map(Hash.values(staff)) { |e| Employee.salary(e) }) / Hash.size(staff)
 puts("average salary: $#{avg}")
-leaves = Array.select(Hash.values(staff)) { |e| Array.empty?(Employee.get_reports(e)) }
-puts("individual contributors: #{Array.join(Array.sort(Array.map(leaves) { |e| Employee.get_name(e) }), ", ")}")
+leaves = Array.select(Hash.values(staff)) { |e| Array.empty?(Employee.reports(e)) }
+puts("individual contributors: #{Array.join(Array.sort(Array.map(leaves) { |e| Employee.name(e) }), ", ")}")
 
 puts("-- chains and common managers --")
 d = by_name(staff, "Donald")
-puts("Donald: #{Array.join(Array.map(chain(staff, d)) { |e| Employee.get_name(e) }, " -> ")}")
+puts("Donald: #{Array.join(Array.map(chain(staff, d)) { |e| Employee.name(e) }, " -> ")}")
 pairs = Array[["Ken", "Dennis"], ["Donald", "Ken"], ["Radia", "Margaret"], ["Alan", "Edsger"], ["Ken", "Nobody"]]
 Array.each(pairs) do |x, y|
   a = by_name(staff, x)
@@ -114,7 +114,7 @@ Array.each(pairs) do |x, y|
     next
   end
   m = common_manager(staff, a, b)
-  puts("#{x} & #{y}: #{m ? Employee.get_name(m) : "none"}")
+  puts("#{x} & #{y}: #{m ? Employee.name(m) : "none"}")
 end
 
 puts("-- bad data --")
@@ -125,5 +125,5 @@ Array.each(bad) do |text|
   Hash.each_value(s) { |e| chain(s, e) }
   puts("ok")
 rescue OrgError => e
-  puts("error (employee #{OrgError.get_employee_id(e)}): #{Exception.message(e)}")
+  puts("error (employee #{OrgError.employee_id(e)}): #{Exception.message(e)}")
 end

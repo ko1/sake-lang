@@ -183,8 +183,8 @@ A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`,
 The error suggests the qualified form, and for a single step also the chain form (`x.T.op(...)`).
 
 - **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.upcase(String.strip(s))`.
-- **Field access** gets the accessor: `p.x` suggests `Point.get_x(p)`, and `p.x = v` suggests
-  `Point.set_x(p, v)`.
+- **Field access** gets the reader: `p.x` suggests `Point.x(p)` (or `p.Point.x`), and `p.x = v`
+  suggests `p.Point.x = v`.
 - **Literal receivers** narrow the suggestions to the literal's type.
 - **`x.nil?`** suggests `x == nil`.
 
@@ -259,7 +259,7 @@ type must have `f` (a static error otherwise), and the checker reports a value o
 not listed. The result is the union of the results.
 
 ```ruby
-def weight(t) = (Leaf|Node).get_weight(t)   # a field of the same name in two Struct types
+def weight(t) = (Leaf|Node).weight(t)   # a field of the same name in two Struct types
 def size_of(x) = (String|Array|Hash).size(x)
 ```
 
@@ -512,11 +512,11 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 
 | Line | Meaning |
 |---|---|
-| `attr_accessor x, ...` | fields with `get_x` and `set_x` |
-| `attr_reader x, ...` | fields with `get_x` only; inside the type's functions, `@x = v` still writes them |
-| `attr_writer x, ...` | fields with `set_x` only; inside the type's functions, `@x` still reads them |
+| `attr_accessor x, ...` | fields with a reader `C.x(c)` and a writer `C.set_x(c, v)` |
+| `attr_reader x, ...` | fields with the reader only; inside the type's functions, `@x = v` still writes them |
+| `attr_writer x, ...` | fields with the writer only; inside the type's functions, `@x` still reads them |
 | `attr_... x = v` | a default value: any expression, evaluated by each `new` that leaves the field out (`items = Array[]` makes a new Array each time, as Ruby's `@items = []` in initialize); trailing fields with defaults may be omitted in `new`. A default is only an initial value: it does not fix the field's type, which, as for every variable, is what is written to it, checked by the operations that use it |
-| `private attr_... x` | a field with no `get_x` / `set_x` outside the class (`@x` inside); `new` still takes it |
+| `private attr_... x` | a field with no reader or writer outside the class (`@x` inside); `new` still takes it |
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
 - **`new`.** `C.new` takes every field positionally, whatever its access.
@@ -549,24 +549,27 @@ This defines the namespace `Point` with the following operations:
 | Operation | Meaning |
 |---|---|
 | `Point.new(x, y)` | create; positional arguments, one per field |
-| `Point.get_x(p)` | read field `x` |
-| `Point.set_x(p, v)` | write field `x` in place; returns `v` |
+| `Point.x(p)`, `p.Point.x` | read field `x` (the reader has the field's name) |
+| `Point.set_x(p, v)`, `p.Point.x = v` | write field `x` in place; returns `v` |
+| `p.Point.x += v`, `\|\|=`, `&&=` | `p.Point.x = p.Point.x + v` with `p` evaluated once |
 | `Point[p1, ...]` | an Array of Point ([§12](#12-tuples-and-arrays)) |
 | `p == nil`, `p != nil` | comparison with nil |
 
 - **Mutability.** Values are mutable and shared by reference. A change made through one variable
   is visible through every other variable that holds the same value.
 - **Adding operations.** Add your own operations in `class Point ... end` or with `def Point.f`.
-  Inside them, the accessors can be called unqualified (`get_x(p)`).
+  Inside them, the readers and writers can be called unqualified (`x(p)`, `set_x(p, v)`). A function
+  named like a field (`def x(p) = ...`) replaces its reader, as a method after `attr_reader` does in
+  Ruby; `@x` still reads the field.
 - **Field shorthand `@x`.** Inside a function of a Struct type (in `class Point` or `def Point.f`),
   `@x` means field `x` of the function's **first parameter**, which is the subject by convention:
 
   | Written | Means |
   |---|---|
-  | `@x` | `Point.get_x(p)` |
+  | `@x` | `Point.x(p)` |
   | `@x = v` | `Point.set_x(p, v)` |
-  | `@x OP= v` | `Point.set_x(p, Point.get_x(p) OP v)` |
-  | `@x \|\|= v` | `Point.get_x(p) \|\| Point.set_x(p, v)` |
+  | `@x OP= v` | `Point.set_x(p, Point.x(p) OP v)` |
+  | `@x \|\|= v` | `Point.x(p) \|\| Point.set_x(p, v)` |
 
   - `p` is the first parameter's current value, even inside a block whose parameter has the same
     name.
@@ -596,7 +599,7 @@ Option wrapper.
   | `return unless x`, `next unless x`, `break unless x`, and other early exits | non-nil after the statement |
   | `String.size(x)`, or any built-in operation taking `x` as an argument | after the call, a type that the operation accepts (it checks its arguments while running) |
 
-  Field reads (`Node.get_next(n)`) are **not** narrowed, because fields are mutable. Copy the field
+  Field reads (`Node.next(n)`) are **not** narrowed, because fields are mutable. Copy the field
   into a local variable first, then test the local.
 - **`--strict`.** Level 2 reports, before running, every operation that may receive an unchecked
   `nil`. Level 3 also covers results of `x[k]` ([§2.1](#21-strictness)).
@@ -688,7 +691,7 @@ ParseError = Exception.new(:line)        # fields: message, line
 begin
   raise ParseError.new("empty", 1)
 rescue ParseError => e
-  ParseError.get_line(e)
+  ParseError.line(e)
 rescue KeyError, IndexError => e
   Exception.message(e)
 rescue => e                              # any rescuable exception
@@ -702,7 +705,7 @@ end
 
 - **Exception types.** `class Name < Exception` with `attr_reader field` (or
   `Name = Exception.new(:field, ...)`) declares an exception type. It is a Struct type whose first
-  field is `message`, so `Name.new("msg", ...)`, `Name.get_message`, `Name.get_field`, and `@field`
+  field is `message`, so `Name.new("msg", ...)`, `Name.message`, `Name.field`, and `@field`
   work as for other Struct types. Exception types have no hierarchy.
 - **Built-in exception types.** These are raised by operations, each with only `message`:
   `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`,
