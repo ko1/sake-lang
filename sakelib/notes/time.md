@@ -7,15 +7,21 @@ given a String, and the formatter, given a Time), `Time.zone_offset`; helpers in
 `test/sakelib/time.{sake,rb}`, identical output with `--strict` (also clean at `--strict=1 -c` and
 `--strict=2 -c`), and also identical with `TZ=Asia/Tokyo`, `America/New_York`, `Australia/Lord_Howe`.
 
-## Representation: a Time has no fixed offset
+## Representation: fixed offsets
 
-Sake's built-in Time is local or UTC (`Time.utc(t)` converts); there is no `Time.new(..., "+09:00")` or
-`getlocal(off)`. So a string with an offset (`"+09:00"`, `"EST"`) gives **the same instant as a local
-Time**, where Ruby keeps the offset: `Time.to_s(Time.parse("2024-01-02 03:04:05 +09:00"))` is
-`2024-01-01 18:04:05 +0000` on a UTC machine, Ruby's is `2024-01-02 03:04:05 +0900`. A UTC zone
-(`Z`, `UTC`, `UT`, `-00:00`, `-0000`; not `GMT` or `+00:00`, as Ruby's `zone_utc?`) gives a UTC Time, and
-`httpdate` always does, as in Ruby. The test therefore prints each parsed Time as its instant in UTC plus
-`utc?`. Times are built from the civil fields by integer arithmetic (days from civil) and `Time.at`, so
+2026-10-05: Sake's Time now has Ruby's fixed offsets (`Time.new(..., "+09:00")`, `Time.localtime(t, off)`,
+`Time.getlocal`, `in:`). A string with an offset (`"+09:00"`, `"EST"`) gives a Time **with that offset**,
+as Ruby's `force_zone!`: the local zone when it has the same offset (so `Time.zone` names it), otherwise
+a fixed-offset Time (`Time.zone` nil). A UTC zone (`Z`, `UTC`, `UT`, `-00:00`, `-0000`; not `GMT` or
+`+00:00`, as Ruby's `zone_utc?`) gives a UTC Time, and `httpdate` always does. Missing fields come from
+`now` seen at the string's offset (`Time.getlocal(now, off)`, Ruby's `now.getlocal(off)`). The test now
+prints each parsed Time as Ruby shows it (`Time.iso8601(t, 3)`, `utc?`, `zone`) and has a section of
+fixed-offset round trips (`xmlschema`, `rfc2822`, `%z`, `%:z`).
+
+Before this, a Time was only local or UTC, so a string with an offset gave the same instant as a local
+Time and the test printed instants in UTC; that difference from Ruby is gone.
+
+Times are built from the civil fields by integer arithmetic (days from civil) and `Time.at`, so
 fractions (`Rational`) and overflow (`2024-02-30` is March 1, `24:00:00` and `23:59:60` roll over) follow
 Ruby's `Time.local` / `Time.utc`.
 
@@ -31,7 +37,7 @@ Ruby's `Time.local` / `Time.utc`.
 | `Time.rfc2822(s)`, `rfc822` / `t.rfc2822` | same | same (`-0000` for a UTC Time) |
 | `Time.zone_offset(zone)` | same | same, including the local zone's own abbreviation (`JST` under `TZ=Asia/Tokyo`); `year` argument missing |
 | `Time#to_date`, `to_time`, `Time.json_create` ... | — | missing |
-| result of `Time.parse` with an offset | a local Time | differs (above) |
+| result of `Time.parse` with an offset | a Time with that offset | same (above; formerly a local Time) |
 
 ## Frictions (wrote first → message → wrote instead)
 
@@ -50,7 +56,10 @@ Ruby's `Time.local` / `Time.utc`.
 - `Integer(sec, 10)` → `Kernel.Integer` takes one argument → `String.to_i`.
 - Ruby's `now.getlocal(off)` (fill missing fields from `now` in the string's zone) → no fixed-offset Time
   → `Time.utc(Time.at(Time.to_i(now) + off))` and read its fields. Found only by running the test under
-  `TZ=Asia/Tokyo` (the default UTC machine hides it).
+  `TZ=Asia/Tokyo` (the default UTC machine hides it). Now `Time.getlocal(now, off)`, as Ruby.
+- `Time.iso8601(str)` as the parser is still out of reach: the built-in `Time.iso8601` is the formatter
+  (it now shows the offset, `2024-01-02T03:04:05+09:00`), and a library cannot add a String case to a
+  built-in; `Time.xmlschema(str)` remains the parser.
 
 ## Language features used
 

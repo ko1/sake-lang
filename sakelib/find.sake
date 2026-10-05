@@ -1,8 +1,7 @@
 # find: Ruby's Find module (Find.find, Find.prune) and Pathname#find.
 #
-# Sake cannot list a directory, so Find.find yields each given path, and a directory raises IOError
-# when the walk would descend into it; a directory the block prunes is fine. Find.prune is an
-# exception (FindPrune) that Find.find rescues, where Ruby throws :prune.
+# The walk is Ruby's find.rb: depth first, each directory's children sorted, symbolic links not
+# followed. Find.prune is an exception (FindPrune) that Find.find rescues, where Ruby throws :prune.
 require "pathname"
 
 class FindPrune < Exception
@@ -11,28 +10,36 @@ end
 module Find
   module_function
 
-  # Ruby checks every path before yielding any; ignore_error is accepted (Ruby ignores errors
-  # while listing, which Sake never does).
+  # Ruby checks every path before yielding any. With ignore_error (the default), a directory that
+  # cannot be listed is skipped, as Ruby does.
   def find(*paths, ignore_error: true)
     list = Array.map(paths) do |x|
       s = Pathname.path_of(x)
-      raise IOError, "No such file or directory - #{s}" unless File.exist?(s)
+      raise IOError, "No such file or directory - #{s}" unless File.exist?(s) || File.symlink?(s)
       s
     end
     found = String[]
     Array.each(list) do |path|
-      pruned = false
-      if block_given?
-        begin
-          yield path
-        rescue FindPrune
-          pruned = true
+      ps = String[path]
+      while (file = Array.shift(ps))
+        pruned = false
+        if block_given?
+          begin
+            yield file
+          rescue FindPrune
+            pruned = true
+          end
+        else
+          Array.push(found, file)
         end
-      else
-        Array.push(found, path)
-      end
-      if !pruned && File.directory?(path)
-        raise IOError, "listing a directory is not available in Sake - #{path}"
+        next if pruned || !File.directory?(file) || File.symlink?(file)
+        begin
+          fs = Dir.children(file)
+        rescue IOError
+          raise unless ignore_error
+          next
+        end
+        Array.each(Array.reverse(Array.sort(fs))) { |f| Array.unshift(ps, File.join(file, f)) }
       end
     end
     block_given? ? nil : found

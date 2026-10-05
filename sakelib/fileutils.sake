@@ -1,9 +1,7 @@
-# fileutils: the common subset of Ruby's FileUtils (cp, mv, rm, rm_f, rm_rf, touch, mkdir_p,
-# mkdir, rmdir, compare_file), on regular files.
+# fileutils: the common subset of Ruby's FileUtils: cp, cp_r, mv, rm, rm_r, rm_rf, touch, mkdir_p,
+# mkdir, rmdir, ln, ln_s, chmod, compare_file, uptodate?, ... on files and directories.
 #
-# Sake has no directory primitives (no mkdir, rmdir, rename, stat, listing): a directory that exists
-# can be a destination (cp/mv into it) and mkdir_p of it is a no-op, but creating or removing one
-# raises IOError. Errors from the file system are IOError (Ruby: Errno::*).
+# Errors from the file system are IOError (Ruby: Errno::*).
 require "pathname"
 
 module FileUtils
@@ -23,6 +21,8 @@ module FileUtils
 
   def fu_same?(a, b) = Pathname.cleanpath(Pathname.new(a)) == Pathname.cleanpath(Pathname.new(b))
 
+  def remove_trailing_slash(dir) = dir == "/" ? dir : String.delete_suffix(dir, "/")
+
   # Each [src, dest] pair: into dest/basename(src) when dest is a directory.
   def fu_each_src_dest(src, dest)
     d0 = Pathname.path_of(dest)
@@ -41,14 +41,18 @@ module FileUtils
     end
   end
 
+  def pwd = Dir.pwd
+
   def mkdir_p(list, mode: nil, noop: false, verbose: false)
     paths = fu_list(list)
     fu_output_message(verbose, "mkdir -p #{Array.join(paths, " ")}")
     return paths if noop
     Array.each(paths) do |path|
-      next if File.directory?(path)
-      raise IOError, "File exists - #{path}" if File.exist?(path)
-      raise IOError, "mkdir is not available in Sake - #{path}"
+      Array.each(Pathname.descend(Pathname.new(remove_trailing_slash(path)))) do |d|
+        s = Pathname.path(d)
+        next if File.directory?(s)
+        mode ? Dir.mkdir(s, mode) : Dir.mkdir(s)
+      end
     end
     paths
   end
@@ -61,20 +65,29 @@ module FileUtils
     fu_output_message(verbose, "mkdir #{Array.join(paths, " ")}")
     return nil if noop
     Array.each(paths) do |path|
-      raise IOError, "File exists - #{path}" if File.exist?(path)
-      raise IOError, "mkdir is not available in Sake - #{path}"
+      s = remove_trailing_slash(path)
+      mode ? Dir.mkdir(s, mode) : Dir.mkdir(s)
     end
     paths
   end
 
+  # parents: also each parent, until one is not empty (Ruby ignores that error).
   def rmdir(list, parents: false, noop: false, verbose: false)
     paths = fu_list(list)
     fu_output_message(verbose, "rmdir #{parents ? "-p " : ""}#{Array.join(paths, " ")}")
     return nil if noop
     Array.each(paths) do |path|
-      raise IOError, "No such file or directory - #{path}" unless File.exist?(path)
-      raise IOError, "Not a directory - #{path}" unless File.directory?(path)
-      raise IOError, "rmdir is not available in Sake - #{path}"
+      dir = remove_trailing_slash(path)
+      Dir.rmdir(dir)
+      next unless parents
+      begin
+        while (parent = File.dirname(dir)) != "." && parent != dir
+          dir = parent
+          Dir.rmdir(dir)
+        end
+      rescue IOError
+        nil
+      end
     end
     paths
   end
@@ -97,34 +110,55 @@ module FileUtils
   def rm_f(list, noop: false, verbose: false) = rm(list, force: true, noop:, verbose:)
   def safe_unlink(list, noop: false, verbose: false) = rm(list, force: true, noop:, verbose:)
 
-  # Files only: a directory raises IOError even with force, rather than being left silently.
   def rm_r(list, force: false, noop: false, verbose: false, secure: nil)
     paths = fu_list(list)
     fu_output_message(verbose, "rm -r#{force ? "f" : ""} #{Array.join(paths, " ")}")
     return nil if noop
-    Array.each(paths) do |path|
-      raise IOError, "removing a directory is not available in Sake - #{path}" if File.directory?(path)
-      begin
-        File.delete(path)
-      rescue IOError
-        raise unless force
-      end
-    end
+    Array.each(paths) { |path| remove_entry(path, force) }
     paths
   end
 
   def rm_rf(list, noop: false, verbose: false, secure: nil) = rm_r(list, force: true, noop:, verbose:, secure:)
   def rmtree(list, noop: false, verbose: false, secure: nil) = rm_r(list, force: true, noop:, verbose:, secure:)
 
-  # Creates missing files; an existing file is left as is (Sake cannot set mtime).
-  def touch(list, noop: false, verbose: false, nocreate: false)
+  # A file, or a directory with everything in it; a symbolic link is removed, not followed.
+  def remove_entry(path, force = false)
+    begin
+      s = Pathname.path_of(path)
+      raise IOError, "No such file or directory - #{s}" unless File.exist?(s) || File.symlink?(s)
+      Pathname.remove_tree(s)
+    rescue IOError
+      raise unless force
+    end
+    nil
+  end
+
+  def remove_dir(path, force = false)
+    raise IOError, "Not a directory - #{Pathname.path_of(path)}" unless force || File.directory?(Pathname.path_of(path))
+    remove_entry(path, force)
+  end
+
+  def remove_file(path, force = false)
+    begin
+      File.delete(Pathname.path_of(path))
+    rescue IOError
+      raise unless force
+    end
+    nil
+  end
+
+  # Creates missing files and sets the times of existing ones (now, or mtime:).
+  def touch(list, noop: false, verbose: false, mtime: nil, nocreate: false)
     paths = fu_list(list)
     fu_output_message(verbose, "touch #{nocreate ? "-c " : ""}#{Array.join(paths, " ")}")
     return nil if noop
     Array.each(paths) do |path|
-      next if File.exist?(path)
-      raise IOError, "No such file or directory - #{path}" if nocreate
-      File.write(path, "")
+      unless File.exist?(path)
+        raise IOError, "No such file or directory - #{path}" if nocreate
+        File.write(path, "")
+        next unless mtime
+      end
+      File.utime(mtime, mtime, path)
     end
     paths
   end
@@ -134,27 +168,105 @@ module FileUtils
     return nil if noop
     fu_each_src_dest(src, dest) do |s, d|
       raise IOError, "Is a directory - #{s}" if File.directory?(s)
-      File.write(d, File.read(s))
+      copy_file(s, d, preserve)
     end
     nil
   end
 
   def copy(src, dest, preserve: nil, noop: false, verbose: false) = cp(src, dest, preserve:, noop:, verbose:)
-  def copy_file(src, dest) = File.write(Pathname.path_of(dest), File.read(Pathname.path_of(src)))
 
-  # A copy then a delete (Sake has no rename), so a failure in between leaves both files.
+  def copy_file(src, dest, preserve = false)
+    s = Pathname.path_of(src)
+    d = Pathname.path_of(dest)
+    File.write(d, File.read(s))
+    File.utime(File.atime(s), File.mtime(s), d) if preserve
+    nil
+  end
+
+  # Directories with their contents; into dest/basename(src) when dest is a directory.
+  def cp_r(src, dest, preserve: nil, noop: false, verbose: false, dereference_root: true, remove_destination: nil)
+    fu_output_message(verbose, "cp -r#{preserve ? "p" : ""} #{Array.join(fu_list(src), " ")} #{Pathname.path_of(dest)}")
+    return nil if noop
+    fu_each_src_dest(src, dest) { |s, d| copy_entry(s, d, preserve) }
+    nil
+  end
+
+  def copy_entry(src, dest, preserve = false, dereference_root = false, remove_destination = false)
+    s = Pathname.path_of(src)
+    d = Pathname.path_of(dest)
+    if File.directory?(s)
+      Dir.mkdir(d) unless File.directory?(d)
+      Array.each(Array.sort(Dir.children(s))) { |c| copy_entry(File.join(s, c), File.join(d, c), preserve) }
+    else
+      copy_file(s, d, preserve)
+    end
+    nil
+  end
+
+  # Renames; into dest/basename(src) when dest is a directory.
   def mv(src, dest, force: nil, noop: false, verbose: false, secure: nil)
     fu_output_message(verbose, "mv#{force ? " -f" : ""} #{Array.join(fu_list(src), " ")} #{Pathname.path_of(dest)}")
     return nil if noop
     fu_each_src_dest(src, dest) do |s, d|
-      raise IOError, "moving a directory is not available in Sake - #{s}" if File.directory?(s)
-      File.write(d, File.read(s))
-      File.delete(s)
+      begin
+        raise IOError, "File exists - #{d}" if File.directory?(s) && File.directory?(d) && !Dir.empty?(d)
+        File.rename(s, d)
+      rescue IOError
+        raise unless force
+      end
     end
     0
   end
 
   def move(src, dest, force: nil, noop: false, verbose: false, secure: nil) = mv(src, dest, force:, noop:, verbose:, secure:)
+
+  # Ruby's ln / ln_s: a link to each src, in dest when it is a directory; force: replaces dest.
+  def ln(src, dest, force: nil, noop: false, verbose: false)
+    fu_output_message(verbose, "ln#{force ? " -f" : ""} #{Array.join(fu_list(src), " ")} #{Pathname.path_of(dest)}")
+    return nil if noop
+    r = 0
+    fu_each_src_dest(src, dest) do |s, d|
+      remove_file(d, true) if force
+      r = File.link(s, d)
+    end
+    r
+  end
+
+  def link(src, dest, force: nil, noop: false, verbose: false) = ln(src, dest, force:, noop:, verbose:)
+
+  # The link's target is src as written; dest/basename(src) when dest is a directory.
+  def ln_s(src, dest, force: nil, noop: false, verbose: false)
+    fu_output_message(verbose, "ln -s#{force ? "f" : ""} #{Array.join(fu_list(src), " ")} #{Pathname.path_of(dest)}")
+    return nil if noop
+    d0 = Pathname.path_of(dest)
+    r = 0
+    Array.each(fu_list(src)) do |s|
+      d = File.directory?(d0) && !File.symlink?(d0) ? File.join(d0, File.basename(s)) : d0
+      remove_file(d, true) if force
+      r = File.symlink(s, d)
+    end
+    r
+  end
+
+  def symlink(src, dest, force: nil, noop: false, verbose: false) = ln_s(src, dest, force:, noop:, verbose:)
+  def ln_sf(src, dest, noop: false, verbose: false) = ln_s(src, dest, force: true, noop:, verbose:)
+
+  # mode: an Integer such as 0o644 (Ruby also takes "u+x" symbolic modes).
+  def chmod(mode, list, noop: false, verbose: false)
+    paths = fu_list(list)
+    fu_output_message(verbose, "chmod #{format("%o", mode)} #{Array.join(paths, " ")}")
+    return nil if noop
+    Array.each(paths) { |path| File.chmod(mode, path) }
+    paths
+  end
+
+  # new exists and is newer than each of old_list that exists.
+  def uptodate?(new, old_list)
+    n = Pathname.path_of(new)
+    return false unless File.exist?(n)
+    t = File.mtime(n)
+    Array.all?(fu_list(old_list)) { |old| !File.exist?(old) || File.mtime(old) < t }
+  end
 
   def compare_file(a, b) = File.read(Pathname.path_of(a)) == File.read(Pathname.path_of(b))
   def identical?(a, b) = compare_file(a, b)

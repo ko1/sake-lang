@@ -234,6 +234,7 @@ module Sake
         call_block(blk, [t("String")])
         a0
       when "File.open" then blk ? call_block(blk, [t("IO")]) : t("IO")
+      when "Dir.mktmpdir" then blk ? call_block(blk, [t("String")]) : t("String")
       else :none
       end
     end
@@ -443,7 +444,7 @@ module Sake
     def table_result(name, args, blk, node)
       result, opts = TABLE[name]
       return :none unless result
-      a0 = opts[:kernel] ? [] : args[0]
+      a0 = opts[:kernel] || opts[:on] ? [] : args[0]
       elem = each_elem(a0)
       elem = t("Integer") if elem.empty? && opts[:int_range]
       bres = []
@@ -480,6 +481,7 @@ module Sake
       when :transpose then new_site(node, " #{name}", aux_site(node, "inner", elem_of(elem)))
       when :tuple3_string then tuple([t("String")] * 3)
       when :tuple_int2 then tuple([t("Integer")] * 2)
+      when :tuple_string2 then tuple([t("String")] * 2)
       when :tuple_elem_nil2 then tuple([u(elem, t("Nil"))] * 2)
       when :tuple_arrays, :tuple_pair_arrays then aux_site(node, "part", elem).then { tuple([_1, _1]) }
       when :set_elem then set_site(node).tap { set_sites[_1[0][1]].elem = u(set_sites[_1[0][1]].elem, elem) }

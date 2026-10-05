@@ -122,10 +122,12 @@ module Sake
     TIME_FIELDS = %i[year month day hour min sec wday yday].freeze
 
     def install_time(reg)
-      reg.define("Time", :now, []) { Time.now }
-      reg.define("Time", :at, [REAL]) { |s| Time.at(s) }
-      reg.define("Time", :new, ["Integer"], optional: %w[Integer Integer Integer Integer Integer]) do |*xs|
-        ruby_error("ArgumentError") { Time.new(*xs) }
+      # A zone is a fixed UTC offset ("+09:00", "Z", "UTC", "A".."Z", or seconds), as Ruby's `in:`.
+      zone = { "in" => %w[String Integer] }
+      reg.define("Time", :now, [], keywords: zone) { |**kw| ruby_error("ArgumentError") { Time.now(**kw) } }
+      reg.define("Time", :at, [REAL + ["Time"]], keywords: zone) { |s, **kw| ruby_error("ArgumentError") { Time.at(s, **kw) } }
+      reg.define("Time", :new, ["Integer"], optional: [*%w[Integer Integer Integer Integer], REAL, %w[String Integer]], keywords: zone) do |*xs, **kw|
+        ruby_error("ArgumentError") { Time.new(*xs, **kw) }
       end
       TIME_FIELDS.each { |m| reg.define("Time", m, ["Time"], &m) }
       reg.define("Time", :to_i, ["Time"], &:to_i)

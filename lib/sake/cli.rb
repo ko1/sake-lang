@@ -151,7 +151,7 @@ module Sake
     # The typer's findings for the chosen items, as diagnostics.
     def strict_diagnostics(program, items, typer)
       typer.findings.map { |c, item| [c, mixed?(program, typer, c, item) ? "mixed" : item] }.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.file ? 0 : 1, c.file.to_s, c.line, c.column] }.map do |c, item|
-        what = { "pair" => "the operands", "index" => "the index", "value" => "the value", "range" => "the Range's first value" }.fetch(c.arg) { "argument #{c.arg}" }
+        what = { "pair" => "the operands", "index" => "the index", "value" => "the value", "range" => "the Range's first value" }.fetch(c.arg) { c.arg.to_s.end_with?(":") ? "keyword `#{c.arg}`" : "argument #{c.arg}" }
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item

@@ -1047,6 +1047,7 @@ module Sake
     # The keyword parameters of a call's target: a user function's, or (a dispatch) the module function's.
     def target_keywords(target)
       return struct_new_keywords(target) if struct_new_target?(target)
+      return target.keyword_types.transform_values { true } if target.is_a?(Builtin) && target.keyword_types.any? # all optional
       fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
       fn.is_a?(UserFunction) && (fn.keywords&.any? || fn.kwrest_param) ? fn.keywords : nil
     end

@@ -1,50 +1,60 @@
 require "find"
 require "pathname"
+require "tmpdir"
 
-# Sake cannot create or list directories: the test walks files named _find_* in this directory,
-# and directories only where the block prunes them; it removes its files at the end.
+# The test walks a tree in a temporary directory and shows each path relative to it.
 def try
   yield
 rescue SystemCallError => e
   puts "error"
 end
 
-File.write("_find_a.txt", "a")
-File.write("_find_b.rb", "b")
+Dir.mktmpdir do |dir|
+  short = ->(f) { f.delete_prefix(dir) }
+  Dir.mkdir(File.join(dir, "src"))
+  Dir.mkdir(File.join(dir, "src", "lib"))
+  Dir.mkdir(File.join(dir, "src", "skip"))
+  Dir.mkdir(File.join(dir, "empty"))
+  File.write(File.join(dir, "src", "a.txt"), "a")
+  File.write(File.join(dir, "src", "b.rb"), "b")
+  File.write(File.join(dir, "src", "lib", "c.rb"), "c")
+  File.write(File.join(dir, "src", "skip", "d.rb"), "d")
+  File.write(File.join(dir, "top.rb"), "t")
+  a = File.join(dir, "src", "a.txt")
 
-Find.find("_find_a.txt") { |f| p f }
-p Find.find("_find_a.txt", "_find_b.rb") { |f| puts "visit #{f}" }
-p Find.find("_find_b.rb", "_find_a.txt").to_a
-p Find.find(Pathname.new("_find_a.txt")).to_a
-p Find.find("_find_a.txt", ignore_error: false).to_a
+  Find.find(dir) { |f| p short.(f) }
+  p Find.find(a, File.join(dir, "top.rb")) { |f| puts "visit #{short.(f)}" }
+  p Find.find(File.join(dir, "src")).to_a.map(&short)
+  p Find.find(Pathname.new(a)).to_a.map(&short)
+  p Find.find(File.join(dir, "empty"), ignore_error: false).to_a.map(&short)
 
-# a directory is fine when the block prunes it
-seen = []
-Find.find(".", "_find_a.txt", "..") do |f|
-  seen.push(f)
-  Find.prune if File.directory?(f)
+  # prune: skip a directory's contents
+  seen = []
+  Find.find(dir) do |f|
+    Find.prune if File.basename(f) == "skip"
+    seen.push(short.(f)) if f.end_with?(".rb")
+  end
+  p seen
+  sizes = 0
+  Find.find(dir) { |f| sizes += File.size(f) if File.file?(f) }
+  p sizes
+  n = 0
+  Find.find(a) do |f|
+    n += 1
+    Find.prune
+  end
+  p n
+
+  # a missing path is reported before anything is yielded
+  count = 0
+  try { Find.find(a, File.join(dir, "missing")) { |f| count += 1 } }
+  p count
+
+  # Pathname#find
+  Pathname.new(File.join(dir, "src", "lib")).find { |x| p short.(x.to_s) }
+  p Pathname.new(a).find.to_a.map { |x| short.(x.to_s) }
 end
-p seen
-n = 0
-Find.find("_find_a.txt") do |f|
-  n += 1
-  Find.prune
-end
-p n
-
-# a missing path is reported before anything is yielded
-count = 0
-try { Find.find("_find_a.txt", "_find_missing") { |f| count += 1 } }
-p count
-
-# Pathname#find
-Pathname.new("_find_b.rb").find { |x| p x }
-p Pathname.new("_find_a.txt").find.to_a
 Pathname.new(".").find do |x|
   p x
   Find.prune
 end
-
-File.delete("_find_a.txt")
-File.delete("_find_b.rb")
-p File.exist?("_find_a.txt")
