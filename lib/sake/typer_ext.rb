@@ -190,6 +190,8 @@ module Sake
         call_block(blk, [])
         [] # only a break leaves it (its values are added to the call's result)
       when "Hash.dup" then args[0]
+      when "Kernel.dup" # the same types (a copy); a type's own dup gives what it returns
+        u(*args[0].map { |a| (own = struct_atom?(a) && @program.functions.dig(a, "dup")) ? call_user(own, [[a].freeze], nil) : [a] })
       when "Math.PI", "Math.E", "Float.INFINITY", "Float.NAN", "Float.EPSILON", "Float.MAX", "Float.MIN" then t("Float")
       when "Kernel.once"
         # One value for the place, whichever call computes it first: the union over every evaluation.

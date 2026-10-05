@@ -545,3 +545,4 @@ AI 向けの話と最適化の話は、同じ結論に収束する: **操作に�
   - `*rest` / `**opts`：呼び出し先が静的に決まるので、呼び出しの場で `Array[...]` / `Hash[k: v]` を作って渡す。`**opts` を持つ関数ではキーワードの綴り間違いが静的エラーにならない（Ruby と同じ意味）。`*rest` の後の引数と名前の無い `*` / `**` は不可。呼び出し側の `f(*xs)` は未対応のまま。
   - `attr_accessor :next`：予約語に限り Symbol で宣言できる。
   - `x => T` の失敗（NoMatchingPatternError）は rescue できるようにした。確実に合わないものは level 1 のエラー、合わないかもしれないものは実行時の検査とし exhaustive（level 3）でだけ報告。TypeError などは rescue 不可のまま。
+- **`Kernel.dup(x)`**（2026-10-05、ko1「Kernel.dup(obj) で dup。もし T が上書きしてれば T#dup がよばれる」）。どの値にも使える浅い複製（容器と Struct の値は新しく、要素は同じ）。型が `dup` を定義していればそれを呼ぶ（Ruby の obj.dup と同じ）。型推論は引数と同じ型、型の dup があればその返り値の型。

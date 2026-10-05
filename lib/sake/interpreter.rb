@@ -429,6 +429,9 @@ module Sake
                            node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
       end
       return once_value(blk, node) if fn.full_name == "Kernel.once"
+      if fn.full_name == "Kernel.dup" && args[0].is_a?(StructValue) && (own = @program.functions.dig(args[0].type.name, "dup"))
+        return call_user(own, args, nil, node) # T.dup, when the type defines it
+      end
       ruby_blk = blk && (fn.full_name == "Thread.new" ? thread_body(blk, node) : ->(*xs) { call_block(blk, xs, node) })
       v = fn.impl.call(*args, &ruby_blk)
       if fn.name == "new" && v.is_a?(StructValue)

@@ -77,6 +77,9 @@ module Sake
       reg.define("Arithmetic", :to_i, [real]) { |x| ruby_error("FloatDomainError") { x.to_i } }
       reg.define("Arithmetic", :zero?, [real], &:zero?)
       reg.define("Hash", :dup, ["Hash"], &:dup)
+      # dup(x): a shallow copy of any value (Ruby's obj.dup); a type that defines dup gets its own
+      # (the interpreter calls it, Interpreter#call_builtin).
+      reg.define("Kernel", :dup, ["Any"]) { |x| Values.shallow_copy(x) }
       # loop { ... }: until a break (Ruby's loop; StopIteration is not a Sake exception).
       reg.define("Kernel", :loop, [], block: :required) { |&b| loop { b.call } }
       # Math::PI and friends, read as operations (as ARGV is): Sake has no value constants.

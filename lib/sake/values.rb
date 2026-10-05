@@ -49,6 +49,20 @@ module Sake
   end
 
   # `{x: 1, y: 2}`: the shape is fixed at creation; values may be replaced by ones of the same type.
+  module Values
+    # A copy whose containers are new and whose elements are the same values (Ruby's dup).
+    def self.shallow_copy(x)
+      case x
+      when TypedArray then TypedArray.new(x.elem_type, x.to_a)
+      when ::Array, ::Hash, ::Set then x.dup
+      when ::String then x.dup
+      when Tuple then Tuple.new(x.elems.dup)
+      when StructValue then StructValue.new(x.type, x.values.dup)
+      else x # numbers, Symbols, nil, true/false, Records, ... are values
+      end
+    end
+  end
+
   class RecordValue
     SHAPES = {}
     attr_reader :shape, :values

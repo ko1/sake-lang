@@ -818,6 +818,7 @@ one.
 | `Integer(x)`, `Float(x)` | Integer, Float | Ruby's strict conversions; `ArgumentError` on bad input |
 | `rand`, `rand(n)` | Float, or Integer/Float below n | |
 | `loop { }` | the value of a `break` | runs the block until a `break` |
+| `dup(x)` | a copy of x | Ruby's `obj.dup`: new containers and Struct values, the same elements; a type that defines `dup` gets its own |
 
 `Math::PI`, `Math::E`, `Float::INFINITY`, `Float::NAN`, `Float::EPSILON`, `Float::MAX`, `Float::MIN` are read as
 operations (`Math.PI`), as `ARGV` is: Sake has no value constants, and no other nested names.
