@@ -90,7 +90,10 @@ module Sake
         right_env = env.dup_level
         narrow(right_env, n.left, n.is_a?(And))
         r = ev(n.right, right_env)
-        join_into(env, env.dup_level, right_env)
+        # The path that skips the right side knows the left's truthiness too (`@x ||= v` in initialize).
+        left_env = env.dup_level
+        narrow(left_env, n.left, n.is_a?(Or))
+        join_into(env, left_env, right_env)
         # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
         left = n.is_a?(And) ? l & (NILS + ["Boolean"]) : l - NILS
         u(*left.map { [_1] }, r)
