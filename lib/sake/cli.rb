@@ -27,9 +27,12 @@ module Sake
       exit status: 0 = ok, 1 = runtime error, 2 = problem found before running
     TEXT
 
-    STRICT_ITEMS = %w[type rescue nil index-nil exhaustive unrescued].freeze
-    STRICT_LEVELS = [[], %w[type rescue], %w[type rescue nil], %w[type rescue nil index-nil exhaustive],
-                     %w[type rescue nil index-nil exhaustive unrescued]].freeze
+    # mixed: a type report whose value came through a field (or a container in a field) that holds
+    # both fitting and non-fitting types: likely instances of one type used for different values.
+    STRICT_ITEMS = %w[type rescue nil mixed index-nil exhaustive unrescued].freeze
+    STRICT_LEVELS = [[], %w[type rescue], %w[type rescue nil mixed], %w[type rescue nil mixed index-nil exhaustive],
+                     %w[type rescue nil mixed index-nil exhaustive unrescued]].freeze
+    WARN_ITEMS = %w[mixed].freeze # shown as warnings at the levels where they do not stop the program
     DEFAULT_LEVEL = 1
     RECOMMENDED_LEVEL = 2
 
@@ -140,23 +143,24 @@ module Sake
           err.puts "warning: type checks skipped (internal error in the type checker: #{e.class}: #{e.message})"
           return
         end
+      strict_diagnostics(program, WARN_ITEMS - items, typer).each { err.puts(_1.to_s.sub(": error: ", ": warning: ")) }
       diags = strict_diagnostics(program, items, typer)
       raise StaticErrors.new(diags) unless diags.empty?
     end
 
     # The typer's findings for the chosen items, as diagnostics.
     def strict_diagnostics(program, items, typer)
-      typer.findings.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.file ? 0 : 1, c.file.to_s, c.line, c.column] }.map do |c, item|
+      typer.findings.map { |c, item| [c, mixed?(program, typer, c, item) ? "mixed" : item] }.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.file ? 0 : 1, c.file.to_s, c.line, c.column] }.map do |c, item|
         what = { "pair" => "the operands", "index" => "the index", "value" => "the value" }.fetch(c.arg) { "argument #{c.arg}" }
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item
-          when "type", "exhaustive"
+          when "type", "exhaustive", "mixed"
             next_msg = ["yield: no block is given on this call", ["check `block_given?` before `yield`"]] if c.op == "yield"
             next_msg = ["the block passed on is missing here, and this call needs one", ["check `block_given?` first"]] if c.op == "&block"
             msg, hints = next_msg || type_message(c, what, typer, program)
             # Where a field got the wrong type, when the function around the operation reads a field.
-            if item == "type" && c.node && reads_field?(program, c.node)
+            if %w[type mixed].include?(item) && c.node && reads_field?(program, c.node)
               hints += typer.field_sources(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing)
             end
             [msg, hints]
@@ -175,6 +179,14 @@ module Sake
         hints += ["reached by the call at #{c.via.map { _1.is_a?(Integer) ? "line #{_1}" : _1 }.join(" → ")}"] if c.via&.any?
         Diagnostic.new(c.file || program.path, c.line, c.column, "#{msg} [#{item}]", hints)
       end
+    end
+
+    # A type report fed by a field that holds both the fitting and the failing types (see STRICT_ITEMS).
+    def mixed?(program, typer, c, item)
+      return false unless item == "type" && !c.failing.empty?
+      fails = typer.type_names(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing) - ["Nil"]
+      return false if fails.empty?
+      typer.mixing_fields.any? { |names| (fails - names).empty? && !(names - fails).empty? }
     end
 
     # Whether the function around node reads a field: `@x`, or a reader `T.x(...)` / `v.T.x` of a Struct type.

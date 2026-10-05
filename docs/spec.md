@@ -45,10 +45,17 @@ whole-program type inference; whatever is not reported is still checked while ru
 |---|---|---|---|
 | 0 | `--strict=0` | (none) | syntax, names, argument counts, blocks, calls on values, forbidden syntax, literal types in `T[...]` (always checked) |
 | 1 | default | `type`, `rescue` | a value whose type, other than nil, does not fit (`"" + 1`, or `pick() + 1` where `pick` returns 1 or ""); a `rescue` of an exception the begin body never raises |
-| 2 | `--strict` | `type`, `rescue`, `nil` | also a value that may be nil, used without a check (except results of `x[k]`) |
-| 3 | `--strict=3` | `type`, `rescue`, `nil`, `index-nil`, `exhaustive` | also the result of `x[k]`, which is nil on a miss, used without a check; a `case`/`in` that may get a value of an open type (String, Integer, a Symbol not written as a literal, ...) that no literal branch takes |
+| 2 | `--strict` | `type`, `rescue`, `nil`, `mixed` | also a value that may be nil, used without a check (except results of `x[k]`); and a `mixed` report (below) |
+| 3 | `--strict=3` | `type`, `rescue`, `nil`, `mixed`, `index-nil`, `exhaustive` | also the result of `x[k]`, which is nil on a miss, used without a check; a `case`/`in` that may get a value of an open type (String, Integer, a Symbol not written as a literal, ...) that no literal branch takes |
 | 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued |
 
+- **`mixed`.** A type report whose failing types all appear, together with fitting ones, in one field
+  (or in the elements of a container held in a field) of a Struct type. The typer gives a field one type
+  for all instances, so instances of one type used for different values (an Integer heap and a Job heap
+  sharing `Heap.items`) meet there; the report is likely such a meeting rather than a mistake. It stops
+  the program from level 2; at level 1 it is printed as a warning. The cost of the heuristic: a field
+  that really got a wrong type (`Config.new("h", "eighty")` for an Integer port) is also `mixed`; check
+  such a value where it is stored, in `initialize` (`@port => Integer`).
 - **Naming items.** `--strict=type,nil` selects exactly these items. `--strict=2,index-nil` adds an
   item to a level, and `--strict=3,-index-nil` removes one.
 - **Labels.** Each report ends with its item, such as `[type]`.

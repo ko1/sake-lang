@@ -36,7 +36,7 @@ How much is checked before running is set with `--strict`:
 |---|---|---|
 | 0 | `--strict=0` | only syntax, names, argument counts, calls on values, and the like |
 | 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation; **rescue**: a rescue of an exception never raised |
-| 2 | `--strict` | **nil**: a value that may be nil, used without a check |
+| 2 | `--strict` | **nil**: a value that may be nil, used without a check; **mixed**: a type report where values of different types met in a field (a warning at level 1) |
 | 3 | `--strict=3` | **index-nil**: the result of `x[k]`, used without a check; **exhaustive**: a `case` whose literal branches may miss some value |
 | 4 | `--strict=4` | **unrescued**: a `raise` that may reach the top level |
 
@@ -717,7 +717,6 @@ puts(Point.new(1))
 ```
 $ sake instance_errors.sake
 instance_errors.sake:5:9: error: method call on a value `pt.x` is not allowed
-  hint: Point.x(pt)
   hint: Point.x(pt)
   hint: pt.Point.x
 instance_errors.sake:6:7: error: field `x` of Point is read-only (attr_reader)

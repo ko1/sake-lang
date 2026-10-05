@@ -380,6 +380,27 @@ module Sake
       end
     end
 
+    def type_names(atoms) = atoms.map { atom_type_name(_1) }.uniq
+
+    # The type names each field holds (and the elements of the containers in it), for fields holding two
+    # or more: where values of different types meet (instances of one type used for different values).
+    def mixing_fields
+      @mixing_fields ||= @fields.flat_map do |_dt, fs|
+        fs.filter_map do |_f, ty|
+          inner = ty.flat_map do |a|
+            next [] unless a.is_a?(Array)
+            case a[0]
+            when :array then @sites[a[1]]&.elem || []
+            when :hash then hash_sites[a[1]]&.val || []
+            when :set then set_sites[a[1]]&.elem || []
+            else []
+            end
+          end
+          [type_names(ty), type_names(inner)].map { _1 - %w[Nil] }.select { _1.size >= 2 }
+        end.flatten(1)
+      end
+    end
+
     # "Struct.field holds T (written at line N)" for fields of several types, one of which is in failing.
     def field_sources(failing)
       names = failing.map { atom_type_name(_1) }.uniq - ["Nil"]
