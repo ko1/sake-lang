@@ -213,10 +213,60 @@ module Sake
     # the written atoms of that type, not just the name.
     STRUCTURED = %w[Tuple Range].freeze
 
+    # A container's site: the place that makes it, per instantiation of the function around it (the
+    # function's argument types), as a template is instantiated per type: `def index_by(rows) = Hash[]…`
+    # called on Departments and on Employees makes two Hashes. When the instantiation's arguments already
+    # hold (anywhere inside) a container made by this same function (recursion, or functions passing
+    # containers back and forth), the place gets one site for all, as before, so sites stay finite.
+    def site_id(node)
+      inst = @inst_stack&.last
+      ctx = site_context(inst)
+      id = ctx ? (((@ctx_site_ids ||= {}.compare_by_identity)[node] ||= {})[ctx] ||= next_site_id(node, ctx)) : (@site_ids[node] ||= next_site_id(node))
+      (@site_fns ||= {})[id] ||= inst&.first # the function whose code made it
+      id
+    end
+
+    def next_site_id(node, ctx = nil)
+      id = (@site_count = (@site_count || 0) + 1)
+      (@site_ctx_label ||= {})[id] = ((@ctx_labels ||= {}.compare_by_identity)[node] ||= {})[ctx] ||= (@ctx_labels[node].size + 1) if ctx
+      id
+    end
+
+    def site_context(inst)
+      return nil unless inst
+      fn, args = inst
+      seen = {}
+      args.any? { |ty| holds_site_of?(ty, fn, seen) } ? nil : inst
+    end
+
+    # Whether ty holds (anywhere inside) a container made by fn's code.
+    def holds_site_of?(ty, fn, seen)
+      ty.any? do |a|
+        next false unless a.is_a?(Array) && %i[array hash set queue thread].include?(a[0]) && a[1].is_a?(Integer)
+        next false if seen[a]
+        seen[a] = true
+        next true if @site_fns&.[](a[1]).equal?(fn)
+        inner =
+          case a[0]
+          when :array then [@sites[a[1]]&.elem]
+          when :hash then [hash_sites[a[1]]&.key, hash_sites[a[1]]&.val]
+          when :set then [set_sites[a[1]]&.elem]
+          when :queue then [queue_sites[a[1]]&.elem]
+          else []
+          end
+        inner.compact.any? { holds_site_of?(_1, fn, seen) }
+      end
+    end
+
+    def site_label(id, node, extra = nil)
+      n = @site_ctx_label&.[](id)
+      "L#{node.location.start_line}#{n ? "##{n}" : ""}#{extra}"
+    end
+
     def site_for(node, label_extra = nil, declared: nil, init: [])
-      id = (@site_ids[node] ||= @site_ids.size + 1)
+      id = site_id(node)
       elem = declared && !STRUCTURED.include?(declared) ? t(declared) : init
-      @sites[id] ||= Site.new(id, node, "L#{node.location.start_line}#{label_extra}", declared, init, elem)
+      @sites[id] ||= Site.new(id, node, site_label(id, node, label_extra), declared, init, elem)
       [[:array, id]].freeze
     end
 
@@ -353,9 +403,11 @@ module Sake
       if fn.yields
         return unknown("recursive yield") if @yield_depth[fn] >= MAX_YIELD_DEPTH
         @yield_depth[fn] += 1
+        (@inst_stack ||= []).push([fn, args])
         begin
           return run_body(fn, args, blk)
         ensure
+          @inst_stack.pop
           @yield_depth[fn] -= 1
         end
       end
@@ -367,7 +419,12 @@ module Sake
       end
       @in_progress[key] = true
       @raised.push({})
-      r = run_body(fn, args, nil)
+      (@inst_stack ||= []).push(key)
+      begin
+        r = run_body(fn, args, nil)
+      ensure
+        @inst_stack.pop
+      end
       @raises[key] = merge_into(@raises[key] || {}, @raised.pop)
       merge_raised(@raises[key])
       @in_progress.delete(key)

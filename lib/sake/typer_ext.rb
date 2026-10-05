@@ -15,28 +15,28 @@ module Sake
     def queue_sites = (@queue_sites ||= {})
 
     def thread_site(node)
-      id = (@site_ids[node] ||= @site_ids.size + 1)
-      thread_sites[id] ||= SetSite.new(id, "L#{node.location.start_line}", [])
+      id = site_id(node)
+      thread_sites[id] ||= SetSite.new(id, site_label(id, node), [])
       [[:thread, id]].freeze
     end
 
     def queue_site(node)
-      id = (@site_ids[node] ||= @site_ids.size + 1)
-      queue_sites[id] ||= SetSite.new(id, "L#{node.location.start_line}", [])
+      id = site_id(node)
+      queue_sites[id] ||= SetSite.new(id, site_label(id, node), [])
       [[:queue, id]].freeze
     end
 
     def queue_elem(ty) = u(*atoms_of(ty, :queue).map { queue_sites[_1[1]].elem })
 
     def hash_site(node, label = "")
-      id = (@site_ids[node] ||= @site_ids.size + 1)
-      hash_sites[id] ||= HashSite.new(id, "L#{node.location.start_line}#{label}", [], [], t("Nil"))
+      id = site_id(node)
+      hash_sites[id] ||= HashSite.new(id, site_label(id, node, label), [], [], t("Nil"))
       [[:hash, id]].freeze
     end
 
     def set_site(node, label = "")
-      id = (@site_ids[node] ||= @site_ids.size + 1)
-      set_sites[id] ||= SetSite.new(id, "L#{node.location.start_line}#{label}", [])
+      id = site_id(node)
+      set_sites[id] ||= SetSite.new(id, site_label(id, node, label), [])
       [[:set, id]].freeze
     end
 
@@ -405,8 +405,8 @@ module Sake
     # A second site created by the same call (an inner Array, a group's values, ...).
     def aux_site(node, tag, elem)
       key = ((@aux_keys ||= {})[[node.object_id, tag]] ||= Object.new)
-      id = (@site_ids[key] ||= @site_ids.size + 1)
-      @sites[id] ||= Site.new(id, key, "L#{node.location.start_line} #{tag}", nil, elem, elem)
+      id = site_id(key)
+      @sites[id] ||= Site.new(id, key, site_label(id, node, " #{tag}"), nil, elem, elem)
       @sites[id].elem = u(@sites[id].elem, elem)
       [[:array, id]].freeze
     end
