@@ -53,7 +53,7 @@ includes TSort is fine.
 | `obj.strongly_connected_components` | `T.strongly_connected_components(obj)` | same |
 | `obj.each_strongly_connected_component { }` | `T.each_strongly_connected_component(obj) { }` | same |
 | `obj.each_strongly_connected_component_from(n, id_map = {}, stack = []) { }` | `T.each_strongly_connected_component_from(obj, n, id_map = Hash[], stack = Array[]) { }` | same (returns the minimum id as Ruby) |
-| `obj.tsort_each` (no block → Enumerator) | — | missing (no Enumerator; its `.to_a` is `tsort`, so an Array stand-in would only repeat that) |
+| `obj.tsort_each`, `obj.each_strongly_connected_component` (no block → Enumerator) | `T.tsort_each(obj)`, `T.each_strongly_connected_component(obj)` | same as the Enumerator's `to_a`: an Array, as the built-in blockless `each_slice` (2026-10-05) |
 | `TSort::Cyclic` | `TSortCyclic` | differs: name (no nested names) |
 | `TSort.tsort(each_node, each_child)` and the other module functions on callables | `TSort.tsort_hash(h)`, `strongly_connected_components_hash`, `tsort_each_hash`, `each_strongly_connected_component_hash` | differs: a Hash graph instead of two callables |
 | `TSort.each_strongly_connected_component_from(node, each_child, ...)` | — | missing (use the mixin) |
@@ -115,3 +115,13 @@ None for the algorithm. Language-level: first-class blocks (Ruby's callable form
 - The Hash-graph `tsort_each_hash` / `each_strongly_connected_component_hash` and the internal
   `tsort_each_node` pass their block on with `&b` (`Hash.each_key(@h, &b)`, as Ruby's
   `each_key(&block)`), instead of `{ |n| yield(n) }`.
+
+## 2026-10-05
+
+- `tsort_each` and `each_strongly_connected_component` without a block return an Array (Ruby's
+  Enumerator, as `to_a`), like the built-in blockless `each_cons` / `each_slice`; the test compares
+  them with Ruby's `.to_a`.
+- `TSortHashGraph`'s Hash is `private attr_reader h`: no `TSortHashGraph.h` reader outside.
+- Nothing else changed: the module has no keyword or rest parameters in Ruby, and no internal
+  state besides the includer. Still differs: `TSort::Cyclic` (no nested names) and the callable
+  module functions (`TSort.tsort(each_node, each_child)`).

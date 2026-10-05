@@ -24,13 +24,14 @@ type includes, as Ruby's `Digest::Instance`.
 | `md == "hexstring"` | | differs: false (a String is never equal to an MD5) |
 | `Digest::MD5.file(path)` | `MD5.file(path)` | same; a missing file raises `IOError`, not `Errno::ENOENT` |
 | `Digest.hexencode(s)` | `Digest.hexencode(s)` | same |
-| `md.file(path)` (instance) | | missing: the name is taken by `MD5.file(path)` |
+| `md.file(path)` (instance) | `MD5.file(md, path)` | same (2026-10-05; one name, as `hexdigest`) |
 | `md.digest(s)`, `md.hexdigest(s)`, `md.base64digest(s)` (reset, digest s, reset) | `MD5.digest(md, s)`, ... | same (phase 2) |
-| `md.dup`, `md.clone` | | missing |
+| `md.dup` | `dup(md)` | same (2026-10-05; the state Array is copied) |
+| `md.clone` | | missing |
 | `Digest::SHA2.new(bitlen)`, `Digest::RMD160`, `Digest(:MD5)` | | missing |
 
 Also visible, though Ruby has no such names: the functions each algorithm defines for the mixin
-(`state`, `store_state`, `initial_state`, `compress`, `word_bytes`, `little_endian?`, `words`,
+(`initial_state`, `compress`, `word_bytes`, `little_endian?`, `words`,
 `pack_words`, `name`), the mixin's `finish`, `finish_hex`, `compress_words`, `digest_of`, and the tables
 `MD5.k`, `MD5.shifts`, `SHA256.k`, `SHA512.k`. Sake has no private functions.
 
@@ -40,10 +41,8 @@ Also visible, though Ruby has no such names: the functions each algorithm define
   and `md.hexdigest(str = nil)`; in Sake both are `MD5.hexdigest(x, s = nil)`, one function that
   passes a fresh `MD5.new` to the mixin's `digest_of(fresh, x, s)`, which does `case x in String
   ... else` (x a digest). Another argument type is still rejected before running, by `finish(x)`.
-- **State as separate fields.** `MD5.new` takes no arguments only when every field has a literal
-  `default:`. An Array cannot be a default, so the chaining words are fields `h0`..`h7` (Integer)
-  and `pending` is a String, not an `Integer[]`. `state(md)` / `store_state(md, h)` convert to an
-  `Integer[]` for each update.
+- **State.** (Until 2026-10-05, fields `h0`..`h7`, since a default had to be a literal; now one
+  private field `h = initial_state`, see the 2026-10-05 section.) `pending` is a binary String.
 - **Tables are functions** computed once: `def k = once { Integer[...] }` (phase 2).
 - **Equality** is Struct equality (same type, same fields: same digest so far and same pending
   bytes). Ruby compares the hex digests, and also accepts a String.
@@ -163,3 +162,17 @@ Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matri
   for a class, so each class repeats the one line.
 - Fields `h0`..`h7` are `nil | Integer` in `--types`: `@h0, @h1, ... = h` destructures an
   `Integer[]` whose length is not known statically (same before the review).
+
+## 2026-10-05 (expression defaults, private fields, dup)
+
+- The state is one field again: `private attr_reader h = initial_state, pending = "", len = 0`.
+  The default is evaluated per `new` and calls the class's `initial_state` (SHA384's own words
+  through `class SHA384 < SHA512`), so `initialize`, the fields `h0`..`h7`, and the per-update
+  `state` / `store_state` copies are gone; `compress` updates `@h` in place. The fields have no
+  readers outside the class, as Ruby's digest state.
+- `dup(md)` (Ruby's `md.dup`): the mixin defines `dup` to copy the word Array, since the
+  built-in shallow `dup` would share it.
+- `MD5.file(md, path)` (Ruby's `md.file(path)`) next to `MD5.file(path)`.
+- `@len += n` in place of `@len = @len + n`.
+- Still differs: `md == "hex"`, `md.clone`, `Digest::SHA2`, `Digest::MD5` written `MD5`, and the
+  mixin's helpers (`compress`, `words`, `initial_state`, ...) are public functions.

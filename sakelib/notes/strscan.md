@@ -12,7 +12,7 @@ defined): Sake has no nested names.
 | Ruby | Sake | |
 |---|---|---|
 | `StringScanner.new(s)` | `StringScanner.new(s)` | same |
-| `StringScanner.new(s, fixed_anchor: true)` | — | missing (`StringScanner.new` is the constructor generated from the fields, which takes no keywords) |
+| `StringScanner.new(s, fixed_anchor: true)` | `StringScanner.new(s, fixed_anchor: true)` | same (2026-10-05: a keyword to `new`; `\A`, `^`, look-behind see the whole String) |
 | `ss.scan(re_or_str)` | `StringScanner.scan(ss, p)` | same |
 | `ss.scan_until(p)` | `StringScanner.scan_until(ss, p)` | same |
 | `ss.skip(p)` / `ss.skip_until(p)` | `StringScanner.skip(ss, p)` / `skip_until` | same (byte lengths) |
@@ -41,8 +41,8 @@ defined): Sake has no nested names.
 | `ss.pre_match` / `ss.post_match` | `StringScanner.pre_match(ss)` / `post_match` | same |
 | `ss[i]`, `ss["name"]`, `ss[:name]` | `ss[i]` or `StringScanner.[](ss, i)` | same (unknown name: `IndexError`, message prefixed by Sake for regexp matches) |
 | `ss.captures` / `ss.size` / `ss.named_captures` | `StringScanner.captures(ss)` / … | same |
-| `ss.values_at(*is)` | — | missing (a user function cannot take a rest parameter) |
-| `ss.fixed_anchor?` | `StringScanner.fixed_anchor?(ss)` | same (always false) |
+| `ss.values_at(*is)` | `StringScanner.values_at(ss, *is)` | same (2026-10-05) |
+| `ss.fixed_anchor?` | `StringScanner.fixed_anchor?(ss)` | same |
 | `ss.inspect` / `p(ss)` | `p(ss)` | same for ASCII; differs for non-ASCII (see below) |
 | `getbyte`, `peep`, `clear`, `empty?`, `restsize` (obsolete), `must_C_version` | — | missing (obsolete) |
 
@@ -148,3 +148,20 @@ defined): Sake has no nested names.
   raises NoMatchingPatternError) and resets the pointer, so the internal fields given to `new` by
   mistake cannot start the scanner elsewhere. `set_string` asserts `s => String` likewise.
 - `ScanError` is `class ScanError < Exception` (was `ScanError = Exception.new`).
+
+## 2026-10-05
+
+- `StringScanner.new(s, fixed_anchor: true)`: a field `fixed_anchor = false`, given by keyword as
+  Ruby's. With it every Regexp is matched in place (`\G`-wrapped for the anchored scans), so `\A`,
+  `^`, `\b`, look-behind see the String before the pointer; without it, the copy-of-the-rest path as
+  before. The `\G` table is keyed by `[inspect, fixed]`.
+- `values_at(ss, *is)` with a rest parameter.
+- Internal state is `private attr_reader` (`fixed_anchor`, `cpos`, `bpos`, `prev_*`, `mend`, `md`,
+  `mstr`): no `StringScanner.mstr` outside; `string` stays a reader (the duplicate `def string` is gone).
+  `@bpos += n` where it was `@bpos = @bpos + n`.
+- Tests: fixed_anchor (`\Ab` and `^b` fail at pointer 1, look-behind sees the `a`, `^c` after a
+  newline), `fixed_anchor: false`, `values_at` before a match, with negative/out-of-range indexes, and
+  with none.
+- Still not Ruby's: `pos=`/`string=` are `set_pos`/`set_string` (not fields); `StringScanner.new(1)`
+  raises `NoMatchingPatternError`, not `TypeError` (no class name of a value to build Ruby's message);
+  `get_byte`/`scan_byte` (byte pointer inside a character).

@@ -37,7 +37,7 @@ turns a String port into an Integer (`""` → the default), and sets the default
 | `URI::InvalidURIError` | `InvalidURIError` | differs: no nested names; same messages (`bad URI (is not URI?): "..."`, `URI must be ascii only "..."` with Ruby's `dump` form) |
 | `URI::BadURIError` | `BadURIError` | differs: name (`both URI are relative`) |
 | `u.scheme`, `userinfo`, `user`, `password`, `host`, `hostname`, `port`, `path`, `opaque`, `query`, `fragment` | `URI.scheme(u)` ... (also `URI.x(u)`) | same |
-| `u.host = v`, `port=`, `path=`, `query=`, `fragment=` | `URI.set_host(u, v)` ... | differs: no validation of the new value (Ruby checks it against the grammar); `port` must be an Integer |
+| `u.host = v`, `port=`, `path=`, `query=`, `fragment=` | `u.URI.host = v` / `URI.set_host(u, v)` ... (also `u.URI.query \|\|= v`) | differs: no validation of the new value (Ruby checks it against the grammar); `port` must be an Integer |
 | `u.scheme=`, `userinfo=`, `user=`, `password=`, `opaque=` | — | missing (reader fields) |
 | `u.to_s`, `"#{u}"`, `puts u` | `URI.to_s(u)`, `"#{u}"`, `puts(u)` | same (default port omitted) |
 | `u.inspect`, `p u` | `URI.inspect(u)`, `p(u)` | same |
@@ -45,7 +45,7 @@ turns a String port into an Integer (`""` → the default), and sets the default
 | `u.request_uri` | `URI.request_uri(u)` | differs: available for every scheme (Ruby: HTTP/HTTPS only) |
 | `u.default_port` | `URI.default_port(u)` | same |
 | `u.merge(ref)`, `u + ref` | `URI.merge(u, ref)`, `u + ref` | same; `ref` is a String or a URI |
-| `URI.join(base, ref, ...)` | `URI.join(base, ref, ...)` | same for one base and up to three references (optional parameters; Sake has no rest parameters); nest for more (`base` may be a URI) |
+| `URI.join(base, *refs)` | `URI.join(base, *refs)` | same (2026-10-05: a rest parameter; a splat `URI.join(b, *list)` is still rejected, see `uri_bug_splat_into_rest.sake`) |
 | `u.normalize` | `URI.normalize(u)` | same (host lower-cased, empty path → "/") |
 | `u == v` | `u == v` | differs: Sake compares the fields as they are; Ruby compares normalized forms (so `http://H` == `http://h/` in Ruby only) |
 | `u.dup` | `URI.dup(u)` | same |
@@ -79,7 +79,7 @@ private functions.
 - `String.dump(s)`: Ruby's error message for a non-ASCII URI uses it; `URI._dump` builds it as
   `inspect` plus a `gsub` block for non-ASCII characters (UTF-8 only).
 - `String.scrub(s)`: `decode_www_form` scrubs invalid bytes in Ruby; not done here.
-- Rest parameters (`def join(*refs)`), for Ruby's `URI.join(*str)`.
+- ~~Rest parameters (`def join(*refs)`)~~: added 2026-10-05.
 
 ## Friction
 
@@ -138,3 +138,17 @@ private functions.
   relative URI is no longer reported at `--strict`. Repro: `notes/uri_bug_initialize_conditional_write.sake`.
 - Remaining frictions: setters (`set_port`, `set_host`, ...) do not go through `initialize`'s conversions
   (Ruby's `port = "81"` converts); `URI(s)` cannot be a function; `URI.join` up to three references.
+
+## 2026-10-05
+
+- `URI.join(base, *refs)`: any number of references, as Ruby (`Array.reduce` over `merge`); was up to three.
+- `merge` and `normalize` write fields as `base.URI.path = ...`, `v.URI.host = ...`.
+- Tests: `URI.join` with seven references (the last a URI), and field writes `u.URI.port = 8080`,
+  `u.URI.query ||= "q=1"`, `u.URI.fragment = "top"` against Ruby's `u.port = 8080` ....
+- `u.URI.path += "/b"` is rightly rejected under `--strict` (`path` is nil for an opaque URI); Ruby
+  would raise at run time only then.
+- Bug: `URI.join(base, *list)` is a static error, "splat arguments go only to built-ins", with the hint
+  "takes a fixed number of arguments", untrue for a `*rest` function (`uri_bug_splat_into_rest.sake`).
+- `URI.new` keeps Ruby's 9 positional arguments (no defaults: Ruby's `Generic.new` requires them).
+- Still not Ruby's: `URI(s)`, setters do not validate or convert (`port = "81"`), `scheme=` /
+  `userinfo=` / `opaque=` missing (a user `set_x` cannot replace a field's writer), one type for all schemes.

@@ -189,3 +189,19 @@ show("parse block value", CSV.parse("h,i\n1,2\n") { |row| show("parse row", row)
 CSV.parse("h,i\n1,2\n", headers: true) { |row| show("parse h row", row) }
 puts "ArgumentError: reading"   # the Sake port reads only through read/foreach
 File.delete(iopath)
+
+puts "== 2026-10-05"
+fr = CSV.parse("a,b\n1,2", headers: true)[0]
+show("fetch default", fr.fetch("zz", "dflt"))
+show("fetch block", fr.fetch("zz") { |h| "no #{h}" })
+show("fetch found", fr.fetch("b", "dflt"))
+show("row values_at", fr.values_at("b", "a", "zz"))
+show("table values_at", t.values_at(1, 0))
+out = CSV.new($stdout, col_sep: ";", headers: "x,y", write_headers: true)
+out << [1, "a;b"]
+out << ["2", nil]
+show("new col_sep", out.col_sep)
+show("new row_sep", out.row_sep)
+show("new headers", out.headers)
+show("new lineno", out.lineno)
+show("new force_quotes?", out.force_quotes?)

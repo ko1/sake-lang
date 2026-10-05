@@ -66,3 +66,17 @@ p(list.size)
 Benchmark.bm { |x| 1 }
 Benchmark.bmbm { |x| 1 }
 print(Benchmark::Tms.new(1.0, 2.0, 0.0, 0.0, 3.0, "lab%u").format("%n\n"))
+
+# 2026-10-05: labels for the Tms values the block returns, as Ruby's bm(7, ">total:", ">avg:")
+list = Benchmark.benchmark("C\n", 5, "<%n>\n", ">total:", ">avg:") do |x|
+  tf = x.report("for:") { 1 }
+  tt = x.item("times:", "ignored") { 2 }
+  [tf + tt, (tf + tt) / 2]
+end
+p(list.size)
+list = Benchmark.benchmark("", 0, "%n.\n", "only") { |x| [Benchmark::Tms.new, 1, Benchmark::Tms.new(0.0, 0.0, 0.0, 0.0, 0.0, "own")] }
+p(list)
+Benchmark.bm(3, "a", "b") { |x| 1 }
+p(Benchmark::Tms.new(0.0, 0.0, 0.0, 0.0, 0.0, :sym).label)
+p(Benchmark::Tms.new(1.0, 0.0, 0.0, 0.0, 0.0, nil).label)
+print(a.format("%n %s %d\n", "x", 3))

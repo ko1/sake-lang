@@ -32,11 +32,12 @@ and compares the help text and the errors with Ruby's.
 | `op.program_name=` | `OptionParser.set_program_name(op, s)` | differs: the default is `"sake"`, not `$0` |
 | `op.version=`, `op.ver` | `OptionParser.set_version(op, v)`, `OptionParser.ver(op)` | same (`ver` is `"prog 1.2"`, or nil); no `release` |
 | `op.summary_width=`, `summary_indent=` | `set_summary_width`, `set_summary_indent` | same |
-| `op.on("-v", "--[no-]verbose", "desc") { \|v\| ... }` | `OptionParser.on(op, "-v", "--[no-]verbose", "desc")` | differs: no block. Up to four arguments, each sorted by content as Ruby does (`-x` short, `--xx` long, a type, else the description), so `on(op, "--dry-run", "Dry run")` and `on(op, "-q")` work (phase 2) |
+| `op.on("-v", "--[no-]verbose", "desc") { \|v\| ... }` | `OptionParser.on(op, "-v", "--[no-]verbose", "desc")` | differs: no block. `on(op, *args)`: any number of arguments, each sorted by content as Ruby does (`-x` short, `--xx` long, a type, else a description line) (2026-10-05) |
 | `op.on("-c", "--count N", Integer, "desc")` | `OptionParser.on(op, "-c", "--count N", :Integer, "desc")` | differs: the type is a Symbol (`:Integer`, `:Float`, `:String`) |
 | `op.on("-t", "--type T", ["a", "b"], "desc")` | `OptionParser.on(op, "-t", "--type T", Array["a", "b"], "desc")` | same (exact match, or a unique prefix) |
-| `op.on_tail(...)` | `OptionParser.on_tail(op, ...)` | same, without a block |
-| `op.on_head(...)` | — | missing |
+| `op.on_tail(...)`, `op.on_head(...)` | `OptionParser.on_tail(op, ...)`, `OptionParser.on_head(op, ...)` | same, without a block (`on_head` 2026-10-05) |
+| `OptionParser.new(banner, width, indent)` | `OptionParser.new(banner, width, indent)` | same |
+| several description strings in `on` | the same | same: one help line each (2026-10-05) |
 | `op.separator(s)` | `OptionParser.separator(op, s)` | same |
 | `op.help`, `op.to_s`, `puts op` | `OptionParser.help(op)`, `to_s`, `puts(op)` | same |
 | `op.parse(argv, into: h)` | `OptionParser.parse(op, argv, into: h)` | same |
@@ -44,7 +45,7 @@ and compares the help text and the errors with Ruby's.
 | `op.parse!(argv, into: h)` | `OptionParser.parse!(op, argv, into: h)` | same (argv keeps the rest) |
 | `op.order(argv, into: h)`, `order!` | `OptionParser.order(op, argv, into: h)`, `order!` | same (stops at the first non-option) |
 | `op.permute(argv, into: h)`, `permute!` | `OptionParser.permute(op, argv, into: h)`, `permute!` | same |
-| `op.getopts(argv, "ab:", "foo", "bar:")` | `OptionParser.getopts(op, argv, "ab:", String["foo", "bar:"])` | same (long options as an optional Array; no rest parameters). Stops at the first non-option, as Ruby (fixed in phase 2; phase 1 permuted) |
+| `op.getopts(argv, "ab:", "foo", "bar:")` | `OptionParser.getopts(op, argv, "ab:", "foo", "bar:")` | same (`*long_specs`, 2026-10-05). Stops at the first non-option, as Ruby |
 | `op.getopts("ab:")` (ARGV) | — | differs: argv is required here (it comes before the short spec) |
 | `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | one type `OptionParserError`, with `get_kind(e)` = `"InvalidOption"`, ... | differs: no hierarchy, so `rescue OptionParserError` stands for `rescue OptionParser::ParseError` |
 | `e.message`, `e.args`, `e.reason` | `Exception.message(e)`, `OptionParserError.args(e)`, `OptionParserError.reason(e)` | same text |
@@ -53,7 +54,7 @@ and compares the help text and the errors with Ruby's.
 | `ARGV` as the default argv | `parse(op)`, `parse!(op)`, ... | same, but `parse!(op)` cannot shorten ARGV: Sake's `ARGV` gives a new Array at each use ([optparse_bug_argv_copy.sake](optparse_bug_argv_copy.sake)). Write `args = ARGV; OptionParser.parse!(op, args)` |
 | `ARGV.options`, `ARGV.getopts` | — | missing |
 | acceptors `Numeric`, `DecimalInteger`, `OctalInteger`, `TrueClass`, `Array` (comma lists), `Regexp` patterns, `OptionParser#accept` | — | missing |
-| `op.environment`, `op.load`, completion scripts, `on_head` | — | missing |
+| `op.environment`, `op.load`, completion scripts | — | missing |
 
 ## Differences from Ruby, and why
 
@@ -66,7 +67,7 @@ and compares the help text and the errors with Ruby's.
   `OptionParser.parse(op, argv, in: h)` → `error: OptionParser.parse has no keyword parameter `in``,
   and the old positional form `parse(op, argv, h)` → `wrong number of arguments ... (given 3,
   expected 1..2)`.
-- **Up to four arguments.** Ruby's `on(*args)` sorts its arguments by their content (`-x`,
+- **Up to four arguments** (until 2026-10-05; now `on(op, *args)`). Ruby's `on(*args)` sorts its arguments by their content (`-x`,
   `--xx`, a class, an Array, a description). Sake has optional parameters but no rest parameters, so
   `on` takes up to four (`on(op, a, b = "", c = "", d = "")`) and sorts them the same way. One switch
   has one short and one long form.
@@ -155,3 +156,17 @@ optional, but a block still cannot be stored for `parse` to call later.
 - Still missing: `OptionParser.new { |o| ... }` (`new` takes no block); the exception hierarchy
   (`InvalidOption < ParseError`) is one type with a `kind`, built by `OptionParserError.make`
   because `message` is the first field and is computed from the others.
+
+## 2026-10-05
+
+- `on(op, *args)`, `on_tail(op, *args)`, and the new `on_head(op, *args)` take any number of
+  arguments, as Ruby's `on(*opts)`; every description string is kept and gets its own help line.
+- `getopts(op, argv, short, *long_specs)`, as Ruby (was an Array of long specs).
+- The switch list is `private attr_reader list = Array[]` (was `attr_reader list = nil` filled by
+  `initialize`, which is gone).
+- `summarize` is now Ruby's `Switch#summarize`: when `-s, --long ARG` does not fit the width, the
+  long form goes on a line of its own (`-k K,` / `--kind`). Found by a new test with
+  `OptionParser.new("Usage: ...", 10, "  ")`; the old code printed one overlong line.
+- Still not Ruby's: no blocks for `on`/`new`; the type is a Symbol (`:Integer`); `parse(op, argv)`
+  takes one Array, not `parse(*argv)`; one exception type with a `kind`.
+- No new bugs.

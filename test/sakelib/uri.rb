@@ -117,3 +117,12 @@ puts("-- separator: a keyword, as in Ruby")
 p(URI.decode_www_form("a=1;b=%20;;c;", separator: ";"))
 p(URI.decode_www_form("a=1&b=2", separator: ";"))
 p(URI.decode_www_form("k=%E6%97%A5|x=1", "ASCII-8BIT", separator: "|").map { |k, v| [k, v] })
+puts("-- 2026-10-05: join(base, *refs), field writes")
+p(URI.join("http://h/a/", "b/", "c/", "d/", "e/", "../f", URI.parse("?q#x")))
+p(URI.join("http://h/", "x/", "y", "#z"))
+u = URI.parse("http://example.com/a")
+u.port = 8080
+u.path = "/a/b"
+u.query ||= "q=1"
+u.fragment = "top"
+p(u)

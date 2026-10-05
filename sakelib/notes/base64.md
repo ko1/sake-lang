@@ -63,3 +63,7 @@ lenient and strict decoding of 22 malformed inputs, and UTF-8 text. Its output i
 ## Review 2026-10-05
 
 No change: `urlsafe_encode64(bin, padding: true)` is already Ruby's keyword; every function is one pack/unpack, as Ruby's. No class, no initialize, no type check Ruby does by hand. `--strict=1`/`2`: 0 reports before and after.
+
+## 2026-10-05
+
+Checked against the new features; nothing applies. Ruby's only keyword (`padding:`) was already a keyword; there is no type with state. No change to the library or the test.

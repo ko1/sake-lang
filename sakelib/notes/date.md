@@ -5,7 +5,7 @@
 
 ## Representation
 
-- `class Date` with `attr_reader year = -4712, month = 1, day = 1, jd = nil`: the civil date plus its Julian
+- `class Date` with `attr_reader year = -4712, month = 1, day = 1` and `private attr_reader start = DateCore.italy, jd = nil`: the civil date plus its Julian
   Day Number, which `initialize` computes (and checks) for every `Date.new`.
 - **Calendar: Ruby's default `Date::ITALY`.** Julian before 1582-10-15 and Gregorian from then on, as
   Ruby does, so `Date.civil(1582, 10, 4) + 1` is 1582-10-15, 1582-10-10 is invalid, and 1000-02-29
@@ -19,7 +19,7 @@
 
 | Ruby | Sake | |
 |---|---|---|
-| `Date.new(y = -4712, m = 1, d = 1)`, `Date.civil(...)` | same | same (since 2026-10-05: field defaults + `initialize`, which raises `DateError` for an invalid date). A fourth argument fills the `jd` field and is ignored, like Ruby's `start`. A non-Integer year/month/day is a `type` report at the call (`@year => Integer` in initialize); Ruby raises `TypeError` |
+| `Date.new(y = -4712, m = 1, d = 1)`, `Date.civil(...)` | same | same (since 2026-10-05: field defaults + `initialize`, which raises `DateError` for an invalid date). The fourth argument is Ruby's `start` (since the second 2026-10-05 change; only `Date.ITALY`, else `ArgumentError`). A non-Integer year/month/day is a `type` report at the call (`@year => Integer` in initialize); Ruby raises `TypeError` |
 | `Date.new(y, -1, -1)` (negative month/day) | same | same |
 | `Date.new`, `Date.new(y)`, `Date.new(y, m)` (defaults) | same | same |
 | `Date::Error` | `DateError` | differs: no nested names (`A::B`). In Ruby it is an `ArgumentError` subclass; Sake has no hierarchy, so `rescue ArgumentError` does not catch it. Message `invalid date`, same |
@@ -27,7 +27,7 @@
 | `Date.leap?(y)`, `Date.gregorian_leap?(y)`, `Date.julian_leap?(y)` | same | same |
 | `d.leap?` | `Date.leap?(d)` | same (one op takes an Integer or a Date, by `case/in`) |
 | `Date.jd(n)` / `d.jd` | `Date.jd(n)` / `Date.jd(d)` | same (one op, Integer → Date, Date → Integer); `Date.jd(d)` also works |
-| `Date.ordinal(y = -4712, yd = 1)`, `Date.commercial(y = -4712, w = 1, d = 1)` | same | same (negative yd/w/d count from the end; defaults since phase 2) |
+| `Date.ordinal(y = -4712, yd = 1, start)`, `Date.commercial(y = -4712, w = 1, d = 1, start)` | same | same (negative yd/w/d count from the end; defaults since phase 2; `start` must be `Date.ITALY`) |
 | `Date.today` | `Date.today` | same (from `Time.now`, local) |
 | `year month mon day mday wday yday mjd ajd ld start` | `Date.year(d)` ... | same |
 | `cwyear cweek cwday` | same | same (ISO 8601 week) |
@@ -38,19 +38,21 @@
 | `succ`, `next` | same | same |
 | `<=> < <= > >= == !=`, `Comparable`, `sort`/`min`/`max` | same | same; `<=>` takes Dates only (Ruby also compares with Numerics as ajd) |
 | `step(limit, by = 1) {}` | `Date.step(d, limit, by = 1) {}` | same, except `by == 0` raises `ArgumentError` (Ruby loops forever) |
-| `upto(max) {}`, `downto(min) {}` | same | same; without a block (Enumerator) missing |
+| `upto(max) {}`, `downto(min) {}` | same | same |
+| `step`, `upto`, `downto` without a block (Enumerator) | an Array of the Dates | same as the Enumerator's `to_a` (2026-10-05, as the built-in blockless `each_slice`) |
 | `to_s`, `inspect` | same | same (`#<Date: 2024-01-31 ((2460341j,0s,0n),+0s,2299161j)>`) |
 | `iso8601 xmlschema rfc3339 httpdate rfc2822` | same | same |
 | `jisx0301`, `rfc822`, `asctime`, `ctime` | — | missing (asctime is `strftime(d, "%c")`) |
 | `strftime(fmt = "%F")` | `Date.strftime(d, fmt = "%F")` | same for `Y C y m d e j H M S I l L N s Q u w U W V G g A a B b h p P z :z ::z Z n t % F D x T X R r c v +` with flags `- _ 0 ^ #` and width; `E`/`O` modifiers missing (output verbatim) |
 | `Date.parse(s = "-4712-01-01", comp = true)` | same | differs: only these forms: `Y-M-D` (anywhere, so ISO date-times), `Y/M/D`, `YYYYMMDD`, `D Mon [Y]`, `Mon D[,] [Y]` (with optional weekday, ordinal suffix, two-digit year: 69-99 → 19xx, else 20xx; no year → this year). Ruby's heuristic parser accepts far more (times, `M/D/Y`, era names, ...). `comp = false` keeps two-digit years as is (phase 2) |
-| `Date.parse(s, comp, limit: 128)` | `Date.parse(s, comp, limit: 128)` | same (`limit: nil` for none; `ArgumentError: string length (N) exceeds the limit L`). Ruby's `start` (third positional) is missing |
+| `Date.parse(s, comp, limit: 128)` | `Date.parse(s, comp, limit: 128)` | same (`limit: nil` for none; `ArgumentError: string length (N) exceeds the limit L`); `start` (third positional) since 2026-10-05, `Date.ITALY` only |
 | `Date._parse`, `Date._iso8601` (hashes) | — | missing |
 | `Date.iso8601(s)` | same | same for `YYYY-MM-DD`, `YYYYMMDD`, ordinal `YYYY-DDD` / `YYYYDDD`, week `YYYY-Www-D` / `YYYYWwwD`, an optional trailing `T...` |
-| `Date.strptime(s = "-4712-01-01", fmt = "%F")` | same | same for directives `Y y m d e j b B h a A u w F D x n t %`; missing year → this year, month/day → 1; text after the format is ignored, as Ruby. No `%G/%V/%U/%W` |
+| `Date.strptime(s = "-4712-01-01", fmt = "%F", start = Date::ITALY)` | `start = Date.ITALY` | same for directives `Y y m d e j b B h a A u w F D x n t %`; missing year → this year, month/day → 1; text after the format is ignored, as Ruby. No `%G/%V/%U/%W` |
 | `Date::MONTHNAMES`, `ABBR_MONTHNAMES`, `DAYNAMES`, `ABBR_DAYNAMES` | `Date.monthnames` ... | differs: functions (no value constants) whose Array is built once (`once`) and shared, as Ruby's constant; Ruby's is frozen, Sake's can be changed |
 | `to_date`, `to_time` | same | same (`to_time` uses `Time.new`, proleptic Gregorian, local time) |
-| `Date::ITALY`, `ENGLAND`, `new_start`, `italy`, `england`, `julian`, `gregorian` | — | missing (one fixed calendar) |
+| `Date::ITALY` | `Date.ITALY` | differs: a function (no value constants), as `Math.PI` |
+| `ENGLAND`, `JULIAN`, `GREGORIAN`, `new_start`, `italy`, `england`, `julian`, `gregorian` | — | missing (one fixed calendar; another `start` raises `ArgumentError`) |
 | `DateTime`, `Time#to_date` | — | missing (`Time#to_date` would be `Date.civil(Time.year(t), Time.month(t), Time.day(t))`) |
 | `hash`/`eql?`: Date as a Hash key | — | missing: see below |
 
@@ -142,3 +144,20 @@ Result: about 3% faster, at the edge of the spread: the per-directive `case` and
 - Remaining frictions: `DateError` for `Date::Error` (no nested names; no `ArgumentError` parent);
   Date as a Hash key; one operation for Ruby's class and instance methods of the same name
   (`Date.jd`, `leap?`, `iso8601`, by `case x in Integer`); the strptime cursor as a Tuple `[pos]`.
+
+## 2026-10-05 (keywords, private fields, blockless iteration)
+
+- `start` is a field again, as Ruby's fourth argument: `private attr_reader start = DateCore.italy, jd = nil`.
+  Before, a fourth argument silently filled `jd` (then overwritten by `initialize`). Now `Date.new`,
+  `civil`, `ordinal`, `commercial`, `parse`, `strptime` take `start` and check it is `Date.ITALY`
+  (another raises `ArgumentError`: `NotImplementedError` would not be rescuable, being a program
+  error); `Date.start(d)` returns it as a Float. Both fields are private, so there is no
+  `Date.set_jd`; `new` still takes them (`Date.new(y, m, d, jd: 5)` is accepted and ignored).
+- `jd = nil` stays a placeholder: a field default cannot read an earlier field (`jd =
+  DateCore.valid_civil_jd(year, month, day)` → `wrong number of arguments for Date.year`; `@year`
+  → "`@year` needs a first argument"), unlike a Ruby parameter default `def initialize(y, m, d, jd = f(y, m, d))`.
+  It also must not run before `initialize`'s `@year => Integer` check.
+- `step`, `upto`, `downto` without a block return an Array (Ruby: an Enumerator; the test compares `.to_a`).
+- Friction: `start = ITALY` as a default inside `class Date` → `type ITALY cannot be used as a value`
+  (an uppercase bare name is a constant, as in Ruby) → `start = Date.ITALY`.
+- No keyword constructor applies: Ruby's `Date.new` takes no keywords.

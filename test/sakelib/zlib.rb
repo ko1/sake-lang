@@ -30,7 +30,8 @@ p Zlib.crc32_combine(Zlib.crc32(a), Zlib.crc32(""), 0)
 p Zlib.adler32_combine(Zlib.adler32(a), Zlib.adler32(""), 0)
 
 p Zlib.crc_table.size
-p Zlib.crc_table.take(4)
+p Zlib.crc_table.first(4)
+p Zlib.crc_table.last(2)
 p Zlib.crc_table.last
 
 p Zlib.crc32

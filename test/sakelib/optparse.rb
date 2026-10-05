@@ -101,6 +101,18 @@ args = ["x", "--count", "2"]
 p(op.permute!(args, into: h3))
 puts(show(h3))
 
+# new(banner, width, indent) positionally, on_head, and on with more than four arguments
+small = OptionParser.new("Usage: small [opts]", 10, "  ")
+small.on("-a", "--all", "All")
+small.separator("More:")
+small.on_head("-f", "--first", "First, before the separator")
+small.on("-k", "--kind K", ["x", "y"], String, "Kind")
+small.on("-m", "--multi", "Line one", "line two")
+print(small.help)
+h4 = {}
+p(small.parse(["-f", "-k", "y", "z"], into: h4))
+puts(show(h4))
+
 # --help that was not declared: prints the help and exits 0 (abbreviated, as Ruby)
 begin
   plain.parse(["-a", "--he"])

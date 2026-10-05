@@ -5,7 +5,7 @@
 Integer, Float, true/false, and nil. The parser and generator are written in Sake. They follow the C
 extension's behavior, including its error messages (`unexpected character: 'x' at line 1 column 4`),
 its float format (`1e+20`, `0.00000015`), its nesting limits, and its acceptance of comments.
-`test/sakelib/json.sake` prints the same 109 lines as `json.rb`, including 42 malformed inputs with
+`test/sakelib/json.sake` prints the same 137 lines as `json.rb`, including 42 malformed inputs with
 their messages.
 
 Earlier work reused: the overall shape of `experiments/2026-10-03-libraries/json/lib.sake` (a parser
@@ -21,7 +21,7 @@ order of checks and messages.
 | `JSON.parse(s, {symbolize_names: true})` (opts Hash) | | missing (keywords only) |
 | `JSON.parse(s, object_class:, array_class:, decimal_class:, create_additions:, freeze:)` | | missing |
 | `JSON.parse(s, allow_control_characters:, allow_invalid_escape:, allow_duplicate_key:)` | | missing (easy to add) |
-| `JSON.parse!(s)` | | missing |
+| `JSON.parse!(s)` | `JSON.parse!(s)` | same (NaN allowed, no nesting limit; 2026-10-05) |
 | `JSON.generate(obj)` | `JSON.generate(obj)` | same |
 | `JSON.generate(obj, indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)` | `JSON.generate(obj, indent: ..., ...)` | same |
 | `JSON.generate(obj, opts)` (opts Hash or State) | | missing (keywords only) |
@@ -38,7 +38,7 @@ order of checks and messages.
 | `JSON::ParserError` | `JSONParserError` | differs (no nested names) |
 | `JSON::NestingError` | raised as `JSONParserError`, Ruby's message | differs (no subtype; Ruby's NestingError is a ParserError, so `rescue JSONParserError` catches it as in Ruby, also from `generate`) |
 | `JSON::GeneratorError` | `JSONGeneratorError` | differs (name) |
-| `JSON::ParserError#line`, `#column` | | missing (only in the message) |
+| `JSON::ParserError#line`, `#column` | `JSONParserError.line(e)`, `e.JSONParserError.column` | same (nil for a nesting error, as Ruby; 2026-10-05) |
 | `JSON::Fragment`, `JSON::Coder`, `json/add/*`, `to_json(state)` protocol | | missing |
 
 Generating takes nil, true, false, Integer, Float, String, Symbol (as a String), Array, Tuple (as an
@@ -173,3 +173,23 @@ callers narrow with `if v in Hash`. The test's config example does this.
 - Keywords passed on with the `k:` shorthand (`load_file`, `fast_generate`, `pretty_generate`).
 - Still unlike Ruby: no `**opts`, so `fast_generate`/`pretty_generate` repeat all keywords
   (json.sake:501, 507); `nil.to_json` / `true.to_json` have no namespace (json.sake:565-583).
+
+## 2026-10-05
+
+- Internal state is private: `JSONParserState` and `JSONGeneratorState` declare their fields with
+  `private attr_reader` / `private attr_accessor`, so no reader leaks outside. The parse driver
+  (`skip_ws`, `value`, the end-of-stream check), which `JSON.parse` wrote with
+  `JSONParserState.pos(ps)` / `len(ps)`, moved into `JSONParserState.parse(ps)`.
+- The states take their options by keyword, with Ruby's names and defaults on the fields:
+  `JSONParserState.new(s, symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:)`,
+  `JSONGeneratorState.new(indent:, space:, ...)`, as Ruby's `JSON::Parser.new(src, **opts)` /
+  `JSON::State.new(**opts)`.
+- New: `JSON.parse!(s)`, and `JSONParserError` has Ruby's `line` / `column` fields (nil for a nesting
+  error). The test checks both.
+- `Float::NAN` / `Float::INFINITY` replace `0.0 / 0.0` / `1.0 / 0.0` in the parser and the test.
+- Still not Ruby's API: `fast_generate` / `pretty_generate` / `load_file` / `parse!` still repeat the
+  keyword list. They could take `**opts`, but a Hash cannot be spread into a call (`g(v, **opts)` is
+  "`**` is not supported"), and reading options from the Hash would lose the static check of a
+  misspelled keyword. No `NestingError` subtype, `nil.to_json`, `JSON[...]`, or opts Hash argument.
+- Bug: a field default cannot read an earlier field, unlike a parameter default
+  (`json_bug_field_default_reads_earlier_field.sake`); `len` is still set in `initialize`.

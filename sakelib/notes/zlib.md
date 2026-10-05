@@ -93,3 +93,7 @@ Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matri
 ## Review 2026-10-05
 
 No change: `crc32(s = nil, crc = 0)` / `adler32` already take Ruby's optional arguments, `crc_table` is `once`. `s` is `nil | String` by Ruby's API (nil gives the initial value). `--strict=1`/`2`: 0 reports before and after.
+
+## 2026-10-05
+
+No library change: Zlib is a module of checksum functions with Ruby's optional arguments already; none of the new features (keywords to `new`, `*rest`/`**opts`, `private attr_*`, field defaults) applies. The test uses the new `Array.first(a, n)` / `Array.last(a, n)` (Ruby's `first(4)` / `last(2)`) in place of `Array.take`. Still not Ruby's: no compression; `gf2_times`/`gf2_square` are visible (no private functions).

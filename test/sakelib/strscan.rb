@@ -227,3 +227,21 @@ begin
 rescue ArgumentError => e
   puts("ArgumentError: #{e.message}")
 end
+
+# 2026-10-05: fixed_anchor: (a keyword to new, as in Ruby) and values_at(*is)
+ss = StringScanner.new("ab\ncd b", fixed_anchor: true)
+p(ss.fixed_anchor?)
+ss.skip(/a/)
+p(ss.scan(/\Ab/))
+p(ss.scan(/^b/))
+p(ss.scan(/(?<=a)b/))
+ss.skip(/\n/)
+p(ss.scan(/^c/))
+p(ss.scan(/\bd/))
+p(ss.check_until(/\bb/))
+p(StringScanner.new("x", fixed_anchor: false).fixed_anchor?)
+ss = StringScanner.new("Fri Dec 12 1975")
+p(ss.values_at(0))
+ss.scan(/(\w+) (\w+) (\d+)/)
+p(ss.values_at(0, -1, 5, 2))
+p(ss.values_at)

@@ -150,3 +150,13 @@ end
 t = Time.now
 today = Date.today
 show("today", today == Date.new(t.year, t.month, t.day) || Date.today != today)
+
+# start (Ruby's fourth argument; only Date::ITALY)
+show("start", [Date::ITALY, Date.new(2024, 1, 31, Date::ITALY).start, Date.civil(1582, 10, 15, Date::ITALY),
+               Date.parse("2024-02-03", true, Date::ITALY), Date.strptime("2024-02-03", "%F", Date::ITALY),
+               Date.ordinal(2024, 60, Date::ITALY), Date.commercial(2024, 1, 1, Date::ITALY)])
+# without a block: Ruby's Enumerator, as an Array
+show("blockless step", [Date.new(2024, 1, 1).step(Date.new(2024, 1, 10), 4).to_a,
+                        Date.new(2024, 2, 28).upto(Date.new(2024, 3, 1)).to_a,
+                        Date.new(2024, 3, 1).downto(Date.new(2024, 2, 28)).to_a,
+                        Date.new(2024, 3, 1).upto(Date.new(2024, 2, 28)).to_a])

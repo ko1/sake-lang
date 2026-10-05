@@ -71,3 +71,8 @@ h = {}
 (0...1000).each { |i| h[i] = [i + 1] }
 order = tsort_hash(h)
 p([order.size, order.first, order.last])
+
+# without a block: an Array (Ruby: an Enumerator, compared through to_a)
+p({1 => [2, 3], 2 => [3], 3 => []}.tsort_each.to_a)
+p(b.each_strongly_connected_component.to_a)
+p(b.tsort_each.to_a)

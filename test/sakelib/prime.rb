@@ -75,3 +75,9 @@ p Prime.first(5)
 p(Prime.each(30).to_a)
 p(Integer.each_prime(20).to_a)
 p(Prime.each(1).to_a)
+
+begin
+  Prime.prime?(1.5)
+rescue ArgumentError => e
+  puts("ArgumentError: #{e.message}")
+end

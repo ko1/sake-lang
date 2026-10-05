@@ -54,7 +54,7 @@ values in the program and pass them in the Hash.
 | Ruby | Sake | |
 |---|---|---|
 | `ERB.new(str)` | `ERB.new(str)` | same |
-| `ERB.new(str, trim_mode: "-")` (`">"`, `"<>"`) | `ERB.new(str, "-")` | differs: positional (Sake has no keyword arguments; the field has a default) |
+| `ERB.new(str, trim_mode: "-")` (`">"`, `"<>"`) | `ERB.new(str, trim_mode: "-")` | same (2026-10-05; was positional `ERB.new(str, "-")`, which still works) |
 | `erb.result_with_hash(hash)` | `ERB.result_with_hash(erb, hash)` | same for templates within the subset; keys are Symbols |
 | `erb.result(binding)`, `erb.run` | — | missing: no `binding` in Sake (by design) |
 | `erb.src` | `ERB.src(erb)` | differs: gives the template text (Ruby: the generated Ruby code) |
@@ -124,3 +124,13 @@ values in the program and pass them in the Hash.
 - Kept: compiling at render time (Ruby's `ERB.new` does not raise for a bad template either).
 - Still unlike Ruby: `ERB.new(str, trim_mode: "-")` is `ERB.new(str, "-")`: `new` is the Struct
   constructor and takes fields positionally, so it cannot take Ruby's keyword (erb.sake:29).  Helpers are `_`-prefixed for want of `private`.
+
+## 2026-10-05
+
+- `ERB.new(str, trim_mode: "-")`, as Ruby: `new` takes a field by keyword.
+- `template` and `trim_mode` are `private attr_reader` (Ruby's ERB has no such readers; `ERB.src`
+  stays the way to get the text).
+- `ERBNode`'s `vars`, `body`, `alt` default to `String[]` / `ERBNode[]` (evaluated per `new`), so
+  its `initialize` is gone; `ERBFrame.set_in_alt(f, true)` is `f.ERBFrame.in_alt = true`.
+- Still not Ruby's: the template subset, `ERB.src` (the text, not Ruby code), `ERBError`, and the
+  `_`-prefixed helpers are visible (no `private` for functions). No bugs found.

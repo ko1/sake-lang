@@ -33,24 +33,22 @@ end
 # Fields start as Ruby's OptionParser.new(banner = nil, width = 32, indent = " " * 4).
 class OptionParser
   attr_accessor banner = nil, summary_width = 32, summary_indent = "    ", program_name = "sake", version = nil
-  attr_reader list = nil
-
-  def initialize(op)
-    @list = Array[]
-  end
+  private attr_reader list = Array[]
 
   # Ruby's on("-v", "--[no-]verbose", Integer, "desc"): each argument is sorted by its content,
   # "-x" short, "--xx" long, a Symbol type (:Integer, :Float, :String) or an Array of allowed
   # Strings, and anything else the description.
-  def on(op, a, b = "", c = "", d = "") = declare(op, Array[a, b, c, d], false)
-  def on_tail(op, a, b = "", c = "", d = "") = declare(op, Array[a, b, c, d], true)
+  def on(op, *args) = declare(op, args, :body)
+  def on_head(op, *args) = declare(op, args, :head)
+  def on_tail(op, *args) = declare(op, args, :tail)
 
-  def declare(op, args, tail)
+  # at: :head (before everything declared so far), :body, or :tail (after everything, in the help)
+  def declare(op, args, at)
     short = ""
     long = ""
     conv = :String
     choices = String[]
-    desc = ""
+    desc = String[]
     Array.each(args) do |x|
       case x
       in String
@@ -58,8 +56,8 @@ class OptionParser
           long = x
         elsif String.start_with?(x, "-")
           short = x
-        elsif x != ""
-          desc = desc == "" ? x : desc
+        else
+          Array.push(desc, x)
         end
       in Symbol
         unless x == :String || x == :Integer || x == :Float
@@ -71,7 +69,7 @@ class OptionParser
         Array.each(x) { |c| Array.push(choices, c) }
       end
     end
-    add_switch(op, short, long, conv, choices, desc, tail)
+    add_switch(op, short, long, conv, choices, desc, at)
   end
 
   def separator(op, text)
@@ -79,7 +77,7 @@ class OptionParser
     op
   end
 
-  def add_switch(op, short, long, conv, choices, desc, tail)
+  def add_switch(op, short, long, conv, choices, desc, at)
     s = ""
     l = ""
     arg = ""
@@ -106,8 +104,12 @@ class OptionParser
     if arg != ""
       kind = String.include?(arg, "[") ? :optional : :required
     end
-    sw = OptionParserSwitch.new(s, l, arg, kind, neg, conv, choices, desc, tail)
-    Array.push(@list, sw)
+    sw = OptionParserSwitch.new(s, l, arg, kind, neg, conv, choices, desc, tail: at == :tail)
+    if at == :head
+      Array.unshift(@list, sw)
+    else
+      Array.push(@list, sw)
+    end
     op
   end
 
@@ -139,23 +141,43 @@ class OptionParser
     indent = @summary_indent
     s = OptionParserSwitch.short(sw)
     l = OptionParserSwitch.long(sw)
-    left = s != "" ? "-" + s : ""
+    arg = OptionParserSwitch.arg(sw)
+    left = String[s != "" ? "-" + s : ""]
+    right = Array.dup(OptionParserSwitch.desc(sw))
     if l != ""
-      ldisp = "--" + (OptionParserSwitch.negatable(sw) ? "[no-]" : "") + l
-      left = left == "" ? "    " + ldisp : left + ", " + ldisp
+      lopt = "--" + (OptionParserSwitch.negatable(sw) ? "[no-]" : "") + l
+      len = String.size(Array.fetch(left, -1)) + String.size(lopt)
+      len += String.size(arg) if Array.size(left) == 1
+      Array.push(left, "") unless len < width - 1 || s == ""
+      last = Array.fetch(left, -1)
+      left[-1] = last + (last == "" ? "    " : ", ") + lopt
     end
-    left += OptionParserSwitch.arg(sw)
-    desc = OptionParserSwitch.desc(sw)
-    if String.size(left) > width
-      out = indent + left + "\n"
-      out += indent + String.ljust("", width) + " " + desc + "\n" if desc != ""
-      out
-    elsif desc == ""
-      indent + left + "\n"
-    else
-      indent + String.ljust(left, width) + " " + desc + "\n"
+    if arg != ""
+      left[0] = Array.fetch(left, 0) + (Array.size(left) > 1 ? String.sub(arg, /\A(\[?)=/, "\\1") + "," : arg)
     end
+    out = ""
+    mlen = widest(left)
+    while mlen > width && !Array.empty?(left)
+      x = Array.fetch(left, 0)
+      Array.shift(left)
+      mlen = widest(left) if String.size(x) == mlen
+      if String.size(x) < width && !Array.empty?(right) && Array.fetch(right, 0) != ""
+        x = String.ljust(x, width) + " " + Array.fetch(right, 0)
+        Array.shift(right)
+      end
+      out += indent + x + "\n"
+    end
+    n = Tuple.max([Array.size(left), Array.size(right)])
+    Integer.times(n) do |i|
+      x = Array.fetch(left, i, "")
+      r = Array.fetch(right, i, "")
+      x = String.ljust(x, width) + " " + r if r != ""
+      out += indent + x + "\n"
+    end
+    out
   end
+
+  def widest(lines) = Array.reduce(lines, 0) { |m, x| Tuple.max([m, String.size(x)]) }
 
   def parse(op, argv = ARGV, into: Hash[]) = run(op, argv, into, false)
   def order(op, argv = ARGV, into: Hash[]) = run(op, argv, into, true)
@@ -189,7 +211,7 @@ class OptionParser
 
   # Ruby's getopts("ab:", "long", "name:"): a Hash from each option name (a String) to true/false
   # for a flag and a String or nil for an option with ":"; argv keeps the remaining arguments.
-  def getopts(op, argv, short_spec, long_specs = String[])
+  def getopts(op, argv, short_spec, *long_specs)
     g = OptionParser.new
     result = Hash[]
     chars = String.chars(short_spec)

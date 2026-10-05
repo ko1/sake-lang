@@ -9,15 +9,19 @@
 class ScanError < Exception              # Ruby: StringScanner::Error (alias ScanError)
 end
 
-# The last match: its text `mstr` (nil: none), MatchData `md` (nil for a String pattern), end `mend`.
+# StringScanner.new(s, fixed_anchor: true) as Ruby. The rest is internal: the pointer in characters and
+# bytes, and the last match: its text `mstr` (nil: none), MatchData `md` (nil for a String pattern), end `mend`.
 class StringScanner
-  attr_reader string, cpos = 0, bpos = 0, prev_cpos = 0, prev_bpos = 0, mend = 0, md = nil, mstr = nil
+  attr_reader string
+  private attr_reader fixed_anchor = false
+  private attr_reader cpos = 0, bpos = 0, prev_cpos = 0, prev_bpos = 0, mend = 0, md = nil, mstr = nil
   include Indexable
   include Bitwise                          # for <<
 
   # Ruby: StringScanner.new(str) raises TypeError for a non-String; the pointer starts at 0.
   def initialize(ss)
     @string => String
+    @fixed_anchor = !!@fixed_anchor
     reset(ss)
   end
 
@@ -42,7 +46,7 @@ class StringScanner
     consumed = b == @cpos ? mstr : String.[](@string, @cpos, e - @cpos) || ""
     if succptr
       @cpos = e
-      @bpos = @bpos + String.bytesize(consumed)
+      @bpos += String.bytesize(consumed)
     end
     consumed
   end
@@ -51,24 +55,25 @@ class StringScanner
   # starting at the pointer, as Ruby's does: it is matched on a copy of the rest.
   def sees_before?(src) = String.match?(src, /\\[AbBG]|(?<!\[)\^|\\\[\^|\(\?<[=!]/)
 
-  # inspect of a pattern => \G(?flags:source), or false: match on the rest instead.
+  # inspect of a pattern (and fixed_anchor) => \G(?flags:source), or false: match on the rest instead.
   def anchored_table = once { Hash[] }
 
-  def anchored(pattern)
+  # With fixed_anchor, \A and ^ see the whole String, so every pattern is matched in place.
+  def anchored(pattern, fixed)
     key = Kernel.inspect(pattern)
     table = anchored_table
-    found = table[key]
+    found = table[[key, fixed]]
     return found if found != nil
     src = Regexp.source(pattern)
     re = false
-    unless sees_before?(src)
+    if fixed || !sees_before?(src)
       flags = String.[](key, (String.rindex(key, "/") || 0) + 1..) || ""
       on = Array.join(Array.select(String["m", "i", "x"]) { |f| String.include?(flags, f) })
       off = Array.join(Array.reject(String["m", "i", "x"]) { |f| String.include?(flags, f) })
       nl = String.include?(flags, "x") ? "\n" : ""
       re = Regexp.new("\\G(?#{on}#{off == "" ? "" : "-" + off}:#{src}#{nl})")
     end
-    table[key] = re
+    table[[key, fixed]] = re
     re
   end
 
@@ -87,7 +92,7 @@ class StringScanner
       end
       e = b + String.length(pattern) if b
     in Regexp
-      re = anchored(pattern)
+      re = anchored(pattern, @fixed_anchor)
       if re in Regexp
         m = Regexp.match(headonly ? re : pattern, @string, @cpos)
         if m
@@ -212,8 +217,6 @@ class StringScanner
 
   # --- the String ---
 
-  def string(ss) = @string
-
   # Ruby: ss.string = s
   def set_string(ss, s)
     s => String
@@ -278,7 +281,12 @@ class StringScanner
     m ? MatchData.named_captures(m) : Hash[]
   end
 
-  def fixed_anchor?(ss) = false
+  def values_at(ss, *is)
+    return nil if @mstr == nil
+    Array.map(is) { |i| StringScanner.[](ss, i) }
+  end
+
+  def fixed_anchor?(ss) = @fixed_anchor
 
   # #<StringScanner 4/11 "test" @ " stri..."> (5 characters each side; Ruby counts bytes).
   def inspect(ss)

@@ -72,16 +72,16 @@ puts JSON.generate(nil)
 puts JSON.fast_generate([1, {"a" => "b"}])
 puts JSON.generate("plain")
 begin
-  JSON.generate([0.0 / 0.0])
+  JSON.generate([Float::NAN])
 rescue JSON::GeneratorError => e
   puts "GeneratorError: #{e.message}"
 end
 begin
-  JSON.generate({"x" => 1.0 / 0.0})
+  JSON.generate({"x" => Float::INFINITY})
 rescue JSON::GeneratorError => e
   puts "GeneratorError: #{e.message}"
 end
-puts JSON.generate([0.0 / 0.0, -1.0 / 0.0], allow_nan: true)
+puts JSON.generate([Float::NAN, -Float::INFINITY], allow_nan: true)
 begin
   JSON.generate([255.chr])
 rescue JSON::GeneratorError => e
@@ -104,7 +104,7 @@ puts JSON.pretty_generate(1)
 puts JSON.pretty_generate({"a" => 1, "b" => [2]}, indent: "\t", space_before: " ")
 
 # dump / load
-puts JSON.dump({"n" => 0.0 / 0.0})
+puts JSON.dump({"n" => Float::NAN})
 p JSON.load("[1, NaN]")
 p JSON.load(nil)
 p JSON.load("")
@@ -152,4 +152,15 @@ begin
   JSON.generate([[1]], max_nesting: 1)
 rescue JSON::NestingError => e
   puts "NestingError: #{e.message}"
+end
+
+# parse!: NaN allowed, no nesting limit
+p JSON.parse!("[NaN, -Infinity]")
+p JSON.parse!("[" * 200 + "]" * 200).size
+
+# ParserError#line / #column (nil for a nesting error)
+["[1,\n  x]", "{\"a\": 1 2}", "", "[[[1]]]"].each do |s|
+  JSON.parse(s, max_nesting: 2)
+rescue JSON::ParserError => e
+  p [e.line, e.column]
 end

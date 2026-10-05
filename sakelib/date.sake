@@ -9,8 +9,9 @@ class DateError < Exception
 end
 
 class Date
-  # Date.new(y = -4712, m = 1, d = 1) as Ruby; a fourth argument (Ruby's `start`) is ignored.
-  attr_reader year = -4712, month = 1, day = 1, jd = nil
+  # Date.new(y = -4712, m = 1, d = 1, start = Date.ITALY) as Ruby; jd is computed by initialize.
+  attr_reader year = -4712, month = 1, day = 1
+  private attr_reader start = DateCore.italy, jd = nil
   include Arithmetic
   include Comparable
   include Bitwise
@@ -20,6 +21,7 @@ class Date
     @year => Integer
     @month => Integer
     @day => Integer
+    DateCore.check_start(@start)
     jd = DateCore.valid_civil_jd(@year, @month, @day)
     raise DateError, "invalid date" if jd == nil
     @jd = jd
@@ -28,15 +30,20 @@ class Date
 
   # ---- constructors ----
 
-  def civil(y = -4712, m = 1, d = 1) = Date.new(y, m, d)
+  def civil(y = -4712, m = 1, d = 1, start = Date.ITALY) = Date.new(y, m, d, start)
 
-  def ordinal(y = -4712, yd = 1)
+  # Ruby's Date::ITALY (the only calendar reform supported).
+  def ITALY = DateCore.italy
+
+  def ordinal(y = -4712, yd = 1, start = Date.ITALY)
+    DateCore.check_start(start)
     jd = DateCore.valid_ordinal_jd(y, yd)
     raise DateError, "invalid date" if jd == nil
     jd(jd)
   end
 
-  def commercial(y = -4712, w = 1, wd = 1)
+  def commercial(y = -4712, w = 1, wd = 1, start = Date.ITALY)
+    DateCore.check_start(start)
     jd = DateCore.valid_commercial_jd(y, w, wd)
     raise DateError, "invalid date" if jd == nil
     jd(jd)
@@ -97,7 +104,7 @@ class Date
   def mjd(d) = @jd - 2400001
   def ajd(d) = Rational(@jd * 2 - 1, 2)
   def ld(d) = @jd - 2299160
-  def start(d) = 2299161.0
+  def start(d) = Float(@start)
   def cwyear(d) = DateCore.jd_to_commercial(@jd)[0]
   def cweek(d) = DateCore.jd_to_commercial(@jd)[1]
   def cwday(d)
@@ -146,7 +153,13 @@ class Date
 
   # ---- iteration ----
 
+  # Without a block, an Array of the Dates (Ruby: an Enumerator; its to_a).
   def step(d, limit, by = 1)
+    unless block_given?
+      out = Array[]
+      step(d, limit, by) { |x| Array.push(out, x) }
+      return out
+    end
     raise ArgumentError, "step can't be 0" if by == 0
     cur = d
     if by > 0
@@ -164,6 +177,7 @@ class Date
   end
 
   def upto(d, max)
+    return step(d, max, 1) unless block_given?
     cur = d
     while cur <= max
       yield(cur)
@@ -173,6 +187,7 @@ class Date
   end
 
   def downto(d, min)
+    return step(d, min, -1) unless block_given?
     cur = d
     while cur >= min
       yield(cur)
@@ -231,14 +246,16 @@ class Date
   # ---- parsing ----
 
   # comp: a two-digit year becomes 19xx/20xx, as Ruby. limit: nil for no limit.
-  def parse(s = "-4712-01-01", comp = true, limit: 128)
+  def parse(s = "-4712-01-01", comp = true, start = Date.ITALY, limit: 128)
+    DateCore.check_start(start)
     if limit && String.length(s) > limit
       raise ArgumentError, "string length (#{String.length(s)}) exceeds the limit #{limit}"
     end
     DateCore.parse(s, comp)
   end
 
-  def strptime(s = "-4712-01-01", fmt = "%F")
+  def strptime(s = "-4712-01-01", fmt = "%F", start = Date.ITALY)
+    DateCore.check_start(start)
     st = DateCore.scan_format(s, fmt, [0], Hash[])
     raise DateError, "invalid date" if st == nil
     DateCore.from_fields(st)
@@ -250,6 +267,12 @@ module DateCore
   module_function
 
   def italy = 2299161
+
+  # Only Ruby's default calendar (Date::ITALY) is implemented.
+  def check_start(start)
+    return if start == italy
+    raise ArgumentError, "only Date::ITALY is supported as start, not #{Kernel.inspect(start)}"
+  end
 
   def month_names = once { String["January", "February", "March", "April", "May", "June", "July",
                                   "August", "September", "October", "November", "December"] }

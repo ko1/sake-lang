@@ -49,3 +49,7 @@ join-then-split round trips. Its output is identical to `shellwords.rb`.
 ## Review 2026-10-05
 
 No change: module functions only, as Ruby's. `shellescape(x)` takes any value (Ruby's `str.to_s`), so its parameter is a union of whatever callers pass (Integer | String | Symbol in the test). `--strict=1`/`2`: 0 reports before and after.
+
+## 2026-10-05
+
+Checked against the new features; nothing applies (module functions only, no keywords or rest arguments in Ruby's API). No change to the library or the test.

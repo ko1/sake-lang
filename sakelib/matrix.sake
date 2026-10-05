@@ -1,6 +1,7 @@
 # matrix: Ruby's Matrix and Vector (matrix-0.4.3) in Sake.
 # Algorithms (determinant, inverse, rank, **) are ported line by line, so Float results match Ruby's.
 # `Matrix[[1, 2], [3, 4]]` means "an Array of Matrix" in Sake: build with Matrix.rows(...) instead.
+# The rows are private (Ruby's protected `rows`): other matrices are read with to_a or at.
 
 class ErrDimensionMismatch < StandardError
 end
@@ -12,7 +13,8 @@ class ZeroVectorError < StandardError
 end
 
 class Matrix
-  attr_reader row_array, column_count
+  private attr_reader row_array             # Ruby's protected `rows`
+  attr_reader column_count
   include Arithmetic
   include Indexable
 
@@ -35,7 +37,9 @@ class Matrix
     raise ArgumentError if row_count < 0 || column_count < 0
     Matrix.new(Array.new(row_count) { |i| Array.new(column_count) { |j| yield(i, j) } }, column_count)
   end
-  def diagonal(values)
+  def diagonal(*values) = Matrix.diagonal_of(values)
+  # `diagonal(*a)` cannot be written: splats go to built-ins only (notes/matrix_bug_splat_into_rest.sake).
+  def diagonal_of(values)
     size = Array.size(values)
     return Matrix.empty(0, 0) if size == 0
     rs = Array.new(size) do |j|
@@ -45,7 +49,7 @@ class Matrix
     end
     Matrix.new(rs, size)
   end
-  def scalar(n, value) = Matrix.diagonal(Array.new(n, value))
+  def scalar(n, value) = Matrix.diagonal_of(Array.new(n, value))
   def identity(n) = Matrix.scalar(n, 1)
   def unit(n) = Matrix.identity(n)
   def zero(row_count, column_count = row_count)
@@ -58,15 +62,24 @@ class Matrix
     raise ArgumentError, "Negative size" if column_count < 0 || row_count < 0
     Matrix.new(Array.new(row_count) { Array[] }, column_count)
   end
-  def vstack(x, y)
-    raise ErrDimensionMismatch, "The given matrices must have #{Matrix.column_count(x)} columns, but one has #{Matrix.column_count(y)}" if Matrix.column_count(x) != Matrix.column_count(y)
-    Matrix.new(Matrix.to_a(x) + Matrix.to_a(y), Matrix.column_count(x))
+  def vstack(x, *matrices)
+    result = Matrix.to_a(x)
+    Array.each(matrices) do |m|
+      raise ErrDimensionMismatch, "The given matrices must have #{Matrix.column_count(x)} columns, but one has #{Matrix.column_count(m)}" if Matrix.column_count(m) != Matrix.column_count(x)
+      Array.concat(result, Matrix.to_a(m))
+    end
+    Matrix.new(result, Matrix.column_count(x))
   end
-  def hstack(x, y)
-    raise ErrDimensionMismatch, "The given matrices must have #{Matrix.row_count(x)} rows, but one has #{Matrix.row_count(y)}" if Matrix.row_count(x) != Matrix.row_count(y)
-    yr = Matrix.row_array(y)
-    rs = Array.new(Matrix.row_count(x)) { |i| Array.fetch(Matrix.row_array(x), i) + Array.fetch(yr, i) }
-    Matrix.new(rs, Matrix.column_count(x) + Matrix.column_count(y))
+  def hstack(x, *matrices)
+    result = Matrix.to_a(x)
+    total_column_count = Matrix.column_count(x)
+    Array.each(matrices) do |m|
+      raise ErrDimensionMismatch, "The given matrices must have #{Matrix.row_count(x)} rows, but one has #{Matrix.row_count(m)}" if Matrix.row_count(m) != Matrix.row_count(x)
+      mr = Matrix.to_a(m)
+      Array.each_with_index(result) { |row, i| Array.concat(row, Array.fetch(mr, i)) }
+      total_column_count += Matrix.column_count(m)
+    end
+    Matrix.new(result, total_column_count)
   end
 
   # An Array, or a Vector's elements (Ruby's convert_to_array).
@@ -263,10 +276,10 @@ class Matrix
       Matrix.new(Array.map(@row_array) { |row| Array.map(row) { |e| e * x } }, @column_count)
     in Vector
       r = m * Matrix.column_vector(x)
-      Vector.new(Array.map(Matrix.row_array(r)) { |row| Array.fetch(row, 0) })
+      Vector.new(Array.map(Matrix.to_a(r)) { |row| Array.fetch(row, 0) })
     in Matrix
       raise ErrDimensionMismatch, "Dimension mismatch" if @column_count != Matrix.row_count(x)
-      m_rows = Matrix.row_array(x)
+      m_rows = Matrix.to_a(x)
       xc = Matrix.column_count(x)
       new_rows = Array.map(@row_array) do |row_i|
         Array.new(xc) do |j|
@@ -460,7 +473,7 @@ class Matrix
     n = Matrix.row_count(m)
     last = n - 1
     a = Matrix.to_a(m)
-    res = Matrix.row_array(Matrix.identity(n))
+    res = Matrix.to_a(Matrix.identity(n))
     Integer.upto(0, last) do |k|
       i = k
       akk = Matrix.abs(Array.fetch(Array.fetch(a, k), k))
@@ -507,18 +520,10 @@ class Matrix
   def round(m, ndigits = 0)
     Matrix.collect(m) do |e|
       case e
-      in Integer then Integer.round(e, ndigits)
-      in Float then ndigits > 0 ? Float.round(e, ndigits) : Float.to_i(Float.round(e, ndigits))  # notes/matrix_bug_float_round_digits.sake
-      in Rational then Matrix.round_rational(e, ndigits)
+      in Integer | Float | Rational then Arithmetic.round(e, ndigits)
       in Complex then raise ArgumentError, "Complex can't be rounded"
       end
     end
-  end
-  # Rational#round(n): Sake's Rational.round takes no digits.
-  def round_rational(r, ndigits)
-    return Rational.round(r) if ndigits == 0
-    s = 10r ** ndigits
-    Rational.round(r * s) / s
   end
 
   # --- conversion ---
@@ -535,7 +540,7 @@ class Matrix
 end
 
 class Vector
-  attr_reader elems
+  private attr_reader elems
   include Arithmetic
   include Indexable
 
@@ -570,16 +575,14 @@ class Vector
   end
   def each2(v, w)
     raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
-    ws = Vector.elems(w)
-    Array.each_with_index(@elems) { |e, i| yield(e, Array.fetch(ws, i)) }
+    Array.each_with_index(@elems) { |e, i| yield(e, Vector.at(w, i)) }
     v
   end
   def collect(v) = Vector.new(Array.map(@elems) { |e| yield(e) })
   def map(v, &b) = Vector.collect(v, &b)
   def collect2(v, w)
     raise ErrDimensionMismatch, "Dimension mismatch" if Vector.size(v) != Vector.size(w)
-    ws = Vector.elems(w)
-    Array.new(Array.size(@elems)) { |i| yield(Array.fetch(@elems, i), Array.fetch(ws, i)) }
+    Array.new(Array.size(@elems)) { |i| yield(Array.fetch(@elems, i), Vector.at(w, i)) }
   end
   def map2(v, w, &b) = Vector.new(Vector.collect2(v, w, &b))
 
@@ -631,15 +634,24 @@ class Vector
     end
   end
 
-  # Ruby's cross_product(*vs) takes size - 2 vectors; here the 3-dimensional form only.
-  def cross_product(v, w)
-    raise ErrOperationNotDefined, "cross product is not defined on vectors of dimension #{Vector.size(v)}" unless Vector.size(v) == 3
-    raise ErrDimensionMismatch, "Dimension mismatch" unless Vector.size(w) == 3
-    a0, a1, a2 = Array.fetch(@elems, 0), Array.fetch(@elems, 1), Array.fetch(@elems, 2)
-    b0, b1, b2 = Vector.at(w, 0), Vector.at(w, 1), Vector.at(w, 2)
-    Vector.new(Array[b2 * a1 - b1 * a2, b0 * a2 - b2 * a0, b1 * a0 - b0 * a1])
+  # size - 2 vectors, as Ruby's; above 3 dimensions (Ruby's laplace_expansion) is not ported.
+  def cross_product(v, *vs) = Vector.cross_of(v, vs)
+  def cross(v, *vs) = Vector.cross_of(v, vs)
+  def cross_of(v, vs)
+    size = Vector.size(v)
+    raise ErrOperationNotDefined, "cross product is not defined on vectors of dimension #{size}" unless size >= 2
+    raise ArgumentError, "wrong number of arguments (#{Array.size(vs)} for #{size - 2})" unless Array.size(vs) == size - 2
+    Array.each(vs) { |w| raise ErrDimensionMismatch, "Dimension mismatch" unless Vector.size(w) == size }
+    case size
+    in 2 then Vector.new(Array[-Array.fetch(@elems, 1), Array.fetch(@elems, 0)])
+    in 3
+      w = Array.fetch(vs, 0)
+      a0, a1, a2 = Array.fetch(@elems, 0), Array.fetch(@elems, 1), Array.fetch(@elems, 2)
+      b0, b1, b2 = Vector.at(w, 0), Vector.at(w, 1), Vector.at(w, 2)
+      Vector.new(Array[b2 * a1 - b1 * a2, b0 * a2 - b2 * a0, b1 * a0 - b0 * a1])
+    else raise NotImplementedError, "cross product of dimension #{size} is not ported"
+    end
   end
-  def cross(v, w) = Vector.cross_product(v, w)
   def at(v, i) = Array.fetch(@elems, i)
 
   def magnitude(v) = Math.sqrt(Array.inject(@elems, 0) { |s, e| s + Vector.abs2(e) })
@@ -665,7 +677,7 @@ class Vector
     in Complex then raise ArgumentError, "angle_with needs real vectors"
     in Integer | Float | Rational
       if Matrix.abs(dot) >= prod
-        dot > 0 ? 0 : Math.atan(1) * 4
+        dot > 0 ? 0 : Math::PI
       else
         Vector.acos(dot / prod)
       end
@@ -674,7 +686,7 @@ class Vector
   # Math.acos is not a Sake built-in; atan2 gives it within an ulp or so.
   def acos(x) = Math.atan2(Math.sqrt(1 - x * x), x)
 
-  def round(v, ndigits = 0) = Vector.new(Matrix.row_array(Matrix.round(Matrix.column_vector(v), ndigits)).Array.map { |r| Array.fetch(r, 0) })
+  def round(v, ndigits = 0) = Vector.new(Array.map(Matrix.to_a(Matrix.round(Matrix.column_vector(v), ndigits))) { |r| Array.fetch(r, 0) })
   def covector(v) = Matrix.row_vector(v)
   def to_matrix(v) = Matrix.column_vector(v)
   def to_s(v) = "Vector[" + Array.join(@elems, ", ") + "]"

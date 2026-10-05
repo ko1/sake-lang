@@ -132,3 +132,14 @@ nlines = File.readlines(newpath)
 p(nlines.fetch(0)[0, 20])
 print(nlines.fetch(1))
 File.delete(newpath)
+
+# Ruby's keyword arguments to new
+kw = Logger.new($stdout, level: :warn, progname: "kw", datetime_format: "%H:%M")
+p(kw.level)
+kw.info("hidden")
+kw.warn("keywords")
+kw.progname = "#{kw.progname}!"
+kw.error("progname +=")
+fmt = Logger.new($stdout, formatter: proc { |sev, time, prog, msg| "#{sev}: #{msg}\n" })
+fmt.info("formatter keyword")
+p(Logger.new(nil, 0, 1048576, level: "error").level)

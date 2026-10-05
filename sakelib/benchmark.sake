@@ -6,6 +6,9 @@ class BenchmarkTms
   attr_reader utime = 0.0, stime = 0.0, cutime = 0.0, cstime = 0.0, real = 0.0, label = ""
   include Arithmetic
 
+  # As Ruby's label.to_s: any label (nil, a Symbol) becomes a String.
+  def initialize(t) = @label = "#{@label}"
+
   def total(t) = @utime + @stime + @cutime + @cstime
 
   def +(a, b) = memberwise(a, :+, b)
@@ -22,23 +25,23 @@ class BenchmarkTms
     end
   end
 
-  # Ruby's memberwise: the result has an empty label.
+  # Ruby's memberwise: the result has no label.
   def memberwise(t, op, x)
     case x
     in BenchmarkTms
-      BenchmarkTms.new(apply(op, @utime, BenchmarkTms.utime(x)), apply(op, @stime, BenchmarkTms.stime(x)),
-                       apply(op, @cutime, BenchmarkTms.cutime(x)), apply(op, @cstime, BenchmarkTms.cstime(x)),
-                       apply(op, @real, BenchmarkTms.real(x)), "")
+      BenchmarkTms.new(apply(op, @utime, x.BenchmarkTms.utime), apply(op, @stime, x.BenchmarkTms.stime),
+                       apply(op, @cutime, x.BenchmarkTms.cutime), apply(op, @cstime, x.BenchmarkTms.cstime),
+                       apply(op, @real, x.BenchmarkTms.real))
     in Integer | Float
       BenchmarkTms.new(apply(op, @utime, x), apply(op, @stime, x), apply(op, @cutime, x), apply(op, @cstime, x),
-                       apply(op, @real, x), "")
+                       apply(op, @real, x))
     end
   end
 
   # Ruby's Tms#format: %u %y %U %Y %t %r (the real time in parentheses) %n (the label), each with
   # optional flags such as %10.6u, replaced one directive after another as Ruby's gsub! calls do.
   # With a format given, the result goes through `str % args` (%% becomes %, a stray % raises).
-  def format(t, fmt = nil)
+  def format(t, fmt = nil, *args)
     str = fmt == nil ? Benchmark.FORMAT : fmt
     str = String.gsub(str, /%[-+.\d]*n/) { |m| Kernel.format(String.chop(m) + "s", @label) }
     str = String.gsub(str, /%[-+.\d]*u/) { |m| Kernel.format(String.chop(m) + "f", @utime) }
@@ -47,7 +50,7 @@ class BenchmarkTms
     str = String.gsub(str, /%[-+.\d]*Y/) { |m| Kernel.format(String.chop(m) + "f", @cstime) }
     str = String.gsub(str, /%[-+.\d]*t/) { |m| Kernel.format(String.chop(m) + "f", BenchmarkTms.total(t)) }
     str = String.gsub(str, /%[-+.\d]*r/) { |m| "(" + Kernel.format(String.chop(m) + "f", @real) + ")" }
-    fmt == nil ? str : Kernel.format(str)
+    fmt == nil ? str : Kernel.format(str, *args)
   end
 
   def to_s(t) = BenchmarkTms.format(t)
@@ -59,11 +62,11 @@ class BenchmarkTms
 
   def add!(t, &b)
     m = Benchmark.measure(&b)
-    @utime += BenchmarkTms.utime(m)
-    @stime += BenchmarkTms.stime(m)
-    @cutime += BenchmarkTms.cutime(m)
-    @cstime += BenchmarkTms.cstime(m)
-    @real += BenchmarkTms.real(m)
+    @utime += m.BenchmarkTms.utime
+    @stime += m.BenchmarkTms.stime
+    @cutime += m.BenchmarkTms.cutime
+    @cstime += m.BenchmarkTms.cstime
+    @real += m.BenchmarkTms.real
     t
   end
 end
@@ -71,11 +74,11 @@ end
 # Ruby's Benchmark::Report and Benchmark::Job in one: `report` measures and records, as Ruby's
 # report; in bmbm, the block given to bmbm runs once per mode (:collect, :rehearsal, :real).
 class BenchmarkReport
-  attr_reader width = 0, format = nil, mode = :report, list = nil
-  # As Ruby's Report#initialize: the list starts empty.
-  def initialize(r) = @list = BenchmarkTms[]
+  attr_reader width = 0, format = nil, list = BenchmarkTms[]
+  private attr_reader mode = :report
 
-  def report(r, label = "", &b)
+  # Ruby ignores the format arguments too.
+  def report(r, label = "", *format, &b)
     w = String.length(label)
     @width = w if @width < w
     return BenchmarkTms.new if @mode == :collect
@@ -86,7 +89,7 @@ class BenchmarkReport
     t
   end
 
-  def item(r, label = "", &b) = report(r, label, &b)
+  def item(r, label = "", *format, &b) = report(r, label, &b)
 end
 
 module Benchmark
@@ -114,36 +117,51 @@ module Benchmark
     BenchmarkTms.new(0.0, 0.0, 0.0, 0.0, Time.now - t0, label)
   end
 
-  # Prints after the block returns, as Ruby does: caption, then each report's line.
-  def benchmark(caption = "", label_width = 0, format = Benchmark.FORMAT)
+  # Prints after the block returns, as Ruby does: caption, then each report's line. When the block
+  # returns an Array, its Tms values are printed too, labeled from `labels` (Ruby's ">total:" lines).
+  def benchmark(caption = "", label_width = 0, format = Benchmark.FORMAT, *labels, &b) =
+    benchmark_labels(caption, label_width, format, labels, &b)
+
+  # benchmark with the labels as an Array: `bm` cannot pass its *labels on with a splat
+  # (notes/benchmark_bug_splat_to_rest.sake).
+  def benchmark_labels(caption, label_width, format, labels)
     r = BenchmarkReport.new(label_width + 1, format)
-    yield(r)
-    print(" " * BenchmarkReport.width(r) + caption) unless String.empty?(caption)
-    list = BenchmarkReport.list(r)
+    results = yield(r)
+    print(" " * r.BenchmarkReport.width + caption) unless String.empty?(caption)
+    list = r.BenchmarkReport.list
     Array.each(list) do |t|
-      print(String.ljust(BenchmarkTms.label(t), BenchmarkReport.width(r)))
+      print(String.ljust(t.BenchmarkTms.label, r.BenchmarkReport.width))
       print(BenchmarkTms.format(t, format))
+    end
+    # Ruby's `Array === results`; `[a, b]` is a Tuple in Sake.
+    results = Tuple.to_a(results) if results in Tuple
+    if results in Array
+      Array.each(results) do |t|
+        if t in BenchmarkTms
+          print(String.ljust(Array.shift(labels) || t.BenchmarkTms.label, label_width + 1), BenchmarkTms.format(t, format))
+        end
+      end
     end
     list
   end
 
-  def bm(label_width = 0, &b) = benchmark(Benchmark.CAPTION, label_width, Benchmark.FORMAT, &b)
+  def bm(label_width = 0, *labels, &b) = benchmark_labels(Benchmark.CAPTION, label_width, Benchmark.FORMAT, labels, &b)
 
   # Ruby's bmbm stores the blocks and runs each twice; Sake cannot store blocks, so the block given
   # to bmbm runs three times: to collect the labels, for the rehearsal, and for the real run.
   def bmbm(width = 0)
-    r = BenchmarkReport.new(width, Benchmark.FORMAT, :collect)
+    r = BenchmarkReport.new(width, Benchmark.FORMAT, mode: :collect)
     yield(r)
     w = BenchmarkReport.width(r) + 1
     cap = Benchmark.CAPTION
     puts(String.ljust("Rehearsal ", w + String.length(cap), "-"))
-    reh = BenchmarkReport.new(w, Benchmark.FORMAT, :rehearsal)
+    reh = BenchmarkReport.new(w, Benchmark.FORMAT, mode: :rehearsal)
     yield(reh)
     sum = Array.inject(BenchmarkReport.list(reh), BenchmarkTms.new) { |acc, t| acc + t }
     ets = BenchmarkTms.format(sum, "total: %tsec")
     print(String.rjust(" #{ets}\n\n", w + String.length(cap) + 2, "-"))
     print(" " * w + cap)
-    real = BenchmarkReport.new(w, Benchmark.FORMAT, :real)
+    real = BenchmarkReport.new(w, Benchmark.FORMAT, mode: :real)
     yield(real)
     BenchmarkReport.list(real)
   end

@@ -278,3 +278,16 @@ p(rs)
 p(ob.each.to_a)
 p(ob.each(:diagonal).to_a)
 p(Vector[1, 2].each.to_a)
+
+# 2026-10-05: rest parameters (diagonal, vstack, hstack, cross_product) and round with digits
+show("vstack3", Matrix.vstack(a, b, Matrix.row_vector([9, 9])))
+show("hstack3", Matrix.hstack(a, b, Matrix.column_vector([0, 0])))
+show("vstack1", Matrix.vstack(a))
+try("vstack bad") { Matrix.vstack(a, b, rect) }
+try("hstack bad") { Matrix.hstack(a, Matrix.identity(3)) }
+show("diagonal()", Matrix.diagonal())
+show("cross 2d", Vector[1, 2].cross_product)
+try("cross args") { Vector[1, 2, 3].cross_product }
+try("cross 1d") { Vector[1].cross_product }
+show("round -1", Matrix[[15, 1234.5], [1/3r, 25r]].round(-1))
+show("round 2", Matrix[[15, 1234.5678], [1/3r, 2.5]].round(2))

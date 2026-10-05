@@ -45,3 +45,7 @@ None: the first draft ran under `--strict` and matched Ruby's output. `seen[abbr
 ## Review 2026-10-05
 
 No change: `abbrev(words, pattern = nil)` is Ruby's signature. `pattern` is `nil | Regexp | String` by Ruby's API, taken apart with `case`/`in` (`abbrev.sake:35`). `--strict=1`/`2`: 0 reports before and after.
+
+## 2026-10-05
+
+Checked against the new features; nothing applies. `abbrev(words, pattern = nil)` is Ruby's signature, there is no type with state, and no `*rest`/keywords in Ruby's API. No change to the library or the test.

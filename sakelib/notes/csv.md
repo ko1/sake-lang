@@ -46,17 +46,20 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | `CSV.generate_lines(rows, **opts)` | `CSV.generate_lines(rows, **opts)` | same |
 | `CSV.open(path, "w"/"a", **opts) { \|csv\| }` | `CSV.open(path, mode, **opts) { }` | same (phase 3): rows go to the file's IO as they are added; the file is closed after the block, whose value is returned |
 | `csv = CSV.open(path, "w")`, `csv.close` | `c = CSV.open(path, "w")`, `CSV.close(c)` | same (phase 3) |
-| `CSV.open(path, "r")`, `CSV.new(io)`, `#shift`, `#gets`, `#each` | — | missing: `CSV.open` with a read mode raises ArgumentError; read with `CSV.read`/`foreach`/`parse` |
+| `CSV.new(io, **opts)` for writing, `csv << row` | `CSV.new(io, col_sep: ";", headers: ..., write_headers: true)` | same (2026-10-05): `io` an IO or nil (collects lines, as `generate`) |
+| `csv.col_sep`, `row_sep`, `quote_char`, `headers`, `path`, `force_quotes?`, `quote_empty?`, `to_io` | `CSV.col_sep(c)` ... | same (2026-10-05) |
+| `CSV.open(path, "r")`, `CSV.new(io)` for reading, `#shift`, `#gets`, `#each` | — | missing: `CSV.open` with a read mode raises ArgumentError; read with `CSV.read`/`foreach`/`parse` |
 | `csv.lineno`, `csv.inspect` | `CSV.lineno(c)`, `CSV.inspect(c)` | same for writers (the StringIO's `encoding:` is not shown) |
 | `csv << row`, `add_row`, `puts` | `csv << row`, `CSV.add_row(c, r)`, `CSV.puts(c, r)` | same |
 | `"a,b".parse_csv`, `[..].to_csv` | `String.parse_csv(s)`, `Array.to_csv(a)`, `Tuple.to_csv(t)` | same |
 | `Row.new(headers, fields)` | `CSVRow.new(hs, fs)` | same (2026-10-05: copies and pads in `initialize`; `CSVRow.pad` is gone) |
 | `row[h]`, `row[i]`, `row[h] = v`, `row.field(h)` | same with `CSVRow.` / indexing | same |
 | `row.fetch(h)` | `CSVRow.fetch(r, h)` (KeyError "key not found: h") | same |
-| `row.fetch(h, default)`, `row.fetch(h) { }`, `row.dig` | — | missing |
-| `headers fields to_a to_h to_hash each size length empty? index values_at delete << to_s to_csv == inspect` | `CSVRow.` same names (`values_at` takes an Array) | same |
+| `row.fetch(h, default)`, `row.fetch(h) { \|h\| }` | `CSVRow.fetch(r, h, default)`, `CSVRow.fetch(r, h) { \|h\| }` | same (2026-10-05, `*default` and `block_given?`) |
+| `row.dig` | — | missing |
+| `headers fields to_a to_h to_hash each size length empty? index values_at delete << to_s to_csv == inspect` | `CSVRow.` same names | same (2026-10-05: `values_at(r, *hs)`, was one Array) |
 | `header? has_key? include? key? member? field? header_row? field_row?` | same | same |
-| `table.headers size length empty? each map select find to_a to_s to_csv delete values_at << push inspect` | `CSVTable.` same names (`values_at` takes an Array) | same |
+| `table.headers size length empty? each map select find to_a to_s to_csv delete values_at << push inspect` | `CSVTable.` same names | same (2026-10-05: `values_at(t, *is)`) |
 | `table[i]`, `table[h]`, `table[i] = row`, `table[h] = v / [vs]` | same | same |
 | `table.by_col`, `by_row`, `mode`, `dig`, `each` in column mode | — | missing |
 | Enumerable on Table (`sort_by`, `group_by`, ...) | via `CSVTable.rows(t)` + Array ops | differs |
@@ -81,7 +84,7 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - ~~`CSV.foreach(path, mode)` has no mode argument.~~ It has one (phase 3).
 - ~~`CSVRow.new` is the Struct constructor and does not pad.~~ It pads in `initialize` (2026-10-05).
 - `CSV.read` of a missing file raises `IOError` (Ruby: `Errno::ENOENT`), as Sake's `File.read` does.
-- `values_at` takes one Array (user functions have no rest parameters).
+- ~~`values_at` takes one Array.~~ It takes `*rest` (2026-10-05).
 
 ## Not ported, and why
 
@@ -194,3 +197,24 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - Still unlike Ruby: no `**opts`, so `read`/`readlines`/`foreach` repeat the 11 keywords
   (csv.sake:199-220); `CSV.new` is the Struct constructor (9 positional fields), so `writer`
   (csv.sake:273) stands in for Ruby's `CSV.new(io, **opts)`.
+
+## 2026-10-05
+
+- **`CSV.new(io = nil, col_sep:, row_sep:, quote_char:, headers:, force_quotes:, quote_empty:,
+  write_headers:, path:)`** is the writer, as Ruby's `CSV.new(io, **opts)`: keywords to `new` give
+  the fields by name, and `initialize` turns `row_sep: :auto` into `"\n"`, a header line String
+  (split by `col_sep`, as Ruby) or Tuple into an Array, and writes the headers with
+  `write_headers`. The internal `writer(...)` helper (9 positional arguments) is gone;
+  `generate*` and `open` call `CSV.new(...)` with `k:` shorthands.
+- Internal state is `private attr_reader`: `io`, `lines = String[]`, `force_quotes`, `quote_empty`,
+  `write_headers` (Ruby's `force_quotes?`, `quote_empty?`, `to_io` are functions);
+  `CSVTable.header_list` too. `lineno` is a reader with `@lineno += 1` (it was an accessor).
+- `CSVRow.values_at(r, *hs)`, `CSVTable.values_at(t, *is)`, `CSVRow.fetch(r, h, *default) { |h| }`.
+- The test adds a "2026-10-05" section (fetch default/block, `values_at`, `CSV.new(IO.stdout, ...)`
+  with its readers).
+- **Still not Ruby's: options are not passed on with `**opts`.** `f(**opts)` is "`**` is not
+  supported", and passing the collected Hash makes every option one union of types, which `--strict`
+  rejects and which loses the `headers: nil` → Array typing (`csv_bug_double_splat_pass_on.sake`).
+  So `read`/`readlines`/`foreach`/`generate*`/`open` still list their keywords.
+- `@row_sep = "\n" if @row_sep == :auto` in `initialize` left the field `Symbol | String` (`==` does
+  not narrow); `case @row_sep in String then @row_sep else "\n" end` does.

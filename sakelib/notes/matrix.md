@@ -6,7 +6,7 @@ Vector operations. Determinant (the expanded forms for sizes up to 4, then Barei
 results match Ruby, including the last bits of Float. Test: `test/sakelib/matrix.sake` and `.rb`, about 190
 lines of output that match Ruby's at `--strict`. The test also passes at `--strict=3`.
 
-Types: `class Matrix` (`attr_reader rows, column_count`) and `class Vector` (`attr_reader elements`). Both
+Types: `class Matrix` (`private attr_reader row_array`, `attr_reader column_count`) and `class Vector` (`private attr_reader elems`). Both
 include `Arithmetic` (so `+ - * / ** -@ +@` work) and `Indexable` (so `m[i, j]`, `m[i, j] = x`, `v[i]`,
 and `v[i] = x` work). `==` is the built-in Struct equality, which compares the same fields as Ruby's
 `Matrix#==` (`rows` and `column_count`), so 1 == 1.0 holds element by element. Matrices therefore stay
@@ -23,10 +23,10 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `Matrix.identity(n)`, `unit(n)` | same | same (`Matrix.I` is missing) |
 | `Matrix.zero(r, c = r)` | same | same (phase 2) |
 | `Matrix.scalar(n, v)` | same | same |
-| `Matrix.diagonal(1, 2, 3)` | `Matrix.diagonal(Array[1, 2, 3])` | differs: user functions take no rest parameter |
+| `Matrix.diagonal(1, 2, 3)` | `Matrix.diagonal(1, 2, 3)` | same (2026-10-05: `*values`) |
 | `Matrix.row_vector(a)`, `column_vector(a)` | same | same (Array or Vector) |
 | `Matrix.empty(r = 0, c = 0)` | same | same (phase 2) |
-| `Matrix.vstack(a, b, ...)`, `hstack` | `Matrix.vstack(a, b)`, `hstack(a, b)` | differs: exactly two |
+| `Matrix.vstack(a, b, ...)`, `hstack` | same | same (2026-10-05: `(x, *matrices)`) |
 | `m[i, j]`, `element`, `component` | `m[i, j]`, `Matrix.element(m, i, j)`, `component` | same (nil outside the matrix) |
 | `m[i, j] = v` | `m[i, j] = v` | same for Integer indexes; the Range forms are missing |
 | `row_count`, `row_size`, `column_count`, `column_size` | `Matrix.row_count(m)`, ... | same |
@@ -45,7 +45,7 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `determinant`, `det` | same | same |
 | `inverse`, `inv` | same | same (Integer entries give Rationals, as in Ruby) |
 | `rank`, `trace`, `tr` | same | same |
-| `round(n = 0)` | `Matrix.round(m, n)` | same (phase 2: n defaults to 0, and Floats then become Integers, as in Ruby); Rational entries are rounded in Sake, because `Rational.round` takes no digits |
+| `round(n = 0)` | `Matrix.round(m, n)` | same (2026-10-05: `Arithmetic.round(e, n)` for Integer, Float, and Rational entries) |
 | `square?`, `empty?`, `zero?`, `diagonal?`, `upper_triangular?`, `lower_triangular?`, `symmetric?`, `antisymmetric?`, `orthogonal?`, `permutation?`, `singular?`, `regular?` | same | same |
 | `==`, `!=` | same | same |
 | `to_s`, `inspect` | `puts(m)`, `p(m)` | same text |
@@ -60,7 +60,7 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `size`, `to_a`, `each`, `each2`, `map`/`collect`, `map2`, `collect2` | same | same |
 | `+ - * /`, `-v`, `+v` | same | same (Vector * Vector raises ErrOperationNotDefined, as in Ruby) |
 | `inner_product`, `dot` | same | same (conjugates a Complex right operand) |
-| `cross_product(w)`, `cross` | `Vector.cross_product(v, w)` | same for 3 dimensions; Ruby's `cross_product(*vs)` for other sizes is missing |
+| `cross_product(*vs)`, `cross` | `Vector.cross_product(v, *vs)` | same for 2 and 3 dimensions (2026-10-05); above 3 (Ruby's `laplace_expansion`) raises NotImplementedError |
 | `magnitude`, `norm`, `r`, `normalize` | same | same |
 | `angle_with(w)` | same | same, except within about 1 ulp: Sake has no `Math.acos`, so it uses `atan2(sqrt(1 - x²), x)` |
 | `zero?`, `covector`, `to_matrix`, `round(n = 0)`, `==` | same | same |
@@ -71,9 +71,8 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 - **No `Matrix[...]` or `Vector[...]`.** `T[...]` builds an Array of T, which is a static meaning of the
   syntax, so `Matrix[[1, 2]]` reports `Matrix[]: an element must be Matrix, but is Array`. Construction
   goes through `Matrix.rows` and `Vector.elements`, which Ruby also has.
-- **No rest parameters.** `Matrix.diagonal(*vs)`, `vstack(*ms)`, and `hstack(*ms)` each use one
-  fixed form. `Vector.basis(size:, index:)` takes Ruby's required keywords. (Optional positional parameters are there
-  since phase 2: `zero`, `build`, `empty`, `rows`, `round`, `each`, `collect` take Ruby's.)
+- **Rest parameters** (2026-10-05): `Matrix.diagonal(*values)`, `vstack(x, *ms)`, `hstack(x, *ms)`,
+  `Vector.cross_product(v, *vs)`. `Vector.basis(size:, index:)` takes Ruby's required keywords.
 - **Scalars go on the right.** `2 * m` is `Integer.*(2, m)`. Integer's `*` does not take a Matrix, and
   there is no `coerce`, so only `m * 2` works.
 - **Exceptions are top-level names.** Ruby's `Matrix::ErrDimensionMismatch` and
@@ -89,9 +88,9 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
   with Ruby.
 - `Integer.quo` / `Numeric#quo`: Ruby's `inverse` relies on `Integer#quo(Integer)` → Rational. I wrote it as
   `Integer.to_r(a) / b` inside `Matrix.quo`.
-- `Rational.round(r, digits)`: `Matrix#round(n)` on Rational entries needs it (done by hand).
 - `Complex.abs2`: `Vector#magnitude` uses `abs2` (done by hand).
-- `Math::PI` (or `Math.pi`): I wrote `Math.atan(1) * 4`, which happens to equal π exactly in IEEE doubles.
+- ~~`Math::PI`~~: added; `angle_with` uses it.
+- ~~`Rational.round(r, digits)`~~: `Arithmetic.round(x, n)` (2026-10-05).
 - (language) right-operand dispatch or `coerce`, so that `2 * m` can work.
 
 ## Friction
@@ -186,3 +185,18 @@ Enumerator gives with `.to_a`; there is no Enumerator. `build`, `collect`/`map`,
 - Still differs: `Matrix[...]`/`Vector[...]` (Array-of-T syntax), scalars on the left (`2 * m`), rest
   parameters (`diagonal(*vs)`, `vstack(*ms)`), and `Float.round(x, 0)` giving a Float
   (`matrix.sake` `round`, by design).
+
+## 2026-10-05
+
+- Rest parameters as Ruby's: `Matrix.diagonal(1, 2, 3)`, `Matrix.vstack(x, *ms)`, `Matrix.hstack(x, *ms)`
+  (Ruby's checks and messages for each extra matrix), `Vector.cross_product(v, *vs)` (sizes 2 and 3,
+  Ruby's "wrong number of arguments (0 for 1)"). The test adds three-way stacks, the error cases,
+  `diagonal()`, a 2D cross product, and `round(-1)` / `round(2)` on mixed entries.
+- `Matrix.round` is one `Arithmetic.round(e, n)` branch for Integer, Float, and Rational; the Float
+  `n <= 0` workaround and the hand-written Rational rounding are gone. `angle_with` uses `Math::PI`.
+- The rows (`row_array`) and the Vector's `elems` are `private attr_reader`: Ruby's `rows` is
+  protected, and Sake has no protected, so another matrix's rows are read with `to_a` (a copy) or `at`.
+- Bug: a splat cannot go to a user function's `*rest` (`matrix_bug_splat_into_rest.sake`), so
+  `scalar` calls a helper `diagonal_of(values)` and `cross` calls `cross_of(v, vs)`.
+- Still differs: `Matrix[...]`/`Vector[...]`, `2 * m`, `cross_product` above 3 dimensions,
+  `combine(*ms)`, `Vector.independent?(*vs)`, eigen/LUP, Range indexes.

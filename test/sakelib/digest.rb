@@ -72,3 +72,18 @@ puts(m1.hexdigest)
 p(Digest::MD5.new.digest("abc") == Digest::MD5.digest("abc"))
 puts(Digest::SHA512.new.base64digest("x"))
 puts(Digest::SHA384.new.update("q").hexdigest("日本語"))
+
+# 2026-10-05: dup gives an independent copy; the instance form of file updates md.
+d1 = Digest::SHA256.new
+d1 << "abc"
+d2 = d1.dup
+d2 << "def"
+puts(d1.hexdigest)
+puts(d2.hexdigest)
+p(d1 == Digest::SHA256.new.update("abc"))
+m6 = Digest::MD5.new
+m6 << "x"
+p(m6.file("digest.rb").equal?(m6))
+puts(m6.hexdigest)
+s4 = Digest::SHA384.new.dup
+puts(s4.hexdigest)

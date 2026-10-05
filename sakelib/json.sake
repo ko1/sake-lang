@@ -6,11 +6,13 @@
 # Options are Ruby's keyword arguments: JSON.parse(s, symbolize_names: true),
 # JSON.generate(v, space: " "). (Ruby's positional opts Hash is not taken.)
 # Ruby's JSON::ParserError / JSON::GeneratorError are JSONParserError / JSONGeneratorError (no nested
-# names). JSON::NestingError is raised as JSONParserError / JSONGeneratorError with Ruby's message.
+# names). JSON::NestingError is raised as JSONParserError with Ruby's message.
 #
 # Error messages follow json 2.20's, including "at line L column C".
 
+# Ruby's ParserError#line / #column; nil for a nesting error, as Ruby's NestingError.
 class JSONParserError < Exception
+  attr_reader line = nil, column = nil
 end
 
 class JSONGeneratorError < Exception
@@ -20,15 +22,26 @@ end
 
 # Ruby's JSON::Parser.new(source, opts): the options become flags, max_nesting an Integer (0: no limit).
 class JSONParserState
-  attr_reader src, symbolize, allow_nan, trailing, max_nesting, len = 0
-  attr_accessor pos = 0, depth = 0
+  private attr_reader src, symbolize_names = false, allow_nan = false, allow_trailing_comma = false,
+                      max_nesting = 100, len = 0
+  private attr_accessor pos = 0, depth = 0
 
   def initialize(ps)
     @len = String.bytesize(@src)
-    @symbolize = @symbolize == true
+    @symbolize_names = @symbolize_names == true
     @allow_nan = @allow_nan == true
-    @trailing = @trailing == true
+    @allow_trailing_comma = @allow_trailing_comma == true
     @max_nesting = JSON.nesting(@max_nesting)
+  end
+
+  # The whole source is one value, with only whitespace and comments around it.
+  def parse(ps)
+    skip_ws(ps)
+    end_of_input(ps) if @pos >= @len
+    v = value(ps)
+    skip_ws(ps)
+    fail(ps, "unexpected token at end of stream %s") if @pos < @len
+    v
   end
 
   # Positions are byte offsets (`len` is the byte size), so reading at a position costs O(1) on
@@ -73,7 +86,7 @@ class JSONParserState
       line += 1
       column = 0
     end
-    raise JSONParserError, "#{text} at line #{line} column #{column}"
+    raise JSONParserError.new("#{text} at line #{line} column #{column}", line, column)
   end
 
   def fail(ps, msg) = fail_at(ps, msg, @pos)
@@ -106,14 +119,14 @@ class JSONParserState
 
   def nest(ps)
     @depth += 1
-    raise JSONParserError, "nesting of #{@depth} is too deep" if @max_nesting > 0 && @depth > @max_nesting
+    raise JSONParserError.new("nesting of #{@depth} is too deep") if @max_nesting > 0 && @depth > @max_nesting
     ps
   end
 
   def value(ps)
     skip_ws(ps)
     c = peek(ps)
-    raise JSONParserError, "unexpected end of input" unless c
+    raise JSONParserError.new("unexpected end of input") unless c
     case c
     in "{" then object(ps)
     in "[" then array(ps)
@@ -123,13 +136,13 @@ class JSONParserState
     in "n" then keyword(ps, "null", nil)
     in "N"
       fail(ps, "unexpected token %s") unless @allow_nan
-      keyword(ps, "NaN", 0.0 / 0.0)
+      keyword(ps, "NaN", Float::NAN)
     in "I"
       fail(ps, "unexpected token %s") unless @allow_nan
-      keyword(ps, "Infinity", 1.0 / 0.0)
+      keyword(ps, "Infinity", Float::INFINITY)
     in "-"
       if @allow_nan && byte_at(ps, @pos + 1) == "I"
-        keyword(ps, "-Infinity", -1.0 / 0.0)
+        keyword(ps, "-Infinity", -Float::INFINITY)
       else
         number(ps)
       end
@@ -173,7 +186,7 @@ class JSONParserState
       c = peek(ps)
       if c == ","
         @pos += 1
-        if @trailing
+        if @allow_trailing_comma
           skip_ws(ps)
           if peek(ps) == "]"
             @pos += 1
@@ -191,7 +204,7 @@ class JSONParserState
     a
   end
 
-  def key(ps, s) = @symbolize ? String.to_sym(s) : s
+  def key(ps, s) = @symbolize_names ? String.to_sym(s) : s
 
   def object(ps)
     h = Hash[]
@@ -223,7 +236,7 @@ class JSONParserState
       if c == ","
         @pos += 1
         skip_ws(ps)
-        if @trailing && peek(ps) == "}"
+        if @allow_trailing_comma && peek(ps) == "}"
           @pos += 1
           break
         end
@@ -368,7 +381,8 @@ end
 
 # Ruby's JSON::State.new(opts).
 class JSONGeneratorState
-  attr_reader indent, space, space_before, object_nl, array_nl, allow_nan, max_nesting
+  private attr_reader indent = "", space = "", space_before = "", object_nl = "", array_nl = "", allow_nan = false,
+                      max_nesting = 100
 
   def initialize(gs)
     @allow_nan = @allow_nan == true
@@ -415,7 +429,7 @@ class JSONGeneratorState
 
   def nest(gs, depth)
     if @max_nesting > 0 && depth > @max_nesting
-      raise JSONParserError, "nesting of #{depth - 1} is too deep. Did you try to serialize objects with circular references?"
+      raise JSONParserError.new("nesting of #{depth - 1} is too deep. Did you try to serialize objects with circular references?")
     end
     gs
   end
@@ -464,14 +478,12 @@ module JSON
   # ---- parsing ----
 
   def parse(s, symbolize_names: false, allow_nan: false, allow_trailing_comma: false, max_nesting: 100)
-    ps = JSONParserState.new(s, symbolize_names, allow_nan, allow_trailing_comma, max_nesting)
-    n = JSONParserState.len(ps)
-    JSONParserState.skip_ws(ps)
-    JSONParserState.end_of_input(ps) if JSONParserState.pos(ps) >= n
-    v = JSONParserState.value(ps)
-    JSONParserState.skip_ws(ps)
-    JSONParserState.fail(ps, "unexpected token at end of stream %s") if JSONParserState.pos(ps) < n
-    v
+    JSONParserState.parse(JSONParserState.new(s, symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:))
+  end
+
+  # Ruby's parse!: NaN allowed, no nesting limit.
+  def parse!(s, symbolize_names: false, allow_nan: true, allow_trailing_comma: false, max_nesting: false)
+    parse(s, symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:)
   end
 
   def load_file(path, symbolize_names: false, allow_nan: false, allow_trailing_comma: false, max_nesting: 100)
@@ -494,7 +506,7 @@ module JSON
 
   def generate(v, indent: "", space: "", space_before: "", object_nl: "", array_nl: "", allow_nan: false,
                max_nesting: 100)
-    gs = JSONGeneratorState.new(indent, space, space_before, object_nl, array_nl, allow_nan, max_nesting)
+    gs = JSONGeneratorState.new(indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)
     JSONGeneratorState.emit(gs, v, 0)
   end
 

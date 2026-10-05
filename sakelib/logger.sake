@@ -3,19 +3,22 @@
 # The formatter is a format string over the keys severity, datetime, progname, msg
 # (`Kernel.format` with a Hash), since a block cannot be stored.
 
-# Logger.new(dev, level, progname, formatter, datetime_format): the fields after dev are Ruby's keyword
-# arguments (level:, progname:, ...) in their order, since `new` takes the fields positionally.
+# Logger.new(dev, shift_age = 0, shift_size = 1048576, level:, progname:, formatter:, datetime_format:)
+# as Ruby: the fields after dev are Ruby's positional and keyword arguments in their order.
 class Logger
-  attr_reader logdev, level = 0
+  private attr_reader logdev
+  private attr_reader shift_age = 0, shift_size = 1048576
+  attr_reader level = 0
   attr_accessor progname = nil, formatter = nil, datetime_format = nil
-  attr_reader closed = false
-  attr_accessor fixed_time = nil
-  attr_reader io = nil
+  attr_accessor fixed_time = nil   # Sake only: every entry uses this time
+  private attr_reader closed = false, io = nil
 
   # As Ruby's initialize: the device must be an IO, a path, or nil, and the level is coerced (level=).
+  # Log rotation is not implemented, so shift_age and shift_size must keep their defaults.
   def initialize(l)
     @logdev => IO | String | nil
     @level = Logger.coerce_level(@level)
+    raise ArgumentError, "log rotation (shift_age, shift_size) is not supported" if @shift_age != 0 || @shift_size != 1048576
   end
   # Ruby's Logger::DEBUG ... Logger::UNKNOWN (Sake has no value constants).
   def DEBUG = 0
@@ -130,21 +133,16 @@ class Logger
     end
   end
 
-  def now(l)
-    t = @fixed_time
-    t == nil ? Time.now : t
-  end
+  def now(l) = @fixed_time || Time.now
 
   def format_datetime(l, time)
-    f = @datetime_format
-    Time.strftime(time, f == nil ? Logger.default_datetime_format : f)
+    Time.strftime(time, @datetime_format || Logger.default_datetime_format)
   end
 
   def format_message(l, severity, time, progname, msg)
-    f = @formatter
     text = (msg in String) ? msg : Kernel.inspect(msg)
     dt = format_datetime(l, time)
-    Kernel.format(f == nil ? Logger.default_format : f, Hash[severity: severity, datetime: dt, progname: progname, msg: text])
+    Kernel.format(@formatter || Logger.default_format, Hash[severity: severity, datetime: dt, progname: progname, msg: text])
   end
 
   def write(l, s)

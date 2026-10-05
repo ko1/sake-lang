@@ -55,3 +55,7 @@ private functions); the leading `_` marks them internal.
 ## Review 2026-10-05
 
 No change: optional `encoding` arguments, `once` table and block `gsub` were done in phase 2. Ruby's `to_str` conversion of the argument has no Sake counterpart (each operation checks for a String). `--strict=1`/`2`: 0 reports before and after.
+
+## 2026-10-05
+
+Checked against the new features; nothing applies (module functions with positional optional arguments, as Ruby's). The helpers `_percent_encode` and friends stay public: `private` covers `attr_*` fields, not module functions. No change to the library or the test.

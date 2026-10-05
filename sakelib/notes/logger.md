@@ -3,9 +3,8 @@
 `require "logger"`. A `Logger` is a Sake type whose operations take the logger first:
 
 ```ruby
-log = Logger.new(IO.stdout)            # or IO.stderr, a File.open IO, a file path, or nil
-Logger.set_level(log, :warn)           # or Logger.WARN, or "WARN"
-Logger.set_progname(log, "app")
+log = Logger.new(IO.stdout, level: :warn, progname: "app")   # or IO.stderr, a File.open IO, a path, or nil
+log.Logger.level = :warn               # or Logger.WARN, or "WARN"; also Logger.set_level(log, x)
 Logger.warn(log, "disk almost full")   # W, [2026-10-03T12:34:56.123456]  WARN -- app: disk almost full
 Logger.debug(log) { expensive_dump }   # the block runs only when the level passes
 Logger.set_formatter(log, "%<severity>s %<progname>s: %<msg>s\n")
@@ -21,9 +20,9 @@ Ruby redefines `Time.now`. Ruby's formatter is also patched to drop the pid (see
 | `Logger.new($stdout)` / `Logger.new($stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | `Logger.new(IO.stdout)` / `Logger.new(IO.stderr)` / `Logger.new("app.log")` / `Logger.new(nil)` | same (phase 3; phase 2 had `:stdout`/`:stderr`) |
 | `Logger.new(io)` (a `File.open`) | `Logger.new(io)` | same; `Logger.close` leaves an IO it was given open (Ruby closes it) |
 | `File::NULL` | `nil` | differs: no `File::NULL` constant |
-| `Logger.new(dev, level: ..., progname: ..., formatter: ..., datetime_format: ...)` | `Logger.new(dev, level, progname, formatter, datetime_format)` | differs: positional, in the order of Ruby's keywords (`new` takes the fields positionally); `initialize` coerces the level and checks the device (phase 4) |
+| `Logger.new(dev, shift_age = 0, shift_size = 1048576, level: ..., progname: ..., formatter: ..., datetime_format: ...)` | the same | same (2026-10-05: `new` takes fields by keyword); `initialize` coerces the level and checks the device; a `shift_age`/`shift_size` other than the default raises `ArgumentError` (no rotation) |
 | `Logger::DEBUG` ... `Logger::UNKNOWN` | `Logger.DEBUG` ... `Logger.UNKNOWN` | differs: Sake has no value constants, so these are functions |
-| `log.level` / `log.level = x` | `Logger.level(log)` / `Logger.set_level(log, x)` | same (Integer, Symbol, or String; anything else raises `ArgumentError`, "invalid log level: ...") |
+| `log.level` / `log.level = x` | `Logger.level(log)` or `log.Logger.level` / `Logger.set_level(log, x)` or `log.Logger.level = x` | same (Integer, Symbol, or String; anything else raises `ArgumentError`, "invalid log level: ...") |
 | `log.debug(msg = nil)` ... `log.unknown(msg = nil)` | `Logger.debug(log, msg = nil)` ... `Logger.unknown(log, msg = nil)` | same (phase 2: the argument is optional; with none, the progname is logged, as Ruby) |
 | `log.info { "msg" }`, `log.info("prog") { "msg" }` | `Logger.info(log) { "msg" }`, `Logger.info(log, "prog") { "msg" }` | same (phase 3, `block_given?`): the block gives the message and runs only when the level passes; the argument is then the progname |
 | `log.add(sev, msg = nil, prog = nil) { }`, `log.log` | `Logger.add(log, sev, msg = nil, prog = nil) { }`, `Logger.log` | same (with msg nil, the block's value, or else prog, or else the logger's progname, is the message; severity nil is UNKNOWN; above 5 prints `ANY`) |
@@ -31,14 +30,14 @@ Ruby redefines `Time.now`. Ruby's formatter is also patched to drop the pid (see
 | `log.debug?` ... `log.fatal?` | `Logger.debug?(log)` ... | same |
 | `log.debug!` ... `log.fatal!` | `Logger.debug!(log)` ... | same |
 | `log.with_level(:debug) { ... }` | `Logger.with_level(log, :debug) { ... }` | differs: the level is restored after the block. In Ruby's logger 1.7.0, the ensure clause pins the per-Fiber override to the old level, because `prev` is never nil. After that, `level=` and `info!` have no effect |
-| `log.progname`, `progname=` | `get_progname`, `set_progname` | same |
+| `log.progname`, `progname=`, `progname += s` | `log.Logger.progname`, `log.Logger.progname = s` (or `progname`, `set_progname`) | same |
 | `log.datetime_format=` | `Logger.set_datetime_format(log, fmt)` | same (strftime) |
 | `log.formatter = proc { \|sev, time, prog, msg\| ... }` | `Logger.set_formatter(log, "%<severity>s ... %<msg>s\n")` | differs: a format string with the keys `severity`, `datetime` (already formatted), `progname`, and `msg` |
 | default format `"%.1s, [%s #%d] %5s -- %s: %s\n"` | the same, without ` #pid` | differs: Sake has no `Process.pid` |
 | `msg` not a String | `Kernel.inspect(msg)` | same; an exception message is also inspected, where Ruby writes `message (Class)` and the backtrace |
 | `log.close` | `Logger.close(log)` | same; a later write warns `log writing failed. closed stream` on stderr, as Ruby (phase 2) |
 | `log.reopen`, log rotation (`shift_age`, `shift_size`) | — | missing |
-| (Sake only) | `Logger.set_fixed_time(log, time)` | every entry uses `time`, so that output can be compared |
+| (Sake only) | `Logger.set_fixed_time(log, time)`, `Logger.new(dev, fixed_time: time)` | every entry uses `time`, so that output can be compared |
 | `Logger::Formatter#call`, `format_message`, `format_severity` | `Logger.format_message(log, sev, time, prog, msg)`, `Logger.format_severity(n)` | same |
 
 ## Differences from Ruby, and why
@@ -114,3 +113,20 @@ Result: no difference beyond the spread.
   `logger_bug_pass_on_optional_block.sake`, is fixed).
 - Still differs: `Logger.new(dev, level: :warn)` cannot be written; `new` is the Struct's
   constructor and takes no keywords (`sakelib/logger.sake:6`).
+
+## 2026-10-05
+
+- `Logger.new(dev, level: :warn, progname: "app", formatter: fmt, datetime_format: "%H:%M")` as Ruby's
+  keywords. Two private fields `shift_age = 0`, `shift_size = 1048576` come before them, so Ruby's
+  positional `Logger.new(dev, 0, 1048576, level: ...)` means the same; other values raise
+  `ArgumentError` (rotation is not implemented, rather than silently ignored).
+- `logdev`, `shift_age`, `shift_size`, `closed`, `io` are `private attr_reader` (Ruby has no readers
+  for them); `level` keeps its reader, and `log.Logger.level = :warn` goes through `set_level`'s
+  coercion, as Ruby's `level=`.
+- `@fixed_time || Time.now`, `@formatter || default_format` in place of `f == nil ? ... : f`.
+- Test: keywords to `new` (level as a Symbol and a String, progname, datetime_format, formatter),
+  `log.Logger.level = x` reads/writes. `kw.Logger.progname += "!"` is rejected at `--strict`
+  (progname is `nil | String` for the whole program, as other loggers store nil), so the test writes
+  `"#{progname}!"`; that is the checker's per-field typing, not a bug.
+- Still differs: the formatter is a format string (no stored procs), `Logger::INFO` is
+  `Logger.INFO`, no `Process.pid` in the line, no rotation or `reopen`.

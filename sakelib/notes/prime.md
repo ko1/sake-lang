@@ -21,7 +21,7 @@ division by the wheel of 30, then deterministic Miller-Rabin with Ruby's base ta
 | `Prime.each_with_index { \|p, i\| ... break ... }` | same | same (phase 2) |
 | `Prime.first(n)`, `Prime.take(n)` | same | same |
 | `Prime.take_while { }`, `Prime.find { }` | same | same |
-| `Prime.prime?(n)`, `Prime.include?(n)` | same | same |
+| `Prime.prime?(n)`, `Prime.include?(n)` | same | same (a non-Integer raises `ArgumentError`, as Ruby, since 2026-10-05) |
 | `n.prime?` | `Integer.prime?(n)` | same |
 | `Prime.prime_division(n)`, `n.prime_division` | `Prime.prime_division(n)`, `Integer.prime_division(n)` | same: `[[p, e], ...]`, an Array of Tuples, which prints as Ruby's; negative n gives `[-1, 1]` first, and 0 raises ZeroDivisionError |
 | `Prime.int_from_prime_division(pd)`, `Integer.from_prime_division(pd)` | same | same |
@@ -43,8 +43,8 @@ division by the wheel of 30, then deterministic Miller-Rabin with Ruby's base ta
   variable). `Prime.extend_primes` sieves again up to twice the bound (128 first) and appends the new
   primes, so the list only grows and `each` can walk it by index while it grows. Ruby's sieve
   extends by segments; this one sieves from 2 again, which costs at most as much as all the sieves
-  before it. Also visible (Ruby keeps them private): `Prime.primes`, `sieved_to`, `extend_primes`,
-  `sieve`.
+  before it. Also visible (Ruby keeps them private): `Prime.sieve`. Since 2026-10-05 the cache is
+  `EratosthenesSieve.instance` (see below).
 - **Enumerators.** `Prime.each(30).to_a`, `Prime.lazy.select { }.first(5)`, and `Prime.each_with_index`
   need first-class iterators, which Sake does not have (blocks are not values). The common cases have
   their own operations (`to_a`, `each_with_index`, `take_while`, `find`).
@@ -117,3 +117,16 @@ Bug found: a `yield` inside a `while` loop is reported as "no block is given" ev
   which cannot be rescued, unlike Ruby's `ArgumentError`).
 - Both bugs above are fixed: `Prime.each` has Ruby's shape again (`return Prime.to_a(ub) unless
   block_given?`, then the loop), and `Integer.each_prime(ub, &b) = Prime.each(ub, &b)`.
+
+## 2026-10-05
+
+- The cache is now a type, as Ruby's: `EratosthenesSieve` with `private attr_reader primes =
+  Integer[], max_checked = 0`, `EratosthenesSieve.instance = once { EratosthenesSieve.new }`, and
+  `get_nth_prime(sieve, i)` / `compute_primes(sieve)` (Ruby's names). It replaces
+  `once { Integer[] }` plus a one-element Array standing for the bound (`Prime.primes`,
+  `sieved_to`, `extend_primes` are gone).
+- `Prime.prime?(1.5)` raises `ArgumentError` "Expected an integer, got 1.5", as Ruby (was
+  `n => Integer`); the test rescues it in both languages.
+- `while true` loops in `each` and `prime_division` are `loop do`.
+- Still not Ruby's: no Enumerators (`each(n)` without a block is an Array), no generator objects,
+  no `Prime.lazy`. No bugs found.

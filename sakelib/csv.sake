@@ -10,11 +10,35 @@ class MalformedCSVError < Exception
 end
 
 # A writer (Ruby's CSV object for output): `csv << row` appends a line, to a String (generate) or to
-# the IO of a file (open).
+# an IO: `CSV.new(IO.stdout, col_sep: ";")`, or the file of `CSV.open`.
 class CSV
-  attr_reader lines, col_sep, row_sep, quote_char, force_quotes, quote_empty, headers, io = nil, path = nil
-  attr_accessor lineno = 0
+  private attr_reader io = nil
+  attr_reader col_sep = ",", row_sep = :auto, quote_char = "\"", headers = nil
+  private attr_reader force_quotes = false, quote_empty = true, write_headers = false
+  attr_reader path = nil, lineno = 0
+  private attr_reader lines = String[]
   include Bitwise
+
+  # As Ruby's CSV.new for writing: row_sep :auto is "\n"; headers as a header line String (split
+  # by col_sep) or a Tuple become an Array; write_headers writes them first.
+  def initialize(c)
+    @row_sep = case @row_sep
+               in String then @row_sep
+               else "\n"
+               end
+    hs = case @headers
+         in String then parse_line(@headers, col_sep: @col_sep)
+         in Tuple then Tuple.to_a(@headers)
+         in Array then @headers
+         else nil
+         end
+    @headers = hs
+    c << hs if @write_headers && hs
+  end
+
+  def to_io(c) = @io
+  def force_quotes?(c) = @force_quotes
+  def quote_empty?(c) = @quote_empty
 
   # ---- parsing ----
 
@@ -260,7 +284,7 @@ class CSV
     else
       IO.write(f, line)
     end
-    @lineno = @lineno + 1
+    @lineno += 1
     c
   end
 
@@ -269,35 +293,22 @@ class CSV
 
   def string(c) = Array.join(@lines)
 
-  # headers: nil / false, a String of the header line, or an Array (or Tuple) of headers.
-  def writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers, io = nil, path = nil)
-    hs = case headers
-         in String then parse_line(headers)
-         in Tuple then Tuple.to_a(headers)
-         in Array then headers
-         else nil
-         end
-    c = CSV.new(String[], col_sep, row_sep == :auto ? "\n" : row_sep, quote_char, force_quotes, quote_empty, hs, io, path)
-    c << hs if write_headers && hs
-    c
-  end
-
   # Ruby's generate(str = nil, **options) appends to str; here str is not changed.
   def generate(str = "", col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
                quote_empty: true, write_headers: false)
-    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers)
+    c = CSV.new(col_sep:, row_sep:, quote_char:, headers:, force_quotes:, quote_empty:, write_headers:)
     yield(c)
     str + string(c)
   end
 
   def generate_line(row, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
                     quote_empty: true)
-    line_of(writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, false), row)
+    line_of(CSV.new(col_sep:, row_sep:, quote_char:, headers:, force_quotes:, quote_empty:), row)
   end
 
   def generate_lines(rows, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, force_quotes: false,
                      quote_empty: true)
-    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, false)
+    c = CSV.new(col_sep:, row_sep:, quote_char:, headers:, force_quotes:, quote_empty:)
     Array.join(Array.map(rows) { |r| line_of(c, r) })
   end
 
@@ -310,7 +321,7 @@ class CSV
       raise ArgumentError, "CSV.open: only writing (\"w\" or \"a\") is supported, got #{Kernel.inspect(mode)}"
     end
     f = File.open(path, mode)
-    c = writer(col_sep, row_sep, quote_char, headers, force_quotes, quote_empty, write_headers, f, path)
+    c = CSV.new(f, col_sep:, row_sep:, quote_char:, headers:, force_quotes:, quote_empty:, write_headers:, path:)
     if block_given?
       begin
         yield(c)
@@ -383,10 +394,19 @@ class CSVRow
     v
   end
 
-  def fetch(r, h)
+  # As Ruby's fetch(header, *default) { |header| }: a missing header gives the block's value, then
+  # the default, then KeyError.
+  def fetch(r, h, *default)
+    raise ArgumentError, "Too many arguments" if Array.size(default) > 1
     i = Array.index(@headers, h)
-    raise KeyError, "key not found: #{h}" unless i
-    @fields[i]
+    return @fields[i] if i
+    if block_given?
+      yield(h)
+    elsif Array.empty?(default)
+      raise KeyError, "key not found: #{h}"
+    else
+      default[0]
+    end
   end
 
   def has_key?(r, h) = Array.include?(@headers, h)
@@ -401,7 +421,7 @@ class CSVRow
   def empty?(r) = Array.empty?(@fields)
   def header_row?(r) = false
   def field_row?(r) = true
-  def values_at(r, hs) = Array.map(hs) { |h| r[h] }
+  def values_at(r, *hs) = Array.map(hs) { |h| r[h] }
 
   # Appends a field (with a nil header), or a [header, field] Tuple.
   def <<(r, x)
@@ -453,7 +473,8 @@ end
 
 # Ruby's CSV::Table (row mode only): rows sharing the headers.
 class CSVTable
-  attr_reader header_list, rows
+  private attr_reader header_list
+  attr_reader rows
   include Indexable
   include Bitwise
 
@@ -511,7 +532,7 @@ class CSVTable
     end
   end
 
-  def values_at(t, is) = Array.map(is) { |i| @rows[i] }
+  def values_at(t, *is) = Array.map(is) { |i| @rows[i] }
 
   def to_a(t)
     out = Array[headers(t)]
