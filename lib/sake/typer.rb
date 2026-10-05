@@ -681,21 +681,40 @@ module Sake
     # T.initialize(c) after T.new: analyzed for each construction, where `@x` reads the value this `new`
     # gave (the instance is the one just made), so a wrong argument is reported for this call.
     # Returns the fields' types after initialize (field => type), or nil when it cannot finish normally.
+    # The fields of the new instance are followed like local variables ([:field, name] in the env), so a
+    # field written on some paths only keeps what `new` gave on the others; every exit (the end, and each
+    # `return`) adds its types.
     def run_initialize(dt, given, node)
       init = @program.functions.dig(dt.name, "initialize") or return given
       @init_depth ||= Hash.new(0)
       return given if @init_depth[init] >= 2 # an initialize that constructs its own type
       @init_depth[init] += 1
       @instantiated[init] = true
-      overlay = init_overlay?(init) ? given.dup : nil
-      (@init_given ||= []).push(overlay && [init, overlay])
       @callers.push(call_site(node))
+      frame = Frame.new(init, [], nil)
+      env = Env.new(nil, frame)
+      env.vars[0] = t(dt.name)
+      exits = nil
+      if init_overlay?(init)
+        given.each { |f, ty| env.vars[[:field, f]] = ty }
+        exits = (@init_frames ||= {}.compare_by_identity)[frame] = {}
+      end
       begin
-        run_body(init, [t(dt.name)], nil).empty? ? nil : (overlay || given)
+        r = ev(@ast.functions.fetch(init).body, env)
+        init_exit(env, exits) if exits && !env.dead
+        return nil if u(r, frame.ret).empty?
+        exits ? given.keys.to_h { |f| [f, exits[f] || given[f]] } : given
       ensure
+        @init_frames&.delete(frame)
         @callers.pop
-        @init_given.pop
         @init_depth[init] -= 1
+      end
+    end
+
+    # The new instance's fields where initialize leaves (its end, or a `return`).
+    def init_exit(env, exits)
+      @program.struct_types.fetch(env.frame.fn.namespace).fields.each do |f|
+        (ty = env.lookup([:field, f])) && exits[f] = u(exits[f] || [], ty)
       end
     end
 

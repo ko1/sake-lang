@@ -121,6 +121,7 @@ module Sake
       when CaseIn then case_match(n, env)
       when Return
         env.frame.ret = u(env.frame.ret, ev(n.value, env))
+        (exits = @init_frames&.[](env.frame)) && init_exit(env, exits)
         env.dead = true
         []
       when Next
@@ -167,11 +168,11 @@ module Sake
         nodes = n.is_a?(FieldSet) ? [n.subject, n.value] : [n.subject]
         args = nodes.map { ev(_1, env) }
         # Inside initialize run for a construction: the instance's fields are the values that `new` gave.
-        given = init_given(env, n)
-        given[n.field] = args[1] if given && n.is_a?(FieldSet)
-        if given && n.is_a?(FieldGet) && given.key?(n.field)
+        own = init_field?(env, n)
+        assign(env, [:field, n.field], args[1]) if own && n.is_a?(FieldSet)
+        if own && n.is_a?(FieldGet)
           record(n.origin, n.fn.full_name, 1, n.fn.param_type(0), args[0]) # the getter's subject check, as call_builtin does
-          given[n.field]
+          env.lookup([:field, n.field]) || []
         else
           # Written as `T.get_x(s)`, it is a call like any other; `@x` reads the function's subject.
           n.origin.is_a?(Prism::CallNode) ? builtin_call(n, n.fn, nodes, args, nil, env) : call_builtin(n.fn, args, nil, n.origin)
@@ -279,9 +280,17 @@ module Sake
       @jumps.pop
     end
 
+    # The variable a test reads: a local's slot, or inside initialize a field of the new instance.
+    def narrow_slot(env, n)
+      return n.slot if n.is_a?(LVarGet)
+      return [:field, n.field] if n.is_a?(FieldGet) && init_field?(env, n)
+      nil
+    end
+
     # Narrows a local variable's type on the path where `pred` is truthy (or falsy).
     # Forms: `x`, `x != nil`, `x == nil`, `x in T`, `a && b`, `a || b`. Field reads are never narrowed
-    # (values are mutable, so another alias may change the field between the test and the use).
+    # (values are mutable, so another alias may change the field between the test and the use), except
+    # the new instance's fields inside initialize, which are followed like locals.
     def narrow(env, pred, truthy)
       return unless @narrow
       case pred
@@ -296,12 +305,13 @@ module Sake
           narrow(env, pred.right, false)
         end
       when LVarGet, LVarSet then restrict(env, pred.slot, truthy ? :non_nil : :falsy) # `while (x = f)` tests x
+      when FieldGet then (slot = narrow_slot(env, pred)) && restrict(env, slot, truthy ? :non_nil : :falsy)
       when Seq then narrow(env, pred.body.last, truthy) unless pred.body.empty?
       when MatchP
-        var = pred.value
-        return unless var.is_a?(LVarGet) && (ty = env.lookup(var.slot))
+        slot = narrow_slot(env, pred.value)
+        return unless slot && (ty = env.lookup(slot))
         m, rest = match_atoms(ty, pred.pattern)
-        set_narrowed(env, var.slot, u(*(truthy ? m : rest).map { [_1] }))
+        set_narrowed(env, slot, u(*(truthy ? m : rest).map { [_1] }))
       when IsNil, BinOp
         return if pred.is_a?(BinOp) && !%w[== !=].include?(pred.op)
         return if pred.origin.receiver.is_a?(Prism::ConstantReadNode) # `Kernel.==(x, nil)` is not a test form
@@ -310,11 +320,11 @@ module Sake
           var = pred.value
           is_nil = !pred.negate == truthy
         else
-          var = [pred.left, pred.right].find { _1.is_a?(LVarGet) }
+          var = [pred.left, pred.right].find { narrow_slot(env, _1) }
           return unless [pred.left, pred.right].any? { _1.is_a?(Lit) && _1.value.nil? }
           is_nil = (pred.op == "==") == truthy
         end
-        restrict(env, var.slot, is_nil ? :nil : :non_nil) if var.is_a?(LVarGet)
+        (slot = var && narrow_slot(env, var)) && restrict(env, slot, is_nil ? :nil : :non_nil)
       end
     end
 
@@ -590,6 +600,7 @@ module Sake
         return xs.size == 4 ? index_set(o, xs[0], xs[1], lit, xs[3], xs[2]) : index_set(o, xs[0], xs[1], lit, xs[2])
       end
       args = arg_types(n.args, env)
+      init_escape(env, n)
       if n.block.is_a?(BlockPass) # its breaks go to its own call
         given = env.frame&.block
         return call_with(n, env, args, given) if given || !Sake.needs_block?(n)
@@ -738,9 +749,21 @@ module Sake
       u(r, r2)
     end
 
-    def init_given(env, n)
-      init, given = @init_given&.last
-      init && env.frame&.fn.equal?(init) && n.subject.is_a?(LVarGet) && n.subject.slot.zero? ? given : nil
+    # Inside initialize, passing the new instance to a function lets it write the fields: from then on
+    # each followed field may also hold anything the field is ever given.
+    def init_escape(env, n)
+      return unless @init_frames&.key?(env.frame) && [CallUser, CallDispatch, CallUnion].include?(n.class)
+      return unless n.args.any? { _1.is_a?(LVarGet) && _1.slot.zero? }
+      dt = env.frame.fn.namespace
+      @program.struct_types.fetch(dt).fields.each do |f|
+        cur = env.lookup([:field, f]) or next
+        assign(env, [:field, f], u(cur, @fields[dt][f] || []))
+      end
+    end
+
+    # `@x` of the instance that initialize is running for (followed like a local variable).
+    def init_field?(env, n)
+      @init_frames&.key?(env.frame) && n.subject.is_a?(LVarGet) && n.subject.slot.zero?
     end
 
     # A path after return/next/break, in this block or around it.

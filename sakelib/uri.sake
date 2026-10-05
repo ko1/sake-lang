@@ -9,10 +9,23 @@ end
 class BadURIError < Exception
 end
 
-# Field order (for URI.new): scheme, userinfo, opaque, host, port, path, query, fragment.
+# URI.new takes Ruby's URI::Generic.new arguments: scheme, userinfo, host, port, registry, path,
+# opaque, query, fragment (registry is always nil, as in Ruby).
 class URI
-  attr_reader scheme, userinfo, opaque
-  attr_accessor host, port, path, query, fragment
+  attr_reader scheme, userinfo
+  attr_accessor host, port
+  attr_reader registry
+  attr_accessor path
+  attr_reader opaque
+  attr_accessor query, fragment
+
+  # As Ruby's Generic#initialize: scheme lower-cased, port a String or Integer (empty: the default).
+  def initialize(u)
+    @scheme = String.downcase(@scheme) if @scheme
+    @port = @port == "" ? nil : String.to_i(@port) if @port in String
+    @path = "" if @path == nil && @opaque == nil
+    @port = default_port(u) if @port == nil
+  end
   # --- the RFC 3986 grammar, from Ruby's uri/rfc3986_parser.rb ---
   def _host_re
     "(?<IP-literal>\\[(?:(?<IPv6address>(?:\\h{1,4}:){6}(?<ls32>\\h{1,4}:\\h{1,4}" \
@@ -50,16 +63,10 @@ class URI
   end
 
   # --- parsing ---
-  def _new(scheme, userinfo, host, port_s, path, opaque, query, fragment)
-    scheme = String.downcase(scheme) if scheme
-    port = nil
-    port = String.to_i(port_s) if port_s && port_s != ""
-    path = "" if path == nil && opaque == nil
-    # URI::FTP keeps the path without its leading "/" (RFC 1738)
-    path = String.delete_prefix(path, "/") if scheme == "ftp" && path
-    u = URI.new(scheme, userinfo, opaque, host, port, path, query, fragment)
-    URI.set_port(u, default_port(u)) if port == nil
-    u
+  # Ruby's URI.for: URI::FTP keeps the path without its leading "/" (RFC 1738).
+  def _for(scheme, userinfo, host, port, registry, path, opaque, query, fragment)
+    path = String.delete_prefix(path, "/") if scheme && String.downcase(scheme) == "ftp" && path
+    URI.new(scheme, userinfo, host, port, registry, path, opaque, query, fragment)
   end
 
   # Ruby's String#dump for a UTF-8 String: inspect, with each non-ASCII character as \uXXXX.
@@ -96,8 +103,8 @@ class URI
   end
 
   def parse(s)
-    scheme, userinfo, host, port, _registry, path, opaque, query, fragment = split(s)
-    _new(scheme, userinfo, host, port, path, opaque, query, fragment)
+    scheme, userinfo, host, port, registry, path, opaque, query, fragment = split(s)
+    _for(scheme, userinfo, host, port, registry, path, opaque, query, fragment)
   end
 
   # --- reading ---
@@ -134,6 +141,7 @@ class URI
   def port(u) = @port
   def path(u) = @path
   def opaque(u) = @opaque
+  def registry(u) = @registry
   def query(u) = @query
   def fragment(u) = @fragment
 
@@ -197,7 +205,7 @@ class URI
 
   def inspect(u) = "#<#{class_name(u)} #{to_s(u)}>"
 
-  def dup(u) = URI.new(@scheme, @userinfo, @opaque, @host, @port, @path, @query, @fragment)
+  def dup(u) = URI.new(@scheme, @userinfo, @host, @port, @registry, @path, @opaque, @query, @fragment)
 
   # Lower-case scheme and host; an empty path becomes "/".
   def normalize(u)
@@ -279,7 +287,7 @@ class URI
     URI.set_fragment(base, nil)
     base_path = @path
     if has_authority
-      base = URI.new(@scheme, URI.get_userinfo(rel), nil, URI.get_host(rel), URI.get_port(rel) || default_port(u), rel_path, nil, nil)
+      base = URI.new(@scheme, URI.get_userinfo(rel), URI.get_host(rel), URI.get_port(rel), nil, rel_path, nil, nil, nil)
     elsif base_path && rel_path
       URI.set_path(base, _merge_path(base_path, rel_path))
     end
