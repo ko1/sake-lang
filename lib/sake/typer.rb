@@ -48,6 +48,7 @@ module Sake
       @sites = {}
       @fields = Hash.new { |h, k| h[k] = {} }
       @nil_writes = Hash.new { |h, k| h[k] = Hash.new { |h2, f| h2[f] = [] } } # dt => field => [line]
+      @type_writes = Hash.new { |h, k| h[k] = Hash.new { |h2, f| h2[f] = Hash.new { |h3, n| h3[n] = [] } } } # dt => field => type name => [line]
       @returns = {}
     end
 
@@ -235,14 +236,10 @@ module Sake
       end
     end
 
-    # A field whose default fixed its type keeps that type; other writes are checks.
+    # A field's type is every type written to it (a default is only the value `new` stores).
     def field_write(dt, field, ty, node)
-      if (fixed = @program.struct_types[dt]&.field_types&.[](field))
-        record(node, "#{dt}.#{field}", "field", fixed, ty)
-        @fields[dt][field] = t(fixed)
-        return
-      end
       @nil_writes[dt][field] << node.location.start_line if ty.any? { nil_atom?(_1) }
+      ty.each { |a| @type_writes[dt][field][atom_type_name(a)] << node.location.start_line unless nil_atom?(a) }
       @fields[dt][field] = u(@fields[dt][field] || [], ty)
     end
 
@@ -329,6 +326,19 @@ module Sake
           next if wants && (ty - NILS).none? { |a| Array(wants).any? { |w| atom_matches?(a, w) } }
           lines = @nil_writes[dt][f].uniq.sort
           "#{dt}.#{f} may be nil (nil is stored at line #{lines.join(", ")})"
+        end
+      end
+    end
+
+    # "Struct.field holds T (written at line N)" for fields of several types, one of which is in failing.
+    def field_sources(failing)
+      names = failing.map { atom_type_name(_1) }.uniq - ["Nil"]
+      @type_writes.flat_map do |dt, fs|
+        fs.filter_map do |f, by_type|
+          next if by_type.size < 2
+          hit = by_type.keys & names
+          next if hit.empty? || hit.size == by_type.size
+          "#{dt}.#{f} holds #{hit.join(" and ")} (written at line #{hit.flat_map { by_type[_1] }.uniq.sort.join(", ")}) besides #{(by_type.keys - hit).join(", ")}"
         end
       end
     end
@@ -672,7 +682,7 @@ module Sake
       case name
       when "new"
         dt.fields.each_with_index do |f, i|
-          ty = args[i] || (dt.field_types[f] ? t(dt.field_types[f]) : t("Nil"))
+          ty = args[i] || (dt.default_types.key?(f) ? t(dt.default_types[f]) : t("Nil"))
           field_write(dt.name, f, ty, node)
         end
         t(dt.name)

@@ -30,13 +30,14 @@ module Sake
   end
 
   # exception: made by Exception.new (or built in); its first field is message and it can be raised.
-  # field_types: field => type name fixed by a default value. getters / setters: field => Builtin, used by
+  # default_types: field => the type of its default value (what `new` stores when the argument is left
+  # out); a default does not fix the field's type. getters / setters: field => Builtin, used by
   # `@x` inside the type's functions whether or not the field is public.
   # own_equality: the type defines == (or Comparable with <=>); its values cannot be Hash keys or Set elements.
   # A Sake thread: Thread.new's value, around Ruby's Thread.
   ThreadValue = Struct.new(:thread)
 
-  StructType = Struct.new(:name, :fields, :exception, :field_types, :getters, :setters, :own_equality)
+  StructType = Struct.new(:name, :fields, :exception, :default_types, :getters, :setters, :own_equality)
 
   # The type of a Record: its set of (field, type) pairs, sorted by field and interned.
   Shape = Struct.new(:fields, :types) do

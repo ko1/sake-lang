@@ -509,7 +509,7 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 | `attr_accessor x, ...` | fields with `get_x` and `set_x` |
 | `attr_reader x, ...` | fields with `get_x` only; inside the type's functions, `@x = v` still writes them |
 | `attr_writer x, ...` | fields with `set_x` only; inside the type's functions, `@x` still reads them |
-| `attr_... x = v` | a default value, a literal number, String, Symbol, true, false, or nil; trailing fields with defaults may be omitted in `new`; a non-nil default fixes the field's type, and each write is checked |
+| `attr_... x = v` | a default value, a literal number, String, Symbol, true, false, or nil; trailing fields with defaults may be omitted in `new`. A default is only an initial value: it does not fix the field's type, which, as for every variable, is what is written to it, checked by the operations that use it |
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
 - **`new`.** `C.new` takes every field positionally, whatever its access.

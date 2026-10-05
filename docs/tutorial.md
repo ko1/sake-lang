@@ -549,7 +549,7 @@ true
 | `attr_reader x, y` | `C.get_x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
 | `attr_accessor n` | `C.get_n(c)` and `C.set_n(c, v)` from anywhere |
 | `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
-| `attr_accessor n = 0` | a default value (a literal); trailing fields with defaults may be left out of `new`; a non-nil default also fixes the field's type |
+| `attr_accessor n = 0` | a default value (a literal); trailing fields with defaults may be left out of `new`; it does not fix the field's type |
 | `class E < Exception` | an exception type: `message` comes first |
 
 Use `attr_reader` for every field that is not changed from outside, which is most of them: every

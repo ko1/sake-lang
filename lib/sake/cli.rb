@@ -71,11 +71,6 @@ module Sake
       if c.arg == "result"
         return ["#{c.op} must return a String, but #{c.verdict == :error ? "returns" : "may return"} #{typer.show_failing(c)}", []]
       end
-      if c.arg == "field"
-        type, field = c.op.split(".", 2)
-        verb = c.verdict == :error ? "is" : "can be"
-        return ["field #{field} of #{type} must be #{c.expected} (fixed by its default), but #{verb} #{typer.show_failing(c)}", []]
-      end
       maybe = c.verdict == :error ? "are " : "may be "
       case c.op
       # Operand pairs only: `Kernel.Rational` and other built-ins of these modules check single arguments.
@@ -152,7 +147,12 @@ module Sake
           when "type", "exhaustive"
             next_msg = ["yield: no block is given on this call", ["check `block_given?` before `yield`"]] if c.op == "yield"
             next_msg = ["the block passed on is missing here, and this call needs one", ["check `block_given?` first"]] if c.op == "&block"
-            next_msg || type_message(c, what, typer, program)
+            msg, hints = next_msg || type_message(c, what, typer, program)
+            # Where a field got the wrong type, when the function around the operation reads a field.
+            if item == "type" && c.node && field_reading_region(program, c.node).match?(/@\w|\.get_\w/)
+              hints += typer.field_sources(c.arg == "pair" ? c.failing.map(&:first) : c.failing)
+            end
+            [msg, hints]
           when "rescue"
             ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]
           when "unrescued"

@@ -227,22 +227,14 @@ module Sake
     end
 
     # readers / writers: the fields with a public get_ / set_ (all of them by default).
-    # defaults: field => default value (a value type); a non-nil default fixes the field's type.
+    # defaults: field => default value (a literal): only the value `new` stores when the argument is left
+    # out. It does not fix the field's type: types come from operations, as for every other variable.
     def define_struct(name, fields, exception: false, readers: fields, writers: fields, defaults: {})
-      field_types = defaults.reject { |_, v| v.nil? }.transform_values { Values.type_of(_1) }
-      dt = @struct_types[name] = StructType.new(name, fields, exception, field_types, {}, {})
+      dt = @struct_types[name] = StructType.new(name, fields, exception, defaults.transform_values { Values.type_of(_1) }, {}, {})
       return if name.include?("::")
-      check = lambda do |f, x|
-        want = field_types[f]
-        if want && Values.type_of(x) != want
-          raise Fail.new("TypeError", "field #{f} of #{name} must be #{want} (fixed by its default), got #{Values.describe(x)}")
-        end
-      end
       required = fields.size - fields.reverse.take_while { defaults.key?(_1) }.size
       @registry.define(name, :new, fields.take(required).map { "Any" }, optional: fields.drop(required).map { "Any" }) do |*vs|
-        vals = fields.each_with_index.map { |f, i| i < vs.size ? vs[i] : defaults[f] }
-        fields.zip(vals) { |f, x| check.(f, x) }
-        StructValue.new(dt, vals)
+        StructValue.new(dt, fields.each_with_index.map { |f, i| i < vs.size ? vs[i] : defaults[f] })
       end
       Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
@@ -250,7 +242,7 @@ module Sake
         dt.getters[f] = Builtin.new(namespace: name, name: "get_#{f}", params: [name], optional: [], rest: nil, block: :none,
                                     impl: ->(r) { r.values[i] })
         dt.setters[f] = Builtin.new(namespace: name, name: "set_#{f}", params: [name, "Any"], optional: [], rest: nil, block: :none,
-                                    impl: ->(r, x) { check.(f, x); r.values[i] = x })
+                                    impl: ->(r, x) { r.values[i] = x })
         @registry.define(name, "get_#{f}", [name], &dt.getters[f].impl) if readers.include?(f)
         @registry.define(name, "set_#{f}", [name, "Any"], &dt.setters[f].impl) if writers.include?(f)
       end
