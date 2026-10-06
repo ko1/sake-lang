@@ -1,0 +1,136 @@
+class ResolveError < Exception
+end
+
+def name?(s) = String.match?(s, /\A[a-z0-9_]+\z/)
+
+class Config
+  attr_reader values, sections
+
+  def initialize(c)
+    @values = Hash[]
+    @sections = Hash[]
+  end
+
+  def section(c, name)
+    ks = @sections[name]
+    return ks if ks
+    ks = String[]
+    @sections[name] = ks
+    ks
+  end
+
+  # true when the key was already there
+  def set(c, sec, key, value)
+    full = "#{sec}.#{key}"
+    dup = Hash.key?(@values, full)
+    @values[full] = value
+    Array.push(section(c, sec), key) if dup
+    dup
+  end
+
+  def keys(c, sec)
+    ks = @sections[sec]
+    ks ? Array.sort(ks) : nil
+  end
+
+  def key?(c, full) = Hash.key?(@values, full)
+
+  def resolve(c, full, chain)
+    if Array.include?(chain, full)
+      raise ResolveError.new("cycle #{Array.join(chain + Array[full], " -> ")}")
+    end
+    sec = Array.fetch(String.split(full, "."), 0)
+    String.gsub(Hash.fetch(@values, full), /\$\{([a-z0-9_]+(?:\.[a-z0-9_]+)?)\}/) do |m|
+      name = String.delete_suffix(String.delete_prefix(m, "${"), "}")
+      ref = String.include?(name, ".") ? name : "#{sec}.#{name}"
+      raise ResolveError.new("undefined #{ref}") unless Hash.key?(@values, ref)
+      resolve(c, ref, chain + Array[full])
+    end
+  end
+end
+
+def typed(v)
+  low = String.downcase(v)
+  if String.match?(v, /\A[+-]?\d+\z/)
+    "int #{String.to_i(v)}"
+  elsif Array.include?(Array["true", "yes", "on"], low)
+    "bool true"
+  elsif Array.include?(Array["false", "no", "off"], low)
+    "bool false"
+  elsif String.include?(v, ",")
+    items = String.split(v, ",", -1).Array.map { String.strip(it) }.Array.reject { String.empty?(it) }
+    head = "list[#{Array.size(items)}]"
+    Array.empty?(items) ? head : "#{head} #{Array.join(items, " | ")}"
+  else
+    "str \"#{v}\""
+  end
+end
+
+def config_line(conf, sec, line, n)
+  return sec if String.empty?(line) || String.start_with?(line, "#") || String.start_with?(line, ";")
+  m = String.match(line, /\A\[(.*)\]\z/)
+  if m
+    name = m[1]
+    if name && name?(name)
+      Config.section(conf, name)
+      return name
+    end
+  end
+  key, value = String.split(line, "=", 2)
+  if String.include?(line, "=") && key && name?(String.strip(key))
+    k = String.strip(key)
+    v = value ? String.strip(value) : ""
+    puts("line #{n}: duplicate key #{sec}.#{k}") if Config.set(conf, sec, k, v)
+  else
+    puts("line #{n}: syntax error")
+  end
+  sec
+end
+
+def get(conf, arg)
+  full = String.include?(arg, ".") ? arg : "main.#{arg}"
+  unless Config.key?(conf, full)
+    puts("#{full}: not found")
+    return
+  end
+  begin
+    puts("#{full} = #{typed(Config.resolve(conf, full, String[]))}")
+  rescue ResolveError => e
+    puts("#{full}: error: #{Exception.message(e)}")
+  end
+end
+
+def query_line(conf, line, n)
+  return if String.empty?(line)
+  words = String.split(line, " ")
+  cmd = Array.fetch(words, 0)
+  if Array.size(words) == 2 && cmd == "GET"
+    get(conf, Array.fetch(words, 1))
+  elsif Array.size(words) == 2 && cmd == "KEYS"
+    sec = Array.fetch(words, 1)
+    ks = Config.keys(conf, sec)
+    if ks == nil
+      puts("#{sec}: not found")
+    else
+      puts("#{sec}: #{Array.empty?(ks) ? "(none)" : Array.join(ks, ", ")}")
+    end
+  else
+    puts("line #{n}: bad query")
+  end
+end
+
+conf = Config.new
+sec = "main"
+in_queries = false
+n = 0
+while (raw = gets)
+  n += 1
+  line = String.strip(raw)
+  if in_queries
+    query_line(conf, line, n)
+  elsif line == "%%"
+    in_queries = true
+  else
+    sec = config_line(conf, sec, line, n)
+  end
+end

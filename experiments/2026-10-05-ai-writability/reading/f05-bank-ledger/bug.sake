@@ -1,0 +1,125 @@
+class LedgerError < Exception
+end
+
+class Account
+  attr_reader name, limit, balance, lowest, txns, debits
+
+  def initialize(a)
+    @balance = 0
+    @lowest = 0
+    @txns = 0
+    @debits = 0
+  end
+
+  def change(a, amount, txn, debit)
+    @balance += amount
+    @lowest = @balance if @balance < @lowest
+    @txns += 1 if txn
+    @debits += 1 if debit
+  end
+
+  def can_pay?(a, amount) = @balance - amount >= -@limit
+  def new_month(a) = @debits = 0
+end
+
+def money(c) = format("%s%d.%02d", c < 0 ? "-" : "", Integer.abs(c) / 100, Integer.abs(c) % 100)
+
+def amount(s, allow_zero)
+  m = String.match(s, /\A(\d+)(?:\.(\d\d?))?\z/)
+  raise LedgerError, "bad amount" unless m
+  c = String.to_i(m[1] || "") * 100 + String.to_i(String.ljust(m[2] || "", 2, "0"))
+  raise LedgerError, "bad amount" if c == 0 && !allow_zero
+  c
+end
+
+def lookup(accounts, n)
+  a = accounts[n]
+  raise LedgerError, "no account #{n}" unless a
+  a
+end
+
+def check_name(s)
+  raise LedgerError, "bad name" unless String.match?(s, /\A[a-z]{1,16}\z/)
+  s
+end
+
+def arity = once { Hash["OPEN" => 3, "DEPOSIT" => 3, "WITHDRAW" => 3, "TRANSFER" => 4, "MONTHEND" => 1] }
+
+def month_end(accounts, month)
+  puts("== month #{month} ==")
+  Array.each(Array.sort(Hash.keys(accounts))) do |n|
+    a = Hash.fetch(accounts, n)
+    bal = Account.balance(a)
+    if bal < 0
+      charge = (-bal * 15 + 500) / 1000
+      Account.change(a, -charge, false, false)
+      puts("#{n} interest #{money(-charge)}") if charge > 0
+    elsif bal > 0
+      gain = bal * 25 / 10_000
+      Account.change(a, gain, false, false)
+      puts("#{n} interest +#{money(gain)}") if gain > 0
+    end
+    if Account.debits(a) > 4
+      Account.change(a, -200, false, false)
+      puts("#{n} fee -2.00")
+    end
+    Account.new_month(a)
+  end
+end
+
+accounts = Hash[]
+month = 0
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  cmd = Array.fetch(f, 0)
+  begin
+    n = arity[cmd]
+    raise LedgerError, "unknown command" unless n
+    raise LedgerError, "wrong field count" unless Array.size(f) == n
+    if cmd == "OPEN"
+      name = check_name(Array.fetch(f, 1))
+      limit = amount(Array.fetch(f, 2), true)
+      raise LedgerError, "account #{name} exists" if Hash.key?(accounts, name)
+      accounts[name] = Account.new(name, limit)
+    elsif cmd == "DEPOSIT" || cmd == "WITHDRAW"
+      name = check_name(Array.fetch(f, 1))
+      amt = amount(Array.fetch(f, 2), false)
+      a = lookup(accounts, name)
+      if cmd == "DEPOSIT"
+        Account.change(a, amt, true, false)
+      else
+        raise LedgerError, "insufficient funds in #{name}" unless Account.can_pay?(a, amt)
+        Account.change(a, -amt, true, true)
+      end
+    elsif cmd == "TRANSFER"
+      from = check_name(Array.fetch(f, 1))
+      to = check_name(Array.fetch(f, 2))
+      amt = amount(Array.fetch(f, 3), false)
+      a = lookup(accounts, from)
+      b = lookup(accounts, to)
+      raise LedgerError, "same account" if from == to
+      raise LedgerError, "insufficient funds in #{from}" unless Account.can_pay?(a, amt)
+      Account.change(a, -amt, true, true)
+      Account.change(b, amt, true, false)
+    else
+      month += 1
+      month_end(accounts, month)
+    end
+  rescue LedgerError => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  end
+end
+
+if Hash.empty?(accounts)
+  puts("no accounts")
+else
+  puts(format("%-16s %12s %12s %5s", "account", "balance", "lowest", "txns"))
+  rows = Array.sort_by(Hash.values(accounts)) { |a| [-Account.balance(a), Account.name(a)] }
+  Array.each(rows) do |a|
+    puts(format("%-16s %12s %12s %5d", Account.name(a), money(Account.balance(a)), money(Account.lowest(a)), Account.txns(a)))
+  end
+  puts("total: #{money(Array.sum(Hash.values(accounts)) { Account.balance(it) })}")
+end

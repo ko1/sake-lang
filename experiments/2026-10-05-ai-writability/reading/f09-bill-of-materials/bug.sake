@@ -1,0 +1,134 @@
+class BadLine < Exception
+end
+
+class CannotBuild < Exception
+end
+
+class Part
+  attr_reader cost
+end
+
+class Assy
+  attr_reader labor, comps
+end
+
+def name_re = /\A[a-z][a-z0-9_]{0,15}\z/
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def money!(s)
+  m = String.match(s, /\A(\d+)\.(\d\d)\z/)
+  raise BadLine, "bad cost" unless m
+  String.to_i(m[1] || "") * 100 + String.to_i(m[2] || "")
+end
+
+def name!(s)
+  raise BadLine, "bad name" unless String.match?(s, name_re)
+  s
+end
+
+# Checks the structure below name, depth first in component order.
+def check(items, name, path)
+  i = Array.index(path, name)
+  if i
+    cycle = Array.push(Array.drop(path, i), name)
+    raise CannotBuild, "cycle #{Array.join(cycle, " > ")}"
+  end
+  item = items[name]
+  unless item
+    raise CannotBuild, "unknown item #{name}" if Array.empty?(path)
+    raise CannotBuild, "unknown item #{name} in #{Array.last(path)}"
+  end
+  case item
+  in Part then nil
+  in Assy
+    Array.each(Assy.comps(item)) { |c, q| check(items, c, path + Array[name]) }
+  end
+end
+
+def unit_cost(items, name)
+  item = Hash.fetch(items, name)
+  case item
+  in Part then Part.cost(item)
+  in Assy then Assy.labor(item) + Array.sum(Assy.comps(item)) { |c, q| q * unit_cost(items, c) }
+  end
+end
+
+def explode(items, name, qty, depth, parts)
+  puts("#{"  " * depth}#{qty} x #{name} = #{money(qty * unit_cost(items, name))}")
+  item = Hash.fetch(items, name)
+  case item
+  in Part then parts[name] += qty
+  in Assy then Array.each(Assy.comps(item)) { |c, q| explode(items, c, qty * q, depth + 1, parts) }
+  end
+end
+
+def parse_comp(s)
+  m = String.match(s, /\A([^:]+):(\d+)\z/)
+  raise BadLine, "bad component #{s}" unless m
+  c = m[1] || ""
+  q = String.to_i(m[2] || "")
+  raise BadLine, "bad component #{s}" unless String.match?(c, name_re) && Integer.between?(q, 1, 999)
+  [c, q]
+end
+
+def define(items, f)
+  cmd = Array.fetch(f, 0)
+  if cmd == "PART"
+    raise BadLine, "wrong field count" unless Array.size(f) == 3
+    name = name!(Array.fetch(f, 1))
+    cost = money!(Array.fetch(f, 2))
+    raise BadLine, "duplicate #{name}" if Hash.key?(items, name)
+    items[name] = Part.new(cost)
+  else
+    raise BadLine, "wrong field count" unless Array.size(f) >= 4
+    name = name!(Array.fetch(f, 1))
+    labor = money!(Array.fetch(f, 2))
+    comps = Tuple[]
+    Array.each(Array.drop(f, 3)) { |s| Array.push(comps, parse_comp(s)) }
+    seen = Hash.find(Array.tally(Array.map(comps) { |c, q| c })) { |c, n| n > 1 }
+    if seen
+      c, _ = seen
+      raise BadLine, "repeated component #{c}"
+    end
+    raise BadLine, "duplicate #{name}" if Hash.key?(items, name)
+    items[name] = Assy.new(labor, comps)
+  end
+end
+
+def build(items, f)
+  raise BadLine, "wrong field count" unless Array.size(f) == 3
+  name = name!(Array.fetch(f, 1))
+  s = Array.fetch(f, 2)
+  qty = String.to_i(s)
+  raise BadLine, "bad quantity" unless String.match?(s, /\A\d+\z/) && Integer.between?(qty, 1, 1000)
+  check(items, name, String[])
+  parts = Hash.new(0)
+  explode(items, name, qty, 0, parts)
+  puts("parts:")
+  Array.each(Hash.sort_by(parts) { |n, q| [q, n] }) do |n, q|
+    puts("  #{n} x#{q} = #{money(q * unit_cost(items, n))}")
+  end
+end
+
+items = Hash[]
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  cmd = Array.fetch(f, 0)
+  begin
+    if cmd == "PART" || cmd == "ASSY"
+      define(items, f)
+    elsif cmd == "BUILD"
+      build(items, f)
+    else
+      raise BadLine, "unknown command"
+    end
+  rescue BadLine => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  rescue CannotBuild => e
+    puts("line #{lineno}: cannot build: #{Exception.message(e)}")
+  end
+end

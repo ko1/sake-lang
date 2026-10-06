@@ -1,0 +1,87 @@
+class Rate
+  attr_reader first, step, cap, grace
+end
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def part_fee(rate, minutes)
+  return 0 if minutes == 0
+  extra = Integer.clamp(minutes - 60, 0, minutes)
+  Rate.first(rate) + extra / 30 * Rate.step(rate)
+end
+
+def fee(rate, stay)
+  return 0 if stay <= Rate.grace(rate)
+  days, rem = Integer.divmod(stay, 1440)
+  cap = Rate.cap(rate)
+  days * cap + Tuple.min([cap, part_fee(rate, rem)])
+end
+
+# [minute of day, kind, plate], or nil for an invalid line
+def parse_event(line)
+  f = String.split(line, " ")
+  return nil unless Array.size(f) == 3
+  t, kind, plate = f
+  m = String.match(t, /\A(\d\d):(\d\d)\z/)
+  return nil unless m
+  h = String.to_i(m[1])
+  mi = String.to_i(m[2])
+  return nil if h > 23 || mi > 59
+  return nil unless kind == "IN" || kind == "OUT"
+  return nil unless String.match?(plate, /\A[A-Z0-9]{1,8}\z/)
+  [h * 60 + mi, kind, plate]
+end
+
+lines = String[]
+while (l = gets)
+  Array.push(lines, String.chomp(l))
+end
+
+header = String.split(lines[0] || "", " ")
+rate = Rate.new(String.to_i(header[1] || "0"), String.to_i(header[2] || "0"),
+                String.to_i(header[3] || "0"), String.to_i(header[4] || "0"))
+
+inside = Hash[]
+revenue = Hash.new(0)
+exits = Hash.new(0)
+day = 0
+prev = 0
+Array.each_with_index(lines) do |line, i|
+  next if i == 0 || String.empty?(String.strip(line))
+  n = i + 1
+  ev = parse_event(line)
+  unless ev
+    puts("line #{n}: invalid")
+    next
+  end
+  t, kind, plate = ev
+  day += 1 if t < prev
+  prev = t
+  now = day * 1440 + t
+  if kind == "IN"
+    if Hash.key?(inside, plate)
+      puts("line #{n}: #{plate} already inside")
+    else
+      inside[plate] = now
+    end
+  else
+    since = Hash.delete(inside, plate)
+    if since == nil
+      puts("line #{n}: #{plate} not inside")
+    else
+      stay = now - since
+      f = fee(rate, stay)
+      revenue[plate] += f
+      exits[plate] += 1
+      puts(format("%s %d:%02d %s", plate, stay / 60, stay % 60, money(f)))
+    end
+  end
+end
+
+puts("--- summary")
+Hash.keys(exits)
+  .Array.sort_by { |pl| [-revenue[pl], pl] }
+  .Array.each { |pl| puts("#{pl} #{exits[pl]} #{money(revenue[pl])}") }
+puts("total #{Array.sum(Hash.values(exits))} #{money(Array.sum(Hash.values(revenue)))}")
+still = Array.sort(Hash.keys(inside))
+puts("inside: #{Array.empty?(still) ? "none" : Array.join(still, ", ")}")
