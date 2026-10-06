@@ -1,0 +1,72 @@
+def reason(f)
+  return "wrong field count" if Array.size(f) != 6
+  ts = f[0]
+  m = String.match(ts, /\A(\d\d\d\d)-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)\z/)
+  return "bad timestamp" if m == nil
+  c = MatchData.captures(m)
+  mo = String.to_i(c[1])
+  d = String.to_i(c[2])
+  h = String.to_i(c[3])
+  mi = String.to_i(c[4])
+  s = String.to_i(c[5])
+  return "bad timestamp" if mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], f[1])
+  return "bad path" unless String.start_with?(f[2], "/")
+  return "bad status" unless String.match?(f[3], /\A\d{3}\z/)
+  st = String.to_i(f[3])
+  return "bad status" if st < 100 || st > 599
+  return "bad bytes" unless f[4] == "-" || String.match?(f[4], /\A\d+\z/)
+  return "bad duration" unless String.match?(f[5], /\A\d+\z/)
+  nil
+end
+
+lines = String.split(IO.read(IO.stdin), "\n")
+counts = Hash.new(0)
+n4 = Hash.new(0)
+n5 = Hash.new(0)
+bytes = Hash.new(0)
+dsum = Hash.new(0)
+dmax = Hash.new(0)
+hours = Hash.new(0)
+bad = Array[]
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  r = reason(f)
+  if r
+    Array.push(bad, "  line #{i + 1}: #{r}")
+    next
+  end
+  path = String.split(f[2], "?", 2)[0]
+  path = "" if path == nil
+  key = "#{f[1]} #{path}"
+  counts[key] += 1
+  st = String.to_i(f[3])
+  n4[key] += 1 if st >= 400 && st < 500
+  n5[key] += 1 if st >= 500
+  bytes[key] += String.to_i(f[4]) unless f[4] == "-"
+  dur = String.to_i(f[5])
+  dsum[key] += dur
+  dmax[key] = dur if dur > dmax[key]
+  hours[String.slice(f[0], 0, 13)] += 1
+end
+
+if Hash.empty?(counts)
+  puts("no valid requests")
+else
+  keys = Array.sort_by(Hash.keys(counts)) { |k| [-counts[k], k] }
+  w = Array.max(Array.map(keys) { |k| String.size(k) })
+  w = 8 if w < 8
+  puts(format("%s %5s %4s %4s %8s %7s %6s", String.ljust("endpoint", w), "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  Array.each(keys) do |k|
+    q = (dsum[k] * 20 + counts[k]) / (2 * counts[k])
+    avg = "#{q / 10}.#{q % 10}"
+    puts(format("%s %5d %4d %4d %8d %7s %6d", String.ljust(k, w), counts[k], n4[k], n5[k], bytes[k], avg, dmax[k]))
+  end
+  hk = Array.sort(Hash.keys(hours))
+  best = hk[0]
+  Array.each(hk) { |h| best = h if hours[h] > hours[best] }
+  puts("busiest hour: #{String.slice(best, 0, 10)} #{String.slice(best, 11, 2)}:00 (#{hours[best]} requests)")
+end
+puts("invalid lines: #{Array.size(bad)}")
+puts(*bad) unless Array.empty?(bad)

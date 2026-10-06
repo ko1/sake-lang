@@ -1,0 +1,149 @@
+def parse_money(s)
+  m = String.match(s, /\A(\d+)(?:\.(\d{1,2}))?\z/)
+  return nil unless m
+  frac = m[2]
+  f = frac ? String.to_i(String.ljust(frac, 2, "0")) : 0
+  String.to_i(m[1]) * 100 + f
+end
+
+def money(c)
+  sign = c < 0 ? "-" : ""
+  a = Integer.abs(c)
+  "#{sign}#{a / 100}.#{String.rjust(Integer.to_s(a % 100), 2, "0")}"
+end
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+# account = [balance, limit, lowest, txns, outgoing this month]
+def adjust(a, delta)
+  a[0] += delta
+  a[2] = a[0] if a[0] < a[2]
+end
+
+def month_end(acc, mc)
+  mc[0] += 1
+  puts("== month #{mc[0]} ==")
+  Array.each(Array.sort(Hash.keys(acc))) do |name|
+    a = acc[name]
+    if a[0] < 0
+      over = -a[0]
+      charge = (over * 15 + 999) / 1000
+      if charge != 0
+        puts("#{name} interest -#{money(charge)}")
+        adjust(a, -charge)
+      end
+    elsif a[0] > 0
+      add = a[0] * 25 / 10000
+      if add != 0
+        puts("#{name} interest +#{money(add)}")
+        adjust(a, add)
+      end
+    end
+    if a[4] > 4
+      puts("#{name} fee -2.00")
+      adjust(a, -200)
+    end
+    a[4] = 0
+  end
+end
+
+def handle(acc, mc, n, f)
+  cmd = f[0]
+  want = 0
+  if cmd == "OPEN" || cmd == "DEPOSIT" || cmd == "WITHDRAW"
+    want = 3
+  elsif cmd == "TRANSFER"
+    want = 4
+  elsif cmd == "MONTHEND"
+    want = 1
+  else
+    err(n, "unknown command")
+    return
+  end
+  if Array.size(f) != want
+    err(n, "wrong field count")
+    return
+  end
+  if cmd == "MONTHEND"
+    month_end(acc, mc)
+    return
+  end
+  names = cmd == "TRANSFER" ? Array[f[1], f[2]] : Array[f[1]]
+  Array.each(names) do |nm|
+    unless String.match?(nm, /\A[a-z]{1,16}\z/)
+      err(n, "bad name")
+      return
+    end
+  end
+  amt = parse_money(f[want - 1])
+  if amt == nil || (cmd != "OPEN" && amt == 0)
+    err(n, "bad amount")
+    return
+  end
+  if cmd == "OPEN"
+    name = f[1]
+    if acc[name] != nil
+      err(n, "account #{name} exists")
+      return
+    end
+    acc[name] = Array[0, amt, 0, 0, 0]
+    return
+  end
+  Array.each(names) do |nm|
+    if acc[nm] == nil
+      err(n, "no account #{nm}")
+      return
+    end
+  end
+  a = acc[f[1]]
+  if cmd == "DEPOSIT"
+    adjust(a, amt)
+    a[3] += 1
+  elsif cmd == "WITHDRAW"
+    if a[0] - amt < -a[1]
+      err(n, "insufficient funds in #{f[1]}")
+      return
+    end
+    adjust(a, -amt)
+    a[3] += 1
+    a[4] += 1
+  else
+    if f[1] == f[2]
+      err(n, "same account")
+      return
+    end
+    if a[0] - amt < -a[1]
+      err(n, "insufficient funds in #{f[1]}")
+      return
+    end
+    b = acc[f[2]]
+    adjust(a, -amt)
+    adjust(b, amt)
+    a[3] += 1
+    a[4] += 1
+    b[3] += 1
+  end
+end
+
+acc = Hash[]
+mc = Array[0]
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, i|
+  f = String.split(String.chomp(raw), " ")
+  next if Array.empty?(f)
+  handle(acc, mc, i + 1, f)
+end
+
+if Hash.empty?(acc)
+  puts("no accounts")
+else
+  puts(format("%-16s %12s %12s %5s", "account", "balance", "lowest", "txns"))
+  names = Array.sort_by(Hash.keys(acc)) { |k| [-acc[k][0], k] }
+  total = 0
+  Array.each(names) do |k|
+    a = acc[k]
+    total += a[0]
+    puts(format("%-16s %12s %12s %5d", k, money(a[0]), money(a[2]), a[3]))
+  end
+  puts("total: #{money(total)}")
+end

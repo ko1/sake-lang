@@ -1,0 +1,147 @@
+Def = Struct.new(:toks, :jmp)
+
+def builtins = once { Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "then", "else", ":", ";"] }
+
+def number?(t) = String.match?(t, /\A-?\d+\z/)
+
+def syntax_ok?(toks)
+  st = Array[]
+  i = 0
+  while i < Array.size(toks)
+    t = toks[i]
+    if t == ":"
+      return false unless Array.empty?(st)
+      name = toks[i + 1]
+      return false if name == nil || number?(name) || Array.include?(builtins, name)
+      Array.push(st, "def")
+      i += 1
+    elsif t == ";"
+      return false unless Array.last(st) == "def"
+      Array.pop(st)
+    elsif t == "if"
+      Array.push(st, "if")
+    elsif t == "else"
+      return false unless Array.last(st) == "if"
+      Array.pop(st)
+      Array.push(st, "else")
+    elsif t == "then"
+      top = Array.last(st)
+      return false unless top == "if" || top == "else"
+      Array.pop(st)
+    end
+    i += 1
+  end
+  Array.empty?(st)
+end
+
+# for each if/else index, the index it jumps to
+def jumps(toks)
+  j = Array.new(Array.size(toks), 0)
+  st = Array[]
+  Array.each_with_index(toks) do |t, i|
+    if t == "if"
+      Array.push(st, i)
+    elsif t == "else"
+      k = Array.pop(st)
+      j[k] = i
+      Array.push(st, i)
+    elsif t == "then"
+      k = Array.pop(st)
+      j[k] = i
+    end
+  end
+  j
+end
+
+def need(stack, n, w)
+  raise RuntimeError, "stack underflow in #{w}" if Array.size(stack) < n
+end
+
+def run(toks, jmp, stack, dict, depth)
+  pc = 0
+  while pc < Array.size(toks)
+    t = toks[pc]
+    if number?(t)
+      Array.push(stack, String.to_i(t))
+    elsif t == ":"
+      e = pc + 2
+      e += 1 while toks[e] != ";"
+      body = toks[pc + 2, e - pc - 2]
+      dict[toks[pc + 1]] = Def.new(body, jumps(body))
+      pc = e
+    elsif t == "if"
+      need(stack, 1, "if")
+      v = Array.pop(stack)
+      if v == 0
+        pc = jmp[pc] + 1
+        next
+      end
+    elsif t == "else"
+      pc = jmp[pc] + 1
+      next
+    elsif t == "then"
+      pc += 0
+    elsif Array.include?(Array["+", "-", "*", "/", "mod", "=", "<", ">", "swap", "over"], t)
+      need(stack, 2, t)
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      case t
+      in "+" then Array.push(stack, a + b)
+      in "-" then Array.push(stack, a - b)
+      in "*" then Array.push(stack, a * b)
+      in "/"
+        raise RuntimeError, "division by zero" if b == 0
+        Array.push(stack, (a - Integer.remainder(a, b)) / b)
+      in "mod"
+        raise RuntimeError, "division by zero" if b == 0
+        Array.push(stack, Integer.remainder(a, b))
+      in "=" then Array.push(stack, a == b ? 1 : 0)
+      in "<" then Array.push(stack, a < b ? 1 : 0)
+      in ">" then Array.push(stack, a > b ? 1 : 0)
+      in "swap" then Array.push(stack, b, a)
+      else Array.push(stack, a, b, a)
+      end
+    elsif t == "dup"
+      need(stack, 1, "dup")
+      Array.push(stack, Array.last(stack))
+    elsif t == "drop"
+      need(stack, 1, "drop")
+      Array.pop(stack)
+    elsif t == "."
+      need(stack, 1, ".")
+      puts(Array.pop(stack))
+    else
+      d = dict[t]
+      raise RuntimeError, "unknown word #{t}" if d == nil
+      raise RuntimeError, "too deep" if depth >= 100
+      run(Def.toks(d), Def.jmp(d), stack, dict, depth + 1)
+    end
+    pc += 1
+  end
+  nil
+end
+
+stack = Array[]
+dict = Hash[]
+n = 0
+while (line = gets)
+  n += 1
+  toks = String.split(String.chomp(line), " ")
+  unless syntax_ok?(toks)
+    puts("line #{n}: syntax error")
+    next
+  end
+  saved = Array.dup(stack)
+  begin
+    run(toks, jumps(toks), stack, dict, 0)
+  rescue RuntimeError => e
+    Array.clear(stack)
+    Array.concat(stack, saved)
+    puts("line #{n}: error: #{Exception.message(e)}")
+  end
+end
+if Array.empty?(stack)
+  puts("stack: (empty)")
+else
+  puts("stack: " + Array.join(stack, " "))
+end

@@ -1,0 +1,154 @@
+Db = Struct.new(:cost, :comps, :qtys, :units, :parts, :done)
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+def good_name(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+def good_money(s) = String.match?(s, /\A[0-9]+\.[0-9]{2}\z/)
+def cents(s) = String.to_i(String.delete(s, "."))
+
+def check(db, name, parent, path)
+  unless Hash.key?(Db.cost(db), name)
+    return parent == "" ? "unknown item #{name}" : "unknown item #{name} in #{parent}"
+  end
+  if Array.include?(path, name)
+    i = Array.index(path, name) || 0
+    cyc = Array.drop(path, i)
+    Array.push(cyc, name)
+    return "cycle " + Array.join(cyc, " > ")
+  end
+  return "" if Hash.key?(Db.done(db), name)
+  Array.push(path, name)
+  cs = Hash.fetch(Db.comps(db), name, String[])
+  k = 0
+  while k < Array.size(cs)
+    r = check(db, Array.fetch(cs, k, ""), name, path)
+    return r if r != ""
+    k += 1
+  end
+  Array.pop(path)
+  Db.done(db)[name] = true
+  ""
+end
+
+def unit(db, name)
+  u = Db.units(db)
+  return Hash.fetch(u, name, 0) if Hash.key?(u, name)
+  total = Hash.fetch(Db.cost(db), name, 0)
+  cs = Hash.fetch(Db.comps(db), name, String[])
+  qs = Hash.fetch(Db.qtys(db), name, Integer[])
+  Array.each_with_index(cs) do |c, i|
+    total += Array.fetch(qs, i, 0) * unit(db, c)
+  end
+  u[name] = total
+  total
+end
+
+def walk(db, name, qty, depth)
+  u = unit(db, name)
+  puts(String.*("  ", depth) + "#{qty} x #{name} = #{money(qty * u)}")
+  cs = Hash.fetch(Db.comps(db), name, String[])
+  if Array.empty?(cs)
+    p2 = Db.parts(db)
+    p2[name] = Hash.fetch(p2, name, 0) + qty
+  else
+    qs = Hash.fetch(Db.qtys(db), name, Integer[])
+    Array.each_with_index(cs) do |c, i|
+      walk(db, c, qty * Array.fetch(qs, i, 0), depth + 1)
+    end
+  end
+end
+
+db = Db.new(Hash[], Hash[], Hash[], Hash[], Hash[], Hash[])
+n = 0
+while (line = gets)
+  n += 1
+  f = String.split(String.chomp(line), " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  cnt = Array.size(f)
+  if cmd != "PART" && cmd != "ASSY" && cmd != "BUILD"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if (cmd == "PART" && cnt != 3) || (cmd == "BUILD" && cnt != 3) || (cmd == "ASSY" && cnt < 4)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  name = f[1]
+  unless good_name(name)
+    puts("line #{n}: error: bad name")
+    next
+  end
+  if cmd == "PART"
+    unless good_money(f[2])
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    if Hash.key?(Db.cost(db), name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    Db.cost(db)[name] = cents(f[2])
+    Db.comps(db)[name] = String[]
+    Db.qtys(db)[name] = Integer[]
+  elsif cmd == "ASSY"
+    unless good_money(f[2])
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    cn = String[]
+    cq = Integer[]
+    bad = ""
+    rep = ""
+    Array.each(Array.drop(f, 3)) do |t|
+      m = String.match(t, /\A([a-z][a-z0-9_]{0,15}):([0-9]+)\z/)
+      if m == nil
+        bad = t if bad == ""
+      else
+        q = String.to_i(MatchData.[](m, 2))
+        if q < 1 || q > 999
+          bad = t if bad == ""
+        else
+          nm = MatchData.[](m, 1)
+          rep = nm if rep == "" && Array.include?(cn, nm)
+          Array.push(cn, nm)
+          Array.push(cq, q)
+        end
+      end
+    end
+    if bad != ""
+      puts("line #{n}: error: bad component #{bad}")
+      next
+    end
+    if rep != ""
+      puts("line #{n}: error: repeated component #{rep}")
+      next
+    end
+    if Hash.key?(Db.cost(db), name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    Db.cost(db)[name] = cents(f[2])
+    Db.comps(db)[name] = cn
+    Db.qtys(db)[name] = cq
+  else
+    unless String.match?(f[2], /\A[0-9]+\z/) && String.to_i(f[2]) >= 1 && String.to_i(f[2]) <= 1000
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    qty = String.to_i(f[2])
+    Hash.clear(Db.done(db))
+    r = check(db, name, "", String[])
+    if r != ""
+      puts("line #{n}: cannot build: #{r}")
+      next
+    end
+    Hash.clear(Db.parts(db))
+    walk(db, name, qty, 0)
+    puts("parts:")
+    pt = Db.parts(db)
+    Array.each(Array.sort_by(Hash.keys(pt)) { |k| [-Hash.fetch(pt, k, 0), k] }) do |k|
+      q = Hash.fetch(pt, k, 0)
+      puts("  #{k} x#{q} = #{money(q * unit(db, k))}")
+    end
+  end
+end

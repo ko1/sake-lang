@@ -1,0 +1,151 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def valid_name?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+# cents, or nil when the text is not money
+def parse_money(s)
+  m = String.match(s, /\A(\d+)\.(\d\d)\z/)
+  return nil unless m
+  String.to_i(m[1]) * 100 + String.to_i(m[2])
+end
+
+# nil when everything under name can be built, otherwise the first problem
+def check(parts, assys, ok, name, parent, path)
+  return nil if Hash.key?(ok, name)
+  if Hash.key?(parts, name)
+    ok[name] = true
+    return nil
+  end
+  a = assys[name]
+  if a == nil
+    return "unknown item #{name}" if parent == nil
+    return "unknown item #{name} in #{parent}"
+  end
+  i = Array.index(path, name)
+  return "cycle " + Array.join(Array.drop(path, i) + Array[name], " > ") if i != nil
+  Array.push(path, name)
+  Array.each(a[1]) do |cn, cq|
+    msg = check(parts, assys, ok, cn, name, path)
+    return msg if msg != nil
+  end
+  Array.pop(path)
+  ok[name] = true
+  nil
+end
+
+def unit(parts, assys, memo, name)
+  c = parts[name]
+  return c if c != nil
+  m = memo[name]
+  return m if m != nil
+  a = assys[name]
+  total = a[0]
+  Array.each(a[1]) { |cn, cq| total += cq * unit(parts, assys, memo, cn) }
+  memo[name] = total
+  total
+end
+
+def walk(parts, assys, memo, name, qty, depth, totals)
+  puts("#{"  " * depth}#{qty} x #{name} = #{money(qty * unit(parts, assys, memo, name))}")
+  if Hash.key?(parts, name)
+    totals[name] += qty
+  else
+    Array.each(assys[name][1]) do |cn, cq|
+      walk(parts, assys, memo, cn, qty * cq, depth + 1, totals)
+    end
+  end
+end
+
+parts = Hash[]
+assys = Hash[]
+
+Array.each_with_index(IO.readlines(IO.stdin())) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  cnt = Array.size(f)
+  if cmd == "PART" || cmd == "ASSY" || cmd == "BUILD"
+    if (cmd == "ASSY" && cnt < 4) || (cmd != "ASSY" && cnt != 3)
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+  else
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  name = f[1]
+  if !valid_name?(name)
+    puts("line #{n}: error: bad name")
+    next
+  end
+  if cmd == "PART"
+    cost = parse_money(f[2])
+    if cost == nil
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    if Hash.key?(parts, name) || Hash.key?(assys, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    parts[name] = cost
+  elsif cmd == "ASSY"
+    labor = parse_money(f[2])
+    if labor == nil
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    comps = Tuple[]
+    bad = nil
+    Array.each(Array.drop(f, 3)) do |txt|
+      m = String.match(txt, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+      q = m == nil ? 0 : String.to_i(m[2])
+      if q < 1 || q > 999
+        bad = txt
+        break
+      end
+      Array.push(comps, [m[1], q])
+    end
+    if bad != nil
+      puts("line #{n}: error: bad component #{bad}")
+      next
+    end
+    seen = Set[]
+    rep = nil
+    Array.each(comps) do |cn, cq|
+      if Set.include?(seen, cn)
+        rep = cn
+        break
+      end
+      Set.add(seen, cn)
+    end
+    if rep != nil
+      puts("line #{n}: error: repeated component #{rep}")
+      next
+    end
+    if Hash.key?(parts, name) || Hash.key?(assys, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    assys[name] = [labor, comps]
+  else
+    if !String.match?(f[2], /\A\d+\z/) || String.to_i(f[2]) < 1 || String.to_i(f[2]) > 1000
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    qty = String.to_i(f[2])
+    msg = check(parts, assys, Hash[], name, nil, String[])
+    if msg != nil
+      puts("line #{n}: cannot build: #{msg}")
+      next
+    end
+    memo = Hash[]
+    totals = Hash.new(0)
+    walk(parts, assys, memo, name, qty, 0, totals)
+    puts("parts:")
+    rows = Array.sort_by(Hash.to_a(totals)) { |pn, t| [-t, pn] }
+    Array.each(rows) { |pn, t| puts("  #{pn} x#{t} = #{money(t * parts[pn])}") }
+  end
+end

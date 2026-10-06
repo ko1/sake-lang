@@ -1,0 +1,166 @@
+Item = Struct.new(:kind, :cost, :comps)
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def ok_name?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+def parse_cost(s)
+  return nil unless String.match?(s, /\A\d+\.\d\d\z/)
+  String.to_i(String.delete(s, "."))
+end
+
+# returns an error message, or nil when the item can be built
+def check(name, parent, path, items, done)
+  if Array.include?(path, name)
+    i = Array.index(path, name)
+    cyc = Array.drop(path, i)
+    Array.push(cyc, name)
+    return "cycle " + Array.join(cyc, " > ")
+  end
+  it = items[name]
+  if it == nil
+    return "unknown item #{name}" if parent == nil
+    return "unknown item #{name} in #{parent}"
+  end
+  return nil if Set.include?(done, name)
+  Array.push(path, name)
+  err = nil
+  if Item.kind(it) == :assy
+    Array.each(Item.comps(it)) do |c, q|
+      err = check(c, name, path, items, done) if err == nil
+    end
+  end
+  Array.pop(path)
+  Set.add(done, name) if err == nil
+  err
+end
+
+def unit_cost(name, items, memo)
+  known = memo[name]
+  return known if known != nil
+  it = items[name]
+  c = Item.cost(it)
+  if Item.kind(it) == :assy
+    Array.each(Item.comps(it)) do |cn, q|
+      c += q * unit_cost(cn, items, memo)
+    end
+  end
+  memo[name] = c
+  c
+end
+
+def render(name, qty, depth, items, memo, parts)
+  it = items[name]
+  u = unit_cost(name, items, memo)
+  pad = "  " * depth
+  puts("#{pad}#{qty} x #{name} = #{money(qty * u)}")
+  if Item.kind(it) == :part
+    parts[name] += qty
+  else
+    Array.each(Item.comps(it)) do |cn, q|
+      render(cn, qty * q, depth + 1, items, memo, parts)
+    end
+  end
+end
+
+lines = IO.readlines(IO.stdin)
+items = Hash[]
+
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  cnt = Array.size(f)
+  if cmd != "PART" && cmd != "ASSY" && cmd != "BUILD"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if (cmd == "PART" && cnt != 3) || (cmd == "ASSY" && cnt < 4) || (cmd == "BUILD" && cnt != 3)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  name = f[1]
+  unless ok_name?(name)
+    puts("line #{n}: error: bad name")
+    next
+  end
+  if cmd == "BUILD"
+    qs = f[2]
+    unless String.match?(qs, /\A\d+\z/) && String.to_i(qs) >= 1 && String.to_i(qs) <= 1000
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    err = check(name, nil, Array[], items, Set[])
+    if err != nil
+      puts("line #{n}: cannot build: #{err}")
+      next
+    end
+    memo = Hash[]
+    parts = Hash[]
+    Array.each(Hash.keys(items)) { |k| parts[k] = 0 }
+    render(name, String.to_i(qs), 0, items, memo, parts)
+    puts("parts:")
+    used = Array.select(Hash.keys(parts)) { |k| parts[k] > 0 }
+    ordered = Array.sort_by(used) { |k| [-parts[k], k] }
+    Array.each(ordered) do |k|
+      puts("  #{k} x#{parts[k]} = #{money(parts[k] * Item.cost(items[k]))}")
+    end
+    next
+  end
+  cost = parse_cost(f[2])
+  if cost == nil
+    puts("line #{n}: error: bad cost")
+    next
+  end
+  if cmd == "PART"
+    if Hash.key?(items, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    items[name] = Item.new(:part, cost, Tuple[])
+  else
+    comps = Tuple[]
+    bad = nil
+    Array.each(Array.drop(f, 3)) do |text|
+      if bad == nil
+        m = String.match(text, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+        if m == nil
+          bad = text
+        else
+          q = String.to_i(m[2])
+          if q < 1 || q > 999
+            bad = text
+          else
+            Array.push(comps, [m[1], q])
+          end
+        end
+      end
+    end
+    if bad != nil
+      puts("line #{n}: error: bad component #{bad}")
+      next
+    end
+    seen = Set[]
+    rep = nil
+    Array.each(comps) do |cn, q|
+      if rep == nil
+        if Set.include?(seen, cn)
+          rep = cn
+        else
+          Set.add(seen, cn)
+        end
+      end
+    end
+    if rep != nil
+      puts("line #{n}: error: repeated component #{rep}")
+      next
+    end
+    if Hash.key?(items, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    items[name] = Item.new(:assy, cost, comps)
+  end
+end

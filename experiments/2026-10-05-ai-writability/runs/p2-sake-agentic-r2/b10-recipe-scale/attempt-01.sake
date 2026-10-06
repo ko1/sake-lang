@@ -1,0 +1,134 @@
+def qty_str(r)
+  num = Rational.numerator(r)
+  den = Rational.denominator(r)
+  if den <= 8
+    whole = num / den
+    rem = num % den
+    if rem == 0
+      "#{whole}"
+    elsif whole == 0
+      "#{rem}/#{den}"
+    else
+      "#{whole} #{rem}/#{den}"
+    end
+  else
+    v = (num * 200 + den) / (2 * den)
+    format("%d.%02d", v / 100, v % 100)
+  end
+end
+
+def nice?(r) = r >= 1 && Rational.denominator(r) <= 4
+
+# [group, factor in the group's base unit], or nil
+def unit_info(u)
+  if u == "tsp"
+    ["sp", 1]
+  elsif u == "tbsp"
+    ["sp", 3]
+  elsif u == "cup"
+    ["sp", 48]
+  elsif u == "g"
+    ["g", 1]
+  elsif u == "kg"
+    ["g", 1000]
+  elsif u == "ml"
+    ["ml", 1]
+  elsif u == "l"
+    ["ml", 1000]
+  elsif u == "-"
+    ["ct", 1]
+  end
+end
+
+def show(group, t, name)
+  if group == "ct"
+    return "#{qty_str(Kernel.Rational(Rational.ceil(t), 1))} #{name}"
+  end
+  if group == "sp"
+    cups = t / 48
+    return "#{qty_str(cups)} cup #{name}" if nice?(cups)
+    tb = t / 3
+    return "#{qty_str(tb)} tbsp #{name}" if nice?(tb)
+    return "#{qty_str(t)} tsp #{name}"
+  end
+  if group == "g"
+    return "#{qty_str(t / 1000)} kg #{name}" if t >= 1000
+    return "#{qty_str(t)} g #{name}"
+  end
+  return "#{qty_str(t / 1000)} l #{name}" if t >= 1000
+  "#{qty_str(t)} ml #{name}"
+end
+
+def int_ok?(s, lo, hi) = String.match?(s, /\A\d+\z/) && String.to_i(s) >= lo && String.to_i(s) <= hi
+
+lines = IO.readlines(IO.stdin)
+head = Array.empty?(lines) ? Array[] : String.split(String.strip(lines[0]), " ")
+unless Array.size(head) == 4 && head[0] == "SERVES" && head[2] == "->" && int_ok?(head[1], 1, 100) && int_ok?(head[3], 1, 100)
+  puts("line 1: error: bad servings")
+  exit
+end
+m_srv = String.to_i(head[3])
+factor = Kernel.Rational(m_srv, String.to_i(head[1]))
+puts("serves #{m_srv} (x #{qty_str(factor)})")
+
+order = String[]
+totals = Hash[]
+names = Hash[]
+groups = Hash[]
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  next if n == 1
+  f = String.split(String.strip(raw), " ")
+  next if Array.empty?(f)
+  next if String.start_with?(f[0], "#")
+  q = nil
+  used = 1
+  a = f[0]
+  if String.match?(a, /\A\d+\z/)
+    q = Kernel.Rational(String.to_i(a), 1)
+    fm = f[1] == nil ? nil : String.match(f[1], /\A(\d+)\/(\d+)\z/)
+    if fm && String.to_i(fm[2]) != 0
+      q = q + Kernel.Rational(String.to_i(fm[1]), String.to_i(fm[2]))
+      used = 2
+    end
+  else
+    dm = String.match(a, /\A(\d+)\.(\d+)\z/)
+    fr = String.match(a, /\A(\d+)\/(\d+)\z/)
+    if dm
+      q = Kernel.Rational(String.to_i(dm[1] + dm[2]), 10 ** String.size(dm[2]))
+    elsif fr && String.to_i(fr[2]) != 0
+      q = Kernel.Rational(String.to_i(fr[1]), String.to_i(fr[2]))
+    end
+  end
+  if q == nil || q <= 0
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  u = f[used]
+  if u == nil
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  info = unit_info(u)
+  if info == nil
+    puts("line #{n}: error: unknown unit #{u}")
+    next
+  end
+  rest = Array.drop(f, used + 1)
+  if Array.empty?(rest)
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(rest, " ")
+  key = "#{info[0]}|#{name}"
+  unless Hash.key?(totals, key)
+    Array.push(order, key)
+    totals[key] = Kernel.Rational(0, 1)
+    names[key] = name
+    groups[key] = info[0]
+  end
+  totals[key] = totals[key] + q * info[1] * factor
+end
+
+Array.each(order) { |key| puts(show(groups[key], totals[key], names[key])) }

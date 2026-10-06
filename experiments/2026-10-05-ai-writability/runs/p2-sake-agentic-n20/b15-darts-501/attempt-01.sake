@@ -1,0 +1,108 @@
+class Player
+  attr_reader name
+  attr_accessor left, turns, thrown
+end
+
+# returns [points, double?] or nil
+def dart(t)
+  return [25, false] if t == "25"
+  return [50, true] if t == "BULL"
+  return [0, false] if t == "MISS"
+  m = String.match(t, /\A([SDT])(20|1\d|[1-9])\z/)
+  return nil if m == nil
+  c = MatchData.captures(m)
+  v = String.to_i(c[1])
+  return [v, false] if c[0] == "S"
+  return [v * 2, true] if c[0] == "D"
+  [v * 3, false]
+end
+
+lines = String.split(IO.read(IO.stdin), "\n")
+h = String.split(lines[0] == nil ? "" : lines[0], " ")
+ok = Array.size(h) >= 2 && Array.size(h) <= 5 && String.match?(h[0], /\A\d+\z/)
+if ok
+  s = String.to_i(h[0])
+  ok = s >= 2 && s <= 1001
+end
+names = Array.drop(h, 1)
+if ok
+  ok = Array.all?(names) { |nm| String.match?(nm, /\A[a-z]{1,10}\z/) } && Array.size(Array.uniq(names)) == Array.size(names)
+end
+unless ok
+  puts("invalid header")
+  exit
+end
+start = String.to_i(h[0])
+players = Hash[]
+Array.each(names) { |nm| players[nm] = Player.new(nm, start, 0, 0) }
+winner = nil
+Array.each_with_index(lines) do |line, i|
+  next if i == 0
+  n = i + 1
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  if winner != nil
+    puts("line #{n}: game over")
+    next
+  end
+  pl = players[f[0]]
+  if pl == nil
+    puts("line #{n}: unknown player #{f[0]}")
+    next
+  end
+  darts = Array.drop(f, 1)
+  if Array.size(darts) < 1 || Array.size(darts) > 3
+    puts("line #{n}: expected 1 to 3 darts")
+    next
+  end
+  bad = Array.find(darts) { |d| dart(d) == nil }
+  if bad
+    puts("line #{n}: bad dart #{bad}")
+    next
+  end
+  left0 = Player.left(pl)
+  left = left0
+  result = :scored
+  last = ""
+  thrown = 0
+  Array.each(darts) do |d|
+    r = dart(d)
+    thrown += 1
+    nl = left - r[0]
+    if nl < 0 || nl == 1 || (nl == 0 && !r[1])
+      result = :bust
+      left = left0
+      break
+    end
+    left = nl
+    if nl == 0
+      result = :out
+      last = d
+      break
+    end
+  end
+  Player.set_turns(pl, Player.turns(pl) + 1)
+  Player.set_thrown(pl, Player.thrown(pl) + thrown)
+  Player.set_left(pl, left)
+  if result == :bust
+    puts("#{f[0]} busts, #{left} left")
+  elsif result == :out
+    winner = f[0]
+    puts("#{f[0]} checks out with #{last}")
+  else
+    puts("#{f[0]} scores #{left0 - left}, #{left} left")
+  end
+end
+puts("STANDINGS")
+idx = Hash[]
+Array.each_with_index(names) { |nm, i| idx[nm] = i }
+ranked = Array.sort_by(names) { |nm| [Player.left(players[nm]), idx[nm]] }
+Array.each_with_index(ranked) do |nm, i|
+  pl = players[nm]
+  avg = "-"
+  if Player.thrown(pl) > 0
+    avg = format("%.2f", (start - Player.left(pl)) * 3.0 / Player.thrown(pl))
+  end
+  puts(format("%d. %-10s %4d %3d %6s", i + 1, nm, Player.left(pl), Player.turns(pl), avg))
+end
+puts(winner == nil ? "no winner" : "winner: #{winner}")

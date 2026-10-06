@@ -1,0 +1,126 @@
+def tenths_str(t) = "#{t / 10}.#{t % 10}"
+
+def round_tenths(r) = Rational.floor(r * 10 + Kernel.Rational(1, 2))
+
+def grade(t)
+  if t >= 900
+    "A"
+  elsif t >= 800
+    "B"
+  elsif t >= 700
+    "C"
+  elsif t >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+weights = Hash[]
+cats = Hash[]
+missing = Hash[]
+errors = Array[]
+n = 0
+Array.each(IO.readlines(IO.stdin())) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line)
+  if Array.size(f) == 3 && f[0] == "weight"
+    cat = f[1]
+    w = f[2]
+    if !String.match?(w, /\A\d+\z/) || String.to_i(w) < 1 || String.to_i(w) > 100
+      Array.push(errors, "line #{n}: bad weight #{w}")
+    elsif Hash.key?(weights, cat)
+      Array.push(errors, "line #{n}: duplicate category #{cat}")
+    else
+      weights[cat] = String.to_i(w)
+    end
+    next
+  end
+  if Array.size(f) != 3
+    Array.push(errors, "line #{n}: bad format")
+    next
+  end
+  name = f[0]
+  cat = f[1]
+  sc = f[2]
+  unless Hash.key?(weights, cat)
+    Array.push(errors, "line #{n}: unknown category #{cat}")
+    next
+  end
+  m = String.match(sc, /\A(\d+|EX|-)\/(\d+)\z/)
+  kind = :bad
+  p_ = 0
+  mx = 0
+  if m
+    cap = MatchData.captures(m)
+    mx = String.to_i(cap[1])
+    if mx > 0
+      if cap[0] == "EX"
+        kind = :ex
+      elsif cap[0] == "-"
+        kind = :miss
+      elsif String.to_i(cap[0]) <= mx
+        kind = :ok
+        p_ = String.to_i(cap[0])
+      end
+    end
+  end
+  if kind == :bad
+    Array.push(errors, "line #{n}: bad score #{sc}")
+    next
+  end
+  unless Hash.key?(cats, name)
+    cats[name] = Hash[]
+    missing[name] = 0
+  end
+  next if kind == :ex
+  unless Hash.key?(cats[name], cat)
+    cats[name][cat] = Array[0, 0]
+  end
+  cats[name][cat][0] += p_
+  cats[name][cat][1] += mx
+  missing[name] += 1 if kind == :miss
+end
+
+# percentage per student (Rational) or nil
+pct = Hash[]
+total = Kernel.Rational(0)
+cnt = 0
+Array.each(Hash.keys(cats)) do |name|
+  num = Kernel.Rational(0)
+  den = 0
+  Hash.each(cats[name]) do |cat, pm|
+    w = weights[cat]
+    num = num + Kernel.Rational(pm[0], pm[1]) * w
+    den += w
+  end
+  if den > 0
+    r = num * 100 / den
+    pct[name] = r
+    total = total + r
+    cnt += 1
+  end
+end
+
+Array.each(errors) { |e| puts(e) }
+names = Hash.keys(cats)
+width = 7
+Array.each(names) { |nm| width = String.size(nm) if String.size(nm) > width }
+puts(String.ljust("Student", width) + "  Score  G  Missing")
+with = Array.select(names) { |nm| Hash.key?(pct, nm) }
+without = Array.reject(names) { |nm| Hash.key?(pct, nm) }
+rows = Array.sort_by(with) { |nm| [-round_tenths(pct[nm]), nm] }
+Array.each(rows) do |nm|
+  t = round_tenths(pct[nm])
+  puts(String.ljust(nm, width) + "  " + String.rjust(tenths_str(t), 5) + "  " + grade(t) + "  " + String.rjust(Integer.to_s(missing[nm]), 7))
+end
+Array.each(Array.sort(without)) do |nm|
+  puts(String.ljust(nm, width) + "  " + String.rjust("n/a", 5) + "  -  " + String.rjust(Integer.to_s(missing[nm]), 7))
+end
+if cnt > 0
+  puts("class average: #{tenths_str(round_tenths(total / cnt))}")
+else
+  puts("class average: n/a")
+end

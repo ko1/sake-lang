@@ -1,0 +1,120 @@
+def rnd(a, b) = (2 * a + b) / (2 * b)
+
+def fmt(s)
+  return "#{s}B" if s < 1024
+  k = 1024
+  m = 1024 * 1024
+  g = 1024 * 1024 * 1024
+  u = k
+  letter = "K"
+  nxt = "M"
+  if s >= g
+    u = g
+    letter = "G"
+    nxt = "G"
+  elsif s >= m
+    u = m
+    letter = "M"
+    nxt = "G"
+  end
+  t = rnd(s * 10, u)
+  return "#{t / 10}.#{t % 10}#{letter}" if t < 100
+  n = rnd(s, u)
+  return "1.0#{nxt}" if n == 1024 && u != g
+  "#{n}#{letter}"
+end
+
+def base(path)
+  parts = String.split(path, "/")
+  Array.last(parts) || path
+end
+
+def emit(dir, depth, maxd, thr, children, size)
+  return if depth >= maxd
+  kids = Hash.fetch(children, dir, String[])
+  sorted = Array.sort_by(kids) { |c| [-(size[c] || 0), base(c)] }
+  small = 0
+  smallsum = 0
+  Array.each(sorted) do |c|
+    sz = size[c] || 0
+    if sz < thr
+      small += 1
+      smallsum += sz
+    else
+      isd = Hash.key?(children, c)
+      name = isd ? "#{base(c)}/" : base(c)
+      puts(format("%6s  %s%s", fmt(sz), String.*("  ", depth + 1), name))
+      emit(c, depth + 1, maxd, thr, children, size) if isd
+    end
+  end
+  if small > 0
+    puts(format("%6s  %s%s", fmt(smallsum), String.*("  ", depth + 1), "(#{small} smaller)"))
+  end
+end
+
+def main
+  lines = IO.readlines(IO.stdin)
+  hdr = Array.empty?(lines) ? Array[] : String.split(String.strip(lines[0]))
+  ok = Array.size(hdr) == 4 && hdr[0] == "depth" && hdr[2] == "threshold" && String.match?(hdr[1], /\A\d+\z/) && String.match?(hdr[3], /\A\d+\z/)
+  unless ok
+    puts("bad header")
+    return
+  end
+  maxd = String.to_i(hdr[1])
+  thr = String.to_i(hdr[3])
+  files = Hash.new(-1)
+  dirs = Set[]
+  size = Hash.new(0)
+  children = Hash.new
+  lineno = 1
+  Array.each(Array.drop(lines, 1)) do |raw|
+    lineno += 1
+    line = String.chomp(raw)
+    next if String.strip(line) == ""
+    tk = String.split(String.strip(line))
+    good = Array.size(tk) == 2 && String.match?(tk[0], /\A\d+\z/) && String.to_i(tk[0]) <= 10000000000000
+    comps = String.split(tk[1] || "", "/", -1)
+    if good
+      good = !Array.any?(comps) { |c| c == "" || c == "." || c == ".." }
+    end
+    unless good
+      puts("line #{lineno}: malformed")
+      next
+    end
+    path = tk[1] || ""
+    sz = String.to_i(tk[0])
+    if files[path] >= 0
+      puts("line #{lineno}: duplicate #{path}")
+      next
+    end
+    bad = Set.include?(dirs, path)
+    pre = ""
+    Integer.times(Array.size(comps) - 1) do |i|
+      pre = i == 0 ? comps[0] : "#{pre}/#{comps[i]}"
+      bad = true if files[pre] >= 0
+    end
+    if bad
+      puts("line #{lineno}: conflict #{path}")
+      next
+    end
+    files[path] = sz
+    size["."] += sz
+    par = "."
+    cur = ""
+    Integer.times(Array.size(comps)) do |i|
+      cur = i == 0 ? comps[0] : "#{cur}/#{comps[i]}"
+      size[cur] += sz
+      kids = Hash.fetch(children, par, nil)
+      if kids == nil
+        kids = String[]
+        children[par] = kids
+      end
+      Array.push(kids, cur) unless Array.include?(kids, cur)
+      Set.add(dirs, cur) if i < Array.size(comps) - 1
+      par = cur
+    end
+  end
+  puts(format("%6s  %s", fmt(size["."]), "."))
+  emit(".", 0, maxd, thr, children, size)
+end
+main

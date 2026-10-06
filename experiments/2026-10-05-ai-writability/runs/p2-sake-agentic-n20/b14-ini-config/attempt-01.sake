@@ -1,0 +1,114 @@
+CfgError = Exception.new
+
+def name?(s) = String.match?(s, /\A[a-z0-9_]+\z/)
+
+def resolve(secs, sec, key, stack)
+  full = "#{sec}.#{key}"
+  if Array.include?(stack, full)
+    raise CfgError.new("cycle " + Array.join(stack + Array[full], " -> "))
+  end
+  Array.push(stack, full)
+  rest = secs[sec][key]
+  out = ""
+  while true
+    m = String.match(rest, /\$\{([a-z0-9_]+(?:\.[a-z0-9_]+)?)\}/)
+    break if m == nil
+    ref = MatchData.captures(m)[0]
+    out += MatchData.pre_match(m)
+    rest = MatchData.post_match(m)
+    s2 = sec
+    k2 = ref
+    if String.include?(ref, ".")
+      pr = String.split(ref, ".")
+      s2 = pr[0]
+      k2 = pr[1]
+    end
+    if secs[s2] == nil || secs[s2][k2] == nil
+      raise CfgError.new("undefined #{s2}.#{k2}")
+    end
+    out += resolve(secs, s2, k2, stack)
+  end
+  Array.pop(stack)
+  out + rest
+end
+
+def typed(v)
+  return "int #{String.to_i(v)}" if String.match?(v, /\A[+-]?\d+\z/)
+  lv = String.downcase(v)
+  return "bool true" if lv == "true" || lv == "yes" || lv == "on"
+  return "bool false" if lv == "false" || lv == "no" || lv == "off"
+  if String.include?(v, ",")
+    items = Array.reject(Array.map(String.split(v, ",")) { |x| String.strip(x) }) { |x| x == "" }
+    return "list[#{Array.size(items)}]" if Array.empty?(items)
+    return "list[#{Array.size(items)}] #{Array.join(items, " | ")}"
+  end
+  "str \"#{v}\""
+end
+
+secs = Hash[]
+cur = "main"
+inq = false
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  if !inq
+    if line == "%%"
+      inq = true
+      next
+    end
+    next if line == "" || String.start_with?(line, "#") || String.start_with?(line, ";")
+    sm = String.match(line, /\A\[([a-z0-9_]+)\]\z/)
+    if sm != nil
+      cur = MatchData.captures(sm)[0]
+      secs[cur] = Hash[] if secs[cur] == nil
+      next
+    end
+    if String.include?(line, "=")
+      pr = String.split(line, "=", 2)
+      k = String.strip(pr[0])
+      v = pr[1] == nil ? "" : String.strip(pr[1])
+      if name?(k)
+        secs[cur] = Hash[] if secs[cur] == nil
+        puts("line #{n}: duplicate key #{cur}.#{k}") if secs[cur][k] != nil
+        secs[cur][k] = v
+        next
+      end
+    end
+    puts("line #{n}: syntax error")
+  else
+    next if line == ""
+    f = String.split(line, " ")
+    if f[0] == "GET" && Array.size(f) == 2
+      nm = f[1]
+      sec = "main"
+      key = nm
+      if String.include?(nm, ".")
+        pr = String.split(nm, ".", 2)
+        sec = pr[0]
+        key = pr[1] == nil ? "" : pr[1]
+      end
+      if secs[sec] == nil || secs[sec][key] == nil
+        puts("#{sec}.#{key}: not found")
+      else
+        begin
+          v = resolve(secs, sec, key, Array[])
+          puts("#{sec}.#{key} = #{typed(v)}")
+        rescue CfgError => e
+          puts("#{sec}.#{key}: error: #{Exception.message(e)}")
+        end
+      end
+    elsif f[0] == "KEYS" && Array.size(f) == 2
+      s = secs[f[1]]
+      if s == nil
+        puts("#{f[1]}: not found")
+      elsif Hash.empty?(s)
+        puts("#{f[1]}: (none)")
+      else
+        puts("#{f[1]}: #{Array.join(Array.sort(Hash.keys(s)), ", ")}")
+      end
+    else
+      puts("line #{n}: bad query")
+    end
+  end
+end

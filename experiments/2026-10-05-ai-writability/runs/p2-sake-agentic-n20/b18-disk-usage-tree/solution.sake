@@ -1,0 +1,118 @@
+class Node
+  attr_reader name, dir, kids
+  attr_accessor size
+end
+
+def hsize(s)
+  return "#{s}B" if s < 1024
+  k = 1024
+  m = k * k
+  g = m * k
+  u = s >= g ? g : (s >= m ? m : k)
+  units = Hash[k => "K", m => "M", g => "G"]
+  t = (s * 20 + u) / (2 * u)
+  return "#{t / 10}.#{t % 10}#{units[u]}" if t < 100
+  n = (s * 2 + u) / (2 * u)
+  if n == 1024 && u != g
+    return "1.0#{units[u * 1024]}"
+  end
+  "#{n}#{units[u]}"
+end
+
+def total(nd)
+  return Node.size(nd) unless Node.dir(nd)
+  s = 0
+  Array.each(Hash.values(Node.kids(nd))) { |c| s += total(c) }
+  Node.set_size(nd, s)
+  s
+end
+
+def line(nd, depth, label)
+  puts(format("%6s  %s%s", hsize(Node.size(nd)), String.*("  ", depth), label))
+end
+
+def label(nd) = Node.dir(nd) ? "#{Node.name(nd)}/" : Node.name(nd)
+
+def show(nd, depth, dmax, thr)
+  return if depth >= dmax
+  ents = Array.sort_by(Hash.values(Node.kids(nd))) { |c| [-Node.size(c), Node.name(c)] }
+  small = 0
+  smalls = 0
+  Array.each(ents) do |c|
+    if Node.size(c) < thr
+      small += 1
+      smalls += Node.size(c)
+    else
+      line(c, depth + 1, label(c))
+      show(c, depth + 1, dmax, thr)
+    end
+  end
+  puts(format("%6s  %s%s", hsize(smalls), String.*("  ", depth + 1), "(#{small} smaller)")) if small > 0
+end
+
+lines = String.split(IO.read(IO.stdin), "\n")
+h = String.split(lines[0] == nil ? "" : lines[0], " ")
+if Array.size(h) != 4 || h[0] != "depth" || h[2] != "threshold" || !String.match?(h[1], /\A\d+\z/) || !String.match?(h[3], /\A\d+\z/)
+  puts("bad header")
+  exit
+end
+dmax = String.to_i(h[1])
+thr = String.to_i(h[3])
+root = Node.new(".", true, Hash[], 0)
+Array.each_with_index(lines) do |raw, i|
+  next if i == 0
+  n = i + 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  comps = Array.size(f) == 2 ? String.split(f[1], "/", -1) : Array[]
+  ok = Array.size(f) == 2 && String.match?(f[0], /\A\d+\z/) && String.to_i(f[0]) <= 10000000000000 && !Array.empty?(comps)
+  if ok
+    ok = Array.all?(comps) { |c| c != "" && c != "." && c != ".." }
+  end
+  if !ok
+    puts("line #{n}: malformed")
+    next
+  end
+  nd = root
+  conflict = false
+  dup = false
+  Array.each_with_index(comps) do |c, ci|
+    last = ci == Array.size(comps) - 1
+    nx = Node.kids(nd)[c]
+    if nx == nil
+      break
+    end
+    if last
+      if Node.dir(nx)
+        conflict = true
+      else
+        dup = true
+      end
+    elsif !Node.dir(nx)
+      conflict = true
+      break
+    end
+    nd = nx
+  end
+  if dup
+    puts("line #{n}: duplicate #{f[1]}")
+    next
+  end
+  if conflict
+    puts("line #{n}: conflict #{f[1]}")
+    next
+  end
+  nd = root
+  Array.each_with_index(comps) do |c, ci|
+    last = ci == Array.size(comps) - 1
+    nx = Node.kids(nd)[c]
+    if nx == nil
+      nx = Node.new(c, !last, Hash[], last ? String.to_i(f[0]) : 0)
+      Node.kids(nd)[c] = nx
+    end
+    nd = nx
+  end
+end
+total(root)
+line(root, 0, ".")
+show(root, 0, dmax, thr)

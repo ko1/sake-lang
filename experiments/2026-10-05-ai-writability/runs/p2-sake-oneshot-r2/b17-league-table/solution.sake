@@ -1,0 +1,119 @@
+class Team
+  attr_accessor name, played, won, drawn, lost, gfor, gagainst, pts
+  def add_game(t, goals_for, goals_against)
+    @played += 1
+    @gfor += goals_for
+    @gagainst += goals_against
+    if goals_for > goals_against
+      @won += 1
+      @pts += 3
+    elsif goals_for == goals_against
+      @drawn += 1
+      @pts += 1
+    else
+      @lost += 1
+    end
+  end
+end
+
+def tokens(line) = String.split(String.strip(line), /\s+/)
+
+def valid_name(s)
+  String.match?(s, /\A[A-Za-z][A-Za-z0-9_]{0,11}\z/)
+end
+
+def ensure_team(teams, name)
+  unless Hash.key?(teams, name)
+    teams[name] = Team.new(name, 0, 0, 0, 0, 0, 0, 0)
+  end
+  Hash.fetch(teams, name)
+end
+
+def points(a, b)
+  if a > b
+    3
+  elsif a == b
+    1
+  else
+    0
+  end
+end
+
+def h2h(t, trip, games)
+  me = Hash.fetch(trip, Team.name(t))
+  total = 0
+  Array.each(games) do |g|
+    home, away, hg, ag = g
+    if Hash.fetch(trip, home) == me && Hash.fetch(trip, away) == me
+      if Team.name(t) == home
+        total += points(hg, ag)
+      elsif Team.name(t) == away
+        total += points(ag, hg)
+      end
+    end
+  end
+  total
+end
+
+def gd_str(gd)
+  if gd > 0
+    "+#{gd}"
+  else
+    Integer.to_s(gd)
+  end
+end
+
+def run_all
+  lines = Array.map(IO.readlines(IO.stdin)) { |l| String.chomp(l) }
+  teams = Hash[]
+  games = Tuple[]
+  Array.each_with_index(lines) do |line, idx|
+    toks = tokens(line)
+    next if Array.empty?(toks)
+    ok = false
+    if Array.size(toks) == 3
+      home, sc, away = toks
+      if valid_name(home) && valid_name(away) && home != away && (sc == "P-P" || String.match?(sc, /\A[0-9]{1,2}-[0-9]{1,2}\z/))
+        ok = true
+        ensure_team(teams, home)
+        ensure_team(teams, away)
+        if sc != "P-P"
+          parts = String.split(sc, "-")
+          h = String.to_i(parts[0])
+          a = String.to_i(parts[1])
+          Team.add_game(Hash.fetch(teams, home), h, a)
+          Team.add_game(Hash.fetch(teams, away), a, h)
+          Array.push(games, [home, away, h, a])
+        end
+      end
+    end
+    puts("invalid line #{idx + 1}: #{line}") unless ok
+  end
+  rows = Hash.values(teams)
+  if Array.empty?(rows)
+    puts("no teams")
+    return
+  end
+  trip = Hash[]
+  Array.each(rows) do |t|
+    trip[Team.name(t)] = [Team.pts(t), Team.gfor(t) - Team.gagainst(t), Team.gfor(t)]
+  end
+  keys = Hash[]
+  Array.each(rows) do |t|
+    p3, g3, f3 = Hash.fetch(trip, Team.name(t))
+    keys[Team.name(t)] = [-p3, -g3, -f3, -h2h(t, trip, games)]
+  end
+  sorted = Array.sort_by(rows) do |t|
+    k1, k2, k3, k4 = Hash.fetch(keys, Team.name(t))
+    [k1, k2, k3, k4, Team.name(t)]
+  end
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+  Array.each(sorted) do |t|
+    mine = Hash.fetch(keys, Team.name(t))
+    pos = 1 + Array.count(sorted) { |o| Hash.fetch(keys, Team.name(o)) < mine }
+    gd = Team.gfor(t) - Team.gagainst(t)
+    puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", pos, Team.name(t), Team.played(t), Team.won(t), Team.drawn(t), Team.lost(t), Team.gfor(t), Team.gagainst(t), gd_str(gd), Team.pts(t)))
+  end
+end
+
+run_all

@@ -1,0 +1,165 @@
+Slot = Struct.new(:name, :price, :count)
+
+def coin_values = Array[5, 10, 25, 50, 100, 200]
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def parse_money(s)
+  return nil unless String.match?(s, /\A\d+\.\d\d\z/)
+  String.to_i(String.delete(s, "."))
+end
+
+def ok_count?(s, limit) = String.match?(s, /\A\d+\z/) && String.to_i(s) <= limit
+
+def coin_list(plan) = Array.join(Array.map(plan) { |c| money(c) }, " ")
+
+def make_change(tubes, change)
+  plan = Array[]
+  rest = change
+  Array.each(Array.reverse(coin_values)) do |c|
+    k = rest / c
+    avail = tubes[c]
+    k = avail if k > avail
+    Integer.times(k) { Array.push(plan, c) }
+    rest -= k * c
+  end
+  rest == 0 ? plan : nil
+end
+
+lines = IO.readlines(IO.stdin)
+slots = Hash[]
+tubes = Hash.new(0)
+credit = 0
+inserted = Array[]
+sold = Hash.new(0)
+revenue = Hash.new(0)
+
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  need = 0
+  if cmd == "SLOT"
+    need = 5
+  elsif cmd == "TUBE"
+    need = 3
+  elsif cmd == "COIN"
+    need = 2
+  elsif cmd == "SELECT"
+    need = 2
+  elsif cmd == "CANCEL"
+    need = 1
+  end
+  if need == 0
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != need
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+
+  if cmd == "SLOT"
+    code = f[1]
+    name = f[2]
+    price = parse_money(f[3])
+    cnt = f[4]
+    unless String.match?(code, /\A[A-Z]\d\z/)
+      puts("line #{n}: error: bad slot")
+      next
+    end
+    unless String.match?(name, /\A[a-z]{1,12}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    if price == nil
+      puts("line #{n}: error: bad money")
+      next
+    end
+    unless ok_count?(cnt, 99)
+      puts("line #{n}: error: bad count")
+      next
+    end
+    slots[code] = Slot.new(name, price, String.to_i(cnt))
+  elsif cmd == "TUBE"
+    v = parse_money(f[1])
+    if v == nil || !Array.include?(coin_values, v)
+      puts("line #{n}: error: bad coin")
+      next
+    end
+    unless ok_count?(f[2], 999)
+      puts("line #{n}: error: bad count")
+      next
+    end
+    tubes[v] += String.to_i(f[2])
+  elsif cmd == "COIN"
+    v = parse_money(f[1])
+    if v == nil
+      puts("line #{n}: error: bad money")
+      next
+    end
+    if !Array.include?(coin_values, v)
+      puts("rejected #{money(v)}")
+    elsif credit + v > 500
+      puts("rejected #{money(v)} (credit limit)")
+    else
+      tubes[v] += 1
+      credit += v
+      Array.push(inserted, v)
+      puts("credit #{money(credit)}")
+    end
+  elsif cmd == "SELECT"
+    code = f[1]
+    s = slots[code]
+    if s == nil
+      puts("no slot #{code}")
+    elsif Slot.count(s) == 0
+      puts("sold out #{code}")
+    elsif credit < Slot.price(s)
+      puts("insert #{money(Slot.price(s) - credit)} more")
+    else
+      change = credit - Slot.price(s)
+      plan = make_change(tubes, change)
+      if plan == nil
+        puts("exact change needed")
+      else
+        Array.each(plan) { |c| tubes[c] -= 1 }
+        Slot.set_count(s, Slot.count(s) - 1)
+        nm = Slot.name(s)
+        sold[nm] += 1
+        revenue[nm] += Slot.price(s)
+        credit = 0
+        inserted = Array[]
+        if change == 0
+          puts("vend #{nm}, change #{money(change)}")
+        else
+          puts("vend #{nm}, change #{money(change)} [#{coin_list(plan)}]")
+        end
+      end
+    end
+  else
+    if credit == 0
+      puts("nothing to return")
+    else
+      Array.each(inserted) { |c| tubes[c] -= 1 }
+      puts("returned #{money(credit)} [#{coin_list(inserted)}]")
+      credit = 0
+      inserted = Array[]
+    end
+  end
+end
+
+puts("credit #{money(credit)} kept") if credit != 0
+puts("sales:")
+names = Hash.keys(sold)
+if Array.empty?(names)
+  puts("  none")
+else
+  ordered = Array.sort_by(names) { |nm| [-revenue[nm], nm] }
+  Array.each(ordered) do |nm|
+    puts(format("  %-12s %3d %8s", nm, sold[nm], money(revenue[nm])))
+  end
+end
+puts("tubes: " + Array.join(Array.map(coin_values) { |c| "#{money(c)}x#{tubes[c]}" }, " "))

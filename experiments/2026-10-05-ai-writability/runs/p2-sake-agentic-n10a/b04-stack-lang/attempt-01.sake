@@ -1,0 +1,184 @@
+class VM
+  attr_accessor stack, depth, dict
+  def need(v, k, w)
+    raise RuntimeError, "stack underflow in #{w}" if Array.size(@stack) < k
+    v
+  end
+  def pop(v) = Array.pop(@stack)
+  def push(v, x) = Array.push(@stack, x)
+end
+
+def reserved = Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"]
+
+def number?(t) = String.match?(t, /\A-?\d+\z/)
+
+def syntax_ok?(toks)
+  in_def = false
+  ifs = Array[]
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if t == ":"
+      return false if in_def || Array.size(ifs) > 0
+      return false if i + 1 >= n
+      name = toks[i + 1]
+      return false if number?(name) || Array.include?(reserved, name)
+      in_def = true
+      i += 1
+    elsif t == ";"
+      return false if !in_def || Array.size(ifs) > 0
+      in_def = false
+    elsif t == "if"
+      Array.push(ifs, false)
+    elsif t == "else"
+      return false if Array.size(ifs) == 0 || Array.last(ifs)
+      Array.pop(ifs)
+      Array.push(ifs, true)
+    elsif t == "then"
+      return false if Array.size(ifs) == 0
+      Array.pop(ifs)
+    end
+    i += 1
+  end
+  !in_def && Array.size(ifs) == 0
+end
+
+def tdiv(a, b)
+  q = Integer.abs(a) / Integer.abs(b)
+  (a < 0) != (b < 0) ? -q : q
+end
+
+def builtin(vm, w)
+  case w
+  in "+" | "-" | "*" | "/" | "mod" | "=" | "<" | ">"
+    VM.need(vm, 2, w)
+    b = VM.pop(vm)
+    a = VM.pop(vm)
+    r = 0
+    case w
+    in "+" then r = a + b
+    in "-" then r = a - b
+    in "*" then r = a * b
+    in "/" | "mod"
+      raise RuntimeError, "division by zero" if b == 0
+      q = tdiv(a, b)
+      r = w == "/" ? q : a - q * b
+    in "=" then r = a == b ? 1 : 0
+    in "<" then r = a < b ? 1 : 0
+    in ">" then r = a > b ? 1 : 0
+    end
+    VM.push(vm, r)
+    true
+  in "dup"
+    VM.need(vm, 1, w)
+    a = VM.pop(vm)
+    VM.push(vm, a)
+    VM.push(vm, a)
+    true
+  in "drop"
+    VM.need(vm, 1, w)
+    VM.pop(vm)
+    true
+  in "swap"
+    VM.need(vm, 2, w)
+    b = VM.pop(vm)
+    a = VM.pop(vm)
+    VM.push(vm, b)
+    VM.push(vm, a)
+    true
+  in "over"
+    VM.need(vm, 2, w)
+    b = VM.pop(vm)
+    a = VM.pop(vm)
+    VM.push(vm, a)
+    VM.push(vm, b)
+    VM.push(vm, a)
+    true
+  in "."
+    VM.need(vm, 1, w)
+    puts(VM.pop(vm))
+    true
+  else
+    false
+  end
+end
+
+def exec(vm, toks, a, b)
+  i = a
+  while i < b
+    t = toks[i]
+    if t == "if"
+      VM.need(vm, 1, "if")
+      c = VM.pop(vm)
+      depth = 0
+      j = i + 1
+      els = -1
+      while true
+        w = toks[j]
+        if w == "if"
+          depth += 1
+        elsif w == "then"
+          break if depth == 0
+          depth -= 1
+        elsif w == "else" && depth == 0
+          els = j
+        end
+        j += 1
+      end
+      if c != 0
+        exec(vm, toks, i + 1, els >= 0 ? els : j)
+      elsif els >= 0
+        exec(vm, toks, els + 1, j)
+      end
+      i = j + 1
+      next
+    end
+    if t == ":"
+      j = i + 2
+      j += 1 while toks[j] != ";"
+      VM.dict(vm)[toks[i + 1]] = toks[i + 2, j - i - 2]
+      i = j + 1
+      next
+    end
+    if number?(t)
+      VM.push(vm, String.to_i(t))
+    elsif !builtin(vm, t)
+      body = VM.dict(vm)[t]
+      raise RuntimeError, "unknown word #{t}" if body == nil
+      raise RuntimeError, "too deep" if VM.depth(vm) >= 100
+      VM.set_depth(vm, VM.depth(vm) + 1)
+      exec(vm, body, 0, Array.size(body))
+      VM.set_depth(vm, VM.depth(vm) - 1)
+    end
+    i += 1
+  end
+  nil
+end
+
+vm = VM.new(Integer[], 0, Hash[])
+text = IO.read(IO.stdin)
+Array.each_with_index(String.split(text, "\n")) do |line, i|
+  n = i + 1
+  toks = String.split(String.strip(line), " ")
+  next if Array.size(toks) == 0
+  unless syntax_ok?(toks)
+    puts("line #{n}: syntax error")
+    next
+  end
+  snap = Array.dup(VM.stack(vm))
+  VM.set_depth(vm, 0)
+  begin
+    exec(vm, toks, 0, Array.size(toks))
+  rescue RuntimeError => e
+    Array.clear(VM.stack(vm))
+    Array.concat(VM.stack(vm), snap)
+    puts("line #{n}: error: #{Exception.message(e)}")
+  end
+end
+st = VM.stack(vm)
+if Array.size(st) == 0
+  puts("stack: (empty)")
+else
+  puts("stack: " + Array.join(st, " "))
+end

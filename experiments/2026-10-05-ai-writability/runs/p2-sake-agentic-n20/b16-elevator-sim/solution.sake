@@ -1,0 +1,117 @@
+class Pax
+  attr_reader t, f, g
+  attr_accessor state, pick, drop
+end
+
+def ints?(f, k) = Array.size(f) == k && Array.all?(f) { |x| String.match?(x, /\A\d+\z/) }
+
+lines = String.split(IO.read(IO.stdin), "\n")
+h = String.split(lines[0] == nil ? "" : lines[0], " ")
+ok = ints?(h, 3)
+if ok
+  ok = String.to_i(h[0]) >= 2 && String.to_i(h[0]) <= 50 && String.to_i(h[1]) <= 5 && String.to_i(h[2]) >= 1 && String.to_i(h[2]) <= 20
+end
+unless ok
+  puts("invalid header")
+  exit
+end
+nf = String.to_i(h[0])
+dd = String.to_i(h[1])
+cap = String.to_i(h[2])
+pax = Array[]
+prev = 0
+Array.each_with_index(lines) do |line, i|
+  next if i == 0
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  good = ints?(f, 3)
+  if good
+    t = String.to_i(f[0])
+    fl = String.to_i(f[1])
+    g = String.to_i(f[2])
+    good = t <= 1000 && fl >= 1 && fl <= nf && g >= 1 && g <= nf && fl != g && t >= prev
+  end
+  if good
+    prev = String.to_i(f[0])
+    Array.push(pax, Pax.new(String.to_i(f[0]), String.to_i(f[1]), String.to_i(f[2]), 0, 0, 0))
+  else
+    puts("line #{i + 1}: invalid request")
+  end
+end
+if Array.empty?(pax)
+  puts("no passengers")
+  exit
+end
+n = Array.size(pax)
+t = 0
+fl = 1
+dir = 0
+done = 0
+last = 0
+while done < n
+  Array.each(pax) { |x| Pax.set_state(x, 1) if Pax.state(x) == 0 && Pax.t(x) <= t }
+  moved = false
+  Array.each_with_index(pax) do |x, i|
+    if Pax.state(x) == 2 && Pax.g(x) == fl
+      Pax.set_state(x, 3)
+      Pax.set_drop(x, t)
+      done += 1
+      last = t
+      moved = true
+      puts("t=#{t} floor #{fl} drop P#{i + 1}")
+    end
+  end
+  targets = Integer[]
+  Array.each(pax) do |x|
+    Array.push(targets, Pax.g(x)) if Pax.state(x) == 2
+    Array.push(targets, Pax.f(x)) if Pax.state(x) == 1
+  end
+  above = Array.any?(targets) { |x| x > fl }
+  below = Array.any?(targets) { |x| x < fl }
+  if dir == 1
+    dir = above ? 1 : (below ? -1 : 0)
+  elsif dir == -1
+    dir = below ? -1 : (above ? 1 : 0)
+  end
+  if dir == 0 && !Array.empty?(targets)
+    best = Array.min_by(targets) { |x| [Integer.abs(x - fl), x] }
+    if best > fl
+      dir = 1
+    elsif best < fl
+      dir = -1
+    else
+      w = Array.find(pax) { |x| Pax.state(x) == 1 && Pax.f(x) == fl }
+      dir = Pax.g(w) > fl ? 1 : -1
+    end
+  end
+  riding = Array.count(pax) { |x| Pax.state(x) == 2 }
+  Array.each_with_index(pax) do |x, i|
+    if Pax.state(x) == 1 && Pax.f(x) == fl && riding < cap
+      pd = Pax.g(x) > fl ? 1 : -1
+      if pd == dir
+        Pax.set_state(x, 2)
+        Pax.set_pick(x, t)
+        riding += 1
+        moved = true
+        puts("t=#{t} floor #{fl} pick P#{i + 1}")
+      end
+    end
+  end
+  if moved
+    t += dd
+  else
+    fl += dir
+    t += 1
+  end
+end
+sw = 0
+sr = 0
+Array.each_with_index(pax) do |x, i|
+  w = Pax.pick(x) - Pax.t(x)
+  r = Pax.drop(x) - Pax.pick(x)
+  sw += w
+  sr += r
+  puts("P#{i + 1} wait #{w} ride #{r}")
+end
+puts("average wait #{format("%.2f", sw * 1.0 / n)} ride #{format("%.2f", sr * 1.0 / n)}")
+puts("done at t=#{last}")

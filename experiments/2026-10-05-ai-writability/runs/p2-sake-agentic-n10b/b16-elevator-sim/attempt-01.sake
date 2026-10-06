@@ -1,0 +1,132 @@
+def ints?(f, k) = Array.size(f) == k && Array.all?(f) { |x| String.match?(x, /\A\d+\z/) }
+
+lines = Array.map(String.lines(IO.read(IO.stdin))) { |l| String.chomp(l) }
+hf = Array.empty?(lines) ? String[] : String.split(lines[0])
+if !ints?(hf, 3)
+  puts("invalid header")
+  exit
+end
+nf = String.to_i(hf[0])
+door = String.to_i(hf[1])
+cap = String.to_i(hf[2])
+if nf < 2 || nf > 50 || door > 5 || cap < 1 || cap > 20
+  puts("invalid header")
+  exit
+end
+
+out = String[]
+pt = Integer[]
+pf = Integer[]
+pg = Integer[]
+Array.each_with_index(lines) do |raw, idx|
+  next if idx == 0
+  f = String.split(raw)
+  next if Array.empty?(f)
+  n = idx + 1
+  valid = ints?(f, 3)
+  if valid
+    t = String.to_i(f[0])
+    a = String.to_i(f[1])
+    b = String.to_i(f[2])
+    valid = a >= 1 && a <= nf && b >= 1 && b <= nf && a != b && t <= 1000
+    valid = valid && (Array.empty?(pt) || t >= Array.last(pt))
+  end
+  if valid
+    Array.push(pt, t)
+    Array.push(pf, a)
+    Array.push(pg, b)
+  else
+    Array.push(out, "line #{n}: invalid request")
+  end
+end
+
+np = Array.size(pt)
+if np == 0
+  puts(*out) unless Array.empty?(out)
+  puts("no passengers")
+  exit
+end
+
+state = Array.new(np, 0)
+pick = Array.new(np, 0)
+drop = Array.new(np, 0)
+t = 0
+fl = 1
+dir = 0
+ndone = 0
+riders = 0
+while ndone < np
+  Integer.times(np) { |i| state[i] = 1 if state[i] == 0 && pt[i] <= t }
+  drops = Array.select(Array.new(np) { |i| i }) { |i| state[i] == 2 && pg[i] == fl }
+  Array.each(drops) do |i|
+    state[i] = 3
+    drop[i] = t
+    ndone += 1
+    riders -= 1
+    Array.push(out, "t=#{t} floor #{fl} drop P#{i + 1}")
+  end
+  break if ndone == np
+  targets = Integer[]
+  Integer.times(np) do |i|
+    Array.push(targets, pg[i]) if state[i] == 2
+    Array.push(targets, pf[i]) if state[i] == 1
+  end
+  if dir == 1
+    if Array.any?(targets) { |x| x > fl }
+      dir = 1
+    elsif Array.any?(targets) { |x| x < fl }
+      dir = -1
+    else
+      dir = 0
+    end
+  elsif dir == -1
+    if Array.any?(targets) { |x| x < fl }
+      dir = -1
+    elsif Array.any?(targets) { |x| x > fl }
+      dir = 1
+    else
+      dir = 0
+    end
+  end
+  if dir == 0 && !Array.empty?(targets)
+    best = Array.min_by(targets) { |x| [(x - fl).abs, x] }
+    if best == fl
+      w = Array.find(Array.new(np) { |i| i }) { |i| state[i] == 1 && pf[i] == fl }
+      dir = pg[w] > fl ? 1 : -1
+    else
+      dir = best > fl ? 1 : -1
+    end
+  end
+  moved = !Array.empty?(drops)
+  if dir != 0
+    Integer.times(np) do |i|
+      next unless state[i] == 1 && pf[i] == fl && riders < cap
+      pd = pg[i] > fl ? 1 : -1
+      next if pd != dir
+      state[i] = 2
+      pick[i] = t
+      riders += 1
+      moved = true
+      Array.push(out, "t=#{t} floor #{fl} pick P#{i + 1}")
+    end
+  end
+  if moved
+    t += door
+  else
+    fl += dir
+    t += 1
+  end
+end
+
+puts(*out)
+sw = 0
+sr = 0
+Integer.times(np) do |i|
+  w = pick[i] - pt[i]
+  r = drop[i] - pick[i]
+  sw += w
+  sr += r
+  puts("P#{i + 1} wait #{w} ride #{r}")
+end
+puts(format("average wait %.2f ride %.2f", Integer.fdiv(sw, np), Integer.fdiv(sr, np)))
+puts("done at t=#{Array.max(drop)}")

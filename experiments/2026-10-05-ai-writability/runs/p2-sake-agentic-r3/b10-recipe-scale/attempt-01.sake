@@ -1,0 +1,154 @@
+def rat(a, b) = Kernel.Rational(a, b)
+
+# a quantity as text: whole, fraction, mixed, or a two-digit decimal
+def fmt(x)
+  d = Rational.denominator(x)
+  if d <= 8
+    w = Rational.floor(x)
+    n = Rational.numerator(x - w)
+    return "#{w}" if n == 0
+    return "#{n}/#{d}" if w == 0
+    "#{w} #{n}/#{d}"
+  else
+    c = Rational.floor(x * 100 + rat(1, 2))
+    format("%d.%02d", c / 100, c % 100)
+  end
+end
+
+def fraction_field?(s)
+  md = String.match(s, /\A(\d+)\/(\d+)\z/)
+  md != nil && String.to_i(md[2]) != 0
+end
+
+def to_fraction(s)
+  md = String.match(s, /\A(\d+)\/(\d+)\z/)
+  rat(String.to_i(md[1]), String.to_i(md[2]))
+end
+
+# [value, fields used] or nil
+def parse_quantity(f)
+  first = f[0]
+  if String.match?(first, /\A\d+\z/)
+    v = rat(String.to_i(first), 1)
+    if Array.size(f) > 1 && fraction_field?(f[1])
+      return [v + to_fraction(f[1]), 2]
+    end
+    return [v, 1]
+  end
+  dm = String.match(first, /\A(\d+)\.(\d+)\z/)
+  if dm
+    return [rat(String.to_i(dm[1] + dm[2]), 10 ** String.size(dm[2])), 1]
+  end
+  return [to_fraction(first), 1] if fraction_field?(first)
+  nil
+end
+
+def group_of(u)
+  if u == "tsp" || u == "tbsp" || u == "cup"
+    "spoon"
+  elsif u == "g" || u == "kg"
+    "g"
+  elsif u == "ml" || u == "l"
+    "ml"
+  else
+    "count"
+  end
+end
+
+def factor_of(u)
+  if u == "tbsp"
+    3
+  elsif u == "cup"
+    48
+  elsif u == "kg" || u == "l"
+    1000
+  else
+    1
+  end
+end
+
+lines = IO.readlines(IO.stdin())
+head = lines[0]
+hf = head == nil ? Array[] : String.split(head, " ")
+if Array.size(hf) != 4 || hf[0] != "SERVES" || hf[2] != "->" ||
+   !String.match?(hf[1], /\A\d+\z/) || !String.match?(hf[3], /\A\d+\z/) ||
+   String.to_i(hf[1]) < 1 || String.to_i(hf[1]) > 100 ||
+   String.to_i(hf[3]) < 1 || String.to_i(hf[3]) > 100
+  puts("line 1: error: bad servings")
+  exit(0)
+end
+m = String.to_i(hf[3])
+factor = rat(m, String.to_i(hf[1]))
+puts("serves #{m} (x #{fmt(factor)})")
+
+units = Array["tsp", "tbsp", "cup", "g", "kg", "ml", "l", "-"]
+order = String[]
+totals = Hash[]
+
+Array.each_with_index(lines) do |raw, idx|
+  next if idx == 0
+  n = idx + 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  next if String.start_with?(f[0], "#")
+  pq = parse_quantity(f)
+  if pq == nil || pq[0] <= 0
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  rest = Array.drop(f, pq[1])
+  if Array.empty?(rest)
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  u = rest[0]
+  if !Array.include?(units, u)
+    puts("line #{n}: error: unknown unit #{u}")
+    next
+  end
+  nm = Array.drop(rest, 1)
+  if Array.empty?(nm)
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(nm, " ")
+  g = group_of(u)
+  key = g + "|" + name
+  amt = pq[0] * factor * factor_of(u)
+  cur = totals[key]
+  if cur == nil
+    Array.push(order, key)
+    totals[key] = [name, g, amt]
+  else
+    totals[key] = [name, g, cur[2] + amt]
+  end
+end
+
+Array.each(order) do |key|
+  name, g, amt = totals[key]
+  if g == "spoon"
+    cups = amt * rat(1, 48)
+    tb = amt * rat(1, 3)
+    if cups >= 1 && Rational.denominator(cups) <= 4
+      puts("#{fmt(cups)} cup #{name}")
+    elsif tb >= 1 && Rational.denominator(tb) <= 4
+      puts("#{fmt(tb)} tbsp #{name}")
+    else
+      puts("#{fmt(amt)} tsp #{name}")
+    end
+  elsif g == "g"
+    if amt >= 1000
+      puts("#{fmt(amt * rat(1, 1000))} kg #{name}")
+    else
+      puts("#{fmt(amt)} g #{name}")
+    end
+  elsif g == "ml"
+    if amt >= 1000
+      puts("#{fmt(amt * rat(1, 1000))} l #{name}")
+    else
+      puts("#{fmt(amt)} ml #{name}")
+    end
+  else
+    puts("#{Rational.ceil(amt)} #{name}")
+  end
+end

@@ -1,0 +1,183 @@
+def number?(t) = String.match?(t, /\A-?\d+\z/)
+
+def builtins = Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"]
+
+def syntax_ok?(toks)
+  in_def = false
+  open = Array[]
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if t == ":"
+      return false if in_def || !Array.empty?(open)
+      return false if i + 1 >= n
+      nm = toks[i + 1]
+      return false if number?(nm) || Array.include?(builtins, nm)
+      in_def = true
+      i += 1
+    elsif t == "if"
+      Array.push(open, false)
+    elsif t == "else"
+      return false if Array.empty?(open)
+      return false if open[-1]
+      open[-1] = true
+    elsif t == "then"
+      return false if Array.empty?(open)
+      Array.pop(open)
+    elsif t == ";"
+      return false unless in_def
+      return false unless Array.empty?(open)
+      in_def = false
+    end
+    i += 1
+  end
+  !in_def && Array.empty?(open)
+end
+
+def needs(stack, k, w)
+  raise "stack underflow in #{w}" if Array.size(stack) < k
+end
+
+def tdiv(a, b)
+  q = Integer.abs(a) / Integer.abs(b)
+  (a < 0) != (b < 0) ? -q : q
+end
+
+# index of the else/then that matches, starting at i (depth 0)
+def skip(toks, i, allow_else)
+  depth = 0
+  j = i
+  n = Array.size(toks)
+  while j < n
+    t = toks[j]
+    if t == "if"
+      depth += 1
+    elsif t == "then"
+      return j if depth == 0
+      depth -= 1
+    elsif t == "else"
+      return j if depth == 0 && allow_else
+    end
+    j += 1
+  end
+  n
+end
+
+def word(t, stack, dict, dep)
+  if t == "+" || t == "-" || t == "*" || t == "=" || t == "<" || t == ">"
+    needs(stack, 2, t)
+    b = Array.pop(stack)
+    a = Array.pop(stack)
+    r = 0
+    if t == "+"
+      r = a + b
+    elsif t == "-"
+      r = a - b
+    elsif t == "*"
+      r = a * b
+    elsif t == "="
+      r = a == b ? 1 : 0
+    elsif t == "<"
+      r = a < b ? 1 : 0
+    else
+      r = a > b ? 1 : 0
+    end
+    Array.push(stack, r)
+  elsif t == "/" || t == "mod"
+    needs(stack, 2, t)
+    b = Array.pop(stack)
+    a = Array.pop(stack)
+    if b == 0
+      Array.push(stack, a)
+      Array.push(stack, b)
+      raise "division by zero"
+    end
+    q = tdiv(a, b)
+    Array.push(stack, t == "/" ? q : a - b * q)
+  elsif t == "dup"
+    needs(stack, 1, t)
+    Array.push(stack, stack[-1])
+  elsif t == "drop"
+    needs(stack, 1, t)
+    Array.pop(stack)
+  elsif t == "swap"
+    needs(stack, 2, t)
+    b = Array.pop(stack)
+    a = Array.pop(stack)
+    Array.push(stack, b)
+    Array.push(stack, a)
+  elsif t == "over"
+    needs(stack, 2, t)
+    Array.push(stack, stack[-2])
+  elsif t == "."
+    needs(stack, 1, t)
+    puts(Array.pop(stack))
+  else
+    body = dict[t]
+    raise "unknown word #{t}" if body == nil
+    raise "too deep" if dep[0] >= 100
+    dep[0] += 1
+    run(body, stack, dict, dep)
+    dep[0] -= 1
+  end
+end
+
+def run(toks, stack, dict, dep)
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    i += 1
+    if number?(t)
+      Array.push(stack, String.to_i(t))
+    elsif t == "if"
+      needs(stack, 1, "if")
+      c = Array.pop(stack)
+      if c == 0
+        i = skip(toks, i, true) + 1
+      end
+    elsif t == "else"
+      i = skip(toks, i, false) + 1
+    elsif t == "then"
+      i += 0
+    elsif t == ":"
+      name = toks[i]
+      j = i + 1
+      while toks[j] != ";"
+        j += 1
+      end
+      dict[name] = toks[i + 1, j - i - 1]
+      i = j + 1
+    else
+      word(t, stack, dict, dep)
+    end
+  end
+end
+
+stack = Array[]
+dict = Hash[]
+dep = Array[0]
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, idx|
+  toks = String.split(String.chomp(raw), " ")
+  if !syntax_ok?(toks)
+    puts("line #{idx + 1}: syntax error")
+    next
+  end
+  saved = Array.dup(stack)
+  dep[0] = 0
+  begin
+    run(toks, stack, dict, dep)
+  rescue RuntimeError => e
+    Array.clear(stack)
+    Array.concat(stack, saved)
+    puts("line #{idx + 1}: error: #{Exception.message(e)}")
+  end
+end
+
+if Array.empty?(stack)
+  puts("stack: (empty)")
+else
+  puts("stack: #{Array.join(stack, " ")}")
+end

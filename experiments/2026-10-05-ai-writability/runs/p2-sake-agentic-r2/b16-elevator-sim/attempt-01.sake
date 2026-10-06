@@ -1,0 +1,138 @@
+def ints(line)
+  toks = String.split(String.strip(line))
+  ok = true
+  Array.each(toks) { |s| ok = false unless String.match?(s, /\A\d+\z/) }
+  return nil unless ok
+  Array.map(toks) { |s| String.to_i(s) }
+end
+
+lines = IO.readlines(IO.stdin)
+hdr = Array.size(lines) > 0 ? ints(lines[0]) : nil
+if hdr == nil || Array.size(hdr) != 3 || hdr[0] < 2 || hdr[0] > 50 || hdr[1] > 5 || hdr[2] < 1 || hdr[2] > 20
+  puts("invalid header")
+  exit
+end
+nf = hdr[0]
+dt = hdr[1]
+cap = hdr[2]
+
+pt = Integer[]
+pf = Integer[]
+pg = Integer[]
+prev = 0
+i = 1
+while i < Array.size(lines)
+  ln = lines[i]
+  if String.strip(ln) != ""
+    v = ints(ln)
+    ok = v != nil && Array.size(v) == 3
+    if ok
+      ok = v[1] >= 1 && v[1] <= nf && v[2] >= 1 && v[2] <= nf && v[1] != v[2] && v[0] <= 1000 && v[0] >= prev
+    end
+    if ok
+      Array.push(pt, v[0])
+      Array.push(pf, v[1])
+      Array.push(pg, v[2])
+      prev = v[0]
+    else
+      puts("line #{i + 1}: invalid request")
+    end
+  end
+  i += 1
+end
+
+n = Array.size(pt)
+if n == 0
+  puts("no passengers")
+  exit
+end
+
+# state: 0 not yet, 1 waiting, 2 riding, 3 done
+st = Array.new(n, 0)
+pick = Array.new(n, 0)
+drop = Array.new(n, 0)
+f = 1
+t = 0
+dir = 0 # 0 idle, 1 up, -1 down
+left = n
+while left > 0
+  Integer.times(n) { |k| st[k] = 1 if st[k] == 0 && pt[k] <= t }
+  moved = false
+  Integer.times(n) do |k|
+    if st[k] == 2 && pg[k] == f
+      st[k] = 3
+      drop[k] = t
+      left -= 1
+      moved = true
+      puts("t=#{t} floor #{f} drop P#{k + 1}")
+    end
+  end
+  above = false
+  below = false
+  any = false
+  best = nil
+  bestd = 0
+  Integer.times(n) do |k|
+    tg = nil
+    tg = pg[k] if st[k] == 2
+    tg = pf[k] if st[k] == 1
+    if tg != nil
+      any = true
+      above = true if tg > f
+      below = true if tg < f
+      d = Integer.abs(tg - f)
+      if best == nil || d < bestd || (d == bestd && tg < best)
+        best = tg
+        bestd = d
+      end
+    end
+  end
+  if dir == 1
+    dir = above ? 1 : (below ? -1 : 0)
+  elsif dir == -1
+    dir = below ? -1 : (above ? 1 : 0)
+  end
+  if dir == 0 && any
+    if best > f
+      dir = 1
+    elsif best < f
+      dir = -1
+    else
+      w = Integer.times(n) { |k| break k if st[k] == 1 && pf[k] == f }
+      dir = pg[w] > f ? 1 : -1
+    end
+  end
+  riders = Array.count(st) { |s| s == 2 }
+  Integer.times(n) do |k|
+    if st[k] == 1 && pf[k] == f && riders < cap
+      pd = pg[k] > f ? 1 : -1
+      if pd == dir
+        st[k] = 2
+        pick[k] = t
+        riders += 1
+        moved = true
+        puts("t=#{t} floor #{f} pick P#{k + 1}")
+      end
+    end
+  end
+  if moved
+    t += dt
+  else
+    f += dir
+    t += 1
+  end
+end
+
+sw = 0
+sr = 0
+last = 0
+Integer.times(n) do |k|
+  w = pick[k] - pt[k]
+  r = drop[k] - pick[k]
+  sw += w
+  sr += r
+  last = drop[k] if drop[k] > last
+  puts("P#{k + 1} wait #{w} ride #{r}")
+end
+puts(format("average wait %.2f ride %.2f", sw / Integer.to_f(n), sr / Integer.to_f(n)))
+puts("done at t=#{last}")

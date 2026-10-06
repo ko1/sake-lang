@@ -1,0 +1,162 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+# cents, or nil when the text is not money
+def parse_money(s)
+  m = String.match(s, /\A(\d+)\.(\d\d)\z/)
+  return nil unless m
+  String.to_i(m[1]) * 100 + String.to_i(m[2])
+end
+
+def coin_list(cs) = Array.join(Array.map(cs) { |c| money(c) }, " ")
+
+coins = Array[5, 10, 25, 50, 100, 200]
+tubes = Array[0, 0, 0, 0, 0, 0]
+slots = Hash[]
+sales = Hash[]
+inserted = Integer[]
+credit = 0
+
+Array.each_with_index(IO.readlines(IO.stdin())) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  need = 0
+  if cmd == "SLOT"
+    need = 5
+  elsif cmd == "TUBE"
+    need = 3
+  elsif cmd == "COIN" || cmd == "SELECT"
+    need = 2
+  elsif cmd == "CANCEL"
+    need = 1
+  else
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != need
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+
+  if cmd == "SLOT"
+    if !String.match?(f[1], /\A[A-Z]\d\z/)
+      puts("line #{n}: error: bad slot")
+      next
+    end
+    if !String.match?(f[2], /\A[a-z]{1,12}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    price = parse_money(f[3])
+    if price == nil
+      puts("line #{n}: error: bad money")
+      next
+    end
+    if !String.match?(f[4], /\A\d+\z/) || String.to_i(f[4]) > 99
+      puts("line #{n}: error: bad count")
+      next
+    end
+    slots[f[1]] = [f[2], price, String.to_i(f[4])]
+  elsif cmd == "TUBE"
+    v = parse_money(f[1])
+    ci = v == nil ? nil : Array.index(coins, v)
+    if ci == nil
+      puts("line #{n}: error: bad coin")
+      next
+    end
+    if !String.match?(f[2], /\A\d+\z/) || String.to_i(f[2]) > 999
+      puts("line #{n}: error: bad count")
+      next
+    end
+    tubes[ci] += String.to_i(f[2])
+  elsif cmd == "COIN"
+    v = parse_money(f[1])
+    if v == nil
+      puts("line #{n}: error: bad money")
+      next
+    end
+    ci = Array.index(coins, v)
+    if ci == nil
+      puts("rejected #{money(v)}")
+    elsif credit + v > 500
+      puts("rejected #{money(v)} (credit limit)")
+    else
+      tubes[ci] += 1
+      credit += v
+      Array.push(inserted, v)
+      puts("credit #{money(credit)}")
+    end
+  elsif cmd == "SELECT"
+    s = slots[f[1]]
+    if s == nil
+      puts("no slot #{f[1]}")
+      next
+    end
+    name = s[0]
+    price = s[1]
+    cnt = s[2]
+    if cnt == 0
+      puts("sold out #{f[1]}")
+      next
+    end
+    if credit < price
+      puts("insert #{money(price - credit)} more")
+      next
+    end
+    change = credit - price
+    rem = change
+    paid = Integer[]
+    take = Array[0, 0, 0, 0, 0, 0]
+    i = 5
+    while i >= 0
+      k = rem / coins[i]
+      k = tubes[i] if k > tubes[i]
+      take[i] = k
+      rem -= k * coins[i]
+      Integer.times(k) { Array.push(paid, coins[i]) }
+      i -= 1
+    end
+    if rem != 0
+      puts("exact change needed")
+      next
+    end
+    Integer.times(6) { |j| tubes[j] -= take[j] }
+    slots[f[1]] = [name, price, cnt - 1]
+    st = sales[name]
+    if st == nil
+      sales[name] = [1, price]
+    else
+      sales[name] = [st[0] + 1, st[1] + price]
+    end
+    credit = 0
+    Array.clear(inserted)
+    if change == 0
+      puts("vend #{name}, change #{money(change)}")
+    else
+      puts("vend #{name}, change #{money(change)} [#{coin_list(paid)}]")
+    end
+  else
+    if credit == 0
+      puts("nothing to return")
+    else
+      Array.each(inserted) do |v|
+        tubes[Array.index(coins, v)] -= 1
+      end
+      puts("returned #{money(credit)} [#{coin_list(inserted)}]")
+      credit = 0
+      Array.clear(inserted)
+    end
+  end
+end
+
+puts("credit #{money(credit)} kept") if credit != 0
+puts("sales:")
+rows = Array.sort_by(Hash.to_a(sales)) { |name, st| [-st[1], name] }
+if Array.empty?(rows)
+  puts("  none")
+else
+  Array.each(rows) { |name, st| puts(format("  %-12s %3d %8s", name, st[0], money(st[1]))) }
+end
+puts("tubes: " + Array.join(Array.map(Array.zip(coins, tubes)) { |c, t| "#{money(c)}x#{t}" }, " "))

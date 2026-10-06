@@ -1,0 +1,156 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+def hm(m) = format("%d:%02d", m / 60, m % 60)
+
+def leap?(y) = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+def days_in_month(y, m)
+  return 29 if m == 2 && leap?(y)
+  Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+end
+
+# days since 1970-01-01, or nil when not a real date in 1970-2099
+def parse_date(s)
+  md = String.match(s, /\A(\d{4})-(\d\d)-(\d\d)\z/)
+  return nil unless md
+  y = String.to_i(md[1])
+  m = String.to_i(md[2])
+  d = String.to_i(md[3])
+  return nil if y < 1970 || y > 2099
+  return nil if m < 1 || m > 12
+  return nil if d < 1 || d > days_in_month(y, m)
+  y -= 1 if m <= 2
+  era = y / 400
+  yoe = y - era * 400
+  mp = (m + 9) % 12
+  doy = (153 * mp + 2) / 5 + d - 1
+  doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+end
+
+# minutes since midnight, or nil
+def parse_time(s)
+  md = String.match(s, /\A([01]\d|2[0-3]):([0-5]\d)\z/)
+  return nil unless md
+  String.to_i(md[1]) * 60 + String.to_i(md[2])
+end
+
+emps = Hash[]
+shifts = Hash[]
+
+Array.each_with_index(IO.readlines(IO.stdin())) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  cnt = Array.size(f)
+  if cmd == "EMP"
+    if cnt != 4
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    if !String.match?(f[1], /\AE\d{3}\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    if !String.match?(f[2], /\A[A-Za-z]{1,10}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    rm = String.match(f[3], /\A(\d+)\.(\d\d)\z/)
+    if rm == nil
+      puts("line #{n}: error: bad rate")
+      next
+    end
+    if emps[f[1]] != nil
+      puts("line #{n}: error: duplicate employee #{f[1]}")
+      next
+    end
+    emps[f[1]] = [f[2], String.to_i(rm[1]) * 100 + String.to_i(rm[2])]
+    shifts[f[1]] = Tuple[]
+  elsif cmd == "SHIFT"
+    if cnt != 5 && cnt != 6
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    id = f[1]
+    if !String.match?(id, /\AE\d{3}\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    if emps[id] == nil
+      puts("line #{n}: error: unknown employee #{id}")
+      next
+    end
+    day = parse_date(f[2])
+    if day == nil
+      puts("line #{n}: error: bad date")
+      next
+    end
+    st = parse_time(f[3])
+    en = parse_time(f[4])
+    if st == nil || en == nil
+      puts("line #{n}: error: bad time")
+      next
+    end
+    len = en - st
+    len += 1440 if en <= st
+    brk = 0
+    if cnt == 6
+      if !String.match?(f[5], /\A\d+\z/)
+        puts("line #{n}: error: bad break")
+        next
+      end
+      brk = String.to_i(f[5])
+    end
+    if brk >= len
+      puts("line #{n}: error: bad break")
+      next
+    end
+    abs_start = day * 1440 + st
+    abs_end = abs_start + len
+    clash = Array.any?(shifts[id]) { |s, e, d, w| abs_start < e && s < abs_end }
+    if clash
+      puts("line #{n}: error: overlapping shift")
+      next
+    end
+    brk = 30 if len > 360 && brk < 30
+    Array.push(shifts[id], [abs_start, abs_end, day, len - brk])
+  else
+    puts("line #{n}: error: unknown command")
+  end
+end
+
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+tot_reg = 0
+tot_ot = 0
+tot_pay = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  name = emps[id][0]
+  rate = emps[id][1]
+  reg = 0
+  ot = 0
+  day_total = Hash.new(0)
+  week_reg = Hash.new(0)
+  Array.each(Array.sort_by(shifts[id]) { |s, e, d, w| s }) do |s, e, d, w|
+    dt = day_total[d]
+    ot_day = dt + w - (dt > 480 ? dt : 480)
+    ot_day = 0 if ot_day < 0
+    rest = w - ot_day
+    wk = (d + 3) / 7
+    wr = week_reg[wk]
+    ot_week = wr + rest - (wr > 2400 ? wr : 2400)
+    ot_week = 0 if ot_week < 0
+    r = rest - ot_week
+    week_reg[wk] = wr + r
+    day_total[d] = dt + w
+    reg += r
+    ot += ot_day + ot_week
+  end
+  pay = (reg * rate * 2 + ot * rate * 3 + 60) / 120
+  tot_reg += reg
+  tot_ot += ot
+  tot_pay += pay
+  puts(format("%-4s %-10s %8s %8s %10s", id, name, hm(reg), hm(ot), money(pay)))
+end
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", hm(tot_reg), hm(tot_ot), money(tot_pay)))

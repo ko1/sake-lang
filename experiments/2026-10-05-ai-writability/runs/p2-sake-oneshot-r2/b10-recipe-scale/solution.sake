@@ -1,0 +1,157 @@
+def parse_frac(s)
+  m = String.match(s, /\A(\d+)\/(\d+)\z/)
+  return nil if m == nil
+  den = String.to_i(m[2])
+  return nil if den == 0
+  Rational(String.to_i(m[1]), den)
+end
+
+# returns [quantity, number of fields used] or nil
+def parse_qty(f)
+  a = f[0]
+  if String.match?(a, /\A\d+\z/)
+    whole = Rational(String.to_i(a), 1)
+    b = f[1]
+    if b != nil
+      fr = parse_frac(b)
+      return [whole + fr, 2] if fr != nil
+    end
+    [whole, 1]
+  elsif String.match?(a, /\A\d+\.\d+\z/)
+    parts = String.split(a, ".")
+    w = parts[0]
+    d = parts[1]
+    [Rational(String.to_i(w + d), 10 ** String.size(d)), 1]
+  else
+    fr = parse_frac(a)
+    return nil if fr == nil
+    [fr, 1]
+  end
+end
+
+# returns [group, multiplier] or nil
+def unit_info(u)
+  if u == "tsp"
+    ["s", 1]
+  elsif u == "tbsp"
+    ["s", 3]
+  elsif u == "cup"
+    ["s", 48]
+  elsif u == "g"
+    ["g", 1]
+  elsif u == "kg"
+    ["g", 1000]
+  elsif u == "ml"
+    ["m", 1]
+  elsif u == "l"
+    ["m", 1000]
+  elsif u == "-"
+    ["n", 1]
+  else
+    nil
+  end
+end
+
+def fmt(q)
+  den = Rational.denominator(q)
+  if den <= 8
+    whole = Rational.floor(q)
+    fr = q - whole
+    if fr == 0
+      "#{whole}"
+    elsif whole == 0
+      "#{Rational.numerator(fr)}/#{Rational.denominator(fr)}"
+    else
+      "#{whole} #{Rational.numerator(fr)}/#{Rational.denominator(fr)}"
+    end
+  else
+    c = Rational.round(q * 100)
+    format("%d.%02d", c / 100, c % 100)
+  end
+end
+
+def small_den?(q) = q >= 1 && Rational.denominator(q) <= 4
+
+def show_amount(g, a)
+  if g == "s"
+    cups = a / 48
+    tb = a / 3
+    if small_den?(cups)
+      "#{fmt(cups)} cup"
+    elsif small_den?(tb)
+      "#{fmt(tb)} tbsp"
+    else
+      "#{fmt(a)} tsp"
+    end
+  elsif g == "g"
+    a >= 1000 ? "#{fmt(a / 1000)} kg" : "#{fmt(a)} g"
+  elsif g == "m"
+    a >= 1000 ? "#{fmt(a / 1000)} l" : "#{fmt(a)} ml"
+  else
+    "#{Rational.ceil(a)}"
+  end
+end
+
+lines = IO.readlines(IO.stdin)
+first = Array.empty?(lines) ? "" : String.strip(lines[0])
+hf = String.split(first, " ")
+ok = Array.size(hf) == 4 && hf[0] == "SERVES" && hf[2] == "->"
+if ok
+  ok = String.match?(hf[1], /\A\d+\z/) && String.match?(hf[3], /\A\d+\z/)
+end
+if ok
+  ok = String.to_i(hf[1]) >= 1 && String.to_i(hf[1]) <= 100 && String.to_i(hf[3]) >= 1 && String.to_i(hf[3]) <= 100
+end
+unless ok
+  puts("line 1: error: bad servings")
+  exit
+end
+
+serves = String.to_i(hf[3])
+factor = Rational(serves, String.to_i(hf[1]))
+puts("serves #{serves} (x #{fmt(factor)})")
+
+totals = Hash[]
+Array.each_with_index(lines) do |raw, idx|
+  next if idx == 0
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  next if String.start_with?(f[0], "#")
+  r = parse_qty(f)
+  if r == nil
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  q, used = r
+  if q <= 0
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  u = f[used]
+  if u == nil
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  info = unit_info(u)
+  if info == nil
+    puts("line #{n}: error: unknown unit #{u}")
+    next
+  end
+  rest = Array.drop(f, used + 1)
+  if Array.empty?(rest)
+    puts("line #{n}: error: missing name")
+    next
+  end
+  g, mult = info
+  name = Array.join(rest, " ")
+  key = [name, g]
+  amt = q * factor * mult
+  cur = totals[key]
+  totals[key] = cur == nil ? amt : cur + amt
+end
+
+Hash.each(totals) do |(name, g), a|
+  puts("#{show_amount(g, a)} #{name}")
+end

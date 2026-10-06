@@ -1,0 +1,203 @@
+class Db
+  attr_reader kind, cost, labor, comps
+end
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+def cents(s) = String.to_i(String.delete(s, "."))
+def ok_name(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+def ok_money(s) = String.match?(s, /\A\d+\.\d{2}\z/)
+
+def comp_ok(t)
+  return false unless String.match?(t, /\A[a-z][a-z0-9_]{0,15}:\d+\z/)
+  parts = String.split(t, ":")
+  q = String.to_i(parts[1])
+  q >= 1 && q <= 999
+end
+
+def bad_component(f)
+  idx = 3
+  while idx < Array.size(f)
+    return f[idx] unless comp_ok(f[idx])
+    idx += 1
+  end
+  nil
+end
+
+def repeated_component(f)
+  seen = Set[]
+  idx = 3
+  while idx < Array.size(f)
+    parts = String.split(f[idx], ":")
+    nm = parts[0]
+    return nm if Set.include?(seen, nm)
+    Set.add(seen, nm)
+    idx += 1
+  end
+  nil
+end
+
+def parse_comps(f)
+  comps = Array[]
+  idx = 3
+  while idx < Array.size(f)
+    parts = String.split(f[idx], ":")
+    Array.push(comps, [parts[0], String.to_i(parts[1])])
+    idx += 1
+  end
+  comps
+end
+
+def check(db, name, parent, path, ok)
+  kinds = Db.kind(db)
+  if !Hash.key?(kinds, name)
+    return "unknown item #{name}" if parent == nil
+    return "unknown item #{name} in #{parent}"
+  end
+  return nil if Hash.key?(ok, name)
+  idx = Array.index(path, name)
+  if idx != nil
+    cyc = Array.join(Array.drop(path, idx) + Array[name], " > ")
+    return "cycle #{cyc}"
+  end
+  if kinds[name] == "assy"
+    comps = Db.comps(db)
+    Array.push(path, name)
+    msg = nil
+    Array.each(comps[name]) do |cn, q|
+      msg = check(db, cn, name, path, ok)
+      break if msg
+    end
+    Array.pop(path)
+    return msg if msg
+  end
+  ok[name] = true
+  nil
+end
+
+def unit(db, name, memo)
+  return memo[name] if Hash.key?(memo, name)
+  kinds = Db.kind(db)
+  c = 0
+  if kinds[name] == "part"
+    costs = Db.cost(db)
+    c = costs[name]
+  else
+    labors = Db.labor(db)
+    comps = Db.comps(db)
+    c = labors[name]
+    Array.each(comps[name]) { |cn, q| c += q * unit(db, cn, memo) }
+  end
+  memo[name] = c
+  c
+end
+
+def emit(db, name, qty, depth, uc, parts)
+  kinds = Db.kind(db)
+  pad = "  " * depth
+  puts("#{pad}#{qty} x #{name} = #{money(qty * uc[name])}")
+  if kinds[name] == "part"
+    parts[name] += qty
+  else
+    comps = Db.comps(db)
+    Array.each(comps[name]) { |cn, q| emit(db, cn, qty * q, depth + 1, uc, parts) }
+  end
+end
+
+lines = IO.readlines(IO.stdin)
+db = Db.new(Hash[], Hash[], Hash[], Hash[])
+kinds = Db.kind(db)
+costs = Db.cost(db)
+labors = Db.labor(db)
+compmap = Db.comps(db)
+
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  next if line == ""
+  f = String.split(line, /\s+/)
+  cmd = f[0]
+  sz = Array.size(f)
+  if cmd == "PART"
+    if sz != 3
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    name = f[1]
+    unless ok_name(name)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    unless ok_money(f[2])
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    if Hash.key?(kinds, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    kinds[name] = "part"
+    costs[name] = cents(f[2])
+  elsif cmd == "ASSY"
+    if sz < 4
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    name = f[1]
+    unless ok_name(name)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    unless ok_money(f[2])
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    bad = bad_component(f)
+    if bad
+      puts("line #{n}: error: bad component #{bad}")
+      next
+    end
+    rep = repeated_component(f)
+    if rep
+      puts("line #{n}: error: repeated component #{rep}")
+      next
+    end
+    if Hash.key?(kinds, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    kinds[name] = "assy"
+    labors[name] = cents(f[2])
+    compmap[name] = parse_comps(f)
+  elsif cmd == "BUILD"
+    if sz != 3
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    name = f[1]
+    unless ok_name(name)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    unless String.match?(f[2], /\A\d+\z/) && String.to_i(f[2]) >= 1 && String.to_i(f[2]) <= 1000
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    qty = String.to_i(f[2])
+    msg = check(db, name, nil, Array[], Hash[])
+    if msg
+      puts("line #{n}: cannot build: #{msg}")
+      next
+    end
+    uc = Hash[]
+    unit(db, name, uc)
+    parts = Hash.new(0)
+    emit(db, name, qty, 0, uc, parts)
+    puts("parts:")
+    names = Array.sort_by(Hash.keys(parts)) { |nm| [0 - parts[nm], nm] }
+    Array.each(names) do |nm|
+      puts("  #{nm} x#{parts[nm]} = #{money(parts[nm] * costs[nm])}")
+    end
+  else
+    puts("line #{n}: error: unknown command")
+  end
+end

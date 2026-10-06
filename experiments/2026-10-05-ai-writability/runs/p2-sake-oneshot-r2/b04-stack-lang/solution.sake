@@ -1,0 +1,194 @@
+Err = Exception.new(:code)
+
+class Def
+  attr_reader body, jmp
+end
+
+def words = Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"]
+
+def builtin?(w) = Array.include?(words, w)
+
+def number?(w) = String.match?(w, /\A-?\d+\z/)
+
+def jumps(toks)
+  j = Array.new(Array.size(toks), 0)
+  st = Integer[]
+  Array.each_with_index(toks) do |t, i|
+    if t == "if"
+      Array.push(st, i)
+    elsif t == "else"
+      k = Array.pop(st)
+      j[k] = i
+      Array.push(st, i)
+    elsif t == "then"
+      k = Array.pop(st)
+      j[k] = i
+    end
+  end
+  j
+end
+
+def syntax_ok?(toks)
+  st = String[]
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if t == ":"
+      return false unless Array.empty?(st)
+      return false if i + 1 >= n
+      nm = toks[i + 1]
+      return false if number?(nm) || builtin?(nm)
+      Array.push(st, ":")
+      i += 1
+    elsif t == ";"
+      return false if Array.empty?(st) || Array.last(st) != ":"
+      Array.pop(st)
+    elsif t == "if"
+      Array.push(st, "if")
+    elsif t == "else"
+      return false if Array.empty?(st) || Array.last(st) != "if"
+      Array.pop(st)
+      Array.push(st, "else")
+    elsif t == "then"
+      return false if Array.empty?(st) || (Array.last(st) != "if" && Array.last(st) != "else")
+      Array.pop(st)
+    end
+    i += 1
+  end
+  Array.empty?(st)
+end
+
+def arith(w, a, b)
+  if w == "+"
+    a + b
+  elsif w == "-"
+    a - b
+  elsif w == "*"
+    a * b
+  elsif w == "="
+    a == b ? 1 : 0
+  elsif w == "<"
+    a < b ? 1 : 0
+  elsif w == ">"
+    a > b ? 1 : 0
+  else
+    raise Err.new("division by zero", 0) if b == 0
+    q = Integer.abs(a) / Integer.abs(b)
+    q = -q if (a < 0) != (b < 0)
+    w == "/" ? q : a - q * b
+  end
+end
+
+class VM
+  attr_reader stack, defs
+  attr_accessor depth
+
+  def need(m, k, w)
+    raise Err.new("stack underflow in #{w}", 0) if Array.size(@stack) < k
+    m
+  end
+
+  def builtin(m, w)
+    st = @stack
+    if w == "dup"
+      need(m, 1, w)
+      Array.push(st, st[-1])
+    elsif w == "drop"
+      need(m, 1, w)
+      Array.pop(st)
+    elsif w == "swap"
+      need(m, 2, w)
+      b = Array.pop(st)
+      a = Array.pop(st)
+      Array.push(st, b)
+      Array.push(st, a)
+    elsif w == "over"
+      need(m, 2, w)
+      Array.push(st, st[-2])
+    elsif w == "."
+      need(m, 1, w)
+      puts(Array.pop(st))
+    else
+      need(m, 2, w)
+      b = Array.pop(st)
+      a = Array.pop(st)
+      Array.push(st, arith(w, a, b))
+    end
+    nil
+  end
+
+  def run(m, toks, jmp)
+    i = 0
+    n = Array.size(toks)
+    while i < n
+      t = toks[i]
+      if t == ":"
+        name = toks[i + 1]
+        j = i + 2
+        body = String[]
+        while toks[j] != ";"
+          Array.push(body, toks[j])
+          j += 1
+        end
+        Hash.store(@defs, name, Def.new(body, jumps(body)))
+        i = j + 1
+      elsif t == "if"
+        need(m, 1, "if")
+        v = Array.pop(@stack)
+        if v == 0
+          i = jmp[i] + 1
+        else
+          i += 1
+        end
+      elsif t == "else"
+        i = jmp[i] + 1
+      elsif t == "then"
+        i += 1
+      elsif number?(t)
+        Array.push(@stack, String.to_i(t))
+        i += 1
+      elsif builtin?(t)
+        builtin(m, t)
+        i += 1
+      else
+        d = @defs[t]
+        raise Err.new("unknown word #{t}", 0) unless d
+        raise Err.new("too deep", 0) if @depth >= 100
+        @depth += 1
+        run(m, Def.body(d), Def.jmp(d))
+        @depth -= 1
+        i += 1
+      end
+    end
+    nil
+  end
+end
+
+vm = VM.new(Integer[], Hash[], 0)
+lines = IO.readlines(IO.stdin)
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  toks = String.split(String.chomp(raw), " ")
+  unless syntax_ok?(toks)
+    puts("line #{n}: syntax error")
+    next
+  end
+  saved = Array.dup(VM.stack(vm))
+  VM.set_depth(vm, 0)
+  begin
+    VM.run(vm, toks, jumps(toks))
+  rescue Err => e
+    st = VM.stack(vm)
+    Array.clear(st)
+    Array.concat(st, saved)
+    puts("line #{n}: error: #{Exception.message(e)}")
+  end
+end
+st = VM.stack(vm)
+if Array.empty?(st)
+  puts("stack: (empty)")
+else
+  puts("stack: #{Array.join(st, " ")}")
+end

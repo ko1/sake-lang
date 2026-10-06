@@ -1,0 +1,121 @@
+def rnd(a, b) = (2 * a + b) / (2 * b)
+
+def human(s)
+  return "#{s}B" if s < 1024
+  k = 1024
+  m = 1024 * 1024
+  g = 1024 * 1024 * 1024
+  u = k
+  letter = "K"
+  next_letter = "M"
+  if s >= g
+    u = g
+    letter = "G"
+    next_letter = "G"
+  elsif s >= m
+    u = m
+    letter = "M"
+    next_letter = "G"
+  end
+  t = rnd(s * 10, u)
+  return "#{t / 10}.#{t % 10}#{letter}" if t < 100
+  n = rnd(s, u)
+  return "1.0#{next_letter}" if n == 1024 && u != g
+  "#{n}#{letter}"
+end
+
+def last_comp(path) = Array.last(String.split(path, "/"))
+
+def show(size, depth, name) = puts(format("%6s  %s%s", human(size), String.*("  ", depth), name))
+
+def print_dir(path, depth, maxd, thr, children, sizes, dirs)
+  return if depth >= maxd
+  kids = Array.sort_by(children[path]) { |c| [-sizes[c], last_comp(c)] }
+  hidden = 0
+  hsum = 0
+  Array.each(kids) do |c|
+    if sizes[c] < thr
+      hidden += 1
+      hsum += sizes[c]
+    else
+      isdir = Set.include?(dirs, c)
+      show(sizes[c], depth + 1, isdir ? "#{last_comp(c)}/" : last_comp(c))
+      print_dir(c, depth + 1, maxd, thr, children, sizes, dirs) if isdir
+    end
+  end
+  show(hsum, depth + 1, "(#{hidden} smaller)") if hidden > 0
+end
+
+lines = IO.readlines(IO.stdin)
+hd = Array.size(lines) > 0 ? String.split(lines[0]) : Array[]
+if Array.size(hd) != 4 || hd[0] != "depth" || hd[2] != "threshold" || !String.match?(hd[1], /\A\d+\z/) || !String.match?(hd[3], /\A\d+\z/)
+  puts("bad header")
+  exit
+end
+maxd = String.to_i(hd[1])
+thr = String.to_i(hd[3])
+
+files = Hash[]
+dirs = Set[]
+sizes = Hash.new(0)
+children = Hash.new(nil)
+children[""] = Array[]
+
+i = 1
+while i < Array.size(lines)
+  text = String.chomp(lines[i])
+  num = i + 1
+  i += 1
+  next if String.strip(text) == ""
+  toks = String.split(text)
+  ok = Array.size(toks) == 2 && String.match?(toks[0], /\A\d+\z/) && String.size(toks[0]) <= 14
+  if ok
+    ok = String.to_i(toks[0]) <= 10000000000000
+  end
+  comps = Array[]
+  if ok
+    path = toks[1]
+    comps = String.split(path, "/", -1)
+    ok = Array.all?(comps) { |c| c != "" && c != "." && c != ".." }
+  end
+  if !ok
+    puts("line #{num}: malformed")
+    next
+  end
+  path = toks[1]
+  if Hash.key?(files, path)
+    puts("line #{num}: duplicate #{path}")
+    next
+  end
+  conflict = Set.include?(dirs, path)
+  prefs = Array[]
+  cur = ""
+  Integer.times(Array.size(comps) - 1) do |k|
+    cur = k == 0 ? comps[0] : "#{cur}/#{comps[k]}"
+    Array.push(prefs, cur)
+    conflict = true if Hash.key?(files, cur)
+  end
+  if conflict
+    puts("line #{num}: conflict #{path}")
+    next
+  end
+  sz = String.to_i(toks[0])
+  files[path] = sz
+  sizes[""] += sz
+  sizes[path] = sz
+  parent = ""
+  Array.each(prefs) do |pf|
+    if !Set.include?(dirs, pf)
+      Set.add(dirs, pf)
+      children[pf] = Array[]
+      Array.push(children[parent], pf)
+    end
+    sizes[pf] += sz
+    parent = pf
+  end
+  children[parent] = Array[] if children[parent] == nil
+  Array.push(children[parent], path)
+end
+
+show(sizes[""], 0, ".")
+print_dir("", 0, maxd, thr, children, sizes, dirs)

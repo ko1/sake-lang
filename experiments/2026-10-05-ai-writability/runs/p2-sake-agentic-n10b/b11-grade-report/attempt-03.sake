@@ -1,0 +1,126 @@
+def round10(r) = Rational.floor(r * 10 + Rational(1, 2))
+
+def fmt10(n) = "#{n / 10}.#{n % 10}"
+
+def grade(n)
+  if n >= 900
+    "A"
+  elsif n >= 800
+    "B"
+  elsif n >= 700
+    "C"
+  elsif n >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+lines = String.lines(IO.read(IO.stdin))
+weights = Hash[]
+pts = Hash.new(0)
+maxs = Hash.new(0)
+miss = Hash.new(0)
+order = String[]
+errors = String[]
+
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line)
+  if f[0] == "weight" && Array.size(f) == 3
+    cat = f[1]
+    w = f[2]
+    if !String.match?(w, /\A\d+\z/) || String.to_i(w) < 1 || String.to_i(w) > 100
+      Array.push(errors, "line #{n}: bad weight #{w}")
+    elsif Hash.key?(weights, cat)
+      Array.push(errors, "line #{n}: duplicate category #{cat}")
+    else
+      weights[cat] = String.to_i(w)
+    end
+  elsif Array.size(f) != 3
+    Array.push(errors, "line #{n}: bad format")
+  else
+    name = f[0]
+    cat = f[1]
+    sc = f[2]
+    if !Hash.key?(weights, cat)
+      Array.push(errors, "line #{n}: unknown category #{cat}")
+    else
+      m = String.match(sc, /\A(\d+|EX|-)\/(\d+)\z/)
+      known = false
+      if m
+        mm = String.to_i(m[2])
+        if mm > 0
+          if m[1] == "EX" || m[1] == "-"
+            known = true
+          elsif String.to_i(m[1]) <= mm
+            known = true
+          end
+        end
+      end
+      if !known
+        Array.push(errors, "line #{n}: bad score #{sc}")
+      else
+        if !Hash.key?(miss, name)
+          Array.push(order, name)
+          miss[name] = 0
+        end
+        k = [name, cat]
+        if m[1] == "EX"
+          nil
+        elsif m[1] == "-"
+          miss[name] += 1
+          maxs[k] += String.to_i(m[2])
+        else
+          pts[k] += String.to_i(m[1])
+          maxs[k] += String.to_i(m[2])
+        end
+      end
+    end
+  end
+end
+
+puts(*errors) unless Array.empty?(errors)
+
+# per student: rounded percentage (Integer, tenths) and exact percentage
+rows = Tuple[]
+total = Rational(0)
+cnt = 0
+Array.each(order) do |name|
+  num = Rational(0)
+  den = 0
+  Hash.each(weights) do |cat, w|
+    k = [name, cat]
+    if Hash.key?(maxs, k) && maxs[k] > 0
+      num = num + Rational(pts[k] * w, maxs[k])
+      den += w
+    end
+  end
+  if den > 0
+    pct = num * 100 / den
+    total = total + pct
+    cnt += 1
+    Array.push(rows, [0, -round10(pct), name, round10(pct), miss[name]])
+  else
+    Array.push(rows, [1, 0, name, -1, miss[name]])
+  end
+end
+
+width = 7
+Array.each(order) { |name| width = String.size(name) if String.size(name) > width }
+
+puts(String.ljust("Student", width) + "  Score  G  Missing")
+Array.each(Array.sort(rows)) do |kind, neg, name, r10, ms|
+  if kind == 0
+    puts(String.ljust(name, width) + "  " + String.rjust(fmt10(r10), 5) + "  " + grade(r10) + "  " + String.rjust(Integer.to_s(ms), 7))
+  else
+    puts(String.ljust(name, width) + "  " + String.rjust("n/a", 5) + "  -  " + String.rjust(Integer.to_s(ms), 7))
+  end
+end
+if cnt > 0
+  puts("class average: #{fmt10(round10(total / cnt))}")
+else
+  puts("class average: n/a")
+end

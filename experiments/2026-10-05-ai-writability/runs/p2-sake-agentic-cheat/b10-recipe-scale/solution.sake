@@ -1,0 +1,144 @@
+def one = Rational(1, 1)
+
+def fmt(x)
+  d = Rational.denominator(x)
+  if d <= 8
+    w = Rational.floor(x)
+    r = x - Rational(w, 1)
+    nn = Rational.numerator(r)
+    return "#{w}" if nn == 0
+    return "#{nn}/#{d}" if w == 0
+    "#{w} #{nn}/#{d}"
+  else
+    c = Rational.floor(x * Rational(100, 1) + Rational(1, 2))
+    format("%d.%02d", c / 100, c % 100)
+  end
+end
+
+def frac(s)
+  m = String.match(s, /\A([0-9]+)\/([0-9]+)\z/)
+  return Rational(0, 1) if m == nil
+  den = String.to_i(MatchData.[](m, 2))
+  return Rational(0, 1) if den == 0
+  Rational(String.to_i(MatchData.[](m, 1)), den)
+end
+
+def whole_s(s) = String.match?(s, /\A[0-9]+\z/)
+def dec(s)
+  parts = String.split(s, ".")
+  digits = Array.fetch(parts, 1, "")
+  Rational(String.to_i(Array.fetch(parts, 0, "0") + digits), Integer.**(10, String.size(digits)))
+end
+
+def unit_group(u)
+  return "sp" if u == "tsp" || u == "tbsp" || u == "cup"
+  return "g" if u == "g" || u == "kg"
+  return "ml" if u == "ml" || u == "l"
+  return "ct" if u == "-"
+  ""
+end
+
+def unit_mul(u)
+  return 3 if u == "tbsp"
+  return 48 if u == "cup"
+  return 1000 if u == "kg" || u == "l"
+  1
+end
+
+first = gets
+f0 = first ? String.split(String.chomp(first), " ") : String[]
+okh = Array.size(f0) == 4 && f0[0] == "SERVES" && f0[2] == "->" && String.match?(f0[1], /\A[0-9]{1,3}\z/) && String.match?(f0[3], /\A[0-9]{1,3}\z/)
+if okh
+  okh = String.to_i(f0[1]) >= 1 && String.to_i(f0[1]) <= 100 && String.to_i(f0[3]) >= 1 && String.to_i(f0[3]) <= 100
+end
+unless okh
+  puts("line 1: error: bad servings")
+  exit
+end
+factor = Rational(String.to_i(f0[3]), String.to_i(f0[1]))
+puts("serves #{f0[3]} (x #{fmt(factor)})")
+
+order = String[]
+sums = Hash[]
+gname = Hash[]
+ggroup = Hash[]
+n = 1
+while (line = gets)
+  n += 1
+  f = String.split(String.chomp(line), " ")
+  next if Array.empty?(f)
+  next if String.start_with?(f[0], "#")
+  q = Rational(0, 1)
+  used = 1
+  if whole_s(f[0])
+    q = Rational(String.to_i(f[0]), 1)
+    if Array.size(f) >= 2 && String.match?(f[1], /\A[0-9]+\/[0-9]+\z/) && String.to_i(String.partition(f[1], "/")[2]) != 0
+      q = q + frac(f[1])
+      used = 2
+    end
+  elsif String.match?(f[0], /\A[0-9]+\.[0-9]+\z/)
+    q = dec(f[0])
+  else
+    q = frac(f[0])
+  end
+  unless Rational.positive?(q)
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  rest = Array.drop(f, used)
+  if Array.empty?(rest)
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  u = rest[0]
+  mul = unit_mul(u)
+  grp = unit_group(u)
+  if grp == ""
+    puts("line #{n}: error: unknown unit #{u}")
+    next
+  end
+  if Array.size(rest) < 2
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(Array.drop(rest, 1), " ")
+  key = grp + "|" + name
+  unless Hash.key?(sums, key)
+    Array.push(order, key)
+    gname[key] = name
+    ggroup[key] = grp
+    sums[key] = Rational(0, 1)
+  end
+  sums[key] = Hash.fetch(sums, key, Rational(0, 1)) + q * factor * Rational(mul, 1)
+end
+
+Array.each(order) do |key|
+  a = Hash.fetch(sums, key, Rational(0, 1))
+  g = Hash.fetch(ggroup, key, "")
+  nm = Hash.fetch(gname, key, "")
+  if g == "ct"
+    puts("#{Rational.ceil(a)} #{nm}")
+  elsif g == "g"
+    if a >= Rational(1000, 1)
+      puts("#{fmt(a / Rational(1000, 1))} kg #{nm}")
+    else
+      puts("#{fmt(a)} g #{nm}")
+    end
+  elsif g == "ml"
+    if a >= Rational(1000, 1)
+      puts("#{fmt(a / Rational(1000, 1))} l #{nm}")
+    else
+      puts("#{fmt(a)} ml #{nm}")
+    end
+  else
+    cups = a / Rational(48, 1)
+    tb = a / Rational(3, 1)
+    if cups >= one && Rational.denominator(cups) <= 4
+      puts("#{fmt(cups)} cup #{nm}")
+    elsif tb >= one && Rational.denominator(tb) <= 4
+      puts("#{fmt(tb)} tbsp #{nm}")
+    else
+      puts("#{fmt(a)} tsp #{nm}")
+    end
+  end
+end

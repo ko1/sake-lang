@@ -1,0 +1,172 @@
+Emp = Struct.new(:name, :rate, :shifts)
+
+def leap_year(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+def month_days(y, m)
+  if m == 2
+    leap_year(y) ? 29 : 28
+  elsif Array.include?(Array[4, 6, 9, 11], m)
+    30
+  else
+    31
+  end
+end
+
+# days since 1970-01-01, or nil when not a real date in 1970..2099
+def parse_date(s)
+  return nil unless String.match?(s, /\A\d{4}-\d\d-\d\d\z/)
+  y = String.to_i(String.slice(s, 0, 4))
+  m = String.to_i(String.slice(s, 5, 2))
+  d = String.to_i(String.slice(s, 8, 2))
+  return nil if y < 1970 || y > 2099
+  return nil if m < 1 || m > 12
+  return nil if d < 1 || d > month_days(y, m)
+  n = 0
+  Range.each(1970...y) do |yy|
+    if leap_year(yy)
+      n += 366
+    else
+      n += 365
+    end
+  end
+  Range.each(1...m) { |mm| n += month_days(y, mm) }
+  n + d - 1
+end
+
+def parse_time(s)
+  return nil unless String.match?(s, /\A\d\d:\d\d\z/)
+  h = String.to_i(String.slice(s, 0, 2))
+  mi = String.to_i(String.slice(s, 3, 2))
+  return nil if h > 23 || mi > 59
+  h * 60 + mi
+end
+
+def parse_rate(s)
+  return nil unless String.match?(s, /\A\d+\.\d\d\z/)
+  String.to_i(String.delete(s, "."))
+end
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def hm(m) = format("%d:%02d", m / 60, m % 60)
+
+def settle(e)
+  reg = 0
+  ot = 0
+  day_total = Hash.new(0)
+  week_reg = Hash.new(0)
+  sorted = Array.sort_by(Emp.shifts(e)) { |s, en, dd, w| s }
+  Array.each(sorted) do |s, en, dd, w|
+    dt = day_total[dd]
+    above = dt + w - (dt > 480 ? dt : 480)
+    od = above > 0 ? above : 0
+    rest = w - od
+    wk = (dd + 3) / 7
+    wr = week_reg[wk]
+    above_w = wr + rest - (wr > 2400 ? wr : 2400)
+    ow = above_w > 0 ? above_w : 0
+    r = rest - ow
+    reg += r
+    ot += od + ow
+    week_reg[wk] = wr + r
+    day_total[dd] = dt + w
+  end
+  [reg, ot]
+end
+
+lines = IO.readlines(IO.stdin)
+emps = Hash[]
+
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  cnt = Array.size(f)
+  if cmd != "EMP" && cmd != "SHIFT"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if (cmd == "EMP" && cnt != 4) || (cmd == "SHIFT" && cnt != 5 && cnt != 6)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  id = f[1]
+  unless String.match?(id, /\AE\d{3}\z/)
+    puts("line #{n}: error: bad id")
+    next
+  end
+  if cmd == "EMP"
+    nm = f[2]
+    unless String.match?(nm, /\A[A-Za-z]{1,10}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    rate = parse_rate(f[3])
+    if rate == nil
+      puts("line #{n}: error: bad rate")
+      next
+    end
+    if Hash.key?(emps, id)
+      puts("line #{n}: error: duplicate employee #{id}")
+      next
+    end
+    emps[id] = Emp.new(nm, rate, Tuple[])
+  else
+    e = emps[id]
+    if e == nil
+      puts("line #{n}: error: unknown employee #{id}")
+      next
+    end
+    day = parse_date(f[2])
+    if day == nil
+      puts("line #{n}: error: bad date")
+      next
+    end
+    st = parse_time(f[3])
+    en = parse_time(f[4])
+    if st == nil || en == nil
+      puts("line #{n}: error: bad time")
+      next
+    end
+    len = en > st ? en - st : en - st + 1440
+    brk = 0
+    if cnt == 6
+      bs = f[5]
+      unless String.match?(bs, /\A\d+\z/)
+        puts("line #{n}: error: bad break")
+        next
+      end
+      brk = String.to_i(bs)
+      if brk >= len
+        puts("line #{n}: error: bad break")
+        next
+      end
+    end
+    s0 = day * 1440 + st
+    e0 = s0 + len
+    clash = Array.any?(Emp.shifts(e)) { |s, en2, dd, w| s0 < en2 && s < e0 }
+    if clash
+      puts("line #{n}: error: overlapping shift")
+      next
+    end
+    brk = 30 if len > 360 && brk < 30
+    Array.push(Emp.shifts(e), [s0, e0, day, len - brk])
+  end
+end
+
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+tr = 0
+to = 0
+tp = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  e = emps[id]
+  r, o = settle(e)
+  pay = (2 * r * Emp.rate(e) + 3 * o * Emp.rate(e) + 60) / 120
+  tr += r
+  to += o
+  tp += pay
+  puts(format("%-4s %-10s %8s %8s %10s", id, Emp.name(e), hm(r), hm(o), money(pay)))
+end
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", hm(tr), hm(to), money(tp)))

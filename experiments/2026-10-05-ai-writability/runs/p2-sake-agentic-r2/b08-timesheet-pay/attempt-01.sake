@@ -1,0 +1,166 @@
+def leap?(y) = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+def month_days(y, m)
+  return 29 if m == 2 && leap?(y)
+  Array.at(Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31], m - 1)
+end
+
+# days since 1970-01-01, or nil for a bad date
+def parse_date(s)
+  mt = String.match(s, /\A(\d{4})-(\d\d)-(\d\d)\z/)
+  return nil unless mt
+  y = String.to_i(mt[1])
+  m = String.to_i(mt[2])
+  d = String.to_i(mt[3])
+  return nil if y < 1970 || y > 2099
+  return nil if m < 1 || m > 12
+  return nil if d < 1 || d > month_days(y, m)
+  yy = m <= 2 ? y - 1 : y
+  era = yy / 400
+  yoe = yy - era * 400
+  mp = m > 2 ? m - 3 : m + 9
+  doy = (153 * mp + 2) / 5 + d - 1
+  doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+end
+
+def parse_time(s)
+  mt = String.match(s, /\A(\d\d):(\d\d)\z/)
+  return nil unless mt
+  h = String.to_i(mt[1])
+  m = String.to_i(mt[2])
+  return nil if h > 23 || m > 59
+  h * 60 + m
+end
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+def hm(m) = format("%d:%02d", m / 60, m % 60)
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+names = Hash[]
+rates = Hash[]
+shifts = Hash[]
+n = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  sz = Array.size(f)
+  if cmd == "EMP"
+    if sz != 4
+      err(n, "wrong field count")
+      next
+    end
+    id = f[1]
+    unless String.match?(id, /\AE\d{3}\z/)
+      err(n, "bad id")
+      next
+    end
+    unless String.match?(f[2], /\A[A-Za-z]{1,10}\z/)
+      err(n, "bad name")
+      next
+    end
+    rm = String.match(f[3], /\A(\d+)\.(\d\d)\z/)
+    unless rm
+      err(n, "bad rate")
+      next
+    end
+    if Hash.key?(names, id)
+      err(n, "duplicate employee #{id}")
+      next
+    end
+    names[id] = f[2]
+    rates[id] = String.to_i(rm[1]) * 100 + String.to_i(rm[2])
+    shifts[id] = Tuple[]
+  elsif cmd == "SHIFT"
+    if sz != 5 && sz != 6
+      err(n, "wrong field count")
+      next
+    end
+    id = f[1]
+    unless String.match?(id, /\AE\d{3}\z/)
+      err(n, "bad id")
+      next
+    end
+    unless Hash.key?(names, id)
+      err(n, "unknown employee #{id}")
+      next
+    end
+    days = parse_date(f[2])
+    if days == nil
+      err(n, "bad date")
+      next
+    end
+    st = parse_time(f[3])
+    en = parse_time(f[4])
+    if st == nil || en == nil
+      err(n, "bad time")
+      next
+    end
+    len = en - st
+    len += 1440 if len <= 0
+    brk = 0
+    if sz == 6
+      unless String.match?(f[5], /\A\d+\z/)
+        err(n, "bad break")
+        next
+      end
+      brk = String.to_i(f[5])
+    end
+    if brk >= len
+      err(n, "bad break")
+      next
+    end
+    s_abs = days * 1440 + st
+    e_abs = s_abs + len
+    clash = Array.any?(shifts[id]) { |sh| s_abs < sh[1] && sh[0] < e_abs }
+    if clash
+      err(n, "overlapping shift")
+      next
+    end
+    brk = 30 if len > 360 && brk < 30
+    Array.push(shifts[id], [s_abs, e_abs, days, len - brk])
+  else
+    err(n, "unknown command")
+  end
+end
+
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+tot_reg = 0
+tot_ot = 0
+tot_pay = 0
+Array.each(Array.sort(Hash.keys(names))) do |id|
+  daily = Hash.new(0)
+  weekly = Hash.new(0)
+  reg = 0
+  ot = 0
+  Array.each(Array.sort_by(shifts[id]) { |sh| sh[0] }) do |sh|
+    w = sh[3]
+    day = sh[2]
+    before = daily[day]
+    od = before + w - 480
+    od = 0 if od < 0
+    od = w if od > w
+    rd = w - od
+    wk = (day + 3) / 7
+    wb = weekly[wk]
+    ow = wb + rd - 2400
+    ow = 0 if ow < 0
+    ow = rd if ow > rd
+    daily[day] = before + w
+    weekly[wk] = wb + rd - ow
+    reg += rd - ow
+    ot += od + ow
+  end
+  r = rates[id]
+  num = reg * r * 2 + ot * r * 3
+  pay = (num * 2 + 120) / 240
+  tot_reg += reg
+  tot_ot += ot
+  tot_pay += pay
+  puts(format("%-4s %-10s %8s %8s %10s", id, names[id], hm(reg), hm(ot), money(pay)))
+end
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", hm(tot_reg), hm(tot_ot), money(tot_pay)))

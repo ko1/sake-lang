@@ -1,0 +1,132 @@
+Booking = Struct.new(:id, :room, :day, :s, :e, :who)
+
+def days = once { Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+
+def hhmm(m) = format("%02d:%02d", m / 60, m % 60)
+
+# minutes since midnight, or nil if not a valid time of the day
+def parse_time(t)
+  return nil unless String.match?(t, /\A\d\d:\d\d\z/)
+  h = String.to_i(String.slice(t, 0, 2))
+  mi = String.to_i(String.slice(t, 3, 2))
+  return nil if mi >= 60
+  m = h * 60 + mi
+  return nil if m % 15 != 0 || m < 480 || m > 1200
+  m
+end
+
+def overlaps?(b, room, day, s, e)
+  Booking.room(b) == room && Booking.day(b) == day && s < Booking.e(b) && Booking.s(b) < e
+end
+
+def fmt_b(b) = "#{Booking.who(b)} #{hhmm(Booking.s(b))}-#{hhmm(Booking.e(b))}"
+
+books = Booking[]
+next_id = 1
+n = 0
+while (line = gets)
+  n += 1
+  f = String.split(String.chomp(line), " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  err = nil
+  if cmd == "BOOK"
+    if Array.size(f) != 5
+      err = "wrong field count"
+    elsif !String.match?(f[1], /\A[A-Z0-9]{1,8}\z/)
+      err = "bad room"
+    elsif !Array.include?(days, f[2])
+      err = "bad day"
+    else
+      tp = String.match(f[3], /\A(\d\d:\d\d)-(\d\d:\d\d)\z/)
+      s = tp ? parse_time(tp[1]) : nil
+      e = tp ? parse_time(tp[2]) : nil
+      if s == nil || e == nil || s >= e
+        err = "bad time"
+      elsif !String.match?(f[4], /\A[a-z]{1,12}\z/)
+        err = "bad name"
+      else
+        room = f[1]
+        day = f[2]
+        who = f[4]
+        hit = nil
+        Array.each(books) do |b|
+          if overlaps?(b, room, day, s, e)
+            if hit == nil || Booking.s(b) < Booking.s(hit)
+              hit = b
+            end
+          end
+        end
+        if hit
+          puts("CONFLICT #{room} #{day} with ##{Booking.id(hit)} (#{fmt_b(hit)})")
+        elsif Array.count(books) { |b| Booking.who(b) == who && Booking.day(b) == day } >= 3
+          puts("LIMIT #{who} #{day}")
+        else
+          Array.push(books, Booking.new(next_id, room, day, s, e, who))
+          puts("OK ##{next_id} #{room} #{day} #{hhmm(s)}-#{hhmm(e)} #{who}")
+          next_id += 1
+        end
+      end
+    end
+  elsif cmd == "CANCEL"
+    if Array.size(f) != 2
+      err = "wrong field count"
+    elsif !String.match?(f[1], /\A\d+\z/)
+      err = "bad id"
+    else
+      id = String.to_i(f[1])
+      if Array.any?(books) { |b| Booking.id(b) == id }
+        Array.delete_if(books) { |b| Booking.id(b) == id }
+        puts("CANCELLED ##{id}")
+      else
+        puts("NO BOOKING ##{id}")
+      end
+    end
+  elsif cmd == "FREE"
+    if Array.size(f) != 4
+      err = "wrong field count"
+    elsif !String.match?(f[1], /\A[A-Z0-9]{1,8}\z/)
+      err = "bad room"
+    elsif !Array.include?(days, f[2])
+      err = "bad day"
+    elsif !String.match?(f[3], /\A\d+\z/) || String.to_i(f[3]) <= 0 || String.to_i(f[3]) % 15 != 0
+      err = "bad duration"
+    else
+      room = f[1]
+      day = f[2]
+      dur = String.to_i(f[3])
+      t = 480
+      found = nil
+      while found == nil && t + dur <= 1200
+        if Array.any?(books) { |b| overlaps?(b, room, day, t, t + dur) }
+          t += 15
+        else
+          found = t
+        end
+      end
+      if found
+        puts("FREE #{room} #{day} #{hhmm(found)}-#{hhmm(found + dur)}")
+      else
+        puts("FULL #{room} #{day}")
+      end
+    end
+  else
+    err = "unknown command"
+  end
+  puts("line #{n}: error: #{err}") if err
+end
+
+puts("== schedule ==")
+sorted = Array.sort_by(books) { |b| [Array.index(days, Booking.day(b)), Booking.room(b), Booking.s(b)] }
+puts("(none)") if Array.empty?(sorted)
+Array.each(sorted) do |b|
+  puts(format("%s %-8s %s-%s #%d %s", Booking.day(b), Booking.room(b), hhmm(Booking.s(b)), hhmm(Booking.e(b)), Booking.id(b), Booking.who(b)))
+end
+puts("== usage ==")
+tot = Hash[]
+Array.each(books) { |b| tot[Booking.room(b)] = Hash.fetch(tot, Booking.room(b), 0) + Booking.e(b) - Booking.s(b) }
+puts("(none)") if Hash.empty?(tot)
+Array.each(Array.sort(Hash.keys(tot))) do |r|
+  m = tot[r]
+  puts(format("%-8s %dh%02dm", r, m / 60, m % 60))
+end

@@ -1,0 +1,168 @@
+def inf = 1000000000
+
+def solve(efrom, eto, eline, emin, pen, src, dst)
+  ne = Array.size(efrom)
+  g = Array.new(ne, inf)
+  Array.each(Range.to_a(0...ne)) { |e| g[e] = 0 if eto[e] == dst }
+  changed = true
+  while changed
+    changed = false
+    Array.each(Range.to_a(0...ne)) do |e|
+      next if eto[e] == dst
+      best = g[e]
+      Array.each(Range.to_a(0...ne)) do |e2|
+        next if efrom[e2] != eto[e]
+        next if g[e2] >= inf
+        c = emin[e2] * 1000 + g[e2]
+        c += pen * 1000 + 1 if eline[e2] != eline[e]
+        best = c if c < best
+      end
+      if best < g[e]
+        g[e] = best
+        changed = true
+      end
+    end
+  end
+  total = inf
+  Array.each(Range.to_a(0...ne)) do |e|
+    next if efrom[e] != src
+    next if g[e] >= inf
+    c = emin[e] * 1000 + g[e]
+    total = c if c < total
+  end
+  return -1, String[], String[] if total >= inf
+  order = Array.sort_by(Array.select(Range.to_a(0...ne)) { g[it] < inf }) { g[it] }
+  fst = Hash[]
+  fln = Hash[]
+  Array.each(order) do |e|
+    if eto[e] == dst
+      fst[e] = String[]
+      fln[e] = String[]
+    else
+      bs = nil
+      bl = nil
+      Array.each(Range.to_a(0...ne)) do |e2|
+        next if efrom[e2] != eto[e]
+        next if g[e2] >= inf
+        c = emin[e2] * 1000 + g[e2]
+        c += pen * 1000 + 1 if eline[e2] != eline[e]
+        next if c != g[e]
+        cs = Array.concat(Array[eto[e2]], fst[e2])
+        cl = Array.concat(Array[eline[e2]], fln[e2])
+        if bs == nil || bl == nil
+          bs = cs
+          bl = cl
+        else
+          k = Array.<=>(cs, bs)
+          if k < 0 || (k == 0 && Array.<=>(cl, bl) < 0)
+            bs = cs
+            bl = cl
+          end
+        end
+      end
+      fst[e] = bs || String[]
+      fln[e] = bl || String[]
+    end
+  end
+  bs = nil
+  bl = nil
+  Array.each(Range.to_a(0...ne)) do |e|
+    next if efrom[e] != src
+    next if g[e] >= inf
+    next if emin[e] * 1000 + g[e] != total
+    cs = Array.concat(Array[eto[e]], fst[e])
+    cl = Array.concat(Array[eline[e]], fln[e])
+    if bs == nil || bl == nil
+      bs = cs
+      bl = cl
+    else
+      k = Array.<=>(cs, bs)
+      if k < 0 || (k == 0 && Array.<=>(cl, bl) < 0)
+        bs = cs
+        bl = cl
+      end
+    end
+  end
+  return total, bs || String[], bl || String[]
+end
+
+def route_line(src, sts, lns)
+  legs = String[]
+  cur = ""
+  Array.each_with_index(lns) do |ln, j|
+    if j == 0 || ln != lns[j - 1]
+      Array.push(legs, cur) unless String.empty?(cur)
+      cur = "#{ln}: #{j == 0 ? src : sts[j - 1]} > #{sts[j]}"
+    else
+      cur += " > #{sts[j]}"
+    end
+  end
+  Array.push(legs, cur) unless String.empty?(cur)
+  "  " + Array.join(legs, "; ")
+end
+
+efrom = String[]
+eto = String[]
+eline = String[]
+emin = Integer[]
+known = Hash.new(0)
+pen = 0
+seen_p = false
+inq = false
+all = IO.readlines(IO.stdin)
+Array.each_with_index(all) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  if !seen_p
+    pen = String.to_i(line)
+    seen_p = true
+    next
+  end
+  f = String.split(line)
+  if !inq
+    if line == "QUERIES"
+      inq = true
+      next
+    end
+    if Array.size(f) != 4 || !String.match?(f[3], /\A[1-9][0-9]{0,2}\z/) || f[1] == f[2]
+      puts("invalid segment at line #{n}")
+      next
+    end
+    m = String.to_i(f[3])
+    Array.push(efrom, f[1])
+    Array.push(eto, f[2])
+    Array.push(eline, f[0])
+    Array.push(emin, m)
+    Array.push(efrom, f[2])
+    Array.push(eto, f[1])
+    Array.push(eline, f[0])
+    Array.push(emin, m)
+    known[f[1]] = 1
+    known[f[2]] = 1
+  else
+    if Array.size(f) != 2
+      puts("invalid query at line #{n}")
+      next
+    end
+    a = f[0]
+    b = f[1]
+    head = "#{a} -> #{b}:"
+    if known[a] == 0
+      puts("#{head} unknown station #{a}")
+    elsif known[b] == 0
+      puts("#{head} unknown station #{b}")
+    elsif a == b
+      puts("#{head} 0 min, 0 transfers")
+    else
+      total, sts, lns = solve(efrom, eto, eline, emin, pen, a, b)
+      if total < 0
+        puts("#{head} no route")
+      else
+        k = total % 1000
+        puts("#{head} #{total / 1000} min, #{k} #{k == 1 ? "transfer" : "transfers"}")
+        puts(route_line(a, sts, lns))
+      end
+    end
+  end
+end

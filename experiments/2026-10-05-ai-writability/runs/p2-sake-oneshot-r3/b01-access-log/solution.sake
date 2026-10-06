@@ -1,0 +1,91 @@
+def digits?(s) = String.match?(s, /\A\d+\z/)
+
+def ts_ok?(ts)
+  m = String.match(ts, /\A\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\z/)
+  return false unless m
+  mo = String.to_i(m[1])
+  d = String.to_i(m[2])
+  h = String.to_i(m[3])
+  mi = String.to_i(m[4])
+  s = String.to_i(m[5])
+  mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && s <= 59
+end
+
+def status_ok?(st)
+  return false unless String.match?(st, /\A\d{3}\z/)
+  n = String.to_i(st)
+  n >= 100 && n <= 599
+end
+
+def reason_of(f)
+  return "wrong field count" if Array.size(f) != 6
+  ts, meth, path, status, bytes, dur = f
+  return "bad timestamp" unless ts_ok?(ts)
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], meth)
+  return "bad path" unless String.start_with?(path, "/")
+  return "bad status" unless status_ok?(status)
+  return "bad bytes" unless bytes == "-" || digits?(bytes)
+  return "bad duration" unless digits?(dur)
+  nil
+end
+
+lines = IO.readlines(IO.stdin)
+stats = Hash[]
+hours = Hash.new(0)
+invalid = Array[]
+
+Array.each_with_index(lines) do |raw, i|
+  line = String.chomp(raw)
+  fields = String.split(line, " ")
+  next if Array.empty?(fields)
+  reason = reason_of(fields)
+  if reason
+    Array.push(invalid, "  line #{i + 1}: #{reason}")
+    next
+  end
+  ts, meth, path, status, bytes, dur = fields
+  q = String.index(path, "?")
+  base = q ? path[0, q] : path
+  ep = "#{meth} #{base}"
+  st = String.to_i(status)
+  du = String.to_i(dur)
+  rec = stats[ep]
+  if rec == nil
+    rec = Array[0, 0, 0, 0, 0, 0]
+    stats[ep] = rec
+  end
+  rec[0] += 1
+  rec[1] += 1 if st >= 400 && st < 500
+  rec[2] += 1 if st >= 500
+  rec[3] += String.to_i(bytes) if bytes != "-"
+  rec[4] += du
+  rec[5] = du if du > rec[5]
+  hours[ts[0, 13]] += 1
+end
+
+if Hash.size(stats) == 0
+  puts("no valid requests")
+else
+  keys = Array.sort_by(Hash.keys(stats)) { |k| [-stats[k][0], k] }
+  w = 8
+  Array.each(keys) { |k| w = String.size(k) if String.size(k) > w }
+  puts(format("%-#{w}s %5s %4s %4s %8s %7s %6s", "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  Array.each(keys) do |k|
+    r = stats[k]
+    tenths = (r[4] * 20 + r[0]) / (2 * r[0])
+    avg = "#{tenths / 10}.#{tenths % 10}"
+    puts(format("%-#{w}s %5d %4d %4d %8d %7s %6d", k, r[0], r[1], r[2], r[3], avg, r[5]))
+  end
+  best = nil
+  bestn = 0
+  Array.each(Array.sort(Hash.keys(hours))) do |hk|
+    if hours[hk] > bestn
+      best = hk
+      bestn = hours[hk]
+    end
+  end
+  puts("busiest hour: #{best[0, 10]} #{best[11, 2]}:00 (#{bestn} requests)")
+end
+
+puts("invalid lines: #{Array.size(invalid)}")
+Array.each(invalid) { |s| puts(s) }

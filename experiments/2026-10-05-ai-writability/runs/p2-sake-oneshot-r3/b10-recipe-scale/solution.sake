@@ -1,0 +1,164 @@
+def is_int(s) = String.match?(s, /\A\d+\z/)
+
+def parse_raw(s)
+  if String.match?(s, /\A\d+\z/)
+    Rational(String.to_i(s), 1)
+  elsif String.match?(s, /\A\d+\.\d+\z/)
+    parts = String.split(s, ".")
+    ip = parts[0]
+    fp = parts[1]
+    Rational(String.to_i(ip + fp), 10 ** String.size(fp))
+  elsif String.match?(s, /\A\d+\/\d+\z/)
+    parts = String.split(s, "/")
+    den = String.to_i(parts[1])
+    den == 0 ? nil : Rational(String.to_i(parts[0]), den)
+  else
+    nil
+  end
+end
+
+def is_frac(s) = String.match?(s, /\A\d+\/\d+\z/) && parse_raw(s) != nil
+
+def unit_group(u)
+  if u == "tsp" || u == "tbsp" || u == "cup"
+    "sp"
+  elsif u == "g" || u == "kg"
+    "g"
+  elsif u == "ml" || u == "l"
+    "ml"
+  elsif u == "-"
+    "ct"
+  else
+    nil
+  end
+end
+
+def unit_mult(u)
+  if u == "tbsp"
+    3
+  elsif u == "cup"
+    48
+  elsif u == "kg" || u == "l"
+    1000
+  else
+    1
+  end
+end
+
+def show(x)
+  d = Rational.denominator(x)
+  if d <= 8
+    w = Rational.floor(x)
+    r = x - w
+    rn = Rational.numerator(r)
+    if rn == 0
+      "#{w}"
+    elsif w == 0
+      "#{rn}/#{d}"
+    else
+      "#{w} #{rn}/#{d}"
+    end
+  else
+    v = Rational.floor(x * 100 + Rational(1, 2))
+    format("%d.%02d", v / 100, v % 100)
+  end
+end
+
+def nice(x) = x >= 1 && Rational.denominator(x) <= 4
+
+def run(lines)
+  if Array.empty?(lines)
+    puts("line 1: error: bad servings")
+    return nil
+  end
+  h = String.split(String.strip(lines[0]), /\s+/)
+  good = Array.size(h) == 4 && h[0] == "SERVES" && h[2] == "->" && is_int(h[1]) && is_int(h[3])
+  if good
+    good = String.to_i(h[1]) >= 1 && String.to_i(h[1]) <= 100 && String.to_i(h[3]) >= 1 && String.to_i(h[3]) <= 100
+  end
+  unless good
+    puts("line 1: error: bad servings")
+    return nil
+  end
+  sn = String.to_i(h[1])
+  sm = String.to_i(h[3])
+  factor = Rational(sm, sn)
+  puts("serves #{sm} (x #{show(factor)})")
+
+  totals = Hash[]
+  order = Array[]
+  Array.each_with_index(lines) do |raw, i|
+    next if i == 0
+    n = i + 1
+    line = String.strip(raw)
+    next if line == ""
+    f = String.split(line, /\s+/)
+    next if String.start_with?(f[0], "#")
+    sz = Array.size(f)
+    q = parse_raw(f[0])
+    idx = 1
+    if q != nil && is_int(f[0]) && sz > 1 && is_frac(f[1])
+      q = q + parse_raw(f[1])
+      idx = 2
+    end
+    if q == nil || q <= 0
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    if idx >= sz
+      puts("line #{n}: error: missing unit")
+      next
+    end
+    u = f[idx]
+    grp = unit_group(u)
+    if grp == nil
+      puts("line #{n}: error: unknown unit #{u}")
+      next
+    end
+    if idx + 1 >= sz
+      puts("line #{n}: error: missing name")
+      next
+    end
+    name = Array.join(Array.drop(f, idx + 1), " ")
+    key = [name, grp]
+    if !Hash.key?(totals, key)
+      totals[key] = Rational(0, 1)
+      Array.push(order, key)
+    end
+    totals[key] = totals[key] + q * unit_mult(u) * factor
+  end
+
+  Array.each(order) do |key|
+    name = key[0]
+    grp = key[1]
+    a = totals[key]
+    if grp == "sp"
+      cups = a / 48
+      tb = a / 3
+      if nice(cups)
+        puts("#{show(cups)} cup #{name}")
+      elsif nice(tb)
+        puts("#{show(tb)} tbsp #{name}")
+      else
+        puts("#{show(a)} tsp #{name}")
+      end
+    elsif grp == "g"
+      if a >= 1000
+        puts("#{show(a / 1000)} kg #{name}")
+      else
+        puts("#{show(a)} g #{name}")
+      end
+    elsif grp == "ml"
+      if a >= 1000
+        puts("#{show(a / 1000)} l #{name}")
+      else
+        puts("#{show(a)} ml #{name}")
+      end
+    else
+      puts("#{Rational.ceil(a)} #{name}")
+    end
+  end
+  nil
+end
+
+run(IO.readlines(IO.stdin))

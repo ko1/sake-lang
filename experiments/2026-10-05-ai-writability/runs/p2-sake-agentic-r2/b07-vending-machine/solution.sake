@@ -1,0 +1,206 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def parse_money(s)
+  m = String.match(s, /\A(\d+)\.(\d\d)\z/)
+  return nil unless m
+  String.to_i(m[1]) * 100 + String.to_i(m[2])
+end
+
+def coin_index(c)
+  Array.index(Array[5, 10, 25, 50, 100, 200], c)
+end
+
+def coin_value(i) = Array.at(Array[5, 10, 25, 50, 100, 200], i)
+
+def coin_list(coins) = Array.join(Array.map(coins) { |c| money(c) }, " ")
+
+class Slot
+  attr_reader name, price, count
+  def take(s)
+    @count -= 1
+  end
+end
+
+class Machine
+  attr_reader credit, tubes, slots, inserted, sold_n, sold_rev
+  def initialize(m)
+    @credit = 0
+    @tubes = Integer[0, 0, 0, 0, 0, 0]
+    @slots = Hash[]
+    @inserted = Integer[]
+    @sold_n = Hash.new(0)
+    @sold_rev = Hash.new(0)
+  end
+
+  def define_slot(m, code, name, price, count)
+    @slots[code] = Slot.new(name, price, count)
+  end
+
+  def add_tube(m, idx, count)
+    @tubes[idx] += count
+  end
+
+  def insert(m, c)
+    idx = coin_index(c)
+    if idx == nil
+      puts("rejected #{money(c)}")
+    elsif @credit + c > 500
+      puts("rejected #{money(c)} (credit limit)")
+    else
+      @tubes[idx] += 1
+      @credit += c
+      Array.push(@inserted, c)
+      puts("credit #{money(@credit)}")
+    end
+  end
+
+  def select(m, code)
+    s = @slots[code]
+    if s == nil
+      puts("no slot #{code}")
+      return nil
+    end
+    if Slot.count(s) == 0
+      puts("sold out #{code}")
+      return nil
+    end
+    price = Slot.price(s)
+    if @credit < price
+      puts("insert #{money(price - @credit)} more")
+      return nil
+    end
+    change = @credit - price
+    paid = Integer[]
+    taken = Integer[0, 0, 0, 0, 0, 0]
+    rest = change
+    i = 5
+    while i >= 0
+      v = coin_value(i)
+      n = rest / v
+      n = @tubes[i] if n > @tubes[i]
+      taken[i] = n
+      Integer.times(n) { Array.push(paid, v) }
+      rest -= n * v
+      i -= 1
+    end
+    if rest != 0
+      puts("exact change needed")
+      return nil
+    end
+    Integer.times(6) { |j| @tubes[j] -= taken[j] }
+    Slot.take(s)
+    name = Slot.name(s)
+    @sold_n[name] += 1
+    @sold_rev[name] += price
+    @credit = 0
+    Array.clear(@inserted)
+    if change == 0
+      puts("vend #{name}, change 0.00")
+    else
+      puts("vend #{name}, change #{money(change)} [#{coin_list(paid)}]")
+    end
+  end
+
+  def cancel(m)
+    if @credit == 0
+      puts("nothing to return")
+      return nil
+    end
+    Array.each(@inserted) { |c| @tubes[coin_index(c)] -= 1 }
+    puts("returned #{money(@credit)} [#{coin_list(@inserted)}]")
+    @credit = 0
+    Array.clear(@inserted)
+  end
+
+  def report(m)
+    puts("credit #{money(@credit)} kept") if @credit != 0
+    puts("sales:")
+    names = Array.sort_by(Hash.keys(@sold_n)) { |nm| [-@sold_rev[nm], nm] }
+    if Array.empty?(names)
+      puts("  none")
+    else
+      Array.each(names) do |nm|
+        puts(format("  %-12s %3d %8s", nm, @sold_n[nm], money(@sold_rev[nm])))
+      end
+    end
+    parts = Array.map(Array[0, 1, 2, 3, 4, 5]) { |i| "#{money(coin_value(i))}x#{@tubes[i]}" }
+    puts("tubes: #{Array.join(parts, " ")}")
+  end
+end
+
+def count_ok?(s, mx) = String.match?(s, /\A\d+\z/) && String.to_i(s) <= mx
+
+mach = Machine.new(0)
+n = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  want = 0
+  if cmd == "SLOT"
+    want = 5
+  elsif cmd == "TUBE"
+    want = 3
+  elsif cmd == "COIN" || cmd == "SELECT"
+    want = 2
+  elsif cmd == "CANCEL"
+    want = 1
+  else
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "SLOT"
+    unless String.match?(f[1], /\A[A-Z][0-9]\z/)
+      puts("line #{n}: error: bad slot")
+      next
+    end
+    unless String.match?(f[2], /\A[a-z]{1,12}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    price = parse_money(f[3])
+    if price == nil
+      puts("line #{n}: error: bad money")
+      next
+    end
+    unless count_ok?(f[4], 99)
+      puts("line #{n}: error: bad count")
+      next
+    end
+    Machine.define_slot(mach, f[1], f[2], price, String.to_i(f[4]))
+  elsif cmd == "TUBE"
+    c = parse_money(f[1])
+    if c == nil
+      puts("line #{n}: error: bad money")
+      next
+    end
+    idx = coin_index(c)
+    if idx == nil
+      puts("line #{n}: error: bad coin")
+      next
+    end
+    unless count_ok?(f[2], 999)
+      puts("line #{n}: error: bad count")
+      next
+    end
+    Machine.add_tube(mach, idx, String.to_i(f[2]))
+  elsif cmd == "COIN"
+    c = parse_money(f[1])
+    if c == nil
+      puts("line #{n}: error: bad money")
+      next
+    end
+    Machine.insert(mach, c)
+  elsif cmd == "SELECT"
+    Machine.select(mach, f[1])
+  else
+    Machine.cancel(mach)
+  end
+end
+Machine.report(mach)

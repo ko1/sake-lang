@@ -1,0 +1,110 @@
+class Cell
+  attr_accessor p, m
+end
+
+def tenths(x) = Rational.floor(x * 10 + Rational(1, 2))
+def tfmt(t) = "#{t / 10}.#{t % 10}"
+
+def grade(t)
+  return "A" if t >= 900
+  return "B" if t >= 800
+  return "C" if t >= 700
+  return "D" if t >= 600
+  "F"
+end
+
+weights = Hash[]
+errors = Array[]
+students = Hash[]
+missing = Hash.new(0)
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  next if line == "" || String.start_with?(line, "#")
+  f = String.split(line, " ")
+  if Array.size(f) == 3 && f[0] == "weight"
+    w = f[2]
+    if !String.match?(w, /\A\d+\z/) || String.to_i(w) < 1 || String.to_i(w) > 100
+      Array.push(errors, "line #{n}: bad weight #{w}")
+    elsif weights[f[1]] != nil
+      Array.push(errors, "line #{n}: duplicate category #{f[1]}")
+    else
+      weights[f[1]] = String.to_i(w)
+    end
+    next
+  end
+  if Array.size(f) != 3
+    Array.push(errors, "line #{n}: bad format")
+    next
+  end
+  st = f[0]
+  cat = f[1]
+  if weights[cat] == nil
+    Array.push(errors, "line #{n}: unknown category #{cat}")
+    next
+  end
+  sm = String.match(f[2], /\A(\d+|EX|-)\/(\d+)\z/)
+  ok = false
+  p0 = nil
+  mx = 0
+  if sm != nil
+    c = MatchData.captures(sm)
+    mx = String.to_i(c[1])
+    p0 = c[0]
+    ok = mx > 0 && (!String.match?(p0, /\A\d+\z/) || String.to_i(p0) <= mx)
+  end
+  if !ok
+    Array.push(errors, "line #{n}: bad score #{f[2]}")
+    next
+  end
+  students[st] = Hash[] if students[st] == nil
+  cells = students[st]
+  if p0 == "EX"
+    nil
+  else
+    cell = cells[cat]
+    if cell == nil
+      cell = Cell.new(0, 0)
+      cells[cat] = cell
+    end
+    Cell.set_m(cell, Cell.m(cell) + mx)
+    if p0 == "-"
+      missing[st] += 1
+    else
+      Cell.set_p(cell, Cell.p(cell) + String.to_i(p0))
+    end
+  end
+end
+puts(*errors) unless Array.empty?(errors)
+names = Hash.keys(students)
+w = 7
+Array.each(names) { |nm| w = String.size(nm) if String.size(nm) > w }
+raw = Hash[]
+Array.each(names) do |nm|
+  num = Rational(0, 1)
+  den = 0
+  Hash.each(students[nm]) do |cat, cell|
+    num += Rational(Cell.p(cell) * weights[cat], Cell.m(cell))
+    den += weights[cat]
+  end
+  raw[nm] = num * 100 / den if den > 0
+end
+withp = Array.select(names) { |nm| raw[nm] != nil }
+without = Array.sort(Array.select(names) { |nm| raw[nm] == nil })
+withp = Array.sort_by(withp) { |nm| [-tenths(raw[nm]), nm] }
+puts(String.ljust("Student", w) + "  Score  G  Missing")
+Array.each(withp) do |nm|
+  t = tenths(raw[nm])
+  puts("#{String.ljust(nm, w)}  #{String.rjust(tfmt(t), 5)}  #{grade(t)}  #{String.rjust(Integer.to_s(missing[nm]), 7)}")
+end
+Array.each(without) do |nm|
+  puts("#{String.ljust(nm, w)}  #{String.rjust("n/a", 5)}  -  #{String.rjust(Integer.to_s(missing[nm]), 7)}")
+end
+if Array.empty?(withp)
+  puts("class average: n/a")
+else
+  tot = Rational(0, 1)
+  Array.each(withp) { |nm| tot += raw[nm] }
+  puts("class average: #{tfmt(tenths(tot / Array.size(withp)))}")
+end

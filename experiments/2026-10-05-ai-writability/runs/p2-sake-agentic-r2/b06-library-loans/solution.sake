@@ -1,0 +1,204 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def parse_amount(s)
+  m = String.match(s, /\A(\d+)(?:\.(\d{1,2}))?\z/)
+  return nil unless m
+  whole = String.to_i(m[1])
+  fs = m[2]
+  frac = 0
+  if fs != nil
+    frac = String.to_i(fs)
+    frac = frac * 10 if String.size(fs) == 1
+  end
+  total = whole * 100 + frac
+  return nil if total == 0
+  total
+end
+
+def refuse(n, msg) = puts("line #{n}: refused: #{msg}")
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+class Desk
+  attr_reader day, lender, due, holds, queues, owed, touched
+  def initialize(d)
+    @day = 0
+    @lender = Hash[]
+    @due = Hash[]
+    @holds = Hash[]
+    @queues = Hash[]
+    @owed = Hash.new(0)
+    @touched = Hash[]
+  end
+
+  def advance(d, n)
+    @day = n
+  end
+
+  def loans_of(d, member) = Hash.count(@lender) { |b, m| m == member }
+  def overdue_of(d, member) = Hash.any?(@lender) { |b, m| m == member && @due[b] < @day }
+
+  def checkout(d, n, member, book)
+    h = @holds[book]
+    if Hash.key?(@lender, book)
+      refuse(n, "#{book} is on loan")
+    elsif h != nil && h != member
+      refuse(n, "#{book} is held for #{h}")
+    elsif overdue_of(d, member)
+      refuse(n, "#{member} has overdue books")
+    elsif loans_of(d, member) >= 3
+      refuse(n, "#{member} has 3 loans")
+    elsif @owed[member] >= 1000
+      refuse(n, "#{member} owes #{money(@owed[member])}")
+    else
+      @lender[book] = member
+      @due[book] = @day + 14
+      Hash.delete(@holds, book)
+      @touched[member] = true
+      puts("#{member} borrowed #{book}, due day #{@day + 14}")
+    end
+  end
+
+  def give_back(d, n, book)
+    unless Hash.key?(@lender, book)
+      refuse(n, "#{book} is not on loan")
+      return nil
+    end
+    m = @lender[book]
+    late = @day - @due[book]
+    Hash.delete(@lender, book)
+    Hash.delete(@due, book)
+    if late > 0
+      fine = late * 25
+      fine = 500 if fine > 500
+      @owed[m] = @owed[m] + fine
+      puts("#{m} returned #{book}, #{late} days late, fine #{money(fine)}")
+    else
+      puts("#{m} returned #{book}")
+    end
+    q = @queues[book]
+    if q != nil && !Array.empty?(q)
+      nm = Array.shift(q)
+      @holds[book] = nm
+      puts("#{book} held for #{nm}")
+    end
+  end
+
+  def reserve(d, n, member, book)
+    q = @queues[book]
+    if @lender[book] == member
+      refuse(n, "#{member} already has #{book}")
+    elsif @holds[book] == member || (q != nil && Array.include?(q, member))
+      refuse(n, "#{member} already reserved #{book}")
+    elsif !Hash.key?(@lender, book) && !Hash.key?(@holds, book)
+      refuse(n, "#{book} is available")
+    else
+      if q == nil
+        q = String[]
+        @queues[book] = q
+      end
+      Array.push(q, member)
+      @touched[member] = true
+      puts("reserved #{book} for #{member} (position #{Array.size(q)})")
+    end
+  end
+
+  def pay(d, n, member, cents)
+    o = @owed[member]
+    if cents > o
+      refuse(n, "#{member} owes only #{money(o)}")
+    else
+      @owed[member] = o - cents
+      puts("#{member} paid #{money(cents)}, owes #{money(o - cents)}")
+    end
+  end
+
+  def report(d)
+    puts(format("%-12s %5s %8s", "member", "loans", "owes"))
+    names = Array.sort(Hash.keys(@touched))
+    Array.each(names) do |m|
+      puts(format("%-12s %5d %8s", m, loans_of(d, m), money(@owed[m])))
+    end
+    puts("overdue on day #{@day}:")
+    late = Array.select(Hash.keys(@lender)) { |b| @due[b] < @day }
+    if Array.empty?(late)
+      puts("  none")
+    else
+      late = Array.sort_by(late) { |b| [@due[b], b] }
+      Array.each(late) do |b|
+        puts("  #{b} #{@lender[b]} due #{@due[b]} (#{@day - @due[b]} days)")
+      end
+    end
+  end
+end
+
+def good_member?(s) = String.match?(s, /\A[a-z]{1,12}\z/)
+def good_book?(s) = String.match?(s, /\A[A-Z][A-Z0-9]{0,7}\z/)
+
+desk = Desk.new(0)
+lines = IO.readlines(IO.stdin)
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  ds = f[0]
+  unless String.match?(ds, /\A\d+\z/) && String.to_i(ds) <= 100000
+    err(n, "bad day")
+    next
+  end
+  day = String.to_i(ds)
+  if day < Desk.day(desk)
+    err(n, "day goes backwards")
+    next
+  end
+  Desk.advance(desk, day)
+  cmd = f[1]
+  want = 0
+  if cmd == "CHECKOUT" || cmd == "RESERVE" || cmd == "PAY"
+    want = 4
+  elsif cmd == "RETURN"
+    want = 3
+  else
+    err(n, "unknown command")
+    next
+  end
+  if Array.size(f) != want
+    err(n, "wrong field count")
+    next
+  end
+  if cmd == "RETURN"
+    book = f[2]
+    unless good_book?(book)
+      err(n, "bad book")
+      next
+    end
+    Desk.give_back(desk, n, book)
+  else
+    member = f[2]
+    unless good_member?(member)
+      err(n, "bad member")
+      next
+    end
+    if cmd == "PAY"
+      cents = parse_amount(f[3])
+      if cents == nil
+        err(n, "bad amount")
+        next
+      end
+      Desk.pay(desk, n, member, cents)
+    else
+      book = f[3]
+      unless good_book?(book)
+        err(n, "bad book")
+        next
+      end
+      if cmd == "CHECKOUT"
+        Desk.checkout(desk, n, member, book)
+      else
+        Desk.reserve(desk, n, member, book)
+      end
+    end
+  end
+end
+Desk.report(desk)

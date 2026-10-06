@@ -1,0 +1,138 @@
+class Bk
+  attr_reader id, room, day, s, e, who
+end
+
+def days = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+def hhmm(m) = format("%02d:%02d", m / 60, m % 60)
+
+def tmin(h, m)
+  mm = String.to_i(m)
+  t = String.to_i(h) * 60 + mm
+  return nil if mm >= 60 || mm % 15 != 0 || t < 480 || t > 1200
+  t
+end
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+def overlaps?(b, room, day, s, e)
+  Bk.room(b) == room && Bk.day(b) == day && Bk.s(b) < e && s < Bk.e(b)
+end
+
+lines = IO.readlines(IO.stdin)
+books = Bk[]
+next_id = 1
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  f = String.split(String.chomp(raw), " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  unless Array.include?(Array["BOOK", "CANCEL", "FREE"], cmd)
+    err(n, "unknown command")
+    next
+  end
+  want = cmd == "BOOK" ? 5 : (cmd == "CANCEL" ? 2 : 4)
+  if Array.size(f) != want
+    err(n, "wrong field count")
+    next
+  end
+  if cmd == "CANCEL"
+    unless String.match?(f[1], /\A\d+\z/)
+      err(n, "bad id")
+      next
+    end
+    id = String.to_i(f[1])
+    found = Array.find(books) { |b| Bk.id(b) == id }
+    if found
+      Array.delete(books, found)
+      puts("CANCELLED ##{id}")
+    else
+      puts("NO BOOKING ##{id}")
+    end
+    next
+  end
+  room = f[1]
+  unless String.match?(room, /\A[A-Z0-9]{1,8}\z/)
+    err(n, "bad room")
+    next
+  end
+  day = f[2]
+  unless Array.include?(days, day)
+    err(n, "bad day")
+    next
+  end
+  if cmd == "FREE"
+    unless String.match?(f[3], /\A\d+\z/) && String.to_i(f[3]) > 0 && String.to_i(f[3]) % 15 == 0
+      err(n, "bad duration")
+      next
+    end
+    len = String.to_i(f[3])
+    t = 480
+    ans = nil
+    while ans == nil && t + len <= 1200
+      if Array.none?(books) { |b| overlaps?(b, room, day, t, t + len) }
+        ans = t
+      end
+      t += 15
+    end
+    if ans
+      puts("FREE #{room} #{day} #{hhmm(ans)}-#{hhmm(ans + len)}")
+    else
+      puts("FULL #{room} #{day}")
+    end
+    next
+  end
+  m = String.match(f[3], /\A(\d\d):(\d\d)-(\d\d):(\d\d)\z/)
+  unless m
+    err(n, "bad time")
+    next
+  end
+  h1, m1, h2, m2 = MatchData.captures(m)
+  s = tmin(h1, m1)
+  e = tmin(h2, m2)
+  if s == nil || e == nil || s >= e
+    err(n, "bad time")
+    next
+  end
+  who = f[4]
+  unless String.match?(who, /\A[a-z]{1,12}\z/)
+    err(n, "bad name")
+    next
+  end
+  hits = Array.select(books) { |b| overlaps?(b, room, day, s, e) }
+  if !Array.empty?(hits)
+    c = Array.min_by(hits) { |b| Bk.s(b) }
+    puts("CONFLICT #{room} #{day} with ##{Bk.id(c)} (#{Bk.who(c)} #{hhmm(Bk.s(c))}-#{hhmm(Bk.e(c))})")
+    next
+  end
+  cnt = Array.count(books) { |b| Bk.who(b) == who && Bk.day(b) == day }
+  if cnt >= 3
+    puts("LIMIT #{who} #{day}")
+    next
+  end
+  Array.push(books, Bk.new(next_id, room, day, s, e, who))
+  puts("OK ##{next_id} #{room} #{day} #{hhmm(s)}-#{hhmm(e)} #{who}")
+  next_id += 1
+end
+
+puts("== schedule ==")
+if Array.empty?(books)
+  puts("(none)")
+else
+  sorted = Array.sort_by(books) { |b| [Array.index(days, Bk.day(b)), Bk.room(b), Bk.s(b)] }
+  Array.each(sorted) do |b|
+    puts(format("%s %-8s %s-%s #%d %s", Bk.day(b), Bk.room(b), hhmm(Bk.s(b)), hhmm(Bk.e(b)), Bk.id(b), Bk.who(b)))
+  end
+end
+puts("== usage ==")
+if Array.empty?(books)
+  puts("(none)")
+else
+  tot = Hash.new(0)
+  Array.each(books) { |b| tot[Bk.room(b)] += Bk.e(b) - Bk.s(b) }
+  Array.each(Array.sort(Hash.keys(tot))) do |r|
+    mins = tot[r]
+    puts(format("%-8s %dh%02dm", r, mins / 60, mins % 60))
+  end
+end

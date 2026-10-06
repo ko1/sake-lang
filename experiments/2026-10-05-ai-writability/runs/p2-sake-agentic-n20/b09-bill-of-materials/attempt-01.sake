@@ -1,0 +1,137 @@
+class Item
+  attr_reader part, cost, comps
+end
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+def name?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+def money?(s) = String.match?(s, /\A\d+\.\d\d\z/)
+def cents(s) = String.to_i(String.delete(s, "."))
+
+def check(items, name, parent, path, clean)
+  it = items[name]
+  if it == nil
+    return parent == nil ? "unknown item #{name}" : "unknown item #{name} in #{parent}"
+  end
+  if Array.include?(path, name)
+    idx = Array.index(path, name)
+    return "cycle " + Array.join(Array.drop(path, idx) + Array[name], " > ")
+  end
+  return nil if Set.include?(clean, name)
+  Array.push(path, name)
+  Array.each(Item.comps(it)) do |c|
+    r = check(items, c[0], name, path, clean)
+    return r if r
+  end
+  Array.pop(path)
+  Set.add(clean, name)
+  nil
+end
+
+def unit(items, memo, name)
+  return memo[name] if memo[name] != nil
+  it = items[name]
+  v = Item.cost(it)
+  Array.each(Item.comps(it)) { |c| v += c[1] * unit(items, memo, c[0]) }
+  memo[name] = v
+  v
+end
+
+def show(items, memo, name, qty, depth, totals, out)
+  it = items[name]
+  u = unit(items, memo, name)
+  Array.push(out, "#{String.*("  ", depth)}#{qty} x #{name} = #{money(qty * u)}")
+  if Item.part(it)
+    totals[name] += qty
+  else
+    Array.each(Item.comps(it)) { |c| show(items, memo, c[0], qty * c[1], depth + 1, totals, out) }
+  end
+  nil
+end
+
+items = Hash[]
+memo = Hash[]
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) do |line, i|
+  n = i + 1
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  sz = Array.size(f)
+  if cmd != "PART" && cmd != "ASSY" && cmd != "BUILD"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if (cmd == "PART" && sz != 3) || (cmd == "ASSY" && sz < 4) || (cmd == "BUILD" && sz != 3)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  name = f[1]
+  if !name?(name)
+    puts("line #{n}: error: bad name")
+    next
+  end
+  if cmd == "BUILD"
+    if !String.match?(f[2], /\A\d+\z/) || String.to_i(f[2]) < 1 || String.to_i(f[2]) > 1000
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    r = check(items, name, nil, Array[], Set[])
+    if r
+      puts("line #{n}: cannot build: #{r}")
+      next
+    end
+    totals = Hash.new(0)
+    out = Array[]
+    show(items, memo, name, String.to_i(f[2]), 0, totals, out)
+    puts(*out)
+    puts("parts:")
+    Array.each(Array.sort_by(Hash.keys(totals)) { |k| [-totals[k], k] }) do |k|
+      puts("  #{k} x#{totals[k]} = #{money(totals[k] * unit(items, memo, k))}")
+    end
+    next
+  end
+  if !money?(f[2])
+    puts("line #{n}: error: bad cost")
+    next
+  end
+  if cmd == "PART"
+    if items[name] != nil
+      puts("line #{n}: error: duplicate #{name}")
+    else
+      items[name] = Item.new(true, cents(f[2]), Tuple[])
+    end
+    next
+  end
+  comps = Tuple[]
+  bad = nil
+  Array.each(Array.drop(f, 3)) do |t|
+    m = String.match(t, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+    ok = false
+    if m != nil
+      q = String.to_i(MatchData.captures(m)[1])
+      if q >= 1 && q <= 999
+        ok = true
+        Array.push(comps, [MatchData.captures(m)[0], q])
+      end
+    end
+    if !ok
+      bad = t
+      break
+    end
+  end
+  if bad
+    puts("line #{n}: error: bad component #{bad}")
+    next
+  end
+  names = Array.map(comps) { |c| c[0] }
+  rep = Array.find(names) { |x| Array.count(names, x) > 1 }
+  if rep
+    puts("line #{n}: error: repeated component #{rep}")
+    next
+  end
+  if items[name] != nil
+    puts("line #{n}: error: duplicate #{name}")
+    next
+  end
+  items[name] = Item.new(false, cents(f[2]), comps)
+end

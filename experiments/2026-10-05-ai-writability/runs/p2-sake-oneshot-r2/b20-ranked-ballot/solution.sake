@@ -1,0 +1,118 @@
+def tokens(line) = String.split(String.strip(line), /\s+/)
+
+def check_ballot(names, cands)
+  seen = String[]
+  Array.each(names) do |nm|
+    return "empty rank" if String.empty?(nm)
+    return "unknown candidate #{nm}" unless Array.include?(cands, nm)
+    return "duplicate #{nm}" if Array.include?(seen, nm)
+    Array.push(seen, nm)
+  end
+  nil
+end
+
+def count_round(ballots, alive)
+  counts = Hash[]
+  Array.each(alive) { |c| counts[c] = 0 }
+  exhausted = 0
+  Array.each(ballots) do |b|
+    pick = nil
+    Array.each(b) do |nm|
+      if Array.include?(alive, nm)
+        pick = nm
+        break
+      end
+    end
+    if pick == nil
+      exhausted += 1
+    else
+      counts[pick] += 1
+    end
+  end
+  [counts, exhausted]
+end
+
+def pct(v, active)
+  return "0.0%" if active == 0
+  t = (2000 * v + active) / (2 * active)
+  "#{t / 10}.#{t % 10}%"
+end
+
+def hist_at(hist, c, r)
+  arr = Hash.fetch(hist, c)
+  Array.fetch(arr, r)
+end
+
+def pick_elim(alive, counts, hist, round)
+  minv = Array.min(Array.map(alive) { |c| Hash.fetch(counts, c) })
+  tied = Array.select(alive) { |c| Hash.fetch(counts, c) == minv }
+  r = round - 2
+  while Array.size(tied) > 1 && r >= 0
+    m = Array.min(Array.map(tied) { |c| hist_at(hist, c, r) })
+    tied = Array.select(tied) { |c| hist_at(hist, c, r) == m }
+    r -= 1
+  end
+  Array.max(tied)
+end
+
+def run_all
+  lines = Array.map(IO.readlines(IO.stdin)) { |l| String.chomp(l) }
+  cands = String[]
+  if Array.size(lines) > 0
+    Array.each(tokens(lines[0])) do |w|
+      Array.push(cands, w) unless Array.include?(cands, w)
+    end
+  end
+  if Array.empty?(cands)
+    puts("no candidates")
+    return
+  end
+  ballots = Array[]
+  rejected = 0
+  Array.each_with_index(lines) do |line, idx|
+    next if idx == 0
+    next if String.empty?(String.strip(line))
+    parts = String.split(line + ">x", ">")
+    Array.pop(parts)
+    names = Array.map(parts) { |s| String.strip(s) }
+    reason = check_ballot(names, cands)
+    if reason == nil
+      Array.push(ballots, names)
+    else
+      rejected += 1
+      puts("rejected line #{idx + 1}: #{reason}")
+    end
+  end
+  puts("ballots: #{Array.size(ballots)} valid, #{rejected} rejected")
+  alive = Array.dup(cands)
+  hist = Hash[]
+  Array.each(cands) { |c| hist[c] = Integer[] }
+  round = 0
+  while true
+    round += 1
+    counts, exhausted = count_round(ballots, alive)
+    active = Array.size(ballots) - exhausted
+    Array.each(alive) { |c| Array.push(Hash.fetch(hist, c), Hash.fetch(counts, c)) }
+    puts("round #{round}")
+    order = Array.sort_by(alive) { |c| [-Hash.fetch(counts, c), c] }
+    Array.each(order) do |c|
+      v = Hash.fetch(counts, c)
+      puts("  #{c} #{v} #{pct(v, active)}")
+    end
+    puts("  exhausted #{exhausted}")
+    if active == 0
+      puts("no winner")
+      break
+    end
+    winner = Array.find(order) { |c| Hash.fetch(counts, c) * 2 > active }
+    if winner != nil
+      puts("winner #{winner}")
+      break
+    end
+    gone = pick_elim(alive, counts, hist, round)
+    puts("  eliminated #{gone}")
+    Array.delete(alive, gone)
+  end
+end
+
+run_all

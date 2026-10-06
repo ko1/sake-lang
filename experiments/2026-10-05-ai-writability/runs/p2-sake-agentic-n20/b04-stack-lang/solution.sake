@@ -1,0 +1,170 @@
+VmError = Exception.new
+
+class VM
+  attr_reader stack, defs
+end
+
+def builtin?(w)
+  Array.include?(Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"], w)
+end
+
+def number?(w) = String.match?(w, /\A-?\d+\z/)
+
+def syntax_ok(toks)
+  st = Array[]
+  in_def = false
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if t == ":"
+      return false if in_def || !Array.empty?(st)
+      name = toks[i + 1]
+      return false if name == nil || number?(name) || builtin?(name)
+      in_def = true
+      i += 1
+    elsif t == "if"
+      Array.push(st, "if")
+    elsif t == "else"
+      return false if Array.empty?(st) || st[-1] != "if"
+      st[-1] = "else"
+    elsif t == "then"
+      return false if Array.empty?(st)
+      Array.pop(st)
+    elsif t == ";"
+      return false if !in_def || !Array.empty?(st)
+      in_def = false
+    end
+    i += 1
+  end
+  !in_def && Array.empty?(st)
+end
+
+def need(vm, k, w)
+  raise VmError.new("stack underflow in #{w}") if Array.size(VM.stack(vm)) < k
+end
+
+def find_end(toks, from)
+  nest = 0
+  e = -1
+  j = from
+  while true
+    t = toks[j]
+    if t == "if"
+      nest += 1
+    elsif t == "then"
+      return [e, j] if nest == 0
+      nest -= 1
+    elsif t == "else" && nest == 0
+      e = j
+    end
+    j += 1
+  end
+end
+
+def run(vm, toks, depth)
+  st = VM.stack(vm)
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    i += 1
+    if number?(t)
+      Array.push(st, String.to_i(t))
+    elsif t == ":"
+      name = toks[i]
+      j = i + 1
+      body = Array[]
+      while toks[j] != ";"
+        Array.push(body, toks[j])
+        j += 1
+      end
+      VM.defs(vm)[name] = body
+      i = j + 1
+    elsif t == "if"
+      need(vm, 1, "if")
+      v = Array.pop(st)
+      if v == 0
+        e, th = find_end(toks, i)
+        i = e >= 0 ? e + 1 : th
+      end
+    elsif t == "else"
+      e, th = find_end(toks, i)
+      i = th
+    elsif t == "then"
+      nil
+    elsif t == "+" || t == "-" || t == "*" || t == "/" || t == "mod" || t == "=" || t == "<" || t == ">"
+      need(vm, 2, t)
+      b = Array.pop(st)
+      a = Array.pop(st)
+      if t == "+"
+        Array.push(st, a + b)
+      elsif t == "-"
+        Array.push(st, a - b)
+      elsif t == "*"
+        Array.push(st, a * b)
+      elsif t == "=" || t == "<" || t == ">"
+        r = t == "=" ? a == b : (t == "<" ? a < b : a > b)
+        Array.push(st, r ? 1 : 0)
+      else
+        if b == 0
+          Array.push(st, a)
+          Array.push(st, b)
+          raise VmError.new("division by zero")
+        end
+        r = Integer.remainder(a, b)
+        if t == "mod"
+          Array.push(st, r)
+        else
+          Array.push(st, (a - r) / b)
+        end
+      end
+    elsif t == "dup"
+      need(vm, 1, t)
+      Array.push(st, st[-1])
+    elsif t == "drop"
+      need(vm, 1, t)
+      Array.pop(st)
+    elsif t == "swap"
+      need(vm, 2, t)
+      b = Array.pop(st)
+      a = Array.pop(st)
+      Array.push(st, b, a)
+    elsif t == "over"
+      need(vm, 2, t)
+      Array.push(st, st[-2])
+    elsif t == "."
+      need(vm, 1, t)
+      puts(Array.pop(st))
+    else
+      body = VM.defs(vm)[t]
+      raise VmError.new("unknown word #{t}") if body == nil
+      raise VmError.new("too deep") if depth >= 100
+      run(vm, body, depth + 1)
+    end
+  end
+  nil
+end
+
+vm = VM.new(Integer[], Hash[])
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) do |line, i|
+  toks = String.split(line, " ")
+  if !syntax_ok(toks)
+    puts("line #{i + 1}: syntax error")
+    next
+  end
+  saved = Array.dup(VM.stack(vm))
+  begin
+    run(vm, toks, 0)
+  rescue VmError => e
+    Array.clear(VM.stack(vm))
+    Array.concat(VM.stack(vm), saved)
+    puts("line #{i + 1}: error: #{Exception.message(e)}")
+  end
+end
+if Array.empty?(VM.stack(vm))
+  puts("stack: (empty)")
+else
+  puts("stack: #{Array.join(VM.stack(vm), " ")}")
+end

@@ -1,0 +1,71 @@
+def check(f)
+  return "wrong field count" if Array.size(f) != 6
+  ts = f[0]
+  ok = Regexp.match?(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\z/, ts)
+  if ok
+    mo = String.to_i(String.slice(ts, 5, 2))
+    d = String.to_i(String.slice(ts, 8, 2))
+    h = String.to_i(String.slice(ts, 11, 2))
+    mi = String.to_i(String.slice(ts, 14, 2))
+    s = String.to_i(String.slice(ts, 17, 2))
+    ok = mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && s <= 59
+  end
+  return "bad timestamp" unless ok
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], f[1])
+  return "bad path" unless String.start_with?(f[2], "/")
+  return "bad status" unless Regexp.match?(/\A[1-5]\d\d\z/, f[4 - 1])
+  return "bad bytes" unless Regexp.match?(/\A(\d+|-)\z/, f[4])
+  return "bad duration" unless Regexp.match?(/\A\d+\z/, f[5])
+  ""
+end
+
+counts = Hash.new(0)
+n4 = Hash.new(0)
+n5 = Hash.new(0)
+bytes = Hash.new(0)
+sums = Hash.new(0)
+maxs = Hash.new(0)
+hours = Hash.new(0)
+bad = String[]
+lineno = 0
+while (line = gets)
+  lineno += 1
+  l = String.strip(String.chomp(line))
+  next if String.empty?(l)
+  f = String.split(l, " ")
+  r = check(f)
+  if r != ""
+    Array.push(bad, "  line #{lineno}: #{r}")
+    next
+  end
+  path = String.split(f[2], "?", 2)[0]
+  ep = "#{f[1]} #{path}"
+  st = String.to_i(f[3])
+  du = String.to_i(f[5])
+  counts[ep] += 1
+  n4[ep] += 1 if st >= 400 && st < 500
+  n5[ep] += 1 if st >= 500
+  bytes[ep] += String.to_i(f[4]) if f[4] != "-"
+  sums[ep] += du
+  maxs[ep] = du if du > maxs[ep]
+  hours["#{String.slice(f[0], 0, 10)} #{String.slice(f[0], 11, 2)}:00"] += 1
+end
+
+if Hash.size(counts) == 0
+  puts("no valid requests")
+else
+  keys = Array.sort_by(Hash.keys(counts)) { |k| [-counts[k], k] }
+  w = Array.max(Array.map(keys) { String.size(it) })
+  w = 8 if w < 8
+  puts(format("%-#{w}s %5s %4s %4s %8s %7s %6s", "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  Array.each(keys) do |k|
+    c = counts[k]
+    t = (sums[k] * 20 + c) / (2 * c)
+    avg = "#{t / 10}.#{t % 10}"
+    puts(format("%-#{w}s %5d %4d %4d %8d %7s %6d", k, c, n4[k], n5[k], bytes[k], avg, maxs[k]))
+  end
+  hk = Array.sort_by(Hash.keys(hours)) { |k| [-hours[k], k] }
+  puts("busiest hour: #{hk[0]} (#{hours[hk[0]]} requests)")
+end
+puts("invalid lines: #{Array.size(bad)}")
+Array.each(bad) { puts(it) }

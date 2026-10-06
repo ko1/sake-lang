@@ -1,0 +1,170 @@
+def inf = 1000000000000
+
+def edge_cost(prev, ln, m, pen)
+  c = m * 1000
+  c += pen * 1000 + 1 if prev != "" && prev != ln
+  c
+end
+
+# cost-to-go (minutes*1000 + transfers) from every [station, last line] state to target
+def cost_to_go(states, adj, target, pen)
+  f = Hash.new(inf)
+  Array.each(states) { |st| f[st] = 0 if st[0] == target }
+  changed = true
+  while changed
+    changed = false
+    Array.each(states) do |st|
+      next if st[0] == target
+      Array.each(adj[st[0]]) do |e|
+        nb, ln, m = e
+        nf = f[[nb, ln]]
+        next if nf >= inf
+        c = edge_cost(st[1], ln, m, pen) + nf
+        if c < f[st]
+          f[st] = c
+          changed = true
+        end
+      end
+    end
+  end
+  f
+end
+
+def route(adj, states, from, target, pen)
+  f = cost_to_go(states, adj, target, pen)
+  start = [from, ""]
+  opt = f[start]
+  return nil if opt >= inf
+  front = Hash[start => 0]
+  lseqs = Hash[start => Array[]]
+  stations = Array[from]
+  cur = from
+  while cur != target
+    best = nil
+    cands = Array[]
+    Array.each(Hash.keys(front)) do |st|
+      pc = front[st]
+      Array.each(adj[st[0]]) do |e|
+        nb, ln, m = e
+        nf = f[[nb, ln]]
+        next if nf >= inf
+        nc = pc + edge_cost(st[1], ln, m, pen)
+        next if nc + nf != opt
+        Array.push(cands, [nb, ln, nc, Array.push(Array.dup(lseqs[st]), ln)])
+        best = nb if best == nil || nb < best
+      end
+    end
+    nfront = Hash[]
+    nl = Hash[]
+    Array.each(cands) do |cd|
+      nb, ln, nc, ls = cd
+      next if nb != best
+      key = [nb, ln]
+      if !Hash.key?(nfront, key) || ls < nl[key]
+        nfront[key] = nc
+        nl[key] = ls
+      end
+    end
+    front = nfront
+    lseqs = nl
+    Array.push(stations, best)
+    cur = best
+  end
+  lines = Array[]
+  Array.each(Hash.keys(front)) do |st|
+    l = lseqs[st]
+    Array.push(lines, l)
+  end
+  [opt, stations, Array.min(lines)]
+end
+
+lines_in = IO.readlines(IO.stdin())
+pen = 0
+seen_p = false
+in_q = false
+adj = Hash[]
+lnames = Set[]
+queries = Array[]
+out = Array[]
+Array.each_with_index(lines_in) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  unless seen_p
+    pen = String.to_i(line)
+    seen_p = true
+    next
+  end
+  if !in_q
+    if line == "QUERIES"
+      in_q = true
+      next
+    end
+    f = String.split(line)
+    if Array.size(f) != 4 || !String.match?(f[3], /\A[1-9]\d{0,2}\z/) || f[1] == f[2]
+      Array.push(out, ["msg", "invalid segment at line #{n}"])
+    else
+      ln = f[0]
+      a = f[1]
+      b = f[2]
+      m = String.to_i(f[3])
+      adj[a] = Array[] unless Hash.key?(adj, a)
+      adj[b] = Array[] unless Hash.key?(adj, b)
+      Array.push(adj[a], [b, ln, m])
+      Array.push(adj[b], [a, ln, m])
+      Set.add(lnames, ln)
+    end
+  else
+    f = String.split(line)
+    if Array.size(f) != 2
+      Array.push(out, ["msg", "invalid query at line #{n}"])
+    else
+      Array.push(out, ["q", f[0], f[1]])
+    end
+  end
+end
+
+states = Array[]
+Array.each(Hash.keys(adj)) do |s|
+  Array.push(states, [s, ""])
+  Array.each(Set.to_a(lnames)) { |l| Array.push(states, [s, l]) }
+end
+
+Array.each(out) do |o|
+  if o[0] == "msg"
+    puts(o[1])
+    next
+  end
+  from = o[1]
+  to = o[2]
+  head = "#{from} -> #{to}:"
+  if !Hash.key?(adj, from)
+    puts("#{head} unknown station #{from}")
+  elsif !Hash.key?(adj, to)
+    puts("#{head} unknown station #{to}")
+  elsif from == to
+    puts("#{head} 0 min, 0 transfers")
+  else
+    r = route(adj, states, from, to, pen)
+    if r == nil
+      puts("#{head} no route")
+    else
+      opt, sts, ls = r
+      k = opt % 1000
+      puts("#{head} #{opt / 1000} min, #{k} #{k == 1 ? "transfer" : "transfers"}")
+      legs = Array[]
+      i = 0
+      while i < Array.size(ls)
+        j = i
+        names = Array[sts[i]]
+        while j < Array.size(ls) && ls[j] == ls[i]
+          Array.push(names, sts[j + 1])
+          j += 1
+        end
+        Array.push(legs, "#{ls[i]}: #{Array.join(names, " > ")}")
+        i = j
+      end
+      puts("  #{Array.join(legs, "; ")}")
+    end
+  end
+end

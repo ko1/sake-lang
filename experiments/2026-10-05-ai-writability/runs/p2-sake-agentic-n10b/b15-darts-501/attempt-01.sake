@@ -1,0 +1,106 @@
+# points of a dart token, or nil when invalid
+def dart_points(tok)
+  m = String.match(tok, /\A([SDT])([1-9]|1[0-9]|20)\z/)
+  if m
+    n = String.to_i(m[2])
+    mult = m[1] == "S" ? 1 : (m[1] == "D" ? 2 : 3)
+    return n * mult
+  end
+  return 25 if tok == "25"
+  return 50 if tok == "BULL"
+  return 0 if tok == "MISS"
+  nil
+end
+
+def double?(tok) = String.match?(tok, /\AD/) || tok == "BULL"
+
+lines = Array.map(String.lines(IO.read(IO.stdin))) { |l| String.chomp(l) }
+hf = Array.empty?(lines) ? String[] : String.split(lines[0])
+ok = Array.size(hf) >= 2 && Array.size(hf) <= 5 && String.match?(hf[0], /\A\d+\z/)
+if ok
+  s0 = String.to_i(hf[0])
+  ok = s0 >= 2 && s0 <= 1001
+end
+if ok
+  names0 = Array.drop(hf, 1)
+  ok = Array.all?(names0) { |x| String.match?(x, /\A[a-z]{1,10}\z/) } && Array.size(Array.uniq(names0)) == Array.size(names0)
+end
+unless ok
+  puts("invalid header")
+  exit
+end
+start = String.to_i(hf[0])
+names = Array.drop(hf, 1)
+np = Array.size(names)
+left = Array.new(np, start)
+turns = Array.new(np, 0)
+thrown = Array.new(np, 0)
+winner = nil
+out = String[]
+
+Array.each_with_index(lines) do |raw, idx|
+  next if idx == 0
+  n = idx + 1
+  f = String.split(raw)
+  next if Array.empty?(f)
+  name = f[0]
+  darts = Array.drop(f, 1)
+  if winner != nil
+    Array.push(out, "line #{n}: game over")
+    next
+  end
+  pi = Array.index(names, name)
+  if pi == nil
+    Array.push(out, "line #{n}: unknown player #{name}")
+    next
+  end
+  if Array.size(darts) < 1 || Array.size(darts) > 3
+    Array.push(out, "line #{n}: expected 1 to 3 darts")
+    next
+  end
+  bad = Array.find(darts) { |d| dart_points(d) == nil }
+  if bad != nil
+    Array.push(out, "line #{n}: bad dart #{bad}")
+    next
+  end
+  cur = left[pi]
+  total = 0
+  result = :score
+  checkout = ""
+  cnt = 0
+  Array.each(darts) do |d|
+    cnt += 1
+    pts = dart_points(d)
+    total += pts
+    cur -= pts
+    if cur < 0 || cur == 1 || (cur == 0 && !double?(d))
+      result = :bust
+      break
+    elsif cur == 0
+      result = :out
+      checkout = d
+      break
+    end
+  end
+  turns[pi] += 1
+  thrown[pi] += cnt
+  if result == :bust
+    Array.push(out, "#{name} busts, #{left[pi]} left")
+  elsif result == :out
+    left[pi] = 0
+    winner = name
+    Array.push(out, "#{name} checks out with #{checkout}")
+  else
+    left[pi] = cur
+    Array.push(out, "#{name} scores #{total}, #{cur} left")
+  end
+end
+
+puts(*out) unless Array.empty?(out)
+puts("STANDINGS")
+order = Array.sort_by(Array.new(np) { |i| i }) { |i| [left[i], i] }
+Array.each_with_index(order) do |i, r|
+  avg = thrown[i] == 0 ? "-" : format("%.2f", Integer.fdiv((start - left[i]) * 3, thrown[i]))
+  puts(format("%d. %-10s %4d %3d %6s", r + 1, names[i], left[i], turns[i], avg))
+end
+puts(winner == nil ? "no winner" : "winner: #{winner}")

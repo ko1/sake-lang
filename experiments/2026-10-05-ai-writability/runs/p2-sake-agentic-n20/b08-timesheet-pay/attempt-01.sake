@@ -1,0 +1,149 @@
+class Emp
+  attr_reader name, rate
+  attr_reader shifts
+end
+
+def leap?(y) = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+def days_in(y, m)
+  return (leap?(y) ? 29 : 28) if m == 2
+  return 30 if m == 4 || m == 6 || m == 9 || m == 11
+  31
+end
+
+def days_from_civil(y, m, d)
+  yy = m <= 2 ? y - 1 : y
+  era = yy / 400
+  yoe = yy - era * 400
+  mp = (m + 9) % 12
+  doy = (153 * mp + 2) / 5 + d - 1
+  doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+end
+
+def parse_hm(s)
+  m = String.match(s, /\A(\d\d):(\d\d)\z/)
+  return nil if m == nil
+  c = MatchData.captures(m)
+  h = String.to_i(c[0])
+  mi = String.to_i(c[1])
+  return nil if h > 23 || mi > 59
+  h * 60 + mi
+end
+
+def hm(m) = "#{m / 60}:#{String.rjust(Integer.to_s(m % 60), 2, "0")}"
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+
+emps = Hash[]
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) do |line, i|
+  n = i + 1
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  sz = Array.size(f)
+  if cmd != "EMP" && cmd != "SHIFT"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if (cmd == "EMP" && sz != 4) || (cmd == "SHIFT" && sz != 5 && sz != 6)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  id = f[1]
+  if !String.match?(id, /\AE\d\d\d\z/)
+    puts("line #{n}: error: bad id")
+    next
+  end
+  if cmd == "EMP"
+    if !String.match?(f[2], /\A[A-Za-z]{1,10}\z/)
+      puts("line #{n}: error: bad name")
+    elsif !String.match?(f[3], /\A\d+\.\d\d\z/)
+      puts("line #{n}: error: bad rate")
+    elsif emps[id] != nil
+      puts("line #{n}: error: duplicate employee #{id}")
+    else
+      emps[id] = Emp.new(f[2], String.to_i(String.delete(f[3], ".")), Tuple[])
+    end
+    next
+  end
+  e = emps[id]
+  if e == nil
+    puts("line #{n}: error: unknown employee #{id}")
+    next
+  end
+  dm = String.match(f[2], /\A(\d\d\d\d)-(\d\d)-(\d\d)\z/)
+  ok = false
+  y = 0
+  mo = 0
+  d = 0
+  if dm != nil
+    c = MatchData.captures(dm)
+    y = String.to_i(c[0])
+    mo = String.to_i(c[1])
+    d = String.to_i(c[2])
+    ok = y >= 1970 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= days_in(y, mo)
+  end
+  if !ok
+    puts("line #{n}: error: bad date")
+    next
+  end
+  s = parse_hm(f[3])
+  en = parse_hm(f[4])
+  if s == nil || en == nil
+    puts("line #{n}: error: bad time")
+    next
+  end
+  len = en > s ? en - s : en - s + 1440
+  brk = 0
+  if sz == 6
+    if !String.match?(f[5], /\A\d+\z/) || String.to_i(f[5]) >= len
+      puts("line #{n}: error: bad break")
+      next
+    end
+    brk = String.to_i(f[5])
+  end
+  days = days_from_civil(y, mo, d)
+  as = days * 1440 + s
+  ae = as + len
+  if Array.any?(Emp.shifts(e)) { |t| as < t[1] && t[0] < ae }
+    puts("line #{n}: error: overlapping shift")
+    next
+  end
+  brk = 30 if len > 360 && brk < 30
+  dow = (days + 3) % 7
+  Array.push(Emp.shifts(e), [as, ae, len - brk, days, days - dow])
+end
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+treg = 0
+tot = 0
+tpay = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  e = emps[id]
+  daytot = Hash.new(0)
+  weekreg = Hash.new(0)
+  reg = 0
+  ot = 0
+  Array.each(Array.sort_by(Emp.shifts(e)) { |t| t[0] }) do |t|
+    w = t[2]
+    room = 480 - daytot[t[3]]
+    room = 0 if room < 0
+    dr = w < room ? w : room
+    ot += w - dr
+    daytot[t[3]] += w
+    wroom = 2400 - weekreg[t[4]]
+    wroom = 0 if wroom < 0
+    r = dr < wroom ? dr : wroom
+    ot += dr - r
+    reg += r
+    weekreg[t[4]] += r
+  end
+  num = reg * Emp.rate(e) * 2 + ot * Emp.rate(e) * 3
+  pay = (num + 60) / 120
+  treg += reg
+  tot += ot
+  tpay += pay
+  puts(format("%-4s %-10s %8s %8s %10s", id, Emp.name(e), hm(reg), hm(ot), money(pay)))
+end
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", hm(treg), hm(tot), money(tpay)))

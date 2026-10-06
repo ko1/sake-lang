@@ -1,0 +1,137 @@
+def tenths(r) = Arithmetic.floor(r * 10 + Rational(1, 2))
+
+def fmt1(t) = "#{t / 10}.#{t % 10}"
+
+def grade(t)
+  if t >= 900
+    "A"
+  elsif t >= 800
+    "B"
+  elsif t >= 700
+    "C"
+  elsif t >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+weights = Hash[]
+cats = Array[]
+pts = Hash.new(0)
+dens = Hash.new(0)
+missing = Hash.new(0)
+known = Array[]
+seen = Set[]
+errors = Array[]
+
+lines = IO.readlines(IO.stdin())
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line)
+  if Array.size(f) == 3 && f[0] == "weight"
+    cat = f[1]
+    w = f[2]
+    if !String.match?(w, /\A\d+\z/) || String.to_i(w) < 1 || String.to_i(w) > 100
+      Array.push(errors, "line #{n}: bad weight #{w}")
+    elsif Hash.key?(weights, cat)
+      Array.push(errors, "line #{n}: duplicate category #{cat}")
+    else
+      weights[cat] = String.to_i(w)
+      Array.push(cats, cat)
+    end
+    next
+  end
+  if Array.size(f) != 3
+    Array.push(errors, "line #{n}: bad format")
+    next
+  end
+  stu = f[0]
+  cat = f[1]
+  sc = f[2]
+  if !Hash.key?(weights, cat)
+    Array.push(errors, "line #{n}: unknown category #{cat}")
+    next
+  end
+  m = String.match(sc, /\A(\d+|EX|-)\/(\d+)\z/)
+  p_ = 0
+  mx = 0
+  kind = :bad
+  if sc == "EX"
+    kind = :ex
+  elsif m
+    cap = MatchData.captures(m)
+    mx = String.to_i(cap[1])
+    if mx > 0
+      if cap[0] == "EX"
+        kind = :ex
+      elsif cap[0] == "-"
+        kind = :miss
+      else
+        p_ = String.to_i(cap[0])
+        kind = :ok if p_ <= mx
+      end
+    end
+  end
+  if kind == :bad
+    Array.push(errors, "line #{n}: bad score #{sc}")
+    next
+  end
+  unless Set.include?(seen, stu)
+    Set.add(seen, stu)
+    Array.push(known, stu)
+  end
+  key = [stu, cat]
+  if kind == :ok
+    pts[key] += p_
+    dens[key] += mx
+  elsif kind == :miss
+    missing[stu] += 1
+    dens[key] += mx
+  end
+end
+
+rows = Array[]
+total = Rational(0, 1)
+counted = 0
+Array.each(known) do |stu|
+  num = Rational(0, 1)
+  wsum = 0
+  Array.each(cats) do |c|
+    d = dens[[stu, c]]
+    if d > 0
+      num += weights[c] * Rational(pts[[stu, c]], d)
+      wsum += weights[c]
+    end
+  end
+  if wsum > 0
+    pct = 100 * num / wsum
+    total += pct
+    counted += 1
+    rows_t = tenths(pct)
+    Array.push(rows, [0, -rows_t, stu, rows_t])
+  else
+    Array.push(rows, [1, 0, stu, 0])
+  end
+end
+
+Array.each(errors) { |e| puts(e) }
+w = Array.max(Array[7, *Array.map(known) { |s| String.size(s) }])
+puts("#{String.ljust("Student", w)}  Score  G  Missing")
+Array.each(Array.sort(rows)) do |kind, neg, stu, t|
+  if kind == 0
+    sc = String.rjust(fmt1(t), 5)
+    g = grade(t)
+  else
+    sc = "  n/a"
+    g = "-"
+  end
+  puts("#{String.ljust(stu, w)}  #{sc}  #{g}  #{String.rjust(Integer.to_s(missing[stu]), 7)}")
+end
+if counted > 0
+  puts("class average: #{fmt1(tenths(total / counted))}")
+else
+  puts("class average: n/a")
+end

@@ -1,0 +1,135 @@
+def digits?(s) = String.match?(s, /\A[0-9]+\z/)
+
+def human(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  unit = "K"
+  nu = "M"
+  if s >= 1073741824
+    u = 1073741824
+    unit = "G"
+    nu = "T"
+  elsif s >= 1048576
+    u = 1048576
+    unit = "M"
+    nu = "G"
+  end
+  t = (20 * s + u) / (2 * u)
+  if t < 100
+    return "#{t / 10}.#{t % 10}#{unit}"
+  end
+  n = (2 * s + u) / (2 * u)
+  if n == 1024 && unit != "G"
+    return "1.0#{nu}"
+  end
+  "#{n}#{unit}"
+end
+
+def join_path(dir, name) = dir == "" ? name : "#{dir}/#{name}"
+
+def show(dir, depth, maxd, thr, kids, total, isdir)
+  return nil if depth >= maxd
+  names = kids[dir]
+  names = Array[] if names == nil
+  entries = Array.sort_by(names) { |nm| [-total[join_path(dir, nm)], nm] }
+  small = 0
+  smalln = 0
+  indent = "  " * (depth + 1)
+  Array.each(entries) do |nm|
+    path = join_path(dir, nm)
+    sz = total[path]
+    if sz < thr
+      small += sz
+      smalln += 1
+    elsif isdir[path]
+      puts(format("%6s  %s%s/", human(sz), indent, nm))
+      show(path, depth + 1, maxd, thr, kids, total, isdir)
+    else
+      puts(format("%6s  %s%s", human(sz), indent, nm))
+    end
+  end
+  if smalln > 0
+    puts(format("%6s  %s(%d smaller)", human(small), indent, smalln))
+  end
+  nil
+end
+
+lines = Array.map(String.split(IO.read(IO.stdin), "\n")) { |l| String.chomp(l) }
+hdr_ok = false
+maxd = 0
+thr = 0
+if Array.size(lines) > 0
+  ht = String.split(lines[0])
+  if Array.size(ht) == 4 && ht[0] == "depth" && digits?(ht[1]) && ht[2] == "threshold" && digits?(ht[3])
+    hdr_ok = true
+    maxd = String.to_i(ht[1])
+    thr = String.to_i(ht[3])
+  end
+end
+
+if !hdr_ok
+  puts("bad header")
+else
+  files = Hash[]
+  isdir = Hash[]
+  kids = Hash[]
+  seen = Hash[]
+  total = Hash.new(0)
+  i = 1
+  while i < Array.size(lines)
+    line = lines[i]
+    no = i + 1
+    i += 1
+    toks = String.split(line)
+    next if Array.size(toks) == 0
+    ok_form = false
+    fsz = 0
+    comps = Array[]
+    if Array.size(toks) == 2 && digits?(toks[0]) && String.match?(toks[1], /\A[^\/]+(\/[^\/]+)*\z/)
+      fsz = String.to_i(toks[0])
+      comps = String.split(toks[1], "/")
+      bad = Array.any?(comps) { |c| c == "." || c == ".." }
+      ok_form = fsz <= 10000000000000 && !bad
+    end
+    if !ok_form
+      puts("line #{no}: malformed")
+      next
+    end
+    path = toks[1]
+    if files[path]
+      puts("line #{no}: duplicate #{path}")
+      next
+    end
+    conflict = isdir[path] ? true : false
+    k = 1
+    while k < Array.size(comps)
+      conflict = true if files[Array.join(Array.take(comps, k), "/")]
+      k += 1
+    end
+    if conflict
+      puts("line #{no}: conflict #{path}")
+      next
+    end
+    files[path] = true
+    k = 0
+    while k < Array.size(comps)
+      parent = Array.join(Array.take(comps, k), "/")
+      child = Array.join(Array.take(comps, k + 1), "/")
+      unless seen[child]
+        seen[child] = true
+        lst = kids[parent]
+        if lst == nil
+          lst = Array[]
+          kids[parent] = lst
+        end
+        Array.push(lst, comps[k])
+      end
+      total[child] += fsz
+      isdir[child] = true if k < Array.size(comps) - 1
+      k += 1
+    end
+    total[""] += fsz
+  end
+  puts(format("%6s  %s", human(total[""]), "."))
+  show("", 0, maxd, thr, kids, total, isdir)
+end

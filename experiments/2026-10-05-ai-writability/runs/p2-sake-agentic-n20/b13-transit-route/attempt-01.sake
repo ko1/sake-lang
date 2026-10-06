@@ -1,0 +1,177 @@
+def inf = 1000000000000
+
+def pen(l, l2, p) = (l == "" || l == l2) ? 0 : p * 1000 + 1
+
+def solve(adj, states, p, from, to)
+  h = Hash[]
+  Array.each(states) { |st| h[st] = (st[0] == to ? 0 : inf) }
+  changed = true
+  while changed
+    changed = false
+    Array.each(states) do |st|
+      next if st[0] == to
+      best = h[st]
+      Array.each(adj[st[0]]) do |e|
+        hw = h[[e[0], e[1]]]
+        next if hw >= inf
+        c = e[2] * 1000 + pen(st[1], e[1], p) + hw
+        best = c if c < best
+      end
+      if best < h[st]
+        h[st] = best
+        changed = true
+      end
+    end
+  end
+  total = inf
+  Array.each(adj[from]) do |e|
+    hw = h[[e[0], e[1]]]
+    next if hw >= inf
+    c = e[2] * 1000 + hw
+    total = c if c < total
+  end
+  return nil if total >= inf
+  cur = Hash[]
+  cur[[from, ""]] = 0
+  stations = Array[from]
+  while stations[-1] != to
+    cands = Hash[]
+    Hash.each(cur) do |st, g|
+      Array.each(adj[st[0]]) do |e|
+        hw = h[[e[0], e[1]]]
+        next if hw >= inf
+        c = g + e[2] * 1000 + pen(st[1], e[1], p)
+        next if c + hw != total
+        key = [e[0], e[1]]
+        old = cands[key]
+        cands[key] = c if old == nil || c < old
+      end
+    end
+    minw = Array.min(Array.map(Hash.keys(cands)) { |k| k[0] })
+    nxt = Hash[]
+    Hash.each(cands) { |k, c| nxt[k] = c if k[0] == minw }
+    cur = nxt
+    Array.push(stations, minw)
+  end
+  k = Array.size(stations) - 1
+  opts = Array[]
+  Integer.times(k) do |i|
+    o = Array[]
+    Array.each(adj[stations[i]]) { |e| Array.push(o, [e[1], e[2]]) if e[0] == stations[i + 1] }
+    Array.push(opts, o)
+  end
+  tail = Array.new(k) { Array[] }
+  Integer.downto(k - 1, 0) do |i|
+    Array.each(opts[i]) do |o|
+      if i == k - 1
+        Array.push(tail[i], 0)
+      else
+        best = inf
+        Array.each(opts[i + 1]) do |o2|
+          idx = Array.index(opts[i + 1], o2)
+          c = pen(o[0], o2[0], p) + o2[1] * 1000 + tail[i + 1][idx]
+          best = c if c < best
+        end
+        Array.push(tail[i], best)
+      end
+    end
+  end
+  lines = Array[]
+  prev = Array[]
+  Integer.times(k) do |i|
+    cand = Hash[]
+    Array.each_with_index(opts[i]) do |o, j|
+      g = inf
+      if i == 0
+        g = o[1] * 1000
+      else
+        Array.each(prev) do |pr|
+          c = pr[1] + pen(opts[i - 1][pr[0]][0], o[0], p) + o[1] * 1000
+          g = c if c < g
+        end
+      end
+      cand[j] = g if g + tail[i][j] == total
+    end
+    ml = Array.min(Array.map(Hash.keys(cand)) { |j| opts[i][j][0] })
+    nprev = Array[]
+    Hash.each(cand) { |j, g| Array.push(nprev, [j, g]) if opts[i][j][0] == ml }
+    prev = nprev
+    Array.push(lines, ml)
+  end
+  [total, stations, lines]
+end
+
+lines = String.split(IO.read(IO.stdin), "\n")
+p = 0
+adj = Hash[]
+states = Set[]
+inq = false
+seenp = false
+queries = Array[]
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  next if line == ""
+  if !seenp
+    p = String.to_i(line)
+    seenp = true
+    next
+  end
+  f = String.split(line, " ")
+  if !inq
+    if line == "QUERIES"
+      inq = true
+      next
+    end
+    if Array.size(f) == 4 && String.match?(f[3], /\A[1-9]\d{0,2}\z/) && f[1] != f[2]
+      m = String.to_i(f[3])
+      adj[f[1]] = Array[] if adj[f[1]] == nil
+      adj[f[2]] = Array[] if adj[f[2]] == nil
+      Array.push(adj[f[1]], [f[2], f[0], m])
+      Array.push(adj[f[2]], [f[1], f[0], m])
+      Set.add(states, [f[1], f[0]])
+      Set.add(states, [f[2], f[0]])
+    else
+      puts("invalid segment at line #{n}")
+    end
+  else
+    if Array.size(f) != 2
+      puts("invalid query at line #{n}")
+      next
+    end
+    a = f[0]
+    b = f[1]
+    st = Set.to_a(states)
+    if adj[a] == nil
+      puts("#{a} -> #{b}: unknown station #{a}")
+    elsif adj[b] == nil
+      puts("#{a} -> #{b}: unknown station #{b}")
+    elsif a == b
+      puts("#{a} -> #{b}: 0 min, 0 transfers")
+    else
+      r = solve(adj, st, p, a, b)
+      if r == nil
+        puts("#{a} -> #{b}: no route")
+      else
+        total = r[0]
+        k = total % 1000
+        puts("#{a} -> #{b}: #{total / 1000} min, #{k} #{k == 1 ? "transfer" : "transfers"}")
+        sts = r[1]
+        ls = r[2]
+        legs = Array[]
+        legl = ls[0]
+        legs_st = Array[sts[0]]
+        Array.each_with_index(ls) do |l, j|
+          if l != legl
+            Array.push(legs, "#{legl}: #{Array.join(legs_st, " > ")}")
+            legl = l
+            legs_st = Array[sts[j]]
+          end
+          Array.push(legs_st, sts[j + 1])
+        end
+        Array.push(legs, "#{legl}: #{Array.join(legs_st, " > ")}")
+        puts("  " + Array.join(legs, "; "))
+      end
+    end
+  end
+end

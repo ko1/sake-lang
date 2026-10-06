@@ -1,0 +1,95 @@
+class Team
+  attr_reader name
+  attr_accessor p, w, d, l, gf, ga, pts
+  def gd(t) = @gf - @ga
+end
+
+def name?(s) = String.match?(s, /\A[A-Za-z][A-Za-z0-9_]{0,11}\z/)
+
+def team(teams, nm)
+  teams[nm] = Team.new(nm, 0, 0, 0, 0, 0, 0, 0) if teams[nm] == nil
+  teams[nm]
+end
+
+def play(t, gf, ga)
+  Team.set_p(t, Team.p(t) + 1)
+  Team.set_gf(t, Team.gf(t) + gf)
+  Team.set_ga(t, Team.ga(t) + ga)
+  if gf > ga
+    Team.set_w(t, Team.w(t) + 1)
+    Team.set_pts(t, Team.pts(t) + 3)
+  elsif gf == ga
+    Team.set_d(t, Team.d(t) + 1)
+    Team.set_pts(t, Team.pts(t) + 1)
+  else
+    Team.set_l(t, Team.l(t) + 1)
+  end
+end
+
+teams = Hash[]
+games = Array[]
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) do |raw, i|
+  line = String.chomp(raw)
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  sm = Array.size(f) == 3 ? String.match(f[1], /\A(\d{1,2})-(\d{1,2})\z/) : nil
+  post = Array.size(f) == 3 && f[1] == "P-P"
+  if Array.size(f) != 3 || !name?(f[0]) || !name?(f[2]) || f[0] == f[2] || (sm == nil && !post)
+    puts("invalid line #{i + 1}: #{line}")
+    next
+  end
+  a = team(teams, f[0])
+  b = team(teams, f[2])
+  next if post
+  c = MatchData.captures(sm)
+  hg = String.to_i(c[0])
+  ag = String.to_i(c[1])
+  play(a, hg, ag)
+  play(b, ag, hg)
+  Array.push(games, [f[0], f[2], hg, ag])
+end
+if Hash.empty?(teams)
+  puts("no teams")
+  exit
+end
+all = Array.sort_by(Hash.values(teams)) { |t| [-Team.pts(t), -Team.gd(t), -Team.gf(t), Team.name(t)] }
+rows = Array[]
+ahead = 0
+i = 0
+while i < Array.size(all)
+  j = i
+  t0 = all[i]
+  while j < Array.size(all) && Team.pts(all[j]) == Team.pts(t0) && Team.gd(all[j]) == Team.gd(t0) && Team.gf(all[j]) == Team.gf(t0)
+    j += 1
+  end
+  grp = Array.take(Array.drop(all, i), j - i)
+  names = Array.map(grp) { |t| Team.name(t) }
+  h2h = Hash.new(0)
+  Array.each(games) do |g|
+    if Array.include?(names, g[0]) && Array.include?(names, g[1])
+      if g[2] > g[3]
+        h2h[g[0]] += 3
+      elsif g[2] == g[3]
+        h2h[g[0]] += 1
+        h2h[g[1]] += 1
+      else
+        h2h[g[1]] += 3
+      end
+    end
+  end
+  ordered = Array.sort_by(grp) { |t| [-h2h[Team.name(t)], Team.name(t)] }
+  Array.each(ordered) do |t|
+    better = Array.count(grp) { |u| h2h[Team.name(u)] > h2h[Team.name(t)] }
+    Array.push(rows, [ahead + better + 1, t])
+  end
+  ahead += j - i
+  i = j
+end
+puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+Array.each(rows) do |r|
+  t = r[1]
+  gd = Team.gd(t)
+  gds = gd > 0 ? "+#{gd}" : Integer.to_s(gd)
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", Integer.to_s(r[0]), Team.name(t), Team.p(t), Team.w(t), Team.d(t), Team.l(t), Team.gf(t), Team.ga(t), gds, Team.pts(t)))
+end

@@ -1,0 +1,157 @@
+def reserved(w) = Array.include?(Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"], w)
+
+def is_num(w) = Regexp.match?(/\A-?\d+\z/, w)
+
+def syntax_ok(toks)
+  ifs = Integer[]
+  in_def = false
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    w = toks[i]
+    if w == ":"
+      return false if in_def || !Array.empty?(ifs)
+      return false if i + 1 >= n
+      nm = toks[i + 1]
+      return false if is_num(nm) || reserved(nm)
+      in_def = true
+      i += 1
+    elsif w == ";"
+      return false if !in_def || !Array.empty?(ifs)
+      in_def = false
+    elsif w == "if"
+      Array.push(ifs, 0)
+    elsif w == "else"
+      return false if Array.empty?(ifs) || Array.last(ifs) == 1
+      ifs[Array.size(ifs) - 1] = 1
+    elsif w == "then"
+      return false if Array.empty?(ifs)
+      Array.pop(ifs)
+    end
+    i += 1
+  end
+  !in_def && Array.empty?(ifs)
+end
+
+def need(st, k, w)
+  raise "stack underflow in #{w}" if Array.size(st) < k
+end
+
+def find_end(toks, i)
+  depth = 0
+  e = -1
+  j = i + 1
+  while j < Array.size(toks)
+    w = toks[j]
+    if w == "if"
+      depth += 1
+    elsif w == "then"
+      return [e, j] if depth == 0
+      depth -= 1
+    elsif w == "else"
+      e = j if depth == 0
+    end
+    j += 1
+  end
+  [e, j]
+end
+
+def pop(st) = Array.pop(st) || 0
+
+def run(toks, from, to, st, defs, depth)
+  i = from
+  while i < to
+    w = toks[i]
+    if is_num(w)
+      Array.push(st, String.to_i(w))
+    elsif w == "+" || w == "-" || w == "*" || w == "=" || w == "<" || w == ">"
+      need(st, 2, w)
+      b = pop(st)
+      a = pop(st)
+      r = 0
+      if w == "+"
+        r = a + b
+      elsif w == "-"
+        r = a - b
+      elsif w == "*"
+        r = a * b
+      elsif w == "="
+        r = a == b ? 1 : 0
+      elsif w == "<"
+        r = a < b ? 1 : 0
+      else
+        r = a > b ? 1 : 0
+      end
+      Array.push(st, r)
+    elsif w == "/" || w == "mod"
+      need(st, 2, w)
+      b = pop(st)
+      a = pop(st)
+      raise "division by zero" if b == 0
+      q = Arithmetic.abs(a) / Arithmetic.abs(b)
+      q = -q if (a < 0) != (b < 0)
+      Array.push(st, w == "/" ? q : a - q * b)
+    elsif w == "dup"
+      need(st, 1, w)
+      Array.push(st, Array.last(st))
+    elsif w == "drop"
+      need(st, 1, w)
+      Array.pop(st)
+    elsif w == "swap"
+      need(st, 2, w)
+      b = pop(st)
+      a = pop(st)
+      Array.push(st, b, a)
+    elsif w == "over"
+      need(st, 2, w)
+      Array.push(st, st[Array.size(st) - 2])
+    elsif w == "."
+      need(st, 1, w)
+      puts(pop(st))
+    elsif w == "if"
+      need(st, 1, w)
+      c = pop(st)
+      et = find_end(toks, i)
+      e = et[0]
+      t = et[1]
+      if c != 0
+        run(toks, i + 1, e >= 0 ? e : t, st, defs, depth)
+      elsif e >= 0
+        run(toks, e + 1, t, st, defs, depth)
+      end
+      i = t
+    elsif w == ":"
+      j = i + 2
+      j += 1 while toks[j] != ";"
+      defs[toks[i + 1]] = toks[i + 2, j - i - 2]
+      i = j
+    else
+      body = defs[w]
+      raise "unknown word #{w}" if body == nil
+      raise "too deep" if depth >= 100
+      run(body, 0, Array.size(body), st, defs, depth + 1)
+    end
+    i += 1
+  end
+end
+
+st = Integer[]
+defs = Hash[]
+lineno = 0
+while (line = gets)
+  lineno += 1
+  toks = String.split(String.chomp(line), " ")
+  if !syntax_ok(toks)
+    puts("line #{lineno}: syntax error")
+    next
+  end
+  saved = Array.dup(st)
+  begin
+    run(toks, 0, Array.size(toks), st, defs, 0)
+  rescue => e
+    Array.clear(st)
+    Array.concat(st, saved)
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  end
+end
+puts(Array.empty?(st) ? "stack: (empty)" : "stack: #{Array.join(st, " ")}")

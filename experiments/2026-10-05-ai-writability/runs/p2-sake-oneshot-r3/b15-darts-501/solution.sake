@@ -1,0 +1,123 @@
+def dart_points(tok)
+  return [25, false] if tok == "25"
+  return [50, true] if tok == "BULL"
+  return [0, false] if tok == "MISS"
+  m = String.match(tok, /\A([SDT])([1-9]|1[0-9]|20)\z/)
+  return [-1, false] if m == nil
+  kind, num = MatchData.captures(m)
+  v = String.to_i(num)
+  if kind == "S"
+    [v, false]
+  elsif kind == "D"
+    [2 * v, true]
+  else
+    [3 * v, false]
+  end
+end
+
+def parse_header(line)
+  f = String.split(String.strip(line), /\s+/)
+  return nil if Array.size(f) < 2 || Array.size(f) > 5
+  return nil unless String.match?(f[0], /\A\d+\z/)
+  s = String.to_i(f[0])
+  return nil if s < 2 || s > 1001
+  names = Array.drop(f, 1)
+  ok = true
+  Array.each(names) { |nm| ok = false unless String.match?(nm, /\A[a-z]{1,10}\z/) }
+  return nil unless ok
+  return nil if Array.size(Array.uniq(names)) != Array.size(names)
+  [s, names]
+end
+
+lines = IO.readlines(IO.stdin)
+hd = nil
+hd = parse_header(lines[0]) unless Array.empty?(lines)
+if hd == nil
+  puts("invalid header")
+  exit(0)
+end
+start, names = hd
+
+left = Hash[]
+turns = Hash.new(0)
+darts = Hash.new(0)
+Array.each(names) { |nm| left[nm] = start }
+winner = nil
+
+Array.each_with_index(lines) do |raw, i|
+  next if i == 0
+  n = i + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, /\s+/)
+  name = f[0]
+  if winner != nil
+    puts("line #{n}: game over")
+    next
+  end
+  unless Hash.key?(left, name)
+    puts("line #{n}: unknown player #{name}")
+    next
+  end
+  ds = Array.drop(f, 1)
+  if Array.size(ds) < 1 || Array.size(ds) > 3
+    puts("line #{n}: expected 1 to 3 darts")
+    next
+  end
+  parsed = Array.map(ds) { |t| dart_points(t) }
+  bad = nil
+  Array.each_with_index(parsed) do |dp, j|
+    pts, dbl = dp
+    bad = ds[j] if bad == nil && pts < 0
+  end
+  if bad != nil
+    puts("line #{n}: bad dart #{bad}")
+    next
+  end
+  turns[name] += 1
+  startl = left[name]
+  cur = startl
+  total = 0
+  result = "scores"
+  last_tok = ""
+  Array.each_with_index(parsed) do |dp, j|
+    break if result != "scores"
+    pts, dbl = dp
+    darts[name] += 1
+    cur -= pts
+    total += pts
+    if cur < 0 || cur == 1 || (cur == 0 && !dbl)
+      result = "bust"
+    elsif cur == 0
+      result = "out"
+      last_tok = ds[j]
+    end
+  end
+  if result == "bust"
+    left[name] = startl
+    puts("#{name} busts, #{startl} left")
+  elsif result == "out"
+    left[name] = 0
+    winner = name
+    puts("#{name} checks out with #{last_tok}")
+  else
+    left[name] = cur
+    puts("#{name} scores #{total}, #{cur} left")
+  end
+end
+
+puts("STANDINGS")
+rows = Array[]
+Array.each_with_index(names) { |nm, i| Array.push(rows, [left[nm], i, nm]) }
+sorted = Array.sort(rows)
+Array.each_with_index(sorted) do |row, r|
+  lf, ix, nm = row
+  d = darts[nm]
+  avg = d == 0 ? "-" : format("%.2f", Integer.fdiv((start - lf) * 3, d))
+  puts(format("%d. %-10s %4d %3d %6s", r + 1, nm, lf, turns[nm], avg))
+end
+if winner == nil
+  puts("no winner")
+else
+  puts("winner: #{winner}")
+end

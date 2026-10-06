@@ -1,0 +1,154 @@
+Node = Struct.new(:name, :size, :dir, :kids)
+
+def tokens(line) = String.split(String.strip(line), /\s+/)
+
+def digits(s) = String.match?(s, /\A[0-9]+\z/)
+
+def human(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  unit = "K"
+  nxt = "M"
+  if s >= 1073741824
+    u = 1073741824
+    unit = "G"
+    nxt = "G"
+  elsif s >= 1048576
+    u = 1048576
+    unit = "M"
+    nxt = "G"
+  end
+  t = (20 * s + u) / (2 * u)
+  if t < 100
+    return "#{t / 10}.#{t % 10}#{unit}"
+  end
+  n = (2 * s + u) / (2 * u)
+  if n == 1024 && unit != "G"
+    return "1.0#{nxt}"
+  end
+  "#{n}#{unit}"
+end
+
+def path_ok(path)
+  return false if String.start_with?(path, "/") || String.end_with?(path, "/") || String.include?(path, "//")
+  comps = String.split(path, "/")
+  return false if Array.empty?(comps)
+  Array.none?(comps) { |c| c == "." || c == ".." }
+end
+
+def total(n)
+  return Node.size(n) unless Node.dir(n)
+  sum = 0
+  Array.each(Node.kids(n)) { |k| sum += total(k) }
+  Node.set_size(n, sum)
+  sum
+end
+
+def label(n)
+  if Node.dir(n)
+    "#{Node.name(n)}/"
+  else
+    Node.name(n)
+  end
+end
+
+def show(size, depth, name)
+  puts(format("%6s  %s%s", human(size), "  " * depth, name))
+end
+
+def walk(n, depth, maxd, thr)
+  return unless depth < maxd
+  kids = Array.sort_by(Node.kids(n)) { |k| [-Node.size(k), Node.name(k)] }
+  small = 0
+  smalln = 0
+  Array.each(kids) do |k|
+    if Node.size(k) < thr
+      small += Node.size(k)
+      smalln += 1
+    else
+      show(Node.size(k), depth + 1, label(k))
+      walk(k, depth + 1, maxd, thr) if Node.dir(k)
+    end
+  end
+  if smalln > 0
+    show(small, depth + 1, "(#{smalln} smaller)")
+  end
+end
+
+def run_all
+  lines = Array.map(IO.readlines(IO.stdin)) { |l| String.chomp(l) }
+  if Array.empty?(lines)
+    puts("bad header")
+    return
+  end
+  ht = tokens(lines[0])
+  unless Array.size(ht) == 4 && ht[0] == "depth" && ht[2] == "threshold" && digits(ht[1]) && digits(ht[3])
+    puts("bad header")
+    return
+  end
+  maxd = String.to_i(ht[1])
+  thr = String.to_i(ht[3])
+  root = Node.new(".", 0, true, Array[])
+  nodes = Hash[]
+  Array.each_with_index(lines) do |line, idx|
+    next if idx == 0
+    toks = tokens(line)
+    next if Array.empty?(toks)
+    lineno = idx + 1
+    unless Array.size(toks) == 2 && digits(toks[0]) && String.to_i(toks[0]) <= 10000000000000 && path_ok(toks[1])
+      puts("line #{lineno}: malformed")
+      next
+    end
+    size = String.to_i(toks[0])
+    path = toks[1]
+    comps = String.split(path, "/")
+    if Hash.key?(nodes, path)
+      ex = Hash.fetch(nodes, path)
+      if Node.dir(ex)
+        puts("line #{lineno}: conflict #{path}")
+      else
+        puts("line #{lineno}: duplicate #{path}")
+      end
+      next
+    end
+    clash = false
+    cur = ""
+    i = 0
+    while i < Array.size(comps) - 1
+      cur = i == 0 ? comps[0] : cur + "/" + comps[i]
+      if Hash.key?(nodes, cur) && !Node.dir(Hash.fetch(nodes, cur))
+        clash = true
+      end
+      i += 1
+    end
+    if clash
+      puts("line #{lineno}: conflict #{path}")
+      next
+    end
+    parent = root
+    cur = ""
+    i = 0
+    last = Array.size(comps) - 1
+    while i <= last
+      cur = i == 0 ? comps[0] : cur + "/" + comps[i]
+      if i == last
+        node = Node.new(comps[i], size, false, Array[])
+        Array.push(Node.kids(parent), node)
+        nodes[cur] = node
+      elsif Hash.key?(nodes, cur)
+        node = Hash.fetch(nodes, cur)
+      else
+        node = Node.new(comps[i], 0, true, Array[])
+        Array.push(Node.kids(parent), node)
+        nodes[cur] = node
+      end
+      parent = node
+      i += 1
+    end
+  end
+  total(root)
+  show(Node.size(root), 0, ".")
+  walk(root, 0, maxd, thr)
+end
+
+run_all

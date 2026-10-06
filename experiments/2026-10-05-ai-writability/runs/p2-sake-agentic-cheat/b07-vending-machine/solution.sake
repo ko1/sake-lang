@@ -1,0 +1,143 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+def good_money(s) = String.match?(s, /\A[0-9]+\.[0-9]{2}\z/)
+def cents(s) = String.to_i(String.delete(s, "."))
+def coins = Integer[200, 100, 50, 25, 10, 5]
+
+sname = Hash[]
+sprice = Hash[]
+scount = Hash[]
+tubes = Hash.new(0)
+sold = Hash.new(0)
+rev = Hash.new(0)
+inserted = Integer[]
+credit = 0
+n = 0
+while (line = gets)
+  n += 1
+  f = String.split(String.chomp(line), " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  want = 0
+  if cmd == "SLOT"
+    want = 5
+  elsif cmd == "TUBE"
+    want = 3
+  elsif cmd == "COIN" || cmd == "SELECT"
+    want = 2
+  elsif cmd == "CANCEL"
+    want = 1
+  else
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "SLOT"
+    code = f[1]
+    unless String.match?(code, /\A[A-Z][0-9]\z/)
+      puts("line #{n}: error: bad slot")
+      next
+    end
+    unless String.match?(f[2], /\A[a-z]{1,12}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    unless good_money(f[3])
+      puts("line #{n}: error: bad money")
+      next
+    end
+    unless String.match?(f[4], /\A[0-9]{1,2}\z/)
+      puts("line #{n}: error: bad count")
+      next
+    end
+    sname[code] = f[2]
+    sprice[code] = cents(f[3])
+    scount[code] = String.to_i(f[4])
+  elsif cmd == "TUBE"
+    c = 0
+    c = cents(f[1]) if good_money(f[1])
+    unless Array.include?(coins, c)
+      puts("line #{n}: error: bad coin")
+      next
+    end
+    unless String.match?(f[2], /\A[0-9]{1,3}\z/)
+      puts("line #{n}: error: bad count")
+      next
+    end
+    tubes[c] += String.to_i(f[2])
+  elsif cmd == "COIN"
+    unless good_money(f[1])
+      puts("line #{n}: error: bad money")
+      next
+    end
+    c = cents(f[1])
+    if !Array.include?(coins, c)
+      puts("rejected #{f[1]}")
+    elsif credit + c > 500
+      puts("rejected #{f[1]} (credit limit)")
+    else
+      tubes[c] += 1
+      Array.push(inserted, c)
+      credit += c
+      puts("credit #{money(credit)}")
+    end
+  elsif cmd == "SELECT"
+    code = f[1]
+    unless Hash.key?(sname, code)
+      puts("no slot #{code}")
+      next
+    end
+    if Hash.fetch(scount, code, 0) <= 0
+      puts("sold out #{code}")
+      next
+    end
+    price = Hash.fetch(sprice, code, 0)
+    if credit < price
+      puts("insert #{money(price - credit)} more")
+      next
+    end
+    change = credit - price
+    need = change
+    paid = Integer[]
+    Array.each(coins) do |c|
+      k = Integer.clamp(need / c, 0, tubes[c])
+      k.Integer.times { Array.push(paid, c) }
+      need -= k * c
+    end
+    if need != 0
+      puts("exact change needed")
+      next
+    end
+    Array.each(paid) { |c| tubes[c] -= 1 }
+    code_name = Hash.fetch(sname, code, "")
+    scount[code] = Hash.fetch(scount, code, 0) - 1
+    sold[code_name] += 1
+    rev[code_name] += price
+    credit = 0
+    Array.clear(inserted)
+    s = "vend #{code_name}, change #{money(change)}"
+    s += " [" + Array.join(Array.map(paid) { |c| money(c) }, " ") + "]" if change != 0
+    puts(s)
+  else
+    if credit == 0
+      puts("nothing to return")
+    else
+      Array.each(inserted) { |c| tubes[c] -= 1 }
+      puts("returned #{money(credit)} [" + Array.join(Array.map(inserted) { |c| money(c) }, " ") + "]")
+      Array.clear(inserted)
+      credit = 0
+    end
+  end
+end
+
+puts("credit #{money(credit)} kept") if credit != 0
+puts("sales:")
+names = Array.sort_by(Hash.keys(sold)) { |nm| [-rev[nm], nm] }
+if Array.empty?(names)
+  puts("  none")
+else
+  Array.each(names) { |nm| puts(format("  %-12s %3d %8s", nm, sold[nm], money(rev[nm]))) }
+end
+puts("tubes: " + Array.join(Array.map(Array.reverse(coins)) { |c| "#{money(c)}x#{tubes[c]}" }, " "))

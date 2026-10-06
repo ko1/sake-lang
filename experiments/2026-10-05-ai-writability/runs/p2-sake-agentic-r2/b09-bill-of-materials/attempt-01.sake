@@ -1,0 +1,190 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def parse_money(s)
+  m = String.match(s, /\A(\d+)\.(\d\d)\z/)
+  return nil unless m
+  String.to_i(m[1]) * 100 + String.to_i(m[2])
+end
+
+def name_ok?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+class Bom
+  attr_reader part_cost, labor, comps, verified, units, totals
+  def initialize(b)
+    @part_cost = Hash[]
+    @labor = Hash[]
+    @comps = Hash[]
+    @verified = Hash[]
+    @units = Hash[]
+    @totals = Hash.new(0)
+  end
+
+  def defined?(b, name) = Hash.key?(@part_cost, name) || Hash.key?(@labor, name)
+
+  def add_part(b, name, cost)
+    @part_cost[name] = cost
+  end
+
+  def add_assy(b, name, labor, list)
+    @labor[name] = labor
+    @comps[name] = list
+  end
+
+  # the first problem under `name`, or nil
+  def verify(b, name, parent, path)
+    return nil if Hash.key?(@verified, name)
+    unless defined?(b, name)
+      return parent == nil ? "unknown item #{name}" : "unknown item #{name} in #{parent}"
+    end
+    i = Array.index(path, name)
+    if i != nil
+      return "cycle #{Array.join(Array.drop(path, i), " > ")} > #{name}"
+    end
+    if Hash.key?(@labor, name)
+      Array.push(path, name)
+      Array.each(@comps[name]) do |c|
+        r = verify(b, c[0], name, path)
+        if r != nil
+          Array.pop(path)
+          return r
+        end
+      end
+      Array.pop(path)
+    end
+    @verified[name] = true
+    nil
+  end
+
+  def unit(b, name)
+    u = @units[name]
+    return u if u != nil
+    if Hash.key?(@part_cost, name)
+      u = @part_cost[name]
+    else
+      u = @labor[name]
+      Array.each(@comps[name]) { |c| u += c[1] * unit(b, c[0]) }
+    end
+    @units[name] = u
+    u
+  end
+
+  def show(b, name, qty, depth)
+    puts("#{String.*("  ", depth)}#{qty} x #{name} = #{money(qty * unit(b, name))}")
+    if Hash.key?(@labor, name)
+      Array.each(@comps[name]) { |c| show(b, c[0], qty * c[1], depth + 1) }
+    else
+      @totals[name] += qty
+    end
+  end
+
+  def build(b, n, name, qty)
+    msg = verify(b, name, nil, String[])
+    if msg != nil
+      puts("line #{n}: cannot build: #{msg}")
+      return nil
+    end
+    Hash.clear(@totals)
+    show(b, name, qty, 0)
+    puts("parts:")
+    names = Array.sort_by(Hash.keys(@totals)) { |nm| [-@totals[nm], nm] }
+    Array.each(names) do |nm|
+      puts("  #{nm} x#{@totals[nm]} = #{money(@totals[nm] * @part_cost[nm])}")
+    end
+  end
+end
+
+bom = Bom.new(0)
+n = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, " ")
+  cmd = f[0]
+  sz = Array.size(f)
+  if cmd == "PART"
+    if sz != 3
+      err(n, "wrong field count")
+      next
+    end
+    unless name_ok?(f[1])
+      err(n, "bad name")
+      next
+    end
+    cost = parse_money(f[2])
+    if cost == nil
+      err(n, "bad cost")
+      next
+    end
+    if Bom.defined?(bom, f[1])
+      err(n, "duplicate #{f[1]}")
+      next
+    end
+    Bom.add_part(bom, f[1], cost)
+  elsif cmd == "ASSY"
+    if sz < 4
+      err(n, "wrong field count")
+      next
+    end
+    unless name_ok?(f[1])
+      err(n, "bad name")
+      next
+    end
+    labor = parse_money(f[2])
+    if labor == nil
+      err(n, "bad cost")
+      next
+    end
+    list = Tuple[]
+    bad = nil
+    Array.each(Array.drop(f, 3)) do |t|
+      m = String.match(t, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+      q = m ? String.to_i(m[2]) : 0
+      if q < 1 || q > 999
+        bad = t
+        break
+      end
+      Array.push(list, [m[1], q])
+    end
+    if bad != nil
+      err(n, "bad component #{bad}")
+      next
+    end
+    seen = Hash[]
+    rep = nil
+    Array.each(list) do |c|
+      if Hash.key?(seen, c[0])
+        rep = c[0]
+        break
+      end
+      seen[c[0]] = true
+    end
+    if rep != nil
+      err(n, "repeated component #{rep}")
+      next
+    end
+    if Bom.defined?(bom, f[1])
+      err(n, "duplicate #{f[1]}")
+      next
+    end
+    Bom.add_assy(bom, f[1], labor, list)
+  elsif cmd == "BUILD"
+    if sz != 3
+      err(n, "wrong field count")
+      next
+    end
+    unless name_ok?(f[1])
+      err(n, "bad name")
+      next
+    end
+    unless String.match?(f[2], /\A\d+\z/) && String.to_i(f[2]) >= 1 && String.to_i(f[2]) <= 1000
+      err(n, "bad quantity")
+      next
+    end
+    Bom.build(bom, n, f[1], String.to_i(f[2]))
+  else
+    err(n, "unknown command")
+  end
+end

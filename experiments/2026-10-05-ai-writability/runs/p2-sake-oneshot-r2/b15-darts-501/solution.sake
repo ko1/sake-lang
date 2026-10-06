@@ -1,0 +1,118 @@
+def valid_header(f)
+  return false if Array.size(f) < 2 || Array.size(f) > 5
+  return false unless String.match?(f[0], /\A\d+\z/)
+  s = String.to_i(f[0])
+  return false if s < 2 || s > 1001
+  names = Array.drop(f, 1)
+  Array.each(names) do |n|
+    return false unless String.match?(n, /\A[a-z]{1,10}\z/)
+  end
+  Array.size(Array.uniq(names)) == Array.size(names)
+end
+
+def dart(tok)
+  return [true, 25, false] if tok == "25"
+  return [true, 50, true] if tok == "BULL"
+  return [true, 0, false] if tok == "MISS"
+  m = String.match(tok, /\A([SDT])([1-9]|1[0-9]|20)\z/)
+  return [false, 0, false] if m == nil
+  kind = m[1]
+  n = String.to_i(m[2])
+  return [true, n, false] if kind == "S"
+  return [true, 2 * n, true] if kind == "D"
+  [true, 3 * n, false]
+end
+
+lines = IO.readlines(IO.stdin)
+hf = Array[]
+hf = String.split(lines[0], " ") unless Array.empty?(lines)
+
+if !valid_header(hf)
+  puts("invalid header")
+else
+  start = String.to_i(hf[0])
+  names = Array.drop(hf, 1)
+  left = Hash[]
+  turns = Hash[]
+  darts = Hash[]
+  Array.each(names) do |n|
+    left[n] = start
+    turns[n] = 0
+    darts[n] = 0
+  end
+  winner = nil
+
+  Array.each_with_index(lines) do |raw, idx|
+    next if idx == 0
+    no = idx + 1
+    line = String.strip(raw)
+    next if String.empty?(line)
+    f = String.split(line, " ")
+    nm = f[0]
+    toks = Array.drop(f, 1)
+    if winner != nil
+      puts("line #{no}: game over")
+    elsif !Hash.key?(left, nm)
+      puts("line #{no}: unknown player #{nm}")
+    elsif Array.size(toks) < 1 || Array.size(toks) > 3
+      puts("line #{no}: expected 1 to 3 darts")
+    else
+      bad = Array.find(toks) do |t|
+        valid, pt, dbl = dart(t)
+        !valid
+      end
+      if bad != nil
+        puts("line #{no}: bad dart #{bad}")
+      else
+        start_left = Hash.fetch(left, nm)
+        cur = start_left
+        total = 0
+        thrown = 0
+        state = :ok
+        chk = ""
+        Array.each(toks) do |t|
+          if state == :ok
+            valid, pt, dbl = dart(t)
+            thrown += 1
+            total += pt
+            cur -= pt
+            if cur < 0 || cur == 1 || (cur == 0 && !dbl)
+              state = :bust
+              cur = start_left
+            elsif cur == 0
+              state = :out
+              chk = t
+            end
+          end
+        end
+        left[nm] = cur
+        turns[nm] = Hash.fetch(turns, nm) + 1
+        darts[nm] = Hash.fetch(darts, nm) + thrown
+        if state == :bust
+          puts("#{nm} busts, #{cur} left")
+        elsif state == :out
+          puts("#{nm} checks out with #{chk}")
+          winner = nm
+        else
+          puts("#{nm} scores #{total}, #{cur} left")
+        end
+      end
+    end
+  end
+
+  puts("STANDINGS")
+  ranked = Array.sort_by(Range.to_a(0...Array.size(names))) { |i| [Hash.fetch(left, Array.fetch(names, i)), i] }
+  Array.each_with_index(ranked) do |i, r|
+    nm = Array.fetch(names, i)
+    lf = Hash.fetch(left, nm)
+    th = Hash.fetch(darts, nm)
+    avg = "-"
+    avg = format("%.2f", Integer.fdiv((start - lf) * 3, th)) if th > 0
+    puts(format("%d. %-10s %4d %3d %6s", r + 1, nm, lf, Hash.fetch(turns, nm), avg))
+  end
+  if winner == nil
+    puts("no winner")
+  else
+    puts("winner: #{winner}")
+  end
+end

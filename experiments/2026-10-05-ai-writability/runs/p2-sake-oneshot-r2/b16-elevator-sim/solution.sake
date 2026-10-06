@@ -1,0 +1,173 @@
+Pax = Struct.new(:id, :t, :f, :g, :state, :pick, :drop)
+
+def tokens(line) = String.split(String.strip(line), /\s+/)
+
+def all_digits(toks)
+  Array.all?(toks) { |s| String.match?(s, /\A[0-9]+\z/) }
+end
+
+def parse_header(line)
+  toks = tokens(line)
+  bad = [false, 0, 0, 0]
+  return bad unless Array.size(toks) == 3 && all_digits(toks)
+  n = String.to_i(toks[0])
+  d = String.to_i(toks[1])
+  c = String.to_i(toks[2])
+  return bad if n < 2 || n > 50 || d < 0 || d > 5 || c < 1 || c > 20
+  [true, n, d, c]
+end
+
+def parse_req(toks, n, prev)
+  bad = [false, 0, 0, 0]
+  return bad unless Array.size(toks) == 3 && all_digits(toks)
+  t = String.to_i(toks[0])
+  f = String.to_i(toks[1])
+  g = String.to_i(toks[2])
+  return bad if t > 1000 || t < prev
+  return bad if f < 1 || f > n || g < 1 || g > n || f == g
+  [true, t, f, g]
+end
+
+def simulate(pax, d, cap)
+  t = 0
+  f = 1
+  dir = 0
+  left = Array.size(pax)
+  last = 0
+  while left > 0
+    Array.each(pax) do |q|
+      Pax.set_state(q, 1) if Pax.state(q) == 0 && Pax.t(q) <= t
+    end
+    acted = false
+    Array.each(pax) do |q|
+      if Pax.state(q) == 2 && Pax.g(q) == f
+        Pax.set_state(q, 3)
+        Pax.set_drop(q, t)
+        left -= 1
+        last = t
+        acted = true
+        puts("t=#{t} floor #{f} drop P#{Pax.id(q)}")
+      end
+    end
+    break if left == 0
+    above = false
+    below = false
+    found = false
+    bestd = 0
+    bestf = 0
+    Array.each(pax) do |q|
+      s = Pax.state(q)
+      if s == 1 || s == 2
+        tf = Pax.f(q)
+        tf = Pax.g(q) if s == 2
+        above = true if tf > f
+        below = true if tf < f
+        dist = Integer.abs(tf - f)
+        if !found || dist < bestd || (dist == bestd && tf < bestf)
+          found = true
+          bestd = dist
+          bestf = tf
+        end
+      end
+    end
+    if dir == 1
+      if above
+        dir = 1
+      elsif below
+        dir = -1
+      else
+        dir = 0
+      end
+    elsif dir == -1
+      if below
+        dir = -1
+      elsif above
+        dir = 1
+      else
+        dir = 0
+      end
+    end
+    if dir == 0 && found
+      if bestf > f
+        dir = 1
+      elsif bestf < f
+        dir = -1
+      else
+        chosen = false
+        Array.each(pax) do |q|
+          if !chosen && Pax.state(q) == 1 && Pax.f(q) == f
+            chosen = true
+            dir = Pax.g(q) > Pax.f(q) ? 1 : -1
+          end
+        end
+      end
+    end
+    riders = Array.count(pax) { |q| Pax.state(q) == 2 }
+    Array.each(pax) do |q|
+      if riders < cap && Pax.state(q) == 1 && Pax.f(q) == f
+        pd = -1
+        pd = 1 if Pax.g(q) > Pax.f(q)
+        if pd == dir
+          Pax.set_state(q, 2)
+          Pax.set_pick(q, t)
+          riders += 1
+          acted = true
+          puts("t=#{t} floor #{f} pick P#{Pax.id(q)}")
+        end
+      end
+    end
+    if acted
+      t += d
+    else
+      f += dir
+      t += 1
+    end
+  end
+  last
+end
+
+def run_all
+  lines = Array.map(IO.readlines(IO.stdin)) { |l| String.chomp(l) }
+  if Array.empty?(lines)
+    puts("invalid header")
+    return
+  end
+  ok, n, d, c = parse_header(lines[0])
+  unless ok
+    puts("invalid header")
+    return
+  end
+  pax = Pax[]
+  prev = 0
+  Array.each_with_index(lines) do |line, idx|
+    next if idx == 0
+    toks = tokens(line)
+    next if Array.empty?(toks)
+    valid, t, f, g = parse_req(toks, n, prev)
+    if valid
+      Array.push(pax, Pax.new(Array.size(pax) + 1, t, f, g, 0, 0, 0))
+      prev = t
+    else
+      puts("line #{idx + 1}: invalid request")
+    end
+  end
+  if Array.empty?(pax)
+    puts("no passengers")
+    return
+  end
+  last = simulate(pax, d, c)
+  sw = 0
+  sr = 0
+  Array.each(pax) do |q|
+    w = Pax.pick(q) - Pax.t(q)
+    r = Pax.drop(q) - Pax.pick(q)
+    sw += w
+    sr += r
+    puts("P#{Pax.id(q)} wait #{w} ride #{r}")
+  end
+  cnt = Array.size(pax)
+  puts(format("average wait %.2f ride %.2f", Integer.to_f(sw) / cnt, Integer.to_f(sr) / cnt))
+  puts("done at t=#{last}")
+end
+
+run_all

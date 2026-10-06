@@ -1,0 +1,156 @@
+def days = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+def hhmm(t) = format("%02d:%02d", t / 60, t % 60)
+
+def time_min(s)
+  m = String.match(s, /\A(\d\d):(\d\d)\z/)
+  return nil unless m
+  h = String.to_i(m[1])
+  mi = String.to_i(m[2])
+  return nil if mi >= 60
+  t = h * 60 + mi
+  return nil if t % 15 != 0 || t < 480 || t > 1200
+  t
+end
+
+def room_ok?(s) = String.match?(s, /\A[A-Z0-9]{1,8}\z/)
+
+def busy?(bk, room, di, s, e)
+  r = false
+  Array.each(bk) do |b|
+    r = true if b[1] == room && b[2] == di && s < b[4] && b[3] < e
+  end
+  r
+end
+
+def handle(bk, nid, n, f)
+  cmd = f[0]
+  unless cmd == "BOOK" || cmd == "CANCEL" || cmd == "FREE"
+    err(n, "unknown command")
+    return
+  end
+  want = cmd == "BOOK" ? 5 : (cmd == "CANCEL" ? 2 : 4)
+  if Array.size(f) != want
+    err(n, "wrong field count")
+    return
+  end
+  if cmd == "CANCEL"
+    unless String.match?(f[1], /\A\d+\z/)
+      err(n, "bad id")
+      return
+    end
+    id = String.to_i(f[1])
+    idx = Array.find_index(bk) { |b| b[0] == id }
+    if idx == nil
+      puts("NO BOOKING ##{id}")
+    else
+      Array.delete_at(bk, idx)
+      puts("CANCELLED ##{id}")
+    end
+    return
+  end
+  room = f[1]
+  unless room_ok?(room)
+    err(n, "bad room")
+    return
+  end
+  day = f[2]
+  di = Array.index(days, day)
+  if di == nil
+    err(n, "bad day")
+    return
+  end
+  if cmd == "FREE"
+    ds = f[3]
+    unless String.match?(ds, /\A\d+\z/) && String.to_i(ds) > 0 && String.to_i(ds) % 15 == 0
+      err(n, "bad duration")
+      return
+    end
+    mins = String.to_i(ds)
+    st = 480
+    found = nil
+    while found == nil && st + mins <= 1200
+      if busy?(bk, room, di, st, st + mins)
+        st += 15
+      else
+        found = st
+      end
+    end
+    if found == nil
+      puts("FULL #{room} #{day}")
+    else
+      puts("FREE #{room} #{day} #{hhmm(found)}-#{hhmm(found + mins)}")
+    end
+    return
+  end
+  tm = String.match(f[3], /\A(\d\d:\d\d)-(\d\d:\d\d)\z/)
+  s = nil
+  e = nil
+  if tm
+    s = time_min(tm[1])
+    e = time_min(tm[2])
+  end
+  if s == nil || e == nil || s >= e
+    err(n, "bad time")
+    return
+  end
+  who = f[4]
+  unless String.match?(who, /\A[a-z]{1,12}\z/)
+    err(n, "bad name")
+    return
+  end
+  conflict = nil
+  Array.each(bk) do |b|
+    if b[1] == room && b[2] == di && s < b[4] && b[3] < e
+      conflict = b if conflict == nil || b[3] < conflict[3]
+    end
+  end
+  if conflict
+    puts("CONFLICT #{room} #{day} with ##{conflict[0]} (#{conflict[5]} #{hhmm(conflict[3])}-#{hhmm(conflict[4])})")
+    return
+  end
+  cnt = 0
+  Array.each(bk) do |b|
+    cnt += 1 if b[5] == who && b[2] == di
+  end
+  if cnt >= 3
+    puts("LIMIT #{who} #{day}")
+    return
+  end
+  id = nid[0]
+  nid[0] += 1
+  Array.push(bk, Array[id, room, di, s, e, who])
+  puts("OK ##{id} #{room} #{day} #{hhmm(s)}-#{hhmm(e)} #{who}")
+end
+
+bk = Array[]
+nid = Array[1]
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, i|
+  f = String.split(String.chomp(raw), " ")
+  next if Array.empty?(f)
+  handle(bk, nid, i + 1, f)
+end
+
+puts("== schedule ==")
+if Array.empty?(bk)
+  puts("(none)")
+else
+  sorted = Array.sort_by(bk) { |b| [b[2], b[1], b[3]] }
+  Array.each(sorted) do |b|
+    puts(format("%s %-8s %s-%s #%d %s", days[b[2]], b[1], hhmm(b[3]), hhmm(b[4]), b[0], b[5]))
+  end
+end
+puts("== usage ==")
+if Array.empty?(bk)
+  puts("(none)")
+else
+  tot = Hash.new(0)
+  Array.each(bk) { |b| tot[b[1]] += b[4] - b[3] }
+  Array.each(Array.sort(Hash.keys(tot))) do |room|
+    t = tot[room]
+    puts(format("%-8s %dh%02dm", room, t / 60, t % 60))
+  end
+end

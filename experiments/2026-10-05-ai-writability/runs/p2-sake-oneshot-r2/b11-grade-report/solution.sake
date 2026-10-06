@@ -1,0 +1,132 @@
+def digits?(s) = String.match?(s, /\A\d+\z/)
+
+def parse_score(sc)
+  parts = String.split(sc, "/")
+  return [:bad, 0, 0] if Array.size(parts) != 2
+  ps, ms = parts
+  return [:bad, 0, 0] unless digits?(ms)
+  m = String.to_i(ms)
+  return [:bad, 0, 0] if m <= 0
+  return [:ex, 0, m] if ps == "EX"
+  return [:miss, 0, m] if ps == "-"
+  return [:bad, 0, 0] unless digits?(ps)
+  v = String.to_i(ps)
+  return [:bad, 0, 0] if v > m
+  [:pts, v, m]
+end
+
+def fmt1(t) = "#{t / 10}.#{t % 10}"
+
+def grade(t)
+  if t >= 900
+    "A"
+  elsif t >= 800
+    "B"
+  elsif t >= 700
+    "C"
+  elsif t >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+lines = IO.readlines(IO.stdin)
+weights = Hash[]
+errs = String[]
+pts = Hash.new(0)
+mxs = Hash.new(0)
+cnt = Hash.new(0)
+miss = Hash.new(0)
+known = Hash[]
+
+no = 0
+Array.each(lines) do |raw|
+  no += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line, " ")
+  if Array.size(f) == 3 && f[0] == "weight"
+    wcat = f[1]
+    ws = f[2]
+    if !digits?(ws) || String.to_i(ws) < 1 || String.to_i(ws) > 100
+      Array.push(errs, "line #{no}: bad weight #{ws}")
+    elsif Hash.key?(weights, wcat)
+      Array.push(errs, "line #{no}: duplicate category #{wcat}")
+    else
+      weights[wcat] = String.to_i(ws)
+    end
+  elsif Array.size(f) != 3
+    Array.push(errs, "line #{no}: bad format")
+  else
+    st, cat, sc = f
+    if !Hash.key?(weights, cat)
+      Array.push(errs, "line #{no}: unknown category #{cat}")
+    else
+      kind, pv, mv = parse_score(sc)
+      if kind == :bad
+        Array.push(errs, "line #{no}: bad score #{sc}")
+      elsif kind == :ex
+        known[st] = true
+      elsif kind == :miss
+        known[st] = true
+        cnt[[st, cat]] += 1
+        mxs[[st, cat]] += mv
+        miss[st] += 1
+      else
+        known[st] = true
+        cnt[[st, cat]] += 1
+        pts[[st, cat]] += pv
+        mxs[[st, cat]] += mv
+      end
+    end
+  end
+end
+
+names = Hash.keys(known)
+width = 7
+Array.each(names) { |n| width = String.size(n) if String.size(n) > width }
+
+withp = Array[]
+nop = Array[]
+tmap = Hash[]
+sumpct = 0r
+npct = 0
+cats = Hash.keys(weights)
+Array.each(names) do |n|
+  num = 0r
+  den = 0
+  Array.each(cats) do |c|
+    if cnt[[n, c]] > 0
+      wt = Hash.fetch(weights, c)
+      num = num + Rational(pts[[n, c]], mxs[[n, c]]) * wt
+      den += wt
+    end
+  end
+  if den > 0
+    pct = num * 100 / den
+    sumpct = sumpct + pct
+    npct += 1
+    t = Arithmetic.floor(pct * 10 + Rational(1, 2))
+    tmap[n] = t
+    Array.push(withp, [-t, n])
+  else
+    Array.push(nop, n)
+  end
+end
+
+Array.each(errs) { |e| puts(e) }
+puts(String.ljust("Student", width) + "  Score  G  Missing")
+Array.each(Array.sort(withp)) do |negt, n|
+  t = -negt
+  puts(String.ljust(n, width) + "  " + String.rjust(fmt1(t), 5) + "  " + grade(t) + "  " + String.rjust(Integer.to_s(miss[n]), 7))
+end
+Array.each(Array.sort(nop)) do |n|
+  puts(String.ljust(n, width) + "  " + String.rjust("n/a", 5) + "  -  " + String.rjust(Integer.to_s(miss[n]), 7))
+end
+if npct == 0
+  puts("class average: n/a")
+else
+  avg = Arithmetic.floor(sumpct / npct * 10 + Rational(1, 2))
+  puts("class average: #{fmt1(avg)}")
+end

@@ -1,0 +1,71 @@
+class Ep
+  attr_accessor count, n4, n5, bytes, dsum, dmax
+end
+
+def check(f)
+  return "wrong field count" if Array.size(f) != 6
+  ts, method, path, status, bytes, dur = f
+  return "bad timestamp" unless String.match?(ts, /\A\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\z/)
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], method)
+  return "bad path" unless String.start_with?(path, "/")
+  return "bad status" unless String.match?(status, /\A[1-5]\d\d\z/)
+  return "bad bytes" unless bytes == "-" || String.match?(bytes, /\A\d+\z/)
+  return "bad duration" unless String.match?(dur, /\A\d+\z/)
+  nil
+end
+
+lines = IO.readlines(IO.stdin)
+eps = Hash[]
+hours = Hash[]
+invalid = Tuple[]
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.chomp(raw)
+  next if String.empty?(String.strip(line))
+  f = String.split(line, " ")
+  reason = check(f)
+  if reason
+    Array.push(invalid, [n, reason])
+    next
+  end
+  ts, method, path, status, bytes, dur = f
+  key = method + " " + String.split(path, "?", 2)[0]
+  e = eps[key]
+  unless e
+    e = Ep.new(0, 0, 0, 0, 0, 0)
+    eps[key] = e
+  end
+  Ep.set_count(e, Ep.count(e) + 1)
+  st = String.to_i(status)
+  Ep.set_n4(e, Ep.n4(e) + 1) if st >= 400 && st <= 499
+  Ep.set_n5(e, Ep.n5(e) + 1) if st >= 500
+  Ep.set_bytes(e, Ep.bytes(e) + String.to_i(bytes)) unless bytes == "-"
+  d = String.to_i(dur)
+  Ep.set_dsum(e, Ep.dsum(e) + d)
+  Ep.set_dmax(e, d) if d > Ep.dmax(e)
+  h = ts[0, 13]
+  hours[h] = (hours[h] || 0) + 1
+end
+
+if Hash.empty?(eps)
+  puts("no valid requests")
+else
+  keys = Array.sort_by(Hash.keys(eps)) { |k| [-Ep.count(eps[k]), k] }
+  w = Array.max(Array.map(keys) { |k| String.size(k) })
+  w = 8 if w < 8
+  puts(format("%-#{w}s %5s %4s %4s %8s %7s %6s", "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  Array.each(keys) do |k|
+    e = eps[k]
+    c = Ep.count(e)
+    t = (Ep.dsum(e) * 20 + c) / (2 * c)
+    avg = "#{t / 10}.#{t % 10}"
+    puts(format("%-#{w}s %5d %4d %4d %8d %7s %6d", k, c, Ep.n4(e), Ep.n5(e), Ep.bytes(e), avg, Ep.dmax(e)))
+  end
+  hk = Array.sort(Hash.keys(hours))
+  best = hk[0]
+  Array.each(hk) { |h| best = h if hours[h] > hours[best] }
+  puts("busiest hour: #{best[0, 10]} #{best[11, 2]}:00 (#{hours[best]} requests)")
+end
+puts("invalid lines: #{Array.size(invalid)}")
+Array.each(invalid) { |ln, r| puts("  line #{ln}: #{r}") }

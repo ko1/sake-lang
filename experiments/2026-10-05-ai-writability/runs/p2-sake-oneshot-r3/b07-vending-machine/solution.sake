@@ -1,0 +1,158 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def all_coins = Array[200, 100, 50, 25, 10, 5]
+
+def is_money(s) = String.match?(s, /\A\d+\.\d{2}\z/)
+def to_cents(s) = String.to_i(String.delete(s, "."))
+
+def coin_value(s)
+  return 0 unless is_money(s)
+  c = to_cents(s)
+  Array.include?(all_coins, c) ? c : 0
+end
+
+def count_ok(s, mx) = String.match?(s, /\A\d+\z/) && String.to_i(s) <= mx
+
+def arity(cmd)
+  if cmd == "SLOT"
+    5
+  elsif cmd == "TUBE"
+    3
+  elsif cmd == "COIN" || cmd == "SELECT"
+    2
+  elsif cmd == "CANCEL"
+    1
+  else
+    0
+  end
+end
+
+def field_error(cmd, f)
+  if cmd == "SLOT"
+    return "bad slot" unless String.match?(f[1], /\A[A-Z]\d\z/)
+    return "bad name" unless String.match?(f[2], /\A[a-z]{1,12}\z/)
+    return "bad money" unless is_money(f[3])
+    return "bad count" unless count_ok(f[4], 99)
+  elsif cmd == "TUBE"
+    return "bad coin" unless coin_value(f[1]) > 0
+    return "bad count" unless count_ok(f[2], 999)
+  elsif cmd == "COIN"
+    return "bad money" unless is_money(f[1])
+  end
+  nil
+end
+
+lines = IO.readlines(IO.stdin)
+credit = 0
+inserted = Array[]
+tubes = Hash[]
+Array.each(all_coins) { |cn| tubes[cn] = 0 }
+slot_name = Hash[]
+slot_price = Hash[]
+slot_count = Hash[]
+sales_n = Hash.new(0)
+sales_r = Hash.new(0)
+
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  next if line == ""
+  f = String.split(line, /\s+/)
+  cmd = f[0]
+  want = arity(cmd)
+  if want == 0
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  err = field_error(cmd, f)
+  if err
+    puts("line #{n}: error: #{err}")
+    next
+  end
+
+  if cmd == "SLOT"
+    code = f[1]
+    slot_name[code] = f[2]
+    slot_price[code] = to_cents(f[3])
+    slot_count[code] = String.to_i(f[4])
+  elsif cmd == "TUBE"
+    coin = coin_value(f[1])
+    tubes[coin] += String.to_i(f[2])
+  elsif cmd == "COIN"
+    coin = coin_value(f[1])
+    if coin == 0
+      puts("rejected #{money(to_cents(f[1]))}")
+    elsif credit + coin > 500
+      puts("rejected #{money(coin)} (credit limit)")
+    else
+      tubes[coin] += 1
+      Array.push(inserted, coin)
+      credit += coin
+      puts("credit #{money(credit)}")
+    end
+  elsif cmd == "SELECT"
+    code = f[1]
+    if !Hash.key?(slot_name, code)
+      puts("no slot #{code}")
+    elsif slot_count[code] == 0
+      puts("sold out #{code}")
+    elsif credit < slot_price[code]
+      puts("insert #{money(slot_price[code] - credit)} more")
+    else
+      change = credit - slot_price[code]
+      left = change
+      paid = Array[]
+      Array.each(all_coins) do |cv|
+        k = left / cv
+        avail = tubes[cv]
+        k = avail if k > avail
+        Integer.times(k) { Array.push(paid, cv) }
+        left -= k * cv
+      end
+      if left != 0
+        puts("exact change needed")
+      else
+        Array.each(paid) { |pc| tubes[pc] -= 1 }
+        slot_count[code] -= 1
+        nm = slot_name[code]
+        sales_n[nm] += 1
+        sales_r[nm] += slot_price[code]
+        credit = 0
+        Array.clear(inserted)
+        msg = "vend #{nm}, change #{money(change)}"
+        if change != 0
+          lst = Array.join(Array.map(paid) { |pc| money(pc) }, " ")
+          msg = msg + " [" + lst + "]"
+        end
+        puts(msg)
+      end
+    end
+  else
+    if credit == 0
+      puts("nothing to return")
+    else
+      lst = Array.join(Array.map(inserted) { |pc| money(pc) }, " ")
+      Array.each(inserted) { |pc| tubes[pc] -= 1 }
+      puts("returned #{money(credit)} [#{lst}]")
+      credit = 0
+      Array.clear(inserted)
+    end
+  end
+end
+
+puts("credit #{money(credit)} kept") if credit != 0
+puts("sales:")
+names = Array.sort_by(Hash.keys(sales_n)) { |nm| [0 - sales_r[nm], nm] }
+if Array.empty?(names)
+  puts("  none")
+else
+  Array.each(names) do |nm|
+    puts(format("  %-12s %3d %8s", nm, sales_n[nm], money(sales_r[nm])))
+  end
+end
+tl = Array.map(Array.reverse(all_coins)) { |cv| "#{money(cv)}x#{tubes[cv]}" }
+puts("tubes: " + Array.join(tl, " "))

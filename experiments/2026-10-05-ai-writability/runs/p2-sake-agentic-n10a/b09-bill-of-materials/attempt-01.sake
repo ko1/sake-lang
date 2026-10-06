@@ -1,0 +1,136 @@
+Def = Struct.new(:kind, :cost, :comps)
+Comp = Struct.new(:name, :qty)
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+def name_ok?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+def money?(s) = String.match?(s, /\A\d+\.\d\d\z/)
+def cents(s) = String.to_i(String.delete(s, "."))
+
+def check(defs, ok, path, name, parent)
+  d = defs[name]
+  if d == nil
+    return parent == nil ? "unknown item #{name}" : "unknown item #{name} in #{parent}"
+  end
+  return nil if Set.include?(ok, name)
+  k = Array.index(path, name)
+  if k != nil
+    cyc = Array.dup(path[k..-1])
+    Array.push(cyc, name)
+    return "cycle " + Array.join(cyc, " > ")
+  end
+  Array.push(path, name)
+  Array.each(Def.comps(d)) do |c|
+    r = check(defs, ok, path, Comp.name(c), name)
+    return r if r != nil
+  end
+  Array.pop(path)
+  Set.add(ok, name)
+  nil
+end
+
+def unit(defs, memo, name)
+  m = memo[name]
+  return m if m != nil
+  d = defs[name]
+  total = Def.cost(d)
+  Array.each(Def.comps(d)) { |c| total += Comp.qty(c) * unit(defs, memo, Comp.name(c)) }
+  memo[name] = total
+  total
+end
+
+def emit(defs, memo, parts, name, qty, depth)
+  u = unit(defs, memo, name)
+  puts("#{String.*("  ", depth)}#{qty} x #{name} = #{money(qty * u)}")
+  d = defs[name]
+  if Def.kind(d) == :part
+    parts[name] += qty
+  else
+    Array.each(Def.comps(d)) { |c| emit(defs, memo, parts, Comp.name(c), qty * Comp.qty(c), depth + 1) }
+  end
+  nil
+end
+
+defs = Hash[]
+text = IO.read(IO.stdin)
+Array.each_with_index(String.split(text, "\n")) do |line, i|
+  n = i + 1
+  f = String.split(String.strip(line), " ")
+  next if Array.size(f) == 0
+  cmd = f[0]
+  sz = Array.size(f)
+  unless cmd == "PART" || cmd == "ASSY" || cmd == "BUILD"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if (cmd == "PART" && sz != 3) || (cmd == "ASSY" && sz < 4) || (cmd == "BUILD" && sz != 3)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  name = f[1]
+  unless name_ok?(name)
+    puts("line #{n}: error: bad name")
+    next
+  end
+  if cmd == "BUILD"
+    unless String.match?(f[2], /\A\d+\z/) && String.to_i(f[2]) >= 1 && String.to_i(f[2]) <= 1000
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    err = check(defs, Set[], String[], name, nil)
+    if err != nil
+      puts("line #{n}: cannot build: #{err}")
+      next
+    end
+    parts = Hash.new(0)
+    memo = Hash[]
+    emit(defs, memo, parts, name, String.to_i(f[2]), 0)
+    puts("parts:")
+    Array.each(Array.sort_by(Hash.keys(parts)) { |k| [-parts[k], k] }) do |k|
+      puts("  #{k} x#{parts[k]} = #{money(parts[k] * unit(defs, memo, k))}")
+    end
+    next
+  end
+  unless money?(f[2])
+    puts("line #{n}: error: bad cost")
+    next
+  end
+  if cmd == "PART"
+    if defs[name] != nil
+      puts("line #{n}: error: duplicate #{name}")
+    else
+      defs[name] = Def.new(:part, cents(f[2]), Comp[])
+    end
+    next
+  end
+  comps = Comp[]
+  bad = nil
+  Array.each(f[3..-1]) do |tok|
+    m = String.match(tok, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+    q = m == nil ? 0 : String.to_i(MatchData.captures(m)[1])
+    if m == nil || q < 1 || q > 999
+      bad = tok
+      break
+    end
+    Array.push(comps, Comp.new(MatchData.captures(m)[0], q))
+  end
+  if bad != nil
+    puts("line #{n}: error: bad component #{bad}")
+    next
+  end
+  seen = Set[]
+  rep = nil
+  Array.each(comps) do |c|
+    if Set.include?(seen, Comp.name(c))
+      rep = Comp.name(c)
+      break
+    end
+    Set.add(seen, Comp.name(c))
+  end
+  if rep != nil
+    puts("line #{n}: error: repeated component #{rep}")
+  elsif defs[name] != nil
+    puts("line #{n}: error: duplicate #{name}")
+  else
+    defs[name] = Def.new(:assy, cents(f[2]), comps)
+  end
+end

@@ -1,0 +1,141 @@
+def fmt_size(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  unit = "K"
+  nxt = "M"
+  if s >= 1024 * 1024 * 1024
+    u = 1024 * 1024 * 1024
+    unit = "G"
+    nxt = "T"
+  elsif s >= 1024 * 1024
+    u = 1024 * 1024
+    unit = "M"
+    nxt = "G"
+  end
+  t = (20 * s + u) / (2 * u)
+  if t < 100
+    "#{t / 10}.#{t % 10}#{unit}"
+  else
+    n = (2 * s + u) / (2 * u)
+    if n == 1024 && unit != "G"
+      "1.0#{nxt}"
+    else
+      "#{n}#{unit}"
+    end
+  end
+end
+
+def last_comp(path)
+  parts = String.split(path, "/")
+  parts[Array.size(parts) - 1]
+end
+
+def render(children, files, dsz, path, depth, maxd, thr)
+  return if depth >= maxd
+  kids = children[path]
+  return if kids == nil
+  ents = Tuple[]
+  Array.each(kids) do |c|
+    isdir = files[c] == nil
+    size = isdir ? dsz[c] : files[c]
+    Array.push(ents, [size, last_comp(c), c, isdir])
+  end
+  ents = Array.sort_by(ents) { |e| [-e[0], e[1]] }
+  small = 0
+  stotal = 0
+  Array.each(ents) do |e|
+    size, name, c, isdir = e
+    if size < thr
+      small += 1
+      stotal += size
+    else
+      puts(format("%6s  %s%s", fmt_size(size), String.*("  ", depth + 1), isdir ? "#{name}/" : name))
+      render(children, files, dsz, c, depth + 1, maxd, thr) if isdir
+    end
+  end
+  if small > 0
+    puts(format("%6s  %s%s", fmt_size(stotal), String.*("  ", depth + 1), "(#{small} smaller)"))
+  end
+end
+
+lines = IO.readlines(IO.stdin)
+head = Array.size(lines) > 0 ? String.split(lines[0]) : Array[]
+ok = Array.size(head) == 4 && head[0] == "depth" && head[2] == "threshold" && String.match?(head[1], /\A[0-9]+\z/) && String.match?(head[3], /\A[0-9]+\z/)
+unless ok
+  puts("bad header")
+  exit(0)
+end
+maxd = String.to_i(head[1])
+thr = String.to_i(head[3])
+
+files = Hash.new
+dirs = Hash.new
+children = Hash.new
+dsz = Hash.new(0)
+total = 0
+k = 1
+while k < Array.size(lines)
+  text = String.chomp(lines[k])
+  toks = String.split(text)
+  no = k + 1
+  k += 1
+  next if Array.size(toks) == 0
+  ok = Array.size(toks) == 2 && String.match?(toks[0], /\A[0-9]+\z/) && String.size(toks[0]) <= 14
+  size = 0
+  path = ""
+  comps = Array[]
+  if ok
+    size = String.to_i(toks[0])
+    path = toks[1]
+    ok = size <= 10000000000000 && !String.start_with?(path, "/") && !String.end_with?(path, "/") && !String.include?(path, "//")
+  end
+  if ok
+    comps = String.split(path, "/")
+    ok = !Array.any?(comps) { |c| c == "." || c == ".." }
+  end
+  unless ok
+    puts("line #{no}: malformed")
+    next
+  end
+  if files[path] != nil
+    puts("line #{no}: duplicate #{path}")
+    next
+  end
+  prefixes = Array[]
+  acc = ""
+  i = 0
+  while i < Array.size(comps) - 1
+    acc = i == 0 ? comps[0] : "#{acc}/#{comps[i]}"
+    Array.push(prefixes, acc)
+    i += 1
+  end
+  if dirs[path] != nil || Array.any?(prefixes) { |pf| files[pf] != nil }
+    puts("line #{no}: conflict #{path}")
+    next
+  end
+  parent = ""
+  Array.each(prefixes) do |pf|
+    if dirs[pf] == nil
+      dirs[pf] = true
+      kids = children[parent]
+      if kids == nil
+        kids = String[]
+        children[parent] = kids
+      end
+      Array.push(kids, pf)
+    end
+    dsz[pf] += size
+    parent = pf
+  end
+  kids = children[parent]
+  if kids == nil
+    kids = String[]
+    children[parent] = kids
+  end
+  Array.push(kids, path)
+  files[path] = size
+  total += size
+end
+
+puts(format("%6s  %s", fmt_size(total), "."))
+render(children, files, dsz, "", 0, maxd, thr)

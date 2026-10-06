@@ -1,0 +1,133 @@
+def grade(t)
+  if t >= 900
+    "A"
+  elsif t >= 800
+    "B"
+  elsif t >= 700
+    "C"
+  elsif t >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+def tenths_text(t) = "#{t / 10}.#{t % 10}"
+
+lines = IO.readlines(IO.stdin)
+weights = Hash[]
+pts = Hash.new(0)
+mx = Hash.new(0)
+cnt = Hash.new(0)
+miss = Hash.new(0)
+known = Hash[]
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line, /\s+/)
+  if Array.size(f) == 3 && f[0] == "weight"
+    cat = f[1]
+    wstr = f[2]
+    if !String.match?(wstr, /\A\d+\z/) || String.to_i(wstr) < 1 || String.to_i(wstr) > 100
+      puts("line #{n}: bad weight #{wstr}")
+    elsif Hash.key?(weights, cat)
+      puts("line #{n}: duplicate category #{cat}")
+    else
+      weights[cat] = String.to_i(wstr)
+    end
+    next
+  end
+  if Array.size(f) != 3
+    puts("line #{n}: bad format")
+    next
+  end
+  st, cat, sc = f
+  unless Hash.key?(weights, cat)
+    puts("line #{n}: unknown category #{cat}")
+    next
+  end
+  m = String.match(sc, /\A(\d+|EX|-)\/(\d+)\z/)
+  if m == nil
+    puts("line #{n}: bad score #{sc}")
+    next
+  end
+  ps, ms = MatchData.captures(m)
+  mval = String.to_i(ms)
+  if mval <= 0
+    puts("line #{n}: bad score #{sc}")
+    next
+  end
+  k = [st, cat]
+  if ps == "EX"
+    known[st] = true
+  elsif ps == "-"
+    known[st] = true
+    miss[st] += 1
+    mx[k] += mval
+    cnt[k] += 1
+  else
+    pval = String.to_i(ps)
+    if pval > mval
+      puts("line #{n}: bad score #{sc}")
+      next
+    end
+    known[st] = true
+    pts[k] += pval
+    mx[k] += mval
+    cnt[k] += 1
+  end
+end
+
+names = Hash.keys(known)
+width = 7
+Array.each(names) { |nm| width = String.size(nm) if String.size(nm) > width }
+
+pcts = Hash[]
+Array.each(names) do |st|
+  num = Rational(0, 1)
+  den = 0
+  Hash.each(weights) do |cat, wt|
+    kk = [st, cat]
+    if cnt[kk] > 0
+      num = num + wt * Rational(pts[kk], mx[kk])
+      den += wt
+    end
+  end
+  pcts[st] = num * 100 / den if den > 0
+end
+
+withp = Array[]
+without = Array[]
+Array.each(names) do |st|
+  if Hash.key?(pcts, st)
+    pr = pcts[st]
+    tt = Rational.floor(pr * 10 + Rational(1, 2))
+    Array.push(withp, [st, tt])
+  else
+    Array.push(without, st)
+  end
+end
+withp = Array.sort_by(withp) { |st, tt| [-tt, st] }
+without = Array.sort(without)
+
+puts(String.ljust("Student", width) + "  Score  G  Missing")
+Array.each(withp) do |st, tt|
+  mc = miss[st]
+  puts(String.ljust(st, width) + "  " + String.rjust(tenths_text(tt), 5) + "  " + grade(tt) + "  " + String.rjust("#{mc}", 7))
+end
+Array.each(without) do |st|
+  mc = miss[st]
+  puts(String.ljust(st, width) + "  " + String.rjust("n/a", 5) + "  -  " + String.rjust("#{mc}", 7))
+end
+
+if Hash.empty?(pcts)
+  puts("class average: n/a")
+else
+  total = Rational(0, 1)
+  Hash.each(pcts) { |st, v| total = total + v }
+  avg = total / Hash.size(pcts)
+  at = Rational.floor(avg * 10 + Rational(1, 2))
+  puts("class average: #{tenths_text(at)}")
+end

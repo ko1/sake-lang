@@ -1,0 +1,133 @@
+def one = Rational(1, 1)
+def zero = Rational(0, 1)
+
+def int?(s) = String.match?(s, /\A\d+\z/)
+def frac?(s) = String.match?(s, /\A\d+\/\d+\z/)
+def dec?(s) = String.match?(s, /\A\d+\.\d+\z/)
+
+# Rational for an integer / decimal / fraction field, nil if malformed
+def parse_one(s)
+  if int?(s)
+    Rational(String.to_i(s), 1)
+  elsif dec?(s)
+    parts = String.split(s, ".")
+    Rational(String.to_i(parts[0] + parts[1]), 10 ** String.size(parts[1]))
+  elsif frac?(s)
+    parts = String.split(s, "/")
+    d = String.to_i(parts[1])
+    d == 0 ? nil : Rational(String.to_i(parts[0]), d)
+  else
+    nil
+  end
+end
+
+def fmt(x)
+  d = Rational.denominator(x)
+  if d <= 8
+    whole = Rational.floor(x)
+    fr = x - whole
+    if Rational.numerator(fr) == 0
+      Integer.to_s(whole)
+    elsif whole == 0
+      "#{Rational.numerator(fr)}/#{d}"
+    else
+      "#{whole} #{Rational.numerator(fr)}/#{d}"
+    end
+  else
+    c = Rational.floor(x * 100 + Rational(1, 2))
+    "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+  end
+end
+
+def small?(x) = Rational.denominator(x) <= 4
+
+def show(a, group)
+  case group
+  in :spoon
+    cups = a / 48
+    tbsp = a / 3
+    if cups >= 1 && small?(cups)
+      "#{fmt(cups)} cup"
+    elsif tbsp >= 1 && small?(tbsp)
+      "#{fmt(tbsp)} tbsp"
+    else
+      "#{fmt(a)} tsp"
+    end
+  in :g
+    a >= 1000 ? "#{fmt(a / 1000)} kg" : "#{fmt(a)} g"
+  in :ml
+    a >= 1000 ? "#{fmt(a / 1000)} l" : "#{fmt(a)} ml"
+  else
+    Integer.to_s(Rational.ceil(a))
+  end
+end
+
+text = IO.read(IO.stdin)
+lines = String.split(text, "\n")
+h = lines[0] == nil ? Array[] : String.split(String.strip(lines[0]), " ")
+unless Array.size(h) == 4 && h[0] == "SERVES" && h[2] == "->" && int?(h[1]) && int?(h[3]) &&
+       String.to_i(h[1]) >= 1 && String.to_i(h[1]) <= 100 && String.to_i(h[3]) >= 1 && String.to_i(h[3]) <= 100
+  puts("line 1: error: bad servings")
+  exit
+end
+factor = Rational(String.to_i(h[3]), String.to_i(h[1]))
+puts("serves #{h[3]} (x #{fmt(factor)})")
+
+order = Array[]
+sums = Hash[]
+Array.each_with_index(lines) do |line, i|
+  next if i == 0
+  n = i + 1
+  f = String.split(String.strip(line), " ")
+  next if Array.size(f) == 0 || String.start_with?(f[0], "#")
+  q = parse_one(f[0])
+  used = 1
+  if q != nil && int?(f[0]) && Array.size(f) > 1 && frac?(f[1])
+    fr = parse_one(f[1])
+    q = fr == nil ? nil : q + fr
+    used = 2
+  end
+  if q == nil || q <= 0
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  if Array.size(f) <= used
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  unit = f[used]
+  mult = 0
+  group = :count
+  case unit
+  in "tsp" then mult = 1; group = :spoon
+  in "tbsp" then mult = 3; group = :spoon
+  in "cup" then mult = 48; group = :spoon
+  in "g" then mult = 1; group = :g
+  in "kg" then mult = 1000; group = :g
+  in "ml" then mult = 1; group = :ml
+  in "l" then mult = 1000; group = :ml
+  in "-" then mult = 1; group = :count
+  else
+    puts("line #{n}: error: unknown unit #{unit}")
+    next
+  end
+  if Array.size(f) <= used + 1
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(f[(used + 1)..-1], " ")
+  key = [name, group]
+  amount = q * mult * factor
+  if sums[key] == nil
+    Array.push(order, key)
+    sums[key] = amount
+  else
+    sums[key] = sums[key] + amount
+  end
+end
+
+Array.each(order) do |key|
+  name, group = key
+  s = show(sums[key], group)
+  puts("#{s} #{name}")
+end

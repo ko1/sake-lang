@@ -1,0 +1,141 @@
+Emp = Struct.new(:id, :name, :rate, :shifts)
+Shift = Struct.new(:s, :e, :day, :worked)
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+def hm(m) = "#{m / 60}:#{String.rjust(Integer.to_s(m % 60), 2, "0")}"
+
+def days_from_civil(y0, m, d)
+  y = m <= 2 ? y0 - 1 : y0
+  era = y / 400
+  yoe = y - era * 400
+  doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1
+  doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+end
+
+def leap?(y) = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+# days since epoch, or nil when not a real date in 1970-2099
+def parse_date(s)
+  return nil unless String.match?(s, /\A\d{4}-\d{2}-\d{2}\z/)
+  y = String.to_i(s[0, 4])
+  m = String.to_i(s[5, 2])
+  d = String.to_i(s[8, 2])
+  return nil if y < 1970 || y > 2099 || m < 1 || m > 12 || d < 1
+  mdays = Array[31, leap?(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return nil if d > mdays[m - 1]
+  days_from_civil(y, m, d)
+end
+
+def parse_time(s)
+  return nil unless String.match?(s, /\A\d{2}:\d{2}\z/)
+  h = String.to_i(s[0, 2])
+  m = String.to_i(s[3, 2])
+  return nil if h > 23 || m > 59
+  h * 60 + m
+end
+
+emps = Hash[]
+text = IO.read(IO.stdin)
+Array.each_with_index(String.split(text, "\n")) do |line, i|
+  n = i + 1
+  f = String.split(String.strip(line), " ")
+  next if Array.size(f) == 0
+  cmd = f[0]
+  unless cmd == "EMP" || cmd == "SHIFT"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  sz = Array.size(f)
+  if (cmd == "EMP" && sz != 4) || (cmd == "SHIFT" && sz != 5 && sz != 6)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  unless String.match?(f[1], /\AE\d{3}\z/)
+    puts("line #{n}: error: bad id")
+    next
+  end
+  id = f[1]
+  if cmd == "EMP"
+    if !String.match?(f[2], /\A[A-Za-z]{1,10}\z/)
+      puts("line #{n}: error: bad name")
+    elsif !String.match?(f[3], /\A\d+\.\d\d\z/)
+      puts("line #{n}: error: bad rate")
+    elsif emps[id] != nil
+      puts("line #{n}: error: duplicate employee #{id}")
+    else
+      emps[id] = Emp.new(id, f[2], String.to_i(String.delete(f[3], ".")), Shift[])
+    end
+    next
+  end
+  emp = emps[id]
+  if emp == nil
+    puts("line #{n}: error: unknown employee #{id}")
+    next
+  end
+  day = parse_date(f[2])
+  if day == nil
+    puts("line #{n}: error: bad date")
+    next
+  end
+  st = parse_time(f[3])
+  en = parse_time(f[4])
+  if st == nil || en == nil
+    puts("line #{n}: error: bad time")
+    next
+  end
+  en += 1440 if en <= st
+  len = en - st
+  brk = 0
+  if sz == 6
+    if !String.match?(f[5], /\A\d+\z/) || String.to_i(f[5]) >= len
+      puts("line #{n}: error: bad break")
+      next
+    end
+    brk = String.to_i(f[5])
+  end
+  as = day * 1440 + st
+  ae = as + len
+  if Array.any?(Emp.shifts(emp)) { |x| as < Shift.e(x) && Shift.s(x) < ae }
+    puts("line #{n}: error: overlapping shift")
+    next
+  end
+  brk = 30 if len > 360 && brk < 30
+  Array.push(Emp.shifts(emp), Shift.new(as, ae, day, len - brk))
+end
+
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+treg = 0
+tot = 0
+tpay = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  emp = emps[id]
+  daytot = Hash.new(0)
+  wk = Hash.new(0)
+  reg = 0
+  ot = 0
+  Array.each(Array.sort_by(Emp.shifts(emp)) { |x| Shift.s(x) }) do |x|
+    w = Shift.worked(x)
+    before = daytot[Shift.day(x)]
+    over = before + w - 480
+    over = 0 if over < 0
+    ot1 = over < w ? over : w
+    daytot[Shift.day(x)] = before + w
+    rest = w - ot1
+    week = (Shift.day(x) + 3) / 7
+    wover = wk[week] + rest - 2400
+    wover = 0 if wover < 0
+    ot2 = wover < rest ? wover : rest
+    wk[week] += rest - ot2
+    reg += rest - ot2
+    ot += ot1 + ot2
+  end
+  r = Emp.rate(emp)
+  num = 2 * reg * r + 3 * ot * r
+  pay = (2 * num + 120) / 240
+  treg += reg
+  tot += ot
+  tpay += pay
+  puts(format("%-4s %-10s %8s %8s %10s", id, Emp.name(emp), hm(reg), hm(ot), money(pay)))
+end
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", hm(treg), hm(tot), money(tpay)))

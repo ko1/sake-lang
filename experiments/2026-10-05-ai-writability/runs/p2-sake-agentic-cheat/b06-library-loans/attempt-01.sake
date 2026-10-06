@@ -1,0 +1,174 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+def good_member(s) = String.match?(s, /\A[a-z]{1,12}\z/)
+def good_book(s) = String.match?(s, /\A[A-Z][A-Z0-9]{0,7}\z/)
+def good_amount(s) = String.match?(s, /\A[0-9]+(\.[0-9]{1,2})?\z/)
+def cents(s)
+  parts = String.split(s, ".")
+  whole = String.to_i(Array.fetch(parts, 0, "0"))
+  frac = String.to_i(String.ljust(Array.fetch(parts, 1, "0"), 2, "0"))
+  whole * 100 + frac
+end
+
+loan_member = Hash[]
+loan_due = Hash[]
+holds = Hash[]
+queues = Hash[]
+owed = Hash.new(0)
+seen = Hash[]
+today = 0
+n = 0
+while (line = gets)
+  n += 1
+  f = String.split(String.chomp(line), " ")
+  next if Array.empty?(f)
+  d = Array.fetch(f, 0, "")
+  unless String.match?(d, /\A[0-9]+\z/) && String.to_i(d) <= 100000
+    puts("line #{n}: error: bad day")
+    next
+  end
+  day = String.to_i(d)
+  if day < today
+    puts("line #{n}: error: day goes backwards")
+    next
+  end
+  today = day
+  cmd = Array.fetch(f, 1, "")
+  cnt = Array.size(f)
+  want = 0
+  if cmd == "CHECKOUT" || cmd == "RESERVE" || cmd == "PAY"
+    want = 4
+  elsif cmd == "RETURN"
+    want = 3
+  else
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if cnt != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "RETURN"
+    book = f[2]
+    unless good_book(book)
+      puts("line #{n}: error: bad book")
+      next
+    end
+    m = Hash.fetch(loan_member, book, "")
+    if m == ""
+      puts("line #{n}: refused: #{book} is not on loan")
+      next
+    end
+    due = Hash.fetch(loan_due, book, 0)
+    late = today - due
+    Hash.delete(loan_member, book)
+    Hash.delete(loan_due, book)
+    if late > 0
+      fine = Integer.clamp(late * 25, 0, 500)
+      owed[m] += fine
+      puts("#{m} returned #{book}, #{late} days late, fine #{money(fine)}")
+    else
+      puts("#{m} returned #{book}")
+    end
+    q = Hash.fetch(queues, book, String[])
+    unless Array.empty?(q)
+      nxt = Array.shift(q)
+      if nxt
+        holds[book] = nxt
+        puts("#{book} held for #{nxt}")
+      end
+    end
+    next
+  end
+  mem = f[2]
+  unless good_member(mem)
+    puts("line #{n}: error: bad member")
+    next
+  end
+  if cmd == "PAY"
+    a = f[3]
+    unless good_amount(a) && cents(a) > 0
+      puts("line #{n}: error: bad amount")
+      next
+    end
+    amt = cents(a)
+    o = owed[mem]
+    if amt > o
+      puts("line #{n}: refused: #{mem} owes only #{money(o)}")
+    else
+      owed[mem] = o - amt
+      puts("#{mem} paid #{money(amt)}, owes #{money(o - amt)}")
+    end
+    next
+  end
+  book = f[3]
+  unless good_book(book)
+    puts("line #{n}: error: bad book")
+    next
+  end
+  if cmd == "CHECKOUT"
+    if Hash.key?(loan_member, book)
+      puts("line #{n}: refused: #{book} is on loan")
+      next
+    end
+    h = Hash.fetch(holds, book, "")
+    if h != "" && h != mem
+      puts("line #{n}: refused: #{book} is held for #{h}")
+      next
+    end
+    mine = 0
+    overdue = false
+    Hash.each(loan_member) do |b, who|
+      if who == mem
+        mine += 1
+        overdue = true if Hash.fetch(loan_due, b, 0) < today
+      end
+    end
+    if overdue
+      puts("line #{n}: refused: #{mem} has overdue books")
+      next
+    end
+    if mine >= 3
+      puts("line #{n}: refused: #{mem} has 3 loans")
+      next
+    end
+    if owed[mem] >= 1000
+      puts("line #{n}: refused: #{mem} owes #{money(owed[mem])}")
+      next
+    end
+    loan_member[book] = mem
+    loan_due[book] = today + 14
+    Hash.delete(holds, book) if h == mem
+    seen[mem] = true
+    puts("#{mem} borrowed #{book}, due day #{today + 14}")
+  else
+    q = Hash.fetch(queues, book, String[])
+    if Hash.fetch(loan_member, book, "") == mem
+      puts("line #{n}: refused: #{mem} already has #{book}")
+    elsif Hash.fetch(holds, book, "") == mem || Array.include?(q, mem)
+      puts("line #{n}: refused: #{mem} already reserved #{book}")
+    elsif !Hash.key?(loan_member, book) && !Hash.key?(holds, book)
+      puts("line #{n}: refused: #{book} is available")
+    else
+      Array.push(q, mem)
+      queues[book] = q
+      seen[mem] = true
+      puts("reserved #{book} for #{mem} (position #{Array.size(q)})")
+    end
+  end
+end
+
+puts(format("%-12s %5s %8s", "member", "loans", "owes"))
+Array.each(Array.sort(Hash.keys(seen))) do |m|
+  c = Array.count(Hash.values(loan_member)) { |w| w == m }
+  puts(format("%-12s %5d %8s", m, c, money(owed[m])))
+end
+puts("overdue on day #{today}:")
+late_books = Array.select(Hash.keys(loan_due)) { |b| Hash.fetch(loan_due, b, 0) < today }
+if Array.empty?(late_books)
+  puts("  none")
+else
+  Array.each(Array.sort_by(late_books) { |b| [Hash.fetch(loan_due, b, 0), b] }) do |b|
+    due = Hash.fetch(loan_due, b, 0)
+    puts("  #{b} #{Hash.fetch(loan_member, b, "")} due #{due} (#{today - due} days)")
+  end
+end
