@@ -1,0 +1,129 @@
+class BadLine < Exception
+end
+
+class Shift
+  attr_reader day, start, length, worked
+  def from(s) = @day * 1440 + @start
+  def to(s) = from(s) + @length
+end
+
+class Employee
+  attr_reader id, name, rate, shifts
+  def initialize(e) = @shifts = Shift[]
+end
+
+def hm(min) = format("%d:%02d", min / 60, min % 60)
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def parse_day(s)
+  m = String.match(s, /\A(\d{4})-(\d\d)-(\d\d)\z/)
+  raise BadLine, "bad date" unless m
+  y = String.to_i(m[1] || "")
+  mo = String.to_i(m[2] || "")
+  d = String.to_i(m[3] || "")
+  ok = Integer.between?(y, 1970, 2099) && Integer.between?(mo, 1, 12) && Integer.between?(d, 1, 31)
+  raise BadLine, "bad date" unless ok
+  t = Time.new(y, mo, d, 0, 0, 0, "+00:00")
+  raise BadLine, "bad date" unless Time.month(t) == mo
+  Time.to_i(t) / 86_400
+end
+
+def parse_time(s)
+  m = String.match(s, /\A(\d\d):(\d\d)\z/)
+  raise BadLine, "bad time" unless m
+  h = String.to_i(m[1] || "")
+  mi = String.to_i(m[2] || "")
+  raise BadLine, "bad time" unless h < 24 && mi < 60
+  h * 60 + mi
+end
+
+def add_emp(emps, f)
+  raise BadLine, "wrong field count" unless Array.size(f) == 4
+  id = Array.fetch(f, 1)
+  name = Array.fetch(f, 2)
+  raise BadLine, "bad id" unless String.match?(id, /\AE\d{3,6}\z/)
+  raise BadLine, "bad name" unless String.match?(name, /\A[A-Za-z]{1,10}\z/)
+  m = String.match(Array.fetch(f, 3), /\A(\d+)\.(\d\d)\z/)
+  raise BadLine, "bad rate" unless m
+  num = String.to_i(String.slice(id, 1, 6))
+  raise BadLine, "duplicate employee #{id}" if Hash.key?(emps, num)
+  emps[num] = Employee.new(id, name, String.to_i(m[1] || "") * 100 + String.to_i(m[2] || ""))
+end
+
+def add_shift(emps, f)
+  raise BadLine, "wrong field count" unless Array.size(f) == 5 || Array.size(f) == 6
+  id = Array.fetch(f, 1)
+  raise BadLine, "bad id" unless String.match?(id, /\AE\d{3,6}\z/)
+  emp = emps[String.to_i(String.slice(id, 1, 6))]
+  raise BadLine, "unknown employee #{id}" unless emp
+  day = parse_day(Array.fetch(f, 2))
+  start = parse_time(Array.fetch(f, 3))
+  stop = parse_time(Array.fetch(f, 4))
+  length = stop > start ? stop - start : stop + 1440 - start
+  b = f[5] || "0"
+  raise BadLine, "bad break" unless String.match?(b, /\A\d+\z/) && String.to_i(b) < length
+  brk = String.to_i(b)
+  brk = 30 if length > 360 && brk < 30
+  s = Shift.new(day, start, length, length - brk)
+  overlap = Array.any?(Employee.shifts(emp)) { |o| Shift.from(o) < Shift.to(s) && Shift.from(s) < Shift.to(o) }
+  raise BadLine, "overlapping shift" if overlap
+  Array.push(Employee.shifts(emp), s)
+end
+
+# Splits worked minutes into regular and overtime: over 8h a day, then over 40h a Monday-based week.
+def split_pay(emp)
+  per_day = Hash.new(0)
+  per_week = Hash.new(0)
+  reg = 0
+  ot = 0
+  Array.each(Array.sort_by(Employee.shifts(emp)) { Shift.from(it) }) do |s|
+    day = Shift.day(s)
+    worked = Shift.worked(s)
+    r = Tuple.min([Tuple.max([480 - per_day[day], 0]), worked])
+    per_day[day] += worked
+    week = (day + 3) / 7
+    w = Tuple.min([Tuple.max([2400 - per_week[week], 0]), r])
+    per_week[week] += r
+    reg += w
+    ot += worked - w
+  end
+  [reg, ot]
+end
+
+emps = Hash[]
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  cmd = Array.fetch(f, 0)
+  begin
+    if cmd == "EMP"
+      add_emp(emps, f)
+    elsif cmd == "SHIFT"
+      add_shift(emps, f)
+    else
+      raise BadLine, "unknown command"
+    end
+  rescue BadLine => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  end
+end
+
+def row(id, name, reg, ot, pay) = puts(format("%-4s %-10s %8s %8s %10s", id, name, reg, ot, pay))
+
+row("id", "name", "regular", "overtime", "pay")
+treg = 0
+tot = 0
+tpay = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  e = Hash.fetch(emps, id)
+  reg, ot = split_pay(e)
+  rate = Employee.rate(e)
+  pay = (reg * rate * 2 + ot * rate * 3 + 60) / 120
+  treg += reg
+  tot += ot
+  tpay += pay
+  row(format("E%03d", id), Employee.name(e), hm(reg), hm(ot), money(pay))
+end
+row("", "total", hm(treg), hm(tot), money(tpay))

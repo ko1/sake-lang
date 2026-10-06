@@ -1,0 +1,162 @@
+class BadLine < Exception
+end
+
+class Refused < Exception
+end
+
+class Loan
+  attr_reader member, book, due
+end
+
+class Library
+  attr_reader loans, holds, queues, owes, members
+
+  def initialize(l)
+    @loans = Hash[]
+    @holds = Hash[]
+    @queues = Hash[]
+    @owes = Hash.new(0)
+    @members = Set[]
+  end
+
+  def queue(l, b)
+    @queues[b] = String[] unless Hash.key?(@queues, b)
+    Hash.fetch(@queues, b)
+  end
+
+  def loans_of(l, m) = Array.select(Hash.values(@loans)) { |x| Loan.member(x) == m }
+
+  def checkout(l, today, m, bs)
+    Array.each(bs) do |b|
+      raise Refused, "#{b} is on loan" if Hash.key?(@loans, b)
+      holder = @holds[b]
+      raise Refused, "#{b} is held for #{holder}" if holder && holder != m
+    end
+    mine = loans_of(l, m)
+    raise Refused, "#{m} has overdue books" if Array.any?(mine) { |x| today > Loan.due(x) }
+    raise Refused, "#{m} has #{Array.size(mine)} loans" if Array.size(mine) + Array.size(bs) > 3
+    raise Refused, "#{m} owes #{money(@owes[m])}" if @owes[m] >= 1000
+    Array.each(bs) do |b|
+      Hash.delete(@holds, b)
+      @loans[b] = Loan.new(m, b, today + 14)
+    end
+    Set.add(@members, m)
+    puts("#{m} borrowed #{Array.join(bs, ", ")}, due day #{today + 14}")
+  end
+
+  def return_book(l, today, bs)
+    Array.each(bs) { |b| raise Refused, "#{b} is not on loan" unless Hash.key?(@loans, b) }
+    Array.each(bs) do |b|
+      loan = Hash.fetch(@loans, b)
+      Hash.delete(@loans, b)
+      m = Loan.member(loan)
+      late = today - Loan.due(loan)
+      if late > 0
+        fine = Tuple.min([late * 25, 500])
+        @owes[m] += fine
+        puts("#{m} returned #{b}, #{late} days late, fine #{money(fine)}")
+      else
+        puts("#{m} returned #{b}")
+      end
+      nxt = Array.shift(queue(l, b))
+      if nxt
+        @holds[b] = nxt
+        puts("#{b} held for #{nxt}")
+      end
+    end
+  end
+
+  def reserve(l, m, b)
+    loan = @loans[b]
+    raise Refused, "#{m} already has #{b}" if loan && Loan.member(loan) == m
+    q = queue(l, b)
+    raise Refused, "#{m} already reserved #{b}" if @holds[b] == m || Array.include?(q, m)
+    raise Refused, "#{b} is available" unless loan || @holds[b]
+    Array.push(q, m)
+    Set.add(@members, m)
+    puts("reserved #{b} for #{m} (position #{Array.size(q)})")
+  end
+
+  def pay(l, m, amt)
+    raise Refused, "#{m} owes only #{money(@owes[m])}" if amt > @owes[m]
+    @owes[m] -= amt
+    puts("#{m} paid #{money(amt)}, owes #{money(@owes[m])}")
+  end
+end
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def member!(s)
+  raise BadLine, "bad member" unless String.match?(s, /\A[a-z]{1,12}\z/)
+  s
+end
+
+def book!(s)
+  raise BadLine, "bad book" unless String.match?(s, /\A[A-Z][A-Z0-9]{0,7}\z/)
+  s
+end
+
+def books!(s)
+  bs = String.split(s, ",", -1)
+  ok = Integer.between?(Array.size(bs), 1, 3) && Array.size(Array.uniq(bs)) == Array.size(bs)
+  raise BadLine, "bad book" unless ok
+  Array.each(bs) { |b| book!(b) }
+  bs
+end
+
+def amount!(s)
+  m = String.match(s, /\A(\d+)(?:\.(\d\d?))?\z/)
+  raise BadLine, "bad amount" unless m
+  c = String.to_i(m[1] || "") * 100 + String.to_i(String.ljust(m[2] || "", 2, "0"))
+  raise BadLine, "bad amount" if c == 0
+  c
+end
+
+def arity = once { Hash["CHECKOUT" => 4, "RETURN" => 3, "RESERVE" => 4, "PAY" => 4] }
+
+lib = Library.new
+today = 0
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  begin
+    d = Array.fetch(f, 0)
+    raise BadLine, "bad day" unless String.match?(d, /\A\d+\z/) && String.to_i(d) <= 100_000
+    raise BadLine, "day goes backwards" if String.to_i(d) < today
+    today = String.to_i(d)
+    cmd = f[1] || ""
+    n = arity[cmd]
+    raise BadLine, "unknown command" unless n
+    raise BadLine, "wrong field count" unless Array.size(f) == n
+    if cmd == "CHECKOUT"
+      m = member!(Array.fetch(f, 2))
+      Library.checkout(lib, today, m, books!(Array.fetch(f, 3)))
+    elsif cmd == "RETURN"
+      Library.return_book(lib, today, books!(Array.fetch(f, 2)))
+    elsif cmd == "RESERVE"
+      m = member!(Array.fetch(f, 2))
+      Library.reserve(lib, m, book!(Array.fetch(f, 3)))
+    else
+      m = member!(Array.fetch(f, 2))
+      Library.pay(lib, m, amount!(Array.fetch(f, 3)))
+    end
+  rescue BadLine => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  rescue Refused => e
+    puts("line #{lineno}: refused: #{Exception.message(e)}")
+  end
+end
+
+puts(format("%-12s %5s %8s", "member", "loans", "owes"))
+Array.each(Set.sort(Library.members(lib))) do |m|
+  owed = Library.owes(lib)[m]
+  puts(format("%-12s %5d %8s", m, Array.size(Library.loans_of(lib, m)), money(owed)))
+end
+puts("overdue on day #{today}:")
+late = Array.select(Hash.values(Library.loans(lib))) { |x| today > Loan.due(x) }
+puts("  none") if Array.empty?(late)
+Array.each(Array.sort_by(late) { |x| [Loan.due(x), Loan.book(x)] }) do |x|
+  puts("  #{Loan.book(x)} #{Loan.member(x)} due #{Loan.due(x)} (#{today - Loan.due(x)} days)")
+end

@@ -1,0 +1,146 @@
+# Weighted course grade report.
+class Student
+  attr_reader name, points, maxima
+  attr_accessor missing
+  def initialize(s)
+    @points = Hash.new(0r)
+    @maxima = Hash.new(0r)
+    @missing = 0
+  end
+
+  def add(s, cat, pts, max)
+    @points[cat] += pts
+    @maxima[cat] += max
+  end
+
+  # nil when no category has a counted entry
+  def percent(s, weights)
+    wsum = 0r
+    total = 0r
+    Hash.each(@maxima) do |cat, max|
+      w = Hash.fetch(weights, cat)
+      wsum += w
+      total += w * Hash.fetch(@points, cat) / max
+    end
+    return nil if wsum == 0
+    total * 100 / wsum
+  end
+end
+
+def tenths(r) = Rational.round(r * 10)
+
+def show(t) = format("%d.%d", t / 10, t % 10)
+
+def letter(t)
+  if t >= 900 then "A"
+  elsif t >= 800 then "B"
+  elsif t >= 700 then "C"
+  elsif t >= 600 then "D"
+  else "F"
+  end
+end
+
+# nil unless s is a number (digits, optional . and 1-2 digits)
+def num(s)
+  m = String.match(s, /\A(\d+)(?:\.(\d{1,2}))?\z/)
+  return nil unless m
+  ip = String.to_i(MatchData.[](m, 1))
+  fp = MatchData.[](m, 2)
+  return Rational(ip, 1) unless fp
+  Rational(ip * Integer.pow(10, String.size(fp)) + String.to_i(fp), Integer.pow(10, String.size(fp)))
+end
+
+def score_error(score)
+  m = String.match(score, /\A(\d[\d.]*|EX|-)\/(\d[\d.]*)\z/)
+  return [true, "", 0r] unless m
+  pts = MatchData.[](m, 1)
+  max = num(MatchData.[](m, 2))
+  return [true, "", 0r] if max == nil
+  return [true, "", 0r] if max <= 0
+  return [false, pts, max] if pts == "EX" || pts == "-"
+  pv = num(pts)
+  return [true, "", 0r] if pv == nil
+  return [true, "", 0r] if pv > max
+  [false, pts, max]
+end
+
+weights = Hash[]
+students = Hash[]
+errors = String[]
+no = 0
+while (raw = gets)
+  no += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line)
+  if f[0] == "weight" && Array.size(f) == 3
+    cat = Array.fetch(f, 1)
+    w = Array.fetch(f, 2)
+    wv = num(w)
+    if wv == nil || wv < 1 || wv > 100
+      Array.push(errors, "line #{no}: bad weight #{w}")
+    elsif Hash.key?(weights, cat)
+      Array.push(errors, "line #{no}: duplicate category #{cat}")
+    else
+      weights[cat] = wv
+    end
+    next
+  end
+  if Array.size(f) != 3
+    Array.push(errors, "line #{no}: bad format")
+    next
+  end
+  name, cat, score = Array.fetch(f, 0), Array.fetch(f, 1), Array.fetch(f, 2)
+  unless Hash.key?(weights, cat)
+    Array.push(errors, "line #{no}: unknown category #{cat}")
+    next
+  end
+  bad, pts, max = score_error(score)
+  if bad
+    Array.push(errors, "line #{no}: bad score #{score}")
+    next
+  end
+  st = students[name]
+  if st == nil
+    st = Student.new(name)
+    students[name] = st
+  end
+  next if pts == "EX"
+  if pts == "-"
+    Student.set_missing(st, Student.missing(st) + 1)
+    Student.add(st, cat, 0r, max)
+  else
+    Student.add(st, cat, num(pts), max)
+  end
+end
+
+Array.each(errors) { |e| puts(e) }
+width = 7
+Hash.each_key(students) { |n| width = Tuple.max([width, String.size(n)]) }
+puts("#{String.ljust("Student", width)}  Score  G  Missing")
+graded = Tuple[]
+ungraded = Student[]
+Hash.each_value(students) do |st|
+  pct = Student.percent(st, weights)
+  if pct
+    Array.push(graded, [st, pct])
+  else
+    Array.push(ungraded, st)
+  end
+end
+graded = Array.sort_by(graded) { |st, pct| [-tenths(pct), Student.name(st)] }
+Array.each(graded) do |st, pct|
+  t = tenths(pct)
+  miss = Integer.to_s(Student.missing(st))
+  puts("#{String.ljust(Student.name(st), width)}  #{String.rjust(show(t), 5)}  #{letter(t)}  #{String.rjust(miss, 7)}")
+end
+Array.each(Array.sort_by(ungraded) { |st| Student.name(st) }) do |st|
+  miss = Integer.to_s(Student.missing(st))
+  puts("#{String.ljust(Student.name(st), width)}    n/a  -  #{String.rjust(miss, 7)}")
+end
+if Array.empty?(graded)
+  puts("class average: n/a")
+else
+  avg = Array.sum(graded, 0r) { |st, pct| pct } / Array.size(graded)
+  puts("class average: #{show(tenths(avg))}")
+end

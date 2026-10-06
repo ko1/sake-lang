@@ -12,6 +12,24 @@ module AW
 
   module_function
 
+  MUTATIONS = [[/ < /, " <= "], [/ > /, " >= "], [/ <= /, " < "], [/ >= /, " > "], [/ \+ 1\b/, " + 2"], [/ - 1\b/, " - 2"],
+               [/ == /, " != "], [/\b0\b/, "1"]].freeze
+
+  # one-operator mutants of a reference (at most 4 per rule)
+  def mutants(src)
+    MUTATIONS.flat_map do |re, rep|
+      offs = []
+      src.scan(re) { offs << Regexp.last_match.offset(0) }
+      offs.first(4).map { |s, e| src[0...s] + rep + src[e..] }
+    end
+  end
+
+  # lines changed from a to b (diff's < and > lines)
+  def diff_lines(a, b)
+    out, _err, _st = run(["diff", a, b], "")
+    out.lines.count { _1.start_with?("< ", "> ", "<\n", ">\n") }
+  end
+
   # [stdout, stderr, status or :timeout]
   def run(cmd, input)
     out = err = +""

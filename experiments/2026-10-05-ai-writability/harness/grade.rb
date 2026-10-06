@@ -7,7 +7,7 @@ require_relative "common"
 ARGV.each do |work|
   meta = JSON.parse(File.read(File.join(work, "meta.json")))
   sol = Dir[File.join(work, "solution.{sake,rb}")].first
-  task_dir = File.join(AW::EXP, "tasks", meta.fetch("task"))
+  task_dir = File.join(AW::EXP, meta.fetch("dir") { "tasks/#{meta.fetch("task")}" }) # change tasks: "dir" = changes/cNN-*
   strict = meta.fetch("strict", 1)
   rec = meta.merge("work" => work)
   if sol.nil?
@@ -22,6 +22,7 @@ ARGV.each do |work|
                "ok_without_checker" => rs0.all? { _1[:ok] }, "attempts" => attempts.size,
                "sec_total" => rs.sum { _1[:sec] }.round(3), "sec_max" => rs.map { _1[:sec] }.max.round(3),
                "sec_total_nocheck" => rs0.sum { _1[:sec] }.round(3), # Sake: the same runs at --strict=0 (no checker)
+               "diff_lines" => meta["base_ref"] && AW.diff_lines(File.join(AW::EXP, meta["base_ref"]), sol), # change tasks
                "failures" => rs.reject { _1[:ok] }.map { { name: _1[:name], status: _1[:status], err: _1[:err][0, 300] } })
   end
   puts JSON.generate(rec)

@@ -1,0 +1,101 @@
+class BadLine < Exception
+end
+
+# unit => [group, size in the group's base unit]
+def units = once do
+  Hash["tsp" => [:spoon, 1], "tbsp" => [:spoon, 3], "cup" => [:spoon, 48], "g" => [:mass, 1],
+       "kg" => [:mass, 1000], "ml" => [:volume, 1], "l" => [:volume, 1000], "-" => [:count, 1]]
+end
+
+def parse_number(s)
+  return Rational(String.to_i(s), 1) if String.match?(s, /\A\d+\z/)
+  return String.to_r(s) if String.match?(s, /\A\d+\.\d+\z/)
+  m = String.match(s, %r{\A(\d+)/(\d+)\z})
+  raise BadLine, "bad quantity" unless m
+  d = String.to_i(m[2] || "")
+  raise BadLine, "bad quantity" if d == 0
+  Rational(String.to_i(m[1] || ""), d)
+end
+
+def show(q)
+  d = Rational.denominator(q)
+  if d <= 8
+    whole, rest = Integer.divmod(Rational.numerator(q), d)
+    return Integer.to_s(whole) if rest == 0
+    return "#{rest}/#{d}" if whole == 0
+    "#{whole} #{rest}/#{d}"
+  else
+    cents = Rational.floor(q * 100 + Rational(1, 2))
+    format("%d.%02d", cents / 100, cents % 100)
+  end
+end
+
+def nice?(q) = q >= 1 && Rational.denominator(q) <= 4
+
+def present(group, base)
+  case group
+  in :spoon
+    return "#{show(base / 48)} cup" if nice?(base / 48)
+    return "#{show(base / 3)} tbsp" if nice?(base / 3)
+    "#{show(base)} tsp"
+  in :mass then base >= 1000 ? "#{show(base / 1000)} kg" : "#{show(base)} g"
+  in :volume then base >= 1000 ? "#{show(base / 1000)} l" : "#{show(base)} ml"
+  in :count then Integer.to_s(Rational.ceil(base))
+  end
+end
+
+def ingredient(totals, sections, f, factor)
+  first = Array.shift(f) || ""
+  qty = parse_number(first)
+  nxt = f[0]
+  if String.match?(first, /\A\d+\z/) && nxt && String.match?(nxt, %r{\A\d+/\d+\z})
+    qty += parse_number(nxt)
+    Array.shift(f)
+  end
+  raise BadLine, "bad quantity" if qty == 0
+  unit = Array.shift(f)
+  raise BadLine, "missing unit" unless unit
+  raise BadLine, "unknown unit #{unit}" unless Hash.key?(units, unit)
+  group, size = Hash.fetch(units, unit)
+  sec = ""
+  if !Array.empty?(f) && String.start_with?(Array.last(f), "@")
+    tag = Array.pop(f) || ""
+    raise BadLine, "bad section" unless String.match?(tag, /\A@[a-z]{1,12}\z/)
+    sec = String.slice(tag, 1, 12)
+  end
+  raise BadLine, "missing name" if Array.empty?(f)
+  Array.push(sections, sec) unless Array.include?(sections, sec)
+  key = [Array.join(f, " "), group, sec]
+  totals[key] = Hash.fetch(totals, key, Rational(0, 1)) + qty * size * factor
+end
+
+lines = IO.readlines(IO.stdin)
+head = String.split(lines[0] || "", " ")
+ok = Array.size(head) == 4 && head[0] == "SERVES" && head[2] == "->" &&
+     Array.all?(Array[head[1] || "", head[3] || ""]) { |s| String.match?(s, /\A\d+\z/) && Integer.between?(String.to_i(s), 1, 100) }
+unless ok
+  puts("line 1: error: bad servings")
+  exit
+end
+m = String.to_i(head[3] || "")
+factor = Rational(m, String.to_i(head[1] || ""))
+puts("serves #{m} (x #{show(factor)})")
+
+totals = Hash[]
+sections = Array[""]
+Array.each_with_index(lines) do |line, i|
+  next if i == 0
+  f = String.split(line, " ")
+  next if Array.empty?(f) || String.start_with?(Array.fetch(f, 0), "#")
+  begin
+    ingredient(totals, sections, f, factor)
+  rescue BadLine => e
+    puts("line #{i + 1}: error: #{Exception.message(e)}")
+  end
+end
+Array.each(sections) do |sec|
+  puts("[#{sec}]") unless sec == ""
+  Hash.each(totals) do |(name, group, s), base|
+    puts("#{present(group, base)} #{name}") if s == sec
+  end
+end

@@ -1,0 +1,117 @@
+class Node
+  attr_reader name, size, children    # children: nil for a file, a Hash for a directory
+
+  def dir(name) = Node.new(name, 0, Hash[])
+  def file(name, size) = Node.new(name, size, nil)
+  def dir?(n) = @children != nil
+  def label(n) = dir?(n) ? "#{@name}/" : @name
+
+  def total(n)
+    kids = @children
+    return (@size < 0 ? 0 : @size) unless kids
+    Array.sum(Hash.values(kids)) { |c| total(c) }
+  end
+
+  def unknown?(n)
+    kids = @children
+    return @size < 0 unless kids
+    Array.any?(Hash.values(kids)) { |c| unknown?(c) }
+  end
+end
+
+def units = Array["B", "K", "M", "G"]
+
+def round_div(a, b) = (2 * a + b) / (2 * b)
+
+def human(s)
+  k = 0
+  k += 1 while k < 3 && s >= 1024 ** (k + 1)
+  return "#{s}B" if k == 0
+  u = 1024 ** k
+  tenths = round_div(s * 10, u)
+  return "#{tenths / 10}.#{tenths % 10}#{units[k]}" if tenths < 100
+  n = round_div(s, u)
+  return "1.0#{units[k + 1]}" if n >= 1024 && k < 3
+  "#{n}#{units[k]}"
+end
+
+def show(_size, plus, depth, text)
+  puts(format("%6s  %s%s", plus, "  " * depth, text))
+end
+
+def size_text(node)
+  if Node.dir?(node)
+    Node.unknown?(node) ? "#{human(Node.total(node))}+" : human(Node.total(node))
+  else
+    Node.unknown?(node) ? "?" : human(Node.total(node))
+  end
+end
+
+def print_tree(node, depth, max_depth, threshold)
+  show(Node.total(node), size_text(node), depth, depth == 0 ? "." : Node.label(node))
+  kids = Node.children(node)
+  return unless kids && depth < max_depth
+  sorted = Array.sort_by(Hash.values(kids)) { |c| [-Node.total(c), Node.name(c)] }
+  big, small = Array.partition(sorted) { |c| Node.unknown?(c) && !Node.dir?(c) || Node.total(c) >= threshold }
+  Array.each(big) { |c| print_tree(c, depth + 1, max_depth, threshold) }
+  unless Array.empty?(small)
+    tot = human(Array.sum(small) { |c| Node.total(c) })
+    tot = "#{tot}+" if Array.any?(small) { |c| Node.unknown?(c) }
+    show(0, tot, depth + 1, "(#{Array.size(small)} smaller)")
+  end
+end
+
+def number?(s) = String.match?(s, /\A\d+\z/)
+
+def valid_path?(parts) = Array.none?(parts) { |p| String.empty?(p) || p == "." || p == ".." }
+
+# Adds the file at path below the directory entries top; returns the message for a rejected line, or nil.
+def add_file(top, path, parts, size)
+  entries = top
+  *parents, base = parts
+  Array.each(parents) do |p|
+    child = entries[p]
+    if child == nil
+      child = Node.dir(p)
+      entries[p] = child
+    end
+    kids = Node.children(child)
+    return "conflict #{path}" unless kids
+    entries = kids
+  end
+  existing = entries[base]
+  return "conflict #{path}" if existing && Node.dir?(existing)
+  return "duplicate #{path}" if existing
+  entries[base] = Node.file(base, size)
+  nil
+end
+
+def main
+  head = String.split(gets || "")
+  unless Array.size(head) == 4 && head[0] == "depth" && head[2] == "threshold" &&
+         number?(head[1]) && number?(head[3])
+    puts("bad header")
+    return
+  end
+  max_depth = String.to_i(head[1])
+  threshold = String.to_i(head[3])
+
+  top = Hash[]
+  root = Node.new(".", 0, top)
+  no = 1
+  while (raw = gets)
+    no += 1
+    toks = String.split(raw)
+    next if Array.empty?(toks)
+    size_s, path = toks
+    if Array.size(toks) != 2 || !(number?(size_s) || size_s == "?") || !valid_path?(String.split(path, "/", -1))
+      puts("line #{no}: malformed")
+      next
+    end
+    err = add_file(top, path, String.split(path, "/", -1), size_s == "?" ? -1 : String.to_i(size_s))
+    puts("line #{no}: #{err}") if err
+  end
+  print_tree(root, 0, max_depth, threshold)
+end
+
+main

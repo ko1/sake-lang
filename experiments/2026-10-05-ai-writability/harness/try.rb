@@ -8,7 +8,7 @@ require_relative "common"
 file = File.expand_path(ARGV.fetch(0))
 work = File.dirname(file)
 meta = JSON.parse(File.read(File.join(work, "meta.json")))
-task_dir = File.join(AW::EXP, "tasks", meta.fetch("task"))
+task_dir = File.join(AW::EXP, meta.fetch("dir") { "tasks/#{meta.fetch("task")}" }) # change tasks: "dir" = changes/cNN-*
 strict = meta.fetch("strict", 1)
 log = File.join(work, "attempts.jsonl")
 n = File.exist?(log) ? File.readlines(log).size + 1 : 1

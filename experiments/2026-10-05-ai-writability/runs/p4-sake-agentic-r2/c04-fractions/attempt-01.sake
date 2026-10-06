@@ -1,0 +1,156 @@
+class Node
+  attr_reader kind, num, name, body, alt
+end
+
+class SyntaxErr < Exception
+end
+
+class RunError < Exception
+end
+
+def builtins = once { Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"] }
+
+def number?(t) = String.match?(t, /\A-?\d+\z/) || (String.match?(t, /\A-?\d+\/\d+\z/) && String.to_i(String.split(t, "/")[1]) != 0)
+
+def to_num(t)
+  return Rational(String.to_i(t), 1) unless String.include?(t, "/")
+  a, b = String.split(t, "/")
+  Rational(String.to_i(a), String.to_i(b))
+end
+
+def show(x) = Rational.denominator(x) == 1 ? Integer.to_s(Rational.numerator(x)) : "#{Rational.numerator(x)}/#{Rational.denominator(x)}"
+
+def flag(c) = c ? Rational(1, 1) : Rational(0, 1)
+
+# Parses toks from i until one of stops; gives [nodes, next index, the stop token or nil].
+def parse_seq(toks, i, stops, in_def)
+  nodes = Node[]
+  while i < Array.size(toks)
+    t = Array.fetch(toks, i)
+    return [nodes, i + 1, t] if Array.include?(stops, t)
+    if t == "if"
+      yes, i, stop = parse_seq(toks, i + 1, Array["else", "then"], in_def)
+      raise SyntaxErr unless stop
+      no = Node[]
+      if stop == "else"
+        no, i, stop = parse_seq(toks, i, Array["then"], in_def)
+        raise SyntaxErr unless stop
+      end
+      Array.push(nodes, Node.new(:if, 0, "", yes, no))
+    elsif t == ":"
+      raise SyntaxErr if in_def || !Array.empty?(stops)
+      name = toks[i + 1]
+      raise SyntaxErr if name == nil || number?(name) || Array.include?(builtins, name)
+      body, i, stop = parse_seq(toks, i + 2, Array[";"], true)
+      raise SyntaxErr unless stop
+      Array.push(nodes, Node.new(:def, 0, name, body, Node[]))
+    elsif t == "else" || t == "then" || t == ";"
+      raise SyntaxErr
+    else
+      if number?(t)
+        Array.push(nodes, Node.new(:num, to_num(t), "", Node[], Node[]))
+      else
+        Array.push(nodes, Node.new(:word, 0, t, Node[], Node[]))
+      end
+      i += 1
+    end
+  end
+  [nodes, i, nil]
+end
+
+class Machine
+  attr_reader stack, words
+
+  def initialize(m)
+    @stack = Rational[]
+    @words = Hash[]
+  end
+
+  def pop(m, word)
+    x = Array.pop(@stack)
+    raise RunError, "stack underflow in #{word}" unless x
+    x
+  end
+
+  def run_line(m, nodes)
+    saved = Array.dup(@stack)
+    begin
+      run(m, nodes, 0)
+    rescue RunError => e
+      @stack = saved
+      raise e
+    end
+  end
+
+  def run(m, nodes, depth)
+    Array.each(nodes) do |node|
+      case Node.kind(node)
+      in :num then Array.push(@stack, Node.num(node))
+      in :def then @words[Node.name(node)] = Node.body(node)
+      in :if then run(m, pop(m, "if") != 0 ? Node.body(node) : Node.alt(node), depth)
+      in :word then word(m, Node.name(node), depth)
+      end
+    end
+  end
+
+  def pop2(m, w)
+    raise RunError, "stack underflow in #{w}" if Array.size(@stack) < 2
+    b = pop(m, w)
+    a = pop(m, w)
+    [a, b]
+  end
+
+  def word(m, w, depth)
+    if w == "+" || w == "-" || w == "*" || w == "/" || w == "mod" || w == "=" || w == "<" || w == ">"
+      a, b = pop2(m, w)
+      Array.push(@stack, binop(w, a, b))
+    elsif w == "dup"
+      x = pop(m, w)
+      Array.push(@stack, x, x)
+    elsif w == "drop"
+      pop(m, w)
+    elsif w == "swap"
+      a, b = pop2(m, w)
+      Array.push(@stack, b, a)
+    elsif w == "over"
+      a, b = pop2(m, w)
+      Array.push(@stack, a, b, a)
+    elsif w == "."
+      puts(show(pop(m, w)))
+    else
+      body = @words[w]
+      raise RunError, "unknown word #{w}" unless body
+      raise RunError, "too deep" if depth >= 100
+      run(m, body, depth + 1)
+    end
+  end
+
+  def binop(w, a, b)
+    return a + b if w == "+"
+    return a - b if w == "-"
+    return a * b if w == "*"
+    return flag(a == b) if w == "="
+    return flag(a < b) if w == "<"
+    return flag(a > b) if w == ">"
+    raise RunError, "division by zero" if b == 0
+    return a / b if w == "/"
+    q = Arithmetic.truncate(a / b)
+    a - b * q
+  end
+end
+
+m = Machine.new
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |line|
+  lineno += 1
+  begin
+    nodes, _, _ = parse_seq(String.split(line, " "), 0, Array[], false)
+    Machine.run_line(m, nodes)
+  rescue SyntaxErr
+    puts("line #{lineno}: syntax error")
+  rescue RunError => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  end
+end
+st = Machine.stack(m)
+puts("stack: #{Array.empty?(st) ? "(empty)" : Array.join(Array.map(st) { show(it) }, " ")}")

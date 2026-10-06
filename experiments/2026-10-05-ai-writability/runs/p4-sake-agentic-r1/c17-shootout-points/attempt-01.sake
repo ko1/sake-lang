@@ -1,0 +1,113 @@
+class Team
+  attr_reader name, played, won, drawn, lost, gf, ga, so
+
+  def create(name) = Team.new(name, 0, 0, 0, 0, 0, 0, 0)
+  def gd(t) = @gf - @ga
+  def pts(t) = @won * 3 + @drawn + @so
+
+  def record(t, scored, conceded, bonus)
+    @so += bonus
+    @played += 1
+    @gf += scored
+    @ga += conceded
+    if scored > conceded
+      @won += 1
+    elsif scored < conceded
+      @lost += 1
+    else
+      @drawn += 1
+    end
+  end
+end
+
+def valid_name?(s) = String.match?(s, /\A[A-Za-z][A-Za-z0-9_]{0,11}\z/)
+
+def valid?(toks)
+  return false unless Array.size(toks) == 3
+  home, score, away = toks
+  valid_name?(home) && valid_name?(away) && home != away &&
+    (score == "P-P" || score_ok?(score))
+end
+
+def score_ok?(score)
+  m = String.match(score, /\A(\d{1,2})-(\d{1,2})(?:\((\d{1,2})-(\d{1,2})\))?\z/)
+  return false unless m
+  c = MatchData.captures(m)
+  x = Array.fetch(c, 2)
+  return true unless x
+  Array.fetch(c, 0) == Array.fetch(c, 1) && String.to_i(x) != String.to_i(Array.fetch(c, 3))
+end
+
+def h2h_points(group, matches)
+  names = Array.map(group) { Team.name(it) }
+  pts = Hash.new(0)
+  Array.each(matches) do |home, hg, ag, away, xs, ys|
+    next unless Array.include?(names, home) && Array.include?(names, away)
+    if hg > ag
+      pts[home] += 3
+    elsif hg < ag
+      pts[away] += 3
+    else
+      pts[home] += 1 + (xs > ys ? 1 : 0)
+      pts[away] += 1 + (ys > xs ? 1 : 0)
+    end
+  end
+  pts
+end
+
+def gd_text(gd) = gd > 0 ? "+#{gd}" : Integer.to_s(gd)
+
+def row(*fields) = format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", *fields)
+
+def main
+  teams = Hash[]
+  matches = Tuple[]
+  no = 0
+  while (raw = gets)
+    no += 1
+    line = String.chomp(raw)
+    toks = String.split(line)
+    next if Array.empty?(toks)
+    unless valid?(toks)
+      puts("invalid line #{no}: #{line}")
+      next
+    end
+    home, score, away = toks
+    Array.each(Array[home, away]) { |n| teams[n] = Team.create(n) unless Hash.key?(teams, n) }
+    next if score == "P-P"
+    c = MatchData.captures(String.match(score, /\A(\d+)-(\d+)(?:\((\d+)-(\d+)\))?\z/))
+    hg = String.to_i(Array.fetch(c, 0))
+    ag = String.to_i(Array.fetch(c, 1))
+    xs = String.to_i(Array.fetch(c, 2) || "0")
+    ys = String.to_i(Array.fetch(c, 3) || "0")
+    Array.push(matches, [home, hg, ag, away, xs, ys])
+    Team.record(Hash.fetch(teams, home), hg, ag, xs > ys ? 1 : 0)
+    Team.record(Hash.fetch(teams, away), ag, hg, ys > xs ? 1 : 0)
+  end
+
+  if Hash.empty?(teams)
+    puts("no teams")
+    return
+  end
+
+  groups = Array.group_by(Hash.values(teams)) { |t| [Team.pts(t), Team.gd(t), Team.gf(t)] }
+  rows = Tuple[]
+  Array.each(Array.sort_by(Hash.to_a(groups)) { |k, _| k }.Array.reverse) do |key, group|
+    hp = h2h_points(group, matches)
+    Array.sort_by(group) { |t| [-hp[Team.name(t)], Team.name(t)] }
+      .Array.each { |t| Array.push(rows, [key, hp[Team.name(t)], t]) }
+  end
+
+  puts(row("Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+  pos = 0
+  prev = nil
+  Array.each_with_index(rows) do |(key, hp, t), i|
+    rank_key = [key, hp]
+    pos = i + 1 unless rank_key == prev
+    prev = rank_key
+    puts(row(pos, Team.name(t), Team.played(t), Team.won(t), Team.drawn(t), Team.lost(t),
+             Team.gf(t), Team.ga(t), gd_text(Team.gd(t)), Team.pts(t)))
+  end
+end
+
+main

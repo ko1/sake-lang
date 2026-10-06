@@ -1,0 +1,130 @@
+class BadLine < Exception
+end
+
+class Slot
+  attr_reader name, price
+  attr_accessor count
+end
+
+def coins = once { Integer[200, 100, 50, 25, 10, 5] }
+def credit_limit = 500
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def money!(s)
+  m = String.match(s, /\A(\d+)\.(\d\d)\z/)
+  raise BadLine, "bad money" unless m
+  String.to_i(m[1] || "") * 100 + String.to_i(m[2] || "")
+end
+
+def count!(s, max)
+  raise BadLine, "bad count" unless String.match?(s, /\A\d+\z/) && String.to_i(s) <= max
+  String.to_i(s)
+end
+
+# Greedy change from the tubes, largest coin first; nil if it cannot be made exactly.
+def make_change(tubes, amount)
+  out = Integer[]
+  Array.each(coins) do |c|
+    n = Tuple.min([Hash.fetch(tubes, c), amount / c])
+    Integer.times(n) { Array.push(out, c) }
+    amount -= c * n
+  end
+  amount == 0 ? out : nil
+end
+
+def coin_list(cs) = Array.join(Array.map(cs) { money(it) }, " ")
+
+def arity = once { Hash["SLOT" => 5, "TUBE" => 3, "COIN" => 2, "SELECT" => 2, "CANCEL" => 1] }
+
+def select(slots, tubes, inserted, sales, code)
+  slot = slots[code]
+  credit = Array.sum(inserted)
+  price = slot ? Slot.price(slot) : nil
+  if slot == nil
+    puts("no slot #{code}")
+  elsif Slot.count(slot) == 0
+    puts("sold out #{code}")
+  elsif price == nil
+    puts("no price #{code}")
+  elsif credit < price
+    puts("insert #{money(price - credit)} more")
+  else
+    change = make_change(tubes, credit - price)
+    if change == nil
+      puts("exact change needed")
+      return
+    end
+    Array.each(change) { |c| tubes[c] -= 1 }
+    Slot.set_count(slot, Slot.count(slot) - 1)
+    Array.clear(inserted)
+    name = Slot.name(slot)
+    n, rev = Hash.fetch(sales, name, [0, 0])
+    sales[name] = [n + 1, rev + price]
+    shown = Array.empty?(change) ? "" : " [#{coin_list(change)}]"
+    puts("vend #{name}, change #{money(credit - price)}#{shown}")
+  end
+end
+
+slots = Hash[]
+tubes = Hash[]
+Array.each(coins) { |c| tubes[c] = 0 }
+inserted = Integer[]
+sales = Hash[]
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  cmd = Array.fetch(f, 0)
+  begin
+    n = arity[cmd]
+    raise BadLine, "unknown command" unless n
+    raise BadLine, "wrong field count" unless Array.size(f) == n
+    if cmd == "SLOT"
+      code = Array.fetch(f, 1)
+      raise BadLine, "bad slot" unless String.match?(code, /\A[A-Z][0-9]\z/)
+      name = Array.fetch(f, 2)
+      raise BadLine, "bad name" unless String.match?(name, /\A[a-z]{1,12}\z/)
+      p = Array.fetch(f, 3)
+      price = p == "-" ? nil : money!(p)
+      slots[code] = Slot.new(name, price, count!(Array.fetch(f, 4), 99))
+    elsif cmd == "TUBE"
+      c = money!(Array.fetch(f, 1))
+      raise BadLine, "bad coin" unless Array.include?(coins, c)
+      tubes[c] += count!(Array.fetch(f, 2), 999)
+    elsif cmd == "COIN"
+      c = money!(Array.fetch(f, 1))
+      credit = Array.sum(inserted)
+      if !Array.include?(coins, c)
+        puts("rejected #{money(c)}")
+      elsif credit + c > credit_limit
+        puts("rejected #{money(c)} (credit limit)")
+      else
+        Array.push(inserted, c)
+        tubes[c] += 1
+        puts("credit #{money(credit + c)}")
+      end
+    elsif cmd == "SELECT"
+      select(slots, tubes, inserted, sales, Array.fetch(f, 1))
+    elsif Array.empty?(inserted)
+      puts("nothing to return")
+    else
+      Array.each(inserted) { |c| tubes[c] -= 1 }
+      puts("returned #{money(Array.sum(inserted))} [#{coin_list(inserted)}]")
+      Array.clear(inserted)
+    end
+  rescue BadLine => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  end
+end
+
+puts("credit #{money(Array.sum(inserted))} kept") unless Array.empty?(inserted)
+puts("sales:")
+puts("  none") if Hash.empty?(sales)
+Array.each(Hash.sort_by(sales) { |name, (n, rev)| [-rev, name] }) do |name, (n, rev)|
+  puts(format("  %-12s %3d %8s", name, n, money(rev)))
+end
+unpriced = Array.sort(Array.select(Hash.keys(slots)) { |c| Slot.price(Hash.fetch(slots, c)) == nil })
+puts("unpriced: #{Array.join(unpriced, " ")}") unless Array.empty?(unpriced)
+puts("tubes: #{Array.join(Array.map(Array.reverse(coins)) { |c| "#{money(c)}x#{Hash.fetch(tubes, c)}" }, " ")}")

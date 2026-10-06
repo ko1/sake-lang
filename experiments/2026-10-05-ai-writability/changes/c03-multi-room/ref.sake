@@ -1,0 +1,142 @@
+class Booking
+  attr_reader id, rooms, day, start, stop, who
+end
+
+class InputError < Exception
+end
+
+def days = once { Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+def open_at = 8 * 60
+def close_at = 20 * 60
+
+def hhmm(m) = format("%02d:%02d", m / 60, m % 60)
+
+def parse_time(s)
+  m = String.match(s, /\A(\d\d):(\d\d)\z/)
+  raise InputError, "bad time" unless m
+  mm = String.to_i(m[2] || "")
+  t = String.to_i(m[1] || "") * 60 + mm
+  raise InputError, "bad time" unless mm < 60 && t % 15 == 0 && Integer.between?(t, open_at, close_at)
+  t
+end
+
+def check_room(s)
+  raise InputError, "bad room" unless String.match?(s, /\A[A-Z0-9]{1,8}\z/)
+  s
+end
+
+def check_rooms(s)
+  rooms = String.split(s, "+", -1)
+  ok = Integer.between?(Array.size(rooms), 1, 4) && Array.size(Array.uniq(rooms)) == Array.size(rooms)
+  raise InputError, "bad room" unless ok
+  Array.each(rooms) { |r| check_room(r) }
+  rooms
+end
+
+def check_day(s)
+  raise InputError, "bad day" unless Array.include?(days, s)
+  s
+end
+
+def same_room(bookings, room, day) = Array.select(bookings) { |k| Array.include?(Booking.rooms(k), room) && Booking.day(k) == day }
+
+def book(bookings, f, next_id)
+  raise InputError, "wrong field count" unless Array.size(f) == 5
+  rooms = check_rooms(Array.fetch(f, 1))
+  day = check_day(Array.fetch(f, 2))
+  a, b = String.split(Array.fetch(f, 3), "-", 2)
+  raise InputError, "bad time" unless a && b
+  start = parse_time(a)
+  stop = parse_time(b)
+  raise InputError, "bad time" unless start < stop
+  who = Array.fetch(f, 4)
+  raise InputError, "bad name" unless String.match?(who, /\A[a-z]{1,12}\z/)
+  Array.each(rooms) do |room|
+    clashes = Array.select(same_room(bookings, room, day)) { |k| Booking.start(k) < stop && start < Booking.stop(k) }
+    clash = Array.min_by(clashes) { Booking.start(it) }
+    if clash
+      puts("CONFLICT #{room} #{day} with ##{Booking.id(clash)} (#{Booking.who(clash)} #{hhmm(Booking.start(clash))}-#{hhmm(Booking.stop(clash))})")
+      return false
+    end
+  end
+  if Array.count(bookings) { |k| Booking.who(k) == who && Booking.day(k) == day } >= 3
+    puts("LIMIT #{who} #{day}")
+    return false
+  end
+  Array.push(bookings, Booking.new(next_id, rooms, day, start, stop, who))
+  puts("OK ##{next_id} #{Array.join(rooms, "+")} #{day} #{hhmm(start)}-#{hhmm(stop)} #{who}")
+  true
+end
+
+def cancel(bookings, f)
+  raise InputError, "wrong field count" unless Array.size(f) == 2
+  s = Array.fetch(f, 1)
+  raise InputError, "bad id" unless String.match?(s, /\A\d+\z/)
+  id = String.to_i(s)
+  k = Array.find(bookings) { |x| Booking.id(x) == id }
+  if k
+    Array.delete(bookings, k)
+    puts("CANCELLED ##{id}")
+  else
+    puts("NO BOOKING ##{id}")
+  end
+end
+
+def free(bookings, f)
+  raise InputError, "wrong field count" unless Array.size(f) == 4
+  room = check_room(Array.fetch(f, 1))
+  day = check_day(Array.fetch(f, 2))
+  s = Array.fetch(f, 3)
+  len = String.to_i(s)
+  raise InputError, "bad duration" unless String.match?(s, /\A\d+\z/) && len > 0 && len % 15 == 0
+  t = open_at
+  Array.each(Array.sort_by(same_room(bookings, room, day)) { Booking.start(it) }) do |k|
+    break if Booking.start(k) - t >= len
+    t = Booking.stop(k) if Booking.stop(k) > t
+  end
+  if t + len <= close_at
+    puts("FREE #{room} #{day} #{hhmm(t)}-#{hhmm(t + len)}")
+  else
+    puts("FULL #{room} #{day}")
+  end
+end
+
+bookings = Booking[]
+next_id = 1
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  cmd = Array.fetch(f, 0)
+  begin
+    if cmd == "BOOK"
+      next_id += 1 if book(bookings, f, next_id)
+    elsif cmd == "CANCEL"
+      cancel(bookings, f)
+    elsif cmd == "FREE"
+      free(bookings, f)
+    else
+      raise InputError, "unknown command"
+    end
+  rescue InputError => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  end
+end
+
+puts("== schedule ==")
+puts("(none)") if Array.empty?(bookings)
+per_room = Tuple[]
+Array.each(bookings) { |k| Array.each(Booking.rooms(k)) { |room| Array.push(per_room, [room, k]) } }
+sorted = Array.sort_by(per_room) { |room, k| [Array.index(days, Booking.day(k)) || 0, room, Booking.start(k)] }
+Array.each(sorted) do |room, k|
+  puts(format("%s %-8s %s-%s #%d %s", Booking.day(k), room, hhmm(Booking.start(k)),
+              hhmm(Booking.stop(k)), Booking.id(k), Booking.who(k)))
+end
+puts("== usage ==")
+puts("(none)") if Array.empty?(bookings)
+groups = Array.group_by(per_room) { |room, k| room }
+Array.each(Array.sort(Hash.keys(groups))) do |room|
+  total = Array.sum(Hash.fetch(groups, room)) { |_, k| Booking.stop(k) - Booking.start(k) }
+  puts(format("%-8s %dh%02dm", room, total / 60, total % 60))
+end

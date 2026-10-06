@@ -1,0 +1,107 @@
+class Passenger
+  attr_reader id, time, from, to
+  attr_accessor picked, dropped
+  def dir(pa) = @to > @from ? :up : :down
+end
+
+def ints(line, n)
+  w = String.split(line, " ")
+  return nil unless Array.size(w) == n && Array.all?(w) { |s| String.match?(s, /\A\d+\z/) }
+  Array.map(w) { |s| String.to_i(s) }
+end
+
+# time as written: whole numbers without a fraction
+def tm(x) = Float.floor(x) == x ? Integer.to_s(Float.to_i(x)) : Float.to_s(x)
+
+def main
+  lines = String.split(IO.read(IO.stdin), "\n")
+  w = String.split(Array.fetch(lines, 0, ""), " ")
+  return puts("invalid header") unless Array.size(w) == 3 && String.match?(Array.fetch(w, 1), /\A\d+(\.5)?\z/)
+  head = ints("#{Array.fetch(w, 0)} #{Array.fetch(w, 2)}", 2)
+  return puts("invalid header") unless head
+  floors, door, cap = Array.fetch(head, 0), Float(Array.fetch(w, 1)), Array.fetch(head, 1)
+  unless Integer.between?(floors, 2, 50) && Float.between?(door, 0.0, 5.0) && Integer.between?(cap, 1, 20)
+    return puts("invalid header")
+  end
+  pending = Passenger[]
+  last = 0
+  Array.each_with_index(lines) do |line, i|
+    next if i == 0 || String.empty?(String.strip(line))
+    r = ints(line, 3)
+    if r
+      tm, from, to = Array.fetch(r, 0), Array.fetch(r, 1), Array.fetch(r, 2)
+      if tm <= 1000 && tm >= last && Integer.between?(from, 1, floors) && Integer.between?(to, 1, floors) && from != to
+        last = tm
+        Array.push(pending, Passenger.new(Array.size(pending) + 1, tm, from, to, -1.0, -1.0))
+        next
+      end
+    end
+    puts("line #{i + 1}: invalid request")
+  end
+  return puts("no passengers") if Array.empty?(pending)
+
+  all = Array.dup(pending)
+  waiting = Passenger[]
+  riding = Passenger[]
+  floor = 1
+  dir = :idle
+  t = 0.0
+  until Array.all?(all) { |pa| Passenger.dropped(pa) >= 0 }
+    while (nx = Array.first(pending)) && Passenger.time(nx) <= t
+      Array.push(waiting, nx)
+      Array.shift(pending)
+    end
+    drops = Array.select(riding) { |pa| Passenger.to(pa) == floor }
+    riding = Array.reject(riding) { |pa| Passenger.to(pa) == floor }
+    Array.each(drops) do |pa|
+      Passenger.set_dropped(pa, t)
+      puts("t=#{tm(t)} floor #{floor} drop P#{Passenger.id(pa)}")
+    end
+    targets = Array.map(riding) { |pa| Passenger.to(pa) } + Array.map(waiting) { |pa| Passenger.from(pa) }
+    above = Array.any?(targets) { |x| x > floor }
+    below = Array.any?(targets) { |x| x < floor }
+    dir = case dir
+          in :up then above ? :up : (below ? :down : :idle)
+          in :down then below ? :down : (above ? :up : :idle)
+          in :idle then :idle
+          end
+    if dir == :idle && !Array.empty?(targets)
+      near = Array.min_by(targets) { |x| [Integer.abs(x - floor), x] }
+      if near && near > floor
+        dir = :up
+      elsif near && near < floor
+        dir = :down
+      else
+        first = Array.find(waiting) { |pa| Passenger.from(pa) == floor }
+        dir = Passenger.dir(first) if first
+      end
+    end
+    picks = Array.select(waiting) { |pa| Passenger.from(pa) == floor && Passenger.dir(pa) == dir }
+      .Array.first(cap - Array.size(riding))
+    waiting = Array.reject(waiting) { |pa| Array.include?(picks, pa) }
+    Array.each(picks) do |pa|
+      Passenger.set_picked(pa, t)
+      Array.push(riding, pa)
+      puts("t=#{tm(t)} floor #{floor} pick P#{Passenger.id(pa)}")
+    end
+    if !Array.empty?(drops) || !Array.empty?(picks)
+      t += door
+      next
+    end
+    floor += 1 if dir == :up
+    floor -= 1 if dir == :down
+    t += 1
+  end
+
+  Array.each(all) do |pa|
+    puts("P#{Passenger.id(pa)} wait #{tm(Passenger.picked(pa) - Passenger.time(pa))} ride #{tm(Passenger.dropped(pa) - Passenger.picked(pa))}")
+  end
+  n = Integer.to_f(Array.size(all))
+  wait = Array.sum(Array.map(all) { |pa| Passenger.picked(pa) - Passenger.time(pa) })
+  ride = Array.sum(Array.map(all) { |pa| Passenger.dropped(pa) - Passenger.picked(pa) })
+  puts(format("average wait %.2f ride %.2f", wait / n, ride / n))
+  done = Array.max(Array.map(all) { |pa| Passenger.dropped(pa) })
+  puts("done at t=#{tm(done)}") if done
+end
+
+main

@@ -6,17 +6,6 @@
 # Prints one JSON line per task; exit 1 when a reference fails or no mutant is killed.
 require_relative "common"
 
-MUTATIONS = [[/ < /, " <= "], [/ > /, " >= "], [/ <= /, " < "], [/ >= /, " > "], [/ \+ 1\b/, " + 2"], [/ - 1\b/, " - 2"],
-             [/ == /, " != "], [/\b0\b/, "1"]].freeze
-
-def mutants(src)
-  MUTATIONS.flat_map do |re, rep|
-    offs = []
-    src.scan(re) { offs << Regexp.last_match.offset(0) }
-    offs.first(4).map { |s, e| src[0...s] + rep + src[e..] }
-  end
-end
-
 bad = false
 ARGV.each do |task|
   rec = { task: File.basename(task) }
@@ -27,7 +16,7 @@ ARGV.each do |task|
     hid = AW.test(ref, task, "hidden", strict)
     rec["#{ext}_ref_ok"] = (pub + hid).all? { _1[:ok] }
     rec["#{ext}_ref_fail"] = (pub + hid).reject { _1[:ok] }.map { |r| [r[:name], r[:status], r[:err][0, 200]] }
-    ms = mutants(File.read(ref)).sample(12, random: Random.new(1))
+    ms = AW.mutants(File.read(ref)).sample(12, random: Random.new(1))
     tmp = File.join(task, ".mutant.#{ext}")
     killed = ms.count do |m|
       File.write(tmp, m)

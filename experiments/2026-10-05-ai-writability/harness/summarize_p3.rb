@@ -4,7 +4,8 @@
 #   USAGE.tsv from usage.rb (one line per agent, named RUN-gN); GRADE.jsonl from grade.rb.
 #   A condition is a run name without -rN.
 # Per task: solved, try.rb runs, runs stopped by the checker (and why), calls to APIs that do not exist
-# (apis.rb on the final solution and on every attempt), run-time NoMethodError/NameError.
+# (apis.rb on the final solution and on every attempt), run-time NoMethodError/NameError, and for change
+# tasks (P4) the lines changed from the starting program (diff/task).
 # Output tokens per agent only: agents read and write several tasks in one call, so they do not split by task.
 # Anything that cannot be measured aborts instead of being counted as 0.
 require_relative "common"
@@ -49,7 +50,7 @@ rows = grade_files.flat_map { |f| File.readlines(f).map { JSON.parse(_1) } }.map
   api = sol ? APIs.send(g["lang"], sol) : nil
   api_att = afiles.map { APIs.send(g["lang"], _1) }
   { cond: g["run"].sub(/-r\d+\z/, ""), run: g["run"], task: g["task"], lang: g["lang"], mode: g["mode"], ok: g["ok"],
-    passed: g["passed"], total: g["total"], tries: atts.size, rejected:,
+    passed: g["passed"], total: g["total"], tries: atts.size, rejected:, diff: g["diff_lines"],
     api_final: api, api_attempts: api_att,
     name_err_runtime: atts.count { |a| a["examples"].any? { _1["stderr"].match?(NAME_ERR) } } +
       (g["failures"] || []).count { _1["err"].to_s.match?(NAME_ERR) } }
@@ -59,7 +60,7 @@ def sum_nn(xs, k) = (bad = xs.count { _1.nil? || _1[k].nil? }).zero? ? xs.sum { 
 
 puts "# P3 summary (#{rows.size} task runs)\n\n"
 puts %w[condition runs tasks solved cases tries/task rejected nowhere(final) elsewhere(final) nowhere(attempts) elsewhere(attempts)
-        name-err(run) agents out/agent out/task].join("\t")
+        name-err(run) agents out/agent out/task diff/task].join("\t")
 rows.group_by { _1[:cond] }.sort.each do |cond, rs|
   outs = agent_out.select { |a, _| rs.any? { |r| a.sub(/-g\d+\z/, "") == r[:run] } }.values
   abort "#{cond}: no agents in #{usage_file}" if outs.empty?
@@ -69,7 +70,8 @@ rows.group_by { _1[:cond] }.sort.each do |cond, rs|
         rs.sum { _1[:rejected].size }, sum_nn(rs.map { _1[:api_final] }, :nowhere),
         rs.first[:lang] == "sake" ? sum_nn(rs.map { _1[:api_final] }, :elsewhere) : "-",
         sum_nn(atts, :nowhere), rs.first[:lang] == "sake" ? sum_nn(atts, :elsewhere) : "-",
-        rs.sum { _1[:name_err_runtime] }, outs.size, outs.sum / outs.size, outs.sum / rs.size].join("\t")
+        rs.sum { _1[:name_err_runtime] }, outs.size, outs.sum / outs.size, outs.sum / rs.size,
+        rs.all? { _1[:diff] } ? format("%.1f", rs.sum { _1[:diff] }.fdiv(rs.size)) : "-"].join("\t")
 end
 puts "\n## rejected by the checker, by kind (agentic: every try.rb run; oneshot: the final solution)"
 rows.group_by { _1[:cond] }.sort.each do |cond, rs|
