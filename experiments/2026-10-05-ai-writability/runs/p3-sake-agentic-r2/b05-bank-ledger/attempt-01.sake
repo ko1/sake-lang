@@ -1,0 +1,146 @@
+class Acct
+  attr_accessor bal, limit, lowest, txns, wd
+end
+
+def money(c)
+  sign = c < 0 ? "-" : ""
+  a = c < 0 ? -c : c
+  "#{sign}#{a / 100}.#{String.rjust(Integer.to_s(a % 100), 2, "0")}"
+end
+
+def cents(s)
+  parts = String.split(s, ".")
+  whole = String.to_i(parts[0]) * 100
+  fr = parts[1]
+  return whole if fr == nil
+  fr = fr + "0" if String.size(fr) == 1
+  whole + String.to_i(fr)
+end
+
+def amount_ok?(s) = String.match?(s, /\A\d+(\.\d{1,2})?\z/)
+
+def name_ok?(s) = String.match?(s, /\A[a-z]{1,16}\z/)
+
+def change(a, delta)
+  Acct.set_bal(a, Acct.bal(a) + delta)
+  Acct.set_lowest(a, Acct.bal(a)) if Acct.bal(a) < Acct.lowest(a)
+end
+
+accts = Hash[]
+month = 0
+n = 0
+Array.each(IO.readlines(IO.stdin())) do |raw|
+  n += 1
+  line = String.chomp(raw)
+  next if String.strip(line) == ""
+  f = String.split(line, " ")
+  cmd = f[0]
+  want = 0
+  nnames = 0
+  case cmd
+  in "OPEN" then want = 3; nnames = 1
+  in "DEPOSIT" then want = 3; nnames = 1
+  in "WITHDRAW" then want = 3; nnames = 1
+  in "TRANSFER" then want = 4; nnames = 2
+  in "MONTHEND" then want = 1
+  else
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "MONTHEND"
+    month += 1
+    puts("== month #{month} ==")
+    Array.each(Array.sort(Hash.keys(accts))) do |nm|
+      a = accts[nm]
+      b = Acct.bal(a)
+      if b < 0
+        ch = (-b * 15 + 999) / 1000
+        if ch != 0
+          change(a, -ch)
+          puts("#{nm} interest -#{money(ch)}")
+        end
+      else
+        ch = b * 25 / 10000
+        if ch != 0
+          change(a, ch)
+          puts("#{nm} interest +#{money(ch)}")
+        end
+      end
+      if Acct.wd(a) > 4
+        change(a, -200)
+        puts("#{nm} fee -2.00")
+      end
+      Acct.set_wd(a, 0)
+    end
+    next
+  end
+  bad = false
+  Integer.times(nnames) { |k| bad = true unless name_ok?(f[1 + k]) }
+  if bad
+    puts("line #{n}: error: bad name")
+    next
+  end
+  unless amount_ok?(f[1 + nnames])
+    puts("line #{n}: error: bad amount")
+    next
+  end
+  amt = cents(f[1 + nnames])
+  if amt == 0 && cmd != "OPEN"
+    puts("line #{n}: error: bad amount")
+    next
+  end
+  if cmd == "OPEN"
+    if accts[f[1]] != nil
+      puts("line #{n}: error: account #{f[1]} exists")
+      next
+    end
+    accts[f[1]] = Acct.new(0, amt, 0, 0, 0)
+    next
+  end
+  missing = nil
+  Integer.times(nnames) { |k| missing = f[1 + k] if missing == nil && accts[f[1 + k]] == nil }
+  if missing != nil
+    puts("line #{n}: error: no account #{missing}")
+    next
+  end
+  a = accts[f[1]]
+  if cmd == "DEPOSIT"
+    change(a, amt)
+    Acct.set_txns(a, Acct.txns(a) + 1)
+    next
+  end
+  if cmd == "TRANSFER" && f[1] == f[2]
+    puts("line #{n}: error: same account")
+    next
+  end
+  if Acct.bal(a) - amt < -Acct.limit(a)
+    puts("line #{n}: error: insufficient funds in #{f[1]}")
+    next
+  end
+  change(a, -amt)
+  Acct.set_txns(a, Acct.txns(a) + 1)
+  Acct.set_wd(a, Acct.wd(a) + 1)
+  if cmd == "TRANSFER"
+    b = accts[f[2]]
+    change(b, amt)
+    Acct.set_txns(b, Acct.txns(b) + 1)
+  end
+end
+
+if Hash.empty?(accts)
+  puts("no accounts")
+else
+  puts(format("%-16s %12s %12s %5s", "account", "balance", "lowest", "txns"))
+  names = Array.sort_by(Hash.keys(accts)) { |k| [-Acct.bal(accts[k]), k] }
+  total = 0
+  Array.each(names) do |k|
+    a = accts[k]
+    total += Acct.bal(a)
+    puts(format("%-16s %12s %12s %5d", k, money(Acct.bal(a)), money(Acct.lowest(a)), Acct.txns(a)))
+  end
+  puts("total: #{money(total)}")
+end

@@ -1,0 +1,163 @@
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+def name_ok?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+def cost_ok?(s) = String.match?(s, /\A\d+\.\d\d\z/)
+def to_cents(s) = String.to_i(String.delete(s, "."))
+
+class Ctx
+  attr_reader part_cost, assy_labor, assy_comps, ok, unit, partq
+
+  def known?(c, name) = Hash.key?(@part_cost, name) || Hash.key?(@assy_labor, name)
+
+  def check(c, name, path)
+    unless known?(c, name)
+      return "unknown item #{name}" if Array.empty?(path)
+      return "unknown item #{name} in #{Array.last(path)}"
+    end
+    if Array.include?(path, name)
+      cyc = Array.drop(path, Array.index(path, name))
+      Array.push(cyc, name)
+      return "cycle " + Array.join(cyc, " > ")
+    end
+    return nil if Hash.key?(@ok, name)
+    if Hash.key?(@assy_comps, name)
+      Array.push(path, name)
+      Array.each(Hash.fetch(@assy_comps, name)) do |comp, q|
+        r = check(c, comp, path)
+        return r if r != nil
+      end
+      Array.pop(path)
+    end
+    okh = @ok
+    okh[name] = true
+    nil
+  end
+
+  def unit_cost(c, name)
+    return Hash.fetch(@unit, name) if Hash.key?(@unit, name)
+    v = 0
+    if Hash.key?(@part_cost, name)
+      v = Hash.fetch(@part_cost, name)
+    else
+      v = Hash.fetch(@assy_labor, name)
+      Array.each(Hash.fetch(@assy_comps, name)) { |comp, q| v += q * unit_cost(c, comp) }
+    end
+    uh = @unit
+    uh[name] = v
+    v
+  end
+
+  def show(c, name, qty, depth)
+    u = unit_cost(c, name)
+    puts("#{"  " * depth}#{qty} x #{name} = #{money(qty * u)}")
+    if Hash.key?(@part_cost, name)
+      pq = @partq
+      pq[name] += qty
+    else
+      Array.each(Hash.fetch(@assy_comps, name)) { |comp, q| show(c, comp, qty * q, depth + 1) }
+    end
+  end
+end
+
+ctx = Ctx.new(Hash[], Hash[], Hash[], Hash[], Hash[], Hash.new(0))
+
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, /\s+/)
+  cmd = f[0]
+  sz = Array.size(f)
+  if cmd == "PART"
+    if sz != 3
+      puts("line #{n}: error: wrong field count")
+    elsif !name_ok?(f[1])
+      puts("line #{n}: error: bad name")
+    elsif !cost_ok?(f[2])
+      puts("line #{n}: error: bad cost")
+    elsif Ctx.known?(ctx, f[1])
+      puts("line #{n}: error: duplicate #{f[1]}")
+    else
+      pc = Ctx.part_cost(ctx)
+      pc[f[1]] = to_cents(f[2])
+    end
+  elsif cmd == "ASSY"
+    if sz < 4
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    if !name_ok?(f[1])
+      puts("line #{n}: error: bad name")
+      next
+    end
+    if !cost_ok?(f[2])
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    texts = Array.drop(f, 3)
+    comps = Tuple[]
+    badtext = nil
+    Array.each(texts) do |t|
+      mt = String.match(t, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+      if mt == nil
+        badtext = t if badtext == nil
+      else
+        cs = MatchData.captures(mt)
+        q = String.to_i(cs[1])
+        if q < 1 || q > 999
+          badtext = t if badtext == nil
+        else
+          Array.push(comps, [cs[0], q])
+        end
+      end
+    end
+    if badtext != nil
+      puts("line #{n}: error: bad component #{badtext}")
+      next
+    end
+    seen = Hash[]
+    rep = nil
+    Array.each(comps) do |comp, q|
+      rep = comp if rep == nil && Hash.key?(seen, comp)
+      seen[comp] = true
+    end
+    if rep != nil
+      puts("line #{n}: error: repeated component #{rep}")
+      next
+    end
+    if Ctx.known?(ctx, f[1])
+      puts("line #{n}: error: duplicate #{f[1]}")
+      next
+    end
+    al = Ctx.assy_labor(ctx)
+    al[f[1]] = to_cents(f[2])
+    ac = Ctx.assy_comps(ctx)
+    ac[f[1]] = comps
+  elsif cmd == "BUILD"
+    if sz != 3
+      puts("line #{n}: error: wrong field count")
+    elsif !name_ok?(f[1])
+      puts("line #{n}: error: bad name")
+    elsif !String.match?(f[2], /\A\d+\z/) || String.to_i(f[2]) < 1 || String.to_i(f[2]) > 1000
+      puts("line #{n}: error: bad quantity")
+    else
+      problem = Ctx.check(ctx, f[1], Array[])
+      if problem != nil
+        puts("line #{n}: cannot build: #{problem}")
+      else
+        pq = Ctx.partq(ctx)
+        Hash.clear(pq)
+        Ctx.show(ctx, f[1], String.to_i(f[2]), 0)
+        puts("parts:")
+        names = Array.sort_by(Hash.keys(pq)) { [-pq[it], it] }
+        Array.each(names) do |nm|
+          tot = Hash.fetch(pq, nm)
+          cost = tot * Hash.fetch(Ctx.part_cost(ctx), nm)
+          puts("  #{nm} x#{tot} = #{money(cost)}")
+        end
+      end
+    end
+  else
+    puts("line #{n}: error: unknown command")
+  end
+end

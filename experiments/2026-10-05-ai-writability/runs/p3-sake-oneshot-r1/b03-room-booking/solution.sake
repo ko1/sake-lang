@@ -1,0 +1,150 @@
+Bk = Struct.new(:id, :room, :day, :s, :e, :who)
+
+def days = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+def hhmm(m) = format("%02d:%02d", m / 60, m % 60)
+
+def tmin(s)
+  m = String.match(s, /\A(\d\d):(\d\d)\z/)
+  return nil unless m
+  hh = String.to_i(m[1])
+  mm = String.to_i(m[2])
+  return nil if mm >= 60 || mm % 15 != 0
+  t = hh * 60 + mm
+  return nil if t < 480 || t > 1200
+  t
+end
+
+def room_ok(s) = String.match?(s, /\A[A-Z0-9]{1,8}\z/)
+def day_ok(s) = Array.include?(days, s)
+def who_ok(s) = String.match?(s, /\A[a-z]{1,12}\z/)
+
+lines = IO.readlines(IO.stdin)
+bks = Array[]
+next_id = 1
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  f = String.split(String.chomp(raw), " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  if cmd != "BOOK" && cmd != "CANCEL" && cmd != "FREE"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  want = cmd == "BOOK" ? 5 : (cmd == "CANCEL" ? 2 : 4)
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "BOOK"
+    room = f[1]
+    day = f[2]
+    tm = f[3]
+    who = f[4]
+    if !room_ok(room)
+      puts("line #{n}: error: bad room")
+      next
+    end
+    if !day_ok(day)
+      puts("line #{n}: error: bad day")
+      next
+    end
+    tmm = String.match(tm, /\A(\d\d:\d\d)-(\d\d:\d\d)\z/)
+    st = nil
+    en = nil
+    if tmm
+      st = tmin(tmm[1])
+      en = tmin(tmm[2])
+    end
+    if st == nil || en == nil || st >= en
+      puts("line #{n}: error: bad time")
+      next
+    end
+    if !who_ok(who)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    hit = nil
+    Array.each(bks) do |b|
+      if Bk.room(b) == room && Bk.day(b) == day && st < Bk.e(b) && Bk.s(b) < en
+        if hit == nil || Bk.s(b) < Bk.s(hit) || (Bk.s(b) == Bk.s(hit) && Bk.id(b) < Bk.id(hit))
+          hit = b
+        end
+      end
+    end
+    if hit != nil
+      puts("CONFLICT #{room} #{day} with ##{Bk.id(hit)} (#{Bk.who(hit)} #{hhmm(Bk.s(hit))}-#{hhmm(Bk.e(hit))})")
+      next
+    end
+    cnt = Array.count(bks) { |b| Bk.who(b) == who && Bk.day(b) == day }
+    if cnt >= 3
+      puts("LIMIT #{who} #{day}")
+      next
+    end
+    Array.push(bks, Bk.new(next_id, room, day, st, en, who))
+    puts("OK ##{next_id} #{room} #{day} #{hhmm(st)}-#{hhmm(en)} #{who}")
+    next_id += 1
+  elsif cmd == "CANCEL"
+    if !String.match?(f[1], /\A\d+\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    id = String.to_i(f[1])
+    idx = Array.find_index(bks) { |b| Bk.id(b) == id }
+    if idx == nil
+      puts("NO BOOKING ##{id}")
+    else
+      Array.delete_at(bks, idx)
+      puts("CANCELLED ##{id}")
+    end
+  else
+    room = f[1]
+    day = f[2]
+    if !room_ok(room)
+      puts("line #{n}: error: bad room")
+      next
+    end
+    if !day_ok(day)
+      puts("line #{n}: error: bad day")
+      next
+    end
+    if !String.match?(f[3], /\A\d+\z/) || String.to_i(f[3]) <= 0 || String.to_i(f[3]) % 15 != 0
+      puts("line #{n}: error: bad duration")
+      next
+    end
+    mins = String.to_i(f[3])
+    found = nil
+    t = 480
+    while found == nil && t + mins <= 1200
+      clash = Array.any?(bks) { |b| Bk.room(b) == room && Bk.day(b) == day && t < Bk.e(b) && Bk.s(b) < t + mins }
+      found = t if !clash
+      t += 15
+    end
+    if found == nil
+      puts("FULL #{room} #{day}")
+    else
+      puts("FREE #{room} #{day} #{hhmm(found)}-#{hhmm(found + mins)}")
+    end
+  end
+end
+
+puts("== schedule ==")
+if Array.empty?(bks)
+  puts("(none)")
+else
+  sorted = Array.sort_by(bks) { |b| [Array.index(days, Bk.day(b)), Bk.room(b), Bk.s(b)] }
+  Array.each(sorted) do |b|
+    puts(format("%s %-8s %s-%s #%d %s", Bk.day(b), Bk.room(b), hhmm(Bk.s(b)), hhmm(Bk.e(b)), Bk.id(b), Bk.who(b)))
+  end
+end
+puts("== usage ==")
+if Array.empty?(bks)
+  puts("(none)")
+else
+  tot = Hash.new(0)
+  Array.each(bks) { |b| tot[Bk.room(b)] += Bk.e(b) - Bk.s(b) }
+  Array.each(Array.sort(Hash.keys(tot))) do |r|
+    m = Hash.fetch(tot, r)
+    puts(format("%-8s %dh%02dm", r, m / 60, m % 60))
+  end
+end

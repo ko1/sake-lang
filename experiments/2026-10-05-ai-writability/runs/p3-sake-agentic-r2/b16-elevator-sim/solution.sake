@@ -1,0 +1,139 @@
+Pax = Struct.new(:t, :f, :g, :state, :pick, :drop)
+
+def digits?(s) = String.match?(s, /\A\d+\z/)
+
+def all_digits?(toks) = Array.all?(toks) { |s| digits?(s) }
+
+def simulate(n, d, c, pax)
+  t = 0
+  f = 1
+  dir = 0
+  ndone = 0
+  total = Array.size(pax)
+  last = 0
+  while ndone < total
+    Array.each(pax) do |p|
+      Pax.set_state(p, 1) if Pax.state(p) == 0 && Pax.t(p) <= t
+    end
+    changed = false
+    Array.each(pax) do |p|
+      if Pax.state(p) == 2 && Pax.g(p) == f
+        Pax.set_state(p, 3)
+        Pax.set_drop(p, t)
+        ndone += 1
+        last = t
+        changed = true
+        puts("t=#{t} floor #{f} drop P#{Array.index(pax, p) + 1}")
+      end
+    end
+    targets = Integer[]
+    Array.each(pax) do |p|
+      if Pax.state(p) == 1
+        Array.push(targets, Pax.f(p))
+      elsif Pax.state(p) == 2
+        Array.push(targets, Pax.g(p))
+      end
+    end
+    if dir == 1
+      if !Array.any?(targets) { |x| x > f }
+        dir = Array.any?(targets) { |x| x < f } ? -1 : 0
+      end
+    elsif dir == -1
+      if !Array.any?(targets) { |x| x < f }
+        dir = Array.any?(targets) { |x| x > f } ? 1 : 0
+      end
+    end
+    if dir == 0 && !Array.empty?(targets)
+      best = Array.min_by(targets) { |x| [Integer.abs(x - f), x] }
+      if best == f
+        w = Array.find(pax) { |p| Pax.state(p) == 1 && Pax.f(p) == f }
+        dir = Pax.g(w) > Pax.f(w) ? 1 : -1
+      else
+        dir = best > f ? 1 : -1
+      end
+    end
+    riders = Array.count(pax) { |p| Pax.state(p) == 2 }
+    Array.each(pax) do |p|
+      if Pax.state(p) == 1 && Pax.f(p) == f && riders < c
+        own = Pax.g(p) > Pax.f(p) ? 1 : -1
+        if own == dir
+          Pax.set_state(p, 2)
+          Pax.set_pick(p, t)
+          riders += 1
+          changed = true
+          puts("t=#{t} floor #{f} pick P#{Array.index(pax, p) + 1}")
+        end
+      end
+    end
+    if changed
+      t += d
+    else
+      f += dir
+      t += 1
+    end
+  end
+  last
+end
+
+def main
+  lines = IO.readlines(IO.stdin)
+  if Array.empty?(lines)
+    puts("invalid header")
+    return
+  end
+  toks = String.split(lines[0])
+  ok = Array.size(toks) == 3 && all_digits?(toks)
+  if ok
+    h = Array.map(toks) { |s| String.to_i(s) }
+    ok = h[0] >= 2 && h[0] <= 50 && h[1] <= 5 && h[2] >= 1 && h[2] <= 20
+  end
+  if !ok
+    puts("invalid header")
+    return
+  end
+  n = h[0]
+  d = h[1]
+  c = h[2]
+  pax = Pax[]
+  prev = 0
+  i = 1
+  while i < Array.size(lines)
+    line = String.strip(lines[i])
+    if !String.empty?(line)
+      tk = String.split(line)
+      good = Array.size(tk) == 3 && all_digits?(tk)
+      if good
+        v = Array.map(tk) { |s| String.to_i(s) }
+        good = v[0] <= 1000 && v[0] >= prev && v[1] >= 1 && v[1] <= n && v[2] >= 1 && v[2] <= n && v[1] != v[2]
+      end
+      if good
+        prev = v[0]
+        Array.push(pax, Pax.new(v[0], v[1], v[2], 0, 0, 0))
+      else
+        puts("line #{i + 1}: invalid request")
+      end
+    end
+    i += 1
+  end
+  if Array.empty?(pax)
+    puts("no passengers")
+    return
+  end
+  last = simulate(n, d, c, pax)
+  sw = 0
+  sr = 0
+  k = 1
+  Array.each(pax) do |p|
+    w = Pax.pick(p) - Pax.t(p)
+    r = Pax.drop(p) - Pax.pick(p)
+    sw += w
+    sr += r
+    puts("P#{k} wait #{w} ride #{r}")
+    k += 1
+  end
+  m = Array.size(pax)
+  puts(format("average wait %.2f ride %.2f", Integer.fdiv(sw, m), Integer.fdiv(sr, m)))
+  puts("done at t=#{last}")
+end
+
+main

@@ -1,0 +1,112 @@
+def blank?(s) = String.match?(s, /\A *\z/)
+
+# 0 = fine, otherwise the rejection reason
+def reject_reason(names, cands)
+  seen = Hash[]
+  reason = ""
+  Array.each(names) do |nm|
+    if nm == ""
+      reason = "empty rank"
+      break
+    elsif !Array.include?(cands, nm)
+      reason = "unknown candidate #{nm}"
+      break
+    elsif seen[nm]
+      reason = "duplicate #{nm}"
+      break
+    end
+    seen[nm] = true
+  end
+  reason
+end
+
+def share(votes, active)
+  return "0.0%" if active == 0
+  t = (votes * 2000 + active) / (2 * active)
+  "#{t / 10}.#{t % 10}%"
+end
+
+def main
+  lines = IO.readlines(IO.stdin)
+  head = Array.empty?(lines) ? "" : lines[0]
+  cands = Array.uniq(String.split(String.strip(head), /\s+/))
+  cands = Array[] if head == "" || Array.first(cands) == ""
+  if Array.empty?(cands)
+    puts("no candidates")
+    return
+  end
+  ballots = Array[]
+  rejected = 0
+  k = 1
+  while k < Array.size(lines)
+    raw = String.chomp(lines[k])
+    k += 1
+    next if blank?(raw)
+    parts = String.split(raw + ">!", ">")
+    Array.pop(parts)
+    names = Array.map(parts) { |x| String.strip(x) }
+    reason = reject_reason(names, cands)
+    if reason == ""
+      Array.push(ballots, names)
+    else
+      rejected += 1
+      puts("rejected line #{k}: #{reason}")
+    end
+  end
+  nv = Array.size(ballots)
+  puts("ballots: #{nv} valid, #{rejected} rejected")
+
+  elim = Hash[]
+  hist = Hash[]
+  Array.each(cands) { |c| hist[c] = Array[] }
+  round = 0
+  while true
+    round += 1
+    counts = Hash[]
+    Array.each(cands) { |c| counts[c] = 0 }
+    exhausted = 0
+    Array.each(ballots) do |b|
+      pick = ""
+      Array.each(b) do |nm|
+        if !elim[nm]
+          pick = nm
+          break
+        end
+      end
+      if pick == ""
+        exhausted += 1
+      else
+        counts[pick] += 1
+      end
+    end
+    active = nv - exhausted
+    live = Array.select(cands) { |c| !elim[c] }
+    Array.each(live) { |c| Array.push(hist[c], counts[c]) }
+    puts("round #{round}")
+    order = Array.sort_by(live) { |c| [-counts[c], c] }
+    Array.each(order) { |c| puts("  #{c} #{counts[c]} #{share(counts[c], active)}") }
+    puts("  exhausted #{exhausted}")
+    if active == 0
+      puts("no winner")
+      break
+    end
+    win = Array.find(live) { |c| counts[c] * 2 > active }
+    if win
+      puts("winner #{win}")
+      break
+    end
+    lo = Array.min(Array.map(live) { |c| counts[c] })
+    tied = Array.select(live) { |c| counts[c] == lo }
+    rd = round - 2
+    while Array.size(tied) > 1 && rd >= 0
+      m = Array.min(Array.map(tied) { |c| hist[c][rd] })
+      tied = Array.select(tied) { |c| hist[c][rd] == m }
+      rd -= 1
+    end
+    victim = Array.max(tied)
+    puts("  eliminated #{victim}")
+    elim[victim] = true
+  end
+end
+
+main()

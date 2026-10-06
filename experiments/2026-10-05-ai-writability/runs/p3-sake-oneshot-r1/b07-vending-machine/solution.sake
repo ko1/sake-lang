@@ -1,0 +1,159 @@
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+def money_ok?(s) = String.match?(s, /\A\d+\.\d\d\z/)
+def to_cents(s) = String.to_i(String.delete(s, "."))
+def coin_list(cs) = Array.join(Array.map(cs) { money(it) }, " ")
+
+coins = Array[5, 10, 25, 50, 100, 200]
+tubes = Array.new(6, 0)
+slot_name = Hash[]
+slot_price = Hash[]
+slot_count = Hash[]
+sold_items = Hash.new(0)
+sold_rev = Hash.new(0)
+inserted = Array[]
+credit = 0
+
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, i|
+  n = i + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, /\s+/)
+  cmd = f[0]
+  want = 0
+  if cmd == "SLOT"
+    want = 5
+  elsif cmd == "TUBE"
+    want = 3
+  elsif cmd == "COIN" || cmd == "SELECT"
+    want = 2
+  elsif cmd == "CANCEL"
+    want = 1
+  end
+  if want == 0
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  bad = nil
+  if cmd == "SLOT"
+    if !String.match?(f[1], /\A[A-Z]\d\z/)
+      bad = "bad slot"
+    elsif !String.match?(f[2], /\A[a-z]{1,12}\z/)
+      bad = "bad name"
+    elsif !money_ok?(f[3])
+      bad = "bad money"
+    elsif !String.match?(f[4], /\A\d{1,2}\z/)
+      bad = "bad count"
+    end
+  elsif cmd == "TUBE"
+    if !money_ok?(f[1])
+      bad = "bad money"
+    elsif Array.index(coins, to_cents(f[1])) == nil
+      bad = "bad coin"
+    elsif !String.match?(f[2], /\A\d{1,3}\z/)
+      bad = "bad count"
+    end
+  elsif cmd == "COIN"
+    bad = "bad money" unless money_ok?(f[1])
+  end
+  if bad != nil
+    puts("line #{n}: error: #{bad}")
+    next
+  end
+
+  if cmd == "SLOT"
+    code = f[1]
+    slot_name[code] = f[2]
+    slot_price[code] = to_cents(f[3])
+    slot_count[code] = String.to_i(f[4])
+  elsif cmd == "TUBE"
+    k = Array.index(coins, to_cents(f[1]))
+    tubes[k] += String.to_i(f[2])
+  elsif cmd == "COIN"
+    v = to_cents(f[1])
+    k = Array.index(coins, v)
+    if k == nil
+      puts("rejected #{money(v)}")
+    elsif credit + v > 500
+      puts("rejected #{money(v)} (credit limit)")
+    else
+      tubes[k] += 1
+      Array.push(inserted, v)
+      credit += v
+      puts("credit #{money(credit)}")
+    end
+  elsif cmd == "SELECT"
+    code = f[1]
+    if !Hash.key?(slot_name, code)
+      puts("no slot #{code}")
+    elsif Hash.fetch(slot_count, code) == 0
+      puts("sold out #{code}")
+    elsif credit < Hash.fetch(slot_price, code)
+      puts("insert #{money(Hash.fetch(slot_price, code) - credit)} more")
+    else
+      price = Hash.fetch(slot_price, code)
+      change = credit - price
+      paid = Array.new(6, 0)
+      j = 5
+      while j >= 0
+        take = change / coins[j]
+        take = tubes[j] if take > tubes[j]
+        paid[j] = take
+        change -= take * coins[j]
+        j -= 1
+      end
+      if change != 0
+        puts("exact change needed")
+      else
+        given = Integer[]
+        total = 0
+        j = 5
+        while j >= 0
+          Integer.times(paid[j]) { Array.push(given, coins[j]) }
+          tubes[j] -= paid[j]
+          total += paid[j] * coins[j]
+          j -= 1
+        end
+        name = Hash.fetch(slot_name, code)
+        slot_count[code] = Hash.fetch(slot_count, code) - 1
+        sold_items[name] += 1
+        sold_rev[name] += price
+        credit = 0
+        inserted = Array[]
+        if total == 0
+          puts("vend #{name}, change #{money(0)}")
+        else
+          puts("vend #{name}, change #{money(total)} [#{coin_list(given)}]")
+        end
+      end
+    end
+  else
+    if credit == 0
+      puts("nothing to return")
+    else
+      Array.each(inserted) do |v|
+        k = Array.index(coins, v)
+        tubes[k] -= 1
+      end
+      puts("returned #{money(credit)} [#{coin_list(inserted)}]")
+      credit = 0
+      inserted = Array[]
+    end
+  end
+end
+
+puts("credit #{money(credit)} kept") if credit != 0
+puts("sales:")
+names = Array.sort_by(Hash.keys(sold_items)) { [-sold_rev[it], it] }
+if Array.empty?(names)
+  puts("  none")
+else
+  Array.each(names) do |nm|
+    puts(format("  %-12s %3d %8s", nm, sold_items[nm], money(sold_rev[nm])))
+  end
+end
+puts("tubes: " + Array.join(Array.map(Array[0, 1, 2, 3, 4, 5]) { "#{money(coins[it])}x#{tubes[it]}" }, " "))

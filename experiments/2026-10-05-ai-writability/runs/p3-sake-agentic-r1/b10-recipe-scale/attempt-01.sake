@@ -1,0 +1,153 @@
+def fmt(x)
+  d = Rational.denominator(x)
+  if d <= 8
+    w = Rational.floor(x)
+    fr = x - w
+    return Integer.to_s(w) if fr == 0
+    s = "#{Rational.numerator(fr)}/#{d}"
+    return w == 0 ? s : "#{w} #{s}"
+  end
+  c = Rational.floor(x * 100 + Rational(1, 2))
+  "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+end
+
+def decimal(s)
+  parts = String.split(s, ".")
+  k = String.size(parts[1])
+  Rational(String.to_i(parts[0] + parts[1]), 10 ** k)
+end
+
+# a quantity as a Rational, or nil when it is not one
+def simple_qty(s)
+  if String.match?(s, /\A\d+\z/)
+    Rational(String.to_i(s), 1)
+  elsif String.match?(s, /\A\d+\.\d+\z/)
+    decimal(s)
+  elsif String.match?(s, /\A\d+\/\d+\z/)
+    p2 = String.split(s, "/")
+    den = String.to_i(p2[1])
+    den == 0 ? nil : Rational(String.to_i(p2[0]), den)
+  else
+    nil
+  end
+end
+
+def frac?(s)
+  return false unless String.match?(s, /\A\d+\/\d+\z/)
+  String.to_i(String.split(s, "/")[1]) != 0
+end
+
+# [group, tsp-or-base factor] of a unit, or nil
+def unit_info(u)
+  if u == "tsp"
+    [:spoon, 1]
+  elsif u == "tbsp"
+    [:spoon, 3]
+  elsif u == "cup"
+    [:spoon, 48]
+  elsif u == "g"
+    [:gram, 1]
+  elsif u == "kg"
+    [:gram, 1000]
+  elsif u == "ml"
+    [:ml, 1]
+  elsif u == "l"
+    [:ml, 1000]
+  elsif u == "-"
+    [:count, 1]
+  else
+    nil
+  end
+end
+
+def good(x, unit_size) = Rational.denominator(x / unit_size) <= 4 && x / unit_size >= 1
+
+# "QUANTITY UNIT" text of an amount in base units
+def show(group, amt, name)
+  if group == :count
+    n = Rational.ceil(amt)
+    return "#{n} #{name}"
+  end
+  v = amt
+  u = ""
+  if group == :spoon
+    if good(amt, 48)
+      v = amt / 48
+      u = "cup"
+    elsif good(amt, 3)
+      v = amt / 3
+      u = "tbsp"
+    else
+      u = "tsp"
+    end
+  elsif group == :gram
+    if amt >= 1000
+      v = amt / 1000
+      u = "kg"
+    else
+      u = "g"
+    end
+  else
+    if amt >= 1000
+      v = amt / 1000
+      u = "l"
+    else
+      u = "ml"
+    end
+  end
+  "#{fmt(v)} #{u} #{name}"
+end
+
+lines = IO.readlines(IO.stdin)
+f0 = lines[0] == nil ? Array[] : String.split(lines[0])
+unless Array.size(f0) == 4 && f0[0] == "SERVES" && String.match?(f0[1], /\A\d+\z/) &&
+       String.match?(f0[3], /\A\d+\z/) && f0[2] == "->" &&
+       String.to_i(f0[1]) >= 1 && String.to_i(f0[1]) <= 100 &&
+       String.to_i(f0[3]) >= 1 && String.to_i(f0[3]) <= 100
+  puts("line 1: error: bad servings")
+  exit
+end
+factor = Rational(String.to_i(f0[3]), String.to_i(f0[1]))
+puts("serves #{f0[3]} (x #{fmt(factor)})")
+
+order = Array[]
+totals = Hash[]
+Array.each_with_index(lines) do |line, i|
+  next if i == 0
+  f = String.split(line)
+  next if Array.empty?(f)
+  next if String.start_with?(f[0], "#")
+  n = i + 1
+  q = simple_qty(f[0])
+  rest = Array.drop(f, 1)
+  if q != nil && String.match?(f[0], /\A\d+\z/) && Array.size(f) > 1 && frac?(f[1])
+    q = q + simple_qty(f[1])
+    rest = Array.drop(f, 2)
+  end
+  if q == nil || q == 0
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  if Array.empty?(rest)
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  info = unit_info(rest[0])
+  if info == nil
+    puts("line #{n}: error: unknown unit #{rest[0]}")
+    next
+  end
+  if Array.size(rest) < 2
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(Array.drop(rest, 1), " ")
+  key = [info[0], name]
+  if totals[key] == nil
+    Array.push(order, key)
+    totals[key] = Rational(0, 1)
+  end
+  totals[key] = totals[key] + q * info[1] * factor
+end
+
+Array.each(order) { |key| puts(show(key[0], totals[key], key[1])) }

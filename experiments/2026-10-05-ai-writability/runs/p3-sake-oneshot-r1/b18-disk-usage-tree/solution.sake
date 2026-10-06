@@ -1,0 +1,152 @@
+class Node
+  attr_reader name, isdir
+  attr_accessor size
+  attr_reader kids
+end
+
+def tokens(line) = String.split(String.strip(line), /\s+/)
+
+def digits?(s) = String.match?(s, /\A\d+\z/)
+
+def round_div(a, b) = (2 * a + b) / (2 * b)
+
+def fmt_size(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  unit = "K"
+  if s >= 1073741824
+    u = 1073741824
+    unit = "G"
+  elsif s >= 1048576
+    u = 1048576
+    unit = "M"
+  end
+  t = round_div(s * 10, u)
+  if t < 100
+    "#{t / 10}.#{t % 10}#{unit}"
+  else
+    n = round_div(s, u)
+    if n == 1024 && unit != "G"
+      nxt = unit == "K" ? "M" : "G"
+      "1.0#{nxt}"
+    else
+      "#{n}#{unit}"
+    end
+  end
+end
+
+# 0 = free, 1 = duplicate, 2 = conflict
+def check_path(root, comps)
+  cur = root
+  i = 0
+  n = Array.size(comps)
+  while i < n
+    ks = Node.kids(cur)
+    child = ks[comps[i]]
+    return 0 if child == nil
+    if i == n - 1
+      return Node.isdir(child) ? 2 : 1
+    end
+    return 2 unless Node.isdir(child)
+    cur = child
+    i += 1
+  end
+  0
+end
+
+def add_file(root, comps, sz)
+  cur = root
+  i = 0
+  n = Array.size(comps)
+  while i < n
+    nm = comps[i]
+    ks = Node.kids(cur)
+    child = ks[nm]
+    if child == nil
+      isf = i == n - 1
+      child = Node.new(nm, !isf, isf ? sz : 0, Hash[])
+      ks[nm] = child
+    end
+    cur = child
+    i += 1
+  end
+end
+
+def total(n)
+  if Node.isdir(n)
+    s = 0
+    Array.each(Hash.values(Node.kids(n))) { |k| s += total(k) }
+    Node.set_size(n, s)
+    s
+  else
+    Node.size(n)
+  end
+end
+
+def indent(dep) = String.*("  ", dep)
+
+def show_line(sz, dep, nm)
+  puts(format("%6s  %s%s", fmt_size(sz), indent(dep), nm))
+end
+
+def show(node, dep, dmax, thr)
+  return if dep >= dmax
+  kids = Hash.values(Node.kids(node))
+  sorted = Array.sort_by(kids) { |k| [-Node.size(k), Node.name(k)] }
+  hidden = 0
+  hk = 0
+  Array.each(sorted) do |k|
+    if Node.size(k) < thr
+      hidden += Node.size(k)
+      hk += 1
+    else
+      label = Node.isdir(k) ? "#{Node.name(k)}/" : Node.name(k)
+      show_line(Node.size(k), dep + 1, label)
+      show(k, dep + 1, dmax, thr)
+    end
+  end
+  show_line(hidden, dep + 1, "(#{hk} smaller)") if hk > 0
+end
+
+def main
+  lines = IO.readlines(IO.stdin)
+  h = Array.empty?(lines) ? Array[] : tokens(lines[0])
+  unless Array.size(h) == 4 && h[0] == "depth" && h[2] == "threshold" && digits?(h[1]) && digits?(h[3])
+    puts("bad header")
+    return
+  end
+  dmax = String.to_i(h[1])
+  thr = String.to_i(h[3])
+  root = Node.new(".", true, 0, Hash[])
+  k = 1
+  while k < Array.size(lines)
+    toks = tokens(lines[k])
+    k += 1
+    next if Array.empty?(toks)
+    ok = Array.size(toks) == 2 && digits?(toks[0]) && String.match?(toks[1], /\A[^\/]+(?:\/[^\/]+)*\z/)
+    comps = Array[]
+    sz = 0
+    if ok
+      sz = String.to_i(toks[0])
+      comps = String.split(toks[1], "/")
+      ok = sz <= 10000000000000 && !Array.any?(comps) { |c| c == "." || c == ".." }
+    end
+    unless ok
+      puts("line #{k}: malformed")
+      next
+    end
+    r = check_path(root, comps)
+    if r == 1
+      puts("line #{k}: duplicate #{toks[1]}")
+    elsif r == 2
+      puts("line #{k}: conflict #{toks[1]}")
+    else
+      add_file(root, comps, sz)
+    end
+  end
+  total(root)
+  show_line(Node.size(root), 0, ".")
+  show(root, 0, dmax, thr)
+end
+
+main()

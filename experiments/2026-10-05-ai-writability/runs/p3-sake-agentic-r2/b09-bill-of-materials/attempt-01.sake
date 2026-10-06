@@ -1,0 +1,141 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def name_ok?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+def parse_cost(s)
+  return nil unless String.match?(s, /\A\d+\.\d\d\z/)
+  parts = String.split(s, ".")
+  String.to_i(parts[0]) * 100 + String.to_i(parts[1])
+end
+
+class Item
+  attr_reader labor, comps
+end
+
+def unit_cost(items, name, memo)
+  c = memo[name]
+  return c if c
+  it = items[name]
+  total = Item.labor(it)
+  Array.each(Item.comps(it)) { |cn, q| total += q * unit_cost(items, cn, memo) }
+  memo[name] = total
+  total
+end
+
+def validate(items, name, parent, path, ok)
+  it = items[name]
+  unless it
+    return parent ? "unknown item #{name} in #{parent}" : "unknown item #{name}"
+  end
+  if Array.include?(path, name)
+    i = Array.index(path, name)
+    cyc = Array.drop(path, i) + Array[name]
+    return "cycle #{Array.join(cyc, " > ")}"
+  end
+  return nil if ok[name]
+  Array.push(path, name)
+  Array.each(Item.comps(it)) do |cn, q|
+    r = validate(items, cn, name, path, ok)
+    return r if r
+  end
+  Array.pop(path)
+  ok[name] = true
+  nil
+end
+
+def show(items, name, qty, depth, memo, parts)
+  it = items[name]
+  puts("#{String.*(" ", depth * 2)}#{qty} x #{name} = #{money(qty * unit_cost(items, name, memo))}")
+  if Array.empty?(Item.comps(it))
+    parts[name] += qty
+  else
+    Array.each(Item.comps(it)) { |cn, q| show(items, cn, qty * q, depth + 1, memo, parts) }
+  end
+end
+
+items = Hash[]
+n = 0
+Array.each(IO.readlines(IO.stdin())) do |line|
+  n += 1
+  f = String.split(line)
+  next if Array.empty?(f)
+  cmd = f[0]
+  sz = Array.size(f)
+  if cmd == "PART" || cmd == "ASSY" || cmd == "BUILD"
+    if (cmd == "PART" && sz != 3) || (cmd == "BUILD" && sz != 3) || (cmd == "ASSY" && sz < 4)
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    name = f[1]
+    unless name_ok?(name)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    if cmd == "BUILD"
+      unless String.match?(f[2], /\A\d+\z/) && String.to_i(f[2]) >= 1 && String.to_i(f[2]) <= 1000
+        puts("line #{n}: error: bad quantity")
+        next
+      end
+      path = Array[]
+      msg = validate(items, name, nil, path, Hash[])
+      if msg
+        puts("line #{n}: cannot build: #{msg}")
+        next
+      end
+      memo = Hash[]
+      parts = Hash.new(0)
+      show(items, name, String.to_i(f[2]), 0, memo, parts)
+      puts("parts:")
+      names = Array.sort_by(Hash.keys(parts)) { |pn| [-parts[pn], pn] }
+      Array.each(names) do |pn|
+        puts("  #{pn} x#{parts[pn]} = #{money(parts[pn] * unit_cost(items, pn, memo))}")
+      end
+      next
+    end
+    cost = parse_cost(f[2])
+    unless cost
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    comps = Tuple[]
+    if cmd == "ASSY"
+      bad = nil
+      Array.each(Array.drop(f, 3)) do |txt|
+        if String.match?(txt, /\A[a-z][a-z0-9_]{0,15}:\d+\z/)
+          pr = String.split(txt, ":")
+          q = String.to_i(pr[1])
+          if q >= 1 && q <= 999
+            Array.push(comps, [pr[0], q])
+            next
+          end
+        end
+        bad = txt
+        break
+      end
+      if bad
+        puts("line #{n}: error: bad component #{bad}")
+        next
+      end
+      seen = Hash[]
+      dup = nil
+      Array.each(comps) do |cn, q|
+        if seen[cn]
+          dup = cn
+          break
+        end
+        seen[cn] = true
+      end
+      if dup
+        puts("line #{n}: error: repeated component #{dup}")
+        next
+      end
+    end
+    if items[name]
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    items[name] = Item.new(cost, comps)
+  else
+    puts("line #{n}: error: unknown command")
+  end
+end

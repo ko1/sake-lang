@@ -1,0 +1,124 @@
+def resolve(secs, sec, key, stack)
+  val = secs[sec][key]
+  Array.push(stack, "#{sec}.#{key}")
+  out = ""
+  pos = 0
+  while true
+    m = String.match(val, /\$\{([a-z0-9_]+(?:\.[a-z0-9_]+)?)\}/, pos)
+    break if m == nil
+    st = MatchData.begin(m, 0)
+    out += val[pos, st - pos]
+    pos = MatchData.end(m, 0)
+    name = m[1]
+    if String.include?(name, ".")
+      rs, rk = String.split(name, ".")
+    else
+      rs = sec
+      rk = name
+    end
+    full = "#{rs}.#{rk}"
+    if Array.include?(stack, full)
+      return [false, "cycle " + Array.join(Array[*stack, full], " -> ")]
+    end
+    sh = secs[rs]
+    if sh == nil || !Hash.key?(sh, rk)
+      return [false, "undefined #{full}"]
+    end
+    ok, txt = resolve(secs, rs, rk, stack)
+    return [false, txt] if !ok
+    out += txt
+  end
+  out += val[pos, String.size(val) - pos]
+  Array.pop(stack)
+  [true, out]
+end
+
+def typed(v)
+  if String.match?(v, /\A[+-]?\d+\z/)
+    return "int #{String.to_i(v)}"
+  end
+  lv = String.downcase(v)
+  return "bool true" if lv == "true" || lv == "yes" || lv == "on"
+  return "bool false" if lv == "false" || lv == "no" || lv == "off"
+  if String.include?(v, ",")
+    parts = Array.map(String.split(v, ",")) { String.strip(it) }
+    items = Array.reject(parts) { String.empty?(it) }
+    cnt = Array.size(items)
+    if cnt > 0
+      return "list[#{cnt}] " + Array.join(items, " | ")
+    end
+    return "list[0]"
+  end
+  "str \"#{v}\""
+end
+
+lines = String.lines(IO.read(IO.stdin))
+secs = Hash[]
+cur = "main"
+in_q = false
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.strip(raw)
+  if !in_q
+    if line == "%%"
+      in_q = true
+      next
+    end
+    next if String.empty?(line) || String.start_with?(line, "#") || String.start_with?(line, ";")
+    m = String.match(line, /\A\[([a-z0-9_]+)\]\z/)
+    if m != nil
+      cur = m[1]
+      secs[cur] = Hash[] unless Hash.key?(secs, cur)
+    else
+      idx = String.index(line, "=")
+      k = idx == nil ? "" : String.strip(line[0, idx])
+      if idx != nil && String.match?(k, /\A[a-z0-9_]+\z/)
+        v = String.strip(line[idx + 1, String.size(line) - idx - 1])
+        secs[cur] = Hash[] unless Hash.key?(secs, cur)
+        h = secs[cur]
+        if Hash.key?(h, k)
+          puts("line #{n}: duplicate key #{cur}.#{k}")
+        end
+        h[k] = v
+      else
+        puts("line #{n}: syntax error")
+      end
+    end
+  else
+    next if String.empty?(line)
+    f = String.split(line, " ")
+    cmd = f[0]
+    if cmd == "GET" && Array.size(f) == 2 && String.match?(f[1], /\A[a-z0-9_]+(\.[a-z0-9_]+)?\z/)
+      nm = f[1]
+      if String.include?(nm, ".")
+        sec, key = String.split(nm, ".")
+      else
+        sec = "main"
+        key = nm
+      end
+      sh = secs[sec]
+      if sh == nil || !Hash.key?(sh, key)
+        puts("#{sec}.#{key}: not found")
+      else
+        ok, txt = resolve(secs, sec, key, Array[])
+        if ok
+          puts("#{sec}.#{key} = #{typed(txt)}")
+        else
+          puts("#{sec}.#{key}: error: #{txt}")
+        end
+      end
+    elsif cmd == "KEYS" && Array.size(f) == 2 && String.match?(f[1], /\A[a-z0-9_]+\z/)
+      sh = secs[f[1]]
+      if sh == nil
+        puts("#{f[1]}: not found")
+      else
+        ks = Array.sort(Hash.keys(sh))
+        listing = Array.empty?(ks) ? "(none)" : Array.join(ks, ", ")
+        puts("#{f[1]}: #{listing}")
+      end
+    else
+      puts("line #{n}: bad query")
+    end
+  end
+end

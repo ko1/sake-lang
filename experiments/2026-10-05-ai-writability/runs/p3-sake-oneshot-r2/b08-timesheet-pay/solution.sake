@@ -1,0 +1,169 @@
+Emp = Struct.new(:id, :name, :rate, :shifts)
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+
+def hm(m) = "#{m / 60}:#{String.rjust(Integer.to_s(m % 60), 2, "0")}"
+
+def dim(y, m)
+  if m == 2
+    leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+    return leap ? 29 : 28
+  end
+  return 30 if Array.include?(Array[4, 6, 9, 11], m)
+  31
+end
+
+# days since 1970-01-01, or nil when not a real date in 1970..2099
+def parse_date(s)
+  md = String.match(s, /\A(\d{4})-(\d\d)-(\d\d)\z/)
+  return nil if md == nil
+  ys, ms, ds = MatchData.captures(md)
+  y = String.to_i(ys)
+  mo = String.to_i(ms)
+  d = String.to_i(ds)
+  return nil if y < 1970 || y > 2099 || mo < 1 || mo > 12 || d < 1
+  return nil if d > dim(y, mo)
+  yy = mo <= 2 ? y - 1 : y
+  era = yy / 400
+  yoe = yy - era * 400
+  mp = (mo + 9) % 12
+  doy = (153 * mp + 2) / 5 + d - 1
+  doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+end
+
+def parse_time(s)
+  md = String.match(s, /\A(\d\d):(\d\d)\z/)
+  return nil if md == nil
+  hs, ms = MatchData.captures(md)
+  h = String.to_i(hs)
+  m = String.to_i(ms)
+  return nil if h > 23 || m > 59
+  h * 60 + m
+end
+
+def handle(emps, n, line)
+  f = String.split(line, " ")
+  return nil if Array.empty?(f)
+  cmd = f[0]
+  if cmd == "EMP"
+    if Array.size(f) != 4
+      err(n, "wrong field count")
+      return nil
+    end
+    id = f[1]
+    unless String.match?(id, /\AE\d{3}\z/)
+      err(n, "bad id")
+      return nil
+    end
+    unless String.match?(f[2], /\A[A-Za-z]{1,10}\z/)
+      err(n, "bad name")
+      return nil
+    end
+    unless String.match?(f[3], /\A\d+\.\d\d\z/)
+      err(n, "bad rate")
+      return nil
+    end
+    if emps[id] != nil
+      err(n, "duplicate employee #{id}")
+      return nil
+    end
+    rate = String.to_i(String.delete(f[3], "."))
+    emps[id] = Emp.new(id, f[2], rate, Array[])
+  elsif cmd == "SHIFT"
+    cnt = Array.size(f)
+    if cnt != 5 && cnt != 6
+      err(n, "wrong field count")
+      return nil
+    end
+    id = f[1]
+    unless String.match?(id, /\AE\d{3}\z/)
+      err(n, "bad id")
+      return nil
+    end
+    e = emps[id]
+    if e == nil
+      err(n, "unknown employee #{id}")
+      return nil
+    end
+    days = parse_date(f[2])
+    if days == nil
+      err(n, "bad date")
+      return nil
+    end
+    st = parse_time(f[3])
+    en = parse_time(f[4])
+    if st == nil || en == nil
+      err(n, "bad time")
+      return nil
+    end
+    len = en - st
+    len += 1440 if en <= st
+    brk = 0
+    if cnt == 6
+      unless String.match?(f[5], /\A\d+\z/)
+        err(n, "bad break")
+        return nil
+      end
+      brk = String.to_i(f[5])
+      if brk >= len
+        err(n, "bad break")
+        return nil
+      end
+    end
+    abs_start = days * 1440 + st
+    abs_end = abs_start + len
+    clash = Array.any?(Emp.shifts(e)) { |s0, e0, d0, w0| abs_start < e0 && s0 < abs_end }
+    if clash
+      err(n, "overlapping shift")
+      return nil
+    end
+    brk = 30 if len > 360 && brk < 30
+    Array.push(Emp.shifts(e), [abs_start, abs_end, days, len - brk])
+  else
+    err(n, "unknown command")
+  end
+  nil
+end
+
+emps = Hash[]
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) { |line, i| handle(emps, i + 1, line) }
+
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+tot_reg = 0
+tot_ot = 0
+tot_pay = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  e = emps[id]
+  rate = Emp.rate(e)
+  daytot = Hash.new(0)
+  weekreg = Hash.new(0)
+  reg = 0
+  ot = 0
+  sorted = Array.sort_by(Emp.shifts(e)) { |s0, e0, d0, w0| s0 }
+  Array.each(sorted) do |s0, e0, d0, w0|
+    before = daytot[d0]
+    daytot[d0] = before + w0
+    over_after = before + w0 > 480 ? before + w0 - 480 : 0
+    over_before = before > 480 ? before - 480 : 0
+    rest = w0 - (over_after - over_before)
+    wk = (d0 + 3) / 7
+    br = weekreg[wk]
+    room = 2400 - br
+    room = 0 if room < 0
+    regular = rest < room ? rest : room
+    weekreg[wk] = br + regular
+    reg += regular
+    ot += w0 - regular
+  end
+  num = reg * rate * 2 + ot * rate * 3
+  pay = (num + 60) / 120
+  tot_reg += reg
+  tot_ot += ot
+  tot_pay += pay
+  puts(format("%-4s %-10s %8s %8s %10s", id, Emp.name(e), hm(reg), hm(ot), money(pay)))
+end
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", hm(tot_reg), hm(tot_ot), money(tot_pay)))

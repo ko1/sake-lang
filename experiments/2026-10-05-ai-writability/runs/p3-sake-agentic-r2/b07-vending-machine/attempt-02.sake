@@ -1,0 +1,196 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def parse_money(s)
+  return nil unless String.match?(s, /\A\d+\.\d\d\z/)
+  parts = String.split(s, ".")
+  String.to_i(parts[0]) * 100 + String.to_i(parts[1])
+end
+
+def parse_count(s, max)
+  return nil unless String.match?(s, /\A\d+\z/)
+  v = String.to_i(s)
+  v <= max ? v : nil
+end
+
+def coins = Array[200, 100, 50, 25, 10, 5]
+
+def coin_index(c) = Array.index(Array[5, 10, 25, 50, 100, 200], c)
+
+def coin_list(cs) = Array.join(Array.map(cs) { |c| money(c) }, " ")
+
+class Machine
+  attr_reader slots, tubes, inserted, sold, revenue
+
+  def credit(m) = Array.sum(@inserted, 0)
+
+  def err(m, n, msg) = puts("line #{n}: error: #{msg}")
+
+  def do_slot(m, n, f)
+    code = f[1]
+    unless String.match?(code, /\A[A-Z][0-9]\z/)
+      err(m, n, "bad slot")
+      return
+    end
+    unless String.match?(f[2], /\A[a-z]{1,12}\z/)
+      err(m, n, "bad name")
+      return
+    end
+    price = parse_money(f[3])
+    unless price
+      err(m, n, "bad money")
+      return
+    end
+    cnt = parse_count(f[4], 99)
+    unless cnt
+      err(m, n, "bad count")
+      return
+    end
+    @slots[code] = [f[2], price, cnt]
+  end
+
+  def do_tube(m, n, f)
+    v = parse_money(f[1])
+    unless v
+      err(m, n, "bad money")
+      return
+    end
+    i = coin_index(v)
+    unless i
+      err(m, n, "bad coin")
+      return
+    end
+    cnt = parse_count(f[2], 999)
+    unless cnt
+      err(m, n, "bad count")
+      return
+    end
+    @tubes[i] += cnt
+  end
+
+  def do_coin(m, n, f)
+    v = parse_money(f[1])
+    unless v
+      err(m, n, "bad money")
+      return
+    end
+    i = coin_index(v)
+    unless i
+      puts("rejected #{money(v)}")
+      return
+    end
+    cr = credit(m)
+    if cr + v > 500
+      puts("rejected #{money(v)} (credit limit)")
+      return
+    end
+    @tubes[i] += 1
+    Array.push(@inserted, v)
+    puts("credit #{money(cr + v)}")
+  end
+
+  def do_select(m, n, f)
+    code = f[1]
+    s = @slots[code]
+    unless s
+      puts("no slot #{code}")
+      return
+    end
+    name = s[0]
+    price = s[1]
+    if s[2] == 0
+      puts("sold out #{code}")
+      return
+    end
+    cr = credit(m)
+    if cr < price
+      puts("insert #{money(price - cr)} more")
+      return
+    end
+    change = cr - price
+    left = change
+    paid = Array[]
+    take = Array[]
+    Array.each(coins) do |c|
+      i = coin_index(c)
+      k = Integer.clamp(left / c, 0, @tubes[i])
+      Integer.times(k) { Array.push(paid, c) }
+      Array.push(take, [i, k])
+      left -= k * c
+    end
+    if left != 0
+      puts("exact change needed")
+      return
+    end
+    Array.each(take) { |i, k| @tubes[i] -= k }
+    s[2] -= 1
+    @sold[name] += 1
+    @revenue[name] += price
+    Array.clear(@inserted)
+    if change == 0
+      puts("vend #{name}, change #{money(change)}")
+    else
+      puts("vend #{name}, change #{money(change)} [#{coin_list(paid)}]")
+    end
+  end
+
+  def do_cancel(m, n, f)
+    cr = credit(m)
+    if cr == 0
+      puts("nothing to return")
+      return
+    end
+    Array.each(@inserted) { |c| @tubes[coin_index(c)] -= 1 }
+    puts("returned #{money(cr)} [#{coin_list(@inserted)}]")
+    Array.clear(@inserted)
+  end
+
+  def handle(m, n, line)
+    f = String.split(line)
+    return if Array.empty?(f)
+    cmd = f[0]
+    need = 0
+    need = 5 if cmd == "SLOT"
+    need = 3 if cmd == "TUBE"
+    need = 2 if cmd == "COIN"
+    need = 2 if cmd == "SELECT"
+    need = 1 if cmd == "CANCEL"
+    if need == 0
+      err(m, n, "unknown command")
+      return
+    end
+    if Array.size(f) != need
+      err(m, n, "wrong field count")
+      return
+    end
+    do_slot(m, n, f) if cmd == "SLOT"
+    do_tube(m, n, f) if cmd == "TUBE"
+    do_coin(m, n, f) if cmd == "COIN"
+    do_select(m, n, f) if cmd == "SELECT"
+    do_cancel(m, n, f) if cmd == "CANCEL"
+  end
+
+  def report(m)
+    cr = credit(m)
+    puts("credit #{money(cr)} kept") if cr != 0
+    puts("sales:")
+    names = Array.sort_by(Hash.keys(@sold)) { |nm| [-@revenue[nm], nm] }
+    if Array.empty?(names)
+      puts("  none")
+    else
+      Array.each(names) do |nm|
+        puts(format("  %-12s %3d %8s", nm, @sold[nm], money(@revenue[nm])))
+      end
+    end
+    labels = Array["0.05", "0.10", "0.25", "0.50", "1.00", "2.00"]
+    parts = Array.map(Array[0, 1, 2, 3, 4, 5]) { |i| "#{labels[i]}x#{@tubes[i]}" }
+    puts("tubes: #{Array.join(parts, " ")}")
+  end
+end
+
+m = Machine.new(Hash[], Array[0, 0, 0, 0, 0, 0], Integer[], Hash.new(0), Hash.new(0))
+n = 0
+Array.each(IO.readlines(IO.stdin())) do |line|
+  n += 1
+  Machine.handle(m, n, line)
+end
+Machine.report(m)

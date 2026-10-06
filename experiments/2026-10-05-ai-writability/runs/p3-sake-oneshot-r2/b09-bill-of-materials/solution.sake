@@ -1,0 +1,174 @@
+Item = Struct.new(:kind, :cost, :comps)
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+
+def good_name?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+def good_money?(s) = String.match?(s, /\A\d+\.\d\d\z/)
+
+def cents(s) = String.to_i(String.delete(s, "."))
+
+# nil when the structure is fine, else the reason
+def check(items, name, path, parent)
+  item = items[name]
+  if item == nil
+    return parent == nil ? "unknown item #{name}" : "unknown item #{name} in #{parent}"
+  end
+  if Array.include?(path, name)
+    i = Array.index(path, name)
+    seg = Array.join(Array.drop(path, i) + Array[name], " > ")
+    return "cycle #{seg}"
+  end
+  return nil if Item.kind(item) == :part
+  newpath = path + Array[name]
+  Array.each(Item.comps(item)) do |cn, cq|
+    r = check(items, cn, newpath, name)
+    return r if r != nil
+  end
+  nil
+end
+
+def unit(items, name, memo)
+  c = memo[name]
+  return c if c != nil
+  item = items[name]
+  cost = Item.cost(item)
+  if Item.kind(item) == :assy
+    Array.each(Item.comps(item)) { |cn, cq| cost += cq * unit(items, cn, memo) }
+  end
+  memo[name] = cost
+  cost
+end
+
+def show(items, name, qty, depth, parts, memo)
+  u = unit(items, name, memo)
+  puts("#{"  " * depth}#{qty} x #{name} = #{money(qty * u)}")
+  item = items[name]
+  if Item.kind(item) == :part
+    parts[name] += qty
+  else
+    Array.each(Item.comps(item)) do |cn, cq|
+      show(items, cn, qty * cq, depth + 1, parts, memo)
+    end
+  end
+  nil
+end
+
+def handle(items, n, line)
+  f = String.split(line, " ")
+  return nil if Array.empty?(f)
+  cmd = f[0]
+  cnt = Array.size(f)
+  if cmd == "PART"
+    if cnt != 3
+      err(n, "wrong field count")
+      return nil
+    end
+    name = f[1]
+    unless good_name?(name)
+      err(n, "bad name")
+      return nil
+    end
+    unless good_money?(f[2])
+      err(n, "bad cost")
+      return nil
+    end
+    if items[name] != nil
+      err(n, "duplicate #{name}")
+      return nil
+    end
+    items[name] = Item.new(:part, cents(f[2]), Array[])
+  elsif cmd == "ASSY"
+    if cnt < 4
+      err(n, "wrong field count")
+      return nil
+    end
+    name = f[1]
+    unless good_name?(name)
+      err(n, "bad name")
+      return nil
+    end
+    unless good_money?(f[2])
+      err(n, "bad cost")
+      return nil
+    end
+    comps = Array[]
+    bad = nil
+    Array.each(Array.drop(f, 3)) do |tok|
+      md = String.match(tok, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+      if md == nil
+        bad = tok if bad == nil
+      else
+        nm, qs = MatchData.captures(md)
+        q = String.to_i(qs)
+        if q < 1 || q > 999
+          bad = tok if bad == nil
+        else
+          Array.push(comps, [nm, q])
+        end
+      end
+    end
+    if bad != nil
+      err(n, "bad component #{bad}")
+      return nil
+    end
+    seen = Set[]
+    rep = nil
+    Array.each(comps) do |cn, cq|
+      if Set.include?(seen, cn)
+        rep = cn if rep == nil
+      else
+        Set.add(seen, cn)
+      end
+    end
+    if rep != nil
+      err(n, "repeated component #{rep}")
+      return nil
+    end
+    if items[name] != nil
+      err(n, "duplicate #{name}")
+      return nil
+    end
+    items[name] = Item.new(:assy, cents(f[2]), comps)
+  elsif cmd == "BUILD"
+    if cnt != 3
+      err(n, "wrong field count")
+      return nil
+    end
+    name = f[1]
+    unless good_name?(name)
+      err(n, "bad name")
+      return nil
+    end
+    qty = 0
+    qty = String.to_i(f[2]) if String.match?(f[2], /\A\d+\z/)
+    if qty < 1 || qty > 1000
+      err(n, "bad quantity")
+      return nil
+    end
+    reason = check(items, name, Array[], nil)
+    if reason != nil
+      puts("line #{n}: cannot build: #{reason}")
+      return nil
+    end
+    parts = Hash.new(0)
+    memo = Hash[]
+    show(items, name, qty, 0, parts, memo)
+    puts("parts:")
+    list = Array[]
+    Hash.each(parts) { |pn, total| Array.push(list, [pn, total]) }
+    sorted = Array.sort_by(list) { |pn, total| [-total, pn] }
+    Array.each(sorted) do |pn, total|
+      puts("  #{pn} x#{total} = #{money(total * Item.cost(items[pn]))}")
+    end
+  else
+    err(n, "unknown command")
+  end
+  nil
+end
+
+items = Hash[]
+lines = String.split(IO.read(IO.stdin), "\n")
+Array.each_with_index(lines) { |line, i| handle(items, i + 1, line) }

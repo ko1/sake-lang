@@ -1,0 +1,154 @@
+Assy = Struct.new(:labor, :comps)
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+
+def name_ok?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+def cost_ok?(s) = String.match?(s, /\A\d+\.\d\d\z/)
+
+def to_cents(s)
+  parts = String.split(s, ".")
+  String.to_i(parts[0]) * 100 + String.to_i(parts[1])
+end
+
+class Db
+  attr_reader parts, assys, ok, unit
+
+  def defined?(db, name) = @parts[name] != nil || @assys[name] != nil
+
+  # the first problem of a depth-first walk, or nil
+  def check(db, name, path, parent)
+    return nil if Set.include?(@ok, name)
+    a = @assys[name]
+    if @parts[name] == nil && a == nil
+      return parent == nil ? "unknown item #{name}" : "unknown item #{name} in #{parent}"
+    end
+    i = Array.index(path, name)
+    if i != nil
+      return "cycle " + Array.join(Array.drop(path, i) + Array[name], " > ")
+    end
+    if a != nil
+      Array.push(path, name)
+      Array.each(Assy.comps(a)) do |c|
+        r = check(db, c[0], path, name)
+        return r if r != nil
+      end
+      Array.pop(path)
+    end
+    Set.add(@ok, name)
+    nil
+  end
+
+  def unit_cost(db, name)
+    u = @unit[name]
+    return u if u != nil
+    a = @assys[name]
+    if a == nil
+      u = @parts[name]
+    else
+      u = Assy.labor(a)
+      Array.each(Assy.comps(a)) { |c| u += c[1] * unit_cost(db, c[0]) }
+    end
+    @unit[name] = u
+    u
+  end
+
+  def show(db, name, qty, depth, totals)
+    puts(" " * (depth * 2) + "#{qty} x #{name} = #{money(qty * unit_cost(db, name))}")
+    a = @assys[name]
+    if a == nil
+      totals[name] = totals[name] + qty
+    else
+      Array.each(Assy.comps(a)) { |c| show(db, c[0], qty * c[1], depth + 1, totals) }
+    end
+  end
+
+  def build(db, n, name, qty)
+    msg = check(db, name, Array[], nil)
+    if msg != nil
+      puts("line #{n}: cannot build: #{msg}")
+      return
+    end
+    totals = Hash.new(0)
+    show(db, name, qty, 0, totals)
+    puts("parts:")
+    names = Array.sort_by(Hash.keys(totals)) { |k| [-totals[k], k] }
+    ps = @parts
+    Array.each(names) do |k|
+      puts("  #{k} x#{totals[k]} = #{money(totals[k] * ps[k])}")
+    end
+  end
+
+  def define_part(db, n, f)
+    unless cost_ok?(f[2])
+      err(n, "bad cost")
+      return
+    end
+    if defined?(db, f[1])
+      err(n, "duplicate #{f[1]}")
+      return
+    end
+    @parts[f[1]] = to_cents(f[2])
+  end
+
+  def define_assy(db, n, f)
+    unless cost_ok?(f[2])
+      err(n, "bad cost")
+      return
+    end
+    comps = Tuple[]
+    Array.each(Array.drop(f, 3)) do |t|
+      m = String.match(t, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+      q = m ? String.to_i(m[2]) : 0
+      if q < 1 || q > 999
+        err(n, "bad component #{t}")
+        return
+      end
+      Array.push(comps, [m[1], q])
+    end
+    seen = Set[]
+    Array.each(comps) do |c|
+      if Set.include?(seen, c[0])
+        err(n, "repeated component #{c[0]}")
+        return
+      end
+      Set.add(seen, c[0])
+    end
+    if defined?(db, f[1])
+      err(n, "duplicate #{f[1]}")
+      return
+    end
+    @assys[f[1]] = Assy.new(to_cents(f[2]), comps)
+  end
+end
+
+db = Db.new(Hash[], Hash[], Set[], Hash[])
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line)
+  next if Array.empty?(f)
+  n = i + 1
+  k = Array.size(f)
+  cmd = f[0]
+  if cmd == "PART" || cmd == "ASSY" || cmd == "BUILD"
+    if (cmd == "PART" && k != 3) || (cmd == "ASSY" && k < 4) || (cmd == "BUILD" && k != 3)
+      err(n, "wrong field count")
+    elsif !name_ok?(f[1])
+      err(n, "bad name")
+    elsif cmd == "PART"
+      Db.define_part(db, n, f)
+    elsif cmd == "ASSY"
+      Db.define_assy(db, n, f)
+    else
+      if String.match?(f[2], /\A\d+\z/) && String.to_i(f[2]) >= 1 && String.to_i(f[2]) <= 1000
+        Db.build(db, n, f[1], String.to_i(f[2]))
+      else
+        err(n, "bad quantity")
+      end
+    end
+  else
+    err(n, "unknown command")
+  end
+end

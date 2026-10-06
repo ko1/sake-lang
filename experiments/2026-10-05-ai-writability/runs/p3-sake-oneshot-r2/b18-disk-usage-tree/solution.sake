@@ -1,0 +1,145 @@
+def read_lines
+  out = String[]
+  l = gets
+  while l != nil
+    Array.push(out, String.chomp(l))
+    l = gets
+  end
+  out
+end
+
+def digits?(s) = String.match?(s, /\A[0-9]+\z/)
+
+def fmt_size(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  unit = "K"
+  nxt = "M"
+  if s >= 1073741824
+    u = 1073741824
+    unit = "G"
+    nxt = "T"
+  elsif s >= 1048576
+    u = 1048576
+    unit = "M"
+    nxt = "G"
+  end
+  t = (s * 20 + u) / (2 * u)
+  if t < 100
+    return "#{t / 10}.#{t % 10}#{unit}"
+  end
+  n = (s * 2 + u) / (2 * u)
+  if n == 1024 && unit != "G"
+    return "1.0#{nxt}"
+  end
+  "#{n}#{unit}"
+end
+
+def bad_path?(path)
+  return true if String.start_with?(path, "/") || String.end_with?(path, "/") || String.include?(path, "//")
+  bad = false
+  Array.each(String.split(path, "/")) do |c|
+    bad = true if c == "." || c == ".."
+  end
+  bad
+end
+
+def add_kid(kids, parent, entry)
+  lst = kids[parent]
+  if lst == nil
+    lst = Tuple[]
+    kids[parent] = lst
+  end
+  Array.push(lst, entry)
+end
+
+def emit(kids, dirs, files, dirpath, depth, maxd, thr)
+  return if depth >= maxd
+  entries = kids[dirpath]
+  return if entries == nil
+  es = Array.map(entries) { |nm, isdir, full| [nm, isdir, full, isdir ? dirs[full] : files[full]] }
+  sorted = Array.sort_by(es) { |nm, isdir, full, sz| [-sz, nm] }
+  hidden = 0
+  hsum = 0
+  Array.each(sorted) do |nm, isdir, full, sz|
+    if sz < thr
+      hidden += 1
+      hsum += sz
+    else
+      label = isdir ? "#{nm}/" : nm
+      puts(format("%6s  %s%s", fmt_size(sz), "  " * (depth + 1), label))
+      emit(kids, dirs, files, full, depth + 1, maxd, thr) if isdir
+    end
+  end
+  if hidden > 0
+    puts(format("%6s  %s%s", fmt_size(hsum), "  " * (depth + 1), "(#{hidden} smaller)"))
+  end
+end
+
+def solve(lines)
+  if Array.size(lines) == 0
+    puts("bad header")
+    return
+  end
+  hd = String.split(lines[0])
+  if Array.size(hd) != 4 || hd[0] != "depth" || hd[2] != "threshold" || !digits?(hd[1]) || !digits?(hd[3])
+    puts("bad header")
+    return
+  end
+  maxd = String.to_i(hd[1])
+  thr = String.to_i(hd[3])
+  files = Hash[]
+  dirs = Hash[]
+  kids = Hash[]
+  total = 0
+  i = 1
+  while i < Array.size(lines)
+    toks = String.split(lines[i])
+    if Array.size(toks) > 0
+      if Array.size(toks) != 2 || !digits?(toks[0]) || bad_path?(toks[1]) || String.to_i(toks[0]) > 10000000000000
+        puts("line #{i + 1}: malformed")
+      else
+        size = String.to_i(toks[0])
+        path = toks[1]
+        comps = String.split(path, "/")
+        len = Array.size(comps)
+        if Hash.key?(files, path)
+          puts("line #{i + 1}: duplicate #{path}")
+        else
+          conflict = Hash.key?(dirs, path)
+          kk = 1
+          while kk < len
+            conflict = true if Hash.key?(files, Array.join(Array.take(comps, kk), "/"))
+            kk += 1
+          end
+          if conflict
+            puts("line #{i + 1}: conflict #{path}")
+          else
+            files[path] = size
+            total += size
+            kk = 1
+            while kk <= len
+              full = Array.join(Array.take(comps, kk), "/")
+              parent = Array.join(Array.take(comps, kk - 1), "/")
+              nm = comps[kk - 1]
+              if kk == len
+                add_kid(kids, parent, [nm, false, full])
+              elsif Hash.key?(dirs, full)
+                dirs[full] += size
+              else
+                dirs[full] = size
+                add_kid(kids, parent, [nm, true, full])
+              end
+              kk += 1
+            end
+          end
+        end
+      end
+    end
+    i += 1
+  end
+  puts(format("%6s  %s%s", fmt_size(total), "", "."))
+  emit(kids, dirs, files, "", 0, maxd, thr)
+end
+
+solve(read_lines)

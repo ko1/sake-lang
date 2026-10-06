@@ -1,0 +1,127 @@
+def parse_score(s)
+  m = String.match(s, /\A(\d+|EX|-)\/(\d+)\z/)
+  return nil unless m
+  mx = String.to_i(m[2])
+  return nil if mx <= 0
+  head = m[1]
+  if head == "EX"
+    [1, 0, mx]
+  elsif head == "-"
+    [2, 0, mx]
+  else
+    pts = String.to_i(head)
+    return nil if pts > mx
+    [0, pts, mx]
+  end
+end
+
+def tenths_of(r) = Rational.floor(r * 10 + Rational(1, 2))
+
+def tenths_text(t) = "#{t / 10}.#{t % 10}"
+
+def grade_of(t)
+  if t >= 900
+    "A"
+  elsif t >= 800
+    "B"
+  elsif t >= 700
+    "C"
+  elsif t >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+errors = Array[]
+weights = Hash[]
+students = Hash[]
+missing = Hash[]
+lineno = 0
+
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line, " ")
+  if Array.size(f) == 3 && f[0] == "weight"
+    w = f[2]
+    if !String.match?(w, /\A\d+\z/) || String.to_i(w) < 1 || String.to_i(w) > 100
+      Array.push(errors, "line #{lineno}: bad weight #{w}")
+    elsif Hash.key?(weights, f[1])
+      Array.push(errors, "line #{lineno}: duplicate category #{f[1]}")
+    else
+      weights[f[1]] = String.to_i(w)
+    end
+  elsif Array.size(f) != 3
+    Array.push(errors, "line #{lineno}: bad format")
+  else
+    name = f[0]
+    cat = f[1]
+    if !Hash.key?(weights, cat)
+      Array.push(errors, "line #{lineno}: unknown category #{cat}")
+    else
+      r = parse_score(f[2])
+      if r == nil
+        Array.push(errors, "line #{lineno}: bad score #{f[2]}")
+      else
+        kind, pts, mx = r
+        if !Hash.key?(students, name)
+          students[name] = Hash[]
+          missing[name] = 0
+        end
+        ent = students[name]
+        if kind != 1
+          missing[name] += 1 if kind == 2
+          if Hash.key?(ent, cat)
+            cur = ent[cat]
+            cur[0] += pts
+            cur[1] += mx
+          else
+            ent[cat] = Array[pts, mx]
+          end
+        end
+      end
+    end
+  end
+end
+
+withp = Array[]
+nop = Array[]
+total = Rational(0, 1)
+Hash.each(students) do |name, ent|
+  num = Rational(0, 1)
+  den = 0
+  Hash.each(ent) do |cat, pm|
+    wt = weights[cat]
+    num += Rational(pm[0], pm[1]) * wt
+    den += wt
+  end
+  if den == 0
+    Array.push(nop, name)
+  else
+    pct = num * 100 / den
+    total += pct
+    Array.push(withp, [name, tenths_of(pct)])
+  end
+end
+
+wid = 7
+Array.each(Hash.keys(students)) { |n| wid = String.size(n) if String.size(n) > wid }
+
+Array.each(errors) { |e| puts(e) }
+puts("#{String.ljust("Student", wid)}  Score  G  Missing")
+sorted = Array.sort_by(withp) { |r| [-r[1], r[0]] }
+Array.each(sorted) do |r|
+  name = r[0]
+  t = r[1]
+  puts("#{String.ljust(name, wid)}  #{String.rjust(tenths_text(t), 5)}  #{grade_of(t)}  #{String.rjust(Integer.to_s(missing[name]), 7)}")
+end
+Array.each(Array.sort(nop)) do |name|
+  puts("#{String.ljust(name, wid)}  #{String.rjust("n/a", 5)}  -  #{String.rjust(Integer.to_s(missing[name]), 7)}")
+end
+if Array.size(withp) == 0
+  puts("class average: n/a")
+else
+  puts("class average: #{tenths_text(tenths_of(total / Array.size(withp)))}")
+end

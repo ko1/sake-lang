@@ -1,0 +1,165 @@
+ForthError = Exception.new(:unused)
+
+def reserved?(t)
+  Array.include?(Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"], t)
+end
+
+def number?(t) = String.match?(t, /\A-?\d+\z/)
+
+# true when the line passes the syntax checks
+def syntax_ok?(toks)
+  ifs = Array[]
+  in_def = false
+  expect_name = false
+  Array.each(toks) do |t|
+    if expect_name
+      return false if number?(t) || reserved?(t)
+      expect_name = false
+      in_def = true
+    elsif t == ":"
+      return false if in_def || Array.size(ifs) > 0
+      expect_name = true
+    elsif t == ";"
+      return false if !in_def || Array.size(ifs) > 0
+      in_def = false
+    elsif t == "if"
+      Array.push(ifs, false)
+    elsif t == "else"
+      return false if Array.empty?(ifs) || ifs[-1]
+      ifs[-1] = true
+    elsif t == "then"
+      return false if Array.empty?(ifs)
+      Array.pop(ifs)
+    end
+  end
+  !(expect_name || in_def || Array.size(ifs) > 0)
+end
+
+def need(st, k, w)
+  raise ForthError, "stack underflow in #{w}" if Array.size(st) < k
+end
+
+def arith(st, w)
+  need(st, 2, w)
+  b = Array.pop(st)
+  a = Array.pop(st)
+  if w == "+"
+    Array.push(st, a + b)
+  elsif w == "-"
+    Array.push(st, a - b)
+  elsif w == "*"
+    Array.push(st, a * b)
+  elsif w == "="
+    Array.push(st, a == b ? 1 : 0)
+  elsif w == "<"
+    Array.push(st, a < b ? 1 : 0)
+  elsif w == ">"
+    Array.push(st, a > b ? 1 : 0)
+  else
+    raise ForthError, "division by zero" if b == 0
+    q = a / b
+    q += 1 if a % b != 0 && ((a < 0) != (b < 0))
+    if w == "/"
+      Array.push(st, q)
+    else
+      Array.push(st, a - b * q)
+    end
+  end
+end
+
+# index of the matching else (when stop_at_else) or then, after the token at i
+def skip(toks, i, stop_at_else)
+  j = i + 1
+  nest = 0
+  while true
+    t = toks[j]
+    if t == "if"
+      nest += 1
+    elsif t == "then"
+      return j if nest == 0
+      nest -= 1
+    elsif t == "else" && nest == 0 && stop_at_else
+      return j
+    end
+    j += 1
+  end
+end
+
+def run(toks, depth, st, dict)
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if number?(t)
+      Array.push(st, String.to_i(t))
+    elsif t == "+" || t == "-" || t == "*" || t == "/" || t == "mod" || t == "=" || t == "<" || t == ">"
+      arith(st, t)
+    elsif t == "dup"
+      need(st, 1, t)
+      Array.push(st, st[-1])
+    elsif t == "drop"
+      need(st, 1, t)
+      Array.pop(st)
+    elsif t == "swap"
+      need(st, 2, t)
+      b = Array.pop(st)
+      a = Array.pop(st)
+      Array.push(st, b)
+      Array.push(st, a)
+    elsif t == "over"
+      need(st, 2, t)
+      Array.push(st, st[-2])
+    elsif t == "."
+      need(st, 1, t)
+      puts(Integer.to_s(Array.pop(st)))
+    elsif t == "if"
+      need(st, 1, t)
+      c = Array.pop(st)
+      i = skip(toks, i, true) if c == 0
+    elsif t == "else"
+      i = skip(toks, i, false)
+    elsif t == "then"
+      i = i
+    elsif t == ":"
+      j = i + 2
+      j += 1 while toks[j] != ";"
+      dict[toks[i + 1]] = toks[i + 2, j - i - 2]
+      i = j
+    else
+      body = dict[t]
+      raise ForthError, "unknown word #{t}" unless body
+      raise ForthError, "too deep" if depth >= 100
+      run(body, depth + 1, st, dict)
+    end
+    i += 1
+  end
+end
+
+text = IO.read(IO.stdin)
+lines = String.split(text, "\n")
+st = Array[]
+dict = Hash[]
+
+Array.each_with_index(lines) do |line, i|
+  toks = String.split(line, " ")
+  next if Array.empty?(toks)
+  n = i + 1
+  unless syntax_ok?(toks)
+    puts("line #{n}: syntax error")
+    next
+  end
+  saved = Array.dup(st)
+  begin
+    run(toks, 0, st, dict)
+  rescue ForthError => e
+    puts("line #{n}: error: #{Exception.message(e)}")
+    Array.clear(st)
+    Array.concat(st, saved)
+  end
+end
+
+if Array.empty?(st)
+  puts("stack: (empty)")
+else
+  puts("stack: " + Array.join(st, " "))
+end

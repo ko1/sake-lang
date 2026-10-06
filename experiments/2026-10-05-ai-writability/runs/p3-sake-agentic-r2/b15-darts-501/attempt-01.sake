@@ -1,0 +1,102 @@
+# Returns [points, is_double] or nil when the token is not a dart.
+def dart(tok)
+  return [25, false] if tok == "25"
+  return [50, true] if tok == "BULL"
+  return [0, false] if tok == "MISS"
+  m = String.match(tok, /\A([SDT])([1-9][0-9]?)\z/)
+  return nil unless m
+  v = String.to_i(m[2])
+  return nil if v > 20
+  case m[1]
+  in "S" then [v, false]
+  in "D" then [v * 2, true]
+  else [v * 3, false]
+  end
+end
+
+lines = IO.readlines(IO.stdin())
+hdr = Array.empty?(lines) ? Array[] : String.split(lines[0])
+valid = Array.size(hdr) >= 2 && Array.size(hdr) <= 5
+if valid
+  valid = String.match?(hdr[0], /\A[0-9]+\z/) && String.to_i(hdr[0]) >= 2 && String.to_i(hdr[0]) <= 1001
+end
+if valid
+  names = Array.drop(hdr, 1)
+  valid = Array.all?(names) { |x| String.match?(x, /\A[a-z]{1,10}\z/) } && Array.size(Array.uniq(names)) == Array.size(names)
+end
+unless valid
+  puts("invalid header")
+  exit
+end
+
+start = String.to_i(hdr[0])
+names = Array.drop(hdr, 1)
+left = Hash[]
+turns = Hash.new(0)
+thrown = Hash.new(0)
+Array.each(names) { |x| left[x] = start }
+winner = nil
+n = 1
+Array.each(Array.drop(lines, 1)) do |raw|
+  n += 1
+  f = String.split(raw)
+  next if Array.empty?(f)
+  if winner
+    puts("line #{n}: game over")
+    next
+  end
+  name = f[0]
+  unless Hash.key?(left, name)
+    puts("line #{n}: unknown player #{name}")
+    next
+  end
+  ds = Array.drop(f, 1)
+  if Array.size(ds) < 1 || Array.size(ds) > 3
+    puts("line #{n}: expected 1 to 3 darts")
+    next
+  end
+  bad = Array.find(ds) { |t| dart(t) == nil }
+  if bad
+    puts("line #{n}: bad dart #{bad}")
+    next
+  end
+  rem = left[name]
+  total = 0
+  state = 0
+  last = ""
+  Array.each(ds) do |t|
+    d = dart(t)
+    thrown[name] += 1
+    total += d[0]
+    rem -= d[0]
+    last = t
+    if rem < 0 || rem == 1 || (rem == 0 && !d[1])
+      state = 1
+      break
+    elsif rem == 0
+      state = 2
+      break
+    end
+  end
+  turns[name] += 1
+  if state == 1
+    puts("#{name} busts, #{left[name]} left")
+  elsif state == 2
+    left[name] = 0
+    winner = name
+    puts("#{name} checks out with #{last}")
+  else
+    left[name] = rem
+    puts("#{name} scores #{total}, #{rem} left")
+  end
+end
+
+puts("STANDINGS")
+idx = Array.map(Array.new(Array.size(names)) { |i| i }) { |i| [left[names[i]], i] }
+idx = Array.sort(idx)
+Array.each_with_index(idx) do |pr, r|
+  nm = names[pr[1]]
+  avg = thrown[nm] == 0 ? "-" : format("%.2f", (start - left[nm]) * 3.0 / thrown[nm])
+  puts(format("%d. %-10s %4d %3d %6s", r + 1, nm, left[nm], turns[nm], avg))
+end
+puts(winner ? "winner: #{winner}" : "no winner")

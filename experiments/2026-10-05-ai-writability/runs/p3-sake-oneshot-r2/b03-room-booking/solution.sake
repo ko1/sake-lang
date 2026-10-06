@@ -1,0 +1,155 @@
+Booking = Struct.new(:id, :room, :day, :s, :e, :who)
+
+def days = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+def hhmm(m) = format("%02d:%02d", m / 60, m % 60)
+
+# minutes since midnight, or -1 when not a valid time
+def parse_time(t)
+  m = String.match(t, /\A(\d\d):(\d\d)\z/)
+  return -1 unless m
+  c = MatchData.captures(m)
+  h = String.to_i(c[0])
+  mi = String.to_i(c[1])
+  return -1 if mi >= 60
+  total = h * 60 + mi
+  return -1 if total % 15 != 0
+  return -1 if total < 480 || total > 1200
+  total
+end
+
+def bad_line(n, msg) = puts("line #{n}: error: #{msg}")
+
+text = IO.read(IO.stdin)
+lines = String.split(text, "\n")
+books = Booking[]
+nextid = 1
+
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  n = i + 1
+  cmd = f[0]
+  unless cmd == "BOOK" || cmd == "CANCEL" || cmd == "FREE"
+    bad_line(n, "unknown command")
+    next
+  end
+  want = 4
+  want = 5 if cmd == "BOOK"
+  want = 2 if cmd == "CANCEL"
+  if Array.size(f) != want
+    bad_line(n, "wrong field count")
+    next
+  end
+  if cmd == "CANCEL"
+    unless String.match?(f[1], /\A\d+\z/)
+      bad_line(n, "bad id")
+      next
+    end
+    id = String.to_i(f[1])
+    found = Array.any?(books) { |b| Booking.id(b) == id }
+    if found
+      Array.delete_if(books) { |b| Booking.id(b) == id }
+      puts("CANCELLED ##{id}")
+    else
+      puts("NO BOOKING ##{id}")
+    end
+    next
+  end
+  room = f[1]
+  unless String.match?(room, /\A[A-Z0-9]{1,8}\z/)
+    bad_line(n, "bad room")
+    next
+  end
+  day = f[2]
+  unless Array.include?(days, day)
+    bad_line(n, "bad day")
+    next
+  end
+  if cmd == "FREE"
+    ok = String.match?(f[3], /\A\d+\z/)
+    dur = 0
+    if ok
+      dur = String.to_i(f[3])
+      ok = dur > 0 && dur % 15 == 0
+    end
+    unless ok
+      bad_line(n, "bad duration")
+      next
+    end
+    here = Array.select(books) { |b| Booking.room(b) == room && Booking.day(b) == day }
+    here = Array.sort_by(here) { |b| Booking.s(b) }
+    cursor = 480
+    start = -1
+    Array.each(here) do |b|
+      if start < 0
+        if Booking.s(b) - cursor >= dur
+          start = cursor
+        elsif Booking.e(b) > cursor
+          cursor = Booking.e(b)
+        end
+      end
+    end
+    start = cursor if start < 0 && 1200 - cursor >= dur
+    if start < 0
+      puts("FULL #{room} #{day}")
+    else
+      puts("FREE #{room} #{day} #{hhmm(start)}-#{hhmm(start + dur)}")
+    end
+    next
+  end
+  tm = String.match(f[3], /\A(\d\d:\d\d)-(\d\d:\d\d)\z/)
+  st = -1
+  en = -1
+  if tm
+    tc = MatchData.captures(tm)
+    st = parse_time(tc[0])
+    en = parse_time(tc[1])
+  end
+  if st < 0 || en < 0 || st >= en
+    bad_line(n, "bad time")
+    next
+  end
+  who = f[4]
+  unless String.match?(who, /\A[a-z]{1,12}\z/)
+    bad_line(n, "bad name")
+    next
+  end
+  clash = Array.select(books) do |b|
+    Booking.room(b) == room && Booking.day(b) == day && Booking.s(b) < en && st < Booking.e(b)
+  end
+  if Array.size(clash) > 0
+    c = Array.min_by(clash) { |b| [Booking.s(b), Booking.id(b)] }
+    puts("CONFLICT #{room} #{day} with ##{Booking.id(c)} (#{Booking.who(c)} #{hhmm(Booking.s(c))}-#{hhmm(Booking.e(c))})")
+    next
+  end
+  mine = Array.count(books) { |b| Booking.who(b) == who && Booking.day(b) == day }
+  if mine >= 3
+    puts("LIMIT #{who} #{day}")
+    next
+  end
+  Array.push(books, Booking.new(nextid, room, day, st, en, who))
+  puts("OK ##{nextid} #{room} #{day} #{hhmm(st)}-#{hhmm(en)} #{who}")
+  nextid += 1
+end
+
+puts("== schedule ==")
+if Array.empty?(books)
+  puts("(none)")
+else
+  ordered = Array.sort_by(books) { |b| [Array.index(days, Booking.day(b)), Booking.room(b), Booking.s(b)] }
+  Array.each(ordered) do |b|
+    puts(format("%s %-8s %s-%s #%d %s", Booking.day(b), Booking.room(b), hhmm(Booking.s(b)), hhmm(Booking.e(b)), Booking.id(b), Booking.who(b)))
+  end
+end
+puts("== usage ==")
+if Array.empty?(books)
+  puts("(none)")
+else
+  tot = Hash.new(0)
+  Array.each(books) { |b| tot[Booking.room(b)] += Booking.e(b) - Booking.s(b) }
+  Array.each(Array.sort(Hash.keys(tot))) do |r|
+    t = tot[r]
+    puts(format("%-8s %dh%02dm", r, t / 60, t % 60))
+  end
+end

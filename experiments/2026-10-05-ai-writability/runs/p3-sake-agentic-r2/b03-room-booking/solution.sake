@@ -1,0 +1,132 @@
+class Bk
+  attr_reader id, room, day, s, e, who
+end
+
+def days = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+# minutes since midnight, or nil
+def parse_time(t)
+  return nil unless String.match?(t, /\A\d\d:\d\d\z/)
+  h = String.to_i(t[0, 2])
+  m = String.to_i(t[3, 2])
+  return nil if m >= 60 || m % 15 != 0
+  v = h * 60 + m
+  return nil if v < 480 || v > 1200
+  v
+end
+
+def hm(v) = format("%02d:%02d", v / 60, v % 60)
+
+def overlap?(b, room, day, s, e) = Bk.room(b) == room && Bk.day(b) == day && Bk.s(b) < e && s < Bk.e(b)
+
+books = Array[]
+next_id = 1
+n = 0
+Array.each(IO.readlines(IO.stdin())) do |raw|
+  n += 1
+  line = String.chomp(raw)
+  next if String.strip(line) == ""
+  f = String.split(line, " ")
+  cmd = f[0]
+  want = cmd == "BOOK" ? 5 : (cmd == "CANCEL" ? 2 : (cmd == "FREE" ? 4 : 0))
+  if want == 0
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "CANCEL"
+    unless String.match?(f[1], /\A\d+\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    id = String.to_i(f[1])
+    b = Array.find(books) { Bk.id(it) == id }
+    if b == nil
+      puts("NO BOOKING ##{id}")
+    else
+      Array.delete(books, b)
+      puts("CANCELLED ##{id}")
+    end
+    next
+  end
+  room = f[1]
+  unless String.match?(room, /\A[A-Z0-9]{1,8}\z/)
+    puts("line #{n}: error: bad room")
+    next
+  end
+  day = f[2]
+  unless Array.include?(days, day)
+    puts("line #{n}: error: bad day")
+    next
+  end
+  if cmd == "FREE"
+    unless String.match?(f[3], /\A\d+\z/) && String.to_i(f[3]) > 0 && String.to_i(f[3]) % 15 == 0
+      puts("line #{n}: error: bad duration")
+      next
+    end
+    mins = String.to_i(f[3])
+    t = 480
+    found = nil
+    while found == nil && t + mins <= 1200
+      found = t unless Array.any?(books) { overlap?(it, room, day, t, t + mins) }
+      t += 15
+    end
+    if found == nil
+      puts("FULL #{room} #{day}")
+    else
+      puts("FREE #{room} #{day} #{hm(found)}-#{hm(found + mins)}")
+    end
+    next
+  end
+  parts = String.split(f[3], "-")
+  s = nil
+  e = nil
+  if Array.size(parts) == 2
+    s = parse_time(parts[0])
+    e = parse_time(parts[1])
+  end
+  if s == nil || e == nil || s >= e
+    puts("line #{n}: error: bad time")
+    next
+  end
+  who = f[4]
+  unless String.match?(who, /\A[a-z]{1,12}\z/)
+    puts("line #{n}: error: bad name")
+    next
+  end
+  cs = Array.select(books) { overlap?(it, room, day, s, e) }
+  if Array.size(cs) > 0
+    c = Array.min_by(cs) { Bk.s(it) }
+    puts("CONFLICT #{room} #{day} with ##{Bk.id(c)} (#{Bk.who(c)} #{hm(Bk.s(c))}-#{hm(Bk.e(c))})")
+    next
+  end
+  if Array.count(books) { Bk.who(it) == who && Bk.day(it) == day } >= 3
+    puts("LIMIT #{who} #{day}")
+    next
+  end
+  Array.push(books, Bk.new(next_id, room, day, s, e, who))
+  puts("OK ##{next_id} #{room} #{day} #{hm(s)}-#{hm(e)} #{who}")
+  next_id += 1
+end
+
+puts("== schedule ==")
+if Array.empty?(books)
+  puts("(none)")
+else
+  Array.each(Array.sort_by(books) { |b| [Array.index(days, Bk.day(b)), Bk.room(b), Bk.s(b)] }) do |b|
+    puts(format("%s %-8s %s-%s #%d %s", Bk.day(b), Bk.room(b), hm(Bk.s(b)), hm(Bk.e(b)), Bk.id(b), Bk.who(b)))
+  end
+end
+puts("== usage ==")
+if Array.empty?(books)
+  puts("(none)")
+else
+  tot = Hash.new(0)
+  Array.each(books) { |b| tot[Bk.room(b)] += Bk.e(b) - Bk.s(b) }
+  Array.each(Array.sort(Hash.keys(tot))) do |r|
+    puts(format("%-8s %dh%02dm", r, tot[r] / 60, tot[r] % 60))
+  end
+end

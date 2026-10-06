@@ -1,0 +1,116 @@
+def money(c)
+  neg = c < 0
+  a = neg ? -c : c
+  (neg ? "-" : "") + "#{a / 100}.#{String.rjust(Integer.to_s(a % 100), 2, "0")}"
+end
+
+def cents(s)
+  m = String.match(s, /\A(\d+)(?:\.(\d{1,2}))?\z/)
+  return -1 unless m
+  c = MatchData.captures(m)
+  fr = c[1]
+  f = fr ? String.to_i(String.ljust(fr, 2, "0")) : 0
+  String.to_i(c[0]) * 100 + f
+end
+
+def report(lots)
+  puts(format("%-12s %5s %10s", "SKU", "QTY", "VALUE"))
+  tq = 0
+  tv = 0
+  Array.each(Array.sort(Hash.keys(lots))) do |s|
+    q = 0
+    v = 0
+    Array.each(lots[s]) do |lq, lc|
+      q += lq
+      v += lq * lc
+    end
+    tq += q
+    tv += v
+    puts(format("%-12s %5d %10s", s, q, money(v)))
+  end
+  puts(format("%-12s %5d %10s", "TOTAL", tq, money(tv)))
+end
+
+text = IO.read(IO.stdin)
+lines = String.split(text, "\n")
+lots = Hash[]
+onhand = Hash.new(0)
+rev = 0
+cogs = 0
+
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  n = i + 1
+  cmd = f[0]
+  unless cmd == "RECEIVE" || cmd == "SHIP" || cmd == "REPORT"
+    puts("line #{n}: error: unknown command #{cmd}")
+    next
+  end
+  want = cmd == "REPORT" ? 1 : 4
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "REPORT"
+    report(lots)
+    next
+  end
+  sku = f[1]
+  unless String.match?(sku, /\A[A-Z0-9-]{1,12}\z/)
+    puts("line #{n}: error: bad sku")
+    next
+  end
+  qok = String.match?(f[2], /\A\d+\z/)
+  if qok
+    qv = String.to_i(f[2])
+    qok = qv >= 1 && qv <= 1000000
+  end
+  unless qok
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  q = String.to_i(f[2])
+  price = cents(f[3])
+  if price < 0
+    puts("line #{n}: error: bad price")
+    next
+  end
+  if cmd == "RECEIVE"
+    Hash.store(lots, sku, Array[]) unless Hash.key?(lots, sku)
+    Array.push(lots[sku], [q, price])
+    onhand[sku] += q
+  else
+    unless Hash.key?(lots, sku)
+      puts("line #{n}: error: unknown sku #{sku}")
+      next
+    end
+    have = onhand[sku]
+    if q > have
+      puts("line #{n}: error: insufficient stock for #{sku} (have #{have}, need #{q})")
+      next
+    end
+    fifo = lots[sku]
+    need = q
+    cost = 0
+    while need > 0
+      lot = fifo[0]
+      take = lot[0] < need ? lot[0] : need
+      cost += take * lot[1]
+      lot[0] -= take
+      need -= take
+      Array.shift(fifo) if lot[0] == 0
+    end
+    onhand[sku] -= q
+    revenue = q * price
+    rev += revenue
+    cogs += cost
+    puts("line #{n}: shipped #{q} #{sku}: revenue #{money(revenue)}, cost #{money(cost)}")
+  end
+end
+
+puts("== final ==")
+report(lots)
+puts("revenue: #{money(rev)}")
+puts("cost of goods sold: #{money(cogs)}")
+puts("gross profit: #{money(rev - cogs)}")

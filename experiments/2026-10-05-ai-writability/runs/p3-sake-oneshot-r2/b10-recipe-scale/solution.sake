@@ -1,0 +1,154 @@
+def fmt(q)
+  d = Rational.denominator(q)
+  if d <= 8
+    w = Rational.floor(q)
+    fr = q - w
+    return "#{w}" if fr == 0
+    frs = "#{Rational.numerator(fr)}/#{d}"
+    return frs if w == 0
+    return "#{w} #{frs}"
+  end
+  c = Rational.floor(q * 100 + Rational(1, 2))
+  "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+end
+
+def unit_info(u)
+  case u
+  in "tsp" then [:spoon, 1]
+  in "tbsp" then [:spoon, 3]
+  in "cup" then [:spoon, 48]
+  in "g" then [:gram, 1]
+  in "kg" then [:gram, 1000]
+  in "ml" then [:ml, 1]
+  in "l" then [:ml, 1000]
+  in "-" then [:count, 1]
+  else nil
+  end
+end
+
+# [quantity, number of fields used] or nil
+def parse_qty(f)
+  a = f[0]
+  if String.match?(a, /\A\d+\z/)
+    b = f[1]
+    if b != nil && String.match?(b, /\A\d+\/\d+\z/)
+      num, den = String.split(b, "/")
+      return nil if String.to_i(den) == 0
+      return [Rational(String.to_i(a), 1) + Rational(String.to_i(num), String.to_i(den)), 2]
+    end
+    return [Rational(String.to_i(a), 1), 1]
+  end
+  if String.match?(a, /\A\d+\.\d+\z/)
+    whole, frac = String.split(a, ".")
+    k = String.size(frac)
+    scale = 10 ** k
+    return [Rational(String.to_i(whole) * scale + String.to_i(frac), scale), 1]
+  end
+  if String.match?(a, /\A\d+\/\d+\z/)
+    num, den = String.split(a, "/")
+    return nil if String.to_i(den) == 0
+    return [Rational(String.to_i(num), String.to_i(den)), 1]
+  end
+  nil
+end
+
+def spoon_text(a, name)
+  cups = a / 48
+  if cups >= 1 && Rational.denominator(cups) <= 4
+    return "#{fmt(cups)} cup #{name}"
+  end
+  tb = a / 3
+  if tb >= 1 && Rational.denominator(tb) <= 4
+    return "#{fmt(tb)} tbsp #{name}"
+  end
+  "#{fmt(a)} tsp #{name}"
+end
+
+lines = String.split(IO.read(IO.stdin), "\n")
+first = lines[0]
+first = "" if first == nil
+hf = String.split(first, " ")
+ok = Array.size(hf) == 4 && hf[0] == "SERVES" && hf[2] == "->" &&
+  String.match?(hf[1], /\A\d+\z/) && String.match?(hf[3], /\A\d+\z/)
+if ok
+  ok = String.to_i(hf[1]) >= 1 && String.to_i(hf[1]) <= 100 &&
+    String.to_i(hf[3]) >= 1 && String.to_i(hf[3]) <= 100
+end
+if !ok
+  puts("line 1: error: bad servings")
+  exit(0)
+end
+
+factor = Rational(String.to_i(hf[3]), String.to_i(hf[1]))
+puts("serves #{String.to_i(hf[3])} (x #{fmt(factor)})")
+
+amounts = Hash[]
+order = Array[]
+Array.each_with_index(lines) do |line, i|
+  n = i + 1
+  next if n == 1
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  next if String.start_with?(f[0], "#")
+  parsed = parse_qty(f)
+  if parsed == nil
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  q = parsed[0]
+  used = parsed[1]
+  if q <= 0
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  rest = Array.drop(f, used)
+  if Array.empty?(rest)
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  u = rest[0]
+  info = unit_info(u)
+  if info == nil
+    puts("line #{n}: error: unknown unit #{u}")
+    next
+  end
+  words = Array.drop(rest, 1)
+  if Array.empty?(words)
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(words, " ")
+  grp = info[0]
+  mult = info[1]
+  key = [grp, name]
+  amt = q * mult * factor
+  cur = amounts[key]
+  if cur == nil
+    Array.push(order, key)
+    amounts[key] = amt
+  else
+    amounts[key] = cur + amt
+  end
+end
+
+Array.each(order) do |key|
+  grp, name = key
+  total = amounts[key]
+  if grp == :spoon
+    puts(spoon_text(total, name))
+  elsif grp == :gram
+    if total >= 1000
+      puts("#{fmt(total / 1000)} kg #{name}")
+    else
+      puts("#{fmt(total)} g #{name}")
+    end
+  elsif grp == :ml
+    if total >= 1000
+      puts("#{fmt(total / 1000)} l #{name}")
+    else
+      puts("#{fmt(total)} ml #{name}")
+    end
+  else
+    puts("#{Rational.ceil(total)} #{name}")
+  end
+end

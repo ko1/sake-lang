@@ -1,0 +1,154 @@
+def step_cost(pen, from_line, line, mins)
+  c = mins * 1000
+  c += pen * 1000 + 1 if from_line != "" && from_line != line
+  c
+end
+
+def better(a, b)
+  return true if b == nil
+  return true if a[0] < b[0]
+  return false if a[0] > b[0]
+  a[1] < b[1]
+end
+
+def solve(adj, pen, from, to)
+  inf = 1000000000000
+  d = Hash.new(inf)
+  states = Array[[from, ""]]
+  Hash.each(adj) do |st, es|
+    Array.each(es) { |e| Array.push(states, [e[0], e[1]]) }
+  end
+  states = Array.uniq(states)
+  Array.each(states) { |s| d[s] = 0 if s[0] == to }
+  changed = true
+  while changed
+    changed = false
+    Array.each(states) do |s|
+      next unless Hash.key?(adj, s[0])
+      Array.each(adj[s[0]]) do |e|
+        cand = step_cost(pen, s[1], e[1], e[2]) + d[[e[0], e[1]]]
+        if cand < d[s]
+          d[s] = cand
+          changed = true
+        end
+      end
+    end
+  end
+  best = d[[from, ""]]
+  return nil if best >= inf
+
+  frontier = Array[[[from, ""], 0]]
+  seq = Array[from]
+  cur = from
+  while cur != to
+    cands = Array[]
+    Array.each(frontier) do |f|
+      s = f[0]
+      Array.each(adj[cur]) do |e|
+        c = f[1] + step_cost(pen, s[1], e[1], e[2])
+        Array.push(cands, [e[0], e[1], c]) if c + d[[e[0], e[1]]] == best
+      end
+    end
+    mn = Array.min(Array.map(cands) { |c| c[0] })
+    seen = Hash[]
+    nf = Array[]
+    Array.each(cands) do |c|
+      next unless c[0] == mn
+      k = [c[0], c[1]]
+      next if Hash.key?(seen, k)
+      seen[k] = true
+      Array.push(nf, [k, c[2]])
+    end
+    frontier = nf
+    Array.push(seq, mn)
+    cur = mn
+  end
+
+  layer = Hash["" => [0, Array[]]]
+  i = 0
+  while i < Array.size(seq) - 1
+    nxt = Hash[]
+    Hash.each(layer) do |l, val|
+      Array.each(adj[seq[i]]) do |e|
+        next unless e[0] == seq[i + 1]
+        cand = [val[0] + step_cost(pen, l, e[1], e[2]), val[1] + Array[e[1]]]
+        nxt[e[1]] = cand if better(cand, nxt[e[1]])
+      end
+    end
+    layer = nxt
+    i += 1
+  end
+  bestv = nil
+  Hash.each(layer) do |l, val|
+    bestv = val if val[0] == best && better(val, bestv)
+  end
+  [best, seq, bestv[1]]
+end
+
+lines = IO.readlines(IO.stdin())
+pen = String.to_i(String.strip(lines[0]))
+adj = Hash[]
+out = Array[]
+inq = false
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  next if n == 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line)
+  if !inq
+    if line == "QUERIES"
+      inq = true
+      next
+    end
+    ok = Array.size(f) == 4 && String.match?(f[3], /\A[1-9][0-9]{0,2}\z/) && f[1] != f[2]
+    if !ok
+      puts("invalid segment at line #{n}")
+      next
+    end
+    m = String.to_i(f[3])
+    adj[f[1]] = Array[] unless Hash.key?(adj, f[1])
+    adj[f[2]] = Array[] unless Hash.key?(adj, f[2])
+    Array.push(adj[f[1]], [f[2], f[0], m])
+    Array.push(adj[f[2]], [f[1], f[0], m])
+  else
+    if Array.size(f) != 2
+      puts("invalid query at line #{n}")
+      next
+    end
+    from = f[0]
+    to = f[1]
+    if !Hash.key?(adj, from)
+      puts("#{from} -> #{to}: unknown station #{from}")
+    elsif !Hash.key?(adj, to)
+      puts("#{from} -> #{to}: unknown station #{to}")
+    elsif from == to
+      puts("#{from} -> #{to}: 0 min, 0 transfers")
+    else
+      r = solve(adj, pen, from, to)
+      if r == nil
+        puts("#{from} -> #{to}: no route")
+      else
+        best = r[0]
+        seq = r[1]
+        ls = r[2]
+        k = best % 1000
+        puts("#{from} -> #{to}: #{best / 1000} min, #{k} #{k == 1 ? "transfer" : "transfers"}")
+        legs = Array[]
+        cur_line = ""
+        cur_st = Array[]
+        Array.each_with_index(ls) do |l, idx|
+          if l != cur_line
+            Array.push(legs, "#{cur_line}: #{Array.join(cur_st, " > ")}") unless cur_line == ""
+            cur_line = l
+            cur_st = Array[seq[idx]]
+          end
+          Array.push(cur_st, seq[idx + 1])
+        end
+        Array.push(legs, "#{cur_line}: #{Array.join(cur_st, " > ")}")
+        puts("  " + Array.join(legs, "; "))
+      end
+    end
+  end
+end

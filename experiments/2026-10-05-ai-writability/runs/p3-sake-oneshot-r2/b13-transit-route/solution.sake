@@ -1,0 +1,143 @@
+def ecost(l, m, mins, pn)
+  if l != "" && l != m
+    (mins + pn) * 100 + 1
+  else
+    mins * 100
+  end
+end
+
+def dist_to_go(dedges, lines, tgt, pn)
+  rd = Hash[]
+  changed = true
+  while changed
+    changed = false
+    Array.each(dedges) do |u, v, m, mins|
+      rv = v == tgt ? 0 : rd["#{v}|#{m}"]
+      next if rv == nil
+      Array.each(lines) do |l|
+        c = ecost(l, m, mins, pn) + rv
+        key = "#{u}|#{l}"
+        cur = rd[key]
+        if cur == nil || c < cur
+          rd[key] = c
+          changed = true
+        end
+      end
+    end
+  end
+  rd
+end
+
+def best(u, l, tgt, dedges, rd, memo, pn)
+  return [Array[], Array[]] if u == tgt
+  key = "#{u}|#{l}"
+  hit = memo[key]
+  return hit if hit != nil
+  here = rd[key]
+  bs = nil
+  bl = nil
+  Array.each(dedges) do |a, v, m, mins|
+    next if a != u
+    rv = v == tgt ? 0 : rd["#{v}|#{m}"]
+    next if rv == nil
+    next if ecost(l, m, mins, pn) + rv != here
+    ss, ls = best(v, m, tgt, dedges, rd, memo, pn)
+    cs = Array[v, *ss]
+    cl = Array[m, *ls]
+    if bs == nil || cs < bs || (cs == bs && cl < bl)
+      bs = cs
+      bl = cl
+    end
+  end
+  res = [bs, bl]
+  memo[key] = res
+  res
+end
+
+def query(src, tgt, known, dedges, alllines, pn)
+  if !Hash.key?(known, src)
+    puts("#{src} -> #{tgt}: unknown station #{src}")
+    return nil
+  end
+  if !Hash.key?(known, tgt)
+    puts("#{src} -> #{tgt}: unknown station #{tgt}")
+    return nil
+  end
+  if src == tgt
+    puts("#{src} -> #{tgt}: 0 min, 0 transfers")
+    return nil
+  end
+  rd = dist_to_go(dedges, alllines, tgt, pn)
+  total = rd["#{src}|"]
+  if total == nil
+    puts("#{src} -> #{tgt}: no route")
+    return nil
+  end
+  memo = Hash[]
+  ss, ls = best(src, "", tgt, dedges, rd, memo, pn)
+  tt = total / 100
+  kk = total % 100
+  word = kk == 1 ? "transfer" : "transfers"
+  puts("#{src} -> #{tgt}: #{tt} min, #{kk} #{word}")
+  st = Array[src, *ss]
+  legs = Array[]
+  cur_line = nil
+  cur = nil
+  Array.each_with_index(ls) do |m, i|
+    if m != cur_line
+      cur_line = m
+      cur = Array[st[i]]
+      Array.push(legs, [m, cur])
+    end
+    Array.push(cur, st[i + 1])
+  end
+  txt = Array.map(legs) { |m, stns| "#{m}: #{Array.join(stns, " > ")}" }
+  puts("  " + Array.join(txt, "; "))
+  nil
+end
+
+lines = String.lines(IO.read(IO.stdin))
+pn = 0
+got_p = false
+mode = 1
+segs = Array[]
+known = Hash[]
+dedges = Array[]
+alllines = Array[""]
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  if !got_p
+    pn = String.to_i(line)
+    got_p = true
+    next
+  end
+  if mode == 1
+    if line == "QUERIES"
+      mode = 2
+      Array.each(segs) do |a, b, ln, mins|
+        Array.push(dedges, [a, b, ln, mins])
+        Array.push(dedges, [b, a, ln, mins])
+        Array.push(alllines, ln) unless Array.include?(alllines, ln)
+      end
+    else
+      f = String.split(line, " ")
+      if Array.size(f) == 4 && String.match?(f[3], /\A[1-9]\d{0,2}\z/) && f[1] != f[2]
+        known[f[1]] = true
+        known[f[2]] = true
+        Array.push(segs, [f[1], f[2], f[0], String.to_i(f[3])])
+      else
+        puts("invalid segment at line #{n}")
+      end
+    end
+  else
+    g = String.split(line, " ")
+    if Array.size(g) != 2
+      puts("invalid query at line #{n}")
+    else
+      query(g[0], g[1], known, dedges, alllines, pn)
+    end
+  end
+end

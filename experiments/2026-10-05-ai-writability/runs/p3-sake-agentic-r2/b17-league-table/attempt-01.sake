@@ -1,0 +1,105 @@
+Team = Struct.new(:name, :p, :w, :d, :l, :gf, :ga)
+
+def pts(t) = 3 * Team.w(t) + Team.d(t)
+def gd(t) = Team.gf(t) - Team.ga(t)
+
+def name_ok?(s) = String.match?(s, /\A[A-Za-z][A-Za-z0-9_]{0,11}\z/)
+
+def get_team(teams, name)
+  t = teams[name]
+  if t == nil
+    t = Team.new(name, 0, 0, 0, 0, 0, 0)
+    teams[name] = t
+  end
+  t
+end
+
+def apply(t, gf, ga)
+  Team.set_p(t, Team.p(t) + 1)
+  Team.set_gf(t, Team.gf(t) + gf)
+  Team.set_ga(t, Team.ga(t) + ga)
+  if gf > ga
+    Team.set_w(t, Team.w(t) + 1)
+  elsif gf == ga
+    Team.set_d(t, Team.d(t) + 1)
+  else
+    Team.set_l(t, Team.l(t) + 1)
+  end
+end
+
+def signed(n) = n > 0 ? "+#{n}" : Integer.to_s(n)
+
+def main
+  lines = IO.readlines(IO.stdin)
+  teams = Hash[]
+  matches = Tuple[]
+  i = 0
+  while i < Array.size(lines)
+    raw = String.chomp(lines[i])
+    i += 1
+    next if String.empty?(String.strip(raw))
+    tk = String.split(raw)
+    ok = Array.size(tk) == 3 && name_ok?(tk[0]) && name_ok?(tk[2]) && tk[0] != tk[2]
+    hg = 0
+    ag = 0
+    played = false
+    if ok
+      m = String.match(tk[1], /\A(\d{1,2})-(\d{1,2})\z/)
+      if m
+        cs = MatchData.captures(m)
+        hg = String.to_i(cs[0])
+        ag = String.to_i(cs[1])
+        played = true
+      elsif tk[1] != "P-P"
+        ok = false
+      end
+    end
+    if !ok
+      puts("invalid line #{i}: #{raw}")
+      next
+    end
+    a = get_team(teams, tk[0])
+    b = get_team(teams, tk[2])
+    if played
+      apply(a, hg, ag)
+      apply(b, ag, hg)
+      Array.push(matches, [tk[0], tk[2], hg, ag])
+    end
+  end
+  list = Hash.values(teams)
+  if Array.empty?(list)
+    puts("no teams")
+    return
+  end
+  # head-to-head points within a group equal on points, GD, GF
+  h2h = Hash.new(0)
+  Array.each(list) do |t|
+    grp = Set[]
+    Array.each(list) do |u|
+      Set.add(grp, Team.name(u)) if pts(u) == pts(t) && gd(u) == gd(t) && Team.gf(u) == Team.gf(t)
+    end
+    sum = 0
+    Array.each(matches) do |home, away, hg, ag|
+      if Set.include?(grp, home) && Set.include?(grp, away)
+        if home == Team.name(t)
+          sum += hg > ag ? 3 : (hg == ag ? 1 : 0)
+        elsif away == Team.name(t)
+          sum += ag > hg ? 3 : (hg == ag ? 1 : 0)
+        end
+      end
+    end
+    h2h[Team.name(t)] = sum
+  end
+  key = Hash[]
+  Array.each(list) do |t|
+    key[Team.name(t)] = [-pts(t), -gd(t), -Team.gf(t), -h2h[Team.name(t)]]
+  end
+  sorted = Array.sort_by(list) { |t| [key[Team.name(t)], Team.name(t)] }
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+  Array.each(sorted) do |t|
+    pos = 1 + Array.count(list) { |u| key[Team.name(u)] < key[Team.name(t)] }
+    puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", pos, Team.name(t), Team.p(t), Team.w(t), Team.d(t), Team.l(t), Team.gf(t), Team.ga(t), signed(gd(t)), pts(t)))
+  end
+end
+
+main

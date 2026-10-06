@@ -1,0 +1,66 @@
+def check(f)
+  return "wrong field count" if Array.size(f) != 6
+  ts, method, path, status, bytes, dur = f
+  return "bad timestamp" unless String.match?(ts, /\A\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\z/)
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], method)
+  return "bad path" unless String.start_with?(path, "/")
+  return "bad status" unless String.match?(status, /\A[1-5]\d\d\z/)
+  return "bad bytes" unless bytes == "-" || String.match?(bytes, /\A\d+\z/)
+  return "bad duration" unless String.match?(dur, /\A\d+\z/)
+  nil
+end
+
+text = IO.read(IO.stdin)
+lines = String.lines(text)
+stats = Hash[]
+hours = Hash.new(0)
+invalid = Array[]
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.chomp(raw)
+  f = String.split(line, " ")
+  next if Array.size(f) == 0
+  reason = check(f)
+  if reason
+    Array.push(invalid, "  line #{n}: #{reason}")
+    next
+  end
+  ts, method, path, status, bytes, dur = f
+  path = String.split(path, "?", 2)[0] || ""
+  path = "" if String.start_with?(f[2], "?")
+  key = "#{method} #{path}"
+  st = String.to_i(status)
+  d = String.to_i(dur)
+  s = stats[key]
+  if s == nil
+    s = Array[0, 0, 0, 0, 0, 0]
+    stats[key] = s
+  end
+  s[0] += 1
+  s[1] += 1 if st >= 400 && st < 500
+  s[2] += 1 if st >= 500
+  s[3] += String.to_i(bytes) if bytes != "-"
+  s[4] += d
+  s[5] = d if d > s[5]
+  hours[ts[0, 13]] += 1
+end
+
+if Hash.size(stats) == 0
+  puts("no valid requests")
+else
+  rows = Array.sort_by(Hash.to_a(stats)) { |k, s| [-s[0], k] }
+  w = Array.max(Array.map(rows) { |k, s| String.size(k) })
+  w = 8 if w < 8
+  puts(format("%s %5s %4s %4s %8s %7s %6s", String.ljust("endpoint", w), "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  Array.each(rows) do |k, s|
+    t = (s[4] * 20 + s[0]) / (2 * s[0])
+    avg = "#{t / 10}.#{t % 10}"
+    puts(format("%s %5d %4d %4d %8d %7s %6d", String.ljust(k, w), s[0], s[1], s[2], s[3], avg, s[5]))
+  end
+  best = Array.sort_by(Hash.to_a(hours)) { |k, c| [-c, k] }[0]
+  hk, hc = best
+  puts("busiest hour: #{hk[0, 10]} #{hk[11, 2]}:00 (#{hc} requests)")
+end
+puts("invalid lines: #{Array.size(invalid)}")
+puts(*invalid) if Array.size(invalid) > 0

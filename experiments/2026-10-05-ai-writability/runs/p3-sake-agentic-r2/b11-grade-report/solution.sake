@@ -1,0 +1,118 @@
+def tenths(pct) = Rational.floor(pct * 10 + 1/2r)
+
+def fmt10(t) = "#{t / 10}.#{t % 10}"
+
+def grade(t)
+  if t >= 900
+    "A"
+  elsif t >= 800
+    "B"
+  elsif t >= 700
+    "C"
+  elsif t >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+lines = IO.readlines(IO.stdin())
+weights = Hash[]
+students = Hash[]
+missing = Hash.new(0)
+errors = Array[]
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line)
+  if Array.size(f) == 3 && f[0] == "weight"
+    cat = f[1]
+    w = f[2]
+    if !String.match?(w, /\A\d+\z/) || String.to_i(w) < 1 || String.to_i(w) > 100
+      Array.push(errors, "line #{n}: bad weight #{w}")
+    elsif Hash.key?(weights, cat)
+      Array.push(errors, "line #{n}: duplicate category #{cat}")
+    else
+      weights[cat] = String.to_i(w)
+    end
+    next
+  end
+  if Array.size(f) != 3
+    Array.push(errors, "line #{n}: bad format")
+    next
+  end
+  st = f[0]
+  cat = f[1]
+  sc = f[2]
+  unless Hash.key?(weights, cat)
+    Array.push(errors, "line #{n}: unknown category #{cat}")
+    next
+  end
+  m = String.match(sc, /\A(\d+|EX|-)\/(\d+)\z/)
+  ok = false
+  pts = 0
+  mx = 0
+  if m
+    mx = String.to_i(m[2])
+    if mx > 0
+      if m[1] == "EX" || m[1] == "-"
+        ok = true
+      elsif String.to_i(m[1]) <= mx
+        ok = true
+        pts = String.to_i(m[1])
+      end
+    end
+  end
+  unless ok
+    Array.push(errors, "line #{n}: bad score #{sc}")
+    next
+  end
+  students[st] = Hash[] unless Hash.key?(students, st)
+  next if m[1] == "EX"
+  missing[st] += 1 if m[1] == "-"
+  h = students[st]
+  h[cat] = Array[0, 0] unless Hash.key?(h, cat)
+  h[cat][0] += pts
+  h[cat][1] += mx
+end
+
+Array.each(errors) { |e| puts(e) }
+
+rows = Array[]
+Hash.each(students) do |name, h|
+  num = 0r
+  den = 0
+  Hash.each(h) do |cat, pm|
+    w = weights[cat]
+    num += Kernel.Rational(pm[0] * w, pm[1])
+    den += w
+  end
+  if den > 0
+    pct = num * 100 / den
+    Array.push(rows, [name, true, tenths(pct), pct])
+  else
+    Array.push(rows, [name, false, 0, 0r])
+  end
+end
+
+width = 7
+Array.each(rows) { |r| width = Array.max(Array[width, String.size(r[0])]) }
+puts("#{String.ljust("Student", width)}  Score  G  Missing")
+withp = Array.select(rows) { |r| r[1] }
+nop = Array.reject(rows) { |r| r[1] }
+withp = Array.sort_by(withp) { |r| [-r[2], r[0]] }
+nop = Array.sort_by(nop) { |r| r[0] }
+Array.each(withp) do |r|
+  puts("#{String.ljust(r[0], width)}  #{String.rjust(fmt10(r[2]), 5)}  #{grade(r[2])}  #{String.rjust(Integer.to_s(missing[r[0]]), 7)}")
+end
+Array.each(nop) do |r|
+  puts("#{String.ljust(r[0], width)}  #{String.rjust("n/a", 5)}  -  #{String.rjust(Integer.to_s(missing[r[0]]), 7)}")
+end
+if Array.empty?(withp)
+  puts("class average: n/a")
+else
+  total = Array.reduce(withp, 0r) { |a, r| a + r[3] }
+  puts("class average: #{fmt10(tenths(total / Array.size(withp)))}")
+end

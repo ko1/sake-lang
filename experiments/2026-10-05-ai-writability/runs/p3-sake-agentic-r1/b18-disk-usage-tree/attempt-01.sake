@@ -1,0 +1,119 @@
+def size_str(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  unit = "K"
+  nxt = "M"
+  if s >= 1073741824
+    u = 1073741824
+    unit = "G"
+    nxt = "T"
+  elsif s >= 1048576
+    u = 1048576
+    unit = "M"
+    nxt = "G"
+  end
+  t = (20 * s + u) / (2 * u)
+  return "#{t / 10}.#{t % 10}#{unit}" if t < 100
+  n = (2 * s + u) / (2 * u)
+  return "1.0#{nxt}" if n == 1024 && unit != "G"
+  "#{n}#{unit}"
+end
+
+def last_name(p)
+  comps = String.split(p, "/")
+  comps[-1]
+end
+
+def show(size, depth, label)
+  puts(format("%6s  %s%s", size_str(size), String.*("  ", depth), label))
+end
+
+def print_dir(path, depth, maxd, thr, children, dirs, sizes)
+  return nil if depth >= maxd
+  kids = children[path]
+  return nil if kids == nil
+  sorted = Array.sort_by(kids) { |p| [-sizes[p], last_name(p)] }
+  small = 0
+  smallsum = 0
+  Array.each(sorted) do |p|
+    if sizes[p] < thr
+      small += 1
+      smallsum += sizes[p]
+    else
+      if dirs[p] != nil
+        show(sizes[p], depth + 1, "#{last_name(p)}/")
+        print_dir(p, depth + 1, maxd, thr, children, dirs, sizes)
+      else
+        show(sizes[p], depth + 1, last_name(p))
+      end
+    end
+  end
+  show(smallsum, depth + 1, "(#{small} smaller)") if small > 0
+  nil
+end
+
+lines = Array.map(IO.readlines(IO.stdin())) { String.chomp(it) }
+htoks = lines[0] == nil ? Array[] : String.split(lines[0])
+if Array.size(htoks) != 4 || htoks[0] != "depth" || htoks[2] != "threshold" || !String.match?(htoks[1], /\A\d+\z/) || !String.match?(htoks[3], /\A\d+\z/)
+  puts("bad header")
+  exit(0)
+end
+maxd = String.to_i(htoks[1])
+thr = String.to_i(htoks[3])
+
+files = Hash[]
+dirs = Hash[]
+sizes = Hash.new(0)
+children = Hash[]
+
+def add_child(children, parent, p)
+  children[parent] = Array[] if children[parent] == nil
+  Array.push(children[parent], p)
+end
+
+Array.each_with_index(lines) do |line, i|
+  next if i == 0
+  next if String.strip(line) == ""
+  toks = String.split(line)
+  n = i + 1
+  if Array.size(toks) != 2 || !String.match?(toks[0], /\A\d+\z/) || String.to_i(toks[0]) > 10000000000000 || !String.match?(toks[1], /\A[^\/]+(\/[^\/]+)*\z/) || Array.any?(String.split(toks[1], "/")) { it == "." || it == ".." }
+    puts("line #{n}: malformed")
+    next
+  end
+  sz = String.to_i(toks[0])
+  path = toks[1]
+  comps = String.split(path, "/")
+  if files[path] != nil
+    puts("line #{n}: duplicate #{path}")
+    next
+  end
+  conflict = dirs[path] != nil
+  k = 1
+  while k < Array.size(comps)
+    conflict = true if files[Array.join(comps[0, k], "/")] != nil
+    k += 1
+  end
+  if conflict
+    puts("line #{n}: conflict #{path}")
+    next
+  end
+  files[path] = sz
+  sizes[path] = sz
+  sizes[""] += sz
+  parent = ""
+  k = 1
+  while k < Array.size(comps)
+    pre = Array.join(comps[0, k], "/")
+    if dirs[pre] == nil
+      dirs[pre] = true
+      add_child(children, parent, pre)
+    end
+    sizes[pre] += sz
+    parent = pre
+    k += 1
+  end
+  add_child(children, parent, path)
+end
+
+show(sizes[""], 0, ".")
+print_dir("", 0, maxd, thr, children, dirs, sizes)

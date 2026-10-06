@@ -1,0 +1,154 @@
+def builtins = Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"]
+
+def number?(t) = String.match?(t, /\A-?\d+\z/)
+
+def syntax_ok(toks)
+  ifs = Array[]          # one entry per open if: true once it has an else
+  in_def = false
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if t == ":"
+      return false if in_def || Array.size(ifs) > 0
+      return false if i + 1 >= n
+      nm = toks[i + 1]
+      return false if number?(nm) || Array.include?(builtins, nm)
+      in_def = true
+      i += 1
+    elsif t == ";"
+      return false unless in_def
+      return false if Array.size(ifs) > 0
+      in_def = false
+    elsif t == "if"
+      Array.push(ifs, false)
+    elsif t == "else"
+      return false if Array.size(ifs) == 0 || ifs[-1]
+      ifs[-1] = true
+    elsif t == "then"
+      return false if Array.size(ifs) == 0
+      Array.pop(ifs)
+    end
+    i += 1
+  end
+  !in_def && Array.size(ifs) == 0
+end
+
+# index of the matching else (if allowed) or then, scanning from i
+def find_end(toks, i, want_else)
+  depth = 0
+  while i < Array.size(toks)
+    t = toks[i]
+    if t == "if"
+      depth += 1
+    elsif t == "then"
+      return i if depth == 0
+      depth -= 1
+    elsif t == "else" && depth == 0 && want_else
+      return i
+    end
+    i += 1
+  end
+  i
+end
+
+def need(stack, k, w)
+  raise RuntimeError, "stack underflow in #{w}" if Array.size(stack) < k
+end
+
+def exec(stack, defs, toks, depth)
+  i = 0
+  while i < Array.size(toks)
+    t = toks[i]
+    if number?(t)
+      Array.push(stack, String.to_i(t))
+    elsif t == ":"
+      j = i + 2
+      j += 1 while toks[j] != ";"
+      defs[toks[i + 1]] = toks[i + 2, j - i - 2]
+      i = j
+    elsif t == "+" || t == "-" || t == "*" || t == "=" || t == "<" || t == ">"
+      need(stack, 2, t)
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      r = if t == "+" then a + b
+          elsif t == "-" then a - b
+          elsif t == "*" then a * b
+          elsif t == "=" then (a == b ? 1 : 0)
+          elsif t == "<" then (a < b ? 1 : 0)
+          else (a > b ? 1 : 0)
+          end
+      Array.push(stack, r)
+    elsif t == "/" || t == "mod"
+      need(stack, 2, t)
+      raise RuntimeError, "division by zero" if stack[-1] == 0
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if t == "mod"
+        Array.push(stack, Integer.remainder(a, b))
+      else
+        q = Integer.abs(a) / Integer.abs(b)
+        q = -q if (a < 0) != (b < 0)
+        Array.push(stack, q)
+      end
+    elsif t == "dup"
+      need(stack, 1, t)
+      Array.push(stack, stack[-1])
+    elsif t == "drop"
+      need(stack, 1, t)
+      Array.pop(stack)
+    elsif t == "swap"
+      need(stack, 2, t)
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, b, a)
+    elsif t == "over"
+      need(stack, 2, t)
+      Array.push(stack, stack[-2])
+    elsif t == "."
+      need(stack, 1, t)
+      puts(Array.pop(stack))
+    elsif t == "if"
+      need(stack, 1, t)
+      v = Array.pop(stack)
+      if v == 0
+        i = find_end(toks, i + 1, true)
+      end
+    elsif t == "else"
+      i = find_end(toks, i + 1, false)
+    elsif t == "then"
+      # nothing
+    else
+      body = defs[t]
+      raise RuntimeError, "unknown word #{t}" if body == nil
+      raise RuntimeError, "too deep" if depth >= 100
+      exec(stack, defs, body, depth + 1)
+    end
+    i += 1
+  end
+end
+
+stack = Array[]
+defs = Hash[]
+n = 0
+Array.each(String.lines(IO.read(IO.stdin))) do |raw|
+  n += 1
+  toks = String.split(String.chomp(raw), " ")
+  unless syntax_ok(toks)
+    puts("line #{n}: syntax error")
+    next
+  end
+  saved = Array.dup(stack)
+  begin
+    exec(stack, defs, toks, 0)
+  rescue RuntimeError => e
+    Array.clear(stack)
+    Array.concat(stack, saved)
+    puts("line #{n}: error: #{Exception.message(e)}")
+  end
+end
+if Array.size(stack) == 0
+  puts("stack: (empty)")
+else
+  puts("stack: #{Array.join(stack, " ")}")
+end

@@ -1,0 +1,127 @@
+Node = Struct.new(:name, :dir, :size, :kids)
+
+def digits?(s) = String.match?(s, /\A\d+\z/)
+
+def fmt_size(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  unit = "K"
+  nxt = "M"
+  if s >= 1024 * 1024 * 1024
+    u = 1024 * 1024 * 1024
+    unit = "G"
+  elsif s >= 1024 * 1024
+    u = 1024 * 1024
+    unit = "M"
+    nxt = "G"
+  end
+  t = (s * 20 + u) / (2 * u)
+  if t < 100
+    return "#{t / 10}.#{t % 10}#{unit}"
+  end
+  n = (s * 2 + u) / (2 * u)
+  if n == 1024 && unit != "G"
+    return "1.0#{nxt}"
+  end
+  "#{n}#{unit}"
+end
+
+def line_out(size, depth, name)
+  puts(format("%6s  %s%s", fmt_size(size), String.*("  ", depth), name))
+end
+
+def show(node, depth, maxd, thr)
+  return if depth >= maxd
+  kids = Array.sort_by(Hash.values(Node.kids(node))) { |k| [-Node.size(k), Node.name(k)] }
+  small = 0
+  small_total = 0
+  Array.each(kids) do |k|
+    if Node.size(k) < thr
+      small += 1
+      small_total += Node.size(k)
+    else
+      line_out(Node.size(k), depth + 1, Node.dir(k) ? "#{Node.name(k)}/" : Node.name(k))
+      show(k, depth + 1, maxd, thr) if Node.dir(k)
+    end
+  end
+  line_out(small_total, depth + 1, "(#{small} smaller)") if small > 0
+end
+
+# returns :ok, :dup or :conflict
+def check(root, comps)
+  node = root
+  n = Array.size(comps)
+  i = 0
+  while i < n
+    k = Node.kids(node)[comps[i]]
+    return :ok if k == nil
+    if i == n - 1
+      return Node.dir(k) ? :conflict : :dup
+    end
+    return :conflict if !Node.dir(k)
+    node = k
+    i += 1
+  end
+  :ok
+end
+
+def insert(root, comps, size)
+  node = root
+  Node.set_size(node, Node.size(node) + size)
+  n = Array.size(comps)
+  i = 0
+  while i < n
+    name = comps[i]
+    k = Node.kids(node)[name]
+    if k == nil
+      k = Node.new(name, i < n - 1, 0, Hash[])
+      Node.kids(node)[name] = k
+    end
+    Node.set_size(k, Node.size(k) + size)
+    node = k
+    i += 1
+  end
+end
+
+def main
+  lines = IO.readlines(IO.stdin)
+  hd = Array.empty?(lines) ? Array[] : String.split(lines[0])
+  if !(Array.size(hd) == 4 && hd[0] == "depth" && digits?(hd[1]) && hd[2] == "threshold" && digits?(hd[3]))
+    puts("bad header")
+    return
+  end
+  maxd = String.to_i(hd[1])
+  thr = String.to_i(hd[3])
+  root = Node.new(".", true, 0, Hash[])
+  i = 1
+  while i < Array.size(lines)
+    raw = lines[i]
+    i += 1
+    next if String.empty?(String.strip(raw))
+    tk = String.split(raw)
+    ok = Array.size(tk) == 2 && digits?(tk[0]) && String.size(tk[0]) <= 14
+    ok = String.to_i(tk[0]) <= 10000000000000 if ok
+    if ok
+      path = tk[1]
+      ok = !String.start_with?(path, "/") && !String.end_with?(path, "/") && !String.include?(path, "//")
+      comps = String.split(path, "/")
+      ok = ok && !Array.include?(comps, ".") && !Array.include?(comps, "..")
+    end
+    if !ok
+      puts("line #{i}: malformed")
+      next
+    end
+    r = check(root, comps)
+    if r == :dup
+      puts("line #{i}: duplicate #{tk[1]}")
+    elsif r == :conflict
+      puts("line #{i}: conflict #{tk[1]}")
+    else
+      insert(root, comps, String.to_i(tk[0]))
+    end
+  end
+  line_out(Node.size(root), 0, ".")
+  show(root, 0, maxd, thr)
+end
+
+main

@@ -1,0 +1,169 @@
+VM = Struct.new(:stack, :defs, :depth)
+
+def binops = Array["+", "-", "*", "/", "mod", "=", "<", ">"]
+def keywords = Array["dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"]
+
+def num?(t) = String.match?(t, /\A-?\d+\z/)
+def builtin?(t) = Array.include?(binops, t) || Array.include?(keywords, t)
+
+def syntax_ok(toks)
+  n = Array.size(toks)
+  depth = 0
+  has_else = Array[]
+  in_def = false
+  i = 0
+  while i < n
+    t = Array.fetch(toks, i)
+    if t == ":"
+      return false if in_def || depth > 0
+      return false if i + 1 >= n
+      name = Array.fetch(toks, i + 1)
+      return false if num?(name) || builtin?(name)
+      in_def = true
+      i += 1
+    elsif t == ";"
+      return false if !in_def || depth > 0
+      in_def = false
+    elsif t == "if"
+      depth += 1
+      Array.push(has_else, false)
+    elsif t == "else"
+      return false if depth == 0
+      return false if Array.last(has_else)
+      Array.pop(has_else)
+      Array.push(has_else, true)
+    elsif t == "then"
+      return false if depth == 0
+      depth -= 1
+      Array.pop(has_else)
+    end
+    i += 1
+  end
+  !in_def && depth == 0
+end
+
+# index just after the matching else (to_else) or then, for an if/else at position i
+def skip(toks, i, to_else)
+  n = Array.size(toks)
+  depth = 0
+  while i < n
+    t = Array.fetch(toks, i)
+    i += 1
+    if t == "if"
+      depth += 1
+    elsif t == "then"
+      return i if depth == 0
+      depth -= 1
+    elsif t == "else" && depth == 0 && to_else
+      return i
+    end
+  end
+  i
+end
+
+def run_toks(vm, toks)
+  stack = VM.stack(vm)
+  n = Array.size(toks)
+  i = 0
+  while i < n
+    t = Array.fetch(toks, i)
+    i += 1
+    if num?(t)
+      Array.push(stack, String.to_i(t))
+    elsif t == ":"
+      j = i + 1
+      while Array.fetch(toks, j) != ";"
+        j += 1
+      end
+      Hash.store(VM.defs(vm), Array.fetch(toks, i), toks[i + 1, j - i - 1])
+      i = j + 1
+    elsif t == "if"
+      return "stack underflow in if" if Array.empty?(stack)
+      v = Array.pop(stack)
+      i = skip(toks, i, true) if v == 0
+    elsif t == "else"
+      i = skip(toks, i, false)
+    elsif t == "then"
+      i += 0
+    elsif Array.include?(binops, t)
+      return "stack underflow in #{t}" if Array.size(stack) < 2
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if t == "+"
+        Array.push(stack, a + b)
+      elsif t == "-"
+        Array.push(stack, a - b)
+      elsif t == "*"
+        Array.push(stack, a * b)
+      elsif t == "/" || t == "mod"
+        return "division by zero" if b == 0
+        q = Integer.abs(a) / Integer.abs(b)
+        r = Integer.abs(a) % Integer.abs(b)
+        if t == "/"
+          Array.push(stack, (a < 0) != (b < 0) ? -q : q)
+        else
+          Array.push(stack, a < 0 ? -r : r)
+        end
+      elsif t == "="
+        Array.push(stack, a == b ? 1 : 0)
+      elsif t == "<"
+        Array.push(stack, a < b ? 1 : 0)
+      else
+        Array.push(stack, a > b ? 1 : 0)
+      end
+    elsif t == "dup"
+      return "stack underflow in dup" if Array.size(stack) < 1
+      Array.push(stack, Array.last(stack))
+    elsif t == "drop"
+      return "stack underflow in drop" if Array.size(stack) < 1
+      Array.pop(stack)
+    elsif t == "swap"
+      return "stack underflow in swap" if Array.size(stack) < 2
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, b)
+      Array.push(stack, a)
+    elsif t == "over"
+      return "stack underflow in over" if Array.size(stack) < 2
+      Array.push(stack, Array.fetch(stack, Array.size(stack) - 2))
+    elsif t == "."
+      return "stack underflow in ." if Array.size(stack) < 1
+      puts(Array.pop(stack))
+    else
+      body = VM.defs(vm)[t]
+      return "unknown word #{t}" if body == nil
+      d = VM.depth(vm)
+      return "too deep" if d >= 100
+      VM.set_depth(vm, d + 1)
+      err = run_toks(vm, body)
+      return err if err
+      VM.set_depth(vm, d)
+    end
+  end
+  nil
+end
+
+lines = IO.readlines(IO.stdin)
+vm = VM.new(Array[], Hash[], 0)
+Array.each_with_index(lines) do |raw, i|
+  toks = String.split(String.chomp(raw), " ")
+  if !syntax_ok(toks)
+    puts("line #{i + 1}: syntax error")
+    next
+  end
+  stack = VM.stack(vm)
+  snap = Array.dup(stack)
+  VM.set_depth(vm, 0)
+  err = run_toks(vm, toks)
+  if err
+    Array.clear(stack)
+    Array.concat(stack, snap)
+    puts("line #{i + 1}: error: #{err}")
+  end
+end
+st = VM.stack(vm)
+if Array.empty?(st)
+  puts("stack: (empty)")
+else
+  puts("stack: " + Array.join(st, " "))
+end

@@ -1,0 +1,127 @@
+def lookup(secs, s, k)
+  h = secs[s]
+  h == nil ? nil : h[k]
+end
+
+# returns [true, text] or [false, message]
+def resolve(secs, s, k, stack)
+  id = "#{s}.#{k}"
+  v = lookup(secs, s, k)
+  return [false, "undefined #{id}"] if v == nil
+  stk = stack + Array[id]
+  out = ""
+  pos = 0
+  while pos <= String.size(v)
+    m = String.match(v, /\$\{([a-z0-9_]+(?:\.[a-z0-9_]+)?)\}/, pos)
+    break if m == nil
+    b = MatchData.begin(m, 0)
+    e = MatchData.end(m, 0)
+    out = out + String.slice(v, pos, b - pos)
+    ref = MatchData.captures(m)[0]
+    if String.include?(ref, ".")
+      parts = String.split(ref, ".")
+      rs = parts[0]
+      rk = parts[1]
+    else
+      rs = s
+      rk = ref
+    end
+    rid = "#{rs}.#{rk}"
+    if Array.include?(stk, rid)
+      return [false, "cycle " + Array.join(stk + Array[rid], " -> ")]
+    end
+    r = resolve(secs, rs, rk, stk)
+    return r if !r[0]
+    out = out + r[1]
+    pos = e
+  end
+  out = out + String.slice(v, pos, String.size(v) - pos) if pos <= String.size(v)
+  [true, out]
+end
+
+def typed(v)
+  low = String.downcase(v)
+  if String.match?(v, /\A[+-]?\d+\z/)
+    "int #{String.to_i(v)}"
+  elsif Array.include?(Array["true", "yes", "on"], low)
+    "bool true"
+  elsif Array.include?(Array["false", "no", "off"], low)
+    "bool false"
+  elsif String.include?(v, ",")
+    items = Array.reject(Array.map(String.split(v, ",")) { |x| String.strip(x) }) { |x| String.empty?(x) }
+    if Array.empty?(items)
+      "list[0]"
+    else
+      "list[#{Array.size(items)}] #{Array.join(items, " | ")}"
+    end
+  else
+    "str \"#{v}\""
+  end
+end
+
+secs = Hash[]
+cur = "main"
+n = 0
+in_q = false
+while (raw = gets)
+  n += 1
+  line = String.strip(raw)
+  if !in_q
+    if line == "%%"
+      in_q = true
+      next
+    end
+    next if String.empty?(line) || String.start_with?(line, "#") || String.start_with?(line, ";")
+    hm = String.match(line, /\A\[([a-z0-9_]+)\]\z/)
+    if hm
+      cur = MatchData.captures(hm)[0]
+      secs[cur] = Hash[] if secs[cur] == nil
+    else
+      i = String.index(line, "=")
+      key = i ? String.strip(String.slice(line, 0, i)) : ""
+      if i == nil || !String.match?(key, /\A[a-z0-9_]+\z/)
+        puts("line #{n}: syntax error")
+      else
+        val = String.strip(String.slice(line, i + 1, String.size(line)))
+        secs[cur] = Hash[] if secs[cur] == nil
+        puts("line #{n}: duplicate key #{cur}.#{key}") if Hash.key?(secs[cur], key)
+        secs[cur][key] = val
+      end
+    end
+  else
+    next if String.empty?(line)
+    w = String.split(line, / +/)
+    if w[0] == "GET" && Array.size(w) == 2
+      name = w[1]
+      i = String.index(name, ".")
+      if i
+        s = String.slice(name, 0, i)
+        k = String.slice(name, i + 1, String.size(name))
+      else
+        s = "main"
+        k = name
+      end
+      if lookup(secs, s, k) == nil
+        puts("#{s}.#{k}: not found")
+      else
+        r = resolve(secs, s, k, Array[])
+        if r[0]
+          puts("#{s}.#{k} = #{typed(r[1])}")
+        else
+          puts("#{s}.#{k}: error: #{r[1]}")
+        end
+      end
+    elsif w[0] == "KEYS" && Array.size(w) == 2
+      h = secs[w[1]]
+      if h == nil
+        puts("#{w[1]}: not found")
+      elsif Hash.empty?(h)
+        puts("#{w[1]}: (none)")
+      else
+        puts("#{w[1]}: #{Array.join(Array.sort(Hash.keys(h)), ", ")}")
+      end
+    else
+      puts("line #{n}: bad query")
+    end
+  end
+end

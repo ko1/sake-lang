@@ -1,0 +1,91 @@
+def digits?(s) = String.match?(s, /\A\d+\z/)
+
+def ts_ok?(ts)
+  m = String.match(ts, /\A(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\z/)
+  return false unless m
+  c = MatchData.captures(m)
+  mo = String.to_i(c[1])
+  d = String.to_i(c[2])
+  h = String.to_i(c[3])
+  mi = String.to_i(c[4])
+  s = String.to_i(c[5])
+  mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && s <= 59
+end
+
+def reason(f)
+  return "wrong field count" if Array.size(f) != 6
+  return "bad timestamp" unless ts_ok?(f[0])
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], f[1])
+  return "bad path" unless String.start_with?(f[2], "/")
+  ok = String.match?(f[3], /\A\d{3}\z/)
+  if ok
+    st = String.to_i(f[3])
+    ok = st >= 100 && st <= 599
+  end
+  return "bad status" unless ok
+  return "bad bytes" unless f[4] == "-" || digits?(f[4])
+  return "bad duration" unless digits?(f[5])
+  ""
+end
+
+text = IO.read(IO.stdin)
+lines = String.split(text, "\n")
+cnt = Hash.new(0)
+n4 = Hash.new(0)
+n5 = Hash.new(0)
+bytes = Hash.new(0)
+dsum = Hash.new(0)
+dmax = Hash.new(0)
+hours = Hash.new(0)
+invalid = Array[]
+
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line, " ")
+  next if Array.empty?(f)
+  why = reason(f)
+  if why != ""
+    Array.push(invalid, "  line #{i + 1}: #{why}")
+    next
+  end
+  path = f[2]
+  q = String.index(path, "?")
+  path = path[0, q] if q
+  ep = f[1] + " " + path
+  cnt[ep] += 1
+  st = String.to_i(f[3])
+  n4[ep] += 1 if st >= 400 && st <= 499
+  n5[ep] += 1 if st >= 500 && st <= 599
+  bytes[ep] += String.to_i(f[4]) unless f[4] == "-"
+  du = String.to_i(f[5])
+  dsum[ep] += du
+  dmax[ep] = du if du > dmax[ep]
+  hk = f[0][0, 10] + " " + f[0][11, 2]
+  hours[hk] += 1
+end
+
+eps = Hash.keys(cnt)
+if Array.size(eps) > 0
+  w = 8
+  Array.each(eps) { |e| w = String.size(e) if String.size(e) > w }
+  puts(String.ljust("endpoint", w) + " " + format("%5s %4s %4s %8s %7s %6s", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  sorted = Array.sort_by(eps) { |e| [-cnt[e], e] }
+  Array.each(sorted) do |e|
+    c = cnt[e]
+    tenths = (dsum[e] * 20 + c) / (2 * c)
+    avg = "#{tenths / 10}.#{tenths % 10}"
+    puts(String.ljust(e, w) + " " + format("%5d %4d %4d %8d %7s %6d", c, n4[e], n5[e], bytes[e], avg, dmax[e]))
+  end
+  best = nil
+  bestn = 0
+  Array.each(Array.sort(Hash.keys(hours))) do |k|
+    if hours[k] > bestn
+      best = k
+      bestn = hours[k]
+    end
+  end
+  puts("busiest hour: #{best}:00 (#{bestn} requests)")
+else
+  puts("no valid requests")
+end
+puts("invalid lines: #{Array.size(invalid)}")
+Array.each(invalid) { |l| puts(l) }

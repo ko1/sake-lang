@@ -1,0 +1,125 @@
+def parse_score(s)
+  m = String.match(s, /\A(\d+|EX|-)\/(\d+)\z/)
+  return [-1, 0, 0] if m == nil
+  mx = String.to_i(m[2])
+  return [-1, 0, 0] if mx <= 0
+  a = m[1]
+  return [1, 0, mx] if a == "EX"
+  return [2, 0, mx] if a == "-"
+  pt = String.to_i(a)
+  return [-1, 0, 0] if pt > mx
+  [0, pt, mx]
+end
+
+def tenths(r) = Rational.floor(r * 10 + Rational(1, 2))
+
+def fmt_tenths(t) = "#{t / 10}.#{t % 10}"
+
+def grade(t)
+  if t >= 900
+    "A"
+  elsif t >= 800
+    "B"
+  elsif t >= 700
+    "C"
+  elsif t >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+def stats(ents, name, cats)
+  sp = Hash.new(0)
+  sm = Hash.new(0)
+  missing = 0
+  Array.each(ents) do |e|
+    nm, cat, kind, pt, mx = e
+    next if nm != name
+    missing += 1 if kind == 2
+    next if kind == 1
+    sp[cat] += pt
+    sm[cat] += mx
+  end
+  num = Rational(0, 1)
+  den = 0
+  Hash.each(sm) do |c, m|
+    wt = cats[c]
+    num += Rational(sp[c] * wt, m)
+    den += wt
+  end
+  pct = den == 0 ? nil : num * 100 / den
+  [pct, missing]
+end
+
+lines = String.lines(IO.read(IO.stdin))
+cats = Hash[]
+ents = Array[]
+known = Hash[]
+n = 0
+Array.each(lines) do |raw|
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line, " ")
+  if f[0] == "weight" && Array.size(f) == 3
+    ws = f[2]
+    if !String.match?(ws, /\A\d+\z/) || String.to_i(ws) < 1 || String.to_i(ws) > 100
+      puts("line #{n}: bad weight #{ws}")
+    elsif Hash.key?(cats, f[1])
+      puts("line #{n}: duplicate category #{f[1]}")
+    else
+      cats[f[1]] = String.to_i(ws)
+    end
+  elsif Array.size(f) != 3
+    puts("line #{n}: bad format")
+  elsif !Hash.key?(cats, f[1])
+    puts("line #{n}: unknown category #{f[1]}")
+  else
+    kind, pt, mx = parse_score(f[2])
+    if kind < 0
+      puts("line #{n}: bad score #{f[2]}")
+    else
+      known[f[0]] = true
+      Array.push(ents, [f[0], f[1], kind, pt, mx])
+    end
+  end
+end
+
+names = Hash.keys(known)
+wd = 7
+Array.each(names) { |nm| wd = String.size(nm) if String.size(nm) > wd }
+rows = Array.map(names) do |nm|
+  pct, missing = stats(ents, nm, cats)
+  t = pct == nil ? nil : tenths(pct)
+  [nm, pct, t, missing]
+end
+sorted = Array.sort_by(rows) do |nm, pct, t, missing|
+  t == nil ? [1, 0, nm] : [0, -t, nm]
+end
+
+puts(String.ljust("Student", wd) + "  Score  G  Missing")
+Array.each(sorted) do |nm, pct, t, missing|
+  if t == nil
+    ps = "n/a"
+    g = "-"
+  else
+    ps = fmt_tenths(t)
+    g = grade(t)
+  end
+  puts(String.ljust(nm, wd) + "  " + String.rjust(ps, 5) + "  " + g + "  " + String.rjust(Integer.to_s(missing), 7))
+end
+
+sum = 0
+cnt = 0
+Array.each(rows) do |nm, pct, t, missing|
+  if pct != nil
+    sum += pct
+    cnt += 1
+  end
+end
+if cnt == 0
+  puts("class average: n/a")
+else
+  puts("class average: #{fmt_tenths(tenths(sum / cnt))}")
+end

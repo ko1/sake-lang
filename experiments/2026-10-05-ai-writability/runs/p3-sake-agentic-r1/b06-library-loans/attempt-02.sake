@@ -1,0 +1,207 @@
+Loan = Struct.new(:member, :due)
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+
+def parse_amount(s)
+  m = String.match(s, /\A(\d+)(?:\.(\d{1,2}))?\z/)
+  return nil unless m
+  whole = String.to_i(m[1])
+  frac = m[2]
+  f = 0
+  if frac != nil
+    f = String.size(frac) == 1 ? String.to_i(frac) * 10 : String.to_i(frac)
+  end
+  c = whole * 100 + f
+  c > 0 ? c : nil
+end
+
+class Desk
+  attr_reader loans, holds, queues, owed, members
+  attr_accessor today
+
+  def err(d, n, msg) = puts("line #{n}: error: #{msg}")
+  def refuse(d, n, msg) = puts("line #{n}: refused: #{msg}")
+
+  def handle(d, n, f)
+    day_s = f[0]
+    unless String.match?(day_s, /\A\d+\z/) && String.to_i(day_s) <= 100000
+      err(d, n, "bad day")
+      return
+    end
+    day = String.to_i(day_s)
+    if day < @today
+      err(d, n, "day goes backwards")
+      return
+    end
+    @today = day
+    cmd = f[1]
+    expected = 0
+    if cmd == "CHECKOUT" || cmd == "RESERVE" || cmd == "PAY"
+      expected = 4
+    elsif cmd == "RETURN"
+      expected = 3
+    else
+      err(d, n, "unknown command")
+      return
+    end
+    if Array.size(f) != expected
+      err(d, n, "wrong field count")
+      return
+    end
+    member = nil
+    book = nil
+    amount = nil
+    if cmd == "RETURN"
+      book = f[2]
+    else
+      member = f[2]
+      unless String.match?(member, /\A[a-z]{1,12}\z/)
+        err(d, n, "bad member")
+        return
+      end
+      if cmd == "PAY"
+        amount = parse_amount(f[3])
+        if amount == nil
+          err(d, n, "bad amount")
+          return
+        end
+      else
+        book = f[3]
+      end
+    end
+    if book != nil && !String.match?(book, /\A[A-Z][A-Z0-9]{0,7}\z/)
+      err(d, n, "bad book")
+      return
+    end
+    if cmd == "CHECKOUT"
+      checkout(d, n, member, book)
+    elsif cmd == "RETURN"
+      give_back(d, n, book)
+    elsif cmd == "RESERVE"
+      reserve(d, n, member, book)
+    else
+      pay(d, n, member, amount)
+    end
+  end
+
+  def checkout(d, n, m, b)
+    today = @today
+    loans = @loans
+    holds = @holds
+    if loans[b] != nil
+      refuse(d, n, "#{b} is on loan")
+      return
+    end
+    h = holds[b]
+    if h != nil && h != m
+      refuse(d, n, "#{b} is held for #{h}")
+      return
+    end
+    mine = Array.select(Hash.values(loans)) { |l| Loan.member(l) == m }
+    if Array.any?(mine) { |l| Loan.due(l) < today }
+      refuse(d, n, "#{m} has overdue books")
+      return
+    end
+    if Array.size(mine) >= 3
+      refuse(d, n, "#{m} has 3 loans")
+      return
+    end
+    o = @owed[m]
+    if o >= 1000
+      refuse(d, n, "#{m} owes #{money(o)}")
+      return
+    end
+    loans[b] = Loan.new(m, today + 14)
+    Hash.delete(holds, b) if h == m
+    Set.add(@members, m)
+    puts("#{m} borrowed #{b}, due day #{today + 14}")
+  end
+
+  def give_back(d, n, b)
+    loan = @loans[b]
+    if loan == nil
+      refuse(d, n, "#{b} is not on loan")
+      return
+    end
+    m = Loan.member(loan)
+    late = @today - Loan.due(loan)
+    Hash.delete(@loans, b)
+    if late > 0
+      fine = (late * 25 > 500 ? 500 : late * 25)
+      @owed[m] = @owed[m] + fine
+      puts("#{m} returned #{b}, #{late} days late, fine #{money(fine)}")
+    else
+      puts("#{m} returned #{b}")
+    end
+    q = @queues[b]
+    if q != nil && !Array.empty?(q)
+      nxt = Array.shift(q)
+      @holds[b] = nxt
+      puts("#{b} held for #{nxt}")
+    end
+  end
+
+  def reserve(d, n, m, b)
+    loan = @loans[b]
+    if loan != nil && Loan.member(loan) == m
+      refuse(d, n, "#{m} already has #{b}")
+      return
+    end
+    q = @queues[b]
+    if @holds[b] == m || (q != nil && Array.include?(q, m))
+      refuse(d, n, "#{m} already reserved #{b}")
+      return
+    end
+    if loan == nil && @holds[b] == nil
+      refuse(d, n, "#{b} is available")
+      return
+    end
+    if q == nil
+      q = Array[]
+      @queues[b] = q
+    end
+    Array.push(q, m)
+    Set.add(@members, m)
+    puts("reserved #{b} for #{m} (position #{Array.size(q)})")
+  end
+
+  def pay(d, n, m, amount)
+    o = @owed[m]
+    if amount > o
+      refuse(d, n, "#{m} owes only #{money(o)}")
+      return
+    end
+    @owed[m] = o - amount
+    puts("#{m} paid #{money(amount)}, owes #{money(o - amount)}")
+  end
+
+  def report(d)
+    puts(format("%-12s %5s %8s", "member", "loans", "owes"))
+    ls = Hash.values(@loans)
+    Array.each(Array.sort(Set.to_a(@members))) do |m|
+      cnt = Array.count(ls) { |l| Loan.member(l) == m }
+      puts(format("%-12s %5d %8s", m, cnt, money(@owed[m])))
+    end
+    today = @today
+    puts("overdue on day #{today}:")
+    od = Array.select(Hash.to_a(@loans)) { |kv| Loan.due(kv[1]) < today }
+    if Array.empty?(od)
+      puts("  none")
+    else
+      od = Array.sort_by(od) { |kv| [Loan.due(kv[1]), kv[0]] }
+      Array.each(od) do |kv|
+        l = kv[1]
+        puts("  #{kv[0]} #{Loan.member(l)} due #{Loan.due(l)} (#{today - Loan.due(l)} days)")
+      end
+    end
+  end
+end
+
+d = Desk.new(Hash[], Hash[], Hash[], Hash.new(0), Set[], 0)
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line)
+  next if Array.empty?(f)
+  Desk.handle(d, i + 1, f)
+end
+Desk.report(d)

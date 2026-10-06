@@ -1,0 +1,181 @@
+Shift = Struct.new(:start, :stop, :day, :worked)
+Emp = Struct.new(:name, :rate, :shifts)
+
+def err(n, msg) = puts("line #{n}: error: #{msg}")
+
+def leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+def days_in_month(y, m)
+  return (leap?(y) ? 29 : 28) if m == 2
+  return 30 if m == 4 || m == 6 || m == 9 || m == 11
+  31
+end
+
+# days since 1970-01-01, or nil when not a real date in 1970..2099
+def parse_date(s)
+  return nil unless String.match?(s, /\A\d{4}-\d\d-\d\d\z/)
+  parts = String.split(s, "-")
+  y = String.to_i(parts[0])
+  m = String.to_i(parts[1])
+  d = String.to_i(parts[2])
+  return nil if y < 1970 || y > 2099
+  return nil if m < 1 || m > 12
+  return nil if d < 1 || d > days_in_month(y, m)
+  yy = m <= 2 ? y - 1 : y
+  era = yy / 400
+  yoe = yy - era * 400
+  mp = m > 2 ? m - 3 : m + 9
+  doy = (153 * mp + 2) / 5 + d - 1
+  doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+end
+
+def parse_time(s)
+  return nil unless String.match?(s, /\A\d\d:\d\d\z/)
+  h = String.to_i(String.slice(s, 0, 2))
+  mi = String.to_i(String.slice(s, 3, 2))
+  return nil if h > 23 || mi > 59
+  h * 60 + mi
+end
+
+def hm(mins) = "#{mins / 60}:#{String.rjust(Integer.to_s(mins % 60), 2, "0")}"
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+
+def add_shift(emps, n, f)
+  k = Array.size(f)
+  if k != 5 && k != 6
+    err(n, "wrong field count")
+    return
+  end
+  id = f[1]
+  unless String.match?(id, /\AE\d{3}\z/)
+    err(n, "bad id")
+    return
+  end
+  e = emps[id]
+  if e == nil
+    err(n, "unknown employee #{id}")
+    return
+  end
+  day = parse_date(f[2])
+  if day == nil
+    err(n, "bad date")
+    return
+  end
+  st = parse_time(f[3])
+  en = parse_time(f[4])
+  if st == nil || en == nil
+    err(n, "bad time")
+    return
+  end
+  len = en > st ? en - st : en - st + 1440
+  brk = 0
+  if k == 6
+    unless String.match?(f[5], /\A\d+\z/)
+      err(n, "bad break")
+      return
+    end
+    brk = String.to_i(f[5])
+  end
+  if brk >= len
+    err(n, "bad break")
+    return
+  end
+  s = day * 1440 + st
+  t = s + len
+  if Array.any?(Emp.shifts(e)) { |o| s < Shift.stop(o) && Shift.start(o) < t }
+    err(n, "overlapping shift")
+    return
+  end
+  eff = brk
+  eff = 30 if len > 360 && brk < 30
+  Array.push(Emp.shifts(e), Shift.new(s, t, day, len - eff))
+end
+
+def add_emp(emps, n, f)
+  if Array.size(f) != 4
+    err(n, "wrong field count")
+    return
+  end
+  id = f[1]
+  unless String.match?(id, /\AE\d{3}\z/)
+    err(n, "bad id")
+    return
+  end
+  unless String.match?(f[2], /\A[A-Za-z]{1,10}\z/)
+    err(n, "bad name")
+    return
+  end
+  unless String.match?(f[3], /\A\d+\.\d\d\z/)
+    err(n, "bad rate")
+    return
+  end
+  if emps[id] != nil
+    err(n, "duplicate employee #{id}")
+    return
+  end
+  parts = String.split(f[3], ".")
+  rate = String.to_i(parts[0]) * 100 + String.to_i(parts[1])
+  emps[id] = Emp.new(f[2], rate, Shift[])
+end
+
+# returns [regular, overtime] minutes for one employee
+def split_minutes(e)
+  by_day = Hash.new(0)
+  by_week = Hash.new(0)
+  reg = 0
+  ot = 0
+  Array.each(Array.sort_by(Emp.shifts(e)) { |s| Shift.start(s) }) do |s|
+    w = Shift.worked(s)
+    day = Shift.day(s)
+    before = by_day[day]
+    ot_d = before + w - 480
+    ot_d = 0 if ot_d < 0
+    ot_d = w if ot_d > w
+    rest = w - ot_d
+    wk = (day + 3) / 7
+    wb = by_week[wk]
+    ot_w = wb + rest - 2400
+    ot_w = 0 if ot_w < 0
+    ot_w = rest if ot_w > rest
+    r = rest - ot_w
+    by_week[wk] = wb + r
+    by_day[day] = before + w
+    reg += r
+    ot += ot_d + ot_w
+  end
+  [reg, ot]
+end
+
+emps = Hash[]
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line)
+  next if Array.empty?(f)
+  n = i + 1
+  if f[0] == "EMP"
+    add_emp(emps, n, f)
+  elsif f[0] == "SHIFT"
+    add_shift(emps, n, f)
+  else
+    err(n, "unknown command")
+  end
+end
+
+fmt = "%-4s %-10s %8s %8s %10s"
+puts(format(fmt, "id", "name", "regular", "overtime", "pay"))
+tr = 0
+to = 0
+tp = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  e = emps[id]
+  reg, ot = split_minutes(e)
+  num = reg * Emp.rate(e) * 2 + ot * Emp.rate(e) * 3
+  pay = (2 * num + 120) / 240
+  tr += reg
+  to += ot
+  tp += pay
+  puts(format(fmt, id, Emp.name(e), hm(reg), hm(ot), money(pay)))
+end
+puts(format(fmt, "", "total", hm(tr), hm(to), money(tp)))

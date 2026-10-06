@@ -1,0 +1,164 @@
+RunError = Exception.new()
+
+class Ins
+  attr_accessor op, n, name, body
+end
+
+class Comp
+  attr_reader code, next_i
+end
+
+def builtins = Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ";", ":"]
+
+def number?(t) = String.match?(t, /\A-?\d+\z/)
+
+def compile(toks, start, in_def)
+  code = Array[]
+  ifidx = Array[]
+  elsidx = Array[]
+  i = start
+  while i < Array.size(toks)
+    t = toks[i]
+    if t == ":"
+      return nil if in_def || Array.size(ifidx) > 0
+      name = toks[i + 1]
+      return nil if name == nil || number?(name) || Array.include?(builtins, name)
+      r = compile(toks, i + 2, true)
+      return nil if r == nil
+      Array.push(code, Ins.new("def", 0, name, Comp.code(r)))
+      i = Comp.next_i(r)
+      next
+    elsif t == ";"
+      return nil if !in_def || Array.size(ifidx) > 0
+      return Comp.new(code, i + 1)
+    elsif t == "if"
+      Array.push(code, Ins.new("if", 0, "if", nil))
+      Array.push(ifidx, Array.size(code) - 1)
+      Array.push(elsidx, -1)
+    elsif t == "else"
+      return nil if Array.empty?(ifidx)
+      return nil if elsidx[-1] != -1
+      Array.push(code, Ins.new("jmp", 0, "else", nil))
+      Ins.set_n(code[ifidx[-1]], Array.size(code))
+      elsidx[-1] = Array.size(code) - 1
+    elsif t == "then"
+      return nil if Array.empty?(ifidx)
+      if elsidx[-1] == -1
+        Ins.set_n(code[ifidx[-1]], Array.size(code))
+      else
+        Ins.set_n(code[elsidx[-1]], Array.size(code))
+      end
+      Array.pop(ifidx)
+      Array.pop(elsidx)
+    elsif number?(t)
+      Array.push(code, Ins.new("num", String.to_i(t), t, nil))
+    else
+      Array.push(code, Ins.new("word", 0, t, nil))
+    end
+    i += 1
+  end
+  return nil if in_def || Array.size(ifidx) > 0
+  Comp.new(code, i)
+end
+
+def need(st, k, w)
+  raise RunError.new("stack underflow in #{w}") if Array.size(st) < k
+end
+
+def builtin(w, st)
+  case w
+  in "+" | "-" | "*" | "/" | "mod" | "=" | "<" | ">"
+    need(st, 2, w)
+    b = Array.pop(st)
+    a = Array.pop(st)
+    r = 0
+    case w
+    in "+" then r = a + b
+    in "-" then r = a - b
+    in "*" then r = a * b
+    in "=" then r = a == b ? 1 : 0
+    in "<" then r = a < b ? 1 : 0
+    in ">" then r = a > b ? 1 : 0
+    else
+      raise RunError.new("division by zero") if b == 0
+      aa = a < 0 ? -a : a
+      bb = b < 0 ? -b : b
+      q = aa / bb
+      q = -q if (a < 0) != (b < 0)
+      r = w == "/" ? q : a - q * b
+    end
+    Array.push(st, r)
+  in "dup"
+    need(st, 1, w)
+    Array.push(st, st[-1])
+  in "drop"
+    need(st, 1, w)
+    Array.pop(st)
+  in "swap"
+    need(st, 2, w)
+    b = Array.pop(st)
+    a = Array.pop(st)
+    Array.push(st, b, a)
+  in "over"
+    need(st, 2, w)
+    Array.push(st, st[-2])
+  in "."
+    need(st, 1, w)
+    puts(Array.pop(st))
+  end
+end
+
+def run(code, st, words, depth)
+  pc = 0
+  while pc < Array.size(code)
+    ins = code[pc]
+    pc += 1
+    op = Ins.op(ins)
+    if op == "num"
+      Array.push(st, Ins.n(ins))
+    elsif op == "jmp"
+      pc = Ins.n(ins)
+    elsif op == "if"
+      need(st, 1, "if")
+      pc = Ins.n(ins) if Array.pop(st) == 0
+    elsif op == "def"
+      words[Ins.name(ins)] = Ins.body(ins)
+    else
+      w = Ins.name(ins)
+      if Array.include?(builtins, w)
+        builtin(w, st)
+      else
+        body = words[w]
+        raise RunError.new("unknown word #{w}") if body == nil
+        raise RunError.new("too deep") if depth >= 100
+        run(body, st, words, depth + 1)
+      end
+    end
+  end
+end
+
+st = Array[]
+words = Hash[]
+n = 0
+Array.each(IO.readlines(IO.stdin())) do |raw|
+  n += 1
+  toks = String.split(String.chomp(raw), " ")
+  r = compile(toks, 0, false)
+  if r == nil
+    puts("line #{n}: syntax error")
+    next
+  end
+  snap = Array.dup(st)
+  begin
+    run(Comp.code(r), st, words, 0)
+  rescue RunError => e
+    Array.clear(st)
+    Array.concat(st, snap)
+    puts("line #{n}: error: #{Exception.message(e)}")
+  end
+end
+if Array.empty?(st)
+  puts("stack: (empty)")
+else
+  puts("stack: #{Array.join(st, " ")}")
+end

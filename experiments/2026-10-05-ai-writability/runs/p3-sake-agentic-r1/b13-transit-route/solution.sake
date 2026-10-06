@@ -1,0 +1,167 @@
+Seg = Struct.new(:line, :a, :b, :m)
+
+def moves(segs, u)
+  out = Array[]
+  Array.each(segs) do |s|
+    Array.push(out, [Seg.line(s), Seg.b(s), Seg.m(s)]) if Seg.a(s) == u
+    Array.push(out, [Seg.line(s), Seg.a(s), Seg.m(s)]) if Seg.b(s) == u
+  end
+  out
+end
+
+def step_cost(prev, ln, m, pen)
+  m * 1000 + ((prev != "" && prev != ln) ? pen * 1000 + 1 : 0)
+end
+
+def route(segs, pen, from, to)
+  dist = Hash[]
+  dist[[from, ""]] = 0
+  changed = true
+  while changed
+    changed = false
+    Array.each(Hash.keys(dist)) do |st|
+      d = dist[st]
+      Array.each(moves(segs, st[0])) do |mv|
+        nd = d + step_cost(st[1], mv[0], mv[2], pen)
+        key = [mv[1], mv[0]]
+        cur = dist[key]
+        if cur == nil || nd < cur
+          dist[key] = nd
+          changed = true
+        end
+      end
+    end
+  end
+  best = nil
+  Array.each(Hash.keys(dist)) do |st|
+    best = dist[st] if st[0] == to && (best == nil || dist[st] < best)
+  end
+  return nil if best == nil
+  # good: states on an optimal path that ends at `to`
+  good = Set[]
+  Array.each(Hash.keys(dist)) { |st| Set.add(good, st) if st[0] == to && dist[st] == best }
+  ch = true
+  while ch
+    ch = false
+    Array.each(Hash.keys(dist)) do |st|
+      next if Set.include?(good, st)
+      Array.each(moves(segs, st[0])) do |mv|
+        key = [mv[1], mv[0]]
+        if Set.include?(good, key) && dist[st] + step_cost(st[1], mv[0], mv[2], pen) == dist[key]
+          Set.add(good, st)
+          ch = true
+          break
+        end
+      end
+    end
+  end
+  # layers of states by lexicographically smallest station sequence
+  layers = Array[Array[[from, ""]]]
+  while Array.last(layers)[0][0] != to
+    cands = Array[]
+    Array.each(Array.last(layers)) do |st|
+      Array.each(moves(segs, st[0])) do |mv|
+        key = [mv[1], mv[0]]
+        if Set.include?(good, key) && dist[st] + step_cost(st[1], mv[0], mv[2], pen) == dist[key]
+          Array.push(cands, key)
+        end
+      end
+    end
+    minst = Array.min(Array.map(cands) { |k| k[0] })
+    nxt = Array.uniq(Array.select(cands) { |k| k[0] == minst })
+    Array.push(layers, nxt)
+  end
+  # prune layers backwards
+  n = Array.size(layers)
+  valid = Array.new(n) { Set[] }
+  Array.each(Array.last(layers)) { |st| Set.add(valid[n - 1], st) if dist[st] == best }
+  i = n - 2
+  while i >= 0
+    Array.each(layers[i]) do |st|
+      Array.each(moves(segs, st[0])) do |mv|
+        key = [mv[1], mv[0]]
+        if Set.include?(valid[i + 1], key) && dist[st] + step_cost(st[1], mv[0], mv[2], pen) == dist[key]
+          Set.add(valid[i], st)
+        end
+      end
+    end
+    i -= 1
+  end
+  path = Array[[from, ""]]
+  i = 1
+  while i < n
+    cur = Array.last(path)
+    opts = Array[]
+    Array.each(moves(segs, cur[0])) do |mv|
+      key = [mv[1], mv[0]]
+      if Set.include?(valid[i], key) && dist[cur] + step_cost(cur[1], mv[0], mv[2], pen) == dist[key]
+        Array.push(opts, key)
+      end
+    end
+    pick = Array.min_by(opts) { |k| k[1] }
+    Array.push(path, pick)
+    i += 1
+  end
+  [best, path]
+end
+
+def name?(s) = String.match?(s, /\A\w+\z/)
+
+pen = String.to_i(String.strip(gets))
+segs = Array[]
+known = Set[]
+n = 1
+in_q = false
+while (raw = gets)
+  n += 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  f = String.split(line, / +/)
+  if !in_q
+    if line == "QUERIES"
+      in_q = true
+    elsif Array.size(f) == 4 && name?(f[0]) && name?(f[1]) && name?(f[2]) && String.match?(f[3], /\A[1-9]\d{0,2}\z/) && f[1] != f[2]
+      Array.push(segs, Seg.new(f[0], f[1], f[2], String.to_i(f[3])))
+      Set.add(known, f[1])
+      Set.add(known, f[2])
+    else
+      puts("invalid segment at line #{n}")
+    end
+  else
+    if Array.size(f) != 2
+      puts("invalid query at line #{n}")
+    else
+      a = f[0]
+      b = f[1]
+      if !Set.include?(known, a)
+        puts("#{a} -> #{b}: unknown station #{a}")
+      elsif !Set.include?(known, b)
+        puts("#{a} -> #{b}: unknown station #{b}")
+      elsif a == b
+        puts("#{a} -> #{b}: 0 min, 0 transfers")
+      else
+        r = route(segs, pen, a, b)
+        if r == nil
+          puts("#{a} -> #{b}: no route")
+        else
+          best = r[0]
+          path = r[1]
+          k = best % 1000
+          puts("#{a} -> #{b}: #{best / 1000} min, #{k} #{k == 1 ? "transfer" : "transfers"}")
+          legs = Array[]
+          i = 1
+          while i < Array.size(path)
+            ln = path[i][1]
+            if Array.empty?(legs) || legs[-1][0] != ln
+              Array.push(legs, [ln, Array[path[i - 1][0], path[i][0]]])
+            else
+              Array.push(legs[-1][1], path[i][0])
+            end
+            i += 1
+          end
+          puts("  " + Array.join(Array.map(legs) { |l| "#{l[0]}: #{Array.join(l[1], " > ")}" }, "; "))
+        end
+      end
+    end
+  end
+end

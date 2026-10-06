@@ -1,0 +1,156 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def hm(m) = "#{m / 60}:#{format("%02d", m % 60)}"
+
+def leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+def month_days(y, m)
+  return 31 if Array.include?(Array[1, 3, 5, 7, 8, 10, 12], m)
+  return 30 if m != 2
+  leap?(y) ? 29 : 28
+end
+
+# days since 1970-01-01, or nil if not a real date
+def parse_date(s)
+  return nil unless String.match?(s, /\A\d{4}-\d\d-\d\d\z/)
+  p3 = String.split(s, "-")
+  y = String.to_i(p3[0])
+  mo = String.to_i(p3[1])
+  d = String.to_i(p3[2])
+  return nil if y < 1970 || y > 2099 || mo < 1 || mo > 12
+  return nil if d < 1 || d > month_days(y, mo)
+  days = 0
+  Integer.upto(1970, y - 1) { |yy| days += leap?(yy) ? 366 : 365 }
+  Integer.upto(1, mo - 1) { |mm| days += month_days(y, mm) }
+  days + d - 1
+end
+
+def parse_time(s)
+  return nil unless String.match?(s, /\A([01]\d|2[0-3]):[0-5]\d\z/)
+  p2 = String.split(s, ":")
+  String.to_i(p2[0]) * 60 + String.to_i(p2[1])
+end
+
+class Emp
+  attr_reader name, rate, shifts
+end
+
+def pay_of(rate, reg, ot) = (reg * rate * 2 + ot * rate * 3 + 60) / 120
+
+def compute(e)
+  day_tot = Hash.new(0)
+  week_reg = Hash.new(0)
+  reg = 0
+  ot = 0
+  Array.each(Array.sort_by(Emp.shifts(e)) { |s| s[0] }) do |s|
+    date = s[2]
+    w = s[3]
+    dt = day_tot[date]
+    ot_day = Integer.clamp(dt + w - 480, 0, w)
+    rest = w - ot_day
+    day_tot[date] = dt + w
+    wk = (date + 3) / 7
+    wr = week_reg[wk]
+    ot_week = Integer.clamp(wr + rest - 2400, 0, rest)
+    r = rest - ot_week
+    week_reg[wk] = wr + r
+    reg += r
+    ot += ot_day + ot_week
+  end
+  [reg, ot]
+end
+
+emps = Hash[]
+n = 0
+Array.each(IO.readlines(IO.stdin())) do |line|
+  n += 1
+  f = String.split(line)
+  next if Array.empty?(f)
+  cmd = f[0]
+  if cmd == "EMP"
+    if Array.size(f) != 4
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    unless String.match?(f[1], /\AE\d{3}\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    unless String.match?(f[2], /\A[A-Za-z]{1,10}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    unless String.match?(f[3], /\A\d+\.\d\d\z/)
+      puts("line #{n}: error: bad rate")
+      next
+    end
+    if emps[f[1]]
+      puts("line #{n}: error: duplicate employee #{f[1]}")
+      next
+    end
+    rp = String.split(f[3], ".")
+    emps[f[1]] = Emp.new(f[2], String.to_i(rp[0]) * 100 + String.to_i(rp[1]), Tuple[])
+  elsif cmd == "SHIFT"
+    if Array.size(f) != 5 && Array.size(f) != 6
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    unless String.match?(f[1], /\AE\d{3}\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    e = emps[f[1]]
+    unless e
+      puts("line #{n}: error: unknown employee #{f[1]}")
+      next
+    end
+    date = parse_date(f[2])
+    unless date
+      puts("line #{n}: error: bad date")
+      next
+    end
+    st = parse_time(f[3])
+    en = parse_time(f[4])
+    unless st && en
+      puts("line #{n}: error: bad time")
+      next
+    end
+    len = (en - st) % 1440
+    len = 1440 if len == 0
+    brk = 0
+    if Array.size(f) == 6
+      unless String.match?(f[5], /\A\d+\z/) && String.to_i(f[5]) < len
+        puts("line #{n}: error: bad break")
+        next
+      end
+      brk = String.to_i(f[5])
+    end
+    a = date * 1440 + st
+    b = a + len
+    clash = Array.any?(Emp.shifts(e)) { |s| a < s[1] && s[0] < b }
+    if clash
+      puts("line #{n}: error: overlapping shift")
+      next
+    end
+    brk = 30 if len > 360 && brk < 30
+    Array.push(Emp.shifts(e), [a, b, date, len - brk])
+  else
+    puts("line #{n}: error: unknown command")
+  end
+end
+
+fmt = "%-4s %-10s %8s %8s %10s"
+puts(format(fmt, "id", "name", "regular", "overtime", "pay"))
+tr = 0
+to = 0
+tp = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  e = emps[id]
+  reg, ot = compute(e)
+  pay = pay_of(Emp.rate(e), reg, ot)
+  tr += reg
+  to += ot
+  tp += pay
+  puts(format(fmt, id, Emp.name(e), hm(reg), hm(ot), money(pay)))
+end
+puts(format(fmt, "", "total", hm(tr), hm(to), money(tp)))

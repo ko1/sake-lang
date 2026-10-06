@@ -1,0 +1,197 @@
+Slot = Struct.new(:name, :price, :count)
+
+def money(c) = "#{c / 100}.#{String.rjust(Integer.to_s(c % 100), 2, "0")}"
+
+def parse_money(s)
+  return nil unless String.match?(s, /\A\d+\.\d\d\z/)
+  parts = String.split(s, ".")
+  String.to_i(parts[0]) * 100 + String.to_i(parts[1])
+end
+
+def coins = Array[5, 10, 25, 50, 100, 200]
+
+def coin_index(c) = Array.index(coins, c)
+
+def count_ok(s, max)
+  String.match?(s, /\A\d+\z/) && String.to_i(s) <= max
+end
+
+def coin_list(cs) = "[" + Array.join(Array.map(cs) { |c| money(c) }, " ") + "]"
+
+class Machine
+  attr_reader slots, tubes, inserted, sold_n, sold_rev
+  attr_accessor credit
+
+  def err(m, n, msg) = puts("line #{n}: error: #{msg}")
+
+  def handle(m, n, f)
+    cmd = f[0]
+    k = Array.size(f)
+    expected = 0
+    if cmd == "SLOT"
+      expected = 5
+    elsif cmd == "TUBE"
+      expected = 3
+    elsif cmd == "COIN" || cmd == "SELECT"
+      expected = 2
+    elsif cmd == "CANCEL"
+      expected = 1
+    else
+      err(m, n, "unknown command")
+      return
+    end
+    if k != expected
+      err(m, n, "wrong field count")
+      return
+    end
+    if cmd == "SLOT"
+      unless String.match?(f[1], /\A[A-Z]\d\z/)
+        err(m, n, "bad slot")
+        return
+      end
+      unless String.match?(f[2], /\A[a-z]{1,12}\z/)
+        err(m, n, "bad name")
+        return
+      end
+      price = parse_money(f[3])
+      if price == nil
+        err(m, n, "bad money")
+        return
+      end
+      unless count_ok(f[4], 99)
+        err(m, n, "bad count")
+        return
+      end
+      @slots[f[1]] = Slot.new(f[2], price, String.to_i(f[4]))
+    elsif cmd == "TUBE"
+      v = parse_money(f[1])
+      if v == nil
+        err(m, n, "bad money")
+        return
+      end
+      idx = coin_index(v)
+      if idx == nil
+        err(m, n, "bad coin")
+        return
+      end
+      unless count_ok(f[2], 999)
+        err(m, n, "bad count")
+        return
+      end
+      @tubes[idx] = @tubes[idx] + String.to_i(f[2])
+    elsif cmd == "COIN"
+      v = parse_money(f[1])
+      if v == nil
+        err(m, n, "bad money")
+        return
+      end
+      idx = coin_index(v)
+      if idx == nil
+        puts("rejected #{money(v)}")
+        return
+      end
+      if @credit + v > 500
+        puts("rejected #{money(v)} (credit limit)")
+        return
+      end
+      @tubes[idx] = @tubes[idx] + 1
+      @credit = @credit + v
+      Array.push(@inserted, v)
+      puts("credit #{money(@credit)}")
+    elsif cmd == "SELECT"
+      select(m, f[1])
+    else
+      cancel(m)
+    end
+  end
+
+  def select(m, code)
+    s = @slots[code]
+    if s == nil
+      puts("no slot #{code}")
+      return
+    end
+    if Slot.count(s) == 0
+      puts("sold out #{code}")
+      return
+    end
+    price = Slot.price(s)
+    if @credit < price
+      puts("insert #{money(price - @credit)} more")
+      return
+    end
+    change = @credit - price
+    left = change
+    take = Array.new(6, 0)
+    i = 5
+    while i >= 0
+      c = Array.at(coins, i)
+      t = left / c
+      t = @tubes[i] if t > @tubes[i]
+      take[i] = t
+      left -= t * c
+      i -= 1
+    end
+    if left != 0
+      puts("exact change needed")
+      return
+    end
+    paid = Array[]
+    i = 5
+    while i >= 0
+      Integer.times(take[i]) { Array.push(paid, Array.at(coins, i)) }
+      @tubes[i] = @tubes[i] - take[i]
+      i -= 1
+    end
+    Slot.set_count(s, Slot.count(s) - 1)
+    name = Slot.name(s)
+    @sold_n[name] = @sold_n[name] + 1
+    @sold_rev[name] = @sold_rev[name] + price
+    @credit = 0
+    Array.clear(@inserted)
+    msg = "vend #{name}, change #{money(change)}"
+    msg = msg + " " + coin_list(paid) if change != 0
+    puts(msg)
+  end
+
+  def cancel(m)
+    if @credit == 0
+      puts("nothing to return")
+      return
+    end
+    Array.each(@inserted) do |c|
+      i = coin_index(c)
+      @tubes[i] = @tubes[i] - 1
+    end
+    puts("returned #{money(@credit)} #{coin_list(@inserted)}")
+    @credit = 0
+    Array.clear(@inserted)
+  end
+
+  def report(m)
+    puts("credit #{money(@credit)} kept") if @credit != 0
+    puts("sales:")
+    names = Hash.keys(@sold_n)
+    if Array.empty?(names)
+      puts("  none")
+    else
+      rev = @sold_rev
+      sn = @sold_n
+      names = Array.sort_by(names) { |nm| [-rev[nm], nm] }
+      Array.each(names) do |nm|
+        puts(format("  %-12s %3d %8s", nm, sn[nm], money(rev[nm])))
+      end
+    end
+    ts = Array.map(Array.zip(coins, @tubes)) { |c, k| "#{money(c)}x#{k}" }
+    puts("tubes: " + Array.join(ts, " "))
+  end
+end
+
+m = Machine.new(Hash[], Array.new(6, 0), Integer[], Hash.new(0), Hash.new(0), 0)
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |line, i|
+  f = String.split(line)
+  next if Array.empty?(f)
+  Machine.handle(m, i + 1, f)
+end
+Machine.report(m)

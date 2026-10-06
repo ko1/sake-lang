@@ -1,0 +1,112 @@
+def qty_str(x)
+  d = Rational.denominator(x)
+  if d <= 8
+    w = Rational.floor(x)
+    r = x - w
+    return "#{w}" if Rational.zero?(r)
+    rs = "#{Rational.numerator(r)}/#{Rational.denominator(r)}"
+    return w == 0 ? rs : "#{w} #{rs}"
+  end
+  c = Rational.floor(x * 100 + Kernel.Rational(1, 2))
+  "#{c / 100}.#{format("%02d", c % 100)}"
+end
+
+def nice?(x) = x >= 1 && Rational.denominator(x) <= 4
+
+def int_field?(s) = String.match?(s, /\A\d+\z/)
+def frac_field?(s) = String.match?(s, /\A\d+\/\d+\z/)
+
+def unit_info(u)
+  return [:spoon, 1] if u == "tsp"
+  return [:spoon, 3] if u == "tbsp"
+  return [:spoon, 48] if u == "cup"
+  return [:gram, 1] if u == "g"
+  return [:gram, 1000] if u == "kg"
+  return [:ml, 1] if u == "ml"
+  return [:ml, 1000] if u == "l"
+  return [:count, 1] if u == "-"
+  nil
+end
+
+def show_amount(group, name, amt)
+  if group == :count
+    return "#{Rational.ceil(amt)} #{name}"
+  end
+  if group == :gram
+    return amt >= 1000 ? "#{qty_str(amt / 1000)} kg #{name}" : "#{qty_str(amt)} g #{name}"
+  end
+  if group == :ml
+    return amt >= 1000 ? "#{qty_str(amt / 1000)} l #{name}" : "#{qty_str(amt)} ml #{name}"
+  end
+  cups = amt / 48
+  return "#{qty_str(cups)} cup #{name}" if nice?(cups)
+  tb = amt / 3
+  return "#{qty_str(tb)} tbsp #{name}" if nice?(tb)
+  "#{qty_str(amt)} tsp #{name}"
+end
+
+lines = IO.readlines(IO.stdin())
+h = Array.empty?(lines) ? Array[] : String.split(lines[0])
+unless Array.size(h) == 4 && h[0] == "SERVES" && h[2] == "->" && int_field?(h[1]) && int_field?(h[3]) &&
+       String.to_i(h[1]) >= 1 && String.to_i(h[1]) <= 100 && String.to_i(h[3]) >= 1 && String.to_i(h[3]) <= 100
+  puts("line 1: error: bad servings")
+  exit(0)
+end
+factor = Kernel.Rational(String.to_i(h[3]), String.to_i(h[1]))
+puts("serves #{h[3]} (x #{qty_str(factor)})")
+
+order = Tuple[]
+totals = Hash[]
+n = 1
+Array.each(Array.drop(lines, 1)) do |line|
+  n += 1
+  f = String.split(line)
+  next if Array.empty?(f)
+  next if String.start_with?(f[0], "#")
+  q = nil
+  used = 0
+  if int_field?(f[0]) && f[1] && frac_field?(f[1])
+    parts = String.split(f[1], "/")
+    if String.to_i(parts[1]) != 0
+      q = String.to_r(f[0]) + String.to_r(f[1])
+    end
+    used = 2
+  elsif int_field?(f[0]) || String.match?(f[0], /\A\d+\.\d+\z/)
+    q = String.to_r(f[0])
+    used = 1
+  elsif frac_field?(f[0])
+    parts = String.split(f[0], "/")
+    q = String.to_r(f[0]) if String.to_i(parts[1]) != 0
+    used = 1
+  end
+  if q == nil || !Rational.positive?(q)
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  if Array.size(f) <= used
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  info = unit_info(f[used])
+  unless info
+    puts("line #{n}: error: unknown unit #{f[used]}")
+    next
+  end
+  if Array.size(f) <= used + 1
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(Array.drop(f, used + 1), " ")
+  key = [name, info[0]]
+  amt = q * info[1] * factor
+  if totals[key]
+    totals[key] = totals[key] + amt
+  else
+    totals[key] = amt
+    Array.push(order, key)
+  end
+end
+
+Array.each(order) do |name, group|
+  puts(show_amount(group, name, totals[[name, group]]))
+end
