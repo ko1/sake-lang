@@ -709,8 +709,16 @@ module Sake
                                           "but #{ctx.ns} is not a Struct type with field `#{field}` (line #{node.location.start_line})")
       end
       unless ctx.fn && dt
+        owners = @struct_types.values.select { _1.fields.include?(field) }.map(&:name).reject { _1.include?("::") }
+        hints = if ctx.fn && !ctx.fn.namespace && !owners.empty?
+                  # a top-level `def change(a, d)` reading @bal: make it the type's function
+                  params = ctx.fn.params.join(", ")
+                  owners.first(2).map { "make it a function of #{_1}: `def #{_1}.#{ctx.fn.name}(#{params})` (or inside `class #{_1}`)" }
+                else
+                  []
+                end
         return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a Struct type",
-                     ["outside one, write the reader: `Type.#{field}(obj)`"])
+                     [*hints, "outside one, write the reader: `Type.#{field}(obj)`"])
       end
       return error(node, "`#{node.name}` needs a first argument (the #{dt.name}) in #{ctx.fn.full_name}") if ctx.fn.params.empty?
       unless dt.fields.include?(field)

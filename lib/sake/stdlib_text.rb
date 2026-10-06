@@ -32,6 +32,8 @@ module Sake
       reg.define("String", :byteindex, ["String", str_re], optional: ["Integer"]) do |s, t, pos = 0|
         ruby_error("IndexError") { s.byteindex(t, pos) }
       end
+      # Ruby's s.slice(i), s.slice(i, n), s.slice(range): s[...] written as an operation
+      reg.define("String", :slice, ["String", %w[Integer Range]], optional: ["Integer"]) { |s, i, n = nil| n ? s.slice(i, n) : s.slice(i) }
       reg.define("String", :byteslice, %w[String Integer], optional: ["Integer"]) { |s, i, n = nil| n ? s.byteslice(i, n) : s.byteslice(i) }
       reg.define("String", :b, ["String"], &:b)
       reg.define("String", :unpack, %w[String String]) { |s, fmt| ruby_error("ArgumentError") { s.unpack(fmt) } }

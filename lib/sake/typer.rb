@@ -355,7 +355,7 @@ module Sake
         # `x => T` that may not match is a check at run time (rescuable); one that surely fails is a type error.
         next [c, "exhaustive"] if c.op == "=>" && c.verdict != :error
         next [c, "type"] if c.verdict == :error
-        parts = c.failing.map { |f| operand_pair?(c) ? f : [f] }
+        parts = c.failing.map { |f| operand_pair?(c) || c.arg == "elements" ? f : [f] }
         next [c, "type"] unless parts.all? { |p| p.any? { nil_atom?(_1) } }
         [c, parts.any? { |p| p.include?("Nil") } ? "nil" : "index-nil"]
       end
@@ -631,18 +631,27 @@ module Sake
     # Tuples and Arrays are ordered by their elements: each pair of element types must be comparable.
     def check_ordered_elements(node, op, pairs)
       elem_pairs = []
-      pairs.each do |x, y|
-        if [x, y].all? { _1.is_a?(Array) && _1[0] == :tuple }
-          x[1].zip(y[1]).each { |ex, ey| elem_pairs.concat(ex.product(ey)) if ey }
-        elsif [x, y].all? { _1.is_a?(Array) && _1[0] == :array }
-          elem_pairs.concat(elem_of([x]).product(elem_of([y])))
-        end
-      end
+      pairs.each { |x, y| elem_pairs.concat(element_pairs(x, y)) if container_pair?(x, y) }
+      elem_pairs.uniq!
       return if elem_pairs.empty?
       failing = elem_pairs.reject { |ex, ey| comparable_atoms?(ex, ey) }
       verdict = failing.empty? ? :proven : (failing.size == elem_pairs.size ? :error : :partial)
       add_check(node, op_name(op), "elements", "comparable elements", u(*elem_pairs.map { |ex, ey| tuple([[ex].freeze, [ey].freeze]) }),
                 verdict, failing)
+    end
+
+    def container_pair?(x, y) = %i[tuple array].any? { |k| [x, y].all? { _1.is_a?(Array) && _1[0] == k } }
+
+    # The pairs of atoms an ordering of x and y compares, through nested Tuples and Arrays (so a nil
+    # inside is reported as nil, not as an Array that cannot be compared).
+    def element_pairs(x, y, depth = 0)
+      return [[x, y]] unless depth < 3 && container_pair?(x, y)
+      inner = if x[0] == :tuple
+                x[1].zip(y[1]).flat_map { |ex, ey| ey ? ex.product(ey) : [] }
+              else
+                elem_of([x]).product(elem_of([y]))
+              end
+      inner.flat_map { |a, b| element_pairs(a, b, depth + 1) }
     end
 
     def comparable_atoms?(x, y, depth = 0)

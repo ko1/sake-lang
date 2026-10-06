@@ -692,6 +692,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.rstrip(x)`
 - `String.scan(x, String|Regexp)`
 - `String.size(x)`
+- `String.slice(x, Integer|Range, [Integer])`
 - `String.split(x, [String|Regexp], [Integer])`
 - `String.squeeze(x)`
 - `String.start_with?(x, String)`

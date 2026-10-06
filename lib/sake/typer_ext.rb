@@ -175,6 +175,7 @@ module Sake
       case name
       when "String.index", "String.rindex", "String.byteindex" then u(t("Integer"), t("Nil"))
       when "String.byteslice" then u(t("String"), t("Nil"))
+      when "String.slice" then u(t("String"), t("IndexNil")) # as s[i, n]: nil past the end (index-nil)
       when "String.b" then t("String")
       when "String.unpack" then new_site(node, " String.unpack", unpack_elem(node))
       when "String.unpack1" then u(unpack_elem(node), t("Nil"))
