@@ -1,0 +1,83 @@
+def pct(count, active)
+  return "0.0" if active == 0
+  tenths = (count * 2000 + active) / (2 * active)
+  "#{tenths / 10}.#{tenths % 10}"
+end
+
+# [ranks, nil] for a valid ballot, [nil, reason] for a rejected one
+def check_ballot(line, names)
+  ranks = Array.map(String.split(line, ">", -1)) { String.strip(it) }
+  seen = Set[]
+  Array.each(ranks) do |r|
+    return [nil, "empty rank"] if String.empty?(r)
+    return [nil, "unknown candidate #{r}"] unless Array.include?(names, r)
+    return [nil, "duplicate #{r}"] if Set.include?(seen, r)
+    Set.add(seen, r)
+  end
+  [ranks, nil]
+end
+
+# votes of c in each earlier round, latest first
+def past(history, c) = Array.reverse(Array.map(history) { |h| Hash.fetch(h, c, 0) })
+
+lines = String[]
+while (l = gets)
+  Array.push(lines, String.chomp(l))
+end
+names = String.split(lines[0] || "", " ")
+if Array.empty?(names)
+  puts("no candidates")
+  exit
+end
+
+ballots = Array[]
+rejected = 0
+Array.each_with_index(lines) do |line, i|
+  next if i == 0 || String.empty?(String.strip(line))
+  ranks, err = check_ballot(line, names)
+  if err
+    puts("rejected line #{i + 1}: #{err}")
+    rejected += 1
+  elsif ranks
+    Array.push(ballots, ranks)
+  end
+end
+puts("ballots: #{Array.size(ballots)} valid, #{rejected} rejected")
+
+continuing = Array.dup(names)
+history = Array[]
+round = 0
+loop do
+  round += 1
+  counts = Hash[]
+  Array.each(continuing) { |c| counts[c] = 0 }
+  exhausted = 0
+  Array.each(ballots) do |b|
+    top = Array.find(b) { |c| Hash.key?(counts, c) }
+    if top
+      counts[top] = Hash.fetch(counts, top, 0) + 1
+    else
+      exhausted += 1
+    end
+  end
+  active = Array.size(ballots) - exhausted
+  puts("round #{round}")
+  Array.sort_by(continuing) { |c| [-Hash.fetch(counts, c, 0), c] }
+    .Array.each { |c| puts("  #{c} #{Hash.fetch(counts, c, 0)} #{pct(Hash.fetch(counts, c, 0), active)}%") }
+  puts("  exhausted #{exhausted}")
+  Array.push(history, counts)
+  if active == 0
+    puts("no winner")
+    break
+  end
+  leader = Array.find(continuing) { |c| Hash.fetch(counts, c, 0) * 2 > active }
+  if leader
+    puts("winner #{leader}")
+    break
+  end
+  # fewest now, then fewest in earlier rounds going back, then the name last in byte order
+  low = Array.min(Array.map(continuing) { |c| past(history, c) })
+  loser = Array.max(Array.select(continuing) { |c| past(history, c) == low })
+  puts("  eliminated #{loser}")
+  Array.delete(continuing, loser)
+end

@@ -1,0 +1,87 @@
+class Stat
+  attr_reader count, c4, c5, bytes, ms_total, ms_max
+  def initialize(s)
+    @count = 0
+    @c4 = 0
+    @c5 = 0
+    @bytes = 0
+    @ms_total = 0
+    @ms_max = 0
+  end
+
+  def add(s, code, bytes, ms)
+    @count += 1
+    @c4 += 1 if code >= 400 && code <= 499
+    @c5 += 1 if code >= 500
+    @bytes += bytes
+    @ms_total += ms
+    @ms_max = ms if ms > @ms_max
+  end
+
+  def avg(s)
+    tenths = (@ms_total * 20 + @count) / (@count * 2)
+    "#{tenths / 10}.#{tenths % 10}"
+  end
+end
+
+def in_range(s, lo, hi) = Integer.between?(String.to_i(s), lo, hi)
+
+def check(fields)
+  return "wrong field count" unless Array.size(fields) == 6
+  ts, meth, path, status, bytes, ms = fields
+  m = String.match(ts, /\A(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\z/)
+  return "bad timestamp" unless m
+  ok = in_range(m[2], 1, 12) && in_range(m[3], 1, 31) && in_range(m[4], 0, 23) &&
+       in_range(m[5], 0, 59) && in_range(m[6], 0, 59)
+  return "bad timestamp" unless ok
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], meth)
+  return "bad path" unless String.start_with?(path, "/")
+  return "bad status" unless String.match?(status, /\A\d{3}\z/) && in_range(status, 100, 599)
+  return "bad bytes" unless bytes == "-" || String.match?(bytes, /\A\d+\z/)
+  return "bad duration" unless String.match?(ms, /\A\d+\z/)
+  nil
+end
+
+stats = Hash[]
+hours = Hash.new(0)
+invalid = Tuple[]
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  line = String.chomp(raw)
+  next if String.empty?(String.strip(line))
+  fields = String.split(line, " ")
+  reason = check(fields)
+  if reason
+    Array.push(invalid, [lineno, reason])
+    next
+  end
+  ts, meth, path, status, bytes, ms = fields
+  key = "#{meth} #{String.split(path, "?", 2)[0]}"
+  st = stats[key]
+  if st == nil
+    st = Stat.new
+    stats[key] = st
+  end
+  Stat.add(st, String.to_i(status), String.to_i(bytes), String.to_i(ms))
+  hours[String.[](ts, 0, 13)] += 1
+end
+
+if Hash.empty?(stats)
+  puts("no valid requests")
+else
+  w = Array.max(Array[8, *Array.map(Hash.keys(stats)) { String.size(it) }])
+  puts(format("%-#{w}s %5s %4s %4s %8s %7s %6s", "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  rows = Hash.sort_by(stats) { |k, s| [-Stat.count(s), k] }
+  Array.each(rows) do |k, s|
+    puts(format("%-#{w}s %5d %4d %4d %8d %7s %6d", k, Stat.count(s), Stat.c4(s), Stat.c5(s),
+                Stat.bytes(s), Stat.avg(s), Stat.ms_max(s)))
+  end
+  best = Hash.min_by(hours) { |h, c| [-c, h] }
+  if best
+    hour, n = best
+    puts("busiest hour: #{String.[](hour, 0, 10)} #{String.[](hour, 11, 2)}:00 (#{n} requests)")
+  end
+end
+puts("invalid lines: #{Array.size(invalid)}")
+Array.each(invalid) { |lineno, reason| puts("  line #{lineno}: #{reason}") }

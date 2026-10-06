@@ -1,0 +1,105 @@
+class InputError < Exception
+end
+
+def money(cents)
+  sign = cents < 0 ? "-" : ""
+  a = Integer.abs(cents)
+  format("%s%d.%02d", sign, a / 100, a % 100)
+end
+
+def parse_sku(s)
+  raise InputError, "bad sku" unless String.match?(s, /\A[A-Z0-9-]{1,12}\z/)
+  s
+end
+
+def parse_qty(s)
+  ok = String.match?(s, /\A\d+\z/) && Integer.between?(String.to_i(s), 1, 1_000_000)
+  raise InputError, "bad quantity" unless ok
+  String.to_i(s)
+end
+
+def parse_price(s)
+  m = String.match(s, /\A(\d+)(?:\.(\d{1,2}))?\z/)
+  raise InputError, "bad price" unless m
+  frac = m[2] || "0"
+  String.to_i(m[1] || "0") * 100 + String.to_i(String.ljust(frac, 2, "0"))
+end
+
+def on_hand(stock) = Array.sum(stock) { |n, c| n }
+
+def report(lots)
+  puts(format("%-12s %5s %10s", "SKU", "QTY", "VALUE"))
+  tq = 0
+  tv = 0
+  Array.each(Array.sort(Hash.keys(lots))) do |sku|
+    stock = Hash.fetch(lots, sku)
+    q = on_hand(stock)
+    v = Array.sum(stock) { |n, c| n * c }
+    tq += q
+    tv += v
+    puts(format("%-12s %5d %10s", sku, q, money(v)))
+  end
+  puts(format("%-12s %5d %10s", "TOTAL", tq, money(tv)))
+end
+
+# Takes qty units from the oldest lots; gives their cost.
+def take(stock, qty)
+  cost = 0
+  left = qty
+  while left > 0
+    n, c = Array.fetch(stock, 0)
+    t = n < left ? n : left
+    cost += t * c
+    left -= t
+    if t == n
+      Array.shift(stock)
+    else
+      stock[0] = [n - t, c]
+    end
+  end
+  cost
+end
+
+lots = Hash[]
+revenue = 0
+cogs = 0
+lineno = 0
+Array.each(IO.readlines(IO.stdin)) do |raw|
+  lineno += 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  cmd = Array.fetch(f, 0)
+  begin
+    if cmd == "RECEIVE" || cmd == "SHIP"
+      raise InputError, "wrong field count" unless Array.size(f) == 4
+      sku = parse_sku(Array.fetch(f, 1))
+      qty = parse_qty(Array.fetch(f, 2))
+      price = parse_price(Array.fetch(f, 3))
+      if cmd == "RECEIVE"
+        lots[sku] = Tuple[] unless Hash.key?(lots, sku)
+        Array.push(Hash.fetch(lots, sku), [qty, price])
+      else
+        raise InputError, "unknown sku #{sku}" unless Hash.key?(lots, sku)
+        stock = Hash.fetch(lots, sku)
+        have = on_hand(stock)
+        raise InputError, "insufficient stock for #{sku} (have #{have}, need #{qty})" if have < qty
+        cost = take(stock, qty)
+        revenue += qty * price
+        cogs += cost
+        puts("line #{lineno}: shipped #{qty} #{sku}: revenue #{money(qty * price)}, cost #{money(cost)}")
+      end
+    elsif cmd == "REPORT"
+      raise InputError, "wrong field count" unless Array.size(f) == 1
+      report(lots)
+    else
+      raise InputError, "unknown command #{cmd}"
+    end
+  rescue InputError => e
+    puts("line #{lineno}: error: #{Exception.message(e)}")
+  end
+end
+puts("== final ==")
+report(lots)
+puts("revenue: #{money(revenue)}")
+puts("cost of goods sold: #{money(cogs)}")
+puts("gross profit: #{money(revenue - cogs)}")

@@ -1,0 +1,119 @@
+class Edge
+  attr_reader line, to, minutes
+end
+
+class Network
+  attr_reader penalty, adj
+
+  def initialize(n) = @adj = Hash[]
+
+  def add_one(n, a, e)
+    list = @adj[a]
+    if list
+      Array.push(list, e)
+    else
+      @adj[a] = Edge[e]
+    end
+  end
+
+  def add(n, line, a, b, minutes)
+    add_one(n, a, Edge.new(line, b, minutes))
+    add_one(n, b, Edge.new(line, a, minutes))
+  end
+
+  def known?(n, s) = Hash.key?(@adj, s)
+
+  def edges(n, s) = Hash.fetch(@adj, s, Edge[])
+
+  def better?(n, key, old) = old == nil || key < old
+
+  # [time, transfers, stations, lines] of the best trip, or nil
+  def route(n, from, to)
+    best = Hash[]
+    done = Set[]
+    Array.each(edges(n, from)) do |e|
+      key = [Edge.minutes(e), 0, Array[from, Edge.to(e)], Array[Edge.line(e)]]
+      st = [Edge.to(e), Edge.line(e)]
+      best[st] = key if better?(n, key, best[st])
+    end
+    loop do
+      cur = Hash.reject(best) { |st, _| Set.include?(done, st) }.Hash.min_by { |_, k| k }
+      return nil unless cur
+      st, key = cur
+      Set.add(done, st)
+      station, line = st
+      return key if station == to
+      time, transfers, stations, lines = key
+      Array.each(edges(n, station)) do |e|
+        nxt = Edge.to(e)
+        next if Array.include?(stations, nxt)
+        ns = [nxt, Edge.line(e)]
+        next if Set.include?(done, ns)
+        change = Edge.line(e) == line ? 0 : 1
+        nk = [time + Edge.minutes(e) + change * @penalty, transfers + change, stations + Array[nxt], lines + Array[Edge.line(e)]]
+        best[ns] = nk if better?(n, nk, best[ns])
+      end
+    end
+  end
+end
+
+def legs(stations, lines)
+  out = String[]
+  i = 0
+  size = Array.size(lines)
+  while i < size
+    j = i
+    j += 1 while j + 1 < size && lines[j + 1] == lines[i]
+    seg = Array.join(Array.take(Array.drop(stations, i), j - i + 2), " > ")
+    Array.push(out, "#{lines[i]}: #{seg}")
+    i = j + 1
+  end
+  Array.join(out, "; ")
+end
+
+def query(net, from, to)
+  head = "#{from} -> #{to}:"
+  bad = Array.find(Array[from, to]) { |s| !Network.known?(net, s) }
+  if bad
+    puts("#{head} unknown station #{bad}")
+    return
+  end
+  if from == to
+    puts("#{head} 0 min, 0 transfers")
+    return
+  end
+  r = Network.route(net, from, to)
+  if r
+    time, transfers, stations, lines = r
+    puts("#{head} #{time} min, #{transfers} transfer#{transfers == 1 ? "" : "s"}")
+    puts("  #{legs(stations, lines)}")
+  else
+    puts("#{head} no route")
+  end
+end
+
+def valid_minutes?(s) = String.match?(s, /\A[1-9]\d*\z/) && String.to_i(s) <= 999
+
+first = gets
+net = Network.new(first ? String.to_i(first) : 0)
+in_queries = false
+n = 1
+while (raw = gets)
+  n += 1
+  raw = String.chomp(raw)
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  if !in_queries
+    if raw == "QUERIES"
+      in_queries = true
+    elsif Array.size(f) == 4 && valid_minutes?(Array.fetch(f, 3)) && f[1] != f[2]
+      Network.add(net, Array.fetch(f, 0), Array.fetch(f, 1), Array.fetch(f, 2), String.to_i(Array.fetch(f, 3)))
+    else
+      puts("invalid segment at line #{n}")
+    end
+  elsif Array.size(f) == 2
+    query(net, Array.fetch(f, 0), Array.fetch(f, 1))
+  else
+    puts("invalid query at line #{n}")
+  end
+end

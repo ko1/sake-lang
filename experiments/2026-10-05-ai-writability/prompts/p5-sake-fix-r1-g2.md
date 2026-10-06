@@ -1,0 +1,34 @@
+# Brief: find and fix a bug by reading
+
+You maintain programs written in **Sake**. Each task directory listed in your prompt (take them in
+the given order) holds:
+
+- `solution.sake`: a program meant to implement `spec.md`; it has one bug;
+- `spec.md`: what the program should do;
+- `example/input.txt`: an input on which it goes wrong, with `example/expected.txt` (the correct
+  standard output) and `example/actual.txt` (what the program prints now).
+
+Fix the bug by editing `solution.sake` in place, changing only what the fix needs. It is graded on hidden
+test cases by exact output.
+
+**Do not run anything**: no `ruby`, no `bin/sake`, no other command that executes, checks or
+evaluates code. Find the bug by reading.
+
+Do not open anything outside the listed task directories, except the language documents named
+below. In particular never look at `experiments/2026-10-05-ai-writability/tasks/`, `reading/`,
+`changes/`, `runs/` of others, `test/`, `sakelib/`, `lib/`, or other experiments. Do not search the web.
+
+When you finish a task, move on; you cannot come back to an earlier one. Shell commands need
+`dangerouslyDisableSandbox: true`. Reply in under 120 words: per task, the bug you found and how sure
+you are (one line each).
+
+**Sake** (in `/home/ko1/app/sake`): Ruby syntax where every operation is written with its type
+(`String.upcase(s)`, not `s.upcase`). Learn it from `docs/tutorial.md` (start here), `docs/spec.md`
+and `docs/builtins.md`; these are the only documents you may read.
+
+Your tasks, in order (directories under /home/ko1/app/sake/experiments/2026-10-05-ai-writability/runs/p5-sake-fix-r1/):
+- f06-library-loans
+- f07-vending-machine
+- f08-timesheet-pay
+- f09-bill-of-materials
+- f10-recipe-scale
