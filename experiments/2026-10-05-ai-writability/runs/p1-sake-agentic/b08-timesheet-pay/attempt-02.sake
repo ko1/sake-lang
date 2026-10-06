@@ -1,0 +1,157 @@
+Emp = Struct.new(:name, :rate, :shifts)
+
+def leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+def month_days(y, m)
+  return (leap?(y) ? 29 : 28) if m == 2
+  Array.include?(Array[4, 6, 9, 11], m) ? 30 : 31
+end
+
+# days since 1970-01-01
+def day_number(y, m, d)
+  total = 0
+  yy = 1970
+  while yy < y
+    total += leap?(yy) ? 366 : 365
+    yy += 1
+  end
+  mm = 1
+  while mm < m
+    total += month_days(y, mm)
+    mm += 1
+  end
+  total + d - 1
+end
+
+def hm(min) = format("%d:%02d", min / 60, min % 60)
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def time_min(s)
+  return nil unless String.match?(s, /\A\d\d:\d\d\z/)
+  h = String.to_i(String.[](s, 0, 2))
+  m = String.to_i(String.[](s, 3, 2))
+  return nil if h > 23 || m > 59
+  h * 60 + m
+end
+
+emps = Hash.new
+
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  t = String.split(line, " ")
+  cmd = t[0]
+  sz = Array.size(t)
+  if cmd == "EMP"
+    if sz != 4
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    id = t[1]
+    unless String.match?(id, /\AE\d{3}\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    unless String.match?(t[2], /\A[A-Za-z]{1,10}\z/)
+      puts("line #{n}: error: bad name")
+      next
+    end
+    unless String.match?(t[3], /\A\d+\.\d\d\z/)
+      puts("line #{n}: error: bad rate")
+      next
+    end
+    if emps[id] != nil
+      puts("line #{n}: error: duplicate employee #{id}")
+      next
+    end
+    rp = String.split(t[3], ".")
+    emps[id] = Emp.new(t[2], String.to_i(rp[0]) * 100 + String.to_i(rp[1]), Tuple[])
+  elsif cmd == "SHIFT"
+    if sz != 5 && sz != 6
+      puts("line #{n}: error: wrong field count")
+      next
+    end
+    id = t[1]
+    unless String.match?(id, /\AE\d{3}\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    e = emps[id]
+    if e == nil
+      puts("line #{n}: error: unknown employee #{id}")
+      next
+    end
+    ds = t[2]
+    ok = String.match?(ds, /\A\d{4}-\d\d-\d\d\z/)
+    y = 0
+    mo = 0
+    d = 0
+    if ok
+      y = String.to_i(String.[](ds, 0, 4))
+      mo = String.to_i(String.[](ds, 5, 2))
+      d = String.to_i(String.[](ds, 8, 2))
+      ok = y >= 1970 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= month_days(y, mo)
+    end
+    unless ok
+      puts("line #{n}: error: bad date")
+      next
+    end
+    s = time_min(t[3])
+    f = time_min(t[4])
+    if s == nil || f == nil
+      puts("line #{n}: error: bad time")
+      next
+    end
+    len = f > s ? f - s : f - s + 1440
+    brk = 0
+    if sz == 6
+      unless String.match?(t[5], /\A\d+\z/) && String.to_i(t[5]) < len
+        puts("line #{n}: error: bad break")
+        next
+      end
+      brk = String.to_i(t[5])
+    end
+    day = day_number(y, mo, d)
+    a = day * 1440 + s
+    b = a + len
+    if Array.any?(Emp.shifts(e)) { |sh| a < sh[1] && sh[0] < b }
+      puts("line #{n}: error: overlapping shift")
+      next
+    end
+    brk = 30 if len > 360 && brk < 30
+    Array.push(Emp.shifts(e), [a, b, len - brk, day])
+  else
+    puts("line #{n}: error: unknown command")
+  end
+end
+
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+tot_reg = 0
+tot_ot = 0
+tot_pay = 0
+Array.each(Array.sort(Hash.keys(emps))) do |id|
+  e = emps[id]
+  day_tot = Hash.new(0)
+  week_reg = Hash.new(0)
+  reg = 0
+  ot = 0
+  Array.each(Array.sort_by(Emp.shifts(e)) { |sh| sh[0] }) do |a, b, w, day|
+    dreg = Integer.clamp(480 - day_tot[day], 0, w)
+    day_tot[day] += w
+    wk = (day + 3) / 7
+    allowed = Integer.clamp(2400 - week_reg[wk], 0, dreg)
+    week_reg[wk] += allowed
+    reg += allowed
+    ot += w - allowed
+  end
+  r = Emp.rate(e)
+  pay = (2 * (reg * r * 2 + ot * r * 3) + 120) / 240
+  tot_reg += reg
+  tot_ot += ot
+  tot_pay += pay
+  puts(format("%-4s %-10s %8s %8s %10s", id, Emp.name(e), hm(reg), hm(ot), money(pay)))
+end
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", hm(tot_reg), hm(tot_ot), money(tot_pay)))

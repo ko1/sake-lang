@@ -1,0 +1,145 @@
+def ref_re = /\$\{([a-z0-9_]+)(?:\.([a-z0-9_]+))?\}/
+
+# returns [ok, text-or-problem]
+def resolve(secs, sec, key, stack)
+  full = "#{sec}.#{key}"
+  Array.push(stack, full)
+  v = secs[sec][key]
+  v => String
+  out = ""
+  pos = 0
+  while true
+    m = String.match(v, ref_re, pos)
+    break if m == nil
+    b = MatchData.begin(m, 0)
+    e = MatchData.end(m, 0)
+    out += v[pos, b - pos]
+    g1 = m[1]
+    g2 = m[2]
+    g1 => String
+    rs = g2 == nil ? sec : g1
+    rk = g2 == nil ? g1 : g2
+    rs => String
+    rk => String
+    rfull = "#{rs}.#{rk}"
+    unless Hash.key?(secs, rs) && Hash.key?(secs[rs], rk)
+      Array.pop(stack)
+      return [false, "undefined #{rfull}"]
+    end
+    if Array.include?(stack, rfull)
+      msg = "cycle " + Array.join(Array[*stack, rfull], " -> ")
+      Array.pop(stack)
+      return [false, msg]
+    end
+    ok, text = resolve(secs, rs, rk, stack)
+    unless ok
+      Array.pop(stack)
+      return [false, text]
+    end
+    out += text
+    pos = e
+  end
+  out += v[pos..]
+  Array.pop(stack)
+  [true, out]
+end
+
+def typed(v)
+  if String.match?(v, /\A[+-]?\d+\z/)
+    "int #{String.to_i(v)}"
+  elsif Array.include?(Array["true", "yes", "on"], String.downcase(v))
+    "bool true"
+  elsif Array.include?(Array["false", "no", "off"], String.downcase(v))
+    "bool false"
+  elsif String.include?(v, ",")
+    items = Array.reject(Array.map(String.split(v, ",", -1)) { |x| String.strip(x) }) { |x| String.empty?(x) }
+    if Array.empty?(items)
+      "list[0]"
+    else
+      "list[#{Array.size(items)}] #{Array.join(items, " | ")}"
+    end
+  else
+    "str \"#{v}\""
+  end
+end
+
+def name?(s) = String.match?(s, /\A[a-z0-9_]+\z/)
+
+lines = Array.map(IO.readlines(IO.stdin)) { |l| String.strip(l) }
+secs = Hash[]
+cur = "main"
+in_queries = false
+
+Array.each_with_index(lines) do |line, idx|
+  n = idx + 1
+  if !in_queries
+    if line == "%%"
+      in_queries = true
+      next
+    end
+    next if String.empty?(line) || String.start_with?(line, "#") || String.start_with?(line, ";")
+    hm = String.match(line, /\A\[([a-z0-9_]+)\]\z/)
+    if hm
+      nm = hm[1]
+      nm => String
+      cur = nm
+      secs[cur] = Hash[] unless Hash.key?(secs, cur)
+    elsif String.include?(line, "=")
+      eq = String.index(line, "=")
+      eq => Integer
+      k = String.strip(line[0, eq])
+      val = String.strip(line[(eq + 1)..])
+      if !name?(k)
+        puts("line #{n}: syntax error")
+      else
+        secs[cur] = Hash[] unless Hash.key?(secs, cur)
+        if Hash.key?(secs[cur], k)
+          puts("line #{n}: duplicate key #{cur}.#{k}")
+        end
+        secs[cur][k] = val
+      end
+    else
+      puts("line #{n}: syntax error")
+    end
+  else
+    next if String.empty?(line)
+    w = String.split(line, " ")
+    w = Array.reject(w) { |x| String.empty?(x) }
+    if Array.size(w) == 2 && w[0] == "GET"
+      nm = w[1]
+      nm => String
+      di = String.index(nm, ".")
+      if di == nil
+        sec = "main"
+        key = nm
+      else
+        sec = nm[0, di]
+        key = nm[(di + 1)..]
+      end
+      sec => String
+      key => String
+      full = "#{sec}.#{key}"
+      if !(Hash.key?(secs, sec) && Hash.key?(secs[sec], key))
+        puts("#{full}: not found")
+      else
+        ok, text = resolve(secs, sec, key, Array[])
+        if ok
+          puts("#{full} = #{typed(text)}")
+        else
+          puts("#{full}: error: #{text}")
+        end
+      end
+    elsif Array.size(w) == 2 && w[0] == "KEYS"
+      sn = w[1]
+      sn => String
+      if !Hash.key?(secs, sn)
+        puts("#{sn}: not found")
+      else
+        ks = Array.sort(Hash.keys(secs[sn]))
+        puts("#{sn}: " + (Array.empty?(ks) ? "(none)" : Array.join(ks, ", ")))
+      end
+    else
+      puts("line #{n}: bad query")
+    end
+  end
+end

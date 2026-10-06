@@ -1,0 +1,84 @@
+class Stat
+  attr_reader count, n4, n5, bytes, sum, max
+  def add(s, status, b, dur)
+    @count += 1
+    @n4 += 1 if status >= 400 && status <= 499
+    @n5 += 1 if status >= 500 && status <= 599
+    @bytes += b
+    @sum += dur
+    @max = dur if dur > @max
+    s
+  end
+end
+
+def bad_ts(ts)
+  return true unless String.match?(ts, /\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\z/)
+  mo = String.to_i(ts[5, 2])
+  d = String.to_i(ts[8, 2])
+  h = String.to_i(ts[11, 2])
+  mi = String.to_i(ts[14, 2])
+  s = String.to_i(ts[17, 2])
+  !(mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && s <= 59)
+end
+
+def reason(f)
+  return "wrong field count" if Array.size(f) != 6
+  ts, meth, path, st, by, du = f
+  return "bad timestamp" if bad_ts(ts)
+  return "bad method" unless Array.include?(Array["GET", "POST", "PUT", "DELETE"], meth)
+  return "bad path" unless String.start_with?(path, "/")
+  unless String.match?(st, /\A\d{3}\z/) && String.to_i(st) >= 100 && String.to_i(st) <= 599
+    return "bad status"
+  end
+  return "bad bytes" unless by == "-" || String.match?(by, /\A\d+\z/)
+  return "bad duration" unless String.match?(du, /\A\d+\z/)
+  nil
+end
+
+lines = IO.readlines(IO.stdin)
+stats = Hash[]
+hours = Hash[]
+invalid = String[]
+
+Array.each_with_index(lines) do |raw, i|
+  f = String.split(String.chomp(raw), " ")
+  next if Array.empty?(f)
+  why = reason(f)
+  if why
+    Array.push(invalid, "  line #{i + 1}: #{why}")
+    next
+  end
+  ts, meth, path, st, by, du = f
+  q = String.index(path, "?")
+  base = q ? path[0, q] : path
+  key = "#{meth} #{base}"
+  entry = stats[key]
+  if entry == nil
+    entry = Stat.new(0, 0, 0, 0, 0, 0)
+    stats[key] = entry
+  end
+  b = by == "-" ? 0 : String.to_i(by)
+  Stat.add(entry, String.to_i(st), b, String.to_i(du))
+  hk = "#{ts[0, 10]} #{ts[11, 2]}"
+  hours[hk] = (hours[hk] || 0) + 1
+end
+
+if Hash.empty?(stats)
+  puts("no valid requests")
+else
+  rows = Array.sort_by(Hash.to_a(stats)) { |k, e| [-Stat.count(e), k] }
+  w = 8
+  Array.each(rows) { |k, e| w = String.size(k) if String.size(k) > w }
+  puts(String.ljust("endpoint", w) + format(" %5s %4s %4s %8s %7s %6s", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+  Array.each(rows) do |k, e|
+    c = Stat.count(e)
+    t = (Stat.sum(e) * 20 + c) / (2 * c)
+    avg = "#{t / 10}.#{t % 10}"
+    puts(String.ljust(k, w) + format(" %5d %4d %4d %8d %7s %6d", c, Stat.n4(e), Stat.n5(e), Stat.bytes(e), avg, Stat.max(e)))
+  end
+  best = Array.first(Array.sort_by(Hash.to_a(hours)) { |k, n| [-n, k] })
+  hk, n = best
+  puts("busiest hour: #{hk}:00 (#{n} requests)")
+end
+puts("invalid lines: #{Array.size(invalid)}")
+Array.each(invalid) { |l| puts(l) }

@@ -1,0 +1,128 @@
+def fraction?(s) = String.match?(s, /\A\d+\/\d+\z/) && String.to_i(String.split(s, "/")[1]) != 0
+
+def parse_fraction(s)
+  parts = String.split(s, "/")
+  Rational(String.to_i(parts[0]), String.to_i(parts[1]))
+end
+
+# the quantity of a field, or nil
+def parse_single(s)
+  if String.match?(s, /\A\d+\z/)
+    Rational(String.to_i(s), 1)
+  elsif String.match?(s, /\A\d+\.\d+\z/)
+    parts = String.split(s, ".")
+    scale = 10 ** String.size(parts[1])
+    Rational(String.to_i(parts[0]) * scale + String.to_i(parts[1]), scale)
+  elsif fraction?(s)
+    parse_fraction(s)
+  else
+    nil
+  end
+end
+
+def frac_text(num, den) = "#{num}/#{den}"
+
+def show_qty(q)
+  q = Rational(q, 1)
+  den = Rational.denominator(q)
+  num = Rational.numerator(q)
+  if den > 8
+    c = Rational.floor(q * 100 + Rational(1, 2))
+    return format("%d.%02d", c / 100, c % 100)
+  end
+  whole = num / den
+  rest = num % den
+  return Integer.to_s(whole) if rest == 0
+  return frac_text(rest, den) if whole == 0
+  "#{whole} #{frac_text(rest, den)}"
+end
+
+def nice?(q) = q >= 1 && Rational.denominator(Rational(q, 1)) <= 4
+
+def unit_base(u)
+  case u
+  in "tsp" then Array["spoon", 1]
+  in "tbsp" then Array["spoon", 3]
+  in "cup" then Array["spoon", 48]
+  in "g" then Array["g", 1]
+  in "kg" then Array["g", 1000]
+  in "ml" then Array["ml", 1]
+  in "l" then Array["ml", 1000]
+  in "-" then Array["count", 1]
+  else nil
+  end
+end
+
+lines = IO.readlines(IO.stdin)
+head = lines[0] == nil ? Array[] : String.split(lines[0], " ")
+ok = Array.size(head) == 4 && head[0] == "SERVES" && head[2] == "->"
+ok = ok && String.match?(head[1], /\A\d+\z/) && String.match?(head[3], /\A\d+\z/)
+ok = ok && String.to_i(head[1]) >= 1 && String.to_i(head[1]) <= 100
+ok = ok && String.to_i(head[3]) >= 1 && String.to_i(head[3]) <= 100
+unless ok
+  puts("line 1: error: bad servings")
+  exit(0)
+end
+m = String.to_i(head[3])
+factor = Rational(m, String.to_i(head[1]))
+puts("serves #{m} (x #{show_qty(factor)})")
+
+order = Array[]
+totals = Hash.new
+Array.each_with_index(lines) do |raw, idx|
+  next if idx == 0
+  n = idx + 1
+  t = String.split(String.strip(raw), " ")
+  next if Array.empty?(t)
+  next if String.start_with?(t[0], "#")
+  qty = parse_single(t[0])
+  rest = Array.drop(t, 1)
+  if qty != nil && String.match?(t[0], /\A\d+\z/) && !Array.empty?(rest) && fraction?(rest[0])
+    qty = qty + parse_fraction(rest[0])
+    rest = Array.drop(rest, 1)
+  end
+  if qty == nil || qty <= 0
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  if Array.empty?(rest)
+    puts("line #{n}: error: missing unit")
+    next
+  end
+  ub = unit_base(rest[0])
+  if ub == nil
+    puts("line #{n}: error: unknown unit #{rest[0]}")
+    next
+  end
+  if Array.size(rest) < 2
+    puts("line #{n}: error: missing name")
+    next
+  end
+  name = Array.join(Array.drop(rest, 1), " ")
+  key = [name, ub[0]]
+  if totals[key] == nil
+    Array.push(order, key)
+    totals[key] = Rational(0, 1)
+  end
+  totals[key] = totals[key] + qty * ub[1] * factor
+end
+
+Array.each(order) do |key|
+  name, group = key
+  v = Rational(totals[key], 1)
+  if group == "spoon"
+    if nice?(v / 48)
+      puts("#{show_qty(v / 48)} cup #{name}")
+    elsif nice?(v / 3)
+      puts("#{show_qty(v / 3)} tbsp #{name}")
+    else
+      puts("#{show_qty(v)} tsp #{name}")
+    end
+  elsif group == "g"
+    puts(v >= 1000 ? "#{show_qty(v / 1000)} kg #{name}" : "#{show_qty(v)} g #{name}")
+  elsif group == "ml"
+    puts(v >= 1000 ? "#{show_qty(v / 1000)} l #{name}" : "#{show_qty(v)} ml #{name}")
+  else
+    puts("#{Rational.ceil(v)} #{name}")
+  end
+end

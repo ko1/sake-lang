@@ -1,0 +1,113 @@
+def valid_minutes?(s) = String.match?(s, /\A[1-9]\d{0,2}\z/)
+
+# best path per state "station|line": [cost, transfers, stations, lines]
+def offer(best, st, cand)
+  cur = best[st]
+  if cur == nil || cand < cur
+    best[st] = cand
+    return true
+  end
+  false
+end
+
+def search(dedges, pen, src)
+  best = Hash[]
+  Array.each(dedges) do |e|
+    u, v, ln, m = e
+    offer(best, "#{v}|#{ln}", [m, 0, [src, v], [ln]]) if u == src
+  end
+  changed = true
+  while changed
+    changed = false
+    Array.each(Hash.to_a(best)) do |st, key|
+      cost, k, sts, lns = key
+      here = Array.last(sts)
+      last = Array.last(lns)
+      Array.each(dedges) do |e|
+        u, v, ln, m = e
+        next if u != here
+        sw = ln != last
+        cand = [cost + m + (sw ? pen : 0), k + (sw ? 1 : 0), sts + [v], lns + [ln]]
+        changed = true if offer(best, "#{v}|#{ln}", cand)
+      end
+    end
+  end
+  best
+end
+
+lines = Array.map(IO.readlines(IO.stdin)) { |l| String.chomp(l) }
+pen = 0
+seen_pen = false
+in_queries = false
+dedges = Array[]
+known = Set[]
+
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  if !seen_pen
+    pen = String.to_i(line)
+    seen_pen = true
+    next
+  end
+  if !in_queries
+    if line == "QUERIES"
+      in_queries = true
+      next
+    end
+    f = String.split(line)
+    if Array.size(f) == 4 && valid_minutes?(f[3]) && f[1] != f[2]
+      m = String.to_i(f[3])
+      Array.push(dedges, [f[1], f[2], f[0], m])
+      Array.push(dedges, [f[2], f[1], f[0], m])
+      Set.add(known, f[1])
+      Set.add(known, f[2])
+    else
+      puts("invalid segment at line #{n}")
+    end
+  else
+    f = String.split(line)
+    if Array.size(f) != 2
+      puts("invalid query at line #{n}")
+      next
+    end
+    from = f[0]
+    to = f[1]
+    head = "#{from} -> #{to}:"
+    if !Set.include?(known, from)
+      puts("#{head} unknown station #{from}")
+    elsif !Set.include?(known, to)
+      puts("#{head} unknown station #{to}")
+    elsif from == to
+      puts("#{head} 0 min, 0 transfers")
+    else
+      best = search(dedges, pen, from)
+      win = nil
+      Hash.each(best) do |st, key|
+        if Array.last(key[2]) == to && (win == nil || key < win)
+          win = key
+        end
+      end
+      if win == nil
+        puts("#{head} no route")
+      else
+        cost, k, sts, lns = win
+        puts("#{head} #{cost} min, #{k} #{k == 1 ? "transfer" : "transfers"}")
+        legs = Array[]
+        i = 0
+        while i < Array.size(lns)
+          j = i
+          path = Array[sts[i]]
+          while j < Array.size(lns) && lns[j] == lns[i]
+            Array.push(path, sts[j + 1])
+            j += 1
+          end
+          Array.push(legs, "#{lns[i]}: #{Array.join(path, " > ")}")
+          i = j
+        end
+        puts("  " + Array.join(legs, "; "))
+      end
+    end
+  end
+end

@@ -1,0 +1,140 @@
+Item = Struct.new(:part, :cost, :comps)
+
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+def cents(s)
+  parts = String.split(s, ".")
+  String.to_i(parts[0]) * 100 + String.to_i(parts[1])
+end
+
+def name?(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+def money?(s) = String.match?(s, /\A\d+\.\d\d\z/)
+
+# the first problem met walking depth first, or nil
+def check(items, done, path, name, parent)
+  it = items[name]
+  if it == nil
+    return parent == nil ? "unknown item #{name}" : "unknown item #{name} in #{parent}"
+  end
+  at = Array.index(path, name)
+  if at != nil
+    return "cycle " + Array.join(Array.drop(path, at) + Array[name], " > ")
+  end
+  return nil if done[name]
+  Array.push(path, name)
+  unless Item.part(it)
+    Array.each(Item.comps(it)) do |c, q|
+      err = check(items, done, path, c, name)
+      if err != nil
+        return err
+      end
+    end
+  end
+  Array.pop(path)
+  done[name] = true
+  nil
+end
+
+def unit_cost(items, memo, name)
+  return memo[name] if memo[name] != nil
+  it = items[name]
+  total = Item.cost(it)
+  unless Item.part(it)
+    Array.each(Item.comps(it)) { |c, q| total += q * unit_cost(items, memo, c) }
+  end
+  memo[name] = total
+  total
+end
+
+def show(items, memo, totals, name, qty, depth)
+  it = items[name]
+  puts("#{String.*("  ", depth)}#{qty} x #{name} = #{money(qty * unit_cost(items, memo, name))}")
+  if Item.part(it)
+    totals[name] += qty
+  else
+    Array.each(Item.comps(it)) { |c, q| show(items, memo, totals, c, qty * q, depth + 1) }
+  end
+end
+
+items = Hash.new
+
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  line = String.strip(raw)
+  next if String.empty?(line)
+  t = String.split(line, " ")
+  cmd = t[0]
+  sz = Array.size(t)
+  if cmd == "PART"
+    if sz != 3
+      puts("line #{n}: error: wrong field count")
+    elsif !name?(t[1])
+      puts("line #{n}: error: bad name")
+    elsif !money?(t[2])
+      puts("line #{n}: error: bad cost")
+    elsif items[t[1]] != nil
+      puts("line #{n}: error: duplicate #{t[1]}")
+    else
+      items[t[1]] = Item.new(true, cents(t[2]), Tuple[])
+    end
+  elsif cmd == "ASSY"
+    if sz < 4
+      puts("line #{n}: error: wrong field count")
+      next
+    elsif !name?(t[1])
+      puts("line #{n}: error: bad name")
+      next
+    elsif !money?(t[2])
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    comps = Tuple[]
+    bad = nil
+    Array.each(Array.drop(t, 3)) do |txt|
+      m = String.match(txt, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+      if m == nil || String.to_i(m[2]) < 1 || String.to_i(m[2]) > 999
+        bad = txt
+        break
+      end
+      Array.push(comps, [m[1], String.to_i(m[2])])
+    end
+    if bad != nil
+      puts("line #{n}: error: bad component #{bad}")
+      next
+    end
+    names = Array.map(comps) { |c, q| c }
+    rep = Array.find(names) { |c| Array.count(names) { |d| d == c } > 1 }
+    if rep != nil
+      puts("line #{n}: error: repeated component #{rep}")
+    elsif items[t[1]] != nil
+      puts("line #{n}: error: duplicate #{t[1]}")
+    else
+      items[t[1]] = Item.new(false, cents(t[2]), comps)
+    end
+  elsif cmd == "BUILD"
+    if sz != 3
+      puts("line #{n}: error: wrong field count")
+    elsif !name?(t[1])
+      puts("line #{n}: error: bad name")
+    elsif !String.match?(t[2], /\A\d+\z/) || String.to_i(t[2]) < 1 || String.to_i(t[2]) > 1000
+      puts("line #{n}: error: bad quantity")
+    else
+      err = check(items, Hash.new, Array[], t[1], nil)
+      if err != nil
+        puts("line #{n}: cannot build: #{err}")
+      else
+        memo = Hash.new
+        totals = Hash.new(0)
+        show(items, memo, totals, t[1], String.to_i(t[2]), 0)
+        puts("parts:")
+        Array.each(Array.sort_by(Hash.keys(totals)) { |nm| [-totals[nm], nm] }) do |nm|
+          puts("  #{nm} x#{totals[nm]} = #{money(totals[nm] * Item.cost(items[nm]))}")
+        end
+      end
+    end
+  else
+    puts("line #{n}: error: unknown command")
+  end
+end

@@ -1,0 +1,129 @@
+def round10(x) = Rational.floor(x * 10 + Rational(1, 2))
+
+def pct_text(r10) = "#{r10 / 10}.#{r10 % 10}"
+
+def grade_of(r10)
+  if r10 >= 900
+    "A"
+  elsif r10 >= 800
+    "B"
+  elsif r10 >= 700
+    "C"
+  elsif r10 >= 600
+    "D"
+  else
+    "F"
+  end
+end
+
+def total_of(cells, weights)
+  num = Rational(0, 1)
+  den = 0
+  Hash.each(cells) do |cat, pm|
+    w = Hash.fetch(weights, cat)
+    num += Rational(w * pm[0], pm[1])
+    den += w
+  end
+  return nil if den == 0
+  num * 100 / den
+end
+
+weights = Hash[]
+students = Hash[]
+missing = Hash[]
+errors = Array[]
+lineno = 0
+
+Array.each(String.lines(IO.read(IO.stdin))) do |raw|
+  lineno += 1
+  line = String.strip(raw)
+  next if String.empty?(line) || String.start_with?(line, "#")
+  f = String.split(line)
+  if Array.size(f) == 3 && f[0] == "weight"
+    cat = f[1]
+    wt = f[2]
+    if !String.match?(wt, /\A\d+\z/) || String.to_i(wt) < 1 || String.to_i(wt) > 100
+      Array.push(errors, "line #{lineno}: bad weight #{wt}")
+    elsif Hash.key?(weights, cat)
+      Array.push(errors, "line #{lineno}: duplicate category #{cat}")
+    else
+      weights[cat] = String.to_i(wt)
+    end
+  elsif Array.size(f) != 3
+    Array.push(errors, "line #{lineno}: bad format")
+  else
+    student = f[0]
+    cat = f[1]
+    score = f[2]
+    if !Hash.key?(weights, cat)
+      Array.push(errors, "line #{lineno}: unknown category #{cat}")
+    else
+      m = String.match(score, /\A(\d+|EX|-)\/(\d+)\z/)
+      ok = false
+      if m
+        mx = String.to_i(m[2])
+        ok = mx > 0
+        if ok && m[1] != "EX" && m[1] != "-"
+          ok = String.to_i(m[1]) <= mx
+        end
+      end
+      if !ok
+        Array.push(errors, "line #{lineno}: bad score #{score}")
+      else
+        unless Hash.key?(students, student)
+          students[student] = Hash[]
+          missing[student] = 0
+        end
+        head = m[1]
+        if head != "EX"
+          pts = 0
+          if head == "-"
+            missing[student] += 1
+          else
+            pts = String.to_i(head)
+          end
+          cells = Hash.fetch(students, student)
+          cell = Hash.fetch(cells, cat, nil)
+          if cell == nil
+            cell = Array[0, 0]
+            cells[cat] = cell
+          end
+          cell[0] += pts
+          cell[1] += String.to_i(m[2])
+        end
+      end
+    end
+  end
+end
+
+withp = Array[]
+nop = Array[]
+sum = Rational(0, 1)
+cnt = 0
+width = 7
+Array.each(Hash.keys(students)) do |name|
+  width = String.size(name) if String.size(name) > width
+  t = total_of(Hash.fetch(students, name), weights)
+  ms = Hash.fetch(missing, name)
+  if t
+    Array.push(withp, [round10(t), name, ms])
+    sum += t
+    cnt += 1
+  else
+    Array.push(nop, [name, ms])
+  end
+end
+
+Array.each(errors) { |e| puts(e) }
+puts(String.ljust("Student", width) + "  Score  G  Missing")
+Array.each(Array.sort_by(withp) { |r, n, ms| [-r, n] }) do |r, n, ms|
+  puts(String.ljust(n, width) + "  " + String.rjust(pct_text(r), 5) + "  " + grade_of(r) + "  " + String.rjust(Integer.to_s(ms), 7))
+end
+Array.each(Array.sort_by(nop) { |n, ms| n }) do |n, ms|
+  puts(String.ljust(n, width) + "  " + String.rjust("n/a", 5) + "  -  " + String.rjust(Integer.to_s(ms), 7))
+end
+if cnt == 0
+  puts("class average: n/a")
+else
+  puts("class average: #{pct_text(round10(sum / cnt))}")
+end

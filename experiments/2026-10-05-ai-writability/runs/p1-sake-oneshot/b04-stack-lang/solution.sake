@@ -1,0 +1,168 @@
+def builtins = Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"]
+
+def number?(w) = String.match?(w, /\A-?\d+\z/)
+
+def valid(toks)
+  in_def = false
+  stk = Array[]
+  i = 0
+  while i < Array.size(toks)
+    w = toks[i]
+    if w == ":"
+      return false if in_def || !Array.empty?(stk)
+      name = toks[i + 1]
+      return false if name == nil || number?(name) || Array.include?(builtins, name)
+      in_def = true
+      i += 1
+    elsif w == ";"
+      return false unless in_def && Array.empty?(stk)
+      in_def = false
+    elsif w == "if"
+      Array.push(stk, "if")
+    elsif w == "else"
+      return false if Array.empty?(stk) || Array.last(stk) == "else"
+      Array.pop(stk)
+      Array.push(stk, "else")
+    elsif w == "then"
+      return false if Array.empty?(stk)
+      Array.pop(stk)
+    end
+    i += 1
+  end
+  !in_def && Array.empty?(stk)
+end
+
+def need(st, k, w)
+  raise "stack underflow in #{w}" if Array.size(st) < k
+end
+
+def binary(w, st)
+  need(st, 2, w)
+  b = Array.pop(st)
+  a = Array.pop(st)
+  r = 0
+  if w == "+"
+    r = a + b
+  elsif w == "-"
+    r = a - b
+  elsif w == "*"
+    r = a * b
+  elsif w == "="
+    r = a == b ? 1 : 0
+  elsif w == "<"
+    r = a < b ? 1 : 0
+  elsif w == ">"
+    r = a > b ? 1 : 0
+  else
+    raise "division by zero" if b == 0
+    if w == "/"
+      q = Integer.abs(a) / Integer.abs(b)
+      r = (a < 0) != (b < 0) ? -q : q
+    else
+      r = Integer.remainder(a, b)
+    end
+  end
+  Array.push(st, r)
+end
+
+def word(w, st, dict, depth)
+  if Array.include?(Array["+", "-", "*", "/", "mod", "=", "<", ">"], w)
+    binary(w, st)
+  elsif w == "dup"
+    need(st, 1, w)
+    Array.push(st, Array.last(st))
+  elsif w == "drop"
+    need(st, 1, w)
+    Array.pop(st)
+  elsif w == "swap"
+    need(st, 2, w)
+    b = Array.pop(st)
+    a = Array.pop(st)
+    Array.push(st, b)
+    Array.push(st, a)
+  elsif w == "over"
+    need(st, 2, w)
+    Array.push(st, st[-2])
+  elsif w == "."
+    need(st, 1, w)
+    puts(Integer.to_s(Array.pop(st)))
+  else
+    body = dict[w]
+    raise "unknown word #{w}" if body == nil
+    raise "too deep" if depth >= 100
+    run(body, 0, Array.size(body), st, dict, depth + 1)
+  end
+end
+
+def run(toks, lo, hi, st, dict, depth)
+  i = lo
+  while i < hi
+    w = toks[i]
+    if w == ":"
+      j = i + 2
+      j += 1 while toks[j] != ";"
+      dict[toks[i + 1]] = Array.drop(Array.take(toks, j), i + 2)
+      i = j + 1
+    elsif w == "if"
+      need(st, 1, "if")
+      c = Array.pop(st)
+      else_idx = nil
+      then_idx = nil
+      d = 0
+      j = i + 1
+      while then_idx == nil
+        t = toks[j]
+        if t == "if"
+          d += 1
+        elsif t == "then"
+          if d == 0
+            then_idx = j
+          else
+            d -= 1
+          end
+        elsif t == "else" && d == 0
+          else_idx = j
+        end
+        j += 1
+      end
+      if c != 0
+        run(toks, i + 1, else_idx == nil ? then_idx : else_idx, st, dict, depth)
+      elsif else_idx != nil
+        run(toks, else_idx + 1, then_idx, st, dict, depth)
+      end
+      i = then_idx + 1
+    elsif number?(w)
+      Array.push(st, String.to_i(w))
+      i += 1
+    else
+      word(w, st, dict, depth)
+      i += 1
+    end
+  end
+end
+
+st = Integer[]
+dict = Hash[]
+
+Array.each_with_index(IO.readlines(IO.stdin)) do |raw, i|
+  n = i + 1
+  toks = String.split(String.chomp(raw), " ")
+  if !valid(toks)
+    puts("line #{n}: syntax error")
+    next
+  end
+  saved = Array.dup(st)
+  begin
+    run(toks, 0, Array.size(toks), st, dict, 0)
+  rescue RuntimeError => e
+    Array.clear(st)
+    Array.concat(st, saved)
+    puts("line #{n}: error: #{Exception.message(e)}")
+  end
+end
+
+if Array.empty?(st)
+  puts("stack: (empty)")
+else
+  puts("stack: #{Array.join(st, " ")}")
+end

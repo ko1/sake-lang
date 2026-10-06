@@ -1,0 +1,120 @@
+Lot = Struct.new(:qty, :cost)
+
+def money(c)
+  sign = c < 0 ? "-" : ""
+  a = Integer.abs(c)
+  "#{sign}#{a / 100}.#{String.rjust(Integer.to_s(a % 100), 2, "0")}"
+end
+
+def cents(s)
+  whole, frac = String.split(s, ".")
+  f = frac == nil ? 0 : String.to_i(String.ljust(frac, 2, "0"))
+  String.to_i(whole) * 100 + f
+end
+
+def have(lots)
+  t = 0
+  Array.each(lots) { |l| t += Lot.qty(l) }
+  t
+end
+
+def report(inv)
+  puts(format("%-12s %5s %10s", "SKU", "QTY", "VALUE"))
+  tq = 0
+  tv = 0
+  Array.each(Array.sort(Hash.keys(inv))) do |sku|
+    q = 0
+    v = 0
+    Array.each(inv[sku]) do |l|
+      q += Lot.qty(l)
+      v += Lot.qty(l) * Lot.cost(l)
+    end
+    tq += q
+    tv += v
+    puts(format("%-12s %5d %10s", sku, q, money(v)))
+  end
+  puts(format("%-12s %5d %10s", "TOTAL", tq, money(tv)))
+end
+
+inv = Hash[]
+revenue = 0
+cogs = 0
+
+Array.each_with_index(IO.readlines(IO.stdin)) do |raw, i|
+  n = i + 1
+  f = String.split(String.chomp(raw), " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  unless cmd == "RECEIVE" || cmd == "SHIP" || cmd == "REPORT"
+    puts("line #{n}: error: unknown command #{cmd}")
+    next
+  end
+  if cmd == "REPORT"
+    if Array.size(f) != 1
+      puts("line #{n}: error: wrong field count")
+    else
+      report(inv)
+    end
+    next
+  end
+  if Array.size(f) != 4
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  c, sku, qs, ps = f
+  unless String.match?(sku, /\A[A-Z0-9-]{1,12}\z/)
+    puts("line #{n}: error: bad sku")
+    next
+  end
+  unless String.match?(qs, /\A\d+\z/) && String.to_i(qs) >= 1 && String.to_i(qs) <= 1000000
+    puts("line #{n}: error: bad quantity")
+    next
+  end
+  unless String.match?(ps, /\A\d+(\.\d{1,2})?\z/)
+    puts("line #{n}: error: bad price")
+    next
+  end
+  q = String.to_i(qs)
+  price = cents(ps)
+  lots = inv[sku]
+  if cmd == "RECEIVE"
+    if lots == nil
+      lots = Lot[]
+      inv[sku] = lots
+    end
+    Array.push(lots, Lot.new(q, price))
+    next
+  end
+  if lots == nil
+    puts("line #{n}: error: unknown sku #{sku}")
+    next
+  end
+  h = have(lots)
+  if h < q
+    puts("line #{n}: error: insufficient stock for #{sku} (have #{h}, need #{q})")
+    next
+  end
+  need = q
+  cost = 0
+  while need > 0
+    lot = Array.first(lots)
+    take = Lot.qty(lot) < need ? Lot.qty(lot) : need
+    cost += take * Lot.cost(lot)
+    if take == Lot.qty(lot)
+      Array.shift(lots)
+    else
+      Lot.set_qty(lot, Lot.qty(lot) - take)
+    end
+    need -= take
+  end
+  rev = q * price
+  revenue += rev
+  cogs += cost
+  puts("line #{n}: shipped #{q} #{sku}: revenue #{money(rev)}, cost #{money(cost)}")
+end
+
+puts("== final ==")
+report(inv)
+puts("revenue: #{money(revenue)}")
+puts("cost of goods sold: #{money(cogs)}")
+puts("gross profit: #{money(revenue - cogs)}")

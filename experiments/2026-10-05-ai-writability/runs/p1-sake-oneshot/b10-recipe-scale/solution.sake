@@ -1,0 +1,161 @@
+def den(x) = Rational.denominator(Rational(x))
+
+# "N/D" with D nonzero as a Rational, else nil
+def parse_frac(s)
+  m = String.match(s, /\A(\d+)\/(\d+)\z/)
+  return nil unless m
+  d = String.to_i(m[2])
+  return nil if d == 0
+  Rational(String.to_i(m[1]), d)
+end
+
+# [quantity, fields used], or nil when bad or not above zero
+def parse_qty(f)
+  a = f[0]
+  q = nil
+  used = 1
+  if String.match?(a, /\A\d+\z/)
+    b = f[1]
+    if b != nil && String.match?(b, /\A\d+\/\d+\z/)
+      fr = parse_frac(b)
+      return nil if fr == nil
+      q = Rational(String.to_i(a), 1) + fr
+      used = 2
+    else
+      q = Rational(String.to_i(a), 1)
+    end
+  elsif String.match?(a, /\A\d+\.\d+\z/)
+    parts = String.split(a, ".")
+    q = Rational(String.to_i(parts[0] + parts[1]), 10 ** String.size(parts[1]))
+  elsif String.match?(a, /\A\d+\/\d+\z/)
+    q = parse_frac(a)
+  end
+  return nil if q == nil
+  return nil if q <= 0
+  [q, used]
+end
+
+# [group, multiplier in the group's base unit], or nil
+def unit_info(u)
+  return ["spoon", 1] if u == "tsp"
+  return ["spoon", 3] if u == "tbsp"
+  return ["spoon", 48] if u == "cup"
+  return ["g", 1] if u == "g"
+  return ["g", 1000] if u == "kg"
+  return ["ml", 1] if u == "ml"
+  return ["ml", 1000] if u == "l"
+  return ["count", 1] if u == "-"
+  nil
+end
+
+# whole, proper fraction, mixed number, or two-digit decimal
+def fmt(q)
+  r = Rational(q)
+  d = Rational.denominator(r)
+  if d <= 8
+    num = Rational.numerator(r)
+    whole = num / d
+    rem = num % d
+    return Integer.to_s(whole) if rem == 0
+    return "#{rem}/#{d}" if whole == 0
+    "#{whole} #{rem}/#{d}"
+  else
+    c = Rational.floor(r * 100 + Rational(1, 2))
+    format("%d.%02d", c / 100, c % 100)
+  end
+end
+
+def run(lines)
+  hdr = lines[0]
+  f0 = Array[]
+  f0 = String.split(hdr, " ") if hdr != nil
+  ok = Array.size(f0) == 4 && f0[0] == "SERVES" && f0[2] == "->"
+  ok = ok && String.match?(f0[1], /\A\d+\z/) && String.match?(f0[3], /\A\d+\z/)
+  ok = ok && String.to_i(f0[1]) >= 1 && String.to_i(f0[1]) <= 100
+  ok = ok && String.to_i(f0[3]) >= 1 && String.to_i(f0[3]) <= 100
+  unless ok
+    puts("line 1: error: bad servings")
+    return nil
+  end
+  serves = String.to_i(f0[3])
+  factor = Rational(serves, String.to_i(f0[1]))
+  puts("serves #{serves} (x #{fmt(factor)})")
+
+  order = Array[]
+  group_of = Hash[]
+  name_of = Hash[]
+  totals = Hash[]
+
+  Array.each_with_index(lines) do |raw, idx|
+    next if idx == 0
+    n = idx + 1
+    f = String.split(raw, " ")
+    next if Array.empty?(f)
+    next if String.start_with?(f[0], "#")
+    pq = parse_qty(f)
+    if pq == nil
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    q = pq[0]
+    rest = Array.drop(f, pq[1])
+    if Array.empty?(rest)
+      puts("line #{n}: error: missing unit")
+      next
+    end
+    info = unit_info(rest[0])
+    if info == nil
+      puts("line #{n}: error: unknown unit #{rest[0]}")
+      next
+    end
+    if Array.size(rest) < 2
+      puts("line #{n}: error: missing name")
+      next
+    end
+    name = Array.join(Array.drop(rest, 1), " ")
+    key = "#{info[0]}:#{name}"
+    amt = q * factor * info[1]
+    if totals[key] == nil
+      Array.push(order, key)
+      group_of[key] = info[0]
+      name_of[key] = name
+      totals[key] = amt
+    else
+      totals[key] = totals[key] + amt
+    end
+  end
+
+  Array.each(order) do |key|
+    g = group_of[key]
+    name = name_of[key]
+    t = Rational(totals[key])
+    if g == "spoon"
+      cups = t / 48
+      tb = t / 3
+      if cups >= 1 && den(cups) <= 4
+        puts("#{fmt(cups)} cup #{name}")
+      elsif tb >= 1 && den(tb) <= 4
+        puts("#{fmt(tb)} tbsp #{name}")
+      else
+        puts("#{fmt(t)} tsp #{name}")
+      end
+    elsif g == "g"
+      if t >= 1000
+        puts("#{fmt(t / 1000)} kg #{name}")
+      else
+        puts("#{fmt(t)} g #{name}")
+      end
+    elsif g == "ml"
+      if t >= 1000
+        puts("#{fmt(t / 1000)} l #{name}")
+      else
+        puts("#{fmt(t)} ml #{name}")
+      end
+    else
+      puts("#{Rational.ceil(t)} #{name}")
+    end
+  end
+  nil
+end
+
+run(IO.readlines(IO.stdin))

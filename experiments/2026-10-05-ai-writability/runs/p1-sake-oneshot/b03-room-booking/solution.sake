@@ -1,0 +1,137 @@
+Bk = Struct.new(:id, :room, :day, :s, :e, :who)
+
+def days = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+def hm(t) = format("%02d:%02d", t / 60, t % 60)
+
+# minutes since midnight, or nil when not a valid time
+def parse_time(h, m)
+  return nil if m >= 60
+  t = h * 60 + m
+  return nil unless t % 15 == 0 && t >= 480 && t <= 1200
+  t
+end
+
+def overlaps(b, room, day, s, e)
+  Bk.room(b) == room && Bk.day(b) == day && Bk.s(b) < e && s < Bk.e(b)
+end
+
+bookings = Bk[]
+next_id = 1
+
+Array.each_with_index(IO.readlines(IO.stdin)) do |raw, i|
+  n = i + 1
+  f = String.split(String.chomp(raw), " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  unless cmd == "BOOK" || cmd == "CANCEL" || cmd == "FREE"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  want = cmd == "BOOK" ? 5 : (cmd == "CANCEL" ? 2 : 4)
+  if Array.size(f) != want
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  if cmd == "CANCEL"
+    ids = f[1]
+    unless String.match?(ids, /\A\d+\z/)
+      puts("line #{n}: error: bad id")
+      next
+    end
+    id = String.to_i(ids)
+    found = Array.find(bookings) { |b| Bk.id(b) == id }
+    if found == nil
+      puts("NO BOOKING ##{id}")
+    else
+      Array.delete_if(bookings) { |b| Bk.id(b) == id }
+      puts("CANCELLED ##{id}")
+    end
+    next
+  end
+  room = f[1]
+  unless String.match?(room, /\A[A-Z0-9]{1,8}\z/)
+    puts("line #{n}: error: bad room")
+    next
+  end
+  day = f[2]
+  unless Array.include?(days, day)
+    puts("line #{n}: error: bad day")
+    next
+  end
+  if cmd == "FREE"
+    ms = f[3]
+    unless String.match?(ms, /\A\d+\z/) && String.to_i(ms) > 0 && String.to_i(ms) % 15 == 0
+      puts("line #{n}: error: bad duration")
+      next
+    end
+    mins = String.to_i(ms)
+    t = 480
+    ans = nil
+    while ans == nil && t + mins <= 1200
+      free = true
+      Array.each(bookings) { |b| free = false if overlaps(b, room, day, t, t + mins) }
+      ans = t if free
+      t += 15
+    end
+    if ans == nil
+      puts("FULL #{room} #{day}")
+    else
+      puts("FREE #{room} #{day} #{hm(ans)}-#{hm(ans + mins)}")
+    end
+    next
+  end
+  m = String.match(f[3], /\A(\d\d):(\d\d)-(\d\d):(\d\d)\z/)
+  s = nil
+  e = nil
+  if m
+    c = Array.map(MatchData.captures(m)) { |x| String.to_i(x) }
+    s = parse_time(c[0], c[1])
+    e = parse_time(c[2], c[3])
+  end
+  if s == nil || e == nil || s >= e
+    puts("line #{n}: error: bad time")
+    next
+  end
+  who = f[4]
+  unless String.match?(who, /\A[a-z]{1,12}\z/)
+    puts("line #{n}: error: bad name")
+    next
+  end
+  clash = Array.select(bookings) { |b| overlaps(b, room, day, s, e) }
+  if !Array.empty?(clash)
+    b = Array.min_by(clash) { |x| Bk.s(x) }
+    puts("CONFLICT #{room} #{day} with ##{Bk.id(b)} (#{Bk.who(b)} #{hm(Bk.s(b))}-#{hm(Bk.e(b))})")
+    next
+  end
+  held = Array.count(bookings) { |b| Bk.who(b) == who && Bk.day(b) == day }
+  if held >= 3
+    puts("LIMIT #{who} #{day}")
+    next
+  end
+  Array.push(bookings, Bk.new(next_id, room, day, s, e, who))
+  puts("OK ##{next_id} #{room} #{day} #{hm(s)}-#{hm(e)} #{who}")
+  next_id += 1
+end
+
+puts("== schedule ==")
+if Array.empty?(bookings)
+  puts("(none)")
+else
+  sorted = Array.sort_by(bookings) { |b| [Array.index(days, Bk.day(b)), Bk.room(b), Bk.s(b)] }
+  Array.each(sorted) do |b|
+    puts(format("%s %-8s %s-%s #%d %s", Bk.day(b), Bk.room(b), hm(Bk.s(b)), hm(Bk.e(b)), Bk.id(b), Bk.who(b)))
+  end
+end
+
+puts("== usage ==")
+if Array.empty?(bookings)
+  puts("(none)")
+else
+  usage = Hash.new(0)
+  Array.each(bookings) { |b| usage[Bk.room(b)] += Bk.e(b) - Bk.s(b) }
+  Array.each(Array.sort(Hash.keys(usage))) do |r|
+    t = usage[r]
+    puts(format("%-8s %dh%02dm", r, t / 60, t % 60))
+  end
+end

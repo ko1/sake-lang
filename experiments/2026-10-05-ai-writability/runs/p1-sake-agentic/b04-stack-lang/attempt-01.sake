@@ -1,0 +1,160 @@
+StackErr = Exception.new
+
+def builtins = once { Array["+", "-", "*", "/", "mod", "=", "<", ">", "dup", "drop", "swap", "over", ".", "if", "else", "then", ":", ";"] }
+
+def number?(t) = String.match?(t, /\A-?\d+\z/)
+
+def syntax_ok?(toks)
+  frames = Array[]
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if t == ":"
+      return false unless Array.empty?(frames)
+      return false if i + 1 >= n
+      name = toks[i + 1]
+      return false if number?(name) || Array.include?(builtins, name)
+      Array.push(frames, "def")
+      i += 1
+    elsif t == ";"
+      return false unless Array.last(frames) == "def"
+      Array.pop(frames)
+    elsif t == "if"
+      Array.push(frames, "if")
+    elsif t == "else"
+      return false unless Array.last(frames) == "if"
+      Array.pop(frames)
+      Array.push(frames, "else")
+    elsif t == "then"
+      top = Array.last(frames)
+      return false unless top == "if" || top == "else"
+      Array.pop(frames)
+    end
+    i += 1
+  end
+  Array.empty?(frames)
+end
+
+def pop(st, w)
+  raise StackErr, "stack underflow in #{w}" if Array.empty?(st)
+  Array.pop(st)
+end
+
+# index of the matching else (if stop_else) or then, scanning from i
+def scan(toks, i, stop_else)
+  depth = 0
+  while i < Array.size(toks)
+    t = toks[i]
+    if t == "if"
+      depth += 1
+    elsif t == "then"
+      return i if depth == 0
+      depth -= 1
+    elsif t == "else" && depth == 0 && stop_else
+      return i
+    end
+    i += 1
+  end
+  i
+end
+
+def idiv(a, b)
+  q = Arithmetic.abs(a) / Arithmetic.abs(b)
+  (a < 0) != (b < 0) ? -q : q
+end
+
+def exec(toks, st, words, depth)
+  i = 0
+  n = Array.size(toks)
+  while i < n
+    t = toks[i]
+    if number?(t)
+      Array.push(st, String.to_i(t))
+    elsif t == ":"
+      j = scan_semi(toks, i)
+      words[toks[i + 1]] = toks[i + 2, j - i - 2]
+      i = j
+    elsif t == "+" || t == "-" || t == "*" || t == "=" || t == "<" || t == ">"
+      raise StackErr, "stack underflow in #{t}" if Array.size(st) < 2
+      b = Array.pop(st)
+      a = Array.pop(st)
+      r = if t == "+" then a + b
+          elsif t == "-" then a - b
+          elsif t == "*" then a * b
+          elsif t == "=" then (a == b ? 1 : 0)
+          elsif t == "<" then (a < b ? 1 : 0)
+          else (a > b ? 1 : 0)
+          end
+      Array.push(st, r)
+    elsif t == "/" || t == "mod"
+      raise StackErr, "stack underflow in #{t}" if Array.size(st) < 2
+      b = Array.pop(st)
+      a = Array.pop(st)
+      raise StackErr, "division by zero" if b == 0
+      q = idiv(a, b)
+      Array.push(st, t == "/" ? q : a - q * b)
+    elsif t == "dup"
+      a = pop(st, t)
+      Array.push(st, a, a)
+    elsif t == "drop"
+      pop(st, t)
+    elsif t == "swap"
+      raise StackErr, "stack underflow in swap" if Array.size(st) < 2
+      b = Array.pop(st)
+      a = Array.pop(st)
+      Array.push(st, b, a)
+    elsif t == "over"
+      raise StackErr, "stack underflow in over" if Array.size(st) < 2
+      Array.push(st, st[-2])
+    elsif t == "."
+      puts(pop(st, t))
+    elsif t == "if"
+      c = pop(st, t)
+      if c == 0
+        j = scan(toks, i + 1, true)
+        i = j
+      end
+    elsif t == "else"
+      i = scan(toks, i + 1, false)
+    elsif t == "then"
+      nil
+    else
+      body = words[t]
+      raise StackErr, "unknown word #{t}" if body == nil
+      raise StackErr, "too deep" if depth >= 100
+      exec(body, st, words, depth + 1)
+    end
+    i += 1
+  end
+  nil
+end
+
+def scan_semi(toks, i)
+  j = i + 2
+  j += 1 while toks[j] != ";"
+  j
+end
+
+st = Array[]
+words = Hash[]
+n = 0
+loop do
+  line = gets
+  break unless line
+  n += 1
+  toks = String.split(String.chomp(line), " ")
+  unless syntax_ok?(toks)
+    puts("line #{n}: syntax error")
+    next
+  end
+  saved = Array.dup(st)
+  begin
+    exec(toks, st, words, 0)
+  rescue StackErr => e
+    puts("line #{n}: error: #{Exception.message(e)}")
+    Array.clear(st)
+    Array.concat(st, saved)
+  end
+end
+puts(Array.empty?(st) ? "stack: (empty)" : "stack: #{Array.join(st, " ")}")

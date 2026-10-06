@@ -1,0 +1,169 @@
+def money(c) = format("%d.%02d", c / 100, c % 100)
+
+# cents, or nil
+def parse_cost(s)
+  m = String.match(s, /\A(\d+)\.(\d\d)\z/)
+  return nil unless m
+  String.to_i(m[1]) * 100 + String.to_i(m[2])
+end
+
+def valid_name(s) = String.match?(s, /\A[a-z][a-z0-9_]{0,15}\z/)
+
+class Db
+  attr_reader part_cost, labor, comps, ok, units
+
+  def has?(d, name) = @part_cost[name] != nil || @comps[name] != nil
+
+  def add_part(d, name, cost)
+    @part_cost[name] = cost
+  end
+
+  def add_assy(d, name, labor_cost, list)
+    @labor[name] = labor_cost
+    @comps[name] = list
+  end
+
+  # the first problem of a depth-first walk, or nil
+  def check(d, name, parent, path)
+    return nil if @ok[name]
+    if !has?(d, name)
+      if parent == nil
+        return "unknown item #{name}"
+      else
+        return "unknown item #{name} in #{parent}"
+      end
+    end
+    if Array.include?(path, name)
+      i = Array.index(path, name)
+      cyc = Array.join(Array.drop(path, i) + Array[name], " > ")
+      return "cycle #{cyc}"
+    end
+    if @comps[name] != nil
+      Array.push(path, name)
+      Array.each(@comps[name]) do |cn, cq|
+        err = check(d, cn, name, path)
+        return err if err
+      end
+      Array.pop(path)
+    end
+    @ok[name] = true
+    nil
+  end
+
+  def unit(d, name)
+    u = @units[name]
+    return u if u != nil
+    if @part_cost[name] != nil
+      u = @part_cost[name]
+    else
+      u = @labor[name]
+      Array.each(@comps[name]) { |cn, cq| u += cq * unit(d, cn) }
+    end
+    @units[name] = u
+    u
+  end
+
+  def walk(d, name, qty, depth, out, parts)
+    Array.push(out, "#{"  " * depth}#{qty} x #{name} = #{money(qty * unit(d, name))}")
+    if @part_cost[name] != nil
+      parts[name] += qty
+    else
+      Array.each(@comps[name]) { |cn, cq| walk(d, cn, qty * cq, depth + 1, out, parts) }
+    end
+    nil
+  end
+end
+
+db = Db.new(Hash[], Hash[], Hash[], Hash[], Hash[])
+
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |raw, idx|
+  n = idx + 1
+  f = String.split(raw, " ")
+  next if Array.empty?(f)
+  cmd = f[0]
+  cnt = Array.size(f)
+  if cmd != "PART" && cmd != "ASSY" && cmd != "BUILD"
+    puts("line #{n}: error: unknown command")
+    next
+  end
+  if (cmd == "PART" && cnt != 3) || (cmd == "ASSY" && cnt < 4) || (cmd == "BUILD" && cnt != 3)
+    puts("line #{n}: error: wrong field count")
+    next
+  end
+  name = f[1]
+  unless valid_name(name)
+    puts("line #{n}: error: bad name")
+    next
+  end
+
+  if cmd == "PART"
+    cost = parse_cost(f[2])
+    if cost == nil
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    if Db.has?(db, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    Db.add_part(db, name, cost)
+  elsif cmd == "ASSY"
+    labor = parse_cost(f[2])
+    if labor == nil
+      puts("line #{n}: error: bad cost")
+      next
+    end
+    comps = Array[]
+    bad = nil
+    Array.each(Array.drop(f, 3)) do |t|
+      next if bad != nil
+      m = String.match(t, /\A([a-z][a-z0-9_]{0,15}):(\d+)\z/)
+      q = 0
+      q = String.to_i(m[2]) if m
+      if m == nil || q < 1 || q > 999
+        bad = t
+      else
+        Array.push(comps, [m[1], q])
+      end
+    end
+    if bad != nil
+      puts("line #{n}: error: bad component #{bad}")
+      next
+    end
+    seen = Hash[]
+    rep = nil
+    Array.each(comps) do |cn, cq|
+      rep = cn if rep == nil && seen[cn]
+      seen[cn] = true
+    end
+    if rep != nil
+      puts("line #{n}: error: repeated component #{rep}")
+      next
+    end
+    if Db.has?(db, name)
+      puts("line #{n}: error: duplicate #{name}")
+      next
+    end
+    Db.add_assy(db, name, labor, comps)
+  else
+    unless String.match?(f[2], /\A\d+\z/) && String.to_i(f[2]) >= 1 && String.to_i(f[2]) <= 1000
+      puts("line #{n}: error: bad quantity")
+      next
+    end
+    qty = String.to_i(f[2])
+    err = Db.check(db, name, nil, Array[])
+    if err
+      puts("line #{n}: cannot build: #{err}")
+      next
+    end
+    out = Array[]
+    parts = Hash.new(0)
+    Db.walk(db, name, qty, 0, out, parts)
+    puts(Array.join(out, "\n"))
+    puts("parts:")
+    Array.each(Array.sort_by(Hash.keys(parts)) { |pn| [-parts[pn], pn] }) do |pn|
+      puts("  #{pn} x#{parts[pn]} = #{money(parts[pn] * Db.unit(db, pn))}")
+    end
+  end
+end

@@ -1,0 +1,143 @@
+Node = Struct.new(:name, :file, :size, :kids)
+
+def rnd(a, u) = (2 * a + u) / (2 * u)
+
+def fmt_size(s)
+  return "#{s}B" if s < 1024
+  u = 1024
+  letter = "K"
+  nxt = "M"
+  if s >= 1073741824
+    u = 1073741824
+    letter = "G"
+    nxt = "T"
+  elsif s >= 1048576
+    u = 1048576
+    letter = "M"
+    nxt = "G"
+  end
+  t = rnd(s * 10, u)
+  if t < 100
+    return "#{t / 10}.#{t % 10}#{letter}"
+  end
+  n = rnd(s, u)
+  return "1.0#{nxt}" if n == 1024 && u != 1073741824
+  "#{n}#{letter}"
+end
+
+def fill(node)
+  return Node.size(node) if Node.file(node)
+  total = 0
+  Array.each(Hash.values(Node.kids(node))) { |k| total += fill(k) }
+  Node.set_size(node, total)
+  total
+end
+
+def indent(depth) = String.*("  ", depth)
+
+def row(size, depth, name) = format("%6s  %s%s", fmt_size(size), indent(depth), name)
+
+def show(node, depth, dmax, thr)
+  return if depth >= dmax
+  kids = Hash.values(Node.kids(node))
+  sorted = Array.sort_by(kids) { |k| [-Node.size(k), Node.name(k)] }
+  small = 0
+  smalln = 0
+  Array.each(sorted) do |k|
+    if Node.size(k) < thr
+      small += Node.size(k)
+      smalln += 1
+    else
+      if Node.file(k)
+        puts(row(Node.size(k), depth + 1, Node.name(k)))
+      else
+        puts(row(Node.size(k), depth + 1, "#{Node.name(k)}/"))
+        show(k, depth + 1, dmax, thr)
+      end
+    end
+  end
+  puts(row(small, depth + 1, "(#{smalln} smaller)")) if smalln > 0
+end
+
+def solve_main
+  lines = IO.readlines(IO.stdin)
+  if Array.empty?(lines)
+    puts("bad header")
+    return
+  end
+  ht = String.split(String.strip(String.chomp(lines[0])), /\s+/)
+  if Array.size(ht) != 4 || ht[0] != "depth" || ht[2] != "threshold" || !String.match?(ht[1], /\A\d+\z/) || !String.match?(ht[3], /\A\d+\z/)
+    puts("bad header")
+    return
+  end
+  dmax = String.to_i(ht[1])
+  thr = String.to_i(ht[3])
+  root = Node.new(".", false, 0, Hash[])
+  k = 1
+  while k < Array.size(lines)
+    lineno = k + 1
+    s = String.strip(String.chomp(lines[k]))
+    k += 1
+    next if String.empty?(s)
+    toks = String.split(s, /\s+/)
+    if Array.size(toks) != 2 || !String.match?(toks[0], /\A\d+\z/) || !String.match?(toks[1], /\A[^\/]+(\/[^\/]+)*\z/)
+      puts("line #{lineno}: malformed")
+      next
+    end
+    size = String.to_i(toks[0])
+    path = toks[1]
+    comps = String.split(path, "/")
+    if size > 10000000000000 || Array.include?(comps, ".") || Array.include?(comps, "..")
+      puts("line #{lineno}: malformed")
+      next
+    end
+    n = Array.size(comps)
+    status = 0
+    cur = root
+    i = 0
+    while i < n && status == 0 && cur
+      kids = Node.kids(cur)
+      child = kids[comps[i]]
+      if child == nil
+        cur = nil
+      elsif Node.file(child)
+        status = i == n - 1 ? 1 : 2
+      elsif i == n - 1
+        status = 2
+      else
+        cur = child
+      end
+      i += 1
+    end
+    if status == 1
+      puts("line #{lineno}: duplicate #{path}")
+      next
+    end
+    if status == 2
+      puts("line #{lineno}: conflict #{path}")
+      next
+    end
+    cur = root
+    i = 0
+    while i < n
+      nm = comps[i]
+      kids = Node.kids(cur)
+      if i == n - 1
+        kids[nm] = Node.new(nm, true, size, Hash[])
+      else
+        child = kids[nm]
+        if child == nil
+          child = Node.new(nm, false, 0, Hash[])
+          kids[nm] = child
+        end
+        cur = child
+      end
+      i += 1
+    end
+  end
+  fill(root)
+  puts(row(Node.size(root), 0, "."))
+  show(root, 0, dmax, thr)
+end
+
+solve_main
