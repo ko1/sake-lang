@@ -65,6 +65,10 @@ whole-program type inference; whatever is not reported is still checked while ru
   still reported, as in Erlang's Dialyzer.
 - **Internal errors.** If the type inference itself fails, the type checks are skipped with a
   warning, and the program runs.
+- **Too many element pairs.** Comparing Arrays or Tuples (`<`, `<=>`, sorting) checks that each pair
+  of element types can be compared. When the element types of one comparison make more than 50,000
+  pairs, that comparison's elements are not checked, with a warning at the comparison; the other
+  checks are unaffected.
 
 ## 3. Program structure
 

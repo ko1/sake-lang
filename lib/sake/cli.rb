@@ -143,6 +143,10 @@ module Sake
           err.puts "warning: type checks skipped (internal error in the type checker: #{e.class}: #{e.message})"
           return
         end
+      typer.unchecked.each do |node, msg|
+        file = program.sources&.[](node.location.send(:source)) || program.path
+        err.puts Diagnostic.new(file, node.location.start_line, node.location.start_column, msg, []).to_s.sub(": error: ", ": warning: ")
+      end
       strict_diagnostics(program, WARN_ITEMS - items, typer).each { err.puts(_1.to_s.sub(": error: ", ": warning: ")) }
       diags = strict_diagnostics(program, items, typer)
       raise StaticErrors.new(diags) unless diags.empty?

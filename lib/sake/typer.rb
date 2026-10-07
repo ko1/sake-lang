@@ -34,6 +34,9 @@ module Sake
 
     attr_reader :checks, :sites, :fields, :dead_functions, :passes
 
+    # [node, message] of each check given up on (too much to check); shown as warnings.
+    def unchecked = (@unchecked || {}).values
+
     # Inferred result type of each built-in call node (last pass), for validating result types.
     def results = @results || {}
 
@@ -645,10 +648,23 @@ module Sake
     end
 
     # Tuples and Arrays are ordered by their elements: each pair of element types must be comparable.
+    # Element pairs one comparison may visit before its element check is given up (reported as unchecked).
+    MAX_ELEMENT_PAIRS = 50_000
+
     def check_ordered_elements(node, op, pairs)
       elem_pairs = []
       seen = Hash.new { |h, d| h[d] = Hash.new { |h2, x| h2[x] = {}.compare_by_identity }.compare_by_identity }
-      pairs.each { |x, y| elem_pairs.concat(element_pairs(x, y, 0, seen)) if container_pair?(x, y) }
+      budget = [MAX_ELEMENT_PAIRS]
+      done = catch(:element_pairs_budget) do
+        pairs.each { |x, y| elem_pairs.concat(element_pairs(x, y, 0, seen, budget)) if container_pair?(x, y) }
+        true
+      end
+      unless done
+        add_check(node, op_name(op), "elements", "comparable elements", unknown("element pairs"), :unknown)
+        (@unchecked ||= {})[[other_file(node), node.location.start_line, node.location.start_column]] ||=
+          [node, "#{op_name(op)}: the elements were not checked: their types make more than #{MAX_ELEMENT_PAIRS} pairs to compare"]
+        return
+      end
       elem_pairs.uniq!
       return if elem_pairs.empty?
       failing = elem_pairs.reject { |ex, ey| comparable_atoms?(ex, ey) }
@@ -664,7 +680,7 @@ module Sake
     # A pair already visited at the same depth yields the same pairs again, and the caller drops repeats,
     # so it is skipped: without this, nested element unions multiply into billions of pairs. seen is keyed by
     # depth, then by the atoms' identities (hashing deep atoms by value costs as much as the walk).
-    def element_pairs(x, y, depth, seen)
+    def element_pairs(x, y, depth, seen, budget)
       return [] if seen[depth][x].key?(y)
       seen[depth][x][y] = true
       return [[x, y]] unless depth < 3 && container_pair?(x, y)
@@ -673,7 +689,8 @@ module Sake
               else
                 elem_of([x]).product(elem_of([y]))
               end
-      inner.flat_map { |a, b| element_pairs(a, b, depth + 1, seen) }
+      throw :element_pairs_budget if (budget[0] -= inner.size).negative?
+      inner.flat_map { |a, b| element_pairs(a, b, depth + 1, seen, budget) }
     end
 
     def comparable_atoms?(x, y, depth = 0)
