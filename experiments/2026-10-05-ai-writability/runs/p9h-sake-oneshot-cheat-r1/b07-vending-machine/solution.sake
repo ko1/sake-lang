@@ -1,0 +1,315 @@
+Slot = Struct.new(:name, :price, :count)
+
+def valid_money?(s)
+  s != nil && String.match?(s, /^\d+\.\d{2}$/)
+end
+
+def valid_slot?(s)
+  s != nil && String.match?(s, /^[A-Z]\d$/)
+end
+
+def valid_name?(s)
+  s != nil && String.match?(s, /^[a-z]{1,12}$/)
+end
+
+def valid_count?(s)
+  s != nil && String.match?(s, /^\d{1,2}$/)
+end
+
+def valid_coin?(s)
+  s == "0.05" || s == "0.10" || s == "0.25" || s == "0.50" || s == "1.00" || s == "2.00"
+end
+
+def format_money(amount)
+  format("%.2f", amount)
+end
+
+def parse_money(s)
+  String.to_f(s)
+end
+
+def get_coins()
+  [2.00, 1.00, 0.50, 0.25, 0.10, 0.05]
+end
+
+def coins_to_index(coin)
+  case coin
+  in 0.05 then 5
+  in 0.10 then 4
+  in 0.25 then 3
+  in 0.50 then 2
+  in 1.00 then 1
+  in 2.00 then 0
+  else -1
+  end
+end
+
+slots = Hash[]
+tubes = Array[0, 0, 0, 0, 0, 0]
+credit = 0.0
+inserted_coins = Array[]
+sales = Hash[]
+line_num = 0
+
+while (line = gets)
+  line_num += 1
+  line_stripped = String.strip(line)
+  if String.empty?(line_stripped)
+    next
+  end
+
+  parts = String.split(line_stripped, /\s+/)
+
+  if Array.empty?(parts)
+    next
+  end
+
+  cmd = Array.at(parts, 0)
+
+  if cmd == "SLOT"
+    if Array.length(parts) != 5
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    slot_code = Array.at(parts, 1)
+    name = Array.at(parts, 2)
+    price_str = Array.at(parts, 3)
+    count_str = Array.at(parts, 4)
+
+    unless valid_slot?(slot_code)
+      puts("line #{line_num}: error: bad slot")
+      next
+    end
+    unless valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    unless valid_money?(price_str)
+      puts("line #{line_num}: error: bad money")
+      next
+    end
+    unless valid_count?(count_str)
+      puts("line #{line_num}: error: bad count")
+      next
+    end
+
+    price = parse_money(price_str)
+    count = String.to_i(count_str)
+    slots[slot_code] = Slot.new(name, price, count)
+
+  elsif cmd == "TUBE"
+    if Array.length(parts) != 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    coin_str = Array.at(parts, 1)
+    count_str = Array.at(parts, 2)
+
+    unless valid_coin?(coin_str)
+      puts("line #{line_num}: error: bad coin")
+      next
+    end
+    unless String.match?(count_str, /^\d{1,3}$/)
+      puts("line #{line_num}: error: bad count")
+      next
+    end
+
+    coin_val = parse_money(coin_str)
+    idx = coins_to_index(coin_val)
+    count = String.to_i(count_str)
+    tubes[idx] = (tubes[idx] || 0) + count
+
+  elsif cmd == "COIN"
+    if Array.length(parts) != 2
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    coin_str = Array.at(parts, 1)
+
+    unless valid_money?(coin_str)
+      puts("line #{line_num}: error: bad money")
+      next
+    end
+
+    unless valid_coin?(coin_str)
+      puts("rejected #{coin_str}")
+      next
+    end
+
+    coin_val = parse_money(coin_str)
+    if credit + coin_val > 5.0
+      puts("rejected #{coin_str} (credit limit)")
+      next
+    end
+
+    credit += coin_val
+    Array.push(inserted_coins, coin_val)
+    idx = coins_to_index(coin_val)
+    tubes[idx] = (tubes[idx] || 0) + 1
+    puts("credit #{format_money(credit)}")
+
+  elsif cmd == "SELECT"
+    if Array.length(parts) != 2
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    slot_code = Array.at(parts, 1)
+
+    slot = slots[slot_code]
+    if slot == nil
+      puts("no slot #{slot_code}")
+      next
+    end
+
+    if slot.count == 0
+      puts("sold out #{slot_code}")
+      next
+    end
+
+    if credit < slot.price
+      diff = slot.price - credit
+      puts("insert #{format_money(diff)} more")
+      next
+    end
+
+    change = credit - slot.price
+
+    if change > 0.0
+      needed_change = change
+      change_coins = Array[]
+      tubes_copy = Array.dup(tubes)
+      coins = get_coins()
+
+      Array.each(coins) do |coin_val|
+        idx = coins_to_index(coin_val)
+        cnt = tubes_copy[idx] || 0
+
+        needed = Arithmetic.to_i(needed_change / coin_val)
+        take = [needed, cnt]
+        take = Array.min(take)
+
+        if take > 0
+          Array.each(1..take) { Array.push(change_coins, coin_val) }
+          tubes_copy[idx] = cnt - take
+          needed_change -= take * coin_val
+        end
+      end
+
+      if Arithmetic.abs(needed_change) > 0.001
+        puts("exact change needed")
+        next
+      end
+
+      tubes = tubes_copy
+    end
+
+    slot.count -= 1
+    slots[slot_code] = slot
+
+    inserted_coins = Array[]
+    credit = 0.0
+
+    product_name = slot.name
+    old_sales = sales[product_name] || 0.0
+    sales[product_name] = old_sales + slot.price
+
+    if change > 0.0
+      change_str = Array.join(Array.map(Array.sort(Array.dup(change_coins)) { |x| -x }) { |c| format_money(c) }, " ")
+      puts("vend #{product_name}, change #{format_money(change)} [#{change_str}]")
+    else
+      puts("vend #{product_name}")
+    end
+
+  elsif cmd == "CANCEL"
+    if Array.length(parts) != 1
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    if credit == 0.0
+      puts("nothing to return")
+      next
+    end
+
+    returned_coins = Array[]
+    Array.each(inserted_coins) do |coin_val|
+      idx = coins_to_index(coin_val)
+      tubes[idx] = (tubes[idx] || 0) - 1
+      Array.push(returned_coins, coin_val)
+    end
+
+    coin_strs = Array.map(returned_coins) { |c| format_money(c) }
+    puts("returned #{format_money(credit)} [#{Array.join(coin_strs, " ")}]")
+
+    credit = 0.0
+    inserted_coins = Array[]
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+end
+
+if credit > 0.0
+  puts("credit #{format_money(credit)} kept")
+end
+
+puts("sales:")
+if Hash.empty?(sales)
+  puts("  none")
+else
+  sales_list = Array[]
+  Hash.each(sales) do |name, revenue|
+    items = Arithmetic.to_i(revenue / 0.01)
+    slot = nil
+    Hash.each(slots) do |code, s|
+      if s.name == name
+        slot = s
+      end
+    end
+
+    if slot != nil
+      count_sold = 0
+      Hash.each(slots) do |code, s|
+        if s.name == name
+          count_sold += 1
+        end
+      end
+    end
+
+    Array.push(sales_list, [name, revenue])
+  end
+
+  sales_sorted = Array.sort_by(sales_list) { |item| [-Array.at(item, 1), Array.at(item, 0)] }
+
+  Array.each(sales_sorted) do |item|
+    name = Array.at(item, 0)
+    revenue = Array.at(item, 1)
+
+    total_count = 0
+    Hash.each(slots) do |code, s|
+      if s.name == name
+        total_count += 1
+      end
+    end
+
+    single_price = revenue / Float.to_i(Integer.to_f(total_count))
+    items_sold = 0
+    Hash.each(slots) do |code, s|
+      if s.name == name
+        items_sold += 2 - s.count
+      end
+    end
+
+    puts(format("  %-12s %3d %8s", name, items_sold, format_money(revenue)))
+  end
+end
+
+tube_strs = Array[]
+coins = get_coins()
+Array.each(coins) do |coin_val|
+  idx = coins_to_index(coin_val)
+  cnt = tubes[idx] || 0
+  Array.push(tube_strs, "#{format_money(coin_val)}x#{cnt}")
+end
+
+puts("tubes: #{Array.join(tube_strs, " ")}")

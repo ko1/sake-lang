@@ -1,0 +1,211 @@
+Ballot = Struct.new(:preferences, :valid)
+
+def main
+  # Read candidates
+  cand_line = gets
+  return if cand_line == nil
+
+  cand_line = String.chomp(cand_line)
+  candidates = String.split(cand_line, /\s+/)
+
+  if Array.empty?(candidates)
+    puts("no candidates")
+    return
+  end
+
+  # Parse ballots
+  ballots = Array[]
+  rejected = Array[]
+  line_num = 2
+
+  while (line = gets)
+    line = String.chomp(line)
+    line_num += 1
+
+    if String.empty?(line)
+      next
+    end
+
+    # Parse ballot
+    parts = String.split(line, /\s*>\s*/)
+
+    # Clean up parts
+    parts = Array.map(parts) { |p| String.strip(p) }
+
+    # Validate ballot
+    preferences = Array[]
+    valid = true
+
+    Array.each(parts) do |pref|
+      if String.empty?(pref)
+        Array.push(rejected, {line: line_num, reason: "empty rank"})
+        valid = false
+        break
+      end
+
+      if !Array.include?(candidates, pref)
+        Array.push(rejected, {line: line_num, reason: "unknown candidate #{pref}"})
+        valid = false
+        break
+      end
+
+      if Array.include?(preferences, pref)
+        Array.push(rejected, {line: line_num, reason: "duplicate #{pref}"})
+        valid = false
+        break
+      end
+
+      Array.push(preferences, pref)
+    end
+
+    Array.push(ballots, Ballot.new(preferences, valid))
+  end
+
+  # Print rejections
+  Array.each(rejected) { |r| puts("rejected line #{r[:line]}: #{r[:reason]}") }
+
+  valid_count = Array.size(Array.filter(ballots) { |b| Ballot.valid(b) })
+  rejected_count = Array.size(rejected)
+  puts("ballots: #{valid_count} valid, #{rejected_count} rejected")
+
+  # Runoff voting
+  active_cands = Array.dup(candidates)
+  round_num = 1
+  vote_history = Hash[]
+  Array.each(candidates) { |c| vote_history[c] = Array[] }
+
+  loop do
+    # Count votes
+    votes = Hash[]
+    exhausted = 0
+    Array.each(candidates) { |c| votes[c] = 0 }
+
+    Array.each(ballots) do |b|
+      if !Ballot.valid(b)
+        next
+      end
+
+      # Find first active preference
+      prefs = Ballot.preferences(b)
+      found = false
+      Array.each(prefs) do |p|
+        if Array.include?(active_cands, p)
+          votes[p] += 1
+          found = true
+          break
+        end
+      end
+
+      if !found
+        exhausted += 1
+      end
+    end
+
+    # Store votes in history
+    Array.each(active_cands) do |c|
+      Array.push(vote_history[c], votes[c])
+    end
+
+    puts("round #{round_num}")
+
+    # Sort by votes desc, name asc
+    sorted = Array.sort_by(active_cands) do |c|
+      [-votes[c], c]
+    end
+
+    # Print candidate lines
+    active = 0
+    Array.each(ballots) do |b|
+      if !Ballot.valid(b)
+        next
+      end
+
+      prefs = Ballot.preferences(b)
+      found = false
+      Array.each(prefs) do |p|
+        if Array.include?(active_cands, p)
+          found = true
+          break
+        end
+      end
+
+      if found
+        active += 1
+      end
+    end
+
+    Array.each(sorted) do |c|
+      c_votes = votes[c]
+      if active == 0
+        pct = 0.0
+      else
+        pct = Integer.to_f(c_votes * 1000) / Integer.to_f(active) / 10.0
+      end
+      pct_rounded = Float.round(pct + 0.05, 1)
+      puts(format("  %s %d %.1f%%", c, c_votes, pct_rounded))
+    end
+
+    puts(format("  exhausted %d", exhausted))
+
+    # Check for winner
+    winner = false
+    no_winner = false
+    if active == 0
+      no_winner = true
+    else
+      Array.each(active_cands) do |c|
+        if votes[c] * 2 > active
+          puts("winner #{c}")
+          winner = true
+        end
+      end
+    end
+
+    if no_winner
+      puts("no winner")
+      break
+    end
+
+    if winner
+      break
+    end
+
+    # Eliminate candidate with fewest votes
+    min_votes = 999999
+    Array.each(active_cands) do |c|
+      if votes[c] < min_votes
+        min_votes = votes[c]
+      end
+    end
+
+    candidates_to_eliminate = Array.filter(active_cands) { |c| votes[c] == min_votes }
+
+    # Tiebreak by vote history
+    if Array.size(candidates_to_eliminate) > 1
+      # Go through history rounds backward
+      round_idx = round_num - 2
+      while round_idx >= 0 && Array.size(candidates_to_eliminate) > 1
+        min_hist = 999999
+        Array.each(candidates_to_eliminate) do |c|
+          hist_votes = vote_history[c][round_idx]
+          if hist_votes < min_hist
+            min_hist = hist_votes
+          end
+        end
+
+        candidates_to_eliminate = Array.filter(candidates_to_eliminate) { |c| vote_history[c][round_idx] == min_hist }
+        round_idx -= 1
+      end
+    end
+
+    # Tiebreak by name (last in byte order)
+    eliminated = Array.max_by(candidates_to_eliminate) { |c| c }
+
+    puts("  eliminated #{eliminated}")
+
+    active_cands = Array.filter(active_cands) { |c| c != eliminated }
+    round_num += 1
+  end
+end
+
+main

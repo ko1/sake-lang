@@ -1,0 +1,361 @@
+Definition = Struct.new(:tokens)
+
+# Global state
+stack = Integer[]
+definitions = Hash[]
+call_depth = 0
+
+def is_number(token)
+  if String.match?(token, /^-?[0-9]+$/)
+    true
+  else
+    false
+  end
+end
+
+def check_syntax(line_num, tokens)
+  # Check for syntax errors
+  depth = 0  # for : and ;
+  if_depth = 0  # for if/then/else
+
+  Array.each_with_index(tokens) do |token, idx|
+    case token
+    in ":"
+      if if_depth > 0 || depth > 0
+        return false
+      end
+      depth += 1
+
+      # Next token must be a name
+      if idx + 1 >= Array.size(tokens)
+        return false
+      end
+      name = Array.at(tokens, idx + 1)
+      if is_number(name) || name == "+" || name == "-" || name == "*" || name == "/" || name == "mod" || name == "=" || name == "<" || name == ">" || name == "dup" || name == "drop" || name == "swap" || name == "over" || name == "." || name == "if" || name == "then" || name == "else" || name == ";" || name == ":"
+        return false
+      end
+
+    in ";"
+      if depth <= 0
+        return false
+      end
+      depth -= 1
+
+    in "if"
+      if_depth += 1
+
+    in "then"
+      if if_depth <= 0
+        return false
+      end
+      if_depth -= 1
+
+    in "else"
+      if if_depth <= 0
+        return false
+      end
+    end
+  end
+
+  if depth > 0 || if_depth > 0
+    return false
+  end
+
+  true
+end
+
+def run_tokens(line_num, tokens, stack, definitions)
+  # Process a line of tokens
+  # Returns [new_stack, success, error_message]
+
+  i = 0
+  while i < Array.size(tokens)
+    token = Array.at(tokens, i)
+
+    if is_number(token)
+      num = String.to_i(token)
+      Array.push(stack, num)
+      i += 1
+
+    elsif token == "+"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in +"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a + b)
+      i += 1
+
+    elsif token == "-"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in -"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a - b)
+      i += 1
+
+    elsif token == "*"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in *"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a * b)
+      i += 1
+
+    elsif token == "/"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in /"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        return [stack, false, "division by zero"]
+      end
+      Array.push(stack, Integer.div(a, b))
+      i += 1
+
+    elsif token == "mod"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in mod"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        return [stack, false, "division by zero"]
+      end
+      Array.push(stack, Integer.modulo(a, b))
+      i += 1
+
+    elsif token == "="
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in ="]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, (a == b ? 1 : 0))
+      i += 1
+
+    elsif token == "<"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in <"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, (a < b ? 1 : 0))
+      i += 1
+
+    elsif token == ">"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in >"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, (a > b ? 1 : 0))
+      i += 1
+
+    elsif token == "dup"
+      if Array.size(stack) < 1
+        return [stack, false, "stack underflow in dup"]
+      end
+      a = Array.last(stack)
+      Array.push(stack, a)
+      i += 1
+
+    elsif token == "drop"
+      if Array.size(stack) < 1
+        return [stack, false, "stack underflow in drop"]
+      end
+      Array.pop(stack)
+      i += 1
+
+    elsif token == "swap"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in swap"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, b)
+      Array.push(stack, a)
+      i += 1
+
+    elsif token == "over"
+      if Array.size(stack) < 2
+        return [stack, false, "stack underflow in over"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a)
+      Array.push(stack, b)
+      Array.push(stack, a)
+      i += 1
+
+    elsif token == "."
+      if Array.size(stack) < 1
+        return [stack, false, "stack underflow in ."]
+      end
+      val = Array.pop(stack)
+      puts(val)
+      i += 1
+
+    elsif token == "if"
+      if Array.size(stack) < 1
+        return [stack, false, "stack underflow in if"]
+      end
+      cond = Array.pop(stack)
+
+      # Find matching then/else
+      depth = 1
+      then_idx = nil
+      else_idx = nil
+      j = i + 1
+
+      while j < Array.size(tokens) && depth > 0
+        t = Array.at(tokens, j)
+        if t == "if"
+          depth += 1
+        elsif t == "then"
+          depth -= 1
+          if depth == 0
+            then_idx = j
+          end
+        elsif t == "else" && depth == 1
+          else_idx = j
+        end
+        j += 1
+      end
+
+      if then_idx == nil
+        return [stack, false, "syntax error"]
+      end
+
+      # Run appropriate branch
+      if cond != 0
+        # Run then branch
+        if else_idx == nil
+          branch_tokens = Array.slice(tokens, i + 1, then_idx - i - 1)
+        else
+          branch_tokens = Array.slice(tokens, i + 1, else_idx - i - 1)
+        end
+      else
+        # Run else branch if present
+        if else_idx != nil
+          branch_tokens = Array.slice(tokens, else_idx + 1, then_idx - else_idx - 1)
+        else
+          branch_tokens = Array[]
+        end
+      end
+
+      result = run_tokens(line_num, branch_tokens, stack, definitions)
+      stack = Array.at(result, 0)
+      if !Array.at(result, 1)
+        return result
+      end
+
+      i = then_idx + 1
+
+    elsif token == ":"
+      # Definition - find matching ;
+      j = i + 1
+      depth = 1
+      semi_idx = nil
+
+      while j < Array.size(tokens) && depth > 0
+        if Array.at(tokens, j) == ";"
+          depth -= 1
+          if depth == 0
+            semi_idx = j
+          end
+        elsif Array.at(tokens, j) == ":"
+          depth += 1
+        end
+        j += 1
+      end
+
+      if semi_idx == nil
+        return [stack, false, "syntax error"]
+      end
+
+      name = Array.at(tokens, i + 1)
+      def_tokens = Array.slice(tokens, i + 2, semi_idx - i - 2)
+      definitions[name] = Definition.new(def_tokens)
+
+      i = semi_idx + 1
+
+    elsif token == "then" || token == "else" || token == ";"
+      # These are handled as part of if/definition
+      i += 1
+
+    else
+      # User word
+      if definitions[token] == nil
+        return [stack, false, "unknown word #{token}"]
+      end
+
+      if call_depth >= 100
+        return [stack, false, "too deep"]
+      end
+
+      call_depth += 1
+      def_tokens = Definition.tokens(definitions[token])
+      result = run_tokens(line_num, def_tokens, stack, definitions)
+      call_depth -= 1
+
+      stack = Array.at(result, 0)
+      if !Array.at(result, 1)
+        return result
+      end
+
+      i += 1
+    end
+  end
+
+  [stack, true, nil]
+end
+
+# Read and process input
+lines = IO.readlines(IO.stdin)
+
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+
+  chomp_line = String.chomp(line)
+  if String.empty?(chomp_line)
+    next
+  end
+
+  tokens = String.split(chomp_line, /\s+/)
+
+  if Array.empty?(tokens)
+    next
+  end
+
+  # Check syntax
+  if !check_syntax(line_num, tokens)
+    puts("line #{line_num}: syntax error")
+    next
+  end
+
+  # Save stack in case of error
+  original_stack = Array.dup(stack)
+
+  # Run tokens
+  result = run_tokens(line_num, tokens, stack, definitions)
+  stack = Array.at(result, 0)
+  success = Array.at(result, 1)
+  error = Array.at(result, 2)
+
+  if !success
+    stack = original_stack
+    puts("line #{line_num}: error: #{error}")
+  end
+end
+
+# Print final stack
+if Array.empty?(stack)
+  puts("stack: (empty)")
+else
+  stack_str = Array.join(stack, " ")
+  puts("stack: #{stack_str}")
+end

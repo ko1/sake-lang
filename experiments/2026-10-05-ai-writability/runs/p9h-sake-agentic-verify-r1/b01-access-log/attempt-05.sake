@@ -1,0 +1,310 @@
+# Parse access logs and print summary
+
+EndpointStats = Struct.new(:count, :n4xx, :n5xx, :bytes, :total_duration, :max_duration)
+
+def is_digit_string?(s)
+  if String.size(s) == 0
+    return false
+  end
+  String.match(s, /^\d+$/) != nil
+end
+
+def valid_timestamp?(ts)
+  # Check format YYYY-MM-DDTHH:MM:SS
+  if String.size(ts) != 19
+    return false
+  end
+
+  # Check character at position 10 is 'T'
+  if String.slice(ts, 10, 1) != "T"
+    return false
+  end
+
+  date_part = String.slice(ts, 0, 10)
+  time_part = String.slice(ts, 11, 8)
+
+  date_segments = String.split(date_part, "-")
+  if Array.size(date_segments) != 3
+    return false
+  end
+
+  year_str = Array.at(date_segments, 0)
+  month_str = Array.at(date_segments, 1)
+  day_str = Array.at(date_segments, 2)
+
+  if String.size(year_str) != 4 || String.size(month_str) != 2 || String.size(day_str) != 2
+    return false
+  end
+
+  if !is_digit_string?(year_str) || !is_digit_string?(month_str) || !is_digit_string?(day_str)
+    return false
+  end
+
+  begin
+    month = String.to_i(month_str)
+    day = String.to_i(day_str)
+
+    if month < 1 || month > 12
+      return false
+    end
+    if day < 1 || day > 31
+      return false
+    end
+  rescue
+    return false
+  end
+
+  time_segments = String.split(time_part, ":")
+  if Array.size(time_segments) != 3
+    return false
+  end
+
+  hour_str = Array.at(time_segments, 0)
+  min_str = Array.at(time_segments, 1)
+  sec_str = Array.at(time_segments, 2)
+
+  if String.size(hour_str) != 2 || String.size(min_str) != 2 || String.size(sec_str) != 2
+    return false
+  end
+
+  if !is_digit_string?(hour_str) || !is_digit_string?(min_str) || !is_digit_string?(sec_str)
+    return false
+  end
+
+  begin
+    hour = String.to_i(hour_str)
+    min = String.to_i(min_str)
+    sec = String.to_i(sec_str)
+
+    if hour < 0 || hour > 23
+      return false
+    end
+    if min < 0 || min > 59
+      return false
+    end
+    if sec < 0 || sec > 59
+      return false
+    end
+  rescue
+    return false
+  end
+
+  true
+end
+
+def valid_method?(method)
+  method == "GET" || method == "POST" || method == "PUT" || method == "DELETE"
+end
+
+def valid_path?(path)
+  String.size(path) > 0 && String.start_with?(path, "/")
+end
+
+def valid_status?(status)
+  if String.size(status) != 3
+    return false
+  end
+  if !is_digit_string?(status)
+    return false
+  end
+  begin
+    s = String.to_i(status)
+    s >= 100 && s <= 599
+  rescue
+    false
+  end
+end
+
+def valid_bytes?(bytes)
+  bytes == "-" || is_digit_string?(bytes)
+end
+
+def valid_duration?(duration)
+  is_digit_string?(duration)
+end
+
+def extract_path(path_with_query)
+  parts = String.split(path_with_query, "?")
+  Array.at(parts, 0)
+end
+
+def extract_hour_key(timestamp)
+  # Format: YYYY-MM-DDTHH:MM:SS -> YYYY-MM-DD HH:00
+  date_part = String.slice(timestamp, 0, 10)
+  hour_part = String.slice(timestamp, 11, 2)
+  String.+(String.+(date_part, " "), String.+(hour_part, ":00"))
+end
+
+lines = Array[]
+line_num = 0
+while true
+  line = Kernel.gets()
+  if line == nil
+    break
+  end
+  line_num += 1
+  Array.push(lines, [line, line_num])
+end
+
+endpoints = Hash[]
+hours = Hash[]
+invalid_lines = Array[]
+valid_count = 0
+
+Array.each(lines) do |line_tuple|
+  line, idx = line_tuple
+
+  # Skip empty lines
+  stripped = String.strip(line)
+  if String.size(stripped) == 0
+    next
+  end
+
+  fields = String.split(stripped, /\s+/)
+
+  # Check field count
+  if Array.size(fields) != 6
+    Array.push(invalid_lines, [idx, "wrong field count"])
+    next
+  end
+
+  timestamp = Array.at(fields, 0)
+  method = Array.at(fields, 1)
+  path = Array.at(fields, 2)
+  status = Array.at(fields, 3)
+  bytes = Array.at(fields, 4)
+  duration = Array.at(fields, 5)
+
+  # Validate each field in order
+  if !valid_timestamp?(timestamp)
+    Array.push(invalid_lines, [idx, "bad timestamp"])
+    next
+  end
+
+  if !valid_method?(method)
+    Array.push(invalid_lines, [idx, "bad method"])
+    next
+  end
+
+  if !valid_path?(path)
+    Array.push(invalid_lines, [idx, "bad path"])
+    next
+  end
+
+  if !valid_status?(status)
+    Array.push(invalid_lines, [idx, "bad status"])
+    next
+  end
+
+  if !valid_bytes?(bytes)
+    Array.push(invalid_lines, [idx, "bad bytes"])
+    next
+  end
+
+  if !valid_duration?(duration)
+    Array.push(invalid_lines, [idx, "bad duration"])
+    next
+  end
+
+  # Process valid line
+  valid_count += 1
+  clean_path = extract_path(path)
+  endpoint = String.+(method, String.+(" ", clean_path))
+
+  # Update hour stats
+  hour_key = extract_hour_key(timestamp)
+  hour_count = Hash.fetch(hours, hour_key, 0)
+  Hash.store(hours, hour_key, hour_count + 1)
+
+  # Get or create endpoint stats
+  ep_stats = Hash.fetch(endpoints, endpoint, nil)
+  if ep_stats == nil
+    ep_stats = EndpointStats.new(0, 0, 0, 0, 0, 0)
+    Hash.store(endpoints, endpoint, ep_stats)
+  end
+
+  EndpointStats.set_count(ep_stats, EndpointStats.count(ep_stats) + 1)
+
+  status_num = String.to_i(status)
+  if status_num >= 400 && status_num < 500
+    EndpointStats.set_n4xx(ep_stats, EndpointStats.n4xx(ep_stats) + 1)
+  elsif status_num >= 500 && status_num < 600
+    EndpointStats.set_n5xx(ep_stats, EndpointStats.n5xx(ep_stats) + 1)
+  end
+
+  if bytes != "-"
+    byte_count = String.to_i(bytes)
+    EndpointStats.set_bytes(ep_stats, EndpointStats.bytes(ep_stats) + byte_count)
+  end
+
+  duration_ms = String.to_i(duration)
+  EndpointStats.set_total_duration(ep_stats, EndpointStats.total_duration(ep_stats) + duration_ms)
+  if duration_ms > EndpointStats.max_duration(ep_stats)
+    EndpointStats.set_max_duration(ep_stats, duration_ms)
+  end
+end
+
+if valid_count == 0
+  puts("no valid requests")
+else
+  # Find max endpoint length
+  max_len = 8
+  Hash.each(endpoints) do |ep, _|
+    ep_len = String.size(ep)
+    if ep_len > max_len
+      max_len = ep_len
+    end
+  end
+
+  # Print header
+  fmt_width = Integer.to_s(max_len)
+  fmt_str = String.+(String.+("%-", fmt_width), "s %5s %4s %4s %8s %7s %6s")
+  puts(Kernel.format(fmt_str, "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+
+  # Build sorted list
+  ep_list = Hash.to_a(endpoints)
+  sorted_eps = Array.sort_by(ep_list) do |ep_tuple|
+    ep, stats = ep_tuple
+    count = EndpointStats.count(stats)
+    [-count, ep]
+  end
+
+  # Print rows
+  Array.each(sorted_eps) do |ep_tuple|
+    ep, stats = ep_tuple
+
+    count = EndpointStats.count(stats)
+    n4xx = EndpointStats.n4xx(stats)
+    n5xx = EndpointStats.n5xx(stats)
+    total_bytes = EndpointStats.bytes(stats)
+    total_duration = EndpointStats.total_duration(stats)
+    max_duration = EndpointStats.max_duration(stats)
+
+    avg_ms_float = Arithmetic.to_f(total_duration) / Arithmetic.to_f(count)
+
+    fmt_width = Integer.to_s(max_len)
+    fmt_str = String.+(String.+("%-", fmt_width), "s %5d %4d %4d %8d %7.1f %6d")
+    puts(Kernel.format(fmt_str, ep, count, n4xx, n5xx, total_bytes, avg_ms_float, max_duration))
+  end
+
+  # Find busiest hour (earliest on tie)
+  busiest_hour = nil
+  max_requests = 0
+  Hash.each(hours) do |hour, count|
+    if count > max_requests
+      max_requests = count
+      busiest_hour = hour
+    elsif count == max_requests && (busiest_hour == nil || hour < busiest_hour)
+      busiest_hour = hour
+    end
+  end
+
+  puts(Kernel.format("busiest hour: %s (%d requests)", busiest_hour, max_requests))
+end
+
+# Print invalid lines
+puts(Kernel.format("invalid lines: %d", Array.size(invalid_lines)))
+Array.each(invalid_lines) do |error_tuple|
+  line_num, reason = error_tuple
+  puts(Kernel.format("  line %d: %s", line_num, reason))
+end

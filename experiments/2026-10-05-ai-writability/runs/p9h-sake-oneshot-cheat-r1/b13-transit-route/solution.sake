@@ -1,0 +1,278 @@
+def is_valid_time(s)
+  if !String.match?(s, /^[0-9]+$/)
+    false
+  else
+    n = String.to_i(s)
+    if String.start_with?(s, "0") && String.length(s) > 1
+      false
+    elsif n < 1 || n > 999
+      false
+    else
+      true
+    end
+  end
+end
+
+# Read penalty
+penalty_line = String.chomp(gets)
+penalty = String.to_i(penalty_line)
+
+# Read segments
+segments = Array[]
+line_num = 2
+known_stations = Set[]
+queries_found = false
+
+while (line = gets)
+  line = String.chomp(line)
+  line = String.strip(line)
+
+  if String.empty?(line)
+    line_num += 1
+    next
+  end
+
+  if line == "QUERIES"
+    queries_found = true
+    line_num += 1
+    break
+  end
+
+  fields = String.split(line, /\s+/)
+
+  if Integer.length(fields) != 4
+    puts("invalid segment at line #{line_num}")
+  elsif String.at(fields, 0) == String.at(fields, 1)
+    puts("invalid segment at line #{line_num}")
+  elsif !is_valid_time(String.at(fields, 3))
+    puts("invalid segment at line #{line_num}")
+  else
+    line_name = String.at(fields, 0)
+    from_st = String.at(fields, 1)
+    to_st = String.at(fields, 2)
+    minutes = String.to_i(String.at(fields, 3))
+
+    Array.push(segments, {line: line_name, from: from_st, to: to_st, time: minutes})
+    Set.add(known_stations, from_st)
+    Set.add(known_stations, to_st)
+  end
+
+  line_num += 1
+end
+
+# Process queries
+while (line = gets)
+  line = String.chomp(line)
+  line = String.strip(line)
+
+  if String.empty?(line)
+    line_num += 1
+    next
+  end
+
+  fields = String.split(line, /\s+/)
+
+  if Integer.length(fields) != 2
+    puts("invalid query at line #{line_num}")
+    line_num += 1
+    next
+  end
+
+  from_st = String.at(fields, 0)
+  to_st = String.at(fields, 1)
+
+  if !Set.include?(known_stations, from_st)
+    puts("#{from_st} -> #{to_st}: unknown station #{from_st}")
+    line_num += 1
+    next
+  end
+
+  if !Set.include?(known_stations, to_st)
+    puts("#{from_st} -> #{to_st}: unknown station #{to_st}")
+    line_num += 1
+    next
+  end
+
+  if from_st == to_st
+    puts("#{from_st} -> #{to_st}: 0 min, 0 transfers")
+    line_num += 1
+    next
+  end
+
+  # Dijkstra's algorithm with custom comparison
+  # State: {station, cost, transfers, path (array of stations), lines (array of line names)}
+
+  states = Array[{station: from_st, cost: 0, transfers: 0, path: Array[from_st], lines: Array[], last_line: nil}]
+  visited = Set[]
+  best = nil
+
+  while !Array.empty?(states)
+    # Find best unvisited state
+    best_idx = 0
+    best_state = Array.at(states, 0)
+
+    Integer.times(Integer.length(states)) do |i|
+      state = Array.at(states, i)
+      state => {station:, cost:, transfers:, path:, lines:, last_line:}
+
+      if !Set.include?(visited, station)
+        if i > 0 && best_state in {station: String if Set.include?(visited, it)} && state not in {station: String if Set.include?(visited, it)}
+          best_idx = i
+          best_state = state
+        elsif i > 0 && best_state in {station: String if Set.include?(visited, it)} && state in {station: String if Set.include?(visited, it)}
+          # Both unvisited, compare
+          best_state => {cost: best_cost, transfers: best_trans, path: best_path, lines: best_lines}
+          state => {cost: state_cost, transfers: state_trans, path: state_path, lines: state_lines}
+
+          cmp_cost = state_cost <=> best_cost
+          if cmp_cost < 0
+            best_idx = i
+            best_state = state
+          elsif cmp_cost == 0
+            cmp_trans = state_trans <=> best_trans
+            if cmp_trans < 0
+              best_idx = i
+              best_state = state
+            elsif cmp_trans == 0
+              cmp_path = state_path <=> best_path
+              if cmp_path < 0
+                best_idx = i
+                best_state = state
+              elsif cmp_path == 0
+                cmp_lines = state_lines <=> best_lines
+                if cmp_lines < 0
+                  best_idx = i
+                  best_state = state
+                end
+              end
+            end
+          end
+        else
+          best_idx = i
+          best_state = state
+        end
+      end
+    end
+
+    best_state => {station: curr_station, cost: curr_cost, transfers: curr_transfers, path: curr_path, lines: curr_lines, last_line: curr_line}
+
+    if Set.include?(visited, curr_station)
+      Array.delete_at(states, best_idx)
+      next
+    end
+
+    Set.add(visited, curr_station)
+
+    if curr_station == to_st
+      best = best_state
+      break
+    end
+
+    # Explore neighbors
+    Array.each(segments) do |seg|
+      seg => {line: seg_line, from: seg_from, to: seg_to, time: seg_time}
+
+      next_station = nil
+      if seg_from == curr_station
+        next_station = seg_to
+      elsif seg_to == curr_station
+        next_station = seg_from
+      else
+        next
+      end
+
+      if Set.include?(visited, next_station)
+        next
+      end
+
+      new_transfers = curr_transfers
+      new_lines = Array.dup(curr_lines)
+
+      if curr_line != nil && seg_line != curr_line
+        new_transfers += 1
+        Array.push(new_lines, seg_line)
+      elsif curr_line == nil
+        Array.push(new_lines, seg_line)
+      end
+
+      new_cost = curr_cost + seg_time
+      if new_transfers > curr_transfers
+        new_cost += penalty
+      end
+
+      new_path = Array.dup(curr_path)
+      Array.push(new_path, next_station)
+
+      new_state = {station: next_station, cost: new_cost, transfers: new_transfers, path: new_path, lines: new_lines, last_line: seg_line}
+      Array.push(states, new_state)
+    end
+  end
+
+  if best
+    best => {cost: best_cost, transfers: best_transfers, path: best_path, lines: best_lines, last_line: best_line}
+
+    transfer_word = if best_transfers == 1 then "transfer" else "transfers" end
+    puts("#{from_st} -> #{to_st}: #{best_cost} min, #{best_transfers} #{transfer_word}")
+
+    # Build route description
+    puts("  " + build_route(best_path, segments))
+  else
+    puts("#{from_st} -> #{to_st}: no route")
+  end
+
+  line_num += 1
+end
+
+def build_route(path, segments)
+  # path is array of stations, segments is array of {line:, from:, to:, time:}
+  # We need to group consecutive segments on the same line
+
+  legs = Array[]
+  current_line = nil
+  current_stations = Array[String.at(path, 0)]
+
+  Integer.times(Integer.length(path) - 1) do |i|
+    from_st = String.at(path, i)
+    to_st = String.at(path, i + 1)
+
+    # Find the segment used
+    seg_line = nil
+    Array.each(segments) do |seg|
+      seg => {line: seg_line_name, from: seg_from, to: seg_to, time:}
+      if (seg_from == from_st && seg_to == to_st) || (seg_from == to_st && seg_to == from_st)
+        if current_line == nil || current_line == seg_line_name
+          seg_line = seg_line_name
+        end
+      end
+    end
+
+    if seg_line == nil
+      # Try any matching segment
+      Array.each(segments) do |seg|
+        seg => {line: seg_line_name, from: seg_from, to: seg_to}
+        if (seg_from == from_st && seg_to == to_st) || (seg_from == to_st && seg_to == from_st)
+          seg_line = seg_line_name
+          break
+        end
+      end
+    end
+
+    if current_line != seg_line && current_line != nil
+      # Start new leg
+      leg = current_line + ": " + Array.join(current_stations, " > ")
+      Array.push(legs, leg)
+      current_line = seg_line
+      current_stations = Array[from_st, to_st]
+    else
+      current_line = seg_line
+      Array.push(current_stations, to_st)
+    end
+  end
+
+  if !Array.empty?(current_stations)
+    leg = current_line + ": " + Array.join(current_stations, " > ")
+    Array.push(legs, leg)
+  end
+
+  Array.join(legs, "; ")
+end

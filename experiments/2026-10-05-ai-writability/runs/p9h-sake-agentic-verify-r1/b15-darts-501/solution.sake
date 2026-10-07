@@ -1,0 +1,210 @@
+def parse_dart(dart_str)
+  if dart_str == "MISS"
+    [0, false]
+  elsif dart_str == "BULL"
+    [50, true]
+  elsif dart_str == "25"
+    [25, false]
+  elsif String.start_with?(dart_str, "S")
+    if String.size(dart_str) == 2
+      num_str = String.slice(dart_str, 1, 1)
+      if String.match?(num_str, /^\d+$/)
+        num = String.to_i(num_str)
+        if num >= 1 && num <= 20
+          [num, false]
+        else
+          nil
+        end
+      else
+        nil
+      end
+    else
+      nil
+    end
+  elsif String.start_with?(dart_str, "D")
+    if String.size(dart_str) == 2
+      num_str = String.slice(dart_str, 1, 1)
+      if String.match?(num_str, /^\d+$/)
+        num = String.to_i(num_str)
+        if num >= 1 && num <= 20
+          [num * 2, true]
+        else
+          nil
+        end
+      else
+        nil
+      end
+    else
+      nil
+    end
+  elsif String.start_with?(dart_str, "T")
+    if String.size(dart_str) == 2
+      num_str = String.slice(dart_str, 1, 1)
+      if String.match?(num_str, /^\d+$/)
+        num = String.to_i(num_str)
+        if num >= 1 && num <= 20
+          [num * 3, false]
+        else
+          nil
+        end
+      else
+        nil
+      end
+    else
+      nil
+    end
+  else
+    nil
+  end
+end
+
+first_line = Kernel.gets()
+if first_line == nil
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+first_line = String.strip(first_line)
+header_fields = String.split(first_line)
+
+if Array.size(header_fields) < 2 || Array.size(header_fields) > 5
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+start_str = Array.at(header_fields, 0)
+if String.match?(start_str, /^\d+$/) == nil
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+start = String.to_i(start_str)
+if start < 2 || start > 1001
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+player_names = Array[]
+Integer.times(Array.size(header_fields) - 1) do |i|
+  name = Array.at(header_fields, i + 1)
+  if String.size(name) < 1 || String.size(name) > 10 || String.match?(name, /^[a-z]+$/) == nil
+    puts("invalid header")
+    Kernel.exit(0)
+  end
+  Array.push(player_names, name)
+end
+
+if Array.size(player_names) > Array.size(Array.uniq(player_names))
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+player_state = Hash["__dummy__" => [0, 0, false, 0]]
+Array.each(player_names) do |name|
+  Hash.[]=( player_state, name, [start, 0, false, 0] )
+end
+
+line_num = 1
+IO.each_line(IO.stdin()) do |line|
+  line_num = line_num + 1
+  line = String.strip(line)
+
+  if String.empty?(line)
+    next
+  end
+
+  fields = String.split(line)
+
+  if Array.size(fields) < 1
+    next
+  end
+
+  player_name = Array.at(fields, 0)
+
+  if !Hash.has_key?(player_state, player_name)
+    puts("line #{line_num}: unknown player #{player_name}")
+    next
+  end
+
+  state = Hash.[](player_state, player_name)
+  current_left = Array.at(state, 0)
+  turn_count = Array.at(state, 1)
+  checked_out = Array.at(state, 2)
+  darts_thrown = Array.at(state, 3)
+
+  if checked_out
+    puts("line #{line_num}: game over")
+    next
+  end
+
+  darts = Array[]
+  Integer.times(Array.size(fields) - 1) do |i|
+    dart_str = Array.at(fields, i + 1)
+    result = parse_dart(dart_str)
+    if result == nil
+      Array.push(darts, nil)
+    else
+      Array.push(darts, result)
+    end
+  end
+
+  if Array.size(darts) < 1 || Array.size(darts) > 3
+    puts("line #{line_num}: expected 1 to 3 darts")
+    next
+  end
+
+  bad_dart_found = false
+  bad_dart_idx = 0
+  Array.each_with_index(darts) do |d, i|
+    if d == nil
+      bad_dart_found = true
+      bad_dart_idx = i
+    end
+  end
+
+  if bad_dart_found
+    dart_str = Array.at(fields, bad_dart_idx + 1)
+    puts("line #{line_num}: bad dart #{dart_str}")
+    next
+  end
+
+  turn_score = 0
+  is_bust = false
+  checkout_dart = nil
+  final_dart_str = ""
+
+  Array.each_with_index(darts) do |dart, di|
+    points = Array.at(dart, 0)
+    is_double = Array.at(dart, 1)
+
+    turn_score = turn_score + points
+    new_left = current_left - turn_score
+
+    if new_left < 0 || new_left == 1 || (new_left == 0 && !is_double)
+      is_bust = true
+      break
+    end
+
+    if new_left == 0 && is_double
+      checkout_dart = dart
+      final_dart_str = Array.at(fields, di + 1)
+      break
+    end
+  end
+
+  if is_bust
+    puts("#{player_name} busts, #{current_left} left")
+    new_state = [current_left, turn_count + 1, false, darts_thrown + Array.size(darts)]
+    Hash.[]=( player_state, player_name, new_state)
+  elsif checkout_dart != nil
+    puts("#{player_name} checks out with #{final_dart_str}")
+    new_state = [current_left - turn_score, turn_count + 1, true, darts_thrown + Array.size(darts)]
+    Hash.[]=( player_state, player_name, new_state)
+  else
+    puts("#{player_name} scores #{turn_score}, #{current_left - turn_score} left")
+    new_state = [current_left - turn_score, turn_count + 1, false, darts_thrown + Array.size(darts)]
+    Hash.[]=( player_state, player_name, new_state)
+  end
+end
+
+puts("STANDINGS")

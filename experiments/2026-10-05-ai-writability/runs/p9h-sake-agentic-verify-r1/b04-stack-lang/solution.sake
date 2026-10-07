@@ -1,0 +1,309 @@
+# Stack language interpreter - focusing on Example 1 first
+
+def is_number?(t)
+  if String.size(t) == 0 || (t == "-")
+    return false
+  end
+  if String.start_with?(t, "-")
+    String.match(String.slice(t, 1, String.size(t) - 1), /^\d+$/) != nil
+  else
+    String.match(t, /^\d+$/) != nil
+  end
+end
+
+def truncated_div(a, b)
+  # Division truncated toward zero (not floor division)
+  q = a / b
+  r = a % b
+  if (a < 0) != (b < 0) && r != 0
+    q + 1
+  else
+    q
+  end
+end
+
+def truncated_mod(a, b)
+  # Remainder that matches truncated division
+  a - b * truncated_div(a, b)
+end
+
+def is_builtin?(w)
+  w == "+" || w == "-" || w == "*" || w == "/" || w == "mod" || w == "=" || w == "<" || w == ">" ||
+  w == "dup" || w == "drop" || w == "swap" || w == "over" || w == "." ||
+  w == "if" || w == "then" || w == "else" || w == ";"
+end
+
+def check_syntax(toks)
+  d = 0
+  in_d = false
+  Array.each_with_index(toks) do |t, i|
+    if t == ":"
+      if in_d || d > 0
+        return false
+      end
+      if i + 1 >= Array.size(toks)
+        return false
+      end
+      nt = Array.at(toks, i + 1)
+      if is_number?(nt) || is_builtin?(nt)
+        return false
+      end
+      in_d = true
+    elsif t == ";"
+      if !in_d
+        return false
+      end
+      in_d = false
+    elsif t == "if"
+      d += 1
+    elsif t == "then"
+      if d == 0
+        return false
+      end
+      d -= 1
+    elsif t == "else"
+      if d == 0
+        return false
+      end
+    end
+  end
+  !in_d && d == 0
+end
+
+stack = Array[]
+defs = Hash[]
+call_depth = 0
+
+def execute_tokens(toks, stk, defs, cd)
+  i = 0
+  while i < Array.size(toks)
+    t = Array.at(toks, i)
+
+    if is_number?(t)
+      Array.push(stk, String.to_i(t))
+    elsif t == "+"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in +"]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      Array.push(stk, a + b)
+    elsif t == "-"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in -"]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      Array.push(stk, a - b)
+    elsif t == "*"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in *"]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      Array.push(stk, a * b)
+    elsif t == "/"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in /"]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      if b == 0
+        return Array["error", "division by zero"]
+      end
+      Array.push(stk, truncated_div(a, b))
+    elsif t == "mod"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in mod"]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      if b == 0
+        return Array["error", "division by zero"]
+      end
+      Array.push(stk, truncated_mod(a, b))
+    elsif t == "="
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in ="]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      Array.push(stk, a == b ? 1 : 0)
+    elsif t == "<"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in <"]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      Array.push(stk, a < b ? 1 : 0)
+    elsif t == ">"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in >"]
+      end
+      b = Array.pop(stk)
+      a = Array.pop(stk)
+      Array.push(stk, a > b ? 1 : 0)
+    elsif t == "dup"
+      if Array.size(stk) < 1
+        return Array["error", "stack underflow in dup"]
+      end
+      Array.push(stk, Array.last(stk))
+    elsif t == "drop"
+      if Array.size(stk) < 1
+        return Array["error", "stack underflow in drop"]
+      end
+      Array.pop(stk)
+    elsif t == "swap"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in swap"]
+      end
+      sz = Array.size(stk)
+      tmp = Array.at(stk, sz - 1)
+      Array.[]=( stk, sz - 1, Array.at(stk, sz - 2))
+      Array.[]=( stk, sz - 2, tmp)
+    elsif t == "over"
+      if Array.size(stk) < 2
+        return Array["error", "stack underflow in over"]
+      end
+      Array.push(stk, Array.at(stk, Array.size(stk) - 2))
+    elsif t == "."
+      if Array.size(stk) < 1
+        return Array["error", "stack underflow in ."]
+      end
+      puts(Integer.to_s(Array.pop(stk)))
+    elsif t == "if"
+      if Array.size(stk) < 1
+        return Array["error", "stack underflow in if"]
+      end
+      cond = Array.pop(stk)
+
+      # Find then/else
+      d2 = 1
+      ti = nil
+      ei = nil
+      j = i + 1
+      while j < Array.size(toks)
+        tj = Array.at(toks, j)
+        if tj == "if"
+          d2 += 1
+        elsif tj == "then"
+          d2 -= 1
+          if d2 == 0
+            ti = j
+            break
+          end
+        elsif tj == "else" && d2 == 1
+          ei = j
+        end
+        j += 1
+      end
+
+      # Execute branch
+      if cond != 0
+        if ei != nil
+          branch = Array.drop(Array.take(toks, ei), i + 1)
+        else
+          branch = Array.drop(Array.take(toks, ti), i + 1)
+        end
+      else
+        if ei != nil
+          branch = Array.drop(Array.take(toks, ti), ei + 1)
+        else
+          branch = Array[]
+        end
+      end
+
+      res = execute_tokens(branch, stk, defs, cd)
+      if res != nil && Array.at(res, 0) == "error"
+        return res
+      end
+
+      i = ti
+    elsif t == "then" || t == "else"
+      # Skip
+    else
+      # User word
+      if Hash.has_key?(defs, t)
+        if cd >= 100
+          return Array["error", "too deep"]
+        end
+        res = execute_tokens(Hash.fetch(defs, t), stk, defs, cd + 1)
+        if res != nil && Array.at(res, 0) == "error"
+          return res
+        end
+      else
+        return Array["error", String.+("unknown word ", t)]
+      end
+    end
+
+    i += 1
+  end
+
+  nil
+end
+
+lines = Array[]
+while true
+  line = Kernel.gets()
+  if line == nil
+    break
+  end
+  Array.push(lines, line)
+end
+
+Array.each_with_index(lines) do |line, idx|
+  ln = idx + 1
+  stripped = String.strip(line)
+
+  if String.size(stripped) == 0
+    next
+  end
+
+  toks = String.split(stripped, /\s+/)
+
+  if !check_syntax(toks)
+    puts(Kernel.format("line %d: syntax error", ln))
+    next
+  end
+
+  # Extract definitions
+  defs_toks = Array[]
+  i = 0
+  while i < Array.size(toks)
+    t = Array.at(toks, i)
+    if t == ":"
+      nm = Array.at(toks, i + 1)
+      bd = Array[]
+      j = i + 2
+      while j < Array.size(toks)
+        if Array.at(toks, j) == ";"
+          break
+        end
+        Array.push(bd, Array.at(toks, j))
+        j += 1
+      end
+      Hash.store(defs, nm, bd)
+      i = j + 1
+    else
+      Array.push(defs_toks, t)
+      i += 1
+    end
+  end
+
+  # Execute
+  bak = Array.dup(stack)
+  err = execute_tokens(defs_toks, stack, defs, 0)
+
+  if err != nil
+    puts(Kernel.format("line %d: error: %s", ln, Array.at(err, 1)))
+    Array.clear(stack)
+    Array.each(bak) { |v| Array.push(stack, v) }
+  end
+end
+
+# Final
+if Array.size(stack) == 0
+  puts("stack: (empty)")
+else
+  puts(String.+("stack: ", Array.join(stack, " ")))
+end

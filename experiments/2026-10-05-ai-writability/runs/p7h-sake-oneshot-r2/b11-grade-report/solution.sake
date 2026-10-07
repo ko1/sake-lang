@@ -1,0 +1,256 @@
+def read_all_lines
+  lines = Array[]
+  while true
+    line = gets
+    break unless line
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def is_blank(line)
+  String.empty?(String.strip(line))
+end
+
+def starts_with_comment(line)
+  String.start_with?(String.strip(line), "#")
+end
+
+def split_fields(line)
+  String.split(String.strip(line), /\s+/)
+end
+
+def is_valid_weight(w_str)
+  if String.match?(w_str, /^\d+$/)
+    w = String.to_i(w_str)
+    w >= 1 && w <= 100
+  else
+    false
+  end
+end
+
+def parse_score(score_str)
+  if score_str == "EX"
+    [:ex, 0, 0]
+  elsif score_str == "-"
+    [:missing, 0, 0]
+  else
+    parts = String.split(score_str, "/")
+    if Array.size(parts) == 2
+      p_str = Array.at(parts, 0)
+      m_str = Array.at(parts, 1)
+      if String.match?(p_str, /^\d+$/) && String.match?(m_str, /^\d+$/)
+        p = String.to_i(p_str)
+        m = String.to_i(m_str)
+        if m > 0 && p <= m
+          [:score, p, m]
+        else
+          :bad
+        end
+      else
+        :bad
+      end
+    else
+      :bad
+    end
+  end
+end
+
+def round_half_up(val, digits)
+  factor = 10.0 ** digits.to_f
+  Float.floor(val * factor + 0.5) / factor
+end
+
+def grade_for_percentage(pct)
+  if pct >= 90.0
+    "A"
+  elsif pct >= 80.0
+    "B"
+  elsif pct >= 70.0
+    "C"
+  elsif pct >= 60.0
+    "D"
+  else
+    "F"
+  end
+end
+
+def main
+  all_lines = read_all_lines
+  weights = Hash[]
+  students = Hash[]
+  categories = Array[]
+  errors = Array[]
+
+  Integer.times(Array.size(all_lines)) do |i|
+    line = Array.at(all_lines, i)
+    line_num = i + 1
+
+    next if is_blank(line)
+    next if starts_with_comment(line)
+
+    fields = split_fields(line)
+
+    if Array.size(fields) == 0
+      next
+    end
+
+    first_field = Array.at(fields, 0)
+
+    if first_field == "weight"
+      if Array.size(fields) != 3
+        Array.push(errors, "line #{line_num}: bad format")
+      else
+        category = Array.at(fields, 1)
+        weight_str = Array.at(fields, 2)
+
+        if Hash.has_key?(weights, category)
+          Array.push(errors, "line #{line_num}: duplicate category #{category}")
+        else
+          if is_valid_weight(weight_str)
+            w = String.to_i(weight_str)
+            Hash.store(weights, category, w)
+            Array.push(categories, category)
+          else
+            Array.push(errors, "line #{line_num}: bad weight #{weight_str}")
+          end
+        end
+      end
+    else
+      if Array.size(fields) != 3
+        Array.push(errors, "line #{line_num}: bad format")
+      else
+        student = Array.at(fields, 0)
+        category = Array.at(fields, 1)
+        score_str = Array.at(fields, 2)
+
+        unless Hash.has_key?(weights, category)
+          Array.push(errors, "line #{line_num}: unknown category #{category}")
+        else
+          result = parse_score(score_str)
+          if result == :bad
+            Array.push(errors, "line #{line_num}: bad score #{score_str}")
+          else
+            status, p, m = result
+
+            unless Hash.has_key?(students, student)
+              Hash.store(students, student, {scores: Hash[], missing: 0})
+            end
+            student_data = Hash.at(students, student)
+            scores = Hash.at(student_data, :scores)
+
+            unless Hash.has_key?(scores, category)
+              Hash.store(scores, category, Array[])
+            end
+            cat_scores = Hash.at(scores, category)
+
+            if status == :score
+              Array.push(cat_scores, [p, m])
+            elsif status == :missing
+              Array.push(cat_scores, [0, m])
+              current_missing = Hash.at(student_data, :missing)
+              Hash.store(student_data, :missing, current_missing + 1)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  Array.each(errors) { |e| puts(e) }
+
+  student_list = Array[]
+
+  Hash.each(students) do |name, data|
+    scores = Hash.at(data, :scores)
+    missing = Hash.at(data, :missing)
+
+    total_weighted_frac = 0.0
+    total_active_weight = 0
+
+    Array.each(categories) do |cat|
+      if Hash.has_key?(scores, cat)
+        cat_scores = Hash.at(scores, cat)
+        points = 0
+        maxima = 0
+        Array.each(cat_scores) do |p, m|
+          points += p
+          maxima += m
+        end
+        if maxima > 0
+          fraction = points.to_f / maxima.to_f
+          weight = Hash.at(weights, cat)
+          total_weighted_frac += fraction * weight.to_f
+          total_active_weight += weight
+        end
+      end
+    end
+
+    if total_active_weight > 0
+      pct = 100.0 * total_weighted_frac / total_active_weight.to_f
+      pct_rounded = round_half_up(pct, 1)
+      grade = grade_for_percentage(pct_rounded)
+      Array.push(student_list, [name, pct, pct_rounded, grade, missing])
+    else
+      Array.push(student_list, [name, nil, nil, "-", missing])
+    end
+  end
+
+  width = 7
+  Array.each(Hash.keys(students)) do |name|
+    name_len = String.size(name)
+    if name_len > width
+      width = name_len
+    end
+  end
+
+  with_pct = Array.select(student_list) { |n, p, pr, g, m| p != nil }
+  without_pct = Array.select(student_list) { |n, p, pr, g, m| p == nil }
+
+  Array.sort!(with_pct) do |a, b|
+    p_a = Array.at(a, 2)
+    p_b = Array.at(b, 2)
+    if p_a <=> p_b == 0
+      String.<=>(Array.at(a, 0), Array.at(b, 0))
+    else
+      (p_b <=> p_a)
+    end
+  end
+
+  Array.sort!(without_pct) { |a, b| String.<=>(Array.at(a, 0), Array.at(b, 0)) }
+
+  final_list = Array.+(with_pct, without_pct)
+
+  header = String.ljust("Student", width) + "  Score  G  Missing"
+  puts(header)
+
+  total_pct = 0.0
+  count = 0
+
+  Array.each(final_list) do |name, raw_pct, rounded_pct, grade, missing|
+    name_part = String.ljust(name, width)
+
+    if rounded_pct != nil
+      pct_str = String.rjust(Float.to_s(rounded_pct), 5)
+      total_pct += raw_pct
+      count += 1
+    else
+      pct_str = "  n/a"
+    end
+
+    grade_str = grade
+    missing_str = String.rjust(Integer.to_s(missing), 7)
+
+    puts(name_part + pct_str + "  " + grade_str + missing_str)
+  end
+
+  if count > 0
+    avg_pct = total_pct / count.to_f
+    avg_rounded = round_half_up(avg_pct, 1)
+    puts("class average: #{avg_rounded}")
+  else
+    puts("class average: n/a")
+  end
+end
+
+main

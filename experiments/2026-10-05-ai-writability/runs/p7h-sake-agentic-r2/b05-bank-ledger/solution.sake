@@ -1,0 +1,357 @@
+Account = Struct.new(:balance, :limit, :lowest, :txns, :withdrawals_since_month)
+
+def is_valid_name(name)
+  if String.empty?(name) || String.size(name) > 16
+    return false
+  end
+
+  String.each_char(name) do |c|
+    code = String.ord(c)
+    if !(code >= String.ord("a") && code <= String.ord("z"))
+      return false
+    end
+  end
+
+  true
+end
+
+def is_valid_amount(s)
+  if String.empty?(s)
+    return false
+  end
+
+  amount = String.to_f(s) rescue nil
+  if amount == nil || amount <= 0
+    return false
+  end
+
+  if String.include?(s, ".")
+    parts = String.split(s, ".")
+    if Array.size(parts) != 2
+      return false
+    end
+    frac = Array.at(parts, 1)
+    if String.size(frac) > 2
+      return false
+    end
+  end
+
+  true
+end
+
+def is_valid_limit(s)
+  if String.empty?(s)
+    return false
+  end
+
+  limit = String.to_f(s) rescue nil
+  if limit == nil || limit < 0
+    return false
+  end
+
+  if String.include?(s, ".")
+    parts = String.split(s, ".")
+    if Array.size(parts) != 2
+      return false
+    end
+    frac = Array.at(parts, 1)
+    if String.size(frac) > 2
+      return false
+    end
+  end
+
+  true
+end
+
+def money_to_s(amount)
+  format("%.2f", amount)
+end
+
+def ceil_cent(amount)
+  Float.ceil(amount * 100.0) / 100.0
+end
+
+def floor_cent(amount)
+  Float.floor(amount * 100.0) / 100.0
+end
+
+# Initialize
+accounts = Hash.new(nil)
+month_count = 0
+line_num = 1
+
+while true
+  line = gets()
+  if line == nil
+    break
+  end
+
+  trimmed = String.strip(line)
+  if String.empty?(trimmed)
+    line_num += 1
+    next
+  end
+
+  fields = String.split(trimmed, " ")
+
+  if Array.size(fields) == 0
+    line_num += 1
+    next
+  end
+
+  cmd = Array.at(fields, 0)
+
+  if cmd == "OPEN"
+    if Array.size(fields) != 3
+      puts("line #{line_num}: error: wrong field count")
+      line_num += 1
+      next
+    end
+
+    name = Array.at(fields, 1)
+    limit_str = Array.at(fields, 2)
+
+    if !is_valid_name(name)
+      puts("line #{line_num}: error: bad name")
+      line_num += 1
+      next
+    end
+
+    if !is_valid_limit(limit_str)
+      puts("line #{line_num}: error: bad amount")
+      line_num += 1
+      next
+    end
+
+    if Hash.key?(accounts, name)
+      puts("line #{line_num}: error: account #{name} exists")
+      line_num += 1
+      next
+    end
+
+    limit = String.to_f(limit_str)
+    acc = Account.new(0.0, limit, 0.0, 0, 0)
+    Hash.store(accounts, name, acc)
+
+  elsif cmd == "DEPOSIT"
+    if Array.size(fields) != 3
+      puts("line #{line_num}: error: wrong field count")
+      line_num += 1
+      next
+    end
+
+    name = Array.at(fields, 1)
+    amount_str = Array.at(fields, 2)
+
+    if !is_valid_name(name)
+      puts("line #{line_num}: error: bad name")
+      line_num += 1
+      next
+    end
+
+    if !is_valid_amount(amount_str)
+      puts("line #{line_num}: error: bad amount")
+      line_num += 1
+      next
+    end
+
+    if !Hash.key?(accounts, name)
+      puts("line #{line_num}: error: no account #{name}")
+      line_num += 1
+      next
+    end
+
+    amount = String.to_f(amount_str)
+    acc = Hash.fetch(accounts, name)
+    new_balance = Account.balance(acc) + amount
+    new_lowest = if new_balance < Account.lowest(acc) then new_balance else Account.lowest(acc) end
+
+    new_acc = Account.new(new_balance, Account.limit(acc), new_lowest, Account.txns(acc) + 1, Account.withdrawals_since_month(acc))
+    Hash.store(accounts, name, new_acc)
+
+  elsif cmd == "WITHDRAW"
+    if Array.size(fields) != 3
+      puts("line #{line_num}: error: wrong field count")
+      line_num += 1
+      next
+    end
+
+    name = Array.at(fields, 1)
+    amount_str = Array.at(fields, 2)
+
+    if !is_valid_name(name)
+      puts("line #{line_num}: error: bad name")
+      line_num += 1
+      next
+    end
+
+    if !is_valid_amount(amount_str)
+      puts("line #{line_num}: error: bad amount")
+      line_num += 1
+      next
+    end
+
+    if !Hash.key?(accounts, name)
+      puts("line #{line_num}: error: no account #{name}")
+      line_num += 1
+      next
+    end
+
+    amount = String.to_f(amount_str)
+    acc = Hash.fetch(accounts, name)
+    new_balance = Account.balance(acc) - amount
+
+    if new_balance < -Account.limit(acc)
+      puts("line #{line_num}: error: insufficient funds in #{name}")
+      line_num += 1
+      next
+    end
+
+    new_lowest = if new_balance < Account.lowest(acc) then new_balance else Account.lowest(acc) end
+    new_acc = Account.new(new_balance, Account.limit(acc), new_lowest, Account.txns(acc) + 1, Account.withdrawals_since_month(acc) + 1)
+    Hash.store(accounts, name, new_acc)
+
+  elsif cmd == "TRANSFER"
+    if Array.size(fields) != 4
+      puts("line #{line_num}: error: wrong field count")
+      line_num += 1
+      next
+    end
+
+    from = Array.at(fields, 1)
+    to = Array.at(fields, 2)
+    amount_str = Array.at(fields, 3)
+
+    if !is_valid_name(from)
+      puts("line #{line_num}: error: bad name")
+      line_num += 1
+      next
+    end
+
+    if !is_valid_name(to)
+      puts("line #{line_num}: error: bad name")
+      line_num += 1
+      next
+    end
+
+    if !is_valid_amount(amount_str)
+      puts("line #{line_num}: error: bad amount")
+      line_num += 1
+      next
+    end
+
+    if from == to
+      puts("line #{line_num}: error: same account")
+      line_num += 1
+      next
+    end
+
+    if !Hash.key?(accounts, from)
+      puts("line #{line_num}: error: no account #{from}")
+      line_num += 1
+      next
+    end
+
+    if !Hash.key?(accounts, to)
+      puts("line #{line_num}: error: no account #{to}")
+      line_num += 1
+      next
+    end
+
+    amount = String.to_f(amount_str)
+    from_acc = Hash.fetch(accounts, from)
+    to_acc = Hash.fetch(accounts, to)
+
+    new_from_balance = Account.balance(from_acc) - amount
+    if new_from_balance < -Account.limit(from_acc)
+      puts("line #{line_num}: error: insufficient funds in #{from}")
+      line_num += 1
+      next
+    end
+
+    new_from_lowest = if new_from_balance < Account.lowest(from_acc) then new_from_balance else Account.lowest(from_acc) end
+    new_to_balance = Account.balance(to_acc) + amount
+    new_to_lowest = if new_to_balance < Account.lowest(to_acc) then new_to_balance else Account.lowest(to_acc) end
+
+    new_from_acc = Account.new(new_from_balance, Account.limit(from_acc), new_from_lowest, Account.txns(from_acc) + 1, Account.withdrawals_since_month(from_acc) + 1)
+    new_to_acc = Account.new(new_to_balance, Account.limit(to_acc), new_to_lowest, Account.txns(to_acc) + 1, Account.withdrawals_since_month(to_acc))
+
+    Hash.store(accounts, from, new_from_acc)
+    Hash.store(accounts, to, new_to_acc)
+
+  elsif cmd == "MONTHEND"
+    if Array.size(fields) != 1
+      puts("line #{line_num}: error: wrong field count")
+      line_num += 1
+      next
+    end
+
+    month_count += 1
+    puts("== month #{month_count} ==")
+
+    # Process each account
+    sorted_names = Array.sort(Hash.keys(accounts))
+    Array.each(sorted_names) do |name|
+      acc = Hash.fetch(accounts, name)
+      balance = Account.balance(acc)
+      withdrawals = Account.withdrawals_since_month(acc)
+
+      # Interest
+      if balance < 0
+        charge = ceil_cent(Float(-balance) * 0.015)
+        if charge > 0
+          balance = balance - charge
+          puts("#{name} interest -#{money_to_s(charge)}")
+        end
+      else
+        credit = floor_cent(Float(balance) * 0.0025)
+        if credit > 0
+          balance = balance + credit
+          puts("#{name} interest +#{money_to_s(credit)}")
+        end
+      end
+
+      # Fee
+      if withdrawals > 4
+        balance = balance - 2.0
+        puts("#{name} fee -2.00")
+      end
+
+      # Update account with new balance and reset withdrawal counter
+      new_lowest = if balance < Account.lowest(acc) then balance else Account.lowest(acc) end
+      new_acc = Account.new(balance, Account.limit(acc), new_lowest, Account.txns(acc), 0)
+      Hash.store(accounts, name, new_acc)
+    end
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+
+  line_num += 1
+end
+
+# Final report
+if Array.size(Hash.keys(accounts)) == 0
+  puts("no accounts")
+else
+  # Sort by balance (descending) then name
+  sorted_accounts = Array.sort_by(Hash.keys(accounts)) do |name|
+    acc = Hash.fetch(accounts, name)
+    [-Account.balance(acc), name]
+  end
+
+  puts(format("%-16s %12s %12s %5s", "account", "balance", "lowest", "txns"))
+
+  total = 0.0
+  Array.each(sorted_accounts) do |name|
+    acc = Hash.fetch(accounts, name)
+    balance = Account.balance(acc)
+    lowest = Account.lowest(acc)
+    txns = Account.txns(acc)
+    total += balance
+
+    puts(format("%-16s %12s %12s %5d", name, money_to_s(balance), money_to_s(lowest), txns))
+  end
+
+  puts("total: #{money_to_s(total)}")
+end

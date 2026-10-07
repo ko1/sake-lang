@@ -1,0 +1,381 @@
+# Library loans system
+
+# Data structures:
+# Book status: {book: {on_loan: member/nil, held_for: member/nil, queues: [members]}}
+# Member info: {member: {loans: [books], due: [days], owes: amount}}
+
+def valid_day?(s) = /^\d+$/ === s && Integer.to_s(String.to_i(s)) == s
+
+def valid_member?(s) = /^[a-z]{1,12}$/ === s
+
+def valid_book?(s) = /^[A-Z][A-Z0-9]{0,7}$/ === s
+
+def valid_amount?(s)
+  return false if s == nil || String.size(s) == 0
+  if String.match(s, /^(\d+)(?:\.(\d{1,2}))?$/)
+    true
+  else
+    false
+  end
+end
+
+def parse_amount(s)
+  if String.match(s, /^(\d+)\.(\d{1,2})$/)
+    Float(s)
+  elsif String.match(s, /^(\d+)$/)
+    Float(String.to_i(s))
+  else
+    nil
+  end
+end
+
+# Main program
+lines = Array[]
+while (line = gets)
+  Array.push(lines, line)
+end
+
+current_day = 0
+books = Hash.new(nil)  # book -> {on_loan: member, held_for: member, queue: [members]}
+members = Hash.new(nil)  # member -> {loans: [books], due_days: [days], owes: 0.0}
+
+line_num = 0
+Array.each(lines) do |line_str|
+  line_num += 1
+
+  # Skip blank lines
+  if String.empty?(String.strip(line_str))
+    next
+  end
+
+  parts = String.split(String.strip(line_str), /\s+/)
+
+  # Check day
+  if Array.size(parts) == 0 || !valid_day?(parts[0])
+    puts("line #{line_num}: error: bad day")
+    next
+  end
+
+  day = String.to_i(parts[0])
+  if day < current_day
+    puts("line #{line_num}: error: day goes backwards")
+    next
+  end
+  current_day = day
+
+  # Check command
+  if Array.size(parts) < 2
+    puts("line #{line_num}: error: unknown command")
+    next
+  end
+
+  command = parts[1]
+
+  case command
+  in "CHECKOUT"
+    # DAY CHECKOUT MEMBER BOOK
+    if Array.size(parts) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    member = parts[2]
+    book = parts[3]
+
+    if !valid_member?(member)
+      puts("line #{line_num}: error: bad member")
+      next
+    end
+    if !valid_book?(book)
+      puts("line #{line_num}: error: bad book")
+      next
+    end
+
+    # Check rules
+    book_info = books[book]
+
+    # Check if book is on loan
+    if book_info != nil && book_info[:on_loan] != nil
+      puts("line #{line_num}: refused: #{book} is on loan")
+      next
+    end
+
+    # Check if book is held for someone else
+    if book_info != nil && book_info[:held_for] != nil && book_info[:held_for] != member
+      puts("line #{line_num}: refused: #{book} is held for #{book_info[:held_for]}")
+      next
+    end
+
+    # Check if member has overdue books
+    member_info = members[member]
+    has_overdue = false
+    if member_info != nil
+      Array.each_with_index(member_info[:loans]) do |loan_book, idx|
+        if member_info[:due_days][idx] < current_day
+          has_overdue = true
+        end
+      end
+    end
+
+    if has_overdue
+      puts("line #{line_num}: refused: #{member} has overdue books")
+      next
+    end
+
+    # Check if member has 3 loans
+    if member_info != nil && Array.size(member_info[:loans]) >= 3
+      puts("line #{line_num}: refused: #{member} has 3 loans")
+      next
+    end
+
+    # Check if member owes 10 or more
+    owes = 0.0
+    if member_info != nil
+      owes = member_info[:owes]
+    end
+
+    if owes >= 10.0
+      puts("line #{line_num}: refused: #{member} owes #{format("%.2f", owes)}")
+      next
+    end
+
+    # Proceed with checkout
+    if member_info == nil
+      members[member] = {loans: Array[], due_days: Array[], owes: 0.0}
+      member_info = members[member]
+    end
+
+    Array.push(member_info[:loans], book)
+    Array.push(member_info[:due_days], current_day + 14)
+
+    if book_info == nil
+      books[book] = {on_loan: member, held_for: nil, queue: Array[]}
+    else
+      book_info[:on_loan] = member
+      # Remove hold on this book if it was for this member
+      if book_info[:held_for] == member
+        book_info[:held_for] = nil
+      end
+    end
+
+    puts("#{member} borrowed #{book}, due day #{current_day + 14}")
+
+  in "RETURN"
+    # DAY RETURN BOOK
+    if Array.size(parts) != 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    book = parts[2]
+
+    if !valid_book?(book)
+      puts("line #{line_num}: error: bad book")
+      next
+    end
+
+    book_info = books[book]
+
+    if book_info == nil || book_info[:on_loan] == nil
+      puts("line #{line_num}: refused: #{book} is not on loan")
+      next
+    end
+
+    member = book_info[:on_loan]
+    member_info = members[member]
+
+    # Find and remove the book from member's loans
+    book_idx = nil
+    Array.each_with_index(member_info[:loans]) do |b, i|
+      if b == book
+        book_idx = i
+      end
+    end
+
+    if book_idx == nil
+      puts("line #{line_num}: refused: #{book} is not on loan")
+      next
+    end
+
+    due_day = member_info[:due_days][book_idx]
+    days_late = current_day - due_day
+
+    # Remove from loans
+    Array.delete_at(member_info[:loans], book_idx)
+    Array.delete_at(member_info[:due_days], book_idx)
+
+    # Calculate and apply fine
+    if days_late > 0
+      fine = Float(days_late) * 0.25
+      if fine > 5.0
+        fine = 5.0
+      end
+      member_info[:owes] += fine
+      puts("#{member} returned #{book}, #{days_late} days late, fine #{format("%.2f", fine)}")
+    else
+      puts("#{member} returned #{book}")
+    end
+
+    book_info[:on_loan] = nil
+
+    # Handle queue
+    if Array.size(book_info[:queue]) > 0
+      next_member = Array.shift(book_info[:queue])
+      book_info[:held_for] = next_member
+      puts("#{book} held for #{next_member}")
+    end
+
+  in "RESERVE"
+    # DAY RESERVE MEMBER BOOK
+    if Array.size(parts) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    member = parts[2]
+    book = parts[3]
+
+    if !valid_member?(member)
+      puts("line #{line_num}: error: bad member")
+      next
+    end
+    if !valid_book?(book)
+      puts("line #{line_num}: error: bad book")
+      next
+    end
+
+    # Check if member already has the book
+    member_info = members[member]
+    if member_info != nil && Array.include?(member_info[:loans], book)
+      puts("line #{line_num}: refused: #{member} already has #{book}")
+      next
+    end
+
+    # Check if member already reserved the book
+    book_info = books[book]
+    if book_info != nil
+      if book_info[:held_for] == member
+        puts("line #{line_num}: refused: #{member} already reserved #{book}")
+        next
+      end
+      if Array.include?(book_info[:queue], member)
+        puts("line #{line_num}: refused: #{member} already reserved #{book}")
+        next
+      end
+    end
+
+    # Check if book is available
+    if book_info == nil || (book_info[:on_loan] == nil && book_info[:held_for] == nil && Array.size(book_info[:queue]) == 0)
+      puts("line #{line_num}: refused: #{book} is available")
+      next
+    end
+
+    # Add to queue or hold
+    if member_info == nil
+      members[member] = {loans: Array[], due_days: Array[], owes: 0.0}
+      member_info = members[member]
+    end
+
+    if book_info == nil
+      books[book] = {on_loan: nil, held_for: nil, queue: Array[]}
+      book_info = books[book]
+    end
+
+    if book_info[:held_for] == nil && book_info[:on_loan] == nil
+      book_info[:held_for] = member
+      puts("reserved #{book} for #{member} (position 1)")
+    else
+      Array.push(book_info[:queue], member)
+      position = Array.size(book_info[:queue])
+      if book_info[:held_for] != nil
+        position += 1
+      end
+      puts("reserved #{book} for #{member} (position #{position})")
+    end
+
+  in "PAY"
+    # DAY PAY MEMBER AMOUNT
+    if Array.size(parts) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    member = parts[2]
+    amount_str = parts[3]
+
+    if !valid_member?(member)
+      puts("line #{line_num}: error: bad member")
+      next
+    end
+    if !valid_amount?(amount_str)
+      puts("line #{line_num}: error: bad amount")
+      next
+    end
+
+    member_info = members[member]
+    if member_info == nil
+      member_info = {loans: Array[], due_days: Array[], owes: 0.0}
+      members[member] = member_info
+    end
+
+    amount = parse_amount(amount_str)
+    owes = member_info[:owes]
+
+    if amount > owes
+      puts("line #{line_num}: refused: #{member} owes only #{format("%.2f", owes)}")
+      next
+    end
+
+    member_info[:owes] -= amount
+    remaining = member_info[:owes]
+    puts("#{member} paid #{format("%.2f", amount)}, owes #{format("%.2f", remaining)}")
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+end
+
+# Final report
+puts("member       loans     owes")
+
+# Collect members who borrowed or reserved
+member_list = Array[]
+Hash.each(members) do |member, info|
+  if Array.size(info[:loans]) > 0 || info[:owes] > 0.0
+    Array.push(member_list, member)
+  end
+end
+
+# Sort by byte order
+member_list = Array.sort(member_list)
+
+Array.each(member_list) do |member|
+  info = members[member]
+  loans_count = Array.size(info[:loans])
+  owes = info[:owes]
+  puts(format("%-12s %5d %8s", member, loans_count, format("%.2f", owes)))
+end
+
+puts("overdue on day #{current_day}:")
+
+# Find all overdue loans
+overdue_loans = Array[]
+Hash.each(members) do |member, info|
+  Array.each_with_index(info[:loans]) do |book, idx|
+    due_day = info[:due_days][idx]
+    if due_day < current_day
+      Array.push(overdue_loans, [due_day, book, member])
+    end
+  end
+end
+
+if Array.size(overdue_loans) == 0
+  puts("  none")
+else
+  # Sort by due day, then book
+  overdue_loans = Array.sort_by(overdue_loans) { |due, book, member| [due, book] }
+  Array.each(overdue_loans) do |due_day, book, member|
+    days_late = current_day - due_day
+    puts("  #{book} #{member} due #{due_day} (#{days_late} days)")
+  end
+end

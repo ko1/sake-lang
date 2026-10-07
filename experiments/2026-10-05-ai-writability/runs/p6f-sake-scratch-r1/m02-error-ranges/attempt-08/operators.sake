@@ -1,0 +1,173 @@
+# Operators (SPEC section 7): arithmetic, comparison, equality, membership,
+# indexing and slicing. sp is the range an error is reported at.
+
+module Ops
+  module_function
+
+  def mismatch(op, a, b, sp)
+    Fail.runtime("type", sp, "cannot apply '#{op}' to #{Values.type_name(a)} and #{Values.type_name(b)}")
+  end
+
+  # A binary operator other than `and` / `or`.
+  def binary(op, a, b, sp)
+    case op
+    in "+" then add(a, b, sp)
+    in "-" | "*" | "/" | "%" | "**" then arithmetic(op, a, b, sp)
+    in "<" | "<=" | ">" | ">=" then compare(op, a, b, sp)
+    in "==" then Values.equal?(a, b, 0, sp)
+    in "!=" then !Values.equal?(a, b, 0, sp)
+    in "in" then member?(a, b, sp)
+    end
+  end
+
+  # `+` adds ints and concatenates two strings or two arrays.
+  def add(a, b, sp)
+    case a
+    in Integer then return a + b if (b in Integer)
+    in String then return a + b if (b in String)
+    in MiniArray then return MiniArray.new(MiniArray.items(a) + MiniArray.items(b)) if (b in MiniArray)
+    else nil
+    end
+    mismatch("+", a, b, sp)
+  end
+
+  # `- * / % **` on two ints; / and % round toward negative infinity.
+  def arithmetic(op, a, b, sp)
+    if a in Integer
+      return int_arithmetic(op, a, b, sp) if (b in Integer)
+    end
+    mismatch(op, a, b, sp)
+  end
+
+  def int_arithmetic(op, a, b, sp)
+    case op
+    in "-" then a - b
+    in "*" then a * b
+    in "/"
+      Fail.runtime("zero", sp, "division by zero") if b == 0
+      a / b
+    in "%"
+      Fail.runtime("zero", sp, "division by zero") if b == 0
+      a % b
+    in "**"
+      Fail.runtime("value", sp, "negative exponent") if b < 0
+      a ** b
+    end
+  end
+
+  # `< <= > >=` on two ints or two strings (strings by code points).
+  def compare(op, a, b, sp)
+    case a
+    in Integer then return ordered(op, a, b) if (b in Integer)
+    in String then return ordered(op, a, b) if (b in String)
+    else nil
+    end
+    mismatch(op, a, b, sp)
+  end
+
+  def ordered(op, a, b)
+    case op
+    in "<" then a < b
+    in "<=" then a <= b
+    in ">" then a > b
+    in ">=" then a >= b
+    end
+  end
+
+  def negate(v, sp)
+    return -v if (v in Integer)
+    Fail.runtime("type", sp, "cannot negate #{Values.type_name(v)}")
+  end
+
+  # `x in c` (7.4).
+  def member?(x, c, sp)
+    case c
+    in MiniArray then Array.any?(MiniArray.items(c)) { |e| Values.equal?(x, e, 0, sp) }
+    in MiniMap then (x in String | Integer) && Hash.key?(MiniMap.entries(c), x)
+    in String
+      return String.include?(c, x) if (x in String)
+      mismatch("in", x, c, sp)
+    else mismatch("in", x, c, sp)
+    end
+  end
+
+  # The position an int index refers to in a sequence of length n (negative
+  # counts from the end), checked against the bounds.
+  def position(index, n, what, sp)
+    i = index < 0 ? index + n : index
+    return i if i >= 0 && i < n
+    Fail.runtime("index", sp, "index #{index} out of range for #{what} of length #{n}")
+  end
+
+  def index_type_error(what, index, sp)
+    Fail.runtime("type", sp, "#{what} index must be an int, got #{Values.type_name(index)}")
+  end
+
+  def missing_key(key, sp) = Fail.runtime("key", sp, "key #{Text.repr(key, 0)} not found")
+
+  # Reading `a[i]` (7.6).
+  def index(target, key, sp)
+    case target
+    in MiniArray
+      index_type_error("array", key, sp) unless (key in Integer)
+      items = MiniArray.items(target)
+      items[position(key, Array.size(items), "array", sp)]
+    in String
+      index_type_error("string", key, sp) unless (key in Integer)
+      target[position(key, String.length(target), "string", sp)]
+    in MiniMap
+      k = Values.map_key(key, sp)
+      entries = MiniMap.entries(target)
+      missing_key(k, sp) unless Hash.key?(entries, k)
+      entries[k]
+    else Fail.runtime("type", sp, "cannot index #{Values.type_name(target)}")
+    end
+  end
+
+  # Writing `a[i] = v` (7.6): arrays do not grow; maps add or replace.
+  def store(target, key, value, sp)
+    case target
+    in MiniArray
+      index_type_error("array", key, sp) unless (key in Integer)
+      items = MiniArray.items(target)
+      items[position(key, Array.size(items), "array", sp)] = value
+    in MiniMap
+      MiniMap.entries(target)[Values.map_key(key, sp)] = value
+    in String then Fail.runtime("type", sp, "strings are immutable")
+    else Fail.runtime("type", sp, "cannot index #{Values.type_name(target)}")
+    end
+    nil
+  end
+
+  # A slice bound: nil means `default`; negative counts from the end once;
+  # then it is clamped to 0..n.
+  def bound(b, default, n, sp)
+    return default if b == nil
+    Fail.runtime("type", sp, "slice bound must be an int, got #{Values.type_name(b)}") unless (b in Integer)
+    i = b < 0 ? b + n : b
+    return 0 if i < 0
+    return n if i > n
+    i
+  end
+
+  # `a[lo:hi]` on an array or a string: a new array or string, never failing
+  # on bounds.
+  def slice(target, lo, hi, sp)
+    case target
+    in MiniArray
+      items = MiniArray.items(target)
+      n = Array.size(items)
+      i = bound(lo, 0, n, sp)
+      j = bound(hi, n, n, sp)
+      return MiniArray.new(Array[]) if j <= i
+      MiniArray.new(Array.first(Array.drop(items, i), j - i))
+    in String
+      n = String.length(target)
+      i = bound(lo, 0, n, sp)
+      j = bound(hi, n, n, sp)
+      return "" if j <= i
+      String.slice(target, i, j - i)
+    else Fail.runtime("type", sp, "cannot slice #{Values.type_name(target)}")
+    end
+  end
+end

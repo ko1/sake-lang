@@ -1,0 +1,275 @@
+def read_all_lines
+  lines = Array[]
+  while true
+    line = gets
+    break unless line
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def is_valid_name(name)
+  String.match?(name, /^[a-z0-9_]+$/)
+end
+
+def process_config(all_lines)
+  config = Hash[]
+  config_messages = Array[]
+  sections = Array[]
+  current_section = "main"
+
+  Array.push(sections, current_section)
+  Hash.store(config, "main", Hash[])
+
+  Integer.times(Array.size(all_lines)) do |i|
+    line = Array.at(all_lines, i)
+    line_num = i + 1
+
+    trimmed = String.strip(line)
+
+    if String.empty?(trimmed)
+      next
+    end
+
+    if trimmed == "%%"
+      break
+    end
+
+    if String.start_with?(trimmed, "#") || String.start_with?(trimmed, ";")
+      next
+    end
+
+    if String.start_with?(trimmed, "[") && String.end_with?(trimmed, "]")
+      section = String.slice(trimmed, 1, String.size(trimmed) - 2)
+      if is_valid_name(section)
+        current_section = section
+        unless Array.include?(sections, section)
+          Array.push(sections, section)
+          Hash.store(config, section, Hash[])
+        end
+      else
+        Array.push(config_messages, "line #{line_num}: syntax error")
+      end
+      next
+    end
+
+    parts = String.split(trimmed, "=", 2)
+    if Array.size(parts) == 2
+      key = String.strip(Array.at(parts, 0))
+      value = String.strip(Array.at(parts, 1))
+
+      if is_valid_name(key)
+        section_hash = Hash.at(config, current_section)
+        if Hash.has_key?(section_hash, key)
+          Array.push(config_messages, "line #{line_num}: duplicate key #{current_section}.#{key}")
+        end
+        Hash.store(section_hash, key, value)
+      else
+        Array.push(config_messages, "line #{line_num}: syntax error")
+      end
+    else
+      Array.push(config_messages, "line #{line_num}: syntax error")
+    end
+  end
+
+  [config, config_messages]
+end
+
+def resolve_value(config, section, key, visited)
+  section_hash = Hash.at(config, section)
+
+  if section_hash && Hash.has_key?(section_hash, key)
+    value = Hash.at(section_hash, key)
+    visited_key = section + "." + key
+
+    if Array.include?(visited, visited_key)
+      cycle_str = Array.join(Array.+(visited, [visited_key]), " -> ")
+      [:error, "cycle " + cycle_str]
+    else
+      new_visited = Array.+(visited, [visited_key])
+      resolved = resolve_references(config, section, value, new_visited)
+      resolved
+    end
+  else
+    [:error, "undefined " + section + "." + key]
+  end
+end
+
+def resolve_references(config, section, value, visited)
+  result = ""
+  i = 0
+
+  while i < String.size(value)
+    if String.slice(value, i, 2) == "${"
+      j = String.index(value, "}", i)
+      if j
+        ref = String.slice(value, i + 2, j - i - 2)
+
+        if String.include?(ref, ".")
+          parts = String.split(ref, ".", 2)
+          ref_section = Array.at(parts, 0)
+          ref_key = Array.at(parts, 1)
+        else
+          ref_section = section
+          ref_key = ref
+        end
+
+        if is_valid_name(ref_section) && is_valid_name(ref_key)
+          resolved = resolve_value(config, ref_section, ref_key, visited)
+          case resolved
+          in [:error, msg]
+            return [:error, msg]
+          in [:ok, text]
+            result = result + text
+          end
+        else
+          result = result + "${" + ref + "}"
+        end
+
+        i = j + 1
+      else
+        result = result + String.slice(value, i, 1)
+        i += 1
+      end
+    else
+      result = result + String.slice(value, i, 1)
+      i += 1
+    end
+  end
+
+  [:ok, result]
+end
+
+def type_value(value)
+  if String.match?(value, /^[+-]?\d+$/)
+    v = String.to_i(value)
+    ["int", Integer.to_s(v)]
+  elsif String.downcase(value) == "true" || String.downcase(value) == "yes" || String.downcase(value) == "on"
+    ["bool", "true"]
+  elsif String.downcase(value) == "false" || String.downcase(value) == "no" || String.downcase(value) == "off"
+    ["bool", "false"]
+  elsif String.include?(value, ",")
+    items = String.split(value, ",")
+    trimmed = Array.map(items) { |it| String.strip(it) }
+    filtered = Array.select(trimmed) { |it| !String.empty?(it) }
+    count = Array.size(filtered)
+    if count > 0
+      ["list", String.join(Array[count], " ") + " " + Array.join(filtered, " | ")]
+    else
+      ["list", "0"]
+    end
+  else
+    ["str", "\"#{value}\""]
+  end
+end
+
+def main
+  all_lines = read_all_lines
+
+  config_end = Array.size(all_lines)
+  Integer.times(Array.size(all_lines)) do |i|
+    if String.strip(Array.at(all_lines, i)) == "%%"
+      config_end = i
+      break
+    end
+  end
+
+  config_lines = Array[]
+  Integer.times(config_end) do |i|
+    Array.push(config_lines, Array.at(all_lines, i))
+  end
+
+  config, config_messages = process_config(config_lines)
+
+  Array.each(config_messages) { |msg| puts(msg) }
+
+  if config_end < Array.size(all_lines)
+    Integer.times(Array.size(all_lines) - config_end - 1) do |i|
+      query_idx = config_end + i + 1
+      line = Array.at(all_lines, query_idx)
+      line_num = query_idx + 1
+      trimmed = String.strip(line)
+
+      if String.empty?(trimmed)
+        next
+      end
+
+      parts = String.split(trimmed, /\s+/)
+
+      if Array.size(parts) == 0
+        next
+      end
+
+      cmd = Array.at(parts, 0)
+
+      if cmd == "GET"
+        if Array.size(parts) != 2
+          puts("line #{line_num}: bad query")
+        else
+          name = Array.at(parts, 1)
+
+          if String.include?(name, ".")
+            sections_parts = String.split(name, ".", 2)
+            section = Array.at(sections_parts, 0)
+            key = Array.at(sections_parts, 1)
+          else
+            section = "main"
+            key = name
+          end
+
+          unless is_valid_name(section) && is_valid_name(key)
+            puts("line #{line_num}: bad query")
+            next
+          end
+
+          section_hash = Hash.at(config, section)
+          if section_hash && Hash.has_key?(section_hash, key)
+            resolved = resolve_value(config, section, key, Array[])
+            case resolved
+            in [:error, msg]
+              puts("#{section}.#{key}: error: #{msg}")
+            in [:ok, value]
+              typed = type_value(value)
+              type_name = Array.at(typed, 0)
+              type_val = Array.at(typed, 1)
+              if type_name == "list"
+                puts("#{section}.#{key} = #{type_name}[#{type_val}]")
+              else
+                puts("#{section}.#{key} = #{type_name} #{type_val}")
+              end
+            end
+          else
+            puts("#{section}.#{key}: not found")
+          end
+        end
+      elsif cmd == "KEYS"
+        if Array.size(parts) != 2
+          puts("line #{line_num}: bad query")
+        else
+          section = Array.at(parts, 1)
+          unless is_valid_name(section)
+            puts("line #{line_num}: bad query")
+            next
+          end
+
+          section_hash = Hash.at(config, section)
+          if section_hash
+            keys = Hash.keys(section_hash)
+            Array.sort!(keys)
+            if Array.size(keys) == 0
+              puts("#{section}: (none)")
+            else
+              puts("#{section}: " + Array.join(keys, ", "))
+            end
+          else
+            puts("#{section}: not found")
+          end
+        end
+      else
+        puts("line #{line_num}: bad query")
+      end
+    end
+  end
+end
+
+main

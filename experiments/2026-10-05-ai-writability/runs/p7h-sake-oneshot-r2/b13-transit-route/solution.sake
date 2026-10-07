@@ -1,0 +1,259 @@
+def read_all_lines
+  lines = Array[]
+  while true
+    line = gets
+    break unless line
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def is_valid_name(name)
+  String.match?(name, /^[a-zA-Z0-9_]+$/)
+end
+
+def is_valid_minutes(m_str)
+  if String.match?(m_str, /^[1-9]\d{0,2}$/)
+    m = String.to_i(m_str)
+    m >= 1 && m <= 999
+  else
+    false
+  end
+end
+
+def parse_segment(fields)
+  if Array.size(fields) != 4
+    nil
+  else
+    line = Array.at(fields, 0)
+    from = Array.at(fields, 1)
+    to = Array.at(fields, 2)
+    mins_str = Array.at(fields, 3)
+
+    if is_valid_name(line) && is_valid_name(from) && is_valid_name(to) &&
+       is_valid_minutes(mins_str) && from != to
+      mins = String.to_i(mins_str)
+      [line, from, to, mins]
+    else
+      nil
+    end
+  end
+end
+
+def dijkstra_route(graph, stations, from, to, penalty)
+  if from == to
+    [0, 0, []]
+  else
+    dist = Hash.new(999999)
+    Hash.store(dist, from, 0)
+    transfers = Hash.new(999999)
+    Hash.store(transfers, from, 0)
+    visited = Set[]
+    parent = Hash[]
+    parent_line = Hash[]
+
+    Integer.times(Array.size(stations)) do |_iter|
+      best = nil
+      best_cost = 999999
+
+      Array.each(stations) do |s|
+        unless Set.include?(visited, s)
+          curr_dist = Hash.at(dist, s)
+          if curr_dist < best_cost
+            best = s
+            best_cost = curr_dist
+          end
+        end
+      end
+
+      break unless best
+
+      Set.add(visited, best)
+
+      if best == to
+        break
+      end
+
+      if Hash.has_key?(graph, best)
+        edges = Hash.at(graph, best)
+        Hash.each(edges) do |next_station, line_options|
+          Array.each(line_options) do |line, time|
+            new_dist = Hash.at(dist, best) + time
+            new_trans = Hash.at(transfers, best)
+
+            if parent_line && Hash.has_key?(parent_line, best)
+              parent_l = Hash.at(parent_line, best)
+              if line != parent_l
+                new_trans += 1
+              end
+            end
+
+            curr_dist = Hash.at(dist, next_station)
+            curr_trans = Hash.at(transfers, next_station)
+
+            if new_dist < curr_dist || (new_dist == curr_dist && new_trans < curr_trans)
+              Hash.store(dist, next_station, new_dist)
+              Hash.store(transfers, next_station, new_trans)
+              Hash.store(parent, next_station, best)
+              Hash.store(parent_line, next_station, line)
+            end
+          end
+        end
+      end
+    end
+
+    if Hash.has_key?(dist, to) && Hash.at(dist, to) < 999999
+      route_path = Array[]
+      curr = to
+      while Hash.has_key?(parent, curr)
+        prev = Hash.at(parent, curr)
+        line = Hash.at(parent_line, curr)
+        Array.unshift(route_path, [prev, curr, line])
+        curr = prev
+      end
+
+      total_time = Hash.at(dist, to) + Hash.at(transfers, to) * penalty
+      trans = Hash.at(transfers, to)
+
+      [total_time, trans, route_path]
+    else
+      [999999, 999999, []]
+    end
+  end
+end
+
+def main
+  all_lines = read_all_lines
+
+  penalty = String.to_i(Array.at(all_lines, 0))
+
+  segments = Array[]
+  stations_set = Set[]
+  graph = Hash[]
+  errors = Array[]
+  queries_start = nil
+
+  Integer.times(Array.size(all_lines) - 1) do |i|
+    line_num = i + 2
+    line = Array.at(all_lines, i + 1)
+    stripped = String.strip(line)
+
+    if String.empty?(stripped)
+      next
+    end
+
+    if stripped == "QUERIES"
+      queries_start = i + 2
+      break
+    end
+
+    fields = String.split(stripped, /\s+/)
+    result = parse_segment(fields)
+
+    if result
+      seg_line, from, to, mins = result
+
+      Array.push(segments, result)
+      Set.add(stations_set, from)
+      Set.add(stations_set, to)
+
+      unless Hash.has_key?(graph, from)
+        Hash.store(graph, from, Hash[])
+      end
+      from_edges = Hash.at(graph, from)
+      unless Hash.has_key?(from_edges, to)
+        Hash.store(from_edges, to, Array[])
+      end
+      to_edges = Hash.at(from_edges, to)
+      Array.push(to_edges, [seg_line, mins])
+
+      unless Hash.has_key?(graph, to)
+        Hash.store(graph, to, Hash[])
+      end
+      to_edges_rev = Hash.at(graph, to)
+      unless Hash.has_key?(to_edges_rev, from)
+        Hash.store(to_edges_rev, from, Array[])
+      end
+      from_edges_rev = Hash.at(to_edges_rev, from)
+      Array.push(from_edges_rev, [seg_line, mins])
+    else
+      Array.push(errors, "invalid segment at line #{line_num}")
+    end
+  end
+
+  Array.each(errors) { |e| puts(e) }
+
+  stations = Array[]
+  Set.each(stations_set) { |s| Array.push(stations, s) }
+  Array.sort!(stations)
+
+  if queries_start
+    Integer.times(Array.size(all_lines) - queries_start) do |i|
+      query_line_num = queries_start + i + 1
+      line = Array.at(all_lines, queries_start + i)
+      stripped = String.strip(line)
+
+      if String.empty?(stripped)
+        next
+      end
+
+      fields = String.split(stripped, /\s+/)
+
+      if Array.size(fields) != 2
+        puts("invalid query at line #{query_line_num}")
+      else
+        from = Array.at(fields, 0)
+        to = Array.at(fields, 1)
+
+        unless Set.include?(stations_set, from)
+          puts("#{from} -> #{to}: unknown station #{from}")
+        else
+          unless Set.include?(stations_set, to)
+            puts("#{from} -> #{to}: unknown station #{to}")
+          else
+            result = dijkstra_route(graph, stations, from, to, penalty)
+            time, trans, route = result
+
+            if from == to
+              puts("#{from} -> #{to}: 0 min, 0 transfers")
+            elsif time == 999999
+              puts("#{from} -> #{to}: no route")
+            else
+              trans_str = if trans == 1
+                "1 transfer"
+              else
+                "#{trans} transfers"
+              end
+              puts("#{from} -> #{to}: #{time} min, #{trans_str}")
+
+              legs = Array[]
+              current_line = nil
+              current_leg = Array[]
+
+              Array.each(route) do |from_s, to_s, line_name|
+                if line_name != current_line
+                  if Array.size(current_leg) > 0
+                    leg_str = current_line + ": " + Array.join(current_leg, " > ")
+                    Array.push(legs, leg_str)
+                  end
+                  current_line = line_name
+                  current_leg = Array[from_s]
+                end
+                Array.push(current_leg, to_s)
+              end
+
+              if Array.size(current_leg) > 0
+                leg_str = current_line + ": " + Array.join(current_leg, " > ")
+                Array.push(legs, leg_str)
+              end
+
+              puts("  " + Array.join(legs, "; "))
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+main

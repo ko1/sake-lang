@@ -1,0 +1,356 @@
+# Meeting room bookings
+
+Booking = Struct.new(:id, :room, :day, :start_mins, :end_mins, :who)
+
+def is_valid_room?(room)
+  if String.size(room) < 1 || String.size(room) > 8
+    return false
+  end
+  String.match(room, /^[A-Z0-9]+$/) != nil
+end
+
+def is_valid_day?(day)
+  day == "Mon" || day == "Tue" || day == "Wed" || day == "Thu" || day == "Fri" || day == "Sat" || day == "Sun"
+end
+
+def parse_time(time_str)
+  # Returns minutes since 08:00, or nil if invalid
+  # Format: HH:MM, between 08:00 and 20:00, multiple of 15
+  parts = String.split(time_str, ":")
+  if Array.size(parts) != 2
+    return nil
+  end
+
+  hour_str = Array.at(parts, 0)
+  min_str = Array.at(parts, 1)
+
+  begin
+    hour = String.to_i(hour_str)
+    mins = String.to_i(min_str)
+
+    if hour < 8 || hour > 20 || mins < 0 || mins >= 60
+      return nil
+    end
+
+    total_mins = hour * 60 + mins
+
+    if (total_mins - 480) % 15 != 0  # 480 = 8 * 60
+      return nil
+    end
+
+    if hour == 20 && mins > 0
+      return nil
+    end
+
+    total_mins - 480
+  rescue
+    nil
+  end
+end
+
+def format_time(mins)
+  # Convert back to HH:MM
+  total_mins = mins + 480
+  hour = total_mins / 60
+  min = total_mins % 60
+  Kernel.format("%02d:%02d", hour, min)
+end
+
+def is_valid_name?(who)
+  if String.size(who) < 1 || String.size(who) > 12
+    return false
+  end
+  String.match(who, /^[a-z]+$/) != nil
+end
+
+def is_digit_string?(s)
+  if String.size(s) == 0
+    return false
+  end
+  String.match(s, /^\d+$/) != nil
+end
+
+def times_overlap?(s1, e1, s2, e2)
+  s1 < e2 && s2 < e1
+end
+
+lines = Array[]
+while true
+  line = Kernel.gets()
+  if line == nil
+    break
+  end
+  Array.push(lines, line)
+end
+
+bookings = Hash[]  # id -> Booking
+next_id = 1
+day_order = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+
+  stripped = String.strip(line)
+  if String.size(stripped) == 0
+    next
+  end
+
+  fields = String.split(stripped, /\s+/)
+  if Array.size(fields) == 0
+    next
+  end
+
+  command = Array.at(fields, 0)
+
+  if command == "BOOK"
+    if Array.size(fields) != 5
+      puts(Kernel.format("line %d: error: wrong field count", line_num))
+      next
+    end
+
+    room = Array.at(fields, 1)
+    day = Array.at(fields, 2)
+    time_range = Array.at(fields, 3)
+    who = Array.at(fields, 4)
+
+    # Validate room
+    if !is_valid_room?(room)
+      puts(Kernel.format("line %d: error: bad room", line_num))
+      next
+    end
+
+    # Validate day
+    if !is_valid_day?(day)
+      puts(Kernel.format("line %d: error: bad day", line_num))
+      next
+    end
+
+    # Parse time
+    time_parts = String.split(time_range, "-")
+    if Array.size(time_parts) != 2
+      puts(Kernel.format("line %d: error: bad time", line_num))
+      next
+    end
+
+    start_str = Array.at(time_parts, 0)
+    end_str = Array.at(time_parts, 1)
+
+    start_mins = parse_time(start_str)
+    if start_mins == nil
+      puts(Kernel.format("line %d: error: bad time", line_num))
+      next
+    end
+
+    end_mins = parse_time(end_str)
+    if end_mins == nil
+      puts(Kernel.format("line %d: error: bad time", line_num))
+      next
+    end
+
+    if start_mins >= end_mins
+      puts(Kernel.format("line %d: error: bad time", line_num))
+      next
+    end
+
+    # Validate name
+    if !is_valid_name?(who)
+      puts(Kernel.format("line %d: error: bad name", line_num))
+      next
+    end
+
+    # Check for conflicts
+    conflict = nil
+    Hash.each(bookings) do |bid, b|
+      if Booking.room(b) == room && Booking.day(b) == day
+        if times_overlap?(start_mins, end_mins, Booking.start_mins(b), Booking.end_mins(b))
+          if conflict == nil || Booking.start_mins(b) < Booking.start_mins(conflict)
+            conflict = b
+          end
+        end
+      end
+    end
+
+    if conflict != nil
+      start_fmt = format_time(Booking.start_mins(conflict))
+      end_fmt = format_time(Booking.end_mins(conflict))
+      puts(Kernel.format("CONFLICT %s %s with #%d (%s %s-%s)", room, day, Booking.id(conflict), Booking.who(conflict), start_fmt, end_fmt))
+      next
+    end
+
+    # Check booking limit (3 per person per day)
+    count_for_person_day = 0
+    Hash.each(bookings) do |bid, b|
+      if Booking.who(b) == who && Booking.day(b) == day
+        count_for_person_day += 1
+      end
+    end
+
+    if count_for_person_day >= 3
+      puts(Kernel.format("LIMIT %s %s", who, day))
+      next
+    end
+
+    # Accept booking
+    booking = Booking.new(next_id, room, day, start_mins, end_mins, who)
+    Hash.store(bookings, next_id, booking)
+
+    start_fmt = format_time(start_mins)
+    end_fmt = format_time(end_mins)
+    puts(Kernel.format("OK #%d %s %s %s-%s %s", next_id, room, day, start_fmt, end_fmt, who))
+
+    next_id += 1
+
+  elsif command == "CANCEL"
+    if Array.size(fields) != 2
+      puts(Kernel.format("line %d: error: wrong field count", line_num))
+      next
+    end
+
+    id_str = Array.at(fields, 1)
+    begin
+      bid = String.to_i(id_str)
+      booking = Hash.fetch(bookings, bid, nil)
+      if booking == nil
+        puts(Kernel.format("NO BOOKING #%d", bid))
+      else
+        Hash.delete(bookings, bid)
+        puts(Kernel.format("CANCELLED #%d", bid))
+      end
+    rescue
+      puts(Kernel.format("line %d: error: bad id", line_num))
+    end
+
+  elsif command == "FREE"
+    if Array.size(fields) != 4
+      puts(Kernel.format("line %d: error: wrong field count", line_num))
+      next
+    end
+
+    room = Array.at(fields, 1)
+    day = Array.at(fields, 2)
+    minutes_str = Array.at(fields, 3)
+
+    if !is_valid_room?(room)
+      puts(Kernel.format("line %d: error: bad room", line_num))
+      next
+    end
+
+    if !is_valid_day?(day)
+      puts(Kernel.format("line %d: error: bad day", line_num))
+      next
+    end
+
+    begin
+      minutes = String.to_i(minutes_str)
+      if minutes <= 0 || minutes % 15 != 0
+        puts(Kernel.format("line %d: error: bad duration", line_num))
+        next
+      end
+    rescue
+      puts(Kernel.format("line %d: error: bad duration", line_num))
+      next
+    end
+
+    # Find all bookings for this room/day, sorted by start time
+    room_day_bookings = Array[]
+    Hash.each(bookings) do |bid, b|
+      if Booking.room(b) == room && Booking.day(b) == day
+        Array.push(room_day_bookings, b)
+      end
+    end
+
+    room_day_bookings = Array.sort_by(room_day_bookings) { Booking.start_mins(it) }
+
+    # Find earliest free slot
+    found = false
+    current_time = 0  # 08:00
+
+    Array.each(room_day_bookings) do |b|
+      if current_time + minutes <= Booking.start_mins(b)
+        # Free slot found
+        if current_time + minutes <= 720  # 20:00
+          start_fmt = format_time(current_time)
+          end_fmt = format_time(current_time + minutes)
+          puts(Kernel.format("FREE %s %s %s-%s", room, day, start_fmt, end_fmt))
+          found = true
+          break
+        end
+      end
+      current_time = Booking.end_mins(b)
+    end
+
+    if !found
+      if current_time + minutes <= 720
+        start_fmt = format_time(current_time)
+        end_fmt = format_time(current_time + minutes)
+        puts(Kernel.format("FREE %s %s %s-%s", room, day, start_fmt, end_fmt))
+        found = true
+      end
+    end
+
+    if !found
+      puts(Kernel.format("FULL %s %s", room, day))
+    end
+
+  else
+    puts(Kernel.format("line %d: error: unknown command", line_num))
+  end
+end
+
+# Print schedule
+puts("== schedule ==")
+
+# Collect all bookings sorted by day, room, start time
+schedule = Hash.to_a(bookings)
+schedule = Array.map(schedule) { |_, b| b }
+schedule = Array.sort_by(schedule) do |b|
+  day_index = Array.index(day_order, Booking.day(b))
+  if day_index == nil
+    day_index = 999
+  end
+  [day_index, Booking.room(b), Booking.start_mins(b)]
+end
+
+if Array.size(schedule) == 0
+  puts("(none)")
+else
+  Array.each(schedule) do |b|
+    start_fmt = format_time(Booking.start_mins(b))
+    end_fmt = format_time(Booking.end_mins(b))
+    puts(Kernel.format("%s %-8s %s-%s #%d %s", Booking.day(b), Booking.room(b), start_fmt, end_fmt, Booking.id(b), Booking.who(b)))
+  end
+end
+
+# Print usage
+puts("== usage ==")
+
+# Collect unique rooms from schedule
+rooms_used = Set[]
+Array.each(schedule) do |b|
+  Set.add(rooms_used, Booking.room(b))
+end
+
+rooms_list = Array[]
+Set.each(rooms_used) do |room|
+  Array.push(rooms_list, room)
+end
+
+rooms_list = Array.sort(rooms_list)
+
+if Array.size(rooms_list) == 0
+  puts("(none)")
+else
+  Array.each(rooms_list) do |room|
+    total_mins = 0
+    Array.each(schedule) do |b|
+      if Booking.room(b) == room
+        duration = Booking.end_mins(b) - Booking.start_mins(b)
+        total_mins += duration
+      end
+    end
+
+    hours = total_mins / 60
+    minutes = total_mins % 60
+    puts(Kernel.format("%-8s %dh%02dm", room, hours, minutes))
+  end
+end

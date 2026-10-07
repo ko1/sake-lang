@@ -1,0 +1,185 @@
+Team = Struct.new(:name, :pts, :gf, :ga, :p, :w, :d, :l)
+
+def is_valid_name(s)
+  size = String.size(s)
+  return false if size < 1 || size > 12
+  return false if !String.match?(s, /\A[A-Za-z][A-Za-z0-9_]*\z/)
+  true
+end
+
+def main
+  teams = Hash[]
+  errors = Array[]
+  line_num = 0
+
+  while (line = gets)
+    line_num += 1
+    line = String.chomp(line)
+
+    if String.empty?(line)
+      next
+    end
+
+    parts = String.split(line, /\s+/)
+
+    if Array.size(parts) != 3
+      Array.push(errors, "invalid line #{line_num}: #{line}")
+      next
+    end
+
+    home = parts[0]
+    score_str = parts[1]
+    away = parts[2]
+
+    if !is_valid_name(home) || !is_valid_name(away) || home == away
+      Array.push(errors, "invalid line #{line_num}: #{line}")
+      next
+    end
+
+    # Parse score
+    score_parts = String.split(score_str, "-")
+    if Array.size(score_parts) != 2
+      Array.push(errors, "invalid line #{line_num}: #{line}")
+      next
+    end
+
+    home_score_str = score_parts[0]
+    away_score_str = score_parts[1]
+
+    if home_score_str == "P" && away_score_str == "P"
+      # Postponed - add teams but no points
+      if !Hash.key?(teams, home)
+        teams[home] = Team.new(home, 0, 0, 0, 0, 0, 0, 0)
+      end
+      if !Hash.key?(teams, away)
+        teams[away] = Team.new(away, 0, 0, 0, 0, 0, 0, 0)
+      end
+      next
+    end
+
+    # Parse numeric scores
+    begin
+      home_score = String.to_i(home_score_str)
+      away_score = String.to_i(away_score_str)
+    rescue
+      Array.push(errors, "invalid line #{line_num}: #{line}")
+      next
+    end
+
+    if home_score < 0 || away_score < 0 || home_score > 99 || away_score > 99
+      Array.push(errors, "invalid line #{line_num}: #{line}")
+      next
+    end
+
+    # Initialize teams if needed
+    if !Hash.key?(teams, home)
+      teams[home] = Team.new(home, 0, 0, 0, 0, 0, 0, 0)
+    end
+    if !Hash.key?(teams, away)
+      teams[away] = Team.new(away, 0, 0, 0, 0, 0, 0, 0)
+    end
+
+    # Update stats
+    home_team = teams[home]
+    away_team = teams[away]
+
+    new_home = Team.new(
+      Team.name(home_team),
+      Team.pts(home_team),
+      Team.gf(home_team) + home_score,
+      Team.ga(home_team) + away_score,
+      Team.p(home_team) + 1,
+      Team.w(home_team),
+      Team.d(home_team),
+      Team.l(home_team)
+    )
+
+    new_away = Team.new(
+      Team.name(away_team),
+      Team.pts(away_team),
+      Team.gf(away_team) + away_score,
+      Team.ga(away_team) + home_score,
+      Team.p(away_team) + 1,
+      Team.w(away_team),
+      Team.d(away_team),
+      Team.l(away_team)
+    )
+
+    if home_score > away_score
+      new_home = Team.new(Team.name(new_home), Team.pts(new_home) + 3, Team.gf(new_home), Team.ga(new_home), Team.p(new_home), Team.w(new_home) + 1, Team.d(new_home), Team.l(new_home))
+      new_away = Team.new(Team.name(new_away), Team.pts(new_away), Team.gf(new_away), Team.ga(new_away), Team.p(new_away), Team.w(new_away), Team.d(new_away), Team.l(new_away) + 1)
+    elsif away_score > home_score
+      new_home = Team.new(Team.name(new_home), Team.pts(new_home), Team.gf(new_home), Team.ga(new_home), Team.p(new_home), Team.w(new_home), Team.d(new_home), Team.l(new_home) + 1)
+      new_away = Team.new(Team.name(new_away), Team.pts(new_away) + 3, Team.gf(new_away), Team.ga(new_away), Team.p(new_away), Team.w(new_away) + 1, Team.d(new_away), Team.l(new_away))
+    else
+      new_home = Team.new(Team.name(new_home), Team.pts(new_home) + 1, Team.gf(new_home), Team.ga(new_home), Team.p(new_home), Team.w(new_home), Team.d(new_home) + 1, Team.l(new_home))
+      new_away = Team.new(Team.name(new_away), Team.pts(new_away) + 1, Team.gf(new_away), Team.ga(new_away), Team.p(new_away), Team.w(new_away), Team.d(new_away) + 1, Team.l(new_away))
+    end
+
+    teams[home] = new_home
+    teams[away] = new_away
+  end
+
+  # Print errors
+  Array.each(errors) { |e| puts(e) }
+
+  if Array.empty?(Hash.keys(teams))
+    puts("no teams")
+    return
+  end
+
+  # Sort teams
+  team_list = Hash.values(teams)
+  team_list = Array.sort_by(team_list) do |t|
+    gd = Team.gf(t) - Team.ga(t)
+    [
+      -Team.pts(t),
+      -gd,
+      -Team.gf(t),
+      String.to_s(Team.name(t))
+    ]
+  end
+
+  # Print header
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+
+  # Print teams
+  pos = 1
+  prev_pts = -1
+  prev_gd = nil
+  prev_gf = -1
+  Array.each_with_index(team_list) do |t, i|
+    pts = Team.pts(t)
+    gd = Team.gf(t) - Team.ga(t)
+    gf = Team.gf(t)
+
+    if pts != prev_pts || gd != prev_gd || gf != prev_gf
+      pos = i + 1
+    end
+
+    gd_str = if gd > 0
+      "+#{gd}"
+    else
+      Integer.to_s(gd)
+    end
+
+    puts(format("%3d %-12s%3d%3d%3d%3d%4d%4d%4s%4d",
+      pos,
+      Team.name(t),
+      Team.p(t),
+      Team.w(t),
+      Team.d(t),
+      Team.l(t),
+      Team.gf(t),
+      Team.ga(t),
+      gd_str,
+      pts
+    ))
+
+    prev_pts = pts
+    prev_gd = gd
+    prev_gf = gf
+  end
+end
+
+main

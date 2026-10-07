@@ -1,0 +1,365 @@
+# Vending machine
+
+Slot = Struct.new(:name, :price, :count)
+Coin = Struct.new(:value, :label)
+
+def is_digit?(c)
+  c = String.codepoints(c)
+  if Array.size(c) > 0
+    code = Array.first(c)
+    code >= 48 && code <= 57
+  else
+    false
+  end
+end
+
+def is_upper?(c)
+  c = String.codepoints(c)
+  if Array.size(c) > 0
+    code = Array.first(c)
+    code >= 65 && code <= 90
+  else
+    false
+  end
+end
+
+def is_lower?(c)
+  c = String.codepoints(c)
+  if Array.size(c) > 0
+    code = Array.first(c)
+    code >= 97 && code <= 122
+  else
+    false
+  end
+end
+
+def valid_slot?(s)
+  if String.size(s) != 2
+    false
+  else
+    chars = String.chars(s)
+    is_upper?(Array.at(chars, 0)) && is_digit?(Array.at(chars, 1))
+  end
+end
+
+def valid_name?(s)
+  size = String.size(s)
+  if size < 1 || size > 12
+    false
+  else
+    valid = true
+    String.each_char(s) { |c| valid = valid && is_lower?(c) }
+    valid
+  end
+end
+
+def valid_money?(s)
+  parts = String.split(s, ".")
+  if Array.size(parts) != 2
+    false
+  else
+    first = Array.at(parts, 0)
+    second = Array.at(parts, 1)
+
+    valid_first = true
+    String.each_char(first) { |c| valid_first = valid_first && is_digit?(c) }
+
+    if String.size(second) != 2
+      false
+    else
+      valid_second = true
+      String.each_char(second) { |c| valid_second = valid_second && is_digit?(c) }
+      valid_first && valid_second
+    end
+  end
+end
+
+def valid_count?(s)
+  if String.size(s) == 0
+    false
+  else
+    valid = true
+    String.each_char(s) { |c| valid = valid && is_digit?(c) }
+    if valid
+      n = String.to_i(s)
+      n >= 0 && n <= 999
+    else
+      false
+    end
+  end
+end
+
+def parse_money(s)
+  Float(s)
+end
+
+def is_valid_coin?(s)
+  if s == "0.05" || s == "0.10" || s == "0.25" || s == "0.50" || s == "1.00" || s == "2.00"
+    true
+  else
+    false
+  end
+end
+
+# Read all lines
+lines = Array[]
+while (line = gets)
+  Array.push(lines, line)
+end
+
+# Initialize
+slots = Hash[]
+coin_tubes = Hash[]
+coin_tubes["0.05"] = 0
+coin_tubes["0.10"] = 0
+coin_tubes["0.25"] = 0
+coin_tubes["0.50"] = 0
+coin_tubes["1.00"] = 0
+coin_tubes["2.00"] = 0
+
+credit = 0.0
+inserted_coins = Array[]
+
+sales = Hash[]
+
+line_num = 0
+Array.each(lines) do |line_str|
+  line_num += 1
+
+  if String.empty?(String.strip(line_str))
+    next
+  end
+
+  parts = String.split(String.strip(line_str), /\s+/)
+
+  if Array.size(parts) == 0
+    next
+  end
+
+  command = parts[0]
+
+  if command == "SLOT"
+    if Array.size(parts) != 5
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    slot_code = parts[1]
+    name = parts[2]
+    price_str = parts[3]
+    count_str = parts[4]
+
+    if !valid_slot?(slot_code)
+      puts("line #{line_num}: error: bad slot")
+      next
+    end
+    if !valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    if !valid_money?(price_str)
+      puts("line #{line_num}: error: bad money")
+      next
+    end
+    if !valid_count?(count_str)
+      puts("line #{line_num}: error: bad count")
+      next
+    end
+
+    price = parse_money(price_str)
+    count = String.to_i(count_str)
+    slots[slot_code] = Slot.new(name, price, count)
+
+  elsif command == "TUBE"
+    if Array.size(parts) != 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    coin_val = parts[1]
+    count_str = parts[2]
+
+    if !is_valid_coin?(coin_val)
+      puts("line #{line_num}: error: bad coin")
+      next
+    end
+    if !valid_count?(count_str)
+      puts("line #{line_num}: error: bad count")
+      next
+    end
+
+    count = String.to_i(count_str)
+    coin_tubes[coin_val] = coin_tubes[coin_val] + count
+
+  elsif command == "COIN"
+    if Array.size(parts) != 2
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    coin_val = parts[1]
+
+    if !valid_money?(coin_val)
+      puts("line #{line_num}: error: bad money")
+      next
+    end
+    if !is_valid_coin?(coin_val)
+      puts("line #{line_num}: error: bad coin")
+      next
+    end
+
+    coin_float = parse_money(coin_val)
+    new_credit = credit + coin_float
+
+    if new_credit > 5.0
+      puts("rejected #{coin_val} (credit limit)")
+      next
+    end
+
+    credit = new_credit
+    Array.push(inserted_coins, coin_float)
+    coin_tubes[coin_val] = coin_tubes[coin_val] + 1
+    puts("credit #{format("%.2f", credit)}")
+
+  elsif command == "SELECT"
+    if Array.size(parts) != 2
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    slot_code = parts[1]
+
+    slot = slots[slot_code]
+    if slot == nil
+      puts("no slot #{slot_code}")
+      next
+    end
+
+    if Slot.count(slot) == 0
+      puts("sold out #{slot_code}")
+      next
+    end
+
+    price = Slot.price(slot)
+    if credit < price
+      diff = price - credit
+      puts("insert #{format("%.2f", diff)} more")
+      next
+    end
+
+    change = credit - price
+
+    # Try to make change
+    coin_values = Array[2.0, 1.0, 0.5, 0.25, 0.1, 0.05]
+    coin_labels = Array["2.00", "1.00", "0.50", "0.25", "0.10", "0.05"]
+
+    change_coins = Array[]
+    remaining_change = change
+    temp_tubes = Hash[]
+    temp_tubes["0.05"] = coin_tubes["0.05"]
+    temp_tubes["0.10"] = coin_tubes["0.10"]
+    temp_tubes["0.25"] = coin_tubes["0.25"]
+    temp_tubes["0.50"] = coin_tubes["0.50"]
+    temp_tubes["1.00"] = coin_tubes["1.00"]
+    temp_tubes["2.00"] = coin_tubes["2.00"]
+
+    Array.each_with_index(coin_values) do |val, idx|
+      label = Array.at(coin_labels, idx)
+      while remaining_change >= val - 0.001 && temp_tubes[label] > 0
+        Array.push(change_coins, val)
+        remaining_change -= val
+        temp_tubes[label] = temp_tubes[label] - 1
+      end
+    end
+
+    if Arithmetic.abs(remaining_change) > 0.001
+      puts("exact change needed")
+      next
+    end
+
+    # Apply the change
+    coin_tubes["0.05"] = temp_tubes["0.05"]
+    coin_tubes["0.10"] = temp_tubes["0.10"]
+    coin_tubes["0.25"] = temp_tubes["0.25"]
+    coin_tubes["0.50"] = temp_tubes["0.50"]
+    coin_tubes["1.00"] = temp_tubes["1.00"]
+    coin_tubes["2.00"] = temp_tubes["2.00"]
+
+    # Record sale
+    product_name = Slot.name(slot)
+    if sales[product_name] == nil
+      sales[product_name] = [0, 0.0]
+    end
+    old_sale = sales[product_name]
+    sales[product_name] = [Array.at(old_sale, 0) + 1, Array.at(old_sale, 1) + price]
+
+    # Update slot
+    new_count = Slot.count(slot) - 1
+    slots[slot_code] = Slot.new(Slot.name(slot), Slot.price(slot), new_count)
+
+    credit = 0.0
+    inserted_coins = Array[]
+
+    if Array.size(change_coins) == 0
+      puts("vend #{product_name}")
+    else
+      coin_strs = Array.map(change_coins) { format("%.2f", it) }
+      coins_display = Array.join(coin_strs, " ")
+      puts("vend #{product_name}, change #{format("%.2f", change)} [#{coins_display}]")
+    end
+
+  elsif command == "CANCEL"
+    if Array.size(parts) != 1
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    if credit == 0.0
+      puts("nothing to return")
+      next
+    end
+
+    # Return coins in order inserted
+    returned = Array[]
+    Array.each(inserted_coins) do |coin|
+      label = format("%.2f", coin)
+      coin_tubes[label] = coin_tubes[label] - 1
+      Array.push(returned, coin)
+    end
+
+    credit = 0.0
+    inserted_coins = Array[]
+
+    total_returned = Array.reduce(returned, 0.0) { |acc, c| acc + c }
+    coin_strs = Array.map(returned) { format("%.2f", it) }
+    coins_display = Array.join(coin_strs, " ")
+    puts("returned #{format("%.2f", total_returned)} [#{coins_display}]")
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+end
+
+if credit > 0.0
+  puts("credit #{format("%.2f", credit)} kept")
+end
+
+puts("sales:")
+if Hash.size(sales) == 0
+  puts("  none")
+else
+  # Sort by revenue descending, then by name
+  sale_list = Array[]
+  Hash.each(sales) do |name, info|
+    Array.push(sale_list, [name, Array.at(info, 0), Array.at(info, 1)])
+  end
+
+  sale_list = Array.sort_by(sale_list) { |name, count, revenue| [-revenue, name] }
+
+  Array.each(sale_list) do |name, count, revenue|
+    puts(format("  %-12s %3d %8s", name, count, format("%.2f", revenue)))
+  end
+end
+
+tubes_str = "tubes: 0.05x#{coin_tubes["0.05"]} 0.10x#{coin_tubes["0.10"]} 0.25x#{coin_tubes["0.25"]} 0.50x#{coin_tubes["0.50"]} 1.00x#{coin_tubes["1.00"]} 2.00x#{coin_tubes["2.00"]}"
+puts(tubes_str)

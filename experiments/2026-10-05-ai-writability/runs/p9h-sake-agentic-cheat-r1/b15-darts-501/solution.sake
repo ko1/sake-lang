@@ -1,0 +1,261 @@
+header = gets
+if header == nil
+  puts("invalid header")
+  exit()
+end
+
+header = String.strip(header)
+parts = String.split(header)
+
+if Array.size(parts) < 2 || Array.size(parts) > 5
+  puts("invalid header")
+  exit()
+end
+
+start_str = Array.at(parts, 0)
+unless String.match?(start_str, /^\d+$/)
+  puts("invalid header")
+  exit()
+end
+
+start = String.to_i(start_str)
+if start < 2 || start > 1001
+  puts("invalid header")
+  exit()
+end
+
+players = Array[]
+i = 0
+while i < Array.size(parts) - 1
+  name = Array.at(parts, i + 1)
+  if String.match?(name, /^[a-z]{1,10}$/)
+    Array.push(players, name)
+  else
+    puts("invalid header")
+    exit()
+  end
+  i = i + 1
+end
+
+if Array.size(players) == 0
+  puts("invalid header")
+  exit()
+end
+
+# Check for duplicates
+seen = Set[]
+Array.each(players) { |p|
+  if Set.include?(seen, p)
+    puts("invalid header")
+    exit()
+  end
+  Set.add(seen, p)
+}
+
+# Initialize game state
+scores = Hash.new()
+turns_played = Hash.new()
+darts_thrown = Hash.new()
+checked_out = Set[]
+
+Array.each(players) { |p|
+  scores[p] = start
+  turns_played[p] = 0
+  darts_thrown[p] = 0
+}
+
+line_num = 2
+while (turn_line = gets)
+  line = String.strip(turn_line)
+
+  if String.empty?(line)
+    line_num = line_num + 1
+    next
+  end
+
+  turn_parts = String.split(line)
+
+  if Array.size(turn_parts) < 2
+    puts("line #{line_num}: expected 1 to 3 darts")
+    line_num = line_num + 1
+    next
+  end
+
+  player_name = Array.at(turn_parts, 0)
+
+  if Set.size(checked_out) > 0
+    puts("line #{line_num}: game over")
+    line_num = line_num + 1
+    next
+  end
+
+  if !Hash.key?(scores, player_name)
+    puts("line #{line_num}: unknown player #{player_name}")
+    line_num = line_num + 1
+    next
+  end
+
+  dart_count = Array.size(turn_parts) - 1
+  if dart_count < 1 || dart_count > 3
+    puts("line #{line_num}: expected 1 to 3 darts")
+    line_num = line_num + 1
+    next
+  end
+
+  # Validate and score darts
+  dart_values = Integer[]
+  dart_types = Array[]
+  dart_strs = Array[]
+
+  i = 1
+  valid = true
+  first_bad_dart = nil
+  while i <= dart_count
+    dart_str = Array.at(turn_parts, i)
+    dart_value = nil
+    dart_type = nil
+
+    if dart_str == "BULL"
+      dart_value = 50
+      dart_type = "double"
+    elsif dart_str == "25"
+      dart_value = 25
+      dart_type = "single"
+    elsif dart_str == "MISS"
+      dart_value = 0
+      dart_type = "single"
+    elsif String.match?(dart_str, /^S(\d+)$/)
+      match_data = String.match(dart_str, /^S(\d+)$/)
+      num_str = MatchData.captures(match_data).Array.at(0)
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        dart_value = num
+        dart_type = "single"
+      end
+    elsif String.match?(dart_str, /^D(\d+)$/)
+      match_data = String.match(dart_str, /^D(\d+)$/)
+      num_str = MatchData.captures(match_data).Array.at(0)
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        dart_value = num * 2
+        dart_type = "double"
+      end
+    elsif String.match?(dart_str, /^T(\d+)$/)
+      match_data = String.match(dart_str, /^T(\d+)$/)
+      num_str = MatchData.captures(match_data).Array.at(0)
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        dart_value = num * 3
+        dart_type = "single"
+      end
+    end
+
+    if dart_value == nil
+      if first_bad_dart == nil
+        first_bad_dart = dart_str
+      end
+      valid = false
+      break
+    end
+
+    Array.push(dart_values, dart_value)
+    Array.push(dart_types, dart_type)
+    Array.push(dart_strs, dart_str)
+    i = i + 1
+  end
+
+  if !valid
+    puts("line #{line_num}: bad dart #{first_bad_dart}")
+    line_num = line_num + 1
+    next
+  end
+
+  # Apply darts
+  current_score = scores[player_name]
+  total_score = 0
+  bust = false
+  checked_out_dart = nil
+  darts_counted = 0
+
+  i = 0
+  while i < Array.size(dart_values)
+    value = Array.at(dart_values, i)
+    dtype = Array.at(dart_types, i)
+    dstr = Array.at(dart_strs, i)
+
+    total_score = total_score + value
+    new_score = current_score - total_score
+
+    if new_score < 0 || new_score == 1 || (new_score == 0 && dtype != "double")
+      bust = true
+      break
+    end
+
+    darts_counted = darts_counted + 1
+
+    if new_score == 0 && dtype == "double"
+      checked_out_dart = dstr
+      Set.add(checked_out, player_name)
+      break
+    end
+
+    i = i + 1
+  end
+
+  if bust
+    puts("#{player_name} busts, #{current_score} left")
+  elsif checked_out_dart != nil
+    puts("#{player_name} checks out with #{checked_out_dart}")
+    scores[player_name] = 0
+  else
+    new_score = current_score - total_score
+    scores[player_name] = new_score
+    puts("#{player_name} scores #{total_score}, #{new_score} left")
+  end
+
+  turns_played[player_name] = turns_played[player_name] + 1
+  darts_thrown[player_name] = darts_thrown[player_name] + darts_counted
+
+  line_num = line_num + 1
+end
+
+# Output standings
+puts("STANDINGS")
+
+# Sort players
+player_list = Array[]
+Array.each(players) { |p| Array.push(player_list, p) }
+
+player_list = Array.sort_by(player_list) { |p|
+  left = scores[p]
+  name = p
+  [left, name]
+}
+
+rank = 1
+winner = nil
+Array.each(player_list) { |p|
+  left = scores[p]
+  thrown = darts_thrown[p]
+
+  if left == 0
+    winner = p
+  end
+
+  avg_str = "-"
+  if thrown > 0
+    avg = Integer.to_f(start - left) * 3.0 / Integer.to_f(thrown)
+    avg_str = format("%.2f", avg)
+  end
+
+  line = format("%d. %-10s %4d %3d %6s", rank, p, left, thrown, avg_str)
+  puts(line)
+
+  rank = rank + 1
+}
+
+if winner != nil
+  puts("winner: #{winner}")
+else
+  puts("no winner")
+end

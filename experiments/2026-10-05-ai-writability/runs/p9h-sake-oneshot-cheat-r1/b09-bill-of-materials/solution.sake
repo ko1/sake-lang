@@ -1,0 +1,267 @@
+Part = Struct.new(:cost)
+Assy = Struct.new(:labor, :components)
+
+def valid_name?(s)
+  s != nil && String.match?(s, /^[a-z][a-z0-9_]{0,15}$/)
+end
+
+def valid_cost?(s)
+  s != nil && String.match?(s, /^\d+\.\d{2}$/)
+end
+
+def valid_qty?(s, max_qty)
+  s != nil && String.match?(s, /^\d+$/) && String.to_i(s) >= 1 && String.to_i(s) <= max_qty
+end
+
+def parse_component(comp_str)
+  parts = String.split(comp_str, ":")
+  if Array.length(parts) != 2
+    nil
+  else
+    name = Array.at(parts, 0)
+    qty_str = Array.at(parts, 1)
+    [name, qty_str]
+  end
+end
+
+items = Hash[]
+line_num = 0
+
+while (line = gets)
+  line_num += 1
+  line_stripped = String.strip(line)
+  if String.empty?(line_stripped)
+    next
+  end
+
+  parts = String.split(line_stripped, /\s+/)
+
+  if Array.empty?(parts)
+    next
+  end
+
+  cmd = Array.at(parts, 0)
+
+  if cmd == "PART"
+    if Array.length(parts) != 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    name = Array.at(parts, 1)
+    cost_str = Array.at(parts, 2)
+
+    unless valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    unless valid_cost?(cost_str)
+      puts("line #{line_num}: error: bad cost")
+      next
+    end
+
+    if items[name] != nil
+      puts("line #{line_num}: error: duplicate #{name}")
+      next
+    end
+
+    cost = String.to_f(cost_str)
+    items[name] = Part.new(cost)
+
+  elsif cmd == "ASSY"
+    if Array.length(parts) < 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    name = Array.at(parts, 1)
+    labor_str = Array.at(parts, 2)
+
+    unless valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    unless valid_cost?(labor_str)
+      puts("line #{line_num}: error: bad cost")
+      next
+    end
+
+    if items[name] != nil
+      puts("line #{line_num}: error: duplicate #{name}")
+      next
+    end
+
+    labor = String.to_f(labor_str)
+    components = Hash[]
+
+    error = nil
+    Array.each(3..Array.length(parts) - 1) do |i|
+      comp_text = Array.at(parts, i)
+      parsed = parse_component(comp_text)
+
+      if parsed == nil
+        error = comp_text
+        break
+      end
+
+      comp_name = Array.at(parsed, 0)
+      qty_str = Array.at(parsed, 1)
+
+      unless valid_qty?(qty_str, 999)
+        error = comp_text
+        break
+      end
+
+      if components[comp_name] != nil
+        error = comp_name
+        break
+      end
+
+      qty = String.to_i(qty_str)
+      components[comp_name] = qty
+    end
+
+    if error != nil
+      if components[error] != nil
+        puts("line #{line_num}: error: repeated component #{error}")
+      else
+        puts("line #{line_num}: error: bad component #{error}")
+      end
+      next
+    end
+
+    items[name] = Assy.new(labor, components)
+
+  elsif cmd == "BUILD"
+    if Array.length(parts) != 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    name = Array.at(parts, 1)
+    qty_str = Array.at(parts, 2)
+
+    unless valid_qty?(qty_str, 1000)
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    qty = String.to_i(qty_str)
+
+    if items[name] == nil
+      puts("line #{line_num}: cannot build: unknown item #{name}")
+      next
+    end
+
+    path = Array[]
+    parts_tally = Hash[]
+
+    def walk(item_name, quantity, path, items, parts_tally)
+      case items[item_name]
+      in Part
+        parts_tally[item_name] = (parts_tally[item_name] || 0) + quantity
+      in Assy
+        assy = items[item_name]
+        comps = assy.components
+        Hash.each(comps) do |comp_name, comp_qty|
+          if Array.include?(path, comp_name)
+            old_path = Array.drop_while(path) { |x| x != comp_name }
+            path_str = Array.join(Array.push(Array.dup(old_path), comp_name), " > ")
+            return path_str
+          end
+
+          if items[comp_name] == nil
+            return "unknown item #{comp_name} in #{item_name}"
+          end
+
+          new_path = Array.push(Array.dup(path), comp_name)
+          result = walk(comp_name, quantity * comp_qty, new_path, items, parts_tally)
+          return result if result != nil
+        end
+      end
+
+      nil
+    end
+
+    result = walk(name, qty, path, items, parts_tally)
+    if result != nil
+      if String.include?(result, ">")
+        puts("line #{line_num}: cannot build: cycle #{result}")
+      else
+        puts("line #{line_num}: cannot build: #{result}")
+      end
+      next
+    end
+
+    tree = Array[]
+
+    def build_tree(item_name, quantity, depth, items, tree)
+      item = items[item_name]
+      case item
+      in Part
+        Array.push(tree, [depth, item_name, quantity, item.cost * quantity])
+      in Assy
+        Array.push(tree, [depth, item_name, quantity, nil])
+        Hash.each(item.components) do |comp_name, comp_qty|
+          build_tree(comp_name, quantity * comp_qty, depth + 1, items, tree)
+        end
+      end
+    end
+
+    build_tree(name, qty, 0, items, tree)
+
+    def unit_cost(item_name, items)
+      item = items[item_name]
+      case item
+      in Part
+        item.cost
+      in Assy
+        cost = item.labor
+        Hash.each(item.components) do |comp_name, comp_qty|
+          cost += unit_cost(comp_name, items) * comp_qty
+        end
+        cost
+      end
+    end
+
+    Array.each(tree) do |entry|
+      depth = Array.at(entry, 0)
+      item_name = Array.at(entry, 1)
+      quantity = Array.at(entry, 2)
+      total = Array.at(entry, 3)
+
+      indent = String.*(  , depth * 2)
+
+      if total == nil
+        ucost = unit_cost(item_name, items)
+        total = quantity * ucost
+      end
+
+      puts("#{indent}#{quantity} x #{item_name} = #{format("%.2f", total)}")
+    end
+
+    puts("parts:")
+
+    if Hash.empty?(parts_tally)
+      puts("  none")
+    else
+      parts_sorted = Array[]
+      Hash.each(parts_tally) do |part_name, total_qty|
+        Array.push(parts_sorted, [total_qty, part_name])
+      end
+
+      parts_sorted = Array.sort_by(parts_sorted) { |entry| [-Array.at(entry, 0), Array.at(entry, 1)] }
+
+      Array.each(parts_sorted) do |entry|
+        total_qty = Array.at(entry, 0)
+        part_name = Array.at(entry, 1)
+        part = items[part_name]
+        total_cost = total_qty * part.cost
+        puts("  #{part_name} x#{total_qty} = #{format("%.2f", total_cost)}")
+      end
+    end
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+end

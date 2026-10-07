@@ -1,0 +1,248 @@
+Part = Struct.new(:cost)
+Assy = Struct.new(:labor, :components)
+
+def valid_name?(name)
+  name =~ /^[a-z][a-z0-9_]{0,15}$/
+end
+
+def valid_cost?(cost_str)
+  cost_str =~ /^\d+\.\d{2}$/
+end
+
+def valid_qty?(qty_str, max_val)
+  qty_str =~ /^([1-9]\d*)$/ && String.to_i(qty_str) <= max_val && String.to_i(qty_str) > 0
+end
+
+def format_money(amount)
+  format("%.2f", amount)
+end
+
+def get_unit_cost(name, defs)
+  item = Hash.at(defs, name)
+  if item in Part
+    Part.cost(item)
+  elsif item in Assy
+    labor = Assy.labor(item)
+    components = Assy.components(item)
+    total = labor
+    Array.each(components) { |comp_name, qty|
+      total += qty * get_unit_cost(comp_name, defs)
+    }
+    total
+  else
+    0.0
+  end
+end
+
+def build_tree(name, qty, defs, path, tree)
+  if Array.include?(path, name)
+    idx = Array.index(path, name)
+    cycle_path = Array[]
+    (idx...Array.size(path)) { |i|
+      Array.push(cycle_path, Array.at(path, i))
+    }
+    Array.push(cycle_path, name)
+    false
+  else
+    item = Hash.at(defs, name)
+    if !item
+      false
+    elsif item in Part
+      Array.push(tree, [name, qty, path])
+      true
+    elsif item in Assy
+      components = Assy.components(item)
+      new_path = Array[*path, name]
+      Array.each(components) { |comp_name, comp_qty|
+        unless build_tree(comp_name, comp_qty * qty, defs, new_path, tree)
+          return false
+        end
+      }
+      Array.push(tree, [name, qty, path])
+      true
+    else
+      false
+    end
+  end
+end
+
+defs = Hash[]
+line_num = 0
+
+while line = gets
+  line_num += 1
+  line = String.strip(line)
+  next if String.empty?(line)
+
+  fields = String.split(line, /\s+/)
+  command = Array.at(fields, 0)
+
+  unless command
+    puts("line #{line_num}: error: unknown command")
+    next
+  end
+
+  case command
+  in "PART"
+    unless Array.size(fields) == 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    name = Array.at(fields, 1)
+    cost_str = Array.at(fields, 2)
+
+    unless valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    unless valid_cost?(cost_str)
+      puts("line #{line_num}: error: bad cost")
+      next
+    end
+
+    if Hash.has_key?(defs, name)
+      puts("line #{line_num}: error: duplicate #{name}")
+      next
+    end
+
+    cost = String.to_f(cost_str)
+    defs[name] = Part.new(cost)
+
+  in "ASSY"
+    unless Array.size(fields) >= 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    name = Array.at(fields, 1)
+    labor_str = Array.at(fields, 2)
+
+    unless valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    unless valid_cost?(labor_str)
+      puts("line #{line_num}: error: bad cost")
+      next
+    end
+
+    if Hash.has_key?(defs, name)
+      puts("line #{line_num}: error: duplicate #{name}")
+      next
+    end
+
+    labor = String.to_f(labor_str)
+    components = Array[]
+    seen_comps = Set[]
+    error = false
+
+    (3...Array.size(fields)) { |i|
+      comp_text = Array.at(fields, i)
+      unless comp_text =~ /^([a-z][a-z0-9_]{0,15}):(\d+)$/
+        puts("line #{line_num}: error: bad component #{comp_text}")
+        error = true
+        break
+      end
+
+      comp_name = String.slice(comp_text, 0, comp_text =~ /:/)
+      comp_qty = String.to_i(String.slice(comp_text, (comp_text =~ /:/) + 1, comp_text =~ /^/))
+
+      if Set.include?(seen_comps, comp_name)
+        puts("line #{line_num}: error: repeated component #{comp_name}")
+        error = true
+        break
+      end
+
+      if comp_qty < 1 || comp_qty > 999
+        puts("line #{line_num}: error: bad component #{comp_text}")
+        error = true
+        break
+      end
+
+      Set.add(seen_comps, comp_name)
+      Array.push(components, [comp_name, comp_qty])
+    }
+
+    next if error
+
+    defs[name] = Assy.new(labor, components)
+
+  in "BUILD"
+    unless Array.size(fields) == 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    name = Array.at(fields, 1)
+    qty_str = Array.at(fields, 2)
+
+    unless valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    unless valid_qty?(qty_str, 1000)
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    qty = String.to_i(qty_str)
+
+    tree = Array[]
+    unless build_tree(name, qty, defs, Array[], tree)
+      unless Hash.has_key?(defs, name)
+        puts("line #{line_num}: cannot build: unknown item #{name}")
+      else
+        path = Array[]
+        find_cycle = Array[name]
+        build_tree(name, qty, defs, find_cycle, Array[])
+      end
+      next
+    end
+
+    tree = Array.reverse(tree)
+    depth_map = Hash[]
+    parts_total = Hash[]
+
+    Array.each(tree) { |node_name, node_qty, node_path|
+      depth = Array.size(node_path)
+      depth_map[node_name] = depth
+
+      if Hash.at(defs, node_name) in Part
+        if !Hash.has_key?(parts_total, node_name)
+          parts_total[node_name] = 0
+        end
+        parts_total[node_name] += node_qty
+      end
+    }
+
+    printed = Set[]
+    prev_depth = -1
+    Array.each(tree) { |node_name, node_qty, node_path|
+      unless Set.include?(printed, "#{node_path}:#{node_name}")
+        indent = "  " * Array.size(node_path)
+        unit_cost = get_unit_cost(node_name, defs)
+        total_cost = node_qty * unit_cost
+        puts("#{indent}#{node_qty} x #{node_name} = #{format_money(total_cost)}")
+        Set.add(printed, "#{node_path}:#{node_name}")
+      end
+    }
+
+    puts("parts:")
+    if Hash.empty?(parts_total)
+      next
+    end
+
+    parts_list = Array[]
+    Hash.each(parts_total) { |pname, ptotal|
+      part = Hash.at(defs, pname)
+      part_cost = Part.cost(part)
+      Array.push(parts_list, [ptotal, pname, part_cost * ptotal])
+    }
+    parts_list = Array.sort_by(parts_list) { |total, pname, cost| [-total, pname] }
+
+    Array.each(parts_list) { |total, pname, cost|
+      puts("  #{pname} x#{total} = #{format_money(cost)}")
+    }
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+end

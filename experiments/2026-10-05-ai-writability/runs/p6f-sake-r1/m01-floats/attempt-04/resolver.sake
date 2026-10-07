@@ -1,0 +1,301 @@
+# The static pass (SPEC.md, "Static checks"): runs over the whole program before
+# it starts and stops at the first error. It also records, in each Name node,
+# how many scopes out its variable lives, which the interpreter relies on.
+#
+# The scopes it opens must match the environments the interpreter creates, one
+# for one: the built-ins, the program, each block (if/elif/else branch, match
+# arm, while body, try body, finally body), each function call (parameters and
+# body together), each for iteration (loop variable and body together) and
+# each catch (variable and handler).
+
+# What the resolver knows about a declared name.
+# kind: "variable" (let, parameter, loop or catch variable), "constant", "function"
+# (fn declaration) or "built-in". fn is the FnExpr of a "function", else nil.
+Decl = Struct.new(:kind, :fn)
+
+class Resolver
+  attr_reader scopes
+  attr_accessor loop_depth, function_depth
+
+  def initialize(resolver)
+    builtins = Hash[]
+    Array.each(Builtins.names) { |name| builtins[name] = Decl.new("built-in", nil) }
+    @scopes = Array[builtins]
+    @loop_depth = 0
+    @function_depth = 0
+  end
+
+  def resolve_program(resolver, program)
+    with_scope(resolver) { resolve_statements(resolver, Program.body(program)) }
+  end
+
+  # ---- scopes ----
+
+  def with_scope(resolver)
+    Array.push(@scopes, Hash[])
+    yield
+    Array.pop(@scopes)
+    nil
+  end
+
+  def declare(resolver, name, decl, pos)
+    name => String
+    scope = @scopes[-1]
+    Errors.static("'#{name}' is already declared in this scope", pos) if Hash.key?(scope, name)
+
+    scope[name] = decl
+  end
+
+  def declare_variable(resolver, name, pos) = declare(resolver, name, Decl.new("variable", nil), pos)
+
+  # How many scopes out `name` is declared, or nil if it is not declared at all.
+  def depth_of(resolver, name)
+    i = Array.length(@scopes) - 1
+    while i >= 0
+      return Array.length(@scopes) - 1 - i if Hash.key?(@scopes[i], name)
+
+      i -= 1
+    end
+    nil
+  end
+
+  def decl_at(resolver, depth, name)
+    depth => Integer
+    @scopes[Array.length(@scopes) - 1 - depth][name]
+  end
+
+  def in_loop(resolver)
+    @loop_depth += 1
+    yield
+    @loop_depth -= 1
+  end
+
+  # ---- statements ----
+
+  # Function declarations are visible in their whole statement list, so they are
+  # declared before any statement of the list is looked at. A statement after
+  # break, continue, return or throw in the same list could never run.
+  def resolve_statements(resolver, stmts)
+    stmts => Array
+    Array.each(stmts) do |stmt|
+      declare(resolver, FnExpr.name(FnDecl.fn(stmt)), Decl.new("function", FnDecl.fn(stmt)), FnDecl.pos(stmt)) if (stmt in FnDecl)
+    end
+    Array.each_index(stmts) do |i|
+      stmt = stmts[i]
+      resolve_statement(resolver, stmt)
+      jump = jump_keyword(resolver, stmt)
+      if jump != nil && i < Array.length(stmts) - 1
+        stmt => Break | Continue | Return | Throw
+        Errors.static("code after '#{jump}' is unreachable", (Break|Continue|Return|Throw).pos(stmt))
+      end
+    end
+  end
+
+  def jump_keyword(resolver, stmt)
+    case stmt
+    in Break then "break"
+    in Continue then "continue"
+    in Return then "return"
+    in Throw then "throw"
+    else nil
+    end
+  end
+
+  def resolve_block(resolver, stmts)
+    with_scope(resolver) { resolve_statements(resolver, stmts) }
+  end
+
+  def resolve_statement(resolver, stmt)
+    case stmt
+    in Let
+      resolve_expression(resolver, Let.value(stmt)) unless Let.value(stmt) == nil
+      declare_variable(resolver, Let.name(stmt), Let.pos(stmt))
+    in LetList
+      resolve_expression(resolver, LetList.value(stmt))
+      Array.each(LetList.names(stmt)) { |name| declare_variable(resolver, Param.name(name), Param.pos(name)) }
+    in Const
+      resolve_expression(resolver, Const.value(stmt))
+      declare(resolver, Const.name(stmt), Decl.new("constant", nil), Const.pos(stmt))
+    in FnDecl
+      resolve_function(resolver, FnDecl.fn(stmt))
+    in Assign
+      resolve_target(resolver, Assign.target(stmt))
+      resolve_expression(resolver, Assign.value(stmt))
+    in MultiAssign
+      Array.each(MultiAssign.targets(stmt)) { |target| resolve_target(resolver, target) }
+      Array.each(MultiAssign.values(stmt)) { |value| resolve_expression(resolver, value) }
+    in ExprStmt
+      resolve_expression(resolver, ExprStmt.expr(stmt))
+    in If
+      Array.each(If.branches(stmt)) do |branch|
+        resolve_expression(resolver, IfBranch.cond(branch))
+        resolve_block(resolver, IfBranch.body(branch))
+      end
+      resolve_block(resolver, If.else_body(stmt)) unless If.else_body(stmt) == nil
+    in Match
+      resolve_match(resolver, stmt)
+    in While
+      resolve_expression(resolver, While.cond(stmt))
+      in_loop(resolver) { resolve_block(resolver, While.body(stmt)) }
+    in For
+      resolve_expression(resolver, For.iterable(stmt))
+      with_scope(resolver) do
+        Array.each(For.vars(stmt)) { |var| declare_variable(resolver, Param.name(var), Param.pos(var)) }
+        in_loop(resolver) { resolve_statements(resolver, For.body(stmt)) }
+      end
+    in Break
+      Errors.static("'break' outside a loop", Break.pos(stmt)) if @loop_depth == 0
+    in Continue
+      Errors.static("'continue' outside a loop", Continue.pos(stmt)) if @loop_depth == 0
+    in Return
+      Errors.static("'return' outside a function", Return.pos(stmt)) if @function_depth == 0
+      resolve_expression(resolver, Return.value(stmt)) unless Return.value(stmt) == nil
+    in Throw
+      resolve_expression(resolver, Throw.value(stmt))
+    in Assert
+      resolve_expression(resolver, Assert.cond(stmt))
+      resolve_expression(resolver, Assert.message(stmt)) unless Assert.message(stmt) == nil
+    in Try
+      resolve_block(resolver, Try.body(stmt))
+      var = Try.var(stmt)
+      unless var == nil
+        with_scope(resolver) do
+          declare_variable(resolver, Param.name(var), Param.pos(var))
+          resolve_statements(resolver, Try.handler(stmt))
+        end
+      end
+      resolve_block(resolver, Try.finally_body(stmt)) unless Try.finally_body(stmt) == nil
+    else
+      raise ArgumentError, "unknown statement #{Kernel.inspect(stmt)}"
+    end
+  end
+
+  def resolve_match(resolver, stmt)
+    resolve_expression(resolver, Match.subject(stmt))
+    Array.each(Match.arms(stmt)) do |arm|
+      Array.each(MatchArm.values(arm)) { |value| resolve_expression(resolver, value) }
+      resolve_block(resolver, MatchArm.body(arm))
+    end
+    resolve_block(resolver, Match.else_body(stmt)) unless Match.else_body(stmt) == nil
+  end
+
+  # Only variables can be assigned; constants, functions and built-ins cannot.
+  def resolve_target(resolver, target)
+    case target
+    in Name
+      resolve_name(resolver, target)
+      kind = Decl.kind(decl_at(resolver, Name.depth(target), Name.name(target)))
+      Errors.static("cannot assign to #{kind} '#{Name.name(target)}'", Name.pos(target)) unless kind == "variable"
+    in IndexExpr
+      resolve_expression(resolver, IndexExpr.target(target))
+      resolve_expression(resolver, IndexExpr.index(target))
+    else nil
+    end
+  end
+
+  # A function body sees no enclosing loop: `break` inside it needs its own loop.
+  # A parameter's default sees the parameters before it.
+  def resolve_function(resolver, fn)
+    saved_loop_depth = @loop_depth
+    @loop_depth = 0
+    @function_depth += 1
+    with_scope(resolver) do
+      Array.each(FnExpr.params(fn)) do |param|
+        resolve_expression(resolver, Param.default(param)) unless Param.default(param) == nil
+        declare_variable(resolver, Param.name(param), Param.pos(param))
+      end
+      resolve_statements(resolver, FnExpr.body(fn))
+    end
+    @function_depth -= 1
+    @loop_depth = saved_loop_depth
+  end
+
+  # ---- expressions ----
+
+  def resolve_name(resolver, node)
+    depth = depth_of(resolver, Name.name(node))
+    Errors.static(undefined_message(resolver, Name.name(node)), Name.pos(node)) if depth == nil
+
+    Name.set_depth(node, depth)
+  end
+
+  # "undefined name 'pirnt'; did you mean 'print'?". A visible name is suggested
+  # when its edit distance is at most (length of the undefined name - 1) / 2,
+  # and at most 2. The closest wins; among equally close names, the one in the
+  # innermost scope, then the first in alphabetical order.
+  def undefined_message(resolver, name)
+    best = nil
+    best_distance = Tuple.min([(String.length(name) - 1) / 2, 2]) + 1
+    i = Array.length(@scopes) - 1
+    while i >= 0
+      Array.each(Array.sort(Hash.keys(@scopes[i]))) do |candidate|
+        distance = Format.edit_distance(name, candidate)
+        if distance < best_distance
+          best = candidate
+          best_distance = distance
+        end
+      end
+      i -= 1
+    end
+    message = "undefined name '#{name}'"
+    best == nil ? message : "#{message}; did you mean '#{best}'?"
+  end
+
+  def resolve_expression(resolver, node)
+    case node
+    in IntLit | FloatLit | StrLit | BoolLit | NilLit
+      nil
+    in InterpStr
+      Array.each(InterpStr.parts(node)) { |part| resolve_expression(resolver, part) unless (part in String) }
+    in Name
+      resolve_name(resolver, node)
+    in ArrayLit
+      Array.each(ArrayLit.elements(node)) { |element| resolve_expression(resolver, element) }
+    in MapLit
+      Array.each_index(MapLit.keys(node)) do |i|
+        resolve_expression(resolver, MapLit.keys(node)[i])
+        resolve_expression(resolver, MapLit.values(node)[i])
+      end
+    in FnExpr
+      resolve_function(resolver, node)
+    in Unary
+      resolve_expression(resolver, Unary.operand(node))
+    in Binary | Logical
+      resolve_expression(resolver, (Binary|Logical).left(node))
+      resolve_expression(resolver, (Binary|Logical).right(node))
+    in Call
+      resolve_call(resolver, node)
+    in IndexExpr
+      resolve_expression(resolver, IndexExpr.target(node))
+      resolve_expression(resolver, IndexExpr.index(node))
+    in Slice
+      resolve_expression(resolver, Slice.target(node))
+      resolve_expression(resolver, Slice.start(node)) unless Slice.start(node) == nil
+      resolve_expression(resolver, Slice.stop(node)) unless Slice.stop(node) == nil
+    else
+      raise ArgumentError, "unknown expression #{Kernel.inspect(node)}"
+    end
+  end
+
+  # A call whose callee names a fn declaration or a built-in directly has its
+  # argument count checked here; such names can never be reassigned.
+  def resolve_call(resolver, node)
+    resolve_expression(resolver, Call.callee(node))
+    Array.each(Call.args(node)) { |arg| resolve_expression(resolver, arg) }
+    callee = Call.callee(node)
+    return unless (callee in Name)
+
+    decl = decl_at(resolver, Name.depth(callee), Name.name(callee))
+    case Decl.kind(decl)
+    in "function"
+      min, max = Arity.of_function(Decl.fn(decl))
+    in "built-in"
+      min, max = Builtins.arity(Name.name(callee))
+    else
+      return
+    end
+    return if Arity.accepts?(min, max, Array.length(Call.args(node)))
+
+    Errors.static(Arity.message(Name.name(callee), min, max, Array.length(Call.args(node))), Call.pos(node))
+  end
+end

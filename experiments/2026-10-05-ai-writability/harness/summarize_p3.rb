@@ -43,7 +43,11 @@ rows = grade_files.flat_map { |f| File.readlines(f).map { JSON.parse(_1) } }.map
   sol = Dir[File.join(work, "solution.{sake,rb}")].first
   atts = File.exist?(f = File.join(work, "attempts.jsonl")) ? File.readlines(f).map { JSON.parse(_1) } : []
   afiles = Dir[File.join(work, "attempt-*.{sake,rb}")].sort
-  abort "#{work}: #{afiles.size} attempt files, #{atts.size} log lines" if afiles.size != atts.size
+  # try.rb copies the attempt before running it; a run killed from outside (the solver's own `timeout`) leaves
+  # the copy without a log line. Report those runs; any other mismatch is a harness fault.
+  unlogged = afiles.size - atts.size
+  abort "#{work}: #{afiles.size} attempt files, #{atts.size} log lines" unless unlogged.zero? || (unlogged.positive? && afiles.first(atts.size).each_with_index.all? { |f, i| f.end_with?(format("attempt-%02d%s", i + 1, File.extname(f))) })
+  warn "#{work}: #{unlogged} attempt(s) killed before logging" if unlogged.positive?
   rejected = if g["mode"] == "agentic" then atts.reject { _1["check_ok"] }.map { kind(_1["diagnostics"]) }
              else [sol && check_kind(sol, g["strict"])].compact
              end

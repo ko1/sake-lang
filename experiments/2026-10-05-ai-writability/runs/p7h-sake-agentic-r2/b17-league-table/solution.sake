@@ -1,0 +1,182 @@
+# League table
+Team = Struct.new(:name, :played, :won, :drawn, :lost, :gf, :ga)
+Match = Struct.new(:home, :away, :home_goals, :away_goals, :postponed)
+
+def is_valid_team_name(name)
+  if String.size(name) < 1 || String.size(name) > 12
+    return false
+  end
+  first_char = String.at(name, 0)
+  if !(first_char >= "A" && first_char <= "Z") && !(first_char >= "a" && first_char <= "z")
+    return false
+  end
+  Integer.times(String.size(name) - 1) do |i|
+    c = String.at(name, i + 1)
+    is_valid = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "_"
+    if !is_valid
+      return false
+    end
+  end
+  true
+end
+
+def parse_score(score_str)
+  if score_str == "P-P"
+    {:postponed => true}
+  elsif String.include?(score_str, "-")
+    parts = String.split(score_str, "-")
+    if Array.size(parts) != 2
+      return nil
+    end
+    begin
+      home_goals = String.to_i(parts[0])
+      away_goals = String.to_i(parts[1])
+      if home_goals < 0 || away_goals < 0
+        return nil
+      end
+      {:postponed => false, :home_goals => home_goals, :away_goals => away_goals}
+    rescue
+      nil
+    end
+  else
+    nil
+  end
+end
+
+# Parse input
+teams = Hash[]
+matches = Array[]
+invalid_lines = Array[]
+line_num = 1
+
+while true
+  line = gets
+  break if line == nil
+
+  line_trimmed = String.strip(line)
+
+  if String.size(line_trimmed) == 0
+    line_num += 1
+    next
+  end
+
+  parts = String.split(line_trimmed, /\s+/)
+
+  if Array.size(parts) != 3
+    Array.push(invalid_lines, [line_num, line_trimmed])
+    line_num += 1
+    next
+  end
+
+  home_team = parts[0]
+  score_str = parts[1]
+  away_team = parts[2]
+
+  if home_team == away_team
+    Array.push(invalid_lines, [line_num, line_trimmed])
+    line_num += 1
+    next
+  end
+
+  if !is_valid_team_name(home_team) || !is_valid_team_name(away_team)
+    Array.push(invalid_lines, [line_num, line_trimmed])
+    line_num += 1
+    next
+  end
+
+  score = parse_score(score_str)
+  if score == nil
+    Array.push(invalid_lines, [line_num, line_trimmed])
+    line_num += 1
+    next
+  end
+
+  # Add teams if not exist
+  if !(Hash.key?(teams, home_team))
+    teams[home_team] = Team.new(home_team, 0, 0, 0, 0, 0, 0)
+  end
+  if !(Hash.key?(teams, away_team))
+    teams[away_team] = Team.new(away_team, 0, 0, 0, 0, 0, 0)
+  end
+
+  # Process match
+  if !score[:postponed]
+    home_goals = score[:home_goals]
+    away_goals = score[:away_goals]
+
+    home_t = Hash.fetch(teams, home_team)
+    away_t = Hash.fetch(teams, away_team)
+
+    # Update stats
+    home_t = Team.new(Team.name(home_t), Team.played(home_t) + 1, Team.won(home_t) + (if home_goals > away_goals then 1 else 0 end),
+                      Team.drawn(home_t) + (if home_goals == away_goals then 1 else 0 end),
+                      Team.lost(home_t) + (if home_goals < away_goals then 1 else 0 end),
+                      Team.gf(home_t) + home_goals, Team.ga(home_t) + away_goals)
+
+    away_t = Team.new(Team.name(away_t), Team.played(away_t) + 1, Team.won(away_t) + (if away_goals > home_goals then 1 else 0 end),
+                      Team.drawn(away_t) + (if away_goals == home_goals then 1 else 0 end),
+                      Team.lost(away_t) + (if away_goals < home_goals then 1 else 0 end),
+                      Team.gf(away_t) + away_goals, Team.ga(away_t) + home_goals)
+
+    teams[home_team] = home_t
+    teams[away_team] = away_t
+  end
+
+  line_num += 1
+end
+
+# Print invalid lines
+Array.each(invalid_lines) do |item|
+  line_no, line_text = item[0], item[1]
+  puts("invalid line #{line_no}: #{line_text}")
+end
+
+# Check if any teams
+if Hash.size(teams) == 0
+  puts("no teams")
+  exit
+end
+
+# Get team list and sort
+team_list = Array[]
+Hash.each(teams) do |name, team|
+  Array.push(team_list, team)
+end
+
+# Sort teams
+team_list = Array.sort_by(team_list) do |t|
+  pts = Team.won(t) * 3 + Team.drawn(t)
+  gd = Team.gf(t) - Team.ga(t)
+  gf = Team.gf(t)
+  name = Team.name(t)
+  [-pts, -gd, -gf, name]
+end
+
+# Output
+puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+
+last_pts = nil
+last_gd = nil
+last_gf = nil
+position = 1
+team_index = 0
+
+Array.each(team_list) do |t|
+  pts = Team.won(t) * 3 + Team.drawn(t)
+  gd = Team.gf(t) - Team.ga(t)
+  gf = Team.gf(t)
+
+  if last_pts != nil && (pts != last_pts || gd != last_gd || gf != last_gf)
+    position = team_index + 1
+  end
+
+  gd_str = if gd > 0 then "+#{gd}" elsif gd == 0 then "0" else Integer.to_s(gd) end
+
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", position, Team.name(t), Team.played(t), Team.won(t),
+              Team.drawn(t), Team.lost(t), Team.gf(t), Team.ga(t), gd_str, pts))
+
+  last_pts = pts
+  last_gd = gd
+  last_gf = gf
+  team_index += 1
+end

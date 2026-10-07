@@ -1,0 +1,303 @@
+# Vending machine simulation
+
+Slot = Struct.new(:name, :price, :count)
+Sale = Struct.new(:name, :revenue)
+SaleItem = Struct.new(:product_name, :count, :revenue)
+
+# Valid coins
+valid_coins = Float[0.05, 0.10, 0.25, 0.50, 1.00, 2.00]
+coin_names = Hash["0.05" => 0.05, "0.10" => 0.10, "0.25" => 0.25, "0.50" => 0.50, "1.00" => 1.00, "2.00" => 2.00]
+
+# State
+slots = Hash.new(nil)                    # CODE -> {name, price, count}
+tubes = Hash[0.05 => 0, 0.10 => 0, 0.25 => 0, 0.50 => 0, 1.00 => 0, 2.00 => 0]
+credit = 0.0
+inserted_coins = Array[]                 # Coins inserted for this transaction
+sales = Hash.new(nil)                    # product_name -> {count, revenue}
+
+line_num = 0
+
+def validate_money(s)
+  if !String.match?(s, /^\d+\.\d{2}$/)
+    nil
+  else
+    String.to_f(s)
+  end
+end
+
+def validate_code(s)
+  String.match?(s, /^[A-Z]\d$/)
+end
+
+def validate_name(s)
+  String.size(s) >= 1 && String.size(s) <= 12 && String.match?(s, /^[a-z]+$/)
+end
+
+def validate_count(s)
+  num = String.to_i(s) rescue nil
+  num != nil && num >= 0 && num <= 99
+end
+
+def validate_tube_count(s)
+  num = String.to_i(s) rescue nil
+  num != nil && num >= 0 && num <= 999
+end
+
+Kernel.loop do
+  line_str = Kernel.gets
+  break if line_str == nil
+
+  line_num = Integer.+(line_num, 1)
+  fields = String.split(String.strip(line_str), /\s+/)
+
+  if Array.size(fields) == 0
+    next
+  end
+
+  cmd = Array.at(fields, 0)
+
+  # Error: unknown command
+  if cmd == nil || (cmd != "SLOT" && cmd != "TUBE" && cmd != "COIN" && cmd != "SELECT" && cmd != "CANCEL")
+    puts("line #{line_num}: error: unknown command")
+    next
+  end
+
+  case cmd
+  in "SLOT"
+    # SLOT CODE NAME PRICE COUNT
+    if Array.size(fields) != 5
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    code = Array.at(fields, 1)
+    name = Array.at(fields, 2)
+    price_str = Array.at(fields, 3)
+    count_str = Array.at(fields, 4)
+
+    if !validate_code(code)
+      puts("line #{line_num}: error: bad slot")
+      next
+    end
+
+    if !validate_name(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+
+    price = validate_money(price_str)
+    if price == nil
+      puts("line #{line_num}: error: bad money")
+      next
+    end
+
+    count = String.to_i(count_str) rescue nil
+    if count == nil || count < 0 || count > 99
+      puts("line #{line_num}: error: bad count")
+      next
+    end
+
+    Hash.store(slots, code, Slot.new(name, price, count))
+
+  in "TUBE"
+    # TUBE COIN COUNT
+    if Array.size(fields) != 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    coin_str = Array.at(fields, 1)
+    count_str = Array.at(fields, 2)
+
+    coin = validate_money(coin_str)
+    if coin == nil || !Array.include?(valid_coins, coin)
+      puts("line #{line_num}: error: bad coin")
+      next
+    end
+
+    count = String.to_i(count_str) rescue nil
+    if count == nil || count < 0 || count > 999
+      puts("line #{line_num}: error: bad count")
+      next
+    end
+
+    current = Hash.fetch(tubes, coin, 0)
+    Hash.store(tubes, coin, Integer.+(current, count))
+
+  in "COIN"
+    # COIN VALUE
+    if Array.size(fields) != 2
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    coin_str = Array.at(fields, 1)
+
+    coin = validate_money(coin_str)
+    if coin == nil || !Array.include?(valid_coins, coin)
+      puts("line #{line_num}: error: bad coin")
+      next
+    end
+
+    new_credit = Float.+(credit, coin)
+    if new_credit > 5.0
+      puts("rejected #{format("%.2f", coin)} (credit limit)")
+      next
+    end
+
+    credit = new_credit
+    current = Hash.fetch(tubes, coin, 0)
+    Hash.store(tubes, coin, Integer.+(current, 1))
+    Array.push(inserted_coins, coin)
+    puts("credit #{format("%.2f", credit)}")
+
+  in "SELECT"
+    # SELECT CODE
+    if Array.size(fields) != 2
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    code = Array.at(fields, 1)
+
+    slot = Hash.fetch(slots, code, nil)
+    if slot == nil
+      puts("no slot #{code}")
+      next
+    end
+
+    if Slot.count(slot) == 0
+      puts("sold out #{code}")
+      next
+    end
+
+    price = Slot.price(slot)
+    if credit < price
+      need = Float.-(price, credit)
+      puts("insert #{format("%.2f", need)} more")
+      next
+    end
+
+    # Make change
+    change = Float.-(credit, price)
+
+    # Greedy algorithm: try to make exact change
+    change_coins = Array[]
+    remaining = change
+
+    # Try each coin from largest to smallest
+    Array.each(Float[2.00, 1.00, 0.50, 0.25, 0.10, 0.05]) do |coin_val|
+      while remaining >= coin_val
+        available = Hash.fetch(tubes, coin_val, 0)
+        if available > 0
+          Array.push(change_coins, coin_val)
+          remaining = Float.-(remaining, coin_val)
+          Hash.store(tubes, coin_val, Integer.-(available, 1))
+        else
+          break
+        end
+      end
+    end
+
+    # Check if we can make exact change
+    if Float.abs(remaining) > 0.001
+      # Revert the changes
+      Array.each(change_coins) do |coin_val|
+        current = Hash.fetch(tubes, coin_val, 0)
+        Hash.store(tubes, coin_val, Integer.+(current, 1))
+      end
+      puts("exact change needed")
+      next
+    end
+
+    # Remove sold item and add to inserted coins and tubes
+    new_count = Integer.-(Slot.count(slot), 1)
+    Hash.store(slots, code, Slot.new(Slot.name(slot), price, new_count))
+
+    # Also need to put inserted coins into tubes
+    Array.each(inserted_coins) do |coin_val|
+      current = Hash.fetch(tubes, coin_val, 0)
+      Hash.store(tubes, coin_val, Integer.+(current, 1))
+    end
+
+    # Record sale
+    product_name = Slot.name(slot)
+    sale = Hash.fetch(sales, product_name, nil)
+    if sale == nil
+      Hash.store(sales, product_name, Sale.new(1, price))
+    else
+      Hash.store(sales, product_name, Sale.new(Integer.+(Sale.name(sale), 1), Float.+(Sale.revenue(sale), price)))
+    end
+
+    # Reset state
+    credit = 0.0
+    inserted_coins = Array[]
+
+    if Array.size(change_coins) > 0
+      puts("vend #{product_name}, change #{format("%.2f", change)} [#{Array.join(Array.map(change_coins) { format("%.2f", it) }, " ")}]")
+    else
+      puts("vend #{product_name}")
+    end
+
+  in "CANCEL"
+    # CANCEL
+    if Array.size(fields) != 1
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    if Float.zero?(credit)
+      puts("nothing to return")
+      next
+    end
+
+    # Return coins in order inserted
+    returned_coins = Array[]
+    Array.each(inserted_coins) do |coin_val|
+      current = Hash.fetch(tubes, coin_val, 0)
+      Hash.store(tubes, coin_val, Integer.-(current, 1))
+      Array.push(returned_coins, coin_val)
+    end
+
+    if Array.size(returned_coins) > 0
+      puts("returned #{format("%.2f", credit)} [#{Array.join(Array.map(returned_coins) { format("%.2f", it) }, " ")}]")
+    else
+      puts("returned #{format("%.2f", credit)}")
+    end
+
+    credit = 0.0
+    inserted_coins = Array[]
+  end
+end
+
+# Final output
+if !Float.zero?(credit)
+  puts("credit #{format("%.2f", credit)} kept")
+end
+
+puts("sales:")
+if Hash.size(sales) > 0
+  # Sort by revenue (highest first), then by name
+  sales_list = SaleItem[]
+  Hash.each(sales) do |name, sale|
+    Array.push(sales_list, SaleItem.new(name, Sale.name(sale), Sale.revenue(sale)))
+  end
+
+  sorted = Array.sort_by(sales_list) do |item|
+    revenue = SaleItem.revenue(item)
+    name = SaleItem.product_name(item)
+    neg_revenue = Float.-(0.0, revenue)
+    [neg_revenue, name]
+  end
+
+  Array.each(sorted) do |item|
+    name = SaleItem.product_name(item)
+    count = SaleItem.count(item)
+    revenue = SaleItem.revenue(item)
+    puts(format("  %-12s %3d %8s", name, count, format("%.2f", revenue)))
+  end
+else
+  puts("  none")
+end
+
+puts("tubes: 0.05x#{Hash.fetch(tubes, 0.05, 0)} 0.10x#{Hash.fetch(tubes, 0.10, 0)} 0.25x#{Hash.fetch(tubes, 0.25, 0)} 0.50x#{Hash.fetch(tubes, 0.50, 0)} 1.00x#{Hash.fetch(tubes, 1.00, 0)} 2.00x#{Hash.fetch(tubes, 2.00, 0)}")

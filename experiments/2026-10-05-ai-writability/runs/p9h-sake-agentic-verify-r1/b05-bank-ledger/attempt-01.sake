@@ -1,0 +1,314 @@
+# Bank ledger
+
+Account = Struct.new(:balance, :limit, :lowest, :txns, :withdrawals_since_month)
+
+def is_valid_name?(n)
+  if String.size(n) < 1 || String.size(n) > 16
+    return false
+  end
+  String.match(n, /^[a-z]+$/) != nil
+end
+
+def is_valid_amount?(a)
+  String.match(a, /^(\d+(\.\d{1,2})?|\.\d{1,2})$/) != nil && String.to_f(a) > 0
+end
+
+def is_valid_limit?(l)
+  String.match(l, /^(\d+(\.\d{1,2})?|\.\d{1,2})$/) != nil
+end
+
+def parse_money(s)
+  # Returns cents (integer)
+  Integer(String.to_f(s) * 100.0)
+end
+
+def format_money(c)
+  is_neg = c < 0
+  abs_c = Arithmetic.abs(c)
+  dollars = abs_c / 100
+  cents = abs_c % 100
+  sign = is_neg ? "-" : ""
+  Kernel.format("%s%d.%02d", sign, dollars, cents)
+end
+
+lines = Array[]
+while true
+  line = Kernel.gets()
+  if line == nil
+    break
+  end
+  Array.push(lines, line)
+end
+
+accounts = Hash[]
+month_num = 0
+
+Array.each_with_index(lines) do |line, idx|
+  ln = idx + 1
+  stripped = String.strip(line)
+
+  if String.size(stripped) == 0
+    next
+  end
+
+  fields = String.split(stripped, /\s+/)
+  if Array.size(fields) == 0
+    next
+  end
+
+  cmd = Array.at(fields, 0)
+
+  if cmd == "OPEN"
+    if Array.size(fields) != 3
+      puts(Kernel.format("line %d: error: wrong field count", ln))
+      next
+    end
+
+    name = Array.at(fields, 1)
+    limit_str = Array.at(fields, 2)
+
+    if !is_valid_name?(name)
+      puts(Kernel.format("line %d: error: bad name", ln))
+      next
+    end
+
+    if !is_valid_limit?(limit_str)
+      puts(Kernel.format("line %d: error: bad amount", ln))
+      next
+    end
+
+    if Hash.has_key?(accounts, name)
+      puts(Kernel.format("line %d: error: account %s exists", ln, name))
+      next
+    end
+
+    limit = parse_money(limit_str)
+    acc = Account.new(0, limit, 0, 0, 0)
+    Hash.store(accounts, name, acc)
+
+  elsif cmd == "DEPOSIT"
+    if Array.size(fields) != 3
+      puts(Kernel.format("line %d: error: wrong field count", ln))
+      next
+    end
+
+    name = Array.at(fields, 1)
+    amt_str = Array.at(fields, 2)
+
+    if !is_valid_name?(name)
+      puts(Kernel.format("line %d: error: bad name", ln))
+      next
+    end
+
+    if !Hash.has_key?(accounts, name)
+      puts(Kernel.format("line %d: error: no account %s", ln, name))
+      next
+    end
+
+    if !is_valid_amount?(amt_str)
+      puts(Kernel.format("line %d: error: bad amount", ln))
+      next
+    end
+
+    amt = parse_money(amt_str)
+    acc = Hash.fetch(accounts, name)
+    new_bal = Account.balance(acc) + amt
+    Account.set_balance(acc, new_bal)
+    if new_bal < Account.lowest(acc)
+      Account.set_lowest(acc, new_bal)
+    end
+    Account.set_txns(acc, Account.txns(acc) + 1)
+
+  elsif cmd == "WITHDRAW"
+    if Array.size(fields) != 3
+      puts(Kernel.format("line %d: error: wrong field count", ln))
+      next
+    end
+
+    name = Array.at(fields, 1)
+    amt_str = Array.at(fields, 2)
+
+    if !is_valid_name?(name)
+      puts(Kernel.format("line %d: error: bad name", ln))
+      next
+    end
+
+    if !Hash.has_key?(accounts, name)
+      puts(Kernel.format("line %d: error: no account %s", ln, name))
+      next
+    end
+
+    if !is_valid_amount?(amt_str)
+      puts(Kernel.format("line %d: error: bad amount", ln))
+      next
+    end
+
+    amt = parse_money(amt_str)
+    acc = Hash.fetch(accounts, name)
+    new_bal = Account.balance(acc) - amt
+
+    if new_bal < -Account.limit(acc)
+      puts(Kernel.format("line %d: error: insufficient funds in %s", ln, name))
+      next
+    end
+
+    Account.set_balance(acc, new_bal)
+    if new_bal < Account.lowest(acc)
+      Account.set_lowest(acc, new_bal)
+    end
+    Account.set_txns(acc, Account.txns(acc) + 1)
+    Account.set_withdrawals_since_month(acc, Account.withdrawals_since_month(acc) + 1)
+
+  elsif cmd == "TRANSFER"
+    if Array.size(fields) != 4
+      puts(Kernel.format("line %d: error: wrong field count", ln))
+      next
+    end
+
+    from = Array.at(fields, 1)
+    to = Array.at(fields, 2)
+    amt_str = Array.at(fields, 3)
+
+    if !is_valid_name?(from)
+      puts(Kernel.format("line %d: error: bad name", ln))
+      next
+    end
+
+    if !is_valid_name?(to)
+      puts(Kernel.format("line %d: error: bad name", ln))
+      next
+    end
+
+    if !Hash.has_key?(accounts, from)
+      puts(Kernel.format("line %d: error: no account %s", ln, from))
+      next
+    end
+
+    if !Hash.has_key?(accounts, to)
+      puts(Kernel.format("line %d: error: no account %s", ln, to))
+      next
+    end
+
+    if from == to
+      puts(Kernel.format("line %d: error: same account", ln))
+      next
+    end
+
+    if !is_valid_amount?(amt_str)
+      puts(Kernel.format("line %d: error: bad amount", ln))
+      next
+    end
+
+    amt = parse_money(amt_str)
+    from_acc = Hash.fetch(accounts, from)
+    new_from_bal = Account.balance(from_acc) - amt
+
+    if new_from_bal < -Account.limit(from_acc)
+      puts(Kernel.format("line %d: error: insufficient funds in %s", ln, from))
+      next
+    end
+
+    to_acc = Hash.fetch(accounts, to)
+    new_to_bal = Account.balance(to_acc) + amt
+
+    Account.set_balance(from_acc, new_from_bal)
+    if new_from_bal < Account.lowest(from_acc)
+      Account.set_lowest(from_acc, new_from_bal)
+    end
+    Account.set_txns(from_acc, Account.txns(from_acc) + 1)
+    Account.set_withdrawals_since_month(from_acc, Account.withdrawals_since_month(from_acc) + 1)
+
+    Account.set_balance(to_acc, new_to_bal)
+    if new_to_bal < Account.lowest(to_acc)
+      Account.set_lowest(to_acc, new_to_bal)
+    end
+    Account.set_txns(to_acc, Account.txns(to_acc) + 1)
+
+  elsif cmd == "MONTHEND"
+    if Array.size(fields) != 1
+      puts(Kernel.format("line %d: error: wrong field count", ln))
+      next
+    end
+
+    month_num += 1
+    puts(Kernel.format("== month %d ==", month_num))
+
+    # Get accounts in order and calculate interest/fees
+    accs_list = Hash.to_a(accounts)
+    accs_list = Array.sort_by(accs_list) { |name, _| name }
+
+    Array.each(accs_list) do |acc_tuple|
+      name, acc = acc_tuple
+
+      bal = Account.balance(acc)
+
+      # Interest
+      if bal < 0
+        # Charge 1.5%, round up
+        overdrawn = Arithmetic.abs(bal)
+        charge = (overdrawn * 150 + 9999) / 10000  # Round up: (x + 9999) / 10000 for 0.01% precision
+        if charge > 0
+          Account.set_balance(acc, bal - charge)
+          new_bal = Account.balance(acc)
+          if new_bal < Account.lowest(acc)
+            Account.set_lowest(acc, new_bal)
+          end
+          puts(Kernel.format("%s interest -%s", name, format_money(charge)))
+        end
+      else
+        # Add 0.25%, round down
+        credit = bal * 25 / 10000
+        if credit > 0
+          Account.set_balance(acc, bal + credit)
+          new_bal = Account.balance(acc)
+          if new_bal < Account.lowest(acc)
+            Account.set_lowest(acc, new_bal)
+          end
+          puts(Kernel.format("%s interest +%s", name, format_money(credit)))
+        end
+      end
+
+      # Fee
+      if Account.withdrawals_since_month(acc) > 4
+        fee = 200  # 2.00 in cents
+        new_bal = Account.balance(acc) - fee
+        Account.set_balance(acc, new_bal)
+        if new_bal < Account.lowest(acc)
+          Account.set_lowest(acc, new_bal)
+        end
+        puts(Kernel.format("%s fee -2.00", name))
+      end
+
+      Account.set_withdrawals_since_month(acc, 0)
+    end
+
+  else
+    puts(Kernel.format("line %d: error: unknown command", ln))
+  end
+end
+
+# Final report
+if Hash.size(accounts) == 0
+  puts("no accounts")
+else
+  puts(Kernel.format("%-16s %12s %12s %5s", "account", "balance", "lowest", "txns"))
+
+  accs_list = Hash.to_a(accounts)
+  accs_list = Array.sort_by(accs_list) do |name, acc|
+    [-Account.balance(acc), name]
+  end
+
+  total = 0
+  Array.each(accs_list) do |acc_tuple|
+    name, acc = acc_tuple
+    bal = Account.balance(acc)
+    low = Account.lowest(acc)
+    txns = Account.txns(acc)
+
+    total += bal
+
+    puts(Kernel.format("%-16s %12s %12s %5d", name, format_money(bal), format_money(low), txns))
+  end
+
+  puts(Kernel.format("total: %s", format_money(total)))
+end

@@ -1,0 +1,237 @@
+# Disk usage tree
+Dir = Struct.new(:name, :children, :size, :is_file)
+File_entry = Struct.new(:name, :size)
+
+def format_size(bytes)
+  if bytes < 1024
+    return "#{bytes}B"
+  end
+
+  k = 1024
+  m = 1024 * 1024
+  g = 1024 * 1024 * 1024
+
+  units = if bytes >= g then [g, "G"] elsif bytes >= m then [m, "M"] elsif bytes >= k then [k, "K"] else [1, ""] end
+  u_val, u_letter = units
+
+  # Calculate t = bytes * 10 / u_val, rounded
+  t = (bytes * 10 + u_val / 2) / u_val  # Banker's rounding (halves up)
+
+  if t < 100
+    dec = t / 10
+    frac = t % 10
+    return "#{dec}.#{frac}#{u_letter}"
+  end
+
+  n = (bytes + u_val / 2) / u_val
+
+  if n == 1024 && u_letter != "G"
+    next_u_val = u_val * 1024
+    next_u_letter = u_letter == "K" ? "M" : "G"
+    return format_size((bytes * 10) / next_u_val)
+  end
+
+  return "#{n}#{u_letter}"
+end
+
+# Read header
+header_line = gets
+if header_line == nil
+  puts("bad header")
+  exit
+end
+
+header_line => String
+parts = String.split(String.strip(header_line))
+
+if Array.size(parts) != 4 || Array.at(parts, 0) != "depth" || Array.at(parts, 2) != "threshold"
+  puts("bad header")
+  exit
+end
+
+depth_limit = String.to_i(Array.at(parts, 1))
+threshold = String.to_i(Array.at(parts, 3))
+
+# Build filesystem tree
+root = Dir.new(".", Hash[], 0, false)
+all_files = Set[]
+
+# Track accepted paths for duplicate/conflict detection
+accepted_files = Set[]
+accepted_dirs = Set[]
+
+line_num = 1
+errors = Array[]
+
+while (line = gets)
+  line => String
+  line_num = line_num + 1
+
+  stripped = String.strip(line)
+  next if String.empty?(stripped)
+
+  parts = String.split(stripped)
+  if Array.size(parts) != 2
+    Array.push(errors, [line_num, "malformed"])
+    next
+  end
+
+  size_str = Array.at(parts, 0)
+  path = Array.at(parts, 1)
+
+  # Validate size
+  size = String.to_i(size_str)
+  if Integer.to_s(size) != size_str
+    Array.push(errors, [line_num, "malformed"])
+    next
+  end
+
+  # Validate path
+  if String.empty?(path) || String.include?(path, "/.")
+    Array.push(errors, [line_num, "malformed"])
+    next
+  end
+
+  path_parts = String.split(path, "/")
+  valid_path = true
+  Array.each(path_parts) do |p|
+    valid_path = false if String.empty?(p) || p == "." || p == ".."
+  end
+  if !valid_path || Array.at(path_parts, 0) == ""
+    Array.push(errors, [line_num, "malformed"])
+    next
+  end
+
+  # Check for duplicates
+  if Set.include?(accepted_files, path)
+    Array.push(errors, [line_num, "duplicate #{path}"])
+    next
+  end
+
+  # Check for conflicts
+  conflict = false
+  Array.each(accepted_files) do |f|
+    # Check if f is a proper prefix of path
+    if String.start_with?(path, f + "/")
+      conflict = true
+    end
+    # Check if path is a proper prefix of f
+    if String.start_with?(f, path + "/")
+      conflict = true
+    end
+  end
+
+  if conflict
+    Array.push(errors, [line_num, "conflict #{path}"])
+    next
+  end
+
+  # Accept file
+  Set.add(accepted_files, path)
+
+  # Build directory tree
+  current = root
+  Array.each_with_index(path_parts) do |comp, idx|
+    is_last = idx == Array.size(path_parts) - 1
+
+    children = Dir.children(current)
+    existing = children[comp]
+
+    if existing == nil
+      if is_last
+        new_entry = Dir.new(comp, Hash[], size, true)
+      else
+        new_entry = Dir.new(comp, Hash[], 0, false)
+      end
+      children[comp] = new_entry
+      current = new_entry
+    else
+      current = existing
+    end
+  end
+end
+
+# Print errors
+Array.each(errors) do |e|
+  puts("line #{Array.at(e, 0)}: #{Array.at(e, 1)}")
+end
+
+# Calculate sizes recursively
+def calc_size(node)
+  if Dir.is_file(node)
+    return Dir.size(node)
+  end
+
+  total = 0
+  children = Dir.children(node)
+  Hash.each(children) do |name, child|
+    sz = calc_size(child)
+    total = total + sz
+  end
+  Dir.set_size(node, total)
+  total
+end
+
+calc_size(root)
+
+# Print tree
+def print_tree(node, depth, depth_limit, threshold)
+  name = Dir.name(node)
+  indent = String.*(
+    "  ",
+    depth
+  )
+
+  size = Dir.size(node)
+  puts(format("%6s  %s%s", format_size(size), indent, if Dir.is_file(node) then name else name + "/" end))
+
+  if depth >= depth_limit || Dir.is_file(node)
+    return
+  end
+
+  children = Dir.children(node)
+
+  # Sort children: by size descending, then name ascending
+  entries = Hash.to_a(children)
+  entries = Array.sort_by(entries) do |item|
+    key, child = item
+    child_size = Dir.size(child)
+    [-child_size, key]
+  end
+
+  # Separate above/below threshold
+  above_threshold = Array[]
+  below_threshold = Array[]
+
+  Array.each(entries) do |item|
+    key, child = item
+    child_size = Dir.size(child)
+    if child_size >= threshold
+      Array.push(above_threshold, item)
+    else
+      Array.push(below_threshold, item)
+    end
+  end
+
+  # Print above threshold
+  Array.each(above_threshold) do |item|
+    key, child = item
+    print_tree(child, depth + 1, depth_limit, threshold)
+  end
+
+  # Print smaller entries summary
+  if !Array.empty?(below_threshold)
+    smaller_size = 0
+    Array.each(below_threshold) do |item|
+      key, child = item
+      smaller_size = smaller_size + Dir.size(child)
+    end
+    indent2 = String.*(
+      "  ",
+      depth + 1
+    )
+    puts(format("%6s  %s(%d smaller)", format_size(smaller_size), indent2, Array.size(below_threshold)))
+  end
+end
+
+print_tree(root, 0, depth_limit, threshold)

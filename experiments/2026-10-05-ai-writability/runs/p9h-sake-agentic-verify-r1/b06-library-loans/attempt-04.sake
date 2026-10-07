@@ -1,0 +1,324 @@
+# Library loans simulation
+
+Book = Struct.new(:member, :due_day)
+Member = Struct.new(:owed, :loans, :reserved)
+OverdueEntry = Struct.new(:book, :member, :due_day, :days_late)
+
+current_day = 0
+books = Hash.new(nil)
+members = Hash.new(nil)
+reserves = Hash.new(nil)
+
+line_num = 0
+
+# Read all lines from stdin
+Kernel.loop do
+  line_str = Kernel.gets
+  break if line_str == nil
+
+  line_num = Integer.+(line_num, 1)
+  line = String.split(String.strip(line_str), /\s+/)
+
+  # Skip blank lines
+  if Array.size(line) == 0
+    next
+  end
+
+  # Parse day
+  day_str = Array.at(line, 0)
+  day = (String.to_i(day_str) rescue nil)
+
+  # Error: bad day
+  if day == nil
+    puts("line #{line_num}: error: bad day")
+    next
+  end
+
+  # Error: day goes backwards
+  if day < current_day
+    puts("line #{line_num}: error: day goes backwards")
+    next
+  end
+
+  if day > current_day
+    current_day = day
+  end
+
+  # Parse command
+  cmd = Array.at(line, 1)
+
+  # Error: unknown command
+  if cmd == nil || (cmd != "CHECKOUT" && cmd != "RETURN" && cmd != "RESERVE" && cmd != "PAY")
+    puts("line #{line_num}: error: unknown command")
+    next
+  end
+
+  # Process commands
+  case cmd
+  in "CHECKOUT"
+    # DAY CHECKOUT MEMBER BOOK
+    if Array.size(line) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    member = Array.at(line, 2)
+    book = Array.at(line, 3)
+
+    # Validate member and book
+    if member == nil || String.size(member) < 1 || String.size(member) > 12 || !String.match?(member, /^[a-z]+$/)
+      puts("line #{line_num}: error: bad member")
+      next
+    end
+
+    if book == nil || String.size(book) < 1 || String.size(book) > 8 || !String.match?(book, /^[A-Z][A-Z0-9]*$/)
+      puts("line #{line_num}: error: bad book")
+      next
+    end
+
+    # Check if book is on loan
+    book_info = Hash.fetch(books, book, nil)
+    if book_info != nil
+      puts("line #{line_num}: refused: #{book} is on loan")
+      next
+    end
+
+    # Check if book is held for someone
+    reserve_queue = Hash.fetch(reserves, book, nil)
+    if reserve_queue != nil && Array.size(reserve_queue) > 0
+      first_in_queue = Array.at(reserve_queue, 0)
+      if first_in_queue != member
+        puts("line #{line_num}: refused: #{book} is held for #{first_in_queue}")
+        next
+      end
+    end
+
+    # Get or create member info
+    member_info = Hash.fetch(members, member, nil)
+    if member_info == nil
+      member_info = Member.new(0.0, Array[], false)
+      Hash.store(members, member, member_info)
+    end
+
+    # Check for overdue books
+    has_overdue = false
+    Array.each(Member.loans(member_info)) do |b|
+      b_info = Hash.fetch(books, b, nil)
+      if b_info != nil && Book.due_day(b_info) < current_day
+        has_overdue = true
+      end
+    end
+
+    if has_overdue
+      puts("line #{line_num}: refused: #{member} has overdue books")
+      next
+    end
+
+    # Check loan count
+    if Array.size(Member.loans(member_info)) >= 3
+      puts("line #{line_num}: refused: #{member} has 3 loans")
+      next
+    end
+
+    # Check amount owed
+    if Member.owed(member_info) >= 10.0
+      puts("line #{line_num}: refused: #{member} owes #{format("%.2f", Member.owed(member_info))}")
+      next
+    end
+
+    # Process checkout
+    due_day = Integer.+(current_day, 14)
+    Hash.store(books, book, Book.new(member, due_day))
+    Array.push(Member.loans(member_info), book)
+
+    # Remove from reserve queue if at front
+    if reserve_queue != nil && Array.size(reserve_queue) > 0 && Array.at(reserve_queue, 0) == member
+      Array.shift(reserve_queue)
+    end
+
+    puts("#{member} borrowed #{book}, due day #{due_day}")
+
+  in "RETURN"
+    # DAY RETURN BOOK
+    if Array.size(line) != 3
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    book = Array.at(line, 2)
+
+    if book == nil || String.size(book) < 1 || String.size(book) > 8 || !String.match?(book, /^[A-Z][A-Z0-9]*$/)
+      puts("line #{line_num}: error: bad book")
+      next
+    end
+
+    book_info = Hash.fetch(books, book, nil)
+    if book_info == nil
+      puts("line #{line_num}: refused: #{book} is not on loan")
+      next
+    end
+
+    member = Book.member(book_info)
+    due_day = Book.due_day(book_info)
+    days_late = Integer.-(current_day, due_day)
+
+    member_info = Hash.fetch(members, member, nil)
+
+    if days_late > 0
+      fine = Float(Integer.to_f(days_late) * 0.25)
+      if fine > 5.0
+        fine = 5.0
+      end
+      owed = Float.+(Member.owed(member_info), fine)
+      Hash.store(members, member, Member.new(owed, Member.loans(member_info), Member.reserved(member_info)))
+      puts("#{member} returned #{book}, #{days_late} days late, fine #{format("%.2f", fine)}")
+    else
+      puts("#{member} returned #{book}")
+    end
+
+    # Remove from loans
+    loans = Member.loans(member_info)
+    Array.delete(loans, book)
+
+    # Remove from books
+    Hash.delete(books, book)
+
+    # Check if anyone is waiting
+    reserve_queue = Hash.fetch(reserves, book, nil)
+    if reserve_queue != nil && Array.size(reserve_queue) > 0
+      next_member = Array.shift(reserve_queue)
+      Hash.store(books, book, Book.new(next_member, -1))
+      puts("#{book} held for #{next_member}")
+    end
+
+  in "RESERVE"
+    # DAY RESERVE MEMBER BOOK
+    if Array.size(line) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    member = Array.at(line, 2)
+    book = Array.at(line, 3)
+
+    if member == nil || String.size(member) < 1 || String.size(member) > 12 || !String.match?(member, /^[a-z]+$/)
+      puts("line #{line_num}: error: bad member")
+      next
+    end
+
+    if book == nil || String.size(book) < 1 || String.size(book) > 8 || !String.match?(book, /^[A-Z][A-Z0-9]*$/)
+      puts("line #{line_num}: error: bad book")
+      next
+    end
+
+    # Check if member already has the book
+    member_info = Hash.fetch(members, member, nil)
+    if member_info != nil && Array.include?(Member.loans(member_info), book)
+      puts("line #{line_num}: refused: #{member} already has #{book}")
+      next
+    end
+
+    # Check if member already reserved
+    reserve_queue = Hash.fetch(reserves, book, nil)
+    if reserve_queue != nil && Array.include?(reserve_queue, member)
+      puts("line #{line_num}: refused: #{member} already reserved #{book}")
+      next
+    end
+
+    # Check if book is available
+    book_info = Hash.fetch(books, book, nil)
+    if book_info == nil
+      puts("line #{line_num}: refused: #{book} is available")
+      next
+    end
+
+    # Process reserve
+    if member_info == nil
+      member_info = Member.new(0.0, Array[], false)
+      Hash.store(members, member, member_info)
+    end
+
+    if reserve_queue == nil
+      reserve_queue = Array[]
+      Hash.store(reserves, book, reserve_queue)
+    end
+
+    Array.push(reserve_queue, member)
+    position = Array.size(reserve_queue)
+    puts("reserved #{book} for #{member} (position #{position})")
+
+  in "PAY"
+    # DAY PAY MEMBER AMOUNT
+    if Array.size(line) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    member = Array.at(line, 2)
+    amount_str = Array.at(line, 3)
+
+    if member == nil || String.size(member) < 1 || String.size(member) > 12 || !String.match?(member, /^[a-z]+$/)
+      puts("line #{line_num}: error: bad member")
+      next
+    end
+
+    amount = (String.to_f(amount_str) rescue nil)
+    if amount == nil || amount <= 0
+      puts("line #{line_num}: error: bad amount")
+      next
+    end
+
+    member_info = Hash.fetch(members, member, nil)
+    if member_info == nil
+      member_info = Member.new(0.0, Array[], false)
+      Hash.store(members, member, member_info)
+    end
+
+    owed = Member.owed(member_info)
+    if amount > owed
+      puts("line #{line_num}: refused: #{member} owes only #{format("%.2f", owed)}")
+      next
+    end
+
+    new_owed = Float.-(owed, amount)
+    Hash.store(members, member, Member.new(new_owed, Member.loans(member_info), Member.reserved(member_info)))
+    puts("#{member} paid #{format("%.2f", amount)}, owes #{format("%.2f", new_owed)}")
+  end
+end
+
+# Final report
+puts(format("%-12s %5s %8s", "member", "loans", "owes"))
+
+# Sort members by name
+member_names = Array.sort(Hash.keys(members))
+Array.each(member_names) do |member|
+  member_info = Hash.fetch(members, member, nil)
+  loans_count = Array.size(Member.loans(member_info))
+  owed = Member.owed(member_info)
+  puts(format("%-12s %5d %8s", member, loans_count, format("%.2f", owed)))
+end
+
+# Overdue report
+puts("overdue on day #{current_day}:")
+
+# Build overdue list
+overdue_list = OverdueEntry[]
+Hash.each(books) do |book_key, book_value|
+  if book_value != nil
+    due = Book.due_day(book_value)
+    if due > 0 && due < current_day
+      member_name = Book.member(book_value)
+      days_late = Integer.-(current_day, due)
+      Array.push(overdue_list, OverdueEntry.new(book_key, member_name, due, days_late))
+    end
+  end
+end
+
+if Array.size(overdue_list) > 0
+  sorted = Array.sort_by(overdue_list) { |ent| [OverdueEntry.due_day(ent), OverdueEntry.book(ent)] }
+  Array.each(sorted) do |ent|
+    puts("  #{OverdueEntry.book(ent)} #{OverdueEntry.member(ent)} due #{OverdueEntry.due_day(ent)} (#{OverdueEntry.days_late(ent)} days)")
+  end
+else
+  puts("  none")
+end

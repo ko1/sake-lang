@@ -1,0 +1,199 @@
+# Parking garage billing
+Car_log = Struct.new(:plate, :time_in, :hours_in, :mins_in, :fee)
+
+def format_money(cents)
+  dollars = cents / 100
+  remainder = cents % 100
+  "#{dollars}.#{Integer.to_s(remainder).rjust(2, "0")}"
+end
+
+def parse_time(time_str)
+  parts = String.split(time_str, ":")
+  if Array.size(parts) != 2
+    return nil
+  end
+  hh = String.to_i(Array.at(parts, 0))
+  mm = String.to_i(Array.at(parts, 1))
+  if hh < 0 || hh > 23 || mm < 0 || mm > 59
+    return nil
+  end
+  [hh, mm]
+end
+
+def is_valid_plate(plate)
+  if String.empty?(plate) || String.size(plate) > 8
+    return false
+  end
+  String.each_char(plate) do |c|
+    is_valid = (c >= "A" && c <= "Z") || (c >= "0" && c <= "9")
+    return false if !is_valid
+  end
+  true
+end
+
+def calc_fee(duration_mins, first, step, cap, grace)
+  if duration_mins <= grace
+    return 0
+  end
+
+  # Split into days and remainder
+  days = duration_mins / 1440
+  remainder = duration_mins % 1440
+
+  # Calculate part(remainder)
+  if remainder == 0
+    part_r = 0
+  else
+    # part(r) = first + step * (number of started 30-min periods after first 60 min)
+    if remainder <= 60
+      part_r = first
+    else
+      mins_after_first = remainder - 60
+      # Number of started 30-min periods
+      periods = (mins_after_first + 29) / 30
+      part_r = first + step * periods
+    end
+  end
+
+  fee = days * cap + part_r
+  if fee > cap
+    fee = cap
+  end
+
+  fee
+end
+
+# Read rate header
+rate_line = gets
+rate_line => String
+parts = String.split(String.strip(rate_line))
+
+if Array.size(parts) != 5 || Array.at(parts, 0) != "RATE"
+  puts("Bad rate header")
+  exit
+end
+
+first = String.to_i(Array.at(parts, 1))
+step = String.to_i(Array.at(parts, 2))
+cap = String.to_i(Array.at(parts, 3))
+grace = String.to_i(Array.at(parts, 4))
+
+# Process events
+inside = Hash[]  # plate -> [hours, minutes] when entered
+exits = Array[]
+line_num = 1
+last_time_mins = nil
+current_day = 0
+
+while (line = gets)
+  line => String
+  line_num = line_num + 1
+
+  stripped = String.strip(line)
+  next if String.empty?(stripped)
+
+  parts = String.split(stripped)
+
+  if Array.size(parts) < 3
+    puts("line #{line_num}: invalid")
+    next
+  end
+
+  time_str = Array.at(parts, 0)
+  event = Array.at(parts, 1)
+  plate = Array.at(parts, 2)
+
+  # Validate time
+  time = parse_time(time_str)
+  if time == nil || !Array.include?(["IN", "OUT"], event) || !is_valid_plate(plate)
+    puts("line #{line_num}: invalid")
+    next
+  end
+
+  hh, mm = time
+  time_mins = hh * 60 + mm
+
+  # Check if new day
+  if last_time_mins != nil && time_mins < last_time_mins
+    current_day = current_day + 1
+  end
+  last_time_mins = time_mins
+
+  if event == "IN"
+    if inside[plate]
+      puts("line #{line_num}: #{plate} already inside")
+    else
+      inside[plate] = [hh, mm, current_day]
+    end
+  else  # OUT
+    entry = inside[plate]
+    if entry == nil
+      puts("line #{line_num}: #{plate} not inside")
+    else
+      in_hh, in_mm, in_day = entry
+
+      # Calculate duration
+      end_mins = (current_day - in_day) * 1440 + hh * 60 + mm
+      start_mins = in_hh * 60 + in_mm
+      duration_mins = end_mins - start_mins
+
+      fee_cents = calc_fee(duration_mins, first, step, cap, grace)
+
+      # Calculate display time
+      total_mins = duration_mins
+      display_hours = total_mins / 60
+      display_mins = total_mins % 60
+
+      puts("#{plate} #{display_hours}:#{Integer.to_s(display_mins).rjust(2, "0")} #{format_money(fee_cents)}")
+
+      Array.push(exits, [plate, fee_cents])
+      Hash.delete(inside, plate)
+    end
+  end
+end
+
+# Output summary
+puts("--- summary")
+
+# Group by plate
+plates_data = Hash[]
+Array.each(exits) do |exit_info|
+  plate, fee = exit_info
+  if plates_data[plate] == nil
+    plates_data[plate] = [0, 0]
+  end
+  count, revenue = plates_data[plate]
+  plates_data[plate] = [count + 1, revenue + fee]
+end
+
+# Sort by revenue descending, then plate ascending
+plate_entries = Hash.to_a(plates_data)
+plate_entries = Array.sort_by(plate_entries) do |item|
+  plate, data = item
+  count, revenue = data
+  [-revenue, plate]
+end
+
+total_exits = 0
+total_revenue = 0
+
+Array.each(plate_entries) do |item|
+  plate, data = item
+  count, revenue = data
+  total_exits = total_exits + count
+  total_revenue = total_revenue + revenue
+  puts("#{plate} #{count} #{format_money(revenue)}")
+end
+
+puts("total #{total_exits} #{format_money(total_revenue)}")
+
+# Print inside cars
+inside_plates = Hash.keys(inside)
+inside_plates = Array.sort(inside_plates)
+
+if Array.empty?(inside_plates)
+  puts("inside: none")
+else
+  plate_str = Array.join(inside_plates, ", ")
+  puts("inside: #{plate_str}")
+end

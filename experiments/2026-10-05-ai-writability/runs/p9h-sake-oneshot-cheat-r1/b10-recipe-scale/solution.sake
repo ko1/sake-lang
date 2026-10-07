@@ -1,0 +1,242 @@
+def parse_quantity(qty_str, next_str)
+  if String.match?(qty_str, /^[1-9]\d*$/)
+    int_part = String.to_i(qty_str)
+    if String.match?(next_str || "", /^[1-9]\d*\/[1-9]\d*$/)
+      frac_parts = String.split(next_str, "/")
+      num = String.to_i(Array.at(frac_parts, 0))
+      den = String.to_i(Array.at(frac_parts, 1))
+      [Rational(int_part * den + num, den), 2]
+    else
+      [Rational(int_part, 1), 1]
+    end
+  elsif String.match?(qty_str, /^[1-9]\d*\/[1-9]\d*$/)
+    parts = String.split(qty_str, "/")
+    num = String.to_i(Array.at(parts, 0))
+    den = String.to_i(Array.at(parts, 1))
+    if den == 0
+      nil
+    else
+      [Rational(num, den), 1]
+    end
+  elsif String.match?(qty_str, /^\d+(\.\d+)?$/)
+    num_parts = String.split(qty_str, ".")
+    int_str = Array.at(num_parts, 0)
+    dec_str = Array.at(num_parts, 1)
+    if dec_str != nil
+      scale = Integer.to_f(10) ** String.length(dec_str)
+      total = String.to_i(int_str + dec_str)
+      den = Integer.to_f(scale)
+      [Rational(total, Integer.to_f(scale)), 1]
+    else
+      [Rational(String.to_i(int_str), 1), 1]
+    end
+  else
+    nil
+  end
+end
+
+def get_unit_group(unit)
+  case unit
+  in "tsp" | "tbsp" | "cup" then "spoons"
+  in "g" | "kg" then "grams"
+  in "ml" | "l" then "ml"
+  in "-" then "count"
+  else nil
+  end
+end
+
+def to_base_unit(qty, unit)
+  case unit
+  in "tsp" then [qty, "tsp"]
+  in "tbsp" then [qty * 3, "tsp"]
+  in "cup" then [qty * 48, "tsp"]
+  in "g" then [qty, "g"]
+  in "kg" then [qty * 1000, "g"]
+  in "ml" then [qty, "ml"]
+  in "l" then [qty * 1000, "ml"]
+  in "-" then [qty, "-"]
+  else nil
+  end
+end
+
+def format_quantity(qty)
+  num = Rational.numerator(qty)
+  den = Rational.denominator(qty)
+
+  if den == 1
+    Integer.to_s(num)
+  elsif num < den
+    "#{num}/#{den}"
+  else
+    whole = num / den
+    rem = num % den
+    if rem == 0
+      Integer.to_s(whole)
+    else
+      "#{whole} #{rem}/#{den}"
+    end
+  end
+end
+
+line_num = 0
+first_line = true
+factor = nil
+ingredients = Hash[]
+order = Array[]
+
+while (line = gets)
+  line_num += 1
+  line_stripped = String.strip(line)
+
+  if String.empty?(line_stripped)
+    next
+  end
+
+  if String.start_with?(line_stripped, "#")
+    next
+  end
+
+  parts = String.split(line_stripped, /\s+/)
+
+  if first_line
+    first_line = false
+
+    if Array.length(parts) != 4 || Array.at(parts, 0) != "SERVES" || Array.at(parts, 2) != "->"
+      puts("line 1: error: bad servings")
+      exit(0)
+    end
+
+    n_str = Array.at(parts, 1)
+    m_str = Array.at(parts, 3)
+
+    unless String.match?(n_str, /^[1-9]\d*$/) && String.match?(m_str, /^[1-9]\d*$/)
+      puts("line 1: error: bad servings")
+      exit(0)
+    end
+
+    n = String.to_i(n_str)
+    m = String.to_i(m_str)
+    factor = Rational(m, n)
+
+    puts("serves #{m} (x #{format_quantity(factor)})")
+  else
+    if Array.empty?(parts)
+      next
+    end
+
+    qty_str = Array.at(parts, 0)
+    unit_str = Array.at(parts, 1)
+
+    result = parse_quantity(qty_str, unit_str)
+
+    if result == nil
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    qty = Array.at(result, 0)
+    consumed = Array.at(result, 1)
+
+    if qty == nil || Rational.to_i(qty) <= 0
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    if consumed == 2
+      unit_str = Array.at(parts, 2)
+      name_start_idx = 3
+    else
+      name_start_idx = 2
+    end
+
+    unless unit_str != nil
+      puts("line #{line_num}: error: missing unit")
+      next
+    end
+
+    unless get_unit_group(unit_str) != nil
+      puts("line #{line_num}: error: unknown unit #{unit_str}")
+      next
+    end
+
+    name_parts = Array[]
+    Array.each(name_start_idx..Array.length(parts) - 1) do |i|
+      Array.push(name_parts, Array.at(parts, i))
+    end
+
+    if Array.empty?(name_parts)
+      puts("line #{line_num}: error: missing name")
+      next
+    end
+
+    name = Array.join(name_parts, " ")
+
+    scaled_qty = qty * factor
+    base_result = to_base_unit(scaled_qty, unit_str)
+    base_qty = Array.at(base_result, 0)
+    base_unit = Array.at(base_result, 1)
+    unit_group = get_unit_group(unit_str)
+
+    key = [name, unit_group, base_unit]
+
+    if ingredients[key] == nil
+      Array.push(order, key)
+      ingredients[key] = base_qty
+    else
+      ingredients[key] = ingredients[key] + base_qty
+    end
+  end
+end
+
+Array.each(order) do |key|
+  name = Array.at(key, 0)
+  unit_group = Array.at(key, 1)
+  base_unit = Array.at(key, 2)
+  base_qty = ingredients[key]
+
+  if unit_group == "spoons"
+    cups = base_qty / 48
+    tbsp = base_qty / 3
+    tsp = base_qty
+
+    if Rational.to_i(cups) >= 1 && Rational.denominator(cups) <= 4
+      display_qty = cups
+      display_unit = "cup"
+    elsif Rational.to_i(tbsp) >= 1 && Rational.denominator(tbsp) <= 4
+      display_qty = tbsp
+      display_unit = "tbsp"
+    else
+      display_qty = tsp
+      display_unit = "tsp"
+    end
+  elsif unit_group == "grams"
+    kg = base_qty / 1000
+
+    if Rational.to_i(kg) >= 1
+      display_qty = kg
+      display_unit = "kg"
+    else
+      display_qty = base_qty
+      display_unit = "g"
+    end
+  elsif unit_group == "ml"
+    l = base_qty / 1000
+
+    if Rational.to_i(l) >= 1
+      display_qty = l
+      display_unit = "l"
+    else
+      display_qty = base_qty
+      display_unit = "ml"
+    end
+  else
+    display_qty = Arithmetic.ceil(base_qty)
+    display_unit = "-"
+  end
+
+  if display_unit == "-"
+    puts("#{Rational.to_i(display_qty)} #{name}")
+  else
+    puts("#{format_quantity(display_qty)} #{display_unit} #{name}")
+  end
+end

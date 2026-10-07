@@ -1,0 +1,224 @@
+def parse_score(score_str)
+  case score_str
+  in "EX" then [:excused]
+  in "-" then [:missing]
+  else
+    parts = String.split(score_str, "/")
+    if Integer.length(parts) != 2 then [:error]
+    else
+      p_str = String.at(parts, 0)
+      m_str = String.at(parts, 1)
+      if String.match?(p_str, /^\d+$/) && String.match?(m_str, /^\d+$/)
+        p = String.to_i(p_str)
+        m = String.to_i(m_str)
+        if m > 0 && p <= m then [:score, p, m]
+        else [:error]
+        end
+      else [:error]
+      end
+    end
+  end
+end
+
+def round_half_up(f)
+  i = Float.to_i(f * 10.0 + 0.5)
+  Float.to_f(i) / 10.0
+end
+
+def grade_for(pct)
+  case pct
+  in Float if pct >= 90.0 then "A"
+  in Float if pct >= 80.0 then "B"
+  in Float if pct >= 70.0 then "C"
+  in Float if pct >= 60.0 then "D"
+  else "F"
+  end
+end
+
+# Read all lines
+lines = IO.readlines(IO.stdin)
+
+weights = Hash[]
+errors = Array[]
+scores_by_student_cat = Hash[]
+students = Set[]
+
+Integer.times(Integer.length(lines)) do |i|
+  line_num = i + 1
+  line = String.chomp(String.at(lines, i))
+  line = String.strip(line)
+
+  if String.empty?(line) || String.start_with?(line, "#")
+    next
+  end
+
+  fields = String.split(line, /\s+/)
+
+  if Integer.length(fields) > 0 && String.at(fields, 0) == "weight"
+    if Integer.length(fields) != 3
+      Array.push(errors, "line #{line_num}: bad format")
+      next
+    end
+
+    cat = String.at(fields, 1)
+    w_str = String.at(fields, 2)
+
+    if !String.match?(w_str, /^\d+$/)
+      Array.push(errors, "line #{line_num}: bad weight #{w_str}")
+      next
+    end
+
+    w = String.to_i(w_str)
+    if w < 1 || w > 100
+      Array.push(errors, "line #{line_num}: bad weight #{w_str}")
+      next
+    end
+
+    if Hash.has_key?(weights, cat)
+      Array.push(errors, "line #{line_num}: duplicate category #{cat}")
+      next
+    end
+
+    Hash.store(weights, cat, w)
+  else
+    if Integer.length(fields) != 3
+      Array.push(errors, "line #{line_num}: bad format")
+      next
+    end
+
+    student = String.at(fields, 0)
+    cat = String.at(fields, 1)
+    score_str = String.at(fields, 2)
+
+    if !Hash.has_key?(weights, cat)
+      Array.push(errors, "line #{line_num}: unknown category #{cat}")
+      next
+    end
+
+    Set.add(students, student)
+
+    parsed = parse_score(score_str)
+    parsed => [type, *rest]
+
+    case type
+    in "excused" then next
+    in "missing"
+      key = {student: student, cat: cat}
+      if Hash.has_key?(scores_by_student_cat, key)
+        v = Hash.fetch(scores_by_student_cat, key, nil)
+        if v
+          v => {points:, maxima:, missing:}
+          Hash.store(scores_by_student_cat, key, {points: points, maxima: maxima, missing: missing + 1})
+        end
+      else
+        Hash.store(scores_by_student_cat, key, {points: 0, maxima: 0, missing: 1})
+      end
+    in "score"
+      p = String.at(rest, 0)
+      m = String.at(rest, 1)
+      key = {student: student, cat: cat}
+      if Hash.has_key?(scores_by_student_cat, key)
+        v = Hash.fetch(scores_by_student_cat, key, nil)
+        if v
+          v => {points:, maxima:, missing:}
+          Hash.store(scores_by_student_cat, key, {points: points + p, maxima: maxima + m, missing: missing})
+        end
+      else
+        Hash.store(scores_by_student_cat, key, {points: p, maxima: m, missing: 0})
+      end
+    in "error"
+      Array.push(errors, "line #{line_num}: bad score #{score_str}")
+    end
+  end
+end
+
+Array.each(errors) { |e| puts(e) }
+
+# Compute results per student
+results = Array[]
+all_unrounded_pcts = Array[]
+
+Array.each(Set.to_a(students)) do |student|
+  total_points = 0.0
+  total_maxima = 0.0
+  weighted_sum = 0.0
+  category_weights_sum = 0
+  missing_count = 0
+
+  Hash.each(weights) do |cat, w|
+    key = {student: student, cat: cat}
+    if Hash.has_key?(scores_by_student_cat, key)
+      v = Hash.fetch(scores_by_student_cat, key, nil)
+      if v
+        v => {points:, maxima:, missing:}
+        if maxima > 0
+          frac = Float.to_f(points) / Float.to_f(maxima)
+          weighted_sum += frac * Float.to_f(w)
+          category_weights_sum += w
+        end
+        missing_count += missing
+      end
+    end
+  end
+
+  if category_weights_sum > 0
+    pct = weighted_sum * 100.0 / Float.to_f(category_weights_sum)
+    rounded_pct = round_half_up(pct)
+    grade = grade_for(rounded_pct)
+    Array.push(results, {student: student, pct: rounded_pct, grade: grade, missing: missing_count, unrounded: pct})
+    Array.push(all_unrounded_pcts, pct)
+  else
+    Array.push(results, {student: student, pct: nil, grade: "-", missing: missing_count, unrounded: nil})
+  end
+end
+
+# Sort results
+with_pct = Array.filter(results) { |r| r in {pct: Float, ...} }
+without_pct = Array.filter(results) { |r| r in {pct: nil, ...} }
+
+with_pct = Array.sort_by(with_pct) { |r|
+  r => {pct:, student:}
+  [-pct, student]
+}
+
+without_pct = Array.sort_by(without_pct) { |r| r in {student:}; student }
+
+final_results = Array.concat(Array.concat(with_pct, without_pct), Array[])
+
+# Calculate width
+width = 7
+Array.each(Set.to_a(students)) do |s|
+  if String.length(s) > width
+    width = String.length(s)
+  end
+end
+
+# Print header
+header = String.ljust("Student", width)
+puts("#{header}  Score  G  Missing")
+
+# Print rows
+Array.each(final_results) do |r|
+  r => {student:, pct:, grade:, missing:}
+  name_col = String.ljust(student, width)
+
+  score_str = if pct then
+    format("%.1f", pct)
+  else
+    "n/a"
+  end
+
+  score_col = String.rjust(score_str, 5)
+  missing_col = String.rjust(Integer.to_s(missing), 7)
+
+  puts("#{name_col}  #{score_col}  #{grade}  #{missing_col}")
+end
+
+# Print class average
+if Integer.length(all_unrounded_pcts) > 0
+  avg = Array.sum(all_unrounded_pcts, 0.0) / Float.to_f(Integer.length(all_unrounded_pcts))
+  avg_rounded = round_half_up(avg)
+  puts("class average: #{format("%.1f", avg_rounded)}")
+else
+  puts("class average: n/a")
+end

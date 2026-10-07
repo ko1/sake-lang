@@ -1,0 +1,226 @@
+# Weighted grade report
+lines = IO.readlines(IO.stdin)
+errors = Array[]
+weights_dict = Hash.new()
+categories = Array[]
+scores_dict = Hash.new()
+students_order = Array[]
+
+Array.each_with_index(lines) { |raw_line, idx|
+  line_num = idx + 1
+  line = String.strip(raw_line)
+
+  next if String.empty?(line) || String.start_with?(line, "#")
+
+  parts = String.split(line)
+
+  if Array.size(parts) > 0 && Array.at(parts, 0) == "weight"
+    if Array.size(parts) != 3
+      Array.push(errors, "line #{line_num}: bad format")
+      next
+    end
+
+    cat = Array.at(parts, 1)
+    w_str = Array.at(parts, 2)
+
+    unless String.match?(w_str, /^\d+$/)
+      Array.push(errors, "line #{line_num}: bad weight #{w_str}")
+      next
+    end
+
+    w = String.to_i(w_str)
+    if w < 1 || w > 100
+      Array.push(errors, "line #{line_num}: bad weight #{w_str}")
+      next
+    end
+
+    if Hash.key?(weights_dict, cat)
+      Array.push(errors, "line #{line_num}: duplicate category #{cat}")
+      next
+    end
+
+    weights_dict[cat] = w
+    Array.push(categories, cat)
+  else
+    if Array.size(parts) != 3
+      Array.push(errors, "line #{line_num}: bad format")
+      next
+    end
+
+    student = Array.at(parts, 0)
+    cat = Array.at(parts, 1)
+    score_str = Array.at(parts, 2)
+
+    unless Hash.key?(weights_dict, cat)
+      Array.push(errors, "line #{line_num}: unknown category #{cat}")
+      next
+    end
+
+    if !Hash.key?(scores_dict, student)
+      student_hash = Hash.new()
+      scores_dict[student] = student_hash
+      Array.push(students_order, student)
+    end
+
+    student_scores = scores_dict[student]
+
+    if score_str == "EX"
+      ex_arr = Array["EX"]
+      student_scores[cat] = ex_arr
+    elsif score_str == "-"
+      missing_arr = Array["MISSING"]
+      student_scores[cat] = missing_arr
+    else
+      parts_score = String.split(score_str, "/")
+      if Array.size(parts_score) != 2
+        Array.push(errors, "line #{line_num}: bad score #{score_str}")
+        next
+      end
+
+      p_str = Array.at(parts_score, 0)
+      m_str = Array.at(parts_score, 1)
+
+      unless String.match?(p_str, /^\d+$/) && String.match?(m_str, /^\d+$/)
+        Array.push(errors, "line #{line_num}: bad score #{score_str}")
+        next
+      end
+
+      p = String.to_i(p_str)
+      m = String.to_i(m_str)
+
+      if m <= 0 || p > m
+        Array.push(errors, "line #{line_num}: bad score #{score_str}")
+        next
+      end
+
+      score_arr = Array["SCORE", p, m]
+      student_scores[cat] = score_arr
+    end
+  end
+}
+
+Array.each(errors) { |e| puts(e) }
+
+# Compute percentages
+percentages = Hash.new()
+missing_counts = Hash.new()
+
+Array.each(students_order) { |student|
+  student_scores = scores_dict[student]
+  if student_scores == nil
+    student_scores = Hash.new()
+  end
+  total_weight = 0
+  weighted_sum = 0.0
+  missing = 0
+  has_counted = false
+
+  Array.each(categories) { |cat|
+    score_entry = student_scores[cat]
+
+    if score_entry != nil
+      entry_type = Array.at(score_entry, 0)
+
+      if entry_type == "EX"
+        # ignored
+      elsif entry_type == "MISSING"
+        missing += 1
+        w = weights_dict[cat]
+        total_weight += w
+        has_counted = true
+      elsif entry_type == "SCORE"
+        p = Array.at(score_entry, 1)
+        m = Array.at(score_entry, 2)
+        points_f = Integer.to_f(p)
+        max_f = Integer.to_f(m)
+        w = weights_dict[cat]
+        total_weight += w
+        weighted_sum += w * (points_f / max_f)
+        has_counted = true
+      end
+    end
+  }
+
+  if has_counted && total_weight > 0
+    pct = 100.0 * weighted_sum / Integer.to_f(total_weight)
+    percentages[student] = pct
+  end
+
+  missing_counts[student] = missing
+}
+
+# Format output
+max_width = 7
+Array.each(students_order) { |s|
+  if String.size(s) > max_width
+    max_width = String.size(s)
+  end
+}
+
+puts(String.ljust("Student", max_width) + "  Score  G  Missing")
+
+# Sort students
+students_with_pct = Array[]
+students_without_pct = Array[]
+
+Array.each(students_order) { |s|
+  if Hash.key?(percentages, s)
+    Array.push(students_with_pct, s)
+  else
+    Array.push(students_without_pct, s)
+  end
+}
+
+# Sort with percentage (descending) then name (ascending)
+students_with_pct = Array.sort_by(students_with_pct) { |s|
+  pct = percentages[s]
+  [-pct, s]
+}
+
+students_without_pct = Array.sort(students_without_pct)
+
+all_students = Array.concat(students_with_pct, students_without_pct)
+
+Array.each(all_students) { |s|
+  score_str = "  n/a"
+  grade = "-"
+
+  if Hash.key?(percentages, s)
+    pct = percentages[s]
+    rounded_pct = Float.round(pct, 1)
+    score_str = String.rjust(Float.to_s(rounded_pct), 5)
+
+    if rounded_pct >= 90.0
+      grade = "A"
+    elsif rounded_pct >= 80.0
+      grade = "B"
+    elsif rounded_pct >= 70.0
+      grade = "C"
+    elsif rounded_pct >= 60.0
+      grade = "D"
+    else
+      grade = "F"
+    end
+  end
+
+  missing = missing_counts[s]
+  if missing == nil
+    missing = 0
+  end
+
+  row = String.ljust(s, max_width) + "  " + score_str + "  " + grade + "  " + String.rjust(Integer.to_s(missing), 7)
+  puts(row)
+}
+
+# Class average
+if Array.size(students_with_pct) > 0
+  avg = 0.0
+  Array.each(students_with_pct) { |s|
+    avg += percentages[s]
+  }
+  avg = avg / Integer.to_f(Array.size(students_with_pct))
+  avg_rounded = Float.round(avg, 1)
+  puts("class average: #{avg_rounded}")
+else
+  puts("class average: n/a")
+end

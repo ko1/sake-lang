@@ -1,0 +1,198 @@
+# Instant-runoff election
+Ballot = Struct.new(:ranks, :valid)
+
+# Read candidates
+cand_line = gets
+if cand_line == nil
+  puts("no candidates")
+  exit
+end
+
+cand_line => String
+candidates = String.split(String.strip(cand_line))
+
+if Array.empty?(candidates)
+  puts("no candidates")
+  exit
+end
+
+# Parse ballots
+ballots = Array[]
+rejected_lines = Array[]
+line_num = 1
+
+while (line = gets)
+  line => String
+  line_num = line_num + 1
+
+  stripped = String.strip(line)
+  next if String.empty?(stripped)
+
+  # Parse ballot
+  ballot_str = String.gsub(stripped, ">", " ")
+  ranks = String.split(ballot_str)
+
+  valid = true
+  reject_reason = nil
+
+  seen = Set[]
+  processed_ranks = Array[]
+
+  Array.each(ranks) do |rank|
+    rank_trimmed = String.strip(rank)
+
+    if String.empty?(rank_trimmed)
+      valid = false
+      reject_reason = "empty rank"
+      break
+    end
+
+    if !Array.include?(candidates, rank_trimmed)
+      valid = false
+      reject_reason = "unknown candidate #{rank_trimmed}"
+      break
+    end
+
+    if Set.include?(seen, rank_trimmed)
+      valid = false
+      reject_reason = "duplicate #{rank_trimmed}"
+      break
+    end
+
+    Set.add(seen, rank_trimmed)
+    Array.push(processed_ranks, rank_trimmed)
+  end
+
+  if !valid
+    Array.push(rejected_lines, [line_num, reject_reason])
+  else
+    Array.push(ballots, Ballot.new(processed_ranks, valid))
+  end
+end
+
+# Output rejected ballots
+Array.each(rejected_lines) { |r| puts("rejected line #{Array.at(r, 0)}: #{Array.at(r, 1)}") }
+
+valid_count = Array.size(Array.filter(ballots) { Ballot.valid(it) })
+rejected_count = Array.size(rejected_lines)
+
+puts("ballots: #{valid_count} valid, #{rejected_count} rejected")
+
+# Run instant-runoff
+continuing = Set[]
+Array.each(candidates) { |c| Set.add(continuing, c) }
+
+round_votes = Array[]  # History of votes per candidate per round
+
+round_num = 0
+
+while true
+  round_num = round_num + 1
+
+  # Count votes
+  votes = Hash.new(0)
+  exhausted = 0
+
+  Array.each(ballots) do |b|
+    if !Ballot.valid(b)
+      next
+    end
+
+    ranks = Ballot.ranks(b)
+    found = false
+    Array.each(ranks) do |rank|
+      if Set.include?(continuing, rank)
+        votes[rank] = votes[rank] + 1
+        found = true
+        break
+      end
+    end
+
+    if !found
+      exhausted = exhausted + 1
+    end
+  end
+
+  Array.push(round_votes, votes)
+
+  # Calculate active
+  active = valid_count - exhausted
+
+  # Output round
+  puts("round #{round_num}")
+
+  # Sort candidates by votes (descending), then name (ascending)
+  continuing_list = Set.to_a(continuing)
+  continuing_list = Array.sort_by(continuing_list) do |c|
+    [-votes[c], c]
+  end
+
+  # Print candidates
+  Array.each(continuing_list) do |c|
+    vote_count = votes[c]
+    if active == 0
+      percentage = 0.0
+    else
+      percentage = Integer.to_f(vote_count) * 100.0 / Integer.to_f(active)
+    end
+
+    # Round half up
+    pct_int = (percentage * 10.0 + 0.5).to_i
+    pct_tenths = pct_int / 10
+    pct_ones = pct_int % 10
+
+    puts("  #{c} #{vote_count} #{pct_tenths}.#{pct_ones}%")
+  end
+
+  puts("  exhausted #{exhausted}")
+
+  # Check winner
+  Array.each(continuing_list) do |c|
+    if votes[c] * 2 > active
+      puts("winner #{c}")
+      exit
+    end
+  end
+
+  # Check if all exhausted
+  if active == 0
+    puts("no winner")
+    exit
+  end
+
+  # Find candidate to eliminate
+  # Fewest votes this round, with history-based tie-breaking
+  min_votes = Array.min(Array.map(continuing_list) { votes(it) })
+
+  candidates_to_eliminate = Array.filter(continuing_list) { votes(it) == min_votes }
+
+  # Tie-break using history
+  Array.each(Array.range(round_num - 1, 1, -1)) do |prev_round|
+    if Array.size(candidates_to_eliminate) == 1
+      break
+    end
+
+    prev_votes = Array.at(round_votes, prev_round - 1)
+    if prev_votes == nil
+      break
+    end
+
+    min_prev = Array.min(Array.map(candidates_to_eliminate) { |c| prev_votes[c] || 0 })
+    candidates_to_eliminate = Array.filter(candidates_to_eliminate) { |c| (prev_votes[c] || 0) == min_prev }
+  end
+
+  # If still tied, eliminate by name (last in byte order)
+  if Array.size(candidates_to_eliminate) > 1
+    candidates_to_eliminate = Array.sort_by(candidates_to_eliminate) { -String.ord(String.at(it, 0)) }
+    # Actually need to sort by last byte order, not first byte
+    # Just use simple string sort and take the last
+    candidates_to_eliminate = Array.sort(candidates_to_eliminate)
+    candidates_to_eliminate = Array.reverse(candidates_to_eliminate)
+  end
+
+  eliminate = Array.at(candidates_to_eliminate, 0)
+
+  Set.delete(continuing, eliminate)
+
+  puts("  eliminated #{eliminate}")
+end

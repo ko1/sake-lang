@@ -1,0 +1,302 @@
+def is_number(token)
+  if String.empty?(token)
+    return false
+  end
+
+  String.to_i(token) rescue nil != nil
+end
+
+def check_syntax(tokens)
+  if_count = 0
+  def_count = 0
+  i = 0
+
+  while i < Array.size(tokens)
+    token = Array.at(tokens, i)
+
+    if token == "if"
+      if_count += 1
+    elsif token == "then"
+      if_count -= 1
+      if if_count < 0
+        return false
+      end
+    elsif token == "else"
+      if if_count <= 0
+        return false
+      end
+    elsif token == ":"
+      if def_count > 0 || if_count > 0
+        return false
+      end
+
+      def_count += 1
+      i += 1
+
+      if i >= Array.size(tokens)
+        return false
+      end
+
+      name = Array.at(tokens, i)
+      if is_number(name)
+        return false
+      end
+
+      if name == "+" || name == "-" || name == "*" || name == "/" || name == "mod" || name == "=" || name == "<" || name == ">" || name == "dup" || name == "drop" || name == "swap" || name == "over" || name == "." || name == "if" || name == "then" || name == "else" || name == ":" || name == ";"
+        return false
+      end
+    elsif token == ";"
+      if def_count <= 0
+        return false
+      end
+      def_count -= 1
+    end
+
+    i += 1
+  end
+
+  if_count == 0 && def_count == 0
+end
+
+def run_tokens_range(tokens, start_idx, end_idx, stack, definitions, depth)
+  if depth > 100
+    return [nil, "too deep"]
+  end
+
+  i = start_idx
+  while i < end_idx
+    token = Array.at(tokens, i)
+
+    if is_number(token)
+      n = String.to_i(token)
+      Array.push(stack, n)
+    elsif token == "+"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in +"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a + b)
+    elsif token == "-"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in -"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a - b)
+    elsif token == "*"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in *"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a * b)
+    elsif token == "/"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in /"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        return [nil, "division by zero"]
+      end
+      result = a / b
+      Array.push(stack, result)
+    elsif token == "mod"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in mod"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        return [nil, "division by zero"]
+      end
+      result = a % b
+      Array.push(stack, result)
+    elsif token == "="
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in ="]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, if a == b then 1 else 0 end)
+    elsif token == "<"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in <"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, if a < b then 1 else 0 end)
+    elsif token == ">"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in >"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, if a > b then 1 else 0 end)
+    elsif token == "dup"
+      if Array.size(stack) < 1
+        return [nil, "stack underflow in dup"]
+      end
+      a = Array.last(stack)
+      Array.push(stack, a)
+    elsif token == "drop"
+      if Array.size(stack) < 1
+        return [nil, "stack underflow in drop"]
+      end
+      Array.pop(stack)
+    elsif token == "swap"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in swap"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, b)
+      Array.push(stack, a)
+    elsif token == "over"
+      if Array.size(stack) < 2
+        return [nil, "stack underflow in over"]
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a)
+      Array.push(stack, b)
+      Array.push(stack, a)
+    elsif token == "."
+      if Array.size(stack) < 1
+        return [nil, "stack underflow in ."]
+      end
+      val = Array.pop(stack)
+      puts(val)
+    elsif token == "if"
+      if Array.size(stack) < 1
+        return [nil, "stack underflow in if"]
+      end
+
+      cond = Array.pop(stack)
+
+      # Find matching then/else
+      j = i + 1
+      else_pos = nil
+      then_pos = nil
+      if_depth = 1
+
+      while j < end_idx
+        t = Array.at(tokens, j)
+        if t == "if"
+          if_depth += 1
+        elsif t == "then"
+          if_depth -= 1
+          if if_depth == 0
+            then_pos = j
+            break
+          end
+        elsif t == "else" && if_depth == 1
+          else_pos = j
+        end
+        j += 1
+      end
+
+      if cond != 0
+        # Execute from i+1 to else_pos (or then_pos if no else)
+        if else_pos
+          result = run_tokens_range(tokens, i + 1, else_pos, stack, definitions, depth)
+        else
+          result = run_tokens_range(tokens, i + 1, then_pos, stack, definitions, depth)
+        end
+        if Array.at(result, 1)
+          return result
+        end
+      else
+        # Execute else part if it exists
+        if else_pos
+          result = run_tokens_range(tokens, else_pos + 1, then_pos, stack, definitions, depth)
+          if Array.at(result, 1)
+            return result
+          end
+        end
+      end
+
+      i = then_pos
+    elsif token == ":"
+      # Skip to matching ;
+      j = i + 1
+      name = Array.at(tokens, j)
+      j += 1
+      body_start = j
+
+      while j < end_idx && Array.at(tokens, j) != ";"
+        j += 1
+      end
+
+      # Store as start/end indices
+      Hash.store(definitions, name, [body_start, j])
+      i = j
+    elsif token == ";" || token == "then" || token == "else"
+      # Skip these, they're handled by if/:
+    else
+      # User-defined word
+      if Hash.key?(definitions, token)
+        indices = Hash.fetch(definitions, token)
+        body_start = Array.at(indices, 0)
+        body_end = Array.at(indices, 1)
+        result = run_tokens_range(tokens, body_start, body_end, stack, definitions, depth + 1)
+        if Array.at(result, 1)
+          return result
+        end
+      else
+        return [nil, "unknown word #{token}"]
+      end
+    end
+
+    i += 1
+  end
+
+  [stack, nil]
+end
+
+# Initialize
+stack = Array[]
+definitions = Hash.new(nil)
+line_num = 1
+
+while true
+  line = gets()
+  if line == nil
+    break
+  end
+
+  trimmed = String.strip(line)
+  if String.empty?(trimmed)
+    line_num += 1
+    next
+  end
+
+  tokens = String.split(trimmed, " ")
+
+  if !check_syntax(tokens)
+    puts("line #{line_num}: syntax error")
+    line_num += 1
+    next
+  end
+
+  # Save stack for rollback on error
+  saved_stack = Array.dup(stack)
+
+  result = run_tokens_range(tokens, 0, Array.size(tokens), stack, definitions, 0)
+
+  if Array.at(result, 1)
+    puts("line #{line_num}: error: #{Array.at(result, 1)}")
+    stack = saved_stack
+  end
+
+  line_num += 1
+end
+
+# Print final stack
+if Array.size(stack) == 0
+  puts("stack: (empty)")
+else
+  stack_str = Array.join(Array.map(stack) { |v| Integer.to_s(v) }, " ")
+  puts("stack: #{stack_str}")
+end

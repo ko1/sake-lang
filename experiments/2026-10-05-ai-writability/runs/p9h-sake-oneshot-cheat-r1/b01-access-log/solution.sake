@@ -1,0 +1,219 @@
+EndpointData = Struct.new(:count, :n4xx, :n5xx, :total_bytes, :total_duration, :max_duration)
+
+def validate_timestamp(ts)
+  if String.size(ts) != 19
+    return nil
+  end
+
+  if String.slice(ts, 4, 1) != "-" || String.slice(ts, 7, 1) != "-" || String.slice(ts, 10, 1) != "T" ||
+     String.slice(ts, 13, 1) != ":" || String.slice(ts, 16, 1) != ":"
+    return nil
+  end
+
+  year_s = String.slice(ts, 0, 4)
+  month_s = String.slice(ts, 5, 2)
+  day_s = String.slice(ts, 8, 2)
+  hour_s = String.slice(ts, 11, 2)
+  min_s = String.slice(ts, 14, 2)
+  sec_s = String.slice(ts, 17, 2)
+
+  year = String.to_i(year_s) rescue return nil
+  month = String.to_i(month_s) rescue return nil
+  day = String.to_i(day_s) rescue return nil
+  hour = String.to_i(hour_s) rescue return nil
+  min = String.to_i(min_s) rescue return nil
+  sec = String.to_i(sec_s) rescue return nil
+
+  if month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || min > 59 || sec > 59
+    return nil
+  end
+
+  [year, month, day, hour, min, sec]
+end
+
+def extract_path(path_with_query)
+  idx = String.index(path_with_query, "?")
+  if idx
+    String.slice(path_with_query, 0, idx)
+  else
+    path_with_query
+  end
+end
+
+def split_fields(line)
+  stripped = String.strip(line)
+  parts = Array[]
+  current = ""
+  in_space = true
+
+  Array.each(String.chars(stripped)) do |ch|
+    if ch == " " || ch == "\t"
+      if !in_space && current != ""
+        Array.push(parts, current)
+        current = ""
+      end
+      in_space = true
+    else
+      in_space = false
+      current = current + ch
+    end
+  end
+
+  if current != ""
+    Array.push(parts, current)
+  end
+
+  parts
+end
+
+lines = IO.readlines(IO.stdin)
+endpoints = Hash[]
+hourly_counts = Hash.new(0)
+invalid_by_line = Hash[]
+
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+
+  if String.strip(line) == ""
+    next
+  end
+
+  fields = split_fields(String.chomp(line))
+
+  if Array.size(fields) != 6
+    invalid_by_line[line_num] = "wrong field count"
+    next
+  end
+
+  timestamp = Array.at(fields, 0)
+  method = Array.at(fields, 1)
+  path = Array.at(fields, 2)
+  status_s = Array.at(fields, 3)
+  bytes_s = Array.at(fields, 4)
+  duration_s = Array.at(fields, 5)
+
+  ts_parsed = validate_timestamp(timestamp)
+  if ts_parsed == nil
+    invalid_by_line[line_num] = "bad timestamp"
+    next
+  end
+
+  if method != "GET" && method != "POST" && method != "PUT" && method != "DELETE"
+    invalid_by_line[line_num] = "bad method"
+    next
+  end
+
+  if !String.start_with?(path, "/")
+    invalid_by_line[line_num] = "bad path"
+    next
+  end
+
+  if String.size(status_s) != 3
+    invalid_by_line[line_num] = "bad status"
+    next
+  end
+
+  status = String.to_i(status_s) rescue nil
+  if status == nil || status < 100 || status > 599
+    invalid_by_line[line_num] = "bad status"
+    next
+  end
+
+  bytes = nil
+  if bytes_s != "-"
+    bytes = String.to_i(bytes_s) rescue nil
+    if bytes == nil || bytes < 0
+      invalid_by_line[line_num] = "bad bytes"
+      next
+    end
+  end
+
+  duration = String.to_i(duration_s) rescue nil
+  if duration == nil || duration < 0
+    invalid_by_line[line_num] = "bad duration"
+    next
+  end
+
+  ts_parsed => [year, month, day, hour, min, sec]
+
+  endpoint = "#{method} #{extract_path(path)}"
+
+  current_data = Hash.fetch(endpoints, endpoint)
+  if current_data == nil
+    current_data = EndpointData.new(0, 0, 0, 0, 0, 0)
+    endpoints[endpoint] = current_data
+  end
+
+  EndpointData.set_count(current_data, EndpointData.count(current_data) + 1)
+
+  if status >= 400 && status < 500
+    EndpointData.set_n4xx(current_data, EndpointData.n4xx(current_data) + 1)
+  elsif status >= 500 && status < 600
+    EndpointData.set_n5xx(current_data, EndpointData.n5xx(current_data) + 1)
+  end
+
+  if bytes
+    EndpointData.set_total_bytes(current_data, EndpointData.total_bytes(current_data) + bytes)
+  end
+
+  EndpointData.set_total_duration(current_data, EndpointData.total_duration(current_data) + duration)
+
+  if duration > EndpointData.max_duration(current_data)
+    EndpointData.set_max_duration(current_data, duration)
+  end
+
+  hour_key = format("%04d-%02d-%02d %02d", year, month, day, hour)
+  current_hour_count = Hash.fetch(hourly_counts, hour_key, 0)
+  hourly_counts[hour_key] = current_hour_count + 1
+end
+
+valid_count = Array.reduce(Hash.keys(endpoints), 0) { |sum, ep| sum + EndpointData.count(endpoints[ep]) }
+
+if valid_count > 0
+  max_ep_len = 8
+  Array.each(Hash.keys(endpoints)) do |ep|
+    if String.size(ep) > max_ep_len
+      max_ep_len = String.size(ep)
+    end
+  end
+
+  sorted_endpoints = Array.sort_by(Hash.keys(endpoints)) do |ep|
+    [-EndpointData.count(endpoints[ep]), ep]
+  end
+
+  header_fmt = "%-" + Integer.to_s(max_ep_len) + "s %5s %4s %4s %8s %7s %6s"
+  puts(format(header_fmt, "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+
+  Array.each(sorted_endpoints) do |ep|
+    data = endpoints[ep]
+    cnt = EndpointData.count(data)
+    avg_ms_val = Float.to_f(EndpointData.total_duration(data)) / Float.to_f(cnt)
+    avg_ms = Float.round(avg_ms_val, 1)
+
+    row_fmt = "%-" + Integer.to_s(max_ep_len) + "s %5d %4d %4d %8d %7s %6d"
+    puts(format(row_fmt, ep, cnt, EndpointData.n4xx(data), EndpointData.n5xx(data),
+                EndpointData.total_bytes(data), Kernel.to_s(avg_ms), EndpointData.max_duration(data)))
+  end
+
+  busiest_hour = nil
+  busiest_count = 0
+  Array.each(Hash.keys(hourly_counts)) do |hour|
+    count = hourly_counts[hour]
+    if count > busiest_count || (count == busiest_count && (busiest_hour == nil || hour < busiest_hour))
+      busiest_hour = hour
+      busiest_count = count
+    end
+  end
+
+  if busiest_hour
+    puts("busiest hour: #{busiest_hour} (#{busiest_count} requests)")
+  end
+else
+  puts("no valid requests")
+end
+
+puts("invalid lines: #{Hash.size(invalid_by_line)}")
+sorted_invalid = Array.sort(Hash.keys(invalid_by_line))
+Array.each(sorted_invalid) do |line_num|
+  puts("  line #{line_num}: #{invalid_by_line[line_num]}")
+end

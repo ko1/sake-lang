@@ -1,0 +1,192 @@
+Node = Struct.new(:name, :is_file, :size, :children)
+
+def parse_header(line)
+  parts = String.split(line, /\s+/)
+  if Array.size(parts) != 4 || parts[0] != "depth" || parts[2] != "threshold"
+    nil
+  else
+    d = String.to_i(parts[1])
+    t = String.to_i(parts[3])
+    [d, t]
+  end
+rescue
+  nil
+end
+
+def format_size(s)
+  if s < 1024
+    "#{s}B"
+  else
+    k = 1024
+    m = 1024 * 1024
+    g = 1024 * 1024 * 1024
+
+    u = 0
+    unit_name = ""
+    if s >= g
+      u = g
+      unit_name = "G"
+    elsif s >= m
+      u = m
+      unit_name = "M"
+    else
+      u = k
+      unit_name = "K"
+    end
+
+    t = s * 10 / u
+    if t < 100
+      q = t / 10
+      r = t % 10
+      "#{q}.#{r}#{unit_name}"
+    else
+      n = (s + u / 2) / u
+      if n == 1024 && u < g
+        if u == m
+          "1.0G"
+        else
+          "1.0M"
+        end
+      else
+        "#{n}#{unit_name}"
+      end
+    end
+  end
+end
+
+# Parse input
+d = 0
+t = 0
+files = Hash[]
+errors = Array[]
+line_no = 1
+
+while true
+  line = gets
+  break if line == nil
+
+  if line_no == 1
+    h = parse_header(String.strip(line))
+    if h == nil
+      puts("bad header")
+      exit(0)
+    end
+    d = h[0]
+    t = h[1]
+    line_no += 1
+    next
+  end
+
+  line = String.strip(line)
+  if String.empty?(line)
+    line_no += 1
+    next
+  end
+
+  parts = String.split(line, /\s+/, 2)
+  if Array.size(parts) != 2
+    Array.push(errors, "line #{line_no}: malformed")
+    line_no += 1
+    next
+  end
+
+  begin
+    sz = String.to_i(parts[0])
+    path = parts[1]
+
+    if String.match(path, /^\//) || String.include?(path, ".") || String.include?(path, "..")
+      Array.push(errors, "line #{line_no}: malformed")
+    elsif Hash.key?(files, path)
+      Array.push(errors, "line #{line_no}: duplicate #{path}")
+    else
+      # Check for conflicts
+      comps = String.split(path, "/")
+      prefix = ""
+      conflict = false
+      Array.each_with_index(comps) do |c, i|
+        if i > 0
+          prefix = "#{prefix}/#{c}"
+        else
+          prefix = c
+        end
+        if i < Array.size(comps) - 1
+          if Hash.key?(files, prefix)
+            Array.push(errors, "line #{line_no}: conflict #{path}")
+            conflict = true
+            break
+          end
+        end
+      end
+
+      unless conflict
+        files[path] = sz
+      end
+    end
+  rescue
+    Array.push(errors, "line #{line_no}: malformed")
+  end
+
+  line_no += 1
+end
+
+Array.each(errors) { puts(it) }
+
+if Hash.size(files) == 0
+  puts("#{format_size(0)}  .")
+  exit(0)
+end
+
+# Build tree and output
+root_size = Hash.reduce(files, 0) { |sum, kv| sum + kv[1] }
+puts("#{format_size(root_size)}  .")
+
+# Simple traversal to print directories and files
+seen = Set[]
+dirs = Set[]
+
+Array.each(Hash.keys(files)) do |path|
+  comps = String.split(path, "/")
+  prefix = ""
+  Array.each_with_index(comps) do |c, i|
+    if i > 0
+      prefix = "#{prefix}/#{c}"
+    else
+      prefix = c
+    end
+    if i < Array.size(comps) - 1
+      Set.add(dirs, prefix)
+    end
+  end
+end
+
+# Process directories recursively
+def print_tree(prefix, depth, max_depth, threshold, files, indent)
+  if depth > max_depth
+    return
+  end
+
+  # Collect files and directories at this level
+  entries = Array[]
+
+  Array.each(Hash.keys(files)) do |path|
+    comps = String.split(path, "/")
+    if Array.size(comps) == depth + 1
+      if Array.join(Array[0..(depth - 1)].map { |i| comps[i] }, "/") == prefix
+        Array.push(entries, [path, true, Hash.at(files, path)])
+      end
+    end
+  end
+
+  # Find subdirectories
+  Array.each(Hash.keys(files)) do |path|
+    comps = String.split(path, "/")
+    if Array.size(comps) > depth + 1
+      check_prefix = Array.join(Array[0..depth].map { |i| comps[i] }, "/")
+      if Array.join(Array[0..(depth - 1)].map { |i| comps[i] }, "/") == prefix
+        Array.push(entries, [check_prefix, false, 0])
+      end
+    end
+  end
+end
+
+puts("#{format_size(root_size)}  .")

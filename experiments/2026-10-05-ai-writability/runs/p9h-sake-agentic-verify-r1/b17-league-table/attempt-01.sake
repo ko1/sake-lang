@@ -1,0 +1,171 @@
+Team = Struct.new(:name, :played, :won, :drawn, :lost, :gf, :ga)
+
+def team_key(team)
+  gd = Team.gf(team) - Team.ga(team)
+  [Team.name(team)]
+end
+
+# Read matches
+matches = Array[]
+errors = Array[]
+line_num = 0
+
+loop do
+  line = gets()
+  if line == nil
+    break
+  end
+  line_num += 1
+
+  stripped = String.strip(line)
+  if String.empty?(stripped)
+    next
+  end
+
+  parts = String.split(stripped)
+
+  if Array.size(parts) != 3
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  home = Array.at(parts, 0)
+  score_str = Array.at(parts, 1)
+  away = Array.at(parts, 2)
+
+  # Validate team names: letter followed by up to 11 chars (letters, digits, underscore)
+  if String.empty?(home) || String.empty?(away) || home == away
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  # Parse score
+  score_parts = String.split(score_str, "-")
+  if Array.size(score_parts) != 2
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  home_score_str = Array.at(score_parts, 0)
+  away_score_str = Array.at(score_parts, 1)
+
+  # Check for postponed or invalid
+  if home_score_str == "P" && away_score_str == "P"
+    # Postponed - teams appear but no game
+    Array.push(matches, [home, away, nil, nil, true])
+    next
+  end
+
+  begin
+    home_score = String.to_i(home_score_str)
+    away_score = String.to_i(away_score_str)
+  rescue
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  if home_score < 0 || away_score < 0
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  Array.push(matches, [home, away, home_score, away_score, false])
+end
+
+# Print errors
+Array.each(errors) do |line_no, text|
+  puts("invalid line #{line_no}: #{text}")
+end
+
+# Collect all teams and their stats
+teams_map = Hash.new(nil)
+
+Array.each(matches) do |home, away, home_score, away_score, postponed|
+  if !Hash.has_key?(teams_map, home)
+    Hash.[]=(teams_map, home, Team.new(home, 0, 0, 0, 0, 0, 0))
+  end
+  if !Hash.has_key?(teams_map, away)
+    Hash.[]=(teams_map, away, Team.new(away, 0, 0, 0, 0, 0, 0))
+  end
+
+  home_team = Hash.[](teams_map, home)
+  away_team = Hash.[](teams_map, away)
+
+  if postponed
+    next
+  end
+
+  # Update stats
+  Team.set_played(home_team, Team.played(home_team) + 1)
+  Team.set_played(away_team, Team.played(away_team) + 1)
+
+  Team.set_gf(home_team, Team.gf(home_team) + home_score)
+  Team.set_ga(home_team, Team.ga(home_team) + away_score)
+  Team.set_gf(away_team, Team.gf(away_team) + away_score)
+  Team.set_ga(away_team, Team.ga(away_team) + home_score)
+
+  if home_score > away_score
+    Team.set_won(home_team, Team.won(home_team) + 1)
+    Team.set_lost(away_team, Team.lost(away_team) + 1)
+  elsif away_score > home_score
+    Team.set_won(away_team, Team.won(away_team) + 1)
+    Team.set_lost(home_team, Team.lost(home_team) + 1)
+  else
+    Team.set_drawn(home_team, Team.drawn(home_team) + 1)
+    Team.set_drawn(away_team, Team.drawn(away_team) + 1)
+  end
+end
+
+if Hash.empty?(teams_map)
+  puts("no teams")
+  exit(0)
+end
+
+# Sort teams
+team_list = Array[]
+Hash.each(teams_map) do |name, team|
+  Array.push(team_list, team)
+end
+
+# Sort by points desc, gd desc, gf desc, name asc
+sorted_teams = Array.sort_by(team_list) do |team|
+  points = Team.won(team) * 3 + Team.drawn(team)
+  gd = Team.gf(team) - Team.ga(team)
+  gf = Team.gf(team)
+  [-points, -gd, -gf, Team.name(team)]
+end
+
+# Print header
+puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+
+# Print teams
+position = 1
+prev_points = nil
+prev_gd = nil
+prev_gf = nil
+
+Array.each(sorted_teams) do |team|
+  points = Team.won(team) * 3 + Team.drawn(team)
+  gd = Team.gf(team) - Team.ga(team)
+  gf = Team.gf(team)
+
+  if prev_points != nil && (points != prev_points || gd != prev_gd || gf != prev_gf)
+    position = Array.size(Array.filter(sorted_teams) { |t|
+      t_pts = Team.won(t) * 3 + Team.drawn(t)
+      t_gd = Team.gf(t) - Team.ga(t)
+      t_gf = Team.gf(t)
+      t_pts > points || (t_pts == points && t_gd > gd) || (t_pts == points && t_gd == gd && t_gf > gf)
+    }) + 1
+  end
+
+  prev_points = points
+  prev_gd = gd
+  prev_gf = gf
+
+  gd_str = (gd >= 0) ? "#{gd}" : "#{gd}"
+  if gd > 0
+    gd_str = "+#{gd}"
+  end
+
+  puts(format("%3d %-12s%3d%3d%3d%3d%4d%4d%4s%4d", position, Team.name(team), Team.played(team), Team.won(team), Team.drawn(team), Team.lost(team), Team.gf(team), Team.ga(team), gd_str, points))
+end

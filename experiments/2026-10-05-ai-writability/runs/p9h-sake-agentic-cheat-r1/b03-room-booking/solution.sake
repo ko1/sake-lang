@@ -1,0 +1,383 @@
+Booking = Struct.new(:id, :room, :day, :start_min, :end_min, :who)
+DayOfWeek = Struct.new(:name, :index)
+
+def parse_time(time_str)
+  # Parse HH:MM, return minutes since 08:00 or nil if invalid
+  if String.match?(time_str, /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/)
+    parts = String.split(time_str, ":")
+    hour = String.to_i(Array.at(parts, 0))
+    minute = String.to_i(Array.at(parts, 1))
+
+    if hour < 8 || hour > 20 || (hour == 20 && minute > 0)
+      return nil
+    end
+
+    if (hour * 60 + minute) % 15 != 0
+      return nil
+    end
+
+    hour * 60 + minute
+  else
+    nil
+  end
+end
+
+def minutes_to_time(minutes)
+  hour = minutes / 60
+  min = minutes % 60
+  format("%02d:%02d", hour, min)
+end
+
+def validate_room(room)
+  if String.match?(room, /^[A-Z0-9]{1,8}$/)
+    room
+  else
+    nil
+  end
+end
+
+def validate_day(day)
+  days = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+  if Array.include?(days, day)
+    day
+  else
+    nil
+  end
+end
+
+def validate_name(name)
+  if String.match?(name, /^[a-z]{1,12}$/)
+    name
+  else
+    nil
+  end
+end
+
+# Track bookings by ID
+bookings = Hash[]
+next_id = 1
+# Track bookings per room/day for quick conflict checking
+room_day_bookings = Hash[]
+
+lines = IO.readlines(IO.stdin)
+
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+
+  chomp_line = String.chomp(line)
+  if String.empty?(chomp_line)
+    next
+  end
+
+  parts = String.split(chomp_line, /\s+/)
+
+  if Array.empty?(parts)
+    next
+  end
+
+  command = Array.at(parts, 0)
+
+  case command
+  in "BOOK"
+    if Array.size(parts) != 5
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    room = Array.at(parts, 1)
+    day = Array.at(parts, 2)
+    time_range = Array.at(parts, 3)
+    who = Array.at(parts, 4)
+
+    # Validate room
+    room_valid = validate_room(room)
+    if room_valid == nil
+      puts("line #{line_num}: error: bad room")
+      next
+    end
+
+    # Validate day
+    day_valid = validate_day(day)
+    if day_valid == nil
+      puts("line #{line_num}: error: bad day")
+      next
+    end
+
+    # Validate time range
+    time_parts = String.split(time_range, "-")
+    if Array.size(time_parts) != 2
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    start_str = Array.at(time_parts, 0)
+    end_str = Array.at(time_parts, 1)
+
+    start_min = parse_time(start_str)
+    if start_min == nil
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    end_min = parse_time(end_str)
+    if end_min == nil
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    if start_min >= end_min
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    # Validate name
+    who_valid = validate_name(who)
+    if who_valid == nil
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+
+    # Check for conflicts
+    key = "#{room_valid}_#{day_valid}"
+    existing_bookings = room_day_bookings[key]
+    if existing_bookings == nil
+      existing_bookings = Array[]
+    end
+
+    conflict_booking = nil
+    Array.each(existing_bookings) do |existing_id|
+      existing = bookings[existing_id]
+      existing_start = Booking.start_min(existing)
+      existing_end = Booking.end_min(existing)
+
+      if start_min < existing_end && end_min > existing_start
+        if conflict_booking == nil || existing_start < Booking.start_min(bookings[conflict_booking])
+          conflict_booking = existing_id
+        end
+      end
+    end
+
+    if conflict_booking != nil
+      conflicting = bookings[conflict_booking]
+      conf_who = Booking.who(conflicting)
+      conf_start = minutes_to_time(Booking.start_min(conflicting))
+      conf_end = minutes_to_time(Booking.end_min(conflicting))
+      puts("CONFLICT #{room_valid} #{day_valid} with ##{conflict_booking} (#{conf_who} #{conf_start}-#{conf_end})")
+      next
+    end
+
+    # Check daily limit (3 bookings per person per day)
+    daily_count = 0
+    Hash.each(bookings) do |id, b|
+      if Booking.who(b) == who_valid && Booking.day(b) == day_valid
+        daily_count += 1
+      end
+    end
+
+    if daily_count >= 3
+      puts("LIMIT #{who_valid} #{day_valid}")
+      next
+    end
+
+    # Accept booking
+    booking_id = next_id
+    next_id += 1
+
+    new_booking = Booking.new(booking_id, room_valid, day_valid, start_min, end_min, who_valid)
+    bookings[booking_id] = new_booking
+
+    if existing_bookings == nil
+      existing_bookings = Array[]
+    end
+    Array.push(existing_bookings, booking_id)
+    room_day_bookings[key] = existing_bookings
+
+    start_time = minutes_to_time(start_min)
+    end_time = minutes_to_time(end_min)
+    puts("OK ##{booking_id} #{room_valid} #{day_valid} #{start_time}-#{end_time} #{who_valid}")
+
+  in "CANCEL"
+    if Array.size(parts) != 2
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    id_str = Array.at(parts, 1)
+
+    if !String.match?(id_str, /^[0-9]+$/)
+      puts("line #{line_num}: error: bad id")
+      next
+    end
+
+    booking_id = String.to_i(id_str)
+
+    if bookings[booking_id] == nil
+      puts("NO BOOKING ##{booking_id}")
+      next
+    end
+
+    booking = bookings[booking_id]
+    room = Booking.room(booking)
+    day = Booking.day(booking)
+
+    key = "#{room}_#{day}"
+    existing = room_day_bookings[key]
+
+    new_existing = Array[]
+    Array.each(existing) do |id|
+      if id != booking_id
+        Array.push(new_existing, id)
+      end
+    end
+    room_day_bookings[key] = new_existing
+
+    Hash.delete(bookings, booking_id)
+
+    puts("CANCELLED ##{booking_id}")
+
+  in "FREE"
+    if Array.size(parts) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    room = Array.at(parts, 1)
+    day = Array.at(parts, 2)
+    duration_str = Array.at(parts, 3)
+
+    room_valid = validate_room(room)
+    if room_valid == nil
+      puts("line #{line_num}: error: bad room")
+      next
+    end
+
+    day_valid = validate_day(day)
+    if day_valid == nil
+      puts("line #{line_num}: error: bad day")
+      next
+    end
+
+    if !String.match?(duration_str, /^[0-9]+$/)
+      puts("line #{line_num}: error: bad duration")
+      next
+    end
+
+    duration = String.to_i(duration_str)
+    if duration <= 0 || duration % 15 != 0
+      puts("line #{line_num}: error: bad duration")
+      next
+    end
+
+    # Find all bookings for this room/day
+    key = "#{room_valid}_#{day_valid}"
+    existing_ids = room_day_bookings[key]
+    if existing_ids == nil
+      existing_ids = Array[]
+    end
+
+    # Sort existing bookings by start time
+    sorted_bookings = Array.sort_by(existing_ids) do |id|
+      booking = bookings[id]
+      Booking.start_min(booking)
+    end
+
+    # Find first free slot
+    current_time = 480  # 08:00 in minutes
+    found_slot = nil
+
+    Array.each(sorted_bookings) do |id|
+      booking = bookings[id]
+      start_time = Booking.start_min(booking)
+      end_time = Booking.end_min(booking)
+
+      if current_time + duration <= start_time
+        found_slot = current_time
+        break
+      end
+
+      if end_time > current_time
+        current_time = end_time
+      end
+    end
+
+    # Check if we can fit at the end
+    if found_slot == nil && current_time + duration <= 1200  # 20:00 in minutes
+      found_slot = current_time
+    end
+
+    if found_slot == nil
+      puts("FULL #{room_valid} #{day_valid}")
+    else
+      start_time_str = minutes_to_time(found_slot)
+      end_time_str = minutes_to_time(found_slot + duration)
+      puts("FREE #{room_valid} #{day_valid} #{start_time_str}-#{end_time_str}")
+    end
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+end
+
+# Print schedule
+puts("== schedule ==")
+
+days_order = Array["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+all_bookings_list = Hash.values(bookings)
+
+sorted_bookings = Array.sort_by(all_bookings_list) do |b|
+  day_index = 0
+  Array.each_with_index(days_order) do |d, i|
+    if Booking.day(b) == d
+      day_index = i
+    end
+  end
+
+  room = Booking.room(b)
+  start = Booking.start_min(b)
+
+  [day_index, room, start]
+end
+
+if Array.empty?(sorted_bookings)
+  puts("(none)")
+else
+  Array.each(sorted_bookings) do |b|
+    day = Booking.day(b)
+    room = Booking.room(b)
+    start = minutes_to_time(Booking.start_min(b))
+    end_t = minutes_to_time(Booking.end_min(b))
+    id = Booking.id(b)
+    who = Booking.who(b)
+
+    puts(format("%s %-8s %s-%s #%d %s", day, room, start, end_t, id, who))
+  end
+end
+
+# Print usage
+puts("== usage ==")
+
+usage_by_room = Hash[]
+
+Array.each(sorted_bookings) do |b|
+  room = Booking.room(b)
+  start = Booking.start_min(b)
+  end_t = Booking.end_min(b)
+
+  if usage_by_room[room] == nil
+    usage_by_room[room] = 0
+  end
+
+  usage_by_room[room] += end_t - start
+end
+
+if Hash.empty?(usage_by_room)
+  puts("(none)")
+else
+  sorted_rooms = Hash.keys(usage_by_room).Array.sort
+  Array.each(sorted_rooms) do |room|
+    total_minutes = usage_by_room[room]
+    hours = total_minutes / 60
+    minutes = total_minutes % 60
+    puts(format("%-8s %dh%02dm", room, hours, minutes))
+  end
+end

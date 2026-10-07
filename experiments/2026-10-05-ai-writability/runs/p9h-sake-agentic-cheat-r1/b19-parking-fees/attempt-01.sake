@@ -1,0 +1,209 @@
+def parse_time(time_str)
+  parts = String.split(time_str, ":")
+  if Array.size(parts) != 2
+    return nil
+  end
+
+  begin
+    hh = String.to_i(parts[0])
+    mm = String.to_i(parts[1])
+  rescue
+    return nil
+  end
+
+  if hh < 0 || hh > 23 || mm < 0 || mm > 59
+    return nil
+  end
+
+  hh * 60 + mm
+end
+
+def format_fee(cents)
+  dollars = cents / 100
+  remainder = cents % 100
+  format("%.2f", Integer.to_f(dollars) + Integer.to_f(remainder) / 100.0)
+end
+
+def main
+  # Parse header
+  header = gets
+  return if header == nil
+
+  header_line = String.chomp(header)
+  header_parts = String.split(header_line, /\s+/)
+
+  if Array.size(header_parts) != 5 || header_parts[0] != "RATE"
+    puts("bad header")
+    return
+  end
+
+  begin
+    first = String.to_i(header_parts[1])
+    step = String.to_i(header_parts[2])
+    cap = String.to_i(header_parts[3])
+    grace = String.to_i(header_parts[4])
+  rescue
+    puts("bad header")
+    return
+  end
+
+  # Process events
+  inside = Hash[]  # plate => entry_time_in_minutes
+  exits = Hash[]   # plate => Array of [duration_minutes, fee_cents]
+  line_num = 2
+  last_valid_time = -1
+  current_day = 0
+
+  while (line = gets)
+    line_num += 1
+    line = String.chomp(line)
+
+    if String.empty?(line)
+      next
+    end
+
+    parts = String.split(line, /\s+/)
+
+    # Validate format
+    if Array.size(parts) < 3
+      puts("line #{line_num}: invalid")
+      next
+    end
+
+    time_str = parts[0]
+    event_type = parts[1]
+    plate = parts[2]
+
+    if Array.size(parts) != 3 || (event_type != "IN" && event_type != "OUT")
+      puts("line #{line_num}: invalid")
+      next
+    end
+
+    # Parse time
+    minutes = parse_time(time_str)
+    if minutes == nil
+      puts("line #{line_num}: invalid")
+      next
+    end
+
+    # Validate plate
+    if String.size(plate) < 1 || String.size(plate) > 8
+      puts("line #{line_num}: invalid")
+      next
+    end
+
+    plate_valid = true
+    Array.each(String.chars(plate)) do |c|
+      if !String.match?(c, /[A-Z0-9]/)
+        plate_valid = false
+      end
+    end
+
+    if !plate_valid
+      puts("line #{line_num}: invalid")
+      next
+    end
+
+    # Handle day boundary
+    if minutes < last_valid_time
+      current_day += 1
+    end
+    last_valid_time = minutes
+
+    # Convert to absolute minutes
+    abs_time = current_day * 1440 + minutes
+
+    if event_type == "IN"
+      if Hash.key?(inside, plate)
+        puts("line #{line_num}: #{plate} already inside")
+      else
+        inside[plate] = abs_time
+      end
+    else  # OUT
+      if !Hash.key?(inside, plate)
+        puts("line #{line_num}: #{plate} not inside")
+      else
+        entry_time = inside[plate]
+        duration = abs_time - entry_time
+
+        # Calculate fee
+        if duration <= grace
+          fee = 0
+        else
+          duration_after_grace = duration - grace
+          d = duration_after_grace / 1440
+          r = duration_after_grace % 1440
+
+          daily_fee = d * cap
+
+          if r == 0
+            remainder_fee = 0
+          else
+            # part(r) = first + step * (number of started 30-minute periods after the first 60 minutes)
+            if r <= 60
+              remainder_fee = first
+            else
+              periods = (r - 60 + 29) / 30  # ceiling division
+              remainder_fee = first + step * periods
+            end
+          end
+
+          fee = daily_fee + Integer.min(cap, remainder_fee)
+        end
+
+        hours = duration / 60
+        mins = duration % 60
+
+        puts("#{plate} #{hours}:#{String.rjust(Integer.to_s(mins), 2, "0")} #{format_fee(fee)}")
+
+        if !Hash.key?(exits, plate)
+          exits[plate] = Array[]
+        end
+        Array.push(exits[plate], [duration, fee])
+
+        hash_delete = Hash.delete(inside, plate)
+      end
+    end
+  end
+
+  # Print summary
+  puts("--- summary")
+
+  # Aggregate by plate
+  plate_summary = Hash[]
+  Array.each(Hash.keys(exits)) do |plate|
+    plate_exits = exits[plate]
+    total_fee = 0
+    Array.each(plate_exits) { |exit_info| total_fee += exit_info[1] }
+    plate_summary[plate] = [Array.size(plate_exits), total_fee]
+  end
+
+  # Sort by revenue descending, then plate ascending
+  sorted_plates = Array.sort_by(Hash.keys(plate_summary)) do |plate|
+    rev = plate_summary[plate][1]
+    [-rev, plate]
+  end
+
+  total_exits = 0
+  total_revenue = 0
+
+  Array.each(sorted_plates) do |plate|
+    count, revenue = plate_summary[plate]
+    total_exits += count
+    total_revenue += revenue
+    puts("#{plate} #{count} #{format_fee(revenue)}")
+  end
+
+  puts("total #{total_exits} #{format_fee(total_revenue)}")
+
+  # Print inside plates
+  inside_plates = Hash.keys(inside)
+  if Array.empty?(inside_plates)
+    puts("inside: none")
+  else
+    inside_plates = Array.sort(inside_plates)
+    puts("inside: #{Array.join(inside_plates, ", ")}")
+  end
+end
+
+main

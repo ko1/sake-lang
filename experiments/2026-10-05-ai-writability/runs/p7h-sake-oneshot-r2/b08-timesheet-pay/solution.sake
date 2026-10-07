@@ -1,0 +1,260 @@
+Employee = Struct.new(:name, :rate)
+Shift = Struct.new(:emp_id, :date, :start_min, :end_min, :worked_minutes)
+
+def valid_emp_id?(id)
+  id =~ /^E\d{3}$/
+end
+
+def valid_name?(name)
+  name =~ /^[A-Za-z]{1,10}$/
+end
+
+def valid_rate?(rate)
+  rate =~ /^\d+\.\d{2}$/
+end
+
+def valid_date?(date_str)
+  date_str =~ /^(\d{4})-(\d{2})-(\d{2})$/ || return false
+  year = String.to_i(String.slice(date_str, 0, 4))
+  month = String.to_i(String.slice(date_str, 5, 2))
+  day = String.to_i(String.slice(date_str, 8, 2))
+
+  year >= 1970 && year <= 2099 && month >= 1 && month <= 12 && day >= 1 && day <= 31
+end
+
+def valid_time?(time_str)
+  time_str =~ /^(\d{2}):(\d{2})$/ || return false
+  hour = String.to_i(String.slice(time_str, 0, 2))
+  min = String.to_i(String.slice(time_str, 3, 2))
+  hour >= 0 && hour <= 23 && min >= 0 && min <= 59
+end
+
+def time_to_minutes(time_str)
+  hour = String.to_i(String.slice(time_str, 0, 2))
+  min = String.to_i(String.slice(time_str, 3, 2))
+  hour * 60 + min
+end
+
+def day_of_week(date_str)
+  year = String.to_i(String.slice(date_str, 0, 4))
+  month = String.to_i(String.slice(date_str, 5, 2))
+  day = String.to_i(String.slice(date_str, 8, 2))
+  t = Time.new(year, month, day)
+  Time.wday(t)
+end
+
+def format_time_hm(total_min)
+  hours = total_min / 60
+  mins = total_min % 60
+  "#{hours}:#{String.rjust(Integer.to_s(mins), 2, "0")}"
+end
+
+def format_money(amount)
+  format("%.2f", amount)
+end
+
+employees = Hash[]
+shifts = Array[]
+
+line_num = 0
+while line = gets
+  line_num += 1
+  line = String.strip(line)
+  next if String.empty?(line)
+
+  fields = String.split(line, /\s+/)
+  command = Array.at(fields, 0)
+
+  unless command
+    puts("line #{line_num}: error: unknown command")
+    next
+  end
+
+  case command
+  in "EMP"
+    unless Array.size(fields) == 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    id = Array.at(fields, 1)
+    name = Array.at(fields, 2)
+    rate_str = Array.at(fields, 3)
+
+    unless valid_emp_id?(id)
+      puts("line #{line_num}: error: bad id")
+      next
+    end
+    unless valid_name?(name)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+    unless valid_rate?(rate_str)
+      puts("line #{line_num}: error: bad rate")
+      next
+    end
+
+    if Hash.has_key?(employees, id)
+      puts("line #{line_num}: error: duplicate employee ID")
+      next
+    end
+
+    rate = String.to_f(rate_str)
+    employees[id] = Employee.new(name, rate)
+
+  in "SHIFT"
+    unless Array.size(fields) == 5 || Array.size(fields) == 6
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+    emp_id = Array.at(fields, 1)
+    date = Array.at(fields, 2)
+    start_str = Array.at(fields, 3)
+    end_str = Array.at(fields, 4)
+    break_min = 0
+    if Array.size(fields) == 6
+      break_str = Array.at(fields, 5)
+      unless break_str =~ /^\d+$/
+        puts("line #{line_num}: error: bad break")
+        next
+      end
+      break_min = String.to_i(break_str)
+    end
+
+    unless Hash.has_key?(employees, emp_id)
+      puts("line #{line_num}: error: bad id")
+      next
+    end
+
+    unless Hash.has_key?(employees, emp_id)
+      puts("line #{line_num}: error: unknown employee ID")
+      next
+    end
+
+    unless valid_date?(date)
+      puts("line #{line_num}: error: bad date")
+      next
+    end
+
+    unless valid_time?(start_str)
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    unless valid_time?(end_str)
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    start_min = time_to_minutes(start_str)
+    end_min = time_to_minutes(end_str)
+
+    if end_min <= start_min
+      end_min += 24 * 60
+    end
+
+    shift_len = end_min - start_min
+    if break_min >= shift_len
+      puts("line #{line_num}: error: bad break")
+      next
+    end
+
+    if shift_len > 6 * 60 && break_min < 30
+      break_min = 30
+    end
+
+    worked_min = shift_len - break_min
+
+    overlap = false
+    Array.each(shifts) { |s|
+      if Shift.emp_id(s) == emp_id && Shift.date(s) == date
+        s_start = Shift.start_min(s)
+        s_end = Shift.end_min(s)
+        if (start_min < s_end && end_min > s_start) || (s_start < end_min && s_end > start_min)
+          overlap = true
+        end
+      end
+    }
+
+    if overlap
+      puts("line #{line_num}: error: overlapping shift")
+      next
+    end
+
+    Array.push(shifts, Shift.new(emp_id, date, start_min, end_min, worked_min))
+
+  else
+    puts("line #{line_num}: error: unknown command")
+  end
+end
+
+emp_ids = Array.sort(Hash.keys(employees))
+total_regular_min = 0
+total_overtime_min = 0
+total_pay = 0.0
+
+Array.each(emp_ids) { |emp_id|
+  emp = employees[emp_id]
+  emp_shifts = Array.select(shifts) { Shift.emp_id(it) == emp_id }
+  emp_shifts = Array.sort_by(emp_shifts) { [Shift.date(it), Shift.start_min(it)] }
+
+  regular_min = 0
+  overtime_min = 0
+
+  daily_totals = Hash[]
+  week_start_date = nil
+  week_total = 0
+
+  Array.each(emp_shifts) { |shift|
+    date = Shift.date(shift)
+    worked = Shift.worked_minutes(shift)
+
+    if !Hash.has_key?(daily_totals, date)
+      daily_totals[date] = 0
+    end
+
+    daily_used = 0
+    remaining = worked
+
+    if daily_totals[date] + remaining > 8 * 60
+      daily_used = 8 * 60 - daily_totals[date]
+      overtime_min += remaining - daily_used
+      daily_totals[date] = 8 * 60
+      remaining = daily_used
+    else
+      daily_totals[date] += remaining
+      daily_used = remaining
+    end
+
+    week_day = day_of_week(date)
+    if week_day == 1 || !week_start_date
+      week_start_date = date
+      week_total = 0
+    end
+
+    if week_total + daily_used > 40 * 60
+      week_overtime = week_total + daily_used - 40 * 60
+      if week_overtime > remaining
+        week_overtime = remaining
+      end
+      overtime_min += week_overtime
+      regular_min += remaining - week_overtime
+      week_total += daily_used
+    else
+      regular_min += remaining
+      week_total += daily_used
+    end
+  }
+
+  rate = Employee.rate(emp)
+  pay = (regular_min * rate + overtime_min * rate * 1.5) / 60.0
+  pay = Float.round(pay, 2)
+
+  total_regular_min += regular_min
+  total_overtime_min += overtime_min
+  total_pay += pay
+
+  puts(format("%-4s %-10s %8s %8s %10s", emp_id, Employee.name(emp), format_time_hm(regular_min), format_time_hm(overtime_min), format_money(pay)))
+}
+
+total_pay_str = format_money(total_pay)
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", format_time_hm(total_regular_min), format_time_hm(total_overtime_min), total_pay_str))

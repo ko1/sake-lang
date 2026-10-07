@@ -1,0 +1,229 @@
+def round_half_up(f, digits)
+  multiplier = 10 ** digits
+  Integer.to_f(Integer.round(f * multiplier + 0.5) / multiplier)
+end
+
+def get_grade(percentage)
+  if percentage >= 90.0
+    "A"
+  elsif percentage >= 80.0
+    "B"
+  elsif percentage >= 70.0
+    "C"
+  elsif percentage >= 60.0
+    "D"
+  else
+    "F"
+  end
+end
+
+def max_int(a, b)
+  if a > b then a else b end
+end
+
+weights = Hash["__dummy__" => 1]
+categories = Array[]
+all_students = Array[]
+scores_data = Hash["__dummy__" => Array[]]
+errors = Array[]
+line_num = 0
+
+IO.each_line(IO.stdin()) do |line|
+  line_num = line_num + 1
+  line = String.strip(line)
+
+  if String.empty?(line) || String.start_with?(line, "#")
+    next
+  end
+
+  fields = String.split(line)
+
+  if Array.size(fields) > 0 && Array.at(fields, 0) == "weight"
+    if Array.size(fields) != 3
+      Array.push(errors, "line #{line_num}: bad format")
+    else
+      category = Array.at(fields, 1)
+      weight_str = Array.at(fields, 2)
+
+      if String.match?(weight_str, /^\d+$/) == nil
+        Array.push(errors, "line #{line_num}: bad weight #{weight_str}")
+      else
+        w = String.to_i(weight_str)
+        if w < 1 || w > 100
+          Array.push(errors, "line #{line_num}: bad weight #{weight_str}")
+        elsif Hash.has_key?(weights, category)
+          Array.push(errors, "line #{line_num}: duplicate category #{category}")
+        else
+          Hash.[]=( weights, category, w)
+          Array.push(categories, category)
+        end
+      end
+    end
+  else
+    if Array.size(fields) != 3
+      Array.push(errors, "line #{line_num}: bad format")
+    else
+      student = Array.at(fields, 0)
+      category = Array.at(fields, 1)
+      score_str = Array.at(fields, 2)
+
+      if !Hash.has_key?(weights, category)
+        Array.push(errors, "line #{line_num}: unknown category #{category}")
+      else
+        key = String.+(student, String.+(":", category))
+
+        if !Hash.has_key?(scores_data, key)
+          entries = Array[]
+          Hash.[]=( scores_data, key, entries)
+        end
+        entries = Hash.[](scores_data, key)
+
+        if Array.include?(all_students, student) == false
+          Array.push(all_students, student)
+        end
+
+        if score_str == "EX"
+          Array.push(entries, nil)
+        elsif score_str == "-"
+          Array.push(entries, [-1, -1])
+        else
+          slash_idx = String.index(score_str, "/")
+          if slash_idx == nil
+            Array.push(errors, "line #{line_num}: bad score #{score_str}")
+          else
+            p_str = String.slice(score_str, 0, slash_idx)
+            m_str = String.slice(score_str, Integer.+(slash_idx, 1), String.size(score_str))
+
+            if String.match?(p_str, /^\d+$/) == nil || String.match?(m_str, /^\d+$/) == nil
+              Array.push(errors, "line #{line_num}: bad score #{score_str}")
+            else
+              p = String.to_i(p_str)
+              m = String.to_i(m_str)
+
+              if m <= 0 || p > m
+                Array.push(errors, "line #{line_num}: bad score #{score_str}")
+              else
+                Array.push(entries, [p, m])
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+Array.each(errors) { |e| puts(e) }
+
+results = Array[]
+Array.each(all_students) do |student|
+  total_weighted_points = 0.0
+  total_weighted_max = 0.0
+  missing_count = 0
+
+  Array.each(categories) do |cat|
+    key = String.+(student, String.+(":", cat))
+
+    if Hash.has_key?(scores_data, key)
+      entries = Hash.[](scores_data, key)
+      cat_points = 0
+      cat_max = 0
+      cat_missing = 0
+
+      Array.each(entries) do |entry|
+        if entry == nil
+          nil
+        else
+          p = Array.at(entry, 0)
+          m = Array.at(entry, 1)
+          if p >= 0
+            cat_points = cat_points + p
+            cat_max = cat_max + m
+          else
+            cat_missing = cat_missing + 1
+          end
+        end
+      end
+
+      missing_count = missing_count + cat_missing
+
+      if cat_max > 0
+        cat_weight = Float(Hash.[](weights, cat))
+        cat_fraction = Float(cat_points) / Float(cat_max)
+        total_weighted_points = total_weighted_points + cat_weight * cat_fraction
+        total_weighted_max = total_weighted_max + cat_weight
+      end
+    end
+  end
+
+  percentage = nil
+  if total_weighted_max > 0.0
+    percentage = 100.0 * total_weighted_points / total_weighted_max
+    percentage = round_half_up(percentage, 1)
+  end
+
+  grade_str = nil
+  if percentage == nil
+    grade_str = "-"
+  else
+    grade_str = get_grade(percentage)
+  end
+
+  Array.push(results, [student, percentage, grade_str, missing_count])
+end
+
+sorted_results = Array.sort_by(results) do |item|
+  name = Array.at(item, 0)
+  pct = Array.at(item, 1)
+
+  if pct == nil
+    [1, name]
+  else
+    [-pct, name]
+  end
+end
+
+width = 7
+Array.each(sorted_results) do |item|
+  name = Array.at(item, 0)
+  width = max_int(width, String.size(name))
+end
+
+puts(String.ljust("Student", width) + "  Score  G  Missing")
+
+total_pct_sum = 0.0
+total_pct_count = 0
+
+Array.each(sorted_results) do |item|
+  student_name = Array.at(item, 0)
+  percentage = Array.at(item, 1)
+  grade = Array.at(item, 2)
+  missing = Array.at(item, 3)
+
+  line = String.ljust(student_name, width)
+  line = String.+(line, "  ")
+
+  if percentage == nil
+    line = String.+(line, String.rjust("n/a", 5))
+  else
+    pct_str = format("%.1f", percentage)
+    line = String.+(line, String.rjust(pct_str, 5))
+    total_pct_sum = total_pct_sum + percentage
+    total_pct_count = total_pct_count + 1
+  end
+
+  line = String.+(line, "  ")
+  line = String.+(line, grade)
+  line = String.+(line, "  ")
+  line = String.+(line, String.rjust(Integer.to_s(missing), 7))
+
+  puts(line)
+end
+
+if total_pct_count > 0
+  class_avg = total_pct_sum / Float(total_pct_count)
+  class_avg = round_half_up(class_avg, 1)
+  puts("class average: #{class_avg}")
+else
+  puts("class average: n/a")
+end

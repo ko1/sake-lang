@@ -1,0 +1,271 @@
+def read_all_lines
+  lines = Array[]
+  while true
+    line = gets
+    break unless line
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def parse_header(header_line)
+  parts = String.split(String.strip(header_line), /\s+/)
+
+  if Array.size(parts) < 2 || Array.size(parts) > 5
+    nil
+  else
+    start_str = Array.at(parts, 0)
+    if !String.match?(start_str, /^\d+$/)
+      nil
+    else
+      start = String.to_i(start_str)
+      if start < 2 || start > 1001
+        nil
+      else
+        player_names = Array[]
+        Integer.times(Array.size(parts) - 1) do |i|
+          name = Array.at(parts, i + 1)
+          if String.size(name) >= 1 && String.size(name) <= 10 && String.match?(name, /^[a-z]+$/)
+            unless Array.include?(player_names, name)
+              Array.push(player_names, name)
+            else
+              return nil
+            end
+          else
+            return nil
+          end
+        end
+
+        if Array.size(player_names) >= 1 && Array.size(player_names) <= 4
+          [start, player_names]
+        else
+          nil
+        end
+      end
+    end
+  end
+end
+
+def parse_dart(dart_str)
+  if dart_str == "MISS"
+    [:dart, 0, false]
+  elsif dart_str == "BULL"
+    [:dart, 50, true]
+  elsif dart_str == "25"
+    [:dart, 25, false]
+  elsif String.start_with?(dart_str, "S")
+    num_str = String.slice(dart_str, 1, String.size(dart_str) - 1)
+    if String.match?(num_str, /^\d+$/)
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        [:dart, num, false]
+      else
+        :bad
+      end
+    else
+      :bad
+    end
+  elsif String.start_with?(dart_str, "D")
+    num_str = String.slice(dart_str, 1, String.size(dart_str) - 1)
+    if String.match?(num_str, /^\d+$/)
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        [:dart, num * 2, true]
+      else
+        :bad
+      end
+    else
+      :bad
+    end
+  elsif String.start_with?(dart_str, "T")
+    num_str = String.slice(dart_str, 1, String.size(dart_str) - 1)
+    if String.match?(num_str, /^\d+$/)
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        [:dart, num * 3, false]
+      else
+        :bad
+      end
+    else
+      :bad
+    end
+  else
+    :bad
+  end
+end
+
+def main
+  all_lines = read_all_lines
+
+  if Array.size(all_lines) == 0
+    puts("invalid header")
+    return
+  end
+
+  header_result = parse_header(Array.at(all_lines, 0))
+  unless header_result
+    puts("invalid header")
+    return
+  end
+
+  start, player_names = header_result
+
+  players = Hash[]
+  Array.each(player_names) do |name|
+    Hash.store(players, name, {left: start, turns: 0, darts_thrown: 0, checked_out: false, turn_start: start})
+  end
+
+  Integer.times(Array.size(all_lines) - 1) do |i|
+    line_num = i + 2
+    line = Array.at(all_lines, i + 1)
+    trimmed = String.strip(line)
+
+    if String.empty?(trimmed)
+      next
+    end
+
+    parts = String.split(trimmed, /\s+/)
+
+    if Array.size(parts) < 1
+      next
+    end
+
+    player_name = Array.at(parts, 0)
+
+    unless Hash.has_key?(players, player_name)
+      puts("line #{line_num}: unknown player #{player_name}")
+      next
+    end
+
+    player_data = Hash.at(players, player_name)
+
+    if Hash.at(player_data, :checked_out)
+      puts("line #{line_num}: game over")
+      next
+    end
+
+    dart_strs = Array[]
+    Integer.times(Array.size(parts) - 1) do |j|
+      Array.push(dart_strs, Array.at(parts, j + 1))
+    end
+
+    if Array.size(dart_strs) < 1 || Array.size(dart_strs) > 3
+      puts("line #{line_num}: expected 1 to 3 darts")
+      next
+    end
+
+    darts = Array[]
+    bad_dart = nil
+    Array.each(dart_strs) do |d_str|
+      result = parse_dart(d_str)
+      if result == :bad
+        bad_dart = d_str
+        break
+      else
+        Array.push(darts, result)
+      end
+    end
+
+    if bad_dart
+      puts("line #{line_num}: bad dart #{bad_dart}")
+      next
+    end
+
+    Hash.store(player_data, :turn_start, Hash.at(player_data, :left))
+    turn_score = 0
+    final_dart = nil
+    is_double = false
+    busted = false
+
+    Array.each(darts) do |dart_info|
+      _tag, points, is_d = dart_info
+      turn_score += points
+      left_after = Hash.at(player_data, :left) - turn_score
+      final_dart = dart_info
+      is_double = is_d
+
+      if left_after < 0 || left_after == 1 || (left_after == 0 && !is_double)
+        busted = true
+        break
+      end
+    end
+
+    Hash.store(player_data, :darts_thrown, Hash.at(player_data, :darts_thrown) + Array.size(darts))
+    Hash.store(player_data, :turns, Hash.at(player_data, :turns) + 1)
+
+    if busted
+      Hash.store(player_data, :left, Hash.at(player_data, :turn_start))
+      puts("#{player_name} busts, #{Hash.at(player_data, :left)} left")
+    else
+      new_left = Hash.at(player_data, :left) - turn_score
+      if new_left == 0 && is_double
+        Hash.store(player_data, :left, 0)
+        Hash.store(player_data, :checked_out, true)
+        _tag, points, _is_d = final_dart
+        dart_name = if points == 50
+          "BULL"
+        elsif points == 25
+          "25"
+        elsif points % 3 == 0 && points > 0
+          "T" + Integer.to_s(points / 3)
+        elsif points % 2 == 0 && points > 0
+          "D" + Integer.to_s(points / 2)
+        else
+          "S" + Integer.to_s(points)
+        end
+        puts("#{player_name} checks out with #{dart_name}")
+      else
+        Hash.store(player_data, :left, new_left)
+        puts("#{player_name} scores #{turn_score}, #{new_left} left")
+      end
+    end
+  end
+
+  puts("STANDINGS")
+
+  standings = Array[]
+  Hash.each(players) do |name, data|
+    Array.push(standings, [name, Hash.at(data, :left), Hash.at(data, :turns), Hash.at(data, :darts_thrown)])
+  end
+
+  Array.sort!(standings) do |a, b|
+    left_a = Array.at(a, 1)
+    left_b = Array.at(b, 1)
+    if left_a == left_b
+      String.<=>(Array.at(a, 0), Array.at(b, 0))
+    else
+      left_a <=> left_b
+    end
+  end
+
+  Integer.times(Array.size(standings)) do |i|
+    rank = i + 1
+    name, left, turns, darts_thrown = Array.at(standings, i)
+
+    if darts_thrown > 0
+      avg = (start.to_f - left.to_f) * 3.0 / darts_thrown.to_f
+      avg_str = String.rjust(format("%.2f", avg), 6)
+    else
+      avg_str = "     -"
+    end
+
+    line = format("%d. %-10s %4d %3d %6s", rank, name, left, turns, "")
+    puts(line + " " + avg_str)
+  end
+
+  winner = nil
+  Array.each(Hash.keys(players)) do |name|
+    if Hash.at(Hash.at(players, name), :left) == 0
+      winner = name
+      break
+    end
+  end
+
+  if winner
+    puts("winner: #{winner}")
+  else
+    puts("no winner")
+  end
+end
+
+main

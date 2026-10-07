@@ -1,0 +1,271 @@
+# FIFO Inventory System
+
+Lot = Struct.new(:qty, :cost)
+
+def is_valid_sku?(sku)
+  if String.size(sku) < 1 || String.size(sku) > 12
+    return false
+  end
+  String.match(sku, /^[A-Z0-9-]+$/) != nil
+end
+
+def is_valid_quantity?(qty_str)
+  if String.size(qty_str) == 0
+    return false
+  end
+  begin
+    qty = String.to_i(qty_str)
+    qty >= 1 && qty <= 1000000
+  rescue
+    false
+  end
+end
+
+def is_valid_money?(money_str)
+  # digits, optionally followed by . and 1-2 digits
+  String.match(money_str, /^(\d+(\.\d{1,2})?|\.\d{1,2})$/) != nil
+end
+
+def parse_money(money_str)
+  # Returns money in cents (integer)
+  begin
+    value = String.to_f(money_str)
+    Integer(value * 100.0)
+  rescue
+    nil
+  end
+end
+
+def format_money(cents)
+  # Format integer cents as $X.XX
+  is_negative = cents < 0
+  abs_cents = Arithmetic.abs(cents)
+  dollars = abs_cents / 100
+  remaining = abs_cents % 100
+
+  sign = is_negative ? "-" : ""
+  Kernel.format("%s%d.%02d", sign, dollars, remaining)
+end
+
+lines = Array[]
+while true
+  line = Kernel.gets()
+  if line == nil
+    break
+  end
+  Array.push(lines, line)
+end
+
+# inventory[sku] = array of Lot
+inventory = Hash[]
+# skus_in_order stores all SKUs ever received, in order
+skus_in_order = Array[]
+total_revenue = 0
+total_cogs = 0
+
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+
+  # Skip empty lines
+  stripped = String.strip(line)
+  if String.size(stripped) == 0
+    next
+  end
+
+  fields = String.split(stripped, /\s+/)
+
+  if Array.size(fields) == 0
+    next
+  end
+
+  command = Array.at(fields, 0)
+
+  if command == "RECEIVE"
+    if Array.size(fields) != 4
+      puts(Kernel.format("line %d: error: wrong field count", line_num))
+      next
+    end
+
+    sku = Array.at(fields, 1)
+    qty_str = Array.at(fields, 2)
+    price_str = Array.at(fields, 3)
+
+    if !is_valid_sku?(sku)
+      puts(Kernel.format("line %d: error: bad sku", line_num))
+      next
+    end
+
+    if !is_valid_quantity?(qty_str)
+      puts(Kernel.format("line %d: error: bad quantity", line_num))
+      next
+    end
+
+    if !is_valid_money?(price_str)
+      puts(Kernel.format("line %d: error: bad price", line_num))
+      next
+    end
+
+    qty = String.to_i(qty_str)
+    cost_cents = parse_money(price_str)
+    if cost_cents == nil
+      puts(Kernel.format("line %d: error: bad price", line_num))
+      next
+    end
+
+    # Add to inventory
+    sku_lots = Hash.fetch(inventory, sku, nil)
+    if sku_lots == nil
+      sku_lots = Array[]
+      Hash.store(inventory, sku, sku_lots)
+      Array.push(skus_in_order, sku)
+    end
+
+    lot = Lot.new(qty, cost_cents)
+    Array.push(sku_lots, lot)
+
+  elsif command == "SHIP"
+    if Array.size(fields) != 4
+      puts(Kernel.format("line %d: error: wrong field count", line_num))
+      next
+    end
+
+    sku = Array.at(fields, 1)
+    qty_str = Array.at(fields, 2)
+    price_str = Array.at(fields, 3)
+
+    if !is_valid_sku?(sku)
+      puts(Kernel.format("line %d: error: bad sku", line_num))
+      next
+    end
+
+    if !is_valid_quantity?(qty_str)
+      puts(Kernel.format("line %d: error: bad quantity", line_num))
+      next
+    end
+
+    if !is_valid_money?(price_str)
+      puts(Kernel.format("line %d: error: bad price", line_num))
+      next
+    end
+
+    qty = String.to_i(qty_str)
+    price_cents = parse_money(price_str)
+    if price_cents == nil
+      puts(Kernel.format("line %d: error: bad price", line_num))
+      next
+    end
+
+    # Check SKU exists
+    sku_lots = Hash.fetch(inventory, sku, nil)
+    if sku_lots == nil
+      puts(Kernel.format("line %d: error: unknown sku %s", line_num, sku))
+      next
+    end
+
+    # Calculate total available
+    available = 0
+    Array.each(sku_lots) do |lot|
+      available += Lot.qty(lot)
+    end
+
+    if qty > available
+      puts(Kernel.format("line %d: error: insufficient stock for %s (have %d, need %d)", line_num, sku, available, qty))
+      next
+    end
+
+    # Ship from oldest lots (FIFO)
+    remaining = qty
+    cost_cents_total = 0
+
+    Array.each(sku_lots) do |lot|
+      lot_qty = Lot.qty(lot)
+      lot_cost = Lot.cost(lot)
+
+      if remaining == 0
+        break
+      end
+
+      taken = remaining < lot_qty ? remaining : lot_qty
+      remaining -= taken
+      cost_cents_total += taken * lot_cost
+
+      # Remove from lot
+      Lot.set_qty(lot, lot_qty - taken)
+    end
+
+    # Clean up empty lots
+    non_empty = Array.select(sku_lots) { Lot.qty(it) > 0 }
+    Hash.store(inventory, sku, non_empty)
+
+    revenue_cents = qty * price_cents
+    total_revenue += revenue_cents
+    total_cogs += cost_cents_total
+
+    puts(Kernel.format("line %d: shipped %d %s: revenue %s, cost %s", line_num, qty, sku, format_money(revenue_cents), format_money(cost_cents_total)))
+
+  elsif command == "REPORT"
+    if Array.size(fields) != 1
+      puts(Kernel.format("line %d: error: wrong field count", line_num))
+      next
+    end
+
+    puts(Kernel.format("%-12s %5s %10s", "SKU", "QTY", "VALUE"))
+
+    total_qty = 0
+    total_value = 0
+
+    Array.each(skus_in_order) do |sku|
+      sku_lots = Hash.fetch(inventory, sku, Array[])
+
+      qty = 0
+      value = 0
+      Array.each(sku_lots) do |lot|
+        lot_qty = Lot.qty(lot)
+        lot_cost = Lot.cost(lot)
+        qty += lot_qty
+        value += lot_qty * lot_cost
+      end
+
+      total_qty += qty
+      total_value += value
+
+      puts(Kernel.format("%-12s %5d %10s", sku, qty, format_money(value)))
+    end
+
+    puts(Kernel.format("%-12s %5d %10s", "TOTAL", total_qty, format_money(total_value)))
+
+  else
+    puts(Kernel.format("line %d: error: unknown command %s", line_num, command))
+  end
+end
+
+# Final report
+puts("== final ==")
+puts(Kernel.format("%-12s %5s %10s", "SKU", "QTY", "VALUE"))
+
+total_qty = 0
+total_value = 0
+
+Array.each(skus_in_order) do |sku|
+  sku_lots = Hash.fetch(inventory, sku, Array[])
+
+  qty = 0
+  value = 0
+  Array.each(sku_lots) do |lot|
+    lot_qty = Lot.qty(lot)
+    lot_cost = Lot.cost(lot)
+    qty += lot_qty
+    value += lot_qty * lot_cost
+  end
+
+  total_qty += qty
+  total_value += value
+
+  puts(Kernel.format("%-12s %5d %10s", sku, qty, format_money(value)))
+end
+
+puts(Kernel.format("%-12s %5d %10s", "TOTAL", total_qty, format_money(total_value)))
+
+puts(Kernel.format("revenue: %s", format_money(total_revenue)))
+puts(Kernel.format("cost of goods sold: %s", format_money(total_cogs)))
+puts(Kernel.format("gross profit: %s", format_money(total_revenue - total_cogs)))

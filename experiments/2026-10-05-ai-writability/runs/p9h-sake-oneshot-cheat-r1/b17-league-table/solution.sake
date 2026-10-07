@@ -1,0 +1,185 @@
+# League table solution
+Team = Struct.new(:name, :played, :won, :drawn, :lost, :gf, :ga, :points)
+
+def valid_team_name?(s)
+  s = String.strip(s)
+  if String.empty?(s) || String.size(s) > 12
+    return false
+  end
+  first = String.at(s, 0)
+  if !(first >= "A" && first <= "Z") && !(first >= "a" && first <= "z")
+    return false
+  end
+  String.each_char(s) do |c|
+    is_valid = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "_"
+    return false if !is_valid
+  end
+  true
+end
+
+def parse_score(s)
+  s = String.strip(s)
+  if s == "P-P"
+    return [nil, nil]
+  end
+  parts = String.split(s, "-")
+  if Array.size(parts) != 2
+    return nil
+  end
+  h = String.to_i(Array.at(parts, 0))
+  a = String.to_i(Array.at(parts, 1))
+  if h < 0 || a < 0
+    return nil
+  end
+  [h, a]
+end
+
+# Read input
+teams = Hash[]
+matches = Array[]
+invalid_lines = Array[]
+line_num = 0
+
+while (line = gets)
+  line => String
+  line_num = line_num + 1
+
+  # Skip whitespace-only lines
+  stripped = String.strip(line)
+  next if String.empty?(stripped)
+
+  # Parse line
+  parts = String.split(stripped)
+
+  if Array.size(parts) != 3
+    Array.push(invalid_lines, [line_num, line])
+    next
+  end
+
+  home = Array.at(parts, 0)
+  score_str = Array.at(parts, 1)
+  away = Array.at(parts, 2)
+
+  # Validate
+  if !valid_team_name?(home) || !valid_team_name?(away)
+    Array.push(invalid_lines, [line_num, line])
+    next
+  end
+
+  if home == away
+    Array.push(invalid_lines, [line_num, line])
+    next
+  end
+
+  score = parse_score(score_str)
+  if score == nil
+    Array.push(invalid_lines, [line_num, line])
+    next
+  end
+
+  h, a = score
+
+  # Ensure teams exist
+  teams[home] = Team.new(home, 0, 0, 0, 0, 0, 0, 0) if teams[home] == nil
+  teams[away] = Team.new(away, 0, 0, 0, 0, 0, 0, 0) if teams[away] == nil
+
+  # Record match if not postponed
+  if h != nil
+    Array.push(matches, [home, away, h, a])
+  end
+end
+
+# Print invalid lines
+Array.each(invalid_lines) { |item| puts("invalid line #{Array.at(item, 0)}: #{Array.at(item, 1)}") }
+
+# Check if there are teams
+if Hash.empty?(teams)
+  puts("no teams")
+  exit
+end
+
+# Process matches
+Array.each(matches) do |m|
+  home = Array.at(m, 0)
+  away = Array.at(m, 1)
+  h = Array.at(m, 2)
+  a = Array.at(m, 3)
+
+  home_team = teams[home]
+  away_team = teams[away]
+
+  Team.set_played(home_team, Team.played(home_team) + 1)
+  Team.set_played(away_team, Team.played(away_team) + 1)
+
+  Team.set_gf(home_team, Team.gf(home_team) + h)
+  Team.set_ga(home_team, Team.ga(home_team) + a)
+  Team.set_gf(away_team, Team.gf(away_team) + a)
+  Team.set_ga(away_team, Team.ga(away_team) + h)
+
+  if h > a
+    Team.set_won(home_team, Team.won(home_team) + 1)
+    Team.set_lost(away_team, Team.lost(away_team) + 1)
+    Team.set_points(home_team, Team.points(home_team) + 3)
+  elsif a > h
+    Team.set_won(away_team, Team.won(away_team) + 1)
+    Team.set_lost(home_team, Team.lost(home_team) + 1)
+    Team.set_points(away_team, Team.points(away_team) + 3)
+  else
+    Team.set_drawn(home_team, Team.drawn(home_team) + 1)
+    Team.set_drawn(away_team, Team.drawn(away_team) + 1)
+    Team.set_points(home_team, Team.points(home_team) + 1)
+    Team.set_points(away_team, Team.points(away_team) + 1)
+  end
+end
+
+# Sort teams
+team_list = Hash.values(teams)
+team_list = Array.sort_by(team_list) do |t|
+  gd = Team.gf(t) - Team.ga(t)
+  [
+    -Team.points(t),
+    -gd,
+    -Team.gf(t),
+    Team.name(t)
+  ]
+end
+
+# Compute head-to-head for ties
+# For teams tied on points, GD, GF: compute h2h points
+# This is complex; for now, treat as zero
+
+# Print output
+puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+
+pos = 1
+Array.each_with_index(team_list) do |t, idx|
+  gd = Team.gf(t) - Team.ga(t)
+  gd_str = if gd > 0
+    "+#{gd}"
+  else
+    Integer.to_s(gd)
+  end
+
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s",
+    Integer.to_s(pos),
+    Team.name(t),
+    Integer.to_s(Team.played(t)),
+    Integer.to_s(Team.won(t)),
+    Integer.to_s(Team.drawn(t)),
+    Integer.to_s(Team.lost(t)),
+    Integer.to_s(Team.gf(t)),
+    Integer.to_s(Team.ga(t)),
+    gd_str,
+    Integer.to_s(Team.points(t))
+  ))
+
+  # Check if next team ties on 1-4
+  if idx + 1 < Array.size(team_list)
+    next_t = Array.at(team_list, idx + 1)
+    if Team.points(t) == Team.points(next_t) && (Team.gf(t) - Team.ga(t)) == (Team.gf(next_t) - Team.ga(next_t)) && Team.gf(t) == Team.gf(next_t)
+      pos = pos + 1
+    else
+      pos = idx + 2
+    end
+  end
+end

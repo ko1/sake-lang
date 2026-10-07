@@ -1,0 +1,256 @@
+Request = Struct.new(:timestamp, :method, :path, :status, :bytes, :duration)
+
+def validate_timestamp(ts)
+  if String.size(ts) != 19
+    return false
+  end
+
+  m_str = String.slice(ts, 5, 2)
+  d_str = String.slice(ts, 8, 2)
+  h_str = String.slice(ts, 11, 2)
+  min_str = String.slice(ts, 14, 2)
+  s_str = String.slice(ts, 17, 2)
+
+  if String.slice(ts, 4, 1) != "-" || String.slice(ts, 7, 1) != "-" || String.slice(ts, 10, 1) != "T" || String.slice(ts, 13, 1) != ":" || String.slice(ts, 16, 1) != ":"
+    return false
+  end
+
+  month = String.to_i(m_str) rescue nil
+  day = String.to_i(d_str) rescue nil
+  hour = String.to_i(h_str) rescue nil
+  minute = String.to_i(min_str) rescue nil
+  second = String.to_i(s_str) rescue nil
+
+  if month == nil || day == nil || hour == nil || minute == nil || second == nil
+    return false
+  end
+
+  if month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59
+    return false
+  end
+
+  true
+end
+
+def parse_request(line)
+  fields = String.split(line, " ")
+  if Array.size(fields) != 6
+    return nil
+  end
+
+  ts = Array.at(fields, 0)
+  meth = Array.at(fields, 1)
+  path = Array.at(fields, 2)
+  status = Array.at(fields, 3)
+  bytes = Array.at(fields, 4)
+  dur = Array.at(fields, 5)
+
+  if !validate_timestamp(ts)
+    return nil
+  end
+
+  if meth != "GET" && meth != "POST" && meth != "PUT" && meth != "DELETE"
+    return nil
+  end
+
+  if String.empty?(path) || String.slice(path, 0, 1) != "/"
+    return nil
+  end
+
+  query_idx = String.index(path, "?")
+  clean_path = if query_idx then String.slice(path, 0, query_idx) else path end
+
+  if String.size(status) != 3
+    return nil
+  end
+  status_num = String.to_i(status) rescue nil
+  if status_num == nil || status_num < 100 || status_num > 599
+    return nil
+  end
+
+  bytes_num = if bytes == "-" then 0 else String.to_i(bytes) rescue nil end
+  if bytes_num == nil
+    return nil
+  end
+
+  dur_num = String.to_i(dur) rescue nil
+  if dur_num == nil || dur_num < 0
+    return nil
+  end
+
+  Request.new(ts, meth, clean_path, status_num, bytes_num, dur_num)
+end
+
+def get_error_reason(trimmed)
+  fields = String.split(trimmed, " ")
+
+  if Array.size(fields) != 6
+    return "wrong field count"
+  end
+
+  ts = Array.at(fields, 0)
+  meth = Array.at(fields, 1)
+  path = Array.at(fields, 2)
+  status = Array.at(fields, 3)
+  bytes = Array.at(fields, 4)
+  dur = Array.at(fields, 5)
+
+  if !validate_timestamp(ts)
+    return "bad timestamp"
+  end
+
+  if meth != "GET" && meth != "POST" && meth != "PUT" && meth != "DELETE"
+    return "bad method"
+  end
+
+  if String.empty?(path) || String.slice(path, 0, 1) != "/"
+    return "bad path"
+  end
+
+  if String.size(status) != 3
+    return "bad status"
+  end
+
+  status_num = String.to_i(status) rescue nil
+  if status_num == nil || status_num < 100 || status_num > 599
+    return "bad status"
+  end
+
+  bytes_num = if bytes == "-" then 0 else String.to_i(bytes) rescue nil end
+  if bytes_num == nil
+    return "bad bytes"
+  end
+
+  dur_num = String.to_i(dur) rescue nil
+  if dur_num == nil || dur_num < 0
+    return "bad duration"
+  end
+
+  "unknown"
+end
+
+# Read all lines
+lines = Array[]
+while true
+  line = gets()
+  if line == nil
+    break
+  end
+  Array.push(lines, String.chomp(line))
+end
+
+# Parse requests
+valid_requests = Array[]
+invalid_lines = Array[]
+line_num = 1
+Array.each(lines) do |line|
+  trimmed = String.strip(line)
+  if String.empty?(trimmed)
+    line_num += 1
+    next
+  end
+
+  req = parse_request(trimmed)
+  if req
+    Array.push(valid_requests, req)
+  else
+    reason = get_error_reason(trimmed)
+    Array.push(invalid_lines, [line_num, reason])
+  end
+  line_num += 1
+end
+
+# Output
+if Array.size(valid_requests) == 0
+  puts("no valid requests")
+else
+  # Group by endpoint
+  endpoints = Hash.new(nil)
+  Array.each(valid_requests) do |req|
+    endpoint = "#{Request.method(req)} #{Request.path(req)}"
+
+    val = if Hash.key?(endpoints, endpoint)
+            Hash.fetch(endpoints, endpoint)
+          else
+            {count: 0, n4xx: 0, n5xx: 0, bytes: 0, durations: Array[]}
+          end
+
+    val["count"] = val["count"] + 1
+    if Request.status(req) >= 400 && Request.status(req) < 500
+      val["n4xx"] = val["n4xx"] + 1
+    elsif Request.status(req) >= 500
+      val["n5xx"] = val["n5xx"] + 1
+    end
+    val["bytes"] = val["bytes"] + Request.bytes(req)
+    Array.push(val["durations"], Request.duration(req))
+
+    Hash.store(endpoints, endpoint, val)
+  end
+
+  # Sort endpoints
+  all_endpoints = Hash.keys(endpoints)
+  sorted_endpoints = Array.sort_by(all_endpoints) do |ep|
+    stats = Hash.fetch(endpoints, ep)
+    [-stats["count"], ep]
+  end
+
+  # Find max endpoint length
+  max_len = 8
+  Array.each(sorted_endpoints) do |ep|
+    if String.size(ep) > max_len
+      max_len = String.size(ep)
+    end
+  end
+
+  # Output header and rows
+  puts(format("%-Ws %5s %4s %4s %8s %7s %6s", "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+
+  Array.each(sorted_endpoints) do |ep|
+    stats = Hash.fetch(endpoints, ep)
+    ds = stats["durations"]
+    total_dur = Array.sum(ds, 0)
+    max_dur = Array.max(ds)
+    avg_dur_f = if Array.size(ds) > 0 then Float(total_dur) / Float(Array.size(ds)) else 0.0 end
+    avg_str = format("%.1f", avg_dur_f)
+
+    puts(format("%-Ws %5d %4d %4d %8d %7s %6d",
+      ep,
+      stats["count"],
+      stats["n4xx"],
+      stats["n5xx"],
+      stats["bytes"],
+      avg_str,
+      max_dur
+    ))
+  end
+
+  # Find busiest hour
+  hours = Hash.new(0)
+  Array.each(valid_requests) do |req|
+    ts = Request.timestamp(req)
+    hour_key = String.slice(ts, 0, 13)
+    prev_count = if Hash.key?(hours, hour_key) then Hash.fetch(hours, hour_key) else 0 end
+    Hash.store(hours, hour_key, prev_count + 1)
+  end
+
+  busiest_hour = nil
+  max_count = 0
+  Array.each(Hash.keys(hours)) do |hour_key|
+    count = Hash.fetch(hours, hour_key)
+    if count > max_count || (count == max_count && (busiest_hour == nil || hour_key < busiest_hour))
+      busiest_hour = hour_key
+      max_count = count
+    end
+  end
+
+  if busiest_hour
+    hour_display = "#{busiest_hour}:00"
+    puts("busiest hour: #{hour_display} (#{max_count} requests)")
+  end
+end
+
+# Output invalid lines
+puts("invalid lines: #{Array.size(invalid_lines)}")
+Array.each(invalid_lines) do |ln, reason|
+  puts("  line #{ln}: #{reason}")
+end

@@ -1,0 +1,247 @@
+Stats = Struct.new(:count, :n4xx, :n5xx, :bytes, :sum_ms, :max_ms)
+Error = Struct.new(:line_num, :reason)
+HourCount = Struct.new(:year_month_day, :hour, :count)
+
+def parse_timestamp(ts)
+  # YYYY-MM-DDTHH:MM:SS format validation
+  if String.size(ts) != 19
+    return nil
+  end
+  if ts[4] != "-" || ts[7] != "-" || ts[10] != "T" || ts[13] != ":" || ts[16] != ":"
+    return nil
+  end
+
+  year = String.to_i(String.slice(ts, 0, 4))
+  month = String.to_i(String.slice(ts, 5, 2))
+  day = String.to_i(String.slice(ts, 8, 2))
+  hour = String.to_i(String.slice(ts, 11, 2))
+  min = String.to_i(String.slice(ts, 14, 2))
+  sec = String.to_i(String.slice(ts, 17, 2))
+
+  if month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || min < 0 || min > 59 || sec < 0 || sec > 59
+    return nil
+  end
+
+  [year, month, day, hour, min, sec]
+end
+
+def validate_method(m)
+  m == "GET" || m == "POST" || m == "PUT" || m == "DELETE"
+end
+
+def validate_path(p)
+  String.start_with?(p, "/")
+end
+
+def validate_status(s)
+  if String.size(s) != 3
+    return false
+  end
+  begin
+    num = String.to_i(s)
+    num >= 100 && num <= 599
+  rescue
+    false
+  end
+end
+
+def validate_bytes(b)
+  b == "-" || (String.match?(b, /^\d+$/) && String.to_i(b) >= 0)
+end
+
+def validate_duration(d)
+  String.match?(d, /^\d+$/) && String.to_i(d) >= 0
+end
+
+def get_status_code(s)
+  String.to_i(s)
+end
+
+def get_bytes(b)
+  b == "-" ? 0 : String.to_i(b)
+end
+
+def get_bytes_known(b)
+  b != "-"
+end
+
+def extract_path(p)
+  if String.include?(p, "?")
+    parts = String.split(p, "?", 2)
+    Array.at(parts, 0)
+  else
+    p
+  end
+end
+
+def format_avg(sum_ms, count)
+  avg = Float(sum_ms) / Float(count)
+  # Round half up to 1 decimal place
+  rounded = Float.round(avg * 10 + 0.5) / 10
+  format("%.1f", rounded)
+end
+
+def read_and_process
+  stats = Hash[]
+  errors = Array[]
+  hour_counts = Hash[]
+  line_num = 0
+
+  Kernel.loop do
+    line = Kernel.gets
+    line_num += 1
+
+    unless line
+      break
+    end
+
+    # Strip trailing newline if present
+    line = String.chomp(line)
+
+    # Skip empty lines
+    if String.empty?(line) || String.empty?(String.strip(line))
+      next
+    end
+
+    # Parse fields
+    fields = String.split(line, /\s+/)
+
+    # Validate field count
+    if Array.size(fields) != 6
+      Array.push(errors, Error.new(line_num, "wrong field count"))
+      next
+    end
+
+    timestamp = Array.at(fields, 0)
+    method = Array.at(fields, 1)
+    path = Array.at(fields, 2)
+    status = Array.at(fields, 3)
+    bytes_str = Array.at(fields, 4)
+    duration = Array.at(fields, 5)
+
+    # Validate each field
+    parsed_ts = parse_timestamp(timestamp)
+    unless parsed_ts
+      Array.push(errors, Error.new(line_num, "bad timestamp"))
+      next
+    end
+
+    unless validate_method(method)
+      Array.push(errors, Error.new(line_num, "bad method"))
+      next
+    end
+
+    unless validate_path(path)
+      Array.push(errors, Error.new(line_num, "bad path"))
+      next
+    end
+
+    unless validate_status(status)
+      Array.push(errors, Error.new(line_num, "bad status"))
+      next
+    end
+
+    unless validate_bytes(bytes_str)
+      Array.push(errors, Error.new(line_num, "bad bytes"))
+      next
+    end
+
+    unless validate_duration(duration)
+      Array.push(errors, Error.new(line_num, "bad duration"))
+      next
+    end
+
+    # Process valid line
+    clean_path = extract_path(path)
+    endpoint = "#{method} #{clean_path}"
+    status_code = get_status_code(status)
+    bytes_val = get_bytes(bytes_str)
+    bytes_known = get_bytes_known(bytes_str)
+    duration_ms = String.to_i(duration)
+
+    # Update stats
+    if Hash.key?(stats, endpoint)
+      s = Hash.fetch(stats, endpoint)
+      Stats.set_count(s, Stats.count(s) + 1)
+      if status_code >= 400 && status_code < 500
+        Stats.set_n4xx(s, Stats.n4xx(s) + 1)
+      end
+      if status_code >= 500 && status_code < 600
+        Stats.set_n5xx(s, Stats.n5xx(s) + 1)
+      end
+      if bytes_known
+        Stats.set_bytes(s, Stats.bytes(s) + bytes_val)
+      end
+      Stats.set_sum_ms(s, Stats.sum_ms(s) + duration_ms)
+      if duration_ms > Stats.max_ms(s)
+        Stats.set_max_ms(s, duration_ms)
+      end
+    else
+      n4xx = status_code >= 400 && status_code < 500 ? 1 : 0
+      n5xx = status_code >= 500 && status_code < 600 ? 1 : 0
+      s = Stats.new(1, n4xx, n5xx, bytes_known ? bytes_val : 0, duration_ms, duration_ms)
+      Hash.store(stats, endpoint, s)
+    end
+
+    # Track hour counts
+    year, month, day, hour, _, _ = parsed_ts
+    hour_key = format("%04d-%02d-%02d %02d", year, month, day, hour)
+    if Hash.key?(hour_counts, hour_key)
+      Hash.store(hour_counts, hour_key, Hash.fetch(hour_counts, hour_key) + 1)
+    else
+      Hash.store(hour_counts, hour_key, 1)
+    end
+  end
+
+  [stats, errors, hour_counts]
+end
+
+stats, errors, hour_counts = read_and_process
+
+# Print results
+if Hash.empty?(stats)
+  puts("no valid requests")
+else
+  # Sort endpoints by count (descending), then by endpoint name (ascending)
+  endpoints = Hash.keys(stats)
+  sorted = Array.sort_by(endpoints) do |ep|
+    s = Hash.fetch(stats, ep)
+    [-Stats.count(s), ep]
+  end
+
+  # Find max endpoint length
+  max_len = 8
+  Array.each(sorted) { |ep| max_len = [max_len, String.size(ep)].max if String.size(ep) > max_len }
+
+  # Print header
+  puts(format("%-Ws %5s %4s %4s %8s %7s %6s", "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms")
+    .gsub("W", Integer.to_s(max_len)))
+
+  # Print rows
+  Array.each(sorted) do |ep|
+    s = Hash.fetch(stats, ep)
+    count = Stats.count(s)
+    avg_str = format_avg(Stats.sum_ms(s), count)
+    row = format("%-Ws %5d %4d %4d %8d %7s %6d",
+      ep, count, Stats.n4xx(s), Stats.n5xx(s), Stats.bytes(s), avg_str, Stats.max_ms(s))
+    puts(row.gsub("W", Integer.to_s(max_len)))
+  end
+
+  # Find busiest hour
+  max_count = 0
+  busiest = nil
+  Hash.each(hour_counts) do |hour_key, count|
+    if count > max_count || (count == max_count && (busiest == nil || hour_key < busiest))
+      max_count = count
+      busiest = hour_key
+    end
+  end
+
+  puts("busiest hour: #{busiest} (#{max_count} requests)")
+end
+
+# Print errors
+puts("invalid lines: #{Array.size(errors)}")
+Array.each(errors) do |e|
+  puts("  line #{Error.line_num(e)}: #{Error.reason(e)}")
+end

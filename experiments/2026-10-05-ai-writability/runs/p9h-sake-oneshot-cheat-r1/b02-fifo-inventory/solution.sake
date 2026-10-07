@@ -1,0 +1,245 @@
+Lot = Struct.new(:qty, :cost)
+
+def parse_money(s)
+  if String.index(s, ".") == nil
+    Integer(s) * 100
+  else
+    parts = String.split(s, ".")
+    int_part = Integer(Array.at(parts, 0))
+    dec_str = Array.at(parts, 1) || "0"
+    dec_part = if String.size(dec_str) == 1
+      Integer(dec_str) * 10
+    else
+      Integer(dec_str)
+    end
+    int_part * 100 + dec_part
+  end
+rescue
+  nil
+end
+
+def format_money(cents)
+  sign = if cents < 0 then "-" else "" end
+  abs_cents = Integer.abs(cents)
+  dollars = abs_cents / 100
+  cents_part = abs_cents % 100
+  "#{sign}#{dollars}.#{format("%02d", cents_part)}"
+end
+
+def parse_qty(s)
+  Integer(s) rescue nil
+end
+
+def valid_sku?(s)
+  size = String.size(s)
+  if size < 1 || size > 12
+    return false
+  end
+
+  Array.each(String.chars(s)) do |ch|
+    case ch
+    in "A".."Z" | "0".."9" | "-"
+      # valid
+    else
+      return false
+    end
+  end
+
+  true
+end
+
+def split_fields(line)
+  stripped = String.strip(line)
+  parts = Array[]
+  current = ""
+  in_space = true
+
+  Array.each(String.chars(stripped)) do |ch|
+    if ch == " " || ch == "\t"
+      if !in_space && current != ""
+        Array.push(parts, current)
+        current = ""
+      end
+      in_space = true
+    else
+      in_space = false
+      current = current + ch
+    end
+  end
+
+  if current != ""
+    Array.push(parts, current)
+  end
+
+  parts
+end
+
+skus = Array[]
+lots_by_sku = Hash[]
+total_revenue = 0
+total_cost = 0
+
+lines = IO.readlines(IO.stdin)
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+
+  if String.strip(line) == ""
+    next
+  end
+
+  fields = split_fields(String.chomp(line))
+
+  if Array.size(fields) == 0
+    next
+  end
+
+  cmd = Array.at(fields, 0)
+
+  if cmd == "REPORT"
+    if Array.size(fields) != 1
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    puts("SKU            QTY      VALUE")
+
+    total_qty = 0
+    total_value = 0
+
+    sorted_skus = Array.sort(skus)
+    Array.each(sorted_skus) do |sku|
+      lots = Hash.fetch(lots_by_sku, sku)
+      sku_qty = Array.reduce(lots, 0) { |sum, lot| sum + Lot.qty(lot) }
+      sku_value = Array.reduce(lots, 0) { |sum, lot| sum + (Lot.qty(lot) * Lot.cost(lot)) }
+
+      total_qty += sku_qty
+      total_value += sku_value
+
+      puts(format("%-12s %5d %10s", sku, sku_qty, format_money(sku_value)))
+    end
+
+    puts(format("%-12s %5d %10s", "TOTAL", total_qty, format_money(total_value)))
+
+  elsif cmd == "RECEIVE"
+    if Array.size(fields) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    sku = Array.at(fields, 1)
+    qty_s = Array.at(fields, 2)
+    cost_s = Array.at(fields, 3)
+
+    if !valid_sku?(sku)
+      puts("line #{line_num}: error: bad sku")
+      next
+    end
+
+    qty = parse_qty(qty_s)
+    if qty == nil || qty < 1 || qty > 1000000
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    cost = parse_money(cost_s)
+    if cost == nil
+      puts("line #{line_num}: error: bad price")
+      next
+    end
+
+    if !Array.include?(skus, sku)
+      Array.push(skus, sku)
+      lots_by_sku[sku] = Array[]
+    end
+
+    lots = lots_by_sku[sku]
+    Array.push(lots, Lot.new(qty, cost))
+
+  elsif cmd == "SHIP"
+    if Array.size(fields) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    sku = Array.at(fields, 1)
+    qty_s = Array.at(fields, 2)
+    price_s = Array.at(fields, 3)
+
+    qty = parse_qty(qty_s)
+    if qty == nil || qty < 1 || qty > 1000000
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    price = parse_money(price_s)
+    if price == nil
+      puts("line #{line_num}: error: bad price")
+      next
+    end
+
+    if !Array.include?(skus, sku)
+      puts("line #{line_num}: error: unknown sku #{sku}")
+      next
+    end
+
+    lots = lots_by_sku[sku]
+
+    available = Array.reduce(lots, 0) { |sum, lot| sum + Lot.qty(lot) }
+    if available < qty
+      puts("line #{line_num}: error: insufficient stock for #{sku} (have #{available}, need #{qty})")
+      next
+    end
+
+    remaining = qty
+    total_cost_for_ship = 0
+    new_lots = Array[]
+
+    Array.each(lots) do |lot|
+      if remaining == 0
+        Array.push(new_lots, lot)
+      elsif Lot.qty(lot) <= remaining
+        total_cost_for_ship += Lot.qty(lot) * Lot.cost(lot)
+        remaining -= Lot.qty(lot)
+      else
+        new_qty = Lot.qty(lot) - remaining
+        total_cost_for_ship += remaining * Lot.cost(lot)
+        Array.push(new_lots, Lot.new(new_qty, Lot.cost(lot)))
+        remaining = 0
+      end
+    end
+
+    lots_by_sku[sku] = new_lots
+
+    revenue = qty * price
+    total_revenue += revenue
+    total_cost += total_cost_for_ship
+
+    puts("line #{line_num}: shipped #{qty} #{sku}: revenue #{format_money(revenue)}, cost #{format_money(total_cost_for_ship)}")
+
+  else
+    puts("line #{line_num}: error: unknown command #{cmd}")
+  end
+end
+
+puts("== final ==")
+puts("SKU            QTY      VALUE")
+
+total_qty = 0
+total_value = 0
+
+sorted_skus = Array.sort(skus)
+Array.each(sorted_skus) do |sku|
+  lots = Hash.fetch(lots_by_sku, sku)
+  sku_qty = Array.reduce(lots, 0) { |sum, lot| sum + Lot.qty(lot) }
+  sku_value = Array.reduce(lots, 0) { |sum, lot| sum + (Lot.qty(lot) * Lot.cost(lot)) }
+
+  total_qty += sku_qty
+  total_value += sku_value
+
+  puts(format("%-12s %5d %10s", sku, sku_qty, format_money(sku_value)))
+end
+
+puts(format("%-12s %5d %10s", "TOTAL", total_qty, format_money(total_value)))
+puts("revenue: #{format_money(total_revenue)}")
+puts("cost of goods sold: #{format_money(total_cost)}")
+puts("gross profit: #{format_money(total_revenue - total_cost)}")

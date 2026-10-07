@@ -1,0 +1,291 @@
+Passenger = Struct.new(:arrival_floor, :dest_floor, :arrival_time, :pickup_time, :dropoff_time)
+
+# Read and validate input
+header_line = gets()
+if header_line == nil
+  puts("invalid header")
+  exit(0)
+end
+
+parts = String.split(header_line)
+if Array.size(parts) != 3
+  puts("invalid header")
+  exit(0)
+end
+
+begin
+  n = String.to_i(Array.at(parts, 0))
+  d = String.to_i(Array.at(parts, 1))
+  c = String.to_i(Array.at(parts, 2))
+rescue
+  puts("invalid header")
+  exit(0)
+end
+
+if n < 2 || n > 50 || d < 0 || d > 5 || c < 1 || c > 20
+  puts("invalid header")
+  exit(0)
+end
+
+# Parse requests
+passengers = Array[]
+errors = Array[]
+last_t = 0
+line_num = 1
+
+loop do
+  line = gets()
+  line_num += 1
+  if line == nil
+    break
+  end
+
+  # Skip blank lines
+  stripped = String.strip(line)
+  if String.empty?(stripped)
+    next
+  end
+
+  parts = String.split(stripped)
+
+  # Must be exactly 3 parts
+  if Array.size(parts) != 3
+    Array.push(errors, line_num)
+    next
+  end
+
+  # Parse to integers
+  t = nil
+  f = nil
+  g = nil
+  begin
+    t = String.to_i(Array.at(parts, 0))
+    f = String.to_i(Array.at(parts, 1))
+    g = String.to_i(Array.at(parts, 2))
+  rescue
+    Array.push(errors, line_num)
+    next
+  end
+
+  # Validate
+  if f < 1 || f > n || g < 1 || g > n || f == g || t > 1000 || t < last_t
+    Array.push(errors, line_num)
+    next
+  end
+
+  last_t = t
+  Array.push(passengers, Passenger.new(f, g, t, nil, nil))
+end
+
+# Print errors
+Array.each(errors) { |line_no| puts("line #{line_no}: invalid request") }
+
+# Check if there are passengers
+if Array.empty?(passengers)
+  puts("no passengers")
+  exit(0)
+end
+
+# Simulation
+num_passengers = Array.size(passengers)
+floor = 1
+time = 0
+direction = 0  # 1 = up, -1 = down, 0 = idle
+in_elevator = Array[]  # indices of passengers in elevator
+all_done = false
+prev_state = nil
+
+loop do
+  if all_done
+    break
+  end
+
+  # Safety check: if we're in the exact same state, force movement to prevent infinite loop
+  current_state = [floor, time, direction, Array.size(in_elevator)]
+  if current_state == prev_state
+    # Force movement
+    if direction == 1
+      floor += 1
+    elsif direction == -1
+      floor -= 1
+    end
+    time += 1
+    prev_state = nil
+    next
+  end
+  prev_state = current_state
+
+  # Step 1: Passengers with t <= time become available for pickup
+  # (nothing needed, we check at pickup time)
+
+  # Step 2: Drop off passengers at this floor
+  size_before = Array.size(in_elevator)
+  still_in = Array[]
+  Array.each(in_elevator) do |p_idx|
+    p = Array.at(passengers, p_idx)
+    if Passenger.dest_floor(p) == floor
+      puts("t=#{time} floor #{floor} drop P#{p_idx + 1}")
+      Passenger.set_dropoff_time(p, time)
+    else
+      Array.push(still_in, p_idx)
+    end
+  end
+  in_elevator = still_in
+  dropped = (Array.size(still_in) < size_before)
+
+  # Step 3: Determine targets
+  all_targets = Array[]
+
+  # Destinations from riders
+  Array.each(in_elevator) do |p_idx|
+    p = Array.at(passengers, p_idx)
+    Array.push(all_targets, Passenger.dest_floor(p))
+  end
+
+  # Waiting passengers
+  Array.each(Range.to_a(0...(num_passengers))) do |i|
+    p = Array.at(passengers, i)
+    if Passenger.pickup_time(p) == nil && Passenger.dropoff_time(p) == nil
+      if Passenger.arrival_time(p) <= time
+        Array.push(all_targets, Passenger.arrival_floor(p))
+      end
+    end
+  end
+
+  # Remove duplicates
+  unique_targets = Array[]
+  Array.each(all_targets) do |t|
+    if !Array.include?(unique_targets, t)
+      Array.push(unique_targets, t)
+    end
+  end
+
+  # Update direction
+  if direction == 1  # up
+    above = Array.select(unique_targets) { |t| t > floor }
+    if Array.empty?(above)
+      below = Array.select(unique_targets) { |t| t < floor }
+      direction = (Array.empty?(below)) ? 0 : -1
+    end
+  elsif direction == -1  # down
+    below = Array.select(unique_targets) { |t| t < floor }
+    if Array.empty?(below)
+      above = Array.select(unique_targets) { |t| t > floor }
+      direction = (Array.empty?(above)) ? 0 : 1
+    end
+  else  # idle
+    if !Array.empty?(unique_targets)
+      closest_floor = Array.at(unique_targets, 0)
+      Array.each(unique_targets) do |t|
+        dist_t = Integer.abs(t - floor)
+        dist_c = Integer.abs(closest_floor - floor)
+        if dist_t < dist_c || (dist_t == dist_c && t < closest_floor)
+          closest_floor = t
+        end
+      end
+
+      if closest_floor > floor
+        direction = 1
+      elsif closest_floor < floor
+        direction = -1
+      else
+        direction = 0
+      end
+    end
+  end
+
+  # Step 4: Pick up passengers at this floor
+  cap = c - Array.size(in_elevator)
+  picked_up = false
+  if cap > 0
+    Array.each(Range.to_a(0...(num_passengers))) do |i|
+      if cap <= 0
+        break
+      end
+      p = Array.at(passengers, i)
+      if Passenger.pickup_time(p) == nil && Passenger.dropoff_time(p) == nil
+        if Passenger.arrival_time(p) <= time && Passenger.arrival_floor(p) == floor
+          # Check direction
+          should_pick = false
+          if direction == 0
+            should_pick = true
+          elsif direction == 1 && Passenger.dest_floor(p) > floor
+            should_pick = true
+          elsif direction == -1 && Passenger.dest_floor(p) < floor
+            should_pick = true
+          end
+
+          if should_pick
+            puts("t=#{time} floor #{floor} pick P#{i + 1}")
+            Passenger.set_pickup_time(p, time)
+            Array.push(in_elevator, i)
+            cap -= 1
+            picked_up = true
+          end
+        end
+      end
+    end
+  end
+
+  # Step 5: Move or wait
+  if dropped || picked_up
+    time += d
+  else
+    if direction == 1
+      floor += 1
+    elsif direction == -1
+      floor -= 1
+    end
+    time += 1
+  end
+
+  # Check if all done
+  all_done_check = true
+  Array.each(Range.to_a(0...(num_passengers))) do |i|
+    p = Array.at(passengers, i)
+    if Passenger.dropoff_time(p) == nil
+      all_done_check = false
+    end
+  end
+  all_done = all_done_check
+end
+
+# Output results
+Array.each(Range.to_a(0...(num_passengers))) do |i|
+  p = Array.at(passengers, i)
+  t_pick = Passenger.pickup_time(p)
+  t_drop = Passenger.dropoff_time(p)
+  if t_pick != nil && t_drop != nil
+    wait = t_pick - Passenger.arrival_time(p)
+    ride = t_drop - t_pick
+    puts("P#{i + 1} wait #{wait} ride #{ride}")
+  end
+end
+
+total_wait = 0
+total_ride = 0
+Array.each(Range.to_a(0...(num_passengers))) do |i|
+  p = Array.at(passengers, i)
+  t_pick = Passenger.pickup_time(p)
+  t_drop = Passenger.dropoff_time(p)
+  if t_pick != nil && t_drop != nil
+    total_wait += t_pick - Passenger.arrival_time(p)
+    total_ride += t_drop - t_pick
+  end
+end
+
+avg_wait = Float(total_wait) / Float(num_passengers)
+avg_ride = Float(total_ride) / Float(num_passengers)
+
+puts(format("average wait %.2f ride %.2f", avg_wait, avg_ride))
+
+max_drop = 0
+Array.each(Range.to_a(0...(num_passengers))) do |i|
+  p = Array.at(passengers, i)
+  t_drop = Passenger.dropoff_time(p)
+  if t_drop != nil && t_drop > max_drop
+    max_drop = t_drop
+  end
+end
+
+puts("done at t=#{max_drop}")

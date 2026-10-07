@@ -1,0 +1,253 @@
+def parse_dart(dart_str)
+  case dart_str
+  in "MISS" then {valid: true, points: 0, is_double: false}
+  in "BULL" then {valid: true, points: 50, is_double: true}
+  in "25" then {valid: true, points: 25, is_double: false}
+  else
+    if String.length(dart_str) < 2
+      {valid: false}
+    else
+      first = String.at(dart_str, 0)
+      rest = String.slice(dart_str, 1, String.length(dart_str) - 1)
+
+      if !String.match?(rest, /^\d+$/)
+        {valid: false}
+      else
+        n = String.to_i(rest)
+
+        case first
+        in "S"
+          if n >= 1 && n <= 20
+            {valid: true, points: n, is_double: false}
+          else
+            {valid: false}
+          end
+        in "D"
+          if n >= 1 && n <= 20
+            {valid: true, points: n * 2, is_double: true}
+          else
+            {valid: false}
+          end
+        in "T"
+          if n >= 1 && n <= 20
+            {valid: true, points: n * 3, is_double: false}
+          else
+            {valid: false}
+          end
+        else
+          {valid: false}
+        end
+      end
+    end
+  end
+end
+
+# Read header
+header_line = gets
+if header_line == nil
+  puts("invalid header")
+  exit(0)
+end
+
+header_line = String.chomp(header_line)
+header_line = String.strip(header_line)
+words = String.split(header_line, /\s+/)
+
+if Integer.length(words) < 2 || Integer.length(words) > 5
+  puts("invalid header")
+  exit(0)
+end
+
+start_str = String.at(words, 0)
+if !String.match?(start_str, /^\d+$/)
+  puts("invalid header")
+  exit(0)
+end
+
+start = String.to_i(start_str)
+if start < 2 || start > 1001
+  puts("invalid header")
+  exit(0)
+end
+
+player_names = Array[]
+Integer.times(Integer.length(words) - 1) do |i|
+  name = String.at(words, i + 1)
+  if String.empty?(name) || String.length(name) > 10 || !String.match?(name, /^[a-z]+$/)
+    puts("invalid header")
+    exit(0)
+  end
+
+  # Check for duplicates
+  if Array.include?(player_names, name)
+    puts("invalid header")
+    exit(0)
+  end
+
+  Array.push(player_names, name)
+end
+
+# Initialize players
+players = Hash[]
+scores = Hash[]
+turns = Hash[]
+darts_thrown = Hash[]
+checked_out = Set[]
+
+Array.each(player_names) do |name|
+  Hash.store(players, name, start)
+  Hash.store(turns, name, 0)
+  Hash.store(darts_thrown, name, 0)
+end
+
+# Process turns
+line_num = 2
+while (line = gets)
+  line = String.chomp(line)
+  line = String.strip(line)
+
+  if String.empty?(line)
+    line_num += 1
+    next
+  end
+
+  words = String.split(line, /\s+/)
+
+  if Integer.length(words) < 1
+    line_num += 1
+    next
+  end
+
+  player_name = String.at(words, 0)
+
+  # Check if game over
+  if Set.include?(checked_out, player_name)
+    puts("line #{line_num}: game over")
+    line_num += 1
+    next
+  end
+
+  # Check if player exists
+  if !Array.include?(player_names, player_name)
+    puts("line #{line_num}: unknown player #{player_name}")
+    line_num += 1
+    next
+  end
+
+  dart_words = Array[]
+  Integer.times(Integer.length(words) - 1) do |i|
+    Array.push(dart_words, String.at(words, i + 1))
+  end
+
+  # Check dart count (1-3)
+  if Integer.length(dart_words) < 1 || Integer.length(dart_words) > 3
+    puts("line #{line_num}: expected 1 to 3 darts")
+    line_num += 1
+    next
+  end
+
+  # Validate all darts first
+  darts = Array[]
+  Array.each(dart_words) do |d|
+    parsed = parse_dart(d)
+
+    if !Hash.fetch(parsed, :valid, false)
+      puts("line #{line_num}: bad dart #{d}")
+      line_num += 1
+      next
+    end
+
+    Array.push(darts, parsed)
+  end
+
+  # If we got here, all darts are valid
+  current_points = Hash.fetch(players, player_name, start)
+  turn_score = 0
+  last_dart = nil
+  busted = false
+
+  Array.each(darts) do |dart|
+    dart => {points:, is_double:}
+
+    new_points = current_points - points
+
+    if new_points < 0
+      busted = true
+      break
+    elsif new_points == 1
+      busted = true
+      break
+    elsif new_points == 0 && !is_double
+      busted = true
+      break
+    end
+
+    current_points = new_points
+    turn_score += points
+    last_dart = dart
+  end
+
+  turns_val = Hash.fetch(turns, player_name, 0) + 1
+  Hash.store(turns, player_name, turns_val)
+
+  darts_val = Hash.fetch(darts_thrown, player_name, 0) + Integer.length(darts)
+  Hash.store(darts_thrown, player_name, darts_val)
+
+  if busted
+    puts("#{player_name} busts, #{Hash.fetch(players, player_name, start)} left")
+  elsif current_points == 0 && (last_dart in {is_double: true})
+    puts("#{player_name} checks out with " + (if last_dart in {points: 50} then "BULL" else "D" + Integer.to_s(Integer.fdiv(last_dart in {points:}; points, 2)) end))
+    Hash.store(players, player_name, 0)
+    Set.add(checked_out, player_name)
+  else
+    Hash.store(players, player_name, current_points)
+    puts("#{player_name} scores #{turn_score}, #{current_points} left")
+  end
+
+  line_num += 1
+end
+
+# Print standings
+puts("STANDINGS")
+
+standing_data = Array[]
+Array.each(player_names) do |name|
+  points_left = Hash.fetch(players, name, start)
+  turns_played = Hash.fetch(turns, name, 0)
+  darts = Hash.fetch(darts_thrown, name, 0)
+
+  if darts > 0
+    avg = Float.to_f(start - points_left) * 3.0 / Float.to_f(darts)
+  else
+    avg = nil
+  end
+
+  Array.push(standing_data, {name: name, points: points_left, turns: turns_played, darts: darts, avg: avg})
+end
+
+standing_data = Array.sort_by(standing_data) do |s|
+  s => {points:, name:}
+  [points, name]
+end
+
+rank = 1
+Array.each(standing_data) do |s|
+  s => {name:, points:, turns:, darts:, avg:}
+
+  avg_str = if avg then format("%.2f", avg) else "-" end
+
+  puts(format("%d. %-10s %4d %3d %6s", rank, name, points, turns, avg_str))
+  rank += 1
+end
+
+# Winner
+if Set.size(checked_out) > 0
+  Array.each(player_names) do |name|
+    if Set.include?(checked_out, name)
+      puts("winner: #{name}")
+      break
+    end
+  end
+else
+  puts("no winner")
+end

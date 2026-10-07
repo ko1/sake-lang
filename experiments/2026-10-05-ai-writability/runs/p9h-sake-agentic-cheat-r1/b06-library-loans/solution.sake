@@ -1,0 +1,300 @@
+def valid_day(s)
+  String.match?(s, /^\d+$/)
+end
+
+def valid_member(s)
+  String.match?(s, /^[a-z]{1,12}$/)
+end
+
+def valid_book(s)
+  String.match?(s, /^[A-Z][A-Z0-9]{0,7}$/)
+end
+
+def valid_amount(s)
+  if String.match?(s, /^\d+(\.\d{1,2})?$/)
+    f = String.to_f(s)
+    f > 0.0
+  else
+    false
+  end
+end
+
+def fmt_money(f)
+  format("%.2f", f)
+end
+
+books = Hash[]
+members = Hash[]
+reserves = Hash[]
+out = Array[]
+line_no = 0
+current_day = 0
+
+while (line = gets)
+  line_no = line_no + 1
+  s = String.strip(line)
+  next if String.empty?(s)
+
+  fields = String.split(s, / +/)
+  next if Array.empty?(fields)
+
+  day_s = Array.at(fields, 0)
+  if !valid_day(day_s)
+    Array.push(out, "line #{line_no}: error: bad day")
+    next
+  end
+
+  day = String.to_i(day_s)
+  if day < current_day
+    Array.push(out, "line #{line_no}: error: day goes backwards")
+    next
+  end
+  current_day = day
+
+  if Array.size(fields) < 2
+    Array.push(out, "line #{line_no}: error: unknown command")
+    next
+  end
+
+  cmd = Array.at(fields, 1)
+
+  case cmd
+  in "CHECKOUT"
+    if Array.size(fields) != 4
+      Array.push(out, "line #{line_no}: error: wrong field count")
+      next
+    end
+    m = Array.at(fields, 2)
+    b = Array.at(fields, 3)
+    if !valid_member(m)
+      Array.push(out, "line #{line_no}: error: bad member")
+      next
+    end
+    if !valid_book(b)
+      Array.push(out, "line #{line_no}: error: bad book")
+      next
+    end
+
+    if books[b] != nil
+      Array.push(out, "line #{line_no}: refused: #{b} is on loan")
+      next
+    end
+    if reserves[b] != nil
+      Array.push(out, "line #{line_no}: refused: #{b} is held for #{reserves[b]}")
+      next
+    end
+
+    has_overdue = false
+    Array.each(Hash.keys(books)) do |bk|
+      m_val = books[bk]
+      if m_val != nil
+        parts = String.split(m_val, ",")
+        m_check = Array.at(parts, 0)
+        due_check = String.to_i(Array.at(parts, 1))
+        if m_check == m && due_check < current_day
+          has_overdue = true
+        end
+      end
+    end
+    if has_overdue
+      Array.push(out, "line #{line_no}: refused: #{m} has overdue books")
+      next
+    end
+
+    loans = 0
+    Array.each(Hash.keys(books)) do |bk|
+      m_val = books[bk]
+      if m_val != nil
+        parts = String.split(m_val, ",")
+        m_check = Array.at(parts, 0)
+        if m_check == m
+          loans = loans + 1
+        end
+      end
+    end
+    if loans >= 3
+      Array.push(out, "line #{line_no}: refused: #{m} has 3 loans")
+      next
+    end
+
+    owes = 0.0
+    if members[m] != nil
+      owes = String.to_f(String.split(members[m], ",")[1])
+    end
+    if owes >= 10.0
+      Array.push(out, "line #{line_no}: refused: #{m} owes #{fmt_money(owes)}")
+      next
+    end
+
+    due = current_day + 14
+    books[b] = "#{m},#{due}"
+    if members[m] == nil
+      members[m] = "0,0.00"
+    end
+    Array.push(out, "#{m} borrowed #{b}, due day #{due}")
+
+  in "RETURN"
+    if Array.size(fields) != 2
+      Array.push(out, "line #{line_no}: error: wrong field count")
+      next
+    end
+    b = Array.at(fields, 1)
+    if !valid_book(b)
+      Array.push(out, "line #{line_no}: error: bad book")
+      next
+    end
+    if books[b] == nil
+      Array.push(out, "line #{line_no}: refused: #{b} is not on loan")
+      next
+    end
+
+    m_data = books[b]
+    parts = String.split(m_data, ",")
+    m_str = Array.at(parts, 0)
+    due = String.to_i(Array.at(parts, 1))
+
+    late = current_day - due
+
+    if late > 0
+      fine = late * 0.25
+      if fine > 5.0
+        fine = 5.0
+      end
+      Array.push(out, "#{m_str} returned #{b}, #{late} days late, fine #{fmt_money(fine)}")
+
+      if members[m_str] != nil
+        parts = String.split(members[m_str], ",")
+        loans = Integer(Array.at(parts, 0))
+        owes = String.to_f(Array.at(parts, 1))
+        members[m_str] = "#{loans},#{fmt_money(owes + fine)}"
+      end
+    else
+      Array.push(out, "#{m_str} returned #{b}")
+    end
+
+    Hash.delete(books, b)
+
+    if reserves[b] != nil
+      next_m = reserves[b]
+      Array.push(out, "#{b} held for #{next_m}")
+    end
+
+  in "RESERVE"
+    if Array.size(fields) != 4
+      Array.push(out, "line #{line_no}: error: wrong field count")
+      next
+    end
+    m = Array.at(fields, 2)
+    b = Array.at(fields, 3)
+    if !valid_member(m)
+      Array.push(out, "line #{line_no}: error: bad member")
+      next
+    end
+    if !valid_book(b)
+      Array.push(out, "line #{line_no}: error: bad book")
+      next
+    end
+
+    if books[b] != nil
+      parts = String.split(books[b], ",")
+      m_check = Array.at(parts, 0)
+      if m_check == m
+        Array.push(out, "line #{line_no}: refused: #{m} already has #{b}")
+        next
+      end
+    end
+
+    if reserves[b] != nil
+      Array.push(out, "line #{line_no}: refused: #{m} already reserved #{b}")
+      next
+    end
+
+    if books[b] == nil && reserves[b] == nil
+      Array.push(out, "line #{line_no}: refused: #{b} is available")
+      next
+    end
+
+    reserves[b] = m
+    Array.push(out, "reserved #{b} for #{m} (position 1)")
+
+    if members[m] == nil
+      members[m] = "0,0.00"
+    end
+
+  in "PAY"
+    if Array.size(fields) != 4
+      Array.push(out, "line #{line_no}: error: wrong field count")
+      next
+    end
+    m = Array.at(fields, 2)
+    amt_s = Array.at(fields, 3)
+
+    if !valid_member(m)
+      Array.push(out, "line #{line_no}: error: bad member")
+      next
+    end
+    if !valid_amount(amt_s)
+      Array.push(out, "line #{line_no}: error: bad amount")
+      next
+    end
+
+    amt = String.to_f(amt_s)
+    owes = 0.0
+    if members[m] != nil
+      owes = String.to_f(String.split(members[m], ",")[1])
+    end
+
+    if amt > owes
+      Array.push(out, "line #{line_no}: refused: #{m} owes only #{fmt_money(owes)}")
+      next
+    end
+
+    new_owes = owes - amt
+    if members[m] == nil
+      members[m] = "0,#{fmt_money(new_owes)}"
+    else
+      parts = String.split(members[m], ",")
+      loans = Integer(Array.at(parts, 0))
+      members[m] = "#{loans},#{fmt_money(new_owes)}"
+    end
+
+    Array.push(out, "#{m} paid #{fmt_money(amt)}, owes #{fmt_money(new_owes)}")
+
+  else
+    Array.push(out, "line #{line_no}: error: unknown command")
+  end
+end
+
+Array.each(out) { |o| puts(o) }
+
+puts(format("%-12s %5s %8s", "member", "loans", "owes"))
+
+all_members = Array.sort(Hash.keys(members))
+Array.each(all_members) do |m|
+  parts = String.split(members[m], ",")
+  loans = Integer(Array.at(parts, 0))
+  owes_str = Array.at(parts, 1)
+  puts(format("%-12s %5d %8s", m, loans, owes_str))
+end
+
+puts("overdue on day #{current_day}:")
+
+overdue = Array[]
+Array.each(Hash.keys(books)) do |b|
+  parts = String.split(books[b], ",")
+  m = Array.at(parts, 0)
+  due = String.to_i(Array.at(parts, 1))
+  if due < current_day
+    Array.push(overdue, [due, b, m])
+  end
+end
+
+if Array.empty?(overdue)
+  puts("  none")
+else
+  sorted = Array.sort_by(overdue) { |due, b, m| [due, b] }
+  Array.each(sorted) do |due, b, m|
+    days = current_day - due
+    puts("  #{b} #{m} due #{due} (#{days} days)")
+  end
+end

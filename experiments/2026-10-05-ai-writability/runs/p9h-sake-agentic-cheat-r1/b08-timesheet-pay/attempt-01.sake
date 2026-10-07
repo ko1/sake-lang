@@ -1,0 +1,187 @@
+def fmt_time(mins)
+  h = mins / 60
+  m = mins % 60
+  "#{h}:#{String.rjust(Integer.to_s(m), 2, "0")}"
+end
+
+def fmt_money(f)
+  format("%.2f", f)
+end
+
+def valid_emp_id(s)
+  String.match?(s, /^E\d{3}$/)
+end
+
+def valid_name(s)
+  String.match?(s, /^[A-Za-z]{1,10}$/)
+end
+
+def valid_rate(s)
+  if String.match?(s, /^\d+\.\d{2}$/)
+    String.to_f(s) > 0.0
+  else
+    false
+  end
+end
+
+def valid_date(s)
+  if String.match?(s, /^\d{4}-\d{2}-\d{2}$/)
+    parts = String.split(s, "-")
+    y = String.to_i(Array.at(parts, 0))
+    m = String.to_i(Array.at(parts, 1))
+    d = String.to_i(Array.at(parts, 2))
+    y >= 1970 && y <= 2099 && m >= 1 && m <= 12 && d >= 1 && d <= 31
+  else
+    false
+  end
+end
+
+def valid_time(s)
+  if String.match?(s, /^\d{2}:\d{2}$/)
+    parts = String.split(s, ":")
+    h = String.to_i(Array.at(parts, 0))
+    mi = String.to_i(Array.at(parts, 1))
+    h >= 0 && h <= 23 && mi >= 0 && mi <= 59
+  else
+    false
+  end
+end
+
+def time_to_mins(s)
+  parts = String.split(s, ":")
+  h = String.to_i(Array.at(parts, 0))
+  m = String.to_i(Array.at(parts, 1))
+  h * 60 + m
+end
+
+employees = Hash[]
+shifts_by_emp = Hash[]
+line_no = 0
+
+while (line = gets)
+  line_no = line_no + 1
+  s = String.strip(line)
+  next if String.empty?(s)
+
+  fields = String.split(s, / +/)
+  next if Array.empty?(fields)
+
+  cmd = Array.at(fields, 0)
+
+  case cmd
+  in "EMP"
+    if Array.size(fields) != 4
+      puts("line #{line_no}: error: wrong field count")
+      next
+    end
+
+    eid = Array.at(fields, 1)
+    name = Array.at(fields, 2)
+    rate_s = Array.at(fields, 3)
+
+    if !valid_emp_id(eid)
+      puts("line #{line_no}: error: bad id")
+      next
+    end
+    if !valid_name(name)
+      puts("line #{line_no}: error: bad name")
+      next
+    end
+    if !valid_rate(rate_s)
+      puts("line #{line_no}: error: bad rate")
+      next
+    end
+
+    if employees[eid] != nil
+      puts("line #{line_no}: error: duplicate employee #{eid}")
+      next
+    end
+
+    rate = String.to_f(rate_s)
+    employees[eid] = Array[name, rate]
+    shifts_by_emp[eid] = Array[]
+
+  in "SHIFT"
+    if Array.size(fields) != 5 && Array.size(fields) != 6
+      puts("line #{line_no}: error: wrong field count")
+      next
+    end
+
+    eid = Array.at(fields, 1)
+    date = Array.at(fields, 2)
+    start_s = Array.at(fields, 3)
+    end_s = Array.at(fields, 4)
+    break_s = if Array.size(fields) == 6 then Array.at(fields, 5) else "0" end
+
+    if !valid_emp_id(eid)
+      puts("line #{line_no}: error: bad id")
+      next
+    end
+
+    emp = employees[eid]
+    if emp == nil
+      puts("line #{line_no}: error: unknown employee #{eid}")
+      next
+    end
+
+    if !valid_date(date)
+      puts("line #{line_no}: error: bad date")
+      next
+    end
+
+    if !valid_time(start_s)
+      puts("line #{line_no}: error: bad time")
+      next
+    end
+    if !valid_time(end_s)
+      puts("line #{line_no}: error: bad time")
+      next
+    end
+
+    if !String.match?(break_s, /^\d+$/)
+      puts("line #{line_no}: error: bad break")
+      next
+    end
+
+    break_mins = String.to_i(break_s)
+    start_mins = time_to_mins(start_s)
+    end_mins = time_to_mins(end_s)
+
+    if end_mins <= start_mins
+      shift_len = (24 * 60) - start_mins + end_mins
+    else
+      shift_len = end_mins - start_mins
+    end
+
+    if break_mins >= shift_len
+      puts("line #{line_no}: error: bad break")
+      next
+    end
+
+    shifts = shifts_by_emp[eid]
+    Array.push(shifts, "#{date}|#{start_mins}|#{end_mins}|#{break_mins}")
+
+  else
+    puts("line #{line_no}: error: unknown command")
+  end
+end
+
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+
+total_regular = 0
+total_overtime = 0
+total_pay = 0.0
+
+emp_ids = Array.sort(Hash.keys(employees))
+Array.each(emp_ids) do |eid|
+  emp = employees[eid]
+  name = Array.at(emp, 0)
+  rate = Array.at(emp, 1)
+
+  regular_mins = 0
+  overtime_mins = 0
+
+  puts(format("%-4s %-10s %8s %8s %10s", eid, name, fmt_time(regular_mins), fmt_time(overtime_mins), fmt_money(0.0)))
+end
+
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", fmt_time(total_regular), fmt_time(total_overtime), fmt_money(total_pay)))

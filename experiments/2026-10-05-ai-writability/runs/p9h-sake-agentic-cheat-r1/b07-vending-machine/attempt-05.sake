@@ -1,0 +1,310 @@
+def fmt_money(f)
+  format("%.2f", f)
+end
+
+def is_coin(s)
+  case String.to_f(s)
+  in 0.05 | 0.10 | 0.25 | 0.50 | 1.00 | 2.00 then true
+  else false
+  end
+end
+
+def valid_slot(s)
+  String.match?(s, /^[A-Z]\d$/)
+end
+
+def valid_name(s)
+  String.match?(s, /^[a-z]{1,12}$/)
+end
+
+def valid_money(s)
+  if String.match?(s, /^\d+\.\d{2}$/)
+    f = String.to_f(s)
+    f >= 0.0
+  else
+    false
+  end
+end
+
+def valid_count(s)
+  if String.match?(s, /^\d+$/)
+    n = String.to_i(s)
+    n >= 0 && n <= 999
+  else
+    false
+  end
+end
+
+def valid_count_slot(s)
+  if String.match?(s, /^\d+$/)
+    n = String.to_i(s)
+    n >= 0 && n <= 99
+  else
+    false
+  end
+end
+
+slots = Hash[]
+tubes = Hash["0.05" => 0, "0.10" => 0, "0.25" => 0, "0.50" => 0, "1.00" => 0, "2.00" => 0]
+credit = 0.0
+inserted = Array[]
+line_no = 0
+sales = Hash[]
+
+coin_values = Array["2.00", "1.00", "0.50", "0.25", "0.10", "0.05"]
+
+while (line = gets)
+  line_no = line_no + 1
+  s = String.strip(line)
+  next if String.empty?(s)
+
+  fields = String.split(s, / +/)
+  next if Array.empty?(fields)
+
+  cmd = Array.at(fields, 0)
+
+  case cmd
+  in "SLOT"
+    if Array.size(fields) != 5
+      puts("line #{line_no}: error: wrong field count")
+      next
+    end
+
+    code = Array.at(fields, 1)
+    name = Array.at(fields, 2)
+    price_s = Array.at(fields, 3)
+    count_s = Array.at(fields, 4)
+
+    if !valid_slot(code)
+      puts("line #{line_no}: error: bad slot")
+      next
+    end
+    if !valid_name(name)
+      puts("line #{line_no}: error: bad name")
+      next
+    end
+    if !valid_money(price_s)
+      puts("line #{line_no}: error: bad money")
+      next
+    end
+    if !valid_count_slot(count_s)
+      puts("line #{line_no}: error: bad count")
+      next
+    end
+
+    slots[code] = "#{name},#{price_s},#{count_s}"
+
+  in "TUBE"
+    if Array.size(fields) != 3
+      puts("line #{line_no}: error: wrong field count")
+      next
+    end
+
+    coin_s = Array.at(fields, 1)
+    count_s = Array.at(fields, 2)
+
+    if !valid_money(coin_s) || !is_coin(coin_s)
+      puts("line #{line_no}: error: bad coin")
+      next
+    end
+    if !valid_count(count_s)
+      puts("line #{line_no}: error: bad count")
+      next
+    end
+
+    count = String.to_i(count_s)
+    existing = tubes[coin_s]
+    tubes[coin_s] = existing + count
+
+  in "COIN"
+    if Array.size(fields) != 2
+      puts("line #{line_no}: error: wrong field count")
+      next
+    end
+
+    coin_s = Array.at(fields, 1)
+
+    if !valid_money(coin_s)
+      puts("line #{line_no}: error: bad money")
+      next
+    end
+    if !is_coin(coin_s)
+      puts("line #{line_no}: error: bad coin")
+      next
+    end
+
+    coin_val = String.to_f(coin_s)
+    new_credit = credit + coin_val
+
+    if new_credit > 5.0
+      puts("rejected #{fmt_money(coin_val)} (credit limit)")
+      next
+    end
+
+    credit = new_credit
+    existing = tubes[coin_s]
+    tubes[coin_s] = existing + 1
+    Array.push(inserted, coin_s)
+    puts("credit #{fmt_money(credit)}")
+
+  in "SELECT"
+    if Array.size(fields) != 2
+      puts("line #{line_no}: error: wrong field count")
+      next
+    end
+
+    code = Array.at(fields, 1)
+
+    slot_data = slots[code]
+    if slot_data == nil
+      puts("no slot #{code}")
+      next
+    end
+
+    parts = String.split(slot_data, ",")
+    name = Array.at(parts, 0)
+    price = String.to_f(Array.at(parts, 1))
+    count = String.to_i(Array.at(parts, 2))
+
+    if count == 0
+      puts("sold out #{code}")
+      next
+    end
+
+    if credit < price
+      needed = price - credit
+      puts("insert #{fmt_money(needed)} more")
+      next
+    end
+
+    change = credit - price
+
+    if change == 0.0
+      new_count = count - 1
+      slots[code] = "#{name},#{Array.at(parts, 1)},#{new_count}"
+
+      if sales[name] == nil
+        sales[name] = "1,#{fmt_money(price)}"
+      else
+        parts2 = String.split(sales[name], ",")
+        sold = String.to_i(Array.at(parts2, 0))
+        revenue = String.to_f(Array.at(parts2, 1))
+        sales[name] = "#{sold + 1},#{fmt_money(revenue + price)}"
+      end
+
+      credit = 0.0
+      inserted = Array[]
+      puts("vend #{name}")
+      next
+    end
+
+    change_coins = Array[]
+    change_left = change
+
+    Array.each(coin_values) do |coin_s|
+      while change_left >= String.to_f(coin_s) - 0.001
+        available = tubes[coin_s]
+        if available > 0
+          Array.push(change_coins, coin_s)
+          tubes[coin_s] = available - 1
+          change_left = change_left - String.to_f(coin_s)
+        else
+          break
+        end
+      end
+    end
+
+    if change_left > 0.001
+      Array.each(change_coins) do |coin_s|
+        available = tubes[coin_s]
+        tubes[coin_s] = available + 1
+      end
+      puts("exact change needed")
+      next
+    end
+
+    new_count = count - 1
+    slots[code] = "#{name},#{Array.at(parts, 1)},#{new_count}"
+
+    if sales[name] == nil
+      sales[name] = "1,#{fmt_money(price)}"
+    else
+      parts2 = String.split(sales[name], ",")
+      sold = String.to_i(Array.at(parts2, 0))
+      revenue = String.to_f(Array.at(parts2, 1))
+      sales[name] = "#{sold + 1},#{fmt_money(revenue + price)}"
+    end
+
+    credit = 0.0
+    inserted = Array[]
+
+    if Array.empty?(change_coins)
+      puts("vend #{name}")
+    else
+      puts("vend #{name}, change #{fmt_money(change)} [#{Array.join(change_coins, " ")}]")
+    end
+
+  in "CANCEL"
+    if Array.size(fields) != 1
+      puts("line #{line_no}: error: wrong field count")
+      next
+    end
+
+    if credit == 0.0
+      puts("nothing to return")
+      next
+    end
+
+    Array.each(inserted) do |coin_s|
+      available = tubes[coin_s]
+      tubes[coin_s] = available - 1
+    end
+
+    puts("returned #{fmt_money(credit)} [#{Array.join(inserted, " ")}]")
+    credit = 0.0
+    inserted = Array[]
+
+  else
+    puts("line #{line_no}: error: unknown command")
+  end
+end
+
+if credit > 0.0
+  puts("credit #{fmt_money(credit)} kept")
+end
+
+puts("sales:")
+if Hash.empty?(sales)
+  puts("  none")
+else
+  sale_list = Array[]
+  Array.each(Hash.keys(sales)) do |name|
+    sale_data = sales[name]
+    parts = String.split(sale_data, ",")
+    sold = String.to_i(Array.at(parts, 0))
+    revenue = String.to_f(Array.at(parts, 1))
+    Array.push(sale_list, "#{revenue}|#{name}|#{sold}")
+  end
+
+  sorted = Array.sort_by(sale_list) do |item|
+    parts = String.split(item, "|")
+    rev = String.to_f(Array.at(parts, 0))
+    nm = Array.at(parts, 1)
+    [-rev, nm]
+  end
+
+  Array.each(sorted) do |item|
+    parts = String.split(item, "|")
+    revenue = String.to_f(Array.at(parts, 0))
+    name = Array.at(parts, 1)
+    sold = String.to_i(Array.at(parts, 2))
+    puts(format("  %-12s %3d %8s", name, sold, fmt_money(revenue)))
+  end
+end
+
+tube_output = "tubes:"
+Array.each(coin_values) do |coin_s|
+  count = tubes[coin_s]
+  tube_output = "#{tube_output} #{coin_s}x#{count}"
+end
+puts(tube_output)

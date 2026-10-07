@@ -1,0 +1,317 @@
+# Stack language interpreter
+
+def is_number?(token)
+  if String.size(token) == 0
+    return false
+  end
+  if String.start_with?(token, "-")
+    if String.size(token) == 1
+      return false
+    end
+    rest = String.slice(token, 1, String.size(token) - 1)
+  else
+    rest = token
+  end
+  String.match(rest, /^\d+$/) != nil
+end
+
+def is_builtin?(word)
+  word == "+" || word == "-" || word == "*" || word == "/" || word == "mod" ||
+  word == "=" || word == "<" || word == ">" ||
+  word == "dup" || word == "drop" || word == "swap" || word == "over" ||
+  word == "." || word == "if" || word == "then" || word == "else" || word == ";"
+end
+
+def check_syntax(tokens)
+  depth = 0
+  in_def = false
+
+  Array.each_with_index(tokens) do |t, idx|
+    if t == ":"
+      if in_def || depth > 0
+        return false
+      end
+      if idx + 1 >= Array.size(tokens)
+        return false
+      end
+      next_t = Array.at(tokens, idx + 1)
+      if is_number?(next_t) || is_builtin?(next_t)
+        return false
+      end
+      in_def = true
+    elsif t == ";"
+      if !in_def
+        return false
+      end
+      in_def = false
+    elsif t == "if"
+      depth += 1
+    elsif t == "then"
+      if depth == 0
+        return false
+      end
+      depth -= 1
+    elsif t == "else"
+      if depth == 0
+        return false
+      end
+    end
+  end
+
+  if in_def || depth > 0
+    return false
+  end
+
+  true
+end
+
+stack = Array[]
+definitions = Hash[]
+
+lines = Array[]
+while true
+  line = Kernel.gets()
+  if line == nil
+    break
+  end
+  Array.push(lines, line)
+end
+
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+  stripped = String.strip(line)
+
+  if String.size(stripped) == 0
+    next
+  end
+
+  tokens = String.split(stripped, /\s+/)
+
+  if !check_syntax(tokens)
+    puts(Kernel.format("line %d: syntax error", line_num))
+    next
+  end
+
+  # Process definitions first
+  defs_only = Array[]
+  i = 0
+  while i < Array.size(tokens)
+    t = Array.at(tokens, i)
+    if t == ":"
+      name = Array.at(tokens, i + 1)
+      body = Array[]
+      j = i + 2
+      while j < Array.size(tokens)
+        if Array.at(tokens, j) == ";"
+          break
+        end
+        Array.push(body, Array.at(tokens, j))
+        j += 1
+      end
+      Hash.store(definitions, name, body)
+      i = j + 1
+    else
+      Array.push(defs_only, t)
+      i += 1
+    end
+  end
+
+  # Execute non-definition tokens
+  backup_stack = Array.dup(stack)
+  error_msg = nil
+
+  begin
+    # Tokenize with a recursive evaluator function
+    def eval_tokens(toks, stk, defs, depth)
+      i = 0
+      while i < Array.size(toks)
+        t = Array.at(toks, i)
+
+        if is_number?(t)
+          Array.push(stk, String.to_i(t))
+        elsif t == "+"
+          if Array.size(stk) < 2
+            return "stack underflow in +"
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          Array.push(stk, a + b)
+        elsif t == "-"
+          if Array.size(stk) < 2
+            return "stack underflow in -"
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          Array.push(stk, a - b)
+        elsif t == "*"
+          if Array.size(stk) < 2
+            return "stack underflow in *"
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          Array.push(stk, a * b)
+        elsif t == "/"
+          if Array.size(stk) < 2
+            return "stack underflow in /"
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          if b == 0
+            return "division by zero"
+          end
+          result = Integer.div(a, b)
+          Array.push(stk, result)
+        elsif t == "mod"
+          if Array.size(stk) < 2
+            return "stack underflow in mod"
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          if b == 0
+            return "division by zero"
+          end
+          result = Integer.remainder(a, b)
+          Array.push(stk, result)
+        elsif t == "="
+          if Array.size(stk) < 2
+            return "stack underflow in ="
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          Array.push(stk, a == b ? 1 : 0)
+        elsif t == "<"
+          if Array.size(stk) < 2
+            return "stack underflow in <"
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          Array.push(stk, a < b ? 1 : 0)
+        elsif t == ">"
+          if Array.size(stk) < 2
+            return "stack underflow in >"
+          end
+          b = Array.pop(stk)
+          a = Array.pop(stk)
+          Array.push(stk, a > b ? 1 : 0)
+        elsif t == "dup"
+          if Array.size(stk) < 1
+            return "stack underflow in dup"
+          end
+          Array.push(stk, Array.last(stk))
+        elsif t == "drop"
+          if Array.size(stk) < 1
+            return "stack underflow in drop"
+          end
+          Array.pop(stk)
+        elsif t == "swap"
+          if Array.size(stk) < 2
+            return "stack underflow in swap"
+          end
+          sz = Array.size(stk)
+          Array.[]=( stk, sz - 1, Array.at(stk, sz - 2))
+          Array.[]=( stk, sz - 2, Array.at(stk, sz - 1))
+        elsif t == "over"
+          if Array.size(stk) < 2
+            return "stack underflow in over"
+          end
+          sz = Array.size(stk)
+          Array.push(stk, Array.at(stk, sz - 2))
+        elsif t == "."
+          if Array.size(stk) < 1
+            return "stack underflow in ."
+          end
+          puts(Integer.to_s(Array.pop(stk)))
+        elsif t == "if"
+          if Array.size(stk) < 1
+            return "stack underflow in if"
+          end
+          cond = Array.pop(stk)
+
+          # Find then/else
+          depth2 = 1
+          then_idx = nil
+          else_idx = nil
+          j = i + 1
+          while j < Array.size(toks)
+            tj = Array.at(toks, j)
+            if tj == "if"
+              depth2 += 1
+            elsif tj == "then"
+              depth2 -= 1
+              if depth2 == 0
+                then_idx = j
+                break
+              end
+            elsif tj == "else" && depth2 == 1
+              else_idx = j
+            end
+            j += 1
+          end
+
+          # Execute branch
+          if cond != 0
+            if else_idx != nil
+              res = eval_tokens(Array.drop(Array.take(toks, else_idx), i + 1), stk, defs, depth)
+              if res != nil
+                return res
+              end
+            else
+              res = eval_tokens(Array.drop(Array.take(toks, then_idx), i + 1), stk, defs, depth)
+              if res != nil
+                return res
+              end
+            end
+          else
+            if else_idx != nil
+              res = eval_tokens(Array.drop(Array.take(toks, then_idx), else_idx + 1), stk, defs, depth)
+              if res != nil
+                return res
+              end
+            end
+          end
+
+          i = then_idx
+        elsif t == "then" || t == "else"
+          # Already handled
+        else
+          # User word
+          if Hash.has_key?(defs, t)
+            if depth >= 100
+              return "too deep"
+            end
+            res = eval_tokens(Hash.fetch(defs, t), stk, defs, depth + 1)
+            if res != nil
+              return res
+            end
+          else
+            return String.+("unknown word ", t)
+          end
+        end
+
+        i += 1
+      end
+
+      nil
+    end
+
+    error_msg = eval_tokens(defs_only, stack, definitions, 0)
+
+  rescue
+    error_msg = "runtime error"
+  end
+
+  if error_msg != nil
+    puts(Kernel.format("line %d: error: %s", line_num, error_msg))
+    Array.clear(stack)
+    Array.each(backup_stack) do |v|
+      Array.push(stack, v)
+    end
+  end
+end
+
+# Final stack
+if Array.size(stack) == 0
+  puts("stack: (empty)")
+else
+  puts(String.+("stack: ", Array.join(stack, " ")))
+end

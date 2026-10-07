@@ -1,0 +1,261 @@
+Ingredient = Struct.new(:name, :unit_group, :amount_tsp_or_g_or_ml, :unit)
+
+def gcd(a, b)
+  while b != 0
+    temp = b
+    b = a % b
+    a = temp
+  end
+  a
+end
+
+def parse_quantity(qty_str)
+  if qty_str =~ /^\d+\/\d+$/
+    parts = String.split(qty_str, "/")
+    num = String.to_i(Array.at(parts, 0))
+    den = String.to_i(Array.at(parts, 1))
+    if den == 0
+      nil
+    else
+      Rational(num, den)
+    end
+  elsif qty_str =~ /^\d+$/
+    String.to_i(qty_str)r
+  elsif qty_str =~ /^\d+\.\d+$/
+    String.to_f(qty_str)r
+  else
+    nil
+  end
+end
+
+def parse_mixed(whole_str, frac_str)
+  whole = String.to_i(whole_str)
+  frac_parts = String.split(frac_str, "/")
+  num = String.to_i(Array.at(frac_parts, 0))
+  den = String.to_i(Array.at(frac_parts, 1))
+  whole + Rational(num, den)
+end
+
+def unit_to_group(unit)
+  case unit
+  in "tsp" | "tbsp" | "cup" then "spoons"
+  in "g" | "kg" then "grams"
+  in "ml" | "l" then "ml"
+  in "-" then "count"
+  else nil
+  end
+end
+
+def convert_to_base(qty, unit)
+  case unit
+  in "tsp" then [qty, "tsp"]
+  in "tbsp" then [qty * 3, "tsp"]
+  in "cup" then [qty * 48, "tsp"]
+  in "g" then [qty, "g"]
+  in "kg" then [qty * 1000, "g"]
+  in "ml" then [qty, "ml"]
+  in "l" then [qty * 1000, "ml"]
+  in "-" then [qty, "-"]
+  else [0, ""]
+  end
+end
+
+def choose_unit(qty, group)
+  case group
+  in "spoons"
+    if qty >= 1 && Rational.denominator(qty) <= 4
+      "cup"
+    elsif qty * Rational(1, 3) >= 1 && Rational.denominator(qty * Rational(1, 3)) <= 4
+      "tbsp"
+    else
+      "tsp"
+    end
+  in "grams"
+    if qty >= 1000
+      "kg"
+    else
+      "g"
+    end
+  in "ml"
+    if qty >= 1000
+      "l"
+    else
+      "ml"
+    end
+  in "count"
+    "-"
+  else
+    ""
+  end
+end
+
+def convert_from_base(qty, group)
+  case group
+  in "spoons"
+    unit = choose_unit(qty, group)
+    amount = case unit
+    in "cup" then qty / 48
+    in "tbsp" then qty / 3
+    in "tsp" then qty
+    else qty
+    end
+    [amount, unit]
+  in "grams"
+    unit = choose_unit(qty, group)
+    amount = case unit
+    in "kg" then qty / 1000
+    in "g" then qty
+    else qty
+    end
+    [amount, unit]
+  in "ml"
+    unit = choose_unit(qty, group)
+    amount = case unit
+    in "l" then qty / 1000
+    in "ml" then qty
+    else qty
+    end
+    [amount, unit]
+  in "count"
+    num = Rational.numerator(qty)
+    den = Rational.denominator(qty)
+    rounded = (num + den - 1) / den
+    [Integer(rounded), "-"]
+  else
+    [qty, ""]
+  end
+end
+
+def format_quantity(qty)
+  if qty in Rational
+    den = Rational.denominator(qty)
+    num = Rational.numerator(qty)
+    if den == 1
+      Integer.to_s(num)
+    elsif num >= den
+      whole = num / den
+      remainder = num % den
+      if remainder == 0
+        Integer.to_s(whole)
+      else
+        "#{whole} #{remainder}/#{den}"
+      end
+    else
+      "#{num}/#{den}"
+    end
+  else
+    format("%.2f", qty)
+  end
+end
+
+line_num = 0
+first_line = true
+factor = nil
+ingredients = Array[]
+seen_pairs = Hash[]
+
+while line = gets
+  line_num += 1
+  line = String.strip(line)
+
+  if first_line
+    first_line = false
+    fields = String.split(line, /\s+/)
+    unless Array.size(fields) == 4 && Array.at(fields, 0) == "SERVES" && Array.at(fields, 2) == "->"
+      puts("line 1: error: bad servings")
+      break
+    end
+
+    from_val = String.to_i(Array.at(fields, 1))
+    to_val = String.to_i(Array.at(fields, 3))
+    factor = Rational(to_val, from_val)
+    puts("serves #{to_val} (x #{format_quantity(factor)})")
+    next
+  end
+
+  next if String.empty?(line)
+  next if String.start_with?(line, "#")
+
+  fields = String.split(line, /\s+/)
+  unless Array.size(fields) >= 3
+    if Array.size(fields) >= 2
+      puts("line #{line_num}: error: missing name")
+    elsif Array.size(fields) >= 1
+      puts("line #{line_num}: error: missing unit")
+    end
+    next
+  end
+
+  qty_field1 = Array.at(fields, 0)
+  qty = parse_quantity(qty_field1)
+
+  if qty == nil
+    if Array.size(fields) >= 2
+      maybe_frac = Array.at(fields, 1)
+      if maybe_frac =~ /^\d+\/\d+$/
+        qty = parse_mixed(qty_field1, maybe_frac)
+        if qty == nil || qty <= 0
+          puts("line #{line_num}: error: bad quantity")
+          next
+        end
+        unit = Array.at(fields, 2)
+        name_start = 3
+      else
+        puts("line #{line_num}: error: bad quantity")
+        next
+      end
+    else
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+  else
+    if qty <= 0
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+    unit = Array.at(fields, 1)
+    name_start = 2
+  end
+
+  unless unit
+    puts("line #{line_num}: error: missing unit")
+    next
+  end
+
+  group = unit_to_group(unit)
+  unless group
+    puts("line #{line_num}: error: unknown unit #{unit}")
+    next
+  end
+
+  unless Array.size(fields) > name_start
+    puts("line #{line_num}: error: missing name")
+    next
+  end
+
+  name = Array.join(Array.slice(fields, name_start, Array.size(fields)), " ")
+
+  scaled_qty = qty * factor
+  base_qty, base_unit = convert_to_base(scaled_qty, unit)
+
+  pair = [name, group]
+  if !Hash.has_key?(seen_pairs, pair)
+    seen_pairs[pair] = Array.size(ingredients)
+    Array.push(ingredients, [name, group, base_qty])
+  else
+    idx = seen_pairs[pair]
+    ing = Array.at(ingredients, idx)
+    Array.set(ingredients, idx, [Array.at(ing, 0), Array.at(ing, 1), Array.at(ing, 2) + base_qty])
+  end
+end
+
+Array.each(ingredients) { |name, group, base_qty|
+  final_qty, final_unit = convert_from_base(base_qty, group)
+  qty_str = format_quantity(final_qty)
+
+  if group == "count"
+    puts("#{qty_str} #{name}")
+  else
+    puts("#{qty_str} #{final_unit} #{name}")
+  end
+}

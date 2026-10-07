@@ -1,0 +1,284 @@
+def read_lines
+  lines = Array[]
+  while line = Kernel.gets
+    Array.push(lines, String.chomp(line))
+  end
+  lines
+end
+
+def parse_fields(line)
+  String.split(String.strip(line))
+end
+
+def is_comment_or_blank(line)
+  stripped = String.strip(line)
+  String.empty?(stripped) || String.start_with?(stripped, "#")
+end
+
+def valid_weight(w_str)
+  if String.match?(w_str, /\A\d+\z/)
+    w = Kernel.Integer(w_str)
+    w >= 1 && w <= 100
+  else
+    false
+  end
+end
+
+def parse_score(score_str)
+  if score_str == "EX"
+    [:excused, nil, nil]
+  elsif score_str == "-"
+    [:missing, nil, nil]
+  elsif String.include?(score_str, "/")
+    parts = String.split(score_str, "/")
+    if Array.length(parts) == 2
+      p_str = Array.at(parts, 0)
+      m_str = Array.at(parts, 1)
+      if String.match?(p_str, /\A\d+\z/) && String.match?(m_str, /\A\d+\z/)
+        p = Kernel.Integer(p_str)
+        m = Kernel.Integer(m_str)
+        if m > 0 && p <= m
+          [:points, p, m]
+        else
+          [:bad, nil, nil]
+        end
+      else
+        [:bad, nil, nil]
+      end
+    else
+      [:bad, nil, nil]
+    end
+  else
+    [:bad, nil, nil]
+  end
+end
+
+def main
+  raw_lines = read_lines
+
+  weights = Hash[]
+  students = Hash[]
+  scores = Array[]
+  errors = Array[]
+
+  line_num = 0
+  while line_num < Array.length(raw_lines)
+    line = Array.at(raw_lines, line_num)
+    line_num += 1
+
+    if is_comment_or_blank(line)
+      next
+    end
+
+    fields = parse_fields(line)
+
+    if Array.length(fields) > 0 && Array.at(fields, 0) == "weight"
+      if Array.length(fields) != 3
+        Array.push(errors, [line_num, "bad format"])
+      else
+        category = Array.at(fields, 1)
+        w_str = Array.at(fields, 2)
+
+        if !valid_weight(w_str)
+          Array.push(errors, [line_num, "bad weight #{w_str}"])
+        elsif Hash.key?(weights, category)
+          Array.push(errors, [line_num, "duplicate category #{category}"])
+        else
+          w = Kernel.Integer(w_str)
+          Hash.[]=(weights, category, w)
+        end
+      end
+    else
+      if Array.length(fields) != 3
+        Array.push(errors, [line_num, "bad format"])
+      else
+        student = Array.at(fields, 0)
+        category = Array.at(fields, 1)
+        score_str = Array.at(fields, 2)
+
+        if !Hash.key?(weights, category)
+          Array.push(errors, [line_num, "unknown category #{category}"])
+        else
+          result = parse_score(score_str)
+          status = Array.at(result, 0)
+          p = Array.at(result, 1)
+          m = Array.at(result, 2)
+
+          if status == :bad
+            Array.push(errors, [line_num, "bad score #{score_str}"])
+          else
+            Array.push(scores, [student, category, status, p, m])
+
+            if !Hash.key?(students, student)
+              Hash.[]=(students, student, true)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  Array.each(errors) { |e|
+    line_no = Array.at(e, 0)
+    msg = Array.at(e, 1)
+    puts("line #{line_no}: #{msg}")
+  }
+
+  student_list = Hash.keys(students)
+  student_list = Array.sort(student_list)
+
+  student_data = Hash[]
+
+  Array.each(student_list) { |s|
+    category_data = Hash[]
+    Hash.[]=(student_data, s, category_data)
+  }
+
+  Array.each(scores) { |score_entry|
+    student = Array.at(score_entry, 0)
+    category = Array.at(score_entry, 1)
+    status = Array.at(score_entry, 2)
+    p = Array.at(score_entry, 3)
+    m = Array.at(score_entry, 4)
+
+    cat_data = Hash.at(student_data, student)
+
+    if !Hash.key?(cat_data, category)
+      Hash.[]=(cat_data, category, [Array[], Array[]])
+    end
+
+    entry = Hash.at(cat_data, category)
+    points_list = Array.at(entry, 0)
+    maxima_list = Array.at(entry, 1)
+
+    if status == :missing
+      Array.push(points_list, 0)
+      Array.push(maxima_list, m)
+    elsif status == :excused
+      next
+    elsif status == :points
+      Array.push(points_list, p)
+      Array.push(maxima_list, m)
+    end
+  }
+
+  results = Array[]
+
+  Array.each(student_list) { |s|
+    cat_data = Hash.at(student_data, s)
+
+    categories_with_data = Array[]
+    total_points = 0
+    total_maxima = 0
+    missing_count = 0
+
+    Array.each(Hash.keys(weights)) { |cat|
+      if Hash.key?(cat_data, cat)
+        entry = Hash.at(cat_data, cat)
+        points_list = Array.at(entry, 0)
+        maxima_list = Array.at(entry, 1)
+
+        if Array.length(points_list) > 0
+          Array.push(categories_with_data, cat)
+          sum_p = Array.reduce(points_list, 0) { |acc, x| acc + x }
+          sum_m = Array.reduce(maxima_list, 0) { |acc, x| acc + x }
+          total_points += sum_p
+          total_maxima += sum_m
+        end
+
+        Array.each(maxima_list) { |m|
+          if Array.at(Hash.at(cat_data, cat), 0)[missing_count] == 0
+            if Array.at(Hash.at(cat_data, cat), 1)[missing_count] > 0
+              missing_count += 1
+            end
+          end
+        }
+      end
+    }
+
+    if Array.length(categories_with_data) > 0 && total_maxima > 0
+      total_weight = 0
+      weighted_sum = 0
+
+      Array.each(categories_with_data) { |cat|
+        entry = Hash.at(cat_data, cat)
+        points_list = Array.at(entry, 0)
+        maxima_list = Array.at(entry, 1)
+
+        sum_p = Array.reduce(points_list, 0) { |acc, x| acc + x }
+        sum_m = Array.reduce(maxima_list, 0) { |acc, x| acc + x }
+
+        w = Hash.at(weights, cat)
+        total_weight += w
+        weighted_sum += (sum_p.to_f / sum_m) * w
+      }
+
+      percentage = weighted_sum / total_weight * 100
+      Array.push(results, [s, percentage, total_maxima])
+    else
+      Array.push(results, [s, nil, total_maxima])
+    end
+  }
+
+  results = Array.sort_by(results) { |r|
+    student = Array.at(r, 0)
+    percentage = Array.at(r, 1)
+    if percentage
+      [-percentage, student]
+    else
+      [Float::INFINITY, student]
+    end
+  }
+
+  w = Array.length(student_list)
+  if w < 7
+    w = 7
+  end
+
+  header = String.ljust("Student", w)
+  header = String.+(header, "  Score  G  Missing")
+  puts(header)
+
+  class_sum = 0
+  class_count = 0
+
+  Array.each(results) { |r|
+    student = Array.at(r, 0)
+    percentage = Array.at(r, 1)
+
+    student_str = String.ljust(student, w)
+
+    if percentage
+      rounded_pct = Float.round(percentage, 1)
+      grade = if rounded_pct >= 90.0
+                "A"
+              elsif rounded_pct >= 80.0
+                "B"
+              elsif rounded_pct >= 70.0
+                "C"
+              elsif rounded_pct >= 60.0
+                "D"
+              else
+                "F"
+              end
+
+      pct_str = String.rjust(Float.to_s(rounded_pct), 5)
+      puts("#{student_str}  #{pct_str}  #{grade}        0")
+
+      class_sum += percentage
+      class_count += 1
+    else
+      puts("#{student_str}    n/a  -        0")
+    end
+  }
+
+  if class_count > 0
+    avg = class_sum / class_count
+    avg_rounded = Float.round(avg, 1)
+    puts("class average: #{avg_rounded}")
+  else
+    puts("class average: n/a")
+  end
+end
+
+main

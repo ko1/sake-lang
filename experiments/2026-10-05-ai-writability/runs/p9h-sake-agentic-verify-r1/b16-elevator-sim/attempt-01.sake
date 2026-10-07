@@ -1,0 +1,242 @@
+# Read input
+header = gets()
+if header == nil
+  puts("invalid header")
+  exit(0)
+end
+
+header_parts = String.split(header)
+if Array.size(header_parts) != 3
+  puts("invalid header")
+  exit(0)
+end
+
+n = String.to_i(Array.at(header_parts, 0))
+d = String.to_i(Array.at(header_parts, 1))
+c = String.to_i(Array.at(header_parts, 2))
+
+if n < 2 || n > 50 || d < 0 || d > 5 || c < 1 || c > 20
+  puts("invalid header")
+  exit(0)
+end
+
+# Read requests
+requests = Array[]
+errors = Array[]
+last_time = 0
+line_num = 1
+
+loop do
+  line = gets()
+  if line == nil
+    break
+  end
+  line_num += 1
+
+  # Skip blank lines
+  if String.empty?(line) || String.empty?(String.strip(line))
+    next
+  end
+
+  parts = String.split(String.strip(line))
+
+  # Check if it's a valid request
+  if Array.size(parts) != 3
+    Array.push(errors, line_num)
+    next
+  end
+
+  t = String.to_i(Array.at(parts, 0)) rescue nil
+  f = String.to_i(Array.at(parts, 1)) rescue nil
+  g = String.to_i(Array.at(parts, 2)) rescue nil
+
+  if t == nil || f == nil || g == nil
+    Array.push(errors, line_num)
+    next
+  end
+
+  if f < 1 || f > n || g < 1 || g > n || f == g || t > 1000 || t < last_time
+    Array.push(errors, line_num)
+    next
+  end
+
+  last_time = t
+  Array.push(requests, [t, f, g])
+end
+
+# Print errors
+Array.each(errors) { |line| puts("line #{line}: invalid request") }
+
+if Array.empty?(requests)
+  puts("no passengers")
+  exit(0)
+end
+
+# Simulation
+floor = 1
+time = 0
+direction = :idle
+waiting = Hash[]  # floor -> Array of [passenger_index, dest_floor]
+riders = Hash[]   # passenger_index -> dest_floor
+picked_up = Hash[]  # passenger_index -> time
+dropped = Hash[]  # passenger_index -> time
+
+num_passengers = Array.size(requests)
+dropped_count = 0
+
+loop do
+  # 1. Requests with T <= t start waiting
+  Array.each(requests) do |req, i|
+    t, f, g = req
+    if t <= time && !Hash.has_key?(waiting, f)
+      Hash.[]=(waiting, f, Array[])
+    end
+    if t <= time && Hash.has_key?(waiting, f)
+      Array.push(Hash.[](waiting, f), [i, g])
+    end
+  end
+
+  # 2. Riders whose destination is f get off
+  to_drop = Array[]
+  Hash.each(riders) do |p, g|
+    if g == floor
+      Array.push(to_drop, p)
+    end
+  end
+
+  Array.each(to_drop) do |p|
+    puts("t=#{time} floor #{floor} drop P#{p + 1}")
+    Hash.delete(riders, p)
+    Hash.[]=(dropped, p, time)
+  end
+
+  # 3. Update direction
+  targets = Array[]
+  Hash.each(riders) do |p, g|
+    if !Array.include?(targets, g)
+      Array.push(targets, g)
+    end
+  end
+
+  Hash.each(waiting) do |f, ws|
+    if !Array.empty?(ws) && !Array.include?(targets, f)
+      Array.push(targets, f)
+    end
+  end
+
+  if direction == :up
+    down_targets = Array.select(targets) { |t| t < floor }
+    up_targets = Array.select(targets) { |t| t > floor }
+    if Array.empty?(up_targets)
+      if Array.empty?(down_targets)
+        direction = :idle
+      else
+        direction = :down
+      end
+    end
+  elsif direction == :down
+    up_targets = Array.select(targets) { |t| t > floor }
+    down_targets = Array.select(targets) { |t| t < floor }
+    if Array.empty?(down_targets)
+      if Array.empty?(up_targets)
+        direction = :idle
+      else
+        direction = :up
+      end
+    end
+  else
+    if !Array.empty?(targets)
+      nearest = Array.min(Array.map(targets) { |t| [Integer.abs(t - floor), t] })
+      target_floor = Array.at(nearest, 1)
+      if target_floor > floor
+        direction = :up
+      elsif target_floor < floor
+        direction = :down
+      else
+        # Direction based on lowest-numbered passenger at f
+        if Hash.has_key?(waiting, floor)
+          ws = Hash.[](waiting, floor)
+          if !Array.empty?(ws)
+            min_p = Array.min(Array.map(ws) { |p, g| p })
+            min_g = Array.at(Array.find(ws) { |p, g| p == min_p }, 1)
+            direction = (min_g > floor) ? :up : :down
+          end
+        end
+      end
+    end
+  end
+
+  # 4. Waiting passengers at f get on
+  if Hash.has_key?(waiting, floor)
+    ws = Hash.[](waiting, floor)
+    to_pick = Array[]
+    Array.each(ws) do |p, g|
+      if Hash.size(riders) < c
+        if (direction == :up && g > floor) || (direction == :down && g < floor) || direction == :idle
+          Array.push(to_pick, [p, g])
+        end
+      end
+    end
+
+    Array.each(to_pick) do |p, g|
+      puts("t=#{time} floor #{floor} pick P#{p + 1}")
+      Hash.[]=(riders, p, g)
+      Hash.[]=(picked_up, p, time)
+      # Remove from waiting
+      ws_new = Array.select(ws) { |wp, wg| wp != p }
+      if Array.empty?(ws_new)
+        Hash.delete(waiting, floor)
+      else
+        Hash.[]=(waiting, floor, ws_new)
+      end
+    end
+  end
+
+  # 5. Check if we're done
+  if Array.size(to_drop) > 0 || (Hash.has_key?(waiting, floor) && Array.size(Array.[](waiting, floor)) > 0)
+    time += d
+  else
+    if Hash.empty?(riders) && Hash.empty?(waiting)
+      break
+    end
+
+    if direction == :up
+      floor += 1
+    elsif direction == :down
+      floor -= 1
+    end
+    time += 1
+  end
+end
+
+# Print results
+Array.each(Range.to_a(0...(num_passengers))) do |i|
+  if Hash.has_key?(picked_up, i) && Hash.has_key?(dropped, i)
+    w = Hash.[](picked_up, i) - Array.at(requests, i)
+    r = Hash.[](dropped, i) - Hash.[](picked_up, i)
+    puts("P#{i + 1} wait #{Hash.[](picked_up, i) - Array.at(Array.at(requests, i), 0)} ride #{Hash.[](dropped, i) - Hash.[](picked_up, i)}")
+  end
+end
+
+total_wait = 0
+total_ride = 0
+Array.each(Range.to_a(0...(num_passengers))) do |i|
+  if Hash.has_key?(picked_up, i) && Hash.has_key?(dropped, i)
+    total_wait += Hash.[](picked_up, i) - Array.at(Array.at(requests, i), 0)
+    total_ride += Hash.[](dropped, i) - Hash.[](picked_up, i)
+  end
+end
+
+avg_wait = total_wait / Float(num_passengers)
+avg_ride = total_ride / Float(num_passengers)
+puts("average wait #{format("%.2f", avg_wait)} ride #{format("%.2f", avg_ride)}")
+
+max_drop = 0
+Array.each(Range.to_a(0...(num_passengers))) do |i|
+  if Hash.has_key?(dropped, i)
+    if Hash.[](dropped, i) > max_drop
+      max_drop = Hash.[](dropped, i)
+    end
+  end
+end
+puts("done at t=#{max_drop}")

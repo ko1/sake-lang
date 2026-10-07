@@ -1,0 +1,267 @@
+Entry = Struct.new(:method, :path, :status, :bytes, :duration)
+Stats = Struct.new(:count, :n4xx, :n5xx, :bytes, :durations)
+InvalidLine = Struct.new(:line_num, :reason)
+
+def validate_timestamp(ts)
+  # Format: YYYY-MM-DDTHH:MM:SS
+  if String.size(ts) != 19 || String.slice(ts, 4, 1) != "-" || String.slice(ts, 7, 1) != "-" || String.slice(ts, 10, 1) != "T" || String.slice(ts, 13, 1) != ":" || String.slice(ts, 16, 1) != ":"
+    return nil
+  end
+
+  year_str = String.slice(ts, 0, 4)
+  month_str = String.slice(ts, 5, 2)
+  day_str = String.slice(ts, 8, 2)
+  hour_str = String.slice(ts, 11, 2)
+  minute_str = String.slice(ts, 14, 2)
+  second_str = String.slice(ts, 17, 2)
+
+  year = String.to_i(year_str) rescue (return nil)
+  month = String.to_i(month_str) rescue (return nil)
+  day = String.to_i(day_str) rescue (return nil)
+  hour = String.to_i(hour_str) rescue (return nil)
+  minute = String.to_i(minute_str) rescue (return nil)
+  second = String.to_i(second_str) rescue (return nil)
+
+  if month < 1 || month > 12 || day < 1 || day > 31
+    return nil
+  end
+
+  if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59
+    return nil
+  end
+
+  ts
+end
+
+def validate_method(m)
+  if m == "GET" || m == "POST" || m == "PUT" || m == "DELETE"
+    m
+  else
+    nil
+  end
+end
+
+def validate_path(p)
+  if String.start_with?(p, "/")
+    p
+  else
+    nil
+  end
+end
+
+def validate_status(s)
+  if String.size(s) == 3 && String.match?(s, /^[0-9]{3}$/)
+    status = String.to_i(s) rescue (return nil)
+    if status >= 100 && status <= 599
+      status
+    else
+      nil
+    end
+  else
+    nil
+  end
+end
+
+def validate_bytes(b)
+  if b == "-"
+    nil
+  elsif String.match?(b, /^[0-9]+$/)
+    String.to_i(b)
+  else
+    false
+  end
+end
+
+def validate_duration(d)
+  if String.match?(d, /^[0-9]+$/)
+    String.to_i(d)
+  else
+    nil
+  end
+end
+
+# Read all input
+lines = IO.readlines(IO.stdin)
+
+# Parse and collect valid/invalid entries
+valid_entries = Array[]
+invalid_lines = Array[]
+hour_counts = Hash.new(0)
+
+Array.each_with_index(lines) do |line, idx|
+  line_num = idx + 1
+
+  # Skip empty lines
+  chomp_line = String.chomp(line)
+  if String.empty?(chomp_line)
+    next
+  end
+
+  parts = String.split(chomp_line, /\s+/)
+
+  if Array.size(parts) != 6
+    Array.push(invalid_lines, InvalidLine.new(line_num, "wrong field count"))
+    next
+  end
+
+  timestamp = Array.at(parts, 0)
+  method_str = Array.at(parts, 1)
+  path_str = Array.at(parts, 2)
+  status_str = Array.at(parts, 3)
+  bytes_str = Array.at(parts, 4)
+  duration_str = Array.at(parts, 5)
+
+  # Validate timestamp
+  ts = validate_timestamp(timestamp)
+  if ts == nil
+    Array.push(invalid_lines, InvalidLine.new(line_num, "bad timestamp"))
+    next
+  end
+
+  # Validate method
+  m = validate_method(method_str)
+  if m == nil
+    Array.push(invalid_lines, InvalidLine.new(line_num, "bad method"))
+    next
+  end
+
+  # Validate path
+  p = validate_path(path_str)
+  if p == nil
+    Array.push(invalid_lines, InvalidLine.new(line_num, "bad path"))
+    next
+  end
+
+  # Validate status
+  status = validate_status(status_str)
+  if status == nil
+    Array.push(invalid_lines, InvalidLine.new(line_num, "bad status"))
+    next
+  end
+
+  # Validate bytes
+  bytes = validate_bytes(bytes_str)
+  if bytes == false
+    Array.push(invalid_lines, InvalidLine.new(line_num, "bad bytes"))
+    next
+  end
+
+  # Validate duration
+  duration = validate_duration(duration_str)
+  if duration == nil
+    Array.push(invalid_lines, InvalidLine.new(line_num, "bad duration"))
+    next
+  end
+
+  # Extract path without query string
+  path_clean = p
+  query_idx = String.index(p, "?")
+  if query_idx
+    path_clean = String.slice(p, 0, query_idx)
+  end
+
+  # Valid entry
+  Array.push(valid_entries, Entry.new(m, path_clean, status, bytes, duration))
+
+  # Extract hour for busiest hour
+  hour_key = String.slice(ts, 0, 13)
+  hour_counts[hour_key] = (hour_counts[hour_key] || 0) + 1
+end
+
+# Group by endpoint and collect stats
+endpoint_stats = Hash[]
+
+Array.each(valid_entries) do |entry|
+  endpoint = "#{Entry.method(entry)} #{Entry.path(entry)}"
+
+  stat = endpoint_stats[endpoint]
+  if stat == nil
+    stat = Stats.new(0, 0, 0, 0, Array[])
+  end
+
+  new_count = Stats.count(stat) + 1
+  new_n4xx = Stats.n4xx(stat)
+  new_n5xx = Stats.n5xx(stat)
+
+  if Entry.status(entry) >= 400 && Entry.status(entry) < 500
+    new_n4xx += 1
+  elsif Entry.status(entry) >= 500
+    new_n5xx += 1
+  end
+
+  new_bytes = Stats.bytes(stat)
+  if Entry.bytes(entry) != nil
+    new_bytes += Entry.bytes(entry)
+  end
+
+  new_durations = Array.dup(Stats.durations(stat))
+  Array.push(new_durations, Entry.duration(entry))
+
+  endpoint_stats[endpoint] = Stats.new(new_count, new_n4xx, new_n5xx, new_bytes, new_durations)
+end
+
+# Output
+if Array.empty?(valid_entries)
+  puts("no valid requests")
+else
+  # Calculate max endpoint length
+  max_len = 8
+  Hash.each(endpoint_stats) do |ep, stat|
+    if String.size(ep) > max_len
+      max_len = String.size(ep)
+    end
+  end
+
+  # Print header using Array.join to build the string
+  header_parts = Array["endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"]
+  # Using format manually with proper placeholders
+  puts(format("%-8s %5s %4s %4s %8s %7s %6s", "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+
+  # Sort endpoints by count (desc) then by name (asc)
+  all_eps = Hash.keys(endpoint_stats)
+  sorted_eps = Array.sort_by(all_eps) do |ep|
+    stat = endpoint_stats[ep]
+    count_neg = -(Stats.count(stat))
+    [count_neg, ep]
+  end
+
+  # Print each row
+  Array.each(sorted_eps) do |ep|
+    stat = endpoint_stats[ep]
+    count = Stats.count(stat)
+    n4xx = Stats.n4xx(stat)
+    n5xx = Stats.n5xx(stat)
+    bytes = Stats.bytes(stat)
+
+    durations = Stats.durations(stat)
+    sum_dur = Array.sum(durations, 0)
+    avg_ms = Integer.to_f(sum_dur) / Integer.to_f(count)
+    max_ms = Array.max(durations)
+
+    avg_str = format("%.1f", avg_ms)
+
+    puts(format("%-8s %5d %4d %4d %8d %7s %6d", ep, count, n4xx, n5xx, bytes, avg_str, max_ms))
+  end
+
+  # Find busiest hour
+  busiest_hour = nil
+  busiest_count = 0
+  Hash.each(hour_counts) do |hour, count|
+    if busiest_hour == nil || count > busiest_count || (count == busiest_count && hour < busiest_hour)
+      busiest_hour = hour
+      busiest_count = count
+    end
+  end
+
+  # Format busiest hour output
+  hour_output = "#{busiest_hour}:00"
+  puts("busiest hour: #{hour_output} (#{busiest_count} requests)")
+end
+
+# Print invalid lines
+puts("invalid lines: #{Array.size(invalid_lines)}")
+Array.each(invalid_lines) do |entry|
+  line_num = InvalidLine.line_num(entry)
+  reason = InvalidLine.reason(entry)
+  puts("  line #{line_num}: #{reason}")
+end

@@ -1,0 +1,194 @@
+# Helper: find candidate index by name
+def find_candidate_idx(names, name)
+  idx = 0
+  Array.each(names) do |n|
+    if n == name
+      return idx
+    end
+    idx += 1
+  end
+  nil
+end
+
+# Read candidates line
+candidates_line = gets()
+if candidates_line == nil
+  puts("no candidates")
+  exit(0)
+end
+
+candidate_names = String.split(candidates_line)
+if Array.empty?(candidate_names)
+  puts("no candidates")
+  exit(0)
+end
+
+num_candidates = Array.size(candidate_names)
+
+# Read ballots
+ballots = Array[]
+rejected = Array[]
+line_num = 1
+ballot_num = 0
+
+loop do
+  line = gets()
+  line_num += 1
+  if line == nil
+    break
+  end
+
+  stripped = String.strip(line)
+  if String.empty?(stripped)
+    next
+  end
+
+  ballot_num += 1
+
+  # Parse ballot: names separated by >
+  parts = String.split(stripped, ">")
+  ballot = Array[]
+  valid = true
+  seen = Set[]
+
+  Array.each(parts) do |part|
+    trimmed = String.strip(part)
+    if String.empty?(trimmed)
+      Array.push(rejected, [line_num, "empty rank"])
+      valid = false
+      break
+    end
+
+    cand_idx = find_candidate_idx(candidate_names, trimmed)
+    if cand_idx == nil
+      Array.push(rejected, [line_num, "unknown candidate #{trimmed}"])
+      valid = false
+      break
+    end
+
+    if Set.include?(seen, trimmed)
+      Array.push(rejected, [line_num, "duplicate #{trimmed}"])
+      valid = false
+      break
+    end
+
+    Set.add(seen, trimmed)
+    Array.push(ballot, cand_idx)
+  end
+
+  if valid
+    Array.push(ballots, ballot)
+  end
+end
+
+# Print rejections
+Array.each(rejected) do |line_no, reason|
+  puts("rejected line #{line_no}: #{reason}")
+end
+
+valid_ballots = Array.size(ballots)
+rejected_ballots = ballot_num - valid_ballots
+puts("ballots: #{valid_ballots} valid, #{rejected_ballots} rejected")
+
+if valid_ballots == 0
+  exit(0)
+end
+
+# Instant runoff voting
+continuing = Set[]
+Array.each(Range.to_a(0...(num_candidates))) do |i|
+  Set.add(continuing, i)
+end
+
+round = 0
+
+loop do
+  round += 1
+
+  # Count votes
+  votes = Integer[*Array.new(num_candidates, 0)]
+  exhausted = 0
+
+  Array.each(ballots) do |ballot|
+    # Find first continuing candidate
+    found = false
+    Array.each(ballot) do |cand_idx|
+      if Set.include?(continuing, cand_idx)
+        Array.[]=(votes, cand_idx, Array.at(votes, cand_idx) + 1)
+        found = true
+        break
+      end
+    end
+    if !found
+      exhausted += 1
+    end
+  end
+
+  active = valid_ballots - exhausted
+
+  puts("round #{round}")
+
+  # Print candidates and vote counts, sorted by votes desc, then name asc
+  candidates_with_votes = Array[]
+  Set.each(continuing) do |idx|
+    Array.push(candidates_with_votes, [idx, Array.at(votes, idx)])
+  end
+
+  sorted = Array.sort_by(candidates_with_votes) do |idx, vote_count|
+    [-vote_count, idx]
+  end
+
+  Array.each(sorted) do |idx, vote_count|
+    if vote_count > 0 || active == 0
+      pct = (active == 0) ? 0.0 : Float(vote_count) * 100.0 / Float(active)
+      pct_rounded = Float.round(pct + 0.05, 1)  # Round half up
+      puts("  #{Array.at(candidate_names, idx)} #{vote_count} #{format("%.1f", pct_rounded)}%")
+    end
+  end
+
+  puts("  exhausted #{exhausted}")
+
+  # Check for winner
+  if active == 0
+    puts("no winner")
+    break
+  end
+
+  max_votes = 0
+  Set.each(continuing) do |idx|
+    v = Array.at(votes, idx)
+    if v > max_votes
+      max_votes = v
+    end
+  end
+
+  if max_votes * 2 > active
+    # Winner found
+    Set.each(continuing) do |idx|
+      if Array.at(votes, idx) == max_votes
+        puts("winner #{Array.at(candidate_names, idx)}")
+        exit(0)
+      end
+    end
+  end
+
+  # Eliminate candidate with fewest votes
+  to_eliminate = nil
+  min_votes = max_votes + 1
+
+  Set.each(continuing) do |idx|
+    v = Array.at(votes, idx)
+    if v < min_votes
+      min_votes = v
+      to_eliminate = idx
+    elsif v == min_votes
+      # Compare names: eliminate the one with the highest name (last in byte order)
+      if Array.at(candidate_names, idx) > Array.at(candidate_names, to_eliminate)
+        to_eliminate = idx
+      end
+    end
+  end
+
+  Set.delete(continuing, to_eliminate)
+  puts("  eliminated #{Array.at(candidate_names, to_eliminate)}")
+end

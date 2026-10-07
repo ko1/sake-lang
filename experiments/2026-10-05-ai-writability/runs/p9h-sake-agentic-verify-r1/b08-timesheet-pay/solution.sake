@@ -1,0 +1,391 @@
+# Timesheet pay computation
+
+Employee = Struct.new(:name, :rate)
+Shift = Struct.new(:emp_id, :date_key, :start_mins, :end_mins, :break_mins, :is_next_day)
+DateKey = Struct.new(:year, :month, :day)
+EmployeePay = Struct.new(:regular_mins, :overtime_mins, :pay)
+
+employees = Hash.new(nil)
+shifts = Array[]
+line_num = 0
+
+def parse_time(s)
+  parts = String.split(s, ":")
+  if Array.size(parts) != 2
+    nil
+  else
+    hours = String.to_i(Array.at(parts, 0)) rescue nil
+    minutes = String.to_i(Array.at(parts, 1)) rescue nil
+    if hours == nil || minutes == nil || hours < 0 || hours > 23 || minutes < 0 || minutes > 59
+      nil
+    else
+      Integer.+(Integer.*(hours, 60), minutes)
+    end
+  end
+end
+
+def parse_date_str(s)
+  parts = String.split(s, "-")
+  if Array.size(parts) != 3
+    nil
+  else
+    year = String.to_i(Array.at(parts, 0)) rescue nil
+    month = String.to_i(Array.at(parts, 1)) rescue nil
+    day = String.to_i(Array.at(parts, 2)) rescue nil
+
+    if year == nil || month == nil || day == nil || year < 1970 || year > 2099 || month < 1 || month > 12 || day < 1
+      nil
+    else
+      days_in_month = Integer[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+      is_leap = false
+      if Integer.%(year, 400) == 0
+        is_leap = true
+      elsif Integer.%(year, 100) == 0
+        is_leap = false
+      elsif Integer.%(year, 4) == 0
+        is_leap = true
+      end
+
+      max_days = if month == 2 && is_leap
+        29
+      else
+        Array.at(days_in_month, Integer.-(month, 1))
+      end
+
+      if day < 1 || day > max_days
+        nil
+      else
+        DateKey.new(year, month, day)
+      end
+    end
+  end
+end
+
+def shifts_overlap(s1, s2)
+  # Both shifts are for the same employee, check if times overlap
+  date1 = Shift.date_key(s1)
+  start1 = Shift.start_mins(s1)
+  end1 = Shift.end_mins(s1)
+  is_next1 = Shift.is_next_day(s1)
+
+  date2 = Shift.date_key(s2)
+  start2 = Shift.start_mins(s2)
+  end2 = Shift.end_mins(s2)
+  is_next2 = Shift.is_next_day(s2)
+
+  # If end times are the same as start times that day wraps to next, adjust
+  # For s1: if is_next1, end time is on next day; otherwise same day
+  # For s2: same logic
+
+  # Simple approach: check if time ranges overlap
+  # s1: start1 to end1 (or start1 to 1440+end1 if wraps)
+  # s2: start2 to end2 (or start2 to 1440+end2 if wraps)
+
+  s1_actual_end = if is_next1
+    Integer.+(1440, end1)
+  else
+    end1
+  end
+
+  s2_actual_end = if is_next2
+    Integer.+(1440, end2)
+  else
+    end2
+  end
+
+  # Convert dates to numeric values for comparison
+  y1, m1, d1 = DateKey.year(date1), DateKey.month(date1), DateKey.day(date1)
+  y2, m2, d2 = DateKey.year(date2), DateKey.month(date2), DateKey.day(date2)
+
+  date1_val = Integer.+(Integer.+(Integer.*(y1, 10000), Integer.*(m1, 100)), d1)
+  date2_val = Integer.+(Integer.+(Integer.*(y2, 10000), Integer.*(m2, 100)), d2)
+
+  # If shifts are on the same date
+  if date1_val == date2_val
+    !(s1_actual_end <= start2 || s2_actual_end <= start1)
+  elsif date2_val == Integer.+(date1_val, 1)
+    # date2 is exactly 1 day after date1
+    # s1 might wrap to date2, s2 is on date2
+    # Convert s1 to absolute time: (24*60 for next day shift)
+    if is_next1
+      # s1 ends at 24*60 + end1 on an absolute timeline
+      # s2 starts at 0 on date2, which is 24*60 on the same timeline
+      # s2 ends at end2 on date2, which is 24*60 + end2
+      !(Integer.+(1440, end1) <= start2 || s2_actual_end <= start1)
+    else
+      # s1 doesn't wrap, so it ends on date1
+      # No overlap possible since s2 is on date2
+      false
+    end
+  elsif date1_val == Integer.+(date2_val, 1)
+    # date1 is exactly 1 day after date2
+    if is_next2
+      !(Integer.+(1440, end2) <= start1 || s1_actual_end <= start2)
+    else
+      false
+    end
+  else
+    # Dates are more than 1 day apart
+    false
+  end
+end
+
+Kernel.loop do
+  line_str = Kernel.gets
+  break if line_str == nil
+
+  line_num = Integer.+(line_num, 1)
+  fields = String.split(String.strip(line_str), /\s+/)
+
+  if Array.size(fields) == 0
+    next
+  end
+
+  cmd = Array.at(fields, 0)
+
+  if cmd == nil || (cmd != "EMP" && cmd != "SHIFT")
+    puts("line #{line_num}: error: unknown command")
+    next
+  end
+
+  case cmd
+  in "EMP"
+    if Array.size(fields) != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    id = Array.at(fields, 1)
+    name = Array.at(fields, 2)
+    rate_str = Array.at(fields, 3)
+
+    if !String.match?(id, /^E\d{3}$/)
+      puts("line #{line_num}: error: bad id")
+      next
+    end
+
+    if !String.match?(name, /^[A-Za-z]{1,10}$/)
+      puts("line #{line_num}: error: bad name")
+      next
+    end
+
+    if !String.match?(rate_str, /^\d+\.\d{2}$/)
+      puts("line #{line_num}: error: bad rate")
+      next
+    end
+
+    rate = String.to_f(rate_str)
+
+    if Hash.has_key?(employees, id)
+      puts("line #{line_num}: error: duplicate employee ID")
+      next
+    end
+
+    Hash.store(employees, id, Employee.new(name, rate))
+
+  in "SHIFT"
+    if Array.size(fields) < 5 || Array.size(fields) > 6
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+
+    emp_id = Array.at(fields, 1)
+    date_str = Array.at(fields, 2)
+    start_str = Array.at(fields, 3)
+    end_str = Array.at(fields, 4)
+    break_str = if Array.size(fields) == 6
+      Array.at(fields, 5)
+    else
+      "0"
+    end
+
+    if !String.match?(emp_id, /^E\d{3}$/)
+      puts("line #{line_num}: error: bad id")
+      next
+    end
+
+    if Hash.fetch(employees, emp_id, nil) == nil
+      puts("line #{line_num}: error: unknown employee #{emp_id}")
+      next
+    end
+
+    date_key = parse_date_str(date_str)
+    if date_key == nil
+      puts("line #{line_num}: error: bad date")
+      next
+    end
+
+    start_mins = parse_time(start_str)
+    if start_mins == nil
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    end_mins = parse_time(end_str)
+    if end_mins == nil
+      puts("line #{line_num}: error: bad time")
+      next
+    end
+
+    # Determine if shift wraps to next day
+    is_next_day = false
+    if end_mins <= start_mins
+      is_next_day = true
+    end
+
+    shift_length = if is_next_day
+      Integer.+(Integer.-(Integer.*(24, 60), start_mins), end_mins)
+    else
+      Integer.-(end_mins, start_mins)
+    end
+
+    break_mins = String.to_i(break_str) rescue nil
+    if break_mins == nil || break_mins < 0 || break_mins >= shift_length
+      puts("line #{line_num}: error: bad break")
+      next
+    end
+
+    # Enforce minimum break for shifts > 6 hours
+    if shift_length > Integer.*(6, 60)
+      if break_mins < 30
+        break_mins = 30
+      end
+    end
+
+    # Check for overlaps with other shifts of the same employee
+    has_overlap = false
+    new_shift = Shift.new(emp_id, date_key, start_mins, end_mins, break_mins, is_next_day)
+    Array.each(shifts) do |existing|
+      if Shift.emp_id(existing) == emp_id
+        if shifts_overlap(existing, new_shift)
+          has_overlap = true
+        end
+      end
+    end
+
+    if has_overlap
+      puts("line #{line_num}: error: overlapping shift")
+      next
+    end
+
+    Array.push(shifts, Shift.new(emp_id, date_key, start_mins, end_mins, break_mins, is_next_day))
+  end
+end
+
+# Calculate pay for each employee
+employee_pay = Hash.new(nil)
+Hash.each(employees) do |emp_id, emp|
+  emp_shifts = Array[]
+  Array.each(shifts) do |shift|
+    if Shift.emp_id(shift) == emp_id
+      Array.push(emp_shifts, shift)
+    end
+  end
+
+  sorted_shifts = Array.sort_by(emp_shifts) do |s|
+    date_key = Shift.date_key(s)
+    start = Shift.start_mins(s)
+    [DateKey.year(date_key), DateKey.month(date_key), DateKey.day(date_key), start]
+  end
+
+  daily_worked = Hash.new(0)
+
+  Array.each(sorted_shifts) do |s|
+    date_key = Shift.date_key(s)
+    break_mins = Shift.break_mins(s)
+    start_mins = Shift.start_mins(s)
+    end_mins = Shift.end_mins(s)
+    is_next = Shift.is_next_day(s)
+
+    shift_len = if is_next
+      Integer.+(Integer.-(Integer.*(24, 60), start_mins), end_mins)
+    else
+      Integer.-(end_mins, start_mins)
+    end
+    worked = Integer.-(shift_len, break_mins)
+
+    current_daily = Hash.fetch(daily_worked, date_key, 0)
+    Hash.store(daily_worked, date_key, Integer.+(current_daily, worked))
+  end
+
+  total_regular = 0
+  total_overtime = 0
+
+  Array.each(sorted_shifts) do |s|
+    date_key = Shift.date_key(s)
+    break_mins = Shift.break_mins(s)
+    start_mins = Shift.start_mins(s)
+    end_mins = Shift.end_mins(s)
+    is_next = Shift.is_next_day(s)
+
+    shift_len = if is_next
+      Integer.+(Integer.-(Integer.*(24, 60), start_mins), end_mins)
+    else
+      Integer.-(end_mins, start_mins)
+    end
+    worked = Integer.-(shift_len, break_mins)
+
+    daily_before = Integer.-(Hash.fetch(daily_worked, date_key, 0), worked)
+    daily_limit = Integer.*(8, 60)
+
+    if daily_before >= daily_limit
+      total_overtime = Integer.+(total_overtime, worked)
+    elsif Integer.+(daily_before, worked) <= daily_limit
+      total_regular = Integer.+(total_regular, worked)
+    else
+      regular_portion = Integer.-(daily_limit, daily_before)
+      overtime_portion = Integer.-(worked, regular_portion)
+      total_regular = Integer.+(total_regular, regular_portion)
+      total_overtime = Integer.+(total_overtime, overtime_portion)
+    end
+  end
+
+  rate = Employee.rate(emp)
+  regular_pay = Float./(Float.*(Integer.to_f(total_regular), rate), 60.0)
+  overtime_pay = Float./(Float.*(Float.*(Integer.to_f(total_overtime), rate), 1.5), 60.0)
+  total_pay = Float.+(regular_pay, overtime_pay)
+
+  Hash.store(employee_pay, emp_id, EmployeePay.new(total_regular, total_overtime, total_pay))
+end
+
+# Output
+puts(format("%-4s %-10s %8s %8s %10s", "id", "name", "regular", "overtime", "pay"))
+
+total_regular_all = 0
+total_overtime_all = 0
+total_pay_all = 0.0
+
+sorted_emp_ids = Array.sort(Hash.keys(employees))
+Array.each(sorted_emp_ids) do |emp_id|
+  emp = Hash.fetch(employees, emp_id, nil)
+  pay_info = Hash.fetch(employee_pay, emp_id, nil)
+
+  if pay_info == nil
+    regular = 0
+    overtime = 0
+    pay = 0.0
+  else
+    regular = EmployeePay.regular_mins(pay_info)
+    overtime = EmployeePay.overtime_mins(pay_info)
+    pay = EmployeePay.pay(pay_info)
+  end
+
+  regular_hours = Integer.div(regular, 60)
+  regular_mins = Integer.%(regular, 60)
+  overtime_hours = Integer.div(overtime, 60)
+  overtime_mins = Integer.%(overtime, 60)
+
+  puts(format("%-4s %-10s %8s %8s %10s", emp_id, Employee.name(emp), "#{regular_hours}:#{format("%02d", regular_mins)}", "#{overtime_hours}:#{format("%02d", overtime_mins)}", format("%.2f", pay)))
+
+  total_regular_all = Integer.+(total_regular_all, regular)
+  total_overtime_all = Integer.+(total_overtime_all, overtime)
+  total_pay_all = Float.+(total_pay_all, pay)
+end
+
+total_regular_hours = Integer.div(total_regular_all, 60)
+total_regular_mins = Integer.%(total_regular_all, 60)
+total_overtime_hours = Integer.div(total_overtime_all, 60)
+total_overtime_mins = Integer.%(total_overtime_all, 60)
+
+puts(format("%-4s %-10s %8s %8s %10s", "", "total", "#{total_regular_hours}:#{format("%02d", total_regular_mins)}", "#{total_overtime_hours}:#{format("%02d", total_overtime_mins)}", format("%.2f", total_pay_all)))

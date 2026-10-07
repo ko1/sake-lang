@@ -1,0 +1,303 @@
+# Parse input and validate
+Request = Struct.new(:time, :from_floor, :to_floor, :line_num)
+Event = Struct.new(:kind, :time, :floor, :passenger_num)  # kind: :pick or :drop
+Passenger = Struct.new(:request_time, :from_floor, :to_floor, :pick_time, :drop_time)
+
+def parse_header(line)
+  parts = String.split(line, " ")
+  if Array.size(parts) != 3
+    return nil
+  end
+  n_str, d_str, c_str = parts[0], parts[1], parts[2]
+  n = String.to_i(n_str)
+  d = String.to_i(d_str)
+  c = String.to_i(c_str)
+  [n, d, c]
+rescue
+  nil
+end
+
+def parse_request(line, prev_time)
+  parts = String.split(line, " ")
+  if Array.size(parts) != 3
+    return nil
+  end
+  begin
+    t = String.to_i(parts[0])
+    f = String.to_i(parts[1])
+    g = String.to_i(parts[2])
+    {t: t, f: f, g: g, valid: t <= prev_time, prev_time: prev_time}
+  rescue
+    nil
+  end
+end
+
+def is_valid_request(req, n, prev_time)
+  req != nil && req[:f] >= 1 && req[:f] <= n && req[:g] >= 1 && req[:g] <= n &&
+    req[:f] != req[:g] && req[:t] <= 1000 && req[:t] >= prev_time
+end
+
+# Main simulation
+header_line = gets
+if header_line == nil
+  puts("invalid header")
+  exit
+end
+
+header_parts = String.split(String.strip(header_line), " ")
+if Array.size(header_parts) != 3
+  puts("invalid header")
+  exit
+end
+
+begin
+  n = String.to_i(header_parts[0])
+  d = String.to_i(header_parts[1])
+  c = String.to_i(header_parts[2])
+rescue
+  puts("invalid header")
+  exit
+end
+
+# Parse requests
+invalid_lines = Array[]
+valid_requests = Array[]
+prev_time = 0
+line_num = 2
+
+while true
+  line = gets
+  break if line == nil
+
+  line = String.strip(line)
+  if String.size(line) == 0
+    line_num += 1
+    next
+  end
+
+  parts = String.split(line, " ")
+  if Array.size(parts) != 3
+    Array.push(invalid_lines, line_num)
+    line_num += 1
+    next
+  end
+
+  begin
+    t = String.to_i(parts[0])
+    f = String.to_i(parts[1])
+    g = String.to_i(parts[2])
+
+    if f < 1 || f > n || g < 1 || g > n || f == g || t > 1000 || t < prev_time
+      Array.push(invalid_lines, line_num)
+    else
+      Array.push(valid_requests, Request.new(t, f, g, Array.size(valid_requests) + 1))
+      prev_time = t
+    end
+  rescue
+    Array.push(invalid_lines, line_num)
+  end
+
+  line_num += 1
+end
+
+# Print invalid lines
+Array.each(invalid_lines) { |line_no| puts("line #{line_no}: invalid request") }
+
+# Check if there are any valid passengers
+if Array.size(valid_requests) == 0
+  puts("no passengers")
+  exit
+end
+
+# Simulation
+events = Array[]
+passengers = Array[]
+
+# Initialize passengers from requests
+Array.each(valid_requests) do |req|
+  Array.push(passengers, Passenger.new(Request.time(req), Request.from_floor(req), Request.to_floor(req), nil, nil))
+end
+
+# Elevator state
+floor = 1
+direction = :idle  # :up, :down, :idle
+time = 0
+waiting = Hash[]  # floor => [passenger indices]
+riding = Array[]  # passenger indices on elevator
+completed = Set[]
+
+# Initialize waiting hash
+Integer.times(n + 1) { |i| waiting[i] = Array[] }
+
+# Simulation loop
+while Array.size(completed) < Array.size(valid_requests)
+  # 1. Add waiting passengers
+  Array.each(valid_requests) do |req|
+    if Request.time(req) <= time
+      pi = Request.line_num(req) - 1
+      if !(Set.include?(completed, pi)) && !Array.include?(riding, pi) &&
+          !Array.include?(Hash.fetch(waiting, Request.from_floor(req), Array[]), pi)
+        Array.push(Hash.fetch(waiting, Request.from_floor(req), Array[]), pi)
+      end
+    end
+  end
+
+  # 2. Drop off passengers
+  to_drop = Array[]
+  Array.each(riding) do |pi|
+    if Passenger.to_floor(Array.at(passengers, pi)) == floor
+      Array.push(to_drop, pi)
+    end
+  end
+
+  Array.each(to_drop) do |pi|
+    riding_copy = Array[]
+    Array.each(riding) { |p| Array.push(riding_copy, p) if p != pi }
+    riding = riding_copy
+
+    pass = Array.at(passengers, pi)
+    Array.push(events, Event.new(:drop, time, floor, pi + 1))
+    drop_time = time
+    Array.set(passengers, pi, Passenger.new(Passenger.request_time(pass), Passenger.from_floor(pass),
+                                           Passenger.to_floor(pass), Passenger.pick_time(pass), drop_time))
+    Set.add(completed, pi)
+  end
+
+  # 3. Update direction
+  targets = Set[]
+  Array.each(riding) { |pi| Set.add(targets, Passenger.to_floor(Array.at(passengers, pi))) }
+  Array.each(waiting) do |f, passengers_on_floor|
+    Array.each(passengers_on_floor) { |pi| Set.add(targets, f) }
+  end
+
+  new_direction = direction
+  if direction == :up
+    has_above = false
+    Set.each(targets) { |tgt| has_above = true if tgt > floor }
+    if !has_above
+      has_below = false
+      Set.each(targets) { |tgt| has_below = true if tgt < floor }
+      if has_below
+        new_direction = :down
+      else
+        new_direction = :idle
+      end
+    end
+  elsif direction == :down
+    has_below = false
+    Set.each(targets) { |tgt| has_below = true if tgt < floor }
+    if !has_below
+      has_above = false
+      Set.each(targets) { |tgt| has_above = true if tgt > floor }
+      if has_above
+        new_direction = :up
+      else
+        new_direction = :idle
+      end
+    end
+  else  # idle
+    if Set.size(targets) > 0
+      # Find nearest target
+      nearest = nil
+      dist = nil
+      Set.each(targets) do |tgt|
+        d = Integer.abs(tgt - floor)
+        if dist == nil || d < dist || (d == dist && (nearest == nil || tgt < nearest))
+          nearest = tgt
+          dist = d
+        end
+      end
+
+      if nearest == floor
+        # Go toward the lowest passenger at this floor
+        waiting_at_floor = Hash.fetch(waiting, floor, Array[])
+        if Array.size(waiting_at_floor) > 0
+          lowest_pi = Array.at(waiting_at_floor, 0)
+          Array.each(waiting_at_floor) do |pi|
+            if pi < lowest_pi
+              lowest_pi = pi
+            end
+          end
+          to_floor = Passenger.to_floor(Array.at(passengers, lowest_pi))
+          new_direction = if to_floor > floor then :up else :down end
+        end
+      else
+        new_direction = if nearest > floor then :up else :down end
+      end
+    end
+  end
+  direction = new_direction
+
+  # 4. Pick up passengers
+  to_pick = Array[]
+  waiting_at_floor = Hash.fetch(waiting, floor, Array[])
+  Array.each(waiting_at_floor) do |pi|
+    if Array.size(riding) < c
+      to_floor = Passenger.to_floor(Array.at(passengers, pi))
+      elevator_going = if direction == :up then to_floor > floor elsif direction == :down then to_floor < floor else false end
+
+      if elevator_going || direction == :idle
+        Array.push(to_pick, pi)
+      end
+    end
+  end
+
+  # Sort to-pick by passenger number (lowest first)
+  to_pick_sorted = Array.sort(to_pick)
+
+  Array.each(to_pick_sorted) do |pi|
+    Array.push(riding, pi)
+    Array.push(events, Event.new(:pick, time, floor, pi + 1))
+    pass = Array.at(passengers, pi)
+    Array.set(passengers, pi, Passenger.new(Passenger.request_time(pass), Passenger.from_floor(pass),
+                                           Passenger.to_floor(pass), time, nil))
+
+    # Remove from waiting
+    new_waiting = Array[]
+    Array.each(waiting_at_floor) { |p| Array.push(new_waiting, p) if p != pi }
+    waiting[floor] = new_waiting
+  end
+
+  # 5. Update time
+  if Array.size(to_drop) > 0 || Array.size(to_pick_sorted) > 0
+    time += d
+  else
+    if direction == :up
+      floor += 1
+    elsif direction == :down
+      floor -= 1
+    end
+    time += 1
+  end
+end
+
+# Output
+Array.each(events) do |evt|
+  kind_str = if Event.kind(evt) == :pick then "pick" else "drop" end
+  puts("t=#{Event.time(evt)} floor #{Event.floor(evt)} #{kind_str} P#{Event.passenger_num(evt)}")
+end
+
+# Calculate statistics
+total_wait = 0
+total_ride = 0
+Array.each_with_index(passengers) do |pass, pi|
+  wait = Passenger.pick_time(pass) - Passenger.request_time(pass)
+  ride = Passenger.drop_time(pass) - Passenger.pick_time(pass)
+  total_wait += wait
+  total_ride += ride
+  puts("P#{pi + 1} wait #{wait} ride #{ride}")
+end
+
+avg_wait = total_wait.to_f / Array.size(passengers)
+avg_ride = total_ride.to_f / Array.size(passengers)
+puts("average wait #{format("%.2f", avg_wait)} ride #{format("%.2f", avg_ride)}")
+
+# Find last drop-off time
+last_drop = 0
+Array.each(events) do |evt|
+  if Event.kind(evt) == :drop
+    last_drop = Event.time(evt)
+  end
+end
+
+puts("done at t=#{last_drop}")

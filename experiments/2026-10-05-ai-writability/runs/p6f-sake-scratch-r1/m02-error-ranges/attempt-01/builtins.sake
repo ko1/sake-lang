@@ -1,0 +1,238 @@
+# The 25 built-in functions (SPEC section 10).
+#
+# A call checks the argument count, then each argument in order (its type,
+# then its value); every error is reported at the `(` of the call.
+
+module Builtins
+  module_function
+
+  def names
+    once do
+      String["print", "len", "push", "pop", "keys", "values", "has", "get", "del", "str", "int",
+             "type", "range", "join", "split", "slice", "sort", "contains", "min", "max", "upper",
+             "lower", "reverse", "map", "filter"]
+    end
+  end
+
+  # One value per built-in, in the order of names.
+  def values = once { Array.map(names) { |name| Builtin.new(name) } }
+
+  # [least, most] arguments; most is -1 when there is no maximum.
+  def arity(name)
+    case name
+    in "print" then [0, -1]
+    in "min" | "max" then [1, -1]
+    in "get" | "slice" then [2, 3]
+    in "range" then [1, 3]
+    in "push" | "has" | "del" | "join" | "split" | "contains" | "map" | "filter" then [2, 2]
+    else [1, 1]
+    end
+  end
+
+  def type_error(name, n, expected, v, sp)
+    Fail.runtime("type", sp, "#{name}: argument #{n} must be #{expected}, got #{Values.type_name(v)}")
+  end
+
+  def want_int(name, args, n, sp)
+    v = args[n - 1]
+    return v if (v in Integer)
+    type_error(name, n, "an int", v, sp)
+  end
+
+  def want_string(name, args, n, sp)
+    v = args[n - 1]
+    return v if (v in String)
+    type_error(name, n, "a string", v, sp)
+  end
+
+  # The items of an array argument.
+  def want_array(name, args, n, sp)
+    v = args[n - 1]
+    return MiniArray.items(v) if (v in MiniArray)
+    type_error(name, n, "an array", v, sp)
+  end
+
+  # The entries of a map argument.
+  def want_map(name, args, n, sp)
+    v = args[n - 1]
+    return MiniMap.entries(v) if (v in MiniMap)
+    type_error(name, n, "a map", v, sp)
+  end
+
+  def want_key(name, args, n, sp)
+    v = args[n - 1]
+    return v if (v in String | Integer)
+    type_error(name, n, "a string or int", v, sp)
+  end
+
+  def want_function(name, args, n, sp)
+    v = args[n - 1]
+    return v if (v in Closure | Builtin)
+    type_error(name, n, "a function", v, sp)
+  end
+
+  def call(vm, b, args, sp)
+    name = Builtin.name(b)
+    min, max = arity(name)
+    n = Array.size(args)
+    if n < min || (max >= 0 && n > max)
+      Fail.runtime("arity", sp, Fail.arity_message(name, min, max, n))
+    end
+    case name
+    in "print"
+      Kernel.print(Array.join(Array.map(args) { |a| Text.str(a) }, " ") + "\n")
+      nil
+    in "len" then len(args, sp)
+    in "push"
+      Array.push(want_array(name, args, 1, sp), args[1])
+      nil
+    in "pop"
+      a = want_array(name, args, 1, sp)
+      Fail.runtime("value", sp, "pop: array is empty") if Array.empty?(a)
+      Array.pop(a)
+    in "keys" then MiniArray.new(Hash.keys(want_map(name, args, 1, sp)))
+    in "values" then MiniArray.new(Hash.values(want_map(name, args, 1, sp)))
+    in "has"
+      m = want_map(name, args, 1, sp)
+      Hash.key?(m, want_key(name, args, 2, sp))
+    in "get"
+      m = want_map(name, args, 1, sp)
+      k = want_key(name, args, 2, sp)
+      Hash.key?(m, k) ? m[k] : args[2]
+    in "del"
+      m = want_map(name, args, 1, sp)
+      k = want_key(name, args, 2, sp)
+      Ops.missing_key(k, sp) unless Hash.key?(m, k)
+      Hash.delete(m, k)
+    in "str" then Text.str(args[0])
+    in "int" then to_int(args[0], sp)
+    in "type" then Values.type_name(args[0])
+    in "range" then range(args, sp)
+    in "join"
+      a = want_array(name, args, 1, sp)
+      sep = want_string(name, args, 2, sp)
+      Array.join(Array.map(a) { |e| Text.str(e) }, sep)
+    in "split" then split(args, sp)
+    in "slice" then slice(args, sp)
+    in "sort" then sort(args, sp)
+    in "contains" then contains(args, sp)
+    in "min" | "max" then extreme(name, args, sp)
+    in "upper" then String.upcase(want_string(name, args, 1, sp))
+    in "lower" then String.downcase(want_string(name, args, 1, sp))
+    in "reverse"
+      x = args[0]
+      case x
+      in MiniArray then MiniArray.new(Array.reverse(MiniArray.items(x)))
+      in String then String.reverse(x)
+      else type_error(name, 1, "an array or string", x, sp)
+      end
+    in "map" | "filter" then map_or_filter(vm, name, args, sp)
+    end
+  end
+
+  def len(args, sp)
+    x = args[0]
+    case x
+    in String then String.length(x)
+    in MiniArray then Array.size(MiniArray.items(x))
+    in MiniMap then Hash.size(MiniMap.entries(x))
+    else type_error("len", 1, "a string, array or map", x, sp)
+    end
+  end
+
+  # An optional `-` then one or more digits, nothing else.
+  def to_int(x, sp)
+    case x
+    in Integer then x
+    in String
+      Fail.runtime("value", sp, "int: cannot convert #{Text.repr(x, 0)} to int") unless String.match?(x, /\A-?[0-9]+\z/)
+      String.to_i(x)
+    else type_error("int", 1, "an int or string", x, sp)
+    end
+  end
+
+  def range(args, sp)
+    Array.each_index(args) { |i| want_int("range", args, i + 1, sp) }
+    n = Array.size(args)
+    start = n == 1 ? 0 : want_int("range", args, 1, sp)
+    stop = n == 1 ? want_int("range", args, 1, sp) : want_int("range", args, 2, sp)
+    step = n == 3 ? want_int("range", args, 3, sp) : 1
+    Fail.runtime("value", sp, "range: step must not be zero") if step == 0
+    out = Array[]
+    i = start
+    while (step > 0 && i < stop) || (step < 0 && i > stop)
+      Array.push(out, i)
+      i += step
+    end
+    MiniArray.new(out)
+  end
+
+  # The pieces between occurrences of sep, keeping empty ones.
+  def split(args, sp)
+    s = want_string("split", args, 1, sp)
+    sep = want_string("split", args, 2, sp)
+    Fail.runtime("value", sp, "split: separator must not be empty") if String.empty?(sep)
+    pieces = Array[]
+    start = 0
+    while true
+      found = String.index(s, sep, start)
+      break unless found
+      Array.push(pieces, String.slice(s, start, found - start) || "")
+      start = found + String.length(sep)
+    end
+    Array.push(pieces, String.slice(s, start, String.length(s) - start) || "")
+    MiniArray.new(pieces)
+  end
+
+  def slice(args, sp)
+    x = args[0]
+    type_error("slice", 1, "an array or string", x, sp) unless (x in MiniArray | String)
+    lo = want_int("slice", args, 2, sp)
+    hi = Array.size(args) == 3 ? want_int("slice", args, 3, sp) : nil
+    Ops.slice(x, lo, hi, sp)
+  end
+
+  # All ints or all strings: each element after the first is checked against
+  # the first.
+  def sort(args, sp)
+    a = want_array("sort", args, 1, sp)
+    return MiniArray.new(Array.dup(a)) if Array.size(a) <= 1
+    first = a[0]
+    Array.each(Array.drop(a, 1)) do |e|
+      same = ((first in Integer) && (e in Integer)) || ((first in String) && (e in String))
+      next if same
+      Fail.runtime("type", sp, "sort: cannot compare #{Values.type_name(first)} and #{Values.type_name(e)}")
+    end
+    MiniArray.new(Array.sort(a))
+  end
+
+  def contains(args, sp)
+    c = args[0]
+    x = args[1]
+    case c
+    in MiniArray | MiniMap then Ops.member?(x, c, sp)
+    in String then String.include?(c, want_string("contains", args, 2, sp))
+    else type_error("contains", 1, "an array, map or string", c, sp)
+    end
+  end
+
+  def extreme(name, args, sp)
+    best = want_int(name, args, 1, sp)
+    Integer.upto(2, Array.size(args)) do |n|
+      v = want_int(name, args, n, sp)
+      best = v if (name == "min" && v < best) || (name == "max" && v > best)
+    end
+    best
+  end
+
+  # map and filter call f with one argument, over a snapshot of the array.
+  def map_or_filter(vm, name, args, sp)
+    a = Array.dup(want_array(name, args, 1, sp))
+    f = want_function(name, args, 2, sp)
+    if name == "map"
+      MiniArray.new(Array.map(a) { |e| Interp.call_value(vm, f, Array[e], sp) })
+    else
+      MiniArray.new(Array.select(a) { |e| Values.truthy?(Interp.call_value(vm, f, Array[e], sp)) })
+    end
+  end
+end

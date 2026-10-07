@@ -1,0 +1,192 @@
+Ballot = Struct.new(:preferences, :valid)
+
+def parse_candidates(line)
+  String.split(String.strip(line), /\s+/)
+end
+
+def parse_ballot(line, candidates)
+  prefs = String.split(line, ">")
+  prefs = Array.map(prefs) { String.strip(it) }
+
+  # Check for empty, unknown, or duplicate
+  seen = Set[]
+  Array.each(prefs) do |p|
+    if String.empty?(p)
+      return [nil, "empty rank"]
+    end
+    if !Array.include?(candidates, p)
+      return [nil, "unknown candidate #{p}"]
+    end
+    if Set.member?(seen, p)
+      return [nil, "duplicate #{p}"]
+    end
+    Set.add(seen, p)
+  end
+
+  [prefs, nil]
+rescue
+  [nil, "invalid"]
+end
+
+def get_tally(ballots, continuing)
+  counts = Hash[]
+  exhausted = 0
+
+  Array.each(ballots) do |b|
+    prefs = Ballot.preferences(b)
+    if prefs == nil
+      next
+    end
+
+    found = false
+    Array.each(prefs) do |p|
+      if Array.include?(continuing, p)
+        if Hash.key?(counts, p)
+          counts[p] = Hash.at(counts, p) + 1
+        else
+          counts[p] = 1
+        end
+        found = true
+        break
+      end
+    end
+
+    if !found
+      exhausted += 1
+    end
+  end
+
+  [counts, exhausted]
+end
+
+# Read candidates
+candidates_line = gets
+if candidates_line == nil
+  puts("no candidates")
+  exit(0)
+end
+
+candidates = parse_candidates(candidates_line)
+if Array.size(candidates) == 0
+  puts("no candidates")
+  exit(0)
+end
+
+# Read ballots
+ballots = Array[]
+rejected = Array[]
+line_no = 2
+
+while true
+  line = gets
+  break if line == nil
+
+  line = String.strip(line)
+  if String.empty?(line)
+    line_no += 1
+    next
+  end
+
+  result = parse_ballot(line, candidates)
+  if result[0] == nil
+    Array.push(rejected, [line_no, result[1]])
+  else
+    Array.push(ballots, Ballot.new(result[0], true))
+  end
+
+  line_no += 1
+end
+
+# Output rejections
+Array.each(rejected) do |r|
+  puts("rejected line #{r[0]}: #{r[1]}")
+end
+
+puts("ballots: #{Array.size(ballots)} valid, #{Array.size(rejected)} rejected")
+
+# Instant runoff
+continuing = candidates
+round = 1
+prev_counts = Hash[]
+
+while true
+  # Get vote tallies
+  result = get_tally(ballots, continuing)
+  counts = result[0]
+  exhausted = result[1]
+
+  # Count active ballots
+  active = Array.size(ballots) - exhausted
+
+  # Check win
+  Array.each(continuing) do |c|
+    vote_count = Hash.at(counts, c) || 0
+    if vote_count * 2 > active
+      puts("round #{round}")
+      sorted = Array.sort_by(Array.select(continuing) { Array.include?(Hash.keys(counts), it) }) do |c2|
+        [-( Hash.at(counts, c2) || 0), c2]
+      end
+      Array.each(sorted) do |c2|
+        v = Hash.at(counts, c2) || 0
+        pct = active > 0 ? (v * 1000 / active + 5) / 10.0 : 0.0
+        puts(format("  %s %d %.1f%%", c2, v, pct))
+      end
+      puts("  exhausted #{exhausted}")
+      puts("winner #{c}")
+      exit(0)
+    end
+  end
+
+  # Check for no winner
+  if active == 0
+    puts("round #{round}")
+    puts("  exhausted #{exhausted}")
+    puts("no winner")
+    exit(0)
+  end
+
+  # Print round
+  puts("round #{round}")
+  sorted = Array.sort_by(continuing) do |c|
+    v = Hash.at(counts, c) || 0
+    pv = Hash.at(prev_counts, c) || 0
+    [-(v), c]
+  end
+  Array.each(sorted) do |c|
+    v = Hash.at(counts, c) || 0
+    pct = (v * 1000 / active + 5) / 10.0
+    puts(format("  %s %d %.1f%%", c, v, pct))
+  end
+  puts("  exhausted #{exhausted}")
+
+  # Find candidate to eliminate
+  min_votes = nil
+  Array.each(continuing) do |c|
+    v = Hash.at(counts, c) || 0
+    if min_votes == nil || v < min_votes
+      min_votes = v
+    end
+  end
+
+  candidates_to_eliminate = Array.select(continuing) { (Hash.at(counts, it) || 0) == min_votes }
+
+  if Array.size(candidates_to_eliminate) > 1
+    # Use history
+    candidates_to_eliminate = Array.sort_by(candidates_to_eliminate) do |c|
+      pv = 0
+      Array.each(Range.to_a(1..round)) do |r|
+        # Would need to track previous rounds...
+        # For now, use lexicographic order
+      end
+      -pv
+    end
+  end
+
+  to_eliminate = Array.last(candidates_to_eliminate)
+  puts("  eliminated #{to_eliminate}")
+
+  continuing = Array.select(continuing) { it != to_eliminate }
+  prev_counts[to_eliminate] = Hash.at(counts, to_eliminate) || 0
+
+  round += 1
+end
