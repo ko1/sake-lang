@@ -1,0 +1,233 @@
+def parse_score(score_str)
+  if score_str == "EX"
+    Array["EX", 0, 0]
+  elsif score_str == "-"
+    Array["MISS", 0, 0]
+  elsif String.include?(score_str, "/")
+    parts = String.split(score_str, "/")
+    if Array.length(parts) != 2
+      nil
+    else
+      p_str = Array.at(parts, 0)
+      m_str = Array.at(parts, 1)
+      p = Kernel.Integer(p_str) rescue nil
+      m = Kernel.Integer(m_str) rescue nil
+      if p == nil || m == nil || m <= 0 || p > m
+        nil
+      else
+        Array["SCORE", p, m]
+      end
+    end
+  else
+    nil
+  end
+end
+
+lines = Array[]
+Array.each(IO.readlines(IO.stdin())) { |line|
+  stripped = String.strip(line)
+  Array.push(lines, stripped)
+}
+
+weights = Hash[]
+students = Hash[]
+errors = Array[]
+line_num = 0
+
+Array.each(lines) { |line|
+  line_num = Integer.+(line_num, 1)
+
+  if String.empty?(line) || String.start_with?(line, "#")
+    # Skip blank and comment lines
+  else
+    fields = String.split(line)
+
+    if Array.length(fields) == 3 && Array.at(fields, 0) == "weight"
+      category = Array.at(fields, 1)
+      weight_str = Array.at(fields, 2)
+
+      # Validate weight
+      weight = Kernel.Integer(weight_str) rescue nil
+      if weight == nil || weight < 1 || weight > 100
+        Array.push(errors, Array[line_num, "bad weight #{weight_str}"])
+      elsif Hash.has_key?(weights, category)
+        Array.push(errors, Array[line_num, "duplicate category #{category}"])
+      else
+        Hash.store(weights, category, weight)
+      end
+    elsif Array.length(fields) == 3
+      student = Array.at(fields, 0)
+      category = Array.at(fields, 1)
+      score_str = Array.at(fields, 2)
+
+      # Validate format and values
+      if !Hash.has_key?(weights, category)
+        Array.push(errors, Array[line_num, "unknown category #{category}"])
+      else
+        score_info = parse_score(score_str)
+        if score_info == nil
+          Array.push(errors, Array[line_num, "bad score #{score_str}"])
+        else
+          if !Hash.has_key?(students, student)
+            Hash.store(students, student, Hash[])
+          end
+          student_data = Hash.fetch(students, student)
+          if !Hash.has_key?(student_data, category)
+            Hash.store(student_data, category, Array[])
+          end
+          category_scores = Hash.fetch(student_data, category)
+          Array.push(category_scores, score_info)
+        end
+      end
+    else
+      Array.push(errors, Array[line_num, "bad format"])
+    end
+  end
+}
+
+# Output errors
+Array.each(errors) { |err|
+  line_num = Array.at(err, 0)
+  msg = Array.at(err, 1)
+  puts("line #{line_num}: #{msg}")
+}
+
+# Calculate percentages and grades
+results = Array[]
+max_name_len = 7
+
+Array.each(Hash.keys(students)) { |name|
+  if String.length(name) > max_name_len
+    max_name_len = String.length(name)
+  end
+}
+
+Array.each(Hash.keys(students)) { |name|
+  student_data = Hash.fetch(students, name)
+
+  # Calculate weighted average
+  total_weight = 0
+  total_weighted_sum = 0.0
+  has_score = false
+
+  Array.each(Hash.keys(weights)) { |category|
+    if Hash.has_key?(student_data, category)
+      scores = Hash.fetch(student_data, category)
+
+      # Filter out EX entries and sum points/maxima
+      points = 0
+      maxima = 0
+      Array.each(scores) { |score_info|
+        type = Array.at(score_info, 0)
+        p = Array.at(score_info, 1)
+        m = Array.at(score_info, 2)
+        if type != "EX"
+          points = Integer.+(points, p)
+          maxima = Integer.+(maxima, m)
+        end
+      }
+
+      if maxima > 0
+        has_score = true
+        weight = Hash.fetch(weights, category)
+        total_weight = Integer.+(total_weight, weight)
+        fraction = Float./(Kernel.Float(points), Kernel.Float(maxima))
+        total_weighted_sum = Float.+(total_weighted_sum, Float.*(Kernel.Float(weight), fraction))
+      end
+    end
+  }
+
+  if has_score
+    percentage = Float./(total_weighted_sum, Kernel.Float(total_weight))
+    rounded = Float.round(Float.*(percentage, 100.0), 1)
+
+    # Determine grade
+    if Float.>=(rounded, 90.0)
+      grade = "A"
+    elsif Float.>=(rounded, 80.0)
+      grade = "B"
+    elsif Float.>=(rounded, 70.0)
+      grade = "C"
+    elsif Float.>=(rounded, 60.0)
+      grade = "D"
+    else
+      grade = "F"
+    end
+
+    # Count missing entries
+    missing = 0
+    Array.each(Hash.keys(weights)) { |category|
+      if Hash.has_key?(student_data, category)
+        scores = Hash.fetch(student_data, category)
+        Array.each(scores) { |score_info|
+          type = Array.at(score_info, 0)
+          if type == "MISS"
+            missing = Integer.+(missing, 1)
+          end
+        }
+      end
+    }
+
+    Array.push(results, Array[name, rounded, grade, missing, true])
+  else
+    # No percentage
+    missing = 0
+    Array.each(Hash.keys(weights)) { |category|
+      if Hash.has_key?(student_data, category)
+        scores = Hash.fetch(student_data, category)
+        Array.each(scores) { |score_info|
+          type = Array.at(score_info, 0)
+          if type != "EX"
+            missing = Integer.+(missing, 1)
+          end
+        }
+      end
+    }
+    Array.push(results, Array[name, 0.0, "-", missing, false])
+  end
+}
+
+# Sort results
+sorted = Array.sort_by(results) { |r|
+  has_score = Array.at(r, 4)
+  name = Array.at(r, 0)
+  score = Array.at(r, 1)
+  if has_score
+    Array[-score, name]
+  else
+    Array[1, name]  # Students without score come last
+  end
+}
+
+# Print header
+puts(String.ljust("Student", max_name_len) + "  Score  G  Missing")
+
+# Print rows
+all_percentages = Array[]
+Array.each(sorted) { |r|
+  name = Array.at(r, 0)
+  score = Array.at(r, 1)
+  grade = Array.at(r, 2)
+  missing = Array.at(r, 3)
+  has_score = Array.at(r, 4)
+
+  name_col = String.ljust(name, max_name_len)
+  if has_score
+    score_col = String.rjust(Kernel.to_s(score), 5)
+    Array.push(all_percentages, score)
+  else
+    score_col = String.rjust("n/a", 5)
+  end
+
+  missing_col = String.rjust(Kernel.to_s(missing), 7)
+  puts("#{name_col}  #{score_col}  #{grade}  #{missing_col}")
+}
+
+# Class average
+if Array.empty?(all_percentages)
+  puts("class average: n/a")
+else
+  avg = Float./(Kernel.Float(Array.sum(all_percentages)), Kernel.Float(Array.length(all_percentages)))
+  rounded_avg = Float.round(avg, 1)
+  puts("class average: #{rounded_avg}")
+end

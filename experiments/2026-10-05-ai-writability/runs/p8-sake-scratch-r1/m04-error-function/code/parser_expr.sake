@@ -1,0 +1,212 @@
+# The parser, part 2: expressions (SPEC section 3.2), from loosest to tightest:
+#   or, and, not, comparisons (not chained), + -, * / %, unary -, ** (right),
+#   postfix call / index / slice / field, primary.
+
+class Parser
+  def parse_expr(ps) = parse_or(ps)
+
+  def parse_or(ps)
+    left = parse_and(ps)
+    while at_keyword?(ps, "or")
+      t = advance(ps)
+      left = LogicOp.new("or", left, parse_and(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_and(ps)
+    left = parse_not(ps)
+    while at_keyword?(ps, "and")
+      t = advance(ps)
+      left = LogicOp.new("and", left, parse_not(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_not(ps)
+    return parse_comparison(ps) unless at_keyword?(ps, "not")
+    t = advance(ps)
+    NotOp.new(parse_not(ps), Token.line(t), Token.col(t))
+  end
+
+  def comparison_ops = once { Set["==", "!=", "<", "<=", ">", ">="] }
+
+  def at_comparison?(ps)
+    t = peek(ps)
+    (Token.kind(t) == :op && Set.include?(comparison_ops, Token.text(t))) || at_keyword?(ps, "in")
+  end
+
+  def parse_comparison(ps)
+    left = parse_additive(ps)
+    return left unless at_comparison?(ps)
+    t = advance(ps)
+    right = parse_additive(ps)
+    syntax_error(peek(ps), "comparison operators cannot be chained") if at_comparison?(ps)
+    BinOp.new(Token.text(t), left, right, Token.line(t), Token.col(t))
+  end
+
+  def parse_additive(ps)
+    left = parse_multiplicative(ps)
+    while at_op?(ps, "+") || at_op?(ps, "-")
+      t = advance(ps)
+      left = BinOp.new(Token.text(t), left, parse_multiplicative(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_multiplicative(ps)
+    left = parse_unary(ps)
+    while at_op?(ps, "*") || at_op?(ps, "/") || at_op?(ps, "%")
+      t = advance(ps)
+      left = BinOp.new(Token.text(t), left, parse_unary(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_unary(ps)
+    return parse_power(ps) unless at_op?(ps, "-")
+    t = advance(ps)
+    NegOp.new(parse_unary(ps), Token.line(t), Token.col(t))
+  end
+
+  # The exponent may itself be a negation, and ** groups to the right.
+  def parse_power(ps)
+    base = parse_postfix(ps)
+    return base unless at_op?(ps, "**")
+    t = advance(ps)
+    BinOp.new("**", base, parse_unary(ps), Token.line(t), Token.col(t))
+  end
+
+  def parse_postfix(ps)
+    node = parse_primary(ps)
+    while at_op?(ps, "(") || at_op?(ps, "[") || at_op?(ps, ".")
+      if at_op?(ps, "(")
+        t = advance(ps)
+        args = parse_list(ps, ")")
+        node = CallExpr.new(node, args, Token.line(t), Token.col(t))
+      elsif at_op?(ps, "[")
+        node = parse_index(ps, node)
+      else
+        t = advance(ps)
+        name = expect_name(ps)
+        node = FieldExpr.new(node, Token.text(name), Token.line(t), Token.col(t))
+      end
+    end
+    node
+  end
+
+  # After `[`: `a[i]`, or a slice `a[i:j]` with either bound left out.
+  def parse_index(ps, target)
+    t = advance(ps)
+    lo = nil
+    lo = parse_expr(ps) unless at_op?(ps, ":")
+    if at_op?(ps, ":")
+      advance(ps)
+      hi = nil
+      hi = parse_expr(ps) unless at_op?(ps, "]")
+      expect_op(ps, "]")
+      return SliceExpr.new(target, lo, hi, Token.line(t), Token.col(t))
+    end
+    expect_op(ps, "]")
+    if lo
+      IndexExpr.new(target, lo, Token.line(t), Token.col(t))
+    else
+      Fail.internal("index without an expression")
+    end
+  end
+
+  # Comma-separated expressions up to the closing token, which is consumed;
+  # a trailing comma is allowed.
+  def parse_list(ps, close)
+    items = Array[]
+    until at_op?(ps, close)
+      Array.push(items, parse_expr(ps))
+      break unless at_op?(ps, ",")
+      advance(ps)
+    end
+    expect_op(ps, close)
+    items
+  end
+
+  def parse_primary(ps)
+    t = peek(ps)
+    line = Token.line(t)
+    col = Token.col(t)
+    case Token.kind(t)
+    in :int
+      advance(ps)
+      IntLit.new(Token.int_value(t), line, col)
+    in :string
+      advance(ps)
+      parse_string(t)
+    in :name
+      advance(ps)
+      NameRef.new(Token.text(t), line, col, 0, 0)
+    in :keyword
+      case Token.text(t)
+      in "true" | "false"
+        advance(ps)
+        BoolLit.new(Token.text(t) == "true", line, col)
+      in "nil"
+        advance(ps)
+        NilLit.new(line, col)
+      in "fn"
+        advance(ps)
+        parse_function_rest(ps, "", t)
+      else expected(ps, "expression")
+      end
+    in :op
+      case Token.text(t)
+      in "("
+        advance(ps)
+        inner = parse_expr(ps)
+        expect_op(ps, ")")
+        inner
+      in "["
+        advance(ps)
+        ArrayLit.new(parse_list(ps, "]"), line, col)
+      in "{"
+        advance(ps)
+        parse_map(ps, line, col)
+      else expected(ps, "expression")
+      end
+    else expected(ps, "expression")
+    end
+  end
+
+  # After `{`: `key: value` entries up to `}`.
+  def parse_map(ps, line, col)
+    entries = MapEntry[]
+    until at_op?(ps, "}")
+      start = peek(ps)
+      key = parse_expr(ps)
+      expect_op(ps, ":")
+      value = parse_expr(ps)
+      Array.push(entries, MapEntry.new(key, value, Token.line(start), Token.col(start)))
+      break unless at_op?(ps, ",")
+      advance(ps)
+    end
+    expect_op(ps, "}")
+    MapLit.new(entries, line, col)
+  end
+
+  # A string token: literal text, or text and interpolations, each of which is
+  # parsed from its own token list as one expression followed by its `}`.
+  def parse_string(tok)
+    parts = Token.parts(tok)
+    line = Token.line(tok)
+    col = Token.col(tok)
+    return StrLit.new(Array.join(parts, ""), line, col) if Array.all?(parts) { (it in String) }
+    pieces = Array.map(parts) do |part|
+      case part
+      in String then part
+      in Array
+        sub = Parser.new(part, 0)
+        expr = parse_expr(sub)
+        expected(sub, "'}'") unless at_kind?(sub, :interp_end)
+        expr
+      end
+    end
+    InterpStr.new(pieces, line, col)
+  end
+end

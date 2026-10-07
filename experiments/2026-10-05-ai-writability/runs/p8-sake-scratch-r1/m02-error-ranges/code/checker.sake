@@ -1,0 +1,299 @@
+# The static checks (SPEC section 5): walk the whole program in source order,
+# stop at the first error, and record in the tree where each name lives
+# (NameRef hops/slot, Binder slot, Block nslots) for the evaluator.
+
+class Checker
+  attr_reader scope, in_loop, in_function
+
+  def check_program(program)
+    ck = Checker.new(SScope.open(nil), false, false)
+    check_list(ck, program)
+    Block.set_nslots(program, SScope.nslots(Checker.scope(ck)))
+  end
+
+  # ---- Scopes and declarations ----
+
+  def ensure_fresh(ck, name, span)
+    return unless Hash.key?(SScope.decls(@scope), name)
+    Fail.static(span, "'#{name}' is already declared in this scope")
+  end
+
+  # Declares a name in the current scope and returns its slot.
+  def declare(ck, name, span, kind, min_args, max_args)
+    ensure_fresh(ck, name, span)
+    slot = SScope.nslots(@scope)
+    SScope.set_nslots(@scope, slot + 1)
+    SScope.decls(@scope)[name] = Decl.new(kind, slot, min_args, max_args)
+    slot
+  end
+
+  def declare_var(ck, b)
+    Binder.set_slot(b, declare(ck, Binder.name(b), Binder.span(b), :var, 0, 0))
+  end
+
+  # Runs the checks of a block in a new scope of its own.
+  def check_scoped(ck, block)
+    outer = @scope
+    @scope = SScope.open(outer)
+    check_list(ck, block)
+    Block.set_nslots(block, SScope.nslots(@scope))
+    @scope = outer
+  end
+
+  # A statement list: its function declarations are visible from the start.
+  def check_list(ck, block)
+    Array.each(Block.fns(block)) do |f|
+      b = FnStmt.binder(f)
+      fn = FnStmt.fn(f)
+      max = Array.size(FnLit.params(fn))
+      Binder.set_slot(b, declare(ck, Binder.name(b), Binder.span(b), :fn, FnLit.min_args(fn), max))
+    end
+    stmts = Block.stmts(block)
+    last = Array.size(stmts) - 1
+    Array.each_with_index(stmts) do |stmt, i|
+      check_stmt(ck, stmt)
+      check_reachable(stmt) if i < last
+    end
+  end
+
+  # A jump followed by another statement of the same list.
+  def check_reachable(stmt)
+    case stmt
+    in BreakStmt then Fail.static(BreakStmt.span(stmt), "code after 'break' is unreachable")
+    in ContinueStmt then Fail.static(ContinueStmt.span(stmt), "code after 'continue' is unreachable")
+    in ReturnStmt then Fail.static(ReturnStmt.span(stmt), "code after 'return' is unreachable")
+    in ThrowStmt then Fail.static(ThrowStmt.span(stmt), "code after 'throw' is unreachable")
+    else nil
+    end
+  end
+
+  # The declaration a name refers to, as [decl, hops], or nil.
+  def lookup(ck, name)
+    s = @scope
+    hops = 0
+    while s
+      d = SScope.decls(s)[name]
+      return [d, hops] if d
+      s = SScope.parent(s)
+      hops += 1
+    end
+    b = Scopes.builtin_decls[name]
+    return [b, -1] if b
+    nil
+  end
+
+  # Resolves a use of a name, recording where it lives.
+  def resolve(ck, ref)
+    name = NameRef.name(ref)
+    found = lookup(ck, name)
+    unless found
+      message = "undefined name '#{name}'"
+      hint = Scopes.suggestion(@scope, name)
+      message = "#{message}; did you mean '#{hint}'?" if hint
+      Fail.static(NameRef.span(ref), message)
+    end
+    decl, hops = found
+    NameRef.set_hops(ref, hops)
+    NameRef.set_slot(ref, Decl.slot(decl))
+    decl
+  end
+
+  # ---- Statements ----
+
+  def check_stmt(ck, stmt)
+    case stmt
+    in ExprStmt then check_expr(ck, ExprStmt.expr(stmt))
+    in LetStmt
+      value = LetStmt.value(stmt)
+      check_expr(ck, value) if value
+      declare_var(ck, LetStmt.binder(stmt))
+    in LetArrayStmt
+      check_expr(ck, LetArrayStmt.value(stmt))
+      Array.each(LetArrayStmt.binders(stmt)) { |b| declare_var(ck, b) }
+    in ConstStmt
+      check_expr(ck, ConstStmt.value(stmt))
+      b = ConstStmt.binder(stmt)
+      Binder.set_slot(b, declare(ck, Binder.name(b), Binder.span(b), :const, 0, 0))
+    in FnStmt then check_function(ck, FnStmt.fn(stmt))
+    in IfStmt
+      blocks = IfStmt.blocks(stmt)
+      Array.each_with_index(IfStmt.conds(stmt)) do |cond, i|
+        check_expr(ck, cond)
+        check_scoped(ck, blocks[i])
+      end
+      else_block = IfStmt.else_block(stmt)
+      check_scoped(ck, else_block) if else_block
+    in MatchStmt
+      check_expr(ck, MatchStmt.subject(stmt))
+      Array.each(MatchStmt.arms(stmt)) do |arm|
+        Array.each(WhenArm.values(arm)) { |v| check_expr(ck, v) }
+        check_scoped(ck, WhenArm.block(arm))
+      end
+      else_block = MatchStmt.else_block(stmt)
+      check_scoped(ck, else_block) if else_block
+    in WhileStmt
+      check_expr(ck, WhileStmt.cond(stmt))
+      check_loop_body(ck, WhileStmt.body(stmt))
+    in ForStmt then check_for(ck, stmt)
+    in BreakStmt
+      Fail.static(BreakStmt.span(stmt), "'break' outside a loop") unless @in_loop
+    in ContinueStmt
+      Fail.static(ContinueStmt.span(stmt), "'continue' outside a loop") unless @in_loop
+    in ReturnStmt
+      Fail.static(ReturnStmt.span(stmt), "'return' outside a function") unless @in_function
+      value = ReturnStmt.value(stmt)
+      check_expr(ck, value) if value
+    in ThrowStmt then check_expr(ck, ThrowStmt.value(stmt))
+    in AssertStmt
+      check_expr(ck, AssertStmt.cond(stmt))
+      message = AssertStmt.message(stmt)
+      check_expr(ck, message) if message
+    in TryStmt then check_try(ck, stmt)
+    in AssignStmt
+      Array.each(AssignStmt.targets(stmt)) { |t| check_target(ck, t) }
+      Array.each(AssignStmt.values(stmt)) { |v| check_expr(ck, v) }
+    end
+  end
+
+  def check_loop_body(ck, body)
+    outer_loop = @in_loop
+    @in_loop = true
+    check_scoped(ck, body)
+    @in_loop = outer_loop
+  end
+
+  # The loop variables and the body share one scope; the iterated expression
+  # is outside it.
+  def check_for(ck, stmt)
+    outer = @scope
+    inner = SScope.open(outer)
+    @scope = inner
+    Array.each(ForStmt.binders(stmt)) { |b| declare_var(ck, b) }
+    @scope = outer
+    check_expr(ck, ForStmt.iter(stmt))
+    @scope = inner
+    outer_loop = @in_loop
+    @in_loop = true
+    body = ForStmt.body(stmt)
+    check_list(ck, body)
+    Block.set_nslots(body, SScope.nslots(inner))
+    @in_loop = outer_loop
+    @scope = outer
+  end
+
+  def check_try(ck, stmt)
+    check_scoped(ck, TryStmt.body(stmt))
+    b = TryStmt.catch_binder(stmt)
+    handler = TryStmt.catch_block(stmt)
+    if b && handler
+      outer = @scope
+      @scope = SScope.open(outer)
+      declare_var(ck, b)
+      check_list(ck, handler)
+      Block.set_nslots(handler, SScope.nslots(@scope))
+      @scope = outer
+    end
+    finally_block = TryStmt.finally_block(stmt)
+    check_scoped(ck, finally_block) if finally_block
+  end
+
+  # A name being assigned must be a variable (5.2).
+  def check_target(ck, target)
+    case target
+    in NameRef
+      decl = resolve(ck, target)
+      what =
+        case Decl.kind(decl)
+        in :const then "constant"
+        in :fn then "function"
+        in :builtin then "built-in"
+        else nil
+        end
+      Fail.static(NameRef.span(target), "cannot assign to #{what} '#{NameRef.name(target)}'") if what
+    else check_expr(ck, target)
+    end
+  end
+
+  # A function: its parameters and its body's declarations share one scope,
+  # which starts outside any loop.
+  def check_function(ck, fn)
+    outer = @scope
+    outer_loop = @in_loop
+    outer_function = @in_function
+    @scope = SScope.open(outer)
+    @in_loop = false
+    @in_function = true
+    Array.each(FnLit.params(fn)) do |param|
+      name = Param.name(param)
+      ensure_fresh(ck, name, Param.span(param))
+      default = Param.default(param)
+      check_expr(ck, default) if default
+      declare(ck, name, Param.span(param), :var, 0, 0)
+    end
+    body = FnLit.body(fn)
+    check_list(ck, body)
+    Block.set_nslots(body, SScope.nslots(@scope))
+    @scope = outer
+    @in_loop = outer_loop
+    @in_function = outer_function
+  end
+
+  # ---- Expressions ----
+
+  def check_expr(ck, node)
+    case node
+    in IntLit | StrLit | BoolLit | NilLit then nil
+    in InterpStr
+      Array.each(InterpStr.parts(node)) { |part| check_expr(ck, part) unless (part in String) }
+    in NameRef then resolve(ck, node)
+    in ArrayLit then Array.each(ArrayLit.elements(node)) { |e| check_expr(ck, e) }
+    in MapLit
+      Array.each(MapLit.entries(node)) do |entry|
+        check_expr(ck, MapEntry.key(entry))
+        check_expr(ck, MapEntry.value(entry))
+      end
+    in FnLit then check_function(ck, node)
+    in BinOp
+      check_expr(ck, BinOp.left(node))
+      check_expr(ck, BinOp.right(node))
+    in LogicOp
+      check_expr(ck, LogicOp.left(node))
+      check_expr(ck, LogicOp.right(node))
+    in NotOp then check_expr(ck, NotOp.operand(node))
+    in NegOp then check_expr(ck, NegOp.operand(node))
+    in CallExpr then check_call(ck, node)
+    in IndexExpr
+      check_expr(ck, IndexExpr.target(node))
+      check_expr(ck, IndexExpr.index(node))
+    in SliceExpr
+      check_expr(ck, SliceExpr.target(node))
+      lo = SliceExpr.lo(node)
+      check_expr(ck, lo) if lo
+      hi = SliceExpr.hi(node)
+      check_expr(ck, hi) if hi
+    in FieldExpr then check_expr(ck, FieldExpr.target(node))
+    end
+  end
+
+  # The callee, the arguments, then the argument count when the callee is a
+  # name of a function declaration or a built-in.
+  def check_call(ck, node)
+    callee = CallExpr.callee(node)
+    args = CallExpr.args(node)
+    case callee
+    in NameRef
+      decl = resolve(ck, callee)
+      Array.each(args) { |a| check_expr(ck, a) }
+      kind = Decl.kind(decl)
+      return unless kind == :fn || kind == :builtin
+      n = Array.size(args)
+      min = Decl.min_args(decl)
+      max = Decl.max_args(decl)
+      return if n >= min && (max < 0 || n <= max)
+      Fail.static(CallExpr.span(node), Fail.arity_message(NameRef.name(callee), min, max, n))
+    else
+      check_expr(ck, callee)
+      Array.each(args) { |a| check_expr(ck, a) }
+    end
+  end
+end

@@ -1,0 +1,96 @@
+# Mini values (SPEC section 4).
+#
+#   int       Integer          string    String
+#   bool      true / false     nil       nil
+#   array     MiniArray        map       MiniMap
+#   function  Closure or Builtin
+#
+# Arrays and maps are references: a MiniArray or MiniMap is shared, and its
+# items / entries change in place. They are Struct types rather than bare
+# Arrays and Hashes so that a Mini array is never confused with an Array the
+# interpreter uses itself (an argument list, a snapshot), and so that the
+# type of what a Mini container holds is one type, the field's.
+
+# items: the elements, in order.
+class MiniArray
+  attr_reader items
+end
+
+# entries: a Hash from keys (Strings and Integers) to values, in insertion order.
+class MiniMap
+  attr_reader entries
+end
+
+# A user function: fn is its FnLit, env the scope it was created in. id tells
+# closures apart, since a function is equal only to itself.
+class Closure
+  attr_reader fn, env, id
+end
+
+# A built-in function, known by its name.
+class Builtin
+  attr_reader name
+end
+
+module Values
+  module_function
+
+  def type_name(v)
+    case v
+    in Integer then "int"
+    in String then "string"
+    in true | false then "bool"
+    in nil then "nil"
+    in MiniArray then "array"
+    in MiniMap then "map"
+    in Closure | Builtin then "function"
+    end
+  end
+
+  def truthy?(v) = v != nil && v != false
+
+  # Whether a value may be a map key: a string, int, bool or nil (4).
+  def key_value?(v)
+    case v
+    in String | Integer | true | false | nil then true
+    else false
+    end
+  end
+
+  # A value used as a map key (4).
+  def map_key(key, line, col)
+    return key if key_value?(key)
+    Fail.runtime("type", line, col, "map key must be a string, int, bool or nil, got #{type_name(key)}")
+  end
+
+  # Mini equality (4). level counts the containers entered; reaching level 101
+  # is an error at line/col.
+  def equal?(a, b, level, line, col)
+    Fail.runtime("value", line, col, "values nested too deeply to compare") if level > 100
+    case a
+    in MiniArray
+      return false unless (b in MiniArray)
+      xs = MiniArray.items(a)
+      ys = MiniArray.items(b)
+      return false unless Array.size(xs) == Array.size(ys)
+      i = 0
+      n = Array.size(xs)
+      while i < n
+        return false unless equal?(xs[i], ys[i], level + 1, line, col)
+        i += 1
+      end
+      true
+    in MiniMap
+      return false unless (b in MiniMap)
+      xs = MiniMap.entries(a)
+      ys = MiniMap.entries(b)
+      return false unless Hash.size(xs) == Hash.size(ys)
+      Hash.all?(xs) { |k, v| Hash.key?(ys, k) && equal?(v, ys[k], level + 1, line, col) }
+    in Closure
+      (b in Closure) && Closure.id(a) == Closure.id(b)
+    in Builtin
+      (b in Builtin) && Builtin.name(a) == Builtin.name(b)
+    else a == b
+    end
+  end
+end

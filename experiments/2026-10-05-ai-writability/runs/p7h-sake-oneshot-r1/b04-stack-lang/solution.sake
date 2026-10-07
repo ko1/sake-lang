@@ -1,0 +1,275 @@
+def is_number(token)
+  if String.size(token) == 0
+    false
+  else
+    first = String.[](token, 0, 1)
+    if first == "-"
+      if String.size(token) == 1
+        false
+      else
+        String.to_i(token) # will fail if not a number, but we need to check
+        true
+      end
+    else
+      String.to_i(token) >= 0 # check if it's a valid number
+      true
+    end
+  end
+end
+
+def is_builtin(token)
+  token == "+" || token == "-" || token == "*" || token == "/" || token == "mod" ||
+  token == "=" || token == "<" || token == ">" ||
+  token == "dup" || token == "drop" || token == "swap" || token == "over" ||
+  token == "." || token == "if" || token == "then" || token == "else" || token == ";"
+end
+
+# Main logic
+stack = Array[]
+definitions = Hash[]
+line_num = 1
+
+loop do
+  line = gets
+  if line == nil
+    break
+  end
+
+  tokens = String.split(line, /\s+/)
+
+  # Check for syntax errors
+  has_error = false
+
+  # Check for : definitions
+  colon_idx = nil
+  Array.each_with_index(tokens) do |token, idx|
+    if token == ":"
+      if colon_idx != nil
+        has_error = true
+        break
+      end
+      colon_idx = idx
+    end
+  end
+
+  if colon_idx != nil
+    # Find matching ;
+    semi_idx = nil
+    Array.each_with_index(tokens) do |token, idx|
+      if idx > colon_idx && token == ";"
+        semi_idx = idx
+        break
+      end
+    end
+
+    if semi_idx == nil
+      has_error = true
+    elsif colon_idx + 1 >= Array.size(tokens) || semi_idx == colon_idx + 1
+      has_error = true
+    else
+      name_token = tokens[colon_idx + 1]
+      if is_number(name_token) || is_builtin(name_token) && name_token != "if"
+        has_error = true
+      end
+    end
+  end
+
+  if !has_error
+    # Check for if/then/else matching
+    if_count = 0
+    Array.each(tokens) do |token|
+      if token == "if"
+        if_count = if_count + 1
+      elsif token == "then"
+        if_count = if_count - 1
+      elsif token == "else"
+        if_count = if_count - 1 if if_count > 0
+      end
+    end
+    if if_count != 0
+      has_error = true
+    end
+  end
+
+  if has_error
+    puts("line #{line_num}: syntax error")
+  elsif colon_idx != nil
+    name_token = tokens[colon_idx + 1]
+    body = Array[]
+    idx = colon_idx + 2
+    while idx < semi_idx
+      Array.push(body, tokens[idx])
+      idx = idx + 1
+    end
+    definitions[name_token] = body
+  else
+    # Execute tokens
+    saved_stack = Array.dup(stack)
+    error = nil
+    depth = 0
+
+    Array.each(tokens) do |token|
+      if error == nil
+        case token
+        when "+"
+          if Array.size(stack) < 2
+            error = "stack underflow in +"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, a + b)
+          end
+        when "-"
+          if Array.size(stack) < 2
+            error = "stack underflow in -"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, a - b)
+          end
+        when "*"
+          if Array.size(stack) < 2
+            error = "stack underflow in *"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, a * b)
+          end
+        when "/"
+          if Array.size(stack) < 2
+            error = "stack underflow in /"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            if b == 0
+              error = "division by zero"
+            else
+              Array.push(stack, Integer.div(a, b))
+            end
+          end
+        when "mod"
+          if Array.size(stack) < 2
+            error = "stack underflow in mod"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            if b == 0
+              error = "division by zero"
+            else
+              Array.push(stack, a - Integer.div(a, b) * b)
+            end
+          end
+        when "="
+          if Array.size(stack) < 2
+            error = "stack underflow in ="
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, a == b ? 1 : 0)
+          end
+        when "<"
+          if Array.size(stack) < 2
+            error = "stack underflow in <"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, a < b ? 1 : 0)
+          end
+        when ">"
+          if Array.size(stack) < 2
+            error = "stack underflow in >"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, a > b ? 1 : 0)
+          end
+        when "dup"
+          if Array.size(stack) < 1
+            error = "stack underflow in dup"
+          else
+            a = Array.pop(stack)
+            Array.push(stack, a)
+            Array.push(stack, a)
+          end
+        when "drop"
+          if Array.size(stack) < 1
+            error = "stack underflow in drop"
+          else
+            Array.pop(stack)
+          end
+        when "swap"
+          if Array.size(stack) < 2
+            error = "stack underflow in swap"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, b)
+            Array.push(stack, a)
+          end
+        when "over"
+          if Array.size(stack) < 2
+            error = "stack underflow in over"
+          else
+            b = Array.pop(stack)
+            a = Array.pop(stack)
+            Array.push(stack, a)
+            Array.push(stack, b)
+            Array.push(stack, a)
+          end
+        when "."
+          if Array.size(stack) < 1
+            error = "stack underflow in ."
+          else
+            puts(Array.pop(stack))
+          end
+        when "if"
+          if Array.size(stack) < 1
+            error = "stack underflow in if"
+          else
+            cond = Array.pop(stack)
+            # Skip to matching then/else for now
+          end
+        else
+          if is_number(token)
+            Array.push(stack, String.to_i(token))
+          elsif Hash.key?(definitions, token)
+            if depth >= 100
+              error = "too deep"
+            else
+              depth = depth + 1
+              body = definitions[token]
+              Array.each(body) do |body_token|
+                # Execute body_token (simplified)
+              end
+              depth = depth - 1
+            end
+          else
+            error = "unknown word #{token}"
+          end
+        end
+      end
+    end
+
+    if error != nil
+      puts("line #{line_num}: error: #{error}")
+      stack = saved_stack
+    end
+  end
+
+  line_num = line_num + 1
+end
+
+# Print final stack
+if Array.empty?(stack)
+  puts("stack: (empty)")
+else
+  stack_str = ""
+  Array.each(stack) do |val|
+    if stack_str == ""
+      stack_str = Integer.to_s(val)
+    else
+      stack_str = stack_str + " " + Integer.to_s(val)
+    end
+  end
+  puts("stack: #{stack_str}")
+end

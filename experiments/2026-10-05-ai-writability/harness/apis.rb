@@ -38,9 +38,9 @@ module APIs
     code = "#{reqs.map { "require #{_1.dump}; " }.join}names = []; ObjectSpace.each_object(Module) { |m| " \
            "names.concat(m.instance_methods(true), m.private_instance_methods(true), m.singleton_methods(true), " \
            "m.private_methods(true)) rescue nil }; puts names.uniq.map(&:to_s)"
-    out, err, st = AW.run(["ruby", "--disable-gems", "-e", code], "")
-    abort "listing Ruby methods failed: #{err}" unless st == 0
-    h[reqs] = out.lines.map(&:chomp).to_set
+    out, _err, st = AW.run(["ruby", "--disable-gems", "-e", code], "")
+    out, _err, st = AW.run(["ruby", "-e", code], "") unless st == 0 # a bundled gem (bigdecimal) needs gems on
+    h[reqs] = st == 0 ? out.lines.map(&:chomp).to_set : nil # nil: the file's requires do not load here
   end
 
   def ruby(file)
@@ -68,7 +68,7 @@ module APIs
       n.compact_child_nodes.each { walk.(_1) }
     end
     walk.(res.value)
-    known = LIBS[reqs.sort.uniq]
+    known = LIBS[reqs.sort.uniq] or return { nowhere: nil, elsewhere: nil, names: [], error: "cannot load #{reqs.join(", ")}" }
     bad = calls.reject { |name, _| known.include?(name) || defined.include?(name) }
     { nowhere: bad.size, elsewhere: nil, names: bad.map { |name, line| "#{name}:#{line}" } }
   end

@@ -1,0 +1,208 @@
+Ballot = Struct.new(:preferences, :valid)
+
+# Parse candidates
+cand_line = Kernel.gets
+cand_line => String
+candidates = String.split(cand_line)
+
+if Array.size(candidates) == 0
+  puts("no candidates")
+  exit(0)
+end
+
+# Parse ballots
+ballots = Array[]
+rejected = Array[]
+line_num = 2
+
+while (line = Kernel.gets)
+  stripped = String.strip(line)
+
+  if String.empty?(stripped)
+    line_num += 1
+    next
+  end
+
+  # Split by >
+  parts = String.split(stripped, ">")
+
+  prefs = Array[]
+  valid = true
+  reason = nil
+
+  Integer.times(Array.size(parts)) do |i|
+    rank = String.strip(parts[i])
+
+    if String.empty?(rank)
+      valid = false
+      reason = "empty rank"
+      next
+    end
+
+    found = false
+    Array.each(candidates) { |c| found = true if c == rank }
+
+    if !found
+      valid = false
+      reason = "unknown candidate #{rank}"
+      next
+    end
+
+    already = false
+    Array.each(prefs) { |p| already = true if p == rank }
+
+    if already
+      valid = false
+      reason = "duplicate #{rank}"
+      next
+    end
+
+    Array.push(prefs, rank)
+  end
+
+  if !valid
+    Array.push(rejected, [line_num, reason])
+  end
+
+  Array.push(ballots, Ballot.new(prefs, valid))
+  line_num += 1
+end
+
+# Print rejections
+Array.each(rejected) { |r| puts("rejected line #{r[0]}: #{r[1]}") }
+
+# Count valid/rejected
+valid_count = 0
+Array.each(ballots) { |b| valid_count += 1 if Ballot.valid(b) }
+rejected_count = Array.size(ballots) - valid_count
+
+puts("ballots: #{valid_count} valid, #{rejected_count} rejected")
+
+# Instant runoff voting
+continuing = Hash[]
+Array.each(candidates) { |c| continuing[c] = true }
+
+round_num = 1
+history = Array[]
+
+while true
+  # Count votes
+  votes = Hash[]
+  exhausted = 0
+
+  Array.each(candidates) { |c| votes[c] = 0 }
+
+  Array.each(ballots) do |b|
+    if !Ballot.valid(b)
+      next
+    end
+
+    found = false
+    Array.each(Ballot.preferences(b)) do |pref|
+      if continuing[pref]
+        votes[pref] += 1
+        found = true
+        next
+      end
+    end
+
+    if !found
+      exhausted += 1
+    end
+  end
+
+  active = valid_count - exhausted
+
+  puts("round #{round_num}")
+
+  # Print votes
+  cand_votes = Array[]
+  Hash.each(votes) do |c, v|
+    if continuing[c]
+      Array.push(cand_votes, [c, v])
+    end
+  end
+
+  sorted = Array.sort_by(cand_votes) { |c, v| [-v, c] }
+
+  Array.each(sorted) do |c, v|
+    if active == 0
+      pct = 0.0
+    else
+      pct = Float(v) * 100.0 / Float(active)
+    end
+    pct_rounded = Float.round(pct * 2.0) / 2.0
+    puts(format("  %s %d %.1f%%", c, v, pct_rounded))
+  end
+
+  puts("  exhausted #{exhausted}")
+
+  # Check win condition
+  if active == 0
+    puts("no winner")
+    exit(0)
+  end
+
+  won = false
+  winner = nil
+  Array.each(sorted) do |c, v|
+    if v * 2 > active
+      puts("winner #{c}")
+      won = true
+      winner = c
+      exit(0)
+    end
+  end
+
+  # Eliminate
+  min_votes = nil
+  Array.each(sorted) { |c, v| min_votes = v if min_votes == nil || v < min_votes }
+
+  to_eliminate = Array[]
+  Array.each(sorted) do |c, v|
+    if v == min_votes
+      Array.push(to_eliminate, c)
+    end
+  end
+
+  # Tiebreaker using history
+  if Array.size(to_eliminate) > 1
+    Array.push(history, votes)
+
+    # Keep eliminating by history
+    kept = to_eliminate
+    Integer.downto(Array.size(history) - 1, 0) do |h|
+      if Array.size(kept) <= 1
+        break
+      end
+      min_h = nil
+      Array.each(kept) do |c|
+        v_h = history[h][c]
+        if min_h == nil || v_h < min_h
+          min_h = v_h
+        end
+      end
+      new_kept = Array[]
+      Array.each(kept) do |c|
+        if history[h][c] == min_h
+          Array.push(new_kept, c)
+        end
+      end
+      kept = new_kept
+    end
+
+    # Final tiebreaker: last in byte order
+    if Array.size(kept) > 1
+      kept = Array.sort(kept)
+      to_eliminate = [kept[Array.size(kept) - 1]]
+    else
+      to_eliminate = kept
+    end
+  end
+
+  eliminated = to_eliminate[0]
+  continuing[eliminated] = false
+  puts("  eliminated #{eliminated}")
+
+  round_num += 1
+end

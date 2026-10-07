@@ -1,0 +1,249 @@
+def read_all_lines
+  lines = Array[]
+  while line = Kernel.gets
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def is_blank?(line)
+  String.empty?(String.strip(line))
+end
+
+def parse_dart(dart_str)
+  if dart_str == "25"
+    [:value, 25, false]
+  elsif dart_str == "BULL"
+    [:value, 50, true]
+  elsif dart_str == "MISS"
+    [:value, 0, false]
+  elsif String.start_with?(dart_str, "S")
+    num_str = String.slice(dart_str, 1, String.size(dart_str) - 1)
+    if /^\d+$/ =~ num_str
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        [:value, num, false]
+      else
+        nil
+      end
+    else
+      nil
+    end
+  elsif String.start_with?(dart_str, "D")
+    num_str = String.slice(dart_str, 1, String.size(dart_str) - 1)
+    if /^\d+$/ =~ num_str
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        [:value, num * 2, true]
+      else
+        nil
+      end
+    else
+      nil
+    end
+  elsif String.start_with?(dart_str, "T")
+    num_str = String.slice(dart_str, 1, String.size(dart_str) - 1)
+    if /^\d+$/ =~ num_str
+      num = String.to_i(num_str)
+      if num >= 1 && num <= 20
+        [:value, num * 3, false]
+      else
+        nil
+      end
+    else
+      nil
+    end
+  else
+    nil
+  end
+end
+
+raw_lines = read_all_lines
+
+if Array.empty?(raw_lines)
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+header_line = String.strip(Array.at(raw_lines, 0))
+header_fields = String.split(header_line, /\s+/)
+
+if Array.size(header_fields) < 2 || Array.size(header_fields) > 5
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+start_str = Array.at(header_fields, 0)
+if /^\d+$/ !~ start_str
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+start_score = String.to_i(start_str)
+
+if start_score < 2 || start_score > 1001
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+players = Array[]
+Integer.times(Array.size(header_fields) - 1) do |i|
+  name = Array.at(header_fields, i + 1)
+  if String.size(name) < 1 || String.size(name) > 10 || /^[a-z]+$/ !~ name
+    puts("invalid header")
+    Kernel.exit(0)
+  end
+  if Array.include?(players, name)
+    puts("invalid header")
+    Kernel.exit(0)
+  end
+  Array.push(players, name)
+end
+
+scores = Hash[]
+darts_thrown = Hash[]
+Array.each(players) do |p|
+  scores[p] = start_score
+  darts_thrown[p] = 0
+end
+
+winner = nil
+line_num = 0
+
+Array.each(raw_lines) do |raw_line|
+  line_num += 1
+
+  if line_num == 1
+    next
+  end
+
+  if is_blank?(raw_line)
+    next
+  end
+
+  line = String.strip(raw_line)
+  fields = String.split(line, /\s+/)
+
+  if Array.size(fields) < 1
+    next
+  end
+
+  player_name = Array.at(fields, 0)
+
+  if winner != nil
+    puts(format("line %d: game over", line_num))
+    next
+  end
+
+  if !Array.include?(players, player_name)
+    puts(format("line %d: unknown player %s", line_num, player_name))
+    next
+  end
+
+  dart_tokens = Array[]
+  Integer.times(Array.size(fields) - 1) do |i|
+    Array.push(dart_tokens, Array.at(fields, i + 1))
+  end
+
+  if Array.size(dart_tokens) < 1 || Array.size(dart_tokens) > 3
+    puts(format("line %d: expected 1 to 3 darts", line_num))
+    next
+  end
+
+  darts = Array[]
+  valid = true
+  Array.each(dart_tokens) do |token|
+    parsed = parse_dart(token)
+    if parsed == nil
+      puts(format("line %d: bad dart %s", line_num, token))
+      valid = false
+      break
+    end
+    Array.push(darts, parsed)
+  end
+
+  if !valid
+    next
+  end
+
+  # Apply darts
+  turn_start_score = scores[player_name]
+  current_score = turn_start_score
+  turn_total = 0
+  darts_in_turn = 0
+  is_bust = false
+  is_checkout = false
+
+  Array.each(darts) do |dart|
+    if dart in [:value, points, is_double]
+      current_score -= points
+      turn_total += points
+      darts_in_turn += 1
+
+      if current_score < 0 || current_score == 1
+        is_bust = true
+        break
+      elsif current_score == 0 && !is_double
+        is_bust = true
+        break
+      elsif current_score == 0 && is_double
+        is_checkout = true
+        break
+      end
+    end
+  end
+
+  if is_bust
+    puts(format("%s busts, %d left", player_name, turn_start_score))
+  elsif is_checkout
+    last_dart = Array.last(darts)
+    if last_dart in [:value, points, is_double]
+      # Find the dart string
+      last_dart_str = ""
+      Array.each(dart_tokens) do |token|
+        parsed = parse_dart(token)
+        if parsed == last_dart
+          last_dart_str = token
+          break
+        end
+      end
+      puts(format("%s checks out with %s", player_name, last_dart_str))
+      winner = player_name
+      scores[player_name] = 0
+      darts_thrown[player_name] += darts_in_turn
+    end
+  else
+    scores[player_name] = current_score
+    darts_thrown[player_name] += darts_in_turn
+    puts(format("%s scores %d, %d left", player_name, turn_total, current_score))
+  end
+end
+
+# Standings
+puts("STANDINGS")
+
+sorted_players = Array.sort_by(players) do |p|
+  [scores[p], Array.index(players, p)]
+end
+
+Array.each_with_index(sorted_players) do |p, idx|
+  rank = idx + 1
+  left = scores[p]
+  turns = darts_thrown[p]
+
+  if turns == 0
+    avg_str = "-"
+  else
+    points_scored = start_score - left
+    avg = Integer.to_f(points_scored * 3) / Integer.to_f(turns)
+    avg_str = format("%.2f", avg)
+  end
+
+  puts(format("%d. %-10s %4d %3d %6s", rank, p, left, turns, avg_str))
+end
+
+if winner == nil
+  puts("no winner")
+else
+  puts(format("winner: %s", winner))
+end

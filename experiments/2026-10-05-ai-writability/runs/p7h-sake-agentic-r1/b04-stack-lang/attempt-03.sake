@@ -1,0 +1,299 @@
+def is_builtin(w)
+  w == "+" || w == "-" || w == "*" || w == "/" || w == "mod" ||
+  w == "=" || w == "<" || w == ">" ||
+  w == "dup" || w == "drop" || w == "swap" || w == "over" || w == "."
+end
+
+# Main interpreter state
+stack = Array[]
+dict = Hash[]
+line_num = 0
+call_depth = 0
+
+def execute_tokens(tokens, stack, dict, call_depth)
+  i = 0
+  while i < Array.size(tokens)
+    token = Array.at(tokens, i)
+
+    if String.match(token, /^-?\d+$/)
+      Array.push(stack, String.to_i(token))
+    elsif token == "+"
+      if Array.size(stack) < 2
+        return "stack underflow in +"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, Integer.+(a, b))
+    elsif token == "-"
+      if Array.size(stack) < 2
+        return "stack underflow in -"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, Integer.-(a, b))
+    elsif token == "*"
+      if Array.size(stack) < 2
+        return "stack underflow in *"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, Integer.*(a, b))
+    elsif token == "/"
+      if Array.size(stack) < 2
+        return "stack underflow in /"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        return "division by zero"
+      end
+      Array.push(stack, Integer.div(a, b))
+    elsif token == "mod"
+      if Array.size(stack) < 2
+        return "stack underflow in mod"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        return "division by zero"
+      end
+      Array.push(stack, Integer.%(a, b))
+    elsif token == "."
+      if Array.size(stack) < 1
+        return "stack underflow in ."
+      end
+      puts(Array.pop(stack))
+    elsif token == "dup"
+      if Array.size(stack) < 1
+        return "stack underflow in dup"
+      end
+      Array.push(stack, Array.at(stack, Array.size(stack) - 1))
+    elsif token == "drop"
+      if Array.size(stack) < 1
+        return "stack underflow in drop"
+      end
+      Array.pop(stack)
+    elsif token == "swap"
+      if Array.size(stack) < 2
+        return "stack underflow in swap"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, b)
+      Array.push(stack, a)
+    elsif token == "over"
+      if Array.size(stack) < 2
+        return "stack underflow in over"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a)
+      Array.push(stack, b)
+      Array.push(stack, a)
+    elsif token == "="
+      if Array.size(stack) < 2
+        return "stack underflow in ="
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a == b ? 1 : 0)
+    elsif token == "<"
+      if Array.size(stack) < 2
+        return "stack underflow in <"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a < b ? 1 : 0)
+    elsif token == ">"
+      if Array.size(stack) < 2
+        return "stack underflow in >"
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a > b ? 1 : 0)
+    elsif token == "if"
+      if Array.size(stack) < 1
+        return "stack underflow in if"
+      end
+      cond = Array.pop(stack)
+
+      # Find matching then
+      then_idx = nil
+      else_idx = nil
+      depth = 1
+      j = i + 1
+      while j < Array.size(tokens)
+        t = Array.at(tokens, j)
+        if t == "if"
+          depth += 1
+        elsif t == "then"
+          depth -= 1
+          if depth == 0
+            then_idx = j
+            break
+          end
+        elsif t == "else" && depth == 1
+          else_idx = j
+        end
+        j += 1
+      end
+
+      if then_idx
+        body = Array[]
+        if cond != 0
+          j = i + 1
+          if else_idx
+            while j < else_idx
+              Array.push(body, Array.at(tokens, j))
+              j += 1
+            end
+          else
+            while j < then_idx
+              Array.push(body, Array.at(tokens, j))
+              j += 1
+            end
+          end
+        else
+          if else_idx
+            j = else_idx + 1
+            while j < then_idx
+              Array.push(body, Array.at(tokens, j))
+              j += 1
+            end
+          end
+        end
+
+        if Array.size(body) > 0
+          err = execute_tokens(body, stack, dict, call_depth)
+          if err
+            return err
+          end
+        end
+
+        i = then_idx
+      end
+    elsif token == ":"
+      # Define word - skip for this pass
+      i += 1
+      while i < Array.size(tokens) && Array.at(tokens, i) != ";"
+        i += 1
+      end
+    else
+      if token == ";" || token == "then" || token == "else"
+        # Skip control flow markers
+      elsif Hash.key?(dict, token)
+        call_depth_new = call_depth + 1
+        if call_depth_new > 100
+          return "too deep"
+        end
+
+        body = dict[token]
+        err = execute_tokens(body, stack, dict, call_depth_new)
+        if err
+          return err
+        end
+      else
+        return "unknown word #{token}"
+      end
+    end
+
+    i += 1
+  end
+
+  nil
+end
+
+# Read input
+lines = Array[]
+while true
+  line = gets
+  break if line == nil
+  Array.push(lines, line)
+end
+
+Array.each(lines) { |line|
+  line_num += 1
+  trimmed = String.strip(line)
+
+  if String.empty?(trimmed)
+    next
+  end
+
+  tokens = String.split(trimmed, /\s+/)
+
+  # First pass: process definitions
+  i = 0
+  while i < Array.size(tokens)
+    token = Array.at(tokens, i)
+
+    if token == ":"
+      if i + 1 < Array.size(tokens)
+        name = Array.at(tokens, i + 1)
+
+        # Find matching ;
+        semi_idx = nil
+        j = i + 2
+        while j < Array.size(tokens)
+          if Array.at(tokens, j) == ";"
+            semi_idx = j
+            break
+          end
+          j += 1
+        end
+
+        if semi_idx
+          # Extract body
+          body = Array[]
+          j = i + 2
+          while j < semi_idx
+            Array.push(body, Array.at(tokens, j))
+            j += 1
+          end
+
+          dict[name] = body
+          i = semi_idx
+        end
+      end
+    end
+
+    i += 1
+  end
+
+  # Save initial stack
+  initial_stack = Array[]
+  Array.each(stack) { |v| Array.push(initial_stack, v) }
+
+  # Second pass: execute non-definition tokens
+  exec_tokens = Array[]
+  i = 0
+  while i < Array.size(tokens)
+    token = Array.at(tokens, i)
+
+    if token == ":"
+      i += 1
+      while i < Array.size(tokens) && Array.at(tokens, i) != ";"
+        i += 1
+      end
+    else
+      Array.push(exec_tokens, token)
+    end
+
+    i += 1
+  end
+
+  if Array.size(exec_tokens) > 0
+    err = execute_tokens(exec_tokens, stack, dict, 0)
+    if err
+      puts("line #{line_num}: error: #{err}")
+      stack = initial_stack
+    end
+  end
+}
+
+# Print final stack
+if Array.size(stack) == 0
+  puts("stack: (empty)")
+else
+  parts = Array.map(stack) { |v| Integer.to_s(v) }
+  puts("stack: #{Array.join(parts, " ")}")
+end

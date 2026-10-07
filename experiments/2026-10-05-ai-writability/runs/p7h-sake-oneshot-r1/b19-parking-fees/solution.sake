@@ -1,0 +1,191 @@
+def parse_time(time_str)
+  if String.size(time_str) != 5 || String.at(time_str, 2) != ":"
+    return nil
+  end
+  hh = String.to_i(String.slice(time_str, 0, 2))
+  mm = String.to_i(String.slice(time_str, 3, 2))
+  if hh < 0 || hh > 23 || mm < 0 || mm > 59
+    return nil
+  end
+  hh * 60 + mm
+end
+
+def is_valid_plate(plate)
+  if String.size(plate) < 1 || String.size(plate) > 8
+    return false
+  end
+  Integer.times(String.size(plate)) do |i|
+    c = String.at(plate, i)
+    ok = (c >= "A" && c <= "Z") || (c >= "0" && c <= "9")
+    if !ok
+      return false
+    end
+  end
+  true
+end
+
+def calc_fee(minutes, first, step, cap, grace)
+  if minutes <= grace
+    return 0
+  end
+
+  chargeable = minutes - grace
+  days = chargeable / 1440
+  remainder = chargeable % 1440
+
+  fee = days * cap
+
+  if remainder > 0
+    if remainder <= 60
+      part = first
+    else
+      extra = remainder - 60
+      periods = (extra + 29) / 30
+      part = first + step * periods
+    end
+    fee += Integer.min(cap, part)
+  end
+
+  fee
+end
+
+def format_money(cents)
+  dollars = cents / 100
+  remaining = cents % 100
+  "#{dollars}.#{String.rjust(Integer.to_s(remaining), 2, "0")}"
+end
+
+# Parse rate
+rate_line = Kernel.gets
+rate_line => String
+rate_parts = String.split(rate_line)
+first_hour = String.to_i(rate_parts[1])
+step = String.to_i(rate_parts[2])
+cap = String.to_i(rate_parts[3])
+grace = String.to_i(rate_parts[4])
+
+# Process events
+inside = Hash[]
+exits = Array[]
+line_num = 2
+last_time = -1
+last_day_start = 0
+
+while (line = Kernel.gets)
+  stripped = String.strip(line)
+
+  if String.empty?(stripped)
+    line_num += 1
+    next
+  end
+
+  parts = String.split(stripped)
+
+  if Array.size(parts) < 3
+    puts("line #{line_num}: invalid")
+    line_num += 1
+    next
+  end
+
+  time_str = parts[0]
+  event_type = parts[1]
+  plate = parts[2]
+
+  if Array.size(parts) != 3
+    puts("line #{line_num}: invalid")
+    line_num += 1
+    next
+  end
+
+  if event_type != "IN" && event_type != "OUT"
+    puts("line #{line_num}: invalid")
+    line_num += 1
+    next
+  end
+
+  time_mins = parse_time(time_str)
+  if time_mins == nil || !is_valid_plate(plate)
+    puts("line #{line_num}: invalid")
+    line_num += 1
+    next
+  end
+
+  if time_mins < last_time
+    last_day_start += 1440
+  end
+  last_time = time_mins
+
+  current_time = last_day_start + time_mins
+
+  if event_type == "IN"
+    if inside[plate]
+      puts("line #{line_num}: #{plate} already inside")
+    else
+      inside[plate] = current_time
+    end
+  else
+    if !inside[plate]
+      puts("line #{line_num}: #{plate} not inside")
+    else
+      in_time = inside[plate]
+      stay_minutes = current_time - in_time
+      fee = calc_fee(stay_minutes, first_hour, step, cap, grace)
+
+      hours = stay_minutes / 60
+      mins = stay_minutes % 60
+      puts("#{plate} #{hours}:#{String.rjust(Integer.to_s(mins), 2, "0")} #{format_money(fee)}")
+
+      Array.push(exits, [plate, fee])
+      inside[plate] = nil
+    end
+  end
+
+  line_num += 1
+end
+
+puts("--- summary")
+
+# Aggregate exits by plate
+plate_stats = Hash[]
+Array.each(exits) do |plate, fee|
+  if !plate_stats[plate]
+    plate_stats[plate] = [0, 0]
+  end
+  stat = plate_stats[plate]
+  plate_stats[plate] = [stat[0] + 1, stat[1] + fee]
+end
+
+# Sort by revenue desc, plate asc
+sorted_plates = Array.sort_by(Hash.to_a(plate_stats)) do |plate, stat|
+  [-stat[1], plate]
+end
+
+total_exits = 0
+total_revenue = 0
+
+Array.each(sorted_plates) do |plate, stat|
+  exits_count = stat[0]
+  revenue = stat[1]
+  total_exits += exits_count
+  total_revenue += revenue
+  puts("#{plate} #{exits_count} #{format_money(revenue)}")
+end
+
+puts("total #{total_exits} #{format_money(total_revenue)}")
+
+# Remaining inside, sorted
+remaining = Array[]
+Hash.each(inside) do |plate, time|
+  if time != nil
+    Array.push(remaining, plate)
+  end
+end
+
+remaining_sorted = Array.sort(remaining)
+
+if Array.size(remaining_sorted) == 0
+  puts("inside: none")
+else
+  inside_str = Array.join(remaining_sorted, ", ")
+  puts("inside: #{inside_str}")
+end

@@ -1,0 +1,158 @@
+def read_all_lines
+  lines = Array[]
+  while line = Kernel.gets
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def trim_line(line)
+  String.strip(line)
+end
+
+def is_valid_name?(name)
+  /^[a-z0-9_]+$/ =~ name
+end
+
+raw_lines = read_all_lines
+
+config_data = Hash[]  # section => {key => value}
+section_order = Array[]
+sections_seen = Set[]
+query_idx = nil
+errors = Array[]
+
+# Parse config
+line_num = 0
+Array.each(raw_lines) do |raw_line|
+  line_num += 1
+
+  line = trim_line(raw_line)
+
+  if line == "%%"
+    query_idx = line_num
+    break
+  end
+
+  if String.empty?(line) || String.start_with?(line, "#") || String.start_with?(line, ";")
+    next
+  end
+
+  if String.start_with?(line, "[")
+    if String.end_with?(line, "]")
+      section = String.slice(line, 1, String.size(line) - 2)
+      if is_valid_name?(section)
+        if !Set.include?(sections_seen, section)
+          Array.push(section_order, section)
+          Set.add(sections_seen, section)
+        end
+        if !Hash.key?(config_data, section)
+          config_data[section] = Hash[]
+        end
+      else
+        Array.push(errors, format("line %d: syntax error", line_num))
+      end
+    else
+      Array.push(errors, format("line %d: syntax error", line_num))
+    end
+  elsif String.include?(line, "=")
+    eq_idx = String.index(line, "=")
+    key_part = trim_line(String.slice(line, 0, eq_idx))
+    value_part = trim_line(String.slice(line, eq_idx + 1, String.size(line) - eq_idx - 1))
+
+    if !is_valid_name?(key_part)
+      Array.push(errors, format("line %d: syntax error", line_num))
+    else
+      section = "main"
+      if !Set.include?(sections_seen, section)
+        Array.push(section_order, section)
+        Set.add(sections_seen, section)
+      end
+      if !Hash.key?(config_data, section)
+        config_data[section] = Hash[]
+      end
+
+      if Set.size(sections_seen) > 1
+        section = Array.last(section_order)
+      end
+
+      if Hash.key?(config_data[section], key_part)
+        Array.push(errors, format("line %d: duplicate key %s.%s", line_num, section, key_part))
+      end
+
+      config_data[section][key_part] = value_part
+    end
+  else
+    Array.push(errors, format("line %d: syntax error", line_num))
+  end
+end
+
+# Print config errors
+Array.each(errors) do |err|
+  puts(err)
+end
+
+# Process queries
+if query_idx != nil
+  q_idx = query_idx
+  Array.each_with_index(raw_lines) do |raw_line, idx|
+    line_num = idx + 1
+
+    if line_num <= query_idx
+      next
+    end
+
+    line = trim_line(raw_line)
+
+    if String.empty?(line)
+      next
+    end
+
+    fields = String.split(line, /\s+/)
+
+    if Array.size(fields) < 1
+      Array.push(errors, format("line %d: bad query", line_num))
+      next
+    end
+
+    cmd = Array.at(fields, 0)
+
+    if cmd == "GET" && Array.size(fields) == 2
+      key_spec = Array.at(fields, 1)
+
+      if String.include?(key_spec, ".")
+        dot_idx = String.index(key_spec, ".")
+        section = String.slice(key_spec, 0, dot_idx)
+        key = String.slice(key_spec, dot_idx + 1, String.size(key_spec) - dot_idx - 1)
+      else
+        section = "main"
+        key = key_spec
+      end
+
+      if !Hash.key?(config_data, section) || !Hash.key?(config_data[section], key)
+        puts(format("%s.%s: not found", section, key))
+      else
+        value = config_data[section][key]
+        # TODO: resolve references and type
+        puts(format("%s.%s = str \"%s\"", section, key, value))
+      end
+    elsif cmd == "KEYS" && Array.size(fields) == 2
+      section = Array.at(fields, 1)
+
+      if !Hash.key?(config_data, section)
+        puts(format("%s: not found", section))
+      else
+        keys = Hash.keys(config_data[section])
+        sorted_keys = Array.sort(keys)
+        if Array.empty?(sorted_keys)
+          puts(format("%s: (none)", section))
+        else
+          puts(format("%s: %s", section, Array.join(sorted_keys, ", ")))
+        end
+      end
+    else
+      Array.push(errors, format("line %d: bad query", line_num))
+      puts(Array.last(errors))
+    end
+  end
+end

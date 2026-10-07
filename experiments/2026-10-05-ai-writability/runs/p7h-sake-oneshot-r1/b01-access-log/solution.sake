@@ -1,0 +1,215 @@
+def parse_line(line)
+  fields = String.split(line, /\s+/)
+
+  if Array.size(fields) != 6
+    {valid: false, error: "wrong field count"}
+  else
+    timestamp = fields[0]
+    method = fields[1]
+    path = fields[2]
+    status = fields[3]
+    bytes = fields[4]
+    duration = fields[5]
+
+    # Validate timestamp: YYYY-MM-DDTHH:MM:SS
+    if String.size(timestamp) != 19
+      {valid: false, error: "bad timestamp"}
+    else
+      parts = String.split(timestamp, "T")
+      if Array.size(parts) != 2
+        {valid: false, error: "bad timestamp"}
+      else
+        date_part = parts[0]
+        time_part = parts[1]
+        date_split = String.split(date_part, "-")
+        if Array.size(date_split) != 3 || String.size(date_part) != 10
+          {valid: false, error: "bad timestamp"}
+        else
+          month = String.to_i(date_split[1])
+          day = String.to_i(date_split[2])
+          time_split = String.split(time_part, ":")
+          if Array.size(time_split) != 3 || String.size(time_part) != 8
+            {valid: false, error: "bad timestamp"}
+          else
+            hour = String.to_i(time_split[0])
+            minute = String.to_i(time_split[1])
+            second = String.to_i(time_split[2])
+            if month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59
+              {valid: false, error: "bad timestamp"}
+            elsif method != "GET" && method != "POST" && method != "PUT" && method != "DELETE"
+              {valid: false, error: "bad method"}
+            elsif String.size(path) == 0 || String.[](path, 0, 1) != "/"
+              {valid: false, error: "bad path"}
+            elsif String.size(status) != 3
+              {valid: false, error: "bad status"}
+            else
+              status_code = String.to_i(status)
+              if status_code < 100 || status_code > 599
+                {valid: false, error: "bad status"}
+              elsif bytes != "-" && String.to_i(bytes) < 0
+                {valid: false, error: "bad bytes"}
+              elsif String.to_i(duration) < 0
+                {valid: false, error: "bad duration"}
+              else
+                # Extract path without query
+                path_no_query = path
+                if String.include?(path, "?")
+                  qmark_idx = String.index(path, "?")
+                  path_no_query = String.[](path, 0, qmark_idx)
+                end
+
+                endpoint = method + " " + path_no_query
+                bytes_val = bytes == "-" ? 0 : String.to_i(bytes)
+                duration_val = String.to_i(duration)
+                hour_key = date_part + " " + String.[](time_part, 0, 2) + ":00"
+
+                {
+                  valid: true,
+                  endpoint: endpoint,
+                  status_code: status_code,
+                  bytes: bytes_val,
+                  duration: duration_val,
+                  hour_key: hour_key
+                }
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+# Main logic
+lines = Array[]
+loop do
+  line = gets
+  if line == nil
+    break
+  end
+  Array.push(lines, line)
+end
+
+# Parse all lines
+parsed = Array[]
+invalid_lines = Array[]
+hour_counts = Hash.new(0)
+endpoints = Hash[]
+
+line_num = 1
+Array.each(lines) do |line|
+  if String.strip(line) == ""
+    # skip empty lines
+  else
+    result = parse_line(line)
+    if result["valid"]
+      Array.push(parsed, result)
+      hour_counts[result["hour_key"]] = hour_counts[result["hour_key"]] + 1
+
+      endpoint = result["endpoint"]
+      if Hash.key?(endpoints, endpoint)
+        # update existing
+        data = endpoints[endpoint]
+        data["count"] = data["count"] + 1
+        data["bytes"] = data["bytes"] + result["bytes"]
+        data["total_duration"] = data["total_duration"] + result["duration"]
+        if result["duration"] > data["max_duration"]
+          data["max_duration"] = result["duration"]
+        end
+        if result["status_code"] >= 400 && result["status_code"] < 500
+          data["n4xx"] = data["n4xx"] + 1
+        elsif result["status_code"] >= 500
+          data["n5xx"] = data["n5xx"] + 1
+        end
+      else
+        n4xx = 0
+        n5xx = 0
+        if result["status_code"] >= 400 && result["status_code"] < 500
+          n4xx = 1
+        elsif result["status_code"] >= 500
+          n5xx = 1
+        end
+        endpoints[endpoint] = {
+          count: 1,
+          n4xx: n4xx,
+          n5xx: n5xx,
+          bytes: result["bytes"],
+          total_duration: result["duration"],
+          max_duration: result["duration"]
+        }
+      end
+    else
+      Array.push(invalid_lines, {line: line_num, error: result["error"]})
+    end
+  end
+  line_num = line_num + 1
+end
+
+# Check if there are valid requests
+if Array.empty?(parsed)
+  puts("no valid requests")
+else
+  # Calculate longest endpoint name
+  max_len = 8
+  Hash.each(endpoints) do |endpoint, data|
+    if String.size(endpoint) > max_len
+      max_len = String.size(endpoint)
+    end
+  end
+
+  # Create rows for output
+  rows = Array[]
+  Hash.each(endpoints) do |endpoint, data|
+    total_dur = data["total_duration"]
+    count = data["count"]
+    avg_ms = total_dur / count
+    remainder = total_dur % count
+    avg_decimal = remainder * 10 / count
+
+    Array.push(rows, {
+      endpoint: endpoint,
+      count: count,
+      n4xx: data["n4xx"],
+      n5xx: data["n5xx"],
+      bytes: data["bytes"],
+      avg_ms: avg_ms,
+      avg_decimal: avg_decimal,
+      max_ms: data["max_duration"]
+    })
+  end
+
+  # Sort rows: by count descending, then by endpoint ascending
+  sorted_rows = Array.sort_by(rows) { |r| [-r["count"], r["endpoint"]] }
+
+  # Print header
+  w = max_len
+  format_str = "%-" + Integer.to_s(w) + "s %5s %4s %4s %8s %7s %6s"
+  puts(format(format_str, "endpoint", "count", "4xx", "5xx", "bytes", "avg_ms", "max_ms"))
+
+  # Print rows
+  Array.each(sorted_rows) do |row|
+    endpoint_padded = String.ljust(row["endpoint"], w)
+    avg_str = Integer.to_s(row["avg_ms"]) + "." + Integer.to_s(row["avg_decimal"])
+    puts(format("%-" + Integer.to_s(w) + "s %5d %4d %4d %8d %7s %6d", row["endpoint"], row["count"], row["n4xx"], row["n5xx"], row["bytes"], avg_str, row["max_ms"]))
+  end
+
+  # Find busiest hour
+  busiest_hour = nil
+  max_count = 0
+  Hash.each(hour_counts) do |hour, count|
+    if count > max_count
+      max_count = count
+      busiest_hour = hour
+    elsif count == max_count && (busiest_hour == nil || hour < busiest_hour)
+      busiest_hour = hour
+    end
+  end
+
+  puts("busiest hour: " + busiest_hour + " (" + Integer.to_s(max_count) + " requests)")
+end
+
+# Print invalid lines
+puts("invalid lines: " + Integer.to_s(Array.size(invalid_lines)))
+Array.each(invalid_lines) do |invalid|
+  puts("  line " + Integer.to_s(invalid["line"]) + ": " + invalid["error"])
+end

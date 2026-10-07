@@ -1,0 +1,158 @@
+TeamStats = Struct.new(:name, :played, :won, :drawn, :lost, :gf, :ga, :points)
+
+def team_valid?(name)
+  if String.size(name) < 1 || String.size(name) > 12
+    return false
+  end
+  first = String.at(name, 0)
+  first_ok = (first >= "A" && first <= "Z") || (first >= "a" && first <= "z")
+  if !first_ok
+    return false
+  end
+  Integer.times(String.size(name) - 1) do |i|
+    c = String.at(name, i + 1)
+    ok = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "_"
+    if !ok
+      return false
+    end
+  end
+  true
+end
+
+def parse_score(score_str)
+  parts = String.split(score_str, "-")
+  if Array.size(parts) != 2
+    return nil
+  end
+  h = String.to_i(parts[0])
+  a = String.to_i(parts[1])
+  [h, a]
+end
+
+teams = Hash[]
+matches = Array[]
+errors = Array[]
+line_num = 0
+
+while (line = Kernel.gets)
+  line_num += 1
+  stripped = String.strip(line)
+
+  if String.empty?(stripped)
+    next
+  end
+
+  tokens = String.split(stripped)
+
+  if Array.size(tokens) != 3
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  home = tokens[0]
+  score_str = tokens[1]
+  away = tokens[2]
+
+  if !team_valid?(home) || !team_valid?(away) || home == away
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  if score_str == "P-P"
+    teams[home] = TeamStats.new(home, 0, 0, 0, 0, 0, 0, 0) if !teams[home]
+    teams[away] = TeamStats.new(away, 0, 0, 0, 0, 0, 0, 0) if !teams[away]
+    next
+  end
+
+  score = parse_score(score_str)
+  if score == nil
+    Array.push(errors, [line_num, stripped])
+    next
+  end
+
+  h_goals = score[0]
+  a_goals = score[1]
+
+  Array.push(matches, [home, away, h_goals, a_goals])
+
+  if !teams[home]
+    teams[home] = TeamStats.new(home, 0, 0, 0, 0, 0, 0, 0)
+  end
+  if !teams[away]
+    teams[away] = TeamStats.new(away, 0, 0, 0, 0, 0, 0, 0)
+  end
+end
+
+Array.each(errors) { |err| puts("invalid line #{err[0]}: #{err[1]}") }
+
+if Hash.size(teams) == 0
+  puts("no teams")
+  exit(0)
+end
+
+# Update team stats
+Array.each(matches) do |home, away, h_goals, a_goals|
+  h_stats = teams[home]
+  a_stats = teams[away]
+
+  new_h = TeamStats.new(
+    TeamStats.name(h_stats),
+    TeamStats.played(h_stats) + 1,
+    h_goals > a_goals ? TeamStats.won(h_stats) + 1 : TeamStats.won(h_stats),
+    h_goals == a_goals ? TeamStats.drawn(h_stats) + 1 : TeamStats.drawn(h_stats),
+    h_goals < a_goals ? TeamStats.lost(h_stats) + 1 : TeamStats.lost(h_stats),
+    TeamStats.gf(h_stats) + h_goals,
+    TeamStats.ga(h_stats) + a_goals,
+    TeamStats.points(h_stats) + (h_goals > a_goals ? 3 : (h_goals == a_goals ? 1 : 0))
+  )
+
+  new_a = TeamStats.new(
+    TeamStats.name(a_stats),
+    TeamStats.played(a_stats) + 1,
+    a_goals > h_goals ? TeamStats.won(a_stats) + 1 : TeamStats.won(a_stats),
+    a_goals == h_goals ? TeamStats.drawn(a_stats) + 1 : TeamStats.drawn(a_stats),
+    a_goals < h_goals ? TeamStats.lost(a_stats) + 1 : TeamStats.lost(a_stats),
+    TeamStats.gf(a_stats) + a_goals,
+    TeamStats.ga(a_stats) + h_goals,
+    TeamStats.points(a_stats) + (a_goals > h_goals ? 3 : (a_goals == h_goals ? 1 : 0))
+  )
+
+  teams[home] = new_h
+  teams[away] = new_a
+end
+
+# Sort teams
+team_list = Hash.values(teams)
+sorted = Array.sort_by(team_list) do |t|
+  gd = TeamStats.gf(t) - TeamStats.ga(t)
+  [-TeamStats.points(t), -gd, -TeamStats.gf(t), TeamStats.name(t)]
+end
+
+# Print header
+puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+
+# Print teams
+pos = 1
+prev_key = nil
+Array.each_with_index(sorted) do |t, i|
+  gd = TeamStats.gf(t) - TeamStats.ga(t)
+  key = [-TeamStats.points(t), -(TeamStats.gf(t) - TeamStats.ga(t)), -TeamStats.gf(t)]
+  if prev_key != nil && key != prev_key
+    pos = i + 1
+  end
+  prev_key = key
+
+  gd_str = gd > 0 ? "+#{gd}" : "#{gd}"
+  puts(format("%3d %-12s%3d%3d%3d%3d%4d%4d%4s%4d",
+    pos,
+    TeamStats.name(t),
+    TeamStats.played(t),
+    TeamStats.won(t),
+    TeamStats.drawn(t),
+    TeamStats.lost(t),
+    TeamStats.gf(t),
+    TeamStats.ga(t),
+    gd_str,
+    TeamStats.points(t)
+  ))
+end

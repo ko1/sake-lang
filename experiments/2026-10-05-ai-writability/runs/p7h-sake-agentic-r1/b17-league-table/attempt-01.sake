@@ -1,0 +1,212 @@
+Match = Struct.new(:home, :away, :hgoals, :agoals, :postponed)
+
+def valid_team_name(name)
+  if String.empty?(name) || String.size(name) > 12
+    return false
+  end
+
+  c = String.at(name, 0)
+  if !String.match(c, /[A-Za-z]/)
+    return false
+  end
+
+  String.size(name).times do |i|
+    c = String.at(name, i)
+    if !String.match(c, /[A-Za-z0-9_]/)
+      return false
+    end
+  end
+  true
+end
+
+def parse_score(score_str)
+  if score_str == "P-P"
+    return [nil, nil, true]
+  end
+
+  parts = String.split(score_str, "-")
+  if Array.size(parts) != 2
+    return nil
+  end
+
+  h_str = Array.at(parts, 0)
+  a_str = Array.at(parts, 1)
+
+  if String.empty?(h_str) || String.empty?(a_str)
+    return nil
+  end
+
+  if !String.match(h_str, /^\d{1,2}$/) || !String.match(a_str, /^\d{1,2}$/)
+    return nil
+  end
+
+  [String.to_i(h_str), String.to_i(a_str), false]
+end
+
+def main
+  matches = Array[]
+  teams = Hash.new(nil)
+  errors = Array[]
+  line_num = 1
+
+  loop do
+    line = gets
+    break if line == nil
+
+    line_clean = String.strip(line)
+    if String.empty?(line_clean)
+      line_num += 1
+      next
+    end
+
+    tokens = String.split(line_clean, /\s+/)
+    if Array.size(tokens) != 3
+      Array.push(errors, [line_num, line_clean])
+      line_num += 1
+      next
+    end
+
+    home = Array.at(tokens, 0)
+    score_str = Array.at(tokens, 1)
+    away = Array.at(tokens, 2)
+
+    unless valid_team_name(home) && valid_team_name(away) && home != away
+      Array.push(errors, [line_num, line_clean])
+      line_num += 1
+      next
+    end
+
+    score_data = parse_score(score_str)
+    unless score_data
+      Array.push(errors, [line_num, line_clean])
+      line_num += 1
+      next
+    end
+
+    h_goals = Array.at(score_data, 0)
+    a_goals = Array.at(score_data, 1)
+    postponed = Array.at(score_data, 2)
+
+    Array.push(matches, Match.new(home, away, h_goals, a_goals, postponed))
+
+    if Hash[](teams, home) == nil
+      Hash.store(teams, home, Array[0, 0, 0, 0, 0, 0])
+    end
+    if Hash[](teams, away) == nil
+      Hash.store(teams, away, Array[0, 0, 0, 0, 0, 0])
+    end
+
+    line_num += 1
+  end
+
+  Array.each(errors) { |e| puts("invalid line #{Array.at(e, 0)}: #{Array.at(e, 1)}") }
+
+  if Hash.empty?(teams)
+    puts("no teams")
+    return
+  end
+
+  # Process matches
+  Array.each(matches) do |m|
+    unless Match.postponed(m)
+      home = Match.home(m)
+      away = Match.away(m)
+      hg = Match.hgoals(m)
+      ag = Match.agoals(m)
+
+      h_stats = Hash[](teams, home)
+      a_stats = Hash[](teams, away)
+
+      # Update stats: P W D L GF GA
+      h_p = Array.at(h_stats, 0) + 1
+      h_gf = Array.at(h_stats, 4) + hg
+      h_ga = Array.at(h_stats, 5) + ag
+
+      a_p = Array.at(a_stats, 0) + 1
+      a_gf = Array.at(a_stats, 4) + ag
+      a_ga = Array.at(a_stats, 5) + hg
+
+      if hg > ag
+        # Home win
+        h_w = Array.at(h_stats, 1) + 1
+        a_l = Array.at(a_stats, 3) + 1
+        h_pts = Array.at(h_stats, 6) + 3
+        a_pts = Array.at(a_stats, 6)
+      elsif hg < ag
+        # Away win
+        h_l = Array.at(h_stats, 3) + 1
+        a_w = Array.at(a_stats, 1) + 1
+        h_pts = Array.at(h_stats, 6)
+        a_pts = Array.at(a_stats, 6) + 3
+      else
+        # Draw
+        h_d = Array.at(h_stats, 2) + 1
+        a_d = Array.at(a_stats, 2) + 1
+        h_pts = Array.at(h_stats, 6) + 1
+        a_pts = Array.at(a_stats, 6) + 1
+      end
+
+      h_w = hg > ag ? Array.at(h_stats, 1) + 1 : Array.at(h_stats, 1)
+      h_d = hg == ag ? Array.at(h_stats, 2) + 1 : Array.at(h_stats, 2)
+      h_l = hg < ag ? Array.at(h_stats, 3) + 1 : Array.at(h_stats, 3)
+
+      a_w = ag > hg ? Array.at(a_stats, 1) + 1 : Array.at(a_stats, 1)
+      a_d = ag == hg ? Array.at(a_stats, 2) + 1 : Array.at(a_stats, 2)
+      a_l = ag < hg ? Array.at(a_stats, 3) + 1 : Array.at(a_stats, 3)
+
+      h_pts = (hg > ag ? 3 : 0) + (hg == ag ? 1 : 0)
+      a_pts = (ag > hg ? 3 : 0) + (ag == hg ? 1 : 0)
+
+      Hash.store(teams, home, Array[h_p, h_w, h_d, h_l, h_gf, h_ga, Array.at(h_stats, 6) + h_pts])
+      Hash.store(teams, away, Array[a_p, a_w, a_d, a_l, a_gf, a_ga, Array.at(a_stats, 6) + a_pts])
+    end
+  end
+
+  # Sort teams
+  team_list = Array[]
+  Hash.each(teams) do |name, stats|
+    gf = Array.at(stats, 4)
+    ga = Array.at(stats, 5)
+    gd = gf - ga
+    pts = Array.at(stats, 6)
+    Array.push(team_list, Array[name, stats, gd, pts])
+  end
+
+  sorted = Array.sort_by(team_list) do |t|
+    pts = Array.at(t, 3)
+    gd = Array.at(t, 2)
+    gf = Array.at(Array.at(t, 1), 4)
+    name = Array.at(t, 0)
+    [-pts, -gd, -gf, name]
+  end
+
+  # Output
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+
+  pos = 1
+  prev_rank_key = nil
+  Array.each_with_index(sorted) do |t, idx|
+    name = Array.at(t, 0)
+    stats = Array.at(t, 1)
+    gd = Array.at(t, 2)
+    pts = Array.at(t, 3)
+
+    p_played = Array.at(stats, 0)
+    won = Array.at(stats, 1)
+    drawn = Array.at(stats, 2)
+    lost = Array.at(stats, 3)
+    gf = Array.at(stats, 4)
+    ga = Array.at(stats, 5)
+
+    rank_key = [pts, gd, gf]
+    if rank_key != prev_rank_key
+      pos = idx + 1
+      prev_rank_key = rank_key
+    end
+
+    gd_str = gd >= 0 ? "+#{gd}" : "#{gd}"
+    puts(format("%3d %-12s%3d%3d%3d%3d%4d%4d%4s%4d", pos, name, p_played, won, drawn, lost, gf, ga, gd_str, pts))
+  end
+end
+
+main

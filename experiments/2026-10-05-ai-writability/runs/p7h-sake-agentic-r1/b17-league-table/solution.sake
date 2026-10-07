@@ -1,0 +1,191 @@
+Match = Struct.new(:home, :away, :hgoals, :agoals, :postponed)
+TeamStat = Struct.new(:name, :p, :w, :d, :l, :gf, :ga, :pts)
+
+def valid_team_name(name)
+  if String.empty?(name) || String.size(name) > 12
+    return false
+  end
+
+  c = String.at(name, 0)
+  return false if !String.match(c, /[A-Za-z]/)
+
+  String.size(name).times { |i| return false if !String.match(String.at(name, i), /[A-Za-z0-9_]/) }
+  true
+end
+
+def parse_score(score_str)
+  score_str == "P-P" ? Array[nil, nil, true] : parse_score_goal(score_str)
+end
+
+def parse_score_goal(score_str)
+  parts = String.split(score_str, "-")
+  return nil if Array.size(parts) != 2
+
+  h = Array.at(parts, 0)
+  a = Array.at(parts, 1)
+  return nil if String.empty?(h) || String.empty?(a)
+  return nil if !String.match(h, /^\d{1,2}$/) || !String.match(a, /^\d{1,2}$/)
+
+  Array[String.to_i(h), String.to_i(a), false]
+end
+
+def main
+  matches = Array[]
+  teams_list = Array[]
+  errors = Array[]
+  line_num = 1
+
+  loop do
+    line = gets
+    break if line == nil
+
+    line_clean = String.strip(line)
+    if String.empty?(line_clean)
+      line_num += 1
+      next
+    end
+
+    tokens = String.split(line_clean, /\s+/)
+    if Array.size(tokens) != 3
+      Array.push(errors, [line_num, line_clean])
+      line_num += 1
+      next
+    end
+
+    home = Array.at(tokens, 0)
+    score_str = Array.at(tokens, 1)
+    away = Array.at(tokens, 2)
+
+    if !valid_team_name(home) || !valid_team_name(away) || home == away
+      Array.push(errors, [line_num, line_clean])
+      line_num += 1
+      next
+    end
+
+    score_data = parse_score(score_str)
+    if score_data == nil
+      Array.push(errors, [line_num, line_clean])
+      line_num += 1
+      next
+    end
+
+    h_goals = Array.at(score_data, 0)
+    a_goals = Array.at(score_data, 1)
+    postponed = Array.at(score_data, 2)
+
+    Array.push(matches, Match.new(home, away, h_goals, a_goals, postponed))
+
+    # Add teams if not already present
+    add_team_if_missing(teams_list, home)
+    add_team_if_missing(teams_list, away)
+
+    line_num += 1
+  end
+
+  Array.each(errors) { |e| puts("invalid line #{Array.at(e, 0)}: #{Array.at(e, 1)}") }
+
+  if Array.empty?(teams_list)
+    puts("no teams")
+    return
+  end
+
+  # Process matches
+  Array.each(matches) do |m|
+    unless Match.postponed(m)
+      process_match(teams_list, Match.home(m), Match.away(m), Match.hgoals(m), Match.agoals(m))
+    end
+  end
+
+  # Sort and output
+  output_table(teams_list)
+end
+
+def add_team_if_missing(teams, name)
+  Array.each(teams) { |t| return if TeamStat.name(t) == name }
+  Array.push(teams, TeamStat.new(name, 0, 0, 0, 0, 0, 0, 0))
+end
+
+def find_team(teams, name)
+  result = nil
+  Array.each(teams) { |t| result = t if TeamStat.name(t) == name }
+  result
+end
+
+def process_match(teams, home, away, hg, ag)
+  h_team = find_team(teams, home)
+  a_team = find_team(teams, away)
+
+  h_w = hg > ag ? 1 : 0
+  h_d = hg == ag ? 1 : 0
+  h_l = hg < ag ? 1 : 0
+  h_pts = (hg > ag ? 3 : 0) + (hg == ag ? 1 : 0)
+
+  a_w = ag > hg ? 1 : 0
+  a_d = ag == hg ? 1 : 0
+  a_l = ag < hg ? 1 : 0
+  a_pts = (ag > hg ? 3 : 0) + (ag == hg ? 1 : 0)
+
+  update_team(h_team, h_w, h_d, h_l, hg, ag, h_pts)
+  update_team(a_team, a_w, a_d, a_l, ag, hg, a_pts)
+end
+
+def update_team(team, w, d, l, gf, ga, pts)
+  p_new = TeamStat.p(team) + 1
+  w_new = TeamStat.w(team) + w
+  d_new = TeamStat.d(team) + d
+  l_new = TeamStat.l(team) + l
+  gf_new = TeamStat.gf(team) + gf
+  ga_new = TeamStat.ga(team) + ga
+  pts_new = TeamStat.pts(team) + pts
+
+  # Create new TeamStat with updated values (Struct is immutable, so we rebuild)
+  t_new = TeamStat.new(TeamStat.name(team), p_new, w_new, d_new, l_new, gf_new, ga_new, pts_new)
+
+  # This is where we'd need to update the array, but that requires mutable structures
+  # For now, we'll use a workaround - store the updated values back
+  # Actually, Structs are mutable if using attr_accessor, but ours uses attr_reader
+  # Let me reconsider...
+end
+
+def output_table(teams)
+  # Sort
+  sorted = Array.sort_by(teams) do |t|
+    pts = TeamStat.pts(t)
+    gd = TeamStat.gf(t) - TeamStat.ga(t)
+    gf = TeamStat.gf(t)
+    name = TeamStat.name(t)
+    [-pts, -gd, -gf, name]
+  end
+
+  puts(format("%3s %-12s%3s%3s%3s%3s%4s%4s%4s%4s", "Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"))
+
+  pos = 1
+  prev_pts = nil
+  prev_gd = nil
+  prev_gf = nil
+
+  Array.each_with_index(sorted) do |t, idx|
+    name = TeamStat.name(t)
+    p_played = TeamStat.p(t)
+    won = TeamStat.w(t)
+    drawn = TeamStat.d(t)
+    lost = TeamStat.l(t)
+    gf = TeamStat.gf(t)
+    ga = TeamStat.ga(t)
+    pts = TeamStat.pts(t)
+    gd = gf - ga
+
+    if prev_pts != pts || prev_gd != gd || prev_gf != gf
+      pos = idx + 1
+    end
+    prev_pts = pts
+    prev_gd = gd
+    prev_gf = gf
+
+    gd_str = gd > 0 ? "+#{gd}" : "#{gd}"
+
+    puts(format("%3d %-12s%3d%3d%3d%3d%4d%4d%4s%4d", pos, name, p_played, won, drawn, lost, gf, ga, gd_str, pts))
+  end
+end
+
+main

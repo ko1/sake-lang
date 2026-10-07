@@ -1,0 +1,283 @@
+def parse_money(s)
+  if String.match(s, /^(\d+)(\.\d{1,2})?$/)
+    String.to_f(s)
+  else
+    nil
+  end
+end
+
+def parse_qty(s)
+  if String.match(s, /^\d+$/)
+    n = String.to_i(s)
+    if n >= 1 && n <= 1000000
+      n
+    else
+      nil
+    end
+  else
+    nil
+  end
+end
+
+def validate_sku(sku)
+  if String.match(sku, /^[A-Z0-9\-]{1,12}$/)
+    true
+  else
+    false
+  end
+end
+
+def money_to_string(m)
+  format("%.2f", m)
+end
+
+# Main data structures
+inventory = Hash[]  # SKU -> Array of [qty, cost] lots
+received_skus = Array[]  # Track which SKUs have been received
+total_revenue = 0.0
+total_cogs = 0.0
+line_num = 0
+
+# Read input
+lines = Array[]
+while true
+  line = gets
+  break if line == nil
+  Array.push(lines, line)
+end
+
+Array.each(lines) { |line|
+  line_num += 1
+  trimmed = String.strip(line)
+
+  # Skip blank lines
+  if String.empty?(trimmed)
+    next
+  end
+
+  # Parse fields
+  fields = String.split(trimmed, /\s+/)
+  field_count = Array.size(fields)
+
+  if field_count == 0
+    next
+  end
+
+  command = Array.at(fields, 0)
+
+  if command != "RECEIVE" && command != "SHIP" && command != "REPORT"
+    puts("line #{line_num}: error: unknown command #{command}")
+    next
+  end
+
+  # Validate field count
+  if command == "REPORT"
+    if field_count != 1
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+  elsif command == "RECEIVE" || command == "SHIP"
+    if field_count != 4
+      puts("line #{line_num}: error: wrong field count")
+      next
+    end
+  end
+
+  # Process based on command
+  if command == "REPORT"
+    # Print report
+    puts("SKU            QTY      VALUE")
+
+    total_qty = 0
+    total_value = 0.0
+
+    # Collect and sort SKUs
+    skus_to_report = Array[]
+    Array.each(received_skus) { |sku| Array.push(skus_to_report, sku) }
+    Array.sort(skus_to_report)
+
+    Array.each(Array.sort(skus_to_report)) { |sku|
+      qty = 0
+      value = 0.0
+
+      lots = Hash.fetch(inventory, sku, nil)
+      if lots
+        Array.each(lots) { |lot|
+          lot_qty = lot[0]
+          lot_cost = lot[1]
+          qty += lot_qty
+          value += Float(lot_qty) * lot_cost
+        }
+      end
+
+      value_str = money_to_string(value)
+      puts(format("%-12s %5d %10s", sku, qty, value_str))
+
+      total_qty += qty
+      total_value += value
+    }
+
+    total_value_str = money_to_string(total_value)
+    puts(format("%-12s %5d %10s", "TOTAL", total_qty, total_value_str))
+
+  elsif command == "RECEIVE"
+    sku = Array.at(fields, 1)
+    qty_s = Array.at(fields, 2)
+    cost_s = Array.at(fields, 3)
+
+    # Validate SKU
+    if !validate_sku(sku)
+      puts("line #{line_num}: error: bad sku")
+      next
+    end
+
+    # Validate quantity
+    qty = parse_qty(qty_s)
+    if qty == nil
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    # Validate cost
+    cost = parse_money(cost_s)
+    if cost == nil
+      puts("line #{line_num}: error: bad price")
+      next
+    end
+
+    # Add to inventory
+    if !Array.include?(received_skus, sku)
+      Array.push(received_skus, sku)
+    end
+
+    lots = Hash.fetch(inventory, sku, nil)
+    if lots
+      Array.push(lots, [qty, cost])
+    else
+      lots = Array[[qty, cost]]
+      inventory[sku] = lots
+    end
+
+  elsif command == "SHIP"
+    sku = Array.at(fields, 1)
+    qty_s = Array.at(fields, 2)
+    price_s = Array.at(fields, 3)
+
+    # Validate SKU
+    if !validate_sku(sku)
+      puts("line #{line_num}: error: bad sku")
+      next
+    end
+
+    # Validate quantity
+    qty = parse_qty(qty_s)
+    if qty == nil
+      puts("line #{line_num}: error: bad quantity")
+      next
+    end
+
+    # Validate price
+    price = parse_money(price_s)
+    if price == nil
+      puts("line #{line_num}: error: bad price")
+      next
+    end
+
+    # Check if SKU exists
+    lots = Hash.fetch(inventory, sku, nil)
+    if !lots
+      puts("line #{line_num}: error: unknown sku #{sku}")
+      next
+    end
+
+    # Check if sufficient stock
+    total_available = 0
+    Array.each(lots) { |lot| total_available += lot[0] }
+
+    if total_available < qty
+      puts("line #{line_num}: error: insufficient stock for #{sku} (have #{total_available}, need #{qty})")
+      next
+    end
+
+    # Ship using FIFO
+    remaining = qty
+    cost_total = 0.0
+
+    new_lots = Array[]
+    Array.each(lots) { |lot|
+      if remaining <= 0
+        Array.push(new_lots, lot)
+      else
+        lot_qty = lot[0]
+        lot_cost = lot[1]
+
+        if remaining >= lot_qty
+          # Use entire lot
+          cost_total += Float(lot_qty) * lot_cost
+          remaining -= lot_qty
+        else
+          # Use part of lot
+          cost_total += Float(remaining) * lot_cost
+          new_qty = lot_qty - remaining
+          Array.push(new_lots, [new_qty, lot_cost])
+          remaining = 0
+        end
+      end
+    }
+
+    inventory[sku] = new_lots
+
+    revenue = Float(qty) * price
+    total_revenue += revenue
+    total_cogs += cost_total
+
+    revenue_str = money_to_string(revenue)
+    cost_str = money_to_string(cost_total)
+    puts("line #{line_num}: shipped #{qty} #{sku}: revenue #{revenue_str}, cost #{cost_str}")
+  end
+}
+
+# Final report
+puts("== final ==")
+puts("SKU            QTY      VALUE")
+
+total_qty = 0
+total_value = 0.0
+
+# Collect and sort SKUs
+final_skus = Array[]
+Array.each(received_skus) { |sku| Array.push(final_skus, sku) }
+
+Array.each(Array.sort(final_skus)) { |sku|
+  qty = 0
+  value = 0.0
+
+  lots = Hash.fetch(inventory, sku, nil)
+  if lots
+    Array.each(lots) { |lot|
+      lot_qty = lot[0]
+      lot_cost = lot[1]
+      qty += lot_qty
+      value += Float(lot_qty) * lot_cost
+    }
+  end
+
+  value_str = money_to_string(value)
+  puts(format("%-12s %5d %10s", sku, qty, value_str))
+
+  total_qty += qty
+  total_value += value
+}
+
+total_value_str = money_to_string(total_value)
+puts(format("%-12s %5d %10s", "TOTAL", total_qty, total_value_str))
+
+gross_profit = total_revenue - total_cogs
+
+revenue_str = money_to_string(total_revenue)
+cogs_str = money_to_string(total_cogs)
+profit_str = money_to_string(gross_profit)
+
+puts("revenue: #{revenue_str}")
+puts("cost of goods sold: #{cogs_str}")
+puts("gross profit: #{profit_str}")

@@ -1,0 +1,308 @@
+Req = Struct.new(:id, :time, :from, :to)
+
+def parse_num(s)
+  if String.match(s, /^\d+$/)
+    String.to_i(s)
+  else
+    nil
+  end
+end
+
+def main
+  first = gets
+  return if first == nil
+
+  parts = String.split(String.strip(first), " ")
+  return if Array.size(parts) != 3
+
+  n = parse_num(Array.at(parts, 0))
+  d = parse_num(Array.at(parts, 1))
+  c = parse_num(Array.at(parts, 2))
+
+  if !n || !d || !c || n < 2 || n > 50 || d < 0 || d > 5 || c < 1 || c > 20
+    puts("invalid header")
+    return
+  end
+
+  reqs = Array[]
+  line = 2
+  errs = Array[]
+  last_t = 0
+
+  loop do
+    s = gets
+    break if s == nil
+    s = String.strip(s)
+    next if String.empty?(s)
+
+    p = String.split(s, " ")
+    if Array.size(p) != 3
+      Array.push(errs, line)
+      line += 1
+      next
+    end
+
+    t = parse_num(Array.at(p, 0))
+    f = parse_num(Array.at(p, 1))
+    g = parse_num(Array.at(p, 2))
+
+    if !t || !f || !g || f < 1 || f > n || g < 1 || g > n || f == g || t > 1000 || t < last_t
+      Array.push(errs, line)
+      line += 1
+      next
+    end
+
+    Array.push(reqs, Req.new(Array.size(reqs) + 1, t, f, g))
+    last_t = t
+    line += 1
+  end
+
+  Array.each(errs) { |l| puts("line #{l}: invalid request") }
+
+  if Array.empty?(reqs)
+    puts("no passengers")
+    return
+  end
+
+  sim(n, d, c, reqs)
+end
+
+def sim(n, d, c, reqs)
+  floor = 1
+  time = 0
+  dir = :idle
+  riders = Array[]
+  waiting = Array[]
+  Integer.times(n + 1) { Array.push(waiting, Array[]) }
+
+  pick_times = Array[]
+  drop_times = Array[]
+  Integer.times(Array.size(reqs) + 1) { Array.push(pick_times, nil) }
+  Integer.times(Array.size(reqs) + 1) { Array.push(drop_times, nil) }
+
+  events = Array[]
+
+  req_idx = 0
+
+  loop do
+    # Add new requests
+    while req_idx < Array.size(reqs)
+      r = Array.at(reqs, req_idx)
+      break if Req.time(r) > time
+      pid = Req.id(r)
+      from = Req.from(r)
+      w = Array.at(waiting, from)
+      Array.push(w, pid)
+      req_idx += 1
+    end
+
+    # Check if done
+    if Array.empty?(riders) && req_idx >= Array.size(reqs)
+      all_e = true
+      Integer.times(n + 1) do |i|
+        if !Array.empty?(Array.at(waiting, i))
+          all_e = false
+        end
+      end
+      break if all_e
+    end
+
+    # Drop off
+    dropped = false
+    riders2 = Array[]
+    Array.each(riders) do |pid|
+      dest = nil
+      Array.each(reqs) do |r|
+        if Req.id(r) == pid
+          dest = Req.to(r)
+        end
+      end
+      if dest == floor
+        evnt = Array[time, floor, pid, 0]
+        Array.push(events, evnt)
+        Array.[]=(drop_times, pid, time)
+        dropped = true
+      else
+        Array.push(riders2, pid)
+      end
+    end
+    riders = riders2
+
+    # Targets
+    targets = Set[]
+    Array.each(riders) do |pid|
+      Array.each(reqs) do |r|
+        if Req.id(r) == pid
+          Set.add(targets, Req.to(r))
+        end
+      end
+    end
+    Integer.times(n + 1) do |i|
+      w = Array.at(waiting, i)
+      if !Array.empty?(w)
+        Set.add(targets, i)
+      end
+    end
+
+    # Direction
+    case dir
+    in :up
+      above = false
+      below = false
+      Set.each(targets) { |f| above = true if f > floor }
+      Set.each(targets) { |f| below = true if f < floor }
+      if above
+        # stay up
+      elsif below
+        dir = :down
+      else
+        dir = :idle
+      end
+    in :down
+      above = false
+      below = false
+      Set.each(targets) { |f| above = true if f > floor }
+      Set.each(targets) { |f| below = true if f < floor }
+      if below
+        # stay down
+      elsif above
+        dir = :up
+      else
+        dir = :idle
+      end
+    in :idle
+      if !Set.empty?(targets)
+        nearest = nil
+        best_d = nil
+        Set.each(targets) do |f|
+          d_dist = Arithmetic.abs(f - floor)
+          if best_d == nil || d_dist < best_d
+            nearest = f
+            best_d = d_dist
+          elsif d_dist == best_d && f < nearest
+            nearest = f
+          end
+        end
+
+        if nearest == floor
+          w_at_f = Array.at(waiting, floor)
+          lowest = nil
+          Array.each(w_at_f) do |p|
+            if lowest == nil || p < lowest
+              lowest = p
+            end
+          end
+          if lowest
+            dest = nil
+            Array.each(reqs) do |r|
+              if Req.id(r) == lowest
+                dest = Req.to(r)
+              end
+            end
+            if dest
+              dir = dest > floor ? :up : :down
+            end
+          end
+        else
+          dir = nearest > floor ? :up : :down
+        end
+      end
+    end
+
+    # Pick up - account for riders already in elevator
+    picked = false
+    w_at_f = Array.at(waiting, floor)
+    w_sorted = Array.sort(w_at_f)
+    riders_count = Array.size(riders)
+    pick_count = 0
+    w_new = Array[]
+
+    Array.each(w_sorted) do |pid|
+      avail = c - riders_count - pick_count
+      if avail > 0
+        dest = nil
+        Array.each(reqs) do |r|
+          if Req.id(r) == pid
+            dest = Req.to(r)
+          end
+        end
+        pdir = dest > floor ? :up : :down
+
+        if dir == pdir || dir == :idle
+          Array.push(riders, pid)
+          evnt = Array[time, floor, pid, 1]
+          Array.push(events, evnt)
+          Array.[]=(pick_times, pid, time)
+          pick_count += 1
+          picked = true
+        else
+          Array.push(w_new, pid)
+        end
+      else
+        Array.push(w_new, pid)
+      end
+    end
+    Array.[]=(waiting, floor, w_new)
+
+    # Advance
+    if picked || dropped
+      time += d
+    else
+      case dir
+      in :idle
+        # stay
+      in :up
+        floor += 1
+      in :down
+        floor -= 1
+      end
+      time += 1
+    end
+  end
+
+  # Sort events: by time, then drops before picks
+  sorted = Array.sort_by(events) do |e|
+    t = Array.at(e, 0)
+    typ = Array.at(e, 3)
+    [t, typ]
+  end
+
+  Array.each(sorted) do |e|
+    t = Array.at(e, 0)
+    fl = Array.at(e, 1)
+    pid = Array.at(e, 2)
+    typ = Array.at(e, 3)
+    typ_str = typ == 0 ? "drop" : "pick"
+    puts("t=#{t} floor #{fl} #{typ_str} P#{pid}")
+  end
+
+  # Summary
+  tw = 0
+  tr = 0
+  Array.each(reqs) do |r|
+    id = Req.id(r)
+    rt = Req.time(r)
+    pt = Array.at(pick_times, id)
+    dt = Array.at(drop_times, id)
+    w_t = pt - rt
+    r_t = dt - pt
+    tw += w_t
+    tr += r_t
+    puts("P#{id} wait #{w_t} ride #{r_t}")
+  end
+
+  n_reqs = Array.size(reqs)
+  avg_w = Float(tw) / n_reqs
+  avg_r = Float(tr) / n_reqs
+  puts(format("average wait %.2f ride %.2f", avg_w, avg_r))
+
+  last_d = nil
+  Array.each(sorted) do |e|
+    if Array.at(e, 3) == 0
+      last_d = Array.at(e, 0)
+    end
+  end
+  puts("done at t=#{last_d}")
+end
+
+main

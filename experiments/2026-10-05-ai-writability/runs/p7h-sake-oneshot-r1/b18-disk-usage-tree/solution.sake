@@ -1,0 +1,208 @@
+Node = Struct.new(:name, :size, :children, :is_file)
+
+def parse_header(line)
+  parts = String.split(line)
+  if Array.size(parts) != 4 || parts[0] != "depth" || parts[2] != "threshold"
+    return nil
+  end
+  d = String.to_i(parts[1])
+  t = String.to_i(parts[3])
+  [d, t]
+end
+
+def format_size(bytes)
+  if bytes < 1024
+    return "#{bytes}B"
+  end
+
+  k = 1024
+  m = 1024 * 1024
+  g = 1024 * 1024 * 1024
+
+  if bytes < m
+    unit = k
+    unit_char = "K"
+  elsif bytes < g
+    unit = m
+    unit_char = "M"
+  else
+    unit = g
+    unit_char = "G"
+  end
+
+  t = bytes * 10 / unit
+  if t >= 1000
+    n = (bytes + unit / 2) / unit
+    if n == 1024 && unit != g
+      return "1.0#{String.at("KMG", (unit == k ? 0 : (unit == m ? 1 : 2)))}"
+    else
+      return "#{n}#{unit_char}"
+    end
+  else
+    quot = t / 10
+    rem = t % 10
+    return "#{quot}.#{rem}#{unit_char}"
+  end
+end
+
+header_line = Kernel.gets
+header_line => String
+header_result = parse_header(header_line)
+
+if header_result == nil
+  puts("bad header")
+  exit(0)
+end
+
+depth_limit = header_result[0]
+threshold = header_result[1]
+
+root = Node.new(".", 0, Hash[], false)
+all_files = Hash[]
+errors = Array[]
+line_num = 2
+
+while (line = Kernel.gets)
+  stripped = String.strip(line)
+
+  if String.empty?(stripped)
+    line_num += 1
+    next
+  end
+
+  parts = String.split(stripped)
+  if Array.size(parts) != 2
+    Array.push(errors, "line #{line_num}: malformed")
+    line_num += 1
+    next
+  end
+
+  size = String.to_i(parts[0])
+  path = parts[1]
+
+  if String.include?(path, " ") || String.at(path, 0) == "/"
+    Array.push(errors, "line #{line_num}: malformed")
+    line_num += 1
+    next
+  end
+
+  if all_files[path]
+    Array.push(errors, "line #{line_num}: duplicate #{path}")
+    line_num += 1
+    next
+  end
+
+  path_parts = String.split(path, "/")
+
+  current = root
+  Integer.times(Array.size(path_parts)) do |i|
+    component = path_parts[i]
+
+    is_last = (i == Array.size(path_parts) - 1)
+
+    if Node.is_file(current)
+      Array.push(errors, "line #{line_num}: conflict #{path}")
+      line_num += 1
+      return
+    end
+
+    children = Node.children(current)
+
+    if is_last
+      if children[component]
+        if Node.is_file(children[component])
+          Array.push(errors, "line #{line_num}: duplicate #{path}")
+        else
+          Array.push(errors, "line #{line_num}: conflict #{path}")
+        end
+        line_num += 1
+        return
+      end
+
+      new_node = Node.new(component, size, Hash[], true)
+      children[component] = new_node
+      all_files[path] = new_node
+    else
+      if !children[component]
+        new_dir = Node.new(component, 0, Hash[], false)
+        children[component] = new_dir
+      end
+
+      child = children[component]
+      if Node.is_file(child)
+        Array.push(errors, "line #{line_num}: conflict #{path}")
+        line_num += 1
+        return
+      end
+
+      current = child
+    end
+  end
+
+  line_num += 1
+end
+
+Array.each(errors) { |e| puts(e) }
+
+def compute_sizes(node)
+  if Node.is_file(node)
+    return Node.size(node)
+  end
+
+  total = 0
+  children = Node.children(node)
+  Hash.each(children) { |name, child| total += compute_sizes(child) }
+
+  new_node = Node.new(Node.name(node), total, Node.children(node), Node.is_file(node))
+  node_children = Node.children(node)
+  Hash.each(node_children) { |n, c| node_children[n] = c }
+
+  total
+end
+
+compute_sizes(root)
+
+def print_tree(node, depth, depth_limit, threshold)
+  indent = "  " * depth
+
+  if depth > 0
+    name = Node.name(node)
+    size = Node.size(node)
+    if Node.is_file(node)
+      puts(format("%6s  %s%s", format_size(size), indent, name))
+    else
+      puts(format("%6s  %s%s/", format_size(size), indent, name))
+    end
+  else
+    puts(format("%6s  %s", format_size(Node.size(node)), "."))
+  end
+
+  if Node.is_file(node) || depth >= depth_limit
+    return
+  end
+
+  children = Node.children(node)
+  child_list = Hash.to_a(children)
+  sorted = Array.sort_by(child_list) do |name, child|
+    [-Node.size(child), name]
+  end
+
+  below_threshold = Array[]
+  total_below = 0
+
+  Array.each(sorted) do |name, child|
+    if Node.size(child) < threshold
+      Array.push(below_threshold, child)
+      total_below += Node.size(child)
+    else
+      print_tree(child, depth + 1, depth_limit, threshold)
+    end
+  end
+
+  if Array.size(below_threshold) > 0
+    sub_indent = "  " * (depth + 1)
+    puts(format("%6s  %s(%d smaller)", format_size(total_below), sub_indent, Array.size(below_threshold)))
+  end
+end
+
+print_tree(root, 0, depth_limit, threshold)

@@ -1,0 +1,264 @@
+def read_all_lines
+  lines = Array[]
+  while line = Kernel.gets
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def normalize_line(line)
+  String.strip(line)
+end
+
+def should_skip?(line)
+  line = normalize_line(line)
+  String.empty?(line) || String.start_with?(line, "#")
+end
+
+def parse_fields(line)
+  String.split(normalize_line(line), /\s+/)
+end
+
+def is_valid_weight?(w)
+  if /^\d+$/ =~ w
+    n = String.to_i(w)
+    n >= 1 && n <= 100
+  else
+    false
+  end
+end
+
+def parse_score(score_str)
+  if score_str == "EX"
+    [:ex]
+  elsif score_str == "-"
+    [:missing]
+  elsif /^(\d+)\/(\d+)$/ =~ score_str
+    p_str = $1
+    m_str = $2
+    p = String.to_i(p_str)
+    m = String.to_i(m_str)
+    if m > 0 && p <= m
+      [:score, p, m]
+    else
+      nil
+    end
+  else
+    nil
+  end
+end
+
+def process_input
+  raw_lines = read_all_lines
+
+  categories = Hash[]
+  weights = Hash[]
+  errors = Array[]
+  scores = Hash[]  # student => {category => [[p, m], ...]}
+  students = Array[]
+  line_num = 0
+
+  Array.each(raw_lines) do |raw_line|
+    line_num += 1
+
+    if should_skip?(raw_line)
+      next
+    end
+
+    fields = parse_fields(raw_line)
+
+    if Array.size(fields) == 3 && Array.at(fields, 0) == "weight"
+      cat = Array.at(fields, 1)
+      w = Array.at(fields, 2)
+
+      if !is_valid_weight?(w)
+        Array.push(errors, format("line %d: bad weight %s", line_num, w))
+      elsif Hash.key?(categories, cat)
+        Array.push(errors, format("line %d: duplicate category %s", line_num, cat))
+      else
+        categories[cat] = true
+        weights[cat] = String.to_i(w)
+      end
+    elsif Array.size(fields) == 3
+      student = Array.at(fields, 0)
+      cat = Array.at(fields, 1)
+      score_str = Array.at(fields, 2)
+
+      if !Hash.key?(categories, cat)
+        Array.push(errors, format("line %d: unknown category %s", line_num, cat))
+      else
+        parsed = parse_score(score_str)
+        if parsed == nil
+          Array.push(errors, format("line %d: bad score %s", line_num, score_str))
+        else
+          if !Array.include?(students, student)
+            Array.push(students, student)
+            scores[student] = Hash[]
+          end
+
+          if !Hash.key?(scores[student], cat)
+            scores[student][cat] = Array[]
+          end
+
+          case parsed
+          in [:ex]
+            # ignore
+          in [:missing]
+            Array.push(scores[student][cat], [0, String.to_i(String.split(score_str, "/")[1])])
+          in [:score, p, m]
+            Array.push(scores[student][cat], [p, m])
+          end
+        end
+      end
+    else
+      Array.push(errors, format("line %d: bad format", line_num))
+    end
+  end
+
+  [errors, categories, weights, scores, students]
+end
+
+def calculate_percentage(student, scores, categories, weights)
+  total_weighted = 0.0
+  total_weight = 0.0
+  has_score = false
+
+  Hash.each(categories) do |cat, _|
+    if Hash.key?(scores, cat) && !Array.empty?(scores[cat])
+      has_score = true
+      total_p = 0
+      total_m = 0
+      Array.each(scores[cat]) do |p, m|
+        total_p += p
+        total_m += m
+      end
+      frac = Integer.to_f(total_p) / Integer.to_f(total_m)
+      w = weights[cat]
+      total_weighted += frac * Integer.to_f(w)
+      total_weight += Integer.to_f(w)
+    end
+  end
+
+  if has_score
+    (total_weighted / total_weight) * 100.0
+  else
+    nil
+  end
+end
+
+def round_half_up(x, digits)
+  factor = 10.0 ** Integer.to_f(digits)
+  Float.round(x * factor + 0.5) / factor
+end
+
+def grade_from_percentage(pct)
+  if pct >= 90.0
+    "A"
+  elsif pct >= 80.0
+    "B"
+  elsif pct >= 70.0
+    "C"
+  elsif pct >= 60.0
+    "D"
+  else
+    "F"
+  end
+end
+
+def count_missing(student_scores, categories)
+  count = 0
+  Hash.each(student_scores) do |cat, scores|
+    Array.each(scores) do |p, m|
+      if p == 0 && m > 0
+        found_non_zero = false
+        Array.each(scores) do |pp, mm|
+          if pp > 0
+            found_non_zero = true
+            break
+          end
+        end
+        if !found_non_zero
+          count += 1
+          break
+        end
+      end
+    end
+  end
+  count
+end
+
+errors, categories, weights, scores, students = process_input
+
+# Print errors
+Array.each(errors) do |err|
+  puts(err)
+end
+
+# Calculate percentages and grades
+results = Array[]
+Array.each(students) do |student|
+  pct = calculate_percentage(student, scores[student], categories, weights)
+
+  rounded_pct = nil
+  grade = "-"
+  if pct != nil
+    rounded_pct = round_half_up(pct, 1)
+    grade = grade_from_percentage(rounded_pct)
+  end
+
+  missing_count = count_missing(scores[student], categories)
+
+  Array.push(results, [student, pct, rounded_pct, grade, missing_count])
+end
+
+# Sort: with percentage first by pct desc then name asc, then without percentage by name asc
+sorted = Array.sort_by(results) do |student, pct, rounded_pct, grade, missing|
+  if rounded_pct == nil
+    [1, student]  # no percentage, sort by name
+  else
+    [0, -rounded_pct, student]  # has percentage, sort by -pct desc, then name asc
+  end
+end
+
+# Print header
+max_name_len = 7
+Array.each(students) do |s|
+  if String.size(s) > max_name_len
+    max_name_len = String.size(s)
+  end
+end
+
+header = String.ljust("Student", max_name_len)
+header += "  Score  G  Missing"
+puts(header)
+
+# Print rows
+all_pcts = Array[]
+Array.each(sorted) do |student, pct, rounded_pct, grade, missing|
+  row = String.ljust(student, max_name_len)
+  row += "  "
+
+  if rounded_pct == nil
+    row += String.rjust("n/a", 5)
+  else
+    row += String.rjust(Float.to_s(rounded_pct), 5)
+    Array.push(all_pcts, pct)
+  end
+
+  row += "  "
+  row += grade
+  row += "  "
+  row += String.rjust(Integer.to_s(missing), 7)
+
+  puts(row)
+end
+
+# Print class average
+if Array.empty?(all_pcts)
+  puts("class average: n/a")
+else
+  sum = Array.sum(all_pcts, 0.0)
+  avg = sum / Integer.to_f(Array.size(all_pcts))
+  rounded_avg = round_half_up(avg, 1)
+  puts(format("class average: %s", Float.to_s(rounded_avg)))
+end

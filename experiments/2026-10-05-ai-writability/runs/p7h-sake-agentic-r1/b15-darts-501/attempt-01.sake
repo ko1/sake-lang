@@ -1,0 +1,238 @@
+# Parse header
+input_lines = Array[]
+Array.each(IO.readlines(IO.stdin())) { |line|
+  input_lines.push(String.chomp(line))
+}
+
+if Array.empty?(input_lines)
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+header_fields = String.split(String.strip(Array.at(input_lines, 0)))
+if Array.length(header_fields) < 2 || Array.length(header_fields) > 5
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+start_score_str = Array.at(header_fields, 0)
+start_score = Kernel.Integer(start_score_str) rescue nil
+
+if start_score == nil || start_score < 2 || start_score > 1001
+  puts("invalid header")
+  Kernel.exit(0)
+end
+
+player_names = Array[]
+Integer.upto(1, Integer.-(Array.length(header_fields), 1)) { |i|
+  name = Array.at(header_fields, i)
+  if String.length(name) < 1 || String.length(name) > 10
+    puts("invalid header")
+    Kernel.exit(0)
+  end
+  # Check if all lowercase
+  if String.downcase(name) != name
+    puts("invalid header")
+    Kernel.exit(0)
+  end
+  Array.push(player_names, name)
+}
+
+# Initialize player state
+player_points = Hash[]
+player_darts = Hash[]
+player_busted = Hash[]
+player_checked_out = Hash[]
+
+Array.each(player_names) { |name|
+  Hash.store(player_points, name, start_score)
+  Hash.store(player_darts, name, 0)
+  Hash.store(player_busted, name, false)
+  Hash.store(player_checked_out, name, false)
+}
+
+# Parse dart function
+def parse_dart(dart_str)
+  if dart_str == "25"
+    25
+  elsif dart_str == "BULL"
+    50  # Also counts as double
+  elsif dart_str == "MISS"
+    0
+  elsif String.start_with?(dart_str, "S") && String.length(dart_str) == 3
+    num = Kernel.Integer(String.slice(dart_str, 1, 2)) rescue nil
+    if num != nil && num > 0 && num <= 20
+      num
+    else
+      nil
+    end
+  elsif String.start_with?(dart_str, "D") && String.length(dart_str) == 3
+    num = Kernel.Integer(String.slice(dart_str, 1, 2)) rescue nil
+    if num != nil && num > 0 && num <= 20
+      num * 2
+    else
+      nil
+    end
+  elsif String.start_with?(dart_str, "T") && String.length(dart_str) == 3
+    num = Kernel.Integer(String.slice(dart_str, 1, 2)) rescue nil
+    if num != nil && num > 0 && num <= 20
+      num * 3
+    else
+      nil
+    end
+  else
+    nil
+  end
+end
+
+def is_double(dart_str)
+  dart_str == "BULL" || (String.start_with?(dart_str, "D") && String.length(dart_str) == 3)
+end
+
+# Process turns
+Integer.upto(1, Integer.-(Array.length(input_lines), 1)) { |turn_idx|
+  line_num = Integer.+(turn_idx, 1)
+  line = Array.at(input_lines, turn_idx)
+
+  if String.empty?(String.strip(line))
+    next
+  end
+
+  fields = String.split(String.strip(line))
+
+  if Array.empty?(fields)
+    next
+  end
+
+  player_name = Array.at(fields, 0)
+
+  # Check if game is over
+  if Array.any?(Hash.values(player_checked_out)) { |v| v }
+    puts("line #{line_num}: game over")
+    next
+  end
+
+  # Check if player is known
+  if !Array.any?(player_names) { |p| p == player_name }
+    puts("line #{line_num}: unknown player #{player_name}")
+    next
+  end
+
+  # Check number of darts
+  num_darts = Integer.-(Array.length(fields), 1)
+  if num_darts < 1 || num_darts > 3
+    puts("line #{line_num}: expected 1 to 3 darts")
+    next
+  end
+
+  # Parse and validate darts
+  darts = Array[]
+  has_error = false
+  Integer.upto(1, num_darts) { |i|
+    dart_str = Array.at(fields, i)
+    dart_value = parse_dart(dart_str)
+    if dart_value == nil
+      puts("line #{line_num}: bad dart #{dart_str}")
+      has_error = true
+      break
+    end
+    Array.push(darts, [dart_str, dart_value])
+  }
+
+  if has_error
+    next
+  end
+
+  # Apply darts
+  start_points = Hash.fetch(player_points, player_name)
+  current_points = start_points
+  total_score = 0
+  last_dart_str = ""
+  is_bust = false
+  is_checkout = false
+
+  Array.each(darts) { |dart|
+    dart_str = Array.at(dart, 0)
+    dart_value = Array.at(dart, 1)
+    last_dart_str = dart_str
+
+    new_points = Integer.-(current_points, dart_value)
+    total_score = Integer.+(total_score, dart_value)
+
+    if new_points < 0 || new_points == 1 || (new_points == 0 && !is_double(dart_str))
+      # Bust
+      is_bust = true
+      break
+    elsif new_points == 0 && is_double(dart_str)
+      # Checkout
+      is_checkout = true
+      current_points = 0
+      break
+    else
+      current_points = new_points
+    end
+  }
+
+  # Update state
+  if is_bust
+    puts("#{player_name} busts, #{start_points} left")
+  elsif is_checkout
+    Hash.store(player_points, player_name, 0)
+    Hash.store(player_darts, player_name, Integer.+(Hash.fetch(player_darts, player_name), Array.length(darts)))
+    Hash.store(player_checked_out, player_name, true)
+    puts("#{player_name} checks out with #{last_dart_str}")
+  else
+    Hash.store(player_points, player_name, current_points)
+    Hash.store(player_darts, player_name, Integer.+(Hash.fetch(player_darts, player_name), Array.length(darts)))
+    puts("#{player_name} scores #{total_score}, #{current_points} left")
+  end
+}
+
+# Output standings
+puts("STANDINGS")
+
+# Sort players by points (ascending), then by header order
+player_entries = Array[]
+Array.each(player_names) { |name|
+  points = Hash.fetch(player_points, name)
+  darts = Hash.fetch(player_darts, name)
+  Array.push(player_entries, Array[name, points, darts])
+}
+
+sorted = Array.sort_by(player_entries) { |e|
+  Array[Array.at(e, 1), Array.index(player_names, Array.at(e, 0))]
+}
+
+rank = 1
+Array.each(sorted) { |e|
+  name = Array.at(e, 0)
+  points = Array.at(e, 1)
+  darts = Array.at(e, 2)
+
+  avg_str = if darts == 0
+    "-"
+  else
+    scored = Integer.-(start_score, points)
+    avg = Float./(Float.*(Kernel.Float(scored), 3.0), Kernel.Float(darts))
+    rounded = Float.round(avg, 2)
+    Kernel.to_s(rounded)
+  end
+
+  puts(Kernel.format("%d. %-10s %4d %3d %6s", rank, name, points, darts, avg_str))
+  rank = Integer.+(rank, 1)
+}
+
+# Winner
+winner = nil
+Array.each(player_names) { |name|
+  if Hash.fetch(player_checked_out, name)
+    winner = name
+    break
+  end
+}
+
+if winner != nil
+  puts("winner: #{winner}")
+else
+  puts("no winner")
+end

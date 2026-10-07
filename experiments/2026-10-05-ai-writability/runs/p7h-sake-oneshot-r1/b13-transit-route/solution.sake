@@ -1,0 +1,230 @@
+def read_all_lines
+  lines = Array[]
+  while line = Kernel.gets
+    Array.push(lines, line)
+  end
+  lines
+end
+
+def is_blank?(line)
+  String.empty?(String.strip(line))
+end
+
+def parse_fields(line)
+  String.split(String.strip(line), /\s+/)
+end
+
+def is_valid_station_name?(name)
+  /^[a-zA-Z0-9_]+$/ =~ name
+end
+
+def is_valid_minutes?(str)
+  if /^\d+$/ =~ str
+    n = String.to_i(str)
+    n >= 1 && n <= 999 && (String.start_with?(str, "0") && String.size(str) > 1 ? false : true)
+  else
+    false
+  end
+end
+
+raw_lines = read_all_lines
+
+penalty = nil
+segments = Array[]
+known_stations = Array[]
+errors = Array[]
+queries = Array[]
+query_start = nil
+
+line_num = 0
+Array.each(raw_lines) do |raw_line|
+  line_num += 1
+
+  if is_blank?(raw_line)
+    next
+  end
+
+  line = String.strip(raw_line)
+
+  if line == "QUERIES"
+    query_start = line_num
+    next
+  end
+
+  if query_start == nil
+    if penalty == nil
+      if /^\d+$/ =~ line
+        penalty = String.to_i(line)
+      else
+        Array.push(errors, format("invalid segment at line %d", line_num))
+      end
+    else
+      fields = parse_fields(line)
+
+      if Array.size(fields) != 4
+        Array.push(errors, format("invalid segment at line %d", line_num))
+      else
+        line_name = Array.at(fields, 0)
+        sta = Array.at(fields, 1)
+        stb = Array.at(fields, 2)
+        min_str = Array.at(fields, 3)
+
+        if !is_valid_station_name?(line_name) || !is_valid_station_name?(sta) || !is_valid_station_name?(stb)
+          Array.push(errors, format("invalid segment at line %d", line_num))
+        elsif !is_valid_minutes?(min_str)
+          Array.push(errors, format("invalid segment at line %d", line_num))
+        elsif sta == stb
+          Array.push(errors, format("invalid segment at line %d", line_num))
+        else
+          minutes = String.to_i(min_str)
+          Array.push(segments, [line_name, sta, stb, minutes])
+
+          if !Array.include?(known_stations, sta)
+            Array.push(known_stations, sta)
+          end
+          if !Array.include?(known_stations, stb)
+            Array.push(known_stations, stb)
+          end
+        end
+      end
+    end
+  else
+    fields = parse_fields(line)
+
+    if Array.size(fields) != 2
+      Array.push(errors, format("invalid query at line %d", line_num))
+    else
+      from_st = Array.at(fields, 0)
+      to_st = Array.at(fields, 1)
+      Array.push(queries, [from_st, to_st])
+    end
+  end
+end
+
+if penalty == nil
+  penalty = 0
+end
+
+# Build adjacency list
+graph = Hash[]
+Array.each(known_stations) do |sta|
+  graph[sta] = Array[]
+end
+
+Array.each(segments) do |line_name, sta, stb, minutes|
+  Array.push(graph[sta], [stb, line_name, minutes])
+  Array.push(graph[stb], [sta, line_name, minutes])
+end
+
+# Output errors
+Array.each(errors) do |err|
+  puts(err)
+end
+
+# Process queries
+Array.each(queries) do |from_st, to_st|
+  if !Array.include?(known_stations, from_st)
+    puts(format("%s -> %s: unknown station %s", from_st, to_st, from_st))
+  elsif !Array.include?(known_stations, to_st)
+    puts(format("%s -> %s: unknown station %s", from_st, to_st, to_st))
+  elsif from_st == to_st
+    puts(format("%s -> %s: 0 min, 0 transfers", from_st, to_st))
+  else
+    # Dijkstra's algorithm
+    dist = Hash.new(Float.INFINITY())
+    dist[from_st] = 0
+    prev = Hash[]
+    prev_line = Hash[]
+    visited = Set[]
+
+    loop do
+      current = nil
+      min_dist = Float.INFINITY()
+      Array.each(known_stations) do |st|
+        if !Set.include?(visited, st) && dist[st] < min_dist
+          current = st
+          min_dist = dist[st]
+        end
+      end
+
+      if current == nil || current == to_st
+        break
+      end
+
+      Set.add(visited, current)
+
+      Array.each(graph[current]) do |next_st, line_name, minutes|
+        transfer_cost = 0
+        if prev[current] != nil && prev_line[current] != line_name
+          transfer_cost = penalty
+        end
+
+        new_dist = dist[current] + minutes + transfer_cost
+
+        if new_dist < dist[next_st]
+          dist[next_st] = new_dist
+          prev[next_st] = current
+          prev_line[next_st] = line_name
+        end
+      end
+    end
+
+    if dist[to_st] == Float.INFINITY()
+      puts(format("%s -> %s: no route", from_st, to_st))
+    else
+      total_min = Integer(Float.round(dist[to_st]))
+
+      # Reconstruct path
+      path = Array[]
+      current = to_st
+      while current != from_st
+        Array.unshift(path, [current, prev_line[current]])
+        current = prev[current]
+      end
+
+      # Count transfers
+      transfers = 0
+      Array.each_with_index(path) do |step, i|
+        if i > 0
+          if Array.at(path, i - 1)[1] != Array.at(step, 1)
+            transfers += 1
+          end
+        end
+      end
+
+      # Format output
+      transfer_word = transfers == 1 ? "transfer" : "transfers"
+      puts(format("%s -> %s: %d min, %d %s", from_st, to_st, total_min, transfers, transfer_word))
+
+      # Format route line
+      legs = Array[]
+      current_leg = Array[from_st]
+      current_line = nil
+
+      Array.each(path) do |st, line|
+        if current_line != nil && current_line != line
+          Array.push(legs, [current_line, current_leg])
+          current_leg = Array[st]
+        else
+          Array.push(current_leg, st)
+        end
+        current_line = line
+      end
+
+      if current_line != nil
+        Array.push(legs, [current_line, current_leg])
+      end
+
+      route_line = "  "
+      Array.each_with_index(legs) do |leg, i|
+        line_name, stations = leg
+        if i > 0
+          route_line = String.+(route_line, "; ")
+        end
+        route_line = String.+(route_line, format("%s: %s", line_name, Array.join(stations, " > ")))
+      end
+
+      puts(route_line)
+    end
+  end
+end

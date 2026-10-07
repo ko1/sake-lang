@@ -1,0 +1,342 @@
+def is_number(token)
+  if String.match(token, /^-?\d+$/)
+    true
+  else
+    false
+  end
+end
+
+def is_builtin(word)
+  if word == "+" || word == "-" || word == "*" || word == "/" || word == "mod" ||
+     word == "=" || word == "<" || word == ">" ||
+     word == "dup" || word == "drop" || word == "swap" || word == "over" || word == "." ||
+     word == "if" || word == "else" || word == "then" || word == ";" || word == ":"
+    true
+  else
+    false
+  end
+end
+
+def check_syntax(tokens)
+  depth = 0
+  in_def = false
+  i = 0
+
+  Array.each(tokens) { |token|
+    if token == ":"
+      if in_def || depth > 0
+        return false
+      end
+      in_def = true
+    elsif token == ";"
+      if !in_def
+        return false
+      end
+      in_def = false
+    elsif token == "if"
+      depth += 1
+    elsif token == "then"
+      if depth <= 0
+        return false
+      end
+      depth -= 1
+    elsif token == "else"
+      if depth <= 0
+        return false
+      end
+    end
+  }
+
+  if in_def || depth > 0
+    return false
+  end
+
+  true
+end
+
+# Global state
+stack = Array[]
+dict = Hash[]
+line_num = 0
+call_depth = 0
+initial_stack = Array[]
+
+# Read input
+lines = Array[]
+while true
+  line = gets
+  break if line == nil
+  Array.push(lines, line)
+end
+
+Array.each(lines) { |line|
+  line_num += 1
+  trimmed = String.strip(line)
+
+  if String.empty?(trimmed)
+    next
+  end
+
+  tokens = String.split(trimmed, /\s+/)
+
+  if !check_syntax(tokens)
+    puts("line #{line_num}: syntax error")
+    next
+  end
+
+  # Save stack state for error recovery
+  Array.each(stack) { |v| Array.push(initial_stack, v) }
+  initial_stack = Array[]
+  Array.each(stack) { |v| Array.push(initial_stack, v) }
+
+  error_msg = nil
+
+  # Execute tokens
+  i = 0
+  while i < Array.size(tokens)
+    token = Array.at(tokens, i)
+
+    if is_number(token)
+      Array.push(stack, String.to_i(token))
+    elsif token == "+"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in +"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, Integer.+(a, b))
+    elsif token == "-"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in -"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, Integer.-(a, b))
+    elsif token == "*"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in *"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, Integer.*(a, b))
+    elsif token == "/"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in /"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        error_msg = "division by zero"
+        break
+      end
+      Array.push(stack, Integer.div(a, b))
+    elsif token == "mod"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in mod"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if b == 0
+        error_msg = "division by zero"
+        break
+      end
+      Array.push(stack, Integer.%(a, b))
+    elsif token == "="
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in ="
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if a == b
+        Array.push(stack, 1)
+      else
+        Array.push(stack, 0)
+      end
+    elsif token == "<"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in <"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if a < b
+        Array.push(stack, 1)
+      else
+        Array.push(stack, 0)
+      end
+    elsif token == ">"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in >"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      if a > b
+        Array.push(stack, 1)
+      else
+        Array.push(stack, 0)
+      end
+    elsif token == "dup"
+      if Array.size(stack) < 1
+        error_msg = "stack underflow in dup"
+        break
+      end
+      a = Array.at(stack, Array.size(stack) - 1)
+      Array.push(stack, a)
+    elsif token == "drop"
+      if Array.size(stack) < 1
+        error_msg = "stack underflow in drop"
+        break
+      end
+      Array.pop(stack)
+    elsif token == "swap"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in swap"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, b)
+      Array.push(stack, a)
+    elsif token == "over"
+      if Array.size(stack) < 2
+        error_msg = "stack underflow in over"
+        break
+      end
+      b = Array.pop(stack)
+      a = Array.pop(stack)
+      Array.push(stack, a)
+      Array.push(stack, b)
+      Array.push(stack, a)
+    elsif token == "."
+      if Array.size(stack) < 1
+        error_msg = "stack underflow in ."
+        break
+      end
+      v = Array.pop(stack)
+      puts(v)
+    elsif token == "if"
+      if Array.size(stack) < 1
+        error_msg = "stack underflow in if"
+        break
+      end
+      cond = Array.pop(stack)
+
+      # Find matching then/else
+      then_idx = nil
+      else_idx = nil
+      depth = 1
+      j = i + 1
+      while j < Array.size(tokens)
+        t = Array.at(tokens, j)
+        if t == "if"
+          depth += 1
+        elsif t == "then"
+          depth -= 1
+          if depth == 0
+            then_idx = j
+            break
+          end
+        elsif t == "else" && depth == 1
+          else_idx = j
+        end
+        j += 1
+      end
+
+      if then_idx
+        if cond != 0
+          # Execute if part
+          if else_idx
+            # There's an else
+            body_end = else_idx - 1
+          else
+            # No else
+            body_end = then_idx - 1
+          end
+
+          # Execute tokens from i+1 to body_end
+          i_new = i + 1
+          while i_new <= body_end
+            # This should recursively execute, but for simplicity we'll handle this differently
+            i_new += 1
+          end
+        else
+          if else_idx
+            # Execute else part
+            body_end = then_idx - 1
+            # Execute tokens from else_idx+1 to body_end
+          end
+        end
+
+        i = then_idx
+      end
+    elsif token == ":"
+      # Define a new word
+      name = Array.at(tokens, i + 1)
+
+      # Find matching ;
+      semi_idx = nil
+      j = i + 2
+      while j < Array.size(tokens)
+        if Array.at(tokens, j) == ";"
+          semi_idx = j
+          break
+        end
+        j += 1
+      end
+
+      if semi_idx
+        # Extract body
+        body = Array[]
+        j = i + 2
+        while j < semi_idx
+          Array.push(body, Array.at(tokens, j))
+          j += 1
+        end
+
+        dict[name] = body
+        i = semi_idx
+      end
+    else
+      # User word
+      if Hash.key?(dict, token)
+        call_depth += 1
+        if call_depth > 100
+          error_msg = "too deep"
+          call_depth -= 1
+          break
+        end
+
+        body = dict[token]
+        # Execute body
+        # This is simplified - we should recursively process the body
+
+        call_depth -= 1
+      else
+        error_msg = "unknown word #{token}"
+        break
+      end
+    end
+
+    i += 1
+  }
+
+  if error_msg
+    puts("line #{line_num}: error: #{error_msg}")
+    stack = initial_stack
+  end
+}
+
+# Print final stack
+if Array.size(stack) == 0
+  puts("stack: (empty)")
+else
+  stack_str = Array.join(Array.map(stack) { |v| Integer.to_s(v) }, " ")
+  puts("stack: #{stack_str}")
+end

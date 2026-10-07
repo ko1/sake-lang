@@ -1,0 +1,184 @@
+Request = Struct.new(:time, :from_floor, :to_floor, :id)
+
+# Parse header
+header_line = Kernel.gets
+header_line => String
+parts = String.split(header_line)
+if Array.size(parts) != 3
+  puts("invalid header")
+  exit(1)
+end
+
+n = String.to_i(parts[0])
+d = String.to_i(parts[1])
+c = String.to_i(parts[2])
+
+# Parse and validate requests
+requests = Array[]
+error_lines = Array[]
+line_num = 2
+last_valid_time = -1
+
+while (line = Kernel.gets)
+  stripped = String.strip(line)
+  if String.empty?(stripped)
+    line_num += 1
+    next
+  end
+
+  req_parts = String.split(stripped)
+  is_valid = Array.size(req_parts) == 3
+
+  if is_valid
+    t = String.to_i(req_parts[0])
+    f = String.to_i(req_parts[1])
+    g = String.to_i(req_parts[2])
+    is_valid = (t >= 0 && t <= 1000 && f >= 1 && f <= n && g >= 1 && g <= n && f != g && t >= last_valid_time)
+    if is_valid
+      Array.push(requests, Request.new(t, f, g, Array.size(requests)))
+      last_valid_time = t
+    end
+  end
+
+  if !is_valid
+    Array.push(error_lines, line_num)
+  end
+
+  line_num += 1
+end
+
+Array.each(error_lines) { |ln| puts("line #{ln}: invalid request") }
+
+if Array.size(requests) == 0
+  puts("no passengers")
+  exit(0)
+end
+
+# Simulate elevator
+current_floor = 1
+current_time = 0
+direction = :idle
+riders = Array[]
+waiting = Array[]
+pickups = Array.new(Array.size(requests), nil)
+dropoffs = Array.new(Array.size(requests), nil)
+dropped_count = 0
+
+while dropped_count < Array.size(requests)
+  # Step 1: Activate waiting passengers
+  Array.each(requests) do |req|
+    if Request.time(req) <= current_time
+      found = false
+      Array.each(waiting) { |w| found = true if w[1] == Request.id(req) }
+      if !found
+        Array.push(waiting, [Request.time(req), Request.id(req), Request.to_floor(req), Request.from_floor(req)])
+      end
+    end
+  end
+
+  # Step 2: Drop off at current floor
+  new_riders = Array[]
+  Array.each(riders) do |rider|
+    if rider[1] == current_floor
+      pid = rider[0]
+      dropoffs[pid] = current_time
+      dropped_count += 1
+      puts("t=#{current_time} floor #{current_floor} drop P#{pid + 1}")
+    else
+      Array.push(new_riders, rider)
+    end
+  end
+  riders = new_riders
+
+  # Step 3: Determine direction
+  targets = Array[]
+  Array.each(riders) { |r| Array.push(targets, r[1]) }
+  Array.each(waiting) do |w|
+    f = w[3]
+    has = false
+    Array.each(targets) { |t| has = true if t == f }
+    if !has
+      Array.push(targets, f)
+    end
+  end
+
+  if direction == :up
+    has_above = false
+    Array.each(targets) { |t| has_above = true if t > current_floor }
+    direction = has_above ? :up : (Array.any?(targets) { |t| t < current_floor } ? :down : :idle)
+  elsif direction == :down
+    has_below = false
+    Array.each(targets) { |t| has_below = true if t < current_floor }
+    direction = has_below ? :down : (Array.any?(targets) { |t| t > current_floor } ? :up : :idle)
+  else
+    if Array.size(targets) > 0
+      nearest = targets[0]
+      Array.each(targets) do |t|
+        dist_new = Integer.abs(t - current_floor)
+        dist_old = Integer.abs(nearest - current_floor)
+        if dist_new < dist_old || (dist_new == dist_old && t < nearest)
+          nearest = t
+        end
+      end
+      direction = nearest > current_floor ? :up : (nearest < current_floor ? :down : :idle)
+    end
+  end
+
+  # Step 4: Board passengers
+  boarded = Array[]
+  new_waiting = Array[]
+  Array.each(waiting) do |w|
+    pid = w[1]
+    dest = w[2]
+    floor = w[3]
+
+    if floor == current_floor && Array.size(riders) < c && !Array.include?(boarded, pid)
+      passenger_dir = dest > current_floor ? :up : :down
+      if passenger_dir == direction
+        Array.push(riders, [pid, dest])
+        Array.push(boarded, pid)
+        pickups[pid] = current_time
+        puts("t=#{current_time} floor #{current_floor} pick P#{pid + 1}")
+        next
+      end
+    end
+
+    Array.push(new_waiting, w)
+  end
+  waiting = new_waiting
+
+  # Step 5: Move or wait
+  action_happened = Array.size(boarded) > 0
+  Array.each(riders) { |r| action_happened = true if r[1] == current_floor }
+
+  if action_happened
+    current_time += d
+  else
+    current_floor += 1 if direction == :up
+    current_floor -= 1 if direction == :down
+    current_time += 1
+  end
+end
+
+# Output statistics
+Array.each(requests) do |req|
+  pid = Request.id(req)
+  t = Request.time(req)
+  puts("P#{pid + 1} wait #{pickups[pid] - t} ride #{dropoffs[pid] - pickups[pid]}")
+end
+
+total_wait = 0
+total_ride = 0
+Array.each(requests) do |req|
+  pid = Request.id(req)
+  t = Request.time(req)
+  total_wait += pickups[pid] - t
+  total_ride += dropoffs[pid] - pickups[pid]
+end
+
+n_pass = Float(Array.size(requests))
+puts(format("average wait %.2f ride %.2f", Float(total_wait) / n_pass, Float(total_ride) / n_pass))
+
+last_dropoff = 0
+Array.each(dropoffs) { |t| last_dropoff = t if t > last_dropoff }
+puts("done at t=#{last_dropoff}")

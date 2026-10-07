@@ -1,0 +1,183 @@
+# Read input
+all_lines = Array[]
+Array.each(IO.readlines(IO.stdin())) { |line|
+  Array.push(all_lines, String.chomp(line))
+}
+
+# Parse width
+if Array.empty?(all_lines)
+  puts("invalid width")
+  Kernel.exit(0)
+end
+
+width_str = String.strip(Array.at(all_lines, 0))
+width = if String.empty?(width_str)
+  nil
+else
+  Kernel.Integer(width_str) rescue nil
+end
+
+if width == nil || width < 2 || width > 80
+  puts("invalid width")
+  Kernel.exit(0)
+end
+
+# Extract lines (skip first line which is width)
+lines = Array[]
+Integer.times(Integer.-(Array.length(all_lines), 1)) { |i|
+  line = Array.at(all_lines, Integer.+(i, 1))
+  Array.push(lines, line)
+}
+
+# Extract words and paragraphs
+words_all = Array[]
+paragraphs = Array[]  # Each paragraph is Array of words
+current_para = Array[]
+in_blank_section = true
+
+Array.each(lines) { |line|
+  stripped = String.strip(line)
+  if String.empty?(stripped)
+    # Blank line
+    if !Array.empty?(current_para)
+      Array.push(paragraphs, current_para)
+      current_para = Array[]
+    end
+    in_blank_section = true
+  else
+    # Non-blank line
+    in_blank_section = false
+    words = String.split(stripped)
+    Array.each(words) { |word|
+      Array.push(current_para, word)
+      Array.push(words_all, word)
+    }
+  end
+}
+
+if !Array.empty?(current_para)
+  Array.push(paragraphs, current_para)
+end
+
+# Function to break long words
+def break_words(words_list, width)
+  result = Array[]
+  Array.each(words_list) { |word|
+    if String.length(word) <= width
+      Array.push(result, word)
+    else
+      # Break the word
+      remaining = word
+      while String.length(remaining) > width
+        piece = String.slice(remaining, 0, Integer.-(width, 1))
+        Array.push(result, String.+(piece, "-"))
+        remaining = String.slice(remaining, Integer.-(width, 1), Integer.-(String.length(remaining), Integer.-(width, 1)))
+      end
+      if !String.empty?(remaining)
+        Array.push(result, remaining)
+      end
+    end
+  }
+  result
+end
+
+# Function to justify a line
+def justify_line(words_on_line, width)
+  if Array.length(words_on_line) == 1
+    # Single word - left align
+    word = Array.at(words_on_line, 0)
+    String.ljust(word, width)
+  else
+    # Multiple words - justify
+    text = Array.join(words_on_line, " ")
+    if String.length(text) >= width
+      # Already fits or is too long (shouldn't happen)
+      String.ljust(text, width)
+    else
+      # Need to add extra spaces
+      gaps = Integer.-(Array.length(words_on_line), 1)
+      extra_spaces = Integer.-(width, String.length(text))
+      spaces_per_gap = Integer./(extra_spaces, gaps)
+      remainder = Integer.%(extra_spaces, gaps)
+
+      # Build justified line
+      result = ""
+      Integer.times(Array.length(words_on_line)) { |i|
+        result = String.+(result, Array.at(words_on_line, i))
+        if Integer.<(i, Integer.-(Array.length(words_on_line), 1))
+          # Add spaces
+          num_spaces = Integer.+(1, spaces_per_gap)
+          if Integer.<(i, remainder)
+            num_spaces = Integer.+(num_spaces, 1)
+          end
+          Integer.times(num_spaces) { |_|
+            result = String.+(result, " ")
+          }
+        end
+      }
+      result
+    end
+  end
+end
+
+# Layout paragraphs
+all_text_lines = Array[]
+word_count = Array.length(words_all)
+
+Array.each(paragraphs) { |para|
+  broken_words = break_words(para, width)
+
+  # Lay out lines greedily
+  current_line = Array[]
+  current_length = 0
+
+  Array.each(broken_words) { |word|
+    word_len = String.length(word)
+    if Array.empty?(current_line)
+      # First word on line
+      Array.push(current_line, word)
+      current_length = word_len
+    elsif Integer.+(Integer.+(current_length, 1), word_len) <= width
+      # Fits with space before it
+      Array.push(current_line, word)
+      current_length = Integer.+(Integer.+(current_length, 1), word_len)
+    else
+      # Doesn't fit - start new line
+      justified = justify_line(current_line, width)
+      Array.push(all_text_lines, justified)
+
+      current_line = Array[word]
+      current_length = word_len
+    end
+  }
+
+  # Output last line of paragraph
+  if !Array.empty?(current_line)
+    justified = justify_line(current_line, width)
+    Array.push(all_text_lines, justified)
+  end
+
+  # Add blank separator if not last paragraph
+  if !Array.empty?(paragraphs) && current_line != Array.last(paragraphs)
+    blank = ""
+    Integer.times(width) { |_|
+      blank = String.+(blank, " ")
+    }
+    Array.push(all_text_lines, blank)
+  end
+}
+
+# Output
+border = String.+(String.+("+", String.*(String.+("-", ""), width)), "+")
+puts(border)
+
+Array.each(all_text_lines) { |line|
+  puts(String.+(String.+("|", line), "|"))
+}
+
+puts(border)
+
+# Stats line
+para_count = Array.length(paragraphs)
+line_count = Integer.-(Array.length(all_text_lines), if Array.empty?(paragraphs) then 0 else Integer.-(Array.length(paragraphs), 1) end)
+puts("paragraphs: #{para_count}, lines: #{line_count}, words: #{word_count}")

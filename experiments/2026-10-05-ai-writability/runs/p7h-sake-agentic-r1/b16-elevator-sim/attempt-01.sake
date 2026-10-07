@@ -1,0 +1,258 @@
+Request = Struct.new(:id, :time, :from_floor, :to_floor)
+
+class State
+  attr_accessor floor, time, direction, riders, waiting, pickups, dropoffs
+  def initialize(s)
+    @floor = 1
+    @time = 0
+    @direction = :idle
+    @riders = Array[]
+    @waiting = Hash[]
+    @pickups = Array[]
+    @dropoffs = Array[]
+  end
+end
+
+def parse_int(s)
+  Integer.to_s(String.to_i(s)) == s ? String.to_i(s) : nil
+end
+
+def main
+  header_line = gets
+  return if header_line == nil
+
+  header = String.split(String.strip(header_line), " ")
+  return unless Array.size(header) == 3
+
+  n = parse_int(Array.at(header, 0))
+  d = parse_int(Array.at(header, 1))
+  c = parse_int(Array.at(header, 2))
+
+  unless n && d && c && n >= 2 && n <= 50 && d >= 0 && d <= 5 && c >= 1 && c <= 20
+    puts("invalid header")
+    return
+  end
+
+  requests = Array[]
+  line_num = 2
+  errors = Array[]
+  last_time = 0
+
+  while true
+    line = gets
+    break if line == nil
+
+    line = String.strip(line)
+    next if String.empty?(line)
+
+    parts = String.split(line, " ")
+    if Array.size(parts) != 3
+      Array.push(errors, line_num)
+      line_num += 1
+      next
+    end
+
+    t = parse_int(Array.at(parts, 0))
+    f = parse_int(Array.at(parts, 1))
+    g = parse_int(Array.at(parts, 2))
+
+    if !t || !f || !g || f < 1 || f > n || g < 1 || g > n || f == g || t > 1000 || t < last_time
+      Array.push(errors, line_num)
+      line_num += 1
+      next
+    end
+
+    Array.push(requests, Request.new(Array.size(requests) + 1, t, f, g))
+    last_time = t
+    line_num += 1
+  end
+
+  Array.each(errors) { |ln| puts("line #{ln}: invalid request") }
+
+  if Array.empty?(requests)
+    puts("no passengers")
+    return
+  end
+
+  simulate(n, d, c, requests)
+end
+
+def simulate(n, d, c, requests)
+  state = State.new(0)
+  waiting_by_floor = Hash[]
+  Integer.times(n + 1) { |i| waiting_by_floor[i] = Array[] }
+
+  rider_data = Hash[]
+  Array.each(requests) { |r| rider_data[r.id] = {time: r.time, from_floor: r.from_floor, to_floor: r.to_floor, pickup_time: nil, dropoff_time: nil} }
+
+  req_idx = 0
+  events = Array[]
+
+  while true
+    # Add waiting requests
+    while req_idx < Array.size(requests)
+      req = Array.at(requests, req_idx)
+      break if req.time > state.time
+      Array.push(waiting_by_floor[req.from_floor], req.id)
+      req_idx += 1
+    end
+
+    # Check if done
+    break if Array.empty?(state.riders) && req_idx >= Array.size(requests) && all_waiting_empty(waiting_by_floor)
+
+    # Drop off riders
+    riders_copy = Array.dup(state.riders)
+    Array.each(riders_copy) do |pid|
+      data = Hash.at(rider_data, pid)
+      if data && data[:to_floor] == state.floor
+        Array.delete(state.riders, pid)
+        data[:dropoff_time] = state.time
+        Array.push(events, {type: :drop, time: state.time, floor: state.floor, pid: pid})
+      end
+    end
+
+    # Determine direction
+    targets = Set[]
+    Array.each(state.riders) { |pid| Set.add(targets, rider_data[pid][:to_floor]) }
+    Integer.times(n + 1) do |f|
+      if !Array.empty?(waiting_by_floor[f])
+        Set.add(targets, f)
+      end
+    end
+
+    case state.direction
+    in :up
+      has_above = false
+      has_below = false
+      Set.each(targets) do |f|
+        has_above = true if f > state.floor
+        has_below = true if f < state.floor
+      end
+      if has_above
+        state.direction = :up
+      elsif has_below
+        state.direction = :down
+      else
+        state.direction = :idle
+      end
+    in :down
+      has_above = false
+      has_below = false
+      Set.each(targets) do |f|
+        has_above = true if f > state.floor
+        has_below = true if f < state.floor
+      end
+      if has_below
+        state.direction = :down
+      elsif has_above
+        state.direction = :up
+      else
+        state.direction = :idle
+      end
+    in :idle
+      if !Set.empty?(targets)
+        # Find nearest target
+        nearest = nil
+        min_dist = nil
+        Set.each(targets) do |f|
+          dist = Arithmetic.abs(f - state.floor)
+          if min_dist == nil || dist < min_dist || (dist == min_dist && f < nearest)
+            nearest = f
+            min_dist = dist
+          end
+        end
+
+        if nearest == state.floor
+          # Take direction of lowest passenger at this floor
+          lowest = nil
+          Array.each(waiting_by_floor[state.floor]) do |pid|
+            if lowest == nil || pid < lowest
+              lowest = pid
+            end
+          end
+          if lowest
+            rd = rider_data[lowest]
+            state.direction = rd[:to_floor] > state.floor ? :up : :down
+          end
+        else
+          state.direction = nearest > state.floor ? :up : :down
+        end
+      end
+    end
+
+    # Pick up riders
+    pickup_count = 0
+    waiting_copy = Array.dup(waiting_by_floor[state.floor])
+    Array.sort(waiting_copy)
+    Array.each(waiting_copy) do |pid|
+      break if pickup_count >= c
+      rd = rider_data[pid]
+      passenger_dir = rd[:to_floor] > state.floor ? :up : :down
+      if state.direction == passenger_dir || state.direction == :idle
+        Array.delete(waiting_by_floor[state.floor], pid)
+        Array.push(state.riders, pid)
+        rd[:pickup_time] = state.time
+        Array.push(events, {type: :pick, time: state.time, floor: state.floor, pid: pid})
+        pickup_count += 1
+      end
+    end
+
+    # Advance time
+    someone_moved = pickup_count > 0 || !Array.empty?(riders_copy) && riders_copy != state.riders
+    if someone_moved
+      state.time += d
+    else
+      case state.direction
+      in :idle
+        # Stay
+      in :up
+        state.floor += 1
+      in :down
+        state.floor -= 1
+      end
+      state.time += 1
+    end
+  end
+
+  # Output events
+  Array.each(events) do |e|
+    if e[:type] == :drop
+      puts("t=#{e[:time]} floor #{e[:floor]} drop P#{e[:pid]}")
+    else
+      puts("t=#{e[:time]} floor #{e[:floor]} pick P#{e[:pid]}")
+    end
+  end
+
+  # Output summary
+  total_wait = 0
+  total_ride = 0
+  Array.each(requests) do |r|
+    data = rider_data[r.id]
+    wait = data[:pickup_time] - r.time
+    ride = data[:dropoff_time] - data[:pickup_time]
+    total_wait += wait
+    total_ride += ride
+    puts("P#{r.id} wait #{wait} ride #{ride}")
+  end
+
+  avg_wait = Float(total_wait) / Array.size(requests)
+  avg_ride = Float(total_ride) / Array.size(requests)
+  puts(format("average wait %.2f ride %.2f", avg_wait, avg_ride))
+
+  last_drop = nil
+  Array.each(events) do |e|
+    if e[:type] == :drop
+      last_drop = e[:time]
+    end
+  end
+  puts("done at t=#{last_drop}")
+end
+
+def all_waiting_empty(waiting_by_floor)
+  Hash.each(waiting_by_floor) do |f, waiting|
+    return false if !Array.empty?(waiting)
+  end
+  true
+end
+
+main

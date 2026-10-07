@@ -1,0 +1,144 @@
+# Text dumps of tokens and of the resolved AST, for `main.sake --tokens` and
+# `main.sake --ast` (SPEC.md, "Running"). Expressions are written as
+# S-expressions on one line; each statement starts a line, indented by its
+# nesting. A Name shows the depth the resolver gave it: (name x @1).
+module Debug
+  module_function
+
+  # One line per token: "line:col type text", with an interpolation's tokens
+  # indented below it.
+  def tokens(toks, indent = "")
+    lines = Array[]
+    Array.each(toks) do |tok|
+      Array.push(lines, "#{indent}#{Span.start_text(Token.pos(tok))} #{token_text(tok)}")
+      next unless Token.type(tok) == :interp
+
+      parts = Token.value(tok)
+      parts => Array
+      Array.each(parts) do |part|
+        if (part in String)
+          Array.push(lines, "#{indent}  part #{Format.quote(part)}")
+        else
+          part => Array
+          Array.concat(lines, tokens(part, "#{indent}  "))
+        end
+      end
+    end
+    lines
+  end
+
+  def token_text(tok)
+    case Token.type(tok)
+    in :int then "int #{Token.value(tok)}"
+    in :str
+      value = Token.value(tok)
+      value => String
+      "str #{Format.quote(value)}"
+    in :interp then "interp"
+    in :newline then "newline"
+    in :eof then Token.text(tok) == "" ? "eof" : "eof }"
+    else "#{Token.type(tok)} #{Token.text(tok)}"
+    end
+  end
+
+  def program(prog) = Array.join(statements(Program.body(prog), ""), "\n")
+
+  def statements(stmts, indent)
+    stmts => Array
+    lines = Array[]
+    Array.each(stmts) { |stmt| Array.concat(lines, statement(stmt, indent)) }
+    lines
+  end
+
+  # The lines of one statement, the nested statement lists indented further.
+  def statement(stmt, indent)
+    inner = "#{indent}  "
+    case stmt
+    in ExprStmt then Array["#{indent}#{expression(ExprStmt.expr(stmt))}"]
+    in Let
+      value = Let.value(stmt) == nil ? "" : " #{expression(Let.value(stmt))}"
+      Array["#{indent}(let #{Let.name(stmt)}#{value})"]
+    in LetList then Array["#{indent}(let [#{param_names(LetList.names(stmt))}] #{expression(LetList.value(stmt))})"]
+    in Const then Array["#{indent}(const #{Const.name(stmt)} #{expression(Const.value(stmt))})"]
+    in FnDecl then Array["#{indent}(fn-decl #{FnExpr.name(FnDecl.fn(stmt))} (#{params(FnExpr.params(FnDecl.fn(stmt)))})"] + statements(FnExpr.body(FnDecl.fn(stmt)), inner)
+    in Assign then Array["#{indent}(#{Assign.op(stmt)} #{expression(Assign.target(stmt))} #{expression(Assign.value(stmt))})"]
+    in MultiAssign
+      Array["#{indent}(= [#{expressions(MultiAssign.targets(stmt))}] [#{expressions(MultiAssign.values(stmt))}])"]
+    in If
+      lines = Array[]
+      Array.each_index(If.branches(stmt)) do |i|
+        Array.push(lines, "#{indent}(#{i == 0 ? "if" : "elif"} #{expression(IfBranch.cond(If.branches(stmt)[i]))})")
+        Array.concat(lines, statements(IfBranch.body(If.branches(stmt)[i]), inner))
+      end
+      lines + else_lines(If.else_body(stmt), indent)
+    in Match
+      lines = Array["#{indent}(match #{expression(Match.subject(stmt))})"]
+      Array.each(Match.arms(stmt)) do |arm|
+        Array.push(lines, "#{indent}(when #{expressions(MatchArm.values(arm))})")
+        Array.concat(lines, statements(MatchArm.body(arm), inner))
+      end
+      lines + else_lines(Match.else_body(stmt), indent)
+    in While then Array["#{indent}(while #{expression(While.cond(stmt))})"] + statements(While.body(stmt), inner)
+    in For
+      Array["#{indent}(for #{param_names(For.vars(stmt))} #{expression(For.iterable(stmt))})"] + statements(For.body(stmt), inner)
+    in Break then Array["#{indent}(break)"]
+    in Continue then Array["#{indent}(continue)"]
+    in Return then Array["#{indent}(return#{Return.value(stmt) == nil ? "" : " #{expression(Return.value(stmt))}"})"]
+    in Throw then Array["#{indent}(throw #{expression(Throw.value(stmt))})"]
+    in Assert
+      message = Assert.message(stmt) == nil ? "" : " #{expression(Assert.message(stmt))}"
+      Array["#{indent}(assert #{expression(Assert.cond(stmt))}#{message})"]
+    in Try then try_lines(stmt, indent)
+    else raise ArgumentError, "unknown statement #{Kernel.inspect(stmt)}"
+    end
+  end
+
+  def else_lines(body, indent)
+    return Array[] if body == nil
+
+    Array["#{indent}(else)"] + statements(body, "#{indent}  ")
+  end
+
+  def try_lines(stmt, indent)
+    inner = "#{indent}  "
+    lines = Array["#{indent}(try)"] + statements(Try.body(stmt), inner)
+    var = Try.var(stmt)
+    lines = lines + Array["#{indent}(catch #{Param.name(var)})"] + statements(Try.handler(stmt), inner) unless var == nil
+    lines = lines + Array["#{indent}(finally)"] + statements(Try.finally_body(stmt), inner) unless Try.finally_body(stmt) == nil
+    lines
+  end
+
+  def param_names(params) = Array.join(Array.map(params) { |param| Param.name(param) }, " ")
+
+  def params(params)
+    Array.join(Array.map(params) { |param| Param.default(param) == nil ? Param.name(param) : "#{Param.name(param)}=#{expression(Param.default(param))}" }, " ")
+  end
+
+  def expressions(nodes) = Array.join(Array.map(nodes) { |node| expression(node) }, " ")
+
+  def expression(node)
+    case node
+    in IntLit then Integer.to_s(IntLit.value(node))
+    in StrLit then Format.quote(StrLit.value(node))
+    in InterpStr
+      parts = Array.map(InterpStr.parts(node)) { |part| (part in String) ? Format.quote(part) : expression(part) }
+      "(interp #{Array.join(parts, " ")})"
+    in BoolLit then Kernel.to_s(BoolLit.value(node))
+    in NilLit then "nil"
+    in Name then "(name #{Name.name(node)} @#{Name.depth(node) == nil ? "?" : Name.depth(node)})"
+    in ArrayLit then "[#{expressions(ArrayLit.elements(node))}]"
+    in MapLit
+      entries = Range.map(0...Array.length(MapLit.keys(node))) { |i| "#{expression(MapLit.keys(node)[i])}: #{expression(MapLit.values(node)[i])}" }
+      "{#{Array.join(entries, ", ")}}"
+    in FnExpr then "(fn (#{params(FnExpr.params(node))})#{Array.join(statements(FnExpr.body(node), " "), ";")})"
+    in Unary then "(#{Unary.op(node)} #{expression(Unary.operand(node))})"
+    in Binary | Logical then "(#{(Binary|Logical).op(node)} #{expression((Binary|Logical).left(node))} #{expression((Binary|Logical).right(node))})"
+    in Call then "(call #{expression(Call.callee(node))}#{Array.empty?(Call.args(node)) ? "" : " "}#{expressions(Call.args(node))})"
+    in IndexExpr then "(index #{expression(IndexExpr.target(node))} #{expression(IndexExpr.index(node))})"
+    in Slice
+      bounds = Array.map(Array[Slice.start(node), Slice.stop(node)]) { |bound| bound == nil ? "_" : expression(bound) }
+      "(slice #{expression(Slice.target(node))} #{Array.join(bounds, " ")})"
+    else raise ArgumentError, "unknown expression #{Kernel.inspect(node)}"
+    end
+  end
+end
