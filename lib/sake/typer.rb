@@ -34,6 +34,9 @@ module Sake
 
     attr_reader :checks, :sites, :fields, :dead_functions, :passes
 
+    # [node, message] of each check given up on (too much to check); shown as warnings.
+    def unchecked = (@unchecked || {}).values
+
     # Inferred result type of each built-in call node (last pass), for validating result types.
     def results = @results || {}
 
@@ -78,7 +81,23 @@ module Sake
 
     # --- types ---
 
+    # Typing a large program asks for the same union of the same (frozen) types over and over, so results
+    # are memoized by the arguments' identities; the arguments are kept to tell a reused object_id apart.
+    UNION_MEMO = {}
+    UNION_BY_VALUE = {}
+
     def self.union(*tys)
+      return union_uncached(tys) unless tys.all?(&:frozen?)
+      key = tys.map(&:__id__)
+      if (hit = UNION_MEMO[key]) && hit[0].each_with_index.all? { |a, i| a.equal?(tys[i]) }
+        return hit[1]
+      end
+      r = (UNION_BY_VALUE[tys] ||= union_uncached(tys))
+      UNION_MEMO[key] = [tys, r]
+      r
+    end
+
+    def self.union_uncached(tys)
       atoms = tys.flatten(1).uniq
       tuples, rest = atoms.partition { _1.is_a?(Array) && _1[0] == :tuple }
       # Tuples of one length merge position by position, except that a position holding a single Symbol
@@ -629,9 +648,23 @@ module Sake
     end
 
     # Tuples and Arrays are ordered by their elements: each pair of element types must be comparable.
+    # Element pairs one comparison may visit before its element check is given up (reported as unchecked).
+    MAX_ELEMENT_PAIRS = 50_000
+
     def check_ordered_elements(node, op, pairs)
       elem_pairs = []
-      pairs.each { |x, y| elem_pairs.concat(element_pairs(x, y)) if container_pair?(x, y) }
+      seen = Hash.new { |h, d| h[d] = Hash.new { |h2, x| h2[x] = {}.compare_by_identity }.compare_by_identity }
+      budget = [MAX_ELEMENT_PAIRS]
+      done = catch(:element_pairs_budget) do
+        pairs.each { |x, y| elem_pairs.concat(element_pairs(x, y, 0, seen, budget)) if container_pair?(x, y) }
+        true
+      end
+      unless done
+        add_check(node, op_name(op), "elements", "comparable elements", unknown("element pairs"), :unknown)
+        (@unchecked ||= {})[[other_file(node), node.location.start_line, node.location.start_column]] ||=
+          [node, "#{op_name(op)}: the elements were not checked: their types make more than #{MAX_ELEMENT_PAIRS} pairs to compare"]
+        return
+      end
       elem_pairs.uniq!
       return if elem_pairs.empty?
       failing = elem_pairs.reject { |ex, ey| comparable_atoms?(ex, ey) }
@@ -644,17 +677,27 @@ module Sake
 
     # The pairs of atoms an ordering of x and y compares, through nested Tuples and Arrays (so a nil
     # inside is reported as nil, not as an Array that cannot be compared).
-    def element_pairs(x, y, depth = 0)
+    # A pair already visited at the same depth yields the same pairs again, and the caller drops repeats,
+    # so it is skipped: without this, nested element unions multiply into billions of pairs. seen is keyed by
+    # depth, then by the atoms' identities (hashing deep atoms by value costs as much as the walk).
+    def element_pairs(x, y, depth, seen, budget)
+      return [] if seen[depth][x].key?(y)
+      seen[depth][x][y] = true
       return [[x, y]] unless depth < 3 && container_pair?(x, y)
       inner = if x[0] == :tuple
                 x[1].zip(y[1]).flat_map { |ex, ey| ey ? ex.product(ey) : [] }
               else
                 elem_of([x]).product(elem_of([y]))
               end
-      inner.flat_map { |a, b| element_pairs(a, b, depth + 1) }
+      throw :element_pairs_budget if (budget[0] -= inner.size).negative?
+      inner.flat_map { |a, b| element_pairs(a, b, depth + 1, seen, budget) }
     end
 
     def comparable_atoms?(x, y, depth = 0)
+      ((@comparable_memo ||= {})[[x, y, depth]] ||= [comparable_atoms_uncached?(x, y, depth)])[0]
+    end
+
+    def comparable_atoms_uncached?(x, y, depth)
       return true if [x, y].any? { _1.is_a?(Array) && _1[0] == :unknown }
       if struct_atom?(x)
         return Operators.includes?(@program.includes || {}, x, "Comparable") && !!@program.functions.dig(x, "<=>")
