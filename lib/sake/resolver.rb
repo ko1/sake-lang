@@ -989,7 +989,7 @@ module Sake
         return lowercase_receiver_error(node, ctx)
       end
 
-      hash_ctor = recv.is_a?(Prism::ConstantReadNode) && recv.name == :Hash && node.name == :[]
+      hash_ctor = recv.is_a?(Prism::ConstantReadNode) && recv.name == :Hash && node.name == :[] && node.call_operator_loc.nil?
       if hash_ctor && !(args.empty? || (args.size == 1 && args[0].is_a?(Prism::KeywordHashNode)))
         error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
       end
