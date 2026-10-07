@@ -263,7 +263,7 @@ class Interpreter
 
   def evaluate(node, env)
     case node
-    when IntLit, StrLit, BoolLit
+    when IntLit, FloatLit, StrLit, BoolLit
       node.value
     when NilLit
       nil

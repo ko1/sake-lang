@@ -21,7 +21,7 @@ output. The exit status is always 0.
 
 An error in any phase prints exactly one line and stops the run:
 
-    <kind> error at <line>:<col>: <message>
+    <kind> error at <line>:<col>-<end line>:<end col>: <message>
 
 `<kind>` is `lexical`, `syntax`, `static` or `runtime`. `<line>` and `<col>`
 are 1-based; columns count characters (a tab is one column). Only the first

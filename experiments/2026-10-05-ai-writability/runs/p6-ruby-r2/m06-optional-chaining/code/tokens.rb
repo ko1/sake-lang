@@ -13,7 +13,7 @@ KEYWORDS = %w[
   let match nil not or return then throw true try when while
 ]
 
-TWO_CHAR_OPERATORS = ["**", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%="]
+TWO_CHAR_OPERATORS = ["**", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "?.", "?["]
 ONE_CHAR_OPERATORS = ["+", "-", "*", "/", "%", "(", ")", "[", "]", "{", "}", ",", ":", ";", "=", "<", ">", "."]
 
 ASSIGNMENT_OPERATORS = ["=", "+=", "-=", "*=", "/=", "%="]
@@ -28,11 +28,11 @@ BLOCK_END_KEYWORDS = %w[end elif else catch finally when]
 # A line that ends with one of these continues on the next line.
 CONTINUATION_OPERATORS = [
   "+", "-", "*", "/", "%", "**", "==", "!=", "<", "<=", ">", ">=",
-  "=", "+=", "-=", "*=", "/=", "%=", ",", "."
+  "=", "+=", "-=", "*=", "/=", "%=", ",", ".", "?."
 ]
 CONTINUATION_KEYWORDS = %w[and or not in]
 
-OPENING_BRACKETS = ["(", "[", "{"]
+OPENING_BRACKETS = ["(", "[", "{", "?["]
 CLOSING_BRACKETS = [")", "]", "}"]
 
 module Tokens

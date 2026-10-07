@@ -484,6 +484,9 @@ class Parser
     when :int
       advance
       return IntLit.new(tok.value, tok.pos)
+    when :float
+      advance
+      return FloatLit.new(tok.value, tok.pos)
     when :str
       advance
       return StrLit.new(tok.value, tok.pos)

@@ -1,0 +1,576 @@
+# Builds the AST from tokens by recursive descent (SPEC.md, "Syntax").
+#
+# Expression precedence, loosest first:
+#   or < and < not < comparison (== != < <= > >= in, not chainable)
+#      < + - < * / % < unary - < ** (right-associative)
+#      < call f(...), index a[...] and field m.name
+class Parser
+  attr_reader tokens
+  attr_accessor index
+
+  def initialize(parser)
+    @tokens => Array
+    @index = 0
+  end
+
+  def parse_program(parser)
+    body = parse_statements(parser)
+    expect_end_of_input(parser)
+    Program.new(body)
+  end
+
+  # The expression of one "{...}" in a string; its tokens end with a "}" :eof token.
+  def parse_interpolation(parser)
+    expr = parse_expression(parser)
+    syntax_error(parser, "expected '}', got #{Tokens.describe(current(parser))}") unless Token.type(current(parser)) == :eof
+    expr
+  end
+
+  # ---- token helpers ----
+
+  def current(parser) = Array.fetch(@tokens, @index)
+
+  def lookahead(parser) = Array.fetch(@tokens, Tuple.min([@index + 1, Array.length(@tokens) - 1]))
+
+  def advance(parser)
+    tok = current(parser)
+    @index += 1 unless Token.type(tok) == :eof
+    tok
+  end
+
+  def check_op(parser, text) = Tokens.op?(current(parser), text)
+
+  def check_kw(parser, word) = Tokens.kw?(current(parser), word)
+
+  def syntax_error(parser, message, pos = Token.pos(current(parser)))
+    Errors.syntax(message, pos)
+  end
+
+  def expect_op(parser, text)
+    syntax_error(parser, "expected '#{text}', got #{Tokens.describe(current(parser))}") unless check_op(parser, text)
+    advance(parser)
+  end
+
+  def expect_kw(parser, word)
+    syntax_error(parser, "expected '#{word}', got #{Tokens.describe(current(parser))}") unless check_kw(parser, word)
+    advance(parser)
+  end
+
+  def expect_name(parser)
+    syntax_error(parser, "expected name, got #{Tokens.describe(current(parser))}") unless Token.type(current(parser)) == :ident
+    advance(parser)
+  end
+
+  def expect_end_of_input(parser)
+    return if Token.type(current(parser)) == :eof
+
+    syntax_error(parser, "expected end of input, got #{Tokens.describe(current(parser))}")
+  end
+
+  # ---- statements ----
+
+  def separator?(parser) = Token.type(current(parser)) == :newline || check_op(parser, ";")
+
+  def at_block_end?(parser)
+    Token.type(current(parser)) == :eof || (Token.type(current(parser)) == :kw && Array.include?(block_end_keywords, Token.text(current(parser))))
+  end
+
+  def skip_separators(parser)
+    advance(parser) while separator?(parser)
+  end
+
+  # Statements up to (not including) `end`, `elif`, `else`, `catch` or the end of input.
+  def parse_statements(parser)
+    stmts = Array[]
+    skip_separators(parser)
+    until at_block_end?(parser)
+      Array.push(stmts, parse_statement(parser))
+      if separator?(parser)
+        skip_separators(parser)
+      elsif !at_block_end?(parser)
+        syntax_error(parser, "expected end of statement, got #{Tokens.describe(current(parser))}")
+      end
+    end
+    stmts
+  end
+
+  def parse_statement(parser)
+    tok = current(parser)
+    if Token.type(tok) == :kw
+      case Token.text(tok)
+      in "let" then return parse_let(parser)
+      in "const" then return parse_const(parser)
+      in "match" then return parse_match(parser)
+      in "fn" then return parse_fn_decl(parser) if Token.type(lookahead(parser)) == :ident
+      in "if" then return parse_if(parser)
+      in "while" then return parse_while(parser)
+      in "for" then return parse_for(parser)
+      in "try" then return parse_try(parser)
+      in "return" then return parse_return(parser)
+      in "throw" then return parse_throw(parser)
+      in "assert" then return parse_assert(parser)
+      in "break"
+        advance(parser)
+        return Break.new(Token.pos(tok))
+      in "continue"
+        advance(parser)
+        return Continue.new(Token.pos(tok))
+      else nil
+      end
+    end
+    parse_expression_statement(parser)
+  end
+
+  def parse_let(parser)
+    advance(parser)
+    return parse_let_list(parser) if check_op(parser, "[")
+
+    name = expect_name(parser)
+    value = nil
+    if check_op(parser, "=")
+      advance(parser)
+      value = parse_expression(parser)
+    end
+    Let.new(Token.text(name), value, Token.pos(name))
+  end
+
+  # After `let`: "[" names "]" "=" value.
+  def parse_let_list(parser)
+    open = advance(parser)
+    names = Array[]
+    while true
+      tok = expect_name(parser)
+      Array.push(names, Param.new(Token.text(tok), nil, Token.pos(tok)))
+      break unless check_op(parser, ",")
+
+      advance(parser)
+    end
+    expect_op(parser, "]")
+    expect_op(parser, "=")
+    LetList.new(names, parse_expression(parser), Token.pos(open))
+  end
+
+  def parse_const(parser)
+    advance(parser)
+    name = expect_name(parser)
+    expect_op(parser, "=")
+    Const.new(Token.text(name), parse_expression(parser), Token.pos(name))
+  end
+
+  def parse_fn_decl(parser)
+    fn_tok = advance(parser)
+    name = advance(parser)
+    FnDecl.new(parse_function_rest(parser, Token.text(name), Token.pos(fn_tok)), Token.pos(name))
+  end
+
+  # After `fn` (and the name, if any): "(" params ")" body "end".
+  def parse_function_rest(parser, name, pos)
+    expect_op(parser, "(")
+    params = Array[]
+    unless check_op(parser, ")")
+      while true
+        Array.push(params, parse_param(parser, params))
+        break unless check_op(parser, ",")
+
+        advance(parser)
+        break if check_op(parser, ")")
+      end
+    end
+    expect_op(parser, ")")
+    body = parse_statements(parser)
+    expect_kw(parser, "end")
+    FnExpr.new(name, params, body, pos)
+  end
+
+  # `name` or `name = default`; once one parameter has a default, all later ones need one.
+  def parse_param(parser, earlier)
+    tok = expect_name(parser)
+    default = nil
+    if check_op(parser, "=")
+      advance(parser)
+      default = parse_expression(parser)
+    elsif !Array.empty?(earlier) && Param.default(earlier[-1]) != nil
+      syntax_error(parser, "parameter '#{Token.text(tok)}' needs a default value", Token.pos(tok))
+    end
+    Param.new(Token.text(tok), default, Token.pos(tok))
+  end
+
+  def parse_if(parser)
+    if_tok = advance(parser)
+    branches = Array[parse_if_branch(parser)]
+    while check_kw(parser, "elif")
+      advance(parser)
+      Array.push(branches, parse_if_branch(parser))
+    end
+    else_body = nil
+    if check_kw(parser, "else")
+      advance(parser)
+      else_body = parse_statements(parser)
+    end
+    expect_kw(parser, "end")
+    If.new(branches, else_body, Token.pos(if_tok))
+  end
+
+  # cond "then" body, after `if` or `elif`.
+  def parse_if_branch(parser)
+    cond = parse_expression(parser)
+    expect_kw(parser, "then")
+    IfBranch.new(cond, parse_statements(parser))
+  end
+
+  def parse_while(parser)
+    tok = advance(parser)
+    cond = parse_expression(parser)
+    expect_kw(parser, "do")
+    body = parse_statements(parser)
+    expect_kw(parser, "end")
+    While.new(cond, body, Token.pos(tok))
+  end
+
+  # for x in xs do ... end, or for k, v in m do ... end
+  def parse_for(parser)
+    tok = advance(parser)
+    var = expect_name(parser)
+    vars = Array[Param.new(Token.text(var), nil, Token.pos(var))]
+    if check_op(parser, ",")
+      advance(parser)
+      second = expect_name(parser)
+      Array.push(vars, Param.new(Token.text(second), nil, Token.pos(second)))
+    end
+    expect_kw(parser, "in")
+    iterable = parse_expression(parser)
+    expect_kw(parser, "do")
+    body = parse_statements(parser)
+    expect_kw(parser, "end")
+    For.new(vars, iterable, body, Token.pos(tok))
+  end
+
+  # match subject (newlines) when v, ... then body ... [else body] end
+  def parse_match(parser)
+    tok = advance(parser)
+    subject = parse_expression(parser)
+    skip_separators(parser)
+    arms = Array[]
+    while check_kw(parser, "when")
+      advance(parser)
+      values = Array[parse_expression(parser)]
+      while check_op(parser, ",")
+        advance(parser)
+        Array.push(values, parse_expression(parser))
+      end
+      expect_kw(parser, "then")
+      Array.push(arms, MatchArm.new(values, parse_statements(parser)))
+    end
+    syntax_error(parser, "expected 'when', got #{Tokens.describe(current(parser))}") if Array.empty?(arms)
+    else_body = nil
+    if check_kw(parser, "else")
+      advance(parser)
+      else_body = parse_statements(parser)
+    end
+    expect_kw(parser, "end")
+    Match.new(subject, arms, else_body, Token.pos(tok))
+  end
+
+  # try body [catch name handler] [finally body] end, with at least one of the two.
+  def parse_try(parser)
+    tok = advance(parser)
+    body = parse_statements(parser)
+    unless check_kw(parser, "catch") || check_kw(parser, "finally")
+      syntax_error(parser, "expected 'catch' or 'finally', got #{Tokens.describe(current(parser))}")
+    end
+    var = nil
+    handler = nil
+    if check_kw(parser, "catch")
+      advance(parser)
+      name = expect_name(parser)
+      var = Param.new(Token.text(name), nil, Token.pos(name))
+      handler = parse_statements(parser)
+    end
+    finally_body = nil
+    if check_kw(parser, "finally")
+      advance(parser)
+      finally_body = parse_statements(parser)
+    end
+    expect_kw(parser, "end")
+    Try.new(body, var, handler, finally_body, Token.pos(tok))
+  end
+
+  def parse_return(parser)
+    tok = advance(parser)
+    value = (separator?(parser) || at_block_end?(parser)) ? nil : parse_expression(parser)
+    Return.new(value, Token.pos(tok))
+  end
+
+  def parse_throw(parser)
+    tok = advance(parser)
+    Throw.new(parse_expression(parser), Token.pos(tok))
+  end
+
+  def parse_assert(parser)
+    tok = advance(parser)
+    cond = parse_expression(parser)
+    message = nil
+    if check_op(parser, ",")
+      advance(parser)
+      message = parse_expression(parser)
+    end
+    Assert.new(cond, message, Token.pos(tok))
+  end
+
+  def parse_expression_statement(parser)
+    expr = parse_expression(parser)
+    return parse_multi_assign(parser, expr) if check_op(parser, ",")
+    return ExprStmt.new(expr) unless Token.type(current(parser)) == :op && Array.include?(assignment_operators, Token.text(current(parser)))
+
+    op = advance(parser)
+    check_target(parser, expr, op)
+    Assign.new(expr, Token.text(op), parse_expression(parser), Token.pos(op))
+  end
+
+  def check_target(parser, expr, op)
+    syntax_error(parser, "invalid assignment target", Token.pos(op)) unless (expr in Name) || (expr in IndexExpr)
+  end
+
+  # After the first target of `a, b = x, y`.
+  def parse_multi_assign(parser, first)
+    targets = Array[first]
+    while check_op(parser, ",")
+      advance(parser)
+      Array.push(targets, parse_expression(parser))
+    end
+    op = expect_op(parser, "=")
+    Array.each(targets) { |target| check_target(parser, target, op) }
+    values = Array[parse_expression(parser)]
+    while check_op(parser, ",")
+      advance(parser)
+      Array.push(values, parse_expression(parser))
+    end
+    if Array.length(values) != Array.length(targets)
+      syntax_error(parser, "#{Format.count(Array.length(targets), "target")} but #{Format.count(Array.length(values), "value")}", Token.pos(op))
+    end
+    MultiAssign.new(targets, values, Token.pos(op))
+  end
+
+  # ---- expressions ----
+
+  def parse_expression(parser) = parse_or(parser)
+
+  def parse_or(parser)
+    left = parse_and(parser)
+    while check_kw(parser, "or")
+      op = advance(parser)
+      left = Logical.new("or", left, parse_and(parser), Token.pos(op))
+    end
+    left
+  end
+
+  def parse_and(parser)
+    left = parse_not(parser)
+    while check_kw(parser, "and")
+      op = advance(parser)
+      left = Logical.new("and", left, parse_not(parser), Token.pos(op))
+    end
+    left
+  end
+
+  def parse_not(parser)
+    return parse_comparison(parser) unless check_kw(parser, "not")
+
+    op = advance(parser)
+    Unary.new("not", parse_not(parser), Token.pos(op))
+  end
+
+  def comparison_op?(parser)
+    (Token.type(current(parser)) == :op || Token.type(current(parser)) == :kw) && Array.include?(comparison_operators, Token.text(current(parser)))
+  end
+
+  def parse_comparison(parser)
+    left = parse_additive(parser)
+    return left unless comparison_op?(parser)
+
+    op = advance(parser)
+    expr = Binary.new(Token.text(op), left, parse_additive(parser), Token.pos(op))
+    syntax_error(parser, "comparison operators cannot be chained") if comparison_op?(parser)
+    expr
+  end
+
+  def parse_additive(parser)
+    left = parse_multiplicative(parser)
+    while Token.type(current(parser)) == :op && Array.include?(additive_operators, Token.text(current(parser)))
+      op = advance(parser)
+      left = Binary.new(Token.text(op), left, parse_multiplicative(parser), Token.pos(op))
+    end
+    left
+  end
+
+  def parse_multiplicative(parser)
+    left = parse_unary(parser)
+    while Token.type(current(parser)) == :op && Array.include?(multiplicative_operators, Token.text(current(parser)))
+      op = advance(parser)
+      left = Binary.new(Token.text(op), left, parse_unary(parser), Token.pos(op))
+    end
+    left
+  end
+
+  def parse_unary(parser)
+    return parse_power(parser) unless check_op(parser, "-")
+
+    op = advance(parser)
+    Unary.new("-", parse_unary(parser), Token.pos(op))
+  end
+
+  # The exponent may itself be negated or a power: 2 ** -1, 2 ** 3 ** 2 = 2 ** 9.
+  def parse_power(parser)
+    base = parse_postfix(parser)
+    return base unless check_op(parser, "**")
+
+    op = advance(parser)
+    Binary.new("**", base, parse_unary(parser), Token.pos(op))
+  end
+
+  def parse_postfix(parser)
+    expr = parse_primary(parser)
+    optional = false
+    last_pos = nil
+    loop do
+      if check_op(parser, "?[")
+        optional = true
+        open = advance(parser)
+        last_pos = Token.pos(open)
+        expr = parse_index_rest(parser, expr, open, true)
+      elsif check_op(parser, "?.")
+        optional = true
+        dot = advance(parser)
+        field = expect_name(parser)
+        last_pos = Token.pos(dot)
+        expr = OptIndex.new(expr, StrLit.new(Token.text(field), Token.pos(field)), Token.pos(dot))
+      elsif check_op(parser, "(")
+        open = advance(parser)
+        last_pos = Token.pos(open)
+        expr = Call.new(expr, parse_list(parser, ")"), Token.pos(open))
+      elsif check_op(parser, "[")
+        open = advance(parser)
+        last_pos = Token.pos(open)
+        expr = parse_index_rest(parser, expr, open)
+      elsif check_op(parser, ".")
+        dot = advance(parser)
+        field = expect_name(parser)
+        last_pos = Token.pos(dot)
+        expr = IndexExpr.new(expr, StrLit.new(Token.text(field), Token.pos(field)), Token.pos(dot))
+      else
+        return optional ? OptChain.new(expr, last_pos) : expr
+      end
+    end
+  end
+
+  # After the "[" of `target[`: an index `i]` or a slice `start:stop]`, where
+  # either bound may be left out.
+  def parse_index_rest(parser, target, open, optional = false)
+    start = check_op(parser, ":") ? nil : parse_expression(parser)
+    if check_op(parser, "]") && start != nil
+      advance(parser)
+      return optional ? OptIndex.new(target, start, Token.pos(open)) : IndexExpr.new(target, start, Token.pos(open))
+    end
+    expect_op(parser, ":")
+    stop = check_op(parser, "]") ? nil : parse_expression(parser)
+    expect_op(parser, "]")
+    optional ? OptSlice.new(target, start, stop, Token.pos(open)) : Slice.new(target, start, stop, Token.pos(open))
+  end
+
+  # Comma-separated expressions up to and including `closer`, after the opener.
+  # A trailing comma is allowed (here, in maps, and in parameter lists).
+  def parse_list(parser, closer)
+    items = Array[]
+    unless check_op(parser, closer)
+      while true
+        Array.push(items, parse_expression(parser))
+        break unless check_op(parser, ",")
+
+        advance(parser)
+        break if check_op(parser, closer)
+      end
+    end
+    expect_op(parser, closer)
+    items
+  end
+
+  def parse_primary(parser)
+    tok = current(parser)
+    case Token.type(tok)
+    in :int
+      advance(parser)
+      value = Token.value(tok)
+      value => Integer
+      return IntLit.new(value, Token.pos(tok))
+    in :str
+      advance(parser)
+      value = Token.value(tok)
+      value => String
+      return StrLit.new(value, Token.pos(tok))
+    in :interp
+      advance(parser)
+      return parse_interpolated_string(parser, tok)
+    in :ident
+      advance(parser)
+      return Name.new(Token.text(tok), Token.pos(tok), nil)
+    in :kw
+      case Token.text(tok)
+      in "true" | "false"
+        advance(parser)
+        return BoolLit.new(Token.text(tok) == "true", Token.pos(tok))
+      in "nil"
+        advance(parser)
+        return NilLit.new(Token.pos(tok))
+      in "fn"
+        advance(parser)
+        return parse_function_rest(parser, nil, Token.pos(tok))
+      else nil
+      end
+    in :op
+      case Token.text(tok)
+      in "("
+        advance(parser)
+        expr = parse_expression(parser)
+        expect_op(parser, ")")
+        return expr
+      in "["
+        advance(parser)
+        return ArrayLit.new(parse_list(parser, "]"), Token.pos(tok))
+      in "{"
+        advance(parser)
+        return parse_map_rest(parser, Token.pos(tok))
+      else nil
+      end
+    else nil
+    end
+    syntax_error(parser, "expected expression, got #{Tokens.describe(tok)}")
+  end
+
+  def parse_interpolated_string(parser, tok)
+    token_parts = Token.value(tok)
+    token_parts => Array
+    parts = Array.map(token_parts) do |part|
+      (part in String) ? part : Parser.parse_interpolation(Parser.new(part))
+    end
+    InterpStr.new(parts, Token.pos(tok))
+  end
+
+  # After "{": entries `key: value` separated by commas, then "}".
+  def parse_map_rest(parser, pos)
+    keys = Array[]
+    values = Array[]
+    unless check_op(parser, "}")
+      while true
+        Array.push(keys, parse_expression(parser))
+        expect_op(parser, ":")
+        Array.push(values, parse_expression(parser))
+        break unless check_op(parser, ",")
+
+        advance(parser)
+        break if check_op(parser, "}")
+      end
+    end
+    expect_op(parser, "}")
+    MapLit.new(keys, values, pos)
+  end
+end

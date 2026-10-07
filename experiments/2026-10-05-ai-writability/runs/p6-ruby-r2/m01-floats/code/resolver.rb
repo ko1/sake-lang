@@ -234,7 +234,7 @@ class Resolver
 
   def resolve_expression(node)
     case node
-    when IntLit, StrLit, BoolLit, NilLit
+    when IntLit, FloatLit, StrLit, BoolLit, NilLit
       nil
     when InterpStr
       node.parts.each { |part| resolve_expression(part) unless part.is_a?(String) }

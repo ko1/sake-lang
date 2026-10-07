@@ -116,6 +116,7 @@ module Values
 
   # The map a catch clause receives for a runtime error.
   def error_map(err)
-    { "kind" => err.kind, "message" => err.message, "line" => err.pos.line, "col" => err.pos.col }
+    { "kind" => err.kind, "message" => err.message, "line" => err.pos.line, "col" => err.pos.col,
+      "end_line" => err.pos.end_line, "end_col" => err.pos.end_col }
   end
 end

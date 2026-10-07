@@ -116,7 +116,7 @@ module Builtins
 
   def key_arg(name, args, n, pos)
     value = args[n - 1]
-    arg_error(name, n, "a string or int", value, pos) unless Values.key?(value)
+    arg_error(name, n, "a string, int, bool or nil", value, pos) unless Values.key?(value)
     value
   end
 

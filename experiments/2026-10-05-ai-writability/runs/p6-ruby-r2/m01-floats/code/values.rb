@@ -53,6 +53,7 @@ module Values
   def type_name(value)
     case value
     when Integer then "int"
+    when Float then "float"
     when String then "string"
     when true, false then "bool"
     when nil then "nil"
@@ -86,6 +87,7 @@ module Values
     when Hash then b.is_a?(Hash) && maps_equal(a, b, pos, depth)
     when Closure then b.is_a?(Closure) && a.id == b.id
     when Builtin then b.is_a?(Builtin) && a.name == b.name
+    when Integer, Float then (b.is_a?(Integer) || b.is_a?(Float)) && a == b
     else type_name(a) == type_name(b) && a == b
     end
   end

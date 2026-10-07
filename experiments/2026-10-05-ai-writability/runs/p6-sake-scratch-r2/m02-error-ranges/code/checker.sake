@@ -13,14 +13,14 @@ class Checker
 
   # ---- Scopes and declarations ----
 
-  def ensure_fresh(ck, name, line, col)
+  def ensure_fresh(ck, name, span)
     return unless Hash.key?(SScope.decls(@scope), name)
-    Fail.static(line, col, "'#{name}' is already declared in this scope")
+    Fail.static(span, "'#{name}' is already declared in this scope")
   end
 
   # Declares a name in the current scope and returns its slot.
-  def declare(ck, name, line, col, kind, min_args, max_args)
-    ensure_fresh(ck, name, line, col)
+  def declare(ck, name, span, kind, min_args, max_args)
+    ensure_fresh(ck, name, span)
     slot = SScope.nslots(@scope)
     SScope.set_nslots(@scope, slot + 1)
     SScope.decls(@scope)[name] = Decl.new(kind, slot, min_args, max_args)
@@ -28,7 +28,7 @@ class Checker
   end
 
   def declare_var(ck, b)
-    Binder.set_slot(b, declare(ck, Binder.name(b), Binder.line(b), Binder.col(b), :var, 0, 0))
+    Binder.set_slot(b, declare(ck, Binder.name(b), Binder.span(b), :var, 0, 0))
   end
 
   # Runs the checks of a block in a new scope of its own.
@@ -46,7 +46,7 @@ class Checker
       b = FnStmt.binder(f)
       fn = FnStmt.fn(f)
       max = Array.size(FnLit.params(fn))
-      Binder.set_slot(b, declare(ck, Binder.name(b), Binder.line(b), Binder.col(b), :fn, FnLit.min_args(fn), max))
+      Binder.set_slot(b, declare(ck, Binder.name(b), Binder.span(b), :fn, FnLit.min_args(fn), max))
     end
     stmts = Block.stmts(block)
     last = Array.size(stmts) - 1
@@ -59,10 +59,10 @@ class Checker
   # A jump followed by another statement of the same list.
   def check_reachable(stmt)
     case stmt
-    in BreakStmt then Fail.static(BreakStmt.line(stmt), BreakStmt.col(stmt), "code after 'break' is unreachable")
-    in ContinueStmt then Fail.static(ContinueStmt.line(stmt), ContinueStmt.col(stmt), "code after 'continue' is unreachable")
-    in ReturnStmt then Fail.static(ReturnStmt.line(stmt), ReturnStmt.col(stmt), "code after 'return' is unreachable")
-    in ThrowStmt then Fail.static(ThrowStmt.line(stmt), ThrowStmt.col(stmt), "code after 'throw' is unreachable")
+    in BreakStmt then Fail.static(BreakStmt.span(stmt), "code after 'break' is unreachable")
+    in ContinueStmt then Fail.static(ContinueStmt.span(stmt), "code after 'continue' is unreachable")
+    in ReturnStmt then Fail.static(ReturnStmt.span(stmt), "code after 'return' is unreachable")
+    in ThrowStmt then Fail.static(ThrowStmt.span(stmt), "code after 'throw' is unreachable")
     else nil
     end
   end
@@ -90,7 +90,7 @@ class Checker
       message = "undefined name '#{name}'"
       hint = Scopes.suggestion(@scope, name)
       message = "#{message}; did you mean '#{hint}'?" if hint
-      Fail.static(NameRef.line(ref), NameRef.col(ref), message)
+      Fail.static(NameRef.span(ref), message)
     end
     decl, hops = found
     NameRef.set_hops(ref, hops)
@@ -113,7 +113,7 @@ class Checker
     in ConstStmt
       check_expr(ck, ConstStmt.value(stmt))
       b = ConstStmt.binder(stmt)
-      Binder.set_slot(b, declare(ck, Binder.name(b), Binder.line(b), Binder.col(b), :const, 0, 0))
+      Binder.set_slot(b, declare(ck, Binder.name(b), Binder.span(b), :const, 0, 0))
     in FnStmt then check_function(ck, FnStmt.fn(stmt))
     in IfStmt
       blocks = IfStmt.blocks(stmt)
@@ -136,11 +136,11 @@ class Checker
       check_loop_body(ck, WhileStmt.body(stmt))
     in ForStmt then check_for(ck, stmt)
     in BreakStmt
-      Fail.static(BreakStmt.line(stmt), BreakStmt.col(stmt), "'break' outside a loop") unless @in_loop
+      Fail.static(BreakStmt.span(stmt), "'break' outside a loop") unless @in_loop
     in ContinueStmt
-      Fail.static(ContinueStmt.line(stmt), ContinueStmt.col(stmt), "'continue' outside a loop") unless @in_loop
+      Fail.static(ContinueStmt.span(stmt), "'continue' outside a loop") unless @in_loop
     in ReturnStmt
-      Fail.static(ReturnStmt.line(stmt), ReturnStmt.col(stmt), "'return' outside a function") unless @in_function
+      Fail.static(ReturnStmt.span(stmt), "'return' outside a function") unless @in_function
       value = ReturnStmt.value(stmt)
       check_expr(ck, value) if value
     in ThrowStmt then check_expr(ck, ThrowStmt.value(stmt))
@@ -209,7 +209,7 @@ class Checker
         in :builtin then "built-in"
         else nil
         end
-      Fail.static(NameRef.line(target), NameRef.col(target), "cannot assign to #{what} '#{NameRef.name(target)}'") if what
+      Fail.static(NameRef.span(target), "cannot assign to #{what} '#{NameRef.name(target)}'") if what
     else check_expr(ck, target)
     end
   end
@@ -225,10 +225,10 @@ class Checker
     @in_function = true
     Array.each(FnLit.params(fn)) do |param|
       name = Param.name(param)
-      ensure_fresh(ck, name, Param.line(param), Param.col(param))
+      ensure_fresh(ck, name, Param.span(param))
       default = Param.default(param)
       check_expr(ck, default) if default
-      declare(ck, name, Param.line(param), Param.col(param), :var, 0, 0)
+      declare(ck, name, Param.span(param), :var, 0, 0)
     end
     body = FnLit.body(fn)
     check_list(ck, body)
@@ -290,7 +290,7 @@ class Checker
       min = Decl.min_args(decl)
       max = Decl.max_args(decl)
       return if n >= min && (max < 0 || n <= max)
-      Fail.static(CallExpr.line(node), CallExpr.col(node), Fail.arity_message(NameRef.name(callee), min, max, n))
+      Fail.static(CallExpr.span(node), Fail.arity_message(NameRef.name(callee), min, max, n))
     else
       check_expr(ck, callee)
       Array.each(args) { |a| check_expr(ck, a) }
