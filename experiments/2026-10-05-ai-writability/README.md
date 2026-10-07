@@ -9,8 +9,9 @@
 | P3 | 新しく書く（見える結果だけで測る: 検査の停止、存在しない API） | P3 |
 | P4 | 既存のコードを変える（型や形が変わる変更要求 20） | P4 |
 | P5 | 読む（出力の予測 20、1 行の誤りの修正 20） | P5 |
+| P6 | 大きなプログラム（2,500 行のインタプリタ: 一から書く、仕様変更 8 題） | P6 |
 
-まとめ: 評価ページ（artifact）`sake-ai-evaluation.html` → https://claude.ai/artifact/NaxNc5iropLucuvhawKETD
+まとめ: 評価ページ（artifact）`sake-ai-evaluation.html` → https://claude.ai/artifact/NaxNc5iropLucuvhawKETD（P6 まで反映）
 
 ## 1. 何を測るか
 
