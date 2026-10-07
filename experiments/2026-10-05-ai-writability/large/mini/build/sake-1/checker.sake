@@ -1,0 +1,342 @@
+# The static checks (SPEC section 5): scopes, declarations, jumps and the
+# argument counts of calls to declared functions and built-ins. They also
+# record in each Name node the depth of the scope it refers to.
+
+# What a name was declared as: kind is :variable, :constant, :function or
+# :builtin; `min`/`max` are the argument counts of a function or built-in
+# (`max` nil: no maximum).
+class Decl
+  attr_reader kind, min, max
+end
+
+# A scope of the static checks. Depth 0 is the built-in scope.
+class StaticScope
+  attr_reader decls, parent, depth
+end
+
+class Checker
+  attr_reader scope, in_function, in_loop
+
+  def check_program(stmts)
+    builtins = Hash[]
+    Array.each(builtin_names) do |name|
+      min, max = builtin_arity(name)
+      builtins[name] = Decl.new(:builtin, min, max)
+    end
+    top = StaticScope.new(Hash[], StaticScope.new(builtins, nil, 0), 1)
+    check_list(Checker.new(top, false, false), stmts)
+  end
+
+  def static_error(message, line, col) = compile_error("static", message, line, col)
+
+  # ---- scopes ----
+
+  # Runs the block in a new scope nested in the current one.
+  def in_new_scope(ck)
+    outer = @scope
+    @scope = StaticScope.new(Hash[], outer, StaticScope.depth(outer) + 1)
+    yield
+    @scope = outer
+  end
+
+  def declare(ck, name, decl, line, col)
+    decls = StaticScope.decls(@scope)
+    static_error("'#{name}' is already declared in this scope", line, col) if Hash.key?(decls, name)
+    decls[name] = decl
+  end
+
+  def variable = Decl.new(:variable, 0, nil)
+
+  def declare_function(ck, fn)
+    name = FnExpr.name(fn)
+    name => String
+    decl = Decl.new(:function, FnExpr.required(fn), Array.size(FnExpr.params(fn)))
+    declare(ck, name, decl, FnExpr.line(fn), FnExpr.col(fn))
+  end
+
+  # The scope declaring `name`, innermost first; an error if there is none.
+  def resolve(ck, name, line, col)
+    s = @scope
+    while s
+      return s if Hash.key?(StaticScope.decls(s), name)
+      s = StaticScope.parent(s)
+    end
+    message = "undefined name '#{name}'"
+    suggestion = suggest_name(@scope, name)
+    message += "; did you mean '#{suggestion}'?" if suggestion
+    static_error(message, line, col)
+  end
+
+  def resolve_name(ck, n)
+    found = resolve(ck, Name.name(n), Name.line(n), Name.col(n))
+    Name.set_depth(n, StaticScope.depth(found))
+    Hash.fetch(StaticScope.decls(found), Name.name(n))
+  end
+
+  # ---- statements ----
+
+  # A statement list: its function declarations are entered first.
+  def check_list(ck, stmts)
+    Array.each(block_functions(stmts)) { |fn| declare_function(ck, fn) }
+    last = Array.size(stmts) - 1
+    Array.each_with_index(stmts) do |stmt, i|
+      check_statement(ck, stmt)
+      word = jump_word(stmt)
+      if word && i < last
+        line, col = statement_position(stmt)
+        static_error("code after '#{word}' is unreachable", line, col)
+      end
+    end
+  end
+
+  def check_block(ck, stmts)
+    in_new_scope(ck) { check_list(ck, stmts) }
+  end
+
+  def check_loop_body(ck, stmts)
+    outer = @in_loop
+    @in_loop = true
+    check_block(ck, stmts)
+    @in_loop = outer
+  end
+
+  def jump_word(stmt)
+    case stmt
+    in LoopJump then LoopJump.kind(stmt) == :break ? "break" : "continue"
+    in ReturnStmt then "return"
+    in ThrowStmt then "throw"
+    else nil
+    end
+  end
+
+  def statement_position(stmt)
+    case stmt
+    in LoopJump then [LoopJump.line(stmt), LoopJump.col(stmt)]
+    in ReturnStmt then [ReturnStmt.line(stmt), ReturnStmt.col(stmt)]
+    in ThrowStmt then [ThrowStmt.line(stmt), ThrowStmt.col(stmt)]
+    else [0, 0]
+    end
+  end
+
+  def check_statement(ck, stmt)
+    case stmt
+    in ExprStmt then check_expr(ck, ExprStmt.expr(stmt))
+    in AssignStmt
+      Array.each(AssignStmt.targets(stmt)) { |target| check_target(ck, target) }
+      Array.each(AssignStmt.values(stmt)) { |value| check_expr(ck, value) }
+    in LetStmt
+      value = LetStmt.value(stmt)
+      check_expr(ck, value) if value
+      declare(ck, LetStmt.name(stmt), variable, LetStmt.line(stmt), LetStmt.col(stmt))
+    in LetArray
+      check_expr(ck, LetArray.value(stmt))
+      Array.each(LetArray.names(stmt)) { |id| declare_ident(ck, id) }
+    in ConstStmt
+      check_expr(ck, ConstStmt.value(stmt))
+      declare(ck, ConstStmt.name(stmt), Decl.new(:constant, 0, nil), ConstStmt.line(stmt), ConstStmt.col(stmt))
+    in FnDecl then check_function(ck, FnDecl.fn(stmt))
+    in IfStmt
+      blocks = IfStmt.blocks(stmt)
+      Array.each_with_index(IfStmt.conds(stmt)) do |cond, i|
+        check_expr(ck, cond)
+        check_block(ck, Array.fetch(blocks, i))
+      end
+      else_block = IfStmt.else_block(stmt)
+      check_block(ck, else_block) if else_block
+    in MatchStmt
+      check_expr(ck, MatchStmt.subject(stmt))
+      Array.each(MatchStmt.arms(stmt)) do |arm|
+        Array.each(WhenArm.values(arm)) { |value| check_expr(ck, value) }
+        check_block(ck, WhenArm.body(arm))
+      end
+      else_block = MatchStmt.else_block(stmt)
+      check_block(ck, else_block) if else_block
+    in WhileStmt
+      check_expr(ck, WhileStmt.cond(stmt))
+      check_loop_body(ck, WhileStmt.body(stmt))
+    in ForStmt then check_for(ck, stmt)
+    in LoopJump
+      unless @in_loop
+        word = LoopJump.kind(stmt) == :break ? "break" : "continue"
+        static_error("'#{word}' outside a loop", LoopJump.line(stmt), LoopJump.col(stmt))
+      end
+    in ReturnStmt
+      static_error("'return' outside a function", ReturnStmt.line(stmt), ReturnStmt.col(stmt)) unless @in_function
+      value = ReturnStmt.value(stmt)
+      check_expr(ck, value) if value
+    in ThrowStmt then check_expr(ck, ThrowStmt.value(stmt))
+    in AssertStmt
+      check_expr(ck, AssertStmt.cond(stmt))
+      message = AssertStmt.message(stmt)
+      check_expr(ck, message) if message
+    in TryStmt then check_try(ck, stmt)
+    end
+  end
+
+  def declare_ident(ck, id) = declare(ck, Ident.name(id), variable, Ident.line(id), Ident.col(id))
+
+  # The loop variables and the body's declarations share one scope.
+  def check_for(ck, stmt)
+    check_expr(ck, ForStmt.iter(stmt))
+    outer = @in_loop
+    @in_loop = true
+    in_new_scope(ck) do
+      Array.each(ForStmt.names(stmt)) { |id| declare_ident(ck, id) }
+      check_list(ck, ForStmt.body(stmt))
+    end
+    @in_loop = outer
+  end
+
+  def check_try(ck, stmt)
+    check_block(ck, TryStmt.body(stmt))
+    name = TryStmt.catch_name(stmt)
+    handler = TryStmt.handler(stmt)
+    if name && handler
+      in_new_scope(ck) do
+        declare_ident(ck, name)
+        check_list(ck, handler)
+      end
+    end
+    finally_block = TryStmt.finally_block(stmt)
+    check_block(ck, finally_block) if finally_block
+  end
+
+  # Only variables can be assigned (SPEC 5.2).
+  def check_target(ck, target)
+    case target
+    in Name
+      decl = resolve_name(ck, target)
+      what =
+        case Decl.kind(decl)
+        in :constant then "constant"
+        in :function then "function"
+        in :builtin then "built-in"
+        else nil
+        end
+      static_error("cannot assign to #{what} '#{Name.name(target)}'", Name.line(target), Name.col(target)) if what
+    else check_expr(ck, target)
+    end
+  end
+
+  # Parameters and the body share one scope; a function body starts outside
+  # any loop.
+  def check_function(ck, fn)
+    outer_function = @in_function
+    outer_loop = @in_loop
+    @in_function = true
+    @in_loop = false
+    in_new_scope(ck) do
+      Array.each(FnExpr.params(fn)) do |param|
+        default = Param.default(param)
+        check_expr(ck, default) if default
+        declare(ck, Param.name(param), variable, Param.line(param), Param.col(param))
+      end
+      check_list(ck, FnExpr.body(fn))
+    end
+    @in_function = outer_function
+    @in_loop = outer_loop
+  end
+
+  # ---- expressions ----
+
+  def check_expr(ck, expr)
+    case expr
+    in Lit then nil
+    in Interp
+      Array.each(Interp.parts(expr)) { |part| check_expr(ck, part) unless part in String }
+    in Name then resolve_name(ck, expr)
+    in ArrayLit then Array.each(ArrayLit.elems(expr)) { |e| check_expr(ck, e) }
+    in MapLit
+      values = MapLit.values(expr)
+      Array.each_with_index(MapLit.keys(expr)) do |key, i|
+        check_expr(ck, key)
+        check_expr(ck, Array.fetch(values, i))
+      end
+    in FnExpr then check_function(ck, expr)
+    in Unary then check_expr(ck, Unary.operand(expr))
+    in Binary
+      check_expr(ck, Binary.left(expr))
+      check_expr(ck, Binary.right(expr))
+    in Call then check_call(ck, expr)
+    in Subscript
+      check_expr(ck, Subscript.target(expr))
+      check_expr(ck, Subscript.index(expr))
+    in Field then check_expr(ck, Field.target(expr))
+    in Slice
+      check_expr(ck, Slice.target(expr))
+      low = Slice.low(expr)
+      check_expr(ck, low) if low
+      high = Slice.high(expr)
+      check_expr(ck, high) if high
+    end
+  end
+
+  # The argument count is checked when the callee is written as a name of a
+  # function declaration or a built-in.
+  def check_call(ck, call)
+    callee = Call.callee(call)
+    decl = nil
+    name = ""
+    if callee in Name
+      decl = resolve_name(ck, callee)
+      name = Name.name(callee)
+    else
+      check_expr(ck, callee)
+    end
+    args = Call.args(call)
+    Array.each(args) { |arg| check_expr(ck, arg) }
+    return unless decl
+    kind = Decl.kind(decl)
+    return unless kind == :function || kind == :builtin
+    given = Array.size(args)
+    return if arity_ok?(Decl.min(decl), Decl.max(decl), given)
+    static_error(arity_message(name, Decl.min(decl), Decl.max(decl), given), Call.line(call), Call.col(call))
+  end
+end
+
+# ---- "did you mean" suggestions for undefined names (SPEC 5.2) ----
+
+# The visible name closest to `name`, or nil. Ties go to the innermost scope,
+# then to the alphabetically first name.
+def suggest_name(scope, name)
+  limit = smaller((String.size(name) - 1) / 2, 2)
+  best = nil
+  best_distance = limit + 1
+  s = scope
+  while s
+    Array.each(Array.sort(Hash.keys(StaticScope.decls(s)))) do |candidate|
+      d = edit_distance(name, candidate)
+      if d < best_distance
+        best = candidate
+        best_distance = d
+      end
+    end
+    s = StaticScope.parent(s)
+  end
+  best
+end
+
+# Insertions, deletions, substitutions and swaps of two adjacent characters,
+# each counting 1 (the optimal string alignment distance).
+def edit_distance(a, b)
+  x = String.chars(a)
+  y = String.chars(b)
+  n = Array.size(x)
+  m = Array.size(y)
+  rows = Array.new(n + 1) { |i| Array.new(m + 1) { |j| i == 0 ? j : (j == 0 ? i : 0) } }
+  Range.each(1..n) do |i|
+    Range.each(1..m) do |j|
+      cost = Array.fetch(x, i - 1) == Array.fetch(y, j - 1) ? 0 : 1
+      row = Array.fetch(rows, i)
+      above = Array.fetch(rows, i - 1)
+      d = smaller(smaller(Array.fetch(above, j) + 1, Array.fetch(row, j - 1) + 1), Array.fetch(above, j - 1) + cost)
+      if i > 1 && j > 1 && Array.fetch(x, i - 1) == Array.fetch(y, j - 2) && Array.fetch(x, i - 2) == Array.fetch(y, j - 1)
+        d = smaller(d, Array.fetch(Array.fetch(rows, i - 2), j - 2) + 1)
+      end
+      row[j] = d
+    end
+  end
+  Array.fetch(Array.fetch(rows, n), m)
+end
+
+def smaller(a, b) = a < b ? a : b

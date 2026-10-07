@@ -1,0 +1,68 @@
+# Source positions, and the exceptions that carry Mini errors up to main.sake.
+
+# A 1-based line and column in the source text. Every token and AST node has one.
+Pos = Struct.new(:line, :col)
+
+class Pos
+  def to_s(pos) = "#{@line}:#{@col}"
+end
+
+# The source range an error covers: from the first character of `start` to the
+# last character of `stop`, both Pos. Every AST node has one.
+Span = Struct.new(:start, :stop)
+
+class Span
+  def to_s(span) = "#{@start}-#{@stop}"
+end
+
+# A lexical, syntax or static error: found before the program runs.
+# `phase` is "lexical", "syntax" or "static"; `pos` is a Span.
+class MiniCompileError < Exception
+  attr_reader phase, pos
+
+  def report(err) = "#{@phase} error at #{@pos}: #{@message}"
+end
+
+# A runtime error raised by the interpreter, an operator or a built-in.
+# `kind` is the "kind" entry a catch clause sees (see runtime_error_kinds); `pos` is a Span.
+class MiniRuntimeError < Exception
+  attr_reader kind, pos
+
+  def report(err) = "runtime error at #{@pos}: #{@message}"
+end
+
+# A value thrown by a `throw` statement on its way to the nearest enclosing `try`.
+# `pos` is the Span of the `throw` statement.
+class MiniThrow < Exception
+  attr_reader value, pos
+end
+
+# The values of the "kind" entry of a caught runtime error.
+def runtime_error_kinds = once { Array["type", "index", "key", "zero", "arity", "value", "name", "stack", "assert"] }
+
+module Errors
+  module_function
+
+  def lexical(message, pos)
+    raise MiniCompileError.new(message, "lexical", pos)
+  end
+
+  def syntax(message, pos)
+    raise MiniCompileError.new(message, "syntax", pos)
+  end
+
+  def static(message, pos)
+    raise MiniCompileError.new(message, "static", pos)
+  end
+
+  def runtime(kind, message, pos)
+    raise ArgumentError, "unknown runtime error kind #{kind}" unless Array.include?(runtime_error_kinds, kind)
+
+    raise MiniRuntimeError.new(message, kind, pos)
+  end
+
+  # The line printed for a throw that no `try` caught.
+  def uncaught_throw_report(err)
+    "runtime error at #{MiniThrow.pos(err)}: uncaught throw #{Format.repr(MiniThrow.value(err))}"
+  end
+end

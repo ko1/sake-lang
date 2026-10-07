@@ -1,0 +1,222 @@
+# Parsing expressions (SPEC 3.2), loosest binding first:
+#   or < and < not < comparisons (not chainable) < + - < * / % < unary - < ** (right) < postfix
+
+def comparison_operators = once { Set["==", "!=", "<", "<=", ">", ">="] }
+
+class Parser
+  def parse_expr(p) = parse_or(p)
+
+  def parse_or(p)
+    left = parse_and(p)
+    while at_keyword?(p, "or")
+      t = advance(p)
+      left = Logic.new("or", left, parse_and(p), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_and(p)
+    left = parse_not(p)
+    while at_keyword?(p, "and")
+      t = advance(p)
+      left = Logic.new("and", left, parse_not(p), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_not(p)
+    return parse_comparison(p) unless at_keyword?(p, "not")
+    t = advance(p)
+    Not.new(parse_not(p), Token.line(t), Token.col(t))
+  end
+
+  def at_comparison?(p)
+    t = peek(p)
+    (Token.kind(t) == :op && Set.include?(comparison_operators, Token.text(t))) || keyword?(t, "in")
+  end
+
+  def parse_comparison(p)
+    left = parse_additive(p)
+    return left unless at_comparison?(p)
+    t = advance(p)
+    right = parse_additive(p)
+    if at_comparison?(p)
+      second = peek(p)
+      raise syntax_error("comparison operators cannot be chained", Token.line(second), Token.col(second))
+    end
+    Binary.new(Token.text(t), left, right, Token.line(t), Token.col(t))
+  end
+
+  def parse_additive(p)
+    left = parse_multiplicative(p)
+    while at_op?(p, "+") || at_op?(p, "-")
+      t = advance(p)
+      left = Binary.new(Token.text(t), left, parse_multiplicative(p), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_multiplicative(p)
+    left = parse_unary(p)
+    while at_op?(p, "*") || at_op?(p, "/") || at_op?(p, "%")
+      t = advance(p)
+      left = Binary.new(Token.text(t), left, parse_unary(p), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_unary(p)
+    return parse_power(p) unless at_op?(p, "-")
+    t = advance(p)
+    Negate.new(parse_unary(p), Token.line(t), Token.col(t))
+  end
+
+  # `**` is right-associative and its exponent may be a negation: `2 ** -1`.
+  def parse_power(p)
+    base = parse_postfix(p)
+    return base unless at_op?(p, "**")
+    t = advance(p)
+    Binary.new("**", base, parse_unary(p), Token.line(t), Token.col(t))
+  end
+
+  def parse_postfix(p)
+    expr = parse_primary(p)
+    while true
+      t = peek(p)
+      if op?(t, "(")
+        advance(p)
+        expr = Call.new(expr, parse_list(p, ")"), Token.line(t), Token.col(t))
+      elsif op?(t, "[")
+        advance(p)
+        expr = parse_index_or_slice(p, expr, t)
+      elsif op?(t, ".")
+        advance(p)
+        name = peek(p)
+        raise expected_error("name", name) unless Token.kind(name) == :name
+        advance(p)
+        expr = Field.new(expr, Token.text(name), Token.line(t), Token.col(t))
+      else
+        return expr
+      end
+    end
+  end
+
+  # After `[`: `a[i]`, or a slice `a[i:j]` with either bound optional.
+  def parse_index_or_slice(p, target, bracket)
+    line = Token.line(bracket)
+    col = Token.col(bracket)
+    lo = nil
+    lo = parse_expr(p) unless at_op?(p, ":")
+    if at_op?(p, ":")
+      advance(p)
+      hi = nil
+      hi = parse_expr(p) unless at_op?(p, "]")
+      expect_op(p, "]")
+      return Slice.new(target, lo, hi, line, col)
+    end
+    expect_op(p, "]")
+    return Subscript.new(target, lo, line, col) if lo != nil
+    raise InternalError.new("index without an expression")
+  end
+
+  # Comma-separated expressions up to `closer`, which may follow a trailing comma.
+  def parse_list(p, closer)
+    items = Array[]
+    until at_op?(p, closer)
+      Array.push(items, parse_expr(p))
+      break unless at_op?(p, ",")
+      advance(p)
+    end
+    expect_op(p, closer)
+    items
+  end
+
+  def parse_primary(p)
+    t = peek(p)
+    line = Token.line(t)
+    col = Token.col(t)
+    case Token.kind(t)
+    in :int
+      advance(p)
+      return IntLit.new(String.to_i(String.delete(Token.text(t), "_")), line, col)
+    in :string
+      advance(p)
+      return parse_string(t)
+    in :name
+      advance(p)
+      return Name.new(Token.text(t), line, col, 0)
+    in :keyword
+      case Token.text(t)
+      in "true"
+        advance(p)
+        return ConstLit.new(true, line, col)
+      in "false"
+        advance(p)
+        return ConstLit.new(false, line, col)
+      in "nil"
+        advance(p)
+        return ConstLit.new(nil, line, col)
+      in "fn"
+        advance(p)
+        return FnExpr.new(parse_fn_rest(p, nil, t), line, col)
+      else nil
+      end
+    in :op
+      case Token.text(t)
+      in "("
+        advance(p)
+        expr = parse_expr(p)
+        expect_op(p, ")")
+        return expr
+      in "["
+        advance(p)
+        return ArrayLit.new(parse_list(p, "]"), line, col)
+      in "{"
+        advance(p)
+        return parse_map(p, line, col)
+      else nil
+      end
+    else nil
+    end
+    raise expected_error("expression", t)
+  end
+
+  # After `{`: `key: value` entries up to `}`, with an optional trailing comma.
+  def parse_map(p, line, col)
+    entries = MapEntry[]
+    until at_op?(p, "}")
+      start = peek(p)
+      key = parse_expr(p)
+      expect_op(p, ":")
+      Array.push(entries, MapEntry.new(key, parse_expr(p), Token.line(start), Token.col(start)))
+      break unless at_op?(p, ",")
+      advance(p)
+    end
+    expect_op(p, "}")
+    MapLit.new(entries, line, col)
+  end
+end
+
+# A string token as a StrLit, or a Template when it has interpolations. Each interpolation is
+# parsed on its own: exactly one expression, then the `}` that closes it.
+def parse_string(t)
+  line = Token.line(t)
+  col = Token.col(t)
+  parts = Array[]
+  plain = true
+  Array.each(Token.parts(t)) do |part|
+    case part
+    in String then Array.push(parts, StrLit.new(part, line, col))
+    in Interpolation
+      plain = false
+      sub = Parser.new(Interpolation.tokens(part), 0)
+      expr = Parser.parse_expr(sub)
+      close = Parser.peek(sub)
+      raise expected_error("'}'", close) unless Token.kind(close) == :interp_end
+      Array.push(parts, expr)
+    end
+  end
+  return Template.new(parts, line, col) unless plain
+  text = Array.join(Array.map(Token.parts(t)) { |part| (part in String) ? part : "" }, "")
+  StrLit.new(text, line, col)
+end

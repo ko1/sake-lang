@@ -1,0 +1,69 @@
+# Mini values (SPEC section 4).
+#
+#   int      Integer          array     Array (shared by reference)
+#   string   String           map       Hash (insertion order; String/Integer keys)
+#   bool     true / false     function  Closure or Builtin
+#   nil      nil
+
+# A user function: its definition and the scope it was created in. `id`
+# makes each closure equal only to itself.
+class Closure
+  attr_reader fn, scope, id
+end
+
+class Builtin
+  attr_reader name
+end
+
+# A run-time scope (SPEC 6.4): one per static scope, at the same depth.
+# A declared name is missing from `vars` until its declaration has run.
+class Scope
+  attr_reader vars, parent, depth
+end
+
+def type_name(v)
+  case v
+  in Integer then "int"
+  in String then "string"
+  in true | false then "bool"
+  in nil then "nil"
+  in Array then "array"
+  in Hash then "map"
+  in Closure | Builtin then "function"
+  end
+end
+
+def truthy?(v) = v != nil && v != false
+
+def valid_key?(v) = (v in String) || (v in Integer)
+
+# How deep equality may descend before it gives up (SPEC 4).
+def max_compare_level = 100
+
+# Mini equality (SPEC 4). `level` is the nesting level of `a` and `b`; the
+# position is where a too-deep comparison is reported.
+def mini_equal?(a, b, level, line, col)
+  if level > max_compare_level
+    runtime_error("value", "values nested too deeply to compare", line, col)
+  end
+  case a
+  in Array
+    return false unless b in Array
+    return false unless Array.size(a) == Array.size(b)
+    Array.each_with_index(a) do |x, i|
+      return false unless mini_equal?(x, Array.fetch(b, i), level + 1, line, col)
+    end
+    true
+  in Hash
+    return false unless b in Hash
+    return false unless Hash.size(a) == Hash.size(b)
+    Hash.each(a) do |k, x|
+      return false unless Hash.key?(b, k)
+      return false unless mini_equal?(x, Hash.fetch(b, k), level + 1, line, col)
+    end
+    true
+  in Closure then (b in Closure) && Closure.id(a) == Closure.id(b)
+  in Builtin then (b in Builtin) && Builtin.name(a) == Builtin.name(b)
+  else a == b
+  end
+end

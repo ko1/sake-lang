@@ -1,0 +1,92 @@
+# The scopes of the static checks (SPEC 5.1) and the "did you mean" suggestions.
+
+# What a name was declared as: kind is :variable, :constant, :function or :builtin.
+# fn is the FnDef of a function declaration (for its argument count), nil otherwise.
+class Decl
+  attr_reader kind, fn
+end
+
+# names maps each name declared so far to its Decl; parent is nil for the built-in scope.
+class StaticScope
+  attr_reader names, parent
+end
+
+def new_static_scope(parent) = StaticScope.new(Hash[], parent)
+
+def builtin_static_scope
+  scope = StaticScope.new(Hash[], nil)
+  Array.each(builtin_names) { |name| StaticScope.names(scope)[name] = Decl.new(:builtin, nil) }
+  scope
+end
+
+# The declaration a name refers to, and the number of scopes between the use and it.
+class Resolution
+  attr_reader decl, depth
+end
+
+# The Resolution of a name used in `scope`, or nil when it is not declared.
+def lookup_static(scope, name)
+  depth = 0
+  s = scope
+  while s
+    decl = StaticScope.names(s)[name]
+    return Resolution.new(decl, depth) if decl
+    s = StaticScope.parent(s)
+    depth += 1
+  end
+  nil
+end
+
+def builtin_scope?(scope) = StaticScope.parent(scope) == nil
+
+# ---- Suggestions (SPEC 5.2) ----
+
+# The visible name closest to `name`, or nil: the distance must be at most
+# min(2, (length - 1) / 2); ties go to the innermost scope, then to the alphabetically first.
+def suggestion(scope, name)
+  limit = Tuple.min([2, (String.size(name) - 1) / 2])
+  best = nil
+  best_distance = limit + 1
+  s = scope
+  while s
+    Array.each(Array.sort(Hash.keys(StaticScope.names(s)))) do |candidate|
+      d = edit_distance(name, candidate)
+      if d < best_distance
+        best = candidate
+        best_distance = d
+      end
+    end
+    s = StaticScope.parent(s)
+  end
+  best
+end
+
+# Insertions, deletions, substitutions and swaps of two adjacent characters each count 1
+# (the optimal string alignment distance).
+def edit_distance(a, b)
+  x = String.chars(a)
+  y = String.chars(b)
+  n = Array.size(x)
+  m = Array.size(y)
+  rows = Array.new(n + 1) { |i| Array.new(m + 1) { |j| i == 0 ? j : (j == 0 ? i : 0) } }
+  Integer.upto(1, n) do |i|
+    Integer.upto(1, m) do |j|
+      cost = x[i - 1] == y[j - 1] ? 0 : 1
+      best = Tuple.min([cell(rows, i - 1, j) + 1, cell(rows, i, j - 1) + 1, cell(rows, i - 1, j - 1) + cost])
+      if i > 1 && j > 1 && x[i - 1] == y[j - 2] && x[i - 2] == y[j - 1]
+        best = Tuple.min([best, cell(rows, i - 2, j - 2) + 1])
+      end
+      row = rows[i]
+      row[j] = best if row
+    end
+  end
+  cell(rows, n, m)
+end
+
+def cell(rows, i, j)
+  row = rows[i]
+  raise InternalError.new("edit distance row #{i}") unless row
+  v = row[j]
+  raise InternalError.new("edit distance cell #{i}, #{j}") unless v
+  v
+end

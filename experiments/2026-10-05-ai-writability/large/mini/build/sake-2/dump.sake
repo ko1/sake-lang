@@ -1,0 +1,129 @@
+# The debugging output of `--tokens` and `--ast` (SPEC 1; the format is not part of the language).
+#
+# --tokens: one line per token, "line:col kind text"; an interpolation's tokens are indented
+#           under their string.
+# --ast:    one statement per line as an S-expression, the statements of a block indented by two
+#           spaces under the line that opens it. A name is shown as (name x @d) where d is the
+#           number of scopes between the use and its declaration, or @builtin.
+
+def dump_tokens(tokens, indent)
+  Array.each(tokens) do |t|
+    emit_line("#{indent}#{Token.line(t)}:#{Token.col(t)} #{Token.kind(t)} #{Token.text(t)}")
+    Array.each(Token.parts(t)) do |part|
+      dump_tokens(Interpolation.tokens(part), indent + "  ") if part in Interpolation
+    end
+  end
+end
+
+def dump_program(body)
+  lines = String[]
+  sexpr_block(lines, body, "")
+  Array.each(lines) { |line| emit_line(line) }
+end
+
+def sexpr_block(lines, stmts, indent)
+  Array.each(stmts) { |stmt| sexpr_statement(lines, stmt, indent) }
+end
+
+# A line that opens a block, then the block indented under it.
+def sexpr_nested(lines, header, stmts, indent)
+  Array.push(lines, indent + header)
+  sexpr_block(lines, stmts, indent + "  ")
+end
+
+def sexpr_list(items) = Array.join(Array.map(items) { |e| sexpr(e) }, " ")
+
+def sexpr_optional(expr) = expr == nil ? "" : " " + sexpr(expr)
+
+def sexpr_params(fn)
+  params = Array.map(FnDef.params(fn)) do |param|
+    default = Param.default(param)
+    default ? "(#{Param.name(param)} #{sexpr(default)})" : Param.name(param)
+  end
+  "(#{Array.join(params, " ")})"
+end
+
+def sexpr_statement(lines, stmt, indent)
+  case stmt
+  in ExprStmt then Array.push(lines, indent + sexpr(ExprStmt.expr(stmt)))
+  in Let then Array.push(lines, "#{indent}(let #{Ident.name(Let.ident(stmt))}#{sexpr_optional(Let.init(stmt))})")
+  in LetArray
+    names = Array.join(Array.map(LetArray.idents(stmt)) { |i| Ident.name(i) }, " ")
+    Array.push(lines, "#{indent}(let [#{names}] #{sexpr(LetArray.init(stmt))})")
+  in Const then Array.push(lines, "#{indent}(const #{Ident.name(Const.ident(stmt))} #{sexpr(Const.init(stmt))})")
+  in FnDecl
+    fn = FnDecl.fn(stmt)
+    sexpr_nested(lines, "(fn #{Ident.name(FnDecl.ident(stmt))} #{sexpr_params(fn)})", FnDef.body(fn), indent)
+  in If
+    Array.each_with_index(If.arms(stmt)) do |arm, i|
+      sexpr_nested(lines, "(#{i == 0 ? "if" : "elif"} #{sexpr(IfArm.cond(arm))})", IfArm.body(arm), indent)
+    end
+    else_body = If.else_body(stmt)
+    sexpr_nested(lines, "(else)", else_body, indent) if else_body
+  in Match
+    Array.push(lines, "#{indent}(match #{sexpr(Match.subject(stmt))})")
+    Array.each(Match.arms(stmt)) do |arm|
+      sexpr_nested(lines, "(when #{sexpr_list(WhenArm.values(arm))})", WhenArm.body(arm), indent + "  ")
+    end
+    else_body = Match.else_body(stmt)
+    sexpr_nested(lines, "(else)", else_body, indent + "  ") if else_body
+  in While then sexpr_nested(lines, "(while #{sexpr(While.cond(stmt))})", While.body(stmt), indent)
+  in For
+    second = For.second(stmt)
+    names = Ident.name(For.first(stmt)) + (second ? " " + Ident.name(second) : "")
+    sexpr_nested(lines, "(for #{names} #{sexpr(For.iterable(stmt))})", For.body(stmt), indent)
+  in Break then Array.push(lines, "#{indent}(break)")
+  in Continue then Array.push(lines, "#{indent}(continue)")
+  in Return then Array.push(lines, "#{indent}(return#{sexpr_optional(Return.value(stmt))})")
+  in Throw then Array.push(lines, "#{indent}(throw #{sexpr(Throw.value(stmt))})")
+  in Assert then Array.push(lines, "#{indent}(assert #{sexpr(Assert.cond(stmt))}#{sexpr_optional(Assert.message(stmt))})")
+  in Try
+    sexpr_nested(lines, "(try)", Try.body(stmt), indent)
+    catch_ident = Try.catch_ident(stmt)
+    handler = Try.handler(stmt)
+    sexpr_nested(lines, "(catch #{Ident.name(catch_ident)})", handler, indent) if catch_ident && handler
+    finally_body = Try.finally_body(stmt)
+    sexpr_nested(lines, "(finally)", finally_body, indent) if finally_body
+  in Assign
+    Array.push(lines, "#{indent}(#{Assign.op(stmt)} #{sexpr(Assign.target(stmt))} #{sexpr(Assign.value(stmt))})")
+  in MultiAssign
+    targets = sexpr_list(MultiAssign.targets(stmt))
+    Array.push(lines, "#{indent}(= (#{targets}) (#{sexpr_list(MultiAssign.values(stmt))}))")
+  else raise InternalError.new("unknown statement")
+  end
+end
+
+def sexpr(expr)
+  case expr
+  in IntLit then Integer.to_s(IntLit.value(expr))
+  in StrLit then quote(StrLit.value(expr))
+  in ConstLit then repr(ConstLit.value(expr))
+  in Template then "(str #{sexpr_list(Template.parts(expr))})"
+  in Name
+    depth = Name.depth(expr)
+    "(name #{Name.name(expr)} @#{depth < 0 ? "builtin" : Integer.to_s(depth)})"
+  in ArrayLit then "(array #{sexpr_list(ArrayLit.items(expr))})"
+  in MapLit
+    entries = Array.map(MapLit.entries(expr)) { |e| "(#{sexpr(MapEntry.key(e))} #{sexpr(MapEntry.value(e))})" }
+    "(map #{Array.join(entries, " ")})"
+  in FnExpr
+    fn = FnExpr.fn(expr)
+    body = String[]
+    sexpr_block(body, FnDef.body(fn), "")
+    "(fn #{sexpr_params(fn)} #{Array.join(body, " ")})"
+  in Negate then "(- #{sexpr(Negate.operand(expr))})"
+  in Not then "(not #{sexpr(Not.operand(expr))})"
+  in Binary then "(#{Binary.op(expr)} #{sexpr(Binary.left(expr))} #{sexpr(Binary.right(expr))})"
+  in Logic then "(#{Logic.op(expr)} #{sexpr(Logic.left(expr))} #{sexpr(Logic.right(expr))})"
+  in Call
+    args = Call.args(expr)
+    "(call #{sexpr(Call.callee(expr))}#{Array.empty?(args) ? "" : " " + sexpr_list(args)})"
+  in Subscript then "(index #{sexpr(Subscript.target(expr))} #{sexpr(Subscript.index(expr))})"
+  in Slice
+    lo = Slice.lo(expr)
+    hi = Slice.hi(expr)
+    "(slice #{sexpr(Slice.target(expr))} #{lo ? sexpr(lo) : "_"} #{hi ? sexpr(hi) : "_"})"
+  in Field then "(field #{sexpr(Field.target(expr))} #{Field.name(expr)})"
+  else raise InternalError.new("unknown expression")
+  end
+end

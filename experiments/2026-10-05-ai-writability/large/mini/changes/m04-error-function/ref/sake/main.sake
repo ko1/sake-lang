@@ -1,0 +1,57 @@
+# Mini: reads a program from standard input and runs it (see ../SPEC.md).
+#
+#   sake --strict=2 main.sake < program.mini           run it
+#   sake --strict=2 main.sake --tokens < program.mini  print its tokens instead
+#   sake --strict=2 main.sake --ast < program.mini     print its resolved AST instead
+#
+# Output and error reports both go to standard output; the exit status is 0.
+
+require "errors"
+require "tokens"
+require "lexer"
+require "ast"
+require "parser"
+require "values"
+require "format"
+require "builtins"
+require "resolver"
+require "environment"
+require "operators"
+require "interpreter"
+require "debug"
+
+# mode is "run", "tokens" or "ast".
+def run_mini(source, mode)
+  tokens = Lexer.run(Lexer.new(source))
+  if mode == "tokens"
+    Array.each(Debug.tokens(tokens)) { |line| puts(line) }
+    return
+  end
+  program = Parser.parse_program(Parser.new(tokens))
+  Resolver.resolve_program(Resolver.new, program)
+  if mode == "ast"
+    puts(Debug.program(program))
+    return
+  end
+  Interpreter.run(Interpreter.new, program)
+rescue MiniCompileError => e
+  puts(MiniCompileError.report(e))
+rescue MiniRuntimeError => e
+  puts(MiniRuntimeError.report(e))
+rescue MiniThrow => e
+  puts(Errors.uncaught_throw_report(e))
+end
+
+def main(args)
+  mode =
+    if Array.empty?(args) then "run"
+    elsif args == Array["--tokens"] then "tokens"
+    elsif args == Array["--ast"] then "ast"
+    else
+      puts("usage: sake --strict=2 main.sake [--tokens | --ast] < program.mini")
+      return
+    end
+  run_mini(IO.read(IO.stdin), mode)
+end
+
+main(ARGV)

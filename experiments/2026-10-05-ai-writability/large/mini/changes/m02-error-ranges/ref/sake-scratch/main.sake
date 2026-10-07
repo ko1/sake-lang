@@ -1,0 +1,50 @@
+# Mini, an interpreter for the language of ../SPEC.md.
+#
+#   bin/sake --strict=2 main.sake < program.mini
+#
+# The program is read from standard input and goes through four phases, each
+# finished before the next starts: lexing, parsing, the static checks, and
+# evaluation. Output and error reports go to standard output.
+
+require "errors"
+require "tokens"
+require "lexer"
+require "ast"
+require "parser"
+require "parser_expr"
+require "scopes"
+require "checker"
+require "values"
+require "text"
+require "env"
+require "operators"
+require "builtins"
+require "evaluator"
+
+module Mini
+  module_function
+
+  # The checked syntax tree, or nil after printing a lexical, syntax or
+  # static error.
+  def compile(src)
+    program = Parser.parse_program(Lexer.tokenize(src))
+    Checker.check_program(program)
+    program
+  rescue CompileError => e
+    puts(Fail.report(CompileError.kind(e), CompileError.line(e), CompileError.col(e), CompileError.end_line(e), CompileError.end_col(e), Exception.message(e)))
+    nil
+  end
+
+  def run(src)
+    program = compile(src)
+    return unless program
+    Interp.run_program(program)
+  rescue MiniThrow => e
+    message = "uncaught throw #{Text.repr(MiniThrow.value(e), 0)}"
+    puts(Fail.report("runtime", MiniThrow.line(e), MiniThrow.col(e), MiniThrow.end_line(e), MiniThrow.end_col(e), message))
+  rescue MiniFault => e
+    puts(Fail.report("runtime", MiniFault.line(e), MiniFault.col(e), MiniFault.end_line(e), MiniFault.end_col(e), Exception.message(e)))
+  end
+end
+
+Mini.run(IO.read(IO.stdin))

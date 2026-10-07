@@ -1,0 +1,151 @@
+# Operators on values (SPEC section 7). Each takes the position its errors are
+# reported at.
+
+def operand_error(op, a, b, line, col)
+  type_error("cannot apply '#{op}' to #{type_name(a)} and #{type_name(b)}", line, col)
+end
+
+# A binary operator other than `and` / `or`.
+def binary_op(op, a, b, line, col)
+  case op
+  in "==" then mini_equal?(a, b, 0, line, col)
+  in "!=" then !mini_equal?(a, b, 0, line, col)
+  in "<" | "<=" | ">" | ">=" then compare(op, a, b, line, col)
+  in "in" then contains?(b, a, line, col)
+  in "+" then add(a, b, line, col)
+  else arithmetic(op, a, b, line, col)
+  end
+end
+
+# `+` adds ints and concatenates two strings or two arrays.
+def add(a, b, line, col)
+  case a
+  in Integer then return a + b if b in Integer
+  in String then return a + b if b in String
+  in Array then return a + b if b in Array
+  else nil
+  end
+  operand_error("+", a, b, line, col)
+end
+
+# `- * / % **` on ints. `/` and `%` round toward negative infinity.
+def arithmetic(op, a, b, line, col)
+  operand_error(op, a, b, line, col) unless (a in Integer) && (b in Integer)
+  a => Integer
+  b => Integer
+  case op
+  in "-" then a - b
+  in "*" then a * b
+  in "/" | "%"
+    runtime_error("zero", "division by zero", line, col) if b == 0
+    op == "/" ? a / b : a % b
+  else
+    runtime_error("value", "negative exponent", line, col) if b < 0
+    a ** b
+  end
+end
+
+# `< <= > >=` on two ints or two strings.
+def compare(op, a, b, line, col)
+  if a in Integer
+    return compare_ordered(op, a <=> b) if b in Integer
+  elsif a in String
+    return compare_ordered(op, a <=> b) if b in String
+  end
+  operand_error(op, a, b, line, col)
+end
+
+def compare_ordered(op, order)
+  order => Integer
+  case op
+  in "<" then order < 0
+  in "<=" then order <= 0
+  in ">" then order > 0
+  else order >= 0
+  end
+end
+
+# `x in c` (SPEC 7.4).
+def contains?(c, x, line, col)
+  case c
+  in Array then return Array.any?(c) { |e| mini_equal?(x, e, 0, line, col) }
+  in Hash then return valid_key?(x) && Hash.key?(c, x)
+  in String then return String.include?(c, x) if x in String
+  else nil
+  end
+  operand_error("in", x, c, line, col)
+end
+
+def negate(v, line, col)
+  type_error("cannot negate #{type_name(v)}", line, col) unless v in Integer
+  v => Integer
+  -v
+end
+
+# ---- indexing (SPEC 7.6) ----
+
+def check_key(key, line, col)
+  type_error("map key must be a string or int, got #{type_name(key)}", line, col) unless valid_key?(key)
+end
+
+# The position `index` refers to in an array or string of `length`
+# elements; `what` is "array" or "string".
+def position(what, length, index, line, col)
+  type_error("#{what} index must be an int, got #{type_name(index)}", line, col) unless index in Integer
+  index => Integer
+  i = index < 0 ? index + length : index
+  if i < 0 || i >= length
+    runtime_error("index", "index #{index} out of range for #{what} of length #{length}", line, col)
+  end
+  i
+end
+
+def index_get(target, index, line, col)
+  case target
+  in Array then Array.fetch(target, position("array", Array.size(target), index, line, col))
+  in String
+    i = position("string", String.size(target), index, line, col)
+    String.slice(target, i, 1) || ""
+  in Hash
+    check_key(index, line, col)
+    runtime_error("key", "key #{repr(index, 0)} not found", line, col) unless Hash.key?(target, index)
+    Hash.fetch(target, index)
+  else type_error("cannot index #{type_name(target)}", line, col)
+  end
+end
+
+def index_set(target, index, value, line, col)
+  case target
+  in Array then target[position("array", Array.size(target), index, line, col)] = value
+  in Hash
+    check_key(index, line, col)
+    target[index] = value
+  in String then type_error("strings are immutable", line, col)
+  else type_error("cannot index #{type_name(target)}", line, col)
+  end
+end
+
+# `target[low:high]`; a missing bound is nil (SPEC 7.6).
+def slice_of(target, low, high, line, col)
+  unless (target in Array) || (target in String)
+    type_error("cannot slice #{type_name(target)}", line, col)
+  end
+  length = (target in Array) ? Array.size(target) : String.size(target)
+  from = slice_bound(low, 0, length, line, col)
+  to = slice_bound(high, length, length, line, col)
+  count = to > from ? to - from : 0
+  case target
+  in Array then Array.take(Array.drop(target, from), count)
+  in String then String.slice(target, from, count) || ""
+  end
+end
+
+def slice_bound(bound, missing, length, line, col)
+  return missing if bound == nil
+  type_error("slice bound must be an int, got #{type_name(bound)}", line, col) unless bound in Integer
+  bound => Integer
+  b = bound < 0 ? bound + length : bound
+  return 0 if b < 0
+  return length if b > length
+  b
+end

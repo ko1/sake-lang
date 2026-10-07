@@ -1,0 +1,123 @@
+# The debugging views `--tokens` and `--ast` (SPEC section 1). Their format
+# is not part of the language.
+
+def dump_tokens(tokens, indent)
+  Array.each(tokens) do |t|
+    puts("#{indent}#{Token.line(t)}:#{Token.col(t)} #{Token.type(t)} #{Token.text(t)}")
+    parts = Token.value(t)
+    next unless parts in Array
+    Array.each(parts) { |part| dump_tokens(part, indent + "  ") if part in Array }
+  end
+end
+
+def dump_block(stmts, indent)
+  Array.each(stmts) { |stmt| dump_statement(stmt, indent) }
+end
+
+def dump_line(indent, text) = puts(indent + text)
+
+def dump_statement(stmt, indent)
+  inner = indent + "  "
+  case stmt
+  in ExprStmt then dump_line(indent, sexp(ExprStmt.expr(stmt)))
+  in AssignStmt
+    targets = Array.join(Array.map(AssignStmt.targets(stmt)) { |t| sexp(t) }, " ")
+    values = Array.join(Array.map(AssignStmt.values(stmt)) { |v| sexp(v) }, " ")
+    dump_line(indent, "(#{AssignStmt.op(stmt)} (#{targets}) (#{values}))")
+  in LetStmt
+    value = LetStmt.value(stmt)
+    dump_line(indent, "(let #{LetStmt.name(stmt)}#{value ? " " + sexp(value) : ""})")
+  in LetArray
+    names = Array.join(Array.map(LetArray.names(stmt)) { |id| Ident.name(id) }, " ")
+    dump_line(indent, "(let [#{names}] #{sexp(LetArray.value(stmt))})")
+  in ConstStmt then dump_line(indent, "(const #{ConstStmt.name(stmt)} #{sexp(ConstStmt.value(stmt))})")
+  in FnDecl
+    fn = FnDecl.fn(stmt)
+    dump_line(indent, function_header(fn))
+    dump_block(FnExpr.body(fn), inner)
+  in IfStmt
+    blocks = IfStmt.blocks(stmt)
+    Array.each_with_index(IfStmt.conds(stmt)) do |cond, i|
+      dump_line(indent, "(#{i == 0 ? "if" : "elif"} #{sexp(cond)})")
+      dump_block(Array.fetch(blocks, i), inner)
+    end
+    dump_else(IfStmt.else_block(stmt), indent)
+  in MatchStmt
+    dump_line(indent, "(match #{sexp(MatchStmt.subject(stmt))})")
+    Array.each(MatchStmt.arms(stmt)) do |arm|
+      dump_line(indent, "(when #{Array.join(Array.map(WhenArm.values(arm)) { |v| sexp(v) }, " ")})")
+      dump_block(WhenArm.body(arm), inner)
+    end
+    dump_else(MatchStmt.else_block(stmt), indent)
+  in WhileStmt
+    dump_line(indent, "(while #{sexp(WhileStmt.cond(stmt))})")
+    dump_block(WhileStmt.body(stmt), inner)
+  in ForStmt
+    names = Array.join(Array.map(ForStmt.names(stmt)) { |id| Ident.name(id) }, " ")
+    dump_line(indent, "(for #{names} #{sexp(ForStmt.iter(stmt))})")
+    dump_block(ForStmt.body(stmt), inner)
+  in LoopJump then dump_line(indent, "(#{LoopJump.kind(stmt)})")
+  in ReturnStmt
+    value = ReturnStmt.value(stmt)
+    dump_line(indent, value ? "(return #{sexp(value)})" : "(return)")
+  in ThrowStmt then dump_line(indent, "(throw #{sexp(ThrowStmt.value(stmt))})")
+  in AssertStmt
+    message = AssertStmt.message(stmt)
+    dump_line(indent, "(assert #{sexp(AssertStmt.cond(stmt))}#{message ? " " + sexp(message) : ""})")
+  in TryStmt
+    dump_line(indent, "(try)")
+    dump_block(TryStmt.body(stmt), inner)
+    name = TryStmt.catch_name(stmt)
+    handler = TryStmt.handler(stmt)
+    if name && handler
+      dump_line(indent, "(catch #{Ident.name(name)})")
+      dump_block(handler, inner)
+    end
+    finally_block = TryStmt.finally_block(stmt)
+    if finally_block
+      dump_line(indent, "(finally)")
+      dump_block(finally_block, inner)
+    end
+  end
+end
+
+def dump_else(block, indent)
+  return unless block
+  dump_line(indent, "(else)")
+  dump_block(block, indent + "  ")
+end
+
+def function_header(fn)
+  params = Array.map(FnExpr.params(fn)) do |param|
+    default = Param.default(param)
+    default ? "(#{Param.name(param)} #{sexp(default)})" : Param.name(param)
+  end
+  "(fn #{FnExpr.name(fn) || "_"} (#{Array.join(params, " ")}))"
+end
+
+def sexp(e)
+  case e
+  in Lit then repr(Lit.value(e), 0)
+  in Interp
+    parts = Array.map(Interp.parts(e)) { |part| (part in String) ? repr(part, 0) : sexp(part) }
+    "(interp #{Array.join(parts, " ")})"
+  in Name then "(name #{Name.name(e)} @#{Name.depth(e)})"
+  in ArrayLit then "(array#{sexp_list(ArrayLit.elems(e))})"
+  in MapLit
+    values = MapLit.values(e)
+    entries = Array.map(Array.each_with_index(MapLit.keys(e))) { |k, i| " (#{sexp(k)} #{sexp(Array.fetch(values, i))})" }
+    "(map#{Array.join(entries)})"
+  in FnExpr then function_header(e) + " ..."
+  in Unary then "(#{Unary.op(e)} #{sexp(Unary.operand(e))})"
+  in Binary then "(#{Binary.op(e)} #{sexp(Binary.left(e))} #{sexp(Binary.right(e))})"
+  in Call then "(call #{sexp(Call.callee(e))}#{sexp_list(Call.args(e))})"
+  in Subscript then "(index #{sexp(Subscript.target(e))} #{sexp(Subscript.index(e))})"
+  in Field then "(field #{sexp(Field.target(e))} #{Field.name(e)})"
+  in Slice
+    low = Slice.low(e)
+    high = Slice.high(e)
+    "(slice #{sexp(Slice.target(e))} #{low ? sexp(low) : "_"} #{high ? sexp(high) : "_"})"
+  end
+end
+
+def sexp_list(items) = Array.join(Array.map(items) { |x| " " + sexp(x) })

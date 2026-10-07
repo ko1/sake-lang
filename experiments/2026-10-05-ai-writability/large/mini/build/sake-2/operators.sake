@@ -1,0 +1,155 @@
+# Operators (SPEC 7): arithmetic, comparison, equality, membership, indexing and slicing.
+# Each takes the line/col where its errors are reported.
+
+def operand_error(op, a, b, line, col) =
+  runtime_error("type", "cannot apply '#{op}' to #{type_name(a)} and #{type_name(b)}", line, col)
+
+def binary_op(op, a, b, line, col)
+  case op
+  in "==" then values_equal?(a, b, 0, line, col)
+  in "!=" then !values_equal?(a, b, 0, line, col)
+  in "in" then member?(a, b, "in", line, col)
+  in "+" then add(a, b, line, col)
+  in "<" | "<=" | ">" | ">=" then compare(op, a, b, line, col)
+  else arithmetic(op, a, b, line, col)
+  end
+end
+
+# `+`: ints, strings, or arrays (a new array).
+def add(a, b, line, col)
+  if a in Integer
+    return a + b if b in Integer
+  elsif a in String
+    return a + b if b in String
+  elsif a in Array
+    return a + b if b in Array
+  end
+  raise operand_error("+", a, b, line, col)
+end
+
+# `- * / % **` on two ints. `/` and `%` round toward negative infinity, as Ruby's do.
+def arithmetic(op, a, b, line, col)
+  raise operand_error(op, a, b, line, col) unless (a in Integer) && (b in Integer)
+  case op
+  in "-" then a - b
+  in "*" then a * b
+  in "/" | "%"
+    raise runtime_error("zero", "division by zero", line, col) if b == 0
+    op == "/" ? a / b : a % b
+  in "**"
+    raise runtime_error("value", "negative exponent", line, col) if b < 0
+    a ** b
+  else raise InternalError.new("unknown operator #{op}")
+  end
+end
+
+# `< <= > >=` on two ints or two strings (by code points).
+def compare(op, a, b, line, col)
+  if a in Integer
+    return ordered?(op, a, b) if b in Integer
+  elsif a in String
+    return ordered?(op, a, b) if b in String
+  end
+  raise operand_error(op, a, b, line, col)
+end
+
+# a and b are both ints or both strings.
+def ordered?(op, a, b)
+  case op
+  in "<" then a < b
+  in "<=" then a <= b
+  in ">" then a > b
+  else a >= b
+  end
+end
+
+def negate(v, line, col)
+  return -v if v in Integer
+  raise runtime_error("type", "cannot negate #{type_name(v)}", line, col)
+end
+
+# `x in c` (SPEC 7.4); `what` names the operation in the error ("in", or "contains" checks
+# its own argument types first).
+def member?(x, c, what, line, col)
+  case c
+  in Array then Array.any?(c) { |e| values_equal?(x, e, 0, line, col) }
+  in Hash then valid_key?(x) && Hash.key?(c, x)
+  in String
+    return String.include?(c, x) if x in String
+    raise operand_error(what, x, c, line, col)
+  else raise operand_error(what, x, c, line, col)
+  end
+end
+
+# ---- Indexing (SPEC 7.6) ----
+
+# The position i as an offset into a sequence of `length`, counting negative i from the end;
+# out of range is an index error showing i as written.
+def sequence_offset(what, i, length, line, col)
+  raise runtime_error("type", "#{what} index must be an int, got #{type_name(i)}", line, col) unless i in Integer
+  offset = i < 0 ? i + length : i
+  if offset < 0 || offset >= length
+    raise runtime_error("index", "index #{i} out of range for #{what} of length #{length}", line, col)
+  end
+  offset
+end
+
+def key_not_found(key, line, col) = runtime_error("key", "key #{repr(key)} not found", line, col)
+
+def index_get(target, i, line, col)
+  case target
+  in Array then target[sequence_offset("array", i, Array.size(target), line, col)]
+  in String
+    c = target[sequence_offset("string", i, String.size(target), line, col)]
+    c ? c : ""
+  in Hash
+    check_key(i, line, col)
+    raise key_not_found(i, line, col) unless Hash.key?(target, i)
+    target[i]
+  else raise runtime_error("type", "cannot index #{type_name(target)}", line, col)
+  end
+end
+
+def index_set(target, i, value, line, col)
+  case target
+  in Array then target[sequence_offset("array", i, Array.size(target), line, col)] = value
+  in Hash
+    check_key(i, line, col)
+    target[i] = value
+  in String then raise runtime_error("type", "strings are immutable", line, col)
+  else raise runtime_error("type", "cannot index #{type_name(target)}", line, col)
+  end
+end
+
+# ---- Slicing ----
+
+# `target[lo:hi]` with nil for a missing bound.
+def slice_value(target, lo, hi, line, col)
+  case target
+  in Array
+    from, to = slice_bounds(lo, hi, Array.size(target), line, col)
+    Array.take(Array.drop(target, from), to - from)
+  in String
+    from, to = slice_bounds(lo, hi, String.size(target), line, col)
+    result = String.slice(target, from, to - from)
+    result ? result : ""
+  else raise runtime_error("type", "cannot slice #{type_name(target)}", line, col)
+  end
+end
+
+# [from, to] with 0 <= from <= to <= length.
+def slice_bounds(lo, hi, length, line, col)
+  from = slice_bound(lo, 0, length, line, col)
+  to = slice_bound(hi, length, length, line, col)
+  to = from if to < from
+  [from, to]
+end
+
+def slice_bound(bound, missing, length, line, col)
+  return missing if bound == nil
+  unless bound in Integer
+    raise runtime_error("type", "slice bound must be an int, got #{type_name(bound)}", line, col)
+  end
+  b = bound < 0 ? bound + length : bound
+  Integer.clamp(b, 0, length)
+end

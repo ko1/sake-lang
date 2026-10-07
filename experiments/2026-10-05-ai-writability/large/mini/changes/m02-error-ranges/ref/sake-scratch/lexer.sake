@@ -1,0 +1,207 @@
+# The lexer (SPEC section 2): source text to an Array of Tokens ending with :eof.
+#
+# Positions are 1-based; a column counts characters. The lexer keeps the
+# bracket nesting depth for the newline rule (2.2). An interpolation's code is
+# lexed into its own token list, stored in the string token's parts.
+
+class Lexer
+  attr_reader chars, tokens, i, line, col, depth
+
+  def tokenize(src)
+    lx = Lexer.new(String.chars(src), Token[], 0, 1, 1, 0)
+    scan_program(lx)
+    finish(lx)
+  end
+
+  def finish(lx)
+    Array.push(@tokens, Tokens.make(:eof, "", @line, @col, @col))
+    @tokens
+  end
+
+  def peek(lx) = @chars[@i]
+
+  def peek_next(lx) = @chars[@i + 1]
+
+  def advance(lx)
+    c = @chars[@i]
+    @i += 1
+    if c == "\n"
+      @line += 1
+      @col = 1
+    else
+      @col += 1
+    end
+    c
+  end
+
+  def blank?(c) = c == " " || c == "\t" || c == "\r"
+
+  def digit?(c) = c >= "0" && c <= "9"
+
+  def name_start?(c) = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_"
+
+  def name_char?(c) = name_start?(c) || digit?(c)
+
+  # The top level of the program: newlines, comments and tokens.
+  def scan_program(lx)
+    while true
+      c = peek(lx)
+      break if c == nil
+      if blank?(c)
+        advance(lx)
+      elsif c == "#"
+        advance(lx) while peek(lx) != nil && peek(lx) != "\n"
+      elsif c == "\n"
+        add_newline(lx, @line, @col)
+        advance(lx)
+      else
+        scan_token(lx, @tokens, c)
+      end
+    end
+  end
+
+  # A newline is a token unless one of the rules of 2.2 drops it.
+  def add_newline(lx, line, col)
+    return if @depth > 0
+    last = Array.last(@tokens)
+    return unless last
+    return if Token.kind(last) == :newline
+    return if Tokens.continues_line?(last)
+    Array.push(@tokens, Tokens.make(:newline, "\n", line, col, col))
+  end
+
+  # The code of one interpolation, up to its closing `}` (2.4). Reaching the
+  # end of the line or of the input means the enclosing string is unterminated.
+  def scan_interpolation(lx, out, quote_line, quote_col)
+    braces = 0
+    while true
+      c = peek(lx)
+      Fail.lexical(quote_line, quote_col, @line, @col - 1, "unterminated string") if c == nil || c == "\n"
+      if blank?(c)
+        advance(lx)
+      elsif c == "}" && braces == 0
+        Array.push(out, Tokens.make(:interp_end, "}", @line, @col, @col))
+        advance(lx)
+        return
+      else
+        braces += 1 if c == "{"
+        braces -= 1 if c == "}"
+        scan_token(lx, out, c)
+      end
+    end
+  end
+
+  # One token starting at c (not white space, a comment or a newline).
+  def scan_token(lx, out, c)
+    if digit?(c)
+      scan_int(lx, out)
+    elsif name_start?(c)
+      scan_name(lx, out)
+    elsif c == "\""
+      scan_string(lx, out)
+    else
+      scan_operator(lx, out, c)
+    end
+  end
+
+  # Digits, with single `_` between two digits (2.3).
+  def scan_int(lx, out)
+    line = @line
+    col = @col
+    text = Array[]
+    while true
+      c = peek(lx)
+      n = peek_next(lx)
+      if c != nil && digit?(c)
+        Array.push(text, advance(lx))
+      elsif c == "_" && n != nil && digit?(n)
+        Array.push(text, advance(lx))
+      else
+        break
+      end
+    end
+    written = Array.join(text, "")
+    value = String.to_i(String.delete(written, "_"))
+    Array.push(out, Token.new(:int, written, line, col, @col - 1, value, Array[]))
+  end
+
+  def scan_name(lx, out)
+    line = @line
+    col = @col
+    text = Array[]
+    while true
+      c = peek(lx)
+      break unless c != nil && name_char?(c)
+      Array.push(text, advance(lx))
+    end
+    word = Array.join(text, "")
+    kind = Tokens.keyword?(word) ? :keyword : :name
+    Array.push(out, Tokens.make(kind, word, line, col, @col - 1))
+  end
+
+  def two_char_ops = once { Set["**", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%="] }
+
+  def one_char_ops = once { Set["+", "-", "*", "/", "%", "<", ">", "=", "(", ")", "[", "]", "{", "}", ",", ":", ";", "."] }
+
+  def scan_operator(lx, out, c)
+    line = @line
+    col = @col
+    n = peek_next(lx)
+    if n != nil && Set.include?(two_char_ops, c + n)
+      advance(lx)
+      advance(lx)
+      Array.push(out, Tokens.make(:op, c + n, line, col, col + 1))
+      return
+    end
+    Fail.lexical(line, col, line, col, "unexpected character '#{c}'") unless Set.include?(one_char_ops, c)
+    advance(lx)
+    if c == "(" || c == "[" || c == "{"
+      @depth += 1
+    elsif (c == ")" || c == "]" || c == "}") && @depth > 0
+      @depth -= 1
+    end
+    Array.push(out, Tokens.make(:op, c, line, col, col))
+  end
+
+  def escapes = once { Hash["n" => "\n", "t" => "\t", "\\" => "\\", "\"" => "\"", "{" => "{", "}" => "}"] }
+
+  # A string literal (2.4): literal text and interpolations, on one line.
+  def scan_string(lx, out)
+    quote_line = @line
+    quote_col = @col
+    advance(lx)
+    parts = Array[]
+    text = Array[]
+    while true
+      c = peek(lx)
+      Fail.lexical(quote_line, quote_col, @line, @col - 1, "unterminated string") if c == nil || c == "\n"
+      if c == "\""
+        advance(lx)
+        break
+      elsif c == "\\"
+        line = @line
+        col = @col
+        advance(lx)
+        e = peek(lx)
+        Fail.lexical(quote_line, quote_col, @line, @col - 1, "unterminated string") if e == nil || e == "\n"
+        meaning = escapes[e]
+        Fail.lexical(line, col, @line, @col, "invalid escape '\\#{e}'") unless meaning
+        Array.push(text, meaning)
+        advance(lx)
+      elsif c == "{"
+        Array.push(parts, Array.join(text, "")) unless Array.empty?(text)
+        text = Array[]
+        advance(lx)
+        code = Token[]
+        saved_depth = @depth
+        scan_interpolation(lx, code, quote_line, quote_col)
+        @depth = saved_depth
+        Array.push(parts, code)
+      else
+        Array.push(text, advance(lx))
+      end
+    end
+    Array.push(parts, Array.join(text, "")) unless Array.empty?(text)
+    Array.push(out, Token.new(:string, "\"", quote_line, quote_col, @col - 1, 0, parts))
+  end
+end

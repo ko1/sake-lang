@@ -1,0 +1,170 @@
+# The operators of Mini (SPEC.md, "Operators"): arithmetic, comparison,
+# equality, membership, unary minus, reading and writing through a[i], and
+# slicing with a[i:j].
+module Operators
+  module_function
+
+  def binary(op, a, b, pos)
+    case op
+    in "+" then add(a, b, pos)
+    in "-" | "*" | "/" | "%" then arithmetic(op, a, b, pos)
+    in "**" then power(a, b, pos)
+    in "==" then Values.equal(a, b, pos)
+    in "!=" then !Values.equal(a, b, pos)
+    in "<" | "<=" | ">" | ">=" then compare(op, a, b, pos)
+    in "in" then member(a, b, pos)
+    else raise ArgumentError, "unknown operator #{op}"
+    end
+  end
+
+  def operand_error(op, a, b, pos)
+    Errors.runtime("type", "cannot apply '#{op}' to #{Values.type_name(a)} and #{Values.type_name(b)}", pos)
+  end
+
+  # int + int, string + string (concatenation), array + array (a new array).
+  def add(a, b, pos)
+    if (a in Integer) && (b in Integer)
+      a + b
+    elsif (a in String) && (b in String)
+      a + b
+    elsif (a in Array) && (b in Array)
+      a + b
+    else
+      operand_error("+", a, b, pos)
+    end
+  end
+
+  # Integer division and remainder round toward negative infinity, as Ruby's do:
+  # -7 / 2 is -4 and -7 % 2 is 1.
+  def arithmetic(op, a, b, pos)
+    operand_error(op, a, b, pos) unless (a in Integer) && (b in Integer)
+
+    case op
+    in "-" then a - b
+    in "*" then a * b
+    in "/" | "%"
+      Errors.runtime("zero", "division by zero", pos) if b == 0
+      op == "/" ? a / b : a % b
+    end
+  end
+
+  def power(a, b, pos)
+    operand_error("**", a, b, pos) unless (a in Integer) && (b in Integer)
+    Errors.runtime("value", "negative exponent", pos) if b < 0
+
+    a**b
+  end
+
+  # `item in collection`: an element of an array, a key of a map, or a
+  # substring of a string.
+  def member(item, collection, pos)
+    unless (collection in Array) || (collection in Hash) || ((collection in String) && (item in String))
+      operand_error("in", item, collection, pos)
+    end
+
+    Values.contains?(collection, item, pos)
+  end
+
+  # Ints compare by value, strings character by character (by code point).
+  def compare(op, a, b, pos)
+    if (a in Integer) && (b in Integer)
+      order = a <=> b
+    elsif (a in String) && (b in String)
+      order = a <=> b
+    else
+      operand_error(op, a, b, pos)
+    end
+    order => Integer
+
+    case op
+    in "<" then order < 0
+    in "<=" then order <= 0
+    in ">" then order > 0
+    in ">=" then order >= 0
+    end
+  end
+
+  def negate(value, pos)
+    Errors.runtime("type", "cannot negate #{Values.type_name(value)}", pos) unless (value in Integer)
+
+    -value
+  end
+
+  # a[i] for arrays and strings (negative i counts from the end) and m[k] for maps.
+  def index_get(target, key, pos)
+    case target
+    in Array
+      target[position(target, key, "array", pos)]
+    in String
+      target[position(target, key, "string", pos)]
+    in Hash
+      Values.check_key(key, pos)
+      Errors.runtime("key", "key #{Format.repr(key)} not found", pos) unless Hash.key?(target, key)
+      target[key]
+    else
+      Errors.runtime("type", "cannot index #{Values.type_name(target)}", pos)
+    end
+  end
+
+  # a[i] = v replaces an existing element; m[k] = v adds or replaces an entry.
+  def index_set(target, key, value, pos)
+    case target
+    in Array
+      target[position(target, key, "array", pos)] = value
+    in Hash
+      Values.check_key(key, pos)
+      target[key] = value
+    in String
+      Errors.runtime("type", "strings are immutable", pos)
+    else
+      Errors.runtime("type", "cannot index #{Values.type_name(target)}", pos)
+    end
+    nil
+  end
+
+  # a[start:stop] once the operands are checked: the elements (or characters)
+  # start..stop-1, as a new array (or string). A nil start is 0 and a nil stop
+  # the length; a negative bound counts from the end; bounds are clamped to
+  # 0..length; stop <= start gives an empty result.
+  def slice(target, start, stop)
+    length = (Array|String).length(target)
+    first = start == nil ? 0 : clamp_bound(start, length)
+    last = stop == nil ? length : clamp_bound(stop, length)
+    return (target in String) ? "" : Array[] if last <= first
+
+    target[first...last]
+  end
+
+  def clamp_bound(bound, length)
+    bound += length if bound < 0
+    Integer.clamp(bound, 0, length)
+  end
+
+  # a[start:stop] as an expression: checks the operands, then slices.
+  def slice_expression(target, start, stop, pos)
+    unless (target in Array) || (target in String)
+      Errors.runtime("type", "cannot slice #{Values.type_name(target)}", pos)
+    end
+    Array.each(Array[start, stop]) do |bound|
+      next if bound == nil || (bound in Integer)
+
+      Errors.runtime("type", "slice bound must be an int, got #{Values.type_name(bound)}", pos)
+    end
+    start => Integer | nil
+    stop => Integer | nil
+    slice(target, start, stop)
+  end
+
+  # The 0-based position `index` designates in an array or string of that kind.
+  def position(target, index, kind, pos)
+    unless (index in Integer)
+      Errors.runtime("type", "#{kind} index must be an int, got #{Values.type_name(index)}", pos)
+    end
+
+    i = index < 0 ? index + (Array|String).length(target) : index
+    if i < 0 || i >= (Array|String).length(target)
+      Errors.runtime("index", "index #{index} out of range for #{kind} of length #{(Array|String).length(target)}", pos)
+    end
+    i
+  end
+end

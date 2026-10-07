@@ -1,0 +1,83 @@
+# How values are written as text (SPEC.md, "Printing values"), and small
+# helpers for wording messages.
+module Format
+  module_function
+
+  # The text `print`, `str`, `join` and interpolation produce: a string as it is,
+  # any other value as `repr` writes it.
+  def show(value) = (value in String) ? value : repr(value)
+
+  # The text of a value as it appears inside an array or map: strings are quoted.
+  def repr(value, depth = 0)
+    return "..." if depth > max_nesting
+
+    case value
+    in nil then "null"
+    in true then "true"
+    in false then "false"
+    in Integer then Integer.to_s(value)
+    in String then single_quote(value)
+    in Array then "[#{Array.join(Array.map(value) { |element| repr(element, depth + 1) }, ", ")}]"
+    in Hash then "{#{Array.join(Hash.map(value) { |key, element| "#{repr(key, depth + 1)}: #{repr(element, depth + 1)}" }, ", ")}}"
+    in Closure then FnExpr.name(Closure.fn(value)) == nil ? "<fn>" : "<fn #{FnExpr.name(Closure.fn(value))}>"
+    in Builtin then "<builtin #{Builtin.name(value)}>"
+    else raise ArgumentError, "not a Mini value: #{Kernel.inspect(value)}"
+    end
+  end
+
+  # A string literal that reads back as `text`.
+  def quote(text)
+    escaped = Array.map(String.chars(text)) do |c|
+      case c
+      in "\\" then "\\\\"
+      in "\"" then "\\\""
+      in "\n" then "\\n"
+      in "\t" then "\\t"
+      in "{" then "\\{"
+      else c
+      end
+    end
+    "\"#{Array.join(escaped)}\""
+  end
+
+  # A string as `repr` writes it: in single quotes, with \\ ' { newline tab escaped.
+  def single_quote(text)
+    escaped = Array.map(String.chars(text)) do |c|
+      case c
+      in "\\" then "\\\\"
+      in "'" then "\\'"
+      in "\n" then "\\n"
+      in "\t" then "\\t"
+      in "{" then "\\{"
+      else c
+      end
+    end
+    "'#{Array.join(escaped)}'"
+  end
+
+  # "1 argument", "2 arguments", "0 arguments".
+  def count(n, noun) = n == 1 ? "1 #{noun}" : "#{n} #{noun}s"
+
+  # The edit distance between two names: the fewest single-character
+  # insertions, deletions, substitutions and swaps of two adjacent characters
+  # that turn `a` into `b` (the optimal string alignment distance).
+  def edit_distance(a, b)
+    x = String.chars(a)
+    y = String.chars(b)
+    d = Array.new(Array.length(x) + 1) { |i| Array.new(Array.length(y) + 1) { |j| i == 0 ? j : (j == 0 ? i : 0) } }
+    Range.each(1..Array.length(x)) do |i|
+      Range.each(1..Array.length(y)) do |j|
+        cost = x[i - 1] == y[j - 1] ? 0 : 1
+        best = Tuple.min([d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost])
+        if i > 1 && j > 1 && x[i - 1] == y[j - 2] && x[i - 2] == y[j - 1]
+          best = Tuple.min([best, d[i - 2][j - 2] + 1])
+        end
+        d[i][j] = best
+      end
+    end
+    d[Array.length(x)][Array.length(y)]
+  end
+
+  # The name a message uses for a function: "f", or "function" when anonymous.
+  def function_label(fn) = FnExpr.name(fn) == nil ? "function" : FnExpr.name(fn)
+end

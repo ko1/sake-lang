@@ -31,7 +31,7 @@ module AW
   end
 
   # [stdout, stderr, status or :timeout]
-  def run(cmd, input)
+  def run(cmd, input, timeout = TIMEOUT)
     out = err = +""
     st = nil
     Open3.popen3(*cmd) do |i, o, e, t|
@@ -39,7 +39,7 @@ module AW
       i.close
       ro = Thread.new { o.read }
       re = Thread.new { e.read }
-      unless t.join(TIMEOUT)
+      unless t.join(timeout)
         Process.kill("KILL", t.pid)
         t.join
         st = :timeout

@@ -1,0 +1,150 @@
+# Evaluation, continued: expressions (SPEC 6.1, section 7) and assignment
+# (SPEC 6.3).
+
+# An assignment target with its parts evaluated: for an Subscript or a Field, the
+# container and the key; for a Name, nothing.
+class Place
+  attr_reader target, container, key
+end
+
+class Machine
+  def eval_expr(m, e, scope)
+    case e
+    in Lit then Lit.value(e)
+    in Name then read_variable(e, scope)
+    in Binary then eval_binary(m, e, scope)
+    in Call then eval_call(m, e, scope)
+    in Subscript
+      target = eval_expr(m, Subscript.target(e), scope)
+      index_get(target, eval_expr(m, Subscript.index(e), scope), Subscript.line(e), Subscript.col(e))
+    in Field then index_get(eval_expr(m, Field.target(e), scope), Field.name(e), Field.line(e), Field.col(e))
+    in Slice then eval_slice(m, e, scope)
+    in Unary
+      value = eval_expr(m, Unary.operand(e), scope)
+      Unary.op(e) == "not" ? !truthy?(value) : negate(value, Unary.line(e), Unary.col(e))
+    in Interp
+      pieces = Array.map(Interp.parts(e)) do |part|
+        (part in String) ? part : str_of(eval_expr(m, part, scope))
+      end
+      Array.join(pieces)
+    in ArrayLit then Array.map(ArrayLit.elems(e)) { |x| eval_expr(m, x, scope) }
+    in MapLit then eval_map(m, e, scope)
+    in FnExpr then make_closure(m, e, scope)
+    end
+  end
+
+  # `and` / `or` evaluate their right operand only when needed.
+  def eval_binary(m, e, scope)
+    op = Binary.op(e)
+    left = eval_expr(m, Binary.left(e), scope)
+    if op == "and"
+      return truthy?(left) ? eval_expr(m, Binary.right(e), scope) : left
+    elsif op == "or"
+      return truthy?(left) ? left : eval_expr(m, Binary.right(e), scope)
+    end
+    binary_op(op, left, eval_expr(m, Binary.right(e), scope), Binary.line(e), Binary.col(e))
+  end
+
+  def eval_call(m, e, scope)
+    callee = eval_expr(m, Call.callee(e), scope)
+    args = Array.map(Call.args(e)) { |arg| eval_expr(m, arg, scope) }
+    call_value(m, callee, args, Call.line(e), Call.col(e))
+  end
+
+  def eval_slice(m, e, scope)
+    target = eval_expr(m, Slice.target(e), scope)
+    low_expr = Slice.low(e)
+    high_expr = Slice.high(e)
+    low = low_expr ? eval_expr(m, low_expr, scope) : nil
+    high = high_expr ? eval_expr(m, high_expr, scope) : nil
+    slice_of(target, low, high, Slice.line(e), Slice.col(e))
+  end
+
+  # Each key, then its value; a later equal key replaces the value in place.
+  def eval_map(m, e, scope)
+    map = Hash[]
+    values = MapLit.values(e)
+    positions = MapLit.key_pos(e)
+    Array.each_with_index(MapLit.keys(e)) do |key_expr, i|
+      key = eval_expr(m, key_expr, scope)
+      value = eval_expr(m, Array.fetch(values, i), scope)
+      line, col = Array.fetch(positions, i)
+      check_key(key, line, col)
+      map[key] = value
+    end
+    map
+  end
+
+  # ---- variables (SPEC 6.4) ----
+
+  # The run-time scope at `depth` around `scope`.
+  def scope_at(scope, depth)
+    s = scope
+    while Scope.depth(s) > depth
+      up = Scope.parent(s)
+      up => Scope
+      s = up
+    end
+    s
+  end
+
+  def variable_scope(n, scope)
+    vars = Scope.vars(scope_at(scope, Name.depth(n)))
+    unless Hash.key?(vars, Name.name(n))
+      runtime_error("name", "'#{Name.name(n)}' is used before its declaration", Name.line(n), Name.col(n))
+    end
+    vars
+  end
+
+  def read_variable(n, scope) = Hash.fetch(variable_scope(n, scope), Name.name(n))
+
+  def write_variable(n, value, scope)
+    variable_scope(n, scope)[Name.name(n)] = value
+  end
+
+  # ---- assignment (SPEC 6.3) ----
+
+  # The targets' parts, then the values, then the stores, all left to right.
+  # A compound assignment reads the target between the value and the store.
+  def exec_assign(m, stmt, scope)
+    places = Array.map(AssignStmt.targets(stmt)) { |target| eval_place(m, target, scope) }
+    values = Array.map(AssignStmt.values(stmt)) { |value| eval_expr(m, value, scope) }
+    op = AssignStmt.op(stmt)
+    if op == "="
+      Array.each_with_index(places) { |place, i| store(place, Array.fetch(values, i), scope) }
+      return
+    end
+    place = Array.fetch(places, 0)
+    current = load(place, scope)
+    result = binary_op(String.delete_suffix(op, "="), current, Array.fetch(values, 0), AssignStmt.line(stmt), AssignStmt.col(stmt))
+    store(place, result, scope)
+  end
+
+  def eval_place(m, target, scope)
+    case target
+    in Subscript then Place.new(target, eval_expr(m, Subscript.target(target), scope), eval_expr(m, Subscript.index(target), scope))
+    in Field then Place.new(target, eval_expr(m, Field.target(target), scope), Field.name(target))
+    else Place.new(target, nil, nil)
+    end
+  end
+
+  def load(place, scope)
+    target = Place.target(place)
+    case target
+    in Subscript then index_get(Place.container(place), Place.key(place), Subscript.line(target), Subscript.col(target))
+    in Field then index_get(Place.container(place), Place.key(place), Field.line(target), Field.col(target))
+    in Name then read_variable(target, scope)
+    else raise "not an assignment target"
+    end
+  end
+
+  def store(place, value, scope)
+    target = Place.target(place)
+    case target
+    in Subscript then index_set(Place.container(place), Place.key(place), value, Subscript.line(target), Subscript.col(target))
+    in Field then index_set(Place.container(place), Place.key(place), value, Field.line(target), Field.col(target))
+    in Name then write_variable(target, value, scope)
+    else raise "not an assignment target"
+    end
+  end
+end

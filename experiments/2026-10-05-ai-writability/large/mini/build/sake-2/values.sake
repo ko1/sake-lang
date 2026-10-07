@@ -1,0 +1,67 @@
+# Mini values (SPEC 4) and how they are represented here:
+#
+#   int -> Integer    string -> String    bool -> true/false    nil -> nil
+#   array -> Array (shared by reference)  map -> Hash with String/Integer keys (insertion order)
+#   function -> Closure (a user function) or Builtin (a built-in function)
+
+# A user function value. id tells closures apart: a closure is equal only to itself.
+class Closure
+  attr_reader id, fn, scope
+end
+
+class Builtin
+  attr_reader name
+end
+
+# Deeper than this, comparison fails and repr writes "..." (SPEC 4, 8.1).
+def max_nesting = 100
+
+def type_name(v)
+  case v
+  in Integer then "int"
+  in String then "string"
+  in true | false then "bool"
+  in nil then "nil"
+  in Array then "array"
+  in Hash then "map"
+  in Closure | Builtin then "function"
+  else raise InternalError.new("not a Mini value")
+  end
+end
+
+def truthy?(v) = v != nil && v != false
+
+def valid_key?(v) = (v in String | Integer)
+
+def check_key(key, line, col)
+  return if valid_key?(key)
+  raise runtime_error("type", "map key must be a string or int, got #{type_name(key)}", line, col)
+end
+
+# Mini equality (SPEC 4). level counts how deep the pair is inside the compared values;
+# a pair at level max_nesting + 1 is an error, reported at line/col.
+def values_equal?(a, b, level, line, col)
+  if level > max_nesting
+    raise runtime_error("value", "values nested too deeply to compare", line, col)
+  end
+  case a
+  in Array
+    return false unless b in Array
+    return false unless Array.size(a) == Array.size(b)
+    Array.each_with_index(a) do |x, i|
+      return false unless values_equal?(x, b[i], level + 1, line, col)
+    end
+    true
+  in Hash
+    return false unless b in Hash
+    return false unless Hash.size(a) == Hash.size(b)
+    Hash.each(a) do |k, x|
+      return false unless Hash.key?(b, k)
+      return false unless values_equal?(x, b[k], level + 1, line, col)
+    end
+    true
+  in Closure then (b in Closure) && Closure.id(a) == Closure.id(b)
+  in Builtin then (b in Builtin) && Builtin.name(a) == Builtin.name(b)
+  else type_name(a) == type_name(b) && a == b
+  end
+end

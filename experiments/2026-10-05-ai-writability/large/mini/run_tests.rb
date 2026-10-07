@@ -4,23 +4,28 @@
 #   ruby run_tests.rb IMPL [NAME_SUBSTRING...]
 #
 # IMPL is `ruby` (ruby/main.rb), `sake` (sake/main.sake, the port) or `sake-scratch`
-# (sake-scratch/main.sake, written from SPEC.md alone). For Sake the program must first pass
+# (sake-scratch/main.sake, written from SPEC.md alone), or a path to any main.rb / main.sake. For Sake the program must first pass
 # /home/ko1/app/sake/bin/sake --strict=2 -c, once; then each test runs at --strict=0. With substrings, only the tests whose
 # file name contains one of them run. A test fails when the output differs, the
 # exit status is not 0, or it runs longer than MINI_TEST_TIMEOUT seconds
-# (default 60). Exits with status 1 if any test fails.
+# (default 60). MINI_TESTS=DIR runs the tests in DIR instead of tests/. Exits with status 1 if any test fails.
 
 require "open3"
 
 DIR = __dir__
 SAKE = "/home/ko1/app/sake/bin/sake"
 
-def sake_main(impl) = { "sake" => File.join(DIR, "sake", "main.sake"), "sake-scratch" => File.join(DIR, "sake-scratch", "main.sake") }[impl]
+# IMPL may also be a path to a main.rb / main.sake (the build runs of P6).
+def sake_main(impl)
+  return File.expand_path(impl) if impl.end_with?(".sake")
+  { "sake" => File.join(DIR, "sake", "main.sake"), "sake-scratch" => File.join(DIR, "sake-scratch", "main.sake") }[impl]
+end
 
 # Sake checks the whole program once (--strict=2 -c, ~30 s for 2,500 lines) and runs each test with
 # --strict=0: the level only decides what stops a program before it runs, not how it runs.
 def command_for(impl)
   return ["ruby", File.join(DIR, "ruby", "main.rb")] if impl == "ruby"
+  return ["ruby", File.expand_path(impl)] if impl.end_with?(".rb")
   (main = sake_main(impl)) && [SAKE, "--strict=0", main]
 end
 
@@ -55,7 +60,7 @@ def main(args)
   impl = args[0]
   command = command_for(impl)
   if command.nil?
-    warn("usage: ruby run_tests.rb ruby|sake|sake-scratch [NAME_SUBSTRING...]")
+    warn("usage: ruby run_tests.rb ruby|sake|sake-scratch|PATH/main.rb|PATH/main.sake [NAME_SUBSTRING...]")
     exit(2)
   end
   if (main = sake_main(impl))
@@ -69,8 +74,13 @@ def main(args)
   filters = args.drop(1)
   timeout = Float(ENV.fetch("MINI_TEST_TIMEOUT", "60"))
 
-  tests = Dir.glob(File.join(DIR, "tests", "*.mini")).sort
+  tests_dir = ENV.fetch("MINI_TESTS", File.join(DIR, "tests")) # a change task's own suite (changes/mNN-*/tests)
+  tests = Dir.glob(File.join(tests_dir, "*.mini")).sort
   tests = tests.select { |path| filters.any? { |f| File.basename(path).include?(f) } } unless filters.empty?
+  if tests.empty?
+    puts("no tests found in #{tests_dir}#{filters.empty? ? "" : " matching #{filters.join(" ")}"}")
+    exit(1)
+  end
   failures = 0
   tests.each do |path|
     name = File.basename(path, ".mini")

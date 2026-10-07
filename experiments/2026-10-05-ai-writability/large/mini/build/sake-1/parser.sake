@@ -1,0 +1,250 @@
+# The parser (SPEC section 3): token helpers and statements.
+# Expressions are in parser_expr.sake.
+class Parser
+  attr_reader tokens, pos
+
+  def parse_program(tokens)
+    ps = Parser.new(tokens, 0)
+    stmts = parse_block(ps)
+    t = peek(ps)
+    syntax_error(t, "expected end of input, got #{describe_token(t)}") unless Token.type(t) == :eof
+    stmts
+  end
+
+  # ---- tokens ----
+
+  def peek(ps) = Array.fetch(@tokens, @pos)
+
+  def peek_next(ps) = Array.fetch(@tokens, smaller(@pos + 1, Array.size(@tokens) - 1))
+
+  # Moves past the current token; the last token (end of input, or the end of
+  # an interpolation) is never passed.
+  def advance(ps)
+    t = peek(ps)
+    @pos += 1 if @pos < Array.size(@tokens) - 1
+    t
+  end
+
+  def check(ps, text) = token_is?(peek(ps), text)
+
+  def accept(ps, text)
+    return nil unless check(ps, text)
+    advance(ps)
+  end
+
+  def expect(ps, text)
+    return advance(ps) if check(ps, text)
+    syntax_error(peek(ps), "expected '#{text}', got #{describe_token(peek(ps))}")
+  end
+
+  def expect_name(ps)
+    t = peek(ps)
+    syntax_error(t, "expected name, got #{describe_token(t)}") unless Token.type(t) == :name
+    advance(ps)
+  end
+
+  def syntax_error(t, message) = compile_error("syntax", message, Token.line(t), Token.col(t))
+
+  def separator?(ps)
+    t = peek(ps)
+    Token.type(t) == :newline || token_is?(t, ";")
+  end
+
+  # The end of the input, or a keyword that ends a block.
+  def block_end?(ps)
+    t = peek(ps)
+    type = Token.type(t)
+    return true if type == :eof
+    type == :keyword && Set.include?(block_end_words, Token.text(t))
+  end
+
+  def block_end_words = once { Set["end", "elif", "else", "catch", "finally", "when"] }
+
+  # ---- statements ----
+
+  # Statements up to the end of the input or a block-ending keyword.
+  def parse_block(ps)
+    stmts = Array[]
+    while true
+      advance(ps) while separator?(ps)
+      break if block_end?(ps)
+      Array.push(stmts, parse_statement(ps))
+      next if separator?(ps) || block_end?(ps)
+      t = peek(ps)
+      syntax_error(t, "expected end of statement, got #{describe_token(t)}")
+    end
+    stmts
+  end
+
+  def parse_statement(ps)
+    t = peek(ps)
+    if Token.type(t) == :keyword
+      word = Token.text(t)
+      return parse_let(ps) if word == "let"
+      return parse_const(ps) if word == "const"
+      return FnDecl.new(parse_function(ps)) if word == "fn" && Token.type(peek_next(ps)) == :name
+      return parse_if(ps) if word == "if"
+      return parse_match(ps) if word == "match"
+      return parse_while(ps) if word == "while"
+      return parse_for(ps) if word == "for"
+      return parse_try(ps) if word == "try"
+      return parse_simple_keyword(ps, word) if Set.include?(simple_keywords, word)
+    end
+    parse_expression_statement(ps)
+  end
+
+  def simple_keywords = once { Set["break", "continue", "return", "throw", "assert"] }
+
+  def parse_simple_keyword(ps, word)
+    t = advance(ps)
+    line = Token.line(t)
+    col = Token.col(t)
+    case word
+    in "break" then LoopJump.new(:break, line, col)
+    in "continue" then LoopJump.new(:continue, line, col)
+    in "return"
+      value = separator?(ps) || block_end?(ps) ? nil : parse_expr(ps)
+      ReturnStmt.new(value, line, col)
+    in "throw" then ThrowStmt.new(parse_expr(ps), line, col)
+    else
+      cond = parse_expr(ps)
+      message = accept(ps, ",") ? parse_expr(ps) : nil
+      AssertStmt.new(cond, message, line, col)
+    end
+  end
+
+  def parse_let(ps)
+    advance(ps)
+    if check(ps, "[")
+      open = advance(ps)
+      names = Ident[]
+      while true
+        Array.push(names, ident(expect_name(ps)))
+        break unless accept(ps, ",")
+      end
+      expect(ps, "]")
+      expect(ps, "=")
+      return LetArray.new(names, parse_expr(ps), Token.line(open), Token.col(open))
+    end
+    name = expect_name(ps)
+    value = accept(ps, "=") ? parse_expr(ps) : nil
+    LetStmt.new(Token.text(name), value, Token.line(name), Token.col(name))
+  end
+
+  def parse_const(ps)
+    advance(ps)
+    name = expect_name(ps)
+    expect(ps, "=")
+    ConstStmt.new(Token.text(name), parse_expr(ps), Token.line(name), Token.col(name))
+  end
+
+  def ident(t) = Ident.new(Token.text(t), Token.line(t), Token.col(t))
+
+  def parse_if(ps)
+    t = advance(ps)
+    conds = Array[]
+    blocks = Array[]
+    while true
+      Array.push(conds, parse_expr(ps))
+      expect(ps, "then")
+      Array.push(blocks, parse_block(ps))
+      break unless accept(ps, "elif")
+    end
+    else_block = accept(ps, "else") ? parse_block(ps) : nil
+    expect(ps, "end")
+    IfStmt.new(conds, blocks, else_block, Token.line(t), Token.col(t))
+  end
+
+  def parse_match(ps)
+    t = advance(ps)
+    subject = parse_expr(ps)
+    advance(ps) while separator?(ps)
+    arms = WhenArm[]
+    expect(ps, "when")
+    while true
+      values = Array[parse_expr(ps)]
+      Array.push(values, parse_expr(ps)) while accept(ps, ",")
+      expect(ps, "then")
+      Array.push(arms, WhenArm.new(values, parse_block(ps)))
+      break unless accept(ps, "when")
+    end
+    else_block = accept(ps, "else") ? parse_block(ps) : nil
+    expect(ps, "end")
+    MatchStmt.new(subject, arms, else_block, Token.line(t), Token.col(t))
+  end
+
+  def parse_while(ps)
+    t = advance(ps)
+    cond = parse_expr(ps)
+    expect(ps, "do")
+    body = parse_block(ps)
+    expect(ps, "end")
+    WhileStmt.new(cond, body, Token.line(t), Token.col(t))
+  end
+
+  def parse_for(ps)
+    t = advance(ps)
+    names = Ident[ident(expect_name(ps))]
+    Array.push(names, ident(expect_name(ps))) if accept(ps, ",")
+    expect(ps, "in")
+    iter = parse_expr(ps)
+    expect(ps, "do")
+    body = parse_block(ps)
+    expect(ps, "end")
+    ForStmt.new(names, iter, body, Token.line(t), Token.col(t))
+  end
+
+  def parse_try(ps)
+    t = advance(ps)
+    body = parse_block(ps)
+    catch_name = nil
+    handler = nil
+    finally_block = nil
+    if accept(ps, "catch")
+      catch_name = ident(expect_name(ps))
+      handler = parse_block(ps)
+    end
+    finally_block = parse_block(ps) if accept(ps, "finally")
+    if catch_name == nil && finally_block == nil
+      u = peek(ps)
+      syntax_error(u, "expected 'catch' or 'finally', got #{describe_token(u)}")
+    end
+    expect(ps, "end")
+    TryStmt.new(body, catch_name, handler, finally_block, Token.line(t), Token.col(t))
+  end
+
+  def assign_ops = once { Set["=", "+=", "-=", "*=", "/=", "%="] }
+
+  # An expression, an assignment or a multiple assignment.
+  def parse_expression_statement(ps)
+    first = parse_expr(ps)
+    if check(ps, ",")
+      targets = Array[first]
+      Array.push(targets, parse_expr(ps)) while accept(ps, ",")
+      eq = expect(ps, "=")
+      Array.each(targets) { |target| check_target(target, eq) }
+      values = Array[parse_expr(ps)]
+      Array.push(values, parse_expr(ps)) while accept(ps, ",")
+      if Array.size(targets) != Array.size(values)
+        syntax_error(eq, "#{count_noun(Array.size(targets), "target")} but #{count_noun(Array.size(values), "value")}")
+      end
+      return AssignStmt.new(targets, "=", values, Token.line(eq), Token.col(eq))
+    end
+    t = peek(ps)
+    if Token.type(t) == :op && Set.include?(assign_ops, Token.text(t))
+      advance(ps)
+      check_target(first, t)
+      value = parse_expr(ps)
+      return AssignStmt.new(Array[first], Token.text(t), Array[value], Token.line(t), Token.col(t))
+    end
+    ExprStmt.new(first)
+  end
+
+  # Only a name, an index or a field can be assigned (SPEC 3.3).
+  def check_target(target, op)
+    case target
+    in Name | Subscript | Field then nil
+    else syntax_error(op, "invalid assignment target")
+    end
+  end
+end

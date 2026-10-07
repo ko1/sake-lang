@@ -1,0 +1,240 @@
+# The parser, continued: expressions (SPEC 3.2), loosest binding first.
+class Parser
+  def parse_expr(ps) = parse_or(ps)
+
+  def parse_or(ps)
+    left = parse_and(ps)
+    while check(ps, "or")
+      t = advance(ps)
+      left = Binary.new("or", left, parse_and(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_and(ps)
+    left = parse_not(ps)
+    while check(ps, "and")
+      t = advance(ps)
+      left = Binary.new("and", left, parse_not(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_not(ps)
+    return parse_comparison(ps) unless check(ps, "not")
+    t = advance(ps)
+    Unary.new("not", parse_not(ps), Token.line(t), Token.col(t))
+  end
+
+  def comparison_ops = once { Set["==", "!=", "<", "<=", ">", ">=", "in"] }
+
+  def comparison?(ps)
+    t = peek(ps)
+    type = Token.type(t)
+    (type == :op || type == :keyword) && Set.include?(comparison_ops, Token.text(t))
+  end
+
+  # Comparisons do not associate: `a < b < c` is an error.
+  def parse_comparison(ps)
+    left = parse_additive(ps)
+    return left unless comparison?(ps)
+    t = advance(ps)
+    right = parse_additive(ps)
+    syntax_error(peek(ps), "comparison operators cannot be chained") if comparison?(ps)
+    Binary.new(Token.text(t), left, right, Token.line(t), Token.col(t))
+  end
+
+  def parse_additive(ps)
+    left = parse_multiplicative(ps)
+    while check(ps, "+") || check(ps, "-")
+      t = advance(ps)
+      left = Binary.new(Token.text(t), left, parse_multiplicative(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_multiplicative(ps)
+    left = parse_unary(ps)
+    while check(ps, "*") || check(ps, "/") || check(ps, "%")
+      t = advance(ps)
+      left = Binary.new(Token.text(t), left, parse_unary(ps), Token.line(t), Token.col(t))
+    end
+    left
+  end
+
+  def parse_unary(ps)
+    return parse_power(ps) unless check(ps, "-")
+    t = advance(ps)
+    Unary.new("-", parse_unary(ps), Token.line(t), Token.col(t))
+  end
+
+  # `**` is right-associative and its exponent may be negated: `2 ** -1`.
+  def parse_power(ps)
+    base = parse_postfix(ps)
+    return base unless check(ps, "**")
+    t = advance(ps)
+    Binary.new("**", base, parse_unary(ps), Token.line(t), Token.col(t))
+  end
+
+  def parse_postfix(ps)
+    expr = parse_primary(ps)
+    while true
+      if check(ps, "(")
+        t = advance(ps)
+        args = parse_list(ps, ")")
+        expr = Call.new(expr, args, Token.line(t), Token.col(t))
+      elsif check(ps, "[")
+        expr = parse_index(ps, expr)
+      elsif check(ps, ".")
+        t = advance(ps)
+        name = expect_name(ps)
+        expr = Field.new(expr, Token.text(name), Token.line(t), Token.col(t))
+      else
+        break
+      end
+    end
+    expr
+  end
+
+  # `[i]`, or a slice `[i:j]` with either bound optional.
+  def parse_index(ps, target)
+    t = advance(ps)
+    line = Token.line(t)
+    col = Token.col(t)
+    return parse_slice(ps, target, nil, line, col) if accept(ps, ":")
+    index = parse_expr(ps)
+    return parse_slice(ps, target, index, line, col) if accept(ps, ":")
+    expect(ps, "]")
+    Subscript.new(target, index, line, col)
+  end
+
+  # The rest of a slice, after its `:`.
+  def parse_slice(ps, target, low, line, col)
+    high = check(ps, "]") ? nil : parse_expr(ps)
+    expect(ps, "]")
+    Slice.new(target, low, high, line, col)
+  end
+
+  # Comma-separated expressions up to `close`, with an optional trailing comma.
+  def parse_list(ps, close)
+    items = Array[]
+    while true
+      break if check(ps, close)
+      Array.push(items, parse_expr(ps))
+      break unless accept(ps, ",")
+    end
+    expect(ps, close)
+    items
+  end
+
+  def parse_primary(ps)
+    t = peek(ps)
+    line = Token.line(t)
+    col = Token.col(t)
+    case Token.type(t)
+    in :int
+      advance(ps)
+      value = Token.value(t)
+      value => Integer
+      return Lit.new(value, line, col)
+    in :string
+      advance(ps)
+      return parse_string(t)
+    in :name
+      advance(ps)
+      return Name.new(Token.text(t), line, col, -1)
+    else nil
+    end
+    if check(ps, "true") || check(ps, "false") || check(ps, "nil")
+      advance(ps)
+      return Lit.new(Token.text(t) == "nil" ? nil : Token.text(t) == "true", line, col)
+    end
+    if accept(ps, "(")
+      inner = parse_expr(ps)
+      expect(ps, ")")
+      return inner
+    end
+    return ArrayLit.new(parse_list(ps, "]"), line, col) if accept(ps, "[")
+    return parse_map(ps, line, col) if accept(ps, "{")
+    return parse_function(ps) if check(ps, "fn")
+    syntax_error(t, "expected expression, got #{describe_token(t)}")
+  end
+
+  def parse_map(ps, line, col)
+    keys = Array[]
+    values = Array[]
+    key_pos = Tuple[]
+    while true
+      break if check(ps, "}")
+      k = peek(ps)
+      Array.push(key_pos, [Token.line(k), Token.col(k)])
+      Array.push(keys, parse_expr(ps))
+      expect(ps, ":")
+      Array.push(values, parse_expr(ps))
+      break unless accept(ps, ",")
+    end
+    expect(ps, "}")
+    MapLit.new(keys, values, key_pos, line, col)
+  end
+
+  # A string token: a plain literal, or an interpolation whose expressions are
+  # parsed from their own token lists.
+  def parse_string(t)
+    pieces = Token.value(t)
+    pieces => Array
+    parts = Array[]
+    literal = true
+    Array.each(pieces) do |piece|
+      case piece
+      in String then Array.push(parts, piece)
+      in Array
+        literal = false
+        Array.push(parts, parse_interpolation(piece))
+      end
+    end
+    return Lit.new(Array.join(parts), Token.line(t), Token.col(t)) if literal
+    Interp.new(parts, Token.line(t), Token.col(t))
+  end
+
+  def parse_interpolation(tokens)
+    sub = Parser.new(tokens, 0)
+    expr = parse_expr(sub)
+    t = peek(sub)
+    syntax_error(t, "expected '}', got #{describe_token(t)}") unless Token.type(t) == :interp_end
+    expr
+  end
+
+  # `fn [name](params) body end`, for both declarations and expressions.
+  def parse_function(ps)
+    t = expect(ps, "fn")
+    name = nil
+    line = Token.line(t)
+    col = Token.col(t)
+    if Token.type(peek(ps)) == :name
+      n = advance(ps)
+      name = Token.text(n)
+      line = Token.line(n)
+      col = Token.col(n)
+    end
+    expect(ps, "(")
+    params = Param[]
+    required = 0
+    while true
+      break if check(ps, ")")
+      p = expect_name(ps)
+      default = accept(ps, "=") ? parse_expr(ps) : nil
+      if default == nil
+        if required < Array.size(params)
+          syntax_error(p, "parameter '#{Token.text(p)}' needs a default value")
+        end
+        required += 1
+      end
+      Array.push(params, Param.new(Token.text(p), default, Token.line(p), Token.col(p)))
+      break unless accept(ps, ",")
+    end
+    expect(ps, ")")
+    body = parse_block(ps)
+    expect(ps, "end")
+    FnExpr.new(name, params, body, required, line, col)
+  end
+end

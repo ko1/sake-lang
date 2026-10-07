@@ -1,0 +1,286 @@
+# The 25 built-in functions (SPEC 10). A call checks the number of arguments, then each
+# argument in order (type, then value); every error is reported at the `(` of the call.
+
+def builtin_names = once {
+  String["print", "len", "push", "pop", "keys", "values", "has", "get", "del", "str", "int", "type",
+         "range", "join", "split", "slice", "sort", "contains", "min", "max", "upper", "lower",
+         "reverse", "map", "filter"]
+}
+
+# name => [fewest arguments, most arguments (-1: no maximum)]
+def builtin_arities = once {
+  Hash["print" => [0, -1], "len" => [1, 1], "push" => [2, 2], "pop" => [1, 1], "keys" => [1, 1],
+       "values" => [1, 1], "has" => [2, 2], "get" => [2, 3], "del" => [2, 2], "str" => [1, 1],
+       "int" => [1, 1], "type" => [1, 1], "range" => [1, 3], "join" => [2, 2], "split" => [2, 2],
+       "slice" => [2, 3], "sort" => [1, 1], "contains" => [2, 2], "min" => [1, -1],
+       "max" => [1, -1], "upper" => [1, 1], "lower" => [1, 1], "reverse" => [1, 1],
+       "map" => [2, 2], "filter" => [2, 2]]
+}
+
+def builtin_arity(name)
+  arity = builtin_arities[name]
+  raise InternalError.new("unknown built-in #{name}") unless arity
+  arity
+end
+
+def builtin_min_args(name) = builtin_arity(name)[0]
+
+# nil when there is no maximum.
+def builtin_max_args(name)
+  max = builtin_arity(name)[1]
+  max < 0 ? nil : max
+end
+
+def builtin_accepts?(name, given)
+  max = builtin_max_args(name)
+  given >= builtin_min_args(name) && (max == nil || given <= max)
+end
+
+def emit_line(text) = print(text + "\n")
+
+# ---- Argument checks ----
+
+# A call site: the built-in's name, its arguments, and where errors are reported.
+class BuiltinCall
+  attr_reader name, args, line, col
+end
+
+def arg_error(call, n, expected, v)
+  message = "#{BuiltinCall.name(call)}: argument #{n} must be #{expected}, got #{type_name(v)}"
+  runtime_error("type", message, BuiltinCall.line(call), BuiltinCall.col(call))
+end
+
+def value_error(call, message) = runtime_error("value", message, BuiltinCall.line(call), BuiltinCall.col(call))
+
+# Argument n (1-based); nil when an optional argument was left out.
+def arg(call, n) = BuiltinCall.args(call)[n - 1]
+def given(call) = Array.size(BuiltinCall.args(call))
+
+def int_arg(call, n)
+  v = arg(call, n)
+  return v if v in Integer
+  raise arg_error(call, n, "an int", v)
+end
+
+def string_arg(call, n)
+  v = arg(call, n)
+  return v if v in String
+  raise arg_error(call, n, "a string", v)
+end
+
+def array_arg(call, n)
+  v = arg(call, n)
+  return v if v in Array
+  raise arg_error(call, n, "an array", v)
+end
+
+def map_arg(call, n)
+  v = arg(call, n)
+  return v if v in Hash
+  raise arg_error(call, n, "a map", v)
+end
+
+def key_arg(call, n)
+  v = arg(call, n)
+  return v if v in String | Integer
+  raise arg_error(call, n, "a string or int", v)
+end
+
+def function_arg(call, n)
+  v = arg(call, n)
+  return v if v in Closure | Builtin
+  raise arg_error(call, n, "a function", v)
+end
+
+# ---- Dispatch ----
+
+def call_builtin(rt, name, args, line, col)
+  unless builtin_accepts?(name, Array.size(args))
+    message = arity_message(name, builtin_min_args(name), builtin_max_args(name), Array.size(args))
+    raise runtime_error("arity", message, line, col)
+  end
+  call = BuiltinCall.new(name, args, line, col)
+  case name
+  in "print"
+    emit_line(Array.join(Array.map(args) { |v| to_str(v) }, " "))
+    nil
+  in "len" then builtin_len(call)
+  in "push"
+    Array.push(array_arg(call, 1), arg(call, 2))
+    nil
+  in "pop" then builtin_pop(call)
+  in "keys" then Hash.keys(map_arg(call, 1))
+  in "values" then Hash.values(map_arg(call, 1))
+  in "has"
+    m = map_arg(call, 1)
+    Hash.key?(m, key_arg(call, 2))
+  in "get" then builtin_get(call)
+  in "del" then builtin_del(call)
+  in "str" then to_str(arg(call, 1))
+  in "int" then builtin_int(call)
+  in "type" then type_name(arg(call, 1))
+  in "range" then builtin_range(call)
+  in "join"
+    a = array_arg(call, 1)
+    Array.join(Array.map(a) { |v| to_str(v) }, string_arg(call, 2))
+  in "split" then builtin_split(call)
+  in "slice" then builtin_slice(call)
+  in "sort" then builtin_sort(call)
+  in "contains" then builtin_contains(call)
+  in "min" | "max" then builtin_min_max(call)
+  in "upper" then String.upcase(string_arg(call, 1))
+  in "lower" then String.downcase(string_arg(call, 1))
+  in "reverse" then builtin_reverse(call)
+  in "map" | "filter" then builtin_map_filter(rt, call)
+  else raise InternalError.new("unknown built-in #{name}")
+  end
+end
+
+# ---- The built-ins ----
+
+def builtin_len(call)
+  v = arg(call, 1)
+  case v
+  in String then String.size(v)
+  in Array then Array.size(v)
+  in Hash then Hash.size(v)
+  else raise arg_error(call, 1, "a string, array or map", v)
+  end
+end
+
+def builtin_pop(call)
+  a = array_arg(call, 1)
+  raise value_error(call, "pop: array is empty") if Array.empty?(a)
+  Array.pop(a)
+end
+
+def builtin_get(call)
+  m = map_arg(call, 1)
+  k = key_arg(call, 2)
+  Hash.key?(m, k) ? m[k] : arg(call, 3)
+end
+
+def builtin_del(call)
+  m = map_arg(call, 1)
+  k = key_arg(call, 2)
+  raise key_not_found(k, BuiltinCall.line(call), BuiltinCall.col(call)) unless Hash.key?(m, k)
+  Hash.delete(m, k)
+end
+
+# An int unchanged; a string of an optional `-` and digits, converted.
+def builtin_int(call)
+  v = arg(call, 1)
+  case v
+  in Integer then v
+  in String
+    raise value_error(call, "int: cannot convert #{repr(v)} to int") unless String.match?(v, /\A-?[0-9]+\z/)
+    String.to_i(v)
+  else raise arg_error(call, 1, "an int or string", v)
+  end
+end
+
+# range(n), range(a, b), range(a, b, step).
+def builtin_range(call)
+  n = given(call)
+  first = int_arg(call, 1)
+  start = n == 1 ? 0 : first
+  stop = n == 1 ? first : int_arg(call, 2)
+  step = n == 3 ? int_arg(call, 3) : 1
+  raise value_error(call, "range: step must not be zero") if step == 0
+  out = Array[]
+  i = start
+  while (step > 0 && i < stop) || (step < 0 && i > stop)
+    Array.push(out, i)
+    i += step
+  end
+  out
+end
+
+# The pieces between occurrences of the separator, keeping empty ones.
+def builtin_split(call)
+  s = string_arg(call, 1)
+  sep = string_arg(call, 2)
+  raise value_error(call, "split: separator must not be empty") if sep == ""
+  pieces = Array[]
+  start = 0
+  while true
+    i = String.index(s, sep, start)
+    break unless i
+    Array.push(pieces, substring(s, start, i))
+    start = i + String.size(sep)
+  end
+  Array.push(pieces, substring(s, start, String.size(s)))
+  pieces
+end
+
+# The characters of s from position `from` up to (not including) `to`.
+def substring(s, from, to)
+  piece = String.slice(s, from, to - from)
+  piece ? piece : ""
+end
+
+def builtin_slice(call)
+  x = arg(call, 1)
+  raise arg_error(call, 1, "an array or string", x) unless x in Array | String
+  lo = int_arg(call, 2)
+  hi = given(call) == 3 ? int_arg(call, 3) : nil
+  slice_value(x, lo, hi, BuiltinCall.line(call), BuiltinCall.col(call))
+end
+
+# A new array sorted ascending; all elements must be ints, or all strings.
+def builtin_sort(call)
+  a = array_arg(call, 1)
+  return Array.dup(a) if Array.size(a) < 2
+  first = a[0]
+  ints = Integer[]
+  strings = String[]
+  Array.each(a) do |v|
+    if (first in Integer) && (v in Integer)
+      Array.push(ints, v)
+    elsif (first in String) && (v in String)
+      Array.push(strings, v)
+    else
+      message = "sort: cannot compare #{type_name(first)} and #{type_name(v)}"
+      raise runtime_error("type", message, BuiltinCall.line(call), BuiltinCall.col(call))
+    end
+  end
+  (first in Integer) ? Array.sort(ints) : Array.sort(strings)
+end
+
+def builtin_contains(call)
+  c = arg(call, 1)
+  raise arg_error(call, 1, "an array, map or string", c) unless c in Array | Hash | String
+  x = arg(call, 2)
+  raise arg_error(call, 2, "a string", x) if (c in String) && !(x in String)
+  member?(x, c, "contains", BuiltinCall.line(call), BuiltinCall.col(call))
+end
+
+def builtin_min_max(call)
+  numbers = Integer[]
+  Integer.upto(1, given(call)) { |n| Array.push(numbers, int_arg(call, n)) }
+  result = BuiltinCall.name(call) == "min" ? Array.min(numbers) : Array.max(numbers)
+  raise InternalError.new("min/max of no numbers") if result == nil
+  result
+end
+
+def builtin_reverse(call)
+  x = arg(call, 1)
+  case x
+  in Array then Array.reverse(x)
+  in String then String.reverse(x)
+  else raise arg_error(call, 1, "an array or string", x)
+  end
+end
+
+# map(a, f) and filter(a, f) over a snapshot of a; errors in the calls of f propagate.
+def builtin_map_filter(rt, call)
+  a = Array.dup(array_arg(call, 1))
+  f = function_arg(call, 2)
+  line = BuiltinCall.line(call)
+  col = BuiltinCall.col(call)
+  if BuiltinCall.name(call) == "map"
+    Array.map(a) { |v| call_value(rt, f, Array[v], line, col) }
+  else
+    Array.select(a) { |v| truthy?(call_value(rt, f, Array[v], line, col)) }
+  end
+end

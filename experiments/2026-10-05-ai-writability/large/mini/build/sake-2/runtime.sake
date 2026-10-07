@@ -1,0 +1,91 @@
+# Run-time state: scopes, control-flow signals, and calling functions (SPEC 6.4 - 6.6).
+
+# A run-time scope; one is made for each static scope as it is entered (SPEC 6.4).
+# vars has a name only once its declaration has run (or, for a function, its list started).
+class Scope
+  attr_reader vars, parent
+end
+
+def new_scope(parent) = Scope.new(Hash[], parent)
+
+# How a statement ended other than normally: kind is :break, :continue or :return.
+class Signal
+  attr_reader kind, value
+end
+
+# depth: user-function calls in progress; next_id: the id of the next closure.
+class Runtime
+  attr_accessor depth, next_id
+end
+
+def max_call_depth = 150
+
+# The scope `depth` levels out from `scope`.
+def scope_at(scope, depth)
+  s = scope
+  depth.Integer.times do
+    up = Scope.parent(s)
+    raise InternalError.new("scope chain too short") unless up
+    s = up
+  end
+  s
+end
+
+def make_closure(rt, fn, scope)
+  id = Runtime.next_id(rt)
+  Runtime.set_next_id(rt, id + 1)
+  Closure.new(id, fn, scope)
+end
+
+# Creates the closures of a statement list's function declarations as the list starts.
+def hoist_functions(rt, stmts, scope)
+  Array.each(stmts) do |stmt|
+    if stmt in FnDecl
+      Scope.vars(scope)[Ident.name(FnDecl.ident(stmt))] = make_closure(rt, FnDecl.fn(stmt), scope)
+    end
+  end
+end
+
+# Calls f with already evaluated arguments; errors about the call itself are reported at line/col.
+def call_value(rt, f, args, line, col)
+  case f
+  in Closure then call_closure(rt, f, args, line, col)
+  in Builtin then call_builtin(rt, Builtin.name(f), args, line, col)
+  else raise runtime_error("type", "cannot call #{type_name(f)}", line, col)
+  end
+end
+
+def call_closure(rt, closure, args, line, col)
+  fn = Closure.fn(closure)
+  params = FnDef.params(fn)
+  min = required_count(fn)
+  max = Array.size(params)
+  given = Array.size(args)
+  if given < min || given > max
+    name = FnDef.name(fn)
+    message = arity_message(name ? name : "function", min, max, given)
+    raise runtime_error("arity", message, line, col)
+  end
+  depth = Runtime.depth(rt)
+  if depth >= max_call_depth
+    raise runtime_error("stack", "call depth exceeded #{max_call_depth}", line, col)
+  end
+  Runtime.set_depth(rt, depth + 1)
+  begin
+    scope = new_scope(Closure.scope(closure))
+    vars = Scope.vars(scope)
+    Array.each_with_index(params) do |param, i|
+      default = Param.default(param)
+      vars[Param.name(param)] =
+        if i < given
+          args[i]
+        elsif default
+          eval_expr(rt, default, scope)
+        end
+    end
+    signal = exec_block(rt, FnDef.body(fn), scope)
+    signal && Signal.kind(signal) == :return ? Signal.value(signal) : nil
+  ensure
+    Runtime.set_depth(rt, depth)
+  end
+end

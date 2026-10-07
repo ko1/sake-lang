@@ -1,0 +1,391 @@
+# Runs a resolved program (SPEC.md, "Evaluation").
+#
+# Statements return nil when control goes on to the next statement, or a Flow
+# when a break, continue or return is on its way out. Errors and throws travel
+# as Sake exceptions (MiniRuntimeError and MiniThrow) up to the nearest `try`.
+
+# kind is :break, :continue or :return; value is the returned value.
+Flow = Struct.new(:kind, :value)
+
+# Raised by a NilCheck that finds nil, and rescued by its OptChain, whose value is then nil.
+class NilChain < Exception
+end
+
+# A call deeper than this many user functions is a "stack" runtime error.
+def max_call_depth = 150
+
+class Interpreter
+  attr_reader globals
+  attr_accessor call_depth, closure_count
+
+  def initialize(interp)
+    builtins = Env.new(nil)
+    Array.each(Builtins.names) { |name| Env.define(builtins, name, Builtin.new(name)) }
+    @globals = Env.new(builtins)
+    @call_depth = 0
+    @closure_count = 0
+  end
+
+  def run(interp, program)
+    execute_statements(interp, Program.body(program), @globals)
+    nil
+  end
+
+  # Calls a function value (a Closure or a Builtin) with evaluated arguments;
+  # `pos` is where a problem with the call itself is reported.
+  def call_function(interp, callee, args, pos)
+    case callee
+    in Closure then call_closure(interp, callee, args, pos)
+    in Builtin
+      case Builtin.name(callee)
+      in "map" | "filter" then call_higher_order(interp, Builtin.name(callee), args, pos)
+      else Builtins.call(Builtin.name(callee), args, pos)
+      end
+    else Errors.runtime("type", "cannot call #{Values.type_name(callee)}", pos)
+    end
+  end
+
+  # ---- statements ----
+
+  # Function declarations are bound first, so they can be called from anywhere
+  # in their statement list (and from each other).
+  def execute_statements(interp, stmts, env)
+    stmts => Array
+    Array.each(stmts) { |stmt| Env.define(env, FnExpr.name(FnDecl.fn(stmt)), make_closure(interp, FnDecl.fn(stmt), env)) if (stmt in FnDecl) }
+    Array.each(stmts) do |stmt|
+      flow = execute(interp, stmt, env)
+      return flow unless flow == nil
+    end
+    nil
+  end
+
+  def execute_block(interp, stmts, env) = execute_statements(interp, stmts, Env.new(env))
+
+  def execute(interp, stmt, env)
+    case stmt
+    in ExprStmt
+      evaluate(interp, ExprStmt.expr(stmt), env)
+      nil
+    in Let
+      Env.define(env, Let.name(stmt), Let.value(stmt) == nil ? nil : evaluate(interp, Let.value(stmt), env))
+    in LetList
+      execute_let_list(interp, stmt, env)
+    in Const
+      Env.define(env, Const.name(stmt), evaluate(interp, Const.value(stmt), env))
+    in FnDecl
+      nil
+    in Assign
+      execute_assign(interp, stmt, env)
+    in MultiAssign
+      execute_multi_assign(interp, stmt, env)
+    in If
+      execute_if(interp, stmt, env)
+    in Match
+      execute_match(interp, stmt, env)
+    in While
+      execute_while(interp, stmt, env)
+    in For
+      execute_for(interp, stmt, env)
+    in Break
+      Flow.new(:break, nil)
+    in Continue
+      Flow.new(:continue, nil)
+    in Return
+      Flow.new(:return, Return.value(stmt) == nil ? nil : evaluate(interp, Return.value(stmt), env))
+    in Throw
+      raise MiniThrow.new("uncaught throw", evaluate(interp, Throw.value(stmt), env), Throw.pos(stmt))
+    in Assert
+      execute_assert(interp, stmt, env)
+    in Try
+      execute_try(interp, stmt, env)
+    else
+      raise ArgumentError, "unknown statement #{Kernel.inspect(stmt)}"
+    end
+  end
+
+  def execute_let_list(interp, stmt, env)
+    value = evaluate(interp, LetList.value(stmt), env)
+    Errors.runtime("type", "cannot destructure #{Values.type_name(value)}", LetList.pos(stmt)) unless (value in Array)
+    if Array.length(value) != Array.length(LetList.names(stmt))
+      Errors.runtime("value", "expected #{Format.count(Array.length(LetList.names(stmt)), "element")}, got #{Array.length(value)}", LetList.pos(stmt))
+    end
+    Array.each_index(LetList.names(stmt)) { |i| Env.define(env, Param.name(LetList.names(stmt)[i]), value[i]) }
+    nil
+  end
+
+  # The target's parts are evaluated first, then the right side; a compound
+  # assignment then reads the current value and applies its operator.
+  def execute_assign(interp, stmt, env)
+    target = Assign.target(stmt)
+    case target
+    in Name
+      value = evaluate(interp, Assign.value(stmt), env)
+      if Assign.op(stmt) != "="
+        current = Env.lookup(env, Name.depth(target), Name.name(target), Name.pos(target))
+        value = Operators.binary(Assign.op(stmt)[0], current, value, Assign.pos(stmt))
+      end
+      Env.assign(env, Name.depth(target), Name.name(target), value, Name.pos(target))
+    in IndexExpr
+      container = evaluate(interp, IndexExpr.target(target), env)
+      key = evaluate(interp, IndexExpr.index(target), env)
+      value = evaluate(interp, Assign.value(stmt), env)
+      if Assign.op(stmt) != "="
+        current = Operators.index_get(container, key, IndexExpr.pos(target))
+        value = Operators.binary(Assign.op(stmt)[0], current, value, Assign.pos(stmt))
+      end
+      Operators.index_set(container, key, value, IndexExpr.pos(target))
+    else nil
+    end
+    nil
+  end
+
+  # All targets' parts, then all values, left to right; then the stores, left to
+  # right. So `a, b = b, a` swaps.
+  def execute_multi_assign(interp, stmt, env)
+    places = Array.map(MultiAssign.targets(stmt)) do |target|
+      (target in IndexExpr) ? [evaluate(interp, IndexExpr.target(target), env), evaluate(interp, IndexExpr.index(target), env)] : nil
+    end
+    values = Array.map(MultiAssign.values(stmt)) { |value| evaluate(interp, value, env) }
+    Array.each_index(MultiAssign.targets(stmt)) do |i|
+      target = MultiAssign.targets(stmt)[i]
+      if (target in IndexExpr)
+        place = places[i]
+        place => Tuple
+        Operators.index_set(place[0], place[1], values[i], IndexExpr.pos(target))
+      else
+        target => Name
+        Env.assign(env, Name.depth(target), Name.name(target), values[i], Name.pos(target))
+      end
+    end
+    nil
+  end
+
+  def execute_assert(interp, stmt, env)
+    return nil if Values.truthy?(evaluate(interp, Assert.cond(stmt), env))
+
+    message = "assertion failed"
+    message = "#{message}: #{Format.show(evaluate(interp, Assert.message(stmt), env))}" unless Assert.message(stmt) == nil
+    Errors.runtime("assert", message, Assert.pos(stmt))
+  end
+
+  def execute_if(interp, stmt, env)
+    Array.each(If.branches(stmt)) do |branch|
+      return execute_block(interp, IfBranch.body(branch), env) if Values.truthy?(evaluate(interp, IfBranch.cond(branch), env))
+    end
+    return nil if If.else_body(stmt) == nil
+
+    execute_block(interp, If.else_body(stmt), env)
+  end
+
+  # The first arm with a value == the subject runs; the values are evaluated in
+  # order, and only until one matches.
+  def execute_match(interp, stmt, env)
+    subject = evaluate(interp, Match.subject(stmt), env)
+    Array.each(Match.arms(stmt)) do |arm|
+      Array.each(MatchArm.values(arm)) do |value|
+        return execute_block(interp, MatchArm.body(arm), env) if Values.equal(subject, evaluate(interp, value, env), Match.pos(stmt))
+      end
+    end
+    return nil if Match.else_body(stmt) == nil
+
+    execute_block(interp, Match.else_body(stmt), env)
+  end
+
+  def execute_while(interp, stmt, env)
+    while Values.truthy?(evaluate(interp, While.cond(stmt), env))
+      flow = execute_block(interp, While.body(stmt), env)
+      next if flow == nil || Flow.kind(flow) == :continue
+      return nil if Flow.kind(flow) == :break
+
+      return flow
+    end
+    nil
+  end
+
+  # Iterates over a copy, taken when the loop starts: with one variable, an
+  # array's elements or a map's keys; with two, an array's index and element
+  # or a map's key and value. Each iteration has its own scope and variables.
+  def execute_for(interp, stmt, env)
+    iterable = evaluate(interp, For.iterable(stmt), env)
+    unless (iterable in Array) || (iterable in Hash)
+      Errors.runtime("type", "cannot iterate over #{Values.type_name(iterable)}", For.pos(stmt))
+    end
+    Array.each(loop_values(interp, iterable, Array.length(For.vars(stmt)))) do |values|
+      scope = Env.new(env)
+      Array.each_index(For.vars(stmt)) { |i| Env.define(scope, Param.name(For.vars(stmt)[i]), values[i]) }
+      flow = execute_statements(interp, For.body(stmt), scope)
+      next if flow == nil || Flow.kind(flow) == :continue
+      return nil if Flow.kind(flow) == :break
+
+      return flow
+    end
+    nil
+  end
+
+  # The finally body runs however the body and handler end: normally, by break,
+  # continue or return, or by an error or throw. If it ends normally, the earlier
+  # outcome goes on; if it breaks, continues, returns or raises, that replaces it.
+  # One Array of loop-variable values per iteration.
+  def loop_values(interp, iterable, count)
+    if (iterable in Hash)
+      count == 1 ? Array.map(Hash.keys(iterable)) { |key| Array[key] } : Hash.to_a(iterable)
+    else
+      count == 1 ? Array.map(iterable) { |element| Array[element] } : Range.map(0...Array.length(iterable)) { |i| Array[i, iterable[i]] }
+    end
+  end
+
+  def execute_try(interp, stmt, env)
+    return execute_try_catch(interp, stmt, env) if Try.finally_body(stmt) == nil
+
+    begin
+      flow = execute_try_catch(interp, stmt, env)
+    rescue MiniThrow, MiniRuntimeError => e
+      final = execute_block(interp, Try.finally_body(stmt), env)
+      return final unless final == nil
+
+      raise e
+    end
+    final = execute_block(interp, Try.finally_body(stmt), env)
+    final == nil ? flow : final
+  end
+
+  # The body, and the handler if the body raised and there is a `catch`.
+  def execute_try_catch(interp, stmt, env)
+    var = Try.var(stmt)
+    return execute_block(interp, Try.body(stmt), env) if var == nil
+
+    caught = nil
+    begin
+      return execute_block(interp, Try.body(stmt), env)
+    rescue MiniThrow => e
+      caught = MiniThrow.value(e)
+    rescue MiniRuntimeError => e
+      caught = Values.error_map(e)
+    end
+    scope = Env.new(env)
+    Env.define(scope, Param.name(var), caught)
+    execute_statements(interp, Try.handler(stmt), scope)
+  end
+
+  # ---- expressions ----
+
+  def evaluate(interp, node, env)
+    case node
+    in IntLit | StrLit | BoolLit
+      (IntLit|StrLit|BoolLit).value(node)
+    in NilLit
+      nil
+    in InterpStr
+      Array.join(Array.map(InterpStr.parts(node)) { |part| (part in String) ? part : Format.show(evaluate(interp, part, env)) })
+    in Name
+      Env.lookup(env, Name.depth(node), Name.name(node), Name.pos(node))
+    in ArrayLit
+      Array.map(ArrayLit.elements(node)) { |element| evaluate(interp, element, env) }
+    in MapLit
+      evaluate_map(interp, node, env)
+    in FnExpr
+      make_closure(interp, node, env)
+    in Unary
+      evaluate_unary(interp, node, env)
+    in Binary
+      left = evaluate(interp, Binary.left(node), env)
+      Operators.binary(Binary.op(node), left, evaluate(interp, Binary.right(node), env), Binary.pos(node))
+    in Logical
+      evaluate_logical(interp, node, env)
+    in Call
+      callee = evaluate(interp, Call.callee(node), env)
+      args = Array.map(Call.args(node)) { |arg| evaluate(interp, arg, env) }
+      call_function(interp, callee, args, Call.pos(node))
+    in IndexExpr
+      target = evaluate(interp, IndexExpr.target(node), env)
+      Operators.index_get(target, evaluate(interp, IndexExpr.index(node), env), IndexExpr.pos(node))
+    in Slice
+      target = evaluate(interp, Slice.target(node), env)
+      start = Slice.start(node) == nil ? nil : evaluate(interp, Slice.start(node), env)
+      stop = Slice.stop(node) == nil ? nil : evaluate(interp, Slice.stop(node), env)
+      Operators.slice_expression(target, start, stop, Slice.pos(node))
+    in NilCheck
+      value = evaluate(interp, NilCheck.value(node), env)
+      raise NilChain, "nil receiver" if value == nil
+
+      value
+    in OptChain
+      begin
+        evaluate(interp, OptChain.expr(node), env)
+      rescue NilChain
+        nil
+      end
+    else
+      raise ArgumentError, "unknown expression #{Kernel.inspect(node)}"
+    end
+  end
+
+  # Entries are added in order; a repeated key keeps its first place and its last value.
+  def evaluate_map(interp, node, env)
+    map = Hash[]
+    Array.each_index(MapLit.keys(node)) do |i|
+      key = evaluate(interp, MapLit.keys(node)[i], env)
+      Values.check_key(key, (IntLit|StrLit|InterpStr|BoolLit|NilLit|Name|ArrayLit|MapLit|FnExpr|Unary|Binary|Logical|Call|IndexExpr|Slice|OptChain).pos(MapLit.keys(node)[i]))
+      map[key] = evaluate(interp, MapLit.values(node)[i], env)
+    end
+    map
+  end
+
+  def evaluate_unary(interp, node, env)
+    value = evaluate(interp, Unary.operand(node), env)
+    Unary.op(node) == "not" ? !Values.truthy?(value) : Operators.negate(value, Unary.pos(node))
+  end
+
+  # `and` and `or` give back the operand that decided the result, not a bool.
+  def evaluate_logical(interp, node, env)
+    left = evaluate(interp, Logical.left(node), env)
+    if Logical.op(node) == "and"
+      Values.truthy?(left) ? evaluate(interp, Logical.right(node), env) : left
+    else
+      Values.truthy?(left) ? left : evaluate(interp, Logical.right(node), env)
+    end
+  end
+
+  def make_closure(interp, fn, env)
+    @closure_count += 1
+    Closure.new(fn, env, @closure_count)
+  end
+
+  # ---- calls ----
+
+  # Arguments fill the parameters in order; a missing one takes its default,
+  # evaluated in the new scope, where the parameters before it are already set.
+  def call_closure(interp, closure, args, pos)
+    fn = Closure.fn(closure)
+    min, max = Arity.of_function(fn)
+    unless Arity.accepts?(min, max, Array.length(args))
+      Errors.runtime("arity", Arity.message(Format.function_label(fn), min, max, Array.length(args)), pos)
+    end
+    Errors.runtime("stack", "call depth exceeded #{max_call_depth}", pos) if @call_depth >= max_call_depth
+
+    @call_depth += 1
+    begin
+      scope = Env.new(Closure.env(closure))
+      Array.each_index(FnExpr.params(fn)) do |i|
+        param = FnExpr.params(fn)[i]
+        Env.define(scope, Param.name(param), i < Array.length(args) ? args[i] : evaluate(interp, Param.default(param), scope))
+      end
+      flow = execute_statements(interp, FnExpr.body(fn), scope)
+    ensure
+      @call_depth -= 1
+    end
+    flow == nil ? nil : Flow.value(flow)
+  end
+
+  # map(array, f) and filter(array, f), over a copy of the array.
+  def call_higher_order(interp, name, args, pos)
+    Builtins.check_arity(name, args, pos)
+    array = Builtins.array_arg(name, args, 1, pos)
+    f = Builtins.function_arg(name, args, 2, pos)
+    if name == "map"
+      Array.map(Array.dup(array)) { |element| call_function(interp, f, Array[element], pos) }
+    else
+      Array.select(Array.dup(array)) { |element| Values.truthy?(call_function(interp, f, Array[element], pos)) }
+    end
+  end
+end

@@ -1,0 +1,226 @@
+# Turns Mini source text into tokens (SPEC.md, "Lexical structure").
+#
+# Newlines end statements, so they are tokens too, but only outside brackets
+# (inside ( [ { a newline is just white space) and not after a token that
+# needs something to follow it, such as a binary operator or a comma. Several
+# newlines in a row make one :newline token. A string with interpolations becomes one :interp token whose
+# parts hold the tokens of each embedded expression.
+class Lexer
+  attr_reader chars, tokens
+  attr_accessor index, line, col, nesting
+
+  # Lexer.new(source): the source arrives in the chars field.
+  def initialize(lexer)
+    @chars = String.chars(@chars)
+    @tokens = Array[]
+    @index = 0
+    @line = 1
+    @col = 1
+    @nesting = 0
+  end
+
+  # All tokens of the source, ending with an :eof token whose text is "".
+  def run(lexer)
+    while true
+      skip_blanks_and_comments(lexer)
+      break if at_end?(lexer)
+
+      if peek(lexer) == "\n"
+        scan_newline(lexer)
+      else
+        tok = scan_token(lexer)
+        track_nesting(lexer, tok)
+        Array.push(@tokens, tok)
+      end
+    end
+    Array.push(@tokens, Token.new(:eof, "", nil, here(lexer)))
+    @tokens
+  end
+
+  def at_end?(lexer) = @index >= Array.length(@chars)
+
+  # The character `offset` places ahead, or "" past the end.
+  def peek(lexer, offset = 0)
+    i = @index + offset
+    i < Array.length(@chars) ? Array.fetch(@chars, i) : ""
+  end
+
+  def advance(lexer)
+    c = Array.fetch(@chars, @index)
+    @index += 1
+    if c == "\n"
+      @line += 1
+      @col = 1
+    else
+      @col += 1
+    end
+    c
+  end
+
+  def here(lexer) = Pos.new(@line, @col)
+
+  def digit?(lexer, c) = c >= "0" && c <= "9"
+
+  def ident_start?(lexer, c) = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_"
+
+  def ident_char?(lexer, c) = ident_start?(lexer, c) || digit?(lexer, c)
+
+  def blank?(lexer, c) = c == " " || c == "\t" || c == "\r"
+
+  def skip_blanks_and_comments(lexer)
+    until at_end?(lexer)
+      c = peek(lexer)
+      if blank?(lexer, c)
+        advance(lexer)
+      elsif c == "#"
+        advance(lexer) until at_end?(lexer) || peek(lexer) == "\n"
+      else
+        break
+      end
+    end
+  end
+
+  def skip_blanks(lexer)
+    advance(lexer) while blank?(lexer, peek(lexer))
+  end
+
+  def scan_newline(lexer)
+    pos = here(lexer)
+    advance(lexer)
+    return if @nesting > 0 || Array.empty?(@tokens) || Token.type(@tokens[-1]) == :newline
+    return if continues_line?(lexer, @tokens[-1])
+
+    Array.push(@tokens, Token.new(:newline, "\n", nil, pos))
+  end
+
+  def continues_line?(lexer, tok)
+    (Token.type(tok) == :op && Array.include?(continuation_operators, Token.text(tok))) ||
+      (Token.type(tok) == :kw && Array.include?(continuation_keywords, Token.text(tok)))
+  end
+
+  def track_nesting(lexer, tok)
+    return unless Token.type(tok) == :op
+
+    if Array.include?(opening_brackets, Token.text(tok))
+      @nesting += 1
+    elsif Array.include?(closing_brackets, Token.text(tok)) && @nesting > 0
+      @nesting -= 1
+    end
+  end
+
+  # One token starting at the current character, which is not blank or a newline.
+  def scan_token(lexer)
+    pos = here(lexer)
+    c = peek(lexer)
+    if digit?(lexer, c)
+      scan_int(lexer, pos)
+    elsif ident_start?(lexer, c)
+      scan_word(lexer, pos)
+    elsif c == "\""
+      scan_string(lexer, pos)
+    else
+      scan_operator(lexer, pos)
+    end
+  end
+
+  # Digits, with single underscores allowed between them: 1_000_000.
+  def scan_int(lexer, pos)
+    digits = Array[]
+    while digit?(lexer, peek(lexer)) || (peek(lexer) == "_" && digit?(lexer, peek(lexer, 1)))
+      c = advance(lexer)
+      Array.push(digits, c) unless c == "_"
+    end
+    Token.new(:int, Array.join(digits), String.to_i(Array.join(digits)), pos)
+  end
+
+  def scan_word(lexer, pos)
+    letters = Array[]
+    Array.push(letters, advance(lexer)) while ident_char?(lexer, peek(lexer))
+    word = Array.join(letters)
+    Token.new(Array.include?(keywords, word) ? :kw : :ident, word, nil, pos)
+  end
+
+  def scan_operator(lexer, pos)
+    two = peek(lexer) + peek(lexer, 1)
+    three = two + peek(lexer, 2)
+    if Array.include?(three_char_operators, three)
+      advance(lexer)
+      advance(lexer)
+      advance(lexer)
+      Token.new(:op, three, nil, pos)
+    elsif Array.include?(two_char_operators, two)
+      advance(lexer)
+      advance(lexer)
+      Token.new(:op, two, nil, pos)
+    elsif Array.include?(one_char_operators, peek(lexer))
+      Token.new(:op, advance(lexer), nil, pos)
+    else
+      Errors.lexical("unexpected character '#{peek(lexer)}'", pos)
+    end
+  end
+
+  # A string literal starting at `start` (its opening quote).
+  def scan_string(lexer, start)
+    advance(lexer)
+    parts = Array[]
+    text = Array[]
+    while true
+      c = peek(lexer)
+      Errors.lexical("unterminated string", start) if c == "" || c == "\n"
+      if c == "\""
+        advance(lexer)
+        break
+      elsif c == "\\"
+        Array.push(text, scan_escape(lexer, start))
+      elsif c == "{"
+        advance(lexer)
+        Array.push(parts, Array.join(text)) unless Array.empty?(text)
+        text = Array[]
+        Array.push(parts, scan_interpolation(lexer, start))
+      else
+        Array.push(text, advance(lexer))
+      end
+    end
+    Array.push(parts, Array.join(text)) unless Array.empty?(text)
+    if Array.all?(parts) { |part| part in String }
+      Token.new(:str, "", Array.empty?(parts) ? "" : parts[0], start)
+    else
+      Token.new(:interp, "", parts, start)
+    end
+  end
+
+  def scan_escape(lexer, string_start)
+    pos = here(lexer)
+    advance(lexer)
+    c = peek(lexer)
+    Errors.lexical("unterminated string", string_start) if c == "" || c == "\n"
+    advance(lexer)
+    case c
+    in "n" then "\n"
+    in "t" then "\t"
+    in "\\" | "\"" | "{" | "}" then c
+    else Errors.lexical("invalid escape '\\#{c}'", pos)
+    end
+  end
+
+  # The tokens of one "{...}" inside a string, after its "{". The closing "}"
+  # becomes an :eof token with text "}", so the parser can stop there.
+  def scan_interpolation(lexer, string_start)
+    toks = Array[]
+    level = 0
+    loop do
+      skip_blanks(lexer)
+      c = peek(lexer)
+      Errors.lexical("unterminated string", string_start) if c == "" || c == "\n"
+      if c == "}" && level == 0
+        Array.push(toks, Token.new(:eof, "}", nil, here(lexer)))
+        advance(lexer)
+        return toks
+      end
+      tok = scan_token(lexer)
+      level += 1 if Tokens.op?(tok, "{")
+      level -= 1 if Tokens.op?(tok, "}")
+      Array.push(toks, tok)
+    end
+  end
+end

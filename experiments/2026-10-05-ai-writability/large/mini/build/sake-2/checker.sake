@@ -1,0 +1,240 @@
+# The static checks (SPEC 5): walks the whole tree in source order before anything runs,
+# reports the first problem as a CompileError, and sets the depth of every Name for evaluation.
+#
+# in_function: inside a function body; in_loop: inside a while/for body of the same function.
+
+def check_program(body)
+  scope = new_static_scope(builtin_static_scope)
+  check_block(body, scope, false, false)
+end
+
+def declare(scope, ident, kind, fn)
+  name = Ident.name(ident)
+  names = StaticScope.names(scope)
+  if Hash.key?(names, name)
+    raise static_error("'#{name}' is already declared in this scope", Ident.line(ident), Ident.col(ident))
+  end
+  names[name] = Decl.new(kind, fn)
+end
+
+# A statement list in `scope`. Its function declarations are entered first: they are visible
+# throughout the list.
+def check_block(stmts, scope, in_function, in_loop)
+  Array.each(stmts) do |stmt|
+    declare(scope, FnDecl.ident(stmt), :function, FnDecl.fn(stmt)) if stmt in FnDecl
+  end
+  last = Array.size(stmts) - 1
+  Array.each_with_index(stmts) do |stmt, i|
+    check_statement(stmt, scope, in_function, in_loop)
+    next unless i < last
+    case stmt
+    in Break | Continue | Return | Throw
+      line = (Break | Continue | Return | Throw).line(stmt)
+      col = (Break | Continue | Return | Throw).col(stmt)
+      raise static_error("code after '#{jump_keyword(stmt)}' is unreachable", line, col)
+    else nil
+    end
+  end
+end
+
+# A block with its own scope.
+def check_nested(stmts, scope, in_function, in_loop) =
+  check_block(stmts, new_static_scope(scope), in_function, in_loop)
+
+def check_optional(expr, scope)
+  check_expr(expr, scope) if expr != nil
+end
+
+def check_statement(stmt, scope, in_function, in_loop)
+  case stmt
+  in Let
+    check_optional(Let.init(stmt), scope)
+    declare(scope, Let.ident(stmt), :variable, nil)
+  in LetArray
+    check_expr(LetArray.init(stmt), scope)
+    Array.each(LetArray.idents(stmt)) { |ident| declare(scope, ident, :variable, nil) }
+  in Const
+    check_expr(Const.init(stmt), scope)
+    declare(scope, Const.ident(stmt), :constant, nil)
+  in FnDecl
+    check_function(FnDecl.fn(stmt), scope)
+  in If
+    Array.each(If.arms(stmt)) do |arm|
+      check_expr(IfArm.cond(arm), scope)
+      check_nested(IfArm.body(arm), scope, in_function, in_loop)
+    end
+    else_body = If.else_body(stmt)
+    check_nested(else_body, scope, in_function, in_loop) if else_body
+  in Match
+    check_expr(Match.subject(stmt), scope)
+    Array.each(Match.arms(stmt)) do |arm|
+      Array.each(WhenArm.values(arm)) { |value| check_expr(value, scope) }
+      check_nested(WhenArm.body(arm), scope, in_function, in_loop)
+    end
+    else_body = Match.else_body(stmt)
+    check_nested(else_body, scope, in_function, in_loop) if else_body
+  in While
+    check_expr(While.cond(stmt), scope)
+    check_nested(While.body(stmt), scope, in_function, true)
+  in For
+    loop_scope = new_static_scope(scope)
+    declare(loop_scope, For.first(stmt), :variable, nil)
+    second = For.second(stmt)
+    declare(loop_scope, second, :variable, nil) if second
+    check_expr(For.iterable(stmt), scope)
+    check_block(For.body(stmt), loop_scope, in_function, true)
+  in Break
+    raise static_error("'break' outside a loop", Break.line(stmt), Break.col(stmt)) unless in_loop
+  in Continue
+    raise static_error("'continue' outside a loop", Continue.line(stmt), Continue.col(stmt)) unless in_loop
+  in Return
+    raise static_error("'return' outside a function", Return.line(stmt), Return.col(stmt)) unless in_function
+    check_optional(Return.value(stmt), scope)
+  in Throw
+    check_expr(Throw.value(stmt), scope)
+  in Assert
+    check_expr(Assert.cond(stmt), scope)
+    check_optional(Assert.message(stmt), scope)
+  in Try
+    check_try(stmt, scope, in_function, in_loop)
+  in Assign
+    check_target(Assign.target(stmt), scope)
+    check_expr(Assign.value(stmt), scope)
+  in MultiAssign
+    Array.each(MultiAssign.targets(stmt)) { |target| check_target(target, scope) }
+    Array.each(MultiAssign.values(stmt)) { |value| check_expr(value, scope) }
+  in ExprStmt
+    check_expr(ExprStmt.expr(stmt), scope)
+  else
+    raise InternalError.new("unknown statement")
+  end
+end
+
+def check_try(stmt, scope, in_function, in_loop)
+  check_nested(Try.body(stmt), scope, in_function, in_loop)
+  catch_ident = Try.catch_ident(stmt)
+  handler = Try.handler(stmt)
+  if catch_ident && handler
+    handler_scope = new_static_scope(scope)
+    declare(handler_scope, catch_ident, :variable, nil)
+    check_block(handler, handler_scope, in_function, in_loop)
+  end
+  finally_body = Try.finally_body(stmt)
+  check_nested(finally_body, scope, in_function, in_loop) if finally_body
+end
+
+# A function: its parameters (each default sees the earlier parameters) and its body share
+# one scope. A function body starts outside any loop.
+def check_function(fn, scope)
+  fn_scope = new_static_scope(scope)
+  Array.each(FnDef.params(fn)) do |param|
+    check_optional(Param.default(param), fn_scope)
+    declare(fn_scope, Ident.new(Param.name(param), Param.line(param), Param.col(param)), :variable, nil)
+  end
+  check_block(FnDef.body(fn), fn_scope, true, false)
+end
+
+# An assignment target: a name must be a variable; an index or field target checks its parts.
+def check_target(target, scope)
+  case target
+  in Name
+    decl = resolve_name(target, scope)
+    what =
+      case Decl.kind(decl)
+      in :constant then "constant"
+      in :function then "function"
+      in :builtin then "built-in"
+      else nil
+      end
+    if what
+      raise static_error("cannot assign to #{what} '#{Name.name(target)}'", Name.line(target), Name.col(target))
+    end
+  else
+    check_expr(target, scope)
+  end
+end
+
+# Finds the declaration of a name, records its depth on the node, and returns the Decl.
+def resolve_name(node, scope)
+  name = Name.name(node)
+  found = lookup_static(scope, name)
+  unless found
+    message = "undefined name '#{name}'"
+    suggested = suggestion(scope, name)
+    message += "; did you mean '#{suggested}'?" if suggested
+    raise static_error(message, Name.line(node), Name.col(node))
+  end
+  decl = Resolution.decl(found)
+  Name.set_depth(node, Decl.kind(decl) == :builtin ? -1 : Resolution.depth(found))
+  decl
+end
+
+def check_expr(expr, scope)
+  case expr
+  in IntLit | StrLit | ConstLit then nil
+  in Template then Array.each(Template.parts(expr)) { |part| check_expr(part, scope) }
+  in Name then resolve_name(expr, scope)
+  in ArrayLit then Array.each(ArrayLit.items(expr)) { |item| check_expr(item, scope) }
+  in MapLit
+    Array.each(MapLit.entries(expr)) do |entry|
+      check_expr(MapEntry.key(entry), scope)
+      check_expr(MapEntry.value(entry), scope)
+    end
+  in FnExpr then check_function(FnExpr.fn(expr), scope)
+  in Negate then check_expr(Negate.operand(expr), scope)
+  in Not then check_expr(Not.operand(expr), scope)
+  in Binary
+    check_expr(Binary.left(expr), scope)
+    check_expr(Binary.right(expr), scope)
+  in Logic
+    check_expr(Logic.left(expr), scope)
+    check_expr(Logic.right(expr), scope)
+  in Call then check_call(expr, scope)
+  in Subscript
+    check_expr(Subscript.target(expr), scope)
+    check_expr(Subscript.index(expr), scope)
+  in Slice
+    check_expr(Slice.target(expr), scope)
+    check_optional(Slice.lo(expr), scope)
+    check_optional(Slice.hi(expr), scope)
+  in Field then check_expr(Field.target(expr), scope)
+  else raise InternalError.new("unknown expression")
+  end
+end
+
+# The callee, the arguments, then the argument count when the callee is a name that refers
+# to a function declaration or a built-in.
+def check_call(call, scope)
+  callee = Call.callee(call)
+  decl = nil
+  name = ""
+  case callee
+  in Name
+    decl = resolve_name(callee, scope)
+    name = Name.name(callee)
+  else check_expr(callee, scope)
+  end
+  args = Call.args(call)
+  Array.each(args) { |arg| check_expr(arg, scope) }
+  return unless decl
+  given = Array.size(args)
+  case Decl.kind(decl)
+  in :function
+    fn = Decl.fn(decl)
+    return unless fn
+    min = required_count(fn)
+    max = Array.size(FnDef.params(fn))
+    if given < min || given > max
+      raise static_error(arity_message(name, min, max, given), Call.line(call), Call.col(call))
+    end
+  in :builtin
+    unless builtin_accepts?(name, given)
+      message = arity_message(name, builtin_min_args(name), builtin_max_args(name), given)
+      raise static_error(message, Call.line(call), Call.col(call))
+    end
+  else nil
+  end
+end
+
+# The number of parameters without a default.
+def required_count(fn) = Array.count(FnDef.params(fn)) { |param| Param.default(param) == nil }

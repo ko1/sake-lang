@@ -1,0 +1,336 @@
+# Evaluation (SPEC 6 and 9): expressions give values; a statement gives nil when it completes
+# normally, or a Signal for break / continue / return. Runtime errors and throws are raised as
+# MiniError and MiniThrow.
+
+# ---- Expressions ----
+
+def eval_expr(rt, expr, scope)
+  case expr
+  in IntLit then IntLit.value(expr)
+  in StrLit then StrLit.value(expr)
+  in ConstLit then ConstLit.value(expr)
+  in Template
+    Array.join(Array.map(Template.parts(expr)) { |part| to_str(eval_expr(rt, part, scope)) }, "")
+  in Name then read_name(expr, scope)
+  in ArrayLit then Array.map(ArrayLit.items(expr)) { |item| eval_expr(rt, item, scope) }
+  in MapLit then eval_map(rt, expr, scope)
+  in FnExpr then make_closure(rt, FnExpr.fn(expr), scope)
+  in Negate then negate(eval_expr(rt, Negate.operand(expr), scope), Negate.line(expr), Negate.col(expr))
+  in Not then !truthy?(eval_expr(rt, Not.operand(expr), scope))
+  in Binary
+    a = eval_expr(rt, Binary.left(expr), scope)
+    b = eval_expr(rt, Binary.right(expr), scope)
+    binary_op(Binary.op(expr), a, b, Binary.line(expr), Binary.col(expr))
+  in Logic
+    a = eval_expr(rt, Logic.left(expr), scope)
+    if Logic.op(expr) == "and"
+      truthy?(a) ? eval_expr(rt, Logic.right(expr), scope) : a
+    else
+      truthy?(a) ? a : eval_expr(rt, Logic.right(expr), scope)
+    end
+  in Call
+    f = eval_expr(rt, Call.callee(expr), scope)
+    args = Array.map(Call.args(expr)) { |arg| eval_expr(rt, arg, scope) }
+    call_value(rt, f, args, Call.line(expr), Call.col(expr))
+  in Subscript
+    target = eval_expr(rt, Subscript.target(expr), scope)
+    i = eval_expr(rt, Subscript.index(expr), scope)
+    index_get(target, i, Subscript.line(expr), Subscript.col(expr))
+  in Slice
+    target = eval_expr(rt, Slice.target(expr), scope)
+    lo = eval_optional(rt, Slice.lo(expr), scope)
+    hi = eval_optional(rt, Slice.hi(expr), scope)
+    slice_value(target, lo, hi, Slice.line(expr), Slice.col(expr))
+  in Field
+    target = eval_expr(rt, Field.target(expr), scope)
+    index_get(target, Field.name(expr), Field.line(expr), Field.col(expr))
+  else raise InternalError.new("unknown expression")
+  end
+end
+
+def eval_optional(rt, expr, scope) = expr == nil ? nil : eval_expr(rt, expr, scope)
+
+def eval_map(rt, expr, scope)
+  map = Hash[]
+  Array.each(MapLit.entries(expr)) do |entry|
+    key = eval_expr(rt, MapEntry.key(entry), scope)
+    value = eval_expr(rt, MapEntry.value(entry), scope)
+    check_key(key, MapEntry.line(entry), MapEntry.col(entry))
+    map[key] = value
+  end
+  map
+end
+
+def read_name(node, scope)
+  name = Name.name(node)
+  depth = Name.depth(node)
+  return Builtin.new(name) if depth < 0
+  vars = Scope.vars(scope_at(scope, depth))
+  raise used_before_declaration(node) unless Hash.key?(vars, name)
+  vars[name]
+end
+
+def write_name(node, scope, value)
+  vars = Scope.vars(scope_at(scope, Name.depth(node)))
+  name = Name.name(node)
+  raise used_before_declaration(node) unless Hash.key?(vars, name)
+  vars[name] = value
+end
+
+def used_before_declaration(node) =
+  runtime_error("name", "'#{Name.name(node)}' is used before its declaration", Name.line(node), Name.col(node))
+
+# ---- Statement lists ----
+
+# Runs a statement list in `scope`, creating its function declarations' closures first.
+def exec_block(rt, stmts, scope)
+  hoist_functions(rt, stmts, scope)
+  Array.each(stmts) do |stmt|
+    signal = exec_statement(rt, stmt, scope)
+    return signal if signal
+  end
+  nil
+end
+
+# Runs a block in a new scope.
+def exec_nested(rt, stmts, scope) = exec_block(rt, stmts, new_scope(scope))
+
+# ---- Statements ----
+
+def exec_statement(rt, stmt, scope)
+  case stmt
+  in ExprStmt
+    eval_expr(rt, ExprStmt.expr(stmt), scope)
+    nil
+  in Let
+    Scope.vars(scope)[Ident.name(Let.ident(stmt))] = eval_optional(rt, Let.init(stmt), scope)
+    nil
+  in LetArray then exec_let_array(rt, stmt, scope)
+  in Const
+    Scope.vars(scope)[Ident.name(Const.ident(stmt))] = eval_expr(rt, Const.init(stmt), scope)
+    nil
+  in FnDecl then nil
+  in If then exec_if(rt, stmt, scope)
+  in Match then exec_match(rt, stmt, scope)
+  in While then exec_while(rt, stmt, scope)
+  in For then exec_for(rt, stmt, scope)
+  in Break then Signal.new(:break, nil)
+  in Continue then Signal.new(:continue, nil)
+  in Return then Signal.new(:return, eval_optional(rt, Return.value(stmt), scope))
+  in Throw then raise MiniThrow.new("throw", eval_expr(rt, Throw.value(stmt), scope), Throw.line(stmt), Throw.col(stmt))
+  in Assert then exec_assert(rt, stmt, scope)
+  in Try then exec_try(rt, stmt, scope)
+  in Assign then exec_assign(rt, stmt, scope)
+  in MultiAssign then exec_multi_assign(rt, stmt, scope)
+  else raise InternalError.new("unknown statement")
+  end
+end
+
+def exec_let_array(rt, stmt, scope)
+  value = eval_expr(rt, LetArray.init(stmt), scope)
+  line = LetArray.line(stmt)
+  col = LetArray.col(stmt)
+  raise runtime_error("type", "cannot destructure #{type_name(value)}", line, col) unless value in Array
+  idents = LetArray.idents(stmt)
+  expected = Array.size(idents)
+  got = Array.size(value)
+  if expected != got
+    raise runtime_error("value", "expected #{count_noun(expected, "element", "elements")}, got #{got}", line, col)
+  end
+  vars = Scope.vars(scope)
+  Array.each_with_index(idents) { |ident, i| vars[Ident.name(ident)] = value[i] }
+  nil
+end
+
+def exec_if(rt, stmt, scope)
+  Array.each(If.arms(stmt)) do |arm|
+    return exec_nested(rt, IfArm.body(arm), scope) if truthy?(eval_expr(rt, IfArm.cond(arm), scope))
+  end
+  else_body = If.else_body(stmt)
+  else_body ? exec_nested(rt, else_body, scope) : nil
+end
+
+# The arms' values are evaluated in order, up to the first one equal to the subject.
+def exec_match(rt, stmt, scope)
+  subject = eval_expr(rt, Match.subject(stmt), scope)
+  line = Match.line(stmt)
+  col = Match.col(stmt)
+  Array.each(Match.arms(stmt)) do |arm|
+    Array.each(WhenArm.values(arm)) do |value_expr|
+      value = eval_expr(rt, value_expr, scope)
+      return exec_nested(rt, WhenArm.body(arm), scope) if values_equal?(subject, value, 0, line, col)
+    end
+  end
+  else_body = Match.else_body(stmt)
+  else_body ? exec_nested(rt, else_body, scope) : nil
+end
+
+def exec_while(rt, stmt, scope)
+  while truthy?(eval_expr(rt, While.cond(stmt), scope))
+    signal = exec_nested(rt, While.body(stmt), scope)
+    next unless signal
+    case Signal.kind(signal)
+    in :break then break
+    in :continue then next
+    else return signal
+    end
+  end
+  nil
+end
+
+# Iterates over a snapshot: an array's elements (with their indexes), or a map's keys (with
+# their values). Each iteration has a fresh scope for the loop variables and the body.
+def exec_for(rt, stmt, scope)
+  collection = eval_expr(rt, For.iterable(stmt), scope)
+  firsts = Array[]
+  seconds = Array[]
+  case collection
+  in Array
+    firsts = Range.to_a(0...Array.size(collection))
+    seconds = Array.dup(collection)
+  in Hash
+    firsts = Hash.keys(collection)
+    seconds = Hash.values(collection)
+  else
+    raise runtime_error("type", "cannot iterate over #{type_name(collection)}", For.line(stmt), For.col(stmt))
+  end
+  second = For.second(stmt)
+  first_name = Ident.name(For.first(stmt))
+  with_index = (collection in Array)
+  Array.each_with_index(firsts) do |first, i|
+    loop_scope = new_scope(scope)
+    vars = Scope.vars(loop_scope)
+    if second
+      vars[first_name] = first
+      vars[Ident.name(second)] = seconds[i]
+    else
+      vars[first_name] = with_index ? seconds[i] : first
+    end
+    signal = exec_block(rt, For.body(stmt), loop_scope)
+    next unless signal
+    case Signal.kind(signal)
+    in :break then break
+    in :continue then next
+    else return signal
+    end
+  end
+  nil
+end
+
+def exec_assert(rt, stmt, scope)
+  return nil if truthy?(eval_expr(rt, Assert.cond(stmt), scope))
+  message = "assertion failed"
+  message_expr = Assert.message(stmt)
+  message += ": " + to_str(eval_expr(rt, message_expr, scope)) if message_expr
+  raise runtime_error("assert", message, Assert.line(stmt), Assert.col(stmt))
+end
+
+# ---- try / catch / finally (SPEC 9) ----
+
+# The value a `catch` receives: the thrown value, or an error map for a runtime error.
+def caught_value(e)
+  case e
+  in MiniThrow then MiniThrow.value(e)
+  in MiniError
+    Hash["kind" => MiniError.kind(e), "message" => Exception.message(e),
+         "line" => MiniError.line(e), "col" => MiniError.col(e)]
+  end
+end
+
+def exec_try(rt, stmt, scope)
+  signal = nil
+  escaping = nil
+  begin
+    signal = exec_nested(rt, Try.body(stmt), scope)
+  rescue MiniError, MiniThrow => e
+    escaping = e
+  end
+  catch_ident = Try.catch_ident(stmt)
+  handler = Try.handler(stmt)
+  if escaping && catch_ident && handler
+    handler_scope = new_scope(scope)
+    Scope.vars(handler_scope)[Ident.name(catch_ident)] = caught_value(escaping)
+    escaping = nil
+    begin
+      signal = exec_block(rt, handler, handler_scope)
+    rescue MiniError, MiniThrow => e
+      escaping = e
+    end
+  end
+  finally_body = Try.finally_body(stmt)
+  if finally_body
+    # A break / continue / return / error in the finally block replaces what happened before.
+    finally_signal = exec_nested(rt, finally_body, scope)
+    return finally_signal if finally_signal
+  end
+  raise escaping if escaping
+  signal
+end
+
+# ---- Assignment (SPEC 6.3) ----
+
+# A target with its parts evaluated: a name, or a container with its index (or field name).
+class Place
+  attr_reader node, container, key
+end
+
+def eval_place(rt, target, scope)
+  case target
+  in Subscript then Place.new(target, eval_expr(rt, Subscript.target(target), scope), eval_expr(rt, Subscript.index(target), scope))
+  in Field then Place.new(target, eval_expr(rt, Field.target(target), scope), Field.name(target))
+  else Place.new(target, nil, nil)
+  end
+end
+
+def read_place(place, scope)
+  node = Place.node(place)
+  case node
+  in Name then read_name(node, scope)
+  in Subscript then index_get(Place.container(place), Place.key(place), Subscript.line(node), Subscript.col(node))
+  in Field then index_get(Place.container(place), Place.key(place), Field.line(node), Field.col(node))
+  else raise InternalError.new("not an assignment target")
+  end
+end
+
+def write_place(place, scope, value)
+  node = Place.node(place)
+  case node
+  in Name then write_name(node, scope, value)
+  in Subscript then index_set(Place.container(place), Place.key(place), value, Subscript.line(node), Subscript.col(node))
+  in Field then index_set(Place.container(place), Place.key(place), value, Field.line(node), Field.col(node))
+  else raise InternalError.new("not an assignment target")
+  end
+end
+
+# `t = e` and `t op= e`: the target's parts, then e, then (for op=) the current value.
+def exec_assign(rt, stmt, scope)
+  place = eval_place(rt, Assign.target(stmt), scope)
+  value = eval_expr(rt, Assign.value(stmt), scope)
+  op = Assign.op(stmt)
+  if op != "="
+    current = read_place(place, scope)
+    value = binary_op(String.delete_suffix(op, "="), current, value, Assign.line(stmt), Assign.col(stmt))
+  end
+  write_place(place, scope, value)
+  nil
+end
+
+# All targets' parts, then all values, then the stores, each left to right.
+def exec_multi_assign(rt, stmt, scope)
+  places = Array.map(MultiAssign.targets(stmt)) { |target| eval_place(rt, target, scope) }
+  values = Array.map(MultiAssign.values(stmt)) { |value| eval_expr(rt, value, scope) }
+  Array.each_with_index(places) { |place, i| write_place(place, scope, values[i]) }
+  nil
+end
+
+# Runs a checked program. An error or throw that nothing catches ends it with a report.
+def run_program(body)
+  rt = Runtime.new(0, 0)
+  begin
+    exec_block(rt, body, new_scope(nil))
+  rescue MiniError => e
+    emit_line(error_line("runtime", MiniError.line(e), MiniError.col(e), Exception.message(e)))
+  rescue MiniThrow => e
+    emit_line(error_line("runtime", MiniThrow.line(e), MiniThrow.col(e), "uncaught throw #{repr(MiniThrow.value(e))}"))
+  end
+end

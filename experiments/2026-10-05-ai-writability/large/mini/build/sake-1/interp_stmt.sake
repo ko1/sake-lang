@@ -1,0 +1,242 @@
+# Evaluation (SPEC sections 6 and 9): statements, scopes and calls.
+# Expressions and assignment are in interp_expr.sake.
+
+# How a statement list ended early: kind is :break, :continue or :return.
+class Jump
+  attr_reader kind, value
+end
+
+# The state of a run: the number of user-function calls in progress, and the
+# number of closures made so far (their ids).
+class Machine
+  attr_reader calls, closures
+
+  def run_program(stmts)
+    m = Machine.new(0, 0)
+    builtins = Hash[]
+    Array.each(builtin_names) { |name| builtins[name] = Builtin.new(name) }
+    program = Scope.new(Hash[], Scope.new(builtins, nil, 0), 1)
+    exec_list(m, stmts, program)
+  end
+
+  def child_scope(scope) = Scope.new(Hash[], scope, Scope.depth(scope) + 1)
+
+  def make_closure(m, fn, scope)
+    @closures += 1
+    Closure.new(fn, scope, @closures)
+  end
+
+  # Runs a statement list in `scope` after creating the closures of its
+  # function declarations; returns nil, or the Jump that ended it.
+  def exec_list(m, stmts, scope)
+    vars = Scope.vars(scope)
+    Array.each(block_functions(stmts)) do |fn|
+      name = FnExpr.name(fn)
+      vars[name] = make_closure(m, fn, scope) if name
+    end
+    Array.each(stmts) do |stmt|
+      jump = exec_statement(m, stmt, scope)
+      return jump if jump
+    end
+    nil
+  end
+
+  # A block with its own scope.
+  def exec_block(m, stmts, scope) = exec_list(m, stmts, child_scope(scope))
+
+  def exec_statement(m, stmt, scope)
+    case stmt
+    in ExprStmt
+      eval_expr(m, ExprStmt.expr(stmt), scope)
+      nil
+    in AssignStmt
+      exec_assign(m, stmt, scope)
+      nil
+    in LetStmt
+      value = LetStmt.value(stmt)
+      Scope.vars(scope)[LetStmt.name(stmt)] = value ? eval_expr(m, value, scope) : nil
+      nil
+    in LetArray
+      exec_let_array(m, stmt, scope)
+      nil
+    in ConstStmt
+      Scope.vars(scope)[ConstStmt.name(stmt)] = eval_expr(m, ConstStmt.value(stmt), scope)
+      nil
+    in FnDecl then nil
+    in IfStmt then exec_if(m, stmt, scope)
+    in MatchStmt then exec_match(m, stmt, scope)
+    in WhileStmt then exec_while(m, stmt, scope)
+    in ForStmt then exec_for(m, stmt, scope)
+    in LoopJump then Jump.new(LoopJump.kind(stmt), nil)
+    in ReturnStmt
+      value = ReturnStmt.value(stmt)
+      Jump.new(:return, value ? eval_expr(m, value, scope) : nil)
+    in ThrowStmt
+      value = eval_expr(m, ThrowStmt.value(stmt), scope)
+      raise MiniThrow.new("uncaught throw #{repr(value, 0)}", value, ThrowStmt.line(stmt), ThrowStmt.col(stmt))
+    in AssertStmt
+      exec_assert(m, stmt, scope)
+      nil
+    in TryStmt then exec_try(m, stmt, scope)
+    end
+  end
+
+  def exec_let_array(m, stmt, scope)
+    value = eval_expr(m, LetArray.value(stmt), scope)
+    line = LetArray.line(stmt)
+    col = LetArray.col(stmt)
+    type_error("cannot destructure #{type_name(value)}", line, col) unless value in Array
+    value => Array
+    names = LetArray.names(stmt)
+    if Array.size(value) != Array.size(names)
+      runtime_error("value", "expected #{count_noun(Array.size(names), "element")}, got #{Array.size(value)}", line, col)
+    end
+    vars = Scope.vars(scope)
+    Array.each_with_index(names) { |id, i| vars[Ident.name(id)] = Array.fetch(value, i) }
+  end
+
+  def exec_if(m, stmt, scope)
+    blocks = IfStmt.blocks(stmt)
+    Array.each_with_index(IfStmt.conds(stmt)) do |cond, i|
+      return exec_block(m, Array.fetch(blocks, i), scope) if truthy?(eval_expr(m, cond, scope))
+    end
+    else_block = IfStmt.else_block(stmt)
+    else_block ? exec_block(m, else_block, scope) : nil
+  end
+
+  # The subject is evaluated once; each arm's values only until one is equal.
+  def exec_match(m, stmt, scope)
+    subject = eval_expr(m, MatchStmt.subject(stmt), scope)
+    line = MatchStmt.line(stmt)
+    col = MatchStmt.col(stmt)
+    Array.each(MatchStmt.arms(stmt)) do |arm|
+      Array.each(WhenArm.values(arm)) do |value|
+        if mini_equal?(subject, eval_expr(m, value, scope), 0, line, col)
+          return exec_block(m, WhenArm.body(arm), scope)
+        end
+      end
+    end
+    else_block = MatchStmt.else_block(stmt)
+    else_block ? exec_block(m, else_block, scope) : nil
+  end
+
+  def exec_while(m, stmt, scope)
+    while truthy?(eval_expr(m, WhileStmt.cond(stmt), scope))
+      jump = exec_block(m, WhileStmt.body(stmt), scope)
+      next unless jump
+      return jump if Jump.kind(jump) == :return
+      break if Jump.kind(jump) == :break
+    end
+    nil
+  end
+
+  # Iterates over a snapshot: an array's elements (with their indexes), or a
+  # map's keys (with their values). Each iteration has a fresh scope.
+  def exec_for(m, stmt, scope)
+    iter = eval_expr(m, ForStmt.iter(stmt), scope)
+    pairs =
+      case iter
+      in Array then Array.map(Array.each_with_index(iter)) { |x, i| [i, x] }
+      in Hash then Hash.to_a(iter)
+      else type_error("cannot iterate over #{type_name(iter)}", ForStmt.line(stmt), ForStmt.col(stmt))
+      end
+    names = ForStmt.names(stmt)
+    first = Ident.name(Array.fetch(names, 0))
+    second = Array.size(names) == 2 ? Ident.name(Array.fetch(names, 1)) : nil
+    is_map = (iter in Hash)
+    Array.each(pairs) do |pair|
+      key, item = pair
+      body_scope = child_scope(scope)
+      vars = Scope.vars(body_scope)
+      if second
+        vars[first] = key
+        vars[second] = item
+      else
+        vars[first] = is_map ? key : item
+      end
+      jump = exec_list(m, ForStmt.body(stmt), body_scope)
+      next unless jump
+      return jump if Jump.kind(jump) == :return
+      break if Jump.kind(jump) == :break
+    end
+    nil
+  end
+
+  def exec_assert(m, stmt, scope)
+    return if truthy?(eval_expr(m, AssertStmt.cond(stmt), scope))
+    message = AssertStmt.message(stmt)
+    text = message ? "assertion failed: #{str_of(eval_expr(m, message, scope))}" : "assertion failed"
+    runtime_error("assert", text, AssertStmt.line(stmt), AssertStmt.col(stmt))
+  end
+
+  # try / catch / finally (SPEC 9). A finally block that ends early replaces
+  # what happened before it; otherwise that goes on.
+  def exec_try(m, stmt, scope)
+    outcome = nil
+    pending = nil
+    begin
+      outcome = exec_block(m, TryStmt.body(stmt), scope)
+    rescue MiniThrow => thrown
+      name = TryStmt.catch_name(stmt)
+      handler = TryStmt.handler(stmt)
+      if name && handler
+        begin
+          catch_scope = child_scope(scope)
+          Scope.vars(catch_scope)[Ident.name(name)] = MiniThrow.value(thrown)
+          outcome = exec_list(m, handler, catch_scope)
+        rescue MiniThrow => again
+          pending = again
+        end
+      else
+        pending = thrown
+      end
+    end
+    finally_block = TryStmt.finally_block(stmt)
+    if finally_block
+      jump = exec_block(m, finally_block, scope)
+      return jump if jump
+    end
+    raise pending if pending
+    outcome
+  end
+
+  # ---- calls (SPEC 6.6) ----
+
+  def max_calls = 150
+
+  def call_value(m, f, args, line, col)
+    case f
+    in Closure then call_closure(m, f, args, line, col)
+    in Builtin then call_builtin(m, Builtin.name(f), args, line, col)
+    else type_error("cannot call #{type_name(f)}", line, col)
+    end
+  end
+
+  def call_closure(m, f, args, line, col)
+    fn = Closure.fn(f)
+    params = FnExpr.params(fn)
+    given = Array.size(args)
+    unless arity_ok?(FnExpr.required(fn), Array.size(params), given)
+      message = arity_message(FnExpr.name(fn) || "function", FnExpr.required(fn), Array.size(params), given)
+      runtime_error("arity", message, line, col)
+    end
+    runtime_error("stack", "call depth exceeded #{max_calls}", line, col) if @calls >= max_calls
+    scope = child_scope(Closure.scope(f))
+    vars = Scope.vars(scope)
+    jump = nil
+    @calls += 1
+    begin
+      Array.each_with_index(params) do |param, i|
+        default = Param.default(param)
+        vars[Param.name(param)] =
+          if i < given then Array.fetch(args, i)
+          elsif default then eval_expr(m, default, scope)
+          end
+      end
+      jump = exec_list(m, FnExpr.body(fn), scope)
+    ensure
+      @calls -= 1
+    end
+    jump ? Jump.value(jump) : nil
+  end
+end

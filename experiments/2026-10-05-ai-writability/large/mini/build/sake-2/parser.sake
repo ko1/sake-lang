@@ -1,0 +1,333 @@
+# Parsing statements (SPEC 3.1). Expressions are in parser_expr.sake.
+#
+# The parser walks a token Array that ends with :eof (or, for an interpolation, :interp_end);
+# it never moves past that last token. The first syntax error is raised as a CompileError.
+
+class Parser
+  attr_reader tokens
+  attr_accessor pos
+
+  def peek(p) = @tokens[@pos]
+  def peek_next(p) = @tokens[Tuple.min([@pos + 1, Array.size(@tokens) - 1])]
+
+  def advance(p)
+    t = peek(p)
+    @pos += 1 if @pos < Array.size(@tokens) - 1
+    t
+  end
+
+  def at_op?(p, text) = op?(peek(p), text)
+  def at_keyword?(p, text) = keyword?(peek(p), text)
+
+  # Consumes the operator `text`, or reports "expected 'text', got ...".
+  def expect_op(p, text)
+    raise expected_error("'#{text}'", peek(p)) unless at_op?(p, text)
+    advance(p)
+  end
+
+  def expect_keyword(p, text)
+    raise expected_error("'#{text}'", peek(p)) unless at_keyword?(p, text)
+    advance(p)
+  end
+
+  def expect_ident(p)
+    t = peek(p)
+    raise expected_error("name", t) unless Token.kind(t) == :name
+    advance(p)
+    Ident.new(Token.text(t), Token.line(t), Token.col(t))
+  end
+
+  def at_separator?(p) = Token.kind(peek(p)) == :newline || at_op?(p, ";")
+
+  # The keywords before which a statement may end (SPEC 3.1).
+  def at_block_end?(p)
+    t = peek(p)
+    Token.kind(t) == :eof ||
+      (Token.kind(t) == :keyword && Set.include?(block_end_keywords, Token.text(t)))
+  end
+
+  # ---- Statement lists ----
+
+  # The whole program: statements up to the end of the input.
+  def parse_program(p)
+    body = parse_block(p)
+    t = peek(p)
+    raise expected_error("end of input", t) unless Token.kind(t) == :eof
+    body
+  end
+
+  # Statements up to the next end / elif / else / catch / finally / when (or the end of input).
+  def parse_block(p)
+    stmts = Array[]
+    while true
+      advance(p) while at_separator?(p)
+      break if at_block_end?(p)
+      Array.push(stmts, parse_statement(p))
+      if at_separator?(p)
+        advance(p)
+      elsif !at_block_end?(p)
+        raise expected_error("end of statement", peek(p))
+      end
+    end
+    stmts
+  end
+
+  # A block followed by `end`.
+  def parse_body(p)
+    body = parse_block(p)
+    expect_keyword(p, "end")
+    body
+  end
+
+  # ---- Statements ----
+
+  def parse_statement(p)
+    t = peek(p)
+    if Token.kind(t) == :keyword
+      case Token.text(t)
+      in "let" then return parse_let(p)
+      in "const" then return parse_const(p)
+      in "fn"
+        return parse_fn_decl(p) if Token.kind(peek_next(p)) == :name
+      in "if" then return parse_if(p)
+      in "match" then return parse_match(p)
+      in "while" then return parse_while(p)
+      in "for" then return parse_for(p)
+      in "break"
+        advance(p)
+        return Break.new(Token.line(t), Token.col(t))
+      in "continue"
+        advance(p)
+        return Continue.new(Token.line(t), Token.col(t))
+      in "return" then return parse_return(p)
+      in "throw"
+        advance(p)
+        return Throw.new(parse_expr(p), Token.line(t), Token.col(t))
+      in "assert" then return parse_assert(p)
+      in "try" then return parse_try(p)
+      else nil
+      end
+    end
+    parse_simple_statement(p)
+  end
+
+  def parse_let(p)
+    t = advance(p)
+    if at_op?(p, "[")
+      bracket = advance(p)
+      idents = Ident[expect_ident(p)]
+      while at_op?(p, ",")
+        advance(p)
+        Array.push(idents, expect_ident(p))
+      end
+      expect_op(p, "]")
+      expect_op(p, "=")
+      return LetArray.new(idents, parse_expr(p), Token.line(bracket), Token.col(bracket))
+    end
+    ident = expect_ident(p)
+    init = nil
+    if at_op?(p, "=")
+      advance(p)
+      init = parse_expr(p)
+    end
+    Let.new(ident, init, Token.line(t), Token.col(t))
+  end
+
+  def parse_const(p)
+    t = advance(p)
+    ident = expect_ident(p)
+    expect_op(p, "=")
+    Const.new(ident, parse_expr(p), Token.line(t), Token.col(t))
+  end
+
+  def parse_fn_decl(p)
+    t = advance(p)
+    ident = expect_ident(p)
+    fn = parse_fn_rest(p, Ident.name(ident), t)
+    FnDecl.new(ident, fn, Token.line(t), Token.col(t))
+  end
+
+  # The parameters and body of a function, after `fn` or `fn name`.
+  def parse_fn_rest(p, name, fn_token)
+    params = parse_params(p)
+    FnDef.new(name, params, parse_body(p), Token.line(fn_token), Token.col(fn_token))
+  end
+
+  # `(a, b = 1, ...)`: once a parameter has a default, all later ones need one.
+  def parse_params(p)
+    expect_op(p, "(")
+    params = Param[]
+    seen_default = false
+    until at_op?(p, ")")
+      ident = expect_ident(p)
+      default = nil
+      if at_op?(p, "=")
+        advance(p)
+        default = parse_expr(p)
+        seen_default = true
+      elsif seen_default
+        raise syntax_error("parameter '#{Ident.name(ident)}' needs a default value", Ident.line(ident), Ident.col(ident))
+      end
+      Array.push(params, Param.new(Ident.name(ident), default, Ident.line(ident), Ident.col(ident)))
+      break unless at_op?(p, ",")
+      advance(p)
+    end
+    expect_op(p, ")")
+    params
+  end
+
+  def parse_if(p)
+    t = advance(p)
+    arms = IfArm[]
+    cond = parse_expr(p)
+    expect_keyword(p, "then")
+    Array.push(arms, IfArm.new(cond, parse_block(p)))
+    while at_keyword?(p, "elif")
+      advance(p)
+      cond = parse_expr(p)
+      expect_keyword(p, "then")
+      Array.push(arms, IfArm.new(cond, parse_block(p)))
+    end
+    else_body = parse_else(p)
+    expect_keyword(p, "end")
+    If.new(arms, else_body, Token.line(t), Token.col(t))
+  end
+
+  # An optional `else` block; nil when there is none.
+  def parse_else(p)
+    return nil unless at_keyword?(p, "else")
+    advance(p)
+    parse_block(p)
+  end
+
+  def parse_match(p)
+    t = advance(p)
+    subject = parse_expr(p)
+    advance(p) while at_separator?(p)
+    raise expected_error("'when'", peek(p)) unless at_keyword?(p, "when")
+    arms = WhenArm[]
+    while at_keyword?(p, "when")
+      advance(p)
+      values = Array[parse_expr(p)]
+      while at_op?(p, ",")
+        advance(p)
+        Array.push(values, parse_expr(p))
+      end
+      expect_keyword(p, "then")
+      Array.push(arms, WhenArm.new(values, parse_block(p)))
+    end
+    else_body = parse_else(p)
+    expect_keyword(p, "end")
+    Match.new(subject, arms, else_body, Token.line(t), Token.col(t))
+  end
+
+  def parse_while(p)
+    t = advance(p)
+    cond = parse_expr(p)
+    expect_keyword(p, "do")
+    While.new(cond, parse_body(p), Token.line(t), Token.col(t))
+  end
+
+  def parse_for(p)
+    t = advance(p)
+    first = expect_ident(p)
+    second = nil
+    if at_op?(p, ",")
+      advance(p)
+      second = expect_ident(p)
+    end
+    expect_keyword(p, "in")
+    iterable = parse_expr(p)
+    expect_keyword(p, "do")
+    For.new(first, second, iterable, parse_body(p), Token.line(t), Token.col(t))
+  end
+
+  # `return` has no value when a separator or a block-ending keyword follows it.
+  def parse_return(p)
+    t = advance(p)
+    value = nil
+    value = parse_expr(p) unless at_separator?(p) || at_block_end?(p)
+    Return.new(value, Token.line(t), Token.col(t))
+  end
+
+  def parse_assert(p)
+    t = advance(p)
+    cond = parse_expr(p)
+    message = nil
+    if at_op?(p, ",")
+      advance(p)
+      message = parse_expr(p)
+    end
+    Assert.new(cond, message, Token.line(t), Token.col(t))
+  end
+
+  def parse_try(p)
+    t = advance(p)
+    body = parse_block(p)
+    catch_ident = nil
+    handler = nil
+    finally_body = nil
+    if at_keyword?(p, "catch")
+      advance(p)
+      catch_ident = expect_ident(p)
+      handler = parse_block(p)
+    end
+    if at_keyword?(p, "finally")
+      advance(p)
+      finally_body = parse_block(p)
+    end
+    if catch_ident == nil && finally_body == nil
+      raise expected_error("'catch' or 'finally'", peek(p))
+    end
+    expect_keyword(p, "end")
+    Try.new(body, catch_ident, handler, finally_body, Token.line(t), Token.col(t))
+  end
+
+  # An expression statement, or an assignment whose targets are the leading expressions.
+  def parse_simple_statement(p)
+    start = peek(p)
+    first = parse_expr(p)
+    targets = Array[first]
+    while at_op?(p, ",")
+      advance(p)
+      Array.push(targets, parse_expr(p))
+    end
+    t = peek(p)
+    is_assign = Token.kind(t) == :op && Set.include?(assign_operators, Token.text(t))
+    if !is_assign
+      return ExprStmt.new(first, Token.line(start), Token.col(start)) if Array.size(targets) == 1
+      raise expected_error("'='", t)
+    end
+    op = Token.text(t)
+    # Compound assignment takes a single target and a single value.
+    raise expected_error("'='", t) if op != "=" && Array.size(targets) > 1
+    Array.each(targets) do |target|
+      raise syntax_error("invalid assignment target", Token.line(t), Token.col(t)) unless assignable?(target)
+    end
+    advance(p)
+    return Assign.new(first, op, parse_expr(p), Token.line(t), Token.col(t)) if op != "="
+    values = Array[parse_expr(p)]
+    while at_op?(p, ",")
+      advance(p)
+      Array.push(values, parse_expr(p))
+    end
+    n = Array.size(targets)
+    m = Array.size(values)
+    if n != m
+      message = "#{count_noun(n, "target", "targets")} but #{count_noun(m, "value", "values")}"
+      raise syntax_error(message, Token.line(t), Token.col(t))
+    end
+    return Assign.new(first, op, Array.first(values), Token.line(t), Token.col(t)) if n == 1
+    MultiAssign.new(targets, values, Token.line(t), Token.col(t))
+  end
+end
+
+def block_end_keywords = once { Set["end", "elif", "else", "catch", "finally", "when"] }
+def assign_operators = once { Set["=", "+=", "-=", "*=", "/=", "%="] }
+
+def assignable?(expr) = (expr in Name | Subscript | Field)
+
+def expected_error(what, got) =
+  syntax_error("expected #{what}, got #{describe_token(got)}", Token.line(got), Token.col(got))
+
+def parse(tokens) = Parser.parse_program(Parser.new(tokens, 0))

@@ -1,0 +1,395 @@
+# The evaluator (SPEC sections 6 and 9).
+#
+# Executing a statement gives its completion: nil (go on), :break, :continue
+# or :return (the value is in Interp.ret_value). Throws and runtime errors are
+# the exceptions MiniThrow and MiniFault, which `try` catches.
+
+# depth counts the user-function calls in progress; next_id numbers closures;
+# function names the innermost one ("<fn>" if anonymous, nil at the top level).
+class Interp
+  attr_reader depth, ret_value, next_id, function
+
+  def max_depth = 150
+
+  def run_program(program)
+    vm = Interp.new(0, nil, 0, nil)
+    exec_block(vm, program, Env.open(Block.nslots(program), nil))
+  end
+
+  # ---- Statement lists ----
+
+  # Runs a statement list in env, after creating the closures of its
+  # function declarations.
+  def exec_block(vm, block, env)
+    vars = Env.vars(env)
+    Array.each(Block.fns(block)) do |f|
+      vars[Binder.slot(FnStmt.binder(f))] = make_closure(vm, FnStmt.fn(f), env)
+    end
+    stmts = Block.stmts(block)
+    i = 0
+    n = Array.size(stmts)
+    while i < n
+      done = exec_stmt(vm, stmts[i], env)
+      return done if done
+      i += 1
+    end
+    nil
+  end
+
+  # Runs a block in a new scope of its own.
+  def exec_scoped(vm, block, env) = exec_block(vm, block, Env.open(Block.nslots(block), env))
+
+  def make_closure(vm, fn, env)
+    @next_id += 1
+    Closure.new(fn, env, @next_id)
+  end
+
+  # ---- Statements ----
+
+  def exec_stmt(vm, stmt, env)
+    case stmt
+    in ExprStmt
+      evaluate(vm, ExprStmt.expr(stmt), env)
+      nil
+    in LetStmt
+      value = LetStmt.value(stmt)
+      Env.vars(env)[Binder.slot(LetStmt.binder(stmt))] = value ? evaluate(vm, value, env) : nil
+      nil
+    in LetArrayStmt then exec_let_array(vm, stmt, env)
+    in ConstStmt
+      Env.vars(env)[Binder.slot(ConstStmt.binder(stmt))] = evaluate(vm, ConstStmt.value(stmt), env)
+      nil
+    in FnStmt then nil
+    in IfStmt then exec_if(vm, stmt, env)
+    in MatchStmt then exec_match(vm, stmt, env)
+    in WhileStmt then exec_while(vm, stmt, env)
+    in ForStmt then exec_for(vm, stmt, env)
+    in BreakStmt then :break
+    in ContinueStmt then :continue
+    in ReturnStmt
+      value = ReturnStmt.value(stmt)
+      @ret_value = value ? evaluate(vm, value, env) : nil
+      :return
+    in ThrowStmt
+      raise MiniThrow.new("throw", evaluate(vm, ThrowStmt.value(stmt), env), ThrowStmt.line(stmt), ThrowStmt.col(stmt))
+    in AssertStmt then exec_assert(vm, stmt, env)
+    in TryStmt then exec_try(vm, stmt, env)
+    in AssignStmt then exec_assign(vm, stmt, env)
+    end
+  end
+
+  def exec_let_array(vm, stmt, env)
+    line = LetArrayStmt.line(stmt)
+    col = LetArrayStmt.col(stmt)
+    value = evaluate(vm, LetArrayStmt.value(stmt), env)
+    Fail.runtime("type", line, col, "cannot destructure #{Values.type_name(value)}") unless (value in MiniArray)
+    items = MiniArray.items(value)
+    binders = LetArrayStmt.binders(stmt)
+    want = Array.size(binders)
+    got = Array.size(items)
+    Fail.runtime("value", line, col, "expected #{Fail.count_of(want, "element")}, got #{got}") if want != got
+    vars = Env.vars(env)
+    Array.each_with_index(binders) { |b, i| vars[Binder.slot(b)] = items[i] }
+    nil
+  end
+
+  def exec_if(vm, stmt, env)
+    blocks = IfStmt.blocks(stmt)
+    conds = IfStmt.conds(stmt)
+    i = 0
+    n = Array.size(conds)
+    while i < n
+      return exec_scoped(vm, blocks[i], env) if Values.truthy?(evaluate(vm, conds[i], env))
+      i += 1
+    end
+    else_block = IfStmt.else_block(stmt)
+    else_block ? exec_scoped(vm, else_block, env) : nil
+  end
+
+  # The arms' values are compared with == in order, until one is equal.
+  def exec_match(vm, stmt, env)
+    subject = evaluate(vm, MatchStmt.subject(stmt), env)
+    line = MatchStmt.line(stmt)
+    col = MatchStmt.col(stmt)
+    Array.each(MatchStmt.arms(stmt)) do |arm|
+      Array.each(WhenArm.values(arm)) do |v|
+        return exec_scoped(vm, WhenArm.block(arm), env) if Values.equal?(subject, evaluate(vm, v, env), 0, line, col)
+      end
+    end
+    else_block = MatchStmt.else_block(stmt)
+    else_block ? exec_scoped(vm, else_block, env) : nil
+  end
+
+  # :break ends the loop; :continue and nil go on; :return is passed on.
+  def exec_while(vm, stmt, env)
+    cond = WhileStmt.cond(stmt)
+    body = WhileStmt.body(stmt)
+    while Values.truthy?(evaluate(vm, cond, env))
+      done = exec_scoped(vm, body, env)
+      return nil if done == :break
+      return done if done == :return
+    end
+    nil
+  end
+
+  # Iterates over a snapshot: an array's elements (with their indexes) or a
+  # map's keys (with their values). Each iteration has a fresh scope.
+  def exec_for(vm, stmt, env)
+    iter = evaluate(vm, ForStmt.iter(stmt), env)
+    firsts = Array[]
+    seconds = Array[]
+    case iter
+    in MiniArray
+      seconds = Array.dup(MiniArray.items(iter))
+      firsts = Array.size(ForStmt.binders(stmt)) == 2 ? Array.new(Array.size(seconds)) { |i| i } : seconds
+    in MiniMap
+      firsts = Hash.keys(MiniMap.entries(iter))
+      seconds = Hash.values(MiniMap.entries(iter))
+    else
+      Fail.runtime("type", ForStmt.line(stmt), ForStmt.col(stmt), "cannot iterate over #{Values.type_name(iter)}")
+    end
+    binders = ForStmt.binders(stmt)
+    first_slot = Binder.slot(binders[0])
+    second = binders[1]
+    body = ForStmt.body(stmt)
+    i = 0
+    n = Array.size(firsts)
+    while i < n
+      scope = Env.open(Block.nslots(body), env)
+      vars = Env.vars(scope)
+      vars[first_slot] = firsts[i]
+      vars[Binder.slot(second)] = seconds[i] if second
+      done = exec_block(vm, body, scope)
+      return nil if done == :break
+      return done if done == :return
+      i += 1
+    end
+    nil
+  end
+
+  def exec_assert(vm, stmt, env)
+    return nil if Values.truthy?(evaluate(vm, AssertStmt.cond(stmt), env))
+    message = AssertStmt.message(stmt)
+    text = message ? "assertion failed: #{Text.str(evaluate(vm, message, env))}" : "assertion failed"
+    Fail.runtime("assert", AssertStmt.line(stmt), AssertStmt.col(stmt), text)
+  end
+
+  # ---- try / catch / finally (9) ----
+
+  # The value a `catch` receives.
+  def caught_value(e)
+    case e
+    in MiniThrow then MiniThrow.value(e)
+    in MiniFault
+      MiniMap.new(Hash["kind" => MiniFault.kind(e), "message" => Exception.message(e), "line" => MiniFault.line(e), "col" => MiniFault.col(e), "function" => MiniFault.function(e)])
+    end
+  end
+
+  def exec_try(vm, stmt, env)
+    done = nil
+    escaping = nil
+    begin
+      done = exec_scoped(vm, TryStmt.body(stmt), env)
+    rescue MiniThrow, MiniFault => e
+      Fail.locate(e, @function) if (e in MiniFault)
+      binder = TryStmt.catch_binder(stmt)
+      handler = TryStmt.catch_block(stmt)
+      if binder && handler
+        begin
+          scope = Env.open(Block.nslots(handler), env)
+          Env.vars(scope)[Binder.slot(binder)] = caught_value(e)
+          done = exec_block(vm, handler, scope)
+        rescue MiniThrow, MiniFault => e2
+          escaping = e2
+        end
+      else
+        escaping = e
+      end
+    end
+    finally_block = TryStmt.finally_block(stmt)
+    if finally_block
+      returning = @ret_value
+      final = exec_scoped(vm, finally_block, env)
+      return final if final
+      @ret_value = returning
+    end
+    raise escaping if escaping
+    done
+  end
+
+  # ---- Assignment (6.3) ----
+
+  # Evaluates the parts of a target: a NameRef stays as it is; an element
+  # becomes [container, key, line, col].
+  def place(vm, target, env)
+    case target
+    in NameRef then target
+    in IndexExpr
+      obj = evaluate(vm, IndexExpr.target(target), env)
+      [obj, evaluate(vm, IndexExpr.index(target), env), IndexExpr.line(target), IndexExpr.col(target)]
+    in FieldExpr
+      [evaluate(vm, FieldExpr.target(target), env), FieldExpr.name(target), FieldExpr.line(target), FieldExpr.col(target)]
+    end
+  end
+
+  def read_place(vm, pl, env)
+    case pl
+    in NameRef then read_name(vm, pl, env)
+    else
+      obj, key, line, col = pl
+      Ops.index(obj, key, line, col)
+    end
+  end
+
+  def write_place(vm, pl, value, env)
+    case pl
+    in NameRef then write_name(vm, pl, value, env)
+    else
+      obj, key, line, col = pl
+      Ops.store(obj, key, value, line, col)
+    end
+  end
+
+  # `t op= e` reads t after evaluating e; t1, t2 = e1, e2 evaluates all the
+  # targets' parts, then all the values, then stores left to right.
+  def exec_assign(vm, stmt, env)
+    places = Array.map(AssignStmt.targets(stmt)) { |t| place(vm, t, env) }
+    values = Array.map(AssignStmt.values(stmt)) { |v| evaluate(vm, v, env) }
+    op = AssignStmt.op(stmt)
+    if op != "="
+      pl = places[0]
+      current = read_place(vm, pl, env)
+      plain = String.delete_suffix(op, "=")
+      write_place(vm, pl, Ops.binary(plain, current, values[0], AssignStmt.line(stmt), AssignStmt.col(stmt)), env)
+      return nil
+    end
+    Array.each_with_index(places) { |pl, i| write_place(vm, pl, values[i], env) }
+    nil
+  end
+
+  # ---- Names (6.4) ----
+
+  def read_name(vm, ref, env)
+    hops = NameRef.hops(ref)
+    return Array.fetch(Builtins.values, NameRef.slot(ref)) if hops < 0
+    v = Env.vars(Env.up(env, hops))[NameRef.slot(ref)]
+    case v
+    in Symbol then not_yet_declared(ref)
+    else v
+    end
+  end
+
+  def write_name(vm, ref, value, env)
+    vars = Env.vars(Env.up(env, NameRef.hops(ref)))
+    slot = NameRef.slot(ref)
+    not_yet_declared(ref) if (vars[slot] in Symbol)
+    vars[slot] = value
+  end
+
+  def not_yet_declared(ref)
+    Fail.runtime("name", NameRef.line(ref), NameRef.col(ref), "'#{NameRef.name(ref)}' is used before its declaration")
+  end
+
+  # ---- Expressions ----
+
+  def evaluate(vm, node, env)
+    case node
+    in IntLit then IntLit.value(node)
+    in StrLit then StrLit.value(node)
+    in NameRef then read_name(vm, node, env)
+    in BinOp then Ops.binary(BinOp.op(node), evaluate(vm, BinOp.left(node), env), evaluate(vm, BinOp.right(node), env), BinOp.line(node), BinOp.col(node))
+    in CallExpr then eval_call(vm, node, env)
+    in IndexExpr
+      obj = evaluate(vm, IndexExpr.target(node), env)
+      Ops.index(obj, evaluate(vm, IndexExpr.index(node), env), IndexExpr.line(node), IndexExpr.col(node))
+    in FieldExpr then Ops.index(evaluate(vm, FieldExpr.target(node), env), FieldExpr.name(node), FieldExpr.line(node), FieldExpr.col(node))
+    in LogicOp
+      left = evaluate(vm, LogicOp.left(node), env)
+      if LogicOp.op(node) == "and"
+        Values.truthy?(left) ? evaluate(vm, LogicOp.right(node), env) : left
+      else
+        Values.truthy?(left) ? left : evaluate(vm, LogicOp.right(node), env)
+      end
+    in NotOp then !Values.truthy?(evaluate(vm, NotOp.operand(node), env))
+    in NegOp then Ops.negate(evaluate(vm, NegOp.operand(node), env), NegOp.line(node), NegOp.col(node))
+    in BoolLit then BoolLit.value(node)
+    in NilLit then nil
+    in InterpStr
+      pieces = Array.map(InterpStr.parts(node)) { |part| (part in String) ? part : Text.str(evaluate(vm, part, env)) }
+      Array.join(pieces, "")
+    in ArrayLit then MiniArray.new(Array.map(ArrayLit.elements(node)) { |e| evaluate(vm, e, env) })
+    in MapLit
+      map = Hash[]
+      Array.each(MapLit.entries(node)) do |entry|
+        key = Values.map_key(evaluate(vm, MapEntry.key(entry), env), MapEntry.line(entry), MapEntry.col(entry))
+        map[key] = evaluate(vm, MapEntry.value(entry), env)
+      end
+      MiniMap.new(map)
+    in SliceExpr
+      obj = evaluate(vm, SliceExpr.target(node), env)
+      lo_node = SliceExpr.lo(node)
+      lo = lo_node ? evaluate(vm, lo_node, env) : nil
+      hi_node = SliceExpr.hi(node)
+      hi = hi_node ? evaluate(vm, hi_node, env) : nil
+      Ops.slice(obj, lo, hi, SliceExpr.line(node), SliceExpr.col(node))
+    in FnLit then make_closure(vm, node, env)
+    end
+  end
+
+  # ---- Calls (6.6) ----
+
+  def eval_call(vm, node, env)
+    f = evaluate(vm, CallExpr.callee(node), env)
+    args = Array.map(CallExpr.args(node)) { |a| evaluate(vm, a, env) }
+    call_value(vm, f, args, CallExpr.line(node), CallExpr.col(node))
+  end
+
+  # Errors about the call itself are reported at line/col, the `(`.
+  def call_value(vm, f, args, line, col)
+    case f
+    in Closure then call_closure(vm, f, args, line, col)
+    in Builtin then Builtins.call(vm, f, args, line, col)
+    else Fail.runtime("type", line, col, "cannot call #{Values.type_name(f)}")
+    end
+  end
+
+  # The parameters are bound in a new scope; a missing argument takes its
+  # default, evaluated there at call time.
+  def call_closure(vm, f, args, line, col)
+    fn = Closure.fn(f)
+    params = FnLit.params(fn)
+    given = Array.size(args)
+    min = FnLit.min_args(fn)
+    max = Array.size(params)
+    if given < min || given > max
+      name = FnLit.name(fn)
+      Fail.runtime("arity", line, col, Fail.arity_message(name == "" ? "function" : name, min, max, given))
+    end
+    Fail.runtime("stack", line, col, "call depth exceeded #{max_depth}") if @depth >= max_depth
+    body = FnLit.body(fn)
+    env = Env.open(Block.nslots(body), Closure.env(f))
+    vars = Env.vars(env)
+    @depth += 1
+    outer = @function
+    name = FnLit.name(fn)
+    @function = name == "" ? "<fn>" : name
+    begin
+      Array.each_with_index(params) do |param, i|
+        if i < given
+          vars[i] = args[i]
+        else
+          default = Param.default(param)
+          vars[i] = default ? evaluate(vm, default, env) : nil
+        end
+      end
+      done = exec_block(vm, body, env)
+      done == :return ? @ret_value : nil
+    rescue MiniFault => e
+      Fail.locate(e, @function)
+      raise e
+    ensure
+      @depth -= 1
+      @function = outer
+    end
+  end
+end

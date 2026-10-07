@@ -1,0 +1,90 @@
+# Static scopes (SPEC section 5.1) and the "did you mean" suggestion (5.2).
+
+# What a name was declared as: kind is :var (let, parameters, for and catch
+# variables), :const, :fn (a function declaration) or :builtin. slot is its
+# index in its scope (for a built-in, its index in Builtins.names); min_args
+# and max_args are the argument counts a call must give (max_args -1: no
+# maximum), meaningful for :fn and :builtin.
+class Decl
+  attr_reader kind, slot, min_args, max_args
+end
+
+# One scope of the static checks; each corresponds to one runtime Env.
+# decls holds the names visible so far; nslots counts the slots handed out.
+class SScope
+  attr_reader decls, parent
+  attr_accessor nslots
+
+  def open(parent) = SScope.new(Hash[], parent, 0)
+end
+
+module Scopes
+  module_function
+
+  # The outermost scope: the 25 built-ins.
+  def builtin_decls
+    once do
+      decls = Hash[]
+      Array.each_with_index(Builtins.names) do |name, i|
+        min, max = Builtins.arity(name)
+        decls[name] = Decl.new(:builtin, i, min, max)
+      end
+      decls
+    end
+  end
+
+  # The visible name closest to an undefined one, or nil (5.2): edit distance
+  # at most min(2, (length - 1) / 2); the smallest distance wins, then the
+  # innermost scope, then the alphabetically first name.
+  def suggestion(scope, name)
+    limit = (String.length(name) - 1) / 2
+    limit = 2 if limit > 2
+    return nil if limit < 1
+    best = nil
+    best_distance = limit + 1
+    s = scope
+    while s
+      Array.each(Array.sort(Hash.keys(SScope.decls(s)))) do |candidate|
+        d = distance(name, candidate)
+        if d < best_distance
+          best = candidate
+          best_distance = d
+        end
+      end
+      s = SScope.parent(s)
+    end
+    Array.each(Array.sort(Hash.keys(builtin_decls))) do |candidate|
+      d = distance(name, candidate)
+      if d < best_distance
+        best = candidate
+        best_distance = d
+      end
+    end
+    best
+  end
+
+  # Edit distance with insertions, deletions, substitutions and swaps of two
+  # adjacent characters, each counting 1 (optimal string alignment).
+  def distance(a, b)
+    x = String.chars(a)
+    y = String.chars(b)
+    n = Array.size(x)
+    m = Array.size(y)
+    width = m + 1
+    d = Array.new((n + 1) * width, 0)
+    Integer.upto(0, n) { |i| d[i * width] = i }
+    Integer.upto(0, m) { |j| d[j] = j }
+    Integer.upto(1, n) do |i|
+      Integer.upto(1, m) do |j|
+        cost = x[i - 1] == y[j - 1] ? 0 : 1
+        best = Tuple.min([d[(i - 1) * width + j] + 1, d[i * width + j - 1] + 1, d[(i - 1) * width + j - 1] + cost])
+        if i > 1 && j > 1 && x[i - 1] == y[j - 2] && x[i - 2] == y[j - 1]
+          swap = d[(i - 2) * width + j - 2] + 1
+          best = swap if swap < best
+        end
+        d[i * width + j] = best
+      end
+    end
+    d[n * width + m]
+  end
+end

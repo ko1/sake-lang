@@ -1,0 +1,230 @@
+# The 25 built-in functions (SPEC section 10). Each checks its argument count,
+# then each argument in order; errors are reported at the `(` of the call.
+
+def builtin_names
+  once do
+    String["print", "len", "push", "pop", "keys", "values", "has", "get", "del", "str", "int",
+           "type", "range", "join", "split", "slice", "sort", "contains", "min", "max", "upper",
+           "lower", "reverse", "map", "filter"]
+  end
+end
+
+# [least, most] number of arguments; most is nil when there is no maximum.
+def builtin_arity(name)
+  case name
+  in "print" then [0, nil]
+  in "min" | "max" then [1, nil]
+  in "get" | "slice" then [2, 3]
+  in "range" then [1, 3]
+  in "push" | "has" | "del" | "join" | "split" | "contains" | "map" | "filter" then [2, 2]
+  else [1, 1]
+  end
+end
+
+# The type error for argument `n` of built-in `name`; `expected` is a phrase
+# such as "an int".
+def argument_error(name, n, expected, value, line, col)
+  type_error("#{name}: argument #{n} must be #{expected}, got #{type_name(value)}", line, col)
+end
+
+def array_argument(name, args, n, line, col)
+  v = Array.fetch(args, n - 1)
+  case v
+  in Array then v
+  else argument_error(name, n, "an array", v, line, col)
+  end
+end
+
+def map_argument(name, args, n, line, col)
+  v = Array.fetch(args, n - 1)
+  case v
+  in Hash then v
+  else argument_error(name, n, "a map", v, line, col)
+  end
+end
+
+def string_argument(name, args, n, line, col)
+  v = Array.fetch(args, n - 1)
+  case v
+  in String then v
+  else argument_error(name, n, "a string", v, line, col)
+  end
+end
+
+def int_argument(name, args, n, line, col)
+  v = Array.fetch(args, n - 1)
+  case v
+  in Integer then v
+  else argument_error(name, n, "an int", v, line, col)
+  end
+end
+
+def key_argument(name, args, n, line, col)
+  v = Array.fetch(args, n - 1)
+  argument_error(name, n, "a string or int", v, line, col) unless valid_key?(v)
+  v
+end
+
+class Machine
+  def call_builtin(m, name, args, line, col)
+    min, max = builtin_arity(name)
+    unless arity_ok?(min, max, Array.size(args))
+      runtime_error("arity", arity_message(name, min, max, Array.size(args)), line, col)
+    end
+    case name
+    in "print"
+      Kernel.print(Array.join(Array.map(args) { |v| str_of(v) }, " ") + "\n")
+      nil
+    in "len" then builtin_len(args, line, col)
+    in "push"
+      Array.push(array_argument(name, args, 1, line, col), Array.fetch(args, 1))
+      nil
+    in "pop"
+      a = array_argument(name, args, 1, line, col)
+      runtime_error("value", "pop: array is empty", line, col) if Array.empty?(a)
+      Array.pop(a)
+    in "keys" then Hash.keys(map_argument(name, args, 1, line, col))
+    in "values" then Hash.values(map_argument(name, args, 1, line, col))
+    in "has"
+      map = map_argument(name, args, 1, line, col)
+      Hash.key?(map, key_argument(name, args, 2, line, col))
+    in "get"
+      map = map_argument(name, args, 1, line, col)
+      key = key_argument(name, args, 2, line, col)
+      return Hash.fetch(map, key) if Hash.key?(map, key)
+      Array.size(args) == 3 ? Array.fetch(args, 2) : nil
+    in "del"
+      map = map_argument(name, args, 1, line, col)
+      key = key_argument(name, args, 2, line, col)
+      runtime_error("key", "key #{repr(key, 0)} not found", line, col) unless Hash.key?(map, key)
+      Hash.delete(map, key)
+    in "str" then str_of(Array.fetch(args, 0))
+    in "int" then builtin_int(args, line, col)
+    in "type" then type_name(Array.fetch(args, 0))
+    in "range" then builtin_range(args, line, col)
+    in "join"
+      a = array_argument(name, args, 1, line, col)
+      separator = string_argument(name, args, 2, line, col)
+      Array.join(Array.map(a) { |v| str_of(v) }, separator)
+    in "split" then builtin_split(args, line, col)
+    in "slice" then builtin_slice(args, line, col)
+    in "sort" then builtin_sort(args, line, col)
+    in "contains" then builtin_contains(args, line, col)
+    in "min" | "max"
+      ints = Array.map(Array.each_with_index(args)) { |_v, i| int_argument(name, args, i + 1, line, col) }
+      name == "min" ? Array.min(ints) : Array.max(ints)
+    in "upper" then String.upcase(string_argument(name, args, 1, line, col))
+    in "lower" then String.downcase(string_argument(name, args, 1, line, col))
+    in "reverse"
+      x = Array.fetch(args, 0)
+      case x
+      in Array then Array.reverse(x)
+      in String then String.reverse(x)
+      else argument_error(name, 1, "an array or string", x, line, col)
+      end
+    in "map" | "filter" then builtin_map(m, name, args, line, col)
+    end
+  end
+
+  def builtin_len(args, line, col)
+    x = Array.fetch(args, 0)
+    case x
+    in String then String.size(x)
+    in Array then Array.size(x)
+    in Hash then Hash.size(x)
+    else argument_error("len", 1, "a string, array or map", x, line, col)
+    end
+  end
+
+  # An optional `-` then digits, nothing else.
+  def builtin_int(args, line, col)
+    x = Array.fetch(args, 0)
+    case x
+    in Integer then x
+    in String
+      runtime_error("value", "int: cannot convert #{repr(x, 0)} to int", line, col) unless String.match?(x, /\A-?[0-9]+\z/)
+      String.to_i(x)
+    else argument_error("int", 1, "an int or string", x, line, col)
+    end
+  end
+
+  def builtin_range(args, line, col)
+    bounds = Array.map(Array.each_with_index(args)) { |_v, i| int_argument("range", args, i + 1, line, col) }
+    count = Array.size(bounds)
+    from = count == 1 ? 0 : Array.fetch(bounds, 0)
+    to = count == 1 ? Array.fetch(bounds, 0) : Array.fetch(bounds, 1)
+    step = count == 3 ? Array.fetch(bounds, 2) : 1
+    runtime_error("value", "range: step must not be zero", line, col) if step == 0
+    result = Array[]
+    i = from
+    while step > 0 ? i < to : i > to
+      Array.push(result, i)
+      i += step
+    end
+    result
+  end
+
+  # Pieces between occurrences of the separator, keeping empty ones.
+  def builtin_split(args, line, col)
+    s = string_argument("split", args, 1, line, col)
+    separator = string_argument("split", args, 2, line, col)
+    runtime_error("value", "split: separator must not be empty", line, col) if String.empty?(separator)
+    pieces = Array[]
+    start = 0
+    while true
+      found = String.index(s, separator, start)
+      break unless found
+      Array.push(pieces, String.slice(s, start, found - start) || "")
+      start = found + String.size(separator)
+    end
+    Array.push(pieces, String.slice(s, start, String.size(s) - start) || "")
+    pieces
+  end
+
+  def builtin_slice(args, line, col)
+    x = Array.fetch(args, 0)
+    unless (x in Array) || (x in String)
+      argument_error("slice", 1, "an array or string", x, line, col)
+    end
+    low = int_argument("slice", args, 2, line, col)
+    high = Array.size(args) == 3 ? int_argument("slice", args, 3, line, col) : nil
+    slice_of(x, low, high, line, col)
+  end
+
+  # All ints or all strings: each element is checked against the first.
+  def builtin_sort(args, line, col)
+    a = array_argument("sort", args, 1, line, col)
+    return Array.dup(a) if Array.size(a) <= 1
+    first = type_name(Array.fetch(a, 0))
+    Array.each(a) do |v|
+      t = type_name(v)
+      if t != first || (first != "int" && first != "string")
+        type_error("sort: cannot compare #{first} and #{t}", line, col)
+      end
+    end
+    Array.sort(a)
+  end
+
+  def builtin_contains(args, line, col)
+    c = Array.fetch(args, 0)
+    x = Array.fetch(args, 1)
+    case c
+    in Array | Hash then nil
+    in String then string_argument("contains", args, 2, line, col)
+    else argument_error("contains", 1, "an array, map or string", c, line, col)
+    end
+    contains?(c, x, line, col)
+  end
+
+  # map / filter over a snapshot of the array.
+  def builtin_map(m, name, args, line, col)
+    a = Array.dup(array_argument(name, args, 1, line, col))
+    f = Array.fetch(args, 1)
+    argument_error(name, 2, "a function", f, line, col) unless (f in Closure) || (f in Builtin)
+    if name == "map"
+      Array.map(a) { |v| call_value(m, f, Array[v], line, col) }
+    else
+      Array.select(a) { |v| truthy?(call_value(m, f, Array[v], line, col)) }
+    end
+  end
+end

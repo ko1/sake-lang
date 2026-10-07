@@ -1,0 +1,220 @@
+# Lexing (SPEC section 2): source text -> tokens.
+#
+# A token's kind is one of
+#   :int :string :name :keyword :op   ordinary tokens (text is the source text)
+#   :newline                          a statement-ending newline ("end of line")
+#   :eof                              the end of the input ("end of input")
+#   :interp_end                       the `}` that closes an interpolation
+# A :string token's parts are its pieces in order: a String for literal text, an
+# Interpolation for each `{...}`. Other tokens have no parts.
+
+class Token
+  attr_reader kind, text, line, col, parts
+end
+
+# `{ ... }` inside a string: the tokens of the expression, ending with an :interp_end token.
+class Interpolation
+  attr_reader tokens, line, col
+end
+
+def keywords = once {
+  Set["and", "assert", "break", "catch", "const", "continue", "do", "elif", "else", "end",
+      "false", "finally", "fn", "for", "if", "in", "let", "match", "nil", "not", "or", "return",
+      "then", "throw", "true", "try", "when", "while"]
+}
+
+def two_char_operators = once { Set["**", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%="] }
+def one_char_operators = once { Set["+", "-", "*", "/", "%", "<", ">", "=", "(", ")", "[", "]", "{", "}", ",", ":", ";", "."] }
+
+# Operators and keywords after which a newline does not end the statement (SPEC 2.2).
+def continuation_operators = once {
+  Set["+", "-", "*", "/", "%", "**", "==", "!=", "<", "<=", ">", ">=", "=", "+=", "-=", "*=",
+      "/=", "%=", ",", "."]
+}
+def continuation_keywords = once { Set["and", "or", "not", "in"] }
+
+# How a token is named in syntax error messages (SPEC 3.3).
+def describe_token(t)
+  case Token.kind(t)
+  in :string then "string"
+  in :newline then "end of line"
+  in :eof then "end of input"
+  in :interp_end then "'}'"
+  else "'#{Token.text(t)}'"
+  end
+end
+
+def token_is?(t, kind, text) = Token.kind(t) == kind && Token.text(t) == text
+def op?(t, text) = token_is?(t, :op, text)
+def keyword?(t, text) = token_is?(t, :keyword, text)
+
+def digit?(c) = c >= "0" && c <= "9" && c != ""
+def name_start?(c) = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_"
+def name_char?(c) = name_start?(c) || digit?(c)
+
+# The scanning position. pos indexes chars; line and col are where chars[pos] is.
+class Lexer
+  attr_reader chars
+  attr_accessor pos, line, col
+
+  # The character at pos + ahead, or "" past the end.
+  def peek(lx, ahead = 0)
+    c = @chars[@pos + ahead]
+    c ? c : ""
+  end
+
+  def advance(lx)
+    if peek(lx) == "\n"
+      @line += 1
+      @col = 1
+    else
+      @col += 1
+    end
+    @pos += 1
+  end
+
+  def source_text(lx, from) = Array.join(Array.take(Array.drop(@chars, from), @pos - from), "")
+
+  # Lexes ordinary code up to the end of the input, or, inside an interpolation (quote_line > 0),
+  # up to the `}` that closes it. quote_line/quote_col is the opening quote of the enclosing
+  # string, where an unterminated interpolation is reported.
+  def lex_tokens(lx, quote_line, quote_col)
+    in_interp = quote_line > 0
+    tokens = Token[]
+    depth = 0
+    while true
+      c = peek(lx)
+      line = @line
+      col = @col
+      if c == ""
+        raise lexical_error("unterminated string", quote_line, quote_col) if in_interp
+        Array.push(tokens, Token.new(:eof, "", line, col, Array[]))
+        return tokens
+      elsif c == " " || c == "\t" || c == "\r"
+        advance(lx)
+      elsif c == "\n"
+        raise lexical_error("unterminated string", quote_line, quote_col) if in_interp
+        advance(lx)
+        if depth == 0 && newline_ends_statement?(tokens)
+          Array.push(tokens, Token.new(:newline, "\\n", line, col, Array[]))
+        end
+      elsif c == "#"
+        raise lexical_error("unexpected character '#'", line, col) if in_interp
+        advance(lx) while peek(lx) != "\n" && peek(lx) != ""
+      elsif digit?(c)
+        Array.push(tokens, lex_int(lx))
+      elsif name_start?(c)
+        Array.push(tokens, lex_name(lx))
+      elsif c == "\""
+        Array.push(tokens, lex_string(lx))
+      else
+        text = c + peek(lx, 1)
+        if Set.include?(two_char_operators, text)
+          advance(lx)
+          advance(lx)
+        elsif Set.include?(one_char_operators, c)
+          text = c
+          advance(lx)
+        else
+          raise lexical_error("unexpected character '#{c}'", line, col)
+        end
+        if in_interp && text == "}" && depth == 0
+          Array.push(tokens, Token.new(:interp_end, "}", line, col, Array[]))
+          return tokens
+        end
+        depth += 1 if text == "(" || text == "[" || text == "{"
+        depth -= 1 if (text == ")" || text == "]" || text == "}") && depth > 0
+        Array.push(tokens, Token.new(:op, text, line, col, Array[]))
+      end
+    end
+    raise InternalError.new("unreachable")
+  end
+
+  # Digits with single underscores between two digits (SPEC 2.3).
+  def lex_int(lx)
+    start = @pos
+    line = @line
+    col = @col
+    while digit?(peek(lx)) || (peek(lx) == "_" && digit?(peek(lx, 1)))
+      advance(lx)
+    end
+    Token.new(:int, source_text(lx, start), line, col, Array[])
+  end
+
+  def lex_name(lx)
+    start = @pos
+    line = @line
+    col = @col
+    advance(lx) while name_char?(peek(lx))
+    text = source_text(lx, start)
+    Token.new(Set.include?(keywords, text) ? :keyword : :name, text, line, col, Array[])
+  end
+
+  # A string literal, from its opening quote (SPEC 2.4).
+  def lex_string(lx)
+    start = @pos
+    quote_line = @line
+    quote_col = @col
+    advance(lx)
+    parts = Array[]
+    literal = String[]
+    while true
+      c = peek(lx)
+      if c == "" || c == "\n"
+        raise lexical_error("unterminated string", quote_line, quote_col)
+      elsif c == "\""
+        advance(lx)
+        break
+      elsif c == "\\"
+        Array.push(literal, lex_escape(lx, quote_line, quote_col))
+      elsif c == "{"
+        Array.push(parts, Array.join(literal, "")) unless Array.empty?(literal)
+        literal = String[]
+        brace_line = @line
+        brace_col = @col
+        advance(lx)
+        Array.push(parts, Interpolation.new(lex_tokens(lx, quote_line, quote_col), brace_line, brace_col))
+      else
+        Array.push(literal, c)
+        advance(lx)
+      end
+    end
+    Array.push(parts, Array.join(literal, "")) unless Array.empty?(literal)
+    Token.new(:string, source_text(lx, start), quote_line, quote_col, parts)
+  end
+
+  # The character a backslash escape stands for; the lexer is at the backslash.
+  def lex_escape(lx, quote_line, quote_col)
+    line = @line
+    col = @col
+    advance(lx)
+    c = peek(lx)
+    raise lexical_error("unterminated string", quote_line, quote_col) if c == "" || c == "\n"
+    advance(lx)
+    case c
+    in "n" then "\n"
+    in "t" then "\t"
+    in "\\" then "\\"
+    in "\"" then "\""
+    in "{" then "{"
+    in "}" then "}"
+    else raise lexical_error("invalid escape '\\#{c}'", line, col)
+    end
+  end
+end
+
+# A newline ends a statement unless it is the first token, follows another newline, or follows
+# a token that cannot end an expression (SPEC 2.2).
+def newline_ends_statement?(tokens)
+  last = Array.last(tokens)
+  return false if last == nil
+  case Token.kind(last)
+  in :newline then false
+  in :op then !Set.include?(continuation_operators, Token.text(last))
+  in :keyword then !Set.include?(continuation_keywords, Token.text(last))
+  else true
+  end
+end
+
+# The tokens of a whole program, ending with :eof.
+def lex(source) = Lexer.lex_tokens(Lexer.new(String.chars(source), 0, 1, 1), 0, 0)

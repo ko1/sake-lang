@@ -1,0 +1,206 @@
+# The lexer (SPEC section 2): turns the program text into tokens.
+#
+# `nesting` counts the open ( [ { outside strings: newlines inside them are
+# not tokens. Interpolations are lexed into their own token lists, kept in the
+# string token (see token.sake).
+class Lexer
+  attr_reader chars, pos, line, col, nesting, tokens
+
+  def tokenize(source)
+    lx = Lexer.new(String.chars(source), 0, 1, 1, 0, Token[])
+    run(lx)
+    Lexer.tokens(lx)
+  end
+
+  def run(lx)
+    while true
+      c = peek(lx, 0)
+      break if c == nil
+      if c == " " || c == "\t" || c == "\r"
+        advance(lx)
+      elsif c == "#"
+        advance(lx) while peek(lx, 0) != nil && peek(lx, 0) != "\n"
+      elsif c == "\n"
+        add_newline(lx)
+        advance(lx)
+      else
+        tok = scan_token(lx, false)
+        Array.push(@tokens, tok)
+      end
+    end
+    Array.push(@tokens, Token.new(:eof, "", @line, @col, nil))
+  end
+
+  # A newline is a token only where it can end a statement (SPEC 2.2).
+  def add_newline(lx)
+    return if @nesting > 0
+    last = Array.last(@tokens)
+    return if last == nil
+    return if Token.type(last) == :newline
+    type = Token.type(last)
+    return if (type == :op || type == :keyword) && Set.include?(continuation_texts, Token.text(last))
+    Array.push(@tokens, Token.new(:newline, "\\n", @line, @col, nil))
+  end
+
+  def peek(lx, ahead) = @chars[@pos + ahead]
+
+  def advance(lx)
+    c = @chars[@pos]
+    @pos += 1
+    if c == "\n"
+      @line += 1
+      @col = 1
+    else
+      @col += 1
+    end
+    c
+  end
+
+  def lexical_error(lx, message, line, col) = compile_error("lexical", message, line, col)
+
+  # Scans one token starting at the current (non-blank) character.
+  # `in_interp`: inside an interpolation, brackets do not change `nesting`.
+  def scan_token(lx, in_interp)
+    line = @line
+    col = @col
+    c = peek(lx, 0)
+    c => String
+    return scan_int(lx) if digit?(c)
+    return scan_word(lx) if word_start?(c)
+    return scan_string(lx) if c == "\""
+    pair = c + (peek(lx, 1) || "")
+    if Set.include?(two_char_operators, pair)
+      advance(lx)
+      advance(lx)
+      return Token.new(:op, pair, line, col, nil)
+    end
+    unless Set.include?(one_char_operators, c)
+      lexical_error(lx, "unexpected character '#{c}'", line, col)
+    end
+    advance(lx)
+    unless in_interp
+      @nesting += 1 if c == "(" || c == "[" || c == "{"
+      @nesting -= 1 if (c == ")" || c == "]" || c == "}") && @nesting > 0
+    end
+    Token.new(:op, c, line, col, nil)
+  end
+
+  def digit?(c) = c >= "0" && c <= "9"
+  def word_start?(c) = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_"
+
+  # Digits, with single `_`s between two digits (SPEC 2.3).
+  def scan_int(lx)
+    line = @line
+    col = @col
+    text = Array[]
+    digits = Array[]
+    while true
+      c = peek(lx, 0)
+      if c != nil && digit?(c)
+        Array.push(text, advance(lx))
+        Array.push(digits, c)
+      elsif c == "_" && Array.size(digits) > 0 && digit_at?(lx, 1)
+        Array.push(text, advance(lx))
+      else
+        break
+      end
+    end
+    Token.new(:int, Array.join(text), line, col, String.to_i(Array.join(digits)))
+  end
+
+  def digit_at?(lx, ahead)
+    c = peek(lx, ahead)
+    c != nil && digit?(c)
+  end
+
+  def scan_word(lx)
+    line = @line
+    col = @col
+    text = Array[]
+    while true
+      c = peek(lx, 0)
+      break unless c != nil && (word_start?(c) || digit?(c))
+      Array.push(text, advance(lx))
+    end
+    word = Array.join(text)
+    type = Set.include?(keywords, word) ? :keyword : :name
+    Token.new(type, word, line, col, nil)
+  end
+
+  # A string literal (SPEC 2.4). Its parts are literal Strings and token lists
+  # of interpolations.
+  def scan_string(lx)
+    line = @line
+    col = @col
+    start = @pos
+    advance(lx)
+    parts = Array[]
+    text = Array[]
+    while true
+      c = peek(lx, 0)
+      if c == nil || c == "\n"
+        lexical_error(lx, "unterminated string", line, col)
+      elsif c == "\""
+        advance(lx)
+        break
+      elsif c == "\\"
+        Array.push(text, scan_escape(lx, line, col))
+      elsif c == "{"
+        Array.push(parts, Array.join(text)) unless Array.empty?(text)
+        text = Array[]
+        Array.push(parts, scan_interpolation(lx, line, col))
+      else
+        Array.push(text, advance(lx))
+      end
+    end
+    Array.push(parts, Array.join(text)) unless Array.empty?(text)
+    source = Array.join(Array.take(Array.drop(@chars, start), @pos - start))
+    Token.new(:string, source, line, col, parts)
+  end
+
+  # `quote_line`/`quote_col`: the opening quote, where an unterminated string
+  # is reported.
+  def scan_escape(lx, quote_line, quote_col)
+    line = @line
+    col = @col
+    advance(lx)
+    e = peek(lx, 0)
+    lexical_error(lx, "unterminated string", quote_line, quote_col) if e == nil || e == "\n"
+    e => String
+    replacement =
+      case e
+      in "n" then "\n"
+      in "t" then "\t"
+      in "\\" | "\"" | "{" | "}" then e
+      else lexical_error(lx, "invalid escape '\\#{e}'", line, col)
+      end
+    advance(lx)
+    replacement
+  end
+
+  # The tokens of `{expr}`, up to the `}` that does not close a `{` opened
+  # inside it; that `}` becomes an :interp_end token.
+  def scan_interpolation(lx, quote_line, quote_col)
+    advance(lx)
+    toks = Token[]
+    braces = 0
+    while true
+      c = peek(lx, 0)
+      if c == nil || c == "\n"
+        lexical_error(lx, "unterminated string", quote_line, quote_col)
+      elsif c == " " || c == "\t" || c == "\r"
+        advance(lx)
+      elsif c == "}" && braces == 0
+        Array.push(toks, Token.new(:interp_end, "}", @line, @col, nil))
+        advance(lx)
+        break
+      else
+        tok = scan_token(lx, true)
+        braces += 1 if token_is?(tok, "{")
+        braces -= 1 if token_is?(tok, "}")
+        Array.push(toks, tok)
+      end
+    end
+    toks
+  end
+end
