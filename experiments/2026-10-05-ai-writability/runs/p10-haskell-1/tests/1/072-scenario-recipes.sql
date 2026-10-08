@@ -1,0 +1,24 @@
+-- Ingredients for a few recipes, scaled by servings.
+CREATE TABLE ingredient (recipe TEXT, item TEXT, grams REAL, serves INTEGER);
+INSERT INTO ingredient VALUES ('pancakes', 'flour', 250, 4), ('pancakes', 'milk', 500, 4), ('pancakes', 'egg', 110, 4);
+INSERT INTO ingredient VALUES ('soup', 'lentils', 300, 6), ('soup', 'onion', 150.5, 6), ('soup', 'salt', 7.5, 6);
+INSERT INTO ingredient VALUES ('salad', 'lettuce', 200, 2), ('salad', 'oil', NULL, 2);
+INSERT INTO ingredient VALUES ('salad', 'lemon', 'one', 2);
+INSERT INTO ingredient VALUES ('salad', 'lemon', 40, 2.5);
+SELECT recipe, item, grams FROM ingredient ORDER BY recipe, item;
+SELECT item, grams / serves AS per_person FROM ingredient WHERE recipe = 'soup' ORDER BY per_person;
+SELECT recipe, item FROM ingredient WHERE grams IS NULL;
+SELECT item, grams FROM ingredient WHERE grams >= 250 ORDER BY grams DESC, item;
+SELECT item, grams * 3 FROM ingredient WHERE recipe = 'pancakes' ORDER BY item;
+SELECT upper(substr) FROM ingredient;
+SELECT item FROM ingredient WHERE item < 'm' ORDER BY item;
+SELECT item, length(item) AS n FROM ingredient WHERE n = 5 ORDER BY item;
+SELECT recipe || '/' || item FROM ingredient WHERE serves = '6' ORDER BY grams;
+SELECT item, ifnull(grams, 0) FROM ingredient WHERE recipe = 'salad' ORDER BY item;
+SELECT item, grams % 100 FROM ingredient WHERE recipe = 'soup' ORDER BY item;
+SELECT item FROM ingredient ORDER BY grams NULLS FIRST, item LIMIT 2;
+SELECT item, grams FROM ingredient WHERE grams = 150.5 OR grams = '7.5' ORDER BY grams;
+SELECT item, 1000 / serves FROM ingredient WHERE item = 'egg';
+SELECT item, 1000.0 / serves FROM ingredient WHERE item = 'egg';
+INSERT INTO ingredient (recipe, item, grams) VALUES ('soup', 'pepper', 2), ('soup', 'water', 1000);
+SELECT item, serves IS NULL FROM ingredient WHERE recipe = 'soup' ORDER BY item;

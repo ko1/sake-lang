@@ -1,0 +1,24 @@
+-- a todo tracker: tasks per project, estimates, progress
+CREATE TABLE tasks (id INTEGER PRIMARY KEY, project TEXT NOT NULL, title TEXT, est REAL, done INTEGER DEFAULT 0, owner TEXT);
+INSERT INTO tasks (project, title, est, owner) VALUES ('web', 'login', 3.0, 'ivy'), ('web', 'logout', 0.5, 'ivy');
+INSERT INTO tasks (project, title, est, owner) VALUES ('web', 'theme', 2.0, 'jon'), ('api', 'auth', 5.0, 'jon');
+INSERT INTO tasks (project, title, est, owner) VALUES ('api', 'rate limit', NULL, NULL), ('docs', 'intro', 1.25, 'kai');
+SELECT project, count(*), total(est) FROM tasks GROUP BY project ORDER BY project;
+UPDATE tasks SET done = 1 WHERE title IN ('login', 'intro', 'auth');
+SELECT project, sum(done), count(*) - sum(done) AS open FROM tasks GROUP BY project ORDER BY project;
+SELECT project, round(100.0 * sum(done) / count(*), 1) AS pct FROM tasks GROUP BY project ORDER BY pct DESC, project;
+SELECT owner, count(*) FROM tasks GROUP BY owner ORDER BY owner;
+SELECT owner, sum(est) FROM tasks WHERE done = 0 GROUP BY owner HAVING sum(est) IS NOT NULL ORDER BY owner;
+SELECT project FROM tasks GROUP BY project HAVING count(owner) < count(*) ORDER BY project;
+SELECT avg(est), count(est), sum(est) FROM tasks;
+SELECT project, group_concat(title, ', ' ORDER BY title) FROM tasks WHERE done = 0 GROUP BY project ORDER BY project;
+UPDATE tasks SET est = 'soon' WHERE id = 5;
+UPDATE tasks SET est = '4' WHERE id = 5;
+SELECT est, typeof(est) FROM tasks WHERE id = 5;
+SELECT project, max(est), title FROM tasks GROUP BY project ORDER BY project;
+INSERT INTO tasks (project, title) VALUES (NULL, 'orphan');
+SELECT DISTINCT owner FROM tasks WHERE owner IS NOT NULL ORDER BY owner DESC;
+SELECT done, count(*), sum(est) FROM tasks GROUP BY done ORDER BY done;
+DELETE FROM tasks WHERE done = 1;
+SELECT count(*), group_concat(id, '' ORDER BY id) FROM tasks;
+SELECT project, count(*) FROM tasks GROUP BY project HAVING count(*) > 1 ORDER BY project;

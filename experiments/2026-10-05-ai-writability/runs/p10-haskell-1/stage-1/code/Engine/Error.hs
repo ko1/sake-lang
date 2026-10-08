@@ -1,0 +1,80 @@
+-- | SQL errors. Every user-visible message is built here so the wording
+-- lives in one place; the runner prints it as @Error: <message>@.
+module Engine.Error
+  ( SqlError (..)
+  , Result
+  , orElse
+  , noSuchTable
+  , noSuchColumn
+  , noSuchFunction
+  , wrongArgCount
+  , tableExists
+  , duplicateColumn
+  , noColumnNamed
+  , cannotStore
+  , insertCountMismatch
+  , insertListMismatch
+  , valuesTermMismatch
+  , orderByRange
+  , noTablesSpecified
+  ) where
+
+-- | The message of an error, without the @Error: @ prefix.
+newtype SqlError = SqlError String
+  deriving (Eq, Show)
+
+type Result = Either SqlError
+
+-- | Turn a 'Maybe' into a 'Result' with the given error.
+orElse :: Maybe a -> SqlError -> Result a
+orElse (Just x) _ = Right x
+orElse Nothing e = Left e
+
+noSuchTable, noSuchColumn, noSuchFunction, tableExists, duplicateColumn :: String -> SqlError
+noSuchTable n = SqlError ("no such table: " ++ n)
+noSuchColumn n = SqlError ("no such column: " ++ n)
+noSuchFunction n = SqlError ("no such function: " ++ n)
+tableExists n = SqlError ("table " ++ n ++ " already exists")
+duplicateColumn n = SqlError ("duplicate column name: " ++ n)
+
+wrongArgCount :: String -> SqlError
+wrongArgCount n = SqlError ("wrong number of arguments to function " ++ n ++ "()")
+
+-- | @noColumnNamed table column@.
+noColumnNamed :: String -> String -> SqlError
+noColumnNamed t c = SqlError ("table " ++ t ++ " has no column named " ++ c)
+
+-- | @cannotStore valueType columnType table column@.
+cannotStore :: String -> String -> String -> String -> SqlError
+cannotStore vt ct t c =
+  SqlError ("cannot store " ++ vt ++ " value in " ++ ct ++ " column " ++ t ++ "." ++ c)
+
+-- | @insertCountMismatch table columns values@ (no column list given).
+insertCountMismatch :: String -> Int -> Int -> SqlError
+insertCountMismatch t n m =
+  SqlError ("table " ++ t ++ " has " ++ show n ++ " columns but " ++ show m ++ " values were supplied")
+
+-- | @insertListMismatch values columns@ (column list given).
+insertListMismatch :: Int -> Int -> SqlError
+insertListMismatch m n = SqlError (show m ++ " values for " ++ show n ++ " columns")
+
+valuesTermMismatch :: SqlError
+valuesTermMismatch = SqlError "all VALUES must have the same number of terms"
+
+-- | @orderByRange position columns@; position is 1-based.
+orderByRange :: Int -> Int -> SqlError
+orderByRange i n =
+  SqlError (ordinal i ++ " ORDER BY term out of range - should be between 1 and " ++ show n)
+
+noTablesSpecified :: SqlError
+noTablesSpecified = SqlError "no tables specified"
+
+ordinal :: Int -> String
+ordinal i = show i ++ suffix
+  where
+    suffix
+      | i `mod` 100 `elem` [11, 12, 13] = "th"
+      | i `mod` 10 == 1 = "st"
+      | i `mod` 10 == 2 = "nd"
+      | i `mod` 10 == 3 = "rd"
+      | otherwise = "th"

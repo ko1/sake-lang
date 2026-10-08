@@ -1,0 +1,6 @@
+CREATE TABLE t (a INTEGER);
+INSERT INTO t VALUES (1), (2);
+SELECT a, sum(a) OVER w FROM t;
+SELECT a, sum(a) OVER (missing ORDER BY a) FROM t WINDOW present AS (PARTITION BY a);
+SELECT a, sum(a) OVER w FROM t WINDOW v AS (ORDER BY a);
+SELECT a, sum(a) OVER v FROM t WINDOW v AS (ORDER BY a) ORDER BY a;

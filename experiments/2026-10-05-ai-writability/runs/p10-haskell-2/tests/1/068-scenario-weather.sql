@@ -1,0 +1,23 @@
+-- Daily weather readings; temperatures in Celsius.
+CREATE TABLE readings (day INTEGER, city TEXT, temp REAL, rain_mm INTEGER);
+INSERT INTO readings VALUES (1, 'Oslo', -3.5, 0), (1, 'Rome', 14, 2), (2, 'Oslo', -1, 5);
+INSERT INTO readings VALUES (2, 'Rome', 15.25, 0), (3, 'Oslo', 0, NULL), (3, 'Rome', 11.5, 12);
+INSERT INTO readings VALUES (4, 'Oslo', '-7.25', '3');
+INSERT INTO readings VALUES (4, 'Rome', 12, 1.5);
+SELECT day, city, temp FROM readings ORDER BY city, day;
+SELECT day, temp FROM readings WHERE city = 'Oslo' AND temp < 0 ORDER BY temp;
+SELECT city, day, temp * 9 / 5 + 32 AS f FROM readings WHERE f > 55 ORDER BY f;
+SELECT city, day FROM readings WHERE rain_mm IS NULL;
+SELECT city, day, rain_mm FROM readings WHERE rain_mm > 0 ORDER BY rain_mm DESC;
+SELECT day, abs(temp) FROM readings WHERE city = 'Oslo' ORDER BY day;
+SELECT city, temp FROM readings ORDER BY temp DESC LIMIT 2;
+SELECT city, temp FROM readings ORDER BY temp LIMIT 2 OFFSET 1;
+SELECT city || ' day ' || day || ': ' || temp FROM readings WHERE day = 2 ORDER BY city;
+SELECT day, rain_mm / 2, rain_mm / 2.0 FROM readings WHERE city = 'Rome' ORDER BY day;
+SELECT day, NOT rain_mm FROM readings WHERE city = 'Oslo' ORDER BY day;
+SELECT day FROM readings WHERE temp = '0';
+SELECT day, typeof(temp) FROM readings WHERE city = 'Rome' AND day = 1;
+SELECT city FROM readings WHERE temp = -1.0;
+SELECT humidity FROM readings;
+SELECT day, temp FROM readings ORDER BY 1, 2, 3;
+SELECT day, coalesce(rain_mm, -1) FROM readings WHERE city = 'Oslo' ORDER BY 2, 1;

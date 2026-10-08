@@ -1,0 +1,10 @@
+SELECT 42, typeof(42);
+SELECT 3.5, typeof(3.5);
+SELECT .5, typeof(.5);
+SELECT 5., typeof(5.);
+SELECT 1e3, typeof(1e3);
+SELECT 2.5E-3, typeof(2.5E-3);
+SELECT -3, typeof(-3);
+SELECT - 3;
+SELECT 007;
+SELECT 1E2 + 1;

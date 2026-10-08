@@ -1,0 +1,26 @@
+-- A travel expense log, amounts in euros.
+CREATE TABLE expenses (day INTEGER, category TEXT, amount REAL, note TEXT);
+INSERT INTO expenses VALUES (1, 'food', 12.5, 'lunch'), (1, 'travel', 45, 'train');
+INSERT INTO expenses VALUES (2, 'food', 8.75, NULL), (2, 'hotel', 120, 'two nights');
+INSERT INTO expenses VALUES (3, 'food', '23.10', 'dinner'), (3, 'misc', 0.1 + 0.2, 'stamp');
+INSERT INTO expenses VALUES (4, 'food', 'about 10', 'snack');
+INSERT INTO expenses VALUES (4, 'travel', 30);
+SELECT day, category, amount FROM expenses ORDER BY day, category;
+SELECT category, amount FROM expenses WHERE amount >= 20 ORDER BY amount DESC;
+SELECT day, amount FROM expenses WHERE category = 'food' ORDER BY day;
+SELECT note FROM expenses WHERE note IS NOT NULL ORDER BY note;
+SELECT day, coalesce(note, '(none)') FROM expenses WHERE category = 'food' ORDER BY day;
+SELECT category, amount * 1.2 AS gross FROM expenses WHERE gross > 50 ORDER BY gross;
+SELECT amount FROM expenses WHERE category = 'misc';
+SELECT amount || ' EUR' FROM expenses WHERE day = 3 ORDER BY amount;
+SELECT day, amount / 2 FROM expenses WHERE category = 'hotel';
+SELECT category FROM expenses WHERE amount = '45' ;
+SELECT category FROM expenses WHERE amount = 45.0 AND day = '1';
+SELECT day, category FROM expenses ORDER BY amount DESC LIMIT 1;
+SELECT length(note), note FROM expenses ORDER BY length(note) DESC NULLS LAST, note LIMIT 2;
+SELECT upper(category) AS c FROM expenses WHERE c = 'HOTEL';
+SELECT -amount FROM expenses WHERE note = 'train';
+SELECT day FROM expenses WHERE currency = 'EUR';
+DROP TABLE expenses;
+DROP TABLE IF EXISTS expenses;
+SELECT 'closed';

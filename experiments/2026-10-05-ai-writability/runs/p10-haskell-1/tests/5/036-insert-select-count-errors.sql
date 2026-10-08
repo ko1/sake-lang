@@ -1,0 +1,11 @@
+-- INSERT ... SELECT has the same count errors as VALUES
+CREATE TABLE t (a INTEGER, b INTEGER, c INTEGER);
+CREATE TABLE s (x INTEGER, y INTEGER);
+INSERT INTO s VALUES (1, 2);
+INSERT INTO t SELECT x, y FROM s;
+INSERT INTO t SELECT x, y, x, y FROM s;
+INSERT INTO t (a, b) SELECT x FROM s;
+INSERT INTO t (a) SELECT x, y FROM s;
+INSERT INTO t (a, zz) SELECT x, y FROM s;
+INSERT INTO t (c, a) SELECT x, y FROM s;
+SELECT a, b, c FROM t;
