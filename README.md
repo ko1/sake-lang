@@ -136,33 +136,44 @@ ruby test/test_cli.rb           # the command line, and whether the generated do
 
 **Concluded (2026-10-08). The interpreter is kept as it is, and nothing more is planned.**
 
-This was a research prototype, built to see whether "types on operations" makes a language easier
-for AI to write. The evaluation
+This was a research prototype. The hypothesis was that writing types on **operations** is better
+than writing them on **variables**, for AI to write and to understand code. The evaluation
 ([experiments/2026-10-05-ai-writability/](experiments/2026-10-05-ai-writability/README.md), in
-Japanese; summary page: <https://claude.ai/artifact/NaxNc5iropLucuvhawKETD>) answered no:
+Japanese; summary page: <https://claude.ai/artifact/NaxNc5iropLucuvhawKETD>) could not separate
+that from a larger effect: Sake is a language no model has seen before.
 
-- **Correctness was the same.** With Claude Sonnet 5.5, Sake reached the same correctness as Ruby in
-  writing, changing, and reading programs. The same was true for a SQL engine of 3,000 to 4,000
-  lines built in 6 stages, where Java, Haskell, Scheme, and Ruby with Steep also all passed 366 to
-  368 of the 369 hidden tests. No type checker, in any of these languages, prevented a bug that
-  the others shipped.
-- **The cost was the highest.** For the SQL engine, Sake used 1.71 times Ruby's output tokens and
-  3.5 times the working time. Ruby with Steep, which must also check types on everything, used
-  1.48 times. Making the checker and the startup faster would close part of the gap, but there is
-  no sign it would go below Ruby.
-- **A smaller model did worse.** With Claude Haiku 4.5, Sake passed 26% of the hidden tests
-  against Ruby's 77%. The checker stopped wrong programs but did not help fix them.
+What the evaluation showed:
 
-What would justify reopening it: a task or model where Sonnet-class models fall clearly below the
-ceiling, *and* static type checks (in any language) are seen to stop errors that the dynamically
-typed solutions ship. Only then is it worth asking whether putting types on operations helps.
+- **A capable model uses a new language at about twice the cost.** Claude Sonnet 5.5 had never
+  seen Sake, and got only its documents (about 45k tokens, or an 8k-token cheat sheet). It still
+  wrote, changed, read, and fixed programs as correctly as in Ruby, up to a SQL engine of 4,000
+  lines grown in 6 stages. It almost never called an operation that does not exist. The cost was
+  1.1 to 2.4 times Ruby's output tokens depending on the task: reading was cheap, writing was
+  expensive. Borrowing Ruby's syntax and Ruby's names probably helped (not tested).
+- **A smaller model cannot.** With Claude Haiku 4.5, Sake passed 26% of the hidden tests against
+  Ruby's 77%, and better documents or instructions did not close the gap.
+- **Where to write types did not show up.** On the SQL engine, all 12 runs in Ruby, Java, Haskell,
+  Scheme, Ruby with Steep, and Sake passed 366 to 368 of the 369 hidden tests, and no type checker
+  prevented a bug that the others shipped. The output tokens, against Ruby, were Java 1.06,
+  Haskell 1.18, Scheme 1.22, Steep (types on every variable and method) 1.48, and Sake 1.71.
+  Apart from Steep, which pays for writing every type, the order roughly follows how well-known
+  the language is. Sake's overhead did not shrink as one agent wrote
+  more programs, or with a shorter document. So the cost of an unfamiliar language is paid in
+  every task, and it hides any difference between operations and variables.
+- **Not compared: understanding and fixing code, against a language with types on variables.**
+  Reading and changing were compared only with plain Ruby. A fair test would need a language with
+  types on variables that models know as little as Sake, and such a language is hard to find or
+  to make.
+
+What would justify reopening it: a task where Sonnet-class models fall clearly below the ceiling,
+*and* static type checks (in any language) are seen to stop errors that the dynamically typed
+solutions ship.
 
 **Not measured: whether people read Sake more easily**, for example when reviewing code that AI
-wrote. "One line tells you which function runs" is a claim about a human reader, and the
-evaluation only had AI read (it read Sake as well as Ruby, at 1.1 to 1.4 times the output
-tokens). Testing it needs people: review the same AI-written changes with planted bugs in Ruby and
-in Sake, and compare how many bugs are found and how long it takes. The reviewers already know
-Ruby, so the comparison is biased against Sake.
+wrote. "One line tells you which function runs" is also a claim about a human reader, and the
+evaluation only had AI read. Testing it needs people: review the same AI-written changes with
+planted bugs in Ruby and in Sake, and compare how many bugs are found and how long it takes. The
+reviewers already know Ruby, so the comparison is biased against Sake.
 
 The design notes and their reasons are in [DESIGN.md](DESIGN.md).
 
