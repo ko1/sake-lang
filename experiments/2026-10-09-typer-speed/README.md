@@ -124,6 +124,23 @@ Sake 自体の Ruby 実装（`lib/` 7,458 行）に `rbs prototype rb` で署名
 を 2 回: 6.77 s、6.50 s。同じころの Sake stage-6（4,433 行）は 7.5 s（1 回目の表）、2 回目のあとで 5.7 s。行数あたりでは同じ桁。
 署名が薄いぶん Steep の仕事は実際のプロジェクトより軽いので、目安以上の意味はない。
 
+**撤回**: 上は別のプログラム同士の比較で、「同じ桁」以上を言えない。同じ SQL エンジンを Steep 向けに書いた run
+（`2026-10-05-ai-writability/runs/p10-steep-{1,2}/stage-6`、署名は手書きで `untyped` なし）があったので、そちらで測り直した。
+Steepfile はハーネス（`large/sql/run_tests.rb`）と同じ（`Steep::Diagnostic::Ruby.strict`）。
+2026-10-08 19:26 JST、load 0.1〜0.2、16 コア、交互に 3 回ずつ。Steep は `--jobs=1` と既定（並列）の両方。Sake は 1 プロセス。
+
+| プログラム | 行数 | 検査 | 時間（3 回） | RSS |
+|---|---|---|---|---|
+| steep-1 stage-6 | Ruby 5,063 + RBS 1,222 | `steep check --jobs=1` | 3.36 / 3.58 / 3.56 s | 137〜146 MB |
+| steep-1 stage-6 | 〃 | `steep check`（並列） | 1.91 / 2.00 / 1.97 s | 103 MB |
+| sake-1 stage-6 | Sake 4,433 | `sake --strict=2 -c` | 5.43 / 5.62 / 5.53 s | 131 MB |
+| steep-2 stage-6 | Ruby 4,660 + RBS 1,363 | `steep check --jobs=1` | 3.17 / 3.27 / 3.27 s | 139 MB |
+| steep-2 stage-6 | 〃 | `steep check`（並列） | 1.96 / 1.99 / 2.03 s | 87〜90 MB |
+| sake-2 stage-6 | Sake 4,409 | `sake --strict=2 -c` | 4.36 / 4.43 / 4.41 s | 127 MB |
+
+同じエンジンなら、1 コア同士で Steep が 1.4〜1.6 倍速く、並列を許すと 2.2〜2.8 倍速い。Steep は署名を人が書いているので
+関数ごとに独立に検査できるが、Sake は署名なしで全体の固定点を回しているので、仕事の量がそもそも違う。
+
 ### 残り
 
 - stage-6 のプロファイル（2 回目の後）: GC 12%、`struct_groups` 13%、`add_check` 9%、`union` 8%、`struct_hooks` 全体で 32%。
