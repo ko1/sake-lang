@@ -1,0 +1,97 @@
+# Name resolution: turns a parsed expression into one that can be evaluated against a row.
+# Column names become row positions, aliases are replaced by the expression they stand for,
+# and unknown names or functions are reported here - before any row is read.
+module Resolver
+  module_function
+
+  def resolve(e, scope)
+    case e
+    in Lit then e
+    in Col then resolve_column(e, scope)
+    in Unary then Unary.new(Unary.op(e), resolve(Unary.operand(e), scope))
+    in Binary then Binary.new(Binary.op(e), resolve(Binary.left(e), scope), resolve(Binary.right(e), scope))
+    in Call then resolve_call(e, scope)
+    in Case then resolve_case(e, scope)
+    in Between
+      Between.new(resolve(Between.expr(e), scope), resolve(Between.low(e), scope), resolve(Between.high(e), scope), Between.negated(e))
+    in InList
+      InList.new(resolve(InList.expr(e), scope), resolve_all(InList.items(e), scope), InList.negated(e))
+    in Like then Like.new(resolve(Like.expr(e), scope), resolve(Like.pattern(e), scope), Like.negated(e))
+    in Cast then Cast.new(resolve(Cast.expr(e), scope), Cast.type(e))
+    end
+  end
+
+  def resolve_all(list, scope) = Array.map(list) { resolve(it, scope) }
+
+  def resolve_case(c, scope)
+    operand = Case.operand(c)
+    whens = Array.map(Case.whens(c)) { WhenClause.new(resolve(WhenClause.condition(it), scope), resolve(WhenClause.result(it), scope)) }
+    otherwise = Case.otherwise_expr(c)
+    Case.new(resolve_optional(operand, scope), whens, resolve_optional(otherwise, scope))
+  end
+
+  # An optional expression (nil stays nil).
+  def resolve_optional(e, scope) = e == nil ? nil : resolve(e, scope)
+
+  def resolve_column(c, scope)
+    key = Value.lower(Col.name(c))
+    cols = Scope.columns(scope)
+    i = Array.find_index(cols) { Column.key(it) == key }
+    if i != nil
+      return Col.new(Col.name(c), i, Column.type(Array.fetch(cols, i)))
+    end
+    message = Scope.blocked(scope)[key]
+    raise SqlError.new(message) if message != nil
+    aliased = Scope.aliases(scope)[key]
+    raise SqlError.new("no such column: #{Col.name(c)}") if aliased == nil
+    aliased
+  end
+
+  def resolve_call(c, scope)
+    fn = Value.lower(Call.name(c))
+    argc = Array.size(Call.args(c))
+    return resolve_aggregate(c, fn, scope) if Aggregates.aggregate?(fn, argc, Call.star(c))
+    scalar = Functions.known?(fn)
+    raise SqlError.new("no such function: #{Call.name(c)}") unless scalar || Aggregates.name?(fn)
+    if !scalar || Call.star(c) || !Functions.arity_ok?(fn, argc)
+      raise SqlError.new("wrong number of arguments to function #{Call.name(c)}()")
+    end
+    raise SqlError.new("DISTINCT is not supported for non-aggregate functions") if Call.distinct(c)
+    raise SqlError.new("ORDER BY may not be used with non-aggregate #{Call.name(c)}()") unless Array.empty?(Call.order(c))
+    Call.new(Call.name(c), fn, resolve_all(Call.args(c), scope), false, false, Array[])
+  end
+
+  # An aggregate call becomes a Col reading its slot of the group row: the slots follow the table's
+  # columns, one per distinct Aggregate in the scope's collector (identical calls share one).
+  def resolve_aggregate(c, fn, scope)
+    collector = Scope.collector(scope)
+    raise SqlError.new(misuse_message(Scope.forbidden(scope), Call.name(c))) if collector == nil
+    if Call.distinct(c) && Array.size(Call.args(c)) != 1
+      raise SqlError.new("DISTINCT aggregates must have exactly one argument")
+    end
+    inner = Scope.new(Scope.columns(scope), Scope.aliases(scope), Scope.blocked(scope), nil, :function)
+    order = Array.map(Call.order(c)) { OrderTerm.new(resolve(OrderTerm.expr(it), inner), OrderTerm.desc(it), OrderTerm.nulls(it)) }
+    star = Call.star(c) || Array.empty?(Call.args(c))
+    agg = Aggregate.new(Call.name(c), fn, resolve_all(Call.args(c), inner), Call.distinct(c), star, order)
+    slot = Array.find_index(collector) { Aggregates.same?(it, agg) }
+    if slot == nil
+      slot = Array.size(collector)
+      Array.push(collector, agg)
+    end
+    Col.new(Call.name(c), Array.size(Scope.columns(scope)) + slot, nil)
+  end
+
+  def misuse_message(forbidden, name)
+    case forbidden
+    in :group_by then "aggregate functions are not allowed in the GROUP BY clause"
+    in :misuse then "misuse of aggregate: #{name}()"
+    in :function then "misuse of aggregate function #{name}()"
+    end
+  end
+
+  # A scope over a table's columns where aggregate calls are an error (WHERE of UPDATE / DELETE).
+  def table_scope(columns) = Scope.new(columns, Hash[], Hash[], nil, :function)
+
+  # A scope with no columns and no aliases: for expressions evaluated with no row.
+  def empty_scope = table_scope(Array[])
+end

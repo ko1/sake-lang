@@ -1,0 +1,56 @@
+# INSERT (1.6, 2.1): each row is checked against the table plus the rows before it; the table
+# changes only if every row is good.
+module Insert
+  module_function
+
+  def run(db, stmt)
+    table = Catalog.table!(db, InsertStmt.table(stmt))
+    columns = Table.columns(table)
+    rows = InsertStmt.rows(stmt)
+    width = Array.size(rows[0])
+    Array.each(rows) do |r|
+      Errors.sql_error("all VALUES must have the same number of terms") if Array.size(r) != width
+    end
+    targets = target_columns(stmt, columns)
+    if InsertStmt.listed(stmt)
+      Errors.sql_error("#{width} values for #{Array.size(targets)} columns") if width != Array.size(targets)
+    elsif width != Array.size(columns)
+      Errors.sql_error("table #{InsertStmt.table(stmt)} has #{Array.size(columns)} columns but #{width} values were supplied")
+    end
+
+    scope = Resolver.empty_scope
+    resolved = Array.map(rows) { |exprs| Resolver.resolve_all(exprs, scope) }
+    defaults = Array.map(columns) { |c| Column.default(c) }
+    working = Array.dup(Table.rows(table))
+    Array.each(resolved) do |exprs|
+      raw = Array.dup(defaults)
+      i = 0
+      Array.each(exprs) do |e|
+        raw[targets[i]] = Eval.value_of(e, Array[])
+        i += 1
+      end
+      Array.push(working, Constraints.check_row(table, raw, working, -1, true))
+    end
+    Table.set_rows(table, working)
+    String[]
+  end
+
+  # The positions of the columns that get a value, in the order the values are given.
+  def target_columns(stmt, columns)
+    targets = Integer[]
+    if InsertStmt.listed(stmt)
+      Array.each(InsertStmt.columns(stmt)) do |name|
+        i = Catalog.column_index(columns, name)
+        Errors.sql_error("table #{InsertStmt.table(stmt)} has no column named #{name}") if i < 0
+        Array.push(targets, i)
+      end
+    else
+      i = 0
+      while i < Array.size(columns)
+        Array.push(targets, i)
+        i += 1
+      end
+    end
+    targets
+  end
+end

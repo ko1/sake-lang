@@ -1,0 +1,176 @@
+# SELECT (1.7, 3.x): resolve the names, then filter, group, compute, remove repeats, sort, skip,
+# limit and print.
+
+# One ORDER BY term, planned: `item` is the position of the result column it means, or -1 if the
+# term is an expression `expr` evaluated on the table row.
+SortKey = Struct.new(:item, :expr)
+
+module Select
+  module_function
+
+  # The lines the statement prints.
+  def run(db, stmt)
+    from = SelectStmt.table(stmt)
+    columns = Column[]
+    source = Array[Array[]]
+    table_key = ""
+    if from != ""
+      table = Catalog.table!(db, from)
+      columns = Table.columns(table)
+      source = Table.rows(table)
+      table_key = Catalog.key(from)
+    end
+    aggregate = aggregate_query?(stmt)
+    calls = AggCall[]
+    items = expand(SelectStmt.items(stmt), Scope.new(table_key, columns, AliasEntry[], aggregate ? :collect : :plain, calls), from != "")
+    Errors.sql_error("HAVING clause on a non-aggregate query") if SelectStmt.having(stmt) != nil && !aggregate
+    aliases = aliases_of(items)
+    where = SelectStmt.where(stmt)
+    cond = where == nil ? nil : Resolver.resolve(where, Scope.new(table_key, columns, aliases, :plain, AggCall[]))
+    group_keys = plan_group(SelectStmt.group(stmt), items, Scope.new(table_key, columns, aliases, :group_by, AggCall[]))
+    having = SelectStmt.having(stmt)
+    having_cond = having == nil ? nil : Resolver.resolve(having, Scope.new(table_key, columns, aliases, :collect, calls))
+    keys = plan_order(SelectStmt.order(stmt), items, Scope.new(table_key, columns, aliases, aggregate ? :collect : :order, calls))
+    limit = count_of(SelectStmt.limit(stmt))
+    offset = count_of(SelectStmt.offset(stmt))
+
+    kept = Array[]
+    Array.each(source) do |row|
+      Array.push(kept, row) if cond == nil || Values.truth(Eval.value_of(cond, row)) == 1
+    end
+    out = SortRow[]
+    if aggregate
+      groups = Array.empty?(group_keys) ? Array[kept] : Grouping.partition(kept, group_keys)
+      Array.each(groups) do |rows|
+        row = Aggregates.group_row(calls, rows, Array.size(columns))
+        if having_cond == nil || Values.truth(Eval.value_of(having_cond, row)) == 1
+          Array.push(out, result_row(items, keys, row))
+        end
+      end
+    else
+      Array.each(kept) { |row| Array.push(out, result_row(items, keys, row)) }
+    end
+
+    out = Grouping.distinct_rows(out) if SelectStmt.distinct(stmt)
+    rows = Sorter.sort(out, SelectStmt.order(stmt))
+    rows = Array.drop(rows, offset) if offset > 0
+    rows = Array.take(rows, limit) if limit >= 0
+    lines = String[]
+    Array.each(rows) do |r|
+      Array.push(lines, Array.join(Array.map(SortRow.values(r)) { |v| Values.display(v) }, "|"))
+    end
+    lines
+  end
+
+  # An aggregate query has GROUP BY or an aggregate call in its result columns (3.3).
+  def aggregate_query?(stmt)
+    return true unless Array.empty?(SelectStmt.group(stmt))
+    Array.any?(SelectStmt.items(stmt)) { |it| !ResultCol.star(it) && Aggregates.first_name(ResultCol.expr(it)) != "" }
+  end
+
+  # One result row with the values of its ORDER BY terms, computed on `row`.
+  def result_row(items, keys, row)
+    vals = Array[]
+    Array.each(items) { |it| Array.push(vals, Eval.value_of(ResultCol.expr(it), row)) }
+    sort_keys = Array[]
+    Array.each(keys) do |k|
+      i = SortKey.item(k)
+      Array.push(sort_keys, i >= 0 ? vals[i] : Eval.value_of(SortKey.expr(k), row))
+    end
+    SortRow.new(sort_keys, vals)
+  end
+
+  # The result columns with "*" replaced by the table's columns and every expression resolved.
+  def expand(items, scope, has_from)
+    out = ResultCol[]
+    Array.each(items) do |it|
+      if ResultCol.star(it)
+        Errors.sql_error("no tables specified") unless has_from
+        cols = Scope.columns(scope)
+        i = 0
+        while i < Array.size(cols)
+          Array.push(out, ResultCol.new(false, Resolver.column_ref(cols, i), "", ""))
+          i += 1
+        end
+      else
+        agg = Aggregates.first_name(ResultCol.expr(it))
+        Array.push(out, ResultCol.new(false, Resolver.resolve(ResultCol.expr(it), scope), ResultCol.alias(it), agg))
+      end
+    end
+    out
+  end
+
+  def aliases_of(items)
+    out = AliasEntry[]
+    Array.each(items) do |it|
+      Array.push(out, AliasEntry.new(Catalog.key(ResultCol.alias(it)), ResultCol.expr(it), ResultCol.agg(it))) if ResultCol.alias(it) != ""
+    end
+    out
+  end
+
+  # Position of the result column with this alias (case-insensitive), or -1.
+  def alias_position(items, name)
+    k = Catalog.key(name)
+    Array.find_index(items) { |it| ResultCol.alias(it) != "" && Catalog.key(ResultCol.alias(it)) == k } || -1
+  end
+
+  # The GROUP BY terms as expressions on the table row; `GROUP BY k` is the k-th result column.
+  def plan_group(terms, items, scope)
+    keys = Expr[]
+    n = Array.size(items)
+    pos = 0
+    Array.each(terms) do |t|
+      pos += 1
+      if OrderTerm.by_position(t)
+        k = OrderTerm.position(t)
+        if k < 1 || k > n
+          Errors.sql_error("#{Errors.ordinal(pos)} GROUP BY term out of range - should be between 1 and #{n}")
+        end
+        if ResultCol.agg(items[k - 1]) != ""
+          Errors.sql_error("aggregate functions are not allowed in the GROUP BY clause")
+        end
+        Array.push(keys, ResultCol.expr(items[k - 1]))
+      else
+        Array.push(keys, Resolver.resolve(OrderTerm.expr(t), scope))
+      end
+    end
+    keys
+  end
+
+  def plan_order(terms, items, scope)
+    keys = SortKey[]
+    n = Array.size(items)
+    pos = 0
+    Array.each(terms) do |t|
+      pos += 1
+      e = OrderTerm.expr(t)
+      if OrderTerm.by_position(t)
+        k = OrderTerm.position(t)
+        if k < 1 || k > n
+          Errors.sql_error("#{Errors.ordinal(pos)} ORDER BY term out of range - should be between 1 and #{n}")
+        end
+        Array.push(keys, SortKey.new(k - 1, e))
+      else
+        alias_at = Expr.kind(e) == :col && Expr.qual(e) == "" ? alias_position(items, Expr.text(e)) : -1
+        if alias_at >= 0
+          Array.push(keys, SortKey.new(alias_at, e))
+        else
+          Array.push(keys, SortKey.new(-1, Resolver.resolve(e, scope)))
+        end
+      end
+    end
+    keys
+  end
+
+  # The value of a LIMIT or OFFSET expression as an Integer; -1 if absent or not a number.
+  def count_of(expr)
+    return -1 if expr == nil
+    v = Eval.value_of(Resolver.resolve(expr, Resolver.empty_scope), Array[])
+    case v
+    in Integer then v
+    in Float then Float.truncate(v)
+    in String then Arithmetic.truncate(Values.to_number(v))
+    else -1
+    end
+  end
+end

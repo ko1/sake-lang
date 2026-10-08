@@ -1,0 +1,360 @@
+# Parser: the tokens of one statement -> a statement tree (ast.sake). Any token the grammar does
+# not allow raises "syntax error". Expressions are parsed by precedence levels (1.8), loosest first.
+
+# A position in the token list of one statement.
+Cursor = Struct.new(:toks, :pos)
+
+module Parser
+  module_function
+
+  def parse_statement(toks)
+    cur = Cursor.new(toks, 0)
+    t = peek(cur)
+    stmt = nil
+    if is_kw(t, "SELECT")
+      stmt = parse_select(cur)
+    elsif is_kw(t, "CREATE")
+      stmt = parse_create(cur)
+    elsif is_kw(t, "DROP")
+      stmt = parse_drop(cur)
+    elsif is_kw(t, "INSERT")
+      stmt = parse_insert(cur)
+    else
+      Errors.syntax
+    end
+    Errors.syntax unless Cursor.pos(cur) == Array.size(Cursor.toks(cur))
+    stmt
+  end
+
+  # --- token access ---
+
+  def peek(cur) = peek_at(cur, 0)
+
+  def peek_at(cur, ahead)
+    toks = Cursor.toks(cur)
+    i = Cursor.pos(cur) + ahead
+    i < Array.size(toks) ? toks[i] : Tok.new(:eof, "", "")
+  end
+
+  def advance(cur)
+    t = peek(cur)
+    Cursor.set_pos(cur, Cursor.pos(cur) + 1)
+    t
+  end
+
+  def is_kw(t, word) = Tok.kind(t) == :kw && Tok.text(t) == word
+
+  def is_op(t, op) = Tok.kind(t) == :op && Tok.text(t) == op
+
+  def accept_kw(cur, word)
+    return false unless is_kw(peek(cur), word)
+    advance(cur)
+    true
+  end
+
+  def accept_op(cur, op)
+    return false unless is_op(peek(cur), op)
+    advance(cur)
+    true
+  end
+
+  def expect_kw(cur, word)
+    Errors.syntax unless accept_kw(cur, word)
+  end
+
+  def expect_op(cur, op)
+    Errors.syntax unless accept_op(cur, op)
+  end
+
+  # A name: returns it as written.
+  def expect_name(cur)
+    t = advance(cur)
+    Errors.syntax unless Tok.kind(t) == :ident
+    Tok.text(t)
+  end
+
+  # --- CREATE TABLE / DROP TABLE ---
+
+  def parse_create(cur)
+    expect_kw(cur, "CREATE")
+    expect_kw(cur, "TABLE")
+    if_not_exists = false
+    if accept_kw(cur, "IF")
+      expect_kw(cur, "NOT")
+      expect_kw(cur, "EXISTS")
+      if_not_exists = true
+    end
+    name = expect_name(cur)
+    expect_op(cur, "(")
+    cols = Column[]
+    Array.push(cols, parse_column_def(cur))
+    Array.push(cols, parse_column_def(cur)) while accept_op(cur, ",")
+    expect_op(cur, ")")
+    CreateStmt.new(name, cols, if_not_exists)
+  end
+
+  def parse_column_def(cur)
+    name = expect_name(cur)
+    t = advance(cur)
+    Errors.syntax unless Tok.kind(t) == :ident
+    type = :none
+    type = :integer if Tok.key(t) == "integer"
+    type = :real if Tok.key(t) == "real"
+    type = :text if Tok.key(t) == "text"
+    Errors.syntax if type == :none
+    Column.new(name, type)
+  end
+
+  def parse_drop(cur)
+    expect_kw(cur, "DROP")
+    expect_kw(cur, "TABLE")
+    if_exists = false
+    if accept_kw(cur, "IF")
+      expect_kw(cur, "EXISTS")
+      if_exists = true
+    end
+    DropStmt.new(expect_name(cur), if_exists)
+  end
+
+  # --- INSERT ---
+
+  def parse_insert(cur)
+    expect_kw(cur, "INSERT")
+    expect_kw(cur, "INTO")
+    table = expect_name(cur)
+    names = String[]
+    listed = accept_op(cur, "(")
+    if listed
+      Array.push(names, expect_name(cur))
+      Array.push(names, expect_name(cur)) while accept_op(cur, ",")
+      expect_op(cur, ")")
+    end
+    expect_kw(cur, "VALUES")
+    rows = Array[]
+    Array.push(rows, parse_values_row(cur))
+    Array.push(rows, parse_values_row(cur)) while accept_op(cur, ",")
+    InsertStmt.new(table, listed, names, rows)
+  end
+
+  def parse_values_row(cur)
+    expect_op(cur, "(")
+    row = Expr[]
+    Array.push(row, parse_expr(cur))
+    Array.push(row, parse_expr(cur)) while accept_op(cur, ",")
+    expect_op(cur, ")")
+    row
+  end
+
+  # --- SELECT ---
+
+  def parse_select(cur)
+    expect_kw(cur, "SELECT")
+    items = ResultCol[]
+    Array.push(items, parse_result_col(cur))
+    Array.push(items, parse_result_col(cur)) while accept_op(cur, ",")
+    table = ""
+    table = expect_name(cur) if accept_kw(cur, "FROM")
+    where = nil
+    where = parse_expr(cur) if accept_kw(cur, "WHERE")
+    order = OrderTerm[]
+    if accept_kw(cur, "ORDER")
+      expect_kw(cur, "BY")
+      Array.push(order, parse_order_term(cur))
+      Array.push(order, parse_order_term(cur)) while accept_op(cur, ",")
+    end
+    limit = nil
+    offset = nil
+    if accept_kw(cur, "LIMIT")
+      limit = parse_expr(cur)
+      offset = parse_expr(cur) if accept_kw(cur, "OFFSET")
+    end
+    SelectStmt.new(items, table, where, order, limit, offset)
+  end
+
+  def parse_result_col(cur)
+    return ResultCol.new(true, Ast.literal(nil), "") if accept_op(cur, "*")
+    e = parse_expr(cur)
+    name = ""
+    if accept_kw(cur, "AS")
+      name = expect_name(cur)
+    elsif Tok.kind(peek(cur)) == :ident
+      name = Tok.text(advance(cur))
+    end
+    ResultCol.new(false, e, name)
+  end
+
+  # After a term: where an ordering term may end.
+  def order_term_end?(t)
+    k = Tok.kind(t)
+    return true if k == :eof || (k == :op && Tok.text(t) == ",")
+    k == :kw && (Tok.text(t) == "ASC" || Tok.text(t) == "DESC" || Tok.text(t) == "NULLS" || Tok.text(t) == "LIMIT")
+  end
+
+  def parse_order_term(cur)
+    t = peek(cur)
+    by_position = false
+    position = 0
+    e = Ast.literal(nil)
+    if Tok.kind(t) == :int && order_term_end?(peek_at(cur, 1))
+      by_position = true
+      position = String.to_i(Tok.text(advance(cur)))
+    elsif is_op(t, "-") && Tok.kind(peek_at(cur, 1)) == :int && order_term_end?(peek_at(cur, 2))
+      advance(cur)
+      by_position = true
+      position = -String.to_i(Tok.text(advance(cur)))
+    else
+      e = parse_expr(cur)
+    end
+    desc = false
+    desc = true if accept_kw(cur, "DESC")
+    accept_kw(cur, "ASC") unless desc
+    nulls = :default
+    if accept_kw(cur, "NULLS")
+      if accept_kw(cur, "FIRST")
+        nulls = :first
+      else
+        expect_kw(cur, "LAST")
+        nulls = :last
+      end
+    end
+    OrderTerm.new(e, by_position, position, desc, nulls)
+  end
+
+  # --- expressions (1.8) ---
+
+  def parse_expr(cur) = parse_or(cur)
+
+  def parse_or(cur)
+    left = parse_and(cur)
+    left = Ast.binary(:or, left, parse_and(cur)) while accept_kw(cur, "OR")
+    left
+  end
+
+  def parse_and(cur)
+    left = parse_not(cur)
+    left = Ast.binary(:and, left, parse_not(cur)) while accept_kw(cur, "AND")
+    left
+  end
+
+  def parse_not(cur)
+    return Ast.unary(:not, parse_not(cur)) if accept_kw(cur, "NOT")
+    parse_equality(cur)
+  end
+
+  def parse_equality(cur)
+    left = parse_comparison(cur)
+    loop do
+      t = peek(cur)
+      kind = nil
+      if is_op(t, "=") || is_op(t, "==")
+        kind = :eq
+      elsif is_op(t, "!=") || is_op(t, "<>")
+        kind = :ne
+      elsif is_kw(t, "IS")
+        kind = :is
+      end
+      break if kind == nil
+      advance(cur)
+      kind = :isnot if kind == :is && accept_kw(cur, "NOT")
+      left = Ast.binary(kind, left, parse_comparison(cur))
+    end
+    left
+  end
+
+  def parse_comparison(cur)
+    left = parse_additive(cur)
+    loop do
+      t = peek(cur)
+      kind = nil
+      kind = :lt if is_op(t, "<")
+      kind = :le if is_op(t, "<=")
+      kind = :gt if is_op(t, ">")
+      kind = :ge if is_op(t, ">=")
+      break if kind == nil
+      advance(cur)
+      left = Ast.binary(kind, left, parse_additive(cur))
+    end
+    left
+  end
+
+  def parse_additive(cur)
+    left = parse_multiplicative(cur)
+    loop do
+      t = peek(cur)
+      kind = nil
+      kind = :add if is_op(t, "+")
+      kind = :sub if is_op(t, "-")
+      break if kind == nil
+      advance(cur)
+      left = Ast.binary(kind, left, parse_multiplicative(cur))
+    end
+    left
+  end
+
+  def parse_multiplicative(cur)
+    left = parse_concat(cur)
+    loop do
+      t = peek(cur)
+      kind = nil
+      kind = :mul if is_op(t, "*")
+      kind = :div if is_op(t, "/")
+      kind = :mod if is_op(t, "%")
+      break if kind == nil
+      advance(cur)
+      left = Ast.binary(kind, left, parse_concat(cur))
+    end
+    left
+  end
+
+  def parse_concat(cur)
+    left = parse_unary(cur)
+    left = Ast.binary(:concat, left, parse_unary(cur)) while accept_op(cur, "||")
+    left
+  end
+
+  def parse_unary(cur)
+    return Ast.unary(:neg, parse_unary(cur)) if accept_op(cur, "-")
+    return Ast.unary(:pos, parse_unary(cur)) if accept_op(cur, "+")
+    parse_primary(cur)
+  end
+
+  def parse_primary(cur)
+    t = advance(cur)
+    k = Tok.kind(t)
+    if k == :int
+      Ast.literal(String.to_i(Tok.text(t)))
+    elsif k == :real
+      Ast.literal(String.to_f(Tok.text(t)))
+    elsif k == :str
+      Ast.literal(Tok.text(t))
+    elsif is_kw(t, "NULL")
+      Ast.literal(nil)
+    elsif is_op(t, "(")
+      e = parse_expr(cur)
+      expect_op(cur, ")")
+      e
+    elsif k == :ident
+      parse_name(cur, t)
+    else
+      Errors.syntax
+    end
+  end
+
+  # After a name: a function call, a qualified column (table.column) or a column.
+  def parse_name(cur, t)
+    name = Tok.text(t)
+    if accept_op(cur, "(")
+      args = Expr[]
+      unless accept_op(cur, ")")
+        Array.push(args, parse_expr(cur))
+        Array.push(args, parse_expr(cur)) while accept_op(cur, ",")
+        expect_op(cur, ")")
+      end
+      Ast.call(name, args)
+    elsif accept_op(cur, ".")
+      Ast.column(expect_name(cur), name)
+    else
+      Ast.column(name, "")
+    end
+  end
+end

@@ -1,0 +1,51 @@
+# Syntax trees: what the parser produces and the resolver, evaluator and executor read.
+
+# An expression. kind says which fields matter:
+#   :lit      value
+#   :col      text = name as written, qual = table qualifier as written ("" if none); the parser's
+#             form of a name, which the resolver turns into :ref
+#   :ref      idx = position of the column in the row, aff = its affinity (:integer :real :text)
+#   :neg :pos :not                         args = [operand]
+#   :add :sub :mul :div :mod :concat       args = [left, right]
+#   :eq :ne :lt :le :gt :ge :is :isnot     args = [left, right]
+#   :and :or                               args = [left, right]
+#   :call     text = function name as written, args
+# aff is :none on every node that is not a :ref.
+Expr = Struct.new(:kind, :text, :qual, :value, :idx, :args, :aff)
+
+# A column of a table: name as written, type :integer, :real or :text.
+Column = Struct.new(:name, :type)
+
+# One item of a SELECT list: "*" (star), or an expression with its alias ("" if none).
+ResultCol = Struct.new(:star, :expr, :alias)
+
+# One ORDER BY term. If by_position, `position` is the number written (the expr is unused).
+OrderTerm = Struct.new(:expr, :by_position, :position, :desc, :nulls)   # nulls: :default :first :last
+
+CreateStmt = Struct.new(:name, :columns, :if_not_exists)
+DropStmt = Struct.new(:name, :if_exists)
+# columns: the listed column names (only meaningful if listed); rows: expressions per VALUES row.
+InsertStmt = Struct.new(:table, :listed, :columns, :rows)
+# table is "" without FROM; where, limit and offset are nil when absent.
+SelectStmt = Struct.new(:items, :table, :where, :order, :limit, :offset)
+
+module Ast
+  module_function
+
+  def expr(kind, text, args) = Expr.new(kind, text, "", nil, 0, args, :none)
+
+  def literal(v) = Expr.new(:lit, "", "", v, 0, Expr[], :none)
+
+  def column(name, qual) = Expr.new(:col, name, qual, nil, 0, Expr[], :none)
+
+  def ref(index, aff) = Expr.new(:ref, "", "", nil, index, Expr[], aff)
+
+  def unary(kind, operand) = expr(kind, "", Expr[operand])
+
+  def binary(kind, left, right) = expr(kind, "", Expr[left, right])
+
+  def call(name, args) = expr(:call, name, args)
+
+  # The same node with other arguments.
+  def with_args(e, args) = Expr.new(Expr.kind(e), Expr.text(e), Expr.qual(e), Expr.value(e), Expr.idx(e), args, Expr.aff(e))
+end

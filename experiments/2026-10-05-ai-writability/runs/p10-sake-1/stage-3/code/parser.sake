@@ -1,0 +1,302 @@
+# Parser: the tokens of one statement (without its `;`) -> a statement node (see ast.sake).
+# Recursive descent; the expression levels follow the table in spec 1.8, loosest first.
+# Anything the grammar does not allow raises SqlError "syntax error".
+class Parser
+  attr_reader tokens
+  attr_accessor pos
+
+  def parse(tokens)
+    ps = Parser.new(tokens, 0)
+    stmt = statement(ps)
+    syntax_error unless Token.kind(peek(ps)) == :eof
+    stmt
+  end
+
+  # ---- Token access ----
+
+  def peek(ps)
+    @pos < Array.size(@tokens) ? Array.fetch(@tokens, @pos) : Token.new(:eof, "", nil)
+  end
+
+  # The token `offset` places after the next one (an :eof token past the end).
+  def peek_at(ps, offset)
+    i = @pos + offset
+    i < Array.size(@tokens) ? Array.fetch(@tokens, i) : Token.new(:eof, "", nil)
+  end
+
+  def advance(ps)
+    t = peek(ps)
+    @pos += 1
+    t
+  end
+
+  def at_kw?(ps, word)
+    t = peek(ps)
+    Token.kind(t) == :kw && Token.text(t) == word
+  end
+
+  def accept_kw(ps, word)
+    return false unless at_kw?(ps, word)
+    advance(ps)
+    true
+  end
+
+  def expect_kw(ps, word)
+    syntax_error unless accept_kw(ps, word)
+  end
+
+  def accept_punct(ps, text)
+    t = peek(ps)
+    return false unless Token.kind(t) == :punct && Token.text(t) == text
+    advance(ps)
+    true
+  end
+
+  def expect_punct(ps, text)
+    syntax_error unless accept_punct(ps, text)
+  end
+
+  # An identifier (not a keyword), as written.
+  def ident(ps)
+    t = advance(ps)
+    syntax_error unless Token.kind(t) == :ident
+    Token.text(t)
+  end
+
+  # ---- Statements ----
+
+  def statement(ps)
+    t = advance(ps)
+    syntax_error unless Token.kind(t) == :kw
+    case Token.text(t)
+    in "CREATE" then parse_create(ps)
+    in "DROP" then parse_drop(ps)
+    in "INSERT" then parse_insert(ps)
+    in "SELECT" then parse_select(ps)
+    in "UPDATE" then parse_update(ps)
+    in "DELETE" then parse_delete(ps)
+    else syntax_error
+    end
+  end
+
+  def parse_create(ps)
+    expect_kw(ps, "TABLE")
+    if_not_exists = false
+    if accept_kw(ps, "IF")
+      expect_kw(ps, "NOT")
+      expect_kw(ps, "EXISTS")
+      if_not_exists = true
+    end
+    name = ident(ps)
+    expect_punct(ps, "(")
+    columns = Array[column_def(ps)]
+    constraints = Array[]
+    while accept_punct(ps, ",")
+      if at_kw?(ps, "PRIMARY") || at_kw?(ps, "UNIQUE")
+        Array.push(constraints, table_constraint(ps))
+      else
+        syntax_error unless Array.empty?(constraints)
+        Array.push(columns, column_def(ps))
+      end
+    end
+    expect_punct(ps, ")")
+    CreateTable.new(name, columns, constraints, if_not_exists)
+  end
+
+  # `name type` followed by any number of column constraints.
+  def column_def(ps)
+    name = ident(ps)
+    type = column_type(ident(ps))
+    primary_key = false
+    unique = false
+    not_null = false
+    default = nil
+    while true
+      if accept_kw(ps, "PRIMARY")
+        expect_kw(ps, "KEY")
+        primary_key = true
+      elsif accept_kw(ps, "UNIQUE")
+        unique = true
+      elsif accept_kw(ps, "NOT")
+        expect_kw(ps, "NULL")
+        not_null = true
+      elsif accept_kw(ps, "DEFAULT")
+        default = default_value(ps)
+      else
+        break
+      end
+    end
+    ColumnDef.new(name, type, primary_key, unique, not_null, default)
+  end
+
+  # `[+ | -] numeric-literal | string-literal | NULL`, as the value it stands for.
+  def default_value(ps)
+    t = advance(ps)
+    case Token.kind(t)
+    in :str then Token.text(t)
+    in :number then Token.val(t)
+    in :kw
+      syntax_error unless Token.text(t) == "NULL"
+      nil
+    in :punct
+      syntax_error unless Token.text(t) == "+" || Token.text(t) == "-"
+      n = advance(ps)
+      syntax_error unless Token.kind(n) == :number
+      Token.text(t) == "-" ? Value.negate(Token.val(n)) : Token.val(n)
+    else syntax_error
+    end
+  end
+
+  # `PRIMARY KEY (c, ...)` or `UNIQUE (c, ...)`.
+  def table_constraint(ps)
+    kind = :unique
+    if accept_kw(ps, "PRIMARY")
+      expect_kw(ps, "KEY")
+      kind = :primary_key
+    else
+      expect_kw(ps, "UNIQUE")
+    end
+    expect_punct(ps, "(")
+    names = Array[ident(ps)]
+    while accept_punct(ps, ",")
+      Array.push(names, ident(ps))
+    end
+    expect_punct(ps, ")")
+    TableConstraint.new(kind, names)
+  end
+
+  def column_type(word)
+    case Value.lower(word)
+    in "integer" then :integer
+    in "real" then :real
+    in "text" then :text
+    else syntax_error
+    end
+  end
+
+  def parse_drop(ps)
+    expect_kw(ps, "TABLE")
+    if_exists = false
+    if accept_kw(ps, "IF")
+      expect_kw(ps, "EXISTS")
+      if_exists = true
+    end
+    DropTable.new(ident(ps), if_exists)
+  end
+
+  def parse_insert(ps)
+    expect_kw(ps, "INTO")
+    table = ident(ps)
+    columns = nil
+    if accept_punct(ps, "(")
+      columns = Array[ident(ps)]
+      while accept_punct(ps, ",")
+        Array.push(columns, ident(ps))
+      end
+      expect_punct(ps, ")")
+    end
+    expect_kw(ps, "VALUES")
+    rows = Array[value_row(ps)]
+    while accept_punct(ps, ",")
+      Array.push(rows, value_row(ps))
+    end
+    Insert.new(table, columns, rows)
+  end
+
+  def value_row(ps)
+    expect_punct(ps, "(")
+    values = expression_list(ps)
+    expect_punct(ps, ")")
+    values
+  end
+
+  # After UPDATE: `table SET column = expr [, ...] [WHERE expr]`.
+  def parse_update(ps)
+    table = ident(ps)
+    expect_kw(ps, "SET")
+    sets = Array[assignment(ps)]
+    while accept_punct(ps, ",")
+      Array.push(sets, assignment(ps))
+    end
+    where = accept_kw(ps, "WHERE") ? expression(ps) : nil
+    Update.new(table, sets, where)
+  end
+
+  def assignment(ps)
+    column = ident(ps)
+    expect_punct(ps, "=")
+    Assignment.new(column, expression(ps))
+  end
+
+  # After DELETE: `FROM table [WHERE expr]`.
+  def parse_delete(ps)
+    expect_kw(ps, "FROM")
+    table = ident(ps)
+    where = accept_kw(ps, "WHERE") ? expression(ps) : nil
+    Delete.new(table, where)
+  end
+
+  def parse_select(ps)
+    distinct = accept_kw(ps, "DISTINCT")
+    accept_kw(ps, "ALL") unless distinct
+    items = Array[result_column(ps)]
+    while accept_punct(ps, ",")
+      Array.push(items, result_column(ps))
+    end
+    from = accept_kw(ps, "FROM") ? ident(ps) : nil
+    where = accept_kw(ps, "WHERE") ? expression(ps) : nil
+    group = Array[]
+    if accept_kw(ps, "GROUP")
+      expect_kw(ps, "BY")
+      group = expression_list(ps)
+    end
+    having = accept_kw(ps, "HAVING") ? expression(ps) : nil
+    order = at_kw?(ps, "ORDER") ? order_by(ps) : Array[]
+    limit = nil
+    offset = nil
+    if accept_kw(ps, "LIMIT")
+      limit = expression(ps)
+      offset = expression(ps) if accept_kw(ps, "OFFSET")
+    end
+    Select.new(distinct, items, from, where, group, having, order, limit, offset)
+  end
+
+  # `ORDER BY term [, term]...`
+  def order_by(ps)
+    expect_kw(ps, "ORDER")
+    expect_kw(ps, "BY")
+    terms = Array[order_term(ps)]
+    while accept_punct(ps, ",")
+      Array.push(terms, order_term(ps))
+    end
+    terms
+  end
+
+  def result_column(ps)
+    return ResultColumn.new(nil, nil) if accept_punct(ps, "*")
+    e = expression(ps)
+    alias_name = nil
+    if accept_kw(ps, "AS")
+      alias_name = ident(ps)
+    elsif Token.kind(peek(ps)) == :ident
+      alias_name = ident(ps)
+    end
+    ResultColumn.new(e, alias_name)
+  end
+
+  def order_term(ps)
+    e = expression(ps)
+    desc = accept_kw(ps, "DESC")
+    accept_kw(ps, "ASC") unless desc
+    nulls = :default
+    if accept_kw(ps, "NULLS")
+      if accept_kw(ps, "FIRST")
+        nulls = :first
+      else
+        expect_kw(ps, "LAST")
+        nulls = :last
+      end
+    end
+    OrderTerm.new(e, desc, nulls)
+  end
+end

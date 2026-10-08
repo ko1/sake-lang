@@ -1,0 +1,124 @@
+# SELECT (1.7): resolve the names, then filter, compute, sort, skip, limit and print.
+
+# One ORDER BY term, planned: `item` is the position of the result column it means, or -1 if the
+# term is an expression `expr` evaluated on the table row.
+SortKey = Struct.new(:item, :expr)
+
+module Select
+  module_function
+
+  # The lines the statement prints.
+  def run(db, stmt)
+    from = SelectStmt.table(stmt)
+    columns = Column[]
+    source = Array[Array[]]
+    table_key = ""
+    if from != ""
+      table = Catalog.table!(db, from)
+      columns = Table.columns(table)
+      source = Table.rows(table)
+      table_key = Catalog.key(from)
+    end
+    scope = Scope.new(table_key, columns, AliasEntry[])
+    items = expand(SelectStmt.items(stmt), scope, from != "")
+    name_scope = Scope.new(table_key, columns, aliases_of(items))
+    where = SelectStmt.where(stmt)
+    cond = where == nil ? nil : Resolver.resolve(where, name_scope)
+    keys = plan_order(SelectStmt.order(stmt), items, name_scope)
+    limit = count_of(SelectStmt.limit(stmt))
+    offset = count_of(SelectStmt.offset(stmt))
+
+    out = SortRow[]
+    Array.each(source) do |row|
+      if cond == nil || Values.truth(Eval.value_of(cond, row)) == 1
+        vals = Array[]
+        Array.each(items) { |it| Array.push(vals, Eval.value_of(ResultCol.expr(it), row)) }
+        sort_keys = Array[]
+        Array.each(keys) do |k|
+          i = SortKey.item(k)
+          Array.push(sort_keys, i >= 0 ? vals[i] : Eval.value_of(SortKey.expr(k), row))
+        end
+        Array.push(out, SortRow.new(sort_keys, vals))
+      end
+    end
+
+    rows = Sorter.sort(out, SelectStmt.order(stmt))
+    rows = Array.drop(rows, offset) if offset > 0
+    rows = Array.take(rows, limit) if limit >= 0
+    lines = String[]
+    Array.each(rows) do |r|
+      Array.push(lines, Array.join(Array.map(SortRow.values(r)) { |v| Values.display(v) }, "|"))
+    end
+    lines
+  end
+
+  # The result columns with "*" replaced by the table's columns and every expression resolved.
+  def expand(items, scope, has_from)
+    out = ResultCol[]
+    Array.each(items) do |it|
+      if ResultCol.star(it)
+        Errors.sql_error("no tables specified") unless has_from
+        cols = Scope.columns(scope)
+        i = 0
+        while i < Array.size(cols)
+          Array.push(out, ResultCol.new(false, Resolver.column_ref(cols, i), ""))
+          i += 1
+        end
+      else
+        Array.push(out, ResultCol.new(false, Resolver.resolve(ResultCol.expr(it), scope), ResultCol.alias(it)))
+      end
+    end
+    out
+  end
+
+  def aliases_of(items)
+    out = AliasEntry[]
+    Array.each(items) do |it|
+      Array.push(out, AliasEntry.new(Catalog.key(ResultCol.alias(it)), ResultCol.expr(it))) if ResultCol.alias(it) != ""
+    end
+    out
+  end
+
+  # Position of the result column with this alias (case-insensitive), or -1.
+  def alias_position(items, name)
+    k = Catalog.key(name)
+    Array.find_index(items) { |it| ResultCol.alias(it) != "" && Catalog.key(ResultCol.alias(it)) == k } || -1
+  end
+
+  def plan_order(terms, items, scope)
+    keys = SortKey[]
+    n = Array.size(items)
+    pos = 0
+    Array.each(terms) do |t|
+      pos += 1
+      e = OrderTerm.expr(t)
+      if OrderTerm.by_position(t)
+        k = OrderTerm.position(t)
+        if k < 1 || k > n
+          Errors.sql_error("#{Errors.ordinal(pos)} ORDER BY term out of range - should be between 1 and #{n}")
+        end
+        Array.push(keys, SortKey.new(k - 1, e))
+      else
+        alias_at = Expr.kind(e) == :col && Expr.qual(e) == "" ? alias_position(items, Expr.text(e)) : -1
+        if alias_at >= 0
+          Array.push(keys, SortKey.new(alias_at, e))
+        else
+          Array.push(keys, SortKey.new(-1, Resolver.resolve(e, scope)))
+        end
+      end
+    end
+    keys
+  end
+
+  # The value of a LIMIT or OFFSET expression as an Integer; -1 if absent or not a number.
+  def count_of(expr)
+    return -1 if expr == nil
+    v = Eval.value_of(Resolver.resolve(expr, Resolver.empty_scope), Array[])
+    case v
+    in Integer then v
+    in Float then Float.truncate(v)
+    in String then Arithmetic.truncate(Values.to_number(v))
+    else -1
+    end
+  end
+end

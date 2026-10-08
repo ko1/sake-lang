@@ -1,0 +1,59 @@
+# Name resolution: turns a parsed expression into one that can be evaluated against a row.
+# Column names become row positions, aliases are replaced by the expression they stand for,
+# and unknown names or functions are reported here - before any row is read.
+module Resolver
+  module_function
+
+  def resolve(e, scope)
+    case e
+    in Lit then e
+    in Col then resolve_column(e, scope)
+    in Unary then Unary.new(Unary.op(e), resolve(Unary.operand(e), scope))
+    in Binary then Binary.new(Binary.op(e), resolve(Binary.left(e), scope), resolve(Binary.right(e), scope))
+    in Call then resolve_call(e, scope)
+    in Case then resolve_case(e, scope)
+    in Between
+      Between.new(resolve(Between.expr(e), scope), resolve(Between.low(e), scope), resolve(Between.high(e), scope), Between.negated(e))
+    in InList
+      InList.new(resolve(InList.expr(e), scope), resolve_all(InList.items(e), scope), InList.negated(e))
+    in Like then Like.new(resolve(Like.expr(e), scope), resolve(Like.pattern(e), scope), Like.negated(e))
+    in Cast then Cast.new(resolve(Cast.expr(e), scope), Cast.type(e))
+    end
+  end
+
+  def resolve_all(list, scope) = Array.map(list) { resolve(it, scope) }
+
+  def resolve_case(c, scope)
+    operand = Case.operand(c)
+    whens = Array.map(Case.whens(c)) { WhenClause.new(resolve(WhenClause.condition(it), scope), resolve(WhenClause.result(it), scope)) }
+    otherwise = Case.otherwise_expr(c)
+    Case.new(resolve_optional(operand, scope), whens, resolve_optional(otherwise, scope))
+  end
+
+  # An optional expression (nil stays nil).
+  def resolve_optional(e, scope) = e == nil ? nil : resolve(e, scope)
+
+  def resolve_column(c, scope)
+    key = Value.lower(Col.name(c))
+    cols = Scope.columns(scope)
+    i = Array.find_index(cols) { Column.key(it) == key }
+    if i != nil
+      return Col.new(Col.name(c), i, Column.type(Array.fetch(cols, i)))
+    end
+    aliased = Scope.aliases(scope)[key]
+    raise SqlError.new("no such column: #{Col.name(c)}") if aliased == nil
+    aliased
+  end
+
+  def resolve_call(c, scope)
+    fn = Value.lower(Call.name(c))
+    raise SqlError.new("no such function: #{Call.name(c)}") unless Functions.known?(fn)
+    unless Functions.arity_ok?(fn, Array.size(Call.args(c)))
+      raise SqlError.new("wrong number of arguments to function #{Call.name(c)}()")
+    end
+    Call.new(Call.name(c), fn, resolve_all(Call.args(c), scope))
+  end
+
+  # A scope with no columns and no aliases: for expressions evaluated with no row.
+  def empty_scope = Scope.new(Array[], Hash[])
+end

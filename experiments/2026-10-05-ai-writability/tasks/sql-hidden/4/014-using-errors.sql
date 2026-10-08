@@ -8,6 +8,6 @@ SELECT * FROM emp JOIN dep USING (dept);
 SELECT * FROM emp LEFT JOIN dep USING (code);
 SELECT * FROM emp e JOIN dep d USING (title);
 SELECT * FROM dep JOIN loc USING (code, city);
-SELECT title FROM emp WHERE id IN (SELECT 1 FROM dep JOIN emp USING (id));
+SELECT dept FROM emp WHERE id IN (SELECT 1 FROM dep JOIN emp USING (id));
 SELECT title, city FROM dep JOIN loc USING (code);
 SELECT id, city FROM emp JOIN dep ON dept = dep.code JOIN loc USING (code);

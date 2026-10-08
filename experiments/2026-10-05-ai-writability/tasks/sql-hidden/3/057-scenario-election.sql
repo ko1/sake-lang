@@ -5,7 +5,7 @@ INSERT INTO districts VALUES ('east', 1000), ('west', 800), ('north', 500);
 INSERT INTO votes VALUES ('east', 'kay', 300), ('east', 'lin', 250), ('east', NULL, 20), ('west', 'kay', 200);
 INSERT INTO votes VALUES ('west', 'lin', 390), ('west', 'max', 50), ('north', 'max', 260), ('north', 'lin', 100);
 SELECT candidate, sum(n) AS total FROM votes WHERE candidate IS NOT NULL GROUP BY candidate ORDER BY total DESC;
-SELECT district, sum(n), max(n), candidate FROM votes GROUP BY district ORDER BY district;
+SELECT district, max(n), candidate FROM votes GROUP BY district ORDER BY district;
 SELECT district, sum(n) * 100 / max(1000) FROM votes WHERE district = 'east';
 SELECT candidate, count(DISTINCT district) FROM votes GROUP BY candidate HAVING count(DISTINCT district) > 1 ORDER BY candidate;
 SELECT sum(voters), avg(voters), min(name) FROM districts;

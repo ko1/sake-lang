@@ -1,0 +1,168 @@
+# SELECT (spec 1.7): resolve every name first, then read rows, filter, sort, cut, print.
+
+# A result column: its resolved expression and its alias (nil if none).
+class ResultItem
+  attr_reader expr, alias_name
+end
+
+module Query
+  module_function
+
+  # Runs a SELECT and returns the lines to print.
+  def run(db, st)
+    columns = source_columns(db, st)
+    items = result_items(st, columns)
+    aliases = alias_exprs(items)
+    scope = Scope.new(columns, aliases)
+    where = resolve_where(Select.where(st), scope)
+    specs = sort_keys(st, items, scope, alias_positions(items))
+    limit = cut(Select.limit(st))
+    offset = cut(Select.offset(st))
+
+    out = Array[]
+    Array.each(source_rows(db, st)) do |row|
+      next unless keep?(where, row)
+      vals = Array.map(items) { Evaluator.evaluate(ResultItem.expr(it), row) }
+      keys = Array.map(specs) { sort_key_value(it, vals, row) }
+      Array.push(out, SortItem.new(keys, vals))
+    end
+    out = Sorter.sort(out, specs) unless Array.empty?(specs)
+    out = Array.drop(out, offset == nil ? 0 : Integer.clamp(offset, 0, Array.size(out)))
+    out = Array.take(out, limit) if limit != nil && limit >= 0
+    Array.map(out) { |item| Array.join(Array.map(SortItem.vals(item)) { Value.text_form(it) }, "|") }
+  end
+
+  def resolve_where(e, scope)
+    return nil if e == nil
+    Resolver.resolve(e, scope)
+  end
+
+  # Does the row pass WHERE (nil: no WHERE)? An unknown result drops the row.
+  def keep?(where, row)
+    return true if where == nil
+    Value.truth(Evaluator.evaluate(where, row)) == true
+  end
+
+  # The columns of the FROM table (none without FROM); SqlError if it does not exist.
+  def source_columns(db, st)
+    name = Select.from(st)
+    return Array[] if name == nil
+    Table.columns(Database.table(db, name))
+  end
+
+  # The rows to scan: the table's, or one empty row without FROM.
+  def source_rows(db, st)
+    name = Select.from(st)
+    return Array[Array[]] if name == nil
+    Table.rows(Database.table(db, name))
+  end
+
+  # The result columns with `*` expanded and names resolved against the table's columns.
+  def result_items(st, columns)
+    items = Array[]
+    scope = Scope.new(columns, Hash[])
+    Array.each(Select.items(st)) do |rc|
+      e = ResultColumn.expr(rc)
+      if e == nil
+        raise SqlError.new("no tables specified") if Select.from(st) == nil
+        Array.each_with_index(columns) do |c, i|
+          Array.push(items, ResultItem.new(Col.new(Column.name(c), i, Column.type(c)), nil))
+        end
+      else
+        Array.push(items, ResultItem.new(Resolver.resolve(e, scope), ResultColumn.alias_name(rc)))
+      end
+    end
+    items
+  end
+
+  # lower-cased alias -> the aliased result column's expression (for WHERE and ORDER BY).
+  def alias_exprs(items)
+    h = Hash[]
+    Array.each(items) do |item|
+      a = ResultItem.alias_name(item)
+      h[Value.lower(a)] = ResultItem.expr(item) if a != nil
+    end
+    h
+  end
+
+  # lower-cased alias -> the aliased result column's position (for a bare name in ORDER BY).
+  def alias_positions(items)
+    h = Hash[]
+    Array.each_with_index(items) do |item, i|
+      a = ResultItem.alias_name(item)
+      h[Value.lower(a)] = i if a != nil
+    end
+    h
+  end
+
+  def sort_keys(st, items, scope, positions)
+    n = Array.size(items)
+    Array.map(Array.each_with_index(Select.order(st))) do |term, i|
+      e = OrderTerm.expr(term)
+      k = ordinal(e)
+      pos = -1
+      expr = nil
+      if k != nil
+        if k < 1 || k > n
+          raise SqlError.new("#{ordinal_word(i + 1)} ORDER BY term out of range - should be between 1 and #{n}")
+        end
+        pos = k - 1
+      elsif e in Col
+        p = positions[Value.lower(Col.name(e))]
+        if p == nil
+          expr = Resolver.resolve(e, scope)
+        else
+          pos = p
+        end
+      else
+        expr = Resolver.resolve(e, scope)
+      end
+      SortKey.new(pos, expr, OrderTerm.desc(term), OrderTerm.nulls(term))
+    end
+  end
+
+  # k for an ORDER BY term that is the integer literal k or -k, else nil.
+  def ordinal(e)
+    case e
+    in Lit
+      v = Lit.value(e)
+      (v in Integer) ? v : nil
+    in Unary
+      return nil unless Unary.op(e) == :neg
+      inner = Unary.operand(e)
+      return nil unless inner in Lit
+      v = Lit.value(inner)
+      (v in Integer) ? -v : nil
+    else nil
+    end
+  end
+
+  def ordinal_word(i)
+    suffix = if i % 100 >= 11 && i % 100 <= 13
+      "th"
+    else
+      case i % 10
+      in 1 then "st"
+      in 2 then "nd"
+      in 3 then "rd"
+      else "th"
+      end
+    end
+    "#{i}#{suffix}"
+  end
+
+  def sort_key_value(spec, vals, row)
+    e = SortKey.expr(spec)
+    return Array.fetch(vals, SortKey.position(spec)) if e == nil
+    Evaluator.evaluate(e, row)
+  end
+
+  # The Integer value of a LIMIT / OFFSET expression (no row in scope), or nil if absent.
+  def cut(e)
+    return nil if e == nil
+    v = Evaluator.evaluate(Resolver.resolve(e, Resolver.empty_scope), Array[])
+    return nil if v == nil
+    n = Value.to_number(v)
+    (n in Integer) ? n : Float.to_i(n)
+  end
+end

@@ -1,0 +1,62 @@
+# Name resolution: checks every name of an expression before any row is read, and turns column
+# names (:col) into row positions (:ref) and function names into lower case.
+
+# A result column's alias and the expression it stands for (already resolved).
+AliasEntry = Struct.new(:name, :expr)
+# What an expression's names refer to. table: lower-case name of the FROM table ("" if none);
+# columns: its Column[]; aliases: AliasEntry[] a name may fall back to.
+Scope = Struct.new(:table, :columns, :aliases)
+
+module Resolver
+  module_function
+
+  def empty_scope = Scope.new("", Column[], AliasEntry[])
+
+  def resolve(e, scope)
+    case Expr.kind(e)
+    in :lit then e
+    in :col then resolve_column(e, scope)
+    in :call then resolve_call(e, scope)
+    else Ast.with_args(e, resolve_all(Expr.args(e), scope))
+    end
+  end
+
+  def resolve_all(exprs, scope)
+    out = Expr[]
+    Array.each(exprs) { |a| Array.push(out, resolve(a, scope)) }
+    out
+  end
+
+  def column_ref(columns, i) = Ast.ref(i, Catalog.affinity(columns[i]))
+
+  def resolve_column(e, scope)
+    name = Expr.text(e)
+    qual = Expr.qual(e)
+    key = Catalog.key(name)
+    if qual == "" || Catalog.key(qual) == Scope.table(scope)
+      i = Catalog.column_index(Scope.columns(scope), name)
+      return column_ref(Scope.columns(scope), i) if i >= 0
+      if qual == ""
+        found = find_alias(scope, key)
+        return found if found != nil
+      end
+    end
+    Errors.sql_error("no such column: #{qual == "" ? name : qual + "." + name}")
+  end
+
+  # The expression an alias stands for, or nil.
+  def find_alias(scope, key)
+    entry = Array.find(Scope.aliases(scope)) { |a| AliasEntry.name(a) == key }
+    entry == nil ? nil : AliasEntry.expr(entry)
+  end
+
+  def resolve_call(e, scope)
+    name = Catalog.key(Expr.text(e))
+    range = Functions.arity(name)
+    Errors.sql_error("no such function: #{Expr.text(e)}") if range == nil
+    n = Array.size(Expr.args(e))
+    lo, hi = range
+    Errors.sql_error("wrong number of arguments to function #{Expr.text(e)}()") if n < lo || n > hi
+    Expr.new(:call, name, "", nil, 0, resolve_all(Expr.args(e), scope), :none)
+  end
+end

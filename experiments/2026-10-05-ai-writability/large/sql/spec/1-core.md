@@ -139,8 +139,8 @@ row. A query with no result rows prints nothing.
   `<i-th> ORDER BY term out of range - should be between 1 and <n>`, where `<i-th>` is the position of
   the term in the `ORDER BY` list (not k), written `1st`, `2nd`, `3rd`, `4th`, ... (`11th`, `12th`,
   `13th`, `21st`, `22nd`): `ORDER BY a, 5` with one result column is `2nd ORDER BY term out of range -
-  should be between 1 and 1`. Any other term (including `+1`) is an expression evaluated on the row.
-  Tests do not put an `ORDER BY` term in parentheses, list a column twice in an `INSERT`, or give two
+  should be between 1 and 1`. Any other term is an expression evaluated on the row.
+  Tests do not write an `ORDER BY` or `GROUP BY` term as `+k` or `(k)`, put one in parentheses, list a column twice in an `INSERT`, or give two
   result columns the same alias. Rows are compared term by term in the order of
   values (1.9); `DESC` reverses it. NULLs come first under `ASC` and last under `DESC`, unless
   `NULLS FIRST` or `NULLS LAST` says otherwise. Rows that tie on every term may come out in any order;

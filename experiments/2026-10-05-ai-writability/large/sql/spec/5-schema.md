@@ -126,7 +126,8 @@ after every constraint that exists when it is created (so it is checked before t
 on rows that already conflict is the constraint's error (`UNIQUE constraint failed: t.a, t.b` with the
 index's columns) and creates nothing. Index names have their own name space, except that an index may
 not take a table's name: `index <name> already exists`, `there is already a table named <name>`,
-`no such index: <name>`. Dropping a table drops its indexes.
+`no such index: <name>`. `IF NOT EXISTS` suppresses only `index <name> already exists`; the
+other errors still occur. Dropping a table drops its indexes.
 
 ## 5.8 Errors added in this stage
 

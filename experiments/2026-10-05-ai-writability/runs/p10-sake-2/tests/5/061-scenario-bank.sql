@@ -1,0 +1,28 @@
+-- scenario: bank transfers inside transactions, some failing
+CREATE TABLE account (no INTEGER PRIMARY KEY, owner TEXT NOT NULL, balance INTEGER NOT NULL);
+CREATE TABLE journal (id INTEGER PRIMARY KEY, src INTEGER, dst INTEGER, amount INTEGER);
+INSERT INTO account VALUES (100, 'ann', 500), (200, 'bob', 50), (300, 'cy', 0);
+BEGIN;
+UPDATE account SET balance = balance - 80 WHERE no = 100;
+UPDATE account SET balance = balance + 80 WHERE no = 200;
+INSERT INTO journal (src, dst, amount) VALUES (100, 200, 80);
+COMMIT;
+BEGIN;
+UPDATE account SET balance = balance - 20 WHERE no = 200;
+UPDATE account SET balance = NULL WHERE no = 300;
+INSERT INTO journal (src, dst, amount) VALUES (200, 300, 20);
+ROLLBACK;
+SELECT no, owner, balance FROM account ORDER BY no;
+SELECT id, src, dst, amount FROM journal ORDER BY id;
+BEGIN;
+INSERT INTO account VALUES (400, 'dan', 10);
+INSERT INTO account VALUES (100, 'eve', 1);
+BEGIN;
+UPDATE account SET balance = balance + 5 WHERE owner = 'dan';
+END;
+SELECT owner, balance FROM account WHERE no >= 300 ORDER BY no;
+ROLLBACK;
+CREATE VIEW totals AS SELECT owner, balance + coalesce((SELECT sum(amount) FROM journal WHERE dst = no), 0) - coalesce((SELECT sum(amount) FROM journal WHERE src = no), 0) AS opening FROM account;
+SELECT owner, opening FROM totals ORDER BY owner;
+SELECT 'in', dst, sum(amount) FROM journal GROUP BY dst UNION ALL SELECT 'out', src, sum(amount) FROM journal GROUP BY src ORDER BY 1, 2;
+SELECT sum(balance) FROM account;

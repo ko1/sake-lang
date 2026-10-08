@@ -54,7 +54,7 @@ end
 
 pub, pub_secs, pub_note = run_suite(runner, main, stage, File.join(AW::EXP, "large", "sql", "tests"))
 hid, hid_secs, hid_note = run_suite(runner, main, stage, File.join(AW::EXP, "tasks", "sql-hidden"))
-fmt = ->(per) { per.sort_by { _1.to_i }.to_h { |k, v| [k, "#{v["total"] - v["failed"]}/#{v["total"]}"] } }
+fmt = ->(per) { per.sort_by { |k, _| k.to_i }.to_h { |k, v| [k, "#{v["total"] - v["failed"]}/#{v["total"]}"] } }
 row = { run:, lang: meta["lang"], stage:, files: files.length, lines:,
         public: fmt.(pub), hidden: fmt.(hid),
         public_pass: pub.values.sum { _1["total"] - _1["failed"] }, public_total: pub.values.sum { _1["total"] },

@@ -1,0 +1,82 @@
+# Syntax trees: what the parser produces and the resolver, evaluator and executor read.
+
+# An expression. kind says which fields matter:
+#   :lit      value
+#   :col      text = name as written, qual = table qualifier as written ("" if none); the parser's
+#             form of a name, which the resolver turns into :ref
+#   :ref      idx = position of the column in the row, aff = its affinity (:integer :real :text)
+#   :neg :pos :not                         args = [operand]
+#   :add :sub :mul :div :mod :concat       args = [left, right]
+#   :eq :ne :lt :le :gt :ge :is :isnot     args = [left, right]
+#   :and :or                               args = [left, right]
+#   :call     text = function name as written, args; qual = "*" for count(*); distinct and order
+#             (OrderTerm[]) are set for an aggregate written with DISTINCT / ORDER BY inside the call
+#   :case_search  args = [when1, then1, when2, then2, ..., else]      (else is a NULL literal if absent)
+#   :case_simple  args = [operand, when1, then1, ..., else]
+#   :between  args = [x, low, high]          :in  args = [x, e1, e2, ...]          :like  args = [x, pattern]
+#             (the NOT forms are a :not around these)
+#   :cast     text = "integer" | "real" | "text", args = [operand]
+# aff is :none on every node except a :ref (its column's) and a :cast (its type's).
+Expr = Struct.new(:kind, :text, :qual, :value, :idx, :args, :aff, :distinct, :order)
+
+# A column of a table: name as written, type :integer, :real or :text, NOT NULL (also set for the
+# columns of a PRIMARY KEY), and the DEFAULT value (nil if none).
+Column = Struct.new(:name, :type, :not_null, :default)
+
+# A UNIQUE or PRIMARY KEY constraint as written: the column names, in the order listed.
+KeySpec = Struct.new(:names, :primary)
+
+# One item of a SELECT list: "*" (star), or an expression with its alias ("" if none). agg: the name
+# of the first aggregate call in the expression, "" if none (filled in by Select, not the parser).
+ResultCol = Struct.new(:star, :expr, :alias, :agg)
+
+# One ORDER BY term. If by_position, `position` is the number written (the expr is unused).
+OrderTerm = Struct.new(:expr, :by_position, :position, :desc, :nulls)   # nulls: :default :first :last
+
+# keys: KeySpec[] in declaration order (column constraints in column order, then table constraints).
+CreateStmt = Struct.new(:name, :columns, :keys, :if_not_exists)
+DropStmt = Struct.new(:name, :if_exists)
+# columns: the listed column names (only meaningful if listed); rows: expressions per VALUES row.
+InsertStmt = Struct.new(:table, :listed, :columns, :rows)
+# An aggregate call, resolved (3.2). name: lower case; star: count(*); args: resolved against the
+# table row; order: group_concat's ORDER BY terms (their exprs resolved the same way).
+AggCall = Struct.new(:name, :star, :distinct, :args, :order)
+
+# table is "" without FROM; where, limit and offset are nil when absent. group: GROUP BY terms
+# (by_position set for `GROUP BY k`); having is nil when absent; distinct: SELECT DISTINCT.
+SelectStmt = Struct.new(:items, :table, :where, :group, :having, :order, :limit, :offset, :distinct)
+
+# One `column = expr` of an UPDATE.
+Assignment = Struct.new(:column, :expr)
+UpdateStmt = Struct.new(:table, :sets, :where)
+DeleteStmt = Struct.new(:table, :where)
+
+module Ast
+  module_function
+
+  def node(kind, text, qual, value, idx, args, aff) = Expr.new(kind, text, qual, value, idx, args, aff, false, OrderTerm[])
+
+  def expr(kind, text, args) = node(kind, text, "", nil, 0, args, :none)
+
+  def literal(v) = node(:lit, "", "", v, 0, Expr[], :none)
+
+  def column(name, qual) = node(:col, name, qual, nil, 0, Expr[], :none)
+
+  def ref(index, aff) = node(:ref, "", "", nil, index, Expr[], aff)
+
+  def unary(kind, operand) = expr(kind, "", Expr[operand])
+
+  def binary(kind, left, right) = expr(kind, "", Expr[left, right])
+
+  def call(name, args) = expr(:call, name, args)
+
+  # A call written with `*` (count(*)), DISTINCT or ORDER BY inside the parentheses.
+  def aggregate_call(name, star, distinct, args, order) = Expr.new(:call, name, star ? "*" : "", nil, 0, args, :none, distinct, order)
+
+  def cast(operand, type) = node(:cast, type, "", nil, 0, Expr[operand], type_affinity(type))
+
+  def type_affinity(type) = type == "integer" ? :integer : (type == "real" ? :real : :text)
+
+  # The same node with other arguments.
+  def with_args(e, args) = Expr.new(Expr.kind(e), Expr.text(e), Expr.qual(e), Expr.value(e), Expr.idx(e), args, Expr.aff(e), Expr.distinct(e), Expr.order(e))
+end

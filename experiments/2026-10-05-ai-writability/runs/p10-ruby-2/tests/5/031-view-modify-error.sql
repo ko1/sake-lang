@@ -1,0 +1,12 @@
+-- a view cannot be changed
+CREATE TABLE t (a INTEGER, b INTEGER);
+INSERT INTO t VALUES (1, 2);
+CREATE VIEW vw AS SELECT a, b FROM t;
+INSERT INTO vw VALUES (3, 4);
+INSERT INTO vw (a) VALUES (5);
+UPDATE vw SET a = 9;
+UPDATE vw SET b = 0 WHERE a = 1;
+DELETE FROM vw;
+DELETE FROM vw WHERE a = 1;
+SELECT a, b FROM vw;
+SELECT count(*) FROM t;

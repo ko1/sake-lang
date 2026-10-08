@@ -1,0 +1,58 @@
+# The database: tables, their columns and their rows.
+
+# name: as written in CREATE TABLE. columns: Column[]. rows: each an Array with one value per column.
+Table = Struct.new(:name, :columns, :rows)
+# tables: Hash from the lower-case table name to its Table.
+Database = Struct.new(:tables)
+
+module Catalog
+  module_function
+
+  def new_database = Database.new(Hash[])
+
+  def key(name) = String.downcase(name)
+
+  # The table, or nil.
+  def find_table(db, name) = Database.tables(db)[key(name)]
+
+  # The table; "no such table" if there is none. `name` is spelled as the statement wrote it.
+  def table!(db, name)
+    t = find_table(db, name)
+    Errors.sql_error("no such table: #{name}") if t == nil
+    t
+  end
+
+  # Position of the column in the table, or -1.
+  def column_index(columns, name)
+    k = key(name)
+    Array.find_index(columns) { |c| key(Column.name(c)) == k } || -1
+  end
+
+  def affinity(col) = Column.type(col)
+
+  def create_table(db, stmt)
+    tables = Database.tables(db)
+    name = CreateStmt.name(stmt)
+    if tables[key(name)] != nil
+      return if CreateStmt.if_not_exists(stmt)
+      Errors.sql_error("table #{name} already exists")
+    end
+    seen = Set[]
+    Array.each(CreateStmt.columns(stmt)) do |c|
+      k = key(Column.name(c))
+      Errors.sql_error("duplicate column name: #{Column.name(c)}") if Set.include?(seen, k)
+      Set.add(seen, k)
+    end
+    tables[key(name)] = Table.new(name, CreateStmt.columns(stmt), Array[])
+  end
+
+  def drop_table(db, stmt)
+    tables = Database.tables(db)
+    k = key(DropStmt.name(stmt))
+    if tables[k] == nil
+      return if DropStmt.if_exists(stmt)
+      Errors.sql_error("no such table: #{DropStmt.name(stmt)}")
+    end
+    Hash.delete(tables, k)
+  end
+end

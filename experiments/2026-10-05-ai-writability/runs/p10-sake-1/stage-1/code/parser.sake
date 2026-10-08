@@ -1,0 +1,288 @@
+# Parser: the tokens of one statement (without its `;`) -> a statement node (see ast.sake).
+# Recursive descent; the expression levels follow the table in spec 1.8, loosest first.
+# Anything the grammar does not allow raises SqlError "syntax error".
+class Parser
+  attr_reader tokens
+  attr_accessor pos
+
+  def parse(tokens)
+    ps = Parser.new(tokens, 0)
+    stmt = statement(ps)
+    syntax_error unless Token.kind(peek(ps)) == :eof
+    stmt
+  end
+
+  # ---- Token access ----
+
+  def peek(ps)
+    @pos < Array.size(@tokens) ? Array.fetch(@tokens, @pos) : Token.new(:eof, "", nil)
+  end
+
+  def advance(ps)
+    t = peek(ps)
+    @pos += 1
+    t
+  end
+
+  def at_kw?(ps, word)
+    t = peek(ps)
+    Token.kind(t) == :kw && Token.text(t) == word
+  end
+
+  def accept_kw(ps, word)
+    return false unless at_kw?(ps, word)
+    advance(ps)
+    true
+  end
+
+  def expect_kw(ps, word)
+    syntax_error unless accept_kw(ps, word)
+  end
+
+  def accept_punct(ps, text)
+    t = peek(ps)
+    return false unless Token.kind(t) == :punct && Token.text(t) == text
+    advance(ps)
+    true
+  end
+
+  def expect_punct(ps, text)
+    syntax_error unless accept_punct(ps, text)
+  end
+
+  # An identifier (not a keyword), as written.
+  def ident(ps)
+    t = advance(ps)
+    syntax_error unless Token.kind(t) == :ident
+    Token.text(t)
+  end
+
+  # ---- Statements ----
+
+  def statement(ps)
+    t = advance(ps)
+    syntax_error unless Token.kind(t) == :kw
+    case Token.text(t)
+    in "CREATE" then parse_create(ps)
+    in "DROP" then parse_drop(ps)
+    in "INSERT" then parse_insert(ps)
+    in "SELECT" then parse_select(ps)
+    else syntax_error
+    end
+  end
+
+  def parse_create(ps)
+    expect_kw(ps, "TABLE")
+    if_not_exists = false
+    if accept_kw(ps, "IF")
+      expect_kw(ps, "NOT")
+      expect_kw(ps, "EXISTS")
+      if_not_exists = true
+    end
+    name = ident(ps)
+    expect_punct(ps, "(")
+    columns = Array[column_def(ps)]
+    while accept_punct(ps, ",")
+      Array.push(columns, column_def(ps))
+    end
+    expect_punct(ps, ")")
+    CreateTable.new(name, columns, if_not_exists)
+  end
+
+  def column_def(ps)
+    name = ident(ps)
+    ColumnDef.new(name, column_type(ident(ps)))
+  end
+
+  def column_type(word)
+    case Value.lower(word)
+    in "integer" then :integer
+    in "real" then :real
+    in "text" then :text
+    else syntax_error
+    end
+  end
+
+  def parse_drop(ps)
+    expect_kw(ps, "TABLE")
+    if_exists = false
+    if accept_kw(ps, "IF")
+      expect_kw(ps, "EXISTS")
+      if_exists = true
+    end
+    DropTable.new(ident(ps), if_exists)
+  end
+
+  def parse_insert(ps)
+    expect_kw(ps, "INTO")
+    table = ident(ps)
+    columns = nil
+    if accept_punct(ps, "(")
+      columns = Array[ident(ps)]
+      while accept_punct(ps, ",")
+        Array.push(columns, ident(ps))
+      end
+      expect_punct(ps, ")")
+    end
+    expect_kw(ps, "VALUES")
+    rows = Array[value_row(ps)]
+    while accept_punct(ps, ",")
+      Array.push(rows, value_row(ps))
+    end
+    Insert.new(table, columns, rows)
+  end
+
+  def value_row(ps)
+    expect_punct(ps, "(")
+    values = expression_list(ps)
+    expect_punct(ps, ")")
+    values
+  end
+
+  def parse_select(ps)
+    items = Array[result_column(ps)]
+    while accept_punct(ps, ",")
+      Array.push(items, result_column(ps))
+    end
+    from = accept_kw(ps, "FROM") ? ident(ps) : nil
+    where = accept_kw(ps, "WHERE") ? expression(ps) : nil
+    order = Array[]
+    if accept_kw(ps, "ORDER")
+      expect_kw(ps, "BY")
+      Array.push(order, order_term(ps))
+      while accept_punct(ps, ",")
+        Array.push(order, order_term(ps))
+      end
+    end
+    limit = nil
+    offset = nil
+    if accept_kw(ps, "LIMIT")
+      limit = expression(ps)
+      offset = expression(ps) if accept_kw(ps, "OFFSET")
+    end
+    Select.new(items, from, where, order, limit, offset)
+  end
+
+  def result_column(ps)
+    return ResultColumn.new(nil, nil) if accept_punct(ps, "*")
+    e = expression(ps)
+    alias_name = nil
+    if accept_kw(ps, "AS")
+      alias_name = ident(ps)
+    elsif Token.kind(peek(ps)) == :ident
+      alias_name = ident(ps)
+    end
+    ResultColumn.new(e, alias_name)
+  end
+
+  def order_term(ps)
+    e = expression(ps)
+    desc = accept_kw(ps, "DESC")
+    accept_kw(ps, "ASC") unless desc
+    nulls = :default
+    if accept_kw(ps, "NULLS")
+      if accept_kw(ps, "FIRST")
+        nulls = :first
+      else
+        expect_kw(ps, "LAST")
+        nulls = :last
+      end
+    end
+    OrderTerm.new(e, desc, nulls)
+  end
+
+  # ---- Expressions ----
+  # Precedence climbing over the levels of spec 1.8, numbered from the loosest:
+  #   1 OR   2 AND   3 NOT (prefix)   4 = == != <> IS   5 < <= > >=   6 + -   7 * / %   8 ||
+  #   9 unary - +
+  # Binary operators are left associative.
+
+  def expression(ps) = climb(ps, 1)
+
+  def expression_list(ps)
+    list = Array[expression(ps)]
+    while accept_punct(ps, ",")
+      Array.push(list, expression(ps))
+    end
+    list
+  end
+
+  # An expression made only of operators at level `min` or tighter.
+  def climb(ps, min)
+    left = prefix(ps, min)
+    while true
+      level = binary_level(ps)
+      break if level == 0 || level < min
+      op = binary_operator(ps)
+      left = Binary.new(op, left, climb(ps, level + 1))
+    end
+    left
+  end
+
+  # The level of the binary operator at the next token; 0 if it is not one.
+  def binary_level(ps)
+    t = peek(ps)
+    case Token.kind(t)
+    in :kw
+      case Token.text(t)
+      in "OR" then 1
+      in "AND" then 2
+      in "IS" then 4
+      else 0
+      end
+    in :punct
+      case Token.text(t)
+      in "=" | "==" | "!=" | "<>" then 4
+      in "<" | "<=" | ">" | ">=" then 5
+      in "+" | "-" then 6
+      in "*" | "/" | "%" then 7
+      in "||" then 8
+      else 0
+      end
+    else 0
+    end
+  end
+
+  # Consumes the binary operator at the next token; returns it normalised ("==" is "=", "<>" is "!=").
+  def binary_operator(ps)
+    text = Token.text(advance(ps))
+    case text
+    in "IS" then accept_kw(ps, "NOT") ? "IS NOT" : "IS"
+    in "==" then "="
+    in "<>" then "!="
+    else text
+    end
+  end
+
+  # A primary expression, or a prefix operator (NOT only where the level allows it) and its operand.
+  def prefix(ps, min)
+    t = advance(ps)
+    case Token.kind(t)
+    in :number then Lit.new(Token.val(t))
+    in :str then Lit.new(Token.text(t))
+    in :ident then name_or_call(ps, Token.text(t))
+    in :kw
+      return Unary.new(:not, climb(ps, 3)) if min <= 3 && Token.text(t) == "NOT"
+      syntax_error unless Token.text(t) == "NULL"
+      Lit.new(nil)
+    in :punct
+      case Token.text(t)
+      in "-" then Unary.new(:neg, climb(ps, 9))
+      in "+" then Unary.new(:pos, climb(ps, 9))
+      in "("
+        e = expression(ps)
+        expect_punct(ps, ")")
+        e
+      else syntax_error
+      end
+    else syntax_error
+    end
+  end
+
+  def name_or_call(ps, name)
+    return Col.new(name, -1, nil) unless accept_punct(ps, "(")
+    args = accept_punct(ps, ")") ? Array[] : expression_list(ps)
+    expect_punct(ps, ")") unless Array.empty?(args)
+    Call.new(name, name, args)
+  end
+end

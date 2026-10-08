@@ -1,0 +1,67 @@
+# Evaluates a resolved expression against one row (an Array of values).
+module Evaluator
+  module_function
+
+  def evaluate(e, row)
+    case e
+    in Lit then Lit.value(e)
+    in Col then Array.fetch(row, Col.index(e))
+    in Unary then unary(Unary.op(e), evaluate(Unary.operand(e), row))
+    in Binary then binary(e, row)
+    in Call then Functions.call(Call.fn(e), Array.map(Call.args(e)) { evaluate(it, row) })
+    end
+  end
+
+  def unary(op, v)
+    case op
+    in :neg then Value.negate(v)
+    in :pos then v
+    in :not then Value.from_truth(Value.not3(Value.truth(v)))
+    end
+  end
+
+  def binary(e, row)
+    op = Binary.op(e)
+    left = Binary.left(e)
+    right = Binary.right(e)
+    a = evaluate(left, row)
+    b = evaluate(right, row)
+    case op
+    in "AND" then Value.from_truth(Value.and3(Value.truth(a), Value.truth(b)))
+    in "OR" then Value.from_truth(Value.or3(Value.truth(a), Value.truth(b)))
+    in "+" | "-" | "*" | "/" | "%" then Value.arith(op, a, b)
+    in "||" then Value.concat(a, b)
+    in "IS" then identical(a, affinity(left), b, affinity(right)) ? 1 : 0
+    in "IS NOT" then identical(a, affinity(left), b, affinity(right)) ? 0 : 1
+    else comparison(op, a, affinity(left), b, affinity(right))
+    end
+  end
+
+  # The affinity of an expression: its column's type for a column reference, else none.
+  def affinity(e)
+    case e
+    in Col then Col.aff(e)
+    else nil
+    end
+  end
+
+  # `a IS b`: equality that treats two NULLs as equal and NULL against a value as different.
+  def identical(a, aff_a, b, aff_b)
+    return a == nil && b == nil if a == nil || b == nil
+    Coercion.compare(a, aff_a, b, aff_b) == 0
+  end
+
+  def comparison(op, a, aff_a, b, aff_b)
+    return nil if a == nil || b == nil
+    c = Coercion.compare(a, aff_a, b, aff_b)
+    holds = case op
+            in "=" then c == 0
+            in "!=" then c != 0
+            in "<" then c < 0
+            in "<=" then c <= 0
+            in ">" then c > 0
+            in ">=" then c >= 0
+            end
+    holds ? 1 : 0
+  end
+end

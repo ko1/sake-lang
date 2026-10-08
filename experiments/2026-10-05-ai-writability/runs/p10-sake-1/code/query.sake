@@ -1,0 +1,57 @@
+# Runs a SELECT (spec 1.7, 3, 4): joined rows (Joiner) -> WHERE -> group rows (aggregate queries) -> result columns
+# -> DISTINCT -> ORDER BY -> OFFSET / LIMIT -> printed lines. Names are resolved first, by Planner.
+module Query
+  module_function
+
+  # Runs a SELECT statement and returns the lines to print.
+  def run(db, st)
+    plan = Planner.plan(db, st, nil)
+    Array.map(rows(plan, Array[])) { Array.join(Array.map(it) { Value.text_form(it) }, "|") }
+  end
+
+  # The result rows (Arrays of values) of a plan. `prefix` holds the enclosing query's columns that a
+  # correlated subquery reads; a query that reads none runs once and keeps its rows.
+  def rows(plan, prefix)
+    return compute(plan, prefix) if !Array.empty?(Plan.refs(plan))
+    cache = Plan.cache(plan)
+    Array.push(cache, compute(plan, prefix)) if Array.empty?(cache)
+    Array.fetch(cache, 0)
+  end
+
+  def compute(plan, prefix)
+    rows = Array.select(Joiner.rows(plan, prefix)) { Evaluator.passes?(Plan.where(plan), it) }
+    rows = Grouping.group_rows(plan, rows, prefix) if Plan.grouped(plan)
+    out = Array.map(rows) { result_row(plan, it) }
+    out = distinct_rows(out) if Plan.distinct(plan)
+    out = Sorter.sort(out, Plan.order(plan)) unless Array.empty?(Plan.order(plan))
+    offset = Plan.offset(plan)
+    out = Array.drop(out, offset == nil ? 0 : Integer.clamp(offset, 0, Array.size(out)))
+    limit = Plan.limit(plan)
+    out = Array.take(out, limit) if limit != nil && limit >= 0
+    Array.map(out) { SortItem.vals(it) }
+  end
+
+  # The values to print for one row (or group row), with the values of its ORDER BY terms.
+  def result_row(plan, row)
+    vals = Array.map(Plan.items(plan)) { Evaluator.evaluate(ResultItem.expr(it), row) }
+    keys = Array.map(Plan.order(plan)) { sort_key_value(it, vals, row) }
+    SortItem.new(keys, vals)
+  end
+
+  def sort_key_value(spec, vals, row)
+    e = SortKey.expr(spec)
+    return Array.fetch(vals, SortKey.position(spec)) if e == nil
+    Evaluator.evaluate(e, row)
+  end
+
+  # Keeps the first of each set of rows whose printed values are equal (NULLs equal to each other).
+  def distinct_rows(items)
+    seen = Hash[]
+    Array.select(items) do |item|
+      key = Array.map(SortItem.vals(item)) { Grouping.key_of(it) }
+      fresh = !Hash.key?(seen, key)
+      seen[key] = true
+      fresh
+    end
+  end
+end

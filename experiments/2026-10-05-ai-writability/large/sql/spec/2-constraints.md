@@ -29,9 +29,9 @@ respect this).
   is `UNIQUE constraint failed: <table>.<column>`.
 - `DEFAULT v`: a column not given a value by an `INSERT` gets v (converted by 1.5) instead of NULL.
 
-Checks on one row happen in this order, and the first failure is reported: `NOT NULL` of each column
-in column order; then the INTEGER PRIMARY KEY's value (`datatype mismatch`) and its uniqueness; then
-storage conversion of each other column in column order (1.5); then the other uniqueness constraints (`UNIQUE`, and a `PRIMARY KEY` that
+Checks on one row happen in this order, and the first failure is reported: the INTEGER PRIMARY KEY's
+value (`datatype mismatch`); `NOT NULL` of each column in column order; the INTEGER PRIMARY KEY's
+uniqueness; then storage conversion of each other column in column order (1.5); then the other uniqueness constraints (`UNIQUE`, and a `PRIMARY KEY` that
 is not an INTEGER PRIMARY KEY) from the last declared to the first, where declaration order is the
 column constraints in column order followed by the table constraints in order. Rows of one statement are
 checked one at a time, each against the table as it is after the previous rows; the first failure
@@ -67,7 +67,9 @@ Precedence additions: `IN`, `LIKE` and `BETWEEN` (and their `NOT` forms) bind li
   `(a BETWEEN 1 AND 2) AND c`. `NOT BETWEEN` is the negation.
 - **`x [NOT] IN ( e1 [, e2]... )`**: 1 if x equals some ei; else NULL if x is NULL or some ei is
   NULL; else 0. `NOT IN` is the negation (NULL stays NULL). Only x's affinity counts: if x has an
-  affinity, each ei is converted as rule 1 or 2 of 1.9 would convert it against x; if x has none,
+  affinity, each ei is converted to that affinity (INTEGER or REAL: TEXT that is a numeric literal
+after trimming becomes that number; TEXT: a number becomes its text form), whatever ei's own
+affinity; if x has none,
   nothing is converted (`12 IN (s)` is 0 even when the TEXT column s holds `'12'`, while `12 = s` is 1).
 - The bounds a and b of `BETWEEN` are parsed at the level just tighter than 6 (so they cannot contain
   a comparison without parentheses).
@@ -76,7 +78,7 @@ Precedence additions: `IN`, `LIKE` and `BETWEEN` (and their `NOT` forms) bind li
   one character, and any other character matches itself ignoring ASCII case (`'a' LIKE 'A'` is 1).
   1 or 0. `NOT LIKE` is the negation.
 - **`CAST(x AS type)`** with type `INTEGER`, `REAL` or `TEXT`: NULL stays NULL. To INTEGER: a REAL is
-  truncated toward zero; TEXT takes the longest prefix (after leading spaces) that is an optional sign
+  truncated toward zero; TEXT takes the longest prefix (after leading whitespace) that is an optional sign
   and digits, else 0 (`'12abc'` → 12, `'1e3'` → 1, `'1.9'` → 1, `'abc'` → 0). To REAL: an INTEGER
   becomes REAL; TEXT is read by numeric prefix as a REAL. To TEXT: the text form. A `CAST` expression
   has the affinity of its type (1.9).
@@ -91,7 +93,7 @@ Precedence additions: `IN`, `LIKE` and `BETWEEN` (and their `NOT` forms) bind li
 | `replace(x, from, to)` | x's text form with every non-overlapping occurrence of from, left to right, replaced by to; if from is `''`, x's text form unchanged |
 | `instr(x, y)` | INTEGER: the 1-based position of the first occurrence of y's text form in x's, or 0 |
 | `round(x)`, `round(x, n)` | REAL (below) |
-| `max(x, y, ...)`, `min(x, y, ...)` | two or more arguments: NULL if any is NULL, else the largest / smallest in the order of values (no affinity); of equal values, the first |
+| `max(x, y, ...)`, `min(x, y, ...)` | two or more arguments (tests of this stage never call them with one): NULL if any is NULL, else the largest / smallest in the order of values (no affinity); of equal values, the first |
 
 **substr.** Let L be the length of the text, p = start, q = len (absent: infinite). Positions count
 from 1; then:

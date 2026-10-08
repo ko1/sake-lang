@@ -1,0 +1,57 @@
+# Subqueries in expressions (4.3): a scalar subquery, EXISTS, and IN ( select ). A correlated one
+# runs again for each row of the enclosing query; one that reaches nothing outside itself runs once.
+module Subquery
+  module_function
+
+  # The plan of the subquery of a resolved node.
+  def plan_of(e)
+    plan = Expr.plan(e)
+    case plan
+    in SelectPlan then plan
+    else raise(ArgumentError, "unresolved subquery")
+    end
+  end
+
+  # The result rows (SortRow[]) of the subquery of node e, for the row `env` of the query that holds it.
+  def rows(e, env)
+    plan = plan_of(e)
+    unless SelectPlan.correlated(plan)
+      memo = SelectPlan.memo(plan)
+      Array.push(memo, run(plan, env)) if Array.empty?(memo)
+      return memo[0]
+    end
+    run(plan, env)
+  end
+
+  def run(plan, env)
+    outer = Array.dup(Env.outer(env))
+    Array.push(outer, Env.row(env))
+    Select.execute(plan, outer)
+  end
+
+  # The first column of the first row; NULL if there is no row.
+  def scalar(e, env)
+    rs = rows(e, env)
+    Array.empty?(rs) ? nil : SortRow.values(rs[0])[0]
+  end
+
+  # x IN ( select ): as x IN (v1, v2, ...) over the values of the subquery's column, comparing
+  # with the affinity of that column (e.aff); no rows at all is 0 even for a NULL x.
+  def in_query(e, env)
+    rs = rows(e, env)
+    return 0 if Array.empty?(rs)
+    x = Eval.value_of(Expr.args(e)[0], env)
+    return nil if x == nil
+    unknown = false
+    Array.each(rs) do |r|
+      v = SortRow.values(r)[0]
+      if v == nil
+        unknown = true
+      else
+        a, b = Values.apply_affinity(x, Expr.aff(Expr.args(e)[0]), v, Expr.aff(e))
+        return 1 if Values.compare(a, b) == 0
+      end
+    end
+    unknown ? nil : 0
+  end
+end

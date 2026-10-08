@@ -1,0 +1,112 @@
+# Name resolution: checks every name of an expression before any row is read, and turns column
+# names (:col) into row positions (:ref) and function names into lower case. An aggregate call
+# becomes a :ref to a slot after the table's columns, so an aggregate query evaluates its
+# expressions on "the group's row followed by one value per aggregate" (see Aggregates.group_row).
+
+# A result column's alias and the expression it stands for (already resolved); agg is the name of
+# the first aggregate call in that expression, "" if none.
+AliasEntry = Struct.new(:name, :expr, :agg)
+# What an expression's names refer to. table: lower-case name of the FROM table ("" if none);
+# columns: its Column[]; aliases: AliasEntry[] a name may fall back to.
+# mode says what an aggregate call (or an alias that holds one) means here:
+#   :plain     an error "misuse of aggregate ..."  (WHERE, SET, VALUES, aggregate arguments)
+#   :collect   allowed; calls: AggCall[] the distinct calls so far (slot k is row position ncolumns + k)
+#   :group_by  an error "not allowed in the GROUP BY clause"
+#   :order     an error "misuse of aggregate: f()"  (ORDER BY of a query that is not an aggregate query)
+Scope = Struct.new(:table, :columns, :aliases, :mode, :calls)
+
+module Resolver
+  module_function
+
+  def empty_scope = plain_scope("", Column[])
+
+  # The scope of a statement without aggregates or aliases (UPDATE, DELETE, INSERT, LIMIT).
+  def plain_scope(table, columns) = Scope.new(table, columns, AliasEntry[], :plain, AggCall[])
+
+  def resolve(e, scope)
+    case Expr.kind(e)
+    in :lit then e
+    in :col then resolve_column(e, scope)
+    in :call then resolve_call(e, scope)
+    else Ast.with_args(e, resolve_all(Expr.args(e), scope))
+    end
+  end
+
+  def resolve_all(exprs, scope)
+    out = Expr[]
+    Array.each(exprs) { |a| Array.push(out, resolve(a, scope)) }
+    out
+  end
+
+  def column_ref(columns, i) = Ast.ref(i, Catalog.affinity(columns[i]))
+
+  def resolve_column(e, scope)
+    name = Expr.text(e)
+    qual = Expr.qual(e)
+    key = Catalog.key(name)
+    if qual == "" || Catalog.key(qual) == Scope.table(scope)
+      i = Catalog.column_index(Scope.columns(scope), name)
+      return column_ref(Scope.columns(scope), i) if i >= 0
+      if qual == ""
+        found = find_alias(scope, key)
+        return alias_expr(scope, found) if found != nil
+      end
+    end
+    Errors.sql_error("no such column: #{qual == "" ? name : qual + "." + name}")
+  end
+
+  def find_alias(scope, key) = Array.find(Scope.aliases(scope)) { |a| AliasEntry.name(a) == key }
+
+  # The expression an alias stands for; an alias that holds an aggregate is not usable everywhere.
+  def alias_expr(scope, entry)
+    agg = AliasEntry.agg(entry)
+    if agg != ""
+      Errors.sql_error("aggregate functions are not allowed in the GROUP BY clause") if Scope.mode(scope) == :group_by
+      Errors.sql_error("misuse of aggregate: #{agg}()") if Scope.mode(scope) == :plain
+    end
+    AliasEntry.expr(entry)
+  end
+
+  def resolve_call(e, scope)
+    name = Catalog.key(Expr.text(e))
+    star = Expr.qual(e) == "*"
+    n = Array.size(Expr.args(e))
+    kind = Aggregates.classify(name, n, star)
+    Errors.sql_error("wrong number of arguments to function #{Expr.text(e)}()") if kind == :bad_arity
+    return resolve_aggregate(e, name, star, scope) if kind == :aggregate
+    Errors.syntax if star || Expr.distinct(e) || !Array.empty?(Expr.order(e))
+    range = Functions.arity(name)
+    Errors.sql_error("no such function: #{Expr.text(e)}") if range == nil
+    lo, hi = range
+    Errors.sql_error("wrong number of arguments to function #{Expr.text(e)}()") if n < lo || n > hi
+    Ast.node(:call, name, "", nil, 0, resolve_all(Expr.args(e), scope), :none)
+  end
+
+  # An aggregate call: registered in the scope's calls (once per distinct call), and replaced by
+  # the :ref to its slot.
+  def resolve_aggregate(e, name, star, scope)
+    written = Expr.text(e)
+    case Scope.mode(scope)
+    in :collect then nil
+    in :group_by then Errors.sql_error("aggregate functions are not allowed in the GROUP BY clause")
+    in :order then Errors.sql_error("misuse of aggregate: #{written}()")
+    else Errors.sql_error("misuse of aggregate function #{written}()")
+    end
+    if Expr.distinct(e) && name == "group_concat" && Array.size(Expr.args(e)) > 1
+      Errors.sql_error("DISTINCT aggregates must have exactly one argument")
+    end
+    inner = Scope.new(Scope.table(scope), Scope.columns(scope), Scope.aliases(scope), :plain, AggCall[])
+    order = OrderTerm[]
+    Array.each(Expr.order(e)) do |t|
+      Array.push(order, OrderTerm.new(resolve(OrderTerm.expr(t), inner), false, 0, OrderTerm.desc(t), OrderTerm.nulls(t)))
+    end
+    call = AggCall.new(name, star, Expr.distinct(e), resolve_all(Expr.args(e), inner), order)
+    calls = Scope.calls(scope)
+    slot = Array.index(calls, call) || -1
+    if slot < 0
+      slot = Array.size(calls)
+      Array.push(calls, call)
+    end
+    Ast.ref(Array.size(Scope.columns(scope)) + slot, :none)
+  end
+end

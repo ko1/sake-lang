@@ -1,0 +1,24 @@
+-- library loans: which books are popular, who borrows most
+CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT, year INTEGER);
+CREATE TABLE loans (book INTEGER NOT NULL, reader TEXT NOT NULL, days INTEGER DEFAULT 14);
+INSERT INTO books (title, author, year) VALUES ('Dune', 'Herbert', 1965), ('Emma', 'Austen', 1815);
+INSERT INTO books (title, author, year) VALUES ('Persuasion', 'Austen', 1817), ('Ubik', 'Dick', 1969), ('Valis', 'Dick', 1981);
+INSERT INTO loans (book, reader) VALUES (1, 'kay'), (2, 'kay'), (1, 'lou');
+INSERT INTO loans VALUES (4, 'lou', 7), (5, 'mo', 21), (1, 'mo', 3), (3, 'kay', 30);
+SELECT author, count(*) FROM books GROUP BY author ORDER BY author;
+SELECT author, min(year), max(year) FROM books GROUP BY author ORDER BY min(year);
+SELECT book, count(*) AS n FROM loans GROUP BY book ORDER BY n DESC, book;
+SELECT reader, sum(days) FROM loans GROUP BY reader ORDER BY reader;
+SELECT reader, avg(days) FROM loans GROUP BY reader HAVING avg(days) > 14 ORDER BY reader;
+SELECT year / 100 AS century, count(*) FROM books GROUP BY century ORDER BY century;
+SELECT group_concat(title, '; ' ORDER BY year) FROM books WHERE author = 'Austen';
+INSERT INTO loans (book, reader) VALUES (2, NULL);
+SELECT count(*), total(days) FROM loans;
+UPDATE loans SET days = days + 7 WHERE reader = 'kay';
+SELECT reader, max(days), book FROM loans GROUP BY reader ORDER BY reader;
+SELECT count(DISTINCT reader), count(DISTINCT book) FROM loans;
+SELECT DISTINCT reader FROM loans WHERE days >= 14 ORDER BY reader;
+DELETE FROM loans WHERE days < 10;
+SELECT reader, count(*) FROM loans GROUP BY reader ORDER BY 2 DESC, 1 LIMIT 2;
+SELECT title, length(title) FROM books WHERE length(title) = 4 ORDER BY title;
+SELECT max(length(title)), min(title) FROM books;

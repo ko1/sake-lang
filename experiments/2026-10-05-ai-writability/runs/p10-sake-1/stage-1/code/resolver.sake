@@ -1,0 +1,40 @@
+# Name resolution: turns a parsed expression into one that can be evaluated against a row.
+# Column names become row positions, aliases are replaced by the expression they stand for,
+# and unknown names or functions are reported here - before any row is read.
+module Resolver
+  module_function
+
+  def resolve(e, scope)
+    case e
+    in Lit then e
+    in Col then resolve_column(e, scope)
+    in Unary then Unary.new(Unary.op(e), resolve(Unary.operand(e), scope))
+    in Binary then Binary.new(Binary.op(e), resolve(Binary.left(e), scope), resolve(Binary.right(e), scope))
+    in Call then resolve_call(e, scope)
+    end
+  end
+
+  def resolve_column(c, scope)
+    key = Value.lower(Col.name(c))
+    cols = Scope.columns(scope)
+    i = Array.find_index(cols) { Column.key(it) == key }
+    if i != nil
+      return Col.new(Col.name(c), i, Column.type(Array.fetch(cols, i)))
+    end
+    aliased = Scope.aliases(scope)[key]
+    raise SqlError.new("no such column: #{Col.name(c)}") if aliased == nil
+    aliased
+  end
+
+  def resolve_call(c, scope)
+    fn = Value.lower(Call.name(c))
+    raise SqlError.new("no such function: #{Call.name(c)}") unless Functions.known?(fn)
+    unless Functions.arity_ok?(fn, Array.size(Call.args(c)))
+      raise SqlError.new("wrong number of arguments to function #{Call.name(c)}()")
+    end
+    Call.new(Call.name(c), fn, Array.map(Call.args(c)) { resolve(it, scope) })
+  end
+
+  # A scope with no columns and no aliases: for expressions evaluated with no row.
+  def empty_scope = Scope.new(Array[], Hash[])
+end

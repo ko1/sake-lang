@@ -69,7 +69,7 @@ A query is an **aggregate query** if it has `GROUP BY`, or an aggregate call in 
   the group. A column reference outside an aggregate call (a **bare column**) takes its value from one
   row of the group: if the query has exactly one aggregate call and it is `min(x)` or `max(x)`, the row
   that gave that minimum or maximum (calls in result columns, `HAVING` and `ORDER BY` all count
-  toward "exactly one"); otherwise any row of the group. In the single group of a query without
+  toward "exactly one"; calls written identically count once); otherwise any row of the group. In the single group of a query without
   `GROUP BY` over no rows, a bare column is NULL. Tests use a bare column only when
   every row of the group has the same value there (for example, a `GROUP BY` column), or with that
   single `min`/`max` (and no ties).

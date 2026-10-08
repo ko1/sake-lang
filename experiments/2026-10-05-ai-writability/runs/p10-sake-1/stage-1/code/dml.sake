@@ -1,0 +1,52 @@
+# INSERT. The statement stores nothing unless every row converts (spec 1.5, 1.6).
+module Dml
+  module_function
+
+  def insert(db, st)
+    tname = Insert.table(st)
+    table = Database.table(db, tname)
+    rows = Insert.rows(st)
+    width = Array.size(Array.fetch(rows, 0))
+    unless Array.all?(rows) { Array.size(it) == width }
+      raise SqlError.new("all VALUES must have the same number of terms")
+    end
+    targets = target_columns(table, tname, Insert.columns(st), width)
+    scope = Resolver.empty_scope
+    new_rows = Array.map(rows) do |exprs|
+      values = Array.map(exprs) { Evaluator.evaluate(Resolver.resolve(it, scope), Array[]) }
+      build_row(table, targets, values)
+    end
+    Table.append_rows(table, new_rows)
+  end
+
+  # The column positions the values go to, in the order the values come.
+  def target_columns(table, tname, names, width)
+    columns = Table.columns(table)
+    if names == nil
+      if width != Array.size(columns)
+        raise SqlError.new("table #{tname} has #{Array.size(columns)} columns but #{width} values were supplied")
+      end
+      return Range.to_a(0...Array.size(columns))
+    end
+    positions = Array.map(names) do |n|
+      i = Array.find_index(columns) { Column.key(it) == Value.lower(n) }
+      raise SqlError.new("table #{tname} has no column named #{n}") if i == nil
+      i
+    end
+    if width != Array.size(names)
+      raise SqlError.new("#{width} values for #{Array.size(names)} columns")
+    end
+    positions
+  end
+
+  # A full row: the given values converted to their columns' types, NULL elsewhere.
+  def build_row(table, targets, values)
+    columns = Table.columns(table)
+    row = Array.new(Array.size(columns), nil)
+    Array.each_with_index(targets) do |pos, k|
+      c = Array.fetch(columns, pos)
+      row[pos] = Coercion.for_storage(Array.fetch(values, k), Column.type(c), Table.name(table), Column.name(c))
+    end
+    row
+  end
+end

@@ -1,0 +1,126 @@
+# Syntax tree produced by the parser and consumed by the resolver and the executor.
+# Every node is its own type, so code dispatches with `case node in Binary ...`.
+
+# ---- Expressions ----
+
+# A constant: nil (NULL), Integer, Float or String.
+class Lit
+  attr_reader value
+end
+
+# A column reference. `name` is as written; `index` (position in the table's row) and `aff`
+# (the column's type, :integer / :real / :text, used for comparisons) are filled in by the
+# resolver and are -1 / nil in the parser's output.
+class Col
+  attr_reader name, index, aff
+end
+
+# op is :neg, :pos or :not.
+class Unary
+  attr_reader op, operand
+end
+
+# op is one of + - * / % || = != < <= > >= IS "IS NOT" AND OR ("==" and "<>" are normalised).
+class Binary
+  attr_reader op, left, right
+end
+
+# `name` as written (for messages); `fn` is the lower-case name used to look the function up.
+# distinct / star / order are the aggregate-only forms `f(DISTINCT x)`, `count(*)` and
+# `group_concat(x ORDER BY ..)` (order: Array of OrderTerm); plain calls have false / false / [].
+class Call
+  attr_reader name, fn, args, distinct, star, order
+end
+
+# An aggregate call after name resolution (see Resolver.resolve_aggregate). It does not appear in
+# an expression tree: there it is a Col reading the aggregate's value from the group row.
+# name is as written (for messages); fn is lower-case; order is an Array of OrderTerm.
+class Aggregate
+  attr_reader name, fn, args, distinct, star, order
+end
+
+# `CASE [operand] WHEN .. THEN .. [ELSE ..] END`. operand is nil for the searched form;
+# whens is an Array of WhenClause; otherwise_expr is nil without ELSE.
+class Case
+  attr_reader operand, whens, otherwise_expr
+end
+
+class WhenClause
+  attr_reader condition, result
+end
+
+# `expr [NOT] BETWEEN low AND high`.
+class Between
+  attr_reader expr, low, high, negated
+end
+
+# `expr [NOT] IN (items)`; items is an Array of expressions.
+class InList
+  attr_reader expr, items, negated
+end
+
+# `expr [NOT] LIKE pattern`.
+class Like
+  attr_reader expr, pattern, negated
+end
+
+# `CAST(expr AS type)`; type is :integer, :real or :text.
+class Cast
+  attr_reader expr, type
+end
+
+# ---- Statements ----
+
+# type is :integer, :real or :text. default is the DEFAULT literal's value (nil: NULL / none).
+# primary_key / unique / not_null say which column constraints were written.
+class ColumnDef
+  attr_reader name, type, primary_key, unique, not_null, default
+end
+
+# A table constraint: kind is :primary_key or :unique; columns are names as written.
+class TableConstraint
+  attr_reader kind, columns
+end
+
+class CreateTable
+  attr_reader name, columns, constraints, if_not_exists
+end
+
+class DropTable
+  attr_reader name, if_exists
+end
+
+# columns: Array of names, or nil when the statement gave no column list.
+# rows: Array of rows, each an Array of expressions.
+class Insert
+  attr_reader table, columns, rows
+end
+
+class Assignment
+  attr_reader column, expr
+end
+
+# sets: Array of Assignment; where is nil when absent.
+class Update
+  attr_reader table, sets, where
+end
+
+class Delete
+  attr_reader table, where
+end
+
+# expr is nil for `*`; alias_name is nil when there is no alias.
+class ResultColumn
+  attr_reader expr, alias_name
+end
+
+# nulls is :default, :first or :last.
+class OrderTerm
+  attr_reader expr, desc, nulls
+end
+
+# distinct is true for SELECT DISTINCT; group is the Array of GROUP BY terms; having is nil when absent.
+# from, where, limit and offset are nil when absent.
+class Select
+  attr_reader distinct, items, from, where, group, having, order, limit, offset
+end

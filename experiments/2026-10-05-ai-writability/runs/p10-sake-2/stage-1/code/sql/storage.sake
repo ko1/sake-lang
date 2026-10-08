@@ -1,0 +1,48 @@
+# Storing a value into a column: the column's type is enforced (1.5).
+module Storage
+  module_function
+
+  def type_word(type)
+    case type
+    in :integer then "INTEGER"
+    in :real then "REAL"
+    else "TEXT"
+    end
+  end
+
+  def reject(value_type, col, table_name)
+    Errors.sql_error("cannot store #{value_type} value in #{type_word(Column.type(col))} column #{table_name}.#{Column.name(col)}")
+  end
+
+  # A REAL that is a whole number within 64 bits, as an Integer; otherwise nil.
+  def whole_integer(x)
+    return nil unless x == Float.floor(x)
+    return nil if x < -9223372036854775808.0 || x >= 9223372036854775808.0
+    Float.to_i(x)
+  end
+
+  # The value as it is stored in `col` of the table named `table_name`, or an error.
+  def coerce(v, col, table_name)
+    return nil if v == nil
+    type = Column.type(col)
+    v = Values.numeric_text(v) if type != :text
+    if type == :integer
+      case v
+      in Integer then v
+      in Float
+        n = whole_integer(v)
+        reject("REAL", col, table_name) if n == nil
+        n
+      else reject("TEXT", col, table_name)
+      end
+    elsif type == :real
+      case v
+      in Integer then Integer.to_f(v)
+      in Float then v
+      else reject("TEXT", col, table_name)
+      end
+    else
+      Values.text_of(v)
+    end
+  end
+end

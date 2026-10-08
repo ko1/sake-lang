@@ -6,8 +6,9 @@ module Values
   INT_MAX = 2**63 - 1
 
   NUMERIC_LITERAL = /\A(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\z/
-  SIGNED_LITERAL = /\A *([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?) *\z/
-  NUMERIC_PREFIX = /\A *([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/
+  SIGNED_LITERAL = /\A[ \t\n\r]*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)[ \t\n\r]*\z/
+  NUMERIC_PREFIX = /\A[ \t\n\r]*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/
+  INTEGER_PREFIX = /\A *([+-]?\d+)/
 
   module_function
 
@@ -50,7 +51,7 @@ module Values
     n.between?(INT_MIN, INT_MAX) ? n : n.to_f
   end
 
-  # The number a TEXT value is, if it is a whole numeric literal after trimming spaces (1.5 step 2),
+  # The number a TEXT value is, if it is a whole numeric literal after trimming whitespace (1.5 step 2),
   # else nil.
   def parse_number(text)
     m = SIGNED_LITERAL.match(text)
@@ -62,6 +63,12 @@ module Values
     return value unless value.is_a?(String)
     m = NUMERIC_PREFIX.match(value)
     m ? literal_number(m[1]) : 0
+  end
+
+  # CAST(value AS INTEGER) for TEXT: the longest sign-and-digits prefix after leading spaces (2.3).
+  def text_to_integer(text)
+    m = INTEGER_PREFIX.match(text)
+    m ? Integer(m[1], 10).clamp(INT_MIN, INT_MAX) : 0
   end
 
   # true, false, or nil for unknown (1.10).
@@ -81,6 +88,24 @@ module Values
     return ra <=> rb unless ra == rb
     return 0 if a.nil?
     a <=> b
+  end
+
+  # compare for one ORDER BY term: DESC reverses the order; NULLs come first under ASC and last under
+  # DESC unless nulls_first (true or false) says otherwise (1.7).
+  def compare_ordered(a, b, descending, nulls_first)
+    if a.nil? || b.nil?
+      nulls_first = !descending if nulls_first.nil?
+      ((a.nil? ? 0 : 1) <=> (b.nil? ? 0 : 1)) * (nulls_first ? 1 : -1)
+    else
+      compare(a, b) * (descending ? -1 : 1)
+    end
+  end
+
+  # A hash key under which values equal by 1.9 coincide (1 and 1.0; NULL with NULL).
+  def equality_key(value)
+    return value unless value.is_a?(Float)
+    whole = value.finite? && value == value.truncate && value.truncate.between?(INT_MIN, INT_MAX)
+    whole ? value.truncate : value
   end
 
   def rank(value)

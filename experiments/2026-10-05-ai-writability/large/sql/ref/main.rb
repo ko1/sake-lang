@@ -1,5 +1,5 @@
 # Runs a script of SQL statements from standard input against an in-memory database (the reference
-# implementation of large/sql/spec, stage 1). Results and errors go to standard output.
+# implementation of large/sql/spec, stages 1-6). Results and errors go to standard output.
 require_relative "lexer"
 require_relative "parser"
 require_relative "database"
