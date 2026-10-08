@@ -1,0 +1,25 @@
+-- scenario: recipes and a pantry; what can be cooked
+CREATE TABLE recipe (name TEXT PRIMARY KEY, serves INTEGER);
+CREATE TABLE needs (recipe TEXT, ingredient TEXT, grams INTEGER, UNIQUE (recipe, ingredient));
+CREATE TABLE pantry (ingredient TEXT UNIQUE, grams INTEGER NOT NULL);
+INSERT INTO recipe VALUES ('pancake', 4), ('omelette', 1), ('bread', 8);
+INSERT INTO needs VALUES ('pancake', 'flour', 200), ('pancake', 'egg', 100), ('pancake', 'milk', 300);
+INSERT INTO needs VALUES ('omelette', 'egg', 150), ('omelette', 'cheese', 30), ('bread', 'flour', 500), ('bread', 'yeast', 7);
+INSERT INTO pantry VALUES ('flour', 400), ('egg', 300), ('milk', 1000), ('yeast', 20);
+CREATE VIEW missing AS SELECT n.recipe, n.ingredient FROM needs n LEFT JOIN pantry p ON p.ingredient = n.ingredient WHERE p.grams IS NULL OR p.grams < n.grams;
+SELECT recipe, ingredient FROM missing ORDER BY recipe, ingredient;
+SELECT name FROM recipe EXCEPT SELECT recipe FROM missing;
+SELECT ingredient FROM needs INTERSECT SELECT ingredient FROM pantry ORDER BY ingredient;
+SELECT ingredient FROM needs UNION SELECT ingredient FROM pantry ORDER BY ingredient DESC LIMIT 3;
+INSERT INTO pantry SELECT ingredient, 50 FROM missing WHERE recipe = 'omelette';
+INSERT INTO pantry (ingredient, grams) SELECT 'flour', 100;
+UPDATE pantry SET grams = grams + 200 WHERE ingredient = 'flour';
+SELECT name FROM recipe EXCEPT SELECT recipe FROM missing ORDER BY name;
+BEGIN;
+UPDATE pantry SET grams = grams - (SELECT grams FROM needs WHERE recipe = 'pancake' AND needs.ingredient = pantry.ingredient) WHERE ingredient IN (SELECT ingredient FROM needs WHERE recipe = 'pancake');
+SELECT ingredient, grams FROM pantry ORDER BY ingredient;
+COMMIT;
+SELECT recipe, count(*) FROM missing GROUP BY recipe ORDER BY recipe;
+ALTER TABLE recipe ADD COLUMN minutes INTEGER DEFAULT 20;
+UPDATE recipe SET minutes = 90 WHERE name = 'bread';
+SELECT name, serves, minutes FROM recipe ORDER BY minutes DESC, name;

@@ -1,0 +1,6 @@
+CREATE TABLE a (s TEXT, r REAL, i INTEGER);
+INSERT INTO a VALUES ('12', 12, 12), ('007', 2.5, 7);
+SELECT i, CASE s WHEN 12 THEN 'num matches text 12' WHEN 7 THEN 'seven' ELSE 'none' END FROM a ORDER BY i;
+SELECT i, CASE r WHEN '2.5' THEN 'text 2.5' WHEN ' 12 ' THEN 'text 12' END FROM a ORDER BY i;
+SELECT i, CASE i WHEN '007' THEN 'leading zeros' WHEN '12.0' THEN 'real text' END FROM a ORDER BY i;
+SELECT CASE CAST(5 AS TEXT) WHEN 5 THEN 'cast text' END, CASE '5' WHEN 5 THEN 'x' ELSE 'none' END;

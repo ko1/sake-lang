@@ -1,0 +1,25 @@
+-- A parking garage: entry and exit times in minutes since midnight.
+CREATE TABLE visits (plate TEXT, enter INTEGER, leave INTEGER, rate REAL);
+INSERT INTO visits VALUES ('KX-11', 480, 545, 0.05), ('BB-02', 500, NULL, 0.05);
+INSERT INTO visits VALUES ('ZA-90', 610, 1300, 0.04), ('kx-12', 700, 702, 0.05);
+INSERT INTO visits VALUES ('MM-33', '8:30', 600, 0.05);
+INSERT INTO visits VALUES ('MM-33', 510, 600);
+INSERT INTO visits (plate, enter, leave, rate) VALUES ('MM-33', 510, 600, 0.06), ('NN-44', 900, 960, '0.05');
+SELECT plate, enter, leave FROM visits ORDER BY enter;
+SELECT plate, leave - enter AS mins FROM visits WHERE mins IS NOT NULL ORDER BY mins DESC;
+SELECT plate FROM visits WHERE leave IS NULL;
+SELECT plate, (leave - enter) * rate AS fee FROM visits WHERE fee > 3 ORDER BY fee;
+SELECT plate, enter / 60, enter % 60 FROM visits ORDER BY plate;
+SELECT plate FROM visits WHERE plate > 'L' ORDER BY plate;
+SELECT plate FROM visits WHERE upper(plate) > 'L' ORDER BY plate;
+SELECT plate, enter / 60 || ':' || enter % 60 FROM visits WHERE enter % 60 = 0 ORDER BY 1;
+SELECT plate, rate FROM visits WHERE rate = 0.05 ORDER BY plate;
+SELECT plate, leave - enter < 5 FROM visits ORDER BY enter;
+SELECT plate FROM visits ORDER BY leave DESC NULLS FIRST LIMIT 2;
+SELECT plate, length(plate) FROM visits WHERE plate = 'ZA-90';
+SELECT exit FROM visits;
+SELECT plate, ifnull(leave, 1440) - enter FROM visits WHERE plate = 'BB-02';
+SELECT * FROM visits ORDER BY 1, 2, 3, 4, 5;
+SELECT plate FROM visits WHERE NOT leave > 700 ORDER BY plate;
+DROP TABLE visits;
+SELECT plate FROM visits;

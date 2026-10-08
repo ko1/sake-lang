@@ -1,0 +1,10 @@
+CREATE TABLE seq (id INTEGER PRIMARY KEY, tag TEXT);
+INSERT INTO seq VALUES (-10, 'm10'), (-20, 'm20');
+INSERT INTO seq (tag) VALUES ('next');
+INSERT INTO seq VALUES (100, 'big');
+DELETE FROM seq WHERE id = 100;
+INSERT INTO seq (tag) VALUES ('after');
+SELECT id, tag FROM seq ORDER BY id;
+DELETE FROM seq WHERE tag <> 'zzz';
+INSERT INTO seq (tag) VALUES ('fresh'), ('fresher');
+SELECT id, tag FROM seq ORDER BY id;

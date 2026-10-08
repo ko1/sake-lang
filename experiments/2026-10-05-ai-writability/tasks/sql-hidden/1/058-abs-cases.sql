@@ -1,0 +1,10 @@
+SELECT abs(-12), abs(12), abs(-0), typeof(abs(-12));
+SELECT abs(-12.75), abs(0.0), typeof(abs(-0.5));
+SELECT abs('12'), abs('-1.5'), abs(' -7 '), typeof(abs('12'));
+SELECT abs('-x'), abs(''), abs('3 cats');
+SELECT abs(NULL), typeof(abs(NULL));
+SELECT abs(-3) * 2, abs(2 - 9) + abs(9 - 2);
+SELECT ABS(-1), Abs(-2.5);
+CREATE TABLE g (k INTEGER, i INTEGER, t TEXT);
+INSERT INTO g VALUES (1, -9, '-9'), (2, 4, 'x'), (3, NULL, NULL);
+SELECT k, abs(i), abs(t), typeof(abs(i)), typeof(abs(t)) FROM g ORDER BY k;

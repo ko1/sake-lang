@@ -1,0 +1,10 @@
+SELECT 1 / 0;
+SELECT 1.0 / 0;
+SELECT 5 / 0.0;
+SELECT 5 % 0, 5.5 % 0;
+SELECT 7 % 0.5;
+SELECT 'abc' / 'xyz';
+SELECT typeof(1 / 0);
+CREATE TABLE t (a INTEGER, b INTEGER);
+INSERT INTO t VALUES (10, 2), (10, 0), (9, 3);
+SELECT a, b, a / b, coalesce(a % b, -1) FROM t ORDER BY b;

@@ -1,0 +1,25 @@
+-- A music playlist; durations in seconds.
+CREATE TABLE track (pos INTEGER, title TEXT, artist TEXT, secs INTEGER, rating REAL);
+INSERT INTO track VALUES (1, 'Blue', 'Nia', 215, 4.5), (2, 'after hours', 'Oto', 187, NULL), (3, 'Zero', 'Nia', 301, 3);
+INSERT INTO track VALUES (4, 'Echo', 'Pax', '242', '4.25'), (5, 'Drift', 'oto', 160, 5);
+INSERT INTO track VALUES (6, 'Long', 'Pax', '4:05', 4);
+INSERT INTO track VALUES (6, 'Long', 'Pax', 245.0, 4), (7, 'Short', 'Pax', 59.9, 2);
+SELECT pos, title, secs FROM track ORDER BY pos;
+SELECT title, secs / 60 AS m, secs % 60 AS s FROM track ORDER BY pos;
+SELECT title FROM track WHERE secs > 240 ORDER BY secs DESC;
+SELECT title, artist FROM track WHERE artist = 'Oto' OR artist = 'oto' ORDER BY title;
+SELECT title FROM track WHERE upper(artist) = 'OTO' ORDER BY title DESC;
+SELECT title FROM track ORDER BY title;
+SELECT title FROM track ORDER BY lower(title);
+SELECT title, rating FROM track WHERE rating IS NOT NULL ORDER BY rating DESC, title LIMIT 3;
+SELECT title, coalesce(rating, 0) * 2 FROM track WHERE pos <= 2 ORDER BY pos;
+SELECT artist || ' - ' || title FROM track WHERE NOT rating < 4 ORDER BY pos;
+SELECT title, secs FROM track WHERE secs = '160';
+SELECT title FROM track WHERE rating = 3;
+SELECT title, length(title) FROM track WHERE length(title) <= 4 ORDER BY title;
+SELECT pos, typeof(secs), typeof(rating) FROM track WHERE pos = 4;
+SELECT title FROM track ORDER BY secs LIMIT 1 OFFSET 2;
+SELECT genre FROM track;
+SELECT title FROM track ORDER BY pos DESC LIMIT -1 OFFSET 4;
+DROP TABLE IF EXISTS track;
+SELECT title FROM track;

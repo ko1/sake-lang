@@ -1,0 +1,7 @@
+CREATE TABLE dup (a INTEGER, b TEXT);
+INSERT INTO dup VALUES (1, 'x'), (1, 'x'), (2, 'x'), (1, 'y');
+SELECT ALL a, b FROM dup ORDER BY a, b;
+SELECT DISTINCT a, b FROM dup ORDER BY a, b;
+SELECT DISTINCT b FROM dup ORDER BY b;
+SELECT ALL count(*) FROM dup;
+SELECT DISTINCT a * 0 FROM dup;

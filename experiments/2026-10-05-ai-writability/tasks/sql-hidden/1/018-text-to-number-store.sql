@@ -1,0 +1,12 @@
+CREATE TABLE c (k INTEGER, i INTEGER, r REAL, t TEXT);
+INSERT INTO c VALUES (1, '99', '99', '99');
+INSERT INTO c VALUES (2, ' 3', '-.5', ' 3');
+INSERT INTO c VALUES (3, '4e0', '4e0', '4e0');
+INSERT INTO c VALUES (4, '1,000', 1, 'x');
+INSERT INTO c VALUES (5, 1, '1.2.3', 'x');
+INSERT INTO c VALUES (6, '5x', 1, 'x');
+INSERT INTO c VALUES (7, 1, 'e3', 'x');
+INSERT INTO c VALUES (8, '  ', 1, 'x');
+INSERT INTO c VALUES (9, 1, '++1', 'x');
+INSERT INTO c VALUES (10, '-12.0', '12', '-12.0');
+SELECT k, i, typeof(i), r, typeof(r), t, typeof(t) FROM c ORDER BY k;

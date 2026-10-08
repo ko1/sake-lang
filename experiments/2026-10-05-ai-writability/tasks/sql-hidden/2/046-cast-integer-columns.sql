@@ -1,0 +1,5 @@
+CREATE TABLE raw (s TEXT, r REAL);
+INSERT INTO raw VALUES ('42 apples', -7.99), ('  -3x', 7.99), ('2.5e2', 0.5), ('abc', -0.5), ('+15', 1e3);
+SELECT s, CAST(s AS INTEGER), CAST(r AS INTEGER) FROM raw ORDER BY r;
+SELECT typeof(CAST(s AS INTEGER)), typeof(CAST(r AS INTEGER)) FROM raw WHERE r = 0.5;
+SELECT CAST(' 1.9' AS INTEGER) + CAST('1.9' AS REAL), CAST('-0' AS INTEGER), CAST('007' AS INTEGER);

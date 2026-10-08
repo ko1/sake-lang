@@ -1,0 +1,26 @@
+-- recipes and ingredients: costs, calories, shopping list
+CREATE TABLE recipes (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, serves INTEGER DEFAULT 2);
+CREATE TABLE uses (recipe INTEGER NOT NULL, item TEXT NOT NULL, grams INTEGER, cost REAL, UNIQUE (recipe, item));
+INSERT INTO recipes (title) VALUES ('pancakes'), ('omelette');
+INSERT INTO recipes (title, serves) VALUES ('soup', 4), ('salad', 1);
+INSERT INTO uses VALUES (1, 'flour', 200, 0.4), (1, 'egg', 100, 0.6), (1, 'milk', 300, 0.45), (2, 'egg', 150, 0.9);
+INSERT INTO uses VALUES (2, 'cheese', 50, 1.2), (3, 'leek', 400, 1.5), (3, 'potato', 600, 0.9), (3, 'milk', 200, 0.3);
+INSERT INTO uses VALUES (4, 'lettuce', 150, 1.1), (4, 'egg', 50, 0.3);
+SELECT recipe, count(*), sum(grams), sum(cost) FROM uses GROUP BY recipe ORDER BY recipe;
+SELECT item, count(*) AS n FROM uses GROUP BY item HAVING n > 1 ORDER BY n DESC, item;
+SELECT item, sum(grams) FROM uses GROUP BY item ORDER BY sum(grams) DESC, item LIMIT 3;
+SELECT recipe, item, max(cost) FROM uses GROUP BY recipe ORDER BY recipe;
+SELECT serves, group_concat(title, '/' ORDER BY title) FROM recipes GROUP BY serves ORDER BY serves;
+SELECT round(sum(cost), 2), round(avg(cost), 3), min(cost) FROM uses;
+INSERT INTO uses VALUES (1, 'egg', 50, 0.3);
+INSERT INTO uses VALUES (4, 'oil', 10.5, 0.1);
+INSERT INTO recipes (title, serves) VALUES ('pancakes', 6);
+SELECT count(*) FROM uses;
+UPDATE uses SET cost = cost * 2 WHERE item = 'egg';
+SELECT item, total(cost) FROM uses WHERE item IN ('egg', 'milk') GROUP BY item ORDER BY item;
+SELECT recipe, sum(cost) AS c FROM uses GROUP BY recipe HAVING c > 2 ORDER BY c;
+SELECT count(DISTINCT item), count(DISTINCT recipe) FROM uses;
+SELECT grams >= 200 AS heavy, count(*), group_concat(DISTINCT item ORDER BY item) FROM uses GROUP BY heavy ORDER BY heavy;
+DELETE FROM uses WHERE recipe = 2;
+SELECT recipe, group_concat(item, ' ' ORDER BY grams DESC) FROM uses GROUP BY recipe ORDER BY recipe;
+SELECT DISTINCT recipe FROM uses WHERE cost < 1 ORDER BY recipe DESC;

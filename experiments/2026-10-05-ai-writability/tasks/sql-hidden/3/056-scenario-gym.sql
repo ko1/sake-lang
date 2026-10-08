@@ -1,0 +1,22 @@
+-- gym workouts: volume per exercise and member
+CREATE TABLE sets (id INTEGER PRIMARY KEY, member TEXT NOT NULL, exercise TEXT NOT NULL, reps INTEGER NOT NULL, kg REAL);
+INSERT INTO sets (member, exercise, reps, kg) VALUES ('ola', 'squat', 5, 100.0), ('ola', 'squat', 5, 105.0), ('ola', 'bench', 8, 60.0);
+INSERT INTO sets (member, exercise, reps, kg) VALUES ('pia', 'squat', 10, 60.0), ('pia', 'pullup', 8, NULL), ('pia', 'bench', 6, 47.5);
+INSERT INTO sets (member, exercise, reps, kg) VALUES ('ron', 'pullup', 12, NULL), ('ron', 'pullup', 10, 10.0), ('ron', 'squat', 3, 140.0);
+SELECT exercise, count(*), sum(reps) FROM sets GROUP BY exercise ORDER BY exercise;
+SELECT member, sum(reps * kg) AS volume FROM sets GROUP BY member ORDER BY volume DESC;
+SELECT exercise, max(kg), member FROM sets GROUP BY exercise ORDER BY exercise;
+SELECT member, total(reps * kg), count(kg) FROM sets GROUP BY member ORDER BY member;
+SELECT exercise FROM sets GROUP BY exercise HAVING avg(kg) IS NULL OR avg(kg) < 60 ORDER BY exercise;
+SELECT member, group_concat(DISTINCT exercise ORDER BY exercise) FROM sets GROUP BY member ORDER BY member;
+SELECT reps >= 8 AS high, avg(kg), count(*) FROM sets GROUP BY high ORDER BY high;
+INSERT INTO sets (member, exercise, reps, kg) VALUES ('sam', 'squat', 'five', 80.0);
+INSERT INTO sets (member, exercise, reps, kg) VALUES ('sam', 'squat', 5.0, '80');
+SELECT member, reps, kg, typeof(reps), typeof(kg) FROM sets WHERE member = 'sam';
+UPDATE sets SET kg = kg + 2.5 WHERE exercise = 'bench';
+SELECT exercise, min(kg), max(kg) FROM sets WHERE exercise = 'bench' GROUP BY exercise;
+SELECT count(DISTINCT member), count(DISTINCT exercise), count(*) FROM sets;
+SELECT member, max(kg) FROM sets GROUP BY member HAVING max(kg) > 100 ORDER BY max(kg);
+DELETE FROM sets WHERE kg IS NULL;
+SELECT exercise, count(*) FROM sets GROUP BY exercise ORDER BY 2 DESC, 1;
+SELECT round(avg(kg), 1), sum(reps), max(member) FROM sets;

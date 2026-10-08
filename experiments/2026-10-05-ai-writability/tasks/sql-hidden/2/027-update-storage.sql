@@ -1,0 +1,11 @@
+CREATE TABLE s (i INTEGER, r REAL, t TEXT);
+INSERT INTO s VALUES (0, 0, '');
+UPDATE s SET i = '1e3', r = '3', t = 2.50;
+SELECT i, typeof(i), r, typeof(r), t FROM s;
+UPDATE s SET t = 1e20, r = '-0.25', i = '-12.0';
+SELECT i, r, t, length(t) FROM s;
+UPDATE s SET i = '12x';
+UPDATE s SET i = '0.1';
+UPDATE s SET r = '';
+UPDATE s SET t = NULL, i = NULL, r = NULL;
+SELECT typeof(i), typeof(r), typeof(t) FROM s;

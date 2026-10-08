@@ -1,0 +1,28 @@
+-- holds queue at a library desk
+CREATE TABLE titles (isbn TEXT PRIMARY KEY, title TEXT NOT NULL UNIQUE, year INTEGER, copies INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE holds (pos INTEGER PRIMARY KEY, isbn TEXT NOT NULL, patron TEXT NOT NULL, UNIQUE (patron, isbn));
+INSERT INTO titles VALUES ('111', 'Kindred', 1979, 2), ('222', 'Beloved', 1987, 1), ('333', 'Matilda', 1988, 3);
+INSERT INTO titles (isbn, title) VALUES ('444', 'beloved');
+INSERT INTO titles (isbn, title) VALUES ('555', 'Kindred');
+INSERT INTO titles (isbn, title, year) VALUES ('111', 'Dune', 1965);
+INSERT INTO titles (isbn, title, year) VALUES ('666', 'Dune', '1965 ed.');
+SELECT isbn, title, coalesce(year, 0), copies FROM titles ORDER BY isbn;
+INSERT INTO holds (isbn, patron) VALUES ('222', 'p1'), ('222', 'p2'), ('111', 'p1');
+INSERT INTO holds (isbn, patron) VALUES ('333', 'p3'), ('222', 'p1');
+INSERT INTO holds (pos, isbn, patron) VALUES (10, '333', 'p3');
+INSERT INTO holds (isbn, patron) VALUES ('444', 'p2');
+SELECT pos, isbn, patron FROM holds ORDER BY pos;
+UPDATE holds SET pos = pos - 1 WHERE pos = 10;
+UPDATE holds SET pos = 5 WHERE pos = 10;
+SELECT pos, patron FROM holds WHERE isbn IN ('222', '333') ORDER BY pos;
+DELETE FROM holds WHERE pos = 1;
+UPDATE titles SET copies = copies - 1 WHERE isbn IN ('222', '111');
+SELECT title, copies, CASE copies WHEN 0 THEN 'waitlist' WHEN 1 THEN 'last copy' ELSE 'available' END FROM titles ORDER BY title;
+UPDATE titles SET copies = NULL WHERE copies = 0;
+UPDATE titles SET title = upper(title) WHERE year BETWEEN 1970 AND 1985;
+SELECT isbn, title FROM titles WHERE title LIKE '%e%' ORDER BY isbn;
+UPDATE holds SET patron = 'p1' WHERE pos = 3;
+UPDATE holds SET patron = 'p1' WHERE pos = 2;
+INSERT INTO holds (isbn, patron) VALUES ('111', 'p4');
+SELECT pos, isbn, patron FROM holds ORDER BY pos;
+SELECT title, substr(title, 1, 3) || '-' || substr(isbn, -2), max(year, 1980) FROM titles WHERE year IS NOT NULL ORDER BY year;

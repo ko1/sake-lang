@@ -1,0 +1,9 @@
+CREATE TABLE r (code TEXT PRIMARY KEY, v INTEGER);
+INSERT INTO r VALUES ('a', 1), ('b', 2);
+INSERT INTO r VALUES ('a', 3);
+DELETE FROM r WHERE code = 'a';
+INSERT INTO r VALUES ('a', 3);
+SELECT code, v FROM r ORDER BY code;
+DELETE FROM r;
+INSERT INTO r VALUES ('b', 4), ('a', 5);
+SELECT code, v FROM r ORDER BY v DESC;

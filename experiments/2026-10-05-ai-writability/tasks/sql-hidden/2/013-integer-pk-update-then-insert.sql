@@ -1,0 +1,10 @@
+CREATE TABLE n (id INTEGER PRIMARY KEY, label TEXT UNIQUE);
+INSERT INTO n (label) VALUES ('a'), ('b'), ('c');
+UPDATE n SET id = 50 WHERE label = 'a';
+INSERT INTO n (label) VALUES ('d');
+UPDATE n SET id = id - 40 WHERE id > 40;
+INSERT INTO n (label) VALUES ('e');
+SELECT id, label FROM n ORDER BY id;
+UPDATE n SET id = 3 WHERE label = 'e';
+UPDATE n SET label = 'a' WHERE id = 3;
+SELECT id, label FROM n ORDER BY label;

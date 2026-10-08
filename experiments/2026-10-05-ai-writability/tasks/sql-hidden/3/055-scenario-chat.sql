@@ -1,0 +1,22 @@
+-- chat messages: activity per channel and user
+CREATE TABLE msgs (id INTEGER PRIMARY KEY, channel TEXT NOT NULL, usr TEXT NOT NULL, body TEXT, ts INTEGER);
+INSERT INTO msgs (channel, usr, body, ts) VALUES ('gen', 'al', 'hi all', 100), ('gen', 'bo', 'hey', 105), ('dev', 'al', 'build broke', 110);
+INSERT INTO msgs (channel, usr, body, ts) VALUES ('dev', 'cy', 'fixed', 140), ('gen', 'al', NULL, 150), ('dev', 'al', 'thanks!', 155);
+INSERT INTO msgs (channel, usr, body, ts) VALUES ('ops', 'cy', 'deploy at 5', 200), ('gen', 'cy', 'lunch?', 230);
+SELECT channel, count(*), count(body), count(DISTINCT usr) FROM msgs GROUP BY channel ORDER BY channel;
+SELECT usr, count(*) AS n FROM msgs GROUP BY usr ORDER BY n DESC, usr;
+SELECT channel, max(ts) - min(ts) AS span FROM msgs GROUP BY channel ORDER BY span DESC;
+SELECT channel, usr, max(ts) FROM msgs GROUP BY channel ORDER BY channel;
+SELECT usr, sum(length(body)) FROM msgs GROUP BY usr ORDER BY usr;
+SELECT channel FROM msgs GROUP BY channel HAVING count(*) >= 3 AND count(DISTINCT usr) > 1 ORDER BY channel;
+SELECT ts / 100 AS bucket, group_concat(usr, '' ORDER BY ts) FROM msgs GROUP BY bucket ORDER BY bucket;
+SELECT count(*) FROM msgs WHERE body LIKE '%!' OR body LIKE '%?';
+INSERT INTO msgs (channel, usr, body, ts) VALUES ('gen', NULL, 'anon', 240);
+UPDATE msgs SET body = '(deleted)' WHERE body IS NULL;
+SELECT channel, group_concat(body, ' | ' ORDER BY ts) FROM msgs WHERE channel = 'gen';
+SELECT usr, channel, count(*) FROM msgs GROUP BY usr, channel HAVING count(*) > 1 ORDER BY usr, channel;
+SELECT DISTINCT usr, channel FROM msgs WHERE ts < 150 ORDER BY usr, channel;
+SELECT max(length(body)), min(body), avg(ts) FROM msgs;
+DELETE FROM msgs WHERE channel = 'ops';
+SELECT count(DISTINCT channel), count(*), sum(ts) FROM msgs;
+SELECT usr, min(ts), max(ts) FROM msgs GROUP BY usr ORDER BY min(ts);

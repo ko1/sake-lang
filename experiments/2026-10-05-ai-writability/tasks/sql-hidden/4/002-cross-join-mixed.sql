@@ -1,0 +1,14 @@
+-- , CROSS JOIN and JOIN without a constraint mixed in one FROM.
+CREATE TABLE r (x INTEGER);
+CREATE TABLE s (y TEXT);
+CREATE TABLE t (z REAL);
+INSERT INTO r VALUES (5), (6);
+INSERT INTO s VALUES ('a'), ('b');
+INSERT INTO t VALUES (0.5);
+SELECT x, y, z FROM r CROSS JOIN s, t ORDER BY x, y;
+SELECT x || y FROM r JOIN s JOIN t ORDER BY 1 DESC;
+SELECT y, count(*), sum(x) FROM s INNER JOIN r GROUP BY y ORDER BY y;
+DELETE FROM t;
+SELECT count(*) FROM r CROSS JOIN t;
+SELECT x FROM r CROSS JOIN t ORDER BY x;
+SELECT count(*) FROM r, s CROSS JOIN r AS r2;

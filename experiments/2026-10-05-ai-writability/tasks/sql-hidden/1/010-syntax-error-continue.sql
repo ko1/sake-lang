@@ -1,0 +1,10 @@
+CREATE TABLE t (k INTEGER, v TEXT);
+INSERT INTO t VALUES (1, 'a');
+INSERT INTO t VALUES (2 'b');
+INSERT INTO t VALUES (3, 'c;d');
+SELECT k v w FROM t;
+SELECT k, v FROM t WHERE k > ORDER BY k;
+INSERT INTO t VALUES (4, /* ; */ 'e');
+SELECT k, v FROM t ORDER BY k;
+UPDATER t;
+SELECT 'after';

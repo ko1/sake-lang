@@ -1,0 +1,24 @@
+-- flight log: delays per airline and route
+CREATE TABLE flights (id INTEGER PRIMARY KEY, airline TEXT NOT NULL, src TEXT, dst TEXT, delay INTEGER, seats INTEGER DEFAULT 180);
+INSERT INTO flights (airline, src, dst, delay) VALUES ('ax', 'osl', 'cph', 0), ('ax', 'cph', 'osl', 15), ('by', 'osl', 'ber', 45);
+INSERT INTO flights (airline, src, dst, delay) VALUES ('by', 'ber', 'osl', NULL), ('ax', 'osl', 'cph', 5), ('cz', 'ber', 'cph', 120);
+INSERT INTO flights (airline, src, dst, delay, seats) VALUES ('cz', 'cph', 'ber', 10, 90), ('by', 'osl', 'ber', 30, 150);
+SELECT airline, count(*), avg(delay), max(delay) FROM flights GROUP BY airline ORDER BY airline;
+SELECT src || '-' || dst AS route, count(*) FROM flights GROUP BY route ORDER BY count(*) DESC, route;
+SELECT airline FROM flights GROUP BY airline HAVING count(delay) < count(*);
+SELECT dst, sum(seats) FROM flights GROUP BY dst ORDER BY sum(seats) DESC;
+SELECT airline, src, dst, max(delay) FROM flights;
+SELECT delay > 20 AS late, count(*) FROM flights GROUP BY late ORDER BY late NULLS LAST;
+SELECT src, count(DISTINCT dst) FROM flights GROUP BY src ORDER BY src;
+UPDATE flights SET delay = 0 WHERE delay IS NULL;
+UPDATE flights SET seats = NULL WHERE airline = 'cz';
+SELECT airline, total(delay) / count(*) FROM flights GROUP BY airline ORDER BY 2 DESC;
+SELECT airline, group_concat(dst, ' ' ORDER BY id) FROM flights GROUP BY airline ORDER BY airline;
+INSERT INTO flights (id, airline, src, dst, delay) VALUES (2, 'dq', 'osl', 'ber', 0);
+INSERT INTO flights (airline, src, dst, delay) VALUES ('dq', 'osl', 'ber', 7.5);
+INSERT INTO flights (airline, src, dst, delay) VALUES ('dq', 'osl', 'ber', 7);
+SELECT DISTINCT airline FROM flights WHERE src = 'osl' ORDER BY airline;
+SELECT count(*), max(id), sum(seats) FROM flights;
+SELECT airline, min(delay), id FROM flights GROUP BY airline ORDER BY airline;
+DELETE FROM flights WHERE delay >= 30;
+SELECT airline, count(*) FROM flights GROUP BY 1 HAVING count(*) >= 2 ORDER BY 1;

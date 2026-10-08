@@ -1,0 +1,27 @@
+-- Gym members and their workout log.
+CREATE TABLE member (id INTEGER, name TEXT, joined INTEGER, fee REAL);
+CREATE TABLE workout (member INTEGER, day INTEGER, minutes INTEGER, kind TEXT);
+INSERT INTO member VALUES (1, 'Ola', 2021, 29.9), (2, 'Bea', 2023, 19.9), (3, 'Cas', 2022, 0), (4, 'Dov', '2024', '24.5');
+INSERT INTO member VALUES (5, 'Eli', 'last year', 20);
+INSERT INTO workout VALUES (1, 1, 45, 'run'), (1, 2, 60, 'lift'), (2, 1, 30, 'swim'), (3, 3, '90', 'run');
+INSERT INTO workout VALUES (4, 2, 37.5, 'bike');
+INSERT INTO workout VALUES (4, 2, 38, 'bike'), (2, 3, NULL, 'yoga');
+SELECT id, name, joined, fee FROM member ORDER BY id;
+SELECT member, day, minutes, kind FROM workout ORDER BY member, day;
+SELECT name FROM member WHERE fee = 0 OR fee IS NULL;
+SELECT name, 2025 - joined AS years FROM member WHERE years >= 3 ORDER BY years DESC;
+SELECT member, minutes / 60, minutes % 60 FROM workout WHERE minutes >= 45 ORDER BY member, day;
+SELECT member, minutes * 1.0 / 60 FROM workout WHERE kind = 'bike';
+SELECT kind FROM workout WHERE minutes IS NULL;
+SELECT member, day FROM workout WHERE kind = 'run' AND minutes > '50';
+SELECT upper(nickname) FROM member;
+SELECT name, fee * 12 AS yearly FROM member ORDER BY yearly DESC LIMIT 2;
+SELECT name || ' (' || joined || ')' FROM member ORDER BY joined, name;
+SELECT member, coalesce(minutes, 0) FROM workout WHERE member = 2 ORDER BY day;
+SELECT member, day FROM workout ORDER BY minutes DESC NULLS LAST, member LIMIT 3;
+SELECT name FROM member WHERE name < 'C' ORDER BY name DESC;
+SELECT typeof(joined), typeof(fee) FROM member WHERE id = 4;
+SELECT * FROM workout ORDER BY 1, 2, 3, 4, 5;
+DROP TABLE workout;
+SELECT * FROM workout;
+SELECT member_count() FROM member;

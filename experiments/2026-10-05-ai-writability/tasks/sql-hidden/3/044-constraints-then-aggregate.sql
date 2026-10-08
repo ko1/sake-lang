@@ -1,0 +1,10 @@
+CREATE TABLE members (id INTEGER PRIMARY KEY, email TEXT UNIQUE, tier TEXT NOT NULL DEFAULT 'basic', fee INTEGER);
+INSERT INTO members (email, fee) VALUES ('a@x', 10), ('b@x', 10);
+INSERT INTO members (email, tier, fee) VALUES ('c@x', 'gold', 30), ('a@x', 'gold', 30);
+INSERT INTO members (email, tier, fee) VALUES ('d@x', 'gold', 25), ('e@x', NULL, 5);
+INSERT INTO members (email, tier, fee) VALUES ('f@x', 'gold', 35), (NULL, 'silver', 20), (NULL, 'silver', 16);
+SELECT tier, count(*), sum(fee) FROM members GROUP BY tier ORDER BY tier;
+SELECT count(email), count(DISTINCT tier), max(id) FROM members;
+UPDATE members SET fee = fee * 2 WHERE tier = 'silver';
+UPDATE members SET email = 'b@x' WHERE id = 1;
+SELECT tier, avg(fee) FROM members GROUP BY tier ORDER BY avg(fee) DESC;

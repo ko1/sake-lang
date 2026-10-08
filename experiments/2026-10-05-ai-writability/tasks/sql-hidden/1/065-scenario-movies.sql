@@ -1,0 +1,26 @@
+-- Movie ratings from a small club.
+CREATE TABLE film (id INTEGER, title TEXT, year INTEGER, minutes INTEGER);
+CREATE TABLE rating (film INTEGER, critic TEXT, stars REAL);
+INSERT INTO film VALUES (1, 'Alien', 1979, 117), (2, 'Heat', 1995, 170), (3, 'Up', 2009, 96), (4, 'Ran', 1985, 162);
+INSERT INTO rating VALUES (1, 'kay', 4.5), (1, 'lou', 5), (2, 'kay', 3.5), (3, 'lou', '4'), (4, 'kay', NULL);
+INSERT INTO rating VALUES (3, 'max', 'four');
+INSERT INTO film VALUES (5, 'Jaws', 1975);
+INSERT INTO film (id, title, year, minutes, genre) VALUES (5, 'Jaws', 1975, 124, 'thriller');
+SELECT id, title, year FROM film ORDER BY year;
+SELECT title, minutes / 60 || 'h' || minutes % 60 AS len FROM film ORDER BY id;
+SELECT title, minutes / 60 AS h, minutes % 60 AS m FROM film WHERE h >= 2 ORDER BY title;
+SELECT film, critic, stars FROM rating ORDER BY film, critic;
+SELECT film FROM rating WHERE stars IS NULL;
+SELECT film, critic FROM rating WHERE stars >= 4 ORDER BY stars DESC, critic;
+SELECT film, stars * 2 FROM rating WHERE critic = 'kay' ORDER BY film;
+SELECT title FROM film WHERE year < 1990 AND minutes > 150;
+SELECT title FROM film WHERE title < 'J' ORDER BY title;
+SELECT lower(title) AS t FROM film ORDER BY t DESC LIMIT 2;
+SELECT title, 2025 - year FROM film WHERE NOT year > 1980 ORDER BY year;
+SELECT critic, coalesce(stars, 0.0) FROM rating WHERE film = 4;
+SELECT title, length(title) FROM film ORDER BY length(title) DESC, title;
+SELECT film, stars FROM rating WHERE stars = '5.0';
+SELECT film, typeof(stars) FROM rating WHERE critic = 'lou' ORDER BY film;
+SELECT avg_stars FROM rating;
+SELECT title FROM film ORDER BY minutes LIMIT 2 OFFSET -1;
+SELECT title FROM film ORDER BY title, 2;

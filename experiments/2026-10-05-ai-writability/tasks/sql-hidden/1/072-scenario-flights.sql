@@ -1,0 +1,26 @@
+-- A departures board; times are minutes after midnight.
+CREATE TABLE dep (flight TEXT, dest TEXT, sched INTEGER, delay INTEGER, gate TEXT);
+INSERT INTO dep VALUES ('LX12', 'Rome', 420, 0, 'A1'), ('KL7', 'Oslo', 455, 25, 'B4'), ('AF33', 'Nice', 455, NULL, NULL);
+INSERT INTO dep VALUES ('BA9', 'York', 600, 90, 'A1'), ('IB2', 'Lima', 1380, -5, 'C2'), ('U21', 'Riga', '720', '0', 'B4');
+INSERT INTO dep VALUES ('XX0', 'Nowhere', 'noon', 0, 'Z9');
+INSERT INTO dep (flight, dest, sched) VALUES ('XX0', 'Nowhere'), ('XX1', 'Faro');
+SELECT flight, dest, sched FROM dep ORDER BY sched, flight;
+SELECT flight, sched + delay AS actual FROM dep WHERE actual > sched ORDER BY actual;
+SELECT flight FROM dep WHERE delay IS NULL OR gate IS NULL ORDER BY flight;
+SELECT flight, (sched + coalesce(delay, 0)) / 60, (sched + coalesce(delay, 0)) % 60 FROM dep ORDER BY flight;
+SELECT flight, delay FROM dep WHERE delay < 0;
+SELECT gate, flight FROM dep WHERE gate IS NOT NULL ORDER BY gate, flight DESC;
+SELECT flight FROM dep WHERE gate = 'a1';
+SELECT flight FROM dep WHERE upper(gate) = upper('a1') ORDER BY sched;
+SELECT dest FROM dep WHERE delay >= 30 OR sched >= 1200 ORDER BY dest;
+SELECT dest FROM dep WHERE NOT delay ORDER BY dest;
+SELECT flight || ' to ' || dest AS line FROM dep WHERE sched < 500 ORDER BY line;
+SELECT flight, delay * 1.0 / 60 FROM dep WHERE flight = 'BA9';
+SELECT flight FROM dep ORDER BY delay DESC NULLS LAST, flight LIMIT 2;
+SELECT flight FROM dep ORDER BY delay NULLS LAST, flight LIMIT 2 OFFSET 1;
+SELECT flight, typeof(sched) FROM dep WHERE dest = 'Riga';
+SELECT flight FROM dep WHERE sched = '455' ORDER BY flight;
+SELECT terminal FROM dep;
+SELECT flight, length(flight) FROM dep WHERE length(flight) = 3 ORDER BY flight;
+DROP TABLE dep;
+SELECT * FROM dep;

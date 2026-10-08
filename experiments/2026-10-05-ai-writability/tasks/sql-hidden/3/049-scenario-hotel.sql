@@ -1,0 +1,24 @@
+-- hotel bookings: occupancy and revenue per room type
+CREATE TABLE rooms (no INTEGER PRIMARY KEY, kind TEXT NOT NULL, rate INTEGER NOT NULL);
+CREATE TABLE stays (id INTEGER PRIMARY KEY, room INTEGER NOT NULL, guest TEXT, nights INTEGER, UNIQUE (room, guest));
+INSERT INTO rooms VALUES (101, 'single', 80), (102, 'single', 85), (201, 'double', 120), (202, 'double', 130), (301, 'suite', 300);
+INSERT INTO stays (room, guest, nights) VALUES (101, 'hal', 2), (201, 'ida', 3), (101, 'jon', 1), (301, 'kim', 4);
+INSERT INTO stays (room, guest, nights) VALUES (202, 'lea', 2), (201, 'mia', 1), (102, 'ned', 5);
+INSERT INTO stays (room, guest, nights) VALUES (101, 'hal', 3);
+SELECT kind, count(*), min(rate), max(rate), avg(rate) FROM rooms GROUP BY kind ORDER BY avg(rate);
+SELECT room, count(*), sum(nights) FROM stays GROUP BY room ORDER BY room;
+SELECT room FROM stays GROUP BY room HAVING count(*) > 1 ORDER BY room DESC;
+SELECT guest, nights, max(nights) FROM stays;
+SELECT nights, count(*) FROM stays GROUP BY nights ORDER BY count(*) DESC, nights;
+INSERT INTO stays (room, guest, nights) VALUES (102, 'ned', 2);
+INSERT INTO stays (room, guest, nights) VALUES (102, NULL, 2), (102, NULL, 1);
+SELECT count(*), count(guest), count(DISTINCT room), sum(nights) FROM stays;
+SELECT room, group_concat(coalesce(guest, '?'), ',' ORDER BY id) FROM stays WHERE room < 200 GROUP BY room ORDER BY room;
+UPDATE rooms SET rate = rate + 10 WHERE kind = 'single';
+UPDATE rooms SET kind = NULL WHERE no = 301;
+SELECT kind, sum(rate) FROM rooms GROUP BY kind ORDER BY sum(rate) DESC;
+SELECT room / 100 AS floor, sum(nights) AS n FROM stays GROUP BY floor HAVING n > 3 ORDER BY floor;
+DELETE FROM stays WHERE guest IS NULL;
+SELECT DISTINCT room / 100 FROM stays ORDER BY 1 DESC;
+SELECT guest, sum(nights) FROM stays GROUP BY guest HAVING sum(nights) >= 3 ORDER BY sum(nights), guest;
+SELECT avg(nights), total(nights), count(*) FROM stays;

@@ -1,0 +1,12 @@
+CREATE TABLE p (id INTEGER, kind TEXT, w REAL, n INTEGER);
+INSERT INTO p VALUES (1, 'nail', 0.5, 100), (2, 'screw', 1.25, NULL), (3, 'nail', 2, 40), (4, NULL, NULL, 0), (5, 'bolt', 3.5, 7);
+SELECT id FROM p WHERE kind = 'nail' AND w > 1;
+SELECT id FROM p WHERE kind <> 'nail' ORDER BY id;
+SELECT id FROM p WHERE n ORDER BY id;
+SELECT id FROM p WHERE NOT n ORDER BY id;
+SELECT id FROM p WHERE w * n > 40 ORDER BY id DESC;
+SELECT id FROM p WHERE kind IS NOT 'nail' ORDER BY id;
+SELECT id, kind FROM p WHERE (w > 1 OR n > 50) AND kind IS NOT NULL ORDER BY id;
+SELECT id FROM p WHERE n = 0 OR NULL ORDER BY id;
+SELECT id FROM p WHERE n > 1000;
+SELECT 'yes' WHERE 'abc' = 'abc' AND 2 > 1;

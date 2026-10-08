@@ -1,0 +1,25 @@
+-- Monthly electricity meter readings in kWh.
+CREATE TABLE reading (flat TEXT, month INTEGER, kwh REAL, estimated INTEGER);
+INSERT INTO reading VALUES ('1A', 1, 312.5, 0), ('1A', 2, 290, 0), ('1B', 1, 150.25, 1), ('1B', 2, NULL, 1);
+INSERT INTO reading VALUES ('2A', 1, '401', '0'), ('2A', 2, 388.75, 0), ('2B', 1, 0, 0);
+INSERT INTO reading VALUES ('2B', 2, '1.2e2', 0), ('3A', 1, '---', 0);
+INSERT INTO reading VALUES ('2B', 2, '1.2e2', 0);
+INSERT INTO reading VALUES ('3A', 1.5, 10, 0);
+SELECT flat, month, kwh FROM reading ORDER BY flat, month;
+SELECT flat, kwh FROM reading WHERE month = 1 ORDER BY kwh DESC;
+SELECT flat, month FROM reading WHERE estimated ORDER BY flat, month;
+SELECT flat, kwh * 0.31 AS cost FROM reading WHERE cost > 100 ORDER BY cost;
+SELECT flat FROM reading WHERE kwh IS NULL;
+SELECT flat, month FROM reading WHERE kwh = 0 OR kwh IS NULL ORDER BY flat;
+SELECT flat, kwh / 30 FROM reading WHERE flat = '1A' ORDER BY month;
+SELECT flat, month, kwh > 300 AND NOT estimated FROM reading WHERE month = 2 ORDER BY flat;
+SELECT flat FROM reading WHERE flat > '1Z' AND month = 1 ORDER BY flat DESC;
+SELECT flat || '/' || month, coalesce(kwh, -1) FROM reading WHERE flat < '2' ORDER BY 1;
+SELECT flat, kwh FROM reading WHERE kwh = '120';
+SELECT flat, typeof(kwh), typeof(estimated) FROM reading WHERE flat = '2A' ORDER BY month;
+SELECT flat, abs(kwh - 300) AS gap FROM reading WHERE month = 1 ORDER BY gap LIMIT 2;
+SELECT flat, month FROM reading ORDER BY kwh NULLS LAST, flat LIMIT 2 OFFSET 1;
+SELECT flat, length(kwh) FROM reading WHERE month = 2 ORDER BY flat;
+SELECT tariff FROM reading;
+SELECT flat FROM reading WHERE month = 2 ORDER BY flat, 2;
+SELECT lower(flat), upper(lower(flat)) FROM reading WHERE kwh > 390;

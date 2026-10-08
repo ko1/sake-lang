@@ -1,0 +1,10 @@
+-- column count mismatches are reported at the operator where they are found
+CREATE TABLE p (a INTEGER, b TEXT, c REAL);
+INSERT INTO p VALUES (1, 'x', 1.5);
+SELECT a, b FROM p INTERSECT SELECT a FROM p;
+SELECT a FROM p EXCEPT SELECT a, b, c FROM p;
+SELECT * FROM p UNION ALL SELECT a, b FROM p;
+SELECT a, b FROM p UNION ALL SELECT a, b FROM p EXCEPT SELECT * FROM p;
+SELECT count(*) FROM (SELECT a FROM p UNION SELECT a, b FROM p);
+SELECT 1 WHERE 1 IN (SELECT a FROM p INTERSECT SELECT a, c FROM p);
+SELECT * FROM p UNION SELECT c, b, a FROM p ORDER BY 1;

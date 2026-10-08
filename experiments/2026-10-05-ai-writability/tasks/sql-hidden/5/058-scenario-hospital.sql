@@ -1,0 +1,27 @@
+-- scenario: a clinic's appointments; views, a transaction and a renamed column
+CREATE TABLE doctor (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, ward TEXT);
+CREATE TABLE patient (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE appt (doc INTEGER, pat INTEGER, slot INTEGER, UNIQUE (doc, slot));
+INSERT INTO doctor (name, ward) VALUES ('house', 'a'), ('grey', 'b'), ('who', 'a');
+INSERT INTO patient (name) VALUES ('p1'), ('p2'), ('p3'), ('p4');
+INSERT INTO appt VALUES (1, 1, 9), (1, 2, 10), (2, 1, 9), (2, 3, 11), (3, 4, 9);
+INSERT INTO appt VALUES (1, 3, 9);
+CREATE VIEW schedule AS SELECT d.name AS doctor, p.name AS patient, a.slot FROM appt a JOIN doctor d ON d.id = a.doc JOIN patient p ON p.id = a.pat;
+SELECT doctor, patient, slot FROM schedule ORDER BY slot, doctor;
+SELECT patient FROM schedule WHERE doctor = 'house' INTERSECT SELECT patient FROM schedule WHERE doctor = 'grey';
+SELECT name FROM patient EXCEPT SELECT patient FROM schedule WHERE slot = 9 ORDER BY name;
+BEGIN;
+DELETE FROM appt WHERE doc = 1;
+INSERT INTO appt SELECT 2, pat, slot + 3 FROM appt WHERE doc = 3;
+SELECT doctor, count(*) FROM schedule GROUP BY doctor ORDER BY doctor;
+ROLLBACK;
+SELECT doctor, count(*) FROM schedule GROUP BY doctor ORDER BY doctor;
+WITH load AS (SELECT doc, count(*) AS n FROM appt GROUP BY doc) SELECT d.ward, sum(l.n) FROM doctor d JOIN load l ON l.doc = d.id GROUP BY d.ward ORDER BY d.ward;
+UPDATE schedule SET slot = 1;
+DROP VIEW schedule;
+ALTER TABLE appt RENAME COLUMN slot TO hour;
+INSERT INTO appt VALUES (3, 1, 9);
+INSERT INTO appt VALUES (3, 1, 'noon');
+SELECT doc, hour FROM appt WHERE pat = 1 ORDER BY doc;
+SELECT hour FROM appt WHERE doc = 2 UNION SELECT hour FROM appt WHERE doc = 3 ORDER BY hour DESC LIMIT 2;
+SELECT name FROM doctor WHERE id NOT IN (SELECT doc FROM appt WHERE hour > 10) ORDER BY name;

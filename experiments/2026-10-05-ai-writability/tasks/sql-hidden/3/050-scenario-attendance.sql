@@ -1,0 +1,22 @@
+-- school attendance: present/absent marks per class and day
+CREATE TABLE marks (pupil TEXT NOT NULL, class TEXT NOT NULL, day INTEGER NOT NULL, present INTEGER, PRIMARY KEY (pupil, day));
+INSERT INTO marks VALUES ('ali', '1a', 1, 1), ('bo', '1a', 1, 0), ('cy', '1b', 1, 1), ('di', '1b', 1, 1);
+INSERT INTO marks VALUES ('ali', '1a', 2, 1), ('bo', '1a', 2, 1), ('cy', '1b', 2, 0), ('di', '1b', 2, NULL);
+INSERT INTO marks VALUES ('ali', '1a', 3, 0), ('bo', '1a', 3, 1), ('cy', '1b', 3, 0);
+SELECT class, day, sum(present), count(*) FROM marks GROUP BY class, day ORDER BY class, day;
+SELECT pupil, sum(present) AS days FROM marks GROUP BY pupil ORDER BY days DESC, pupil;
+SELECT pupil FROM marks GROUP BY pupil HAVING count(present) < count(*) ORDER BY pupil;
+SELECT day, round(avg(present), 2) FROM marks GROUP BY day ORDER BY day;
+INSERT INTO marks VALUES ('ali', '1a', 3, 1);
+INSERT INTO marks VALUES ('eve', '1b', 3, 2.0), ('fay', '1b', 3, 'yes');
+SELECT count(*), max(day) FROM marks;
+UPDATE marks SET present = 0 WHERE present IS NULL;
+SELECT class, total(present) / count(*) AS rate FROM marks GROUP BY class ORDER BY rate DESC;
+SELECT class, group_concat(DISTINCT pupil ORDER BY pupil) FROM marks GROUP BY class ORDER BY class;
+SELECT pupil, min(day) FROM marks WHERE present = 0 GROUP BY pupil ORDER BY pupil;
+SELECT day FROM marks GROUP BY day HAVING sum(present) = count(*) ORDER BY day;
+SELECT DISTINCT class, present FROM marks ORDER BY class, present;
+SELECT CASE WHEN sum(present) >= 2 THEN 'ok' ELSE 'warn' END AS flag, pupil FROM marks GROUP BY pupil ORDER BY pupil;
+DELETE FROM marks WHERE day = 1;
+SELECT count(*), sum(present), count(DISTINCT pupil) FROM marks;
+SELECT class, count(*) FROM marks GROUP BY 1 ORDER BY 1 LIMIT 1 OFFSET 1;

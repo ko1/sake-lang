@@ -1,0 +1,11 @@
+SELECT 3 + 4 * 5, (3 + 4) * 5, 20 / 2 * 5, 20 / (2 * 5);
+SELECT 1 + 2 || 3, 1 + (2 || 3), 5 * 2 || 0;
+SELECT 'n' || 5 - 1;
+SELECT 2 + 2 = 4, 2 + 2 > 3 = 1, 1 = 2 < 3;
+SELECT 10 % 4 + 1, 10 % (4 + 1);
+SELECT -3 * -3 - -3;
+SELECT 8 - 4 - 2 - 1, 64 / 4 / 2;
+SELECT 2 * - 3, - 2 * 3;
+SELECT 1 < 2 < 3, 3 > 2 > 1;
+SELECT 0 = 0 IS 1, NULL IS NULL = 1;
+SELECT 1 + 1 IS 2;

@@ -1,0 +1,18 @@
+-- dropping a table drops its indexes, so their names are free again
+CREATE TABLE p (x INTEGER);
+CREATE TABLE q (y INTEGER);
+CREATE UNIQUE INDEX px ON p (x);
+CREATE INDEX qy ON q (y);
+INSERT INTO p VALUES (1);
+INSERT INTO p VALUES (1);
+DROP TABLE p;
+CREATE UNIQUE INDEX px ON q (y);
+INSERT INTO q VALUES (5), (6);
+INSERT INTO q VALUES (5);
+DROP INDEX qy;
+DROP INDEX px;
+INSERT INTO q VALUES (5);
+SELECT y, count(*) FROM q GROUP BY y ORDER BY y;
+CREATE INDEX qy ON q (y);
+DROP TABLE q;
+DROP INDEX qy;

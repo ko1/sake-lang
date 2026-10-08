@@ -1,0 +1,25 @@
+-- Bank accounts; balances in cents, interest rates as REAL.
+CREATE TABLE account (id INTEGER, owner TEXT, cents INTEGER, rate REAL);
+INSERT INTO account VALUES (1, 'ana', 150000, 0.015), (2, 'ben', -2500, 0.0), (3, 'cy', 999, 0.02);
+INSERT INTO account VALUES (4, 'dot', 12.34, 0.01);
+INSERT INTO account VALUES (4, 'dot', '1234', '1e-2'), (5, 'eve', 0, NULL);
+SELECT id, owner, cents, rate FROM account ORDER BY id;
+SELECT owner, cents / 100 AS euros, cents % 100 AS rest FROM account ORDER BY id;
+SELECT owner, cents / 100.0 FROM account WHERE cents < 0;
+SELECT owner FROM account WHERE cents > 1000 ORDER BY cents DESC;
+SELECT owner, cents * rate AS interest FROM account WHERE interest > 0 ORDER BY interest;
+SELECT owner, abs(cents) FROM account WHERE cents < 0;
+SELECT owner, -cents FROM account WHERE id = 2;
+SELECT owner, rate * 100 || '%' FROM account WHERE rate IS NOT NULL ORDER BY rate, owner;
+SELECT owner FROM account WHERE rate IS NULL;
+SELECT owner, cents = 0 FROM account ORDER BY owner;
+SELECT owner FROM account WHERE cents AND rate ORDER BY owner;
+SELECT owner FROM account WHERE NOT cents ORDER BY owner;
+SELECT upper(owner) FROM account ORDER BY cents LIMIT 2;
+SELECT owner, cents / 0 FROM account WHERE id = 1;
+SELECT owner FROM account WHERE cents = '999' AND rate = '0.02';
+SELECT balance FROM account;
+INSERT INTO account VALUES (6, 'fay', 100, 0.01), (7, 'gus', 'none', 0.01);
+INSERT INTO account VALUES (7, 'gus');
+SELECT owner, coalesce(rate, 0.0) * 100 FROM account WHERE id >= 5 ORDER BY id;
+SELECT owner, cents FROM account ORDER BY cents DESC LIMIT 1 OFFSET 0;

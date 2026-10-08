@@ -1,0 +1,25 @@
+-- Hotel rooms and bookings (nights as integers).
+CREATE TABLE room (rno INTEGER, floor INTEGER, beds INTEGER, rate REAL, outlook TEXT);
+INSERT INTO room VALUES (101, 1, 1, 80, 'yard'), (102, 1, 2, 110.5, NULL), (201, 2, 2, 125, 'sea');
+INSERT INTO room VALUES (202, 2, 3, 150, 'sea'), (301, 3, 1, 95.25, 'city'), (302, 3, 2, '130', 'city');
+INSERT INTO room VALUES (303, 3, 'two', 130, 'city');
+INSERT INTO room VALUES (303, 3);
+SELECT rno, floor, beds, rate FROM room ORDER BY rno;
+SELECT rno FROM room WHERE outlook = 'sea' ORDER BY rno;
+SELECT rno FROM room WHERE outlook IS NULL OR outlook = 'yard' ORDER BY rno;
+SELECT rno, rate * 3 AS three_nights FROM room WHERE three_nights > 380 ORDER BY three_nights;
+SELECT rno, rate / beds AS per_bed FROM room ORDER BY per_bed, rno;
+SELECT rno, rno / 100, rno % 100 FROM room WHERE floor = 3 ORDER BY rno;
+SELECT rno FROM room WHERE rno / 100 <> floor;
+SELECT outlook, rno FROM room ORDER BY outlook NULLS LAST, rno DESC;
+SELECT upper(coalesce(outlook, 'none')) || '-' || rno FROM room WHERE beds = 2 ORDER BY rno;
+SELECT rno FROM room WHERE beds > 1 AND NOT outlook = 'sea' ORDER BY rno;
+SELECT rno, rate FROM room WHERE rate = '125';
+SELECT rno, rate FROM room ORDER BY rate DESC LIMIT 2;
+SELECT rno, rate FROM room ORDER BY rate LIMIT 2 OFFSET 2;
+SELECT rno, typeof(rate) FROM room WHERE rno = 302;
+SELECT rno, length(outlook) FROM room WHERE floor = 1 ORDER BY rno;
+SELECT suite FROM room;
+SELECT rno, beds FROM room WHERE beds = 2 ORDER BY 1, 2, 3;
+CREATE TABLE IF NOT EXISTS room (x INTEGER);
+SELECT rno FROM room WHERE rate > 140;

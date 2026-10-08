@@ -1,0 +1,11 @@
+CREATE TABLE s (k TEXT, v INTEGER);
+INSERT INTO s VALUES ('a',1),('b',2);
+SELECT k, v FROM s ORDER BY row_number();
+SELECT k FROM s WHERE rank() > 0;
+SELECT upper(k), lead(v, 1, 0) FROM s;
+SELECT k FROM s GROUP BY k HAVING nth_value(v, 2) > 0;
+SELECT (SELECT last_value(v) FROM s);
+SELECT k, cume_dist(), percent_rank() FROM s;
+SELECT ntile(3), dense_rank() FROM s;
+SELECT first_value(v) FROM s GROUP BY k;
+SELECT k, lag(v, 1) OVER (ORDER BY k), count(*) OVER (), min(v) OVER () FROM s ORDER BY k;

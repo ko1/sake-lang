@@ -1,0 +1,20 @@
+-- ROLLBACK restores renamed tables and columns, dropped indexes and created views
+CREATE TABLE emp (nm TEXT UNIQUE, pay INTEGER);
+INSERT INTO emp VALUES ('a', 1), ('b', 2);
+CREATE UNIQUE INDEX emp_pay ON emp (pay);
+BEGIN;
+ALTER TABLE emp RENAME COLUMN nm TO name;
+ALTER TABLE emp RENAME TO staff;
+DROP INDEX emp_pay;
+CREATE VIEW payroll AS SELECT name, pay FROM staff;
+INSERT INTO staff VALUES ('c', 2);
+SELECT name, pay FROM payroll ORDER BY name;
+ROLLBACK;
+SELECT nm, pay FROM emp ORDER BY nm;
+SELECT * FROM staff;
+SELECT * FROM payroll;
+INSERT INTO emp VALUES ('c', 2);
+CREATE INDEX emp_pay ON emp (nm);
+DROP INDEX emp_pay;
+INSERT INTO emp VALUES ('c', 2);
+SELECT count(*) FROM emp;

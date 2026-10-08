@@ -1,0 +1,11 @@
+CREATE TABLE dice (d INTEGER);
+CREATE TABLE coins (side TEXT);
+CREATE TABLE cards (suit TEXT);
+INSERT INTO dice VALUES (1), (2), (3);
+INSERT INTO coins VALUES ('H'), ('T');
+INSERT INTO cards VALUES ('clubs'), ('hearts');
+SELECT count(*) FROM dice, coins, cards;
+SELECT d, side, suit FROM dice, coins, cards WHERE d % 2 = 1 AND side = 'T' ORDER BY d, suit;
+SELECT d, side FROM dice, coins ORDER BY d DESC, side LIMIT 3 OFFSET 1;
+SELECT a.d, b.d FROM dice a, dice b WHERE a.d + b.d = 4 ORDER BY a.d;
+SELECT sum(d) FROM dice, coins;

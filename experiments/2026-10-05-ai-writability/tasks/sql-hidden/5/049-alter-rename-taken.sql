@@ -1,0 +1,13 @@
+-- RENAME TO a name taken by a table, a view or an index
+CREATE TABLE one (a INTEGER);
+CREATE TABLE two (b INTEGER);
+CREATE VIEW three AS SELECT 3 AS c;
+CREATE INDEX four ON two (b);
+ALTER TABLE one RENAME TO TWO;
+ALTER TABLE one RENAME TO three;
+ALTER TABLE one RENAME TO five;
+ALTER TABLE five RENAME TO one;
+ALTER TABLE one RENAME TO six;
+INSERT INTO six VALUES (6);
+SELECT a FROM six;
+SELECT a FROM one;

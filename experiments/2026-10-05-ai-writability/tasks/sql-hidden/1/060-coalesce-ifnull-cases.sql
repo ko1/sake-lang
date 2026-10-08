@@ -1,0 +1,11 @@
+SELECT coalesce(1, NULL), coalesce(NULL, 'b', 'c'), coalesce(NULL, NULL, NULL, NULL);
+SELECT coalesce(NULL, 0.0), coalesce('', 'x'), coalesce(0, 1);
+SELECT ifnull(0, 1), ifnull(NULL, 2.5), ifnull('', 'z');
+SELECT typeof(coalesce(NULL, NULL)), typeof(ifnull(NULL, 3));
+SELECT IFNULL(NULL, 'up'), Coalesce(NULL, 'mixed');
+CREATE TABLE ph (id INTEGER, home TEXT, work TEXT, mobile TEXT);
+INSERT INTO ph VALUES (1, NULL, NULL, '555-1'), (2, '555-2', '555-3', NULL), (3, NULL, NULL, NULL), (4, NULL, '555-4', '555-5');
+SELECT id, coalesce(mobile, work, home, 'none') FROM ph ORDER BY id;
+SELECT id, ifnull(home, ifnull(work, '-')) FROM ph ORDER BY id;
+SELECT id FROM ph WHERE coalesce(home, work) IS NULL ORDER BY id;
+SELECT coalesce(work, mobile) AS best FROM ph ORDER BY best NULLS LAST;

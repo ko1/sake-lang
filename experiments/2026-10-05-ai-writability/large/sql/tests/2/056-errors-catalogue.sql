@@ -1,0 +1,10 @@
+CREATE TABLE e (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, qty INTEGER DEFAULT 0);
+INSERT INTO e (name) VALUES ('a');
+INSERT INTO e (name) VALUES ('a');
+INSERT INTO e (id, name) VALUES (1, 'b');
+INSERT INTO e (qty) VALUES (2);
+INSERT INTO e (name, qty) VALUES ('c', 'none');
+INSERT INTO e (name, color) VALUES ('d', 'red');
+SELECT foo(name) FROM e;
+SELECT substr('x') FROM e;
+SELECT id, name, qty FROM e ORDER BY id;

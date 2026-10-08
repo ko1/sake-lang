@@ -1,0 +1,23 @@
+-- election: votes per candidate and district, turnout
+CREATE TABLE districts (name TEXT PRIMARY KEY, voters INTEGER NOT NULL);
+CREATE TABLE votes (district TEXT NOT NULL, candidate TEXT, n INTEGER NOT NULL);
+INSERT INTO districts VALUES ('east', 1000), ('west', 800), ('north', 500);
+INSERT INTO votes VALUES ('east', 'kay', 300), ('east', 'lin', 250), ('east', NULL, 20), ('west', 'kay', 200);
+INSERT INTO votes VALUES ('west', 'lin', 390), ('west', 'max', 50), ('north', 'max', 260), ('north', 'lin', 100);
+SELECT candidate, sum(n) AS total FROM votes WHERE candidate IS NOT NULL GROUP BY candidate ORDER BY total DESC;
+SELECT district, sum(n), max(n), candidate FROM votes GROUP BY district ORDER BY district;
+SELECT district, sum(n) * 100 / max(1000) FROM votes WHERE district = 'east';
+SELECT candidate, count(DISTINCT district) FROM votes GROUP BY candidate HAVING count(DISTINCT district) > 1 ORDER BY candidate;
+SELECT sum(voters), avg(voters), min(name) FROM districts;
+SELECT district, round(100.0 * sum(n) / 1000, 1) FROM votes GROUP BY district ORDER BY 2 DESC;
+SELECT candidate IS NULL AS blank, sum(n) FROM votes GROUP BY blank ORDER BY blank;
+INSERT INTO votes VALUES ('south', 'kay', NULL);
+INSERT INTO districts VALUES ('East', 10), ('east', 5);
+SELECT count(*), group_concat(name, ',' ORDER BY voters) FROM districts;
+UPDATE votes SET n = n + 10 WHERE candidate = 'max';
+SELECT candidate, sum(n), group_concat(district, '+' ORDER BY n DESC) FROM votes GROUP BY candidate ORDER BY candidate NULLS FIRST;
+SELECT district FROM votes GROUP BY district HAVING sum(CASE WHEN candidate = 'lin' THEN n ELSE 0 END) * 2 > sum(n) ORDER BY district;
+SELECT DISTINCT district FROM votes WHERE n BETWEEN 100 AND 300 ORDER BY district DESC;
+DELETE FROM votes WHERE candidate IS NULL;
+SELECT count(*), total(n), count(DISTINCT candidate) FROM votes;
+SELECT candidate, sum(n) FROM votes GROUP BY 1 ORDER BY 2 DESC LIMIT 1;

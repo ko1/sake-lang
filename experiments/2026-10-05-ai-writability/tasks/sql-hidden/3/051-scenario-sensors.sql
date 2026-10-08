@@ -1,0 +1,24 @@
+-- sensor readings: per-device statistics, gaps and outliers
+CREATE TABLE devices (id INTEGER PRIMARY KEY, name TEXT UNIQUE, room TEXT);
+CREATE TABLE readings (device INTEGER NOT NULL, t INTEGER NOT NULL, temp REAL, PRIMARY KEY (device, t));
+INSERT INTO devices (name, room) VALUES ('d-a', 'lab'), ('d-b', 'lab'), ('d-c', 'office');
+INSERT INTO readings VALUES (1, 0, 20.5), (1, 10, 21.0), (1, 20, NULL), (1, 30, 22.25);
+INSERT INTO readings VALUES (2, 0, 19.0), (2, 10, 19.5), (3, 0, 23.0), (3, 10, 30.5), (3, 20, 23.5);
+SELECT device, count(*), count(temp), min(temp), max(temp) FROM readings GROUP BY device ORDER BY device;
+SELECT device, avg(temp) FROM readings GROUP BY device ORDER BY avg(temp) DESC;
+SELECT device, t, max(temp) FROM readings GROUP BY device ORDER BY device;
+SELECT t, count(*), round(avg(temp), 2) FROM readings GROUP BY t ORDER BY t;
+SELECT device FROM readings GROUP BY device HAVING max(temp) - min(temp) > 5 ORDER BY device;
+INSERT INTO readings VALUES (2, 10, 18.0);
+INSERT INTO readings VALUES (2, 20, 'hot');
+INSERT INTO readings VALUES (2, 20, '18.75');
+SELECT device, sum(temp), total(temp) FROM readings WHERE device = 2 GROUP BY device;
+SELECT room, count(*) FROM devices GROUP BY room ORDER BY room;
+UPDATE readings SET temp = 23.0 WHERE device = 3 AND t = 10;
+SELECT device, max(temp) - min(temp) AS spread FROM readings GROUP BY device ORDER BY spread, device;
+SELECT temp > 21, count(*) FROM readings GROUP BY temp > 21 ORDER BY 1;
+SELECT DISTINCT temp FROM readings WHERE device = 3 ORDER BY temp;
+SELECT count(DISTINCT temp), count(temp) FROM readings;
+DELETE FROM readings WHERE temp IS NULL OR t > 20;
+SELECT device, group_concat(t, ' ' ORDER BY t) FROM readings GROUP BY device ORDER BY device;
+SELECT sum(temp), avg(t) FROM readings;

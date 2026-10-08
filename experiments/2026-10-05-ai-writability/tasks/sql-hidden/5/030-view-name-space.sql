@@ -1,0 +1,13 @@
+-- one name space for tables and views, names case-insensitive
+CREATE VIEW Report AS SELECT 1 AS one;
+CREATE TABLE report (x INTEGER);
+CREATE VIEW REPORT AS SELECT 2 AS two;
+CREATE TABLE data (x INTEGER);
+CREATE VIEW Data AS SELECT 3 AS three;
+CREATE TABLE IF NOT EXISTS data (y INTEGER);
+CREATE VIEW IF NOT EXISTS report AS SELECT 4 AS four;
+SELECT * FROM REPORT;
+DROP VIEW report;
+CREATE TABLE report (x INTEGER);
+INSERT INTO report VALUES (5);
+SELECT x FROM Report;

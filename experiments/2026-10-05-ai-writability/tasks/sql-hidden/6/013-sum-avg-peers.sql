@@ -1,0 +1,6 @@
+CREATE TABLE t (g TEXT, k INTEGER, v INTEGER);
+INSERT INTO t VALUES ('a',1,5),('a',1,6),('a',2,7),('b',1,1),('b',3,2),('b',3,3),('b',3,4),('a',4,NULL);
+SELECT g, k, v, sum(v) OVER (PARTITION BY g ORDER BY k), avg(v) OVER (PARTITION BY g ORDER BY k) FROM t ORDER BY g, k, v;
+SELECT g, k, v, count(v) OVER (ORDER BY g, k), count(*) OVER (ORDER BY g DESC, k DESC) FROM t ORDER BY g, k, v;
+SELECT g, k, v, total(v) OVER (ORDER BY k RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM t ORDER BY g, k, v;
+SELECT k, sum(v) OVER (ORDER BY k), sum(v) OVER (ORDER BY k ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t WHERE g = 'b' AND k = 1 ORDER BY k;

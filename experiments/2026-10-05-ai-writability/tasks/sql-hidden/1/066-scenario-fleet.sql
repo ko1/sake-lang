@@ -1,0 +1,23 @@
+-- Fuel log for a small delivery fleet.
+CREATE TABLE fuel (van TEXT, km_start INTEGER, km_end INTEGER, litres REAL, price REAL);
+INSERT INTO fuel VALUES ('v1', 1000, 1420, 31.5, 1.85), ('v2', 500, 860, 40, 1.79);
+INSERT INTO fuel VALUES ('v3', 2200, 2200, 0, 1.9), ('v1', 1420, 1800, '29.75', '1.82');
+INSERT INTO fuel VALUES ('v2', 860, '1,200', 35, 1.8);
+INSERT INTO fuel VALUES ('v4', 0, NULL, NULL, NULL);
+SELECT van, km_start, km_end FROM fuel ORDER BY van, km_start;
+SELECT van, km_end - km_start AS km FROM fuel WHERE km > 0 ORDER BY km DESC;
+SELECT van, litres * 100 / (km_end - km_start) AS per100 FROM fuel WHERE litres > 0 ORDER BY per100;
+SELECT van, litres / (km_end - km_start) FROM fuel WHERE van = 'v3';
+SELECT van, litres * price FROM fuel WHERE price IS NOT NULL ORDER BY van, km_start;
+SELECT van FROM fuel WHERE km_end IS NULL;
+SELECT van, km_start / 1000, km_start % 1000 FROM fuel WHERE km_start >= 1000 ORDER BY km_start;
+SELECT van, price FROM fuel WHERE price > '1.8' ORDER BY price DESC;
+SELECT upper(van) || ':' || litres FROM fuel WHERE litres >= 30 ORDER BY litres;
+SELECT van FROM fuel WHERE NOT litres ORDER BY van;
+SELECT van, ifnull(litres, -1) FROM fuel ORDER BY litres NULLS FIRST, van LIMIT 2;
+SELECT van, km_end - km_start FROM fuel ORDER BY 2 DESC NULLS LAST, 1 LIMIT 3;
+SELECT van, typeof(litres), typeof(price) FROM fuel WHERE km_start = 1420;
+SELECT driver FROM fuel;
+SELECT van, abs(km_start - km_end) FROM fuel WHERE van = 'v2';
+INSERT INTO fuel VALUES ('v4', 0, 50, 4.5, 1.88);
+SELECT van, km_end, litres FROM fuel WHERE van = 'v4' ORDER BY km_end NULLS FIRST;

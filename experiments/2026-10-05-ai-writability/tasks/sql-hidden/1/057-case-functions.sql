@@ -1,0 +1,10 @@
+SELECT upper('abc xyz'), lower('ABC XYZ'), upper('123'), lower('');
+SELECT upper(-1.5), lower(2e30), upper(NULL), typeof(lower(7));
+SELECT Upper('q'), LOWER('Q'), uPPeR('mIx');
+SELECT upper('a') = 'A', lower('A') = 'a', upper('a') = 'a';
+SELECT length(upper('hello')), upper(lower('Hello') || 'X');
+CREATE TABLE p (code TEXT);
+INSERT INTO p VALUES ('aB1'), ('Ab2'), ('ab3'), ('AB4');
+SELECT code, upper(code), lower(code) FROM p ORDER BY code;
+SELECT code FROM p WHERE lower(code) < 'ab3' ORDER BY code;
+SELECT code FROM p ORDER BY upper(code) DESC;

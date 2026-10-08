@@ -1,0 +1,12 @@
+CREATE TABLE e (id INTEGER, i INTEGER, r REAL);
+INSERT INTO e (i) VALUES (0.5);
+INSERT INTO e (i) VALUES ('0.5');
+INSERT INTO e (i) VALUES ('half');
+INSERT INTO e (i) VALUES ('3e-1');
+INSERT INTO e (i) VALUES (1e30);
+INSERT INTO e (i) VALUES (-2.0e25);
+INSERT INTO e (r) VALUES ('1/2');
+INSERT INTO e (r) VALUES ('NaN');
+INSERT INTO e (id) VALUES ('id-1');
+INSERT INTO e (id, i, r) VALUES (1, '3e0', '3e0');
+SELECT id, i, r FROM e;

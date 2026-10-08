@@ -1,0 +1,12 @@
+CREATE TABLE b (id INTEGER, s TEXT);
+INSERT INTO b VALUES (1, '7'), (2, '7.0'), (3, '70'), (4, '1e1'), (5, ' 7'), (6, '0.5');
+SELECT id FROM b WHERE s = 7;
+SELECT id FROM b WHERE s = 7.0;
+SELECT id FROM b WHERE s = 10;
+SELECT id FROM b WHERE s = 1e1;
+SELECT id FROM b WHERE s = .5;
+SELECT id FROM b WHERE s > 7 ORDER BY id;
+SELECT id FROM b WHERE s < 10 ORDER BY id;
+SELECT id FROM b WHERE 3 + 4 = s;
+SELECT id, s IS 70, s = '70' FROM b WHERE id = 3;
+SELECT id FROM b WHERE s IS NOT 7 ORDER BY id;

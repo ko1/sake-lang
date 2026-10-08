@@ -1,0 +1,10 @@
+SELECT 3 = 3, 3 == 4, 3 != 4, 3 <> 3;
+SELECT 2 < 2, 2 <= 2, 2 > 2, 2 >= 2;
+SELECT 2 = 2.0, 2 < 2.5, -0.0 = 0, 1e2 = 100;
+SELECT 'A' = 'a', 'abc' >= 'ab', 'Z' > 'A', '' < 'a';
+SELECT NULL = 0, 0 != NULL, NULL >= NULL;
+SELECT 5 = '5', '5' <> 5, 5 < '4';
+SELECT typeof(2 = 2), typeof(NULL = 1);
+CREATE TABLE k (a INTEGER, b REAL);
+INSERT INTO k VALUES (1, 1.0), (2, 2.5), (3, NULL);
+SELECT a, a = b, a < b, a <> b FROM k ORDER BY a;

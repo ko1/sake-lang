@@ -1,0 +1,14 @@
+-- The affinity a plain subquery column brings to IN, against literals and columns.
+CREATE TABLE r (x REAL);
+CREATE TABLE t (s TEXT);
+CREATE TABLE i (n INTEGER);
+INSERT INTO r VALUES (1.5), (3.0);
+INSERT INTO t VALUES ('3'), ('1.5'), (' 7 ');
+INSERT INTO i VALUES (3), (7);
+SELECT '1.5' IN (SELECT x FROM r), '3' IN (SELECT x FROM r), '3' IN (SELECT x * 1 FROM r);
+SELECT 1.5 IN (SELECT s FROM t), 3 IN (SELECT s FROM t), 3.0 IN (SELECT s FROM t), 7 IN (SELECT s FROM t);
+SELECT s FROM t WHERE s IN (SELECT x FROM r) ORDER BY s;
+SELECT s FROM t WHERE s IN (SELECT n FROM i) ORDER BY s;
+SELECT n FROM i WHERE n IN (SELECT s FROM t) ORDER BY n;
+SELECT x FROM r WHERE x IN (SELECT s || '' FROM t) ORDER BY x;
+SELECT n FROM i WHERE n IN (SELECT trim(s) FROM t) ORDER BY n;

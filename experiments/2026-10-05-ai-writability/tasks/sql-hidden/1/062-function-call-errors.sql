@@ -1,0 +1,17 @@
+SELECT unknown_fn();
+SELECT LEN('abc');
+SELECT Upper();
+SELECT LOWER('a', 'b', 'c');
+SELECT TYPEOF(1, 2);
+SELECT ABS();
+SELECT Length(NULL, NULL);
+SELECT COALESCE(NULL);
+SELECT IfNull('x');
+SELECT nullif(1, 2, 3);
+SELECT ifnull();
+SELECT strlen('ab');
+CREATE TABLE f (x INTEGER);
+SELECT x FROM f WHERE nothing_fn(x) = 1;
+SELECT x FROM f ORDER BY abs(x, 1);
+INSERT INTO f VALUES (upper());
+SELECT abs(-4), coalesce(NULL, 'fine');

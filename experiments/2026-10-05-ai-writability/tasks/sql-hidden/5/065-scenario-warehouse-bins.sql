@@ -1,0 +1,28 @@
+-- scenario: warehouse bins; moving stock with INSERT ... SELECT and a unique index
+CREATE TABLE bin (code TEXT PRIMARY KEY, zone TEXT NOT NULL, cap INTEGER DEFAULT 100);
+CREATE TABLE stock (bin TEXT, sku TEXT, qty INTEGER NOT NULL);
+INSERT INTO bin (code, zone) VALUES ('A1', 'a'), ('A2', 'a'), ('B1', 'b');
+INSERT INTO bin VALUES ('B2', 'b', 50);
+INSERT INTO stock VALUES ('A1', 'x', 40), ('A1', 'y', 30), ('A2', 'x', 90), ('B1', 'z', 10);
+CREATE UNIQUE INDEX stock_bin_sku ON stock (bin, sku);
+INSERT INTO stock VALUES ('A1', 'x', 5);
+CREATE VIEW fill AS SELECT b.code, b.zone, b.cap, coalesce(sum(s.qty), 0) AS used FROM bin b LEFT JOIN stock s ON s.bin = b.code GROUP BY b.code;
+SELECT code, used, cap - used FROM fill ORDER BY code;
+SELECT zone, sum(used), sum(cap) FROM fill GROUP BY zone ORDER BY zone;
+SELECT code FROM fill WHERE used = 0 UNION SELECT code FROM fill WHERE used > cap * 0.8 ORDER BY code;
+BEGIN;
+INSERT INTO stock SELECT 'B2', sku, qty FROM stock WHERE bin = 'A1';
+DELETE FROM stock WHERE bin = 'A1';
+SELECT code, used FROM fill WHERE code IN ('A1', 'B2') ORDER BY code;
+COMMIT;
+SELECT sku FROM stock WHERE bin = 'B2' INTERSECT SELECT sku FROM stock WHERE bin = 'A2';
+WITH totals AS (SELECT sku, sum(qty) AS q FROM stock GROUP BY sku) SELECT sku, q FROM totals WHERE q >= 40 ORDER BY q DESC;
+INSERT INTO stock SELECT 'B2', 'x', 1;
+INSERT INTO fill VALUES ('C1', 'c', 1, 0);
+DROP TABLE fill;
+DROP VIEW fill;
+ALTER TABLE stock ADD COLUMN reserved INTEGER NOT NULL DEFAULT 0;
+UPDATE stock SET reserved = qty / 10;
+SELECT bin, sku, qty, reserved FROM stock ORDER BY bin, sku;
+SELECT sum(qty - reserved) FROM stock;
+SELECT count(*) FROM fill;

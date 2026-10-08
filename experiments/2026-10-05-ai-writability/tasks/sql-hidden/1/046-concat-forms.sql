@@ -1,0 +1,11 @@
+SELECT 'x' || 'y' || 'z';
+SELECT 2.0 || 3, 1e15 || '', 1.5e-7 || '';
+SELECT -0.0 || '', 2.0 / 3 || '';
+SELECT NULL || NULL, 'a' || NULL || 'b';
+SELECT 10 || 20 + 1;
+SELECT length(123 || 4.5);
+SELECT typeof(1 || 2), typeof(NULL || 'x');
+SELECT 'n=' || 1 * 3;
+CREATE TABLE c (a TEXT, b INTEGER, r REAL);
+INSERT INTO c VALUES ('id', 7, 2.5), ('k', NULL, 1e20);
+SELECT a || b, a || r, b || r FROM c ORDER BY a;

@@ -1,0 +1,15 @@
+CREATE TABLE inv (id INTEGER PRIMARY KEY, sku TEXT UNIQUE NOT NULL, qty INTEGER DEFAULT 0, PRICE REAL);
+INSERT INTO inv (sku, qty, price) VALUES ('s1', 1, 1.5), ('s2', 2, 2.5);
+INSERT INTO inv (sku) VALUES (NULL);
+INSERT INTO inv (sku) VALUES ('s1');
+INSERT INTO inv (id, sku) VALUES (2, 's3');
+INSERT INTO inv (sku, qty) VALUES ('s3', 1.25);
+INSERT INTO inv (sku, cost) VALUES ('s3', 1);
+INSERT INTO inv VALUES (3, 's3');
+INSERT INTO inv (id, sku) VALUES (3);
+UPDATE inv SET sku = 's2' WHERE id = 1;
+UPDATE inv SET qty = qty + 1 WHERE colour = 'red';
+SELECT replace('a', 'b') FROM inv;
+SELECT trim_all(sku) FROM inv;
+SELECT id, sku, qty, price FROM inv ORDER BY 1, 2, 3, 4, 5;
+SELECT id, sku, qty, price FROM inv ORDER BY id;

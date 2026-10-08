@@ -1,0 +1,26 @@
+-- A vet clinic: pets and their weights in kg.
+CREATE TABLE pet (id INTEGER, name TEXT, species TEXT, kg REAL, born INTEGER);
+CREATE TABLE IF NOT EXISTS pet (other TEXT);
+INSERT INTO pet VALUES (1, 'Rex', 'dog', 31.4, 2016), (2, 'Mog', 'cat', 4.2, 2019), (3, 'Tweet', 'bird', 0.03, 2023);
+INSERT INTO pet VALUES (4, 'Bun', 'rabbit', '1.8', '2021'), (5, 'Fido', 'dog', NULL, 2020);
+INSERT INTO pet VALUES (6, 'Spot', 'dog', 'heavy', 2018);
+INSERT INTO pet VALUES (6, 'Spot', 'dog', 12, 2018.5);
+INSERT INTO pet VALUES (6, 'Spot', 'Dog', 12, 2018);
+SELECT id, name, species, kg FROM pet ORDER BY id;
+SELECT name FROM pet WHERE species = 'dog' ORDER BY name;
+SELECT name FROM pet WHERE lower(species) = 'dog' ORDER BY kg DESC NULLS LAST;
+SELECT name, kg * 1000 AS grams FROM pet WHERE grams < 5000 ORDER BY grams;
+SELECT name, 2025 - born AS age FROM pet ORDER BY age DESC, name;
+SELECT name FROM pet WHERE kg IS NULL;
+SELECT name, kg FROM pet WHERE kg > 10 AND born < 2020 ORDER BY name;
+SELECT name, kg / 2.2 FROM pet WHERE id = 1;
+SELECT name, ifnull(kg, 'unweighed') FROM pet WHERE species = 'dog' ORDER BY id;
+SELECT species, name FROM pet ORDER BY species, name;
+SELECT upper(species) AS s, name FROM pet WHERE s = 'DOG' ORDER BY name;
+SELECT name, typeof(kg), typeof(born) FROM pet WHERE id = 4;
+SELECT name FROM pet WHERE kg = '4.2';
+SELECT name FROM pet WHERE born = 2019.0;
+SELECT name, length(name) FROM pet ORDER BY length(name) DESC, name LIMIT 2;
+SELECT owner FROM pet;
+SELECT name FROM pet ORDER BY kg NULLS FIRST, name LIMIT 2 OFFSET 1;
+SELECT name, nullif(species, 'dog') FROM pet WHERE born >= 2020 ORDER BY born;

@@ -1,0 +1,10 @@
+CREATE TABLE b (k INTEGER, code TEXT UNIQUE, n INTEGER NOT NULL);
+INSERT INTO b VALUES (1, 'a', 1), (2, 'b', 2), (3, 'c', 3), (4, 'd', 4);
+UPDATE b SET n = n + 1, code = CASE WHEN k = 3 THEN 'bb' ELSE code || code END;
+SELECT k, code, n FROM b ORDER BY k;
+UPDATE b SET n = CASE WHEN k = 4 THEN NULL ELSE n * 10 END;
+SELECT k, n FROM b ORDER BY k;
+UPDATE b SET n = CASE WHEN k = 1 THEN 'one' ELSE n * 10 END;
+SELECT k, n FROM b ORDER BY k;
+UPDATE b SET n = n * 10 WHERE k > 2;
+SELECT k, n FROM b ORDER BY k;

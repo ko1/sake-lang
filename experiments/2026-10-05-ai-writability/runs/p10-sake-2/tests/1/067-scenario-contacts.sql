@@ -1,0 +1,24 @@
+-- An address book with optional fields.
+CREATE TABLE contacts (id INTEGER, fname TEXT, lname TEXT, phone TEXT, age INTEGER);
+CREATE TABLE IF NOT EXISTS contacts (id INTEGER);
+INSERT INTO contacts VALUES (1, 'Ada', 'King', '555-0100', 36);
+INSERT INTO contacts VALUES (2, 'grace', 'Hopper', NULL, 85);
+INSERT INTO contacts (id, fname) VALUES (3, 'Linus');
+INSERT INTO contacts (id, lname, phone) VALUES (4, 'Ritchie', 5550199);
+INSERT INTO contacts VALUES (5, 'Ken', 'Thompson', '555-0123', 'old');
+INSERT INTO contacts (id, fname, lname, phone, age, email) VALUES (5, 'x', 'y', 'z', 1, 'e');
+SELECT id, fname, lname FROM contacts ORDER BY id;
+SELECT fname || ' ' || lname AS full FROM contacts WHERE full IS NOT NULL ORDER BY full;
+SELECT coalesce(fname, '?') || ' ' || coalesce(lname, '?') FROM contacts ORDER BY id;
+SELECT id, phone, typeof(phone) FROM contacts WHERE phone IS NOT NULL ORDER BY id;
+SELECT id FROM contacts WHERE phone = 5550199;
+SELECT upper(fname) FROM contacts WHERE fname IS NOT NULL ORDER BY upper(fname);
+SELECT fname FROM contacts WHERE fname IS NOT NULL ORDER BY fname;
+SELECT id, age FROM contacts WHERE age > 40;
+SELECT id, age FROM contacts ORDER BY age DESC NULLS LAST, id;
+SELECT id FROM contacts WHERE age IS NULL AND phone IS NULL;
+SELECT lname, length(lname) FROM contacts WHERE length(lname) > 5 ORDER BY lname;
+SELECT id, nullif(fname, 'Ada') FROM contacts WHERE id < 3 ORDER BY id;
+SELECT ID, fname FROM CONTACTS WHERE Id = 2;
+SELECT * FROM contacts ORDER BY 1, 2, 3, 4, 5, 6;
+SELECT * FROM contacts WHERE id = 1;

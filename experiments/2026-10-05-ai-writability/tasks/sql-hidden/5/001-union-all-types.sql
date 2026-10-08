@@ -1,0 +1,10 @@
+-- UNION ALL keeps every row, with each value's own type
+CREATE TABLE m (v INTEGER);
+CREATE TABLE r (v REAL);
+CREATE TABLE s (v TEXT);
+INSERT INTO m VALUES (2), (2);
+INSERT INTO r VALUES (2.5);
+INSERT INTO s VALUES ('two');
+SELECT v, typeof(v) FROM m UNION ALL SELECT v, typeof(v) FROM r UNION ALL SELECT v, typeof(v) FROM s ORDER BY 1;
+SELECT count(*) FROM (SELECT v FROM m UNION ALL SELECT v FROM m UNION ALL SELECT v FROM s);
+SELECT 'x' || v FROM m UNION ALL SELECT upper(v) FROM s ORDER BY 1 DESC;

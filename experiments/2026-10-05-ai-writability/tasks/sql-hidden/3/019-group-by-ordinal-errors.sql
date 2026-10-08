@@ -1,0 +1,10 @@
+CREATE TABLE o (a INTEGER, b INTEGER, c INTEGER);
+INSERT INTO o VALUES (1, 2, 3);
+SELECT a, b, c FROM o GROUP BY 4;
+SELECT a, b FROM o GROUP BY 2, 0;
+SELECT a FROM o GROUP BY a, b, c, a, b, c, a, b, c, a, 7;
+SELECT a FROM o GROUP BY a, b, c, a, b, c, a, b, c, a, b, 2;
+SELECT a FROM o GROUP BY a, b, c, a, b, c, a, b, c, a, b, c, 3;
+SELECT a FROM o GROUP BY a, b, c, a, b, c, a, b, c, a, b, c, a, b, c, a, b, c, a, b, 99;
+SELECT count(*) FROM o GROUP BY 2;
+SELECT c, a FROM o GROUP BY 2, 1;

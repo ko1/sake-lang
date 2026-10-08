@@ -1,0 +1,27 @@
+-- A pub quiz: teams, rounds, points.
+CREATE TABLE score (team TEXT, round INTEGER, pts INTEGER, bonus REAL);
+INSERT INTO score VALUES ('Owls', 1, 8, 0.5), ('Owls', 2, 6, NULL), ('Foxes', 1, 9, 0), ('Foxes', 2, 4, 1.5);
+INSERT INTO score VALUES ('Moles', 1, 5, 2), ('Moles', 2, '10', '0.25'), ('Bats', 1, 0, NULL);
+INSERT INTO score VALUES ('Bats', 2, 7.5, 0);
+INSERT INTO score VALUES ('Bats', 2, 'seven', 0);
+INSERT INTO score VALUES ('Bats', 2, 7, 0, 1);
+SELECT team, round, pts, bonus FROM score ORDER BY team, round;
+SELECT team, pts + bonus AS total FROM score WHERE round = 1 ORDER BY total DESC;
+SELECT team, pts + coalesce(bonus, 0) AS total FROM score WHERE round = 2 ORDER BY total DESC, team;
+SELECT team FROM score WHERE bonus IS NULL ORDER BY team;
+SELECT team FROM score WHERE pts = 0;
+SELECT team, round FROM score WHERE pts >= 8 OR bonus >= 1.5 ORDER BY team, round;
+SELECT team, round FROM score WHERE NOT pts > 5 ORDER BY pts, team;
+SELECT team, pts * 10 / 3, pts * 10.0 / 3 FROM score WHERE team = 'Owls' ORDER BY round;
+SELECT upper(team) || ':' || pts FROM score WHERE round = 1 ORDER BY pts;
+SELECT team FROM score WHERE team > 'G' AND round = 1 ORDER BY team DESC;
+SELECT team, bonus FROM score WHERE bonus = '1.5';
+SELECT team, round, typeof(pts) FROM score WHERE team = 'Moles' ORDER BY round;
+SELECT team FROM score ORDER BY pts DESC, team LIMIT 3;
+SELECT team, round FROM score ORDER BY bonus DESC NULLS FIRST, team, round LIMIT 3;
+SELECT rank FROM score;
+SELECT team FROM score ORDER BY team, round LIMIT 2 OFFSET 6;
+DROP TABLE score;
+CREATE TABLE score (team TEXT);
+SELECT * FROM score;
+SELECT 'new season';

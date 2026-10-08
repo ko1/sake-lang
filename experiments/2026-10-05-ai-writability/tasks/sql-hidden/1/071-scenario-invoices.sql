@@ -1,0 +1,24 @@
+-- Invoices with net amounts in cents and a VAT rate.
+CREATE TABLE invoice (no INTEGER, client TEXT, net INTEGER, vat REAL, paid INTEGER);
+INSERT INTO invoice VALUES (1001, 'Acme', 120000, 0.2, 1), (1002, 'Bolt', 45050, 0.2, 0), (1003, 'acme', 9999, 0.1, NULL);
+INSERT INTO invoice VALUES (1004, 'Cogs', '75000', '0.2', '1'), (1005, 'Dyna', 0, 0, 0);
+INSERT INTO invoice VALUES (1006, 'Echo', 100.5, 0.2, 0);
+INSERT INTO invoice VALUES (1006, 'Echo', 1005, 'twenty', 0);
+INSERT INTO invoice (no, client, net) VALUES (1006, 'Echo', 1005);
+SELECT no, client, net, vat, paid FROM invoice ORDER BY no;
+SELECT no, net * vat AS tax FROM invoice WHERE tax > 0 ORDER BY tax DESC;
+SELECT no, net + net * vat AS gross FROM invoice ORDER BY gross NULLS FIRST, no;
+SELECT no, net / 100, net % 100 FROM invoice WHERE net > 0 ORDER BY no;
+SELECT no, net / 100.0 FROM invoice WHERE client = 'Bolt';
+SELECT no FROM invoice WHERE NOT paid ORDER BY no;
+SELECT no FROM invoice WHERE paid IS NULL ORDER BY no;
+SELECT no, client FROM invoice WHERE lower(client) = 'acme' ORDER BY no;
+SELECT no, client FROM invoice WHERE client = 'acme';
+SELECT client FROM invoice ORDER BY client;
+SELECT no, coalesce(vat, 0.19) FROM invoice WHERE no > 1004 ORDER BY no;
+SELECT no FROM invoice WHERE net = '45050' AND vat = '0.2';
+SELECT no, paid = 1 AND net > 50000 FROM invoice ORDER BY no;
+SELECT upper(client) || '/' || no FROM invoice ORDER BY net DESC LIMIT 2;
+SELECT no, typeof(net), typeof(paid) FROM invoice WHERE no = 1004;
+SELECT due_date FROM invoice;
+SELECT no FROM invoice WHERE vat IS NOT 0.2 ORDER BY no;

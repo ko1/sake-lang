@@ -1,0 +1,22 @@
+-- product reviews: average stars, helpfulness and reviewers
+CREATE TABLE reviews (id INTEGER PRIMARY KEY, product TEXT NOT NULL, reviewer TEXT, stars INTEGER NOT NULL, helpful INTEGER DEFAULT 0);
+INSERT INTO reviews (product, reviewer, stars) VALUES ('mug', 'ann', 5), ('mug', 'bob', 4), ('lamp', 'ann', 2);
+INSERT INTO reviews (product, reviewer, stars, helpful) VALUES ('lamp', 'cy', 3, 7), ('desk', 'bob', 5, 2), ('desk', NULL, 1, 9);
+INSERT INTO reviews (product, reviewer, stars, helpful) VALUES ('mug', 'dee', 3, 1), ('chair', 'cy', 4, 0);
+SELECT product, count(*), avg(stars) FROM reviews GROUP BY product ORDER BY avg(stars) DESC, product;
+SELECT reviewer, count(*), sum(helpful) FROM reviews GROUP BY reviewer ORDER BY reviewer NULLS LAST;
+SELECT stars, count(*) FROM reviews GROUP BY stars ORDER BY stars DESC;
+SELECT product FROM reviews GROUP BY product HAVING min(stars) >= 3 ORDER BY product;
+SELECT product, max(helpful), reviewer FROM reviews GROUP BY product ORDER BY product;
+SELECT sum(stars = 5), sum(stars < 3), avg(stars >= 4) FROM reviews;
+INSERT INTO reviews (product, reviewer, stars) VALUES ('lamp', 'eve', NULL);
+INSERT INTO reviews (product, reviewer, stars) VALUES ('lamp', 'eve', '4');
+SELECT product, count(*), group_concat(stars, '' ORDER BY id) FROM reviews WHERE product = 'lamp' GROUP BY product;
+UPDATE reviews SET helpful = helpful + 1 WHERE stars <= 2;
+SELECT total(helpful), avg(helpful), max(helpful) FROM reviews;
+SELECT DISTINCT reviewer FROM reviews WHERE stars >= 4 ORDER BY reviewer;
+SELECT count(DISTINCT reviewer), count(reviewer), count(*) FROM reviews;
+SELECT CASE WHEN avg(stars) >= 4 THEN 'good' WHEN avg(stars) >= 3 THEN 'ok' ELSE 'bad' END AS verdict, product FROM reviews GROUP BY product ORDER BY product;
+DELETE FROM reviews WHERE reviewer IS NULL;
+SELECT product, sum(helpful) FROM reviews GROUP BY product HAVING sum(helpful) > 0 ORDER BY 2 DESC, 1;
+SELECT max(stars), min(stars), sum(stars) FROM reviews;

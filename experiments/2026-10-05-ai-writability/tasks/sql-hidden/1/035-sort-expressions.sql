@@ -1,0 +1,10 @@
+CREATE TABLE v (id INTEGER, s TEXT, n INTEGER);
+INSERT INTO v VALUES (1, 'kiwi', 3), (2, 'Fig', -8), (3, 'apple', 5), (4, 'date', -2);
+SELECT id FROM v ORDER BY length(s), id;
+SELECT id FROM v ORDER BY lower(s) DESC;
+SELECT id FROM v ORDER BY s;
+SELECT id, n FROM v ORDER BY n * n;
+SELECT id FROM v ORDER BY n % 2, n;
+SELECT id FROM v ORDER BY s || n;
+SELECT id FROM v ORDER BY n > 0, id DESC;
+SELECT id FROM v ORDER BY coalesce(nullif(n, 5), 100);

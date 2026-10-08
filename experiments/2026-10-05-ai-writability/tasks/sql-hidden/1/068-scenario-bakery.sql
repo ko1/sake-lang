@@ -1,0 +1,26 @@
+-- A bakery's price list and today's sales.
+CREATE TABLE product (code TEXT, name TEXT, price REAL, gluten_free INTEGER);
+CREATE TABLE sale (code TEXT, qty INTEGER);
+INSERT INTO product VALUES ('BR1', 'sourdough', 4.2, 0), ('BR2', 'rye', 3.8, 0), ('CK1', 'carrot cake', 2.75, 0);
+INSERT INTO product VALUES ('CK2', 'almond torte', 3.1, 1), ('MF1', 'muffin', 1.6, 0), ('MC1', 'macaron', 0.9, 1);
+INSERT INTO sale VALUES ('BR1', 12), ('BR2', 4), ('CK1', 7), ('MF1', 20), ('MC1', '30');
+INSERT INTO sale VALUES ('CK2', 'two');
+INSERT INTO sale VALUES ('CK2', 2.0), ('XX9', 1);
+INSERT INTO product (code, name, price) VALUES ('BR3', 'baguette', '2.1'), ('BR4', 'brioche', 'n/a');
+SELECT code, name, price FROM product ORDER BY code;
+SELECT name, price FROM product WHERE gluten_free ORDER BY price;
+SELECT name FROM product WHERE gluten_free = 0 AND price < 3 ORDER BY name;
+SELECT name FROM product WHERE gluten_free IS NULL;
+SELECT code, qty FROM sale WHERE qty >= 10 ORDER BY qty DESC;
+SELECT code, qty FROM sale WHERE code > 'C' ORDER BY code;
+SELECT name, price * 1.07 AS gross FROM product WHERE gross > 4 ORDER BY gross;
+SELECT name, price - 0.5 FROM product WHERE code = 'MF1';
+SELECT upper(code) || ' ' || lower(name) FROM product WHERE name > 'r' ORDER BY 1;
+SELECT name FROM product ORDER BY length(name) DESC, name LIMIT 2;
+SELECT code, qty / 6 AS boxes, qty % 6 AS loose FROM sale ORDER BY code;
+SELECT code FROM sale WHERE qty = '4';
+SELECT name, typeof(price) FROM product WHERE code = 'BR3';
+SELECT name, nullif(gluten_free, 0) FROM product WHERE code < 'C' ORDER BY code;
+SELECT name, price FROM product ORDER BY price DESC LIMIT 3 OFFSET 2;
+SELECT stock FROM product;
+SELECT 'closing';

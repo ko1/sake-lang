@@ -1,0 +1,27 @@
+-- bike rental: bikes, docks and rides
+CREATE TABLE bikes (tag TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'city', dock INTEGER UNIQUE, km REAL NOT NULL DEFAULT 0);
+CREATE TABLE rides (id INTEGER PRIMARY KEY, bike TEXT NOT NULL, rider TEXT NOT NULL, mins INTEGER NOT NULL, fee REAL);
+INSERT INTO bikes (tag, dock) VALUES ('B1', 1), ('B2', 2), ('B3', 3);
+INSERT INTO bikes (tag, kind, dock) VALUES ('E1', 'electric', 4), ('E2', 'electric', NULL);
+INSERT INTO bikes (tag, dock) VALUES ('B4', 2);
+INSERT INTO bikes (tag, kind) VALUES ('B5', NULL);
+INSERT INTO bikes (tag, km) VALUES ('B6', 'far');
+INSERT INTO bikes (tag, dock) VALUES ('b1', 5);
+SELECT tag, kind, coalesce(dock, 0), km FROM bikes ORDER BY tag;
+INSERT INTO rides (bike, rider, mins) VALUES ('B1', 'ana', 25), ('E1', 'ben', 70), ('B2', 'ana', 5);
+INSERT INTO rides (bike, rider, mins) VALUES ('B3', 'cy', 12.5);
+INSERT INTO rides (bike, mins) VALUES ('B3', 12);
+INSERT INTO rides (bike, rider, mins) VALUES ('B3', 'cy', '12');
+UPDATE rides SET fee = CASE WHEN mins <= 10 THEN 0 WHEN bike LIKE 'e%' THEN 1 + mins * 0.25 ELSE 1 + mins * 0.1 END;
+SELECT id, bike, rider, mins, fee FROM rides ORDER BY id;
+UPDATE bikes SET km = km + 3.5, dock = NULL WHERE tag IN ('B1', 'E1');
+UPDATE bikes SET dock = 3 WHERE tag = 'B1';
+UPDATE bikes SET dock = 6 WHERE tag = 'B1';
+SELECT tag, coalesce(dock, 0), km FROM bikes ORDER BY tag;
+SELECT rider, fee, round(fee) FROM rides WHERE fee NOT BETWEEN 0 AND 2 ORDER BY fee;
+UPDATE bikes SET tag = 'B1' WHERE tag = 'b1';
+UPDATE bikes SET tag = 'B9' WHERE tag = 'b1';
+DELETE FROM rides WHERE fee = 0;
+INSERT INTO rides (bike, rider, mins) VALUES ('B9', 'dee', 40);
+SELECT id, bike, rider, coalesce(fee, -1) FROM rides ORDER BY id;
+SELECT tag, kind, instr(kind, 'tr'), substr(tag, 2) * 10 FROM bikes WHERE kind <> 'city' OR dock IS NULL ORDER BY tag;

@@ -1,0 +1,6 @@
+CREATE TABLE w (city TEXT, temp INTEGER, rain INTEGER);
+INSERT INTO w VALUES ('A', 30, 0), ('B', 30, 1), ('C', 10, 1), ('D', NULL, 0), ('E', -5, 1);
+SELECT city, CASE WHEN temp > 25 THEN CASE WHEN rain THEN 'muggy' ELSE 'hot' END WHEN temp < 0 THEN 'icy' ELSE 'mild' END FROM w ORDER BY city;
+SELECT city FROM w WHERE CASE WHEN rain = 1 THEN temp > 0 ELSE 1 END ORDER BY city;
+SELECT city FROM w ORDER BY CASE WHEN temp IS NULL THEN 0 ELSE 1 END, temp DESC, city;
+SELECT CASE WHEN '' THEN 'a' WHEN ' 0.5' THEN 'b' END, CASE WHEN NULL THEN 1 END IS NULL;

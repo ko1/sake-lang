@@ -1,0 +1,10 @@
+CREATE TABLE big (id INTEGER PRIMARY KEY, v REAL);
+INSERT INTO big (v) VALUES (1.0), (1e100), (1.0), (-1e100);
+SELECT sum(v), total(v), avg(v) FROM big;
+DELETE FROM big;
+INSERT INTO big (v) VALUES (0.1), (0.1), (0.1), (0.1), (0.1), (0.1), (0.1), (0.1), (0.1), (0.1);
+SELECT sum(v), sum(v) = 1.0, avg(v) FROM big;
+CREATE TABLE mixed (id INTEGER PRIMARY KEY, n INTEGER, x REAL);
+INSERT INTO mixed (n, x) VALUES (3, NULL), (4, NULL), (NULL, 0.25), (5, NULL);
+SELECT sum(coalesce(n, x)), typeof(sum(coalesce(n, x))) FROM mixed;
+SELECT sum(CASE WHEN id = 1 THEN 1e16 WHEN id = 4 THEN -1e16 ELSE 1 END) FROM mixed;

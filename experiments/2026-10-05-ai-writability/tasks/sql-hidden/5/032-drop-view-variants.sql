@@ -1,0 +1,16 @@
+-- DROP VIEW [IF EXISTS] and the errors for the wrong kind of object
+CREATE TABLE base (k INTEGER);
+CREATE VIEW v1 AS SELECT k FROM base;
+CREATE VIEW v2 AS SELECT 2 AS k;
+DROP VIEW IF EXISTS v2;
+DROP VIEW IF EXISTS v2;
+DROP VIEW v2;
+DROP VIEW base;
+DROP TABLE v1;
+DROP VIEW Ghost;
+DROP TABLE IF EXISTS ghost;
+DROP TABLE ghost;
+SELECT count(*) FROM v1;
+DROP VIEW v1;
+DROP TABLE base;
+SELECT count(*) FROM base;

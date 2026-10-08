@@ -1,0 +1,24 @@
+-- timesheets: hours per person, project and week
+CREATE TABLE entries (id INTEGER PRIMARY KEY, person TEXT NOT NULL, project TEXT, week INTEGER NOT NULL, hours REAL NOT NULL DEFAULT 0);
+INSERT INTO entries (person, project, week, hours) VALUES ('ana', 'web', 1, 12.5), ('ana', 'app', 1, 20), ('ben', 'web', 1, 38.0);
+INSERT INTO entries (person, project, week, hours) VALUES ('ana', 'web', 2, 30), ('ben', 'app', 2, 16.25), ('ben', NULL, 2, 4);
+INSERT INTO entries (person, project, week) VALUES ('cal', 'app', 2);
+INSERT INTO entries (person, project, week, hours) VALUES ('cal', 'web', 3, 40), ('ana', 'app', 3, 8.75);
+SELECT person, sum(hours), count(*) FROM entries GROUP BY person ORDER BY person;
+SELECT project, sum(hours) FROM entries GROUP BY project ORDER BY project;
+SELECT week, person, sum(hours) FROM entries GROUP BY week, person ORDER BY week, person;
+SELECT person FROM entries GROUP BY person HAVING sum(hours) > 40 ORDER BY person;
+SELECT week, max(hours), person FROM entries GROUP BY week ORDER BY week;
+SELECT typeof(sum(hours)), avg(hours) FROM entries WHERE person = 'ana';
+INSERT INTO entries (person, project, week, hours) VALUES ('dan', 'web', 3, NULL);
+INSERT INTO entries (person, project, week, hours) VALUES ('dan', 'web', 'three', 5);
+SELECT count(*) FROM entries;
+UPDATE entries SET project = 'misc' WHERE project IS NULL;
+UPDATE entries SET hours = hours * 1.5 WHERE week = 3;
+SELECT project, count(*), sum(hours), group_concat(DISTINCT person ORDER BY person) FROM entries GROUP BY project ORDER BY sum(hours) DESC;
+SELECT week, round(avg(hours), 2) AS a FROM entries GROUP BY week HAVING a > 15 ORDER BY a;
+SELECT person, count(DISTINCT project), count(DISTINCT week) FROM entries GROUP BY person ORDER BY person;
+SELECT DISTINCT week FROM entries WHERE hours > 25 ORDER BY week;
+DELETE FROM entries WHERE hours = 0;
+SELECT person, min(hours) FROM entries GROUP BY person ORDER BY min(hours);
+SELECT total(hours), count(*), max(id) FROM entries;

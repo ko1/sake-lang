@@ -1,0 +1,10 @@
+SELECT 3 + 0.5, 3 - 0.5, 3 * 0.5, 3 / 0.5;
+SELECT 1 / 2, 1 / 2.0, 1.0 / 2;
+SELECT typeof(2 * 2.0), 2 * 2.0;
+SELECT 0.1 + 0.7, 0.3 - 0.1;
+SELECT 1e300 * 10, 1e-300 / 10;
+SELECT 4.0 / 3 * 3;
+SELECT 2.5 + NULL, NULL / 2.5;
+CREATE TABLE m (a INTEGER, b REAL);
+INSERT INTO m VALUES (3, 2), (7, 0.25);
+SELECT a, b, a / b, a * b, typeof(a + b) FROM m ORDER BY a;

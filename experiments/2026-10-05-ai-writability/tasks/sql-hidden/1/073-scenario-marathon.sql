@@ -1,0 +1,25 @@
+-- Marathon finishers; times in seconds.
+CREATE TABLE runner (bib INTEGER, name TEXT, age INTEGER, secs INTEGER, club TEXT);
+INSERT INTO runner VALUES (7, 'Ike', 34, 10800, 'Hares'), (12, 'Jun', 51, 12950, NULL), (3, 'Kat', 28, 9975, 'Hares');
+INSERT INTO runner VALUES (44, 'Lev', 45, 15300, 'Owls'), (21, 'Mia', 39, NULL, 'Owls'), (9, 'Ned', '62', '14400', 'owls');
+INSERT INTO runner VALUES (50, 'Oz', 30, '3h05', NULL);
+INSERT INTO runner VALUES (50, 'Oz', 30.5, 11100, NULL);
+SELECT bib, name, secs FROM runner ORDER BY secs NULLS LAST;
+SELECT name, secs / 3600 AS h, secs % 3600 / 60 AS m, secs % 60 AS s FROM runner WHERE secs IS NOT NULL ORDER BY bib;
+SELECT name FROM runner WHERE secs IS NULL;
+SELECT name, age FROM runner WHERE age >= 40 ORDER BY age DESC;
+SELECT name, 42195.0 / secs AS mps FROM runner WHERE mps > 3.5 ORDER BY mps DESC;
+SELECT name, club FROM runner WHERE club = 'Owls' ORDER BY name;
+SELECT name, club FROM runner WHERE lower(club) = 'owls' ORDER BY name;
+SELECT name FROM runner WHERE club IS NULL ORDER BY name;
+SELECT name, coalesce(club, 'unattached') FROM runner ORDER BY bib;
+SELECT name FROM runner ORDER BY secs LIMIT 3;
+SELECT name FROM runner ORDER BY secs DESC LIMIT 2 OFFSET 1;
+SELECT name, secs - 10800 AS behind FROM runner WHERE behind > 0 ORDER BY behind;
+SELECT bib, name FROM runner WHERE NOT age < 40 AND secs < 15000 ORDER BY bib;
+SELECT name, typeof(age), typeof(secs) FROM runner WHERE bib = 9;
+SELECT upper(name) || '#' || bib FROM runner WHERE bib < 10 ORDER BY bib;
+SELECT name FROM runner WHERE secs = '10800';
+SELECT pace FROM runner;
+SELECT name, age FROM runner ORDER BY 1, 2, 3;
+SELECT name, -age FROM runner WHERE club = 'Hares' ORDER BY -age;

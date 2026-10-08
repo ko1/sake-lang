@@ -1,0 +1,6 @@
+CREATE TABLE q (id INTEGER, k TEXT);
+INSERT INTO q VALUES (1,'a'),(2,'b');
+SELECT k, ntile(0) OVER (PARTITION BY k) FROM q;
+SELECT * FROM (SELECT id, ntile(-1) OVER (ORDER BY id) AS t FROM q);
+SELECT id, ntile(1 - 3) OVER (ORDER BY id) FROM q;
+SELECT id, ntile(5) OVER (ORDER BY id) FROM q ORDER BY id;

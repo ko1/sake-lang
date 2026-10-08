@@ -1,0 +1,11 @@
+CREATE TABLE slots (n INTEGER UNIQUE, who TEXT);
+INSERT INTO slots VALUES (10, 'ann'), (20, 'bob'), (30, 'cy');
+UPDATE slots SET n = 20 WHERE who = 'cy';
+UPDATE slots SET n = '20' WHERE who = 'ann';
+UPDATE slots SET n = 25 WHERE who = 'cy';
+UPDATE slots SET n = n * 10;
+SELECT n, who FROM slots ORDER BY n;
+INSERT INTO slots VALUES (250, 'dee');
+INSERT INTO slots VALUES (2.5e2, 'dee');
+INSERT INTO slots VALUES (2.5, 'dee');
+SELECT n, who FROM slots ORDER BY who;

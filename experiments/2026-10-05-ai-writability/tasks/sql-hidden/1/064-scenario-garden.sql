@@ -1,0 +1,24 @@
+-- A vegetable garden: beds, plants, sowing weeks.
+CREATE TABLE plant (bed TEXT, crop TEXT, sown INTEGER, spacing_cm REAL, harvested INTEGER);
+INSERT INTO plant VALUES ('A', 'carrot', 14, 5, 0), ('A', 'onion', 12, 10, 1), ('B', 'bean', 20, 15.5, 0);
+INSERT INTO plant VALUES ('B', 'squash', 21, 90, NULL), ('C', 'lettuce', 10, 25, 1), ('C', 'radish', '9', '3', 1);
+INSERT INTO plant VALUES ('D', 'pea', 'early', 4, 0);
+INSERT INTO plant (bed, crop, sown, spacing) VALUES ('D', 'pea', 11, 4);
+SELECT bed, crop, sown FROM plant ORDER BY bed, crop;
+SELECT crop, spacing_cm FROM plant WHERE spacing_cm < 10 ORDER BY spacing_cm;
+SELECT crop FROM plant WHERE harvested ORDER BY sown;
+SELECT crop FROM plant WHERE NOT harvested ORDER BY crop;
+SELECT crop FROM plant WHERE harvested IS NULL;
+SELECT crop, 30 - sown AS weeks_left FROM plant WHERE weeks_left < 15 ORDER BY weeks_left, crop;
+SELECT bed || '-' || crop AS spot FROM plant WHERE bed > 'A' ORDER BY spot DESC;
+SELECT crop, 100 / spacing_cm FROM plant WHERE bed = 'A' ORDER BY crop;
+SELECT crop, 100 / sown FROM plant WHERE bed = 'C' ORDER BY crop;
+SELECT upper(crop) FROM plant WHERE length(crop) = 6 ORDER BY crop;
+SELECT crop, typeof(sown), typeof(spacing_cm) FROM plant WHERE crop = 'radish';
+SELECT crop FROM plant WHERE sown = '20';
+SELECT crop FROM plant ORDER BY spacing_cm DESC LIMIT 1 OFFSET 1;
+SELECT crop, harvested IS NOT NULL AND harvested = 0 FROM plant ORDER BY crop;
+SELECT bed, crop FROM plant WHERE bed = 'b';
+SELECT bed, crop FROM plant WHERE lower(bed) = 'b' ORDER BY crop;
+INSERT INTO plant VALUES ('E', 'garlic', 40, 12, 0), ('E', 'kale', 41, 45, 0);
+SELECT bed, crop FROM plant WHERE bed = 'E' ORDER BY crop;

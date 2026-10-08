@@ -1,0 +1,26 @@
+-- Class attendance: one row per pupil per lesson.
+CREATE TABLE att (pupil TEXT, lesson INTEGER, present INTEGER, late_min INTEGER);
+INSERT INTO att VALUES ('amy', 1, 1, 0), ('amy', 2, 1, 5), ('ben', 1, 0, NULL), ('ben', 2, 1, 12);
+INSERT INTO att VALUES ('cal', 1, 1, 0), ('cal', 2, NULL, NULL), ('dia', 1, '1', '3'), ('dia', 2, 0, NULL);
+INSERT INTO att VALUES ('eve', 1, 'yes', 0);
+INSERT INTO att VALUES ('eve', 1, 1, 0.5);
+INSERT INTO att VALUES ('eve', 1, 1, 0, 'x');
+SELECT pupil, lesson, present, late_min FROM att ORDER BY pupil, lesson;
+SELECT pupil FROM att WHERE lesson = 1 AND present ORDER BY pupil;
+SELECT pupil, lesson FROM att WHERE NOT present ORDER BY pupil, lesson;
+SELECT pupil, lesson FROM att WHERE present IS NULL;
+SELECT pupil, lesson, late_min FROM att WHERE late_min > 0 ORDER BY late_min DESC;
+SELECT pupil, lesson, late_min >= 10 AS very_late FROM att WHERE present = 1 ORDER BY pupil, lesson;
+SELECT pupil, lesson FROM att WHERE present AND late_min = 0 ORDER BY pupil, lesson;
+SELECT pupil, lesson, present OR late_min FROM att WHERE lesson = 2 ORDER BY pupil;
+SELECT upper(pupil), coalesce(late_min, 0) FROM att WHERE lesson = 2 ORDER BY 2 DESC, 1;
+SELECT pupil FROM att WHERE present = '1' AND lesson = '1' ORDER BY pupil DESC;
+SELECT pupil, typeof(present) FROM att WHERE pupil = 'dia' ORDER BY lesson;
+SELECT pupil || '#' || lesson FROM att WHERE present IS NOT 1 ORDER BY 1;
+SELECT pupil FROM att ORDER BY late_min DESC NULLS LAST, pupil LIMIT 1;
+SELECT pupil, lesson FROM att ORDER BY late_min, pupil, lesson LIMIT 3;
+SELECT absent FROM att;
+SELECT pupil FROM att WHERE lesson = 1 ORDER BY 1, 2;
+DROP TABLE att;
+DROP TABLE IF EXISTS att;
+SELECT 'archived';

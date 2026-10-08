@@ -1,0 +1,4 @@
+SELECT 1 + 1 IN (2) AND 'ab' LIKE 'a%', NOT 0 BETWEEN 1 AND 2, 1 = 1 IN (1);
+SELECT 'x' || 'y' IN ('xy'), 2 * 3 NOT BETWEEN 1 AND 5, 3 > 2 LIKE '1';
+SELECT 1 IN (1) IS 1, NULL IN (1) IS NULL, 'a' LIKE 'b' OR 'c' LIKE 'C';
+SELECT 5 = 5 BETWEEN 1 AND 1, 2 = 2 LIKE 1;

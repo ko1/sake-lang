@@ -1,0 +1,13 @@
+CREATE TABLE a (id INTEGER, i INTEGER, r REAL);
+INSERT INTO a VALUES (1, 100, 0.5), (2, -3, 100), (3, 0, NULL);
+SELECT id FROM a WHERE i = '100';
+SELECT id FROM a WHERE i = '1e2';
+SELECT id FROM a WHERE r = ' 100 ' ORDER BY id;
+SELECT id FROM a WHERE r = '.5';
+SELECT id FROM a WHERE i > '-5' ORDER BY id;
+SELECT id FROM a WHERE i < 'x' ORDER BY id;
+SELECT id FROM a WHERE i = '0abc';
+SELECT id, '100' = i, i IS '100', r IS '100.0' FROM a ORDER BY id;
+SELECT id FROM a WHERE r >= '0.5' ORDER BY id DESC;
+SELECT id FROM a WHERE i = r;
+SELECT id FROM a WHERE r = '1e2';

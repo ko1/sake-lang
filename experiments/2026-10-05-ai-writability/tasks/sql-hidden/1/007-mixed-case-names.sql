@@ -1,0 +1,11 @@
+CREATE TABLE CityList (CityName TEXT, Pop INTEGER);
+INSERT INTO citylist (cityname, POP) VALUES ('Lima', 10), ('Oslo', 7);
+SELECT CITYNAME, pop FROM CITYLIST ORDER BY POP;
+select CityName from citylist where pOp = 10;
+SELECT Upper(CityName) AS Big FROM citylist ORDER BY big DESC;
+SELECT cityname AS N FROM citylist WHERE n = 'Oslo';
+DROP TABLE CITYLIST;
+SELECT * FROM citylist;
+CREATE TABLE cityList (x INTEGER);
+INSERT INTO CITYLIST VALUES (1);
+SELECT X FROM citylist;

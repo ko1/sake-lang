@@ -1,0 +1,10 @@
+CREATE TABLE cfg (k TEXT NOT NULL, i INTEGER DEFAULT -2, r REAL DEFAULT ' 7 ', s TEXT DEFAULT 'it''s', z INTEGER DEFAULT +0, e REAL DEFAULT 2.5e-3);
+INSERT INTO cfg (k) VALUES ('one');
+INSERT INTO cfg (k, i, s) VALUES ('two', NULL, NULL);
+INSERT INTO cfg (r, k) VALUES (1, 'three');
+SELECT k, i, r, s, z, e FROM cfg ORDER BY k;
+SELECT typeof(r), typeof(z), typeof(i) FROM cfg WHERE k = 'one';
+CREATE TABLE badd (a TEXT, b INTEGER DEFAULT -2.5);
+INSERT INTO badd (a) VALUES ('x');
+INSERT INTO badd VALUES ('y', 3);
+SELECT a, b FROM badd;
