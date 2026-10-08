@@ -179,7 +179,7 @@ The design notes and their reasons are in [DESIGN.md](DESIGN.md).
 
 ### Known issues (not fixed)
 
-- Checking a 4,400-line program takes about 7 seconds (it took 190 before 2026-10-08; see
+- Checking a 4,400-line program takes about 6 seconds (it took 190 before 2026-10-08; see
   `experiments/2026-10-09-typer-speed/`), and starting a program takes about 0.3 seconds for 2,500
   lines, about 5 times Ruby.
 - Fixed on 2026-10-08: the checker did not terminate for mutually recursive functions that use

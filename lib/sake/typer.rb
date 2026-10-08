@@ -23,13 +23,27 @@ module Sake
     # GEN counts the writes that changed what a container or a field holds (types are interned, so
     # identity tells a change): a memo stored at the current GEN needs no further check.
     GEN = [0]
+    # The mutable state is cells: a Site/HashSite/SetSite, a type's field (and its whole field table),
+    # @once_types, and an instantiation's key (its returns and raises). READS[0] is the read set of the instantiation being
+    # evaluated (nil outside one): cell => GEN at its first read; CHANGED_AT: cell => GEN at its last
+    # change. A read is still good when the cell did not change after it. See call_user.
+    READS = [nil]
+    CHANGED_AT = {}.compare_by_identity
     module Tracked
       def self.setter(mod, *names)
         names.each do |n|
-          mod.define_method(:"#{n}=") { |v| GEN[0] += 1 unless v.equal?(self[n]); self[n] = v }
+          mod.define_method(n) { (r = READS[0]) && (r[self] ||= GEN[0]); self[n] }
+          mod.define_method(:"#{n}=") do |v|
+            CHANGED_AT[self] = (GEN[0] += 1) unless v.equal?(self[n])
+            self[n] = v
+          end
         end
       end
     end
+
+    def read(cell) = (r = READS[0]) && (r[cell] ||= GEN[0])
+    def dirty(cell) = CHANGED_AT[cell] = (GEN[0] += 1)
+    def field_cell(dt, field) = ((@field_cells ||= {})[dt] ||= {})[field] ||= [dt, field].freeze
 
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
     Tracked.setter(Site, :elem)
@@ -52,6 +66,11 @@ module Sake
     # Inferred result type of each built-in call node (last pass), for validating result types.
     def results = @results || {}
 
+    def add_result(node, ty)
+      @results[node] = u(@results[node] || [], ty)
+      @cur_inst&.effects&.push([:result, node, ty])
+    end
+
     # narrow: inside `if x` / `while x` on a local variable, drop nil from x's type.
     # ast: the program's SakeAST, when the caller already has it.
     def initialize(program, narrow: true, ast: nil)
@@ -64,7 +83,9 @@ module Sake
       @fields = Hash.new { |h, k| h[k] = {} }
       @nil_writes = Hash.new { |h, k| h[k] = Hash.new { |h2, f| h2[f] = [] } } # dt => field => [line]
       @type_writes = Hash.new { |h, k| h[k] = Hash.new { |h2, f| h2[f] = Hash.new { |h3, n| h3[n] = [] } } } # dt => field => type name => [line]
-      @returns = {}
+      @returns = {}.compare_by_identity # instantiation key => its result type (all passes)
+      @raises = {}.compare_by_identity  # instantiation key => {exception type => [raise nodes]}
+      @insts = {}.compare_by_identity   # instantiation key => Inst (its last evaluation)
     end
 
     def run
@@ -75,18 +96,21 @@ module Sake
         @checks = {}.compare_by_identity   # keyed by the check key objects (one per node, op, arg)
         @check_ctx = {}.compare_by_identity
         @results = {}.compare_by_identity
-        @done = {}
-        @in_progress = {}
+        @done = {}.compare_by_identity
+        @in_progress = {}.compare_by_identity
+        @valid = {}.compare_by_identity
+        READS[0] = nil
+        @cur_inst = nil
         @yield_depth = Hash.new(0).compare_by_identity
         @instantiated = {}.compare_by_identity
-        @callers = []
-        @path = Path.new(nil)
+        @path = Path.new(nil, nil)
         @raised = [{}]   # stack of {exception type name => [raise nodes]} for the code being analyzed
         @handled = []    # exception type names of the rescue clauses being analyzed (for a bare raise)
         ev(@ast.main.body, Env.new(nil, Frame.new(nil, [], nil)))
         @raised.last.each { |name, nodes| nodes.uniq.each { add_check(_1, "raise", name, "a rescue", t(name), :error, [name]) } }
         break if snapshot == before || @passes >= MAX_PASSES
       end
+      READS[0] = nil
       all_fns = @program.functions.values.flat_map(&:values)
       @dead_functions = all_fns.reject { @instantiated[_1] }
       self
@@ -321,7 +345,7 @@ module Sake
 
     def snapshot
 
-      [(@raises ||= {}).transform_values(&:dup), @sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
+      [@raises.transform_values(&:dup), @sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
        hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] },
        thread_sites.transform_values { [_1.elem] }, queue_sites.transform_values { [_1.elem] }, (@once_types || {}).dup]
     end
@@ -436,9 +460,13 @@ module Sake
     def field_write(dt, field, ty, node)
       @nil_writes[dt][field] << node.location.start_line if ty.any? { nil_atom?(_1) }
       ty.each { |a| @type_writes[dt][field][atom_type_name(a)] << node.location.start_line unless nil_atom?(a) }
-      new = u(@fields[dt][field] || NONE, ty)
-      GEN[0] += 1 unless new.equal?(@fields[dt][field])
-      @fields[dt][field] = new
+      fs = @fields[dt]
+      new = u(fs[field] || NONE, ty)
+      unless new.equal?(fs[field])
+        dirty(field_cell(dt, field))
+        dirty(fs) # the table is the cell of a walk over every field
+      end
+      fs[field] = new
     end
 
     # --- checks ---
@@ -461,6 +489,7 @@ module Sake
     VERDICTS = %i[error unknown partial proven].freeze # worst first
 
     def add_check(node, op, arg, expected, actual, verdict, failing = [])
+      @cur_inst&.effects&.push([:check, node, op, arg, expected, actual, verdict, failing, @path])
       # One key object per (place, op, arg); nodes at the same place (copies of pasted code) share a check.
       key = (((@check_keys ||= {}.compare_by_identity)[node] ||= {})[op] ||= {})[arg] ||= begin
         k = [node.location.start_line, node.location.start_column, op, arg, other_file(node)]
@@ -481,32 +510,29 @@ module Sake
         counts[v] += 1
         prev.verdict = VERDICTS.find { counts[_1].positive? }
         prev.failing = (prev.failing + failing).uniq
-        prev.via ||= @callers.dup unless failing.empty?
+        prev.via ||= @path.callers unless failing.empty?
       else
         @check_ctx[key] = [{ @path => verdict }.compare_by_identity, Hash.new(0).tap { _1[verdict] = 1 }]
         @checks[key] = Check.new(key[0], key[1], op, arg, expected, actual, verdict, failing,
-                                 failing.empty? ? nil : @callers.dup, key[4], node)
+                                 failing.empty? ? nil : @path.callers, key[4], node)
       end
     end
 
     # The call path (@callers) as one object per distinct path, so a check's per-path table keys by identity.
     class Path # a plain class: hashes by identity (a Struct would hash the whole chain)
-      attr_reader :parent
+      attr_reader :parent, :site
 
-      def initialize(parent) = @parent = parent
-      def child(site) = (@children ||= {})[site] ||= Path.new(self)
+      def initialize(parent, site)
+        @parent = parent
+        @site = site
+      end
+
+      def child(site) = (@children ||= {})[site] ||= Path.new(self, site)
+      def callers = @callers ||= (parent ? [*parent.callers, site] : []).freeze
     end
 
-    def push_caller(node)
-      site = call_site(node)
-      @callers.push(site)
-      @path = @path.child(site)
-    end
-
-    def pop_caller
-      @callers.pop
-      @path = @path.parent
-    end
+    def push_caller(node) = @path = @path.child(call_site(node))
+    def pop_caller = @path = @path.parent
 
     # The file of a node when it is not the main file (the checks of required files say where they are).
     def other_file(node)
@@ -603,8 +629,13 @@ module Sake
 
     # --- evaluation ---
 
+    # An instantiation's last evaluation: the cells it read (its own extent: nested instantiations are
+    # children), what it did besides writing cells (checks, builtin results, functions marked
+    # instantiated), and the instantiations it called (in order, as a set).
+    Inst = Struct.new(:key, :reads, :effects, :children)
+
     def call_user(fn, args, blk)
-      @instantiated[fn] = true
+      mark_instantiated(fn)
       args = args.map { Typer.intern(_1) }
       if fn.yields
         return unknown("recursive yield") if @yield_depth[fn] >= MAX_YIELD_DEPTH
@@ -619,9 +650,24 @@ module Sake
       end
 
       key = inst_key(fn, args)
+      key = (@inst_keys ||= {})[key] ||= key # one object per instantiation: the cell of its result
+      @cur_inst&.children&.store(key, true) # also when cached: a pass that uses the result has its effects
       if @in_progress[key] || @done[key]
+        read(key)
         merge_raised(@raises[key] || {})
         return @returns[key] || []
+      end
+      # Evaluating again would read the same cells and do the same, unless one of them changed since.
+      if incremental? && (inst = @insts[key]) && valid?(inst)
+        replay(inst)
+        return @returns[key] || []
+      end
+      outer_inst = @cur_inst
+      outer_reads = READS[0]
+      if incremental?
+        inst = @insts[key] = Inst.new(key, {}.compare_by_identity, [], {}.compare_by_identity)
+        @cur_inst = inst
+        READS[0] = inst.reads
       end
       @in_progress[key] = true
       @raised.push({})
@@ -630,12 +676,71 @@ module Sake
         r = run_body(fn, args, nil)
       ensure
         @inst_stack.pop
+        @cur_inst = outer_inst
+        READS[0] = outer_reads
       end
-      @raises[key] = merge_into(@raises[key] || {}, @raised.pop)
-      merge_raised(@raises[key])
+      raised = merge_into(@raises[key] || {}, @raised.pop)
+      dirty(key) unless raised == @raises[key]
+      @raises[key] = raised
+      merge_raised(raised)
       @in_progress.delete(key)
       @done[key] = true
-      @returns[key] = u(@returns[key] || [], r)
+      ret = u(@returns[key] || [], r)
+      dirty(key) unless ret.equal?(@returns[key])
+      @returns[key] = ret
+    end
+
+    # Whether a pass may replay an instantiation's last evaluation instead of evaluating it again; a
+    # subclass that records every evaluation (the IDE's) says no.
+    def incremental? = true
+
+    def mark_instantiated(fn)
+      @instantiated[fn] = true
+      @cur_inst&.effects&.push([:inst, fn])
+    end
+
+    # Would evaluating the instantiation again do the same as last time? Yes when none of the cells it
+    # read changed after it read them and the instantiations it called are valid too; those in a cycle
+    # with it are taken as valid while checking.
+    def valid?(inst)
+      v = @valid[inst.key]
+      return v != false unless v.nil?
+      @valid[inst.key] = :checking
+      ok = inst.reads.all? { |cell, at| (c = CHANGED_AT[cell]).nil? || c <= at } &&
+           inst.children.all? { |k, _| (c = @insts[k]) && valid?(c) }
+      @valid[inst.key] = ok
+    end
+
+    # What the evaluation did, done again: its checks (at their call paths), results and instantiated
+    # marks, then those of the instantiations it called, each once per pass.
+    def replay(inst)
+      @done[inst.key] = true
+      merge_raised(@raises[inst.key] || {})
+      outer_inst = @cur_inst
+      outer_path = @path
+      @cur_inst = nil
+      begin
+        inst.effects.each do |e|
+          case e[0]
+          when :check
+            @path = e[8]
+            add_check(e[1], e[2], e[3], e[4], e[5], e[6], e[7])
+          when :inst then @instantiated[e[1]] = true
+          when :result then @results[e[1]] = u(@results[e[1]] || [], e[2])
+          end
+        end
+      ensure
+        @cur_inst = outer_inst
+        @path = outer_path
+      end
+      # The children's raises were merged into this instantiation's frame when it was evaluated (and
+      # caught there or not): its own @raises has what escaped, so theirs go to a frame that is dropped.
+      @raised.push({})
+      begin
+        inst.children.each_key { |k| replay(@insts[k]) unless @done[k] || @in_progress[k] }
+      ensure
+        @raised.pop
+      end
     end
 
     # --- exceptions: which user-raised exception types may leave each piece of code ---
@@ -1007,6 +1112,7 @@ module Sake
     # walked once per group walk; groups come out Struct by Struct rather than in the interleaved order.
     def struct_groups(a, out, seen, deps)
       fs = @fields[a]
+      read(fs)
       if (collect = @sg_collect) # inside a memo computation: defer to the use of the memo
         collect << a unless collect.include?(a)
         return
@@ -1076,7 +1182,7 @@ module Sake
       @init_depth ||= Hash.new(0).compare_by_identity
       return given if @init_depth[init] >= 2 # an initialize that constructs its own type
       @init_depth[init] += 1
-      @instantiated[init] = true
+      mark_instantiated(init)
       push_caller(node)
       (@init_fns ||= []).push([init, @inst_stack&.size || 0])
       frame = Frame.new(init, [], nil)
@@ -1141,7 +1247,9 @@ module Sake
         stored = run_initialize(dt, given, node) or return []
         stored.each { |f, ty| field_write(dt.name, f, ty, node) }
         t(dt.name)
-      when *dt.fields then @fields[dt.name][name] || [] # the reader `T.x(v)`
+      when *dt.fields # the reader `T.x(v)`
+        read(field_cell(dt.name, name))
+        @fields[dt.name][name] || []
       when /\Aset_(.+)\z/
         field_write(dt.name, $1, args[1], node)
         args[1]

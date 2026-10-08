@@ -637,7 +637,7 @@ module Sake
       r = call_with(n, env, args, blk)
       return r unless blk && !blk.breaks.empty?
       r = u(r, blk.breaks)
-      (@results ||= {}.compare_by_identity)[o] = u(@results[o] || [], r) if n.is_a?(CallBuiltin) # for crosscheck
+      add_result(o, r) if n.is_a?(CallBuiltin) # for crosscheck
       r
     end
 
@@ -695,7 +695,7 @@ module Sake
 
     def builtin_call(n, fn, arg_nodes, args, blk, env)
       r = call_builtin(fn, args, blk, n.origin)
-      (@results ||= {}.compare_by_identity)[n.origin] = u((@results[n.origin] || []), r) # for crosscheck
+      add_result(n.origin, r) # for crosscheck
       narrow_by_call(env, arg_nodes, args.each_index.map { fn.param_type(_1) }) unless fn.name == CTOR
       r
     end
@@ -783,6 +783,7 @@ module Sake
       dt = env.frame.fn.namespace
       @program.struct_types.fetch(dt).fields.each do |f|
         cur = env.lookup([:field, f]) or next
+        read(field_cell(dt, f))
         assign(env, [:field, f], u(cur, @fields[dt][f] || []))
       end
     end

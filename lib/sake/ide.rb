@@ -170,6 +170,8 @@ module Sake
         r
       end
 
+      def incremental? = false # every node is evaluated in the last pass, so the records cover it
+
       def reset_records
         @rec_pass = @passes
         @rec = {}.compare_by_identity

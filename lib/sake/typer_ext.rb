@@ -199,7 +199,10 @@ module Sake
       when "Kernel.once"
         # One value for the place, whichever call computes it first: the union over every evaluation.
         site = (@once_types ||= {}.compare_by_identity)
-        site[node] = u(site[node] || [], call_block(blk, []))
+        read(site)
+        new = u(site[node] || [], call_block(blk, []))
+        dirty(site) unless new.equal?(site[node])
+        site[node] = new
       when "File.delete" then t("Integer")
       else :none
       end
