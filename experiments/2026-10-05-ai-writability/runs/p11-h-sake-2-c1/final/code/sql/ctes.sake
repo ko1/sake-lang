@@ -1,0 +1,113 @@
+# WITH [RECURSIVE] (5.2): the common table expressions a query sees, planned once per statement and
+# run wherever the query names them.
+
+# A recursive cte: initial and step are SelectPlans, work the Table that stands for the cte inside
+# step (it holds the one row being expanded), keep_all is UNION ALL (else repeated rows are dropped),
+# limit and offset (-1 when absent) are those written after the cte's select.
+# colls: the collation of each column (7.4), under which "equal rows" are told.
+RecursivePlan = Struct.new(:initial, :step, :work, :keep_all, :limit, :offset, :colls)
+
+# The cte seen from inside its own recursive step: the rows of the work table.
+WorkPlan = Struct.new(:table)
+
+module Ctes
+  module_function
+
+  # The database as the body of the WITH sees it: the ctes of the statement, each seeing the ones
+  # before it, and hiding tables and views of the same name. Fails on a repeated name.
+  def layer(db, with)
+    seen = Set[]
+    Array.each(WithStmt.ctes(with)) do |cte|
+      k = Catalog.key(CteDef.name(cte))
+      Errors.sql_error("duplicate WITH table name: #{CteDef.name(cte)}") if Set.add?(seen, k) == nil
+    end
+    ctes = Hash.dup(Database.ctes(db))
+    inner = Catalog.with_ctes(db, ctes)
+    Array.each(WithStmt.ctes(with)) do |cte|
+      entry = recursive?(with, cte) ? plan_recursive(inner, cte, ctes) : plan_plain(inner, cte)
+      ctes[Catalog.key(CteDef.name(cte))] = entry
+    end
+    inner
+  end
+
+  def plan_plain(db, cte)
+    plan = Planner.plan(db, CteDef.query(cte), Scope[])
+    CteEntry.new(Planner.rename_columns(Planner.columns(plan), CteDef.columns(cte), CteDef.name(cte)), plan)
+  end
+
+  # A cte of WITH RECURSIVE whose select is `initial UNION [ALL] recursive`, the recursive select
+  # naming the cte in its FROM.
+  def recursive?(with, cte)
+    return false unless WithStmt.recursive(with)
+    q = CteDef.query(cte)
+    case q
+    in CompoundStmt
+      parts = CompoundStmt.parts(q)
+      ops = CompoundStmt.ops(q)
+      Array.size(parts) == 2 && (ops[0] == :union || ops[0] == :union_all) && mentions?(parts[1], CteDef.name(cte))
+    else false
+    end
+  end
+
+  # Whether the FROM clause of the select has a table of this name.
+  def mentions?(select, name)
+    k = Catalog.key(name)
+    Array.any?(SelectStmt.from(select)) { |item| FromItem.query(item) == nil && Catalog.key(FromItem.table(item)) == k }
+  end
+
+  # The step is planned with the cte's name standing for the work table. `ctes` is the table of the
+  # statement's ctes, which the caller then completes with the entry returned.
+  def plan_recursive(db, cte, ctes)
+    q = CteDef.query(cte)
+    case q
+    in CompoundStmt then plan_recursive_compound(db, cte, q, ctes)
+    else Errors.syntax
+    end
+  end
+
+  def plan_recursive_compound(db, cte, q, ctes)
+    parts = CompoundStmt.parts(q)
+    initial = Planner.plan_select(db, parts[0], Scope[])
+    columns = Planner.rename_columns(Planner.columns(initial), CteDef.columns(cte), CteDef.name(cte))
+    work = Table.new(CteDef.name(cte), columns, Array[], Key[], -1)
+    ctes[Catalog.key(CteDef.name(cte))] = CteEntry.new(columns, WorkPlan.new(work))
+    step = Planner.plan_select(db, parts[1], Scope[])
+    if Array.size(SelectPlan.items(step)) != Array.size(columns)
+      Errors.sql_error("SELECTs to the left and right of #{Compound.op_name(CompoundStmt.ops(q)[0])} do not have the same number of result columns")
+    end
+    plan = RecursivePlan.new(initial, step, work, CompoundStmt.ops(q)[0] == :union_all,
+                             Planner.count_of(db, CompoundStmt.limit(q)), Planner.count_of(db, CompoundStmt.offset(q)),
+                             Compound.column_colls(SelectPlan[initial, step]))
+    CteEntry.new(columns, plan)
+  end
+
+  def work_rows(plan) = Array.map(Table.rows(WorkPlan.table(plan))) { |vals| SortRow.new(Array[], vals) }
+
+  # The rows of a recursive cte (SortRow[]): a queue that starts with the initial rows; each row
+  # taken from its front is a row of the result and the step, run with the cte standing for that
+  # row, puts its rows at the back. Without UNION ALL a row equal to one queued before is not queued.
+  def run_recursive(plan)
+    work = RecursivePlan.work(plan)
+    limit = RecursivePlan.limit(plan)
+    offset = RecursivePlan.offset(plan)
+    stop = limit >= 0 ? limit + (offset > 0 ? offset : 0) : -1
+    queue = Array[]
+    seen = Set[]
+    keep_all = RecursivePlan.keep_all(plan)
+    colls = RecursivePlan.colls(plan)
+    Array.each(Select.execute_select(RecursivePlan.initial(plan), Array[])) { |r| enqueue(queue, seen, keep_all, SortRow.values(r), colls) }
+    head = 0
+    while head < Array.size(queue) && (stop < 0 || head < stop)
+      Table.set_rows(work, Array[queue[head]])
+      head += 1
+      Array.each(Select.execute_select(RecursivePlan.step(plan), Array[])) { |r| enqueue(queue, seen, keep_all, SortRow.values(r), colls) }
+    end
+    Table.set_rows(work, Array[])
+    rows = Array.map(stop >= 0 ? Array.take(queue, stop) : queue) { |vals| SortRow.new(Array[], vals) }
+    Select.limit_rows(rows, offset, limit)
+  end
+
+  def enqueue(queue, seen, keep_all, row, colls)
+    Array.push(queue, row) if keep_all || Set.add?(seen, Grouping.row_key(row, colls)) != nil
+  end
+end

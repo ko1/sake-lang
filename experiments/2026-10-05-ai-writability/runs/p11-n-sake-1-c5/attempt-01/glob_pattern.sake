@@ -1,0 +1,121 @@
+# GLOB matching (spec 7.2): case-sensitive; `*` any run of characters, `?` one character,
+# `[...]` / `[^...]` one character of a set (or not of it); every other character matches itself.
+
+# One element of a compiled pattern. kind is :star, :any, :lit (ch), :set (los/his are the
+# ranges, negated says `[^`) or :never (the pattern has an unclosed `[`, so nothing matches).
+# ch is "" and los / his are empty where they do not apply.
+class GlobItem
+  attr_reader kind, ch, negated, los, his
+end
+
+module GlobPattern
+  module_function
+
+  def matches?(text, pattern)
+    t = String.chars(text)
+    items = compile(String.chars(pattern))
+    n = Array.size(items)
+    ti = 0
+    pi = 0
+    star = -1  # where the last `*` is in the pattern; mark is where it started matching in the text
+    mark = 0
+    while ti < Array.size(t)
+      item = pi < n ? Array.fetch(items, pi) : nil
+      if item != nil && GlobItem.kind(item) == :star
+        star = pi
+        mark = ti
+        pi += 1
+      elsif item != nil && one_matches?(item, Array.fetch(t, ti))
+        ti += 1
+        pi += 1
+      elsif star != -1
+        mark += 1
+        ti = mark
+        pi = star + 1
+      else
+        return false
+      end
+    end
+    while pi < n && GlobItem.kind(Array.fetch(items, pi)) == :star
+      pi += 1
+    end
+    pi == n
+  end
+
+  # Does a :any, :lit or :set item match the character c? (:never matches nothing.)
+  def one_matches?(item, c)
+    case GlobItem.kind(item)
+    in :any then true
+    in :lit then GlobItem.ch(item) == c
+    in :set then in_set?(item, c) != GlobItem.negated(item)
+    else false
+    end
+  end
+
+  def in_set?(item, c)
+    los = GlobItem.los(item)
+    his = GlobItem.his(item)
+    i = 0
+    while i < Array.size(los)
+      return true if Array.fetch(los, i) <= c && c <= Array.fetch(his, i)
+      i += 1
+    end
+    false
+  end
+
+  # The items of a pattern given as characters.
+  def compile(chars)
+    items = GlobItem[]
+    n = Array.size(chars)
+    i = 0
+    while i < n
+      c = Array.fetch(chars, i)
+      if c == "*"
+        Array.push(items, GlobItem.new(:star, "", false, String[], String[]))
+        i += 1
+      elsif c == "?"
+        Array.push(items, GlobItem.new(:any, "", false, String[], String[]))
+        i += 1
+      elsif c == "["
+        set = parse_set(chars, i + 1)
+        return Array[never_item] if set == nil
+        Array.push(items, Tuple.first(set))
+        i = Tuple.last(set)
+      else
+        Array.push(items, GlobItem.new(:lit, c, false, String[], String[]))
+        i += 1
+      end
+    end
+    items
+  end
+
+  def never_item = GlobItem.new(:never, "", false, String[], String[])
+
+  # The class whose members start at index `start` (just after the `[`): [item, index after the `]`],
+  # or nil when no `]` closes it.
+  def parse_set(chars, start)
+    n = Array.size(chars)
+    j = start
+    negated = start < n && Array.fetch(chars, start) == "^"
+    j += 1 if negated
+    los = String[]
+    his = String[]
+    first = true  # a `]` right after the `[` (or `[^`) is a member
+    while j < n
+      c = Array.fetch(chars, j)
+      return [GlobItem.new(:set, "", negated, los, his), j + 1] if c == "]" && !first
+      first = false
+      # `x-y` is a range unless the `-` is the last member (right before the closing `]`).
+      if j + 2 < n && Array.fetch(chars, j + 1) == "-" && Array.fetch(chars, j + 2) != "]"
+        Array.push(los, c)
+        Array.push(his, Array.fetch(chars, j + 2))
+        j += 3
+      else
+        Array.push(los, c)
+        Array.push(his, c)
+        j += 1
+      end
+    end
+    nil
+  end
+end

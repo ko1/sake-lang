@@ -1,0 +1,5 @@
+SELECT X'01' IN (X'02', X'01'), X'01' IN (1, '1'), X'31' IN (1, '1');
+SELECT X'01' NOT IN (X'02'), X'01' IN (NULL, X'01'), X'01' IN (NULL, X'02'), NULL IN (X'01');
+CREATE TABLE c (n INTEGER, s TEXT);
+INSERT INTO c VALUES (5, 'E');
+SELECT n IN (X'35'), s IN (X'45'), s IN ('E', X'45') FROM c;

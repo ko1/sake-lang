@@ -1,0 +1,25 @@
+-- A to-do list with priorities.
+CREATE TABLE todo (id INTEGER, task TEXT, prio INTEGER, done INTEGER);
+INSERT INTO todo VALUES (1, 'buy milk', 2, 0), (2, 'write report', 1, 0), (3, 'call mom', 3, 1);
+INSERT INTO todo VALUES (4, 'fix bike', NULL, 0), (5, 'pay rent', 1, 1);
+INSERT INTO todo (id, task) VALUES (6, 'read book');
+INSERT INTO todo VALUES (7, 'water plants', 'high', 0);
+INSERT INTO todo VALUES (7, 'water plants', 2, 0, 'extra');
+INSERT INTO todo VALUES (7, 'water plants', 2, 0);
+SELECT id, task FROM todo WHERE done ORDER BY id;
+SELECT id, task FROM todo WHERE NOT done ORDER BY prio NULLS LAST, id;
+SELECT id FROM todo WHERE done IS NULL;
+SELECT task FROM todo WHERE prio = 1 AND NOT done;
+SELECT id, done = 0 OR prio = 1 FROM todo ORDER BY id;
+SELECT id, done AND prio FROM todo ORDER BY id;
+SELECT task FROM todo WHERE task > 'p' ORDER BY task;
+SELECT upper(task) FROM todo WHERE id = 3;
+SELECT id, coalesce(prio, 99) AS p FROM todo ORDER BY p, id DESC;
+SELECT id FROM todo ORDER BY id DESC LIMIT 3;
+SELECT id, length(task) FROM todo WHERE length(task) < 9 ORDER BY id;
+SELECT task FROM todo WHERE prio = '2' ORDER BY task;
+SELECT 'done: ' || task FROM todo WHERE done = 1 ORDER BY 1;
+DROP TABLE todo;
+CREATE TABLE todo (id INTEGER, task TEXT);
+INSERT INTO todo VALUES (1, 'fresh start');
+SELECT * FROM todo;

@@ -1,0 +1,6 @@
+SELECT X'1';
+SELECT X'12345';
+SELECT x'zz';
+SELECT X'0g';
+SELECT X'12', 'still runs';
+SELECT x'1 2';

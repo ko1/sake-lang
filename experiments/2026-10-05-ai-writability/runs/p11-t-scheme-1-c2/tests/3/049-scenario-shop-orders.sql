@@ -1,0 +1,24 @@
+-- a small shop: customers, orders, monthly report
+CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, month INTEGER, total REAL, status TEXT DEFAULT 'new');
+INSERT INTO orders (customer, month, total) VALUES ('ann', 1, 19.5), ('bob', 1, 5.0), ('ann', 2, 42.25);
+INSERT INTO orders (customer, month, total) VALUES ('cy', 2, 7.75), ('bob', 2, 12.0), ('ann', 3, 3.5);
+INSERT INTO orders (customer, month, total, status) VALUES ('dee', 3, 100.0, 'paid');
+SELECT count(*), sum(total) FROM orders;
+SELECT month, count(*), sum(total) FROM orders GROUP BY month ORDER BY month;
+SELECT customer, count(*) AS n, sum(total) AS spent FROM orders GROUP BY customer ORDER BY spent DESC;
+UPDATE orders SET status = 'paid' WHERE month = 1;
+SELECT status, count(*) FROM orders GROUP BY status ORDER BY status;
+SELECT customer FROM orders GROUP BY customer HAVING count(*) > 1 ORDER BY customer;
+INSERT INTO orders (customer, month, total) VALUES (NULL, 3, 1.0);
+SELECT count(*) FROM orders;
+SELECT customer, max(total) FROM orders WHERE status = 'new' GROUP BY customer ORDER BY customer;
+SELECT DISTINCT month FROM orders WHERE total > 10 ORDER BY month;
+SELECT month, round(avg(total), 2) FROM orders GROUP BY month HAVING avg(total) > 10 ORDER BY 1;
+DELETE FROM orders WHERE customer = 'dee';
+SELECT month, group_concat(customer, ',' ORDER BY id) FROM orders GROUP BY month ORDER BY month;
+SELECT max(total), min(total), avg(total) FROM orders;
+SELECT customer, sum(total) FROM orders GROUP BY customer ORDER BY 2 DESC LIMIT 1;
+SELECT count(DISTINCT customer) FROM orders;
+UPDATE orders SET total = total * 2 WHERE customer = 'bob';
+SELECT customer, total(total) FROM orders GROUP BY customer ORDER BY customer;
+SELECT status, count(*) FROM orders GROUP BY 1 ORDER BY 2 DESC, 1;

@@ -1,0 +1,75 @@
+# Collating sequences (7): how two TEXT values compare (BINARY, NOCASE, RTRIM), and which collation a
+# comparison, an ordering, a grouping or a uniqueness check uses. A collation is named by its lower case
+# name; "" is never a collation name, it stands for "none".
+#
+# A collation spec is how an expression carries its collation: "" none, "name" implicit (a column's),
+# "!name" explicit (`e COLLATE name`).
+module Collations
+  module_function
+
+  # The lower case name of a collation written by the statement; "no such collation sequence" if
+  # there is no such collation.
+  def canonical(written)
+    k = String.downcase(written)
+    return k if k == "binary" || k == "nocase" || k == "rtrim"
+    Errors.sql_error("no such collation sequence: #{written}")
+  end
+
+  # The text as it is compared under the collation: two texts are equal under it exactly when their
+  # folds are equal, and they sort as their folds do (byte by byte).
+  def fold(s, coll)
+    if coll == "nocase"
+      String.tr(s, "A-Z", "a-z")
+    elsif coll == "rtrim"
+      rtrim(s)
+    else
+      s
+    end
+  end
+
+  # Without its trailing spaces (the character space only).
+  def rtrim(s)
+    return s unless String.end_with?(s, " ")
+    bytes = String.bytes(s)
+    stop = Array.size(bytes)
+    stop -= 1 while stop > 0 && bytes[stop - 1] == 32
+    Text.byteslice(s, 0, stop)
+  end
+
+  def explicit?(spec) = String.start_with?(spec, "!")
+
+  # The name in a spec; "binary" for none.
+  def name_of_spec(spec)
+    return "binary" if spec == ""
+    String.delete_prefix(spec, "!")
+  end
+
+  # The spec of a resolved expression (7.3).
+  def of(e)
+    case Expr.kind(e)
+    in :collate then "!" + Expr.text(e)
+    in :ref then Expr.coll(e)
+    in :pos | :cast then of(Expr.args(e)[0])
+    else ""
+    end
+  end
+
+  # The collation an expression's values are compared among themselves under (7.4): explicit or implicit.
+  def name_of(e) = name_of_spec(of(e))
+
+  # The collation for comparing a with b, given their specs (7.4): an explicit one, the left's first;
+  # else an implicit one, the left's first; else BINARY.
+  def pick(a, b)
+    return name_of_spec(a) if explicit?(a)
+    return name_of_spec(b) if explicit?(b)
+    return a if a != ""
+    return b if b != ""
+    "binary"
+  end
+
+  # A column of the parser with its collation settled: the lower case name, "binary" if none was written.
+  def settled_column(c)
+    coll = Column.coll(c) == "" ? "binary" : canonical(Column.coll(c))
+    Column.new(Column.name(c), Column.type(c), Column.not_null(c), Column.default(c), coll)
+  end
+end

@@ -1,0 +1,65 @@
+# WITH (spec 5.2): plans each cte in order and binds its name so later ctes and the body see it.
+# A recursive cte becomes a RecursivePlan whose recursive select reads a work table (WorkEntry).
+module CtePlanner
+  module_function
+
+  # `db` with the names of `ctes` bound; SqlError on a repeated name.
+  def bind(db, recursive, ctes)
+    seen = Hash[]
+    Array.each(ctes) do |cte|
+      key = Value.lower(Cte.name(cte))
+      raise SqlError.new("duplicate WITH table name: #{Cte.name(cte)}") if Hash.key?(seen, key)
+      seen[key] = true
+    end
+    current = db
+    Array.each(ctes) do |cte|
+      more = Hash[]
+      more[Value.lower(Cte.name(cte))] = plan_cte(current, cte, recursive)
+      current = Database.with_ctes(current, more)
+    end
+    current
+  end
+
+  # The cte sees the ctes before it (and, if recursive, itself).
+  def plan_cte(db, cte, recursive)
+    query = Cte.query(cte)
+    key = Value.lower(Cte.name(cte))
+    plan = case query
+           in Compound then (recursive && recursive?(query, key)) ? plan_recursive(db, cte, query, key) : QueryPlanner.plan(db, query, nil)
+           else QueryPlanner.plan(db, query, nil)
+           end
+    CteEntry.new(plan, Plans.renamed(Plans.columns(plan), Cte.columns(cte)))
+  end
+
+  # `initial UNION [ALL] recursive`, where recursive's FROM mentions the cte.
+  def recursive?(query, key)
+    parts = Compound.parts(query)
+    return false unless Array.size(parts) == 1
+    part = Array.fetch(parts, 0)
+    (CompoundPart.op(part) == "UNION" || CompoundPart.op(part) == "UNION ALL") && mentions?(CompoundPart.select(part), key)
+  end
+
+  # Does the select's FROM name `key` (lower-cased) as a table?
+  def mentions?(sel, key)
+    from = Select.from(sel)
+    return false if from == nil
+    items = Array[FromClause.first(from)]
+    Array.each(FromClause.joins(from)) { Array.push(items, JoinClause.item(it)) }
+    Array.any?(items) { |item| (item in TableRef) && Value.lower(TableRef.name(item)) == key }
+  end
+
+  def plan_recursive(db, cte, query, key)
+    part = Array.fetch(Compound.parts(query), 0)
+    initial = Planner.plan(db, Compound.first(query), nil)
+    columns = Plans.renamed(Plans.columns(initial), Cte.columns(cte))
+    cell = Array[]
+    more = Hash[]
+    more[key] = WorkEntry.new(cell, columns)
+    step = Planner.plan(Database.with_ctes(db, more), CompoundPart.select(part), nil)
+    if Array.size(Plan.items(step)) != Array.size(Plan.items(initial))
+      raise SqlError.new("SELECTs to the left and right of #{CompoundPart.op(part)} do not have the same number of result columns")
+    end
+    colls = Collations.of_compound(Array[initial, step])
+    RecursivePlan.new(initial, step, cell, CompoundPart.op(part) == "UNION", columns, colls, Array[])
+  end
+end

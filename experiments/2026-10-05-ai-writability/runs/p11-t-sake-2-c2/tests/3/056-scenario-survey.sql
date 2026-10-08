@@ -1,0 +1,22 @@
+-- survey answers: distributions and cross-tabs
+CREATE TABLE answers (resp INTEGER, question TEXT, choice TEXT, rating INTEGER);
+INSERT INTO answers VALUES (1, 'q1', 'yes', 4), (1, 'q2', 'blue', 5), (2, 'q1', 'no', 2), (2, 'q2', 'red', 3);
+INSERT INTO answers VALUES (3, 'q1', 'yes', 5), (3, 'q2', 'blue', NULL), (4, 'q1', 'YES', 3), (4, 'q2', NULL, 1);
+SELECT question, count(*), count(choice) FROM answers GROUP BY question ORDER BY question;
+SELECT question, choice, count(*) FROM answers GROUP BY question, choice ORDER BY question, choice;
+SELECT question, lower(choice) AS c, count(*) FROM answers WHERE choice IS NOT NULL GROUP BY question, c ORDER BY question, count(*) DESC;
+SELECT question, avg(rating), min(rating), max(rating) FROM answers GROUP BY question ORDER BY question;
+SELECT DISTINCT question, upper(choice) FROM answers WHERE question = 'q1' ORDER BY 2;
+SELECT resp FROM answers GROUP BY resp HAVING sum(rating) >= 7 ORDER BY resp;
+SELECT rating, count(*) FROM answers GROUP BY rating ORDER BY rating;
+SELECT count(DISTINCT choice), count(DISTINCT lower(choice)) FROM answers;
+SELECT question, group_concat(DISTINCT lower(choice) ORDER BY lower(choice)) FROM answers GROUP BY question ORDER BY question;
+UPDATE answers SET choice = lower(choice);
+SELECT choice, count(*) AS n FROM answers WHERE question = 'q1' GROUP BY choice ORDER BY n DESC;
+UPDATE answers SET rating = 6.5 WHERE resp = 1;
+UPDATE answers SET rating = 6.0 WHERE resp = 1 AND question = 'q1';
+SELECT sum(rating), typeof(sum(rating)) FROM answers WHERE resp = 1;
+SELECT rating BETWEEN 3 AND 5 AS mid, count(*) FROM answers GROUP BY mid ORDER BY mid;
+SELECT resp, count(*) FROM answers WHERE rating IN (1, 2, 3) GROUP BY resp ORDER BY resp;
+DELETE FROM answers WHERE question = 'q2';
+SELECT question, count(*), sum(rating) FROM answers GROUP BY question;

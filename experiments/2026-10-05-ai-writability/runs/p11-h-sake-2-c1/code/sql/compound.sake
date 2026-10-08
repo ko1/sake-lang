@@ -1,0 +1,140 @@
+# Compound selects (5.1): SELECT ... UNION [ALL] | INTERSECT | EXCEPT SELECT ... [ORDER BY ...] [LIMIT ...].
+# The simple selects are planned and run as they are; this combines their rows left to right, then
+# sorts and limits the whole result.
+
+# parts: the SelectPlans, ops: how each joins the result so far (:union_all :union :intersect :except),
+# columns: the result columns as the first select names them, order_cols: for each ORDER BY term the
+# position of the result column it means, terms: the OrderTerms (direction and NULLS). limit, offset:
+# Integers, -1 when absent. correlated, memo: as in SelectPlan. terms are planned: their coll is the
+# collation each sort uses. colls: the collation (7.4) of each result column, under which rows are
+# compared.
+CompoundPlan = Struct.new(:parts, :ops, :columns, :order_cols, :terms, :limit, :offset, :correlated, :memo, :colls)
+
+module Compound
+  module_function
+
+  def plan(db, stmt, parents)
+    parts = SelectPlan[]
+    Array.each(CompoundStmt.parts(stmt)) { |s| Array.push(parts, Planner.plan_select(db, s, parents)) }
+    ops = CompoundStmt.ops(stmt)
+    check_widths(parts, ops)
+    names = Array.map(parts) { |p| Planner.columns(p) }
+    colls = column_colls(parts)
+    cols, terms = order_columns(CompoundStmt.order(stmt), names, colls)
+    CompoundPlan.new(parts, ops, names[0], cols, terms, Planner.count_of(db, CompoundStmt.limit(stmt)),
+                     Planner.count_of(db, CompoundStmt.offset(stmt)), Array.any?(parts) { |p| SelectPlan.correlated(p) }, Array[], colls)
+  end
+
+  # The collation of each result column of the selects joined (all of one width): that of the first
+  # select, left to right, whose column has a collation, else "binary" (7.4).
+  def column_colls(parts)
+    out = String[]
+    k = 0
+    while k < Array.size(SelectPlan.items(parts[0]))
+      spec = ""
+      Array.each(parts) do |p|
+        s = Collations.of(ResultCol.expr(SelectPlan.items(p)[k]))
+        spec = s if spec == "" && s != ""
+      end
+      Array.push(out, Collations.name_of_spec(spec))
+      k += 1
+    end
+    out
+  end
+
+  def op_name(op)
+    case op
+    in :union_all then "UNION ALL"
+    in :union then "UNION"
+    in :intersect then "INTERSECT"
+    else "EXCEPT"
+    end
+  end
+
+  # Every select has as many result columns as the first; the error names the operator at the first mismatch.
+  def check_widths(parts, ops)
+    n = Array.size(SelectPlan.items(parts[0]))
+    i = 1
+    while i < Array.size(parts)
+      if Array.size(SelectPlan.items(parts[i])) != n
+        Errors.sql_error("SELECTs to the left and right of #{op_name(ops[i - 1])} do not have the same number of result columns")
+      end
+      i += 1
+    end
+  end
+
+  # [the position of the result column each ORDER BY term means, the terms planned]. A term is its
+  # number, or a name looked up in the first select's columns, then the next one's, and so on; either
+  # may be followed by COLLATE. `names`: Column[] of each select; `colls`: see CompoundPlan.
+  def order_columns(terms, names, colls)
+    width = Array.size(names[0])
+    cols = Integer[]
+    planned = OrderTerm[]
+    pos = 0
+    Array.each(terms) do |t|
+      pos += 1
+      written = OrderTerm.coll(t)
+      at = 0
+      if OrderTerm.by_position(t)
+        k = OrderTerm.position(t)
+        Errors.sql_error("#{Errors.ordinal(pos)} ORDER BY term out of range - should be between 1 and #{width}") if k < 1 || k > width
+        at = k - 1
+      else
+        e = OrderTerm.expr(t)
+        if Expr.kind(e) == :collate
+          written = Expr.text(e)
+          e = Expr.args(e)[0]
+        end
+        at = named_column(e, names, pos)
+      end
+      Array.push(cols, at)
+      coll = written == "" ? colls[at] : Collations.canonical(written)
+      Array.push(planned, OrderTerm.new(OrderTerm.expr(t), OrderTerm.by_position(t), OrderTerm.position(t), OrderTerm.desc(t), OrderTerm.nulls(t), coll))
+    end
+    [cols, planned]
+  end
+
+  def named_column(e, names, pos)
+    if Expr.kind(e) == :col && Expr.qual(e) == ""
+      k = Catalog.key(Expr.text(e))
+      Array.each(names) do |cols|
+        i = Array.find_index(cols) { |c| Catalog.key(Column.name(c)) == k }
+        return i if i != nil
+      end
+    end
+    Errors.sql_error("#{Errors.ordinal(pos)} ORDER BY term does not match any column in the result set")
+  end
+
+  # The result rows (SortRow[]), sorted, after OFFSET and LIMIT.
+  def execute(plan, outer)
+    parts = CompoundPlan.parts(plan)
+    ops = CompoundPlan.ops(plan)
+    colls = CompoundPlan.colls(plan)
+    acc = value_rows(parts[0], outer)
+    i = 1
+    while i < Array.size(parts)
+      acc = combine(ops[i - 1], acc, value_rows(parts[i], outer), colls)
+      i += 1
+    end
+    cols = CompoundPlan.order_cols(plan)
+    rows = Array.map(acc) { |vals| SortRow.new(Array.map(cols) { |c| vals[c] }, vals) }
+    Select.limit_rows(Sorter.sort(rows, CompoundPlan.terms(plan)), CompoundPlan.offset(plan), CompoundPlan.limit(plan))
+  end
+
+  def value_rows(part, outer) = Array.map(Select.execute_select(part, outer)) { |r| SortRow.values(r) }
+
+  # The rows (each an Array of values) of `left op right`; rows are equal as in SELECT DISTINCT, each
+  # column under its collation in `colls`.
+  def combine(op, left, right, colls)
+    case op
+    in :union_all then left + right
+    in :union then Grouping.distinct_values(left + right, colls)
+    in :intersect
+      in_right = Grouping.key_set(right, colls)
+      Grouping.distinct_values(Array.select(left) { |r| Set.include?(in_right, Grouping.row_key(r, colls)) }, colls)
+    else
+      in_right = Grouping.key_set(right, colls)
+      Grouping.distinct_values(Array.reject(left) { |r| Set.include?(in_right, Grouping.row_key(r, colls)) }, colls)
+    end
+  end
+end

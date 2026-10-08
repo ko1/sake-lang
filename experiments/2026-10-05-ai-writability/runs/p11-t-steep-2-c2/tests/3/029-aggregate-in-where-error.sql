@@ -1,0 +1,7 @@
+CREATE TABLE w (k INTEGER, v INTEGER);
+INSERT INTO w VALUES (1, 5), (2, 7);
+SELECT k FROM w WHERE count(*) > 1;
+SELECT k FROM w WHERE v > avg(v);
+SELECT k FROM w WHERE SUM(v) > 0;
+SELECT k FROM w WHERE Max(v) = 7;
+SELECT k FROM w WHERE max(v, 6) = 7;

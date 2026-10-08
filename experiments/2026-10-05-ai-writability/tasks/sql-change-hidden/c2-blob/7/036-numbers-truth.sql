@@ -1,0 +1,5 @@
+CREATE TABLE fl (id INTEGER, b BLOB);
+INSERT INTO fl VALUES (1, X'31'), (2, X'30'), (3, X'41'), (4, X''), (5, X'3278'), (6, NULL);
+SELECT id FROM fl WHERE b ORDER BY id;
+SELECT id, NOT b, b AND 1, b OR 0 FROM fl ORDER BY id;
+SELECT id, CASE WHEN b THEN 'on' ELSE 'off' END FROM fl ORDER BY id;

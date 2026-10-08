@@ -1,0 +1,139 @@
+module MiniSql
+  class FrameBound
+    attr_reader kind: Symbol
+    attr_reader offset: number?
+
+    def initialize: (Symbol kind, number? offset) -> void
+    def offset?: () -> bool
+    def amount: () -> number
+  end
+
+  class FrameSpec
+    attr_reader mode: Symbol
+    attr_reader start: FrameBound
+    attr_reader finish: FrameBound
+
+    def initialize: (Symbol mode, FrameBound start, FrameBound finish) -> void
+  end
+
+  class WindowSpec
+    attr_reader base: String?
+    attr_reader partition_by: Array[Expr]
+    attr_reader order_by: Array[OrderTerm]
+    attr_reader frame: FrameSpec?
+
+    def initialize: (String? base, Array[Expr] partition_by, Array[OrderTerm] order_by, FrameSpec? frame) -> void
+  end
+
+  class NamedWindow
+    attr_reader name: String
+    attr_reader spec: WindowSpec
+
+    def initialize: (String name, WindowSpec spec) -> void
+  end
+
+  class WindowRef < Expr
+    @scope: WindowScope
+    @position: Integer
+
+    attr_reader name: String
+
+    def initialize: (WindowScope scope, Integer position, String name) -> void
+    def index: () -> Integer
+  end
+
+  class WindowDef
+    @partition_by: Array[Expr]
+    @order: Array[SortKey]
+    @frame: FrameSpec
+
+    attr_reader partition_by: Array[Expr]
+    attr_reader order: Array[SortKey]
+    attr_reader frame: FrameSpec
+
+    def self.build: (Array[Expr] partition_by, Array[SortKey] order, FrameSpec? frame) -> WindowDef
+    def initialize: (Array[Expr] partition_by, Array[SortKey] order, FrameSpec frame) -> void
+    def check_offsets: () -> void
+
+    private
+
+    def check_offset: (FrameBound bound, String which, String noun) -> void
+  end
+
+  module WindowFunctions
+    ARITY: Hash[String, Range[Integer]]
+    FRAME_FUNCTIONS: Array[String]
+
+    def self.known?: (String lower) -> bool
+    def self.arity_ok?: (String lower, Integer count) -> bool
+    def self.uses_frame?: (String name) -> bool
+    def self.compute: (String name, Array[Expr] args, WindowPartition partition, Integer position, Integer first, Integer last) -> sql_value
+    def self.percent_rank: (WindowPartition partition, Integer position) -> Float
+    def self.ntile: (Array[Expr] args, WindowPartition partition, Integer position) -> Integer
+    def self.shifted: (Array[Expr] args, WindowPartition partition, Integer position, Integer direction) -> sql_value
+    def self.nth_value: (Array[Expr] args, WindowPartition partition, Integer position, Integer first, Integer last) -> sql_value
+    def self.at: (Array[Expr] args, WindowPartition partition, Integer? position) -> sql_value
+    def self.positive_integer: (sql_value value) -> Integer?
+  end
+
+  class WindowPartition
+    @order: Array[SortKey]
+    @entries: Array[Candidate]
+    @peer_first: Array[Integer]
+    @peer_last: Array[Integer]
+    @peer_group: Array[Integer]
+
+    def initialize: (Array[SortKey] order, Array[Candidate] candidates) -> void
+    def size: () -> Integer
+    def row: (Integer position) -> Array[sql_value]
+    def serial: (Integer position) -> Integer
+    def peer_first: (Integer position) -> Integer
+    def peer_last: (Integer position) -> Integer
+    def peer_group: (Integer position) -> Integer
+    def frame: (Integer position, FrameSpec spec) -> [Integer, Integer]
+
+    private
+
+    def find_peers: () -> void
+    def peers?: (Candidate left, Candidate right) -> bool
+    def edge: (FrameSpec spec, FrameBound bound, Integer position, bool start) -> Integer
+    def rows_edge: (FrameBound bound, Integer position) -> Integer
+    def range_edge: (FrameBound bound, Integer position, bool start) -> Integer
+  end
+
+  class WindowCall
+    @name: String
+    @args: Array[Expr]
+    @aggregate: AggregateSpec?
+    @definition: WindowDef
+
+    attr_reader name: String
+    attr_reader args: Array[Expr]
+    attr_reader aggregate: AggregateSpec?
+    attr_reader definition: WindowDef
+
+    def initialize: (String name, Array[Expr] args, AggregateSpec? aggregate, WindowDef definition) -> void
+    def results: (Array[Array[sql_value]] rows) -> Array[sql_value]
+
+    private
+
+    def partition_of: (Array[Array[sql_value]] rows, Array[Integer] indexes) -> WindowPartition
+    def compute_partition: (WindowPartition partition) -> Array[sql_value]
+    def frame_rows: (WindowPartition partition, Integer first, Integer last) -> Array[Array[sql_value]]
+  end
+
+  class WindowScope
+    @named: Hash[String, WindowSpec]
+    @calls: Array[WindowCall]
+    @base: Integer
+
+    attr_reader base: Integer
+
+    def initialize: (Array[NamedWindow] named) -> void
+    def empty?: () -> bool
+    def add: (WindowCall call, String name) -> WindowRef
+    def place: (Integer base) -> Integer
+    def resolve: (WindowSpec spec, ?Array[String] seen) -> WindowSpec
+    def extended: (Array[Array[sql_value]] rows) -> Array[Array[sql_value]]
+  end
+end

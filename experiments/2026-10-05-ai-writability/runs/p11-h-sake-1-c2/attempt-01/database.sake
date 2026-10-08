@@ -1,0 +1,177 @@
+# The in-memory database: tables, views, indexes, and the transaction snapshot.
+
+# name as created; key lower-cased for lookups; type :integer / :real / :text / :blob.
+# not_null is true for NOT NULL and for PRIMARY KEY columns; default is the value an INSERT that
+# gives no value uses (nil: NULL), still to be converted to the column's type.
+class Column
+  attr_reader name, key, type, not_null, default
+end
+
+# A UNIQUE or non-rowid PRIMARY KEY constraint: positions of its columns, in the constraint's order.
+# index_name is the lower-cased name of the UNIQUE INDEX that declared it (nil for a table's own).
+class UniqueConstraint
+  attr_reader positions, index_name
+end
+
+# rows: Array of rows, each an Array of values in column order.
+# uniques: the UniqueConstraints in declaration order (column constraints, then table constraints).
+# rowid: position of the INTEGER PRIMARY KEY column (spec 2.1), or -1 if there is none.
+class Table
+  attr_reader name, columns, rows, uniques, rowid
+
+  # Replaces the rows with a validated set (so a failing statement leaves the table alone).
+  def set_rows(t, new_rows) = @rows = new_rows
+
+  # The same table under another name / with other constraints / other columns and rows (ALTER TABLE,
+  # indexes); the rows are shared with the original.
+  def with_name(t, new_name) = Table.new(new_name, @columns, @rows, @uniques, @rowid)
+
+  def with_uniques(t, new_uniques) = Table.new(@name, @columns, @rows, new_uniques, @rowid)
+
+  def with_columns(t, new_columns, new_rows) = Table.new(@name, new_columns, new_rows, @uniques, @rowid)
+
+  def column_position(t, name)
+    key = Value.lower(name)
+    Array.find_index(@columns) { Column.key(it) == key }
+  end
+end
+
+# A view: name as created; columns: the Array of names written, or nil; query: its select, not
+# checked until a statement uses the view.
+class View
+  attr_reader name, columns, query
+end
+
+# An index: name as created; table: lower-cased name of its table. (Only a UNIQUE index has an
+# effect: it owns a UniqueConstraint of the table.)
+class IndexDef
+  attr_reader name, table
+end
+
+# A name bound by WITH: `plan` computes its rows; columns are its SourceColumns.
+class CteEntry
+  attr_reader plan, columns
+end
+
+# The name of a recursive cte while its recursive select is planned: it stands for the rows in `cell`.
+class WorkEntry
+  attr_reader cell, columns
+end
+
+# The rows a table held when a transaction began.
+class TableRows
+  attr_reader table, rows
+end
+
+# What BEGIN keeps: the name tables of every kind as they were, and the rows of each table.
+class Snapshot
+  attr_reader tables, views, indexes, row_sets
+end
+
+# tables / views / indexes: Hashes from the lower-cased name to its Table / View / IndexDef.
+# ctes: Hash from the lower-cased name to the CteEntry / WorkEntry visible to the statement being planned.
+# saved: the Snapshot of the open transaction, or nil.
+class Database
+  attr_reader tables, views, indexes, ctes, saved
+
+  def empty = Database.new(Hash[], Hash[], Hash[], Hash[], nil)
+
+  # The table called `name` (case-insensitive) or SqlError.
+  def table(db, name)
+    t = @tables[Value.lower(name)]
+    raise SqlError.new("no such table: #{name}") if t == nil
+    t
+  end
+
+  def table?(db, name) = Hash.key?(@tables, Value.lower(name))
+
+  # A table to change: a view is refused.
+  def writable_table(db, name)
+    view = @views[Value.lower(name)]
+    raise SqlError.new("cannot modify #{View.name(view)} because it is a view") if view != nil
+    table(db, name)
+  end
+
+  # Tables and views share one name space: :table, :view, or nil when `name` is free.
+  def taken_by(db, name)
+    key = Value.lower(name)
+    return :table if Hash.key?(@tables, key)
+    Hash.key?(@views, key) ? :view : nil
+  end
+
+  # What a name in FROM means: a cte (innermost first), a table or a view; SqlError if none.
+  def relation(db, name)
+    key = Value.lower(name)
+    c = @ctes[key]
+    return c if c != nil
+    t = @tables[key]
+    return t if t != nil
+    v = @views[key]
+    return v if v != nil
+    raise SqlError.new("no such table: #{name}")
+  end
+
+  def add_table(db, table)
+    @tables[Value.lower(Table.name(table))] = table
+  end
+
+  # Drops the table and its indexes.
+  def remove_table(db, name)
+    key = Value.lower(name)
+    Hash.delete(@tables, key)
+    Hash.delete_if(@indexes) { |k, v| IndexDef.table(v) == key }
+  end
+
+  def view(db, name) = @views[Value.lower(name)]
+
+  # Renames a table; its indexes follow it.
+  def rename_table(db, table, new_name)
+    old_key = Value.lower(Table.name(table))
+    key = Value.lower(new_name)
+    Hash.delete(@tables, old_key)
+    @tables[key] = Table.with_name(table, new_name)
+    Array.each(Hash.keys(@indexes)) do |k|
+      index = @indexes[k]
+      @indexes[k] = IndexDef.new(IndexDef.name(index), key) if IndexDef.table(index) == old_key
+    end
+  end
+
+  def add_view(db, view) = @views[Value.lower(View.name(view))] = view
+
+  def remove_view(db, name) = Hash.delete(@views, Value.lower(name))
+
+  def index(db, name) = @indexes[Value.lower(name)]
+
+  def add_index(db, index) = @indexes[Value.lower(IndexDef.name(index))] = index
+
+  def remove_index(db, name) = Hash.delete(@indexes, Value.lower(name))
+
+  # The same database seen with more names bound by WITH (tables, views and indexes are shared).
+  def with_ctes(db, more) = Database.new(@tables, @views, @indexes, Hash.merge(@ctes, more), nil)
+
+  # The same database without WITH names: what a view's select sees.
+  def without_ctes(db) = Database.new(@tables, @views, @indexes, Hash[], nil)
+
+  # ---- Transactions (spec 5.5) ----
+
+  def begin_transaction(db)
+    raise SqlError.new("cannot start a transaction within a transaction") if @saved != nil
+    row_sets = Array.map(Hash.values(@tables)) { TableRows.new(it, Table.rows(it)) }
+    @saved = Snapshot.new(Hash.dup(@tables), Hash.dup(@views), Hash.dup(@indexes), row_sets)
+  end
+
+  def commit(db)
+    raise SqlError.new("cannot commit - no transaction is active") if @saved == nil
+    @saved = nil
+  end
+
+  def rollback(db)
+    snapshot = @saved
+    raise SqlError.new("cannot rollback - no transaction is active") if snapshot == nil
+    Array.each(Snapshot.row_sets(snapshot)) { Table.set_rows(TableRows.table(it), TableRows.rows(it)) }
+    @tables = Snapshot.tables(snapshot)
+    @views = Snapshot.views(snapshot)
+    @indexes = Snapshot.indexes(snapshot)
+    @saved = nil
+  end
+end

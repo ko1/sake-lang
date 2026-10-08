@@ -1,0 +1,123 @@
+# Looking up a column name (spec 4.2): `q.c` in the innermost query with a source named q; a bare `c`
+# in the sources of the innermost query that has it, then (for a rowid name, spec 7.1) the rowid of its
+# table source, then its result column aliases where they are allowed, then the same for each enclosing query.
+#
+# A table source has one more SourceColumn than the table has columns: the rowid, whose key is
+# `rowid_key`, which no written name matches. Only a rowid name reaches it.
+module Names
+  module_function
+
+  # The resolved expression for `qualifier.name` (qualifier nil for a bare name), or SqlError.
+  def lookup(scope, qualifier, name)
+    if qualifier == nil
+      bare(scope, name)
+    else
+      qualified(scope, qualifier, name)
+    end
+  end
+
+  # The key of the rowid SourceColumn of a table source.
+  def rowid_key = " rowid"
+
+  # Is `name` (any case) one of the rowid names?
+  def rowid_name?(name) = Array.include?(Array["rowid", "_rowid_", "oid"], Value.lower(name))
+
+  def bare(scope, name)
+    key = Value.lower(name)
+    level = scope
+    passed = Array[]
+    while level != nil
+      hits = column_hits(level, key)
+      if Array.size(hits) > 1 && !Array.include?(Scope.merged(level), key)
+        raise SqlError.new("ambiguous column name: #{name}")
+      end
+      if !Array.empty?(hits)
+        note_correlated(passed)
+        return column_at(level, Array.fetch(hits, 0))
+      end
+      rowid = bare_rowid(level, key, name)
+      if rowid != nil
+        note_correlated(passed)
+        return rowid
+      end
+      message = Scope.blocked(level)[key]
+      raise SqlError.new(message) if message != nil
+      aliased = Scope.aliases(level)[key]
+      if aliased != nil
+        note_correlated(passed)
+        return aliased
+      end
+      Array.push(passed, level)
+      level = Scope.outer(level)
+    end
+    raise SqlError.new("no such column: #{name}")
+  end
+
+  # A bare rowid name at `level`: the rowid of its only source when that is a table; nil when the name is
+  # no rowid name here; `ambiguous` when the query has several sources and one of them is a table.
+  def bare_rowid(level, key, name)
+    return nil unless rowid_name?(key)
+    sources = Scope.sources(level)
+    tables = Array.select(sources) { Source.column_index(it, rowid_key) != nil }
+    return nil if Array.empty?(tables)
+    raise SqlError.new("ambiguous column name: #{name}") if Array.size(sources) > 1
+    src = Array.fetch(tables, 0)
+    ri = Source.column_index(src, rowid_key)
+    ri => Integer
+    rowid_ref(level, src, ri, name)
+  end
+
+  def qualified(scope, qualifier, name)
+    qkey = Value.lower(qualifier)
+    key = Value.lower(name)
+    level = scope
+    passed = Array[]
+    while level != nil
+      src = Array.find(Scope.sources(level)) { Source.name(it) == qkey }
+      if src != nil
+        ci = Source.column_index(src, key)
+        if ci == nil
+          ri = Source.column_index(src, rowid_key)
+          raise SqlError.new("no such column: #{qualifier}.#{name}") if !rowid_name?(key)
+          raise SqlError.new("no such column: #{qualifier}.#{name}") if ri == nil
+          note_correlated(passed)
+          return rowid_ref(level, src, ri, name)
+        end
+        note_correlated(passed)
+        return column_ref(level, src, ci)
+      end
+      Array.push(passed, level)
+      level = Scope.outer(level)
+    end
+    raise SqlError.new("no such column: #{qualifier}.#{name}")
+  end
+
+  # [source position, column position] of each column named `key` among the level's sources.
+  def column_hits(level, key)
+    hits = Array[]
+    Array.each_with_index(Scope.sources(level)) do |src, si|
+      ci = Source.column_index(src, key)
+      Array.push(hits, [si, ci]) if ci != nil
+    end
+    hits
+  end
+
+  def column_at(level, hit)
+    si, ci = hit
+    column_ref(level, Array.fetch(Scope.sources(level), si), ci)
+  end
+
+  # The resolved reference to column `ci` of `src` in `level`.
+  def column_ref(level, src, ci)
+    c = Array.fetch(Source.columns(src), ci)
+    Col.new(nil, SourceColumn.name(c), Scope.base(level) + Source.offset(src) + ci, SourceColumn.aff(c))
+  end
+
+  # The resolved reference to the rowid (column `ri` of the table source `src`), named as written.
+  def rowid_ref(level, src, ri, name) = Col.new(nil, name, Scope.base(level) + Source.offset(src) + ri, :integer)
+
+  # The scopes passed on the way out were crossed by a reference to an enclosing query.
+  def note_correlated(passed)
+    Array.each(passed) { Array.push(Scope.refs(it), true) }
+  end
+end

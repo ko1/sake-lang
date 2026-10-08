@@ -1,0 +1,81 @@
+# Row integrity (spec 2.1): the checks a row passes before it is stored by INSERT or UPDATE.
+module Constraints
+  module_function
+
+  # The row to store for `raw` (one value per column, defaults already applied), or SqlError.
+  # `rows` are the table's rows as they are now; `skip` is the index in `rows` of the row being
+  # replaced by an UPDATE (-1 for INSERT, so a NULL INTEGER PRIMARY KEY is then assigned, not an error).
+  # The order of checks is the one of spec 2.1: first failure wins.
+  def check_row(table, raw, rows, skip)
+    row = Array.dup(raw)
+    tname = Table.name(table)
+    columns = Table.columns(table)
+    rid = Table.rowid(table)
+    store_rowid(row, rid, rows, skip) if rid != -1
+    Array.each_with_index(columns) do |c, i|
+      if Column.not_null(c) && row[i] == nil
+        raise SqlError.new("NOT NULL constraint failed: #{tname}.#{Column.name(c)}")
+      end
+    end
+    if rid != -1 && conflict?(rows, skip, Array[rid], Array[:binary], row)
+      raise SqlError.new("UNIQUE constraint failed: #{tname}.#{Column.name(Array.fetch(columns, rid))}")
+    end
+    Array.each_with_index(columns) do |c, i|
+      row[i] = Coercion.for_storage(row[i], Column.type(c), tname, Column.name(c)) if i != rid
+    end
+    Array.each(Array.reverse(Table.uniques(table))) do |u|
+      positions = UniqueConstraint.positions(u)
+      if conflict?(rows, skip, positions, UniqueConstraint.collations(u), row)
+        raise SqlError.new(unique_message(table, positions))
+      end
+    end
+    row
+  end
+
+  # `UNIQUE constraint failed: t.a, t.b` for the constraint on `positions`.
+  def unique_message(table, positions)
+    names = Array.map(positions) { "#{Table.name(table)}.#{Column.name(Array.fetch(Table.columns(table), it))}" }
+    "UNIQUE constraint failed: #{Array.join(names, ", ")}"
+  end
+
+  # Gives the INTEGER PRIMARY KEY its value: converted if given, else one more than the largest.
+  def store_rowid(row, rid, rows, skip)
+    v = row[rid]
+    if v == nil
+      raise SqlError.new("datatype mismatch") if skip != -1
+      row[rid] = next_key(rows, rid)
+    else
+      k = Coercion.integer_key(v)
+      raise SqlError.new("datatype mismatch") if k == nil
+      row[rid] = k
+    end
+  end
+
+  def next_key(rows, rid)
+    largest = 0
+    Array.each(rows) do |r|
+      v = Array.fetch(r, rid)
+      largest = v if (v in Integer) && v > largest
+    end
+    largest + 1
+  end
+
+  # Does another row of `rows` (not the one at index `skip`) equal `row` on all `positions`, each compared
+  # under its collation of `colls`? A NULL in any of them never conflicts.
+  def conflict?(rows, skip, positions, colls, row)
+    return false if Array.any?(positions) { Array.fetch(row, it) == nil }
+    i = 0
+    while i < Array.size(rows)
+      other = Array.fetch(rows, i)
+      return true if i != skip && same_on?(other, row, positions, colls)
+      i += 1
+    end
+    false
+  end
+
+  def same_on?(a, b, positions, colls)
+    Array.all?(Array.each_with_index(positions)) do |pos, k|
+      Collation.compare(Array.fetch(a, pos), Array.fetch(b, pos), Array.fetch(colls, k)) == 0
+    end
+  end
+end

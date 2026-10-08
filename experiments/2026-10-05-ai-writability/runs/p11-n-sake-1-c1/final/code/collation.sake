@@ -1,0 +1,100 @@
+# Collating sequences (spec 7): how two TEXT values compare, and which collation an expression has.
+# A collation is :binary, :nocase or :rtrim. :none stands for "no collation" (7.3) and only appears
+# as the answer of `explicit` / `implicit` / `declared`; every decision (`pick`, `of_term`) ends in a real one.
+module Collation
+  module_function
+
+  # The collation called `name` (any case), or SqlError.
+  def lookup(name)
+    case Value.lower(name)
+    in "binary" then :binary
+    in "nocase" then :nocase
+    in "rtrim" then :rtrim
+    else raise SqlError.new("no such collation sequence: #{name}")
+    end
+  end
+
+  # ---- Comparing ----
+
+  # The text `s` as it is compared under `coll` (spec 7.1).
+  def fold(coll, s)
+    case coll
+    in :nocase then Value.lower(s)
+    in :rtrim then String.sub(s, /[ ]+\z/, "")
+    else s
+    end
+  end
+
+  # Value.compare, except that two TEXT values compare under `coll`.
+  def compare(a, b, coll)
+    case a
+    in String
+      case b
+      in String then Value.sign(fold(coll, a), fold(coll, b))
+      else Value.compare(a, b)
+      end
+    else Value.compare(a, b)
+    end
+  end
+
+  # ---- The collation of an expression (7.3), on a resolved expression ----
+
+  # The collation written on it with COLLATE, or :none. `+e` and CAST(e AS t) are as e.
+  def explicit(e)
+    case e
+    in Collated then Collated.coll(e)
+    in Unary then Unary.op(e) == :pos ? explicit(Unary.operand(e)) : :none
+    in Cast then explicit(Cast.expr(e))
+    else :none
+    end
+  end
+
+  # The collation of the column it is (or +e, CAST(e AS t) of one), or :none.
+  def implicit(e)
+    case e
+    in Col then Col.coll(e)
+    in Unary then Unary.op(e) == :pos ? implicit(Unary.operand(e)) : :none
+    in Cast then implicit(Cast.expr(e))
+    else :none
+    end
+  end
+
+  # Explicit, else implicit; :none if it has neither.
+  def declared(e)
+    written = explicit(e)
+    written != :none ? written : implicit(e)
+  end
+
+  # The collation a single term sorts, groups or deduplicates under: its own, else BINARY.
+  def of_term(e)
+    found = declared(e)
+    found == :none ? :binary : found
+  end
+
+  # The first of four candidates that is not :none, else BINARY (the rule of 7.4 lists them in order:
+  # explicit left, explicit right, implicit left, implicit right).
+  def pick(a, b, c, d)
+    return a if a != :none
+    return b if b != :none
+    return c if c != :none
+    d != :none ? d : :binary
+  end
+
+  # The collation of the comparison `left op right`.
+  def of_comparison(left, right) = pick(explicit(left), explicit(right), implicit(left), implicit(right))
+
+  # The collations of the columns of a compound of `plans` (all simple selects, 7.4): the k-th is the
+  # collation of the first plan whose k-th result column has one, else BINARY.
+  def for_columns(plans)
+    n = Array.size(Plan.items(Array.fetch(plans, 0)))
+    Array.new(n) { |k| first_declared(plans, k) }
+  end
+
+  def first_declared(plans, k)
+    Array.each(plans) do |plan|
+      found = declared(ResultItem.expr(Array.fetch(Plan.items(plan), k)))
+      return found if found != :none
+    end
+    :binary
+  end
+end

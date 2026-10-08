@@ -1,0 +1,76 @@
+# Window part of the parser (reopens Parser; spec 6.1): OVER clauses, the WINDOW clause and frames.
+class Parser
+  # After `f(..)` and OVER: `( window-spec )` or a window name.
+  def over_clause(ps)
+    return ident(ps) unless accept_punct(ps, "(")
+    spec = window_spec(ps)
+    expect_punct(ps, ")")
+    spec
+  end
+
+  # `WINDOW name AS ( spec ) [, ...]`, after the WINDOW keyword.
+  def window_clause(ps)
+    windows = Array[]
+    while true
+      name = ident(ps)
+      expect_kw(ps, "AS")
+      expect_punct(ps, "(")
+      spec = window_spec(ps)
+      expect_punct(ps, ")")
+      Array.push(windows, NamedWindow.new(name, spec))
+      break unless accept_punct(ps, ",")
+    end
+    windows
+  end
+
+  # `[base] [PARTITION BY expr, ...] [ORDER BY term, ...] [frame]`, inside the parentheses.
+  def window_spec(ps)
+    base = Token.kind(peek(ps)) == :ident ? ident(ps) : nil
+    partition = Array[]
+    if accept_kw(ps, "PARTITION")
+      expect_kw(ps, "BY")
+      partition = expression_list(ps)
+    end
+    order = at_kw?(ps, "ORDER") ? order_by(ps) : Array[]
+    frame = (at_kw?(ps, "ROWS") || at_kw?(ps, "RANGE")) ? frame_clause(ps) : nil
+    WindowSpec.new(base, partition, order, frame)
+  end
+
+  # `(ROWS | RANGE) bound` (which ends at CURRENT ROW) or `(ROWS | RANGE) BETWEEN bound AND bound`.
+  def frame_clause(ps)
+    units = at_kw?(ps, "ROWS") ? :rows : :range
+    advance(ps)
+    if accept_kw(ps, "BETWEEN")
+      start = frame_bound(ps)
+      expect_kw(ps, "AND")
+      finish = frame_bound(ps)
+    else
+      start = frame_bound(ps)
+      finish = FrameBound.new(:current, nil)
+    end
+    syntax_error if FrameBound.kind(start) == :unbounded_following || FrameBound.kind(finish) == :unbounded_preceding
+    Frame.new(units, start, finish)
+  end
+
+  # `UNBOUNDED PRECEDING | n PRECEDING | CURRENT ROW | n FOLLOWING | UNBOUNDED FOLLOWING`; n is a number.
+  def frame_bound(ps)
+    if accept_kw(ps, "UNBOUNDED")
+      return FrameBound.new(:unbounded_preceding, nil) if accept_kw(ps, "PRECEDING")
+      expect_kw(ps, "FOLLOWING")
+      return FrameBound.new(:unbounded_following, nil)
+    end
+    if accept_kw(ps, "CURRENT")
+      expect_kw(ps, "ROW")
+      return FrameBound.new(:current, nil)
+    end
+    negative = accept_punct(ps, "-")
+    t = advance(ps)
+    syntax_error unless Token.kind(t) == :number
+    n = Token.val(t)
+    syntax_error if n == nil
+    offset = negative ? -n : n
+    return FrameBound.new(:preceding, offset) if accept_kw(ps, "PRECEDING")
+    expect_kw(ps, "FOLLOWING")
+    FrameBound.new(:following, offset)
+  end
+end

@@ -1,0 +1,4 @@
+SELECT CASE X'41' WHEN 'A' THEN 'as text' WHEN 65 THEN 'as number' ELSE 'no match' END;
+SELECT CASE 'A' WHEN X'41' THEN 'yes' ELSE 'no' END;
+SELECT CASE X'' WHEN X'' THEN 'empty' END;
+SELECT CASE X'4100' WHEN X'41' THEN 'prefix' WHEN X'4100' THEN 'exact' END;

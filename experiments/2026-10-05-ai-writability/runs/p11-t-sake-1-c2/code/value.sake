@@ -1,0 +1,211 @@
+# SQL values and their basic semantics (spec 1.3, 1.8 - 1.10).
+# A value is nil (NULL), an Integer, a Float (REAL), a String (TEXT) or a Blob (BLOB, see blob.sake).
+module Value
+  module_function
+
+  # ---- Text helpers (ASCII only, as the spec says) ----
+
+  def lower(s) = String.tr(s, "A-Z", "a-z")
+  def upper(s) = String.tr(s, "a-z", "A-Z")
+
+  # ---- Printing ----
+
+  # The name of a value's type in a storage error (7.6): an INTEGER is "INT".
+  def type_name(v)
+    case v
+    in nil then "NULL"
+    in Integer then "INT"
+    in Float then "REAL"
+    in String then "TEXT"
+    in Blob then "BLOB"
+    end
+  end
+
+  def type_label(type)
+    case type
+    in :integer then "INTEGER"
+    in :real then "REAL"
+    in :text then "TEXT"
+    in :blob then "BLOB"
+    end
+  end
+
+  # A REAL as printf("%.15g"), always showing it is not an integer (1.0, 1.0e+20).
+  def format_real(x)
+    return "0.0" if x == 0.0
+    s = format("%.15g", x)
+    before, e, after = String.partition(s, "e")
+    before = before + ".0" unless String.include?(before, ".")
+    "#{before}#{e}#{after}"
+  end
+
+  # The text form of a value (wherever a value becomes text): a BLOB's is its bytes read as characters.
+  def text_form(v)
+    case v
+    in nil then "NULL"
+    in Integer then Integer.to_s(v)
+    in Float then format_real(v)
+    in String then v
+    in Blob then Blob.text(v)
+    end
+  end
+
+  # How a value prints in a result (1.3): as its text form, except a BLOB, which prints as X'hex'.
+  def print_form(v)
+    case v
+    in Blob then "X'#{Blob.hex(v)}'"
+    else text_form(v)
+    end
+  end
+
+  # ---- Numbers from text ----
+
+  def build_number(sign, body)
+    if String.include?(body, ".") || String.include?(body, "e") || String.include?(body, "E")
+      f = String.to_f(String.sub(body, /\.(?!\d)/, ".0"))
+      sign == "-" ? -f : f
+    else
+      i = String.to_i(body)
+      sign == "-" ? -i : i
+    end
+  end
+
+  # The number a TEXT is, if all of it (spaces around allowed) is a numeric literal; else nil.
+  def parse_numeric(s)
+    m = String.match(s, /\A[ \t\n\r]*([+-]?)((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)[ \t\n\r]*\z/)
+    return nil unless m
+    build_number(m[1], m[2])
+  end
+
+  # The number at the start of a TEXT, or the INTEGER 0 when there is none.
+  def numeric_prefix(s)
+    m = String.match(s, /\A[ \t\n\r]*([+-]?)((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/)
+    return 0 unless m
+    build_number(m[1], m[2])
+  end
+
+  # A non-NULL value read as a number (Integer or Float).
+  def to_number(v)
+    case v
+    in String then numeric_prefix(v)
+    in Blob then numeric_prefix(Blob.text(v))
+    in nil then raise SqlError.new("internal error: NULL read as a number")
+    in Integer | Float then v
+    end
+  end
+
+  # ---- Order of values (1.9) ----
+
+  # -1, 0 or 1: NULL < numbers < TEXT < BLOB; numbers by value; TEXT and BLOB bytewise.
+  def compare(a, b)
+    case a
+    in nil then b == nil ? 0 : -1
+    in Integer | Float
+      case b
+      in nil then 1
+      in Integer | Float then sign(a, b)
+      else -1
+      end
+    in String
+      case b
+      in String then sign(a, b)
+      in Blob then -1
+      else 1
+      end
+    in Blob
+      case b
+      in Blob then sign(Blob.hex(a), Blob.hex(b))
+      else 1
+      end
+    end
+  end
+
+  def sign(a, b) = a < b ? -1 : (a > b ? 1 : 0)
+
+  # ---- Truth values (1.10): true, false, or nil for unknown ----
+
+  def truth(v)
+    case v
+    in nil then nil
+    in String then numeric_prefix(v) != 0
+    in Blob then numeric_prefix(Blob.text(v)) != 0
+    in Integer | Float then v != 0
+    end
+  end
+
+  # A truth value as the SQL value 1, 0 or NULL.
+  def from_truth(t)
+    return nil if t == nil
+    t ? 1 : 0
+  end
+
+  def not3(t)
+    return nil if t == nil
+    !t
+  end
+
+  def and3(a, b)
+    return false if a == false || b == false
+    return nil if a == nil || b == nil
+    true
+  end
+
+  def or3(a, b)
+    return true if a == true || b == true
+    return nil if a == nil || b == nil
+    false
+  end
+
+  # ---- Operators (1.8) ----
+
+  def negate(v)
+    case v
+    in nil then nil
+    in String then negate(numeric_prefix(v))
+    in Blob then negate(numeric_prefix(Blob.text(v)))
+    in Integer | Float then -v
+    end
+  end
+
+  # `op` is one of + - * / %; a NULL operand or a zero divisor gives NULL.
+  def arith(op, a, b)
+    return nil if a == nil || b == nil
+    x = to_number(a)
+    y = to_number(b)
+    if x in Integer
+      return integer_arith(op, x, y) if y in Integer
+    end
+    real_arith(op, Arithmetic.to_f(x), Arithmetic.to_f(y))
+  end
+
+  def integer_arith(op, x, y)
+    case op
+    in "+" then x + y
+    in "-" then x - y
+    in "*" then x * y
+    in "/" then y == 0 ? nil : (x - Integer.remainder(x, y)) / y
+    in "%" then y == 0 ? nil : Integer.remainder(x, y)
+    end
+  end
+
+  def real_arith(op, x, y)
+    case op
+    in "+" then x + y
+    in "-" then x - y
+    in "*" then x * y
+    in "/" then y == 0.0 ? nil : x / y
+    in "%" then real_remainder(Float.to_i(x), Float.to_i(y))
+    end
+  end
+
+  # `%` on REALs: both sides truncated to integers, the remainder given as a REAL.
+  def real_remainder(x, y)
+    return nil if y == 0
+    Arithmetic.to_f(Integer.remainder(x, y))
+  end
+
+  def concat(a, b)
+    return nil if a == nil || b == nil
+    text_form(a) + text_form(b)
+  end
+end

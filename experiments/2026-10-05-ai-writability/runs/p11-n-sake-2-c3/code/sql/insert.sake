@@ -1,0 +1,70 @@
+# INSERT (1.6, 2.1, 5.4): each row is checked against the table plus the rows before it; the table
+# changes only if every row is good.
+module Insert
+  module_function
+
+  def run(db, stmt)
+    table = Catalog.writable_table!(db, InsertStmt.table(stmt))
+    columns = Table.columns(table)
+    query = InsertStmt.query(stmt)
+    plan = query == nil ? nil : Planner.plan(db, query, Scope[])
+    width = plan == nil ? values_width(InsertStmt.rows(stmt)) : Planner.width(plan)
+    targets = target_columns(stmt, table)
+    if InsertStmt.listed(stmt)
+      Errors.sql_error("#{width} values for #{Array.size(targets)} columns") if width != Array.size(targets)
+    elsif width != Array.size(columns)
+      Errors.sql_error("table #{InsertStmt.table(stmt)} has #{Array.size(columns)} columns but #{width} values were supplied")
+    end
+
+    resolved = plan == nil ? Array.map(InsertStmt.rows(stmt)) { |exprs| Resolver.resolve_all(exprs, Resolver.constant_scope(db)) } : select_rows(plan)
+    defaults = Array.map(columns) { |c| Column.default(c) } + Array[nil]
+    working = Array.dup(Table.rows(table))
+    Array.each(resolved) do |exprs|
+      raw = Array.dup(defaults)
+      i = 0
+      Array.each(exprs) do |e|
+        raw[targets[i]] = Eval.value_of(e, Eval.top(Array[]))
+        i += 1
+      end
+      Array.push(working, Constraints.check_row(table, raw, working, -1, true))
+    end
+    Table.set_rows(table, working)
+    String[]
+  end
+
+  # The number of terms of the VALUES rows, which must all be the same.
+  def values_width(rows)
+    Array.each(rows) do |r|
+      Errors.sql_error("all VALUES must have the same number of terms") if Array.size(r) != Array.size(rows[0])
+    end
+    Array.size(rows[0])
+  end
+
+  # The rows of the select, all computed now, as literal expressions.
+  def select_rows(plan)
+    Array.map(Select.execute(plan, Array[])) do |r|
+      Array.map(SortRow.values(r)) { |v| Ast.literal(v) }
+    end
+  end
+
+  # The positions that get a value, in the order the values are given: columns, or the rowid named by
+  # a rowid name that is no column (Catalog.target_index).
+  def target_columns(stmt, table)
+    columns = Table.columns(table)
+    targets = Integer[]
+    if InsertStmt.listed(stmt)
+      Array.each(InsertStmt.columns(stmt)) do |name|
+        i = Catalog.target_index(table, name)
+        Errors.sql_error("table #{InsertStmt.table(stmt)} has no column named #{name}") if i < 0
+        Array.push(targets, i)
+      end
+    else
+      i = 0
+      while i < Array.size(columns)
+        Array.push(targets, i)
+        i += 1
+      end
+    end
+    targets
+  end
+end

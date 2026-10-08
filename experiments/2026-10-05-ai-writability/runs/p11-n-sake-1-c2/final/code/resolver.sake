@@ -1,0 +1,143 @@
+# Name resolution: turns a parsed expression into one that can be evaluated against a row.
+# Column names become row positions, aliases are replaced by the expression they stand for,
+# and unknown names or functions are reported here - before any row is read. Subqueries are planned
+# here too (Planner.plan with the current scope as their enclosing one).
+module Resolver
+  module_function
+
+  def resolve(e, scope)
+    case e
+    in Lit then e
+    in Col then resolve_column(e, scope)
+    in Unary then Unary.new(Unary.op(e), resolve(Unary.operand(e), scope))
+    in Binary then resolve_binary(e, scope)
+    in Call then resolve_call(e, scope)
+    in WindowCall then WindowPlanner.resolve(e, scope)
+    in Case then resolve_case(e, scope)
+    in Between
+      Between.new(resolve_operand(Between.expr(e), scope, true), resolve_operand(Between.low(e), scope, true),
+                  resolve_operand(Between.high(e), scope, true), Between.negated(e))
+    in InList
+      InList.new(resolve(InList.expr(e), scope), resolve_all(InList.items(e), scope), InList.negated(e))
+    in Like then Like.new(resolve(Like.expr(e), scope), resolve(Like.pattern(e), scope), Like.negated(e))
+    in Cast then Cast.new(resolve(Cast.expr(e), scope), Cast.type(e))
+    in ScalarSub then resolve_scalar(e, scope, false)
+    in InSelect then InQuery.new(resolve(InSelect.expr(e), scope), subplan(InSelect.select(e), scope, 1), InSelect.negated(e))
+    in Exists then ExistsQuery.new(QueryPlanner.plan(Scope.db(scope), Exists.select(e), scope))
+    else raise SqlError.new("internal error: expression already resolved")
+    end
+  end
+
+  def resolve_binary(e, scope)
+    op = Binary.op(e)
+    left = Binary.left(e)
+    right = Binary.right(e)
+    Binary.new(op, resolve_operand(left, scope, comparing?(op, right)), resolve_operand(right, scope, comparing?(op, left)))
+  end
+
+  # Is an operand of `op` (the other operand being `other`) in a comparison? `x IS NULL` is not one.
+  def comparing?(op, other)
+    case op
+    in "=" | "!=" | "<" | "<=" | ">" | ">=" then true
+    in "IS" | "IS NOT" then !null_literal?(other)
+    else false
+    end
+  end
+
+  def null_literal?(e)
+    case e
+    in Lit then Lit.value(e) == nil
+    else false
+    end
+  end
+
+  # An operand: a scalar subquery with several columns is `row value misused` where `comparison`.
+  def resolve_operand(e, scope, comparison)
+    case e
+    in ScalarSub then resolve_scalar(e, scope, comparison)
+    else resolve(e, scope)
+    end
+  end
+
+  def resolve_scalar(e, scope, comparison)
+    plan = QueryPlanner.plan(Scope.db(scope), ScalarSub.select(e), scope)
+    n = Array.size(Plans.columns(plan))
+    raise SqlError.new("row value misused") if comparison && n != 1
+    raise SqlError.new("sub-select returns #{n} columns - expected 1") if n != 1
+    ScalarQuery.new(plan)
+  end
+
+  # The Plan of a subquery that must have exactly `n` result columns (the only count the spec has: 1).
+  def subplan(select, scope, n)
+    plan = QueryPlanner.plan(Scope.db(scope), select, scope)
+    count = Array.size(Plans.columns(plan))
+    raise SqlError.new("sub-select returns #{count} columns - expected #{n}") if count != n
+    plan
+  end
+
+  def resolve_all(list, scope) = Array.map(list) { resolve(it, scope) }
+
+  def resolve_case(c, scope)
+    operand = Case.operand(c)
+    whens = Array.map(Case.whens(c)) { WhenClause.new(resolve(WhenClause.condition(it), scope), resolve(WhenClause.result(it), scope)) }
+    otherwise = Case.otherwise_expr(c)
+    Case.new(operand == nil ? nil : resolve_operand(operand, scope, true), whens, resolve_optional(otherwise, scope))
+  end
+
+  # An optional expression (nil stays nil).
+  def resolve_optional(e, scope) = e == nil ? nil : resolve(e, scope)
+
+  def resolve_column(c, scope) = Names.lookup(scope, Col.qualifier(c), Col.name(c))
+
+  def resolve_call(c, scope)
+    fn = Value.lower(Call.name(c))
+    argc = Array.size(Call.args(c))
+    raise SqlError.new("misuse of window function #{Call.name(c)}()") if WindowFunctions.known?(fn)
+    return resolve_aggregate(c, fn, scope) if Aggregates.aggregate?(fn, argc, Call.star(c))
+    scalar = Functions.known?(fn)
+    raise SqlError.new("no such function: #{Call.name(c)}") unless scalar || Aggregates.name?(fn)
+    if !scalar || Call.star(c) || !Functions.arity_ok?(fn, argc)
+      raise SqlError.new("wrong number of arguments to function #{Call.name(c)}()")
+    end
+    raise SqlError.new("DISTINCT is not supported for non-aggregate functions") if Call.distinct(c)
+    raise SqlError.new("ORDER BY may not be used with non-aggregate #{Call.name(c)}()") unless Array.empty?(Call.order(c))
+    Call.new(Call.name(c), fn, resolve_all(Call.args(c), scope), false, false, Array[])
+  end
+
+  # An aggregate call becomes a Col reading its slot of the group row: the slots follow the table's
+  # columns, one per distinct Aggregate in the scope's collector (identical calls share one).
+  def resolve_aggregate(c, fn, scope)
+    collector = Scope.collector(scope)
+    raise SqlError.new(misuse_message(Scope.forbidden(scope), Call.name(c))) if collector == nil
+    if Call.distinct(c) && Array.size(Call.args(c)) != 1
+      raise SqlError.new("DISTINCT aggregates must have exactly one argument")
+    end
+    inner = Scope.with_clause(scope, Scope.aliases(scope), Scope.blocked(scope), nil, :function)
+    order = Array.map(Call.order(c)) { OrderTerm.new(resolve(OrderTerm.expr(it), inner), OrderTerm.desc(it), OrderTerm.nulls(it)) }
+    star = Call.star(c) || Array.empty?(Call.args(c))
+    agg = Aggregate.new(Call.name(c), fn, resolve_all(Call.args(c), inner), Call.distinct(c), star, order)
+    slot = Array.find_index(collector) { Aggregates.same?(it, agg) }
+    if slot == nil
+      slot = Array.size(collector)
+      Array.push(collector, agg)
+    end
+    Col.new(nil, "", Scope.base(scope) + Scope.width(scope) + slot, nil)
+  end
+
+  def misuse_message(forbidden, name)
+    case forbidden
+    in :group_by then "aggregate functions are not allowed in the GROUP BY clause"
+    in :misuse then "misuse of aggregate: #{name}()"
+    in :function then "misuse of aggregate function #{name}()"
+    end
+  end
+
+  # The scope of UPDATE / DELETE: the table is a source named by its name; aggregate calls are an error.
+  def table_scope(db, table)
+    source = Source.new(Value.lower(Table.name(table)), FromPlanner.table_columns(table), 0, Array[])
+    Scope.new(db, Array[source], Array[], 0, Hash[], Hash[], nil, :function, nil, Array[], nil, Hash[])
+  end
+
+  # A scope with no sources: for expressions evaluated with no row.
+  def empty_scope(db) = Scope.new(db, Array[], Array[], 0, Hash[], Hash[], nil, :function, nil, Array[], nil, Hash[])
+end

@@ -1,0 +1,62 @@
+# Telling values and rows apart by the order of values (1.9): GROUP BY, SELECT DISTINCT and
+# DISTINCT inside aggregates all treat NULLs as equal to each other and 1 as equal to 1.0.
+module Grouping
+  module_function
+
+  # A String that is equal for two values exactly when they are equal here.
+  def key(v)
+    case v
+    in Integer then "i#{v}"
+    in Float then whole_float?(v) ? "i#{Float.truncate(v)}" : "f#{Float.to_s(v)}"
+    in String then "s#{String.size(v)}:#{v}"
+    else "n"
+    end
+  end
+
+  def whole_float?(x) = Float.finite?(x) && Integer.to_f(Float.truncate(x)) == x
+
+  def row_key(vals) = Array.join(Array.map(vals) { |v| key(v) }, ",")
+
+  # The rows split into groups by the values of key_exprs on each row; groups and the rows in
+  # them keep the order they first appear in.
+  def partition(rows, key_exprs)
+    index = Hash[]
+    groups = Array[]
+    Array.each(rows) do |row|
+      k = row_key(Array.map(key_exprs) { |e| Eval.value_of(e, row) })
+      at = index[k]
+      if at == nil
+        index[k] = Array.size(groups)
+        Array.push(groups, Array[row])
+      else
+        Array.push(groups[at], row)
+      end
+    end
+    groups
+  end
+
+  # The result rows without repeats of the same values, keeping the first of each (3.4).
+  def distinct_rows(rows)
+    seen = Set[]
+    out = SortRow[]
+    Array.each(rows) do |r|
+      Array.push(out, r) if Set.add?(seen, row_key(SortRow.values(r))) != nil
+    end
+    out
+  end
+
+  # The same for rows that are plain Arrays of values.
+  def distinct_values(rows)
+    seen = Set[]
+    out = Array[]
+    Array.each(rows) { |r| Array.push(out, r) if Set.add?(seen, row_key(r)) != nil }
+    out
+  end
+
+  # The row_key of each of the rows (Arrays of values), as a Set.
+  def key_set(rows)
+    keys = Set[]
+    Array.each(rows) { |r| Set.add(keys, row_key(r)) }
+    keys
+  end
+end

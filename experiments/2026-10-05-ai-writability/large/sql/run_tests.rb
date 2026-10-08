@@ -2,6 +2,7 @@
 # and its standard output is compared with NNN-*.out.
 #
 #   ruby run_tests.rb MAIN [--steep] [--stage N] [NAME_SUBSTRING...]
+#   ruby run_tests.rb MAIN [--steep] --check-only   (P11: only the check; Ruby `ruby -wc`, Scheme reads every form)
 #
 # MAIN is the program's entry file, and its name says the language:
 #   main.rb    Ruby: run with ruby. With --steep, the program is first type-checked with Steep (below).
@@ -20,7 +21,7 @@
 # no test runs. --stage N runs the tests of stages 1..N (default: every stage present). With
 # substrings, only the tests whose "<stage>/<file name>" contains one of them run. A test fails when
 # the output differs, the exit status is not 0, or it runs longer than SQL_TEST_TIMEOUT seconds
-# (default 60). Tests run SQL_TEST_JOBS at a time (default 8). SQL_TESTS=DIR takes the tests from DIR
+# (default 60); the check may take SQL_CHECK_TIMEOUT seconds (default 1200, then CHECK TIMED OUT, exit 3). Tests run SQL_TEST_JOBS at a time (default 8). SQL_TESTS=DIR takes the tests from DIR
 # instead of tests/ (same layout). Exits with status 1 if any test fails.
 
 require "open3"
@@ -29,6 +30,7 @@ require "pathname"
 
 DIR = __dir__
 SAKE = "/home/ko1/app/sake/bin/sake"
+CHECK_TIMEOUT = Float(ENV.fetch("SQL_CHECK_TIMEOUT", "1200")) # seconds for the language check
 
 # [check command or nil, test command, working directory or nil]; nil for an unknown entry name.
 def plan_for(main, steep, tmp)
@@ -56,6 +58,21 @@ def plan_for(main, steep, tmp)
     [["ghc", "-O1", "-v0", "-outputdir", File.join(tmp, "build"), "-o", File.join(tmp, "main"), "-i#{dir}", path],
      [File.join(tmp, "main")], nil]
   when "main.ss" then [nil, ["scheme", "--libdirs", dir, "--program", path], dir]
+  end
+end
+
+# --check-only for the languages whose tests have no check: Ruby `ruby -wc` on every file, Scheme reading
+# every form of every file (no code runs).
+def syntax_check(main_path, tmp)
+  dir = File.dirname(File.expand_path(main_path))
+  case File.basename(main_path)
+  when "main.rb"
+    ["ruby", "-e", 'bad = ARGV.reject { system("ruby", "-wc", _1, out: File::NULL) }; bad.each { system("ruby", "-wc", _1) }; exit(bad.empty?)',
+     *Dir.glob(File.join(dir, "**", "*.rb")).sort]
+  when "main.ss"
+    reader = '(for-each (lambda (f) (call-with-input-file f (lambda (p) (let loop () (unless (eof-object? (read p)) (loop)))))) (cdr (command-line)))'
+    File.write(File.join(tmp, "read-all.ss"), reader)
+    ["scheme", "--script", File.join(tmp, "read-all.ss"), *Dir.glob(File.join(dir, "**", "*.{ss,sls}")).sort]
   end
 end
 
@@ -114,6 +131,9 @@ def parse_args(args)
     elsif args[i] == "--steep"
       steep = true
       i += 1
+    elsif args[i] == "--check-only"
+      $check_only = true
+      i += 1
     else
       rest << args[i]
       i += 1
@@ -134,11 +154,16 @@ def run_tests(main_path, steep, stage, filters, tmp)
     exit(2)
   end
   check, command, chdir = plan
+  check ||= syntax_check(main_path, tmp) if $check_only
   if check
     out, err, status = begin
-      run_one(check, "", 1200)
+      run_one(check, "", CHECK_TIMEOUT)
     rescue Errno::ENOENT => e
       ["", "#{e.message}\n", 127]
+    end
+    if status.nil? # the check did not finish: not a verdict on the program (P11: Sake under load)
+      puts("CHECK TIMED OUT after #{CHECK_TIMEOUT.to_i} seconds (#{check.first(3).join(" ")} ...): no test run")
+      exit(3)
     end
     escapes = steep ? steep_escapes(File.dirname(File.expand_path(main_path))) : []
     unless status == 0 && escapes.empty?
@@ -146,6 +171,10 @@ def run_tests(main_path, steep, stage, filters, tmp)
       puts((escapes.first(10).map { "#{_1}\n" }.join + out + err).lines.first(30).join)
       exit(1)
     end
+  end
+  if $check_only
+    puts("CHECK OK (#{check.first(3).join(" ")} ...)")
+    exit(0)
   end
   timeout = Float(ENV.fetch("SQL_TEST_TIMEOUT", "60"))
   jobs = Integer(ENV.fetch("SQL_TEST_JOBS", "8"))

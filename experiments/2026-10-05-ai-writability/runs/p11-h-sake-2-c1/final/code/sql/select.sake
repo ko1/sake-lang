@@ -1,0 +1,77 @@
+# Running a query: Planner.plan resolves the statement; execute_select filters the joined rows,
+# groups, computes the window functions and the result columns, removes repeats, sorts, skips and
+# limits; a compound select or a WITH table is run by Compound and Ctes.
+module Select
+  module_function
+
+  # The lines the statement prints.
+  def run(db, stmt)
+    plan = Planner.plan(db, stmt, Scope[])
+    lines = String[]
+    Array.each(execute(plan, Array[])) do |r|
+      Array.push(lines, Array.join(Array.map(SortRow.values(r)) { |v| Values.display(v) }, "|"))
+    end
+    lines
+  end
+
+  # The result rows (SortRow[]) of a plan, in order, after OFFSET and LIMIT. `outer` is the rows of
+  # the enclosing queries (outermost first), for the references of a correlated subquery.
+  def execute(plan, outer)
+    case plan
+    in SelectPlan then execute_select(plan, outer)
+    in CompoundPlan then Compound.execute(plan, outer)
+    in RecursivePlan then Ctes.run_recursive(plan)
+    in WorkPlan then Ctes.work_rows(plan)
+    end
+  end
+
+  def execute_select(plan, outer)
+    envs = WindowRun.attach(SelectPlan.windows(plan), base_rows(plan, outer))
+    out = SortRow[]
+    items = SelectPlan.items(plan)
+    keys = SelectPlan.keys(plan)
+    Array.each(envs) { |row| Array.push(out, result_row(items, keys, row)) }
+    out = Grouping.distinct_rows(out, Array.map(items) { |it| Collations.name_of(ResultCol.expr(it)) }) if SelectPlan.distinct(plan)
+    limit_rows(Sorter.sort(out, SelectPlan.terms(plan)), SelectPlan.offset(plan), SelectPlan.limit(plan))
+  end
+
+  # What the result columns are computed on: the rows that pass WHERE, or, for an aggregate query,
+  # the row of each group that passes HAVING (see Aggregates.group_row).
+  def base_rows(plan, outer)
+    cond = SelectPlan.cond(plan)
+    kept = Env[]
+    Array.each(From.rows(SelectPlan.joins(plan), outer)) do |values|
+      row = Env.new(values, outer)
+      Array.push(kept, row) if cond == nil || Values.truth(Eval.value_of(cond, row)) == 1
+    end
+    return kept unless SelectPlan.aggregate(plan)
+    group_keys = SelectPlan.group_keys(plan)
+    groups = Array.empty?(group_keys) ? Array[kept] : Grouping.partition(kept, group_keys)
+    having = SelectPlan.having(plan)
+    out = Env[]
+    Array.each(groups) do |rows|
+      row = Aggregates.group_row(SelectPlan.calls(plan), rows, SelectPlan.width(plan), outer)
+      Array.push(out, row) if having == nil || Values.truth(Eval.value_of(having, row)) == 1
+    end
+    out
+  end
+
+  # The rows after skipping `offset` of them and keeping `limit` (-1 for either: not given).
+  def limit_rows(rows, offset, limit)
+    rows = Array.drop(rows, offset) if offset > 0
+    rows = Array.take(rows, limit) if limit >= 0
+    rows
+  end
+
+  # One result row with the values of its ORDER BY terms, computed on `row`.
+  def result_row(items, keys, row)
+    vals = Array[]
+    Array.each(items) { |it| Array.push(vals, Eval.value_of(ResultCol.expr(it), row)) }
+    sort_keys = Array[]
+    Array.each(keys) do |k|
+      i = SortKey.item(k)
+      Array.push(sort_keys, i >= 0 ? vals[i] : Eval.value_of(SortKey.expr(k), row))
+    end
+    SortRow.new(sort_keys, vals)
+  end
+end

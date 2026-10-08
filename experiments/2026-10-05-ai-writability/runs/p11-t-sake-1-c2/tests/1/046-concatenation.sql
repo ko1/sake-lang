@@ -1,0 +1,12 @@
+SELECT 'ab' || 'cd';
+SELECT 1 || 2, typeof(1 || 2);
+SELECT 1.5 || '';
+SELECT 1.0 || 'x', 100.0 || '';
+SELECT 1e20 || '', 0.1 + 0.2 || '';
+SELECT 'a' || NULL, NULL || 'b';
+SELECT '' || '';
+SELECT -1 || -2;
+SELECT 'x' || 1 / 2;
+CREATE TABLE t (f TEXT, l TEXT, n INTEGER);
+INSERT INTO t VALUES ('Ada', 'Lovelace', 1), ('Alan', NULL, 2);
+SELECT f || ' ' || l, n || '.' || f FROM t ORDER BY n;

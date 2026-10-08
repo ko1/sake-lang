@@ -1,0 +1,12 @@
+-- other column types reject blobs
+CREATE TABLE t (i INTEGER, r REAL, s TEXT);
+INSERT INTO t (i) VALUES (X'3132');
+INSERT INTO t (r) VALUES (X'312E35');
+INSERT INTO t (s) VALUES (X'41');
+INSERT INTO t VALUES (1, 2.5, 'ok');
+UPDATE t SET s = X'4142';
+SELECT * FROM t;
+CREATE TABLE ids (id INTEGER PRIMARY KEY, b BLOB);
+INSERT INTO ids VALUES (X'31', X'31');
+INSERT INTO ids (b) VALUES (X'31');
+SELECT * FROM ids;

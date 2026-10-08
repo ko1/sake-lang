@@ -1,0 +1,10 @@
+CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, flag INTEGER);
+INSERT INTO items (name, flag) VALUES ('x%1', 0), ('y2', 0), ('z%3', 0);
+UPDATE items SET flag = 1 WHERE name LIKE '%\%%' ESCAPE '\\';
+SELECT id, flag FROM items ORDER BY id;
+UPDATE items SET flag = 1 WHERE name LIKE '%\%%' ESCAPE '\';
+SELECT id, flag FROM items ORDER BY id;
+DELETE FROM items WHERE name LIKE 'y%' ESCAPE '';
+SELECT count(*) FROM items;
+INSERT INTO items (name, flag) VALUES ('w' LIKE 'w' ESCAPE 'ww', 9);
+SELECT count(*) FROM items;

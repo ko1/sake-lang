@@ -1,0 +1,6 @@
+CREATE TABLE acct (id INTEGER);
+INSERT INTO acct VALUES (1), (2);
+ALTER TABLE acct ADD COLUMN salt BLOB DEFAULT X'5A5A';
+ALTER TABLE acct ADD COLUMN pepper BLOB;
+INSERT INTO acct (id) VALUES (3);
+SELECT id, salt, pepper FROM acct ORDER BY id;

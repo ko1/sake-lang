@@ -1,0 +1,24 @@
+-- warehouse stock moves; on-hand quantity per product and bin
+CREATE TABLE products (sku TEXT PRIMARY KEY, name TEXT NOT NULL, weight REAL);
+CREATE TABLE moves (id INTEGER PRIMARY KEY, sku TEXT NOT NULL, bin TEXT, qty INTEGER NOT NULL);
+INSERT INTO products VALUES ('p1', 'bolt', 0.05), ('p2', 'nut', 0.02), ('p3', 'gear', 1.25);
+INSERT INTO moves (sku, bin, qty) VALUES ('p1', 'a', 100), ('p1', 'b', 50), ('p2', 'a', 500), ('p1', 'a', -30);
+INSERT INTO moves (sku, bin, qty) VALUES ('p3', 'c', 4), ('p2', 'a', -120), ('p3', 'c', -1), ('p2', 'b', 60);
+SELECT sku, sum(qty) AS onhand FROM moves GROUP BY sku ORDER BY sku;
+SELECT sku, bin, sum(qty) FROM moves GROUP BY sku, bin ORDER BY sku, bin;
+SELECT bin, count(DISTINCT sku) FROM moves GROUP BY bin ORDER BY bin;
+SELECT sku FROM moves GROUP BY sku HAVING sum(qty) < 10 ORDER BY sku;
+SELECT count(*), sum(CASE WHEN qty < 0 THEN 1 ELSE 0 END) FROM moves;
+SELECT max(weight), min(weight), sum(weight) FROM products;
+INSERT INTO products VALUES ('p1', 'washer', 0.01);
+INSERT INTO products VALUES ('p4', 'spring', 'light');
+SELECT count(*) FROM products;
+SELECT bin, group_concat(sku || ':' || qty, ' ' ORDER BY id) FROM moves GROUP BY bin ORDER BY bin;
+UPDATE moves SET bin = 'a' WHERE bin = 'b';
+SELECT bin, count(*), sum(qty) FROM moves GROUP BY bin ORDER BY bin;
+SELECT DISTINCT bin FROM moves ORDER BY bin;
+SELECT sku, min(qty), max(qty) FROM moves GROUP BY sku ORDER BY max(qty) DESC;
+SELECT sum(qty * 1.0) / count(*) FROM moves WHERE sku = 'p3';
+DELETE FROM moves WHERE qty < 0;
+SELECT sku, sum(qty) FROM moves GROUP BY 1 ORDER BY 2;
+SELECT count(*), group_concat(DISTINCT sku ORDER BY sku) FROM moves;

@@ -1,0 +1,5 @@
+CREATE TABLE r (id INTEGER);
+INSERT INTO r VALUES (1), (2), (3);
+SELECT id, ntile(0) OVER (ORDER BY id) FROM r;
+SELECT id, ntile(-2) OVER (ORDER BY id) FROM r;
+SELECT id, ntile(2) OVER (ORDER BY id) FROM r ORDER BY id;

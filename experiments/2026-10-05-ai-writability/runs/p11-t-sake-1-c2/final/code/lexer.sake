@@ -1,0 +1,76 @@
+# Lexer: turns the whole script into tokens.
+#
+# Token kinds: :kw (text is the upper-cased keyword), :ident (text is the name, quotes removed),
+# :number (val is the Integer or Float), :blob (text is the digits, upper-cased), :str (text is the contents), :punct, and :bad for text
+# that is not SQL (it makes its statement a syntax error). `;` is an ordinary :punct token;
+# Script splits the statements on it. Comments and whitespace produce no tokens.
+
+# val is only used by :number.
+class Token
+  attr_reader kind, text, val
+end
+
+module Lexer
+  module_function
+
+  def keyword_text = "ADD ALL ALTER AND AS ASC BEGIN BETWEEN BY CASE CAST COLUMN COMMIT CREATE CROSS CURRENT DEFAULT DELETE DESC DISTINCT DROP ELSE END EXCEPT EXISTS FIRST FOLLOWING FROM GROUP HAVING IF IN INDEX INNER INSERT INTERSECT INTO IS JOIN KEY LAST LEFT LIKE LIMIT NOT NULL NULLS OFFSET ON OR ORDER OUTER OVER PARTITION PRECEDING PRIMARY RANGE RECURSIVE RENAME ROLLBACK ROW ROWS SELECT SET TABLE THEN TO TRANSACTION UNBOUNDED UNION UNIQUE UPDATE USING VALUES VIEW WHEN WHERE WINDOW WITH"
+
+  def keyword?(upper_word) = Set.include?(keywords, upper_word)
+
+  def keywords = once { Set[*String.split(keyword_text, " ")] }
+
+  def tokenize(src)
+    out = Array[]
+    n = String.size(src)
+    i = 0
+    while i < n
+      i = scan(src, i, out)
+    end
+    out
+  end
+
+  # Skips whitespace and comments, then reads one token (appended to `out`); returns the position
+  # after it. One regexp does both so each token costs a single match; the capture group that
+  # matched says which kind of token it is.
+  def scan(src, i, out)
+    m = String.match(src, token_pattern, i)
+    return String.size(src) if m == nil
+    stop = MatchData.end(m, 0)
+    group = Array.find_index(MatchData.captures(m)) { it != nil }
+    return stop if group == nil
+    text = Array.fetch(MatchData.captures(m), group)
+    return stop if text == nil
+    case group
+    in 0 then Array.push(out, Token.new(:number, text, Value.parse_numeric(text)))
+    in 1 then Array.push(out, blob_token(text))
+    in 2 then Array.push(out, word_token(text))
+    in 3 then Array.push(out, Token.new(:str, unquote(text, "'"), nil))
+    in 4 then Array.push(out, Token.new(:ident, unquote(text, "\""), nil))
+    in 5 then Array.push(out, Token.new(:punct, text, nil))
+    else Array.push(out, Token.new(:bad, "", nil))
+    end
+    stop
+  end
+
+  # Groups, in order: number, blob literal, word, string, quoted identifier, punctuation; then an unterminated
+  # quote (to the end of the input) and any other single character, both :bad.
+  def token_pattern = /\G(?:[ \t\r\n]+|--[^\n]*|\/\*(?:[^*]|\*(?!\/))*(?:\*\/|\z))*(?:((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)|([xX]'[^']*')|([A-Za-z_][A-Za-z0-9_]*)|('(?:[^']|'')*')|("(?:[^"]|"")*")|(\|\||<=|>=|<>|!=|==|[-+*\/%=<>(),;.])|(['"][\s\S]*)|([\s\S]))?/
+
+  # `X'digits'`: a :blob token, or :bad (a syntax error for the statement) unless the digits are whole bytes of hex.
+  def blob_token(text)
+    digits = String.slice(text, 2, String.size(text) - 3)
+    return Token.new(:bad, "", nil) unless Blob.hex_digits?(digits)
+    Token.new(:blob, Value.upper(digits), nil)
+  end
+
+  def word_token(word)
+    up = Value.upper(word)
+    keyword?(up) ? Token.new(:kw, up, nil) : Token.new(:ident, word, nil)
+  end
+
+  # Contents of a quoted piece: quotes removed, doubled quotes made single.
+  def unquote(text, quote)
+    inner = String.slice(text, 1, String.size(text) - 2)
+    String.gsub(inner, quote + quote, quote)
+  end
+end

@@ -1,0 +1,178 @@
+# Evaluates a resolved expression against one row (an Array of values).
+module Evaluator
+  module_function
+
+  def evaluate(e, row)
+    case e
+    in Lit then Lit.value(e)
+    in Col then Array.fetch(row, Col.index(e))
+    in WindowValue then Array.fetch(row, Array.size(row) - 1 - WindowValue.slot(e))
+    in Unary then unary(Unary.op(e), evaluate(Unary.operand(e), row))
+    in Binary then binary(e, row)
+    in Call then Functions.call(Call.fn(e), Array.map(Call.args(e)) { evaluate(it, row) })
+    in Case then case_value(e, row)
+    in Between then between(e, row)
+    in InList then in_list(e, row)
+    in Like then like(e, row)
+    in Cast then Coercion.cast(evaluate(Cast.expr(e), row), Cast.type(e))
+    in ScalarQuery then scalar_query(e, row)
+    in InQuery then in_query(e, row)
+    in ExistsQuery then Array.empty?(subquery_rows(ExistsQuery.plan(e), row)) ? 0 : 1
+    else raise SqlError.new("internal error: unresolved subquery")
+    end
+  end
+
+  # ---- Subqueries: run with the enclosing row's columns as the prefix of their own rows ----
+
+  def subquery_rows(plan, row) = Query.rows(plan, Array.take(row, Plans.base(plan)))
+
+  # The first column of the first row, or NULL.
+  def scalar_query(q, row)
+    rows = subquery_rows(ScalarQuery.plan(q), row)
+    Array.empty?(rows) ? nil : Array.fetch(Array.fetch(rows, 0), 0)
+  end
+
+  # `x IN (select)`: as in_list, but x is compared to each value as `x = v` would be.
+  def in_query(q, row)
+    x = InQuery.expr(q)
+    v = evaluate(x, row)
+    plan = InQuery.plan(q)
+    rows = subquery_rows(plan, row)
+    r = false
+    unless Array.empty?(rows)
+      aff = affinity(x)
+      column_aff = plan_affinity(plan)
+      found = false
+      unknown = v == nil
+      Array.each(rows) do |vals|
+        w = Array.fetch(vals, 0)
+        if w == nil
+          unknown = true
+        elsif v != nil && Coercion.compare(v, aff, w, column_aff) == 0
+          found = true
+        end
+      end
+      r = found ? true : (unknown ? nil : false)
+    end
+    Value.from_truth(InQuery.negated(q) ? Value.not3(r) : r)
+  end
+
+  # The affinity of a subquery's first result column.
+  def plan_affinity(plan) = SourceColumn.aff(Array.fetch(Plans.columns(plan), 0))
+
+  # Does the row pass a (resolved) WHERE condition? nil means there is no WHERE; unknown fails.
+  def passes?(where, row)
+    return true if where == nil
+    Value.truth(evaluate(where, row)) == true
+  end
+
+  # Only the branch taken is evaluated. The simple form compares like `=` (with affinity).
+  def case_value(c, row)
+    operand = Case.operand(c)
+    subject = operand == nil ? nil : evaluate(operand, row)
+    Array.each(Case.whens(c)) do |w|
+      cond = WhenClause.condition(w)
+      v = evaluate(cond, row)
+      hit = operand == nil ? Value.truth(v) == true : comparison("=", subject, affinity(operand), v, affinity(cond)) == 1
+      return evaluate(WhenClause.result(w), row) if hit
+    end
+    otherwise = Case.otherwise_expr(c)
+    otherwise == nil ? nil : evaluate(otherwise, row)
+  end
+
+  # x >= low AND x <= high in three-valued logic, x evaluated once.
+  def between(b, row)
+    x = Between.expr(b)
+    low = Between.low(b)
+    high = Between.high(b)
+    v = evaluate(x, row)
+    lo = evaluate(low, row)
+    hi = evaluate(high, row)
+    ge = Value.truth(comparison(">=", v, affinity(x), lo, affinity(low)))
+    le = Value.truth(comparison("<=", v, affinity(x), hi, affinity(high)))
+    r = Value.and3(ge, le)
+    Value.from_truth(Between.negated(b) ? Value.not3(r) : r)
+  end
+
+  # Each item is converted to the affinity of x (only x's counts), then compared without affinity.
+  def in_list(l, row)
+    x = InList.expr(l)
+    v = evaluate(x, row)
+    aff = affinity(x)
+    found = false
+    unknown = v == nil
+    Array.each(InList.items(l)) do |item|
+      w = evaluate(item, row)
+      if w == nil
+        unknown = true
+      elsif v != nil && Value.compare(v, Coercion.to_affinity(w, aff)) == 0
+        found = true
+      end
+    end
+    r = found ? true : (unknown ? nil : false)
+    Value.from_truth(InList.negated(l) ? Value.not3(r) : r)
+  end
+
+  def like(l, row)
+    v = evaluate(Like.expr(l), row)
+    p = evaluate(Like.pattern(l), row)
+    return nil if v == nil || p == nil
+    r = LikePattern.matches?(Value.text_form(v), Value.text_form(p))
+    Value.from_truth(Like.negated(l) ? !r : r)
+  end
+
+  def unary(op, v)
+    case op
+    in :neg then Value.negate(v)
+    in :pos then v
+    in :not then Value.from_truth(Value.not3(Value.truth(v)))
+    end
+  end
+
+  def binary(e, row)
+    op = Binary.op(e)
+    left = Binary.left(e)
+    right = Binary.right(e)
+    a = evaluate(left, row)
+    b = evaluate(right, row)
+    case op
+    in "AND" then Value.from_truth(Value.and3(Value.truth(a), Value.truth(b)))
+    in "OR" then Value.from_truth(Value.or3(Value.truth(a), Value.truth(b)))
+    in "+" | "-" | "*" | "/" | "%" then Value.arith(op, a, b)
+    in "||" then Value.concat(a, b)
+    in "IS" then identical(a, affinity(left), b, affinity(right)) ? 1 : 0
+    in "IS NOT" then identical(a, affinity(left), b, affinity(right)) ? 0 : 1
+    else comparison(op, a, affinity(left), b, affinity(right))
+    end
+  end
+
+  # The affinity of an expression: its column's type for a column reference, else none.
+  def affinity(e)
+    case e
+    in Col then Col.aff(e)
+    in Cast then Cast.type(e)
+    in ScalarQuery then plan_affinity(ScalarQuery.plan(e))
+    else nil
+    end
+  end
+
+  # `a IS b`: equality that treats two NULLs as equal and NULL against a value as different.
+  def identical(a, aff_a, b, aff_b)
+    return a == nil && b == nil if a == nil || b == nil
+    Coercion.compare(a, aff_a, b, aff_b) == 0
+  end
+
+  def comparison(op, a, aff_a, b, aff_b)
+    return nil if a == nil || b == nil
+    c = Coercion.compare(a, aff_a, b, aff_b)
+    holds = case op
+            in "=" then c == 0
+            in "!=" then c != 0
+            in "<" then c < 0
+            in "<=" then c <= 0
+            in ">" then c > 0
+            in ">=" then c >= 0
+            end
+    holds ? 1 : 0
+  end
+end

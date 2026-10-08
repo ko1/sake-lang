@@ -1,0 +1,34 @@
+# Executes a recursive cte (spec 5.2) with a queue: take the first row, add it to the result, run the
+# recursive select with the work table holding just that row, and queue what it returns.
+module Recursion
+  module_function
+
+  # The cte's rows, in the order they were added to the result.
+  def compute(plan)
+    cell = RecursivePlan.cell(plan)
+    seen = Hash[]
+    queue = Array[]
+    enqueue(queue, seen, Query.compute(RecursivePlan.initial(plan), Array[]), RecursivePlan.distinct(plan))
+    i = 0
+    while i < Array.size(queue)
+      Array.clear(cell)
+      Array.push(cell, Array.fetch(queue, i))
+      i += 1
+      enqueue(queue, seen, Query.compute(RecursivePlan.step(plan), Array[]), RecursivePlan.distinct(plan))
+    end
+    Array.clear(cell)
+    queue
+  end
+
+  # Appends `rows` to the queue; with UNION, not a row equal to one queued before.
+  def enqueue(queue, seen, rows, distinct)
+    Array.each(rows) do |row|
+      if distinct
+        key = Grouping.row_key(row)
+        next if Hash.key?(seen, key)
+        seen[key] = true
+      end
+      Array.push(queue, row)
+    end
+  end
+end

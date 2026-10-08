@@ -1,0 +1,10 @@
+SELECT '10' / '4';
+SELECT '10' / 4.0;
+SELECT '1.5' + 1;
+SELECT '3' * '4', typeof('3' * '4');
+SELECT 'x' * 5;
+SELECT '7 apples' + '3 pears';
+SELECT 'abc' - 1;
+CREATE TABLE t (s TEXT);
+INSERT INTO t VALUES ('12'), ('2.5'), ('n/a');
+SELECT s, s + 1, s * 2 FROM t ORDER BY s;

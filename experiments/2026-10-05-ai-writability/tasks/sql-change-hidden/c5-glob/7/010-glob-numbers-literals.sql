@@ -1,0 +1,4 @@
+SELECT 456 GLOB '4*', 456 GLOB '5*', 456 GLOB '??6', -12 GLOB '-*', -12 GLOB '[0-9]*';
+SELECT 2.5 GLOB '2.5', 2.5 GLOB '2.?', 3.0 GLOB '3', 3.0 GLOB '3.0', 1e20 GLOB '1.0e+20';
+SELECT 'x10' GLOB 'x' || 10, 77 GLOB 77, 7 GLOB 70, 12 GLOB 1 || '*';
+SELECT 3 GLOB 1 + 2, 6 GLOB 2 * 3, '6' GLOB 2 * 3;

@@ -1,0 +1,116 @@
+# The FROM clause (4.1): planning its sources and joins, and producing the joined rows. A joined
+# row is the values of every source's columns, side by side, in FROM order.
+
+# One step of the FROM clause: `source` joins the rows so far by `op` (:first, :cross, :inner,
+# :left) and `cond` (resolved ON / USING condition; nil when none).
+Join = Struct.new(:op, :source, :cond)
+
+module From
+  module_function
+
+  # The joins of a FROM clause, planned for a query whose enclosing queries are `parents`.
+  # `marks` is the query's marker for references to those (see Scope).
+  def plan(db, items, parents, marks)
+    joins = Join[]
+    sources = Source[]
+    offset = 0
+    Array.each(items) do |item|
+      source = make_source(db, item, offset)
+      sources = sources + Source[source]
+      scope = Scope.new(db, sources, AliasEntry[], :plain, AggCall[], parents, 0, marks, Windows.none)
+      cond = nil
+      on = FromItem.on(item)
+      cond = Resolver.resolve(on, scope) if on != nil
+      unless Array.empty?(FromItem.using(item))
+        cond = using_condition(sources, Array.size(sources) - 1, FromItem.using(item))
+        source = hide_using(source, FromItem.using(item))
+        sources = Array.take(sources, Array.size(sources) - 1) + Source[source]
+      end
+      Array.push(joins, Join.new(FromItem.op(item), source, cond))
+      offset += Names.source_width(source)
+    end
+    joins
+  end
+
+  # The sources of the joins, in order.
+  def sources_of(joins) = Array.map(joins) { |j| Join.source(j) }
+
+  # A table, view, WITH table or subquery as a source whose first column is at `offset`. A WITH table
+  # hides a table or view of its name, and a table is looked up before a view.
+  def make_source(db, item, offset)
+    name = Catalog.key(FromItem.alias(item) != "" ? FromItem.alias(item) : FromItem.table(item))
+    query = FromItem.query(item)
+    if query != nil
+      plan = Planner.plan(db, query, Scope[])
+      return Source.new(name, Planner.columns(plan), offset, Integer[], nil, plan)
+    end
+    written = FromItem.table(item)
+    cte = Catalog.find_cte(db, written)
+    return Source.new(name, CteEntry.columns(cte), offset, Integer[], nil, CteEntry.plan(cte)) if cte != nil
+    view = Catalog.find_view(db, written)
+    if view != nil && Catalog.find_table(db, written) == nil
+      plan = Views.plan(db, view)
+      return Source.new(name, Planner.rename_columns(Planner.columns(plan), View.columns(view), View.name(view)), offset, Integer[], nil, plan)
+    end
+    table = Catalog.table!(db, written)
+    Source.new(name, Table.columns(table), offset, Integer[], table, nil)
+  end
+
+  # `A.c = B.c AND ...` for USING (c, ...): A.c is the column of the first earlier source that has c,
+  # B.c the column of the source at `at`.
+  def using_condition(sources, at, names)
+    right = sources[at]
+    cond = nil
+    Array.each(names) do |c|
+      ri = Catalog.column_index(Source.columns(right), c)
+      left = Array.find(Array.take(sources, at)) { |s| Catalog.column_index(Source.columns(s), c) >= 0 }
+      if ri < 0 || left == nil
+        Errors.sql_error("cannot join using column #{c} - column not present in both tables")
+      end
+      eq = Ast.binary(:eq, Names.column_ref(left, Catalog.column_index(Source.columns(left), c)), Names.column_ref(right, ri))
+      cond = cond == nil ? eq : Ast.binary(:and, cond, eq)
+    end
+    cond
+  end
+
+  # The source with its USING columns hidden from `*` and unqualified names.
+  def hide_using(source, names)
+    hidden = Integer[]
+    Array.each(names) { |c| Array.push(hidden, Catalog.column_index(Source.columns(source), c)) }
+    Source.new(Source.name(source), Source.columns(source), Source.offset(source), hidden, Source.table(source), Source.query(source))
+  end
+
+  # The joined rows. `outer` is the rows of the enclosing queries, for ON conditions that reach them.
+  def rows(joins, outer)
+    acc = Array[Array[]]
+    Array.each(joins) do |j|
+      right = source_rows(Join.source(j))
+      width = Names.source_width(Join.source(j))
+      cond = Join.cond(j)
+      next_rows = Array[]
+      Array.each(acc) do |left|
+        matched = false
+        Array.each(right) do |r|
+          row = left + r
+          if cond == nil || Values.truth(Eval.value_of(cond, Env.new(row, outer))) == 1
+            Array.push(next_rows, row)
+            matched = true
+          end
+        end
+        Array.push(next_rows, left + Array.new(width, nil)) if Join.op(j) == :left && !matched
+      end
+      acc = next_rows
+    end
+    acc
+  end
+
+  # The rows of a table, or the result rows of a subquery source (run once per use).
+  def source_rows(source)
+    query = Source.query(source)
+    if query != nil
+      return Array.map(Select.execute(query, Array[])) { |r| SortRow.values(r) }
+    end
+    table = Source.table(source)
+    table == nil ? Array[] : Table.rows(table)
+  end
+end

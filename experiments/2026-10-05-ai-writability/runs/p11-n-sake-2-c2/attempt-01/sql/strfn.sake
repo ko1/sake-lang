@@ -1,0 +1,80 @@
+# The text functions substr, trim, replace and instr (2.4), on texts and integers already read.
+module StrFn
+  module_function
+
+  # substr(text, start[, len]); len is nil when absent (2.4).
+  def substr(text, start, len)
+    l = String.length(text)
+    p, q = span(l, start, len)
+    return "" if q <= 0
+    Text.slice(text, p, q > l ? l : q)
+  end
+
+  # substr of a BLOB (7.10): the same selection, by bytes.
+  def substr_blob(b, start, len)
+    l = Blobs.size(b)
+    p, q = span(l, start, len)
+    return Blob.new("") if q <= 0
+    Blob.new(Text.slice(Blob.hex(b), 2 * p, 2 * (q > l ? l : q)))
+  end
+
+  # [p, q] of substr's rules (2.4): q characters (or bytes) from the 0-based p, for a string of l;
+  # nothing is selected if q <= 0. q may exceed what is left.
+  def span(l, start, len)
+    p = start
+    q = len == nil ? 4611686018427387904 : len
+    if p < 0
+      p += l
+      if p < 0
+        q += p
+        p = 0
+        q = 0 if q < 0
+      end
+    elsif p > 0
+      p -= 1
+    else
+      q -= 1 if q > 0
+    end
+    if q < 0
+      q = -q
+      p -= q
+      if p < 0
+        q += p
+        p = 0
+      end
+    end
+    [p, q]
+  end
+
+  # mode: :both, :left or :right; chars: the characters to remove.
+  def trim(text, chars, mode)
+    cs = String.chars(text)
+    drop = Array.to_set(String.chars(chars))
+    first = 0
+    last = Array.size(cs)
+    first += 1 while mode != :right && first < last && Set.include?(drop, cs[first])
+    last -= 1 while mode != :left && last > first && Set.include?(drop, cs[last - 1])
+    Text.slice(text, first, last - first)
+  end
+
+  # Every non-overlapping occurrence of `from`, left to right, replaced by `to`.
+  def replace(text, from, to)
+    return text if from == ""
+    out = ""
+    pos = 0
+    step = String.length(from)
+    loop do
+      i = String.index(text, from, pos)
+      break if i == nil
+      out = out + Text.slice(text, pos, i - pos) + to
+      pos = i + step
+    end
+    out + Text.slice(text, pos, String.length(text) - pos)
+  end
+
+  # 1-based position of the first occurrence, or 0.
+  def instr(text, part)
+    i = String.index(text, part)
+    i == nil ? 0 : i + 1
+  end
+end

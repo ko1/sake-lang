@@ -1,0 +1,113 @@
+# Collations (7): how two TEXT values compare, and which collation an expression or an operation
+# has. A collation is named by its lower-case name: "binary", "nocase" or "rtrim". In an
+# expression's collation "" means none (not the same as "binary": a column that is BINARY has an
+# implicit collation, which wins over the one of the other operand, see for_compare).
+module Collations
+  module_function
+
+  # The lower-case name of a collation as written; "no such collation sequence" if there is none.
+  def canonical!(name)
+    k = String.downcase(name)
+    return k if k == "binary" || k == "nocase" || k == "rtrim"
+    Errors.sql_error("no such collation sequence: #{name}")
+  end
+
+  # The column with its COLLATE checked and spelled in lower case ("binary" when it has none).
+  def checked_column(c)
+    written = Column.collation(c)
+    Column.new(Column.name(c), Column.type(c), Column.not_null(c), Column.default(c), written == "" ? "binary" : canonical!(written))
+  end
+
+  # --- comparing text ---
+
+  # The text as it is compared under the collation: ASCII letters lower-cased, or trailing spaces cut.
+  def fold(s, coll)
+    case coll
+    in "nocase" then String.tr(s, "A-Z", "a-z")
+    in "rtrim" then cut_spaces(s)
+    else s
+    end
+  end
+
+  def cut_spaces(s)
+    r = s
+    r = String.delete_suffix(r, " ") while String.end_with?(r, " ")
+    r
+  end
+
+  # Values.compare, except that two TEXT values compare under the collation.
+  def compare(a, b, coll)
+    if coll != "binary" && Values.rank(a) == 2 && Values.rank(b) == 2
+      x = fold(Values.text_of(a), coll)
+      y = fold(Values.text_of(b), coll)
+      return x == y ? 0 : (x < y ? -1 : 1)
+    end
+    Values.compare(a, b)
+  end
+
+  # --- the collation of an expression (7.3), on a resolved expression ---
+
+  # The explicit one (an `e COLLATE n`, also seen through +, CAST and parentheses), "" if none.
+  def explicit(e)
+    case Expr.kind(e)
+    in :collate then Expr.text(e)
+    in :pos | :cast then explicit(Expr.args(e)[0])
+    else ""
+    end
+  end
+
+  # The implicit one (a column's), "" if none.
+  def implicit(e)
+    case Expr.kind(e)
+    in :ref then Expr.coll(e)
+    in :pos | :cast then implicit(Expr.args(e)[0])
+    else ""
+    end
+  end
+
+  # Explicit, else implicit, else "" (the expression has no collation).
+  def of(e)
+    c = explicit(e)
+    c != "" ? c : implicit(e)
+  end
+
+  # What a single operand sorts, groups or is compared under.
+  def of_binary(e)
+    c = of(e)
+    c == "" ? "binary" : c
+  end
+
+  # --- which collation an operation uses (7.4) ---
+
+  # `a op b` for a comparison: explicit left, explicit right, implicit left, implicit right, binary.
+  def for_compare(a, b)
+    c = explicit(a)
+    return c if c != ""
+    c = explicit(b)
+    return c if c != ""
+    c = implicit(a)
+    return c if c != ""
+    c = implicit(b)
+    c != "" ? c : "binary"
+  end
+
+  # `x IN (select)`: as x = e, where e is the first result column of the plan as written there.
+  def in_query(x, plan)
+    case plan
+    in SelectPlan
+      e = ResultCol.expr(SelectPlan.items(plan)[0])
+      c = explicit(x)
+      return c if c != ""
+      c = explicit(e)
+      return c if c != ""
+      c = implicit(x)
+      return c if c != ""
+      c = implicit(e)
+      c != "" ? c : "binary"
+    in CompoundPlan
+      c = of(x)
+      c != "" ? c : CompoundPlan.colls(plan)[0]
+    else Errors.syntax
+    end
+  end
+end

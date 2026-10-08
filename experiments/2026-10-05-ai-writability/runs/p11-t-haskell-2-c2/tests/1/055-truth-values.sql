@@ -1,0 +1,16 @@
+SELECT 'yes' WHERE 1;
+SELECT 'no' WHERE 0;
+SELECT 'nonzero' WHERE -3;
+SELECT 'half' WHERE 0.5;
+SELECT 'null' WHERE NULL;
+SELECT 'text 1x' WHERE '1x';
+SELECT 'text abc' WHERE 'abc';
+SELECT 'text 0.0' WHERE '0.0';
+SELECT 'text 0.01' WHERE '0.01';
+SELECT 'text -1' WHERE ' -1';
+SELECT NOT '1x', NOT 'abc', NOT '0.0', NOT 2.5;
+SELECT '2' AND 'a', 'z' OR '0', '1x' AND 5;
+CREATE TABLE f (id INTEGER, flag TEXT);
+INSERT INTO f VALUES (1, 'true'), (2, '1'), (3, '0'), (4, NULL), (5, '7 days');
+SELECT id FROM f WHERE flag ORDER BY id;
+SELECT id FROM f WHERE NOT flag ORDER BY id;

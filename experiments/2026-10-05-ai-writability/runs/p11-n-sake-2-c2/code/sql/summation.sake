@@ -1,0 +1,54 @@
+# The sum behind sum(), total() and avg() (3.2): exact for INTEGERs, compensated for REALs.
+module Summation
+  module_function
+
+  def int_max = 9223372036854775807
+
+  # A non-NULL value as it counts in a sum: numeric text is that number, other text is a REAL, and a
+  # BLOB is always a REAL, read by numeric prefix of its text form (7.8).
+  def number_of(v)
+    case v
+    in String
+      n = NumText.parse_whole(v)
+      n == nil ? Arithmetic.to_f(Values.to_number(v)) : n
+    in Blob then Arithmetic.to_f(Values.to_number(v))
+    else v
+    end
+  end
+
+  def integer?(n)
+    case n
+    in Integer then true
+    else false
+    end
+  end
+
+  # [is_integer, sum] of non-NULL values: an Integer sum if all are INTEGERs, else a Float.
+  def total(vals)
+    nums = Array.map(vals) { |v| number_of(v) }
+    first_real = Array.find_index(nums) { |n| !integer?(n) }
+    if first_real == nil
+      s = Array.sum(nums)
+      Errors.sql_error("integer overflow") if s > int_max || s < -int_max - 1
+      return [true, s]
+    end
+    [false, compensated(nums, first_real)]
+  end
+
+  # Kahan-Babuska summation, starting from the exact sum of the INTEGERs before `from`.
+  def compensated(nums, from)
+    s = Arithmetic.to_f(Array.sum(Array.take(nums, from)))
+    c = 0.0
+    Array.each(Array.drop(nums, from)) do |n|
+      v = Arithmetic.to_f(n)
+      t = s + v
+      if Float.abs(s) > Float.abs(v)
+        c = c + ((s - t) + v)
+      else
+        c = c + ((v - t) + s)
+      end
+      s = t
+    end
+    s + c
+  end
+end

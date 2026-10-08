@@ -1,0 +1,25 @@
+-- scenario: a gradebook built up with INSERT ... SELECT and views
+CREATE TABLE student (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+CREATE TABLE course (code TEXT PRIMARY KEY, title TEXT);
+CREATE TABLE grade (student_id INTEGER, code TEXT, score INTEGER, UNIQUE (student_id, code));
+INSERT INTO student (name) VALUES ('ana'), ('ben'), ('cal'), ('dee');
+INSERT INTO course VALUES ('m1', 'math'), ('p1', 'physics');
+INSERT INTO grade SELECT s.id, 'm1', 60 + s.id * 7 FROM student s;
+INSERT INTO grade SELECT id, 'p1', 95 - id * 10 FROM student WHERE name <> 'dee';
+SELECT count(*) FROM grade;
+INSERT INTO grade SELECT 1, 'm1', 99;
+CREATE VIEW report AS SELECT s.name, c.title, g.score FROM grade g JOIN student s ON s.id = g.student_id JOIN course c ON c.code = g.code;
+SELECT name, title, score FROM report ORDER BY name, title;
+CREATE VIEW average AS SELECT name, avg(score) AS mean FROM report GROUP BY name;
+SELECT name, mean FROM average ORDER BY mean DESC, name;
+SELECT name FROM student EXCEPT SELECT name FROM report WHERE title = 'physics';
+SELECT name FROM report WHERE score >= 80 INTERSECT SELECT name FROM report WHERE title = 'math' ORDER BY name;
+DROP VIEW average;
+DROP VIEW report;
+ALTER TABLE grade RENAME COLUMN score TO points;
+SELECT score FROM grade;
+CREATE VIEW report AS SELECT s.name, g.points FROM grade g JOIN student s ON s.id = g.student_id WHERE g.code = 'p1';
+SELECT name, points FROM report ORDER BY points;
+UPDATE grade SET points = points + 5 WHERE code = 'p1';
+SELECT max(points), min(points) FROM report;
+SELECT name, points FROM report UNION ALL SELECT 'total', sum(points) FROM report ORDER BY 2 DESC LIMIT 2;

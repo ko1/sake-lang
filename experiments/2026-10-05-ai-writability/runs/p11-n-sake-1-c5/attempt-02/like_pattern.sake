@@ -1,0 +1,62 @@
+# LIKE matching (spec 2.3, 7.3): `%` any run of characters, `_` one character, others match ignoring ASCII case.
+# With an escape character, the character after it is an ordinary one.
+module LikePattern
+  module_function
+
+  # escape is nil (no ESCAPE clause) or a one-character String.
+  def matches?(text, pattern, escape)
+    t = String.chars(Value.lower(text))
+    compiled = compile(Value.lower(pattern), escape == nil ? nil : Value.lower(escape))
+    return false if compiled == nil
+    p, ordinary = compiled
+    ti = 0
+    pi = 0
+    star = -1  # where the last `%` is in the pattern; mark is where it started matching in the text
+    mark = 0
+    while ti < Array.size(t)
+      pc = pi < Array.size(p) ? Array.fetch(p, pi) : nil
+      lit = pi < Array.size(p) && Array.fetch(ordinary, pi)
+      if pc == "%" && !lit
+        star = pi
+        mark = ti
+        pi += 1
+      elsif pc != nil && ((pc == "_" && !lit) || pc == Array.fetch(t, ti))
+        ti += 1
+        pi += 1
+      elsif star != -1
+        mark += 1
+        ti = mark
+        pi = star + 1
+      else
+        return false
+      end
+    end
+    while pi < Array.size(p) && Array.fetch(p, pi) == "%" && !Array.fetch(ordinary, pi)
+      pi += 1
+    end
+    pi == Array.size(p)
+  end
+
+  # The pattern's characters with, for each, whether it is ordinary (it came after the escape, so
+  # `%` and `_` in it are not wildcards). nil when a trailing escape makes the pattern match nothing.
+  def compile(pattern, escape)
+    chars = String.chars(pattern)
+    out = String[]
+    ordinary = Array[]
+    i = 0
+    while i < Array.size(chars)
+      c = Array.fetch(chars, i)
+      if escape != nil && c == escape
+        return nil if i + 1 >= Array.size(chars)
+        Array.push(out, Array.fetch(chars, i + 1))
+        Array.push(ordinary, true)
+        i += 2
+      else
+        Array.push(out, c)
+        Array.push(ordinary, false)
+        i += 1
+      end
+    end
+    [out, ordinary]
+  end
+end

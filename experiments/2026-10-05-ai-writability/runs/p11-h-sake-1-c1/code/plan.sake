@@ -1,0 +1,137 @@
+# The planned form of a query: everything resolved, ready for Query to execute.
+# A query plans to a Plan (a simple select), a CompoundPlan or a RecursivePlan; the module Plans
+# answers what they have in common.
+
+# A result column: its resolved expression, its alias (nil if none) and, when the expression
+# contains an aggregate call or a window call, the name of the first one as written (else nil).
+class ResultItem
+  attr_reader expr, alias_name, aggregate_name, window_name
+end
+
+# Where the rows of one FROM source come from.
+class TableSource
+  attr_reader table
+end
+
+# A subquery, view or cte in FROM: its plan (any kind) runs once (it is not correlated).
+class DerivedSource
+  attr_reader plan
+end
+
+# A recursive cte's own name inside its recursive select: the single row held in `cell`.
+class WorkSource
+  attr_reader cell
+end
+
+# One source joined in. left: LEFT JOIN (unmatched rows so far are kept, NULL-extended by `width`
+# columns). condition: resolved ON / USING condition, or nil (every pair). The first step has no condition.
+class JoinStep
+  attr_reader left, source, width, condition
+end
+
+# base:       length of the row prefix taken from the enclosing queries (0 for a statement).
+# width:      number of columns of this query's sources; aggregate values follow them in a group row.
+# joins:      the JoinSteps of FROM (empty without FROM: one row, the prefix alone).
+# items:      the ResultItems.
+# where:      resolved WHERE, or nil.
+# group:      resolved GROUP BY terms (empty: none).
+# aggregates: the Aggregates of the whole query, in the order of their slots.
+# grouped:    is it an aggregate query (3.3)? Then rows become group rows.
+# having:     resolved HAVING, or nil.
+# windows:    the Windows of the result columns and ORDER BY, in the order of their slots (spec 6).
+# distinct:   SELECT DISTINCT?
+# order:      the SortKeys of ORDER BY.
+# limit, offset: Integers, or nil when absent.
+# refs:       not empty when the query reads columns of an enclosing query (it is correlated).
+# cache:      holds the rows of an uncorrelated query once it has run (Query.rows).
+class Plan
+  attr_reader base, width, joins, items, where, group, aggregates, grouped, having, windows, distinct, order, limit, offset, refs, cache
+end
+
+# One step of a compound select: its operator ("UNION", "UNION ALL", "INTERSECT", "EXCEPT") and the plan
+# of the simple select on its right.
+class CompoundStep
+  attr_reader op, plan
+end
+
+# A compound select (spec 5.1): `first` combined with each step, left to right, then ordered and cut.
+# columns: the SourceColumns of the first select. order: SortKeys that all name result positions.
+# colls: the collation of each result column (spec 7.4), used to compare rows and to sort.
+# base / refs / cache: as in Plan (refs gathers those of every part).
+class CompoundPlan
+  attr_reader first, steps, columns, colls, order, limit, offset, base, refs, cache
+end
+
+# A recursive cte (spec 5.2): initial and step are Plans; step reads the work table `cell`.
+# distinct: UNION (not UNION ALL). colls: the collation of each result column, as in CompoundPlan.
+# It reads nothing outside itself, so it is never correlated.
+class RecursivePlan
+  attr_reader initial, step, cell, distinct, columns, colls, cache
+end
+
+# What every kind of plan can tell.
+module Plans
+  module_function
+
+  # The SourceColumns a query gives as a source: named by alias, else by the column when the result
+  # column is a plain column reference (else unnamed), with the affinity of the result expression.
+  def columns(plan)
+    case plan
+    in CompoundPlan then CompoundPlan.columns(plan)
+    in RecursivePlan then RecursivePlan.columns(plan)
+    in Plan
+      Array.map(Plan.items(plan)) do |item|
+        e = ResultItem.expr(item)
+        name = ResultItem.alias_name(item)
+        if name == nil
+          name = (e in Col) ? Col.name(e) : ""
+        end
+        SourceColumn.new(name, Value.lower(name), Evaluator.affinity(e), Collations.single(e))
+      end
+    end
+  end
+
+  # The collation of each result column of any kind of plan.
+  def collations(plan)
+    case plan
+    in CompoundPlan then CompoundPlan.colls(plan)
+    in RecursivePlan then RecursivePlan.colls(plan)
+    in Plan then Array.map(Plan.items(plan)) { Collations.single(ResultItem.expr(it)) }
+    end
+  end
+
+  # The same columns under the names of a column list (names beyond the list keep their own).
+  def renamed(columns, names)
+    return columns if names == nil
+    Array.map(Array.each_with_index(columns)) do |c, i|
+      i < Array.size(names) ? SourceColumn.new(Array.fetch(names, i), Value.lower(Array.fetch(names, i)), SourceColumn.aff(c), SourceColumn.coll(c)) : c
+    end
+  end
+
+  # Length of the row prefix the plan expects (0 for a statement).
+  def base(plan)
+    case plan
+    in CompoundPlan then CompoundPlan.base(plan)
+    in RecursivePlan then 0
+    in Plan then Plan.base(plan)
+    end
+  end
+
+  # Non-empty when the plan reads columns of an enclosing query.
+  def refs(plan)
+    case plan
+    in CompoundPlan then CompoundPlan.refs(plan)
+    in RecursivePlan then Array[]
+    in Plan then Plan.refs(plan)
+    end
+  end
+
+  # Where Query.rows keeps the rows of a plan that is not correlated.
+  def cache(plan)
+    case plan
+    in CompoundPlan then CompoundPlan.cache(plan)
+    in RecursivePlan then RecursivePlan.cache(plan)
+    in Plan then Plan.cache(plan)
+    end
+  end
+end

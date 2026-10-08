@@ -1,0 +1,126 @@
+# Collating sequences (spec 7): how two TEXT values compare, and which collation an expression has.
+# A collation is a lower-case name: "binary", "nocase" or "rtrim". An expression's collation is
+# explicit (`e COLLATE n`), implicit (a column) or none (nil); see spec 7.3 and 7.4.
+module Collations
+  module_function
+
+  # The collation a written name stands for (case-insensitive), or SqlError.
+  def canonical(name)
+    key = Value.lower(name)
+    case key
+    in "binary" | "nocase" | "rtrim" then key
+    else raise SqlError.new("no such collation sequence: #{name}")
+    end
+  end
+
+  # `own` (a canonical name a term wrote, or nil) if there is one, else `coll`.
+  def written_or(own, coll)
+    return coll if own == nil
+    own
+  end
+
+  # `written` (a name as written, or nil) as a collation, else `coll`.
+  def named_or(written, coll)
+    return coll if written == nil
+    canonical(written)
+  end
+
+  # `written` (a name as written, or nil) as a collation; a column without COLLATE is "binary".
+  def canonical_or_binary(written)
+    return "binary" if written == nil
+    canonical(written)
+  end
+
+  # `s` as it compares under `coll`: two TEXTs are equal under `coll` exactly when their folds are.
+  def fold(s, coll)
+    case coll
+    in "nocase" then Value.lower(s)
+    in "rtrim" then String.sub(s, /[ ]+\z/, "")
+    else s
+    end
+  end
+
+  # -1, 0 or 1 as Value.compare, except that two TEXTs compare under `coll`.
+  def compare(a, b, coll)
+    case a
+    in String
+      case b
+      in String then Value.compare(fold(a, coll), fold(b, coll))
+      else Value.compare(a, b)
+      end
+    else Value.compare(a, b)
+    end
+  end
+
+  # ---- The collation of a resolved expression (spec 7.3) ----
+
+  # The explicit collation (`e COLLATE n`, also through `+e` and CAST), or nil.
+  def explicit(e)
+    case e
+    in Collate then Collate.name(e)
+    in Unary then Unary.op(e) == :pos ? explicit(Unary.operand(e)) : nil
+    in Cast then explicit(Cast.expr(e))
+    else nil
+    end
+  end
+
+  # The implicit collation (a column's, also through `+e` and CAST), or nil.
+  def implicit(e)
+    case e
+    in Col then Col.coll(e)
+    in Unary then Unary.op(e) == :pos ? implicit(Unary.operand(e)) : nil
+    in Cast then implicit(Cast.expr(e))
+    else nil
+    end
+  end
+
+  # The collation of an expression, explicit before implicit; nil if it has none.
+  def of(e)
+    x = explicit(e)
+    return x if x != nil
+    implicit(e)
+  end
+
+  # The collation the values of one expression are compared under among themselves (spec 7.4).
+  def single(e)
+    x = of(e)
+    return "binary" if x == nil
+    x
+  end
+
+  # The collation of the comparison `a op b`: an explicit one (a first), then an implicit one (a first).
+  def pick(a, b)
+    x = explicit(a)
+    return x if x != nil
+    x = explicit(b)
+    return x if x != nil
+    x = implicit(a)
+    return x if x != nil
+    single(b)
+  end
+
+  # The collation of `x = e` where e is the first result column of `plan` (x IN (select)).
+  def pick_plan(x, plan)
+    case plan
+    in Plan then pick(x, ResultItem.expr(Array.fetch(Plan.items(plan), 0)))
+    else
+      x_coll = of(x)
+      return x_coll if x_coll != nil
+      Array.fetch(Plans.collations(plan), 0)
+    end
+  end
+
+  # The collations of the result columns of a compound select made of `plans` (left to right): for
+  # each column, that of the first plan whose column has one, else "binary" (spec 7.4).
+  def of_compound(plans)
+    first = Array.fetch(plans, 0)
+    Array.new(Array.size(Plan.items(first))) do |k|
+      found = nil
+      Array.each(plans) do |plan|
+        c = of(ResultItem.expr(Array.fetch(Plan.items(plan), k)))
+        found = c if found == nil
+      end
+      found == nil ? "binary" : found
+    end
+  end
+end

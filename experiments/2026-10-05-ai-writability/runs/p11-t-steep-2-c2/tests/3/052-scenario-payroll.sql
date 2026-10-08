@@ -1,0 +1,22 @@
+-- payroll: departments, salaries, raises
+CREATE TABLE emp (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept TEXT, salary INTEGER, bonus REAL);
+INSERT INTO emp (name, dept, salary, bonus) VALUES ('ana', 'eng', 5000, 0.5), ('bo', 'eng', 6200, NULL);
+INSERT INTO emp (name, dept, salary, bonus) VALUES ('cid', 'ops', 3900, 0.25), ('dan', 'ops', 4100, 0.25), ('eve', NULL, 3000, NULL);
+SELECT dept, count(*), sum(salary) FROM emp GROUP BY dept ORDER BY dept;
+SELECT dept, avg(salary) FROM emp WHERE dept IS NOT NULL GROUP BY dept ORDER BY avg(salary) DESC;
+SELECT sum(bonus), count(bonus), avg(bonus) FROM emp;
+SELECT dept, name, max(salary) FROM emp GROUP BY dept ORDER BY dept NULLS LAST;
+UPDATE emp SET salary = salary + 300 WHERE dept = 'ops';
+SELECT dept, min(salary), max(salary) FROM emp GROUP BY dept HAVING count(*) > 1 ORDER BY dept;
+UPDATE emp SET salary = 'lots' WHERE name = 'bo';
+UPDATE emp SET dept = 'eng' WHERE dept IS NULL;
+SELECT dept, group_concat(name, '+' ORDER BY name) FROM emp GROUP BY dept ORDER BY dept;
+SELECT sum(salary * (1 + coalesce(bonus, 0))) FROM emp;
+SELECT dept, sum(salary) AS cost FROM emp GROUP BY dept HAVING cost > 9000 ORDER BY cost;
+SELECT count(*) FROM emp WHERE salary > (6200);
+SELECT DISTINCT bonus FROM emp ORDER BY bonus;
+DELETE FROM emp WHERE bonus IS NULL;
+SELECT count(*), total(bonus), group_concat(DISTINCT dept ORDER BY dept) FROM emp;
+SELECT CASE WHEN salary >= 4000 THEN 'high' ELSE 'low' END AS band, count(*) FROM emp GROUP BY band ORDER BY band;
+SELECT dept FROM emp GROUP BY dept HAVING sum(salary) > 1000000;
+SELECT 'done', count(*) FROM emp;

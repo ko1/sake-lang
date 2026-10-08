@@ -1,0 +1,27 @@
+-- monthly budget with categories and expenses
+CREATE TABLE cats (name TEXT PRIMARY KEY, monthly REAL NOT NULL DEFAULT 100, essential INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE spend (id INTEGER PRIMARY KEY, cat TEXT NOT NULL, day INTEGER NOT NULL, amount REAL NOT NULL, memo TEXT);
+INSERT INTO cats VALUES ('rent', 900, 1), ('food', 300, 1);
+INSERT INTO cats (name) VALUES ('fun'), ('books');
+INSERT INTO cats (name, monthly) VALUES ('fun', 50);
+INSERT INTO cats (name, essential) VALUES ('travel', NULL);
+INSERT INTO cats (name, monthly) VALUES ('gifts', 'some');
+SELECT name, monthly, essential FROM cats ORDER BY name;
+INSERT INTO spend (cat, day, amount, memo) VALUES ('rent', 1, 900, NULL), ('food', 3, 42.5, 'market'), ('food', 9, 61.25, 'Market'), ('fun', 12, 18, 'cinema');
+INSERT INTO spend (cat, day, amount) VALUES ('books', 14, '23.90'), ('food', 15.5, 10);
+INSERT INTO spend (cat, day, amount) VALUES ('books', 14, '23.90');
+INSERT INTO spend (cat, day, amount) VALUES ('fun', 20, NULL);
+SELECT id, cat, day, amount, coalesce(memo, '') FROM spend ORDER BY id;
+SELECT id, amount FROM spend WHERE memo LIKE 'market' ORDER BY id;
+SELECT id, CASE cat WHEN 'rent' THEN 'fixed' WHEN 'food' THEN 'variable' ELSE 'optional' END FROM spend ORDER BY id;
+UPDATE spend SET amount = round(amount * 1.1, 2) WHERE cat IN ('food', 'fun') AND day BETWEEN 1 AND 10;
+SELECT id, amount FROM spend ORDER BY amount DESC;
+UPDATE cats SET monthly = monthly - 25 WHERE essential = 0;
+UPDATE cats SET name = 'food' WHERE name = 'fun';
+SELECT name, monthly, max(monthly, 80), min(monthly, 80) FROM cats ORDER BY name;
+UPDATE spend SET memo = upper(substr(memo, 1, 1)) || lower(substr(memo, 2)) WHERE memo IS NOT NULL;
+SELECT id, memo FROM spend WHERE memo IS NOT NULL ORDER BY id;
+DELETE FROM spend WHERE cat NOT IN ('rent', 'food');
+INSERT INTO spend (cat, day, amount, memo) VALUES ('fun', 28, 12, 'arcade');
+SELECT id, cat, day, amount FROM spend ORDER BY id;
+SELECT id, CAST(amount AS INTEGER), CAST(amount AS TEXT) || ' EUR' FROM spend ORDER BY id;

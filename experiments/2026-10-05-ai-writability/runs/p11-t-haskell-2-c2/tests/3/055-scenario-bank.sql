@@ -1,0 +1,26 @@
+-- bank transactions: balances per account, monthly flows
+CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT NOT NULL UNIQUE, kind TEXT DEFAULT 'checking');
+CREATE TABLE tx (id INTEGER PRIMARY KEY, account INTEGER NOT NULL, day INTEGER, amount INTEGER NOT NULL);
+INSERT INTO accounts (owner) VALUES ('ruth'), ('sam');
+INSERT INTO accounts (owner, kind) VALUES ('tia', 'savings');
+INSERT INTO tx (account, day, amount) VALUES (1, 1, 500), (1, 3, -120), (2, 1, 80), (1, 9, -40);
+INSERT INTO tx (account, day, amount) VALUES (3, 2, 1000), (2, 5, -100), (3, 30, 15), (2, 7, 300);
+SELECT account, sum(amount) AS balance FROM tx GROUP BY account ORDER BY account;
+SELECT account FROM tx GROUP BY account HAVING min(amount) < -100 ORDER BY account;
+SELECT kind, count(*) FROM accounts GROUP BY kind ORDER BY kind;
+SELECT sum(CASE WHEN amount > 0 THEN amount ELSE 0 END), sum(CASE WHEN amount < 0 THEN -amount ELSE 0 END) FROM tx;
+SELECT day / 7 AS week, count(*), sum(amount) FROM tx GROUP BY week ORDER BY week;
+SELECT account, count(*), max(day) FROM tx GROUP BY account ORDER BY count(*) DESC, account;
+INSERT INTO tx (account, day, amount) VALUES (2, 8, 1.5);
+INSERT INTO tx (account, day, amount) VALUES (2, 8, NULL);
+SELECT count(*) FROM tx;
+SELECT account, amount, day FROM tx WHERE amount < 0 ORDER BY amount;
+SELECT account, min(amount), day FROM tx GROUP BY account ORDER BY account;
+UPDATE tx SET amount = amount * 2 WHERE account = 3;
+SELECT sum(amount), avg(amount) FROM tx WHERE account = 3;
+SELECT account, group_concat(amount, ' ' ORDER BY day) FROM tx GROUP BY account ORDER BY account;
+UPDATE accounts SET owner = 'sam' WHERE id = 3;
+SELECT group_concat(owner, '&' ORDER BY id DESC) FROM accounts;
+DELETE FROM tx WHERE day > 6;
+SELECT account, sum(amount) FROM tx GROUP BY account ORDER BY account;
+SELECT count(DISTINCT account), total(amount) FROM tx;

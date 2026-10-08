@@ -1,0 +1,79 @@
+# Text scalar functions (spec 2.4, 7.6): substr, trim / ltrim / rtrim, replace, instr.
+# Arguments are non-NULL values; `text` is always a value's text form.
+module TextFunctions
+  module_function
+
+  # An "infinite" length for substr without a third argument.
+  def unbounded = 4611686018427387904
+
+  # The 0-based start and the length of the part that substr selects from a value of length `l`.
+  def substr_span(l, start, len)
+    p = start
+    q = len
+    if p < 0
+      p += l
+      if p < 0
+        q += p
+        p = 0
+        q = 0 if q < 0
+      end
+    elsif p > 0
+      p -= 1
+    elsif q > 0
+      q -= 1
+    end
+    if q < 0
+      q = -q
+      p -= q
+      if p < 0
+        q += p
+        p = 0
+      end
+    end
+    first = p
+    last = Integer.clamp(p + q, 0, l)
+    return [0, 0] if q <= 0 || first >= last
+    [first, last - first]
+  end
+
+  def substr(text, start, len)
+    first, count = substr_span(String.size(text), start, len)
+    String.slice(text, first, count)
+  end
+
+  # substr on the bytes of a BLOB; a BLOB comes back.
+  def substr_blob(b, start, len)
+    first, count = substr_span(Blob.size(b), start, len)
+    Blob.new(String.slice(Blob.hex(b), 2 * first, 2 * count))
+  end
+
+  # Removes the characters of `chars` from the left and/or the right end of `text`.
+  def trim(text, chars, left, right)
+    cs = String.chars(text)
+    set = String.chars(chars)
+    from = 0
+    to = Array.size(cs)
+    from += 1 while left && from < to && Array.include?(set, Array.fetch(cs, from))
+    to -= 1 while right && to > from && Array.include?(set, Array.fetch(cs, to - 1))
+    String.slice(text, from, to - from)
+  end
+
+  def replace(text, from, to)
+    return text if from == ""
+    String.gsub(text, from) { to }
+  end
+
+  # The 1-based byte position of the first occurrence of the bytes of `target` in `b`, or 0.
+  def instr_blob(b, target)
+    hex = Blob.hex(b)
+    want = Blob.hex(target)
+    i = String.index(hex, want)
+    i = String.index(hex, want, i + 1) while i != nil && i % 2 == 1
+    i == nil ? 0 : i / 2 + 1
+  end
+
+  def instr(text, target)
+    i = String.index(text, target)
+    i == nil ? 0 : i + 1
+  end
+end

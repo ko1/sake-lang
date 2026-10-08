@@ -1,0 +1,22 @@
+-- Orders in a small web shop.
+CREATE TABLE orders (id INTEGER, customer TEXT, item TEXT, qty INTEGER, unit REAL);
+INSERT INTO orders VALUES (101, 'kim', 'mug', 2, 7.5), (102, 'lee', 'pen', 10, 0.8);
+INSERT INTO orders VALUES (103, 'kim', 'pad', 3, 2.25), (104, 'max', 'mug', 1, 7.5);
+INSERT INTO orders VALUES (105, 'lee', 'ink', 0, 12), (106, 'nia', 'pen', 5, NULL);
+INSERT INTO orders VALUES (107, 'max', 'pad', 1, 'free');
+INSERT INTO orders (id, customer, item, qty, unit) VALUES (107, 'max', 'pad');
+SELECT id, customer, qty * unit AS total FROM orders ORDER BY id;
+SELECT id, total FROM orders WHERE total > 10;
+SELECT id, qty * unit AS total FROM orders WHERE total > 10 ORDER BY total DESC;
+SELECT customer, item FROM orders WHERE item = 'mug' ORDER BY customer;
+SELECT id FROM orders WHERE qty = 0 OR unit IS NULL ORDER BY id;
+SELECT id, qty * unit FROM orders ORDER BY 2 NULLS FIRST, 1;
+SELECT DISTINCT_customer FROM orders;
+SELECT customer || ':' || item FROM orders WHERE qty >= 3 ORDER BY qty;
+SELECT id, round_up(unit) FROM orders;
+SELECT id, unit FROM orders WHERE unit >= '7.5' ORDER BY id;
+SELECT id, ifnull(unit, 0) * qty FROM orders WHERE customer = 'nia';
+SELECT upper(item), qty FROM orders ORDER BY qty DESC, item LIMIT 3;
+SELECT id FROM orders ORDER BY customer DESC, id LIMIT 2 OFFSET 2;
+SELECT id, typeof(unit) FROM orders WHERE id > 104 ORDER BY id;
+SELECT id, -qty FROM orders WHERE customer = 'lee' ORDER BY -qty;

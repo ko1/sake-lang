@@ -1,0 +1,23 @@
+-- scenario: merging event logs from two sources
+CREATE TABLE web (ts INTEGER, user TEXT, action TEXT);
+CREATE TABLE app (ts INTEGER, user TEXT, action TEXT);
+INSERT INTO web VALUES (1, 'u1', 'login'), (2, 'u1', 'view'), (3, 'u2', 'login'), (5, 'u1', 'logout');
+INSERT INTO app VALUES (2, 'u1', 'view'), (4, 'u3', 'login'), (6, 'u2', 'buy'), (7, 'u3', 'buy');
+CREATE VIEW allev AS SELECT ts, user, action FROM web UNION SELECT ts, user, action FROM app;
+SELECT ts, user, action FROM allev ORDER BY ts, user;
+SELECT count(*) FROM allev;
+SELECT count(*) FROM (SELECT ts, user, action FROM web UNION ALL SELECT ts, user, action FROM app);
+SELECT user FROM web INTERSECT SELECT user FROM app ORDER BY user;
+SELECT user FROM app EXCEPT SELECT user FROM web;
+SELECT action, count(*) FROM allev GROUP BY action ORDER BY count(*) DESC, action;
+CREATE TABLE buyers (user TEXT PRIMARY KEY, first_buy INTEGER);
+INSERT INTO buyers SELECT user, min(ts) FROM allev WHERE action = 'buy' GROUP BY user;
+SELECT user, first_buy FROM buyers ORDER BY first_buy;
+INSERT INTO buyers SELECT user, 9 FROM app WHERE action = 'login';
+INSERT INTO buyers SELECT user, 9 FROM app WHERE ts = 2;
+WITH firsts AS (SELECT user, min(ts) AS t0 FROM allev GROUP BY user) SELECT f.user, f.t0, b.first_buy - f.t0 FROM firsts f LEFT JOIN buyers b ON b.user = f.user ORDER BY f.user;
+SELECT ts, action FROM allev WHERE user = 'u1' ORDER BY ts DESC LIMIT 2 OFFSET 1;
+SELECT ts FROM web UNION SELECT ts FROM app ORDER BY ts DESC LIMIT 3;
+DELETE FROM allev WHERE ts = 1;
+DROP VIEW allev;
+SELECT count(*) FROM allev;

@@ -1,0 +1,145 @@
+# Name resolution: checks every name of an expression before any row is read, and turns column
+# names (:col) into row positions (:ref) and function names into lower case. An aggregate call
+# becomes a :ref to a slot after the joined row's columns, so an aggregate query evaluates its
+# expressions on "the group's row followed by one value per aggregate" (see Aggregates.group_row).
+# A subquery in an expression is planned here (Select.plan), so its errors come before any row.
+# What names refer to is in scope.sake.
+
+module Resolver
+  module_function
+
+  # The scope of an expression that sees no columns (INSERT values, LIMIT).
+  def constant_scope(db) = table_scope(db, "", Column[], nil)
+
+  # The scope of UPDATE and DELETE: the target table is a source, named by its table name. `table`
+  # is that Table (its rows end with the rowid), nil when there is no source.
+  def table_scope(db, name, columns, table)
+    sources = Source[]
+    Array.push(sources, Source.new(Catalog.key(name), columns, 0, Integer[], table, nil)) if name != ""
+    Scope.new(db, sources, AliasEntry[], :plain, AggCall[], Scope[], Array.size(columns) + (table == nil ? 0 : 1), Array[], Windows.none)
+  end
+
+  # The same query's names with other aliases and another meaning for aggregate calls.
+  def with_mode(scope, aliases, mode, calls)
+    Scope.new(Scope.db(scope), Scope.sources(scope), aliases, mode, calls, Scope.parents(scope), Scope.width(scope), Scope.marks(scope), Scope.windows(scope))
+  end
+
+  # The same query's names where window calls are (or are not) allowed.
+  def with_windows(scope, allowed)
+    sink = Scope.windows(scope)
+    Scope.new(Scope.db(scope), Scope.sources(scope), Scope.aliases(scope), Scope.mode(scope), Scope.calls(scope), Scope.parents(scope),
+              Scope.width(scope), Scope.marks(scope), WindowSink.new(allowed, WindowSink.calls(sink), WindowSink.named(sink)))
+  end
+
+  def resolve(e, scope)
+    case Expr.kind(e)
+    in :lit then e
+    in :col then Names.column(scope, Expr.qual(e), Expr.text(e))
+    in :call then resolve_call(e, scope)
+    in :wcall then Windows.resolve_call(e, scope)
+    in :scalar_sub then resolve_scalar(e, scope, false)
+    in :exists then Ast.with_plan(e, plan_subquery(e, scope), :none)
+    in :in_sub then resolve_in_sub(e, scope)
+    in :eq | :ne | :lt | :le | :gt | :ge then resolve_operands(e, scope, true)
+    in :is | :isnot then resolve_operands(e, scope, !null_literal?(Expr.args(e)[0]) && !null_literal?(Expr.args(e)[1]))
+    in :between then resolve_operands(e, scope, true)
+    in :case_simple then resolve_case_simple(e, scope)
+    else Ast.with_args(e, resolve_all(Expr.args(e), scope))
+    end
+  end
+
+  def resolve_all(exprs, scope)
+    out = Expr[]
+    Array.each(exprs) { |a| Array.push(out, resolve(a, scope)) }
+    out
+  end
+
+  def null_literal?(e) = Expr.kind(e) == :lit && Expr.value(e) == nil
+
+  # The operands of a comparison or BETWEEN: a scalar subquery there may be a row value (4.3).
+  def resolve_operands(e, scope, row_ok)
+    out = Expr[]
+    Array.each(Expr.args(e)) { |a| Array.push(out, Expr.kind(a) == :scalar_sub ? resolve_scalar(a, scope, row_ok) : resolve(a, scope)) }
+    Ast.with_args(e, out)
+  end
+
+  # CASE x WHEN ...: the x may be a row value too.
+  def resolve_case_simple(e, scope)
+    args = Expr.args(e)
+    out = Expr[]
+    Array.push(out, Expr.kind(args[0]) == :scalar_sub ? resolve_scalar(args[0], scope, true) : resolve(args[0], scope))
+    Array.each(Array.drop(args, 1)) { |a| Array.push(out, resolve(a, scope)) }
+    Ast.with_args(e, out)
+  end
+
+  # The plan of the subquery of a :scalar_sub, :exists or :in_sub node.
+  def plan_subquery(e, scope)
+    stmt = Expr.value(e)
+    case stmt
+    in SelectStmt | CompoundStmt | WithStmt then Planner.plan(Scope.db(scope), stmt, Scope[scope] + Scope.parents(scope))
+    else Errors.syntax
+    end
+  end
+
+  # row_ok: the subquery is a direct operand of a comparison, so several columns are "row value misused".
+  def resolve_scalar(e, scope, row_ok)
+    plan = plan_subquery(e, scope)
+    n = Planner.width(plan)
+    Errors.sql_error(row_ok ? "row value misused" : "sub-select returns #{n} columns - expected 1") if n != 1
+    Ast.with_plan(e, plan, result_affinity(plan))
+  end
+
+  def resolve_in_sub(e, scope)
+    plan = plan_subquery(e, scope)
+    n = Planner.width(plan)
+    Errors.sql_error("sub-select returns #{n} columns - expected 1") if n != 1
+    Ast.with_plan(Ast.with_args(e, resolve_all(Expr.args(e), scope)), plan, result_affinity(plan))
+  end
+
+  # The affinity of a plan's first result column: its column's if that is a plain column reference.
+  def result_affinity(plan) = Column.type(Planner.columns(plan)[0])
+
+  def resolve_call(e, scope)
+    name = Catalog.key(Expr.text(e))
+    star = Expr.qual(e) == "*"
+    n = Array.size(Expr.args(e))
+    kind = Aggregates.classify(name, n, star)
+    Errors.sql_error("wrong number of arguments to function #{Expr.text(e)}()") if kind == :bad_arity
+    return resolve_aggregate(e, name, star, scope) if kind == :aggregate
+    Errors.sql_error("misuse of window function #{Expr.text(e)}()") if Windows.window_only?(name)
+    Errors.syntax if star || Expr.distinct(e) || !Array.empty?(Expr.order(e))
+    range = Functions.arity(name)
+    Errors.sql_error("no such function: #{Expr.text(e)}") if range == nil
+    lo, hi = range
+    Errors.sql_error("wrong number of arguments to function #{Expr.text(e)}()") if n < lo || n > hi
+    Ast.node(:call, name, "", nil, 0, resolve_all(Expr.args(e), scope), :none)
+  end
+
+  # An aggregate call: registered in the scope's calls (once per distinct call), and replaced by
+  # the :ref to its slot.
+  def resolve_aggregate(e, name, star, scope)
+    written = Expr.text(e)
+    case Scope.mode(scope)
+    in :collect then nil
+    in :group_by then Errors.sql_error("aggregate functions are not allowed in the GROUP BY clause")
+    in :order then Errors.sql_error("misuse of aggregate: #{written}()")
+    else Errors.sql_error("misuse of aggregate function #{written}()")
+    end
+    if Expr.distinct(e) && name == "group_concat" && Array.size(Expr.args(e)) > 1
+      Errors.sql_error("DISTINCT aggregates must have exactly one argument")
+    end
+    inner = with_windows(with_mode(scope, Scope.aliases(scope), :plain, AggCall[]), false)
+    order = OrderTerm[]
+    Array.each(Expr.order(e)) do |t|
+      Array.push(order, OrderTerm.new(resolve(OrderTerm.expr(t), inner), false, 0, OrderTerm.desc(t), OrderTerm.nulls(t)))
+    end
+    call = AggCall.new(name, star, Expr.distinct(e), resolve_all(Expr.args(e), inner), order)
+    calls = Scope.calls(scope)
+    slot = Array.index(calls, call) || -1
+    if slot < 0
+      slot = Array.size(calls)
+      Array.push(calls, call)
+    end
+    Ast.ref(Scope.width(scope) + slot, :none, "", 0)
+  end
+end

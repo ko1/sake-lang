@@ -1,0 +1,25 @@
+-- A small library catalogue.
+CREATE TABLE books (id INTEGER, title TEXT, author TEXT, year INTEGER, price REAL);
+INSERT INTO books VALUES (1, 'Dune', 'Herbert', 1965, 9.99);
+INSERT INTO books VALUES (2, 'Emma', 'Austen', 1815, 4.5);
+INSERT INTO books VALUES (3, 'Ulysses', 'Joyce', 1922, 12);
+INSERT INTO books (id, title, author) VALUES (4, 'Notes', 'Anon');
+INSERT INTO books VALUES (5, 'Persuasion', 'Austen', '1817', '6.25');
+INSERT INTO books VALUES (6, 'Bad Year', 'Nobody', 'nineteen', 1.0);
+INSERT INTO books VALUES (6, 'Bad Price', 'Nobody', 2000, 'cheap');
+SELECT id, title FROM books ORDER BY id;
+SELECT title, year FROM books WHERE author = 'Austen' ORDER BY year;
+SELECT title FROM books WHERE year IS NULL;
+SELECT title, price FROM books WHERE price > 5 ORDER BY price DESC;
+SELECT title, 2024 - year AS age FROM books WHERE age > 100 ORDER BY age;
+SELECT upper(author) || ': ' || title AS label FROM books ORDER BY label;
+SELECT title FROM books ORDER BY year NULLS FIRST, title;
+SELECT title, price * 1.1 FROM books WHERE id = 2;
+SELECT title, typeof(year), typeof(price) FROM books WHERE id = 5;
+SELECT title FROM books ORDER BY length(title) DESC, title LIMIT 2;
+SELECT isbn FROM books;
+SELECT title FROM books ORDER BY title, 2;
+SELECT id, coalesce(price, 0.0) FROM books WHERE year IS NULL OR price < 5 ORDER BY id;
+CREATE TABLE books (id INTEGER);
+DROP TABLE books;
+SELECT * FROM books;

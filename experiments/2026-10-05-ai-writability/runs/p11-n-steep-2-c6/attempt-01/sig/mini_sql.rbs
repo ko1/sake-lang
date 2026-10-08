@@ -1,0 +1,1229 @@
+type sql_value = Integer | Float | String | nil
+type number = Integer | Float
+type affinity = :integer | :real | :text
+type refusal = :where | :group_by | :order_by
+type transaction_kind = :begin | :commit | :rollback
+
+module MiniSql
+  class SqlError < StandardError
+  end
+
+  module Value
+    BLANKS: String
+    NUMBER_BODY: String
+    WHOLE_NUMBER: Regexp
+    NUMBER_PREFIX: Regexp
+    INTEGER_PREFIX: Regexp
+    INT64_MIN: Integer
+    INT64_MAX: Integer
+
+    def self.type_name: (sql_value value) -> String
+    def self.format_real: (Float real) -> String
+    def self.text_form: (sql_value value) -> String
+    def self.render: (sql_value value) -> String
+    def self.number_from: (String literal) -> number
+    def self.parse_number: (String text) -> number?
+    def self.numeric_prefix: (String text) -> number
+    def self.to_number: (sql_value value) -> number
+    def self.to_integer: (sql_value value) -> Integer
+    def self.truth: (sql_value value) -> bool?
+    def self.from_truth: (bool? truth) -> Integer?
+    def self.rank: (sql_value value) -> Integer
+    def self.compare: (sql_value left, sql_value right) -> Integer
+    def self.group_key: (sql_value value) -> sql_value
+    def self.whole_in_int64?: (Float real) -> bool
+  end
+
+  class Token
+    attr_reader kind: Symbol
+    attr_reader text: String
+
+    def initialize: (Symbol kind, String text) -> void
+    def keyword?: (String word) -> bool
+    def symbol?: (String text) -> bool
+  end
+
+  module Lexer
+    KEYWORDS: Array[String]
+    SKIP: Regexp
+    WORD: Regexp
+    NUMBER: Regexp
+    STRING: Regexp
+    QUOTED: Regexp
+    OPERATOR: Regexp
+
+    def self.statements: (String source) -> Array[Array[Token]]
+    def self.token_at: (String source, Integer position) -> [Token, Integer]
+  end
+
+  class Expr
+    def children: () -> Array[Expr]
+    def affinity: () -> affinity?
+    def aggregate_name: () -> String?
+    def window_name: () -> String?
+  end
+
+  class Literal < Expr
+    attr_reader value: sql_value
+
+    def initialize: (sql_value value) -> void
+  end
+
+  class ColumnRef < Expr
+    attr_reader qualifier: String?
+    attr_reader name: String
+
+    def initialize: (String? qualifier, String name) -> void
+    def spelling: () -> String
+  end
+
+  class Unary < Expr
+    attr_reader op: String
+    attr_reader operand: Expr
+
+    def initialize: (String op, Expr operand) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class Binary < Expr
+    attr_reader op: String
+    attr_reader left: Expr
+    attr_reader right: Expr
+
+    def initialize: (String op, Expr left, Expr right) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class Not < Expr
+    attr_reader operand: Expr
+
+    def initialize: (Expr operand) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class Is < Expr
+    attr_reader negated: bool
+    attr_reader left: Expr
+    attr_reader right: Expr
+
+    def initialize: (bool negated, Expr left, Expr right) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class Call < Expr
+    attr_reader name: String
+    attr_reader args: Array[Expr]
+    attr_reader star: bool
+    attr_reader distinct: bool
+    attr_reader order_by: Array[OrderTerm]
+    attr_reader signature: String
+    attr_reader over: WindowSpec?
+
+    def initialize: (String name, Array[Expr] args, bool star, bool distinct, Array[OrderTerm] order_by, String signature, WindowSpec? over) -> void
+  end
+
+  class Case < Expr
+    attr_reader operand: Expr?
+    attr_reader whens: Array[WhenClause]
+    attr_reader else_expr: Expr?
+
+    def initialize: (Expr? operand, Array[WhenClause] whens, Expr? else_expr) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class WhenClause
+    attr_reader condition: Expr
+    attr_reader result: Expr
+
+    def initialize: (Expr condition, Expr result) -> void
+  end
+
+  class Between < Expr
+    attr_reader negated: bool
+    attr_reader operand: Expr
+    attr_reader low: Expr
+    attr_reader high: Expr
+
+    def initialize: (bool negated, Expr operand, Expr low, Expr high) -> void
+  end
+
+  class InList < Expr
+    attr_reader negated: bool
+    attr_reader operand: Expr
+    attr_reader items: Array[Expr]
+
+    def initialize: (bool negated, Expr operand, Array[Expr] items) -> void
+  end
+
+  class Like < Expr
+    attr_reader negated: bool
+    attr_reader operand: Expr
+    attr_reader pattern: Expr
+
+    def initialize: (bool negated, Expr operand, Expr pattern) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class Cast < Expr
+    attr_reader operand: Expr
+    attr_reader type: affinity
+
+    def initialize: (Expr operand, affinity `type`) -> void
+    def children: () -> Array[Expr]
+    def affinity: () -> affinity
+  end
+
+  class ScalarSelect < Expr
+    attr_reader select: SelectNode
+
+    def initialize: (SelectNode select) -> void
+  end
+
+  class ExistsSelect < Expr
+    attr_reader select: SelectNode
+
+    def initialize: (SelectNode select) -> void
+  end
+
+  class InSelect < Expr
+    attr_reader negated: bool
+    attr_reader operand: Expr
+    attr_reader select: SelectNode
+
+    def initialize: (bool negated, Expr operand, SelectNode select) -> void
+  end
+
+  class BoundColumn < Expr
+    attr_reader index: Integer
+    attr_reader affinity: affinity?
+
+    def initialize: (Integer index, affinity? affinity) -> void
+  end
+
+  class OuterRef < Expr
+    attr_reader frame: RowFrame
+    attr_reader inner: Expr
+
+    def initialize: (RowFrame frame, Expr inner) -> void
+    def affinity: () -> affinity?
+  end
+
+  class AggregateRef < Expr
+    attr_reader index: Integer
+    attr_reader name: String
+
+    def initialize: (Integer index, String name) -> void
+  end
+
+  class BoundCall < Expr
+    attr_reader name: String
+    attr_reader args: Array[Expr]
+
+    def initialize: (String name, Array[Expr] args) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class Compare < Expr
+    attr_reader op: String
+    attr_reader left: Expr
+    attr_reader right: Expr
+    attr_reader left_affinity: affinity?
+    attr_reader right_affinity: affinity?
+
+    def initialize: (String op, Expr left, Expr right, affinity? left_affinity, affinity? right_affinity) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class Statement
+  end
+
+  class ColumnDef
+    attr_reader name: String
+    attr_reader type: affinity
+    attr_reader primary_key: bool
+    attr_reader not_null: bool
+    attr_reader unique: bool
+    attr_reader default: sql_value
+
+    def initialize: (String name, affinity `type`, bool primary_key, bool not_null, bool unique, sql_value default) -> void
+  end
+
+  class TableConstraint
+    attr_reader kind: Symbol
+    attr_reader columns: Array[String]
+
+    def initialize: (Symbol kind, Array[String] columns) -> void
+  end
+
+  class CreateTable < Statement
+    attr_reader name: String
+    attr_reader columns: Array[ColumnDef]
+    attr_reader constraints: Array[TableConstraint]
+    attr_reader if_not_exists: bool
+
+    def initialize: (String name, Array[ColumnDef] columns, Array[TableConstraint] constraints, bool if_not_exists) -> void
+  end
+
+  class DropTable < Statement
+    attr_reader name: String
+    attr_reader if_exists: bool
+
+    def initialize: (String name, bool if_exists) -> void
+  end
+
+  class Insert < Statement
+    attr_reader table: String
+    attr_reader columns: Array[String]?
+    attr_reader source: ValuesList | SelectNode
+    attr_reader with: WithClause?
+
+    def initialize: (String table, Array[String]? columns, ValuesList | SelectNode source, WithClause? with) -> void
+  end
+
+  class ValuesList
+    attr_reader rows: Array[Array[Expr]]
+
+    def initialize: (Array[Array[Expr]] rows) -> void
+  end
+
+  class TransactionStatement < Statement
+    attr_reader kind: transaction_kind
+
+    def initialize: (transaction_kind kind) -> void
+  end
+
+  class CreateView < Statement
+    attr_reader name: String
+    attr_reader columns: Array[String]?
+    attr_reader select: SelectNode
+    attr_reader if_not_exists: bool
+
+    def initialize: (String name, Array[String]? columns, SelectNode select, bool if_not_exists) -> void
+  end
+
+  class DropView < Statement
+    attr_reader name: String
+    attr_reader if_exists: bool
+
+    def initialize: (String name, bool if_exists) -> void
+  end
+
+  class CreateIndex < Statement
+    attr_reader name: String
+    attr_reader table: String
+    attr_reader columns: Array[String]
+    attr_reader unique: bool
+    attr_reader if_not_exists: bool
+
+    def initialize: (String name, String table, Array[String] columns, bool unique, bool if_not_exists) -> void
+  end
+
+  class DropIndex < Statement
+    attr_reader name: String
+    attr_reader if_exists: bool
+
+    def initialize: (String name, bool if_exists) -> void
+  end
+
+  class AddColumn < Statement
+    attr_reader table: String
+    attr_reader column: ColumnDef
+
+    def initialize: (String table, ColumnDef column) -> void
+  end
+
+  class RenameTable < Statement
+    attr_reader table: String
+    attr_reader new_name: String
+
+    def initialize: (String table, String new_name) -> void
+  end
+
+  class RenameColumn < Statement
+    attr_reader table: String
+    attr_reader column: String
+    attr_reader new_name: String
+
+    def initialize: (String table, String column, String new_name) -> void
+  end
+
+  class Assignment
+    attr_reader column: String
+    attr_reader expr: Expr
+
+    def initialize: (String column, Expr expr) -> void
+  end
+
+  class Update < Statement
+    attr_reader table: String
+    attr_reader assignments: Array[Assignment]
+    attr_reader where: Expr?
+
+    def initialize: (String table, Array[Assignment] assignments, Expr? where) -> void
+  end
+
+  class Delete < Statement
+    attr_reader table: String
+    attr_reader where: Expr?
+
+    def initialize: (String table, Expr? where) -> void
+  end
+
+  class ResultColumn
+    attr_reader expr: Expr?
+    attr_reader alias_name: String?
+    attr_reader star_qualifier: String?
+
+    def initialize: (Expr? expr, String? alias_name, String? star_qualifier) -> void
+  end
+
+  class FromItem
+  end
+
+  class TableRef < FromItem
+    attr_reader name: String
+    attr_reader alias_name: String?
+
+    def initialize: (String name, String? alias_name) -> void
+  end
+
+  class SubqueryRef < FromItem
+    attr_reader select: SelectNode
+    attr_reader alias_name: String?
+
+    def initialize: (SelectNode select, String? alias_name) -> void
+  end
+
+  class JoinClause
+    attr_reader kind: :inner | :left
+    attr_reader item: FromItem
+    attr_reader on: Expr?
+    attr_reader using: Array[String]?
+
+    def initialize: (:inner | :left kind, FromItem item, Expr? on, Array[String]? using) -> void
+  end
+
+  class FromClause
+    attr_reader first: FromItem
+    attr_reader joins: Array[JoinClause]
+
+    def initialize: (FromItem first, Array[JoinClause] joins) -> void
+    def mentions_table?: (String name) -> bool
+  end
+
+  class OrderTerm
+    attr_reader expr: Expr
+    attr_reader descending: bool
+    attr_reader nulls: Symbol?
+
+    def initialize: (Expr expr, bool descending, Symbol? nulls) -> void
+  end
+
+  class SelectNode < Statement
+  end
+
+  class Select < SelectNode
+    attr_reader distinct: bool
+    attr_reader columns: Array[ResultColumn]
+    attr_reader from: FromClause?
+    attr_reader where: Expr?
+    attr_reader group_by: Array[Expr]
+    attr_reader having: Expr?
+    attr_reader windows: Array[NamedWindow]
+    attr_reader order_by: Array[OrderTerm]
+    attr_reader limit: Expr?
+    attr_reader offset: Expr?
+
+    def initialize: (bool distinct, Array[ResultColumn] columns, FromClause? from, Expr? where, Array[Expr] group_by, Expr? having, Array[NamedWindow] windows, Array[OrderTerm] order_by, Expr? limit, Expr? offset) -> void
+    def with_tail: (Array[OrderTerm] order_by, Expr? limit, Expr? offset) -> Select
+  end
+
+  class CompoundArm
+    attr_reader op: String
+    attr_reader select: Select
+
+    def initialize: (String op, Select select) -> void
+  end
+
+  class CompoundSelect < SelectNode
+    attr_reader first: Select
+    attr_reader arms: Array[CompoundArm]
+    attr_reader order_by: Array[OrderTerm]
+    attr_reader limit: Expr?
+    attr_reader offset: Expr?
+
+    def initialize: (Select first, Array[CompoundArm] arms, Array[OrderTerm] order_by, Expr? limit, Expr? offset) -> void
+  end
+
+  class CommonTable
+    attr_reader name: String
+    attr_reader columns: Array[String]?
+    attr_reader select: SelectNode
+
+    def initialize: (String name, Array[String]? columns, SelectNode select) -> void
+  end
+
+  class WithClause
+    attr_reader recursive: bool
+    attr_reader tables: Array[CommonTable]
+
+    def initialize: (bool recursive, Array[CommonTable] tables) -> void
+  end
+
+  class WithSelect < SelectNode
+    attr_reader with: WithClause
+    attr_reader body: SelectNode
+
+    def initialize: (WithClause with, SelectNode body) -> void
+  end
+
+  class Parser
+    COMPARISON_OPS: Array[String]
+    EQUALITY_OPS: Array[String]
+
+    @tokens: Array[Token]
+    @pos: Integer
+
+    def self.parse: (Array[Token] tokens) -> Statement
+    def initialize: (Array[Token] tokens) -> void
+    def parse_statement: () -> Statement
+
+    private
+
+    def syntax_error: () -> bot
+    def peek: () -> Token
+    def peek_at: (Integer offset) -> Token
+    def advance: () -> Token
+    def accept_keyword: (String word) -> bool
+    def accept_symbol: (String text) -> bool
+    def expect_keyword: (String word) -> void
+    def expect_symbol: (String text) -> void
+    def expect_ident: () -> String
+    def accept_if_not_exists: () -> bool
+    def accept_if_exists: () -> bool
+    def parse_name_list: () -> Array[String]
+    def parse_create: () -> Statement
+    def parse_create_table: () -> CreateTable
+    def parse_create_view: () -> CreateView
+    def parse_create_index: (bool unique) -> CreateIndex
+    def parse_column_def: () -> ColumnDef
+    def parse_default_value: () -> sql_value
+    def parse_table_constraint: () -> TableConstraint
+    def type_named: (String word) -> affinity?
+    def parse_drop: () -> Statement
+    def parse_alter: () -> Statement
+    def parse_transaction: (transaction_kind kind) -> TransactionStatement
+    def parse_insert: (WithClause? with) -> Insert
+    def parse_with_statement: () -> Statement
+    def parse_with_clause: () -> WithClause
+    def parse_common_table: () -> CommonTable
+    def parse_value_row: () -> Array[Expr]
+    def parse_update: () -> Update
+    def parse_assignment: () -> Assignment
+    def parse_delete: () -> Delete
+    def parse_query: () -> SelectNode
+    def parse_select_body: () -> SelectNode
+    def accept_compound_operator: () -> String?
+    def parse_select_core: () -> Select
+    def parse_named_windows: () -> Array[NamedWindow]
+    def parse_window_spec: () -> WindowSpec
+    def parse_frame: () -> FrameSpec
+    def parse_frame_bound: () -> FrameBound
+    def parse_over: () -> WindowSpec
+    def parse_from: () -> FromClause
+    def accept_join_operator: () -> (:inner | :left)?
+    def parse_from_item: () -> FromItem
+    def parse_alias: () -> String?
+    def parse_parenthesized_select: () -> SelectNode
+    def subquery_ahead?: () -> bool
+    def parse_order_by: () -> Array[OrderTerm]
+    def parse_result_column: () -> ResultColumn
+    def parse_order_term: () -> OrderTerm
+    def parse_expr: () -> Expr
+    def parse_or: () -> Expr
+    def parse_and: () -> Expr
+    def parse_not: () -> Expr
+    def parse_equality: () -> Expr
+    def parse_comparison: () -> Expr
+    def parse_additive: () -> Expr
+    def parse_multiplicative: () -> Expr
+    def membership_keyword: () -> String?
+    def parse_membership: (String word, Expr left) -> Expr
+    def parse_in_items: () -> Array[Expr]
+    def parse_concat: () -> Expr
+    def parse_unary: () -> Expr
+    def parse_primary: () -> Expr
+    def parse_case: () -> Case
+    def parse_cast: () -> Cast
+    def parse_name_or_call: (String name, Integer start) -> Expr
+    def parse_call: (String name, Integer start) -> Call
+    def signature_since: (Integer start) -> String
+  end
+
+  class Column
+    attr_reader name: String
+    attr_reader type: affinity
+    attr_reader not_null: bool
+    attr_reader default: sql_value
+
+    def initialize: (String name, affinity `type`, bool not_null, sql_value default) -> void
+    def renamed: (String new_name) -> Column
+  end
+
+  class UniqueKey
+    attr_reader columns: Array[Integer]
+
+    def initialize: (Array[Integer] columns) -> void
+  end
+
+  class Table
+    @name: String
+    @columns: Array[Column]
+    @key_index: Integer?
+    @unique_keys: Array[UniqueKey]
+    @rows: Array[Array[sql_value]]
+
+    attr_reader name: String
+    attr_reader columns: Array[Column]
+    attr_reader rows: Array[Array[sql_value]]
+
+    def initialize: (String name, Array[Column] columns, Integer? key_index, Array[UniqueKey] unique_keys, Array[Array[sql_value]] rows) -> void
+    def copy: () -> Table
+    def rename: (String new_name) -> void
+    def add_column: (Column column) -> void
+    def rename_column: (Integer index, String new_name) -> void
+    def add_unique_key: (UniqueKey unique) -> void
+    def remove_unique_key: (UniqueKey unique) -> void
+    def column_index: (String name) -> Integer?
+    def default_row: () -> Array[sql_value]
+    def insert_rows: (Array[Array[sql_value]] new_rows) -> void
+    def replace_rows: (Array[[Integer, Array[sql_value]]] changes) -> void
+    def delete_rows: (Array[Integer] indexes) -> void
+
+    private
+
+    def check_row: (Array[sql_value] raw, Array[Array[sql_value]] rows, Integer? own) -> Array[sql_value]
+    def key_of: (sql_value value, Array[Array[sql_value]] rows, bool inserting) -> Integer
+    def unique_error: (UniqueKey unique) -> SqlError
+    def conflict?: (Array[Array[sql_value]] rows, Integer? own, Array[Integer] positions, Array[sql_value] row) -> bool
+    def coerce: (sql_value value, Integer index) -> sql_value
+    def coerce_for: (sql_value value, Column column) -> sql_value
+    def reject: (sql_value value, Column column) -> bot
+    def coerce_integer: (sql_value value, Column column) -> Integer
+    def coerce_real: (sql_value value, Column column) -> Float
+  end
+
+  module SchemaBuilder
+    def self.build: (CreateTable statement) -> Table
+    def self.primary_key_positions: (CreateTable statement, Array[String] names) -> Array[Integer]
+    def self.positions_of: (Array[String] columns, Array[String] names) -> Array[Integer]
+  end
+
+  class View
+    attr_reader name: String
+    attr_reader columns: Array[String]?
+    attr_reader select: SelectNode
+
+    def initialize: (String name, Array[String]? columns, SelectNode select) -> void
+  end
+
+  class Index
+    attr_reader name: String
+    attr_reader table_name: String
+    attr_reader unique_key: UniqueKey?
+
+    def initialize: (String name, String table_name, UniqueKey? unique_key) -> void
+    def on_table: (String new_table_name) -> Index
+  end
+
+  class Snapshot
+    attr_reader tables: Hash[String, Table]
+    attr_reader views: Hash[String, View]
+    attr_reader indexes: Hash[String, Index]
+
+    def initialize: (Hash[String, Table] tables, Hash[String, View] views, Hash[String, Index] indexes) -> void
+  end
+
+  class Database
+    @tables: Hash[String, Table]
+    @views: Hash[String, View]
+    @indexes: Hash[String, Index]
+    @saved: Snapshot?
+
+    def initialize: () -> void
+    def find_table: (String name) -> Table?
+    def fetch_table: (String name) -> Table
+    def add_table: (Table table) -> Table
+    def remove_table: (String name) -> Table?
+    def rename_table: (Table table, String new_name) -> void
+    def find_view: (String name) -> View?
+    def add_view: (View view) -> View
+    def remove_view: (String name) -> View?
+    def find_index: (String name) -> Index?
+    def add_index: (Index index) -> Index
+    def remove_index: (String name) -> Index?
+    def in_transaction?: () -> bool
+    def begin_transaction: () -> Snapshot
+    def commit: () -> nil
+    def rollback: () -> void
+
+    private
+
+    def key: (String name) -> String
+  end
+
+  module Functions
+    MANY: Integer
+    ARITY: Hash[String, Range[Integer]]
+
+    def self.check: (String name, Integer count) -> (:ok | :unknown | :arity)
+    def self.call: (String name, Array[sql_value] args) -> sql_value
+    def self.unary: (String name, sql_value value) -> sql_value
+    def self.non_null: (String name, Array[sql_value] args) -> sql_value
+    def self.absolute: (sql_value value) -> number
+    def self.nullif: (sql_value first, sql_value second) -> sql_value
+    def self.substr: (String text, sql_value start, sql_value length) -> String
+    def self.trim: (String name, String text, sql_value chars) -> String
+    def self.replace: (String text, String from, String replacement) -> String
+    def self.round: (sql_value value, sql_value digits) -> Float
+    def self.math_number: (sql_value value) -> number?
+    def self.math: (String name, Array[sql_value] args) -> sql_value
+    def self.whole: (String name, Float real) -> Float
+    def self.remainder: (Float dividend, Float divisor) -> Float?
+    def self.power: (Float base, Float exponent) -> Float?
+    def self.extreme: (Array[sql_value] args, Integer direction) -> sql_value
+  end
+
+  module Operators
+    def self.negate: (sql_value value) -> number?
+    def self.arithmetic: (String op, sql_value left, sql_value right) -> number?
+    def self.integer_arithmetic: (String op, Integer x, Integer y) -> Integer?
+    def self.real_arithmetic: (String op, Float x, Float y) -> Float?
+    def self.concat: (sql_value left, sql_value right) -> String?
+    def self.logic_not: (sql_value value) -> Integer?
+    def self.logic_and: (sql_value left, sql_value right) -> Integer?
+    def self.logic_or: (sql_value left, sql_value right) -> Integer?
+    def self.numeric?: (affinity? affinity) -> bool
+    def self.apply_affinity: (sql_value left, affinity? left_affinity, sql_value right, affinity? right_affinity) -> [sql_value, sql_value]
+    def self.text_as_number: (sql_value value) -> sql_value
+    def self.number_as_text: (sql_value value) -> sql_value
+    def self.compare: (String op, sql_value left, affinity? left_affinity, sql_value right, affinity? right_affinity) -> Integer?
+    def self.same?: (sql_value left, sql_value right) -> bool
+    def self.like: (sql_value value, sql_value pattern) -> Integer?
+    def self.cast: (sql_value value, affinity `type`) -> sql_value
+  end
+
+  module Evaluator
+    def self.evaluate: (Expr expr, Array[sql_value] row) -> sql_value
+    def self.unary: (Unary expr, Array[sql_value] row) -> sql_value
+    def self.binary: (Binary expr, Array[sql_value] row) -> sql_value
+    def self.compare: (Compare expr, Array[sql_value] row) -> sql_value
+    def self.evaluate_case: (Case expr, Array[sql_value] row) -> sql_value
+    def self.like: (Like expr, Array[sql_value] row) -> sql_value
+  end
+
+  class Binder
+    COMPARISONS: Array[String]
+
+    @sources: Sources
+    @aliases: Hash[String, Expr]
+    @environment: Environment
+    @aggregates: AggregateScope?
+    @windows: WindowScope?
+    @refusal: refusal
+
+    def initialize: (Sources sources, Hash[String, Expr] aliases, Environment environment, ?aggregates: AggregateScope?, ?windows: WindowScope?, ?refusal: refusal) -> void
+    def bind: (Expr expr) -> Expr
+
+    private
+
+    def bind_column: (ColumnRef ref) -> Expr
+    def resolve_in: (Sources sources, Hash[String, Expr] aliases, ColumnRef ref) -> Expr?
+    def refuse_aggregate_alias: (Expr aliased) -> void
+    def refuse_window_alias: (Expr aliased, String alias_name) -> void
+    def plan_subquery: (SelectNode select) -> Plan
+    def bind_scalar: (ScalarSelect expr, bool misuse) -> BoundScalar
+    def bind_in_select: (InSelect expr) -> BoundIn
+    def bind_binary: (Binary expr) -> Expr
+    def bind_compare: (String op, Expr left, Expr right) -> Compare
+    def bind_operand: (Expr expr) -> Expr
+    def bind_case: (Case expr) -> Case
+    def bind_between: (Between expr) -> Expr
+    def bind_in: (InList expr) -> Expr
+    def bind_call: (Call call) -> Expr
+    def bind_aggregate: (Call call) -> AggregateRef
+    def bind_window_call: (Call call, WindowSpec over) -> WindowRef
+    def bind_window_definition: (WindowSpec spec) -> WindowDef
+    def refuse_aggregate: (String name) -> bot
+  end
+
+  class RowFrame
+    attr_accessor row: Array[sql_value]
+
+    def initialize: () -> void
+  end
+
+  class Outer
+    attr_reader sources: Sources
+    attr_reader aliases: Hash[String, Expr]
+    attr_reader frame: RowFrame
+    attr_reader parent: Outer?
+
+    def initialize: (Sources sources, Hash[String, Expr] aliases, RowFrame frame, Outer? parent) -> void
+  end
+
+  class Environment
+    attr_reader database: Database
+    attr_reader frame: RowFrame
+    attr_reader outer: Outer?
+    attr_reader ctes: CteScope?
+
+    def initialize: (Database database, RowFrame frame, Outer? outer, CteScope? ctes) -> void
+  end
+
+  class SourceColumn
+    attr_reader name: String?
+    attr_reader affinity: affinity?
+
+    def initialize: (String? name, affinity? affinity) -> void
+    def self.rename: (Array[SourceColumn] columns, Array[String]? names) -> Array[SourceColumn]
+  end
+
+  class Source
+    attr_reader name: String?
+    attr_reader columns: Array[SourceColumn]
+    attr_reader offset: Integer
+
+    def initialize: (String? name, Array[SourceColumn] columns, Integer offset) -> void
+    def rows: () -> Array[Array[sql_value]]
+    def index_of: (String name) -> Integer?
+  end
+
+  class TableSource < Source
+    @table: Table
+
+    def initialize: (String? name, Table table, Integer offset) -> void
+    def rows: () -> Array[Array[sql_value]]
+  end
+
+  class DerivedSource < Source
+    @plan: Plan
+
+    def initialize: (String? name, Plan plan, Integer offset, Array[SourceColumn] columns) -> void
+    def rows: () -> Array[Array[sql_value]]
+  end
+
+  class WorkingSource < Source
+    @working: WorkingSet
+
+    def initialize: (String? name, Array[SourceColumn] columns, Integer offset, WorkingSet working) -> void
+    def rows: () -> Array[Array[sql_value]]
+  end
+
+  class Sources
+    @sources: Array[Source]
+    @width: Integer
+    @hidden: Hash[Integer, bool]
+
+    attr_reader sources: Array[Source]
+    attr_reader width: Integer
+
+    def initialize: () -> void
+    def empty?: () -> bool
+    def add: (Source source) -> void
+    def hide: (Integer index) -> void
+    def named?: (String name) -> bool
+    def find: (String? qualifier, String name) -> BoundColumn?
+    def affinity_at: (Integer index) -> affinity?
+    def first_index: (String name) -> Integer?
+    def expand: (String? qualifier) -> Array[[Integer, SourceColumn]]
+
+    private
+
+    def called?: (Source source, String name) -> bool
+  end
+
+  class JoinStep
+    attr_reader kind: :inner | :left
+    attr_reader source: Source
+    attr_reader condition: Expr?
+
+    def initialize: (:inner | :left kind, Source source, Expr? condition) -> void
+  end
+
+  class FromPlan
+    @first: Source?
+    @steps: Array[JoinStep]
+
+    def initialize: (Source? first, Array[JoinStep] steps) -> void
+    def rows: () -> Array[Array[sql_value]]
+
+    private
+
+    def join: (Array[Array[sql_value]] left_rows, JoinStep step) -> Array[Array[sql_value]]
+  end
+
+  class BoundSubquery < Expr
+    @plan: Plan
+    @frame: RowFrame
+
+    attr_reader plan: Plan
+
+    def initialize: (Plan plan, RowFrame frame) -> void
+    def evaluate: (Array[sql_value] row) -> sql_value
+
+    private
+
+    def rows_for: (Array[sql_value] row) -> Array[Array[sql_value]]
+  end
+
+  class BoundScalar < BoundSubquery
+    def affinity: () -> affinity?
+  end
+
+  class BoundExists < BoundSubquery
+  end
+
+  class BoundIn < BoundSubquery
+    @operand: Expr
+    @negated: bool
+
+    def initialize: (Expr operand, bool negated, Plan plan, RowFrame frame) -> void
+    def children: () -> Array[Expr]
+  end
+
+  class SortKey
+    @index: Integer?
+    @expr: Expr?
+    @descending: bool
+    @nulls: Symbol?
+
+    attr_reader index: Integer?
+    attr_reader expr: Expr?
+    attr_reader descending: bool
+
+    def initialize: (Integer? index, Expr? expr, bool descending, Symbol? nulls) -> void
+    def value: (Array[sql_value] result, Array[sql_value] row) -> sql_value
+    def compare: (sql_value left, sql_value right) -> Integer
+    def self.compare_candidates: (Array[SortKey] keys, Candidate left, Candidate right) -> Integer
+  end
+
+  class Candidate
+    attr_reader values: Array[sql_value]
+    attr_reader keys: Array[sql_value]
+    attr_reader serial: Integer
+
+    def initialize: (Array[sql_value] values, Array[sql_value] keys, Integer serial) -> void
+  end
+
+  class AggregateSpec
+    attr_reader name: String
+    attr_reader args: Array[Expr]
+    attr_reader star: bool
+    attr_reader distinct: bool
+    attr_reader order_by: Array[SortKey]
+
+    def initialize: (String name, Array[Expr] args, bool star, bool distinct, Array[SortKey] order_by) -> void
+  end
+
+  module Aggregates
+    ARITY: Hash[String, Range[Integer]]
+
+    def self.aggregate?: (String name, Integer count) -> bool
+    def self.arity_ok?: (String lower, Integer count) -> bool
+    def self.compute: (AggregateSpec spec, Array[Array[sql_value]] rows) -> sql_value
+    def self.extreme_row: (AggregateSpec spec, Array[Array[sql_value]] rows) -> Array[sql_value]?
+    def self.extreme_value: (AggregateSpec spec, Array[Array[sql_value]] rows) -> sql_value
+    def self.sort_rows: (Array[Array[sql_value]] rows, Array[SortKey] keys) -> Array[Array[sql_value]]
+    def self.present_values: (AggregateSpec spec, Array[Array[sql_value]] rows) -> Array[sql_value]
+    def self.numeric: (String name, Array[sql_value] values) -> sql_value
+    def self.integer_of: (sql_value value) -> Integer?
+    def self.integer_sum: (Array[sql_value] values) -> Integer?
+    def self.real_sum: (Array[sql_value] values) -> Float
+    def self.group_concat: (AggregateSpec spec, Array[Array[sql_value]] rows) -> String?
+  end
+
+  class AggregateScope
+    @width: Integer
+    @specs: Array[AggregateSpec]
+    @refs: Hash[String, AggregateRef]
+
+    attr_reader specs: Array[AggregateSpec]
+
+    def initialize: (Integer width) -> void
+    def empty?: () -> bool
+    def ref_for: (String signature, String name, AggregateSpec spec) -> AggregateRef
+    def group_row: (Array[Array[sql_value]] rows) -> Array[sql_value]
+
+    private
+
+    def bare_row: (Array[Array[sql_value]] rows) -> Array[sql_value]
+  end
+
+  module Grouping
+    def self.partition: (Array[Array[sql_value]] rows, Array[Expr] terms) -> Array[Array[Array[sql_value]]]
+    def self.partition_indexes: (Array[Array[sql_value]] rows, Array[Expr] terms) -> Array[Array[Integer]]
+  end
+
+  class Plan
+    def columns: () -> Array[SourceColumn]
+    def rows: () -> Array[Array[sql_value]]
+  end
+
+  class QueryPlan < Plan
+    attr_reader from: FromPlan
+    attr_reader results: Array[Expr]
+    attr_reader columns: Array[SourceColumn]
+    attr_reader where: Expr?
+    attr_reader group_by: Array[Expr]
+    attr_reader having: Expr?
+    attr_reader aggregates: AggregateScope?
+    attr_reader windows: WindowScope
+    attr_reader distinct: bool
+    attr_reader keys: Array[SortKey]
+    attr_reader limit: Integer?
+    attr_reader offset: Integer
+
+    def initialize: (FromPlan from, Array[Expr] results, Array[SourceColumn] columns, Expr? where, Array[Expr] group_by, Expr? having, AggregateScope? aggregates, WindowScope windows, bool distinct, Array[SortKey] keys, Integer? limit, Integer offset) -> void
+    def rows: () -> Array[Array[sql_value]]
+  end
+
+  class CompoundStep
+    attr_reader op: String
+    attr_reader plan: Plan
+
+    def initialize: (String op, Plan plan) -> void
+  end
+
+  class CompoundPlan < Plan
+    @first: Plan
+    @steps: Array[CompoundStep]
+    @keys: Array[SortKey]
+    @limit: Integer?
+    @offset: Integer
+
+    attr_reader columns: Array[SourceColumn]
+
+    def initialize: (Plan first, Array[CompoundStep] steps, Array[SourceColumn] columns, Array[SortKey] keys, Integer? limit, Integer offset) -> void
+    def rows: () -> Array[Array[sql_value]]
+
+    private
+
+    def combine: (String op, Array[Array[sql_value]] left, Array[Array[sql_value]] right) -> Array[Array[sql_value]]
+    def sorted: (Array[Array[sql_value]] rows) -> Array[Array[sql_value]]
+  end
+
+  class WorkingSet
+    @rows: Array[Array[sql_value]]
+
+    attr_accessor rows: Array[Array[sql_value]]
+
+    def initialize: () -> void
+  end
+
+  class RecursivePlan < Plan
+    @initial: Plan
+    @step: Plan
+    @working: WorkingSet
+    @union_all: bool
+    @limit: Integer?
+    @offset: Integer
+
+    attr_reader columns: Array[SourceColumn]
+
+    def initialize: (Plan initial, Plan step, WorkingSet working, bool union_all, Array[SourceColumn] columns, Integer? limit, Integer offset) -> void
+    def rows: () -> Array[Array[sql_value]]
+
+    private
+
+    def enqueue: (Array[Array[sql_value]] queue, Hash[Array[sql_value], bool] seen, Array[sql_value] row) -> void
+  end
+
+  class CteBinding
+    @name: String
+    @columns: Array[SourceColumn]
+
+    attr_reader name: String
+    attr_reader columns: Array[SourceColumn]
+
+    def initialize: (String name, Array[SourceColumn] columns) -> void
+    def source: (String? label, Integer offset) -> Source
+  end
+
+  class PlannedCte < CteBinding
+    @plan: Plan
+
+    def initialize: (String name, Array[SourceColumn] columns, Plan plan) -> void
+  end
+
+  class RecursiveCte < CteBinding
+    @working: WorkingSet
+
+    def initialize: (String name, Array[SourceColumn] columns, WorkingSet working) -> void
+  end
+
+  class CteScope
+    @parent: CteScope?
+    @binding: CteBinding
+
+    attr_reader parent: CteScope?
+    attr_reader binding: CteBinding
+
+    def initialize: (CteScope? parent, CteBinding binding) -> void
+    def find: (String name) -> CteBinding?
+  end
+
+  module Terms
+    def self.ordinal: (Expr expr) -> Integer?
+    def self.nth: (Integer number) -> String
+    def self.check_ordinal: (Integer ordinal, Integer position, String clause, Integer count) -> void
+  end
+
+  module Limits
+    def self.resolve: (Expr? limit, Expr? offset, Environment environment) -> [Integer?, Integer]
+    def self.slice: [T] (Array[T] rows, Integer? limit, Integer offset) -> Array[T]
+    def self.integer_of: (Expr? expr, Binder binder) -> Integer?
+  end
+
+  module RowSet
+    def self.key: (Array[sql_value] row) -> Array[sql_value]
+    def self.distinct: (Array[Array[sql_value]] rows) -> Array[Array[sql_value]]
+    def self.keys_of: (Array[Array[sql_value]] rows) -> Hash[Array[sql_value], bool]
+  end
+
+  class Planner
+    @database: Database
+    @select: SelectNode
+    @outer: Outer?
+    @ctes: CteScope?
+
+    def initialize: (Database database, SelectNode select, Outer? outer, CteScope? ctes) -> void
+    def plan: () -> Plan
+  end
+
+  class CtePlanner
+    @database: Database
+    @outer: Outer?
+    @ctes: CteScope?
+
+    def initialize: (Database database, Outer? outer, CteScope? ctes) -> void
+    def scope_for: (WithClause with) -> CteScope?
+
+    private
+
+    def plan_table: (WithClause with, CommonTable table, CteScope? scope) -> CteBinding
+    def recursive?: (CommonTable table, CompoundSelect body) -> bool
+    def plan_recursive: (CommonTable table, CompoundSelect body, CteScope? scope) -> CteBinding
+  end
+
+  class CompoundPlanner
+    @database: Database
+    @select: CompoundSelect
+    @outer: Outer?
+    @ctes: CteScope?
+    @environment: Environment
+
+    def initialize: (Database database, CompoundSelect select, Outer? outer, CteScope? ctes) -> void
+    def plan: () -> CompoundPlan
+
+    private
+
+    def plan_of: (Select select) -> Plan
+    def sort_keys: (Plan first, Array[CompoundStep] steps) -> Array[SortKey]
+    def named_column: (Expr expr, Array[Plan] plans) -> Integer?
+  end
+
+  class SimplePlanner
+    @database: Database
+    @select: Select
+    @environment: Environment
+
+    def initialize: (Database database, Select select, Outer? outer, CteScope? ctes) -> void
+    def plan: () -> QueryPlan
+
+    private
+
+    def bind_from: (Sources sources) -> FromPlan
+    def add_source: (FromItem item, Sources sources) -> Source
+    def named_source: (TableRef item, Integer offset) -> Source
+    def view_source: (View view, String label, Integer offset) -> Source
+    def subquery_source: (SubqueryRef item, Integer offset) -> Source
+    def join_step: (JoinClause join, Sources sources) -> JoinStep
+    def using_condition: (Array[String] names, Source source, Sources sources) -> Expr?
+    def bind_result_columns: (Sources sources, AggregateScope aggregates, WindowScope windows) -> [Array[Expr], Array[SourceColumn], Hash[String, Expr]]
+    def bind_where: (Sources sources, Hash[String, Expr] aliases) -> Expr?
+    def bind_group_by: (Sources sources, Array[Expr] results, Hash[String, Expr] aliases) -> Array[Expr]
+    def bind_having: (Sources sources, Hash[String, Expr] aliases, AggregateScope aggregates, bool aggregate) -> Expr?
+    def order_binder: (Sources sources, Hash[String, Expr] aliases, AggregateScope aggregates, WindowScope windows, bool aggregate) -> Binder
+    def sort_keys: (Binder binder, Array[Expr] results, Hash[String, Expr] aliases) -> Array[SortKey]
+    def alias_position: (Expr expr, Array[Expr] results, Hash[String, Expr] aliases) -> Integer?
+  end
+
+  class Query
+    @plan: QueryPlan
+
+    def initialize: (QueryPlan plan) -> void
+    def rows: () -> Array[Array[sql_value]]
+
+    private
+
+    def group_rows: (QueryPlan plan, Array[Array[sql_value]] rows) -> Array[Array[sql_value]]
+    def candidates_of: (QueryPlan plan, Array[Array[sql_value]] rows) -> Array[Candidate]
+    def distinct: (Array[Candidate] candidates) -> Array[Candidate]
+  end
+
+  class SchemaChanges
+    @database: Database
+
+    def initialize: (Database database) -> void
+    def create_table: (CreateTable statement) -> void
+    def create_view: (CreateView statement) -> void
+    def drop_table: (DropTable statement) -> void
+    def drop_view: (DropView statement) -> void
+    def create_index: (CreateIndex statement) -> void
+    def drop_index: (DropIndex statement) -> void
+    def add_column: (AddColumn statement) -> void
+    def rename_table: (RenameTable statement) -> void
+    def rename_column: (RenameColumn statement) -> void
+
+    private
+
+    def name_in_use?: (String name, bool if_not_exists) -> bool
+    def column_positions: (Table table, Array[String] names) -> Array[Integer]
+  end
+
+  class Executor
+    @database: Database
+    @schema: SchemaChanges
+
+    def initialize: (Database database) -> void
+    def execute: (Statement statement) -> Array[String]
+
+    private
+
+    def select: (SelectNode statement) -> Array[String]
+    def define_schema: (Statement statement) -> Array[String]
+    def transaction: (TransactionStatement statement) -> Array[String]
+    def insert: (Insert statement) -> Array[String]
+    def values_rows: (Insert statement, ValuesList source, CteScope? ctes) -> Array[Array[sql_value]]
+    def select_rows: (Insert statement, SelectNode source, CteScope? ctes) -> Array[Array[sql_value]]
+    def full_row: (Table table, Array[Integer] targets, Array[sql_value] values) -> Array[sql_value]
+    def refuse_view: (String name) -> void
+    def update: (Update statement) -> Array[String]
+    def delete: (Delete statement) -> Array[String]
+    def environment: (CteScope? ctes) -> Environment
+    def target_binder: (Table table) -> Binder
+    def bound_condition: (Binder binder, Expr? condition) -> Expr?
+    def matches?: (Expr? where, Array[sql_value] row) -> bool
+    def target_columns: (Insert statement, Table table) -> Array[Integer]
+    def check_value_count: (Insert statement, Table table, Integer count) -> void
+  end
+
+  class Interpreter
+    @out: IO
+    @executor: Executor
+
+    def initialize: (IO out) -> void
+    def run: (String source) -> void
+  end
+end

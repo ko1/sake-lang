@@ -1,0 +1,110 @@
+# LIKE patterns (2.3, 7.3): % matches any run of characters, _ exactly one; ASCII case is ignored.
+# An optional escape character makes the character after it ordinary.
+#
+# Like and Glob both compile a pattern into a Pat (one item per position) and match it with Like.run.
+# kinds[i] is :lit (lits[i] must equal the character), :one (any character), :star (any run, also
+# none), :class (classes[i] holds the set) or :never (nothing matches). lits and classes are
+# filled at every position, with "" and an empty class where they do not matter.
+Pat = Struct.new(:kinds, :lits, :classes)
+
+# A GLOB class: the character is in the set if it is in one of the ranges [low, high] (a single
+# member is [c, c]); `negated` flips that.
+PatClass = Struct.new(:negated, :ranges)
+
+module Like
+  module_function
+
+  def new_pat = Pat.new(Array[], String[], PatClass[])
+
+  def add(pat, kind, lit, cls)
+    Array.push(Pat.kinds(pat), kind)
+    Array.push(Pat.lits(pat), lit)
+    Array.push(Pat.classes(pat), cls)
+  end
+
+  def no_class = PatClass.new(false, Tuple[])
+
+  def matches?(text, pattern) = matches_escape?(text, pattern, "")
+
+  # esc: the escape character's text ("" for none). A trailing escape makes the pattern match nothing.
+  def matches_escape?(text, pattern, esc)
+    run(String.chars(String.downcase(text)), compile(pattern, esc))
+  end
+
+  def compile(pattern, esc)
+    chars = String.chars(String.downcase(pattern))
+    e = String.downcase(esc)
+    n = Array.size(chars)
+    pat = new_pat
+    i = 0
+    while i < n
+      c = chars[i]
+      if c == e
+        if i + 1 >= n
+          add(pat, :never, "", no_class)
+          return pat
+        end
+        add(pat, :lit, chars[i + 1], no_class)
+        i += 2
+      else
+        if c == "%"
+          add(pat, :star, "", no_class)
+        elsif c == "_"
+          add(pat, :one, "", no_class)
+        else
+          add(pat, :lit, c, no_class)
+        end
+        i += 1
+      end
+    end
+    pat
+  end
+
+  # Does the pattern match all of text (an Array of characters)? Greedy matching that retries from
+  # the last :star.
+  def run(text, pat)
+    kinds = Pat.kinds(pat)
+    lits = Pat.lits(pat)
+    classes = Pat.classes(pat)
+    nt = Array.size(text)
+    np = Array.size(kinds)
+    ti = 0
+    pi = 0
+    star = -1
+    mark = 0
+    while ti < nt
+      if pi < np && kinds[pi] == :star
+        star = pi
+        mark = ti
+        pi += 1
+      elsif pi < np && item_matches?(kinds[pi], lits[pi], classes[pi], text[ti])
+        pi += 1
+        ti += 1
+      elsif star >= 0
+        pi = star + 1
+        mark += 1
+        ti = mark
+      else
+        return false
+      end
+    end
+    pi += 1 while pi < np && kinds[pi] == :star
+    pi == np
+  end
+
+  # One character against one non-star item.
+  def item_matches?(kind, lit, cls, c)
+    case kind
+    in :one then true
+    in :lit then lit == c
+    in :class then in_class?(cls, c)
+    else false
+    end
+  end
+
+  def in_class?(cls, c)
+    hit = false
+    Array.each(PatClass.ranges(cls)) { |low, high| hit = true if low <= c && c <= high }
+    hit != PatClass.negated(cls)
+  end
+end

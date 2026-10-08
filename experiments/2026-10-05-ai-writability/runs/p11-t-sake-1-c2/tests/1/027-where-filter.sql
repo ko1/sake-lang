@@ -1,0 +1,12 @@
+CREATE TABLE t (id INTEGER, price REAL, tag TEXT);
+INSERT INTO t VALUES (1, 9.5, 'a'), (2, 20, 'b'), (3, NULL, 'a'), (4, 15, NULL), (5, 3, 'c');
+SELECT id FROM t WHERE price > 10 ORDER BY id;
+SELECT id FROM t WHERE tag = 'a' ORDER BY id;
+SELECT id FROM t WHERE price < 100 AND tag <> 'b' ORDER BY id;
+SELECT id FROM t WHERE price IS NULL OR tag IS NULL ORDER BY id;
+SELECT id FROM t WHERE NOT price > 10 ORDER BY id;
+SELECT id, price * 2 FROM t WHERE id = 2;
+SELECT id FROM t WHERE 0;
+SELECT id FROM t WHERE NULL;
+SELECT 'x' WHERE 1 = 1;
+SELECT 'y' WHERE 1 = 2;

@@ -1,0 +1,82 @@
+# The frame of a row (6.2): which rows of its partition a window aggregate, first_value, last_value
+# and nth_value look at.
+
+module WindowFrame
+  module_function
+
+  # [first, last] positions in the partition of the row at position p; the frame is empty if first > last.
+  def bounds(frame, part, p)
+    n = Array.size(PartRows.envs(part))
+    first = start_of(frame, part, p)
+    last = end_of(frame, part, p)
+    [first < 0 ? 0 : first, last > n - 1 ? n - 1 : last]
+  end
+
+  # A ROWS offset (the planner checked it is a whole number).
+  def whole(n)
+    case n
+    in Integer then n
+    else Float.truncate(n)
+    end
+  end
+
+  def start_of(frame, part, p)
+    b = FrameSpec.from(frame)
+    off = whole(FrameBound.offset(b))
+    case FrameBound.kind(b)
+    in :unbounded_preceding then 0
+    in :current then FrameSpec.units(frame) == :rows ? p : PartRows.peer_lo(part)[p]
+    in :preceding then FrameSpec.units(frame) == :rows ? p - off : range_start(part, p, -1, FrameBound.offset(b))
+    in :following then FrameSpec.units(frame) == :rows ? p + off : range_start(part, p, 1, FrameBound.offset(b))
+    else Array.size(PartRows.envs(part))
+    end
+  end
+
+  def end_of(frame, part, p)
+    b = FrameSpec.to(frame)
+    off = whole(FrameBound.offset(b))
+    case FrameBound.kind(b)
+    in :unbounded_following then Array.size(PartRows.envs(part)) - 1
+    in :current then FrameSpec.units(frame) == :rows ? p : PartRows.peer_hi(part)[p] - 1
+    in :following then FrameSpec.units(frame) == :rows ? p + off : range_end(part, p, 1, FrameBound.offset(b))
+    in :preceding then FrameSpec.units(frame) == :rows ? p - off : range_end(part, p, -1, FrameBound.offset(b))
+    else -1
+    end
+  end
+
+  # RANGE n PRECEDING (dir -1) / n FOLLOWING (dir 1) as a start: the first row whose ORDER BY value
+  # is at least `off` away from the row's value in that direction. Rows with a NULL value are only
+  # in range of a row whose value is NULL (the row's peers).
+  def range_start(part, p, dir, off)
+    cur = PartRows.keys(part)[p][0]
+    return PartRows.peer_lo(part)[p] if cur == nil
+    sign = direction(part)
+    target = sign * Values.to_number(cur) + dir * off
+    n = Array.size(PartRows.envs(part))
+    j = 0
+    while j < n
+      v = PartRows.keys(part)[j][0]
+      return j if v != nil && sign * Values.to_number(v) >= target
+      j += 1
+    end
+    n
+  end
+
+  # The same as an end: the last row whose value is at most `off` away in that direction.
+  def range_end(part, p, dir, off)
+    cur = PartRows.keys(part)[p][0]
+    return PartRows.peer_hi(part)[p] - 1 if cur == nil
+    sign = direction(part)
+    target = sign * Values.to_number(cur) + dir * off
+    j = Array.size(PartRows.envs(part)) - 1
+    while j >= 0
+      v = PartRows.keys(part)[j][0]
+      return j if v != nil && sign * Values.to_number(v) <= target
+      j -= 1
+    end
+    -1
+  end
+
+  # 1 for an ascending ORDER BY, -1 for a descending one: values are compared as sign * value.
+  def direction(part) = PartRows.desc(part) ? -1 : 1
+end

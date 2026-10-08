@@ -1,0 +1,60 @@
+# CAST(x AS INTEGER | REAL | TEXT | BLOB) (2.3, 7.6).
+module Cast
+  module_function
+
+  # `type` is "integer", "real", "text" or "blob". From a BLOB, a number or TEXT is cast as from its text form.
+  def apply(v, type)
+    return nil if v == nil
+    case type
+    in "integer" then to_integer(v)
+    in "real" then to_real(v)
+    in "blob" then to_blob(v)
+    else Values.text_of(v)
+    end
+  end
+
+  def to_integer(v)
+    case v
+    in Integer then v
+    in Float then clamp(Float.truncate(v))
+    in String then text_to_integer(v)
+    else text_to_integer(Values.text_of(v))
+    end
+  end
+
+  # A BLOB stays; TEXT, INTEGER and REAL become the BLOB of the bytes of their text form.
+  def to_blob(v)
+    case v
+    in Blob then v
+    else Values.blob_of_text(Values.text_of(v))
+    end
+  end
+
+  # An optional sign and digits at the start of the text (after whitespace); 0 if there are none.
+  def text_to_integer(s)
+    bytes = String.bytes(s)
+    n = Array.size(bytes)
+    first = 0
+    first += 1 while first < n && NumText.space?(bytes[first])
+    start = NumText.after_sign(bytes, first)
+    stop = start
+    stop += 1 while stop < n && NumText.digit?(bytes[stop])
+    return 0 if stop == start
+    clamp(String.to_i(Text.byteslice(s, first, stop - first)))
+  end
+
+  # Integers stay within 64 bits.
+  def clamp(n)
+    return 9223372036854775807 if n > 9223372036854775807
+    return -9223372036854775807 - 1 if n < -9223372036854775807 - 1
+    n
+  end
+
+  def to_real(v)
+    n = Values.to_number(v)
+    case n
+    in Integer then Integer.to_f(n)
+    else n
+    end
+  end
+end

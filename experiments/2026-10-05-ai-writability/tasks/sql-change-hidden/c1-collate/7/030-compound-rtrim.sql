@@ -1,0 +1,10 @@
+-- Compound dedupe under RTRIM, and an explicit COLLATE in the first simple-select.
+CREATE TABLE r (s TEXT COLLATE RTRIM);
+CREATE TABLE u (s TEXT);
+INSERT INTO r VALUES ('k1  '), ('k2');
+INSERT INTO u VALUES ('k1'), ('k3 '), ('K2');
+SELECT count(*) FROM (SELECT s FROM r UNION SELECT s FROM u);
+SELECT count(*) FROM (SELECT s FROM r INTERSECT SELECT s FROM u);
+SELECT count(*) FROM (SELECT s FROM u INTERSECT SELECT s FROM r);
+SELECT count(*) FROM (SELECT s COLLATE NOCASE FROM u UNION SELECT s FROM r);
+SELECT count(*) FROM (SELECT s FROM u UNION SELECT s FROM r);

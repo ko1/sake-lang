@@ -1,0 +1,5 @@
+CREATE TABLE answers (q INTEGER, a TEXT);
+INSERT INTO answers VALUES (1, NULL), (2, 'yes'), (3, NULL), (4, 'no'), (5, 'yes');
+SELECT DISTINCT a FROM answers ORDER BY a;
+SELECT DISTINCT a IS NULL FROM answers ORDER BY 1;
+SELECT DISTINCT a, q > 2 FROM answers ORDER BY a NULLS LAST, 2;

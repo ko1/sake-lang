@@ -1,0 +1,12 @@
+-- transaction statements out of place are errors
+COMMIT;
+ROLLBACK;
+END;
+BEGIN;
+BEGIN;
+BEGIN TRANSACTION;
+COMMIT;
+COMMIT;
+ROLLBACK TRANSACTION;
+END TRANSACTION;
+SELECT 'done';

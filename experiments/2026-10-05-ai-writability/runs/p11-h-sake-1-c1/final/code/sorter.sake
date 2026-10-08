@@ -1,0 +1,73 @@
+# ORDER BY: a stable merge sort of result rows by several keys (spec 1.7).
+# Sake's Array.sort takes no comparator, and DESC / NULLS FIRST|LAST need one.
+
+# One row to sort: `keys` are its ORDER BY values, `vals` the result columns to print.
+class SortItem
+  attr_reader keys, vals
+end
+
+# How one ORDER BY term sorts. If `expr` is nil its key is the result column at `position`;
+# otherwise it is `expr` evaluated on the source row. nulls is :default, :first or :last.
+# coll is the collation its TEXT keys compare under (spec 7.4).
+class SortKey
+  attr_reader position, expr, desc, nulls, coll
+end
+
+module Sorter
+  module_function
+
+  def sort(items, specs)
+    return items if Array.size(items) <= 1
+    mid = Array.size(items) / 2
+    merge(sort(Array.take(items, mid), specs), sort(Array.drop(items, mid), specs), specs)
+  end
+
+  # `rows` (Arrays of values) ordered by OrderTerms whose expressions are evaluated on each row.
+  def sort_rows(rows, terms)
+    specs = Array.map(terms) { SortKey.new(-1, OrderTerm.expr(it), OrderTerm.desc(it), OrderTerm.nulls(it), Collations.single(OrderTerm.expr(it))) }
+    items = Array.map(rows) do |row|
+      SortItem.new(Array.map(terms) { Evaluator.evaluate(OrderTerm.expr(it), row) }, row)
+    end
+    Array.map(sort(items, specs)) { SortItem.vals(it) }
+  end
+
+  def merge(left, right, specs)
+    out = Array[]
+    i = 0
+    j = 0
+    while i < Array.size(left) && j < Array.size(right)
+      if compare_items(Array.fetch(left, i), Array.fetch(right, j), specs) <= 0
+        Array.push(out, Array.fetch(left, i))
+        i += 1
+      else
+        Array.push(out, Array.fetch(right, j))
+        j += 1
+      end
+    end
+    Array.concat(out, Array.drop(left, i))
+    Array.concat(out, Array.drop(right, j))
+    out
+  end
+
+  def compare_items(a, b, specs)
+    Array.each_with_index(specs) do |spec, t|
+      c = compare_key(Array.fetch(SortItem.keys(a), t), Array.fetch(SortItem.keys(b), t), spec)
+      return c if c != 0
+    end
+    0
+  end
+
+  # NULLs come first under ASC and last under DESC unless NULLS FIRST / LAST says otherwise.
+  def compare_key(a, b, spec)
+    nulls_first = case SortKey.nulls(spec)
+                  in :first then true
+                  in :last then false
+                  in :default then !SortKey.desc(spec)
+                  end
+    return 0 if a == nil && b == nil
+    return (nulls_first ? -1 : 1) if a == nil
+    return (nulls_first ? 1 : -1) if b == nil
+    c = Collations.compare(a, b, SortKey.coll(spec))
+    SortKey.desc(spec) ? -c : c
+  end
+end

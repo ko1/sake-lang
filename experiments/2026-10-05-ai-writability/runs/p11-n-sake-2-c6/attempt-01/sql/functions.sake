@@ -1,0 +1,110 @@
+# Scalar functions (1.11). Names are matched in lower case.
+module Functions
+  module_function
+
+  # The number of arguments a function takes: [min, max]; nil if there is no such function.
+  def arity(name)
+    case name
+    in "length" then [1, 1]
+    in "upper" then [1, 1]
+    in "lower" then [1, 1]
+    in "abs" then [1, 1]
+    in "typeof" then [1, 1]
+    in "coalesce" then [2, 1000000]
+    in "ifnull" then [2, 2]
+    in "nullif" then [2, 2]
+    in "substr" then [2, 3]
+    in "trim" | "ltrim" | "rtrim" then [1, 2]
+    in "replace" then [3, 3]
+    in "instr" then [2, 2]
+    in "round" then [1, 2]
+    in "max" | "min" then [2, 1000000]
+    in "ceil" | "ceiling" | "floor" | "trunc" | "sqrt" then [1, 1]
+    in "mod" | "pow" | "power" then [2, 2]
+    in "pi" then [0, 0]
+    else nil
+    end
+  end
+
+  # Calls a function with its argument values.
+  def call(name, args)
+    x = args[0]
+    case name
+    in "typeof" then Values.type_name(x)
+    in "coalesce" then first_not_null(args)
+    in "ifnull" then first_not_null(args)
+    in "nullif" then nullif(x, args[1])
+    else
+      return nil if Array.any?(args) { |v| v == nil }
+      scalar(name, args)
+    end
+  end
+
+  # The functions whose result is NULL when any argument is.
+  def scalar(name, args)
+    x = args[0]
+    n = Array.size(args)
+    case name
+    in "length" then String.length(Values.text_of(x))
+    in "upper" then String.upcase(Values.text_of(x))
+    in "lower" then String.downcase(Values.text_of(x))
+    in "abs" then abs(x)
+    in "substr" then StrFn.substr(Values.text_of(x), integer_of(args[1]), n > 2 ? integer_of(args[2]) : nil)
+    in "trim" then StrFn.trim(Values.text_of(x), trim_chars(args), :both)
+    in "ltrim" then StrFn.trim(Values.text_of(x), trim_chars(args), :left)
+    in "rtrim" then StrFn.trim(Values.text_of(x), trim_chars(args), :right)
+    in "replace" then StrFn.replace(Values.text_of(x), Values.text_of(args[1]), Values.text_of(args[2]))
+    in "instr" then StrFn.instr(Values.text_of(x), Values.text_of(args[1]))
+    in "round" then round(x, n > 1 ? integer_of(args[1]) : 0)
+    in "ceil" | "ceiling" | "floor" | "trunc" | "mod" | "pow" | "power" | "sqrt" | "pi" then MathFn.call(name, args)
+    in "max" then extreme(args, 1)
+    else extreme(args, -1)
+    end
+  end
+
+  # A value read as an Integer (a REAL is truncated, text is read by numeric prefix).
+  def integer_of(v)
+    n = Values.to_number(v)
+    case n
+    in Float then Float.truncate(n)
+    else n
+    end
+  end
+
+  def trim_chars(args) = Array.size(args) > 1 ? Values.text_of(args[1]) : " "
+
+  def round(x, digits)
+    n = Values.to_number(x)
+    f = 0.0
+    case n
+    in Integer then f = Integer.to_f(n)
+    else f = n
+    end
+    Rounding.round(f, digits < 0 ? 0 : digits)
+  end
+
+  # The largest (sign 1) or smallest (sign -1) in the order of values; the first of equals.
+  def extreme(args, sign)
+    best = args[0]
+    Array.each(args) { |v| best = v if Values.compare(v, best) * sign > 0 }
+    best
+  end
+
+  def first_not_null(args)
+    found = Array.find(args) { |v| v != nil }
+    found
+  end
+
+  def nullif(x, y)
+    return x if x == nil || y == nil
+    Values.compare(x, y) == 0 ? nil : x
+  end
+
+  # INTEGER and REAL keep their type; TEXT is read by numeric prefix and gives a REAL.
+  def abs(x)
+    case x
+    in String then Arithmetic.to_f(Arithmetic.abs(Values.to_number(x)))
+    else Arithmetic.abs(x)
+    end
+  end
+end

@@ -1,0 +1,310 @@
+# Syntax tree produced by the parser and consumed by the resolver and the executor.
+# Every node is its own type, so code dispatches with `case node in Binary ...`.
+
+# ---- Expressions ----
+
+# A constant: nil (NULL), Integer, Float or String.
+class Lit
+  attr_reader value
+end
+
+# A column reference. `qualifier` and `name` are as written (qualifier is nil for a bare name);
+# `index` (position in the row the query evaluates on, see scope.sake) and `aff` (the column's
+# affinity: :integer / :real / :text, or nil, used for comparisons) are filled in by the resolver
+# and are -1 / nil in the parser's output. A resolved Col has no qualifier and the catalog's name.
+# `coll` is the column's collation (:binary / :nocase / :rtrim, spec 7.3), or :none for a Col that is
+# not a column (an aggregate's slot); it is :none in the parser's output too.
+class Col
+  attr_reader qualifier, name, index, aff, coll
+end
+
+# `expr COLLATE name` as parsed (name as written; the resolver looks it up) ...
+class Collate
+  attr_reader expr, name
+end
+
+# ... and after name resolution: coll is :binary, :nocase or :rtrim. It evaluates to expr's value.
+class Collated
+  attr_reader expr, coll
+end
+
+# op is :neg, :pos or :not.
+class Unary
+  attr_reader op, operand
+end
+
+# op is one of + - * / % || = != < <= > >= IS "IS NOT" AND OR ("==" and "<>" are normalised).
+class Binary
+  attr_reader op, left, right
+end
+
+# `name` as written (for messages); `fn` is the lower-case name used to look the function up.
+# distinct / star / order are the aggregate-only forms `f(DISTINCT x)`, `count(*)` and
+# `group_concat(x ORDER BY ..)` (order: Array of OrderTerm); plain calls have false / false / [].
+class Call
+  attr_reader name, fn, args, distinct, star, order
+end
+
+# An aggregate call after name resolution (see Resolver.resolve_aggregate). It does not appear in
+# an expression tree: there it is a Col reading the aggregate's value from the group row.
+# name is as written (for messages); fn is lower-case; order is an Array of OrderTerm.
+class Aggregate
+  attr_reader name, fn, args, distinct, star, order
+end
+
+# `CASE [operand] WHEN .. THEN .. [ELSE ..] END`. operand is nil for the searched form;
+# whens is an Array of WhenClause; otherwise_expr is nil without ELSE.
+class Case
+  attr_reader operand, whens, otherwise_expr
+end
+
+class WhenClause
+  attr_reader condition, result
+end
+
+# `expr [NOT] BETWEEN low AND high`.
+class Between
+  attr_reader expr, low, high, negated
+end
+
+# `expr [NOT] IN (items)`; items is an Array of expressions.
+class InList
+  attr_reader expr, items, negated
+end
+
+# `expr [NOT] LIKE pattern`.
+class Like
+  attr_reader expr, pattern, negated
+end
+
+# `CAST(expr AS type)`; type is :integer, :real or :text.
+class Cast
+  attr_reader expr, type
+end
+
+# ---- Window functions (spec 6) ----
+# The parser makes a WindowCall; WindowPlanner replaces it with a WindowValue (see window.sake).
+
+# `f(args) OVER over`; call is the Call. over is a String (`OVER name`) or a WindowSpec.
+class WindowCall
+  attr_reader call, over
+end
+
+# `( [base] [PARTITION BY ..] [ORDER BY ..] [frame] )`. base is a window name or nil; partition is an
+# Array of expressions; order an Array of OrderTerm; frame a Frame or nil.
+class WindowSpec
+  attr_reader base, partition, order, frame
+end
+
+# `WINDOW name AS ( spec )`.
+class NamedWindow
+  attr_reader name, spec
+end
+
+# units is :rows or :range. start / finish are FrameBounds (a single bound's finish is CURRENT ROW).
+class Frame
+  attr_reader units, start, finish
+end
+
+# kind is :unbounded_preceding, :preceding, :current, :following or :unbounded_following;
+# offset is the written number (an Integer or Float, negative if written so) for :preceding / :following, else nil.
+class FrameBound
+  attr_reader kind, offset
+end
+
+# A window call after name resolution (see WindowPlanner). name is as written (for messages); fn is
+# lower-case; args, partition are resolved expressions; order is an Array of OrderTerm with resolved
+# expressions; frame is a checked Frame (never nil: the default frame is filled in). star is `count(*)`.
+class Window
+  attr_reader name, fn, args, star, partition, order, frame
+end
+
+# In an expression tree, the result of window number `slot` of the plan: Windowing appends the values
+# to each row in reverse slot order, so the value is found from the end of the row.
+class WindowValue
+  attr_reader slot
+end
+
+# ---- Subqueries ----
+# The parser makes ScalarSub / InSelect / Exists around a Select; the resolver plans the select
+# and replaces them with ScalarQuery / InQuery / ExistsQuery around the Plan (see plan.sake).
+
+# `( select )` as a value.
+class ScalarSub
+  attr_reader select
+end
+
+# `expr [NOT] IN ( select )`.
+class InSelect
+  attr_reader expr, select, negated
+end
+
+# `EXISTS ( select )`; NOT EXISTS is a Unary :not around it.
+class Exists
+  attr_reader select
+end
+
+class ScalarQuery
+  attr_reader plan
+end
+
+class InQuery
+  attr_reader expr, plan, negated
+end
+
+class ExistsQuery
+  attr_reader plan
+end
+
+# ---- Statements ----
+
+# type is :integer, :real or :text. default is the DEFAULT literal's value (nil: NULL / none).
+# primary_key / unique / not_null say which column constraints were written.
+# collation is the name written after COLLATE, "binary" when there is none (looked up when the
+# statement runs, so an unknown name is reported then).
+class ColumnDef
+  attr_reader name, type, primary_key, unique, not_null, default, collation
+end
+
+# A table constraint: kind is :primary_key or :unique; columns are names as written.
+class TableConstraint
+  attr_reader kind, columns
+end
+
+class CreateTable
+  attr_reader name, columns, constraints, if_not_exists
+end
+
+class DropTable
+  attr_reader name, if_exists
+end
+
+# columns: Array of names, or nil when the statement gave no column list.
+# rows: Array of rows, each an Array of expressions (empty for INSERT ... SELECT).
+# query: the select that gives the rows (a query node, see "Queries"), or nil for VALUES.
+class Insert
+  attr_reader table, columns, rows, query
+end
+
+class Assignment
+  attr_reader column, expr
+end
+
+# sets: Array of Assignment; where is nil when absent.
+class Update
+  attr_reader table, sets, where
+end
+
+class Delete
+  attr_reader table, where
+end
+
+# expr is nil for `*` and `q.*`; star_of is the q of `q.*` (nil for `*` and for an expression).
+# alias_name is nil when there is no alias.
+class ResultColumn
+  attr_reader expr, alias_name, star_of
+end
+
+# ---- FROM ----
+
+# `table [[AS] alias]`; alias_name is nil without one.
+class TableRef
+  attr_reader name, alias_name
+end
+
+# `( select ) [[AS] alias]`.
+class SubqueryRef
+  attr_reader select, alias_name
+end
+
+# One join after the first from-item. left: LEFT [OUTER] JOIN. item: TableRef or SubqueryRef.
+# on is nil without ON; using is the USING column names (empty without USING). `,` and CROSS JOIN
+# are inner joins with neither.
+class JoinClause
+  attr_reader left, item, on, using
+end
+
+# first: the first from-item; joins: Array of JoinClause, left to right.
+class FromClause
+  attr_reader first, joins
+end
+
+# nulls is :default, :first or :last.
+class OrderTerm
+  attr_reader expr, desc, nulls
+end
+
+# ---- Queries ----
+# A query is one of Select (a simple select, with its own ORDER BY / LIMIT when it stands alone),
+# Compound or WithQuery. Subqueries, views, ctes and INSERT ... SELECT all hold a query.
+
+# op is "UNION", "UNION ALL", "INTERSECT" or "EXCEPT"; select is the simple select on its right.
+class CompoundPart
+  attr_reader op, select
+end
+
+# first op1 select1 op2 select2 ..., left to right; order / limit / offset apply to the whole result.
+class Compound
+  attr_reader first, parts, order, limit, offset
+end
+
+# One cte of a WITH: columns is the Array of names written, or nil; query is its select.
+class Cte
+  attr_reader name, columns, query
+end
+
+# WITH [RECURSIVE] ctes body: body is a Select or Compound.
+class WithQuery
+  attr_reader recursive, ctes, body
+end
+
+# distinct is true for SELECT DISTINCT; group is the Array of GROUP BY terms; having is nil when absent;
+# windows is the Array of NamedWindow of the WINDOW clause.
+# from (a FromClause), where, limit and offset are nil when absent.
+class Select
+  attr_reader distinct, items, from, where, group, having, windows, order, limit, offset
+end
+
+# ---- Schema and transaction statements ----
+
+# CREATE VIEW: columns is the Array of names written, or nil; query is the (unchecked) select.
+class CreateView
+  attr_reader name, columns, query, if_not_exists
+end
+
+class DropView
+  attr_reader name, if_exists
+end
+
+# One column of CREATE INDEX: name as written; collation is the name written after COLLATE, or ""
+# for none (then the column's own collation is used).
+class IndexColumn
+  attr_reader name, collation
+end
+
+# columns: Array of IndexColumn.
+class CreateIndex
+  attr_reader name, table, columns, unique, if_not_exists
+end
+
+class DropIndex
+  attr_reader name, if_exists
+end
+
+# ALTER TABLE t ADD COLUMN column-def; column is a ColumnDef.
+class AlterAddColumn
+  attr_reader table, column
+end
+
+class AlterRenameTable
+  attr_reader table, new_name
+end
+
+class AlterRenameColumn
+  attr_reader table, column, new_name
+end
+
+# kind is :begin, :commit or :rollback.
+class Transaction
+  attr_reader kind
+end

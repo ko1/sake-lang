@@ -1,0 +1,65 @@
+# GLOB patterns (7.2): case-sensitive; * any run, ? one character, [...] and [^...] one character of a
+# set (ranges x-y; a leading ] and a first or last - are members). Matching is Like.run.
+module Glob
+  module_function
+
+  def matches?(text, pattern) = Like.run(String.chars(text), compile(pattern))
+
+  def compile(pattern)
+    chars = String.chars(pattern)
+    n = Array.size(chars)
+    pat = Like.new_pat
+    i = 0
+    while i < n
+      c = chars[i]
+      if c == "*"
+        Like.add(pat, :star, "", Like.no_class)
+        i += 1
+      elsif c == "?"
+        Like.add(pat, :one, "", Like.no_class)
+        i += 1
+      elsif c == "["
+        close = class_end(chars, i)
+        if close < 0
+          Like.add(pat, :never, "", Like.no_class)
+          return pat
+        end
+        Like.add(pat, :class, "", read_class(chars, i, close))
+        i = close + 1
+      else
+        Like.add(pat, :lit, c, Like.no_class)
+        i += 1
+      end
+    end
+    pat
+  end
+
+  # The position of the ] that closes the class opened at `open`, or -1 if there is none.
+  def class_end(chars, open)
+    n = Array.size(chars)
+    j = open + 1
+    j += 1 if j < n && chars[j] == "^"
+    j += 1 if j < n && chars[j] == "]"
+    j += 1 while j < n && chars[j] != "]"
+    j < n ? j : -1
+  end
+
+  # The class between `open` and its closing ] at `close`.
+  def read_class(chars, open, close)
+    start = open + 1
+    negated = chars[start] == "^"
+    start += 1 if negated
+    ranges = Tuple[]
+    j = start
+    while j < close
+      if j + 2 < close && chars[j + 1] == "-"
+        Array.push(ranges, [chars[j], chars[j + 2]])
+        j += 3
+      else
+        Array.push(ranges, [chars[j], chars[j]])
+        j += 1
+      end
+    end
+    PatClass.new(negated, ranges)
+  end
+end

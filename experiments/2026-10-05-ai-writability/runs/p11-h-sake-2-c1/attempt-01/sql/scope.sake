@@ -1,0 +1,145 @@
+# What names can refer to (4.2): the sources of a FROM clause, the result column aliases, and the
+# sources of the enclosing queries. Names.column turns a written name into a :ref (or the
+# expression of an alias), and reports the name errors.
+
+# One FROM source as names see it.
+#   name     lower case alias, or table name; "" for a subquery without an alias
+#   columns  Column[]; a subquery's columns are named by its result columns and take the affinity of
+#            the column they select (:none if they are not a plain column) and the collation of
+#            their expression ("binary" if it has none)
+#   offset   position of its first column in the joined row
+#   hidden   positions of the columns that `*` and unqualified names skip (the right copy of a USING column)
+#   table    the Table of a table source (nil for a subquery)
+#   query    the plan of a subquery, view or WITH table source (nil for a table)
+Source = Struct.new(:name, :columns, :offset, :hidden, :table, :query)
+
+# A result column's alias and the expression it stands for (already resolved); agg is the name of
+# the first aggregate call in that expression, "" if none.
+AliasEntry = Struct.new(:name, :expr, :agg)
+
+# Where the window calls of one query are collected. allowed: whether a window call is fine in the
+# clause being resolved; calls: the distinct WindowCalls so far (slot k is idx -(k + 1) of the row,
+# see WindowRun.attach); named: the NamedWindows of the WINDOW clause. The clauses of one query share
+# calls and named, and differ in allowed.
+WindowSink = Struct.new(:allowed, :calls, :named)
+
+# What an expression's names refer to.
+#   db       the database (a subquery in an expression looks its tables up there)
+#   sources  Source[] of this query, in FROM order
+#   aliases  AliasEntry[] a name may fall back to
+#   mode     says what an aggregate call (or an alias that holds one) means here:
+#              :plain     an error "misuse of aggregate ..."  (WHERE, ON, SET, VALUES, aggregate arguments)
+#              :collect   allowed; calls: AggCall[] the distinct calls so far (slot k is row position width + k)
+#              :group_by  an error "not allowed in the GROUP BY clause"
+#              :order     an error "misuse of aggregate: f()"  (ORDER BY of a query that is not an aggregate query)
+#   parents  the scopes of the enclosing queries, innermost first, each as of the clause that holds this query
+#   width    the number of columns of the joined row (where the aggregate slots start)
+#   marks    shared by all the scopes of one query; a reference to an enclosing query adds to it
+#   windows  WindowSink: whether window calls are allowed here and where they are collected
+Scope = Struct.new(:db, :sources, :aliases, :mode, :calls, :parents, :width, :marks, :windows)
+
+module Names
+  module_function
+
+  def find_source(scope, qual)
+    k = Catalog.key(qual)
+    Array.find(Scope.sources(scope)) { |s| Source.name(s) == k }
+  end
+
+  # Source.hidden is a list of positions
+  def visible?(source, i) = !Array.include?(Source.hidden(source), i)
+
+  # A reference to column i of the source, seen from the query it is in.
+  def column_ref(source, i)
+    col = Source.columns(source)[i]
+    Ast.ref_with_collation(Source.offset(source) + i, Catalog.affinity(col), Column.name(col), 0, Column.coll(col))
+  end
+
+  # The references to the columns `*` (qual "") or `q.*` stands for.
+  def star(scope, qual)
+    out = Expr[]
+    if qual == ""
+      Array.each(Scope.sources(scope)) do |s|
+        i = 0
+        while i < Array.size(Source.columns(s))
+          Array.push(out, column_ref(s, i)) if visible?(s, i)
+          i += 1
+        end
+      end
+    else
+      s = find_source(scope, qual)
+      Errors.sql_error("no such table: #{qual}") if s == nil
+      i = 0
+      while i < Array.size(Source.columns(s))
+        Array.push(out, column_ref(s, i))
+        i += 1
+      end
+    end
+    out
+  end
+
+  # The :ref for the name, or the expression of the alias it falls back to. Looks in this query,
+  # then in each enclosing one, innermost first.
+  def column(scope, qual, name)
+    chain = Scope[scope] + Scope.parents(scope)
+    depth = 0
+    while depth < Array.size(chain)
+      s = chain[depth]
+      found = qual == "" ? in_sources(s, name) : in_qualified(s, qual, name)
+      found = alias_in(s, name) if found == nil && qual == ""
+      if found != nil
+        mark_correlated(chain, depth)
+        return Ast.shift_depth(found, depth)
+      end
+      depth += 1
+    end
+    Errors.sql_error("no such column: #{qual == "" ? name : qual + "." + name}")
+  end
+
+  # A reference to a row of an enclosing query makes every query between here and there correlated.
+  def mark_correlated(chain, depth)
+    k = 0
+    while k < depth
+      Array.push(Scope.marks(chain[k]), true)
+      k += 1
+    end
+  end
+
+  # The only visible column of this name among the sources; nil if none; an error if several.
+  def in_sources(scope, name)
+    found = nil
+    Array.each(Scope.sources(scope)) do |s|
+      i = Catalog.column_index(Source.columns(s), name)
+      if i >= 0 && visible?(s, i)
+        Errors.sql_error("ambiguous column name: #{name}") if found != nil
+        found = column_ref(s, i)
+      end
+    end
+    found
+  end
+
+  # Column `name` of the source named `qual`; nil if this query has no such source. A source that is
+  # there but lacks the column is an error, not a reason to look further out.
+  def in_qualified(scope, qual, name)
+    s = find_source(scope, qual)
+    return nil if s == nil
+    i = Catalog.column_index(Source.columns(s), name)
+    Errors.sql_error("no such column: #{qual}.#{name}") if i < 0
+    column_ref(s, i)
+  end
+
+  # The expression of the result column alias; an alias that holds an aggregate is not usable everywhere.
+  def alias_in(scope, name)
+    entry = Array.find(Scope.aliases(scope)) { |a| AliasEntry.name(a) == Catalog.key(name) }
+    return nil if entry == nil
+    if !WindowSink.allowed(Scope.windows(scope)) && Ast.window_ref?(AliasEntry.expr(entry))
+      Errors.sql_error("misuse of aliased window function #{name}")
+    end
+    agg = AliasEntry.agg(entry)
+    if agg != ""
+      Errors.sql_error("aggregate functions are not allowed in the GROUP BY clause") if Scope.mode(scope) == :group_by
+      Errors.sql_error("misuse of aggregate: #{agg}()") if Scope.mode(scope) == :plain
+    end
+    AliasEntry.expr(entry)
+  end
+end

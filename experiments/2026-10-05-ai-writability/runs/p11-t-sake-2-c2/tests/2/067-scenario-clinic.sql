@@ -1,0 +1,28 @@
+-- a clinic: patients and appointments
+CREATE TABLE patients (id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT UNIQUE, born INTEGER);
+CREATE TABLE appts (patient INTEGER NOT NULL, slot TEXT NOT NULL, doctor TEXT NOT NULL DEFAULT 'Dr. Lee', kind TEXT DEFAULT 'checkup', UNIQUE (doctor, slot));
+INSERT INTO patients (name, phone, born) VALUES ('Ada', '555-0101', 1980), ('Bao', '555-0102', 1995), ('Cem', NULL, 2010);
+INSERT INTO patients (name, phone) VALUES ('Dina', '555-0101');
+INSERT INTO patients (name, born) VALUES ('Eli', 'nineteen');
+INSERT INTO patients (phone) VALUES ('555-0199');
+INSERT INTO patients (name, phone, born) VALUES ('Fay', NULL, '2001');
+SELECT id, name, coalesce(phone, '-'), born FROM patients ORDER BY id;
+INSERT INTO appts (patient, slot) VALUES (1, '09:00'), (2, '09:30');
+INSERT INTO appts (patient, slot, doctor) VALUES (3, '09:00', 'Dr. Kim');
+INSERT INTO appts (patient, slot) VALUES (4, '09:00');
+INSERT INTO appts (patient, slot, kind) VALUES (4, '10:00', NULL);
+INSERT INTO appts (slot) VALUES ('11:00');
+SELECT patient, slot, doctor, coalesce(kind, '?') FROM appts ORDER BY slot, doctor;
+UPDATE appts SET slot = '09:30' WHERE patient = 1;
+UPDATE appts SET slot = '08:30', kind = 'blood test' WHERE patient = 1;
+SELECT patient, slot, kind FROM appts WHERE doctor LIKE 'dr. l%' ORDER BY slot;
+SELECT name, CASE WHEN born IS NULL THEN 'unknown' WHEN 2026 - born < 18 THEN 'minor' ELSE 'adult' END FROM patients ORDER BY name;
+SELECT slot FROM appts WHERE slot BETWEEN '09:00' AND '10:00' ORDER BY slot, doctor;
+UPDATE patients SET phone = '555-0102' WHERE name = 'Cem';
+UPDATE patients SET phone = '555-' || substr('0000' || (100 + id), -4) WHERE phone IS NULL;
+SELECT id, phone FROM patients ORDER BY id;
+DELETE FROM appts WHERE kind IS NULL OR patient NOT IN (1, 2, 3);
+SELECT patient, slot FROM appts ORDER BY patient;
+DELETE FROM patients WHERE id = 4;
+INSERT INTO patients (name) VALUES ('Gus');
+SELECT id, upper(name), instr(phone, '-') FROM patients ORDER BY id;

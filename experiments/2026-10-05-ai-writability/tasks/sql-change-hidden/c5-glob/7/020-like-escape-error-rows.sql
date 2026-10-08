@@ -1,0 +1,13 @@
+CREATE TABLE r (id INTEGER PRIMARY KEY, s TEXT, esc TEXT);
+SELECT id FROM r WHERE s LIKE 'a%' ESCAPE '##';
+SELECT s LIKE 'a' ESCAPE '' FROM r;
+INSERT INTO r (s, esc) VALUES ('a%', '!'), (NULL, '!');
+SELECT id FROM r WHERE s LIKE 'a%' ESCAPE '##';
+SELECT id, s LIKE 'a!%' ESCAPE esc FROM r ORDER BY id;
+INSERT INTO r (s, esc) VALUES ('b', '!?');
+SELECT id FROM r WHERE s LIKE 'a!%' ESCAPE esc ORDER BY id;
+DELETE FROM r WHERE id = 3;
+SELECT id FROM r WHERE s LIKE 'a!%' ESCAPE esc ORDER BY id;
+CREATE TABLE z (s TEXT);
+INSERT INTO z VALUES (NULL);
+SELECT count(*) FROM z WHERE s LIKE 'x' ESCAPE 'xx';

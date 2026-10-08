@@ -1,0 +1,79 @@
+# CASE, BETWEEN, IN, LIKE and GLOB on one row (2.3). Eval calls these for the node kinds they handle.
+module Predicates
+  module_function
+
+  def case_search(args, row)
+    n = Array.size(args)
+    i = 0
+    while i + 1 < n
+      return Eval.value_of(args[i + 1], row) if Values.truth(Eval.value_of(args[i], row)) == 1
+      i += 2
+    end
+    Eval.value_of(args[n - 1], row)
+  end
+
+  # args = [operand, when, then, ..., else]; the operand is evaluated once, and NULL matches nothing.
+  def case_simple(args, row)
+    n = Array.size(args)
+    x = Eval.value_of(args[0], row)
+    i = 1
+    while x != nil && i + 1 < n
+      v = Eval.value_of(args[i], row)
+      return Eval.value_of(args[i + 1], row) if v != nil && Eval.ordered(x, args[0], v, args[i]) == 0
+      i += 2
+    end
+    Eval.value_of(args[n - 1], row)
+  end
+
+  # x >= low AND x <= high, three-valued; args = [x, low, high].
+  def between(args, row)
+    x = Eval.value_of(args[0], row)
+    low = Eval.value_of(args[1], row)
+    high = Eval.value_of(args[2], row)
+    ge = (x == nil || low == nil) ? nil : Values.from_bool(Eval.ordered(x, args[0], low, args[1]) >= 0)
+    le = (x == nil || high == nil) ? nil : Values.from_bool(Eval.ordered(x, args[0], high, args[2]) <= 0)
+    return 0 if ge == 0 || le == 0
+    (ge == nil || le == nil) ? nil : 1
+  end
+
+  # args = [x, e1, e2, ...]. Only x's affinity counts: each ei is converted to it.
+  def in_list(args, row)
+    x = Eval.value_of(args[0], row)
+    return nil if x == nil
+    unknown = false
+    i = 1
+    while i < Array.size(args)
+      v = Eval.value_of(args[i], row)
+      if v == nil
+        unknown = true
+      else
+        a, b = Values.apply_affinity(x, Expr.aff(args[0]), v, :none)
+        return 1 if Values.compare(a, b) == 0
+      end
+      i += 1
+    end
+    unknown ? nil : 0
+  end
+
+  def like(args, row)
+    x = Eval.value_of(args[0], row)
+    pattern = Eval.value_of(args[1], row)
+    if Array.size(args) > 2
+      esc = Eval.value_of(args[2], row)
+      # Checked before the NULL tests: a bad ESCAPE fails even when x or the pattern is NULL.
+      Errors.sql_error("ESCAPE expression must be a single character") if esc != nil && String.size(Values.text_of(esc)) != 1
+      return nil if x == nil || pattern == nil || esc == nil
+      return Values.from_bool(Like.matches_escape?(Values.text_of(x), Values.text_of(pattern), Values.text_of(esc)))
+    end
+    return nil if x == nil || pattern == nil
+    Values.from_bool(Like.matches?(Values.text_of(x), Values.text_of(pattern)))
+  end
+
+  # args = [x, pattern]; text forms, case-sensitive, no affinity.
+  def glob(args, row)
+    x = Eval.value_of(args[0], row)
+    pattern = Eval.value_of(args[1], row)
+    return nil if x == nil || pattern == nil
+    Values.from_bool(Glob.matches?(Values.text_of(x), Values.text_of(pattern)))
+  end
+end

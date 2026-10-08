@@ -1,0 +1,24 @@
+-- Support tickets with a free-text status.
+CREATE TABLE ticket (no INTEGER, title TEXT, status TEXT, opened INTEGER, hours REAL);
+INSERT INTO ticket VALUES (1, 'Printer jam', 'open', 20240105, 1.5), (2, 'VPN down', 'closed', 20240103, 6);
+INSERT INTO ticket VALUES (3, 'New laptop', 'waiting', 20240110, NULL), (4, 'Password reset', 'closed', 20240111, 0.25);
+INSERT INTO ticket VALUES (5, 'Email "bounce"', 'open', 20240112, 2.75);
+INSERT INTO ticket VALUES (6, 'Bad date', 'open', '2024-01-13', 1);
+INSERT INTO ticket VALUES (6, 'It''s slow', 'Open', 20240113, '0.5');
+SELECT no, title, status FROM ticket ORDER BY no;
+SELECT no, title FROM ticket WHERE status = 'open' ORDER BY opened;
+SELECT no FROM ticket WHERE lower(status) = 'open' ORDER BY no;
+SELECT status, no FROM ticket ORDER BY status, no;
+SELECT no, hours FROM ticket WHERE hours IS NULL OR hours < 1 ORDER BY no;
+SELECT no, opened % 100 AS day FROM ticket WHERE day > 10 ORDER BY day;
+SELECT no, opened / 10000, opened / 100 % 100 FROM ticket WHERE no = 1;
+SELECT title FROM ticket WHERE opened = '20240103';
+SELECT no, hours * 60 AS minutes FROM ticket ORDER BY minutes DESC NULLS LAST;
+SELECT title || ' [' || upper(status) || ']' FROM ticket WHERE no >= 4 ORDER BY no;
+SELECT no FROM ticket WHERE NOT status = 'closed' AND hours > 1 ORDER BY no;
+SELECT priority FROM ticket;
+SELECT no, length(title) FROM ticket ORDER BY length(title), no LIMIT 3;
+SELECT no, coalesce(hours, 'unknown') FROM ticket WHERE no = 3;
+SELECT no, nullif(status, 'closed') FROM ticket ORDER BY no LIMIT 3 OFFSET 1;
+INSERT INTO ticket (no, title) VALUES (7, 'Bare');
+SELECT no, status IS NULL, opened IS NOT NULL FROM ticket WHERE no > 5 ORDER BY no;

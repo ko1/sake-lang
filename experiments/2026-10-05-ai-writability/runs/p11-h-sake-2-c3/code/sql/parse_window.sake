@@ -1,0 +1,95 @@
+# Parsing window syntax (6.1): `OVER (...)` after a call, and the WINDOW clause of a SELECT.
+
+module WindowParser
+  module_function
+
+  # The call itself, or, if OVER follows, the :wcall made from it.
+  def attach_over(cur, call)
+    return call unless Parser.accept_kw(cur, "OVER")
+    Errors.sql_error("DISTINCT is not supported for window functions") if Expr.distinct(call)
+    Errors.syntax unless Array.empty?(Expr.order(call))
+    spec = Tok.kind(Parser.peek(cur)) == :ident ? WindowSpec.new(Parser.expect_name(cur), Expr[], OrderTerm[], no_frame) : parse_parenthesized(cur)
+    Ast.window_call(Expr.text(call), Expr.qual(call) == "*", Expr.args(call), spec)
+  end
+
+  # name AS ( spec ) [, name AS ( spec )]...  (WINDOW is consumed)
+  def parse_definitions(cur)
+    defs = NamedWindow[]
+    loop do
+      name = Parser.expect_name(cur)
+      Parser.expect_kw(cur, "AS")
+      Array.push(defs, NamedWindow.new(name, parse_parenthesized(cur)))
+      break unless Parser.accept_op(cur, ",")
+    end
+    defs
+  end
+
+  def no_frame = FrameSpec.new(:none, FrameBound.new(:current, 0), FrameBound.new(:current, 0))
+
+  # ( [base] [PARTITION BY ...] [ORDER BY ...] [frame] )
+  def parse_parenthesized(cur)
+    Parser.expect_op(cur, "(")
+    base = Tok.kind(Parser.peek(cur)) == :ident ? Parser.expect_name(cur) : ""
+    partition = Expr[]
+    if Parser.accept_kw(cur, "PARTITION")
+      Parser.expect_kw(cur, "BY")
+      Array.push(partition, Parser.parse_expr(cur))
+      Array.push(partition, Parser.parse_expr(cur)) while Parser.accept_op(cur, ",")
+    end
+    order = OrderTerm[]
+    if Parser.accept_kw(cur, "ORDER")
+      Parser.expect_kw(cur, "BY")
+      Array.push(order, Parser.parse_call_order_term(cur))
+      Array.push(order, Parser.parse_call_order_term(cur)) while Parser.accept_op(cur, ",")
+    end
+    frame = parse_frame(cur)
+    Parser.expect_op(cur, ")")
+    WindowSpec.new(base, partition, order, frame)
+  end
+
+  # (ROWS | RANGE) bound | (ROWS | RANGE) BETWEEN bound AND bound; no_frame if absent.
+  def parse_frame(cur)
+    units = :none
+    units = :rows if Parser.accept_kw(cur, "ROWS")
+    units = :range if units == :none && Parser.accept_kw(cur, "RANGE")
+    return no_frame if units == :none
+    if Parser.accept_kw(cur, "BETWEEN")
+      from = parse_bound(cur)
+      Parser.expect_kw(cur, "AND")
+      return FrameSpec.new(units, from, parse_bound(cur))
+    end
+    FrameSpec.new(units, parse_bound(cur), FrameBound.new(:current, 0))
+  end
+
+  def parse_bound(cur)
+    if Parser.accept_kw(cur, "UNBOUNDED")
+      return FrameBound.new(:unbounded_preceding, 0) if Parser.accept_kw(cur, "PRECEDING")
+      Parser.expect_kw(cur, "FOLLOWING")
+      return FrameBound.new(:unbounded_following, 0)
+    end
+    if Parser.accept_kw(cur, "CURRENT")
+      Parser.expect_kw(cur, "ROW")
+      return FrameBound.new(:current, 0)
+    end
+    offset = parse_offset(cur)
+    return FrameBound.new(:preceding, offset) if Parser.accept_kw(cur, "PRECEDING")
+    Parser.expect_kw(cur, "FOLLOWING")
+    FrameBound.new(:following, offset)
+  end
+
+  # A numeric literal with an optional sign; tests only need `-n` to reach the errors of Windows.
+  def parse_offset(cur)
+    negative = Parser.accept_op(cur, "-")
+    Parser.accept_op(cur, "+") unless negative
+    t = Parser.advance(cur)
+    n = 0
+    if Tok.kind(t) == :int
+      n = String.to_i(Tok.text(t))
+    elsif Tok.kind(t) == :real
+      n = String.to_f(Tok.text(t))
+    else
+      Errors.syntax
+    end
+    negative ? -n : n
+  end
+end

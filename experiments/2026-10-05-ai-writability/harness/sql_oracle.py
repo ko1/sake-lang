@@ -11,6 +11,7 @@ either makes SQLite follow the spec or rejects the test:
   - round() is replaced by the spec's definition (SQLite's own rounds via a 16-17 digit decimal form);
   - a REAL is printed by the spec's rule (%.15g plus ".0"); a value where SQLite's own text differs
     rejects the test (about 1 in 10,000 random doubles);
+  - a BLOB (P11 change c2) prints as X'<uppercase hex>';
   - an error whose message is not in the spec's catalogue rejects the test;
   - a test whose output changes under PRAGMA reverse_unordered_selects (the order is not fixed by the
     spec: a missing ORDER BY, ties, group_concat order, bare columns) is rejected.
@@ -133,8 +134,8 @@ def fmt_value(v, conn):
         if v == v and abs(v) != float("inf") and mine != theirs:
             raise Reject("REAL %r prints as %s by the spec but %s in SQLite" % (v, mine, theirs))
         return mine
-    if isinstance(v, bytes):
-        raise Reject("BLOB value")
+    if isinstance(v, bytes):  # P11 change c2: X'<uppercase hex>'
+        return "X'" + v.hex().upper() + "'"
     return v
 
 
@@ -173,6 +174,11 @@ CATALOGUE = [
     r"argument of ntile must be a positive integer", r"misuse of aliased window function .+",
     r"unsupported frame specification", r"frame (starting|ending) offset must be a non-negative number",
     r"second argument to nth_value must be a positive integer"]
+# P11 changes: each change's extra messages, one regular expression per line, in
+# large/sql/changes/<change>/catalogue.txt.
+import glob as _glob, os as _os
+for _f in sorted(_glob.glob(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "large", "sql", "changes", "*", "catalogue.txt"))):
+    CATALOGUE += [l.rstrip("\n") for l in open(_f) if l.strip() and not l.startswith("#")]
 CATALOGUE_RE = re.compile(r"\A(" + "|".join(CATALOGUE) + r")\Z")
 
 

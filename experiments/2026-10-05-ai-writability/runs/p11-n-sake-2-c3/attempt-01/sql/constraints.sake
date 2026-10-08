@@ -1,0 +1,82 @@
+# The checks on one row before it is stored (2.1), in the order the specification gives them.
+module Constraints
+  module_function
+
+  # The row as it will be stored, or the first error. `raw` has one value per column and then the
+  # rowid (defaults already applied); `rows` is the table as it stands, whose row number `skip` (-1
+  # for none) is the row being replaced. A NULL rowid is filled in only when `auto_key` (INSERT).
+  def check_row(table, raw, rows, skip, auto_key)
+    columns = Table.columns(table)
+    rowid = Table.rowid(table)
+    row = Array.dup(raw)
+    settle_rowid(row, rowid < 0 ? Array.size(columns) : rowid, Array.size(columns), rows, auto_key)
+    check_not_null(table, row)
+    keys = Table.keys(table)
+    check_rowid_unique(table, row, rows, skip) if rowid < 0
+    Array.each(keys) { |k| check_unique(table, k, row, rows, skip) if Key.is_rowid(k) }
+    i = 0
+    Array.each(columns) do |c|
+      row[i] = Storage.coerce(row[i], c, Table.name(table)) if i != rowid
+      i += 1
+    end
+    Array.each(Array.reverse(keys)) { |k| check_unique(table, k, row, rows, skip) unless Key.is_rowid(k) }
+    row
+  end
+
+  # The rowid is at `pos` (the INTEGER PRIMARY KEY column, else `last`, the slot after the columns).
+  # It gets the next number when NULL, and must be an INTEGER otherwise; the slot `last` then
+  # holds it in every case.
+  def settle_rowid(row, pos, last, rows, auto_key)
+    v = row[pos]
+    if v == nil
+      Errors.sql_error("datatype mismatch") unless auto_key
+      row[pos] = next_key(rows, last)
+    else
+      n = Storage.key_value(v)
+      Errors.sql_error("datatype mismatch") if n == nil
+      row[pos] = n
+    end
+    row[last] = row[pos]
+  end
+
+  # One more than the largest rowid (kept at `last` in a row) present, or 1 if there are no rows.
+  def next_key(rows, last)
+    return 1 if Array.empty?(rows)
+    best = rows[0][last]
+    Array.each(rows) { |r| best = r[last] if r[last] > best }
+    best + 1
+  end
+
+  # A table without an INTEGER PRIMARY KEY: no other row has the rowid.
+  def check_rowid_unique(table, row, rows, skip)
+    last = Array.size(Table.columns(table))
+    i = 0
+    Array.each(rows) do |other|
+      Errors.sql_error("UNIQUE constraint failed: #{Table.name(table)}.rowid") if i != skip && other[last] == row[last]
+      i += 1
+    end
+  end
+
+  def check_not_null(table, row)
+    i = 0
+    Array.each(Table.columns(table)) do |c|
+      Errors.sql_error("NOT NULL constraint failed: #{Table.name(table)}.#{Column.name(c)}") if Column.not_null(c) && row[i] == nil
+      i += 1
+    end
+  end
+
+  # Another row with equal values in all the key's columns conflicts, unless one of them is NULL.
+  def check_unique(table, key, row, rows, skip)
+    return if Array.any?(Key.cols(key)) { |c| row[c] == nil }
+    i = 0
+    Array.each(rows) do |other|
+      if i != skip && same_key?(key, row, other)
+        names = Array.map(Key.cols(key)) { |c| "#{Table.name(table)}.#{Column.name(Table.columns(table)[c])}" }
+        Errors.sql_error("UNIQUE constraint failed: #{Array.join(names, ", ")}")
+      end
+      i += 1
+    end
+  end
+
+  def same_key?(key, a, b) = Array.all?(Key.cols(key)) { |c| Values.compare(a[c], b[c]) == 0 }
+end

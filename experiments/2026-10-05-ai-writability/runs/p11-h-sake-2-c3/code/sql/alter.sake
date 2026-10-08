@@ -1,0 +1,44 @@
+# ALTER TABLE (5.6): ADD COLUMN, RENAME TO, RENAME COLUMN. Every check comes before the first change.
+module Alter
+  module_function
+
+  def add_column(db, stmt)
+    table = Catalog.writable_table!(db, AlterAddStmt.table(stmt))
+    col = AlterAddStmt.column(stmt)
+    Errors.sql_error("duplicate column name: #{Column.name(col)}") if Catalog.column_index(Table.columns(table), Column.name(col)) >= 0
+    keys = AlterAddStmt.keys(stmt)
+    Errors.sql_error("Cannot add a PRIMARY KEY column") if Array.any?(keys) { |k| KeySpec.primary(k) }
+    Errors.sql_error("Cannot add a UNIQUE column") unless Array.empty?(keys)
+    if Column.not_null(col) && Column.default(col) == nil && !Array.empty?(Table.rows(table))
+      Errors.sql_error("Cannot add a NOT NULL column with default value NULL")
+    end
+    value = Storage.coerce(Column.default(col), col, Table.name(table))
+    width = Array.size(Table.columns(table))
+    Table.set_rows(table, Array.map(Table.rows(table)) { |row| Array.take(row, width) + Array[value, row[width]] })
+    Table.set_columns(table, Table.columns(table) + Column[col])
+  end
+
+  def rename_table(db, stmt)
+    table = Catalog.table!(db, RenameTableStmt.table(stmt))
+    name = RenameTableStmt.new_name(stmt)
+    k = Catalog.key(name)
+    if Catalog.find_table(db, name) != nil || Catalog.find_view(db, name) != nil || Catalog.find_index(db, name) != nil
+      Errors.sql_error("there is already another table or index with this name: #{name}")
+    end
+    old = Catalog.key(Table.name(table))
+    Hash.delete(Database.tables(db), old)
+    Table.set_name(table, name)
+    Database.tables(db)[k] = table
+    Array.each(Hash.values(Database.indexes(db))) { |index| SqlIndex.set_table(index, k) if SqlIndex.table(index) == old }
+  end
+
+  def rename_column(db, stmt)
+    table = Catalog.table!(db, RenameColumnStmt.table(stmt))
+    i = Catalog.column_index(Table.columns(table), RenameColumnStmt.column(stmt))
+    Errors.sql_error("no such column: \"#{RenameColumnStmt.column(stmt)}\"") if i < 0
+    columns = Array.dup(Table.columns(table))
+    c = columns[i]
+    columns[i] = Column.new(RenameColumnStmt.new_name(stmt), Column.type(c), Column.not_null(c), Column.default(c))
+    Table.set_columns(table, columns)
+  end
+end

@@ -1,0 +1,35 @@
+# UPDATE (2.2): the new rows are built and checked one at a time; the table changes only if all pass.
+
+# A resolved assignment: the position of the column and the expression for its new value.
+Change = Struct.new(:col, :expr)
+
+module Update
+  module_function
+
+  def run(db, stmt)
+    table = Catalog.writable_table!(db, UpdateStmt.table(stmt))
+    scope = Resolver.table_scope(db, UpdateStmt.table(stmt), table)
+    changes = Change[]
+    Array.each(UpdateStmt.sets(stmt)) do |a|
+      i = Catalog.target_index(table, Assignment.column(a))
+      Errors.sql_error("no such column: #{Assignment.column(a)}") if i < 0
+      Array.push(changes, Change.new(i, Resolver.resolve(Assignment.expr(a), scope)))
+    end
+    where = UpdateStmt.where(stmt)
+    cond = where == nil ? nil : Resolver.resolve(where, scope)
+
+    old_rows = Table.rows(table)
+    working = Array.dup(old_rows)
+    i = 0
+    Array.each(old_rows) do |old|
+      if cond == nil || Values.truth(Eval.value_of(cond, Eval.top(old))) == 1
+        raw = Array.dup(old)
+        Array.each(changes) { |c| raw[Change.col(c)] = Eval.value_of(Change.expr(c), Eval.top(old)) }
+        working[i] = Constraints.check_row(table, raw, working, i, false)
+      end
+      i += 1
+    end
+    Table.set_rows(table, working)
+    String[]
+  end
+end

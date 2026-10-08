@@ -1,0 +1,169 @@
+# Lexer (1.2): script text -> tokens, and the cut of the token list into statements.
+#
+# kind   text                              key
+# :kw    the keyword, upper case           same
+# :ident the name as written (unquoted)    lower case (what lookups compare)
+# :int   the digits                        ""
+# :real  the literal                       ""
+# :str   the string's contents             ""
+# :blob  the hex digits, upper case         ""
+# :op    the operator or punctuation       ""
+# :semi  ";"                               ""
+# :bad   a character or literal the lexer cannot read    ""
+# :eof   (only produced by the parser, past the last token)
+Tok = Struct.new(:kind, :text, :key)
+
+module Lexer
+  module_function
+
+  def keywords
+    Set[
+      "ADD", "ALL", "ALTER", "AND", "AS", "ASC", "BEGIN", "BETWEEN", "BY", "CASE", "CAST", "COLUMN",
+      "COMMIT", "CREATE", "CROSS", "CURRENT", "DEFAULT", "DELETE", "DESC", "DISTINCT", "DROP", "ELSE",
+      "END", "EXCEPT", "EXISTS", "FIRST", "FOLLOWING", "FROM", "GROUP", "HAVING", "IF", "IN", "INDEX",
+      "INNER", "INSERT", "INTERSECT", "INTO", "IS", "JOIN", "KEY", "LAST", "LEFT", "LIKE", "LIMIT",
+      "NOT", "NULL", "NULLS", "OFFSET", "ON", "OR", "ORDER", "OUTER", "OVER", "PARTITION", "PRECEDING",
+      "PRIMARY", "RANGE", "RECURSIVE", "RENAME", "ROLLBACK", "ROW", "ROWS", "SELECT", "SET", "TABLE",
+      "THEN", "TO", "TRANSACTION", "UNBOUNDED", "UNION", "UNIQUE", "UPDATE", "USING", "VALUES", "VIEW",
+      "WHEN", "WHERE", "WINDOW", "WITH"
+    ]
+  end
+
+  def letter?(c) = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+
+  def word_char?(c) = letter?(c) || NumText.digit?(c)
+
+  # Tokens of the whole script, in order (comments and whitespace dropped).
+  def tokenize(src)
+    bytes = String.bytes(src)
+    n = Array.size(bytes)
+    kws = keywords
+    toks = Tok[]
+    i = 0
+    while i < n
+      c = bytes[i]
+      nxt = NumText.byte_at(bytes, i + 1)
+      if NumText.space?(c)
+        i += 1
+      elsif c == 45 && nxt == 45
+        i += 1 while i < n && bytes[i] != 10
+      elsif c == 47 && nxt == 42
+        i += 2
+        i += 1 while i < n && !(bytes[i] == 42 && NumText.byte_at(bytes, i + 1) == 47)
+        i += 2
+      elsif (c == 88 || c == 120) && nxt == 39
+        i = blob_literal(src, bytes, i, toks)
+      elsif letter?(c)
+        j = i + 1
+        j += 1 while j < n && word_char?(bytes[j])
+        word = Text.byteslice(src, i, j - i)
+        upper = String.upcase(word)
+        if Set.include?(kws, upper)
+          Array.push(toks, Tok.new(:kw, upper, upper))
+        else
+          Array.push(toks, Tok.new(:ident, word, String.downcase(word)))
+        end
+        i = j
+      elsif NumText.digit?(c) || (c == 46 && NumText.digit?(nxt))
+        stop, real = NumText.scan(bytes, i)
+        Array.push(toks, Tok.new(real ? :real : :int, Text.byteslice(src, i, stop - i), ""))
+        i = stop
+      elsif c == 39 || c == 34
+        i = quoted(src, bytes, i, c, toks)
+      elsif c == 59
+        Array.push(toks, Tok.new(:semi, ";", ""))
+        i += 1
+      else
+        i = operator(src, bytes, i, toks)
+      end
+    end
+    toks
+  end
+
+  # A string literal (quote ') or a quoted identifier (quote "); the doubled quote stands for one.
+  # Returns the index after it; an unterminated one swallows the rest of the script.
+  def quoted(src, bytes, start, quote, toks)
+    n = Array.size(bytes)
+    j = start + 1
+    escaped = false
+    closed = false
+    while j < n && !closed
+      if bytes[j] != quote
+        j += 1
+      elsif NumText.byte_at(bytes, j + 1) == quote
+        escaped = true
+        j += 2
+      else
+        closed = true
+      end
+    end
+    unless closed
+      Array.push(toks, Tok.new(:bad, "", ""))
+      return n
+    end
+    body = Text.byteslice(src, start + 1, j - start - 1)
+    pair = Text.byteslice(src, j, 1)
+    body = String.gsub(body, pair + pair, pair) if escaped
+    if quote == 39
+      Array.push(toks, Tok.new(:str, body, ""))
+    else
+      Array.push(toks, Tok.new(:ident, body, String.downcase(body)))
+    end
+    j + 1
+  end
+
+  # A blob literal X'..' (7.1) starting at the X. Read like a string literal, so that it is skipped whole
+  # when statements are cut; a body that is not an even number of hex digits makes a :bad token.
+  # Returns the index after it.
+  def blob_literal(src, bytes, start, toks)
+    lit = Tok[]
+    stop = quoted(src, bytes, start + 1, 39, lit)
+    body = Tok.text(lit[0])
+    if Tok.kind(lit[0]) == :str && hex_digits?(body)
+      Array.push(toks, Tok.new(:blob, String.upcase(body), ""))
+    else
+      Array.push(toks, Tok.new(:bad, "", ""))
+    end
+    stop
+  end
+
+  # Whether s is an even number of hexadecimal digits (possibly none).
+  def hex_digits?(s)
+    bs = String.bytes(s)
+    return false if Array.size(bs) % 2 != 0
+    Array.all?(bs) { |c| NumText.digit?(c) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102) }
+  end
+
+  # Operators and punctuation; anything else becomes a :bad token. Returns the next index.
+  def operator(src, bytes, i, toks)
+    two = Text.byteslice(src, i, 2)
+    if two == "||" || two == "<=" || two == ">=" || two == "<>" || two == "!=" || two == "=="
+      Array.push(toks, Tok.new(:op, two, ""))
+      return i + 2
+    end
+    one = Text.byteslice(src, i, 1)
+    if String.include?("+-*/%=<>(),.", one)
+      Array.push(toks, Tok.new(:op, one, ""))
+    else
+      Array.push(toks, Tok.new(:bad, one, ""))
+    end
+    i + 1
+  end
+
+  # Cuts the tokens at each ";" outside literals (those are single tokens already).
+  # Statements that are empty are left out. Tokens after the last ";" form a statement too.
+  def split_statements(toks)
+    stmts = Array[]
+    cur = Tok[]
+    Array.each(toks) do |t|
+      if Tok.kind(t) == :semi
+        Array.push(stmts, cur) unless Array.empty?(cur)
+        cur = Tok[]
+      else
+        Array.push(cur, t)
+      end
+    end
+    Array.push(stmts, cur) unless Array.empty?(cur)
+    stmts
+  end
+end

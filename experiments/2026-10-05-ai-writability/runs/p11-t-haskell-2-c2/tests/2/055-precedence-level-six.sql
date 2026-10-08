@@ -1,0 +1,5 @@
+-- IN, LIKE and BETWEEN bind like =
+SELECT 1 IN (1, 2) = 1, 0 = 1 IN (0), 'a' LIKE 'A' = 1, 2 + 3 IN (5);
+SELECT NOT 1 IN (2, 3), NOT 'x' LIKE 'y' AND 1, 1 = 1 AND 2 BETWEEN 1 AND 3;
+SELECT 'a' || 'b' LIKE 'ab', 3 * 2 BETWEEN 5 AND 7, 1 < 2 IN (1);
+SELECT 5 BETWEEN 1 AND 10 OR 0, 0 OR 5 NOT BETWEEN 1 AND 10, 1 IS 1 IN (1);

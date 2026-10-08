@@ -1,0 +1,70 @@
+# Sorting result rows by ORDER BY terms (1.7): a stable merge sort.
+
+# keys: the value of each ORDER BY term for the row; values: the result row.
+SortRow = Struct.new(:keys, :values)
+
+module Sorter
+  module_function
+
+  def sort(rows, terms)
+    return rows if Array.empty?(terms) || Array.size(rows) < 2
+    merge_sort(rows, terms)
+  end
+
+  def merge_sort(rows, terms)
+    n = Array.size(rows)
+    return rows if n < 2
+    mid = n / 2
+    left = merge_sort(Array.take(rows, mid), terms)
+    right = merge_sort(Array.drop(rows, mid), terms)
+    out = Array[]
+    i = 0
+    j = 0
+    nl = Array.size(left)
+    nr = Array.size(right)
+    while i < nl && j < nr
+      if compare_rows(right[j], left[i], terms) < 0
+        Array.push(out, right[j])
+        j += 1
+      else
+        Array.push(out, left[i])
+        i += 1
+      end
+    end
+    while i < nl
+      Array.push(out, left[i])
+      i += 1
+    end
+    while j < nr
+      Array.push(out, right[j])
+      j += 1
+    end
+    out
+  end
+
+  # Negative if row a sorts first, positive if b does, 0 on a tie.
+  def compare_rows(a, b, terms)
+    ka = SortRow.keys(a)
+    kb = SortRow.keys(b)
+    i = 0
+    Array.each(terms) do |t|
+      c = compare_key(ka[i], kb[i], t)
+      return c if c != 0
+      i += 1
+    end
+    0
+  end
+
+  # NULLs come first under ASC and last under DESC, unless NULLS FIRST / NULLS LAST says otherwise.
+  def compare_key(x, y, term)
+    desc = OrderTerm.desc(term)
+    if x == nil || y == nil
+      return 0 if x == nil && y == nil
+      nulls = OrderTerm.nulls(term)
+      nulls_first = nulls == :first || (nulls == :default && !desc)
+      return (x == nil) == nulls_first ? -1 : 1
+    end
+    c = Values.compare_under(x, y, OrderTerm.coll(term))
+    desc ? -c : c
+  end
+end

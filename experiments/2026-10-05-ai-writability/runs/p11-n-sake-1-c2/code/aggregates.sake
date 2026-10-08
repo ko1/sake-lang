@@ -1,0 +1,155 @@
+# Aggregate functions (spec 3.2): which calls are aggregates, and their value over the rows of a group.
+module Aggregates
+  module_function
+
+  def name?(fn)
+    case fn
+    in "count" | "sum" | "total" | "avg" | "min" | "max" | "group_concat" then true
+    else false
+    end
+  end
+
+  # Is `fn` called with `argc` arguments (or `*`) an aggregate? `max` / `min` with two or more
+  # arguments are the scalar functions.
+  def aggregate?(fn, argc, star)
+    case fn
+    in "count" then star ? argc == 0 : argc <= 1
+    in "sum" | "total" | "avg" | "min" | "max" then !star && argc == 1
+    in "group_concat" then !star && (argc == 1 || argc == 2)
+    else false
+    end
+  end
+
+  # Do two resolved calls compute the same thing? (The written name does not matter.)
+  def same?(a, b)
+    Aggregate.fn(a) == Aggregate.fn(b) && Aggregate.distinct(a) == Aggregate.distinct(b) &&
+      Aggregate.star(a) == Aggregate.star(b) && ExprKey.same_list?(Aggregate.args(a), Aggregate.args(b)) &&
+      same_order?(Aggregate.order(a), Aggregate.order(b))
+  end
+
+  def same_order?(xs, ys)
+    Array.size(xs) == Array.size(ys) && Array.all?(Array.each_with_index(xs)) do |x, i|
+      y = Array.fetch(ys, i)
+      ExprKey.same?(OrderTerm.expr(x), OrderTerm.expr(y)) && OrderTerm.desc(x) == OrderTerm.desc(y) && OrderTerm.nulls(x) == OrderTerm.nulls(y)
+    end
+  end
+
+  # The value of `agg` over `rows` (the rows of one group, each an Array of values).
+  def compute(agg, rows)
+    rows = Sorter.sort_rows(rows, Aggregate.order(agg)) unless Array.empty?(Aggregate.order(agg))
+    fn = Aggregate.fn(agg)
+    return Array.size(rows) if Aggregate.star(agg)
+    return group_concat(agg, rows) if fn == "group_concat"
+    values = argument_values(agg, rows)
+    case fn
+    in "count" then Array.size(values)
+    in "sum" then Array.empty?(values) ? nil : sum(values, true)
+    in "total" then Arithmetic.to_f(Array.empty?(values) ? 0.0 : sum(values, false))
+    in "avg" then Array.empty?(values) ? nil : Arithmetic.to_f(sum(values, false)) / Array.size(values)
+    in "min" then extreme(values, -1)
+    in "max" then extreme(values, 1)
+    end
+  end
+
+  # The non-NULL values of the first argument over the rows, each distinct one once under DISTINCT.
+  def argument_values(agg, rows)
+    arg = Array.fetch(Aggregate.args(agg), 0)
+    values = Array[]
+    seen = Hash[]
+    Array.each(rows) do |row|
+      v = Evaluator.evaluate(arg, row)
+      next if v == nil
+      if Aggregate.distinct(agg)
+        key = Grouping.key_of(v)
+        next if Hash.key?(seen, key)
+        seen[key] = true
+      end
+      Array.push(values, v)
+    end
+    values
+  end
+
+  # The smallest (direction -1) or largest (1) value, the first of equal ones; NULL if there is none.
+  def extreme(values, direction)
+    return nil if Array.empty?(values)
+    best = Array.fetch(values, 0)
+    Array.each(values) { best = it if Value.compare(it, best) == direction }
+    best
+  end
+
+  # The row that gives the minimum / maximum of a min / max call (the first on ties); nil if every value is NULL.
+  def extreme_row(agg, rows)
+    arg = Array.fetch(Aggregate.args(agg), 0)
+    direction = Aggregate.fn(agg) == "max" ? 1 : -1
+    best = nil
+    best_row = nil
+    Array.each(rows) do |row|
+      v = Evaluator.evaluate(arg, row)
+      next if v == nil
+      if best_row == nil || Value.compare(v, best) == direction
+        best = v
+        best_row = row
+      end
+    end
+    best_row
+  end
+
+  # ---- group_concat ----
+
+  def group_concat(agg, rows)
+    args = Aggregate.args(agg)
+    out = nil
+    seen = Hash[]
+    Array.each(rows) do |row|
+      v = Evaluator.evaluate(Array.fetch(args, 0), row)
+      next if v == nil
+      if Aggregate.distinct(agg)
+        key = Grouping.key_of(v)
+        next if Hash.key?(seen, key)
+        seen[key] = true
+      end
+      if out == nil
+        out = Value.text_form(v)
+      else
+        sep = Array.size(args) == 2 ? Evaluator.evaluate(Array.fetch(args, 1), row) : ","
+        out = out + (sep == nil ? "" : Value.text_form(sep)) + Value.text_form(v)
+      end
+    end
+    out
+  end
+
+  # ---- sum, total, avg (3.2 "Sums") ----
+
+  # Each value as the number it counts as: numeric TEXT as that number, other TEXT (and every BLOB) by
+  # numeric prefix as a REAL, so an Integer in the result means an INTEGER input.
+  def as_number(v)
+    case v
+    in String
+      n = Value.parse_numeric(v)
+      n == nil ? Arithmetic.to_f(Value.numeric_prefix(v)) : n
+    in Blob then Arithmetic.to_f(Value.numeric_prefix(Blobs.text(v)))
+    else v
+    end
+  end
+
+  # The sum of non-NULL `values`: an Integer when all are INTEGERs (exact; `checked` makes a result
+  # outside 64 bits an error), else a REAL summed with compensation from the first non-INTEGER on.
+  def sum(values, checked)
+    nums = Array.map(values) { as_number(it) }
+    first_real = Array.find_index(nums) { it in Float }
+    if first_real == nil
+      total = Array.sum(nums)
+      raise SqlError.new("integer overflow") if checked && !Coercion.in_64_bits?(total)
+      return total
+    end
+    s = Arithmetic.to_f(Array.sum(Array.take(nums, first_real)))
+    c = 0.0
+    Array.each(Array.drop(nums, first_real)) do |n|
+      v = Arithmetic.to_f(n)
+      t = s + v
+      c += Float.abs(s) > Float.abs(v) ? (s - t) + v : (v - t) + s
+      s = t
+    end
+    s + c
+  end
+end

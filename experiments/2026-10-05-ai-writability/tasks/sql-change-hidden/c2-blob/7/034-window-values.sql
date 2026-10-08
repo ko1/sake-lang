@@ -1,0 +1,5 @@
+CREATE TABLE st (t INTEGER, v BLOB);
+INSERT INTO st VALUES (1, X'03'), (2, X'01'), (3, X'02'), (4, NULL);
+SELECT t, lag(v) OVER (ORDER BY t), lead(v, 1, X'EE') OVER (ORDER BY t), max(v) OVER (ORDER BY t) FROM st ORDER BY t;
+SELECT t, first_value(v) OVER (ORDER BY t ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), nth_value(v, 2) OVER (ORDER BY t) FROM st ORDER BY t;
+SELECT t, rank() OVER (ORDER BY v DESC) FROM st ORDER BY t;

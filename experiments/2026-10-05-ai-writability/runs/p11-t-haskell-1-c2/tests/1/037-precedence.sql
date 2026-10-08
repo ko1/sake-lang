@@ -1,0 +1,11 @@
+SELECT 2 * 3 || 4;
+SELECT 'a' || 1 + 2;
+SELECT 1 < 2 = 1;
+SELECT 1 + 2 * 3, (1 + 2) * 3;
+SELECT 10 - 4 - 3, 100 / 10 / 5;
+SELECT 2 + 3 < 6, 7 % 4 * 2;
+SELECT -2 * -3, - 2 || 3;
+SELECT 1 = 1 = 1, 3 > 2 > 1;
+SELECT 1 || 2 || 3 + 1;
+SELECT 5 - -1, -(5 - 1);
+SELECT 2 < 3 IS 1;

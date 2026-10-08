@@ -1,0 +1,80 @@
+# Telling values and rows apart by the order of values (1.9): GROUP BY, SELECT DISTINCT and
+# DISTINCT inside aggregates all treat NULLs as equal to each other and 1 as equal to 1.0. The
+# `_by` forms tell TEXT apart under collations (7.4): one collation name for a value, one per value for a row.
+module Grouping
+  module_function
+
+  # A String that is equal for two values exactly when they are equal here (as BINARY).
+  def key(v) = key_by(v, "binary")
+
+  def key_by(v, coll)
+    case v
+    in Integer then "i#{v}"
+    in Float then whole_float?(v) ? "i#{Float.truncate(v)}" : "f#{Float.to_s(v)}"
+    in String
+      s = Collations.fold(v, coll)
+      "s#{String.size(s)}:#{s}"
+    else "n"
+    end
+  end
+
+  def whole_float?(x) = Float.finite?(x) && Integer.to_f(Float.truncate(x)) == x
+
+  def row_key(vals) = Array.join(Array.map(vals) { |v| key(v) }, ",")
+
+  # The same, the i-th value under the i-th of colls.
+  def row_key_by(vals, colls)
+    parts = String[]
+    i = 0
+    Array.each(vals) do |v|
+      Array.push(parts, key_by(v, colls[i]))
+      i += 1
+    end
+    Array.join(parts, ",")
+  end
+
+  # The rows split into groups by the values of key_exprs on each row (each under its collation);
+  # groups and the rows in them keep the order they first appear in.
+  def partition(rows, key_exprs)
+    colls = Array.map(key_exprs) { |e| Collations.of_binary(e) }
+    index = Hash[]
+    groups = Array[]
+    Array.each(rows) do |row|
+      k = row_key_by(Array.map(key_exprs) { |e| Eval.value_of(e, row) }, colls)
+      at = index[k]
+      if at == nil
+        index[k] = Array.size(groups)
+        Array.push(groups, Array[row])
+      else
+        Array.push(groups[at], row)
+      end
+    end
+    groups
+  end
+
+  # The result rows without repeats of the same values, keeping the first of each (3.4);
+  # colls: the collation of each result column.
+  def distinct_rows(rows, colls)
+    seen = Set[]
+    out = SortRow[]
+    Array.each(rows) do |r|
+      Array.push(out, r) if Set.add?(seen, row_key_by(SortRow.values(r), colls)) != nil
+    end
+    out
+  end
+
+  # The same for rows that are plain Arrays of values.
+  def distinct_values(rows, colls)
+    seen = Set[]
+    out = Array[]
+    Array.each(rows) { |r| Array.push(out, r) if Set.add?(seen, row_key_by(r, colls)) != nil }
+    out
+  end
+
+  # The row_key_by of each of the rows (Arrays of values), as a Set.
+  def key_set(rows, colls)
+    keys = Set[]
+    Array.each(rows) { |r| Set.add(keys, row_key_by(r, colls)) }
+    keys
+  end
+end
