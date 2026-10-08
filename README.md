@@ -20,9 +20,8 @@ Because every operation names its type:
 - **Run-time checks remain.** Every operation still checks its arguments while running, so what
   the checks before running miss still stops at the exact operation.
 
-The motivation is to make a language that is easy for AI to write. An experiment comparing Sake
-with Ruby, with and without type signatures, is planned (see [DESIGN.md](DESIGN.md), in
-Japanese).
+The motivation was to make a language that is easy for AI to write. **The evaluation did not
+support it, and development has stopped (2026-10-08).** See [Status](#status).
 
 ## A taste
 
@@ -135,8 +134,51 @@ ruby test/test_cli.rb           # the command line, and whether the generated do
 
 ## Status
 
-This is a research prototype, built to see how far "types on operations" can go. The design is
-still moving: decisions and open questions are kept in [DESIGN.md](DESIGN.md).
+**Concluded (2026-10-08). The interpreter is kept as it is, and nothing more is planned.**
+
+This was a research prototype, built to see whether "types on operations" makes a language easier
+for AI to write. The evaluation
+([experiments/2026-10-05-ai-writability/](experiments/2026-10-05-ai-writability/README.md), in
+Japanese; summary page: <https://claude.ai/artifact/NaxNc5iropLucuvhawKETD>) answered no:
+
+- **Correctness was the same.** With Claude Sonnet 5.5, Sake reached the same correctness as Ruby in
+  writing, changing, and reading programs. The same was true for a SQL engine of 3,000 to 4,000
+  lines built in 6 stages, where Java, Haskell, Scheme, and Ruby with Steep also all passed 366 to
+  368 of the 369 hidden tests. No type checker, in any of these languages, prevented a bug that
+  the others shipped.
+- **The cost was the highest.** For the SQL engine, Sake used 1.71 times Ruby's output tokens and
+  3.5 times the working time. Ruby with Steep, which must also check types on everything, used
+  1.48 times. Making the checker and the startup faster would close part of the gap, but there is
+  no sign it would go below Ruby.
+- **A smaller model did worse.** With Claude Haiku 4.5, Sake passed 26% of the hidden tests
+  against Ruby's 77%. The checker stopped wrong programs but did not help fix them.
+
+What would justify reopening it: a task or model where Sonnet-class models fall clearly below the
+ceiling, *and* static type checks (in any language) are seen to stop errors that the dynamically
+typed solutions ship. Only then is it worth asking whether putting types on operations helps.
+
+**Not measured: whether people read Sake more easily**, for example when reviewing code that AI
+wrote. "One line tells you which function runs" is a claim about a human reader, and the
+evaluation only had AI read (it read Sake as well as Ruby, at 1.1 to 1.4 times the output
+tokens). Testing it needs people: review the same AI-written changes with planted bugs in Ruby and
+in Sake, and compare how many bugs are found and how long it takes. The reviewers already know
+Ruby, so the comparison is biased against Sake.
+
+The design notes and their reasons are in [DESIGN.md](DESIGN.md).
+
+### Known issues (not fixed)
+
+- The checker does not terminate for mutually recursive functions that use `Array + Array`: each
+  `+` makes a new array type, so the memo of `[function, argument types]` never hits.
+  `--strict=0` skips the checker and runs it.
+
+  ```ruby
+  def f(n, row) = n == 0 ? row : g(n - 1, row + Array[n])
+  def g(n, row) = f(n, row + Array[n])
+  puts Array.size(f(3, Array[]))
+  ```
+- Checking is slow on large programs (3 to 24 seconds for 2,500 lines, depending on the style), and
+  starting a program takes about 0.3 seconds for 2,500 lines, about 5 times Ruby.
 
 ## License
 
