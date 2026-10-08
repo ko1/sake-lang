@@ -653,11 +653,11 @@ module Sake
             add_check(o, "#{d.module}.#{d.name}", "required", "a definition", one(a), :error, [a])
             next
           end
-          @callers.push(call_site(o))
+          push_caller(o)
           begin
             call_user(fn, [one(a), *args.drop(1)], blk)
           ensure
-            @callers.pop
+            pop_caller
           end
         end
         u(*rs)
@@ -668,11 +668,11 @@ module Sake
           fn = un.table[atom_type_name(a)] or next
           xs = [one(a), *args.drop(1)]
           next call_builtin(fn, xs, blk, o) unless fn.is_a?(UserFunction)
-          @callers.push(call_site(o))
+          push_caller(o)
           begin
             call_user(fn, xs, blk)
           ensure
-            @callers.pop
+            pop_caller
           end
         end
         u(*rs)
@@ -683,11 +683,11 @@ module Sake
           add_check(o, "#{n.fn.origin || n.fn.namespace}.#{n.fn.name}", "required", "a definition", atoms, :error, atoms) unless atoms.empty?
           return []
         end
-        @callers.push(call_site(o))
+        push_caller(o)
         begin
           call_user(n.fn, args, blk)
         ensure
-          @callers.pop
+          pop_caller
         end
       when CallBuiltin then builtin_call(n, n.fn, n.args.take_while { !_1.is_a?(Splat) }, args, blk, env)
       end

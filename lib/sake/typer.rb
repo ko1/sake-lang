@@ -72,14 +72,15 @@ module Sake
       loop do
         @passes += 1
         before = snapshot
-        @checks = {}
-        @check_ctx = {}
+        @checks = {}.compare_by_identity   # keyed by the check key objects (one per node, op, arg)
+        @check_ctx = {}.compare_by_identity
         @results = {}.compare_by_identity
         @done = {}
         @in_progress = {}
         @yield_depth = Hash.new(0).compare_by_identity
         @instantiated = {}.compare_by_identity
         @callers = []
+        @path = Path.new(nil)
         @raised = [{}]   # stack of {exception type name => [raise nodes]} for the code being analyzed
         @handled = []    # exception type names of the rescue clauses being analyzed (for a bare raise)
         ev(@ast.main.body, Env.new(nil, Frame.new(nil, [], nil)))
@@ -150,7 +151,37 @@ module Sake
       (UNION2[a] ||= {}.compare_by_identity)[b] = intern(union_uncached([a, b]))
     end
 
+    # Canonical types with neither Tuples nor Symbol literals (nothing to merge or normalize): their union
+    # is a merge of two sorted lists.
+    PLAIN = {}.compare_by_identity
+
+    def self.plain?(ty) = (PLAIN[ty] ||= (ty.none? { _1.is_a?(Array) && (_1[0] == :tuple || _1[0] == :sym) } ? 1 : 0)) == 1
+
+    def self.merge2(a, b)
+      out = []
+      i = j = 0
+      while i < a.size && j < b.size
+        x = a[i]
+        y = b[j]
+        if x == y
+          out << x
+          i += 1
+          j += 1
+        elsif sort_key(x) < sort_key(y)
+          out << x
+          i += 1
+        else
+          out << y
+          j += 1
+        end
+      end
+      out.concat(a[i..]) if i < a.size
+      out.concat(b[j..]) if j < b.size
+      out.freeze
+    end
+
     def self.union_uncached(tys)
+      return merge2(tys[0], tys[1]) if tys.size == 2 && CANON_IDS.key?(tys[0]) && CANON_IDS.key?(tys[1]) && plain?(tys[0]) && plain?(tys[1])
       atoms = tys.flatten(1).uniq
       tuples, rest = atoms.partition { _1.is_a?(Array) && _1[0] == :tuple }
       # Tuples of one length merge position by position, except that a position holding a single Symbol
@@ -165,7 +196,9 @@ module Sake
     # interned types are shared, so most lookups hit).
     SORT_KEYS = {}.compare_by_identity
 
-    def self.sort_key(atom) = atom.is_a?(String) ? atom.inspect : (SORT_KEYS[atom] ||= atom.inspect)
+    SORT_KEYS_BY_NAME = {}
+
+    def self.sort_key(atom) = atom.is_a?(String) ? (SORT_KEYS_BY_NAME[atom] ||= atom.inspect) : (SORT_KEYS[atom] ||= atom.inspect)
 
     MAX_SYMBOLS = 32
 
@@ -345,13 +378,15 @@ module Sake
     # when fn is one of them.
     def makers_of_args(fn, args)
       out = {}.compare_by_identity
-      seen = {}
+      seen = {}.compare_by_identity
       args.all? { |ty| collect_makers(ty, fn, out, seen) } ? out : nil
     end
 
+    CONTAINER_KINDS = { array: true, hash: true, set: true, queue: true, thread: true }.freeze
+
     def collect_makers(ty, fn, out, seen)
       ty.all? do |a|
-        next true unless a.is_a?(Array) && %i[array hash set queue thread].include?(a[0]) && a[1].is_a?(Integer)
+        next true unless a.is_a?(Array) && CONTAINER_KINDS[a[0]] && a[1].is_a?(Integer)
         next true if seen[a]
         seen[a] = true
         ms = makers(a[1])
@@ -426,8 +461,11 @@ module Sake
     VERDICTS = %i[error unknown partial proven].freeze # worst first
 
     def add_check(node, op, arg, expected, actual, verdict, failing = [])
-      key = ((@check_keys ||= {}.compare_by_identity)[node] ||= {})[[op, arg]] ||=
-        [node.location.start_line, node.location.start_column, op, arg, other_file(node)]
+      # One key object per (place, op, arg); nodes at the same place (copies of pasted code) share a check.
+      key = (((@check_keys ||= {}.compare_by_identity)[node] ||= {})[op] ||= {})[arg] ||= begin
+        k = [node.location.start_line, node.location.start_column, op, arg, other_file(node)]
+        (@check_key_objs ||= {})[k] ||= k
+      end
       prev = @checks[key]
       if prev
         return if op == "rescue" && prev.verdict == :proven
@@ -436,19 +474,38 @@ module Sake
         # fails in some and passes in others may fail. Different call paths keep the worse verdict.
         return prev.verdict = :proven if op == "rescue" && verdict == :proven
         ctx, counts = @check_ctx[key] # path => its verdict; counts of each verdict among the paths
-        c = ctx[@callers]
+        c = ctx[@path]
         v = c.nil? || c == verdict ? verdict : (([c, verdict] & %i[unknown]).empty? ? :partial : :unknown)
-        ctx[@callers] = v
+        ctx[@path] = v
         counts[c] -= 1 if c
         counts[v] += 1
         prev.verdict = VERDICTS.find { counts[_1].positive? }
         prev.failing = (prev.failing + failing).uniq
         prev.via ||= @callers.dup unless failing.empty?
       else
-        @check_ctx[key] = [{ @callers.dup => verdict }, Hash.new(0).tap { _1[verdict] = 1 }]
+        @check_ctx[key] = [{ @path => verdict }.compare_by_identity, Hash.new(0).tap { _1[verdict] = 1 }]
         @checks[key] = Check.new(key[0], key[1], op, arg, expected, actual, verdict, failing,
                                  failing.empty? ? nil : @callers.dup, key[4], node)
       end
+    end
+
+    # The call path (@callers) as one object per distinct path, so a check's per-path table keys by identity.
+    class Path # a plain class: hashes by identity (a Struct would hash the whole chain)
+      attr_reader :parent
+
+      def initialize(parent) = @parent = parent
+      def child(site) = (@children ||= {})[site] ||= Path.new(self)
+    end
+
+    def push_caller(node)
+      site = call_site(node)
+      @callers.push(site)
+      @path = @path.child(site)
+    end
+
+    def pop_caller
+      @callers.pop
+      @path = @path.parent
     end
 
     # The file of a node when it is not the main file (the checks of required files say where they are).
@@ -944,6 +1001,37 @@ module Sake
                          fetch fetch_values values_at dig [] []= store add add? union difference intersection intersect?
                          subset? superset? disjoint? - + & | ==].freeze
 
+    # The groups under a Struct type's fields (the default == compares them), memoized per Struct type:
+    # the groups of the types its fields reach directly, the deps of that walk, and the Struct types met on
+    # the way, which are walked (through their own memos) when the memo is used. Each Struct type is
+    # walked once per group walk; groups come out Struct by Struct rather than in the interleaved order.
+    def struct_groups(a, out, seen, deps)
+      fs = @fields[a]
+      if (collect = @sg_collect) # inside a memo computation: defer to the use of the memo
+        collect << a unless collect.include?(a)
+        return
+      end
+      return if seen[fs]
+      seen[fs] = true
+      memo = (@struct_groups ||= {})
+      hit = memo[a]
+      unless hit && (hit[3] == GEN[0] || deps_hold?(hit[0]))
+        d = { fs => fs.values }.compare_by_identity
+        g = []
+        @sg_collect = reached = []
+        begin
+          fs.each_value { compared_groups(_1, g, {}.compare_by_identity, d) }
+        ensure
+          @sg_collect = nil
+        end
+        hit = memo[a] = [d, g, reached, GEN[0]]
+      end
+      hit[3] = GEN[0]
+      out.concat(hit[1])
+      hit[0].each { |o, v| deps[o] = v unless deps.key?(o) }
+      hit[2].each { struct_groups(_1, out, seen, deps) }
+    end
+
     # [deps, [[struct names, their union], ...]] (deps: see deps_hold?).
     def compared_groups_of(tys, meets)
       tops = tys.map { |ty| ty.all? { _1.is_a?(String) } ? ty : u(ty, elem_of(ty), set_elem(ty), *hash_kv(ty)) }
@@ -952,7 +1040,7 @@ module Sake
       deps = {}.compare_by_identity
       seen = {}.compare_by_identity
       tops.each { compared_groups(_1, groups, seen, deps) }
-      [deps, groups.map { |g| [g, of_atoms(g)] }]
+      [deps, groups.uniq.map { |g| [g, (@group_types ||= {})[g] ||= of_atoms(g)] }]
     end
 
     def compared_groups(ty, out, seen, deps)
@@ -970,11 +1058,7 @@ module Sake
         end
       end
       out << shape.structs unless shape.structs.empty?
-      shape.structs.each do |a| # the default == compares fields
-        fs = @fields[a]
-        deps[fs] = fs.values unless deps.key?(fs)
-        fs.each_value { compared_groups(_1, out, seen, deps) }
-      end
+      shape.structs.each { struct_groups(_1, out, seen, deps) }
       shape.columns.each { compared_groups(_1, out, seen, deps) }
       return unless shape.containers
       compared_groups(u(elem_of(ty), set_elem(ty)), out, seen, deps)
@@ -993,7 +1077,7 @@ module Sake
       return given if @init_depth[init] >= 2 # an initialize that constructs its own type
       @init_depth[init] += 1
       @instantiated[init] = true
-      @callers.push(call_site(node))
+      push_caller(node)
       (@init_fns ||= []).push([init, @inst_stack&.size || 0])
       frame = Frame.new(init, [], nil)
       env = Env.new(nil, frame)
@@ -1011,7 +1095,7 @@ module Sake
       ensure
         @init_frames&.delete(frame)
         @init_fns.pop
-        @callers.pop
+        pop_caller
         @init_depth[init] -= 1
       end
     end
