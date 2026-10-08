@@ -1,0 +1,25 @@
+-- A staff list with salaries and managers.
+CREATE TABLE staff (id INTEGER, name TEXT, dept TEXT, salary INTEGER, manager INTEGER);
+INSERT INTO staff VALUES (1, 'Iris', 'ops', 5200, NULL), (2, 'Omar', 'ops', 4100, 1), (3, 'Pia', 'dev', 6100, 1);
+INSERT INTO staff VALUES (4, 'Quin', 'dev', 5800, 3), (5, 'Rosa', 'dev', 4700, 3), (6, 'Sam', 'hr', 3900, 1);
+INSERT INTO staff VALUES (7, 'Tess', 'hr', '4,200', 6);
+INSERT INTO staff VALUES (7, 'Tess', 'hr', 4200.0, 6);
+SELECT id, name, dept, salary FROM staff ORDER BY id;
+SELECT name FROM staff WHERE manager IS NULL;
+SELECT name, salary FROM staff WHERE dept = 'dev' ORDER BY salary DESC;
+SELECT name, salary * 12 AS yearly FROM staff WHERE yearly > 60000 ORDER BY yearly, name;
+SELECT name FROM staff WHERE manager = 3 ORDER BY name;
+SELECT name, salary / 1000 AS k FROM staff ORDER BY k DESC, name;
+SELECT name, salary * 1.05 FROM staff WHERE name = 'Omar';
+SELECT name FROM staff WHERE salary >= 4000 AND salary <= 5000 ORDER BY name;
+SELECT upper(dept) || ' ' || name FROM staff ORDER BY dept DESC, name;
+SELECT name, manager FROM staff ORDER BY manager NULLS LAST, name;
+SELECT name, typeof(salary) FROM staff WHERE id = 7;
+SELECT name FROM staff WHERE dept = 'HR';
+SELECT name FROM staff WHERE lower(dept) = lower('HR') ORDER BY name;
+SELECT name, salary - 5000 FROM staff WHERE NOT salary < 5000 ORDER BY 2;
+SELECT name FROM staff ORDER BY salary LIMIT 1;
+SELECT name FROM staff ORDER BY salary DESC LIMIT 2 OFFSET 1;
+INSERT INTO staff (id, name, dept) VALUES (8, 'Uma', 'ops');
+SELECT name, coalesce(salary, 0), coalesce(manager, 0) FROM staff WHERE dept = 'ops' ORDER BY id;
+SELECT * FROM staff WHERE id = 8;

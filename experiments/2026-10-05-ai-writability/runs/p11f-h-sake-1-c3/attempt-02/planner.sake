@@ -1,0 +1,210 @@
+# Planning a SELECT (spec 1.7, 3.3, 4): resolves every name and checks every clause before any row is
+# read, and gathers the result in a Plan for Query to execute. FROM is planned by FromPlanner.
+module Planner
+  module_function
+
+  # `outer` is the scope of the clause that holds the query when it is a subquery, else nil.
+  def plan(db, st, outer)
+    base = outer == nil ? 0 : Scope.base(outer) + Scope.width(outer)
+    refs = Array[]
+    from = FromPlanner.plan(db, Select.from(st), outer, base, refs)
+    scope = Scope.new(db, FromPlan.sources(from), FromPlan.merged(from), base, Hash[], Hash[], nil, :function, outer, refs, nil, Hash[])
+    aggregates = Array[]
+    windows = Array[]
+    named = WindowPlanner.named_windows(Select.windows(st))
+    item_scope = Scope.with_windows(Scope.with_clause(scope, Hash[], Hash[], aggregates, :function), windows, named)
+    items = result_items(st, item_scope, aggregates, windows)
+    aliases = alias_exprs(items)
+
+    where = Resolver.resolve_optional(Select.where(st), Scope.with_clause(scope, aliases, blocked_aliases(items, :where), nil, :function))
+    group = group_terms(st, items, Scope.with_clause(scope, aliases, blocked_aliases(items, :group_by), nil, :group_by))
+
+    grouped = !Array.empty?(group) || !Array.empty?(aggregates)
+    having = nil
+    condition = Select.having(st)
+    if condition != nil
+      raise SqlError.new("HAVING clause on a non-aggregate query") unless grouped
+      having = Resolver.resolve(condition, Scope.with_clause(scope, aliases, blocked_aliases(items, :having), aggregates, :function))
+    end
+    order_scope = Scope.with_windows(Scope.with_clause(scope, aliases, Hash[], grouped ? aggregates : nil, :misuse), windows, named)
+    order = sort_keys(st, items, order_scope)
+    Plan.new(base, Scope.width(scope), FromPlan.steps(from), items, where, group, aggregates, grouped, having, windows,
+             Select.distinct(st), order, cut(db, Select.limit(st)), cut(db, Select.offset(st)), refs, Array[])
+  end
+
+  # The result columns with `*` expanded and names resolved in `scope`; `collector` and `windows` are the
+  # arrays that receive the aggregate and window calls found.
+  def result_items(st, scope, collector, windows)
+    items = Array[]
+    Array.each(Select.items(st)) do |rc|
+      e = ResultColumn.expr(rc)
+      if e == nil
+        Array.concat(items, star_items(scope, ResultColumn.star_of(rc)))
+      else
+        before = Array.size(collector)
+        before_windows = Array.size(windows)
+        expr = Resolver.resolve(e, scope)
+        first = Array.size(collector) > before ? Aggregate.name(Array.fetch(collector, before)) : nil
+        first_window = Array.size(windows) > before_windows ? Window.name(Array.fetch(windows, before_windows)) : nil
+        Array.push(items, ResultItem.new(expr, ResultColumn.alias_name(rc), first, first_window))
+      end
+    end
+    items
+  end
+
+  # `*` (qualifier nil: every source, without the right copies of USING columns) or `q.*` (all of q's).
+  # Neither includes a table's rowid (spec 7.1).
+  def star_items(scope, qualifier)
+    sources = Scope.sources(scope)
+    if qualifier == nil
+      raise SqlError.new("no tables specified") if Array.empty?(sources)
+      return Array.flat_map(sources) { source_items(scope, it, true) }
+    end
+    q = Value.lower(qualifier)
+    src = Array.find(sources) { Source.name(it) == q }
+    raise SqlError.new("no such table: #{qualifier}") if src == nil
+    source_items(scope, src, false)
+  end
+
+  def source_items(scope, src, skip_hidden)
+    items = Array[]
+    Array.each_with_index(Source.columns(src)) do |c, i|
+      next if i == Source.rowid(src)
+      next if skip_hidden && Array.include?(Source.hidden(src), i)
+      ref = Col.new(nil, SourceColumn.name(c), Scope.base(scope) + Source.offset(src) + i, SourceColumn.aff(c))
+      Array.push(items, ResultItem.new(ref, nil, nil, nil))
+    end
+    items
+  end
+
+  # lower-cased alias -> the aliased result column's expression (for WHERE, GROUP BY, HAVING and ORDER BY).
+  def alias_exprs(items)
+    h = Hash[]
+    Array.each(items) do |item|
+      a = ResultItem.alias_name(item)
+      h[Value.lower(a)] = ResultItem.expr(item) if a != nil
+    end
+    h
+  end
+
+  # lower-cased alias -> the aliased result column's position (for a bare name in ORDER BY).
+  def alias_positions(items)
+    h = Hash[]
+    Array.each_with_index(items) do |item, i|
+      a = ResultItem.alias_name(item)
+      h[Value.lower(a)] = i if a != nil
+    end
+    h
+  end
+
+  # The aliases of result columns that contain a window call, or (except in HAVING) an aggregate call,
+  # with the error for using one in `clause` (:where, :group_by or :having).
+  def blocked_aliases(items, clause)
+    h = Hash[]
+    Array.each(items) do |item|
+      a = ResultItem.alias_name(item)
+      next if a == nil
+      name = ResultItem.aggregate_name(item)
+      if ResultItem.window_name(item) != nil
+        h[Value.lower(a)] = "misuse of aliased window function #{a}"
+      elsif name != nil && clause != :having
+        h[Value.lower(a)] = Resolver.misuse_message(clause == :where ? :misuse : :group_by, name)
+      end
+    end
+    h
+  end
+
+  # ---- GROUP BY ----
+
+  # The resolved GROUP BY terms; an integer term k is the k-th result column.
+  def group_terms(st, items, scope)
+    Array.map(Array.each_with_index(Select.group(st))) do |term, i|
+      k = ordinal(term)
+      if k == nil
+        Resolver.resolve(term, scope)
+      else
+        check_ordinal(k, i, Array.size(items), "GROUP BY")
+        item = Array.fetch(items, k - 1)
+        raise SqlError.new(Resolver.misuse_message(:group_by, "")) if ResultItem.aggregate_name(item) != nil
+        window = ResultItem.window_name(item)
+        raise SqlError.new("misuse of window function #{window}()") if window != nil
+        ResultItem.expr(item)
+      end
+    end
+  end
+
+  # ---- ORDER BY ----
+
+  def sort_keys(st, items, scope)
+    positions = alias_positions(items)
+    n = Array.size(items)
+    Array.map(Array.each_with_index(Select.order(st))) do |term, i|
+      e = OrderTerm.expr(term)
+      k = ordinal(e)
+      pos = -1
+      expr = nil
+      if k != nil
+        check_ordinal(k, i, n, "ORDER BY")
+        pos = k - 1
+      elsif (e in Col) && Col.qualifier(e) == nil
+        p = positions[Value.lower(Col.name(e))]
+        if p == nil
+          expr = Resolver.resolve(e, scope)
+        else
+          pos = p
+        end
+      else
+        expr = Resolver.resolve(e, scope)
+      end
+      SortKey.new(pos, expr, OrderTerm.desc(term), OrderTerm.nulls(term))
+    end
+  end
+
+  # k for a term that is the integer literal k or -k, else nil.
+  def ordinal(e)
+    case e
+    in Lit
+      v = Lit.value(e)
+      (v in Integer) ? v : nil
+    in Unary
+      return nil unless Unary.op(e) == :neg
+      inner = Unary.operand(e)
+      return nil unless inner in Lit
+      v = Lit.value(inner)
+      (v in Integer) ? -v : nil
+    else nil
+    end
+  end
+
+  # The k of the (0-based) i-th term of `clause` must name one of the n result columns.
+  def check_ordinal(k, i, n, clause)
+    if k < 1 || k > n
+      raise SqlError.new("#{ordinal_word(i + 1)} #{clause} term out of range - should be between 1 and #{n}")
+    end
+  end
+
+  def ordinal_word(i)
+    suffix = if i % 100 >= 11 && i % 100 <= 13
+      "th"
+    else
+      case i % 10
+      in 1 then "st"
+      in 2 then "nd"
+      in 3 then "rd"
+      else "th"
+      end
+    end
+    "#{i}#{suffix}"
+  end
+
+  # ---- LIMIT / OFFSET ----
+
+  # The Integer value of a LIMIT / OFFSET expression (no row in scope), or nil if absent.
+  def cut(db, e)
+    return nil if e == nil
+    v = Evaluator.evaluate(Resolver.resolve(e, Resolver.empty_scope(db)), Array[])
+    return nil if v == nil
+    n = Value.to_number(v)
+    (n in Integer) ? n : Float.to_i(n)
+  end
+end

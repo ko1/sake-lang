@@ -2,7 +2,8 @@
 
 # P11 summary: joins runs/grade-p11.jsonl (last row per run) with the solvers' transcripts (actions_p11.rb) and
 # prints, per mode: one row per run, then per language x change means, then the wide-minus-local contrast.
-#   ruby harness/summarize_p11.rb TRANSCRIPT_DIR > runs/summary-p11.txt
+#   ruby harness/summarize_p11.rb TRANSCRIPT_DIR [PREFIX] > runs/summary-p11.txt
+# PREFIX (default p11) picks runs/grade-PREFIX.jsonl and runs/agents-PREFIX.tsv (p11f: the Sake rerun with the fast checker).
 # Wide changes: c1 c2 c3; local: c4 c5 c6. Mode h (hard: no list of places) has only wide changes; its contrast
 # uses mode n's local changes. A run without a grade or a transcript stops the script.
 require "json"
@@ -10,13 +11,14 @@ require "open3"
 require "tmpdir"
 
 EXP = File.expand_path("..", __dir__)
-tdir = ARGV[0] or abort "usage: summarize_p11.rb TRANSCRIPT_DIR"
+tdir = ARGV[0] or abort "usage: summarize_p11.rb TRANSCRIPT_DIR [PREFIX]"
+prefix = ARGV[1] || "p11"
 WIDE = %w[c1 c2 c3].freeze
 LANGS = %w[ruby java haskell scheme steep sake].freeze
 
 grades = {}
-File.foreach(File.join(EXP, "runs", "grade-p11.jsonl")) { |l| r = JSON.parse(l); grades[r["run"]] = r }
-agents = File.readlines(File.join(EXP, "runs", "agents-p11.tsv")).drop(1).map { _1.chomp.split("\t") }
+File.foreach(File.join(EXP, "runs", "grade-#{prefix}.jsonl")) { |l| r = JSON.parse(l); grades[r["run"]] = r }
+agents = File.readlines(File.join(EXP, "runs", "agents-#{prefix}.tsv")).drop(1).map { _1.chomp.split("\t") }
 agents.select! { |run, _| grades.key?(run) }
 map = File.join(Dir.tmpdir, "p11-map-#{$$}.tsv")
 File.write(map, agents.map { _1.join("\t") }.join("\n") + "\n")

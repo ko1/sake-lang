@@ -1,0 +1,137 @@
+# SQL values (1.3, 1.9, 1.10). A value is nil (NULL), an Integer, a Float (REAL) or a String (TEXT).
+# Truth values are the values nil (unknown), 0 (false) and 1 (true).
+module Values
+  module_function
+
+  # --- printing (1.3) ---
+
+  # A REAL as printf("%.15g"), always with a ".0" or an exponent that has a fraction.
+  def format_real(x)
+    return "0.0" if x == 0.0
+    s = format("%.15g", x)
+    e = String.index(s, "e")
+    if e == nil
+      String.include?(s, ".") ? s : s + ".0"
+    else
+      mantissa = Text.slice(s, 0, e)
+      String.include?(mantissa, ".") ? s : mantissa + ".0" + Text.slice(s, e, String.size(s) - e)
+    end
+  end
+
+  # The text form of a value that is not NULL.
+  def text_of(v)
+    case v
+    in Integer then Integer.to_s(v)
+    in Float then format_real(v)
+    in String then v
+    else "NULL"
+    end
+  end
+
+  # What a result row prints for a value.
+  def display(v) = v == nil ? "NULL" : text_of(v)
+
+  # 'null', 'integer', 'real' or 'text'
+  def type_name(v)
+    case v
+    in Integer then "integer"
+    in Float then "real"
+    in String then "text"
+    else "null"
+    end
+  end
+
+  # --- numbers ---
+
+  # A value that is not NULL as a number: text is read by numeric prefix (1.8).
+  def to_number(v)
+    case v
+    in Integer then v
+    in Float then v
+    in String then NumText.parse_prefix(v)
+    else 0
+    end
+  end
+
+  # --- truth (1.10) ---
+
+  # The truth value of a value: nil, 0 or 1.
+  def truth(v)
+    return nil if v == nil
+    n = to_number(v)
+    n == 0 ? 0 : 1
+  end
+
+  def from_bool(b) = b ? 1 : 0
+
+  # --- order of values (1.9) ---
+
+  def rank(v)
+    case v
+    in Integer then 1
+    in Float then 1
+    in String then 2
+    else 0
+    end
+  end
+
+  # -1, 0 or 1: NULL < numbers < text; numbers by value; text byte by byte.
+  def compare(a, b) = compare_under(a, b, "binary")
+
+  # The same, with the texts compared under the collation of that name (7.1): byte by byte after
+  # Collation.fold.
+  def compare_under(a, b, coll)
+    ra = rank(a)
+    rb = rank(b)
+    return (ra < rb ? -1 : 1) if ra != rb
+    return 0 if ra == 0
+    if ra == 1
+      x = to_number(a)
+      y = to_number(b)
+      return x < y ? -1 : (x > y ? 1 : 0)
+    end
+    x = Collation.fold(coll, text_of(a))
+    y = Collation.fold(coll, text_of(b))
+    x == y ? 0 : (x < y ? -1 : 1)
+  end
+
+  # --- affinity (1.9) ---
+
+  # a and b are values neither of which is NULL; aff_a and aff_b are :integer, :real, :text or :none.
+  # Returns the pair as they are compared.
+  def apply_affinity(a, aff_a, b, aff_b)
+    a_num = aff_a == :integer || aff_a == :real
+    b_num = aff_b == :integer || aff_b == :real
+    if a_num && (aff_b == :text || aff_b == :none)
+      return [a, numeric_text(b)]
+    end
+    if b_num && (aff_a == :text || aff_a == :none)
+      return [numeric_text(a), b]
+    end
+    if aff_a == :text && aff_b == :none
+      return [a, number_to_text(b)]
+    end
+    if aff_b == :text && aff_a == :none
+      return [number_to_text(a), b]
+    end
+    [a, b]
+  end
+
+  # Text that is a numeric literal becomes that number; anything else is unchanged.
+  def numeric_text(v)
+    case v
+    in String
+      n = NumText.parse_whole(v)
+      n == nil ? v : n
+    else v
+    end
+  end
+
+  def number_to_text(v)
+    case v
+    in Integer then Integer.to_s(v)
+    in Float then format_real(v)
+    else v
+    end
+  end
+end

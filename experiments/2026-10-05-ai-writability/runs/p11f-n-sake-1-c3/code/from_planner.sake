@@ -1,0 +1,99 @@
+# Planning FROM (spec 4.1): the sources, how they are joined, and the conditions of ON / USING.
+
+# steps: the JoinSteps; sources / merged: as in Scope, for the query's other clauses.
+class FromPlan
+  attr_reader steps, sources, merged
+end
+
+module FromPlanner
+  module_function
+
+  # `outer` is the scope of the clause holding the query (nil for a statement); `base` the length of
+  # the row prefix; `refs` collects references to enclosing queries (see Scope).
+  def plan(db, from, outer, base, refs)
+    sources = Array[]
+    merged = Array[]
+    steps = Array[]
+    if from != nil
+      src, rows = open_source(db, sources, FromClause.first(from))
+      Array.push(sources, src)
+      Array.push(steps, JoinStep.new(false, rows, Array.size(Source.columns(src)), nil))
+      Array.each(FromClause.joins(from)) do |j|
+        right, rows = open_source(db, sources, JoinClause.item(j))
+        Array.push(sources, right)
+        scope = Scope.new(db, sources, merged, base, Hash[], Hash[], nil, :function, outer, refs, nil, Hash[])
+        condition = join_condition(j, scope, right)
+        Array.push(steps, JoinStep.new(JoinClause.left(j), rows, Array.size(Source.columns(right)), condition))
+      end
+    end
+    FromPlan.new(steps, sources, merged)
+  end
+
+  # The Source for a from-item that would follow `sources`, and where its rows come from.
+  def open_source(db, sources, item)
+    offset = Array.sum(Array.map(sources) { Array.size(Source.columns(it)) }, 0)
+    case item
+    in TableRef
+      name = TableRef.name(item)
+      written_alias = TableRef.alias_name(item)
+      name = written_alias if written_alias != nil
+      named_source(db, Database.relation(db, TableRef.name(item)), Value.lower(name), offset)
+    in SubqueryRef
+      plan = QueryPlanner.plan(db, SubqueryRef.select(item), nil)
+      alias_name = SubqueryRef.alias_name(item)
+      name = alias_name == nil ? "" : Value.lower(alias_name)
+      [Source.new(name, Plans.columns(plan), offset, Array[]), DerivedSource.new(plan)]
+    end
+  end
+
+  # The Source for a table, view or cte called `name` in this query, and where its rows come from.
+  # A view is planned afresh each time it is used, without the ctes of the statement.
+  def named_source(db, relation, name, offset)
+    case relation
+    in Table then [Source.new(name, table_columns(relation), offset, Array[]), TableSource.new(relation)]
+    in View
+      plan = QueryPlanner.plan(Database.without_ctes(db), View.query(relation), nil)
+      [Source.new(name, Plans.renamed(Plans.columns(plan), View.columns(relation)), offset, Array[]), DerivedSource.new(plan)]
+    in CteEntry then [Source.new(name, CteEntry.columns(relation), offset, Array[]), DerivedSource.new(CteEntry.plan(relation))]
+    in WorkEntry then [Source.new(name, WorkEntry.columns(relation), offset, Array[]), WorkSource.new(WorkEntry.cell(relation))]
+    end
+  end
+
+  # A table's columns, then its rowid as a last, hidden column (spec 7.1): no name can reach it by key.
+  def table_columns(table)
+    columns = Array.map(Table.columns(table)) { SourceColumn.new(Column.name(it), Column.key(it), Column.type(it)) }
+    Array.push(columns, SourceColumn.new("rowid", RowidNames.key, :integer))
+    columns
+  end
+
+  # The condition joining `right` (the last source of the scope) to the others, or nil.
+  def join_condition(j, scope, right)
+    using = JoinClause.using(j)
+    return using_condition(using, scope, right) unless Array.empty?(using)
+    on = JoinClause.on(j)
+    on == nil ? nil : Resolver.resolve(on, scope)
+  end
+
+  # USING (c, ...) is `left.c = right.c AND ...`, with left.c the column of the first source that has c.
+  # The right copy of c is hidden from `*`, and a bare c is no longer ambiguous.
+  def using_condition(names, scope, right)
+    sources = Scope.sources(scope)
+    left_sources = Array.take(sources, Array.size(sources) - 1)
+    condition = nil
+    Array.each(names) do |name|
+      key = Value.lower(name)
+      left = Array.find(left_sources) { Source.column_index(it, key) != nil }
+      ri = Source.column_index(right, key)
+      if left == nil || ri == nil
+        raise SqlError.new("cannot join using column #{name} - column not present in both tables")
+      end
+      li = Source.column_index(left, key)
+      li => Integer
+      eq = Binary.new("=", Names.column_ref(scope, left, li), Names.column_ref(scope, right, ri))
+      condition = condition == nil ? eq : Binary.new("AND", condition, eq)
+      Array.push(Source.hidden(right), ri)
+      Array.push(Scope.merged(scope), key)
+    end
+    condition
+  end
+end

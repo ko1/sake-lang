@@ -1,0 +1,24 @@
+# Views (5.3): a named select, planned again wherever the view is used as a source.
+module Views
+  module_function
+
+  def create(db, stmt)
+    name = CreateViewStmt.name(stmt)
+    return unless Catalog.claim_name(db, name, CreateViewStmt.if_not_exists(stmt))
+    Database.views(db)[Catalog.key(name)] = View.new(name, CreateViewStmt.columns(stmt), CreateViewStmt.query(stmt))
+  end
+
+  def drop(db, stmt)
+    name = DropViewStmt.name(stmt)
+    table = Catalog.find_table(db, name)
+    Errors.sql_error("use DROP TABLE to delete table #{Table.name(table)}") if table != nil
+    if Catalog.find_view(db, name) == nil
+      return if DropViewStmt.if_exists(stmt)
+      Errors.sql_error("no such view: #{name}")
+    end
+    Hash.delete(Database.views(db), Catalog.key(name))
+  end
+
+  # The plan of the view's select, as the tables are now. The statement's WITH tables are not visible in it.
+  def plan(db, view) = Planner.plan(Catalog.with_ctes(db, Hash[]), View.query(view), Scope[])
+end

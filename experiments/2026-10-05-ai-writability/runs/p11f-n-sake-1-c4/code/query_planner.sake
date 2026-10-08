@@ -1,0 +1,60 @@
+# Planning a query (spec 5.1, 5.2): a simple select goes to Planner; a compound select is planned
+# part by part here; WITH binds its ctes (CtePlanner) and plans the body where they are visible.
+module QueryPlanner
+  module_function
+
+  # The plan of a Select, Compound or WithQuery. `outer` is as in Planner.plan.
+  def plan(db, q, outer)
+    case q
+    in Select then Planner.plan(db, q, outer)
+    in Compound then plan_compound(db, q, outer)
+    in WithQuery then plan(CtePlanner.bind(db, WithQuery.recursive(q), WithQuery.ctes(q)), WithQuery.body(q), outer)
+    end
+  end
+
+  # Every part is planned (so name errors surface in order) and must have as many columns as the first.
+  def plan_compound(db, c, outer)
+    first = Planner.plan(db, Compound.first(c), outer)
+    plans = Array[first]
+    steps = Array[]
+    Array.each(Compound.parts(c)) do |part|
+      right = Planner.plan(db, CompoundPart.select(part), outer)
+      if Array.size(Plan.items(right)) != Array.size(Plan.items(first))
+        raise SqlError.new("SELECTs to the left and right of #{CompoundPart.op(part)} do not have the same number of result columns")
+      end
+      Array.push(plans, right)
+      Array.push(steps, CompoundStep.new(CompoundPart.op(part), right))
+    end
+    refs = Array.flat_map(plans) { Plan.refs(it) }
+    CompoundPlan.new(first, steps, Plans.columns(first), order_keys(Compound.order(c), plans), Planner.cut(db, Compound.limit(c)),
+                     Planner.cut(db, Compound.offset(c)), Plan.base(first), refs, Array[])
+  end
+
+  # ORDER BY of a compound: each term names a result column by position or by alias / column name.
+  def order_keys(terms, plans)
+    n = Array.size(Plan.items(Array.fetch(plans, 0)))
+    Array.map(Array.each_with_index(terms)) do |term, i|
+      e = OrderTerm.expr(term)
+      k = Planner.ordinal(e)
+      pos = -1
+      if k != nil
+        Planner.check_ordinal(k, i, n, "ORDER BY")
+        pos = k - 1
+      elsif (e in Col) && Col.qualifier(e) == nil
+        pos = position_by_name(plans, Col.name(e))
+      end
+      raise SqlError.new("#{Planner.ordinal_word(i + 1)} ORDER BY term does not match any column in the result set") if pos < 0
+      SortKey.new(pos, nil, OrderTerm.desc(term), OrderTerm.nulls(term))
+    end
+  end
+
+  # The position of the result column called `name`, looking in each part in turn; -1 if none.
+  def position_by_name(plans, name)
+    key = Value.lower(name)
+    Array.each(plans) do |plan|
+      i = Array.find_index(Plans.columns(plan)) { SourceColumn.key(it) == key }
+      return i if i != nil
+    end
+    -1
+  end
+end

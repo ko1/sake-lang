@@ -1,0 +1,54 @@
+# CREATE INDEX and DROP INDEX (spec 5.7). An index changes no result; only a UNIQUE index has an effect,
+# as a UniqueConstraint added to its table (declared last, so checked first) that remembers the index.
+# Each index column is compared under its `COLLATE n` if written, else its column's collation (7.4).
+module Indexes
+  module_function
+
+  def create(db, st)
+    name = CreateIndex.name(st)
+    table = Database.table(db, CreateIndex.table(st))
+    raise SqlError.new("there is already a table named #{name}") if Database.taken_by(db, name) != nil
+    if Database.index(db, name) != nil
+      return if CreateIndex.if_not_exists(st)
+      raise SqlError.new("index #{name} already exists")
+    end
+    positions = Array[]
+    colls = Array[]
+    Array.each_with_index(CreateIndex.columns(st)) do |c, k|
+      i = Table.column_position(table, c)
+      raise SqlError.new("no such column: #{c}") if i == nil
+      written = Array.fetch(CreateIndex.collations(st), k)
+      Array.push(positions, i)
+      Array.push(colls, written == nil ? Column.coll(Array.fetch(Table.columns(table), i)) : Collation.named(written))
+    end
+    key = Value.lower(name)
+    if CreateIndex.unique(st)
+      check_existing_rows(table, positions, colls)
+      constraint = UniqueConstraint.new(positions, colls, key)
+      Database.add_table(db, Table.with_uniques(table, Array.concat(Array.dup(Table.uniques(table)), Array[constraint])))
+    end
+    Database.add_index(db, IndexDef.new(name, Value.lower(Table.name(table))))
+  end
+
+  # A new UNIQUE index fails with the constraint's error if rows already conflict on its columns, each
+  # compared under its collation of `colls`.
+  def check_existing_rows(table, positions, colls)
+    rows = Table.rows(table)
+    Array.each_with_index(rows) do |row, i|
+      raise SqlError.new(Constraints.unique_message(table, positions)) if Constraints.conflict?(rows, i, positions, colls, row)
+    end
+  end
+
+  def drop(db, st)
+    name = DropIndex.name(st)
+    index = Database.index(db, name)
+    if index == nil
+      return if DropIndex.if_exists(st)
+      raise SqlError.new("no such index: #{name}")
+    end
+    key = Value.lower(name)
+    table = Database.table(db, IndexDef.table(index))
+    Database.add_table(db, Table.with_uniques(table, Array.reject(Table.uniques(table)) { UniqueConstraint.index_name(it) == key }))
+    Database.remove_index(db, name)
+  end
+end

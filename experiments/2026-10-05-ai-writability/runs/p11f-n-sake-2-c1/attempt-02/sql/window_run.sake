@@ -1,0 +1,110 @@
+# Running window calls (6.2): split the rows into partitions, order each, find the peers, and ask
+# WindowFns for the value of every row. The value of window call k is appended to each row so that
+# the last element is call 0, the one before it call 1, and so on: the resolver gave the call the
+# idx -(k + 1), which does not depend on how many aggregate calls the query has.
+
+# One partition in window order. envs: its rows' Envs; index: where each is in the rows given to
+# attach; keys: its ORDER BY values; peer_lo, peer_hi: the first position of the row's peers and
+# the position after the last; dense: the number of distinct peer groups up to and including the row;
+# desc: whether the first ORDER BY term is descending.
+PartRows = Struct.new(:index, :envs, :keys, :peer_lo, :peer_hi, :dense, :desc)
+
+module WindowRun
+  module_function
+
+  # The Envs with the values of `calls` appended; `envs` unchanged if there are no calls.
+  def attach(calls, envs)
+    return envs if Array.empty?(calls)
+    per_call = Array.map(calls) { |c| values_of(c, envs) }
+    out = Env[]
+    i = 0
+    Array.each(envs) do |env|
+      row = Array.dup(Env.row(env))
+      k = Array.size(calls) - 1
+      while k >= 0
+        Array.push(row, per_call[k][i])
+        k -= 1
+      end
+      Array.push(out, Env.new(row, Env.outer(env)))
+      i += 1
+    end
+    out
+  end
+
+  # The value of one window call on each of the Envs, in their order.
+  def values_of(call, envs)
+    out = Array.new(Array.size(envs), nil)
+    Array.each(partitions(call, envs)) do |positions|
+      part = order_partition(call, envs, positions)
+      p = 0
+      Array.each(PartRows.index(part)) do |at|
+        out[at] = WindowFns.value(call, part, p)
+        p += 1
+      end
+    end
+    out
+  end
+
+  # The positions (in `envs`) of each partition, in the order the partitions first appear.
+  def partitions(call, envs)
+    exprs = WindowCall.partition(call)
+    colls = Array.map(exprs) { |e| Collation.effective(e) }
+    all = Integer[]
+    index = Hash[]
+    groups = Array[]
+    i = 0
+    Array.each(envs) do |env|
+      Array.push(all, i)
+      if !Array.empty?(exprs)
+        k = Grouping.row_key(Array.map(exprs) { |e| Eval.value_of(e, env) }, colls)
+        at = index[k]
+        if at == nil
+          index[k] = Array.size(groups)
+          Array.push(groups, Array[i])
+        else
+          Array.push(groups[at], i)
+        end
+      end
+      i += 1
+    end
+    return groups unless Array.empty?(exprs)
+    Array.empty?(all) ? groups : Array[all]
+  end
+
+  # The partition's rows sorted by the window's ORDER BY (rows that tie keep their order).
+  def order_partition(call, envs, positions)
+    terms = WindowCall.order(call)
+    rows = SortRow[]
+    Array.each(positions) do |i|
+      Array.push(rows, SortRow.new(Array.map(terms) { |t| Eval.value_of(OrderTerm.expr(t), envs[i]) }, Array[i]))
+    end
+    sorted = Sorter.sort(rows, terms)
+    index = Array.map(sorted) { |r| SortRow.values(r)[0] }
+    keys = Array.map(sorted) { |r| SortRow.keys(r) }
+    colls = Array.map(terms) { |t| OrderTerm.coll(t) }
+    lo, hi, dense = peers(Array.map(keys) { |k| Grouping.row_key(k, colls) })
+    PartRows.new(index, Array.map(index) { |i| envs[i] }, keys, lo, hi, dense, !Array.empty?(terms) && OrderTerm.desc(terms[0]))
+  end
+
+  # For rows whose ORDER BY values have these keys (no ORDER BY: all keys are equal), in order:
+  # [peer_lo, peer_hi, dense] as in PartRows.
+  def peers(keys)
+    n = Array.size(keys)
+    lo = Array.new(n, 0)
+    hi = Array.new(n, n)
+    dense = Array.new(n, 1)
+    i = 1
+    while i < n
+      same = keys[i] == keys[i - 1]
+      lo[i] = same ? lo[i - 1] : i
+      dense[i] = same ? dense[i - 1] : dense[i - 1] + 1
+      i += 1
+    end
+    i = n - 2
+    while i >= 0
+      hi[i] = keys[i] == keys[i + 1] ? hi[i + 1] : i + 1
+      i -= 1
+    end
+    [lo, hi, dense]
+  end
+end

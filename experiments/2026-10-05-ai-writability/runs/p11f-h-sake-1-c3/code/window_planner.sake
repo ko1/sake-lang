@@ -1,0 +1,121 @@
+# Planning window calls (spec 6.1, 6.2): checks the function and the window it runs over, and turns the
+# WindowCall into a WindowValue that reads the result computed later by Windowing.
+module WindowPlanner
+  module_function
+
+  # The WINDOW clause as lower-cased name -> spec.
+  def named_windows(defs)
+    named = Hash[]
+    Array.each(defs) do |d|
+      key = Value.lower(NamedWindow.name(d))
+      raise SqlError.new("duplicate WINDOW name: #{NamedWindow.name(d)}") if Hash.key?(named, key)
+      named[key] = NamedWindow.spec(d)
+    end
+    named
+  end
+
+  # A window call in the clause `scope` describes; its Window is added to the scope's collector.
+  def resolve(wc, scope)
+    call = WindowCall.call(wc)
+    windows = Scope.windows(scope)
+    raise SqlError.new("misuse of window function #{Call.name(call)}()") if windows == nil
+    fn = Value.lower(Call.name(call))
+    check_function(call, fn)
+    spec = effective_spec(Scope.named(scope), WindowCall.over(wc))
+    frame = checked_frame(WindowSpec.frame(spec), Array.size(WindowSpec.order(spec)))
+    # The window's expressions see the sources only (no result aliases), and no window calls.
+    inner = Scope.with_clause(scope, Hash[], Hash[], Scope.collector(scope), Scope.forbidden(scope))
+    order = Array.map(WindowSpec.order(spec)) { OrderTerm.new(Resolver.resolve(OrderTerm.expr(it), inner), OrderTerm.desc(it), OrderTerm.nulls(it)) }
+    star = Call.star(call) || Array.empty?(Call.args(call))
+    window = Window.new(Call.name(call), fn, Resolver.resolve_all(Call.args(call), inner), star,
+                        Resolver.resolve_all(WindowSpec.partition(spec), inner), order, frame)
+    Array.push(windows, window)
+    WindowValue.new(Array.size(windows) - 1)
+  end
+
+  # `fn` must be an aggregate (3.2) or a window function, called with a suitable number of arguments.
+  def check_function(call, fn)
+    argc = Array.size(Call.args(call))
+    name = Call.name(call)
+    if Aggregates.aggregate?(fn, argc, Call.star(call))
+      raise SqlError.new("DISTINCT is not supported for window functions") if Call.distinct(call)
+    elsif WindowFunctions.known?(fn)
+      if Call.star(call) || Call.distinct(call) || !WindowFunctions.arity_ok?(fn, argc)
+        raise SqlError.new("wrong number of arguments to function #{name}()")
+      end
+    elsif Aggregates.name?(fn)
+      raise SqlError.new("wrong number of arguments to function #{name}()")
+    elsif Functions.known?(fn)
+      raise SqlError.new("#{name}() may not be used as a window function")
+    else
+      raise SqlError.new("no such function: #{name}")
+    end
+  end
+
+  # ---- Named windows and base windows ----
+
+  # The spec an OVER clause stands for, with its base window's parts merged in (so it has no base).
+  def effective_spec(named, over)
+    case over
+    in String then named_spec(named, over, Array[])
+    in WindowSpec then with_base(named, over, Array[])
+    end
+  end
+
+  # The definition of window `name` (`trail`: the names being defined, to find a cycle).
+  def named_spec(named, name, trail)
+    key = Value.lower(name)
+    spec = named[key]
+    raise SqlError.new("no such window: #{name}") if spec == nil
+    raise SqlError.new("circular window reference: #{name}") if Array.include?(trail, key)
+    with_base(named, spec, Array.concat(Array.dup(trail), Array[key]))
+  end
+
+  # `spec` plus what it takes from its base window: PARTITION BY, and ORDER BY unless it has its own.
+  def with_base(named, spec, trail)
+    base = WindowSpec.base(spec)
+    return spec if base == nil
+    parent = named_spec(named, base, trail)
+    raise SqlError.new("cannot override PARTITION clause of window: #{base}") unless Array.empty?(WindowSpec.partition(spec))
+    if !Array.empty?(WindowSpec.order(parent)) && !Array.empty?(WindowSpec.order(spec))
+      raise SqlError.new("cannot override ORDER BY clause of window: #{base}")
+    end
+    raise SqlError.new("cannot override frame specification of window: #{base}") if WindowSpec.frame(parent) != nil
+    order = Array.empty?(WindowSpec.order(spec)) ? WindowSpec.order(parent) : WindowSpec.order(spec)
+    WindowSpec.new(nil, WindowSpec.partition(parent), order, WindowSpec.frame(spec))
+  end
+
+  # ---- Frames (6.2) ----
+
+  # The frame to run with: the default one (to the current row's last peer) when none was written.
+  def checked_frame(frame, order_count)
+    return Frame.new(:range, FrameBound.new(:unbounded_preceding, nil), FrameBound.new(:current, nil)) if frame == nil
+    start = Frame.start(frame)
+    finish = Frame.finish(frame)
+    s = FrameBound.kind(start)
+    e = FrameBound.kind(finish)
+    if (s == :current && e == :preceding) || (s == :following && (e == :preceding || e == :current))
+      raise SqlError.new("unsupported frame specification")
+    end
+    range = Frame.units(frame) == :range
+    if range && (has_offset?(start) || has_offset?(finish)) && order_count != 1
+      raise SqlError.new("RANGE with offset PRECEDING/FOLLOWING requires one ORDER BY expression")
+    end
+    check_offset(start, "starting", range)
+    check_offset(finish, "ending", range)
+    frame
+  end
+
+  def has_offset?(bound) = FrameBound.offset(bound) != nil
+
+  # Offsets are non-negative; under ROWS they are integers too.
+  def check_offset(bound, word, range)
+    off = FrameBound.offset(bound)
+    return if off == nil
+    if range
+      raise SqlError.new("frame #{word} offset must be a non-negative number") if off < 0
+    elsif !(off in Integer) || off < 0
+      raise SqlError.new("frame #{word} offset must be a non-negative integer")
+    end
+  end
+end

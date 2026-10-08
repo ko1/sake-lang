@@ -1,0 +1,7 @@
+CREATE TABLE r (id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT NOT NULL);
+INSERT INTO r VALUES (1, 'A', 'one');
+INSERT INTO r VALUES (1, 'A', 'uno');
+INSERT INTO r VALUES (2, 'A', 'uno');
+INSERT INTO r VALUES (1, 'B', NULL);
+INSERT INTO r VALUES (2, 'B', 'two');
+SELECT id, code, name FROM r ORDER BY id;

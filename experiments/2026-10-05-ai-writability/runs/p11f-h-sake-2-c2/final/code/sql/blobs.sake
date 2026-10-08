@@ -1,0 +1,74 @@
+# BLOB values (7.1): a string of bytes, kept as an Array of Integers 0..255 so that no byte is ever
+# read as a character. Its text form (the bytes read as characters) is made only where a rule asks.
+Blob = Struct.new(:bytes)
+
+module Blobs
+  module_function
+
+  def blob?(v)
+    case v
+    in Blob then true
+    else false
+    end
+  end
+
+  # The bytes of a BLOB; empty for any other value.
+  def raw(v)
+    case v
+    in Blob then Blob.bytes(v)
+    else Integer[]
+    end
+  end
+
+  # The bytes a value stands for: a BLOB's own, else those of its text form (a value that is not NULL).
+  def bytes_of(v)
+    case v
+    in Blob then Blob.bytes(v)
+    else String.bytes(Values.text_of(v))
+    end
+  end
+
+  # The text form of a BLOB: its bytes read as characters (7.1).
+  def text(v) = Array.pack(raw(v), "U*")
+
+  # Two uppercase hexadecimal digits per byte.
+  def hex(bytes) = Array.join(Array.map(bytes) { |b| format("%02X", b) }, "")
+
+  # The value of the hexadecimal digit byte c, or -1.
+  def hex_digit(c)
+    return c - 48 if c >= 48 && c <= 57
+    return c - 87 if c >= 97 && c <= 102
+    return c - 55 if c >= 65 && c <= 70
+    -1
+  end
+
+  # The BLOB written as these hexadecimal digits, or nil if they are odd in number or not all digits.
+  def from_hex(digits)
+    chars = String.bytes(digits)
+    n = Array.size(chars)
+    return nil if n % 2 != 0
+    out = Integer[]
+    i = 0
+    while i < n
+      hi = hex_digit(chars[i])
+      lo = hex_digit(chars[i + 1])
+      return nil if hi < 0 || lo < 0
+      Array.push(out, hi * 16 + lo)
+      i += 2
+    end
+    Blob.new(out)
+  end
+
+  # -1, 0 or 1: byte by byte as unsigned bytes; a prefix comes first.
+  def compare(x, y)
+    nx = Array.size(x)
+    ny = Array.size(y)
+    n = nx < ny ? nx : ny
+    i = 0
+    while i < n
+      return (x[i] < y[i] ? -1 : 1) if x[i] != y[i]
+      i += 1
+    end
+    nx == ny ? 0 : (nx < ny ? -1 : 1)
+  end
+end

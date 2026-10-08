@@ -1,0 +1,49 @@
+# Executes a compound select (spec 5.1): the parts' rows combined left to right, then ordered and cut.
+module Compounds
+  module_function
+
+  def compute(plan, prefix)
+    acc = Query.compute(CompoundPlan.first(plan), prefix)
+    colls = CompoundPlan.colls(plan)
+    Array.each(CompoundPlan.steps(plan)) do |step|
+      acc = combine(CompoundStep.op(step), acc, Query.compute(CompoundStep.plan(step), prefix), colls)
+    end
+    order = CompoundPlan.order(plan)
+    unless Array.empty?(order)
+      items = Array.map(acc) { |row| SortItem.new(Array.map(order) { Array.fetch(row, SortKey.position(it)) }, row) }
+      acc = Array.map(Sorter.sort(items, order)) { SortItem.vals(it) }
+    end
+    Query.slice(acc, CompoundPlan.offset(plan), CompoundPlan.limit(plan))
+  end
+
+  # `left` op `right`: rows equal as in SELECT DISTINCT, each column under its collation of `colls`;
+  # the first of equal rows is the one kept.
+  def combine(op, left, right, colls)
+    case op
+    in "UNION ALL" then Array.concat(Array.dup(left), right)
+    in "UNION" then unique(Array.concat(Array.dup(left), right), colls)
+    in "INTERSECT"
+      keys = key_set(right, colls)
+      unique(Array.select(left) { Hash.key?(keys, Grouping.row_key(it, colls)) }, colls)
+    in "EXCEPT"
+      keys = key_set(right, colls)
+      unique(Array.reject(left) { Hash.key?(keys, Grouping.row_key(it, colls)) }, colls)
+    end
+  end
+
+  def key_set(rows, colls)
+    keys = Hash[]
+    Array.each(rows) { keys[Grouping.row_key(it, colls)] = true }
+    keys
+  end
+
+  def unique(rows, colls)
+    seen = Hash[]
+    Array.select(rows) do |row|
+      key = Grouping.row_key(row, colls)
+      fresh = !Hash.key?(seen, key)
+      seen[key] = true
+      fresh
+    end
+  end
+end

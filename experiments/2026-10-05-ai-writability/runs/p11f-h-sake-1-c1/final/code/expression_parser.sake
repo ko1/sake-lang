@@ -1,0 +1,210 @@
+# Expression part of the parser (reopens Parser; see parser.sake for token access and statements).
+class Parser
+  # ---- Expressions ----
+  # Precedence climbing over the levels of spec 1.8, numbered from the loosest:
+  #   1 OR   2 AND   3 NOT (prefix)   4 = == != <> IS [NOT] IN LIKE BETWEEN   5 < <= > >=
+  #   6 + -   7 * / %   8 ||   9 unary - +
+  # `COLLATE name` (spec 7.2) is postfix and binds tighter than all of them (see prefix).
+  # Binary operators are left associative. IN / LIKE / BETWEEN (and their NOT forms) sit at level 4.
+
+  def expression(ps) = climb(ps, 1)
+
+  def expression_list(ps)
+    list = Array[expression(ps)]
+    while accept_punct(ps, ",")
+      Array.push(list, expression(ps))
+    end
+    list
+  end
+
+  # An expression made only of operators at level `min` or tighter.
+  def climb(ps, min)
+    left = prefix(ps, min)
+    while true
+      level = binary_level(ps)
+      break if level == 0 || level < min
+      if membership_ahead?(ps)
+        left = membership(ps, left)
+      else
+        op = binary_operator(ps)
+        left = Binary.new(op, left, climb(ps, level + 1))
+      end
+    end
+    left
+  end
+
+  # The level of the binary operator at the next token; 0 if it is not one.
+  def binary_level(ps)
+    t = peek(ps)
+    case Token.kind(t)
+    in :kw
+      case Token.text(t)
+      in "OR" then 1
+      in "AND" then 2
+      in "IS" | "IN" | "LIKE" | "BETWEEN" then 4
+      in "NOT" then membership_word?(peek_at(ps, 1)) ? 4 : 0
+      else 0
+      end
+    in :punct
+      case Token.text(t)
+      in "=" | "==" | "!=" | "<>" then 4
+      in "<" | "<=" | ">" | ">=" then 5
+      in "+" | "-" then 6
+      in "*" | "/" | "%" then 7
+      in "||" then 8
+      else 0
+      end
+    else 0
+    end
+  end
+
+  def membership_word?(t)
+    return false unless Token.kind(t) == :kw
+    Token.text(t) == "IN" || Token.text(t) == "LIKE" || Token.text(t) == "BETWEEN"
+  end
+
+  # Is the next thing `[NOT] IN`, `[NOT] LIKE` or `[NOT] BETWEEN`?
+  def membership_ahead?(ps) = membership_word?(peek(ps)) || (at_kw?(ps, "NOT") && membership_word?(peek_at(ps, 1)))
+
+  # `left [NOT] IN (...) | LIKE pattern | BETWEEN low AND high`.
+  def membership(ps, left)
+    negated = accept_kw(ps, "NOT")
+    word = Token.text(advance(ps))
+    case word
+    in "IN"
+      expect_punct(ps, "(")
+      if query_ahead?(ps)
+        sel = parse_query(ps)
+        expect_punct(ps, ")")
+        return InSelect.new(left, sel, negated)
+      end
+      items = accept_punct(ps, ")") ? Array[] : expression_list(ps)
+      expect_punct(ps, ")") unless Array.empty?(items)
+      InList.new(left, items, negated)
+    in "LIKE" then Like.new(left, climb(ps, 5), negated)
+    else
+      low = climb(ps, 5)
+      expect_kw(ps, "AND")
+      Between.new(left, low, climb(ps, 5), negated)
+    end
+  end
+
+  # Consumes the binary operator at the next token; returns it normalised ("==" is "=", "<>" is "!=").
+  def binary_operator(ps)
+    text = Token.text(advance(ps))
+    case text
+    in "IS" then accept_kw(ps, "NOT") ? "IS NOT" : "IS"
+    in "==" then "="
+    in "<>" then "!="
+    else text
+    end
+  end
+
+  # A primary expression or prefix operator expression (see prefix_term), followed by any `COLLATE name`.
+  def prefix(ps, min)
+    e = prefix_term(ps, min)
+    while accept_kw(ps, "COLLATE")
+      e = Collate.new(e, ident(ps))
+    end
+    e
+  end
+
+  # A primary expression, or a prefix operator (NOT only where the level allows it) and its operand.
+  def prefix_term(ps, min)
+    t = advance(ps)
+    case Token.kind(t)
+    in :number then Lit.new(Token.val(t))
+    in :str then Lit.new(Token.text(t))
+    in :ident then name_or_call(ps, Token.text(t))
+    in :kw
+      return Unary.new(:not, climb(ps, 3)) if min <= 3 && Token.text(t) == "NOT"
+      case Token.text(t)
+      in "NULL" then Lit.new(nil)
+      in "CASE" then case_expression(ps)
+      in "CAST" then cast_expression(ps)
+      in "EXISTS" then exists_expression(ps)
+      else syntax_error
+      end
+    in :punct
+      case Token.text(t)
+      in "-" then Unary.new(:neg, climb(ps, 9))
+      in "+" then Unary.new(:pos, climb(ps, 9))
+      in "("
+        return subquery_value(ps) if query_ahead?(ps)
+        e = expression(ps)
+        expect_punct(ps, ")")
+        e
+      else syntax_error
+      end
+    else syntax_error
+    end
+  end
+
+  # After a name: a column reference or a call, which OVER (window_parser.sake) makes a window call.
+  def name_or_call(ps, name)
+    e = column_or_call(ps, name)
+    return e unless at_kw?(ps, "OVER")
+    advance(ps)
+    case e
+    in Call then WindowCall.new(e, over_clause(ps))
+    else syntax_error
+    end
+  end
+
+  # A column reference (`q.c` too) or a call. Inside the parentheses a call may also be `*` (count(*)),
+  # start with DISTINCT, and end with ORDER BY terms (aggregates only; see Resolver).
+  def column_or_call(ps, name)
+    return Col.new(name, ident(ps), -1, nil, nil) if accept_punct(ps, ".")
+    return Col.new(nil, name, -1, nil, nil) unless accept_punct(ps, "(")
+    if accept_punct(ps, "*")
+      expect_punct(ps, ")")
+      return Call.new(name, name, Array[], false, true, Array[])
+    end
+    return Call.new(name, name, Array[], false, false, Array[]) if accept_punct(ps, ")")
+    distinct = accept_kw(ps, "DISTINCT")
+    args = expression_list(ps)
+    order = at_kw?(ps, "ORDER") ? order_by(ps) : Array[]
+    expect_punct(ps, ")")
+    Call.new(name, name, args, distinct, false, order)
+  end
+
+  # After `(`, at a query: the rest of a scalar subquery.
+  def subquery_value(ps)
+    sel = parse_query(ps)
+    expect_punct(ps, ")")
+    ScalarSub.new(sel)
+  end
+
+  # After EXISTS: `( select )`.
+  def exists_expression(ps)
+    expect_punct(ps, "(")
+    sel = parse_query(ps)
+    expect_punct(ps, ")")
+    Exists.new(sel)
+  end
+
+  # After CASE: `[operand] WHEN c THEN r [WHEN ...] [ELSE e] END`.
+  def case_expression(ps)
+    operand = at_kw?(ps, "WHEN") ? nil : expression(ps)
+    whens = Array[]
+    while accept_kw(ps, "WHEN")
+      condition = expression(ps)
+      expect_kw(ps, "THEN")
+      Array.push(whens, WhenClause.new(condition, expression(ps)))
+    end
+    syntax_error if Array.empty?(whens)
+    otherwise = accept_kw(ps, "ELSE") ? expression(ps) : nil
+    expect_kw(ps, "END")
+    Case.new(operand, whens, otherwise)
+  end
+
+  # After CAST: `( expr AS type )`.
+  def cast_expression(ps)
+    expect_punct(ps, "(")
+    e = expression(ps)
+    expect_kw(ps, "AS")
+    type = column_type(ident(ps))
+    expect_punct(ps, ")")
+    Cast.new(e, type)
+  end
+end

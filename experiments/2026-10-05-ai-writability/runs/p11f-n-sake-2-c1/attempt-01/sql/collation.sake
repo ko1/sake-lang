@@ -1,0 +1,101 @@
+# Collating sequences (7): how two TEXT values compare, and which collation an operation uses.
+# A collation is named by one of the lower-case strings "binary" (the default), "nocase" and "rtrim".
+# Everything that compares, orders, groups or deduplicates TEXT values folds the text with `fold`
+# first (equal values fold to equal text, in the same order), or compares with Values.compare_in.
+module Collation
+  module_function
+
+  # The lower-case name of the collation `written`, or the error of 7.2 (spelled as written).
+  def canonical!(written)
+    k = String.downcase(written)
+    Errors.sql_error("no such collation sequence: #{written}") unless k == "binary" || k == "nocase" || k == "rtrim"
+    k
+  end
+
+  # The collation of a column or index column that wrote `written` after COLLATE ("" for none: binary).
+  def declared!(written) = written == "" ? "binary" : canonical!(written)
+
+  # The text as the collation sees it: NOCASE maps only the ASCII letters A-Z, RTRIM drops trailing spaces.
+  def fold(s, coll)
+    return String.tr(s, "A-Z", "a-z") if coll == "nocase"
+    return rtrim(s) if coll == "rtrim"
+    s
+  end
+
+  def rtrim(s)
+    bytes = String.bytes(s)
+    n = Array.size(bytes)
+    n -= 1 while n > 0 && bytes[n - 1] == 32
+    n == Array.size(bytes) ? s : Text.byteslice(s, 0, n)
+  end
+
+  # --- the collation of an expression (7.3); e is a resolved expression ---
+
+  # The collation named by a COLLATE on the expression itself ("" if none).
+  def explicit(e)
+    case Expr.kind(e)
+    in :collate then Expr.coll(e)
+    in :pos | :cast then explicit(Expr.args(e)[0])
+    else ""
+    end
+  end
+
+  # The collation of the column the expression is ("" if it is not a column).
+  def implicit(e)
+    case Expr.kind(e)
+    in :ref then Expr.coll(e)
+    in :pos | :cast then implicit(Expr.args(e)[0])
+    else ""
+    end
+  end
+
+  # The collation an operation takes from the expression: explicit, else implicit, else binary.
+  def effective(e)
+    ex = explicit(e)
+    return ex if ex != ""
+    im = implicit(e)
+    im == "" ? "binary" : im
+  end
+
+  # The collation of the expression if it has one, else "" (what a compound select looks for).
+  def own(e)
+    ex = explicit(e)
+    ex != "" ? ex : implicit(e)
+  end
+
+  # --- which collation an operation uses (7.4) ---
+
+  # The first of the four that is not "": explicit left, explicit right, implicit left, implicit right.
+  def pick(explicit_left, explicit_right, implicit_left, implicit_right)
+    return explicit_left if explicit_left != ""
+    return explicit_right if explicit_right != ""
+    return implicit_left if implicit_left != ""
+    implicit_right == "" ? "binary" : implicit_right
+  end
+
+  # a op b for = == != <> < <= > >= IS IS NOT (also each WHEN of a CASE, each bound of BETWEEN).
+  def for_compare(a, b) = pick(explicit(a), explicit(b), implicit(a), implicit(b))
+
+  # x IN (select): as x = e for e the subquery's first result column expression.
+  def for_in_query(x, plan)
+    ex = ""
+    im = ""
+    case plan
+    in SelectPlan
+      e = ResultCol.expr(SelectPlan.items(plan)[0])
+      ex = explicit(e)
+      im = implicit(e)
+    in CompoundPlan
+      im = Column.coll(CompoundPlan.columns(plan)[0])
+    else nil
+    end
+    pick(explicit(x), ex, implicit(x), im)
+  end
+
+  # What an ORDER BY / GROUP BY term (with the planned expression `e` it stands for) sorts or groups
+  # under: the COLLATE written on the term, else its expression's.
+  def of_term(written, e) = written == "" ? effective(e) : canonical!(written)
+
+  # The term with its collation set to `coll`.
+  def with_coll(t, coll) = OrderTerm.new(OrderTerm.expr(t), OrderTerm.by_position(t), OrderTerm.position(t), OrderTerm.desc(t), OrderTerm.nulls(t), coll)
+end

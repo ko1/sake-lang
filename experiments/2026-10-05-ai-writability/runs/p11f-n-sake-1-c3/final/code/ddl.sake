@@ -1,0 +1,84 @@
+# CREATE TABLE and DROP TABLE.
+module Ddl
+  module_function
+
+  def create_table(db, st)
+    name = CreateTable.name(st)
+    return unless claim_name(db, name, CreateTable.if_not_exists(st))
+    Database.add_table(db, build_table(name, CreateTable.columns(st), CreateTable.constraints(st)))
+  end
+
+  # May a new table or view take `name` (spec 5.3)? A taken name is an error, or with `missing_ok`
+  # (IF NOT EXISTS) means false: do nothing. An index's name is never allowed.
+  def claim_name(db, name, missing_ok)
+    taken = Database.taken_by(db, name)
+    if taken != nil
+      return false if missing_ok
+      raise SqlError.new("#{taken} #{name} already exists")
+    end
+    raise SqlError.new("there is already an index named #{name}") if Database.index(db, name) != nil
+    true
+  end
+
+  # The Table a CREATE TABLE describes: columns, the INTEGER PRIMARY KEY (if any) and the uniqueness constraints.
+  def build_table(name, defs, constraints)
+    keys = check_distinct_names(defs)
+    primary = primary_key_positions(defs, constraints, keys)
+    key_pos = (Array.size(primary) == 1 && ColumnDef.type(Array.fetch(defs, Array.fetch(primary, 0))) == :integer) ? Array.fetch(primary, 0) : -1
+    columns = Array.map(Array.each_with_index(defs)) do |d, i|
+      not_null = ColumnDef.not_null(d) || (Array.include?(primary, i) && i != key_pos)
+      Column.new(ColumnDef.name(d), Array.fetch(keys, i), ColumnDef.type(d), not_null, ColumnDef.default(d))
+    end
+    uniques = Array[]
+    Array.each_with_index(defs) do |d, i|
+      Array.push(uniques, UniqueConstraint.new(Array[i], nil)) if ColumnDef.primary_key(d) && i != key_pos
+      Array.push(uniques, UniqueConstraint.new(Array[i], nil)) if ColumnDef.unique(d)
+    end
+    Array.each(constraints) do |c|
+      positions = constraint_positions(TableConstraint.columns(c), keys)
+      next if TableConstraint.kind(c) == :primary_key && key_pos != -1
+      Array.push(uniques, UniqueConstraint.new(positions, nil))
+    end
+    Table.new(name, columns, Array[], uniques, key_pos)
+  end
+
+  # The lower-cased column names, in order; SqlError on a repeated name.
+  def check_distinct_names(defs)
+    keys = Array[]
+    Array.each(defs) do |d|
+      key = Value.lower(ColumnDef.name(d))
+      raise SqlError.new("duplicate column name: #{ColumnDef.name(d)}") if Array.include?(keys, key)
+      Array.push(keys, key)
+    end
+    keys
+  end
+
+  # Positions of the PRIMARY KEY columns (declared on a column, or by a table constraint).
+  def primary_key_positions(defs, constraints, keys)
+    positions = Array[]
+    Array.each_with_index(defs) { |d, i| Array.push(positions, i) if ColumnDef.primary_key(d) }
+    Array.each(constraints) do |c|
+      positions = constraint_positions(TableConstraint.columns(c), keys) if TableConstraint.kind(c) == :primary_key
+    end
+    positions
+  end
+
+  def constraint_positions(names, keys)
+    Array.map(names) do |n|
+      i = Array.index(keys, Value.lower(n))
+      raise SqlError.new("no such column: #{n}") if i == nil
+      i
+    end
+  end
+
+  def drop_table(db, st)
+    name = DropTable.name(st)
+    view = Database.view(db, name)
+    raise SqlError.new("use DROP VIEW to delete view #{View.name(view)}") if view != nil
+    unless Database.table?(db, name)
+      return if DropTable.if_exists(st)
+      raise SqlError.new("no such table: #{name}")
+    end
+    Database.remove_table(db, name)
+  end
+end

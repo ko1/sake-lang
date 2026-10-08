@@ -1,0 +1,92 @@
+# The frame of each row of a window partition (spec 6.2): the rows an aggregate or first_value / last_value /
+# nth_value looks at, as a range of positions in the partition.
+module WindowFrames
+  module_function
+
+  # [first, last] (inclusive) for each row of `part`; a frame with first > last is empty.
+  def all(window, part)
+    n = Array.size(WindowPartition.rows(part))
+    Array.new(n) { |i| bounds(window, part, i, n) }
+  end
+
+  def bounds(window, part, i, n)
+    frame = Window.frame(window)
+    start = Frame.start(frame)
+    finish = Frame.finish(frame)
+    if Frame.units(frame) == :rows
+      lo = rows_edge(start, i, n)
+      hi = rows_edge(finish, i, n)
+    else
+      desc = descending?(window)
+      lo = range_start(start, part, i, desc)
+      hi = range_end(finish, part, i, desc)
+    end
+    [lo < 0 ? 0 : lo, hi > n - 1 ? n - 1 : hi]
+  end
+
+  # Does the first ORDER BY term sort downwards? (RANGE offsets need exactly one term.)
+  def descending?(window) = !Array.empty?(Window.order(window)) && OrderTerm.desc(Array.fetch(Window.order(window), 0))
+
+  # ROWS: positions relative to the current row i, before clipping to the partition's n rows.
+  def rows_edge(bound, i, n)
+    count = whole_offset(bound)
+    case FrameBound.kind(bound)
+    in :unbounded_preceding then 0
+    in :preceding then i - count
+    in :current then i
+    in :following then i + count
+    in :unbounded_following then n - 1
+    end
+  end
+
+  def whole_offset(bound)
+    off = FrameBound.offset(bound)
+    case off
+    in Integer then off
+    in Float then Float.to_i(off)
+    else 0
+    end
+  end
+
+  # RANGE: the first row of the frame.
+  def range_start(bound, part, i, desc)
+    case FrameBound.kind(bound)
+    in :unbounded_preceding then 0
+    in :current then Array.fetch(WindowPartition.first_peer(part), i)
+    else
+      lead = WindowPartition.lead(part)
+      v = Array.fetch(lead, i)
+      return Array.fetch(WindowPartition.first_peer(part), i) if v == nil
+      target = target_value(bound, v, desc)
+      found = Array.find_index(lead) { it != nil && sign(desc) * Value.to_number(it) >= target }
+      found == nil ? Array.size(lead) : found
+    end
+  end
+
+  # RANGE: the last row of the frame.
+  def range_end(bound, part, i, desc)
+    case FrameBound.kind(bound)
+    in :unbounded_following then Array.size(WindowPartition.rows(part)) - 1
+    in :current then Array.fetch(WindowPartition.last_peer(part), i)
+    else
+      lead = WindowPartition.lead(part)
+      v = Array.fetch(lead, i)
+      return Array.fetch(WindowPartition.last_peer(part), i) if v == nil
+      target = target_value(bound, v, desc)
+      found = -1
+      Array.each_with_index(lead) { |x, j| found = j if x != nil && sign(desc) * Value.to_number(x) <= target }
+      found
+    end
+  end
+
+  # The offset bound's value in the direction the rows are sorted: the current value (negated under DESC,
+  # so rows always ascend) moved by the offset.
+  def target_value(bound, v, desc)
+    off = FrameBound.offset(bound)
+    shift = off == nil ? 0 : off
+    here = sign(desc) * Value.to_number(v)
+    FrameBound.kind(bound) == :preceding ? here - shift : here + shift
+  end
+
+  def sign(desc) = desc ? -1 : 1
+end

@@ -1,0 +1,204 @@
+# Parser for the statements that define or change the schema, and for transactions: CREATE / DROP of
+# tables, views and indexes (1.4, 5.3, 5.7), ALTER TABLE (5.6), BEGIN / COMMIT / END / ROLLBACK (5.5).
+# Queries and expressions are Parser's; the token helpers used here are Parser's too.
+module SchemaParser
+  module_function
+
+  def parse_create(cur)
+    Parser.expect_kw(cur, "CREATE")
+    return parse_create_view(cur) if Parser.accept_kw(cur, "VIEW")
+    unique = Parser.accept_kw(cur, "UNIQUE")
+    return parse_create_index(cur, unique) if Parser.accept_kw(cur, "INDEX")
+    Errors.syntax if unique
+    Parser.expect_kw(cur, "TABLE")
+    if_not_exists = parse_if_not_exists(cur)
+    name = Parser.expect_name(cur)
+    Parser.expect_op(cur, "(")
+    cols = Column[]
+    keys = KeySpec[]
+    Array.push(cols, parse_column_def(cur, keys))
+    while Parser.accept_op(cur, ",")
+      if Parser.is_kw(Parser.peek(cur), "PRIMARY") || Parser.is_kw(Parser.peek(cur), "UNIQUE")
+        Array.push(keys, parse_table_key(cur))
+        Array.push(keys, parse_table_key(cur)) while Parser.accept_op(cur, ",")
+        break
+      end
+      Array.push(cols, parse_column_def(cur, keys))
+    end
+    Parser.expect_op(cur, ")")
+    CreateStmt.new(name, cols, keys, if_not_exists)
+  end
+
+  # [IF NOT EXISTS]
+  def parse_if_not_exists(cur)
+    return false unless Parser.accept_kw(cur, "IF")
+    Parser.expect_kw(cur, "NOT")
+    Parser.expect_kw(cur, "EXISTS")
+    true
+  end
+
+  # [IF EXISTS]
+  def parse_if_exists(cur)
+    return false unless Parser.accept_kw(cur, "IF")
+    Parser.expect_kw(cur, "EXISTS")
+    true
+  end
+
+  # name type [constraint]...; a PRIMARY KEY or UNIQUE constraint is added to `keys`. The COLLATE name is
+  # checked here, so a column with an unknown one is never created.
+  def parse_column_def(cur, keys)
+    name = Parser.expect_name(cur)
+    t = Parser.advance(cur)
+    Errors.syntax unless Tok.kind(t) == :ident
+    type = :none
+    type = :integer if Tok.key(t) == "integer"
+    type = :real if Tok.key(t) == "real"
+    type = :text if Tok.key(t) == "text"
+    Errors.syntax if type == :none
+    not_null = false
+    default = nil
+    coll = "binary"
+    loop do
+      if Parser.accept_kw(cur, "PRIMARY")
+        Parser.expect_kw(cur, "KEY")
+        Array.push(keys, KeySpec.new(String[name], true))
+      elsif Parser.accept_kw(cur, "UNIQUE")
+        Array.push(keys, KeySpec.new(String[name], false))
+      elsif Parser.accept_kw(cur, "NOT")
+        Parser.expect_kw(cur, "NULL")
+        not_null = true
+      elsif Parser.accept_kw(cur, "DEFAULT")
+        default = parse_default(cur)
+      elsif Parser.accept_kw(cur, "COLLATE")
+        coll = Collation.canonical(Parser.expect_name(cur))
+      else
+        break
+      end
+    end
+    Column.new(name, type, not_null, default, coll)
+  end
+
+  # [+ | -] numeric-literal | string-literal | NULL
+  def parse_default(cur)
+    t = Parser.advance(cur)
+    negative = Parser.is_op(t, "-")
+    signed = negative || Parser.is_op(t, "+")
+    t = Parser.advance(cur) if signed
+    k = Tok.kind(t)
+    if k == :int
+      n = String.to_i(Tok.text(t))
+      negative ? -n : n
+    elsif k == :real
+      x = String.to_f(Tok.text(t))
+      negative ? -x : x
+    elsif k == :str && !signed
+      Tok.text(t)
+    elsif Parser.is_kw(t, "NULL") && !signed
+      nil
+    else
+      Errors.syntax
+    end
+  end
+
+  # PRIMARY KEY ( column, ... ) or UNIQUE ( column, ... )
+  def parse_table_key(cur)
+    primary = Parser.accept_kw(cur, "PRIMARY")
+    if primary
+      Parser.expect_kw(cur, "KEY")
+    else
+      Parser.expect_kw(cur, "UNIQUE")
+    end
+    KeySpec.new(parse_name_list(cur), primary)
+  end
+
+  # ( name, ... )
+  def parse_name_list(cur)
+    Parser.expect_op(cur, "(")
+    names = String[]
+    Array.push(names, Parser.expect_name(cur))
+    Array.push(names, Parser.expect_name(cur)) while Parser.accept_op(cur, ",")
+    Parser.expect_op(cur, ")")
+    names
+  end
+
+  # --- views and indexes ---
+
+  # name [( column, ... )] AS select (CREATE VIEW is consumed)
+  def parse_create_view(cur)
+    if_not_exists = parse_if_not_exists(cur)
+    name = Parser.expect_name(cur)
+    columns = Parser.is_op(Parser.peek(cur), "(") ? parse_name_list(cur) : String[]
+    Parser.expect_kw(cur, "AS")
+    CreateViewStmt.new(name, columns, Parser.parse_query(cur), if_not_exists)
+  end
+
+  # name ON table ( column [COLLATE name], ... ) (CREATE [UNIQUE] INDEX is consumed)
+  def parse_create_index(cur, unique)
+    if_not_exists = parse_if_not_exists(cur)
+    name = Parser.expect_name(cur)
+    Parser.expect_kw(cur, "ON")
+    table = Parser.expect_name(cur)
+    names, colls = parse_index_columns(cur)
+    CreateIndexStmt.new(name, table, names, unique, if_not_exists, colls)
+  end
+
+  # ( column [COLLATE name], ... )  =>  [the column names, the collation names as written ("" if none)]
+  def parse_index_columns(cur)
+    Parser.expect_op(cur, "(")
+    names = String[]
+    colls = String[]
+    loop do
+      Array.push(names, Parser.expect_name(cur))
+      Array.push(colls, Parser.accept_kw(cur, "COLLATE") ? Parser.expect_name(cur) : "")
+      break unless Parser.accept_op(cur, ",")
+    end
+    Parser.expect_op(cur, ")")
+    [names, colls]
+  end
+
+  def parse_drop(cur)
+    Parser.expect_kw(cur, "DROP")
+    if Parser.accept_kw(cur, "VIEW")
+      if_exists = parse_if_exists(cur)
+      return DropViewStmt.new(Parser.expect_name(cur), if_exists)
+    end
+    if Parser.accept_kw(cur, "INDEX")
+      if_exists = parse_if_exists(cur)
+      return DropIndexStmt.new(Parser.expect_name(cur), if_exists)
+    end
+    Parser.expect_kw(cur, "TABLE")
+    if_exists = parse_if_exists(cur)
+    DropStmt.new(Parser.expect_name(cur), if_exists)
+  end
+
+  # --- ALTER TABLE ---
+
+  def parse_alter(cur)
+    Parser.expect_kw(cur, "ALTER")
+    Parser.expect_kw(cur, "TABLE")
+    table = Parser.expect_name(cur)
+    if Parser.accept_kw(cur, "ADD")
+      Parser.accept_kw(cur, "COLUMN")
+      keys = KeySpec[]
+      return AlterAddStmt.new(table, parse_column_def(cur, keys), keys)
+    end
+    Parser.expect_kw(cur, "RENAME")
+    return RenameTableStmt.new(table, Parser.expect_name(cur)) if Parser.accept_kw(cur, "TO")
+    Parser.accept_kw(cur, "COLUMN")
+    column = Parser.expect_name(cur)
+    Parser.expect_kw(cur, "TO")
+    RenameColumnStmt.new(table, column, Parser.expect_name(cur))
+  end
+
+  # --- transactions ---
+
+  # BEGIN | COMMIT | END | ROLLBACK, then an optional TRANSACTION
+  def parse_transaction(cur)
+    word = Tok.text(Parser.advance(cur))
+    Parser.accept_kw(cur, "TRANSACTION")
+    kind = :commit
+    kind = :begin if word == "BEGIN"
+    kind = :rollback if word == "ROLLBACK"
+    TxnStmt.new(kind)
+  end
+end

@@ -155,6 +155,6 @@ row = {
   hidden_failed: g[:hidden_failed], public_failed: g[:public_failed], suite_secs: g[:suite_secs], timeouts: g[:timeouts], note: g[:note],
 }
 row.delete(:public7)
-File.open(File.join(AW::EXP, "runs", "grade-p11.jsonl"), "a") { _1.puts(JSON.generate(row)) }
+File.open(File.join(AW::EXP, "runs", "grade-#{run[/\Ap11\w*/]}.jsonl"), "a") { _1.puts(JSON.generate(row)) } # p11f-... -> grade-p11f.jsonl
 puts "#{run}: change hidden #{row[:hidden7_pass]}/#{row[:hidden7_total]} public #{row[:public_pass]}/#{row[:public_total]} " \
      "regressions #{row[:regressions_hidden].size}+#{row[:regressions_public].size} diff +#{row[:diff_added]}/-#{row[:diff_removed]} timeouts #{row[:timeouts].size} #{row[:note]}"

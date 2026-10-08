@@ -1,0 +1,152 @@
+# The value of each window function over a partition (spec 6.3). The aggregates of 3.2 are computed by
+# Aggregates over the frame; the others are here.
+module WindowFunctions
+  module_function
+
+  def known?(fn)
+    case fn
+    in "row_number" | "rank" | "dense_rank" | "percent_rank" | "cume_dist" | "ntile" then true
+    in "lag" | "lead" | "first_value" | "last_value" | "nth_value" then true
+    else false
+    end
+  end
+
+  def arity_ok?(fn, count)
+    case fn
+    in "row_number" | "rank" | "dense_rank" | "percent_rank" | "cume_dist" then count == 0
+    in "ntile" | "first_value" | "last_value" then count == 1
+    in "lag" | "lead" then count >= 1 && count <= 3
+    in "nth_value" then count == 2
+    else false
+    end
+  end
+
+  # One value for each row of `part`, in the partition's order.
+  def compute(window, part)
+    fn = Window.fn(window)
+    n = Array.size(WindowPartition.rows(part))
+    first = WindowPartition.first_peer(part)
+    last = WindowPartition.last_peer(part)
+    case fn
+    in "row_number" then Array.new(n) { |i| i + 1 }
+    in "rank" then Array.new(n) { |i| Array.fetch(first, i) + 1 }
+    in "dense_rank" then dense_ranks(first)
+    in "percent_rank" then Array.new(n) { |i| n == 1 ? 0.0 : Arithmetic.to_f(Array.fetch(first, i)) / (n - 1) }
+    in "cume_dist" then Array.new(n) { |i| Arithmetic.to_f(Array.fetch(last, i) + 1) / n }
+    in "ntile" then ntile(window, part)
+    in "lag" then shifted(window, part, -1)
+    in "lead" then shifted(window, part, 1)
+    in "first_value" | "last_value" | "nth_value" then in_frame(window, part)
+    else over_frame(window, part)
+    end
+  end
+
+  def dense_ranks(first)
+    group = 0
+    Array.map(Array.each_with_index(first)) do |at, i|
+      group += 1 if at == i
+      group
+    end
+  end
+
+  # ---- Argument values ----
+
+  # The value of argument `k` of the window on row `i` of the partition.
+  def argument(window, part, k, i) = Evaluator.evaluate(Array.fetch(Window.args(window), k), Array.fetch(WindowPartition.rows(part), i))
+
+  # A value that is a whole number, as an Integer; else nil.
+  def whole_number(v)
+    case v
+    in Integer then v
+    in Float then Coercion.whole_in_64_bits?(v) ? Float.to_i(v) : nil
+    in String
+      n = Value.parse_numeric(v)
+      n == nil ? nil : whole_number(n)
+    else nil
+    end
+  end
+
+  # ---- ntile, lag, lead ----
+
+  # Rows go to n buckets that differ in size by at most one, the larger buckets first.
+  def ntile(window, part)
+    total = Array.size(WindowPartition.rows(part))
+    Array.new(total) do |i|
+      n = whole_number(argument(window, part, 0, i))
+      raise SqlError.new("argument of ntile must be a positive integer") if n == nil || n < 1
+      bucket(i, total, n)
+    end
+  end
+
+  def bucket(i, total, n)
+    return i + 1 if n >= total
+    size = total / n
+    extra = total % n
+    big = extra * (size + 1)
+    i < big ? i / (size + 1) + 1 : extra + (i - big) / size + 1
+  end
+
+  # lag (direction -1) and lead (1): the argument on the row k positions away, else the default.
+  def shifted(window, part, direction)
+    total = Array.size(WindowPartition.rows(part))
+    args = Window.args(window)
+    Array.new(total) do |i|
+      k = Array.size(args) > 1 ? argument(window, part, 1, i) : 1
+      if k == nil
+        nil
+      else
+        at = i + direction * Float.to_i(Arithmetic.to_f(Value.to_number(k)))
+        if at >= 0 && at < total
+          argument(window, part, 0, at)
+        else
+          Array.size(args) > 2 ? argument(window, part, 2, i) : nil
+        end
+      end
+    end
+  end
+
+  # ---- Frame functions ----
+
+  def in_frame(window, part)
+    frames = WindowFrames.all(window, part)
+    Array.map(Array.each_with_index(frames)) do |frame, i|
+      lo, hi = frame
+      nth = nth_position(window, part, i)
+      pick = lo + nth
+      if lo > hi
+        nil
+      elsif Window.fn(window) == "last_value"
+        argument(window, part, 0, hi)
+      elsif pick <= hi
+        argument(window, part, 0, pick)
+      else
+        nil
+      end
+    end
+  end
+
+  # How many rows into the frame the value is: 0 for first_value, n - 1 for nth_value(x, n).
+  def nth_position(window, part, i)
+    return 0 unless Window.fn(window) == "nth_value"
+    n = whole_number(argument(window, part, 1, i))
+    raise SqlError.new("second argument to nth_value must be a positive integer") if n == nil || n < 1
+    n - 1
+  end
+
+  # An aggregate over each row's frame; rows with the same frame share one computation.
+  def over_frame(window, part)
+    agg = Aggregate.new(Window.name(window), Window.fn(window), Window.args(window), false, Window.star(window), Array[])
+    rows = WindowPartition.rows(part)
+    previous = [-2, -2]
+    value = nil
+    Array.map(WindowFrames.all(window, part)) do |frame|
+      if frame != previous
+        lo, hi = frame
+        members = lo > hi ? Array[] : Array.take(Array.drop(rows, lo), hi - lo + 1)
+        value = Aggregates.compute(agg, members)
+        previous = frame
+      end
+      value
+    end
+  end
+end

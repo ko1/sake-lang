@@ -1,0 +1,73 @@
+# Storing a value into a column: the column's type is enforced (1.5).
+module Storage
+  module_function
+
+  def type_word(type)
+    case type
+    in :integer then "INTEGER"
+    in :real then "REAL"
+    in :blob then "BLOB"
+    else "TEXT"
+    end
+  end
+
+  def reject(value_type, col, table_name)
+    Errors.sql_error("cannot store #{value_type} value in #{type_word(Column.type(col))} column #{table_name}.#{Column.name(col)}")
+  end
+
+  # A REAL that is a whole number within 64 bits, as an Integer; otherwise nil.
+  def whole_integer(x)
+    return nil unless x == Float.floor(x)
+    return nil if x < -9223372036854775808.0 || x >= 9223372036854775808.0
+    Float.to_i(x)
+  end
+
+  # A BLOB column keeps a BLOB and rejects every other value unconverted (7.4); no other column takes a
+  # BLOB. [stored, ""], or [nil, T] with T the type of the rejected value.
+  def convert_blob(v, type)
+    case v
+    in Blob then type == :blob ? [v, ""] : [nil, "BLOB"]
+    in Integer then [nil, "INT"]
+    in Float then [nil, "REAL"]
+    else [nil, "TEXT"]
+    end
+  end
+
+  # The value (not NULL) converted to a column type: [stored, ""], or [nil, T] when it is rejected,
+  # T being the type of the value at the point of rejection ("TEXT", "REAL", "INT" or "BLOB").
+  def convert(v, type)
+    return convert_blob(v, type) if type == :blob || Blobs.blob?(v)
+    v = Values.numeric_text(v) if type != :text
+    if type == :integer
+      case v
+      in Integer then [v, ""]
+      in Float
+        n = whole_integer(v)
+        n == nil ? [nil, "REAL"] : [n, ""]
+      else [nil, "TEXT"]
+      end
+    elsif type == :real
+      case v
+      in Integer then [Integer.to_f(v), ""]
+      in Float then [v, ""]
+      else [nil, "TEXT"]
+      end
+    else
+      [Values.text_of(v), ""]
+    end
+  end
+
+  # The value as it is stored in `col` of the table named `table_name`, or an error.
+  def coerce(v, col, table_name)
+    return nil if v == nil
+    stored, rejected = convert(v, Column.type(col))
+    reject(rejected, col, table_name) if rejected != ""
+    stored
+  end
+
+  # The value of an INTEGER PRIMARY KEY (not NULL) as an Integer, or nil if it cannot be one.
+  def key_value(v)
+    stored, rejected = convert(v, :integer)
+    rejected == "" ? stored : nil
+  end
+end

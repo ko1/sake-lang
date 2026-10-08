@@ -1,0 +1,90 @@
+# Text scalar functions (spec 2.4): substr, trim / ltrim / rtrim, replace, instr; and substr / instr on BLOBs (7.10).
+# Arguments are non-NULL values; `text` is always a value's text form.
+module TextFunctions
+  module_function
+
+  # An "infinite" length for substr without a third argument.
+  def unbounded = 4611686018427387904
+
+  def substr(text, start, len)
+    first, n = span(String.size(text), start, len)
+    n == 0 ? "" : String.slice(text, first, n)
+  end
+
+  # substr on a BLOB: the same bytes selection, a BLOB (a byte is two hex digits).
+  def blob_substr(b, start, len)
+    first, n = span(Value.blob_size(b), start, len)
+    n == 0 ? Blob.new("") : Blob.new(String.slice(Blob.hex(b), first * 2, n * 2))
+  end
+
+  # The selection of substr(x, start, len) on a value of `l` units: the 0-based first unit and how many (0: none).
+  def span(l, start, len)
+    p = start
+    q = len
+    if p < 0
+      p += l
+      if p < 0
+        q += p
+        p = 0
+        q = 0 if q < 0
+      end
+    elsif p > 0
+      p -= 1
+    elsif q > 0
+      q -= 1
+    end
+    if q < 0
+      q = -q
+      p -= q
+      if p < 0
+        q += p
+        p = 0
+      end
+    end
+    first = p
+    last = Integer.clamp(p + q, 0, l)
+    return [0, 0] if q <= 0 || first >= last
+    [first, last - first]
+  end
+
+  # Removes the characters of `chars` from the left and/or the right end of `text`.
+  def trim(text, chars, left, right)
+    cs = String.chars(text)
+    set = String.chars(chars)
+    from = 0
+    to = Array.size(cs)
+    from += 1 while left && from < to && Array.include?(set, Array.fetch(cs, from))
+    to -= 1 while right && to > from && Array.include?(set, Array.fetch(cs, to - 1))
+    String.slice(text, from, to - from)
+  end
+
+  def replace(text, from, to)
+    return text if from == ""
+    String.gsub(text, from) { to }
+  end
+
+  def instr(text, target)
+    i = String.index(text, target)
+    i == nil ? 0 : i + 1
+  end
+
+  # The 1-based byte position of the first occurrence of BLOB `target` in BLOB `b`, or 0. A match in
+  # the hex digits counts only if it starts at a byte boundary (an even offset).
+  def blob_instr(b, target)
+    hex = Blob.hex(b)
+    want = Blob.hex(target)
+    found = 0
+    from = 0
+    while found == 0 && from <= String.size(hex)
+      i = String.index(hex, want, from)
+      if i == nil
+        from = String.size(hex) + 1
+      elsif i % 2 == 0
+        found = i / 2 + 1
+      else
+        from = i + 1
+      end
+    end
+    found
+  end
+end

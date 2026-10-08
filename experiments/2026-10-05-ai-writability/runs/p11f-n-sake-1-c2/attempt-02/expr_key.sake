@@ -1,0 +1,38 @@
+# A text key for a resolved expression: two expressions with the same key compute the same thing.
+# Used to recognise identical aggregate calls (spec 3.3). Comparing trees with `==` is avoided on
+# purpose: expressions contain subquery Plans, a recursive type that the checker cannot compare.
+module ExprKey
+  module_function
+
+  # An expression containing a subquery has no key that matches another's.
+  def unique_marker = "(subquery)"
+
+  def same?(a, b)
+    ka = of(a)
+    ka == of(b) && !String.include?(ka, unique_marker)
+  end
+
+  def same_list?(xs, ys) = Array.size(xs) == Array.size(ys) && Array.all?(Array.each_with_index(xs)) { |x, i| same?(x, Array.fetch(ys, i)) }
+
+  def of(e)
+    case e
+    in Lit then "#{Value.type_name(Lit.value(e))}:#{Value.printed(Lit.value(e))}"
+    in Col then "col#{Col.index(e)}"
+    in Unary then "(#{Unary.op(e)} #{of(Unary.operand(e))})"
+    in Binary then "(#{Binary.op(e)} #{of(Binary.left(e))} #{of(Binary.right(e))})"
+    in Call then "(#{Call.fn(e)} #{list(Call.args(e))})"
+    in Case then "(case #{opt(Case.operand(e))} #{whens(Case.whens(e))} #{opt(Case.otherwise_expr(e))})"
+    in Between then "(between #{Between.negated(e)} #{of(Between.expr(e))} #{of(Between.low(e))} #{of(Between.high(e))})"
+    in InList then "(in #{InList.negated(e)} #{of(InList.expr(e))} #{list(InList.items(e))})"
+    in Like then "(like #{Like.negated(e)} #{of(Like.expr(e))} #{of(Like.pattern(e))})"
+    in Cast then "(cast #{Cast.type(e)} #{of(Cast.expr(e))})"
+    else unique_marker
+    end
+  end
+
+  def opt(e) = e == nil ? "-" : of(e)
+
+  def list(xs) = Array.join(Array.map(xs) { of(it) }, " ")
+
+  def whens(ws) = Array.join(Array.map(ws) { "#{of(WhenClause.condition(it))}>#{of(WhenClause.result(it))}" }, " ")
+end

@@ -1,0 +1,648 @@
+# Parser: the tokens of one statement -> a statement tree (ast.sake). Any token the grammar does
+# not allow raises "syntax error". Expressions are parsed by precedence levels (1.8, 2.3), loosest first.
+
+# A position in the token list of one statement.
+Cursor = Struct.new(:toks, :pos)
+
+module Parser
+  module_function
+
+  def parse_statement(toks)
+    cur = Cursor.new(toks, 0)
+    t = peek(cur)
+    stmt = nil
+    if is_kw(t, "SELECT")
+      stmt = parse_query(cur)
+    elsif is_kw(t, "WITH")
+      stmt = parse_with_statement(cur)
+    elsif is_kw(t, "CREATE")
+      stmt = SchemaParser.parse_create(cur)
+    elsif is_kw(t, "DROP")
+      stmt = SchemaParser.parse_drop(cur)
+    elsif is_kw(t, "ALTER")
+      stmt = SchemaParser.parse_alter(cur)
+    elsif is_kw(t, "BEGIN") || is_kw(t, "COMMIT") || is_kw(t, "END") || is_kw(t, "ROLLBACK")
+      stmt = SchemaParser.parse_transaction(cur)
+    elsif is_kw(t, "INSERT")
+      stmt = parse_insert(cur)
+    elsif is_kw(t, "UPDATE")
+      stmt = parse_update(cur)
+    elsif is_kw(t, "DELETE")
+      stmt = parse_delete(cur)
+    else
+      Errors.syntax
+    end
+    Errors.syntax unless Cursor.pos(cur) == Array.size(Cursor.toks(cur))
+    stmt
+  end
+
+  # --- token access ---
+
+  def peek(cur) = peek_at(cur, 0)
+
+  def peek_at(cur, ahead)
+    toks = Cursor.toks(cur)
+    i = Cursor.pos(cur) + ahead
+    i < Array.size(toks) ? toks[i] : Tok.new(:eof, "", "")
+  end
+
+  def advance(cur)
+    t = peek(cur)
+    Cursor.set_pos(cur, Cursor.pos(cur) + 1)
+    t
+  end
+
+  def is_kw(t, word) = Tok.kind(t) == :kw && Tok.text(t) == word
+
+  def is_op(t, op) = Tok.kind(t) == :op && Tok.text(t) == op
+
+  def accept_kw(cur, word)
+    return false unless is_kw(peek(cur), word)
+    advance(cur)
+    true
+  end
+
+  def accept_op(cur, op)
+    return false unless is_op(peek(cur), op)
+    advance(cur)
+    true
+  end
+
+  def expect_kw(cur, word)
+    Errors.syntax unless accept_kw(cur, word)
+  end
+
+  def expect_op(cur, op)
+    Errors.syntax unless accept_op(cur, op)
+  end
+
+  # A name: returns it as written.
+  def expect_name(cur)
+    t = advance(cur)
+    Errors.syntax unless Tok.kind(t) == :ident
+    Tok.text(t)
+  end
+
+  # --- INSERT (1.6, 5.4) ---
+
+  def parse_insert(cur)
+    expect_kw(cur, "INSERT")
+    expect_kw(cur, "INTO")
+    table = expect_name(cur)
+    names = String[]
+    listed = accept_op(cur, "(")
+    if listed
+      Array.push(names, expect_name(cur))
+      Array.push(names, expect_name(cur)) while accept_op(cur, ",")
+      expect_op(cur, ")")
+    end
+    if is_kw(peek(cur), "SELECT") || is_kw(peek(cur), "WITH")
+      return InsertStmt.new(table, listed, names, Array[], parse_query(cur))
+    end
+    expect_kw(cur, "VALUES")
+    rows = Array[]
+    Array.push(rows, parse_values_row(cur))
+    Array.push(rows, parse_values_row(cur)) while accept_op(cur, ",")
+    InsertStmt.new(table, listed, names, rows, nil)
+  end
+
+  def parse_values_row(cur)
+    expect_op(cur, "(")
+    row = Expr[]
+    Array.push(row, parse_expr(cur))
+    Array.push(row, parse_expr(cur)) while accept_op(cur, ",")
+    expect_op(cur, ")")
+    row
+  end
+
+  # --- UPDATE / DELETE ---
+
+  def parse_update(cur)
+    expect_kw(cur, "UPDATE")
+    table = expect_name(cur)
+    expect_kw(cur, "SET")
+    sets = Assignment[]
+    Array.push(sets, parse_assignment(cur))
+    Array.push(sets, parse_assignment(cur)) while accept_op(cur, ",")
+    where = nil
+    where = parse_expr(cur) if accept_kw(cur, "WHERE")
+    UpdateStmt.new(table, sets, where)
+  end
+
+  def parse_assignment(cur)
+    name = expect_name(cur)
+    expect_op(cur, "=")
+    Assignment.new(name, parse_expr(cur))
+  end
+
+  def parse_delete(cur)
+    expect_kw(cur, "DELETE")
+    expect_kw(cur, "FROM")
+    table = expect_name(cur)
+    where = nil
+    where = parse_expr(cur) if accept_kw(cur, "WHERE")
+    DeleteStmt.new(table, where)
+  end
+
+  # --- queries: WITH, compound selects, SELECT (5.1, 5.2) ---
+
+  # Where a query starts: SELECT, or WITH for one that has common table expressions.
+  def query_start?(t) = is_kw(t, "SELECT") || is_kw(t, "WITH")
+
+  # [WITH ...] select [compound-op select]... [ORDER BY ...] [LIMIT ...]: a SelectStmt when there is
+  # no compound operator, else a CompoundStmt; inside a WithStmt when there are common table expressions.
+  def parse_query(cur)
+    return parse_query_body(cur) unless is_kw(peek(cur), "WITH")
+    recursive, ctes = parse_ctes(cur)
+    WithStmt.new(recursive, ctes, parse_query_body(cur))
+  end
+
+  # A statement that starts with WITH: its body is a query or an INSERT.
+  def parse_with_statement(cur)
+    recursive, ctes = parse_ctes(cur)
+    body = is_kw(peek(cur), "INSERT") ? parse_insert(cur) : parse_query_body(cur)
+    WithStmt.new(recursive, ctes, body)
+  end
+
+  # WITH [RECURSIVE] cte [, cte]...  =>  [recursive, ctes]
+  def parse_ctes(cur)
+    expect_kw(cur, "WITH")
+    recursive = accept_kw(cur, "RECURSIVE")
+    ctes = CteDef[]
+    loop do
+      name = expect_name(cur)
+      columns = is_op(peek(cur), "(") ? SchemaParser.parse_name_list(cur) : String[]
+      expect_kw(cur, "AS")
+      expect_op(cur, "(")
+      query = parse_query(cur)
+      expect_op(cur, ")")
+      Array.push(ctes, CteDef.new(name, columns, query))
+      break unless accept_op(cur, ",")
+    end
+    [recursive, ctes]
+  end
+
+  def parse_query_body(cur)
+    parts = Array[parse_select(cur)]
+    ops = Symbol[]
+    loop do
+      op = parse_compound_op(cur)
+      break if op == :none
+      Array.push(ops, op)
+      Array.push(parts, parse_select(cur))
+    end
+    order, limit, offset = parse_order_limit(cur)
+    if Array.empty?(ops)
+      first = parts[0]
+      SelectStmt.set_order(first, order)
+      SelectStmt.set_limit(first, limit)
+      SelectStmt.set_offset(first, offset)
+      return first
+    end
+    CompoundStmt.new(parts, ops, order, limit, offset)
+  end
+
+  # UNION [ALL] | INTERSECT | EXCEPT (consumed); :none if the next token is none of them.
+  def parse_compound_op(cur)
+    return (accept_kw(cur, "ALL") ? :union_all : :union) if accept_kw(cur, "UNION")
+    return :intersect if accept_kw(cur, "INTERSECT")
+    return :except if accept_kw(cur, "EXCEPT")
+    :none
+  end
+
+  # [ORDER BY term, ...] [LIMIT expr [OFFSET expr]]  =>  [order, limit, offset]; absent ones are
+  # empty or nil.
+  def parse_order_limit(cur)
+    order = OrderTerm[]
+    if accept_kw(cur, "ORDER")
+      expect_kw(cur, "BY")
+      Array.push(order, parse_order_term(cur))
+      Array.push(order, parse_order_term(cur)) while accept_op(cur, ",")
+    end
+    limit = nil
+    offset = nil
+    if accept_kw(cur, "LIMIT")
+      limit = parse_expr(cur)
+      offset = parse_expr(cur) if accept_kw(cur, "OFFSET")
+    end
+    [order, limit, offset]
+  end
+
+  # One SELECT without its ORDER BY / LIMIT: parse_query_body adds them to a lone select.
+  def parse_select(cur)
+    expect_kw(cur, "SELECT")
+    distinct = accept_kw(cur, "DISTINCT")
+    accept_kw(cur, "ALL") unless distinct
+    items = ResultCol[]
+    Array.push(items, parse_result_col(cur))
+    Array.push(items, parse_result_col(cur)) while accept_op(cur, ",")
+    from = FromItem[]
+    from = parse_from(cur) if accept_kw(cur, "FROM")
+    where = nil
+    where = parse_expr(cur) if accept_kw(cur, "WHERE")
+    group = OrderTerm[]
+    if accept_kw(cur, "GROUP")
+      expect_kw(cur, "BY")
+      Array.push(group, parse_group_term(cur))
+      Array.push(group, parse_group_term(cur)) while accept_op(cur, ",")
+    end
+    having = nil
+    having = parse_expr(cur) if accept_kw(cur, "HAVING")
+    windows = accept_kw(cur, "WINDOW") ? WindowParser.parse_definitions(cur) : NamedWindow[]
+    SelectStmt.new(items, from, where, group, having, OrderTerm[], nil, nil, distinct, windows)
+  end
+
+  def parse_result_col(cur)
+    return ResultCol.new(true, Ast.literal(nil), "", "", "") if accept_op(cur, "*")
+    if Tok.kind(peek(cur)) == :ident && is_op(peek_at(cur, 1), ".") && is_op(peek_at(cur, 2), "*")
+      table = Tok.text(advance(cur))
+      advance(cur)
+      advance(cur)
+      return ResultCol.new(true, Ast.literal(nil), "", "", table)
+    end
+    e = parse_expr(cur)
+    name = ""
+    if accept_kw(cur, "AS")
+      name = expect_name(cur)
+    elsif Tok.kind(peek(cur)) == :ident
+      name = Tok.text(advance(cur))
+    end
+    ResultCol.new(false, e, name, "", "")
+  end
+
+  # --- FROM (4.1) ---
+
+  # from-item [join-op from-item [join-constraint]]...
+  def parse_from(cur)
+    items = FromItem[]
+    Array.push(items, parse_from_item(cur, :first))
+    loop do
+      op = parse_join_op(cur)
+      break if op == :none
+      item = parse_from_item(cur, op)
+      Array.push(items, parse_join_constraint(cur, item))
+    end
+    items
+  end
+
+  # `,` and `[INNER | CROSS | LEFT [OUTER]] JOIN` (consumed): the way the next source joins; :none if the
+  # FROM clause ends here. A JOIN may or may not get a constraint (see parse_join_constraint).
+  def parse_join_op(cur)
+    return :cross if accept_op(cur, ",")
+    op = :inner
+    if accept_kw(cur, "CROSS")
+      op = :cross
+    elsif accept_kw(cur, "LEFT")
+      accept_kw(cur, "OUTER")
+      op = :left
+    elsif accept_kw(cur, "INNER")
+      op = :inner
+    elsif !is_kw(peek(cur), "JOIN")
+      return :none
+    end
+    expect_kw(cur, "JOIN")
+    op
+  end
+
+  # A table (with an optional alias) or a parenthesised subquery (with an optional alias).
+  def parse_from_item(cur, op)
+    if accept_op(cur, "(")
+      query = parse_query(cur)
+      expect_op(cur, ")")
+      return FromItem.new(op, "", query, parse_alias(cur), nil, String[])
+    end
+    FromItem.new(op, expect_name(cur), nil, parse_alias(cur), nil, String[])
+  end
+
+  # [AS] alias; "" if none.
+  def parse_alias(cur)
+    return expect_name(cur) if accept_kw(cur, "AS")
+    Tok.kind(peek(cur)) == :ident ? Tok.text(advance(cur)) : ""
+  end
+
+  # ON expr | USING ( column, ... ) after a JOIN's source. A LEFT JOIN needs one; a CROSS JOIN, a comma
+  # and a JOIN written without one pair every row (a source joined by `,` was parsed as :cross and
+  # cannot have one, so a stray ON is left for the statement's end check to reject).
+  def parse_join_constraint(cur, item)
+    on = nil
+    using = String[]
+    if FromItem.op(item) == :inner || FromItem.op(item) == :left
+      if accept_kw(cur, "ON")
+        on = parse_expr(cur)
+      elsif accept_kw(cur, "USING")
+        expect_op(cur, "(")
+        Array.push(using, expect_name(cur))
+        Array.push(using, expect_name(cur)) while accept_op(cur, ",")
+        expect_op(cur, ")")
+      else
+        Errors.syntax if FromItem.op(item) == :left
+      end
+    end
+    op = FromItem.op(item)
+    op = :cross if op == :inner && on == nil && Array.empty?(using)
+    FromItem.new(op, FromItem.table(item), FromItem.query(item), FromItem.alias(item), on, using)
+  end
+
+  # After a term: where an ordering term may end.
+  def order_term_end?(t)
+    k = Tok.kind(t)
+    return true if k == :eof || (k == :op && Tok.text(t) == ",")
+    return true if k == :op && Tok.text(t) == ")"
+    k == :kw && Set.include?(order_term_enders, Tok.text(t))
+  end
+
+  def order_term_enders
+    Set["ASC", "DESC", "NULLS", "LIMIT", "HAVING", "ORDER", "UNION", "INTERSECT", "EXCEPT"]
+  end
+
+  # A GROUP BY term: an expression, or `k` / `-k` (by_position) for the k-th result column.
+  def parse_group_term(cur)
+    t = parse_order_term(cur)
+    syntax_if_ordered(t)
+    t
+  end
+
+  def syntax_if_ordered(t)
+    Errors.syntax if OrderTerm.desc(t) || OrderTerm.nulls(t) != :default
+  end
+
+  # An ORDER BY term inside an aggregate call: a bare integer is just a constant there.
+  def parse_call_order_term(cur)
+    t = parse_order_term(cur)
+    return t unless OrderTerm.by_position(t)
+    OrderTerm.new(Ast.literal(OrderTerm.position(t)), false, 0, OrderTerm.desc(t), OrderTerm.nulls(t))
+  end
+
+  def parse_order_term(cur)
+    t = peek(cur)
+    by_position = false
+    position = 0
+    e = Ast.literal(nil)
+    if Tok.kind(t) == :int && order_term_end?(peek_at(cur, 1))
+      by_position = true
+      position = String.to_i(Tok.text(advance(cur)))
+    elsif is_op(t, "-") && Tok.kind(peek_at(cur, 1)) == :int && order_term_end?(peek_at(cur, 2))
+      advance(cur)
+      by_position = true
+      position = -String.to_i(Tok.text(advance(cur)))
+    else
+      e = parse_expr(cur)
+    end
+    desc = false
+    desc = true if accept_kw(cur, "DESC")
+    accept_kw(cur, "ASC") unless desc
+    nulls = :default
+    if accept_kw(cur, "NULLS")
+      if accept_kw(cur, "FIRST")
+        nulls = :first
+      else
+        expect_kw(cur, "LAST")
+        nulls = :last
+      end
+    end
+    OrderTerm.new(e, by_position, position, desc, nulls)
+  end
+
+  # --- expressions (1.8) ---
+
+  def parse_expr(cur) = parse_or(cur)
+
+  def parse_or(cur)
+    left = parse_and(cur)
+    left = Ast.binary(:or, left, parse_and(cur)) while accept_kw(cur, "OR")
+    left
+  end
+
+  def parse_and(cur)
+    left = parse_not(cur)
+    left = Ast.binary(:and, left, parse_not(cur)) while accept_kw(cur, "AND")
+    left
+  end
+
+  def parse_not(cur)
+    return Ast.unary(:not, parse_not(cur)) if accept_kw(cur, "NOT")
+    parse_equality(cur)
+  end
+
+  # Level 6: = == != <> IS IS NOT, and [NOT] IN / LIKE / BETWEEN.
+  def parse_equality(cur)
+    left = parse_comparison(cur)
+    loop do
+      t = peek(cur)
+      negated = is_kw(t, "NOT") && postfix_word?(peek_at(cur, 1))
+      word = negated ? peek_at(cur, 1) : t
+      kind = nil
+      if postfix_word?(word)
+        advance(cur)
+        advance(cur) if negated
+        e = parse_postfix(cur, Tok.text(word), left)
+        left = negated ? Ast.unary(:not, e) : e
+      else
+        if is_op(t, "=") || is_op(t, "==")
+          kind = :eq
+        elsif is_op(t, "!=") || is_op(t, "<>")
+          kind = :ne
+        elsif is_kw(t, "IS")
+          kind = :is
+        end
+        break if kind == nil
+        advance(cur)
+        kind = :isnot if kind == :is && accept_kw(cur, "NOT")
+        left = Ast.binary(kind, left, parse_comparison(cur))
+      end
+    end
+    left
+  end
+
+  def postfix_word?(t) = is_kw(t, "IN") || is_kw(t, "LIKE") || is_kw(t, "BETWEEN")
+
+  # What follows `x IN`, `x LIKE` or `x BETWEEN` (the word is consumed).
+  def parse_postfix(cur, word, x)
+    if word == "IN"
+      expect_op(cur, "(")
+      if query_start?(peek(cur))
+        sub = parse_query(cur)
+        expect_op(cur, ")")
+        return Ast.subquery(:in_sub, sub, Expr[x])
+      end
+      args = Expr[x]
+      Array.push(args, parse_expr(cur))
+      Array.push(args, parse_expr(cur)) while accept_op(cur, ",")
+      expect_op(cur, ")")
+      Ast.expr(:in, "", args)
+    elsif word == "LIKE"
+      Ast.binary(:like, x, parse_comparison(cur))
+    else
+      low = parse_comparison(cur)
+      expect_kw(cur, "AND")
+      Ast.expr(:between, "", Expr[x, low, parse_comparison(cur)])
+    end
+  end
+
+  def parse_comparison(cur)
+    left = parse_additive(cur)
+    loop do
+      t = peek(cur)
+      kind = nil
+      kind = :lt if is_op(t, "<")
+      kind = :le if is_op(t, "<=")
+      kind = :gt if is_op(t, ">")
+      kind = :ge if is_op(t, ">=")
+      break if kind == nil
+      advance(cur)
+      left = Ast.binary(kind, left, parse_additive(cur))
+    end
+    left
+  end
+
+  def parse_additive(cur)
+    left = parse_multiplicative(cur)
+    loop do
+      t = peek(cur)
+      kind = nil
+      kind = :add if is_op(t, "+")
+      kind = :sub if is_op(t, "-")
+      break if kind == nil
+      advance(cur)
+      left = Ast.binary(kind, left, parse_multiplicative(cur))
+    end
+    left
+  end
+
+  def parse_multiplicative(cur)
+    left = parse_concat(cur)
+    loop do
+      t = peek(cur)
+      kind = nil
+      kind = :mul if is_op(t, "*")
+      kind = :div if is_op(t, "/")
+      kind = :mod if is_op(t, "%")
+      break if kind == nil
+      advance(cur)
+      left = Ast.binary(kind, left, parse_concat(cur))
+    end
+    left
+  end
+
+  def parse_concat(cur)
+    left = parse_unary(cur)
+    left = Ast.binary(:concat, left, parse_unary(cur)) while accept_op(cur, "||")
+    left
+  end
+
+  def parse_unary(cur)
+    return Ast.unary(:neg, parse_unary(cur)) if accept_op(cur, "-")
+    return Ast.unary(:pos, parse_unary(cur)) if accept_op(cur, "+")
+    parse_primary(cur)
+  end
+
+  def parse_primary(cur)
+    t = advance(cur)
+    k = Tok.kind(t)
+    if k == :int
+      Ast.literal(String.to_i(Tok.text(t)))
+    elsif k == :real
+      Ast.literal(String.to_f(Tok.text(t)))
+    elsif k == :str
+      Ast.literal(Tok.text(t))
+    elsif k == :blob
+      Ast.literal(blob_value(t))
+    elsif is_kw(t, "NULL")
+      Ast.literal(nil)
+    elsif is_op(t, "(")
+      return parse_subquery(cur, :scalar_sub) if query_start?(peek(cur))
+      e = parse_expr(cur)
+      expect_op(cur, ")")
+      e
+    elsif is_kw(t, "EXISTS")
+      expect_op(cur, "(")
+      parse_subquery(cur, :exists)
+    elsif is_kw(t, "CASE")
+      parse_case(cur)
+    elsif is_kw(t, "CAST")
+      parse_cast(cur)
+    elsif k == :ident
+      parse_name(cur, t)
+    else
+      Errors.syntax
+    end
+  end
+
+  # The Blob a :blob token writes; an odd number of digits or a character that is not a digit is a syntax error.
+  def blob_value(t)
+    b = Blobs.from_hex(Tok.text(t))
+    Errors.syntax if b == nil
+    b
+  end
+
+  # A SELECT and the `)` that closes it (the `(` is consumed): a subquery as the node `kind`.
+  def parse_subquery(cur, kind)
+    stmt = parse_query(cur)
+    expect_op(cur, ")")
+    Ast.subquery(kind, stmt, Expr[])
+  end
+
+  # CASE [operand] WHEN .. THEN .. [WHEN ..]... [ELSE ..] END (CASE is consumed).
+  def parse_case(cur)
+    simple = !is_kw(peek(cur), "WHEN")
+    args = Expr[]
+    Array.push(args, parse_expr(cur)) if simple
+    expect_kw(cur, "WHEN")
+    loop do
+      Array.push(args, parse_expr(cur))
+      expect_kw(cur, "THEN")
+      Array.push(args, parse_expr(cur))
+      break unless accept_kw(cur, "WHEN")
+    end
+    Array.push(args, accept_kw(cur, "ELSE") ? parse_expr(cur) : Ast.literal(nil))
+    expect_kw(cur, "END")
+    Ast.expr(simple ? :case_simple : :case_search, "", args)
+  end
+
+  # CAST ( expr AS type ) (CAST is consumed).
+  def parse_cast(cur)
+    expect_op(cur, "(")
+    e = parse_expr(cur)
+    expect_kw(cur, "AS")
+    t = advance(cur)
+    Errors.syntax unless Tok.kind(t) == :ident && (Tok.key(t) == "integer" || Tok.key(t) == "real" || Tok.key(t) == "text" || Tok.key(t) == "blob")
+    expect_op(cur, ")")
+    Ast.cast(e, Tok.key(t))
+  end
+
+  # After a name: a function call, a qualified column (table.column) or a column.
+  def parse_name(cur, t)
+    name = Tok.text(t)
+    if accept_op(cur, "(")
+      parse_call(cur, name)
+    elsif accept_op(cur, ".")
+      Ast.column(expect_name(cur), name)
+    else
+      Ast.column(name, "")
+    end
+  end
+
+  # The rest of `name (` : arguments, `*`, DISTINCT and a trailing ORDER BY (3.1).
+  def parse_call(cur, name)
+    args = Expr[]
+    order = OrderTerm[]
+    star = false
+    distinct = false
+    if accept_op(cur, "*")
+      star = true
+      expect_op(cur, ")")
+    elsif !accept_op(cur, ")")
+      distinct = accept_kw(cur, "DISTINCT")
+      Array.push(args, parse_expr(cur))
+      Array.push(args, parse_expr(cur)) while accept_op(cur, ",")
+      if accept_kw(cur, "ORDER")
+        expect_kw(cur, "BY")
+        Array.push(order, parse_call_order_term(cur))
+        Array.push(order, parse_call_order_term(cur)) while accept_op(cur, ",")
+      end
+      expect_op(cur, ")")
+    end
+    call = star || distinct || !Array.empty?(order) ? Ast.aggregate_call(name, star, distinct, args, order) : Ast.call(name, args)
+    WindowParser.attach_over(cur, call)
+  end
+end

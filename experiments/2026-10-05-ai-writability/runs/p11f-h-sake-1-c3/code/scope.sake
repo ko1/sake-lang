@@ -1,0 +1,68 @@
+# What names and aggregate calls mean while an expression is resolved.
+#
+# Rows. Every row an expression is evaluated on is one flat Array: first the columns of the
+# enclosing queries (the `prefix`, see Scope.base), then the columns of this query's own sources
+# side by side, then - in the rows of an aggregate query - one value per aggregate call. A table's
+# columns end with its hidden rowid (spec 7.1), which is also the last value of its stored rows. A column
+# reference's index is its absolute position in that row, so a correlated subquery reads the
+# enclosing query's columns from the prefix of its own row.
+
+# A column of a source: name as written, lower-cased key, and affinity (:integer / :real / :text,
+# or nil for none; a subquery's columns have the affinity of their result expressions).
+class SourceColumn
+  attr_reader name, key, aff
+end
+
+# One FROM source of a query.
+# name:    lower-cased alias, or table name; "" for a subquery without an alias.
+# columns: its SourceColumns.
+# offset:  position of its first column among the query's own source columns.
+# hidden:  positions of columns that `*` leaves out (the right copy of a USING column).
+# rowid:   position in `columns` of the hidden rowid column of a table source (spec 7.1), always the
+#          last one, or -1 for a source that is not a table. It is a column of the row like the others,
+#          but no name matches it by column_index: only a rowid name does (rowid_index).
+class Source
+  attr_reader name, columns, offset, hidden, rowid
+
+  # Position of the real column whose lower-cased name is `key`, or nil.
+  def column_index(s, key)
+    real = @rowid == -1 ? @columns : Array.take(@columns, @rowid)
+    Array.find_index(real) { SourceColumn.key(it) == key }
+  end
+
+  # Position of the rowid column if `key` (lower-cased) is a rowid name and the source is a table, else nil.
+  def rowid_index(s, key) = (@rowid != -1 && Names.rowid_name?(key)) ? @rowid : nil
+end
+
+# db:        the Database (subqueries find their tables there).
+# sources:   the query's own Sources, left to right (only those joined so far while an ON is resolved).
+# merged:    lower-cased names of USING columns: a bare name that several sources have is not
+#            ambiguous when it is one of these (the leftmost source's column is meant).
+# base:      length of the prefix: the number of columns of all enclosing queries' sources.
+# aliases:   Hash from a lower-cased result-column alias to that column's resolved expression;
+#            consulted only when a name is not a column.
+# blocked:   Hash from a lower-cased alias to the error message for using it here (an alias of a
+#            result column that holds an aggregate call, in a clause where those are not allowed).
+# collector: Array that receives the Aggregates found, or nil where aggregate calls are not allowed.
+# forbidden: why aggregates are not allowed (:function / :group_by / :misuse), when collector is nil.
+# outer:     the Scope of the clause that holds this query when it is a subquery, else nil.
+# refs:      gets one entry whenever a name is found in an enclosing query: the query is correlated.
+# windows:   Array that receives the Windows found, or nil where window calls are not allowed.
+# named:     lower-cased name -> WindowSpec of the query's WINDOW clause (empty where windows is nil).
+class Scope
+  attr_reader db, sources, merged, base, aliases, blocked, collector, forbidden, outer, refs, windows, named
+
+  # The same query in another clause: only the alias and aggregate rules change, and window calls stop
+  # being allowed (see with_windows).
+  def with_clause(s, aliases, blocked, collector, forbidden)
+    Scope.new(@db, @sources, @merged, @base, aliases, blocked, collector, forbidden, @outer, @refs, nil, Hash[])
+  end
+
+  # The same clause where window calls are allowed (result columns and ORDER BY).
+  def with_windows(s, windows, named)
+    Scope.new(@db, @sources, @merged, @base, @aliases, @blocked, @collector, @forbidden, @outer, @refs, windows, named)
+  end
+
+  # The number of columns of the query's own sources.
+  def width(s) = Array.sum(Array.map(@sources) { Array.size(Source.columns(it)) }, 0)
+end

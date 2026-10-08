@@ -1,0 +1,161 @@
+# The database: tables, their columns and their rows.
+
+# A UNIQUE or PRIMARY KEY constraint: positions of its columns, in the order listed.
+# is_rowid: the INTEGER PRIMARY KEY, which Constraints checks apart from the others.
+# index: the lower-case name of the UNIQUE index it came from, "" for a constraint of CREATE TABLE.
+# colls: for a UNIQUE index, the collation written on each of its columns ("" for the column's own);
+# empty for the constraints of CREATE TABLE, which compare under the columns' collations (7.4).
+Key = Struct.new(:cols, :primary, :is_rowid, :index, :colls)
+
+# name: as written in CREATE TABLE. columns: Column[]. rows: each an Array with one value per column.
+# keys: Key[] in declaration order. rowid: position of the INTEGER PRIMARY KEY column, or -1.
+Table = Struct.new(:name, :columns, :rows, :keys, :rowid)
+# A view (5.3): name as created; columns: the names listed after it (empty if none); query: its select,
+# planned again wherever the view is used.
+View = Struct.new(:name, :columns, :query)
+
+# An index (5.7): name as created, and the lower-case name of its table. A UNIQUE one also puts a Key on
+# the table (Key.index); every other index changes no result and is only remembered here.
+SqlIndex = Struct.new(:name, :table)
+
+# A common table expression as the statement's queries see it: its columns, and the plan that
+# produces its rows (see Ctes).
+CteEntry = Struct.new(:columns, :plan)
+
+# What a transaction restores on ROLLBACK (5.5).
+Snapshot = Struct.new(:tables, :views, :indexes)
+
+# tables, views, indexes: Hashes from the lower-case name to the Table, View or SqlIndex; one name space
+# for tables and views, another for indexes. ctes: the WITH tables in sight (lower-case name to
+# CteEntry), empty outside a WITH. saved: the Snapshot taken by BEGIN, as a one-element Array while a
+# transaction is open, else empty.
+Database = Struct.new(:tables, :views, :indexes, :ctes, :saved)
+
+module Catalog
+  module_function
+
+  def new_database = Database.new(Hash[], Hash[], Hash[], Hash[], Snapshot[])
+
+  def key(name) = String.downcase(name)
+
+  # The table, or nil.
+  def find_table(db, name) = Database.tables(db)[key(name)]
+
+  def find_view(db, name) = Database.views(db)[key(name)]
+
+  def find_index(db, name) = Database.indexes(db)[key(name)]
+
+  def find_cte(db, name) = Database.ctes(db)[key(name)]
+
+  # The table; "no such table" if there is none. `name` is spelled as the statement wrote it.
+  def table!(db, name)
+    t = find_table(db, name)
+    Errors.sql_error("no such table: #{name}") if t == nil
+    t
+  end
+
+  # The table an INSERT, UPDATE, DELETE or ALTER changes; a view cannot be changed (5.3).
+  def writable_table!(db, name)
+    v = find_view(db, name)
+    Errors.sql_error("cannot modify #{View.name(v)} because it is a view") if v != nil
+    table!(db, name)
+  end
+
+  # The same database seen by a query that has these WITH tables (shares everything else).
+  def with_ctes(db, ctes) = Database.new(Database.tables(db), Database.views(db), Database.indexes(db), ctes, Database.saved(db))
+
+  # Position of the column in the table, or -1.
+  def column_index(columns, name)
+    k = key(name)
+    Array.find_index(columns) { |c| key(Column.name(c)) == k } || -1
+  end
+
+  def affinity(col) = Column.type(col)
+
+  def create_table(db, stmt)
+    tables = Database.tables(db)
+    name = CreateStmt.name(stmt)
+    return unless claim_name(db, name, CreateStmt.if_not_exists(stmt))
+    columns = with_collations(CreateStmt.columns(stmt))
+    seen = Set[]
+    Array.each(columns) do |c|
+      k = key(Column.name(c))
+      Errors.sql_error("duplicate column name: #{Column.name(c)}") if Set.include?(seen, k)
+      Set.add(seen, k)
+    end
+    keys = resolve_keys(CreateStmt.keys(stmt), columns)
+    rowid = rowid_column(keys, columns)
+    tables[key(name)] = Table.new(name, with_key_not_null(columns, keys), Array[], mark_rowid(keys, rowid), rowid)
+  end
+
+  # The columns with the collation each declared, checked: "binary", "nocase" or "rtrim" (7.2).
+  def with_collations(columns)
+    Array.map(columns) { |c| Column.new(Column.name(c), Column.type(c), Column.not_null(c), Column.default(c), Collation.declared!(Column.coll(c))) }
+  end
+
+  # A new table or view takes `name`: false if it is taken and the statement says IF NOT EXISTS (nothing
+  # to do), an error if it is taken otherwise, or if an index has it.
+  def claim_name(db, name, if_not_exists)
+    kind = find_table(db, name) != nil ? "table" : (find_view(db, name) != nil ? "view" : "")
+    if kind != ""
+      return false if if_not_exists
+      Errors.sql_error("#{kind} #{name} already exists")
+    end
+    Errors.sql_error("there is already an index named #{name}") if find_index(db, name) != nil
+    true
+  end
+
+  # The constraints with column names turned into positions.
+  def resolve_keys(specs, columns)
+    keys = Key[]
+    Array.each(specs) do |spec|
+      cols = Integer[]
+      Array.each(KeySpec.names(spec)) do |n|
+        i = column_index(columns, n)
+        Errors.sql_error("no such column: #{n}") if i < 0
+        Array.push(cols, i)
+      end
+      Array.push(keys, Key.new(cols, KeySpec.primary(spec), false, "", String[]))
+    end
+    keys
+  end
+
+  # The single INTEGER column declared PRIMARY KEY is the row's key; -1 if there is none.
+  def rowid_column(keys, columns)
+    found = Array.find(keys) { |k| Key.primary(k) && Array.size(Key.cols(k)) == 1 && Column.type(columns[Key.cols(k)[0]]) == :integer }
+    found == nil ? -1 : Key.cols(found)[0]
+  end
+
+  def mark_rowid(keys, rowid)
+    Array.map(keys) { |k| Key.new(Key.cols(k), Key.primary(k), rowid >= 0 && Key.primary(k) && Key.cols(k) == Array[rowid], "", Key.colls(k)) }
+  end
+
+  # PRIMARY KEY implies NOT NULL on each of its columns.
+  def with_key_not_null(columns, keys)
+    required = Set[]
+    Array.each(keys) { |k| Array.each(Key.cols(k)) { |c| Set.add(required, c) } if Key.primary(k) }
+    out = Column[]
+    i = 0
+    Array.each(columns) do |c|
+      Array.push(out, Column.new(Column.name(c), Column.type(c), Column.not_null(c) || Set.include?(required, i), Column.default(c), Column.coll(c)))
+      i += 1
+    end
+    out
+  end
+
+  def drop_table(db, stmt)
+    tables = Database.tables(db)
+    name = DropStmt.name(stmt)
+    k = key(name)
+    view = find_view(db, name)
+    Errors.sql_error("use DROP VIEW to delete view #{View.name(view)}") if view != nil
+    if tables[k] == nil
+      return if DropStmt.if_exists(stmt)
+      Errors.sql_error("no such table: #{name}")
+    end
+    Hash.delete(tables, k)
+    Array.each(Hash.keys(Database.indexes(db))) do |i|
+      Hash.delete(Database.indexes(db), i) if SqlIndex.table(Database.indexes(db)[i]) == k
+    end
+  end
+end

@@ -1,0 +1,86 @@
+# Row integrity (spec 2.1): the checks a row passes before it is stored by INSERT or UPDATE.
+module Constraints
+  module_function
+
+  # The row to store for `raw` (one value per column, defaults already applied), or SqlError.
+  # `raw` and the rows are as stored (spec 7): the columns' values, then the rowid; a NULL rowid in `raw`
+  # means "assign one" for an INSERT. `rows` are the table's rows as they are now; `skip` is the index in
+  # `rows` of the row being replaced by an UPDATE (-1 for INSERT, so a NULL rowid is then assigned, not an error).
+  # The order of checks is the one of spec 2.1 and 7.3: first failure wins.
+  def check_row(table, raw, rows, skip)
+    row = Array.dup(raw)
+    tname = Table.name(table)
+    columns = Table.columns(table)
+    ipk = Table.ipk(table)
+    last = Table.rowid_position(table)
+    # The rowid is the INTEGER PRIMARY KEY column if there is one (the slot after the columns then copies it).
+    slot = ipk != -1 ? ipk : last
+    store_rowid(row, slot, rows, skip)
+    row[last] = row[slot]
+    Array.each_with_index(columns) do |c, i|
+      if Column.not_null(c) && row[i] == nil
+        raise SqlError.new("NOT NULL constraint failed: #{tname}.#{Column.name(c)}")
+      end
+    end
+    if conflict?(rows, skip, Array[slot], row)
+      label = ipk != -1 ? Column.name(Array.fetch(columns, ipk)) : "rowid"
+      raise SqlError.new("UNIQUE constraint failed: #{tname}.#{label}")
+    end
+    Array.each_with_index(columns) do |c, i|
+      row[i] = Coercion.for_storage(row[i], Column.type(c), tname, Column.name(c)) if i != ipk
+    end
+    Array.each(Array.reverse(Table.uniques(table))) do |u|
+      positions = UniqueConstraint.positions(u)
+      if conflict?(rows, skip, positions, row)
+        raise SqlError.new(unique_message(table, positions))
+      end
+    end
+    row
+  end
+
+  # `UNIQUE constraint failed: t.a, t.b` for the constraint on `positions`.
+  def unique_message(table, positions)
+    names = Array.map(positions) { "#{Table.name(table)}.#{Column.name(Array.fetch(Table.columns(table), it))}" }
+    "UNIQUE constraint failed: #{Array.join(names, ", ")}"
+  end
+
+  # Gives the rowid (in position `slot` of `row`) its value: converted if given, else one more than the largest.
+  def store_rowid(row, slot, rows, skip)
+    v = row[slot]
+    if v == nil
+      raise SqlError.new("datatype mismatch") if skip != -1
+      row[slot] = next_key(rows, slot)
+    else
+      k = Coercion.integer_key(v)
+      raise SqlError.new("datatype mismatch") if k == nil
+      row[slot] = k
+    end
+  end
+
+  # One more than the largest rowid among `rows` (read at `slot`), or 1 without rows; it may be negative.
+  def next_key(rows, slot)
+    largest = 0
+    found = false
+    Array.each(rows) do |r|
+      v = Array.fetch(r, slot)
+      if (v in Integer) && (!found || v > largest)
+        largest = v
+        found = true
+      end
+    end
+    found ? largest + 1 : 1
+  end
+
+  # Does another row of `rows` (not the one at index `skip`) equal `row` on all `positions`?
+  # A NULL in any of them never conflicts.
+  def conflict?(rows, skip, positions, row)
+    return false if Array.any?(positions) { Array.fetch(row, it) == nil }
+    i = 0
+    while i < Array.size(rows)
+      other = Array.fetch(rows, i)
+      return true if i != skip && Array.all?(positions) { Value.compare(Array.fetch(other, it), Array.fetch(row, it)) == 0 }
+      i += 1
+    end
+    false
+  end
+end

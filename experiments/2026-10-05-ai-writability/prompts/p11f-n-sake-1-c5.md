@@ -1,0 +1,32 @@
+# Brief: change a SQL engine written in **Sake**
+
+`/home/ko1/app/sake/experiments/2026-10-05-ai-writability/runs/p11f-n-sake-1-c5/code/` holds a SQL engine (a small subset of SQLite), entry `main.sake`. Other agents wrote it
+from a specification in six stages; it passes every test of those stages. You are its maintainer now,
+and a change has been requested.
+
+## Material
+
+In `/home/ko1/app/sake/experiments/2026-10-05-ai-writability/runs/p11f-n-sake-1-c5/`:
+- `SPEC.md`: the specification the engine implements (stages 1-6).
+- `CHANGE.md`: the change request. It ends with a list of where the change applies.
+- `code/`: the engine.
+- The check: `ruby /home/ko1/app/sake/experiments/2026-10-05-ai-writability/harness/check_sql.rb /home/ko1/app/sake/experiments/2026-10-05-ai-writability/runs/p11f-n-sake-1-c5` checks the program with `/home/ko1/app/sake/bin/sake --strict=2 -c`. You may use it at most 10 times.
+
+## Your job
+
+Make the change described in CHANGE.md, everywhere it applies, keeping everything else working as
+SPEC.md says. Write it as a careful maintainer would; others will continue from your code.
+
+In this task you cannot run anything: there are no tests, and running the engine or any part of it (or loading its code into an interpreter or a REPL) is not allowed. Your only tool besides reading and editing files is the check above, at most 10 times. A program that fails the check cannot run, so it fails every test. Done means you are confident the change is complete and correct; the program will be judged by tests you do not see, on every place CHANGE.md lists and on stages 1-6.
+
+## Rules
+
+Work only in `/home/ko1/app/sake/experiments/2026-10-05-ai-writability/runs/p11f-n-sake-1-c5/code/`. Do not change SPEC.md, CHANGE.md or anything outside `code/`. Use no
+database library and start no other program from the engine; do not look for other SQL
+implementations or other copies of this engine (do not read anything under
+`/home/ko1/app/sake/experiments/` outside your directory), and do not search the web. No git. Shell
+commands need `dangerouslyDisableSandbox: true`. Do not wait for processes by matching their names
+(`pgrep -f` matches your own command); run commands in the foreground. Reply in under 150 words: the
+files you changed (lines added and removed), the last check's result, and the hardest part (one line each).
+
+**Sake** (in `/home/ko1/app/sake`): Ruby syntax where every operation is written with its type (`String.upcase(s)`, not `s.upcase`). Learn it from `docs/tutorial.md` (start here), `docs/spec.md` and `docs/builtins.md`; these are the only documents you may read.

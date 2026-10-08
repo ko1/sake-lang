@@ -1,0 +1,6 @@
+-- the AND inside BETWEEN belongs to it
+CREATE TABLE g (a INTEGER, c INTEGER);
+INSERT INTO g VALUES (1, 0), (1, 1), (5, 1), (2, 1);
+SELECT a, c FROM g WHERE a BETWEEN 1 AND 2 AND c ORDER BY a, c;
+SELECT a, c FROM g WHERE a BETWEEN 0 + 1 AND 1 + 1 AND c = 0 ORDER BY a;
+SELECT a, c, NOT a BETWEEN 1 AND 2 OR c = 0 FROM g ORDER BY a, c;

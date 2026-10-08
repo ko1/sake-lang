@@ -1,0 +1,86 @@
+# Collating sequences (spec 7): how two TEXT values compare. A collation is :binary, :nocase or :rtrim.
+# Which collation an expression has is decided by ExprCollation.
+module Collation
+  module_function
+
+  # The collation called `name` (any case), or SqlError.
+  def lookup(name)
+    case Value.lower(name)
+    in "binary" then :binary
+    in "nocase" then :nocase
+    in "rtrim" then :rtrim
+    else raise SqlError.new("no such collation sequence: #{name}")
+    end
+  end
+
+  # The text two TEXT values are compared as under `coll` (bytewise).
+  def fold(s, coll)
+    case coll
+    in :binary then s
+    in :nocase then Value.lower(s)
+    in :rtrim then String.sub(s, /[ ]+\z/, "")
+    end
+  end
+
+  # Value.compare, except that two TEXT values compare under `coll`.
+  def compare(a, b, coll)
+    return Value.compare(a, b) if coll == :binary
+    if (a in String) && (b in String)
+      Value.compare(fold(a, coll), fold(b, coll))
+    else
+      Value.compare(a, b)
+    end
+  end
+end
+
+# The collation of a resolved expression (spec 7.3): explicit (`e COLLATE n`), implicit (a column) or none.
+module ExprCollation
+  module_function
+
+  # The explicit collation, or nil.
+  def explicit(e)
+    case e
+    in Collated then Collated.coll(e)
+    in Unary then Unary.op(e) == :pos ? explicit(Unary.operand(e)) : nil
+    in Cast then explicit(Cast.expr(e))
+    else nil
+    end
+  end
+
+  # The implicit collation (of a column), or nil.
+  def implicit(e)
+    case e
+    in Col then Col.coll(e)
+    in Unary then Unary.op(e) == :pos ? implicit(Unary.operand(e)) : nil
+    in Cast then implicit(Cast.expr(e))
+    else nil
+    end
+  end
+
+  # The explicit collation, else the implicit one, else nil (none).
+  def known(e)
+    c = explicit(e)
+    return c if c != nil
+    implicit(e)
+  end
+
+  # What an ordering or grouping term, or a result column, is compared under.
+  def of(e)
+    c = known(e)
+    return :binary if c == nil
+    c
+  end
+
+  # The collation of the comparison `a op b` (7.4): explicit left, explicit right, implicit left, implicit right.
+  def pick(a, b)
+    c = explicit(a)
+    return c if c != nil
+    c = explicit(b)
+    return c if c != nil
+    c = implicit(a)
+    return c if c != nil
+    c = implicit(b)
+    return :binary if c == nil
+    c
+  end
+end

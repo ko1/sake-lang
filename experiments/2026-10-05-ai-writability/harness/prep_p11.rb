@@ -16,8 +16,9 @@ LANGS = {
   "ruby" => { entry: "main.rb", exts: %w[rb], flag: "", name: "Ruby (4.0; the standard library is allowed)",
               check: "checks the syntax of every `.rb` file with `ruby -wc`" },
   "sake" => { entry: "main.sake", exts: %w[sake], flag: "", name: "Sake",
-              check: "checks the program with `/home/ko1/app/sake/bin/sake --strict=2 -c` (this can take minutes)",
-              test_check: "For Sake it first checks the program with `/home/ko1/app/sake/bin/sake --strict=2 -c` (this can take minutes on a large program; a program it rejects does not run), then runs each test at `--strict=0`.",
+              # P11 (2026-10-08 morning) said "(this can take minutes)" here and in test_check; dropped for P11f, after the checker speedup.
+              check: "checks the program with `/home/ko1/app/sake/bin/sake --strict=2 -c`",
+              test_check: "For Sake it first checks the program with `/home/ko1/app/sake/bin/sake --strict=2 -c` (a program it rejects does not run), then runs each test at `--strict=0`.",
               note: "**Sake** (in `/home/ko1/app/sake`): Ruby syntax where every operation is written with its type (`String.upcase(s)`, not `s.upcase`). Learn it from `docs/tutorial.md` (start here), `docs/spec.md` and `docs/builtins.md`; these are the only documents you may read." },
   "java" => { entry: "Main.java", exts: %w[java], flag: "", name: "Java (OpenJDK 21; the standard library is allowed)",
               check: "compiles every `.java` file under `code/` with `javac`",
@@ -49,7 +50,8 @@ code_src = File.join(AW::EXP, "runs", src, "stage-6", "code")
 abort "#{code_src} missing" unless File.directory?(code_src)
 change_file = File.join(cdir, mode == "h" ? "change-hard.md" : "change.md")
 abort "#{change_file} missing" unless File.exist?(change_file)
-run = "p11-#{mode}-#{lang}-#{series}-#{cid}"
+# P11_PREFIX=p11f names the rerun with the fast checker (2026-10-08) p11f-...; its grades go to grade-p11f.jsonl.
+run = "#{ENV.fetch("P11_PREFIX", "p11")}-#{mode}-#{lang}-#{series}-#{cid}"
 work = File.join(AW::EXP, "runs", run)
 abort "#{work} exists" if File.exist?(work)
 

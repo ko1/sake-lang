@@ -1,0 +1,67 @@
+# Collating sequences (spec 7): which collation a comparison of TEXT values is made under.
+#
+# A collation is :binary, :nocase or :rtrim (Value.compare_under / Value.fold apply it). An expression has
+# an explicit collation (`e COLLATE n`), else an implicit one (a column's), else none; both are looked up
+# on the resolved tree and come back as nil when the expression has none.
+module Collation
+  module_function
+
+  # The collation named `name` (any case), or SqlError.
+  def named(name)
+    case Value.lower(name)
+    in "binary" then :binary
+    in "nocase" then :nocase
+    in "rtrim" then :rtrim
+    else raise SqlError.new("no such collation sequence: #{name}")
+    end
+  end
+
+  # The collation of a column declared with the collation name `written` (nil: none written).
+  def declared(written)
+    written == nil ? :binary : named(written)
+  end
+
+  # The collation given by `COLLATE` on the expression itself; `+e` and CAST keep their operand's (7.3).
+  def explicit(e)
+    case e
+    in Collated then Collated.coll(e)
+    in Unary then Unary.op(e) == :pos ? explicit(Unary.operand(e)) : nil
+    in Cast then explicit(Cast.expr(e))
+    else nil
+    end
+  end
+
+  # The collation a column reference brings (nil for any other expression, and for an aggregate's value).
+  def implicit(e)
+    case e
+    in Col then Col.coll(e)
+    in Unary then Unary.op(e) == :pos ? implicit(Unary.operand(e)) : nil
+    in Cast then implicit(Cast.expr(e))
+    else nil
+    end
+  end
+
+  # The expression's own collation, explicit before implicit; nil if it has none.
+  def own(e)
+    x = explicit(e)
+    x == nil ? implicit(e) : x
+  end
+
+  # For the values of one expression compared among themselves (7.4): its collation, else :binary.
+  def single(e)
+    c = own(e)
+    c == nil ? :binary : c
+  end
+
+  # For `a op b` (7.4): an explicit collation (a's first), else an implicit one (a's first), else :binary.
+  def pair(a, b)
+    ea = explicit(a)
+    return ea if ea != nil
+    eb = explicit(b)
+    return eb if eb != nil
+    ia = implicit(a)
+    return ia if ia != nil
+    ib = implicit(b)
+    ib == nil ? :binary : ib
+  end
+end

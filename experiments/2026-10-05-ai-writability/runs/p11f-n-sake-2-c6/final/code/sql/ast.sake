@@ -1,0 +1,167 @@
+# Syntax trees: what the parser produces and the resolver, evaluator and executor read.
+
+# An expression. kind says which fields matter:
+#   :lit      value
+#   :col      text = name as written, qual = table qualifier as written ("" if none); the parser's
+#             form of a name, which the resolver turns into :ref
+#   :ref      idx = position in the row, depth = how many queries out the row is (0: the query's own
+#             row), aff = the column's affinity (:integer :real :text :none), text = the column's name
+#             ("" for an aggregate's slot). A negative idx counts from the end of the row: the slot of
+#             a window call (window k is at idx -(k + 1); see WindowRun.attach)
+#   :neg :pos :not                         args = [operand]
+#   :add :sub :mul :div :mod :concat       args = [left, right]
+#   :eq :ne :lt :le :gt :ge :is :isnot     args = [left, right]
+#   :and :or                               args = [left, right]
+#   :call     text = function name as written, args; qual = "*" for count(*); distinct and order
+#             (OrderTerm[]) are set for an aggregate written with DISTINCT / ORDER BY inside the call
+#   :case_search  args = [when1, then1, when2, then2, ..., else]      (else is a NULL literal if absent)
+#   :case_simple  args = [operand, when1, then1, ..., else]
+#   :between  args = [x, low, high]          :in  args = [x, e1, e2, ...]          :like  args = [x, pattern]
+#             (the NOT forms are a :not around these)
+#   :wcall    a window call before resolution: text = function name as written, qual = "*" for count(*),
+#             args, value = the WindowSpec after OVER; the resolver turns it into a :ref (see :ref)
+#   :cast     text = "integer" | "real" | "text", args = [operand]
+#   :scalar_sub  value = the SelectStmt (parser), plan = the SelectPlan (resolver; nil before)
+#   :exists      the same
+#   :in_sub      the same, args = [x]; aff = the affinity of the subquery's column
+# aff is :none on every node except a :ref (its column's), a :cast (its type's), a :scalar_sub and
+# an :in_sub (their column's).
+Expr = Struct.new(:kind, :text, :qual, :value, :idx, :args, :aff, :distinct, :order, :depth, :plan)
+
+# A column of a table: name as written, type :integer, :real or :text, NOT NULL (also set for the
+# columns of a PRIMARY KEY), and the DEFAULT value (nil if none).
+Column = Struct.new(:name, :type, :not_null, :default)
+
+# A UNIQUE or PRIMARY KEY constraint as written: the column names, in the order listed.
+KeySpec = Struct.new(:names, :primary)
+
+# One item of a SELECT list: "*" or "q.*" (star; `table` is q, "" for a plain "*"), or an expression
+# with its alias ("" if none). agg: the name of the first aggregate call in the expression, "" if none
+# (filled in by SelectPlan, not the parser).
+ResultCol = Struct.new(:star, :expr, :alias, :agg, :table)
+
+# One source of a FROM clause, with how it joins the sources before it. op: :first, :cross (a comma,
+# CROSS JOIN, or JOIN without a constraint), :inner or :left. A table source has `table` (as
+# written) and no query; a subquery source has `query` (a SelectStmt) and table "". alias: "" if
+# none. on: the ON expression (nil if none); using: the USING column names (empty if none).
+FromItem = Struct.new(:op, :table, :query, :alias, :on, :using)
+
+# One ORDER BY term. If by_position, `position` is the number written (the expr is unused).
+OrderTerm = Struct.new(:expr, :by_position, :position, :desc, :nulls)   # nulls: :default :first :last
+
+# keys: KeySpec[] in declaration order (column constraints in column order, then table constraints).
+CreateStmt = Struct.new(:name, :columns, :keys, :if_not_exists)
+DropStmt = Struct.new(:name, :if_exists)
+# columns: the listed column names (only meaningful if listed); rows: expressions per VALUES row.
+# query: the select of INSERT ... SELECT (then rows is empty), nil for VALUES.
+InsertStmt = Struct.new(:table, :listed, :columns, :rows, :query)
+# An aggregate call, resolved (3.2). name: lower case; star: count(*); args: resolved against the
+# table row; order: group_concat's ORDER BY terms (their exprs resolved the same way).
+AggCall = Struct.new(:name, :star, :distinct, :args, :order)
+
+# --- window calls (6.1) ---
+
+# One end of a frame: kind is :unbounded_preceding :preceding :current :following or
+# :unbounded_following; offset is the number written after PRECEDING / FOLLOWING (0 for the others).
+FrameBound = Struct.new(:kind, :offset)
+
+# A frame clause: units :none (not written), :rows or :range; from and to are FrameBounds.
+FrameSpec = Struct.new(:units, :from, :to)
+
+# What follows OVER, as written: the base window's name ("" if none), PARTITION BY expressions,
+# ORDER BY terms (an integer there is a constant) and the frame.
+WindowSpec = Struct.new(:base, :partition, :order, :frame)
+
+# One `name AS ( spec )` of a WINDOW clause.
+NamedWindow = Struct.new(:name, :spec)
+
+# A window call, resolved: name lower case, star (count(*)), args, and the window it works over
+# with its base merged in; frame is complete (never :none units).
+WindowCall = Struct.new(:name, :star, :args, :partition, :order, :frame)
+
+# from: FromItem[], empty without FROM; where, limit and offset are nil when absent. group: GROUP BY
+# terms (by_position set for `GROUP BY k`); having is nil when absent; distinct: SELECT DISTINCT;
+# windows: the NamedWindows of the WINDOW clause.
+SelectStmt = Struct.new(:items, :from, :where, :group, :having, :order, :limit, :offset, :distinct, :windows)
+
+# A query (anything a subquery may be) is a SelectStmt, a CompoundStmt or a WithStmt.
+# parts: the simple SelectStmts (without their own ORDER BY / LIMIT); ops: :union_all :union :intersect
+# :except, ops[i] joining the result so far to parts[i + 1]; order, limit, offset: for the whole result.
+CompoundStmt = Struct.new(:parts, :ops, :order, :limit, :offset)
+
+# One common table expression: columns is the list written after the name (empty if none).
+CteDef = Struct.new(:name, :columns, :query)
+# WITH [RECURSIVE] ctes body; body is a SelectStmt, a CompoundStmt, or an InsertStmt.
+WithStmt = Struct.new(:recursive, :ctes, :body)
+
+CreateViewStmt = Struct.new(:name, :columns, :query, :if_not_exists)
+DropViewStmt = Struct.new(:name, :if_exists)
+CreateIndexStmt = Struct.new(:name, :table, :columns, :unique, :if_not_exists)
+DropIndexStmt = Struct.new(:name, :if_exists)
+
+# ALTER TABLE. column: the new Column; keys: the PRIMARY KEY / UNIQUE constraints written on it.
+AlterAddStmt = Struct.new(:table, :column, :keys)
+RenameTableStmt = Struct.new(:table, :new_name)
+RenameColumnStmt = Struct.new(:table, :column, :new_name)
+
+# kind: :begin, :commit or :rollback.
+TxnStmt = Struct.new(:kind)
+
+# One `column = expr` of an UPDATE.
+Assignment = Struct.new(:column, :expr)
+UpdateStmt = Struct.new(:table, :sets, :where)
+DeleteStmt = Struct.new(:table, :where)
+
+module Ast
+  module_function
+
+  def node(kind, text, qual, value, idx, args, aff) = Expr.new(kind, text, qual, value, idx, args, aff, false, OrderTerm[], 0, nil)
+
+  def expr(kind, text, args) = node(kind, text, "", nil, 0, args, :none)
+
+  def literal(v) = node(:lit, "", "", v, 0, Expr[], :none)
+
+  def column(name, qual) = node(:col, name, qual, nil, 0, Expr[], :none)
+
+  # A column of the row `depth` queries out, or (with name "") an aggregate's slot.
+  def ref(index, aff, name, depth) = Expr.new(:ref, name, "", nil, index, Expr[], aff, false, OrderTerm[], depth, nil)
+
+  def subquery(kind, stmt, args) = node(kind, "", "", stmt, 0, args, :none)
+
+  def unary(kind, operand) = expr(kind, "", Expr[operand])
+
+  def binary(kind, left, right) = expr(kind, "", Expr[left, right])
+
+  def call(name, args) = expr(:call, name, args)
+
+  # A call followed by OVER: spec is its WindowSpec.
+  def window_call(name, star, args, spec) = node(:wcall, name, star ? "*" : "", spec, 0, args, :none)
+
+  # Whether the resolved expression reads the slot of a window call (not looking into subqueries).
+  def window_ref?(e)
+    return Expr.depth(e) == 0 && Expr.idx(e) < 0 if Expr.kind(e) == :ref
+    Array.any?(Expr.args(e)) { |a| window_ref?(a) }
+  end
+
+  # A call written with `*` (count(*)), DISTINCT or ORDER BY inside the parentheses.
+  def aggregate_call(name, star, distinct, args, order) = Expr.new(:call, name, star ? "*" : "", nil, 0, args, :none, distinct, order, 0, nil)
+
+  def cast(operand, type) = node(:cast, type, "", nil, 0, Expr[operand], type_affinity(type))
+
+  def type_affinity(type) = type == "integer" ? :integer : (type == "real" ? :real : :text)
+
+  # The same node with other arguments.
+  def with_args(e, args) = Expr.new(Expr.kind(e), Expr.text(e), Expr.qual(e), Expr.value(e), Expr.idx(e), args, Expr.aff(e), Expr.distinct(e), Expr.order(e), Expr.depth(e), Expr.plan(e))
+
+  # The same node with the plan of its subquery and `aff`, the affinity of the subquery's column.
+  def with_plan(e, plan, aff) = Expr.new(Expr.kind(e), "", "", Expr.value(e), 0, Expr.args(e), aff, false, OrderTerm[], 0, plan)
+
+  # The expression as seen from `by` queries further in: every reference reaches `by` rows further out.
+  def shift_depth(e, by)
+    return e if by == 0
+    if Expr.kind(e) == :ref
+      return Expr.new(:ref, Expr.text(e), "", nil, Expr.idx(e), Expr[], Expr.aff(e), false, OrderTerm[], Expr.depth(e) + by, nil)
+    end
+    with_args(e, Array.map(Expr.args(e)) { |a| shift_depth(a, by) })
+  end
+end

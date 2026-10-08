@@ -1,0 +1,158 @@
+# Type conversions: storing a value into a column (spec 1.5) and comparing under affinity (1.9).
+module Coercion
+  module_function
+
+  # ---- Storage ----
+
+  # The value to store in a column of `type` (:integer, :real, :text, :blob), or SqlError.
+  # A BLOB is stored only in a BLOB column, and a BLOB column takes only a BLOB (spec 7.6).
+  def for_storage(v, type, table, column)
+    return nil if v == nil
+    v = number_from_text(v) if type == :integer || type == :real
+    case type
+    in :blob then to_blob_column(v, table, column)
+    in :integer then to_integer_column(v, table, column)
+    in :real then to_real_column(v, table, column)
+    in :text then to_text_column(v, table, column)
+    end
+  end
+
+  def to_blob_column(v, table, column)
+    case v
+    in Blob then v
+    else reject(v, :blob, table, column)
+    end
+  end
+
+  def to_text_column(v, table, column)
+    case v
+    in Blob then reject(v, :text, table, column)
+    else Value.text_form(v)
+    end
+  end
+
+  def to_integer_column(v, table, column)
+    case v
+    in Integer then v
+    in Float
+      if whole_in_64_bits?(v)
+        Float.to_i(v)
+      else
+        reject(v, :integer, table, column)
+      end
+    else reject(v, :integer, table, column)
+    end
+  end
+
+  def to_real_column(v, table, column)
+    case v
+    in Integer then Arithmetic.to_f(v)
+    in Float then v
+    else reject(v, :real, table, column)
+    end
+  end
+
+  # The INTEGER a non-NULL value is stored as in an INTEGER PRIMARY KEY (the conversion of 1.5), or nil.
+  def integer_key(v)
+    n = number_from_text(v)
+    case n
+    in Integer then n
+    in Float then whole_in_64_bits?(n) ? Float.to_i(n) : nil
+    else nil
+    end
+  end
+
+  def whole_in_64_bits?(f)
+    f == Float.floor(f) && f >= -9.223372036854775808e18 && f < 9.223372036854775808e18
+  end
+
+  def in_64_bits?(i) = i >= -9223372036854775808 && i <= 9223372036854775807
+
+  def reject(v, type, table, column)
+    raise SqlError.new("cannot store #{Value.store_name(v)} value in #{Value.type_label(type)} column #{table}.#{column}")
+  end
+
+  # ---- Comparison ----
+
+  def numeric_affinity?(aff) = aff == :integer || aff == :real
+
+  # A TEXT that is a numeric literal becomes that number; any other value stays as it is.
+  def number_from_text(v)
+    case v
+    in String
+      n = Value.parse_numeric(v)
+      n == nil ? v : n
+    else v
+    end
+  end
+
+  # A number becomes its text form; any other value stays as it is.
+  def text_from_number(v)
+    case v
+    in Integer | Float then Value.text_form(v)
+    else v
+    end
+  end
+
+  # `v` converted to the affinity of a column (nil: none) for IN: a numeric affinity turns numeric TEXT
+  # into a number, TEXT affinity turns a number into text.
+  def to_affinity(v, aff)
+    if numeric_affinity?(aff)
+      number_from_text(v)
+    elsif aff == :text
+      text_from_number(v)
+    else
+      v
+    end
+  end
+
+  # The affinity of a column of `type`, or of CAST(.. AS type): a BLOB has none.
+  def affinity_of(type) = type == :blob ? nil : type
+
+  # ---- CAST (2.3, 7.9) ----
+
+  def cast(v, type)
+    return nil if v == nil
+    case type
+    in :integer then cast_integer(v)
+    in :real then Arithmetic.to_f(Value.to_number(v))
+    in :text then Value.text_form(v)
+    in :blob then cast_blob(v)
+    end
+  end
+
+  # A BLOB stays; a TEXT becomes the BLOB of its bytes; a number, the BLOB of the bytes of its text form.
+  def cast_blob(v)
+    case v
+    in Blob then v
+    else Value.blob_of_text(Value.text_form(v))
+    end
+  end
+
+  # REALs truncate toward zero; TEXT reads only an optional sign and digits ('1e3' is 1).
+  def cast_integer(v)
+    case v
+    in Integer then v
+    in Float then Float.to_i(v)
+    in Blob then cast_integer(Value.text_form(v))
+    in String
+      m = String.match(v, /\A[ \t\n\r]*([+-]?\d+)/)
+      m == nil ? 0 : String.to_i(m[1])
+    end
+  end
+
+  # Compares two non-NULL values; `aff_a`/`aff_b` are the operands' affinities (nil for none).
+  def compare(a, aff_a, b, aff_b)
+    if numeric_affinity?(aff_a) && !numeric_affinity?(aff_b)
+      Value.compare(a, number_from_text(b))
+    elsif numeric_affinity?(aff_b) && !numeric_affinity?(aff_a)
+      Value.compare(number_from_text(a), b)
+    elsif aff_a == :text && aff_b == nil
+      Value.compare(a, text_from_number(b))
+    elsif aff_b == :text && aff_a == nil
+      Value.compare(text_from_number(a), b)
+    else
+      Value.compare(a, b)
+    end
+  end
+end

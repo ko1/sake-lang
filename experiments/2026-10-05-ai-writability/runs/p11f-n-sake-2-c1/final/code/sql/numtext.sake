@@ -1,0 +1,83 @@
+# Reading numbers out of text: the one scanner shared by the lexer (numeric literals),
+# the numeric prefix of arithmetic (1.8) and the text parsing of stored values (1.5).
+module NumText
+  module_function
+
+  def digit?(c) = c >= 48 && c <= 57
+
+  def space?(c) = c == 32 || c == 9 || c == 10 || c == 13
+
+  def byte_at(bytes, i) = Array.fetch(bytes, i, -1)
+
+  # Scans an unsigned numeric literal starting at bytes[i]: digits with an optional fraction and
+  # an optional exponent (which counts only if it has digits), or "." digits.
+  # Returns [end, real]; end == i means there is no number.
+  def scan(bytes, i)
+    j = i
+    j += 1 while digit?(byte_at(bytes, j))
+    int_digits = j - i
+    real = false
+    if byte_at(bytes, j) == 46
+      k = j + 1
+      k += 1 while digit?(byte_at(bytes, k))
+      if int_digits > 0 || k > j + 1
+        j = k
+        real = true
+      end
+    end
+    return [i, false] if int_digits == 0 && !real
+    c = byte_at(bytes, j)
+    if c == 101 || c == 69
+      k = j + 1
+      sign = byte_at(bytes, k)
+      k += 1 if sign == 43 || sign == 45
+      d = k
+      k += 1 while digit?(byte_at(bytes, k))
+      if k > d
+        j = k
+        real = true
+      end
+    end
+    [j, real]
+  end
+
+  # The number a slice of text means: Integer, or Float if it has a "." or an exponent.
+  def convert(text, real) = real ? String.to_f(text) : String.to_i(text)
+
+  # [start, end] of the text without leading and trailing SQL whitespace.
+  def trim_bounds(bytes)
+    first = 0
+    last = Array.size(bytes)
+    first += 1 while first < last && space?(bytes[first])
+    last -= 1 while last > first && space?(bytes[last - 1])
+    [first, last]
+  end
+
+  # Skips an optional sign; returns the index after it.
+  def after_sign(bytes, i)
+    c = byte_at(bytes, i)
+    (c == 43 || c == 45) ? i + 1 : i
+  end
+
+  # The number the text is, as a whole (after trimming and an optional sign), or nil (1.5 step 2).
+  def parse_whole(s)
+    bytes = String.bytes(s)
+    first, last = trim_bounds(bytes)
+    start = after_sign(bytes, first)
+    stop, real = scan(bytes, start)
+    return nil if stop == start || stop != last
+    convert(Text.byteslice(s, first, last - first), real)
+  end
+
+  # The number at the start of the text ("numeric prefix", 1.8); INTEGER 0 if there is none.
+  def parse_prefix(s)
+    bytes = String.bytes(s)
+    first = 0
+    n = Array.size(bytes)
+    first += 1 while first < n && space?(bytes[first])
+    start = after_sign(bytes, first)
+    stop, real = scan(bytes, start)
+    return 0 if stop == start
+    convert(Text.byteslice(s, first, stop - first), real)
+  end
+end

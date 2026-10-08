@@ -1,0 +1,108 @@
+# Looking up a column name (spec 4.2): `q.c` in the innermost query with a source named q; a bare `c`
+# in the sources of the innermost query that has it, then (rowid names only, spec 7.1) the rowid of
+# its table, then its result column aliases where they are allowed, then the same for each enclosing
+# query. A real column named like a rowid name always wins over the rowid.
+module Names
+  module_function
+
+  # The resolved expression for `qualifier.name` (qualifier nil for a bare name), or SqlError.
+  def lookup(scope, qualifier, name)
+    if qualifier == nil
+      bare(scope, name)
+    else
+      qualified(scope, qualifier, name)
+    end
+  end
+
+  def bare(scope, name)
+    key = Value.lower(name)
+    level = scope
+    passed = Array[]
+    while level != nil
+      hits = column_hits(level, key)
+      if Array.size(hits) > 1 && !Array.include?(Scope.merged(level), key)
+        raise SqlError.new("ambiguous column name: #{name}")
+      end
+      if !Array.empty?(hits)
+        note_correlated(passed)
+        return column_at(level, Array.fetch(hits, 0))
+      end
+      rowid = bare_rowid(level, name, key)
+      if rowid != nil
+        note_correlated(passed)
+        return rowid
+      end
+      message = Scope.blocked(level)[key]
+      raise SqlError.new(message) if message != nil
+      aliased = Scope.aliases(level)[key]
+      if aliased != nil
+        note_correlated(passed)
+        return aliased
+      end
+      Array.push(passed, level)
+      level = Scope.outer(level)
+    end
+    raise SqlError.new("no such column: #{name}")
+  end
+
+  # Is the lower-cased `key` one of the rowid names (spec 7.1)?
+  def rowid_name?(key) = key == "rowid" || key == "_rowid_" || key == "oid"
+
+  # A bare rowid name that no source has as a real column (spec 7.1): the rowid of the level's only
+  # source if that is a table; ambiguous with several sources; nil if it is not a rowid here.
+  def bare_rowid(level, name, key)
+    return nil unless rowid_name?(key)
+    sources = Scope.sources(level)
+    raise SqlError.new("ambiguous column name: #{name}") if Array.size(sources) > 1
+    return nil if Array.empty?(sources)
+    src = Array.fetch(sources, 0)
+    ri = Source.rowid_index(src, key)
+    ri == nil ? nil : column_ref(level, src, ri)
+  end
+
+  def qualified(scope, qualifier, name)
+    qkey = Value.lower(qualifier)
+    key = Value.lower(name)
+    level = scope
+    passed = Array[]
+    while level != nil
+      src = Array.find(Scope.sources(level)) { Source.name(it) == qkey }
+      if src != nil
+        ci = Source.column_index(src, key)
+        ci = Source.rowid_index(src, key) if ci == nil
+        raise SqlError.new("no such column: #{qualifier}.#{name}") if ci == nil
+        note_correlated(passed)
+        return column_ref(level, src, ci)
+      end
+      Array.push(passed, level)
+      level = Scope.outer(level)
+    end
+    raise SqlError.new("no such column: #{qualifier}.#{name}")
+  end
+
+  # [source position, column position] of each column named `key` among the level's sources.
+  def column_hits(level, key)
+    hits = Array[]
+    Array.each_with_index(Scope.sources(level)) do |src, si|
+      ci = Source.column_index(src, key)
+      Array.push(hits, [si, ci]) if ci != nil
+    end
+    hits
+  end
+
+  def column_at(level, hit)
+    si, ci = hit
+    column_ref(level, Array.fetch(Scope.sources(level), si), ci)
+  end
+
+  # The resolved reference to column `ci` of `src` in `level`.
+  def column_ref(level, src, ci)
+    c = Array.fetch(Source.columns(src), ci)
+    Col.new(nil, SourceColumn.name(c), Scope.base(level) + Source.offset(src) + ci, SourceColumn.aff(c))
+  end
+
+  # The scopes passed on the way out were crossed by a reference to an enclosing query.
+  def note_correlated(passed)
+    Array.each(passed) { Array.push(Scope.refs(it), true) }
+  end
+end

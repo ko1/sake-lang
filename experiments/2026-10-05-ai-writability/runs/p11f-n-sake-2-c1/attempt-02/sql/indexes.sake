@@ -1,0 +1,52 @@
+# Indexes (5.7). An index changes no result; a UNIQUE one is a uniqueness constraint on its columns,
+# declared after every constraint that exists when it is created.
+module Indexes
+  module_function
+
+  def create(db, stmt)
+    name = CreateIndexStmt.name(stmt)
+    table = Catalog.table!(db, CreateIndexStmt.table(stmt))
+    if Catalog.find_index(db, name) != nil
+      return if CreateIndexStmt.if_not_exists(stmt)
+      Errors.sql_error("index #{name} already exists")
+    end
+    if Catalog.find_table(db, name) != nil || Catalog.find_view(db, name) != nil
+      Errors.sql_error("there is already a table named #{name}")
+    end
+    cols = Integer[]
+    colls = String[]
+    written = CreateIndexStmt.colls(stmt)
+    k = 0
+    Array.each(CreateIndexStmt.columns(stmt)) do |c|
+      i = Catalog.column_index(Table.columns(table), c)
+      Errors.sql_error("no such column: #{c}") if i < 0
+      Array.push(cols, i)
+      Array.push(colls, written[k] == "" ? "" : Collation.canonical!(written[k]))
+      k += 1
+    end
+    if CreateIndexStmt.unique(stmt)
+      key = Key.new(cols, false, false, Catalog.key(name), colls)
+      rows = Table.rows(table)
+      i = 0
+      Array.each(rows) do |row|
+        Constraints.check_unique(table, key, row, rows, i)
+        i += 1
+      end
+      Table.set_keys(table, Table.keys(table) + Key[key])
+    end
+    Database.indexes(db)[Catalog.key(name)] = SqlIndex.new(name, Catalog.key(Table.name(table)))
+  end
+
+  def drop(db, stmt)
+    name = DropIndexStmt.name(stmt)
+    index = Catalog.find_index(db, name)
+    if index == nil
+      return if DropIndexStmt.if_exists(stmt)
+      Errors.sql_error("no such index: #{name}")
+    end
+    k = Catalog.key(name)
+    table = Database.tables(db)[SqlIndex.table(index)]
+    Table.set_keys(table, Array.reject(Table.keys(table)) { |key| Key.index(key) == k }) if table != nil
+    Hash.delete(Database.indexes(db), k)
+  end
+end

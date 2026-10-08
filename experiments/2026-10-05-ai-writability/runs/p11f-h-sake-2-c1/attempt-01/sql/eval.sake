@@ -1,0 +1,119 @@
+# What an expression is evaluated on: `row`, the values of the current query's row, and `outer`,
+# the rows of the enclosing queries (outermost first), which a subquery's references reach.
+Env = Struct.new(:row, :outer)
+
+# Evaluating a resolved expression on one row (1.8, 1.9, 1.10, 2.3).
+module Eval
+  module_function
+
+  # An environment with no enclosing query.
+  def top(row) = Env.new(row, Array[])
+
+  def value_of(e, row)
+    args = Expr.args(e)
+    case Expr.kind(e)
+    in :lit then Expr.value(e)
+    in :ref then ref_value(e, row)
+    in :neg then negate(value_of(args[0], row))
+    in :pos then value_of(args[0], row)
+    in :not then logic_not(Values.truth(value_of(args[0], row)))
+    in :and then logic_and(args, row)
+    in :or then logic_or(args, row)
+    in :concat then concat(value_of(args[0], row), value_of(args[1], row))
+    in :add | :sub | :mul | :div | :mod then Arith.apply(Expr.kind(e), value_of(args[0], row), value_of(args[1], row))
+    in :call then call(e, row)
+    in :case_search then Predicates.case_search(args, row)
+    in :case_simple then Predicates.case_simple(args, row)
+    in :between then Predicates.between(args, row)
+    in :in then Predicates.in_list(args, row)
+    in :like then Predicates.like(args, row)
+    in :cast then Cast.apply(value_of(args[0], row), Expr.text(e))
+    in :collate then value_of(args[0], row)
+    in :scalar_sub then Subquery.scalar(e, row)
+    in :exists then Values.from_bool(!Array.empty?(Subquery.rows(e, row)))
+    in :in_sub then Subquery.in_query(e, row)
+    else compare(e, row)
+    end
+  end
+
+  # A column of this query's row (depth 0) or of an enclosing query's.
+  def ref_value(e, env)
+    depth = Expr.depth(e)
+    return slot(Env.row(env), Expr.idx(e)) if depth == 0
+    outer = Env.outer(env)
+    slot(outer[Array.size(outer) - depth], Expr.idx(e))
+  end
+
+  # Position i of a row; a negative i counts from the end (the slots of window calls).
+  def slot(row, i) = i >= 0 ? row[i] : row[Array.size(row) + i]
+
+  def negate(v)
+    return nil if v == nil
+    n = Values.to_number(v)
+    -n
+  end
+
+  def concat(a, b)
+    return nil if a == nil || b == nil
+    Values.text_of(a) + Values.text_of(b)
+  end
+
+  def logic_not(t)
+    return nil if t == nil
+    t == 0 ? 1 : 0
+  end
+
+  def logic_and(args, row)
+    left = Values.truth(value_of(args[0], row))
+    return 0 if left == 0
+    right = Values.truth(value_of(args[1], row))
+    return 0 if right == 0
+    (left == nil || right == nil) ? nil : 1
+  end
+
+  def logic_or(args, row)
+    left = Values.truth(value_of(args[0], row))
+    return 1 if left == 1
+    right = Values.truth(value_of(args[1], row))
+    return 1 if right == 1
+    (left == nil || right == nil) ? nil : 0
+  end
+
+  def call(e, row)
+    vals = Array[]
+    Array.each(Expr.args(e)) { |a| Array.push(vals, value_of(a, row)) }
+    Functions.call(Expr.text(e), vals)
+  end
+
+  # = == != <> < <= > >= IS and IS NOT, after affinity conversion.
+  def compare(e, row)
+    kind = Expr.kind(e)
+    left = Expr.args(e)[0]
+    right = Expr.args(e)[1]
+    a = value_of(left, row)
+    b = value_of(right, row)
+    if kind == :is || kind == :isnot
+      same = (a == nil || b == nil) ? (a == nil && b == nil) : ordered(a, left, b, right) == 0
+      return Values.from_bool(kind == :is ? same : !same)
+    end
+    return nil if a == nil || b == nil
+    c = ordered(a, left, b, right)
+    result = false
+    case kind
+    in :eq then result = c == 0
+    in :ne then result = c != 0
+    in :lt then result = c < 0
+    in :le then result = c <= 0
+    in :gt then result = c > 0
+    else result = c >= 0
+    end
+    Values.from_bool(result)
+  end
+
+  # Order of two values that are not NULL, converted by the affinity of their expressions and, for two
+  # texts, compared under the collation of `left op right` (7.4).
+  def ordered(a, left, b, right)
+    x, y = Values.apply_affinity(a, Expr.aff(left), b, Expr.aff(right))
+    Values.compare_under(x, y, Collation.choose(left, right))
+  end
+end

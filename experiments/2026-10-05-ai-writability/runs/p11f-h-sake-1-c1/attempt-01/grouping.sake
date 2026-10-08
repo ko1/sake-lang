@@ -1,0 +1,66 @@
+# GROUP BY and aggregate evaluation (spec 3.3): turns the rows that passed WHERE into group rows.
+#
+# A group row is the group's representative source row followed by one value per Aggregate of the
+# plan, so the plan's expressions (which read aggregates as Cols past the table's columns) evaluate
+# on it with the ordinary Evaluator.
+module Grouping
+  module_function
+
+  # The group rows of `rows` that pass HAVING, in order of first appearance.
+  def group_rows(plan, rows, prefix)
+    aggs = Plan.aggregates(plan)
+    out = Array[]
+    Array.each(partition(Plan.group(plan), rows)) do |members|
+      group_row = Array.dup(representative(plan, members, prefix))
+      Array.concat(group_row, Array.map(aggs) { Aggregates.compute(it, members) })
+      Array.push(out, group_row) if Evaluator.passes?(Plan.having(plan), group_row)
+    end
+    out
+  end
+
+  # The rows split by the values of the GROUP BY terms; without terms, one group (even of no rows).
+  def partition(terms, rows)
+    return Array[rows] if Array.empty?(terms)
+    index = Hash[]
+    groups = Array[]
+    Array.each(rows) do |row|
+      key = Array.map(terms) { key_under(Evaluator.evaluate(it, row), Collation.single(it)) }
+      slot = index[key]
+      if slot == nil
+        index[key] = Array.size(groups)
+        Array.push(groups, Array[row])
+      else
+        Array.push(Array.fetch(groups, slot), row)
+      end
+    end
+    groups
+  end
+
+  # The row bare columns read: with a single aggregate that is min / max, the row that gave the
+  # extreme; else the first row; the prefix and NULLs for a group of no rows.
+  def representative(plan, members, prefix)
+    aggs = Plan.aggregates(plan)
+    if Array.size(aggs) == 1
+      agg = Array.fetch(aggs, 0)
+      if Aggregate.fn(agg) == "min" || Aggregate.fn(agg) == "max"
+        best = Aggregates.extreme_row(agg, members)
+        return best unless best == nil
+      end
+    end
+    return Array.fetch(members, 0) unless Array.empty?(members)
+    Array.concat(Array.dup(prefix), Array.new(Plan.width(plan), nil))
+  end
+
+  # A row of values as a Hash key (see key_under); `colls` has the collation of each column.
+  def row_key(vals, colls) = Array.map(Array.each_with_index(vals)) { |v, k| key_under(v, Array.fetch(colls, k)) }
+
+  # A value as a Hash key that treats equal values as one (a whole REAL is the INTEGER it equals; a TEXT
+  # is folded to its form under the collation `coll`, so TEXTs equal under it are one key).
+  def key_under(v, coll)
+    case v
+    in Float then Coercion.whole_in_64_bits?(v) ? Float.to_i(v) : v
+    in String then Value.fold(v, coll)
+    else v
+    end
+  end
+end

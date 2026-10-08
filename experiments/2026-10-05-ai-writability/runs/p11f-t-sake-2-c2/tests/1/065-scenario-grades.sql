@@ -1,0 +1,21 @@
+-- Students and their marks.
+CREATE TABLE marks (student TEXT, course TEXT, mark INTEGER, weight REAL);
+INSERT INTO marks VALUES ('ann', 'math', 81, 0.5), ('ann', 'art', 92, 0.25), ('bob', 'math', 67, 0.5);
+INSERT INTO marks VALUES ('bob', 'art', NULL, 0.25), ('cid', 'math', 74, 0.5), ('cid', 'art', 58, 0.25);
+INSERT INTO marks VALUES ('dee', 'math', 101.5, 0.5);
+INSERT INTO marks VALUES ('dee', 'math', '88', '0.5');
+SELECT student, course, mark FROM marks ORDER BY student, course;
+SELECT student, mark FROM marks WHERE course = 'math' ORDER BY mark DESC;
+SELECT student, mark * weight AS points FROM marks WHERE points > 30 ORDER BY points, student;
+SELECT student, course FROM marks WHERE mark IS NULL;
+SELECT student, mark >= 60 AS passed FROM marks WHERE course = 'art' ORDER BY student;
+SELECT student, mark / 10, mark % 10 FROM marks WHERE course = 'math' ORDER BY student;
+SELECT student || '-' || course FROM marks WHERE NOT mark > 70 ORDER BY 1;
+SELECT student, course FROM marks ORDER BY mark NULLS LAST, student LIMIT 3;
+SELECT upper(student), coalesce(mark, 0) FROM marks WHERE course = 'art' ORDER BY 2 DESC;
+SELECT DISTINCTION FROM marks;
+SELECT mark FROM marks ORDER BY 1, 2;
+SELECT student, mark / 0 FROM marks WHERE student = 'ann' AND course = 'math';
+SELECT student, mark * 1.0 / 3 FROM marks WHERE student = 'cid' ORDER BY course;
+SELECT typeof(mark), typeof(weight) FROM marks WHERE student = 'dee';
+SELECT student, course FROM marks WHERE student = 'ann' AND mark > 90;

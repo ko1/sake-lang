@@ -1,0 +1,99 @@
+# Executes the window calls of a query (spec 6.2): between HAVING and DISTINCT / ORDER BY, each window is
+# computed over all the rows, and its values are appended to the rows for WindowValue to read.
+
+# One partition of a window's rows, in the window's order.
+# indexes:    each row's position among all the rows.   rows: the rows.
+# keys:       each row's ORDER BY values (Arrays).      lead: the first of them (empty: no ORDER BY).
+# first_peer / last_peer: the positions in the partition of the first / last row that ties with each row
+#             (without ORDER BY, every row ties with every other).
+class WindowPartition
+  attr_reader indexes, rows, keys, lead, first_peer, last_peer
+end
+
+module Windowing
+  module_function
+
+  # `rows` with the value of every window appended, the last window first (see WindowValue).
+  def append(windows, rows)
+    return rows if Array.empty?(windows)
+    columns = Array.map(windows) { compute(it, rows) }
+    last = Array.size(columns) - 1
+    Array.map(Array.each_with_index(rows)) do |row, i|
+      out = Array.dup(row)
+      Integer.downto(last, 0) { |k| Array.push(out, Array.fetch(Array.fetch(columns, k), i)) }
+      out
+    end
+  end
+
+  # The window's value for each of `rows`, in their order.
+  def compute(window, rows)
+    values = Array.new(Array.size(rows), nil)
+    Array.each(partitions(window, rows)) do |part|
+      results = WindowFunctions.compute(window, part)
+      Array.each_with_index(WindowPartition.indexes(part)) { |at, pos| values[at] = Array.fetch(results, pos) }
+    end
+    values
+  end
+
+  # The window's partitions, in order of first appearance; each row's partition is its PARTITION BY values.
+  def partitions(window, rows)
+    terms = Window.partition(window)
+    colls = Array.map(terms) { ExprCollation.of(it) }
+    groups = Array[]
+    slots = Hash[]
+    Array.each_with_index(rows) do |row, i|
+      key = Grouping.terms_key(terms, colls, row)
+      slot = slots[key]
+      if slot == nil
+        slots[key] = Array.size(groups)
+        Array.push(groups, Array[i])
+      else
+        Array.push(Array.fetch(groups, slot), i)
+      end
+    end
+    Array.map(groups) { ordered(window, rows, it) }
+  end
+
+  # The rows at `indexes` sorted by the window's ORDER BY (stably; their own order without one).
+  def ordered(window, rows, indexes)
+    terms = Window.order(window)
+    specs = Array.map(terms) { SortKey.new(-1, OrderTerm.expr(it), OrderTerm.desc(it), OrderTerm.nulls(it), ExprCollation.of(OrderTerm.expr(it))) }
+    items = Array.map(indexes) do |at|
+      row = Array.fetch(rows, at)
+      SortItem.new(Array.map(terms) { Evaluator.evaluate(OrderTerm.expr(it), row) }, Array[at])
+    end
+    sorted = Sorter.sort(items, specs)
+    at_list = Array.map(sorted) { row_index(it) }
+    keys = Array.map(sorted) { SortItem.keys(it) }
+    lead = Array.empty?(terms) ? Array[] : Array.map(keys) { Array.fetch(it, 0) }
+    n = Array.size(at_list)
+    first = Array.new(n, 0)
+    last = Array.new(n, n - 1)
+    mark_peers(keys, first, last, Array.map(terms) { ExprCollation.of(OrderTerm.expr(it)) }) unless Array.empty?(terms)
+    WindowPartition.new(at_list, Array.map(at_list) { Array.fetch(rows, it) }, keys, lead, first, last)
+  end
+
+  # The position among all the rows that `ordered` stored in a sorted item.
+  def row_index(item)
+    at = Array.fetch(SortItem.vals(item), 0)
+    at => Integer
+    at
+  end
+
+  # Fills in the first / last position of each run of rows with equal keys (under the terms' collations `colls`).
+  def mark_peers(keys, first, last, colls)
+    n = Array.size(keys)
+    i = 0
+    while i < n
+      j = i
+      j += 1 while j + 1 < n && same_keys?(Array.fetch(keys, i), Array.fetch(keys, j + 1), colls)
+      Integer.upto(i, j) do |k|
+        first[k] = i
+        last[k] = j
+      end
+      i = j + 1
+    end
+  end
+
+  def same_keys?(a, b, colls) = Array.all?(Array.each_with_index(a)) { |x, t| Collation.compare(x, Array.fetch(b, t), Array.fetch(colls, t)) == 0 }
+end

@@ -1,0 +1,101 @@
+# INSERT, UPDATE and DELETE. A statement changes the table only if every row passes
+# Constraints.check_row (spec 1.5, 1.6, 2.1, 2.2): the new rows are built apart and swapped in at the end.
+module Dml
+  module_function
+
+  def insert(db, st)
+    table = Database.writable_table(db, Insert.table(st))
+    query = Insert.query(st)
+    if query == nil
+      insert_values(db, st, table)
+    else
+      insert_select(db, st, table, query)
+    end
+  end
+
+  # INSERT ... SELECT: the select is computed in full before any row is stored.
+  def insert_select(db, st, table, query)
+    plan = QueryPlanner.plan(db, query, nil)
+    targets = target_columns(table, Insert.table(st), Insert.columns(st), Array.size(Plans.columns(plan)))
+    stored = Array.dup(Table.rows(table))
+    Array.each(Query.compute(plan, Array[])) do |values|
+      Array.push(stored, Constraints.check_row(table, raw_row(table, targets, values), stored, -1))
+    end
+    Table.set_rows(table, stored)
+  end
+
+  def insert_values(db, st, table)
+    tname = Insert.table(st)
+    rows = Insert.rows(st)
+    width = Array.size(Array.fetch(rows, 0))
+    unless Array.all?(rows) { Array.size(it) == width }
+      raise SqlError.new("all VALUES must have the same number of terms")
+    end
+    targets = target_columns(table, tname, Insert.columns(st), width)
+    scope = Resolver.empty_scope(db)
+    resolved = Array.map(rows) { |exprs| Array.map(exprs) { Resolver.resolve(it, scope) } }
+    stored = Array.dup(Table.rows(table))
+    Array.each(resolved) do |exprs|
+      values = Array.map(exprs) { Evaluator.evaluate(it, Array[]) }
+      Array.push(stored, Constraints.check_row(table, raw_row(table, targets, values), stored, -1))
+    end
+    Table.set_rows(table, stored)
+  end
+
+  # The row positions the values go to, in the order the values come (a rowid name counts as a column).
+  def target_columns(table, tname, names, width)
+    columns = Table.columns(table)
+    if names == nil
+      if width != Array.size(columns)
+        raise SqlError.new("table #{tname} has #{Array.size(columns)} columns but #{width} values were supplied")
+      end
+      return Range.to_a(0...Array.size(columns))
+    end
+    positions = Array.map(names) do |n|
+      i = Table.store_position(table, n)
+      raise SqlError.new("table #{tname} has no column named #{n}") if i == nil
+      i
+    end
+    if width != Array.size(names)
+      raise SqlError.new("#{width} values for #{Array.size(names)} columns")
+    end
+    positions
+  end
+
+  # A full stored row before conversion: the given values where given, else the column's default;
+  # the rowid (the last value) and the INTEGER PRIMARY KEY have none: NULL means "assign the next one".
+  def raw_row(table, targets, values)
+    row = Array.map(Table.columns(table)) { Column.default(it) }
+    Array.push(row, nil)
+    ipk = Table.ipk(table)
+    row[ipk] = nil if ipk != -1
+    Array.each_with_index(targets) { |pos, k| row[pos] = Array.fetch(values, k) }
+    row
+  end
+
+  def update(db, st)
+    table = Database.writable_table(db, Update.table(st))
+    scope = Resolver.table_scope(db, table)
+    targets = Array.map(Update.sets(st)) do |a|
+      i = Table.store_position(table, Assignment.column(a))
+      raise SqlError.new("no such column: #{Assignment.column(a)}") if i == nil
+      i
+    end
+    exprs = Array.map(Update.sets(st)) { Resolver.resolve(Assignment.expr(it), scope) }
+    where = Resolver.resolve_optional(Update.where(st), scope)
+    stored = Array.dup(Table.rows(table))
+    Array.each_with_index(Table.rows(table)) do |old, i|
+      next unless Evaluator.passes?(where, old)
+      raw = Array.dup(old)
+      Array.each_with_index(targets) { |pos, k| raw[pos] = Evaluator.evaluate(Array.fetch(exprs, k), old) }
+      stored[i] = Constraints.check_row(table, raw, stored, i)
+    end
+    Table.set_rows(table, stored)
+  end
+
+  def delete(db, st)
+    table = Database.writable_table(db, Delete.table(st))
+    where = Resolver.resolve_optional(Delete.where(st), Resolver.table_scope(db, table))
+    Table.set_rows(table, Array.reject(Table.rows(table)) { Evaluator.passes?(where, it) })
+  end
+end

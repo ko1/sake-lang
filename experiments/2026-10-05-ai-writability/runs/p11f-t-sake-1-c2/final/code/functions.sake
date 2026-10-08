@@ -1,0 +1,121 @@
+# Scalar functions (spec 1.11, 2.4). The resolver checks name and arity once; `call` runs one.
+# Text functions are in text_functions.sake, round in rounding.sake.
+module Functions
+  module_function
+
+  def known?(fn)
+    case fn
+    in "length" | "upper" | "lower" | "abs" | "typeof" | "coalesce" | "ifnull" | "nullif" then true
+    in "substr" | "trim" | "ltrim" | "rtrim" | "replace" | "instr" | "round" | "max" | "min" | "hex" then true
+    else false
+    end
+  end
+
+  def arity_ok?(fn, count)
+    case fn
+    in "length" | "upper" | "lower" | "abs" | "typeof" | "hex" then count == 1
+    in "coalesce" | "max" | "min" then count >= 2
+    in "ifnull" | "nullif" | "instr" then count == 2
+    in "substr" then count == 2 || count == 3
+    in "trim" | "ltrim" | "rtrim" | "round" then count == 1 || count == 2
+    in "replace" then count == 3
+    else false
+    end
+  end
+
+  # `args` are already-evaluated values.
+  def call(fn, args)
+    x = Array.fetch(args, 0)
+    case fn
+    in "typeof" then type_of(x)
+    in "coalesce" then Array.find(args) { it != nil }
+    in "ifnull" then x == nil ? Array.fetch(args, 1) : x
+    in "nullif" then null_if(x, Array.fetch(args, 1))
+    in "hex" then x == nil ? "" : hex(x)
+    else Array.any?(args) { it == nil } ? nil : call_non_null(fn, args)
+    end
+  end
+
+  # The functions whose result is NULL when any argument is NULL.
+  def call_non_null(fn, args)
+    x = Array.fetch(args, 0)
+    y = Array.size(args) > 1 ? Array.fetch(args, 1) : nil
+    case fn
+    in "length" then (x in Blob) ? Value.blob_size(x) : String.length(Value.text_form(x))
+    in "upper" then Value.upper(Value.text_form(x))
+    in "lower" then Value.lower(Value.text_form(x))
+    in "abs" then absolute(x)
+    in "substr" then substr(args)
+    in "trim" then trim_with(args, true, true)
+    in "ltrim" then trim_with(args, true, false)
+    in "rtrim" then trim_with(args, false, true)
+    in "replace" then TextFunctions.replace(Value.text_form(x), Value.text_form(y), Value.text_form(Array.fetch(args, 2)))
+    in "instr" then instr(x, y)
+    in "round" then Rounding.round(Value.to_number(x), y == nil ? 0 : Integer.clamp(integer_arg(y), 0, 1000))
+    in "max" then extreme(args, 1)
+    in "min" then extreme(args, -1)
+    end
+  end
+
+  # An argument read as an integer (numeric prefix for TEXT, truncating REALs).
+  def integer_arg(v)
+    n = Value.to_number(v)
+    (n in Integer) ? n : Float.to_i(n)
+  end
+
+  # substr of a BLOB selects bytes (two hex digits each) and gives a BLOB.
+  def substr(args)
+    x = Array.fetch(args, 0)
+    len = Array.size(args) == 3 ? integer_arg(Array.fetch(args, 2)) : TextFunctions.unbounded
+    start = integer_arg(Array.fetch(args, 1))
+    return TextFunctions.substr(Value.text_form(x), start, len) unless x in Blob
+    Blob.new(TextFunctions.substr_bytes(Blob.hex(x), start, len))
+  end
+
+  # Two BLOBs search byte positions; anything else searches the text forms.
+  def instr(x, y)
+    return TextFunctions.instr(Value.text_form(x), Value.text_form(y)) unless (x in Blob) && (y in Blob)
+    TextFunctions.instr_bytes(Blob.hex(x), Blob.hex(y))
+  end
+
+  # The uppercase hex of a BLOB's bytes, or of another value's text form.
+  def hex(x) = Blob.hex(Value.blob_of(x))
+
+  def trim_with(args, left, right)
+    chars = Array.size(args) == 2 ? Value.text_form(Array.fetch(args, 1)) : " "
+    TextFunctions.trim(Value.text_form(Array.fetch(args, 0)), chars, left, right)
+  end
+
+  # The largest (direction 1) or smallest (-1) of the arguments; the first of equal values.
+  def extreme(args, direction)
+    best = Array.fetch(args, 0)
+    Array.each(args) { best = it if Value.compare(it, best) == direction }
+    best
+  end
+
+  def absolute(x)
+    case x
+    in nil then nil
+    in Integer then Integer.abs(x)
+    in Float then Float.abs(x)
+    in String then Float.abs(Arithmetic.to_f(Value.numeric_prefix(x)))
+    in Blob then Float.abs(Arithmetic.to_f(Value.to_number(x)))
+    end
+  end
+
+  def type_of(x)
+    case x
+    in nil then "null"
+    in Integer then "integer"
+    in Float then "real"
+    in String then "text"
+    in Blob then "blob"
+    end
+  end
+
+  # x unless x = y (no affinity); a NULL on either side never equals.
+  def null_if(x, y)
+    return x if x == nil || y == nil
+    Value.compare(x, y) == 0 ? nil : x
+  end
+end

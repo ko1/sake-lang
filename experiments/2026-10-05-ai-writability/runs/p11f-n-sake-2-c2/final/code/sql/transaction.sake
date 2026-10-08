@@ -1,0 +1,42 @@
+# Transactions (5.5): BEGIN keeps a copy of the schema and the rows; ROLLBACK puts it back. Rows are
+# never changed in place (a change makes a new row or a new Array of rows), so a copy of the
+# Arrays that hold them is enough.
+module Transaction
+  module_function
+
+  def run(db, stmt)
+    saved = Database.saved(db)
+    case TxnStmt.kind(stmt)
+    in :begin
+      Errors.sql_error("cannot start a transaction within a transaction") unless Array.empty?(saved)
+      Array.push(saved, snapshot(db))
+    in :commit
+      Errors.sql_error("cannot commit - no transaction is active") if Array.empty?(saved)
+      Array.clear(saved)
+    else
+      Errors.sql_error("cannot rollback - no transaction is active") if Array.empty?(saved)
+      restore(db, saved[0])
+      Array.clear(saved)
+    end
+  end
+
+  def snapshot(db)
+    tables = Hash[]
+    Array.each(Hash.keys(Database.tables(db))) do |k|
+      t = Database.tables(db)[k]
+      tables[k] = Table.new(Table.name(t), Array.dup(Table.columns(t)), Array.dup(Table.rows(t)), Array.dup(Table.keys(t)), Table.rowid(t))
+    end
+    indexes = Hash[]
+    Array.each(Hash.keys(Database.indexes(db))) do |k|
+      i = Database.indexes(db)[k]
+      indexes[k] = SqlIndex.new(SqlIndex.name(i), SqlIndex.table(i))
+    end
+    Snapshot.new(tables, Hash.dup(Database.views(db)), indexes)
+  end
+
+  def restore(db, snap)
+    Database.set_tables(db, Snapshot.tables(snap))
+    Database.set_views(db, Snapshot.views(snap))
+    Database.set_indexes(db, Snapshot.indexes(snap))
+  end
+end

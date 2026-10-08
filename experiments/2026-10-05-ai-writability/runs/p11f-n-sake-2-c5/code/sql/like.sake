@@ -1,0 +1,166 @@
+# LIKE patterns (2.3, 7.3) and GLOB patterns (7.2).
+# LIKE: % matches any run of characters, _ exactly one; ASCII case is ignored; an optional escape
+# character makes the character after it ordinary.
+# GLOB: case-sensitive; * any run, ? one character, [...] / [^...] one character of a set.
+
+# One element of a compiled GLOB pattern. kind: :star :one :lit :class.
+#   :lit    ch = the character
+#   :class  neg = written [^...]; ranges = [low code, high code] pairs (a single member is [c, c])
+# Fields that a kind does not use hold "", false and an empty list.
+GlobItem = Struct.new(:kind, :ch, :neg, :ranges)
+
+module Like
+  module_function
+
+  # LIKE without ESCAPE.
+  def matches?(text, pattern) = matches_escape?(text, pattern, "")
+
+  # esc: the escape character ("" for none). Pattern characters are kept apart from the ordinary ones
+  # they escape, so a literal "%" is not mistaken for a wildcard.
+  def matches_escape?(text, pattern, esc)
+    t = String.chars(String.downcase(text))
+    src = String.chars(String.downcase(pattern))
+    e = String.downcase(esc)
+    p = Array[]
+    special = Array[]
+    ns = Array.size(src)
+    i = 0
+    while i < ns
+      if src[i] == e
+        return false if i + 1 >= ns
+        Array.push(p, src[i + 1])
+        Array.push(special, false)
+        i += 2
+      else
+        Array.push(p, src[i])
+        Array.push(special, src[i] == "%" || src[i] == "_")
+        i += 1
+      end
+    end
+    nt = Array.size(t)
+    np = Array.size(p)
+    ti = 0
+    pi = 0
+    star = -1
+    mark = 0
+    while ti < nt
+      if pi < np && special[pi] && p[pi] == "%"
+        star = pi
+        mark = ti
+        pi += 1
+      elsif pi < np && ((special[pi] && p[pi] == "_") || (!special[pi] && p[pi] == t[ti]))
+        pi += 1
+        ti += 1
+      elsif star >= 0
+        pi = star + 1
+        mark += 1
+        ti = mark
+      else
+        return false
+      end
+    end
+    pi += 1 while pi < np && special[pi] && p[pi] == "%"
+    pi == np
+  end
+
+  # GLOB: does the pattern match the whole text? Both are text forms.
+  def glob?(text, pattern)
+    items = glob_items(pattern)
+    return false if items == nil
+    t = String.chars(text)
+    nt = Array.size(t)
+    np = Array.size(items)
+    ti = 0
+    pi = 0
+    star = -1
+    mark = 0
+    while ti < nt
+      if pi < np && GlobItem.kind(items[pi]) == :star
+        star = pi
+        mark = ti
+        pi += 1
+      elsif pi < np && glob_item_matches?(items[pi], t[ti])
+        pi += 1
+        ti += 1
+      elsif star >= 0
+        pi = star + 1
+        mark += 1
+        ti = mark
+      else
+        return false
+      end
+    end
+    pi += 1 while pi < np && GlobItem.kind(items[pi]) == :star
+    pi == np
+  end
+
+  # One character against a non-star item.
+  def glob_item_matches?(item, c)
+    case GlobItem.kind(item)
+    in :one then true
+    in :lit then GlobItem.ch(item) == c
+    else
+      code = String.ord(c)
+      found = false
+      Array.each(GlobItem.ranges(item)) { |r| found = true if code >= r[0] && code <= r[1] }
+      found != GlobItem.neg(item)
+    end
+  end
+
+  # The pattern as items, or nil when a "[" has no "]" to close it (the pattern matches nothing).
+  def glob_items(pattern)
+    g = String.chars(pattern)
+    n = Array.size(g)
+    items = GlobItem[]
+    i = 0
+    while i < n
+      c = g[i]
+      if c == "*"
+        Array.push(items, GlobItem.new(:star, "", false, Tuple[]))
+        i += 1
+      elsif c == "?"
+        Array.push(items, GlobItem.new(:one, "", false, Tuple[]))
+        i += 1
+      elsif c == "["
+        close = class_end(g, i)
+        return nil if close < 0
+        Array.push(items, glob_class(g, i, close))
+        i = close + 1
+      else
+        Array.push(items, GlobItem.new(:lit, c, false, Tuple[]))
+        i += 1
+      end
+    end
+    items
+  end
+
+  # Index of the "]" closing the class that starts at g[start] == "[", or -1. A "]" right after the
+  # "[" (or after "[^") is a member.
+  def class_end(g, start)
+    n = Array.size(g)
+    k = start + 1
+    k += 1 if k < n && g[k] == "^"
+    k += 1 if k < n && g[k] == "]"
+    k += 1 while k < n && g[k] != "]"
+    k < n ? k : -1
+  end
+
+  # The class written in g[start .. close] as an item.
+  def glob_class(g, start, close)
+    first = start + 1
+    neg = first < close && g[first] == "^"
+    first += 1 if neg
+    ranges = Tuple[]
+    i = first
+    while i < close
+      if i + 2 < close && g[i + 1] == "-"
+        Array.push(ranges, [String.ord(g[i]), String.ord(g[i + 2])])
+        i += 3
+      else
+        Array.push(ranges, [String.ord(g[i]), String.ord(g[i])])
+        i += 1
+      end
+    end
+    GlobItem.new(:class, "", neg, ranges)
+  end
+end

@@ -1,0 +1,168 @@
+# Pattern matching shared by LIKE (spec 2.3, 7.3) and GLOB (7.2): a pattern is first turned into
+# tokens, then one matcher walks the text. Callers fold case themselves (LIKE does, GLOB does not).
+
+# A `[...]` class: the single characters, the ranges (los[i]..his[i]), and whether it is `[^...]`.
+class PatClass
+  attr_reader negated, singles, los, his
+end
+
+# kind is PatternMatch.kind_lit (ch), kind_one, kind_many or kind_set (cls); the unused fields are
+# "" and an empty class.
+class PatToken
+  attr_reader kind, ch, cls
+end
+
+module PatternMatch
+  module_function
+
+  def kind_lit = 0
+  def kind_one = 1
+  def kind_many = 2
+  def kind_set = 3
+
+  def empty_class = PatClass.new(false, Array[], Array[], Array[])
+
+  def literal(ch) = PatToken.new(kind_lit, ch, empty_class)
+
+  # Does the pattern (an Array of PatToken) match the whole of `t` (an Array of characters)?
+  def run(t, toks)
+    ti = 0
+    ti_end = Array.size(t)
+    pi = 0
+    star = -1  # where the last "many" token is; mark is where it started matching in the text
+    mark = 0
+    while ti < ti_end
+      kind = pi < Array.size(toks) ? PatToken.kind(Array.fetch(toks, pi)) : -1
+      if kind == kind_many
+        star = pi
+        mark = ti
+        pi += 1
+      elsif kind != -1 && one_matches?(Array.fetch(toks, pi), Array.fetch(t, ti))
+        ti += 1
+        pi += 1
+      elsif star != -1
+        mark += 1
+        ti = mark
+        pi = star + 1
+      else
+        return false
+      end
+    end
+    while pi < Array.size(toks) && PatToken.kind(Array.fetch(toks, pi)) == kind_many
+      pi += 1
+    end
+    pi == Array.size(toks)
+  end
+
+  # Does the token (not a "many") match the one character `ch`?
+  def one_matches?(tok, ch)
+    case PatToken.kind(tok)
+    in 0 then ch == PatToken.ch(tok)
+    in 1 then true
+    else class_matches?(PatToken.cls(tok), ch)
+    end
+  end
+
+  def class_matches?(cls, ch)
+    found = Array.include?(PatClass.singles(cls), ch)
+    i = 0
+    while !found && i < Array.size(PatClass.los(cls))
+      found = Array.fetch(PatClass.los(cls), i) <= ch && ch <= Array.fetch(PatClass.his(cls), i)
+      i += 1
+    end
+    PatClass.negated(cls) ? !found : found
+  end
+
+  # LIKE tokens: `%` many, `_` one, anything else literal; `esc` ("" for none) makes the character
+  # after it literal. nil when `esc` ends the pattern: such a pattern matches nothing.
+  def like_tokens(chars, esc)
+    toks = PatToken[]
+    n = Array.size(chars)
+    i = 0
+    while i < n
+      c = Array.fetch(chars, i)
+      if c == esc
+        return nil if i + 1 >= n
+        Array.push(toks, literal(Array.fetch(chars, i + 1)))
+        i += 2
+      else
+        if c == "%"
+          Array.push(toks, PatToken.new(kind_many, "", empty_class))
+        elsif c == "_"
+          Array.push(toks, PatToken.new(kind_one, "", empty_class))
+        else
+          Array.push(toks, literal(c))
+        end
+        i += 1
+      end
+    end
+    toks
+  end
+
+  # GLOB tokens: `*` many, `?` one, `[...]` a class, anything else (`]` too) literal. nil when a `[`
+  # has no `]` to close it: such a pattern matches nothing.
+  def glob_tokens(chars)
+    toks = PatToken[]
+    n = Array.size(chars)
+    i = 0
+    while i < n
+      c = Array.fetch(chars, i)
+      if c == "*"
+        Array.push(toks, PatToken.new(kind_many, "", empty_class))
+        i += 1
+      elsif c == "?"
+        Array.push(toks, PatToken.new(kind_one, "", empty_class))
+        i += 1
+      elsif c == "["
+        close = class_end(chars, i)
+        return nil if close == -1
+        Array.push(toks, PatToken.new(kind_set, "", glob_class(chars, i + 1, close)))
+        i = close + 1
+      else
+        Array.push(toks, literal(c))
+        i += 1
+      end
+    end
+    toks
+  end
+
+  # Index of the `]` closing the class that opens at `open`, or -1. A `]` right after `[` or `[^` is a member.
+  def class_end(chars, open)
+    n = Array.size(chars)
+    j = open + 1
+    j += 1 if j < n && Array.fetch(chars, j) == "^"
+    j += 1 if j < n && Array.fetch(chars, j) == "]"
+    while j < n && Array.fetch(chars, j) != "]"
+      j += 1
+    end
+    j < n ? j : -1
+  end
+
+  # The class whose members are chars[first...close] (first is just after the `[`; a leading `^` negates).
+  def glob_class(chars, first, close)
+    negated = Array.fetch(chars, first) == "^"
+    i = negated ? first + 1 : first
+    singles = String[]
+    los = String[]
+    his = String[]
+    while i < close
+      c = Array.fetch(chars, i)
+      if i + 2 < close && Array.fetch(chars, i + 1) == "-"
+        Array.push(los, c)
+        Array.push(his, Array.fetch(chars, i + 2))
+        i += 3
+      else
+        Array.push(singles, c)
+        i += 1
+      end
+    end
+    PatClass.new(negated, singles, los, his)
+  end
+
+  # Does GLOB pattern `pattern` match the whole of `text`? Case-sensitive.
+  def glob_matches?(text, pattern)
+    toks = glob_tokens(String.chars(pattern))
+    return false if toks == nil
+    run(String.chars(text), toks)
+  end
+end

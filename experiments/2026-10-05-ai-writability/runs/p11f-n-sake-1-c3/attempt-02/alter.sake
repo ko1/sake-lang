@@ -1,0 +1,47 @@
+# ALTER TABLE (spec 5.6): ADD COLUMN, RENAME TO, RENAME COLUMN. A changed table is a new Table that
+# replaces the old one in the database (so a ROLLBACK can bring the old one back).
+module Alter
+  module_function
+
+  def add_column(db, st)
+    table = Database.table(db, AlterAddColumn.table(st))
+    d = AlterAddColumn.column(st)
+    name = ColumnDef.name(d)
+    raise SqlError.new("duplicate column name: #{name}") if Table.column_position(table, name) != nil
+    raise SqlError.new("Cannot add a PRIMARY KEY column") if ColumnDef.primary_key(d)
+    raise SqlError.new("Cannot add a UNIQUE column") if ColumnDef.unique(d)
+    has_rows = !Array.empty?(Table.rows(table))
+    if ColumnDef.not_null(d) && ColumnDef.default(d) == nil && has_rows
+      raise SqlError.new("Cannot add a NOT NULL column with default value NULL")
+    end
+    column = Column.new(name, Value.lower(name), ColumnDef.type(d), ColumnDef.not_null(d), ColumnDef.default(d))
+    filler = has_rows ? Coercion.for_storage(ColumnDef.default(d), ColumnDef.type(d), Table.name(table), name) : nil
+    # The new value goes before the rowid, which stays the last value of a row.
+    width = Array.size(Table.columns(table))
+    rows = Array.map(Table.rows(table)) { Array.concat(Array.take(it, width), Array[filler, Array.fetch(it, width)]) }
+    Database.add_table(db, Table.with_columns(table, Array.concat(Array.dup(Table.columns(table)), Array[column]), rows))
+  end
+
+  def rename_table(db, st)
+    table = Database.table(db, AlterRenameTable.table(st))
+    new_name = AlterRenameTable.new_name(st)
+    if Database.taken_by(db, new_name) != nil || Database.index(db, new_name) != nil
+      raise SqlError.new("there is already another table or index with this name: #{new_name}")
+    end
+    Database.rename_table(db, table, new_name)
+  end
+
+  def rename_column(db, st)
+    table = Database.table(db, AlterRenameColumn.table(st))
+    old_name = AlterRenameColumn.column(st)
+    pos = Table.column_position(table, old_name)
+    raise SqlError.new("no such column: \"#{old_name}\"") if pos == nil
+    new_name = AlterRenameColumn.new_name(st)
+    clash = Table.column_position(table, new_name)
+    raise SqlError.new("duplicate column name: #{new_name}") if clash != nil && clash != pos
+    columns = Array.map(Array.each_with_index(Table.columns(table))) do |c, i|
+      i == pos ? Column.new(new_name, Value.lower(new_name), Column.type(c), Column.not_null(c), Column.default(c)) : c
+    end
+    Database.add_table(db, Table.with_columns(table, columns, Table.rows(table)))
+  end
+end

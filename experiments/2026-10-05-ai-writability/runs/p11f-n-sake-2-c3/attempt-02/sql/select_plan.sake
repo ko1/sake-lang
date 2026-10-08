@@ -1,0 +1,217 @@
+# Planning a query (1.7, 3.x, 4.x, 5.1): every name is resolved and every clause turned into the
+# expressions Select.execute evaluates, before any row is read. Select.execute runs the plan.
+# A query plans to a SelectPlan (one simple select) or a CompoundPlan (see compound.sake).
+
+# One ORDER BY term, planned: `item` is the position of the result column it means, or -1 if the
+# term is an expression `expr` evaluated on the joined row.
+SortKey = Struct.new(:item, :expr)
+
+# A planned SELECT.
+#   joins       Join[]: the FROM clause (empty without FROM)
+#   items       ResultCol[]: the result columns, `*` expanded, expressions resolved
+#   cond        the WHERE condition (nil if none)
+#   aggregate   whether it is an aggregate query (3.3)
+#   group_keys  the GROUP BY terms as expressions;  calls: the distinct aggregate calls
+#   windows     the distinct window calls (WindowCall[]), computed after HAVING (slot k: see WindowRun)
+#   having      the HAVING condition (nil if none)
+#   keys        SortKey[] and terms (the OrderTerm[] as written: direction and NULLS) of ORDER BY
+#   limit offset  Integers, -1 when absent
+#   distinct    SELECT DISTINCT
+#   width       the number of columns of a joined row
+#   correlated  whether it reaches a column of an enclosing query
+#   memo        holds the rows of an uncorrelated subquery after its first run
+SelectPlan = Struct.new(:joins, :items, :cond, :aggregate, :group_keys, :calls, :windows, :having, :keys, :terms, :limit, :offset, :distinct, :width, :correlated, :memo)
+
+module Planner
+  module_function
+
+  # The plan for a query (SelectStmt, CompoundStmt or WithStmt), as a subquery of the queries whose
+  # scopes are `parents` (innermost first).
+  def plan(db, stmt, parents)
+    case stmt
+    in SelectStmt then plan_select(db, stmt, parents)
+    in CompoundStmt then Compound.plan(db, stmt, parents)
+    in WithStmt then plan(Ctes.layer(db, stmt), WithStmt.body(stmt), parents)
+    else Errors.syntax
+    end
+  end
+
+  # The plan for one simple select.
+  def plan_select(db, stmt, parents)
+    marks = Array[]
+    joins = From.plan(db, SelectStmt.from(stmt), parents, marks)
+    sources = From.sources_of(joins)
+    width = 0
+    Array.each(sources) { |s| width += Names.width(s) }
+    Windows.check_names(SelectStmt.windows(stmt))
+    wcalls = WindowCall[]
+    base = Scope.new(db, sources, AliasEntry[], :plain, AggCall[], parents, width, marks, WindowSink.new(false, wcalls, SelectStmt.windows(stmt)))
+    shown = Resolver.with_windows(base, true)
+    aggregate = aggregate_query?(stmt)
+    calls = AggCall[]
+    items = expand(SelectStmt.items(stmt), Resolver.with_mode(shown, AliasEntry[], aggregate ? :collect : :plain, calls))
+    Errors.sql_error("HAVING clause on a non-aggregate query") if SelectStmt.having(stmt) != nil && !aggregate
+    aliases = aliases_of(items)
+    where = SelectStmt.where(stmt)
+    cond = where == nil ? nil : Resolver.resolve(where, Resolver.with_mode(base, aliases, :plain, AggCall[]))
+    group_keys = plan_group(SelectStmt.group(stmt), items, Resolver.with_mode(base, aliases, :group_by, AggCall[]))
+    having = SelectStmt.having(stmt)
+    having_cond = having == nil ? nil : Resolver.resolve(having, Resolver.with_mode(base, aliases, :collect, calls))
+    keys = plan_order(SelectStmt.order(stmt), items, Resolver.with_mode(shown, aliases, aggregate ? :collect : :order, calls))
+    limit = count_of(db, SelectStmt.limit(stmt))
+    offset = count_of(db, SelectStmt.offset(stmt))
+    SelectPlan.new(joins, items, cond, aggregate, group_keys, calls, wcalls, having_cond, keys, SelectStmt.order(stmt), limit, offset,
+                   SelectStmt.distinct(stmt), width, !Array.empty?(marks), Array[])
+  end
+
+  # The columns of a plan's result, as a subquery source sees them (4.1).
+  def columns(plan)
+    case plan
+    in SelectPlan then select_columns(plan)
+    in CompoundPlan then CompoundPlan.columns(plan)
+    else raise(ArgumentError, "a plan with no columns")
+    end
+  end
+
+  def width(plan) = Array.size(columns(plan))
+
+  # The columns named by the list a view or a cte gives (names only; the affinity stays); `columns`
+  # when there is no list.
+  def rename_columns(columns, names, owner)
+    return columns if Array.empty?(names)
+    if Array.size(names) != Array.size(columns)
+      Errors.sql_error("expected #{Array.size(names)} columns for '#{owner}' but got #{Array.size(columns)}")
+    end
+    out = Column[]
+    i = 0
+    Array.each(columns) do |c|
+      Array.push(out, Column.new(names[i], Column.type(c), false, nil))
+      i += 1
+    end
+    out
+  end
+
+  # Whether the plan reaches a column of an enclosing query.
+  def correlated(plan)
+    case plan
+    in SelectPlan then SelectPlan.correlated(plan)
+    in CompoundPlan then CompoundPlan.correlated(plan)
+    else false
+    end
+  end
+
+  # Where an uncorrelated subquery keeps its rows after its first run.
+  def memo(plan)
+    case plan
+    in SelectPlan then SelectPlan.memo(plan)
+    in CompoundPlan then CompoundPlan.memo(plan)
+    else raise(ArgumentError, "a plan with no memo")
+    end
+  end
+
+  def select_columns(plan)
+    Array.map(SelectPlan.items(plan)) do |it|
+      e = ResultCol.expr(it)
+      plain = Expr.kind(e) == :ref && Expr.text(e) != ""
+      name = ResultCol.alias(it) != "" ? ResultCol.alias(it) : (plain ? Expr.text(e) : "")
+      Column.new(name, Expr.aff(e), false, nil)
+    end
+  end
+
+  # An aggregate query has GROUP BY or an aggregate call in its result columns (3.3).
+  def aggregate_query?(stmt)
+    return true unless Array.empty?(SelectStmt.group(stmt))
+    Array.any?(SelectStmt.items(stmt)) { |it| !ResultCol.star(it) && Aggregates.first_name(ResultCol.expr(it)) != "" }
+  end
+
+  # The result columns with `*` and `q.*` replaced by the sources' columns and every expression resolved.
+  def expand(items, scope)
+    out = ResultCol[]
+    Array.each(items) do |it|
+      if ResultCol.star(it)
+        Errors.sql_error("no tables specified") if Array.empty?(Scope.sources(scope))
+        Array.each(Names.star(scope, ResultCol.table(it))) { |ref| Array.push(out, ResultCol.new(false, ref, "", "", "")) }
+      else
+        agg = Aggregates.first_name(ResultCol.expr(it))
+        Array.push(out, ResultCol.new(false, Resolver.resolve(ResultCol.expr(it), scope), ResultCol.alias(it), agg, ""))
+      end
+    end
+    out
+  end
+
+  def aliases_of(items)
+    out = AliasEntry[]
+    Array.each(items) do |it|
+      Array.push(out, AliasEntry.new(Catalog.key(ResultCol.alias(it)), ResultCol.expr(it), ResultCol.agg(it))) if ResultCol.alias(it) != ""
+    end
+    out
+  end
+
+  # Position of the result column with this alias (case-insensitive), or -1.
+  def alias_position(items, name)
+    k = Catalog.key(name)
+    Array.find_index(items) { |it| ResultCol.alias(it) != "" && Catalog.key(ResultCol.alias(it)) == k } || -1
+  end
+
+  # The GROUP BY terms as expressions on the table row; `GROUP BY k` is the k-th result column.
+  def plan_group(terms, items, scope)
+    keys = Expr[]
+    n = Array.size(items)
+    pos = 0
+    Array.each(terms) do |t|
+      pos += 1
+      if OrderTerm.by_position(t)
+        k = OrderTerm.position(t)
+        if k < 1 || k > n
+          Errors.sql_error("#{Errors.ordinal(pos)} GROUP BY term out of range - should be between 1 and #{n}")
+        end
+        if ResultCol.agg(items[k - 1]) != ""
+          Errors.sql_error("aggregate functions are not allowed in the GROUP BY clause")
+        end
+        misuse = Windows.window_name(ResultCol.expr(items[k - 1]), WindowSink.calls(Scope.windows(scope)))
+        Errors.sql_error("misuse of window function #{misuse}()") if misuse != ""
+        Array.push(keys, ResultCol.expr(items[k - 1]))
+      else
+        Array.push(keys, Resolver.resolve(OrderTerm.expr(t), scope))
+      end
+    end
+    keys
+  end
+
+  def plan_order(terms, items, scope)
+    keys = SortKey[]
+    n = Array.size(items)
+    pos = 0
+    Array.each(terms) do |t|
+      pos += 1
+      e = OrderTerm.expr(t)
+      if OrderTerm.by_position(t)
+        k = OrderTerm.position(t)
+        if k < 1 || k > n
+          Errors.sql_error("#{Errors.ordinal(pos)} ORDER BY term out of range - should be between 1 and #{n}")
+        end
+        Array.push(keys, SortKey.new(k - 1, e))
+      else
+        alias_at = Expr.kind(e) == :col && Expr.qual(e) == "" ? alias_position(items, Expr.text(e)) : -1
+        if alias_at >= 0
+          Array.push(keys, SortKey.new(alias_at, e))
+        else
+          Array.push(keys, SortKey.new(-1, Resolver.resolve(e, scope)))
+        end
+      end
+    end
+    keys
+  end
+
+  # The value of a LIMIT or OFFSET expression as an Integer; -1 if absent or not a number.
+  def count_of(db, expr)
+    return -1 if expr == nil
+    v = Eval.value_of(Resolver.resolve(expr, Resolver.constant_scope(db)), Eval.top(Array[]))
+    case v
+    in Integer then v
+    in Float then Float.truncate(v)
+    in String then Arithmetic.truncate(Values.to_number(v))
+    else -1
+    end
+  end
+end

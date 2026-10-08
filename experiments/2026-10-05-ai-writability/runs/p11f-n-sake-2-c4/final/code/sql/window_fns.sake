@@ -1,0 +1,76 @@
+# The window functions (6.3): the value for the row at position p of a partition (PartRows).
+
+module WindowFns
+  module_function
+
+  def value(call, part, p)
+    n = Array.size(PartRows.envs(part))
+    case WindowCall.name(call)
+    in "row_number" then p + 1
+    in "rank" then PartRows.peer_lo(part)[p] + 1
+    in "dense_rank" then PartRows.dense(part)[p]
+    in "percent_rank" then percent_rank(part, p, n)
+    in "cume_dist" then Integer.to_f(PartRows.peer_hi(part)[p]) / Integer.to_f(n)
+    in "ntile" then ntile(call, part, p, n)
+    in "lag" then shifted(call, part, p, -1)
+    in "lead" then shifted(call, part, p, 1)
+    in "first_value" | "last_value" | "nth_value" then from_frame(call, part, p)
+    else aggregate(call, part, p)
+    end
+  end
+
+  def argument(call, i, part, p) = Eval.value_of(WindowCall.args(call)[i], PartRows.envs(part)[p])
+
+  def percent_rank(part, p, n)
+    return 0.0 if n == 1
+    Integer.to_f(PartRows.peer_lo(part)[p]) / Integer.to_f(n - 1)
+  end
+
+  # The bucket of position p when n rows go into `buckets` buckets, the larger ones first.
+  def ntile(call, part, p, n)
+    arg = argument(call, 0, part, p)
+    buckets = arg == nil ? 0 : Functions.integer_of(arg)
+    Errors.sql_error("argument of ntile must be a positive integer") if buckets < 1
+    size = n / buckets
+    extra = n % buckets
+    big = size + 1
+    return p / big + 1 if p < extra * big
+    extra + (p - extra * big) / size + 1
+  end
+
+  # lag (dir -1) and lead (dir 1): the first argument on the row k positions away, or the default.
+  def shifted(call, part, p, dir)
+    args = WindowCall.args(call)
+    k = 1
+    if Array.size(args) > 1
+      kv = argument(call, 1, part, p)
+      return nil if kv == nil
+      k = Functions.integer_of(kv)
+    end
+    at = p + dir * k
+    return argument(call, 0, part, at) if at >= 0 && at < Array.size(PartRows.envs(part))
+    Array.size(args) > 2 ? argument(call, 2, part, p) : nil
+  end
+
+  # first_value, last_value and nth_value: the first argument on a row of the frame; NULL if none.
+  def from_frame(call, part, p)
+    name = WindowCall.name(call)
+    nth = 1
+    if name == "nth_value"
+      nv = argument(call, 1, part, p)
+      nth = nv == nil ? 0 : Functions.integer_of(nv)
+      Errors.sql_error("second argument to nth_value must be a positive integer") if nth < 1
+    end
+    first, last = WindowFrame.bounds(WindowCall.frame(call), part, p)
+    return nil if first > last
+    at = name == "last_value" ? last : first + nth - 1
+    at > last ? nil : argument(call, 0, part, at)
+  end
+
+  # An aggregate over the frame's rows, in partition order.
+  def aggregate(call, part, p)
+    first, last = WindowFrame.bounds(WindowCall.frame(call), part, p)
+    rows = first > last ? Env[] : Array.take(Array.drop(PartRows.envs(part), first), last - first + 1)
+    Aggregates.compute(AggCall.new(WindowCall.name(call), WindowCall.star(call), false, WindowCall.args(call), OrderTerm[]), rows)
+  end
+end
