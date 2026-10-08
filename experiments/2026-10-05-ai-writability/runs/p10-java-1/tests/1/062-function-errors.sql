@@ -1,0 +1,16 @@
+SELECT nosuch(1);
+SELECT Frobnicate();
+SELECT length();
+SELECT length('a', 'b');
+SELECT UPPER('a', 'b');
+SELECT coalesce(1);
+SELECT Coalesce();
+SELECT ifnull(1, 2, 3);
+SELECT NullIf(1);
+SELECT typeof();
+SELECT abs(1, 2);
+SELECT lower();
+CREATE TABLE t (a INTEGER);
+INSERT INTO t VALUES (nope(1));
+SELECT a FROM t WHERE bogus(a);
+SELECT upper('fine');

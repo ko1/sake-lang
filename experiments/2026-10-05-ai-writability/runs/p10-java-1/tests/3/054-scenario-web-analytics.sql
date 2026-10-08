@@ -1,0 +1,22 @@
+-- page views by path and visitor
+CREATE TABLE views (id INTEGER PRIMARY KEY, path TEXT NOT NULL, visitor TEXT, ms INTEGER);
+INSERT INTO views (path, visitor, ms) VALUES ('/', 'v1', 120), ('/about', 'v1', 80), ('/', 'v2', 200);
+INSERT INTO views (path, visitor, ms) VALUES ('/blog/a', 'v3', 340), ('/blog/b', 'v2', 410), ('/', NULL, 90);
+INSERT INTO views (path, visitor, ms) VALUES ('/blog/a', 'v1', 300), ('/about', 'v3', NULL);
+SELECT count(*), count(visitor), count(DISTINCT visitor) FROM views;
+SELECT path, count(*) AS hits FROM views GROUP BY path ORDER BY hits DESC, path;
+SELECT path, avg(ms) FROM views GROUP BY path ORDER BY path;
+SELECT substr(path, 1, 5) = '/blog' AS blog, count(*), sum(ms) FROM views GROUP BY blog ORDER BY blog;
+SELECT visitor, group_concat(path, ' > ' ORDER BY id) FROM views WHERE visitor IS NOT NULL GROUP BY visitor ORDER BY visitor;
+SELECT visitor, count(*) FROM views GROUP BY visitor ORDER BY visitor NULLS FIRST;
+SELECT path FROM views GROUP BY path HAVING max(ms) > 300 ORDER BY path;
+SELECT max(ms), path FROM views;
+SELECT path, min(ms) AS fastest FROM views GROUP BY path ORDER BY fastest NULLS LAST, path;
+UPDATE views SET ms = 0 WHERE ms IS NULL;
+SELECT total(ms), avg(ms) FROM views WHERE path = '/about';
+INSERT INTO views (id, path, visitor, ms) VALUES (3, '/x', 'v9', 1);
+SELECT count(*) FROM views;
+SELECT DISTINCT visitor FROM views WHERE path LIKE '/BLOG%' ORDER BY visitor;
+DELETE FROM views WHERE visitor IS NULL;
+SELECT count(*), sum(ms), min(id), max(id) FROM views;
+SELECT path, count(*) FROM views GROUP BY path HAVING count(*) = 1 ORDER BY path;

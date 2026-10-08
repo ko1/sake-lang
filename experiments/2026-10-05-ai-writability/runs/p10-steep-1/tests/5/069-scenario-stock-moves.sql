@@ -1,0 +1,28 @@
+-- scenario: stock movements posted in batches; a bad batch is rolled back
+CREATE TABLE item (code TEXT PRIMARY KEY, name TEXT, qty INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE move (id INTEGER PRIMARY KEY, code TEXT NOT NULL, delta INTEGER NOT NULL);
+INSERT INTO item (code, name) VALUES ('b1', 'bolt'), ('n1', 'nut'), ('w1', 'washer');
+BEGIN;
+INSERT INTO move (code, delta) VALUES ('b1', 100), ('n1', 40), ('w1', 70);
+UPDATE item SET qty = qty + (SELECT sum(delta) FROM move WHERE move.code = item.code);
+COMMIT;
+SELECT code, qty FROM item ORDER BY code;
+BEGIN;
+INSERT INTO move (code, delta) VALUES ('b1', -30), ('n1', -50);
+UPDATE item SET qty = (SELECT sum(delta) FROM move WHERE move.code = item.code);
+SELECT code, qty FROM item WHERE qty < 0;
+ROLLBACK;
+SELECT count(*), sum(delta) FROM move;
+BEGIN;
+INSERT INTO move (code, delta) VALUES ('w1', -20);
+INSERT INTO move (code, delta) VALUES (NULL, 5);
+INSERT INTO move (code, delta) VALUES ('n1', 'ten');
+UPDATE item SET qty = qty - 20 WHERE code = 'w1';
+END;
+SELECT code, qty FROM item ORDER BY qty DESC;
+CREATE VIEW ledger AS SELECT code, sum(delta) AS net, count(*) AS moves FROM move GROUP BY code;
+SELECT i.name, l.net, l.moves, i.qty = l.net FROM item i JOIN ledger l ON l.code = i.code ORDER BY i.name;
+WITH low AS (SELECT code FROM item WHERE qty < 60) SELECT name FROM item WHERE code IN (SELECT code FROM low) ORDER BY name;
+SELECT code, delta FROM move WHERE delta < 0 UNION ALL SELECT code, qty FROM item WHERE qty > 90 ORDER BY 2;
+ALTER TABLE item ADD COLUMN min_qty INTEGER DEFAULT 50;
+SELECT code FROM item WHERE qty < min_qty EXCEPT SELECT code FROM ledger WHERE moves > 1;

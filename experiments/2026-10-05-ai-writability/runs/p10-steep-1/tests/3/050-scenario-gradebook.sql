@@ -1,0 +1,24 @@
+-- grades per course; report averages, best students, failing counts
+CREATE TABLE students (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, year INTEGER);
+CREATE TABLE grades (student INTEGER, course TEXT, score INTEGER, PRIMARY KEY (student, course));
+INSERT INTO students (name, year) VALUES ('amy', 1), ('ben', 2), ('cal', 1), ('dot', 2);
+INSERT INTO grades VALUES (1, 'math', 90), (1, 'art', 72), (2, 'math', 55), (2, 'art', 81);
+INSERT INTO grades VALUES (3, 'math', 67), (3, 'bio', 88), (4, 'bio', 49), (4, 'math', 95);
+INSERT INTO grades VALUES (1, 'math', 99);
+SELECT count(*) FROM grades;
+SELECT course, count(*), avg(score) FROM grades GROUP BY course ORDER BY course;
+SELECT course, max(score), student FROM grades GROUP BY course ORDER BY course;
+SELECT student, sum(score) AS pts FROM grades GROUP BY student ORDER BY pts DESC;
+SELECT course, sum(CASE WHEN score < 60 THEN 1 ELSE 0 END) AS failing FROM grades GROUP BY course ORDER BY failing DESC, course;
+SELECT year, count(*) FROM students GROUP BY year ORDER BY year;
+SELECT course FROM grades GROUP BY course HAVING min(score) >= 60 ORDER BY course;
+UPDATE grades SET score = score + 10 WHERE score < 60;
+SELECT min(score), max(score) FROM grades;
+SELECT course, group_concat(student, ' ' ORDER BY score DESC) FROM grades GROUP BY course ORDER BY course;
+SELECT count(DISTINCT course), count(DISTINCT student) FROM grades;
+SELECT score / 10 * 10 AS band, count(*) FROM grades GROUP BY band ORDER BY band;
+INSERT INTO students (name, year) VALUES ('amy', 3);
+SELECT count(*), max(id) FROM students;
+DELETE FROM grades WHERE course = 'art';
+SELECT student, count(*) FROM grades GROUP BY student HAVING count(*) = 2 ORDER BY student;
+SELECT DISTINCT course FROM grades ORDER BY course DESC;

@@ -1,0 +1,21 @@
+-- scenario: blog posts and tags, searched with compound selects and ctes
+CREATE TABLE post (id INTEGER PRIMARY KEY, title TEXT, author TEXT);
+CREATE TABLE tag (post_id INTEGER, label TEXT, UNIQUE (post_id, label));
+INSERT INTO post (title, author) VALUES ('Intro to SQL', 'kim'), ('Joins', 'kim'), ('Cooking rice', 'lee'), ('SQL and rice', 'lee');
+INSERT INTO tag VALUES (1, 'sql'), (2, 'sql'), (2, 'advanced'), (3, 'food'), (4, 'sql'), (4, 'food');
+INSERT INTO tag VALUES (4, 'food');
+SELECT p.title FROM post p JOIN tag t ON t.post_id = p.id WHERE t.label = 'sql' INTERSECT SELECT p.title FROM post p JOIN tag t ON t.post_id = p.id WHERE t.label = 'food';
+SELECT title FROM post WHERE id IN (SELECT post_id FROM tag WHERE label = 'sql' EXCEPT SELECT post_id FROM tag WHERE label = 'advanced') ORDER BY title;
+SELECT label FROM tag UNION SELECT author FROM post ORDER BY label;
+CREATE VIEW tagcount AS SELECT label, count(*) AS n FROM tag GROUP BY label;
+SELECT label, n FROM tagcount ORDER BY n DESC, label;
+INSERT INTO tag SELECT id, 'kim' FROM post WHERE author = 'kim';
+SELECT label, n FROM tagcount WHERE n = 2 ORDER BY label;
+WITH popular AS (SELECT label FROM tagcount WHERE n >= 3) SELECT p.title, group_concat(t.label, '+' ORDER BY t.label) FROM post p JOIN tag t ON t.post_id = p.id WHERE t.label IN (SELECT label FROM popular) GROUP BY p.id ORDER BY p.id;
+SELECT title FROM post WHERE title LIKE '%sql%' UNION ALL SELECT label FROM tag WHERE label LIKE 's%' ORDER BY 1;
+DELETE FROM tag WHERE label = 'kim';
+SELECT count(*) FROM tagcount;
+SELECT author, count(*) FROM post GROUP BY author UNION SELECT 'all', count(*) FROM post ORDER BY 2 DESC, 1;
+SELECT title AS t FROM post UNION SELECT label FROM tag ORDER BY t DESC LIMIT 3;
+SELECT title FROM post UNION SELECT label FROM tag ORDER BY title, 2;
+DROP VIEW tagcount;

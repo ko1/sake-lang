@@ -3,11 +3,14 @@
 # P10 summary: per run and stage, the hidden and public results (runs/grade-p10.jsonl, last line per
 # run+stage), lines of code, output tokens and working time (runs/usage-p10.tsv), and from each
 # agent's transcript:
-#   test_runs  - shell commands that ran run_tests.rb
-#   checks     - other shell commands that ran bin/sake at a checking level (-c, or a run without
-#                --strict=0; --strict=1 and 2 check the whole program before running it) (Sake only)
-#   rejected   - command results in which the Sake checker rejected a program: run_tests.rb's
-#                "CHECK FAILED", or a line "<file>.sake:<line>:<col>: error:" in the output
+#   test_runs  - shell commands that ran run_tests.rb with ruby (reading the file, e.g. with cat, is not a run)
+#   checks     - other shell commands that ran a checker or compiler on their own: bin/sake at a checking
+#                level (-c, or a run without --strict=0; --strict=1 and 2 check the whole program before
+#                running it), javac, ghc, or steep
+#   rejected   - command results in which the checker or compiler rejected a program: run_tests.rb's
+#                "CHECK FAILED", or a diagnostic line in the output ("<f>.sake:L:C: error:",
+#                "<f>.java:L: error:", "<f>.hs:L:C: error", "<f>.rb:L:C: [error]" or "[warning]" from
+#                Steep). Chez Scheme has no checker; its errors appear when a test runs.
 #   test_secs  - wall time between each test-running command and its result, summed (includes queueing
 #                on a shared machine)
 #   ruby harness/summarize_p10.rb [TRANSCRIPT_DIR]
@@ -42,8 +45,9 @@ def transcript_stats(path)
       if c["type"] == "tool_use" && c["name"] == "Bash"
         cmd = c.dig("input", "command").to_s
         sake_lines = cmd.lines.flat_map { _1.split(/[|;&]+/) }.grep(%r{bin/sake\b})
-        kind = if cmd.include?("run_tests.rb") then :test
+        kind = if cmd.match?(/\bruby\s+(-\S+\s+)*\S*run_tests\.rb\b/) then :test
                elsif sake_lines.any? { !_1.include?("--strict=0") || _1 =~ /\s-c\b/ } then :check
+               elsif cmd.match?(/(^|[\s;&|(])(javac|ghc|steep)\s/) then :check
                end
         calls[c["id"]] = [kind, t] if kind
       elsif c["type"] == "tool_result" && (k = calls[c["tool_use_id"]])
@@ -51,7 +55,8 @@ def transcript_stats(path)
         kind, t0 = k
         stats[kind == :test ? :test_runs : :checks] += 1
         stats[:test_secs] += (t - t0) if kind == :test && t && t0
-        rej = text.include?("CHECK FAILED") || text.match?(/\.sake:\d+:\d+: error:/)
+        rej = text.include?("CHECK FAILED") ||
+              text.match?(/\.sake:\d+:\d+: error:|\.java:\d+: error:|\.hs:\d+:\d+: error|\.rb:\d+:\d+: \[(error|warning)\]/)
         stats[:rejected] += 1 if rej
       end
     end
@@ -73,7 +78,7 @@ puts cols.join("\t")
 rows.each { |r| puts cols.map { r[_1] }.join("\t") }
 puts
 puts "per language (sum over stages, mean over the two runs):"
-rows.group_by { _1[:run][/ruby|sake/] }.each do |lang, rs|
+rows.group_by { _1[:run][/\Ap10-(\w+)-\d+\z/, 1] or abort "run name #{_1[:run]}" }.each do |lang, rs|
   n = rs.map { _1[:run] }.uniq.length
   final = rs.select { _1[:stage] == 6 }
   puts format("%-5s out %.0fk  time %.0f min  test runs %.0f  test wait %.0f min  checks %.0f  rejected %.0f  final lines %s  final hidden %s",

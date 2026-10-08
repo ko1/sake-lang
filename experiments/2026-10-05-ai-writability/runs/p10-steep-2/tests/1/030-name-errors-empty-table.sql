@@ -1,0 +1,10 @@
+CREATE TABLE empty (a INTEGER);
+SELECT a FROM empty;
+SELECT b FROM empty;
+SELECT a FROM empty WHERE c = 1;
+SELECT a FROM empty ORDER BY d;
+SELECT nofunc(a) FROM empty;
+SELECT upper(a, a) FROM empty;
+SELECT a FROM empty ORDER BY a, 2;
+SELECT 'still empty', a FROM empty;
+SELECT 'end';

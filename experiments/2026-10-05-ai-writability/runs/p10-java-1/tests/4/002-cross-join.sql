@@ -1,0 +1,12 @@
+-- CROSS JOIN, JOIN and INNER JOIN without a constraint are all cartesian products.
+CREATE TABLE a (x INTEGER);
+CREATE TABLE b (y INTEGER);
+CREATE TABLE c (z TEXT);
+INSERT INTO a VALUES (1), (2);
+INSERT INTO b VALUES (10), (20);
+INSERT INTO c VALUES ('p'), ('q'), ('r');
+SELECT x, y FROM a CROSS JOIN b ORDER BY x, y;
+SELECT x + y FROM a JOIN b ORDER BY 1;
+SELECT x * y FROM a INNER JOIN b ORDER BY 1 DESC;
+SELECT count(*) FROM a CROSS JOIN b CROSS JOIN c;
+SELECT x, y, z FROM a, b CROSS JOIN c WHERE x = 2 AND y = 10 ORDER BY z;

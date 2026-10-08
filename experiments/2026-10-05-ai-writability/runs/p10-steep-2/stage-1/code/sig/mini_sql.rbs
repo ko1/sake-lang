@@ -1,0 +1,390 @@
+type sql_value = Integer | Float | String | nil
+type number = Integer | Float
+type affinity = :integer | :real | :text
+
+module MiniSql
+  class SqlError < StandardError
+  end
+
+  module Value
+    BLANKS: String
+    NUMBER_BODY: String
+    WHOLE_NUMBER: Regexp
+    NUMBER_PREFIX: Regexp
+    INT64_MIN: Integer
+    INT64_MAX: Integer
+
+    def self.type_name: (sql_value value) -> String
+    def self.format_real: (Float real) -> String
+    def self.text_form: (sql_value value) -> String
+    def self.render: (sql_value value) -> String
+    def self.number_from: (String literal) -> number
+    def self.parse_number: (String text) -> number?
+    def self.numeric_prefix: (String text) -> number
+    def self.to_number: (sql_value value) -> number
+    def self.truth: (sql_value value) -> bool?
+    def self.from_truth: (bool? truth) -> Integer?
+    def self.rank: (sql_value value) -> Integer
+    def self.compare: (sql_value left, sql_value right) -> Integer
+    def self.whole_in_int64?: (Float real) -> bool
+  end
+
+  class Token
+    attr_reader kind: Symbol
+    attr_reader text: String
+
+    def initialize: (Symbol kind, String text) -> void
+    def keyword?: (String word) -> bool
+    def symbol?: (String text) -> bool
+  end
+
+  module Lexer
+    KEYWORDS: Array[String]
+    SKIP: Regexp
+    WORD: Regexp
+    NUMBER: Regexp
+    STRING: Regexp
+    QUOTED: Regexp
+    OPERATOR: Regexp
+
+    def self.statements: (String source) -> Array[Array[Token]]
+    def self.token_at: (String source, Integer position) -> [Token, Integer]
+  end
+
+  class Expr
+  end
+
+  class Literal < Expr
+    attr_reader value: sql_value
+
+    def initialize: (sql_value value) -> void
+  end
+
+  class ColumnRef < Expr
+    attr_reader qualifier: String?
+    attr_reader name: String
+
+    def initialize: (String? qualifier, String name) -> void
+    def spelling: () -> String
+  end
+
+  class Unary < Expr
+    attr_reader op: String
+    attr_reader operand: Expr
+
+    def initialize: (String op, Expr operand) -> void
+  end
+
+  class Binary < Expr
+    attr_reader op: String
+    attr_reader left: Expr
+    attr_reader right: Expr
+
+    def initialize: (String op, Expr left, Expr right) -> void
+  end
+
+  class Not < Expr
+    attr_reader operand: Expr
+
+    def initialize: (Expr operand) -> void
+  end
+
+  class Is < Expr
+    attr_reader negated: bool
+    attr_reader left: Expr
+    attr_reader right: Expr
+
+    def initialize: (bool negated, Expr left, Expr right) -> void
+  end
+
+  class Call < Expr
+    attr_reader name: String
+    attr_reader args: Array[Expr]
+
+    def initialize: (String name, Array[Expr] args) -> void
+  end
+
+  class BoundColumn < Expr
+    attr_reader index: Integer
+    attr_reader affinity: affinity
+
+    def initialize: (Integer index, affinity affinity) -> void
+  end
+
+  class BoundCall < Expr
+    attr_reader name: String
+    attr_reader args: Array[Expr]
+
+    def initialize: (String name, Array[Expr] args) -> void
+  end
+
+  class Compare < Expr
+    attr_reader op: String
+    attr_reader left: Expr
+    attr_reader right: Expr
+    attr_reader left_affinity: affinity?
+    attr_reader right_affinity: affinity?
+
+    def initialize: (String op, Expr left, Expr right, affinity? left_affinity, affinity? right_affinity) -> void
+  end
+
+  class Statement
+  end
+
+  class ColumnDef
+    attr_reader name: String
+    attr_reader type: affinity
+
+    def initialize: (String name, affinity `type`) -> void
+  end
+
+  class CreateTable < Statement
+    attr_reader name: String
+    attr_reader columns: Array[ColumnDef]
+    attr_reader if_not_exists: bool
+
+    def initialize: (String name, Array[ColumnDef] columns, bool if_not_exists) -> void
+  end
+
+  class DropTable < Statement
+    attr_reader name: String
+    attr_reader if_exists: bool
+
+    def initialize: (String name, bool if_exists) -> void
+  end
+
+  class Insert < Statement
+    attr_reader table: String
+    attr_reader columns: Array[String]?
+    attr_reader rows: Array[Array[Expr]]
+
+    def initialize: (String table, Array[String]? columns, Array[Array[Expr]] rows) -> void
+  end
+
+  class ResultColumn
+    attr_reader expr: Expr?
+    attr_reader alias_name: String?
+
+    def initialize: (Expr? expr, String? alias_name) -> void
+  end
+
+  class OrderTerm
+    attr_reader expr: Expr
+    attr_reader descending: bool
+    attr_reader nulls: Symbol?
+
+    def initialize: (Expr expr, bool descending, Symbol? nulls) -> void
+  end
+
+  class Select < Statement
+    attr_reader columns: Array[ResultColumn]
+    attr_reader from: String?
+    attr_reader where: Expr?
+    attr_reader order_by: Array[OrderTerm]
+    attr_reader limit: Expr?
+    attr_reader offset: Expr?
+
+    def initialize: (Array[ResultColumn] columns, String? from, Expr? where, Array[OrderTerm] order_by, Expr? limit, Expr? offset) -> void
+  end
+
+  class Parser
+    COMPARISON_OPS: Array[String]
+    EQUALITY_OPS: Array[String]
+
+    @tokens: Array[Token]
+    @pos: Integer
+
+    def self.parse: (Array[Token] tokens) -> Statement
+    def initialize: (Array[Token] tokens) -> void
+    def parse_statement: () -> Statement
+
+    private
+
+    def syntax_error: () -> bot
+    def peek: () -> Token
+    def advance: () -> Token
+    def accept_keyword: (String word) -> bool
+    def accept_symbol: (String text) -> bool
+    def expect_keyword: (String word) -> void
+    def expect_symbol: (String text) -> void
+    def expect_ident: () -> String
+    def parse_create: () -> CreateTable
+    def parse_column_def: () -> ColumnDef
+    def type_named: (String word) -> affinity?
+    def parse_drop: () -> DropTable
+    def parse_insert: () -> Insert
+    def parse_value_row: () -> Array[Expr]
+    def parse_select: () -> Select
+    def parse_result_column: () -> ResultColumn
+    def parse_order_term: () -> OrderTerm
+    def parse_expr: () -> Expr
+    def parse_or: () -> Expr
+    def parse_and: () -> Expr
+    def parse_not: () -> Expr
+    def parse_equality: () -> Expr
+    def parse_comparison: () -> Expr
+    def parse_additive: () -> Expr
+    def parse_multiplicative: () -> Expr
+    def parse_concat: () -> Expr
+    def parse_unary: () -> Expr
+    def parse_primary: () -> Expr
+    def parse_name_or_call: (String name) -> Expr
+  end
+
+  class Column
+    attr_reader name: String
+    attr_reader type: affinity
+
+    def initialize: (String name, affinity `type`) -> void
+  end
+
+  class Table
+    attr_reader name: String
+    attr_reader columns: Array[Column]
+    attr_reader rows: Array[Array[sql_value]]
+
+    def initialize: (String name, Array[Column] columns) -> void
+    def column_index: (String name) -> Integer?
+    def coerce: (sql_value value, Integer index) -> sql_value
+    def append: (Array[sql_value] row) -> void
+
+    private
+
+    def reject: (sql_value value, Column column) -> bot
+    def coerce_integer: (sql_value value, Column column) -> Integer
+    def coerce_real: (sql_value value, Column column) -> Float
+  end
+
+  class Database
+    @tables: Hash[String, Table]
+
+    def initialize: () -> void
+    def find_table: (String name) -> Table?
+    def fetch_table: (String name) -> Table
+    def add_table: (Table table) -> Table
+    def remove_table: (String name) -> Table?
+
+    private
+
+    def key: (String name) -> String
+  end
+
+  module Functions
+    MANY: Integer
+    ARITY: Hash[String, Range[Integer]]
+
+    def self.check: (String name, Integer count) -> (:ok | :unknown | :arity)
+    def self.call: (String name, Array[sql_value] args) -> sql_value
+    def self.unary: (String name, sql_value value) -> sql_value
+    def self.absolute: (sql_value value) -> number
+    def self.nullif: (sql_value first, sql_value second) -> sql_value
+  end
+
+  module Operators
+    def self.negate: (sql_value value) -> number?
+    def self.arithmetic: (String op, sql_value left, sql_value right) -> number?
+    def self.integer_arithmetic: (String op, Integer x, Integer y) -> Integer?
+    def self.real_arithmetic: (String op, Float x, Float y) -> Float?
+    def self.concat: (sql_value left, sql_value right) -> String?
+    def self.logic_not: (sql_value value) -> Integer?
+    def self.logic_and: (sql_value left, sql_value right) -> Integer?
+    def self.logic_or: (sql_value left, sql_value right) -> Integer?
+    def self.numeric?: (affinity? affinity) -> bool
+    def self.apply_affinity: (sql_value left, affinity? left_affinity, sql_value right, affinity? right_affinity) -> [sql_value, sql_value]
+    def self.text_as_number: (sql_value value) -> sql_value
+    def self.number_as_text: (sql_value value) -> sql_value
+    def self.compare: (String op, sql_value left, affinity? left_affinity, sql_value right, affinity? right_affinity) -> Integer?
+    def self.same?: (sql_value left, sql_value right) -> bool
+  end
+
+  module Evaluator
+    def self.evaluate: (Expr expr, Array[sql_value] row) -> sql_value
+    def self.unary: (Unary expr, Array[sql_value] row) -> sql_value
+    def self.binary: (Binary expr, Array[sql_value] row) -> sql_value
+    def self.compare: (Compare expr, Array[sql_value] row) -> sql_value
+  end
+
+  class Binder
+    COMPARISONS: Array[String]
+
+    @table: Table?
+    @aliases: Hash[String, Expr]
+
+    def initialize: (Table? table, Hash[String, Expr] aliases) -> void
+    def bind: (Expr expr) -> Expr
+
+    private
+
+    def bind_column: (ColumnRef ref) -> Expr
+    def bind_binary: (Binary expr) -> Expr
+    def bind_compare: (String op, Expr left, Expr right) -> Compare
+    def affinity: (Expr expr) -> affinity?
+    def bind_call: (Call call) -> BoundCall
+  end
+
+  class SortKey
+    @index: Integer?
+    @expr: Expr?
+    @descending: bool
+    @nulls: Symbol?
+
+    attr_reader index: Integer?
+    attr_reader expr: Expr?
+
+    def initialize: (Integer? index, Expr? expr, bool descending, Symbol? nulls) -> void
+    def value: (Array[sql_value] result, Array[sql_value] row) -> sql_value
+    def compare: (sql_value left, sql_value right) -> Integer
+  end
+
+  class Candidate
+    attr_reader values: Array[sql_value]
+    attr_reader keys: Array[sql_value]
+    attr_reader serial: Integer
+
+    def initialize: (Array[sql_value] values, Array[sql_value] keys, Integer serial) -> void
+  end
+
+  class Query
+    @database: Database
+    @select: Select
+
+    def initialize: (Database database, Select select) -> void
+    def run: () -> Array[String]
+
+    private
+
+    def no_row: () -> Array[sql_value]
+    def bind_result_columns: (Table? table) -> [Array[Expr], Hash[String, Expr]]
+    def sort_keys: (Binder binder, Array[Expr] results, Hash[String, Expr] aliases) -> Array[SortKey]
+    def ordinal_of: (Expr expr) -> Integer?
+    def alias_position: (Expr expr, Array[Expr] results, Hash[String, Expr] aliases) -> Integer?
+    def nth: (Integer number) -> String
+    def compare: (Array[SortKey] keys, Candidate left, Candidate right) -> Integer
+    def limit_and_offset: () -> [Integer?, Integer]
+    def integer_of: (Expr? expr, Binder binder) -> Integer?
+    def window: (Array[Candidate] candidates, Integer? limit, Integer offset) -> Array[Candidate]
+  end
+
+  class Executor
+    @database: Database
+
+    def initialize: (Database database) -> void
+    def execute: (Statement statement) -> Array[String]
+
+    private
+
+    def create_table: (CreateTable statement) -> Array[String]
+    def drop_table: (DropTable statement) -> Array[String]
+    def insert: (Insert statement) -> Array[String]
+    def target_columns: (Insert statement, Table table) -> Array[Integer]
+    def check_value_count: (Insert statement, Table table, Integer count) -> void
+  end
+
+  class Interpreter
+    @out: IO
+    @executor: Executor
+
+    def initialize: (IO out) -> void
+    def run: (String source) -> void
+  end
+end

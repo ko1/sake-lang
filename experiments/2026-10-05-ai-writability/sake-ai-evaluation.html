@@ -59,7 +59,7 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
 
 <main>
 <h1>AI 向け言語 Sake の評価</h1>
-<p class="sub">2026-10-06〜07 ・ Claude Sonnet 5.5 に Sake と Ruby で、書かせ、直させ、読ませた結果（P1〜P6、解く側 190 体。P6 は 2,500 行のインタプリタ）。小さいモデル Claude Haiku 4.5 でも、新しく書く題を流した（P7h・P9h、44 体）。検査器を直したあと、大きなコードの仕様変更も流し直した（P6f、24 体）。2026-10-08 には、SQL エンジンを 6 段階で 3,000〜4,000 行まで育てさせた（P10、24 体）</p>
+<p class="sub">2026-10-06〜07 ・ Claude Sonnet 5.5 に Sake と Ruby で、書かせ、直させ、読ませた結果（P1〜P6、解く側 190 体。P6 は 2,500 行のインタプリタ）。小さいモデル Claude Haiku 4.5 でも、新しく書く題を流した（P7h・P9h、44 体）。検査器を直したあと、大きなコードの仕様変更も流し直した（P6f、24 体）。2026-10-08 には、SQL エンジンを 6 段階で 3,000〜4,000 行まで育てさせた（P10、24 体）。同じ課題を Java・Scheme・Steep 付き Ruby でも流した（P10b、36 体）</p>
 
 <div class="lead">
 <ol>
@@ -80,6 +80,7 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
     </ul>
   </li>
   <li><strong>SQL エンジンを 6 段階で育てさせても、正しさは同じ（P10）。</strong>Ruby・Sake 各 2 系列が 3,000〜4,000 行まで育て、隠しテスト 369 本で 366〜368 本。落ちた 3 種類のうち 2 種類は両言語に共通で、型が防いだ誤りはなかった。Sake は出力トークン 1.7 倍、作業時間 3.5 倍、行数 1.25 倍。新しい検査器の不具合（止まらない型の計算）を 1 つ見つけた（結果 8）。</li>
+  <li><strong>同じ SQL エンジンを Java・Scheme・Steep 付き Ruby で書かせても、正しさは同じ（P10b）。</strong>出力トークンは Ruby を 1 として Java 1.06、Scheme 1.21、Steep 1.48、Sake 1.71 倍。型を全部書かせる Steep は、検査に止められた回数が Sake とほぼ同じで、出力トークンは Sake の 86%。Sake の上乗せのうち、型を書くことによる分と、Sake 固有の分を分ける手がかりになる（結果 9）。</li>
   <li><strong>大きなコードでは、処理系の側に課題が見えた。</strong>
     <ul>
       <li>2,500 行のプログラムの検査時間は 1 回 3〜24 秒で、書き方で 7.5 倍違う。Ruby から移した形が遅い。</li>
@@ -479,8 +480,11 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
 </table></div>
 <ul>
   <li><strong>型が防いだ誤りはなかった。</strong><code>2</code> と <code>2.0</code> の取り違えは、操作に型を書いても検査の網にかからない。どちらも数として比べられるからだ。</li>
-  <li><strong>負のキーの誤りは Sake にだけ出た。</strong>2 体とも <code>Array.max</code> を使わず、初期値 0 のループを書いた。値の型が和（Integer|Float|String|nil）なので、<code>Array.max</code> が返す nil と和を検査に通す手間を避けた形と読める（推定。2 対 0、反復は 2）。検査器の厳しさが、別の種類の誤りを呼んだ可能性がある。</li>
 </ul>
+<div class="retracted">
+  <p><s><strong>負のキーの誤りは Sake にだけ出た。</strong>2 体とも <code>Array.max</code> を使わず、初期値 0 のループを書いた。値の型が和（Integer|Float|String|nil）なので、<code>Array.max</code> が返す nil と和を検査に通す手間を避けた形と読める（推定。2 対 0、反復は 2）。検査器の厳しさが、別の種類の誤りを呼んだ可能性がある。</s></p>
+  <p>取り下げた（2026-10-08、P10b）。同じ誤りが、型検査のない Scheme と Steep 付き Ruby にも 1 系列ずつ出た（結果 9）。どれも初期値 0 で最大を探す手書きのループで、検査器との摩擦では説明できない。</p>
+</div>
 <h3>検査器の不具合をもう 1 つ見つけた</h3>
 <p><span class="sake">Sake</span>-1 の段階 4 で、検査器がスタックを使い切って落ちた。エージェントは <code>a + b</code> を <code>Array.concat</code> に書き換えて回避し、その段階に 37 分かかった（他の段階の 2〜7 倍）。切り出した最小の再現は 3 行で、互いに呼び合う 2 つの関数がどちらも <code>Array + Array</code> を使うだけで起きる。</p>
 <pre><code>def f(n, row) = n == 0 ? row : g(n - 1, row + Array[n])
@@ -488,13 +492,52 @@ def g(n, row) = f(n, row + Array[n])
 puts Array.size(f(3, Array[]))</code></pre>
 <p>検査器は関数の結果を「関数と引数の型」で覚えるが、<code>+</code> のたびに新しい配列の型が生まれ、覚えたものに二度と当たらない（トレースで確認）。P6 の止まらない検査と同じ種類の、型の計算が収束しない不具合で、まだ直していない。</p>
 
+<h2>結果 9: Java・Scheme・Steep 付き Ruby でも、正しさは同じ（P10b）</h2>
+<p>Sake の上乗せは「知らない言語だから」か「型を書くから」か。それを分けるため、結果 8 と同じ課題（仕様、テスト、6 段階、Sonnet 5.5、各 2 系列）を 3 つの言語で流した。Haskell も予定したが、このマシンに GHC がなく、まだ流していない。</p>
+<ul>
+  <li><strong>Java</strong>（OpenJDK 21）: 静的型で、よく知られた言語。コンパイルが通らなければテストは走らない。</li>
+  <li><strong>Scheme</strong>（Chez Scheme 10、R6RS）: 動的型で、検査はない。</li>
+  <li><strong>Steep 付き Ruby</strong>（Steep 2.1、RBS 4.2）: Sake の <code>--strict=2</code> に寄せた。全クラス・全メソッドの型（RBS）を書かせ、Steep の strict 診断で警告 1 つでも不合格とした。<code>untyped</code> と <code>steep:ignore</code> も不合格。</li>
+</ul>
+<div class="tablewrap"><table>
+<tr><th></th><th><span class="ruby">Ruby</span></th><th>Java</th><th>Scheme</th><th>Steep</th><th><span class="sake">Sake</span></th></tr>
+<tr><td>隠しテスト（369 本、2 系列）</td><td class="n">367・368</td><td class="n">367・368</td><td class="n">366・367</td><td class="n">367・368</td><td class="n">367・366</td></tr>
+<tr><td>行数（空行を除く）</td><td class="n">3,364・2,971</td><td class="n">4,144・4,009</td><td class="n">3,120・3,168</td><td class="n">5,357・5,200</td><td class="n">3,972・3,985</td></tr>
+<tr><td>うち型の記述（RBS）</td><td class="n">–</td><td class="n">–</td><td class="n">–</td><td class="n">1,038・1,079</td><td class="n">–</td></tr>
+<tr><td>出力トークン（2 系列平均）</td><td class="n">192k</td><td class="n">203k</td><td class="n">233k</td><td class="n">284k</td><td class="n">329k</td></tr>
+<tr><td>Ruby との比</td><td class="n">1.00</td><td class="n">1.06</td><td class="n">1.21</td><td class="n">1.48</td><td class="n">1.71</td></tr>
+<tr><td>作業時間（2 系列平均）</td><td class="n">26 分</td><td class="n">26 分</td><td class="n">34 分</td><td class="n">36 分</td><td class="n">92 分</td></tr>
+<tr><td>テストの実行待ち（系列あたり）</td><td class="n">1 分</td><td class="n">1 分</td><td class="n">4 分</td><td class="n">2 分</td><td class="n">16 分</td></tr>
+<tr><td>検査・コンパイルに止められた回数（系列あたり）</td><td class="n">0</td><td class="n">2</td><td class="n">–</td><td class="n">11</td><td class="n">12</td></tr>
+</table></div>
+<p class="note">Ruby と Sake は結果 8 の値。P10b は 6 系列を並行で流し、マシンの負荷は結果 8 と揃っていないので、時間は参考値。</p>
+<ul>
+  <li><strong>正しさはどの言語でも同じ。</strong>10 系列すべて、公開テストは全段階で全通過、隠しテストは 366〜368/369。</li>
+  <li><strong>出力トークンは Ruby &lt; Java &lt; Scheme &lt; Steep &lt; Sake の順。</strong>よく知られた静的型の Java は Ruby とほぼ同じ費用だった。</li>
+  <li><strong>Steep は、型を全部書く条件で Sake に近い。</strong>検査に止められた回数は 11 回で、Sake の 12 回とほぼ同じ。出力トークンは Ruby の 1.48 倍で、Sake（1.71 倍）より 14% 少ない。Sake の上乗せの多くは「型を全部書かせて検査に通す」ことにあり、Sake に固有の分（操作ごとに型を書く記法、文書から学ぶこと、遅い検査と実行）は残りの一部、という読み方ができる（推定。2 系列ずつで、切り分けてはいない）。</li>
+  <li><strong>作業時間の差は処理系の差。</strong>テストの実行待ちは Steep 2 分、Sake 16 分。</li>
+  <li>Steep の Ruby 部分は、素の Ruby より約 3 割長い。RBS を足すと 1.7 倍。Java は 1.3 倍。</li>
+</ul>
+<h3>落ちた隠しテスト（10 系列）</h3>
+<div class="tablewrap"><table>
+<tr><th>隠しテスト</th><th>落ちた系列</th></tr>
+<tr><td>相関のある UNION</td><td>10 系列すべて</td></tr>
+<tr><td>負のキーだけの表での自動採番</td><td><span class="sake">Sake</span> 2、Steep 1、Scheme 1（<span class="ruby">Ruby</span>・Java は 0）</td></tr>
+<tr><td><code>sum(i / 2)</code> と <code>sum(i / 2.0)</code></td><td><span class="ruby">Ruby</span> 1、<span class="sake">Sake</span> 2（P10b の 6 系列は 0）</td></tr>
+<tr><td>2 つの窓関数を誤用したとき、どちらを報告するか</td><td>Scheme 2（後の方を報告した）</td></tr>
+<tr><td>ビュー名の大文字小文字</td><td>Java 1</td></tr>
+</table></div>
+<ul>
+  <li><strong>型検査が防いだと言える誤りはない。</strong>負のキーの誤りは、型検査のある Steep・Sake にも、ない Scheme にも出た。</li>
+</ul>
+
 <h2>どう読むか</h2>
 <p><strong>Sonnet にとっては、学べる言語になっている。</strong>事前学習ゼロで、書く・変える・読む・直すのすべてで Ruby と同じ正しさに届く。Ruby の構文と Ruby の名前（<code>String.upcase</code>）を借りた設計が効いていると考えられる。存在しない API をほとんど書かないのも、名前が Ruby と同じだからだろう。ただし Haiku では成り立たない（結果 7）。資料を読んで書き方を確かめる力がモデルに要り、それがないモデルには、Sake は Ruby よりはっきり書きにくい。</p>
 <p><strong>出力トークンの上乗せは「書く」に集中している。</strong>1 題あたりの出力トークンの比は、読む・直すでは 1.1〜1.4 倍に縮み、新しく書くと 1.6 倍、実行せずに書くと 2.4 倍に膨らむ。モデルは Sake を読むときは Ruby とほぼ同じように読めるが、書くときは毎回「どの型の何という操作か、それはあるか」を組み立てている。AI にとって Sake は、読むのは安く、書くのが高い言語である。</p>
 <p><strong>大きなコードでは、作業時間は言語より処理系で決まる。</strong>2,500 行の仕様変更では、1 体あたりの出力トークンは 1.8〜2.1 倍だったが、作業時間は 5〜13 倍になった。作業時間の上乗せの大半は検査の遅さと打ち切りで、どちらも処理系の性能と不具合である。検査器を直すと 3.7〜6.4 倍に縮み、残りの多くはテストのたびの起動の時間だった（P6f）。出力トークンの上乗せも、小さい題とは中身が違う（結果 6 の「出力トークンの中身」）。変更を考えて書く呼び出しの思考は Ruby と同じくらいで、増えたのはコードを読み解く思考と、検査に止められて試し直す・待つまわりだった。書き方（移植版かスクラッチ版か）でも大きく変わる。AI に書かせる言語として使うなら、まず検査器を大きなプログラムで速く、確実に止まるようにする必要がある。</p>
 <p><strong>型を書く利点は、正しさの差としてはまだ観測できていない。</strong>どの作業でも型は正答率を上げなかった。落ちる原因は仕様の読み違いや振る舞いの崩れで、型の誤りではなかった。2,500 行では、検査器が変更の届くべき箇所を指す場面が実際にあった。ただ、Ruby 側も読んで見つけられる規模だった。利点が正しさの差として出るとすれば、次の場面だろう。</p>
 <ul>
-  <li>書き手が行き先を見落とすほど大きなコード（1 万行以上。P10 では 4,000 行まで育てても差は出ず、共通の見落としは両言語に同じように出た。結果 8）</li>
+  <li>書き手が行き先を見落とすほど大きなコード（1 万行以上。P10 では 4,000 行まで育てても差は出ず、共通の見落としは両言語に同じように出た。結果 8。Java・Steep でも同じだった。結果 9）</li>
   <li><s>書き手より弱いモデル</s>（Haiku で試した。検査は誤ったプログラムを止めたが、止められたものを正しく直すところまでは届かず、正答は増えなかった。結果 7）</li>
   <li>もっと難しい読む作業（例を渡さずに誤りを探す、長い入力を追う）</li>
 </ul>
@@ -513,7 +556,8 @@ puts Array.size(f(3, Array[]))</code></pre>
   <li>P6 の作業時間は、同時に走る他のエージェントの負荷を含む。比は同じ条件で取っているが、絶対値は参考値。</li>
   <li>P6 で「参照が触れた関数を、解答が触れなかった数」を直し忘れの指標にしようとしたが、使えなかった。参照と違う関数を書き換えて同じ結果に達する解（隠しテスト全通過）が多く、設計の違いを数えてしまう。正しさは隠しテストで見た。</li>
   <li>変える・読む・直すの題は易しく、正答率が天井に近い（9 割以上）。正しさの差が出ないのは、差がないからとは限らない。</li>
-  <li>Ruby は事前学習で知っている言語なので、この比較は「新しい言語」と「慣れた言語」の比較でもある。</li>
+  <li>Ruby は事前学習で知っている言語なので、この比較は「新しい言語」と「慣れた言語」の比較でもある。結果 9 で Java・Scheme・Steep 付き Ruby を足したが、どれも事前学習で知っている言語で、「知らない言語」の対照にはなっていない。</li>
+  <li>P10b の Haskell は、マシンに GHC がなく未実施。</li>
   <li>題・変更要求・誤りは AI が書いた。仕様の曖昧さは、どの言語にも同じように効いている。</li>
   <li>出力トークンは題ごとには分けられない（エージェントが複数の題をまとめて読み書きするため）。エージェント単位で数え、題数で割っている。</li>
   <li><strong>逸脱</strong>:
@@ -548,6 +592,7 @@ puts Array.size(f(3, Array[]))</code></pre>
     </ul>
   </li>
   <li><strong>さらに大きく。</strong>2,500 行でも天井だった。P10 で SQL エンジンを 6 段階で育てさせたが、3,000〜4,000 行で止まり、正しさは同じだった（結果 8）。1 万行に届かせるには段階を足す必要がある。</li>
+  <li><strong>Haskell を足す。</strong>GHC を入れて、結果 9 と同じ条件で 2 系列。型推論があり、型を書く量が少ない静的型の言語として、Steep・Sake との間に置ける。</li>
   <li><strong>検査器の止まらない型の計算を直す。</strong>互いに呼び合う関数の <code>Array + Array</code>（結果 8）。直したら、P10 の Sake 系列の待ち時間を測り直す。</li>
   <li><strong>小さいモデルで、どこで止まるかを見る。</strong>反復を足し、チートシートと「書く前に引け」を試したが縮まなかった（結果 7）。次は、検査に止められたあとの直し方を見る。止められた誤りの種類（型・構文・名前）ごとに、次の試行で直ったかを数える。</li>
 </ul>

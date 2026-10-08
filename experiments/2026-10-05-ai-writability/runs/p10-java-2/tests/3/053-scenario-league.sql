@@ -1,0 +1,22 @@
+-- a sports league table computed from match results
+CREATE TABLE results (match INTEGER, team TEXT, goals INTEGER, against INTEGER);
+INSERT INTO results VALUES (1, 'lions', 2, 1), (1, 'bears', 1, 2), (2, 'wolves', 0, 0), (2, 'lions', 0, 0);
+INSERT INTO results VALUES (3, 'bears', 3, 1), (3, 'wolves', 1, 3), (4, 'lions', 1, 2), (4, 'bears', 2, 1);
+SELECT team, count(*) AS played FROM results GROUP BY team ORDER BY team;
+SELECT team, sum(CASE WHEN goals > against THEN 3 WHEN goals = against THEN 1 ELSE 0 END) AS pts FROM results GROUP BY team ORDER BY pts DESC, team;
+SELECT team, sum(goals) - sum(against) AS diff FROM results GROUP BY team ORDER BY diff DESC;
+SELECT team, sum(goals) FROM results GROUP BY team HAVING sum(goals) >= 3 ORDER BY team;
+SELECT match, sum(goals) FROM results GROUP BY match ORDER BY match;
+SELECT max(goals), team, match FROM results;
+SELECT count(*) FROM results WHERE goals = against;
+SELECT team, group_concat(goals || '-' || against, ' ' ORDER BY match) FROM results GROUP BY team ORDER BY team;
+INSERT INTO results VALUES (5, 'wolves', 4, 0), (5, 'lions', 0, 4);
+SELECT team, sum(goals), avg(goals) FROM results GROUP BY team ORDER BY team;
+UPDATE results SET goals = 5 WHERE match = 5 AND team = 'wolves';
+SELECT sum(goals), total(against) FROM results WHERE match = 5;
+SELECT DISTINCT match FROM results WHERE goals = 0 ORDER BY match;
+SELECT team FROM results GROUP BY team HAVING min(goals) = 0 AND max(goals) > 2 ORDER BY team;
+SELECT count(DISTINCT team), count(DISTINCT match), count(*) FROM results;
+SELECT team, count(*) FROM results GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 1 OFFSET 1;
+DELETE FROM results WHERE match = 2;
+SELECT team, count(*) FROM results GROUP BY team ORDER BY count(*), team;

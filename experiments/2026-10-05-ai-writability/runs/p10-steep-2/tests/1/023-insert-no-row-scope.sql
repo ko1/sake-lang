@@ -1,0 +1,8 @@
+CREATE TABLE t (a INTEGER, b INTEGER);
+INSERT INTO t VALUES (1, 2);
+INSERT INTO t VALUES (a, 3);
+INSERT INTO t (a, b) VALUES (5, b);
+INSERT INTO t VALUES (2 + 3, 10 * 2);
+INSERT INTO t VALUES (length('abcd'), abs(-6));
+INSERT INTO t VALUES (-(7), '8' + 1);
+SELECT a, b FROM t ORDER BY a;

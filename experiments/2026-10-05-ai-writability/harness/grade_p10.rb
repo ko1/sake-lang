@@ -23,17 +23,23 @@ else
   FileUtils.mkdir_p(snap)
   FileUtils.cp_r(File.join(work, "code"), File.join(snap, "code"))
 end
-main = File.join(snap, "code", "main.#{meta["ext"]}")
+# runs made before the other languages have "ext" only
+entry = meta["entry"] || "main.#{meta["ext"]}"
+exts = meta["exts"] || [meta["ext"]]
+main = File.join(snap, "code", entry)
 abort "#{main} missing" unless File.exist?(main)
 
-files = Dir.glob(File.join(snap, "code", "**", "*.#{meta["ext"]}"))
-lines = files.sum { |f| File.readlines(f).count { |l| !l.strip.empty? } }
+files = exts.flat_map { |e| Dir.glob(File.join(snap, "code", "**", "*.#{e}")) }
+line_count = ->(f) { File.readlines(f).count { |l| !l.strip.empty? } }
+lines = files.sum(&line_count)
+lines_by_ext = exts.to_h { |e| [e, files.select { _1.end_with?(".#{e}") }.sum(&line_count)] }
 
 runner = File.join(AW::EXP, "large", "sql", "run_tests.rb")
-def run_suite(runner, main, stage, tests_dir)
+flags = meta["flag"].to_s.split
+def run_suite(runner, main, flags, stage, tests_dir)
   env = { "SQL_TESTS" => tests_dir }
   t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  out, err, _st = Open3.capture3(env, "ruby", runner, main, "--stage", stage.to_s)
+  out, err, _st = Open3.capture3(env, "ruby", runner, main, *flags, "--stage", stage.to_s)
   secs = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
   text = out + err
   per = Hash.new { |h, k| h[k] = { "total" => 0, "failed" => 0 } }
@@ -52,10 +58,10 @@ def run_suite(runner, main, stage, tests_dir)
   [per, secs, nil]
 end
 
-pub, pub_secs, pub_note = run_suite(runner, main, stage, File.join(AW::EXP, "large", "sql", "tests"))
-hid, hid_secs, hid_note = run_suite(runner, main, stage, File.join(AW::EXP, "tasks", "sql-hidden"))
+pub, pub_secs, pub_note = run_suite(runner, main, flags, stage, File.join(AW::EXP, "large", "sql", "tests"))
+hid, hid_secs, hid_note = run_suite(runner, main, flags, stage, File.join(AW::EXP, "tasks", "sql-hidden"))
 fmt = ->(per) { per.sort_by { |k, _| k.to_i }.to_h { |k, v| [k, "#{v["total"] - v["failed"]}/#{v["total"]}"] } }
-row = { run:, lang: meta["lang"], stage:, files: files.length, lines:,
+row = { run:, lang: meta["lang"], stage:, files: files.length, lines:, lines_by_ext:,
         public: fmt.(pub), hidden: fmt.(hid),
         public_pass: pub.values.sum { _1["total"] - _1["failed"] }, public_total: pub.values.sum { _1["total"] },
         hidden_pass: hid.values.sum { _1["total"] - _1["failed"] }, hidden_total: hid.values.sum { _1["total"] },

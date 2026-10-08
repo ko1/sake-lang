@@ -1,0 +1,15 @@
+-- DROP VIEW and DROP TABLE each work on their own kind
+CREATE TABLE t (a INTEGER);
+CREATE VIEW v AS SELECT a FROM t;
+DROP TABLE v;
+DROP VIEW t;
+DROP VIEW nothere;
+DROP VIEW IF EXISTS nothere;
+SELECT count(*) FROM v;
+DROP VIEW v;
+SELECT count(*) FROM v;
+DROP VIEW v;
+CREATE VIEW v AS SELECT 'again' AS w;
+SELECT w FROM v;
+DROP TABLE t;
+SELECT w FROM v;

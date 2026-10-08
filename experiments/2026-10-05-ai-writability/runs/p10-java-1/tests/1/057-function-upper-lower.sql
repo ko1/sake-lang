@@ -1,0 +1,10 @@
+SELECT upper('hello'), lower('HELLO');
+SELECT upper('MiXeD 123 _-!'), lower('MiXeD 123 _-!');
+SELECT upper(1.5), lower(1e20), upper(12);
+SELECT upper(NULL), lower(NULL);
+SELECT typeof(upper(12)), UPPER('x'), Lower('Y');
+SELECT upper(lower('AbC')) || lower(upper('dEf'));
+CREATE TABLE t (name TEXT);
+INSERT INTO t VALUES ('Smith'), ('jones'), ('McDonald');
+SELECT name, upper(name), lower(name) FROM t ORDER BY lower(name);
+SELECT name FROM t WHERE upper(name) = 'JONES';

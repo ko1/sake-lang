@@ -1,0 +1,21 @@
+-- Stock levels in a shop's back room.
+CREATE TABLE stock (sku TEXT, name TEXT, qty INTEGER, unit_cost REAL);
+INSERT INTO stock VALUES ('A-1', 'bolt', 120, 0.04), ('A-2', 'nut', 300, 0.02), ('B-7', 'hinge', 12, 1.75);
+INSERT INTO stock VALUES ('C-3', 'bracket', 0, 3.2), ('C-4', 'clamp', NULL, 4);
+INSERT INTO stock (sku, name, qty) VALUES ('D-1', 'washer', '450');
+INSERT INTO stock VALUES ('E-1', 'spring', 2.5, 0.3);
+INSERT INTO stock VALUES ('E-1', 'spring', 25);
+INSERT INTO stock (sku, name, qtty) VALUES ('E-1', 'spring', 25);
+SELECT sku, name, qty FROM stock ORDER BY sku;
+SELECT name, qty * unit_cost AS value FROM stock WHERE value IS NOT NULL ORDER BY value DESC;
+SELECT name FROM stock WHERE qty = 0 OR qty IS NULL ORDER BY name;
+SELECT name, qty FROM stock WHERE qty < 100 ORDER BY qty;
+SELECT name, qty / 12, qty % 12 FROM stock WHERE qty >= 12 ORDER BY name;
+SELECT sku FROM stock WHERE sku > 'B' AND sku < 'D' ORDER BY sku DESC;
+SELECT name, unit_cost FROM stock ORDER BY unit_cost DESC NULLS LAST, name;
+SELECT lower(sku) || '/' || upper(name) FROM stock WHERE qty > 200 ORDER BY 1;
+SELECT name, ifnull(qty, 'unknown') FROM stock WHERE name = 'clamp';
+SELECT name FROM stock ORDER BY qty DESC LIMIT 2 OFFSET 1;
+SELECT count FROM stock;
+SELECT name, typeof(qty) FROM stock WHERE sku = 'D-1';
+SELECT name, qty FROM stock WHERE qty = '12';

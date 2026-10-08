@@ -1,0 +1,11 @@
+SELECT -5, - -5, -(-5);
+SELECT -2.5, -0.0;
+SELECT -NULL;
+SELECT -'3abc', -'2.5', -'abc';
+SELECT typeof(-'7'), typeof(-'7.0');
+SELECT +5, +'abc', +'12', typeof(+'12');
+SELECT +NULL;
+SELECT +-3, -+3;
+CREATE TABLE t (x INTEGER);
+INSERT INTO t VALUES (4), (-6);
+SELECT x, -x FROM t ORDER BY -x;

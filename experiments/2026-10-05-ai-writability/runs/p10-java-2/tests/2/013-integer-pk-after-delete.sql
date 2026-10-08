@@ -1,0 +1,10 @@
+CREATE TABLE q (id INTEGER PRIMARY KEY, job TEXT);
+INSERT INTO q (job) VALUES ('a'), ('b'), ('c');
+DELETE FROM q WHERE id = 3;
+INSERT INTO q (job) VALUES ('d');
+DELETE FROM q WHERE id = 1;
+INSERT INTO q (job) VALUES ('e');
+SELECT id, job FROM q ORDER BY id;
+DELETE FROM q;
+INSERT INTO q (job) VALUES ('f');
+SELECT id, job FROM q ORDER BY id;

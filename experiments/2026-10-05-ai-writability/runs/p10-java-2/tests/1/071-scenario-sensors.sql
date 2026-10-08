@@ -1,0 +1,24 @@
+-- Raw sensor messages arrive as text and are stored in typed columns.
+CREATE TABLE sensor (id INTEGER, label TEXT, lo REAL, hi REAL);
+CREATE TABLE sample (sensor INTEGER, t INTEGER, value REAL);
+INSERT INTO sensor VALUES (1, 'boiler', 40, 90), (2, 'attic', -10, 35.5), (3, 'cellar', '5', '18');
+INSERT INTO sample VALUES ('1', '100', '72.5'), ('1', '160', ' 91.25 '), ('2', '100', '-12');
+INSERT INTO sample VALUES (2, 160, '20.5'), (3, 100, '17'), (3, 160, NULL);
+INSERT INTO sample VALUES (3, 220, 'ERR');
+INSERT INTO sample VALUES (3, '220.5', 1);
+SELECT sensor, t, value FROM sample ORDER BY sensor, t;
+SELECT id, label, lo, hi FROM sensor ORDER BY id;
+SELECT sensor, t FROM sample WHERE value > 90 OR value < -10 ORDER BY sensor;
+SELECT sensor, t, value FROM sample WHERE value IS NULL;
+SELECT sensor, value - 20 AS delta FROM sample WHERE delta > 0 ORDER BY delta;
+SELECT sensor, t / 60, t % 60 FROM sample WHERE sensor = 1 ORDER BY t;
+SELECT label, hi - lo AS span FROM sensor ORDER BY span DESC;
+SELECT label FROM sensor WHERE lo < 0 AND hi > 30;
+SELECT sensor, abs(value) FROM sample WHERE sensor = 2 ORDER BY t;
+SELECT typeof(sensor), typeof(t), typeof(value) FROM sample WHERE t = 100 AND sensor = 2;
+SELECT sensor, t FROM sample WHERE t = '160' ORDER BY sensor;
+SELECT sensor, value FROM sample ORDER BY value DESC NULLS FIRST, sensor LIMIT 3;
+SELECT label || '@' || hi FROM sensor ORDER BY id;
+SELECT sensor FROM sample WHERE value = '72.50';
+SELECT sensor, coalesce(value, lo) FROM sample WHERE sensor = 3 ORDER BY t;
+SELECT unit FROM sensor;
