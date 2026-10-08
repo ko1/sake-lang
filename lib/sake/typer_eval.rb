@@ -42,7 +42,7 @@ module Sake
       end
 
       # A variable's type on this path when a branch did not touch it.
-      def outside(slot) = (owns?(slot) ? nil : parent.lookup(slot)) || ["Nil"].freeze
+      def outside(slot) = (owns?(slot) ? nil : parent.lookup(slot)) || Typer.one("Nil")
 
       def dup_level = Env.new(@parent, @frame, @own, @vars.dup, @links.dup)
 
@@ -63,7 +63,7 @@ module Sake
 
     def ev(n, env)
       case n
-      when Lit then n.value.is_a?(Symbol) ? [[:sym, n.value.to_s]].freeze : t(LIT_TYPES.fetch(n.value.class))
+      when Lit then n.value.is_a?(Symbol) ? Typer.intern([[:sym, n.value.to_s]].freeze) : t(LIT_TYPES.fetch(n.value.class))
       when Str then t("String")
       when Seq
         r = t("Nil")
@@ -96,13 +96,13 @@ module Sake
         join_into(env, left_env, right_env)
         # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
         left = n.is_a?(And) ? l & (NILS + ["Boolean"]) : l - NILS
-        u(*left.map { [_1] }, r)
+        u(of_atoms(left), r)
       when MakeTuple then tuple(n.elems.map { ev(_1, env) })
       when MakeRecord then record_type(n.keys.zip(n.values.map { ev(_1, env) }))
-      when MakePairs then [[:pairs, n.keys.zip(n.values).map { |k, v| [ev(k, env), ev(v, env)] }]].freeze
+      when MakePairs then Typer.intern([[:pairs, n.keys.zip(n.values).map { |k, v| [ev(k, env), ev(v, env)] }]].freeze)
       when MakeRange
         ends = u(ev(n.left, env), ev(n.right, env))
-        [[:range, u(*(ends - ["Nil"]).map { [_1] })]].freeze
+        Typer.intern([[:range, of_atoms(ends - ["Nil"])]].freeze)
       when Interp, MakeRegexp
         n.parts.each { ev(_1, env) }
         t(n.is_a?(Interp) ? "String" : "Regexp")
@@ -210,7 +210,7 @@ module Sake
     def or_assign(n, env)
       slot = n.left.slot
       cur = env.lookup(slot) || t("Nil")
-      assign(env, slot, u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(n.right.value, env)))
+      assign(env, slot, u(of_atoms(cur - NILS - ["Boolean"]), ev(n.right.value, env)))
     end
 
     # `x[k] OP= v` / `x[k] ||= v`
@@ -221,7 +221,7 @@ module Sake
       cur = index_get(n.origin, recv, key, lit)
       val =
         if n.op == "||"
-          u(*(cur - NILS - ["Boolean"]).map { [_1] }, ev(n.value, env))
+          u(of_atoms(cur - NILS - ["Boolean"]), ev(n.value, env))
         else
           binop(n.origin, n.op, cur, ev(n.value, env))
         end
@@ -326,7 +326,7 @@ module Sake
         slot = narrow_slot(env, pred.value)
         return unless slot && (ty = env.lookup(slot))
         m, rest = match_atoms(ty, pred.pattern)
-        set_narrowed(env, slot, u(*(truthy ? m : rest).map { [_1] }))
+        set_narrowed(env, slot, of_atoms(truthy ? m : rest))
       when IsNil, BinOp
         return if pred.is_a?(BinOp) && !%w[== !=].include?(pred.op)
         return if pred.origin.receiver.is_a?(Prism::ConstantReadNode) # `Kernel.==(x, nil)` is not a test form
@@ -364,7 +364,7 @@ module Sake
       subject = other[0]
       if (slot = narrow_slot(env, subject)) && (ty = env.lookup(slot))
         m, rest = match_atoms(ty, PValue.new(value: lit[0]))
-        set_narrowed(env, slot, u(*(eq ? m : rest).map { [_1] }))
+        set_narrowed(env, slot, of_atoms(eq ? m : rest))
       elsif (var, pos = indexed_var(subject)) && var
         ty = (env.lookup(var) || []).filter_map { |a| a[1][pos] if a.is_a?(Array) && a[0] == :tuple }
         m, rest = match_atoms(u(*ty), PValue.new(value: lit[0]))
@@ -384,7 +384,7 @@ module Sake
       ty = env.lookup(slot) or return
       return if unknown?(ty) || unknown?(atoms)
       kept = ty.reject { |a| a.is_a?(Array) && a[0] == :tuple && a[1][pos] && a[1][pos].none? { atoms.include?(_1) } }
-      set_narrowed(env, slot, u(*kept.map { [_1] })) unless kept.empty? || kept.size == ty.size
+      set_narrowed(env, slot, of_atoms(kept)) unless kept.empty? || kept.size == ty.size
     end
 
     # [atoms that may match the pattern, atoms that may not]. An unknown atom may be anything: it goes
@@ -450,7 +450,7 @@ module Sake
         remaining -= ["Boolean"] if bools.size == 2
         next if m.empty? && !v.empty?
         e = env.dup_level
-        set_narrowed(e, var, u(*m.map { [_1] })) if var
+        set_narrowed(e, var, of_atoms(m)) if var
         narrow_by_position(e, tuple_var, pos, m) if tuple_var
         bind_pattern(e, pat, m)
         results << ev(body, e)
@@ -458,7 +458,7 @@ module Sake
       end
       if n.else_ && (!remaining.empty? || v.empty?) # an else no value reaches is not analyzed
         e = env.dup_level
-        set_narrowed(e, var, u(*remaining.map { [_1] })) if var
+        set_narrowed(e, var, of_atoms(remaining)) if var
         narrow_by_position(e, tuple_var, pos, remaining) if tuple_var
         results << ev(n.else_, e)
         envs << e
@@ -505,7 +505,7 @@ module Sake
         when :nil then ty & NILS
         when :falsy then ty & (NILS + ["Boolean"])
         end
-      set_narrowed(env, slot, u(*atoms.map { [_1] }))
+      set_narrowed(env, slot, of_atoms(atoms))
     end
 
     def match_record(n, env)
@@ -574,7 +574,7 @@ module Sake
         cur = env.lookup(other) or next
         allowed = u(*alive.map { _1[1][i] || t("Nil") })
         kept = cur.select { allowed.include?(_1) }
-        set_narrowed(env, other, u(*kept.map { [_1] }), follow: false) unless kept.empty? || kept.size == cur.size
+        set_narrowed(env, other, of_atoms(kept), follow: false) unless kept.empty? || kept.size == cur.size
       end
     end
 
@@ -650,12 +650,12 @@ module Sake
         rs = args[0].filter_map do |a|
           fn = d.table[atom_type_name(a)] or next
           if fn.abstract # the type includes the module but does not define the function
-            add_check(o, "#{d.module}.#{d.name}", "required", "a definition", [a].freeze, :error, [a])
+            add_check(o, "#{d.module}.#{d.name}", "required", "a definition", one(a), :error, [a])
             next
           end
           @callers.push(call_site(o))
           begin
-            call_user(fn, [[a].freeze, *args.drop(1)], blk)
+            call_user(fn, [one(a), *args.drop(1)], blk)
           ensure
             @callers.pop
           end
@@ -666,7 +666,7 @@ module Sake
         record(o, un.full_name, "subject", un.types, args[0])
         rs = args[0].filter_map do |a|
           fn = un.table[atom_type_name(a)] or next
-          xs = [[a].freeze, *args.drop(1)]
+          xs = [one(a), *args.drop(1)]
           next call_builtin(fn, xs, blk, o) unless fn.is_a?(UserFunction)
           @callers.push(call_site(o))
           begin
@@ -710,7 +710,7 @@ module Sake
         next unless arg.is_a?(LVarGet) && (ty = env.lookup(arg.slot))
         next if unknown?(ty)
         kept = ty.select { |a| Array(want).any? { atom_matches?(a, _1) } }
-        env.vars[arg.slot] = u(*kept.map { [_1] })
+        env.vars[arg.slot] = of_atoms(kept)
       end
     end
 
@@ -748,7 +748,7 @@ module Sake
         end
         e = env.dup_level
         join_into(e, e.dup_level, body_env)
-        assign(e, clause.slot, u(*caught.uniq.map { [_1] })) if clause.slot
+        assign(e, clause.slot, of_atoms(caught.uniq)) if clause.slot
         # A bare raise in the clause re-raises what was caught; only explicitly raised types are tracked.
         @handled.push(caught.select { raised.key?(_1) })
         results << ev(clause.body, e)

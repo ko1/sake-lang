@@ -6,7 +6,9 @@ module Sake
   class Typer
     # default: the type a missing key gives (nil unless made by Hash.new(default)).
     HashSite = Struct.new(:id, :label, :key, :val, :default)
+    Tracked.setter(HashSite, :key, :val)
     SetSite = Struct.new(:id, :label, :elem)
+    Tracked.setter(SetSite, :elem)
 
     def hash_sites = (@hash_sites ||= {})
     def set_sites = (@set_sites ||= {})
@@ -17,13 +19,13 @@ module Sake
     def thread_site(node)
       id = site_id(node)
       thread_sites[id] ||= SetSite.new(id, site_label(id, node), [])
-      [[:thread, id]].freeze
+      site_type(:thread, id)
     end
 
     def queue_site(node)
       id = site_id(node)
       queue_sites[id] ||= SetSite.new(id, site_label(id, node), [])
-      [[:queue, id]].freeze
+      site_type(:queue, id)
     end
 
     def queue_elem(ty) = u(*atoms_of(ty, :queue).map { queue_sites[_1[1]].elem })
@@ -31,13 +33,13 @@ module Sake
     def hash_site(node, label = "")
       id = site_id(node)
       hash_sites[id] ||= HashSite.new(id, site_label(id, node, label), [], [], t("Nil"))
-      [[:hash, id]].freeze
+      site_type(:hash, id)
     end
 
     def set_site(node, label = "")
       id = site_id(node)
       set_sites[id] ||= SetSite.new(id, site_label(id, node, label), [])
-      [[:set, id]].freeze
+      site_type(:set, id)
     end
 
     # Runs a type's own to_s / inspect for each Struct type in ty, and checks that it returns a String.
@@ -86,7 +88,7 @@ module Sake
         return nil unless a.is_a?(Array)
         case a[0]
         when :hash then u(hash_sites[a[1]].val, hash_sites[a[1]].default.map { _1 == "Nil" ? "IndexNil" : _1 }.then { u(*_1.map { |x| [x] }) })
-        when :array then atoms_of(key, :range).any? ? u([a].freeze, t("IndexNil")) : nil
+        when :array then atoms_of(key, :range).any? ? u(one(a), t("IndexNil")) : nil
         end
       end
     end
@@ -192,7 +194,7 @@ module Sake
         [] # only a break leaves it (its values are added to the call's result)
       when "Hash.dup" then args[0]
       when "Kernel.dup" # the same types (a copy); a type's own dup gives what it returns
-        u(*args[0].map { |a| (own = struct_atom?(a) && @program.functions.dig(a, "dup")) ? call_user(own, [[a].freeze], nil) : [a] })
+        u(*args[0].map { |a| (own = struct_atom?(a) && @program.functions.dig(a, "dup")) ? call_user(own, [one(a)], nil) : [a] })
       when "Math.PI", "Math.E", "Float.INFINITY", "Float.NAN", "Float.EPSILON", "Float.MAX", "Float.MIN" then t("Float")
       when "Kernel.once"
         # One value for the place, whichever call computes it first: the union over every evaluation.
@@ -439,7 +441,7 @@ module Sake
       id = site_id(key)
       @sites[id] ||= Site.new(id, key, site_label(id, node, " #{tag}"), nil, elem, elem)
       @sites[id].elem = u(@sites[id].elem, elem)
-      [[:array, id]].freeze
+      site_type(:array, id)
     end
 
     def table_result(name, args, blk, node)

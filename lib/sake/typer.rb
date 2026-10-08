@@ -20,7 +20,19 @@ module Sake
     MAX_LOOP_ITER = 10
     MAX_TUPLE_DEPTH = 3
 
+    # GEN counts the writes that changed what a container or a field holds (types are interned, so
+    # identity tells a change): a memo stored at the current GEN needs no further check.
+    GEN = [0]
+    module Tracked
+      def self.setter(mod, *names)
+        names.each do |n|
+          mod.define_method(:"#{n}=") { |v| GEN[0] += 1 unless v.equal?(self[n]); self[n] = v }
+        end
+      end
+    end
+
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
+    Tracked.setter(Site, :elem)
     Frame = Struct.new(:fn, :ret, :block)
     # The type of a parameter the call did not give, until the function's prologue types its default.
     MISSING = ["(not given)"].freeze
@@ -65,8 +77,8 @@ module Sake
         @results = {}.compare_by_identity
         @done = {}
         @in_progress = {}
-        @yield_depth = Hash.new(0)
-        @instantiated = {}
+        @yield_depth = Hash.new(0).compare_by_identity
+        @instantiated = {}.compare_by_identity
         @callers = []
         @raised = [{}]   # stack of {exception type name => [raise nodes]} for the code being analyzed
         @handled = []    # exception type names of the rescue clauses being analyzed (for a bare raise)
@@ -81,20 +93,61 @@ module Sake
 
     # --- types ---
 
-    # Typing a large program asks for the same union of the same (frozen) types over and over, so results
-    # are memoized by the arguments' identities; the arguments are kept to tell a reused object_id apart.
-    UNION_MEMO = {}
-    UNION_BY_VALUE = {}
+    # Types are interned: one frozen object per canonical value, kept for the life of the process, so
+    # equal types are the same object and object ids never repeat. The tables of the typer key by
+    # identity; hashing nested atoms by value was most of the time on large programs.
+    CANON = {}                       # value => the canonical object
+    CANON_IDS = {}.compare_by_identity
+    UNION_MEMO = {}                  # sorted ids of the (interned) arguments => result
+    ONE_BY_NAME = {}                 # atom => the type of just that atom
+    ONE_BY_ATOM = {}.compare_by_identity
+
+    def self.intern(ty)
+      return ty if CANON_IDS.key?(ty)
+      return NONE if ty.empty?
+      CANON[ty] || begin
+        c = union_uncached([ty])
+        c = (CANON[c] ||= c)
+        CANON_IDS[c] = true
+        CANON[ty.frozen? ? ty : ty.dup.freeze] = c
+        c
+      end
+    end
+
+    def self.one(a) = a.is_a?(String) ? (ONE_BY_NAME[a] ||= intern([a].freeze)) : (ONE_BY_ATOM[a] ||= intern([a].freeze))
+
+    # The type made of these atoms (a selection from a canonical type, usually).
+    def self.of_atoms(atoms)
+      return NONE if atoms.empty?
+      return one(atoms[0]) if atoms.size == 1
+      union(*atoms.map { one(_1) })
+    end
+
+    NONE = [].freeze
+    CANON[NONE] = NONE
+    CANON_IDS[NONE] = true
 
     def self.union(*tys)
-      return union_uncached(tys) unless tys.all?(&:frozen?)
+      return union2(tys[0], tys[1]) if tys.size == 2
+      tys.map! { CANON_IDS.key?(_1) ? _1 : intern(_1) }
+      return tys[0] if tys.size == 1
       key = tys.map(&:__id__)
-      if (hit = UNION_MEMO[key]) && hit[0].each_with_index.all? { |a, i| a.equal?(tys[i]) }
-        return hit[1]
-      end
-      r = (UNION_BY_VALUE[tys] ||= union_uncached(tys))
-      UNION_MEMO[key] = [tys, r]
-      r
+      key.sort!
+      UNION_MEMO[key] ||= intern(union_uncached(tys))
+    end
+
+    # The two-argument case, by far the commonest, keyed by identity in either order.
+    UNION2 = {}.compare_by_identity
+
+    def self.union2(a, b)
+      a = intern(a) unless CANON_IDS.key?(a)
+      b = intern(b) unless CANON_IDS.key?(b)
+      return a if a.equal?(b)
+      return b if a.empty?
+      return a if b.empty?
+      (h = UNION2[a]) && (r = h[b]) and return r
+      (h = UNION2[b]) && (r = h[a]) and return r
+      (UNION2[a] ||= {}.compare_by_identity)[b] = intern(union_uncached([a, b]))
     end
 
     def self.union_uncached(tys)
@@ -105,8 +158,14 @@ module Sake
       merged = tuples.group_by { |tp| [tp[1].size, tp[1].each_with_index.filter_map { |e, i| [i, e[0]] if e.size == 1 && e[0].is_a?(Array) && e[0][0] == :sym }] }.map do |_, ts|
         [:tuple, ts.map { _1[1] }.transpose.map { |es| union(*es) }]
       end
-      (normalize_symbols(rest) + merged).uniq.sort_by(&:inspect).freeze
+      (normalize_symbols(rest) + merged).uniq.sort_by { sort_key(_1) }.freeze
     end
+
+    # Atoms sort by their inspect text; the text of an atom object is computed once (atoms inside
+    # interned types are shared, so most lookups hit).
+    SORT_KEYS = {}.compare_by_identity
+
+    def self.sort_key(atom) = atom.is_a?(String) ? atom.inspect : (SORT_KEYS[atom] ||= atom.inspect)
 
     MAX_SYMBOLS = 32
 
@@ -118,15 +177,23 @@ module Sake
       syms.size > MAX_SYMBOLS ? atoms - syms + ["Symbol"] : atoms
     end
 
-    def u(*tys) = Typer.union(*tys)
-    def t(name) = [name].freeze
-    def unknown(reason) = [[:unknown, reason]].freeze
+    def u(*tys) = tys.size == 2 ? Typer.union2(tys[0], tys[1]) : Typer.union(*tys)
+    def t(name) = Typer.one(name)
+    def one(a) = Typer.one(a)
+    def of_atoms(atoms) = Typer.of_atoms(atoms)
+    def unknown(reason) = Typer.intern([[:unknown, reason]].freeze)
     def unknown?(ty) = ty.any? { _1.is_a?(Array) && _1[0] == :unknown }
+
+    TUPLE_MEMO = {} # ids of the (interned) element types => the Tuple type
 
     def tuple(elems, depth = 0)
       return unknown("tuple depth") if elems.any? { tuple_depth(_1) >= MAX_TUPLE_DEPTH }
-      [[:tuple, elems]].freeze
+      elems = elems.map { Typer.intern(_1) }
+      TUPLE_MEMO[elems.map(&:__id__)] ||= Typer.intern([[:tuple, elems]].freeze)
     end
+
+    # The type of a container atom, one object per site.
+    def site_type(kind, id) = ((@site_types ||= {})[kind] ||= {})[id] ||= Typer.intern([[kind, id]].freeze)
 
     def tuple_depth(ty)
       ty.map do |a|
@@ -146,7 +213,7 @@ module Sake
       sorted = pairs.sort_by(&:first)
       return [] if sorted.any? { _1[1].empty? }
       return unknown("record depth") if sorted.any? { tuple_depth(_1[1]) >= MAX_TUPLE_DEPTH }
-      combos = sorted.map { |_, ty| ty }.inject([[]]) { |acc, ty| acc.product(ty).map { |c, a| c + [[a].freeze] } }
+      combos = sorted.map { |_, ty| ty }.inject([[]]) { |acc, ty| acc.product(ty).map { |c, a| c + [one(a)] } }
       return unknown("record variants") if combos.size > MAX_RECORD_VARIANTS
       u(*combos.map { |c| [[:record, sorted.map(&:first).zip(c)]] })
     end
@@ -155,7 +222,7 @@ module Sake
     NILS = %w[Nil IndexNil].freeze
 
     def nil_atom?(a) = NILS.include?(a)
-    def without_nil(ty) = u(*(ty - NILS).map { [_1] })
+    def without_nil(ty) = of_atoms(ty - NILS)
 
     def atom_type_name(a)
       return (a == "IndexNil" ? "Nil" : a) if a.is_a?(String)
@@ -235,16 +302,27 @@ module Sake
     # A container's site: the place that makes it, per instantiation of the function around it (the
     # function's argument types), as a template is instantiated per type: `def index_by(rows) = Hash[]…`
     # called on Departments and on Employees makes two Hashes. When the instantiation's arguments already
-    # hold (anywhere inside) a container made by this same function (recursion, or functions passing
-    # containers back and forth), the place gets one site for all, as before, so sites stay finite.
+    # hold (anywhere inside) a container made by this same function, or one made in the context of such a
+    # container (recursion, or functions passing containers back and forth: f makes xs, g(xs) makes ys,
+    # f(ys) makes zs, ...), the place gets one site for all, as before, so sites stay finite. Checking only
+    # the function that made the container let the back-and-forth case add sites every pass.
     def site_id(node)
       inst = @inst_stack&.last
-      ctx = site_context(inst)
+      made_by = inst && makers_of_args(*inst)
+      ctx = made_by && inst_key(*inst)
       # a pasted copy (class B < A) shares A's nodes but not A's containers
       init, depth = @init_fns&.last
       fn = init && depth == (@inst_stack&.size || 0) ? init : inst&.first
       ctx = [:paste, fn.namespace, ctx] if fn&.pasted
-      id = ctx ? (((@ctx_site_ids ||= {}.compare_by_identity)[node] ||= {})[ctx] ||= next_site_id(node, ctx)) : (@site_ids[node] ||= next_site_id(node))
+      if ctx
+        id = ((@ctx_site_ids ||= {}.compare_by_identity)[node] ||= {})[ctx] ||= begin
+          made_by ||= {}.compare_by_identity # a pasted copy's site outside any instantiation, or shared
+          made_by[inst.first] = true if inst
+          next_site_id(node, ctx).tap { (@site_makers ||= {})[_1] = made_by.keys }
+        end
+      else
+        id = (@site_ids[node] ||= next_site_id(node))
+      end
       (@site_fns ||= {})[id] ||= inst&.first # the function whose code made it
       id
     end
@@ -255,20 +333,30 @@ module Sake
       id
     end
 
-    def site_context(inst)
-      return nil unless inst
-      fn, args = inst
+    # An instantiation (a function and its argument types) as a cheap hash key: the ids of the function
+    # and of the interned types. Hashing [fn, args] by value walks the function's whole body.
+    def inst_key(fn, args) = [fn.__id__, *args.map(&:__id__)]
+
+    # The functions whose contexts a site came from: the one whose code made it and, for a site made per
+    # instantiation, those of the containers its instantiation's arguments held.
+    def makers(id) = @site_makers&.[](id) || [@site_fns&.[](id)]
+
+    # The makers (as a set keyed by identity) of every container the arguments hold, anywhere inside; nil
+    # when fn is one of them.
+    def makers_of_args(fn, args)
+      out = {}.compare_by_identity
       seen = {}
-      args.any? { |ty| holds_site_of?(ty, fn, seen) } ? nil : inst
+      args.all? { |ty| collect_makers(ty, fn, out, seen) } ? out : nil
     end
 
-    # Whether ty holds (anywhere inside) a container made by fn's code.
-    def holds_site_of?(ty, fn, seen)
-      ty.any? do |a|
-        next false unless a.is_a?(Array) && %i[array hash set queue thread].include?(a[0]) && a[1].is_a?(Integer)
-        next false if seen[a]
+    def collect_makers(ty, fn, out, seen)
+      ty.all? do |a|
+        next true unless a.is_a?(Array) && %i[array hash set queue thread].include?(a[0]) && a[1].is_a?(Integer)
+        next true if seen[a]
         seen[a] = true
-        next true if @site_fns&.[](a[1]).equal?(fn)
+        ms = makers(a[1])
+        next false if ms.any? { _1.equal?(fn) }
+        ms.each { out[_1] = true }
         inner =
           case a[0]
           when :array then [@sites[a[1]]&.elem]
@@ -277,7 +365,7 @@ module Sake
           when :queue then [queue_sites[a[1]]&.elem]
           else []
           end
-        inner.compact.any? { holds_site_of?(_1, fn, seen) }
+        inner.compact.all? { collect_makers(_1, fn, out, seen) }
       end
     end
 
@@ -290,7 +378,7 @@ module Sake
       id = site_id(node)
       elem = declared && !STRUCTURED.include?(declared) ? t(declared) : init
       @sites[id] ||= Site.new(id, node, site_label(id, node, label_extra), declared, init, elem)
-      [[:array, id]].freeze
+      site_type(:array, id)
     end
 
     def array_sites(ty) = ty.select { _1.is_a?(Array) && _1[0] == :array }.map { @sites[_1[1]] }
@@ -313,7 +401,9 @@ module Sake
     def field_write(dt, field, ty, node)
       @nil_writes[dt][field] << node.location.start_line if ty.any? { nil_atom?(_1) }
       ty.each { |a| @type_writes[dt][field][atom_type_name(a)] << node.location.start_line unless nil_atom?(a) }
-      @fields[dt][field] = u(@fields[dt][field] || [], ty)
+      new = u(@fields[dt][field] || NONE, ty)
+      GEN[0] += 1 unless new.equal?(@fields[dt][field])
+      @fields[dt][field] = new
     end
 
     # --- checks ---
@@ -333,8 +423,11 @@ module Sake
       add_check(node, op, arg, wants.join("|"), actual, verdict, failing)
     end
 
+    VERDICTS = %i[error unknown partial proven].freeze # worst first
+
     def add_check(node, op, arg, expected, actual, verdict, failing = [])
-      key = [node.location.start_line, node.location.start_column, op, arg, other_file(node)]
+      key = ((@check_keys ||= {}.compare_by_identity)[node] ||= {})[[op, arg]] ||=
+        [node.location.start_line, node.location.start_column, op, arg, other_file(node)]
       prev = @checks[key]
       if prev
         return if op == "rescue" && prev.verdict == :proven
@@ -342,15 +435,19 @@ module Sake
         # Evaluations along the same calls are loop iterations and passes towards the fixpoint: a check that
         # fails in some and passes in others may fail. Different call paths keep the worse verdict.
         return prev.verdict = :proven if op == "rescue" && verdict == :proven
-        ctx = (@check_ctx[key] ||= {})
-        ctx[@callers] = (c = ctx[@callers]).nil? || c == verdict ? verdict : (([c, verdict] & %i[unknown]).empty? ? :partial : :unknown)
-        prev.verdict = ctx.values.reduce { worse(_1, _2) }
+        ctx, counts = @check_ctx[key] # path => its verdict; counts of each verdict among the paths
+        c = ctx[@callers]
+        v = c.nil? || c == verdict ? verdict : (([c, verdict] & %i[unknown]).empty? ? :partial : :unknown)
+        ctx[@callers] = v
+        counts[c] -= 1 if c
+        counts[v] += 1
+        prev.verdict = VERDICTS.find { counts[_1].positive? }
         prev.failing = (prev.failing + failing).uniq
         prev.via ||= @callers.dup unless failing.empty?
       else
-        (@check_ctx[key] = {})[@callers.dup] = verdict
-        @checks[key] = Check.new(node.location.start_line, node.location.start_column, op, arg, expected, actual, verdict, failing,
-                                 failing.empty? ? nil : @callers.dup, other_file(node), node)
+        @check_ctx[key] = [{ @callers.dup => verdict }, Hash.new(0).tap { _1[verdict] = 1 }]
+        @checks[key] = Check.new(key[0], key[1], op, arg, expected, actual, verdict, failing,
+                                 failing.empty? ? nil : @callers.dup, key[4], node)
       end
     end
 
@@ -451,6 +548,7 @@ module Sake
 
     def call_user(fn, args, blk)
       @instantiated[fn] = true
+      args = args.map { Typer.intern(_1) }
       if fn.yields
         return unknown("recursive yield") if @yield_depth[fn] >= MAX_YIELD_DEPTH
         @yield_depth[fn] += 1
@@ -463,14 +561,14 @@ module Sake
         end
       end
 
-      key = [fn, args]
+      key = inst_key(fn, args)
       if @in_progress[key] || @done[key]
         merge_raised(@raises[key] || {})
         return @returns[key] || []
       end
       @in_progress[key] = true
       @raised.push({})
-      (@inst_stack ||= []).push(key)
+      (@inst_stack ||= []).push([fn, args])
       begin
         r = run_body(fn, args, nil)
       ensure
@@ -504,12 +602,12 @@ module Sake
       recv.each do |a|
         if struct_atom?(a)
           fn = Operators.includes?(@program.includes || {}, a, "Indexable") && @program.functions.dig(a, "[]")
-          fn ? results << call_user(fn, [[a].freeze, key, *[extra].compact], nil) : failing << a
+          fn ? results << call_user(fn, [one(a), key, *[extra].compact], nil) : failing << a
           next
         end
         if extra # `s[start, length]` on a String or an Array: a slice, or nil
           if a == "String" then results << t("String") << t("IndexNil")
-          elsif a.is_a?(Array) && a[0] == :array then results << [a].freeze << t("IndexNil")
+          elsif a.is_a?(Array) && a[0] == :array then results << one(a) << t("IndexNil")
           else failing << a
           end
           record(node, "Indexable.[]", "length", "Integer", extra) unless struct_atom?(a)
@@ -551,7 +649,7 @@ module Sake
       return [] if recv.empty? || key.empty? || val.empty? || extra&.empty?
       recv.each do |a|
         if struct_atom?(a) && Operators.includes?(@program.includes || {}, a, "Indexable") && (fn = @program.functions.dig(a, "[]="))
-          call_user(fn, [[a].freeze, key, *[extra].compact, val], nil)
+          call_user(fn, [one(a), key, *[extra].compact, val], nil)
           next
         end
         next if extra # built-in types take one index when writing
@@ -585,16 +683,16 @@ module Sake
       if %w[== !=].include?(op)
         fn = @program.functions.dig(x, "==")
         fn ||= Operators.includes?(@program.includes || {}, x, "Comparable") && @program.functions.dig(x, "<=>")
-        call_user(fn, [[x].freeze, b.include?(x) ? [x].freeze : b], nil) if fn && (b.include?(x) || @program.functions.dig(x, "=="))
+        call_user(fn, [one(x), b.include?(x) ? one(x) : b], nil) if fn && (b.include?(x) || @program.functions.dig(x, "=="))
         return t("Boolean")
       end
       mod = Operators::MODULE_OF.fetch(op)
       return nil unless Operators.includes?(@program.includes || {}, x, mod)
       if (fn = @program.functions.dig(x, op))
-        return call_user(fn, [[x].freeze, b], nil)
+        return call_user(fn, [one(x), b], nil)
       end
       if mod == "Comparable" && (cmp = @program.functions.dig(x, "<=>"))
-        call_user(cmp, [[x].freeze, b], nil)
+        call_user(cmp, [one(x), b], nil)
         return t("Boolean")
       end
       nil
@@ -641,7 +739,7 @@ module Sake
         results << (key == %w[Set Set] ? set_site(node, " #{op}").tap { |r| set_sites[r[0][1]].elem = u(set_sites[r[0][1]].elem, set_elem([x]), *(op == "|" ? [set_elem([y])] : [])) } : binop_result(op, *key))
       end
       verdict = hits == pairs.size ? :proven : (hits.zero? ? :error : :partial)
-      actual = pairs.map { |x, y| tuple([[x].freeze, [y].freeze]) }
+      actual = pairs.map { |x, y| tuple([one(x), one(y)]) }
       add_check(node, op_name(op), "pair", "table row", u(*actual), verdict, failing)
       check_ordered_elements(node, op, pairs) if op == "<=>" || COMPARE_OPS.take(4).include?(op)
       u(*results)
@@ -669,7 +767,7 @@ module Sake
       return if elem_pairs.empty?
       failing = elem_pairs.reject { |ex, ey| comparable_atoms?(ex, ey) }
       verdict = failing.empty? ? :proven : (failing.size == elem_pairs.size ? :error : :partial)
-      add_check(node, op_name(op), "elements", "comparable elements", u(*elem_pairs.map { |ex, ey| tuple([[ex].freeze, [ey].freeze]) }),
+      add_check(node, op_name(op), "elements", "comparable elements", u(*elem_pairs.map { |ex, ey| tuple([one(ex), one(ey)]) }),
                 verdict, failing)
     end
 
@@ -723,9 +821,9 @@ module Sake
       a.each do |x|
         if struct_atom?(x)
           fn = Operators.includes?(@program.includes || {}, x, Operators::MODULE_OF.fetch(op)) && @program.functions.dig(x, op)
-          fn ? results << call_user(fn, [[x].freeze], nil) : failing << x
+          fn ? results << call_user(fn, [one(x)], nil) : failing << x
         elsif @registry.unary_ops[op].key?(atom_type_name(x))
-          results << [x].freeze
+          results << one(x)
         else
           failing << x
         end
@@ -794,16 +892,50 @@ module Sake
     # their elements with each other, then, level by level, values at the same place (the same field,
     # Tuple position, Record key, or element of nested collections).
     def struct_hooks(tys, name)
-      tops = tys.map { |ty| u(ty, elem_of(ty), set_elem(ty), *hash_kv(ty)) }
-      tops = [u(*tops)] if MEETS_ARGUMENTS.include?(name) # an argument against a collection's elements or keys
-      groups = []
-      seen = {}
-      tops.each { compared_groups(_1, groups, seen) }
-      groups.each do |g|
-        other = u(*g.map { [_1] })
+      return if tys.all? { |ty| ty.all? { _1.is_a?(String) && !struct_atom?(_1) } } # built-in atoms only: nothing to compare
+      meets = MEETS_ARGUMENTS.include?(name) # an argument against a collection's elements or keys
+      # Memoized per argument types; the groups also depend on what the containers the walk read hold.
+      key = [meets, *tys.map(&:__id__)]
+      memo = (@hooks_memo ||= {})
+      hit = memo[key]
+      if hit && (hit[2] == GEN[0] || deps_hold?(hit[0]))
+        hit[2] = GEN[0]
+        groups = hit[1]
+      else
+        groups = (memo[key] = [*compared_groups_of(tys, meets), GEN[0]])[1]
+      end
+      groups.each do |g, other|
         g.each do |x|
-          %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [[x].freeze, other], nil) }
+          %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [one(x), other], nil) }
         end
+      end
+    end
+
+    # deps: what a group walk read, by identity => what it held then (types are interned, so identity
+    # tells a change): a Site or SetSite => elem, a HashSite => [key, val], a type's field table => values.
+    def deps_hold?(deps)
+      deps.all? do |o, v|
+        case o
+        when HashSite then o.key.equal?(v[0]) && o.val.equal?(v[1])
+        when Hash
+          vs = o.values
+          vs.size == v.size && vs.each_index.all? { vs[_1].equal?(v[_1]) }
+        else o.elem.equal?(v)
+        end
+      end
+    end
+
+    # What a canonical type holds besides containers, fixed per type: its Struct atoms, and the types at
+    # each Tuple position and Record key; and whether it has containers (whose contents are read at walk time).
+    Shape = Struct.new(:structs, :columns, :containers)
+
+    def shape_of(ty)
+      (@shapes ||= {}.compare_by_identity)[ty] ||= begin
+        tuples = atoms_of(ty, :tuple).map { _1[1] }
+        columns = (0...(tuples.map(&:size).max || 0)).map { |i| u(*tuples.filter_map { _1[i] }) }
+        records = atoms_of(ty, :record).flat_map { _1[1] }
+        columns += records.map(&:first).uniq.map { |k| u(*records.select { _1[0] == k }.map(&:last)) }
+        Shape.new(ty.select { struct_atom?(_1) }, columns, ty.any? { _1.is_a?(Array) && %i[array set hash].include?(_1[0]) })
       end
     end
 
@@ -812,18 +944,41 @@ module Sake
                          fetch fetch_values values_at dig [] []= store add add? union difference intersection intersect?
                          subset? superset? disjoint? - + & | ==].freeze
 
-    def compared_groups(ty, out, seen)
+    # [deps, [[struct names, their union], ...]] (deps: see deps_hold?).
+    def compared_groups_of(tys, meets)
+      tops = tys.map { |ty| ty.all? { _1.is_a?(String) } ? ty : u(ty, elem_of(ty), set_elem(ty), *hash_kv(ty)) }
+      tops = [u(*tops)] if meets
+      groups = []
+      deps = {}.compare_by_identity
+      seen = {}.compare_by_identity
+      tops.each { compared_groups(_1, groups, seen, deps) }
+      [deps, groups.map { |g| [g, of_atoms(g)] }]
+    end
+
+    def compared_groups(ty, out, seen, deps)
       return if ty.empty? || seen[ty]
       seen[ty] = true
-      structs = ty.select { struct_atom?(_1) }
-      out << structs unless structs.empty?
-      structs.each { |a| @fields[a].each_value { compared_groups(_1, out, seen) } } # the default == compares fields
-      tuples = atoms_of(ty, :tuple).map { _1[1] }
-      (0...(tuples.map(&:size).max || 0)).each { |i| compared_groups(u(*tuples.filter_map { _1[i] }), out, seen) }
-      records = atoms_of(ty, :record).flat_map { _1[1] }
-      records.map(&:first).uniq.each { |k| compared_groups(u(*records.select { _1[0] == k }.map(&:last)), out, seen) }
-      compared_groups(u(elem_of(ty), set_elem(ty)), out, seen)
-      hash_kv(ty).each { compared_groups(_1, out, seen) }
+      shape = shape_of(ty)
+      if shape.containers
+        ty.each do |a|
+          next unless a.is_a?(Array)
+          case a[0]
+          when :array then (s = @sites[a[1]]) && deps.key?(s) || (deps[s] = s.elem)
+          when :set then (s = set_sites[a[1]]) && deps.key?(s) || (deps[s] = s.elem)
+          when :hash then (s = hash_sites[a[1]]) && deps.key?(s) || (deps[s] = [s.key, s.val])
+          end
+        end
+      end
+      out << shape.structs unless shape.structs.empty?
+      shape.structs.each do |a| # the default == compares fields
+        fs = @fields[a]
+        deps[fs] = fs.values unless deps.key?(fs)
+        fs.each_value { compared_groups(_1, out, seen, deps) }
+      end
+      shape.columns.each { compared_groups(_1, out, seen, deps) }
+      return unless shape.containers
+      compared_groups(u(elem_of(ty), set_elem(ty)), out, seen, deps)
+      hash_kv(ty).each { compared_groups(_1, out, seen, deps) }
     end
 
     # T.initialize(c) after T.new: analyzed for each construction, where `@x` reads the value this `new`
@@ -834,7 +989,7 @@ module Sake
     # `return`) adds its types.
     def run_initialize(dt, given, node)
       init = @program.functions.dig(dt.name, "initialize") or return given
-      @init_depth ||= Hash.new(0)
+      @init_depth ||= Hash.new(0).compare_by_identity
       return given if @init_depth[init] >= 2 # an initialize that constructs its own type
       @init_depth[init] += 1
       @instantiated[init] = true

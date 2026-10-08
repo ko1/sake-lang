@@ -179,17 +179,12 @@ The design notes and their reasons are in [DESIGN.md](DESIGN.md).
 
 ### Known issues (not fixed)
 
-- The checker does not terminate for mutually recursive functions that use `Array + Array`: each
-  `+` makes a new array type, so the memo of `[function, argument types]` never hits.
-  `--strict=0` skips the checker and runs it.
-
-  ```ruby
-  def f(n, row) = n == 0 ? row : g(n - 1, row + Array[n])
-  def g(n, row) = f(n, row + Array[n])
-  puts Array.size(f(3, Array[]))
-  ```
-- Checking is slow on large programs (3 to 24 seconds for 2,500 lines, depending on the style), and
-  starting a program takes about 0.3 seconds for 2,500 lines, about 5 times Ruby.
+- Checking a 4,400-line program takes about 7 seconds (it took 190 before 2026-10-08; see
+  `experiments/2026-10-09-typer-speed/`), and starting a program takes about 0.3 seconds for 2,500
+  lines, about 5 times Ruby.
+- Fixed on 2026-10-08: the checker did not terminate for mutually recursive functions that use
+  `Array + Array` (each `+` made a new array type per instantiation). A container made in the context
+  of a container this function made is now shared, so the chain stops.
 
 ## License
 
