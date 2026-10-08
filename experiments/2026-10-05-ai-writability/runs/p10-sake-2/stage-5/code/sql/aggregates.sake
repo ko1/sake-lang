@@ -1,0 +1,142 @@
+# Aggregate functions (3.2): which calls are aggregates, and their value over the rows of a group.
+module Aggregates
+  module_function
+
+  # :aggregate; :bad_arity (an aggregate's name with an argument count it does not take); or
+  # :other (not an aggregate, so a scalar function; max and min with 2 or more arguments).
+  def classify(name, argc, star)
+    case name
+    in "count" then ((star && argc == 0) || (!star && argc == 1)) ? :aggregate : :bad_arity
+    in "sum" | "total" | "avg" then (!star && argc == 1) ? :aggregate : :bad_arity
+    in "min" | "max"
+      return :bad_arity if star || argc == 0
+      argc == 1 ? :aggregate : :other
+    in "group_concat" then (!star && (argc == 1 || argc == 2)) ? :aggregate : :bad_arity
+    else :other
+    end
+  end
+
+  # The name, as written, of the first aggregate call in an expression not yet resolved; "" if none.
+  def first_name(e)
+    if Expr.kind(e) == :call && classify(Catalog.key(Expr.text(e)), Array.size(Expr.args(e)), Expr.qual(e) == "*") == :aggregate
+      return Expr.text(e)
+    end
+    Array.each(Expr.args(e)) do |a|
+      n = first_name(a)
+      return n if n != ""
+    end
+    ""
+  end
+
+  # The row (Env) an aggregate query evaluates its expressions on: one row of the group (3.3)
+  # followed by the value of each call. `width` is the number of columns of a joined row; `outer`
+  # the rows of the enclosing queries.
+  def group_row(calls, rows, width, outer)
+    row = Array.dup(representative(calls, rows, width))
+    Array.each(calls) { |c| Array.push(row, compute(c, rows)) }
+    Env.new(row, outer)
+  end
+
+  # The values of the row that supplies the bare columns: the row of the minimum or maximum if
+  # that is the only aggregate of the query, else the first row; NULLs when the group has no rows.
+  def representative(calls, rows, width)
+    return Array.new(width, nil) if Array.empty?(rows)
+    if Array.size(calls) == 1
+      c = calls[0]
+      if (AggCall.name(c) == "min" || AggCall.name(c) == "max") && !AggCall.distinct(c)
+        i = extreme_index(c, rows)
+        return Env.row(rows[i]) if i >= 0
+      end
+    end
+    Env.row(rows[0])
+  end
+
+  # Position of the first row with the smallest (min) or largest (max) non-NULL argument, or -1.
+  def extreme_index(call, rows)
+    sign = AggCall.name(call) == "max" ? 1 : -1
+    best = nil
+    at = -1
+    i = 0
+    Array.each(rows) do |row|
+      v = Eval.value_of(AggCall.args(call)[0], row)
+      if v != nil && (at < 0 || Values.compare(v, best) * sign > 0)
+        best = v
+        at = i
+      end
+      i += 1
+    end
+    at
+  end
+
+  # The value of an aggregate call over the table rows of one group.
+  def compute(call, rows)
+    name = AggCall.name(call)
+    return Array.size(rows) if AggCall.star(call)
+    rows = ordered(call, rows)
+    return group_concat(call, rows) if name == "group_concat"
+    vals = arguments(call, rows)
+    case name
+    in "count" then Array.size(vals)
+    in "min" | "max" then extreme(vals, name == "max" ? 1 : -1)
+    in "sum" then Array.empty?(vals) ? nil : Summation.total(vals)[1]
+    in "total" then Array.empty?(vals) ? 0.0 : Arithmetic.to_f(Summation.total(vals)[1])
+    else average(vals)
+    end
+  end
+
+  # The non-NULL values of the first argument, one of each if the call is DISTINCT.
+  def arguments(call, rows)
+    arg = AggCall.args(call)[0]
+    seen = Set[]
+    out = Array[]
+    Array.each(rows) do |row|
+      v = Eval.value_of(arg, row)
+      if v != nil && (!AggCall.distinct(call) || Set.add?(seen, Grouping.key(v)) != nil)
+        Array.push(out, v)
+      end
+    end
+    out
+  end
+
+  def extreme(vals, sign)
+    best = nil
+    Array.each(vals) { |v| best = v if best == nil || Values.compare(v, best) * sign > 0 }
+    best
+  end
+
+  def average(vals)
+    return nil if Array.empty?(vals)
+    Arithmetic.to_f(Summation.total(vals)[1]) / Integer.to_f(Array.size(vals))
+  end
+
+  # group_concat's ORDER BY: the group's rows sorted by its terms (a stable sort).
+  def ordered(call, rows)
+    terms = AggCall.order(call)
+    return rows if Array.empty?(terms)
+    keyed = SortRow[]
+    i = 0
+    Array.each(rows) do |row|
+      Array.push(keyed, SortRow.new(Array.map(terms) { |t| Eval.value_of(OrderTerm.expr(t), row) }, Array[i]))
+      i += 1
+    end
+    Array.map(Sorter.sort(keyed, terms)) { |r| rows[SortRow.values(r)[0]] }
+  end
+
+  # The text forms of the non-NULL values, each preceded by the separator of its own row (3.2).
+  def group_concat(call, rows)
+    args = AggCall.args(call)
+    seen = Set[]
+    out = String[]
+    Array.each(rows) do |row|
+      v = Eval.value_of(args[0], row)
+      if v != nil && (!AggCall.distinct(call) || Set.add?(seen, Grouping.key(v)) != nil)
+        unless Array.empty?(out)
+          sep = Array.size(args) > 1 ? Eval.value_of(args[1], row) : ","
+          Array.push(out, sep == nil ? "" : Values.text_of(sep))
+        end
+        Array.push(out, Values.text_of(v))
+      end
+    end
+    Array.empty?(out) ? nil : Array.join(out, "")
+  end
+end

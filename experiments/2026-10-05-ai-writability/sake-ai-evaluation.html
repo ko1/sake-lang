@@ -26,6 +26,7 @@ p { margin: .6rem 0; }
 ul { padding-left: 1.2rem; margin: .6rem 0; }
 li { margin: .3rem 0; }
 code { font-family: var(--mono); font-size: .88em; }
+pre { background: var(--soft); border: 1px solid var(--rule); border-radius: 6px; padding: .7rem .9rem; overflow-x: auto; line-height: 1.5; }
 .lead { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.2rem; }
 .lead ol { margin: 0; padding-left: 1.3rem; }
 .lead li { margin: .45rem 0; }
@@ -58,7 +59,7 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
 
 <main>
 <h1>AI 向け言語 Sake の評価</h1>
-<p class="sub">2026-10-06〜07 ・ Claude Sonnet 5.5 に Sake と Ruby で、書かせ、直させ、読ませた結果（P1〜P6、解く側 190 体。P6 は 2,500 行のインタプリタ）。小さいモデル Claude Haiku 4.5 でも、新しく書く題を流した（P7h・P9h、44 体）。検査器を直したあと、大きなコードの仕様変更も流し直した（P6f、24 体）</p>
+<p class="sub">2026-10-06〜07 ・ Claude Sonnet 5.5 に Sake と Ruby で、書かせ、直させ、読ませた結果（P1〜P6、解く側 190 体。P6 は 2,500 行のインタプリタ）。小さいモデル Claude Haiku 4.5 でも、新しく書く題を流した（P7h・P9h、44 体）。検査器を直したあと、大きなコードの仕様変更も流し直した（P6f、24 体）。2026-10-08 には、SQL エンジンを 6 段階で 3,000〜4,000 行まで育てさせた（P10、24 体）</p>
 
 <div class="lead">
 <ol>
@@ -78,6 +79,7 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
       <li>ただ、Ruby 側も読んで同じ箇所を見つけ、正答率はどの作業でも同じ天井に張り付いた。</li>
     </ul>
   </li>
+  <li><strong>SQL エンジンを 6 段階で育てさせても、正しさは同じ（P10）。</strong>Ruby・Sake 各 2 系列が 3,000〜4,000 行まで育て、隠しテスト 369 本で 366〜368 本。落ちた 3 種類のうち 2 種類は両言語に共通で、型が防いだ誤りはなかった。Sake は出力トークン 1.7 倍、作業時間 3.5 倍、行数 1.25 倍。新しい検査器の不具合（止まらない型の計算）を 1 つ見つけた（結果 8）。</li>
   <li><strong>大きなコードでは、処理系の側に課題が見えた。</strong>
     <ul>
       <li>2,500 行のプログラムの検査時間は 1 回 3〜24 秒で、書き方で 7.5 倍違う。Ruby から移した形が遅い。</li>
@@ -438,13 +440,61 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
 </ul>
 <p>「Haiku は確かめないから書けない」とだけ読むのは、P9h で弱まった。確かめを指示しても縮まなかったからだ。書く前に引くことはできても、引いた結果を組み立てて型の通るプログラムにする段で止まっている、と読むのが今のところ近い（推定）。</p>
 
+<h2>結果 8: SQL エンジンを 6 段階で育てさせても、正しさは同じ（P10）</h2>
+<p>P6 までの題は Sonnet が満点に張り付いた。もっと大きなプログラムを、AI 自身に段階的に育てさせた。題材は SQLite の部分集合で、段階ごとに仕様を足す。段階 1 は一から書き、段階 2〜6 は同じ系列の前の段階のコードに足す（作り手は毎段階、新しいエージェント）。</p>
+<div class="tablewrap"><table>
+<tr><th>段階</th><th>足す仕様</th><th>公開 / 隠しテスト</th></tr>
+<tr><td>1</td><td>表・INSERT・単表 SELECT・式・型（STRICT 表の型強制、比較時の affinity）・実数の印字</td><td class="n">76 / 77</td></tr>
+<tr><td>2</td><td>制約と検査順、UPDATE・DELETE、CASE・IN・LIKE・CAST、文字列関数・round</td><td class="n">68 / 70</td></tr>
+<tr><td>3</td><td>集約（補償付きの和）・GROUP BY・HAVING・DISTINCT</td><td class="n">58 / 58</td></tr>
+<tr><td>4</td><td>結合・名前解決・相関サブクエリ</td><td class="n">55 / 55</td></tr>
+<tr><td>5</td><td>複合 SELECT・WITH（再帰）・ビュー・トランザクション・ALTER・索引</td><td class="n">69 / 69</td></tr>
+<tr><td>6</td><td>ウィンドウ関数（ROWS・RANGE 枠）</td><td class="n">40 / 40</td></tr>
+</table></div>
+<ul>
+  <li><strong>正解の作り方</strong>: 期待出力は Python の sqlite3（SQLite 3.46）で計算した。仕様と SQLite がずれる箇所は、SQLite を仕様に合わせる（<code>round</code> の置き換え、STRICT の付与）か、テストを捨てる（印字の食い違い、仕様にないエラー、行の順序が決まらないもの）。</li>
+  <li><strong>仕様の検証</strong>: 本計測の前に、テストを書く 6 体と Ruby の参照実装 6 体（Opus 5.5）に、仕様と SQLite の食い違いを洗わせた。約 60 件を記録し、仕様かテストを直した。本計測は、その段階の参照実装が全テストに通ってから流した。</li>
+</ul>
+<div class="tablewrap"><table>
+<tr><th>系列（Sonnet 5.5）</th><th>隠しテスト（369 本）</th><th>行数・ファイル</th><th>出力トークン</th><th>作業時間</th></tr>
+<tr><td><span class="ruby">Ruby</span>-1</td><td class="n">367</td><td class="n">3,364・34</td><td class="n">206k</td><td class="n">28 分</td></tr>
+<tr><td><span class="ruby">Ruby</span>-2</td><td class="n">368</td><td class="n">2,971・30</td><td class="n">178k</td><td class="n">24 分</td></tr>
+<tr><td><span class="sake">Sake</span>-1</td><td class="n">367</td><td class="n">3,972・44</td><td class="n">352k</td><td class="n">99 分</td></tr>
+<tr><td><span class="sake">Sake</span>-2</td><td class="n">366</td><td class="n">3,985・45</td><td class="n">305k</td><td class="n">85 分</td></tr>
+</table></div>
+<p class="note">出力トークンと作業時間は 6 段階の合計。行数は空行を除く。</p>
+<ul>
+  <li><strong>正しさは同じ。</strong>4 系列とも公開テストは全段階で全通過。</li>
+  <li><strong>Sake は出力トークン 1.7 倍、作業時間 3.5 倍、行数 1.25 倍</strong>（2 系列の平均）。出力トークンの比は、段階 1（一から書く）で 2.6 倍、段階 2〜6（足す）で 1.4〜2.0 倍。</li>
+  <li><strong>作業時間の差の多くはテストの待ち。</strong>1 系列あたりテストの実行待ちは Ruby 1 分、Sake 16 分。Sake は終盤、全テスト 1 回に 3〜4.5 分かかった（検査と 366 本の起動）。複数のエージェントが同じマシンで並列にテストを流していたので、時間は参考値。</li>
+  <li>検査に止められたのは 1 系列 6 段階で 12 回。段階あたり 2 回で、止められても次で直る。</li>
+  <li>行数は目標の 1 万行に届かず、3,000〜4,000 行だった。</li>
+</ul>
+<h3>落ちた隠しテスト（3 種類）</h3>
+<div class="tablewrap"><table>
+<tr><th>隠しテスト</th><th>落ちた系列</th><th>中身</th></tr>
+<tr><td>相関のある UNION</td><td>4 系列すべて</td><td>複合 SELECT の中から外側の列を参照すると「列がない」。仕様では許されている。公開テストに同じ形がない</td></tr>
+<tr><td><code>sum(i / 2)</code> と <code>sum(i / 2.0)</code></td><td><span class="ruby">Ruby</span>-1、<span class="sake">Sake</span>-1（あとで自分で直した）、<span class="sake">Sake</span>-2</td><td>同じ集約呼び出しをまとめる処理が構文木を構造で比べ、<code>2 == 2.0</code> を真として 2 つを 1 つにした</td></tr>
+<tr><td>負のキーだけの表での自動採番</td><td><span class="sake">Sake</span> の 2 系列だけ</td><td>次のキーを「0 から始めて最大を探す」手書きのループで求め、最大が負だと 1 を返した。Ruby の 2 系列は <code>.max || 0</code> で正しい</td></tr>
+</table></div>
+<ul>
+  <li><strong>型が防いだ誤りはなかった。</strong><code>2</code> と <code>2.0</code> の取り違えは、操作に型を書いても検査の網にかからない。どちらも数として比べられるからだ。</li>
+  <li><strong>負のキーの誤りは Sake にだけ出た。</strong>2 体とも <code>Array.max</code> を使わず、初期値 0 のループを書いた。値の型が和（Integer|Float|String|nil）なので、<code>Array.max</code> が返す nil と和を検査に通す手間を避けた形と読める（推定。2 対 0、反復は 2）。検査器の厳しさが、別の種類の誤りを呼んだ可能性がある。</li>
+</ul>
+<h3>検査器の不具合をもう 1 つ見つけた</h3>
+<p><span class="sake">Sake</span>-1 の段階 4 で、検査器がスタックを使い切って落ちた。エージェントは <code>a + b</code> を <code>Array.concat</code> に書き換えて回避し、その段階に 37 分かかった（他の段階の 2〜7 倍）。切り出した最小の再現は 3 行で、互いに呼び合う 2 つの関数がどちらも <code>Array + Array</code> を使うだけで起きる。</p>
+<pre><code>def f(n, row) = n == 0 ? row : g(n - 1, row + Array[n])
+def g(n, row) = f(n, row + Array[n])
+puts Array.size(f(3, Array[]))</code></pre>
+<p>検査器は関数の結果を「関数と引数の型」で覚えるが、<code>+</code> のたびに新しい配列の型が生まれ、覚えたものに二度と当たらない（トレースで確認）。P6 の止まらない検査と同じ種類の、型の計算が収束しない不具合で、まだ直していない。</p>
+
 <h2>どう読むか</h2>
 <p><strong>Sonnet にとっては、学べる言語になっている。</strong>事前学習ゼロで、書く・変える・読む・直すのすべてで Ruby と同じ正しさに届く。Ruby の構文と Ruby の名前（<code>String.upcase</code>）を借りた設計が効いていると考えられる。存在しない API をほとんど書かないのも、名前が Ruby と同じだからだろう。ただし Haiku では成り立たない（結果 7）。資料を読んで書き方を確かめる力がモデルに要り、それがないモデルには、Sake は Ruby よりはっきり書きにくい。</p>
 <p><strong>出力トークンの上乗せは「書く」に集中している。</strong>1 題あたりの出力トークンの比は、読む・直すでは 1.1〜1.4 倍に縮み、新しく書くと 1.6 倍、実行せずに書くと 2.4 倍に膨らむ。モデルは Sake を読むときは Ruby とほぼ同じように読めるが、書くときは毎回「どの型の何という操作か、それはあるか」を組み立てている。AI にとって Sake は、読むのは安く、書くのが高い言語である。</p>
 <p><strong>大きなコードでは、作業時間は言語より処理系で決まる。</strong>2,500 行の仕様変更では、1 体あたりの出力トークンは 1.8〜2.1 倍だったが、作業時間は 5〜13 倍になった。作業時間の上乗せの大半は検査の遅さと打ち切りで、どちらも処理系の性能と不具合である。検査器を直すと 3.7〜6.4 倍に縮み、残りの多くはテストのたびの起動の時間だった（P6f）。出力トークンの上乗せも、小さい題とは中身が違う（結果 6 の「出力トークンの中身」）。変更を考えて書く呼び出しの思考は Ruby と同じくらいで、増えたのはコードを読み解く思考と、検査に止められて試し直す・待つまわりだった。書き方（移植版かスクラッチ版か）でも大きく変わる。AI に書かせる言語として使うなら、まず検査器を大きなプログラムで速く、確実に止まるようにする必要がある。</p>
 <p><strong>型を書く利点は、正しさの差としてはまだ観測できていない。</strong>どの作業でも型は正答率を上げなかった。落ちる原因は仕様の読み違いや振る舞いの崩れで、型の誤りではなかった。2,500 行では、検査器が変更の届くべき箇所を指す場面が実際にあった。ただ、Ruby 側も読んで見つけられる規模だった。利点が正しさの差として出るとすれば、次の場面だろう。</p>
 <ul>
-  <li>書き手が行き先を見落とすほど大きなコード（1 万行以上）</li>
+  <li>書き手が行き先を見落とすほど大きなコード（1 万行以上。P10 では 4,000 行まで育てても差は出ず、共通の見落としは両言語に同じように出た。結果 8）</li>
   <li><s>書き手より弱いモデル</s>（Haiku で試した。検査は誤ったプログラムを止めたが、止められたものを正しく直すところまでは届かず、正答は増えなかった。結果 7）</li>
   <li>もっと難しい読む作業（例を渡さずに誤りを探す、長い入力を追う）</li>
 </ul>
@@ -459,7 +509,7 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
 <h2>限界</h2>
 <ul>
   <li>モデルは主に Sonnet 5.5。Haiku 4.5 は新しく書く題だけ（各条件 2 反復、手を加えた条件は 1 反復）。題は中規模（40〜150 行）の 20 題とその派生、および 2,500 行のインタプリタ 1 つ。API ではなくサブエージェントで回したので、温度やトークン計上は細かく揃えていない。</li>
-  <li>P6 の各セルは 2 反復（一から書くのは各言語 2 体）。大きなコードの題材は 1 つで、変更要求も含めて AI が作った。</li>
+  <li>P6 の各セルは 2 反復（一から書くのは各言語 2 体）。大きなコードの題材は 1 つで、変更要求も含めて AI が作った。P10 も各言語 2 系列で、仕様は SQLite の挙動を 1 つずつ確かめて書いたが、テストの作成と検証は AI が行った。</li>
   <li>P6 の作業時間は、同時に走る他のエージェントの負荷を含む。比は同じ条件で取っているが、絶対値は参考値。</li>
   <li>P6 で「参照が触れた関数を、解答が触れなかった数」を直し忘れの指標にしようとしたが、使えなかった。参照と違う関数を書き換えて同じ結果に達する解（隠しテスト全通過）が多く、設計の違いを数えてしまう。正しさは隠しテストで見た。</li>
   <li>変える・読む・直すの題は易しく、正答率が天井に近い（9 割以上）。正しさの差が出ないのは、差がないからとは限らない。</li>
@@ -497,7 +547,8 @@ svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
       <li>P6f で流し直した（結果 6）。作業時間の比は 13.1 → 6.4 倍（移植版）、4.9 → 3.7 倍（スクラッチ版）。次は起動の時間（テスト 1 本 0.3 秒）を減らす。</li>
     </ul>
   </li>
-  <li><strong>さらに大きく。</strong>2,500 行でも天井だった。1 万行・数十ファイルで、直し忘れが実際に起きるかを見る。</li>
+  <li><strong>さらに大きく。</strong>2,500 行でも天井だった。P10 で SQL エンジンを 6 段階で育てさせたが、3,000〜4,000 行で止まり、正しさは同じだった（結果 8）。1 万行に届かせるには段階を足す必要がある。</li>
+  <li><strong>検査器の止まらない型の計算を直す。</strong>互いに呼び合う関数の <code>Array + Array</code>（結果 8）。直したら、P10 の Sake 系列の待ち時間を測り直す。</li>
   <li><strong>小さいモデルで、どこで止まるかを見る。</strong>反復を足し、チートシートと「書く前に引け」を試したが縮まなかった（結果 7）。次は、検査に止められたあとの直し方を見る。止められた誤りの種類（型・構文・名前）ごとに、次の試行で直ったかを数える。</li>
 </ul>
 <p class="note">データと手順: リポジトリの <code>experiments/2026-10-05-ai-writability/</code>（README、runs/、prompts/、harness/、tasks/、changes/、reading/）。</p>

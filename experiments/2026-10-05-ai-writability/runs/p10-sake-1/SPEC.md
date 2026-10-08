@@ -1,4 +1,4 @@
-# A small SQL engine: specification, stages 1..4
+# A small SQL engine: specification, stages 1..6
 
 # Stage 1: the core
 
@@ -566,3 +566,240 @@ refers to that subquery's own sources in tests.
 
 `ambiguous column name: <name>`; `sub-select returns <n> columns - expected 1`; `row value misused`;
 `cannot join using column <c> - column not present in both tables`; `no such table: <q>` for `q.*`.
+
+# Stage 5: compound selects, WITH, views, transactions, schema changes
+
+## 5.1 Compound selects
+
+```
+select := [WITH ...] simple-select [compound-op simple-select]... [ORDER BY ...] [LIMIT ... [OFFSET ...]]
+compound-op := UNION | UNION ALL | INTERSECT | EXCEPT
+```
+
+Each simple-select is a `SELECT` without its own `ORDER BY`/`LIMIT`. The operators have equal
+precedence and associate to the left. All simple-selects must have the same number of result
+columns, else `SELECTs to the left and right of <op> do not have the same number of result columns`
+(`<op>` being the operator where the mismatch is found, left to right). `UNION ALL` concatenates;
+`UNION` keeps one of each distinct row of both sides; `INTERSECT` keeps the distinct rows that are in
+both; `EXCEPT` keeps the distinct rows of the left side that are not in the right. Rows are equal as
+in `SELECT DISTINCT` (3.4); tests do not rely on which of two equal rows of different types (`1`,
+`1.0`) is kept.
+
+The trailing `ORDER BY`/`LIMIT`/`OFFSET` apply to the whole result. In a compound select, an
+`ORDER BY` term must be an integer literal (the k-th column) or a name that is an alias or column
+name of a result column (looked up in the first simple-select, then the next, and so on; tests use
+names of the first); a name that matches none is `<i-th> ORDER BY term does not match any column in
+the result set`. Tests use no other expressions as `ORDER BY` terms of a compound select. The result's column names are those of the first
+simple-select. A compound select may appear wherever a select may (subqueries, `FROM`, views, `WITH`,
+`INSERT ... SELECT`).
+
+## 5.2 WITH
+
+```
+WITH [RECURSIVE] cte [, cte]... select
+cte := name [( column [, column]... )] AS ( select )
+```
+
+Each cte is a temporary named source, visible in the ctes after it and anywhere in the statement's
+select (including its subqueries); it hides a table of the same name. Tests do not refer to a later
+cte, nor mention a cte's own name inside it except in a recursive cte. Its columns are named by the
+list, else as for a subquery source (4.1). Two ctes of one name are `duplicate WITH table name:
+<name>`.
+
+**Recursive cte** (only after `WITH RECURSIVE`): a cte whose select is `initial UNION [ALL]
+recursive`, where initial is one simple-select that does not mention the cte and recursive is one
+simple-select whose `FROM` mentions the cte exactly once (not inside a subquery). It is computed
+with a queue: run initial and put its rows in the queue; then, while the queue is not empty, take
+its first row, add it to the result, and run recursive with the cte standing for that single row,
+putting its rows at the end of the queue. With `UNION` (not `ALL`), a row equal to a row already put
+in the queue earlier is not put in again. The cte's rows are in the order they were added to the
+result (so `group_concat` over a recursive cte without `ORDER BY` is well defined); for every other
+source the order stays unspecified. Tests always terminate.
+
+## 5.3 Views
+
+```
+CREATE VIEW [IF NOT EXISTS] name [( column [, column]... )] AS select ;
+DROP VIEW [IF EXISTS] name ;
+```
+
+A view is a named select, run anew wherever the view is used as a source (it sees the tables as they
+are then). Its column names are the list, else as for a subquery source. Tables and views share one
+name space: creating a table or view whose name is taken is `table <name> already exists` if a
+table has it and `view <name> already exists` if a view has it. A view cannot be changed:
+`INSERT`/`UPDATE`/`DELETE` on it is `cannot modify <name> because it is a view`. `DROP TABLE` of a
+view is `use DROP VIEW to delete view <name>`; `DROP VIEW` of a table is `use DROP TABLE to delete
+table <name>`; in these three messages `<name>` is spelled as created, not as written. `DROP VIEW` of
+nothing is `no such view: <name>`. `CREATE VIEW` does not check its select: an error in it (an
+unknown column, a compound with mismatched counts) is reported by each statement that uses the view.
+A table or view may not take an index's name: `there is already an index named <name>`.
+A column of a view, cte or subquery source that is a plain column reference keeps that column's
+affinity (1.9), so `v.a = '5'` is true for a view column `a` over an INTEGER column holding 5; tests do
+not depend on the affinity of a compound select's columns. Tests do not drop, rename or change a
+table that a view still uses.
+
+## 5.4 INSERT ... SELECT
+
+```
+INSERT INTO table [( column [, column]... )] select ;
+```
+
+Inserts the select's rows, exactly as if they had been written as `VALUES` rows (same count errors,
+storage, constraints and all-or-nothing). The select is fully computed before any row is inserted.
+`WITH` may also start an `INSERT` (`WITH c AS (...) INSERT INTO t SELECT ... FROM c`).
+
+## 5.5 Transactions
+
+```
+BEGIN [TRANSACTION] ;     COMMIT [TRANSACTION] ;     END [TRANSACTION] ;     ROLLBACK [TRANSACTION] ;
+```
+
+`BEGIN` starts a transaction (inside one: `cannot start a transaction within a transaction`).
+`COMMIT` (or `END`) ends it, keeping its changes (with none open: `cannot commit - no transaction is
+active`). `ROLLBACK` ends it and undoes every change made since `BEGIN`, including tables, views and
+indexes created, dropped or altered (with none open: `cannot rollback - no transaction is active`).
+A statement that fails inside a transaction has no effect, and the transaction stays open. A
+transaction still open at the end of the script is simply left; it prints nothing.
+
+## 5.6 ALTER TABLE
+
+```
+ALTER TABLE table ADD [COLUMN] column-def ;
+ALTER TABLE table RENAME TO new-name ;
+ALTER TABLE table RENAME [COLUMN] column TO new-name ;
+```
+
+- `ADD COLUMN` appends a column; existing rows get its `DEFAULT` value converted to the column's type
+  as by 1.5 (`TEXT DEFAULT 7` gives `'7'`), or NULL. `NOT NULL` without a non-NULL `DEFAULT` is
+  `Cannot add a NOT NULL column with default value NULL` if the table has rows (on an empty table it
+  is allowed); `UNIQUE` is `Cannot
+  add a UNIQUE column`; `PRIMARY KEY` is `Cannot add a PRIMARY KEY column`; an existing name is
+  `duplicate column name: <name>`.
+- `RENAME TO` renames the table (a taken name: `there is already another table or index with this
+  name: <new-name>`); its constraints and indexes follow it.
+- `RENAME COLUMN` renames a column (one the table does not have: `no such column: "<column>"`, with the
+  double quotes); constraints and indexes follow it. Tests do not rename a column to a name the table
+  already has.
+- An unknown table is `no such table: <name>`. Error messages name tables and columns by their current
+  names.
+
+## 5.7 Indexes
+
+```
+CREATE [UNIQUE] INDEX [IF NOT EXISTS] name ON table ( column [, column]... ) ;
+DROP INDEX [IF EXISTS] name ;
+```
+
+An index changes no result. A `UNIQUE` index is a uniqueness constraint (2.1) on its columns, declared
+after every constraint that exists when it is created (so it is checked before them); creating it
+on rows that already conflict is the constraint's error (`UNIQUE constraint failed: t.a, t.b` with the
+index's columns) and creates nothing. Index names have their own name space, except that an index may
+not take a table's name: `index <name> already exists`, `there is already a table named <name>`,
+`no such index: <name>`. `IF NOT EXISTS` suppresses only `index <name> already exists`; the
+other errors still occur. Dropping a table drops its indexes.
+
+## 5.8 Errors added in this stage
+
+`SELECTs to the left and right of <op> do not have the same number of result columns`;
+`<i-th> ORDER BY term does not match any column in the result set`; `duplicate WITH table name: <name>`;
+`view <name> already exists`; `cannot modify <name> because it is a view`;
+`use DROP VIEW to delete view <name>`; `use DROP TABLE to delete table <name>`; `no such view: <name>`;
+`cannot start a transaction within a transaction`; `cannot commit - no transaction is active`;
+`cannot rollback - no transaction is active`; `Cannot add a NOT NULL column with default value NULL`;
+`Cannot add a UNIQUE column`; `Cannot add a PRIMARY KEY column`;
+`there is already another table or index with this name: <name>`; `no such column: "<column>"`;
+`index <name> already exists`; `there is already a table named <name>`; `no such index: <name>`;
+`there is already an index named <name>`.
+
+# Stage 6: window functions
+
+## 6.1 Syntax
+
+```
+window-call := name ( [expr [, expr]...] | * ) OVER ( window-spec ) | name ( ... ) OVER window-name
+window-spec := [base-window-name] [PARTITION BY expr [, expr]...] [ORDER BY ordering-term [, ...]] [frame]
+frame := (ROWS | RANGE) frame-start | (ROWS | RANGE) BETWEEN frame-start AND frame-end
+frame-start, frame-end := UNBOUNDED PRECEDING | n PRECEDING | CURRENT ROW | n FOLLOWING | UNBOUNDED FOLLOWING
+SELECT ... [HAVING ...] [WINDOW window-name AS ( window-spec ) [, ...]] [ORDER BY ...] [LIMIT ...]
+```
+
+`frame-start` alone means `BETWEEN frame-start AND CURRENT ROW`. n is an integer literal (a
+negative one only appears in tests as `-n`, for the errors in 6.2).
+A named window (`WINDOW w AS (...)`) can be used as `OVER w`, or as the base of a window-spec
+(`OVER (w ORDER BY x)`), which adds to it the parts it does not have (tests add only `ORDER BY` and
+a frame to a base that has neither); an unknown name is `no such window: <name>`. Window names are
+unquoted identifiers, distinct within one `WINDOW` clause. In a compound select (5.1) each
+simple-select has its own `WINDOW` clause, visible only in that simple-select.
+
+Inside a window-spec, `PARTITION BY` and `ORDER BY` terms are plain expressions over the query's
+sources: an integer literal there is a constant (not a result column number) and a result column's
+alias is not visible.
+
+## 6.2 Where they run
+
+Window calls may appear only in the result columns and the `ORDER BY` of a `SELECT` (also inside
+other expressions there, such as `abs(row_number() OVER (...))` or `rank() OVER (...) * 10`). In
+`WHERE`, `GROUP BY` or `HAVING`, or inside the arguments of an aggregate or window call, a window
+call is `misuse of window function <name>()`. A name in `WHERE` that is the alias of a result column
+containing a window call is `misuse of aliased window function <alias>`. They are computed after `WHERE`, `GROUP BY` and `HAVING`, over the rows that the query
+would otherwise produce (one per group in an aggregate query, where a window's expressions may use
+aggregate calls, e.g. `rank() OVER (ORDER BY sum(x) DESC)`), and before `DISTINCT`, the final
+`ORDER BY`, `LIMIT` and `OFFSET`.
+
+For each window call: the rows are divided into **partitions** by the `PARTITION BY` values (equal
+as in `GROUP BY`; one partition without it), and each partition is sorted by the window's `ORDER BY`
+(rows that tie are **peers**; without `ORDER BY`, all rows of the partition are peers and their order
+is unspecified: tests then use only functions that do not depend on it). Each row's result depends on
+its partition, its position, and its **frame**, a range of rows of the partition:
+
+- Without a frame clause: with `ORDER BY`, from the partition's first row to the current row's last
+  peer; without `ORDER BY`, the whole partition.
+- `ROWS`: positions. `n PRECEDING`/`n FOLLOWING` are the row n positions before/after the current
+  row (clipped to the partition), `CURRENT ROW` is the current row, `UNBOUNDED` the partition's
+  first/last row.
+- `RANGE`: peers and values. `CURRENT ROW` as a start means the current row's first peer, as an end
+  its last peer. `n PRECEDING`/`n FOLLOWING` require exactly one `ORDER BY` term (else `RANGE with
+  offset PRECEDING/FOLLOWING requires one ORDER BY expression`) and mean the first/last row whose
+  value of that term is within n below/above the current row's value (with `DESC`, above/below);
+  rows whose term is NULL are within any range of a NULL current value only. Tests use numeric terms.
+- A frame whose start is `CURRENT ROW` and end is `n PRECEDING`, or whose start is `n FOLLOWING` and
+  end is `CURRENT ROW` or `n PRECEDING`, is `unsupported frame specification` (this includes a
+  start alone of `n FOLLOWING`). Otherwise a frame whose start comes after its end (`ROWS BETWEEN 1
+  PRECEDING AND 2 PRECEDING`, `ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING`) is empty.
+- A negative offset is, under `ROWS`, `frame starting offset must be a non-negative integer` or
+  `frame ending offset must be a non-negative integer`; under `RANGE`, the same with `number` in
+  place of `integer`. A start of `UNBOUNDED FOLLOWING` or an end of `UNBOUNDED PRECEDING` does not
+  occur in tests.
+
+## 6.3 Window functions
+
+The aggregates of 3.2 (`count`, `sum`, `total`, `avg`, `min`, `max`, `group_concat`, without
+`DISTINCT` or an inner `ORDER BY`) used with `OVER` compute over the frame, adding the frame's rows
+in partition order. In addition:
+
+| function | result for the current row (positions are 1-based within the partition) |
+|---|---|
+| `row_number()` | its position |
+| `rank()` | the position of its first peer (1 without `ORDER BY`) |
+| `dense_rank()` | the number of distinct peer groups up to and including its own |
+| `percent_rank()` | (rank - 1) / (rows in partition - 1) as REAL; 0.0 for a one-row partition |
+| `cume_dist()` | (position of its last peer) / (rows in partition) as REAL |
+| `ntile(n)` | the bucket 1..n of the row when the partition's rows, in order, are split into n buckets whose sizes differ by at most 1, larger buckets first; n NULL, zero or negative is `argument of ntile must be a positive integer` (tests use integer n) |
+| `lag(x)`, `lag(x, k)`, `lag(x, k, d)` | x evaluated on the row k positions earlier in the partition (k defaults to 1; a negative k means -k positions later; a NULL k gives NULL), or else d (default NULL) evaluated on the current row |
+| `lead(x)`, `lead(x, k)`, `lead(x, k, d)` | the same, k positions later |
+| `first_value(x)`, `last_value(x)` | x on the frame's first / last row; NULL if the frame is empty |
+| `nth_value(x, n)` | x on the frame's n-th row; NULL if it has fewer rows; n not a positive integer is `second argument to nth_value must be a positive integer` |
+
+`rank`, `dense_rank`, `percent_rank`, `cume_dist`, `ntile`, `row_number`, `lag` and `lead` ignore the
+frame. Calling one of these names without `OVER` is `misuse of window function <name>()` (for the
+names that are not also aggregates). Tests do not use `OVER` with other functions, `DISTINCT` in a
+window aggregate, or a window-spec that overrides its base's `PARTITION BY` or `ORDER BY`.
+
+## 6.4 Errors added in this stage
+
+`misuse of window function <name>()`; `misuse of aliased window function <alias>`; `no such window: <name>`;
+`unsupported frame specification`; `frame starting offset must be a non-negative number`;
+`frame ending offset must be a non-negative number`; `second argument to nth_value must be a positive integer`;
+`RANGE with offset PRECEDING/FOLLOWING requires one ORDER BY expression`;
+`frame starting offset must be a non-negative integer`; `frame ending offset must be a non-negative
+integer`; `argument of ntile must be a positive integer`.

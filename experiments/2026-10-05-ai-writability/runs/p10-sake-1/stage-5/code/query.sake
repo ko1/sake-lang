@@ -1,0 +1,68 @@
+# Runs a query (spec 1.7, 3, 4, 5): a simple select - joined rows (Joiner) -> WHERE -> group rows (aggregate
+# queries) -> result columns -> DISTINCT -> ORDER BY -> OFFSET / LIMIT - or a compound / recursive plan
+# (Compounds, Recursion) -> printed lines. Names are resolved first, by QueryPlanner.
+module Query
+  module_function
+
+  # Runs a query statement and returns the lines to print.
+  def run(db, q)
+    plan = QueryPlanner.plan(db, q, nil)
+    Array.map(rows(plan, Array[])) { Array.join(Array.map(it) { Value.text_form(it) }, "|") }
+  end
+
+  # The result rows (Arrays of values) of a plan. `prefix` holds the enclosing query's columns that a
+  # correlated subquery reads; a query that reads none runs once and keeps its rows.
+  def rows(plan, prefix)
+    return compute(plan, prefix) if !Array.empty?(Plans.refs(plan))
+    cache = Plans.cache(plan)
+    Array.push(cache, compute(plan, prefix)) if Array.empty?(cache)
+    Array.fetch(cache, 0)
+  end
+
+  def compute(plan, prefix)
+    case plan
+    in CompoundPlan then Compounds.compute(plan, prefix)
+    in RecursivePlan then Recursion.compute(plan)
+    in Plan then compute_select(plan, prefix)
+    end
+  end
+
+  def compute_select(plan, prefix)
+    rows = Array.select(Joiner.rows(plan, prefix)) { Evaluator.passes?(Plan.where(plan), it) }
+    rows = Grouping.group_rows(plan, rows, prefix) if Plan.grouped(plan)
+    out = Array.map(rows) { result_row(plan, it) }
+    out = distinct_rows(out) if Plan.distinct(plan)
+    out = Sorter.sort(out, Plan.order(plan)) unless Array.empty?(Plan.order(plan))
+    slice(Array.map(out) { SortItem.vals(it) }, Plan.offset(plan), Plan.limit(plan))
+  end
+
+  # Skips `offset` rows (nil: none) and keeps at most `limit` (nil or negative: all).
+  def slice(rows, offset, limit)
+    out = Array.drop(rows, offset == nil ? 0 : Integer.clamp(offset, 0, Array.size(rows)))
+    (limit != nil && limit >= 0) ? Array.take(out, limit) : out
+  end
+
+  # The values to print for one row (or group row), with the values of its ORDER BY terms.
+  def result_row(plan, row)
+    vals = Array.map(Plan.items(plan)) { Evaluator.evaluate(ResultItem.expr(it), row) }
+    keys = Array.map(Plan.order(plan)) { sort_key_value(it, vals, row) }
+    SortItem.new(keys, vals)
+  end
+
+  def sort_key_value(spec, vals, row)
+    e = SortKey.expr(spec)
+    return Array.fetch(vals, SortKey.position(spec)) if e == nil
+    Evaluator.evaluate(e, row)
+  end
+
+  # Keeps the first of each set of rows whose printed values are equal (NULLs equal to each other).
+  def distinct_rows(items)
+    seen = Hash[]
+    Array.select(items) do |item|
+      key = Grouping.row_key(SortItem.vals(item))
+      fresh = !Hash.key?(seen, key)
+      seen[key] = true
+      fresh
+    end
+  end
+end

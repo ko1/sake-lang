@@ -1,0 +1,44 @@
+# Executes FROM (spec 4.1): the rows of the sources joined left to right.
+module Joiner
+  module_function
+
+  # (Rows are joined with Array.concat on a copy: the checker cannot type Array `+` on rows of rows.)
+
+  # The rows of the joined sources, each the `prefix` (the enclosing queries' columns) followed by one
+  # row of every source. Without FROM, one row: the prefix alone.
+  def rows(plan, prefix)
+    steps = Plan.joins(plan)
+    return Array[prefix] if Array.empty?(steps)
+    current = Array.map(source_rows(JoinStep.source(Array.fetch(steps, 0)))) { Array.concat(Array.dup(prefix), it) }
+    Array.each(Array.drop(steps, 1)) { current = join(current, it) }
+    current
+  end
+
+  def source_rows(source)
+    case source
+    in TableSource then Table.rows(TableSource.table(source))
+    in DerivedSource then Query.rows(DerivedSource.plan(source), Array[])
+    end
+  end
+
+  # Every pair of a row of `left_rows` and a row of the step's source that passes its condition; a
+  # LEFT JOIN also keeps each left row that has no pair, with NULLs for the source's columns.
+  def join(left_rows, step)
+    right_rows = source_rows(JoinStep.source(step))
+    condition = JoinStep.condition(step)
+    nulls = Array.new(JoinStep.width(step), nil)
+    out = Array[]
+    Array.each(left_rows) do |l|
+      matched = false
+      Array.each(right_rows) do |r|
+        row = Array.concat(Array.dup(l), r)
+        if Evaluator.passes?(condition, row)
+          Array.push(out, row)
+          matched = true
+        end
+      end
+      Array.push(out, Array.concat(Array.dup(l), nulls)) if JoinStep.left(step) && !matched
+    end
+    out
+  end
+end

@@ -1,0 +1,80 @@
+# INSERT, UPDATE and DELETE. A statement changes the table only if every row passes
+# Constraints.check_row (spec 1.5, 1.6, 2.1, 2.2): the new rows are built apart and swapped in at the end.
+module Dml
+  module_function
+
+  def insert(db, st)
+    tname = Insert.table(st)
+    table = Database.table(db, tname)
+    rows = Insert.rows(st)
+    width = Array.size(Array.fetch(rows, 0))
+    unless Array.all?(rows) { Array.size(it) == width }
+      raise SqlError.new("all VALUES must have the same number of terms")
+    end
+    targets = target_columns(table, tname, Insert.columns(st), width)
+    scope = Resolver.empty_scope(db)
+    resolved = Array.map(rows) { |exprs| Array.map(exprs) { Resolver.resolve(it, scope) } }
+    stored = Array.dup(Table.rows(table))
+    Array.each(resolved) do |exprs|
+      values = Array.map(exprs) { Evaluator.evaluate(it, Array[]) }
+      Array.push(stored, Constraints.check_row(table, raw_row(table, targets, values), stored, -1))
+    end
+    Table.set_rows(table, stored)
+  end
+
+  # The column positions the values go to, in the order the values come.
+  def target_columns(table, tname, names, width)
+    columns = Table.columns(table)
+    if names == nil
+      if width != Array.size(columns)
+        raise SqlError.new("table #{tname} has #{Array.size(columns)} columns but #{width} values were supplied")
+      end
+      return Range.to_a(0...Array.size(columns))
+    end
+    positions = Array.map(names) do |n|
+      i = Table.column_position(table, n)
+      raise SqlError.new("table #{tname} has no column named #{n}") if i == nil
+      i
+    end
+    if width != Array.size(names)
+      raise SqlError.new("#{width} values for #{Array.size(names)} columns")
+    end
+    positions
+  end
+
+  # A full row before conversion: the given values where given, else the column's default
+  # (the INTEGER PRIMARY KEY has none: NULL means "assign the next key").
+  def raw_row(table, targets, values)
+    row = Array.map(Table.columns(table)) { Column.default(it) }
+    rid = Table.rowid(table)
+    row[rid] = nil if rid != -1
+    Array.each_with_index(targets) { |pos, k| row[pos] = Array.fetch(values, k) }
+    row
+  end
+
+  def update(db, st)
+    table = Database.table(db, Update.table(st))
+    scope = Resolver.table_scope(db, table)
+    targets = Array.map(Update.sets(st)) do |a|
+      i = Table.column_position(table, Assignment.column(a))
+      raise SqlError.new("no such column: #{Assignment.column(a)}") if i == nil
+      i
+    end
+    exprs = Array.map(Update.sets(st)) { Resolver.resolve(Assignment.expr(it), scope) }
+    where = Resolver.resolve_optional(Update.where(st), scope)
+    stored = Array.dup(Table.rows(table))
+    Array.each_with_index(Table.rows(table)) do |old, i|
+      next unless Evaluator.passes?(where, old)
+      raw = Array.dup(old)
+      Array.each_with_index(targets) { |pos, k| raw[pos] = Evaluator.evaluate(Array.fetch(exprs, k), old) }
+      stored[i] = Constraints.check_row(table, raw, stored, i)
+    end
+    Table.set_rows(table, stored)
+  end
+
+  def delete(db, st)
+    table = Database.table(db, Delete.table(st))
+    where = Resolver.resolve_optional(Delete.where(st), Resolver.table_scope(db, table))
+    Table.set_rows(table, Array.reject(Table.rows(table)) { Evaluator.passes?(where, it) })
+  end
+end
