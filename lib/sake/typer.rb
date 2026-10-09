@@ -659,7 +659,15 @@ module Sake
         end
       end
 
-      key = inst_key(fn, args)
+      # An argument with no value yet (an early pass of the fixpoint): the call has nothing to run on; the body
+      # is analyzed once the value arrives. SAKE_TYPER_DEFER=1 (measured in experiments/2026-10-09-typer-shape-keys).
+      return [] if DEFER_BOTTOM[0] && args.any?(&:empty?)
+      # Arguments the body only reads are keyed by shape (typer_shape.rb): the body runs on the actual ones.
+      key_args = args
+      if SHAPE_KEYS[0] && (ok = shape_ok(fn)).any?
+        key_args = args.each_with_index.map { |a, i| (ok[i] && (sk = shape_key(a))) ? sk : a }
+      end
+      key = inst_key(fn, key_args)
       key = (@inst_keys ||= {})[key] ||= key # one object per instantiation: the cell of its result
       @cur_inst&.children&.store(key, true) # also when cached: a pass that uses the result has its effects
       if @in_progress[key] || @done[key]
@@ -681,7 +689,7 @@ module Sake
       end
       @in_progress[key] = true
       @raised.push({})
-      (@inst_stack ||= []).push([fn, args])
+      (@inst_stack ||= []).push([fn, key_args]) # the body's containers are per instantiation: per key
       begin
         r = run_body(fn, args, nil)
       ensure
@@ -1423,3 +1431,4 @@ module Sake
 end
 require_relative "typer_ext"
 require_relative "typer_eval"
+require_relative "typer_shape"

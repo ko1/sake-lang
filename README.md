@@ -179,7 +179,8 @@ The design notes and their reasons are in [DESIGN.md](DESIGN.md).
 
 ### Known issues (not fixed)
 
-- Checking a 4,400-line program takes about 4.5 seconds with YJIT, which `bin/sake` turns on (it took
+- Checking a 4,400-line program takes about 3 seconds with YJIT, which `bin/sake` turns on (4.5 before the
+  shape keys of 2026-10-09, `experiments/2026-10-09-typer-shape-keys/`; it took
   190 before 2026-10-08; see `experiments/2026-10-09-typer-speed/`), and starting a program takes about 0.3 seconds for 2,500
   lines, about 5 times Ruby.
 - Fixed on 2026-10-08: the checker did not terminate for mutually recursive functions that use
