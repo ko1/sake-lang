@@ -1,0 +1,174 @@
+require "tempfile"
+
+def try
+  yield
+rescue IOError, ArgumentError, EOFError => e
+  puts "error: #{String.sub(Exception.message(e), /\/\S+/, "<path>")}"
+end
+
+# The names are random: the tests print the pattern of the basename, never the name.
+def name_pattern(path) = String.sub(File.basename(path), /\d{8}-\d+-[0-9a-z]+/, "<stamp>")
+
+# Tempfile.new: a new empty file in Dir.tmpdir, mode 0600
+t = Tempfile.new("foo")
+path = Tempfile.path(t)
+p path != nil
+path => String
+p File.exist?(path)
+p File.dirname(path) == Dir.tmpdir
+p name_pattern(path)
+p File.size(path)
+p Tempfile.size(t)
+p Tempfile.closed?(t)
+p Tempfile.inspect(t) == "#<Tempfile:#{path}>"
+
+# write, read, rewind, pos, seek, eof?
+p Tempfile.write(t, "hello")
+p Tempfile.pos(t)
+p Tempfile.read(t)
+p Tempfile.rewind(t)
+p Tempfile.read(t)
+p Tempfile.eof?(t)
+p Tempfile.size(t)
+p File.read(path)
+p Tempfile.write(t, " ", "wörld", 1)
+Tempfile.rewind(t)
+p Tempfile.read(t, 5)
+p Tempfile.seek(t, 1)
+p Tempfile.read(t, 4)
+p Tempfile.seek(t, -1, 2)
+p Tempfile.read(t)
+Tempfile.set_pos(t, 0)
+p Tempfile.write(t, "J")
+p Tempfile.pos(t)
+p File.read(path)
+p Tempfile.truncate(t, 5)
+p File.read(path)
+p Tempfile.length(t)
+try { Tempfile.set_pos(t, -1) }
+try { Tempfile.read(t, -1) }
+
+# puts, print, <<, printf, putc, gets, readline, readlines, each_line, getc
+Tempfile.truncate(t, 0)
+Tempfile.rewind(t)
+p Tempfile.puts(t, "a", Array["b", "c"], 1)
+p Tempfile.print(t, "x", :y)
+t2 = t << "z" << 2
+p Tempfile.path(t2) == path
+p Tempfile.printf(t, "|%03d\n", 7)
+p Tempfile.putc(t, "qq")
+Tempfile.flush(t)
+p File.read(path)
+Tempfile.rewind(t)
+p Tempfile.gets(t)
+p Tempfile.gets(t, chomp: true)
+p Tempfile.readline(t)
+p Tempfile.getc(t)
+p Tempfile.getbyte(t)
+p Tempfile.readlines(t)
+p Tempfile.gets(t)
+try { Tempfile.readline(t) }
+Tempfile.rewind(t)
+Tempfile.each_line(t) { |l| print String.length(l), "," }
+puts
+Tempfile.rewind(t)
+p Tempfile.path(Tempfile.each_line(t, chomp: true) { |l| print l, "|" }) == path
+puts
+p Tempfile.path(Tempfile.flush(t)) == path
+p Tempfile.fsync(t)
+
+# close, open, close!, unlink: the file stays until unlinked
+p Tempfile.close(t)
+p Tempfile.closed?(t)
+p File.exist?(path)
+p Tempfile.size(t)
+try { Tempfile.write(t, "x") }
+try { Tempfile.read(t) }
+try { Tempfile.pos(t) }
+p Tempfile.path(t) == path
+p Tempfile.path(Tempfile.open(t)) == path
+p Tempfile.closed?(t)
+p Tempfile.pos(t)
+p Tempfile.gets(t)
+p Tempfile.unlink(t)
+p Tempfile.path(t)
+p Tempfile.inspect(t)
+p File.exist?(path)
+p Tempfile.unlink(t)
+p Tempfile.delete(t)
+p Tempfile.close(t)
+p Tempfile.closed?(t)
+try { Tempfile.open(t) }
+
+# close! and a [prefix, suffix] basename, an explicit directory
+Dir.mktmpdir do |dir|
+  t = Tempfile.new(["report-", ".txt"], dir)
+  path = Tempfile.path(t)
+  path => String
+  p File.dirname(path) == dir
+  p name_pattern(path)
+  p File.extname(path)
+  Tempfile.write(t, "data")
+  p Tempfile.close!(t)
+  p File.exist?(path)
+  p Tempfile.path(t)
+  p Array.size(Dir.children(dir))
+  t = Tempfile.new("", dir)
+  path = Tempfile.path(t)
+  path => String
+  p name_pattern(path)
+  Tempfile.close(t, true)
+  p Dir.children(dir)
+  # characters other than , - . 0-9 A-Z _ a-z ~ are dropped from the names
+  t = Tempfile.new("a/b c", dir)
+  path = Tempfile.path(t)
+  path => String
+  p name_pattern(path)
+  Tempfile.close!(t)
+  t = Tempfile.new(Array["x y", "/.z"], dir)
+  path = Tempfile.path(t)
+  path => String
+  p name_pattern(path)
+  Tempfile.close!(t)
+  p Dir.children(dir)
+end
+
+# Tempfile.create with a block: the file is removed afterwards; the value is the block's
+kept = ""
+r = Tempfile.create("blk") do |f|
+  kept = Tempfile.path(f) || ""
+  p name_pattern(kept)
+  p File.exist?(kept)
+  Tempfile.write(f, "in block")
+  Tempfile.rewind(f)
+  Tempfile.read(f)
+end
+p r
+p File.exist?(kept)
+
+# Tempfile.create without a block: an open file that stays
+f = Tempfile.create(["c-", ".log"])
+path = Tempfile.path(f) || ""
+p name_pattern(path)
+p Tempfile.write(f, "abc\ndef\n")
+Tempfile.rewind(f)
+p Tempfile.gets(f)
+p Tempfile.read(f)
+p Tempfile.close(f)
+p File.read(path)
+p File.exist?(path)
+Tempfile.unlink(f)
+p File.exist?(path)
+
+# two files at once have different names
+a = Tempfile.new("same")
+b = Tempfile.new("same")
+p Tempfile.path(a) != Tempfile.path(b)
+Tempfile.write(a, "A")
+Tempfile.write(b, "B")
+Tempfile.rewind(a)
+Tempfile.rewind(b)
+p Tempfile.read(a) + Tempfile.read(b)
+Tempfile.close!(a)
+Tempfile.close!(b)
+p Tempfile.path(a)

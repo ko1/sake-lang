@@ -1,0 +1,446 @@
+# stringio: StringIO, an IO over a String (Ruby's stringio).
+#
+# Positions (`pos`, `seek`, `size`, `read(n)`, `gets(limit)`) are in bytes, as in Ruby; the String is
+# sliced with String.byteslice / bytesplice. The String given to `new` is shared and written in place,
+# as Ruby's is (String.concat, String.bytesplice, String.replace).
+# Errno::EINVAL (bad seek, negative length) is IOError here, with Ruby's message.
+
+class EOFError < Exception                # Ruby: EOFError, raised by readline, readchar, readbyte
+end
+
+# StringIO.new(string = "", mode = "r+") as Ruby. `pos` and `lineno` are Ruby's readers; the rest is
+# internal: the access flags from the mode and the two half-closed states.
+class StringIO
+  attr_reader string
+  private attr_reader mode
+  attr_reader pos
+  attr_accessor lineno
+  private attr_reader readable, writable, append, closed_r, closed_w
+  include Bitwise                         # for <<
+
+  def initialize(io)
+    @string = "" if @string == nil
+    @mode = "r+" if @mode == nil
+    @string => String
+    @mode => String
+    @pos = 0
+    @lineno = 0
+    @closed_r = false
+    @closed_w = false
+    apply_mode(io, @mode)
+  end
+
+  # --- internal ---
+
+  # "r", "r+", "w", "w+", "a", "a+", with an optional b/t and ":encoding" ignored; "w" empties the String.
+  def apply_mode(io, mode)
+    m = String.sub(String.sub(mode, /:.*/, ""), /[bt]/, "")
+    plus = String.end_with?(m, "+")
+    case String.[](m, 0)
+    in "r"
+      @readable = true
+      @writable = plus
+      @append = false
+    in "w"
+      @readable = plus
+      @writable = true
+      @append = false
+      String.clear(@string)
+    in "a"
+      @readable = plus
+      @writable = true
+      @append = true
+    else raise ArgumentError, "invalid access mode #{mode}"
+    end
+    nil
+  end
+
+  def check_readable(io)
+    raise IOError, "not opened for reading" if @closed_r || !@readable
+    nil
+  end
+
+  def check_writable(io)
+    raise IOError, "not opened for writing" if @closed_w || !@writable
+    nil
+  end
+
+  def bytes_left(io) = String.bytesize(@string) - @pos
+
+  def rest(io) = String.byteslice(@string, @pos, bytes_left(io)) || ""
+
+  # `len` bytes at `at`, extended to the next character boundary (as Ruby's limit reads do).
+  def whole_chars(io, at, len)
+    s = String.byteslice(@string, at, len) || ""
+    max = String.bytesize(@string) - at
+    while !String.valid_encoding?(s) && len < max
+      len += 1
+      s = String.byteslice(@string, at, len) || ""
+    end
+    s
+  end
+
+  # Writes `s` at `pos` (over what is there, then growing), padding with NUL past the end, as Ruby.
+  def write_bytes(io, s)
+    size = String.bytesize(@string)
+    @pos = size if @append
+    String.concat(@string, "\0" * (@pos - size)) if @pos > size
+    size = String.bytesize(@string)
+    n = String.bytesize(s)
+    String.bytesplice(@string, @pos, [n, size - @pos].Tuple.min, s)
+    @pos += n
+    n
+  end
+
+  # --- reading ---
+
+  # read(io) gives the rest ("" at the end); read(io, n) gives up to n bytes, nil at the end (n > 0).
+  def read(io, length = nil)
+    check_readable(io)
+    if length == nil
+      s = rest(io)
+      @pos = String.bytesize(@string)
+      return s
+    end
+    raise ArgumentError, "negative length #{length} given" if length < 0
+    return "" if length == 0
+    return nil if bytes_left(io) <= 0
+    s = String.b(String.byteslice(@string, @pos, length) || "")
+    @pos += String.bytesize(s)
+    s
+  end
+
+  # Ruby: readpartial / read_nonblock raise EOFError at the end instead of giving nil.
+  def readpartial(io, length)
+    s = read(io, length)
+    raise EOFError, "end of file reached" if s == nil
+    s
+  end
+
+  def read_nonblock(io, length) = readpartial(io, length)
+
+  # pread: `length` bytes from `offset`, without moving pos; "" for length 0, EOFError past the end.
+  def pread(io, length, offset)
+    check_readable(io)
+    raise ArgumentError, "negative string size (or size too big)" if length < 0
+    raise IOError, "Invalid argument - pread" if offset < 0
+    return "" if length == 0
+    raise EOFError, "end of file reached" if offset >= String.bytesize(@string)
+    String.b(String.byteslice(@string, offset, length) || "")
+  end
+
+  # gets(io, sep = "\n", limit = nil, chomp: false), also gets(io, limit) and gets(io, nil) (the rest).
+  # sep "" is paragraph mode: a line ends at a run of newlines, which it includes, as Ruby's StringIO.
+  def gets(io, sep = "\n", limit = nil, chomp: false)
+    check_readable(io)
+    if sep in Integer
+      limit = sep
+      sep = "\n"
+    end
+    return "" if limit == 0
+    return nil if bytes_left(io) <= 0
+    size = String.bytesize(@string)
+    e = size
+    if sep == ""
+      @pos += 1 while @pos < size && String.getbyte(@string, @pos) == 10
+      return nil if @pos >= size
+      i = String.byteindex(@string, "\n\n", @pos)
+      if i
+        e = i + 2
+        e += 1 while e < size && String.getbyte(@string, e) == 10
+      end
+    elsif sep != nil
+      i = String.byteindex(@string, sep, @pos)
+      e = i + String.bytesize(sep) if i
+    end
+    len = e - @pos
+    len = limit if limit != nil && limit < len
+    line = whole_chars(io, @pos, len)
+    @pos += String.bytesize(line)
+    @lineno += 1
+    chomp ? chomp_line(io, line, sep) : line
+  end
+
+  def chomp_line(io, line, sep)
+    case sep
+    in nil then line
+    in "\n" then String.chomp(line)
+    in "" then String.sub(line, /\n+\z/, "")
+    else String.delete_suffix(line, sep)
+    end
+  end
+
+  def readline(io, sep = "\n", limit = nil, chomp: false)
+    line = gets(io, sep, limit, chomp:)
+    raise EOFError, "end of file reached" if line == nil
+    line
+  end
+
+  def each_line(io, sep = "\n", chomp: false)
+    loop do
+      line = gets(io, sep, nil, chomp:)
+      break unless line
+      yield line
+    end
+    io
+  end
+
+  def each(io, sep = "\n", chomp: false, &b) = each_line(io, sep, chomp:, &b)
+
+  def readlines(io, sep = "\n", chomp: false)
+    lines = String[]
+    loop do
+      line = gets(io, sep, nil, chomp:)
+      break unless line
+      Array.push(lines, line)
+    end
+    lines
+  end
+
+  # The character at pos (whole, up to 4 bytes), or nil at the end.
+  def getc(io)
+    check_readable(io)
+    return nil if bytes_left(io) <= 0
+    c = whole_chars(io, @pos, 1)
+    @pos += String.bytesize(c)
+    c
+  end
+
+  def readchar(io)
+    c = getc(io)
+    raise EOFError, "end of file reached" if c == nil
+    c
+  end
+
+  def getbyte(io)
+    check_readable(io)
+    b = String.getbyte(@string, @pos)
+    @pos += 1 if b != nil
+    b
+  end
+
+  def readbyte(io)
+    b = getbyte(io)
+    raise EOFError, "end of file reached" if b == nil
+    b
+  end
+
+  def each_char(io)
+    loop do
+      c = getc(io)
+      break unless c
+      yield c
+    end
+    io
+  end
+
+  def each_byte(io)
+    loop do
+      b = getbyte(io)
+      break unless b
+      yield b
+    end
+    io
+  end
+
+  # Pushes `c` (a String, or an Integer codepoint) back before pos; what does not fit before pos is
+  # put in front of the String, as Ruby does. nil does nothing.
+  def ungetc(io, c)
+    check_readable(io)
+    return nil if c == nil
+    s = (c in Integer) ? Integer.chr(c) : c
+    unget_bytes(io, s)
+  end
+
+  def ungetbyte(io, b)
+    check_readable(io)
+    return nil if b == nil
+    s = (b in Integer) ? String.b(Array.pack(Array[b & 255], "C")) : b
+    unget_bytes(io, s)
+  end
+
+  def unget_bytes(io, s)
+    n = String.bytesize(s)
+    if n <= @pos
+      @pos -= n
+      String.bytesplice(@string, @pos, n, s)
+    else
+      String.replace(@string, s + rest(io))
+      @pos = 0
+    end
+    nil
+  end
+
+  # --- writing ---
+
+  # Ruby: io.write(*objs) gives the number of bytes written.
+  def write(io, *objs)
+    check_writable(io)
+    Array.sum(Array.map(objs) { |x| write_bytes(io, Kernel.to_s(x)) })
+  end
+
+  def syswrite(io, s) = write(io, s)
+  def write_nonblock(io, s) = write(io, s)
+
+  def <<(io, x)
+    write(io, x)
+    io
+  end
+
+  def print(io, *objs)
+    write(io, *objs)
+    nil
+  end
+
+  def printf(io, fmt, *args)
+    write(io, format(fmt, *args))
+    nil
+  end
+
+  # Ruby's puts: each Array one element per line, an empty Array nothing, nil an empty line, a
+  # newline after each item that lacks one; no items: a newline.
+  def puts(io, *objs)
+    check_writable(io)
+    if Array.empty?(objs)
+      write_bytes(io, "\n")
+    else
+      Array.each(objs) { |x| puts_item(io, x) }
+    end
+    nil
+  end
+
+  def puts_item(io, x)
+    case x
+    in Array then Array.each(x) { |e| puts_item(io, e) }
+    else
+      s = Kernel.to_s(x)
+      write_bytes(io, s)
+      write_bytes(io, "\n") unless String.end_with?(s, "\n")
+    end
+    nil
+  end
+
+  # putc: an Integer's low byte, or a String's first character; gives the argument.
+  def putc(io, c)
+    check_writable(io)
+    case c
+    in Integer then write_bytes(io, String.b(Array.pack(Array[c & 255], "C")))
+    in String then write_bytes(io, String.[](c, 0) || "")
+    end
+    c
+  end
+
+  # --- position ---
+
+  def tell(io) = @pos
+
+  # Ruby: io.pos = n (negative: Errno::EINVAL).
+  def set_pos(io, n)
+    raise IOError, "Invalid argument" if n < 0
+    @pos = n
+  end
+
+  # whence: 0 / :SET from the start, 1 / :CUR from pos, 2 / :END from the end (Ruby: IO::SEEK_*).
+  def seek(io, offset, whence = 0)
+    raise IOError, "closed stream" if closed?(io)
+    base = case whence
+           in 0 | :SET then 0
+           in 1 | :CUR then @pos
+           in 2 | :END then String.bytesize(@string)
+           else raise IOError, "Invalid argument - invalid whence"
+           end
+    raise IOError, "Invalid argument" if base + offset < 0
+    @pos = base + offset
+    0
+  end
+
+  def rewind(io)
+    @pos = 0
+    @lineno = 0
+    0
+  end
+
+  def eof?(io)
+    check_readable(io)
+    bytes_left(io) <= 0
+  end
+
+  def eof(io) = eof?(io)
+
+  # --- the String ---
+
+  def size(io) = String.bytesize(@string)
+  def length(io) = String.bytesize(@string)
+
+  # Cuts the String to n bytes, or pads it with NUL; pos does not move. Gives 0, as Ruby.
+  def truncate(io, n)
+    check_writable(io)
+    raise IOError, "Invalid argument - negative length" if n < 0
+    size = String.bytesize(@string)
+    if n < size
+      String.replace(@string, String.byteslice(@string, 0, n) || "")
+    else
+      String.concat(@string, "\0" * (n - size))
+    end
+    0
+  end
+
+  # Ruby: io.string = s: a new String, pos and lineno 0; the mode and a closed state stay (Ruby 4.0).
+  def set_string(io, s)
+    s => String
+    @string = s
+    @pos = 0
+    @lineno = 0
+    s
+  end
+
+  # reopen: as new: the String, the mode, open again.
+  def reopen(io, s = "", mode = "r+")
+    set_string(io, s)
+    @closed_r = false
+    @closed_w = false
+    apply_mode(io, mode)
+    io
+  end
+
+  # --- closing ---
+
+  def close(io)
+    @closed_r = true
+    @closed_w = true
+    nil
+  end
+
+  def close_read(io)
+    raise IOError, "closing non-duplex IO for reading" unless @readable
+    @closed_r = true
+    nil
+  end
+
+  def close_write(io)
+    raise IOError, "closing non-duplex IO for writing" unless @writable
+    @closed_w = true
+    nil
+  end
+
+  def closed?(io) = @closed_r && @closed_w
+  def closed_read?(io) = @closed_r || !@readable
+  def closed_write?(io) = @closed_w || !@writable
+
+  # --- IO-compatible no-ops ---
+
+  def flush(io) = io
+  def fsync(io) = 0
+  def sync(io) = true
+  def set_sync(io, v) = v
+  def fileno(io) = nil
+  def isatty(io) = false
+  def tty?(io) = false
+  def pid(io) = nil
+  def binmode(io) = io
+  def external_encoding(io) = String.encoding(@string)
+  def internal_encoding(io) = nil
+
+  # Ruby shows the address; nothing of the contents.
+  def inspect(io) = "#<StringIO>"
+end

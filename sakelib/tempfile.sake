@@ -1,0 +1,215 @@
+# tempfile: Tempfile, a temporary file in the system's temporary directory (Ruby's tempfile).
+#
+# The file is created by Tempfile.new / Tempfile.create with Ruby's name, <prefix><yyyymmdd>-<pid>-<random
+# base 36><suffix>, mode 0600, in Dir.tmpdir (defined here, as Ruby's tmpdir.rb does). Reading and writing
+# go through a StringIO over the file's contents at the saved position, written back after each write:
+# Sake's IO has no seek, so an open IO could not give Ruby's rewind/read-after-write.
+# Tempfile.create gives a Tempfile too (Ruby: a File), and with a block closes and removes it afterwards.
+require "stringio"
+
+class Dir
+  # Ruby's Dir.tmpdir ($TMPDIR, else /tmp): the directory Dir.mktmpdir creates in.
+  def tmpdir = once { d = Dir.mktmpdir("sake"); Dir.rmdir(d); File.dirname(d) }
+end
+
+# Tempfile.new(basename = "", tmpdir = nil): basename is a String prefix, or [prefix, suffix].
+class Tempfile
+  attr_reader basename
+  attr_reader tmpdir
+  private attr_reader fpath, pos, lineno, closed, unlinked
+  include Bitwise                         # for <<
+
+  def initialize(tf)
+    @basename = "" if @basename == nil
+    @tmpdir = Dir.tmpdir if @tmpdir == nil
+    @basename => String | Tuple | Array
+    @tmpdir => String
+    @pos = 0
+    @lineno = 0
+    @closed = false
+    @unlinked = false
+    @fpath = create_file(tf)
+  end
+
+  # Tempfile.create(basename = "", tmpdir = nil) { |tf| }: the file is closed and removed after the block,
+  # whose value is the result; without a block, the new Tempfile (Ruby: a File).
+  def create(basename = "", tmpdir = nil)
+    tf = Tempfile.new(basename, tmpdir)
+    return tf unless block_given?
+    begin
+      yield tf
+    ensure
+      close(tf)
+      unlink(tf)
+    end
+  end
+
+  # --- naming and creating ---
+
+  def digits36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+  def base36(n)
+    return "0" if n == 0
+    s = ""
+    while n > 0
+      s = (String.[](digits36, n % 36) || "") + s
+      n /= 36
+    end
+    s
+  end
+
+  def prefix_suffix(b)
+    case b
+    in String then [b, ""]
+    in Tuple | Array then [Kernel.to_s(b[0]), Kernel.to_s(b[1])]
+    end
+  end
+
+  # Ruby's Dir::Tmpname.create: <prefix><yyyymmdd>-<pid>-<rand>[-<n>]<suffix>, n added on a collision;
+  # characters other than , - . 0-9 A-Z _ a-z ~ are dropped from the prefix and suffix, as Ruby does.
+  def make_tmpname(tf, n)
+    prefix, suffix = prefix_suffix(@basename)
+    prefix = String.delete(prefix, "^,-.0-9A-Z_a-z~")
+    suffix = String.delete(suffix, "^,-.0-9A-Z_a-z~")
+    stamp = Time.strftime(Time.now, "%Y%m%d")
+    "#{prefix}#{stamp}-#{Process.pid}-#{base36(Kernel.rand(0x100000000))}#{n > 0 ? "-#{n}" : ""}#{suffix}"
+  end
+
+  # Creates an empty file with a fresh name (Ruby: O_EXCL), mode 0600; gives its path.
+  def create_file(tf)
+    n = 0
+    path = File.join(@tmpdir, make_tmpname(tf, n))
+    while File.exist?(path)
+      n += 1
+      path = File.join(@tmpdir, make_tmpname(tf, n))
+    end
+    File.write(path, "")
+    File.chmod(0o600, path)
+    path
+  end
+
+  # --- the file ---
+
+  # Ruby: nil once unlinked.
+  def path(tf) = @unlinked ? nil : @fpath
+  def to_path(tf) = path(tf)
+
+  # Ruby: reopens the file (mode r+) at position 0.
+  def open(tf)
+    raise IOError, "No such file or directory @ rb_sysopen - #{@fpath}" unless File.exist?(@fpath)
+    @closed = false
+    @pos = 0
+    @lineno = 0
+    tf
+  end
+
+  # Ruby: close(true) also unlinks, and gives unlink's result.
+  def close(tf, unlink_now = false)
+    @closed = true
+    unlink_now ? unlink(tf) : nil
+  end
+
+  def close!(tf) = close(tf, true)
+
+  # Removes the file; true, or nil when already removed (as Ruby).
+  def unlink(tf)
+    return nil if @unlinked
+    begin
+      File.delete(@fpath)
+    rescue IOError
+      nil
+    end
+    @unlinked = true
+    true
+  end
+
+  def delete(tf) = unlink(tf)
+
+  def closed?(tf) = @closed
+
+  # The file's size, also when closed; 0 once removed.
+  def size(tf) = File.exist?(@fpath) ? File.size(@fpath) : 0
+  def length(tf) = size(tf)
+
+  # --- reading and writing, through a StringIO over the contents at pos ---
+
+  def with_io(tf, writing)
+    raise IOError, "closed stream" if @closed
+    io = StringIO.new(File.read(@fpath))
+    StringIO.set_pos(io, @pos)
+    StringIO.set_lineno(io, @lineno)
+    r = yield io
+    File.write(@fpath, StringIO.string(io)) if writing
+    @pos = StringIO.pos(io)
+    @lineno = StringIO.lineno(io)
+    r
+  end
+
+  def read(tf, length = nil) = with_io(tf, false) { |io| StringIO.read(io, length) }
+  def gets(tf, sep = "\n", limit = nil, chomp: false) = with_io(tf, false) { |io| StringIO.gets(io, sep, limit, chomp:) }
+  def readline(tf, sep = "\n", limit = nil, chomp: false) = with_io(tf, false) { |io| StringIO.readline(io, sep, limit, chomp:) }
+  def readlines(tf, sep = "\n", chomp: false) = with_io(tf, false) { |io| StringIO.readlines(io, sep, chomp:) }
+  def getc(tf) = with_io(tf, false) { |io| StringIO.getc(io) }
+  def getbyte(tf) = with_io(tf, false) { |io| StringIO.getbyte(io) }
+  def readchar(tf) = with_io(tf, false) { |io| StringIO.readchar(io) }
+  def eof?(tf) = with_io(tf, false) { |io| StringIO.eof?(io) }
+  def eof(tf) = eof?(tf)
+
+  def each_line(tf, sep = "\n", chomp: false)
+    loop do
+      line = gets(tf, sep, nil, chomp:)
+      break unless line
+      yield line
+    end
+    tf
+  end
+
+  def each(tf, sep = "\n", chomp: false, &b) = each_line(tf, sep, chomp:, &b)
+
+  def write(tf, *objs) = with_io(tf, true) { |io| StringIO.write(io, *objs) }
+  def print(tf, *objs) = with_io(tf, true) { |io| StringIO.print(io, *objs) }
+  def puts(tf, *objs) = with_io(tf, true) { |io| StringIO.puts(io, *objs) }
+  def printf(tf, fmt, *args) = with_io(tf, true) { |io| StringIO.printf(io, fmt, *args) }
+  def putc(tf, c) = with_io(tf, true) { |io| StringIO.putc(io, c) }
+
+  def <<(tf, x)
+    write(tf, x)
+    tf
+  end
+
+  def truncate(tf, n) = with_io(tf, true) { |io| StringIO.truncate(io, n) }
+
+  # --- position ---
+
+  def pos(tf)
+    raise IOError, "closed stream" if @closed
+    @pos
+  end
+
+  def tell(tf) = pos(tf)
+
+  def set_pos(tf, n)
+    raise IOError, "closed stream" if @closed
+    raise IOError, "Invalid argument @ rb_io_set_pos - #{@fpath}" if n < 0
+    @pos = n
+  end
+
+  def seek(tf, offset, whence = 0) = with_io(tf, false) { |io| StringIO.seek(io, offset, whence) }
+
+  def rewind(tf)
+    raise IOError, "closed stream" if @closed
+    @pos = 0
+    @lineno = 0
+    0
+  end
+
+  # --- IO-compatible no-ops (every write is already in the file) ---
+
+  def flush(tf) = tf
+  def fsync(tf) = 0
+  def sync(tf) = true
+  def binmode(tf) = tf
+
+  # Ruby: #<Tempfile:/tmp/foo20261009-1-abc>, and "#<Tempfile:>" once unlinked (Ruby 4.0).
+  def inspect(tf) = "#<Tempfile:#{@unlinked ? "" : @fpath}>"
+end
