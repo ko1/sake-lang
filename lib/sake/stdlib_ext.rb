@@ -405,8 +405,10 @@ module Sake
       end
       reg.define("Array", :each_with_object, %w[Array Any], block: :required) { |a, memo, &b| a.each { b.(_1, memo) }; memo }
       # `sum(xs, 0.0)`: as Ruby, the initial value (default 0) is the result for an empty collection.
-      reg.define("Array", :sum, ["Array"], optional: [NUMERIC], block: :optional) do |a, init = 0, &b|
+      # Elements of a type that includes Arithmetic are added with its own + (Interpreter#call_builtin).
+      reg.define("Array", :sum, ["Array"], optional: ["Any"], block: :optional) do |a, init = 0, &b|
         xs = b ? a.map { b.(_1) } : a
+        raise Fail.new("TypeError", "the initial value must be a number, got #{Values.describe(init)}") unless NUMERIC.include?(Values.type_of(init))
         xs.each { |x| raise Fail.new("TypeError", "element must be a number, got #{Values.describe(x)}") unless NUMERIC.include?(Values.type_of(x)) }
         xs.sum(init)
       end

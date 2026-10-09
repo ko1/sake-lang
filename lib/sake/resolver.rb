@@ -609,7 +609,14 @@ module Sake
         error(node, "`begin ... end while` is not supported") if node.begin_modifier?
         check(node.predicate, ctx)
         check(node.statements, ctx.dup.tap { _1.in_loop = true })
-      when Prism::AndNode, Prism::OrNode then check_each(ctx, node.left, node.right)
+      when Prism::AndNode, Prism::OrNode
+        # `raise X if a in T && cond` parses as `(raise X if a in T) && cond`: the left operand is a whole statement.
+        if (node.left.is_a?(Prism::IfNode) || node.left.is_a?(Prism::UnlessNode)) && node.left.end_keyword_loc.nil?
+          op = node.operator_loc.slice
+          error(node, "`#{op}` applies to the whole `... #{node.left.is_a?(Prism::IfNode) ? "if" : "unless"} ...` here, not to its condition",
+                ["write the condition as `(x in T) #{op} ...`, or put the modifier after the whole condition"])
+        end
+        check_each(ctx, node.left, node.right)
       when Prism::ParenthesesNode
         node.body.is_a?(Prism::StatementsNode) ? check_statements(node.body, ctx, inherit: true) : check(node.body, ctx)
       when Prism::ArrayNode

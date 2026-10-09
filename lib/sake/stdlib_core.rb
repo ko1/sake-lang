@@ -72,6 +72,10 @@ module Sake
           end
         end
       end
+      # Record.to_h(r) / keys / values: a Record's fields as data (Symbol keys), for code that walks any Record.
+      reg.define("Record", :to_h, ["Any"]) { |r| record!(r).shape.fields.zip(r.values).to_h { |f, v| [f.to_sym, v] } }
+      reg.define("Record", :keys, ["Any"]) { |r| record!(r).shape.fields.map(&:to_sym) }
+      reg.define("Record", :values, ["Any"]) { |r| record!(r).values.dup }
       # Kernel.PROGRAM_NAME: the program's path (Ruby's $0). Kernel.equal?(a, b): the same value, not just equal.
       reg.define("Kernel", :PROGRAM_NAME, []) { Sake.program_name || $0 }
       reg.define("Kernel", :equal?, %w[Any Any]) { |a, b| a.equal?(b) }
@@ -80,6 +84,11 @@ module Sake
         CLOCK_PROCESS_CPUTIME_ID: Process::CLOCK_PROCESS_CPUTIME_ID }.each do |name, v|
         reg.define("Process", name, []) { v }
       end
+    end
+
+    def record!(r)
+      raise Fail.new("TypeError", "argument 1 must be a Record, got #{Values.describe(r)}") unless r.is_a?(RecordValue)
+      r
     end
 
     def row_items(e)

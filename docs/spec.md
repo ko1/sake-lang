@@ -748,7 +748,9 @@ end
 - **`rescue`.** `rescue A, B => e` catches the listed types only, since there is no hierarchy.
   `rescue => e` catches every rescuable exception; `e` is a union, so narrow it with
   `case e in A ...`.
-- **Reading the message.** `Exception.message(e)` reads the message of any exception value.
+- **Reading the message.** `Exception.message(e)` reads the message of any exception value. For an
+  exception raised by a built-in operation it is Ruby's text (`divided by 0`); the report of an
+  unrescued one also names the operation (`ZeroDivisionError: Arithmetic./: divided by 0`).
 - **Program errors.** `SystemStackError`, `LocalJumpError`, and `NotImplementedError` cannot be
   rescued, and naming them in `rescue` is a static error. `TypeError` (an operation given a value of
   the wrong type) and `NoMatchingPatternError` can be rescued, as in Ruby: the checks before running

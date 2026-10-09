@@ -440,6 +440,13 @@ module Sake
                            node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v), op: fn.full_name)
       end
       return once_value(blk, node) if fn.full_name == "Kernel.once"
+      # Array.sum over values of a type with its own + (include Arithmetic): folded with that +, from the initial
+      # value when given, else from the first element (Ruby would start from 0, which no user type can be added to).
+      if fn.full_name == "Array.sum" && (args[0].any? { _1.is_a?(StructValue) } || args[1].is_a?(StructValue))
+        xs = blk ? args[0].map { call_block(blk, [_1], node) } : args[0]
+        xs = [args[1], *xs] if args.size > 1
+        return xs.empty? ? 0 : xs.drop(1).reduce(xs[0]) { |acc, x| binary_op(node, "+", acc, x) }
+      end
       if fn.full_name == "Kernel.dup" && args[0].is_a?(StructValue) && (own = @program.functions.dig(args[0].type.name, "dup"))
         return call_user(own, args, nil, node) # T.dup, when the type defines it
       end

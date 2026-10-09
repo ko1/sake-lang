@@ -18,6 +18,10 @@ module Sake
       reg.define("Thread", :alive?, ["Thread"]) { |t| t.thread.alive? }
       # The running thread (the main program's, or one made by Thread.new): two values of the same thread are ==.
       reg.define("Thread", :current, []) { ThreadValue.new(::Thread.current) }
+      # kill(t): ends the thread where it is (its ensure clauses run); raise(t, message): a RuntimeError is raised in
+      # it, where it is (Timeout.timeout stops a block with this).
+      reg.define("Thread", :kill, ["Thread"]) { |t| t.thread.kill; t }
+      reg.define("Thread", :raise, %w[Thread String]) { |t, msg| t.thread.raise(RunError.new("RuntimeError", msg, 0)); t }
       reg.define("Mutex", :new, []) { ::Thread::Mutex.new }
       reg.define("Mutex", :synchronize, ["Mutex"], block: :required) { |m, &b| m.synchronize { b.call } }
       reg.define("Mutex", :lock, ["Mutex"]) { |m| ruby_error("ThreadError") { m.lock } }
@@ -44,7 +48,12 @@ module Sake
       reg.define("TCPServer", :accept, ["TCPServer"]) { |s| net_error { s.accept } }
       reg.define("TCPServer", :port, ["TCPServer"]) { |s| s.addr[1] }
       reg.define("TCPServer", :close, ["TCPServer"]) { |s| s.close.then { nil } }
-      reg.define("Socket", :connect, %w[String Integer]) { |host, port| net_error { require "socket"; ::TCPSocket.new(host, port) } }
+      # connect(host, port[, timeout]): IOError when the connection is not made within timeout seconds.
+      reg.define("Socket", :connect, %w[String Integer], optional: [%w[Integer Float Rational]]) do |host, port, timeout = nil|
+        net_error { require "socket"; timeout ? ::TCPSocket.new(host, port, connect_timeout: timeout) : ::TCPSocket.new(host, port) }
+      end
+      # set_timeout(s, seconds): a read or write that waits longer raises IOError (Ruby's IO#timeout=).
+      reg.define("Socket", :set_timeout, ["Socket", %w[Integer Float Rational Nil]]) { |s, secs| s.timeout = secs; s }
       reg.define("Socket", :gets, ["Socket"]) { |s| net_error { s.gets } }
       reg.define("Socket", :read, %w[Socket Integer]) { |s, n| net_error { nonneg(n) && s.read(n) } }
       reg.define("Socket", :write, %w[Socket String]) { |s, str| net_error { s.write(str) } }

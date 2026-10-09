@@ -1360,8 +1360,13 @@ module Sake
       when "Array.sum"
         e = elem_of(a0)
         e = call_block(blk, [e]) if blk && !e.empty?
-        record(node, "Array.sum", "elem", Stdlib::NUMERIC, e)
-        sum_type(args[1], e)
+        arith = @program.struct_types.keys.select { Operators.includes?(@program.includes || {}, _1, "Arithmetic") && @program.functions.dig(_1, "+") }
+        record(node, "Array.sum", "elem", Stdlib::NUMERIC + arith, e)
+        record(node, "Array.sum", 2, Stdlib::NUMERIC + arith, args[1]) if args[1]
+        structs = e.select { arith.include?(_1) }
+        structs.each { |x| (fn = @program.functions.dig(x, "+")) && call_user(fn, [one(x), u(e, *[args[1]].compact)], nil) }
+        u(sum_type(args[1] && args[1].reject { arith.include?(_1) }.then { _1.empty? ? nil : of_atoms(_1) }, e.reject { arith.include?(_1) }),
+          of_atoms(structs), args[1] ? of_atoms(args[1].select { arith.include?(_1) }) : [])
       when "Array.new"
         elem = blk ? call_block(blk, [t("Integer")]) : (args[1] || t("Nil"))
         new_site(node, " #{name}", elem)

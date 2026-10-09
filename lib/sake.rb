@@ -33,7 +33,12 @@ module Sake
     visit = lambda do |file, src|
       result = Prism.parse(src, filepath: file)
       unless result.errors.empty?
-        result.errors.each { |e| diags << Diagnostic.new(file, e.location.start_line, e.location.start_column, "syntax error: #{e.message}", []) }
+        lines = src.lines
+        result.errors.each do |e|
+          # `x in T` binds loosely (Ruby's grammar): `f(a, x in T)` and `x in T ? a : b` do not parse as meant.
+          hint = lines[e.location.start_line - 1].to_s.match?(/\b\w+ in [A-Z]/) ? ["`x in T` needs its own parentheses here: `(x in T)`"] : []
+          diags << Diagnostic.new(file, e.location.start_line, e.location.start_column, "syntax error: #{e.message}", hint)
+        end
         next
       end
       root = result.value
@@ -51,8 +56,10 @@ module Sake
         name += ".sake" if File.extname(name).empty?
         target = File.dirname(file) == "." || File.absolute_path?(name) ? name : File.join(File.dirname(file), name)
         # Not next to the requiring file: Sake's own library (sakelib/), as Ruby's standard library.
-        # The requiring file itself is never the one meant (test/sakelib/csv.sake requiring "csv").
-        if (!File.exist?(target) || File.expand_path(target) == File.expand_path(file)) && File.exist?(File.join(SAKELIB, name))
+        # The requiring file itself is never the one meant (test/sakelib/csv.sake requiring "csv"), nor is a
+        # sibling that is a program rather than a library (test/sakelib/net_http.sake next to another test).
+        if File.exist?(File.join(SAKELIB, name)) &&
+           (!File.exist?(target) || File.expand_path(target) == File.expand_path(file) || !library_file?(target))
           target = File.join(SAKELIB, name)
         end
         next if seen[File.expand_path(target)]
@@ -73,6 +80,22 @@ module Sake
     Stdlib.install(registry, out)
     Stdlib.install_ext(registry, out, input)
     Resolver.new(path, files, registry, sources).resolve
+  end
+
+  # Whether a file is a library: its top level holds only definitions (class, module, def, `X = Struct.new`)
+  # and requires. A file that also runs something is a program, which a `require` next to it does not mean.
+  def library_file?(path)
+    result = Prism.parse(File.read(path), filepath: path)
+    return true unless result.errors.empty?
+    result.value.statements.body.all? do |st|
+      case st
+      when Prism::ClassNode, Prism::ModuleNode, Prism::DefNode, Prism::ConstantWriteNode then true
+      when Prism::CallNode then Resolver.require_call?(st)
+      else false
+      end
+    end
+  rescue SystemCallError
+    true
   end
 
   # The file a Prism node (or a SakeAST node) comes from.

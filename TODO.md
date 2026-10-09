@@ -9,8 +9,8 @@
 - [x] (10-09, already worked; test added) `return unless x in T` / `raise ... unless x in T` の後で x を絞る（observer）。
 - [x] (10-09) `Integer <=> Integer`（同種のスカラー同士）を `Integer` に（nil は比較できない組だけ。bigdecimal）。
 - [x] (10-09) `String.byteslice` の nil を `IndexNil`（`s[i, n]` と同じ扱い。stringio で `|| ""` が 12 回）。
-- [ ] `raise X if a in T && cond`: `&&` が `raise ... if` 全体に掛かる構文解析を警告する（net_http）。
-- [ ] `x in T ? a : b` / `f(t, x in T)` の構文エラーに「`(x in T)` と括る」hint（延べ 9 本が踏んだ）。
+- [x] (10-09) `raise X if a in T && cond`: `&&` が `raise ... if` 全体に掛かる構文解析を警告する（net_http）。
+- [x] (10-09) `x in T ? a : b` / `f(t, x in T)` の構文エラーに「`(x in T)` と括る」hint（延べ 9 本が踏んだ）。
 - [ ] `empty?` の直後の `Array.shift` / `Array.max` / `Array.last` は nil 型（3 本）。空でないことを追うのは難しい。`fetch` を勧める hint で代える。
 - [ ] 要素の型を変える破壊的操作（`transform_keys!`）で容器の型が前後の合併になる（検査器が時間を持たない）。文書化のみ。
 - [ ] ライブラリ 1 本を `--strict=4` で検査すると `unrescued` が全部出る。文書化（レベル 4 はプログラム向け）。
@@ -20,14 +20,14 @@
 - [x] (10-09) `rescue StandardError => e` / `rescue Exception` を裸の rescue として受ける。
 
 - [x] (10-09) 組み込みの例外の文から `Op: ` を外し、操作名は報告の行に出す（Ruby と同じ `Exception.message`。4 本）。
-- [ ] `test/sakelib/foo.sake`（プログラム）が兄弟の `require "foo"` を影にする: トップレベルに定義以外の文がある file はライブラリ候補にしない。
+- [x] (10-09) `test/sakelib/foo.sake`（プログラム）が兄弟の `require "foo"` を影にする: トップレベルに定義以外の文がある file はライブラリ候補にしない。
 
 ## 組み込み
 
-- [ ] `Record.to_h(r)` / `Record.keys(r)`（pp の汎用 walk、以前の csv/json も）。
-- [ ] ソケットのタイムアウト: `Socket.connect(host, port, timeout)`、`Socket.set_timeout(s, secs)`（net_http）。
-- [ ] `Thread.kill(t)`、`Thread.raise(t, msg)`（timeout が本体を止められない）。
-- [ ] `Array.sum` / `Range.sum` が `Arithmetic` を include する型の要素を受ける（bigdecimal, matrix）。
+- [x] (10-09) `Record.to_h(r)` / `Record.values(r)` / `Record.keys(r)`（pp の汎用 walk、以前の csv/json も）。
+- [x] (10-09) ソケットのタイムアウト: `Socket.connect(host, port, timeout)`、`Socket.set_timeout(s, secs)`（net_http）。
+- [x] (10-09) `Thread.kill(t)`、`Thread.raise(t, msg)`（timeout が本体を止められない）。
+- [x] (10-09, `Array.sum` のみ) `Array.sum` / `Range.sum` が `Arithmetic` を include する型の要素を受ける（bigdecimal, matrix）。
 - [ ] TLS（`Socket.connect(host, port, {ssl: true})`。net_http は http のみ）。
 - [ ] Float → 10 進の桁指定変換（bigdecimal の `BigDecimal(float, prec)`）。
 

@@ -190,6 +190,16 @@ module Sake
       when "String.slice!" then u(t("String"), t("Nil"))
       when "Process.CLOCK_REALTIME", "Process.CLOCK_MONOTONIC", "Process.CLOCK_PROCESS_CPUTIME_ID" then t("Integer")
       when "Kernel.system" then u(t("Boolean"), t("Nil"))
+      when "Record.to_h", "Record.keys", "Record.values"
+        recs = atoms_of(args[0], :record)
+        return unknown("record") if recs.empty?
+        keys = u(*recs.flat_map { |a| a[1].map { |f, _| one([:sym, f]) } })
+        vals = u(*recs.flat_map { |a| a[1].map { |_, ty| ty } })
+        case name
+        when "Record.to_h" then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = keys; s.val = vals }
+        when "Record.keys" then new_site(node, " #{name}", keys)
+        else new_site(node, " #{name}", vals)
+        end
       when "Open3.capture2", "Open3.capture2e" then tuple([t("String"), t("Integer")])
       when "Open3.capture3" then tuple([t("String"), t("String"), t("Integer")])
       when "Hash.set_default"
@@ -236,6 +246,7 @@ module Sake
       when "Thread.value" then u(*atoms_of(a0, :thread).map { thread_sites[_1[1]].elem })
       when "Thread.join" then args.size == 2 ? u(a0, t("Nil")) : a0
       when "Thread.current" then t("Thread")
+      when "Thread.kill", "Thread.raise", "Socket.set_timeout" then a0
       when "Mutex.lock", "Mutex.unlock" then a0
       when "Mutex.try_lock", "Mutex.locked?", "Mutex.owned?" then t("Boolean")
       when "IO.seek", "IO.pos", "IO.rewind", "IO.truncate", "IO.size" then t("Integer")

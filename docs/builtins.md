@@ -136,7 +136,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.sort!(x)`
 - `Array.sort_by(x) { }`
 - `Array.sort_by!(x) { }`
-- `Array.sum(x, [Integer|Float|Rational|Complex]) [{ }]`
+- `Array.sum(x, [Any]) [{ }]`
 - `Array.take(x, Integer)`
 - `Array.take_while(x) { }`
 - `Array.tally(x)`
@@ -712,6 +712,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Rational.truncate(x)`
 - `Rational.zero?(x)`
 
+## Record
+
+- `Record.keys(Any)`
+- `Record.to_h(Any)`
+- `Record.values(Any)`
+
 ## Regexp
 
 - `Regexp.!=(x, Any)`
@@ -830,9 +836,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 - `Socket.close(x)`
 - `Socket.close_write(x)`
-- `Socket.connect(String, Integer)`
+- `Socket.connect(String, Integer, [Integer|Float|Rational])`
 - `Socket.gets(x)`
 - `Socket.read(x, Integer)`
+- `Socket.set_timeout(x, Integer|Float|Rational|Nil)`
 - `Socket.write(x, String)`
 
 ## String
@@ -1015,7 +1022,9 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Thread.alive?(x)`
 - `Thread.current()`
 - `Thread.join(x, [Integer|Float|Rational])`
+- `Thread.kill(x)`
 - `Thread.new() { }`
+- `Thread.raise(x, String)`
 - `Thread.value(x)`
 
 ## Time
