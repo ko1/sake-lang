@@ -134,11 +134,18 @@ module Sake
       end
     end
 
+    # SAKE_TYPER=2 selects the experimental Typer2 (experiments/2026-10-09-typer2/).
+    def typer_class
+      return Typer if ENV["SAKE_TYPER"] != "2"
+      require_relative "typer2"
+      Typer2
+    end
+
     def strict_check(program, items, err)
       require_relative "typer"
       typer =
         begin
-          Typer.new(program).run
+          typer_class.new(program).run
         rescue StandardError => e
           err.puts "warning: type checks skipped (internal error in the type checker: #{e.class}: #{e.message})"
           return
@@ -220,7 +227,7 @@ module Sake
     # Runs only on the error path: static analysis tells where the nil may have come from.
     def add_nil_hints(error, source, path)
       require_relative "typer"
-      typer = Typer.new(Sake.load(source, path, out: StringIO.new)).run
+      typer = typer_class.new(Sake.load(source, path, out: StringIO.new)).run
       error.hints = [*typer.nil_sources(error.expected), NIL_CHECK_HINT]
     rescue StandardError
       error.hints = [NIL_CHECK_HINT]
@@ -275,7 +282,7 @@ module Sake
       end
       if types
         require_relative "typer"
-        out.write(Typer.new(program).run.report)
+        out.write(typer_class.new(program).run.report)
         return 0
       end
       strict_check(program, items, err) unless items.empty?

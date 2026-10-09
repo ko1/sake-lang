@@ -29,12 +29,18 @@ module Sake
     # change. A read is still good when the cell did not change after it. See call_user.
     READS = [nil]
     CHANGED_AT = {}.compare_by_identity
+    ON_DIRTY = [nil] # a hook told of each changed cell (Typer2's worklist)
     module Tracked
       def self.setter(mod, *names)
         names.each do |n|
           mod.define_method(n) { (r = READS[0]) && (r[self] ||= GEN[0]); self[n] }
           mod.define_method(:"#{n}=") do |v|
-            CHANGED_AT[self] = (GEN[0] += 1) unless v.equal?(self[n])
+            unless v.equal?(self[n])
+              CHANGED_AT[self] = (GEN[0] += 1)
+              self[n] = v
+              (h = ON_DIRTY[0]) && h.call(self)
+              next v
+            end
             self[n] = v
           end
         end
@@ -42,7 +48,11 @@ module Sake
     end
 
     def read(cell) = (r = READS[0]) && (r[cell] ||= GEN[0])
-    def dirty(cell) = CHANGED_AT[cell] = (GEN[0] += 1)
+
+    def dirty(cell)
+      CHANGED_AT[cell] = (GEN[0] += 1)
+      (h = ON_DIRTY[0]) && h.call(cell)
+    end
     def field_cell(dt, field) = ((@field_cells ||= {})[dt] ||= {})[field] ||= [dt, field].freeze
 
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
