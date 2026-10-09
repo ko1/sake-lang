@@ -76,6 +76,12 @@ module Sake
       reg.define("Record", :to_h, ["Any"]) { |r| record!(r).shape.fields.zip(r.values).to_h { |f, v| [f.to_sym, v] } }
       reg.define("Record", :keys, ["Any"]) { |r| record!(r).shape.fields.map(&:to_sym) }
       reg.define("Record", :values, ["Any"]) { |r| record!(r).values.dup }
+      # at_exit { ... }: the block runs when the program ends (normally, by exit, or by an error), last registered
+      # first, as Ruby's. The block is kept by the interpreter, as Thread.new keeps its block.
+      reg.define("Kernel", :at_exit, [], block: :required) do |&b|
+        Sake.at_exit_blocks << b
+        nil
+      end
       # Kernel.PROGRAM_NAME: the program's path (Ruby's $0). Kernel.equal?(a, b): the same value, not just equal.
       reg.define("Kernel", :PROGRAM_NAME, []) { Sake.program_name || $0 }
       reg.define("Kernel", :equal?, %w[Any Any]) { |a, b| a.equal?(b) }

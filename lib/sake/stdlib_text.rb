@@ -5,6 +5,8 @@ module Sake
   class << self
     attr_accessor :program_name # the main file's path (Kernel.PROGRAM_NAME), set by Sake.load
 
+    def at_exit_blocks = @at_exit_blocks ||= []
+
     def argv = @argv ||= []
 
     def argv=(xs)

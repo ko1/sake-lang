@@ -190,6 +190,9 @@ module Sake
       when "String.slice!" then u(t("String"), t("Nil"))
       when "Process.CLOCK_REALTIME", "Process.CLOCK_MONOTONIC", "Process.CLOCK_PROCESS_CPUTIME_ID" then t("Integer")
       when "Kernel.system" then u(t("Boolean"), t("Nil"))
+      when "Kernel.at_exit"
+        call_block(blk, [])
+        t("Nil")
       when "Record.to_h", "Record.keys", "Record.values"
         recs = atoms_of(args[0], :record)
         return unknown("record") if recs.empty?

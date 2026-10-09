@@ -493,6 +493,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.Integer(String|Integer|Float)`
 - `Kernel.PROGRAM_NAME()`
 - `Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
+- `Kernel.at_exit() { }`
 - `Kernel.block_given?()`
 - `Kernel.dup(Any)`
 - `Kernel.equal?(Any, Any)`

@@ -120,8 +120,22 @@ module Sake
 
   def execute(program, thread: true)
     path = program.path
-    return Interpreter.new(program).run unless thread
-    th = Thread.new { Interpreter.new(program).run }
+    unless thread
+      Sake.at_exit_blocks.clear
+      begin
+        return Interpreter.new(program).run
+      ensure
+        Sake.at_exit_blocks.reverse_each(&:call)
+      end
+    end
+    Sake.at_exit_blocks.clear
+    th = Thread.new do
+      begin
+        Interpreter.new(program).run
+      ensure
+        Sake.at_exit_blocks.reverse_each(&:call) # Kernel.at_exit, last registered first, after a normal end, exit, or an error
+      end
+    end
     th.report_on_exception = false
     th.value
   rescue RunError => e

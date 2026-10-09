@@ -508,7 +508,8 @@ module Sake
       @struct_types.each_key do |type|
         %w[to_s inspect].each do |name|
           fn = @functions.dig(type, name) or next
-          error(fn.node, "#{type}.#{name} takes exactly one argument (the value to show)") if fn.params.size != 1
+          # One required parameter (the value); more may follow with defaults (`to_s(d, fmt = "")`), as Ruby's to_s(base).
+          error(fn.node, "#{type}.#{name} takes one argument (the value to show); any other must have a default") if fn.min_arity != 1 || fn.keywords&.any? { |_, d| d.nil? }
           error(fn.node, "#{type}.#{name} cannot take a block") if fn.yields
         end
       end
