@@ -46,3 +46,14 @@
     Ruby の区別がそのまま残っているのは良い。
 16. **Ruby 4.0 の `Set#select` は Array を返す**（Sake もそれに合わせている）。Ruby 側の挙動で、移植のとき Ruby の版を確かめる必要がある。
 17. **`String.b(s) == "\xE3\x81\x82"` は false**（Ruby と同じ: バイト列が同じでもエンコーディングが違う）。`String.encoding` で確かめる。
+
+## 10-09: Sake で言語のテストを書いていて（language_test）
+
+18. **`def` はブロックの中に書けない**（Ruby は許す）。テストごとに補助関数をブロック内に置く Ruby の癖は使えず、全部トップレベルに出した。
+    メッセージは明快（`def` must be at the top level or directly in a class/module body）。
+19. **`x in T` を引数の中に裸で書くと構文エラー**（`assert(t, v in Point)`）。`(v in Point)` と括る。Prism の規則で、以前の移植 6 本も踏んだ。
+    「`in` の優先順位」専用のメッセージが欲しいという要求はそのまま。
+20. **配列パターン `in [a, b]` は未対応**（spec §16）。Tuple は `in Tuple` で受けて `t[0]` で取る。Record パターン `{name:}` は使える。
+21. **`x rescue y` の型は `x | y` の合併になる**ので、`assert_match(re, (1 / 0 rescue "..."))` は「Integer かもしれない」で止まる。
+    正しい指摘（Ruby でも 1/0 が例外を出さなければ Integer が渡る）。`assert_raises` のブロックに書き直した。
+22. **型の値の等価と比較**は書いた `<=>`/`==` が `Array.sort`・`Array.max`・`assert_equal` にそのまま効く。ここは Ruby と同じ感触。
