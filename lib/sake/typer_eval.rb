@@ -281,7 +281,13 @@ module Sake
         ev(n.body, body)
         join_many(env, [env.dup_level, body, *@jumps[-1]])
         env.dead = false # the loop may not run at all
-        return t("Nil") if env.chain_snapshot == before
+        next unless env.chain_snapshot == before
+        # After the loop: the test was false (`while x == nil` leaves x non-nil), or a break happened.
+        exit_env = env.dup_level
+        narrow(exit_env, n.cond, n.until_)
+        join_many(env, [exit_env, *@jumps[-1]])
+        env.dead = false
+        return t("Nil")
       end
       env.vars.transform_values! { unknown("loop did not converge") }
       t("Nil")
@@ -711,6 +717,9 @@ module Sake
         next if unknown?(ty)
         kept = ty.select { |a| Array(want).any? { atom_matches?(a, _1) } }
         env.vars[arg.slot] = of_atoms(kept)
+        # No type fits: the call always raises, so the rest of this path does not run (as after `raise`);
+        # reporting what follows would only echo this error.
+        env.dead = true if kept.empty? && !ty.empty?
       end
     end
 
