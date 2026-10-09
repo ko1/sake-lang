@@ -189,6 +189,9 @@ module Sake
         u(t("String"), t("Nil"))
       when "String.slice!" then u(t("String"), t("Nil"))
       when "Process.CLOCK_REALTIME", "Process.CLOCK_MONOTONIC", "Process.CLOCK_PROCESS_CPUTIME_ID" then t("Integer")
+      when "Kernel.system" then u(t("Boolean"), t("Nil"))
+      when "Open3.capture2", "Open3.capture2e" then tuple([t("String"), t("Integer")])
+      when "Open3.capture3" then tuple([t("String"), t("String"), t("Integer")])
       when "Hash.set_default"
         atoms_of(args[0], :hash).each { |a| s = hash_sites[a[1]]; s.default = u(s.default, args[1]) }
         args[1]
@@ -533,6 +536,7 @@ module Sake
       when :time_to_a then tuple([t("Integer")] * 8 + [t("Boolean"), t("String")])
       when :array_kv then new_site(node, " #{name}", u(k, v))
       when :array_string_nil then new_site(node, " #{name}", u(t("String"), t("Nil")))
+      when :hash_string_string then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = t("String"); s.val = t("String") }
       when :hash_names_ints then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = t("String"); s.val = new_site(node, " #{name}", t("Integer")) }
       when :hash_classify then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = bres; s.val = set_site(node, " classify").tap { set_sites[_1[0][1]].elem = u(set_sites[_1[0][1]].elem, elem) } }
       when :recv_write_block # map!: the block's results join the elements

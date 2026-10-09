@@ -279,6 +279,11 @@ module Sake
       # Kernel / Process
       ["Kernel", :srand, [], I, { opt: [I], kernel: true }],
       ["Process", :pid, [], I, { on: Process }], ["Process", :clock_gettime, [I], "Float", { on: Process, opt: ["Symbol"] }],
+      # ENV: Ruby's ENV["X"] is ENV.get("X"); ENV["X"] = v is ENV.set("X", v)
+      ["ENV", :get, [S], :string_nil, { on: ENV, ruby: :[] }], ["ENV", :fetch, [S], S, { on: ENV, opt: [S], key_error: true }],
+      ["ENV", :key?, [S], :bool, { on: ENV }], ["ENV", :set, [S, S], S, { on: ENV, ruby: :[]= }],
+      ["ENV", :delete, [S], :string_nil, { on: ENV }], ["ENV", :keys, [], "Array<String>", { on: ENV }],
+      ["ENV", :to_h, [], :hash_string_string, { on: ENV }],
     ].freeze
   end
 

@@ -204,6 +204,16 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Dir.rmdir(String)`
 - `Dir.unlink(String)`
 
+## ENV
+
+- `ENV.delete(String)`
+- `ENV.fetch(String, [String])`
+- `ENV.get(String)`
+- `ENV.key?(String)`
+- `ENV.keys()`
+- `ENV.set(String, String)`
+- `ENV.to_h()`
+
 ## File
 
 - `File.absolute_path(String, [String])`
@@ -491,6 +501,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.sleep([Integer|Float|Rational])`
 - `Kernel.sprintf(String, *Any)`
 - `Kernel.srand([Integer])`
+- `Kernel.system(String, *String)`
 - `Kernel.to_s(Any)`
 - `Kernel.warn(*Any)`
 
@@ -553,6 +564,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 - `Mutex.new()`
 - `Mutex.synchronize(x) { }`
+
+## Open3
+
+- `Open3.capture2(String, *String)`
+- `Open3.capture2e(String, *String)`
+- `Open3.capture3(String, *String)`
 
 ## Process
 

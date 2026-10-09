@@ -45,6 +45,22 @@ module Sake
       reg.define("String", :slice!, ["String", %w[Integer Range String Regexp]], optional: ["Integer"]) do |s, i, n = nil|
         ruby_error("TypeError") { n ? s.slice!(i, n) : s.slice!(i) }
       end
+      # Child processes (Ruby's open3 is built in: a program cannot spawn one otherwise). Kernel.system(cmd, *args)
+      # runs a command (true, false, or nil when it could not start, as Ruby); Open3.capture2 / capture2e / capture3
+      # give the output(s) and the exit status as a Tuple ([out, status], [out, err, status]).
+      reg.define("Kernel", :system, ["String"], rest: "String") { |cmd, *args| system(cmd, *args) }
+      reg.define("Open3", :capture2, ["String"], rest: "String") do |cmd, *args|
+        require "open3"
+        io_error { Open3.capture2(cmd, *args).then { |out, st| Tuple.new([out, st.exitstatus || -1]) } }
+      end
+      reg.define("Open3", :capture2e, ["String"], rest: "String") do |cmd, *args|
+        require "open3"
+        io_error { Open3.capture2e(cmd, *args).then { |out, st| Tuple.new([out, st.exitstatus || -1]) } }
+      end
+      reg.define("Open3", :capture3, ["String"], rest: "String") do |cmd, *args|
+        require "open3"
+        io_error { Open3.capture3(cmd, *args).then { |out, err, st| Tuple.new([out, err, st.exitstatus || -1]) } }
+      end
       # Process.clock_gettime(Process.CLOCK_MONOTONIC): the clocks are read as operations, as Math.PI is.
       { CLOCK_REALTIME: Process::CLOCK_REALTIME, CLOCK_MONOTONIC: Process::CLOCK_MONOTONIC,
         CLOCK_PROCESS_CPUTIME_ID: Process::CLOCK_PROCESS_CPUTIME_ID }.each do |name, v|
