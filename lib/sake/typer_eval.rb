@@ -297,7 +297,7 @@ module Sake
 
     # The variable a test reads: a local's slot, or inside initialize a field of the new instance.
     def narrow_slot(env, n)
-      return n.slot if n.is_a?(LVarGet)
+      return n.slot if n.is_a?(LVarGet) || n.is_a?(LVarSet) # `while (x = f()) != nil` tests the x just assigned
       return [:field, n.field] if n.is_a?(FieldGet) && init_field?(env, n)
       nil
     end

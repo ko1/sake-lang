@@ -247,7 +247,10 @@ module Sake
       clause = n.rescue_clause
       while clause
         ref = clause.reference
-        rescues << Rescue.new(names: clause.exceptions.map(&:slice), slot: ref && slot(ref.depth, ref.name),
+        # `rescue StandardError` catches everything rescuable, as a bare rescue (names: []).
+        names = clause.exceptions.map(&:slice)
+        names = [] if names.any? { Resolver::CATCH_ALL.include?(_1) }
+        rescues << Rescue.new(names:, slot: ref && slot(ref.depth, ref.name),
                               body: lower(clause.statements), origin: clause)
         clause = clause.subsequent
       end

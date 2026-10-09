@@ -1020,9 +1020,13 @@ module Sake
       u(init, *init.product(nums).map { |a, b| binop_result("+", a, b) })
     end
 
+    # Types whose <=> with each other never gives nil (no NaN, no elements).
+    ORDERED = %w[Integer Rational String Symbol Time].freeze
+
     # Result types of the BinaryOp rows (Ruby's numeric tower).
     def binop_result(op, t1, t2)
-      return u(t("Integer"), t("Nil")) if op == "<=>"
+      # <=> is nil only for operands that cannot be ordered: a NaN (Float), or elements of a Tuple/Array that cannot.
+      return (ORDERED.include?(t1) && ORDERED.include?(t2) ? t("Integer") : u(t("Integer"), t("Nil"))) if op == "<=>"
       return t("Boolean") if COMPARE_OPS.include?(op) || op == "!~"
       return u(t("Integer"), t("Nil")) if op == "=~"
       return t("String") if t1 == "String"

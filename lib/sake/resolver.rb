@@ -55,6 +55,7 @@ module Sake
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
                             RegexpError FloatDomainError Math::DomainError NoMatchingPatternError TypeError EOFError ThreadError].freeze
     NOT_RESCUABLE = %w[SystemStackError NotImplementedError LocalJumpError].freeze
+    CATCH_ALL = %w[StandardError Exception].freeze # Ruby's names for "any rescuable error" (a bare rescue in Sake)
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
     # `require "x"`: a call with no receiver, read by Sake.load before resolving.
@@ -842,6 +843,7 @@ module Sake
 
     def check_rescued_type(n)
       name = exception_name(n)
+      return if CATCH_ALL.include?(name) # `rescue StandardError => e`: every rescuable error, as a bare rescue
       if NOT_RESCUABLE.include?(name)
         error(n, "#{name} cannot be rescued: it is a program error, which the checks before running report")
       elsif !(name && @struct_types[name]&.exception)
