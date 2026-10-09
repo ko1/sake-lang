@@ -16,9 +16,9 @@
 | tmpdir | 不要 | `Dir.mktmpdir` が組み込み |
 | socket | 不要 | `TCPServer` / `Socket` が組み込み（TCP のみ。UDP、UNIX ドメインは無い） |
 | open3 | 不要 | `Open3.capture2 / capture2e / capture3` と `Kernel.system` が組み込み（2026-10-09）。`popen3` のストリーム版は無い |
-| pp | 一部 | `pp` は組み込み（1 行）。幅で折り返す PP は `sakelib/pp.sake`（2026-10-09 に移植中） |
-| prettyprint | 移植 | `sakelib/prettyprint.sake`（同上） |
-| monitor, mutex_m, observer, timeout, stringio, tempfile, getoptlong, bigdecimal, net/http, open-uri | 移植 | 2026-10-09 に移植（それぞれの notes を参照） |
+| pp | 一部 | `pp` は組み込み（1 行）。幅で折り返す PP は `sakelib/pp.sake`（2026-10-09 に移植） |
+| prettyprint | 移植 | `sakelib/prettyprint.sake`（2026-10-09） |
+| monitor, mutex_m, observer, timeout, stringio, tempfile, getoptlong, bigdecimal, net/http (`net_http`), open-uri (`open_uri`) | 移植 | 2026-10-09 に移植（それぞれの notes を参照）。timeout はブロックを止められない（`Thread.raise` が無い）、net_http は http のみ（TLS が無い） |
 | resolv, resolv-replace | 組み込み | DNS は UDP ソケットが要る。Sake に UDP は無い |
 | openssl, net/https, digest の OpenSSL 版 | 組み込み | TLS と暗号。`digest.sake` は MD5/SHA を Sake で計算する（遅い）。TLS は組み込みで提供するしかない |
 | net/ftp, net/imap, net/pop, net/smtp | 組み込みの不足 | TCP の上に書けるが、試験に使える相手（サーバ）が無い。net/http は試験の中でサーバを立てた |

@@ -17,6 +17,11 @@ ko1 の依頼: Ruby のライブラリをほぼ全部 Sake 用に移植し、使
 | 日 | 内容 |
 |---|---|
 | 10-09 | コア API: Integer/Float/Rational/Complex/String/Symbol/Array/Hash/Set/Range/Regexp/MatchData/Time/Math/Process に約 250 操作。`test/sake/core_test.sake`（16 テスト・213 アサーション）で Ruby の値と照合。minitest.sake。 |
+| 10-09 | 組み込み: `ENV`、`Kernel.system`、`Open3.capture2/2e/3`（`process_test.sake`）。`Integer.to_s(n, base)`、`String.to_i(s, base)`。 |
+| 10-09 | Sake で書いたテスト: string / collections / numbers / language / io_thread（合計 7 本、約 520 アサーション）。 |
+| 10-09 | 12 本の移植（エージェント 5 体、`brief.md`）: observer, monitor, mutex_m, timeout, prettyprint, pp, stringio, tempfile, net_http, open_uri, getoptlong, bigdecimal。全部 Ruby の双子と同一出力。 |
+| 10-09 | 移植が求めた組み込み 15 種（`Thread.current`、`Mutex.lock`…、`IO.seek`…、`Dir.tmpdir`、`Zlib`、`EOFError`/`ThreadError` など）。検査器 2 件（確実に失敗する呼び出しの後は到達不能、`while` 終了後の絞り込み）、デッドロックを Sake のエラーに。 |
+| 10-09 | 移さないライブラリとその理由: `sakelib/notes/not-ported.md`。friction の集計: `notes.md`。 |
 
 ## 方法
 
