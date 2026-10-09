@@ -128,7 +128,8 @@ module Sake
 
     def install_integer(reg)
       install_typed_ops(reg, "Integer", ARITH + COMPARE + %i[== != **])
-      reg.define("Integer", :to_s, ["Integer"], &:to_s)
+      # to_s(n, base = 10), as Ruby's (base 2..36)
+      reg.define("Integer", :to_s, ["Integer"], optional: ["Integer"]) { |n, base = 10| ruby_error("ArgumentError") { n.to_s(base) } }
       reg.define("Integer", :to_f, ["Integer"], &:to_f)
       reg.define("Integer", :abs, ["Integer"], &:abs)
       reg.define("Integer", :succ, ["Integer"], &:succ)
@@ -166,10 +167,12 @@ module Sake
         s * n
       end
       %i[length size upcase downcase capitalize swapcase reverse strip lstrip rstrip chomp
-         empty? to_i to_f chars lines].each do |m|
+         empty? to_f chars lines].each do |m|
         reg.define("String", m, ["String"], &m)
       end
       reg.define("String", :to_s, ["String"]) { _1 }
+      # to_i(s, base = 10), as Ruby's (base 2..36; 0 reads a prefix such as 0x)
+      reg.define("String", :to_i, ["String"], optional: ["Integer"]) { |str, base = 10| ruby_error("ArgumentError") { str.to_i(base) } }
       %i[include? start_with? end_with?].each do |m|
         reg.define("String", m, %w[String String]) { |s, t| s.public_send(m, t) }
       end

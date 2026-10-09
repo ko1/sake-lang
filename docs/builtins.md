@@ -472,7 +472,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Integer.to_i(x)`
 - `Integer.to_int(x)`
 - `Integer.to_r(x)`
-- `Integer.to_s(x)`
+- `Integer.to_s(x, [Integer])`
 - `Integer.truncate(x, [Integer])`
 - `Integer.upto(x, Integer) { }`
 - `Integer.zero?(x)`
@@ -931,7 +931,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.swapcase!(x)`
 - `String.to_c(x)`
 - `String.to_f(x)`
-- `String.to_i(x)`
+- `String.to_i(x, [Integer])`
 - `String.to_r(x)`
 - `String.to_s(x)`
 - `String.to_sym(x)`
