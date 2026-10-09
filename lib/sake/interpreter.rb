@@ -222,7 +222,7 @@ module Sake
       when CallUnion
         un = n.union
         fn = un.table[Values.type_of(args[0])]
-        fail_at(n, "TypeError", "#{un.full_name}: argument 1 must be #{un.types.join(" or ")}, got #{Values.describe(args[0])}", nil_value: args[0].nil?) unless fn
+        fail_at(n, "TypeError", "argument 1 must be #{un.types.join(" or ")}, got #{Values.describe(args[0])}", nil_value: args[0].nil?, op: un.full_name) unless fn
         fn.is_a?(UserFunction) ? call_user(fn, args, blk, n.origin) : call_builtin(fn, args, blk, n.origin)
       end
     end
@@ -429,15 +429,15 @@ module Sake
         kw.each do |k, v|
           want = fn.keyword_types.fetch(k.to_s)
           next if type_ok?(want, v)
-          raise RunError.new("TypeError", "#{fn.full_name}: keyword `#{k}:` must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
-                             node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
+          raise RunError.new("TypeError", "keyword `#{k}:` must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
+                             node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v), op: fn.full_name)
         end
       end
       args.each_with_index do |v, i|
         want = fn.param_type(i)
         next if type_ok?(want, v)
-        raise RunError.new("TypeError", "#{fn.full_name}: argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
-                           node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v))
+        raise RunError.new("TypeError", "argument #{i + 1} must be #{Array(want).join(" or ")}, got #{Values.describe(v)}",
+                           node.location.start_line, @stack.dup, file: where_file(node), expected: want, nil_value: v.nil?, hints: literal_hints(want, v), op: fn.full_name)
       end
       return once_value(blk, node) if fn.full_name == "Kernel.once"
       if fn.full_name == "Kernel.dup" && args[0].is_a?(StructValue) && (own = @program.functions.dig(args[0].type.name, "dup"))
@@ -451,13 +451,13 @@ module Sake
       end
       v
     rescue Fail => e
-      raise RunError.new(e.kind, "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
+      raise RunError.new(e.kind, e.message, node.location.start_line, @stack.dup, file: where_file(node), op: fn.full_name)
     rescue ::EncodingError => e
-      raise RunError.new("EncodingError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
+      raise RunError.new("EncodingError", e.message, node.location.start_line, @stack.dup, file: where_file(node), op: fn.full_name)
     rescue ::ArgumentError => e
       # Broken UTF-8 (a byteslice cut mid-character) reaching a regexp or a scan: Ruby's ArgumentError.
       raise unless e.message.start_with?("invalid byte sequence")
-      raise RunError.new("ArgumentError", "#{fn.full_name}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
+      raise RunError.new("ArgumentError", e.message, node.location.start_line, @stack.dup, file: where_file(node), op: fn.full_name)
     end
 
     # once { ... }: one value per place in the program, shared by threads (copies of this interpreter
@@ -559,14 +559,14 @@ module Sake
         defined += plain.map { |r| "(#{r.map { Values.display_type(_1) }.join(", ")})" }
         defined << "(any, nil), (nil, any)" unless nil_rows.empty?
         defined = defined.join(", ")
-        raise RunError.new("TypeError", "#{mod}.#{op}: no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
-                           node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil? || b.nil?)
+        raise RunError.new("TypeError", "no implementation for (#{Values.describe(a)}, #{Values.describe(b)}); defined for #{defined}",
+                           node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil? || b.nil?, op: "#{mod}.#{op}")
       end
       impl.call(a, b)
     rescue Fail => e
-      raise RunError.new(e.kind, "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
+      raise RunError.new(e.kind, e.message, node.location.start_line, @stack.dup, file: where_file(node), op: "#{mod}.#{op}")
     rescue ::EncodingError => e
-      raise RunError.new("EncodingError", "#{mod}.#{op}: #{e.message}", node.location.start_line, @stack.dup, file: where_file(node))
+      raise RunError.new("EncodingError", e.message, node.location.start_line, @stack.dup, file: where_file(node), op: "#{mod}.#{op}")
     end
 
     # Strings of incompatible encodings (a byte from Integer.chr(227) next to UTF-8 text) meeting.
@@ -583,8 +583,8 @@ module Sake
       impl = @registry.unary_ops[op][Values.type_of(a)]
       unless impl
         defined = @registry.unary_ops[op].keys.join(", ")
-        raise RunError.new("TypeError", "#{mod}.#{op}: no implementation for #{Values.describe(a)}; defined for #{defined}",
-                           node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil?)
+        raise RunError.new("TypeError", "no implementation for #{Values.describe(a)}; defined for #{defined}",
+                           node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil?, op: "#{mod}.#{op}")
       end
       impl.call(a)
     end
@@ -612,8 +612,8 @@ module Sake
         eq = struct_equal?(recv, args[1])
         return op == "==" ? eq : !eq
       end
-      fail_node = ->(msg, kind = "TypeError") { raise RunError.new(kind, msg, node.location.start_line, @stack.dup, file: where_file(node)) }
-      fail_node.("#{mod}.#{op}: #{type} does not include #{mod}") unless Operators.includes?(@program.includes, type, mod)
+      fail_node = ->(msg, kind = "TypeError") { raise RunError.new(kind, msg, node.location.start_line, @stack.dup, file: where_file(node), op: "#{mod}.#{op}") }
+      fail_node.("#{type} does not include #{mod}") unless Operators.includes?(@program.includes, type, mod)
       if (fn = own_fn(type, op))
         return call_user(fn, args, nil, node)
       end
@@ -623,7 +623,7 @@ module Sake
         return { "<" => r.negative?, "<=" => r <= 0, ">" => r.positive?, ">=" => r >= 0 }.fetch(op)
       end
       need = mod == "Comparable" && op != "<=>" ? "#{op} or <=>" : op
-      fail_node.("#{mod}.#{op}: #{type} does not define #{need}")
+      fail_node.("#{type} does not define #{need}")
     end
 
     # A type's own ==; else, with Comparable and <=>, a value of the same type is equal when `a <=> b` is 0

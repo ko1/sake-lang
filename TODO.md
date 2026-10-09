@@ -19,7 +19,7 @@
 
 - [x] (10-09) `rescue StandardError => e` / `rescue Exception` を裸の rescue として受ける。
 
-- [ ] 組み込みの例外の文から `Op: ` を外し、操作名は報告の行に出す（Ruby と同じ `Exception.message`。4 本）。
+- [x] (10-09) 組み込みの例外の文から `Op: ` を外し、操作名は報告の行に出す（Ruby と同じ `Exception.message`。4 本）。
 - [ ] `test/sakelib/foo.sake`（プログラム）が兄弟の `require "foo"` を影にする: トップレベルに定義以外の文がある file はライブラリ候補にしない。
 
 ## 組み込み

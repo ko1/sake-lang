@@ -24,11 +24,13 @@ module Sake
   # An error raised while running a Sake program: by `raise` (value is the exception) or by an
   # operation (value is built from kind and message when a rescue needs it).
   class RunError < Error
-    attr_reader :kind, :line, :frames, :expected, :file
+    attr_reader :kind, :line, :frames, :expected, :file, :op
     attr_accessor :path, :hints
 
     # file: the file of line when it is not the main file (path). frames: [callee, call line, file].
-    def initialize(kind, message, line, frames = [], expected: nil, nil_value: false, hints: [], file: nil)
+    # op: the built-in operation that raised; shown in the report, not part of the message (which is what
+    # `Exception.message(e)` gives a program: Ruby's text).
+    def initialize(kind, message, line, frames = [], expected: nil, nil_value: false, hints: [], file: nil, op: nil)
       @kind = kind
       @file = file
       @line = line
@@ -36,6 +38,7 @@ module Sake
       @expected = expected
       @nil_value = nil_value
       @hints = hints
+      @op = op
       super(message)
     end
 
@@ -48,7 +51,7 @@ module Sake
     # frames: [callee, call line], outermost first.
     def report
       callers = ["<main>", *frames.map(&:first)]
-      s = +"#{file || path}:#{line}: in #{callers.last}: #{kind}: #{message}"
+      s = +"#{file || path}:#{line}: in #{callers.last}: #{kind}: #{op ? "#{op}: " : ""}#{message}"
       shown = frames.each_with_index.reverse_each.to_a
       if shown.size > MAX_FRAMES
         omitted = shown.size - MAX_FRAMES
