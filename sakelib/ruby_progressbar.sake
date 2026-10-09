@@ -1,0 +1,444 @@
+# ruby_progressbar: a text progress bar, after the ruby-progressbar gem (1.13.0).
+#
+#   bar = ProgressBar.create(total: 10, format: "%t: |%B| %p%% %e", length: 60)
+#   ProgressBar.increment(bar); ProgressBar.set_progress(bar, 7); ProgressBar.finish(bar)
+#   ProgressBar.to_s(bar)                 # the bar rendered at `length` columns
+#   ProgressBar.log(bar, "a message")     # a line above the bar
+#
+# Ruby's ProgressBar.create(opts) makes a ProgressBar::Base; here ProgressBar is the type and
+# `create` takes the gem's options as keywords. The format molecules (%t %c %C %u %p %P %j %J %a %e
+# %E %f %l %B %b %W %w %i %r %R, %% for %) render as the gem's.
+#
+# Output. The gem picks its output by `output.tty?`: on a TTY it honours `format:` and redraws the
+# bar with "\r"; elsewhere it ignores `format:` and prints the bar's growth piecewise. Sake has no
+# tty?, so this port always writes the TTY way: every update prints the bar and "\r" ("\n" once
+# stopped) to `output:` (an IO, a StringIO, or nil for no output at all, the gem's Outputs::Null),
+# after a throttle of `throttle_rate` seconds. `ProgressBar.to_s(bar)` renders without printing.
+# The width is `length:`, else ENV["RUBY_PROGRESS_BAR_LENGTH"], else 80 (no terminal query).
+# Time. `clock:` (Sake only) fixes "now" for the elapsed time, the ETA, the rate, and the throttle;
+# ProgressBar.set_clock(bar, t) moves it. Without it the bar reads Time.now, as the gem does.
+
+require "stringio"
+
+class InvalidProgressError < Exception       # Ruby: ProgressBar::InvalidProgressError
+end
+
+# The fields are the gem's options in its names (projector_strength: the smoothing strength of its
+# projector; rate_scale, a lambda, is not here); the rest is the timer and the projector's state.
+class ProgressBar
+  attr_reader total, progress, title, format, length, progress_mark, remainder_mark, output
+  attr_reader throttle_rate, starting_at, autostart, autofinish, unknown_progress_animation_steps
+  attr_reader projector_strength
+  attr_accessor clock
+  private attr_reader finished, started_at, stopped_at, projection, starting_position
+  private attr_reader throttle_started_at, current_length
+
+  def create(total: 100, title: "Progress", format: nil, length: nil, progress_mark: "=",
+             remainder_mark: " ", output: IO.stdout, throttle_rate: 0.01, starting_at: 0,
+             autostart: true, autofinish: true, unknown_progress_animation_steps: nil,
+             projector_strength: 0.1, clock: nil)
+    ProgressBar.new(total: total, title: title, format: format, length: length,
+                    progress_mark: progress_mark, remainder_mark: remainder_mark, output: output,
+                    throttle_rate: throttle_rate, starting_at: starting_at, autostart: autostart,
+                    autofinish: autofinish, projector_strength: projector_strength, clock: clock,
+                    unknown_progress_animation_steps: unknown_progress_animation_steps)
+  end
+
+  def default_format = ENV.get("RUBY_PROGRESS_BAR_FORMAT") || "%t: |%B|"
+
+  def initialize(b)
+    @total => Integer | nil
+    @title = "Progress" if @title == nil
+    @format = default_format if @format == nil
+    if @length == nil
+      env = ENV.get("RUBY_PROGRESS_BAR_LENGTH")
+      @length = env == nil ? 80 : String.to_i(env)
+    end
+    @progress_mark = "=" if @progress_mark == nil
+    @remainder_mark = " " if @remainder_mark == nil
+    @throttle_rate = 0.01 if @throttle_rate == nil
+    @starting_at = 0 if @starting_at == nil
+    @autostart = true if @autostart == nil
+    @autofinish = true if @autofinish == nil
+    @unknown_progress_animation_steps = String["=---", "-=--", "--=-", "---="] if @unknown_progress_animation_steps == nil
+    @projector_strength = 0.1 if @projector_strength == nil
+    @finished = false
+    @started_at = nil
+    @stopped_at = nil
+    @projection = 0.0
+    @progress = 0
+    @starting_position = 0
+    @throttle_started_at = nil
+    @current_length = nil
+    start(b, at: @starting_at) if @autostart
+  end
+
+  # --- the timer ---
+
+  def now(b) = @clock || Time.now
+
+  def timer_start(b)
+    st = @started_at
+    sp = @stopped_at
+    @started_at = (st != nil && sp != nil) ? now(b) - (sp - st) : now(b)
+    @stopped_at = nil
+  end
+
+  def timer_stop(b)
+    @stopped_at = now(b) if @started_at != nil
+    nil
+  end
+
+  def timer_reset(b)
+    @started_at = nil
+    @stopped_at = nil
+  end
+
+  def started?(b) = @started_at != nil
+  def stopped?(b) = @stopped_at != nil || finished?(b)
+  def paused?(b) = stopped?(b)
+  def finished?(b) = @finished || (@autofinish && @progress == @total)
+
+  def elapsed_seconds(b)
+    st = @started_at
+    return 0.0 if st == nil
+    (@stopped_at || now(b)) - st
+  end
+
+  def elapsed_whole_seconds(b) = Float.floor(elapsed_seconds(b))
+
+  def divide_seconds(seconds)
+    hours, rest = Integer.divmod(seconds, 3600)
+    minutes, secs = Integer.divmod(rest, 60)
+    [hours, minutes, secs]
+  end
+
+  def time_text(seconds)
+    h, m, s = divide_seconds(seconds)
+    Kernel.format("%02d:%02d:%02d", h, m, s)
+  end
+
+  # --- progress ---
+
+  def unknown?(b) = @total == nil
+
+  def percentage_completed(b)
+    t = @total
+    return 0 if t == nil
+    return 100 if t == 0
+    @progress * 100 / t
+  end
+
+  # Ruby gives 100.0 / 0.0 (Floats) or a "%5.2f" String; all are Strings here.
+  def percentage_completed_with_precision(b)
+    t = @total
+    return "0.0" if t == nil
+    return "100.0" if t == 0
+    Kernel.format("%5.2f", Float.floor(@progress * 100 / Float(t) * 100) / 100.0)
+  end
+
+  def absolute(b) = @progress - @starting_position
+
+  # The projector (the gem's SmoothedAverage): a running estimate of the progress made.
+  def project(b, new_progress)
+    @projection = (new_progress - @starting_position) * (1.0 - @projector_strength) + @projection * @projector_strength
+  end
+
+  def store_progress(b, v)
+    t = @total
+    raise InvalidProgressError, "You can't set the item's current value to be greater than the total." if t != nil && v > t
+    @progress = v
+    project(b, v)
+  end
+
+  def after_update(b)
+    timer_stop(b) if finished?(b)
+    refresh(b)
+  end
+
+  # Ruby: bar.start(at: n) (at: is required here, so that progress is never nil).
+  def start(b, at:)
+    timer_start(b)
+    @progress = at
+    @starting_position = at
+    @projection = 0.0
+    after_update(b)
+  end
+
+  def increment(b)
+    if @progress == @total
+      warn("WARNING: Your progress bar is currently at #{@progress} out of #{@total} and cannot be incremented. In v2.0.0 this will become a ProgressBar::InvalidProgressError.")
+    else
+      store_progress(b, @progress + 1)
+    end
+    after_update(b)
+  end
+
+  def decrement(b)
+    if @progress == 0
+      warn("WARNING: Your progress bar is currently at #{@progress} out of #{@total} and cannot be decremented. In v2.0.0 this will become a ProgressBar::InvalidProgressError.")
+    else
+      store_progress(b, @progress - 1)
+    end
+    after_update(b)
+  end
+
+  # Ruby: bar.progress = n
+  def set_progress(b, v)
+    store_progress(b, v)
+    after_update(b)
+    v
+  end
+
+  # Ruby: bar.total = n (nil: unknown)
+  def set_total(b, v)
+    raise InvalidProgressError, "You can't set the item's total value to less than the current progress." unless v == nil || v >= @progress
+    @total = v
+    after_update(b)
+    v
+  end
+
+  def finish(b)
+    return nil if finished?(b)
+    @finished = true
+    t = @total
+    @progress = t if t != nil
+    timer_stop(b)
+    refresh(b)
+  end
+
+  def pause(b)
+    return nil if paused?(b)
+    timer_stop(b)
+    refresh(b)
+  end
+
+  def stop(b) = pause(b)
+
+  def resume(b)
+    return nil unless stopped?(b)
+    timer_start(b)
+    refresh(b)
+  end
+
+  def reset(b)
+    @finished = false
+    @progress = @starting_position
+    @projection = 0.0
+    timer_reset(b)
+    refresh(b)
+  end
+
+  # Ruby: bar.title = s, bar.format = s, bar.progress_mark = s, bar.remainder_mark = s (each redraws).
+  def set_title(b, s)
+    @title = s
+    refresh(b)
+    s
+  end
+
+  def set_format(b, s)
+    @format = s || default_format
+    refresh(b)
+    s
+  end
+
+  def set_progress_mark(b, s)
+    @progress_mark = s
+    refresh(b)
+    s
+  end
+
+  def set_remainder_mark(b, s)
+    @remainder_mark = s
+    refresh(b)
+    s
+  end
+
+  # --- the molecules ---
+
+  def elapsed_with_label(b) = "Time: #{started?(b) ? time_text(elapsed_whole_seconds(b)) : "--:--:--"}"
+
+  def estimated_seconds_remaining(b)
+    t = @total
+    return nil if t == nil || @projection == 0.0 || @progress == 0 || @stopped_at != nil || @started_at == nil
+    Float.round(elapsed_seconds(b) * (t / @projection - 1))
+  end
+
+  # oob: :unknown ("??:??:??"), :friendly ("> 4 Days"), or nil, for an estimate over 99 hours.
+  def estimated(b, oob)
+    remaining = estimated_seconds_remaining(b)
+    return "??:??:??" if remaining == nil
+    hours, _, _ = divide_seconds(remaining)
+    if hours > 99 && oob != nil
+      oob == :unknown ? "??:??:??" : "> 4 Days"
+    else
+      time_text(remaining)
+    end
+  end
+
+  def estimated_with_label(b, oob) = " ETA: #{estimated(b, oob)}"
+
+  def estimated_with_elapsed_fallback(b, oob) = finished?(b) ? elapsed_with_label(b) : estimated_with_label(b, oob)
+
+  def estimated_wall_clock(b)
+    sp = @stopped_at
+    return Time.strftime(sp, "%H:%M:%S") if finished?(b) && sp != nil
+    return "--:--:--" unless started?(b)
+    remaining = estimated_seconds_remaining(b)
+    return "--:--:--" if remaining == nil
+    Time.strftime(now(b) + remaining, "%H:%M:%S")
+  end
+
+  def rate_of_change(b, fmt)
+    elapsed = Float(elapsed_whole_seconds(b))
+    return "0" if elapsed <= 0
+    Kernel.format(fmt, absolute(b) / elapsed)
+  end
+
+  # The value of a molecule that does not need the bar's width.
+  def molecule_value(b, key)
+    case key
+    in "%t" | "%T" then @title
+    in "%c" then Kernel.to_s(@progress)
+    in "%C" then Kernel.to_s(@total)
+    in "%u" then unknown?(b) ? "??" : Kernel.to_s(@total)
+    in "%p" then Kernel.to_s(percentage_completed(b))
+    in "%P" then percentage_completed_with_precision(b)
+    in "%j" then String.rjust(Kernel.to_s(percentage_completed(b)), 3)
+    in "%J" then String.rjust(percentage_completed_with_precision(b), 6)
+    in "%a" then elapsed_with_label(b)
+    in "%e" then estimated_with_elapsed_fallback(b, :unknown)
+    in "%E" then estimated_with_elapsed_fallback(b, :friendly)
+    in "%f" then estimated_with_elapsed_fallback(b, nil)
+    in "%l" then estimated_wall_clock(b)
+    in "%r" then rate_of_change(b, "%i")
+    in "%R" then rate_of_change(b, "%.2f")
+    else raise KeyError, "key not found: :#{String.[](key, 1) || ""}"
+    end
+  end
+
+  def bar_molecule?(key) = String.include?("WwBbi", String.[](key, 1) || "")
+
+  def completed_length(b, len) = len * percentage_completed(b) / 100
+
+  def standard_complete_string(b, len) = @progress_mark * completed_length(b, len)
+
+  def incomplete_string(b, len) = @remainder_mark * (len - completed_length(b, len))
+
+  def integrated_percentage_complete_string(b, len)
+    done = completed_length(b, len)
+    return standard_complete_string(b, len) if done < 5
+    String.center(" #{percentage_completed(b)} ", done, @progress_mark)
+  end
+
+  def unknown_string(b, len)
+    steps = @unknown_progress_animation_steps
+    frame = Array.fetch(steps, @progress % Array.size(steps))
+    String.[](frame * (len / Array.size(steps) + 2), 0, len) || ""
+  end
+
+  # The value of a molecule that fills the bar's width `len`.
+  def bar_value(b, key, len)
+    case key
+    in "%B" then unknown?(b) ? unknown_string(b, len) : standard_complete_string(b, len) + incomplete_string(b, len)
+    in "%b" then standard_complete_string(b, len)
+    in "%W" then unknown?(b) ? unknown_string(b, len) : integrated_percentage_complete_string(b, len) + incomplete_string(b, len)
+    in "%w" then integrated_percentage_complete_string(b, len)
+    in "%i" then unknown?(b) ? unknown_string(b, len) : incomplete_string(b, len)
+    end
+  end
+
+  def displayable_length(s) = String.length(String.gsub(s, /\e\[[\d;]+m/, ""))
+
+  # The gem's Formatter.process: the other molecules first, then the bar ones get what is left of
+  # the width (each %B counted as 2 characters of the format).
+  def process(b, fmt, max_length)
+    out = fmt
+    bar_keys = String[]
+    Array.each(String.scan(fmt, /%[a-zA-Z]/)) do |key|
+      if bar_molecule?(key)
+        Array.push(bar_keys, key)
+      else
+        out = String.gsub(out, key, molecule_value(b, key))
+      end
+    end
+    out = String.gsub(out, "%%", "%")
+    bar_length = max_length - displayable_length(out) + 2 * Array.size(bar_keys)
+    bar_length = 0 if bar_length < 0
+    Array.each(bar_keys) { |key| out = String.gsub(out, key, bar_value(b, key, bar_length)) }
+    out
+  end
+
+  # Ruby: bar.to_s, bar.to_s(new_format) (the new format stays, and the bar is redrawn, as the gem).
+  def to_s(b, new_format = nil)
+    set_format(b, new_format) if new_format != nil
+    process(b, @format, @length)
+  end
+
+  def inspect(b) = "#<ProgressBar:#{@progress}/#{@total == nil ? "unknown" : @total}>"
+
+  # The gem's to_h (its started?/stopped? are times or nil; true/false here).
+  def to_h(b)
+    Hash["output_stream" => @output, "length" => @length, "title" => @title,
+         "progress_mark" => @progress_mark, "remainder_mark" => @remainder_mark,
+         "progress" => @progress, "total" => @total,
+         "percentage" => String.to_f(percentage_completed_with_precision(b)),
+         "elapsed_time_in_seconds" => elapsed_seconds(b),
+         "estimated_time_remaining_in_seconds" => estimated_seconds_remaining(b),
+         "base_rate_of_change" => base_rate(b), "scaled_rate_of_change" => base_rate(b),
+         "unknown_progress_animation_steps" => @unknown_progress_animation_steps,
+         "throttle_rate" => @throttle_rate, "started?" => started?(b), "stopped?" => stopped?(b),
+         "finished?" => finished?(b)]
+  end
+
+  def base_rate(b) = absolute(b) / Float(elapsed_whole_seconds(b))
+
+  # --- the output ---
+
+  def write_out(b, s)
+    o = @output
+    case o
+    in IO
+      IO.print(o, s)
+      IO.flush(o)
+    in StringIO
+      StringIO.print(o, s)
+      StringIO.flush(o)
+    in nil then nil
+    end
+    nil
+  end
+
+  def eol(b) = stopped?(b) ? "\n" : "\r"
+
+  # Blanks the bar's line (Ruby: bar.clear).
+  def clear(b) = write_out(b, " " * @length + "\r")
+
+  # Redraws the bar, unless one was drawn less than throttle_rate seconds ago (always once stopped,
+  # or with force). The first draw clears the line first, as the gem's does.
+  def refresh(b, force: false)
+    return nil if @output == nil
+    last = @throttle_started_at
+    if last == nil || force || stopped?(b) || now(b) - last >= @throttle_rate
+      @throttle_started_at = now(b)
+      if @current_length != @length
+        @current_length = @length
+        clear(b)
+      end
+      write_out(b, to_s(b) + eol(b))
+    end
+    nil
+  end
+
+  # Ruby: bar.log(s): a line printed above the bar, which is then redrawn.
+  def log(b, s)
+    o = @output
+    return nil if o == nil
+    clear(b)
+    case o
+    in IO then IO.puts(o, s)
+    in StringIO then StringIO.puts(o, s)
+    end
+    refresh(b, force: true) unless stopped?(b)
+  end
+end

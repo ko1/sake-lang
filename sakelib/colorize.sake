@@ -1,0 +1,167 @@
+# colorize: ANSI colours and modes on Strings, after the colorize gem (1.1.0).
+#
+#   Colorize.red("x")                      # "\e[0;31;49mx\e[0m"   (Ruby: "x".red)
+#   "x".Colorize.red.Colorize.on_blue      # "\e[0;31;44mx\e[0m"   (Ruby: "x".red.on_blue)
+#   Colorize.colorize("x", color: :red, background: :blue, mode: :bold)
+#   Colorize.colorize("x", :red); Colorize.colorize("x", {color: :red})   # the gem's two forms too
+#   Colorize.disable_colorization(true)    # Ruby: String.disable_colorization = true
+#
+# The gem adds a method per colour and mode to String; a String cannot grow operations in Sake, so
+# they are module functions with the String first. The codes are the gem's: an escape
+# "\e[MODE;COLOR;BACKGROUNDm" ... "\e[0m" around each run of text; a call on an already coloured
+# String re-reads its codes and replaces only what it was asked to, as the gem does.
+
+module Colorize
+  module_function
+
+  # The gem's tables (add_color_alias writes into color_codes, so they are `once` values).
+  def color_codes = once {
+    Hash[black: 0, light_black: 60, red: 1, light_red: 61, green: 2, light_green: 62,
+         yellow: 3, light_yellow: 63, blue: 4, light_blue: 64, magenta: 5, light_magenta: 65,
+         cyan: 6, light_cyan: 66, white: 7, light_white: 67, default: 9]
+  }
+
+  def mode_codes = once {
+    Hash[default: 0, bold: 1, dim: 2, italic: 3, underline: 4, blink: 5, blink_slow: 5, blink_fast: 6,
+         invert: 7, hide: 8, strike: 9]
+  }
+
+  def colors = Hash.keys(color_codes)
+  def modes = Hash.keys(mode_codes)
+
+  # The SGR number of a colour name (foreground / background), or nil for an unknown name or nil.
+  def color(c)
+    return nil if c == nil
+    code = color_codes[c]
+    code == nil ? nil : code + 30
+  end
+
+  def background_color(c)
+    return nil if c == nil
+    code = color_codes[c]
+    code == nil ? nil : code + 40
+  end
+
+  def mode(m) = m == nil ? nil : mode_codes[m]
+
+  # Ruby: String.disable_colorization (read) and String.disable_colorization = v / (v) (write).
+  def colorization_state = once { Hash[disabled: false] }
+
+  def disable_colorization(value = nil)
+    colorization_state[:disabled] = value if value != nil
+    colorization_state[:disabled] || false
+  end
+
+  def set_disable_colorization(value) = disable_colorization(value)
+
+  # Ruby: String.add_color_alias(:grey, :light_black). The alias works in colorize(s, :grey) and
+  # colorize(s, color: :grey); a Colorize.grey operation cannot appear (no define_method).
+  def add_color_alias(name, source)
+    raise "Color #{name} already exists" if Hash.key?(color_codes, name)
+    raise "Color #{source} does not exist" unless Hash.key?(color_codes, source)
+    color_codes[name] = Hash.fetch(color_codes, source)
+    nil
+  end
+
+  # The runs of a String: a coloured run gives its three codes (Strings) and its text, a plain run
+  # has nil codes. The gem's scan_for_colors / split_colors.
+  def scan_for_colors(s)
+    Array.map(String.scan(s, /\e\[([0-9;]+)m(.+?)\e\[0m|([^\e]+)/m)) do |codes, text, plain|
+      parts = codes == nil ? String[] : String.split(codes, ";")
+      m = nil
+      c = nil
+      b = nil
+      if Array.size(parts) == 3
+        m, c, b = parts
+      elsif Array.size(parts) == 1
+        c = Array.fetch(parts, 0)
+      end
+      {mode: m, color: c, background: b, text: text || plain || ""}
+    end
+  end
+
+  # Ruby's s.colorize(:red), s.colorize(color: :red, background: :blue, mode: :bold). `params` is a
+  # colour Symbol or a Record {color:, background:, mode:} (any of the three); the keywords are the
+  # Sake way to write the Hash form, and win over the Record.
+  def colorize(s, params = nil, color: nil, background: nil, mode: nil)
+    return s if disable_colorization
+    if params in Symbol
+      color = color || params
+    elsif params in Record
+      h = Record.to_h(params)
+      color = color || h[:color]
+      background = background || h[:background]
+      mode = mode || h[:mode]
+    end
+    new_mode = Colorize.mode(mode)
+    new_color = Colorize.color(color)
+    new_background = background_color(background)
+    out = ""
+    Array.each(scan_for_colors(s)) do |seg|
+      seg => {mode: m, color: c, background: b, text:}
+      m2 = new_mode || m || 0
+      c2 = new_color || c || 39
+      b2 = new_background || b || 49
+      out += "\e[#{m2};#{c2};#{b2}m#{text}\e[0m"
+    end
+    out
+  end
+
+  def uncolorize(s) = Array.join(Array.map(scan_for_colors(s)) { |seg| seg => {text:}; text })
+
+  def colorized?(s)
+    Array.any?(scan_for_colors(s)) do |seg|
+      seg => {mode: m, color: c, background: b}
+      m != nil || c != nil || b != nil
+    end
+  end
+
+  # --- the gem's methods, one per colour, background, and mode ---
+
+  def black(s) = colorize(s, color: :black)
+  def light_black(s) = colorize(s, color: :light_black)
+  def red(s) = colorize(s, color: :red)
+  def light_red(s) = colorize(s, color: :light_red)
+  def green(s) = colorize(s, color: :green)
+  def light_green(s) = colorize(s, color: :light_green)
+  def yellow(s) = colorize(s, color: :yellow)
+  def light_yellow(s) = colorize(s, color: :light_yellow)
+  def blue(s) = colorize(s, color: :blue)
+  def light_blue(s) = colorize(s, color: :light_blue)
+  def magenta(s) = colorize(s, color: :magenta)
+  def light_magenta(s) = colorize(s, color: :light_magenta)
+  def cyan(s) = colorize(s, color: :cyan)
+  def light_cyan(s) = colorize(s, color: :light_cyan)
+  def white(s) = colorize(s, color: :white)
+  def light_white(s) = colorize(s, color: :light_white)
+  def default(s) = colorize(s, color: :default)
+
+  def on_black(s) = colorize(s, background: :black)
+  def on_light_black(s) = colorize(s, background: :light_black)
+  def on_red(s) = colorize(s, background: :red)
+  def on_light_red(s) = colorize(s, background: :light_red)
+  def on_green(s) = colorize(s, background: :green)
+  def on_light_green(s) = colorize(s, background: :light_green)
+  def on_yellow(s) = colorize(s, background: :yellow)
+  def on_light_yellow(s) = colorize(s, background: :light_yellow)
+  def on_blue(s) = colorize(s, background: :blue)
+  def on_light_blue(s) = colorize(s, background: :light_blue)
+  def on_magenta(s) = colorize(s, background: :magenta)
+  def on_light_magenta(s) = colorize(s, background: :light_magenta)
+  def on_cyan(s) = colorize(s, background: :cyan)
+  def on_light_cyan(s) = colorize(s, background: :light_cyan)
+  def on_white(s) = colorize(s, background: :white)
+  def on_light_white(s) = colorize(s, background: :light_white)
+  def on_default(s) = colorize(s, background: :default)
+
+  def bold(s) = colorize(s, mode: :bold)
+  def dim(s) = colorize(s, mode: :dim)
+  def italic(s) = colorize(s, mode: :italic)
+  def underline(s) = colorize(s, mode: :underline)
+  def blink(s) = colorize(s, mode: :blink)
+  def blink_slow(s) = colorize(s, mode: :blink_slow)
+  def blink_fast(s) = colorize(s, mode: :blink_fast)
+  def invert(s) = colorize(s, mode: :invert)
+  def hide(s) = colorize(s, mode: :hide)
+  def strike(s) = colorize(s, mode: :strike)
+end
