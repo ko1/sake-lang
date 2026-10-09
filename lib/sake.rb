@@ -103,5 +103,11 @@ module Sake
   rescue RunError => e
     e.path = path
     raise
+  rescue Exception => e # rubocop:disable Lint/RescueException -- Ruby's `fatal` (a deadlock) is not a StandardError
+    raise unless e.class.name == "fatal" && e.message.include?("Deadlock")
+    err = RunError.new("ThreadError", "deadlock: every thread is waiting (a Queue.pop with nothing left to push, " \
+                                      "a Mutex.synchronize inside itself, or a Thread.join on a thread waiting for this one)", 0)
+    err.path = path
+    raise err
   end
 end
