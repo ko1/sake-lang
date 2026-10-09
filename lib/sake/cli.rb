@@ -80,7 +80,7 @@ module Sake
       when ->(op) { c.arg == "pair" && op.match?(/\A(Arithmetic|Comparable|Bitwise|Kernel)\./) }
         mod = c.op.split(".", 2)[0]
         op = c.op.split(".", 2)[1]
-        lefts = c.failing.map(&:first).select { _1.is_a?(String) && program.struct_types.key?(_1) }.uniq
+        lefts = c.failing.map(&:first).select { typer.struct_atom?(_1) }.map { typer.struct_name(_1) }.uniq
         unless lefts.empty?
           t = lefts.first
           if !Operators.includes?(program.includes, t, mod)
@@ -100,7 +100,7 @@ module Sake
         ["#{c.op}: #{t} includes #{mod} but does not define #{f}, which #{mod} requires (`raise NotImplementedError`)", ["define `def #{f}(...)` in class #{t}"]]
       when ->(_) { c.arg == "operand" }
         mod, op = c.op.split(".", 2)
-        if (t = c.failing.find { _1.is_a?(String) && program.struct_types.key?(_1) })
+        if (t = c.failing.find { typer.struct_atom?(_1) }&.then { typer.struct_name(_1) })
           return ["#{c.op}: #{t} does not include #{mod}", ["add `include #{mod}` and `def #{op}(a)` to class #{t}"]] unless Operators.includes?(program.includes, t, mod)
           return ["#{c.op}: #{t} includes #{mod} but does not define #{op}", ["define `def #{op}(a)` in class #{t}"]]
         end

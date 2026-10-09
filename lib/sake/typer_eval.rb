@@ -786,7 +786,7 @@ module Sake
           @handled.last || []
         else
           v = ev(n.args[0], env)
-          n.type ? [n.type] : v.filter_map { |a| a == "String" ? "RuntimeError" : (a.is_a?(String) && struct_type(a)&.exception ? a : nil) }
+          n.type ? [n.type] : v.filter_map { |a| a == "String" ? "RuntimeError" : (struct_atom?(a) && struct_type(struct_name(a))&.exception ? struct_name(a) : nil) }
         end
       types.each { merge_raised(_1 => [n.origin]) }
       env.dead = true
@@ -847,10 +847,11 @@ module Sake
       return unless @init_frames&.key?(env.frame) && [CallUser, CallDispatch, CallUnion].include?(n.class)
       return unless n.args.any? { _1.is_a?(LVarGet) && _1.slot.zero? }
       dt = env.frame.fn.namespace
+      key = fields_key(@init_site.fetch(env.frame).first) # the new instance's own site
       @program.struct_types.fetch(dt).fields.each do |f|
         cur = env.lookup([:field, f]) or next
-        read(field_cell(dt, f))
-        assign(env, [:field, f], u(cur, @fields[dt][f] || []))
+        read(field_cell(key, f))
+        assign(env, [:field, f], u(cur, @fields[key][f] || []))
       end
     end
 

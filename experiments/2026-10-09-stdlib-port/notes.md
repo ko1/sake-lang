@@ -147,7 +147,8 @@ rubyzip, chronic, i18n / faker, thor, awesome_print / concurrent-ruby, jwt, rspe
 - **フィールドの型はプログラム全体で 1 つ**: `Expectation.actual`（rspec）、`Promise.result`（concurrent）、`Thor` の options Hash の値が、
   全部の使用箇所の union になり `[mixed]` で落ちる。rspec は期待を Tuple `[ex, actual]` にして（リテラルごとの型）解決。Promise は
   `then` の中で `v => Integer`。Hash も同じ（thor は `Thor.integer(options, :k)` ヘルパ）。4 本。これは **Sake の設計の中心（型は操作に、
-  変数には書かない）の代償**で、ジェネリクスの無い型付きコレクションそのもの。
+  変数には書かない）の代償**で、ジェネリクスの無い型付きコレクションそのもの。→ 同日に D13 で、構築場所ごとに別の型にした
+  （`expect(42)` と `expect("abc")` は別の `Expectation`）。Hash の値の union（thor）は残る。
 - **`**opts` を次に渡せない**（`f(**opts)` は「`**` は未対応」）: i18n の 3 つの入口を Hash を位置で受ける内部関数に集約、thor の DSL
   関数 6 本が 9 キーワードを繰り返す。csv（以前）と合わせて 3 本。→ **D11**。
 - **`new` の位置引数の順 = `attr_*` の行の順**（行をまたいでも）: アクセスでまとめて書く Ruby の癖で構築子が変わる（rubyzip。

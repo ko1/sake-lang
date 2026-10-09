@@ -572,6 +572,12 @@ Every `class` is a type. Its fields are declared in the body of its first `class
   conversions (`@celsius = Float(@celsius)`), as in Ruby. It takes exactly that one parameter, and calling `C.initialize` directly is an error.
   The checker analyzes it for each `C.new` call, where `@x` reads the value that call gave, so a
   wrong argument is reported for that call; the fields hold what initialize leaves in them.
+- **One type per construction.** For the checker, each `C.new` is its own type: instances made at
+  different places (or by one place in a function called with different argument types, such as
+  `expect(42)` and `expect("x")`) keep their own field types, so a `Heap` of Integers and a `Heap` of
+  Jobs do not mix, and a generic wrapper (`Ok.new(yield(@value))` in `Result.map`) is one type per
+  caller. Messages name such a type with its site (`Heap@L7`) only when the type has several. Values
+  built from values (`Value.new(a + b)` inside a function taking Values) stay one type per place.
 - **`class B < A`.** Shorthand for writing A's definitions in B: A's fields come first (then B's),
   A's functions are B's too (with unqualified names and `@x` inside them meaning B's), and A's
   `include`s are B's. B's own definition of a function wins over A's. Nothing relates A and B

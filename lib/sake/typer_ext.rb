@@ -45,8 +45,8 @@ module Sake
     # Runs a type's own to_s / inspect for each Struct type in ty, and checks that it returns a String.
     def show_types(ty, kind, node)
       ty.each do |a|
-        next unless a.is_a?(String) && (fn = @program.functions.dig(a, kind.to_s))
-        r = call_user(fn, [t(a)], nil)
+        next unless struct_atom?(a) && (fn = @program.functions.dig(struct_name(a), kind.to_s))
+        r = call_user(fn, [one(a)], nil)
         record(node, fn.full_name, "result", "String", r)
       end
     end
@@ -128,7 +128,7 @@ module Sake
       ty.each do |a|
         next if seen[a]
         seen[a] = true
-        if a.is_a?(String)
+        if a.is_a?(String) || a[0] == :obj
           show_types([a], kind, node)
           next
         end
@@ -226,7 +226,7 @@ module Sake
         [] # only a break leaves it (its values are added to the call's result)
       when "Hash.dup" then args[0]
       when "Kernel.dup" # the same types (a copy); a type's own dup gives what it returns
-        u(*args[0].map { |a| (own = struct_atom?(a) && @program.functions.dig(a, "dup")) ? call_user(own, [one(a)], nil) : [a] })
+        u(*args[0].map { |a| (own = struct_atom?(a) && @program.functions.dig(struct_name(a), "dup")) ? call_user(own, [one(a)], nil) : [a] })
       when "Math.PI", "Math.E", "Float.INFINITY", "Float.NAN", "Float.EPSILON", "Float.MAX", "Float.MIN" then t("Float")
       when "Kernel.once"
         # One value for the place, whichever call computes it first: the union over every evaluation.
@@ -485,7 +485,7 @@ module Sake
     def aux_site(node, tag, elem)
       key = ((@aux_keys ||= {})[[node.object_id, tag]] ||= Object.new)
       id = site_id(key)
-      @sites[id] ||= Site.new(id, key, site_label(id, node, " #{tag}"), nil, elem, elem)
+      @sites[id] ||= Site.new(id, key, site_label(id, node, " #{tag}"), nil, elem, elem).tap { note_contents(id, elem) }
       @sites[id].elem = u(@sites[id].elem, elem)
       site_type(:array, id)
     end

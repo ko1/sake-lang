@@ -64,4 +64,5 @@
 - [x] D9. (10-09, キーワードの `new` は既にある。spec §10.1 で勧める) 位置の `new` でフィールド順の誤りが静かに通る（キーワードの `new` はある）。
 - [x] D10. (10-09) `Kernel.at_exit { }`: 組み込みがブロックを持つ（Thread.new と同じ）。finalizer は無し（GC と結びつく）。
 - [?] D11. `**opts` を次の関数に渡す `f(**opts)`（csv, i18n, thor。`sakelib/notes/csv_bug_double_splat_pass_on.sake`）。Hash を位置で渡すと値が 1 つの union になって型が落ちる。案: `f(**opts)` を「opts の各キーを f のキーワードに静的に展開」として、f のキーワード集合 ⊆ opts の集合（`**` で集めた関数のキーワード）のときだけ許す。
+- [x] D13. (10-09) Struct 値の型を構築場所ごとに分ける（`Expectation@L4#1`）: `expect(42)` と `expect("abc")` が別の型になり、rspec / Promise / Heap の `[mixed]` が消える。鍵は `new` のノード × 引数の平らな形 × ブロック。費用は SQL エンジンで 1.4〜2.6 倍（`experiments/2026-10-09-struct-sites/`）。typer2 は未対応（型ごとの表のまま）。
 - [?] D12. フィールドの既定値が前のフィールドを読めない（`attr_reader src, len = String.bytesize(src)`。`sakelib/notes/json_bug_field_default_reads_earlier_field.sake`）。spec §10.1 は「引数の既定値のよう」と言うが、引数の既定値は前の引数を読める（§6）。案: 読めるようにする（initialize に写すのと同じ）か、spec に「読めない」と書く。

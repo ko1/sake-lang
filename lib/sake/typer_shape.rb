@@ -98,7 +98,7 @@ module Sake
         when IndexSet then mark(n.recv, :written); go(n.recv, :read); go(n.key, :read); go(n.extra, :read); go(n.value, :escape)
         when IndexUpdate then mark(n.recv, :written); go(n.recv, :read); go(n.key, :read); go(n.value, :read)
         when FieldGet then go(n.subject, :read)
-        when FieldSet then go(n.subject, :read); go(n.value, :escape)
+        when FieldSet then mark(n.subject, :written); go(n.subject, :read); go(n.value, :escape)
         when Splat then go(n.value, :escape)
         when MultiWrite
           go(n.value, :read)
@@ -171,7 +171,7 @@ module Sake
         when :tuple then a[1].any? { deep?(_1) }
         when :record then a[1].any? { deep?(_1[1]) }
         when :range then deep?(a[1])
-        when :sym then false
+        when :sym, :obj then false # a Struct value is keyed by its site (identity)
         else true # containers and unknowns
         end
       end

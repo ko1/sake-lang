@@ -30,6 +30,7 @@ module Sake
     READS = [nil]
     CHANGED_AT = {}.compare_by_identity
     ON_DIRTY = [nil] # a hook told of each changed cell (Typer2's worklist)
+    ON_WRITE = [nil] # a hook told of each site's new contents (the maker closure, see note_contents)
     module Tracked
       def self.setter(mod, *names)
         names.each do |n|
@@ -39,6 +40,7 @@ module Sake
               CHANGED_AT[self] = (GEN[0] += 1)
               self[n] = v
               (h = ON_DIRTY[0]) && h.call(self)
+              (w = ON_WRITE[0]) && w.call(self, v)
               next v
             end
             self[n] = v
@@ -56,6 +58,11 @@ module Sake
     def field_cell(dt, field) = ((@field_cells ||= {})[dt] ||= {})[field] ||= [dt, field].freeze
 
     Site = Struct.new(:id, :node, :label, :declared, :init, :elem)
+    # A Struct value's type is its construction site (`Point@L12`, atom [:obj, id]), as an Array's is its
+    # allocation site: instances made at different places (or by different instantiations) keep their own
+    # field types. A value named by its type (a rescued exception, a hook's `one(T)`) reads the type's
+    # table, the join of every site's.
+    ObjSite = Struct.new(:id, :node, :label, :name)
     Tracked.setter(Site, :elem)
     Frame = Struct.new(:fn, :ret, :block)
     # The type of a parameter the call did not give, until the function's prologue types its default.
@@ -90,6 +97,7 @@ module Sake
       @registry = program.registry
       @site_ids = {}.compare_by_identity
       @sites = {}
+      @obj_sites = {}
       @fields = Hash.new { |h, k| h[k] = {} }
       @nil_writes = Hash.new { |h, k| h[k] = Hash.new { |h2, f| h2[f] = [] } } # dt => field => [line]
       @type_writes = Hash.new { |h, k| h[k] = Hash.new { |h2, f| h2[f] = Hash.new { |h3, n| h3[n] = [] } } } # dt => field => type name => [line]
@@ -100,6 +108,7 @@ module Sake
 
     def run
       @passes = 0
+      ON_WRITE[0] = ->(site, v) { note_contents(site.id, v) }
       loop do
         @passes += 1
         before = snapshot
@@ -303,8 +312,15 @@ module Sake
       when :thread then "Thread"
       when :queue then "Queue"
       when :sym then "Symbol"
+      when :obj then @obj_sites[a[1]].name
       else "?"
       end
+    end
+
+    # A Struct value is shown by its type, with its site (`Point@L12`) when the type has several.
+    def obj_label(a)
+      s = @obj_sites[a[1]]
+      @obj_sites.each_value.count { _1.name == s.name } > 1 ? "#{s.name}@#{s.label}" : s.name
     end
 
     # seen: the sites being shown; a site inside itself (a recursive structure) is shown by its label only.
@@ -334,6 +350,7 @@ module Sake
           return "Array@#{s.label}" if seen[a]
           "Array@#{s.label}[#{show(s.elem, seen.tap { _1[a] = true })}]"
         when :unknown then "?(#{a[1]})"
+        when :obj then obj_label(a)
         when :range then "Range[#{show(a[1], seen)}]"
         when :hash
           s = hash_sites[a[1]]
@@ -373,12 +390,26 @@ module Sake
     # container (recursion, or functions passing containers back and forth: f makes xs, g(xs) makes ys,
     # f(ys) makes zs, ...), the place gets one site for all, as before, so sites stay finite. Checking only
     # the function that made the container let the back-and-forth case add sites every pass.
-    def site_id(node)
+    # flat: a construction site (`T.new`), keyed by the flat shape of the instantiation's arguments (Struct
+    # values by their type, containers by kind), so `expect(42)` and `expect("x")` make two Expectation
+    # types while values built from values (`add(a, b) = Value.new(...)`) stay finite.
+    def site_id(node, flat: false)
       inst = @inst_stack&.last
-      made_by = inst && makers_of_args(*inst)
-      ctx = made_by && inst_key(*inst)
-      # a pasted copy (class B < A) shares A's nodes but not A's containers
       init, depth = @init_fns&.last
+      if init && depth == (@inst_stack&.size || 0)
+        # inside initialize: a container made there belongs to this construction (its site is finite, so this is)
+        me = inst[1][0].first[1]
+        made_by = { init => true }.compare_by_identity
+        makers(me).each { made_by[_1] = true }
+        ctx = [:init, me]
+      elsif flat && inst
+        made_by = (makers_of_args(inst[0], inst[1]) || {}).dup
+        ctx = [:flat, inst[0].__id__, inst[2]&.node&.__id__, *inst[1].map { flat_key(_1) }]
+      else
+        made_by = inst && makers_of_args(inst[0], inst[1])
+        ctx = made_by && inst_key(inst[0], inst[1])
+      end
+      # a pasted copy (class B < A) shares A's nodes but not A's containers
       fn = init && depth == (@inst_stack&.size || 0) ? init : inst&.first
       ctx = [:paste, fn.namespace, ctx] if fn&.pasted
       if ctx
@@ -392,6 +423,10 @@ module Sake
       end
       (@site_fns ||= {})[id] ||= inst&.first # the function whose code made it
       id
+    end
+
+    def flat_key(ty)
+      (@flat_keys ||= {}.compare_by_identity)[ty] ||= ty.map { |a| a.is_a?(String) ? a : (a[0] == :obj ? @obj_sites[a[1]].name : a[0]) }.uniq.sort_by(&:to_s).freeze
     end
 
     def next_site_id(node, ctx = nil)
@@ -416,26 +451,49 @@ module Sake
       args.all? { |ty| collect_makers(ty, fn, out, seen) } ? out : nil
     end
 
-    CONTAINER_KINDS = { array: true, hash: true, set: true, queue: true, thread: true }.freeze
+    CONTAINER_KINDS = { array: true, hash: true, set: true, queue: true, thread: true, obj: true }.freeze
 
     def collect_makers(ty, fn, out, seen)
       ty.all? do |a|
-        next true unless a.is_a?(Array) && CONTAINER_KINDS[a[0]] && a[1].is_a?(Integer)
+        next true unless container_atom?(a)
         next true if seen[a]
         seen[a] = true
-        ms = makers(a[1])
-        next false if ms.any? { _1.equal?(fn) }
-        ms.each { out[_1] = true }
-        inner =
-          case a[0]
-          when :array then [@sites[a[1]]&.elem]
-          when :hash then [hash_sites[a[1]]&.key, hash_sites[a[1]]&.val]
-          when :set then [set_sites[a[1]]&.elem]
-          when :queue then [queue_sites[a[1]]&.elem]
-          else []
-          end
-        inner.compact.all? { collect_makers(_1, fn, out, seen) }
+        cl = closure(a[1])
+        next false if cl.key?(fn)
+        cl.each_key { out[_1] = true }
+        true
       end
+    end
+
+    def container_atom?(a) = a.is_a?(Array) && CONTAINER_KINDS[a[0]] && a[1].is_a?(Integer)
+
+    # The makers of every container reachable from a site (through elements, keys, values and fields), kept
+    # incrementally: a write into a site links the containers written (note_contents), and a site's growth
+    # flows to the sites holding it. Walking the graph at each site creation was the typer's main cost once
+    # Struct values became sites (a database reaches every row).
+    def closure(id)
+      (@closure ||= {})[id] ||= makers(id).to_h { [_1, true] }.compare_by_identity
+    end
+
+    def note_contents(pid, ty)
+      ty.each do |c|
+        next unless container_atom?(c)
+        links = ((@links ||= {})[pid] ||= {})
+        next if links[c[1]]
+        links[c[1]] = true
+        ((@parents ||= {})[c[1]] ||= []) << pid
+        grow(pid, closure(c[1]), {})
+      end
+    end
+
+    def grow(pid, ms, seen)
+      return if seen[pid]
+      seen[pid] = true
+      cl = closure(pid)
+      before = cl.size
+      ms.each_key { cl[_1] = true }
+      return if cl.size == before
+      (@parents&.[](pid) || []).each { grow(_1, cl, seen) }
     end
 
     def site_label(id, node, extra = nil)
@@ -446,7 +504,7 @@ module Sake
     def site_for(node, label_extra = nil, declared: nil, init: [])
       id = site_id(node)
       elem = declared && !STRUCTURED.include?(declared) ? t(declared) : init
-      @sites[id] ||= Site.new(id, node, site_label(id, node, label_extra), declared, init, elem)
+      @sites[id] ||= Site.new(id, node, site_label(id, node, label_extra), declared, init, elem).tap { note_contents(id, elem) }
       site_type(:array, id)
     end
 
@@ -466,14 +524,27 @@ module Sake
       end
     end
 
-    # A field's type is every type written to it (a default is only the value `new` stores).
-    def field_write(dt, field, ty, node)
+    # The field table a Struct atom reads: its site's, or its type's for a value named by its type.
+    def fields_key(a) = a.is_a?(String) ? a : a[1]
+    def fields_of(a) = @fields[fields_key(a)]
+    def owner_name(key) = key.is_a?(Integer) ? "#{@obj_sites[key].name}@#{@obj_sites[key].label}" : key
+    def struct_name(a) = atom_type_name(a)
+
+    # A field's type is every type written to it (a default is only the value `new` stores): written to the
+    # site table of each obj atom in `atoms` (the values written through) and to the type's table.
+    def field_write(dt, field, ty, node, atoms: [])
       @nil_writes[dt][field] << node.location.start_line if ty.any? { nil_atom?(_1) }
       ty.each { |a| @type_writes[dt][field][atom_type_name(a)] << node.location.start_line unless nil_atom?(a) }
-      fs = @fields[dt]
+      field_store(dt, field, ty)
+      atoms.each { field_store(_1[1], field, ty) if _1.is_a?(Array) && _1[0] == :obj }
+    end
+
+    def field_store(key, field, ty)
+      note_contents(key, ty) if key.is_a?(Integer)
+      fs = @fields[key]
       new = u(fs[field] || NONE, ty)
       unless new.equal?(fs[field])
-        dirty(field_cell(dt, field))
+        dirty(field_cell(key, field))
         dirty(fs) # the table is the cell of a walk over every field
       end
       fs[field] = new
@@ -586,6 +657,7 @@ module Sake
     # "Struct.field (nil written at line N)" for fields that may hold nil next to a type in `wants`.
     def nil_sources(wants = nil)
       @fields.flat_map do |dt, fs|
+        next [] unless dt.is_a?(String) # a type's table: the join of its sites
         fs.filter_map do |f, ty|
           next unless ty.any? { nil_atom?(_1) }
           next if wants && (ty - NILS).none? { |a| Array(wants).any? { |w| atom_matches?(a, w) } }
@@ -608,11 +680,14 @@ module Sake
 
     # Whether a field holding two or more types holds these very Symbol values.
     def field_holds_symbols?(atoms)
-      @fields.any? { |_dt, fs| fs.any? { |_f, ty| (type_names(ty) - %w[Nil]).size >= 2 && atoms.all? { ty.include?(_1) } } }
+      site_fields.any? { |_dt, fs| fs.any? { |_f, ty| (type_names(ty) - %w[Nil]).size >= 2 && atoms.all? { ty.include?(_1) } } }
     end
 
+    # The field tables of construction sites (a type's table is their join, so it mixes what its sites keep apart).
+    def site_fields = @fields.select { |k, _| k.is_a?(Integer) }
+
     def mixing_fields
-      @mixing_fields ||= @fields.flat_map do |_dt, fs|
+      @mixing_fields ||= site_fields.flat_map do |_dt, fs|
         fs.flat_map do |_f, ty|
           inner = ty.flat_map do |a|
             next [] unless a.is_a?(Array)
@@ -657,7 +732,7 @@ module Sake
       if fn.yields
         return unknown("recursive yield") if @yield_depth[fn] >= MAX_YIELD_DEPTH
         @yield_depth[fn] += 1
-        (@inst_stack ||= []).push([fn, args])
+        (@inst_stack ||= []).push([fn, args, blk]) # the block tells a construction site apart (Result.map's Ok.new per caller)
         begin
           return run_body(fn, args, blk)
         ensure
@@ -788,7 +863,7 @@ module Sake
       failing = []
       recv.each do |a|
         if struct_atom?(a)
-          fn = Operators.includes?(@program.includes || {}, a, "Indexable") && @program.functions.dig(a, "[]")
+          fn = Operators.includes?(@program.includes || {}, struct_name(a), "Indexable") && @program.functions.dig(struct_name(a), "[]")
           fn ? results << call_user(fn, [one(a), key, *[extra].compact], nil) : failing << a
           next
         end
@@ -835,7 +910,7 @@ module Sake
     def index_set(node, recv, key, lit, val, extra = nil)
       return [] if recv.empty? || key.empty? || val.empty? || extra&.empty?
       recv.each do |a|
-        if struct_atom?(a) && Operators.includes?(@program.includes || {}, a, "Indexable") && (fn = @program.functions.dig(a, "[]="))
+        if struct_atom?(a) && Operators.includes?(@program.includes || {}, struct_name(a), "Indexable") && (fn = @program.functions.dig(struct_name(a), "[]="))
           call_user(fn, [one(a), key, *[extra].compact, val], nil)
           next
         end
@@ -854,7 +929,7 @@ module Sake
       end
       bad = recv.reject do |a|
         (a.is_a?(Array) && %i[array tuple hash].include?(a[0])) ||
-          (struct_atom?(a) && Operators.includes?(@program.includes || {}, a, "Indexable") && @program.functions.dig(a, "[]="))
+          (struct_atom?(a) && Operators.includes?(@program.includes || {}, struct_name(a), "Indexable") && @program.functions.dig(struct_name(a), "[]="))
       end
       verdict = unknown?(recv) ? :unknown : (bad.empty? ? :proven : (bad.size == recv.size ? :error : :partial))
       add_check(node, "Indexable.[]=", "pair", "(Array|Tuple, Integer)", recv, verdict, bad)
@@ -863,22 +938,23 @@ module Sake
 
     def op_name(op) = "#{Operators::MODULE_OF.fetch(op)}.#{op}"
 
-    def struct_atom?(a) = a.is_a?(String) && @program.struct_types.key?(a)
+    def struct_atom?(a) = a.is_a?(String) ? @program.struct_types.key?(a) : a[0] == :obj
 
     # The result of a Struct type's own operator (or nil when the type cannot do op).
     def user_op_result(op, x, b)
+      xn = struct_name(x)
       if %w[== !=].include?(op)
-        fn = @program.functions.dig(x, "==")
-        fn ||= Operators.includes?(@program.includes || {}, x, "Comparable") && @program.functions.dig(x, "<=>")
-        call_user(fn, [one(x), b.include?(x) ? one(x) : b], nil) if fn && (b.include?(x) || @program.functions.dig(x, "=="))
+        fn = @program.functions.dig(xn, "==")
+        fn ||= Operators.includes?(@program.includes || {}, xn, "Comparable") && @program.functions.dig(xn, "<=>")
+        call_user(fn, [one(x), b.include?(x) ? one(x) : b], nil) if fn && (b.include?(x) || @program.functions.dig(xn, "=="))
         return t("Boolean")
       end
       mod = Operators::MODULE_OF.fetch(op)
-      return nil unless Operators.includes?(@program.includes || {}, x, mod)
-      if (fn = @program.functions.dig(x, op))
+      return nil unless Operators.includes?(@program.includes || {}, xn, mod)
+      if (fn = @program.functions.dig(xn, op))
         return call_user(fn, [one(x), b], nil)
       end
-      if mod == "Comparable" && (cmp = @program.functions.dig(x, "<=>"))
+      if mod == "Comparable" && (cmp = @program.functions.dig(xn, "<=>"))
         call_user(cmp, [one(x), b], nil)
         return t("Boolean")
       end
@@ -911,7 +987,7 @@ module Sake
           results << t("Boolean")
           next
         end
-        if struct_atom?(y) && (co = @program.functions.dig(y, "coerce")) # the right operand's type converts the pair
+        if struct_atom?(y) && (co = @program.functions.dig(struct_name(y), "coerce")) # the right operand's type converts the pair
           pair = call_user(co, [one(y), one(x)], nil)
           record(node, "#{y}.coerce", "result", "Tuple", pair)
           twos = atoms_of(pair, :tuple).select { _1[1].size == 2 }
@@ -993,7 +1069,7 @@ module Sake
     def comparable_atoms_uncached?(x, y, depth)
       return true if [x, y].any? { _1.is_a?(Array) && _1[0] == :unknown }
       if struct_atom?(x)
-        return Operators.includes?(@program.includes || {}, x, "Comparable") && !!@program.functions.dig(x, "<=>")
+        return Operators.includes?(@program.includes || {}, struct_name(x), "Comparable") && !!@program.functions.dig(struct_name(x), "<=>")
       end
       if depth < 3 && [x, y].all? { _1.is_a?(Array) && _1[0] == :tuple }
         return x[1].zip(y[1]).all? { |ex, ey| ey.nil? || ex.product(ey).all? { |a, b| comparable_atoms?(a, b, depth + 1) } }
@@ -1015,7 +1091,7 @@ module Sake
       failing = []
       a.each do |x|
         if struct_atom?(x)
-          fn = Operators.includes?(@program.includes || {}, x, Operators::MODULE_OF.fetch(op)) && @program.functions.dig(x, op)
+          fn = Operators.includes?(@program.includes || {}, struct_name(x), Operators::MODULE_OF.fetch(op)) && @program.functions.dig(struct_name(x), op)
           fn ? results << call_user(fn, [one(x)], nil) : failing << x
         elsif @registry.unary_ops[op].key?(atom_type_name(x))
           results << one(x)
@@ -1105,7 +1181,7 @@ module Sake
       end
       groups.each do |g, other|
         g.each do |x|
-          %w[<=> ==].each { |op| (fn = @program.functions.dig(x, op)) and call_user(fn, [one(x), other], nil) }
+          %w[<=> ==].each { |op| (fn = @program.functions.dig(struct_name(x), op)) and call_user(fn, [one(x), other], nil) }
         end
       end
     end
@@ -1148,7 +1224,7 @@ module Sake
     # the way, which are walked (through their own memos) when the memo is used. Each Struct type is
     # walked once per group walk; groups come out Struct by Struct rather than in the interleaved order.
     def struct_groups(a, out, seen, deps)
-      fs = @fields[a]
+      fs = fields_of(a)
       read(fs)
       if (collect = @sg_collect) # inside a memo computation: defer to the use of the memo
         collect << a unless collect.include?(a)
@@ -1214,21 +1290,25 @@ module Sake
     # The fields of the new instance are followed like local variables ([:field, name] in the env), so a
     # field written on some paths only keeps what `new` gave on the others; every exit (the end, and each
     # `return`) adds its types.
-    def run_initialize(dt, given, node)
+    def run_initialize(dt, given, node, me)
       init = @program.functions.dig(dt.name, "initialize") or return given
       @init_depth ||= Hash.new(0).compare_by_identity
-      return given if @init_depth[init] >= 2 # an initialize that constructs its own type
+      # An initialize that constructs its own type (through the functions it calls) is cut at two levels: the
+      # construction there is a value of the type as any site made it (:cutoff), not one with unset fields.
+      return :cutoff if @init_depth[init] >= 2
       @init_depth[init] += 1
       mark_instantiated(init)
       push_caller(node)
-      (@init_fns ||= []).push([init, @inst_stack&.size || 0])
+      (@inst_stack ||= []).push([init, [me]]) # containers made in initialize are this construction's
+      (@init_fns ||= []).push([init, @inst_stack.size])
       frame = Frame.new(init, [], nil)
       env = Env.new(nil, frame)
-      env.vars[0] = t(dt.name)
+      env.vars[0] = me
       exits = nil
       if init_overlay?(init)
         given.each { |f, ty| env.vars[[:field, f]] = ty }
         exits = (@init_frames ||= {}.compare_by_identity)[frame] = {}
+        (@init_site ||= {}.compare_by_identity)[frame] = me
       end
       begin
         r = ev(@ast.functions.fetch(init).body, env)
@@ -1237,7 +1317,9 @@ module Sake
         exits ? given.keys.to_h { |f| [f, exits[f] || given[f]] } : given
       ensure
         @init_frames&.delete(frame)
+        @init_site&.delete(frame)
         @init_fns.pop
+        @inst_stack.pop
         pop_caller
         @init_depth[init] -= 1
       end
@@ -1279,16 +1361,20 @@ module Sake
           ty ||= t("Nil") # left out: nil until initialize sets it
           [f, ty]
         end
+        id = site_id(node, flat: true)
+        @obj_sites[id] ||= ObjSite.new(id, node, site_label(id, node), dt.name)
+        me = site_type(:obj, id)
         # A construction whose initialize cannot finish (`@port => Integer` on a String) stores nothing;
         # otherwise the fields hold what initialize leaves in them.
-        stored = run_initialize(dt, given, node) or return []
-        stored.each { |f, ty| field_write(dt.name, f, ty, node) }
-        t(dt.name)
-      when *dt.fields # the reader `T.x(v)`
-        read(field_cell(dt.name, name))
-        @fields[dt.name][name] || []
+        stored = run_initialize(dt, given, node, me) or return []
+        return t(dt.name) if stored == :cutoff
+        stored.each { |f, ty| field_write(dt.name, f, ty, node, atoms: me) }
+        me
+      when *dt.fields # the reader `T.x(v)`: the field of each value's site (a value named by its type: the type's table)
+        mine = args[0].select { struct_atom?(_1) && struct_name(_1) == dt.name }
+        u(*mine.map { |a| k = fields_key(a); read(field_cell(k, name)); @fields[k][name] || [] })
       when /\Aset_(.+)\z/
-        field_write(dt.name, $1, args[1], node)
+        field_write(dt.name, $1, args[1], node, atoms: args[0])
         args[1]
       end
     end
@@ -1380,10 +1466,11 @@ module Sake
         arith = @program.struct_types.keys.select { Operators.includes?(@program.includes || {}, _1, "Arithmetic") && @program.functions.dig(_1, "+") }
         record(node, "Array.sum", "elem", Stdlib::NUMERIC + arith, e)
         record(node, "Array.sum", 2, Stdlib::NUMERIC + arith, args[1]) if args[1]
-        structs = e.select { arith.include?(_1) }
-        structs.each { |x| (fn = @program.functions.dig(x, "+")) && call_user(fn, [one(x), u(e, *[args[1]].compact)], nil) }
-        u(sum_type(args[1] && args[1].reject { arith.include?(_1) }.then { _1.empty? ? nil : of_atoms(_1) }, e.reject { arith.include?(_1) }),
-          of_atoms(structs), args[1] ? of_atoms(args[1].select { arith.include?(_1) }) : [])
+        arith_atom = ->(a) { struct_atom?(a) && arith.include?(struct_name(a)) }
+        structs = e.select { arith_atom.(_1) }
+        structs.each { |x| (fn = @program.functions.dig(struct_name(x), "+")) && call_user(fn, [one(x), u(e, *[args[1]].compact)], nil) }
+        u(sum_type(args[1] && args[1].reject { arith_atom.(_1) }.then { _1.empty? ? nil : of_atoms(_1) }, e.reject { arith_atom.(_1) }),
+          of_atoms(structs), args[1] ? of_atoms(args[1].select { arith_atom.(_1) }) : [])
       when "Array.new"
         elem = blk ? call_block(blk, [t("Integer")]) : (args[1] || t("Nil"))
         new_site(node, " #{name}", elem)
@@ -1452,13 +1539,16 @@ module Sake
         end
         out << "  #{c.verdict.to_s.ljust(7)} L#{c.line} #{c.op} arg #{c.arg}: want #{c.expected}, got #{show(c.actual)}\n"
       end
+      by_type = @obj_sites.each_value.group_by(&:name).map { |n, ss| "#{n} #{ss.size}" }.join(", ")
+      out << "sites: arrays #{@sites.size}, structs #{@obj_sites.size} (#{by_type}); instantiations #{@inst_keys&.size || 0}\n"
       out << "arrays:\n"
       @sites.each_value do |s|
         kind = s.declared ? "declared #{s.declared}" : "init #{show(s.init)} -> #{show(s.elem)}#{s.init != s.elem ? " (widened)" : ""}"
         out << "  #{s.label}: #{kind}\n"
       end
-      out << "fields:\n"
-      @fields.each { |dt, fs| fs.each { |f, ty| out << "  #{dt}.#{f}: #{show(ty)}\n" } }
+      out << "fields:\n" # each site's; a type's table (the join) only for a type with no site
+      with_site = @obj_sites.each_value.map(&:name).to_set
+      @fields.each { |k, fs| fs.each { |f, ty| out << "  #{owner_name(k)}.#{f}: #{show(ty)}\n" } unless k.is_a?(String) && with_site.include?(k) }
       out << "dead functions: #{@dead_functions.map(&:full_name).join(", ")}\n" unless @dead_functions.empty?
       out
     end

@@ -751,7 +751,7 @@ puts(length(Point.new(3, 4)))
 
 ```
 $ sake data_runtime_error.sake
-data_runtime_error.sake:5:16: error: Line.to: argument 1 must be Line, but is Point [type]
+data_runtime_error.sake:5:16: error: Line.to: argument 1 must be Line, but is Point@L11 [type]
   hint: reached by the call at line 11
 (exit status 2)
 ```
@@ -1408,11 +1408,8 @@ $ sake strict.sake
 
 ```
 $ sake --strict strict.sake
-strict.sake:3:20: error: Node.value: argument 1 may be nil (nil | Node) [nil]
-  hint: check the value first: `if x`, `while x`, `return unless x`, or `x != nil`
-  hint: Node.next may be nil (nil is stored at line 10)
-  hint: reached by the call at line 11
-(exit status 2)
+2
+2
 ```
 
 ## 12. Exceptions
@@ -1540,14 +1537,18 @@ apple
 $ sake --types types.sake
 passes: 2
 checks: proven=13 partial=0 error=0 unknown=0
+sites: arrays 3, structs 2 (Item 2); instantiations 1
 arrays:
   L5: declared Item
   L7 Array.select: init Item -> Item
   L8 Array.map: init String -> String
 fields:
-  Item.name: String
-  Item.price: Integer
-  Item.qty: Integer
+  Item@L5.name: String
+  Item@L5.price: Integer
+  Item@L5.qty: Integer
+  Item@L5.name: String
+  Item@L5.price: Integer
+  Item@L5.qty: Integer
 ```
 
 In the `strict` program from section 11, the inference finds the one unchecked use:
@@ -1555,12 +1556,14 @@ In the `strict` program from section 11, the inference finds the one unchecked u
 ```
 $ sake --types strict.sake
 passes: 2
-checks: proven=3 partial=1 error=0 unknown=0
-  partial L3 Node.value arg 1: want Node, got nil | Node
+checks: proven=4 partial=0 error=0 unknown=0
+sites: arrays 0, structs 2 (Node 2); instantiations 2
 arrays:
 fields:
-  Node.value: Integer
-  Node.next: nil | Node
+  Node@L10.value: Integer
+  Node@L10.next: nil
+  Node@L10.value: Integer
+  Node@L10.next: Node@L10
 ```
 
 ## 15. Putting it together
