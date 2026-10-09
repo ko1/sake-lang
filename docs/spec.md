@@ -45,9 +45,9 @@ whole-program type inference; whatever is not reported is still checked while ru
 |---|---|---|---|
 | 0 | `--strict=0` | (none) | syntax, names, argument counts, blocks, calls on values, forbidden syntax, literal types in `T[...]` (always checked) |
 | 1 | default | `type`, `rescue` | a value whose type, other than nil, does not fit (`"" + 1`, or `pick() + 1` where `pick` returns 1 or ""); a `rescue` of an exception the begin body never raises |
-| 2 | `--strict` | `type`, `rescue`, `nil`, `mixed` | also a value that may be nil, used without a check (except results of `x[k]`); and a `mixed` report (below) |
-| 3 | `--strict=3` | `type`, `rescue`, `nil`, `mixed`, `index-nil`, `exhaustive` | also the result of `x[k]`, which is nil on a miss, used without a check; a `case`/`in` that may get a value of an open type (String, Integer, a Symbol not written as a literal, ...) that no literal branch takes |
-| 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued |
+| 2 | `--strict` | `type`, `rescue`, `nil`, `mixed` | also a value that may be nil, used without a check (except the nil of a miss: `x[k]`, and `Array.first`, `last`, `pop`, `shift`, `min`, `max`, `at`, `sample`, `delete_at` on an empty Array); and a `mixed` report (below) |
+| 3 | `--strict=3` | `type`, `rescue`, `nil`, `mixed`, `index-nil`, `exhaustive` | also the nil of a miss (`x[k]`, `Array.first` and the others above), used without a check; a `case`/`in` that may get a value of an open type (String, Integer, a Symbol not written as a literal, ...) that no literal branch takes |
+| 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued (for a program; a library's raises are meant for its callers) |
 
 - **`mixed`.** A type report whose failing types all appear, together with fitting ones, in one field
   (or in the elements of a container held in a field) of a Struct type. The typer gives a field one type
@@ -693,6 +693,12 @@ Arrays are mutable and shared by reference.
 
 **Ruby habits.** A Tuple or Record passed where an Array is expected, such as `result = []`
 followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
+
+- **In-place operations that change the element type.** The checker gives a container one element type
+  for the whole program, so after `Array.map!(xs) { |x| Integer.to_s(x) }` or `Hash.transform_keys!(h) { |k| ... }`
+  it takes the container to hold both the old and the new type, and reports operations that fit only one
+  of them as `type` (partial). Use the in-place forms for a mapping within one type, and `Array.map` /
+  `Hash.transform_keys` (a new container) to change it.
 
 ### 12.1 Hash and Set
 

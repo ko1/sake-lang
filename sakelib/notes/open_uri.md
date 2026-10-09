@@ -80,3 +80,7 @@ file; it is all Sake-level code over `net_http`.
 ## Later the same day (2026-10-09)
 
 See net_http.md: Zlib and ENV are built in.
+
+## Later the same day, again (2026-10-09)
+
+https works through net_http (see net_http.md).

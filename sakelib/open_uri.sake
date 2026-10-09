@@ -10,7 +10,7 @@
 #
 # Options: a Hash as Ruby's. String keys are request headers ("User-Agent" => "x"); Symbol keys are
 # :redirect (false: raise OpenURIHTTPRedirect instead of following), :max_redirects (an Integer),
-# :http_basic_authentication ([user, password]). No TLS, so https:// raises ArgumentError.
+# :http_basic_authentication ([user, password]). https:// goes through net_http's TLS connection.
 
 require "uri"
 require "net_http"
@@ -179,8 +179,7 @@ module OpenURI
   def _to_uri(url)
     u = (url in URI) ? url : URI.parse(url)
     scheme = URI.scheme(u)
-    raise ArgumentError, "https is not supported: Sake has no TLS (#{u})" if scheme == "https"
-    raise ArgumentError, "not an HTTP URL: #{Kernel.inspect("#{u}")}" unless scheme == "http" && URI.host(u)
+    raise ArgumentError, "not an HTTP URL: #{Kernel.inspect("#{u}")}" unless (scheme == "http" || scheme == "https") && URI.host(u)
     raise ArgumentError, "userinfo not supported.  [RFC3986]" if URI.userinfo(u)
     u
   end
@@ -198,7 +197,7 @@ module OpenURI
       user, pass = auth
       NetHTTPRequest.basic_auth(req, user, pass)
     end
-    res = NetHTTP.start(URI.hostname(u) || "localhost", URI.port(u) || 80) { |http| NetHTTP.request(http, req) }
+    res = NetHTTP.start(URI.hostname(u) || "localhost", NetHTTP._port(u), NetHTTP._ssl?(u)) { |http| NetHTTP.request(http, req) }
     io = OpenURIMeta.new(NetHTTPResponse.body(res) || "", [NetHTTPResponse.code(res), NetHTTPResponse.message(res)],
                          NetHTTPResponse.to_hash(res), nil)
     io.OpenURIMeta.base_uri = u

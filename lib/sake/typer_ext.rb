@@ -264,7 +264,7 @@ module Sake
       when "Queue.close" then a0
       when "Queue.size", "TCPServer.port", "Socket.write" then t("Integer")
       when "TCPServer.new" then t("TCPServer")
-      when "TCPServer.accept", "Socket.connect" then t("Socket")
+      when "TCPServer.accept", "Socket.connect", "Socket.connect_ssl" then t("Socket")
       when "TCPServer.close", "Socket.close", "Socket.close_write" then t("Nil")
       when "Socket.gets", "Socket.read", "IO.gets" then u(t("String"), t("Nil"))
       when "IO.stdin", "IO.stdout", "IO.stderr", "IO.flush" then t("IO")
@@ -424,7 +424,8 @@ module Sake
       when "Array.flatten" then new_site(node, " #{name}", u(*elem_of(a0).map { |e| e.is_a?(Array) && e[0] == :array ? elem_of([e]) : [e] }))
       when "Array.compact" then new_site(node, " #{name}", without_nil(elem_of(a0)))
       when "Array.uniq", "Array.rotate", "Array.shuffle" then new_site(node, " #{name}", elem_of(a0))
-      when "Array.sample", "Array.delete", "Array.delete_at" then u(elem_of(a0), t("Nil"))
+      when "Array.sample", "Array.delete_at" then u(elem_of(a0), t("IndexNil"))
+      when "Array.delete" then u(elem_of(a0), t("Nil"))
       when "Array.tally" then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = elem_of(a0); s.val = t("Integer") }
       when "Array.group_by"
         e = elem_of(a0)

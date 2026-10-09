@@ -131,3 +131,7 @@ constructors, 16 on responses, 24 on NetHTTP).
 ## Later the same day (2026-10-09)
 
 Zlib.inflate/deflate/gzip/gunzip and ENV.get/fetch are built in; socket timeouts and TLS are still missing.
+
+## Later the same day, again (2026-10-09)
+
+https works: `NetHTTP.start(host, 443, true)` / a URI with scheme https connects with `Socket.connect_ssl` (TLS, peer verified); `open_timeout`/`read_timeout` are now applied to the socket (`Socket.connect(host, port, timeout)`, `Socket.set_timeout`). Checked by hand against https://example.com (200). The test still uses a local plain-http server.

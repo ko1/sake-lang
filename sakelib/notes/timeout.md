@@ -58,3 +58,7 @@ calling thread, as Ruby.
 ## Later the same day (2026-10-09)
 
 Thread.join(t, limit) is built in (it would replace the polling loop). Thread.raise/kill are still missing.
+
+## Later the same day, again (2026-10-09)
+
+With `Thread.join(t, limit)` and `Thread.raise(t, message)` built in, `Timeout.timeout` now interrupts the block where it is (its ensure clauses run) and raises TimeoutError, as Ruby's. The polling loop and the "the block keeps running" caveat are gone. A block with a bare `rescue` swallows the interruption, as in Ruby.

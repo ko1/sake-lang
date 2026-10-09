@@ -11,9 +11,9 @@
 - [x] (10-09) `String.byteslice` の nil を `IndexNil`（`s[i, n]` と同じ扱い。stringio で `|| ""` が 12 回）。
 - [x] (10-09) `raise X if a in T && cond`: `&&` が `raise ... if` 全体に掛かる構文解析を警告する（net_http）。
 - [x] (10-09) `x in T ? a : b` / `f(t, x in T)` の構文エラーに「`(x in T)` と括る」hint（延べ 9 本が踏んだ）。
-- [ ] `empty?` の直後の `Array.shift` / `Array.max` / `Array.last` は nil 型（3 本）。空でないことを追うのは難しい。`fetch` を勧める hint で代える。
-- [ ] 要素の型を変える破壊的操作（`transform_keys!`）で容器の型が前後の合併になる（検査器が時間を持たない）。文書化のみ。
-- [ ] ライブラリ 1 本を `--strict=4` で検査すると `unrescued` が全部出る。文書化（レベル 4 はプログラム向け）。
+- [x] (10-09) `empty?` の直後の `Array.shift` / `Array.max` / `Array.last` は nil 型（3 本）: 空の配列の nil を `x[k]` と同じ index-nil（level 3）にした。空でないことを追うのは難しい。
+- [x] (10-09, 文書化: spec §12) 要素の型を変える破壊的操作（`transform_keys!`）で容器の型が前後の合併になる（検査器が時間を持たない）。
+- [x] (10-09, 文書化: spec §2.1) ライブラリ 1 本を `--strict=4` で検査すると `unrescued` が全部出る（レベル 4 はプログラム向け）。
 
 ## 実行時・メッセージ
 
@@ -26,10 +26,10 @@
 
 - [x] (10-09) `Record.to_h(r)` / `Record.values(r)` / `Record.keys(r)`（pp の汎用 walk、以前の csv/json も）。
 - [x] (10-09) ソケットのタイムアウト: `Socket.connect(host, port, timeout)`、`Socket.set_timeout(s, secs)`（net_http）。
-- [x] (10-09) `Thread.kill(t)`、`Thread.raise(t, msg)`（timeout が本体を止められない）。
+- [x] (10-09) `Thread.kill(t)`、`Thread.raise(t, msg)`。timeout.sake は `Thread.raise` でブロックを本当に止めるようになった。
 - [x] (10-09, `Array.sum` のみ) `Array.sum` / `Range.sum` が `Arithmetic` を include する型の要素を受ける（bigdecimal, matrix）。
-- [ ] TLS（`Socket.connect(host, port, {ssl: true})`。net_http は http のみ）。
-- [ ] Float → 10 進の桁指定変換（bigdecimal の `BigDecimal(float, prec)`）。
+- [x] (10-09) TLS: `Socket.connect_ssl(host, port[, timeout])`（OpenSSL、peer を検証）。net_http が https で使う。
+- [x] (10-09, 不要と判断) Float → 10 進の桁指定変換: `Float.to_r` が正確な値を与えるので、有効桁への丸めは bigdecimal.sake 側で書ける。
 
 ## 設計判断が要るもの（変えるなら仕様）
 

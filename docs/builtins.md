@@ -837,6 +837,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Socket.close(x)`
 - `Socket.close_write(x)`
 - `Socket.connect(String, Integer, [Integer|Float|Rational])`
+- `Socket.connect_ssl(String, Integer, [Integer|Float|Rational])`
 - `Socket.gets(x)`
 - `Socket.read(x, Integer)`
 - `Socket.set_timeout(x, Integer|Float|Rational|Nil)`

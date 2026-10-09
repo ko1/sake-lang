@@ -52,12 +52,27 @@ module Sake
       reg.define("Socket", :connect, %w[String Integer], optional: [%w[Integer Float Rational]]) do |host, port, timeout = nil|
         net_error { require "socket"; timeout ? ::TCPSocket.new(host, port, connect_timeout: timeout) : ::TCPSocket.new(host, port) }
       end
+      # connect_ssl(host, port[, timeout]): a TLS connection (Ruby's OpenSSL::SSL::SSLSocket, verifying the peer).
+      # The Socket operations read and write it; close closes the TCP connection too.
+      reg.define("Socket", :connect_ssl, %w[String Integer], optional: [%w[Integer Float Rational]]) do |host, port, timeout = nil|
+        net_error do
+          require "socket"
+          require "openssl"
+          tcp = timeout ? ::TCPSocket.new(host, port, connect_timeout: timeout) : ::TCPSocket.new(host, port)
+          ctx = ::OpenSSL::SSL::SSLContext.new
+          ctx.set_params(verify_mode: ::OpenSSL::SSL::VERIFY_PEER)
+          ssl = ::OpenSSL::SSL::SSLSocket.new(tcp, ctx)
+          ssl.hostname = host
+          ssl.sync_close = true
+          ssl.connect
+        end
+      end
       # set_timeout(s, seconds): a read or write that waits longer raises IOError (Ruby's IO#timeout=).
       reg.define("Socket", :set_timeout, ["Socket", %w[Integer Float Rational Nil]]) { |s, secs| s.timeout = secs; s }
       reg.define("Socket", :gets, ["Socket"]) { |s| net_error { s.gets } }
       reg.define("Socket", :read, %w[Socket Integer]) { |s, n| net_error { nonneg(n) && s.read(n) } }
       reg.define("Socket", :write, %w[Socket String]) { |s, str| net_error { s.write(str) } }
-      reg.define("Socket", :close_write, ["Socket"]) { |s| net_error { s.close_write.then { nil } } }
+      reg.define("Socket", :close_write, ["Socket"]) { |s| net_error { (s.respond_to?(:close_write) ? s : s.io).close_write.then { nil } } }
       reg.define("Socket", :close, ["Socket"]) { |s| s.close.then { nil } }
     end
 
@@ -72,7 +87,7 @@ module Sake
     rescue SystemCallError, IOError => e
       raise Fail.new("IOError", e.message)
     rescue StandardError => e
-      raise unless e.class.name == "SocketError" # defined only once socket is loaded
+      raise unless %w[SocketError OpenSSL::SSL::SSLError].include?(e.class.name) # defined once their library is loaded
       raise Fail.new("IOError", e.message)
     rescue LoadError, NotImplementedError => e
       raise Fail.new("IOError", "sockets are not available here (#{e.message})")

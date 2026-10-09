@@ -1,5 +1,5 @@
-# net_http: a client subset of Ruby's net/http over Sake's Socket built-ins. HTTP/1.1, plain http:// only
-# (Sake has no TLS). Every request is sent with `Connection: close` on its own connection, so a
+# net_http: a client subset of Ruby's net/http over Sake's Socket built-ins. HTTP/1.1; https:// through
+# Socket.connect_ssl (TLS, the peer verified). Every request is sent with `Connection: close` on its own connection, so a
 # `start` block is a scope, not a kept connection.
 #
 # Ruby's nested names are flattened (Sake has none): Net::HTTP -> NetHTTP, Net::HTTPResponse ->
@@ -300,7 +300,7 @@ end
 # fields but not enforced: Sake's sockets have no timeout.
 class NetHTTP
   attr_reader address, port
-  attr_accessor open_timeout, read_timeout
+  attr_accessor open_timeout, read_timeout, use_ssl
   private attr_accessor started
 
   def initialize(http)
@@ -309,6 +309,7 @@ class NetHTTP
     @port => Integer
     @open_timeout = 60 if @open_timeout == nil
     @read_timeout = 60 if @read_timeout == nil
+    @use_ssl = false if @use_ssl == nil
     @started = false
   end
 
@@ -321,8 +322,9 @@ class NetHTTP
 
   # Ruby's two `start`s: Net::HTTP.start(host, port) { |http| } (a String) and http.start (a NetHTTP).
   # Without a block it returns the started NetHTTP; with one, the block's value, finished afterwards.
-  def start(host_or_http, port = nil)
-    http = (host_or_http in NetHTTP) ? host_or_http : NetHTTP.new(host_or_http, port)
+  # start(host, port, use_ssl = false): use_ssl true connects with TLS (https).
+  def start(host_or_http, port = nil, use_ssl = false)
+    http = (host_or_http in NetHTTP) ? host_or_http : NetHTTP.new(host_or_http, port, nil, nil, use_ssl)
     raise IOError, "HTTP session already opened" if NetHTTP.started?(http)
     http.NetHTTP.started = true
     return http unless block_given?
@@ -430,7 +432,8 @@ class NetHTTP
   # Ruby: http.request(req, body = nil) -> the response. One connection per request.
   def request(http, req, body = nil)
     req.NetHTTPRequest.body = body if body != nil
-    sock = Socket.connect(@address, @port)
+    sock = @use_ssl ? Socket.connect_ssl(@address, @port, @open_timeout) : Socket.connect(@address, @port, @open_timeout)
+    Socket.set_timeout(sock, @read_timeout)
     begin
       Socket.write(sock, NetHTTPRequest._wire(req, @address, @port))
       b = NetHTTPRequest.body(req)
@@ -460,27 +463,29 @@ class NetHTTP
 
   # --- Ruby's class methods: Net::HTTP.get(uri) / get(host, path, port = 80) ---
   def _check_http(uri)
-    raise ArgumentError, "https is not supported: Sake has no TLS (#{uri})" if URI.scheme(uri) == "https"
-    raise ArgumentError, "not an HTTP URI: #{uri}" if URI.scheme(uri) != "http" && URI.scheme(uri) != nil
+    raise ArgumentError, "not an HTTP URI: #{uri}" if URI.scheme(uri) != "http" && URI.scheme(uri) != "https" && URI.scheme(uri) != nil
     uri
   end
+
+  def _ssl?(u) = URI.scheme(u) == "https"
+  def _port(u) = URI.port(u) || (_ssl?(u) ? 443 : 80)
 
   def _target(uri_or_host, path_or_headers, port)
     case uri_or_host
     in URI
       u = _check_http(uri_or_host)
       hdr = (path_or_headers in Hash) ? path_or_headers : nil
-      [URI.hostname(u) || "localhost", URI.port(u) || 80, URI.request_uri(u) || "/", hdr]
+      [URI.hostname(u) || "localhost", _port(u), URI.request_uri(u) || "/", hdr, _ssl?(u)]
     in String
       path_or_headers => String
-      [uri_or_host, port || 80, path_or_headers, nil]
+      [uri_or_host, port || 80, path_or_headers, nil, false]
     end
   end
 
   # Ruby: Net::HTTP.get_response(uri, headers = nil) or get_response(host, path, port = nil)
   def get_response(uri_or_host, path_or_headers = nil, port = nil)
-    host, prt, path, hdr = _target(uri_or_host, path_or_headers, port)
-    start(host, prt) { |http| request_get(http, path, hdr) }
+    host, prt, path, hdr, ssl = _target(uri_or_host, path_or_headers, port)
+    start(host, prt, ssl) { |http| request_get(http, path, hdr) }
   end
 
   # Ruby: Net::HTTP.get(uri) -> the body String (nil for a response without one, such as 204)
@@ -495,7 +500,7 @@ class NetHTTP
   # Ruby: Net::HTTP.post(uri, data, header = nil) -> the response
   def post(uri, data, header = nil)
     u = _check_http(uri)
-    start(URI.hostname(u) || "localhost", URI.port(u) || 80) { |http| request_post(http, URI.request_uri(u) || "/", data, header) }
+    start(URI.hostname(u) || "localhost", _port(u), _ssl?(u)) { |http| request_post(http, URI.request_uri(u) || "/", data, header) }
   end
 
   # Ruby: Net::HTTP.post_form(uri, params) -> the response (application/x-www-form-urlencoded)
@@ -503,6 +508,6 @@ class NetHTTP
     u = _check_http(uri)
     req = NetHTTPPost.new(URI.request_uri(u) || "/")
     NetHTTPRequest.set_form_data(req, params)
-    start(URI.hostname(u) || "localhost", URI.port(u) || 80) { |http| request(http, req) }
+    start(URI.hostname(u) || "localhost", _port(u), _ssl?(u)) { |http| request(http, req) }
   end
 end
