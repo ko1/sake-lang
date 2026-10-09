@@ -1,0 +1,129 @@
+require "httparty"
+require "webrick"
+require "json"
+
+# --- an API server: the webrick port, one handler type ---
+class Api
+  include HTTPHandler
+  def allow?(h, method) = true           # a servlet answering every method (Ruby: `def service(req, res)`)
+  def call(h, req, res)
+    body = HTTPRequest.body(req)
+    q = HTTPRequest.query(req)
+    case HTTPRequest.path_info(req)
+    in "/users"
+      HTTPResponse.set_content_type(res, "application/json; charset=utf-8")
+      res.HTTPResponse.body = JSON.generate(Hash["users" => Array[Hash["id" => 1, "name" => "ko1"]], "page" => q["page"] || "1", "q" => Hash.sort_by(HTTPUtils.parse_query(HTTPRequest.query_string(req))) { |k, v| k }])
+    in "/echo"
+      HTTPResponse.set_content_type(res, "application/json")
+      res.HTTPResponse.body = JSON.generate(Hash["method" => HTTPRequest.request_method(req), "content_type" => HTTPRequest.content_type(req), "body" => body, "auth" => req["Authorization"], "x" => req["X-Api-Key"], "accept" => req["Accept"]])
+    in "/text"
+      HTTPResponse.set_content_type(res, "text/plain")
+      res.HTTPResponse.body = "plain #{HTTPRequest.request_method(req)} #{Kernel.inspect(body)}"
+    in "/missing"
+      HTTPResponse.set_status(res, 404)
+      HTTPResponse.set_content_type(res, "application/json")
+      res.HTTPResponse.body = "{\"error\":\"not found\"}"
+    in "/boom"
+      HTTPResponse.set_status(res, 503)
+      res.HTTPResponse.body = "down"
+    in "/go"
+      HTTPResponse.set_status(res, 302)
+      res["Location"] = "/text"
+    in "/loop"
+      HTTPResponse.set_status(res, 302)
+      res["Location"] = "/loop"
+    in "/empty"
+      HTTPResponse.set_status(res, 204)
+    else
+      HTTPResponse.set_status(res, 400)
+      res.HTTPResponse.body = "?"
+    end
+  end
+end
+
+srv = HTTPServer.new("127.0.0.1", 0)
+port = HTTPServer.port(srv)
+HTTPServer.mount(srv, "/", Api.new)
+t = Thread.new { HTTPServer.start(srv) }
+base = "http://127.0.0.1:#{port}"
+
+def show(r)
+  puts("#{HTTPartyResponse.code(r)} #{Kernel.inspect(HTTPartyResponse.message(r))} success=#{HTTPartyResponse.success?(r)} type=#{Kernel.inspect(HTTPartyResponse.content_type(r))}")
+  puts("  body=#{Kernel.inspect(HTTPartyResponse.body(r))}")
+  puts("  parsed=#{Kernel.inspect(HTTPartyResponse.parsed_response(r))}")
+end
+
+puts("-- get")
+r = HTTParty.get("#{base}/users")
+show(r)
+p([HTTPartyResponse.ok?(r), HTTPartyResponse.client_error?(r), HTTPartyResponse.server_error?(r), HTTPartyResponse.redirection?(r), HTTPartyResponse.not_found?(r), HTTPartyResponse.nil?(r)])
+p(r["users"])
+p(HTTPartyResponse.header(r, "Content-Type"))
+p(HTTPartyResponse.headers(r)["content-length"])
+p(HTTPartyResponse.content_length(r))
+puts(HTTPartyResponse.to_s(r))
+r = HTTParty.get("#{base}/users?page=2", query: Hash["sort" => "name", "tags" => Array["a", "b c"], "f" => Hash["x" => 1]])
+show(r)
+r = HTTParty.get(URI.parse("#{base}/echo"), headers: Hash["X-Api-Key" => "k1", "Accept" => "application/json"])
+show(r)
+r = HTTParty.get("#{base}/echo", basic_auth: Hash[username: "user", password: "pw"])
+p(r["auth"])
+r = HTTParty.get("#{base}/text")
+show(r)
+p(r[0])
+
+puts("-- post, put, patch, delete, head")
+r = HTTParty.post("#{base}/echo", body: Hash["name" => "sake", "tags" => Array["x", "y"]])
+show(r)
+r = HTTParty.post("#{base}/echo", body: JSON.generate(Hash["a" => 1]), headers: Hash["Content-Type" => "application/json"])
+show(r)
+r = HTTParty.post("#{base}/text", body: "raw text")
+show(r)
+r = HTTParty.put("#{base}/echo", body: Hash["v" => "2"])
+p([r["method"], r["body"]])
+r = HTTParty.patch("#{base}/echo", body: "p")
+p([r["method"], r["body"], r["content_type"]])
+r = HTTParty.delete("#{base}/echo")
+p([r["method"], r["body"]])
+r = HTTParty.head("#{base}/users")
+p([HTTPartyResponse.code(r), HTTPartyResponse.body(r), HTTPartyResponse.parsed_response(r), HTTPartyResponse.headers(r)["content-type"]])
+
+puts("-- errors, redirects")
+r = HTTParty.get("#{base}/missing")
+show(r)
+p([HTTPartyResponse.not_found?(r), HTTPartyResponse.client_error?(r), r["error"]])
+r = HTTParty.get("#{base}/boom")
+show(r)
+r = HTTParty.get("#{base}/empty")
+show(r)
+r = HTTParty.get("#{base}/go")
+show(r)
+r = HTTParty.get("#{base}/go", follow_redirects: false)
+p([HTTPartyResponse.code(r), HTTPartyResponse.redirection?(r), String.sub(HTTPartyResponse.headers(r)["location"] || "", /:\d+\//, ":PORT/")])
+r = HTTParty.post("#{base}/go", body: "x")
+show(r)
+begin
+  HTTParty.get("#{base}/loop")
+rescue HTTPartyRedirectionTooDeep => e
+  puts("RedirectionTooDeep: #{Exception.message(e)}")
+end
+
+puts("-- to_params")
+p(HTTParty.to_params(Hash["a" => 1, "b" => Array[1, 2], "c" => Hash["d" => "e f"], "n" => nil]))
+p(HTTParty.normalize_param("k", "v&w"))
+
+puts("-- client (the class DSL)")
+api = HTTPartyClient.new(base, Hash["X-Api-Key" => "secret"], Hash["page" => "9"])
+r = HTTPartyClient.get(api, "/users", query: Hash["sort" => "id"])
+show(r)
+r = HTTPartyClient.get(api, "/echo")
+p([r["x"], r["accept"]])
+api.HTTPartyClient.basic_auth = Hash[username: "u", password: "p"]
+r = HTTPartyClient.post(api, "/echo", body: Hash["k" => "v"], headers: Hash["Accept" => "text/*"])
+p([r["auth"], r["x"], r["accept"], r["body"]])
+api2 = HTTPartyClient.new(base + "/")
+p(HTTPartyResponse.body(HTTPartyClient.get(api2, "/text")))
+
+HTTPServer.shutdown(srv)
+Thread.join(t)
+puts("end")

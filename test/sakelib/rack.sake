@@ -1,0 +1,208 @@
+require "rack"
+require "rackup"
+require "net_http"
+
+# --- a Rack app and a middleware: types, since an app cannot be a lambda ---
+class Hello
+  include RackApp
+  def call(app, env)
+    req = RackRequest.new(env)
+    res = RackResponse.new
+    RackResponse.set_content_type(res, "text/plain")
+    case RackRequest.path_info(req)
+    in "/"
+      RackResponse.write(res, "hello #{RackRequest.params(req)["name"] || "world"}")
+    in "/form"
+      p = RackRequest.params(req)
+      RackResponse.write(res, "#{RackRequest.request_method(req)} #{Kernel.inspect(Hash.sort_by(p) { |k, v| k })} #{Kernel.inspect(RackRequest.media_type(req))}")
+    in "/raw"
+      RackResponse.write(res, "#{RackRequest.request_method(req)} #{Kernel.inspect(RackRequest.media_type(req))} #{Kernel.inspect(RackRequest.body(req))}")
+    in "/cookie"
+      RackResponse.set_cookie(res, "seen", Hash[value: "yes", path: "/", http_only: true])
+      RackResponse.set_cookie(res, "n", "#{Hash.size(RackRequest.cookies(req))}")
+      RackResponse.write(res, Kernel.inspect(RackRequest.cookies(req)))
+    in "/go"
+      RackResponse.redirect(res, "/", 303)
+    in "/nothing"
+      res.RackResponse.status = 204
+    in "/info"
+      RackResponse.write(res, "#{RackRequest.url(req)} host=#{RackRequest.host(req)} port=#{RackRequest.port(req)} path=#{RackRequest.path(req)} script=#{RackRequest.script_name(req)} qs=#{RackRequest.query_string(req)} get=#{RackRequest.get?(req)} ua=#{RackRequest.user_agent(req)} xhr=#{RackRequest.xhr?(req)}")
+    else
+      res.RackResponse.status = 404
+      RackResponse.write(res, "no #{RackRequest.path_info(req)}")
+    end
+    RackResponse.finish(res)
+  end
+end
+
+class Counter                 # middleware: counts calls, adds a header
+  attr_reader app
+  attr_accessor count
+  include RackApp
+  def initialize(mw) = @count = 0
+  def call(mw, env)
+    @count += 1
+    status, headers, body = RackApp.call(@app, env)
+    headers["x-count"] = Integer.to_s(@count)
+    [status, headers, body]
+  end
+end
+
+puts("-- RackUtils")
+p(RackUtils.parse_query("a=1&a=2&b=x+y%21&c&d="))
+p(RackUtils.parse_query("a=1;a=2", ";"))
+p(RackUtils.parse_nested_query("a[b]=1&a[c][d]=2&x[]=1&x[]=2&y[][k]=1&y[][k]=2&z&w=&v=1&v=2&q[=1"))
+p(RackUtils.parse_nested_query(""))
+begin
+  RackUtils.parse_nested_query("a[]=1&a[b]=2")
+rescue RackParameterTypeError => e
+  puts("ParameterTypeError: #{Exception.message(e)}")
+end
+begin
+  RackUtils.parse_nested_query("a" + String.*("[b]", 40) + "=1")
+rescue RackParamsTooDeepError => e
+  puts("ParamsTooDeepError: #{Exception.message(e)}")
+end
+p(RackUtils.build_query(Hash["a" => "1", "b" => Array["x", "y z"], "c" => nil, "d" => 2]))
+p(RackUtils.build_nested_query(Hash["a" => Hash["b" => "1"], "x" => Array["1", "2"], "n" => nil]))
+p(RackUtils.build_nested_query(Array["a", "b"], "list"))
+begin
+  RackUtils.build_nested_query("bare")
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+p([RackUtils.escape("a b&c/d"), RackUtils.unescape("a+b%26c"), RackUtils.escape_path("/a b/c?d=é"), RackUtils.unescape_path("/a%20b")])
+p([RackUtils.status_code(:not_found), RackUtils.status_code(:ok), RackUtils.status_code(200), RackUtils.status_code("201"), RackUtils.status_code(:unprocessable_content)])
+begin
+  RackUtils.status_code(:teapot)
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+p([RackUtils.http_status_codes[200], RackUtils.http_status_codes[418], RackUtils.http_status_codes[511], Hash.size(RackUtils.http_status_codes)])
+p(RackUtils.parse_cookies_header("a=1; b=x%20y; a=2; c; d="))
+p(RackUtils.parse_cookies_header(nil))
+p(RackUtils.set_cookie_header("s", "v w"))
+p(RackUtils.set_cookie_header("s", Hash[value: "1", domain: "example.org", path: "/", max_age: 60, expires: Time.at(0), secure: true, http_only: true, same_site: :strict]))
+p(RackUtils.set_cookie_header("s", Hash[value: Array["a", "b"], same_site: :none]))
+begin
+  RackUtils.set_cookie_header("bad key", "v")
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+p(RackUtils.delete_set_cookie_header("s", Hash[path: "/x"]))
+p([RackUtils.clean_path_info("/a/../b/./c//"), RackUtils.clean_path_info("a/b/../../.."), RackUtils.clean_path_info("")])
+p([RackUtils.valid_path?("/ok"), RackUtils.valid_path?("/n\0")])
+p(RackUtils.q_values("text/html;q=0.9, */*;q=0.1, application/json"))
+p([RackUtils.best_q_match("gzip;q=0.5, deflate", Array["gzip", "deflate", "identity"]), RackUtils.best_q_match("br", Array["gzip"])])
+
+puts("-- RackMockRequest.env_for, RackRequest")
+env = RackMockRequest.env_for("/")
+p(Hash.reject(env) { |k, v| String.start_with?(k, "rack.") })
+env = RackMockRequest.env_for("https://example.com:8443/a/b?x=1&y[z]=2", method: :post, input: "k=v&list[]=1", headers: Hash["CONTENT_TYPE" => "application/x-www-form-urlencoded", "HTTP_COOKIE" => "a=1; b=x%20y", "HTTP_USER_AGENT" => "sake"])
+p(Hash.reject(env) { |k, v| String.start_with?(k, "rack.") })
+p(env["rack.input"])
+req = RackRequest.new(env)
+p([RackRequest.request_method(req), RackRequest.get?(req), RackRequest.post?(req), RackRequest.put?(req)])
+p([RackRequest.path_info(req), RackRequest.script_name(req), RackRequest.path(req), RackRequest.query_string(req), RackRequest.fullpath(req)])
+p([RackRequest.scheme(req), RackRequest.ssl?(req), RackRequest.host(req), RackRequest.hostname(req), RackRequest.port(req), RackRequest.host_with_port(req), RackRequest.base_url(req), RackRequest.url(req)])
+p([RackRequest.content_type(req), RackRequest.media_type(req), RackRequest.content_length(req), RackRequest.form_data?(req), RackRequest.user_agent(req), RackRequest.xhr?(req)])
+p(RackRequest.GET(req))
+p(RackRequest.POST(req))
+p(RackRequest.params(req))
+p(RackRequest.cookies(req))
+p(RackRequest.body(req))
+env = RackMockRequest.env_for("http://example.org:80/p", params: Hash["q" => "1", "r" => Array["a", "b"]], headers: Hash["HTTP_HOST" => "example.org", "HTTP_X_FORWARDED_PROTO" => "https", "CONTENT_TYPE" => "text/html; charset=utf-8"])
+req = RackRequest.new(env)
+p([env["QUERY_STRING"], RackRequest.params(req), RackRequest.scheme(req), RackRequest.port(req), RackRequest.url(req), RackRequest.media_type(req), RackRequest.media_type_params(req), RackRequest.content_charset(req)])
+env = RackMockRequest.env_for("/p", method: "post", params: Hash["a" => "1", "b" => Hash["c" => "2"]])
+req = RackRequest.new(env)
+p([env["CONTENT_TYPE"], env["rack.input"], env["CONTENT_LENGTH"], RackRequest.params(req), RackRequest.body(req)])
+env = RackMockRequest.env_for("/p", method: "POST", input: "{\"a\":1}", headers: Hash["CONTENT_TYPE" => "application/json"])
+req = RackRequest.new(env)
+p([RackRequest.params(req), RackRequest.form_data?(req), RackRequest.body(req), RackRequest.cookies(req)])
+env = RackMockRequest.env_for("/p", headers: Hash["HTTP_HOST" => "[::1]:3000", "HTTP_ACCEPT_LANGUAGE" => "ja, en;q=0.5"])
+req = RackRequest.new(env)
+p([RackRequest.host(req), RackRequest.hostname(req), RackRequest.port(req), RackRequest.url(req), RackRequest.accept_language(req)])
+
+puts("-- RackResponse")
+res = RackResponse.new
+p(RackResponse.finish(res))
+p([RackResponse.status(res), RackResponse.ok?(res), RackResponse.successful?(res), RackResponse.body(res), RackResponse.headers(res)])
+res = RackResponse.new("hi")
+p(RackResponse.finish(res))
+res = RackResponse.new(String["a", "bc"], 201, Hash["Content-Type" => "text/plain", "X-Y" => "z"])
+p(RackResponse.finish(res))
+RackResponse.write(res, "d")
+p(RackResponse.finish(res))
+p([RackResponse.content_type(res), RackResponse.media_type(res), RackResponse.content_length(res), RackResponse.get_header(res, "x-y"), RackResponse.has_header?(res, "x-y"), RackResponse.has_header?(res, "nope"), RackResponse.created?(res)])
+res = RackResponse.new
+RackResponse.set_cookie(res, "s", Hash[value: "1", path: "/", http_only: true, same_site: :lax])
+RackResponse.set_cookie(res, "t", "2")
+p(RackResponse.headers(res))
+RackResponse.delete_cookie(res, "s")
+p(RackResponse.set_cookie_header(res))
+RackResponse.add_header(res, "vary", "accept-encoding")
+RackResponse.add_header(res, "vary", "cookie")
+p([RackResponse.get_header(res, "vary"), RackResponse.add_header(res, "vary", nil)])
+RackResponse.redirect(res, "/elsewhere")
+p([RackResponse.status(res), RackResponse.location(res), RackResponse.redirect?(res), RackResponse.redirection?(res)])
+res = RackResponse.new("gone", 204, Hash["content-type" => "text/plain"])
+p(RackResponse.finish(res))
+p([RackResponse.no_content?(res), RackResponse.client_error?(res), RackResponse.invalid?(res)])
+res = RackResponse.new(nil, 404)
+RackResponse.write(res, "a")
+RackResponse.write(res, "é")
+p([RackResponse.finish(res), RackResponse.not_found?(res), RackResponse.server_error?(res)])
+res = RackResponse.new(nil, "500")
+p([RackResponse.status(res), RackResponse.server_error?(res)])
+RackResponse.set_content_type(res, "application/json")
+RackResponse.set_etag(res, "\"abc\"")
+RackResponse.set_cache_control(res, "no-store")
+RackResponse.set_header(res, "x-removed", "1")
+RackResponse.delete_header(res, "x-removed")
+p(RackResponse.headers(res))
+parts = String[]
+RackResponse.each(RackResponse.new(String["x", "y"])) { |s| Array.push(parts, s) }
+p(parts)
+
+puts("-- the app through RackMockRequest")
+app = Counter.new(Hello.new)
+status, headers, body = RackApp.call(app, RackMockRequest.env_for("/?name=Sake"))
+p([status, headers, body])
+p(RackMockRequest.get(app, "/form", params: Hash["q" => "1"]))
+p(RackMockRequest.post(app, "/form", params: Hash["a" => "1", "b" => Hash["c" => "2"]]))
+p(RackMockRequest.post(app, "/form?x=9", input: "k=v", headers: Hash["CONTENT_TYPE" => "application/x-www-form-urlencoded"]))
+p(RackMockRequest.post(app, "/raw", input: "k=v", headers: Hash["CONTENT_TYPE" => "application/x-www-form-urlencoded"]))
+p(RackMockRequest.get(app, "/cookie", headers: Hash["HTTP_COOKIE" => "a=1; b=2"]))
+p(RackMockRequest.get(app, "/go"))
+p(RackMockRequest.get(app, "/nothing"))
+p(RackMockRequest.get(app, "/missing"))
+p(Counter.count(app))
+
+puts("-- the app served by webrick (Rackup::Handler::WEBrick)")
+srv = HTTPServer.new("127.0.0.1", 0)
+port = HTTPServer.port(srv)
+HTTPServer.mount(srv, "/", RackupHandlerWEBrick.new(app))
+t = Thread.new { HTTPServer.start(srv) }
+def url(port, path) = URI.parse("http://127.0.0.1:#{port}#{path}")
+def show(res)
+  puts("#{NetHTTPResponse.code(res)} type=#{Kernel.inspect(res["content-type"])} length=#{Kernel.inspect(res["content-length"])} count=#{res["x-count"]} body=#{Kernel.inspect(NetHTTPResponse.body(res))}")
+end
+show(NetHTTP.get_response(url(port, "/")))
+show(NetHTTP.get_response(url(port, "/?name=net")))
+show(NetHTTP.post_form(url(port, "/form"), Hash["k" => "v w", "n" => "1"]))
+show(NetHTTP.post(url(port, "/form"), "{\"a\":1}", Hash["Content-Type" => "application/json"]))
+show(NetHTTP.post(url(port, "/raw"), "{\"a\":1}", Hash["Content-Type" => "application/json"]))
+res = NetHTTP.get_response(url(port, "/cookie"), Hash["Cookie" => "a=1; b=2"])
+show(res)
+p(NetHTTPResponse.get_fields(res, "set-cookie"))
+res = NetHTTP.get_response(url(port, "/go"))
+puts("#{NetHTTPResponse.code(res)} location=#{String.sub(res["location"] || "", /:\d+\//, ":PORT/")}")
+show(NetHTTP.get_response(url(port, "/nothing")))
+show(NetHTTP.get_response(url(port, "/missing")))
+res = NetHTTP.get_response(url(port, "/info?q=1"), Hash["User-Agent" => "sake-test", "X-Requested-With" => "XMLHttpRequest"])
+puts(String.gsub(NetHTTPResponse.body(res) || "", /\d{4,5}/, "PORT"))
+HTTPServer.shutdown(srv)
+Thread.join(t)
+p(Counter.count(app))
+puts("end")

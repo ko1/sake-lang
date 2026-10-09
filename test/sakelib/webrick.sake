@@ -1,0 +1,146 @@
+require "webrick"
+require "net_http"
+
+# --- handlers: a type per mount_proc block; its fields are what the block closed over ---
+class Hello
+  attr_reader greeting
+  include HTTPHandler
+  def call(h, req, res)
+    res["Content-Type"] = "text/plain"
+    res.HTTPResponse.body = "#{@greeting}, #{HTTPRequest.query(req)["name"] || "world"}!\n"
+  end
+end
+
+class Echo
+  include HTTPHandler
+  def call(h, req, res)
+    HTTPResponse.set_content_type(res, "text/plain")
+    q = HTTPRequest.query(req)
+    body = HTTPRequest.body(req)
+    res.HTTPResponse.body = "#{HTTPRequest.request_method(req)} script=#{HTTPRequest.script_name(req)} info=#{HTTPRequest.path_info(req)} path=#{HTTPRequest.path(req)} qs=#{Kernel.inspect(HTTPRequest.query_string(req))} q=#{Kernel.inspect(Hash.sort_by(q) { |k, v| k })} ct=#{Kernel.inspect(HTTPRequest.content_type(req))} len=#{Kernel.inspect(req["content-length"])} body=#{Kernel.inspect(body)} token=#{Kernel.inspect(req["X-Token"])} host=#{Kernel.inspect(HTTPRequest.host(req))}"
+  end
+end
+
+class Created
+  attr_reader code
+  include HTTPHandler
+  def call(h, req, res)
+    HTTPResponse.set_status(res, @code)
+    res["X-Reason"] = HTTPResponse.reason_phrase(res) || ""
+    res.HTTPResponse.body = "made" if @code == 201
+  end
+end
+
+class Redirector
+  attr_reader to
+  include HTTPHandler
+  def call(h, req, res) = HTTPResponse.set_redirect(res, 302, @to)
+end
+
+class Boom
+  include HTTPHandler
+  def call(h, req, res) = raise("kaboom")
+end
+
+class Teapot
+  include HTTPHandler
+  def call(h, req, res) = raise(HTTPStatus.error(422, "short and stout"))
+end
+
+srv = HTTPServer.new("127.0.0.1", 0)
+port = HTTPServer.port(srv)
+p(HTTPServer.status(srv))
+HTTPServer.mount(srv, "/hello", Hello.new("Hi"))
+HTTPServer.mount_proc(srv, "/echo", Echo.new)
+HTTPServer.mount(srv, "/echo/deeper", Created.new(201))
+HTTPServer.mount(srv, "/nothing", Created.new(204))
+HTTPServer.mount(srv, "/go", Redirector.new("/hello?name=there"))
+HTTPServer.mount(srv, "/boom", Boom.new)
+HTTPServer.mount(srv, "/teapot", Teapot.new)
+t = Thread.new { HTTPServer.start(srv) }
+
+def url(port, path) = URI.parse("http://127.0.0.1:#{port}#{path}")
+
+def show(res)
+  body = NetHTTPResponse.body(res)
+  puts("#{NetHTTPResponse.code(res)} #{NetHTTPResponse.message(res)} type=#{Kernel.inspect(res["content-type"])} length=#{Kernel.inspect(res["content-length"])} body=#{Kernel.inspect(body)}")
+end
+
+puts("-- GET")
+show(NetHTTP.get_response(url(port, "/hello")))
+show(NetHTTP.get_response(url(port, "/hello?name=Sake&name=two")))
+show(NetHTTP.get_response(url(port, "/hello/")))
+show(NetHTTP.get_response(url(port, "/echo")))
+show(NetHTTP.get_response(url(port, "/echo/sub/path?x=1&y=a+b%21")))
+show(NetHTTP.get_response(url(port, "/echo/deeper/x")))
+show(NetHTTP.get_response(url(port, "/echo"), Hash["X-Token" => "t0k"]))
+
+puts("-- POST")
+show(NetHTTP.post_form(url(port, "/echo"), Hash["k" => "v w", "n" => "1"]))
+show(NetHTTP.post(url(port, "/echo"), "{\"a\":1}", Hash["Content-Type" => "application/json"]))
+
+puts("-- HEAD, 204, redirect, errors")
+res = NetHTTP.start("127.0.0.1", port) { |http| NetHTTP.head(http, "/hello") }
+show(res)
+show(NetHTTP.get_response(url(port, "/nothing")))
+res = NetHTTP.get_response(url(port, "/go"))
+puts("#{NetHTTPResponse.code(res)} location=#{String.sub(res["location"] || "", /:\d+\//, ":PORT/")} body=#{Kernel.inspect(NetHTTPResponse.body(res))}")
+res = NetHTTP.get_response(url(port, "/echo/deeper"))
+puts("#{NetHTTPResponse.code(res)} #{NetHTTPResponse.message(res)} reason=#{res["x-reason"]} body=#{Kernel.inspect(NetHTTPResponse.body(res))}")
+res = NetHTTP.get_response(url(port, "/missing"))
+puts("#{NetHTTPResponse.code(res)} #{NetHTTPResponse.message(res)} type=#{res["content-type"]} html=#{String.include?(NetHTTPResponse.body(res) || "", "<H1>Not Found</H1>")} path=#{String.include?(NetHTTPResponse.body(res) || "", "'/missing' not found.")}")
+res = NetHTTP.get_response(url(port, "/boom"))
+puts("#{NetHTTPResponse.code(res)} #{NetHTTPResponse.message(res)} kaboom=#{String.include?(NetHTTPResponse.body(res) || "", "kaboom")}")
+res = NetHTTP.get_response(url(port, "/teapot"))
+puts("#{NetHTTPResponse.code(res)} #{NetHTTPResponse.message(res)} msg=#{String.include?(NetHTTPResponse.body(res) || "", "short and stout")}")
+
+res = NetHTTP.start("127.0.0.1", port) { |http| NetHTTP.patch(http, "/echo", "x", Hash["Content-Type" => "text/plain"]) }
+puts("#{NetHTTPResponse.code(res)} #{NetHTTPResponse.message(res)} msg=#{String.include?(NetHTTPResponse.body(res) || "", "unsupported method &#39;PATCH&#39;.") || String.include?(NetHTTPResponse.body(res) || "", "unsupported method 'PATCH'.")}")
+res = NetHTTP.start("127.0.0.1", port) { |http| NetHTTP.put(http, "/echo", "x", Hash["Content-Type" => "text/plain"]) }
+show(res)
+res = NetHTTP.start("127.0.0.1", port) { |http| NetHTTP.send_request(http, "OPTIONS", "/echo") }
+puts("#{NetHTTPResponse.code(res)} allow=#{res["allow"]} body=#{Kernel.inspect(NetHTTPResponse.body(res))}")
+
+puts("-- raw HTTP/1.0 and a bad request")
+c = Socket.connect("127.0.0.1", port)
+Socket.write(c, "GET /hello?name=raw HTTP/1.0\r\n\r\n")
+Socket.close_write(c)
+status = Socket.gets(c) || ""
+rest = String[]
+l = Socket.gets(c)
+while l != nil
+  Array.push(rest, l)
+  l = Socket.gets(c)
+end
+Socket.close(c)
+puts(String.chomp(status))
+puts(Array.last(rest) || "")
+c = Socket.connect("127.0.0.1", port)
+Socket.write(c, "NOT A REQUEST\r\n\r\n")
+Socket.close_write(c)
+puts(String.chomp(Socket.gets(c) || ""))
+Socket.close(c)
+
+puts("-- unmount, shutdown")
+HTTPServer.unmount(srv, "/hello")
+res = NetHTTP.get_response(url(port, "/hello"))
+puts("#{NetHTTPResponse.code(res)} #{NetHTTPResponse.message(res)} type=#{res["content-type"]}")
+p(HTTPServer.status(srv))
+HTTPServer.shutdown(srv)
+Thread.join(t)
+p(HTTPServer.status(srv))
+begin
+  NetHTTP.get_response(url(port, "/hello"))
+  puts("still up?")
+rescue IOError
+  puts("refused")
+end
+
+puts("-- HTTPStatus, HTTPUtils")
+p([HTTPStatus.reason_phrase(200), HTTPStatus.reason_phrase(422), HTTPStatus.reason_phrase(599)])
+p([HTTPStatus.success?(204), HTTPStatus.redirect?(301), HTTPStatus.client_error?(404), HTTPStatus.server_error?(503), HTTPStatus.error?(200)])
+p(HTTPUtils.parse_query("a=1&b=x+y%21&a=2;c&=d"))
+p(HTTPUtils.parse_query(nil))
+p([HTTPUtils.escape_form("a b&c!"), HTTPUtils.unescape_form("a+b%26c"), HTTPUtils.escape("a b/c?d\"é"), HTTPUtils.unescape("a%20b"), HTTPUtils.escape_path("/a b/c?d=é/:x")])
+p([HTTPUtils.mime_type("index.html"), HTTPUtils.mime_type("x.PNG"), HTTPUtils.mime_type("Makefile")])
+puts("end")

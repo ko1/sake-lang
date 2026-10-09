@@ -1,0 +1,473 @@
+# webrick: a small HTTP/1.0-1.1 server over Sake's TCPServer, after Ruby's WEBrick (the subset that
+# `mount_proc` programs use). Ruby's nested names are flattened: WEBrick::HTTPServer -> HTTPServer,
+# WEBrick::HTTPRequest -> HTTPRequest, WEBrick::HTTPResponse -> HTTPResponse, WEBrick::HTTPStatus ->
+# HTTPStatus, WEBrick::HTTPUtils -> HTTPUtils.
+#
+# A handler cannot be a block (`mount_proc "/x" { |req, res| ... }`), since Sake does not keep blocks. It
+# is a value of a Struct type that includes HTTPHandler and defines `call(handler, req, res)`: the type is
+# the code, its fields are what the block would have closed over. `mount` keeps it under a path, and the
+# server runs `HTTPHandler.call`, which dispatches to the handler's type:
+#
+#   class Hello
+#     attr_reader greeting
+#     include HTTPHandler
+#     def call(h, req, res)
+#       res["Content-Type"] = "text/plain"
+#       res.HTTPResponse.body = "#{@greeting}, #{HTTPRequest.query(req)["name"]}!\n"
+#     end
+#   end
+#   srv = HTTPServer.new("127.0.0.1", 0)       # port 0: an ephemeral one, read with HTTPServer.port
+#   HTTPServer.mount(srv, "/hello", Hello.new("Hi"))
+#   t = Thread.new { HTTPServer.start(srv) }   # one thread per connection, one request per connection
+#   ...
+#   HTTPServer.shutdown(srv)
+#   Thread.join(t)
+#
+# Paths are matched as WEBrick's MountTable does: the longest mounted path that is the request path or a
+# prefix of it at a "/" boundary; `script_name` is the mounted part and `path_info` the rest.
+# Every response is sent with Content-Length and Connection: close (no keep-alive, no chunked bodies).
+# Errors raised by a handler, including HTTPStatus.error (WEBrick's `raise HTTPStatus::NotFound`), become
+# an error response with WEBrick's HTML body; an unknown path is 404.
+
+require "uri"
+
+module HTTPHandler
+  def call(h, req, res) = raise(NotImplementedError)
+
+  # Ruby's ProcHandler answers GET, HEAD, POST and PUT (do_GET & co.); other methods are 405. A handler type that
+  # answers more (a servlet with its own do_DELETE) defines `def allow?(h, method) = true`; its definition wins.
+  def allow?(h, method) = method == "GET" || method == "HEAD" || method == "POST" || method == "PUT"
+end
+
+# Ruby: raise WEBrick::HTTPStatus::NotFound, "msg" inside a handler. `code` picks the response's status.
+class HTTPStatusError < Exception
+  attr_reader code
+end
+
+module HTTPStatus
+  module_function
+
+  def status_message = once do
+    Hash[100 => "Continue", 101 => "Switching Protocols", 200 => "OK", 201 => "Created", 202 => "Accepted",
+         203 => "Non-Authoritative Information", 204 => "No Content", 205 => "Reset Content",
+         206 => "Partial Content", 207 => "Multi-Status", 300 => "Multiple Choices", 301 => "Moved Permanently", 302 => "Found",
+         303 => "See Other", 304 => "Not Modified", 305 => "Use Proxy", 307 => "Temporary Redirect",
+         400 => "Bad Request", 401 => "Unauthorized", 402 => "Payment Required",
+         403 => "Forbidden", 404 => "Not Found", 405 => "Method Not Allowed", 406 => "Not Acceptable",
+         407 => "Proxy Authentication Required", 408 => "Request Timeout", 409 => "Conflict", 410 => "Gone",
+         411 => "Length Required", 412 => "Precondition Failed", 413 => "Request Entity Too Large",
+         414 => "Request-URI Too Large", 415 => "Unsupported Media Type", 416 => "Request Range Not Satisfiable",
+         417 => "Expectation Failed", 422 => "Unprocessable Entity", 423 => "Locked", 424 => "Failed Dependency",
+         426 => "Upgrade Required", 428 => "Precondition Required", 429 => "Too Many Requests",
+         431 => "Request Header Fields Too Large", 451 => "Unavailable For Legal Reasons",
+         500 => "Internal Server Error", 501 => "Not Implemented", 502 => "Bad Gateway",
+         503 => "Service Unavailable", 504 => "Gateway Timeout", 505 => "HTTP Version Not Supported",
+         507 => "Insufficient Storage", 511 => "Network Authentication Required"]
+  end
+
+  # Ruby: WEBrick::HTTPStatus.reason_phrase(code) (nil for an unknown code)
+  def reason_phrase(code) = status_message[code]
+
+  def info?(code) = code >= 100 && code < 200
+  def success?(code) = code >= 200 && code < 300
+  def redirect?(code) = code >= 300 && code < 400
+  def error?(code) = code >= 400 && code < 600
+  def client_error?(code) = code >= 400 && code < 500
+  def server_error?(code) = code >= 500 && code < 600
+
+  # Ruby: raise WEBrick::HTTPStatus[code], msg. The message defaults to the reason phrase.
+  def error(code, message = nil) = HTTPStatusError.new(message || reason_phrase(code) || "", code)
+end
+
+module HTMLUtils
+  module_function
+  # Ruby: WEBrick::HTMLUtils.escape (& < > " only; not the quote)
+  def escape(s) = String.gsub(s, /[&"<>]/, once { Hash["&" => "&amp;", "\"" => "&quot;", "<" => "&lt;", ">" => "&gt;"] })
+end
+
+module HTTPUtils
+  module_function
+
+  # Ruby: WEBrick::HTTPUtils.parse_query(str): name => the first value (Ruby's FormData keeps the others in
+  # its `list`); pairs separated by & or ;.
+  def parse_query(str)
+    q = Hash[]
+    return q if str == nil
+    Array.each(String.split(str, /[&;]/)) do |x|
+      next if x == ""
+      key, _sep, val = String.partition(x, "=")
+      key = unescape_form(key)
+      q[key] = String.chomp(unescape_form(val)) unless Hash.key?(q, key)
+    end
+    q
+  end
+
+  # Ruby's _escape/_unescape: each unsafe byte becomes %XX. Unsafe for `escape`: control, space, <>#%", {}|\^[]`,
+  # and non-ASCII; `escape_form` also escapes the reserved ;/?:@&=+$, and turns a space into +.
+  def _escape(s, unsafe) = String.force_encoding(String.gsub(String.b(s), unsafe) { |m| format("%%%02X", String.ord(m)) }, "UTF-8")
+  def _unescape(s) = String.force_encoding(String.gsub(String.b(s), /%(\h\h)/) { |m| Array.pack(Array[m[1, 2] || ""], "H2") }, "UTF-8")
+
+  # (Ruby writes \x7f-\xff with /n; a Regexp literal with /n and bytes above \x7f stops Sake's lowering, see
+  # notes/webrick_bug_regexp_n_flag.sake, so non-ASCII bytes are [^\x00-\x7f] on the binary copy.)
+  def escape(s) = _escape(s, /[\x00-\x20\x7f<>#%"{}|\\^\[\]`]|[^\x00-\x7f]/)
+  def unescape(s) = _unescape(s)
+  def escape_form(s) = String.gsub(_escape(s, /[\x00-\x1f\x7f<>#%"{}|\\^\[\]`;\/?:@&=+$,]|[^\x00-\x7f]/), " ", "+")
+  def unescape_form(s) = _unescape(String.gsub(s, "+", " "))
+  # Ruby: escape_path("/a b/c") escapes each "/segment" (pchar: unreserved and :@&=+$, stay); text before the first "/" is dropped.
+  def escape_path(s) = Array.join(Array.map(String.scan(s, /\/([^\/]*)/)) { |seg| "/" + _escape(seg[0], /[^0-9a-zA-Z\-_.!~*'():@&=+$,]/) })
+
+  # Ruby: WEBrick::HTTPUtils.mime_type(filename, DefaultMimeTypes)
+  def mime_types = once do
+    Hash["html" => "text/html", "htm" => "text/html", "txt" => "text/plain", "css" => "text/css",
+         "js" => "application/javascript", "json" => "application/json", "xml" => "text/xml",
+         "png" => "image/png", "jpg" => "image/jpeg", "jpeg" => "image/jpeg", "gif" => "image/gif",
+         "svg" => "image/svg+xml", "ico" => "image/x-icon", "pdf" => "application/pdf", "zip" => "application/zip"]
+  end
+  def mime_type(filename)
+    m = String.match(filename, /\.(\w+)\z/)
+    (m && mime_types[String.downcase(m[1] || "")]) || "application/octet-stream"
+  end
+end
+
+# The parsed request. `header` is a Hash of downcased name => Array of values, as Ruby's; `req["Name"]` joins
+# them. `body` is the whole body (by Content-Length), or nil without one. `query` is the parsed query string,
+# or the form body of a POST with application/x-www-form-urlencoded, as Ruby's.
+class HTTPRequest
+  attr_reader request_method, unparsed_uri, http_version, request_line, header, body
+  attr_reader path, query_string, script_name, path_info, peeraddr
+  private attr_reader parsed_query
+  include Indexable
+
+  def initialize(req)
+    @request_method => String
+    @header = Hash[] if @header == nil
+    @script_name = "" if @script_name == nil
+    @path_info = @path if @path_info == nil
+    @parsed_query = nil
+  end
+
+  def [](req, name)
+    vs = @header[String.downcase(name)]
+    vs == nil || Array.empty?(vs) ? nil : Array.join(vs, ", ")
+  end
+
+  def content_type(req) = HTTPRequest.[](req, "content-type")
+
+  def content_length(req)
+    v = HTTPRequest.[](req, "content-length")
+    v ? String.to_i(v) : nil
+  end
+
+  def host(req)
+    h = HTTPRequest.[](req, "host")
+    h ? String.sub(h, /:\d+\z/, "") : nil
+  end
+
+  # Ruby: req.query (a Hash of name => value; see HTTPUtils.parse_query)
+  def query(req)
+    q = @parsed_query
+    return q if q
+    ct = content_type(req)
+    q = if @request_method == "GET" || @request_method == "HEAD"
+      HTTPUtils.parse_query(@query_string)
+    elsif ct != nil && String.start_with?(ct, "application/x-www-form-urlencoded")
+      HTTPUtils.parse_query(@body)
+    else
+      Hash[]
+    end
+    @parsed_query = q
+    q
+  end
+
+  def request_uri(req) = URI.parse(@unparsed_uri)
+
+  # Internal: the mount table's split of the path.
+  def _route(req, dir)
+    @script_name = dir == "/" ? "" : dir
+    @path_info = String.[](@path, String.length(@script_name)..) || ""
+    nil
+  end
+
+  def each(req)
+    Hash.each(@header) { |k, vs| yield(k, Array.join(vs, ", ")) }
+    req
+  end
+
+  def to_s(req) = @request_line
+  def inspect(req) = "#<WEBrick::HTTPRequest #{@request_method} #{@unparsed_uri} #{@http_version}>"
+
+  # Internal: `path` and `query_string` from the request target (an absolute-form target keeps its path).
+  def _split_target(target)
+    t = target
+    m = String.match(t, /\Ahttps?:\/\/[^\/]*(\/.*)?\z/)
+    t = (m[1] || "/") if m
+    pth, _q, qs = String.partition(t, "?")
+    [pth == "" ? "/" : pth, _q == "" ? nil : qs]
+  end
+end
+
+# The response a handler fills: `status` (HTTPResponse.set_status(res, 404) sets the reason phrase too, as Ruby's
+# `status=`), header fields with `res["Name"] = v` (one value per name), `cookies` (an Array of String, each sent as
+# its own Set-Cookie line, as Ruby's `res.cookies`), `body` (a String). `Content-Length` is added when sent.
+class HTTPResponse
+  attr_reader http_version, status, reason_phrase, header, cookies
+  attr_accessor body
+  attr_reader sent_size
+  include Indexable
+
+  def initialize(res)
+    @http_version = "1.1" if @http_version == nil
+    @status = 200 if @status == nil
+    @reason_phrase = HTTPStatus.reason_phrase(@status) if @reason_phrase == nil
+    @header = Hash[] if @header == nil
+    @cookies = String[] if @cookies == nil
+    @body = "" if @body == nil
+    @sent_size = 0
+  end
+
+  def [](res, name) = @header[String.downcase(name)]
+  def []=(res, name, v)
+    @header[String.downcase(name)] = "#{v}"
+    v
+  end
+
+  # Ruby: res.status = code (also sets reason_phrase)
+  def set_status(res, code)
+    code => Integer
+    @status = code
+    @reason_phrase = HTTPStatus.reason_phrase(code)
+    code
+  end
+  def status(res) = @status
+
+  def content_type(res) = @header["content-type"]
+  def set_content_type(res, t) = HTTPResponse.[]=(res, "content-type", t)
+  def content_length(res)
+    v = @header["content-length"]
+    v ? String.to_i(v) : nil
+  end
+  def set_content_length(res, n) = HTTPResponse.[]=(res, "content-length", n)
+
+  def status_line(res) = String.rstrip("HTTP/#{@http_version} #{@status} #{@reason_phrase}") + "\r\n"
+
+  def each(res)
+    Hash.each(@header) { |k, v| yield(k, v) }
+    res
+  end
+
+  # Ruby: res.set_redirect(WEBrick::HTTPStatus::Found, url) raises; here set_redirect(302, url) does the same.
+  def set_redirect(res, code, url)
+    u = "#{url}"
+    @body = "<HTML><A HREF=\"#{u}\">#{u}</A>.</HTML>\n"
+    @header["location"] = u
+    raise HTTPStatus.error(code)
+  end
+
+  # Ruby's set_error body (the HTML page WEBrick sends for an error status).
+  def set_error(res, code, message)
+    set_status(res, code)
+    @header["content-type"] = "text/html; charset=ISO-8859-1"
+    @body = "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0//EN\">\n<HTML>\n  <HEAD><TITLE>#{@reason_phrase}</TITLE></HEAD>\n  <BODY>\n    <H1>#{@reason_phrase}</H1>\n    #{HTMLUtils.escape(message)}\n    <HR>\n    <ADDRESS>\n     WEBrick (Sake)\n    </ADDRESS>\n  </BODY>\n</HTML>\n"
+    nil
+  end
+
+  def inspect(res) = "#<WEBrick::HTTPResponse #{@status} #{@reason_phrase}>"
+  def to_s(res) = inspect(res)
+end
+
+# HTTPServer.new(host, port): WEBrick::HTTPServer.new(BindAddress: host, Port: port). `port` is the port
+# bound (for 0, the one picked). `status` is :Stop, :Running, or :Shutdown, as Ruby's.
+class HTTPServer
+  attr_reader host, port, status
+  private attr_reader sock, mount_tab, lock
+
+  def initialize(srv)
+    @host => String
+    @port => Integer
+    @sock = TCPServer.new(@host, @port)
+    @port = TCPServer.port(@sock)
+    @mount_tab = Hash[]
+    @status = :Stop
+    @lock = Mutex.new
+  end
+
+  # Ruby: server.mount(dir, servlet) / server.mount_proc(dir) { |req, res| }: `handler` includes HTTPHandler.
+  def mount(srv, dir, handler)
+    @mount_tab[_normalize(dir)] = handler
+    nil
+  end
+  def mount_proc(srv, dir, handler) = mount(srv, dir, handler)
+
+  def unmount(srv, dir)
+    Hash.delete(@mount_tab, _normalize(dir))
+    nil
+  end
+  def umount(srv, dir) = unmount(srv, dir)
+
+  def _normalize(dir)
+    d = String.sub(dir, /\/+\z/, "")
+    d == "" ? "/" : d
+  end
+
+  # The longest mounted path that is `path` or a prefix of it ending at a "/" (as WEBrick's MountTable.scan).
+  def _lookup(srv, path)
+    best = nil
+    Hash.each_key(@mount_tab) do |dir|
+      ok = dir == "/" || path == dir || String.start_with?(path, dir + "/")
+      best = dir if ok && (best == nil || String.length(dir) > String.length(best))
+    end
+    best
+  end
+
+  def listeners(srv) = Array[@sock]
+
+  # Ruby: server.start. Accepts until shutdown; each connection is served in its own thread.
+  def start(srv)
+    Mutex.synchronize(@lock) { @status = :Running }
+    loop do
+      c = _accept(srv)
+      break if c == nil || @status != :Running
+      _spawn(srv, c)
+    end
+    Mutex.synchronize(@lock) { @status = :Stop }
+    nil
+  end
+
+  # nil once the listening socket is closed by shutdown (accept raises IOError then).
+  def _accept(srv)
+    TCPServer.accept(@sock)
+  rescue IOError
+    nil
+  end
+
+  # A function of its own so that each thread gets its own `c` (a function's locals are shared by its threads).
+  def _spawn(srv, c) = Thread.new { _serve(srv, c) }
+
+  # Ruby: server.shutdown. Closes the listening socket, which ends the accept loop in `start`.
+  def shutdown(srv)
+    Mutex.synchronize(@lock) { @status = :Shutdown }
+    TCPServer.close(@sock)
+    nil
+  end
+  def stop(srv) = shutdown(srv)
+
+  # --- one connection: parse the request, run the handler, send the response ---
+  def _read_request(sock)
+    line = Socket.gets(sock)
+    return nil if line == nil
+    line = String.chomp(line)
+    m = String.match(line, /\A(\S+)\s+(\S+)(?:\s+HTTP\/(\d+\.\d+))?\s*\z/)
+    raise HTTPStatus.error(400, "bad Request-Line '#{line}'.") unless m
+    header = Hash[]
+    l = Socket.gets(sock)
+    last = nil
+    while l != nil && String.chomp(l) != ""
+      l = String.chomp(l)
+      if String.match?(l, /\A[ \t]/) && last
+        vs = header[last]
+        Array.push(vs, String.strip(l)) if vs
+      else
+        k, _sep, v = String.partition(l, ":")
+        raise HTTPStatus.error(400, "bad header '#{l}'.") if _sep == ""
+        last = String.downcase(k)
+        vs = header[last]
+        if vs
+          Array.push(vs, String.strip(v))
+        else
+          header[last] = String[String.strip(v)]
+        end
+      end
+      l = Socket.gets(sock)
+    end
+    target = m[2] || "/"
+    path, qs = HTTPRequest._split_target(target)
+    lens = header["content-length"]
+    body = lens ? _read_n(sock, String.to_i(Array.join(lens))) : nil
+    HTTPRequest.new(m[1] || "GET", target, m[3] || "0.9", line, header, body, path, qs, "", path, nil)
+  end
+
+  def _read_n(sock, n)
+    return "" if n == 0
+    out = String[]
+    got = 0
+    while got < n
+      s = Socket.read(sock, n - got)
+      break if s == nil || s == ""
+      got += String.bytesize(s)
+      Array.push(out, s)
+    end
+    Array.join(out)
+  end
+
+  def _send(sock, req, res)
+    body = HTTPResponse.body(res)
+    head = req != nil && HTTPRequest.request_method(req) == "HEAD"
+    st = HTTPResponse.status(res)
+    no_body = st == 204 || st == 304 || HTTPStatus.info?(st)
+    hdr = HTTPResponse.header(res)
+    if no_body
+      Hash.delete(hdr, "content-length")
+    else
+      hdr["content-length"] = Integer.to_s(String.bytesize(body))
+    end
+    # A relative Location becomes absolute against the request's URI, as WEBrick's setup_header does.
+    loc = hdr["location"]
+    if loc != nil && req != nil
+      base = URI.parse("http://#{req["host"] || "localhost"}#{HTTPRequest.unparsed_uri(req)}")
+      hdr["location"] = URI.to_s(URI.merge(base, loc))
+    end
+    hdr["connection"] = "close"
+    hdr["server"] = "WEBrick (Sake)" unless Hash.key?(hdr, "server")
+    out = String[HTTPResponse.status_line(res)]
+    Hash.each(hdr) do |k, v|
+      name = Array.join(Array.map(String.split(k, "-", -1)) { |w| String.capitalize(w) }, "-")
+      Array.push(out, "#{name}: #{v}\r\n")
+    end
+    Array.each(HTTPResponse.cookies(res)) { |c| Array.push(out, "Set-Cookie: #{c}\r\n") }
+    Array.push(out, "\r\n")
+    Array.push(out, body) unless head || no_body
+    Socket.write(sock, Array.join(out))
+    nil
+  end
+
+  # Ruby: HTTPServer#service: the mount table picks the handler, which fills `res`.
+  def service(srv, req, res)
+    dir = _lookup(srv, HTTPRequest.path(req))
+    raise HTTPStatus.error(404, "'#{HTTPRequest.path(req)}' not found.") unless dir
+    handler = @mount_tab[dir]
+    raise HTTPStatus.error(404, "'#{HTTPRequest.path(req)}' not found.") unless handler
+    HTTPRequest._route(req, dir)
+    m = HTTPRequest.request_method(req)
+    if m == "OPTIONS"                      # AbstractServlet#do_OPTIONS: the Allow header, nothing else
+      res["Allow"] = HTTPHandler.allow?(handler, "DELETE") ? "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT" : "GET,HEAD,OPTIONS,POST,PUT"
+      return nil
+    end
+    raise HTTPStatus.error(405, "unsupported method '#{m}'.") unless HTTPHandler.allow?(handler, m)
+    HTTPHandler.call(handler, req, res)
+    nil
+  end
+
+  def _serve(srv, sock)
+    req = nil
+    res = HTTPResponse.new
+    failed = false
+    begin
+      req = _read_request(sock)
+      service(srv, req, res) if req
+    rescue HTTPStatusError => e
+      failed = true
+      code = HTTPStatusError.code(e)
+      if HTTPStatus.redirect?(code)
+        HTTPResponse.set_status(res, code)
+      else
+        HTTPResponse.set_error(res, code, Exception.message(e))
+      end
+    rescue => e
+      failed = true
+      HTTPResponse.set_error(res, 500, Exception.message(e))
+    end
+    _send(sock, req, res) if req != nil || failed
+  ensure
+    Socket.close(sock)
+  end
+end

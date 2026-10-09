@@ -1,0 +1,166 @@
+# httparty: the HTTParty gem's module functions over NetHTTP (sakelib/net_http.sake).
+# HTTParty.get(url, query: Hash[...], headers: Hash[...], basic_auth: Hash[username: "u", password: "p"]),
+# HTTParty.post(url, body: String | Hash, ...), put, patch, delete, head, options. A Hash body is sent as
+# application/x-www-form-urlencoded (HTTParty's HashConversions.to_params, Rack-style nested keys); a String body
+# is sent as given (set the Content-Type header for JSON). `query` is appended to the URL's query string.
+#
+# Ruby's nested names are flattened: HTTParty::Response -> HTTPartyResponse. `parsed_response` is the JSON value
+# for a JSON content type (HTTParty's Parser; XML/CSV are not parsed here), else the body String.
+# HTTParty's class-level DSL (`base_uri`, `default_params`, `format :json`, `headers`) is a class macro storing state
+# in the including class; Sake has no class state, so it is a HTTPartyClient value with those fields, used as
+# HTTPartyClient.get(client, path, ...) — "include HTTParty" becomes "hold a client".
+
+require "net_http"
+require "uri"
+require "json"
+
+# Ruby: HTTParty::Response. `code` is an Integer, `headers` a Hash of downcased name => String (joined with ", ").
+class HTTPartyResponse
+  attr_reader code, body, headers, request_uri, response, parsed_response
+  private attr_reader message
+
+  def initialize(r)
+    @code => Integer
+    @parsed_response = HTTParty._parse(@body, @headers["content-type"]) if @parsed_response == nil
+  end
+
+  def success?(r) = @code >= 200 && @code < 300
+  def ok?(r) = @code == 200
+  def redirection?(r) = @code >= 300 && @code < 400
+  def client_error?(r) = @code >= 400 && @code < 500
+  def server_error?(r) = @code >= 500 && @code < 600
+  def not_found?(r) = @code == 404
+  def unauthorized?(r) = @code == 401
+  def forbidden?(r) = @code == 403
+  def bad_request?(r) = @code == 400
+  def nil?(r) = @body == nil || @body == ""
+
+  def message(r) = @message
+  def content_type(r) = NetHTTPResponse.content_type(@response)
+  def content_length(r) = NetHTTPResponse.content_length(@response)
+
+  # Ruby: response.headers["content-type"] (case-insensitive)
+  def header(r, name) = @headers[String.downcase(name)]
+  include Indexable
+  # Ruby: response["key"] reads the parsed JSON object (Hash); for a String body, its character at an Integer index
+  def [](r, k)
+    pr = @parsed_response
+    (Hash|Array|String).[](pr, k)
+  end
+
+  def to_s(r) = @body || ""
+  def inspect(r) = "#<HTTParty::Response:0x code=#{@code} body=#{Kernel.inspect(@body)} message=#{Kernel.inspect(@message)} headers=#{Kernel.inspect(@headers)}>"
+end
+
+module HTTParty
+  module_function
+
+  # HTTParty::HashConversions.to_params: {a: 1, b: [1, 2], c: {d: 3}} -> "a=1&b[]=1&b[]=2&c[d]=3"
+  def to_params(hash) = Array.join(Hash.map(hash) { |k, v| normalize_param(k, v) }, "&")
+
+  def normalize_param(key, value)
+    case value
+    in Array
+      Array.join(Array.map(value) { |v| normalize_param("#{key}[]", v) }, "&")
+    in Hash
+      Array.join(Hash.map(value) { |k, v| normalize_param("#{key}[#{k}]", v) }, "&")
+    in nil
+      URI.encode_www_form_component("#{key}")
+    else
+      "#{URI.encode_www_form_component("#{key}")}=#{URI.encode_www_form_component("#{value}")}"
+    end
+  end
+
+  def _parse(body, content_type)
+    return nil if body == nil
+    ct = content_type ? String.downcase(content_type) : ""
+    if String.match?(ct, /\A\s*(?:application\/(?:hal\+|problem\+|vnd\.api\+)?json|text\/json|application\/x-javascript|text\/javascript)/)
+      body == "" ? nil : JSON.parse(body)
+    else
+      body
+    end
+  end
+
+  def _uri(url, query)
+    u = (url in URI) ? URI.dup(url) : URI.parse(url)
+    if query != nil && !Hash.empty?(query)
+      q = URI.query(u)
+      extra = to_params(query)
+      u.URI.query = q == nil || q == "" ? extra : "#{q}&#{extra}"
+    end
+    u
+  end
+
+  # The request: `method` is the verb; the fields of HTTParty's options that matter here.
+  def _request(method, url, query, headers, body, basic_auth, timeout, follow_redirects, limit)
+    u = _uri(url, query)
+    path = URI.request_uri(u) || "/"
+    req = NetHTTPRequest.new(method, path, nil, NetHTTP._fields(headers))
+    req["User-Agent"] = "Ruby" unless NetHTTPRequest.key?(req, "user-agent")   # HTTParty leaves Net::HTTP's default
+    if body != nil
+      if body in Hash
+        req.NetHTTPRequest.body = to_params(body)
+        req["Content-Type"] = "application/x-www-form-urlencoded" unless NetHTTPRequest.key?(req, "content-type")
+      else
+        req.NetHTTPRequest.body = "#{body}"
+        req["Content-Type"] = "application/x-www-form-urlencoded" unless NetHTTPRequest.key?(req, "content-type")
+      end
+    end
+    if basic_auth != nil
+      basic_auth => Hash
+      NetHTTPRequest.basic_auth(req, "#{basic_auth[:username]}", "#{basic_auth[:password]}")
+    end
+    host = URI.hostname(u) || "localhost"
+    port = URI.port(u) || (URI.scheme(u) == "https" ? 443 : 80)
+    http = NetHTTP.new(host, port, timeout, timeout, URI.scheme(u) == "https")
+    res = NetHTTP.request(http, req)
+    code = String.to_i(NetHTTPResponse.code(res))
+    loc = res["location"]
+    if follow_redirects && loc != nil && (code == 301 || code == 302 || code == 303 || code == 307 || code == 308)
+      raise HTTPartyRedirectionTooDeep, "HTTP redirects too deep" if limit <= 0
+      target = URI.merge(u, loc)
+      meth = (code == 303 || ((code == 301 || code == 302) && method == "POST")) ? "GET" : method
+      return _request(meth, target, nil, headers, meth == "GET" ? nil : body, basic_auth, timeout, true, limit - 1)
+    end
+    hdrs = Hash[]
+    NetHTTPResponse.each_header(res) { |k, v| hdrs[k] = v }
+    HTTPartyResponse.new(code, NetHTTPResponse.body(res), hdrs, u, res, message: NetHTTPResponse.message(res))
+  end
+
+  def get(url, query: nil, headers: nil, basic_auth: nil, timeout: 60, follow_redirects: true) = _request("GET", url, query, headers, nil, basic_auth, timeout, follow_redirects, 5)
+  def head(url, query: nil, headers: nil, basic_auth: nil, timeout: 60, follow_redirects: true) = _request("HEAD", url, query, headers, nil, basic_auth, timeout, follow_redirects, 5)
+  def delete(url, query: nil, headers: nil, body: nil, basic_auth: nil, timeout: 60, follow_redirects: true) = _request("DELETE", url, query, headers, body, basic_auth, timeout, follow_redirects, 5)
+  def options(url, query: nil, headers: nil, basic_auth: nil, timeout: 60, follow_redirects: true) = _request("OPTIONS", url, query, headers, nil, basic_auth, timeout, follow_redirects, 5)
+  def post(url, body: nil, query: nil, headers: nil, basic_auth: nil, timeout: 60, follow_redirects: true) = _request("POST", url, query, headers, body, basic_auth, timeout, follow_redirects, 5)
+  def put(url, body: nil, query: nil, headers: nil, basic_auth: nil, timeout: 60, follow_redirects: true) = _request("PUT", url, query, headers, body, basic_auth, timeout, follow_redirects, 5)
+  def patch(url, body: nil, query: nil, headers: nil, basic_auth: nil, timeout: 60, follow_redirects: true) = _request("PATCH", url, query, headers, body, basic_auth, timeout, follow_redirects, 5)
+end
+
+class HTTPartyRedirectionTooDeep < Exception      # HTTParty::RedirectionTooDeep
+end
+
+# HTTParty's class DSL as a value: HTTPartyClient.new("http://api.example.com", headers: Hash["X-Key" => "k"],
+# default_params: Hash["format" => "json"]); then HTTPartyClient.get(client, "/users", query: ...).
+# Ruby: `class API; include HTTParty; base_uri "..."; headers "X-Key" => "k"; default_params format: "json"; end`.
+class HTTPartyClient
+  attr_reader base_uri
+  attr_accessor headers, default_params, basic_auth, timeout
+
+  def initialize(c)
+    @base_uri => String
+    @headers = Hash[] if @headers == nil
+    @default_params = Hash[] if @default_params == nil
+    @timeout = 60 if @timeout == nil
+  end
+
+  def _url(c, path) = String.end_with?(@base_uri, "/") && String.start_with?(path, "/") ? @base_uri + (String.[](path, 1..) || "") : @base_uri + path
+  def _query(c, query) = query ? Hash.merge(@default_params, query) : @default_params
+  def _headers(c, headers) = headers ? Hash.merge(@headers, headers) : @headers
+
+  def get(c, path, query: nil, headers: nil) = HTTParty.get(_url(c, path), query: _query(c, query), headers: _headers(c, headers), basic_auth: @basic_auth, timeout: @timeout)
+  def head(c, path, query: nil, headers: nil) = HTTParty.head(_url(c, path), query: _query(c, query), headers: _headers(c, headers), basic_auth: @basic_auth, timeout: @timeout)
+  def delete(c, path, query: nil, headers: nil, body: nil) = HTTParty.delete(_url(c, path), query: _query(c, query), headers: _headers(c, headers), body: body, basic_auth: @basic_auth, timeout: @timeout)
+  def post(c, path, body: nil, query: nil, headers: nil) = HTTParty.post(_url(c, path), body: body, query: _query(c, query), headers: _headers(c, headers), basic_auth: @basic_auth, timeout: @timeout)
+  def put(c, path, body: nil, query: nil, headers: nil) = HTTParty.put(_url(c, path), body: body, query: _query(c, query), headers: _headers(c, headers), basic_auth: @basic_auth, timeout: @timeout)
+  def patch(c, path, body: nil, query: nil, headers: nil) = HTTParty.patch(_url(c, path), body: body, query: _query(c, query), headers: _headers(c, headers), basic_auth: @basic_auth, timeout: @timeout)
+end
