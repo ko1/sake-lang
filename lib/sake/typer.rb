@@ -904,6 +904,14 @@ module Sake
           results << t("Boolean")
           next
         end
+        if struct_atom?(y) && (co = @program.functions.dig(y, "coerce")) # the right operand's type converts the pair
+          pair = call_user(co, [one(y), one(x)], nil)
+          record(node, "#{y}.coerce", "result", "Tuple", pair)
+          twos = atoms_of(pair, :tuple).select { _1[1].size == 2 }
+          results << binop(node, op, u(*twos.map { _1[1][0] }), u(*twos.map { _1[1][1] })) unless twos.empty?
+          hits += 1
+          next
+        end
         key = [x, y].map { atom_type_name(_1) }
         unless rows.key?(key)
           failing << [x, y]

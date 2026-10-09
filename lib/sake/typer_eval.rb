@@ -423,6 +423,17 @@ module Sake
         end
         lit = v.is_a?(Str) ? "String" : LIT_TYPES.fetch(v.value.class)
         [ty.select { atom_type_name(_1) == lit }, ty]
+      when PBind then [ty, []]
+      when PTuple # Tuples of the pattern's length whose every position may match; a position that may not keeps the Tuple on both sides
+        matched = []
+        rest = []
+        ty.each do |a|
+          next rest << a unless a.is_a?(Array) && a[0] == :tuple && a[1].size == pat.elems.size
+          parts = a[1].zip(pat.elems).map { |pty, sub| match_atoms(pty, sub) }
+          matched << a if parts.all? { |m, _| !m.empty? }
+          rest << a if parts.any? { |_, r| !r.empty? }
+        end
+        [matched, rest]
       end
     end
 
@@ -435,6 +446,13 @@ module Sake
       when PAlt
         bind_pattern(env, pat.left, matched)
         bind_pattern(env, pat.right, matched)
+      when PBind then assign(env, pat.slot, unknown?(matched) ? unknown("pattern") : of_atoms(matched))
+      when PTuple
+        pat.elems.each_with_index do |sub, i|
+          tuples = matched.select { _1.is_a?(Array) && _1[0] == :tuple }
+          pos = u(*tuples.map { |a| of_atoms(match_atoms(a[1][i], sub)[0]) })
+          bind_pattern(env, sub, unknown?(matched) ? unknown("pattern") : pos)
+        end
       end
     end
 

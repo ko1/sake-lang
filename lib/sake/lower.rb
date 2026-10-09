@@ -274,6 +274,8 @@ module Sake
       when Prism::HashPatternNode
         keys, slots = record_targets(pat)
         PRecord.new(keys:, slots:, origin: pat)
+      when Prism::ArrayPatternNode then PTuple.new(elems: pat.requireds.map { pattern(_1) }, origin: pat)
+      when Prism::LocalVariableTargetNode then PBind.new(slot: slot(pat.depth, pat.name), origin: pat)
       else PValue.new(value: lower(pat), origin: pat)
       end
     end

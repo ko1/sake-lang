@@ -820,8 +820,13 @@ module Sake
         ok = pat.constant.nil? && pat.rest.nil? && !pat.elements.empty? &&
              pat.elements.all? { |el| el.is_a?(Prism::AssocNode) && el.key.is_a?(Prism::SymbolNode) && pattern_target(el.value).is_a?(Prism::LocalVariableTargetNode) }
         error(pat, "only Record patterns that bind fields are supported: `in {x:, y: name}`") unless ok
+      when Prism::ArrayPatternNode # a Tuple pattern: one sub-pattern per position
+        ok = pat.constant.nil? && pat.rest.nil? && pat.posts.empty? && !pat.requireds.empty?
+        return error(pat, "a Tuple pattern names each position: `in [Integer, x]` (no `*rest`)") unless ok
+        pat.requireds.each { check_pattern(_1, ctx) }
+      when Prism::LocalVariableTargetNode then nil # binds the value (inside a Tuple pattern, or alone)
       else
-        error(pat, "unsupported pattern `#{first_line(pat.slice)}`; use a type (`in Integer`), a literal, `A | B`, or `{x:}`")
+        error(pat, "unsupported pattern `#{first_line(pat.slice)}`; use a type (`in Integer`), a literal, `A | B`, `{x:}`, or `[p, q]`")
       end
     end
 

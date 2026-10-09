@@ -312,6 +312,10 @@ module Sake
       when PValue
         lit = ev(pat.value, f)
         Values.type_of(lit) == Values.type_of(v) && lit == v
+      when PTuple then v.is_a?(Tuple) && v.elems.size == pat.elems.size && pat.elems.zip(v.elems).all? { |p, e| pattern_match?(e, p, f) }
+      when PBind
+        f.slots[pat.slot] = v
+        true
       end
     end
 
@@ -551,6 +555,15 @@ module Sake
       return user_op(node, mod, op, [a, b]) if a.is_a?(StructValue)
       # A value of another type is never equal to a Struct value (as `struct == other` says).
       return op == "!=" if %w[== !=].include?(op) && b.is_a?(StructValue)
+      # `1 + money`: a Struct type on the right that defines coerce(b, a) -> [a', b'] (Ruby's protocol) has the pair
+      # converted and the operator run on it (dispatched on a', usually a value of its own type).
+      if b.is_a?(StructValue) && (co = own_fn(b.type.name, "coerce"))
+        pair = call_user(co, [b, a], nil, node)
+        unless pair.is_a?(Tuple) && pair.elems.size == 2
+          fail_at(node, "TypeError", "#{b.type.name}.coerce must give a Tuple [left, right], got #{Values.describe(pair)}")
+        end
+        return binary_op(node, op, pair.elems[0], pair.elems[1])
+      end
       # Records compare by their fields (any two shapes; different shapes are not equal).
       return a.public_send(op, b) if %w[== !=].include?(op) && a.is_a?(RecordValue) && b.is_a?(RecordValue)
       rows = @registry.binary_ops[op]

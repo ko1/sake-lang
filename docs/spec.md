@@ -235,6 +235,11 @@ module, resolved statically:
 
 ### 5.6 Calling a module's functions: module_function and dispatch
 
+A name in a type or module is one function: Sake has no `def self.f` next to `def f`, because the
+"instance" form only means that the value comes first (`T.f(x, ...)`). Where Ruby has both a class
+method and an instance method of one name (`Net::HTTP.get(uri)` and `http.get(path)`), one of them
+takes another name, or one function tells the forms apart by the type of its first argument.
+
 A module's functions are of two kinds, as in Ruby:
 
 | Kind | How it is declared | `M.f(args)` |
@@ -319,7 +324,9 @@ end
   (`Time.at(t, in: "+09:00")`, `Dir.glob(pat, base: dir)`; builtins.md lists them as `[k: T]`).
   `f(k:)` passes the variable `k`, as in Ruby. Arguments are
   evaluated in the order written. A block parameter `&b` (or `&`) may only be passed on (§7).
-  `*rest` after the optional parameters collects the remaining positional arguments in a new Array,
+  `*rest` after the optional parameters collects the remaining positional arguments in a new Array
+  (so its elements share one type, the union of everything any call passes; to keep a type per
+  position, pass a Tuple: `notify(stock, ["AAPL", 120])`, then `name, price = event`),
   and `**opts` at the end the keywords that are not parameters in a Hash of Symbol keys; both are
   built at the call, since the callee is known (a function with `**opts` accepts any keyword, so a
   misspelled one is no longer an error there). Parameters after `*rest` and nameless `*` / `**` are
@@ -398,6 +405,10 @@ operator through that module ([§5.6](#56-calling-a-modules-functions-module_fun
   operator in its class, such as `include Arithmetic` with `def +(a, b)`. With `include Comparable`,
   defining `<=>` is enough: `<`, `<=`, `>`, and `>=` come from it, and `Array.sort`, `min`, and `max`
   use it too.
+- **A built-in on the left.** `2 + money` dispatches on Integer, which has no row for Money. A
+  Struct type that defines `coerce(b, a)`, giving a Tuple `[left, right]` as Ruby's protocol does,
+  has the pair converted first and the operator run on it: `def coerce(m, other) = [Money.new(other * 100), m]`
+  makes `2 + money` into `Money.new(200) + money`. The checker follows the conversion.
 - **Equality.** `==` on Struct values compares the type and the fields, as Ruby's Struct does,
   unless the type defines its own `==`. A type that includes `Comparable` and defines `<=>` (and not
   `==`) is equal to a value of the same type when `<=>` gives 0, as Ruby's `Comparable#==`; a value
@@ -493,6 +504,8 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
 | `nil`, `true`, `false`, `1`, `"s"`, `:ok` | an equal value of the same type |
 | `P \| Q` | either |
 | `{x:, y: name}` | a Record with those fields; binds the locals `x` and `name` |
+| `[P, Q]` | a Tuple of that length whose positions match `P` and `Q` (nested patterns allowed) |
+| `x` (a bare name inside `[...]`, or alone) | anything; binds the local `x` |
 
 - **No dispatch.** Matching compares type tags and values. There is no `===`, so `case`/`when` is
   not supported.
@@ -537,7 +550,8 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 | `private attr_... x` | the reader and writer are for the class's own functions only (on any of its values: `@x`, or `T.x(other)`); `new` still takes it |
 
 - **Field order.** Fields are in the order written; it is the order of `C.new`'s arguments.
-- **`new`.** `C.new` takes the fields positionally, whatever their access, or by name:
+- **`new`.** `C.new` takes the fields positionally, whatever their access, or by name (prefer the
+  names for a type with several fields: a positional `new` is not checked against the field order):
   `Logger.new(io, level: :warn)` gives the first field by position and `level` by keyword (an unknown
   name and a field given twice are errors). Without `initialize`, every field must be given. With it,
   trailing fields may be left out (or skipped for a later keyword): they are nil when initialize
@@ -1150,6 +1164,6 @@ Each of these is rejected statically. Most wait on a design decision.
 - **The type scope `Integer.(a + b)`.**
 - **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**
 - **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.
-- **Patterns other than those in [§9.1](#91-pattern-matching)**: arrays, find patterns, pins, guards.
+- **Patterns other than those in [§9.1](#91-pattern-matching)**: `*rest` in a Tuple pattern, find patterns, pins, guards.
 - **Nested names** such as `URI::HTTP` (only the built-in constants `Math::PI` & co. are read).
 - **First-class blocks** (storing a block, `proc`, `lambda`): see §7 for what blocks can do.
