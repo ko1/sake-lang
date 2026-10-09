@@ -33,3 +33,16 @@
     Sake のブロックは第二級で Enumerator が無いので、Ruby の「ブロックを省くと Enumerator」は表せない。
 11. **`Hash#default=`** は `Hash.set_default(h, v)`。setter の名前規則（`set_x`）に揃えた。
 12. **`Process::CLOCK_MONOTONIC`** のような定数は `Process.CLOCK_MONOTONIC` という操作（`Math.PI` と同じ）。値の定数が無いことの帰結。
+
+## 10-09: Sake でテストを書いていて（string_test, collections_test）
+
+13. **実行時の型エラーを期待するテストは書けない。** `assert_raises { Array.push(Integer[1], "a") }`、`pair[5]`（Tuple の範囲外）、
+    `Range.to_a(1.0..2.0)` は、検査器がプログラム全体を実行前に拒否する（それが仕様: 「到達しない枝も検査する」）。
+    テストでそれを確かめるには `--strict=0` で別のファイルにするか、検査器の報告をテストするしかない。Ruby の感覚で
+    「例外が出ることを確かめる」テストを書くと、テストファイルごと落ちる。これは言語の設計どおりだが、テストスイートの作りに効く。
+14. **同じ理由で、1 つの Hash に別の型の鍵を入れる試験も書けない。** `Hash.store(h, /re/, 1)` を試すと、`h` の鍵の型が
+    `Symbol | Regexp` になり、他の行の `Symbol.to_s(k)` が partial になる。新しい Hash で試すしかない。
+15. **`a + b` と `a - b` は新しい配列**（Ruby と同じ）。期待値を自分で間違えたが、Sake では `Array.concat` が破壊的で `+` が非破壊という
+    Ruby の区別がそのまま残っているのは良い。
+16. **Ruby 4.0 の `Set#select` は Array を返す**（Sake もそれに合わせている）。Ruby 側の挙動で、移植のとき Ruby の版を確かめる必要がある。
+17. **`String.b(s) == "\xE3\x81\x82"` は false**（Ruby と同じ: バイト列が同じでもエンコーディングが違う）。`String.encoding` で確かめる。
