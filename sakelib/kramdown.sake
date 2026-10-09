@@ -1,0 +1,690 @@
+# kramdown: Markdown → HTML after the kramdown gem, for the common subset.
+#
+# Kramdown.to_html(text) gives what kramdown 2.5 gives for
+#   Kramdown::Document.new(text, input: "GFM", hard_wrap: false,
+#                          gfm_quirks: [:paragraph_end, :no_auto_typographic],
+#                          smart_quotes: %w[apos apos quot quot]).to_html
+# that is, kramdown's GFM parser (``` fences, a list or a heading may interrupt a paragraph) without
+# the typographic rewrites (smart quotes, -- and ...). Supported: ATX and setext headings (with
+# GFM auto ids), paragraphs, * and _ emphasis, ** and __ strong, `code` spans, indented and fenced
+# code blocks, inline and reference links, images, <http://autolinks>, ordered and unordered lists
+# (nested, tight or loose), blockquotes, horizontal rules, hard breaks (two spaces or \ before a
+# newline), backslash escapes, HTML entities, and the escaping of <, > and &.
+# Not supported: raw HTML, tables, footnotes, definition lists, abbreviations, {:attribute} lists,
+# math, header {#ids}, link definitions spanning two lines.
+#
+# The tree is an Array of KNode; Kramdown.parse(text) gives it, Kramdown.render(nodes) the HTML.
+
+# A node of the document tree. kind: :blank :eob :p :header :codeblock :blockquote :ul :ol :li :hr
+# (blocks), :text :raw :em :strong :codespan :a :img :br (spans). text: the text (also a header's
+# source text, a code block's code, an image's alt), href: a link's href or an image's src, lang: a
+# fenced block's language, level: a header's level, count: open brackets while reading a link's text.
+class KNode
+  attr_reader kind
+  attr_accessor text, level, href, title, lang, transparent, count
+  attr_accessor children
+
+  def initialize(n)
+    @kind => Symbol
+    @text = "" if @text == nil
+    @level = 0 if @level == nil
+    @href = "" if @href == nil
+    @lang = "" if @lang == nil
+    @transparent = false if @transparent == nil
+    @count = 0 if @count == nil
+    @children = KNode[]
+  end
+end
+
+# Block parsing over the lines of a source (without their newlines), as kramdown's block parsers:
+# blank line, indented code, fenced code, blockquote, ATX header, hr, list, setext header, link
+# definition, paragraph, tried in that order at each line.
+class KBlocks
+  attr_reader lines
+  private attr_accessor pos
+
+  def initialize(b) = @pos = 0
+
+  def blank?(s) = String.match?(s, /\A\s*\z/)
+  def indented?(s) = String.match?(s, /\A(?:\t| {4})/)
+  def list_start?(s) = String.match?(s, /\A {0,3}(?:[+*-]|\d+\.)[\t| ]/)
+  def hr?(s) = String.match?(s, /\A {0,3}(\*|-|_)[ \t]*\1[ \t]*\1(\1|[ \t])*\z/)
+  def fence_start?(s) = String.match?(s, /\A {0,3}[~`]{3,}/)
+  def quote_start?(s) = String.match?(s, /\A {0,3}> ?/)
+  def link_def_re = /\A {0,3}\[([^\]]+)\]:[ \t]*(?:<([^>]*)>|(\S+))(?:[ \t]+(["'])(.+?)\4)?[ \t]*\z/
+  def paragraph_end?(s)
+    blank?(s) || list_start?(s) || String.match?(s, /\A\#{1,6}[\t ]+/) || quote_start?(s) ||
+      fence_start?(s) || String.match?(s, /\A {0,3}:[\t| ]/)
+  end
+
+  def line(b, i) = Array.fetch(@lines, i)
+  def size(b) = Array.size(@lines)
+
+  def parse(b)
+    out = KNode[]
+    while @pos < size(b)
+      l = line(b, @pos)
+      if blank?(l)
+        last = Array.last(out)
+        Array.push(out, KNode.new(:blank)) unless last && KNode.kind(last) == :blank
+        @pos += 1
+      elsif indented?(l)
+        parse_codeblock(b, out)
+      elsif fence_start?(l) && parse_fenced(b, out)
+        nil
+      elsif quote_start?(l)
+        parse_blockquote(b, out)
+      elsif String.match?(l, /\A\#{1,6}[\t ]+/) && parse_atx(b, out)
+        nil
+      elsif hr?(l)
+        Array.push(out, KNode.new(:hr))
+        @pos += 1
+      elsif list_start?(l)
+        parse_list(b, out)
+      elsif setext?(b, out)
+        parse_setext(b, out)
+      elsif String.match?(l, link_def_re)
+        Array.push(out, KNode.new(:eob))
+        @pos += 1
+      else
+        parse_paragraph(b, out)
+      end
+    end
+    out
+  end
+
+  # An indented block, with its lazy lines (joined to the line before with a space, as kramdown) and
+  # the blank lines that more indented lines follow.
+  def parse_codeblock(b, out)
+    buf = String[]
+    n = size(b)
+    while @pos < n
+      l = line(b, @pos)
+      if blank?(l)
+        j = @pos
+        j += 1 while j < n && blank?(line(b, j))
+        break unless j < n && indented?(line(b, j))
+        while @pos < j
+          Array.push(buf, String.sub(line(b, @pos), /\A(?:\t| {4})/, ""))
+          @pos += 1
+        end
+      elsif indented?(l)
+        Array.push(buf, String.sub(l, /\A(?:\t| {4})/, ""))
+        @pos += 1
+      elsif Array.size(buf) > 0 && String.match?(l, /\A {0,3}\S/)
+        i = Array.size(buf) - 1
+        buf[i] = Array.fetch(buf, i) + " " + l
+        @pos += 1
+      else
+        break
+      end
+    end
+    Array.push(out, KNode.new(:codeblock, Array.join(buf, "\n")))
+  end
+
+  # GFM fence: ``` or ~~~ (3 or more), an optional language, closed by the same fence or a longer one.
+  def parse_fenced(b, out)
+    m = String.match(line(b, @pos), /\A {0,3}(([~`]){3,})\s*?((\S+?)(?:\?\S*)?)?\s*\z/)
+    return false unless m
+    open = m[1] || ""
+    ch = m[2] || ""
+    close_re = /\A {0,3}#{Regexp.escape(open)}#{Regexp.escape(ch)}*\s*\z/
+    j = @pos + 1
+    j += 1 while j < size(b) && !String.match?(line(b, j), close_re)
+    return false if j >= size(b)
+    body = Array.join(Array.map(Range.to_a((@pos + 1)...j)) { |i| line(b, i) }, "\n")
+    Array.push(out, KNode.new(:codeblock, body, lang: m[4] || ""))
+    @pos = j + 1
+    true
+  end
+
+  # Lines up to a blank line, with `> ` removed where present (lazy lines stay), parsed as blocks.
+  def parse_blockquote(b, out)
+    buf = String[]
+    while @pos < size(b)
+      l = line(b, @pos)
+      break if blank?(l)
+      Array.push(buf, String.sub(l, /\A {0,3}> ?/, ""))
+      @pos += 1
+    end
+    node = KNode.new(:blockquote)
+    KNode.set_children(node, KBlocks.parse(KBlocks.new(buf)))
+    Array.push(out, node)
+  end
+
+  def parse_atx(b, out)
+    m = String.match(line(b, @pos), /\A(\#{1,6})[\t ]+(.*)\z/)
+    return false unless m
+    text = String.rstrip(String.sub(String.rstrip(m[2] || ""), /[\t ]#+\z/, ""))
+    return false if text == ""
+    Array.push(out, KNode.new(:header, text, level: String.size(m[1] || "")))
+    @pos += 1
+    true
+  end
+
+  # A setext header needs a block boundary before it (nothing, a blank line, or a link definition).
+  def setext?(b, out)
+    return false unless @pos + 1 < size(b) && String.match?(line(b, @pos + 1), /\A[-=][-=]*[ \t]*\z/)
+    last = Array.last(out)
+    last == nil || KNode.kind(last) == :blank || KNode.kind(last) == :eob
+  end
+
+  def parse_setext(b, out)
+    text = String.strip(line(b, @pos))
+    level = String.start_with?(line(b, @pos + 1), "=") ? 1 : 2
+    Array.push(out, KNode.new(:header, text, level:))
+    @pos += 2
+  end
+
+  # Lines up to a paragraph end; a paragraph right after another (the fence that never closed) joins it.
+  def parse_paragraph(b, out)
+    start = @pos
+    buf = String[line(b, @pos)]
+    @pos += 1
+    while @pos < size(b) && !paragraph_end?(line(b, @pos))
+      Array.push(buf, line(b, @pos))
+      @pos += 1
+    end
+    text = String.strip(Array.join(buf, "\n"))
+    last = Array.last(out)
+    if last && KNode.kind(last) == :p && start > 0
+      joiner = String.end_with?(line(b, start - 1), "  ") ? "  \n" : "\n"
+      KNode.set_text(last, KNode.text(last) + joiner + text)
+    else
+      Array.push(out, KNode.new(:p, text))
+    end
+  end
+
+  # kramdown's parse_list: items are collected with their indentation, each item's lines are parsed
+  # as blocks, then the first paragraph of a tight item is made transparent (no <p>).
+  def parse_list(b, out)
+    first = line(b, @pos)
+    ul = String.match?(first, /\A {0,3}[+*-][\t| ]/)
+    list = KNode.new(ul ? :ul : :ol)
+    items = Array[]                        # per item: Array of String[] (parts parsed separately)
+    parts = Array[String[]]
+    item_re = ul ? /\A( {0,3}[+*-])([\t| ].*)\z/ : /\A( {0,3}\d+\.)([\t| ].*)\z/
+    indentation = 0
+    nested = false
+    last_blank = false
+    n = size(b)
+    while @pos < n
+      l = line(b, @pos)
+      m = String.match(l, item_re)
+      if last_blank && hr?(l)
+        break
+      elsif m
+        marker = m[1] || ""
+        content = m[2] || ""
+        content = String.gsub(content, /\A(\t+)/) { |t| " " * (4 * String.size(t)) }
+        lead = String.match(content, /\A */)
+        indentation = String.size(marker) + (lead ? String.size(MatchData.to_s(lead)) : 0)
+        content = String.sub(content, /\A\s*/, "")
+        parts = Array[String[content]]
+        Array.push(items, parts)
+        w = Integer.clamp(indentation - 1, 0, 3)
+        item_re = ul ? /\A( {0,#{w}}[+*-])([\t| ].*)\z/ : /\A( {0,#{w}}\d+\.)([\t| ].*)\z/
+        nested = list_start?(content)
+        last_blank = false
+      elsif blank?(l)
+        nested = true
+        last_blank = true
+        Array.push(Array.fetch(parts, Array.size(parts) - 1), "")
+      elsif content_line?(l, indentation) || !last_blank
+        result = String.gsub(l, /\A(\t+)/) { |t| " " * (4 * String.size(t)) }
+        indent_found = String.start_with?(result, " " * indentation)
+        result = result[indentation, String.size(result) - indentation] || "" if indent_found
+        if !nested && indent_found && list_start?(result)
+          Array.push(parts, String[])
+          nested = true
+        elsif nested && !indent_found && list_start?(result)
+          result = " " * (indentation + 4) + result
+        end
+        Array.push(Array.fetch(parts, Array.size(parts) - 1), result)
+        last_blank = false
+      else
+        break
+      end
+      @pos += 1
+    end
+
+    last_blank_node = nil
+    lis = KNode.children(list)
+    Array.each_with_index(items) do |item_parts, idx|
+      li = KNode.new(:li)
+      Array.push(lis, li)
+      kids = KNode.children(li)
+      Array.each(item_parts) { |part| Array.concat(kids, KBlocks.parse(KBlocks.new(part))) }
+      next if Array.empty?(kids)
+      f = Array.fetch(kids, 0)
+      k = Array.size(kids)
+      is_last = idx == Array.size(items) - 1
+      second_blank = k >= 2 && KNode.kind(Array.fetch(kids, 1)) == :blank
+      if KNode.kind(f) == :p && (k < 2 || !second_blank || (is_last && k == 2)) &&
+          (!is_last || Array.size(items) == 1 || earlier_open?(lis))
+        KNode.set_text(f, KNode.text(f) + "\n") if k > 1 && !second_blank
+        KNode.set_transparent(f, true)
+      end
+      last_blank_node = KNode.kind(Array.fetch(kids, k - 1)) == :blank ? Array.pop(kids) : nil
+    end
+    Array.push(out, list)
+    Array.push(out, last_blank_node) if last_blank_node
+  end
+
+  # A line indented at least as far as the item's content (kramdown's content_re).
+  def content_line?(l, indentation)
+    return false if blank?(l)
+    q = indentation / 4
+    r = indentation % 4
+    String.match?(l, /\A(?:(?:\t| {4}){#{q}} {#{r}}|(?:\t| {4}){#{q + 1}})/)
+  end
+
+  # Whether an item before the last has no paragraph first, or a transparent one.
+  def earlier_open?(lis)
+    Array.any?(Array.take(lis, Array.size(lis) - 1)) do |li|
+      f = Array.first(KNode.children(li))
+      f == nil || KNode.kind(f) != :p || KNode.transparent(f)
+    end
+  end
+end
+
+# Span parsing of a paragraph's or header's text, as kramdown's span parsers: emphasis, codespan,
+# autolink, link, entity, line break, escaped chars, tried in that order at each special character.
+class KSpans
+  attr_reader str, defs
+  private attr_accessor pos, open
+
+  def initialize(sc)
+    @pos = 0
+    @open = Symbol[]
+  end
+
+  def span_start_re
+    /\*|_|`|<(?:(?:mailto|https?|ftps?):.+?|[[:alnum:]\-_.]+?@[[:alnum:]\-_.]+?)>|!?\[(?=[^^])|&(?:[\w:][\-\w.:]*|#\d+|#x[0-9a-fA-F]+);|(?:  |\\\\|\\)(?=\n)|\\[\\.*_+`<>()\[\]{}#!:|"'$=\-~]/
+  end
+
+  def rest(sc) = @str[@pos, String.size(@str) - @pos] || ""
+  def at?(sc, re) = String.match?(@str, re, @pos)
+  def at(sc, re) = String.match(@str, re, @pos)
+  def char_before(sc) = @pos > 0 ? @str[@pos - 1] || "" : ""
+
+  def add_text(node, s)
+    return nil if s == ""
+    kids = KNode.children(node)
+    last = Array.last(kids)
+    if last && KNode.kind(last) == :text
+      KNode.set_text(last, KNode.text(last) + s)
+    else
+      Array.push(kids, KNode.new(:text, s))
+    end
+    nil
+  end
+
+  # Fills node's children from the text at pos until the stop String ("" for none) closes the
+  # element elem (:em, :strong, :a); gives whether the stop was found.
+  def parse_spans(sc, node, stop, elem)
+    Array.push(@open, KNode.kind(node))
+    n = String.size(@str)
+    found = false
+    while @pos < n && !found
+      i = String.index(@str, span_start_re, @pos)
+      j = stop == "" ? nil : String.index(@str, stop, @pos)
+      k = elem == :a ? String.index(@str, /!?\[/, @pos) : nil
+      nxt = i
+      nxt = j if j != nil && (nxt == nil || j < nxt)
+      nxt = k if k != nil && (nxt == nil || k < nxt)
+      if nxt == nil
+        if stop == ""
+          add_text(node, rest(sc))
+          @pos = n
+        end
+        break
+      end
+      add_text(node, @str[@pos, nxt - @pos] || "")
+      @pos = nxt
+      found = close_ok?(sc, node, stop, elem) if stop != "" && stop_here?(sc, stop, elem)
+      next if found
+      unless parse_one(sc, node)
+        add_text(node, @str[@pos] || "")
+        @pos += 1
+      end
+    end
+    Array.pop(@open)
+    found
+  end
+
+  def stop_here?(sc, stop, elem)
+    return true if String.start_with?(rest(sc), stop)
+    elem == :a && at?(sc, /\G!?\[/)
+  end
+
+  # kramdown's closing conditions for each element.
+  def close_ok?(sc, node, stop, elem)
+    case elem
+    in :a
+      if at?(sc, /\G\]/)
+        KNode.set_count(node, KNode.count(node) - 1)
+      else
+        KNode.set_count(node, KNode.count(node) + 1)
+      end
+      imgs = Array.count(KNode.children(node)) { |c| KNode.kind(c) == :img }
+      KNode.count(node) - imgs == 0
+    in :em | :strong
+      d = stop[0] || ""
+      return false if String.match?(char_before(sc), /\s/)
+      return false if elem == :em && at?(sc, /\G#{Regexp.escape(d * 2)}(?!#{Regexp.escape(d)})/)
+      return false if d == "_" && at?(sc, /\G#{Regexp.escape(stop)}[[:alnum:]]/)
+      !Array.empty?(KNode.children(node))
+    else false
+    end
+  end
+
+  # One span parser at pos, in kramdown's order; false when none applies.
+  def parse_one(sc, node)
+    if at?(sc, /\G(?:\*\*?|__?)/)
+      parse_emphasis(sc, node)
+    elsif at?(sc, /\G`/)
+      parse_codespan(sc, node)
+    elsif (m = at(sc, /\G<((mailto|https?|ftps?):.+?|[[:alnum:]\-_.]+?@[[:alnum:]\-_.]+?)>/))
+      inner = m[1] || ""
+      href = m[2] == nil ? "mailto:#{inner}" : inner
+      a = KNode.new(:a, href:)
+      add_text(a, String.sub(inner, /\Amailto:/, ""))
+      Array.push(KNode.children(node), a)
+      @pos = MatchData.end(m, 0)
+    elsif at?(sc, /\G!?\[(?=[^^])/)
+      parse_link(sc, node)
+    elsif (m = at(sc, /\G&(?:([\w:][\-\w.:]*)|#(\d+)|#x([0-9a-fA-F]+));/))
+      parse_entity(sc, node, m)
+    elsif (m = at(sc, /\G(?:  |\\\\)(?=\n)/)) || (m = at(sc, /\G\\(?=\n(?!\z))/))
+      Array.push(KNode.children(node), KNode.new(:br))   # GFM: one backslash before a newline too
+      @pos = MatchData.end(m, 0)
+    elsif (m = at(sc, /\G\\([\\.*_+`<>()\[\]{}#!:|"'$=\-~])/))
+      add_text(node, m[1] || "")
+      @pos = MatchData.end(m, 0)
+    else
+      return false
+    end
+    true
+  end
+
+  def parse_emphasis(sc, node)
+    start = @pos
+    result = MatchData.to_s(at(sc, /\G(?:\*\*?|__?)/) || raise("emphasis"))
+    @pos += String.size(result)
+    elem = String.size(result) == 2 ? :strong : :em
+    type = result[0] || ""
+    before = @str[0, start] || ""
+    if (type == "_" && String.match?(before, /[[:alpha:]]-?[[:alpha:]]*_*\z/)) || at?(sc, /\G\s/) ||
+        Array.include?(@open, elem)
+      add_text(node, result)
+      return nil
+    end
+    el = KNode.new(elem)
+    found = parse_spans(sc, el, result, elem)
+    delim = result
+    if !found && elem == :strong && KNode.kind(node) != :em
+      @pos = start + 1
+      el = KNode.new(:em)
+      delim = type
+      found = parse_spans(sc, el, delim, :em)
+    end
+    if found
+      @pos += String.size(delim)
+      Array.push(KNode.children(node), el)
+    else
+      @pos = start + String.size(result)
+      add_text(node, result)
+    end
+    nil
+  end
+
+  def parse_codespan(sc, node)
+    result = MatchData.to_s(at(sc, /\G`+/) || raise("codespan"))
+    start = @pos
+    @pos += String.size(result)
+    simple = String.size(result) == 1
+    if simple && (start == 0 || String.match?(@str[start - 1] || "", /\s/)) && at?(sc, /\G\s/)
+      add_text(node, result)
+      return nil
+    end
+    close = String.index(@str, result, @pos)
+    if close
+      text = @str[@pos, close - @pos] || ""
+      unless simple
+        text = text[1, String.size(text) - 1] || "" if String.start_with?(text, " ")
+        text = text[0, String.size(text) - 1] || "" if String.end_with?(text, " ")
+      end
+      Array.push(KNode.children(node), KNode.new(:codespan, text))
+      @pos = close + String.size(result)
+    else
+      add_text(node, result)
+    end
+    nil
+  end
+
+  def parse_entity(sc, node, m)
+    name = m[1]
+    dec = m[2]
+    hex = m[3]
+    whole = MatchData.to_s(m)
+    @pos = MatchData.end(m, 0)
+    ch = nil
+    if dec
+      ch = Array.pack(Array[String.to_i(dec)], "U")
+    elsif hex
+      ch = Array.pack(Array[String.hex(hex)], "U")
+    elsif name
+      ch = entity_table[name]
+    end
+    if ch == nil
+      add_text(node, whole)                # unknown name: kramdown writes &amp; and the rest
+    elsif ch == "<" || ch == ">" || ch == "&"
+      add_text(node, ch)                   # escaped again on output, as kramdown's &lt; &gt; &amp;
+    else
+      Array.push(KNode.children(node), KNode.new(:raw, ch))
+    end
+    nil
+  end
+
+  def entity_table
+    once do
+      Hash["amp" => "&", "lt" => "<", "gt" => ">", "quot" => "\"", "apos" => "'", "nbsp" => " ",
+           "copy" => "©", "reg" => "®", "trade" => "™", "mdash" => "—",
+           "ndash" => "–", "hellip" => "…", "laquo" => "«", "raquo" => "»",
+           "ldquo" => "“", "rdquo" => "”", "lsquo" => "‘", "rsquo" => "’"]
+    end
+  end
+
+  def normalize_id(s) = String.downcase(String.gsub(s, /\s+/, " "))
+
+  # [text](url "title"), [text](<url>), [text][id], [text][], [text], ![alt](src "title").
+  def parse_link(sc, node)
+    start = @pos
+    result = MatchData.to_s(at(sc, /\G!?\[/) || raise("link"))
+    @pos += String.size(result)
+    cur = @pos
+    img = String.start_with?(result, "!")
+    if !img && (Array.include?(@open, :a) || Array.include?(@open, :img))
+      add_text(node, result)
+      return nil
+    end
+    el = KNode.new(img ? :img : :a, count: 1)
+    found = parse_spans(sc, el, "]", :a)
+    unless found
+      @pos = start + String.size(result)
+      add_text(node, result)
+      return nil
+    end
+    alt = String.gsub(@str[cur, @pos - cur] || "", /\\([\\.*_+`<>()\[\]{}#!:|"'$=\-~])/, "\\1")
+    @pos += 1                              # the ]
+    id_m = at(sc, /\G\s*?\[([^\]]+)?\]/)
+    if id_m || !at?(sc, /\G\(/)
+      @pos = MatchData.end(id_m, 0) if id_m
+      id = normalize_id((id_m ? id_m[1] : nil) || alt)
+      d = @defs[id]
+      if d
+        add_link(node, el, KNode.href(d), KNode.title(d), alt)
+      else
+        @pos = start + String.size(result)
+        add_text(node, result)
+      end
+      return nil
+    end
+    url = ""
+    if (m = at(sc, /\G\(<(.*?)>/))
+      url = m[1] || ""
+      @pos = MatchData.end(m, 0)
+      if at?(sc, /\G\)/)
+        @pos += 1
+        add_link(node, el, url, nil, alt)
+        return nil
+      end
+    else
+      depth = 0
+      while (m = at(sc, /(\()|(\))|\s(?=['"])/))
+        url += @str[@pos, MatchData.end(m, 0) - @pos] || ""
+        @pos = MatchData.end(m, 0)
+        if m[2]
+          depth -= 1
+          break if depth == 0
+        elsif m[1]
+          depth += 1
+        else
+          break
+        end
+      end
+      url = String.strip(url[1, String.size(url) - 2] || "")
+      if depth == 0
+        add_link(node, el, url, nil, alt)
+        return nil
+      end
+    end
+    if (m = at(sc, /\G\s*?(["'])(.+?)\1\s*?\)/m))
+      @pos = MatchData.end(m, 0)
+      add_link(node, el, url, m[2], alt)
+    else
+      @pos = start + String.size(result)
+      add_text(node, result)
+    end
+    nil
+  end
+
+  def add_link(node, el, href, title, alt)
+    KNode.set_href(el, href)
+    KNode.set_title(el, title)
+    if KNode.kind(el) == :img
+      KNode.set_text(el, alt)
+      Array.clear(KNode.children(el))
+    end
+    Array.push(KNode.children(node), el)
+  end
+end
+
+# kramdown's HTML converter: blocks indented by 2 per level, one "\n" per run of blank lines.
+class KHtml
+  attr_reader ids
+
+  def escape_text(s) = String.gsub(s, /[<>&]/, escape_table)
+  def escape_attr(s) = String.gsub(s, /[<>&"]/, escape_table)
+  def escape_table = once { Hash["<" => "&lt;", ">" => "&gt;", "&" => "&amp;", "\"" => "&quot;"] }
+
+  def inner(h, node, indent) = Array.join(Array.map(KNode.children(node)) { |c| convert(h, c, indent + 2) }, "")
+
+  def title_attr(node)
+    t = KNode.title(node)
+    t == nil ? "" : " title=\"#{escape_attr(t)}\""
+  end
+
+  # GFM's header id: downcased, non-word characters dropped, spaces as -, -1, -2 for repeats.
+  def header_id(h, raw)
+    id = String.tr(String.gsub(String.downcase(raw), /[^\p{Word}\- \t]/, ""), " \t", "-")
+    @ids[id] += 1
+    c = @ids[id]
+    id += "-#{c}" if c > 0
+    id
+  end
+
+  def convert(h, node, indent)
+    sp = " " * indent
+    case KNode.kind(node)
+    in :blank then "\n"
+    in :eob then ""
+    in :text then escape_text(KNode.text(node))
+    in :raw then KNode.text(node)
+    in :p
+      KNode.transparent(node) ? inner(h, node, indent) : "#{sp}<p>#{inner(h, node, indent)}</p>\n"
+    in :header
+      id = header_id(h, KNode.text(node))
+      attr = id == "" ? "" : " id=\"#{escape_attr(id)}\""
+      lv = KNode.level(node)
+      "#{sp}<h#{lv}#{attr}>#{inner(h, node, indent)}</h#{lv}>\n"
+    in :codeblock
+      lang = KNode.lang(node)
+      cls = lang == "" ? "" : " class=\"language-#{escape_attr(lang)}\""
+      "#{sp}<pre><code#{cls}>#{escape_text(KNode.text(node))}\n</code></pre>\n"
+    in :blockquote | :ul | :ol
+      name = Symbol.to_s(KNode.kind(node))
+      "#{sp}<#{name}>\n#{inner(h, node, indent)}#{sp}</#{name}>\n"
+    in :li
+      kids = KNode.children(node)
+      first = Array.first(kids)
+      res = inner(h, node, indent)
+      body = if first == nil || (KNode.kind(first) == :p && KNode.transparent(first))
+        res + (String.end_with?(res, "\n") ? sp : "")
+      else
+        "\n" + res + sp
+      end
+      "#{sp}<li>#{body}</li>\n"
+    in :hr then "#{sp}<hr />\n"
+    in :em | :strong
+      name = Symbol.to_s(KNode.kind(node))
+      "<#{name}>#{inner(h, node, indent)}</#{name}>"
+    in :codespan then "<code>#{escape_text(KNode.text(node))}</code>"
+    in :a then "<a href=\"#{escape_attr(KNode.href(node))}\"#{title_attr(node)}>#{inner(h, node, indent)}</a>"
+    in :img then "<img src=\"#{escape_attr(KNode.href(node))}\" alt=\"#{escape_attr(KNode.text(node))}\"#{title_attr(node)} />"
+    in :br then "<br />"
+    end
+  end
+end
+
+module Kramdown
+  module_function
+
+  # The document tree of a Markdown text: an Array of KNode with spans parsed.
+  def parse(text)
+    text => String
+    src = String.gsub(text, /\r\n?/, "\n")
+    src = String.chomp(src)
+    lines = String.split(src, "\n", -1)
+    Array.push(lines, "") if Array.empty?(lines)   # kramdown reads "" as one blank line
+    defs = Hash[]
+    Array.each(lines) do |l|
+      m = String.match(l, KBlocks.link_def_re)
+      next unless m
+      id = String.downcase(String.gsub(m[1] || "", /\s+/, " "))
+      defs[id] = KNode.new(:a, href: m[2] || m[3] || "", title: m[5])
+    end
+    nodes = KBlocks.parse(KBlocks.new(lines))
+    Array.each(nodes) { |n| parse_spans_in(n, defs) }
+    nodes
+  end
+
+  def parse_spans_in(node, defs)
+    case KNode.kind(node)
+    in :p | :header
+      sc = KSpans.new(KNode.text(node), defs)
+      KSpans.parse_spans(sc, node, "", :none)
+    in :blockquote | :ul | :ol | :li
+      Array.each(KNode.children(node)) { |c| parse_spans_in(c, defs) }
+    else nil
+    end
+  end
+
+  def render(nodes)
+    h = KHtml.new(Hash.new(-1))
+    Array.join(Array.map(nodes) { |n| KHtml.convert(h, n, 0) }, "")
+  end
+
+  def to_html(text) = render(parse(text))
+end

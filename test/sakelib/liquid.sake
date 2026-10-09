@@ -1,0 +1,78 @@
+require "liquid"
+
+def show(label, t, assigns = Hash[])
+  puts("#{label}: #{Kernel.inspect(Liquid.render(t, assigns))}")
+rescue LiquidSyntaxError => e
+  puts("#{label}: LiquidSyntaxError: #{Exception.message(e)}")
+rescue ZeroDivisionError => e
+  puts("#{label}: ZeroDivisionError: #{Exception.message(e)}")
+end
+
+puts("== output")
+ctx = Hash["name" => "World", "n" => 3, "f" => 2.5, "t" => true, "nope" => nil, "s" => "a <b> & 'c'",
+           "xs" => Array[3, 1, 2], "h" => Hash["k" => "v", "size" => 99, "n" => Hash["m" => "deep"]],
+           "words" => Array["alpha", "beta", "gamma"], "empty_s" => "", "empty_a" => Array[], "blank_s" => "  "]
+show("var", "Hello {{ name }}! {{n}} {{ f }} {{ t }} [{{ nope }}] [{{ missing }}]", ctx)
+show("literals", "{{ 'sq' }} {{ \"dq\" }} {{ 42 }} {{ -1.5 }} {{ true }} {{ nil }} {{ (1..4) }}", ctx)
+show("lookups", "{{ h.k }} {{ h['k'] }} {{ h[\"n\"].m }} {{ h.n.m }} {{ h.size }} {{ xs[0] }} {{ xs[-1] }} {{ xs.size }} {{ xs.first }} {{ xs.last }} {{ name.size }} {{ words[n] }} {{ h.missing.x }}", ctx)
+show("array output", "{{ xs }} {{ words }} {{ h }}", ctx)
+show("whitespace", "a {{- name -}} b\n{%- if t -%}\n  yes\n{%- endif -%}\nc", ctx)
+show("unterminated", "{{ name", ctx)
+
+puts("== filters")
+show("case", "{{ name | upcase }} {{ name | downcase }} {{ 'hello WORLD' | capitalize }} {{ nope | upcase }}|", ctx)
+show("size", "{{ name | size }} {{ xs | size }} {{ h | size }} {{ n | size }} {{ nope | size }}", ctx)
+show("join", "{{ xs | join }} {{ words | join: ', ' }} {{ name | join: '-' }}", ctx)
+show("first last", "{{ xs | first }} {{ xs | last }} [{{ name | first }}] {{ xs | reverse | join: ',' }} {{ xs | sort | join: ',' }}", ctx)
+show("math", "{{ n | plus: 2 }} {{ n | minus: 5 }} {{ n | times: f }} {{ 7 | divided_by: 2 }} {{ 7 | divided_by: 2.0 }} {{ -7 | divided_by: 2 }} {{ 7 | modulo: 3 }} {{ '4' | plus: '1.5' }} {{ 'x' | plus: 1 }} {{ nope | plus: 1 }}", ctx)
+show("math2", "{{ -3 | abs }} {{ 2.7 | floor }} {{ 2.2 | ceil }} {{ xs | sum }} {{ f | times: 2 }}", ctx)
+show("divzero", "{{ n | divided_by: 0 }}", ctx)
+show("default", "{{ nope | default: 'd' }} {{ empty_s | default: 'd' }} {{ empty_a | default: 'd' }} {{ 0 | default: 'd' }} {{ false | default: 'd' }} {{ name | default: 'd' }} [{{ nope | default }}]", ctx)
+show("strings", "{{ 'a-b-c' | replace: '-', '+' }} {{ 'a-b-c' | replace_first: '-', '+' }} {{ 'a-b-c' | remove: '-' }} {{ 'a-b-c' | remove_first: '-' }} {{ name | append: '!' | prepend: '>' }} {{ n | append: 'x' }}", ctx)
+show("truncate", "{{ 'Ground control to Major Tom.' | truncate: 20 }} {{ 'Ground control to Major Tom.' | truncate: 25, ', and so on' }} {{ 'Ground control' | truncate: 20 }} {{ 'abcdef' | truncate: 2 }} {{ 'Ground control to Major Tom.' | truncatewords: 3 }} {{ 'a b' | truncatewords: 3 }}", ctx)
+show("escape", "{{ s | escape }} [{{ nope | escape }}] {{ s }}", ctx)
+show("strip split", "[{{ '  x  ' | strip }}] [{{ '  x  ' | lstrip }}] [{{ '  x  ' | rstrip }}] {{ 'a,b,c' | split: ',' | join: '|' }} {{ 'a,b,c' | split: ',' | size }} {{ \"l1\nl2\" | newline_to_br }} {{ \"l1\nl2\" | strip_newlines }}", ctx)
+show("date", "{{ 1234567890 | date: '%Y-%m-%d' }} {{ '2026-10-09 15:04:05' | date: '%d %b %Y %H:%M' }} {{ '2026-10-09' | date: '%A' }} {{ 'not a date' | date: '%Y' }} {{ nope | date: '%Y' }} {{ 'x' | date: '' }}", ctx)
+show("date Time", "{{ when | date: '%Y/%m/%d %H:%M:%S' }}", Hash["when" => Time.new(2026, 1, 2, 3, 4, 5, "+00:00")])
+show("unknown filter", "{{ name | bogus | upcase }} {{ name | bogus: 1, 2 }}", ctx)
+show("chain", "{{ words | join: ' ' | upcase | truncate: 12 | append: '!' }}", ctx)
+
+puts("== if")
+show("if", "{% if t %}T{% endif %}{% if nope %}N{% else %}E{% endif %}{% if false %}F{% elsif n == 3 %}three{% else %}other{% endif %}", ctx)
+show("ops", "{% if n == 3 %}1{% endif %}{% if n != 3 %}2{% endif %}{% if n <> 4 %}3{% endif %}{% if n < 4 %}4{% endif %}{% if n > 4 %}5{% endif %}{% if n <= 3 %}6{% endif %}{% if n >= 4 %}7{% endif %}{% if f > n %}8{% endif %}{% if 'b' > 'a' %}9{% endif %}{% if n == 3.0 %}A{% endif %}{% if '3' == n %}B{% endif %}", ctx)
+show("contains", "{% if name contains 'orl' %}1{% endif %}{% if xs contains 1 %}2{% endif %}{% if xs contains '1' %}3{% endif %}{% if h contains 'k' %}4{% endif %}{% if nope contains 'x' %}5{% endif %}{% if name contains nope %}6{% endif %}", ctx)
+show("and or", "{% if t and n == 3 %}1{% endif %}{% if nope or t %}2{% endif %}{% if false or t and nope %}3{% endif %}{% if t and nope or t %}4{% endif %}{% if nope and t or t %}5{% endif %}", ctx)
+show("empty blank", "{% if empty_s == empty %}1{% endif %}{% if empty_a == empty %}2{% endif %}{% if name == empty %}3{% endif %}{% if blank_s == blank %}4{% endif %}{% if nope == blank %}5{% endif %}{% if n == blank %}6{% endif %}{% if xs != empty %}7{% endif %}", ctx)
+show("truthiness", "{% if 0 %}0{% endif %}{% if '' %}e{% endif %}{% if empty_a %}a{% endif %}{% if false %}f{% endif %}{% if nope %}n{% endif %}", ctx)
+show("nil compare", "{% if nope < 1 %}1{% else %}2{% endif %}{% if name < 1 %}3{% else %}4{% endif %}", ctx)
+show("unless", "{% unless t %}1{% else %}2{% endunless %}{% unless nope %}3{% endunless %}{% unless t %}4{% elsif n == 3 %}5{% endunless %}", ctx)
+show("nested", "{% if t %}{% if n > 1 %}{% if nope %}x{% else %}deep{% endif %}{% endif %}{% endif %}", ctx)
+show("unclosed", "{% if t %}x", ctx)
+show("stray end", "x{% endif %}", ctx)
+show("unknown tag", "{% bogus %}", ctx)
+
+puts("== for")
+show("for", "{% for x in xs %}{{ forloop.index }}:{{ x }} {% endfor %}", ctx)
+show("forloop", "{% for w in words %}{{ forloop.index0 }}/{{ forloop.rindex }}/{{ forloop.rindex0 }}/{{ forloop.length }}/{{ forloop.first }}/{{ forloop.last }}/{{ forloop.name }} {% endfor %}", ctx)
+show("limit offset reversed", "{% for x in xs limit: 2 %}{{ x }}{% endfor %}|{% for x in xs offset: 1 %}{{ x }}{% endfor %}|{% for x in xs reversed %}{{ x }}{% endfor %}|{% for x in xs offset: 1 limit: 1 reversed %}{{ x }}{% endfor %}", ctx)
+show("range", "{% for i in (1..n) %}{{ i }}{% endfor %} {% for i in (n..5) %}{{ i }}{% endfor %}", ctx)
+show("empty else", "{% for x in empty_a %}{{ x }}{% else %}none{% endfor %}{% for x in nope %}{{ x }}{% else %}nil{% endfor %}{% for x in name %}[{{ x }}]{% endfor %}{% for x in n %}{{ x }}{% endfor %}", ctx)
+show("hash", "{% for pair in h %}{{ pair[0] }}={{ pair[1] }};{% endfor %}", Hash["h" => Hash["a" => 1, "b" => 2]])
+show("nested for", "{% for a in xs %}{% for b in words %}{{ forloop.index }}{{ a }}{{ b }}{% endfor %};{% endfor %}", ctx)
+show("break continue", "{% for x in xs %}{% if x == 1 %}{% continue %}{% endif %}{{ x }}{% endfor %}|{% for x in xs %}{% if x == 1 %}{% break %}{% endif %}{{ x }}{% endfor %}|{% for w in words %}{% for x in xs %}{% if x == 1 %}{% break %}{% endif %}{{ x }}{% endfor %}{{ w }} {% endfor %}", ctx)
+show("scope", "{% for x in xs %}{% assign last = x %}{% endfor %}{{ last }} {{ x }}|{% assign x = 'outer' %}{% for x in xs %}{{ x }}{% endfor %}{{ x }}", ctx)
+
+puts("== assign capture case")
+show("assign", "{% assign a = 5 %}{% assign b = a | plus: 1 | times: 2 %}{{ a }} {{ b }}{% assign c = name | upcase %} {{ c }}{% assign my-var = 'dash' %} {{ my-var }}", ctx)
+show("capture", "{% capture greeting %}Hi {{ name }}{% if t %}!{% endif %}{% endcapture %}[{{ greeting }}] {{ greeting | size }}", ctx)
+show("case", "{% case n %}{% when 1 %}one{% when 2, 3 %}two-or-three{% when 3 or 4 %}three-or-four{% else %}other{% endcase %}", ctx)
+show("case else", "{% case name %}{% when 'x' %}x{% else %}other{% endcase %}{% case nope %}{% when nil %}nil!{% endcase %}{% case name %}\n  {% when 'World' %}\n  w\n{% endcase %}", ctx)
+show("comment raw", "a{% comment %}hidden {{ name }} {% if %}{% comment %}nested{% endcomment %}{% endcomment %}b{% raw %}{{ name }} {% if t %}{% endraw %}c", ctx)
+show("raw trim", "a {%- raw -%} {{ x }} {%- endraw -%} b", ctx)
+show("echo", "{% echo name | downcase %}", ctx)
+
+puts("== parse twice")
+tmpl = Template.parse("{{ greeting | default: 'Hello' }}, {{ who }}!{% for i in (1..2) %} {{ i }}{% endfor %}")
+puts(Template.render(tmpl, Hash["who" => "A"]))
+puts(Template.render(tmpl, Hash["who" => "B", "greeting" => "Yo"]))
+puts(Template.render(tmpl))
