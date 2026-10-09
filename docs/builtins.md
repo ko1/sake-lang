@@ -34,20 +34,26 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.all?(x) { }`
 - `Array.any?(x) { }`
 - `Array.append(x, *Any)`
+- `Array.assoc(x, Any)`
 - `Array.at(x, Integer)`
 - `Array.bsearch(x) { }`
+- `Array.bsearch_index(x) { }`
 - `Array.chunk_while(x) { }`
 - `Array.clear(x)`
 - `Array.collect(x) { }`
+- `Array.collect!(x) { }`
 - `Array.combination(x, Integer)`
 - `Array.compact(x)`
+- `Array.compact!(x)`
 - `Array.concat(x, Array)`
 - `Array.count(x, [Any]) [{ }]`
+- `Array.cycle(x, Integer) { }`
 - `Array.delete(x, Any)`
 - `Array.delete_at(x, Integer)`
 - `Array.delete_if(x) { }`
 - `Array.detect(x) { }`
 - `Array.difference(x, *Array)`
+- `Array.dig(x, Integer)`
 - `Array.drop(x, Integer)`
 - `Array.drop_while(x) { }`
 - `Array.dup(x)`
@@ -60,8 +66,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.each_with_object(x, Any) { }`
 - `Array.empty?(x)`
 - `Array.fetch(x, Integer, [Any])`
+- `Array.fetch_values(x, *Integer)`
 - `Array.fill(x, Any)`
 - `Array.filter(x) { }`
+- `Array.filter!(x) { }`
 - `Array.filter_map(x) { }`
 - `Array.find(x) { }`
 - `Array.find_all(x) { }`
@@ -69,6 +77,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.first(x, [Integer])`
 - `Array.flat_map(x) { }`
 - `Array.flatten(x)`
+- `Array.flatten!(x)`
 - `Array.group_by(x) { }`
 - `Array.include?(x, Any)`
 - `Array.index(x, Any)`
@@ -81,6 +90,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.last(x, [Integer])`
 - `Array.length(x)`
 - `Array.map(x) { }`
+- `Array.map!(x) { }`
 - `Array.max(x)`
 - `Array.max_by(x) { }`
 - `Array.min(x)`
@@ -95,31 +105,48 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.partition(x) { }`
 - `Array.permutation(x, [Integer])`
 - `Array.pop(x)`
+- `Array.prepend(x, *Any)`
 - `Array.product(x, Array)`
 - `Array.push(x, *Any)`
+- `Array.rassoc(x, Any)`
 - `Array.reduce(x, Any) { }`
 - `Array.reject(x) { }`
+- `Array.reject!(x) { }`
+- `Array.repeated_combination(x, Integer)`
+- `Array.repeated_permutation(x, Integer)`
+- `Array.replace(x, Array)`
 - `Array.reverse(x)`
+- `Array.reverse!(x)`
 - `Array.reverse_each(x) { }`
+- `Array.rfind(x) { }`
 - `Array.rindex(x, Any)`
 - `Array.rotate(x, [Integer])`
+- `Array.rotate!(x, [Integer])`
 - `Array.sample(x)`
 - `Array.select(x) { }`
+- `Array.select!(x) { }`
 - `Array.shift(x)`
 - `Array.shuffle(x)`
+- `Array.shuffle!(x)`
 - `Array.size(x)`
+- `Array.slice(x, Integer|Range, [Integer])`
+- `Array.slice!(x, Integer|Range, [Integer])`
 - `Array.slice_when(x) { }`
 - `Array.sort(x)`
+- `Array.sort!(x)`
 - `Array.sort_by(x) { }`
+- `Array.sort_by!(x) { }`
 - `Array.sum(x, [Integer|Float|Rational|Complex]) [{ }]`
 - `Array.take(x, Integer)`
 - `Array.take_while(x) { }`
 - `Array.tally(x)`
+- `Array.to_a(x)`
 - `Array.to_h(x)`
 - `Array.to_set(x)`
 - `Array.transpose(x)`
 - `Array.union(x, *Array)`
 - `Array.uniq(x)`
+- `Array.uniq!(x)`
 - `Array.unshift(x, *Any)`
 - `Array.values_at(x, *Integer)`
 - `Array.zip(x, *Array)`
@@ -134,13 +161,32 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Complex./(x, Any)`
 - `Complex.==(x, Any)`
 - `Complex.abs(x)`
+- `Complex.abs2(x)`
+- `Complex.angle(x)`
 - `Complex.arg(x)`
+- `Complex.conj(x)`
 - `Complex.conjugate(x)`
+- `Complex.denominator(x)`
+- `Complex.fdiv(x, Integer|Float|Rational)`
+- `Complex.finite?(x)`
+- `Complex.imag(x)`
 - `Complex.imaginary(x)`
+- `Complex.infinite?(x)`
+- `Complex.magnitude(x)`
 - `Complex[*Any]`
+- `Complex.numerator(x)`
+- `Complex.phase(x)`
 - `Complex.polar(x)`
+- `Complex.quo(x, Integer|Float|Rational|Complex)`
+- `Complex.rationalize(x, [Rational])`
 - `Complex.real(x)`
+- `Complex.real?(x)`
+- `Complex.rect(x)`
 - `Complex.rectangular(x)`
+- `Complex.to_c(x)`
+- `Complex.to_f(x)`
+- `Complex.to_i(x)`
+- `Complex.to_r(x)`
 - `Complex.to_s(x)`
 
 ## Dir
@@ -217,9 +263,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Float.MIN()`
 - `Float.NAN()`
 - `Float.abs(x)`
+- `Float.angle(x)`
+- `Float.arg(x)`
 - `Float.between?(x, Float, Float)`
 - `Float.ceil(x)`
 - `Float.clamp(x, Float, Float)`
+- `Float.denominator(x)`
 - `Float.divmod(x, Float)`
 - `Float.fdiv(x, Integer|Float|Rational)`
 - `Float.finite?(x)`
@@ -231,6 +280,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Float.negative?(x)`
 - `Float[*Any]`
 - `Float.next_float(x)`
+- `Float.numerator(x)`
+- `Float.phase(x)`
 - `Float.positive?(x)`
 - `Float.prev_float(x)`
 - `Float.quo(x, Integer|Float|Rational)`
@@ -238,6 +289,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Float.round(x, [Integer])`
 - `Float.to_f(x)`
 - `Float.to_i(x)`
+- `Float.to_int(x)`
 - `Float.to_r(x)`
 - `Float.to_s(x)`
 - `Float.truncate(x)`
@@ -251,8 +303,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.[]=(x, Any, Any)`
 - `Hash.all?(x) { }`
 - `Hash.any?(x) { }`
+- `Hash.assoc(x, Any)`
 - `Hash.clear(x)`
 - `Hash.compact(x)`
+- `Hash.compact!(x)`
 - `Hash.count(x) [{ }]`
 - `Hash.default(x)`
 - `Hash.delete(x, Any)`
@@ -271,10 +325,12 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.fetch(x, Any, [Any])`
 - `Hash.fetch_values(x, *Any)`
 - `Hash.filter(x) { }`
+- `Hash.filter!(x) { }`
 - `Hash.filter_map(x) { }`
 - `Hash.find(x) { }`
 - `Hash.first(x)`
 - `Hash.flat_map(x) { }`
+- `Hash.flatten(x)`
 - `Hash.group_by(x) { }`
 - `Hash.has_key?(x, Any)`
 - `Hash.has_value?(x, Any)`
@@ -290,15 +346,21 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.max_by(x) { }`
 - `Hash.member?(x, Any)`
 - `Hash.merge(x, Hash)`
+- `Hash.merge!(x, Hash)`
 - `Hash.min_by(x) { }`
 - `Hash.new([Any])`
 - `Hash[*Any]`
 - `Hash.none?(x) { }`
 - `Hash.one?(x) { }`
 - `Hash.partition(x) { }`
+- `Hash.rassoc(x, Any)`
 - `Hash.reduce(x, Any) { }`
 - `Hash.reject(x) { }`
+- `Hash.reject!(x) { }`
+- `Hash.replace(x, Hash)`
 - `Hash.select(x) { }`
+- `Hash.select!(x) { }`
+- `Hash.set_default(x, Any)`
 - `Hash.shift(x)`
 - `Hash.size(x)`
 - `Hash.slice(x, *Any)`
@@ -307,8 +369,11 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.sum(x, [Integer|Float|Rational|Complex]) { }`
 - `Hash.take(x, Integer)`
 - `Hash.to_a(x)`
+- `Hash.to_h(x)`
 - `Hash.transform_keys(x) { }`
+- `Hash.transform_keys!(x) { }`
 - `Hash.transform_values(x) { }`
+- `Hash.transform_values!(x) { }`
 - `Hash.update(x, Hash)`
 - `Hash.value?(x, Any)`
 - `Hash.values(x)`
@@ -361,6 +426,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Integer.ceildiv(x, Integer)`
 - `Integer.chr(x)`
 - `Integer.clamp(x, Integer, Integer)`
+- `Integer.denominator(x)`
 - `Integer.digits(x)`
 - `Integer.div(x, Integer|Float|Rational)`
 - `Integer.divmod(x, Integer)`
@@ -370,6 +436,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Integer.floor(x, [Integer])`
 - `Integer.gcd(x, Integer)`
 - `Integer.gcdlcm(x, Integer)`
+- `Integer.integer?(x)`
 - `Integer.lcm(x, Integer)`
 - `Integer.magnitude(x)`
 - `Integer.modulo(x, Integer)`
@@ -377,19 +444,23 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Integer[*Any]`
 - `Integer.next(x)`
 - `Integer.nobits?(x, Integer)`
+- `Integer.numerator(x)`
 - `Integer.odd?(x)`
 - `Integer.ord(x)`
 - `Integer.positive?(x)`
 - `Integer.pow(x, Integer, [Integer])`
 - `Integer.pred(x)`
+- `Integer.rationalize(x, [Integer|Float|Rational])`
 - `Integer.remainder(x, Integer)`
 - `Integer.round(x, [Integer])`
+- `Integer.size(x)`
 - `Integer.sqrt(x)`
 - `Integer.step(x, Integer, Integer) { }`
 - `Integer.succ(x)`
 - `Integer.times(x) { }`
 - `Integer.to_f(x)`
 - `Integer.to_i(x)`
+- `Integer.to_int(x)`
 - `Integer.to_r(x)`
 - `Integer.to_s(x)`
 - `Integer.truncate(x, [Integer])`
@@ -419,6 +490,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.rand([Integer|Float])`
 - `Kernel.sleep([Integer|Float|Rational])`
 - `Kernel.sprintf(String, *Any)`
+- `Kernel.srand([Integer])`
 - `Kernel.to_s(Any)`
 - `Kernel.warn(*Any)`
 
@@ -426,36 +498,69 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 - `MatchData.[](x, Any)`
 - `MatchData.begin(x, Integer)`
+- `MatchData.bytebegin(x, Integer)`
+- `MatchData.byteend(x, Integer)`
+- `MatchData.byteoffset(x, Integer)`
 - `MatchData.captures(x)`
 - `MatchData.end(x, Integer)`
+- `MatchData.length(x)`
+- `MatchData.match(x, Integer)`
+- `MatchData.match_length(x, Integer)`
 - `MatchData.named_captures(x)`
 - `MatchData.names(x)`
+- `MatchData.offset(x, Integer)`
 - `MatchData.post_match(x)`
 - `MatchData.pre_match(x)`
+- `MatchData.regexp(x)`
+- `MatchData.size(x)`
+- `MatchData.string(x)`
 - `MatchData.to_a(x)`
 - `MatchData.to_s(x)`
+- `MatchData.values_at(x, *Integer)`
 
 ## Math
 
 - `Math.E()`
 - `Math.PI()`
+- `Math.acos(Integer|Float|Rational)`
+- `Math.acosh(Integer|Float|Rational)`
+- `Math.asin(Integer|Float|Rational)`
+- `Math.asinh(Integer|Float|Rational)`
 - `Math.atan(Integer|Float|Rational)`
 - `Math.atan2(Integer|Float, Integer|Float)`
+- `Math.atanh(Integer|Float|Rational)`
 - `Math.cbrt(Integer|Float|Rational)`
 - `Math.cos(Integer|Float|Rational)`
+- `Math.cosh(Integer|Float|Rational)`
+- `Math.erf(Integer|Float|Rational)`
+- `Math.erfc(Integer|Float|Rational)`
 - `Math.exp(Integer|Float|Rational)`
+- `Math.frexp(Integer|Float|Rational)`
+- `Math.gamma(Integer|Float|Rational)`
 - `Math.hypot(Integer|Float, Integer|Float)`
+- `Math.ldexp(Integer|Float|Rational, Integer)`
+- `Math.lgamma(Integer|Float|Rational)`
 - `Math.log(Integer|Float|Rational)`
 - `Math.log10(Integer|Float|Rational)`
 - `Math.log2(Integer|Float|Rational)`
 - `Math.sin(Integer|Float|Rational)`
+- `Math.sinh(Integer|Float|Rational)`
 - `Math.sqrt(Integer|Float|Rational)`
 - `Math.tan(Integer|Float|Rational)`
+- `Math.tanh(Integer|Float|Rational)`
 
 ## Mutex
 
 - `Mutex.new()`
 - `Mutex.synchronize(x) { }`
+
+## Process
+
+- `Process.CLOCK_MONOTONIC()`
+- `Process.CLOCK_PROCESS_CPUTIME_ID()`
+- `Process.CLOCK_REALTIME()`
+- `Process.clock_gettime(Integer, [Symbol])`
+- `Process.pid()`
 
 ## Queue
 
@@ -474,20 +579,30 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Range.all?(x) { }`
 - `Range.any?(x) { }`
 - `Range.begin(x)`
+- `Range.bsearch(x) { }`
+- `Range.chunk_while(x) { }`
+- `Range.collect(x) { }`
+- `Range.collect_concat(x) { }`
+- `Range.compact(x)`
 - `Range.count(x) [{ }]`
 - `Range.cover?(x, Any)`
+- `Range.cycle(x, Integer) { }`
 - `Range.detect(x) { }`
 - `Range.drop(x, Integer)`
+- `Range.drop_while(x) { }`
 - `Range.each(x) { }`
 - `Range.each_cons(x, Integer) { }`
+- `Range.each_entry(x) { }`
 - `Range.each_slice(x, Integer) { }`
 - `Range.each_with_index(x) { }`
 - `Range.each_with_object(x, Any) { }`
 - `Range.end(x)`
+- `Range.entries(x)`
 - `Range.exclude_end?(x)`
 - `Range.filter(x) { }`
 - `Range.filter_map(x) { }`
 - `Range.find(x) { }`
+- `Range.find_all(x) { }`
 - `Range.find_index(x) { }`
 - `Range.first(x, [Integer])`
 - `Range.flat_map(x) { }`
@@ -501,6 +616,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Range.member?(x, Any)`
 - `Range.min(x)`
 - `Range.min_by(x) { }`
+- `Range.minmax(x)`
+- `Range.minmax_by(x) { }`
 - `Range.none?(x) { }`
 - `Range.one?(x) { }`
 - `Range.overlap?(x, Range)`
@@ -510,6 +627,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Range.reverse_each(x) { }`
 - `Range.select(x) { }`
 - `Range.size(x)`
+- `Range.slice_after(x) { }`
+- `Range.slice_before(x) { }`
+- `Range.slice_when(x) { }`
+- `Range.sort(x)`
 - `Range.sort_by(x) { }`
 - `Range.step(x, Integer) { }`
 - `Range.sum(x, [Integer|Float|Rational|Complex]) [{ }]`
@@ -518,6 +639,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Range.tally(x)`
 - `Range.to_a(x)`
 - `Range.to_set(x)`
+- `Range.uniq(x)`
 - `Range.zip(x, *Array)`
 
 ## Rational
@@ -538,14 +660,19 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Rational.abs(x)`
 - `Rational.ceil(x)`
 - `Rational.denominator(x)`
+- `Rational.fdiv(x, Integer|Float|Rational)`
 - `Rational.floor(x)`
+- `Rational.magnitude(x)`
 - `Rational.negative?(x)`
 - `Rational[*Any]`
 - `Rational.numerator(x)`
 - `Rational.positive?(x)`
+- `Rational.quo(x, Integer|Rational)`
+- `Rational.rationalize(x, [Rational])`
 - `Rational.round(x)`
 - `Rational.to_f(x)`
 - `Rational.to_i(x)`
+- `Rational.to_r(x)`
 - `Rational.to_s(x)`
 - `Rational.truncate(x)`
 - `Rational.zero?(x)`
@@ -555,11 +682,19 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Regexp.!=(x, Any)`
 - `Regexp.==(x, Any)`
 - `Regexp.=~(x, Any)`
+- `Regexp.casefold?(x)`
+- `Regexp.encoding(x)`
 - `Regexp.escape(String)`
+- `Regexp.fixed_encoding?(x)`
 - `Regexp.match(x, String, [Integer])`
 - `Regexp.match?(x, String, [Integer])`
+- `Regexp.named_captures(x)`
+- `Regexp.names(x)`
 - `Regexp.new(String)`
+- `Regexp.options(x)`
 - `Regexp.source(x)`
+- `Regexp.timeout(x)`
+- `Regexp.union(*String|Regexp)`
 
 ## Set
 
@@ -571,48 +706,89 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Set.add?(x, Any)`
 - `Set.all?(x) { }`
 - `Set.any?(x) { }`
+- `Set.chunk_while(x) { }`
+- `Set.classify(x) { }`
 - `Set.clear(x)`
+- `Set.collect(x) { }`
+- `Set.collect!(x) { }`
+- `Set.collect_concat(x) { }`
+- `Set.compact(x)`
 - `Set.count(x) [{ }]`
+- `Set.cycle(x, Integer) { }`
 - `Set.delete(x, Any)`
 - `Set.delete?(x, Any)`
 - `Set.delete_if(x) { }`
+- `Set.detect(x) { }`
 - `Set.difference(x, Set)`
 - `Set.disjoint?(x, Set)`
+- `Set.drop(x, Integer)`
+- `Set.drop_while(x) { }`
 - `Set.each(x) { }`
+- `Set.each_cons(x, Integer) { }`
+- `Set.each_entry(x) { }`
+- `Set.each_slice(x, Integer) { }`
+- `Set.each_with_index(x) { }`
 - `Set.each_with_object(x, Any) { }`
 - `Set.empty?(x)`
+- `Set.entries(x)`
 - `Set.filter(x) { }`
+- `Set.filter!(x) { }`
 - `Set.filter_map(x) { }`
 - `Set.find(x) { }`
+- `Set.find_all(x) { }`
+- `Set.find_index(x) { }`
 - `Set.first(x)`
+- `Set.flat_map(x) { }`
+- `Set.flatten(x)`
+- `Set.group_by(x) { }`
 - `Set.include?(x, Any)`
+- `Set.inject(x, Any) { }`
 - `Set.intersect?(x, Set)`
 - `Set.intersection(x, Set)`
 - `Set.join(x, [String])`
 - `Set.keep_if(x) { }`
 - `Set.length(x)`
 - `Set.map(x) { }`
+- `Set.map!(x) { }`
 - `Set.max(x)`
+- `Set.max_by(x) { }`
 - `Set.member?(x, Any)`
 - `Set.merge(x, Set)`
 - `Set.min(x)`
+- `Set.min_by(x) { }`
+- `Set.minmax(x)`
+- `Set.minmax_by(x) { }`
 - `Set[*Any]`
 - `Set.none?(x) { }`
+- `Set.one?(x) { }`
 - `Set.partition(x) { }`
 - `Set.proper_subset?(x, Set)`
 - `Set.proper_superset?(x, Set)`
 - `Set.reduce(x, Any) { }`
 - `Set.reject(x) { }`
+- `Set.reject!(x) { }`
+- `Set.replace(x, Set)`
+- `Set.reverse_each(x) { }`
 - `Set.select(x) { }`
+- `Set.select!(x) { }`
 - `Set.size(x)`
+- `Set.slice_after(x) { }`
+- `Set.slice_before(x) { }`
+- `Set.slice_when(x) { }`
 - `Set.sort(x)`
 - `Set.sort_by(x) { }`
 - `Set.subset?(x, Set)`
 - `Set.subtract(x, Any)`
 - `Set.sum(x, [Integer|Float|Rational|Complex])`
 - `Set.superset?(x, Set)`
+- `Set.take(x, Integer)`
+- `Set.take_while(x) { }`
+- `Set.tally(x)`
 - `Set.to_a(x)`
+- `Set.to_set(x)`
 - `Set.union(x, Set)`
+- `Set.uniq(x)`
+- `Set.zip(x, *Array)`
 - `Set.|(x, Any)`
 
 ## Socket
@@ -639,67 +815,103 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.>(x, Any)`
 - `String.>=(x, Any)`
 - `String.[](x, Any, [Integer])`
+- `String.append_as_bytes(x, *String|Integer)`
 - `String.ascii_only?(x)`
 - `String.b(x)`
 - `String.between?(x, String, String)`
 - `String.byteindex(x, String|Regexp, [Integer])`
+- `String.byterindex(x, String|Regexp, [Integer])`
 - `String.bytes(x)`
 - `String.bytesize(x)`
 - `String.byteslice(x, Integer, [Integer])`
+- `String.bytesplice(x, Integer, Integer, String)`
 - `String.capitalize(x)`
+- `String.capitalize!(x)`
 - `String.casecmp(x, String)`
 - `String.casecmp?(x, String)`
 - `String.center(x, Integer, [String])`
 - `String.chars(x)`
 - `String.chomp(x)`
+- `String.chomp!(x, [String])`
 - `String.chop(x)`
+- `String.chop!(x)`
 - `String.chr(x)`
 - `String.clamp(x, String, String)`
+- `String.clear(x)`
 - `String.codepoints(x)`
+- `String.concat(x, *String|Integer)`
 - `String.count(x, String)`
+- `String.crypt(x, String)`
 - `String.delete(x, String)`
+- `String.delete!(x, String, *String)`
 - `String.delete_prefix(x, String)`
+- `String.delete_prefix!(x, String)`
 - `String.delete_suffix(x, String)`
+- `String.delete_suffix!(x, String)`
 - `String.downcase(x)`
+- `String.downcase!(x)`
+- `String.dump(x)`
 - `String.each_byte(x) { }`
 - `String.each_char(x) { }`
+- `String.each_codepoint(x) { }`
+- `String.each_grapheme_cluster(x) { }`
 - `String.each_line(x) { }`
 - `String.empty?(x)`
+- `String.encode(x, String, [String])`
 - `String.encoding(x)`
 - `String.end_with?(x, String)`
 - `String.force_encoding(x, String)`
 - `String.getbyte(x, Integer)`
+- `String.grapheme_clusters(x)`
 - `String.gsub(x, String|Regexp, [String|Hash]) [{ }]`
+- `String.gsub!(x, String|Regexp, [String|Hash]) [{ }]`
 - `String.hex(x)`
 - `String.include?(x, String)`
 - `String.index(x, String|Regexp, [Integer])`
+- `String.insert(x, Integer, String)`
 - `String.intern(x)`
 - `String.length(x)`
 - `String.lines(x)`
 - `String.ljust(x, Integer, [String])`
 - `String.lstrip(x)`
+- `String.lstrip!(x)`
 - `String.match(x, String|Regexp, [Integer])`
 - `String.match?(x, String|Regexp, [Integer])`
 - `String[*Any]`
 - `String.next(x)`
+- `String.next!(x)`
 - `String.oct(x)`
 - `String.ord(x)`
 - `String.partition(x, String|Regexp)`
+- `String.prepend(x, *String)`
+- `String.replace(x, String)`
 - `String.reverse(x)`
+- `String.reverse!(x)`
 - `String.rindex(x, String|Regexp, [Integer])`
 - `String.rjust(x, Integer, [String])`
 - `String.rpartition(x, String|Regexp)`
 - `String.rstrip(x)`
+- `String.rstrip!(x)`
 - `String.scan(x, String|Regexp)`
+- `String.scrub(x, [String])`
+- `String.scrub!(x, [String])`
+- `String.setbyte(x, Integer, Integer)`
 - `String.size(x)`
 - `String.slice(x, Integer|Range, [Integer])`
+- `String.slice!(x, Integer|Range|String|Regexp, [Integer])`
 - `String.split(x, [String|Regexp], [Integer])`
 - `String.squeeze(x)`
+- `String.squeeze!(x, *String)`
 - `String.start_with?(x, String)`
 - `String.strip(x)`
+- `String.strip!(x)`
 - `String.sub(x, String|Regexp, [String|Hash]) [{ }]`
+- `String.sub!(x, String|Regexp, [String|Hash]) [{ }]`
 - `String.succ(x)`
+- `String.succ!(x)`
+- `String.sum(x, [Integer])`
 - `String.swapcase(x)`
+- `String.swapcase!(x)`
 - `String.to_c(x)`
 - `String.to_f(x)`
 - `String.to_i(x)`
@@ -707,10 +919,17 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.to_s(x)`
 - `String.to_sym(x)`
 - `String.tr(x, String, String)`
+- `String.tr!(x, String, String)`
 - `String.tr_s(x, String, String)`
+- `String.tr_s!(x, String, String)`
+- `String.undump(x)`
+- `String.unicode_normalize(x, [Symbol])`
+- `String.unicode_normalize!(x, [Symbol])`
+- `String.unicode_normalized?(x, [Symbol])`
 - `String.unpack(x, String)`
 - `String.unpack1(x, String)`
 - `String.upcase(x)`
+- `String.upcase!(x)`
 - `String.upto(x, String) { }`
 - `String.valid_encoding?(x)`
 
@@ -724,13 +943,22 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Symbol.>(x, Any)`
 - `Symbol.>=(x, Any)`
 - `Symbol.capitalize(x)`
+- `Symbol.casecmp(x, Symbol)`
 - `Symbol.casecmp?(x, Symbol)`
 - `Symbol.downcase(x)`
 - `Symbol.empty?(x)`
+- `Symbol.encoding(x)`
 - `Symbol.end_with?(x, String)`
+- `Symbol.id2name(x)`
+- `Symbol.intern(x)`
 - `Symbol.length(x)`
+- `Symbol.match(x, Regexp|String)`
+- `Symbol.match?(x, Regexp|String)`
+- `Symbol.name(x)`
 - `Symbol[*Any]`
+- `Symbol.next(x)`
 - `Symbol.size(x)`
+- `Symbol.slice(x, Integer, [Integer])`
 - `Symbol.start_with?(x, String)`
 - `Symbol.succ(x)`
 - `Symbol.swapcase(x)`
@@ -763,11 +991,15 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Time.==(x, Any)`
 - `Time.>(x, Any)`
 - `Time.>=(x, Any)`
+- `Time.asctime(x)`
 - `Time.at(Integer|Float|Rational|Time, [in: String|Integer])`
 - `Time.ceil(x, [Integer])`
+- `Time.ctime(x)`
 - `Time.day(x)`
+- `Time.dst?(x)`
 - `Time.floor(x, [Integer])`
 - `Time.friday?(x)`
+- `Time.getgm(x)`
 - `Time.getlocal(x, [String|Integer])`
 - `Time.getutc(x)`
 - `Time.gmt?(x)`
@@ -775,6 +1007,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Time.gmtime(x)`
 - `Time.gmtoff(x)`
 - `Time.hour(x)`
+- `Time.isdst(x)`
 - `Time.iso8601(x, [Integer])`
 - `Time.localtime(x, [String|Integer])`
 - `Time.mday(x)`
@@ -789,12 +1022,18 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Time.saturday?(x)`
 - `Time.sec(x)`
 - `Time.strftime(x, String)`
+- `Time.subsec(x)`
 - `Time.sunday?(x)`
 - `Time.thursday?(x)`
+- `Time.to_a(x)`
 - `Time.to_f(x)`
 - `Time.to_i(x)`
+- `Time.to_r(x)`
 - `Time.to_s(x)`
 - `Time.tuesday?(x)`
+- `Time.tv_nsec(x)`
+- `Time.tv_sec(x)`
+- `Time.tv_usec(x)`
 - `Time.usec(x)`
 - `Time.utc(x)`
 - `Time.utc?(x)`

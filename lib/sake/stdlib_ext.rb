@@ -32,6 +32,7 @@ module Sake
       install_more_array(reg)
       install_text(reg, out)
       install_streams(reg, out, input)
+      install_core_more(reg)
       install_ext_binary_ops(reg)
     end
 

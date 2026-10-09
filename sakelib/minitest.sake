@@ -1,0 +1,185 @@
+# minitest: a test framework in the style of Ruby's Minitest, for programs written in Sake.
+#
+# Sake has no reflection, so tests are not methods found by name but blocks given to Minitest.test, and
+# every assertion names the test case it belongs to (the block's parameter), as every Sake operation
+# names its subject:
+#
+#   suite = Minitest.suite("arrays")
+#   Minitest.test(suite, "push appends") do |t|
+#     a = Array[1]
+#     Array.push(a, 2)
+#     Minitest.assert_equal(t, [1, 2], a)
+#   end
+#   Minitest.run(suite)      # prints the report; exits with 1 when a test failed
+#
+# A failed assertion raises AssertionFailed, which Minitest.test records as a failure; any other
+# exception is recorded as an error, as in Ruby. Tests run as they are defined, in order.
+
+class AssertionFailed < StandardError
+end
+
+# One suite: its tests' results ([name, :pass | :fail | :error, message] Tuples) and assertion count.
+class TestSuite
+  attr_reader name, started
+  attr_accessor results, assertions
+end
+
+# The test a block is running: what the assertions count against.
+class TestCase
+  attr_reader suite, name
+end
+
+module Minitest
+  module_function
+
+  def suite(name = "tests") = TestSuite.new(name, Time.now, Array[], 0)
+
+  def test(suite, name)
+    t = TestCase.new(suite, name)
+    begin
+      yield(t)
+      record(suite, name, :pass, "")
+    rescue AssertionFailed => e
+      record(suite, name, :fail, Exception.message(e))
+    rescue => e
+      record(suite, name, :error, Exception.message(e))
+    end
+    nil
+  end
+
+  def record(suite, name, status, message) = Array.push(TestSuite.results(suite), [name, status, message])
+
+  def count(t)
+    s = TestCase.suite(t)
+    TestSuite.set_assertions(s, TestSuite.assertions(s) + 1)
+    nil
+  end
+
+  def fail_with(message, prefix)
+    raise AssertionFailed, (prefix == "" ? message : "#{prefix}: #{message}")
+  end
+
+  # assert(t, cond): cond must be truthy.
+  def assert(t, cond, msg = "")
+    count(t)
+    return true if cond
+    fail_with("expected a truthy value, got #{Kernel.inspect(cond)}", msg)
+  end
+
+  def refute(t, cond, msg = "")
+    count(t)
+    return true unless cond
+    fail_with("expected a falsy value, got #{Kernel.inspect(cond)}", msg)
+  end
+
+  def assert_equal(t, expected, actual, msg = "")
+    count(t)
+    return true if expected == actual
+    fail_with("expected #{Kernel.inspect(expected)}, got #{Kernel.inspect(actual)}", msg)
+  end
+
+  def refute_equal(t, unexpected, actual, msg = "")
+    count(t)
+    return true if unexpected != actual
+    fail_with("expected something other than #{Kernel.inspect(unexpected)}", msg)
+  end
+
+  def assert_nil(t, x, msg = "")
+    count(t)
+    return true if x == nil
+    fail_with("expected nil, got #{Kernel.inspect(x)}", msg)
+  end
+
+  def refute_nil(t, x, msg = "")
+    count(t)
+    return true if x != nil
+    fail_with("expected a value, got nil", msg)
+  end
+
+  # assert_in_delta(t, expected, actual, delta = 0.001): numbers within delta of each other.
+  def assert_in_delta(t, expected, actual, delta = 0.001, msg = "")
+    count(t)
+    diff = Arithmetic.abs(expected - actual)
+    return true if diff <= delta
+    fail_with("expected #{Kernel.inspect(expected)} within #{delta} of #{Kernel.inspect(actual)} (off by #{diff})", msg)
+  end
+
+  # assert_includes(t, collection, x): an Array, String, Hash (a key), Set, or Range that includes x.
+  def assert_includes(t, collection, x, msg = "")
+    count(t)
+    return true if (Array|String|Hash|Set|Range).include?(collection, x)
+    fail_with("expected #{Kernel.inspect(collection)} to include #{Kernel.inspect(x)}", msg)
+  end
+
+  def refute_includes(t, collection, x, msg = "")
+    count(t)
+    return true unless (Array|String|Hash|Set|Range).include?(collection, x)
+    fail_with("expected #{Kernel.inspect(collection)} not to include #{Kernel.inspect(x)}", msg)
+  end
+
+  def assert_empty(t, collection, msg = "")
+    count(t)
+    return true if (Array|String|Hash|Set).empty?(collection)
+    fail_with("expected #{Kernel.inspect(collection)} to be empty", msg)
+  end
+
+  def refute_empty(t, collection, msg = "")
+    count(t)
+    return true unless (Array|String|Hash|Set).empty?(collection)
+    fail_with("expected #{Kernel.inspect(collection)} not to be empty", msg)
+  end
+
+  def assert_match(t, pattern, s, msg = "")
+    count(t)
+    return true if String.match?(s, pattern)
+    fail_with("expected #{Kernel.inspect(s)} to match #{Kernel.inspect(pattern)}", msg)
+  end
+
+  # assert_raises(t) { ... }: the block must raise; gives the exception's message (Ruby gives the exception,
+  # whose class the caller would check; here the message is what a test can look at).
+  def assert_raises(t, msg = "")
+    count(t)
+    begin
+      yield
+    rescue => e
+      return Exception.message(e)
+    end
+    fail_with("expected an exception, none was raised", msg)
+  end
+
+  # assert_output(t, expected) { ... }: not available (a Sake program cannot capture its own output); print
+  # and compare instead.
+
+  def passed?(suite) = Array.all?(TestSuite.results(suite)) { |r| r[1] == :pass }
+
+  # report(suite): Ruby's summary, with each failure and error listed; true when everything passed.
+  def report(suite)
+    results = TestSuite.results(suite)
+    failures = Array.select(results) { |r| r[1] == :fail }
+    errors = Array.select(results) { |r| r[1] == :error }
+    puts "# Running #{TestSuite.name(suite)}:"
+    puts
+    puts Array.join(Array.map(results) { |r| r[1] == :pass ? "." : (r[1] == :fail ? "F" : "E") })
+    puts
+    secs = Time.now - TestSuite.started(suite)
+    puts "Finished in #{Float.round(secs, 6)}s"
+    puts
+    n = 0
+    Array.each(Array.select(results) { |r| r[1] != :pass }) do |r|
+      n += 1
+      puts "  #{n}) #{r[1] == :fail ? "Failure" : "Error"}:"
+      puts r[0]
+      puts r[2]
+      puts
+    end
+    puts "#{Array.size(results)} runs, #{TestSuite.assertions(suite)} assertions, #{Array.size(failures)} failures, #{Array.size(errors)} errors"
+    Array.empty?(failures) && Array.empty?(errors)
+  end
+
+  # run(suite): report, and exit with 1 unless everything passed.
+  def run(suite)
+    ok = report(suite)
+    Kernel.exit(1) unless ok
+    ok
+  end
+end

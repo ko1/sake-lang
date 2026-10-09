@@ -1321,7 +1321,16 @@ module Sake
       when "Array.join" then t("String")
       when "Array.first", "Array.last"
         args.size == 2 ? new_site(node, " #{name}", elem_of(a0)) : u(elem_of(a0), t("Nil"))
-      when "Array.at", "Array.pop", "Array.shift", "Array.min", "Array.max"
+      when "Array.slice", "Array.slice!" # a[i] (an element or nil), a[i, n] / a[range] (an Array)
+        args.size == 3 || atoms_of(args[1], :range).any? ? u(new_site(node, " #{name}", elem_of(a0)), t("Nil")) : u(elem_of(a0), t("Nil"))
+      when "Array.prepend"
+        write_elems(a0, args.drop(1), node, name)
+        a0
+      when "Array.map!", "Array.collect!"
+        e = elem_of(a0)
+        write_elems(a0, [call_block(blk, [e])], node, name) unless e.empty?
+        a0
+      when "Array.at", "Array.pop", "Array.shift", "Array.min", "Array.max", "Array.assoc", "Array.rassoc"
         u(elem_of(a0), t("Nil"))
       when "Array.fetch" then args.size == 3 ? u(elem_of(a0), args[2]) : elem_of(a0)
       when "Tuple.max", "Tuple.min", "Tuple.minmax"

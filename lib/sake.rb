@@ -11,6 +11,7 @@ require_relative "sake/stdlib_table"
 require_relative "sake/stdlib_net"
 require_relative "sake/stdlib_text"
 require_relative "sake/stdlib_io"
+require_relative "sake/stdlib_core"
 require_relative "sake/resolver"
 require_relative "sake/interpreter"
 

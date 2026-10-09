@@ -8,3 +8,6 @@ Tests: `test/sakelib/NAME.sake` (run with `--strict`) must print what `test/sake
 program with Ruby's library, prints (`ruby -Ilib test/test_sakelib.rb`).
 
 Each library's notes (what differs from Ruby and why, what is missing): `sakelib/notes/NAME.md`.
+
+`minitest.sake` is a test framework for programs written in Sake; Sake's own test suite written in Sake is
+`test/sake/*_test.sake` (run by `test/test_sake_suite.rb`).

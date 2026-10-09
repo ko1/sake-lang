@@ -184,6 +184,22 @@ module Sake
       when "String.sub", "String.gsub"
         call_block(blk, [t("String")]) if blk
         t("String")
+      when "String.sub!", "String.gsub!"
+        call_block(blk, [t("String")]) if blk
+        u(t("String"), t("Nil"))
+      when "String.slice!" then u(t("String"), t("Nil"))
+      when "Process.CLOCK_REALTIME", "Process.CLOCK_MONOTONIC", "Process.CLOCK_PROCESS_CPUTIME_ID" then t("Integer")
+      when "Hash.set_default"
+        atoms_of(args[0], :hash).each { |a| s = hash_sites[a[1]]; s.default = u(s.default, args[1]) }
+        args[1]
+      when "Hash.transform_keys!"
+        k, = hash_kv(args[0])
+        atoms_of(args[0], :hash).each { |a| s = hash_sites[a[1]]; s.key = u(s.key, call_block(blk, [k])) } unless k.empty?
+        args[0]
+      when "Set.map!", "Set.collect!"
+        e = set_elem(args[0])
+        atoms_of(args[0], :set).each { |a| s = set_sites[a[1]]; s.elem = u(s.elem, call_block(blk, [e])) } unless e.empty?
+        args[0]
       when "Regexp.match", "String.match" then u(t("MatchData"), t("Nil"))
       when "Regexp.match?", "String.match?" then t("Boolean")
       when "Kernel.warn" then t("Nil")
@@ -453,18 +469,21 @@ module Sake
       a0 = opts[:kernel] || opts[:on] ? [] : args[0]
       elem = each_elem(a0)
       elem = t("Integer") if elem.empty? && opts[:int_range]
+      k, v = hash_kv(a0)
       bres = []
       if blk && !%i[acc_elem acc_pair].include?(opts[:yields])
         yargs =
           case opts[:yields]
           when :two then [elem, elem]
+          when :with_index then [elem, t("Integer")]
+          when :val then [v]
+          when :key then [k]
           when :elem_memo, :pair_memo then [elem, args[1]]
           when :slice then [aux_site(node, "slice", elem)]
           else [opts[:yield_type] ? t(opts[:yield_type]) : elem]
           end
         bres = call_block(blk, yargs) unless yargs.any?(&:empty?)
       end
-      k, v = hash_kv(a0)
       case result
       when /\AArray<(\w+)>\z/ then new_site(node, " #{name}", t($1))
       when String then t(result)
@@ -502,6 +521,39 @@ module Sake
       when :hash_default then u(*atoms_of(a0, :hash).map { hash_sites[_1[1]].default })
       when :pair_nil then k.empty? ? t("Nil") : u(pair_type(k, v), t("Nil"))
       when :array_pairs then new_site(node, " #{name}", k.empty? ? [] : pair_type(k, v))
+      # 2026-10-09: the rest of the core API
+      when :int_float then u(t("Integer"), t("Float"))
+      when :real_part then u(t("Integer"), t("Float"), t("Rational"))
+      when :int_rational then u(t("Integer"), t("Rational"))
+      when :tuple_real2 then tuple([u(t("Integer"), t("Float"), t("Rational"))] * 2)
+      when :matchdata_nil then u(t("MatchData"), t("Nil"))
+      when :float_nil then u(t("Float"), t("Nil"))
+      when :tuple_int_nil2 then tuple([u(t("Integer"), t("Nil"))] * 2)
+      when :tuple_float_int then tuple([t("Float"), t("Integer")])
+      when :time_to_a then tuple([t("Integer")] * 8 + [t("Boolean"), t("String")])
+      when :array_kv then new_site(node, " #{name}", u(k, v))
+      when :array_string_nil then new_site(node, " #{name}", u(t("String"), t("Nil")))
+      when :hash_names_ints then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = t("String"); s.val = new_site(node, " #{name}", t("Integer")) }
+      when :hash_classify then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = bres; s.val = set_site(node, " classify").tap { set_sites[_1[0][1]].elem = u(set_sites[_1[0][1]].elem, elem) } }
+      when :recv_write_block # map!: the block's results join the elements
+        write_elems(a0, [bres], node, name)
+        a0
+      when :recv_flatten # flatten!: the inner Arrays' elements join
+        write_elems(a0, [u(*elem.map { |e| e.is_a?(Array) && e[0] == :array ? elem_of([e]) : [e] })], node, name)
+        u(a0, t("Nil"))
+      when :recv_elems_of # replace: the other Array's elements join
+        write_elems(a0, [elem_of(args[1])], node, name)
+        a0
+      when :recv_merge # merge! / update / replace: the other Hash's keys and values join
+        ok, ov = hash_kv(args[1])
+        atoms_of(a0, :hash).each { |a| s = hash_sites[a[1]]; s.key = u(s.key, ok); s.val = u(s.val, ov) }
+        a0
+      when :recv_write_val # transform_values!: the block's results join the values
+        atoms_of(a0, :hash).each { |a| s = hash_sites[a[1]]; s.val = u(s.val, bres) }
+        a0
+      when :recv_set_elems_of
+        atoms_of(a0, :set).each { |a| s = set_sites[a[1]]; s.elem = u(s.elem, set_elem(args[1])) }
+        a0
       else raise "BUG: table result #{result.inspect}"
       end
     end

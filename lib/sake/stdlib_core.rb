@@ -1,0 +1,69 @@
+# frozen_string_literal: true
+
+module Sake
+  # The rest of Ruby's core API that the table (stdlib_table.rb) cannot express: results that depend on the
+  # arguments' count or kinds, in-place forms that must keep a typed Array's or a Set's invariants, and a few
+  # values read as operations (2026-10-09, experiments/2026-10-09-stdlib-port).
+  module Stdlib
+    module_function
+
+    def install_core_more(reg)
+      # Array.slice(a, i) / (a, i, n) / (a, range) is a[...]; slice! also removes what it returns.
+      %i[slice slice!].each do |m|
+        reg.define("Array", m, ["Array", %w[Integer Range]], optional: ["Integer"]) do |a, i, n = nil|
+          ruby_error("TypeError") { n ? a.public_send(m, i, n) : a.public_send(m, i) }
+        end
+      end
+      reg.define("Array", :prepend, ["Array"], rest: "Any") { |a, *xs| a.unshift(*check_elems(a, xs)) }
+      # assoc / rassoc: the first element (a Tuple or an Array) whose first / second item equals the key.
+      # Ruby's look for Arrays only; Sake's pairs are Tuples.
+      reg.define("Array", :assoc, %w[Array Any]) { |a, k| a.find { |e| (row = row_items(e)) && row[0] == k } }
+      reg.define("Array", :rassoc, %w[Array Any]) { |a, v| a.find { |e| (row = row_items(e)) && row[1] == v } }
+      # map! / collect!: each element replaced by the block's value (a typed Array keeps its element type).
+      %i[map! collect!].each do |m|
+        reg.define("Array", m, ["Array"], block: :required) { |a, &b| a.map! { |x| check_elems(a, [b.(x)])[0] } }
+      end
+      reg.define("Set", :map!, ["Set"], block: :required) { |s, &b| s.map! { |x| key!(b.(x)) } }
+      reg.define("Set", :collect!, ["Set"], block: :required) { |s, &b| s.map! { |x| key!(b.(x)) } }
+      reg.define("Hash", :transform_keys!, ["Hash"], block: :required) { |h, &b| h.transform_keys! { |k| key!(b.(k)) } }
+      # Hash.set_default(h, v): the value a missing key gives from now on (Ruby's h.default = v).
+      reg.define("Hash", :set_default, %w[Hash Any]) { |h, v| h.default = v }
+      # String.sub!(s, pat, repl) / gsub!: in place; nil when nothing matched (Ruby). As sub/gsub, the
+      # replacement is a String, a Hash, or a block.
+      %i[sub! gsub!].each do |m|
+        reg.define("String", m, ["String", %w[String Regexp]], optional: [%w[String Hash]], block: :optional) do |s, pat, repl = nil, &b|
+          ruby_error("TypeError") do
+            if repl.is_a?(Hash) then s.send(m, pat, repl.transform_values { Values.to_s(_1) })
+            elsif repl then s.send(m, pat, repl)
+            elsif b then s.send(m, pat) { Values.to_s(b.call(Regexp.last_match[0])) }
+            else raise Fail.new("ArgumentError", "#{m} needs a replacement or a block")
+            end
+          end
+        end
+      end
+      # String.slice!(s, i) / (s, i, n) / (s, range) / (s, str) / (s, regexp): removes and gives the part, or nil.
+      reg.define("String", :slice!, ["String", %w[Integer Range String Regexp]], optional: ["Integer"]) do |s, i, n = nil|
+        ruby_error("TypeError") { n ? s.slice!(i, n) : s.slice!(i) }
+      end
+      # Process.clock_gettime(Process.CLOCK_MONOTONIC): the clocks are read as operations, as Math.PI is.
+      { CLOCK_REALTIME: Process::CLOCK_REALTIME, CLOCK_MONOTONIC: Process::CLOCK_MONOTONIC,
+        CLOCK_PROCESS_CPUTIME_ID: Process::CLOCK_PROCESS_CPUTIME_ID }.each do |name, v|
+        reg.define("Process", name, []) { v }
+      end
+    end
+
+    def row_items(e)
+      case e
+      when Tuple then e.elems
+      when Array then e
+      end
+    end
+
+    # The frozen Strings a program meets: Hash keys and Set elements (key_copy), ARGV, and Symbol names.
+    def frozen_error
+      yield
+    rescue ::FrozenError
+      raise Fail.new("TypeError", "cannot change this String in place: it is a Hash key, a Set element, or a program argument")
+    end
+  end
+end
