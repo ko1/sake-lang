@@ -1,0 +1,192 @@
+require "minitest"
+
+# The language: types and instances, modules and dispatch, pattern matching, blocks, exceptions, nil, once.
+# Functions used by the tests are at the top level: `def` cannot appear inside a block.
+suite = Minitest.suite("language")
+
+class Point
+  attr_reader x, y
+  include Arithmetic
+  include Comparable
+
+  def +(a, b) = Point.new(@x + Point.x(b), @y + Point.y(b))
+  def <=>(a, b) = [@x, @y] <=> [Point.x(b), Point.y(b)]
+  def to_s(p) = "(#{@x}, #{@y})"
+  def norm2(p) = @x * @x + @y * @y
+end
+
+class Account
+  attr_reader owner
+  attr_accessor balance
+
+  def initialize(a)
+    @balance = 0 if @balance == nil
+    raise ArgumentError, "owner must not be empty" if @owner == ""
+  end
+
+  def deposit(a, n)
+    @balance += n
+    a
+  end
+end
+
+module Shape
+  def area(s) = raise NotImplementedError
+  def describe(s) = "#{Shape.name(s)} with area #{Shape.area(s)}"
+  def name(s) = raise NotImplementedError
+end
+
+class Square
+  attr_reader side
+  include Shape
+  def area(s) = @side * @side
+  def name(s) = "square"
+end
+
+class Circle
+  attr_reader r
+  include Shape
+  def area(s) = Float.round(3.14159 * @r * @r, 2)
+  def name(s) = "circle"
+end
+
+class LowBalance < StandardError
+end
+
+def kind(v)
+  case v
+  in Integer then "int"
+  in String then "str"
+  in nil then "nil"
+  in Tuple then "tuple of #{Tuple.size(v)}" # array patterns (`in [a, b]`) are not supported
+  in {name:} then "record named #{name}"
+  else "other"
+  end
+end
+
+def twice(x) = yield(yield(x))
+
+def maybe(x)
+  return "no block" unless block_given?
+  yield(x)
+end
+
+def withdraw(balance, n)
+  raise LowBalance, "need #{n}, have #{balance}" if n > balance
+  balance - n
+end
+
+def table = once { Array.map(Range.to_a(1..3)) { |i| i * i } }
+
+Minitest.test(suite, "types: fields, operators, comparison, to_s") do |t|
+  p = Point.new(1, 2) + Point.new(3, 4)
+  Minitest.assert_equal(t, 4, Point.x(p))
+  Minitest.assert_equal(t, "(4, 6)", "#{p}")
+  Minitest.assert_equal(t, 52, Point.norm2(p))
+  Minitest.assert(t, Point.new(1, 2) < Point.new(1, 3))
+  Minitest.assert_equal(t, Point.new(1, 2), Point.new(1, 2))
+  Minitest.assert_equal(t, Point.new(0, 9), Array.max(Array[Point.new(0, 9), Point.new(0, 1)]))
+  Minitest.assert_equal(t, Array[Point.new(0, 1), Point.new(0, 9)], Array.sort(Array[Point.new(0, 9), Point.new(0, 1)]))
+end
+
+Minitest.test(suite, "initialize: defaults, validation, accessors") do |t|
+  a = Account.new("ann")
+  Minitest.assert_equal(t, 0, Account.balance(a))
+  Account.deposit(a, 5)
+  Minitest.assert_equal(t, 5, Account.balance(a))
+  Account.set_balance(a, 7)
+  Minitest.assert_equal(t, 7, Account.balance(a))
+  Minitest.assert_equal(t, 3, Account.balance(Account.new("bob", 3)))
+  Minitest.assert_match(t, /owner must not be empty/, Minitest.assert_raises(t) { Account.new("") })
+  Minitest.assert_equal(t, "ann", Account.owner(a))
+end
+
+Minitest.test(suite, "modules: mixin dispatch and required functions") do |t|
+  shapes = Array[Square.new(2), Circle.new(1)]
+  Minitest.assert_equal(t, Array["square with area 4", "circle with area 3.14"], Array.map(shapes) { |s| Shape.describe(s) })
+  Minitest.assert_equal(t, 4, Shape.area(shapes[0]))
+  Minitest.assert_equal(t, 3.14, Circle.area(Circle.new(1)))
+end
+
+Minitest.test(suite, "pattern matching: case/in on types, values, Tuples, Records") do |t|
+  Minitest.assert_equal(t, "int", kind(1))
+  Minitest.assert_equal(t, "str", kind("a"))
+  Minitest.assert_equal(t, "nil", kind(nil))
+  Minitest.assert_equal(t, "tuple of 2", kind([1, "a"]))
+  Minitest.assert_equal(t, "record named x", kind({name: "x"}))
+  Minitest.assert_equal(t, "other", kind(1.5))
+  v = Point.new(1, 2)
+  Minitest.assert(t, (v in Point)) # `v in Point` needs its own parentheses inside an argument list
+  Minitest.refute(t, (v in String))
+  case 3
+  in 1 | 2 then Minitest.assert(t, false)
+  in 3 then Minitest.assert(t, true)
+  end
+  case :b
+  in :a then Minitest.assert(t, false)
+  in :b | :c then Minitest.assert(t, true)
+  end
+end
+
+Minitest.test(suite, "blocks: break, next, values, nested") do |t|
+  r = Array.each(Array[1, 2, 3]) { |x| break x * 10 if x == 2 }
+  Minitest.assert_equal(t, 20, r)
+  Minitest.assert_equal(t, Array[1, 3], Array.filter_map(Array[1, 2, 3]) { |x| next nil if x == 2; x })
+  total = 0
+  Array.each(Array[1, 2]) { |x| Array.each(Array[10, 20]) { |y| total += x * y } }
+  Minitest.assert_equal(t, 90, total)
+  Minitest.assert_equal(t, 3, Kernel.loop { break 3 })
+  Minitest.assert_equal(t, 7, twice(5) { |v| v + 1 })
+  Minitest.assert_equal(t, "no block", maybe(1))
+  Minitest.assert_equal(t, 2, maybe(1) { |v| v + 1 })
+end
+
+Minitest.test(suite, "exceptions: raise, rescue by type, ensure, retry, message") do |t|
+  Minitest.assert_equal(t, 5, withdraw(10, 5))
+  msg = begin
+    withdraw(1, 5)
+    "ok"
+  rescue LowBalance => e
+    Exception.message(e)
+  end
+  Minitest.assert_equal(t, "need 5, have 1", msg)
+  log = Array[]
+  begin
+    Array.push(log, "body")
+    raise ArgumentError, "bad"
+  rescue ArgumentError => e
+    Array.push(log, "rescue #{Exception.message(e)}")
+  ensure
+    Array.push(log, "ensure")
+  end
+  Minitest.assert_equal(t, Array["body", "rescue bad", "ensure"], log)
+  tries = 0
+  begin
+    tries += 1
+    raise RuntimeError, "flaky" if tries < 3
+  rescue RuntimeError
+    retry
+  end
+  Minitest.assert_equal(t, 3, tries)
+  Minitest.assert_match(t, /divided by 0/, Minitest.assert_raises(t) { 1 / 0 })
+end
+
+Minitest.test(suite, "nil: narrowing, ||, fetch defaults") do |t|
+  h = Hash[a: 1]
+  v = h[:a]
+  Minitest.assert_equal(t, 2, v ? v + 1 : 0)
+  Minitest.assert_equal(t, 0, h[:z] || 0)
+  name = Array.find(Array["x", "yy"]) { |s| String.size(s) > 1 }
+  Minitest.assert_equal(t, 2, name ? String.size(name) : -1)
+  Minitest.assert_nil(t, Array.first(Array[]))
+  Minitest.assert_equal(t, "none", Array.first(Array[]) || "none")
+  Minitest.assert_equal(t, 9, Array.fetch(Array[], 0, 9))
+end
+
+Minitest.test(suite, "once: one value per place") do |t|
+  Minitest.assert_equal(t, Array[1, 4, 9], table)
+  Array.push(table, 16)
+  Minitest.assert_equal(t, Array[1, 4, 9, 16], table)
+end
+
+Minitest.run(suite)
