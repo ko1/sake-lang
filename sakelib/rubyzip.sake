@@ -1,0 +1,288 @@
+# rubyzip: ZIP archives (PKWARE APPNOTE), read and written in memory and on disk, with stored (0) and
+# deflated (8) entries. Ruby's Zip::File is an Array of ZipEntry here: Zip.read(path) / Zip.parse(bytes)
+# give the entries, Zip.write(path, entries) / Zip.generate(entries) make an archive. Nested names are
+# flattened: Zip::Entry is ZipEntry, Zip::Error is ZipError.
+#
+# Inflating: the built-in Zlib.inflate takes a zlib stream and needs its Adler-32 trailer, which a ZIP
+# entry (raw deflate) does not have. The entry is wrapped as a gzip member instead: its trailer is the
+# CRC-32 and the size, which the ZIP headers do have, so Zlib.gunzip inflates it and checks the CRC.
+require "zlib"
+
+class ZipError < Exception
+end
+
+# ZipEntry.new(name, data = "", compression_method: 8, time: Time.now, comment: ""). A name ending in "/"
+# is a directory (stored, no data). `crc` is the CRC-32 of `data`; `compressed` is the data as stored in an
+# archive (nil until compressed or read).
+class ZipEntry
+  attr_accessor name                       # the attr_* lines fix the order of new's positional arguments
+  attr_reader data
+  attr_accessor compression_method, time, comment
+  attr_reader crc
+  private attr_accessor compressed
+
+  def initialize(e)
+    @name => String
+    @data = "" if @data == nil
+    @data => String
+    @compression_method = 8 if @compression_method == nil
+    @compression_method = 0 if directory?(e)
+    raise ZipError, "unsupported compression method #{@compression_method}" unless @compression_method == 0 || @compression_method == 8
+    @time = Time.now if @time == nil
+    @comment = "" if @comment == nil
+    @crc = Zlib.crc32(@data)
+    @compressed = nil
+  end
+
+  def size(e) = String.bytesize(@data)
+  def directory?(e) = String.end_with?(@name, "/")
+  def file?(e) = !directory?(e)
+  def ftype(e) = directory?(e) ? :directory : :file
+  def to_s(e) = @name
+
+  # Replaces the data (Ruby: a new get_output_stream); the CRC follows, the stored form is dropped.
+  def set_data(e, s)
+    s => String
+    @data = s
+    @crc = Zlib.crc32(s)
+    @compressed = nil
+    s
+  end
+
+  # The bytes as they are, or would be, stored in an archive.
+  def compressed_data(e)
+    c = @compressed
+    return c if c != nil
+    c = @compression_method == 8 ? Zip.deflate_raw(@data) : String.b(@data)
+    @compressed = c
+    c
+  end
+
+  def compressed_size(e) = String.bytesize(compressed_data(e))
+
+  # An entry read from an archive: its stored bytes are kept, so compressed_size is the archive's.
+  def from_archive(name, data, method, time, comment, raw)
+    e = ZipEntry.new(name, data, compression_method: method, time: time, comment: comment)
+    set_compressed(e, raw)
+    e
+  end
+end
+
+module Zip
+  module_function
+
+  # --- reading ---
+
+  def read(path) = parse(File.read(path))
+
+  # The entries of an archive given as bytes: the central directory is read (its sizes are reliable even
+  # when the local headers defer them to a data descriptor), then each entry's data from its local header.
+  def parse(bytes)
+    b = String.b(bytes)
+    eocd = String.rindex(b, "PK\x05\x06")
+    raise ZipError, "Zip end of central directory signature not found" if eocd == nil
+    _disk, _cd_disk, _here, total, _cd_size, cd_off, _clen = String.unpack(bytes_at(b, eocd + 4, 18), "vvvvVVv")
+    if total == 0xffff || cd_off == 0xffffffff
+      raise ZipError, "Zip64 end of central directory locator not found" unless bytes_at(b, eocd - 20, 4) == "PK\x06\x07"
+      _ldisk, z64 = String.unpack(bytes_at(b, eocd - 16, 12), "VQ<")
+      raise ZipError, "Zip64 end of central directory record not found" unless bytes_at(b, z64, 4) == "PK\x06\x06"
+      _size, _vm, _vn, _d, _cdd, _h, total, _cds, cd_off = String.unpack(bytes_at(b, z64 + 4, 52), "Q<vvVVQ<Q<Q<Q<")
+    end
+    entries = ZipEntry[]
+    off = cd_off
+    Integer.times(total) do
+      raise ZipError, "Zip central directory signature not found at #{off}" unless bytes_at(b, off, 4) == "PK\x01\x02"
+      _vm, _vn, flags, method, mtime, mdate, crc, csize, usize, nlen, elen, clen, _d, _ia, _ea, loff =
+        String.unpack(bytes_at(b, off + 4, 42), "vvvvvvVVVvvvvvVV")
+      name = String.force_encoding(bytes_at(b, off + 46, nlen), "UTF-8")
+      extra = bytes_at(b, off + 46 + nlen, elen)
+      comment = String.force_encoding(bytes_at(b, off + 46 + nlen + elen, clen), "UTF-8")
+      off += 46 + nlen + elen + clen
+      usize, csize, loff = zip64_sizes(extra, usize, csize, loff)
+      raise ZipError, "#{name}: encrypted entries are not supported" if flags & 1 == 1
+      raise ZipError, "#{name}: local header signature not found" unless bytes_at(b, loff, 4) == "PK\x03\x04"
+      lnlen, lelen = String.unpack(bytes_at(b, loff + 26, 4), "vv")
+      raw = bytes_at(b, loff + 30 + lnlen + lelen, csize)
+      data = entry_data_of(name, method, raw, crc, usize)
+      Array.push(entries, ZipEntry.from_archive(name, data, method, from_dos_time(mdate, mtime), comment, raw))
+    end
+    entries
+  end
+
+  def bytes_at(b, i, len)
+    raise ZipError, "truncated archive (#{len} bytes at #{i})" if i < 0 || i + len > String.bytesize(b)
+    String.byteslice(b, i, len) || ""
+  end
+
+  # The 0x0001 extra field holds the 64-bit values of the fields set to 0xffffffff, in this order.
+  def zip64_sizes(extra, usize, csize, loff)
+    i = 0
+    n = String.bytesize(extra)
+    while i + 4 <= n
+      id, len = String.unpack(bytes_at(extra, i, 4), "vv")
+      if id == 1
+        j = i + 4
+        if usize == 0xffffffff
+          usize = u64(extra, j)
+          j += 8
+        end
+        if csize == 0xffffffff
+          csize = u64(extra, j)
+          j += 8
+        end
+        loff = u64(extra, j) if loff == 0xffffffff
+        break
+      end
+      i += 4 + len
+    end
+    [usize, csize, loff]
+  end
+
+  # String.unpack1 may give nil (for formats that can fail), so its result is checked here once.
+  def u64(b, i)
+    v = String.unpack1(bytes_at(b, i, 8), "Q<")
+    raise ZipError, "truncated archive (8 bytes at #{i})" if v == nil
+    v
+  end
+
+  def entry_data_of(name, method, raw, crc, usize)
+    case method
+    in 0
+      raise ZipError, "#{name}: CRC-32 mismatch" if Zlib.crc32(raw) != crc
+      raw
+    in 8
+      begin
+        inflate_raw(raw, crc, usize)
+      rescue ArgumentError => e
+        raise ZipError, "#{name}: #{Exception.message(e)}"
+      end
+    else
+      raise ZipError, "#{name}: unsupported compression method #{method}"
+    end
+  end
+
+  # --- compression ---
+
+  # Raw deflate: Zlib.deflate's stream without its 2-byte zlib header and 4-byte Adler-32 trailer.
+  def deflate_raw(s)
+    z = Zlib.deflate(s)
+    String.byteslice(z, 2, String.bytesize(z) - 6) || ""
+  end
+
+  # Raw inflate through Zlib.gunzip: a gzip header, the entry, and the trailer gunzip checks (CRC-32, size mod 2**32).
+  def inflate_raw(raw, crc, size)
+    gz = String.b("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03") + raw + Array.pack(Array[crc, size % 4294967296], "VV")
+    Zlib.gunzip(gz)
+  end
+
+  def crc32(s) = Zlib.crc32(s)
+
+  # --- writing ---
+
+  def write(path, entries, comment: "") = File.write(path, generate(entries, comment: comment))
+
+  # The archive's bytes: local headers with their data, the central directory, the end record.
+  def generate(entries, comment: "")
+    out = String.b("")
+    cd = String.b("")
+    Array.each(entries) do |e|
+      name = String.b(ZipEntry.name(e))
+      ecomment = String.b(ZipEntry.comment(e))
+      flags = String.ascii_only?(name) && String.ascii_only?(ecomment) ? 0 : 0x800
+      method = ZipEntry.compression_method(e)
+      ddate, dtime = dos_time(ZipEntry.time(e))
+      body = ZipEntry.compressed_data(e)
+      fixed = Array[flags, method, dtime, ddate, ZipEntry.crc(e), String.bytesize(body), ZipEntry.size(e), String.bytesize(name)]
+      eattr = ZipEntry.directory?(e) ? (0o40755 << 16) | 0x10 : 0o100644 << 16
+      off = String.bytesize(out)
+      String.concat(out, "PK\x03\x04", Array.pack(Array[20, *fixed, 0], "vvvvvVVVvv"), name, body)
+      String.concat(cd, "PK\x01\x02", Array.pack(Array[0x0314, 20, *fixed, 0, String.bytesize(ecomment), 0, 0, eattr, off], "vvvvvvVVVvvvvvVV"),
+                    name, ecomment)
+    end
+    acomment = String.b(comment)
+    n = Array.size(entries)
+    String.concat(out, cd, "PK\x05\x06", Array.pack(Array[0, 0, n, n, String.bytesize(cd), String.bytesize(out), String.bytesize(acomment)], "vvvvVVv"), acomment)
+    out
+  end
+
+  # MS-DOS date and time (local, 2-second resolution): [date, time].
+  def dos_time(t)
+    y = Time.year(t)
+    y = 1980 if y < 1980
+    [((y - 1980) << 9) | (Time.month(t) << 5) | Time.day(t),
+     (Time.hour(t) << 11) | (Time.min(t) << 5) | (Time.sec(t) / 2)]
+  end
+
+  def from_dos_time(date, time)
+    m = (date >> 5) & 15
+    d = date & 31
+    Time.new(1980 + (date >> 9), m == 0 ? 1 : m, d == 0 ? 1 : d, time >> 11, (time >> 5) & 63, (time & 31) * 2)
+  end
+
+  # --- an Array of entries as Ruby's Zip::File ---
+
+  def names(entries) = Array.map(entries) { |e| ZipEntry.name(e) }
+
+  def find_entry(entries, name) = Array.find(entries) { |e| ZipEntry.name(e) == name }
+
+  # The data of the named entry (Ruby: zf.read(name)); ZipError when there is none.
+  def entry_data(entries, name)
+    e = find_entry(entries, name)
+    raise ZipError, "No such file or directory - #{name}" if e == nil
+    ZipEntry.data(e)
+  end
+
+  # Adds an entry and gives it (Ruby: zf.get_output_stream(name) { |f| f.write data }).
+  def add(entries, name, data, compression_method: 8, time: nil)
+    e = ZipEntry.new(name, data, compression_method: compression_method, time: time)
+    Array.push(entries, e)
+    e
+  end
+
+  # Adds a file from disk (Ruby: zf.add(name, path)); its mtime is kept.
+  def add_file(entries, path, name = File.basename(path), compression_method: 8) =
+    add(entries, name, File.read(path), compression_method: compression_method, time: File.mtime(path))
+
+  def mkdir(entries, name, time: nil)
+    name = name + "/" unless String.end_with?(name, "/")
+    raise ZipError, "Directory already exists - #{name}" if find_entry(entries, name) != nil
+    add(entries, name, "", compression_method: 0, time: time)
+  end
+
+  def remove(entries, name)
+    e = find_entry(entries, name)
+    Array.delete(entries, e) if e != nil
+    e
+  end
+
+  # Entries whose names match a shell pattern: `*` and `?` do not cross `/`, `**` does.
+  def glob(entries, pattern)
+    src = String.gsub(Regexp.escape(pattern), /\\\*\\\*\/?|\\\*|\\\?/) do |m|
+      m == "\\*" ? "[^/]*" : m == "\\?" ? "[^/]" : "(?:.*/)?"
+    end
+    re = Regexp.new("\\A" + src + "\\z")
+    Array.select(entries) { |e| String.match?(String.delete_suffix(ZipEntry.name(e), "/"), re) }   # as rubyzip: "dir/" is "dir"
+  end
+
+  # Writes every entry under dir (Ruby: entry.extract(dest)); gives the paths written.
+  def extract(entries, dir)
+    Array.map(entries) do |e|
+      path = File.join(dir, ZipEntry.name(e))
+      raise ZipError, "#{ZipEntry.name(e)}: escapes the destination" unless String.start_with?(File.expand_path(path), File.expand_path(dir) + "/")
+      if ZipEntry.directory?(e)
+        mkdir_p(path)
+      else
+        mkdir_p(File.dirname(path))
+        File.write(path, ZipEntry.data(e))
+      end
+      path
+    end
+  end
+
+  def mkdir_p(path)
+    return if Dir.exist?(path)
+    parent = File.dirname(path)
+    mkdir_p(parent) unless parent == path
+    Dir.mkdir(path)
+  end
+end

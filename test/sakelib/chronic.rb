@@ -1,0 +1,70 @@
+require_relative "ref/chronic"
+
+# The gem's test clock: 2006-08-16 14:00 (a Wednesday), here in a fixed zone so the output never moves.
+def now = Time.new(2006, 8, 16, 14, 0, 0, "+09:00")
+
+def show(text, context: :future, ambiguous_time_range: 6)
+  t = Chronic.parse(text, now: now, context: context, ambiguous_time_range: ambiguous_time_range)
+  puts "#{text.ljust(24)} => #{t.nil? ? "nil" : t.strftime("%Y-%m-%d %H:%M:%S %z (%a)")}"
+end
+
+puts "-- days"
+["today", "tomorrow", "yesterday", "this day", "next day", "last day", "now", "tonight",
+                  "this morning", "this afternoon", "this evening", "next morning", "last night", "afternoon"].each { |s| show(s) }
+show("today", context: :past)
+
+puts "-- day names"
+["monday", "next monday", "this wednesday", "next wednesday", "last friday", "last wed", "tue", "this thurs"].each { |s| show(s) }
+show("this wednesday", context: :past)
+
+puts "-- units"
+["this week", "next week", "last week", "this month", "next month", "last month", "this year", "next year", "last year",
+                  "next hour", "last hour", "this hour", "next minute", "this minute", "next second", "last second", "this second",
+                  "next fortnight"].each { |s| show(s) }
+show("this week", context: :past)
+show("this month", context: :past)
+show("this year", context: :past)
+
+puts "-- offsets"
+["3 days ago", "3 days from now", "2 weeks from now", "in 3 hours", "an hour ago", "a week from now",
+                  "1 month ago", "6 months from now", "2 years ago", "30 minutes ago", "10 seconds from now",
+                  "3 days from tomorrow", "2 weeks ago at 7pm", "1 fortnight hence", "1 month from january 31"].each { |s| show(s) }
+
+puts "-- months and dates"
+["may 27", "may 27th", "27 may 1979", "may 27 1979", "january 5", "jan 5", "aug 24", "aug 10", "august 16",
+                  "feb 30", "february 29 2024", "february 29 2023", "may", "november", "this november", "next november", "last november",
+                  "next august", "last august", "2024-07-01", "7/1/2024", "7/1", "7/1/24", "7/1/79", "12/31/1999", "13/1/2024",
+                  "2024-02-30"].each { |s| show(s) }
+
+puts "-- times"
+["7pm", "7 pm", "7:30pm", "7:30 pm", "noon", "midnight", "13:00", "13:45", "0:10", "5", "6", "12", "12 pm", "12 am",
+                  "12:01 am", "12:01 pm", "1:01pm", "4 am", "4:00 in the morning", "11 at night", "7:30", "17:30:15", "9am",
+                  "7.30 pm"].each { |s| show(s) }
+show("5", ambiguous_time_range: :none)
+show("4:00", ambiguous_time_range: :none)
+show("4", ambiguous_time_range: 3)
+
+puts "-- day and time"
+["7:30pm tomorrow", "tomorrow 7:30pm", "tomorrow at 7pm", "tomorrow noon", "tomorrow midnight", "yesterday at 3",
+                  "friday 13:00", "monday 4:00", "friday 1 pm", "friday 11 in the evening", "sunday 6am", "friday evening at 7",
+                  "sat 4:00", "january 5 at 7pm", "may 27 1979 7:30", "2024-07-01 7pm", "7/1/2024 13:00", "27 oct 2006 7:30pm",
+                  "next week 7pm", "last month at noon", "this afternoon 3:30", "today 23:59:59"].each { |s| show(s) }
+show("sat 4:00", ambiguous_time_range: :none)
+
+puts "-- not understood"
+["", "   ", "foo", "next", "7 bar", "tomorrow yesterday", "25", "monday tuesday", "jan 5 6 7", "7pm 8pm", "next 5"].each { |s| show(s) }
+
+puts "-- spans"
+sp = Chronic.parse_span("tomorrow", now: now)
+puts sp.nil? ? "nil" : "#{sp.from.strftime("%F %T")} .. #{sp.to.strftime("%F %T")} width=#{sp.width}"
+sp = Chronic.parse_span("7pm", now: now)
+puts sp.nil? ? "nil" : "#{sp.from.strftime("%F %T")} .. #{sp.to.strftime("%F %T")} width=#{sp.width}"
+p Chronic.parse_span("nothing", now: now)
+
+puts "-- another zone and clock"
+t = Chronic.parse("next friday at 9am", now: Time.new(2024, 2, 28, 23, 59, 0, "-05:00"))
+puts t.nil? ? "nil" : t.strftime("%Y-%m-%d %H:%M:%S %z (%a)")
+t = Chronic.parse("1 day from now", now: Time.new(2024, 2, 28, 23, 59, 0, "-05:00"))
+puts t.nil? ? "nil" : t.strftime("%Y-%m-%d %H:%M:%S %z (%a)")
+t = Chronic.parse("next month", now: Time.new(2006, 11, 15, 0, 0, 0, "+00:00"))
+puts t.nil? ? "nil" : t.strftime("%Y-%m-%d %H:%M:%S %z (%a)")

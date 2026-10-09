@@ -1,0 +1,66 @@
+require "rubyzip"
+require "base64"
+
+def t0 = Time.new(2024, 7, 1, 13, 5, 8)
+
+def show(e)
+  data = ZipEntry.directory?(e) ? "" : ZipEntry.data(e)
+  shown = String.bytesize(data) > 40 ? "bytes=#{String.bytesize(data)}" : "data=#{Kernel.inspect(data)}"
+  puts "#{ZipEntry.name(e)}: size=#{ZipEntry.size(e)} compressed=#{ZipEntry.compressed_size(e)} method=#{ZipEntry.compression_method(e)} crc=#{Integer.to_s(ZipEntry.crc(e), 16)} time=#{Time.strftime(ZipEntry.time(e), "%Y-%m-%d %H:%M:%S")} dir=#{ZipEntry.directory?(e)} ftype=#{ZipEntry.ftype(e)} #{shown}"
+end
+
+# An archive written by rubyzip 3.4.1 (zip64 extra fields, UTF-8 name, archive comment).
+def fixture = "UEsDBC0AAAAIAKRo4VjjUT2N//////////8JABQAaGVsbG8udHh0AQAQABcAAAAAAAAACgAAAAAAAADLSM3JyVfIQCcBUEsDBC0AAAAAAKRo4VjPYiAZ//////////8FABQAcy50eHQBABAABQAAAAAAAAAFAAAAAAAAAHBsYWluUEsDBBQAAAAAAKRo4VgAAAAAAAAAAAAAAAAEAAkAZGlyL1VUBQABhKmCZlBLAwQtAAAACACkaOFYf4lUCP//////////CQAUAGRpci94LmJpbgEAEAADAAAAAAAAAAUAAAAAAAAAY2BkAgBQSwMELQAAAAgApGjhWA4K4Rb//////////w0AFADml6XmnKzoqp4udHh0AQAQAAcAAAAAAAAACQAAAAAAAADLy8zIz0vPBwBQSwECNAMtAAAACACkaOFY41E9jf//////////CQAUAAAAAAABAAAApIEAAAAAaGVsbG8udHh0AQAQABcAAAAAAAAACgAAAAAAAABQSwECNAMtAAAAAACkaOFYz2IgGf//////////BQAUAAAAAAABAAAApIFFAAAAcy50eHQBABAABQAAAAAAAAAFAAAAAAAAAFBLAQI0AxQAAAAAAKRo4VgAAAAAAAAAAAAAAAAEAAkAAAAAAAEAAADtQYEAAABkaXIvVVQFAAGEqYJmUEsBAjQDLQAAAAgApGjhWH+JVAj//////////wkAFAAAAAAAAQAAAKSBrAAAAGRpci94LmJpbgEAEAADAAAAAAAAAAUAAAAAAAAAUEsBAjQDLQAAAAgApGjhWA4K4Rb//////////w0AFAAAAAAAAQAAAKSB7AAAAOaXpeacrOiqni50eHQBABAABwAAAAAAAAAJAAAAAAAAAFBLBQYAAAAABQAFAGcBAAA0AQAABwBmaXh0dXJl"
+
+puts "-- an archive written by rubyzip"
+entries = Zip.parse(Base64.decode64(fixture))
+Array.each(entries) { |e| show(e) }
+puts Array.join(Zip.names(entries), " ")
+p Zip.entry_data(entries, "s.txt")
+e = Zip.find_entry(entries, "dir/x.bin")
+puts e == nil ? "none" : "found #{ZipEntry.name(e)}"
+p Zip.find_entry(entries, "nope")
+puts Array.join(Zip.names(Zip.glob(entries, "dir/*")), " ")
+puts Array.join(Zip.names(Zip.glob(entries, "*.txt")), " ")
+puts Array.join(Zip.names(Zip.glob(entries, "**/*.bin")), " ")
+p Array.size(entries)
+
+puts "-- round trip through a file"
+Dir.mktmpdir do |d|
+  path = File.join(d, "a.zip")
+  written = ZipEntry[]
+  Zip.add(written, "hello.txt", "hello hello hello hello", time: t0)
+  Zip.add(written, "s.txt", "plain", compression_method: 0, time: t0)
+  Zip.mkdir(written, "dir", time: t0)
+  Zip.add(written, "dir/x.bin", String.b("\x00\x01\x02"), time: t0)
+  Zip.add(written, "big.txt", "abc " * 1000, time: t0)
+  Zip.add(written, "日本語.txt", "nihongo", time: t0)
+  Zip.add(written, "empty.txt", "", time: t0)
+  Zip.write(path, written)
+  read = Zip.read(path)
+  Array.each(read) { |e| show(e) }
+  puts Array.join(Zip.names(read), " ")
+  p Zip.entry_data(read, "s.txt")
+  p Zip.entry_data(read, "big.txt") == "abc " * 1000
+  p Array.size(read)
+
+  puts "-- extract"
+  out = File.join(d, "out")
+  Dir.mkdir(out)
+  Zip.extract(read, out)
+  p Array.sort(Dir.glob("**/*", base: out))
+  p File.read(File.join(out, "hello.txt"))
+  p File.read(File.join(out, "dir/x.bin")) == String.b("\x00\x01\x02")
+
+  puts "-- errors"
+  begin
+    Zip.entry_data(read, "nope")
+  rescue ZipError => e
+    puts Exception.message(e)
+  end
+end
+begin
+  Zip.parse("garbage")
+rescue ZipError => e
+  puts Exception.message(e)
+end

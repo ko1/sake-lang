@@ -1,0 +1,308 @@
+# i18n: translations by locale and dotted key, with %{name} interpolation, pluralization, fallbacks, and
+# localized times and dates, as Ruby's i18n gem (1.15, Simple backend). Differences in shape:
+#   I18n.backend.store_translations(:en, h)  ->  I18n.backend_store(:en, h)   (also I18n.load_yaml(path))
+#   I18n.locale = :ja                        ->  I18n.set_locale(:ja)         (no setter syntax on a module)
+#   I18n.fallbacks = [:en]                   ->  I18n.set_fallbacks(Array[:en]); I18n.fallbacks(:ja) is [:ja, :en]
+#   I18n::MissingTranslationData & co.       ->  MissingTranslationData, InvalidLocale, MissingInterpolationArgument,
+#                                                InvalidPluralizationData, I18nArgumentError (no nested names)
+# A translation is a String, a Hash (a subtree, or plural forms :zero/:one/:other), an Array, or any YAML value.
+require "yaml"
+require "date"
+
+class MissingTranslationData < Exception
+end
+
+class InvalidLocale < Exception
+end
+
+class MissingInterpolationArgument < Exception
+end
+
+class InvalidPluralizationData < Exception
+end
+
+class I18nArgumentError < Exception
+end
+
+# The gem's I18n.config: one per program.
+class I18nConfig
+  attr_accessor locale, default_locale, fallbacks, enforce_available_locales
+  attr_reader translations                      # locale Symbol => Hash of Symbol keys
+end
+
+module I18n
+  module_function
+
+  def config = once { I18nConfig.new(:en, :en, Array[], true, Hash[]) }
+
+  # --- locales ---
+
+  def locale = I18nConfig.locale(config)
+  def default_locale = I18nConfig.default_locale(config)
+
+  def set_locale(l)
+    enforce_available!(l)
+    I18nConfig.set_locale(config, l)
+  end
+
+  def set_default_locale(l)
+    enforce_available!(l)
+    I18nConfig.set_default_locale(config, l)
+  end
+
+  # The locales with translations, in the order they were stored (the gem's).
+  def available_locales = Hash.keys(I18nConfig.translations(config))
+  def locale_available?(l) = Hash.key?(I18nConfig.translations(config), l)
+  def enforce_available_locales = I18nConfig.enforce_available_locales(config)
+  def set_enforce_available_locales(b) = I18nConfig.set_enforce_available_locales(config, b)
+
+  def enforce_available!(l)
+    raise InvalidLocale, "#{Kernel.inspect(l)} is not a valid locale" if enforce_available_locales && !locale_available?(l)
+    l
+  end
+
+  # The locales tried for `l`: itself, then the default fallbacks (the gem's I18n.fallbacks[l]).
+  def fallbacks(l = nil)
+    l = locale if l == nil
+    Array.uniq(Array[l, *I18nConfig.fallbacks(config)])
+  end
+
+  # I18n.fallbacks = [:en]; an empty Array (the start) means no fallbacks, as a gem without the Fallbacks backend.
+  def set_fallbacks(locales) = I18nConfig.set_fallbacks(config, Array[*locales])
+
+  def with_locale(l)
+    saved = locale
+    set_locale(l)
+    begin
+      yield
+    ensure
+      I18nConfig.set_locale(config, saved)
+    end
+  end
+
+  # --- storing ---
+
+  # Deep-merges `data` (a Hash; String keys become Symbols) into the locale's translations.
+  def backend_store(l, data)
+    all = I18nConfig.translations(config)
+    current = all[l]
+    current = Hash[] if current == nil
+    all[l] = deep_merge(current, symbolize(data))
+    nil
+  end
+
+  # A YAML file whose top-level keys are locales, as the files of I18n.load_path.
+  def load_yaml(path)
+    doc = YAML.load_file(path)
+    doc => Hash
+    Hash.each(doc) do |l, data|
+      next unless data in Hash
+      backend_store(String.to_sym(Kernel.to_s(l)), data)
+    end
+    nil
+  end
+
+  def symbolize(v)
+    case v
+    in Hash
+      out = Hash[]
+      Hash.each(v) { |k, x| out[(k in String) ? String.to_sym(k) : k] = symbolize(x) }
+      out
+    in Array then Array.map(v) { |x| symbolize(x) }
+    else v
+    end
+  end
+
+  def deep_merge(a, b)
+    out = Hash.dup(a)
+    Hash.each(b) do |k, v|
+      cur = out[k]
+      out[k] = (cur in Hash) && (v in Hash) ? deep_merge(cur, v) : v
+    end
+    out
+  end
+
+  # --- translating ---
+
+  # I18n.t(key, locale:, scope:, default:, count:, name: "..."); a missing key gives "Translation missing: en.key".
+  # The keywords are collected once here and passed on as a Hash (`**values` cannot be passed on in Sake).
+  def t(key, locale: nil, scope: nil, default: nil, count: nil, separator: ".", **values) =
+    translate_with(key, locale, scope, default, count, separator, values, false)
+
+  def translate(key, locale: nil, scope: nil, default: nil, count: nil, separator: ".", **values) =
+    translate_with(key, locale, scope, default, count, separator, values, false)
+
+  # As t, raising MissingTranslationData instead of giving the message.
+  def t!(key, locale: nil, scope: nil, default: nil, count: nil, separator: ".", **values) =
+    translate_with(key, locale, scope, default, count, separator, values, true)
+
+  def translate_with(key, locale, scope, default, count, separator, values, strict)
+    return nil if key == nil
+    l = locale == nil ? I18n.locale : locale
+    enforce_available!(l)
+    if key in Array
+      return Array.map(key) { |k| translate_with(k, l, scope, default, count, separator, values, strict) }
+    end
+    keys = normalize_keys(key, scope, separator)
+    raise I18nArgumentError, "I18nArgumentError" if Array.empty?(keys)
+    entry = lookup(l, keys)
+    entry = resolve_default(l, default, scope, count, separator, values) if entry == nil && default != nil
+    if entry == nil
+      message = "Translation missing: #{Array.join(Array[l, *keys], ".")}"
+      raise MissingTranslationData, message if strict
+      return message
+    end
+    finish(l, entry, count, values)
+  end
+
+  def exists?(key, locale = nil, scope: nil, separator: ".")
+    l = locale == nil ? I18n.locale : locale
+    lookup(l, normalize_keys(key, scope, separator)) != nil
+  end
+
+  # Pluralization (a Hash entry with a count), then interpolation (a String entry with values).
+  def finish(l, entry, count, values)
+    entry = pluralize(l, entry, count) if count != nil && (entry in Hash)
+    (entry in String) ? interpolate(entry, count, values) : entry
+  end
+
+  # "scope.key" split on the separator, empty parts dropped: Symbols.
+  def normalize_keys(key, scope, separator)
+    parts = Array[]
+    Array.each(Array[*scope_parts(scope), key]) do |k|
+      next if k == nil
+      Array.each(String.split(Kernel.to_s(k), separator)) { |s| Array.push(parts, String.to_sym(s)) unless s == "" }
+    end
+    parts
+  end
+
+  def scope_parts(scope)
+    case scope
+    in nil then Array[]
+    in Array then scope
+    else Array[scope]
+    end
+  end
+
+  # The entry at keys in the locale, or in its fallbacks; nil when none has it.
+  def lookup(l, keys)
+    all = I18nConfig.translations(config)
+    Array.each(fallbacks(l)) do |loc|
+      v = all[loc]
+      Array.each(keys) do |k|
+        v = (v in Hash) ? v[k] : nil
+        break if v == nil
+      end
+      return v if v != nil
+    end
+    nil
+  end
+
+  # default: a String (interpolated), a Symbol (another key), an Array of those (the first that resolves), or any value.
+  def resolve_default(l, default, scope, count, separator, values)
+    case default
+    in Array
+      Array.each(default) do |d|
+        v = resolve_default(l, d, scope, count, separator, values)
+        return v if v != nil
+      end
+      nil
+    in Symbol
+      entry = lookup(l, normalize_keys(default, scope, separator))
+      entry == nil ? nil : finish(l, entry, count, values)
+    else default
+    end
+  end
+
+  # :zero when the count is 0 and the entry has it, :one for 1, else :other (the gem's default rule).
+  def pluralize(l, entry, count)
+    key = count == 0 && Hash.key?(entry, :zero) ? :zero : count == 1 ? :one : :other
+    raise InvalidPluralizationData, "translation data #{Kernel.inspect(entry)} can not be used with :count => #{count}. key '#{key}' is missing." unless Hash.key?(entry, key)
+    entry[key]
+  end
+
+  # %{name} from the values (count is one of them); a name not given raises, as the gem; no values: unchanged.
+  def interpolate(s, count, values)
+    values = Hash.merge(Hash[count: count], values) if count != nil
+    return s if Hash.empty?(values)
+    String.gsub(s, /%\{(\w+)\}/) do |m|
+      name = String.to_sym(String.[](m, 2, String.size(m) - 3) || "")
+      unless Hash.key?(values, name)
+        raise MissingInterpolationArgument, "missing interpolation argument #{Kernel.inspect(name)} in #{Kernel.inspect(s)} (#{Kernel.inspect(values)} given)"
+      end
+      Kernel.to_s(values[name])
+    end
+  end
+
+  # --- localizing ---
+
+  # I18n.l(time_or_date, format: :default): the format from time.formats / date.formats (a Symbol), or given
+  # (a String); %a %A %b %B %p %P come from date.day_names & co. and time.am / time.pm, as the gem.
+  def l(obj, locale: nil, format: :default)
+    l = locale == nil ? I18n.locale : locale
+    enforce_available!(l)
+    case obj
+    in Time
+      fmt = format_for(l, :time, format)
+      Time.strftime(obj, localize_names(l, fmt, Time.wday(obj), Time.month(obj), Time.hour(obj)))
+    in Date
+      fmt = format_for(l, :date, format)
+      Date.strftime(obj, localize_names(l, fmt, Date.wday(obj), Date.month(obj), nil))
+    else
+      raise I18nArgumentError, "Object must be a Date, DateTime or Time object. #{Kernel.inspect(obj)} given."
+    end
+  end
+
+  def localize(obj, locale: nil, format: :default) = l(obj, locale: locale, format: format)
+
+  def format_for(l, type, format)
+    return format if format in String
+    f = t!(String.to_sym("#{type}.formats.#{format}"), locale: l)
+    (f in String) ? f : raise(I18nArgumentError, "format #{Kernel.inspect(f)} is not a String")
+  end
+
+  def localize_names(l, fmt, wday, mon, hour)
+    String.gsub(fmt, /%(\^?)[aAbBpP]/) do |m|
+      up = String.include?(m, "^")
+      key = case String.[](m, -1)
+            in "a" then :abbr_day_names
+            in "A" then :day_names
+            in "b" then :abbr_month_names
+            in "B" then :month_names
+            else :meridian
+            end
+      if key == :meridian
+        hour == nil ? m : String.[](m, -1) == "p" ? String.upcase(name_at(l, :time, hour < 12 ? :am : :pm, nil)) : String.downcase(name_at(l, :time, hour < 12 ? :am : :pm, nil))
+      else
+        s = name_at(l, :date, key, key == :day_names || key == :abbr_day_names ? wday : mon)
+        up ? String.upcase(s) : s
+      end
+    end
+  end
+
+  # date.day_names[i] & co.; the entry must exist, as the gem's t! inside localize.
+  def name_at(l, type, key, i)
+    v = t!(String.to_sym("#{type}.#{key}"), locale: l)
+    return Kernel.to_s(v) if i == nil
+    raise I18nArgumentError, "#{type}.#{key} is not an Array" unless v in Array
+    Kernel.to_s(v[i])
+  end
+
+  # --- transliterating ---
+
+  # Non-ASCII characters replaced by the gem's default approximations ("Ærøskøbing" is "AEroskobing"), else "?".
+  def transliterate(s, replacement: "?")
+    table = approximations
+    String.gsub(s, /[^\x00-\x7f]/) { |c| table[c] || replacement }
+  end
+
+  def approximations = once do
+    pairs = "À=A Á=A Â=A Ã=A Ä=A Å=A Æ=AE Ç=C È=E É=E Ê=E Ë=E Ì=I Í=I Î=I Ï=I Ð=D Ñ=N Ò=O Ó=O Ô=O Õ=O Ö=O ×=x Ø=O Ù=U Ú=U Û=U Ü=U Ý=Y Þ=Th ß=ss ẞ=SS à=a á=a â=a ã=a ä=a å=a æ=ae ç=c è=e é=e ê=e ë=e ì=i í=i î=i ï=i ð=d ñ=n ò=o ó=o ô=o õ=o ö=o ø=o ù=u ú=u û=u ü=u ý=y þ=th ÿ=y Ā=A ā=a Ă=A ă=a Ą=A ą=a Ć=C ć=c Ĉ=C ĉ=c Ċ=C ċ=c Č=C č=c Ď=D ď=d Đ=D đ=d Ē=E ē=e Ĕ=E ĕ=e Ė=E ė=e Ę=E ę=e Ě=E ě=e Ĝ=G ĝ=g Ğ=G ğ=g Ġ=G ġ=g Ģ=G ģ=g Ĥ=H ĥ=h Ħ=H ħ=h Ĩ=I ĩ=i Ī=I ī=i Ĭ=I ĭ=i Į=I į=i İ=I ı=i Ĳ=IJ ĳ=ij Ĵ=J ĵ=j Ķ=K ķ=k ĸ=k Ĺ=L ĺ=l Ļ=L ļ=l Ľ=L ľ=l Ŀ=L ŀ=l Ł=L ł=l Ń=N ń=n Ņ=N ņ=n Ň=N ň=n ŉ='n Ŋ=NG ŋ=ng Ō=O ō=o Ŏ=O ŏ=o Ő=O ő=o Œ=OE œ=oe Ŕ=R ŕ=r Ŗ=R ŗ=r Ř=R ř=r Ś=S ś=s Ŝ=S ŝ=s Ş=S ş=s Š=S š=s Ţ=T ţ=t Ť=T ť=t Ŧ=T ŧ=t Ũ=U ũ=u Ū=U ū=u Ŭ=U ŭ=u Ů=U ů=u Ű=U ű=u Ų=U ų=u Ŵ=W ŵ=w Ŷ=Y ŷ=y Ÿ=Y Ź=Z ź=z Ż=Z ż=z Ž=Z ž=z Ǫ=O ǫ=o Ǭ=O ǭ=o"
+    table = Hash[]
+    Array.each(String.split(pairs, " ")) do |pair|
+      k, v = String.split(pair, "=", 2)
+      table[k] = v if k != nil && v != nil
+    end
+    table
+  end
+end

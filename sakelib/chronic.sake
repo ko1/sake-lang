@@ -1,0 +1,404 @@
+# chronic: natural-language dates ("tomorrow", "next monday", "3 days ago", "may 27 at 7pm"), shaped as the
+# gem is: the text is normalized, split into tokens, each token tagged with a kind, and the kinds pick a
+# handler. Chronic.parse(text, now: Time.now) gives a Time in now's zone, or nil when the text is not understood.
+#
+# What the gem does, in short (its test suite's values, with now = 2006-08-16 14:00):
+#   a span is found first (a day, a week, a month, a minute...), then guessed: its middle when it is wider
+#   than a second ("tomorrow" is noon, "next week" is Wednesday noon, "today" is 19:00, halfway to midnight);
+#   a time of day is placed in the day found ("tomorrow 7pm"), or today ("7pm"); an hour of 1..12 without
+#   am/pm is read in 6:00..18:00 ("5" is 17:00, "7:30" is 7:30), as the gem's ambiguous_time_range: 6.
+
+class ChronicToken
+  attr_reader word
+  attr_accessor kind                        # :scalar :time :date :month :dayname :grabber :unit :pointer :meridian :portion
+  attr_accessor num                         # :scalar, :month (1..12), :dayname (0..6)
+  attr_accessor sym                         # :grabber (:this :next :last), :unit, :pointer (:past :future), :meridian (:am :pm), :portion
+  attr_accessor parts                       # :time [h, m, s]; :date [y, m, d] (y is 0 when not given)
+
+  def initialize(t)
+    @parts = Integer[] if @parts == nil
+  end
+end
+
+# A span of time, from (inclusive) to (exclusive), as the gem's Chronic::Span.
+class ChronicSpan
+  attr_reader from, to
+
+  def width(s) = Float.to_i(@to - @from)
+  def to_s(s) = "#{@from}..#{@to}"
+end
+
+module Chronic
+  module_function
+
+  def parse(text, now: Time.now, context: :future, ambiguous_time_range: 6)
+    span = parse_span(text, now: now, context: context, ambiguous_time_range: ambiguous_time_range)
+    span == nil ? nil : guess(span)
+  end
+
+  # The span before guessing (the gem's guess: false), or nil.
+  def parse_span(text, now: Time.now, context: :future, ambiguous_time_range: 6)
+    tokens = tokenize(pre_normalize(text))
+    return nil if tokens == nil || Array.empty?(tokens)
+    handle(tokens, now, context, ambiguous_time_range)
+  end
+
+  # The middle of a span wider than a second, else its start (the gem's Chronic.guess).
+  def guess(span)
+    w = ChronicSpan.width(span)
+    w > 1 ? ChronicSpan.from(span) + w / 2 : ChronicSpan.from(span)
+  end
+
+  # --- normalizing and tokenizing (the gem's pre_normalize and Token scanning) ---
+
+  def pre_normalize(text)
+    s = String.downcase(String.strip(text))
+    s = String.gsub(s, /\b(\d+)(?:st|nd|rd|th)\b/, "\\1")
+    s = String.gsub(s, /\btoday\b/, "this day")
+    s = String.gsub(s, /\btomm?orr?ow\b/, "next day")
+    s = String.gsub(s, /\byesterday\b/, "last day")
+    s = String.gsub(s, /\bnoon\b/, "12:00 pm")
+    s = String.gsub(s, /\bmidnight\b/, "24:00")
+    s = String.gsub(s, /\bnow\b/, "this second")
+    s = String.gsub(s, /\b(?:ago|before)\b/, "past")
+    s = String.gsub(s, /\bthis (?:last|past)\b/, "last")
+    s = String.gsub(s, /\b(?:in the|during the|at) (morning|afternoon|evening|night)\b/, "\\1")
+    s = String.gsub(s, /\btonight\b/, "this night")
+    s = String.gsub(s, /\b(\d{1,2})\s*([ap])\.?m?\.?\b/, "\\1 \\2m")
+    s = String.gsub(s, /\b(hence|after|from)\b/, "future")
+    s = String.gsub(s, /\A\s?an? /, "1 ")
+    s
+  end
+
+  # Words and numbers; dates (2024-07-01, 7/1/2024) and times (7:30, 19:30:00) stay one token.
+  def tokenize(text)
+    tokens = ChronicToken[]
+    words = String.scan(text, /\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{1,2}(?:[.:]\d{2}){1,2}|\d+|[a-z]+/)
+    Array.each(words) do |w|
+      t = tag(w)
+      return nil if t == nil                     # a word the parser does not know: the text is not understood
+      Array.push(tokens, t) if ChronicToken.kind(t) != :noise
+    end
+    tokens
+  end
+
+  def months = once { Hash["jan" => 1, "feb" => 2, "mar" => 3, "apr" => 4, "may" => 5, "jun" => 6, "jul" => 7, "aug" => 8, "sep" => 9, "oct" => 10, "nov" => 11, "dec" => 12] }
+  def daynames = once { Hash["sun" => 0, "mon" => 1, "tue" => 2, "wed" => 3, "thu" => 4, "fri" => 5, "sat" => 6] }
+  def units = once do
+    Hash["second" => :second, "seconds" => :second, "sec" => :second, "secs" => :second,
+         "minute" => :minute, "minutes" => :minute, "min" => :minute, "mins" => :minute,
+         "hour" => :hour, "hours" => :hour, "hr" => :hour, "hrs" => :hour,
+         "day" => :day, "days" => :day, "week" => :week, "weeks" => :week, "wk" => :week, "wks" => :week,
+         "fortnight" => :fortnight, "fortnights" => :fortnight,
+         "month" => :month, "months" => :month, "mo" => :month, "year" => :year, "years" => :year, "yr" => :year, "yrs" => :year]
+  end
+
+  def tag(w)
+    t = ChronicToken.new(w)
+    if String.match?(w, /\A\d{4}-\d{1,2}-\d{1,2}\z/)
+      y, m, d = Array.map(String.split(w, "-")) { |x| String.to_i(x) }
+      set_token(t, :date, Integer[y || 0, m || 0, d || 0])
+    elsif String.match?(w, /\A\d{1,2}\/\d{1,2}(\/\d{2,4})?\z/)
+      m, d, y = Array.map(String.split(w, "/")) { |x| String.to_i(x) }       # US order: month/day/year
+      y = y == nil ? 0 : y < 100 ? (y <= 68 ? 2000 + y : 1900 + y) : y
+      set_token(t, :date, Integer[y, m || 0, d || 0])
+    elsif String.match?(w, /\A\d{1,2}([.:]\d{2}){1,2}\z/)
+      h, mi, s = Array.map(String.split(w, /[.:]/)) { |x| String.to_i(x) }
+      set_token(t, :time, Integer[h || 0, mi || 0, s || 0])
+    elsif String.match?(w, /\A\d+\z/)
+      ChronicToken.set_kind(t, :scalar)
+      ChronicToken.set_num(t, String.to_i(w))
+    elsif String.match?(w, /\A(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\z/) && month_word?(w)
+      ChronicToken.set_kind(t, :month)
+      ChronicToken.set_num(t, months[String.[](w, 0, 3)] || 0)
+    elsif String.match?(w, /\A(sun|mon|tue|wed|thu|fri|sat)[a-z]*\z/) && day_word?(w)
+      ChronicToken.set_kind(t, :dayname)
+      ChronicToken.set_num(t, daynames[String.[](w, 0, 3)] || 0)
+    elsif w == "this" || w == "next" || w == "last"
+      set_sym(t, :grabber, String.to_sym(w))
+    elsif Hash.key?(units, w)
+      set_sym(t, :unit, units[w] || :day)
+    elsif w == "past"
+      set_sym(t, :pointer, :past)
+    elsif w == "future" || w == "in"
+      set_sym(t, :pointer, :future)
+    elsif w == "am" || w == "pm"
+      set_sym(t, :meridian, String.to_sym(w))
+    elsif w == "morning" || w == "afternoon" || w == "evening" || w == "night"
+      set_sym(t, :portion, String.to_sym(w))
+    elsif w == "at" || w == "on" || w == "the" || w == "of" || w == "and"
+      ChronicToken.set_kind(t, :noise)
+    else
+      return nil
+    end
+    t
+  end
+
+  def month_word?(w) = String.match?(w, /\A(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?|nov(ember)?|dec(ember)?)\z/)
+  def day_word?(w) = String.match?(w, /\A(sun(day)?|mon(day)?|tue(s|sday)?|wed(nesday)?|thu(r|rs|rsday)?|fri(day)?|sat(urday)?)\z/)
+
+  def set_token(t, kind, parts)
+    ChronicToken.set_kind(t, kind)
+    ChronicToken.set_parts(t, parts)
+  end
+
+  def set_sym(t, kind, sym)
+    ChronicToken.set_kind(t, kind)
+    ChronicToken.set_sym(t, sym)
+  end
+
+  def kinds(tokens) = Array.map(tokens) { |t| ChronicToken.kind(t) }
+  def num(t) = ChronicToken.num(t) || 0
+  def sym(t) = ChronicToken.sym(t) || :none
+
+  # --- handlers ---
+
+  def handle(tokens, now, context, atr)
+    ks = kinds(tokens)
+    # "3 days ago", "in 2 weeks", "2 weeks from now": an offset from an anchor, which is the rest of the text
+    if ks[0] == :scalar && ks[1] == :unit && ks[2] == :pointer
+      return offset_from(tokens, num(Array.fetch(tokens, 0)), sym(Array.fetch(tokens, 1)), sym(Array.fetch(tokens, 2)), now, context, atr)
+    elsif ks[0] == :pointer && ks[1] == :scalar && ks[2] == :unit
+      return offset_from(tokens, num(Array.fetch(tokens, 1)), sym(Array.fetch(tokens, 2)), sym(Array.fetch(tokens, 0)), now, context, atr)
+    end
+    # a lone number is a time of day ("friday 11 at night"), unless it is a day or a year next to a month name
+    mi = Array.find_index(ks) { |k| k == :month }
+    Array.each_with_index(tokens) do |t, i|
+      next unless ChronicToken.kind(t) == :scalar
+      year = num(t) > 31 || String.size(ChronicToken.word(t)) == 4
+      date_part = mi != nil && (i == mi - 1 || i == mi + 1 || (i == mi + 2 && ks[mi + 1] == :scalar && year))
+      next if date_part
+      return nil if num(t) > 24
+      set_token(t, :time, Integer[num(t), 0, 0])
+    end
+    return nil if Array.count(tokens) { |t| ChronicToken.kind(t) == :time } > 1
+    time = Array.find(tokens) { |t| ChronicToken.kind(t) == :time }
+    meridian = Array.find(tokens) { |t| ChronicToken.kind(t) == :meridian }
+    portion = Array.find(tokens) { |t| ChronicToken.kind(t) == :portion }
+    day = Array.reject(tokens) { |t| ChronicToken.kind(t) == :time || ChronicToken.kind(t) == :meridian }
+    if time != nil && portion != nil && meridian == nil        # "4:00 in the morning", "friday 11 at night"
+      meridian = ChronicToken.new("", kind: :meridian, sym: sym(portion) == :morning ? :am : :pm)
+      without = Array.reject(day) { |t| ChronicToken.kind(t) == :portion }
+      day = without unless kinds(without) == Array[:grabber]    # "this afternoon 3:30": the portion names the day
+    end
+    span = day_span(day, now, context)
+    return span if time == nil
+    return nil if span == nil && !Array.empty?(day)
+    t = resolve_time(span == nil ? now : ChronicSpan.from(span), time, meridian, atr, span == nil)
+    ChronicSpan.new(t, t + 1)
+  end
+
+  # The day (or wider) span named by the tokens that are not a time: nil for none, or for a shape not understood.
+  def day_span(day, now, context)
+    ks = kinds(day)
+    n = Array.size(day)
+    return nil if n == 0
+    a = Array.fetch(day, 0)
+    b = n > 1 ? Array.fetch(day, 1) : a
+    c = n > 2 ? Array.fetch(day, 2) : a
+    if n == 2 && ks == Array[:grabber, :unit]
+      grabber_unit(sym(a), sym(b), now, context)
+    elsif n == 2 && ks == Array[:grabber, :dayname]
+      dayname_span(sym(a), num(b), now, context)
+    elsif n == 2 && ks == Array[:grabber, :month]
+      month_span(sym(a), num(b), now)
+    elsif n == 2 && ks == Array[:grabber, :portion]
+      portion_span(sym(a), sym(b), now)
+    elsif n == 1 && ks[0] == :dayname
+      dayname_span(:this, num(a), now, context)
+    elsif n == 1 && ks[0] == :month
+      month_span(:this, num(a), now)
+    elsif n == 1 && ks[0] == :portion
+      portion_span(:this, sym(a), now)
+    elsif n == 2 && ks == Array[:month, :scalar]
+      month_day(now, 0, num(a), num(b), context)
+    elsif n == 2 && ks == Array[:scalar, :month]
+      month_day(now, 0, num(b), num(a), context)
+    elsif n == 3 && ks == Array[:month, :scalar, :scalar]
+      month_day(now, num(c), num(a), num(b), context)
+    elsif n == 3 && ks == Array[:scalar, :month, :scalar]
+      month_day(now, num(c), num(b), num(a), context)
+    elsif n == 1 && ks[0] == :date
+      y, m, d = ChronicToken.parts(a)
+      month_day(now, y || 0, m || 0, d || 0, context)
+    else
+      nil
+    end
+  end
+
+  # now ± n units; "2 weeks from now" anchors at the span of the rest ("this second"), which is now.
+  def offset_from(tokens, n, unit, dir, now, context, atr)
+    rest = Array.drop(tokens, 3)
+    anchor = now
+    unless Array.empty?(rest)
+      span = handle(rest, now, context, atr)
+      return nil if span == nil
+      anchor = guess(span)
+    end
+    t = offset(anchor, unit, dir == :past ? -n : n)
+    ChronicSpan.new(t, t + 1)
+  end
+
+  def offset(t, unit, n)
+    case unit
+    in :second then t + n
+    in :minute then t + n * 60
+    in :hour then t + n * 3600
+    in :day then t + n * 86400
+    in :week then t + n * 604800
+    in :fortnight then t + n * 1209600
+    in :month then add_months(t, n)
+    in :year then add_months(t, n * 12)
+    else t
+    end
+  end
+
+  # The same day and time n months on; a day the month lacks becomes its last (the gem lets Time overflow).
+  def add_months(t, n)
+    y = Time.year(t) + (Time.month(t) - 1 + n) / 12
+    m = (Time.month(t) - 1 + n) % 12 + 1
+    d = Integer.clamp(Time.day(t), 1, days_in_month(y, m))
+    mk(t, y, m, d, Time.hour(t), Time.min(t), Time.sec(t))
+  end
+
+  # A time of day within the day of `base`: with am/pm it is that day's; an hour 1..12 without am/pm is the
+  # first of h, h+12, next day's h at or after atr o'clock (the gem's ambiguous_time_range); any other hour is
+  # the first of h, next day's h at or after now (or the day's start, when a day was named).
+  def resolve_time(base, time, meridian, atr, relative)
+    h, m, s = ChronicToken.parts(time)
+    h ||= 0
+    m ||= 0
+    s ||= 0
+    day0 = midnight(base)
+    if meridian != nil
+      return day0 + (h % 12 + (sym(meridian) == :pm ? 12 : 0)) * 3600 + m * 60 + s
+    end
+    if h >= 1 && h <= 12 && atr != :none
+      tick = (h % 12) * 3600 + m * 60 + s
+      lower = day0 + ((atr in Integer) ? atr : 6) * 3600
+      cands = Array[day0 + tick, day0 + tick + 43200, day0 + 86400 + tick]
+    elsif h >= 1 && h <= 12
+      tick = (h % 12) * 3600 + m * 60 + s
+      lower = relative ? base : day0
+      cands = Array[day0 + tick, day0 + tick + 43200, day0 + 86400 + tick]
+    else
+      tick = h * 3600 + m * 60 + s
+      lower = relative ? base : day0
+      cands = Array[day0 + tick, day0 + 86400 + tick]
+    end
+    Array.find(cands) { |c| c >= lower } || Array.fetch(cands, -1)
+  end
+
+  # "this day", "next week", "last month", ... (the gem's Repeater#this / #next with a Grabber).
+  def grabber_unit(g, unit, now, context)
+    case unit
+    in :second
+      g == :next ? span_of(now + 1, 1) : g == :last ? span_of(now - 1, 1) : span_of(now, 1)
+    in :minute
+      start = floor_to(now, 60)
+      g == :next ? span_of(start + 60, 60) : g == :last ? span_of(start - 60, 60) : ChronicSpan.new(now, start + 60)
+    in :hour
+      start = floor_to(now, 3600)
+      g == :next ? span_of(start + 3600, 3600) : g == :last ? span_of(start - 3600, 3600) : ChronicSpan.new(now, start + 3600)
+    in :day
+      today = midnight(now)
+      if g == :next then span_of(today + 86400, 86400)
+      elsif g == :last then span_of(today - 86400, 86400)
+      elsif context == :past then ChronicSpan.new(today, floor_to(now, 3600))
+      else ChronicSpan.new(floor_to(now, 3600), today + 86400)
+      end
+    in :week
+      start = midnight(now) - Time.wday(now) * 86400           # the gem's weeks start on Sunday
+      if g == :next then span_of(start + 604800, 604800)
+      elsif g == :last then span_of(start - 604800, 604800)
+      elsif context == :past then ChronicSpan.new(start, floor_to(now, 3600))
+      else ChronicSpan.new(floor_to(now, 3600) + 3600, start + 604800)
+      end
+    in :fortnight
+      start = midnight(now) - Time.wday(now) * 86400
+      if g == :next then span_of(start + 604800, 1209600)
+      elsif g == :last then span_of(start - 1209600, 1209600)
+      else ChronicSpan.new(floor_to(now, 3600) + 3600, start + 1209600)
+      end
+    in :month
+      ms = mk(now, Time.year(now), Time.month(now), 1)
+      if g == :next then ChronicSpan.new(add_months(ms, 1), add_months(ms, 2))
+      elsif g == :last then ChronicSpan.new(add_months(ms, -1), ms)
+      elsif context == :past then ChronicSpan.new(ms, midnight(now))
+      else ChronicSpan.new(midnight(now) + 86400, add_months(ms, 1))
+      end
+    in :year
+      ys = mk(now, Time.year(now), 1, 1)
+      if g == :next then ChronicSpan.new(add_months(ys, 12), add_months(ys, 24))
+      elsif g == :last then ChronicSpan.new(add_months(ys, -12), ys)
+      elsif context == :past then ChronicSpan.new(ys, midnight(now))
+      else ChronicSpan.new(midnight(now) + 86400, add_months(ys, 12))
+      end
+    else
+      nil
+    end
+  end
+
+  # "next monday" is the first Monday after today, "last friday" the last one before it; "this" is "next"
+  # (as the gem), or "last" with context: :past.
+  def dayname_span(g, wd, now, context)
+    g = :last if g == :this && context == :past
+    d = midnight(now)
+    step = g == :last ? -86400 : 86400
+    d += step
+    d += step while Time.wday(d) != wd
+    span_of(d, 86400)
+  end
+
+  # "this november": this year's unless it has ended; "next": the one after this month; "last": the one before.
+  def month_span(g, m, now)
+    y = Time.year(now)
+    cur = Time.month(now)
+    y += 1 if g == :this && cur > m
+    y += 1 if g == :next && cur >= m
+    y -= 1 if g == :last && cur < m
+    start = mk(now, y, m, 1)
+    ChronicSpan.new(start, add_months(start, 1))
+  end
+
+  # morning 6-12, afternoon 13-17, evening 17-20, night 20-24, of today ("this"), the next or the last one.
+  def portion_span(g, portion, now)
+    lo, hi = case portion
+             in :morning then [6, 12]
+             in :afternoon then [13, 17]
+             in :evening then [17, 20]
+             else [20, 24]
+             end
+    today = midnight(now)
+    start = today + lo * 3600
+    start += 86400 if g == :next && start <= now
+    start -= 86400 if g == :last && start + (hi - lo) * 3600 > now
+    span_of(start, (hi - lo) * 3600)
+  end
+
+  # A calendar day; with no year, this year's, or next year's when it has passed (context: :future).
+  def month_day(now, y, m, d, context)
+    return nil if m < 1 || m > 12 || d < 1
+    year = y == 0 ? Time.year(now) : y
+    return nil if d > days_in_month(year, m)
+    start = mk(now, year, m, d)
+    if y == 0 && context == :future && start + 86400 <= now
+      year += 1
+      return nil if d > days_in_month(year, m)
+      start = mk(now, year, m, d)
+    end
+    span_of(start, 86400)
+  end
+
+  # --- Time helpers, all in now's zone (a fixed offset, so a day is 86400 seconds) ---
+
+  def mk(now, y, m, d, h = 0, mi = 0, s = 0) = Time.new(y, m, d, h, mi, s, Time.utc_offset(now))
+  def midnight(t) = mk(t, Time.year(t), Time.month(t), Time.day(t))
+  def floor_to(t, secs) = t - (Time.hour(t) * 3600 + Time.min(t) * 60 + Time.sec(t)) % secs
+  def span_of(start, secs) = ChronicSpan.new(start, start + secs)
+
+  def days_in_month(y, m)
+    return 29 if m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)
+    Array.fetch(Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31], m - 1)
+  end
+end
