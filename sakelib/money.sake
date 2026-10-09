@@ -1,0 +1,281 @@
+# money: the core of the money gem (6.x). An amount of a currency kept as an Integer of the currency's
+# smallest unit (`fractional`, Ruby's `cents`), arithmetic, comparison, allocation, formatting and exchange.
+#
+#   m = Money.new(1234, "USD")            # 12.34 USD; Money.from_amount(12.34, "USD") is the same
+#   m + Money.new(1, "USD"); m * 2; m / 3; -m; m < n; Array.sort(Money[...])
+#   Money.format(m)                       # "$12.34"; EUR "€1.234,57"; JPY "¥1,000"
+#   Money.allocate(m, Array[1, 1, 1]); Money.split(m, 3)
+#   Bank.add_rate(Money.default_bank, "USD", "EUR", 0.9); Money.exchange_to(m, "EUR")
+#
+# Ruby's nested names are flattened: Money::Currency -> Currency, Money::Bank::VariableExchange -> Bank,
+# Money::Bank::UnknownRate -> MoneyUnknownRate, Money::Currency::UnknownCurrency -> MoneyUnknownCurrency.
+# Amounts are exact: a Float is read with Float.rationalize (0.9 is 9/10, as the gem's BigDecimal reads it)
+# and rounded to the smallest unit half to even, the gem's default rounding mode. `Money.amount` is a Float
+# (the gem: a BigDecimal); `Money.to_d` is a Rational. Currency data for USD, EUR, JPY, GBP, CHF, CAD, AUD,
+# CNY, KRW, INR. Not ported: I18n / locale backends, `Money.default_formatting_rules`, `infinite_precision`,
+# `Money.rounding_mode` (half even only), `Money::Bank::VariableExchange#export_rates`, `2 * money`
+# (Ruby's `coerce`: an operator dispatches on its left operand, and Integer's `*` has no Money row).
+
+class MoneyUnknownRate < Exception          # Ruby: Money::Bank::UnknownRate
+end
+class MoneyUnknownCurrency < Exception      # Ruby: Money::Currency::UnknownCurrency
+end
+
+# Ruby: Money::Currency. `symbol_first` says where the symbol goes in `format`.
+class Currency
+  attr_reader iso_code, name, symbol, subunit_to_unit, decimal_mark, thousands_separator, symbol_first, priority
+  include Comparable
+
+  def table = once do
+    h = Hash[]
+    Array.each(Array[
+      ["USD", "United States Dollar", "$", 100, ".", ",", true, 1],
+      ["EUR", "Euro", "€", 100, ",", ".", true, 2],
+      ["GBP", "British Pound", "£", 100, ".", ",", true, 3],
+      ["AUD", "Australian Dollar", "$", 100, ".", ",", true, 4],
+      ["CAD", "Canadian Dollar", "$", 100, ".", ",", true, 5],
+      ["JPY", "Japanese Yen", "¥", 1, ".", ",", true, 6],
+      ["CHF", "Swiss Franc", "CHF", 100, ".", ",", true, 100],
+      ["CNY", "Chinese Renminbi Yuan", "¥", 100, ".", ",", true, 100],
+      ["INR", "Indian Rupee", "₹", 100, ".", ",", true, 100],
+      ["KRW", "South Korean Won", "₩", 1, ".", ",", true, 100]
+    ]) { |code, nm, sym, sub, dm, ts, first, pri| h[code] = Currency.new(code, nm, sym, sub, dm, ts, first, pri) }
+    h
+  end
+
+  # Ruby: Money::Currency.find("usd") -> the Currency, or nil
+  def find(id) = table[String.upcase("#{id}")]
+
+  # Ruby: Money::Currency.wrap(x): a Currency stays, a code is looked up (UnknownCurrency if none)
+  def wrap(x)
+    case x
+    in Currency then x
+    in String | Symbol
+      c = find(x)
+      raise MoneyUnknownCurrency, "Unknown currency '#{String.downcase("#{x}")}'" unless c
+      c
+    end
+  end
+
+  def all = Array.sort(Hash.values(table))
+  def id(c) = String.to_sym(String.downcase(@iso_code))
+  def code(c) = @symbol
+  def decimal_places(c) = Integer.to_s(@subunit_to_unit) == "1" ? 0 : String.length(Integer.to_s(@subunit_to_unit)) - 1
+  def symbol_first?(c) = @symbol_first
+  def <=>(a, b) = [@priority, @iso_code] <=> [Currency.priority(b), Currency.iso_code(b)]
+  def to_s(c) = @iso_code
+  def to_str(c) = @iso_code
+  def inspect(c) = "#<Money::Currency id: #{String.downcase(@iso_code)}, priority: #{@priority}, symbol_first: #{@symbol_first}, thousands_separator: #{@thousands_separator}, decimal_mark: #{@decimal_mark}, iso_code: #{@iso_code}, name: #{@name}, symbol: #{@symbol}, subunit_to_unit: #{@subunit_to_unit}>"
+end
+
+# Ruby: Money::Bank::VariableExchange, a table of rates. Money.default_bank is the shared one.
+class Bank
+  attr_reader rates
+
+  def initialize(b)
+    @rates = Hash[] if @rates == nil
+  end
+
+  def rate_key(from, to) = "#{Currency.iso_code(Currency.wrap(from))}_TO_#{Currency.iso_code(Currency.wrap(to))}"
+
+  # Ruby: bank.add_rate("USD", "EUR", 0.9) -> the rate
+  def add_rate(b, from, to, rate)
+    rate => Integer | Float | Rational
+    @rates[rate_key(from, to)] = rate
+    rate
+  end
+
+  def set_rate(b, from, to, rate) = add_rate(b, from, to, rate)
+  def get_rate(b, from, to) = @rates[rate_key(from, to)]
+
+  # Ruby: bank.exchange_with(money, "EUR") -> a Money of that currency (UnknownRate without a rate)
+  def exchange_with(b, from, to_currency)
+    to = Currency.wrap(to_currency)
+    return from if Money.currency(from) == to
+    rate = get_rate(b, Money.currency(from), to)
+    raise MoneyUnknownRate, "No conversion rate known for '#{Money.currency(from)}' -> '#{to}'" unless rate
+    Money.from_amount(Money.to_d(from) * Money.to_r(rate), to)
+  end
+end
+
+class Money
+  attr_reader fractional, currency
+  include Arithmetic
+  include Comparable
+
+  # Money.new(fractional, currency = "USD"): a fraction of the smallest unit is rounded half to even.
+  def initialize(m)
+    f = @fractional
+    f => Integer | Float | Rational
+    @fractional = round_half_even(to_r(f))
+    c = @currency
+    @currency = Currency.wrap(c == nil ? default_currency : c)
+  end
+
+  def default_currency = "USD"
+  def default_bank = once { Bank.new(Hash[]) }
+
+  # Ruby: Money.from_amount(12.34, "USD") (units, not the smallest unit)
+  def from_amount(amount, currency = nil)
+    amount => Integer | Float | Rational
+    cur = Currency.wrap(currency == nil ? default_currency : currency)
+    Money.new(to_r(amount) * Currency.subunit_to_unit(cur), cur)
+  end
+
+  def from_cents(cents, currency = nil) = Money.new(cents, currency)
+  def zero(currency = nil) = Money.new(0, currency)
+  def us_dollar(cents) = Money.new(cents, "USD")
+  def euro(cents) = Money.new(cents, "EUR")
+  def pound_sterling(cents) = Money.new(cents, "GBP")
+
+  # Ruby: Money.add_rate(from, to, rate) on the default bank
+  def add_rate(from, to, rate) = Bank.add_rate(default_bank, from, to, rate)
+
+  # A Float is read as the decimal it prints as (0.9 -> 9/10), as the gem's BigDecimal does.
+  def to_r(x)
+    case x
+    in Float then Float.rationalize(x)
+    in Integer then Integer.to_r(x)
+    in Rational then x
+    end
+  end
+
+  # Ruby's BigDecimal::ROUND_HALF_EVEN, the gem's default rounding mode.
+  def round_half_even(r)
+    fl = Rational.floor(r)
+    frac = r - fl
+    half = Rational(1, 2)
+    return fl if frac < half
+    return fl + 1 if frac > half
+    Integer.even?(fl) ? fl : fl + 1
+  end
+
+  def cents(m) = @fractional
+  def amount(m) = Rational.to_f(to_d(m))
+  def to_d(m) = Rational(@fractional, Currency.subunit_to_unit(@currency))
+  def to_f(m) = amount(m)
+  def to_i(m) = Rational.to_i(to_d(m))
+  def currency_as_string(m) = Currency.iso_code(@currency)
+  def zero?(m) = @fractional == 0
+  def positive?(m) = @fractional > 0
+  def negative?(m) = @fractional < 0
+  def nonzero?(m) = @fractional == 0 ? nil : m
+  def abs(m) = Money.new(Integer.abs(@fractional), @currency)
+  def -@(m) = Money.new(-@fractional, @currency)
+  def +@(m) = m
+
+  # The other operand in a's currency (exchanged through the default bank when it differs).
+  def same_currency(a, b)
+    b => Money
+    Money.currency(b) == @currency ? b : exchange_to(b, @currency)
+  end
+
+  def +(a, b) = Money.new(@fractional + Money.fractional(same_currency(a, b)), @currency)
+  def -(a, b) = Money.new(@fractional - Money.fractional(same_currency(a, b)), @currency)
+
+  # Ruby: money * number (a Money raises TypeError there)
+  def *(a, b)
+    raise TypeError, "Can't multiply a Money by a Money" if b in Money
+    b => Integer | Float | Rational
+    Money.new(Integer.to_r(@fractional) * to_r(b), @currency)
+  end
+
+  # Ruby: money / number -> Money; money / money -> the ratio (a BigDecimal there, a Float here)
+  def /(a, b)
+    if b in Money
+      other = same_currency(a, b)
+      raise ZeroDivisionError, "divided by 0" if Money.fractional(other) == 0
+      return Rational.to_f(Rational(@fractional, Money.fractional(other)))
+    end
+    b => Integer | Float | Rational
+    raise ZeroDivisionError, "divided by 0" if b == 0
+    Money.new(Integer.to_r(@fractional) / to_r(b), @currency)
+  end
+
+  def div(a, b) = a / b
+
+  # Two zero amounts are equal whatever their currencies; otherwise b is exchanged into a's currency,
+  # and without a rate they do not compare (nil, so == is false), as the gem.
+  def <=>(a, b)
+    b => Money
+    return 0 if zero?(a) && zero?(b)
+    other = b
+    if Money.currency(b) != @currency
+      begin
+        other = exchange_to(b, @currency)
+      rescue MoneyUnknownRate
+        return nil
+      end
+    end
+    @fractional <=> Money.fractional(other)
+  end
+
+  def eql?(a, b) = (b in Money) && a == b
+
+  # Ruby: money.allocate([1, 1, 1]) or allocate(3) -> Moneys whose sum is money; the remainder goes to the
+  # first parts (Money::Allocation.generate)
+  def allocate(m, parts)
+    ps = case parts
+    in Integer then Array.new(parts, 1)
+    in Array then Array.all?(parts) { |x| x == 0 } ? Array.new(Array.size(parts), 1) : Array.dup(parts)
+    end
+    raise ArgumentError, "need at least one party" if Array.empty?(ps)
+    result = Integer[]
+    remaining = @fractional
+    while !Array.empty?(ps)
+      sum = Array.sum(ps)
+      part = Array.pop(ps)
+      split = 0
+      if sum > 0 && part != nil
+        split = Arithmetic.truncate(remaining * part / sum)
+      end
+      Array.unshift(result, split)
+      remaining -= split
+    end
+    Array.map(result) { |c| Money.new(c, @currency) }
+  end
+
+  def split(m, n) = allocate(m, n)
+
+  # Ruby: money.exchange_to("EUR") through the default bank, or exchange_to("EUR", bank)
+  def exchange_to(m, other_currency, bank = nil) = Bank.exchange_with(bank == nil ? default_bank : bank, m, other_currency)
+
+  # Ruby: money.format(**rules). Rules kept: symbol (true, false, or a String), no_cents, no_cents_if_whole,
+  # with_currency, thousands_separator, decimal_mark, sign_before_symbol, symbol_position (:before / :after),
+  # format ("%u" the symbol, "%n" the number).
+  def format(m, symbol: true, no_cents: false, no_cents_if_whole: false, with_currency: false, thousands_separator: nil, decimal_mark: nil, sign_before_symbol: true, symbol_position: nil, format: nil)
+    cur = @currency
+    unit = Currency.subunit_to_unit(cur)
+    whole, sub = Integer.divmod(Integer.abs(@fractional), unit)
+    sep = thousands_separator == nil ? Currency.thousands_separator(cur) : thousands_separator
+    mark = decimal_mark == nil ? Currency.decimal_mark(cur) : decimal_mark
+    number = String.gsub(Integer.to_s(whole), /(\d)(?=(\d{3})+\z)/, "\\1#{sep}")
+    places = Currency.decimal_places(cur)
+    unless no_cents || places == 0 || (no_cents_if_whole && sub == 0)
+      number = "#{number}#{mark}#{String.rjust(Integer.to_s(sub), places, "0")}"
+    end
+    sym = case symbol
+    in true then Currency.symbol(cur)
+    in false | nil then ""
+    in String then symbol
+    end
+    sign = @fractional < 0 ? "-" : ""
+    number = "#{sign}#{number}" unless sign_before_symbol
+    text = if format != nil
+      String.gsub(String.gsub(format, "%u", sym), "%n", number)
+    elsif sym == ""
+      number
+    elsif symbol_position == :after || (symbol_position == nil && !Currency.symbol_first(cur))
+      "#{number} #{sym}"
+    else
+      "#{sym}#{number}"
+    end
+    text = "#{sign}#{text}" if sign_before_symbol
+    text = "#{text} #{Currency.iso_code(cur)}" if with_currency
+    text
+  end
+
+  # Ruby: money.to_s -> the amount with the currency's decimal mark and no symbol ("12.34", EUR "12,34", JPY "100")
+  def to_s(m) = format(m, symbol: false, thousands_separator: "", no_cents_if_whole: Currency.decimal_places(@currency) == 0)
+  def inspect(m) = "#<Money fractional:#{@fractional} currency:#{Currency.iso_code(@currency)}>"
+end

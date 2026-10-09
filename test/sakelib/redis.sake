@@ -1,0 +1,580 @@
+require "redis"
+
+# --- a tiny RESP2 server on an ephemeral port, in a thread: an in-memory Hash, the commands the test uses ---
+class RespError < Exception             # an error reply ("-ERR ...")
+end
+
+class Db
+  attr_reader store, expires            # key => String | Array (list) | Set | Hash; key => Time
+end
+
+def resp_read_command(c)
+  line = Socket.gets(c)
+  return nil unless line
+  n = String.to_i(String.[](String.chomp(line), 1, 20) || "0")
+  args = String[]
+  Integer.times(n) do
+    len_line = Socket.gets(c)
+    return nil unless len_line
+    len = String.to_i(String.[](String.chomp(len_line), 1, 20) || "0")
+    data = Socket.read(c, len + 2) || ""
+    Array.push(args, String.byteslice(data, 0, len) || "")
+  end
+  args
+end
+
+def resp_encode(v)
+  case v
+  in nil then "$-1\r\n"
+  in Integer then ":#{v}\r\n"
+  in Symbol then "+#{v}\r\n"
+  in String then "$#{String.bytesize(v)}\r\n#{v}\r\n"
+  in Array then "*#{Array.size(v)}\r\n" + Array.join(Array.map(v) { |x| resp_encode(x) })
+  in RespError then "-#{Exception.message(v)}\r\n"
+  end
+end
+
+def alive?(db, key)
+  exp = Db.expires(db)[key]
+  if exp != nil && exp <= Time.now
+    Hash.delete(Db.store(db), key)
+    Hash.delete(Db.expires(db), key)
+  end
+  Hash.key?(Db.store(db), key)
+end
+
+def fetch(db, key) = alive?(db, key) ? Db.store(db)[key] : nil
+
+def put(db, key, v)
+  Db.store(db)[key] = v
+  Hash.delete(Db.expires(db), key)
+  v
+end
+
+def wrongtype = raise(RespError, "WRONGTYPE Operation against a key holding the wrong kind of value")
+
+def string_at(db, key)
+  v = fetch(db, key)
+  case v
+  in nil | String then v
+  else wrongtype
+  end
+end
+
+def int_at(db, key)
+  s = string_at(db, key)
+  return 0 if s == nil
+  raise RespError, "ERR value is not an integer or out of range" unless String.match?(s, /\A-?\d+\z/)
+  String.to_i(s)
+end
+
+def list_at(db, key, create)
+  v = fetch(db, key)
+  if v == nil
+    l = String[]
+    put(db, key, l) if create
+    return l
+  end
+  case v
+  in Array then v
+  else wrongtype
+  end
+end
+
+def hash_at(db, key, create)
+  v = fetch(db, key)
+  if v == nil
+    h = Hash[]
+    put(db, key, h) if create
+    return h
+  end
+  case v
+  in Hash then v
+  else wrongtype
+  end
+end
+
+def set_at(db, key, create)
+  v = fetch(db, key)
+  if v == nil
+    s = Set[]
+    put(db, key, s) if create
+    return s
+  end
+  case v
+  in Set then v
+  else wrongtype
+  end
+end
+
+def arity(cmd, args, n)
+  raise RespError, "ERR wrong number of arguments for '#{String.downcase(cmd)}' command" if Array.size(args) < n
+end
+
+def to_int(s)
+  raise RespError, "ERR value is not an integer or out of range" unless String.match?(s, /\A-?\d+\z/)
+  String.to_i(s)
+end
+
+def glob_to_re(pat) = Regexp.new("\\A" + String.gsub(String.gsub(Regexp.escape(pat), "\\*", ".*"), "\\?", ".") + "\\z")
+
+def lrange_of(l, start, stop)
+  n = Array.size(l)
+  s = start < 0 ? n + start : start
+  e = stop < 0 ? n + stop : stop
+  s = 0 if s < 0
+  e = n - 1 if e >= n
+  return String[] if s > e || s >= n
+  Array[*(Array.slice(l, s, e - s + 1) || Array[])]
+end
+
+def execute(db, cmd, args)
+  case String.upcase(cmd)
+  in "PING" then Array.empty?(args) ? :PONG : Array.fetch(args, 0)
+  in "ECHO"
+    arity(cmd, args, 1)
+    Array.fetch(args, 0)
+  in "SELECT" then :OK
+  in "FLUSHDB" | "FLUSHALL"
+    Hash.clear(Db.store(db))
+    Hash.clear(Db.expires(db))
+    :OK
+  in "DBSIZE" then Array.count(Hash.keys(Db.store(db))) { |k| alive?(db, k) }
+  in "DEL"
+    arity(cmd, args, 1)
+    Array.count(args) { |k| alive?(db, k) && Hash.delete(Db.store(db), k) != nil }
+  in "EXISTS"
+    arity(cmd, args, 1)
+    Array.count(args) { |k| alive?(db, k) }
+  in "EXPIRE"
+    arity(cmd, args, 2)
+    key = Array.fetch(args, 0)
+    secs = to_int(Array.fetch(args, 1))
+    if !alive?(db, key)
+      0
+    elsif secs <= 0
+      Hash.delete(Db.store(db), key)
+      1
+    else
+      Db.expires(db)[key] = Time.now + secs
+      1
+    end
+  in "TTL"
+    arity(cmd, args, 1)
+    key = Array.fetch(args, 0)
+    exp = Db.expires(db)[key]
+    if !alive?(db, key)
+      -2
+    elsif exp == nil
+      -1
+    else
+      Arithmetic.ceil(exp - Time.now)
+    end
+  in "KEYS"
+    arity(cmd, args, 1)
+    re = glob_to_re(Array.fetch(args, 0))
+    Array.select(Hash.keys(Db.store(db))) { |k| alive?(db, k) && String.match?(k, re) }
+  in "TYPE"
+    arity(cmd, args, 1)
+    case fetch(db, Array.fetch(args, 0))
+    in nil then :none
+    in String then :string
+    in Array then :list
+    in Hash then :hash
+    in Set then :set
+    end
+  in "GET"
+    arity(cmd, args, 1)
+    string_at(db, Array.fetch(args, 0))
+  in "SET"
+    arity(cmd, args, 2)
+    key = Array.fetch(args, 0)
+    value = Array.fetch(args, 1)
+    opts = Array.drop(args, 2)
+    ex = nil
+    nx = false
+    xx = false
+    i = 0
+    while i < Array.size(opts)
+      o = String.upcase(Array.fetch(opts, i))
+      case o
+      in "EX"
+        ex = to_int(Array.fetch(opts, i + 1))
+        i += 1
+      in "PX"
+        ex = Rational(to_int(Array.fetch(opts, i + 1)), 1000)
+        i += 1
+      in "NX" then nx = true
+      in "XX" then xx = true
+      else raise RespError, "ERR syntax error"
+      end
+      i += 1
+    end
+    present = alive?(db, key)
+    if (nx && present) || (xx && !present)
+      nil
+    else
+      put(db, key, value)
+      Db.expires(db)[key] = Time.now + ex if ex != nil
+      :OK
+    end
+  in "SETNX"
+    arity(cmd, args, 2)
+    key = Array.fetch(args, 0)
+    if alive?(db, key)
+      0
+    else
+      put(db, key, Array.fetch(args, 1))
+      1
+    end
+  in "MGET"
+    arity(cmd, args, 1)
+    Array.map(args) { |k| string_at(db, k) }
+  in "MSET"
+    arity(cmd, args, 2)
+    Array.each(Array.each_slice(args, 2)) { |k, v| put(db, k, v) }
+    :OK
+  in "INCR" | "DECR" | "INCRBY" | "DECRBY"
+    arity(cmd, args, String.end_with?(String.upcase(cmd), "BY") ? 2 : 1)
+    key = Array.fetch(args, 0)
+    by = String.end_with?(String.upcase(cmd), "BY") ? to_int(Array.fetch(args, 1)) : 1
+    by = -by if String.start_with?(String.upcase(cmd), "DECR")
+    n = int_at(db, key) + by
+    Db.store(db)[key] = Integer.to_s(n)
+    n
+  in "APPEND"
+    arity(cmd, args, 2)
+    key = Array.fetch(args, 0)
+    s = (string_at(db, key) || "") + Array.fetch(args, 1)
+    Db.store(db)[key] = s
+    String.bytesize(s)
+  in "STRLEN"
+    arity(cmd, args, 1)
+    String.bytesize(string_at(db, Array.fetch(args, 0)) || "")
+  in "HSET"
+    arity(cmd, args, 3)
+    h = hash_at(db, Array.fetch(args, 0), true)
+    added = 0
+    Array.each(Array.each_slice(Array.drop(args, 1), 2)) do |f, v|
+      added += 1 unless Hash.key?(h, f)
+      h[f] = v
+    end
+    added
+  in "HGET"
+    arity(cmd, args, 2)
+    hash_at(db, Array.fetch(args, 0), false)[Array.fetch(args, 1)]
+  in "HMGET"
+    arity(cmd, args, 2)
+    h = hash_at(db, Array.fetch(args, 0), false)
+    Array.map(Array.drop(args, 1)) { |f| h[f] }
+  in "HGETALL"
+    arity(cmd, args, 1)
+    out = String[]
+    Hash.each(hash_at(db, Array.fetch(args, 0), false)) { |f, v| Array.push(out, f, v) }
+    out
+  in "HDEL"
+    arity(cmd, args, 2)
+    key = Array.fetch(args, 0)
+    h = hash_at(db, key, false)
+    n = Array.count(Array.drop(args, 1)) { |f| Hash.delete(h, f) != nil }
+    Hash.delete(Db.store(db), key) if Hash.empty?(h)
+    n
+  in "HEXISTS"
+    arity(cmd, args, 2)
+    Hash.key?(hash_at(db, Array.fetch(args, 0), false), Array.fetch(args, 1)) ? 1 : 0
+  in "HKEYS"
+    arity(cmd, args, 1)
+    Hash.keys(hash_at(db, Array.fetch(args, 0), false))
+  in "HVALS"
+    arity(cmd, args, 1)
+    Hash.values(hash_at(db, Array.fetch(args, 0), false))
+  in "HLEN"
+    arity(cmd, args, 1)
+    Hash.size(hash_at(db, Array.fetch(args, 0), false))
+  in "LPUSH" | "RPUSH"
+    arity(cmd, args, 2)
+    l = list_at(db, Array.fetch(args, 0), true)
+    Array.each(Array.drop(args, 1)) { |v| String.upcase(cmd) == "LPUSH" ? Array.unshift(l, v) : Array.push(l, v) }
+    Array.size(l)
+  in "LPOP" | "RPOP"
+    arity(cmd, args, 1)
+    key = Array.fetch(args, 0)
+    l = list_at(db, key, false)
+    v = String.upcase(cmd) == "LPOP" ? Array.shift(l) : Array.pop(l)
+    Hash.delete(Db.store(db), key) if Array.empty?(l)
+    v
+  in "LRANGE"
+    arity(cmd, args, 3)
+    lrange_of(list_at(db, Array.fetch(args, 0), false), to_int(Array.fetch(args, 1)), to_int(Array.fetch(args, 2)))
+  in "LLEN"
+    arity(cmd, args, 1)
+    Array.size(list_at(db, Array.fetch(args, 0), false))
+  in "LINDEX"
+    arity(cmd, args, 2)
+    list_at(db, Array.fetch(args, 0), false)[to_int(Array.fetch(args, 1))]
+  in "SADD"
+    arity(cmd, args, 2)
+    s = set_at(db, Array.fetch(args, 0), true)
+    Array.count(Array.drop(args, 1)) { |m| Set.add?(s, m) != nil }
+  in "SREM"
+    arity(cmd, args, 2)
+    key = Array.fetch(args, 0)
+    s = set_at(db, key, false)
+    n = Array.count(Array.drop(args, 1)) { |m| Set.delete?(s, m) != nil }
+    Hash.delete(Db.store(db), key) if Set.empty?(s)
+    n
+  in "SMEMBERS"
+    arity(cmd, args, 1)
+    Array.sort(Set.to_a(set_at(db, Array.fetch(args, 0), false)))
+  in "SISMEMBER"
+    arity(cmd, args, 2)
+    Set.include?(set_at(db, Array.fetch(args, 0), false), Array.fetch(args, 1)) ? 1 : 0
+  in "SCARD"
+    arity(cmd, args, 1)
+    Set.size(set_at(db, Array.fetch(args, 0), false))
+  else
+    raise RespError, "ERR unknown command '#{cmd}', with args beginning with: #{Array.join(Array.map(args) { |a| "'#{a}' " })}"
+  end
+end
+
+def run(db, cmd, args)
+  execute(db, cmd, args)
+rescue RespError => e
+  e
+end
+
+# One connection: commands until EOF; MULTI queues until EXEC.
+def serve_client(db, c)
+  tx = nil
+  cmd = resp_read_command(c)
+  while cmd
+    name = String.upcase(Array.fetch(cmd, 0, ""))
+    args = Array.drop(cmd, 1)
+    reply = if name == "MULTI"
+      tx = Array[]
+      :OK
+    elsif name == "EXEC"
+      queued = tx || Array[]
+      tx = nil
+      Array.map(queued) { |q| run(db, Array.fetch(q, 0), Array.drop(q, 1)) }
+    elsif tx != nil
+      Array.push(tx, cmd)
+      :QUEUED
+    else
+      run(db, name, args)
+    end
+    Socket.write(c, resp_encode(reply))
+    cmd = resp_read_command(c)
+  end
+  Socket.close(c)
+end
+
+def serve(srv, db)
+  loop { serve_client(db, TCPServer.accept(srv)) }
+end
+
+srv = TCPServer.new("127.0.0.1", 0)
+port = TCPServer.port(srv)
+db = Db.new(Hash[], Hash[])
+server = Thread.new { serve(srv, db) }
+
+# --- the client ---
+puts("-- connect")
+r = Redis.new(host: "127.0.0.1", port: port)
+p([Redis.host(r), Redis.port(r) == port, Redis.db(r), Redis.connected?(r)])
+p(Redis.id(r) == "redis://127.0.0.1:#{port}/0")
+p(Redis.ping(r))
+p(Redis.ping(r, "hello"))
+p(Redis.echo(r, "echo"))
+p(Redis.connected?(r))
+p(Redis.flushdb(r))
+p(Redis.dbsize(r))
+
+puts("-- strings")
+p(Redis.set(r, "name", "sake"))
+p(Redis.get(r, "name"))
+p(Redis.get(r, "missing"))
+p(Redis.set(r, "n", 10))
+p(Redis.incr(r, "n"))
+p(Redis.incrby(r, "n", 5))
+p(Redis.decr(r, "n"))
+p(Redis.decrby(r, "n", 3))
+p(Redis.get(r, "n"))
+p(Redis.incr(r, "fresh"))
+p(Redis.append(r, "name", "-lang"))
+p(Redis.strlen(r, "name"))
+p(Redis.get(r, "name"))
+p(Redis.set(r, "name", "x", nx: true))
+p(Redis.set(r, "new", "x", nx: true))
+p(Redis.set(r, "nope", "x", xx: true))
+p(Redis.set(r, "new", "y", xx: true))
+p(Redis.setnx(r, "new", "z"))
+p(Redis.setnx(r, "new2", "z"))
+p(Redis.mset(r, "a", 1, "b", 2))
+p(Redis.mget(r, "a", "b", "c"))
+p(Redis.mget(r, Array["a", "name"]))
+p(Redis.exists(r, "a", "b", "c"))
+p(Redis.exists?(r, "a"))
+p(Redis.exists?(r, "c"))
+p(Redis.del(r, "a", "b", "c"))
+p(Redis.exists(r, "a"))
+p(Redis.type(r, "name"))
+p(Redis.type(r, "missing"))
+p(Array.sort(Redis.keys(r)))
+p(Array.sort(Redis.keys(r, "n*")))
+p(Redis.keys(r, "?"))
+begin
+  Redis.incr(r, "name")
+rescue RedisCommandError => e
+  puts("RedisCommandError: #{Exception.message(e)}")
+end
+
+puts("-- expiry")
+p(Redis.set(r, "temp", "v"))
+p(Redis.ttl(r, "temp"))
+p(Redis.expire(r, "temp", 100))
+p(Redis.ttl(r, "temp"))
+p(Redis.expire(r, "missing", 100))
+p(Redis.ttl(r, "missing"))
+p(Redis.set(r, "short", "v", ex: 100))
+p(Redis.ttl(r, "short"))
+p(Redis.set(r, "ms", "v", px: 50000))
+p(Redis.ttl(r, "ms"))
+p(Redis.expire(r, "ms", 0))
+p(Redis.exists(r, "ms"))
+p(Redis.set(r, "gone", "v", px: 1))
+sleep(0.01)
+p([Redis.get(r, "gone"), Redis.exists?(r, "gone"), Redis.ttl(r, "gone")])
+
+puts("-- hashes")
+p(Redis.hset(r, "user", "name", "ko1", "lang", "ruby"))
+p(Redis.hset(r, "user", Hash["lang" => "sake", "age" => 1]))
+p(Redis.hget(r, "user", "name"))
+p(Redis.hget(r, "user", "nope"))
+p(Redis.hgetall(r, "user"))
+p(Redis.hgetall(r, "nohash"))
+p(Redis.hmget(r, "user", "name", "nope", "age"))
+p(Redis.hexists(r, "user", "age"))
+p(Redis.hexists(r, "user", "nope"))
+p(Redis.hkeys(r, "user"))
+p(Redis.hvals(r, "user"))
+p(Redis.hlen(r, "user"))
+p(Redis.hdel(r, "user", "age", "nope"))
+p(Redis.hgetall(r, "user"))
+p(Redis.type(r, "user"))
+begin
+  Redis.get(r, "user")
+rescue RedisCommandError => e
+  puts("RedisCommandError: #{Exception.message(e)}")
+end
+
+puts("-- lists")
+p(Redis.rpush(r, "q", "a"))
+p(Redis.rpush(r, "q", "b", "c"))
+p(Redis.lpush(r, "q", "z"))
+p(Redis.llen(r, "q"))
+p(Redis.lrange(r, "q", 0, -1))
+p(Redis.lrange(r, "q", 1, 2))
+p(Redis.lrange(r, "q", -2, -1))
+p(Redis.lrange(r, "q", 5, 10))
+p(Redis.lindex(r, "q", 0))
+p(Redis.lindex(r, "q", -1))
+p(Redis.lindex(r, "q", 9))
+p(Redis.lpop(r, "q"))
+p(Redis.rpop(r, "q"))
+p(Redis.lrange(r, "q", 0, -1))
+p(Redis.lpop(r, "empty"))
+p(Redis.llen(r, "empty"))
+p(Redis.type(r, "q"))
+begin
+  Redis.lpush(r, "name", "x")
+rescue RedisCommandError => e
+  puts("RedisCommandError: #{Exception.message(e)}")
+end
+
+puts("-- sets")
+p(Redis.sadd(r, "tags", "a", "b"))
+p(Redis.sadd(r, "tags", "b", "c"))
+p(Redis.sadd?(r, "tags", "d"))
+p(Redis.sadd?(r, "tags", "d"))
+p(Redis.smembers(r, "tags"))
+p(Redis.sismember(r, "tags", "a"))
+p(Redis.sismember(r, "tags", "zz"))
+p(Redis.scard(r, "tags"))
+p(Redis.srem(r, "tags", "a", "zz"))
+p(Redis.srem?(r, "tags", "b"))
+p(Redis.srem?(r, "tags", "b"))
+p(Redis.smembers(r, "tags"))
+p(Redis.smembers(r, "noset"))
+p(Redis.type(r, "tags"))
+
+puts("-- call")
+p(Redis.call(r, "SET", "raw", "1"))
+p(Redis.call(r, "GET", "raw"))
+p(Redis.call(r, "INCR", "raw"))
+p(Redis.call(r, "GET", "nothing"))
+p(Redis.call(r, "MGET", "raw", "nothing"))
+p(Redis.call(r, :ping))
+p(Redis.call(r, "DEL", Array["raw", "name"]))
+begin
+  Redis.call(r, "NOSUCH", "a", "b")
+rescue RedisCommandError => e
+  puts("RedisCommandError: #{Exception.message(e)}")
+end
+begin
+  Redis.call(r, "GET")
+rescue RedisCommandError => e
+  puts("RedisCommandError: #{Exception.message(e)}")
+end
+
+puts("-- pipelined, multi")
+replies = Redis.pipelined(r) do |pipe|
+  p(RedisPipeline.set(pipe, "p1", "one"))
+  RedisPipeline.set(pipe, "p2", 2)
+  RedisPipeline.get(pipe, "p1")
+  RedisPipeline.incr(pipe, "p2")
+  RedisPipeline.exists?(pipe, "p1")
+  RedisPipeline.expire(pipe, "p1", 100)
+  RedisPipeline.hset(pipe, "ph", "k", "v")
+  RedisPipeline.hgetall(pipe, "ph")
+  RedisPipeline.mget(pipe, "p1", "p2", "nope")
+  RedisPipeline.set(pipe, "p1", "x", nx: true)
+  RedisPipeline.call(pipe, "TYPE", "ph")
+  RedisPipeline.get(pipe, "nope")
+end
+p(replies)
+p(Redis.pipelined(r) { |pipe| })
+p(Redis.multi(r) { |tx| })
+replies = Redis.multi(r) do |tx|
+  RedisPipeline.incr(tx, "counter")
+  RedisPipeline.incr(tx, "counter")
+  RedisPipeline.get(tx, "counter")
+  RedisPipeline.sadd(tx, "s", "m")
+  RedisPipeline.smembers(tx, "s")
+end
+p(replies)
+p(Redis.get(r, "counter"))
+
+puts("-- close, reconnect, errors")
+p(Redis.close(r))
+p(Redis.connected?(r))
+p(Redis.get(r, "counter"))
+p(Redis.connected?(r))
+Redis.disconnect!(r)
+r2 = Redis.new("127.0.0.1", port, 3)
+p(Redis.ping(r2))
+p(Redis.id(r2) == "redis://127.0.0.1:#{port}/3")
+Redis.close(r2)
+closed = TCPServer.new("127.0.0.1", 0)
+closed_port = TCPServer.port(closed)
+TCPServer.close(closed)
+bad = Redis.new(host: "127.0.0.1", port: closed_port)
+begin
+  Redis.get(bad, "x")
+rescue RedisCannotConnectError => e
+  puts("RedisCannotConnectError: #{String.start_with?(Exception.message(e), "Error connecting to Redis on 127.0.0.1:")}")
+end
+p(Redis.connected?(bad))
+
+TCPServer.close(srv)
+puts("end")

@@ -1,0 +1,91 @@
+require "dotenv"
+
+# Keys are prefixed so that the surrounding environment cannot have them.
+Array.each(Array.select(ENV.keys) { |k| String.start_with?(k, "SAKE_DOTENV_") }) { |k| ENV.delete(k) }
+ENV.delete("DOTENV_LINEBREAK_MODE")
+
+puts("-- DotenvParser.call")
+text = "# comment\n" +
+  "SAKE_DOTENV_A=1\n" +
+  "export SAKE_DOTENV_B=two words # trailing\n" +
+  "SAKE_DOTENV_C=\"dq \\n x \\\"q\\\" $SAKE_DOTENV_A ${SAKE_DOTENV_B}\"\n" +
+  "SAKE_DOTENV_D='sq \\n $SAKE_DOTENV_A'\n" +
+  "SAKE_DOTENV_E=${SAKE_DOTENV_A}-$SAKE_DOTENV_B-${SAKE_DOTENV_NOPE}\n" +
+  "SAKE_DOTENV_F=\\$SAKE_DOTENV_A\n" +
+  "SAKE_DOTENV_G=\"a\\\\b\"\n" +
+  "SAKE_DOTENV_H=$(echo hi)\n" +
+  "SAKE_DOTENV_I=\"x\\ty\"\n" +
+  "SAKE_DOTENV_J=\n" +
+  "export SAKE_DOTENV_A\n" +
+  "SAKE_DOTENV_L: colon\n" +
+  "SAKE_DOTENV.M=dot\n" +
+  "\n   \n" +
+  "SAKE_DOTENV_N = spaced \n" +
+  "SAKE_DOTENV_O=\"multi\nline\"\n" +
+  "SAKE_DOTENV_P='it''s'\n"
+h = DotenvParser.call(text)
+Hash.each(h) { |k, v| puts("#{k}=#{Kernel.inspect(v)}") }
+p(Hash.size(h))
+
+puts("-- errors")
+begin
+  DotenvParser.call("export SAKE_DOTENV_Z")
+rescue DotenvFormatError => e
+  puts("DotenvFormatError: #{Exception.message(e)}")
+end
+p(Dotenv.load("/nonexistent/.env"))
+begin
+  Dotenv.load!("/nonexistent/.env")
+rescue IOError => e
+  puts("IOError")
+end
+begin
+  Dotenv.require_keys("SAKE_DOTENV_NOPE1", "SAKE_DOTENV_NOPE2")
+rescue DotenvMissingKeys => e
+  puts("DotenvMissingKeys: #{Exception.message(e)}")
+end
+
+puts("-- existing values")
+ENV.set("SAKE_DOTENV_T", "old")
+p(DotenvParser.call("SAKE_DOTENV_T=new"))
+p(DotenvParser.call("SAKE_DOTENV_T=new", overwrite: true))
+p(Dotenv.update(Hash["SAKE_DOTENV_T" => "x", "SAKE_DOTENV_U" => "y"]))
+p(ENV.get("SAKE_DOTENV_T"))
+p(Dotenv.update(Hash["SAKE_DOTENV_T" => "x"], overwrite: true))
+p(ENV.get("SAKE_DOTENV_T"))
+p(Dotenv.modify(Hash["SAKE_DOTENV_T" => "in", "SAKE_DOTENV_V" => "v"]) { [ENV.get("SAKE_DOTENV_T"), ENV.get("SAKE_DOTENV_V")] })
+p([ENV.get("SAKE_DOTENV_T"), ENV.get("SAKE_DOTENV_V")])
+p(Dotenv.require_keys("SAKE_DOTENV_T", "SAKE_DOTENV_U"))
+
+puts("-- files")
+Dir.mktmpdir do |dir|
+  env = File.join(dir, ".env")
+  local = File.join(dir, ".env.local")
+  File.write(env, "SAKE_DOTENV_HOST=example.com\nSAKE_DOTENV_URL=\"https://$SAKE_DOTENV_HOST/${SAKE_DOTENV_T}\"\nSAKE_DOTENV_T=from-file\n")
+  File.write(local, "SAKE_DOTENV_HOST=localhost\nSAKE_DOTENV_PORT=3000\n")
+  p(Dotenv.parse(env))
+  p(Dotenv.parse(env, local))
+  p(Dotenv.parse(env, local, overwrite: true))
+  p(Dotenv.load(env))
+  p([ENV.get("SAKE_DOTENV_HOST"), ENV.get("SAKE_DOTENV_URL"), ENV.get("SAKE_DOTENV_T")])
+  p(Dotenv.load(local))
+  p(ENV.get("SAKE_DOTENV_HOST"))
+  p(Dotenv.overload(local))
+  p([ENV.get("SAKE_DOTENV_HOST"), ENV.get("SAKE_DOTENV_PORT")])
+  p(Dotenv.overwrite(env))
+  p(ENV.get("SAKE_DOTENV_T"))
+  p(Dotenv.load(env, local, "/nonexistent"))
+  begin
+    Dotenv.overload!(env, "/nonexistent")
+  rescue IOError => e
+    puts("IOError")
+  end
+end
+
+puts("-- legacy line breaks")
+ENV.set("DOTENV_LINEBREAK_MODE", "legacy")
+p(DotenvParser.call("SAKE_DOTENV_W=\"a\\nb\\rc\""))
+ENV.delete("DOTENV_LINEBREAK_MODE")
+p(DotenvParser.call("DOTENV_LINEBREAK_MODE=legacy\nSAKE_DOTENV_W=\"a\\nb\""))
+p(DotenvParser.call("SAKE_DOTENV_W=\"a\\nb\""))
+puts("end")

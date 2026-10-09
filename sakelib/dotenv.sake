@@ -1,0 +1,178 @@
+# dotenv: the dotenv gem (3.x). Loads `KEY=value` lines of a .env file into ENV.
+#
+#   Dotenv.load(".env")                 # sets ENV, keeps what is already set; the Hash of what changed
+#   Dotenv.overload(".env")             # also overwrites (Ruby's overwrite / overload)
+#   Dotenv.parse(".env", ".env.local")  # the Hash without touching ENV
+#   DotenvParser.call(text)             # Ruby: Dotenv::Parser.call(text) (a String, not a file)
+#
+# Syntax, as the gem's: comments (#), `export KEY=v`, `KEY: v`, single quotes (literal), double quotes
+# (`\"` and `\\` unescaped, `$VAR` / `${VAR}` substituted from the file then ENV, `$(cmd)` run by sh),
+# unquoted values (substituted and unescaped too). In the gem since 3.0, `\n` inside double quotes stays
+# the two characters unless `DOTENV_LINEBREAK_MODE=legacy`; the same here.
+# Nested names are flattened: Dotenv::Parser -> DotenvParser, Dotenv::FormatError -> DotenvFormatError,
+# Dotenv::MissingKeys -> DotenvMissingKeys. Not ported: Rails integration, the instrumenter, autorestore,
+# the template (`dotenv -t`), `Dotenv.save` / `restore` (`modify` restores by itself).
+
+class DotenvFormatError < Exception      # Ruby: Dotenv::FormatError (a SyntaxError there)
+end
+class DotenvMissingKeys < Exception      # Ruby: Dotenv::MissingKeys
+end
+
+module DotenvParser
+  module_function
+
+  # The gem's LINE pattern, with its named groups.
+  def line_re = once do
+    /(?:^|\A)\s*(?<export>export\s+)?(?<key>[\w.]+)(?:(?:\s*=\s*?|:\s+?)(?<value>\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|[^\#\n]+)?)?\s*(?:\#.*)?(?:$|\z)/
+  end
+
+  def variable_re = once { /(\\)?(\$)(?!\()\{?([A-Z0-9_]+)?\}?/i }
+  def command_re = once { /(?<backslash>\\)?\$(?<cmd>\((?:[^()]|\g<cmd>)+\))/ }
+
+  # Ruby: Dotenv::Parser.call(string, overwrite: false) -> Hash of key => value
+  def call(string, overwrite: false)
+    text = String.gsub(string, /\r\n?/, "\n")
+    hash = Hash[]
+    pos = 0
+    m = Regexp.match(line_re, text, pos)
+    while m
+      key = m["key"] || ""
+      value = m["value"]
+      if existing?(key, overwrite)
+        hash[key] = ENV.get(key)          # the gem keeps ENV's value in the Hash too
+      elsif m["export"] && value == nil
+        raise DotenvFormatError, "Line #{Kernel.inspect(MatchData.to_s(m))} has an unset variable" unless Hash.key?(hash, key)
+      else
+        hash[key] = parse_value(value || "", hash)
+      end
+      pos = MatchData.end(m, 0)
+      m = Regexp.match(line_re, text, pos)
+    end
+    hash
+  end
+
+  # An ENV value is kept unless overwriting (DOTENV_LINEBREAK_MODE is always read from the file).
+  def existing?(key, overwrite) = !overwrite && key != "DOTENV_LINEBREAK_MODE" && ENV.key?(key)
+
+  def parse_value(raw, hash)
+    value = String.strip(raw)
+    q = String.match(value, /\A(['"])(.*)\1\z/m)
+    quote = nil
+    if q
+      quote = q[1]
+      value = q[2] || ""
+    end
+    value = expand_newlines(value, hash) if quote == "\""
+    if quote != "'"
+      value = unescape_characters(value)
+      value = substitute_commands(value, hash)
+      value = substitute_variables(value, hash)
+    end
+    value
+  end
+
+  def unescape_characters(value) = String.gsub(value, /\\([^$])/, "\\1")
+
+  def expand_newlines(value, hash)
+    if (hash["DOTENV_LINEBREAK_MODE"] || ENV.get("DOTENV_LINEBREAK_MODE")) == "legacy"
+      String.gsub(String.gsub(value, "\\n", "\n"), "\\r", "\r")
+    else
+      String.gsub(String.gsub(value, "\\n", "\\\\\\n"), "\\r", "\\\\\\r")
+    end
+  end
+
+  # $VAR and ${VAR}: the file's own values first, then ENV, else empty; \$ is kept.
+  def substitute_variables(value, hash)
+    String.gsub(value, variable_re) do |var|
+      m = String.match(var, variable_re)
+      if m == nil
+        var
+      elsif m[1] == "\\"
+        String.[](var, 1, String.length(var) - 1) || ""
+      elsif m[3]
+        name = m[3] || ""
+        hash[name] || ENV.get(name) || ""
+      else
+        var
+      end
+    end
+  end
+
+  # $(cmd): run by sh, the output without its final newline; \$(cmd) is kept.
+  def substitute_commands(value, hash)
+    String.gsub(value, command_re) do |whole|
+      m = String.match(whole, command_re)
+      cmd = m ? (m["cmd"] || "()") : "()"
+      if m && m["backslash"]
+        String.[](whole, 1, String.length(whole) - 1) || ""
+      else
+        inner = String.[](cmd, 1, String.length(cmd) - 2) || ""
+        out, _status = Open3.capture2("sh", "-c", substitute_variables(inner, hash))
+        String.chomp(out)
+      end
+    end
+  end
+end
+
+module Dotenv
+  module_function
+
+  # Ruby: Dotenv.load(*filenames, overwrite: false, ignore: true) -> the Hash of ENV keys it changed
+  def load(*filenames, overwrite: false, ignore: true)
+    update(parse(*filenames, overwrite: overwrite, ignore: ignore), overwrite: overwrite)
+  end
+
+  # Ruby: Dotenv.load! raises IOError (Ruby: Errno::ENOENT) for a missing file
+  def load!(*filenames) = load(*filenames, ignore: false)
+
+  def overwrite(*filenames) = load(*filenames, overwrite: true)
+  def overload(*filenames) = load(*filenames, overwrite: true)
+  def overwrite!(*filenames) = load(*filenames, overwrite: true, ignore: false)
+  def overload!(*filenames) = load(*filenames, overwrite: true, ignore: false)
+
+  # Ruby: Dotenv.parse(*filenames, overwrite:, ignore:) -> the Hash of the files' values (".env" by default)
+  def parse(*filenames, overwrite: false, ignore: true)
+    names = Array.empty?(filenames) ? String[".env"] : filenames
+    names = Array.reverse(names) if overwrite
+    hash = Hash[]
+    Array.each(names) do |name|
+      path = File.expand_path(name)
+      if File.file?(path)
+        Hash.merge!(hash, DotenvParser.call(File.read(path), overwrite: overwrite))
+      elsif !ignore
+        raise IOError, "No such file or directory @ rb_sysopen - #{path}"
+      end
+    end
+    hash
+  end
+
+  # Ruby: Dotenv.update(env, overwrite: false) -> the Hash of the keys whose ENV value changed (Ruby's
+  # Dotenv::Diff: a comparison of ENV before and after, so in ENV's order, not the file's)
+  def update(env, overwrite: false)
+    before = ENV.to_h
+    Hash.each(env) do |k, v|
+      key = "#{k}"
+      ENV.set(key, "#{v}") if overwrite || !ENV.key?(key)
+    end
+    Hash.select(ENV.to_h) { |k, v| before[k] != v }
+  end
+
+  # Ruby: Dotenv.modify(env) { ... }: ENV changed for the block, restored afterwards
+  def modify(env)
+    before = ENV.to_h
+    begin
+      update(env, overwrite: true)
+      yield
+    ensure
+      Hash.each(ENV.to_h) { |k, _v| ENV.delete(k) unless Hash.key?(before, k) }
+      Hash.each(before) { |k, v| ENV.set(k, v) if ENV.get(k) != v }
+    end
+  end
+
+  # Ruby: Dotenv.require_keys("A", "B") raises MissingKeys naming the ENV keys not set
+  def require_keys(*keys)
+    missing = Array.reject(Array.flatten(keys)) { |k| ENV.key?("#{k}") }
+    return nil if Array.empty?(missing)
+    raise DotenvMissingKeys, "Missing required configuration keys: #{Kernel.inspect(missing)}"
+  end
+end
