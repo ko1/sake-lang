@@ -1,0 +1,333 @@
+# active_support_inflector: ActiveSupport::Inflector (activesupport 8.1) in Sake.
+#
+# `ActiveSupport::Inflector.pluralize(w)` is `Inflector.pluralize(w)` (nested names are flattened); the
+# String core extensions (`"post".pluralize`) are `StringExt.pluralize(s)` in active_support_core_ext.
+#
+# The inflection rules are data: ActiveSupport's default `inflections(:en)` block is the table built once
+# by `Inflector.inflections` (a Record of Arrays and a Hash, made by `once`), in ActiveSupport's order
+# (a rule added later is tried first). `Inflector.plural/singular/irregular/uncountable/acronym/human`
+# add rules to that table, as `inflect.plural ...` does inside Ruby's block.
+#
+# Not ported: `constantize` / `safe_constantize` (no reflection: a String cannot name a type), the
+# `locale` arguments (one language), `transliterate`'s I18n rules (the default approximations only).
+
+module Inflector
+  module_function
+
+  # --- the rule table ---
+
+  # {plurals:, singulars:, uncountables:, humans:, acronyms:}: Arrays of [rule, replacement] Tuples (rule a
+  # Regexp or a String), an Array of lowercase words, and a Hash lowercase => Acronym.
+  def inflections = once do
+    t = {plurals: Array[], singulars: Array[], uncountables: Array[], humans: Array[], acronyms: Hash[]}
+    default_inflections(t)
+    t
+  end
+
+  def plurals
+    inflections => {plurals:}
+    plurals
+  end
+
+  def singulars
+    inflections => {singulars:}
+    singulars
+  end
+
+  def uncountables
+    inflections => {uncountables:}
+    uncountables
+  end
+
+  def humans
+    inflections => {humans:}
+    humans
+  end
+
+  def acronyms
+    inflections => {acronyms:}
+    acronyms
+  end
+
+  # Ruby's Inflections#plural: a String rule is no longer uncountable; the rule goes first.
+  def plural(rule, replacement)
+    Array.delete(uncountables, rule) if rule in String
+    Array.delete(uncountables, replacement)
+    Array.unshift(plurals, [rule, replacement])
+    nil
+  end
+
+  def singular(rule, replacement)
+    Array.delete(uncountables, rule) if rule in String
+    Array.delete(uncountables, replacement)
+    Array.unshift(singulars, [rule, replacement])
+    nil
+  end
+
+  # Ruby's Inflections#irregular: four rules each way, keeping the case of the first letter.
+  def irregular(sing, plur)
+    Array.delete(uncountables, sing)
+    Array.delete(uncountables, plur)
+    s0 = String.[](sing, 0) || ""
+    srest = String.[](sing, 1..) || ""
+    p0 = String.[](plur, 0) || ""
+    prest = String.[](plur, 1..) || ""
+    if String.upcase(s0) == String.upcase(p0)
+      plural(Regexp.new("(?i)(#{s0})#{srest}$"), '\1' + prest)
+      plural(Regexp.new("(?i)(#{p0})#{prest}$"), '\1' + prest)
+      singular(Regexp.new("(?i)(#{s0})#{srest}$"), '\1' + srest)
+      singular(Regexp.new("(?i)(#{p0})#{prest}$"), '\1' + srest)
+    else
+      plural(Regexp.new("#{String.upcase(s0)}(?i)#{srest}$"), String.upcase(p0) + prest)
+      plural(Regexp.new("#{String.downcase(s0)}(?i)#{srest}$"), String.downcase(p0) + prest)
+      plural(Regexp.new("#{String.upcase(p0)}(?i)#{prest}$"), String.upcase(p0) + prest)
+      plural(Regexp.new("#{String.downcase(p0)}(?i)#{prest}$"), String.downcase(p0) + prest)
+      singular(Regexp.new("#{String.upcase(s0)}(?i)#{srest}$"), String.upcase(s0) + srest)
+      singular(Regexp.new("#{String.downcase(s0)}(?i)#{srest}$"), String.downcase(s0) + srest)
+      singular(Regexp.new("#{String.upcase(p0)}(?i)#{prest}$"), String.upcase(s0) + srest)
+      singular(Regexp.new("#{String.downcase(p0)}(?i)#{prest}$"), String.downcase(s0) + srest)
+    end
+    nil
+  end
+
+  def uncountable(*words)
+    Array.each(words) { |w| Array.push(uncountables, String.downcase(w)) }
+    nil
+  end
+
+  # Ruby's Inflections#human: a Regexp rule is applied before the usual humanize; a String rule maps a
+  # whole word to its human form.
+  def human(rule, replacement)
+    Array.unshift(humans, [rule, replacement])
+    nil
+  end
+
+  def acronym(word)
+    acronyms[String.downcase(word)] = word
+    nil
+  end
+
+  # ActiveSupport's active_support/inflections.rb, in its order (each call puts its rule first).
+  def default_inflections(t)
+    t => {plurals:, singulars:}
+    Array.each(Array[
+      [/$/, "s"], [/s$/i, "s"], [/^(ax|test)is$/i, '\1es'], [/(octop|vir)us$/i, '\1i'], [/(octop|vir)i$/i, '\1i'],
+      [/(alias|status)$/i, '\1es'], [/(bu)s$/i, '\1ses'], [/(buffal|tomat)o$/i, '\1oes'], [/([ti])um$/i, '\1a'],
+      [/([ti])a$/i, '\1a'], [/sis$/i, "ses"], [/(?:([^f])fe|([lr])f)$/i, '\1\2ves'], [/(hive)$/i, '\1s'],
+      [/([^aeiouy]|qu)y$/i, '\1ies'], [/(x|ch|ss|sh)$/i, '\1es'], [/(matr|vert|ind)(?:ix|ex)$/i, '\1ices'],
+      [/^(m|l)ouse$/i, '\1ice'], [/^(m|l)ice$/i, '\1ice'], [/^(ox)$/i, '\1en'], [/^(oxen)$/i, '\1'], [/(quiz)$/i, '\1zes']
+    ]) { |rule| Array.unshift(plurals, rule) }
+    Array.each(Array[
+      [/s$/i, ""], [/(ss)$/i, '\1'], [/(n)ews$/i, '\1ews'], [/([ti])a$/i, '\1um'],
+      [/((a)naly|(b)a|(d)iagno|(p)arenthe|(p)rogno|(s)ynop|(t)he)(sis|ses)$/i, '\1sis'],
+      [/(^analy)(sis|ses)$/i, '\1sis'], [/([^f])ves$/i, '\1fe'], [/(hive)s$/i, '\1'], [/(tive)s$/i, '\1'],
+      [/([lr])ves$/i, '\1f'], [/([^aeiouy]|qu)ies$/i, '\1y'], [/(s)eries$/i, '\1eries'], [/(m)ovies$/i, '\1ovie'],
+      [/(x|ch|ss|sh)es$/i, '\1'], [/^(m|l)ice$/i, '\1ouse'], [/(bus)(es)?$/i, '\1'], [/(o)es$/i, '\1'],
+      [/(shoe)s$/i, '\1'], [/(cris|test)(is|es)$/i, '\1is'], [/^(a)x[ie]s$/i, '\1xis'], [/(octop|vir)(us|i)$/i, '\1us'],
+      [/(alias|status)(es)?$/i, '\1'], [/^(ox)en/i, '\1'], [/(vert|ind)ices$/i, '\1ex'], [/(matr)ices$/i, '\1ix'],
+      [/(quiz)zes$/i, '\1'], [/(database)s$/i, '\1']
+    ]) { |rule| Array.unshift(singulars, rule) }
+    Array.each(Array[["person", "people"], ["man", "men"], ["child", "children"], ["sex", "sexes"],
+                     ["move", "moves"], ["zombie", "zombies"]]) { |s, p| irregular_into(t, s, p) }
+    t => {uncountables:}
+    Array.concat(uncountables, String["equipment", "information", "rice", "money", "species", "series", "fish",
+                                      "sheep", "jeans", "police"])
+    nil
+  end
+
+  # irregular while the table is still being built (the public functions would call `inflections` again).
+  def irregular_into(t, sing, plur)
+    t => {plurals:, singulars:}
+    s0 = String.[](sing, 0) || ""
+    srest = String.[](sing, 1..) || ""
+    p0 = String.[](plur, 0) || ""
+    prest = String.[](plur, 1..) || ""
+    Array.unshift(plurals, [Regexp.new("(?i)(#{s0})#{srest}$"), '\1' + prest])
+    Array.unshift(plurals, [Regexp.new("(?i)(#{p0})#{prest}$"), '\1' + prest])
+    Array.unshift(singulars, [Regexp.new("(?i)(#{s0})#{srest}$"), '\1' + srest])
+    Array.unshift(singulars, [Regexp.new("(?i)(#{p0})#{prest}$"), '\1' + srest])
+    nil
+  end
+
+  # Ruby's Uncountables#uncountable?: /\b(?:w1|w2|...)\Z/i, rebuilt when the words change.
+  def uncountable_re_table = once { Hash[] }
+
+  def uncountable?(str)
+    words = uncountables
+    return false if Array.empty?(words)
+    key = Array.join(words, "|")
+    table = uncountable_re_table
+    re = table[key]
+    if re == nil
+      re = Regexp.new("(?i)\\b(?:#{Array.join(Array.map(words) { |w| Regexp.escape(w) }, "|")})\\Z")
+      table[key] = re
+    end
+    Regexp.match?(re, str)
+  end
+
+  # Ruby's apply_inflections: the first rule that changes the word wins.
+  def apply_inflections(word, rules)
+    result = dup(word)
+    return result if String.empty?(word) || uncountable?(result)
+    Array.each(rules) { |rule, replacement| break if String.sub!(result, rule, replacement) }
+    result
+  end
+
+  # --- the words ---
+
+  def pluralize(word) = apply_inflections(word, plurals)
+  def singularize(word) = apply_inflections(word, singulars)
+
+  # "HTML|RESTful" (longest first) or a pattern that never matches, as Ruby's acronym_regex.
+  def acronym_alternation
+    acr = acronyms
+    return "(?=a)b" if Hash.empty?(acr)
+    Array.join(Array.sort_by(Hash.values(acr)) { |a| -String.length(a) }, "|")
+  end
+
+  # Ruby: camelize(term, uppercase_first_letter = true); false or :lower gives lowerCamelCase.
+  def camelize(term, uppercase_first_letter = true)
+    acr = acronyms
+    string = term
+    if !uppercase_first_letter || uppercase_first_letter == :lower
+      re = Regexp.new("^(?:#{acronym_alternation}(?=\\b|[A-Z_])|\\w)")
+      string = String.sub(string, re) { |m| String.downcase(m) }
+    elsif String.match?(string, /\A[a-z\d]*\z/)
+      found = acr[string]
+      return found ? dup(found) : String.capitalize(string)
+    else
+      string = String.sub(string, /^[a-z\d]*/) { |m| acr[m] || String.capitalize(m) }
+    end
+    # Ruby reads $1 ("/") and $2 (the word) in the block; here the match itself is taken apart.
+    String.gsub(string, /(?:_|(\/))([a-z\d]*)/i) do |m|
+      word = String.[](m, 1..) || ""
+      substituted = acr[word] || String.capitalize(word)
+      String.start_with?(m, "/") ? "::#{substituted}" : substituted
+    end
+  end
+
+  def underscore(camel_cased_word)
+    return dup(camel_cased_word) unless String.match?(camel_cased_word, /[A-Z-]|::/)
+    word = String.gsub(camel_cased_word, "::", "/")
+    unless Hash.empty?(acronyms)
+      # Ruby's one regexp with an optional look-behind group, as two passes: after a letter, and at a word start.
+      alt = acronym_alternation
+      word = String.gsub(word, Regexp.new("(?<=[A-Za-z\\d])(?:#{alt})(?=\\b|[^a-z])")) { |m| "_" + String.downcase(m) }
+      word = String.gsub(word, Regexp.new("\\b(?:#{alt})(?=\\b|[^a-z])")) { |m| String.downcase(m) }
+    end
+    word = String.gsub(word, /(?<=[A-Z])(?=[A-Z][a-z])|(?<=[a-z\d])(?=[A-Z])/, "_")
+    String.downcase(String.tr(word, "-", "_"))
+  end
+
+  def humanize(lower_case_and_underscored_word, capitalize: true, keep_id_suffix: false)
+    result = dup(lower_case_and_underscored_word)
+    Array.each(humans) { |rule, replacement| break if String.sub!(result, rule, replacement) }
+    result = String.lstrip(String.tr(result, "_", " "))
+    if !keep_id_suffix && String.end_with?(lower_case_and_underscored_word, "_id")
+      result = String.delete_suffix(result, " id")
+    end
+    acr = acronyms
+    result = String.gsub(result, /([[[:alpha:]]\d]+)/i) do |m|
+      down = String.downcase(m)
+      acr[down] || down
+    end
+    result = String.sub(result, /\A[[:alpha:]]/) { |m| String.upcase(m) } if capitalize
+    result
+  end
+
+  def upcase_first(string) = String.length(string) > 0 ? String.upcase(String.[](string, 0) || "") + (String.[](string, 1..) || "") : ""
+  def downcase_first(string) = String.length(string) > 0 ? String.downcase(String.[](string, 0) || "") + (String.[](string, 1..) || "") : ""
+
+  def titleize(word, keep_id_suffix: false)
+    String.gsub(humanize(underscore(word), keep_id_suffix: keep_id_suffix), /\b(?<!\w['’`()])[a-z]/) { |m| String.capitalize(m) }
+  end
+
+  def tableize(class_name) = pluralize(underscore(class_name))
+
+  # Ruby: strips a leading schema name ("schema.posts").
+  def classify(table_name) = camelize(singularize(String.sub(table_name, /.*\./, "")))
+
+  def dasherize(underscored_word) = String.tr(underscored_word, "_", "-")
+
+  def demodulize(path)
+    i = String.rindex(path, "::")
+    i ? String.[](path, (i + 2)..) || "" : path
+  end
+
+  def deconstantize(path) = String.[](path, 0, String.rindex(path, "::") || 0) || ""
+
+  def foreign_key(class_name, separate_class_name_and_id_with_underscore = true)
+    underscore(demodulize(class_name)) + (separate_class_name_and_id_with_underscore ? "_id" : "id")
+  end
+
+  # --- numbers ---
+
+  # Ruby's en locale: number.nth.ordinals (1 == 1.0, so 1.0 is "st"; 1.5 falls through to its to_i).
+  def ordinal(number)
+    return "st" if number == 1
+    return "nd" if number == 2
+    return "rd" if number == 3
+    m = Integer.abs(Arithmetic.to_i(number)) % 100
+    m = m % 10 if m > 13
+    case m
+    in 1 then "st"
+    in 2 then "nd"
+    in 3 then "rd"
+    else "th"
+    end
+  end
+
+  def ordinalize(number) = "#{number}#{ordinal(number)}"
+
+  # --- transliteration ---
+
+  # The i18n gem's HashTransliterator::DEFAULT_APPROXIMATIONS.
+  def approximations = once do
+    Hash["À" => "A", "Á" => "A", "Â" => "A", "Ã" => "A", "Ä" => "A", "Å" => "A", "Æ" => "AE",
+         "Ç" => "C", "È" => "E", "É" => "E", "Ê" => "E", "Ë" => "E", "Ì" => "I", "Í" => "I",
+         "Î" => "I", "Ï" => "I", "Ð" => "D", "Ñ" => "N", "Ò" => "O", "Ó" => "O", "Ô" => "O",
+         "Õ" => "O", "Ö" => "O", "×" => "x", "Ø" => "O", "Ù" => "U", "Ú" => "U", "Û" => "U",
+         "Ü" => "U", "Ý" => "Y", "Þ" => "Th", "ß" => "ss", "ẞ" => "SS", "à" => "a",
+         "á" => "a", "â" => "a", "ã" => "a", "ä" => "a", "å" => "a", "æ" => "ae", "ç" => "c",
+         "è" => "e", "é" => "e", "ê" => "e", "ë" => "e", "ì" => "i", "í" => "i", "î" => "i",
+         "ï" => "i", "ð" => "d", "ñ" => "n", "ò" => "o", "ó" => "o", "ô" => "o", "õ" => "o",
+         "ö" => "o", "ø" => "o", "ù" => "u", "ú" => "u", "û" => "u", "ü" => "u", "ý" => "y",
+         "þ" => "th", "ÿ" => "y", "Ā" => "A", "ā" => "a", "Ă" => "A", "ă" => "a", "Ą" => "A",
+         "ą" => "a", "Ć" => "C", "ć" => "c", "Ĉ" => "C", "ĉ" => "c", "Ċ" => "C", "ċ" => "c",
+         "Č" => "C", "č" => "c", "Ď" => "D", "ď" => "d", "Đ" => "D", "đ" => "d", "Ē" => "E",
+         "ē" => "e", "Ĕ" => "E", "ĕ" => "e", "Ė" => "E", "ė" => "e", "Ę" => "E", "ę" => "e",
+         "Ě" => "E", "ě" => "e", "Ĝ" => "G", "ĝ" => "g", "Ğ" => "G", "ğ" => "g", "Ġ" => "G",
+         "ġ" => "g", "Ģ" => "G", "ģ" => "g", "Ĥ" => "H", "ĥ" => "h", "Ħ" => "H", "ħ" => "h",
+         "Ĩ" => "I", "ĩ" => "i", "Ī" => "I", "ī" => "i", "Ĭ" => "I", "ĭ" => "i", "Į" => "I",
+         "į" => "i", "İ" => "I", "ı" => "i", "Ĳ" => "IJ", "ĳ" => "ij", "Ĵ" => "J", "ĵ" => "j",
+         "Ķ" => "K", "ķ" => "k", "ĸ" => "k", "Ĺ" => "L", "ĺ" => "l", "Ļ" => "L", "ļ" => "l",
+         "Ľ" => "L", "ľ" => "l", "Ŀ" => "L", "ŀ" => "l", "Ł" => "L", "ł" => "l", "Ń" => "N",
+         "ń" => "n", "Ņ" => "N", "ņ" => "n", "Ň" => "N", "ň" => "n", "ŉ" => "'n", "Ŋ" => "NG",
+         "ŋ" => "ng", "Ō" => "O", "ō" => "o", "Ŏ" => "O", "ŏ" => "o", "Ő" => "O", "ő" => "o",
+         "Œ" => "OE", "œ" => "oe", "Ŕ" => "R", "ŕ" => "r", "Ŗ" => "R", "ŗ" => "r", "Ř" => "R",
+         "ř" => "r", "Ś" => "S", "ś" => "s", "Ŝ" => "S", "ŝ" => "s", "Ş" => "S", "ş" => "s",
+         "Š" => "S", "š" => "s", "Ţ" => "T", "ţ" => "t", "Ť" => "T", "ť" => "t", "Ŧ" => "T",
+         "ŧ" => "t", "Ũ" => "U", "ũ" => "u", "Ū" => "U", "ū" => "u", "Ŭ" => "U", "ŭ" => "u",
+         "Ů" => "U", "ů" => "u", "Ű" => "U", "ű" => "u", "Ų" => "U", "ų" => "u", "Ŵ" => "W",
+         "ŵ" => "w", "Ŷ" => "Y", "ŷ" => "y", "Ÿ" => "Y", "Ź" => "Z", "ź" => "z", "Ż" => "Z",
+         "ż" => "z", "Ž" => "Z", "ž" => "z", "Ǫ" => "O", "ǫ" => "o", "Ǭ" => "O", "ǭ" => "o"]
+  end
+
+  # Ruby: transliterate(string, replacement = "?"); :none keeps a character without an approximation.
+  def transliterate(string, replacement = "?")
+    return dup(string) if String.ascii_only?(string)
+    table = approximations
+    String.gsub(String.unicode_normalize(string, :nfc), /[^\x00-\x7f]/) do |c|
+      table[c] || (replacement == :none ? c : replacement)
+    end
+  end
+
+  def parameterize(string, separator: "-", preserve_case: false)
+    s = String.gsub(transliterate(string), /[^a-z0-9\-_]+/i, separator)
+    unless String.empty?(separator)
+      s = String.gsub(s, Regexp.new("#{Regexp.escape(separator)}{2,}"), separator)
+      s = String.delete_suffix(String.delete_prefix(s, separator), separator)
+    end
+    preserve_case ? s : String.downcase(s)
+  end
+end

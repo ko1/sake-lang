@@ -1,0 +1,642 @@
+# active_support_core_ext: ActiveSupport's core extensions (activesupport 8.1) in Sake.
+#
+# ActiveSupport adds methods to String, Array, Hash, Integer, Object ("x".blank?, xs.in_groups_of(3)).
+# A Sake type's operations are fixed, and a value is never a receiver, so each extension is a function in a
+# module named after the Ruby class it extends, with the value first:
+#
+#   "x".squish              StringExt.squish(s)
+#   xs.in_groups_of(3)      ArrayExt.in_groups_of(xs, 3)
+#   h.deep_merge(other)     HashExt.deep_merge(h, other)
+#   7.ordinalize            IntegerExt.ordinalize(7)
+#   x.blank?                Blank.blank?(x)          (Object#blank?: any value)
+#   2.hours                 Duration.hours(2)        (Numeric#hours: a Duration type)
+#
+# `Hash#except`, `Hash#slice`, `Array#sum`, `String#start_with?` and others that Sake's core already has are
+# not repeated. Methods that take a method name (`xs.pluck(:id)` on objects, `minimum(:price)`) take a block.
+
+require "active_support_inflector"
+
+# Object#blank? / present? / presence over any value, as ActiveSupport defines them per class.
+module Blank
+  module_function
+
+  def blank?(x)
+    case x
+    in nil | false then true
+    in true then false
+    in String then String.empty?(x) || String.match?(x, /\A[[:space:]]*\z/)
+    in Array then Array.empty?(x)
+    in Hash then Hash.empty?(x)
+    in Set then Set.empty?(x)
+    in Symbol then Symbol.empty?(x)
+    else false
+    end
+  end
+
+  def present?(x) = !blank?(x)
+
+  # Ruby: `self if present?`; the result is `x | nil`.
+  def presence(x) = blank?(x) ? nil : x
+
+  # Object#deep_dup over any value: Arrays and Hashes copied through, the rest by dup.
+  def deep_dup(x)
+    case x
+    in Array then ArrayExt.deep_dup(x)
+    in Hash then HashExt.deep_dup(x)
+    else dup(x)
+    end
+  end
+end
+
+module StringExt
+  module_function
+
+  def blank?(s) = String.empty?(s) || String.match?(s, /\A[[:space:]]*\z/)
+  def present?(s) = !blank?(s)
+  def presence(s) = blank?(s) ? nil : s
+
+  def squish(s) = String.strip(String.gsub(s, /[[:space:]]+/, " "))
+
+  def remove(s, *patterns)
+    r = dup(s)
+    Array.each(patterns) { |pat| r = String.gsub(r, pat, "") }
+    r
+  end
+
+  # Ruby: truncate(n, omission: "...", separator: nil); separator is a String or a Regexp.
+  def truncate(s, truncate_to, omission: "...", separator: nil)
+    return dup(s) unless String.length(s) > truncate_to
+    room = truncate_to - String.length(omission)
+    stop = separator ? String.rindex(s, separator, room) || room : room
+    "#{String.[](s, 0, stop) || ""}#{omission}"
+  end
+
+  # Ruby: truncate_words(n, omission: "...", separator: /\s+/)
+  def truncate_words(s, words_count, omission: "...", separator: nil)
+    sep = separator == nil ? "\\s+" : (separator in Regexp) ? Regexp.source(separator) : Regexp.escape(separator)
+    m = String.match(s, Regexp.new("(?m)\\A((?>.+?#{sep}){#{words_count - 1}}.+?)#{sep}.*"))
+    m ? (m[1] || "") + omission : dup(s)
+  end
+
+  # Ruby: indent(amount, indent_string = nil, indent_empty_lines = false); nil takes the String's own
+  # leading tab or space.
+  def indent(s, amount, indent_string = nil, indent_empty_lines = false)
+    own = String.match(s, /^[ \t]/)
+    is = indent_string || (own ? MatchData.to_s(own) : " ")
+    String.gsub(s, indent_empty_lines ? /^/ : /^(?!$)/, is * amount)
+  end
+
+  def at(s, position) = s[position]
+  def from(s, position) = String.[](s, position, String.length(s))
+
+  def to(s, position)
+    position += String.size(s) if position < 0
+    String.[](s, 0, position + 1) || ""
+  end
+
+  def first(s, limit = 1)
+    r = String.[](s, 0, limit)
+    r == nil ? raise(ArgumentError, "negative limit") : r
+  end
+
+  def last(s, limit = 1)
+    r = String.[](s, Integer.clamp(String.length(s) - limit, 0, String.length(s)), limit)
+    r == nil ? raise(ArgumentError, "negative limit") : r
+  end
+
+  def starts_with?(s, prefix) = String.start_with?(s, prefix)
+  def ends_with?(s, suffix) = String.end_with?(s, suffix)
+
+  # String#inflections (active_support/core_ext/string/inflections.rb): the Inflector with the String first.
+  def pluralize(s) = Inflector.pluralize(s)
+  def singularize(s) = Inflector.singularize(s)
+  # Ruby: "s".camelize(:lower) for lowerCamelCase (:upper is the default).
+  def camelize(s, first_letter = :upper) = Inflector.camelize(s, first_letter != :lower)
+  def camelcase(s, first_letter = :upper) = camelize(s, first_letter)
+  def underscore(s) = Inflector.underscore(s)
+  def dasherize(s) = Inflector.dasherize(s)
+  def demodulize(s) = Inflector.demodulize(s)
+  def deconstantize(s) = Inflector.deconstantize(s)
+  def tableize(s) = Inflector.tableize(s)
+  def classify(s) = Inflector.classify(s)
+  def humanize(s, capitalize: true, keep_id_suffix: false) = Inflector.humanize(s, capitalize: capitalize, keep_id_suffix: keep_id_suffix)
+  def titleize(s, keep_id_suffix: false) = Inflector.titleize(s, keep_id_suffix: keep_id_suffix)
+  def titlecase(s, keep_id_suffix: false) = titleize(s, keep_id_suffix: keep_id_suffix)
+  def foreign_key(s, separate_class_name_and_id_with_underscore = true) = Inflector.foreign_key(s, separate_class_name_and_id_with_underscore)
+  def parameterize(s, separator: "-", preserve_case: false) = Inflector.parameterize(s, separator: separator, preserve_case: preserve_case)
+  def upcase_first(s) = Inflector.upcase_first(s)
+  def downcase_first(s) = Inflector.downcase_first(s)
+end
+
+# Ruby: Enumerable::SoleItemExpectedError
+class SoleItemExpectedError < StandardError
+end
+
+module ArrayExt
+  module_function
+
+  def blank?(xs) = Array.empty?(xs)
+  def present?(xs) = !Array.empty?(xs)
+  def presence(xs) = Array.empty?(xs) ? nil : xs
+
+  # Ruby: in_groups_of(n, fill_with = nil); false pads nothing. Gives the groups, or yields each.
+  def in_groups_of(xs, number, fill_with = nil)
+    raise ArgumentError, "Group size must be a positive integer, was #{Kernel.inspect(number)}" if number <= 0
+    # a new untyped Array: a `String[]` could not take the nil padding
+    collection = Array.concat(Array[], xs)
+    if fill_with != false
+      padding = (number - Array.size(xs) % number) % number
+      Array.concat(collection, Array.new(padding, fill_with))
+    end
+    groups = Array.each_slice(collection, number)
+    Array.each(groups) { |g| yield(g) } if block_given?
+    groups
+  end
+
+  # Ruby: in_groups(n, fill_with = nil): n groups of nearly equal size, the shorter ones padded.
+  def in_groups(xs, number, fill_with = nil)
+    division = Array.size(xs) / number
+    modulo = Array.size(xs) % number
+    groups = Array[]
+    start = 0
+    Integer.times(number) do |index|
+      length = division + (modulo > 0 && modulo > index ? 1 : 0)
+      group = Array.concat(Array[], Array.slice(xs, start, length) || Array[])
+      Array.push(group, fill_with) if fill_with != false && modulo > 0 && length == division
+      Array.push(groups, group)
+      start += length
+    end
+    Array.each(groups) { |g| yield(g) } if block_given?
+    groups
+  end
+
+  # Ruby: split(value = nil) or split { |x| ... }: the Array cut at each matching element.
+  def split(xs, value = nil)
+    arr = Array.dup(xs)
+    result = Array[]
+    loop do
+      idx = block_given? ? Array.find_index(arr) { |e| yield(e) } : Array.index(arr, value)
+      break if idx == nil
+      Array.push(result, Array.slice!(arr, 0, idx) || Array[])
+      Array.shift(arr)
+    end
+    Array.push(result, arr)
+  end
+
+  def to_sentence(xs, words_connector: ", ", two_words_connector: " and ", last_word_connector: ", and ")
+    case Array.length(xs)
+    in 0 then ""
+    in 1 then "#{xs[0]}"
+    in 2 then "#{xs[0]}#{two_words_connector}#{xs[1]}"
+    else "#{Array.join(Array.take(xs, Array.length(xs) - 1), words_connector)}#{last_word_connector}#{xs[-1]}"
+    end
+  end
+
+  def second(xs) = xs[1]
+  def third(xs) = xs[2]
+  def fourth(xs) = xs[3]
+  def fifth(xs) = xs[4]
+  def forty_two(xs) = xs[41]
+  def second_to_last(xs) = xs[-2]
+  def third_to_last(xs) = xs[-3]
+
+  def from(xs, position) = Array.[](xs, position, Array.length(xs)) || Array[]
+  def to(xs, position) = position >= 0 ? Array.take(xs, position + 1) : Array.[](xs, 0..position) || Array[]
+
+  # Ruby's elements.flatten(1): each argument an element, or an Array of them.
+  def flat1(elements) = Array.flat_map(elements) { |e| (e in Array) ? e : Array[e] }
+
+  def including(xs, *elements) = xs + flat1(elements)
+  def excluding(xs, *elements) = xs - flat1(elements)
+  def without(xs, *elements) = xs - flat1(elements)
+  def exclude?(xs, x) = !Array.include?(xs, x)
+
+  def compact_blank(xs) = Array.reject(xs) { |x| Blank.blank?(x) }
+
+  # Ruby: many? / many? { |x| ... }: more than one (matching) element.
+  def many?(xs)
+    if block_given?
+      Array.count(xs) { |x| yield(x) } > 1
+    else
+      Array.size(xs) > 1
+    end
+  end
+
+  def sole(xs)
+    raise SoleItemExpectedError, "no item found" if Array.empty?(xs)
+    raise SoleItemExpectedError, "multiple items found" if Array.size(xs) > 1
+    xs[0]
+  end
+
+  def index_by(xs)
+    result = Hash[]
+    Array.each(xs) { |x| result[yield(x)] = x }
+    result
+  end
+
+  # Ruby: index_with(default) or index_with { |x| ... }
+  def index_with(xs, default = nil)
+    result = Hash[]
+    if block_given?
+      Array.each(xs) { |x| result[x] = yield(x) }
+    else
+      Array.each(xs) { |x| result[x] = default }
+    end
+    result
+  end
+
+  # Ruby: pluck(*keys) over elements that take `[]` (Hashes, Arrays); one key gives the values, more give Tuples.
+  def pluck(xs, *keys)
+    if Array.size(keys) > 1
+      Array.map(xs) { |e| Array.map(keys) { |k| e[k] } }
+    else
+      k = keys[0]
+      Array.map(xs) { |e| e[k] }
+    end
+  end
+
+  def pick(xs, *keys)
+    return nil if Array.empty?(xs)
+    first = xs[0]
+    Array.size(keys) > 1 ? Array.map(keys) { |k| first[k] } : first[keys[0]]
+  end
+
+  # Ruby: minimum(:key) / maximum(:key) name a method; here the block computes the key.
+  def minimum(xs) = Array.min(Array.map(xs) { |x| yield(x) })
+  def maximum(xs) = Array.max(Array.map(xs) { |x| yield(x) })
+
+  # Ruby: in_order_of(:key, series, filter: true); the block gives each element's key.
+  def in_order_of(xs, series, filter: true)
+    if filter
+      groups = Array.group_by(xs) { |x| yield(x) }
+      Array.flat_map(series) { |k| groups[k] || Array[] }
+    else
+      Array.sort_by(xs) { |x| Array.index(series, yield(x)) || Array.size(series) }
+    end
+  end
+
+  def deep_dup(xs) = Array.map(xs) { |x| Blank.deep_dup(x) }
+end
+
+module HashExt
+  module_function
+
+  def blank?(h) = Hash.empty?(h)
+  def present?(h) = !Hash.empty?(h)
+  def presence(h) = Hash.empty?(h) ? nil : h
+
+  # Ruby: deep_merge(other) { |key, this_val, other_val| ... }: Hashes under the same key are merged
+  # recursively; the block (if any) decides the other collisions.
+  def deep_merge(h, other)
+    result = Hash.dup(h)
+    Hash.each(other) do |k, v|
+      this_val = result[k]
+      if Hash.key?(result, k) && (this_val in Hash) && (v in Hash)
+        if block_given?
+          result[k] = deep_merge(this_val, v) { |k2, a, b| yield(k2, a, b) }
+        else
+          result[k] = deep_merge(this_val, v)
+        end
+      elsif Hash.key?(result, k)
+        if block_given?
+          result[k] = yield(k, this_val, v)
+        else
+          result[k] = v
+        end
+      else
+        result[k] = v
+      end
+    end
+    result
+  end
+
+  def deep_merge!(h, other)
+    merged = block_given? ? deep_merge(h, other) { |k, a, b| yield(k, a, b) } : deep_merge(h, other)
+    Hash.replace(h, merged)
+  end
+
+  def reverse_merge(h, other) = Hash.merge(other, h)
+  def with_defaults(h, other) = Hash.merge(other, h)
+  def reverse_merge!(h, other) = Hash.replace(h, Hash.merge(other, h))
+  def with_defaults!(h, other) = Hash.replace(h, Hash.merge(other, h))
+
+  def stringify_key(k) = (k in Symbol) ? Symbol.to_s(k) : (k in String) ? k : Kernel.to_s(k)
+  def symbolize_key(k) = (k in String) ? String.to_sym(k) : k
+
+  def stringify_keys(h) = Hash.transform_keys(h) { |k| stringify_key(k) }
+  def symbolize_keys(h) = Hash.transform_keys(h) { |k| symbolize_key(k) }
+  def to_options(h) = symbolize_keys(h)
+
+  # Ruby: deep_transform_keys { |k| ... } through nested Hashes and the Arrays between them.
+  def deep_transform_keys(h, &b) = deep_transform_keys_in(h, &b)
+
+  def deep_transform_keys_in(obj, &b)
+    case obj
+    in Hash then Hash.each_with_object(obj, Hash[]) { |(k, v), r| r[yield(k)] = deep_transform_keys_in(v, &b) }
+    in Array then Array.map(obj) { |e| deep_transform_keys_in(e, &b) }
+    else obj
+    end
+  end
+
+  def deep_transform_values(h, &b) = deep_transform_values_in(h, &b)
+
+  def deep_transform_values_in(obj, &b)
+    case obj
+    in Hash then Hash.transform_values(obj) { |v| deep_transform_values_in(v, &b) }
+    in Array then Array.map(obj) { |e| deep_transform_values_in(e, &b) }
+    else yield(obj)
+    end
+  end
+
+  def deep_stringify_keys(h) = deep_transform_keys(h) { |k| stringify_key(k) }
+  def deep_symbolize_keys(h) = deep_transform_keys(h) { |k| symbolize_key(k) }
+
+  def compact_blank(h) = Hash.reject(h) { |_k, v| Blank.blank?(v) }
+  def compact_blank!(h) = Hash.delete_if(h) { |_k, v| Blank.blank?(v) }
+
+  # Ruby: raises ArgumentError naming the first unknown key.
+  def assert_valid_keys(h, *valid_keys)
+    Hash.each_key(h) do |k|
+      unless Array.include?(valid_keys, k)
+        raise ArgumentError, "Unknown key: #{Kernel.inspect(k)}. Valid keys are: #{Array.join(Array.map(valid_keys) { |v| Kernel.inspect(v) }, ", ")}"
+      end
+    end
+    h
+  end
+
+  # Ruby: a copy whose values (and keys other than Strings and Symbols) are deep_dup'ed.
+  def deep_dup(h)
+    copy = Hash.dup(h)
+    Hash.each(h) do |k, v|
+      if k in String | Symbol
+        copy[k] = Blank.deep_dup(v)
+      else
+        Hash.delete(copy, k)
+        copy[Blank.deep_dup(k)] = Blank.deep_dup(v)
+      end
+    end
+    copy
+  end
+end
+
+module IntegerExt
+  module_function
+
+  def ordinalize(n) = Inflector.ordinalize(n)
+  def ordinal(n) = Inflector.ordinal(n)
+  def multiple_of?(n, number) = number == 0 ? n == 0 : n % number == 0
+  def blank?(n) = false
+  def present?(n) = true
+end
+
+module NumericExt
+  module_function
+
+  def in_milliseconds(n) = n * 1000
+  def blank?(n) = false
+  def present?(n) = true
+end
+
+# ActiveSupport::Duration: an amount of time with its parts (`Duration.hours(2)` is Ruby's `2.hours`).
+# `value` is the length in seconds; `parts` a Hash part => amount (:years, :months, :weeks, :days,
+# :hours, :minutes, :seconds). Arithmetic and comparison as Ruby's; `ago` / `since` move a Time, the
+# calendar parts (years, months, weeks, days) by the calendar, as Time#advance does.
+class Duration
+  attr_reader value, parts
+  include Arithmetic
+  include Comparable
+
+  # Ruby: Duration.new drops zero parts (unless the whole value is 0).
+  def initialize(d)
+    @parts = Hash.reject(@parts) { |_k, v| v == 0 } unless @value == 0
+  end
+
+  def part_names = once { Symbol[:years, :months, :weeks, :days, :hours, :minutes, :seconds] }
+
+  def seconds_per(part)
+    case part
+    in :seconds then 1
+    in :minutes then 60
+    in :hours then 3600
+    in :days then 86400
+    in :weeks then 604800
+    in :months then 2629746      # 1/12 of a gregorian year
+    in :years then 31556952      # a gregorian year (365.2425 days)
+    end
+  end
+
+  def seconds(n) = Duration.new(n, Hash[seconds: n])
+  def minutes(n) = Duration.new(n * 60, Hash[minutes: n])
+  def hours(n) = Duration.new(n * 3600, Hash[hours: n])
+  def days(n) = Duration.new(n * 86400, Hash[days: n])
+  def weeks(n) = Duration.new(n * 604800, Hash[weeks: n])
+  def fortnights(n) = weeks(n * 2)
+  def months(n) = Duration.new(n * 2629746, Hash[months: n])
+  def years(n) = Duration.new(n * 31556952, Hash[years: n])
+
+  # Ruby: Duration.build(seconds): the seconds split into the largest parts.
+  def build(n)
+    parts = Hash[]
+    sign = n <=> 0
+    remainder = Arithmetic.abs(Arithmetic.round(n, 9))
+    unless n == 0
+      Array.each(part_names) do |part|
+        next if part == :seconds
+        per = seconds_per(part)
+        parts[part] = Arithmetic.floor(remainder / per) * sign
+        remainder = remainder % per
+      end
+    end
+    parts[:seconds] = remainder * sign
+    Duration.new(n, parts)
+  end
+
+  def other_value(o) = (o in Duration) ? Duration.value(o) : o
+
+  def <=>(d, other) = @value <=> other_value(other)
+  def ==(d, other) = other_value(other) == @value
+
+  def +(d, other)
+    if other in Duration
+      merged = Hash.dup(@parts)
+      Hash.each(Duration.parts(other)) { |k, v| merged[k] = (merged[k] || 0) + v }
+      Duration.new(@value + Duration.value(other), merged)
+    else
+      merged = Hash.dup(@parts)
+      merged[:seconds] = (merged[:seconds] || 0) + other
+      Duration.new(@value + other, merged)
+    end
+  end
+
+  def -(d, other) = d + (-other)
+  def -@(d) = Duration.new(-@value, Hash.transform_values(@parts) { |v| -v })
+  def +@(d) = d
+
+  # Ruby: a Duration times a number; dividing by a Duration gives a number, by a number a Duration.
+  def *(d, n) = Duration.new(@value * n, Hash.transform_values(@parts) { |v| v * n })
+
+  def /(d, other)
+    if other in Duration
+      @value / Duration.value(other)
+    else
+      Duration.new(@value / other, Hash.transform_values(@parts) { |v| v / other })
+    end
+  end
+
+  def %(d, other) = build(@value % other_value(other))
+
+  def to_i(d) = Arithmetic.to_i(@value)
+  def to_f(d) = Arithmetic.to_f(@value)
+  def to_s(d) = Kernel.to_s(@value)
+  def abs(d) = Duration.new(Arithmetic.abs(@value), @parts)
+  def zero?(d) = @value == 0
+  def positive?(d) = @value > 0
+  def negative?(d) = @value < 0
+
+  def in_seconds(d) = @value
+  def in_minutes(d) = Arithmetic.to_f(@value) / 60
+  def in_hours(d) = Arithmetic.to_f(@value) / 3600
+  def in_days(d) = Arithmetic.to_f(@value) / 86400
+  def in_weeks(d) = Arithmetic.to_f(@value) / 604800
+  def in_months(d) = Arithmetic.to_f(@value) / 2629746
+  def in_years(d) = Arithmetic.to_f(@value) / 31556952
+
+  # Ruby: "1 hour and 30 minutes" (p d prints this)
+  def inspect(d)
+    return "#{@value} seconds" if Hash.empty?(@parts)
+    names = part_names
+    sorted = Hash.sort_by(@parts) { |unit, _v| Array.index(names, unit) || 0 }
+    ArrayExt.to_sentence(Array.map(sorted) { |unit, val| "#{val} #{val == 1 ? String.chop(Symbol.to_s(unit)) : Symbol.to_s(unit)}" })
+  end
+
+  # Ruby: Duration#iso8601 ("P1DT2H"); weeks mixed with other date parts become days.
+  def iso8601(d, precision: nil)
+    parts = Hash.reject(@parts) { |_k, v| v == 0 }
+    return "PT0S" if Hash.empty?(parts)
+    if Hash.key?(parts, :weeks) && (Hash.key?(parts, :years) || Hash.key?(parts, :months) || Hash.key?(parts, :days))
+      parts[:days] = (parts[:days] || 0) + (Hash.delete(parts, :weeks) || 0) * 7
+    end
+    out = "P"
+    out += "#{parts[:years]}Y" if Hash.key?(parts, :years)
+    out += "#{parts[:months]}M" if Hash.key?(parts, :months)
+    out += "#{parts[:days]}D" if Hash.key?(parts, :days)
+    out += "#{parts[:weeks]}W" if Hash.key?(parts, :weeks)
+    time = ""
+    time += "#{parts[:hours]}H" if Hash.key?(parts, :hours)
+    time += "#{parts[:minutes]}M" if Hash.key?(parts, :minutes)
+    if Hash.key?(parts, :seconds)
+      secs = parts[:seconds]
+      time += precision ? format("%0.0#{precision}f", secs) + "S" : "#{secs}S"
+    end
+    out += "T#{time}" unless String.empty?(time)
+    out
+  end
+
+  # Ruby: Duration.parse("P1Y2M3DT4H5M6S"); ArgumentError (Ruby: ISO8601Parser::ParsingError) if malformed.
+  def parse(s)
+    m = String.match(s, /\A([-+]?)P((?:-?\d+(?:[.,]\d+)?[YMWD])*)(?:T((?:-?\d+(?:[.,]\d+)?[HMS])*))?\z/)
+    raise ArgumentError, "Invalid ISO 8601 duration: #{Kernel.inspect(s)}" unless m
+    sign = m[1] == "-" ? -1 : 1
+    parts = Hash[]
+    date = m[2] || ""
+    time = m[3]
+    Array.each(String.scan(date, /(-?\d+(?:[.,]\d+)?)([YMWD])/)) do |num, unit|
+      parts[case unit
+            in "Y" then :years
+            in "M" then :months
+            in "W" then :weeks
+            else :days
+            end] = parse_number(num || "") * sign
+    end
+    if time
+      Array.each(String.scan(time, /(-?\d+(?:[.,]\d+)?)([HMS])/)) do |num, unit|
+        parts[case unit
+              in "H" then :hours
+              in "M" then :minutes
+              else :seconds
+              end] = parse_number(num || "") * sign
+      end
+    end
+    raise ArgumentError, "Invalid ISO 8601 duration: #{Kernel.inspect(s)} is empty duration" if Hash.empty?(parts)
+    if Hash.key?(parts, :weeks) && (Hash.key?(parts, :years) || Hash.key?(parts, :months) || Hash.key?(parts, :days))
+      raise ArgumentError, "Invalid ISO 8601 duration: #{Kernel.inspect(s)} mixing weeks with other date parts not allowed"
+    end
+    if time && String.empty?(time)
+      raise ArgumentError, "Invalid ISO 8601 duration: #{Kernel.inspect(s)} time part marker is present but time part is empty"
+    end
+    total = Hash.sum(parts) { |part, n| n * seconds_per(part) }
+    Duration.new(total, parts)
+  end
+
+  def parse_number(num) = String.match?(num, /[.,]/) ? String.to_f(String.tr(num, ",", ".")) : String.to_i(num)
+
+  # --- moving a Time ---
+
+  def since(d, time = Time.now) = sum(d, 1, time)
+  def from_now(d, time = Time.now) = sum(d, 1, time)
+  def after(d, time = Time.now) = sum(d, 1, time)
+  def ago(d, time = Time.now) = sum(d, -1, time)
+  def until(d, time = Time.now) = sum(d, -1, time)
+  def before(d, time = Time.now) = sum(d, -1, time)
+
+  def sum(d, sign, time)
+    return time + sign * @value if Hash.empty?(@parts)
+    t = time
+    Hash.each(@parts) do |type, number|
+      t = case type
+          in :seconds then t + sign * number
+          in :minutes then t + sign * number * 60
+          in :hours then t + sign * number * 3600
+          else advance(t, type, sign * number)
+          end
+    end
+    t
+  end
+
+  # Ruby's Time#advance with one calendar part: whole weeks and days move the date, their fraction the
+  # clock; months and years move the month, keeping the day (clamped to the month's end, as Date#>>).
+  def advance(t, type, n)
+    whole = Arithmetic.floor(n)
+    fraction = n - whole
+    hours = 0
+    year = Time.year(t)
+    month = Time.month(t)
+    day = Time.day(t)
+    case type
+    in :weeks
+      day_shift = whole * 7
+      hours = 24 * 7 * fraction
+    in :days
+      day_shift = whole
+      hours = 24 * fraction
+    in :months
+      year, month, day = shift_months(year, month, day, whole)
+      day_shift = 0
+    else                                      # :years
+      year, month, day = shift_months(year, month, day, whole * 12)
+      day_shift = 0
+    end
+    off = Time.utc_offset(t)
+    date = Time.new(year, month, day, 12, 0, 0, off) + day_shift * 86400
+    moved = Time.new(Time.year(date), Time.month(date), Time.day(date), Time.hour(t), Time.min(t), Time.sec(t) + Time.subsec(t), off)
+    hours == 0 ? moved : moved + hours * 3600
+  end
+
+  def shift_months(year, month, day, n)
+    total = year * 12 + (month - 1) + n
+    y = total / 12
+    m = total % 12 + 1
+    [y, m, Integer.clamp(day, 1, days_in_month(y, m))]
+  end
+
+  def days_in_month(y, m)
+    if m == 2
+      leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+      leap ? 29 : 28
+    elsif m == 4 || m == 6 || m == 9 || m == 11
+      30
+    else
+      31
+    end
+  end
+end

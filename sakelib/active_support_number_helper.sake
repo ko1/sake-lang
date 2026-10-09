@@ -1,0 +1,266 @@
+# active_support_number_helper: ActiveSupport::NumberHelper (activesupport 8.1) in Sake.
+#
+# `ActiveSupport::NumberHelper.number_to_currency(n, precision: 3)` is
+# `NumberHelper.number_to_currency(n, precision: 3)`. Ruby's options Hash is Sake keyword parameters, with
+# ActiveSupport's en defaults as their default values (`separator: "."`, `delimiter: ","`, `precision: 3`
+# ...); a misspelled option is a static error here, where Ruby ignores it. ActionView's names
+# (`number_with_delimiter`, `number_with_precision`) are given too.
+#
+# A number is an Integer, Float, Rational or String (as Ruby: "12345.67" is formatted, a String that is not
+# a number is given back as it is), or nil, which gives nil. Rounding is ActiveSupport's BigDecimal
+# rounding, done on exact Rationals: a Float is read from its shortest decimal form (1.005 rounds to 1.01,
+# as BigDecimal("1.005") does, not as Float#round). `round_mode:` takes BigDecimal's names (:default /
+# :half_up, :half_even / :banker, :half_down, :up, :down / :truncate, :ceiling / :ceil, :floor).
+#
+# Not ported: `locale:` and I18n lookups (en only), `delimiter_pattern:`, `units:` naming an I18n scope
+# (a Hash of units is taken), `number_to_human(n, units: {...})` with an inflected unit (one/other).
+
+module NumberHelper
+  module_function
+
+  # --- the number as an exact decimal ---
+
+  # Ruby's valid_bigdecimal: the number as a Rational, or nil for a String that is not a number.
+  def to_decimal(number)
+    case number
+    in Integer then Kernel.Rational(number)
+    in Rational then number
+    in Float then Float.finite?(number) ? String.to_r(Float.to_s(number)) : nil
+    in String
+      s = String.strip(number)
+      String.match?(s, /\A[-+]?(\d+\.?\d*|\.\d+)\z/) ? String.to_r(s) : nil
+    end
+  end
+
+  # digits before the point (1 for 0), as Ruby's RoundingHelper#digit_count.
+  def digit_count(r) = r == 0 ? 1 : Arithmetic.floor(Math.log10(Rational.to_f(Rational.abs(r))) + 1)
+
+  # BigDecimal#round(digits, mode) on a Rational; digits may be negative. -0 becomes 0.
+  def round_decimal(r, digits, mode)
+    scale = Kernel.Rational(10) ** digits
+    x = r * scale
+    floor = Arithmetic.floor(x)
+    frac = x - floor
+    n = case mode
+        in :up then frac == 0 ? floor : (x < 0 ? floor : floor + 1)
+        in :down | :truncate then x < 0 && frac != 0 ? floor + 1 : floor
+        in :ceiling | :ceil then frac == 0 ? floor : floor + 1
+        in :floor then floor
+        in :half_down                        # half toward zero
+          if frac == Kernel.Rational(1, 2)
+            x < 0 ? floor + 1 : floor
+          else
+            frac > Kernel.Rational(1, 2) ? floor + 1 : floor
+          end
+        in :half_even | :banker
+          if frac == Kernel.Rational(1, 2)
+            Integer.even?(floor) ? floor : floor + 1
+          else
+            frac > Kernel.Rational(1, 2) ? floor + 1 : floor
+          end
+        else                                 # :default, :half_up: half away from zero
+          if frac == Kernel.Rational(1, 2)
+            x < 0 ? floor : floor + 1
+          else
+            frac > Kernel.Rational(1, 2) ? floor + 1 : floor
+          end
+        end
+    Kernel.Rational(n) / scale
+  end
+
+  # BigDecimal#to_s("F") of a Rational whose fraction has at most `digits` places: "1234.5", "-0.25", "12.0".
+  def decimal_string(r, digits)
+    neg = r < 0
+    a = Rational.abs(r)
+    int = Arithmetic.floor(a)
+    frac = a - int
+    s = Integer.to_s(int)
+    if frac == 0
+      s += ".0"
+    else
+      scaled = Arithmetic.floor(frac * Kernel.Rational(10) ** digits)
+      s += "." + String.sub(String.rjust(Integer.to_s(scaled), digits, "0"), /0+\z/, "")
+    end
+    neg ? "-" + s : s
+  end
+
+  # --- delimiting (number_to_delimited) ---
+
+  def delimit(s, delimiter, separator)
+    parts = String.split(s, ".")
+    left = parts[0] || ""
+    left = String.gsub(left, /(\d)(?=(\d\d\d)+(?!\d))/) { |d| "#{d}#{delimiter}" }
+    right = parts[1]
+    right ? left + separator + right : left
+  end
+
+  # Ruby: number_to_delimited(n, delimiter: ",", separator: "."); a String that is not a number is given back.
+  def number_to_delimited(number, delimiter: ",", separator: ".")
+    return nil if number == nil
+    return number if (number in String) && to_decimal(number) == nil
+    delimit(Kernel.to_s(number), delimiter, separator)
+  end
+
+  def number_with_delimiter(number, delimiter: ",", separator: ".") = number_to_delimited(number, delimiter: delimiter, separator: separator)
+
+  # --- rounding (number_to_rounded) ---
+
+  # Ruby's NumberToRoundedConverter#convert: round, pad the fraction to `precision` places (or to the
+  # significant digits), delimit, and optionally strip the trailing zeros. precision nil: the number as it is.
+  def rounded(number, precision, significant, strip_insignificant_zeros, separator, delimiter, round_mode)
+    r = to_decimal(number)
+    return Kernel.to_s(number) if r == nil
+    if precision == nil
+      formatted = Kernel.to_s(number)
+    else
+      digits = precision
+      if significant && precision > 0
+        digits = precision - digit_count(r)
+        rounded_r = round_decimal(r, digits, round_mode)
+        places = precision - digit_count(rounded_r)
+        places = 0 if places < 0
+      else
+        rounded_r = round_decimal(r, digits, round_mode)
+        places = precision
+      end
+      s = decimal_string(rounded_r, digits > 0 ? digits : 0)
+      a, b = String.split(s, ".")
+      a = a || "0"
+      b = b || ""
+      formatted = places != 0 ? a + "." + (String.[](b + "0" * places, 0, places) || "") : a
+    end
+    delimited = delimit(formatted, delimiter, separator)
+    if strip_insignificant_zeros
+      esc = Regexp.escape(separator)
+      delimited = String.sub(delimited, Regexp.new("(#{esc})(\\d*[1-9])?0+\\z"), '\1\2')
+      delimited = String.sub(delimited, Regexp.new("#{esc}\\z"), "")
+    end
+    delimited
+  end
+
+  # Ruby: number_to_rounded(n, precision: 3, significant: false, strip_insignificant_zeros: false,
+  #                         separator: ".", delimiter: "", round_mode: :default)
+  def number_to_rounded(number, precision: 3, significant: false, strip_insignificant_zeros: false,
+                        separator: ".", delimiter: "", round_mode: :default)
+    return nil if number == nil
+    return number if (number in String) && to_decimal(number) == nil
+    rounded(number, precision, significant, strip_insignificant_zeros, separator, delimiter, round_mode)
+  end
+
+  def number_with_precision(number, precision: 3, significant: false, strip_insignificant_zeros: false,
+                            separator: ".", delimiter: "", round_mode: :default)
+    number_to_rounded(number, precision: precision, significant: significant, strip_insignificant_zeros: strip_insignificant_zeros,
+                      separator: separator, delimiter: delimiter, round_mode: round_mode)
+  end
+
+  # --- currency ---
+
+  # Ruby: number_to_currency(n, unit: "$", format: "%u%n", negative_format: "-%u%n", precision: 2, ...).
+  # negative_format defaults to "-" + format when format is given.
+  def number_to_currency(number, unit: "$", format: "%u%n", negative_format: nil, precision: 2, significant: false,
+                         strip_insignificant_zeros: false, separator: ".", delimiter: ",", round_mode: :default)
+    return nil if number == nil
+    neg_format = negative_format || "-#{format}"
+    fmt = format
+    r = to_decimal(number)
+    if r != nil
+      if r < 0
+        r = Rational.abs(r)
+        fmt = neg_format if r * Kernel.Rational(10) ** precision >= Kernel.Rational(1, 2)
+      end
+      number_s = rounded(r, precision, significant, strip_insignificant_zeros, separator, delimiter, round_mode)
+    else
+      number_s = String.strip(Kernel.to_s(number))
+      if String.start_with?(number_s, "-")
+        number_s = String.sub(number_s, /^-/, "")
+        fmt = neg_format
+      end
+    end
+    String.gsub(String.gsub(fmt, "%n", number_s), "%u", unit)
+  end
+
+  # --- percentage ---
+
+  # Ruby: number_to_percentage(n, format: "%n%", precision: 3, delimiter: "", ...)
+  def number_to_percentage(number, format: "%n%", precision: 3, significant: false, strip_insignificant_zeros: false,
+                           separator: ".", delimiter: "", round_mode: :default)
+    return nil if number == nil
+    s = rounded(number, precision, significant, strip_insignificant_zeros, separator, delimiter, round_mode)
+    String.gsub(format, "%n", s)
+  end
+
+  # --- human sizes ---
+
+  def storage_units = once { String["Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB"] }
+
+  # Ruby: number_to_human_size(n, precision: 3, significant: true, strip_insignificant_zeros: true, format: "%n %u", ...)
+  def number_to_human_size(number, precision: 3, significant: true, strip_insignificant_zeros: true, separator: ".",
+                           delimiter: "", round_mode: :default, format: "%n %u")
+    return nil if number == nil
+    r = to_decimal(number)
+    return number if r == nil
+    f = Rational.to_f(r)
+    whole = Arithmetic.to_i(f)
+    if Integer.abs(whole) < 1024
+      unit = whole == 1 ? "Byte" : "Bytes"
+      number_s = Integer.to_s(whole)
+    else
+      exponent = Arithmetic.to_i(Math.log(Float.abs(f)) / Math.log(1024))
+      exponent = 7 if exponent > 7
+      unit = Array.fetch(storage_units, exponent)
+      number_s = rounded(f / 1024.0 ** exponent, precision, significant, strip_insignificant_zeros, separator, delimiter, round_mode)
+    end
+    String.gsub(String.gsub(format, "%n", number_s), "%u", unit)
+  end
+
+  # Ruby's DECIMAL_UNITS: exponent => unit name
+  def decimal_units = once do
+    Hash[0 => :unit, 1 => :ten, 2 => :hundred, 3 => :thousand, 6 => :million, 9 => :billion, 12 => :trillion,
+         15 => :quadrillion, -1 => :deci, -2 => :centi, -3 => :mili, -6 => :micro, -9 => :nano, -12 => :pico, -15 => :femto]
+  end
+
+  def default_human_units = once do
+    Hash[unit: "", thousand: "Thousand", million: "Million", billion: "Billion", trillion: "Trillion", quadrillion: "Quadrillion"]
+  end
+
+  # Ruby: number_to_human(n, precision: 3, significant: true, strip_insignificant_zeros: true, format: "%n %u",
+  #                       units: {unit: "", thousand: "Thousand", ...}); units is a Hash unit name => label.
+  def number_to_human(number, precision: 3, significant: true, strip_insignificant_zeros: true, separator: ".",
+                      delimiter: "", round_mode: :default, format: "%n %u", units: nil)
+    return nil if number == nil
+    r = to_decimal(number)
+    return number if r == nil
+    unit_table = units || default_human_units
+    # the number is rounded first, so 999999 is "1 Million"
+    digits = significant && precision > 0 ? precision - digit_count(r) : precision
+    f = Rational.to_f(round_decimal(r, digits, round_mode))
+    exponent = f != 0 ? Arithmetic.floor(Math.log10(Float.abs(f))) : 0
+    inverted = Hash.invert(decimal_units)
+    exponents = Array.sort(Array.map(Hash.keys(unit_table)) { |name| Hash.fetch(inverted, name) })
+    unit_exponent = Array.find(Array.reverse(exponents)) { |e| exponent >= e } || 0
+    scaled = f / 10.0 ** unit_exponent
+    number_s = rounded(scaled, precision, significant, strip_insignificant_zeros, separator, delimiter, round_mode)
+    unit = unit_table[decimal_units[unit_exponent]] || ""
+    String.strip(String.gsub(String.gsub(format, "%n", number_s), "%u", unit))
+  end
+
+  # --- phone numbers ---
+
+  # Ruby: number_to_phone(n, area_code: false, delimiter: "-", extension: nil, country_code: nil, pattern: nil)
+  def number_to_phone(number, area_code: false, delimiter: "-", extension: nil, country_code: nil, pattern: nil)
+    return nil if number == nil
+    str = String.strip(Kernel.to_s(number))
+    if area_code
+      str = String.gsub(str, pattern || /(\d{1,3})(\d{3})(\d{4}$)/, "(\\1) \\2#{delimiter}\\3")
+    else
+      str = String.gsub(str, pattern || /(\d{0,3})(\d{3})(\d{4})$/, "\\1#{delimiter}\\2#{delimiter}\\3")
+      str = String.[](str, 1..) || "" if !String.empty?(delimiter) && String.start_with?(str, delimiter)
+    end
+    prefix = country_code == nil || blank_option?(country_code) ? "" : "+#{country_code}#{delimiter}"
+    ext = extension == nil || blank_option?(extension) ? "" : " x #{extension}"
+    prefix + str + ext
+  end
+
+  # Object#blank? of an option value (nil, "", "  "), without requiring active_support_core_ext.
+  def blank_option?(x) = (x in String) ? String.match?(x, /\A[[:space:]]*\z/) : x == nil || x == false
+end
