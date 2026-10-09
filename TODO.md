@@ -33,13 +33,13 @@
 
 ## 設計判断が要るもの（変えるなら仕様）
 
-- [?] Tuple と Array の `==`（`[1, 2] == Array[1, 2]` が false。テストの期待値で毎回踏む）。
-- [?] 配列パターン `in [a, b]`（spec §16 で保留中）。
-- [?] 型ごとに名前空間が 1 つ: Ruby のクラスメソッドとインスタンスメソッドの同名（`Net::HTTP.get` / `http.get`、`PP.pp`、`Time.xmlschema`）。
-- [?] 右オペランドの dispatch（`coerce`。`1 + bigdecimal`）。
-- [?] `*args` が位置ごとの型を持たない（observer の `notify_observers`）。
-- [?] `to_s(x, fmt)`（`to_s` は 1 引数固定）。
-- [?] `def` をブロックの中に書けない。
-- [?] `def NAN` を型の中から裸で呼べない（大文字は型）。
-- [?] 位置の `new` でフィールド順の誤りが静かに通る（キーワードの `new` はある）。
-- [?] `at_exit` / finalizer（第一級のブロックが無い）。
+- [?] D1. Tuple と Array の `==`（`[1, 2] == Array[1, 2]` が false。テストの期待値で毎回踏む）。
+- [?] D2. 配列パターン `in [a, b]`（spec §16 で保留中）。
+- [?] D3. 型ごとに名前空間が 1 つ: Ruby のクラスメソッドとインスタンスメソッドの同名（`Net::HTTP.get` / `http.get`、`PP.pp`、`Time.xmlschema`）。
+- [?] D4. 右オペランドの dispatch（`coerce`。`1 + bigdecimal`）。
+- [?] D5. `*args` が位置ごとの型を持たない（observer の `notify_observers`）。
+- [?] D6. `to_s(x, fmt)`（`to_s` は 1 引数固定）。
+- [?] D7. `def` をブロックの中に書けない。
+- [?] D8. `def NAN` を型の中から裸で呼べない（大文字は型）。
+- [?] D9. 位置の `new` でフィールド順の誤りが静かに通る（キーワードの `new` はある）。
+- [?] D10. `at_exit` / finalizer（第一級のブロックが無い）。
