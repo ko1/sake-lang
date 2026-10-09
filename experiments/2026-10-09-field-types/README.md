@@ -30,7 +30,7 @@ Sonnet 5.5 が書いたもの。sake-1 は `class` + `attr_reader`、sake-2 は 
 | `T.set_x(...)` の呼び出し | 5（1 フィールド） | 20（12 フィールド） |
 | 全 `new` 地点で nil、あとで書かれる（衝突） | 1: `Database.saved` | 2: `SelectStmt.limit`, `.offset` |
 
-union の正体は AST の直和型。sake-1 では式の union（Struct 型 14〜18 個）が 28 フィールド、文の union が 9 フィールドに現れる。
+union の正体は AST のノード型の合併（Struct 型は値にタグがあるので実質は直和）。sake-1 では式の union（Struct 型 14〜18 個）が 28 フィールド、文の union が 9 フィールドに現れる。
 
 ## 結論
 
@@ -40,5 +40,5 @@ union の正体は AST の直和型。sake-1 では式の union（Struct 型 14�
   関数呼び出しの結果。その型を知るには囲む関数の推論が要り、それは他の関数の返り値（フィールドの読み出しを含む）に依存するので、不動点は残る。
   規則が変えるのは「広げる書き込み」が「照合する書き込み」になる 13 と 20 回分だけ。
 - **union は本物。** フィールドの 3 分の 1 は 2 つ以上の Struct 型を持ち、`ResultColumn.new(col)` と `ResultColumn.new(binary)` が別の場所にある
-  だけで生じる。単一化で局所にするには直和を名前で宣言する（OCaml の variant）しかなく、それは union か nil を持つフィールド（3 分の 1）に
+  だけで生じる。単一化で局所にするには合併を名前で宣言する（OCaml の variant）しかなく、それは union か nil を持つフィールド（3 分の 1）に
   型を書くことになる。
