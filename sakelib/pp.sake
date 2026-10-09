@@ -1,0 +1,124 @@
+# pp: pretty-printing a value to a width (Ruby's PP).
+#
+# PP.pp(obj, out = IO.stdout, width = 79) prints `obj` to `out` (a String or an IO), wrapped at `width`
+# as Ruby's pp does; PP.pretty_inspect(obj, width) gives the String. Ruby's PP is a subclass of
+# PrettyPrint whose instance methods (q.pp(v), q.comma_breakable, q.seplist, q.pp_hash) walk a value;
+# here they are operations of PrettyPrint, so a block given to PrettyPrint.format can call
+# PrettyPrint.pp(q, v) for a built-in value and its own printing for a Struct type.
+#
+# Values are walked by their type tag: Arrays, Tuples, Hashes, Sets recurse; a String of several lines
+# is split as Ruby does; everything else (numbers, Symbols, nil, Struct values, Records, Ranges) is
+# written as Kernel.inspect gives it, in one piece.
+
+require "prettyprint"
+
+class PrettyPrint
+  # Ruby: q.pp(obj)
+  def pp(q, v)
+    case v
+    in Array then pp_array(q, v)
+    in Tuple then pp_array(q, Tuple.to_a(v))
+    in Hash then pp_hash(q, v)
+    in Set then group(q, 1, "Set[", "]") { seplist(q, Set.to_a(v)) { |e| pp(q, e) } }
+    in String then pp_string(q, v)
+    else text(q, Kernel.inspect(v))
+    end
+  end
+
+  def pp_array(q, a)
+    group(q, 1, "[", "]") { seplist(q, a) { |e| pp(q, e) } }
+  end
+
+  # Ruby: a String of several lines is written as `"l1\n" +` / `"l2"`, one line per breakable.
+  def pp_string(q, s)
+    lines = String.lines(s)
+    if Array.size(lines) > 1
+      group(q, 0, "", "") { seplist(q, lines, " +") { |l| text(q, Kernel.inspect(l)) } }
+    else
+      text(q, Kernel.inspect(s))
+    end
+  end
+
+  # Ruby: q.comma_breakable
+  def comma_breakable(q)
+    text(q, ",")
+    breakable(q)
+  end
+
+  # Ruby: q.seplist(list, sep_proc) { |v| }. The separator is `sep` then a breakable (Ruby takes a proc;
+  # nil there means comma_breakable, which is the default here). A Hash is given as Hash.to_a(h).
+  def seplist(q, list, sep = ",")
+    first = true
+    Array.each(list) do |v|
+      if first
+        first = false
+      else
+        text(q, sep)
+        breakable(q)
+      end
+      yield(v)
+    end
+    nil
+  end
+
+  # Ruby: q.pp_hash(h): `{k: v, "k" => v}` (Ruby 3.4's style), each pair its own group.
+  def pp_hash(q, h)
+    group(q, 1, "{", "}") do
+      seplist(q, Hash.to_a(h)) { |k, v| group(q) { pp_hash_pair(q, k, v) } }
+    end
+  end
+
+  # Ruby: q.pp_hash_pair(k, v). A Symbol key is `name:`, quoted when its inspect needs quotes or ends
+  # in an operator character; any other key is `k =>`.
+  def pp_hash_pair(q, k, v)
+    if k in Symbol
+      ki = Kernel.inspect(k)
+      name = Symbol.to_s(k)
+      name = Kernel.inspect(name) if String.match?(ki, /\A:["$@!]|[%&*+\-\/<=>@\]^`|~]\z/)
+      text(q, "#{name}:")
+    else
+      pp(q, k)
+      text(q, " ")
+      text(q, "=>")
+    end
+    group(q, 1) do
+      breakable(q)
+      pp(q, v)
+    end
+  end
+end
+
+module PP
+  module_function
+
+  # Ruby: PP.pp(obj, out = $stdout, width = PP.width_for(out)) => out
+  def pp(obj, out = IO.stdout, width = width_for(out))
+    emit(out, pretty_inspect(obj, width))
+  end
+
+  # Ruby: PP.singleline_pp(obj, out = $stdout) => out (no newline)
+  def singleline_pp(obj, out = IO.stdout)
+    emit(out, PrettyPrint.singleline_format("") { |q| PrettyPrint.pp(q, obj) })
+  end
+
+  # Ruby: obj.pretty_inspect => the pp output as a String, with its newline
+  def pretty_inspect(obj, width = 79)
+    s = PrettyPrint.format("", width) { |q| PrettyPrint.pp(q, obj) }
+    String.concat(s, "\n")
+  end
+
+  # pretty_inspect by another name (asked for by the port's brief); Ruby has no PP.pp_to_s.
+  def pp_to_s(obj, width = 79) = pretty_inspect(obj, width)
+
+  # Ruby: the terminal's width - 1 when `out` is a tty, else 79. Sake has no winsize: always 79.
+  def width_for(out) = 79
+
+  def emit(out, s)
+    case out
+    in String then String.concat(out, s)
+    in IO
+      IO.write(out, s)
+      out
+    end
+  end
+end

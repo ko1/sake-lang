@@ -1,0 +1,258 @@
+# prettyprint: Oppen-style pretty printer (Ruby's PrettyPrint).
+#
+# PrettyPrint.format(output, maxwidth) { |q| ... } drives a printer `q` with
+# PrettyPrint.text(q, s), breakable(q), group(q, indent, open, close) { }, nest(q, indent) { }.
+# The output is a String appended in place. Ruby's PrettyPrint::Text, Breakable, Group, GroupQueue and
+# SingleLine are the top-level types Text, Breakable, Group, GroupQueue; single-line mode is a flag of
+# PrettyPrint (Ruby: a separate class) so the same block works for both formats.
+
+# A run of text waiting in the buffer.
+class Text
+  attr_reader width
+  private attr_reader objs
+
+  def initialize(t)
+    @objs = String[]
+    @width = 0
+  end
+
+  def output(t, q, output_width)
+    Array.each(@objs) { |s| String.concat(PrettyPrint.output(q), s) }
+    output_width + @width
+  end
+
+  def add(t, obj, width)
+    Array.push(@objs, obj)
+    @width += width
+    nil
+  end
+end
+
+# A group of breakables that break together. `id` tells groups apart (Struct == compares fields).
+class Group
+  attr_reader depth, id
+  attr_reader breakables
+  private attr_reader broken
+
+  def initialize(g)
+    @breakables = Array[]
+    @broken = false
+  end
+
+  # Ruby's name; the keyword does not get in the way of a qualified call, Group.break(g)
+  def break(g)
+    @broken = true
+    nil
+  end
+
+  def break?(g) = @broken
+end
+
+# A breakable waiting in the buffer: `obj` is written when its group fits, a newline and `indent` spaces otherwise.
+class Breakable
+  attr_reader obj, width, indent
+  private attr_reader group
+
+  def output(b, q, output_width)
+    Array.shift(Group.breakables(@group))
+    if Group.break?(@group)
+      String.concat(PrettyPrint.output(q), PrettyPrint.newline(q), " " * @indent)
+      @indent
+    else
+      GroupQueue.delete(PrettyPrint.group_queue(q), @group) if Array.empty?(Group.breakables(@group))
+      String.concat(PrettyPrint.output(q), @obj)
+      output_width + @width
+    end
+  end
+end
+
+# Groups by depth, so the outermost one with breakables is broken first.
+class GroupQueue
+  private attr_reader queue
+
+  def initialize(gq)
+    @queue = Array[]
+  end
+
+  def enq(gq, group)
+    depth = Group.depth(group)
+    Array.push(@queue, Array[]) until depth < Array.length(@queue)
+    Array.push(@queue[depth], group)
+    nil
+  end
+
+  # The shallowest group that still has breakables, marked broken; groups it skips are broken too.
+  def deq(gq)
+    Array.each(@queue) do |gs|
+      Integer.downto(Array.length(gs) - 1, 0) do |i|
+        g = gs[i]
+        unless Array.empty?(Group.breakables(g))
+          Array.delete_at(gs, i)
+          Group.break(g)
+          return g
+        end
+      end
+      Array.each(gs) { |g| Group.break(g) }
+      Array.clear(gs)
+    end
+    nil
+  end
+
+  def delete(gq, group)
+    gs = @queue[Group.depth(group)]
+    id = Group.id(group)
+    Array.delete_if(gs) { |g| Group.id(g) == id } if gs
+    nil
+  end
+end
+
+# PrettyPrint.new(output = "", maxwidth = 79, newline = "\n", singleline = false): trailing fields may be
+# left out (Ruby's 4th argument, genspace, is always `" " * n`).
+class PrettyPrint
+  attr_reader output, maxwidth, newline, singleline
+  attr_reader indent, group_queue
+  private attr_reader output_width, buffer_width, buffer, group_stack, serial
+
+  def initialize(q)
+    @output = "" if @output == nil
+    @maxwidth = 79 if @maxwidth == nil
+    @newline = "\n" if @newline == nil
+    @singleline = false if @singleline == nil
+    @output => String
+    @maxwidth => Integer
+    @newline => String
+    @output_width = 0
+    @buffer_width = 0
+    @buffer = Array[]
+    @serial = 0
+    root = Group.new(0, 0)
+    @group_stack = Group[root]
+    @group_queue = GroupQueue.new
+    GroupQueue.enq(@group_queue, root)
+    @indent = 0
+  end
+
+  # Ruby: PrettyPrint.format(output = '', maxwidth = 79, newline = "\n") { |q| ... } => output
+  def format(output = "", maxwidth = 79, newline = "\n")
+    q = PrettyPrint.new(output, maxwidth, newline)
+    yield(q)
+    flush(q)
+    output
+  end
+
+  # Ruby: PrettyPrint.singleline_format(output = '') { |q| ... } => output; every breakable is its separator.
+  def singleline_format(output = "")
+    q = PrettyPrint.new(output, 79, "\n", true)
+    yield(q)
+    output
+  end
+
+  def current_group(q) = Array.fetch(@group_stack, -1)
+
+  def new_group(q, depth)
+    @serial += 1
+    Group.new(depth, @serial)
+  end
+
+  def break_outmost_groups(q)
+    while @maxwidth < @output_width + @buffer_width
+      group = GroupQueue.deq(@group_queue)
+      return nil if group == nil
+      until Array.empty?(Group.breakables(group))
+        data = Array.shift(@buffer)
+        data => Text | Breakable
+        @output_width = (Text|Breakable).output(data, q, @output_width)
+        @buffer_width -= (Text|Breakable).width(data)
+      end
+      while !Array.empty?(@buffer) && (Array.first(@buffer) in Text)
+        t = Array.shift(@buffer)
+        t => Text
+        @output_width = Text.output(t, q, @output_width)
+        @buffer_width -= Text.width(t)
+      end
+    end
+    nil
+  end
+
+  def text(q, obj, width = String.length(obj))
+    if Array.empty?(@buffer)
+      String.concat(@output, obj)
+      @output_width += width
+    else
+      last = Array.last(@buffer)
+      if last in Text
+        t = last
+      else
+        t = Text.new
+        Array.push(@buffer, t)
+      end
+      Text.add(t, obj, width)
+      @buffer_width += width
+      break_outmost_groups(q)
+    end
+    nil
+  end
+
+  def fill_breakable(q, sep = " ", width = String.length(sep))
+    group(q) { breakable(q, sep, width) }
+  end
+
+  def breakable(q, sep = " ", width = String.length(sep))
+    if @singleline
+      String.concat(@output, sep)
+      return nil
+    end
+    group = current_group(q)
+    if Group.break?(group)
+      flush(q)
+      String.concat(@output, @newline, " " * @indent)
+      @output_width = @indent
+      @buffer_width = 0
+    else
+      b = Breakable.new(sep, width, @indent, group)
+      Array.push(Group.breakables(group), b)
+      Array.push(@buffer, b)
+      @buffer_width += width
+      break_outmost_groups(q)
+    end
+    nil
+  end
+
+  def group(q, indent = 0, open_obj = "", close_obj = "", open_width = String.length(open_obj), close_width = String.length(close_obj))
+    text(q, open_obj, open_width)
+    group_sub(q) { nest(q, indent) { yield } }
+    text(q, close_obj, close_width)
+    nil
+  end
+
+  def group_sub(q)
+    group = new_group(q, Group.depth(current_group(q)) + 1)
+    Array.push(@group_stack, group)
+    GroupQueue.enq(@group_queue, group)
+    begin
+      yield
+    ensure
+      Array.pop(@group_stack)
+      GroupQueue.delete(@group_queue, group) if Array.empty?(Group.breakables(group))
+    end
+  end
+
+  def nest(q, indent)
+    @indent += indent
+    begin
+      yield
+    ensure
+      @indent -= indent
+    end
+  end
+
+  def flush(q)
+    Array.each(@buffer) do |data|
+      data => Text | Breakable
+      @output_width = (Text|Breakable).output(data, q, @output_width)
+    end
+    Array.clear(@buffer)
+    @buffer_width = 0
+    nil
+  end
+end
