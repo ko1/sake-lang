@@ -1365,7 +1365,11 @@ module Sake
       (@registry.namespaces_defining(name) | @functions.select { |ns, fs| ns && fs.key?(name) }.keys) - Operators::MODULES
     end
 
-    def spell(word, dict) = DidYouMean::SpellChecker.new(dictionary: dict.uniq).correct(word)
+    # An in-place form (`upcase!`) is not suggested next to its plain form.
+    def spell(word, dict)
+      found = DidYouMean::SpellChecker.new(dictionary: dict.uniq).correct(word)
+      found.reject { |c| c.end_with?("!") && !word.end_with?("!") && found.include?(c.chomp("!")) }
+    end
 
     # --- `x.y` on a lowercase receiver ---
 

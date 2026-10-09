@@ -99,7 +99,6 @@ puts(Integer.to_string(42))
 $ sake typo.sake
 typo.sake:1:13: error: undefined function `String.upcse`
   hint: did you mean `String.upcase`?
-  hint: did you mean `String.upcase!`?
 typo.sake:2:6: error: undefined type or module `Strng`
   hint: did you mean `String`?
 typo.sake:3:14: error: undefined function `Integer.to_string`
