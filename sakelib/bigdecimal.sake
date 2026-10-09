@@ -1,0 +1,498 @@
+# bigdecimal: arbitrary-precision decimal arithmetic (Ruby's bigdecimal 4.1).
+#
+# A BigDecimal is kind :finite, :nan, or :inf, with a sign (1 or -1), an Integer significand and a
+# base-10 exponent: the value is sgn * sig * 10**exp. A finite value is kept normalized (no trailing
+# zeros in sig; zero is sig 0, exp 0, with its sign), so equal values have equal fields.
+# Ruby's Kernel.BigDecimal(x) is BigDecimal.parse(s), from_i(n), from_f(f, prec), from_r(r, prec).
+# Ruby's rounding-mode constants are Symbols (:half_up, :half_even, :up, :down, :ceiling, :floor, ...).
+
+class BigDecimal
+  private attr_reader kind, sgn, sig, exp
+  include Arithmetic
+  include Comparable
+
+  def initialize(d)
+    @kind => Symbol
+    @sgn => Integer
+    @sig => Integer
+    @exp => Integer
+    raise ArgumentError, "sign must be 1 or -1" unless @sgn == 1 || @sgn == -1
+    if @kind == :finite
+      raise ArgumentError, "negative significand" if @sig < 0
+      if @sig == 0
+        @exp = 0
+      else
+        # strip trailing zeros, in chunks first
+        big = 10 ** 16
+        while @sig % big == 0
+          @sig /= big
+          @exp += 16
+        end
+        while @sig % 10 == 0
+          @sig /= 10
+          @exp += 1
+        end
+      end
+    else
+      raise ArgumentError, "kind must be :finite, :nan, or :inf" unless @kind == :nan || @kind == :inf
+      @sig = 0
+      @exp = 0
+    end
+  end
+
+  # --- constructors ---
+
+  def mk(sgn, sig, exp) = BigDecimal.new(:finite, sgn, sig, exp)
+  # Ruby's BigDecimal::NAN and ::INFINITY are read as operations, like Float.NAN. Inside the class
+  # they are `nan` and `infinity`: an unqualified nan is a constant to the parser.
+  def NAN = nan
+  def INFINITY = infinity
+  def nan = BigDecimal.new(:nan, 1, 0, 0)
+  def infinity = BigDecimal.new(:inf, 1, 0, 0)
+  def inf(sgn) = BigDecimal.new(:inf, sgn, 0, 0)
+  def zero(sgn = 1) = mk(sgn, 0, 0)
+  def double_fig = 16
+
+  def from_i(n) = n < 0 ? mk(-1, -n, 0) : mk(1, n, 0)
+
+  # Ruby's BigDecimal("1.5"): optional sign, digits with single underscores, a point, an e/E/d/D
+  # exponent, surrounding spaces; "Infinity", "-Infinity", "NaN". Anything else is Ruby's ArgumentError.
+  def parse(s)
+    s => String
+    sp = Regexp.match(/\A\s*([+-]?)(Infinity|NaN)\s*\z/, s)
+    if sp
+      return (sp[2] == "NaN") ? nan : inf(sp[1] == "-" ? -1 : 1)
+    end
+    m = Regexp.match(/\A\s*([+-]?)(\d+(?:_\d+)*_?)?(?:\.(\d+(?:_\d+)*_?)?)?(?:[eEdD]([+-]?\d+(?:_\d+)*_?))?\s*\z/, s)
+    ip = m ? m[2] : nil
+    fp = m ? m[3] : nil
+    raise ArgumentError, "invalid value for BigDecimal(): #{Kernel.inspect(s)}" if m == nil || (ip == nil && fp == nil)
+    ip = ip ? String.delete(ip, "_") : ""
+    fp = fp ? String.delete(fp, "_") : ""
+    e = m[4]
+    e = e ? String.to_i(String.delete(e, "_")) : 0
+    sig = String.to_i(ip + fp)
+    mk(m[1] == "-" ? -1 : 1, sig, e - String.length(fp))
+  end
+
+  # Ruby's BigDecimal(float, prec): the shortest decimal that reads back as the Float, rounded to
+  # prec significant digits when prec > 0 (Ruby rounds from the Float's exact value past 17 digits).
+  def from_f(f, prec = 0)
+    f => Float
+    raise ArgumentError, "precision too large." if prec > 17
+    return nan if Float.nan?(f)
+    return inf(f > 0 ? 1 : -1) if Float.infinite?(f)
+    d = parse(Float.to_s(f))
+    prec > 0 ? mult(d, 1, prec) : d
+  end
+
+  # Ruby's BigDecimal(rational, prec): the quotient to prec significant digits (0: `/`'s default).
+  # Ruby requires prec for a Rational; here it is optional, as `BigDecimal(r, 0)` is in Ruby.
+  def from_r(r, prec = 0)
+    r => Rational
+    div(from_i(Rational.numerator(r)), from_i(Rational.denominator(r)), prec)
+  end
+
+  # A number as a BigDecimal (Ruby's coercion of the other operand).
+  def of(x)
+    case x
+    in BigDecimal then x
+    in Integer then from_i(x)
+    in Float then from_f(x)
+    end
+  end
+
+  # --- internal ---
+
+  def ndigits(n) = n == 0 ? 0 : String.length(Integer.to_s(n))
+
+  # Round away `drop` low digits of sig (drop > 0) by `mode`; Ruby's modes as Symbols.
+  def round_digits(sgn, sig, exp, drop, mode)
+    p = 10 ** drop
+    q = sig / p
+    r = sig % p
+    half = 5 * 10 ** (drop - 1)
+    up = case mode
+         in :up then r != 0
+         in :down | :truncate then false
+         in :half_up | :default then r >= half
+         in :half_down then r > half
+         in :half_even | :banker then r > half || (r == half && Integer.odd?(q))
+         in :ceiling | :ceil then r != 0 && sgn > 0
+         in :floor then r != 0 && sgn < 0
+         else raise ArgumentError, "invalid rounding mode (#{mode})"
+         end
+    q += 1 if up
+    mk(sgn, q, exp + drop)
+  end
+
+  # Round to n significant digits (n > 0).
+  def round_sig(sgn, sig, exp, n, mode)
+    drop = ndigits(sig) - n
+    drop > 0 ? round_digits(sgn, sig, exp, drop, mode) : mk(sgn, sig, exp)
+  end
+
+  def check_mode(mode)
+    unless Array.include?(Symbol[:up, :down, :truncate, :half_up, :default, :half_down, :half_even, :banker, :ceiling, :ceil, :floor], mode)
+      raise ArgumentError, "invalid rounding mode (#{mode})"
+    end
+    nil
+  end
+
+  # sig and exp aligned to a common exponent: [sa, sb, e].
+  def align(a, b)
+    ea = BigDecimal.exp(a)
+    eb = BigDecimal.exp(b)
+    e = ea < eb ? ea : eb
+    [BigDecimal.sig(a) * 10 ** (ea - e), BigDecimal.sig(b) * 10 ** (eb - e), e]
+  end
+
+  # --- predicates and parts ---
+
+  def nan?(d) = @kind == :nan
+  def finite?(d) = @kind == :finite
+  def infinite?(d) = @kind == :inf ? @sgn : nil
+  def zero?(d) = @kind == :finite && @sig == 0
+  def nonzero?(d) = zero?(d) ? nil : d
+  def negative?(d) = @kind != :nan && @sgn < 0 && !zero?(d)
+  def positive?(d) = @kind != :nan && @sgn > 0 && !zero?(d)
+
+  # Ruby's sign: NaN 0, zero ±1, finite ±2, infinite ±3.
+  def sign(d)
+    case @kind
+    in :nan then 0
+    in :inf then 3 * @sgn
+    in :finite then (@sig == 0 ? 1 : 2) * @sgn
+    end
+  end
+
+  # Number of significant decimal digits, counting the integer part's trailing zeros (Ruby's).
+  def precision(d)
+    return 0 unless @kind == :finite && @sig != 0
+    n = ndigits(@sig)
+    @exp >= 0 ? n + @exp : (n > -@exp ? n : -@exp)
+  end
+  def scale(d) = @kind == :finite && @exp < 0 ? -@exp : 0
+  def precision_scale(d) = [precision(d), scale(d)]
+  def n_significant_digits(d) = @kind == :finite ? ndigits(@sig) : 0
+  # The decimal exponent of the "0.xxx" form: 1.23 is 0.123e1, so 1.
+  def exponent(d) = @kind == :finite && @sig != 0 ? @exp + ndigits(@sig) : 0
+
+  # --- comparison ---
+
+  # -1, 0, 1, or nil when either is NaN (or the other is not a number).
+  def <=>(a, b)
+    case b
+    in BigDecimal | Integer | Float
+      o = of(b)
+      return nil if @kind == :nan || BigDecimal.nan?(o)
+      cmp_values(a, o)
+    in Rational
+      return nil if @kind != :finite
+      to_r(a) <=> b
+    else nil
+    end
+  end
+
+  def cmp_values(a, o)
+    sa = @kind == :inf ? 3 * @sgn : (zero?(a) ? 0 : 2 * @sgn)
+    sb = BigDecimal.infinite?(o) ? 3 * BigDecimal.sgn(o) : (BigDecimal.zero?(o) ? 0 : 2 * BigDecimal.sgn(o))
+    if sa != sb
+      return sa < sb ? -1 : 1
+    end
+    return 0 if @kind == :inf || sa == 0
+    x, y, _ = align(a, o)
+    x == y ? 0 : (x < y ? -@sgn : @sgn)
+  end
+
+  # Ruby: false with NaN; false for a value that is not a number.
+  def ==(a, b) = (a <=> b) == 0
+  def !=(a, b) = !(a == b)
+  def <(a, b) = (a <=> b) == -1
+  def >(a, b) = (a <=> b) == 1
+  def <=(a, b)
+    c = a <=> b
+    c == -1 || c == 0
+  end
+  def >=(a, b)
+    c = a <=> b
+    c == 1 || c == 0
+  end
+
+  # --- arithmetic (exact) ---
+
+  def -@(d)
+    case @kind
+    in :nan then d
+    in :inf then inf(-@sgn)
+    in :finite then mk(-@sgn, @sig, @exp)
+    end
+  end
+  def +@(d) = d
+  def abs(d) = @kind == :nan ? d : (@kind == :inf ? infinity : mk(1, @sig, @exp))
+
+  def +(a, b) = add(a, b, 0)
+  def -(a, b) = sub(a, b, 0)
+  def *(a, b) = mult(a, b, 0)
+  def /(a, b) = div(a, b, 0)
+  def quo(a, b, prec = 0) = div(a, b, prec)
+
+  # Ruby's add(b, n): the sum rounded to n significant digits (n = 0: exact), mode half_up.
+  def add(a, b, n)
+    o = of(b)
+    return nan if @kind == :nan || BigDecimal.nan?(o)
+    if @kind == :inf
+      return BigDecimal.infinite?(o) == -@sgn ? nan : a
+    end
+    return o if BigDecimal.infinite?(o)
+    x, y, e = align(a, o)
+    s = x * @sgn + y * BigDecimal.sgn(o)
+    r = s < 0 ? mk(-1, -s, e) : mk(1, s, e)
+    n > 0 ? round_sig(BigDecimal.sgn(r), BigDecimal.sig(r), BigDecimal.exp(r), n, :half_up) : r
+  end
+
+  def sub(a, b, n) = add(a, -of(b), n)
+
+  def mult(a, b, n)
+    o = of(b)
+    return nan if @kind == :nan || BigDecimal.nan?(o)
+    s = @sgn * BigDecimal.sgn(o)
+    if @kind == :inf || BigDecimal.infinite?(o)
+      return nan if zero?(a) || BigDecimal.zero?(o)
+      return inf(s)
+    end
+    r = mk(s, @sig * BigDecimal.sig(o), @exp + BigDecimal.exp(o))
+    n > 0 ? round_sig(s, BigDecimal.sig(r), BigDecimal.exp(r), n, :half_up) : r
+  end
+
+  # Ruby's div(b, digits): the quotient to `digits` significant digits (mode half_up). digits = 0 is
+  # Ruby's default for `/`: max(precision(a), precision(b)) + 16, and at least 32.
+  # Ruby's div(b) without digits, the Integer floor quotient, is BigDecimal.idiv(a, b).
+  def div(a, b, digits = 0)
+    raise ArgumentError, "negative precision" if digits < 0
+    o = of(b)
+    return nan if @kind == :nan || BigDecimal.nan?(o)
+    s = @sgn * BigDecimal.sgn(o)
+    if @kind == :inf
+      return BigDecimal.infinite?(o) ? nan : inf(s)
+    end
+    return zero(s) if BigDecimal.infinite?(o)
+    if BigDecimal.zero?(o)
+      return zero?(a) ? nan : inf(s)
+    end
+    return zero(s) if zero?(a)
+    if digits == 0
+      pa = precision(a)
+      pb = BigDecimal.precision(o)
+      digits = (pa > pb ? pa : pb) + double_fig
+      digits = 2 * double_fig if digits < 2 * double_fig
+    end
+    sb = BigDecimal.sig(o)
+    # enough quotient digits, then a sticky digit for the remainder, then round
+    shift = digits + 2 + ndigits(sb) - ndigits(@sig)
+    shift = 0 if shift < 0
+    num = @sig * 10 ** shift
+    q = num / sb
+    e = @exp - BigDecimal.exp(o) - shift
+    if num % sb != 0
+      q = q * 10 + 1
+      e -= 1
+    end
+    round_sig(s, q, e, digits, :half_up)
+  end
+
+  # Ruby's div(b): the quotient rounded toward -Infinity, as an Integer.
+  def idiv(a, b)
+    q, _ = divmod(a, b)
+    q
+  end
+
+  # [Integer quotient toward -Infinity, remainder with b's sign], as Ruby's.
+  def divmod(a, b)
+    o = of(b)
+    raise ZeroDivisionError, "divided by 0" if BigDecimal.zero?(o)
+    raise FloatDomainError, "Computation results in 'NaN' (Not a Number)" if @kind == :nan || BigDecimal.nan?(o)
+    raise FloatDomainError, "Computation results in '#{@sgn > 0 ? "" : "-"}Infinity'" if @kind == :inf
+    if BigDecimal.infinite?(o)
+      # Ruby: a finite value modulo ±Infinity is itself when the signs agree, else the Infinity
+      return @sgn == BigDecimal.sgn(o) || zero?(a) ? [0, a] : [-1, o]
+    end
+    x, y, e = align(a, o)
+    x *= @sgn
+    y *= BigDecimal.sgn(o)
+    q = x / y
+    r = x - q * y
+    [q, r < 0 ? mk(-1, -r, e) : mk(1, r, e)]
+  end
+
+  def %(a, b)
+    o = of(b)
+    return nan if @kind == :nan || BigDecimal.nan?(o) || @kind == :inf
+    _, r = divmod(a, o)
+    r
+  end
+  def modulo(a, b) = a % b
+
+  # The remainder with a's sign (the quotient rounded toward zero).
+  def remainder(a, b)
+    o = of(b)
+    return nan if @kind == :nan || BigDecimal.nan?(o) || @kind == :inf
+    return a if BigDecimal.infinite?(o)
+    raise ZeroDivisionError, "divided by 0" if BigDecimal.zero?(o)
+    x, y, e = align(a, o)
+    r = x % y
+    mk(@sgn, r, e)
+  end
+
+  # Ruby's power(n, prec) for an Integer n: exact for n >= 0 (rounded to prec digits when given);
+  # for n < 0, 1 divided by the exact power, to prec digits or `/`'s default. Non-Integer exponents
+  # (Ruby: via BigMath.exp and log) are not ported.
+  def power(a, n, prec = 0)
+    n => Integer
+    return nan if @kind == :nan
+    return from_i(1) if n == 0
+    if @kind == :inf
+      return n > 0 ? inf(Integer.odd?(n) ? @sgn : 1) : zero(1)
+    end
+    if zero?(a)
+      return n > 0 ? zero(1) : inf(Integer.odd?(n) ? @sgn : 1)
+    end
+    m = n < 0 ? -n : n
+    r = mk(Integer.odd?(m) ? @sgn : 1, @sig ** m, @exp * m)
+    if n < 0
+      div(from_i(1), r, prec)
+    else
+      prec > 0 ? mult(r, 1, prec) : r
+    end
+  end
+  def **(a, n) = power(a, n)
+
+  # Ruby's sqrt(n): the square root to n significant digits (n = 0: n_significant_digits + 16).
+  def sqrt(d, n)
+    raise ArgumentError, "Negative precision for sqrt" if n < 0
+    return infinity if @kind == :inf && @sgn > 0
+    raise FloatDomainError, "sqrt of negative value" if negative?(d) || @kind == :inf
+    raise FloatDomainError, "sqrt of 'NaN'(Not a Number)" if @kind == :nan
+    return d if zero?(d)
+    prec = n == 0 ? ndigits(@sig) + double_fig : n
+    sig = @sig
+    e = @exp
+    if Integer.odd?(e)
+      sig *= 10
+      e -= 1
+    end
+    k = prec + 2 - ndigits(sig) / 2
+    k = 0 if k < 0
+    num = sig * 10 ** (2 * k)
+    r = Integer.sqrt(num)
+    re = e / 2 - k
+    if r * r != num
+      r = r * 10 + 1
+      re -= 1
+    end
+    round_sig(1, r, re, prec, :half_up)
+  end
+
+  # --- rounding ---
+
+  # Ruby's round(n, mode): rounded at the n-th digit after the point (n <= 0: before it). Always a
+  # BigDecimal: Ruby's round without n gives an Integer, which is to_i(round(d)).
+  def round(d, n = 0, mode = :half_up)
+    check_mode(mode)
+    return d unless @kind == :finite
+    drop = -@exp - n
+    drop > 0 ? round_digits(@sgn, @sig, @exp, drop, mode) : d
+  end
+  def floor(d, n = 0) = round(d, n, :floor)
+  def ceil(d, n = 0) = round(d, n, :ceiling)
+  def truncate(d, n = 0) = round(d, n, :down)
+  def fix(d) = truncate(d, 0)
+  def frac(d) = @kind == :finite ? d - fix(d) : d
+
+  # --- conversion ---
+
+  def check_finite(d)
+    raise FloatDomainError, "Computation results in 'NaN' (Not a Number)" if @kind == :nan
+    raise FloatDomainError, "Computation results in '#{@sgn > 0 ? "" : "-"}Infinity'" if @kind == :inf
+    nil
+  end
+
+  # Truncated toward zero, as Ruby's.
+  def to_i(d)
+    check_finite(d)
+    @sgn * (@exp >= 0 ? @sig * 10 ** @exp : @sig / 10 ** -@exp)
+  end
+  def to_int(d) = to_i(d)
+
+  def to_r(d)
+    check_finite(d)
+    @exp >= 0 ? Kernel.Rational(@sgn * @sig * 10 ** @exp, 1) : Kernel.Rational(@sgn * @sig, 10 ** -@exp)
+  end
+
+  # The nearest Float; ±Infinity or ±0.0 beyond Float's range, as Ruby's.
+  def to_f(d)
+    return Float.NAN if @kind == :nan
+    return @sgn * Float.INFINITY if @kind == :inf
+    return @sgn * 0.0 if @sig == 0
+    ex = exponent(d)
+    return @sgn * Float.INFINITY if ex > 309
+    return @sgn * 0.0 if ex < -324
+    Float("#{@sgn < 0 ? "-" : ""}#{@sig}e#{@exp}")
+  end
+
+  def to_d(d) = d
+
+  def to_s(d) = format(d, "")
+  def inspect(d) = format(d, "")
+
+  # Ruby's to_s(fmt) (Sake's to_s takes no format): "" or "E" gives "0.123e1", "F" gives "1.23"; a
+  # leading "+" or " " sets the sign of a positive number; digits group the fraction (and, with F,
+  # the integer part) by that many.
+  def format(d, fmt = "")
+    lead = ""
+    group = 0
+    plain = false
+    case fmt
+    in Integer then group = fmt
+    in String
+      m = Regexp.match(/\A([ +]?)(\d*)([EeFf]?)/, fmt)
+      if m
+        lead = m[1] || ""
+        g = m[2]
+        group = g != nil && g != "" ? String.to_i(g) : 0
+        plain = String.downcase(m[3] || "") == "f"
+      end
+    end
+    sign = @sgn < 0 ? "-" : lead
+    return "NaN" if @kind == :nan
+    return "#{sign}Infinity" if @kind == :inf
+    return "#{sign}0.0" if @sig == 0
+    digits = Integer.to_s(@sig)
+    n = String.length(digits)
+    if plain
+      ip = ""
+      fp = ""
+      if @exp >= 0
+        ip = digits + "0" * @exp
+        fp = "0"
+      elsif -@exp >= n
+        ip = "0"
+        fp = "0" * (-@exp - n) + digits
+      else
+        ip = String.[](digits, 0, n + @exp) || ""
+        fp = String.[](digits, (n + @exp)..) || ""
+      end
+      if group > 0
+        ip = String.reverse(grouped(String.reverse(ip), group))
+        fp = grouped(fp, group)
+      end
+      "#{sign}#{ip}.#{fp}"
+    else
+      digits = grouped(digits, group) if group > 0
+      "#{sign}0.#{digits}e#{@exp + n}"
+    end
+  end
+  def grouped(s, n)
+    Array.join(Array.map(Array.each_slice(String.chars(s), n)) { |g| Array.join(g) }, " ")
+  end
+end

@@ -1,0 +1,128 @@
+require "getoptlong"
+
+def specs = Array[
+  Array["--name", "-n", :required_argument],
+  Array["--verbose", "-v", :no_argument],
+  Array["--level", "-l", :optional_argument],
+  Array["--version", :no_argument]
+]
+
+# Parse argv with the standard specs; print the options, the arguments left, and the state.
+def run(argv, ordering = nil)
+  g = GetoptLong.new(argv, specs)
+  GetoptLong.set_quiet(g, true)
+  GetoptLong.set_ordering(g, ordering) if ordering != nil
+  out = Array[]
+  begin
+    GetoptLong.each(g) { |n, a| Array.push(out, [n, a]) }
+    puts("#{Kernel.inspect(out)} rest=#{Kernel.inspect(argv)} term=#{GetoptLong.terminated?(g)} err=#{Kernel.inspect(GetoptLong.error(g))}")
+  rescue GetoptLongError => e
+    puts("#{GetoptLongError.kind(e)}: #{Exception.message(e)} rest=#{Kernel.inspect(argv)} err=#{Kernel.inspect(GetoptLong.error(g))} msg=#{Kernel.inspect(GetoptLong.error_message(g))}")
+    p(GetoptLong.get(g))
+  end
+end
+
+run(String["-n", "foo", "-v", "a", "b"])
+run(String["a", "-n", "foo", "b", "-v", "c"])
+run(String["a", "-n", "foo", "b", "-v", "c"], :require_order)
+run(String["a", "-n", "foo", "b", "-v", "c"], :return_in_order)
+run(String["--name=bar", "--level", "--verb", "--", "-v", "x"])
+run(String["--level", "3", "--level", "-v", "-l5", "-vl", "7", "-nx"])
+run(String["--ver"])
+run(String["--zzz"])
+run(String["-z"])
+run(String["--name"])
+run(String["-n"])
+run(String["--verbose=1"])
+run(String["-vz"])
+run(String["--name=", "x"])
+run(String["-"])
+run(String["-", "-v"], :require_order)
+run(String["-vn", "foo"])
+run(String["-nvfoo"])
+run(String["-l"])
+run(String["-l", "-v"])
+run(String["--level="])
+run(String["--version=2"])
+run(String[])
+run(String["a", "b"])
+run(String["-vv"])
+run(String["--name", "--verbose"])
+run(String["--name", "--", "x"])
+run(String["-n", "-v"])
+run(String["--na", "x"])
+run(String["--n", "x"])
+run(String["--version", "--verbose"])
+run(String["-l=3"])
+run(String["--level=3=4"])
+run(String["-vl"])
+run(String["--", "-v"])
+run(String["a", "--", "-v"], :return_in_order)
+run(String["x", "-v", "y", "--", "-n", "z"])
+
+# invalid option lists
+def bad(*specs)
+  GetoptLong.new(String["-v"], specs)
+  puts("ok")
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+bad(Array["--a"])
+bad(Array["--a", "-b", "c", :no_argument])
+bad(Array["--a", :no_argument, :required_argument])
+bad(Array[:no_argument])
+bad(Array["--a", :no_argument], Array["--a", :required_argument])
+bad(Array["---a", :no_argument])
+bad(Array["--", :no_argument])
+bad(Array["-vv", :no_argument])
+bad(Array["--a", :no_argument], Array["-b", :optional_argument])
+
+# get, one option at a time; changing the options after the start
+argv = String["-v"]
+g = GetoptLong.new(argv, specs)
+GetoptLong.set_quiet(g, true)
+p(GetoptLong.get(g))
+p(GetoptLong.get(g))
+p(GetoptLong.get_option(g))
+p(GetoptLong.terminated?(g))
+begin
+  GetoptLong.set_ordering(g, :permute)
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)} #{Kernel.inspect(GetoptLong.error(g))}")
+end
+begin
+  GetoptLong.set_options(g, Array["--x", :no_argument])
+rescue RuntimeError => e
+  puts("RuntimeError: #{Exception.message(e)}")
+end
+p(GetoptLong.terminate(g) != nil)
+begin
+  GetoptLong.set_ordering(GetoptLong.new(String[]), :sideways)
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+
+# after an error: get gives nil, terminate raises
+argv = String["-z"]
+g = GetoptLong.new(argv, specs)
+GetoptLong.set_quiet(g, true)
+begin
+  GetoptLong.get(g)
+rescue GetoptLongError => e
+  puts(Exception.message(e))
+end
+begin
+  GetoptLong.terminate(g)
+rescue RuntimeError => e
+  puts("RuntimeError: #{Exception.message(e)}")
+end
+p(GetoptLong.get(g))
+p([GetoptLong.quiet?(g), GetoptLong.ordering(g), GetoptLong.error(g), GetoptLong.error?(g), GetoptLong.error_message(g)])
+
+# defaults, set_options after new, each returns the parser, each_option
+g2 = GetoptLong.new(String["--flag", "rest"])
+p([GetoptLong.ordering(g2), GetoptLong.quiet(g2)])
+GetoptLong.set_options(g2, Array["--flag", "-f", :no_argument], Array["-x", :required_argument])
+GetoptLong.each_option(g2) { |n, a| puts("#{n}=#{a}") }
+p(GetoptLong.argv(g2))
+p(GetoptLong.terminate(g2) != nil)

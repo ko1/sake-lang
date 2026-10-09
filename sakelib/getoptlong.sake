@@ -1,0 +1,268 @@
+# getoptlong: GetoptLong, GNU getopt_long-style option parsing (Ruby's getoptlong 0.2.1).
+#
+# Ruby's GetoptLong reads and shifts the global ARGV. Here the Array is a field given to `new`
+# (pass ARGV for the program's arguments); it is shifted in place as Ruby does, and `terminate`
+# puts the skipped non-option arguments back at its front.
+# Ruby's constants are Symbols: NO_ARGUMENT :no_argument, REQUIRED_ARGUMENT :required_argument,
+# OPTIONAL_ARGUMENT :optional_argument; PERMUTE :permute, REQUIRE_ORDER :require_order,
+# RETURN_IN_ORDER :return_in_order. POSIXLY_CORRECT is not consulted (Sake has no ENV).
+
+# Ruby: GetoptLong::Error and its subclasses; `kind` is :ambiguous_option, :needless_argument,
+# :missing_argument, or :invalid_option (Ruby's AmbiguousOption, NeedlessArgument, ...).
+class GetoptLongError < StandardError
+  attr_reader kind
+end
+
+class GetoptLong
+  attr_reader argv
+  private attr_reader options                 # the option specs given to new, or nil
+  attr_reader ordering, quiet, error, error_message
+  private attr_reader canonical_names, argument_flags, status, rest_singles, non_option_arguments
+
+  # GetoptLong.new(argv) or GetoptLong.new(argv, Array[Array["--name", "-n", :required_argument], ...]).
+  def initialize(g)
+    @argv => Array
+    @ordering = :permute
+    @canonical_names = Hash[]
+    @argument_flags = Hash[]
+    @quiet = false
+    @status = :yet
+    @error = nil
+    @error_message = nil
+    @rest_singles = ""
+    @non_option_arguments = String[]
+    opts = @options
+    set_options_list(g, opts) if opts != nil
+  end
+
+  def argument_flags_list = once { Symbol[:no_argument, :required_argument, :optional_argument] }
+  def orderings = once { Symbol[:require_order, :permute, :return_in_order] }
+
+  # Ruby: g.ordering = o
+  def set_ordering(g, ordering)
+    if @status != :yet
+      # Ruby: set_error(ArgumentError, "argument error") raises before its RuntimeError line is reached
+      record_error(g, :argument_error, "argument error")
+      raise ArgumentError, "argument error"
+    end
+    unless Array.include?(orderings, ordering)
+      raise ArgumentError, "invalid ordering `#{ordering}'"
+    end
+    @ordering = ordering
+  end
+
+  # Ruby: g.set_options(["--name", "-n", REQUIRED_ARGUMENT], ...)
+  def set_options(g, *arguments) = set_options_list(g, arguments)
+
+  def set_options_list(g, arguments)
+    if @status != :yet
+      raise RuntimeError, "invoke set_options, but option processing has already started"
+    end
+    Hash.clear(@canonical_names)
+    Hash.clear(@argument_flags)
+    Array.each(arguments) do |arg|
+      unless arg in Array
+        raise ArgumentError, "the option list contains non-Array argument"
+      end
+      argument_flag = nil
+      Array.each(arg) do |i|
+        if (i in Symbol) && Array.include?(argument_flags_list, i)
+          raise ArgumentError, "too many argument-flags" if argument_flag != nil
+          argument_flag = i
+        end
+      end
+      raise ArgumentError, "no argument-flag" if argument_flag == nil
+      canonical_name = nil
+      Array.each(arg) do |i|
+        next if i == argument_flag
+        begin
+          unless (i in String) && String.match?(i, /\A-([^-]|-.+)\z/)
+            raise ArgumentError, "an invalid option `#{i}'"
+          end
+          raise ArgumentError, "option redefined `#{i}'" if Hash.include?(@canonical_names, i)
+        rescue ArgumentError
+          Hash.clear(@canonical_names)
+          Hash.clear(@argument_flags)
+          raise
+        end
+        canonical_name = i if canonical_name == nil
+        @canonical_names[i] = canonical_name
+        @argument_flags[i] = argument_flag
+      end
+      raise ArgumentError, "no option name" if canonical_name == nil
+    end
+    g
+  end
+
+  # Ruby: g.quiet = true
+  def set_quiet(g, q)
+    @quiet = q
+  end
+  def quiet?(g) = @quiet
+
+  # Puts the skipped non-option arguments back into argv; nil if already terminated, else g.
+  def terminate(g)
+    return nil if @status == :terminated
+    raise RuntimeError, "an error has occurred" if @error != nil
+    @status = :terminated
+    Array.reverse_each(@non_option_arguments) { |a| Array.unshift(@argv, a) }
+    Array.clear(@non_option_arguments)
+    g
+  end
+
+  def terminated?(g) = @status == :terminated
+
+  # Ruby prints "#{$0}: #{message}" to stderr unless quiet, records the error, and raises it.
+  def set_error(g, kind, message)
+    record_error(g, kind, message)
+    raise GetoptLongError.new(message, kind)
+  end
+
+  def record_error(g, kind, message)
+    warn("sake: #{message}") unless @quiet
+    @error = kind
+    @error_message = message
+    nil
+  end
+
+  def error?(g) = @error
+
+  def option_like?(s) = String.match?(s, /\A-./)
+
+  # The next option as [name, argument] (the canonical name; "" as the argument of a flag), or nil
+  # at the end. With :return_in_order, a non-option argument comes as ["", argument].
+  def get(g)
+    option_name = ""
+    option_argument = ""
+    return nil if @error != nil
+    case @status
+    in :yet then @status = :started
+    in :terminated then return nil
+    in :started then nil
+    end
+    argument = ""
+    if String.length(@rest_singles) > 0
+      argument = "-" + @rest_singles
+    elsif Array.empty?(@argv)
+      terminate(g)
+      return nil
+    elsif @ordering == :permute
+      while !Array.empty?(@argv) && !option_like?(Array.fetch(@argv, 0))
+        Array.push(@non_option_arguments, Array.fetch(@argv, 0))
+        Array.shift(@argv)
+      end
+      if Array.empty?(@argv)
+        terminate(g)
+        return nil
+      end
+      argument = Array.fetch(@argv, 0)
+      Array.shift(@argv)
+    elsif @ordering == :require_order
+      unless option_like?(Array.fetch(@argv, 0))
+        terminate(g)
+        return nil
+      end
+      argument = Array.fetch(@argv, 0)
+      Array.shift(@argv)
+    else
+      argument = Array.fetch(@argv, 0)
+      Array.shift(@argv)
+    end
+    if argument == "--" && @rest_singles == ""
+      terminate(g)
+      return nil
+    end
+    long = Regexp.match(/\A(--[^=]+)/, argument)
+    short = Regexp.match(/\A(-(.))(.*)/m, argument)
+    if long && @rest_singles == ""
+      pattern = MatchData.[](long, 1) || ""
+      if Hash.include?(@canonical_names, pattern)
+        option_name = pattern
+      else
+        matches = String[]
+        Hash.each_key(@canonical_names) do |key|
+          if String.index(key, pattern) == 0
+            option_name = key
+            Array.push(matches, key)
+          end
+        end
+        if Array.size(matches) >= 2
+          set_error(g, :ambiguous_option, "option `#{argument}' is ambiguous between #{Array.join(matches, ", ")}")
+        elsif Array.empty?(matches)
+          set_error(g, :invalid_option, "unrecognized option `#{argument}'")
+        end
+      end
+      eq = Regexp.match(/=(.*)/m, argument)
+      flag = @argument_flags[option_name]
+      if flag == :required_argument
+        if eq
+          option_argument = MatchData.[](eq, 1) || ""
+        elsif !Array.empty?(@argv)
+          option_argument = Array.fetch(@argv, 0)
+          Array.shift(@argv)
+        else
+          set_error(g, :missing_argument, "option `#{argument}' requires an argument")
+        end
+      elsif flag == :optional_argument
+        if eq
+          option_argument = MatchData.[](eq, 1) || ""
+        elsif !Array.empty?(@argv) && !option_like?(Array.fetch(@argv, 0))
+          option_argument = Array.fetch(@argv, 0)
+          Array.shift(@argv)
+        else
+          option_argument = ""
+        end
+      elsif eq
+        set_error(g, :needless_argument, "option `#{option_name}' doesn't allow an argument")
+      end
+    elsif short
+      option_name = MatchData.[](short, 1) || ""
+      ch = MatchData.[](short, 2) || ""
+      @rest_singles = MatchData.[](short, 3) || ""
+      if Hash.include?(@canonical_names, option_name)
+        flag = @argument_flags[option_name]
+        if flag == :required_argument
+          if String.length(@rest_singles) > 0
+            option_argument = @rest_singles
+            @rest_singles = ""
+          elsif !Array.empty?(@argv)
+            option_argument = Array.fetch(@argv, 0)
+            Array.shift(@argv)
+          else
+            set_error(g, :missing_argument, "option requires an argument -- #{ch}")
+          end
+        elsif flag == :optional_argument
+          if String.length(@rest_singles) > 0
+            option_argument = @rest_singles
+            @rest_singles = ""
+          elsif !Array.empty?(@argv) && !option_like?(Array.fetch(@argv, 0))
+            option_argument = Array.fetch(@argv, 0)
+            Array.shift(@argv)
+          else
+            option_argument = ""
+          end
+        end
+      else
+        set_error(g, :invalid_option, "invalid option -- #{ch}")
+      end
+    else
+      return ["", argument]
+    end
+    [Hash.fetch(@canonical_names, option_name), option_argument]
+  end
+
+  def get_option(g) = get(g)
+
+  # Ruby: g.each { |name, argument| ... }
+  def each(g)
+    loop do
+      r = get(g)
+      break if r == nil
+      name, argument = r
+      yield(name, argument)
+    end
+    g
+  end
+
+  def each_option(g, &b) = each(g, &b)
+end
