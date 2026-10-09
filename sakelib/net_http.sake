@@ -1,0 +1,508 @@
+# net_http: a client subset of Ruby's net/http over Sake's Socket built-ins. HTTP/1.1, plain http:// only
+# (Sake has no TLS). Every request is sent with `Connection: close` on its own connection, so a
+# `start` block is a scope, not a kept connection.
+#
+# Ruby's nested names are flattened (Sake has none): Net::HTTP -> NetHTTP, Net::HTTPResponse ->
+# NetHTTPResponse, Net::HTTP::Get.new(path) -> NetHTTPGet.new(path) (a NetHTTPRequest), Net::HTTPBadResponse
+# -> NetHTTPBadResponse, and `res.value`'s Net::HTTPClientException & co. -> NetHTTPClientException & co.
+# Ruby's response classes (Net::HTTPOK, Net::HTTPNotFound, ...) are one type whose `code` decides
+# `success?`, `redirection?`, ... and the class name that `inspect` shows.
+
+require "uri"
+
+class NetHTTPBadResponse < Exception          # Ruby: Net::HTTPBadResponse (a malformed status line)
+end
+
+# Raised by NetHTTPResponse.value, as Ruby's `res.value`; `response` is the NetHTTPResponse.
+class NetHTTPError < Exception                # 1xx
+  attr_reader response
+end
+class NetHTTPRetriableError < Exception       # 3xx
+  attr_reader response
+end
+class NetHTTPClientException < Exception      # 4xx
+  attr_reader response
+end
+class NetHTTPFatalError < Exception           # 5xx
+  attr_reader response
+end
+
+# --- header fields, shared by requests and responses ---
+# `fields` is a Hash of downcased name => Array of the values received or set (Ruby's @header).
+module NetHTTPHeader
+  def [](h, name)
+    vs = fields(h)[String.downcase(name)]
+    vs ? Array.join(vs, ", ") : nil
+  end
+
+  # Ruby: h[name] = v (nil deletes the field).
+  def []=(h, name, v)
+    if v == nil
+      Hash.delete(fields(h), String.downcase(name))
+    else
+      fields(h)[String.downcase(name)] = String["#{v}"]
+    end
+    v
+  end
+
+  def add_field(h, name, v)
+    k = String.downcase(name)
+    vs = fields(h)[k]
+    if vs
+      Array.push(vs, "#{v}")
+    else
+      fields(h)[k] = String["#{v}"]
+    end
+    nil
+  end
+
+  def get_fields(h, name) = fields(h)[String.downcase(name)]
+  def key?(h, name) = Hash.key?(fields(h), String.downcase(name))
+
+  # Ruby: h.delete(name) -> the Array of values, or nil
+  def delete(h, name) = Hash.delete(fields(h), String.downcase(name))
+
+  # Ruby: h.each_header { |name, value| } (downcased names, values joined with ", ")
+  def each_header(h)
+    Hash.each(fields(h)) { |k, vs| yield(k, Array.join(vs, ", ")) }
+    h
+  end
+
+  def each_name(h)
+    Hash.each_key(fields(h)) { |k| yield(k) }
+    h
+  end
+
+  # Ruby: h.to_hash, downcased name => Array of values
+  def to_hash(h) = Hash.dup(fields(h))
+
+  # The media type of Content-Type without its parameters ("text/plain"), or nil.
+  def content_type(h)
+    ct = NetHTTPHeader.[](h, "content-type")
+    return nil unless ct
+    m = String.match(ct, /\A\s*([^;\s]+)/)
+    m ? String.downcase(m[1] || "") : nil
+  end
+
+  def set_content_type(h, type) = NetHTTPHeader.[]=(h, "content-type", type)
+
+  # Ruby: h.content_length (nil without the field; a non-numeric value raises as Ruby's)
+  def content_length(h)
+    v = NetHTTPHeader.[](h, "content-length")
+    return nil unless v
+    m = String.match(v, /\A\s*(\d+)/)
+    raise NetHTTPBadResponse, "wrong Content-Length format" unless m
+    String.to_i(m[1] || "0")
+  end
+
+  def chunked?(h)
+    te = NetHTTPHeader.[](h, "transfer-encoding")
+    te != nil && String.include?(String.downcase(te), "chunked")
+  end
+end
+
+# --- requests ---
+# Ruby's Net::HTTP::Get & co. are one type: `method` is the verb. Use NetHTTPGet.new(path) & co.
+class NetHTTPRequest
+  attr_reader method, path
+  attr_accessor body
+  private attr_reader fields
+  include Indexable
+  include NetHTTPHeader
+
+  # Ruby: Net::HTTP::Get.new(path_or_uri, initheader); defaults as Ruby's, except Accept-Encoding (see notes)
+  def initialize(req)
+    @method => String
+    @fields = Hash[] if @fields == nil
+    pth = @path
+    if pth in URI
+      h = URI.hostname(pth)
+      @path = URI.request_uri(pth) || "/"
+      NetHTTPHeader.[]=(req, "host", URI.port(pth) == 80 ? h : "#{h}:#{URI.port(pth)}") if h
+    end
+    pth = @path
+    pth => String
+    raise ArgumentError, "HTTP request path is empty" if pth == ""
+    fields(req)["accept-encoding"] = String["identity"] unless key?(req, "accept-encoding")
+    fields(req)["accept"] = String["*/*"] unless key?(req, "accept")
+    fields(req)["user-agent"] = String["Ruby"] unless key?(req, "user-agent")
+  end
+
+  def request_body_permitted?(req) = Array.include?(String["POST", "PUT", "PATCH"], @method)
+  def response_body_permitted?(req) = @method != "HEAD"
+
+  # Ruby: req.set_form_data(params, sep = "&"); params is a Hash or an Array of [key, value]
+  def set_form_data(req, params, sep = "&")
+    q = URI.encode_www_form(params)
+    @body = sep == "&" ? q : String.gsub(q, "&", sep)
+    NetHTTPHeader.[]=(req, "content-type", "application/x-www-form-urlencoded")
+    nil
+  end
+
+  def basic_auth(req, account, password)
+    NetHTTPHeader.[]=(req, "authorization", "Basic " + Array.pack(Array["#{account}:#{password}"], "m0"))
+  end
+
+  def class_name(req)
+    case @method
+    in "GET" then "Net::HTTP::Get"
+    in "HEAD" then "Net::HTTP::Head"
+    in "POST" then "Net::HTTP::Post"
+    in "PUT" then "Net::HTTP::Put"
+    in "DELETE" then "Net::HTTP::Delete"
+    in "PATCH" then "Net::HTTP::Patch"
+    in "OPTIONS" then "Net::HTTP::Options"
+    else "Net::HTTPGenericRequest"
+    end
+  end
+
+  def inspect(req) = "#<#{class_name(req)} #{@method}>"
+  def to_s(req) = inspect(req)
+
+  # The request head as sent on the wire (Ruby capitalizes each word of a name as it was given).
+  def _wire(req, host, port)
+    out = String["#{@method} #{@path} HTTP/1.1\r\n"]
+    NetHTTPHeader.[]=(req, "host", port == 80 ? host : "#{host}:#{port}") unless key?(req, "host")
+    NetHTTPHeader.[]=(req, "connection", "close")
+    b = @body
+    if b != nil && !key?(req, "content-length")
+      NetHTTPHeader.[]=(req, "content-length", Integer.to_s(String.bytesize(b)))
+    elsif b == nil && request_body_permitted?(req) && !key?(req, "content-length")
+      NetHTTPHeader.[]=(req, "content-length", "0")
+    end
+    Hash.each(fields(req)) do |k, vs|
+      name = Array.join(Array.map(String.split(k, "-", -1)) { |w| String.capitalize(w) }, "-")
+      Array.each(vs) { |v| Array.push(out, "#{name}: #{v}\r\n") }
+    end
+    Array.push(out, "\r\n")
+    Array.join(out)
+  end
+end
+
+# Ruby: Net::HTTP::Get.new(path, initheader = nil); initheader is a Hash of name => value.
+module NetHTTPGet
+  module_function
+  def new(path, initheader = nil) = NetHTTPRequest.new("GET", path, nil, NetHTTP._fields(initheader))
+end
+module NetHTTPHead
+  module_function
+  def new(path, initheader = nil) = NetHTTPRequest.new("HEAD", path, nil, NetHTTP._fields(initheader))
+end
+module NetHTTPPost
+  module_function
+  def new(path, initheader = nil) = NetHTTPRequest.new("POST", path, nil, NetHTTP._fields(initheader))
+end
+module NetHTTPPut
+  module_function
+  def new(path, initheader = nil) = NetHTTPRequest.new("PUT", path, nil, NetHTTP._fields(initheader))
+end
+module NetHTTPDelete
+  module_function
+  def new(path, initheader = nil) = NetHTTPRequest.new("DELETE", path, nil, NetHTTP._fields(initheader))
+end
+module NetHTTPPatch
+  module_function
+  def new(path, initheader = nil) = NetHTTPRequest.new("PATCH", path, nil, NetHTTP._fields(initheader))
+end
+
+# --- responses ---
+# `code` is a String ("200") as Ruby's; `body` is nil for HEAD and for 1xx/204/304.
+class NetHTTPResponse
+  attr_reader http_version, code, message
+  private attr_reader fields
+  attr_accessor body
+  include Indexable
+  include NetHTTPHeader
+
+  def initialize(res)
+    @code => String
+    @fields = Hash[] if @fields == nil
+  end
+
+  def header(res, name) = NetHTTPHeader.[](res, name)
+  def msg(res) = @message
+
+  def informational?(res) = String.start_with?(@code, "1")
+  def success?(res) = String.start_with?(@code, "2")
+  def redirection?(res) = String.start_with?(@code, "3")
+  def client_error?(res) = String.start_with?(@code, "4")
+  def server_error?(res) = String.start_with?(@code, "5")
+
+  # Ruby's res.class.name: the status code picks the class.
+  def class_name(res)
+    case @code
+    in "100" then "Net::HTTPContinue"
+    in "101" then "Net::HTTPSwitchProtocol"
+    in "200" then "Net::HTTPOK"
+    in "201" then "Net::HTTPCreated"
+    in "202" then "Net::HTTPAccepted"
+    in "204" then "Net::HTTPNoContent"
+    in "206" then "Net::HTTPPartialContent"
+    in "301" then "Net::HTTPMovedPermanently"
+    in "302" then "Net::HTTPFound"
+    in "303" then "Net::HTTPSeeOther"
+    in "304" then "Net::HTTPNotModified"
+    in "307" then "Net::HTTPTemporaryRedirect"
+    in "308" then "Net::HTTPPermanentRedirect"
+    in "400" then "Net::HTTPBadRequest"
+    in "401" then "Net::HTTPUnauthorized"
+    in "403" then "Net::HTTPForbidden"
+    in "404" then "Net::HTTPNotFound"
+    in "405" then "Net::HTTPMethodNotAllowed"
+    in "408" then "Net::HTTPRequestTimeout"
+    in "409" then "Net::HTTPConflict"
+    in "410" then "Net::HTTPGone"
+    in "422" then "Net::HTTPUnprocessableEntity"
+    in "429" then "Net::HTTPTooManyRequests"
+    in "500" then "Net::HTTPInternalServerError"
+    in "501" then "Net::HTTPNotImplemented"
+    in "502" then "Net::HTTPBadGateway"
+    in "503" then "Net::HTTPServiceUnavailable"
+    in "504" then "Net::HTTPGatewayTimeout"
+    else
+      case String.[](@code, 0)
+      in "1" then "Net::HTTPInformation"
+      in "2" then "Net::HTTPSuccess"
+      in "3" then "Net::HTTPRedirection"
+      in "4" then "Net::HTTPClientError"
+      in "5" then "Net::HTTPServerError"
+      else "Net::HTTPUnknownResponse"
+      end
+    end
+  end
+
+  def inspect(res) = "#<#{class_name(res)} #{@code} #{@message} readbody=true>"
+  def to_s(res) = inspect(res)
+
+  # Ruby: res.value raises unless 2xx, with the message `code "message"`.
+  def value(res)
+    return nil if success?(res)
+    m = "#{@code} #{Kernel.inspect(@message)}"
+    raise NetHTTPRetriableError.new(m, res) if redirection?(res)
+    raise NetHTTPClientException.new(m, res) if client_error?(res)
+    raise NetHTTPFatalError.new(m, res) if server_error?(res)
+    raise NetHTTPError.new(m, res)
+  end
+
+  # Ruby: res.error! (same as value, for any code)
+  def error!(res)
+    value(res)
+    raise NetHTTPError.new("#{@code} #{Kernel.inspect(@message)}", res)
+  end
+
+  # Ruby: res.read_body (the body was read already, as with Ruby's default)
+  def read_body(res) = @body
+  def entity(res) = @body
+end
+
+# --- the client ---
+# NetHTTP.new(host, port = 80); NetHTTP.start(host, port) { |http| ... }. Timeouts are kept as Ruby's
+# fields but not enforced: Sake's sockets have no timeout.
+class NetHTTP
+  attr_reader address, port
+  attr_accessor open_timeout, read_timeout
+  private attr_accessor started
+
+  def initialize(http)
+    @address => String
+    @port = 80 if @port == nil
+    @port => Integer
+    @open_timeout = 60 if @open_timeout == nil
+    @read_timeout = 60 if @read_timeout == nil
+    @started = false
+  end
+
+  def _fields(initheader)
+    f = Hash[]
+    return f if initheader == nil
+    Hash.each(initheader) { |k, v| f[String.downcase("#{k}")] = String["#{v}"] }
+    f
+  end
+
+  # Ruby's two `start`s: Net::HTTP.start(host, port) { |http| } (a String) and http.start (a NetHTTP).
+  # Without a block it returns the started NetHTTP; with one, the block's value, finished afterwards.
+  def start(host_or_http, port = nil)
+    http = (host_or_http in NetHTTP) ? host_or_http : NetHTTP.new(host_or_http, port)
+    raise IOError, "HTTP session already opened" if NetHTTP.started?(http)
+    http.NetHTTP.started = true
+    return http unless block_given?
+    begin
+      yield(http)
+    ensure
+      finish(http)
+    end
+  end
+
+  def started?(http) = @started
+  def active?(http) = @started
+
+  def finish(http)
+    raise IOError, "HTTP session not yet started" unless @started
+    @started = false
+    nil
+  end
+
+  def inspect(http) = "#<Net::HTTP #{@address}:#{@port} open=#{@started}>"
+
+  # --- the wire ---
+  def _read_line(sock)
+    line = Socket.gets(sock)
+    raise NetHTTPBadResponse, "unexpected end of response" if line == nil
+    String.chomp(line)
+  end
+
+  # Exactly n bytes, or fewer at EOF (Socket.read may stop short).
+  def _read_n(sock, n)
+    return "" if n == 0
+    out = String[]
+    got = 0
+    while got < n
+      s = Socket.read(sock, n - got)
+      break if s == nil || s == ""
+      got += String.bytesize(s)
+      Array.push(out, s)
+    end
+    Array.join(out)
+  end
+
+  def _read_all(sock)
+    out = String[]
+    s = Socket.read(sock, 65536)
+    while s != nil && s != ""
+      Array.push(out, s)
+      s = Socket.read(sock, 65536)
+    end
+    Array.join(out)
+  end
+
+  # Ruby's read_chunked: size lines may carry extensions (";ext=v"); trailers run until an empty line.
+  def _read_chunked(sock)
+    out = String[]
+    loop do
+      line = _read_line(sock)
+      m = String.match(line, /\A\h+/)
+      raise NetHTTPBadResponse, "wrong chunk size line: #{line}" unless m
+      len = String.hex(MatchData.to_s(m))
+      break if len == 0
+      Array.push(out, _read_n(sock, len))
+      _read_n(sock, 2)
+    end
+    while _read_line(sock) != ""
+    end
+    Array.join(out)
+  end
+
+  # Ruby's HTTPResponse.read_new + reading_body, for a request whose method was `method`.
+  def _read_response(sock, method)
+    status = _read_line(sock)
+    m = String.match(status, /\AHTTP(?:\/(\d+\.\d+))?\s+(\d\d\d)(?:\s+(.*))?\z/)
+    raise NetHTTPBadResponse, "wrong status line: #{Kernel.inspect(status)}" unless m
+    res = NetHTTPResponse.new(m[1] || "1.0", m[2] || "", m[3] || "", Hash[], nil)
+    line = _read_line(sock)
+    last = nil
+    while line != ""
+      if String.match?(line, /\A[ \t]/) && last
+        NetHTTPResponse.add_field(res, last, String.strip(line))
+      else
+        name, _sep, value = String.partition(line, ":")
+        raise NetHTTPBadResponse, "wrong header line format: #{Kernel.inspect(line)}" if _sep == ""
+        NetHTTPResponse.add_field(res, name, String.strip(value))
+        last = name
+      end
+      line = _read_line(sock)
+    end
+    code = NetHTTPResponse.code(res)
+    unless method == "HEAD" || code == "204" || code == "304" || String.start_with?(code, "1")
+      body = if NetHTTPResponse.chunked?(res)
+        _read_chunked(sock)
+      else
+        len = NetHTTPResponse.content_length(res)
+        len ? _read_n(sock, len) : _read_all(sock)
+      end
+      res.NetHTTPResponse.body = body
+      # Ruby's inflater drops the field for these; gzip/deflate bodies stay compressed here (no zlib inflate).
+      ce = res["content-encoding"]
+      NetHTTPResponse.delete(res, "content-encoding") if ce == "identity" || ce == "none"
+    end
+    res
+  end
+
+  # Ruby: http.request(req, body = nil) -> the response. One connection per request.
+  def request(http, req, body = nil)
+    req.NetHTTPRequest.body = body if body != nil
+    sock = Socket.connect(@address, @port)
+    begin
+      Socket.write(sock, NetHTTPRequest._wire(req, @address, @port))
+      b = NetHTTPRequest.body(req)
+      Socket.write(sock, b) if b != nil
+      Socket.close_write(sock)
+      res = _read_response(sock, NetHTTPRequest.method(req))
+    ensure
+      Socket.close(sock)
+    end
+    yield(res) if block_given?
+    res
+  end
+
+  # Ruby: http.get(path, initheader) & co. Ruby's `get` is NetHTTP.get here (the class method), so the
+  # instance forms are the request_* names Ruby also has.
+  def request_get(http, path, initheader = nil) = request(http, NetHTTPGet.new(path, initheader))
+  def request_head(http, path, initheader = nil) = request(http, NetHTTPHead.new(path, initheader))
+  def request_post(http, path, data, initheader = nil) = request(http, NetHTTPPost.new(path, initheader), data)
+  def request_put(http, path, data, initheader = nil) = request(http, NetHTTPPut.new(path, initheader), data)
+  def head(http, path, initheader = nil) = request_head(http, path, initheader)
+  def put(http, path, data, initheader = nil) = request_put(http, path, data, initheader)
+  def patch(http, path, data, initheader = nil) = request(http, NetHTTPPatch.new(path, initheader), data)
+  def delete(http, path, initheader = nil) = request(http, NetHTTPDelete.new(path, initheader))
+
+  # Ruby: http.send_request(name, path, data = nil, header = nil)
+  def send_request(http, name, path, data = nil, header = nil) = request(http, NetHTTPRequest.new(name, path, nil, _fields(header)), data)
+
+  # --- Ruby's class methods: Net::HTTP.get(uri) / get(host, path, port = 80) ---
+  def _check_http(uri)
+    raise ArgumentError, "https is not supported: Sake has no TLS (#{uri})" if URI.scheme(uri) == "https"
+    raise ArgumentError, "not an HTTP URI: #{uri}" if URI.scheme(uri) != "http" && URI.scheme(uri) != nil
+    uri
+  end
+
+  def _target(uri_or_host, path_or_headers, port)
+    case uri_or_host
+    in URI
+      u = _check_http(uri_or_host)
+      hdr = (path_or_headers in Hash) ? path_or_headers : nil
+      [URI.hostname(u) || "localhost", URI.port(u) || 80, URI.request_uri(u) || "/", hdr]
+    in String
+      path_or_headers => String
+      [uri_or_host, port || 80, path_or_headers, nil]
+    end
+  end
+
+  # Ruby: Net::HTTP.get_response(uri, headers = nil) or get_response(host, path, port = nil)
+  def get_response(uri_or_host, path_or_headers = nil, port = nil)
+    host, prt, path, hdr = _target(uri_or_host, path_or_headers, port)
+    start(host, prt) { |http| request_get(http, path, hdr) }
+  end
+
+  # Ruby: Net::HTTP.get(uri) -> the body String (nil for a response without one, such as 204)
+  def get(uri_or_host, path_or_headers = nil, port = nil) = NetHTTPResponse.body(get_response(uri_or_host, path_or_headers, port))
+
+  def get_print(uri_or_host, path_or_headers = nil, port = nil)
+    body = get(uri_or_host, path_or_headers, port)
+    print(body) if body
+    nil
+  end
+
+  # Ruby: Net::HTTP.post(uri, data, header = nil) -> the response
+  def post(uri, data, header = nil)
+    u = _check_http(uri)
+    start(URI.hostname(u) || "localhost", URI.port(u) || 80) { |http| request_post(http, URI.request_uri(u) || "/", data, header) }
+  end
+
+  # Ruby: Net::HTTP.post_form(uri, params) -> the response (application/x-www-form-urlencoded)
+  def post_form(uri, params)
+    u = _check_http(uri)
+    req = NetHTTPPost.new(URI.request_uri(u) || "/")
+    NetHTTPRequest.set_form_data(req, params)
+    start(URI.hostname(u) || "localhost", URI.port(u) || 80) { |http| request(http, req) }
+  end
+end

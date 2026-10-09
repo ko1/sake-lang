@@ -1,0 +1,246 @@
+# open_uri: Ruby's open-uri for http:// URLs, over net_http. `URI.open(url)` cannot be added to the URI
+# type of uri.sake from here (a type's functions live in one library), so it is OpenURI.open(url)
+# (Ruby also has OpenURI.open_uri). Redirects (301, 302, 303, 307, 308) are followed as Ruby does;
+# a loop raises RuntimeError "HTTP redirection loop: URL", as Ruby's.
+#
+# The result is an OpenURIMeta: the body String with a read position (Ruby: a StringIO extended with
+# OpenURI::Meta), and the response's status, headers (meta), content_type, charset, base_uri.
+# Ruby's nested names are flattened: OpenURI::HTTPError -> OpenURIHTTPError (fields message, io),
+# OpenURI::HTTPRedirect -> OpenURIHTTPRedirect, OpenURI::TooManyRedirects -> OpenURITooManyRedirects.
+#
+# Options: a Hash as Ruby's. String keys are request headers ("User-Agent" => "x"); Symbol keys are
+# :redirect (false: raise OpenURIHTTPRedirect instead of following), :max_redirects (an Integer),
+# :http_basic_authentication ([user, password]). No TLS, so https:// raises ArgumentError.
+
+require "uri"
+require "net_http"
+
+class OpenURIHTTPError < Exception
+  attr_reader io
+end
+class OpenURIHTTPRedirect < Exception
+  attr_reader io, uri
+end
+class OpenURITooManyRedirects < Exception
+  attr_reader io
+end
+
+# OpenURIMeta.new(body, status, fields): status is [code, message]; fields is downcased name => Array of values.
+# (The fields are declared in `new`'s order.)
+class OpenURIMeta
+  private attr_accessor body
+  attr_reader status
+  private attr_reader fields
+  attr_accessor base_uri
+  private attr_accessor pos
+
+  def initialize(io)
+    @pos = 0
+    @fields = Hash[] if @fields == nil
+    @body = "" if @body == nil
+    @body = String.force_encoding(@body, _encoding(io))
+  end
+
+  # Ruby's meta_setup_encoding: the charset, or binary when there is none or it is unknown.
+  def _encoding(io)
+    cs = charset(io)
+    return "ASCII-8BIT" unless cs
+    begin
+      String.force_encoding("", cs)
+      cs
+    rescue ArgumentError
+      "ASCII-8BIT"
+    end
+  end
+
+  # --- Ruby's OpenURI::Meta ---
+  def meta(io)
+    h = Hash[]
+    Hash.each(@fields) { |k, vs| h[k] = Array.join(vs, ", ") }
+    h
+  end
+
+  def metas(io) = Hash.dup(@fields)
+
+  # Ruby's content_type_parse: [type, [[attr, value], ...]] or nil
+  def _content_type_parse(io)
+    vs = @fields["content-type"]
+    return nil unless vs
+    v = Array.join(vs, ", ")
+    m = String.match(v, /\A\s*([!#$%&'*+\-.0-9A-Z^_`a-z|~]+)\s*\/\s*([!#$%&'*+\-.0-9A-Z^_`a-z|~]+)\s*((?:;\s*[^;=\s]+\s*=\s*(?:"(?:[^"\\]|\\.)*"|[^;\s"]*)\s*)*)(?:;\s*)?\z/)
+    return nil unless m
+    params = Array[]
+    String.scan(m[3] || "", /;\s*([^;=\s]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;\s"]*))/)
+    Array.each(_) do |att, qval, val|
+      value = qval ? String.gsub(qval, /\\(.)/, "\\1") : (val || "")
+      Array.push(params, [String.downcase(att || ""), value])
+    end
+    [String.downcase("#{m[1]}/#{m[2]}"), params]
+  end
+
+  # Ruby: io.content_type ("application/octet-stream" without the field)
+  def content_type(io)
+    parsed = _content_type_parse(io)
+    parsed ? parsed[0] : "application/octet-stream"
+  end
+
+  # Ruby: io.charset: the charset parameter (downcased); "utf-8" for text/* without one; else nil.
+  def charset(io)
+    parsed = _content_type_parse(io)
+    return nil unless parsed
+    type, params = parsed
+    pair = Array.assoc(params, "charset")
+    return pair[1] if pair
+    String.start_with?(type, "text/") ? "utf-8" : nil
+  end
+
+  # Ruby: io.content_encoding, the codings as an Array of downcased Strings
+  def content_encoding(io)
+    vs = @fields["content-encoding"]
+    return String[] unless vs
+    Array.map(String.scan(Array.join(vs, ", "), /[!#$%&'*+\-.0-9A-Z^_`a-z|~]+/)) { |t| String.downcase(t) }
+  end
+
+  # The Last-Modified field as received (Ruby gives a Time; Sake has no Time.httpdate), or nil.
+  def last_modified(io)
+    vs = @fields["last-modified"]
+    vs ? Array.join(vs, ", ") : nil
+  end
+
+  # --- StringIO-like reading ---
+  def string(io) = @body
+  def size(io) = String.bytesize(@body)
+  def length(io) = size(io)
+  def eof?(io) = @pos >= String.bytesize(@body)
+  def eof(io) = eof?(io)
+
+  def rewind(io)
+    @pos = 0
+    0
+  end
+
+  # Ruby: io.read -> the rest (""), io.read(n) -> at most n bytes (nil at the end)
+  def read(io, n = nil)
+    rest = String.byteslice(@body, @pos, String.bytesize(@body) - @pos) || ""
+    if n == nil
+      @pos = String.bytesize(@body)
+      return String.force_encoding(rest, String.encoding(@body))
+    end
+    raise ArgumentError, "negative length #{n} given" if n < 0
+    return "" if n == 0
+    return nil if rest == ""
+    s = String.byteslice(rest, 0, n) || ""
+    @pos += String.bytesize(s)
+    s
+  end
+
+  def gets(io)
+    return nil if eof?(io)
+    rest = String.byteslice(@body, @pos, String.bytesize(@body) - @pos) || ""
+    i = String.byteindex(rest, "\n")
+    line = i ? (String.byteslice(rest, 0, i + 1) || "") : rest
+    @pos += String.bytesize(line)
+    String.force_encoding(line, String.encoding(@body))
+  end
+
+  def readline(io)
+    l = gets(io)
+    raise IOError, "end of file reached" if l == nil
+    l
+  end
+
+  def each_line(io)
+    l = gets(io)
+    while l != nil
+      yield(l)
+      l = gets(io)
+    end
+    io
+  end
+
+  def readlines(io)
+    out = String[]
+    each_line(io) { |l| Array.push(out, l) }
+    out
+  end
+
+  def close(io) = nil
+  def closed?(io) = false
+  def inspect(io)
+    code, msg = @status
+    "#<OpenURIMeta #{code} #{msg} #{content_type(io)} #{size(io)} bytes>"
+  end
+  def to_s(io) = inspect(io)
+end
+
+module OpenURI
+  module_function
+
+  def _to_uri(url)
+    u = (url in URI) ? url : URI.parse(url)
+    scheme = URI.scheme(u)
+    raise ArgumentError, "https is not supported: Sake has no TLS (#{u})" if scheme == "https"
+    raise ArgumentError, "not an HTTP URL: #{Kernel.inspect("#{u}")}" unless scheme == "http" && URI.host(u)
+    raise ArgumentError, "userinfo not supported.  [RFC3986]" if URI.userinfo(u)
+    u
+  end
+
+  def _option(options, key) = options ? options[key] : nil
+
+  # One request; the response as [res, OpenURIMeta].
+  def _fetch(u, options)
+    req = NetHTTPGet.new(URI.request_uri(u) || "/")
+    if options
+      Hash.each(options) { |k, v| req[k] = "#{v}" if k in String }
+    end
+    auth = _option(options, :http_basic_authentication)
+    if auth in Tuple | Array
+      user, pass = auth
+      NetHTTPRequest.basic_auth(req, user, pass)
+    end
+    res = NetHTTP.start(URI.hostname(u) || "localhost", URI.port(u) || 80) { |http| NetHTTP.request(http, req) }
+    io = OpenURIMeta.new(NetHTTPResponse.body(res) || "", [NetHTTPResponse.code(res), NetHTTPResponse.message(res)],
+                         NetHTTPResponse.to_hash(res), nil)
+    io.OpenURIMeta.base_uri = u
+    [res, io]
+  end
+
+  # Ruby: OpenURI.open_uri(name, options = {}) [{ |io| }]
+  def open_uri(name, options = nil)
+    uri = _to_uri(name)
+    follow = _option(options, :redirect) != false
+    max = _option(options, :max_redirects)
+    seen = Set[]
+    io = nil
+    while io == nil
+      res, got = _fetch(uri, options)
+      code = NetHTTPResponse.code(res)
+      status = "#{code} #{NetHTTPResponse.message(res)}"
+      if NetHTTPResponse.success?(res)
+        io = got
+      elsif Array.include?(String["301", "302", "303", "307", "308"], code)
+        loc = NetHTTPResponse.header(res, "location")
+        raise OpenURIHTTPError.new("#{status} (Invalid Location URI)", got) unless loc
+        target = URI.merge(uri, loc)
+        raise OpenURIHTTPRedirect.new(status, got, target) unless follow
+        raise "redirection forbidden: #{uri} -> #{target}" unless URI.scheme(target) == "http"
+        uri = target
+        raise "HTTP redirection loop: #{uri}" if Set.include?(seen, "#{uri}")
+        Set.add(seen, "#{uri}")
+        raise OpenURITooManyRedirects.new("Too many redirects", got) if (max in Integer) && Set.size(seen) > max
+        options = Hash.except(options, :http_basic_authentication) if options
+      else
+        raise OpenURIHTTPError.new(status, got)
+      end
+    end
+    io.OpenURIMeta.base_uri = uri
+    return io unless block_given?
+    yield(io)
+  end
+
+  # Ruby: URI.open(name, options = {}) [{ |io| }]: an OpenURIMeta, or the block's value
+  def open(name, options = nil)
+    return open_uri(name, options) unless block_given?
+    open_uri(name, options) { |io| yield(io) }
+  end
+end

@@ -1,0 +1,325 @@
+require "net_http"
+require "open_uri"
+
+# --- a tiny HTTP/1.1 server on an ephemeral port, in a thread ---
+def respond(c, status, headers, body)
+  Socket.write(c, "HTTP/1.1 #{status}\r\n#{headers}Connection: close\r\n\r\n")
+  Socket.write(c, body) if body
+  Socket.close(c)
+end
+
+def handle(c)
+  line = Socket.gets(c)
+  return Socket.close(c) unless line
+  m = String.match(line, /\A(\S+) (\S+) HTTP/)
+  return Socket.close(c) unless m
+  verb = m[1] || ""
+  path = m[2] || ""
+  hdrs = Hash[]
+  l = Socket.gets(c)
+  while l != nil && String.chomp(l) != ""
+    k, _sep, v = String.partition(String.chomp(l), ":")
+    hdrs[String.downcase(k)] = String.strip(v)
+    l = Socket.gets(c)
+  end
+  len = hdrs["content-length"]
+  body = len ? (Socket.read(c, String.to_i(len)) || "") : ""
+  head = verb == "HEAD"
+  case path
+  in "/hello"
+    text = "Hello, world!\n"
+    respond(c, "200 OK", "Content-Type: text/plain; charset=utf-8\r\nContent-Length: #{String.bytesize(text)}\r\nX-Custom: yes\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n", head ? nil : text)
+  in "/missing"
+    respond(c, "404 Not Found", "Content-Type: text/plain\r\nContent-Length: 9\r\n", "not found")
+  in "/chunked"
+    chunks = "6;ext=1\r\n{\"ok\":\r\n5\r\ntrue}\r\n0\r\nX-Trailer: t\r\n\r\n"
+    respond(c, "200 OK", "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n", chunks)
+  in "/redirect"
+    respond(c, "302 Found", "Location: /hello\r\nContent-Length: 0\r\n", "")
+  in "/redirect-abs"
+    respond(c, "301 Moved Permanently", "Location: http://#{hdrs["host"]}/chunked\r\nContent-Length: 0\r\n", "")
+  in "/loop"
+    respond(c, "302 Found", "Location: /loop2\r\nContent-Length: 0\r\n", "")
+  in "/loop2"
+    respond(c, "307 Temporary Redirect", "Location: /loop\r\nContent-Length: 0\r\n", "")
+  in "/echo"
+    text = "#{verb} #{hdrs["content-type"]} #{body}"
+    respond(c, "200 OK", "Content-Type: text/plain\r\nContent-Length: #{String.bytesize(text)}\r\n", text)
+  in "/headers"
+    text = "ua=#{hdrs["user-agent"]} token=#{hdrs["x-token"]} auth=#{hdrs["authorization"]}"
+    respond(c, "200 OK", "Content-Type: text/plain\r\nContent-Length: #{String.bytesize(text)}\r\n", text)
+  in "/empty"
+    respond(c, "204 No Content", "", nil)
+  in "/nolength"
+    respond(c, "200 OK", "Content-Type: text/plain\r\n", "until eof\n")
+  in "/error"
+    respond(c, "500 Internal Server Error", "Content-Length: 4\r\n", "boom")
+  in "/html"
+    text = "<p>日本語</p>\n"
+    respond(c, "200 OK", "Content-Type: text/html\r\nContent-Length: #{String.bytesize(text)}\r\n", text)
+  in "/binary"
+    bin = Array.pack(Integer[0, 255, 10], "C*")
+    respond(c, "200 OK", "Content-Type: application/octet-stream\r\nContent-Length: 3\r\nContent-Encoding: identity\r\n", bin)
+  else
+    respond(c, "404 Not Found", "Content-Length: 0\r\n", "")
+  end
+end
+
+def serve(srv)
+  loop { handle(TCPServer.accept(srv)) }
+end
+
+srv = TCPServer.new("127.0.0.1", 0)
+port = TCPServer.port(srv)
+server = Thread.new { serve(srv) }
+def url(port, path) = "http://127.0.0.1:#{port}#{path}"
+
+puts("-- NetHTTP.get")
+p(NetHTTP.get(URI.parse(url(port, "/hello"))))
+p(NetHTTP.get("127.0.0.1", "/hello", port))
+p(NetHTTP.get(URI.parse(url(port, "/chunked"))))
+p(NetHTTP.get(URI.parse(url(port, "/nolength"))))
+p(NetHTTP.get(URI.parse(url(port, "/empty"))))
+p(NetHTTP.get(URI.parse(url(port, "/missing"))))
+NetHTTP.get_print(URI.parse(url(port, "/hello")))
+
+puts("-- get_response")
+res = NetHTTP.get_response(URI.parse(url(port, "/hello")))
+p(res)
+p([NetHTTPResponse.code(res), NetHTTPResponse.message(res), NetHTTPResponse.http_version(res)])
+p(NetHTTPResponse.body(res))
+p(NetHTTPResponse.header(res, "Content-Type"))
+p(res["x-custom"])
+p(res["X-Missing"])
+p(NetHTTPResponse.content_type(res))
+p(NetHTTPResponse.content_length(res))
+p(NetHTTPResponse.key?(res, "set-cookie"))
+p(res["set-cookie"])
+p(NetHTTPResponse.get_fields(res, "set-cookie"))
+p(NetHTTPResponse.to_hash(res))
+NetHTTPResponse.each_header(res) { |k, v| puts("#{k}: #{v}") }
+p([NetHTTPResponse.success?(res), NetHTTPResponse.redirection?(res), NetHTTPResponse.client_error?(res), NetHTTPResponse.server_error?(res)])
+p(NetHTTPResponse.value(res))
+
+res = NetHTTP.get_response(URI.parse(url(port, "/missing")))
+p(res)
+p([NetHTTPResponse.code(res), NetHTTPResponse.message(res), NetHTTPResponse.body(res), NetHTTPResponse.success?(res), NetHTTPResponse.client_error?(res)])
+begin
+  NetHTTPResponse.value(res)
+rescue NetHTTPClientException => e
+  puts("NetHTTPClientException: #{Exception.message(e)} #{NetHTTPResponse.code(NetHTTPClientException.response(e))}")
+end
+res = NetHTTP.get_response(URI.parse(url(port, "/error")))
+p(res)
+begin
+  NetHTTPResponse.value(res)
+rescue NetHTTPFatalError => e
+  puts("NetHTTPFatalError: #{Exception.message(e)}")
+end
+
+puts("-- chunked, no body, redirect (not followed)")
+res = NetHTTP.get_response(URI.parse(url(port, "/chunked")))
+p([NetHTTPResponse.body(res), res["transfer-encoding"], res["content-length"], NetHTTPResponse.content_type(res)])
+res = NetHTTP.get_response(URI.parse(url(port, "/empty")))
+p([res, NetHTTPResponse.body(res), NetHTTPResponse.content_length(res)])
+res = NetHTTP.get_response(URI.parse(url(port, "/redirect")))
+p([res, NetHTTPResponse.redirection?(res), res["location"], NetHTTPResponse.body(res)])
+begin
+  NetHTTPResponse.value(res)
+rescue NetHTTPRetriableError => e
+  puts("NetHTTPRetriableError: #{Exception.message(e)}")
+end
+res = NetHTTP.get_response(URI.parse(url(port, "/html")))
+body = NetHTTPResponse.body(res) || ""
+p([String.encoding(body), String.force_encoding(body, "UTF-8")])
+res = NetHTTP.get_response(URI.parse(url(port, "/binary")))
+p([NetHTTPResponse.body(res), String.encoding(NetHTTPResponse.body(res) || "")])
+
+puts("-- post, post_form")
+res = NetHTTP.post(URI.parse(url(port, "/echo")), "{\"a\":1}", Hash["Content-Type" => "application/json"])
+p([res, NetHTTPResponse.body(res)])
+res = NetHTTP.post(URI.parse(url(port, "/echo")), "plain")
+p(NetHTTPResponse.body(res))
+res = NetHTTP.post_form(URI.parse(url(port, "/echo")), Hash["a" => "1", "b" => "two words"])
+p(NetHTTPResponse.body(res))
+
+puts("-- requests")
+req = NetHTTPGet.new("/headers", Hash["X-Token" => "t0k"])
+p(req)
+p([NetHTTPRequest.method(req), NetHTTPRequest.path(req), req["x-token"], req["User-Agent"]])
+req["User-Agent"] = "sake-test"
+NetHTTPRequest.basic_auth(req, "user", "pw")
+p(req["authorization"])
+p(NetHTTPRequest.key?(req, "X-TOKEN"))
+p(Hash.except(NetHTTPRequest.to_hash(req), "accept-encoding"))
+NetHTTPRequest.each_header(req) { |k, v| puts("#{k}: #{v}") unless k == "accept-encoding" }
+p(NetHTTPRequest.delete(req, "accept"))
+p(NetHTTPRequest.key?(req, "accept"))
+NetHTTPRequest.add_field(req, "Foo", "a")
+NetHTTPRequest.add_field(req, "foo", "b")
+p([req["foo"], NetHTTPRequest.get_fields(req, "foo")])
+req["foo"] = nil
+p(NetHTTPRequest.key?(req, "foo"))
+p([NetHTTPRequest.request_body_permitted?(req), NetHTTPRequest.response_body_permitted?(req)])
+post = NetHTTPPost.new("/echo")
+NetHTTPRequest.set_form_data(post, Hash["k" => "v w", "x" => "1&2"])
+p([NetHTTPRequest.body(post), NetHTTPRequest.content_type(post), post["content-type"]])
+NetHTTPRequest.set_form_data(post, Array[["k", "v"], ["k", "w"]], ";")
+p(NetHTTPRequest.body(post))
+NetHTTPRequest.set_content_type(post, "text/plain")
+p(NetHTTPRequest.content_type(post))
+p([NetHTTPRequest.request_body_permitted?(post), NetHTTPHead.new("/").NetHTTPRequest.response_body_permitted?])
+p([NetHTTPPut.new("/"), NetHTTPDelete.new("/"), NetHTTPPatch.new("/"), NetHTTPHead.new("/")])
+begin
+  NetHTTPGet.new("")
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+ureq = NetHTTPGet.new(URI.parse("http://example.com/a/b?c=1"))
+p([NetHTTPRequest.path(ureq), ureq["host"]])
+ureq = NetHTTPGet.new(URI.parse("http://example.com:8080/"))
+p([NetHTTPRequest.path(ureq), ureq["host"]])
+
+puts("-- start")
+out = NetHTTP.start("127.0.0.1", port) do |http|
+  p(NetHTTP.started?(http))
+  p([NetHTTP.address(http) == "127.0.0.1", NetHTTP.port(http) == port])
+  res = NetHTTP.request(http, req)
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.request(http, post)
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.head(http, "/hello")
+  p([res, NetHTTPResponse.body(res), res["content-length"]])
+  res = NetHTTP.request_get(http, "/hello", Hash["X-Token" => "ignored"])
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.request_post(http, "/echo", "x=1", Hash["Content-Type" => "application/x-www-form-urlencoded"])
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.put(http, "/echo", "P", Hash["Content-Type" => "text/plain"])
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.patch(http, "/echo", "Q", Hash["Content-Type" => "text/plain"])
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.delete(http, "/echo")
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.send_request(http, "OPTIONS", "/echo")
+  p(NetHTTPResponse.body(res))
+  res = NetHTTP.request(http, NetHTTPGet.new("/hello")) { |r| puts("block: #{NetHTTPResponse.code(r)}") }
+  p(NetHTTPResponse.code(res))
+  :done
+end
+p(out)
+http = NetHTTP.new("127.0.0.1", port)
+p(NetHTTP.started?(http))
+NetHTTP.start(http)
+p(NetHTTP.started?(http))
+begin
+  NetHTTP.start(http)
+rescue IOError => e
+  puts("IOError: #{Exception.message(e)}")
+end
+p(NetHTTPResponse.body(NetHTTP.request_get(http, "/hello")))
+NetHTTP.finish(http)
+p(NetHTTP.started?(http))
+begin
+  NetHTTP.finish(http)
+rescue IOError => e
+  puts("IOError: #{Exception.message(e)}")
+end
+
+puts("-- connection refused")
+closed = TCPServer.new("127.0.0.1", 0)
+closed_port = TCPServer.port(closed)
+TCPServer.close(closed)
+begin
+  NetHTTP.get_response("127.0.0.1", "/", closed_port)
+  puts("connected?")
+rescue IOError => e
+  puts("refused")
+end
+
+puts("-- OpenURI.open")
+text = OpenURI.open(url(port, "/hello")) { |f| OpenURIMeta.read(f) }
+p(text)
+f = OpenURI.open(url(port, "/hello"))
+p(f)
+p(OpenURIMeta.status(f))
+p(OpenURIMeta.content_type(f))
+p(OpenURIMeta.charset(f))
+p(OpenURIMeta.meta(f))
+p(OpenURIMeta.metas(f))
+p(OpenURIMeta.content_encoding(f))
+p(URI.path(OpenURIMeta.base_uri(f)))
+p([OpenURIMeta.size(f), OpenURIMeta.eof?(f)])
+p(OpenURIMeta.read(f, 5))
+p(OpenURIMeta.read(f, 0))
+p(OpenURIMeta.read(f))
+p(OpenURIMeta.read(f))
+p(OpenURIMeta.read(f, 3))
+p(OpenURIMeta.eof?(f))
+p(OpenURIMeta.rewind(f))
+p(OpenURIMeta.gets(f))
+p(OpenURIMeta.gets(f))
+OpenURIMeta.rewind(f)
+p(OpenURIMeta.readlines(f))
+OpenURIMeta.rewind(f)
+OpenURIMeta.each_line(f) { |l| p(l) }
+p(OpenURIMeta.string(f))
+p(OpenURIMeta.last_modified(f))
+
+puts("-- redirects")
+f = OpenURI.open(url(port, "/redirect"))
+p([OpenURIMeta.status(f), URI.path(OpenURIMeta.base_uri(f)), OpenURIMeta.read(f)])
+f = OpenURI.open(url(port, "/redirect-abs"))
+p([OpenURIMeta.status(f), URI.path(OpenURIMeta.base_uri(f)), OpenURIMeta.read(f), OpenURIMeta.content_type(f), OpenURIMeta.charset(f)])
+begin
+  OpenURI.open(url(port, "/loop"))
+rescue RuntimeError => e
+  puts(String.split(Exception.message(e), ": ")[0])
+end
+begin
+  OpenURI.open(url(port, "/redirect"), Hash[:redirect => false])
+rescue OpenURIHTTPRedirect => e
+  puts("OpenURIHTTPRedirect: #{Exception.message(e)} -> #{URI.path(OpenURIHTTPRedirect.uri(e))}")
+end
+begin
+  OpenURI.open(url(port, "/loop"), Hash[:max_redirects => 1])
+rescue OpenURITooManyRedirects => e
+  puts("OpenURITooManyRedirects: #{Exception.message(e)} #{OpenURIMeta.status(OpenURITooManyRedirects.io(e))}")
+end
+
+puts("-- errors")
+begin
+  OpenURI.open(url(port, "/missing"))
+rescue OpenURIHTTPError => e
+  io = OpenURIHTTPError.io(e)
+  puts("OpenURIHTTPError: #{Exception.message(e)} #{OpenURIMeta.status(io)} #{Kernel.inspect(OpenURIMeta.read(io))}")
+end
+begin
+  OpenURI.open(url(port, "/error"))
+rescue OpenURIHTTPError => e
+  puts("OpenURIHTTPError: #{Exception.message(e)}")
+end
+begin
+  OpenURI.open("http://user:pw@127.0.0.1:#{port}/hello")
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+
+puts("-- options, content types")
+p(OpenURI.open(url(port, "/headers"), Hash["User-Agent" => "ua-x", "X-Token" => "tok"]) { |f| OpenURIMeta.read(f) })
+p(OpenURI.open(url(port, "/headers"), Hash[:http_basic_authentication => ["user", "pw"]]) { |f| OpenURIMeta.read(f) })
+p(OpenURI.open_uri(url(port, "/headers")) { |f| OpenURIMeta.read(f) })
+f = OpenURI.open(url(port, "/html"))
+s = OpenURIMeta.read(f)
+p([OpenURIMeta.content_type(f), OpenURIMeta.charset(f), String.encoding(s), s])
+f = OpenURI.open(url(port, "/binary"))
+s = OpenURIMeta.read(f)
+p([OpenURIMeta.content_type(f), OpenURIMeta.charset(f), String.encoding(s), s, OpenURIMeta.content_encoding(f)])
+f = OpenURI.open(url(port, "/chunked"))
+p([OpenURIMeta.content_type(f), OpenURIMeta.charset(f), OpenURIMeta.read(f), OpenURIMeta.meta(f)])
+f = OpenURI.open(url(port, "/empty"))
+p([OpenURIMeta.status(f), OpenURIMeta.read(f), OpenURIMeta.content_type(f), OpenURIMeta.charset(f), OpenURIMeta.eof?(f), OpenURIMeta.gets(f)])
+f = OpenURI.open(URI.parse(url(port, "/nolength")))
+p([OpenURIMeta.read(f), OpenURIMeta.meta(f)])
+
+TCPServer.close(srv)
+puts("end")
