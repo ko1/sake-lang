@@ -730,6 +730,12 @@ module Sake
                      [*hints, "outside one, write the reader: `Type.#{field}(obj)`"])
       end
       return error(node, "`#{node.name}` needs a first argument (the #{dt.name}) in #{ctx.fn.full_name}") if ctx.fn.params.empty?
+      # Ruby's `def initialize(x) = @x = x` stores the new instance in its own field (the parameter is the instance).
+      if ctx.fn.name == "initialize" && node.is_a?(Prism::InstanceVariableWriteNode) &&
+         node.value.is_a?(Prism::LocalVariableReadNode) && node.value.name.to_s == ctx.fn.params[0]
+        return error(node, "`#{node.name} = #{node.value.name}` stores the new #{dt.name} in its own field: `#{node.value.name}` is the instance, not a value",
+                     ["#{dt.name}.new(...) stores the fields already; initialize only checks or converts them (`#{node.name} = Integer.abs(#{node.name})`)"])
+      end
       unless dt.fields.include?(field)
         return error(node, "#{dt.name} has no field `#{field}`", spell(field, dt.fields).map { "did you mean `@#{_1}`?" })
       end
@@ -797,6 +803,7 @@ module Sake
     def pattern_target(v) = v.is_a?(Prism::ImplicitNode) ? v.value : v
 
     PATTERN_TYPES = (BUILTIN_TYPES + %w[Record IO]).freeze
+    UNION_TYPES = (BUILTIN_TYPES + %w[IO]).freeze # `(A|B).f`: names the run time and the typer both give a value
     BUILTIN_CONSTANTS = { "Math" => %w[PI E], "Float" => %w[INFINITY NAN EPSILON MAX MIN] }.freeze
 
     def builtin_constant?(n)
@@ -1258,7 +1265,7 @@ module Sake
       end
       table = {}
       type_nodes.zip(types) do |tn, t|
-        unless @struct_types.key?(t) || BUILTIN_TYPES.include?(t)
+        unless @struct_types.key?(t) || UNION_TYPES.include?(t)
           error(tn, "`#{t}` is not a type; `(...)` lists types (Struct types or built-in types)")
           next
         end
@@ -1269,6 +1276,11 @@ module Sake
           next
         end
         check_arity(node, found, args.size, !blk.nil?)
+        if found.is_a?(UserFunction) && (found.keywords&.any? || found.kwrest_param)
+          error(tn, "#{t}.#{node.name} takes keywords, so it cannot be called through `(#{types.join("|")}).#{node.name}`",
+                ["dispatch on the type yourself: `case x in #{t} then #{t}.#{node.name}(x, ...) ... end`"])
+          next
+        end
         table[t] = found
       end
       set_call(node, ctx, UnionCall.new(types, node.name.to_s, table)) if table.size == types.size

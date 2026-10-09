@@ -223,7 +223,9 @@ module Sake
         un = n.union
         fn = un.table[Values.type_of(args[0])]
         fail_at(n, "TypeError", "argument 1 must be #{un.types.join(" or ")}, got #{Values.describe(args[0])}", nil_value: args[0].nil?, op: un.full_name) unless fn
-        fn.is_a?(UserFunction) ? call_user(fn, args, blk, n.origin) : call_builtin(fn, args, blk, n.origin)
+        return call_builtin(fn, args, blk, n.origin) unless fn.is_a?(UserFunction)
+        args = [*args.take(fn.positional), args.drop(fn.positional)] if fn.rest_param # `*rest` is packed per branch
+        call_user(fn, args, blk, n.origin)
       end
     end
 

@@ -692,6 +692,10 @@ module Sake
           fn = un.table[atom_type_name(a)] or next
           xs = [one(a), *args.drop(1)]
           next call_builtin(fn, xs, blk, o) unless fn.is_a?(UserFunction)
+          if fn.rest_param # `*rest` is packed per branch
+            rest = xs.drop(fn.positional)
+            xs = [*xs.take(fn.positional), site_for(o, init: u(*rest)).tap { |ty| write_elems(ty, rest, o, "") }]
+          end
           push_caller(o)
           begin
             call_user(fn, xs, blk)
