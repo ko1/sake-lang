@@ -39,8 +39,9 @@ class Repo < Thor
   end
 
   desc "tag NAME", "Tag with NAME", hide: true
+  method_option :meta, type: :hash, desc: "key:value pairs"
   def tag(name)
-    puts "tag #{name}"
+    puts "tag #{name} meta=#{options[:meta].inspect}"
   end
 
   map "ci" => :commit
@@ -74,7 +75,15 @@ run(["ci", "--message=third"])
 run(["config", "user"])
 run(["config", "user", "ko1"])
 run(["tag", "v1"])
+run(["tag", "v2", "--meta", "a:1", "b:two", "plain"])
+run(["greet", "-sv", "-t2", "Combined"])
+run(["greet", "World", "--shout", "false"])
+run(["gr", "Prefix"])
+run(["c"])
 run(["version"])
+run(["tree"])
+run(["help", "tag"])
+run(["help", "help"])
 run(["--version"])
 run(["-V"])
 run([])

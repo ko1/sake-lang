@@ -1,0 +1,301 @@
+# faker: fake names, addresses, text and numbers from small word lists (a deterministic subset of the faker gem).
+#
+# Faker.seed(n) seeds Kernel's generator (Ruby's srand); every pick is Kernel.rand, so a seeded program
+# gives the same data on every run, and the same as a Ruby program with these lists (test/sakelib/ref/faker.rb).
+# The gem's nested names are flattened: Faker::Name.first_name -> FakerName.first_name,
+# Faker::Internet.email -> FakerInternet.email, and so on. The word lists are data built once (`once`).
+
+module Faker
+  module_function
+
+  # Ruby: Faker::Config.random = Random.new(n). Here the global generator: Kernel.rand draws from it.
+  def seed(n) = Kernel.srand(n)
+
+  # One element of a non-empty list.
+  def pick(list) = Array.fetch(list, rand(Array.size(list)))
+
+  # Ruby: Faker::Base.numerify("##-###"): each # becomes a digit.
+  def numerify(s) = String.gsub(s, "#") { Integer.to_s(rand(10)) }
+
+  # Ruby: Faker::Base.letterify("??"): each ? becomes a capital letter.
+  def letterify(s) = String.gsub(s, "?") { Integer.chr(65 + rand(26)) }
+
+  def bothify(s) = letterify(numerify(s))
+
+  # Ruby: Faker::Base.fetch_all / sample: n distinct elements, in list order (the gem shuffles).
+  def pick_distinct(list, n)
+    out = Array[]
+    pool = Array.dup(list)
+    while Array.size(out) < n && !Array.empty?(pool)
+      i = rand(Array.size(pool))
+      Array.push(out, Array.fetch(pool, i))
+      Array.delete_at(pool, i)
+    end
+    out
+  end
+end
+
+module FakerName
+  module_function
+
+  def first_names = once { String["Alice", "Bob", "Carol", "David", "Emma", "Frank", "Grace", "Henry", "Iris", "Jack",
+                                   "Karen", "Liam", "Mia", "Noah", "Olivia", "Paul", "Quinn", "Rose", "Sam", "Tina"] }
+  def last_names = once { String["Anderson", "Brown", "Clark", "Davis", "Evans", "Fisher", "Garcia", "Hill", "Irwin", "Jones",
+                                  "King", "Lewis", "Miller", "Nelson", "Owens", "Parker", "Quinn", "Reed", "Smith", "Turner"] }
+  def prefixes = once { String["Mr.", "Mrs.", "Ms.", "Miss", "Dr."] }
+  def suffixes = once { String["Jr.", "Sr.", "I", "II", "III", "MD", "DDS", "PhD", "DVM"] }
+
+  def first_name = Faker.pick(first_names)
+  def last_name = Faker.pick(last_names)
+  def prefix = Faker.pick(prefixes)
+  def suffix = Faker.pick(suffixes)
+
+  # Ruby: Faker::Name.name, one of the gem's formats: "First Last" or "Prefix First Last" or "First Last Suffix".
+  def name
+    case rand(5)
+    in 0 then "#{prefix} #{first_name} #{last_name}"
+    in 1 then "#{first_name} #{last_name} #{suffix}"
+    else "#{first_name} #{last_name}"
+    end
+  end
+
+  def name_with_middle = "#{first_name} #{first_name} #{last_name}"
+
+  # Ruby: Faker::Name.initials(number: 3)
+  def initials(number = 3) = Faker.letterify("?" * number)
+end
+
+module FakerInternet
+  module_function
+
+  def domain_suffixes = once { String["com", "net", "org", "io", "dev", "info"] }
+  def free_email_domains = once { String["gmail.com", "yahoo.com", "hotmail.com"] }
+  def separators = once { String[".", "_"] }
+
+  # Ruby: Faker::Internet.username(specifier: nil, separators: %w(. _)): two name parts, downcased, joined by a separator.
+  def username(specifier = nil, seps = separators)
+    parts = specifier == nil ? String[first_part, last_part] : String.split(specifier, " ")
+    sep = Faker.pick(seps)
+    String.downcase(Array.join(Array.map(parts) { |x| String.gsub(x, /[^A-Za-z0-9]/, "") }, sep))
+  end
+
+  def first_part = FakerName.first_name
+  def last_part = FakerName.last_name
+
+  # Ruby: Faker::Internet.email(name: nil, domain: nil)
+  def email(name = nil, domain = nil)
+    u = username(name)
+    d = domain == nil ? domain_name : domain
+    "#{u}@#{d}"
+  end
+
+  def free_email(name = nil) = "#{username(name)}@#{Faker.pick(free_email_domains)}"
+
+  def domain_word = String.downcase(String.gsub(FakerName.last_name, /[^A-Za-z]/, ""))
+  def domain_suffix = Faker.pick(domain_suffixes)
+  def domain_name = "#{domain_word}.#{domain_suffix}"
+
+  # Ruby: Faker::Internet.ip_v4_address: four octets (here 1..254, so never a network or broadcast address).
+  def ip_v4_address = Array.join(Array.new(4) { Integer.to_s(rand(254) + 1) }, ".")
+
+  def mac_address = Array.join(Array.new(6) { format("%02x", rand(256)) }, ":")
+
+  # Ruby: Faker::Internet.url(host: domain_name, path: "/#{username}", scheme: "http")
+  def url(host = nil, path = nil, scheme = "http")
+    h = host == nil ? domain_name : host
+    pa = path == nil ? "/#{username}" : path
+    "#{scheme}://#{h}#{pa}"
+  end
+
+  # Ruby: Faker::Internet.password(min_length: 8): here min_length letters and digits.
+  def password(min_length = 8) = Faker.bothify(Array.join(Array.new(min_length) { rand(2) == 0 ? "?" : "#" }))
+
+  # Ruby: Faker::Internet.slug(words: nil, glue: nil)
+  def slug(words = nil, glue = nil)
+    w = words == nil ? Array.join(FakerLorem.words(2), " ") : words
+    g = glue == nil ? Faker.pick(String["-", "_"]) : glue
+    String.downcase(String.gsub(w, " ", g))
+  end
+end
+
+module FakerLorem
+  module_function
+
+  def word_list = once { String["alias", "consequatur", "aut", "perferendis", "sit", "voluptatem", "accusantium", "doloremque",
+                                 "aperiam", "eaque", "ipsa", "quae", "ab", "illo", "inventore", "veritatis", "et", "quasi",
+                                 "architecto", "beatae", "vitae", "dicta", "sunt", "explicabo", "aspernatur", "odit", "fugit",
+                                 "sed", "quia", "magni", "dolores", "eos", "ratione", "sequi", "nesciunt", "neque", "porro",
+                                 "quisquam", "dolorem", "ipsum"] }
+
+  def word = Faker.pick(word_list)
+
+  # Ruby: Faker::Lorem.words(number: 3)
+  def words(number = 3) = Array.new(number) { word }
+
+  def character = Faker.pick(String.chars("abcdefghijklmnopqrstuvwxyz0123456789"))
+  def characters(number = 255) = Array.join(Array.new(number) { character })
+
+  # Ruby: Faker::Lorem.sentence(word_count: 4, random_words_to_add: 0): capitalized, with a period.
+  def sentence(word_count = 4, random_words_to_add = 0)
+    n = word_count + rand(random_words_to_add + 1)
+    String.capitalize(Array.join(words(n), " ")) + "."
+  end
+
+  def sentences(number = 3) = Array.new(number) { sentence }
+
+  # Ruby: Faker::Lorem.paragraph(sentence_count: 3, random_sentences_to_add: 0)
+  def paragraph(sentence_count = 3, random_sentences_to_add = 0)
+    n = sentence_count + rand(random_sentences_to_add + 1)
+    Array.join(sentences(n), " ")
+  end
+
+  def paragraphs(number = 3) = Array.new(number) { paragraph }
+
+  def question(word_count = 4) = String.capitalize(Array.join(words(word_count), " ")) + "?"
+end
+
+module FakerNumber
+  module_function
+
+  def digit = rand(10)
+  def non_zero_digit = rand(9) + 1
+
+  # Ruby: Faker::Number.number(digits: 10): an Integer of exactly `digits` digits (no leading zero).
+  def number(digits = 10)
+    raise ArgumentError, "digits must be positive" if digits < 1
+    s = Integer.to_s(non_zero_digit)
+    Integer.times(digits - 1) { s += Integer.to_s(digit) }
+    String.to_i(s)
+  end
+
+  # Ruby: Faker::Number.leading_zero_number(digits: 10): a String of digits, leading zeros kept.
+  def leading_zero_number(digits = 10) = Array.join(Array.new(digits) { Integer.to_s(digit) })
+
+  # Ruby: Faker::Number.decimal(l_digits: 5, r_digits: 2): a Float with that many digits on each side.
+  def decimal(l_digits = 5, r_digits = 2)
+    l = number(l_digits)
+    r = r_digits > 1 ? leading_zero_number(r_digits - 1) + Integer.to_s(non_zero_digit) : Integer.to_s(non_zero_digit)
+    String.to_f("#{l}.#{r}")
+  end
+
+  # Ruby: Faker::Number.between(from: 1, to: 5000): an Integer in from..to.
+  def between(from = 1, to = 5000) = from + rand(to - from + 1)
+
+  # Ruby: Faker::Number.within(range:)
+  def within(range)
+    b = Range.begin(range)
+    e = Range.end(range)
+    raise ArgumentError, "within needs a finite Range" if b == nil || e == nil   # the ends of 1.. are nil
+    between(b, Range.exclude_end?(range) ? e - 1 : e)
+  end
+
+  # Ruby: Faker::Number.positive(from: 1.00, to: 5000.00): a Float.
+  def positive(from = 1.0, to = 5000.0) = from + rand * (to - from)
+  def negative(from = -5000.0, to = -1.0) = from + rand * (to - from)
+
+  def hexadecimal(digits = 6) = Array.join(Array.new(digits) { Faker.pick(String.chars("0123456789abcdef")) })
+
+  def binary(digits = 4) = Array.join(Array.new(digits) { Integer.to_s(rand(2)) })
+end
+
+module FakerAddress
+  module_function
+
+  def city_prefixes = once { String["North", "East", "West", "South", "New", "Lake", "Port"] }
+  def city_suffixes = once { String["town", "ton", "land", "ville", "berg", "burgh", "borough", "bury", "view", "port",
+                                     "mouth", "stad", "furt", "chester", "fort", "haven", "side", "shire"] }
+  def street_suffixes = once { String["Avenue", "Boulevard", "Court", "Drive", "Lane", "Parkway", "Place", "Road", "Street", "Way"] }
+  def states = once { String["Alabama", "Alaska", "Arizona", "California", "Colorado", "Florida", "Georgia", "Hawaii",
+                              "Illinois", "Kansas", "Maine", "Nevada", "New York", "Ohio", "Oregon", "Texas", "Utah", "Vermont",
+                              "Washington", "Wyoming"] }
+  def state_abbrs = once { String["AL", "AK", "AZ", "CA", "CO", "FL", "GA", "HI", "IL", "KS", "ME", "NV", "NY", "OH", "OR", "TX",
+                                   "UT", "VT", "WA", "WY"] }
+  def countries = once { String["Argentina", "Brazil", "Canada", "Denmark", "Egypt", "France", "Germany", "Hungary", "India",
+                                 "Japan", "Kenya", "Mexico", "Norway", "Peru", "Spain", "Sweden", "Thailand", "Vietnam"] }
+
+  def city_prefix = Faker.pick(city_prefixes)
+  def city_suffix = Faker.pick(city_suffixes)
+  def street_suffix = Faker.pick(street_suffixes)
+  def state = Faker.pick(states)
+  def state_abbr = Faker.pick(state_abbrs)
+  def country = Faker.pick(countries)
+
+  # Ruby: Faker::Address.city, the gem's four formats.
+  def city
+    case rand(4)
+    in 0 then "#{city_prefix} #{FakerName.first_name}#{city_suffix}"
+    in 1 then "#{city_prefix} #{FakerName.first_name}"
+    in 2 then "#{FakerName.first_name}#{city_suffix}"
+    else "#{FakerName.last_name}#{city_suffix}"
+    end
+  end
+
+  def street_name = rand(2) == 0 ? "#{FakerName.last_name} #{street_suffix}" : "#{FakerName.first_name} #{street_suffix}"
+
+  def building_number = Faker.numerify(Faker.pick(String["#####", "####", "###"]))
+
+  def secondary_address = Faker.numerify(Faker.pick(String["Apt. ###", "Suite ###"]))
+
+  # Ruby: Faker::Address.street_address(include_secondary: false)
+  def street_address(include_secondary = false)
+    s = "#{building_number} #{street_name}"
+    include_secondary ? s + " " + secondary_address : s
+  end
+
+  def zip_code = Faker.numerify(Faker.pick(String["#####", "#####-####"]))
+  def zip = zip_code
+  def postcode = zip_code
+
+  def full_address = "#{street_address}, #{city}, #{state_abbr} #{zip_code}"
+
+  def latitude = rand * 180.0 - 90.0
+  def longitude = rand * 360.0 - 180.0
+end
+
+module FakerCompany
+  module_function
+
+  def suffixes = once { String["Inc", "and Sons", "LLC", "Group"] }
+  def industries = once { String["Automotive", "Banking", "Computer Software", "Education", "Farming", "Hospitality",
+                                  "Insurance", "Logistics", "Mining", "Publishing", "Retail", "Telecommunications"] }
+  def buzzwords = once { String["adaptive", "innovative", "robust", "scalable", "seamless", "synergistic", "versatile"] }
+  def bs_verbs = once { String["implement", "utilize", "integrate", "streamline", "optimize", "deliver", "transform"] }
+  def bs_adjectives = once { String["clicks-and-mortar", "value-added", "vertical", "proactive", "robust", "scalable"] }
+  def bs_nouns = once { String["synergies", "web-readiness", "paradigms", "markets", "partnerships", "solutions"] }
+
+  def suffix = Faker.pick(suffixes)
+  def industry = Faker.pick(industries)
+  def buzzword = Faker.pick(buzzwords)
+
+  # Ruby: Faker::Company.name, the gem's three formats.
+  def name
+    case rand(3)
+    in 0 then "#{FakerName.last_name} #{suffix}"
+    in 1 then "#{FakerName.last_name}-#{FakerName.last_name}"
+    else "#{FakerName.last_name}, #{FakerName.last_name} and #{FakerName.last_name}"
+    end
+  end
+
+  def bs = "#{Faker.pick(bs_verbs)} #{Faker.pick(bs_adjectives)} #{Faker.pick(bs_nouns)}"
+
+  def catch_phrase = "#{String.capitalize(buzzword)} #{buzzword} #{Faker.pick(bs_nouns)}"
+
+  # Ruby: Faker::Company.ein: ##-#######
+  def ein = Faker.numerify("##-#######")
+end
+
+module FakerBoolean
+  module_function
+
+  # Ruby: Faker::Boolean.boolean(true_ratio: 0.5)
+  def boolean(true_ratio = 0.5) = rand < true_ratio
+end
+
+module FakerColor
+  module_function
+
+  def color_names = once { String["red", "green", "blue", "yellow", "orange", "purple", "black", "white", "gray", "teal"] }
+  def color_name = Faker.pick(color_names)
+  def hex_color = "#" + FakerNumber.hexadecimal(6)
+  def rgb_color = Array.new(3) { rand(256) }
+end

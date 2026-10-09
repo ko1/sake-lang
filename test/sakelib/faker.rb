@@ -1,0 +1,102 @@
+require_relative "ref/faker"
+
+# Every pick draws Kernel.rand, so a seed fixes the whole sequence; the Sake twin draws the same numbers.
+Faker.seed(42)
+puts "name: #{FakerName.name}"
+puts "first/last: #{FakerName.first_name} #{FakerName.last_name}"
+puts "prefix/suffix: #{FakerName.prefix} #{FakerName.suffix}"
+puts "middle: #{FakerName.name_with_middle}"
+puts "initials: #{FakerName.initials} #{FakerName.initials(2)}"
+5.times { puts "name #{FakerName.name}" }
+
+puts "email: #{FakerInternet.email}"
+puts "email(name): #{FakerInternet.email("Jane Doe")}"
+puts "email(name, domain): #{FakerInternet.email("Jane Doe", "example.com")}"
+puts "free_email: #{FakerInternet.free_email}"
+puts "username: #{FakerInternet.username}"
+puts "username(spec): #{FakerInternet.username("Nancy O'Neil", ["-"])}"
+puts "domain: #{FakerInternet.domain_name} #{FakerInternet.domain_word} #{FakerInternet.domain_suffix}"
+puts "ip: #{FakerInternet.ip_v4_address}"
+puts "mac: #{FakerInternet.mac_address}"
+puts "url: #{FakerInternet.url}"
+puts "url(host, path, scheme): #{FakerInternet.url("example.org", "/x", "https")}"
+puts "password: #{FakerInternet.password} #{FakerInternet.password(12)}"
+puts "slug: #{FakerInternet.slug} #{FakerInternet.slug("Hello Big World", ".")}"
+
+puts "word: #{FakerLorem.word}"
+p FakerLorem.words
+p FakerLorem.words(5)
+puts "sentence: #{FakerLorem.sentence}"
+puts "sentence(2): #{FakerLorem.sentence(2)}"
+puts "sentence(3, 4): #{FakerLorem.sentence(3, 4)}"
+p FakerLorem.sentences(2)
+puts "paragraph: #{FakerLorem.paragraph}"
+puts "paragraph(1, 2): #{FakerLorem.paragraph(1, 2)}"
+p FakerLorem.paragraphs(2)
+puts "question: #{FakerLorem.question(3)}"
+puts "characters: #{FakerLorem.characters(16)}"
+
+p FakerNumber.number
+p FakerNumber.number(3)
+p FakerNumber.number(1)
+p FakerNumber.leading_zero_number(6)
+p FakerNumber.decimal
+p FakerNumber.decimal(2, 1)
+p FakerNumber.decimal(3, 4)
+p FakerNumber.between
+p FakerNumber.between(1, 6)
+p FakerNumber.between(-10, 10)
+p FakerNumber.within(1..3)
+p FakerNumber.within(1...3)
+p FakerNumber.positive
+p FakerNumber.positive(0.0, 1.0)
+p FakerNumber.negative
+p FakerNumber.digit
+p FakerNumber.non_zero_digit
+p FakerNumber.hexadecimal
+p FakerNumber.hexadecimal(2)
+p FakerNumber.binary
+begin
+  FakerNumber.number(0)
+rescue ArgumentError => e
+  puts "ArgumentError: #{e.message}"
+end
+
+4.times { puts "city: #{FakerAddress.city}" }
+puts "street_address: #{FakerAddress.street_address}"
+puts "street_address(secondary): #{FakerAddress.street_address(true)}"
+puts "street_name: #{FakerAddress.street_name}"
+puts "building_number: #{FakerAddress.building_number}"
+puts "zip: #{FakerAddress.zip_code} #{FakerAddress.zip} #{FakerAddress.postcode}"
+puts "state: #{FakerAddress.state} (#{FakerAddress.state_abbr})"
+puts "country: #{FakerAddress.country}"
+puts "full: #{FakerAddress.full_address}"
+p FakerAddress.latitude.round(6)
+p FakerAddress.longitude.round(6)
+
+4.times { puts "company: #{FakerCompany.name}" }
+puts "suffix: #{FakerCompany.suffix}"
+puts "industry: #{FakerCompany.industry}"
+puts "bs: #{FakerCompany.bs}"
+puts "catch_phrase: #{FakerCompany.catch_phrase}"
+puts "ein: #{FakerCompany.ein}"
+
+p Array.new(6) { FakerBoolean.boolean }
+p FakerBoolean.boolean(1.0)
+p FakerBoolean.boolean(0.0)
+puts "color: #{FakerColor.color_name} #{FakerColor.hex_color}"
+p FakerColor.rgb_color
+
+p Faker.numerify("###-####")
+p Faker.letterify("???")
+p Faker.bothify("?#?#")
+p Faker.pick_distinct(%w[a b c d], 3)
+p Faker.pick_distinct(%w[a b], 5)
+
+# the same seed gives the same sequence again
+Faker.seed(42)
+first = FakerName.name
+Faker.seed(42)
+p first == FakerName.name
+Faker.seed(7)
+puts "seed 7: #{FakerName.name}, #{FakerInternet.email}, #{FakerAddress.city}"
