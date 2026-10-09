@@ -25,6 +25,7 @@ module Sake
   # literal, at the top level of a file) reads lib/x.sake next to the requiring file, once; the
   # required files come first, as their top-level statements run before the requiring file's.
   def load(source, path, out: $stdout, input: $stdin)
+    Sake.program_name = path
     files = [] # [path, ProgramNode], required files before the files that require them
     sources = {}.compare_by_identity # Prism source => path, to name the file of any node
     diags = []

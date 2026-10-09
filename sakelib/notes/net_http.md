@@ -127,3 +127,7 @@ constructors, 16 on responses, 24 on NetHTTP).
 - What felt good: `include NetHTTPHeader` in both types gave `[]`, `[]=`, `add_field`, `each_header` once,
   with `fields(h)` resolving to each type's private reader; `req["X-Token"] = "t"` reads as Ruby with
   `include Indexable`. The first draft ran under `--strict` after one real bug of mine.
+
+## Later the same day (2026-10-09)
+
+Zlib.inflate/deflate/gzip/gunzip and ENV.get/fetch are built in; socket timeouts and TLS are still missing.

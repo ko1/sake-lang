@@ -234,7 +234,14 @@ module Sake
       when "Thread.new"
         thread_site(node).tap { |s| site = thread_sites[s[0][1]]; site.elem = u(site.elem, call_block(blk, [])) }
       when "Thread.value" then u(*atoms_of(a0, :thread).map { thread_sites[_1[1]].elem })
-      when "Thread.join" then a0
+      when "Thread.join" then args.size == 2 ? u(a0, t("Nil")) : a0
+      when "Thread.current" then t("Thread")
+      when "Mutex.lock", "Mutex.unlock" then a0
+      when "Mutex.try_lock", "Mutex.locked?", "Mutex.owned?" then t("Boolean")
+      when "IO.seek", "IO.pos", "IO.rewind", "IO.truncate", "IO.size" then t("Integer")
+      when "IO.getc" then u(t("String"), t("Nil"))
+      when "Zlib.inflate", "Zlib.deflate", "Zlib.gzip", "Zlib.gunzip", "Kernel.PROGRAM_NAME" then t("String")
+      when "Kernel.equal?" then t("Boolean")
       when "Thread.alive?", "Queue.empty?", "Queue.closed?" then t("Boolean")
       when "Mutex.new" then t("Mutex")
       when "Mutex.synchronize" then call_block(blk, [])
@@ -252,7 +259,7 @@ module Sake
       when "IO.stdin", "IO.stdout", "IO.stderr", "IO.flush" then t("IO")
       when "IO.puts", "IO.print", "IO.close" then t("Nil")
       when "IO.write" then t("Integer")
-      when "IO.read" then t("String")
+      when "IO.read" then args.size == 2 ? u(t("String"), t("Nil")) : t("String")
       when "IO.eof?", "IO.closed?" then t("Boolean")
       when "IO.readlines" then new_site(node, " IO.readlines", t("String"))
       when "IO.each_line"

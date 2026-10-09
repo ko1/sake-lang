@@ -140,7 +140,7 @@ module Sake
       # Dir and File: class methods of Ruby's Dir and File
       *[[:children, [S], "Array<String>"], [:entries, [S], "Array<String>"], [:exist?, [S], :bool],
         [:empty?, [S], :bool], [:mkdir, [S], I, { opt: [I] }], [:rmdir, [S], I], [:unlink, [S], I, { ruby: :rmdir }],
-        [:pwd, [], S], [:home, [], S, { opt: [S] }],
+        [:pwd, [], S], [:home, [], S, { opt: [S] }], [:tmpdir, [], S],
         [:glob, [[S, A]], "Array<String>", { keywords: { "base" => S } }],
         [:each_child, [S], "Nil", { block: :required, yields: :one, yield_type: S, conv: :nil }]].map do |name, ps, r, o = {}|
         ["Dir", name, ps, r, { on: Dir, io: true, **o }]

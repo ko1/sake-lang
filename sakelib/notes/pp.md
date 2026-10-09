@@ -88,3 +88,7 @@ pp.sake) and `module PP` has the class methods. A block given to `PrettyPrint.fo
   dispatch, and the Ruby 3.4 Symbol-key rule ported as a one-line regexp over `Kernel.inspect(k)`. The first
   run of the nested Hash at widths 40 and 20, the odd Symbol keys and the multi-line String matched Ruby
   byte for byte.
+
+## Later the same day (2026-10-09)
+
+Kernel.equal?(a, b) is built in (an identity test for cycle detection); Record.to_h is still missing.

@@ -68,3 +68,7 @@ printed to stderr as `sake: message` (Ruby: `#{$0}: message`).
 - What felt good: the `get` port is Ruby's code almost line for line (`Regexp.match` for `$1`, `Hash`
   for the two tables, `Array.shift` on the given Array); the first `--strict` run passed except for the
   `rescue` report above, which was a true finding.
+
+## Later the same day (2026-10-09)
+
+ENV.get("POSIXLY_CORRECT") and Kernel.PROGRAM_NAME (Ruby's $0) are built in.

@@ -76,3 +76,7 @@ file; it is all Sake-level code over `net_http`.
   `|att, qval, val|` and `att || ""` worked, but every element is `String | nil` for the rest of the block.
 - `_option(options, :redirect) != false` reads oddly compared with Ruby's `options.fetch(:redirect, true)`;
   there is no `Hash.fetch` on a possibly nil Hash without a check first.
+
+## Later the same day (2026-10-09)
+
+See net_http.md: Zlib and ENV are built in.

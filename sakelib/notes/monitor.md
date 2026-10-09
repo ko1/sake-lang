@@ -86,3 +86,7 @@ thread** (no `Thread.current`). So:
 - `Monitor.owner: Integer | nil | :consumer | :main | :producer | :t` (every identity the program passes),
   `Monitor.waiters: Array[[Queue[true|false], me] ...]`, `MonitorCond.waiters: Array[Queue[true|false]]`.
   All checks proven at `--types`.
+
+## Later the same day (2026-10-09)
+
+Thread.current, Thread.join(t, limit), Mutex.lock/unlock/try_lock/locked?/owned?, Queue.pop(q, timeout) and the exception type ThreadError are built in; a deadlock is reported as a Sake ThreadError. This file still uses its hand-over lock; it could now be a wrapper over the built-in Mutex.

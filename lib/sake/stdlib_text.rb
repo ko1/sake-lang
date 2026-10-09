@@ -3,6 +3,8 @@
 module Sake
   # A program's command-line arguments (ARGV) and `exit`, set and caught by the CLI.
   class << self
+    attr_accessor :program_name # the main file's path (Kernel.PROGRAM_NAME), set by Sake.load
+
     def argv = @argv ||= []
 
     def argv=(xs)

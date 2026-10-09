@@ -61,6 +61,20 @@ module Sake
         require "open3"
         io_error { Open3.capture3(cmd, *args).then { |out, err, st| Tuple.new([out, err, st.exitstatus || -1]) } }
       end
+      # Zlib: Ruby's compression, which a library in Sake cannot match in speed.
+      %i[inflate deflate gzip gunzip].each do |m|
+        reg.define("Zlib", m, ["String"]) do |s|
+          require "zlib"
+          begin
+            ::Zlib.public_send(m, s)
+          rescue ::Zlib::Error => e
+            raise Fail.new("ArgumentError", e.message)
+          end
+        end
+      end
+      # Kernel.PROGRAM_NAME: the program's path (Ruby's $0). Kernel.equal?(a, b): the same value, not just equal.
+      reg.define("Kernel", :PROGRAM_NAME, []) { Sake.program_name || $0 }
+      reg.define("Kernel", :equal?, %w[Any Any]) { |a, b| a.equal?(b) }
       # Process.clock_gettime(Process.CLOCK_MONOTONIC): the clocks are read as operations, as Math.PI is.
       { CLOCK_REALTIME: Process::CLOCK_REALTIME, CLOCK_MONOTONIC: Process::CLOCK_MONOTONIC,
         CLOCK_PROCESS_CPUTIME_ID: Process::CLOCK_PROCESS_CPUTIME_ID }.each do |name, v|

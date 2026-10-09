@@ -109,3 +109,7 @@ lacks) is declared here as `class EOFError < Exception`; `tempfile.sake` require
   above, and the Ruby twin of the 276-line test printed the same 201 lines after fixing one behaviour
   (`string=` on a closed StringIO) that Ruby 4.0 itself had changed. `attr_accessor lineno` gave
   `set_lineno` for free; `include Bitwise` gave `io << "x" << 1` with Ruby's chaining.
+
+## Later the same day (2026-10-09)
+
+EOFError is a built-in exception type (the declaration here was removed); Integer.to_s(n, base) is built in. IO.seek/pos/rewind/read(io, n)/getc/truncate/size are built in for the File-backed ports.

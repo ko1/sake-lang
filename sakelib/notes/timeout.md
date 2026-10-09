@@ -54,3 +54,7 @@ calling thread, as Ruby.
 3. `--types` lists each `raise` in the library under `unrescued` (level 4): expected for a library.
 4. `sleep(remaining < 0.005 ? remaining : 0.005)`: there is no `Float.min(a, b)`; `Tuple.min([a, b])` would do, the
    ternary reads better. `Comparable.clamp` exists but needs both bounds.
+
+## Later the same day (2026-10-09)
+
+Thread.join(t, limit) is built in (it would replace the polling loop). Thread.raise/kill are still missing.

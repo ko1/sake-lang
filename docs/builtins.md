@@ -202,6 +202,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Dir.mktmpdir([String], [String]) [{ }]`
 - `Dir.pwd()`
 - `Dir.rmdir(String)`
+- `Dir.tmpdir()`
 - `Dir.unlink(String)`
 
 ## ENV
@@ -235,7 +236,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `File.join(*String|Array)`
 - `File.link(String, String)`
 - `File.mtime(String)`
-- `File.open(String, [String]) [{ }]`
+- `File.open(String, [String], [Integer]) [{ }]`
 - `File.read(String)`
 - `File.readable?(String)`
 - `File.readlines(String)`
@@ -398,14 +399,20 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `IO.each_line(x) { }`
 - `IO.eof?(x)`
 - `IO.flush(x)`
+- `IO.getc(x)`
 - `IO.gets(x)`
+- `IO.pos(x)`
 - `IO.print(x, *Any)`
 - `IO.puts(x, *Any)`
-- `IO.read(x)`
+- `IO.read(x, [Integer])`
 - `IO.readlines(x)`
+- `IO.rewind(x)`
+- `IO.seek(x, Integer, [Integer|Symbol])`
+- `IO.size(x)`
 - `IO.stderr()`
 - `IO.stdin()`
 - `IO.stdout()`
+- `IO.truncate(x, Integer)`
 - `IO.write(x, String)`
 
 ## Integer
@@ -484,9 +491,11 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.Complex(Integer|Float|Rational, [Integer|Float|Rational])`
 - `Kernel.Float(String|Integer|Float)`
 - `Kernel.Integer(String|Integer|Float)`
+- `Kernel.PROGRAM_NAME()`
 - `Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
 - `Kernel.block_given?()`
 - `Kernel.dup(Any)`
+- `Kernel.equal?(Any, Any)`
 - `Kernel.exit([Integer|Boolean])`
 - `Kernel.format(String, *Any)`
 - `Kernel.gets()`
@@ -562,8 +571,15 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Mutex
 
+- `Mutex.!=(x, Any)`
+- `Mutex.==(x, Any)`
+- `Mutex.lock(x)`
+- `Mutex.locked?(x)`
 - `Mutex.new()`
+- `Mutex.owned?(x)`
 - `Mutex.synchronize(x) { }`
+- `Mutex.try_lock(x)`
+- `Mutex.unlock(x)`
 
 ## Open3
 
@@ -581,11 +597,13 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Queue
 
+- `Queue.!=(x, Any)`
+- `Queue.==(x, Any)`
 - `Queue.close(x)`
 - `Queue.closed?(x)`
 - `Queue.empty?(x)`
 - `Queue.new()`
-- `Queue.pop(x)`
+- `Queue.pop(x, [Integer|Float|Rational])`
 - `Queue.push(x, Any)`
 - `Queue.size(x)`
 
@@ -992,8 +1010,11 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Thread
 
+- `Thread.!=(x, Any)`
+- `Thread.==(x, Any)`
 - `Thread.alive?(x)`
-- `Thread.join(x)`
+- `Thread.current()`
+- `Thread.join(x, [Integer|Float|Rational])`
 - `Thread.new() { }`
 - `Thread.value(x)`
 
@@ -1080,6 +1101,13 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Tuple.size(x)`
 - `Tuple.to_a(x)`
 
+## Zlib
+
+- `Zlib.deflate(String)`
+- `Zlib.gunzip(String)`
+- `Zlib.gzip(String)`
+- `Zlib.inflate(String)`
+
 ## Exception types
 
-Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError`, `TypeError` has `T.new(message)`, `T.get_message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception; `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError` can only be named in `rescue`.
+Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError`, `TypeError`, `EOFError`, `ThreadError` has `T.new(message)`, `T.get_message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception; `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError` can only be named in `rescue`.

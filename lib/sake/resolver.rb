@@ -53,7 +53,7 @@ module Sake
     # Raised by operations, and rescuable by name. Program errors (NOT_RESCUABLE) are what the checks before
     # running report, so they cannot be rescued.
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
-                            RegexpError FloatDomainError Math::DomainError NoMatchingPatternError TypeError].freeze
+                            RegexpError FloatDomainError Math::DomainError NoMatchingPatternError TypeError EOFError ThreadError].freeze
     NOT_RESCUABLE = %w[SystemStackError NotImplementedError LocalJumpError].freeze
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 

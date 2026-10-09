@@ -95,3 +95,7 @@ tempfile requires). It includes `Bitwise` for `tf << x`.
 - What felt good: the Tempfile port is 40 operations in about 200 lines because StringIO carries the
   IO semantics; `Tempfile.create` with and without a block is one function with `block_given?` and
   `begin/ensure`, exactly Ruby's shape.
+
+## Later the same day (2026-10-09)
+
+Dir.tmpdir, File.open(path, mode, perm), IO.seek/pos/rewind/read(io, n)/truncate/size and Integer.to_s(n, base) are built in (the Dir.tmpdir written here was removed). The StringIO shadow could now be replaced by one open IO.

@@ -36,16 +36,26 @@ module Sake
       reg.define("IO", :print, ["IO"], rest: "Any") { |f, *xs| io_error { xs.each { f.io.write(Values.to_s(_1)) } } && nil }
       reg.define("IO", :write, %w[IO String]) { |f, s| io_error { f.io.write(s) } }
       reg.define("IO", :gets, ["IO"]) { |f| io_error { f.io.gets } }
-      reg.define("IO", :read, ["IO"]) { |f| io_error { f.io.read } }
+      # read(io): the rest; read(io, n): up to n bytes, nil at the end (Ruby's).
+      reg.define("IO", :read, ["IO"], optional: ["Integer"]) { |f, n = nil| io_error { n ? f.io.read(n) : f.io.read } }
+      reg.define("IO", :getc, ["IO"]) { |f| io_error { f.io.getc } }
+      # Positions, as Ruby's: seek(io, offset[, whence]) with whence 0/1/2 or :SET/:CUR/:END; pos; rewind; truncate.
+      reg.define("IO", :seek, %w[IO Integer], optional: [%w[Integer Symbol]]) do |f, off, whence = 0|
+        io_error { f.io.seek(off, whence.is_a?(Symbol) ? IO.const_get(:"SEEK_#{whence}") : whence) }
+      end
+      reg.define("IO", :pos, ["IO"]) { |f| io_error { f.io.pos } }
+      reg.define("IO", :rewind, ["IO"]) { |f| io_error { f.io.rewind } }
+      reg.define("IO", :truncate, %w[IO Integer]) { |f, n| io_error { f.io.truncate(n) } }
+      reg.define("IO", :size, ["IO"]) { |f| io_error { f.io.size } }
       reg.define("IO", :readlines, ["IO"]) { |f| io_error { f.io.readlines } }
       reg.define("IO", :each_line, ["IO"], block: :required) { |f, &b| io_error { f.io.each_line { b.(_1) } } && f }
       reg.define("IO", :eof?, ["IO"]) { |f| io_error { f.io.eof? } }
       reg.define("IO", :flush, ["IO"]) { |f| io_error { f.io.flush } && f }
       reg.define("IO", :close, ["IO"]) { |f| f.io.close.then { nil } }
       reg.define("IO", :closed?, ["IO"]) { |f| f.io.closed? }
-      # File.open(path, mode = "r"): an IO; with a block, the block's value, the file closed after it.
-      reg.define("File", :open, ["String"], optional: ["String"], block: :optional) do |path, mode = "r", &b|
-        file = io_error { ruby_error("ArgumentError") { File.open(path, mode) } }
+      # File.open(path, mode = "r"[, perm]): an IO; with a block, the block's value, the file closed after it.
+      reg.define("File", :open, ["String"], optional: %w[String Integer], block: :optional) do |path, mode = "r", perm = nil, &b|
+        file = io_error { ruby_error("ArgumentError") { perm ? File.open(path, mode, perm) : File.open(path, mode) } }
         f = IOValue.new(path) { file }
         next f unless b
         begin

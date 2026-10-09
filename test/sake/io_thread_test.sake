@@ -1,0 +1,93 @@
+require "minitest"
+
+# IO positions, Thread.current and Mutex/Queue additions, Zlib, Dir.tmpdir, Kernel.equal?/PROGRAM_NAME, EOFError
+# (built in on 2026-10-09 for the stringio, tempfile, monitor, timeout and net_http ports).
+suite = Minitest.suite("io_thread")
+
+Minitest.test(suite, "IO: seek, pos, rewind, read(n), getc, truncate, size") do |t|
+  dir = Dir.mktmpdir("sake_io")
+  path = File.join(dir, "f.txt")
+  File.write(path, "hello world")
+  f = File.open(path, "r+")
+  Minitest.assert_equal(t, "hello", IO.read(f, 5))
+  Minitest.assert_equal(t, 5, IO.pos(f))
+  Minitest.assert_equal(t, " ", IO.getc(f))
+  Minitest.assert_equal(t, 0, IO.seek(f, 0))
+  Minitest.assert_equal(t, "h", IO.getc(f))
+  IO.seek(f, -5, :END)
+  Minitest.assert_equal(t, "world", IO.read(f))
+  Minitest.assert_nil(t, IO.read(f, 1))
+  Minitest.assert_equal(t, "", IO.read(f))
+  Minitest.assert_equal(t, 0, IO.rewind(f))
+  Minitest.assert_equal(t, 11, IO.size(f))
+  IO.truncate(f, 5)
+  Minitest.assert_equal(t, "hello", IO.read(f))
+  IO.close(f)
+  Minitest.assert_equal(t, "hello", File.read(path))
+  g = File.open(File.join(dir, "secret"), "w", 0o600)
+  IO.puts(g, "x")
+  IO.close(g)
+  Minitest.assert(t, String.start_with?(Dir.tmpdir, "/"))
+  File.delete(path)
+  File.delete(File.join(dir, "secret"))
+  Dir.rmdir(dir)
+end
+
+Minitest.test(suite, "Thread.current, join with a limit, Mutex lock/unlock/try_lock, Queue.pop timeout") do |t|
+  main = Thread.current
+  Minitest.assert_equal(t, main, Thread.current)
+  th = Thread.new { Thread.current }
+  inner = Thread.value(th)
+  Minitest.refute_equal(t, main, inner)
+  Minitest.assert_equal(t, th, inner)
+  m = Mutex.new
+  Minitest.refute(t, Mutex.locked?(m))
+  Mutex.lock(m)
+  Minitest.assert(t, Mutex.locked?(m))
+  Minitest.assert(t, Mutex.owned?(m))
+  Minitest.refute(t, Mutex.try_lock(m))
+  Mutex.unlock(m)
+  Minitest.assert(t, Mutex.try_lock(m))
+  Mutex.unlock(m)
+  Minitest.assert_match(t, /not locked|not owner/, Minitest.assert_raises(t) { Mutex.unlock(m) })
+  q = Queue.new
+  Minitest.assert_nil(t, Queue.pop(q, 0.01))
+  Queue.push(q, 1)
+  Minitest.assert_equal(t, 1, Queue.pop(q, 1))
+  slow = Thread.new { Kernel.sleep(0.2); 9 }
+  Minitest.assert_nil(t, Thread.join(slow, 0.01))
+  Minitest.assert_equal(t, slow, Thread.join(slow))
+  Minitest.assert_equal(t, 9, Thread.value(slow))
+end
+
+Minitest.test(suite, "Zlib round trips") do |t|
+  s = String.*("abc", 100)
+  z = Zlib.deflate(s)
+  Minitest.assert(t, String.bytesize(z) < String.bytesize(s))
+  Minitest.assert_equal(t, s, Zlib.inflate(z))
+  Minitest.assert_equal(t, s, Zlib.gunzip(Zlib.gzip(s)))
+  Minitest.assert_match(t, /incorrect header|invalid/, Minitest.assert_raises(t) { Zlib.inflate("not zlib") })
+end
+
+Minitest.test(suite, "Kernel.equal?, PROGRAM_NAME, EOFError and ThreadError are exception types") do |t|
+  a = Array[1]
+  b = Array[1]
+  Minitest.assert(t, a == b)
+  Minitest.refute(t, Kernel.equal?(a, b))
+  Minitest.assert(t, Kernel.equal?(a, a))
+  Minitest.assert(t, String.end_with?(Kernel.PROGRAM_NAME, "io_thread_test.sake"))
+  msg = begin
+    raise EOFError, "end of file reached"
+  rescue EOFError => e
+    Exception.message(e)
+  end
+  Minitest.assert_equal(t, "end of file reached", msg)
+  msg2 = begin
+    raise ThreadError, "deadlock"
+  rescue ThreadError => e
+    Exception.message(e)
+  end
+  Minitest.assert_equal(t, "deadlock", msg2)
+end
+
+Minitest.run(suite)

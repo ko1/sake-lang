@@ -30,3 +30,7 @@ As `monitor`: `Thread.current`, and `Mutex.lock/unlock/try_lock/locked?/owned?`,
    finds `sakelib/monitor.sake` (relative to the requiring file), as hoped.
 2. A mixin that defines `synchronize`, `lock`, `unlock` is fine next to the includer's own functions: the
    includer's definitions win (§5.5), as in Ruby.
+
+## Later the same day (2026-10-09)
+
+Mutex.lock/unlock/try_lock/locked?/owned? and Thread.current are built in (see monitor.md).
