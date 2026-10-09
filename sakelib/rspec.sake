@@ -1,0 +1,471 @@
+# rspec: RSpec's DSL and documentation formatter, for programs written in Sake, in the shape of
+# sakelib/minitest.sake: tests are blocks given to a call, and every expectation names the example it
+# belongs to (the block's parameter), as every Sake operation names its subject.
+#
+#   RSpec.describe("Array") do |g|
+#     RSpec.it(g, "pushes") do |ex|
+#       a = Array[1]
+#       Array.push(a, 2)
+#       RSpec.expect(ex, a).To.eq(Array[1, 2])          # expect(a).to eq([1, 2])
+#       RSpec.expect(ex, a).NotTo.be_empty              # expect(a).not_to be_empty
+#     end
+#     RSpec.context(g, "when empty") do |g2|
+#       RSpec.it(g2, "has no first") { |ex| RSpec.expect(ex, Array.first(Array[])).To.be_nil }
+#     end
+#   end
+#   RSpec.run     # documentation format, the failures, "2 examples, 0 failures"; exit 1 on failure
+#
+# RSpec's `expect(x).to eq(y)` is a matcher object given to `to`; Sake has no matcher values, so a
+# matcher is an operation on the expectation (the Tuple [example, actual]): `Expectation.to_eq(e, y)`,
+# or in the chain form `RSpec.expect(ex, x).To.eq(y)`, where To and NotTo are modules whose functions
+# take the expectation first: it reads as RSpec does, and the checker sees each actual's own type. `expect { ... }.to raise_error` is `RSpec.expect(ex).To.raise_error(/msg/) { ... }`:
+# the block goes to the matcher, since it cannot be kept by the expectation.
+#
+# Not here (blocks cannot be stored): `let`, `before`/`after`, `subject`, `shared_examples`,
+# `expect { }.to change { }` (two blocks), composed matchers (`all(be_even)`, `include(a_string_matching(..))`),
+# custom matchers. Examples run as they are defined; `RSpec.run` prints.
+#
+# The documentation format is RSpec's without the timing line ("Finished in ...") and the "Failed
+# examples:" list (there are no file:line positions in Sake).
+
+class RSpecExpectationNotMet < StandardError
+end
+
+class RSpecPending < StandardError
+end
+
+# A describe/context group. lines (the documentation output) and results are shared by every group
+# of one run: a child gets its parent's.
+class ExampleGroup
+  attr_reader description, depth, full_description, lines, results
+end
+
+# The example a block is running: what the expectations count against.
+class Example
+  attr_reader group, description
+  attr_accessor expectations
+end
+
+# One expectation is the Tuple [example, actual] that RSpec.expect gives (nil actual for a block
+# expectation). A Tuple, not a Struct type: a Tuple literal's type is its own at each place it is made,
+# so `a` below has the type of that one expect call, and `expect(42).to match(/4/)` is a type error
+# before running; a field of a Struct type would hold every value the program ever expects on.
+module Expectation
+  module_function
+
+  def count(e)
+    ex, a = e
+    Example.set_expectations(ex, Example.expectations(ex) + 1)
+    nil
+  end
+
+  def fail_with(message) = raise(RSpecExpectationNotMet, message)
+
+  def two_lines(expected, got) = "expected: #{expected}\n     got: #{got}"
+
+  # ---- equality ----
+
+  def to_eq(e, expected)
+    count(e)
+    ex, a = e
+    return true if a == expected
+    fail_with(two_lines(Kernel.inspect(expected), Kernel.inspect(a)) + "\n\n(compared using ==)")
+  end
+
+  def not_to_eq(e, expected)
+    count(e)
+    ex, a = e
+    return true if a != expected
+    fail_with("expected: value != #{Kernel.inspect(expected)}\n     got: #{Kernel.inspect(a)}\n\n(compared using ==)")
+  end
+
+  def to_eql(e, expected) = to_eq(e, expected)
+  def not_to_eql(e, expected) = not_to_eq(e, expected)
+
+  # to_be(e, x): RSpec's `be(x)`, the same object.
+  def to_be(e, expected)
+    count(e)
+    ex, a = e
+    return true if Kernel.equal?(a, expected)
+    fail_with(two_lines(Kernel.inspect(expected), Kernel.inspect(a)) + "\n\n(compared using equal?)")
+  end
+
+  # ---- truthiness ----
+
+  def to_be_truthy(e)
+    count(e)
+    ex, a = e
+    return true if a
+    fail_with(two_lines("truthy value", Kernel.inspect(a)))
+  end
+
+  def to_be_falsey(e)
+    count(e)
+    ex, a = e
+    return true unless a
+    fail_with(two_lines("falsey value", Kernel.inspect(a)))
+  end
+
+  def to_be_falsy(e) = to_be_falsey(e)
+  def not_to_be_truthy(e) = to_be_falsey(e)
+
+  def to_be_nil(e)
+    count(e)
+    ex, a = e
+    return true if a == nil
+    fail_with(two_lines("nil", Kernel.inspect(a)))
+  end
+
+  def not_to_be_nil(e)
+    count(e)
+    ex, a = e
+    return true if a != nil
+    fail_with("expected: not nil\n     got: nil")
+  end
+
+  # ---- collections and strings ----
+
+  def includes?(a, x) = (Array|String|Hash|Set|Range).include?(a, x)
+
+  # to_include(e, *xs): an Array, String, Hash (keys), Set, or Range including each of xs.
+  def to_include(e, *xs)
+    count(e)
+    ex, a = e
+    missing = Array.reject(xs) { |x| includes?(a, x) }
+    return true if Array.empty?(missing)
+    fail_with("expected #{Kernel.inspect(a)} to include #{Array.join(Array.map(missing) { |x| Kernel.inspect(x) }, ", ")}")
+  end
+
+  def not_to_include(e, *xs)
+    count(e)
+    ex, a = e
+    present = Array.select(xs) { |x| includes?(a, x) }
+    return true if Array.empty?(present)
+    fail_with("expected #{Kernel.inspect(a)} not to include #{Array.join(Array.map(present) { |x| Kernel.inspect(x) }, ", ")}")
+  end
+
+  def to_match(e, pattern)
+    count(e)
+    ex, a = e
+    return true if String.match?(a, pattern)
+    fail_with("expected #{Kernel.inspect(a)} to match #{Kernel.inspect(pattern)}")
+  end
+
+  def not_to_match(e, pattern)
+    count(e)
+    ex, a = e
+    return true unless String.match?(a, pattern)
+    fail_with("expected #{Kernel.inspect(a)} not to match #{Kernel.inspect(pattern)}")
+  end
+
+  def to_start_with(e, prefix)
+    count(e)
+    ex, a = e
+    return true if String.start_with?(a, prefix)
+    fail_with("expected #{Kernel.inspect(a)} to start with #{Kernel.inspect(prefix)}")
+  end
+
+  def to_end_with(e, suffix)
+    count(e)
+    ex, a = e
+    return true if String.end_with?(a, suffix)
+    fail_with("expected #{Kernel.inspect(a)} to end with #{Kernel.inspect(suffix)}")
+  end
+
+  def to_be_empty(e)
+    count(e)
+    ex, a = e
+    return true if (Array|String|Hash|Set).empty?(a)
+    fail_with("expected `#{Kernel.inspect(a)}.empty?` to be truthy, got false")
+  end
+
+  def not_to_be_empty(e)
+    count(e)
+    ex, a = e
+    return true unless (Array|String|Hash|Set).empty?(a)
+    fail_with("expected `#{Kernel.inspect(a)}.empty?` to be falsey, got true")
+  end
+
+  # to_have_size(e, n): not RSpec's (it has no size matcher; `have_attributes(size: n)` is the nearest).
+  def to_have_size(e, n)
+    count(e)
+    ex, a = e
+    size = (Array|String|Hash|Set).size(a)
+    return true if size == n
+    fail_with("expected #{Kernel.inspect(a)} to have size #{n}, got #{size}")
+  end
+
+  def to_have_key(e, k)
+    count(e)
+    ex, a = e
+    return true if Hash.key?(a, k)
+    fail_with("expected #{Kernel.inspect(a)} to have key #{Kernel.inspect(k)}")
+  end
+
+  # to_contain_exactly(e, *xs): the same elements in any order.
+  def to_contain_exactly(e, *xs)
+    count(e)
+    ex, a = e
+    got = Array.sort_by(a) { |x| Kernel.inspect(x) }
+    want = Array.sort_by(xs) { |x| Kernel.inspect(x) }
+    return true if got == want
+    fail_with("expected collection contained:  #{Kernel.inspect(want)}\nactual collection contained:    #{Kernel.inspect(got)}")
+  end
+
+  def to_match_array(e, xs) = to_contain_exactly(e, *xs)
+
+  # ---- numbers ----
+
+  # to_be_within(e, delta, x): RSpec's `be_within(delta).of(x)`.
+  def to_be_within(e, delta, expected)
+    count(e)
+    ex, a = e
+    return true if Arithmetic.abs(a - expected) <= delta
+    fail_with("expected #{Kernel.inspect(a)} to be within #{delta} of #{Kernel.inspect(expected)}")
+  end
+
+  # RSpec's `be > x`, `be >= x`, `be < x`, `be <= x`, `be_between(lo, hi)`.
+  def to_be_gt(e, x)
+    count(e)
+    ex, a = e
+    return true if a > x
+    fail_with("expected: > #{Kernel.inspect(x)}\n     got:   #{Kernel.inspect(a)}")
+  end
+
+  def to_be_ge(e, x)
+    count(e)
+    ex, a = e
+    return true if a >= x
+    fail_with("expected: >= #{Kernel.inspect(x)}\n     got:    #{Kernel.inspect(a)}")
+  end
+
+  def to_be_lt(e, x)
+    count(e)
+    ex, a = e
+    return true if a < x
+    fail_with("expected: < #{Kernel.inspect(x)}\n     got:   #{Kernel.inspect(a)}")
+  end
+
+  def to_be_le(e, x)
+    count(e)
+    ex, a = e
+    return true if a <= x
+    fail_with("expected: <= #{Kernel.inspect(x)}\n     got:    #{Kernel.inspect(a)}")
+  end
+
+  def to_be_between(e, lo, hi)
+    count(e)
+    ex, a = e
+    return true if a >= lo && a <= hi
+    fail_with("expected #{Kernel.inspect(a)} to be between #{Kernel.inspect(lo)} and #{Kernel.inspect(hi)} (inclusive)")
+  end
+
+  # ---- blocks ----
+
+  # to_satisfy(e, description = "satisfy expression") { |x| }: RSpec's `satisfy("desc") { |x| ... }`.
+  def to_satisfy(e, description = "satisfy expression")
+    count(e)
+    ex, a = e
+    return true if yield(a)
+    fail_with("expected #{Kernel.inspect(a)} to #{description}")
+  end
+
+  # to_all(e) { |x| }: RSpec's `all(matcher)`, with the block as the matcher over each element.
+  def to_all(e)
+    count(e)
+    ex, a = e
+    bad = Array.reject(a) { |x| yield(x) }
+    return true if Array.empty?(bad)
+    fail_with("expected #{Kernel.inspect(a)} to all match, but #{Kernel.inspect(bad)} did not")
+  end
+
+  # to_raise_error(e, expected = nil) { }: the block must raise; expected is a String (the whole
+  # message) or a Regexp (matched against it), as RSpec's. Gives the message.
+  def to_raise_error(e, expected = nil)
+    count(e)
+    begin
+      yield
+    rescue => err
+      msg = Exception.message(err)
+      case expected
+      in nil then return msg
+      in String then return msg if msg == expected
+      in Regexp then return msg if String.match?(msg, expected)
+      end
+      fail_with("expected an error with message matching #{Kernel.inspect(expected)}, got #{Kernel.inspect(msg)}")
+    end
+    fail_with(expected == nil ? "expected an exception but nothing was raised" : "expected an error with message matching #{Kernel.inspect(expected)} but nothing was raised")
+  end
+
+  def not_to_raise_error(e)
+    count(e)
+    begin
+      yield
+    rescue => err
+      fail_with("expected no Exception, got #{Kernel.inspect(Exception.message(err))}")
+    end
+    true
+  end
+end
+
+# The chain forms: RSpec.expect(ex, x).To.eq(y) is Expectation.to_eq(RSpec.expect(ex, x), y).
+module To
+  module_function
+  def eq(e, x) = Expectation.to_eq(e, x)
+  def eql(e, x) = Expectation.to_eql(e, x)
+  def be(e, x) = Expectation.to_be(e, x)
+  def be_truthy(e) = Expectation.to_be_truthy(e)
+  def be_falsey(e) = Expectation.to_be_falsey(e)
+  def be_falsy(e) = Expectation.to_be_falsey(e)
+  def be_nil(e) = Expectation.to_be_nil(e)
+  def include(e, *xs) = Expectation.to_include(e, *xs)
+  def match(e, pattern) = Expectation.to_match(e, pattern)
+  def start_with(e, s) = Expectation.to_start_with(e, s)
+  def end_with(e, s) = Expectation.to_end_with(e, s)
+  def be_empty(e) = Expectation.to_be_empty(e)
+  def have_size(e, n) = Expectation.to_have_size(e, n)
+  def have_key(e, k) = Expectation.to_have_key(e, k)
+  def contain_exactly(e, *xs) = Expectation.to_contain_exactly(e, *xs)
+  def match_array(e, xs) = Expectation.to_match_array(e, xs)
+  def be_within(e, delta, x) = Expectation.to_be_within(e, delta, x)
+  def be_gt(e, x) = Expectation.to_be_gt(e, x)
+  def be_ge(e, x) = Expectation.to_be_ge(e, x)
+  def be_lt(e, x) = Expectation.to_be_lt(e, x)
+  def be_le(e, x) = Expectation.to_be_le(e, x)
+  def be_between(e, lo, hi) = Expectation.to_be_between(e, lo, hi)
+  def satisfy(e, description = "satisfy expression", &b) = Expectation.to_satisfy(e, description, &b)
+  def all(e, &b) = Expectation.to_all(e, &b)
+  def raise_error(e, expected = nil, &b) = Expectation.to_raise_error(e, expected, &b)
+end
+
+module NotTo
+  module_function
+  def eq(e, x) = Expectation.not_to_eq(e, x)
+  def eql(e, x) = Expectation.not_to_eql(e, x)
+  def be_truthy(e) = Expectation.not_to_be_truthy(e)
+  def be_nil(e) = Expectation.not_to_be_nil(e)
+  def include(e, *xs) = Expectation.not_to_include(e, *xs)
+  def match(e, pattern) = Expectation.not_to_match(e, pattern)
+  def be_empty(e) = Expectation.not_to_be_empty(e)
+  def raise_error(e, &b) = Expectation.not_to_raise_error(e, &b)
+end
+
+module RSpec
+  module_function
+
+  # The groups of this run, in definition order, and their output lines and results (one list each
+  # for the run, as RSpec numbers failures across groups); RSpec.run reports them all.
+  def world = once { Array[] }
+  def world_lines = once { Array[] }
+  def world_results = once { Array[] }
+
+  # describe(description) { |g| ... }: a top-level group; the block defines its examples and contexts.
+  def describe(description)
+    g = ExampleGroup.new(description, 0, description, world_lines, world_results)
+    Array.push(world_lines, "") unless Array.empty?(world)
+    Array.push(world, g)
+    Array.push(ExampleGroup.lines(g), description)
+    yield(g)
+    g
+  end
+
+  # context(g, description) { |g2| ... }: a nested group, one level deeper.
+  def context(g, description)
+    child = ExampleGroup.new(description, ExampleGroup.depth(g) + 1,
+                             "#{ExampleGroup.full_description(g)} #{description}",
+                             ExampleGroup.lines(g), ExampleGroup.results(g))
+    Array.push(ExampleGroup.lines(g), indent(g) + description)
+    yield(child)
+    child
+  end
+
+  def indent(g) = "  " * (ExampleGroup.depth(g) + 1)
+
+  def record(g, description, status, message)
+    results = ExampleGroup.results(g)
+    Array.push(results, ["#{ExampleGroup.full_description(g)} #{description}", status, message])
+    line = indent(g) + description
+    if status == :failed
+      n = Array.count(results) { |r| r[1] == :failed }
+      line += " (FAILED - #{n})"
+    elsif status == :pending
+      line += " (PENDING: #{message})"
+    end
+    Array.push(ExampleGroup.lines(g), line)
+    nil
+  end
+
+  # it(g, description) { |ex| ... }: runs the example now and records it; without a block it is pending.
+  def it(g, description)
+    return record(g, description, :pending, "Not yet implemented") unless block_given?
+    ex = Example.new(g, description, 0)
+    begin
+      yield(ex)
+      record(g, description, :passed, "")
+    rescue RSpecExpectationNotMet => e
+      record(g, description, :failed, Exception.message(e))
+    rescue RSpecPending => e
+      record(g, description, :pending, Exception.message(e))
+    rescue => e
+      record(g, description, :failed, Exception.message(e))
+    end
+    nil
+  end
+
+  def specify(g, description, &b) = it(g, description, &b)
+  def example(g, description, &b) = it(g, description, &b)
+
+  # xit(g, description) { }: skipped, as RSpec's.
+  def xit(g, description, &b) = record(g, description, :pending, "Temporarily skipped with xit")
+
+  # pending(ex, reason): inside an example, marks it pending (RSpec runs on and expects a failure;
+  # here the example stops, as `skip` does).
+  def pending(ex, reason = "No reason given") = raise(RSpecPending, reason)
+  def skip(ex, reason = "No reason given") = raise(RSpecPending, reason)
+
+  # expect(ex, actual = nil): the expectation [ex, actual]; without a value, for a block matcher.
+  def expect(ex, actual = nil) = [ex, actual]
+
+  def plural(n, word) = "#{n} #{word}#{n == 1 ? "" : "s"}"
+
+  def indent_lines(s, prefix) = Array.join(Array.map(String.split(s, "\n")) { |l| l == "" ? "" : prefix + l }, "\n")
+
+  # report: the documentation format of every group of this run, the pending and failed examples, the
+  # summary; true when nothing failed.
+  def report
+    Array.each(world_lines) { |l| puts l }
+    puts
+    results = world_results
+    pending = Array.select(results) { |r| r[1] == :pending }
+    failed = Array.select(results) { |r| r[1] == :failed }
+    unless Array.empty?(pending)
+      puts "Pending: (Failures listed here are expected and do not affect your suite's status)"
+      puts
+      Array.each_with_index(pending) do |r, i|
+        puts "  #{i + 1}) #{r[0]}"
+        puts "     # #{r[2]}"
+        puts
+      end
+    end
+    unless Array.empty?(failed)
+      puts "Failures:"
+      puts
+      Array.each_with_index(failed) do |r, i|
+        puts "  #{i + 1}) #{r[0]}"
+        puts "     Failure/Error: " + String.sub(indent_lines(r[2], "       "), /\A\s+/, "")
+        puts
+      end
+    end
+    summary = "#{plural(Array.size(results), "example")}, #{plural(Array.size(failed), "failure")}"
+    summary += ", #{Array.size(pending)} pending" unless Array.empty?(pending)
+    puts summary
+    Array.empty?(failed)
+  end
+
+  # run: report, and exit with 1 unless every example passed.
+  def run
+    ok = report
+    Kernel.exit(1) unless ok
+    ok
+  end
+end

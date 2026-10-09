@@ -1,0 +1,871 @@
+# concurrent-ruby: a subset of the gem over Sake's built-in Thread, Mutex, Queue.
+#
+# Nested names are flattened: Concurrent::Future -> ConcurrentFuture, Concurrent::Promise ->
+# ConcurrentPromise, Concurrent::Atom -> ConcurrentAtom, Concurrent::Map -> ConcurrentMap,
+# Concurrent::Event -> ConcurrentEvent; AtomicFixnum, AtomicBoolean, AtomicReference, CountDownLatch,
+# Semaphore, FixedThreadPool, IVar, ScheduledTask keep their names.
+#
+# What a block is in Sake decides the shapes:
+# - A block can be kept only by Thread.new. So everything that "runs a block later" is a thread that
+#   waits first: ScheduledTask.execute(delay) { } sleeps then runs; ConcurrentPromise.then(p) { } is a
+#   thread that waits for p; FixedThreadPool.post(pool) { } is a thread that waits for one of the pool's
+#   permits (a Semaphore of n) before running, so at most n posted blocks run at once. There is no
+#   queue of blocks: a Queue cannot hold a block.
+# - Delay.new { } (a block kept until the first value) cannot be written; add_observer { } neither.
+#
+# The gem's Obligation (value / wait / state / reason, shared by Future, Promise, IVar, ScheduledTask)
+# is the mixin Obligation here: each type declares the fields it reads (status, result, error: named
+# apart from the operations state, value, reason, since a field's reader would shadow the mixin's
+# operation of the same name) and sets them in initialize.
+#
+# Waiting is a Queue per waiter: `wait` registers a Queue under the lock and pops it (with the timeout);
+# `complete` pushes to every registered Queue. Lost wake-ups are impossible: registration and
+# completion are both under the lock.
+
+class ConcurrentRejectedExecutionError < StandardError
+end
+
+class ConcurrentMultipleAssignmentError < StandardError
+end
+
+# ---- Obligation: a value that arrives once ----
+
+module Obligation
+  # Blocks until the obligation is complete (or timeout seconds); gives the obligation.
+  def wait(o, timeout = nil)
+    q = nil
+    Mutex.synchronize(@lock) do
+      if @status == :pending || @status == :processing
+        q = Queue.new
+        Array.push(@waiters, q)
+      end
+    end
+    if q != nil
+      timeout == nil ? Queue.pop(q) : Queue.pop(q, timeout)
+    end
+    o
+  end
+
+  # The value, waiting for it; nil when rejected, or still incomplete after timeout seconds.
+  def value(o, timeout = nil)
+    wait(o, timeout)
+    Mutex.synchronize(@lock) { @status == :fulfilled ? @result : nil }
+  end
+
+  # The value, or raises the reason of a rejection.
+  def value!(o, timeout = nil)
+    wait(o, timeout)
+    r = Mutex.synchronize(@lock) { @status == :rejected ? @error : nil }
+    raise r if r != nil
+    Mutex.synchronize(@lock) { @status == :fulfilled ? @result : nil }
+  end
+
+  def state(o) = Mutex.synchronize(@lock) { @status }
+  def reason(o) = Mutex.synchronize(@lock) { @error }
+  def fulfilled?(o) = state(o) == :fulfilled
+  def rejected?(o) = state(o) == :rejected
+  def pending?(o) = state(o) == :pending
+  def processing?(o) = state(o) == :processing
+  def complete?(o) = fulfilled?(o) || rejected?(o)
+  def incomplete?(o) = !complete?(o)
+  def unscheduled?(o) = state(o) == :unscheduled
+
+  # Settles the obligation once; false when it was already settled. Wakes every waiter.
+  def complete(o, new_state, v, r)
+    done = false
+    Mutex.synchronize(@lock) do
+      if @status != :fulfilled && @status != :rejected
+        @status = new_state
+        @result = v
+        @error = r
+        Array.each(@waiters) { |q| Queue.push(q, true) }
+        Array.clear(@waiters)
+        done = true
+      end
+    end
+    done
+  end
+
+  def fulfill(o, v) = complete(o, :fulfilled, v, nil)
+  def reject(o, r) = complete(o, :rejected, nil, r)
+
+  # Runs the block on the obligation's behalf: its value fulfills, its exception rejects.
+  def settle(o)
+    begin
+      v = yield
+      fulfill(o, v)
+    rescue => e
+      reject(o, e)
+    end
+    o
+  end
+end
+
+# ---- Future: a block run on its own thread ----
+
+class ConcurrentFuture
+  private attr_accessor lock, status, result, error, waiters
+  include Obligation
+
+  def initialize(f)
+    @lock = Mutex.new
+    @status = :pending
+    @result = nil
+    @error = nil
+    @waiters = Array[]
+  end
+
+  # Concurrent::Future.execute { }: starts the block now; value/wait on the result.
+  def execute
+    f = ConcurrentFuture.new
+    Thread.new do
+      Mutex.synchronize(ConcurrentFuture.lock(f)) { ConcurrentFuture.set_status(f, :processing) }
+      ConcurrentFuture.settle(f) { yield }
+      nil
+    end
+    f
+  end
+end
+
+# ---- Promise: a Future with then / rescue chains ----
+
+class ConcurrentPromise
+  private attr_accessor lock, status, result, error, waiters
+  include Obligation
+
+  def initialize(p)
+    @lock = Mutex.new
+    @status = :pending
+    @result = nil
+    @error = nil
+    @waiters = Array[]
+  end
+
+  def execute
+    p = ConcurrentPromise.new
+    Thread.new do
+      ConcurrentPromise.settle(p) { yield }
+      nil
+    end
+    p
+  end
+
+  # Concurrent::Promise.fulfill(v) / reject(reason), the class methods, are fulfilled(v) / rejected(r):
+  # an already settled promise. (The names fulfill / reject are Obligation's settle-this-one.)
+  def fulfilled(v)
+    p = ConcurrentPromise.new
+    fulfill(p, v)
+    p
+  end
+
+  def rejected(r)
+    p = ConcurrentPromise.new
+    reject(p, r)
+    p
+  end
+
+  # p.then { |v| }: a child promise whose thread waits for p, then runs the block on p's value. A
+  # rejection passes through (the block does not run). The block is kept by the child's thread, not
+  # by the promise: this is the one place Sake keeps a block.
+  def then(p)
+    child = ConcurrentPromise.new
+    Thread.new do
+      wait(p)
+      r = reason(p)
+      if r == nil
+        v = value(p)
+        settle(child) { yield(v) }
+      else
+        reject(child, r)
+      end
+      nil
+    end
+    child
+  end
+
+  # p.rescue { |reason| }: a child fulfilled with the block's value when p is rejected, or with p's
+  # value when it is fulfilled. Ruby's aliases on_error and catch are the same operation.
+  def rescue(p)
+    child = ConcurrentPromise.new
+    Thread.new do
+      wait(p)
+      r = reason(p)
+      if r == nil
+        fulfill(child, value(p))
+      else
+        settle(child) { yield(r) }
+      end
+      nil
+    end
+    child
+  end
+
+  def on_error(p, &b) = ConcurrentPromise.rescue(p, &b)
+  def catch(p, &b) = ConcurrentPromise.rescue(p, &b)
+
+  # Concurrent::Promise.zip(*promises): a promise of the Array of their values, rejected with the
+  # first rejection.
+  def zip(*promises)
+    child = ConcurrentPromise.new
+    Thread.new do
+      failed = nil
+      vs = Array.map(promises) do |q|
+        ConcurrentPromise.wait(q)
+        r = ConcurrentPromise.reason(q)
+        failed = r if r != nil && failed == nil
+        ConcurrentPromise.value(q)
+      end
+      failed == nil ? ConcurrentPromise.fulfill(child, vs) : ConcurrentPromise.reject(child, failed)
+      nil
+    end
+    child
+  end
+end
+
+# ---- IVar: set once from outside ----
+
+class IVar
+  private attr_accessor lock, status, result, error, waiters
+  include Obligation
+
+  def initialize(iv)
+    @lock = Mutex.new
+    @status = :pending
+    @result = nil
+    @error = nil
+    @waiters = Array[]
+  end
+
+  # set(iv, v): fulfills; a second set raises ConcurrentMultipleAssignmentError, as the gem.
+  def set(iv, v)
+    raise ConcurrentMultipleAssignmentError, "Concurrent::MultipleAssignmentError" unless fulfill(iv, v)
+    iv
+  end
+
+  def try_set(iv, v) = fulfill(iv, v)
+
+  def fail(iv, r)
+    raise ConcurrentMultipleAssignmentError, "Concurrent::MultipleAssignmentError" unless reject(iv, r)
+    iv
+  end
+end
+
+# ---- ScheduledTask: a block run after a delay ----
+
+class ScheduledTask
+  private attr_accessor lock, status, result, error, waiters
+  include Obligation
+
+  def initialize(t)
+    @lock = Mutex.new
+    @status = :pending
+    @result = nil
+    @error = nil
+    @waiters = Array[]
+  end
+
+  # ScheduledTask.execute(delay) { }: sleeps delay seconds on its thread, then runs the block unless
+  # the task was cancelled meanwhile.
+  def execute(delay)
+    t = ScheduledTask.new
+    Thread.new do
+      sleep delay
+      go = Mutex.synchronize(ScheduledTask.lock(t)) do
+        if ScheduledTask.status(t) == :pending
+          ScheduledTask.set_status(t, :processing)
+          true
+        else
+          false
+        end
+      end
+      ScheduledTask.settle(t) { yield } if go
+      nil
+    end
+    t
+  end
+
+  # cancel(t): true when the task had not started; it then never runs.
+  def cancel(t)
+    Mutex.synchronize(@lock) do
+      if @status == :pending
+        @status = :cancelled
+        Array.each(@waiters) { |q| Queue.push(q, true) }
+        Array.clear(@waiters)
+        true
+      else
+        false
+      end
+    end
+  end
+
+  def cancelled?(t) = state(t) == :cancelled
+end
+
+# ---- Atom, AtomicFixnum, AtomicBoolean, AtomicReference ----
+
+class ConcurrentAtom
+  attr_reader value
+  private attr_reader lock
+
+  def initialize(a)
+    @lock = Mutex.new
+  end
+
+  # swap(a) { |old| new }: the block's value replaces the current one; gives the new value. The gem
+  # retries the block on a lost race; here the block runs under the lock, so once.
+  def swap(a)
+    Mutex.synchronize(@lock) do
+      @value = yield(@value)
+    end
+  end
+
+  def compare_and_set(a, old, new)
+    Mutex.synchronize(@lock) do
+      if @value == old
+        @value = new
+        true
+      else
+        false
+      end
+    end
+  end
+
+  def reset(a, new) = Mutex.synchronize(@lock) { @value = new }
+end
+
+class AtomicFixnum
+  attr_reader value
+  private attr_reader lock
+
+  def initialize(n)
+    @value = 0 if @value == nil
+    @lock = Mutex.new
+  end
+
+  def set_value(n, v) = Mutex.synchronize(@lock) { @value = v }
+  def increment(n, delta = 1) = Mutex.synchronize(@lock) { @value += delta }
+  def decrement(n, delta = 1) = Mutex.synchronize(@lock) { @value -= delta }
+  def up(n, delta = 1) = increment(n, delta)
+  def down(n, delta = 1) = decrement(n, delta)
+
+  def compare_and_set(n, expect, update)
+    Mutex.synchronize(@lock) do
+      if @value == expect
+        @value = update
+        true
+      else
+        false
+      end
+    end
+  end
+
+  def update(n) = Mutex.synchronize(@lock) { @value = yield(@value) }
+end
+
+class AtomicBoolean
+  attr_reader value
+  private attr_reader lock
+
+  def initialize(b)
+    @value = false if @value == nil
+    @lock = Mutex.new
+  end
+
+  def set_value(b, v) = Mutex.synchronize(@lock) { @value = v ? true : false }
+  def true?(b) = Mutex.synchronize(@lock) { @value }
+  def false?(b) = !true?(b)
+
+  # make_true: true when the value changed.
+  def make_true(b)
+    Mutex.synchronize(@lock) do
+      was = @value
+      @value = true
+      !was
+    end
+  end
+
+  def make_false(b)
+    Mutex.synchronize(@lock) do
+      was = @value
+      @value = false
+      was
+    end
+  end
+end
+
+class AtomicReference
+  attr_reader value
+  private attr_reader lock
+
+  def initialize(r)
+    @lock = Mutex.new
+  end
+
+  def get(r) = Mutex.synchronize(@lock) { @value }
+  def set(r, v) = Mutex.synchronize(@lock) { @value = v }
+  def set_value(r, v) = set(r, v)
+
+  def get_and_set(r, v)
+    Mutex.synchronize(@lock) do
+      old = @value
+      @value = v
+      old
+    end
+  end
+
+  # The gem compares by identity (equal?); here by ==, the same for Symbols, Integers and other values
+  # without identity in Sake.
+  def compare_and_set(r, old, new)
+    Mutex.synchronize(@lock) do
+      if @value == old
+        @value = new
+        true
+      else
+        false
+      end
+    end
+  end
+
+  def update(r) = Mutex.synchronize(@lock) { @value = yield(@value) }
+end
+
+# ---- Map: a Hash under a lock ----
+
+class ConcurrentMap
+  private attr_reader h, lock
+  include Indexable
+
+  def initialize(m)
+    @h = Hash[]
+    @lock = Mutex.new
+  end
+
+  def [](m, k) = Mutex.synchronize(@lock) { @h[k] }
+  def []=(m, k, v)
+    Mutex.synchronize(@lock) { @h[k] = v }
+  end
+  def get(m, k) = m[k]
+  def put(m, k, v)
+    m[k] = v
+  end
+
+  # put_if_absent(m, k, v): the existing value, or nil when v was stored.
+  def put_if_absent(m, k, v)
+    Mutex.synchronize(@lock) do
+      if Hash.key?(@h, k)
+        @h[k]
+      else
+        @h[k] = v
+        nil
+      end
+    end
+  end
+
+  # compute_if_absent(m, k) { }: the value, computing and storing the block's value when absent.
+  def compute_if_absent(m, k)
+    Mutex.synchronize(@lock) do
+      if Hash.key?(@h, k)
+        @h[k]
+      else
+        @h[k] = yield
+      end
+    end
+  end
+
+  # compute_if_present(m, k) { |v| }: replaces the value when present; nil otherwise.
+  def compute_if_present(m, k)
+    Mutex.synchronize(@lock) do
+      Hash.key?(@h, k) ? (@h[k] = yield(@h[k])) : nil
+    end
+  end
+
+  # compute(m, k) { |old| }: old is nil when absent; the block's value is stored.
+  def compute(m, k) = Mutex.synchronize(@lock) { @h[k] = yield(@h[k]) }
+
+  # merge_pair(m, k, v) { |old| }: stores v when absent, else the block's value of the old one.
+  def merge_pair(m, k, v)
+    Mutex.synchronize(@lock) do
+      Hash.key?(@h, k) ? (@h[k] = yield(@h[k])) : (@h[k] = v)
+    end
+  end
+
+  # fetch(m, k), fetch(m, k, default), fetch(m, k) { |k| }: as Ruby's Hash#fetch (KeyError when missing).
+  def fetch(m, k, *default)
+    Mutex.synchronize(@lock) do
+      if Hash.key?(@h, k)
+        @h[k]
+      elsif block_given?
+        yield(k)
+      elsif !Array.empty?(default)
+        Array.fetch(default, 0)
+      else
+        raise KeyError, "key not found"
+      end
+    end
+  end
+
+  # fetch_or_store(m, k, default) / { |k| }: fetch, storing the default when missing.
+  def fetch_or_store(m, k, *default)
+    Mutex.synchronize(@lock) do
+      if Hash.key?(@h, k)
+        @h[k]
+      elsif block_given?
+        @h[k] = yield(k)
+      elsif !Array.empty?(default)
+        @h[k] = Array.fetch(default, 0)
+      else
+        raise KeyError, "key not found"
+      end
+    end
+  end
+
+  def get_and_set(m, k, v)
+    Mutex.synchronize(@lock) do
+      old = @h[k]
+      @h[k] = v
+      old
+    end
+  end
+
+  def replace_if_exists(m, k, v)
+    Mutex.synchronize(@lock) do
+      if Hash.key?(@h, k)
+        old = @h[k]
+        @h[k] = v
+        old
+      else
+        nil
+      end
+    end
+  end
+
+  def replace_pair(m, k, old, new)
+    Mutex.synchronize(@lock) do
+      if Hash.key?(@h, k) && @h[k] == old
+        @h[k] = new
+        true
+      else
+        false
+      end
+    end
+  end
+
+  def delete(m, k) = Mutex.synchronize(@lock) { Hash.delete(@h, k) }
+
+  def delete_pair(m, k, v)
+    Mutex.synchronize(@lock) do
+      if Hash.key?(@h, k) && @h[k] == v
+        Hash.delete(@h, k)
+        true
+      else
+        false
+      end
+    end
+  end
+
+  def key?(m, k) = Mutex.synchronize(@lock) { Hash.key?(@h, k) }
+  def key(m, v) = Mutex.synchronize(@lock) { Hash.key(@h, v) }
+  def value?(m, v) = Mutex.synchronize(@lock) { Hash.value?(@h, v) }
+  def keys(m) = Mutex.synchronize(@lock) { Hash.keys(@h) }
+  def values(m) = Mutex.synchronize(@lock) { Hash.values(@h) }
+  def size(m) = Mutex.synchronize(@lock) { Hash.size(@h) }
+  def empty?(m) = Mutex.synchronize(@lock) { Hash.empty?(@h) }
+  def clear(m)
+    Mutex.synchronize(@lock) { Hash.clear(@h) }
+    m
+  end
+
+  # each_pair(m) { |k, v| }: over a snapshot, so the block may change the map.
+  def each_pair(m)
+    pairs = Mutex.synchronize(@lock) { Hash.to_a(@h) }
+    Array.each(pairs) { |k, v| yield(k, v) }
+    m
+  end
+
+  def each(m, &b) = each_pair(m, &b)
+  def each_key(m) = Array.each(keys(m)) { |k| yield(k) }
+  def each_value(m) = Array.each(values(m)) { |v| yield(v) }
+  def to_a(m) = Mutex.synchronize(@lock) { Hash.to_a(@h) }
+end
+
+# ---- CountDownLatch ----
+
+class CountDownLatch
+  attr_reader count
+  private attr_reader lock, waiters
+
+  def initialize(l)
+    @count = 1 if @count == nil
+    @lock = Mutex.new
+    @waiters = Array[]
+  end
+
+  def count_down(l)
+    Mutex.synchronize(@lock) do
+      @count -= 1 if @count > 0
+      if @count == 0
+        Array.each(@waiters) { |q| Queue.push(q, true) }
+        Array.clear(@waiters)
+      end
+    end
+    nil
+  end
+
+  # wait(l, timeout = nil): true once the count reached 0, false when the timeout passed first.
+  def wait(l, timeout = nil)
+    q = nil
+    Mutex.synchronize(@lock) do
+      if @count > 0
+        q = Queue.new
+        Array.push(@waiters, q)
+      end
+    end
+    return true if q == nil
+    if timeout == nil
+      Queue.pop(q)
+      return true
+    end
+    Queue.pop(q, timeout) == true
+  end
+end
+
+# ---- Semaphore ----
+
+class Semaphore
+  private attr_accessor available, lock, waiters
+
+  def initialize(s)
+    @available => Integer
+    raise ArgumentError, "count must be an non-negative integer" if @available < 0
+    @lock = Mutex.new
+    @waiters = Array[]
+  end
+
+  # Hands permits to waiters in arrival order while they fit. Called with the lock held.
+  def hand_over(s)
+    while !Array.empty?(@waiters)
+      q, n = Array.fetch(@waiters, 0)
+      break if n > @available
+      Array.shift(@waiters)
+      @available -= n
+      Queue.push(q, true)
+    end
+    nil
+  end
+
+  def acquire(s, n = 1)
+    raise ArgumentError, "permits must be an integer greater than or equal to zero" if n < 0
+    q = nil
+    Mutex.synchronize(@lock) do
+      if Array.empty?(@waiters) && n <= @available
+        @available -= n
+      else
+        q = Queue.new
+        Array.push(@waiters, [q, n])
+      end
+    end
+    Queue.pop(q) if q != nil
+    nil
+  end
+
+  # try_acquire(s, n = 1, timeout = nil): without a timeout, takes the permits only if free now.
+  def try_acquire(s, n = 1, timeout = nil)
+    q = nil
+    got = false
+    Mutex.synchronize(@lock) do
+      if Array.empty?(@waiters) && n <= @available
+        @available -= n
+        got = true
+      elsif timeout != nil
+        q = Queue.new
+        Array.push(@waiters, [q, n])
+      end
+    end
+    return got if q == nil || timeout == nil
+    return true if Queue.pop(q, timeout) != nil
+    # Timed out: withdraw, unless a release handed the permits over meanwhile.
+    Mutex.synchronize(@lock) do
+      i = Array.find_index(@waiters) { |w| w[0] == q }
+      if i == nil
+        Queue.pop(q)
+        true
+      else
+        Array.delete_at(@waiters, i)
+        false
+      end
+    end
+  end
+
+  def release(s, n = 1)
+    Mutex.synchronize(@lock) do
+      @available += n
+      hand_over(s)
+    end
+    nil
+  end
+
+  def available_permits(s) = Mutex.synchronize(@lock) { @available }
+
+  def drain_permits(s)
+    Mutex.synchronize(@lock) do
+      n = @available
+      @available = 0
+      n
+    end
+  end
+
+  def reduce_permits(s, n)
+    Mutex.synchronize(@lock) { @available -= n }
+    nil
+  end
+
+  # Threads waiting for permits (not in the gem; FixedThreadPool.queue_length uses it).
+  def waiting(s) = Mutex.synchronize(@lock) { Array.size(@waiters) }
+end
+
+# ---- Event ----
+
+class ConcurrentEvent
+  private attr_accessor flag, lock, waiters
+
+  def initialize(e)
+    @flag = false
+    @lock = Mutex.new
+    @waiters = Array[]
+  end
+
+  def set?(e) = Mutex.synchronize(@lock) { @flag }
+
+  # set(e): true; wakes every waiter.
+  def set(e)
+    Mutex.synchronize(@lock) do
+      @flag = true
+      Array.each(@waiters) { |q| Queue.push(q, true) }
+      Array.clear(@waiters)
+    end
+    true
+  end
+
+  def try?(e)
+    Mutex.synchronize(@lock) do
+      if @flag
+        false
+      else
+        @flag = true
+        Array.each(@waiters) { |q| Queue.push(q, true) }
+        Array.clear(@waiters)
+        true
+      end
+    end
+  end
+
+  def reset(e)
+    Mutex.synchronize(@lock) { @flag = false }
+    true
+  end
+
+  # wait(e, timeout = nil): true when set, false when the timeout passed first.
+  def wait(e, timeout = nil)
+    q = nil
+    Mutex.synchronize(@lock) do
+      unless @flag
+        q = Queue.new
+        Array.push(@waiters, q)
+      end
+    end
+    return true if q == nil
+    if timeout == nil
+      Queue.pop(q)
+      return true
+    end
+    Queue.pop(q, timeout) == true
+  end
+end
+
+# ---- FixedThreadPool ----
+
+# post(pool) { } starts a thread for the block at once; the thread takes one of max_length permits
+# before running the block, so at most max_length posted blocks run at a time, and the rest wait in
+# the Semaphore's queue in the order their threads reached it (the gem's queue is FIFO in post order;
+# threads start in no fixed order, so two blocks posted back to back may swap).
+class FixedThreadPool
+  attr_reader max_length
+  private attr_accessor permits, lock, threads, running, completed
+
+  def initialize(pool)
+    @max_length => Integer
+    raise ArgumentError, "max_length must be greater than zero" if @max_length < 1
+    @permits = Semaphore.new(@max_length)
+    @lock = Mutex.new
+    @threads = Array[]
+    @running = true
+    @completed = 0
+  end
+
+  # post(pool) { }: true; raises ConcurrentRejectedExecutionError after shutdown (the gem's :abort
+  # fallback policy). An exception in the block ends that task silently and uncounted, as in the gem.
+  # The block sees the caller's variables as they are when it runs (notes/concurrent_ruby_bug_*.sake):
+  # pass a loop variable through a function parameter.
+  def post(pool)
+    sem = @permits
+    lock = @lock
+    t = Mutex.synchronize(lock) do
+      raise ConcurrentRejectedExecutionError, "Concurrent::RejectedExecutionError" unless @running
+      Thread.new do
+        Semaphore.acquire(sem)
+        begin
+          yield
+          Mutex.synchronize(lock) { @completed += 1 }
+        rescue => e
+          nil
+        ensure
+          Semaphore.release(sem)
+        end
+        nil
+      end
+    end
+    Mutex.synchronize(lock) { Array.push(@threads, t) }
+    true
+  end
+
+  def <<(pool, &b) = post(pool, &b)
+
+  def running?(pool) = Mutex.synchronize(@lock) { @running }
+  # As the gem: shutdown? once no task is left running; shuttingdown? while some still are.
+  def shutdown?(pool) = !running?(pool) && length(pool) == 0
+  def shuttingdown?(pool) = !running?(pool) && length(pool) > 0
+
+  # shutdown(pool): no more posts; tasks already posted still run.
+  def shutdown(pool)
+    Mutex.synchronize(@lock) { @running = false }
+    nil
+  end
+
+  # kill(pool): shutdown and stop every task thread now.
+  def kill(pool)
+    shutdown(pool)
+    Array.each(Mutex.synchronize(@lock) { Array.dup(@threads) }) { |t| Thread.kill(t) }
+    nil
+  end
+
+  # wait_for_termination(pool, timeout = nil): true when every posted task finished (within timeout).
+  def wait_for_termination(pool, timeout = nil)
+    deadline = timeout == nil ? nil : Process.clock_gettime(Process.CLOCK_MONOTONIC) + timeout
+    ts = Mutex.synchronize(@lock) { Array.dup(@threads) }
+    Array.each(ts) do |t|
+      if deadline == nil
+        Thread.join(t)
+      else
+        left = deadline - Process.clock_gettime(Process.CLOCK_MONOTONIC)
+        return false if left <= 0
+        return false if Thread.join(t, left) == nil
+      end
+    end
+    true
+  end
+
+  def completed_task_count(pool) = Mutex.synchronize(@lock) { @completed }
+  def scheduled_task_count(pool) = Mutex.synchronize(@lock) { Array.size(@threads) }
+  def length(pool) = Array.count(Mutex.synchronize(@lock) { Array.dup(@threads) }) { |t| Thread.alive?(t) }
+  def queue_length(pool) = Semaphore.waiting(@permits)
+end
