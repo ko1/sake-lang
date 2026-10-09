@@ -1,0 +1,70 @@
+require "mutex_m"
+
+class Counter
+  attr_accessor n
+  private attr_accessor mu_mutex
+  include Mutex_m
+  def initialize(c)
+    @n = 0
+    @mu_mutex = Monitor.new
+  end
+  def incr(c, me) = mu_synchronize(c, me) { @n += 1 }
+end
+
+c = Counter.new
+p Counter.mu_locked?(c)
+Counter.mu_lock(c, :main)
+p Counter.mu_locked?(c)
+p Counter.mu_try_lock(c, :main)        # held: false, as Ruby's Mutex
+begin
+  Counter.mu_lock(c, :main)
+rescue ThreadError => e
+  puts "ThreadError: #{Exception.message(e)}"
+end
+Counter.mu_unlock(c, :main)
+p Counter.mu_locked?(c)
+begin
+  Counter.mu_unlock(c, :main)
+rescue ThreadError => e
+  puts "ThreadError: #{Exception.message(e)}"
+end
+p Counter.mu_try_lock(c, :main)
+p Counter.locked?(c)
+Counter.unlock(c, :main)
+
+# synchronize: value, release on exception
+p Counter.mu_synchronize(c, :main) { Counter.mu_locked?(c) ? :inside : :outside }
+begin
+  Counter.synchronize(c, :main) { raise "boom" }
+rescue RuntimeError => e
+  puts Exception.message(e)
+end
+p Counter.mu_locked?(c)
+
+# threads
+ts = Array.map(Range.to_a(1..4)) do |i|
+  Thread.new { Integer.times(250) { Counter.incr(c, i) } }
+end
+Array.each(ts) { |t| Thread.join(t) }
+p Counter.n(c)
+
+# try_lock from another thread while held; unlock by a non-owner
+held = Queue.new
+release = Queue.new
+t = Thread.new do
+  Counter.lock(c, :t)
+  Queue.push(held, true)
+  Queue.pop(release)
+  Counter.unlock(c, :t)
+  :done
+end
+Queue.pop(held)
+p Counter.try_lock(c, :main)
+begin
+  Counter.mu_unlock(c, :main)
+rescue ThreadError => e
+  puts "ThreadError: #{Exception.message(e)}"
+end
+Queue.push(release, true)
+p Thread.value(t)
+p Counter.mu_locked?(c)

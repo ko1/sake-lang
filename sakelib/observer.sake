@@ -1,0 +1,73 @@
+# observer: Ruby's Observable, as two modules.
+#
+#   Observable  is included by the subject type. Its functions keep the observer list in two fields that
+#               the including type declares (Ruby keeps them in @observer_peers / @observer_state too):
+#                 private attr_accessor observer_peers, observer_state
+#               They may be left nil by initialize: the functions create the list on first use.
+#   Observer    is included by every observer type, which defines `update(obs, *args)`.
+#               `notify_observers` calls `Observer.update(obs, *args)`, which dispatches on the observer's type
+#               (spec §5.6). Ruby calls a method named at add_observer time (default :update); Sake has no
+#               dispatch by name, so the function is always `update`.
+#
+#   class Ticker
+#     attr_reader name
+#     private attr_accessor observer_peers, observer_state
+#     include Observable
+#     def initialize(t) = nil
+#     def tick(t, price)
+#       changed(t)
+#       notify_observers(t, Time.now, price)
+#     end
+#   end
+#   class Warner
+#     attr_reader limit
+#     include Observer
+#     def update(w, *args) = puts("over #{@limit}") if args[1] > @limit
+#   end
+#   t = Ticker.new("ACME")
+#   Ticker.add_observer(t, Warner.new(100))
+#
+# Observers are found by `==` (a Struct value's fields), where Ruby uses identity: adding an observer equal
+# to one already added is a no-op, as in Ruby, and `delete_observer` removes the first equal one.
+
+module Observer
+  def update(obs, *args) = raise(NotImplementedError)
+end
+
+module Observable
+  # The list, created on first use (Ruby's @observer_peers).
+  def observer_peers_list(o) = @observer_peers || (@observer_peers = Array[])
+
+  # Adds obs unless an equal observer is already there. Ruby's `func` argument (the method to call) has no
+  # counterpart: the observer's type defines `update`.
+  def add_observer(o, obs)
+    peers = observer_peers_list(o)
+    Array.push(peers, obs) unless Array.include?(peers, obs)
+    peers
+  end
+
+  def delete_observer(o, obs) = Array.delete(observer_peers_list(o), obs)
+
+  def delete_observers(o)
+    Array.clear(observer_peers_list(o))
+    o
+  end
+
+  def count_observers(o) = Array.size(observer_peers_list(o))
+
+  def changed(o, state = true)
+    @observer_state = state
+    state
+  end
+
+  def changed?(o) = @observer_state ? true : false
+
+  # Calls `update(obs, *args)` on each observer, in the order added, when `changed` was set; then clears it.
+  def notify_observers(o, *args)
+    if changed?(o)
+      Array.each(observer_peers_list(o)) { |obs| Observer.update(obs, *args) }
+      @observer_state = false
+    end
+    nil
+  end
+end

@@ -1,0 +1,165 @@
+require "monitor"
+
+# Deterministic: prints counts and totals, never timing. `me` names the thread: Sake has no Thread.current.
+
+# 1. enter / exit / try_enter / mon_locked? / mon_owned?, reentrant under the same identity
+m = Monitor.new
+p Monitor.mon_locked?(m)
+Monitor.enter(m, :main)
+p Monitor.mon_locked?(m)
+p Monitor.mon_owned?(m, :main)
+p Monitor.mon_owned?(m, :other)
+p Monitor.try_enter(m, :main)        # re-entry: true
+Monitor.exit(m, :main)
+p Monitor.mon_locked?(m)             # still held once
+Monitor.exit(m, :main)
+p Monitor.mon_locked?(m)
+p Monitor.try_enter(m, :main)
+Monitor.exit(m, :main)
+
+# exit without enter
+begin
+  Monitor.exit(m, :main)
+rescue ThreadError => e
+  puts "ThreadError: #{Exception.message(e)}"
+end
+
+# nested synchronize, and the value of the block
+v = Monitor.synchronize(m, :main) do
+  Monitor.synchronize(m, :main) { Monitor.mon_locked?(m) ? 10 : 0 } + 1
+end
+p v
+p Monitor.mon_locked?(m)
+
+# an exception inside synchronize releases the monitor
+begin
+  Monitor.synchronize(m, :main) { raise "boom" }
+rescue RuntimeError => e
+  puts Exception.message(e)
+end
+p Monitor.mon_locked?(m)
+
+# 2. a counter shared by threads
+def count_up(m, threads, rounds)
+  counter = 0
+  ts = Array.map(Range.to_a(1..threads)) do |i|
+    Thread.new do
+      Integer.times(rounds) { Monitor.synchronize(m, i) { counter += 1 } }
+    end
+  end
+  Array.each(ts) { |t| Thread.join(t) }
+  counter
+end
+p count_up(Monitor.new, 4, 500)
+
+# 3. try_enter from another thread while it is held
+held = Queue.new
+release = Queue.new
+t = Thread.new do
+  Monitor.synchronize(m, :t) do
+    Queue.push(held, true)
+    Queue.pop(release)
+  end
+  :done
+end
+Queue.pop(held)
+p Monitor.try_enter(m, :main)
+p Monitor.mon_locked?(m)
+p Monitor.mon_owned?(m, :main)
+Queue.push(release, true)
+p Thread.value(t)
+p Monitor.try_enter(m, :main)
+Monitor.exit(m, :main)
+
+# 4. condition variables: a bounded buffer
+def bounded_buffer(n, capacity)
+  m = Monitor.new
+  not_full = Monitor.new_cond(m)
+  not_empty = Monitor.new_cond(m)
+  buf = Integer[]
+  consumer = Thread.new do
+    total = 0
+    Integer.times(n) do
+      Monitor.synchronize(m, :consumer) do
+        MonitorCond.wait_while(not_empty, :consumer) { Array.empty?(buf) }
+        x = Array.shift(buf)
+        total += x if x != nil
+        MonitorCond.signal(not_full, :consumer)
+      end
+    end
+    total
+  end
+  Integer.times(n) do |i|
+    Monitor.synchronize(m, :producer) do
+      MonitorCond.wait_until(not_full, :producer) { Array.size(buf) < capacity }
+      Array.push(buf, i + 1)
+      MonitorCond.signal(not_empty, :producer)
+    end
+  end
+  Thread.value(consumer)
+end
+p bounded_buffer(20, 3)
+
+# broadcast wakes every waiter
+def broadcast_all(k)
+  m = Monitor.new
+  cond = Monitor.new_cond(m)
+  ready = false
+  waiting = 0
+  woken = 0
+  ts = Array.map(Range.to_a(1..k)) do |i|
+    Thread.new do
+      Monitor.synchronize(m, i) do
+        waiting += 1
+        MonitorCond.wait_until(cond, i) { ready }
+        woken += 1
+      end
+    end
+  end
+  # wait until every thread waits (each released the monitor in wait)
+  sleep 0.01 until Monitor.synchronize(m, :main) { waiting == k }
+  Monitor.synchronize(m, :main) do
+    ready = true
+    MonitorCond.broadcast(cond, :main)
+  end
+  Array.each(ts) { |t| Thread.join(t) }
+  woken
+end
+p broadcast_all(3)
+
+# signal without holding the monitor
+cond = Monitor.new_cond(m)
+begin
+  MonitorCond.signal(cond)
+rescue ThreadError => e
+  puts "ThreadError: #{Exception.message(e)}"
+end
+
+# 5. MonitorMixin
+class Account
+  attr_accessor balance
+  private attr_accessor mon_data
+  include MonitorMixin
+  def initialize(a)
+    @balance = 0
+    @mon_data = Monitor.new
+  end
+  def deposit(a, amount, me) = synchronize(a, me) { @balance += amount }
+end
+
+acct = Account.new
+ts = Array.map(Range.to_a(1..3)) do |i|
+  Thread.new { Integer.times(200) { Account.deposit(acct, i, i) } }
+end
+Array.each(ts) { |t| Thread.join(t) }
+p Account.balance(acct)
+p Account.mon_locked?(acct)
+Account.mon_enter(acct, :main)
+p Account.mon_locked?(acct)
+p Account.mon_owned?(acct, :main)
+p Account.mon_try_enter(acct, :main)
+Account.mon_exit(acct, :main)
+Account.mon_exit(acct, :main)
+p Account.mon_locked?(acct)
+c = Account.new_cond(acct)
+p Account.mon_synchronize(acct, :main) { MonitorCond.signal(c, :main); :ok }

@@ -1,0 +1,111 @@
+require "observer"
+
+# The subject: a ticker that notifies when the price changes.
+class Ticker
+  attr_reader name
+  attr_accessor price
+  private attr_accessor observer_peers, observer_state
+  include Observable
+  def initialize(t) = @price = 0
+
+  def set_price_and_notify(t, price)
+    if price != @price
+      @price = price
+      changed(t)
+    end
+    notify_observers(t, @name, price)
+  end
+end
+
+# Observer 1: prints a warning over a limit, counting the warnings.
+class Warner
+  attr_reader limit
+  attr_accessor count
+  include Observer
+  def initialize(w) = @count = 0
+  def update(w, *args)
+    # Ruby: `name, price = args; if price > limit`. Sake types the Array's elements as one union
+    # (nil | String | Integer), so the Integer is picked by a pattern test first.
+    price = args[1]
+    if price in Integer
+      if price > @limit
+        @count += 1
+        puts "Warner: #{args[0]} is #{price}, over #{@limit}"
+      end
+    end
+  end
+end
+
+# Observer 2: records every notification.
+class Recorder
+  attr_reader log
+  include Observer
+  def update(r, *args) = Array.push(@log, Array.join(Array.map(args) { |a| Kernel.to_s(a) }, "@"))
+end
+
+t = Ticker.new("ACME")
+warner = Warner.new(100)
+rec = Recorder.new(String[])
+p Ticker.count_observers(t)
+p Ticker.changed?(t)
+Ticker.add_observer(t, warner)
+Ticker.add_observer(t, rec)
+Ticker.add_observer(t, warner)        # equal observer: not added twice
+p Ticker.count_observers(t)
+
+Ticker.set_price_and_notify(t, 90)
+p Ticker.changed?(t)
+Ticker.set_price_and_notify(t, 120)
+Ticker.set_price_and_notify(t, 120)   # unchanged: observers not told
+Ticker.set_price_and_notify(t, 150)
+p Warner.count(warner)
+p Recorder.log(rec)
+
+# changed(false) suppresses the next notification; changed? reflects it
+Ticker.changed(t)
+p Ticker.changed?(t)
+Ticker.changed(t, false)
+p Ticker.changed?(t)
+Ticker.notify_observers(t, "ACME", 0)
+p Array.size(Recorder.log(rec))
+
+# notify with no arguments, and with a different number
+class Bell
+  attr_accessor rings
+  include Observer
+  def initialize(b) = @rings = 0
+  def update(b, *args)
+    @rings += 1
+    puts "Bell: #{Array.size(args)} args"
+  end
+end
+bell = Bell.new
+Ticker.add_observer(t, bell)
+Ticker.changed(t)
+Ticker.notify_observers(t)
+Ticker.changed(t)
+Ticker.notify_observers(t, "ACME", 1, 2, 3)
+p Bell.rings(bell)
+p Array.size(Recorder.log(rec))
+
+# delete: Sake finds the observer by ==, Ruby by identity; these cases agree
+Ticker.delete_observer(t, warner)
+p Ticker.count_observers(t)
+Ticker.delete_observer(t, Warner.new(5))             # not there
+p Ticker.count_observers(t)
+Ticker.set_price_and_notify(t, 500)
+p Warner.count(warner)
+Ticker.delete_observer(t, Bell.new)                  # rings differ: not equal, not removed
+p Ticker.count_observers(t)
+Ticker.delete_observers(t)
+p Ticker.count_observers(t)
+Ticker.set_price_and_notify(t, 1000)
+p Bell.rings(bell)
+
+# Two independent subjects do not share observers.
+t2 = Ticker.new("ZZZ")
+Ticker.add_observer(t2, Recorder.new(String[]))
+Ticker.add_observer(t, bell)
+p [Ticker.count_observers(t), Ticker.count_observers(t2)]
+Ticker.set_price_and_notify(t2, 7)
+p Bell.rings(bell)

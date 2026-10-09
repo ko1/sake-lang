@@ -1,0 +1,61 @@
+# mutex_m: Ruby's Mutex_m, a mixin that gives a type a lock.
+#
+# The including type declares `private attr_accessor mu_mutex`, sets `@mu_mutex = Monitor.new` in initialize
+# (Ruby's mu_initialize), and includes Mutex_m. Sake's Mutex has only `synchronize`, so the lock is a
+# Monitor from sakelib/monitor.sake, used without re-entry. As there, `me` is an optional thread identity
+# (Sake has no Thread.current): with it, locking twice raises ThreadError as Ruby's Mutex does; without it,
+# the second lock waits forever.
+#
+#   class Counter
+#     attr_accessor n
+#     private attr_accessor mu_mutex
+#     include Mutex_m
+#     def initialize(c)
+#       @n = 0
+#       @mu_mutex = Monitor.new
+#     end
+#     def incr(c) = mu_synchronize(c) { @n += 1 }
+#   end
+
+require "monitor"
+
+module Mutex_m
+  def mu_lock(x, me = nil)
+    raise ThreadError, "deadlock; recursive locking" if me != nil && Monitor.mon_owned?(@mu_mutex, me)
+    Monitor.enter(@mu_mutex, me)
+    x
+  end
+
+  def mu_unlock(x, me = nil)
+    raise ThreadError, "Attempt to unlock a mutex which is not locked" unless Monitor.mon_locked?(@mu_mutex)
+    if me != nil && !Monitor.mon_owned?(@mu_mutex, me)
+      raise ThreadError, "Attempt to unlock a mutex which is locked by another thread/fiber"
+    end
+    Monitor.exit(@mu_mutex, me)
+    x
+  end
+
+  # false when the lock is held, by anyone (Ruby's Mutex#try_lock by the holder is false too).
+  def mu_try_lock(x, me = nil)
+    return false if Monitor.mon_locked?(@mu_mutex)
+    Monitor.try_enter(@mu_mutex, me)
+  end
+
+  def mu_locked?(x) = Monitor.mon_locked?(@mu_mutex)
+
+  def mu_synchronize(x, me = nil)
+    mu_lock(x, me)
+    begin
+      yield
+    ensure
+      mu_unlock(x, me)
+    end
+  end
+
+  # Ruby's Mutex_m also gives the unprefixed names.
+  def lock(x, me = nil) = mu_lock(x, me)
+  def unlock(x, me = nil) = mu_unlock(x, me)
+  def try_lock(x, me = nil) = mu_try_lock(x, me)
+  def locked?(x) = mu_locked?(x)
+  def synchronize(x, me = nil, &b) = mu_synchronize(x, me, &b)
+end

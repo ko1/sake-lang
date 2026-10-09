@@ -1,0 +1,208 @@
+# monitor: Ruby's Monitor (a reentrant lock with condition variables) and MonitorMixin.
+#
+# Sake's Mutex has only `synchronize`, and Sake has no way to name the running thread (no Thread.current).
+# So a Monitor is built from a Mutex that guards its state and one Queue per waiting thread, which the
+# releasing thread pushes to (a hand-over: the lock stays taken and the waiter owns it when its pop
+# returns). Reentrancy needs to know who holds the lock: the caller may give an identity, `me`, any value
+# that is == only to itself across threads (a Symbol or Integer the program chooses per thread):
+#
+#   Monitor.synchronize(m) { ... }              # no identity: a nested enter from the same thread blocks
+#   Monitor.synchronize(m, :worker1) { ... }    # with one: re-entering under the same `me` is counted, as Ruby
+#
+# `mon_owned?(m, me)` needs the identity. Condition variables: `cond = Monitor.new_cond(m)`,
+# `MonitorCond.wait(cond, me = nil)`, `signal`, `broadcast`, `wait_while(cond, me = nil) { }`, `wait_until`.
+# `wait(timeout)` is missing: Queue.pop has no timeout.
+#
+# MonitorMixin: a type declares `private attr_accessor mon_data`, sets `@mon_data = Monitor.new` in
+# initialize (Ruby's mon_initialize), and includes MonitorMixin for mon_enter/mon_exit/mon_synchronize/
+# mon_try_enter/mon_locked?/mon_owned?/new_cond. Ruby's ThreadError is the exception type here too.
+
+class ThreadError < StandardError
+end
+
+class Monitor
+  # lock guards the other fields; waiters: [queue, me] in arrival order, each handed the lock by exit.
+  private attr_accessor lock, locked, owner, count, waiters
+
+  def initialize(m)
+    @lock = Mutex.new
+    @locked = false
+    @owner = nil
+    @count = 0
+    @waiters = Array[]
+  end
+
+  # Takes the monitor, waiting for it; with `me`, a re-entry by the holder is counted instead.
+  def enter(m, me = nil)
+    q = nil
+    Mutex.synchronize(@lock) do
+      if !@locked
+        @locked = true
+        @owner = me
+        @count = 1
+      elsif me != nil && @owner == me
+        @count += 1
+      else
+        q = Queue.new
+        Array.push(@waiters, [q, me])
+      end
+    end
+    Queue.pop(q) if q != nil   # exit set owner and count for us before the push
+    nil
+  end
+
+  def mon_enter(m, me = nil) = enter(m, me)
+
+  # Hands the lock to the first waiter, or frees it. Called with the state locked.
+  def hand_over(m)
+    if Array.empty?(@waiters)
+      @locked = false
+      @owner = nil
+      @count = 0
+    else
+      q, me = Array.fetch(@waiters, 0)   # fetch, not shift: shift's type includes nil
+      Array.shift(@waiters)
+      @owner = me
+      @count = 1
+      Queue.push(q, true)
+    end
+    nil
+  end
+
+  # Releases one level; ThreadError when the monitor is not held (or, with `me`, held by another).
+  def exit(m, me = nil)
+    Mutex.synchronize(@lock) do
+      check_owner(m, me)
+      @count -= 1
+      hand_over(m) if @count == 0
+    end
+    nil
+  end
+
+  def mon_exit(m, me = nil) = exit(m, me)
+
+  # Must be called with @lock held.
+  def check_owner(m, me)
+    raise ThreadError, "current fiber not owner" if !@locked || (me != nil && @owner != me)
+    nil
+  end
+
+  def mon_check_owner(m, me = nil) = Mutex.synchronize(@lock) { check_owner(m, me) }
+
+  # Takes the monitor if it is free (or held under the same `me`); false otherwise, without waiting.
+  def try_enter(m, me = nil)
+    Mutex.synchronize(@lock) do
+      if !@locked
+        @locked = true
+        @owner = me
+        @count = 1
+        true
+      elsif me != nil && @owner == me
+        @count += 1
+        true
+      else
+        false
+      end
+    end
+  end
+
+  def mon_try_enter(m, me = nil) = try_enter(m, me)
+  def try_mon_enter(m, me = nil) = try_enter(m, me)
+
+  def synchronize(m, me = nil)
+    enter(m, me)
+    begin
+      yield
+    ensure
+      exit(m, me)
+    end
+  end
+
+  def mon_synchronize(m, me = nil, &b) = synchronize(m, me, &b)
+
+  def mon_locked?(m) = Mutex.synchronize(@lock) { @locked }
+
+  # Whether `me` holds the monitor. Ruby asks for the current thread; Sake needs the identity.
+  def mon_owned?(m, me) = Mutex.synchronize(@lock) { @locked && @owner == me }
+
+  def new_cond(m) = MonitorCond.new(m)
+
+  # For MonitorCond.wait: gives the lock up entirely, returning the saved count; ThreadError if not held.
+  def release_for_wait(m, me)
+    Mutex.synchronize(@lock) do
+      check_owner(m, me)
+      saved = @count
+      @count = 0
+      hand_over(m)
+      saved
+    end
+  end
+
+  # For MonitorCond.wait: after re-entering, restores the count saved by release_for_wait.
+  def restore_count(m, saved)
+    Mutex.synchronize(@lock) { @count = saved }
+    nil
+  end
+end
+
+# Ruby's MonitorMixin::ConditionVariable: wait registers a Queue while the monitor is held, releases it,
+# and blocks on the Queue; signal and broadcast (called while holding the monitor) push to the Queues.
+class MonitorCond
+  private attr_reader monitor
+  private attr_accessor waiters
+  def initialize(c) = @waiters = Array[]
+
+  # Releases the monitor, waits for signal or broadcast, takes the monitor again (keeping its count).
+  def wait(c, me = nil)
+    q = Queue.new
+    Array.push(@waiters, q)
+    saved = Monitor.release_for_wait(@monitor, me)
+    Queue.pop(q)
+    Monitor.enter(@monitor, me)
+    Monitor.restore_count(@monitor, saved)
+    true
+  end
+
+  def wait_while(c, me = nil)
+    while yield
+      wait(c, me)
+    end
+    nil
+  end
+
+  def wait_until(c, me = nil)
+    until yield
+      wait(c, me)
+    end
+    nil
+  end
+
+  # Wakes one waiter, the longest waiting; nothing when none waits.
+  def signal(c, me = nil)
+    Monitor.mon_check_owner(@monitor, me)
+    q = Array.shift(@waiters)
+    Queue.push(q, true) if q != nil
+    nil
+  end
+
+  def broadcast(c, me = nil)
+    Monitor.mon_check_owner(@monitor, me)
+    Array.each(@waiters) { |q| Queue.push(q, true) }
+    Array.clear(@waiters)
+    nil
+  end
+end
+
+# Ruby's MonitorMixin: the including type keeps a Monitor in the field mon_data.
+module MonitorMixin
+  def mon_enter(x, me = nil) = Monitor.enter(@mon_data, me)
+  def mon_exit(x, me = nil) = Monitor.exit(@mon_data, me)
+  def mon_try_enter(x, me = nil) = Monitor.try_enter(@mon_data, me)
+  def try_mon_enter(x, me = nil) = Monitor.try_enter(@mon_data, me)
+  def mon_synchronize(x, me = nil, &b) = Monitor.synchronize(@mon_data, me, &b)
+  def synchronize(x, me = nil, &b) = Monitor.synchronize(@mon_data, me, &b)
+  def mon_locked?(x) = Monitor.mon_locked?(@mon_data)
+  def mon_owned?(x, me) = Monitor.mon_owned?(@mon_data, me)
+  def mon_check_owner(x, me = nil) = Monitor.mon_check_owner(@mon_data, me)
+  def new_cond(x) = Monitor.new_cond(@mon_data)
+end
