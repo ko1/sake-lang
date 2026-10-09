@@ -37,3 +37,24 @@
 - 移せないものの大半は「言語」側で、`method_missing`・`define_method`・特殊変数・Enumerator・第一級のブロックの 4 つに集約される。
   これは Sake が静的解析のために意図して捨てたもの（DESIGN.md「禁止するもの」）で、代わりの書き方（操作を 1 つずつ書く、once、Record）はある。
 - 「組み込み」側は TLS・UDP・端末の 3 つで、ライブラリを Sake で書いても届かない。使いたいなら処理系に足す。
+
+## gem のうち移さなかった部分（2026-10-09、24 本の移植から）
+
+移した gem の中で落とした機能と理由。各 gem の全文は `sakelib/notes/<gem>.md`。
+
+| 機能 | gem | 判定 | 理由 |
+|---|---|---|---|
+| 保持するブロック（`then(rescuer) {}`、Map の default block、pub/sub の購読、`rate_scale` の lambda、Liquid の drop/custom tag、Thor の `Thor::Group`/Actions） | concurrent-ruby, redis, ruby-progressbar, liquid, thor | 言語 | ブロックは第二級。走らせる側がブロックを持つ型（Future の Thread）か、キーワード・型で表す |
+| 反射（`constantize`、`send`/`method_missing` の登録、`Faker::Config.random` の `Random`、`define_method`） | active_support, liquid, faker, colorize | 言語 / 組み込み | 名前からの呼び出しは無い。`Random` 型は組み込みに無い（`srand` は全体） |
+| クラスを値で渡す API（`ask(q, Integer)`、`raise_error(Class)`、`expect(x).to be_a(T)`） | highline, rspec | 言語 | 型は値でない。型ごとの関数（`ask_integer`）か `x in T` |
+| `2 * money`、Money を Hash のキーに | money | 設計 | 左のオペランドが決める（`coerce` を Money に書けば通る。D4）。Hash のキーは組み込みの値 |
+| 端末（幅、raw mode、`echo = false`、`tty?` 以外） | ruby-progressbar, highline | 組み込みの不足 | `IO.winsize` 等は無い（TODO） |
+| RSA/EC の署名、TLS 以外の暗号 | jwt | 組み込み | OpenSSL の公開鍵。HMAC は digest.sake の上に書けた |
+| BigDecimal の算術、`Liquid error:` の埋め込み | liquid | 設計 | Float で代用。エラーは raise（埋め込みは gem の挙動） |
+| 生の HTML、表、脚注、IAL、smart quotes | kramdown | 予算 | 規則の数。GFM の fence は入れた |
+| keep-alive、chunked、CGI/FileHandler/認証/HTTPS | webrick | 予算 / 組み込み | 1 接続 1 スレッドで `Connection: close`。TLS のサーバ側は組み込みに無い |
+| Builder DSL、Lint、Session、Multipart、Static | rack | 予算 | app は `RackApp` を include する型、middleware は次の app を持つ型 |
+| ロケール、I18n の単位、`delimiter_pattern:` | active_support | 予算 | i18n.sake はあるが接続していない |
+| `endian_precedence`、数詞、範囲 | chronic | 予算 | |
+| ストリーム API（`Zip::InputStream`）、暗号化、permission | rubyzip | 予算 | 全体を読む/書く API のみ |
+| `let`/`before`/`subject`、合成 matcher、`change {}` | rspec | 言語 / 予算 | `let` は遅延評価のブロックを保持する |

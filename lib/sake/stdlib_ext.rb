@@ -281,7 +281,10 @@ module Sake
     STR_OR_RE = %w[String Regexp].freeze
 
     def install_regexp(reg)
-      reg.define("Regexp", :new, ["String"]) { |s| ruby_error("RegexpError") { Regexp.new(s) } }
+      reg.define("Regexp", :new, ["String"], optional: ["String"]) do |s, flags = ""| # flags: letters of "imx", as Ruby's
+        raise Fail.new("ArgumentError", "unknown regexp option: #{flags}") unless flags.match?(/\A[imx]*\z/)
+        ruby_error("RegexpError") { Regexp.new(s, flags) }
+      end
       reg.define("Regexp", :escape, ["String"]) { |s| Regexp.escape(s) }
       reg.define("Regexp", :source, ["Regexp"], &:source)
       reg.define("Regexp", :match, %w[Regexp String]) { |r, s| r.match(s) }
@@ -344,7 +347,11 @@ module Sake
       reg.define("Integer", :clamp, %w[Integer Integer Integer]) { |n, lo, hi| n.clamp(lo, hi) }
       reg.define("Integer", :between?, %w[Integer Integer Integer]) { |n, lo, hi| n.between?(lo, hi) }
       reg.define("Float", :truncate, ["Float"]) { |f| float_to_i(f, &:truncate) }
-      reg.define("Float", :divmod, %w[Float Float]) { |a, b| Tuple.new(a.divmod(b)) }
+      reg.define("Float", :divmod, %w[Float Any]) do |a, b| # the divisor may be an Integer, as Ruby's
+        raise Fail.new("TypeError", "argument 2 must be Float or Integer, got #{Values.describe(b)}") unless b.is_a?(Float) || b.is_a?(Integer)
+        raise Fail.new("ZeroDivisionError", "divided by 0") if b == 0 && b.is_a?(Integer)
+        Tuple.new(a.divmod(b))
+      end
       reg.define("Float", :finite?, ["Float"], &:finite?)
       reg.define("Float", :infinite?, ["Float"], &:infinite?)
       reg.define("Float", :clamp, %w[Float Float Float]) { |n, lo, hi| n.clamp(lo, hi) }
@@ -359,7 +366,7 @@ module Sake
       reg.define("String", :center, %w[String Integer], optional: ["String"]) { |s, n, pad = " "| s.center(n, pad) }
       reg.define("String", :tr, %w[String String String]) { |s, a, b| s.tr(a, b) }
       reg.define("String", :delete, %w[String String]) { |s, t| s.delete(t) }
-      reg.define("String", :squeeze, ["String"], &:squeeze)
+      reg.define("String", :squeeze, ["String"], optional: ["String"]) { |s, chars = nil| chars ? s.squeeze(chars) : s.squeeze }
       reg.define("String", :ord, ["String"]) { |s| ruby_error("ArgumentError") { s.ord } }
       %i[succ next].each { |m| reg.define("String", m, ["String"], &:succ) }
       reg.define("String", :bytes, ["String"], &:bytes)

@@ -120,9 +120,9 @@ module Sake
         args.each { out.write(Values.to_s(_1)) }
         nil
       end
-      reg.define("Kernel", :p, ["Any"]) do |v|
-        out.write("#{Values.inspect(v)}\n")
-        v
+      reg.define("Kernel", :p, [], rest: "Any") do |*vs| # Ruby: p(x) gives x, p(x, y) gives [x, y], p() gives nil
+        vs.each { out.write("#{Values.inspect(_1)}\n") }
+        vs.size == 1 ? vs[0] : (vs.empty? ? nil : Tuple.new(vs))
       end
     end
 
@@ -235,7 +235,7 @@ module Sake
       reg.define("Array", :first, ["Array"], optional: ["Integer"]) { |a, n = nil| n ? (nonneg(n) && a.to_a.first(n)) : a.first }
       reg.define("Array", :last, ["Array"], optional: ["Integer"]) { |a, n = nil| n ? (nonneg(n) && a.to_a.last(n)) : a.last }
       reg.define("Array", :pop, ["Array"], &:pop)
-      reg.define("Array", :shift, ["Array"], &:shift)
+      reg.define("Array", :shift, ["Array"], optional: ["Integer"]) { |a, n = nil| n ? (nonneg(n) && a.shift(n)) : a.shift }
       reg.define("Array", :unshift, ["Array"], rest: "Any") { |a, *xs| a.unshift(*check_elems(a, xs)) }
       reg.define("Array", :min, ["Array"]) { |a| sort_checked(a) { a.min } }
       reg.define("Array", :max, ["Array"]) { |a| sort_checked(a) { a.max } }

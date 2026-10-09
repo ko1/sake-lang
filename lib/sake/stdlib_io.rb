@@ -53,6 +53,7 @@ module Sake
       reg.define("IO", :flush, ["IO"]) { |f| io_error { f.io.flush } && f }
       reg.define("IO", :close, ["IO"]) { |f| f.io.close.then { nil } }
       reg.define("IO", :closed?, ["IO"]) { |f| f.io.closed? }
+      reg.define("IO", :tty?, ["IO"]) { |f| f.io.respond_to?(:tty?) && f.io.tty? }
       # File.open(path, mode = "r"[, perm]): an IO; with a block, the block's value, the file closed after it.
       reg.define("File", :open, ["String"], optional: %w[String Integer], block: :optional) do |path, mode = "r", perm = nil, &b|
         file = io_error { ruby_error("ArgumentError") { perm ? File.open(path, mode, perm) : File.open(path, mode) } }

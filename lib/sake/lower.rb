@@ -212,6 +212,7 @@ module Sake
       opts |= Regexp::IGNORECASE if n.ignore_case?
       opts |= Regexp::EXTENDED if n.extended?
       opts |= Regexp::MULTILINE if n.multi_line?
+      opts |= Regexp::NOENCODING if n.ascii_8bit? # /n: byte ranges above \x7f
       opts
     end
 

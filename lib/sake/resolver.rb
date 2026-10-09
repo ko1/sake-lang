@@ -1324,7 +1324,9 @@ module Sake
         return Operators::Call.new(ns, name)
       end
       unless @registry.namespace?(ns)
-        return error(node.receiver, "undefined type or module `#{ns}`", spell(ns, @registry.namespaces).map { "did you mean `#{_1}`?" })
+        hints = spell(ns, @registry.namespaces).map { "did you mean `#{_1}`?" }
+        hints = ["ARGV is an operation giving the Array of arguments, not a type: `Array.fetch(ARGV, 0)`, `Array.first(ARGV)`"] if ns == "ARGV"
+        return error(node.receiver, "undefined type or module `#{ns}`", hints)
       end
       found = lookup(ns, name)
       return mixin_call(node, ns, name, found, argc) if found.is_a?(UserFunction) && @modules.key?(ns) && !found.module_function
@@ -1418,7 +1420,8 @@ module Sake
       suggestions = node.name == :nil? ? ["#{node.receiver.slice} == nil"] : suggest(node)
       generic =
         if node.name.end_with?("=") # `x.pos = v`: a setter is an operation named set_pos
-          "Sake has no method calls on values; write the field with its type: `#{node.receiver.slice}.Type.#{node.name.to_s.delete_suffix("=")} = value`"
+          "Sake has no method calls on values; write the field with its type: `#{node.receiver.slice}.Type.#{node.name.to_s.delete_suffix("=")} = value`, " \
+          "or call a setter function: `Type.set_#{node.name.to_s.delete_suffix("=")}(#{node.receiver.slice}, value)`"
         else
           "Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"
         end

@@ -125,7 +125,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.sample(x)`
 - `Array.select(x) { }`
 - `Array.select!(x) { }`
-- `Array.shift(x)`
+- `Array.shift(x, [Integer])`
 - `Array.shuffle(x)`
 - `Array.shuffle!(x)`
 - `Array.size(x)`
@@ -280,7 +280,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Float.ceil(x)`
 - `Float.clamp(x, Float, Float)`
 - `Float.denominator(x)`
-- `Float.divmod(x, Float)`
+- `Float.divmod(x, Any)`
 - `Float.fdiv(x, Integer|Float|Rational)`
 - `Float.finite?(x)`
 - `Float.floor(x)`
@@ -413,6 +413,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `IO.stdin()`
 - `IO.stdout()`
 - `IO.truncate(x, Integer)`
+- `IO.tty?(x)`
 - `IO.write(x, String)`
 
 ## Integer
@@ -503,7 +504,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.inspect(Any)`
 - `Kernel.loop() { }`
 - `Kernel.once() { }`
-- `Kernel.p(Any)`
+- `Kernel.p(*Any)`
 - `Kernel.pp(Any)`
 - `Kernel.print(*Any)`
 - `Kernel.puts(*Any)`
@@ -732,7 +733,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Regexp.match?(x, String, [Integer])`
 - `Regexp.named_captures(x)`
 - `Regexp.names(x)`
-- `Regexp.new(String)`
+- `Regexp.new(String, [String])`
 - `Regexp.options(x)`
 - `Regexp.source(x)`
 - `Regexp.timeout(x)`
@@ -944,7 +945,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.slice(x, Integer|Range, [Integer])`
 - `String.slice!(x, Integer|Range|String|Regexp, [Integer])`
 - `String.split(x, [String|Regexp], [Integer])`
-- `String.squeeze(x)`
+- `String.squeeze(x, [String])`
 - `String.squeeze!(x, *String)`
 - `String.start_with?(x, String)`
 - `String.strip(x)`

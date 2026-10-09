@@ -245,7 +245,14 @@ module Sake
 
     def branch(env, pred, then_node, else_node)
       # Whether a block was given is known for each call (a yielding function is analyzed per call).
-      return ev(env.frame.block ? then_node : else_node, env) if pred.is_a?(BlockGiven) && env.frame
+      if env.frame
+        pre, folded = fold_block_given(pred, env)
+        unless folded.equal?(pred)
+          pre.each { ev(_1, env) }
+          return ev(folded ? then_node : else_node, env) if [true, false].include?(folded)
+          pred = folded
+        end
+      end
       ev(pred, env)
       e1 = env.dup_level
       e2 = env.dup_level
@@ -346,6 +353,34 @@ module Sake
           is_nil = (pred.op == "==") == truthy
         end
         (slot = var && narrow_slot(env, var)) && restrict(env, slot, is_nil ? :nil : :non_nil)
+      end
+    end
+
+    # `block_given?` in a condition, also under `&&`, `||` and `!`, is folded to its known value:
+    # [the nodes still evaluated for their effects, the remaining condition or true/false].
+    def fold_block_given(pred, env)
+      case pred
+      when BlockGiven then [[], env.frame.block ? true : false]
+      when And, Or
+        pre, l = fold_block_given(pred.left, env)
+        pre2, r = fold_block_given(pred.right, env)
+        and_ = pred.is_a?(And)
+        if [true, false].include?(l)
+          return [pre, l] if and_ ? !l : l # `false && r`, `true || r`: r is not reached
+          return [pre + pre2, r]
+        end
+        if [true, false].include?(r)
+          return [pre, l] if and_ ? r : !r # `l && true`, `l || false`: as truthy as l
+          return [[*pre, l, *pre2], r] # `l && false`, `l || true`: l runs, r decides
+        end
+        return [[], pred] if l.equal?(pred.left) && r.equal?(pred.right)
+        [[], pred.class.new(left: l, right: r, origin: pred.origin)]
+      when If # `!c`
+        return [[], pred] unless [pred.then_, pred.else_].map { _1.is_a?(Lit) && _1.value } == [false, true]
+        pre, c = fold_block_given(pred.cond, env)
+        return [pre, !c] if [true, false].include?(c)
+        c.equal?(pred.cond) ? [[], pred] : [[], If.new(cond: c, then_: pred.then_, else_: pred.else_, origin: pred.origin)]
+      else [[], pred]
       end
     end
 

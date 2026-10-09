@@ -172,7 +172,8 @@ module Sake
             msg, hints = next_msg || type_message(c, what, typer, program)
             # Where a field got the wrong type, when the function around the operation reads a field.
             if %w[type mixed].include?(item) && c.node && reads_field?(program, c.node)
-              hints += typer.field_sources(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing)
+              failing = typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing
+              hints += typer.field_sources(failing) unless typer.symbol_values?(failing) && !typer.field_holds_symbols?(failing)
             end
             # Rows such as Array["Tokyo", 13_960_000, 2194.07]: each position has a type that the Array loses.
             fails = typer.type_names(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing) - ["Nil"]
@@ -203,6 +204,9 @@ module Sake
       return false unless item == "type" && !c.failing.empty?
       fails = typer.type_names(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing) - ["Nil"]
       return false if fails.empty?
+      failing = typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing
+      # A `case/in` missing a Symbol value: mixed only when a field of several types holds that very value.
+      return typer.field_holds_symbols?(failing) if typer.symbol_values?(failing)
       typer.mixing_fields.any? { |names| (fails - names).empty? && !(names - fails).empty? }
     end
 

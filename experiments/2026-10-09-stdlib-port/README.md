@@ -22,6 +22,9 @@ ko1 の依頼: Ruby のライブラリをほぼ全部 Sake 用に移植し、使
 | 10-09 | 12 本の移植（エージェント 5 体、`brief.md`）: observer, monitor, mutex_m, timeout, prettyprint, pp, stringio, tempfile, net_http, open_uri, getoptlong, bigdecimal。全部 Ruby の双子と同一出力。 |
 | 10-09 | 移植が求めた組み込み 15 種（`Thread.current`、`Mutex.lock`…、`IO.seek`…、`Dir.tmpdir`、`Zlib`、`EOFError`/`ThreadError` など）。検査器 2 件（確実に失敗する呼び出しの後は到達不能、`while` 終了後の絞り込み）、デッドロックを Sake のエラーに。 |
 | 10-09 | 移さないライブラリとその理由: `sakelib/notes/not-ported.md`。friction の集計: `notes.md`。 |
+| 10-09 | TODO.md の課題を全部処理（D1–D10 は ko1 の判断）: Tuple パターン `in [P, Q]`、`coerce`、`to_s(x, fmt = ...)`、`at_exit`、rescue StandardError、`Op: ` を文から外す、など。 |
+| 10-09 | 有名 gem 24 本の移植（エージェント 8 体、`brief-gems.md`）: colorize, ruby-progressbar, highline, ActiveSupport（inflector, core_ext, number_helper）, kramdown, liquid, rack, rackup, webrick, httparty, redis, dotenv, money, rubyzip, chronic, i18n, faker, thor, awesome_print, concurrent-ruby, jwt, rspec。全部 Ruby の双子と同一出力。 |
+| 10-09 | 移植が見つけたもの: 検査器・処理系 7 件を同日に修正（IO を型リストに、union 呼び出しの `*rest`、`&&` の中の `block_given?`、`/n`、Symbol の `[mixed]` の誤認、`def initialize(x) = @x = x`、hint 2 つ）、組み込み 6 種。書き心地の集計: `notes.md`。残りは `TODO.md`（D11、スレッドで走るブロックの引数）。 |
 
 ## 方法
 

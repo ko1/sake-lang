@@ -151,7 +151,7 @@ module Sake
       return t("String") if pat.is_a?(Prism::StringNode)
       return u(t("String"), unknown("scan groups")) unless pat.is_a?(Prism::RegularExpressionNode)
       src = pat.unescaped
-      n = Regexp.new("(?:#{src})|", pat.extended? ? Regexp::EXTENDED : 0).match("").size - 1
+      n = Regexp.new("(?:#{src})|", (pat.extended? ? Regexp::EXTENDED : 0) | (pat.ascii_8bit? ? Regexp::NOENCODING : 0)).match("").size - 1
       return t("String") if n.zero?
       g = src.match?(/\||\)(?:[?*]|{0|{,)/) ? u(t("String"), t("Nil")) : t("String")
       tuple(Array.new(n) { g })
@@ -274,7 +274,7 @@ module Sake
       when "IO.puts", "IO.print", "IO.close" then t("Nil")
       when "IO.write" then t("Integer")
       when "IO.read" then args.size == 2 ? u(t("String"), t("Nil")) : t("String")
-      when "IO.eof?", "IO.closed?" then t("Boolean")
+      when "IO.eof?", "IO.closed?", "IO.tty?" then t("Boolean")
       when "IO.readlines" then new_site(node, " IO.readlines", t("String"))
       when "IO.each_line"
         call_block(blk, [t("String")])
@@ -337,7 +337,9 @@ module Sake
         hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = t("String"); s.val = u(t("String"), t("Nil")) }
       when "Float.infinite?" then u(t("Integer"), t("Nil"))
       when "Integer.divmod" then tuple([t("Integer"), t("Integer")])
-      when "Float.divmod" then tuple([t("Float"), t("Float")])
+      when "Float.divmod"
+        record(node, name, 2, %w[Float Integer], args[1])
+        tuple([t("Integer"), t("Float")]) # Ruby: 7.5.divmod(2) is [3, 1.5]
       when "Integer.digits" then new_site(node, " #{name}", t("Integer"))
       # Range
       when "Range.each", "Range.step", "Range.each_with_index"

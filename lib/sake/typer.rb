@@ -604,9 +604,16 @@ module Sake
 
     # The type names each field holds (and the elements of the containers in it), for fields holding two
     # or more: where values of different types meet (instances of one type used for different values).
+    def symbol_values?(atoms) = !atoms.empty? && atoms.all? { _1.is_a?(Array) && _1[0] == :sym }
+
+    # Whether a field holding two or more types holds these very Symbol values.
+    def field_holds_symbols?(atoms)
+      @fields.any? { |_dt, fs| fs.any? { |_f, ty| (type_names(ty) - %w[Nil]).size >= 2 && atoms.all? { ty.include?(_1) } } }
+    end
+
     def mixing_fields
       @mixing_fields ||= @fields.flat_map do |_dt, fs|
-        fs.filter_map do |_f, ty|
+        fs.flat_map do |_f, ty|
           inner = ty.flat_map do |a|
             next [] unless a.is_a?(Array)
             case a[0]
@@ -617,7 +624,7 @@ module Sake
             end
           end
           [type_names(ty), type_names(inner)].map { _1 - %w[Nil] }.select { _1.size >= 2 }
-        end.flatten(1)
+        end
       end
     end
 
@@ -1299,7 +1306,7 @@ module Sake
       a0 = args[0]
       case name
       when "Kernel.puts", "Kernel.print" then t("Nil")
-      when "Kernel.p" then a0
+      when "Kernel.p" then args.size == 1 ? a0 : (args.empty? ? t("Nil") : tuple(args))
       when "Integer.to_s", "Float.to_s", "String.to_s" then t("String")
       when "Integer.to_f", "String.to_f" then t("Float")
       when "Float.to_i", "Float.floor", "Float.ceil", "String.to_i", "String.length", "String.size",
@@ -1343,6 +1350,7 @@ module Sake
         write_elems(a0, [call_block(blk, [e])], node, name) unless e.empty?
         a0
       when "Array.at", "Array.pop", "Array.shift", "Array.min", "Array.max" # nil on an empty Array: a miss, as x[k]'s
+        return new_site(node, " #{name}", elem_of(a0)) if args[1] && name == "Array.shift" # shift(a, n): the first n, as an Array
         u(elem_of(a0), t("IndexNil"))
       when "Array.assoc", "Array.rassoc" then u(elem_of(a0), t("Nil"))
       when "Array.fetch" then args.size == 3 ? u(elem_of(a0), args[2]) : elem_of(a0)

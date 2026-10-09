@@ -279,8 +279,11 @@ def weight(t) = (Leaf|Node).weight(t)   # a field of the same name in two Struct
 def size_of(x) = (String|Array|Hash).size(x)
 ```
 
-- The list names types: built-in types and Struct types, each at most once. `nil` cannot be
-  listed; check for nil first.
+- The list names types: built-in types (`IO` among them), and Struct types, each at most once.
+  `nil` cannot be listed; check for nil first.
+- The listed functions may differ in shape: a user function's `*rest` is packed for its branch
+  (`(IO|StringIO).print(io, a, b)`). A function that takes keywords cannot be listed; dispatch on
+  the type with `case`.
 - Unlike a module's dispatch ([§5.6](#56-calling-a-modules-functions-module_function-and-dispatch)),
   nothing has to be declared: the call site states the set, and it covers types that share an
   operation's name without sharing a module, such as built-in types or same-named fields.
@@ -849,7 +852,7 @@ one.
 |---|---|---|
 | `puts(*xs)` | nil | prints like Ruby's `puts`; Arrays and Tuples print one element per line |
 | `print(*xs)` | nil | no newline |
-| `p(x)`, `pp(x)` | x | prints `x` in Ruby's `inspect` format |
+| `p(x)`, `p(x, y)`, `pp(x)` | x · `[x, y]` · x | prints each argument in Ruby's `inspect` format, one per line; `p()` gives nil |
 | `format(fmt, *xs)`, `sprintf` | String | Ruby's format; arguments are Integer, Float, String, Symbol, nil, true, false |
 | `Integer(x)`, `Float(x)` | Integer, Float | Ruby's strict conversions; `ArgumentError` on bad input |
 | `rand`, `rand(n)` | Float, or Integer/Float below n | |
@@ -1036,7 +1039,7 @@ Range raise `RangeError` on an endless one.
 
 | Operation | Result |
 |---|---|
-| `Regexp.new(s)` · `Regexp.escape(s)` · `Regexp.source(r)` | Regexp · String · String |
+| `Regexp.new(s, flags = "")` · `Regexp.escape(s)` · `Regexp.source(r)` | Regexp · String · String (flags: letters of `imx`) |
 | `Regexp.match(r, s)`, `String.match(s, r)` | MatchData or nil |
 | `Regexp.match?(r, s)`, `String.match?(s, r)` | true/false |
 | `String.scan(s, r)` | Array of String (Array of Tuples when the pattern has groups) |

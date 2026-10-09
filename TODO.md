@@ -30,6 +30,26 @@
 - [x] (10-09, `Array.sum` のみ) `Array.sum` / `Range.sum` が `Arithmetic` を include する型の要素を受ける（bigdecimal, matrix）。
 - [x] (10-09) TLS: `Socket.connect_ssl(host, port[, timeout])`（OpenSSL、peer を検証）。net_http が https で使う。
 - [x] (10-09, 不要と判断) Float → 10 進の桁指定変換: `Float.to_r` が正確な値を与えるので、有効桁への丸めは bigdecimal.sake 側で書ける。
+- [x] (10-09) `IO.tty?`、`Kernel.p(x, y)`、`Array.shift(a, n)`、`String.squeeze(s, chars)`、`Float.divmod(x, Integer)`、`Regexp.new(src, "imx")`（gem の移植が求めたもの）。
+- [ ] `IO.winsize` / raw mode / noecho（端末。ruby-progressbar, highline）。
+- [ ] `gsub` / `scan` のブロックに MatchData（Ruby の `$1`。active_support, redis）。
+- [ ] `Arithmetic.round` に `half: :even`（money）。`Range.sum`。
+- [ ] `Random` 型（faker の `Config.random`。今は `srand` が全体）。`ENV.replace`（dotenv の save/restore）。
+- [ ] スレッドが例外で死んだとき stderr に報告する（redis: 5 秒のタイムアウトで気づいた）。
+
+## 実装課題（gem の移植で見つかったもの、2026-10-09）
+
+- [x] (10-09) `(IO|StringIO).print(o, s)`: 型のリストに IO を書けなかった。union 呼び出しで `*rest` を取る関数に引数が packed されなかった。キーワードを取る関数はリストに置けない（エラー）。
+- [x] (10-09) `elsif cond && block_given?` がブロック無しの呼び出しで yield を落とさない: `&&` / `||` / `!` の中の `block_given?` を畳む。
+- [x] (10-09) `/[\x7f-\xff]/n`: /n が落ちて RegexpError で処理系が死んでいた。
+- [x] (10-09) `case/in` の Symbol の抜けが、Symbol を持つ無関係なフィールドを `[mixed]` で責める: Symbol の値を持つフィールドがあるときだけ mixed。
+- [x] (10-09) `def initialize(x) = @x = x`（Ruby の癖）: x は新しいインスタンスなので循環する値ができた → 静的エラー。
+- [x] (10-09) hint: `ARGV[0]`（`Array.fetch(ARGV, 0)` を示す）、`ss.pos = 1`（`Type.set_pos(ss, v)` も示す）。
+- [ ] **ブロックの引数が関数のローカル**: ブロックをスレッドで後から走らせると、その時点の値（ループ変数の最後の値）を読む（`sakelib/notes/concurrent_ruby_bug_yield_in_thread_loop_var.sake`）。Ruby はブロック引数が呼び出しごとに新しい。直すにはブロックごとのフレーム（親リンク）が要る: lower / interpreter / typer にまたがる。スレッド無しでは観測できない。
+- [ ] predicate のヘルパ（`def number?(l)`）が絞らないとき、union 全体（1,000 字）を印字する: 「`number?` は絞らない。`case l in Integer | Float` を」と言う（kramdown）。
+- [ ] nil の hint がフィールドを責めるが、nil は `return nil` から来ている（`sakelib/notes/strscan_bug_nil_hint_blames_field.sake`）。`[mixed]` が Hash の値の union を Struct のフィールドのせいにする（thor の `Integer.times(options[:times])`）。
+- [ ] `def initialize(c) = @x = 1 if @x == nil`: 修飾 if が endless def を飲み込み、class 本体の規則の文で報告される（liquid）。
+- [ ] `"..." \ "..."`（補間を含む隣接リテラル）が拒否される（rubyzip）。
 
 ## 設計判断が要るもの（変えるなら仕様）
 
@@ -43,3 +63,5 @@
 - [x] D8. (10-09, 変えない) `def NAN` を型の中から裸で呼べない（大文字は型）。
 - [x] D9. (10-09, キーワードの `new` は既にある。spec §10.1 で勧める) 位置の `new` でフィールド順の誤りが静かに通る（キーワードの `new` はある）。
 - [x] D10. (10-09) `Kernel.at_exit { }`: 組み込みがブロックを持つ（Thread.new と同じ）。finalizer は無し（GC と結びつく）。
+- [?] D11. `**opts` を次の関数に渡す `f(**opts)`（csv, i18n, thor。`sakelib/notes/csv_bug_double_splat_pass_on.sake`）。Hash を位置で渡すと値が 1 つの union になって型が落ちる。案: `f(**opts)` を「opts の各キーを f のキーワードに静的に展開」として、f のキーワード集合 ⊆ opts の集合（`**` で集めた関数のキーワード）のときだけ許す。
+- [?] D12. フィールドの既定値が前のフィールドを読めない（`attr_reader src, len = String.bytesize(src)`。`sakelib/notes/json_bug_field_default_reads_earlier_field.sake`）。spec §10.1 は「引数の既定値のよう」と言うが、引数の既定値は前の引数を読める（§6）。案: 読めるようにする（initialize に写すのと同じ）か、spec に「読めない」と書く。

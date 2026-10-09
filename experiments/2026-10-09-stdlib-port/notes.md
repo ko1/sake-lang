@@ -119,3 +119,84 @@
 - `include` した module の関数が including 型の `@field` をそのまま読める（observer）。`attr_accessor` の setter、`include Indexable` の `req["X"] = v`、
   `(Text|Breakable).width(data)` の union 呼び出し（net_http, prettyprint）。
 - 同一出力の試験（.rb の双子）が、移植者の Ruby の記憶違いを毎回すぐ捕まえた（tempfile 2 件、stringio 1 件、monitor のメッセージ）。
+
+## 10-09: 有名 gem 24 本の移植（8 体のエージェント、`brief-gems.md`）の書き心地と friction の集計
+
+元は `sakelib/notes/<gem>.md` の「Writing feel」「Friction」と各エージェントの報告。gem: colorize, ruby-progressbar, highline /
+ActiveSupport（inflector, core_ext, number_helper）/ kramdown, liquid / rack, rackup, webrick, httparty / redis, dotenv, money /
+rubyzip, chronic, i18n / faker, thor, awesome_print / concurrent-ruby, jwt, rspec。全部 Ruby の双子（gem が入っていれば本物、
+無ければ gem の API を持つ素の Ruby）と同一出力。
+
+### できた・できなかった（gem の API のうち）
+
+- **そのまま移ったもの**: 文字列処理（inflector 140 入力、kramdown GFM 223 行、liquid の 38 filter、colorize 57 操作）、プロトコル
+  （redis RESP2、jwt HS256/384/512、rubyzip の central directory と zip64、webrick/rack の HTTP）、数値（money の half-even、
+  number_helper の 9 つの丸め、BigDecimal の丸めを Rational で再現）、並行（concurrent-ruby の Future/Promise/Atom/Map/Semaphore を
+  Thread + Mutex + Queue で、thor の `Options#parse` 全文）。
+- **型やキーワードで書き直したもの**: Ruby の「クラスを値で渡す」API（`ask(q, Integer)` → `ask_integer`、`raise_error(Class)` →
+  無し）、ブロックで設定する DSL（HighLine の Question/Menu、Thor の `method_option`）→ キーワード引数、`define_method` のループ →
+  1 行の def を 44 本（colorize）、`format` 文字列の eval（faker）→ `case rand(n)`、Rack の env Hash のキャッシュ → `RackRequest` の
+  フィールド、RSpec の `expect(x).to eq(y)` → `RSpec.expect(ex, x).To.eq(y)`（module `To`/`NotTo` の chain 形）。
+- **移せなかったもの**（理由は言語の規則）: 保持するブロック（Promise の `then(rescuer){}`、Map の default block、pub/sub、
+  `rate_scale` の lambda、Liquid の drop、Thor の subcommand の `Thor::Group`）、反射（`constantize`、`send`/`method_missing`
+  による filter/tag の登録、`Faker::Config.random` の `Random` 型）、`2 * money`（左のオペランドが決める。`coerce` は money 側に
+  書けば通る。同日に D4 で入れた）、Money を Hash のキーに、組み込みの端末制御（`IO.winsize`、raw mode、`echo = false`）。
+
+### 言語の規則に由来するもの（設計の帰結）
+
+- **フィールドの型はプログラム全体で 1 つ**: `Expectation.actual`（rspec）、`Promise.result`（concurrent）、`Thor` の options Hash の値が、
+  全部の使用箇所の union になり `[mixed]` で落ちる。rspec は期待を Tuple `[ex, actual]` にして（リテラルごとの型）解決。Promise は
+  `then` の中で `v => Integer`。Hash も同じ（thor は `Thor.integer(options, :k)` ヘルパ）。4 本。これは **Sake の設計の中心（型は操作に、
+  変数には書かない）の代償**で、ジェネリクスの無い型付きコレクションそのもの。
+- **`**opts` を次に渡せない**（`f(**opts)` は「`**` は未対応」）: i18n の 3 つの入口を Hash を位置で受ける内部関数に集約、thor の DSL
+  関数 6 本が 9 キーワードを繰り返す。csv（以前）と合わせて 3 本。→ **D11**。
+- **`new` の位置引数の順 = `attr_*` の行の順**（行をまたいでも）: アクセスでまとめて書く Ruby の癖で構築子が変わる（rubyzip。
+  `field compression_method is already given as argument 2` が出て気づく）。rack も `RackResponse` の順を間違え、`new` の呼び出しで検出。2 本。
+- **フィールドのリーダが同名の mixin の操作を影にする**（`value` と `Obligation.value`）、**クラスメソッドとインスタンスメソッドの同名**
+  （`Promise.fulfill` → `fulfilled`）。D3 のとおり。2 本。
+- **関数のローカルがスレッドに共有される**: Thread ごとに別のローカルを持たせるには関数（`_spawn`）に切り出す。警告は出ない。1 本（rack）。
+  さらに **ブロックの引数も関数のローカル**なので、ブロックをスレッドで後から走らせると、その時点の値（ループ変数の最後の値）を読む
+  （concurrent-ruby、repro あり）。Ruby はブロック引数が呼び出しごとに新しい。→ **実装課題**（スレッドで走る場合だけ観測できる）。
+- **`case` の網羅性は Symbol の集合でしか検査できない**: thor の `run` の `case name` は登録リスト（String）と照合できない。Ruby の `def`
+  が 1 つにしていた「登録」と「分岐」の 2 つのリストになる。1 本。
+- **パターンの型を値で渡せない**: `ask(q, Integer)`、`raise_error(Class)`。1 行の関数を型ごとに書く。2 本。
+
+### 検査器（直せるもの・直したもの）
+
+- 同日に直した: **`(IO|StringIO).print` の IO**（型のリストに IO を書けなかった）、**union 呼び出しで `*rest` の関数に引数が
+  packed されない**、**`elsif cond && block_given?`** が block 無しの呼び出しで yield を落とさない（`&&`/`||`/`!` の中の `block_given?`
+  を畳む）、**`/[\x7f-\xff]/n`**（/n が落ちて RegexpError で処理系が死ぬ）、**`case/in` の Symbol の抜けが無関係なフィールドを
+  `[mixed]` で責める**（Symbol の *値* を持つフィールドがあるときだけ mixed に）、**`def initialize(x) = @x = x`**（x は新しい
+  インスタンスなので自分を自分のフィールドに入れて循環する。Ruby の反射的な書き方なので静的エラーに）、`ARGV[0]` と `ss.pos = 1` の hint。
+- 残り: **predicate のヘルパ（`number?(l)`）が絞らない**とき、union 全体（1,000 字）を印字する → 「絞らない」と言うべき（kramdown）。
+  **nil の hint がフィールドを責める**が nil は `return nil` から来ている（strscan）。**`[mixed]` が Hash の値の union を Struct の
+  フィールドのせいにする**（thor）。**`def initialize(c) = @x = 1 if @x == nil`** は修飾 if が endless def を飲み込み、class 本体の規則
+  の文で報告される（liquid）。**スレッドが例外で死んだとき stderr に何も出ない**（redis。5 秒のタイムアウトで気づく）。
+- 検査器が本物の誤りを見つけた例: `in_groups_of` の nil の padding（`Array.concat: element must be String, but can be nil`、
+  active_support）、`RackResponse` のフィールド順（rack）、`Range.begin` の nil（faker）、`Array.flatten(Hash.to_a(h))` が Tuple を
+  ほどかない（redis）、nil の循環（2 つのフィールドが互いの nil を保持。highline）、Ruby の参照実装側の誤り（colorize の
+  `case x when Integer`）。最初の `--strict` で何も出ず双子の diff で見つかった誤りも多い（kramdown 3 件）。
+- **`|| ""` と `Array.fetch`**: 静かな検査は `m[1]`/`s[i]` の後の `|| ""` で買っている（kramdown, redis）。レベル 2 では
+  `String.[](s, 1..)` の後の `|| ""` は不要だった（thor。strscan からの癖）。
+
+### 組み込みの不足（同日に足したもの）
+
+`IO.tty?`、`Kernel.p(x, y, ...)`、`Array.shift(a, n)`、`String.squeeze(s, chars)`、`Float.divmod(x, Integer)`、`Regexp.new(src, "imx")`。
+
+### 組み込みの不足（残り）
+
+`IO.winsize` / raw / noecho（端末。ruby-progressbar, highline）、`gsub`/`scan` のブロックに MatchData（`$1`。active_support, redis）、
+`Arithmetic.round` の `half: :even`（money）、`Random` 型（faker の `Config.random`）、`ENV.replace`（dotenv の save/restore）、
+`Array.sum` の後に `Range.sum`。
+
+### 良かったと書かれたもの
+
+- 24 本中、kramdown（690 行）・thor・awesome_print・chronic（300 行）・redis・dotenv・money は **最初の `--strict` で何も出ないか 1 件**
+  （その 1 件は本物）。
+- mixin `RedisCommands` に includer ごとの `call` を持たせて、直接でも pipelined でも **返り値に型が付く**（`Redis.get` は `String|nil`、
+  `incr` は Integer）。gem の Future より読みやすいと書かれた。
+- 17 種の node の `case` を `else` 無しで網羅検査できるのは、パーサでは Ruby より良い（liquid）。
+- Sake → Ruby の書き直しは機械的（15 分）。Ruby → Sake のほうに nil ガードが現れる（kramdown）。
+- 間違えた option 名が `did you mean` 付きの静的エラーになる（gem は黙って無視する）。`include ThorCLI` の契約違反が関数名と行で出る。
+- Ruby の双子が gem の事実を暴いた: WEBrick の `mount_proc` は PATCH/DELETE に 405、Rack 3 の `rack.input` は 1 回しか読めない、
+  dotenv 3.x は二重引用符の `\n` をそのまま残す。
