@@ -213,7 +213,7 @@ module Sake
       typer.mixing_fields.any? { |names| (fails - names).empty? && (c.arg == "elements" || !(names - fails).empty?) }
     end
 
-    # Whether the function around node reads a field: `@x`, or a reader `T.x(...)` / `v.T.x` of a Struct type.
+    # Whether the function around node reads a field: `@x`, or a reader `T.x(...)` / `v.T.x` of a class.
     def reads_field?(program, node)
       readers = (@readers ||= {}.compare_by_identity)[program] ||= begin
         names = program.struct_types.flat_map { |t, dt| dt.fields.map { |f| "#{Regexp.escape(t)}\\.#{Regexp.escape(f)}\\b" } }

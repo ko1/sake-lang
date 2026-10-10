@@ -20,7 +20,7 @@ ensure
 end
 ```
 
-- **例外型。** `attr_reader field` を持つ `class Name < Exception`（または `Name = Exception.new(:field, ...)`）が例外型を宣言します。最初のフィールドが `message` の Struct 型なので、`Name.new("msg", ...)`、`Name.message`、`Name.field`、`@field` が他の Struct 型と同じく使えます。例外型に階層はありません。
+- **例外型。** `attr_reader field` を持つ `class Name < Exception`（または `Name = Exception.new(:field, ...)`）が例外型を宣言します。最初のフィールドが `message` のクラスなので、`Name.new("msg", ...)`、`Name.message`、`Name.field`、`@field` が他のクラスと同じく使えます。例外型に階層はありません。
 - **組み込みの例外型。** 操作が投げるもので、`message` だけを持ちます: `RuntimeError`, `ArgumentError`, `TypeError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EOFError`, `RegexpError`, `FloatDomainError`, `EncodingError`, `ThreadError`, `NoMatchingPatternError`, `Math::DomainError`。
 - **`raise` の形:**
   - `raise "msg"` は `RuntimeError` を投げます。
@@ -46,7 +46,7 @@ end
 - 引数の数の誤り
 - 取らないところへのブロック、必要なところでのブロックの欠落
 - 値へのメソッド呼び出し
-- 禁止構文: `send`、`public_send`、`__send__`、`method_missing`、`define_method`、`eval` の仲間、`instance_variable_get`/`set`、`const_get`/`set`、`binding`、`self`、Struct 型の関数の外の `@x`
+- 禁止構文: `send`、`public_send`、`__send__`、`method_missing`、`define_method`、`eval` の仲間、`instance_variable_get`/`set`、`const_get`/`set`、`binding`、`self`、クラスの関数の外の `@x`
 - 未対応の構文
 - 二重定義
 - `T[...]` のリテラルの型の不一致

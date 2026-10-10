@@ -32,7 +32,7 @@ A few spellings mean something else than in Ruby. `[a, b]` is a Tuple and `{x: 1
 | [Functions and blocks](04-functions.md) | Polymorphic functions without annotations, optional and keyword parameters, blocks passed with `yield`, `once`. |
 | [Operators and indexing](05-operators.md) | `a + b` is short for `Arithmetic.+(a, b)`, resolved by the type of the left operand; `Arithmetic`, `Comparable`, `Bitwise` and `Indexable` give your own types operators; `a[i]` and `a[i] = v`. |
 | [Control flow and patterns](06-control.md) | `if`, `while`, `case`/`in`, narrowing with `x in T`, the exhaustiveness check of a `case`. |
-| [Struct types](07-structs.md) | Declaring a type with `class` and `attr_*` lines (`Struct.new` is the shorthand), what `@x` means, `initialize`, `class B < A`, one type per construction site. |
+| [Classes](07-classes.md) | Declaring a type with `class` and `attr_*` lines (`Struct.new` is the shorthand), what `@x` means, `initialize`, `class B < A`, one type per construction site. |
 | [Exceptions and errors](08-exceptions.md) | `raise`, `rescue`, `ensure`, `retry`, declaring exception types, the inference of which exceptions escape a function, the kinds of static and runtime error. |
 | [Built-in operations](09-builtins.md) | A survey of the about 550 built-in operations (named after Ruby's core library) and typed arrays `T[...]`. The exact signature and examples of each operation are in the [Built-in reference](part-reference.md). |
 | [The library (sakelib)](10-library.md) | Ports of the standard library and of gems, minitest, how to write tests. |
@@ -40,7 +40,7 @@ A few spellings mean something else than in Ruby. `[a, b]` is a Tuple and `{x: 1
 
 ## How to read it
 
-- **If you know Ruby and want to start writing**, read [Overview and running programs](01-overview.md), [Program structure and name resolution](02-program.md), [Values and types](03-values.md) and [Operators and indexing](05-operators.md) in that order, and keep the appendix's table at hand: it explains most static errors you will meet. Read [Struct types](07-structs.md) when you declare a type.
+- **If you know Ruby and want to start writing**, read [Overview and running programs](01-overview.md), [Program structure and name resolution](02-program.md), [Values and types](03-values.md) and [Operators and indexing](05-operators.md) in that order, and keep the appendix's table at hand: it explains most static errors you will meet. Read [Classes](07-classes.md) when you declare a type.
 - **If a language model is to write Sake**, hand it [cheatsheet.md](https://github.com/ko1/sake-lang/blob/main/docs/cheatsheet.md), which compresses the rules of this part into four pages (about 10k tokens). A guided introduction is [tutorial.md](https://github.com/ko1/sake-lang/blob/main/docs/tutorial.md).
 - **To try things**, the [playground](https://ko1.github.io/sake-lang/playground/) runs in the browser, with completion, diagnostics as you type, and the inferred types on hover.
 - **Conventions.** A `# value` in an example is the real output of `bin/sake`. A "static error" is reported before running, and nothing runs; a "runtime error" stops at that operation. "Level n" means `--strict=n`.

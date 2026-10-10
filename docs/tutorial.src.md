@@ -375,7 +375,7 @@ everything else (`Hash.each`, `Range.to_a`, `String.match`), while `h[k]`, `1..5
 @@example ruby_types
 
 Hash keys and Set elements compare as `==` does: numbers, Strings, Symbols, `true`, `false`, `nil`,
-Time, and Tuples, Records, Arrays, Hashes, Sets and Struct values made of these. A Struct type that
+Time, and Tuples, Records, Arrays, Hashes, Sets and values of a class made of these. A class that
 defines its own `==` (or `<=>` with `Comparable`) cannot be a key, since its keys could disagree with
 it.
 
@@ -397,7 +397,7 @@ reports every unchecked use before running. A local variable you have tested cou
 ## 12. Exceptions
 
 `raise`, `rescue`, `else`, `ensure`, and `retry` work as in Ruby. An exception type is declared with
-`Exception.new`: it is a Struct type whose first field is `message`. There is no hierarchy, so a
+`Exception.new`: it is a class whose first field is `message`. There is no hierarchy, so a
 `rescue` lists the types it catches.
 
 @@example exceptions
@@ -411,7 +411,7 @@ that can never match. Level 4 also reports a `raise` that nothing rescues:
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
-- `self`, and `@x` outside a function of a Struct type
+- `self`, and `@x` outside a function of a class
 - `eval`, `send`, and similar
 
 All of these are reported together, before running:

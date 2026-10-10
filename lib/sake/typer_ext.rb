@@ -42,7 +42,7 @@ module Sake
       site_type(:set, id)
     end
 
-    # Runs a type's own to_s / inspect for each Struct type in ty, and checks that it returns a String.
+    # Runs a type's own to_s / inspect for each class in ty, and checks that it returns a String.
     def show_types(ty, kind, node)
       ty.each do |a|
         next unless struct_atom?(a) && (fn = @program.functions.dig(struct_name(a), kind.to_s))

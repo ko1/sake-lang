@@ -20,7 +20,7 @@
 | Time | `Time.now`, `Time.at(0)`, `Time.new(2026, 10, 1)` | |
 | IO | `IO.stdout`, `File.open(path)` | ファイルとストリームの 1 つの型 |
 | Thread, Mutex, Queue, TCPServer, Socket | `Thread.new { }`, `Mutex.new`, ... | 並行とネットワーク |
-| Struct 型 | `Point.new(x, y)` | 可変なフィールドを持つレコード |
+| クラス | `Point.new(x, y)` | 可変なフィールドを持つレコード |
 
 - **真偽。** 偽は `nil` と `false` だけです。`0` や `""` を含む他のすべての値は真です。
 - **エラーメッセージ。** `nil`、`true`、`false` は値として示され（`got nil`）、他の値は型名で示されます（`got Integer`）。
@@ -34,7 +34,7 @@
 | `to_s` | `puts`, `print`, `"#{x}"`, `Array.join`, `format` の `%s`, `:"#{x}"`, `/#{x}/` | Ruby の `to_s` と同じ。`nil` は空、Array と Tuple は `inspect` |
 | `inspect` | `p`、`Kernel.inspect`、`format` の `%p`、および Array・Tuple・Hash・Record の中の要素 | Ruby の `inspect` と同じ。`#<struct Point x=1, y=2>` |
 
-- **自分の形。** Struct 型は class の中に自分の `to_s` と `inspect` を定義できます: `def to_s(p) = "(#{@x}, #{@y})"`。必須の引数は値 1 つで（既定値付きの引数は続けられる: `to_s(n, base = 10)`）、String を返さなければなりません。String でない結果は実行前に `type` の問題、実行時は `TypeError` です。
+- **自分の形。** クラスはその本体に自分の `to_s` と `inspect` を定義できます: `def to_s(p) = "(#{@x}, #{@y})"`。必須の引数は値 1 つで（既定値付きの引数は続けられる: `to_s(n, base = 10)`）、String を返さなければなりません。String でない結果は実行前に `type` の問題、実行時は `TypeError` です。
 - **どれが走るか。** 型の集合は閉じているので、値の型が分かればどの `to_s` が走るかも分かります。
 
 ## Tuple、Record、Array
@@ -56,13 +56,13 @@
 
 - **型。** Record の型は (フィールド, 型) の集合、例えば `{x: Integer, y: Integer}` です。同じ集合の Record は同じ型です。
 - **順序。** 順序は関係ありません。`{y: 2, x: 1}` は `{x: 1, y: 2}` と印字されます。
-- **Struct ではない。** フィールドが一致しても Record は Struct の値ではありません。Struct 型は名前で、Record 型は構造で決まります。
+- **Struct ではない。** フィールドが一致しても Record は Struct の値ではありません。クラスは名前で、Record 型は構造で決まります。
 - **フィールドの読み出し。** パターンで分解します: `r => {x:, y: name}`。ローカル `x` にフィールド `x`、ローカル `name` にフィールド `y` が束縛されます。一部のフィールドだけ書いてもよい。無いフィールドは `KeyError`、Record でない値は `TypeError`。`Record.to_h(r)`、`Record.keys(r)`、`Record.values(r)` もあります。
 - **制限。** フィールド名はラベル（`x:`）で書きます。空の `{}` と `{key => value}` は静的エラーです（Hash は `Hash[...]`）。
 
 **Array。** `Array[a, ...]` は要素型を宣言しない Array を作ります。どの値も入ります。
 
-**T の Array。** `T[a, ...]` は要素型 T の Array を作ります。T は組み込み型（`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`）か Struct 型です。
+**T の Array。** `T[a, ...]` は要素型 T の Array を作ります。T は組み込み型（`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`）かクラスです。
 
 - **書き込みの検査。** 作成、`Array.push`、`Array.append`、`Array.concat` のすべての書き込みが検査され、合わなければ `TypeError`。暗黙の変換は無く、Integer は `Float[]` に入りません。
 - **静的検査。** `T[...]` のリテラル引数が別の型なら実行前に報告されます。Ruby 流に書いた `Point[1, 2]`（`Point.new(1, 2)` のつもり）がここで捕まります。
@@ -77,7 +77,7 @@ Array は可変で、参照で共有されます。
 ## Hash と Set
 
 - **構築。** `Hash[k => v, ...]`（`Hash[name: v]` も。キーは Symbol）、`Hash[]`、`Hash.new(default)` が Hash を、`Set[x, ...]` が Set を作ります。リテラル `{...}` は Record で、Hash ではありません。
-- **キーと要素。** Hash のキーと Set の要素は Ruby の `eql?` と同じく値と型で比較します。`1` と `1.0` は別のキーです（`Hash[1 => "a"][1.0]` は nil、`Set[1, 1.0]` は 2 要素）が、`1 == 1.0` は true です。使えるもの: Integer, Float, String, Symbol, true, false, nil, Time、およびそれらからなる Tuple, Record, Array, Hash, Set, Struct 値。使えないもの（`TypeError`）: Regexp, Range、自分の等価（`==`、または `Comparable` の `<=>`）を定義した Struct 型の値（キーの比較がその等価と食い違いうる）。Ruby と同じく、キーに使った Array・Hash・Set・Struct 値を後で変えると見つからなくなります。
+- **キーと要素。** Hash のキーと Set の要素は Ruby の `eql?` と同じく値と型で比較します。`1` と `1.0` は別のキーです（`Hash[1 => "a"][1.0]` は nil、`Set[1, 1.0]` は 2 要素）が、`1 == 1.0` は true です。使えるもの: Integer, Float, String, Symbol, true, false, nil, Time、およびそれらからなる Tuple, Record, Array, Hash, Set, Struct 値。使えないもの（`TypeError`）: Regexp, Range、自分の等価（`==`、または `Comparable` の `<=>`）を定義したクラスの値（キーの比較がその等価と食い違いうる）。Ruby と同じく、キーに使った Array・Hash・Set・Struct 値を後で変えると見つからなくなります。
 - **キーは複製される。** Tuple や Record のキーは格納時に複製されるので、元を後で書いてもキーは変わりません。
 - **既定値。** `Hash.new(default)` は無いキーに `default` を返し、Ruby と同じく同じオブジェクトを共有します。ブロックの形 `Hash.new { ... }` はありません（ブロックは値ではない）。
 - **ブロック。** Hash のブロックは `[key, value]` を 1 つの Tuple として受けるので、`|k, v|` で分解します。

@@ -21,7 +21,7 @@
 | `proc`, `lambda`, `->`, `&:sym`, `method(:f)` | none; a block is only passed, with `yield` or `&b` | blocks are second-class |
 | `obj.send(:f)`, `define_method`, `method_missing`, `eval` | none | call targets are static |
 | `f(**opts)` | none (pass the Hash positionally) | an open design question (D11) |
-| `rescue A` with a hierarchy | `rescue A, B` (no hierarchy); `rescue => e` catches all | exception types are Struct types |
+| `rescue A` with a hierarchy | `rescue A, B` (no hierarchy); `rescue => e` catches all | exception types are classes |
 | `1 + money` | define `coerce(m, other)` in Money | the left operand decides |
 | `Data.define` | `Struct.new` | named types are mutable |
 | `for x in xs` | `Array.each(xs) { \|x\| }` | |

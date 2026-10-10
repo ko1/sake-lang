@@ -1,6 +1,6 @@
 # Exceptions
 
-The built-in exception types. Built-in operations raise them when they fail at run time, and a program raises them itself with `raise E, "msg"`. Each is declared as a Struct type with the single field `message` ([Struct types](../07-structs.md)), so the operations of any Struct type apply:
+The built-in exception types. Built-in operations raise them when they fail at run time, and a program raises them itself with `raise E, "msg"`. Each is declared as a class with the single field `message` ([Classes](../07-classes.md)), so the operations of any class apply:
 
 - `E.new(message)` makes an exception value (`message` is usually a String; its type is not checked). `raise E, "msg"` is short for `raise E.new("msg")`, and `raise E` uses the type's name as the message. `raise "msg"` raises a `RuntimeError`. `raise` is syntax, described in [Exceptions and errors](../08-exceptions.md).
 - `E.message(e)` reads the message and `E.set_message(e, s)` replaces it (`e.E.message` is the same read). The old `E.get_message` is rejected with a hint to use `E.message`. `Exception.message(e)` reads the message of an exception value of any type: use it where the type is a union, as after `rescue => e`.

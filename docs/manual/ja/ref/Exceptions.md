@@ -1,6 +1,6 @@
 # Exceptions
 
-組み込みの例外型です。組み込みの操作が実行時に失敗したときに投げるもので、プログラム自身も `raise E, "msg"` で投げられます。各型はフィールド `message` だけを持つ Struct 型として宣言されていて（[Struct 型](../07-structs.md)）、他の Struct 型と同じ操作が使えます:
+組み込みの例外型です。組み込みの操作が実行時に失敗したときに投げるもので、プログラム自身も `raise E, "msg"` で投げられます。各型はフィールド `message` だけを持つクラスとして宣言されていて（[クラス](../07-classes.md)）、他のクラスと同じ操作が使えます:
 
 - `E.new(message)` が例外値を作ります（`message` は普通 String ですが、型は検査されません）。`raise E, "msg"` は `raise E.new("msg")` の略、`raise E` はメッセージを型名にします。`raise "msg"` は `RuntimeError` です。`raise` は構文で、[例外とエラー](../08-exceptions.md)にあります。
 - `E.message(e)` がメッセージを読み、`E.set_message(e, s)` が書き換えます（`e.E.message` も同じ）。古い `E.get_message` は拒まれ、`E.message` に直すよう案内されます。どの型の例外値でも読めるのが `Exception.message(e)` で、`rescue => e` のように型が和になっているときに使います。

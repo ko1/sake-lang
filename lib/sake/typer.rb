@@ -940,7 +940,7 @@ module Sake
 
     def struct_atom?(a) = a.is_a?(String) ? @program.struct_types.key?(a) : a[0] == :obj
 
-    # The result of a Struct type's own operator (or nil when the type cannot do op).
+    # The result of a class's own operator (or nil when the type cannot do op).
     def user_op_result(op, x, b)
       xn = struct_name(x)
       if %w[== !=].include?(op)
@@ -1116,7 +1116,7 @@ module Sake
       @registry.binary_ops["<=>"].key?([x, y].map { atom_type_name(_1) })
     end
 
-    # `-x` / `+x` / `~x`: a built-in type keeps its type; a Struct type runs its own operator.
+    # `-x` / `+x` / `~x`: a built-in type keeps its type; a class runs its own operator.
     def unop(node, op, a)
       return [] if a.empty?
       if unknown?(a)
@@ -1257,9 +1257,9 @@ module Sake
                          fetch fetch_values values_at dig [] []= store add add? union difference intersection intersect?
                          subset? superset? disjoint? - + & | ==].freeze
 
-    # The groups under a Struct type's fields (the default == compares them), memoized per Struct type:
-    # the groups of the types its fields reach directly, the deps of that walk, and the Struct types met on
-    # the way, which are walked (through their own memos) when the memo is used. Each Struct type is
+    # The groups under a class's fields (the default == compares them), memoized per class:
+    # the groups of the types its fields reach directly, the deps of that walk, and the classes met on
+    # the way, which are walked (through their own memos) when the memo is used. Each class is
     # walked once per group walk; groups come out Struct by Struct rather than in the interleaved order.
     def struct_groups(a, out, seen, deps)
       fs = fields_of(a)

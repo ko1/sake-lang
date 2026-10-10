@@ -166,4 +166,4 @@ Reading from or writing to a closed IO, or one not opened for it, raises `IOErro
 
 ## Typed arrays
 
-`Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`, `Tuple[...]`, and `D[...]` for each Struct type `D` create an Array whose element type is that type ([Values and types](03-values.md)).
+`Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`, `Tuple[...]`, and `D[...]` for each class `D` create an Array whose element type is that type ([Values and types](03-values.md)).

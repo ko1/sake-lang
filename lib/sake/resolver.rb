@@ -19,7 +19,7 @@ module Sake
     def keyword_shape = [(keywords || {}).transform_values(&:nil?), !rest_param.nil?, !kwrest_param.nil?]
   end
 
-  # `@x` inside a function of a Struct type: field x of the function's first parameter.
+  # `@x` inside a function of a class: field x of the function's first parameter.
   FieldAccess = Struct.new(:getter, :setter, :param)
 
   # `M.f(x, ...)` for a mixin function f of module M: table maps each type including M to its f.
@@ -110,7 +110,7 @@ module Sake
 
     def collect
       stmts = @files.flat_map { |_, root| root.statements.body }.reject { Resolver.require_call?(_1) }
-      # Struct types first so that `class Point` bodies can see their accessors.
+      # classes first so that `class Point` bodies can see their accessors.
       stmts.grep(Prism::ConstantWriteNode).each { collect_constant(_1) }
       @class_nodes = stmts.grep(Prism::ClassNode).select { _1.constant_path.is_a?(Prism::ConstantReadNode) }.group_by { _1.constant_path.name.to_s }
       @class_specs = {}
@@ -233,7 +233,7 @@ module Sake
       unless struct_new?(v) || exception
         fn = node.name.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
         @value_constants[node.name] = fn
-        return error(node, "Sake has no value constants; only a Struct type can be assigned to a constant",
+        return error(node, "Sake has no value constants; only a class made with Struct.new can be assigned to a constant",
                      ["define a function instead: `def #{fn} = #{first_line(v.slice)}`"])
       end
       return error(v.block, "#{v.receiver.name}.new with a block is not supported; define functions in `class #{node.name}`") if v.block
@@ -731,10 +731,10 @@ module Sake
       check(node.value, ctx) if node.respond_to?(:value)
       field = node.name.to_s.delete_prefix("@")
       dt = ctx.ns && @struct_types[ctx.ns]
-      return if ctx.trait # a field of the including Struct type; checked in each includer
+      return if ctx.trait # a field of the including class; checked in each includer
       if ctx.fn&.origin && !(dt && dt.fields.include?(field))
         return error(ctx.fn.include_node, "`include #{ctx.fn.origin}` in #{ctx.ns}: #{ctx.fn.origin}.#{ctx.fn.name} uses `#{node.name}`, " \
-                                          "but #{ctx.ns} is not a Struct type with field `#{field}` (line #{node.location.start_line})")
+                                          "but #{ctx.ns} is not a class with field `#{field}` (line #{node.location.start_line})")
       end
       unless ctx.fn && dt
         owners = @struct_types.values.select { _1.fields.include?(field) }.map(&:name).reject { _1.include?("::") }
@@ -745,7 +745,7 @@ module Sake
                 else
                   []
                 end
-        return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a Struct type",
+        return error(node, "`#{node.name}` means a field of the first argument, so it is only available in a function of a class",
                      [*hints, "outside one, write the reader: `Type.#{field}(obj)`"])
       end
       return error(node, "`#{node.name}` needs a first argument (the #{dt.name}) in #{ctx.fn.full_name}") if ctx.fn.params.empty?
@@ -795,7 +795,7 @@ module Sake
       chain = recv.is_a?(Prism::CallNode) && recv.receiver && recv.call_operator_loc && recv.name.to_s.match?(/\A[A-Z]/) && recv.arguments.nil?
       unless chain && (dt = @struct_types[recv.name.to_s]) && dt.fields.include?(field = node.read_name.to_s)
         return error(node, "`#{first_line(node.slice)}`: write a field with its type, as `x.Point.count += 1`",
-                     ["(the left side is `value.Type.field`, a field of a Struct type)"])
+                     ["(the left side is `value.Type.field`, a field of a class)"])
       end
       check(recv.receiver, ctx)
       check(node.value, ctx)
@@ -1287,7 +1287,7 @@ module Sake
       table = {}
       type_nodes.zip(types) do |tn, t|
         unless @struct_types.key?(t) || UNION_TYPES.include?(t)
-          error(tn, "`#{t}` is not a type; `(...)` lists types (Struct types or built-in types)")
+          error(tn, "`#{t}` is not a type; `(...)` lists types (classes or built-in types)")
           next
         end
         found = lookup(t, node.name.to_s)

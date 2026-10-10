@@ -573,7 +573,7 @@ module Sake
       return user_op(node, mod, op, [a, b]) if a.is_a?(StructValue)
       # A value of another type is never equal to a Struct value (as `struct == other` says).
       return op == "!=" if %w[== !=].include?(op) && b.is_a?(StructValue)
-      # `1 + money`: a Struct type on the right that defines coerce(b, a) -> [a', b'] (Ruby's protocol) has the pair
+      # `1 + money`: a class on the right that defines coerce(b, a) -> [a', b'] (Ruby's protocol) has the pair
       # converted and the operator run on it (dispatched on a', usually a value of its own type).
       if b.is_a?(StructValue) && (co = own_fn(b.type.name, "coerce"))
         pair = call_user(co, [b, a], nil, node)

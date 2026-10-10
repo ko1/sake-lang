@@ -893,7 +893,7 @@ Array.any?(Array[1])           # !> Array.any? requires a block
 
 `Array.sum(x, [Any]) [{ }]`
 
-要素の和。ブロックがあれば各要素をブロックの値に写してから足します。`init`（既定 0）から足し始め、空の Array では `init` そのものが結果です。要素と `init` は数（Integer、Float、Rational、Complex）か、`Arithmetic` を include して `+` を定義した Struct 型の値でなければならず、それ以外は静的に `type` の問題、実行時は `TypeError`（String の連結には `join` を使います）。Float の和が欲しいときは `sum(a, 0.0)` と書くと、空でも Float になります。
+要素の和。ブロックがあれば各要素をブロックの値に写してから足します。`init`（既定 0）から足し始め、空の Array では `init` そのものが結果です。要素と `init` は数（Integer、Float、Rational、Complex）か、`Arithmetic` を include して `+` を定義したクラスの値でなければならず、それ以外は静的に `type` の問題、実行時は `TypeError`（String の連結には `join` を使います）。Float の和が欲しいときは `sum(a, 0.0)` と書くと、空でも Float になります。
 
 ```ruby
 p(Array.sum(Array[1, 2, 3]))                       # => 6

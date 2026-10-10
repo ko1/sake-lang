@@ -72,7 +72,7 @@ p(a)                             # => [1, {k: 2}]
 
 `Kernel.sprintf(String, *Any)`
 
-Ruby の `format` と同じ書式で String を作ります: `%d`、`%f`、`%e`、`%g`、`%x`、`%o`、`%b`、`%c`、`%s`、`%p`、`%%` と、幅・精度・`-`・`+`・`0` のフラグ。`%s` は値の `to_s`（Struct 型自身の `to_s(x)` も使われます）、`%p` は `inspect` です。`%<name>d` と `%{name}` は、Record（`{a: 1}`）か Symbol をキーに持つ Hash（`Hash[a: 1]`）を唯一の引数として 1 つ渡します。演算子の形 `fmt % x` も同じです（[String](String.md)）。引数が足りない・多すぎる、数値の指示子に数にならない値を渡す、無いキーを名乗る（`key<a> not found`）、はすべて `ArgumentError` です。
+Ruby の `format` と同じ書式で String を作ります: `%d`、`%f`、`%e`、`%g`、`%x`、`%o`、`%b`、`%c`、`%s`、`%p`、`%%` と、幅・精度・`-`・`+`・`0` のフラグ。`%s` は値の `to_s`（クラス自身の `to_s(x)` も使われます）、`%p` は `inspect` です。`%<name>d` と `%{name}` は、Record（`{a: 1}`）か Symbol をキーに持つ Hash（`Hash[a: 1]`）を唯一の引数として 1 つ渡します。演算子の形 `fmt % x` も同じです（[String](String.md)）。引数が足りない・多すぎる、数値の指示子に数にならない値を渡す、無いキーを名乗る（`key<a> not found`）、はすべて `ArgumentError` です。
 
 ```ruby
 p(format("%05.2f|%-4s|%p|%x", 3.14159, :ab, "q", 255))   # => "03.14|ab  |\"q\"|ff"

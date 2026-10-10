@@ -2,7 +2,7 @@
 
 Hash はキーから値への対応で、挿入順を保ちます。Ruby の `{"a" => 1}` のようなリテラルはなく、`Hash["a" => 1, b: 2]`、`Hash[]`、`Hash.new(default)` で構築します（[値と型](../03-values.md)）。**`{k: v}` は Record であって Hash ではありません**（`{}` も空の Record で、静的に拒否されます。[Record](Record.md)）。`Hash[name: v]` と書いたキーは Symbol です。
 
-キーに使えるのは Integer、Float、String、Symbol、true、false、nil、Time と、それらだけからなる Tuple、Record、Array、Hash、Set、Struct 値です。Regexp、Range、独自の等価性（`==` や `Comparable`）を定義した Struct 型の値はキーにできず、実行時に `TypeError` です。Tuple と Record のキーは格納時に複製されるので、元の値を後で書き換えてもキーは変わりません（Array などのキーは Ruby と同じく、書き換えると見つからなくなります）。`"a"` と `:a`、`1` と `1.0` は別のキーです。
+キーに使えるのは Integer、Float、String、Symbol、true、false、nil、Time と、それらだけからなる Tuple、Record、Array、Hash、Set、Struct 値です。Regexp、Range、独自の等価性（`==` や `Comparable`）を定義したクラスの値はキーにできず、実行時に `TypeError` です。Tuple と Record のキーは格納時に複製されるので、元の値を後で書き換えてもキーは変わりません（Array などのキーは Ruby と同じく、書き換えると見つからなくなります）。`"a"` と `:a`、`1` と `1.0` は別のキーです。
 
 `h[k]` は見つからないと nil（`Hash.new(default)` で作った Hash なら default）を返します。この nil をそのまま使うことは `--strict=3` でだけ `index-nil` として報告されます（level 2 は報告しません）。見つからないことを例外にしたいときは `Hash.fetch` を使います。`Hash.dig`、`Hash.min_by`、`Hash.max_by` の nil も外れの nil です（level 3）。`Hash.delete`、`Hash.key`、`Hash.first`、`Hash.shift`、`Hash.find` などの nil は level 2 で報告されます。
 

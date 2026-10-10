@@ -72,7 +72,7 @@ p(a)                             # => [1, {k: 2}]
 
 `Kernel.sprintf(String, *Any)`
 
-Makes a String with Ruby's `format` directives: `%d`, `%f`, `%e`, `%g`, `%x`, `%o`, `%b`, `%c`, `%s`, `%p`, `%%`, with width, precision and the flags `-`, `+`, `0`. `%s` uses a value's `to_s` (a Struct type's own `to_s(x)` included), `%p` its `inspect`. `%<name>d` and `%{name}` take one Record (`{a: 1}`) or one Hash with Symbol keys (`Hash[a: 1]`) as the single argument; the same holds for the operator form `fmt % x` ([String](String.md)). Too few or too many arguments, a value that is not a number for a numeric directive, and a missing key (`key<a> not found`) are all `ArgumentError`.
+Makes a String with Ruby's `format` directives: `%d`, `%f`, `%e`, `%g`, `%x`, `%o`, `%b`, `%c`, `%s`, `%p`, `%%`, with width, precision and the flags `-`, `+`, `0`. `%s` uses a value's `to_s` (a class's own `to_s(x)` included), `%p` its `inspect`. `%<name>d` and `%{name}` take one Record (`{a: 1}`) or one Hash with Symbol keys (`Hash[a: 1]`) as the single argument; the same holds for the operator form `fmt % x` ([String](String.md)). Too few or too many arguments, a value that is not a number for a numeric directive, and a missing key (`key<a> not found`) are all `ArgumentError`.
 
 ```ruby
 p(format("%05.2f|%-4s|%p|%x", 3.14159, :ab, "q", 255))   # => "03.14|ab  |\"q\"|ff"

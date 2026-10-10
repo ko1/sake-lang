@@ -1,6 +1,6 @@
 # Set
 
-Set は重複の無い要素の集まりです。`Set[1, 2]` が Set を作ります（Ruby の `Set.new([1, 2])` にあたる `Set.new` はありません。[値と型](../03-values.md)）。要素は Hash のキーと同じ規則で区別されます: Integer, Float, String, Symbol, true, false, nil, Time と、それらからなる Tuple, Record, Array, Hash, Set, Struct 値が要素になれ、Regexp, Range, 自分の等価（`==` か `Comparable`）を定義した Struct 型の値は実行時に `TypeError` です。同じ要素かどうかは Ruby の Hash と同じく `hash` と `eql?` で決まるので、`1` と `1.0` は別の要素です。要素は追加した順に並び、反復もその順です。要素に使った String は複製が入るので、後で元の String を変えても Set は変わりません。
+Set は重複の無い要素の集まりです。`Set[1, 2]` が Set を作ります（Ruby の `Set.new([1, 2])` にあたる `Set.new` はありません。[値と型](../03-values.md)）。要素は Hash のキーと同じ規則で区別されます: Integer, Float, String, Symbol, true, false, nil, Time と、それらからなる Tuple, Record, Array, Hash, Set, Struct 値が要素になれ、Regexp, Range, 自分の等価（`==` か `Comparable`）を定義したクラスの値は実行時に `TypeError` です。同じ要素かどうかは Ruby の Hash と同じく `hash` と `eql?` で決まるので、`1` と `1.0` は別の要素です。要素は追加した順に並び、反復もその順です。要素に使った String は複製が入るので、後で元の String を変えても Set は変わりません。
 
 検査器は Set の要素の型を構築した場所ごとに追い、`Set.add` などの書き込みで広げます。ブロックを取る操作のブロックは、その要素の型の値を受け取ります。
 

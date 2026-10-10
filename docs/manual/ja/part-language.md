@@ -32,7 +32,7 @@ Ruby と字面が同じでも意味が違うものがいくつかあります。
 | [関数とブロック](04-functions.md) | 注釈の無い多相な関数、省略できる引数とキーワード、`yield` で渡すブロック、`once`。 |
 | [演算子と添字](05-operators.md) | `a + b` は `Arithmetic.+(a, b)` の略記で、左のオペランドの型に解決されること、`Arithmetic`・`Comparable`・`Bitwise`・`Indexable` を include して自分の型に演算子を与えること、`a[i]` と `a[i] = v`。 |
 | [制御構造とパターン](06-control.md) | `if`・`while`・`case`/`in`、`x in T` による絞り込み、`case` の網羅性の検査。 |
-| [Struct 型](07-structs.md) | `class` と `attr_*` による型の宣言（`Struct.new` はその略記）、`@x` の意味、`initialize`、`class B < A`、構築場所ごとに 1 つの型。 |
+| [クラス](07-classes.md) | `class` と `attr_*` による型の宣言（`Struct.new` はその略記）、`@x` の意味、`initialize`、`class B < A`、構築場所ごとに 1 つの型。 |
 | [例外とエラー](08-exceptions.md) | `raise`・`rescue`・`ensure`・`retry`、例外型の宣言、関数から漏れる例外の推論、静的エラーと実行時エラーの種類。 |
 | [組み込み操作](09-builtins.md) | 約 550 の組み込み操作の概観（名前は Ruby の core と同じ）と型付き Array `T[...]`。各操作の正確な署名と例は[組み込みリファレンス](part-reference.md)に。 |
 | [ライブラリ（sakelib）](10-library.md) | 標準添付ライブラリと gem の移植、minitest、テストの書き方。 |
@@ -40,7 +40,7 @@ Ruby と字面が同じでも意味が違うものがいくつかあります。
 
 ## 読み方
 
-- **Ruby を知っていて書き始めるなら**、[概要と実行](01-overview.md)、[プログラムの構造と名前解決](02-program.md)、[値と型](03-values.md)、[演算子と添字](05-operators.md)の順に読み、付録の対応表を手元に置くと、ほとんどの静的エラーの意味が分かります。Struct を使うときに[Struct 型](07-structs.md)を読んでください。
+- **Ruby を知っていて書き始めるなら**、[概要と実行](01-overview.md)、[プログラムの構造と名前解決](02-program.md)、[値と型](03-values.md)、[演算子と添字](05-operators.md)の順に読み、付録の対応表を手元に置くと、ほとんどの静的エラーの意味が分かります。クラスを宣言するときに[クラス](07-classes.md)を読んでください。
 - **言語モデルに書かせるなら**、この部の規則を 4 ページに圧縮した [cheatsheet.md](https://github.com/ko1/sake-lang/blob/main/docs/cheatsheet.md)（約 1 万トークン）を渡します。順を追った入門は [tutorial.md](https://github.com/ko1/sake-lang/blob/main/docs/tutorial.md) です。
 - **試すなら**、[playground](https://ko1.github.io/sake-lang/playground/)がブラウザで動きます。補完、入力中の診断、ホバーで推論された型が見られます。
 - **約束。** 例の中の `# 値` は `bin/sake` の実際の出力です。「静的エラー」は実行前に報告され何も走らないもの、「実行時エラー」はその操作で止まるものを指します。「レベル n」は `--strict=n` のことです。

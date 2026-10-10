@@ -20,7 +20,7 @@
 | Time | `Time.now`, `Time.at(0)`, `Time.new(2026, 10, 1)` | |
 | IO | `IO.stdout`, `File.open(path)` | one type for files and streams |
 | Thread, Mutex, Queue, TCPServer, Socket | `Thread.new { }`, `Mutex.new`, ... | concurrency and networking |
-| Struct type | `Point.new(x, y)` | record with mutable fields |
+| class | `Point.new(x, y)` | record with mutable fields |
 
 - **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is truthy.
 - **Error messages.** `nil`, `true`, and `false` are shown as values (`got nil`). Every other value is shown by its type name (`got Integer`).
@@ -34,7 +34,7 @@ Every value can be shown, in two forms:
 | `to_s` | `puts`, `print`, `"#{x}"`, `Array.join`, `format`'s `%s`, `:"#{x}"`, `/#{x}/` | as Ruby's `to_s`: `nil` shows as empty, Arrays and Tuples as `inspect` |
 | `inspect` | `p`, `Kernel.inspect`, `format`'s `%p`, and elements inside an Array, Tuple, Hash, or Record | as Ruby's `inspect`: `#<struct Point x=1, y=2>` |
 
-- **Your own form.** A Struct type can define its own `to_s` and `inspect` in its class: `def to_s(p) = "(#{@x}, #{@y})"`. Each takes one required argument, the value (parameters with defaults may follow: `to_s(n, base = 10)`), and must return a String; a non-String result is a `type` problem before running, and a `TypeError` while running.
+- **Your own form.** A class can define its own `to_s` and `inspect` in its body: `def to_s(p) = "(#{@x}, #{@y})"`. Each takes one required argument, the value (parameters with defaults may follow: `to_s(n, base = 10)`), and must return a String; a non-String result is a `type` problem before running, and a `TypeError` while running.
 - **Which one runs.** The set of types is closed, so which `to_s` runs is known whenever the value's type is.
 
 ## Tuples, Records, and arrays
@@ -56,13 +56,13 @@ Every value can be shown, in two forms:
 
 - **Type.** The type of a Record is its set of (field, type) pairs, for example `{x: Integer, y: Integer}`. Two Records with the same set have the same type.
 - **Field order.** Order does not matter: `{y: 2, x: 1}` is printed as `{x: 1, y: 2}`.
-- **Not a Struct.** A Record is never a Struct value, even when the fields match: Struct types are nominal, and Record types are structural.
+- **Not a class value.** A Record is never a value of a class, even when the fields match: classes are nominal, and Record types are structural.
 - **Reading fields.** Take fields apart with a pattern, `r => {x:, y: name}`. This binds the local `x` to field `x` and the local `name` to field `y`. Listing only some of the fields is allowed. A field the Record does not have raises `KeyError`; a value that is not a Record raises `TypeError`. `Record.to_h(r)`, `Record.keys(r)`, and `Record.values(r)` exist too.
 - **Restrictions.** Field names are written as labels (`x:`). An empty `{}` and `{key => value}` are static errors (a Hash is `Hash[...]`).
 
 **Array.** `Array[a, ...]` creates an Array with no declared element type. Any value can be added to it.
 
-**Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type (`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`) or a Struct type.
+**Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type (`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`) or a class.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer cannot go into `Float[]`.
 - **Static check.** If a literal argument of `T[...]` has another type, the error is reported before running. This catches `Point[1, 2]`, Ruby's spelling of `Point.new(1, 2)`.
@@ -77,7 +77,7 @@ Arrays are mutable and shared by reference.
 ## Hash and Set
 
 - **Constructors.** `Hash[k => v, ...]` (also `Hash[name: v]`, whose keys are Symbols), `Hash[]`, and `Hash.new(default)` create a Hash. `Set[x, ...]` creates a Set. The literal `{...}` is a Record, not a Hash.
-- **Keys and elements.** Hash keys and Set elements compare as Ruby's `eql?` does: by value, with the type included, so `1` and `1.0` are different keys (`Hash[1 => "a"][1.0]` is nil; `Set[1, 1.0]` has two elements), while `1 == 1.0` is true. Allowed: Integer, Float, String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and Struct values made of these. Not allowed (`TypeError`): Regexp, Range, and values of a Struct type that defines its own equality (`==`, or `Comparable` with `<=>`), whose keys could disagree with that equality. As in Ruby, changing an Array, Hash, Set, or Struct value after using it as a key makes it unfindable.
+- **Keys and elements.** Hash keys and Set elements compare as Ruby's `eql?` does: by value, with the type included, so `1` and `1.0` are different keys (`Hash[1 => "a"][1.0]` is nil; `Set[1, 1.0]` has two elements), while `1 == 1.0` is true. Allowed: Integer, Float, String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and values of a class made of these. Not allowed (`TypeError`): Regexp, Range, and values of a class that defines its own equality (`==`, or `Comparable` with `<=>`), whose keys could disagree with that equality. As in Ruby, changing an Array, Hash, Set, or Struct value after using it as a key makes it unfindable.
 - **Keys are copied.** A Tuple or Record key is copied when it is stored, so a later write to the original does not change the key.
 - **Default values.** `Hash.new(default)` gives `default` for a missing key, as in Ruby, and the same object is shared, as in Ruby. The block form `Hash.new { ... }` is not available, because blocks are not values.
 - **Blocks.** A block over a Hash receives `[key, value]` as one Tuple, so `|k, v|` takes it apart.

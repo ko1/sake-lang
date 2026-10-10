@@ -893,7 +893,7 @@ Array.any?(Array[1])           # !> Array.any? requires a block
 
 `Array.sum(x, [Any]) [{ }]`
 
-The sum of the elements; with a block, of the block's values. Addition starts from `init` (default 0), and on an empty Array the result is `init` itself. The elements and `init` must be numbers (Integer, Float, Rational, Complex) or values of a Struct type that includes `Arithmetic` and defines `+`; anything else is a `type` problem statically and a `TypeError` at run time (to concatenate Strings use `join`). Write `sum(a, 0.0)` for a Float sum: it is a Float even when the Array is empty.
+The sum of the elements; with a block, of the block's values. Addition starts from `init` (default 0), and on an empty Array the result is `init` itself. The elements and `init` must be numbers (Integer, Float, Rational, Complex) or values of a class that includes `Arithmetic` and defines `+`; anything else is a `type` problem statically and a `TypeError` at run time (to concatenate Strings use `join`). Write `sum(a, 0.0)` for a Float sum: it is a Float even when the Array is empty.
 
 ```ruby
 p(Array.sum(Array[1, 2, 3]))                       # => 6

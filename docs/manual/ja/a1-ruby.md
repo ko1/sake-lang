@@ -21,7 +21,7 @@
 | `proc`, `lambda`, `->`, `&:sym`, `method(:f)` | 無し。ブロックは `yield` か `&b` で渡すだけ | ブロックは第二級 |
 | `obj.send(:f)`, `define_method`, `method_missing`, `eval` | 無し | 呼び出し先は静的 |
 | `f(**opts)` | 無し（Hash を位置で渡す） | 設計判断中（D11） |
-| `rescue A` と階層 | `rescue A, B`（階層は無い）。`rescue => e` は全部 | 例外型は Struct 型 |
+| `rescue A` と階層 | `rescue A, B`（階層は無い）。`rescue => e` は全部 | 例外型はクラス |
 | `1 + money` | Money に `coerce(m, other)` を定義 | 左のオペランドが決める |
 | `Data.define` | `Struct.new` | 名前付き型は可変 |
 | `for x in xs` | `Array.each(xs) { \|x\| }` | |

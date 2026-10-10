@@ -166,4 +166,4 @@
 
 ## 型付き Array
 
-`Integer[...]`、`Float[...]`、`Rational[...]`、`Complex[...]`、`String[...]`、`Symbol[...]`、`Tuple[...]`、および各 Struct 型 `D` の `D[...]` は、要素型がその型の Array を作ります（[値と型](03-values.md)）。
+`Integer[...]`、`Float[...]`、`Rational[...]`、`Complex[...]`、`String[...]`、`Symbol[...]`、`Tuple[...]`、および各クラス `D` の `D[...]` は、要素型がその型の Array を作ります（[値と型](03-values.md)）。

@@ -20,7 +20,7 @@ ensure
 end
 ```
 
-- **Exception types.** `class Name < Exception` with `attr_reader field` (or `Name = Exception.new(:field, ...)`) declares an exception type. It is a Struct type whose first field is `message`, so `Name.new("msg", ...)`, `Name.message`, `Name.field`, and `@field` work as for other Struct types. Exception types have no hierarchy.
+- **Exception types.** `class Name < Exception` with `attr_reader field` (or `Name = Exception.new(:field, ...)`) declares an exception type. It is a class whose first field is `message`, so `Name.new("msg", ...)`, `Name.message`, `Name.field`, and `@field` work as for other classes. Exception types have no hierarchy.
 - **Built-in exception types.** These are raised by operations, each with only `message`: `RuntimeError`, `ArgumentError`, `TypeError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EOFError`, `RegexpError`, `FloatDomainError`, `EncodingError`, `ThreadError`, `NoMatchingPatternError`, `Math::DomainError`.
 - **`raise` forms:**
   - `raise "msg"` raises `RuntimeError`.
@@ -46,7 +46,7 @@ Static errors are reported all together, sorted by position, and nothing runs.
 - wrong argument counts;
 - a block passed where none is taken, or missing where one is required;
 - calls on values;
-- forbidden constructs: `send`, `public_send`, `__send__`, `method_missing`, `define_method`, the `eval` family, `instance_variable_get`/`set`, `const_get`/`set`, `binding`, `self`, and `@x` outside a function of a Struct type;
+- forbidden constructs: `send`, `public_send`, `__send__`, `method_missing`, `define_method`, the `eval` family, `instance_variable_get`/`set`, `const_get`/`set`, `binding`, `self`, and `@x` outside a function of a class;
 - unsupported syntax;
 - duplicate definitions;
 - literal type mismatches in `T[...]`;

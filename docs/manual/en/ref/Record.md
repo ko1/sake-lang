@@ -2,7 +2,7 @@
 
 A Record is a set of (field name, value) pairs, made by the literal `{x: 1, y: "a"}` ([Values and types](../03-values.md)). In Ruby that spelling is a Hash; in Sake it is a **Record, not a Hash**. A Hash is made by `Hash[x: 1]` ([Hash](Hash.md)). `{}` (empty) and `{"a" => 1}` (the `=>` form) are rejected statically.
 
-A Record's type is its set of (field, type) pairs, written `{x: Integer, y: String}`. Records with the same set have the same type. Field order is not part of the type: `{y: 2, x: 1}` prints as `{x: 1, y: 2}`. A Record is never a Struct value (Struct types are told apart by name, Record types by structure; see [Structs](../07-structs.md)).
+A Record's type is its set of (field, type) pairs, written `{x: Integer, y: String}`. Records with the same set have the same type. Field order is not part of the type: `{y: 2, x: 1}` prints as `{x: 1, y: 2}`. A Record is never a value of a class (classes are told apart by name, Record types by structure; see [Structs](../07-classes.md)).
 
 Fields are read with a pattern: `r => {x:, y: name}` binds the local `x` to field `x` and `name` to field `y`. Listing only some of the fields is allowed, and `case r in {x:} ... end` is the same pattern. Naming a field the Record does not have is a `type` problem statically (a `KeyError` at run time), and so is matching a value that is not a Record (a `TypeError` at run time). Writing to a field (`r.x = v`, `r[:x] = v`) does not exist yet (both are rejected statically; `Indexable.[]=` does not take a Record).
 

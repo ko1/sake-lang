@@ -1,6 +1,6 @@
 # Arithmetic
 
-Arithmetic is the module of the arithmetic operators `+`, `-`, `*`, `/`, `%`, `**` and the unary `-x`, `+x`. `a + b` is shorthand for `Arithmetic.+(a, b)`, which dispatches to the `+` of the left operand's type (Integer, Float, Rational, Complex, String, Time, Set, or a Struct type that does `include Arithmetic`), see [Operators and indexing](../05-operators.md) and [Program structure](../02-program.md).
+Arithmetic is the module of the arithmetic operators `+`, `-`, `*`, `/`, `%`, `**` and the unary `-x`, `+x`. `a + b` is shorthand for `Arithmetic.+(a, b)`, which dispatches to the `+` of the left operand's type (Integer, Float, Rational, Complex, String, Time, Set, or a class that does `include Arithmetic`), see [Operators and indexing](../05-operators.md) and [Program structure](../02-program.md).
 
 The eight operations in this chapter are not operators: they are **rounding and conversion for any real number** (Integer, Float, Rational). A Sake operation normally names its type, `Float.round(f)`; these are for values whose type is not settled, such as `Integer | Float` (the result of `Array.sum`, a number read from JSON), and they dispatch on the value's type as Ruby's `x.round` does. The result type follows the argument's: `round`, `floor`, `ceil`, `truncate` without a digit count and `to_i` give an Integer; a rounding with a digit count and `abs` give the argument's type (a union when the argument's type is one); `to_f` gives a Float; `zero?` gives true/false. The checker applies this rule to each type of the argument.
 

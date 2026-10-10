@@ -1329,7 +1329,7 @@ Set[3, 1, 2]
 ```
 
 Hash keys and Set elements compare as `==` does: numbers, Strings, Symbols, `true`, `false`, `nil`,
-Time, and Tuples, Records, Arrays, Hashes, Sets and Struct values made of these. A Struct type that
+Time, and Tuples, Records, Arrays, Hashes, Sets and values of a class made of these. A class that
 defines its own `==` (or `<=>` with `Comparable`) cannot be a key, since its keys could disagree with
 it.
 
@@ -1415,7 +1415,7 @@ $ sake --strict strict.sake
 ## 12. Exceptions
 
 `raise`, `rescue`, `else`, `ensure`, and `retry` work as in Ruby. An exception type is declared with
-`Exception.new`: it is a Struct type whose first field is `message`. There is no hierarchy, so a
+`Exception.new`: it is a class whose first field is `message`. There is no hierarchy, so a
 `rescue` lists the types it catches.
 
 ```ruby
@@ -1477,7 +1477,7 @@ exceptions_flow.sake:11:1: error: rescue OtherError: the begin body never raises
 
 Sake rejects anything that would hide which code runs, or that it has not decided yet:
 
-- `self`, and `@x` outside a function of a Struct type
+- `self`, and `@x` outside a function of a class
 - `eval`, `send`, and similar
 
 All of these are reported together, before running:
@@ -1493,7 +1493,7 @@ eval("1 + 1")
 
 ```
 $ sake forbidden.sake
-forbidden.sake:2:1: error: Sake has no value constants; only a Struct type can be assigned to a constant
+forbidden.sake:2:1: error: Sake has no value constants; only a class made with Struct.new can be assigned to a constant
   hint: define a function instead: `def pi = 3.14159`
 forbidden.sake:4:16: error: Sake has no `self`
 forbidden.sake:6:1: error: `eval` is not allowed in Sake (it defeats static analysis)

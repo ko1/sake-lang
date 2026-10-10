@@ -9,9 +9,9 @@ A program is a file and the files it requires. Its top level may contain:
 - **Function definitions**: `def name(params) ... end` and `def name(params) = expr`.
 - **Namespaced function definitions**: `def Type.name(params) ...`, equivalent to defining `name` inside `class Type`.
 - **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only `def name(...)` (no receiver), `include Module`, and in a class `attr_reader`/`attr_accessor`/`attr_writer` lines.
-  - `class` declares a **type** (a Struct type) or adds operations to one, or to a built-in type such as `String`.
+  - `class` declares a **type** (a class) or adds operations to one, or to a built-in type such as `String`.
   - `module` is a namespace with **no type**; `module` on a type is a static error with a hint.
-- **Struct types**: `class Name` with `attr_*` lines, or `Name = Struct.new(:field, ...)`.
+- **Classes**: `class Name` with `attr_*` lines, or `Name = Struct.new(:field, ...)`.
 - **Statements**: any other expression. Statements run in order.
 
 All definitions are collected before anything runs, so a function may be called on a line above its definition.
@@ -19,7 +19,7 @@ All definitions are collected before anything runs, so a function may be called 
 Rules:
 
 - Namespaces cannot be nested (`A::B` is rejected).
-- Classes do not inherit. For any class, `class B < A` is shorthand for writing A's definitions in B; afterwards A and B are unrelated types, and `A.f` takes only A's (the chapter [Struct types](07-structs.md); this book calls every type a program defines, with `class` or `Struct.new`, a Struct type).
+- Classes do not inherit. For any class, `class B < A` is shorthand for writing A's definitions in B; afterwards A and B are unrelated types, and `A.f` takes only A's ([Classes](07-classes.md)).
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is also an error.
 - Constants can only be assigned from `Struct.new`. Sake has **no value constants**. For a named value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error whose hint gives that function. `once { ... }` computes a value once ([Built-in operations](09-builtins.md)).
@@ -73,7 +73,7 @@ An inner definition **shadows** an outer one. It is not an error for the same na
 
 - **Borrowing.** Each function `f` of `M` becomes `X.f` in the including namespace `X`, unless `X` already has `f`, in which case `X`'s own definition wins. Modules included by `M` are borrowed too.
 - **Order.** Modules are searched in Ruby's ancestor order: the module included **last** comes first. With `include A` then `include B`, a `bar` in both comes from B.
-- **Resolution in the includer.** Inside a borrowed function, unqualified names are resolved in `X`, so `M` can use functions that `X` provides, such as `each`. Nothing is dispatched at run time: each `X.f` is fixed before running. `@x` refers to a field of `X` when `X` is a Struct type.
+- **Resolution in the includer.** Inside a borrowed function, unqualified names are resolved in `X`, so `M` can use functions that `X` provides, such as `each`. Nothing is dispatched at run time: each `X.f` is fixed before running. `@x` refers to a field of `X` when `X` is a class.
 - **Requirements.** If `X` lacks a name that `M`'s functions need, `include M` is a static error. Calling such a function directly, as in `M.total(x)`, is a static error too, with a hint to call it through an includer.
 - **Restrictions.** Only modules can be included, and include cycles are errors.
 - **Not inheritance.** `include` adds no subtype relation.
@@ -101,11 +101,11 @@ A module's functions are of two kinds, as in Ruby:
 `(A|B).f(x, args...)` lists, on the operation itself, the types that `x` may have. While running, the type of `x` picks `A.f` or `B.f`; any other type raises `TypeError`. Before running, every listed type must have `f` (a static error otherwise), and the checker reports a value of `x` whose type is not listed. The result is the union of the results.
 
 ```ruby
-def weight(t) = (Leaf|Node).weight(t)   # a field of the same name in two Struct types
+def weight(t) = (Leaf|Node).weight(t)   # a field of the same name in two classes
 def size_of(x) = (String|Array|Hash).size(x)
 ```
 
-- The list names types: built-in types (`IO` among them) and Struct types, each at most once. `nil` cannot be listed; check for nil first.
+- The list names types: built-in types (`IO` among them) and classes, each at most once. `nil` cannot be listed; check for nil first.
 - The listed functions may differ in shape: a user function's `*rest` is packed for its branch (`(IO|StringIO).print(io, a, b)`). A function that takes keywords cannot be listed; dispatch on the type with `case`.
 - Unlike a module's dispatch, nothing has to be declared: the call site states the set, and it covers types that share an operation's name without sharing a module, such as built-in types or same-named fields.
 

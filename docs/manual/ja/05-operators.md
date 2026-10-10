@@ -12,8 +12,8 @@
 | `Indexable` | `[]`, `[]=`（下記「添字」） | Array, Hash, String, Tuple, MatchData |
 | `Kernel` | `== != =~ !~` | すべての型 |
 
-- **自分の型。** Struct 型は module を include して class の中に演算子を定義すると演算子に参加します。`include Arithmetic` と `def +(a, b)` など。`include Comparable` では `<=>` を定義すれば十分で、`<`、`<=`、`>`、`>=` はそこから来ます。`Array.sort`、`min`、`max` もそれを使います。
-- **左が組み込み型のとき。** `2 + money` は Integer でディスパッチしますが、Integer に Money の行はありません。Struct 型が Ruby のプロトコルと同じく Tuple `[left, right]` を返す `coerce(b, a)` を定義していれば、組を先に変換してから演算子を走らせます: `def coerce(m, other) = [Money.new(other * 100), m]` で `2 + money` は `Money.new(200) + money` になります。検査器も変換を追います。
+- **自分の型。** クラスは module を include して本体に演算子を定義すると演算子に参加します。`include Arithmetic` と `def +(a, b)` など。`include Comparable` では `<=>` を定義すれば十分で、`<`、`<=`、`>`、`>=` はそこから来ます。`Array.sort`、`min`、`max` もそれを使います。
+- **左が組み込み型のとき。** `2 + money` は Integer でディスパッチしますが、Integer に Money の行はありません。クラスが Ruby のプロトコルと同じく Tuple `[left, right]` を返す `coerce(b, a)` を定義していれば、組を先に変換してから演算子を走らせます: `def coerce(m, other) = [Money.new(other * 100), m]` で `2 + money` は `Money.new(200) + money` になります。検査器も変換を追います。
 - **等価。** Struct 値の `==` は、型が自分の `==` を定義していなければ、Ruby の Struct と同じく型とフィールドを比べます。`Comparable` を include して `<=>` を定義した（`==` は定義しない）型は、Ruby の `Comparable#==` と同じく、同じ型の値と `<=>` が 0 のとき等しく、別の型の値（nil など）とは決して等しくなく、`<=>` は呼ばれません。`Array.include?`、`index` などは同じ等価を使います。
 - **明示の形。** `Arithmetic.+(a, b)` は同じようにディスパッチします。`Integer.+(a, b)` は Integer の `+` を直接呼び、`a` は Integer でなければならず、`b` は Integer の `+` が受けるどの型でもよい。
 - **エラー。** 左のオペランドの型が include しない、または定義しない module の演算子を使うのは、実行前に `type` の問題、実行時は `TypeError` です。
@@ -42,7 +42,7 @@
 - **負の指数。** `Integer ** 負の Integer` は `ArgumentError` です。`a ** b` の型が `b` の値に依らないためです。Rational が欲しければ `2r ** -1` と書きます。
 - **Complex。** 順序が無いので `<` などは定義されません。
 - **Time。** `Time ± 数` は Time、`Time - Time` は秒の Float、2 つの Time は比較できます。
-- **別の型の値**は決して等しくありません: `1 == :a` と `struct == "x"` は Ruby と同じく false です（Struct 型自身の `==` があればそれが決める）。
+- **別の型の値**は決して等しくありません: `1 == :a` と `struct == "x"` は Ruby と同じく false です（クラス自身の `==` があればそれが決める）。
 - **コレクション。** Tuple、Array、Set、Hash、Record は中身が等しいとき等しい（2 つの Record は同じフィールドも要る）。Tuple と Array は Ruby の Array と同じく要素ごとに順序付けられ、比べられない要素があれば `<` などは `ArgumentError`、`<=>` は nil です。実行前に、比べられない要素型が報告されます。
 - **`!x`** は `x ? false : true` です。どの値にも使え、型の操作ではありません。
 - **複合代入。** `x OP= e` は `x = x OP e` です。
@@ -50,7 +50,7 @@
 
 ## 添字
 
-`x[k]` は `Indexable.[](x, k)`、`x[k] = v` は `Indexable.[]=(x, k, v)` で、`x` の型の `[]` と `[]=` を走らせます。Struct 型は `include Indexable` と `def [](x, k)` / `def []=(x, k, v)` で参加します。添字が 2 つなら `m[r, c]` は `def [](m, r, c)`、`m[r, c] = v` は `def []=(m, r, c, v)` を呼びます。組み込み型は次のとおりです。
+`x[k]` は `Indexable.[](x, k)`、`x[k] = v` は `Indexable.[]=(x, k, v)` で、`x` の型の `[]` と `[]=` を走らせます。クラスは `include Indexable` と `def [](x, k)` / `def []=(x, k, v)` で参加します。添字が 2 つなら `m[r, c]` は `def [](m, r, c)`、`m[r, c] = v` は `def []=(m, r, c, v)` を呼びます。組み込み型は次のとおりです。
 
 | レシーバ, 添字 | `x[k]` | `x[k] = v` |
 |---|---|---|

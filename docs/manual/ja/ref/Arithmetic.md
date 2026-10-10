@@ -1,6 +1,6 @@
 # Arithmetic
 
-Arithmetic は算術演算子 `+`、`-`、`*`、`/`、`%`、`**` と単項の `-x`、`+x` が属するモジュールです。`a + b` は `Arithmetic.+(a, b)` の略記で、左側の値の型（Integer、Float、Rational、Complex、String、Time、Set、または `include Arithmetic` した Struct 型）の `+` に振り分けられます（[演算子と添字](../05-operators.md)、[プログラムの構造](../02-program.md)）。
+Arithmetic は算術演算子 `+`、`-`、`*`、`/`、`%`、`**` と単項の `-x`、`+x` が属するモジュールです。`a + b` は `Arithmetic.+(a, b)` の略記で、左側の値の型（Integer、Float、Rational、Complex、String、Time、Set、または `include Arithmetic` したクラス）の `+` に振り分けられます（[演算子と添字](../05-operators.md)、[プログラムの構造](../02-program.md)）。
 
 この章に挙げる 8 つの操作は、演算子ではなく、**どの実数（Integer、Float、Rational）にも使える丸めと変換**です。Sake の操作は普通 `Float.round(f)` のように型を名乗りますが、値の型が `Integer | Float` のように定まらないとき（`Array.sum` の結果、JSON から読んだ数など）に、Ruby の `x.round` と同じく値の型を見て振り分けるのがこれらです。結果の型は引数の型に従います: 桁数なしの `round`・`floor`・`ceil`・`truncate` と `to_i` は Integer、桁数付きの丸めと `abs` は引数と同じ型（引数の型が和なら結果も和）、`to_f` は Float、`zero?` は true/false。検査器は引数の各型についてこの規則を当てます。
 

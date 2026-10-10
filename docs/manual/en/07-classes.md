@@ -1,6 +1,6 @@
-# Struct types
+# Classes
 
-This book calls every type a program defines a Struct type. Declared with `attr_*` lines in a `class` or made with `Struct.new(:x, :y)`, it is the same thing: its values hold fields like Ruby's Struct values, and its operations are called with the type, `Type.op(value, ...)`.
+A type a program defines is a class. Declared with `attr_*` lines in a `class` or made with `Struct.new(:x, :y)`, it is the same thing: its values hold fields (and print as Ruby's Struct values, `#<struct Point x=3, y=4>`), and its operations are called with the type, `Point.norm2(pt)`. Classes do not inherit and values take no method calls, so what a Sake class shares with Ruby's is declaring a type and gathering its operations.
 
 ## Declaring a type: class and attr_*
 
@@ -58,7 +58,7 @@ This defines the namespace `Point` with the following operations:
 
 - **Mutability.** Values are mutable and shared by reference. A change made through one variable is visible through every other variable that holds the same value.
 - **Adding operations.** Add your own operations in `class Point ... end` or with `def Point.f`. Inside them, the readers and writers can be called unqualified (`x(p)`, `set_x(p, v)`). A function named like a field (`def x(p) = ...`) replaces its reader, as a method after `attr_reader` does in Ruby; `@x` still reads the field.
-- **Field shorthand `@x`.** Inside a function of a Struct type (in `class Point` or `def Point.f`), `@x` means field `x` of the function's **first parameter**, which is the subject by convention:
+- **Field shorthand `@x`.** Inside a function of a class (in `class Point` or `def Point.f`), `@x` means field `x` of the function's **first parameter**, which is the subject by convention:
 
   | Written | Means |
   |---|---|
@@ -69,7 +69,7 @@ This defines the namespace `Point` with the following operations:
 
   - `p` is the first parameter's current value, even inside a block whose parameter has the same name.
   - The usual runtime check applies: the first argument must be a Point.
-  - `@x` is a static error in each of these cases: outside a function of a Struct type, in a function with no parameters, and when the field does not exist.
+  - `@x` is a static error in each of these cases: outside a function of a class, in a function with no parameters, and when the field does not exist.
 - **Printing.** `p` prints a Struct value as `#<struct Point x=1, y=2>`. `puts` prints it the same way.
 - **`Struct.new` restrictions.** It must be assigned to a top-level constant. It takes symbols only, and no block.
 - **No `Data.define`.** `Data.define` is rejected with a hint to use `Struct.new`. Ruby's `Data` is immutable, but Sake's named types are mutable, which is what Ruby's `Struct` provides.

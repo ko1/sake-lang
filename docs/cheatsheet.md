@@ -196,7 +196,7 @@ p(pt)
   A built-in on the left (`2 + money`) needs `def coerce(m, other) = [Money.new(other), m]` in Money
   (Ruby's protocol: the Tuple `[left, right]` is converted first, then the operator runs).
 - `(A|B).f(x)` calls the `f` of x's type among the listed types (built-in types including `IO`, and
-  Struct types; no nil). `*rest` is packed per branch; a function taking keywords cannot be listed.
+  classes; no nil). `*rest` is packed per branch; a function taking keywords cannot be listed.
 
 ```ruby
 module Shape

@@ -50,7 +50,7 @@ whole-program type inference; whatever is not reported is still checked while ru
 | 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued (for a program; a library's raises are meant for its callers) |
 
 - **`mixed`.** A type report whose failing types all appear, together with fitting ones, in one field
-  (or in the elements of a container held in a field) of a Struct type. The typer gives a field one type
+  (or in the elements of a container held in a field) of a class. The typer gives a field one type
   for all instances, so instances of one type used for different values (an Integer heap and a Job heap
   sharing `Heap.items`) meet there; the report is likely such a meeting rather than a mistake. It stops
   the program from level 2; at level 1 it is printed as a warning. The cost of the heuristic: a field
@@ -89,10 +89,10 @@ A program is a file and the files it requires. Its top level may contain:
 - **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only
   `def name(...)` (no receiver), `include Module`, and in a class `attr_reader`/`attr_accessor`/
   `attr_writer` lines (§10.1).
-  - `class` declares a **type** (a Struct type) or adds operations to one, or to a built-in type
+  - `class` declares a **type** (a class) or adds operations to one, or to a built-in type
     such as `String`.
   - `module` is a namespace with **no type**; `module` on a type is a static error with a hint.
-- **Struct types**: `class Name` with `attr_*` lines, or `Name = Struct.new(:field, ...)`.
+- **Classes**: `class Name` with `attr_*` lines, or `Name = Struct.new(:field, ...)`.
 - **Statements**: any other expression. Statements run in order.
 
 All definitions are collected before anything runs. A function may be called on a line above its
@@ -130,7 +130,7 @@ Rules:
 | Regexp, MatchData | `/(\d+)-(\d+)/`, `/#{x}/`, `String.match(s, re)` | |
 | Rational, Complex | `2r`, `1/3r`, `Rational(1, 3)`, `2i`, `Complex(1, 2)` | Ruby's numeric tower |
 | Time | `Time.now`, `Time.at(0)`, `Time.new(2026, 10, 1)` | |
-| Struct type | `Point.new(x, y)` | record with mutable fields |
+| class | `Point.new(x, y)` | record with mutable fields |
 
 - **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is
   truthy.
@@ -146,7 +146,7 @@ Every value can be shown, in two forms:
 | `to_s` | `puts`, `print`, `"#{x}"`, `Array.join`, `format`'s `%s`, `:"#{x}"`, `/#{x}/` | as Ruby's `to_s`: `nil` shows as empty, Arrays and Tuples as `inspect` |
 | `inspect` | `p`, `Kernel.inspect`, `format`'s `%p`, and elements inside an Array, Tuple, Hash, or Record | as Ruby's `inspect`: `#<struct Point x=1, y=2>` |
 
-- **Your own form.** A Struct type can define its own `to_s` and `inspect` in its class:
+- **Your own form.** A class can define its own `to_s` and `inspect` in its body:
   `def to_s(p) = "(#{@x}, #{@y})"`. Each takes exactly one argument and must return a String;
   a non-String result is a `type` problem before running, and a `TypeError` while running.
 - **Which one runs.** The set of types is closed, so which `to_s` runs is known whenever the
@@ -275,11 +275,11 @@ type must have `f` (a static error otherwise), and the checker reports a value o
 not listed. The result is the union of the results.
 
 ```ruby
-def weight(t) = (Leaf|Node).weight(t)   # a field of the same name in two Struct types
+def weight(t) = (Leaf|Node).weight(t)   # a field of the same name in two classes
 def size_of(x) = (String|Array|Hash).size(x)
 ```
 
-- The list names types: built-in types (`IO` among them), and Struct types, each at most once.
+- The list names types: built-in types (`IO` among them), and classes, each at most once.
   `nil` cannot be listed; check for nil first.
 - The listed functions may differ in shape: a user function's `*rest` is packed for its branch
   (`(IO|StringIO).print(io, a, b)`). A function that takes keywords cannot be listed; dispatch on
@@ -406,12 +406,12 @@ module's function (`Arithmetic.*: ...`).
 | `Indexable` | `[]`, `[]=` ([§8.2](#82-indexing)) | Array, Hash, String, Tuple, MatchData |
 | `Kernel` | `== != =~ !~` | every type |
 
-- **Your own types.** A Struct type joins an operator by including the module and defining the
+- **Your own types.** A class joins an operator by including the module and defining the
   operator in its class, such as `include Arithmetic` with `def +(a, b)`. With `include Comparable`,
   defining `<=>` is enough: `<`, `<=`, `>`, and `>=` come from it, and `Array.sort`, `min`, and `max`
   use it too.
 - **A built-in on the left.** `2 + money` dispatches on Integer, which has no row for Money. A
-  Struct type that defines `coerce(b, a)`, giving a Tuple `[left, right]` as Ruby's protocol does,
+  class that defines `coerce(b, a)`, giving a Tuple `[left, right]` as Ruby's protocol does,
   has the pair converted first and the operator run on it: `def coerce(m, other) = [Money.new(other * 100), m]`
   makes `2 + money` into `Money.new(200) + money`. The checker follows the conversion.
 - **Equality.** `==` on Struct values compares the type and the fields, as Ruby's Struct does,
@@ -454,7 +454,7 @@ table**:
 - **Complex.** A Complex has no ordering, so `<` and the like are not defined for it.
 - **Time.** `Time ± number` gives a Time; `Time - Time` gives a Float of seconds; two Times compare.
 - **Values of different types** are never equal: `1 == :a` and `struct == "x"` are false, as in Ruby
-  (a Struct type's own `==` decides for its values).
+  (a class's own `==` decides for its values).
 - **Collections.** Tuples, Arrays, Sets, Hashes, and Records are equal when their contents are
   (two Records also need the same fields). Tuples and Arrays are ordered element by element, as
   Ruby's Arrays are; when two elements cannot be compared, `<` and the like raise `ArgumentError`
@@ -466,7 +466,7 @@ table**:
 ### 8.2 Indexing
 
 `x[k]` means `Indexable.[](x, k)`, and `x[k] = v` means `Indexable.[]=(x, k, v)`: they run the
-`[]` and `[]=` of `x`'s type. A Struct type joins with `include Indexable` and `def [](x, k)` /
+`[]` and `[]=` of `x`'s type. A class joins with `include Indexable` and `def [](x, k)` /
 `def []=(x, k, v)`; with two indexes, `m[r, c]` calls `def [](m, r, c)` and `m[r, c] = v` calls `def []=(m, r, c, v)`. The built-in types behave as follows:
 
 | Receiver, index | `x[k]` | `x[k] = v` |
@@ -532,7 +532,7 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
 - **Parentheses.** As in Ruby, `x in P` must be in parentheses when it is an argument:
   `p((x in Integer))`.
 
-## 10. Struct types
+## 10. Classes
 
 ### 10.1 Declaring a type: class and attr_*
 
@@ -616,7 +616,7 @@ This defines the namespace `Point` with the following operations:
   Inside them, the readers and writers can be called unqualified (`x(p)`, `set_x(p, v)`). A function
   named like a field (`def x(p) = ...`) replaces its reader, as a method after `attr_reader` does in
   Ruby; `@x` still reads the field.
-- **Field shorthand `@x`.** Inside a function of a Struct type (in `class Point` or `def Point.f`),
+- **Field shorthand `@x`.** Inside a function of a class (in `class Point` or `def Point.f`),
   `@x` means field `x` of the function's **first parameter**, which is the subject by convention:
 
   | Written | Means |
@@ -629,7 +629,7 @@ This defines the namespace `Point` with the following operations:
   - `p` is the first parameter's current value, even inside a block whose parameter has the same
     name.
   - The usual runtime check applies: the first argument must be a Point.
-  - `@x` is a static error in each of these cases: outside a function of a Struct type, in a function
+  - `@x` is a static error in each of these cases: outside a function of a class, in a function
     with no parameters, and when the field does not exist.
 - **Printing.** `p` prints a Struct value as `#<struct Point x=1, y=2>`. `puts` prints it the same way.
 - **`Struct.new` restrictions.** It must be assigned to a top-level constant. It takes symbols
@@ -692,7 +692,7 @@ shape fixes its type at creation. A growable collection is made by an operation 
 - **Type.** The type of a Record is its set of (field, type) pairs, for example
   `{x: Integer, y: Integer}`. Two Records with the same set have the same type.
 - **Field order.** Order does not matter: `{y: 2, x: 1}` is printed as `{x: 1, y: 2}`.
-- **Not a Struct.** A Record is never a Struct value, even when the fields match: Struct types are
+- **Not a class value.** A Record is never a value of a class, even when the fields match: classes are
   nominal, and Record types are structural.
 - **Reading fields.** Take fields apart with a pattern, `r => {x:, y: name}`. This binds the local
   `x` to field `x` and the local `name` to field `y`. Listing only some of the fields is allowed.
@@ -705,7 +705,7 @@ shape fixes its type at creation. A growable collection is made by an operation 
 to it.
 
 **Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type
-(`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`) or a Struct type.
+(`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`) or a class.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and
   `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer
@@ -735,7 +735,7 @@ followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
   included, so `1` and `1.0` are different keys (`Hash[1 => "a"][1.0]` is nil; `Set[1, 1.0]` has two elements),
   while `1 == 1.0` is true. Allowed: Integer, Float,
   String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and Struct values
-  made of these. Not allowed (`TypeError`): Regexp, Range, and values of a Struct type that defines
+  made of these. Not allowed (`TypeError`): Regexp, Range, and values of a class that defines
   its own equality (`==`, or `Comparable` with `<=>`), whose keys could disagree with that equality.
   As in Ruby, changing an Array, Hash, Set, or Struct value after using it as a key makes it
   unfindable.
@@ -768,9 +768,9 @@ end
 ```
 
 - **Exception types.** `class Name < Exception` with `attr_reader field` (or
-  `Name = Exception.new(:field, ...)`) declares an exception type. It is a Struct type whose first
+  `Name = Exception.new(:field, ...)`) declares an exception type. It is a class whose first
   field is `message`, so `Name.new("msg", ...)`, `Name.message`, `Name.field`, and `@field`
-  work as for other Struct types. Exception types have no hierarchy.
+  work as for other classes. Exception types have no hierarchy.
 - **Built-in exception types.** These are raised by operations, each with only `message`:
   `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`,
   `IOError`, `RegexpError`, `FloatDomainError`, `Math::DomainError`.
@@ -821,7 +821,7 @@ The kinds of static error are:
 - calls on values;
 - forbidden constructs: `send`, `public_send`, `__send__`, `method_missing`, `define_method`, the
   `eval` family, `instance_variable_get`/`set`, `const_get`/`set`, `binding`, `self`, and `@x`
-  outside a function of a Struct type;
+  outside a function of a class;
 - unsupported syntax;
 - duplicate definitions;
 - literal type mismatches in `T[...]`;
@@ -1168,7 +1168,7 @@ block's results over every call that may compute it.
 ### Typed arrays
 
 `Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`,
-`Tuple[...]`, and `D[...]` for each Struct type `D` create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
+`Tuple[...]`, and `D[...]` for each class `D` create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 
 ## 16. Not yet supported
 
