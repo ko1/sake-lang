@@ -32,13 +32,26 @@ def registry
   end
 end
 
-def namespaces = registry.namespaces.select { registry.names(_1).any? }.sort
+def namespaces = (registry.namespaces.select { registry.names(_1).any? } + prelude_functions.keys).sort
+
+# The prelude's modules (Enum), written in Sake: namespace => { name => UserFunction }.
+def prelude_functions
+  @prelude_functions ||= Sake.load("", "check_reference.sake", out: StringIO.new, input: StringIO.new).functions.reject { |ns, _| ns.nil? }
+end
 
 # name => signature, the heading name being `Array[]` for the constructor.
 def operations(ns)
   if ns == EXCEPTIONS
     named = Sake::Resolver::BUILTIN_EXCEPTIONS.reject { _1.include?("::") }
     return named.to_h { |e| [e, "#{e}.new(message)"] }
+  end
+  if (fns = prelude_functions[ns])
+    return fns.values.sort_by(&:name).to_h do |fn|
+      req = fn.params.size - fn.defaults.size
+      params = fn.params.each_with_index.map { |p, i| i < req ? p.to_s : "[#{p}]" }
+      block = fn.yields ? (fn.block_optional ? " [{ }]" : " { }") : ""
+      [fn.name, "#{ns}.#{fn.name}(#{params.join(", ")})#{block}"]
+    end
   end
   registry.names(ns).sort.to_h do |n|
     b = registry.lookup(ns, n)

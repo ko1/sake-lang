@@ -319,6 +319,27 @@ before it are written out, so their count is still checked. A splat into a funct
 into `Array.zip`/`Range.zip` (their Tuples are as long as the argument list) and `Hash[...]`. In the typer, a Tuple spreads position by position; an Array stands for any number of
 arguments of its element types.
 
+### 5.9 Enum: the prelude's module
+
+The prelude, `sakelib/prelude.sake`, is read before every program, as if it began with
+`require "prelude"`. It defines `Enum`, Ruby's Enumerable under a short name: a module whose
+functions (`map`, `select`/`filter`, `reject`, `filter_map`, `flat_map`, `find`/`detect`,
+`reduce`/`inject`, `sum`, `count`, `include?`, `any?`, `all?`, `none?`, `one?`, `min_by`, `max_by`,
+`sort_by`, `to_a`, `first`, `take`, `drop`, `group_by`, `partition`, `each_with_object`, `compact`)
+are mixin functions written over a required `each` (§5.6).
+
+- **Built-in collections.** `Array`, `Hash`, `Set` and `Range` include `Enum`, and answer its
+  dispatch with their own operations: `Enum.map(xs) { }` is `Array.map(xs) { }` when `xs` is an
+  Array, and `Enum.each(h) { |k, v| }` is `Hash.each`. Nothing is copied into a built-in type; a
+  value of another type (an Integer, a Tuple, a String) is a `type` problem before running and a
+  `TypeError` while running. Tuple does not include `Enum`: its length and position types are fixed,
+  so it is indexed and destructured, not iterated.
+- **Your own types.** `include Enum` in a class with `def each(c) = ... yield(v) ...` copies every
+  other function into the class (§5.5), so `C.map(c) { }`, `C.count(c)`, `Enum.first(c)` and the
+  rest work; a class's own definition of one of them wins.
+- The prelude's functions are not reported as dead by `--types`, and its file is named in messages
+  like any required file.
+
 ## 6. Functions
 
 ```ruby

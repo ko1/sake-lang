@@ -736,6 +736,7 @@ module Sake
         record(o, "#{d.module}.#{d.name}", "subject", d.table.keys, args[0])
         rs = args[0].filter_map do |a|
           fn = d.table[atom_type_name(a)] or next
+          next call_builtin(fn, [one(a), *args.drop(1)], blk, o) unless fn.is_a?(UserFunction) # a built-in type's own operation (Enum.map on an Array)
           if fn.abstract # the type includes the module but does not define the function
             add_check(o, "#{d.module}.#{d.name}", "required", "a definition", one(a), :error, [a])
             next

@@ -126,7 +126,9 @@ running.
   `case` is exhaustive.
 - **Exceptions**: `raise`, `rescue`, `ensure`, and `retry`, plus inference of which exceptions may
   escape a function.
-- **Built-in library**: about 550 operations, named after Ruby's core library.
+- **Built-in library**: about 550 operations, named after Ruby's core library. `Enum` (the prelude)
+  is Enumerable under a short name: `Enum.map(x) { }` dispatches to Array, Hash, Set or Range, and a
+  class joins with `include Enum` and `def each`.
 
 Not yet: `case`/`when`, first-class blocks, and built-in constants such as `Math::PI`.
 

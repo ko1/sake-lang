@@ -18,6 +18,7 @@ require_relative "sake/interpreter"
 module Sake
   # Libraries that `require "name"` finds when no file of that name is next to the requiring file.
   SAKELIB = File.expand_path("../sakelib", __dir__)
+  PRELUDE = File.join(SAKELIB, "prelude.sake") # read before every program: Enum
 
   module_function
 
@@ -73,6 +74,11 @@ module Sake
         visit.(target, text)
       end
       files << [file, root]
+    end
+    # The prelude (sakelib/prelude.sake: Enum) comes first, as if every program began with `require "prelude"`.
+    unless seen[File.expand_path(PRELUDE)]
+      seen[File.expand_path(PRELUDE)] = true
+      visit.(PRELUDE, File.read(PRELUDE))
     end
     visit.(path, source)
     raise StaticErrors.new(diags) unless diags.empty?

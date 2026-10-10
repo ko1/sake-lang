@@ -215,12 +215,12 @@ function sakeCompletions(ctx) {
   const before = ctx.state.sliceDoc(Math.max(0, word.from - 120), word.from);
   const validFor = /^[\w?!]*$/;
   let m;
-  if ((m = before.match(/\(\s*([A-Z]\w*(?:\s*\|\s*[A-Z]\w*)+)\s*\)\.$/))) {
+  if ((m = before.match(/\(\s*([A-Z][\w:]*(?:\s*\|\s*[A-Z][\w:]*)+)\s*\)\.$/))) {
     const lists = m[1].split("|").map((s) => opsOf(s.trim()));
     const common = lists[0].filter((o) => lists.every((l) => l.some((x) => x.label === o.label)));
     return { from: word.from, options: common, validFor };
   }
-  if ((m = before.match(/(?:^|[^\w])([A-Z]\w*)\.$/))) {
+  if ((m = before.match(/(?:^|[^\w:])([A-Z]\w*(?:::[A-Z]\w*)*)\.$/))) {
     return { from: word.from, options: opsOf(m[1]), validFor };
   }
   if (/[\w)\]"'?!]\.$/.test(before)) {

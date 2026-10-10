@@ -107,6 +107,9 @@ p([q, r, 7 / 2, -7 / 2])
   `&b` may only pass the function's own block on: `def f(xs, &b) = Array.map(xs, &b)`.
 - `it` / `_1` name a single parameter. `|a, b|` destructures one Tuple/Array argument; `|(k, v), i|`
   and `|h, *rest|` work. `next v`, `break v`, and `return` (leaves the enclosing def) as in Ruby.
+- `Enum` (the prelude) is Enumerable under a short name: `Enum.map(x) { }`, `select`, `reduce(x, init) { }`,
+  `count`, `include?(x, v)`, `first`, `sort_by`, `group_by`, ... dispatch on x's type to Array, Hash, Set or
+  Range (so `Enum.map(xs)` is `Array.map(xs)`); a class joins with `include Enum` and `def each(c) = ... yield(v)`.
 - Hash blocks receive `[k, v]`: `Hash.each(h) { |k, v| }`. Without a block, `each_with_index`,
   `each_slice`, `each_cons` return an Array (no Enumerator). `loop { break v }` works.
 - A function that `yield`s must be called with a block unless it checks `block_given?`

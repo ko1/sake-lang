@@ -131,7 +131,7 @@ module Sake
       end
       READS[0] = nil
       all_fns = @program.functions.values.flat_map(&:values)
-      @dead_functions = all_fns.reject { @instantiated[_1] }
+      @dead_functions = all_fns.reject { @instantiated[_1] || Sake.file_of(@program, _1.node) == Sake::PRELUDE } # the prelude's are the library's, not the program's
       self
     end
 

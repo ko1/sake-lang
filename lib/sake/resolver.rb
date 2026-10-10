@@ -130,9 +130,14 @@ module Sake
       end
       apply_pastes
       apply_module_function_names
+      # The collection types include the prelude's Enum: `Enum.map(xs)` dispatches to Array.map and the
+      # others. They keep their own operations only (nothing is copied into a built-in type).
+      ENUM_TYPES.each { (@includes[_1] ||= []) << ["Enum", nil] } if @modules.key?("Enum")
       apply_includes
       apply_initialize_arity
     end
+
+    ENUM_TYPES = %w[Array Hash Set Range].freeze
 
     # A type with initialize: C.new may leave out trailing fields (or skip them for a later keyword);
     # they are nil when initialize starts, and initialize sets them. Without one, C.new takes every field,
@@ -185,6 +190,7 @@ module Sake
       @linearized = {}
       @includes.each_key do |ns|
         (@linearized[ns] = linearize(ns, [])).each do |mod, node|
+          next if node.nil? # the prelude's Enum on a built-in type: the type answers with its own operations only
           (@functions[mod] || {}).each do |name, fn|
             next if fn.origin || lookup(ns, name)
             (@functions[ns] ||= {})[name] = fn.dup.tap do |c|
@@ -1456,10 +1462,17 @@ module Sake
       # No type includes mod (yet): a call that is reached is reported by the type checker.
       return Dispatch.new(mod, name, {}) if types.empty?
       table = types.to_h { |t| [t, lookup(t, name)] }
+      # A built-in type answers with its own operation (Enum.map(xs) is Array.map), or has none.
+      table.each do |t, impl|
+        next unless BUILTIN_TYPES.include?(t) && impl.nil?
+        error(node, "#{mod}.#{name} cannot dispatch to #{t}: #{t} has no `#{name}`", ["call #{mod}.#{name} on a value of another type that includes #{mod}"])
+      end
+      table = table.reject { |t, impl| BUILTIN_TYPES.include?(t) && impl.nil? }
       # A required function's block comes from the types' definitions, which must agree.
       defined = table.values.select { _1.is_a?(UserFunction) && !_1.abstract }
       yields = fn.abstract && defined.any? ? defined.first.yields : fn.yields
       table.each do |t, impl|
+        next if impl.is_a?(Builtin)
         next if impl.is_a?(UserFunction) && impl.params.size == fn.params.size && impl.min_arity == fn.min_arity && impl.keyword_shape == fn.keyword_shape && (impl.abstract || impl.yields == yields)
         error(node, "#{mod}.#{name} dispatches to #{t}.#{name}, whose arguments or block differ from #{mod}.#{name}")
       end

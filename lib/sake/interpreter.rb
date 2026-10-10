@@ -240,6 +240,7 @@ module Sake
         d = n.dispatch
         fn = d.table[Values.type_of(args[0])]
         fail_at(n, "TypeError", "#{d.module}.#{d.name}: #{Values.describe(args[0])} does not include #{d.module}") unless fn
+        return call_builtin(fn, args, blk, n.origin) unless fn.is_a?(UserFunction) # Enum.map on an Array: Array.map
         call_user(fn, args, blk, n.origin)
       when CallUnion
         un = n.union

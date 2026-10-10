@@ -146,6 +146,28 @@ p(Array.tally(Array["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
 - **ブロック無しの繰り返し。** `each_slice` などをブロック無しで呼ぶと Array を返します。
 - **その場の書き換え。** `map!` などは要素型を変えない写像に使います。
 
+## Enum
+
+Enum は Ruby の Enumerable を短い名前にした module で、プログラムを読む前に読まれる prelude（`sakelib/prelude.sake`）が定義します。`Enum.map(x) { }` などは第 1 引数の型でディスパッチし、Array・Hash・Set・Range は自分の操作で答えます（`Enum.map(xs)` は xs が Array なら `Array.map(xs)`）。自分のクラスは `include Enum` と `def each(c) = ... yield(v) ...` を書けば、残りの関数（`map`、`select`、`reject`、`find`、`reduce`、`sum`、`count`、`include?`、`any?`/`all?`/`none?`/`one?`、`min_by`/`max_by`、`sort_by`、`to_a`、`first`、`take`/`drop`、`group_by`、`partition`、`each_with_object`、`compact`、`filter_map`、`flat_map`）が `each` の上に書かれているので全部使えます。詳細は [Enum](ref/Enum.md)。
+
+```ruby
+p(Enum.map(Array[3, 1, 2]) { |v| v * 10 })        # => [30, 10, 20]
+p(Enum.map(Hash[a: 1, b: 2]) { |k, v| "#{k}=#{v}" })   # => ["a=1", "b=2"]
+p(Enum.count(1..4) { |v| v > 2 })                 # => 2
+
+class Deck
+  include Enum
+  attr_reader cards
+  def each(d) = Array.each(@cards) { |c| yield(c) }
+end
+d = Deck.new(Array["A", "K", "Q"])
+p(Deck.select(d) { |c| c < "K" })                  # => ["A"]
+p(Enum.first(d), Deck.count(d))                   # => "A"
+                                                  # => 3
+```
+
+Tuple は Enum を include しません。長さと位置ごとの型が決まっているので、添字と分解で扱います。
+
 ## Tuple, Range
 
 Tuple は長さと各位置の型が決まった並びで、リテラル `[1, "a"]` が作ります。Range は 2 つの端の組で、`1..5`、`1...5`、終端の無い `1..` があります。Tuple の操作は少なく、`Tuple.to_a` で Array にして扱うのが普通です。Range は `Range.each` で数を数え、`Range.to_a` と `Range.include?` をよく使います。詳細は [Tuple](ref/Tuple.md)、[Range](ref/Range.md)。

@@ -94,8 +94,19 @@ module Sake
         end
         [ns, ops]
       end
-      { namespaces:, modules: Operators::MODULE_OF.values.uniq.sort, exceptions: Resolver::BUILTIN_EXCEPTIONS.reject { _1.include?("::") },
-        keywords: KEYWORDS }
+      # The prelude's modules (Enum): their functions, with the parameter names.
+      prelude = Sake.load("", "catalog.sake", out: StringIO.new, input: StringIO.new)
+      prelude.functions.each do |ns, fns|
+        next unless ns && !namespaces.key?(ns)
+        namespaces[ns] = fns.values.sort_by(&:name).map do |fn|
+          req = fn.params.size - fn.defaults.size
+          params = fn.params.each_with_index.map { |p, i| i < req ? p.to_s : "[#{p}]" }
+          block = fn.yields ? (fn.block_optional ? " [{ }]" : " { }") : ""
+          { name: fn.name, signature: "#{ns}.#{fn.name}(#{params.join(", ")})#{block}", block: fn.yields ? (fn.block_optional ? "optional" : "required") : "none" }
+        end
+      end
+      { namespaces:, modules: [*Operators::MODULE_OF.values.uniq, *prelude.functions.keys.compact].uniq.sort,
+        exceptions: Resolver::BUILTIN_EXCEPTIONS.reject { _1.include?("::") }, keywords: KEYWORDS }
     end
 
     # The program's own names, read from the syntax tree (also when it does not resolve): types with their
@@ -109,7 +120,8 @@ module Sake
         return unless n
         case n
         when Prism::ClassNode, Prism::ModuleNode
-          name = n.constant_path.slice
+          name = n.constant_path.slice.delete(" \t\r\n").delete_prefix("::")
+          name = "#{owner}::#{name}" if owner # nested: `class B` inside `module A` is A::B
           t = add_type.(name, n.is_a?(Prism::ModuleNode) ? "module" : "class")
           if n.is_a?(Prism::ClassNode) && n.body.is_a?(Prism::StatementsNode) # attr_reader x, y / attr_accessor n = 0
             n.body.body.each do |st|
@@ -121,7 +133,7 @@ module Sake
         when Prism::ConstantWriteNode
           v = n.value
           if v.is_a?(Prism::CallNode) && v.name == :new && v.receiver.is_a?(Prism::ConstantReadNode) && %i[Struct Exception].include?(v.receiver.name)
-            t = add_type.(n.name.to_s, v.receiver.name == :Struct ? "struct" : "exception")
+            t = add_type.(owner ? "#{owner}::#{n.name}" : n.name.to_s, v.receiver.name == :Struct ? "struct" : "exception")
             (v.arguments&.arguments || []).each { |a| t[:fields] |= [a.unescaped] if a.is_a?(Prism::SymbolNode) }
           end
         when Prism::DefNode

@@ -96,7 +96,7 @@ module Sake
         @cur_inst = nil
       end
       @passes = @evaluations
-      @dead_functions = @program.functions.values.flat_map(&:values).reject { @instantiated[_1] }
+      @dead_functions = @program.functions.values.flat_map(&:values).reject { @instantiated[_1] || Sake.file_of(@program, _1.node) == Sake::PRELUDE }
       self
     end
 

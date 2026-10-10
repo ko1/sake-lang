@@ -146,6 +146,28 @@ p(Array.tally(Array["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
 - **Iteration without a block.** `each_slice` and the like, called without a block, give an Array.
 - **Rewriting in place.** `map!` and the others are for mappings within one type.
 
+## Enum
+
+Enum is Ruby's Enumerable under a short name, defined by the prelude (`sakelib/prelude.sake`), which is read before every program. `Enum.map(x) { }` and the others dispatch on the type of the first argument: an Array, Hash, Set or Range answers with its own operation (`Enum.map(xs)` is `Array.map(xs)` when xs is an Array). A class of your own joins with `include Enum` and `def each(c) = ... yield(v) ...`, and gets the rest (`map`, `select`, `reject`, `find`, `reduce`, `sum`, `count`, `include?`, `any?`/`all?`/`none?`/`one?`, `min_by`/`max_by`, `sort_by`, `to_a`, `first`, `take`/`drop`, `group_by`, `partition`, `each_with_object`, `compact`, `filter_map`, `flat_map`), which are written over `each`. Details: [Enum](ref/Enum.md).
+
+```ruby
+p(Enum.map(Array[3, 1, 2]) { |v| v * 10 })        # => [30, 10, 20]
+p(Enum.map(Hash[a: 1, b: 2]) { |k, v| "#{k}=#{v}" })   # => ["a=1", "b=2"]
+p(Enum.count(1..4) { |v| v > 2 })                 # => 2
+
+class Deck
+  include Enum
+  attr_reader cards
+  def each(d) = Array.each(@cards) { |c| yield(c) }
+end
+d = Deck.new(Array["A", "K", "Q"])
+p(Deck.select(d) { |c| c < "K" })                  # => ["A"]
+p(Enum.first(d), Deck.count(d))                   # => "A"
+                                                  # => 3
+```
+
+Tuple does not include Enum: its length and position types are fixed, so it is indexed and destructured instead.
+
 ## Tuple, Range
 
 A Tuple is a sequence with a fixed length and a type per position; the literal `[1, "a"]` makes one. A Range is a pair of ends: `1..5`, `1...5`, and the endless `1..`. Tuples have few operations, and the usual move is `Tuple.to_a` to get an Array. For Ranges, `Range.each` counts, and `Range.to_a` and `Range.include?` are the common ones. Details: [Tuple](ref/Tuple.md), [Range](ref/Range.md).
