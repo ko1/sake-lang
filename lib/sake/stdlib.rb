@@ -32,6 +32,14 @@ module Sake
       a**b
     end
 
+    # a ** b for real a and b: Ruby gives a Complex for a negative base and a fractional exponent; here that is
+    # out of the domain (the result's type is fixed by the operand types).
+    def real_pow(a, b)
+      r = a**b
+      raise Fail.new("Math::DomainError", "#{a} ** #{b} is not a real number (a negative base with a fractional exponent)") if r.is_a?(Complex) && !a.is_a?(Complex) && !b.is_a?(Complex)
+      r
+    end
+
     def int_div(op, a, b)
       raise Fail.new("ZeroDivisionError", "divided by 0") if b.zero?
       a.public_send(op, b)
@@ -49,7 +57,7 @@ module Sake
         if t1 == "Integer" && t2 == "Integer"
           reg.define_binary(:**, t1, t2) { |a, b| int_pow(a, b) }
         else
-          reg.define_binary(:**, t1, t2) { |a, b| a**b }
+          reg.define_binary(:**, t1, t2) { |a, b| real_pow(a, b) }
         end
       end
       reg.define_binary(:+, "String", "String") { |a, b| a + b }
@@ -100,6 +108,7 @@ module Sake
           right = rows.keys.select { _1[0] == type }.map(&:last)
           reg.define(type, op, [type, "Any"]) do |a, b|
             impl = rows[[type, Values.type_of(b)]]
+            next op.to_s == "!=" if !impl && %w[== !=].include?(op.to_s) # as the operator: values of different types are not equal
             unless impl
               raise Fail.new("TypeError", "no implementation for (#{type}, #{Values.describe(b)}); " \
                                           "defined for (#{type}, #{right.map { Values.display_type(_1) }.join("|")})")
@@ -148,8 +157,8 @@ module Sake
       reg.define("Float", :to_i, ["Float"]) { |f| float_to_i(f, &:to_i) }
       reg.define("Float", :floor, ["Float"]) { |f| float_to_i(f, &:floor) }
       reg.define("Float", :ceil, ["Float"]) { |f| float_to_i(f, &:ceil) }
-      reg.define("Float", :round, ["Float"], optional: ["Integer"]) do |f, digits = nil|
-        digits ? f.round(digits).to_f : float_to_i(f, &:round)
+      reg.define("Float", :round, ["Float"], optional: ["Integer"], keywords: { "half" => "Symbol" }) do |f, digits = nil, **kw|
+        digits ? f.round(digits, **kw).to_f : float_to_i(f) { _1.round(**kw) }
       end
       reg.define("Float", :abs, ["Float"], &:abs)
       reg.define("Float", :nan?, ["Float"], &:nan?)
@@ -160,16 +169,26 @@ module Sake
       yield f
     end
 
+    # r, as a value of x's number type (Ruby's round(digits) gives an Integer for digits <= 0).
+    def same_real(x, r)
+      case x
+      when Float then r.to_f
+      when Rational then r.to_r
+      else r
+      end
+    end
+
     def install_string(reg)
       install_typed_ops(reg, "String", %i[+ == != < <= > >=])
       reg.define("String", :*, %w[String Integer]) do |s, n|
         raise Fail.new("ArgumentError", "negative argument #{n}") if n.negative?
         s * n
       end
-      %i[length size upcase downcase capitalize swapcase reverse strip lstrip rstrip chomp
+      %i[length size upcase downcase capitalize swapcase reverse strip lstrip rstrip
          empty? to_f chars lines].each do |m|
         reg.define("String", m, ["String"], &m)
       end
+      reg.define("String", :chomp, ["String"], optional: ["String"]) { |s, sep = nil| sep ? s.chomp(sep) : s.chomp } # as chomp!
       reg.define("String", :to_s, ["String"]) { _1 }
       # to_i(s, base = 10), as Ruby's (base 2..36; 0 reads a prefix such as 0x)
       reg.define("String", :to_i, ["String"], optional: ["Integer"]) { |str, base = 10| ruby_error("ArgumentError") { str.to_i(base) } }
@@ -362,8 +381,8 @@ module Sake
 
     def install_math(reg)
       %i[sqrt cbrt sin cos tan atan exp log log2 log10].each do |m|
-        reg.define("Math", m, [NUM]) do |x|
-          Math.public_send(m, x)
+        reg.define("Math", m, [NUM], optional: m == :log ? [NUM] : []) do |x, base = nil|
+          base ? Math.log(x, base) : Math.public_send(m, x)
         rescue Math::DomainError => e
           raise Fail.new("Math::DomainError", e.message)
         end

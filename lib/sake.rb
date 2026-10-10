@@ -114,6 +114,17 @@ module Sake
     program.sources[node.location.send(:source)] || program.path
   end
 
+  # A thread that ended with an error nobody read (no Thread.value / Thread.join) is reported on stderr at exit,
+  # as Ruby reports it when the thread dies; the program's own exit status is not changed.
+  def report_dead_threads(path)
+    $stdout.flush if Sake.dead_threads.any? # the program's output first, then the report
+    Sake.dead_threads.each do |_, e|
+      e.path ||= path
+      $stderr.puts("#{e.path}: a thread ended with an error that no Thread.value / Thread.join read:", e.report.gsub(/^/, "  "))
+    end
+    Sake.dead_threads.clear
+  end
+
   # The program runs in its own thread: bin/sake sizes thread stacks (RUBY_THREAD_*_STACK_SIZE)
   # so that Sake's own depth limit, not Ruby's stack, bounds recursion.
   def run(source, path, out: $stdout) = execute(load(source, path, out:))
@@ -122,18 +133,22 @@ module Sake
     path = program.path
     unless thread
       Sake.at_exit_blocks.clear
+      Sake.dead_threads.clear
       begin
         return Interpreter.new(program).run
       ensure
         Sake.at_exit_blocks.reverse_each(&:call)
+        report_dead_threads(path)
       end
     end
     Sake.at_exit_blocks.clear
+    Sake.dead_threads.clear
     th = Thread.new do
       begin
         Interpreter.new(program).run
       ensure
         Sake.at_exit_blocks.reverse_each(&:call) # Kernel.at_exit, last registered first, after a normal end, exit, or an error
+        report_dead_threads(path)
       end
     end
     th.report_on_exception = false

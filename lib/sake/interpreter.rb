@@ -99,6 +99,28 @@ module Sake
       raise RunError.new(kind, message, line(node), @stack.dup, file: where_file(node), **opts)
     end
 
+    # A Ruby exception escaping a built-in becomes the Sake error of the same kind (Ruby's message, with
+    # Sake's names for its values). Subclasses come before their superclasses; EOFError and Errno are IOError.
+    # Ruby's own RuntimeError (String.undump of a bad string) is an ArgumentError: in Sake, RuntimeError is what
+    # `raise "message"` makes, and the checker's rescue check relies on that.
+    RUBY_ERRORS = [[::ZeroDivisionError, "ZeroDivisionError"], [::FloatDomainError, "FloatDomainError"],
+                   [::RangeError, "RangeError"], [::KeyError, "KeyError"], [::ClosedQueueError, "IOError"],
+                   [::IndexError, "IndexError"], [::RegexpError, "RegexpError"], [::Math::DomainError, "Math::DomainError"],
+                   [::ArgumentError, "ArgumentError"], [::TypeError, "TypeError"], [::IOError, "IOError"],
+                   [::SystemCallError, "IOError"], [::ThreadError, "ThreadError"], [::EncodingError, "EncodingError"],
+                   [::NoMatchingPatternError, "NoMatchingPatternError"], [::FrozenError, "TypeError"], [::RuntimeError, "ArgumentError"]].freeze
+    RUBY_ERROR_CLASSES = RUBY_ERRORS.map(&:first).freeze
+
+    def ruby_run_error(e, node, op)
+      return RunError.new(e.kind, e.message, node.location.start_line, @stack.dup, file: where_file(node), op:) if e.is_a?(Fail)
+      raise e if e.is_a?(::ArgumentError) && e.message.start_with?("wrong number of arguments") # the interpreter's own bug
+      raise e if e.instance_of?(::RuntimeError) && e.message.start_with?("BUG")
+      kind = RUBY_ERRORS.find { |c, _| e.is_a?(c) }&.last or raise e
+      return RunError.new(kind, Stdlib::FROZEN_STRING, node.location.start_line, @stack.dup, file: where_file(node), op:) if e.is_a?(::FrozenError) && e.receiver.is_a?(String)
+      msg = e.message.gsub("Sake::Tuple", "Tuple").gsub("Sake::RecordValue", "Record").gsub("Sake::StructValue", "Struct value")
+      RunError.new(kind, msg, node.location.start_line, @stack.dup, file: where_file(node), op:)
+    end
+
     def ev(n, f)
       case n
       when Lit then n.value
@@ -463,14 +485,8 @@ module Sake
         call_user(init, [v], nil, node) if init # after the fields are stored, as Ruby's initialize
       end
       v
-    rescue Fail => e
-      raise RunError.new(e.kind, e.message, node.location.start_line, @stack.dup, file: where_file(node), op: fn.full_name)
-    rescue ::EncodingError => e
-      raise RunError.new("EncodingError", e.message, node.location.start_line, @stack.dup, file: where_file(node), op: fn.full_name)
-    rescue ::ArgumentError => e
-      # Broken UTF-8 (a byteslice cut mid-character) reaching a regexp or a scan: Ruby's ArgumentError.
-      raise unless e.message.start_with?("invalid byte sequence")
-      raise RunError.new("ArgumentError", e.message, node.location.start_line, @stack.dup, file: where_file(node), op: fn.full_name)
+    rescue Fail, *RUBY_ERROR_CLASSES => e
+      raise ruby_run_error(e, node, fn.full_name)
     end
 
     # once { ... }: one value per place in the program, shared by threads (copies of this interpreter
@@ -568,6 +584,8 @@ module Sake
       end
       # Records compare by their fields (any two shapes; different shapes are not equal).
       return a.public_send(op, b) if %w[== !=].include?(op) && a.is_a?(RecordValue) && b.is_a?(RecordValue)
+      # format % {name: v}: the Record's fields name the values (Ruby's `%<name>s` with a Hash).
+      return @registry.binary_ops["%"][%w[String Record]].call(a, b) if op == "%" && a.is_a?(String) && b.is_a?(RecordValue)
       rows = @registry.binary_ops[op]
       key = [Values.type_of(a), Values.type_of(b)]
       impl = rows[key]
@@ -585,10 +603,8 @@ module Sake
                            node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil? || b.nil?, op: "#{mod}.#{op}")
       end
       impl.call(a, b)
-    rescue Fail => e
-      raise RunError.new(e.kind, e.message, node.location.start_line, @stack.dup, file: where_file(node), op: "#{mod}.#{op}")
-    rescue ::EncodingError => e
-      raise RunError.new("EncodingError", e.message, node.location.start_line, @stack.dup, file: where_file(node), op: "#{mod}.#{op}")
+    rescue Fail, *RUBY_ERROR_CLASSES => e
+      raise ruby_run_error(e, node, "#{mod}.#{op}")
     end
 
     # Strings of incompatible encodings (a byte from Integer.chr(227) next to UTF-8 text) meeting.
@@ -609,6 +625,8 @@ module Sake
                            node.location.start_line, @stack.dup, file: where_file(node), nil_value: a.nil?, op: "#{mod}.#{op}")
       end
       impl.call(a)
+    rescue Fail, *RUBY_ERROR_CLASSES => e
+      raise ruby_run_error(e, node, "#{mod}.#{op}")
     end
 
     # `x[k]` / `x[k] = v`: the index operation of x's type.

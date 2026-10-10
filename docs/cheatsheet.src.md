@@ -4,7 +4,7 @@ Sake is Ruby syntax where **every operation names its type**: `String.upcase(s)`
 Run: `bin/sake FILE.sake` (`-c` checks only). Exit 0 ok, 1 runtime error, 2 rejected before running.
 `--strict=N`: 0 names/arity/syntax only; 1 (default) + wrong types and a `rescue` of what is never
 raised; 2 + a maybe-nil value used unchecked (except the nil of a miss: `x[k]`, `Array.first/last/
-pop/shift/min/max/at`); 3 + those misses and a non-exhaustive literal `case`; 4 + a `raise` never rescued.
+pop/shift/min/max/minmax/at/slice/dig`, `Hash.dig`, `Set.first/min/max`); 3 + those misses and a non-exhaustive literal `case`; 4 + a `raise` never rescued.
 Part 1 gives the rules; Part 2 lists every built-in operation (only those exist).
 
 ## Part 1. Rules
@@ -262,7 +262,9 @@ p(v + 1)
 - Operations that may return nil: `gets`, `Array.find/index`, `String.index`, `String.match`,
   `Hash.delete`, `ENV.get`, a field never written, ... Using such a value in another operation
   without a check is rejected at level 2. The nil of a *miss* (`x[k]`, `Array.first/last/pop/
-  shift/min/max/at` on an empty Array) is checked only at level 3.
+  shift/min/max/minmax/at/slice/dig`, `Hash.dig`, `Set.first/min/max` on an empty collection) is checked only at level 3.
+- `Array.sort/min/max/sort_by/min_by/max_by` (and `Set`'s, `Tuple.max/min`) are rejected statically when the
+  element (or key) types cannot all be compared with each other (`Array[1, "a"]`, a nil element).
 - A **local variable** is narrowed by `if x`, `x ? a : b`, `x != nil`, `return unless x`,
   `next unless x`, `x && ...`, `x => T`, `case x in`. `x.nil?` is rejected: write `x == nil`.
 - Defaults: `y = x || 0`, `Hash.fetch(h, k, 0)`, `Array.fetch(a, i, 0)`, `Hash.new(0)`.

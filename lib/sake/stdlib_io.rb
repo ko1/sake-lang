@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "io/console"
 
 module Sake
   # An IO value: the program's stdin/stdout/stderr, or a file from File.open. stdout is the
@@ -20,11 +21,16 @@ module Sake
   module Stdlib
     module_function
 
+    def console(f)
+      raise IOError, "not a terminal" unless f.io.respond_to?(:winsize) && f.io.respond_to?(:tty?) && f.io.tty?
+      f.io
+    end
+
     def install_streams(reg, out, input)
       stdin = IOValue.new("<STDIN>") { input }
       stdout = IOValue.new("<STDOUT>") { out }
       # stdout is flushed first, so that stdout and stderr lines keep their order (as warn does).
-      stderr = IOValue.new("<STDERR>") { out.flush if out.respond_to?(:flush); $stderr }
+      stderr = IOValue.new("<STDERR>") { (out.flush rescue nil) if out.respond_to?(:flush); $stderr } # stdout may be closed
       reg.define("IO", :stdin, []) { stdin }
       reg.define("IO", :stdout, []) { stdout }
       reg.define("IO", :stderr, []) { stderr }
@@ -41,12 +47,13 @@ module Sake
       reg.define("IO", :getc, ["IO"]) { |f| io_error { f.io.getc } }
       # Positions, as Ruby's: seek(io, offset[, whence]) with whence 0/1/2 or :SET/:CUR/:END; pos; rewind; truncate.
       reg.define("IO", :seek, %w[IO Integer], optional: [%w[Integer Symbol]]) do |f, off, whence = 0|
+        raise Fail.new("ArgumentError", "unknown whence: #{whence.inspect} (0/1/2 or :SET/:CUR/:END)") if whence.is_a?(Symbol) && !%i[SET CUR END].include?(whence)
         io_error { f.io.seek(off, whence.is_a?(Symbol) ? IO.const_get(:"SEEK_#{whence}") : whence) }
       end
       reg.define("IO", :pos, ["IO"]) { |f| io_error { f.io.pos } }
       reg.define("IO", :rewind, ["IO"]) { |f| io_error { f.io.rewind } }
       reg.define("IO", :truncate, %w[IO Integer]) { |f, n| io_error { f.io.truncate(n) } }
-      reg.define("IO", :size, ["IO"]) { |f| io_error { f.io.size } }
+      reg.define("IO", :size, ["IO"]) { |f| io_error { f.io.respond_to?(:size) ? f.io.size : raise(IOError, "not a file") } }
       reg.define("IO", :readlines, ["IO"]) { |f| io_error { f.io.readlines } }
       reg.define("IO", :each_line, ["IO"], block: :required) { |f, &b| io_error { f.io.each_line { b.(_1) } } && f }
       reg.define("IO", :eof?, ["IO"]) { |f| io_error { f.io.eof? } }
@@ -54,6 +61,12 @@ module Sake
       reg.define("IO", :close, ["IO"]) { |f| f.io.close.then { nil } }
       reg.define("IO", :closed?, ["IO"]) { |f| f.io.closed? }
       reg.define("IO", :tty?, ["IO"]) { |f| f.io.respond_to?(:tty?) && f.io.tty? }
+      # The terminal (io/console): winsize is [rows, columns]; raw / noecho run the block with the terminal in that
+      # mode and give its value; getch reads one key. Each is an IOError when the IO is not a terminal.
+      reg.define("IO", :winsize, ["IO"]) { |f| io_error { Tuple.new(console(f).winsize) } }
+      reg.define("IO", :raw, ["IO"], block: :required) { |f, &b| io_error { console(f).raw { b.call } } }
+      reg.define("IO", :noecho, ["IO"], block: :required) { |f, &b| io_error { console(f).noecho { b.call } } }
+      reg.define("IO", :getch, ["IO"]) { |f| io_error { console(f).getch } }
       # File.open(path, mode = "r"[, perm]): an IO; with a block, the block's value, the file closed after it.
       reg.define("File", :open, ["String"], optional: %w[String Integer], block: :optional) do |path, mode = "r", perm = nil, &b|
         file = io_error { ruby_error("ArgumentError") { perm ? File.open(path, mode, perm) : File.open(path, mode) } }

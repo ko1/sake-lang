@@ -96,7 +96,7 @@ module Sake
     FIXED_EXT = {
       "Integer" => %w[Symbol.length Symbol.size Hash.length Hash.size Set.length Set.size Range.size
                       Integer.gcd Integer.lcm Integer.pow Integer.bit_length Integer.sqrt Integer.clamp
-                      Float.truncate String.ord String.hex String.oct MatchData.begin MatchData.end
+                      Float.truncate String.ord String.hex String.oct
                       Kernel.Integer File.write Array.count Range.count Hash.count
                       Rational.numerator Rational.denominator Rational.to_i Rational.floor Rational.ceil
                       Rational.round Rational.truncate Time.year Time.month Time.day Time.hour Time.min
@@ -246,8 +246,11 @@ module Sake
       case name
       when "Thread.new"
         thread_site(node).tap { |s| site = thread_sites[s[0][1]]; site.elem = u(site.elem, call_block(blk, [])) }
-      when "Thread.value" then u(*atoms_of(a0, :thread).map { thread_sites[_1[1]].elem })
-      when "Thread.join" then args.size == 2 ? u(a0, t("Nil")) : a0
+      when "Thread.value", "Thread.join"
+        # Thread.raise(t, msg) raises a RuntimeError in t, which value / join bring to the caller.
+        merge_raised("RuntimeError" => [node]) if thread_raise_used?
+        next_result = name == "Thread.value" ? u(*atoms_of(a0, :thread).map { thread_sites[_1[1]].elem }) : (args.size == 2 ? u(a0, t("Nil")) : a0)
+        next_result
       when "Thread.current" then t("Thread")
       when "Thread.kill", "Thread.raise", "Socket.set_timeout" then a0
       when "Mutex.lock", "Mutex.unlock" then a0
@@ -275,6 +278,14 @@ module Sake
       when "IO.write" then t("Integer")
       when "IO.read" then args.size == 2 ? u(t("String"), t("Nil")) : t("String")
       when "IO.eof?", "IO.closed?", "IO.tty?" then t("Boolean")
+      when "IO.winsize" then tuple([t("Integer"), t("Integer")])
+      when "IO.raw", "IO.noecho" then call_block(blk, [])
+      when "IO.getch" then u(t("String"), t("Nil"))
+      when "ENV.replace"
+        k, v = hash_kv(a0)
+        record(node, name, "key", "String", k)
+        record(node, name, "value", "String", v)
+        t("Nil")
       when "IO.readlines" then new_site(node, " IO.readlines", t("String"))
       when "IO.each_line"
         call_block(blk, [t("String")])
@@ -324,6 +335,7 @@ module Sake
       when "Complex.rectangular" then tuple([u(t("Integer"), t("Float"), t("Rational"))] * 2)
       when "Complex.polar" then tuple([u(t("Integer"), t("Float")), u(t("Integer"), t("Float"))])
       when "Kernel.rand" then args.empty? || args[0] == ["Float"] ? t("Float") : t("Integer")
+      when "MatchData.begin", "MatchData.end" then u(t("Integer"), t("IndexNil")) # nil for a group that did not take part
       when "Kernel.pp" then a0
       when "File.readlines", "String.bytes", "MatchData.captures", "MatchData.names", "MatchData.to_a"
         elem = name == "String.bytes" ? t("Integer") : (name == "MatchData.captures" ? u(t("String"), t("Nil")) : t("String"))
@@ -340,7 +352,7 @@ module Sake
       when "Float.divmod"
         record(node, name, 2, %w[Float Integer], args[1])
         tuple([t("Integer"), t("Float")]) # Ruby: 7.5.divmod(2) is [3, 1.5]
-      when "Integer.digits" then new_site(node, " #{name}", t("Integer"))
+      when "Integer.digits" then site_for(node, " #{name}", declared: "Integer") # an Integer[]
       # Range
       when "Range.each", "Range.step", "Range.each_with_index"
         call_block(blk, name == "Range.each_with_index" ? [range_elem(a0), t("Integer")] : [range_elem(a0)])
@@ -359,7 +371,8 @@ module Sake
       when "Range.min", "Range.max", "Range.begin", "Range.end" then u(range_elem(a0), t("Nil"))
       # Hash
       when "Hash.fetch" then u(hash_kv(a0)[1], args[2] || [])
-      when "Hash.dig", "Hash.delete" then u(hash_kv(a0)[1], t("Nil"))
+      when "Hash.delete" then u(hash_kv(a0)[1], t("Nil"))
+      when "Hash.dig" then dig_result(node, name, a0, args.drop(1))
       when "Hash.store"
         atoms_of(a0, :hash).each { |a| s = hash_sites[a[1]]; s.key = u(s.key, args[1]); s.val = u(s.val, args[2]) }
         args[2]
@@ -367,7 +380,8 @@ module Sake
       when "Hash.values" then new_site(node, " #{name}", hash_kv(a0)[1])
       when "Hash.to_a", "Hash.sort_by"
         k, v = hash_kv(a0)
-        call_block(blk, [pair_type(k, v)]) if blk && !k.empty?
+        keys = blk && !k.empty? ? call_block(blk, [pair_type(k, v)]) : []
+        check_sortable(node, name, keys) if name == "Hash.sort_by"
         new_site(node, " #{name}", k.empty? ? [] : pair_type(k, v))
       when "Hash.key" then u(hash_kv(a0)[0], t("Nil"))
       when "Hash.invert" then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key, s.val = hash_kv(a0).reverse }
@@ -389,8 +403,9 @@ module Sake
         hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = k; s.val = v }
       when "Hash.find", "Hash.detect", "Hash.min_by", "Hash.max_by"
         k, v = hash_kv(a0)
-        call_block(blk, [pair_type(k, v)]) unless k.empty?
-        k.empty? ? t("Nil") : u(pair_type(k, v), t("Nil"))
+        keys = k.empty? ? [] : call_block(blk, [pair_type(k, v)])
+        check_sortable(node, name, keys) if name.end_with?("_by")
+        k.empty? ? t("Nil") : u(pair_type(k, v), t(name.end_with?("_by") ? "IndexNil" : "Nil"))
       when "Hash.sum"
         k, v = hash_kv(a0)
         k.empty? ? (args[1] || t("Integer")) : sum_type(args[1], call_block(blk, [pair_type(k, v)]))
@@ -490,6 +505,21 @@ module Sake
       site_type(:array, id)
     end
 
+    # Process.clock_gettime(clock[, unit]): a Float, or an Integer for the whole-number units (:millisecond, ...).
+    def clock_result(node)
+      unit = node.arguments&.arguments&.[](1)
+      return t("Float") if unit.nil?
+      return u(t("Integer"), t("Float")) unless unit.is_a?(Prism::SymbolNode)
+      %w[second millisecond microsecond nanosecond].include?(unit.unescaped) ? t("Integer") : t("Float")
+    end
+
+    def thread_raise_used?
+      if @thread_raise_used.nil? # calls: node => {namespace => target}
+        @thread_raise_used = @program.calls.each_value.any? { |by_ns| by_ns.each_value.any? { _1.respond_to?(:full_name) && _1.full_name == "Thread.raise" } }
+      end
+      @thread_raise_used
+    end
+
     def table_result(name, args, blk, node)
       result, opts = TABLE[name]
       return :none unless result
@@ -511,12 +541,20 @@ module Sake
           end
         bres = call_block(blk, yargs) unless yargs.any?(&:empty?)
       end
+      write_elems(a0, opts[:check_elems] == :all ? [elem_of(args[1])] : [args[1]], node, name) if opts[:check_elems]
+      check_sortable(node, name, opts[:block] ? bres : elem) if opts[:compare]
       case result
       when /\AArray<(\w+)>\z/ then new_site(node, " #{name}", t($1))
+      when :dig then dig_result(node, name, a0, args.drop(1))
+      when :elem_index_nil then u(elem, t("IndexNil"))
+      when :clock then clock_result(node)
       when String then t(result)
       when :bool then t("Boolean")
       when :bool_nil then u(t("Boolean"), t("Nil"))
       when :int_nil then u(t("Integer"), t("Nil"))
+      when :int_index_nil then u(t("Integer"), t("IndexNil")) # a group that did not take part: a miss, as m[i]'s
+      when :string_index_nil then u(t("String"), t("IndexNil"))
+      when :tuple_int_index_nil2 then tuple([u(t("Integer"), t("IndexNil"))] * 2)
       when :string_nil then u(t("String"), t("Nil"))
       when :recv then a0
       when :recv_nil then u(a0, t("Nil"))
@@ -534,7 +572,7 @@ module Sake
       when :tuple3_string then tuple([t("String")] * 3)
       when :tuple_int2 then tuple([t("Integer")] * 2)
       when :tuple_string2 then tuple([t("String")] * 2)
-      when :tuple_elem_nil2 then tuple([u(elem, t("Nil"))] * 2)
+      when :tuple_elem_nil2 then tuple([u(elem, t("IndexNil"))] * 2) # [nil, nil] for an empty collection: a miss
       when :tuple_arrays, :tuple_pair_arrays then aux_site(node, "part", elem).then { tuple([_1, _1]) }
       when :set_elem then set_site(node).tap { set_sites[_1[0][1]].elem = u(set_sites[_1[0][1]].elem, elem) }
       when :memo then args[1]
@@ -557,7 +595,7 @@ module Sake
       when :float_nil then u(t("Float"), t("Nil"))
       when :tuple_int_nil2 then tuple([u(t("Integer"), t("Nil"))] * 2)
       when :tuple_float_int then tuple([t("Float"), t("Integer")])
-      when :time_to_a then tuple([t("Integer")] * 8 + [t("Boolean"), t("String")])
+      when :time_to_a then tuple([t("Integer")] * 8 + [t("Boolean"), u(t("String"), t("Nil"))]) # the zone is nil for a fixed offset
       when :array_kv then new_site(node, " #{name}", u(k, v))
       when :array_string_nil then new_site(node, " #{name}", u(t("String"), t("Nil")))
       when :hash_string_string then hash_site(node).tap { |h| s = hash_sites[h[0][1]]; s.key = t("String"); s.val = t("String") }

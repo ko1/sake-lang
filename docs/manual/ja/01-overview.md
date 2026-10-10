@@ -43,7 +43,7 @@ bin/sake --dump=ast FILE.sake   # 解決済みのプログラム（SakeAST）を
 |---|---|---|---|
 | 0 | `--strict=0` | （無し） | 構文、名前、引数の数、ブロック、値へのメソッド呼び出し、禁止構文、`T[...]` のリテラルの型（常に検査） |
 | 1 | 既定 | `type`, `rescue` | nil 以外の、操作に合わない型の値（`"" + 1`、または 1 か `""` を返す `pick() + 1`）。begin 本体が決して投げない例外の `rescue` |
-| 2 | `--strict` | 上に加えて `nil`, `mixed` | nil かもしれない値を検査なしに使うこと（ただし「外れ」の nil は除く: `x[k]`、空の Array への `Array.first`, `last`, `pop`, `shift`, `min`, `max`, `at`, `sample`, `delete_at`）。`mixed` の報告（下記） |
+| 2 | `--strict` | 上に加えて `nil`, `mixed` | nil かもしれない値を検査なしに使うこと（ただし「外れ」の nil は除く: `x[k]`、`Array.dig`、`Hash.dig`、`MatchData.begin`/`end`、空の容器への `Array.first`, `last`, `pop`, `shift`, `min`, `max`, `minmax`, `at`, `slice`, `sample`, `delete_at`, `Set.first`, `min`, `max`, `min_by`, `max_by`）。`mixed` の報告（下記） |
 | 3 | `--strict=3` | 上に加えて `index-nil`, `exhaustive` | 「外れ」の nil を検査なしに使うこと。開いた型（String、Integer、リテラルで書かれていない Symbol など）の値が、どのリテラルの分岐にも取られないかもしれない `case`/`in` |
 | 4 | `--strict=4` | 上のすべてと `unrescued` | rescue されずにトップレベルまで届くかもしれない `raise`（プログラム向け。ライブラリの raise は呼び出し側のためのもの） |
 

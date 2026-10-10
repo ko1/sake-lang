@@ -43,7 +43,7 @@ The interpreter is written in Ruby and needs Ruby 4.0 (tested with 4.0.2 and Pri
 |---|---|---|---|
 | 0 | `--strict=0` | (none) | syntax, names, argument counts, blocks, calls on values, forbidden syntax, literal types in `T[...]` (always checked) |
 | 1 | default | `type`, `rescue` | a value whose type, other than nil, does not fit (`"" + 1`, or `pick() + 1` where `pick` returns 1 or ""); a `rescue` of an exception the begin body never raises |
-| 2 | `--strict` | `type`, `rescue`, `nil`, `mixed` | also a value that may be nil, used without a check (except the nil of a miss: `x[k]`, and `Array.first`, `last`, `pop`, `shift`, `min`, `max`, `at`, `sample`, `delete_at` on an empty Array); and a `mixed` report (below) |
+| 2 | `--strict` | `type`, `rescue`, `nil`, `mixed` | also a value that may be nil, used without a check (except the nil of a miss: `x[k]`, `Array.dig`, `Hash.dig`, `MatchData.begin`/`end`, and `Array.first`, `last`, `pop`, `shift`, `min`, `max`, `minmax`, `at`, `slice`, `sample`, `delete_at`, `Set.first`, `min`, `max`, `min_by`, `max_by` on an empty collection); and a `mixed` report (below) |
 | 3 | `--strict=3` | `type`, `rescue`, `nil`, `mixed`, `index-nil`, `exhaustive` | also the nil of a miss (`x[k]`, `Array.first` and the others above), used without a check; a `case`/`in` that may get a value of an open type (String, Integer, a Symbol not written as a literal, ...) that no literal branch takes |
 | 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued (for a program; a library's raises are meant for its callers) |
 

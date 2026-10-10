@@ -8,13 +8,18 @@ module Sake
     # variables around it, as every Sake block does. Queue and Mutex are Ruby's. A socket is "Socket".
     def install_concurrency(reg)
       reg.define("Thread", :new, [], block: :required) do |&b|
-        th = ::Thread.new { b.call }
+        th = ::Thread.new do
+          b.call
+        rescue RunError => e
+          Sake.dead_threads << [::Thread.current, e] # reported at exit unless value / join reads it
+          raise
+        end
         th.report_on_exception = false
         ThreadValue.new(th)
       end
-      reg.define("Thread", :value, ["Thread"]) { |t| t.thread.value }
+      reg.define("Thread", :value, ["Thread"]) { |t| read_thread(t) { t.thread.value } }
       # join(t, limit): t, or nil when the thread is still running after limit seconds (Ruby's).
-      reg.define("Thread", :join, ["Thread"], optional: [%w[Integer Float Rational]]) { |t, limit = nil| t.thread.join(limit) && t }
+      reg.define("Thread", :join, ["Thread"], optional: [%w[Integer Float Rational]]) { |t, limit = nil| read_thread(t) { t.thread.join(limit) } && t }
       reg.define("Thread", :alive?, ["Thread"]) { |t| t.thread.alive? }
       # The running thread (the main program's, or one made by Thread.new): two values of the same thread are ==.
       reg.define("Thread", :current, []) { ThreadValue.new(::Thread.current) }
@@ -76,10 +81,11 @@ module Sake
       reg.define("Socket", :close, ["Socket"]) { |s| s.close.then { nil } }
     end
 
-    def ruby_error(kind)
+    # value / join read the thread's end, error included: it is then not an error nobody read.
+    def read_thread(t)
       yield
-    rescue ::ThreadError, ::ArgumentError => e
-      raise Fail.new(kind, e.message)
+    ensure
+      Sake.dead_threads.delete_if { |th, _| th.equal?(t.thread) } unless t.thread.alive?
     end
 
     def net_error
@@ -87,7 +93,7 @@ module Sake
     rescue SystemCallError, IOError => e
       raise Fail.new("IOError", e.message)
     rescue StandardError => e
-      raise unless %w[SocketError OpenSSL::SSL::SSLError].include?(e.class.name) # defined once their library is loaded
+      raise unless e.class.ancestors.any? { %w[SocketError OpenSSL::SSL::SSLError].include?(_1.name) } # defined once their library is loaded
       raise Fail.new("IOError", e.message)
     rescue LoadError, NotImplementedError => e
       raise Fail.new("IOError", "sockets are not available here (#{e.message})")

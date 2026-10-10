@@ -7,6 +7,9 @@ module Sake
 
     def at_exit_blocks = @at_exit_blocks ||= []
 
+    # [Ruby thread, RunError] of threads that ended with an error no Thread.value / Thread.join read (reported at exit).
+    def dead_threads = @dead_threads ||= []
+
     def argv = @argv ||= []
 
     def argv=(xs)
@@ -37,8 +40,8 @@ module Sake
         ruby_error("IndexError") { s.byteindex(t, pos) }
       end
       # Ruby's s.slice(i), s.slice(i, n), s.slice(range): s[...] written as an operation
-      reg.define("String", :slice, ["String", %w[Integer Range]], optional: ["Integer"]) { |s, i, n = nil| n ? s.slice(i, n) : s.slice(i) }
-      reg.define("String", :byteslice, %w[String Integer], optional: ["Integer"]) { |s, i, n = nil| n ? s.byteslice(i, n) : s.byteslice(i) }
+      reg.define("String", :slice, ["String", %w[Integer Range String Regexp]], optional: ["Integer"]) { |s, i, n = nil| n ? s.slice(i, n) : s.slice(i) } # as slice!
+      reg.define("String", :byteslice, ["String", %w[Integer Range]], optional: ["Integer"]) { |s, i, n = nil| n ? s.byteslice(i, n) : s.byteslice(i) }
       reg.define("String", :b, ["String"], &:b)
       reg.define("String", :unpack, %w[String String]) { |s, fmt| ruby_error("ArgumentError") { s.unpack(fmt) } }
       reg.define("String", :unpack1, %w[String String]) { |s, fmt| ruby_error("ArgumentError") { s.unpack1(fmt) } }
@@ -59,7 +62,7 @@ module Sake
       reg.define("String", :match?, ["String", str_re], optional: ["Integer"]) { |s, r, pos = 0| s.match?(r, pos) }
       reg.define("Kernel", :warn, [], rest: "Any") do |*xs|
         xs.flat_map { Values.puts_lines(_1) }.each { $stderr.puts(_1) }
-        out.flush if out.respond_to?(:flush)
+        (out.flush rescue nil) if out.respond_to?(:flush) # stdout may be closed
         nil
       end
       reg.define("Kernel", :exit, [], optional: [%w[Integer Boolean]]) do |st = 0|
@@ -73,12 +76,15 @@ module Sake
       # Arithmetic.round(x) and friends: one operation for any real number, as `x.round` in Ruby
       # (Float.round names a Float); the result's type follows x's (Stdlib table in typer_ext).
       real = %w[Integer Float Rational]
+      # With digits the result keeps x's type (Ruby gives an Integer for digits <= 0: 1234.5.round(-2) is 1200).
+      # round takes half: :up (the default), :even, or :down, as Ruby's. NaN and infinity: FloatDomainError.
       %i[round floor ceil truncate].each do |m|
-        reg.define("Arithmetic", m, [real], optional: ["Integer"]) do |x, n = nil|
-          ruby_error("FloatDomainError") { n ? x.public_send(m, n) : x.public_send(m) }
+        reg.define("Arithmetic", m, [real], optional: ["Integer"], keywords: m == :round ? { "half" => "Symbol" } : {}) do |x, n = nil, **kw|
+          n ? same_real(x, x.public_send(m, n, **kw)) : x.public_send(m, **kw)
         end
       end
       reg.define("Arithmetic", :abs, [real], &:abs)
+      reg.define("String", :casecmp?, %w[String String]) { |s, t| s.casecmp?(t) || false } # nil (incompatible encodings) is false
       reg.define("Arithmetic", :to_f, [real], &:to_f)
       reg.define("Arithmetic", :to_i, [real]) { |x| ruby_error("FloatDomainError") { x.to_i } }
       reg.define("Arithmetic", :zero?, [real], &:zero?)

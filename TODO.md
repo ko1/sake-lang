@@ -31,11 +31,11 @@
 - [x] (10-09) TLS: `Socket.connect_ssl(host, port[, timeout])`（OpenSSL、peer を検証）。net_http が https で使う。
 - [x] (10-09, 不要と判断) Float → 10 進の桁指定変換: `Float.to_r` が正確な値を与えるので、有効桁への丸めは bigdecimal.sake 側で書ける。
 - [x] (10-09) `IO.tty?`、`Kernel.p(x, y)`、`Array.shift(a, n)`、`String.squeeze(s, chars)`、`Float.divmod(x, Integer)`、`Regexp.new(src, "imx")`（gem の移植が求めたもの）。
-- [ ] `IO.winsize` / raw mode / noecho（端末。ruby-progressbar, highline）。
+- [x] (10-10) `IO.winsize` / `IO.raw { }` / `IO.noecho { }` / `IO.getch`（端末。ruby-progressbar, highline）。端末でなければ IOError。
 - [ ] `gsub` / `scan` のブロックに MatchData（Ruby の `$1`。active_support, redis）。
-- [ ] `Arithmetic.round` に `half: :even`（money）。`Range.sum`。
-- [ ] `Random` 型（faker の `Config.random`。今は `srand` が全体）。`ENV.replace`（dotenv の save/restore）。
-- [ ] スレッドが例外で死んだとき stderr に報告する（redis: 5 秒のタイムアウトで気づいた）。
+- [x] (10-10, `Arithmetic.round` / `Float.round` に `half:`。`Range.sum` は既にある) `Arithmetic.round` に `half: :even`（money）。`Range.sum`。
+- [ ] `Random` 型（faker の `Config.random`。今は `srand` が全体）。[x] (10-10) `ENV.replace`（dotenv の save/restore）。
+- [x] (10-10, 誰も value / join で読まなかった例外をプログラムの終了時に stderr へ) スレッドが例外で死んだとき stderr に報告する（redis: 5 秒のタイムアウトで気づいた）。
 
 ## 実装課題（gem の移植で見つかったもの、2026-10-09）
 
@@ -46,26 +46,26 @@
 - [x] (10-09) `def initialize(x) = @x = x`（Ruby の癖）: x は新しいインスタンスなので循環する値ができた → 静的エラー。
 - [x] (10-09) hint: `ARGV[0]`（`Array.fetch(ARGV, 0)` を示す）、`ss.pos = 1`（`Type.set_pos(ss, v)` も示す）。
 - [ ] **ブロックの引数が関数のローカル**: ブロックをスレッドで後から走らせると、その時点の値（ループ変数の最後の値）を読む（`sakelib/notes/concurrent_ruby_bug_yield_in_thread_loop_var.sake`）。Ruby はブロック引数が呼び出しごとに新しい。直すにはブロックごとのフレーム（親リンク）が要る: lower / interpreter / typer にまたがる。スレッド無しでは観測できない。
-- [ ] predicate のヘルパ（`def number?(l)`）が絞らないとき、union 全体（1,000 字）を印字する: 「`number?` は絞らない。`case l in Integer | Float` を」と言う（kramdown）。
-- [ ] nil の hint がフィールドを責めるが、nil は `return nil` から来ている（`sakelib/notes/strscan_bug_nil_hint_blames_field.sake`）。`[mixed]` が Hash の値の union を Struct のフィールドのせいにする（thor の `Integer.times(options[:times])`）。
-- [ ] `def initialize(c) = @x = 1 if @x == nil`: 修飾 if が endless def を飲み込み、class 本体の規則の文で報告される（liquid）。
-- [ ] `"..." \ "..."`（補間を含む隣接リテラル）が拒否される（rubyzip）。
+- [x] (10-10, 本体が `param in Pattern` だけの関数は条件で引数を絞る) predicate のヘルパ（`def number?(l)`）が絞らないとき、union 全体（1,000 字）を印字する: 「`number?` は絞らない。`case l in Integer | Float` を」と言う（kramdown）。
+- [x] (10-10 に確認: 既に責めない) nil の hint がフィールドを責めるが、nil は `return nil` から来ている（`sakelib/notes/strscan_bug_nil_hint_blames_field.sake`）。[ ] `[mixed]` が Hash の値の union を Struct のフィールドのせいにする（thor の `Integer.times(options[:times])`）。
+- [x] (10-10, hint で「`= (body if cond)` と括る」と言う) `def initialize(c) = @x = 1 if @x == nil`: 修飾 if が endless def を飲み込み、class 本体の規則の文で報告される（liquid）。
+- [x] (10-10) `"..." \ "..."`（補間を含む隣接リテラル）が拒否される（rubyzip）。
 
 ## 実装課題（組み込みリファレンスの執筆で見つかったもの、2026-10-10）
 
-リファレンス（`docs/manual/*/ref/`）は今の挙動をそのまま書いている。直したら該当の節も直す（`ruby tools/check_reference.rb` が例で捕まえる）。
+全部 10-10 に処理した（`experiments/2026-10-10-reference-fixes/`）。リファレンスの該当の節も同日に直した（`ruby tools/check_reference.rb` が例で捕まえる）。
 
-- [ ] **`Stdlib.ruby_error` が二重定義**（`stdlib_ext.rb:50` と `stdlib_net.rb:79`。後者が勝ち、ThreadError と ArgumentError しか包まない）。そのため `Integer.chr(256)`、`Integer.sqrt(-1)`、`Integer.digits(-1)`、`Integer.pow(2, -1, 7)`、`Regexp.new("(")`、`String.match?("a+c", "+")`、`String.byteindex("héllo", "l", 2)`、`Arithmetic.round/to_i(Float.NAN)`、`Integer(Float.NAN)` などが Ruby の生の backtrace で死に、`rescue RegexpError` 等で捕まえられない。1 か所にまとめれば直る。
-- [ ] 包まれていない Ruby 例外（生の backtrace）: `"ab" * -1`（演算子形。`String.*` は包む）、`ljust/rjust/center` の空の詰め文字、`tr/delete/squeeze/count` の逆順範囲 `"z-a"`、`String.undump`、`Array.each_slice/each_cons(a, 0)`、`Array.pack` の TypeError、`Array.transpose` に Tuple（`Sake::Tuple` の名が出る）、`Set.subtract(s, 1)`（NoMethodError）、`MatchData.begin/end` の範囲外、`Range.first/last(1.0..2.0, 2)`、`Range.max(1.0...2.5)`、`Range.first(..5)`、`Range.step(r, 0)`、`Range.sum(r, Complex)`、`7.5 % 0`、`Float.divmod(x, 0.0)`、`Float.clamp` の lo > hi、`IO.close(IO.stdout)` 後の `puts`、`IO.size(IO.stdin)`、`IO.seek(f, n, :FOO)`、`ENV.set("", v)`、`Process.clock_gettime(999)`、`Mutex.synchronize` の再入、`Thread.value/join(Thread.current)`、`Socket.connect` の名前解決失敗（`Socket::ResolutionError`）、閉じた `TCPServer.port`。
-- [ ] **`==` / `!=` の関数形が演算子形と食い違う**: `1 == "a"` は false だが `Integer.==(1, "a")`、`String.==("a", 1)`、`Symbol.==(:a, "a")`、`Hash.==(h, nil)`、`Float.==(1.0, "1")`、`Range.==(1..5, 5)`、`Time.==(t, 100)` は実行時 TypeError。署名が `(x, Any)` なので静的に通る。関数形も false を返すか、署名を狭めるか。
-- [ ] 検査器の型と実行時の値がずれるもの: `MatchData.begin/end` が Integer（参加しなかったグループで nil）、`String.casecmp?`/`Symbol.casecmp?` が Boolean（エンコーディング不一致で nil）、`Time.to_a` の zone が String（固定オフセットで nil）、`Process.clock_gettime(c, :millisecond)` が Float（Integer）、`rand(0)` が Integer（Float）、`Float.**(負, 0.5)` が Float（Complex）、`Rational.**(4r, 1r/2)` が Rational（Float）、`Arithmetic.round(1234.5, -2)` が Float（Integer）、`Float.numerator(NaN)` が Integer（NaN）、`Complex.abs(Complex(3r, 0))` が Integer|Float（Rational）。
-- [ ] 「外れの nil」の分類が揃っていない: `Array.slice/slice!/dig/minmax`、`Set.first/min/max/min_by/max_by`、`Hash.dig` は level 2、`a[i]`/`Array.first/min/max` は level 3。`Array.dig`/`Hash.dig` は鍵 1 つしか取らない（Ruby は複数）。
-- [ ] 型付き Array の穴: `Array.insert` が末尾より先に nil を詰める（`is[3] = 2` は IndexError）、`Array.fill` は実行時だけ、`Array.replace` は静的だけで検査、`Integer.digits` は型無しの Array。
-- [ ] `Array.sort/min/max/sort_by` の要素型の混在（`Array[1, "a"]`）が静的に出ない（`<`/`<=>` は出る）。`Tuple.max([1, "a"])` も同じ。
-- [ ] `Hash.flat_map` が Tuple のブロック結果を拒む（`[k, v]` と書くのが自然）。`Regexp.new` が `n` フラグを拒む（リテラル `/a/n` は通る）。`Regexp.union` が Array 1 つを取らない。`Range.include?/member?` が `cover?` の実装（`"a".."z"` が `"mm"` を含む）。`Range.minmax` が Float の Range を拒む（`min`/`max` は通す）。`Math.log(x, base)` が無い。`Kernel.Rational(0.5)` が拒まれる。`String.force_encoding` が新しい String を返す。`Thread.raise` 後の `Thread.value` を `rescue RuntimeError` で受けると `rescue` 項目が拒む（`rescue => e` だけ通る。未捕捉の報告が行 0）。`Socket`/`TCPServer` の `==` が黙って false（`==` の操作が無いのに弾かれない）。
-- [ ] メッセージ: `MatchData.[]=` の「defined for」が INDEX_ROWS（INDEX_SET_ROWS であるべき）、`Symbol.name` の凍結した String を変えたときの TypeError が Symbol の名を挙げない、`stdlib_core.rb` のコメントが Symbol 名を凍結と言うが `Symbol.to_s` は可変。
-- [ ] 仕様の文: spec §12.1「鍵は `==` で比べる」は `eql?`/hash（`Hash[1 => "a"][1.0]` は nil、`Set[1, 1.0]` は 2 要素）。`Hash.==(h, nil)` と同様。
-- [ ] `Array.rfind` が Ruby 4.0 の `Array#rfind` に依存している。
+- [x] (10-10) **`Stdlib.ruby_error` が二重定義**（`stdlib_ext.rb:50` と `stdlib_net.rb:79`。後者が勝ち、ThreadError と ArgumentError しか包まない）。そのため `Integer.chr(256)`、`Integer.sqrt(-1)`、`Integer.digits(-1)`、`Integer.pow(2, -1, 7)`、`Regexp.new("(")`、`String.match?("a+c", "+")`、`String.byteindex("héllo", "l", 2)`、`Arithmetic.round/to_i(Float.NAN)`、`Integer(Float.NAN)` などが Ruby の生の backtrace で死に、`rescue RegexpError` 等で捕まえられない。1 か所にまとめれば直る。
+- [x] (10-10, 組み込みの境界で Ruby の例外をクラスごとに Sake の例外に写す: `Interpreter#ruby_run_error`) 包まれていない Ruby 例外（生の backtrace）: `"ab" * -1`（演算子形。`String.*` は包む）、`ljust/rjust/center` の空の詰め文字、`tr/delete/squeeze/count` の逆順範囲 `"z-a"`、`String.undump`、`Array.each_slice/each_cons(a, 0)`、`Array.pack` の TypeError、`Array.transpose` に Tuple（`Sake::Tuple` の名が出る）、`Set.subtract(s, 1)`（NoMethodError）、`MatchData.begin/end` の範囲外、`Range.first/last(1.0..2.0, 2)`、`Range.max(1.0...2.5)`、`Range.first(..5)`、`Range.step(r, 0)`、`Range.sum(r, Complex)`、`7.5 % 0`、`Float.divmod(x, 0.0)`、`Float.clamp` の lo > hi、`IO.close(IO.stdout)` 後の `puts`、`IO.size(IO.stdin)`、`IO.seek(f, n, :FOO)`、`ENV.set("", v)`、`Process.clock_gettime(999)`、`Mutex.synchronize` の再入、`Thread.value/join(Thread.current)`、`Socket.connect` の名前解決失敗（`Socket::ResolutionError`）、閉じた `TCPServer.port`。
+- [x] (10-10, 関数形も false / true を返す) **`==` / `!=` の関数形が演算子形と食い違う**: `1 == "a"` は false だが `Integer.==(1, "a")`、`String.==("a", 1)`、`Symbol.==(:a, "a")`、`Hash.==(h, nil)`、`Float.==(1.0, "1")`、`Range.==(1..5, 5)`、`Time.==(t, 100)` は実行時 TypeError。署名が `(x, Any)` なので静的に通る。関数形も false を返すか、署名を狭めるか。
+- [x] (10-10: begin/end は `Integer | nil`、casecmp? は false、zone は `String | nil`、clock_gettime は単位のリテラルで Integer/Float、rand(0) は ArgumentError、負の底の `**` は Math::DomainError、`** Rational` は `Rational | Float`、round の桁指定は主語の型を保つ、numerator(NaN) は FloatDomainError、Complex.abs の Rational は Float) 検査器の型と実行時の値がずれるもの: `MatchData.begin/end` が Integer（参加しなかったグループで nil）、`String.casecmp?`/`Symbol.casecmp?` が Boolean（エンコーディング不一致で nil）、`Time.to_a` の zone が String（固定オフセットで nil）、`Process.clock_gettime(c, :millisecond)` が Float（Integer）、`rand(0)` が Integer（Float）、`Float.**(負, 0.5)` が Float（Complex）、`Rational.**(4r, 1r/2)` が Rational（Float）、`Arithmetic.round(1234.5, -2)` が Float（Integer）、`Float.numerator(NaN)` が Integer（NaN）、`Complex.abs(Complex(3r, 0))` が Integer|Float（Rational）。
+- [x] (10-10, 全部 level 3 に。dig は鍵を複数取る) 「外れの nil」の分類が揃っていない: `Array.slice/slice!/dig/minmax`、`Set.first/min/max/min_by/max_by`、`Hash.dig` は level 2、`a[i]`/`Array.first/min/max` は level 3。`Array.dig`/`Hash.dig` は鍵 1 つしか取らない（Ruby は複数）。
+- [x] (10-10: insert は末尾より先で IndexError、fill は静的にも、replace は実行時にも、digits は `Integer[]`) 型付き Array の穴: `Array.insert` が末尾より先に nil を詰める（`is[3] = 2` は IndexError）、`Array.fill` は実行時だけ、`Array.replace` は静的だけで検査、`Integer.digits` は型無しの Array。
+- [x] (10-10, 静的に `type`。erb / liquid / redis / concurrent_ruby の移植がこれで止まり、絞り込みを足した) `Array.sort/min/max/sort_by` の要素型の混在（`Array[1, "a"]`）が静的に出ない（`<`/`<=>` は出る）。`Tuple.max([1, "a"])` も同じ。
+- [x] (10-10, 全部) `Hash.flat_map` が Tuple のブロック結果を拒む（`[k, v]` と書くのが自然）。`Regexp.new` が `n` フラグを拒む（リテラル `/a/n` は通る）。`Regexp.union` が Array 1 つを取らない。`Range.include?/member?` が `cover?` の実装（`"a".."z"` が `"mm"` を含む）。`Range.minmax` が Float の Range を拒む（`min`/`max` は通す）。`Math.log(x, base)` が無い。`Kernel.Rational(0.5)` が拒まれる。`String.force_encoding` が新しい String を返す。`Thread.raise` 後の `Thread.value` を `rescue RuntimeError` で受けると `rescue` 項目が拒む（`rescue => e` だけ通る。未捕捉の報告が行 0）。`Socket`/`TCPServer` の `==` が黙って false（`==` の操作が無いのに弾かれない）。
+- [x] (10-10) メッセージ: `MatchData.[]=` の「defined for」が INDEX_ROWS（INDEX_SET_ROWS であるべき）、`Symbol.name` の凍結した String を変えたときの TypeError が Symbol の名を挙げない、`stdlib_core.rb` のコメントが Symbol 名を凍結と言うが `Symbol.to_s` は可変。
+- [x] (10-10, spec と 03-values を `eql?` に) 仕様の文: spec §12.1「鍵は `==` で比べる」は `eql?`/hash（`Hash[1 => "a"][1.0]` は nil、`Set[1, 1.0]` は 2 要素）。`Hash.==(h, nil)` と同様。
+- [x] (10-10) `Array.rfind` が Ruby 4.0 の `Array#rfind` に依存している。
 
 ## 設計判断が要るもの（変えるなら仕様）
 

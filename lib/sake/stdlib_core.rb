@@ -105,10 +105,12 @@ module Sake
     end
 
     # The frozen Strings a program meets: Hash keys and Set elements (key_copy), ARGV, and Symbol names.
+    FROZEN_STRING = "cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument"
+
     def frozen_error
       yield
     rescue ::FrozenError
-      raise Fail.new("TypeError", "cannot change this String in place: it is a Hash key, a Set element, or a program argument")
+      raise Fail.new("TypeError", FROZEN_STRING)
     end
   end
 end

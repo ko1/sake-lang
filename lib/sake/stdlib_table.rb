@@ -33,7 +33,7 @@ module Sake
       # Symbol
       ["Symbol", :upcase, [], "Symbol"], ["Symbol", :downcase, [], "Symbol"], ["Symbol", :capitalize, [], "Symbol"],
       ["Symbol", :swapcase, [], "Symbol"], ["Symbol", :succ, [], "Symbol"], ["Symbol", :empty?, [], :bool],
-      ["Symbol", :start_with?, [S], :bool], ["Symbol", :end_with?, [S], :bool], ["Symbol", :casecmp?, ["Symbol"], :bool_nil],
+      ["Symbol", :start_with?, [S], :bool], ["Symbol", :end_with?, [S], :bool], ["Symbol", :casecmp?, ["Symbol"], :bool, { conv: :bool }],
       # Integer / Float / Rational
       [I, :ceildiv, [I], I, { zero_div: true }], [I, :div, [REAL], I, { zero_div: true }],
       [I, :modulo, [I], I, { zero_div: true }], [I, :remainder, [I], I, { zero_div: true }],
@@ -57,7 +57,7 @@ module Sake
       [A, :drop_while, [], :array, { block: :required, yields: :one }],
       [A, :each_index, [], :recv, { block: :required, yields: :one, yield_type: I }],
       [A, :reverse_each, [], :recv, { block: :required, yields: :one }],
-      [A, :minmax, [], :tuple_elem_nil2, { conv: :tuple, compare: true }],
+      [A, :minmax, [], :tuple_elem_nil2, { conv: :tuple, compare: true }], # nil for an empty Array: a miss (level 3)
       [A, :minmax_by, [], :tuple_elem_nil2, { block: :required, yields: :one, conv: :tuple, compare: true }],
       [A, :one?, [], :bool, { block: :required, yields: :one }],
       [A, :rindex, ["Any"], :int_nil], [A, :values_at, [], :array_elem_nil, { rest: I }],
@@ -66,11 +66,11 @@ module Sake
       [A, :chunk_while, [], :array_of_arrays, { block: :required, yields: :two, conv: :to_a }],
       [A, :slice_when, [], :array_of_arrays, { block: :required, yields: :two, conv: :to_a }],
       [A, :each_entry, [], :recv, { block: :required, yields: :one }],
-      [A, :transpose, [], :transpose],
+      [A, :transpose, [], :transpose, { tuple_rows: true }],
       [A, :union, [], :array_union, { rest: A }], [A, :difference, [], :array, { rest: A }],
       [A, :intersection, [], :array, { rest: A }], [A, :intersect?, [A], :bool],
       [A, :keep_if, [], :recv, { block: :required, yields: :one }],
-      [A, :fill, ["Any"], :recv, { check_elems: true }],
+      [A, :fill, ["Any"], :recv, { check_elems: :one }],
       [A, :bsearch, [], :elem_nil, { block: :required, yields: :one }],
       [A, :to_set, [], :set_elem, { conv: :set }],
       # Range
@@ -99,9 +99,9 @@ module Sake
       ["Set", :any?, [], :bool, { block: :required, yields: :one }], ["Set", :all?, [], :bool, { block: :required, yields: :one }],
       ["Set", :none?, [], :bool, { block: :required, yields: :one }],
       ["Set", :count, [], I, { block: :optional, yields: :one }], ["Set", :sum, [], :elem_sum, { opt: [%w[Integer Float Rational Complex]] }],
-      ["Set", :min, [], :elem_nil, { compare: true }], ["Set", :max, [], :elem_nil, { compare: true }],
+      ["Set", :min, [], :elem_index_nil, { compare: true }], ["Set", :max, [], :elem_index_nil, { compare: true }],
       ["Set", :sort, [], :array, { compare: true }], ["Set", :sort_by, [], :array, { block: :required, yields: :one, compare: true }],
-      ["Set", :join, [], S, { opt: [S] }], ["Set", :first, [], :elem_nil],
+      ["Set", :join, [], S, { opt: [S] }], ["Set", :first, [], :elem_index_nil],
       ["Set", :find, [], :elem_nil, { block: :required, yields: :one }],
       ["Set", :partition, [], :tuple_arrays, { block: :required, yields: :one, conv: :tuple }],
       ["Set", :reduce, ["Any"], :fold, { block: :required, yields: :acc_elem }],
@@ -162,13 +162,13 @@ module Sake
       [I, :denominator, [], I], [I, :numerator, [], I], [I, :integer?, [], :bool], [I, :size, [], I], [I, :to_int, [], I],
       [I, :rationalize, [], "Rational", { opt: [REAL] }],
       ["Float", :arg, [], :int_float], ["Float", :angle, [], :int_float], ["Float", :phase, [], :int_float],
-      ["Float", :denominator, [], I], ["Float", :numerator, [], I], ["Float", :to_int, [], I],
+      ["Float", :denominator, [], I, { finite_float: true }], ["Float", :numerator, [], I, { finite_float: true }], ["Float", :to_int, [], I, { finite_float: true }],
       ["Rational", :fdiv, [REAL], "Float"], ["Rational", :magnitude, [], "Rational"], ["Rational", :quo, [%w[Integer Rational]], "Rational", { zero_div: true }],
       ["Rational", :rationalize, [], "Rational", { opt: ["Rational"] }], ["Rational", :to_r, [], "Rational"],
       ["Complex", :abs2, [], :real_part], ["Complex", :arg, [], "Float"], ["Complex", :angle, [], "Float"], ["Complex", :phase, [], "Float"],
       ["Complex", :conj, [], "Complex"], ["Complex", :denominator, [], I], ["Complex", :fdiv, [REAL], "Complex"],
       ["Complex", :finite?, [], :bool], ["Complex", :infinite?, [], :int_nil], ["Complex", :imag, [], :real_part],
-      ["Complex", :magnitude, [], :int_float], ["Complex", :numerator, [], "Complex"], ["Complex", :quo, [REAL + ["Complex"]], "Complex", { zero_div: true }],
+      ["Complex", :magnitude, [], :int_float, { conv: :rational_to_f }], ["Complex", :numerator, [], "Complex"], ["Complex", :quo, [REAL + ["Complex"]], "Complex", { zero_div: true }],
       ["Complex", :rationalize, [], "Rational", { opt: ["Rational"] }], ["Complex", :real?, [], :bool],
       ["Complex", :rect, [], :tuple_real2, { conv: :tuple }], ["Complex", :to_c, [], "Complex"],
       ["Complex", :to_f, [], "Float"], ["Complex", :to_i, [], I], ["Complex", :to_r, [], "Rational"],
@@ -193,8 +193,8 @@ module Sake
       ["Symbol", :slice, [I], :string_nil, { opt: [I] }], ["Symbol", :match, [["Regexp", S]], :matchdata_nil], ["Symbol", :match?, [["Regexp", S]], :bool],
       # Array
       [A, :bsearch_index, [], :int_nil, { block: :required, yields: :one }],
-      [A, :cycle, [I], "Nil", { block: :required, yields: :one }], [A, :dig, [I], :elem_nil],
-      [A, :rfind, [], :elem_nil, { block: :required, yields: :one }],
+      [A, :cycle, [I], "Nil", { block: :required, yields: :one }], [A, :dig, [I], :dig, { rest: "Any" }],
+      [A, :rfind, [], :elem_nil, { block: :required, yields: :one }], # the impl is in install_more_array (Ruby 4.0's rfind)
       [A, :fetch_values, [], :array, { rest: I }],
       [A, :repeated_combination, [I], :array_of_arrays, { conv: :to_a }], [A, :repeated_permutation, [I], :array_of_arrays, { conv: :to_a }],
       [A, :reverse!, [], :recv], [A, :rotate!, [], :recv, { opt: [I] }], [A, :shuffle!, [], :recv],
@@ -202,7 +202,7 @@ module Sake
       [A, :to_a, [], :recv], [A, :uniq!, [], :recv_nil], [A, :compact!, [], :recv_nil],
       [A, :select!, [], :recv_nil, { block: :required, yields: :one }], [A, :filter!, [], :recv_nil, { block: :required, yields: :one }],
       [A, :reject!, [], :recv_nil, { block: :required, yields: :one }],
-      [A, :flatten!, [], :recv_flatten], [A, :replace, [A], :recv_elems_of],
+      [A, :flatten!, [], :recv_flatten], [A, :replace, [A], :recv_elems_of, { check_elems: :all }],
       # Hash
       [H, :assoc, ["Any"], :pair_nil, { conv: :tuple_or_nil }], [H, :rassoc, ["Any"], :pair_nil, { conv: :tuple_or_nil }],
       [H, :compact!, [], :recv_nil], [H, :flatten, [], :array_kv],
@@ -230,8 +230,8 @@ module Sake
       ["Set", :find_index, [], :int_nil, { block: :required, yields: :one }], ["Set", :flatten, [], :set_elem],
       ["Set", :group_by, [], :hash_group, { block: :required, yields: :one, conv: :group }],
       ["Set", :inject, ["Any"], :fold, { block: :required, yields: :acc_elem }],
-      ["Set", :max_by, [], :elem_nil, { block: :required, yields: :one, compare: true }],
-      ["Set", :min_by, [], :elem_nil, { block: :required, yields: :one, compare: true }],
+      ["Set", :max_by, [], :elem_index_nil, { block: :required, yields: :one, compare: true }],
+      ["Set", :min_by, [], :elem_index_nil, { block: :required, yields: :one, compare: true }],
       ["Set", :minmax, [], :tuple_elem_nil2, { conv: :tuple, compare: true }],
       ["Set", :minmax_by, [], :tuple_elem_nil2, { block: :required, yields: :one, conv: :tuple, compare: true }],
       ["Set", :one?, [], :bool, { block: :required, yields: :one }],
@@ -254,17 +254,17 @@ module Sake
       ["Range", :each_entry, [], :recv, { block: :required, yields: :one, int_range: true }],
       ["Range", :entries, [], :array, { int_range: true, finite: true }],
       ["Range", :find_all, [], :array, { block: :required, yields: :one, int_range: true, finite: true }],
-      ["Range", :minmax, [], :tuple_elem_nil2, { int_range: true, finite: true, conv: :tuple }],
+      ["Range", :minmax, [], :tuple_elem_nil2, { finite: true, conv: :tuple }],
       ["Range", :minmax_by, [], :tuple_elem_nil2, { block: :required, yields: :one, int_range: true, finite: true, conv: :tuple }],
       ["Range", :sort, [], :array, { int_range: true, finite: true }], ["Range", :uniq, [], :array, { int_range: true, finite: true }],
       # Regexp / MatchData
       ["Regexp", :casefold?, [], :bool], ["Regexp", :encoding, [], S, { conv: :encoding }], ["Regexp", :fixed_encoding?, [], :bool],
       ["Regexp", :named_captures, [], :hash_names_ints], ["Regexp", :names, [], "Array<String>"], ["Regexp", :options, [], I],
-      ["Regexp", :timeout, [], :float_nil], ["Regexp", :union, [], "Regexp", { on: Regexp, rest: [S, "Regexp"] }],
-      ["MatchData", :bytebegin, [I], :int_nil], ["MatchData", :byteend, [I], :int_nil],
-      ["MatchData", :byteoffset, [I], :tuple_int_nil2, { conv: :tuple }], ["MatchData", :offset, [I], :tuple_int_nil2, { conv: :tuple }],
-      ["MatchData", :length, [], I], ["MatchData", :size, [], I], ["MatchData", :match, [I], :string_nil],
-      ["MatchData", :match_length, [I], :int_nil], ["MatchData", :regexp, [], "Regexp"], ["MatchData", :string, [], S],
+      ["Regexp", :timeout, [], :float_nil], ["Regexp", :union, [], "Regexp", { on: Regexp, rest: [S, "Regexp", A] }],
+      ["MatchData", :bytebegin, [I], :int_index_nil], ["MatchData", :byteend, [I], :int_index_nil],
+      ["MatchData", :byteoffset, [I], :tuple_int_index_nil2, { conv: :tuple }], ["MatchData", :offset, [I], :tuple_int_index_nil2, { conv: :tuple }],
+      ["MatchData", :length, [], I], ["MatchData", :size, [], I], ["MatchData", :match, [I], :string_index_nil],
+      ["MatchData", :match_length, [I], :int_index_nil], ["MatchData", :regexp, [], "Regexp"], ["MatchData", :string, [], S],
       ["MatchData", :values_at, [], :array_string_nil, { rest: I }],
       # Time
       ["Time", :asctime, [], S], ["Time", :ctime, [], S], ["Time", :dst?, [], :bool], ["Time", :isdst, [], :bool],
@@ -278,7 +278,7 @@ module Sake
       ["Math", :frexp, [REAL], :tuple_float_int, { on: Math, conv: :tuple }], ["Math", :lgamma, [REAL], :tuple_float_int, { on: Math, conv: :tuple }],
       # Kernel / Process
       ["Kernel", :srand, [], I, { opt: [I], kernel: true }],
-      ["Process", :pid, [], I, { on: Process }], ["Process", :clock_gettime, [I], "Float", { on: Process, opt: ["Symbol"] }],
+      ["Process", :pid, [], I, { on: Process }], ["Process", :clock_gettime, [I], :clock, { on: Process, opt: ["Symbol"] }],
       # ENV: Ruby's ENV["X"] is ENV.get("X"); ENV["X"] = v is ENV.set("X", v)
       ["ENV", :get, [S], :string_nil, { on: ENV, ruby: :[] }], ["ENV", :fetch, [S], S, { on: ENV, opt: [S], key_error: true }],
       ["ENV", :key?, [S], :bool, { on: ENV }], ["ENV", :set, [S, S], S, { on: ENV, ruby: :[]= }],
@@ -308,8 +308,13 @@ module Sake
       recv = opts[:kernel] ? Kernel : opts[:on] || args.shift
       int_range!(recv) if opts[:int_range]
       finite!(recv) if opts[:finite]
-      args[0] = Set.new(args[0].to_a.map { key!(_1) }) if opts[:set_arg] && !args[0].is_a?(Set)
-      check_elems(recv, [args[0]]) if opts[:check_elems]
+      if opts[:set_arg] && !args[0].is_a?(Set)
+        raise Fail.new("TypeError", "argument 2 must be Set, Array, Tuple, or Range, got #{Values.describe(args[0])}") unless args[0].is_a?(Array) || args[0].is_a?(Tuple) || args[0].is_a?(Range)
+        args[0] = Set.new((args[0].is_a?(Tuple) ? args[0].elems : args[0].to_a).map { key!(_1) })
+      end
+      check_elems(recv, opts[:check_elems] == :all ? args[0].to_a : [args[0]]) if opts[:check_elems]
+      recv = recv.map { _1.is_a?(Tuple) ? _1.elems : _1 } if opts[:tuple_rows]
+      raise Fail.new("FloatDomainError", recv.to_s) if opts[:finite_float] && !recv.finite?
       blk = b && table_block(b, opts[:yields])
       result =
         begin
@@ -319,13 +324,17 @@ module Sake
         rescue ::KeyError => e
           raise Fail.new("KeyError", e.message)
         rescue ::FrozenError
-          raise Fail.new("TypeError", "cannot change this String in place: it is a Hash key, a Set element, or a program argument")
+          raise Fail.new("TypeError", FROZEN_STRING)
         rescue ::Math::DomainError => e
           raise Fail.new("Math::DomainError", e.message)
-        rescue ::ArgumentError, ::NoMethodError, ::TypeError => e
+        rescue ::ArgumentError => e
           raise Fail.new("ArgumentError", opts[:compare] ? "cannot compare the elements" : e.message)
+        rescue ::NoMethodError, ::TypeError => e
+          raise Fail.new("TypeError", opts[:compare] ? "cannot compare the elements" : e.message.sub(/ for an instance of (\w+)\z/) { " of #{Values.display_type($1)}" })
         rescue ::IndexError, ::RangeError => e
           raise Fail.new(e.class.name, e.message)
+        rescue ::SystemCallError => e # an argument the system refuses (ENV.set("", v), an unknown clock)
+          raise Fail.new(opts[:io] ? "IOError" : "ArgumentError", e.message)
         end
       convert(result, opts[:conv], recv, opts)
     end
@@ -342,8 +351,10 @@ module Sake
       end
     end
 
+    # The block's result for flat_map: an Array, or a Tuple (`[k, v]` is natural there).
     def array_result(r)
-      raise Fail.new("TypeError", "the block must return an Array, got #{Values.describe(r)}") unless r.is_a?(Array)
+      return r.elems if r.is_a?(Tuple)
+      raise Fail.new("TypeError", "the block must return an Array or a Tuple, got #{Values.describe(r)}") unless r.is_a?(Array)
       r
     end
 
@@ -360,6 +371,8 @@ module Sake
       when :group_pairs then r.to_h { |k, kvs| [key!(k), kvs.map { |kv| pair(*kv) }] }
       when :partition_pairs then Tuple.new(r.map { |kvs| kvs.map { |kv| pair(*kv) } })
       when :encoding then r.name
+      when :bool then !!r
+      when :rational_to_f then r.is_a?(Rational) ? r.to_f : r
       else raise "BUG: conversion #{conv}"
       end
     end

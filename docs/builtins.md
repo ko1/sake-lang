@@ -11,7 +11,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Arithmetic.abs(Integer|Float|Rational)`
 - `Arithmetic.ceil(Integer|Float|Rational, [Integer])`
 - `Arithmetic.floor(Integer|Float|Rational, [Integer])`
-- `Arithmetic.round(Integer|Float|Rational, [Integer])`
+- `Arithmetic.round(Integer|Float|Rational, [Integer], [half: Symbol])`
 - `Arithmetic.to_f(Integer|Float|Rational)`
 - `Arithmetic.to_i(Integer|Float|Rational)`
 - `Arithmetic.truncate(Integer|Float|Rational, [Integer])`
@@ -53,7 +53,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Array.delete_if(x) { }`
 - `Array.detect(x) { }`
 - `Array.difference(x, *Array)`
-- `Array.dig(x, Integer)`
+- `Array.dig(x, Integer, *Any)`
 - `Array.drop(x, Integer)`
 - `Array.drop_while(x) { }`
 - `Array.dup(x)`
@@ -212,6 +212,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `ENV.get(String)`
 - `ENV.key?(String)`
 - `ENV.keys()`
+- `ENV.replace(Hash)`
 - `ENV.set(String, String)`
 - `ENV.to_h()`
 
@@ -297,7 +298,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Float.prev_float(x)`
 - `Float.quo(x, Integer|Float|Rational)`
 - `Float.rationalize(x)`
-- `Float.round(x, [Integer])`
+- `Float.round(x, [Integer], [half: Symbol])`
 - `Float.to_f(x)`
 - `Float.to_i(x)`
 - `Float.to_int(x)`
@@ -323,7 +324,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.delete(x, Any)`
 - `Hash.delete_if(x) { }`
 - `Hash.detect(x) { }`
-- `Hash.dig(x, Any)`
+- `Hash.dig(x, Any, *Any)`
 - `Hash.drop(x, Integer)`
 - `Hash.dup(x)`
 - `Hash.each(x) { }`
@@ -400,10 +401,13 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `IO.eof?(x)`
 - `IO.flush(x)`
 - `IO.getc(x)`
+- `IO.getch(x)`
 - `IO.gets(x)`
+- `IO.noecho(x) { }`
 - `IO.pos(x)`
 - `IO.print(x, *Any)`
 - `IO.puts(x, *Any)`
+- `IO.raw(x) { }`
 - `IO.read(x, [Integer])`
 - `IO.readlines(x)`
 - `IO.rewind(x)`
@@ -414,6 +418,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `IO.stdout()`
 - `IO.truncate(x, Integer)`
 - `IO.tty?(x)`
+- `IO.winsize(x)`
 - `IO.write(x, String)`
 
 ## Integer
@@ -493,7 +498,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.Float(String|Integer|Float)`
 - `Kernel.Integer(String|Integer|Float)`
 - `Kernel.PROGRAM_NAME()`
-- `Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
+- `Kernel.Rational(Integer|Float|Rational|String, [Integer|Rational])`
 - `Kernel.at_exit() { }`
 - `Kernel.block_given?()`
 - `Kernel.dup(Any)`
@@ -562,7 +567,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Math.hypot(Integer|Float, Integer|Float)`
 - `Math.ldexp(Integer|Float|Rational, Integer)`
 - `Math.lgamma(Integer|Float|Rational)`
-- `Math.log(Integer|Float|Rational)`
+- `Math.log(Integer|Float|Rational, [Integer|Float])`
 - `Math.log10(Integer|Float|Rational)`
 - `Math.log2(Integer|Float|Rational)`
 - `Math.sin(Integer|Float|Rational)`
@@ -737,7 +742,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Regexp.options(x)`
 - `Regexp.source(x)`
 - `Regexp.timeout(x)`
-- `Regexp.union(*String|Regexp)`
+- `Regexp.union(*String|Regexp|Array)`
 
 ## Set
 
@@ -836,6 +841,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Socket
 
+- `Socket.!=(x, Any)`
+- `Socket.==(x, Any)`
 - `Socket.close(x)`
 - `Socket.close_write(x)`
 - `Socket.connect(String, Integer, [Integer|Float|Rational])`
@@ -868,7 +875,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.byterindex(x, String|Regexp, [Integer])`
 - `String.bytes(x)`
 - `String.bytesize(x)`
-- `String.byteslice(x, Integer, [Integer])`
+- `String.byteslice(x, Integer|Range, [Integer])`
 - `String.bytesplice(x, Integer, Integer, String)`
 - `String.capitalize(x)`
 - `String.capitalize!(x)`
@@ -876,7 +883,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.casecmp?(x, String)`
 - `String.center(x, Integer, [String])`
 - `String.chars(x)`
-- `String.chomp(x)`
+- `String.chomp(x, [String])`
 - `String.chomp!(x, [String])`
 - `String.chop(x)`
 - `String.chop!(x)`
@@ -887,7 +894,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.concat(x, *String|Integer)`
 - `String.count(x, String)`
 - `String.crypt(x, String)`
-- `String.delete(x, String)`
+- `String.delete(x, String, *String)`
 - `String.delete!(x, String, *String)`
 - `String.delete_prefix(x, String)`
 - `String.delete_prefix!(x, String)`
@@ -942,10 +949,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `String.scrub!(x, [String])`
 - `String.setbyte(x, Integer, Integer)`
 - `String.size(x)`
-- `String.slice(x, Integer|Range, [Integer])`
+- `String.slice(x, Integer|Range|String|Regexp, [Integer])`
 - `String.slice!(x, Integer|Range|String|Regexp, [Integer])`
 - `String.split(x, [String|Regexp], [Integer])`
-- `String.squeeze(x, [String])`
+- `String.squeeze(x, *String)`
 - `String.squeeze!(x, *String)`
 - `String.start_with?(x, String)`
 - `String.strip(x)`
@@ -1013,6 +1020,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## TCPServer
 
+- `TCPServer.!=(x, Any)`
+- `TCPServer.==(x, Any)`
 - `TCPServer.accept(x)`
 - `TCPServer.close(x)`
 - `TCPServer.new(String, Integer)`

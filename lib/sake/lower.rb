@@ -217,15 +217,21 @@ module Sake
     end
 
     def interp(n)
-      parts = n.parts.map do |part|
+      Interp.new(parts: interp_parts(n), origin: n)
+    end
+
+    # Adjacent literals ("a#{x}" "b") nest an interpolated literal in the parts: flattened here.
+    def interp_parts(n)
+      n.parts.flat_map do |part|
         case part
-        when Prism::StringNode then Str.new(string: part.unescaped.dup.freeze, origin: part)
+        when Prism::StringNode then [Str.new(string: part.unescaped.dup.freeze, origin: part)]
         when Prism::EmbeddedStatementsNode
-          ToS.new(value: part.statements ? statements(part.statements.body, part.statements, inherit: true) : lit(nil, part), origin: part)
-        when Prism::EmbeddedVariableNode then ToS.new(value: lower(part.variable), origin: part)
+          [ToS.new(value: part.statements ? statements(part.statements.body, part.statements, inherit: true) : lit(nil, part), origin: part)]
+        when Prism::EmbeddedVariableNode then [ToS.new(value: lower(part.variable), origin: part)]
+        when Prism::InterpolatedStringNode then interp_parts(part)
+        else raise "BUG: interpolated part #{part.class}"
         end
       end
-      Interp.new(parts:, origin: n)
     end
 
     def args(args_node)

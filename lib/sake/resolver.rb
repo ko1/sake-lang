@@ -412,6 +412,10 @@ module Sake
           error(st, "a module has no fields; `#{st.name}` is for a class") if node.is_a?(Prism::ModuleNode)
         elsif !st.is_a?(Prism::DefNode)
           hint = st.is_a?(Prism::CallNode) && st.name.start_with?("attr") ? spell(st.name.to_s, ATTRS.keys.map(&:to_s)).map { "did you mean `#{_1}`?" } : []
+          if (st.is_a?(Prism::IfNode) || st.is_a?(Prism::UnlessNode)) && st.statements&.body&.first.is_a?(Prism::DefNode)
+            d = st.statements.body.first # `def f(x) = body if cond`: Ruby reads the modifier as the def's, not the body's
+            hint = ["Ruby reads `def #{d.name}(...) = body #{st.is_a?(Prism::IfNode) ? "if" : "unless"} cond` as a conditional definition; write the body in parentheses: `def #{d.name}(...) = (body #{st.is_a?(Prism::IfNode) ? "if" : "unless"} cond)`"]
+          end
           error(st, "only `def`, `include`, and (in a class) `attr_reader`/`attr_accessor`/`attr_writer` are allowed in a class/module body", hint)
         elsif st.receiver
           error(st, "`def #{st.receiver.slice}.#{st.name}` inside `#{cp.slice}`: write `def #{st.name}` (it defines #{ns}.#{st.name})")
@@ -670,6 +674,7 @@ module Sake
           when Prism::StringNode then nil
           when Prism::EmbeddedStatementsNode then part.statements && check_statements(part.statements, ctx, inherit: true)
           when Prism::EmbeddedVariableNode then check(part.variable, ctx)
+          when Prism::InterpolatedStringNode then check(part, ctx) # adjacent literals: "a#{x}" "b"
           else error(part, "unsupported part of an interpolated literal")
           end
         end
@@ -905,7 +910,7 @@ module Sake
     end
 
     # keywords: the callee's keyword parameters (name => default or nil), when `k: v` arguments are its.
-    def check_args(args_node, ctx, hash_pairs: false, splat: false, keywords: nil)
+    def check_args(args_node, ctx, hash_pairs: false, splat: false, keywords: nil, callee: nil)
       (args_node&.arguments || []).each do |a|
         case a
         when Prism::SplatNode
@@ -924,6 +929,8 @@ module Sake
               next error(el, "`**` is not supported") unless el.is_a?(Prism::AssocNode)
               check(el.value, ctx)
             end
+          elsif callee
+            error(a, "#{callee} takes no keyword arguments")
           else
             error(a, "keyword arguments go only to functions with keyword parameters (`def f(x, k: 1)`)")
           end
@@ -968,7 +975,7 @@ module Sake
         target = resolve_qualified(node, recv.name.to_s, name, argc: args.size + 1, from: ctx.ns)
         check(subject, ctx)
         kws = target_keywords(target)
-        check_args(node.arguments, ctx, splat: true, keywords: kws)
+        check_args(node.arguments, ctx, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)))
         check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
         return unless target
         set_call(node, ctx, target)
@@ -1016,7 +1023,7 @@ module Sake
         error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
       end
       kws = target_keywords(target)
-      check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws)
+      check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)))
       check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
       return unless target
 

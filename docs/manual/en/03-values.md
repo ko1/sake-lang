@@ -11,8 +11,8 @@
 | Record | `{x: a, y: b}` | set of (field, type) pairs fixed at creation |
 | Array | `Array[a, ...]` | no declared element type |
 | Array of T | `T[a, ...]`, e.g. `Float[]`, `Point[p]` | element type T, checked on every write |
-| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | keys compare as `==` |
-| Set | `Set[1, 2]` | elements compare as `==` |
+| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | keys compare by value and type (Ruby's `eql?`) |
+| Set | `Set[1, 2]` | elements compare by value and type (Ruby's `eql?`) |
 | Symbol | `:name` | |
 | Range | `1..5`, `1...5`, `1..` | ends are Integer, Float, String, or nil |
 | Regexp, MatchData | `/(\d+)-(\d+)/`, `/#{x}/`, `String.match(s, re)` | |
@@ -77,7 +77,7 @@ Arrays are mutable and shared by reference.
 ## Hash and Set
 
 - **Constructors.** `Hash[k => v, ...]` (also `Hash[name: v]`, whose keys are Symbols), `Hash[]`, and `Hash.new(default)` create a Hash. `Set[x, ...]` creates a Set. The literal `{...}` is a Record, not a Hash.
-- **Keys and elements.** Hash keys and Set elements compare as `==` does. Allowed: Integer, Float, String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and Struct values made of these. Not allowed (`TypeError`): Regexp, Range, and values of a Struct type that defines its own equality (`==`, or `Comparable` with `<=>`), whose keys could disagree with that equality. As in Ruby, changing an Array, Hash, Set, or Struct value after using it as a key makes it unfindable.
+- **Keys and elements.** Hash keys and Set elements compare as Ruby's `eql?` does: by value, with the type included, so `1` and `1.0` are different keys (`Hash[1 => "a"][1.0]` is nil; `Set[1, 1.0]` has two elements), while `1 == 1.0` is true. Allowed: Integer, Float, String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and Struct values made of these. Not allowed (`TypeError`): Regexp, Range, and values of a Struct type that defines its own equality (`==`, or `Comparable` with `<=>`), whose keys could disagree with that equality. As in Ruby, changing an Array, Hash, Set, or Struct value after using it as a key makes it unfindable.
 - **Keys are copied.** A Tuple or Record key is copied when it is stored, so a later write to the original does not change the key.
 - **Default values.** `Hash.new(default)` gives `default` for a missing key, as in Ruby, and the same object is shared, as in Ruby. The block form `Hash.new { ... }` is not available, because blocks are not values.
 - **Blocks.** A block over a Hash receives `[key, value]` as one Tuple, so `|k, v|` takes it apart.

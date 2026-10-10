@@ -93,7 +93,7 @@ module Sake
       when ->(op) { c.arg == "pair" && %w[Indexable.[] Indexable.[]=].include?(op) }
         tuples, others = c.failing.partition { _1.is_a?(Array) && _1[0] == :tuple }
         return ["#{c.op}: the index is outside the Tuple #{typer.show(tuples)}", []] if others.empty?
-        ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{Stdlib::INDEX_ROWS}", []]
+        ["#{c.op}: the receiver #{maybe.sub("are", "is")}#{typer.show(others)}, which cannot be indexed; defined for #{c.op.end_with?("=") ? Stdlib::INDEX_SET_ROWS : Stdlib::INDEX_ROWS}", []]
       when ->(_) { c.arg == "required" }
         mod, f = c.op.split(".", 2)
         t = typer.show_failing(c)
@@ -183,7 +183,9 @@ module Sake
             end
             [msg, hints]
           when "rescue"
-            ["rescue #{c.arg}: the begin body never raises #{c.arg}", ["remove this rescue, or raise #{c.arg} in the body"]]
+            hints = ["remove this rescue, or raise #{c.arg} in the body"]
+            hints << "Thread.value / Thread.join raise RuntimeError only in a program that calls Thread.raise" if c.arg == "RuntimeError"
+            ["rescue #{c.arg}: the begin body never raises #{c.arg}", hints]
           when "unrescued"
             ["raise: #{c.arg} may reach the top level without being rescued", ["rescue it, or check with a level below 4"]]
           when "nil"
@@ -202,12 +204,13 @@ module Sake
     # A type report fed by a field that holds both the fitting and the failing types (see STRICT_ITEMS).
     def mixed?(program, typer, c, item)
       return false unless item == "type" && !c.failing.empty?
-      fails = typer.type_names(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing) - ["Nil"]
+      failing = typer.operand_pair?(c) ? c.failing.map(&:first) : (c.arg == "elements" ? c.failing.flatten(1) : c.failing)
+      fails = typer.type_names(failing) - ["Nil"]
       return false if fails.empty?
-      failing = typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing
       # A `case/in` missing a Symbol value: mixed only when a field of several types holds that very value.
       return typer.field_holds_symbols?(failing) if typer.symbol_values?(failing)
-      typer.mixing_fields.any? { |names| (fails - names).empty? && !(names - fails).empty? }
+      # The failing types all come from one field of several types (for the elements of a sort, the whole union may fail).
+      typer.mixing_fields.any? { |names| (fails - names).empty? && (c.arg == "elements" || !(names - fails).empty?) }
     end
 
     # Whether the function around node reads a field: `@x`, or a reader `T.x(...)` / `v.T.x` of a Struct type.
@@ -226,6 +229,13 @@ module Sake
       fn = fns.select { |d| d.location.send(:source).equal?(node.location.send(:source)) && d.location.start_line <= line && line <= d.location.end_line }
               .min_by { _1.location.end_line - _1.location.start_line }
       (fn || node).slice
+    end
+
+    # The program may have closed its stdout (IO.close(IO.stdout)): nothing is left to flush then.
+    def flush_out(out)
+      out.flush
+    rescue IOError
+      nil
     end
 
     # Runs only on the error path: static analysis tells where the nil may have come from.
@@ -303,14 +313,14 @@ module Sake
       end
       0
     rescue StaticErrors => e
-      out.flush
+      flush_out(out)
       err.puts e.message
       2
     rescue Exit => e # Kernel.exit
-      out.flush
+      flush_out(out)
       e.status
     rescue RunError => e
-      out.flush
+      flush_out(out)
       add_nil_hints(e, source, path) if e.nil_value?
       err.puts e.report
       1

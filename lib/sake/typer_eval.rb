@@ -340,6 +340,11 @@ module Sake
         return unless slot && (ty = env.lookup(slot))
         m, rest = match_atoms(ty, pred.pattern)
         set_narrowed(env, slot, of_atoms(truthy ? m : rest))
+      when CallUser # a predicate helper `def number?(x) = (x in Integer | Float)` narrows its argument as the pattern does
+        i, pattern = predicate_pattern(pred.fn)
+        return unless pattern && (slot = pred.args[i] && narrow_slot(env, pred.args[i])) && (ty = env.lookup(slot))
+        m, rest = match_atoms(ty, pattern)
+        set_narrowed(env, slot, of_atoms(truthy ? m : rest))
       when IsNil, BinOp
         return if pred.is_a?(BinOp) && !%w[== !=].include?(pred.op)
         return if pred.origin.receiver.is_a?(Prism::ConstantReadNode) # `Kernel.==(x, nil)` is not a test form
@@ -426,6 +431,29 @@ module Sake
       return if unknown?(ty) || unknown?(atoms)
       kept = ty.reject { |a| a.is_a?(Array) && a[0] == :tuple && a[1][pos] && a[1][pos].none? { atoms.include?(_1) } }
       set_narrowed(env, slot, of_atoms(kept)) unless kept.empty? || kept.size == ty.size
+    end
+
+    # [parameter index, pattern] when fn's whole body is `param in Pattern` (a predicate without bindings), else nil.
+    def predicate_pattern(fn)
+      (@predicate_patterns ||= {}.compare_by_identity)[fn] ||= begin
+        f = @ast.functions[fn]
+        body = f&.body
+        body = body.body[0] if body.is_a?(Seq) && body.body.size == 1
+        if body.is_a?(MatchP) && body.value.is_a?(LVarGet) && body.value.slot < f.nparams && !binds?(body.pattern)
+          [body.value.slot, body.pattern]
+        else
+          [nil, nil]
+        end
+      end
+    end
+
+    def binds?(pat)
+      case pat
+      when PBind, PRecord, MatchRecord then true
+      when PAlt then binds?(pat.left) || binds?(pat.right)
+      when PTuple then pat.elems.any? { binds?(_1) }
+      else false
+      end
     end
 
     # [atoms that may match the pattern, atoms that may not]. An unknown atom may be anything: it goes

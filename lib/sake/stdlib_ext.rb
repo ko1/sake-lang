@@ -47,10 +47,38 @@ module Sake
 
     def pair(k, v) = Tuple.new([k, v])
 
+    # Runs Ruby and names the Sake kind of its ArgumentError / RangeError / IndexError (the vague ones);
+    # a more specific Ruby error (KeyError, FloatDomainError, TypeError, ...) keeps its class (Interpreter#ruby_run_error).
     def ruby_error(kind)
       yield
-    rescue ::RangeError, ::KeyError, ::ArgumentError, ::IndexError, ::FloatDomainError, ::RegexpError => e
-      raise Fail.new(kind || e.class.name, e.message)
+    rescue ::RangeError, ::ArgumentError, ::IndexError => e
+      raise e if (e.is_a?(::KeyError) || e.is_a?(::FloatDomainError)) && e.class.name != kind
+      raise Fail.new(kind, e.message)
+    end
+
+    # dig: each key steps into an Array (an Integer index), a Tuple (an Integer position), or a Hash; a miss, or
+    # nil on the way, gives nil (Ruby's dig, with Tuples added).
+    def dig_into(x, keys)
+      keys.each do |k|
+        x = case x
+            when nil then return nil
+            when Array, Tuple
+              raise Fail.new("TypeError", "an index into #{Values.describe(x)} must be Integer, got #{Values.describe(k)}") unless k.is_a?(Integer)
+              x.is_a?(Tuple) ? x.elems[k] : x[k]
+            when Hash then x[k]
+            else raise Fail.new("TypeError", "#{Values.describe(x)} cannot be dug into (not an Array, a Tuple, or a Hash)")
+            end
+      end
+      x
+    end
+
+    # format's values: a Tuple spreads into the arguments, a Record is the Hash of `%<name>s` (as Ruby's).
+    def format_arg(x)
+      case x
+      when Tuple then x.elems
+      when RecordValue then x.shape.fields.zip(x.values).to_h { |k, v| [k.to_sym, v] }
+      else x
+      end
     end
 
     def install_ext_binary_ops(reg)
@@ -59,13 +87,13 @@ module Sake
       end
       %i[& | ^ << >>].each { |op| reg.define_binary(op, "Integer", "Integer") { |a, b| a.public_send(op, b) } }
       %i[| & -].each { |op| reg.define_binary(op, "Set", "Set") { |a, b| a.public_send(op, b) } }
-      %w[Symbol IO Regexp Range Thread Mutex Queue].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
+      %w[Symbol IO Regexp Range Thread Mutex Queue Socket TCPServer].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
       reg.define_binary(:=~, "String", "Regexp") { |s, r| s =~ r }
       reg.define_binary(:=~, "Regexp", "String") { |r, s| r =~ s }
       reg.define_binary(:!~, "String", "Regexp") { |s, r| s !~ r }
-      %w[Integer Float String Symbol Tuple Nil Boolean].each do |t|
+      %w[Integer Float String Symbol Tuple Record Hash Nil Boolean].each do |t|
         reg.define_binary(:%, "String", t) do |f, x|
-          ruby_error("ArgumentError") { f % (x.is_a?(Tuple) ? x.elems : x) }
+          ruby_error("ArgumentError") { f % format_arg(x) }
         end
       end
     end
@@ -74,7 +102,7 @@ module Sake
     NUMERIC = (REAL + ["Complex"]).freeze
 
     def num_op(op, a, b)
-      a.public_send(op, b)
+      op == :** ? real_pow(a, b) : a.public_send(op, b)
     rescue ::ZeroDivisionError
       raise Fail.new("ZeroDivisionError", "divided by 0")
     end
@@ -91,7 +119,7 @@ module Sake
       end
       install_typed_ops(reg, "Rational", %i[+ - * / % ** < <= > >= == !=])
       install_typed_ops(reg, "Complex", %i[+ - * / ** == !=])
-      reg.define("Kernel", :Rational, [%w[Integer Rational String]], optional: [%w[Integer Rational]]) do |a, b = 1|
+      reg.define("Kernel", :Rational, [%w[Integer Float Rational String]], optional: [%w[Integer Rational]]) do |a, b = 1|
         Rational(a, b)
       rescue ::ZeroDivisionError
         raise Fail.new("ZeroDivisionError", "divided by 0")
@@ -108,10 +136,11 @@ module Sake
       reg.define("Rational", :to_s, ["Rational"], &:to_s)
       reg.define("Rational", :abs, ["Rational"], &:abs)
       reg.define("Rational", :zero?, ["Rational"], &:zero?)
-      %i[real imaginary abs arg conjugate].each { |m| reg.define("Complex", m, ["Complex"], &m) }
+      %i[real imaginary arg conjugate].each { |m| reg.define("Complex", m, ["Complex"], &m) }
+      reg.define("Complex", :abs, ["Complex"]) { |c| c.abs.then { _1.is_a?(Rational) ? _1.to_f : _1 } } # Complex(3r, 0).abs is (3/1) in Ruby
       reg.define("Complex", :to_s, ["Complex"], &:to_s)
       reg.define("Complex", :rectangular, ["Complex"]) { |c| Tuple.new(c.rectangular) }
-      reg.define("Complex", :polar, ["Complex"]) { |c| Tuple.new(c.polar) }
+      reg.define("Complex", :polar, ["Complex"]) { |c| Tuple.new(c.polar.map { _1.is_a?(Rational) ? _1.to_f : _1 }) } # as abs: a Rational magnitude is a Float
       %w[sqrt cbrt sin cos tan atan exp log log2 log10].each { |m| reg.lookup("Math", m).params[0] = REAL }
       reg.lookup("Array", "sum").impl = lambda do |a, &b|
         xs = b ? a.map { b.(_1) } : a
@@ -188,8 +217,9 @@ module Sake
         finite!(r)
         b ? r.count { Values.truthy?(b.(_1)) } : r.count
       end
+      # include? / member? walk a String Range ("a".."z" does not include "mm"); cover? compares with the ends.
       %i[include? cover? member?].each do |m|
-        reg.define("Range", m, %w[Range Any]) { |r, x| ruby_error("ArgumentError") { r.cover?(x) } }
+        reg.define("Range", m, %w[Range Any]) { |r, x| ruby_error("ArgumentError") { m == :cover? ? r.cover?(x) : r.include?(x) } }
       end
       reg.define("Range", :first, ["Range"], optional: ["Integer"]) { |r, n = nil| ruby_error("RangeError") { n ? r.first(n) : r.first } }
       reg.define("Range", :last, ["Range"], optional: ["Integer"]) { |r, n = nil| finite!(r); ruby_error("RangeError") { n ? r.to_a.last(n) : r.last } }
@@ -217,7 +247,7 @@ module Sake
       rescue ::KeyError
         raise Fail.new("KeyError", "key not found: #{Values.inspect(k)}")
       end
-      reg.define("Hash", :dig, %w[Hash Any]) { |h, k| h[k] }
+      reg.define("Hash", :dig, %w[Hash Any], rest: "Any") { |h, k, *ks| dig_into(h, [k, *ks]) }
       reg.define("Hash", :store, %w[Hash Any Any]) { |h, k, v| h[key!(k)] = v }
       reg.define("Hash", :delete, %w[Hash Any]) { |h, k| h.delete(k) }
       reg.define("Hash", :keys, ["Hash"], &:keys)
@@ -281,9 +311,10 @@ module Sake
     STR_OR_RE = %w[String Regexp].freeze
 
     def install_regexp(reg)
-      reg.define("Regexp", :new, ["String"], optional: ["String"]) do |s, flags = ""| # flags: letters of "imx", as Ruby's
-        raise Fail.new("ArgumentError", "unknown regexp option: #{flags}") unless flags.match?(/\A[imx]*\z/)
-        ruby_error("RegexpError") { Regexp.new(s, flags) }
+      reg.define("Regexp", :new, ["String"], optional: ["String"]) do |s, flags = ""| # flags: letters of "imxn", as the literal's
+        raise Fail.new("ArgumentError", "unknown regexp option: #{flags}") unless flags.match?(/\A[imxn]*\z/)
+        bits = { "i" => Regexp::IGNORECASE, "m" => Regexp::MULTILINE, "x" => Regexp::EXTENDED, "n" => Regexp::NOENCODING }
+        ruby_error("RegexpError") { Regexp.new(s, flags.each_char.sum { bits.fetch(_1) }) }
       end
       reg.define("Regexp", :escape, ["String"]) { |s| Regexp.escape(s) }
       reg.define("Regexp", :source, ["Regexp"], &:source)
@@ -321,7 +352,7 @@ module Sake
       %i[format sprintf].each do |m|
         # %s uses each value's to_s, including a type's own; other directives need numbers or Strings.
         reg.define("Kernel", m, ["String"], rest: "Any") do |f, *xs|
-          format(f, *xs)
+          format(f, *xs.map { _1.is_a?(RecordValue) ? format_arg(_1) : _1 })
         rescue ::ArgumentError, ::TypeError, ::KeyError => e
           raise Fail.new("ArgumentError", e.message)
         end
@@ -330,7 +361,8 @@ module Sake
       reg.define("Kernel", :to_s, ["Any"]) { |x| Values.to_s(x) }
       reg.define("Kernel", :inspect, ["Any"]) { |x| Values.inspect(x) }
       reg.define("Kernel", :pp, ["Any"]) { |v| reg.lookup("Kernel", "p").impl.(v) }
-      reg.define("Kernel", :rand, [], optional: [NUM]) { |n = nil| n ? rand(n) : rand }
+      # rand(n): an Integer in 0...n for an Integer n, a Float in 0.0...n for a Float n (Ruby's Random.rand: n must be positive).
+      reg.define("Kernel", :rand, [], optional: [%w[Integer Float]]) { |n = nil| n ? Random.rand(n) : rand }
       reg.define("Kernel", :Integer, [%w[String Integer Float]]) { |x| ruby_error("ArgumentError") { Integer(x) } }
       reg.define("Kernel", :Float, [%w[String Integer Float]]) { |x| ruby_error("ArgumentError") { Float(x) } }
     end
@@ -340,7 +372,7 @@ module Sake
       reg.define("Integer", :gcd, %w[Integer Integer]) { |a, b| a.gcd(b) }
       reg.define("Integer", :lcm, %w[Integer Integer]) { |a, b| a.lcm(b) }
       reg.define("Integer", :pow, %w[Integer Integer], optional: ["Integer"]) { |a, b, m = nil| m ? a.pow(b, m) : int_pow(a, b) }
-      reg.define("Integer", :digits, ["Integer"]) { |n| ruby_error("ArgumentError") { n.digits } }
+      reg.define("Integer", :digits, ["Integer"]) { |n| TypedArray.new("Integer", n.digits) } # Math::DomainError when negative
       reg.define("Integer", :bit_length, ["Integer"], &:bit_length)
       reg.define("Integer", :chr, ["Integer"]) { |n| ruby_error("RangeError") { n.chr } }
       reg.define("Integer", :sqrt, ["Integer"]) { |n| ruby_error("Math::DomainError") { Integer.sqrt(n) } }
@@ -360,20 +392,19 @@ module Sake
     def install_more_string(reg)
       # Bytes and encodings, as Ruby: Array.pack(bytes, "C*") is binary, force_encoding relabels it.
       reg.define("Array", :pack, %w[Array String]) { |a, fmt| ruby_error("ArgumentError") { a.pack(fmt) }.then { _1.frozen? ? _1 : _1 } }
-      reg.define("String", :force_encoding, %w[String String]) { |s, enc| ruby_error("ArgumentError") { s.dup.force_encoding(enc) } }
+      reg.define("String", :force_encoding, %w[String String]) { |s, enc| ruby_error("ArgumentError") { s.force_encoding(enc) } } # in place, as Ruby's
       reg.define("String", :valid_encoding?, ["String"], &:valid_encoding?)
       reg.define("String", :encoding, ["String"]) { |s| s.encoding.name }
       reg.define("String", :center, %w[String Integer], optional: ["String"]) { |s, n, pad = " "| s.center(n, pad) }
       reg.define("String", :tr, %w[String String String]) { |s, a, b| s.tr(a, b) }
-      reg.define("String", :delete, %w[String String]) { |s, t| s.delete(t) }
-      reg.define("String", :squeeze, ["String"], optional: ["String"]) { |s, chars = nil| chars ? s.squeeze(chars) : s.squeeze }
+      reg.define("String", :delete, %w[String String], rest: "String") { |s, t, *ts| s.delete(t, *ts) } # as delete!
+      reg.define("String", :squeeze, ["String"], rest: "String") { |s, *chars| s.squeeze(*chars) } # as squeeze!
       reg.define("String", :ord, ["String"]) { |s| ruby_error("ArgumentError") { s.ord } }
       %i[succ next].each { |m| reg.define("String", m, ["String"], &:succ) }
       reg.define("String", :bytes, ["String"], &:bytes)
       reg.define("String", :hex, ["String"], &:hex)
       reg.define("String", :oct, ["String"], &:oct)
       reg.define("String", :each_line, ["String"], block: :required) { |s, &b| s.each_line { b.(_1) }; s }
-      reg.define("String", :casecmp?, %w[String String]) { |s, t| s.casecmp?(t) }
       reg.lookup("String", "sub").params[1] = STR_OR_RE
       reg.lookup("String", "gsub").params[1] = STR_OR_RE
       reg.lookup("String", "index").params[1] = STR_OR_RE
@@ -403,13 +434,9 @@ module Sake
         a.each_with_object({}) { |x, h| (h[key!(b.(x))] ||= []) << x }
       end
       reg.define("Array", :partition, ["Array"], block: :required) { |a, &b| Tuple.new(a.partition { Values.truthy?(b.(_1)) }) }
-      reg.define("Array", :flat_map, ["Array"], block: :required) do |a, &b|
-        a.flat_map do |x|
-          r = b.(x)
-          raise Fail.new("TypeError", "the block must return an Array, got #{Values.describe(r)}") unless r.is_a?(Array)
-          r
-        end
-      end
+      reg.define("Array", :flat_map, ["Array"], block: :required) { |a, &b| a.flat_map { array_result(b.(_1)) } }
+      # rfind(a) { }: the last element the block accepts (Ruby 4.0's Array#rfind, written out).
+      reg.define("Array", :rfind, ["Array"], block: :required) { |a, &b| a.reverse_each.find { Values.truthy?(b.(_1)) } }
       reg.define("Array", :each_with_object, %w[Array Any], block: :required) { |a, memo, &b| a.each { b.(_1, memo) }; memo }
       # `sum(xs, 0.0)`: as Ruby, the initial value (default 0) is the result for an empty collection.
       # Elements of a type that includes Arithmetic are added with its own + (Interpreter#call_builtin).
@@ -432,7 +459,21 @@ module Sake
       reg.define("Array", :delete, %w[Array Any]) { |a, x| a.delete(x) }
       reg.define("Array", :delete_at, %w[Array Integer]) { |a, i| a.delete_at(i) }
       reg.define("Array", :delete_if, ["Array"], block: :required) { |a, &b| a.delete_if { Values.truthy?(b.(_1)) } }
-      reg.define("Array", :insert, %w[Array Integer], rest: "Any") { |a, i, *xs| ruby_error("IndexError") { a.insert(i, *check_elems(a, xs)) } }
+      # insert past the end would fill the gap with nil (Ruby): an IndexError here, as `a[k] = v` past the end is.
+      reg.define("Array", :insert, %w[Array Integer], rest: "Any") do |a, i, *xs|
+        raise Fail.new("IndexError", "index #{i} is past the end of the Array (length #{a.size}); the gap would be nil") if i > a.size
+        raise Fail.new("IndexError", "index #{i} is before the start of the Array (length #{a.size})") if i < -a.size - 1
+        a.insert(i, *check_elems(a, xs))
+      end
+      reg.define("Array", :dig, %w[Array Integer], rest: "Any") { |a, k, *ks| dig_into(a, [k, *ks]) }
+      # ENV.replace(h): the whole environment becomes h; checked before anything changes (String keys and values).
+      reg.define("ENV", :replace, ["Hash"]) do |h|
+        h.each do |k, v|
+          raise Fail.new("TypeError", "keys and values must be String, got #{Values.describe(k)} => #{Values.describe(v)}") unless k.is_a?(String) && v.is_a?(String)
+        end
+        ENV.replace(h)
+        nil
+      end
       reg.define("Array", :clear, ["Array"], &:clear)
       reg.define("Array", :dup, ["Array"]) { |a| a.is_a?(TypedArray) ? TypedArray.new(a.elem_type, a.to_a) : a.dup }
       count = reg.lookup("Array", "count")

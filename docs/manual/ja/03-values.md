@@ -11,8 +11,8 @@
 | Record | `{x: a, y: b}` | (フィールド, 型) の集合が作成時に固定 |
 | Array | `Array[a, ...]` | 要素型の宣言なし |
 | T の Array | `T[a, ...]`、例 `Float[]`, `Point[p]` | 要素型 T。書き込みごとに検査 |
-| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | キーは `==` で比較 |
-| Set | `Set[1, 2]` | 要素は `==` で比較 |
+| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | キーは値と型で比較（Ruby の `eql?`） |
+| Set | `Set[1, 2]` | 要素は値と型で比較（Ruby の `eql?`） |
 | Symbol | `:name` | |
 | Range | `1..5`, `1...5`, `1..` | 端は Integer, Float, String, nil |
 | Regexp, MatchData | `/(\d+)-(\d+)/`, `/#{x}/`, `String.match(s, re)` | |
@@ -77,7 +77,7 @@ Array は可変で、参照で共有されます。
 ## Hash と Set
 
 - **構築。** `Hash[k => v, ...]`（`Hash[name: v]` も。キーは Symbol）、`Hash[]`、`Hash.new(default)` が Hash を、`Set[x, ...]` が Set を作ります。リテラル `{...}` は Record で、Hash ではありません。
-- **キーと要素。** Hash のキーと Set の要素は `==` で比較します。使えるもの: Integer, Float, String, Symbol, true, false, nil, Time、およびそれらからなる Tuple, Record, Array, Hash, Set, Struct 値。使えないもの（`TypeError`）: Regexp, Range、自分の等価（`==`、または `Comparable` の `<=>`）を定義した Struct 型の値（キーの比較がその等価と食い違いうる）。Ruby と同じく、キーに使った Array・Hash・Set・Struct 値を後で変えると見つからなくなります。
+- **キーと要素。** Hash のキーと Set の要素は Ruby の `eql?` と同じく値と型で比較します。`1` と `1.0` は別のキーです（`Hash[1 => "a"][1.0]` は nil、`Set[1, 1.0]` は 2 要素）が、`1 == 1.0` は true です。使えるもの: Integer, Float, String, Symbol, true, false, nil, Time、およびそれらからなる Tuple, Record, Array, Hash, Set, Struct 値。使えないもの（`TypeError`）: Regexp, Range、自分の等価（`==`、または `Comparable` の `<=>`）を定義した Struct 型の値（キーの比較がその等価と食い違いうる）。Ruby と同じく、キーに使った Array・Hash・Set・Struct 値を後で変えると見つからなくなります。
 - **キーは複製される。** Tuple や Record のキーは格納時に複製されるので、元を後で書いてもキーは変わりません。
 - **既定値。** `Hash.new(default)` は無いキーに `default` を返し、Ruby と同じく同じオブジェクトを共有します。ブロックの形 `Hash.new { ... }` はありません（ブロックは値ではない）。
 - **ブロック。** Hash のブロックは `[key, value]` を 1 つの Tuple として受けるので、`|k, v|` で分解します。

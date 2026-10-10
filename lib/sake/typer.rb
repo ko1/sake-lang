@@ -987,6 +987,11 @@ module Sake
           results << t("Boolean")
           next
         end
+        if op == "%" && x == "String" && y.is_a?(Array) && y[0] == :record # format % {name: v}: the Record names the values
+          hits += 1
+          results << t("String")
+          next
+        end
         if struct_atom?(y) && (co = @program.functions.dig(struct_name(y), "coerce")) # the right operand's type converts the pair
           pair = call_user(co, [one(y), one(x)], nil)
           record(node, "#{y}.coerce", "result", "Tuple", pair)
@@ -1062,6 +1067,37 @@ module Sake
       inner.flat_map { |a, b| element_pairs(a, b, depth + 1, seen, budget) }
     end
 
+    # Array.sort / min / max and the *_by forms (elems: the element types, or the block's result types):
+    # every pair of them must be comparable, else the operation fails at run time (ArgumentError).
+    def check_sortable(node, name, elems)
+      return if elems.empty? || unknown?(elems)
+      pairs = elems.each_with_index.flat_map { |x, i| elems.drop(i).map { |y| [x, y] } }
+      failing = pairs.reject { |x, y| comparable_atoms?(x, y) }
+      verdict = failing.empty? ? :proven : (failing.size == pairs.size ? :error : :partial)
+      add_check(node, name, "elements", "comparable elements", u(*pairs.map { |x, y| tuple([one(x), one(y)]) }), verdict, failing)
+    end
+
+    # Array.dig(a, i, j, ...) / Hash.dig(h, k, l, ...): each key steps into the elements or values; nil is a miss.
+    # In a union of containers, an Array or Tuple takes the step only when the key may be an Integer (the
+    # other branches are not where this key goes); a value that is no container at all is a type problem.
+    def dig_result(node, name, recv, keys)
+      cur = recv
+      keys.each do |key|
+        break if cur.empty? || unknown?(cur)
+        containers, others = cur.reject { _1 == "IndexNil" || _1 == "Nil" }.partition { _1.is_a?(Array) && %i[array hash tuple].include?(_1[0]) }
+        record(node, name, "value", %w[Array Hash Tuple], others) unless others.empty?
+        integer_key = unknown?(key) || key.include?("Integer")
+        cur = u(*containers.map do |a|
+          case a[0]
+          when :array then integer_key ? elem_of([a]) : []
+          when :tuple then integer_key ? tuple_elems([a]) : []
+          else u(hash_sites[a[1]].val, hash_sites[a[1]].default.map { _1 == "Nil" ? "IndexNil" : _1 }.then { u(*_1.map { |x| [x] }) })
+          end
+        end)
+      end
+      u(cur, t("IndexNil"))
+    end
+
     def comparable_atoms?(x, y, depth = 0)
       ((@comparable_memo ||= {})[[x, y, depth]] ||= [comparable_atoms_uncached?(x, y, depth)])[0]
     end
@@ -1120,6 +1156,8 @@ module Sake
       return (ORDERED.include?(t1) && ORDERED.include?(t2) ? t("Integer") : u(t("Integer"), t("Nil"))) if op == "<=>"
       return t("Boolean") if COMPARE_OPS.include?(op) || op == "!~"
       return u(t("Integer"), t("Nil")) if op == "=~"
+      # x ** Rational: a Rational when the exponent is a whole number (4r ** 2r), else a Float (4r ** (1r/2)).
+      return u(t("Rational"), t("Float")) if op == "**" && t2 == "Rational" && %w[Integer Rational].include?(t1)
       return t("String") if t1 == "String"
       return t("Set") if t1 == "Set"
       return (t2 == "Time" ? t("Float") : t("Time")) if t1 == "Time"
@@ -1426,8 +1464,8 @@ module Sake
       when "Array.join" then t("String")
       when "Array.first", "Array.last"
         args.size == 2 ? new_site(node, " #{name}", elem_of(a0)) : u(elem_of(a0), t("IndexNil"))
-      when "Array.slice", "Array.slice!" # a[i] (an element or nil), a[i, n] / a[range] (an Array)
-        args.size == 3 || atoms_of(args[1], :range).any? ? u(new_site(node, " #{name}", elem_of(a0)), t("Nil")) : u(elem_of(a0), t("Nil"))
+      when "Array.slice", "Array.slice!" # a[i] (an element or nil), a[i, n] / a[range] (an Array); the nil is a miss, as x[k]'s
+        args.size == 3 || atoms_of(args[1], :range).any? ? u(new_site(node, " #{name}", elem_of(a0)), t("IndexNil")) : u(elem_of(a0), t("IndexNil"))
       when "Array.prepend"
         write_elems(a0, args.drop(1), node, name)
         a0
@@ -1437,19 +1475,22 @@ module Sake
         a0
       when "Array.at", "Array.pop", "Array.shift", "Array.min", "Array.max" # nil on an empty Array: a miss, as x[k]'s
         return new_site(node, " #{name}", elem_of(a0)) if args[1] && name == "Array.shift" # shift(a, n): the first n, as an Array
+        check_sortable(node, name, elem_of(a0)) if %w[Array.min Array.max].include?(name)
         u(elem_of(a0), t("IndexNil"))
       when "Array.assoc", "Array.rassoc" then u(elem_of(a0), t("Nil"))
       when "Array.fetch" then args.size == 3 ? u(elem_of(a0), args[2]) : elem_of(a0)
       when "Tuple.max", "Tuple.min", "Tuple.minmax"
         e = tuple_elems(a0)
+        check_sortable(node, name, e) unless e == t("Nil") # [] gives nil, not an error
         name == "Tuple.minmax" ? tuple([e, e]) : e
       when "Array.unshift"
         write_elems(a0, args.drop(1), node, name)
         a0
       when "Array.find", "Array.detect", "Array.min_by", "Array.max_by"
         e = elem_of(a0)
-        call_block(blk, [e]) unless e.empty?
-        u(e, t("Nil"))
+        keys = e.empty? ? [] : call_block(blk, [e])
+        check_sortable(node, name, keys) if name.end_with?("_by")
+        u(e, t(name.end_with?("_by") ? "IndexNil" : "Nil")) # min_by / max_by: nil only for an empty Array, a miss
       when "Array.index", "String.index" then u(t("Integer"), t("Nil"))
       when "Array.find_index"
         e = elem_of(a0)
@@ -1475,10 +1516,12 @@ module Sake
         elem = blk ? call_block(blk, [t("Integer")]) : (args[1] || t("Nil"))
         new_site(node, " #{name}", elem)
       when "Array.reverse", "Array.sort", "Array.take", "Array.drop"
+        check_sortable(node, name, elem_of(a0)) if name == "Array.sort"
         new_site(node, " #{name}", elem_of(a0))
       when "Array.select", "Array.filter", "Array.reject", "Array.sort_by"
         e = elem_of(a0)
-        call_block(blk, [e]) unless e.empty?
+        keys = e.empty? ? [] : call_block(blk, [e])
+        check_sortable(node, name, keys) if name == "Array.sort_by"
         new_site(node, " #{name}", e)
       when "Array.map"
         e = elem_of(a0)
