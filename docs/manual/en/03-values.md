@@ -1,6 +1,6 @@
 # Values and types
 
-| Type | Literals / constructors | Notes |
+| Type | How it is written (a literal, or the operation that makes it) | Notes |
 |---|---|---|
 | Integer | `42`, `-7` | arbitrary precision |
 | Float | `1.5`, `2.0` | |

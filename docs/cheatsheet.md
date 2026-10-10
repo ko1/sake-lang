@@ -189,7 +189,7 @@ p(pt)
 
 ### Modules, operators for your types
 - `module M` + `module_function`: plain functions `M.f(x)`. A module without `module_function` is a
-  mixin: `include M` in a class borrows its functions (they may call the includer's functions);
+  mixin: `include M` in a class copies its functions (they may call the includer's functions);
   `M.f(x)` dispatches to `x`'s type. A body of only `raise NotImplementedError` marks a required function.
 - Operators: `include Comparable` + `def <=>(a, b)` gives `< <= > >= ==` and `Array.sort/min/max`;
   `include Arithmetic` + `def +(a, b)`; `include Indexable` + `def [](c, k)` / `def []=(c, k, v)`.

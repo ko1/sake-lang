@@ -248,8 +248,8 @@ home for plain functions (`module_function`), and as a **mixin** that types incl
 
 - **Module functions.** Functions after `module_function` are called directly, as
   `Geometry.dist2(...)`, like Ruby's `Math`.
-- **Mixins.** `include M` borrows M's functions, as Ruby's modules do, but statically. Inside a
-  borrowed function, unqualified names are looked up in the class that includes it, so
+- **Mixins.** `include M` copies M's functions, as Ruby's modules do, but statically. Inside a
+  copied function, unqualified names are looked up in the class that includes it, so
   `Shape.describe` uses the `area` of Square or of Disc.
 - **Dispatch.** Calling a mixin function through its module, as `Shape.describe(x)`, runs the
   function of `x`'s type, which must include the module. This is the one place besides operators

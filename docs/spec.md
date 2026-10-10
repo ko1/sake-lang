@@ -215,21 +215,24 @@ Code at the top level has no enclosing namespace, so resolution starts at step 2
 
 ### 5.5 include
 
-`include M` in a class or module body borrows the functions of the module `M`. This is Ruby's
+`include M` in a class or module body copies the functions of the module `M`. This is Ruby's
 module, resolved statically:
 
-- **Borrowing.** Each function `f` of `M` becomes `X.f` in the including namespace `X`, unless `X`
-  already has `f`, in which case `X`'s own definition wins. Modules included by `M` are borrowed
+- **Copying.** Each function `f` of `M` becomes `X.f` in the including namespace `X`, unless `X`
+  already has `f`, in which case `X`'s own definition wins. Modules included by `M` are copied
   too.
 - **Order.** Modules are searched in Ruby's ancestor order: the module included **last** comes
   first. With `include A` then `include B`, a `bar` in both comes from B, as in Ruby.
-- **Resolution in the includer.** Inside a borrowed function, unqualified names are resolved in
+- **Resolution in the includer.** Inside a copied function, unqualified names are resolved in
   `X`, so `M` can use functions that `X` provides, such as `each`. Nothing is dispatched at run
-  time: each `X.f` is fixed before running. `@x` refers to a field of `X` when `X` is a Struct
-  type.
-- **Requirements.** If `X` lacks a name that `M`'s functions need, `include M` is a static error.
-  Calling such a function directly, as in `M.total(x)`, is a static error too, with a hint to call
-  it through an includer.
+  time: each `X.f` is fixed before running. `@x` refers to a field of `X` when `X` is a class.
+
+- **Requirements.** The unqualified names that the bodies of `M`'s functions call (`each(x)`, say)
+  and the fields `@x` they read, minus what `M` itself, the top level and `Kernel` define, are `M`'s
+  requirements. Nothing is declared; they are collected from the bodies. If `X` lacks one (no
+  `each`, no field `x`), `include M` is a static error naming the function and the name. Calling a
+  function with requirements directly, as in `M.total(x)`, is a static error too, with a hint to
+  call it through an includer.
 - **Restrictions.** Only modules can be included, and include cycles are errors.
 - **Not inheritance.** `include` adds no subtype relation.
 
@@ -254,7 +257,7 @@ A module's functions are of two kinds, as in Ruby:
   `M`, and reports one that does not as a `type` problem. While running, a type that does not
   include `M` raises `TypeError`.
 - **Static calls.** A type's own namespace is always static: `Basket.total(b)` runs Basket's
-  `total`, whether defined in Basket or borrowed from `Summary`. `Summary.total(x)` is the
+  `total`, whether defined in Basket or copied from `Summary`. `Summary.total(x)` is the
   dispatching form.
 - **Kernel.** Every type includes `Kernel`. `Kernel.to_s(x)` and `Kernel.inspect(x)` dispatch to a
   type's own `to_s` and `inspect`, or use the built-in form. `"#{x}"`, `puts`, and `p` are
@@ -284,9 +287,11 @@ def size_of(x) = (String|Array|Hash).size(x)
 - The listed functions may differ in shape: a user function's `*rest` is packed for its branch
   (`(IO|StringIO).print(io, a, b)`). A function that takes keywords cannot be listed; dispatch on
   the type with `case`.
-- Unlike a module's dispatch ([§5.6](#56-calling-a-modules-functions-module_function-and-dispatch)),
-  nothing has to be declared: the call site states the set, and it covers types that share an
-  operation's name without sharing a module, such as built-in types or same-named fields.
+- A mixin function's dispatch `M.f(x)` ([§5.6](#56-calling-a-modules-functions-module_function-and-dispatch))
+  is the same selection as `(A|B|...).f(x)` listing every class that includes `M`. The difference
+  is where the set is stated: `include` declares it on each class, `(A|B)` states it at the call.
+  So nothing has to be declared, and it covers types that share an operation's name without
+  sharing a module, such as built-in types or same-named fields.
 
 ### 5.8 Arity and blocks
 
