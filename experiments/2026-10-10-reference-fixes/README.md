@@ -27,4 +27,4 @@ ko1 の依頼: 「どんどん解決してって。利用感レポート忘れ�
 
 ## 利用感
 
-`notes.md`。
+`notes.md`。同じ内容の HTML 版 `notes.html` を artifact として publish した: https://claude.ai/artifact/WoWrzLyGPDQbTw7VjGdQRp
