@@ -86,14 +86,14 @@ running.
 
 ### Native code through Rust (experimental)
 
-`tools/sakec.rb` compiles a program to a native executable by way of Rust, for the subset whose types
+`bin/sabic` compiles a program to a native executable by way of Rust, for the subset whose types
 the generator can fix: Integer (as 64-bit, an overflow is an error), Float, true/false, nil as
 `Option`, String, Array, Tuple, classes, and blocks. Anything outside the subset is reported with its
 line, and the program still runs on the interpreter.
 
 ```
-ruby tools/sakec.rb FILE.sake            # writes FILE.rs and builds FILE with rustc -O
-ruby tools/sakec.rb FILE.sake --emit     # only the Rust source
+bin/sabic FILE.sake            # writes FILE.rs and builds FILE with rustc -O
+bin/sabic FILE.sake --emit     # only the Rust source
 ```
 
 On three micro benchmarks (loops, fib, levenshtein) the compiled program ran 3 to 21 times faster than
@@ -155,6 +155,7 @@ Not yet: `case`/`when`, first-class blocks, and built-in constants such as `Math
 
 ```
 bin/sake                 the command
+bin/sabic                the compiler to native code through Rust (sabi, 錆, is rust)
 lib/sake/                resolver (checks before running), lower (Prism AST to SakeAST), interpreter
                          and typer (type inference), both on SakeAST, the Rust backend (rust.rb),
                          standard library (stdlib*.rb)

@@ -6,7 +6,7 @@ Sake のプログラムを Rust に変換してネイティブにすると、ど
 
 ## 方法
 
-- **バックエンド**: `lib/sake/rust.rb`（`tools/sakec.rb` が呼ぶ）。検査済みの SakeAST を入力に、関数を引数の型ごとに単相化して Rust を出し、`rustc --edition 2021 -O -C overflow-checks=on` で実行ファイルにする。対象は型を一つに固定できる部分集合: Integer（i64。溢れたらエラー）、Float、true/false、nil（`Option<T>`）、String、Array（`Rc<UnsafeCell<Vec<T>>>`。Sake の値は参照なので共有する）、Tuple、クラス（`Rc<UnsafeCell<struct>>`）、ブロック（`yield` だけのものは `&mut impl FnMut`、`Array.each` / `Integer.times` / `Range.each` のものはループにインライン展開）。対象外のものは行番号付きで断り、exit 3。
+- **バックエンド**: `lib/sake/rust.rb`（`bin/sabic` が呼ぶ）。検査済みの SakeAST を入力に、関数を引数の型ごとに単相化して Rust を出し、`rustc --edition 2021 -O -C overflow-checks=on` で実行ファイルにする。対象は型を一つに固定できる部分集合: Integer（i64。溢れたらエラー）、Float、true/false、nil（`Option<T>`）、String、Array（`Rc<UnsafeCell<Vec<T>>>`。Sake の値は参照なので共有する）、Tuple、クラス（`Rc<UnsafeCell<struct>>`）、ブロック（`yield` だけのものは `&mut impl FnMut`、`Array.each` / `Integer.times` / `Range.each` のものはループにインライン展開）。対象外のものは行番号付きで断り、exit 3。
 - **プログラム**: `bench/loops.sake`（10,000 × 100,000 回の `j % u` と配列更新）、`bench/fib.sake`（素朴な再帰。`fib(1)` から `fib(u-1)` の和）、`bench/levenshtein.sake`（引数の全組の編集距離）。Ruby 版（`bench/*.rb`）は同じアルゴリズムを同じ形で書いたもの。手書き Rust（`bench/hand/*.rs`）は同じアルゴリズムを Rust らしく書いたもの（`%` は Rust の切り捨て、配列は `Vec` を直接）。3 本とも `bin/sake --strict=4 -c` を通り、出力は Ruby 版と一致する。
 - **入力**: loops は `7`、fib は `32`（インタプリタも走る）と `38`（インタプリタ以外）、levenshtein は `srand(1)` で作った 40 文字 × 100 語（9,900 組）。loops はインタプリタでは 10^9 回が長すぎるので、内側を 1/100 にした `loops_small`（10^7 回）を全実装で別に測った。
 - **計測**: `bench/run.sh`。各 3 回（インタプリタは 1 回）、bash の `time` で壁時計。出力は `build/*.out` に取り、fib と levenshtein では 4 実装の出力が一致することを確かめる。JIT なしの Ruby（`--disable-yjit`）、loops をメソッドに包んだ `loops_fn.rb`、`--yjit-call-threshold=1` は run.sh の後に手で足した（`results-run2.txt` 末尾）。

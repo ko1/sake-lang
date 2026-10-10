@@ -102,7 +102,7 @@
 
 ## Rust バックエンド（2026-10-10、experiments/2026-10-10-rust-backend）
 
-- `tools/sakec.rb` は部分集合だけ。Hash・Set・Regexp・rescue・mixin ディスパッチ・`(A|B).f`・Thread を足す。
+- `bin/sabic` は部分集合だけ。Hash・Set・Regexp・rescue・mixin ディスパッチ・`(A|B).f`・Thread を足す。
 - 生成器が自前の型推論を持っている。typer が式ごとの型を保持するようにして、それを使う。
 - Integer は 64 ビット（溢れたらエラー）。多倍長への昇格を入れるか、言語の意味論を 64 ビットにするかは未決。
 - 命名: Sake → Rust の変換器の名前（錆＋酒）。

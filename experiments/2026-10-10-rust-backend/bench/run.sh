@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds and times the three micro benchmarks under Ruby (YJIT), the Sake interpreter, Sake compiled
-# through Rust (tools/sakec.rb), and Rust written by hand. Prints one line per run: name, impl, run, seconds.
+# through Rust (bin/sabic), and Rust written by hand. Prints one line per run: name, impl, run, seconds.
 #   RUBY=.../ruby SAKE=.../sake-repo REPS=3 ./run.sh > results.txt
 # The interpreter runs loops at 1/100 of the inner loop (loops_small), and that variant is timed for every
 # implementation too, so the ratio is still like for like.
@@ -21,7 +21,7 @@ cp fib.sake build/fib_big.sake; cp fib.rb build/fib_big.rb; cp hand/fib.rs build
 
 echo "# $(date -u +%FT%TZ) host=$(hostname) ruby=$($RUBY -v) rustc=$(rustc --version) sake=$(cat $SAKE/REVISION 2>/dev/null)" >&2
 for b in loops loops_small fib fib_big levenshtein; do
-  $RUBY $SAKE/tools/sakec.rb build/$b.sake -o build/$b.sakers
+  $RUBY $SAKE/bin/sabic build/$b.sake -o build/$b.sakers
   rustc --edition 2021 -O -C overflow-checks=on -o build/$b.hand build/${b}_hand.rs 2>/dev/null
 done
 
