@@ -1,0 +1,98 @@
+# Nagel-Schreckenberg traffic on a ring road with mixed top speeds and random slowdowns: a
+# space-time diagram and a flow/speed/jam table over densities.
+# Shows: initialize with defaults, attr_accessor, Records returned and destructured with `=> {...}`,
+# a deterministic LCG.
+
+class Vehicle
+  attr_reader id
+  attr_accessor pos
+  attr_reader max_speed
+  attr_accessor speed, laps, stops
+  def initialize(v)
+    @speed = 0
+    @laps = 0
+    @stops = 0
+  end
+end
+
+class Road
+  attr_reader length, n, rng, p_slow, cars
+
+  def initialize(r)
+    @cars = nil
+    spacing = @length / @n
+    @cars = Array.new(@n) { |i| Vehicle.new(i, i * spacing, i % 4 == 3 ? 3 : 5) }
+  end
+
+  def chance(r)
+    @rng = (@rng * 69069 + 1) % 4294967296
+    @rng / 4294967296.0
+  end
+
+  def step(r)
+    sorted = Array.sort_by(@cars) { Vehicle.pos(it) }
+    n = Array.size(sorted)
+    gaps = Range.map(0...n) do |i|
+      (Vehicle.pos(sorted[(i + 1) % n]) - Vehicle.pos(sorted[i]) - 1 + @length) % @length
+    end
+    Array.each_with_index(sorted) do |car, i|
+      v = Vehicle.speed(car)
+      v += 1 if v < Vehicle.max_speed(car)
+      v = gaps[i] if v > gaps[i]
+      v -= 1 if v > 0 && chance(r) < @p_slow
+      Vehicle.set_stops(car, Vehicle.stops(car) + 1) if v == 0 && Vehicle.speed(car) > 0
+      Vehicle.set_speed(car, v)
+    end
+    flow = 0
+    Array.each(sorted) do |car|
+      np = Vehicle.pos(car) + Vehicle.speed(car)
+      if np >= @length
+        Vehicle.set_laps(car, Vehicle.laps(car) + 1)
+        flow += 1
+        np -= @length
+      end
+      Vehicle.set_pos(car, np)
+    end
+    flow
+  end
+
+  def picture(r)
+    cells = Array.new(@length, ".")
+    Array.each(@cars) { |c| cells[Vehicle.pos(c)] = Integer.to_s(Vehicle.speed(c)) }
+    Array.join(cells, "")
+  end
+
+  def mean_speed(r) = Array.sum(@cars) { Vehicle.speed(it) } / Integer.to_f(Array.size(@cars))
+end
+
+def run(n, p_slow, steps, show)
+  road = Road.new(60, n, 12345, p_slow)
+  passed = 0
+  speeds = Float[]
+  Integer.times(steps) do |t|
+    passed += Road.step(road)
+    Array.push(speeds, Road.mean_speed(road))
+    puts(format("%3d %s", t, Road.picture(road))) if show && t >= steps - 12
+  end
+  jams = Array.sum(Road.cars(road)) { Vehicle.stops(it) }
+  tail = Array.drop(speeds, steps / 2)
+  {passed: passed, avg_speed: Array.sum(tail) / Array.size(tail), jams: jams, cars: Road.cars(road)}
+end
+
+puts("space-time diagram, 15 cars, p=0.25 (last 12 steps)")
+detail = run(15, 0.25, 60, true)
+detail => {cars:}
+slowest = Array.min_by(cars) { |c| [Vehicle.laps(c), Vehicle.pos(c)] }
+fastest = Array.max_by(cars) { |c| [Vehicle.laps(c), Vehicle.pos(c)] }
+puts("leader: car #{Vehicle.id(fastest)} (#{Vehicle.laps(fastest)} laps), last: car #{Vehicle.id(slowest)} (#{Vehicle.laps(slowest)} laps)")
+
+puts("--- fundamental diagram")
+puts("cars density  p=0.00              p=0.25              p=0.50")
+Array.each(Array[5, 15, 25, 40]) do |n|
+  cols = Array.map(Array[0.0, 0.25, 0.5]) do |p|
+    r = run(n, p, 40, false)
+    r => {passed:, avg_speed:, jams:}
+    format("flow %3d v %4.2f j%3d", passed, avg_speed, jams)
+  end
+  puts(format("%4d %6.2f  %s", n, n / 60.0, Array.join(cols, " | ")))
+end

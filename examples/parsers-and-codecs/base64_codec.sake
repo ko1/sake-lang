@@ -1,0 +1,99 @@
+# A hand-written Base64 encoder/decoder (standard and URL-safe alphabets, padding, whitespace) with
+# a positioned DecodeError.
+# Shows: bit operations on bytes, an exception class with a position field, raise/rescue,
+# String.ord/chr.
+
+class DecodeError < StandardError
+  attr_reader position
+end
+
+def std_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+def url_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+def encode(bytes, alphabet, pad)
+  out = ""
+  i = 0
+  n = Array.size(bytes)
+  while i < n
+    b0 = bytes[i]
+    b1 = i + 1 < n ? bytes[i + 1] : 0
+    b2 = i + 2 < n ? bytes[i + 2] : 0
+    triple = (b0 << 16) | (b1 << 8) | b2
+    out += alphabet[(triple >> 18) & 63]
+    out += alphabet[(triple >> 12) & 63]
+    if i + 1 < n
+      out += alphabet[(triple >> 6) & 63]
+    elsif pad
+      out += "="
+    end
+    if i + 2 < n
+      out += alphabet[triple & 63]
+    elsif pad
+      out += "="
+    end
+    i += 3
+  end
+  out
+end
+
+def reverse_table(alphabet)
+  table = Hash[]
+  Array.each_with_index(String.chars(alphabet)) { |c, i| table[c] = i }
+  table
+end
+
+def decode(text, alphabet)
+  table = reverse_table(alphabet)
+  clean = String.delete(text, "=\n ")
+  bytes = Array[]
+  buffer = 0
+  bits = 0
+  Array.each_with_index(String.chars(clean)) do |c, pos|
+    v = table[c]
+    raise DecodeError.new("invalid character #{Kernel.inspect(c)}", pos) if v == nil
+    buffer = (buffer << 6) | v
+    bits += 6
+    if bits >= 8
+      bits -= 8
+      Array.push(bytes, (buffer >> bits) & 255)
+    end
+  end
+  raise DecodeError.new("dangling bits", Array.size(bytes)) if bits >= 6
+  bytes
+end
+
+def bytes_to_string(bytes) = Array.join(Array.map(bytes) { |b| Integer.chr(b) }, "")
+
+def hex(bytes) = Array.join(Array.map(bytes) { |b| format("%02x", b) }, " ")
+
+samples = Array["", "f", "fo", "foo", "foob", "fooba", "foobar",
+                "Many hands make light work.", "subjects?_d>>"]
+
+Array.each(samples) do |s|
+  bytes = String.bytes(s)
+  enc = encode(bytes, std_alphabet, true)
+  back = bytes_to_string(decode(enc, std_alphabet))
+  status = back == s ? "ok" : "MISMATCH"
+  puts(format("%-30s -> %-40s %s", Kernel.inspect(s), enc, status))
+end
+
+puts("-- url-safe, unpadded --")
+binary = Array[251, 255, 191, 0, 62, 63, 254]
+std = encode(binary, std_alphabet, true)
+url = encode(binary, url_alphabet, false)
+puts("bytes: #{hex(binary)}")
+puts("std  : #{std}")
+puts("url  : #{url}")
+puts("url decoded: #{hex(decode(url, url_alphabet))}")
+
+puts("-- wrapped input --")
+wrapped = "TWFu\nIGlz IGRp\nc3Rp\nbmd1aXNoZWQ="
+puts(bytes_to_string(decode(wrapped, std_alphabet)))
+
+puts("-- errors --")
+Array.each(Array["SGVsbG8*", "QUJD$EFG", "QQ", "Q"]) do |bad|
+  result = decode(bad, std_alphabet)
+  puts("#{bad}: decoded #{Array.size(result)} bytes: #{hex(result)}")
+rescue DecodeError => e
+  puts("#{bad}: error at #{DecodeError.position(e)}: #{Exception.message(e)}")
+end

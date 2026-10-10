@@ -1,0 +1,111 @@
+# Produces a unified diff of two texts: an LCS table, Edit records for keep/delete/add, context
+# hunks and insertion/deletion counts.
+# Shows: a class with attr_reader fields, 2-D tables from Array.new, case/in on Symbol operations,
+# while loops.
+
+class Edit
+  attr_reader op, old_no, new_no, text
+end
+
+def lcs_table(a, b)
+  n = Array.size(a)
+  m = Array.size(b)
+  t = Array.new(n + 1) { Array.new(m + 1, 0) }
+  Integer.downto(n - 1, 0) do |i|
+    Integer.downto(m - 1, 0) do |j|
+      if a[i] == b[j]
+        t[i][j] = t[i + 1][j + 1] + 1
+      else
+        down = t[i + 1][j]
+        right = t[i][j + 1]
+        t[i][j] = down >= right ? down : right
+      end
+    end
+  end
+  t
+end
+
+def diff(a, b)
+  t = lcs_table(a, b)
+  edits = Edit[]
+  i = 0
+  j = 0
+  while i < Array.size(a) || j < Array.size(b)
+    if i < Array.size(a) && j < Array.size(b) && a[i] == b[j]
+      Array.push(edits, Edit.new(:same, i + 1, j + 1, a[i]))
+      i += 1
+      j += 1
+    elsif i < Array.size(a) && (j >= Array.size(b) || t[i + 1][j] >= t[i][j + 1])
+      Array.push(edits, Edit.new(:del, i + 1, nil, a[i]))
+      i += 1
+    else
+      Array.push(edits, Edit.new(:add, nil, j + 1, b[j]))
+      j += 1
+    end
+  end
+  edits
+end
+
+def hunks(edits, context)
+  changed = Array.select(Range.to_a(0...Array.size(edits))) { |k| Edit.op(edits[k]) != :same }
+  groups = Array[]
+  Array.each(changed) do |k|
+    lo = Integer.clamp(k - context, 0, Array.size(edits) - 1)
+    hi = Integer.clamp(k + context, 0, Array.size(edits) - 1)
+    last = Array.last(groups)
+    if last != nil && lo <= last[1] + 1
+      last[1] = hi
+    else
+      Array.push(groups, Array[lo, hi])
+    end
+  end
+  Array.map(groups) { |lo, hi| edits[lo..hi] }
+end
+
+def start_of(hunk, side)
+  Array.each(hunk) do |e|
+    n = side == :old ? Edit.old_no(e) : Edit.new_no(e)
+    return n if n != nil
+  end
+  0
+end
+
+def header(hunk)
+  old_len = Array.count(hunk) { |e| Edit.op(e) != :add }
+  new_len = Array.count(hunk) { |e| Edit.op(e) != :del }
+  "@@ -#{start_of(hunk, :old)},#{old_len} +#{start_of(hunk, :new)},#{new_len} @@"
+end
+
+def prefix(op)
+  case op
+  in :same then " "
+  in :add then "+"
+  in :del then "-"
+  end
+end
+
+def unified(name, a, b, context)
+  edits = diff(a, b)
+  puts("--- a/#{name}")
+  puts("+++ b/#{name}")
+  hs = hunks(edits, context)
+  if Array.empty?(hs)
+    puts("(no differences)")
+    return
+  end
+  Array.each(hs) do |h|
+    puts(header(h))
+    Array.each(h) { |e| puts(prefix(Edit.op(e)) + Edit.text(e)) }
+  end
+  stats = Array.tally(Array.map(edits) { |e| Edit.op(e) })
+  puts("#{Hash.fetch(stats, :add, 0)} insertions(+), #{Hash.fetch(stats, :del, 0)} deletions(-)")
+end
+
+old_text = "# Config loader\ndef load(path)\n  text = File.read(path)\n  parse(text)\nend\n\ndef parse(text)\n  text.lines.map(&:strip)\nend\n\ndef unused\n  nil\nend\n# end of file"
+new_text = "# Config loader\ndef load(path)\n  text = File.read(path)\n  raise \"empty\" if text.empty?\n  parse(text)\nend\n\ndef parse(text)\n  text.lines.map(&:chomp)\nend\n\n# end of file\n# (generated)"
+
+unified("config.rb", String.split(old_text, "\n"), String.split(new_text, "\n"), 2)
+puts
+unified("same.txt", Array["a", "b"], Array["a", "b"], 3)
+puts
+unified("words.txt", String.split("the cat sat on the mat", " "), String.split("a cat sat on a hat today", " "), 1)

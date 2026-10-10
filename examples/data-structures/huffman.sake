@@ -1,0 +1,100 @@
+# Huffman codes: a frequency tally, an ordered queue of Leaf/Internal nodes with deterministic
+# tie-breaking, a code table and an encode/decode round trip.
+# Shows: two node classes dispatched with (Leaf|Internal).weight(node), `case node in Leaf / in
+# Internal`, `node in Leaf` tests. Passes level 1; level 2 warns that Internal.left can hold a Leaf.
+
+class Leaf
+  attr_reader char, weight, order
+end
+
+class Internal
+  attr_reader left, right, weight, order
+end
+
+def before?(a, b)
+  wa = (Leaf|Internal).weight(a)
+  wb = (Leaf|Internal).weight(b)
+  wa < wb || (wa == wb && (Leaf|Internal).order(a) < (Leaf|Internal).order(b))
+end
+
+# sorted insert keeps the queue ordered by (weight, order)
+def enqueue(queue, node)
+  i = Array.find_index(queue) { |q| before?(node, q) }
+  if i == nil
+    Array.push(queue, node)
+  else
+    Array.insert(queue, i, node)
+  end
+end
+
+def build_tree(text)
+  freq = Array.tally(String.chars(text))
+  queue = Array[]
+  chars = Array.sort(Hash.keys(freq))
+  Array.each_with_index(chars) { |c, i| enqueue(queue, Leaf.new(c, freq[c], i)) }
+  next_order = Array.size(chars)
+  while Array.size(queue) > 1
+    a = Array.shift(queue)
+    b = Array.shift(queue)
+    enqueue(queue, Internal.new(a, b, (Leaf|Internal).weight(a) + (Leaf|Internal).weight(b), next_order))
+    next_order += 1
+  end
+  Array.first(queue)
+end
+
+def assign_codes(node, prefix, table)
+  case node
+  in Leaf
+    table[Leaf.char(node)] = prefix == "" ? "0" : prefix
+  in Internal
+    assign_codes(Internal.left(node), prefix + "0", table)
+    assign_codes(Internal.right(node), prefix + "1", table)
+  end
+  table
+end
+
+def encode(text, table) = Array.join(Array.map(String.chars(text)) { |c| table[c] })
+
+def decode(bits, root)
+  return Leaf.char(root) * String.size(bits) if root in Leaf
+  out = ""
+  node = root
+  String.each_char(bits) do |b|
+    node = b == "0" ? Internal.left(node) : Internal.right(node)
+    if node in Leaf
+      out += Leaf.char(node)
+      node = root
+    end
+  end
+  out
+end
+
+def depth(node)
+  case node
+  in Leaf then 0
+  in Internal then 1 + Array.max(Array[depth(Internal.left(node)), depth(Internal.right(node))])
+  end
+end
+
+def show_char(c) = c == " " ? "' '" : c
+
+def report(text)
+  root = build_tree(text)
+  table = assign_codes(root, "", Hash[])
+  bits = encode(text, table)
+  back = decode(bits, root)
+  raw = String.size(text) * 8
+  puts("text: #{Kernel.inspect(text)}")
+  puts("  symbols #{Hash.size(table)}, tree depth #{depth(root)}, total weight #{(Leaf|Internal).weight(root)}")
+  rows = Array.sort_by(Hash.to_a(table)) { |c, code| [String.size(code), c] }
+  Array.each(Array.take(rows, 6)) { |c, code| puts(format("    %-4s %-10s x%d", show_char(c), code, Array.count(String.chars(text), c))) }
+  puts("    ... #{Array.size(rows) - 6} more") if Array.size(rows) > 6
+  puts(format("  bits %d vs %d raw (%.1f%%), avg %.3f bits/char", String.size(bits), raw, 100.0 * String.size(bits) / raw, String.size(bits) / Float(String.size(text))))
+  puts("  first 40 bits: #{bits[0...40]}") if String.size(bits) > 40
+  puts("  round trip: #{back == text ? "ok" : "MISMATCH"}")
+end
+
+report("abracadabra")
+report("aaaaaaa")
+report("she sells sea shells by the sea shore")
+report("the quick brown fox jumps over the lazy dog")

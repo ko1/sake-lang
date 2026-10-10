@@ -1,0 +1,107 @@
+# LZW compression with a growing dictionary (variable code width, frozen once full) and the matching
+# decompressor, including the cScSc case.
+# Shows: Hash dictionaries in both directions, once, raise/rescue for corrupt streams, format.
+
+def max_code = 511
+
+def initial_dict
+  d = Hash[]
+  Integer.times(256) { |i| d[Integer.chr(i)] = i }
+  d
+end
+
+def compress(text)
+  dict = initial_dict
+  next_code = 256
+  codes = Integer[]
+  w = ""
+  String.each_char(text) do |c|
+    wc = w + c
+    if Hash.key?(dict, wc)
+      w = wc
+    else
+      Array.push(codes, dict[w])
+      if next_code <= max_code
+        dict[wc] = next_code
+        next_code += 1
+      end
+      w = c
+    end
+  end
+  Array.push(codes, dict[w]) unless String.empty?(w)
+  codes
+end
+
+def decompress(codes)
+  dict = Hash[]
+  Integer.times(256) { |i| dict[i] = Integer.chr(i) }
+  next_code = 256
+  return "" if Array.empty?(codes)
+  w = dict[Array.first(codes)]
+  out = w
+  Array.each(Array.drop(codes, 1)) do |k|
+    entry = dict[k]
+    if entry == nil
+      raise ArgumentError, "bad code #{k}" if k != next_code
+      entry = w + w[0]
+    end
+    out += entry
+    if next_code <= max_code
+      dict[next_code] = w + entry[0]
+      next_code += 1
+    end
+    w = entry
+  end
+  out
+end
+
+def bit_width(n)
+  w = 9
+  w += 1 while (1 << w) <= n
+  w
+end
+
+def packed_bits(codes)
+  # code width grows as the dictionary grows: 9 bits until code 511 is assigned
+  total = 0
+  dict_size = 256
+  Array.each(codes) do |c|
+    total += bit_width(dict_size)
+    dict_size += 1 if dict_size <= max_code
+  end
+  total
+end
+
+def sample_texts
+  Array[
+    "TOBEORNOTTOBEORTOBEORNOT",
+    "abababababababababababab",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "the rain in spain stays mainly in the plain; the rain in spain stays mainly in the plain",
+    "xyz"
+  ]
+end
+
+Array.each(sample_texts) do |text|
+  codes = compress(text)
+  back = decompress(codes)
+  bits = packed_bits(codes)
+  raw_bits = String.size(text) * 8
+  shown = Array.size(codes) > 12 ? Array.join(Array.take(codes, 12), " ") + " ..." : Array.join(codes, " ")
+  puts(text)
+  puts("  codes(#{Array.size(codes)}): #{shown}")
+  puts(format("  %d -> %d bits (%.1f%%) roundtrip=%s", raw_bits, bits,
+              100.0 * bits / raw_bits, back == text))
+  high = Array.max(codes)
+  puts("  highest code: #{high}") if high
+end
+
+long = String.*("ab", 600) + "c"
+codes = compress(long)
+puts("long input: #{String.size(long)} chars, #{Array.size(codes)} codes, max #{Array.max(codes)}, ok=#{decompress(codes) == long}")
+
+begin
+  decompress(Integer[65, 66, 300])
+rescue ArgumentError => e
+  puts("corrupt stream: #{Exception.message(e)}")
+end

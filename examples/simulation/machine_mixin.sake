@@ -1,0 +1,108 @@
+# A reusable StateMachine mixin (fire / can? / events_available) shared by Door, Light and Ticket
+# types, each with its own transition table and on-enter hook.
+# Shows: a mixin module included by three classes, required functions (raise NotImplementedError),
+# StateMachine.fire(m, e) dispatching to m's type, case/in.
+
+module StateMachine
+  def can?(m, event) = Hash.key?(transitions(m), [state(m), event])
+
+  def fire(m, event)
+    target = transitions(m)[[state(m), event]]
+    if target == nil
+      Array.push(@log, "#{label(m)}: ignored #{event} in #{state(m)}")
+      return false
+    end
+    before = state(m)
+    @state = target
+    on_enter(m, target)
+    Array.push(@log, "#{label(m)}: #{before} --#{event}--> #{target}")
+    true
+  end
+
+  def events_available(m)
+    st = state(m)
+    Array.sort_by(Array.filter_map(Hash.keys(transitions(m))) { |s, e| s == st ? e : nil }) { Symbol.to_s(it) }
+  end
+end
+
+class Door
+  include StateMachine
+  attr_reader name, state, log, opened
+  def initialize(d)
+    @state = :closed
+    @log = nil
+    @opened = 0
+    @log = Array[]
+  end
+  def label(d) = "door #{@name}"
+  def transitions(d) = Hash[[:closed, :open] => :opened, [:opened, :close] => :closed, [:closed, :lock] => :locked, [:locked, :unlock] => :closed]
+  def on_enter(d, st)
+    @opened += 1 if st == :opened
+  end
+end
+
+class Light
+  include StateMachine
+  attr_reader room, state, log, brightness
+  def initialize(l)
+    @state = :off
+    @log = nil
+    @brightness = 0
+    @log = Array[]
+  end
+  def label(l) = "light #{@room}"
+  def transitions(l) = Hash[[:off, :toggle] => :on, [:on, :toggle] => :off, [:on, :dim] => :dimmed, [:dimmed, :toggle] => :off, [:dimmed, :dim] => :dimmed]
+  def on_enter(l, st)
+    case st
+    in :on then @brightness = 100
+    in :off then @brightness = 0
+    in :dimmed then @brightness = @brightness / 2
+    end
+  end
+end
+
+class Ticket
+  include StateMachine
+  attr_reader id, state, log, reopen_count
+  def initialize(t)
+    @state = :open
+    @log = nil
+    @reopen_count = 0
+    @log = Array[]
+  end
+  def label(t) = "ticket ##{@id}"
+  def transitions(t)
+    Hash[
+      [:open, :start] => :in_progress, [:in_progress, :review] => :in_review,
+      [:in_review, :approve] => :done, [:in_review, :reject] => :in_progress,
+      [:done, :reopen] => :open, [:open, :close] => :done
+    ]
+  end
+  def on_enter(t, st)
+    @reopen_count += 1 if st == :open
+  end
+end
+
+front = Door.new("front")
+hall = Light.new("hall")
+bug = Ticket.new(42)
+
+script = Array[
+  [front, :open], [hall, :toggle], [hall, :dim], [front, :lock], [front, :close],
+  [hall, :dim], [bug, :start], [bug, :review], [bug, :reject], [front, :lock],
+  [bug, :review], [front, :unlock], [bug, :approve], [hall, :toggle], [bug, :reopen],
+  [front, :open], [hall, :dim], [bug, :close]
+]
+fired = 0
+Array.each(script) do |machine, event|
+  fired += 1 if StateMachine.fire(machine, event)
+end
+puts("#{fired} of #{Array.size(script)} events fired")
+
+Array.each(Door.log(front)) { puts(it) }
+Array.each(Light.log(hall)) { puts(it) }
+Array.each(Ticket.log(bug)) { puts(it) }
+
+puts("door opened #{Door.opened(front)} times, now #{Door.state(front)}; next: #{StateMachine.events_available(front)}")
+puts("light at #{Light.brightness(hall)}%, now #{Light.state(hall)}; next: #{StateMachine.events_available(hall)}")
+puts("ticket reopened #{Ticket.reopen_count(bug)} times, now #{Ticket.state(bug)}; can reopen? #{StateMachine.can?(bug, :reopen)}")

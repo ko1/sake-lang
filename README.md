@@ -138,6 +138,7 @@ lib/sake/                resolver (checks before running), lower (Prism AST to S
                          and typer (type inference), both on SakeAST,
                          standard library (stdlib*.rb)
 test/                    golden tests (test/samples/*.sake with *.expected) and CLI tests
+examples/                example programs by category, each with its expected output (examples/README.md)
 docs/                    tutorial, specification, built-in list, one-page guide, examples
 tools/                   generators for the docs (they run the examples)
 experiments/             experiments, each with its method, results, and limits in a README
@@ -148,6 +149,7 @@ Run the tests with:
 ```
 ruby test/test_samples.rb       # UPDATE=1 rewrites the expected outputs
 ruby test/test_cli.rb           # the command line, and whether the generated docs are up to date
+ruby test/test_examples.rb      # examples/**/*.sake print their *.expected (UPDATE=1 rewrites them)
 ruby test/test_sakelib.rb       # the library ports: each test/sakelib/X.sake prints what X.rb prints
 ruby test/test_sake_suite.rb    # Sake's test suite written in Sake (test/sake/*_test.sake, on sakelib/minitest.sake)
 ruby test/test_ide.rb           # the playground's Ruby side (lib/sake/ide.rb)

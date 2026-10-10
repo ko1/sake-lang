@@ -1,0 +1,84 @@
+# Builds a keyword-in-context concordance of a short text: aligned context lines, collocates within
+# a window and sentence dispersion.
+# Shows: a Hash of Arrays keyed by word, Tuples of [sentence, position], Set, String.scan and
+# String.center.
+
+def text
+  "The river runs past the old mill. Children play by the river in summer. " +
+  "In winter the river freezes and the mill stands silent. " +
+  "The miller says the river gives and the river takes. " +
+  "Nobody remembers when the mill last ground any grain."
+end
+
+def stopwords = Set["the", "and", "in", "by", "any", "when", "past"]
+
+def sentences(t)
+  parts = String.split(t, /(?<=\.)\s+/)
+  Array.map(parts) do |s|
+    Array.reject(String.split(String.downcase(s), /[^a-z]+/)) { |w| String.empty?(w) }
+  end
+end
+
+def build_concordance(sents)
+  conc = Hash[]
+  Array.each_with_index(sents) do |words, si|
+    Array.each_with_index(words) do |w, wi|
+      conc[w] ||= Array[]
+      Array.push(conc[w], [si, wi])
+    end
+  end
+  conc
+end
+
+def context_line(words, wi, width)
+  from = wi - width
+  from = 0 if from < 0
+  left = Array.join(words[from...wi], " ")
+  right = Array.join(Array.take(Array.drop(words, wi + 1), width), " ")
+  format("%28s [%s] %s", left, words[wi], right)
+end
+
+def collocates(sents, conc, keyword, span)
+  counts = Hash.new(0)
+  occurrences = conc[keyword]
+  return counts unless occurrences
+  Array.each(occurrences) do |si, wi|
+    words = sents[si]
+    Range.each((wi - span)..(wi + span)) do |j|
+      next if j < 0 || j == wi
+      w = words[j]
+      next if w == nil || w == keyword || Set.include?(stopwords, w)
+      counts[w] += 1
+    end
+  end
+  counts
+end
+
+sents = sentences(text)
+conc = build_concordance(sents)
+puts("sentences: #{Array.size(sents)}, vocabulary: #{Hash.size(conc)}")
+
+Array.each(Array["river", "mill", "winter", "boat"]) do |kw|
+  occ = conc[kw]
+  if occ == nil
+    puts("== #{kw}: not found ==")
+    next
+  end
+  puts("== #{kw} (#{Array.size(occ)}) ==")
+  Array.each(occ) do |si, wi|
+    puts("#{si + 1}:#{String.ljust(Integer.to_s(wi + 1), 2)} #{context_line(sents[si], wi, 4)}")
+  end
+end
+
+coll = collocates(sents, conc, "river", 3)
+ranked = Array.sort_by(Hash.to_a(coll)) { |w, n| [-n, w] }
+puts("collocates of river: " + Array.join(Array.map(Array.take(ranked, 5)) { |w, n| "#{w}(#{n})" }, ", "))
+
+spread = Hash.transform_values(conc) { |occ| Array.size(Array.uniq(Array.map(occ) { |si, wi| si })) }
+wide = Array.sort(Hash.keys(Hash.select(spread) { |w, n| n >= 3 }))
+puts("in 3+ sentences: #{Array.join(wide, ", ")}")
+firsts = Hash.map(conc) { |w, occ| [w, occ[0]] }
+late = Array.select(firsts) do |w, (si, _)|
+  si >= 3 && !Set.include?(stopwords, w)
+end
+puts("first seen in sentence 4+: #{Array.join(Array.sort(Array.map(late) { |w, _| w }), ", ")}")

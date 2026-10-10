@@ -1,0 +1,104 @@
+# Parses semantic versions, sorts them with a Comparable `<=>` (pre-releases first) and resolves
+# constraints like `~> 2.3` by binary search.
+# Shows: include Comparable with `def <=>`, Regexp parsing, case/in on operator Strings, a function
+# that yields, an exception class.
+
+class Version
+  include Comparable
+  attr_reader segments, pre, text
+
+  def parse(s)
+    m = String.match(s, /\A(\d+(?:\.\d+)*)(?:-([a-z]+\d*))?\z/)
+    raise ArgumentError, "malformed version: #{s}" unless m
+    segs = Array.map(String.split(m[1], ".")) { |x| String.to_i(x) }
+    Version.new(segs, m[2], s)
+  end
+
+  def <=>(a, b)
+    sa = @segments
+    sb = Version.segments(b)
+    n = Array.max(Array[Array.size(sa), Array.size(sb)])
+    Integer.times(n) do |i|
+      x = sa[i] || 0
+      y = sb[i] || 0
+      return x <=> y if x != y
+    end
+    pa = @pre
+    pb = Version.pre(b)
+    return 0 if pa == nil && pb == nil
+    return 1 if pa == nil
+    return -1 if pb == nil
+    pa <=> pb
+  end
+
+  def to_s(v) = @text
+end
+
+def bump(v)
+  segs = Version.segments(v)
+  keep = Array.take(segs, Array.size(segs) - 1)
+  keep[-1] += 1
+  Version.parse(Array.join(keep, "."))
+end
+
+def first_index(sorted)
+  lo = 0
+  hi = Array.size(sorted)
+  while lo < hi
+    mid = (lo + hi) / 2
+    if yield(sorted[mid])
+      hi = mid
+    else
+      lo = mid + 1
+    end
+  end
+  lo
+end
+
+# Returns the half-open index range of versions satisfying one constraint.
+def range_for(sorted, constraint)
+  op, text = String.split(constraint, " ")
+  v = Version.parse(text)
+  case op
+  in ">=" then [first_index(sorted) { |x| x >= v }, Array.size(sorted)]
+  in ">" then [first_index(sorted) { |x| x > v }, Array.size(sorted)]
+  in "<" then [0, first_index(sorted) { |x| x >= v }]
+  in "<=" then [0, first_index(sorted) { |x| x > v }]
+  in "~>" then [first_index(sorted) { |x| x >= v }, first_index(sorted) { |x| x >= bump(v) }]
+  in "=" then [first_index(sorted) { |x| x >= v }, first_index(sorted) { |x| x > v }]
+  end
+end
+
+def resolve(sorted, requirement, allow_pre)
+  lo = 0
+  hi = Array.size(sorted)
+  Array.each(String.split(requirement, ",")) do |c|
+    a, b = range_for(sorted, String.strip(c))
+    lo = a if a > lo
+    hi = b if b < hi
+  end
+  candidates = Array.select(sorted[lo...hi] || Array[]) { |v| allow_pre || Version.pre(v) == nil }
+  Array.last(candidates)
+end
+
+published = Array["1.0", "1.2.0", "2.0.0-rc1", "1.10.1", "1.9.3", "2.0.0", "2.3.1", "1.4", "2.3.0",
+                  "2.10.0-beta2", "2.4.0", "3.0.0-alpha1", "2.3.10", "1.10.0", "2.9.9", "2.10.0"]
+versions = Array.sort(Array.map(published) { |s| Version.parse(s) })
+puts("sorted: #{Array.join(versions, " < ")}")
+puts("as plain strings: #{Array.join(Array.sort(published), " ")}")
+puts("newest: #{Array.max(versions)}, oldest: #{Array.min(versions)}")
+
+requirements = Array["~> 2.3", "~> 2.3.0", ">= 1.4, < 2", "< 3", "= 2.0.0", "> 2.10.0", "~> 1.9, >= 1.10"]
+Array.each(requirements) do |req|
+  picked = resolve(versions, req, false)
+  with_pre = resolve(versions, req, true)
+  extra = with_pre && (picked == nil || with_pre > picked) ? " (pre-release: #{with_pre})" : ""
+  puts(format("%-18s -> %s%s", req, picked ? Kernel.to_s(picked) : "no match", extra))
+end
+
+Array.each(Array["1.2.x", "2.0-RC1"]) do |bad|
+  Version.parse(bad)
+rescue ArgumentError => e
+  puts(Exception.message(e))
+end
+puts("1.2 <=> 1.2.0: #{Version.parse("1.2") <=> Version.parse("1.2.0")}")

@@ -1,0 +1,95 @@
+# Railway-style validation: each step returns an {ok:} or {error:} Record and steps chain until one
+# fails, instead of raising.
+# Shows: Record literals and `in {ok:}` / `in {error:}` patterns, combinators built on yield, once.
+
+def ok(v) = {ok: v}
+def err(msg) = {error: msg}
+
+def and_then(result)
+  case result
+  in {ok:} then yield(ok)
+  in {error:} then result
+  end
+end
+
+def parse_order(line)
+  fields = String.split(line, ";")
+  return err("expected 4 fields, got #{Array.size(fields)}") if Array.size(fields) != 4
+  ok(Array.map(fields) { String.strip(it) })
+end
+
+def parse_quantity(fields)
+  customer, sku, raw, coupon = fields
+  q = Integer(raw) rescue nil
+  return err("quantity '#{raw}' is not a number") if q == nil
+  return err("quantity must be positive") if q <= 0
+  ok({customer:, sku:, qty: q, coupon:})
+end
+
+def lookup_price(order)
+  order => {sku:, qty:, customer:, coupon:}
+  price = catalog[sku]
+  return err("unknown sku #{sku}") if price == nil
+  ok({customer:, sku:, qty:, coupon:, subtotal: price * qty})
+end
+
+def apply_coupon(order)
+  order => {coupon:, subtotal:, customer:, sku:, qty:}
+  return ok({customer:, sku:, qty:, total: subtotal}) if coupon == "-"
+  rate = coupons[coupon]
+  return err("coupon #{coupon} is not valid") if rate == nil
+  if rate > 0 && subtotal < 2000
+    return err("coupon #{coupon} needs a subtotal of 2000 (have #{subtotal})")
+  end
+  ok({customer:, sku:, qty:, total: subtotal - subtotal * rate / 100})
+end
+
+def check_credit(order)
+  order => {customer:, total:}
+  limit = credit[customer]
+  return err("no credit line for #{customer}") if limit == nil
+  return err("#{customer} would exceed credit (#{total} > #{limit})") if total > limit
+  ok(order)
+end
+
+def catalog = once { Hash["PEN" => 120, "INK" => 480, "PAD" => 350, "BAG" => 2900] }
+def coupons = once { Hash["SAVE10" => 10, "SAVE25" => 25, "NONE" => 0] }
+def credit = once { Hash["acme" => 5000, "zeta" => 1000, "nova" => 20000] }
+
+def process(line)
+  r = parse_order(line)
+  r = and_then(r) { parse_quantity(it) }
+  r = and_then(r) { lookup_price(it) }
+  r = and_then(r) { apply_coupon(it) }
+  and_then(r) { check_credit(it) }
+end
+
+lines = Array[
+  "acme; PEN; 10; -",
+  "acme; BAG; 2; SAVE10",
+  "zeta; INK; 3; SAVE25",
+  "nova; PAD; x; -",
+  "nova; CUP; 1; -",
+  "zeta; PEN; 5; HALF",
+  "zeta; PAD; 4; NONE",
+  "omni; PEN; 1; -",
+  "acme; PAD",
+  "nova; BAG; 6; SAVE25",
+  "acme; INK; 0; -"
+]
+
+accepted = Array[]
+reasons = Hash.new(0)
+Array.each_with_index(lines) do |line, i|
+  case process(line)
+  in {ok:}
+    ok => {customer:, sku:, qty:, total:}
+    Array.push(accepted, total)
+    puts(format("%2d ok    %-5s %s x%-3d %6d", i + 1, customer, sku, qty, total))
+  in {error:}
+    reasons[String.split(error, " ")[0]] += 1
+    puts(format("%2d error %s", i + 1, error))
+  end
+end
+puts("accepted #{Array.size(accepted)}, revenue #{Array.sum(accepted)}")
+puts("errors by first word: #{Array.join(Hash.map(reasons) { |w, n| "#{w}:#{n}" }, " ")}")

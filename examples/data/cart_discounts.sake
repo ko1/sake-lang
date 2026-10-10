@@ -1,0 +1,95 @@
+# Prices shopping carts from a catalog Hash; promotion rules of four Record shapes dispatched with
+# case/in (BOGO, category percent, bundle by Set subset, spend threshold), and coupons that may be
+# invalid.
+# Shows: Record patterns such as `in {kind: :bogo, sku:}`, Set.subset?, an exception class
+# (UnknownItem), rescue.
+
+class UnknownItem < StandardError
+  attr_reader sku
+end
+
+def catalog
+  Hash[
+    "tea" => {name: "Green tea", cents: 450, cat: :drinks},
+    "cof" => {name: "Coffee beans", cents: 1299, cat: :drinks},
+    "mug" => {name: "Mug", cents: 800, cat: :kitchen},
+    "pot" => {name: "Teapot", cents: 2500, cat: :kitchen},
+    "bis" => {name: "Biscuits", cents: 325, cat: :snacks},
+    "cho" => {name: "Chocolate", cents: 275, cat: :snacks}
+  ]
+end
+
+def promotions
+  Array[
+    {bogo: "bis"},
+    {category: :drinks, pct: 10},
+    {bundle: Set["tea", "pot", "mug"], cents: 3200},
+    {min_total: 5000, off: 500}
+  ]
+end
+
+def coupons = Hash["WELCOME" => 300, "SNACK50" => 150]
+
+def money(c) = format("%s$%d.%02d", c < 0 ? "-" : "", Integer.abs(c) / 100, Integer.abs(c) % 100)
+
+def price_lines(cart, cat)
+  Array.map(Hash.to_a(cart)) do |sku, qty|
+    item = cat[sku]
+    raise UnknownItem.new("unknown sku #{sku}", sku) unless item
+    item => {name:, cents:}
+    [sku, name, qty, cents * qty]
+  end
+end
+
+def apply(rule, cart, cat, subtotal)
+  case rule
+  in {bogo:}
+    q = Hash.fetch(cart, bogo, 0)
+    return nil if q < 2
+    cat[bogo] => {cents:}
+    ["buy one get one: #{bogo}", (q / 2) * cents]
+  in {category:, pct:}
+    base = Hash.sum(cart) { |sku, qty| cat[sku] => {cents:, cat: c}; c == category ? cents * qty : 0 }
+    base > 0 ? ["#{pct}% off #{category}", base * pct / 100] : nil
+  in {bundle:, cents:}
+    have = Array.to_set(Hash.keys(cart))
+    if Set.subset?(bundle, have)
+      full = Array.sum(Array.map(Set.to_a(bundle)) { |sku| cat[sku] => {cents: c}; c })
+      ["bundle #{Array.join(Set.sort(bundle), "+")}", full - cents]
+    end
+  in {min_total:, off:}
+    subtotal >= min_total ? ["spend #{money(min_total)}", off] : nil
+  end
+end
+
+def checkout(label, cart, code)
+  cat = catalog
+  puts("== #{label} ==")
+  lines = price_lines(cart, cat)
+  Array.each(lines) { |sku, name, qty, total| puts(format("  %-13s x%d %9s", name, qty, money(total))) }
+  subtotal = Array.sum(Array.map(lines) { |l| l[3] })
+  puts(format("  %-16s %9s", "subtotal", money(subtotal)))
+  discounts = Array.compact(Array.map(promotions) { |r| apply(r, cart, cat, subtotal) })
+  if code
+    amount = Hash.fetch(coupons, code, nil)
+    Array.push(discounts, amount ? ["coupon #{code}", amount] : ["coupon #{code} (invalid)", 0])
+  end
+  Array.each(discounts) { |what, c| puts(format("  %-28s %9s", what, money(-c))) }
+  total = Integer.clamp(subtotal - Array.sum(Array.map(discounts) { |d| d[1] }), 0, subtotal)
+  puts(format("  %-16s %9s", "TOTAL", money(total)))
+  total
+rescue UnknownItem => e
+  puts("  cannot price cart: #{Exception.message(e)}")
+  nil
+end
+
+totals = Array[
+  checkout("tea lover", Hash["tea" => 2, "pot" => 1, "mug" => 1], "WELCOME"),
+  checkout("snacks", Hash["bis" => 5, "cho" => 2], "SNACK50"),
+  checkout("coffee", Hash["cof" => 3, "mug" => 2], "BOGUS"),
+  checkout("typo", Hash["tea" => 1, "teh" => 1], nil)
+]
+paid = Array.compact(totals)
+puts("carts priced: #{Array.size(paid)}/#{Array.size(totals)}, revenue #{money(Array.sum(paid))}")
+cats = Array.uniq(Array.map(Hash.values(catalog)) { |i| i => {cat:}; cat })
+puts("categories: #{Array.join(Array.map(cats) { |c| Symbol.to_s(c) }, ", ")}")

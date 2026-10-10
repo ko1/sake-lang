@@ -1,0 +1,184 @@
+# A Forth interpreter session with colon definitions, recursion, IF/ELSE/THEN, DO/LOOP with I,
+# string output and per-line error recovery.
+# Shows: a class with attr_accessor state, an exception class (ForthError), raise/rescue per input
+# line, case/in on words, once.
+
+class ForthError < Exception
+  attr_reader word
+end
+
+class Forth
+  attr_reader stack, dict
+  attr_accessor out, loops
+
+  def initialize(f)
+    @stack = nil
+    @dict = nil
+    @out = ""
+    @loops = nil
+    @stack = Array[]
+    @dict = Hash[]
+    @loops = Array[]
+  end
+
+  def push(f, v) = Array.push(@stack, v)
+
+  def pop(f, word)
+    raise ForthError.new("stack underflow", word) if Array.empty?(@stack)
+    Array.pop(@stack)
+  end
+
+  def emit(f, s) = @out += s
+
+  def flag(b) = b ? -1 : 0
+
+  def find_matching(tokens, i, stop_at_else)
+    depth = 0
+    Range.each((i + 1)...Array.size(tokens)) do |j|
+      t = tokens[j]
+      if t == "IF"
+        depth += 1
+      elsif t == "THEN"
+        return j if depth == 0
+        depth -= 1
+      elsif t == "ELSE"
+        return j if depth == 0 && stop_at_else
+      end
+    end
+    raise ForthError.new("unbalanced IF", tokens[i])
+  end
+
+  def run(f, tokens)
+    i = 0
+    while i < Array.size(tokens)
+      w = tokens[i]
+      if w == ":"
+        semi = Array.index(tokens, ";")
+        raise ForthError.new("missing ;", w) if semi == nil
+        @dict[String.upcase(tokens[i + 1])] = tokens[(i + 2)...semi]
+        i = semi
+      elsif w == ".\""
+        j = i + 1
+        words = Array[]
+        while j < Array.size(tokens) && !String.end_with?(tokens[j], "\"")
+          Array.push(words, tokens[j])
+          j += 1
+        end
+        raise ForthError.new("unterminated string", w) if j == Array.size(tokens)
+        Array.push(words, String.delete_suffix(tokens[j], "\""))
+        emit(f, Array.join(words, " "))
+        i = j
+      elsif w == "IF"
+        i = find_matching(tokens, i, true) if pop(f, w) == 0
+      elsif w == "ELSE"
+        i = find_matching(tokens, i, false)
+      elsif w == "THEN"
+        nil
+      elsif w == "DO"
+        start = pop(f, w)
+        limit = pop(f, w)
+        Array.push(@loops, [start, limit, i])
+      elsif w == "LOOP"
+        frame = Array.last(@loops)
+        raise ForthError.new("LOOP without DO", w) if frame == nil
+        frame[0] += 1
+        if frame[0] < frame[1]
+          i = frame[2]
+        else
+          Array.pop(@loops)
+        end
+      elsif w == "I"
+        frame = Array.last(@loops)
+        raise ForthError.new("I outside a loop", w) if frame == nil
+        push(f, frame[0])
+      elsif String.match?(w, /\A-?\d+\z/)
+        push(f, String.to_i(w))
+      else
+        word(f, String.upcase(w))
+      end
+      i += 1
+    end
+  end
+
+  def word(f, w)
+    if (body = @dict[w])
+      return run(f, body)
+    end
+    case w
+    in "+" | "-" | "*" | "/" | "MOD" | "=" | "<" | ">" | "AND"
+      b = pop(f, w)
+      a = pop(f, w)
+      push(f,
+        case w
+        in "+" then a + b
+        in "-" then a - b
+        in "*" then a * b
+        in "/" then a / b
+        in "MOD" then a % b
+        in "=" then flag(a == b)
+        in "<" then flag(a < b)
+        in ">" then flag(a > b)
+        in "AND" then a & b
+        end
+      )
+    in "DUP"
+      a = pop(f, w)
+      push(f, a)
+      push(f, a)
+    in "DROP" then pop(f, w)
+    in "SWAP"
+      b = pop(f, w)
+      a = pop(f, w)
+      push(f, b)
+      push(f, a)
+    in "OVER"
+      b = pop(f, w)
+      a = pop(f, w)
+      Array.push(@stack, a, b, a)
+    in "." then emit(f, "#{pop(f, w)} ")
+    in "EMIT" then emit(f, Integer.chr(pop(f, w)))
+    in "CR" then emit(f, "\n")
+    else raise ForthError.new("unknown word", w)
+    end
+  end
+end
+
+def session = once do
+  Array[
+    ": square dup * ;",
+    "5 square . 12 square .",
+    ": fact dup 1 > IF dup 1 - fact * ELSE drop 1 THEN ;",
+    "10 fact . 1 fact .",
+    "5 0 DO I . LOOP",
+    ": stars 0 DO 42 emit LOOP ;",
+    "3 stars cr 6 stars",
+    "3 4 < . 4 3 < . 7 7 = .",
+    ": fizz 1 + 1 DO I 15 mod 0 = IF .\" FizzBuzz \" ELSE I 3 mod 0 = IF .\" Fizz \" ELSE I 5 mod 0 = IF .\" Buzz \" ELSE I . THEN THEN THEN LOOP ;",
+    "15 fizz",
+    "2 3 over . . .",
+    "1 +",
+    "frobnicate",
+    "10 0 /",
+    ".\" never closed",
+    "100 square square ."
+  ]
+end
+
+f = Forth.new
+Array.each(session) do |line|
+  Forth.set_out(f, "")
+  Forth.set_loops(f, Array[])
+  status = "ok"
+  begin
+    Forth.run(f, String.split(line, " "))
+  rescue ForthError => e
+    status = "error: #{Exception.message(e)} (#{ForthError.word(e)})"
+  rescue ZeroDivisionError
+    status = "error: division by zero"
+  end
+  out = String.rstrip(Forth.out(f))
+  puts("> #{line}")
+  Array.each(String.lines(out)) { |l| puts("  #{String.chomp(l)}") } unless String.empty?(out)
+  puts("  #{status}  stack: #{Array.join(Forth.stack(f), " ")}")
+end
+puts("words: #{Array.join(Array.sort(Hash.keys(Forth.dict(f))), " ")}")

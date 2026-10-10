@@ -1,0 +1,84 @@
+# Compares primality tests: trial division, Fermat and deterministic Miller-Rabin; finds Carmichael
+# numbers and base-2 strong pseudoprimes.
+# Shows: Integer.pow with a modulus, functions returning Tuples (`return a, b`), while loops,
+# format.
+
+def trial_division?(n)
+  return false if n < 2
+  return true if n < 4
+  return false if Integer.even?(n)
+  d = 3
+  while d * d <= n
+    return false if n % d == 0
+    d += 2
+  end
+  true
+end
+
+def fermat_probable?(n, base)
+  return n == 2 if n <= 2
+  Integer.pow(base, n - 1, n) == 1
+end
+
+def decompose(n)
+  d = n - 1
+  s = 0
+  while Integer.even?(d)
+    d /= 2
+    s += 1
+  end
+  [s, d]
+end
+
+def strong_probable?(n, a)
+  return true if a % n == 0
+  s, d = decompose(n)
+  x = Integer.pow(a, d, n)
+  return true if x == 1 || x == n - 1
+  Integer.times(s - 1) do
+    x = x * x % n
+    return true if x == n - 1
+  end
+  false
+end
+
+def witnesses = Integer[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+
+def miller_rabin?(n)
+  return false if n < 2
+  small = Array.find(witnesses) { |p| n % p == 0 }
+  return n == small if small
+  Array.all?(witnesses) { |a| strong_probable?(n, a) }
+end
+
+puts("agreement check on 1..2000:")
+mismatch = Range.select(1..2000) { |n| trial_division?(n) != miller_rabin?(n) }
+puts("  mismatches: #{Array.size(mismatch)}")
+
+carmichael = Array[]
+Integer.step(3, 5000, 2) do |n|
+  next if trial_division?(n)
+  liar = Array.all?(Integer[2, 3, 5, 7, 11, 13]) { |a| Integer.gcd(a, n) != 1 || fermat_probable?(n, a) }
+  Array.push(carmichael, n) if liar
+end
+puts("Carmichael-like composites <= 5000 (Fermat liars to all small coprime bases): #{Array.join(carmichael, " ")}")
+
+spsp2 = Range.select(3..5000) { |n| Integer.odd?(n) && !trial_division?(n) && strong_probable?(n, 2) }
+puts("strong pseudoprimes to base 2 <= 5000: #{Array.join(spsp2, " ")}")
+fpsp2 = Range.count(3..5000) { |n| Integer.odd?(n) && !trial_division?(n) && fermat_probable?(n, 2) }
+puts("Fermat pseudoprimes to base 2 <= 5000: #{fpsp2}")
+
+puts("large candidates:")
+cands = Integer[2 ** 31 - 1, 2 ** 61 - 1, 2 ** 67 - 1, 1000000007, 1000000007 * 998244353, 561 * 1105, 3825123056546413051, 2 ** 89 - 1]
+Array.each(cands) do |c|
+  verdict = miller_rabin?(c) ? "prime" : "composite"
+  s, d = decompose(c)
+  puts(format("  %-28s %-9s (n-1 = 2^%d * odd)", Integer.to_s(c), verdict, s))
+end
+
+puts("next primes after powers of ten:")
+Range.each(1..12) do |k|
+  m = 10 ** k + 1
+  m += 1 until miller_rabin?(m)
+  puts("  10^#{k} + #{m - 10 ** k}")
+end

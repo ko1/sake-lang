@@ -1,0 +1,98 @@
+# Prints cal-style month grids three across, marking special days, and reports week-row counts.
+# Shows: once for the name tables, a Set of marked days, Zeller's congruence, String padding.
+
+def month_names = once do
+  Array["January", "February", "March", "April", "May", "June", "July",
+        "August", "September", "October", "November", "December"]
+end
+
+def leap?(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+
+def days_in_month(y, m)
+  return 29 if m == 2 && leap?(y)
+  Array[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+end
+
+def weekday(y, m, d)
+  t = Array[0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+  y -= 1 if m < 3
+  (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7
+end
+
+class MonthGrid
+  attr_reader year, month, weeks
+
+  # weeks: Array of 7-slot Arrays holding a day number or nil
+  def build(y, m)
+    weeks = Array[]
+    week = Array.new(7)
+    col = weekday(y, m, 1)
+    Range.each(1..days_in_month(y, m)) do |d|
+      week[col] = d
+      col += 1
+      if col == 7
+        Array.push(weeks, week)
+        week = Array.new(7)
+        col = 0
+      end
+    end
+    Array.push(weeks, week) if col > 0
+    MonthGrid.new(y, m, weeks)
+  end
+
+  def title(g) = "#{month_names[@month - 1]} #{@year}"
+
+  # Renders the grid as lines 21 characters wide; marked days get a '*'.
+  def lines(g, marks)
+    out = Array[String.center(title(g), 21), "Su Mo Tu We Th Fr Sa "]
+    Array.each(@weeks) do |week|
+      cells = Array.map(week) do |d|
+        if d == nil
+          "   "
+        elsif Set.include?(marks, [@year, @month, d])
+          String.rjust(Integer.to_s(d), 2) + "*"
+        else
+          String.rjust(Integer.to_s(d), 2) + " "
+        end
+      end
+      Array.push(out, Array.join(cells))
+    end
+    Array.push(out, "") while Array.size(out) < 8
+    out
+  end
+end
+
+def side_by_side(grids, marks)
+  columns = Array.map(grids) { |g| MonthGrid.lines(g, marks) }
+  Range.each(0..7) do |i|
+    row = Array.map(columns) { |c| String.ljust(c[i], 21) }
+    puts(String.rstrip(Array.join(row, "  ")))
+  end
+end
+
+def next_month(y, m) = m == 12 ? [y + 1, 1] : [y, m + 1]
+
+marks = Set[[2026, 10, 1], [2026, 10, 31], [2026, 11, 26], [2026, 12, 25], [2027, 1, 1], [2027, 2, 14]]
+
+y = 2026
+m = 9
+Integer.times(2) do
+  grids = Array[]
+  Integer.times(3) do
+    Array.push(grids, MonthGrid.build(y, m))
+    y, m = next_month(y, m)
+  end
+  side_by_side(grids, marks)
+  puts
+end
+
+# A leap February and a month that needs six week rows.
+feb = MonthGrid.build(2028, 2)
+aug = MonthGrid.build(2026, 8)
+side_by_side(Array[feb, aug], Set[])
+puts
+Array.each(Array[feb, aug]) do |g|
+  rows = Array.size(MonthGrid.weeks(g))
+  first_full = Array.find_index(MonthGrid.weeks(g)) { |w| Array.all?(w) { |d| d != nil } }
+  puts("#{MonthGrid.title(g)}: #{rows} rows, first full week is row #{first_full ? first_full + 1 : "none"}")
+end

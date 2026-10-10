@@ -1,0 +1,77 @@
+# A Brainfuck interpreter with a precomputed bracket jump table, wrapping tape, embedded input and
+# bracket-mismatch errors.
+# Shows: Records for the programs, an exception class with a position, rescue, case/in on
+# characters, once.
+
+class BracketError < Exception
+  attr_reader pos
+end
+
+def strip_comments(src) = Array.join(Array.select(String.chars(src)) { |c| String.include?("+-<>[].,", c) })
+
+def jump_table(code)
+  jumps = Hash[]
+  open = Integer[]
+  Array.each_with_index(String.chars(code)) do |c, i|
+    if c == "["
+      Array.push(open, i)
+    elsif c == "]"
+      j = Array.pop(open)
+      raise BracketError.new("unmatched ']'", i) if j == nil
+      jumps[i] = j
+      jumps[j] = i
+    end
+  end
+  raise BracketError.new("unmatched '['", Array.last(open)) unless Array.empty?(open)
+  jumps
+end
+
+def run(src, input, tape_size)
+  code = strip_comments(src)
+  jumps = jump_table(code)
+  tape = Array.new(tape_size, 0)
+  ptr = 0
+  pc = 0
+  inp = 0
+  out = ""
+  steps = 0
+  while pc < String.size(code)
+    case code[pc]
+    in "+" then tape[ptr] = (tape[ptr] + 1) % 256
+    in "-" then tape[ptr] = (tape[ptr] - 1) % 256
+    in ">" then ptr = (ptr + 1) % tape_size
+    in "<" then ptr = (ptr - 1) % tape_size
+    in "." then out += Integer.chr(tape[ptr])
+    in ","
+      ch = input[inp]
+      tape[ptr] = ch ? String.ord(ch) : 0
+      inp += 1
+    in "[" then pc = jumps[pc] if tape[ptr] == 0
+    in "]" then pc = jumps[pc] if tape[ptr] != 0
+    end
+    pc += 1
+    steps += 1
+  end
+  {out: out, steps: steps, cells: Array.count(tape) { |v| v != 0 }}
+end
+
+def programs = once do
+  Array[
+    ["hello", "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.", ""],
+    ["add 3+4", ",>,[<+>-]<------------------------------------------------.", "34"],
+    ["reverse", ">,[>,]<[.<]", "stressed"],
+    ["upcase", ",[--------------------------------.,] read and shift each byte", "sake"],
+    ["broken", "+[>+<-]]", ""],
+    ["open", "[[]", ""]
+  ]
+end
+
+Array.each(programs) do |name, src, input|
+  begin
+    r = run(src, input, 64)
+    r => {out:, steps:, cells:}
+    puts(format("%-8s %-20s steps=%-5d cells=%d", name, Kernel.inspect(String.chomp(out)), steps, cells))
+  rescue BracketError => e
+    puts(format("%-8s error: %s at %d", name, Exception.message(e), BracketError.pos(e)))
+  end
+end

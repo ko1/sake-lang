@@ -39,3 +39,10 @@ sakelib の約 45 ライブラリを入れ子名に書き換えたエージェ�
 - **Ruby と違うところ**: `class Rackup::Handler::WEBrick` の中で裸の `WEBrick::HTTPResponse` がトップレベルの module に解決される（Ruby なら `::WEBrick` が要る）。便利だが差分。入れ子の class の本体から外側の module の module 関数を型無しで呼べない（Ruby と同じ）。
 - **作業上の罠**: 名前空間の中で `A::` を機械的に剥がす sed が文字列リテラル（`"#<CSV::Row …"`、`"I18n::ArgumentError"`）にも当たり、テスト失敗の唯一の原因になった。
 - **平らなまま残したもの**: `SoleItemExpectedError`（Ruby は `Enumerable::` だが Sake に Enumerable が無い）、Sake 独自の mixin（Blank、StringExt…）、ERB の内部型、rspec の `expect(...).to` の連鎖の装置、など。
+
+## examples/ の整備（コーパス 1,000 本を今日の処理系で走らせたエージェントの報告）
+
+- 10-01 のコーパス 500 本: level 2 で 323、level 1 で 450 が通り、`--strict=0` でも壊れたのは 10 本（`Struct.new` のフィールド既定値の廃止 5、組み込み型になった名前 `Record`/`Dir` 2、`new` という名のフィールド 1、引数の違う実装への mixin ディスパッチ 2）。10-05 の v3: level 2 で 311、level 1 で 435、壊れたのは 1 本（`class Record`）。実行時のバグは 0。
+- level 1 で止まる正しいプログラム（v3 で 64 本）の内訳: `sort_by`/`sort`/`min_by` の鍵が nil を含みうる（約 23）、`Float.round`/`Float.abs`/`Rational.*` に `Integer | Float`（約 13）、Integer と String の union の `Comparable`（約 6）、`else` の無い Symbol の `case/in`（4）。v3 は v1 より level 1 の通過が少ない（435 対 450）: v3 は `w = word(node); … if w` を `@word` に書き直したが、**`if @x` は構築場所がちょうど nil を与えるとき枝を刈らない**（→ TODO）。
+- 良い: 全行が型を名乗るので showcase として読みやすい。`class E < Exception; attr_reader x` は Ruby より短い。`(Leaf|Internal).weight(node)` と `case node in Leaf` で木のコードが明示的。`include Arithmetic` + `def +` で `case b in Poly / in Integer | Float` と書けば混在オペランドの演算子多重定義がきれい。
+- 気になる: フィールドの読み `Node.children(node)` が冗長（レビュー係の全員の不満）で v3 の書き手は `@x` に流れたが、`@x` の絞り込みはローカルより弱い。連鎖形と `_` は 500 本中 11 本と 1 本しか使われていない。1 行目に `coding:` を含むコメントは magic comment になる。

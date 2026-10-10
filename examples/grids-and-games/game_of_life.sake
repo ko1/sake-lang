@@ -1,0 +1,86 @@
+# Conway's Life on small toroidal boards, detecting still lifes and cycles via a Hash of seen
+# states.
+# Shows: a Board class with to_s, nested Arrays of booleans, a Hash keyed by the board's String
+# form, while.
+
+class Board
+  attr_reader rows, cols, cells, generation
+
+  def parse(lines)
+    cells = Array.map(lines) { |line| Array.map(String.chars(line)) { |ch| ch == "#" } }
+    Board.new(Array.size(lines), String.size(lines[0]), cells, 0)
+  end
+
+  def alive?(b, r, c)
+    @cells[(r + @rows) % @rows][(c + @cols) % @cols]
+  end
+
+  def neighbours(b, r, c)
+    n = 0
+    Array.each(Array[-1, 0, 1]) do |dr|
+      Array.each(Array[-1, 0, 1]) do |dc|
+        next if dr == 0 && dc == 0
+        n += 1 if alive?(b, r + dr, c + dc)
+      end
+    end
+    n
+  end
+
+  def step(b)
+    @cells = Range.map(0...@rows) do |r|
+      Range.map(0...@cols) do |c|
+        n = neighbours(b, r, c)
+        @cells[r][c] ? (n == 2 || n == 3) : n == 3
+      end
+    end
+    @generation += 1
+    b
+  end
+
+  def population(b) = Array.sum(@cells) { |row| Array.count(row) { it } }
+
+  def key(b) = Array.join(Array.map(@cells) { |row| Array.join(Array.map(row) { it ? "#" : "." }) }, "/")
+
+  def to_s(b)
+    Array.join(Array.map(@cells) { |row| Array.join(Array.map(row) { it ? "#" : "." }) }, "\n")
+  end
+end
+
+def run(name, lines, max_gens)
+  board = Board.parse(lines)
+  seen = Hash[Board.key(board) => 0]
+  puts("== #{name} (#{Board.rows(board)}x#{Board.cols(board)}) ==")
+  puts(board)
+  history = Array[Board.population(board)]
+  result = nil
+  while Board.generation(board) < max_gens
+    Board.step(board)
+    gen = Board.generation(board)
+    Array.push(history, Board.population(board))
+    k = Board.key(board)
+    if (prev = seen[k])
+      result = [prev, gen - prev]
+      break
+    end
+    seen[k] = gen
+  end
+  puts("after #{Board.generation(board)} generations:")
+  puts(board)
+  puts("population: #{Array.join(history, " ")}")
+  if result
+    first, period = result
+    if period == 1
+      puts("still life from generation #{first}")
+    else
+      puts("cycle of period #{period} entered at generation #{first}")
+    end
+  else
+    puts("no repetition within #{max_gens} generations")
+  end
+  puts("peak population: #{Array.max(history)}, extinct: #{Board.population(board) == 0}")
+end
+
+run("blinker", Array[".....", ".....", ".###.", ".....", "....."], 10)
+run("block", Array["....", ".##.", ".##.", "...."], 5)
+run("glider", Array["#.....", ".##...", "##....", "......", "......", "......"], 30)
+run("diehard-ish", Array[".......", "......#", "##.....", ".#...##", "......."], 12)

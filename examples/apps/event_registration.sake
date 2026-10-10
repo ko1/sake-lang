@@ -1,0 +1,77 @@
+# Conference orders with early-bird and group pricing, per-ticket-type capacity (SoldOutError), name
+# badges sorted by last name, catering tallies and companies sending several people.
+# Shows: attr_accessor stock, an exception class, rescue per order, sort_by with Tuples, group_by.
+
+class SoldOutError < StandardError
+  attr_reader ticket
+end
+
+def early_bird_ends = "2026-08-31"
+
+class TicketType
+  attr_reader name, price, early_price, capacity
+  attr_accessor sold
+  def unit_price(tt, date) = date <= early_bird_ends ? @early_price : @price
+end
+
+class Registration
+  attr_reader order, name, company, ticket, paid, diet
+  def last_name(r) = String.rpartition(@name, " ")[2]
+
+  def badge(r)
+    first, _sp, last = String.rpartition(@name, " ")
+    line1 = String.upcase(last) + ", " + first
+    line2 = @company || "Independent"
+    "[#{String.center(line1, 22)}|#{String.center(line2, 14)}|#{String.center(TicketType.name(@ticket), 8)}]"
+  end
+end
+
+types = Hash[
+  "full" => TicketType.new("full", 600, 450, 6, 0),
+  "day" => TicketType.new("day", 250, 200, 3, 0),
+  "vip" => TicketType.new("vip", 1500, 1500, 1, 0)
+]
+
+orders = Array[
+  ["2026-08-20", "full", Array[["Grace Hopper", "Navy", "veg"], ["Alan Kay", nil, nil]]],
+  ["2026-08-31", "day", Array[["Yukihiro Matsumoto", "Ruby Assn", nil]]],
+  ["2026-09-03", "full", Array[["Barbara Liskov", "MIT", "gf"], ["John Backus", "IBM", nil], ["Frances Allen", "IBM", "veg"]]],
+  ["2026-09-05", "vip", Array[["Ada Lovelace", nil, "veg"]]],
+  ["2026-09-06", "vip", Array[["Charles Babbage", nil, nil]]],
+  ["2026-09-07", "full", Array[["Edsger Dijkstra", "TU/e", nil]]],
+  ["2026-09-09", "day", Array[["Donald Knuth", "Stanford", "veg"], ["Leslie Lamport", "MSR", nil]]]
+]
+
+regs = Array[]
+revenue = 0
+Array.each_with_index(orders) do |(date, type_name, people), i|
+  tt = Hash.fetch(types, type_name)
+  n = Array.size(people)
+  begin
+    left = TicketType.capacity(tt) - TicketType.sold(tt)
+    raise SoldOutError.new("only #{left} #{type_name} left, wanted #{n}", type_name) if n > left
+    total = TicketType.unit_price(tt, date) * n
+    total = total * 90 / 100 if n >= 3
+    TicketType.set_sold(tt, TicketType.sold(tt) + n)
+    revenue += total
+    Array.each(people) do |name, company, diet|
+      Array.push(regs, Registration.new(i + 1, name, company, tt, total / n, diet))
+    end
+    puts(format("order %d %s: %d x %-4s %5d%s", i + 1, date, n, type_name, total, n >= 3 ? " (group -10%)" : ""))
+  rescue SoldOutError => e
+    puts(format("order %d %s: sold out (%s)", i + 1, date, Exception.message(e)))
+  end
+end
+
+puts
+Array.each(Array.sort_by(regs) { |r| String.downcase(Registration.last_name(r)) }) { |r| puts(Registration.badge(r)) }
+puts
+Hash.each_value(types) do |tt|
+  puts(format("%-4s %d/%d sold", TicketType.name(tt), TicketType.sold(tt), TicketType.capacity(tt)))
+end
+diets = Array.tally(Array.filter_map(regs) { |r| Registration.diet(r) })
+puts("Catering: #{Array.size(regs)} people, " + Array.join(Hash.map(diets) { |d, k| "#{k} #{d}" }, ", "))
+puts("Revenue: #{revenue}, average #{format("%.2f", revenue * 1.0 / Array.size(regs))} per attendee")
+companies = Array.group_by(Array.select(regs) { |r| Registration.company(r) != nil }) { |r| Registration.company(r) }
+multi = Hash.select(companies) { |c, rs| Array.size(rs) > 1 }
+Hash.each(multi) { |c, rs| puts("#{c} sends #{Array.size(rs)}") }
