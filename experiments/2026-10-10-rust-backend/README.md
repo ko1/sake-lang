@@ -68,6 +68,24 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 - **shapes は Spinel が 7.7〜9.3 倍遅い**（4.45 / 4.58 対 0.477 / 0.596。最初の生成器に対しても 2.4〜2.7 倍）。ディスパッチの増分は Spinel も +0.13 秒（0.13 ns/回）と小さく、差は 1 反復あたり約 4 ns の定数部分。Spinel のオブジェクトは GC 管理のヒープ上にあり、`shapes.each { |s| total += s.area }` のブロックと外側の `total` への書き込みがどう落ちているかで決まる。Sake→Rust は `Array.each` のブロックをループ本体に展開し、`total` はローカル変数のままで、オブジェクトは `Rc` 経由の読み出し。Spinel の生成 C を読んで切り分けるのは今後の課題。
 - **解析器の大きさは桁が違う。** Spinel は `src/analyze*.c` が 107,000 行、`src/codegen*.c` が 141,000 行、ランタイム `lib/*.c` が 41,000 行。Sake は resolver 1,600 行 + `rust.rb` 1,100 行（うち型推論は約 250 行、Rust 側ランタイム約 350 行）。Spinel が Ruby の意味論（メソッドの動的解決、open class、`poly` への退避、GC）をコンパイラ側で引き受けているのに対し、Sake は言語の側で削っている（呼び出し先は resolver が決める、値へのメソッド呼び出しが無い、ブロックは第二級、継承なし）。性能が同じなら、この差は「どちらが書きやすいか」の問題に戻る。
 
+## C バックエンド（ceec）
+
+`bin/ceec`（`lib/sake/c.rb`）は Rust 版と同じ型推論の上で C を出し、`cc -std=gnu11 -O2` でネイティブにする。Array・String・オブジェクトは C のポインタを共有し（何も解放しない。GC なし）、`nil | T` は `{bool some; T v;}`、クラスの合併は `{int tag; void *p;}` と `switch`、整数演算は `__builtin_*_overflow` で溢れを検査する。`yield` で渡すブロックは呼び出し側の変数を構造体（フレーム）にまとめ、そのポインタを受け取る C 関数にした。式の中の文は GNU C の文式 `({ ... })`、`next`/`break` は `goto`。比較のため手書き C（`bench/hand/*.c`。整数の溢れ検査なし）も書いた。sp4、gcc 15.2、2026-10-10 23:33 UTC（JST 10-11 08:33）。生の結果は `results-c.txt`（`sake-interp OUTPUT DIFFERS` はインタプリタを走らせていないので出力ファイルが無いだけ）。
+
+| ベンチ（秒、中央値） | Sake → C | Sake → C（溢れ検査を外す） | 手書き C | Sake → Rust | 手書き Rust |
+|---|---|---|---|---|---|
+| loops（10^9 回） | 1.387 | 1.356 | 1.355 | 1.269 | 1.162 |
+| fib 38 | 0.186 | 0.065 | 0.064 | 0.186 | 0.206 |
+| levenshtein 100 語 | 0.032 | 0.030 | 0.015 | 0.034 | 0.021 |
+| shapes（10^9 回、3 型） | 0.674 | 0.607 | 0.471 | 0.596 | 0.606 |
+| shapes_mono（10^9 回） | 0.481 | 0.406 | 0.354 | 0.479 | 0.408 |
+
+- **Sake → C と Sake → Rust はほぼ同じ速さ。** loops は C が 9% 遅く（gcc と LLVM の差で、手書き同士でも C 1.355 対 Rust 1.162）、shapes は C が 13% 遅い。fib・levenshtein・shapes_mono は同じ。
+- **fib の手書き C との 3 倍の差は、すべて整数の溢れ検査。** 生成コードから検査を外すと 0.065 で手書き C（0.064）と同じ。手書き Rust（検査あり）も 0.206 で、検査ありの fib はどちらの言語でも 3 倍かかる。gcc は検査が無いと再帰を部分的に展開できるが、検査の分岐があると展開しない。Sake の Integer は溢れないのが意味論なので、検査は外せない（外すなら多倍長への昇格か、64 ビットで回る意味論への変更）。
+- **levenshtein の 2 倍は、Ruby の配列の意味論を保つ検査。** `Array.fetch` の負の添字の正規化と範囲検査、`a[i] = v` の「末尾なら push」の分岐。溢れ検査を外しても 0.030 で、手書き（0.015）との差はほぼ残る。Rust 版の 1.6 倍と同じ理由。
+- **shapes の残り 0.14 秒（1 反復 0.14 ns）は切り分けていない。** 溢れ検査を外して 0.607、手書きは 0.471。候補は合併値の構造体コピーと、ループのたびに `arr->len` と `arr->p` を読み直すこと（生成コードは `Array.each` 中の push を許すため読み直す）。
+- **書きやすさ**: Rust 版で手間だった所有権・`Rc`・借用渡しが C では存在しない。その代わりメモリを解放しない。ブロックの閉包はフレーム構造体で足り、型推論は 1 行も書き足していない。生成器は約 1,150 行（半分は C 側ランタイム）。
+
 ## 限界
 
 - 対象は部分集合で、Hash・Set・Regexp・例外の rescue・mixin ディスパッチ・`(A|B).f`・Thread は未対応（exit 3 で断る）。sakelib の移植 73 本のような普通のプログラムはまだ通らない。
@@ -91,5 +109,6 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 - `bench/run.sh`: 計測スクリプト（sp4 で `RUBY=... SAKE=... ./run.sh > results.txt 2> results.log`。`BENCHES="shapes shapes_mono"` で対象を絞れる）
 - `results-run1.txt` / `.log`, `results-run2.txt` / `.log`: 生の結果（loops / fib / levenshtein）
 - `results-shapes-small.txt`（10,000 round、インタプリタを含む）、`results-shapes.txt`（末尾が 1,000,000 round）、`results-shapes.log`: shapes の生の結果
+- `results-c.txt` / `.log`: C バックエンドと手書き C（末尾に溢れ検査を外した版）
 - `results-spinel.txt`: Spinel で同じ Ruby 版を測った結果（末尾に Spinel のソース行数）
 - `results-run3.txt` / `.log`: 借用渡しにした生成器での再計測（loops / fib_big / levenshtein、shapes の 1,000,000 round。インタプリタは走らせていないので log の「sake-interp OUTPUT DIFFERS」は出力ファイルが無いだけ）

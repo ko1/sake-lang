@@ -116,6 +116,25 @@
   <li><b>生成器を直した。</b> 本体で再代入されない非 Copy の引数（オブジェクト・配列・文字列）は <code>&amp;T</code> で渡し、<code>Array.each</code> の要素も借用で取り出す。shapes は手書き enum と同じ 0.60 秒、shapes_mono は手書きの 1.16 倍。</li>
 </ul>
 
+<h2>C バックエンド ceec（秒）</h2>
+<p><code>bin/ceec</code> は同じ型推論の上で C を出す（gcc 15.2 <code>-O2</code>）。Array・String・オブジェクトはポインタの共有（解放しない、GC なし）、<code>nil | T</code> は <code>{bool some; T v;}</code>、クラスの合併は tag と <code>switch</code>、整数演算は溢れを検査する。手書き C は溢れ検査なし。</p>
+<div class="tablewrap">
+<table>
+<tr><th>ベンチ</th><th>Sake → C</th><th>Sake → C（溢れ検査なし）</th><th>手書き C</th><th>Sake → Rust</th><th>手書き Rust</th></tr>
+<tr><td>loops（10<sup>9</sup> 回）</td><td>1.387</td><td>1.356</td><td>1.355</td><td>1.269</td><td>1.162</td></tr>
+<tr><td>fib 38</td><td>0.186</td><td><b>0.065</b></td><td>0.064</td><td>0.186</td><td>0.206</td></tr>
+<tr><td>levenshtein 100 語</td><td>0.032</td><td>0.030</td><td>0.015</td><td>0.034</td><td>0.021</td></tr>
+<tr><td>shapes（10<sup>9</sup> 回、3 型）</td><td>0.674</td><td>0.607</td><td>0.471</td><td>0.596</td><td>0.606</td></tr>
+<tr><td>shapes_mono（10<sup>9</sup> 回）</td><td>0.481</td><td>0.406</td><td>0.354</td><td>0.479</td><td>0.408</td></tr>
+</table>
+</div>
+<ul>
+  <li><b>Sake → C と Sake → Rust はほぼ同じ速さ。</b> loops は gcc と LLVM の差（手書き同士でも C 1.355 対 Rust 1.162）。</li>
+  <li><b>fib の手書き C との 3 倍の差は、すべて整数の溢れ検査。</b> 検査を外すと 0.065 で手書き C と同じ。検査ありの手書き Rust も 0.206 で、どちらの言語でも検査が再帰の展開を止める。Sake の Integer は溢れないのが意味論なので外せない。</li>
+  <li><b>levenshtein の 2 倍は Ruby の配列の意味論を保つ検査</b>（負の添字、範囲、末尾への書き込みは push）。shapes の残り 0.14 ns/反復は未切り分け。</li>
+  <li><b>書きやすさ。</b> Rust 版で手間だった所有権と参照カウントが C には無く、型推論は 1 行も足していない。代わりにメモリを解放しない。</li>
+</ul>
+
 <h2>Spinel（matz の Ruby AOT コンパイラ）との比較（秒）</h2>
 <p><a href="https://github.com/matz/spinel">Spinel</a> は Ruby の大きな部分集合を全プログラム型推論で C に落とす（世代別 GC 付き）。同じ Ruby 版のプログラムをそのまま入力にして、同じ sp4 で測った（dd29ea35、gcc 15.2、既定の -O2。<code>--warn-widen</code> の警告は利用者のコードには無し）。</p>
 <div class="tablewrap">

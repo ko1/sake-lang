@@ -104,7 +104,9 @@ A mixin call dispatched on the argument's type costs 0.12 ns, about the same as 
 and an eighth of Rust's `dyn Trait`. Against [Spinel](https://github.com/matz/spinel), the Ruby AOT
 compiler, the same programs ran at the same speed on loops and levenshtein and 8 times faster on
 the dispatch benchmark, with an analyzer of 1,100 lines of Ruby where Spinel's is 107,000 lines of C,
-because Sake's rules do that work in the language. The interpreter is 150 to 760 times slower than
+because Sake's rules do that work in the language. `bin/ceec` does the same through C, on the same
+type inference, and runs at the same speed as the Rust output; against hand-written C, the remaining
+gap is the overflow check on every Integer operation (fib: 0.186 s with it, 0.065 s without, hand C 0.064). The interpreter is 150 to 760 times slower than
 Ruby with YJIT.
 
 ## Documentation
