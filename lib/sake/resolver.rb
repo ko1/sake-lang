@@ -215,6 +215,13 @@ module Sake
 
     def struct_new?(v) = constant_call?(v, :Struct, :new)
 
+    # The field names of `Struct.new(:x, :y)` / `Exception.new(:line)`.
+    def struct_new_fields(v)
+      (v.arguments&.arguments || []).filter_map do |a|
+        a.is_a?(Prism::SymbolNode) ? a.unescaped : error(a, "#{v.receiver.name}.new takes field names as symbols, like `#{v.receiver.name}.new(:x, :y)`")
+      end
+    end
+
     def collect_constant(node)
       v = node.value
       if constant_call?(v, :Data, :define)
@@ -232,9 +239,7 @@ module Sake
       return error(v.block, "#{v.receiver.name}.new with a block is not supported; define functions in `class #{node.name}`") if v.block
 
       name = node.name.to_s
-      fields = (v.arguments&.arguments || []).filter_map do |a|
-        a.is_a?(Prism::SymbolNode) ? a.unescaped : error(a, "#{v.receiver.name}.new takes field names as symbols, like `#{v.receiver.name}.new(:x, :y)`")
-      end
+      fields = struct_new_fields(v)
       fields.unshift("message") if exception && fields.first != "message"
       dup = fields.find { fields.count(_1) > 1 }
       return error(v, "duplicate field `#{dup}` in #{v.receiver.name}.new") if dup
@@ -299,8 +304,17 @@ module Sake
       if (sup = first.superclass)
         if sup.is_a?(Prism::HashNode)
           error(sup, "`class #{name} < {...}` is the old form of declaring fields", ["write them in the body: #{old_settings_hint(sup)}"])
+        elsif struct_new?(sup)
+          # Ruby's `class Point < Struct.new(:x, :y)`: the fields, as attr_accessor lines.
+          error(sup.block, "Struct.new with a block is not supported; define functions in the body of `class #{name}`") if sup.block
+          fields = struct_new_fields(sup)
+          if (d = fields.find { fields.count(_1) > 1 })
+            error(sup, "field `#{d}` is declared twice in #{name}")
+            fields.uniq!
+          end
+          spec.merge!(fields: fields.dup, readers: fields.dup, writers: fields.dup)
         elsif !sup.is_a?(Prism::ConstantReadNode)
-          error(sup, "`class #{name} < X` takes a class name: B < A writes A's definitions into B")
+          error(sup, "`class #{name} < X` takes a class name or `Struct.new(:x, :y)`: B < A writes A's definitions into B")
         elsif EXCEPTION_PARENTS.include?(pname = sup.name.to_s)
           spec[:exception] = true
           spec.merge!(fields: ["message"], readers: ["message"], writers: ["message"])

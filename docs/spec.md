@@ -585,7 +585,8 @@ Every `class` is a type. Its fields are declared in the body of its first `class
   `Struct.new` type); a module is included with `include`.
 - **`class E < Exception`** (or `< StandardError`) declares an exception type: `message` is its first
   field, then the fields of its `attr_*` lines.
-- **`Struct.new(:x, :y)`.** Shorthand for `class C` with `attr_accessor x, y`.
+- **`Struct.new(:x, :y)`.** Shorthand for `class C` with `attr_accessor x, y`; `class C < Struct.new(:x, :y)`
+  (Ruby's form) declares those fields first and then the body's `attr_*` lines and functions.
 - **`Exception.new(:line)`.** Shorthand for `class C < Exception` with `attr_accessor line`.
 - **Errors.** `attr_reader :x` (a Symbol), fields in a later `class C`, a default value, and a write from outside to a read-only field are static errors. The old form
   `class C < {reader: [...]}` is an error whose hint gives the `attr_*` lines.

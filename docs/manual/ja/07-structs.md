@@ -33,7 +33,7 @@ end
 - **構築ごとに 1 つの型。** 検査器にとって、各 `C.new` はそれ自身の型です。別の場所で作ったインスタンス（または、`expect(42)` と `expect("x")` のように別の引数型で呼ばれた関数の 1 つの場所）はそれぞれのフィールド型を保つので、Integer の `Heap` と Job の `Heap` は混ざらず、汎用の包み（`Result.map` の `Ok.new(yield(@value))`）は呼び出し元ごとに 1 つの型です。メッセージは、型に複数の場所があるときだけ場所付きで名乗ります（`Heap@L7`）。値から値を作る関数（Value を取る関数の中の `Value.new(a + b)`）は場所ごとに 1 つの型にとどまります。
 - **`class B < A`。** A の定義を B に書き写す略記です。A のフィールドが先（次に B の）、A の関数は B の関数でもあり（型無しの名前と中の `@x` は B のもの）、A の `include` は B のものです。B 自身の定義が A のものに勝ちます。その後 A と B は無関係で、B は A ではなく、`A.f(b)` は型エラーです。`<` はプログラムの class（または `Struct.new` の型）を取り、module は `include` します。
 - **`class E < Exception`**（または `< StandardError`）は例外型を宣言します。`message` が最初のフィールドで、その後に `attr_*` の行のフィールドが続きます。
-- **`Struct.new(:x, :y)`。** `attr_accessor x, y` を持つ `class C` の略記です。
+- **`Struct.new(:x, :y)`。** `attr_accessor x, y` を持つ `class C` の略記です。Ruby の形 `class C < Struct.new(:x, :y)` も書け、そのフィールドが先、本体の `attr_*` 行と関数が後に来ます。
 - **`Exception.new(:line)`。** `attr_accessor line` を持つ `class C < Exception` の略記です。
 - **エラー。** `attr_reader :x`（Symbol）、後の `class C` でのフィールド、既定値、読み出し専用フィールドへの外からの書き込みは静的エラーです。古い形 `class C < {reader: [...]}` はエラーで、hint が `attr_*` の行を示します。
 
