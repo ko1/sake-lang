@@ -13,6 +13,7 @@
 
 - **ラムダが無い。** 失敗する呼び出しを 30 個並べて順に `rescue` する probe を `-> { ... }` の表で書こうとして、全部 `unsupported syntax: lambda` になった。`begin/rescue/end` を 30 回書くか、Ruby 側で生成するしかない。テストの表や callback の表を書くときに毎回ぶつかる（proc 値は D で見送った判断）。
 - **endless def の本体に `in` や修飾 `if` を書くと、Ruby の文法上 def 全体に掛かる。** `def number?(l) = l in Integer | Float` は「def を pattern match する」と読まれて `def must be at the top level` になり、`def initialize(c) = @x = 1 if @x == nil` は class 本体の規則の文で弾かれた。どちらも Ruby の仕様だが、Sake では endless def を多用するので踏みやすい。後者には hint（`= (body if cond)` と括る）を足した。前者は括れば通る。
+  **ko1 の注（10-10）**: `def foo = expr` は Ruby と同じく expr が十分短いときだけに使うもの。`@x = 1 if @x == nil` を 1 行に押し込んだのは書き手の誤用で、普通に `def ... end` で書くべきだった。つまずきの原因は言語ではなく書き手の癖。
 - **`String.dup` が無い**（`Kernel.dup`）。hint が `dup` を持つ名前空間を 3 つ挙げてくれたので 1 回で直ったが、「どの名前空間に置かれているか」を当てる作業は Ruby には無いもの。
 - **`"..." % record` が `Arithmetic.%` として報告される。** 演算子はモジュールに属するので `%` は Arithmetic だが、String の format で `Arithmetic` の名が出ると一瞬迷う。
 - **`r = 3..` は次の行に続く**（Ruby と同じ）。章には `(3..)` と書けと注記した。
