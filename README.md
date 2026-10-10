@@ -26,9 +26,8 @@ support it, and development has stopped (2026-10-08).** See [Status](#status).
 ## A taste
 
 ```ruby
-Point = Struct.new(:x, :y)
-
 class Point
+  attr_reader x, y
   def norm2(p) = @x * @x + @y * @y        # @x is Point.x(p): p is the first argument
 end
 
@@ -105,7 +104,8 @@ running.
 
 - **Values**: Integer, Float, Rational, Complex, String, Symbol, true/false, nil, Tuple `[a, b]`,
   Record `{x: 1}`, Array, Hash, Set, Range, Regexp, and Time.
-- **Named types**: `Struct.new` types, and exception types made with `Exception.new`.
+- **Named types**: `class C` with `attr_reader` / `attr_accessor` lines for its fields (`Struct.new(:x, :y)`
+  is the shorthand), and exception types `class E < Exception`.
 - **Operators**: `a + b` runs the `+` of `a`'s type, and `a[i]` its `[]`. Your own types join by
   including `Arithmetic`, `Comparable`, `Bitwise`, or `Indexable`.
 - **Chains**: `x.T.f(args)` is `T.f(x, args)`, and `_` is the previous statement's value, so a
