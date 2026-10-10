@@ -2,7 +2,7 @@
 
 ## Binary operators
 
-An operator dispatches on the type of its **left operand**: `a OP b` runs `T.OP(a, b)`, where `T` is the type of `a`. Each operator belongs to a module, and `a OP b` is shorthand for calling the operator through that module ([module functions and dispatch](02-program.md)):
+Each operator belongs to a module, and `a OP b` is shorthand for calling that module's function: `a + b` is `Arithmetic.+(a, b)`. A module's function is resolved by the type of its first argument ([module functions and dispatch](02-program.md)), so the call runs `T.+(a, b)` where `T` is the type of `a`: an operator dispatches on its **left operand**. Error messages name the module's function (`Arithmetic.*: ...`).
 
 | Module | Operators | Built-in types that include it |
 |---|---|---|

@@ -19,7 +19,7 @@ All definitions are collected before anything runs, so a function may be called 
 Rules:
 
 - Namespaces cannot be nested (`A::B` is rejected).
-- Classes do not inherit. `class B < A` is shorthand for writing A's definitions in B ([Struct types](07-structs.md)); afterwards A and B are unrelated types, and `A.f` takes only A's.
+- Classes do not inherit. For any class, `class B < A` is shorthand for writing A's definitions in B; afterwards A and B are unrelated types, and `A.f` takes only A's (the chapter [Struct types](07-structs.md); this book calls every type a program defines, with `class` or `Struct.new`, a Struct type).
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is also an error.
 - Constants can only be assigned from `Struct.new`. Sake has **no value constants**. For a named value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error whose hint gives that function. `once { ... }` computes a value once ([Built-in operations](09-builtins.md)).

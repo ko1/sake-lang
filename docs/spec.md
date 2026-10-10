@@ -101,8 +101,8 @@ definition.
 Rules:
 
 - Namespaces cannot be nested (`A::B` is rejected).
-- Classes do not inherit. `class B < A` is shorthand for writing A's definitions in B (§10.1);
-  afterwards A and B are unrelated types, and `A.f` takes only A's.
+- Classes do not inherit. For any class, `class B < A` is shorthand for writing A's definitions in B
+  (§10.1); afterwards A and B are unrelated types, and `A.f` takes only A's.
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
@@ -392,9 +392,11 @@ function.
 
 ### 8.1 Binary operators
 
-An operator dispatches on the type of its **left operand**: `a OP b` runs `T.OP(a, b)`, where `T` is
-the type of `a`. Each operator belongs to a module, and `a OP b` is shorthand for calling the
-operator through that module ([§5.6](#56-calling-a-modules-functions-module_function-and-dispatch)):
+Each operator belongs to a module, and `a OP b` is shorthand for calling that module's function:
+`a + b` is `Arithmetic.+(a, b)`. A module's function is resolved by the type of its first argument
+([§5.6](#56-calling-a-modules-functions-module_function-and-dispatch)), so the call runs `T.+(a, b)`
+where `T` is the type of `a`: an operator dispatches on its **left operand**. Error messages name the
+module's function (`Arithmetic.*: ...`).
 
 | Module | Operators | Built-in types that include it |
 |---|---|---|

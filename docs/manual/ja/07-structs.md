@@ -1,5 +1,7 @@
 # Struct 型
 
+プログラムが定義する型を、この本では Struct 型と呼びます。`class` に `attr_*` の行で宣言しても、`Struct.new(:x, :y)` で作っても同じもので、値は Ruby の Struct の値のようにフィールドを持ち、その操作は `Type.op(value, ...)` と型を付けて呼びます。
+
 ## 型の宣言: class と attr_*
 
 ```ruby

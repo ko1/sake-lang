@@ -1,5 +1,7 @@
 # Struct types
 
+This book calls every type a program defines a Struct type. Declared with `attr_*` lines in a `class` or made with `Struct.new(:x, :y)`, it is the same thing: its values hold fields like Ruby's Struct values, and its operations are called with the type, `Type.op(value, ...)`.
+
 ## Declaring a type: class and attr_*
 
 ```ruby
