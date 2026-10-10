@@ -23,6 +23,11 @@ Because every operation names its type:
 The motivation was to make a language that is easy for AI to write. **The evaluation did not
 support it, and development has stopped (2026-10-08).** See [Status](#status).
 
+> **Writing Sake with a language model?** Give it [docs/cheatsheet.md](docs/cheatsheet.md): the
+> rules on four pages plus the compact list of operations, about 10k tokens, and all a model needs
+> (raw: <https://raw.githubusercontent.com/ko1/sake-lang/main/docs/cheatsheet.md>). The full
+> reference manual and the playground are at <https://ko1.github.io/sake-lang/>.
+
 ## A taste
 
 ```ruby
