@@ -136,7 +136,8 @@ p(Array.each(Array[3, 12, 5]) { |x| break x if x > 10 })
 - `class C` with `attr_reader x, y` / `attr_accessor n` / `attr_writer w` (names bare, not Symbols;
   `attr_accessor :next` only for reserved words) declares a type with fields in that order.
   `private attr_reader x` hides the reader outside the class. No field defaults (`attr_reader a = 1`
-  is rejected); no nested classes/modules, no `A::B`, no constants or code in the body.
+  is rejected); no code in the body. Namespaces nest: `class B` inside `module A` (or `class A::B`) is
+  `A::B`, used as `A::B.f(x)`; inside `A`, a bare `B` means `A::B` when it exists.
 - `C.new(x, y)` takes fields positionally (or by keyword: `C.new(1, y: 2)`; prefer keywords when
   there are several fields). Without `initialize` every field is required. `def initialize(c)`
   (exactly one parameter: the new instance, **not** the field values) runs after `new` stored the
@@ -344,7 +345,7 @@ p(JSON.parse(s))
 
 ### Also rejected
 `self`, `$globals`, `eval`/`send`/`define_method`/`respond_to?`-style reflection, `defined?`,
-`&.`, `obj.method`, `Data.define`, `Struct.new(...) do`, `attr_reader :x` (Symbol form), nested
-`class`/`module`, `A::B` (only `Math::PI` & co.), `require` of a non-literal, `case/when`, `for`,
+`&.`, `obj.method`, `Data.define`, `Struct.new(...) do`, `attr_reader :x` (Symbol form), `A::B` as a
+value (a namespace is not a value), `def A::B.f`, `require` of a non-literal, `case/when`, `for`,
 `%w[]`, writing a Record field, `<<` on String/Array, `f(**opts)`, `Integer.(a + b)`. Only the
 operations listed in Part 2 exist.

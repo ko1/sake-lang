@@ -18,7 +18,7 @@ All definitions are collected before anything runs, so a function may be called 
 
 Rules:
 
-- Namespaces cannot be nested (`A::B` is rejected).
+- Namespaces nest. `class B` (or `module B`, or `B = Struct.new(...)`) written inside `module A` declares `A::B`, and so does `class A::B` at the top level; both spellings may open the same namespace. Outside, the full name is used: `A::B.f(x)`, `x.A::B.f`, `include A::M`, `class C < A::B`, `x in A::B`, `(A::B|C).f(x)`, `rescue A::E`. Inside `A`, a bare `B` means `A::B` when that exists (Ruby's lexical lookup, innermost namespace first), else the top-level `B`. `def A::B.f` is not Ruby syntax: a module function of a nested module is defined inside it (`module A::B`, `module_function`). A namespace is not a value (`p(A::B)` is an error), and `A::B` alone has no meaning.
 - Classes do not inherit. For any class, `class B < A` is shorthand for writing A's definitions in B; afterwards A and B are unrelated types, and `A.f` takes only A's ([Classes](07-classes.md)).
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is also an error.

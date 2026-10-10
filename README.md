@@ -117,8 +117,8 @@ running.
   sequence of operations reads in order while each step still names its type.
 - **Functions and blocks**: functions are polymorphic and take no annotations. Blocks are passed
   with `yield`.
-- **Modules**: `module` with `include` works like Ruby's modules, resolved statically. There is no
-  inheritance.
+- **Modules**: `module` with `include` works like Ruby's modules, resolved statically. Namespaces
+  nest (`A::B`). There is no inheritance.
 - **nil**: a value that may be nil has the type `nil | T`, narrowed by `if x`, `x != nil`, and
   early returns.
 - **Patterns**: `x in Integer` and `case x in ...` narrow types, and the checker verifies that a

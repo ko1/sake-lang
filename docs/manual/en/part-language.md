@@ -16,7 +16,7 @@ p(Hash.to_a(counts).Array.sort_by { |w, n| -n }.Array.first(2))   # [["the", 2],
 Nearly every property of the language follows from this one rule.
 
 - **One line is enough to read it.** `Array.each(words)` says which `each` runs without a declaration to look up; in a chain `x.Array.sort_by { }`, each step names its type too.
-- **Every call target is known before running.** There is no dispatch on the receiver, so a misspelled name (`String.upcse`) or a wrong number of arguments is reported for the whole program before it starts.
+- **Call targets are fixed before running.** `String.upcase(s)` names one function. A module's mixin function `M.f(x)`, a listed call `(A|B).f(x)` and an operator `a + b` choose by the type of the first argument, but the set of candidates (the types that include `M`, the listed types, the operator table) is fixed before running, and a type outside the set is reported before running. Nothing searches the receiver at run time (no `method_missing`, no reflection), so a misspelled name (`String.upcse`) or a wrong number of arguments is also reported for the whole program before it starts.
 - **Types are inferred, never written.** The checker infers the types of the whole program and reports a value that does not fit an operation (`"" + 1`, an unchecked nil) before running; how much of that stops a run is chosen with `--strict`, levels 0 to 4.
 - **Run-time checks remain.** Values carry type tags and every operation checks its arguments, so what the checks before running miss still stops at that operation's line.
 

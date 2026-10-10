@@ -183,7 +183,7 @@ module Sake
                when Prism::CallAndWriteNode then And.new(left: cur, right: set, origin: n)
                else set
                end
-        Seq.new(body: [LVarSet.new(slot: tmp, value: lower(n.receiver.receiver), origin: n), body], origin: n)
+        Seq.new(body: [LVarSet.new(slot: tmp, value: lower(chain_subject(n)), origin: n), body], origin: n)
       when Prism::InstanceVariableOrWriteNode
         fa = target(n) or return unresolved(n)
         Or.new(left: field_get(fa.getter, get(0, n), n), right: field_set(fa.setter, get(0, n), lower(n.value), n), origin: n)
@@ -276,7 +276,7 @@ module Sake
 
     def pattern(pat)
       case pat
-      when Prism::ConstantReadNode then PType.new(name: pat.name.to_s, origin: pat)
+      when Prism::ConstantReadNode, Prism::ConstantPathNode then PType.new(name: @program.const_names.fetch(pat) { pat.name.to_s }, origin: pat)
       when Prism::AlternationPatternNode then PAlt.new(left: pattern(pat.left), right: pattern(pat.right), origin: pat)
       when Prism::HashPatternNode
         keys, slots = record_targets(pat)
@@ -298,7 +298,7 @@ module Sake
         subject = chain_subject(n)
         xs =
           if subject then [lower(subject), *args(n.arguments)]
-          elsif n.receiver.is_a?(Prism::ConstantReadNode) then args(n.arguments)
+          elsif n.receiver.is_a?(Prism::ConstantReadNode) || @program.const_names.key?(n.receiver) then args(n.arguments) # `Integer.+(a, b)`, `A::B.+(a, b)`; not `Math::PI * 2`
           else [lower(n.receiver), *args(n.arguments)]
           end
         return UnOp.new(op: t.op, value: xs[0], origin: n) if Operators::UNARY.include?(t.op)
@@ -396,18 +396,24 @@ module Sake
     end
 
     # `x.T.f(...)`: x (see Resolver#chain_subject).
+    # `x.T.f(...)` / `x.A::B.f(...)`: the subject x (the resolver checked the step; see Resolver#chain_step).
     def chain_subject(n)
+      return nil unless n.call_operator_loc
       r = n.receiver
-      return nil unless n.call_operator_loc && r.is_a?(Prism::CallNode) && r.receiver && r.call_operator_loc
+      r = r.parent while r.is_a?(Prism::ConstantPathNode)
+      return nil unless r.is_a?(Prism::CallNode) && r.receiver && r.call_operator_loc
       r.name.to_s.match?(/\A[A-Z]/) && r.arguments.nil? && r.block.nil? ? r.receiver : nil
     end
+
+    def exception_type(node) = @program.const_names.fetch(node) { node.slice }
 
     def raise_node(n)
       nodes = n.arguments&.arguments || []
       return ReRaise.new(origin: n) if nodes.empty?
-      return Raise.new(type: nodes[0].slice, args: [lower(nodes[1])], origin: n) if nodes.size == 2
-      if nodes[0].is_a?(Prism::ConstantReadNode) # `raise T`: the message is the type's name
-        return Raise.new(type: nodes[0].slice, args: [Str.new(string: nodes[0].slice.freeze, origin: nodes[0])], origin: n)
+      return Raise.new(type: exception_type(nodes[0]), args: [lower(nodes[1])], origin: n) if nodes.size == 2
+      if nodes[0].is_a?(Prism::ConstantReadNode) || nodes[0].is_a?(Prism::ConstantPathNode) # `raise T`: the message is the type's name
+        t = exception_type(nodes[0])
+        return Raise.new(type: t, args: [Str.new(string: t.freeze, origin: nodes[0])], origin: n)
       end
       Raise.new(type: nil, args: [lower(nodes[0])], origin: n)
     end

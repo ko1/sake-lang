@@ -14,9 +14,12 @@ experimental. Points still open in the design are listed in [§16](#16-not-yet-s
 2. **Types are written on operations, not on bindings.** An operation is called with its type,
    `Type.op(subject, args...)`. Variables, parameters, return values, and fields carry no type
    annotations.
-3. **Every call target is known before running.** There is no dispatch on the receiver, no
-   `method_missing`, and no reflection. Name errors are reported for the whole program before
-   execution starts.
+3. **Call targets are fixed before running.** A qualified call `T.f(x)` names one function. A
+   module's mixin function `M.f(x)`, a listed call `(A|B).f(x)` and an operator `a + b` choose by
+   the type of the first argument, among a set of candidates fixed before running (the types that
+   include `M`, the listed types, the operator table); a type outside the set is reported before
+   running. Nothing searches the receiver at run time: no `method_missing`, no reflection. Name
+   errors are reported for the whole program before execution starts.
 4. **Values carry type tags, and every operation checks them.** A wrong type is reported as an
    error at the operation that received it, with the line number. These checks are always
    enabled.
@@ -100,7 +103,13 @@ definition.
 
 Rules:
 
-- Namespaces cannot be nested (`A::B` is rejected).
+- Namespaces nest. `class B` (or `module B`, or `B = Struct.new(...)`) written inside `module A`
+  declares `A::B`, and so does `class A::B` at the top level; both spellings may open the same
+  namespace. Outside, the full name is used: `A::B.f(x)`, `x.A::B.f`, `include A::M`, `class C < A::B`,
+  `x in A::B`, `(A::B|C).f(x)`, `rescue A::E`. Inside `A`, a bare `B` means `A::B` when that exists
+  (Ruby's lexical lookup, innermost namespace first), else the top-level `B`. `def A::B.f` is not Ruby
+  syntax: a module function of a nested module is defined inside it (`module A::B`, `module_function`).
+  A namespace is not a value (`p(A::B)` is an error), and `A::B` alone has no meaning.
 - Classes do not inherit. For any class, `class B < A` is shorthand for writing A's definitions in B
   (§10.1); afterwards A and B are unrelated types, and `A.f` takes only A's.
 - `def self.x` is rejected, because Sake has no `self`.
@@ -226,7 +235,6 @@ module, resolved statically:
 - **Resolution in the includer.** Inside a copied function, unqualified names are resolved in
   `X`, so `M` can use functions that `X` provides, such as `each`. Nothing is dispatched at run
   time: each `X.f` is fixed before running. `@x` refers to a field of `X` when `X` is a class.
-
 - **Requirements.** The unqualified names that the bodies of `M`'s functions call (`each(x)`, say)
   and the fields `@x` they read, minus what `M` itself, the top level and `Kernel` define, are `M`'s
   requirements. Nothing is declared; they are collected from the bodies. If `X` lacks one (no
@@ -566,8 +574,9 @@ Every `class` is a type. Its fields are declared in the body of its first `class
   name and a field given twice are errors). Without `initialize`, every field must be given. With it,
   trailing fields may be left out (or skipped for a later keyword): they are nil when initialize
   starts, and initialize sets them, as Ruby's `@items = []` (`@level = :info if @level == nil` keeps a
-  value `new` gave). An exception type's fields after `message` may always be left out (`raise E,
-  "msg"` gives the message only).
+  value `new` gave). An exception type's fields after `message` may always be left out of `E.new("msg")`
+  (they are nil); `raise E, "msg"` is for a type with no field besides `message` (a type with more
+  fields is raised as `raise E.new(...)`, a static error otherwise).
 - **No default values.** `attr_reader items = Array[]` is an error: a field's first value is set in
   `initialize`, the one place that runs for each new instance, where it can read the other fields
   (`@len = String.bytesize(@src)`). The checker follows the fields through initialize, so a field it
@@ -876,7 +885,8 @@ one.
 | `dup(x)` | a copy of x | Ruby's `obj.dup`: new containers and Struct values, the same elements; a type that defines `dup` gets its own |
 
 `Math::PI`, `Math::E`, `Float::INFINITY`, `Float::NAN`, `Float::EPSILON`, `Float::MAX`, `Float::MIN` are read as
-operations (`Math.PI`), as `ARGV` is: Sake has no value constants, and no other nested names.
+operations (`Math.PI`), as `ARGV` is: Sake has no value constants (a nested name such as `A::B` is a
+namespace, §5.1, never a value).
 
 `Arithmetic.round(x)`, `floor`, `ceil`, `truncate` (with an optional digit count), `abs`, `to_f`, `to_i`, `zero?`
 take any real number (Integer, Float, Rational), as Ruby's `x.round` does; the result's type follows x's (round
@@ -1184,5 +1194,4 @@ Each of these is rejected statically. Most wait on a design decision.
 - **`case`/`when`** (use `case`/`in`), **`%w[]`, `%i[]`.**
 - **`for`**: not planned for now. Iterate with an operation such as `Range.each(1..3) { |i| ... }`.
 - **Patterns other than those in [§9.1](#91-pattern-matching)**: `*rest` in a Tuple pattern, find patterns, pins, guards.
-- **Nested names** such as `URI::HTTP` (only the built-in constants `Math::PI` & co. are read).
 - **First-class blocks** (storing a block, `proc`, `lambda`): see §7 for what blocks can do.

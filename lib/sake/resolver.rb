@@ -37,7 +37,7 @@ module Sake
   # namespaces resolves once per namespace. blocks: node => parameter names.
   # includes: namespace => names of the modules it includes (for dispatch through modules and operators).
   # path: the main file; sources: Prism source => file (for the file of a node, see Sake.file_of).
-  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, keyword_init: true)
+  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, :const_names, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -70,6 +70,7 @@ module Sake
       @functions = {} # namespace (nil = top level) => name => UserFunction
       @struct_types = {}
       @value_constants = {} # rejected `NAME = value` => suggested function name
+      @const_names = {}.compare_by_identity # constant node => the full namespace name it resolved to (A::B)
       @modules = {}         # module name => ModuleNode
       @module_function_names = {} # module => names given to `module_function :name`
       @includes = {} # namespace => [[module name, include node]]
@@ -94,7 +95,7 @@ module Sake
       diags = @diags.uniq { [_1.path, _1.line, _1.column, _1.message] }.sort_by { [order.fetch(_1.path, 0), _1.line, _1.column] }
       raise StaticErrors.new(diags) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks, sources: @sources,
-                  functions: @functions, struct_types: @struct_types,
+                  functions: @functions, struct_types: @struct_types, const_names: @const_names,
                   includes: @linearized.transform_values { |l| l.map(&:first) })
     end
 
@@ -110,18 +111,20 @@ module Sake
 
     def collect
       stmts = @files.flat_map { |_, root| root.statements.body }.reject { Resolver.require_call?(_1) }
-      # classes first so that `class Point` bodies can see their accessors.
-      stmts.grep(Prism::ConstantWriteNode).each { collect_constant(_1) }
-      @class_nodes = stmts.grep(Prism::ClassNode).select { _1.constant_path.is_a?(Prism::ConstantReadNode) }.group_by { _1.constant_path.name.to_s }
+      # Namespaces nest: `class B` inside `module A` is A::B, as `class A::B` is. Every definition is
+      # collected under its full name. Classes first, so that `class Point` bodies can see their accessors.
+      nodes = namespace_nodes(stmts, nil)
+      nodes.each { |st, full| collect_constant(st, full) if st.is_a?(Prism::ConstantWriteNode) }
+      @class_nodes = nodes.select { |st, _| st.is_a?(Prism::ClassNode) }.group_by { |_, full| full }.transform_values { |l| l.map(&:first) }
       @class_specs = {}
       @private_fields = {} # type name => fields declared with private attr_*
-      @module_names = stmts.grep(Prism::ModuleNode).map { _1.constant_path.slice }.to_set | Operators::MODULES
+      @module_names = nodes.filter_map { |st, full| full if st.is_a?(Prism::ModuleNode) }.to_set | Operators::MODULES
       @class_nodes.each_key { class_spec(_1, []) }
       stmts.each do |st|
         case st
         when Prism::ConstantWriteNode then nil
         when Prism::DefNode then collect_def(st, nil)
-        when Prism::ClassNode, Prism::ModuleNode then collect_namespace(st)
+        when Prism::ClassNode, Prism::ModuleNode then collect_namespace(st, nil)
         else @toplevel << st
         end
       end
@@ -136,7 +139,7 @@ module Sake
     # except an exception type's (`raise E, "msg"` gives the message only): its other fields may be nil.
     def apply_initialize_arity
       @struct_types.each do |name, dt|
-        next if name.include?("::") || !(@functions.dig(name, "initialize") || (dt.exception && dt.fields.size > 1))
+        next unless @functions.dig(name, "initialize") || (dt.exception && dt.fields.size > 1)
         fields = dt.fields
         @registry.define(name, :new, [], optional: fields.map { "Any" }) do |*vs|
           StructValue.new(dt, fields.each_index.map { |i| i < vs.size && !vs[i].equal?(Interpreter::MISSING) ? vs[i] : nil })
@@ -215,6 +218,45 @@ module Sake
 
     def struct_new?(v) = constant_call?(v, :Struct, :new)
 
+    # --- namespace names ---
+
+    def constant?(n) = n.is_a?(Prism::ConstantReadNode) || n.is_a?(Prism::ConstantPathNode)
+
+    # The text of a constant, `A::B`, for a ConstantReadNode or a ConstantPathNode (not a chain step).
+    def const_text(n) = n.slice.delete(" \t\r\n").delete_prefix("::")
+
+    def qualify(prefix, name) = prefix ? "#{prefix}::#{name}" : name
+
+    # [node, full name] for every class, module and `C = Struct.new` in stmts, descending into class and
+    # module bodies: `module A` holding `class B` declares A::B.
+    def namespace_nodes(stmts, prefix)
+      stmts.flat_map do |st|
+        case st
+        when Prism::ConstantWriteNode then [[st, qualify(prefix, st.name.to_s)]]
+        when Prism::ClassNode, Prism::ModuleNode
+          full = qualify(prefix, const_text(st.constant_path))
+          body = st.body.is_a?(Prism::StatementsNode) ? st.body.body : []
+          [[st, full], *namespace_nodes(body, full)]
+        else []
+        end
+      end
+    end
+
+    def known_namespace?(name)
+      @registry.namespace?(name) || @module_names.include?(name) || @class_nodes.key?(name) || @struct_types.key?(name)
+    end
+
+    # The namespace a constant names, seen from inside `ns`: as Ruby's lexical lookup, `B` written in
+    # `module A` is A::B when that exists, else B. The full name is kept for the lowering (patterns, raise).
+    def resolve_const(n, ns) = @const_names[n] = resolve_name(const_text(n), ns)
+
+    def resolve_name(text, ns)
+      parts = ns ? ns.split("::") : []
+      parts.size.downto(1).map { "#{parts.first(_1).join("::")}::#{text}" }.find { known_namespace?(_1) } || text
+    end
+
+    def enclosing(ns) = ns&.include?("::") ? ns.rpartition("::").first : nil
+
     # The field names of `Struct.new(:x, :y)` / `Exception.new(:line)`.
     def struct_new_fields(v)
       (v.arguments&.arguments || []).filter_map do |a|
@@ -222,7 +264,7 @@ module Sake
       end
     end
 
-    def collect_constant(node)
+    def collect_constant(node, name)
       v = node.value
       if constant_call?(v, :Data, :define)
         # Ruby's Data is immutable; Sake's named types are mutable, which is Ruby's Struct.
@@ -238,7 +280,6 @@ module Sake
       end
       return error(v.block, "#{v.receiver.name}.new with a block is not supported; define functions in `class #{node.name}`") if v.block
 
-      name = node.name.to_s
       fields = struct_new_fields(v)
       fields.unshift("message") if exception && fields.first != "message"
       dup = fields.find { fields.count(_1) > 1 }
@@ -252,7 +293,6 @@ module Sake
     # readers / writers: the fields with a public reader `T.x` / writer `T.set_x` (all of them by default).
     def define_struct(name, fields, exception: false, readers: fields, writers: fields)
       dt = @struct_types[name] = StructType.new(name, fields, exception, {}, {})
-      return if name.include?("::")
       @registry.define(name, :new, fields.map { "Any" }) { |*vs| StructValue.new(dt, vs) }
       Stdlib.install_typed_array(@registry, name, struct: true)
       Stdlib.define_nil_equality(@registry, name)
@@ -313,9 +353,9 @@ module Sake
             fields.uniq!
           end
           spec.merge!(fields: fields.dup, readers: fields.dup, writers: fields.dup)
-        elsif !sup.is_a?(Prism::ConstantReadNode)
+        elsif !constant?(sup)
           error(sup, "`class #{name} < X` takes a class name or `Struct.new(:x, :y)`: B < A writes A's definitions into B")
-        elsif EXCEPTION_PARENTS.include?(pname = sup.name.to_s)
+        elsif EXCEPTION_PARENTS.include?(pname = resolve_const(sup, enclosing(name)))
           spec[:exception] = true
           spec.merge!(fields: ["message"], readers: ["message"], writers: ["message"])
         elsif seen.include?(pname) || pname == name
@@ -390,11 +430,9 @@ module Sake
       end
     end
 
-    def collect_namespace(node)
+    def collect_namespace(node, prefix)
       cp = node.constant_path
-      return error(cp, "nested namespace `#{cp.slice}` is not supported") unless cp.is_a?(Prism::ConstantReadNode)
-
-      ns = cp.name.to_s
+      ns = qualify(prefix, const_text(cp))
       type = @struct_types.key?(ns) || BUILTIN_TYPES.include?(ns)
       if node.is_a?(Prism::ModuleNode) && type
         error(cp, "`module #{ns}`: #{ns} is a type; add operations to a type with class", ["class #{ns}"])
@@ -419,18 +457,22 @@ module Sake
           end
         elsif include_call?(st)
           st.arguments.arguments.each do |a|
-            next error(a, "include takes module names") unless a.is_a?(Prism::ConstantReadNode)
-            (@includes[ns] ||= []) << [a.name.to_s, st]
+            next error(a, "include takes module names") unless constant?(a)
+            (@includes[ns] ||= []) << [resolve_const(a, ns), st]
           end
         elsif attr_call?(st)
           error(st, "a module has no fields; `#{st.name}` is for a class") if node.is_a?(Prism::ModuleNode)
+        elsif st.is_a?(Prism::ClassNode) || st.is_a?(Prism::ModuleNode)
+          collect_namespace(st, ns) # a nested namespace, ns::Name
+        elsif st.is_a?(Prism::ConstantWriteNode)
+          nil # `Point = Struct.new(...)`: collected first, as ns::Point
         elsif !st.is_a?(Prism::DefNode)
           hint = st.is_a?(Prism::CallNode) && st.name.start_with?("attr") ? spell(st.name.to_s, ATTRS.keys.map(&:to_s)).map { "did you mean `#{_1}`?" } : []
           if (st.is_a?(Prism::IfNode) || st.is_a?(Prism::UnlessNode)) && st.statements&.body&.first.is_a?(Prism::DefNode)
             d = st.statements.body.first # `def f(x) = body if cond`: Ruby reads the modifier as the def's, not the body's
             hint = ["Ruby reads `def #{d.name}(...) = body #{st.is_a?(Prism::IfNode) ? "if" : "unless"} cond` as a conditional definition; write the body in parentheses: `def #{d.name}(...) = (body #{st.is_a?(Prism::IfNode) ? "if" : "unless"} cond)`"]
           end
-          error(st, "only `def`, `include`, and (in a class) `attr_reader`/`attr_accessor`/`attr_writer` are allowed in a class/module body", hint)
+          error(st, "only `def`, `include`, a nested `class`/`module`, `Name = Struct.new(...)`, and (in a class) `attr_reader`/`attr_accessor`/`attr_writer` are allowed in a class/module body", hint)
         elsif st.receiver
           error(st, "`def #{st.receiver.slice}.#{st.name}` inside `#{cp.slice}`: write `def #{st.name}` (it defines #{ns}.#{st.name})")
         else
@@ -449,8 +491,8 @@ module Sake
     def collect_def(node, ns)
       case node.receiver
       when nil then nil
-      when Prism::ConstantReadNode
-        ns = node.receiver.name.to_s
+      when Prism::ConstantReadNode, Prism::ConstantPathNode
+        ns = const_text(node.receiver)
         @registry.add_namespace(ns)
       when Prism::SelfNode
         return error(node, "Sake has no `self`; inside `class Foo`, `def #{node.name}` defines Foo.#{node.name}")
@@ -472,7 +514,7 @@ module Sake
       fn.kwrest_param = node.parameters&.keyword_rest.is_a?(Prism::KeywordRestParameterNode) ? node.parameters.keyword_rest.name&.to_s : nil
       fn.keywords = (node.parameters&.keywords || []).to_h { [_1.name.to_s, _1.is_a?(Prism::OptionalKeywordParameterNode) ? _1.value : nil] }
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
-      fn.module_function = true if node.receiver.is_a?(Prism::ConstantReadNode)
+      fn.module_function = true if constant?(node.receiver)
       fn.abstract = abstract_body?(node.body)
       if (prev = @functions.dig(ns, name))
         error(node, "`#{fn.full_name}` is already defined at line #{prev.node.location.start_line}")
@@ -696,11 +738,18 @@ module Sake
       when Prism::ClassNode, Prism::ModuleNode then error(node, "class/module must be at the top level")
       when Prism::ConstantWriteNode then error(node, "constant assignment must be at the top level")
       when Prism::ConstantPathNode
-        # Math::PI, Float::INFINITY: read as operations (Math.PI), as ARGV is; no other nested names.
+        # Math::PI, Float::INFINITY: read as operations (Math.PI), as ARGV is; no other constants have values.
         par = node.parent
         fn = par.is_a?(Prism::ConstantReadNode) && BUILTIN_CONSTANTS.fetch(par.name.to_s, []).include?(node.name.to_s) && @registry.lookup(par.name.to_s, node.name.to_s)
         return set_call(node, ctx, fn) if fn
-        error(node, "`#{node.slice}` (nested constants) is not supported", ["built-in constants: #{BUILTIN_CONSTANTS.flat_map { |ns, cs| cs.map { "#{ns}::#{_1}" } }.join(", ")}"])
+        root = node
+        root = root.parent while root.is_a?(Prism::ConstantPathNode)
+        if root.is_a?(Prism::CallNode) # `x.A::B` with no operation after the type
+          check(root.receiver, ctx) if root.receiver
+          return error(node, "`#{first_line(node.slice)}` needs an operation after the type: `#{first_line(node.slice)}.op(...)`")
+        end
+        return error(node, "type `#{const_text(node)}` cannot be used as a value") if known_namespace?(resolve_const(node, ctx.ns))
+        error(node, "`#{node.slice}` is not defined", ["built-in constants: #{BUILTIN_CONSTANTS.flat_map { |ns, cs| cs.map { "#{ns}::#{_1}" } }.join(", ")}"])
       when Prism::ConstantReadNode
         # ARGV: the program's arguments (an operation, Kernel.ARGV; Sake has no value constants).
         return set_call(node, ctx, @registry.lookup("Kernel", "ARGV")) if node.name == :ARGV
@@ -791,13 +840,13 @@ module Sake
 
     # `x.T.f += v` (also ||=, &&=): T.set_f(x, T.f(x) + v), with x evaluated once.
     def check_field_op_write(node, ctx)
-      recv = node.receiver
-      chain = recv.is_a?(Prism::CallNode) && recv.receiver && recv.call_operator_loc && recv.name.to_s.match?(/\A[A-Z]/) && recv.arguments.nil?
-      unless chain && (dt = @struct_types[recv.name.to_s]) && dt.fields.include?(field = node.read_name.to_s)
+      step = chain_step(node)
+      tname = step && resolve_name(step[1], ctx.ns)
+      unless step && (dt = @struct_types[tname]) && dt.fields.include?(field = node.read_name.to_s)
         return error(node, "`#{first_line(node.slice)}`: write a field with its type, as `x.Point.count += 1`",
                      ["(the left side is `value.Type.field`, a field of a class)"])
       end
-      check(recv.receiver, ctx)
+      check(step[0], ctx)
       check(node.value, ctx)
       return private_field_error(node, dt.name, field) if private_access?(dt.name, field, ctx.ns)
       reader = lookup(dt.name, field)
@@ -833,8 +882,8 @@ module Sake
     # Patterns of `x in P` and `case x in P`: a type name, a literal, `P | Q`, or a Record pattern.
     def check_pattern(pat, ctx)
       case pat
-      when Prism::ConstantReadNode
-        name = pat.name.to_s
+      when Prism::ConstantReadNode, Prism::ConstantPathNode
+        name = resolve_const(pat, ctx.ns)
         return if @struct_types.key?(name) || PATTERN_TYPES.include?(name)
         error(pat, "`#{name}` is not a type", spell(name, PATTERN_TYPES + @struct_types.keys).map { "did you mean `#{_1}`?" })
       when Prism::NilNode, Prism::TrueNode, Prism::FalseNode, Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::SymbolNode
@@ -862,7 +911,7 @@ module Sake
       check(node.statements, ctx)
       clause = node.rescue_clause
       while clause
-        clause.exceptions.each { check_rescued_type(_1) }
+        clause.exceptions.each { check_rescued_type(_1, ctx) }
         unless clause.reference.nil? || clause.reference.is_a?(Prism::LocalVariableTargetNode)
           error(clause.reference, "rescue binds a local variable: `rescue T => e`")
         end
@@ -873,15 +922,10 @@ module Sake
       check(node.ensure_clause&.statements, ctx)
     end
 
-    def exception_name(n)
-      case n
-      when Prism::ConstantReadNode then n.name.to_s
-      when Prism::ConstantPathNode then n.slice
-      end
-    end
+    def exception_name(n, ctx) = constant?(n) ? resolve_const(n, ctx.ns) : nil
 
-    def check_rescued_type(n)
-      name = exception_name(n)
+    def check_rescued_type(n, ctx)
+      name = exception_name(n, ctx)
       return if CATCH_ALL.include?(name) # `rescue StandardError => e`: every rescuable error, as a bare rescue
       if NOT_RESCUABLE.include?(name)
         error(n, "#{name} cannot be rescued: it is a program error, which the checks before running report")
@@ -894,16 +938,16 @@ module Sake
     # raise; raise "message"; raise exception_value; raise ExceptionType, "message"
     def check_raise(node, ctx)
       args = node.arguments&.arguments || []
-      type_only = args.size == 1 && args[0].is_a?(Prism::ConstantReadNode) # `raise T`, as Ruby: the message is T's name
+      type_only = args.size == 1 && constant?(args[0]) # `raise T`, as Ruby: the message is T's name
       args.each_with_index { |a, i| check(a, ctx) unless i.zero? && (args.size == 2 || type_only) }
       case args.size
       when 0 then error(node, "a bare `raise` re-raises, so it is only allowed in a rescue clause") unless ctx.in_rescue
       when 1
-        if type_only && !@struct_types[args[0].name.to_s]&.exception
+        if type_only && !@struct_types[exception_name(args[0], ctx)]&.exception
           error(args[0], "`raise T` needs an exception type, got `#{args[0].slice}`")
         end
       when 2
-        name = exception_name(args[0])
+        name = exception_name(args[0], ctx)
         dt = name && @struct_types[name]
         if !dt&.exception
           error(args[0], "`raise T, message` needs an exception type, got `#{args[0].slice}`")
@@ -981,12 +1025,14 @@ module Sake
       if (types = union_receiver(recv))
         return check_union_call(node, types, args, blk, ctx)
       end
-      if (subject = chain_subject(node))
+      if (step = chain_step(node))
         # `x.T.f(args)` is `T.f(x, args)`.
+        subject, tname = step
+        tname = resolve_name(tname, ctx.ns)
         name = node.name.to_s
         # `x.T.f = v` is T.set_f(x, v)
-        name = "set_#{name.delete_suffix("=")}" if name.end_with?("=") && @struct_types[recv.name.to_s]&.fields&.include?(name.delete_suffix("="))
-        target = resolve_qualified(node, recv.name.to_s, name, argc: args.size + 1, from: ctx.ns)
+        name = "set_#{name.delete_suffix("=")}" if name.end_with?("=") && @struct_types[tname]&.fields&.include?(name.delete_suffix("="))
+        target = resolve_qualified(node, tname, name, argc: args.size + 1, from: ctx.ns)
         check(subject, ctx)
         kws = target_keywords(target)
         check_args(node.arguments, ctx, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)))
@@ -1000,11 +1046,9 @@ module Sake
         return error(node, "`#{node.name}` is not allowed in Sake (it defeats static analysis)") if FORBIDDEN.include?(node.name.to_s)
         return check_raise(node, ctx) if node.name == :raise && !lookup_unqualified?(ctx, "raise")
         target = resolve_unqualified(node, ctx)
-      elsif recv.is_a?(Prism::ConstantReadNode) && (node.call_operator_loc || node.name == :[])
-        # `T[...]` is the constructor syntax; `T.[](x, k)` is T's index operation.
-        target = resolve_qualified(node, recv.name.to_s, node.call_operator_loc ? node.name.to_s : CTOR, from: ctx.ns)
-      elsif recv.is_a?(Prism::ConstantPathNode) && !builtin_constant?(recv)
-        return error(recv, "`#{recv.slice}` (nested constants) is not supported")
+      elsif constant?(recv) && !builtin_constant?(recv) && (node.call_operator_loc || node.name == :[])
+        # `T[...]` is the constructor syntax; `T.[](x, k)` is T's index operation. `A::B.f` names a nested namespace.
+        target = resolve_qualified(node, resolve_const(recv, ctx.ns), node.call_operator_loc ? node.name.to_s : CTOR, from: ctx.ns)
       elsif node.call_operator_loc.nil? && BINARY_OPS.include?(node.name) && args.size == 1
         error(node, "operator `#{node.name}` is not supported") unless binary_op?(node.name)
         set_call(node, ctx, Operators::Call.new(Operators::MODULE_OF[node.name.to_s], node.name.to_s))
@@ -1260,7 +1304,7 @@ module Sake
       return nil unless recv.is_a?(Prism::ParenthesesNode) && recv.body.is_a?(Prism::StatementsNode) && recv.body.body.size == 1
       flat = lambda do |n|
         case n
-        when Prism::ConstantReadNode then [n]
+        when Prism::ConstantReadNode, Prism::ConstantPathNode then [n]
         when Prism::NilNode then [n]
         when Prism::CallNode
           return nil unless n.name == :| && n.call_operator_loc.nil? && n.receiver && n.arguments&.arguments&.size == 1
@@ -1279,7 +1323,7 @@ module Sake
       if (n = type_nodes.find { _1.is_a?(Prism::NilNode) })
         return error(n, "nil cannot be listed in `(...)`: check for nil first (`if x`), then call the operation")
       end
-      types = type_nodes.map { _1.name.to_s }
+      types = type_nodes.map { resolve_const(_1, ctx.ns) }
       return error(node.receiver, "list a type at most once in `(#{types.join("|")})`") if types.uniq.size != types.size
       if args.empty?
         return error(node, "(#{types.join("|")}).#{node.name} needs an argument to dispatch on")
@@ -1307,13 +1351,22 @@ module Sake
       set_call(node, ctx, UnionCall.new(types, node.name.to_s, table)) if table.size == types.size
     end
 
-    # `x.T.f(...)`: the subject x of a chain whose step `.T` names a type or module.
-    def chain_subject(node)
+    # `x.T.f(...)` or `x.A::B.f(...)`: [x, "T"] / [x, "A::B"] when node's receiver is a chain step that names
+    # a type or module (Ruby parses `x.A::B` as a constant path rooted at the call `x.A`).
+    def chain_step(node)
+      return nil unless node.call_operator_loc
       r = node.receiver
-      return nil unless node.call_operator_loc && r.is_a?(Prism::CallNode) && r.receiver && r.call_operator_loc
+      names = []
+      while r.is_a?(Prism::ConstantPathNode)
+        names.unshift(r.name.to_s)
+        r = r.parent
+      end
+      return nil unless r.is_a?(Prism::CallNode) && r.receiver && r.call_operator_loc
       return nil unless r.name.to_s.match?(/\A[A-Z]/) && r.arguments.nil? && r.block.nil?
-      r.receiver
+      [r.receiver, [r.name.to_s, *names].join("::")]
     end
+
+    def chain_subject(node) = chain_step(node)&.first
 
     # argc: the number of arguments when node's own count is not it (a chain adds its subject).
     # A private field's reader and writer are for the functions of its class (on any of its values).
