@@ -102,7 +102,8 @@
 
 ## Rust バックエンド（2026-10-10、experiments/2026-10-10-rust-backend）
 
-- `bin/sabic` は部分集合だけ。Hash・Set・Regexp・rescue・mixin ディスパッチ・`(A|B).f`・Thread を足す。
+- `bin/sabic` は部分集合だけ。Hash・Set・Regexp・rescue・`(A|B).f`・Thread・Tuple/Record パターンを足す（mixin ディスパッチと `case/in` の値・型パターンは 2026-10-10 に対応）。
+- 生成コードは Array の要素取り出しとディスパッチの引数で `Rc` を clone していて、1 反復あたり約 1.2 ns の損（shapes_mono で手書きの 4 倍）。オブジェクトの引数を `&SRef<T>` で渡す最適化で消せる見込み。
 - 生成器が自前の型推論を持っている。typer が式ごとの型を保持するようにして、それを使う。
 - Integer は 64 ビット（溢れたらエラー）。多倍長への昇格を入れるか、言語の意味論を 64 ビットにするかは未決。
 - 命名: Sake → Rust の変換器の名前（錆＋酒）。

@@ -34,6 +34,22 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 - **手書き Rust との差は 0.9〜1.6 倍。** fib では生成コードの方がわずかに速い（LLVM の揺れの範囲）。loops の 9% と levenshtein の 1.6 倍は、Ruby の意味論を保つ検査の分: `Array.fetch` の負の添字の正規化と範囲検査、`a[i] = v` の「末尾なら push」の分岐。levenshtein は内側のループに fetch が 5 回、set が 1 回ある。
 - **床除算は原因ではない**（切り分け）。手書き Rust の `%`（切り捨て）を Sake と同じ床除算にした `bench/hand/loops_floor.rs` は 1.161 秒で、切り捨ての 1.162 秒と同じ。LLVM が分岐を安く済ませている。
 
+## mixin ディスパッチの費用（shapes）
+
+`Shape.area(s)` が s の型で振り分ける費用を測った。`bench/shapes.sake` は Circle・Rect・Tri を 1,000 個混ぜた Array を round 回なめて面積を足す（round = 1,000,000 で 10^9 回のディスパッチ）。対照の `shapes_mono.sake` は全部 Circle で、呼び出し先が静的に決まる。Ruby 版は `s.area` の多相呼び出し（YJIT のインラインキャッシュ）、手書き Rust は enum + `match`（閉じた型集合。sabic が生成するのと同じ構造）、`Box<dyn Shape>`（vtable）、単相の 3 本。インタプリタは 10,000 round（10^7 回）で測り、他は 1,000,000 round。生成器側の対応: 合併型 `Circle | Rect | Tri` は Rust の enum、`Shape.area(s)` は `match &s { U::Circle(x) => Circle_area(x.clone()), ... }`、`case/in` は if 連鎖。
+
+| | Ruby `--yjit` | Sake interp（10^7 回） | Sake → Rust | 手書き Rust |
+|---|---|---|---|---|
+| shapes_mono（静的） | 18.0 | 46.0 | 1.65 | 0.41 |
+| shapes（3 型） | 20.0 | 44.2 | 1.90 | enum 0.60 / `dyn` 1.44 |
+| ディスパッチの増分 | +2.0（10%） | （起動と同程度） | **+0.25（15%）** | enum +0.19 / `dyn` +1.03 |
+
+単位は秒、中央値。10^9 回なので「増分の秒数 = 1 回あたりの ns」。
+
+- **Sake の mixin ディスパッチは 1 回 0.25 ns**。include している型の集合が静的に閉じているので enum の `match` になり、本体（`3 * r * r`）が呼び出し側に展開される。手書きの enum（+0.19 ns）とほぼ同じで、Rust の `dyn Trait`（+1.03 ns。vtable 経由で展開できない）より速い。Ruby の多相呼び出しは +2.0 ns。
+- **ただし Sake → Rust は手書きより 1.2 秒遅く、それはディスパッチとは別の費用。** 単相の shapes_mono でも 1.65 対 0.41 で、差は 1 反復あたり約 1.2 ns。生成コードは `Array.each` で要素を `Rc` の clone で取り出し（`a_.at(k_)`）、ディスパッチの引数でもう一度 clone する（`x.clone()`）。参照カウントの増減が 1 反復に 2 組、同じキャッシュ行への依存した読み書きで、これが 1 ns 程度に相当する。Sake の値が参照で共有されることを `Rc` で写した代償で、要素を借用で渡す（関数の引数を `&SRef<T>` にする）最適化で消せる見込み。未実施。
+- インタプリタは shapes と shapes_mono でほぼ同じ（44 対 46 秒）。ディスパッチ表の参照 1 回は、AST を歩く費用の中では見えない。
+
 ## 限界
 
 - 対象は部分集合で、Hash・Set・Regexp・例外の rescue・mixin ディスパッチ・`(A|B).f`・Thread は未対応（exit 3 で断る）。sakelib の移植 73 本のような普通のプログラムはまだ通らない。
@@ -49,6 +65,7 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 
 ## ファイル
 
-- `bench/*.sake`, `bench/*.rb`, `bench/loops_fn.rb`, `bench/hand/*.rs`: プログラム
-- `bench/run.sh`: 計測スクリプト（sp4 で `RUBY=... SAKE=... ./run.sh > results.txt 2> results.log`）
-- `results-run1.txt` / `.log`, `results-run2.txt` / `.log`: 生の結果
+- `bench/*.sake`, `bench/*.rb`, `bench/loops_fn.rb`, `bench/hand/*.rs`: プログラム（shapes の手書きは `shapes_enum.rs`、`shapes_dyn.rs`、`shapes_mono.rs`）
+- `bench/run.sh`: 計測スクリプト（sp4 で `RUBY=... SAKE=... ./run.sh > results.txt 2> results.log`。`BENCHES="shapes shapes_mono"` で対象を絞れる）
+- `results-run1.txt` / `.log`, `results-run2.txt` / `.log`: 生の結果（loops / fib / levenshtein）
+- `results-shapes-small.txt`（10,000 round、インタプリタを含む）、`results-shapes.txt`（末尾が 1,000,000 round）、`results-shapes.log`: shapes の生の結果

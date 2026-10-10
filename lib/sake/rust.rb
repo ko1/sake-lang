@@ -22,6 +22,7 @@ module Sake
     TupT = Struct.new(:elems)
     ObjT = Struct.new(:name)
     OptT = Struct.new(:inner)
+    UnionT = Struct.new(:names) # two or more classes, sorted; a Rust enum with one variant per class
 
     # One instantiation of a user function: the argument types it was called with, and what the body did
     # with them. given: which parameter slots the call supplies (the others take their defaults).
@@ -57,7 +58,10 @@ module Sake
           break unless @changed
         end
         raise Unsupported, "types did not settle" if @changed
-        [prelude, structs_code, *@order.map { fn_code(_1) }, main_code(main)].join("\n")
+        fns = @order.map { fn_code(_1) }
+        entry = main_code(main)
+        structs = structs_code # the Rust types come last: generating the code is what finds the unions
+        [prelude, structs, unions_code, *fns, entry].join("\n")
       end
 
       def unsupported(node, msg)
@@ -89,7 +93,10 @@ module Sake
         in [TupT, TupT]
           unsupported(node, "Tuples of different lengths meet") if a.elems.size != b.elems.size
           TupT.new(a.elems.zip(b.elems).map { unify(_1, _2, node) })
-        in [ObjT, ObjT] if a.name == b.name then a
+        in [ObjT, ObjT] then a.name == b.name ? a : UnionT.new([a.name, b.name].sort)
+        in [UnionT, ObjT] then a.names.include?(b.name) ? a : UnionT.new((a.names + [b.name]).sort)
+        in [ObjT, UnionT] then unify(b, a, node)
+        in [UnionT, UnionT] then a.names == b.names ? a : UnionT.new((a.names | b.names).sort)
         else unsupported(node, "a value may be #{show(a)} or #{show(b)}; the Rust backend needs one type")
         end
       end
@@ -101,8 +108,11 @@ module Sake
         when TupT then "[#{t.elems.map { show(_1) }.join(", ")}]"
         when ObjT then t.name
         when OptT then "nil | #{show(t.inner)}"
+        when UnionT then t.names.join(" | ")
         end
       end
+
+      def union_name(t) = "U_#{t.names.map { rs_name(_1) }.join("_")}"
 
       def rt(t, node = nil)
         case t
@@ -118,6 +128,7 @@ module Sake
         when TupT then "(#{t.elems.map { rt(_1, node) }.join(", ")},)"
         when ObjT then "SRef<#{rs_name(t.name)}>"
         when OptT then "Option<#{rt(t.inner, node)}>"
+        when UnionT then ((@unions ||= {})[t.names] = t; union_name(t))
         else unsupported(node, "a value whose type is not known")
         end
       end
@@ -236,6 +247,22 @@ module Sake
           :range
         when CallBuiltin then builtin_type(n, i)
         when CallUser then call_user(n, i).ret
+        when CallDispatch
+          args = n.args.map { ty(_1, i) }
+          case (a0 = args[0])
+          when :unknown then :unknown
+          when ObjT then dispatch_inst(n, i, a0.name, args).ret
+          when UnionT then a0.names.map { dispatch_inst(n, i, _1, args).ret }.reduce { unify(_1, _2, n) }
+          else unsupported(n, "`#{n.dispatch.module}.#{n.dispatch.name}` on #{show(a0)}")
+          end
+        when CaseIn
+          st = ty(n.subject, i)
+          ts = n.clauses.map do |pat, body|
+            check_pattern(pat, st, n)
+            with_case_narrow(i, n.subject, pat, st) { ty(body, i) }
+          end
+          ts << ty(n.else_, i)
+          ts.reduce { unify(_1, _2, n) }
         when BinOp then binop_type(n, i)
         when IsNil then (ty(n.value, i); :bool)
         when UnOp
@@ -369,14 +396,23 @@ module Sake
         when TupT then [:tup, t.elems.map { type_key(_1) }]
         when ObjT then [:obj, t.name]
         when OptT then [:opt, type_key(t.inner)]
+        when UnionT then [:union, t.names]
         else t
         end
       end
 
-      def call_user(n, i)
-        fn = n.fn
+      def call_user(n, i) = instantiate(n, i, n.fn, n.args.map { ty(_1, i) })
+
+      # `M.f(x, ...)` for x of class name: the class's own f (copied from M, or its own definition).
+      def dispatch_inst(n, i, name, arg_types)
+        impl = n.dispatch.table[name]
+        unsupported(n, "`#{n.dispatch.module}.#{n.dispatch.name}` on #{name}, which does not include #{n.dispatch.module}") unless impl
+        unsupported(n, "`#{n.dispatch.module}.#{n.dispatch.name}` dispatching to a built-in type") unless impl.is_a?(UserFunction)
+        instantiate(n, i, impl, [ObjT.new(name), *arg_types.drop(1)])
+      end
+
+      def instantiate(n, i, fn, arg_types)
         func = @ast.functions.fetch(fn)
-        arg_types = n.args.map { ty(_1, i) }
         given = Array.new(func.nparams, false)
         kept = []
         arg_types.each_with_index do |t, k|
@@ -653,13 +689,23 @@ module Sake
 
       def line(n) = n.origin&.location&.start_line || 0
 
+      # code, of type from, where type to is expected: wraps in Some, in a union's variant, or casts.
       def coerce(code, from, to, node)
-        return code if from == to || from == :never || to == :never
+        return code if from == to || from == :never || to == :never || from == :unknown || to.nil? || same?(from, to)
         case to
         when OptT
           return "{ #{code}; None }" if from == :nil
-          return code if from.is_a?(OptT)
-          "Some(#{code})"
+          if from.is_a?(OptT)
+            return code if same?(from.inner, to.inner)
+            return "(#{code}).map(|x| #{coerce("x", from.inner, to.inner, node)})"
+          end
+          "Some(#{coerce(code, from, to.inner, node)})"
+        when UnionT
+          case from
+          when ObjT then "#{rt(to, node)}::#{rs_name(from.name)}(#{code})"
+          when UnionT then "match #{code} { #{from.names.map { |nm| "#{rt(from, node)}::#{rs_name(nm)}(x) => #{rt(to, node)}::#{rs_name(nm)}(x)" }.join(", ")} }"
+          else unsupported(node, "a #{show(from)} where #{show(to)} is expected")
+          end
         when :float then from == :int ? "((#{code}) as f64)" : code
         when :nil then "{ #{code}; }"
         else code
@@ -669,7 +715,7 @@ module Sake
       def stmt(n, i)
         case n
         when Seq then n.body.map { stmt(_1, i) }.join("\n")
-        when LVarSet then "    v#{n.slot} = #{expr(n.value, i)};"
+        when LVarSet then "    v#{n.slot} = #{coerce(expr(n.value, i), ty(n.value, i), i.slots[n.slot], n)};"
         when If
           c = cond(n.cond, i)
           th = with_narrow(i, n.cond, :then) { stmt(n.then_, i) }
@@ -685,8 +731,9 @@ module Sake
         when Lit then n.value.nil? ? "" : "    let _ = #{expr(n, i)};"
         when Return then "    return#{n.value ? " #{coerce(expr(n.value, i), ty(n.value, i), i.ret, n)}" : ""};"
         when Next, Break then "    #{expr(n, i)};"
-        when FieldSet then "    { let t = #{expr(n.value, i)}; #{recv(n.subject, i)}.with(|o| o.#{n.field} = t); }"
-        when IndexSet then "    { let t = #{expr(n.value, i)}; #{recv(n.recv, i)}.set(#{expr(n.key, i)}, t, #{line(n)}); }"
+        when FieldSet then "    { let t = #{coerce(expr(n.value, i), ty(n.value, i), @fields[n.type][n.field], n)}; #{recv(n.subject, i)}.with(|o| o.#{n.field} = t); }"
+        when IndexSet then "    { let t = #{coerce(expr(n.value, i), ty(n.value, i), elem_of(ty(n.recv, i), n), n)}; #{recv(n.recv, i)}.set(#{expr(n.key, i)}, t, #{line(n)}); }"
+        when CaseIn then case_code(n, i, false)
         when ArgDefault then i.given[n.slot] ? "" : "    v#{n.slot} = #{expr(n.value, i)};"
         when MultiWrite
           tmp = n.targets.each_index.map { "t#{_1}" }
@@ -705,16 +752,24 @@ module Sake
         end
       end
 
-      def get(slot, i)
-        base = copy?(i.slots[slot]) ? "v#{slot}" : "v#{slot}.clone()"
-        (@narrow ||= {})[[i, slot]] ? "#{base}.unwrap()" : base
+      # A narrowed variable: the value inside the Option, or the class inside the union. nil when not narrowed.
+      def narrowed(slot, i, borrow)
+        t = (@narrow ||= {})[[i, slot]]
+        return nil unless t
+        decl = i.slots[slot]
+        case decl
+        when OptT then copy?(decl) ? "v#{slot}.unwrap()" : (borrow ? "v#{slot}.as_ref().unwrap()" : "v#{slot}.clone().unwrap()")
+        when UnionT then "(match &v#{slot} { #{rt(decl)}::#{rs_name(t.name)}(x) => x.clone(), _ => unreachable!() })"
+        else "v#{slot}"
+        end
       end
+
+      def get(slot, i) = narrowed(slot, i, false) || (copy?(i.slots[slot]) ? "v#{slot}" : "v#{slot}.clone()")
 
       # A value in receiver position (`x.f(...)`, `puts_(&x)`): a variable is borrowed, not cloned.
       def recv(n, i)
         return expr(n, i) unless n.is_a?(LVarGet)
-        return "v#{n.slot}" unless (@narrow ||= {})[[i, n.slot]]
-        copy?(i.slots[n.slot]) ? "v#{n.slot}.unwrap()" : "v#{n.slot}.as_ref().unwrap()"
+        narrowed(n.slot, i, true) || "v#{n.slot}"
       end
 
       def expr(n, i)
@@ -735,7 +790,7 @@ module Sake
           "format!(#{(["\"#{"{}" * parts.size}\""] + parts).join(", ")})"
         when ToS then "#{recv(n.value, i)}.to_s_()"
         when LVarGet then get(n.slot, i)
-        when LVarSet then "{ v#{n.slot} = #{expr(n.value, i)}; #{get(n.slot, i)} }"
+        when LVarSet then "{ v#{n.slot} = #{coerce(expr(n.value, i), ty(n.value, i), i.slots[n.slot], n)}; #{get(n.slot, i)} }"
         when Seq
           return "()" if n.body.empty?
           return "{\n#{stmt(n, i)}\n    }" if t == :nil
@@ -752,6 +807,8 @@ module Sake
         when MakeTuple then "(#{n.elems.map { expr(_1, i) }.join(", ")},)"
         when CallBuiltin then builtin_code(n, i)
         when CallUser then user_call_code(n, i)
+        when CallDispatch then dispatch_code(n, i)
+        when CaseIn then case_code(n, i, true)
         when BinOp then binop_code(n, i)
         when IsNil
           v = ty(n.value, i)
@@ -763,17 +820,17 @@ module Sake
           end
         when UnOp then "(-#{expr(n.value, i)})"
         when FieldGet then "#{recv(n.subject, i)}.with(|o| o.#{n.field}.clone())"
-        when FieldSet then "{ let t = #{expr(n.value, i)}; #{recv(n.subject, i)}.with(|o| o.#{n.field} = t.clone()); t }"
+        when FieldSet then "{ let t = #{coerce(expr(n.value, i), ty(n.value, i), @fields[n.type][n.field], n)}; #{recv(n.subject, i)}.with(|o| o.#{n.field} = t.clone()); t }"
         when IndexGet
           r = ty(n.recv, i)
           case r
           when TupT then "#{recv(n.recv, i)}.#{n.key.value}.clone()"
           when ArrT then "#{recv(n.recv, i)}.get(#{expr(n.key, i)})"
           end
-        when IndexSet then "{ let t = #{expr(n.value, i)}; #{recv(n.recv, i)}.set(#{expr(n.key, i)}, t.clone(), #{line(n)}); t }"
+        when IndexSet then "{ let t = #{coerce(expr(n.value, i), ty(n.value, i), elem_of(ty(n.recv, i), n), n)}; #{recv(n.recv, i)}.set(#{expr(n.key, i)}, t.clone(), #{line(n)}); t }"
         when IndexUpdate then "#{recv(n.recv, i)}.update(#{expr(n.key, i)}, |x| x #{n.op} #{expr(n.value, i)}, #{line(n)})"
         when ArgDefault then stmt(n, i).strip.chomp(";")
-        when Yield then i.block ? "blk(#{n.args.map { expr(_1, i) }.join(", ")})" : "fail(#{line(n)}, \"LocalJumpError\", \"no block given (yield)\")"
+        when Yield then i.block ? "blk(#{n.args.each_with_index.map { |a, k| coerce(expr(a, i), ty(a, i), i.blk_params[k], n) }.join(", ")})" : "fail(#{line(n)}, \"LocalJumpError\", \"no block given (yield)\")"
         when BlockGiven then i.block ? "true" : "false"
         when Return then "return#{n.value ? " #{coerce(expr(n.value, i), ty(n.value, i), i.ret, n)}" : ""}"
         when Next
@@ -904,14 +961,17 @@ module Sake
         b = args[1]
         ln = line(n)
         if n.fn.name == CTOR
-          return "SArr::new(vec![#{args.join(", ")}])"
+          e = cell(n).root.elem
+          return "SArr::new(vec![#{n.args.each_with_index.map { |x, k| coerce(args[k], ty(x, i), e, n) }.join(", ")}])"
         end
         if @program.struct_types.key?(n.fn.namespace)
           st = @program.struct_types[n.fn.namespace]
           case n.fn.name
-          when "new" then return "SRef::new(#{rs_name(st.name)} { #{st.fields.zip(args).map { |f, v| "#{f}: #{v}" }.join(", ")} })"
+          when "new" then return "SRef::new(#{rs_name(st.name)} { #{st.fields.each_with_index.map { |f, k| "#{f}: #{coerce(args[k], ty(n.args[k], i), @fields[st.name][f], n)}" }.join(", ")} })"
           when *st.fields then return "#{a}.with(|o| o.#{n.fn.name}.clone())"
-          else return "{ let t = #{b}; #{a}.with(|o| o.#{n.fn.name.delete_prefix("set_")} = t.clone()); t }"
+          else
+            f = n.fn.name.delete_prefix("set_")
+            return "{ let t = #{coerce(b, ty(n.args[1], i), @fields[st.name][f], n)}; #{a}.with(|o| o.#{f} = t.clone()); t }"
           end
         end
         case name
@@ -969,13 +1029,15 @@ module Sake
         when "Array.new"
           if n.block
             lab = "'b#{@label += 1}"
-            "{ let n_ = nonneg(#{a}, #{ln}); let mut t_ = Vec::with_capacity(n_); #{lab}: for p0 in 0..(n_ as i64) { t_.push(#{inline_value(n.block, i, lab)}); } SArr::new(t_) }"
+            "{ let n_ = nonneg(#{a}, #{ln}); let mut t_ = Vec::with_capacity(n_); #{lab}: for p0 in 0..(n_ as i64) { t_.push(#{coerce(inline_value(n.block, i, lab), ty(n.block.body, i), cell(n).root.elem, n)}); } SArr::new(t_) }"
           else
-            "SArr::new(vec![#{b}; nonneg(#{a}, #{ln})])"
+            "SArr::new(vec![#{coerce(b, ty(n.args[1], i), cell(n).root.elem, n)}; nonneg(#{a}, #{ln})])"
           end
         when "Array.fetch" then "#{a}.fetch(#{b}, #{ln})"
         when "Array.length", "Array.size" then "#{a}.len()"
-        when "Array.push", "Array.<<", "Array.append" then "#{a}.push_all(vec![#{args.drop(1).join(", ")}])"
+        when "Array.push", "Array.<<", "Array.append"
+          e = elem_of(ty(n.args[0], i), n)
+          "#{a}.push_all(vec![#{n.args.drop(1).each_with_index.map { |x, k| coerce(args[k + 1], ty(x, i), e, n) }.join(", ")}])"
         when "Array.each"
           lab = "'b#{@label += 1}"
           "{ let a_ = #{args[0]}; let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.at(k_); k_ += 1; #{inline_body(n.block, i, lab)} } }"
@@ -984,7 +1046,7 @@ module Sake
           "{ let a_ = #{args[0]}; let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.at(k_); let p1 = k_; k_ += 1; #{inline_body(n.block, i, lab)} } }"
         when "Array.map"
           lab = "'b#{@label += 1}"
-          "{ let a_ = #{args[0]}; let mut t_ = Vec::with_capacity(a_.len() as usize); let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.at(k_); k_ += 1; t_.push(#{inline_value(n.block, i, lab)}); } SArr::new(t_) }"
+          "{ let a_ = #{args[0]}; let mut t_ = Vec::with_capacity(a_.len() as usize); let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.at(k_); k_ += 1; t_.push(#{coerce(inline_value(n.block, i, lab), ty(n.block.body, i), cell(n).root.elem, n)}); } SArr::new(t_) }"
         when "Array.select", "Array.filter", "Array.reject"
           lab = "'b#{@label += 1}"
           keep = name == "Array.reject" ? "!" : ""
@@ -1025,6 +1087,115 @@ module Sake
       def loop_code(range, block, i)
         lab = "'b#{@label += 1}"
         "{ #{lab}: for p0 in #{range} { #{inline_body(block, i, lab)} } }"
+      end
+
+      # --- mixin dispatch and case/in ---
+
+      # `M.f(x, ...)`: a direct call when x's class is known, else a match over the union's variants.
+      def dispatch_code(n, i)
+        a0 = ty(n.args[0], i)
+        arg_types = n.args.map { ty(_1, i) }
+        rest = n.args.drop(1).map { expr(_1, i) }
+        tail = ->(inst) { n.block.is_a?(Block) ? [closure_code(n.block, i, inst)] : (n.block.is_a?(BlockPass) ? ["&mut *blk"] : []) }
+        case a0
+        when ObjT
+          inst = dispatch_inst(n, i, a0.name, arg_types)
+          "#{inst.name}(#{[expr(n.args[0], i), *rest, *tail[inst]].join(", ")})"
+        when UnionT
+          ret = ty(n, i)
+          arms = a0.names.map do |name|
+            inst = dispatch_inst(n, i, name, arg_types)
+            call = "#{inst.name}(#{["x.clone()", *rest, *tail[inst]].join(", ")})"
+            "#{rt(a0, n)}::#{rs_name(name)}(x) => #{coerce(call, inst.ret, ret, n)}"
+          end
+          "match &#{recv(n.args[0], i)} { #{arms.join(", ")} }"
+        end
+      end
+
+      SCALAR_NAMES = { "Integer" => :int, "Float" => :float, "String" => :str }.freeze
+
+      # The patterns the backend knows: a literal, a type name, and `|` of those.
+      def check_pattern(pat, st, n)
+        case pat
+        when PValue
+          v = ty(pat.value, @cur)
+          ok = v == st || (v == :nil && st.is_a?(OptT)) || (st.is_a?(OptT) && v == st.inner) || (%i[int float].include?(v) && %i[int float].include?(st))
+          unsupported(n, "`in #{show(v)}` against a #{show(st)}") unless ok
+        when PType
+          case st
+          when ObjT, UnionT then unsupported(n, "`in #{pat.name}` against a #{show(st)}") unless @program.struct_types.key?(pat.name)
+          when OptT then unsupported(n, "`in #{pat.name}` against a #{show(st)}") unless SCALAR_NAMES.key?(pat.name) || @program.struct_types.key?(pat.name)
+          else unsupported(n, "`in #{pat.name}` against a #{show(st)}") unless SCALAR_NAMES.key?(pat.name)
+          end
+        when PAlt
+          check_pattern(pat.left, st, n)
+          check_pattern(pat.right, st, n)
+        else unsupported(n, "this pattern")
+        end
+      end
+
+      # A Rust condition on s_, the subject's value.
+      def pattern_code(pat, st, i)
+        case pat
+        when PValue
+          v = ty(pat.value, i)
+          return "s_.is_none()" if v == :nil
+          st.is_a?(OptT) ? "(s_ == Some(#{expr(pat.value, i)}))" : "(s_ == #{expr(pat.value, i)})"
+        when PType
+          case st
+          when UnionT then "matches!(s_, #{rt(st)}::#{rs_name(pat.name)}(_))"
+          when ObjT then (st.name == pat.name).to_s
+          when OptT then st.inner.is_a?(UnionT) ? "matches!(s_, Some(#{rt(st.inner)}::#{rs_name(pat.name)}(_)))" : "s_.is_some()"
+          else (SCALAR_NAMES[pat.name] == st).to_s
+          end
+        when PAlt then "(#{pattern_code(pat.left, st, i)} || #{pattern_code(pat.right, st, i)})"
+        end
+      end
+
+      # `case x in C` narrows the variable x to C inside the clause.
+      def with_case_narrow(i, subject, pat, st)
+        if subject.is_a?(LVarGet) && pat.is_a?(PType) && st.is_a?(UnionT)
+          @narrow ||= {}
+          key = [i, subject.slot]
+          saved = @narrow[key]
+          @narrow[key] = ObjT.new(pat.name)
+          begin
+            yield
+          ensure
+            saved ? @narrow[key] = saved : @narrow.delete(key)
+          end
+        else
+          yield
+        end
+      end
+
+      def case_code(n, i, value)
+        st = ty(n.subject, i)
+        t = ty(n, i)
+        branches = n.clauses.map do |pat, body|
+          c = pattern_code(pat, st, i)
+          b = with_case_narrow(i, n.subject, pat, st) { value ? coerce(expr(body, i), ty(body, i), t, n) : stmt(body, i) }
+          "if #{c} {\n#{b}\n    }"
+        end
+        els = value ? coerce(expr(n.else_, i), ty(n.else_, i), t, n) : stmt(n.else_, i)
+        "#{value ? "" : "    "}{ let s_ = #{expr(n.subject, i)}; #{branches.join(" else ")} else {\n#{els}\n    } }"
+      end
+
+      def unions_code
+        (@unions || {}).values.map do |u|
+          name = union_name(u)
+          vars = u.names.map { |nm| "#{rs_name(nm)}(SRef<#{rs_name(nm)}>)" }
+          arms = ->(m) { u.names.map { |nm| "#{name}::#{rs_name(nm)}(x) => x.#{m}()" }.join(", ") }
+          <<~RS
+            #[derive(Clone, PartialEq)]
+            pub enum #{name} { #{vars.join(", ")} }
+            impl Default for #{name} { fn default() -> Self { #{name}::#{rs_name(u.names[0])}(Default::default()) } }
+            impl Show for #{name} {
+                fn to_s_(&self) -> String { match self { #{arms["to_s_"]} } }
+                fn inspect_(&self) -> String { match self { #{arms["inspect_"]} } }
+            }
+          RS
+        end.join("\n")
       end
 
       # --- the run-time support, in every generated program ---

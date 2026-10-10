@@ -88,7 +88,8 @@ running.
 
 `bin/sabic` compiles a program to a native executable by way of Rust, for the subset whose types
 the generator can fix: Integer (as 64-bit, an overflow is an error), Float, true/false, nil as
-`Option`, String, Array, Tuple, classes, and blocks. Anything outside the subset is reported with its
+`Option`, String, Array, Tuple, classes, blocks, unions of classes as a Rust `enum` with mixin calls
+as a `match`, and `case`/`in` on values and types. Anything outside the subset is reported with its
 line, and the program still runs on the interpreter.
 
 ```
@@ -99,7 +100,8 @@ bin/sabic FILE.sake --emit     # only the Rust source
 On three micro benchmarks (loops, fib, levenshtein) the compiled program ran 3 to 21 times faster than
 Ruby 4.0 with YJIT, 8 to 53 times faster than Ruby without it, and within 0.9 to 1.6 times of Rust
 written by hand ([experiments/2026-10-10-rust-backend/](experiments/2026-10-10-rust-backend/README.md)).
-The interpreter is 150 to 760 times slower than Ruby with YJIT.
+A mixin call dispatched on the argument's type costs 0.25 ns, about the same as a hand-written `enum`
+and a quarter of Rust's `dyn Trait`. The interpreter is 150 to 760 times slower than Ruby with YJIT.
 
 ## Documentation
 

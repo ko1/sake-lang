@@ -16,3 +16,9 @@
 - **ブロックが第二級**なのが Rust に向いている。`yield` だけのブロックは `&mut impl FnMut` にそのまま写せ、`Array.each` / `Integer.times` / `Range.each` のブロックはループ本体にインライン展開できる（`break` / `next` / `return` もそのまま Rust の `break` / `continue` / `return` になる）。
 - **値が参照**なのは Rust に向いていない。`Rc<UnsafeCell<Vec<T>>>` で写し、「スレッドが無く、要素への参照が 1 操作を越えて生きない」ことを根拠に unsafe で済ませた。最初の版は変数を参照するたびに Rc を clone していて、levenshtein で手書きの 4 倍遅かった（受け手位置では借用するよう直した）。
 - **`nil | T` は `Option<T>`** に写り、`if x != nil` の中の絞り込みは生成器側でも要った。typer と同じ規則を別の実装でもう一度書くことになる（typer の結果を流用するほうが筋がいい。今回は typer の出力が式ごとの型を保持していないので自前にした）。
+
+## mixin を足したとき（shapes）
+
+- **mixin の要件は `def area(s) = raise NotImplementedError` で宣言する**ことを、`undefined function Shape.area` のエラーで思い出した。hint は `area` を定義している型（Circle, Rect, Tri）を列挙してくれたが、「module に抽象の def を書け」とは言わない。prelude の `Enum.each` と同じ書き方なので、hint にその形を足すとよい。
+- 生成器側では、合併型 `Circle | Rect | Tri` を enum にし、`Shape.area(s)` を `match` にし、`case/in` の `in Circle` で変数を絞り込む、の 3 つで 1 時間弱。resolver のディスパッチ表（型名 → その型の関数）がそのまま `match` の腕になるので、型ごとの関数を実体化して並べるだけだった。
+- `case i % 3 in 0 then ... in 1 then ... else ...` のような値のパターンは、既存のプログラムでそのまま出てきたので、PValue / PType / PAlt だけ対応した。Tuple や Record のパターンは未対応。
