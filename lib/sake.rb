@@ -56,6 +56,22 @@ module Sake
         name = arg[0].unescaped
         name += ".sake" if File.extname(name).empty?
         target = File.dirname(file) == "." || File.absolute_path?(name) ? name : File.join(File.dirname(file), name)
+        if name.match?(/[*?\[{]/)
+          # `require "sql/*"`: every matching .sake file next to the requiring file, in name order (the
+          # requiring file itself excepted). Definitions are collected before anything runs, so the order
+          # only matters for top-level statements.
+          matches = Dir.glob(target).sort.reject { File.expand_path(_1) == File.expand_path(file) || File.directory?(_1) }
+          if matches.empty?
+            diags << Diagnostic.new(file, loc.start_line, loc.start_column, "require: nothing matches #{target}", [])
+            next
+          end
+          matches.each do |m|
+            next if seen[File.expand_path(m)]
+            seen[File.expand_path(m)] = true
+            visit.(m, File.read(m))
+          end
+          next
+        end
         # Not next to the requiring file: Sake's own library (sakelib/), as Ruby's standard library.
         # The requiring file itself is never the one meant (test/sakelib/csv.sake requiring "csv"), nor is a
         # sibling that is a program rather than a library (test/sakelib/net_http.sake next to another test).

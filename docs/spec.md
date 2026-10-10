@@ -85,6 +85,9 @@ A program is a file and the files it requires. Its top level may contain:
   `require`s of a file are read first). Definitions of every file are collected together, so names
   may be used across files in any order; defining a name in two files is an error, as in one file.
   Messages name the file of each line (`lib/units.sake:4`, `from lib/broken.sake:3`).
+  A **glob**, `require "sql/*"`, reads every matching `.sake` file next to the requiring file, in
+  name order (the requiring file itself excepted); a glob that matches nothing is an error. Since
+  definitions are collected first, the order matters only for top-level statements.
 
 - **Function definitions**: `def name(params) ... end` and `def name(params) = expr`.
 - **Namespaced function definitions**: `def Type.name(params) ...`. This is equivalent to defining

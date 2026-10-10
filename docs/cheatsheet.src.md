@@ -332,6 +332,7 @@ p(v)
 ### Libraries
 - `require "json"` loads `sakelib/json.sake` (or `json.sake` next to the file). Names are Ruby's
   with the subject first: `JSON.parse(s)`, `JSON.generate(h)`, `StringScanner.scan(ss, /\w+/)`.
+  `require "sql/*"` reads every matching `.sake` file next to the requiring file, in name order.
 - Ported: json csv yaml toml base64 digest strscan optparse shellwords set-like structures time date
   fileutils pathname tempfile stringio logger benchmark net_http uri cgi ipaddr webrick monitor
   timeout bigdecimal matrix prime securerandom erb; gems colorize thor rack httparty redis money

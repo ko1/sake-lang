@@ -48,6 +48,8 @@ puts("main")                 # => main
 puts(km_to_m(3))             # => 3000
 ```
 
+A **glob**, `require "sql/*"`, reads every file matching `sql/*.sake` next to the requiring file, in **name order** (the requiring file itself excepted); a glob that matches nothing is an error. Definitions are collected first, so the order matters only for top-level statements.
+
 - **Decided before running.** The argument must be a string literal, and `require` must be a statement at the top level of a file. The files of a program are decided before running.
 - **Once.** Each file is read once, whatever requires it. A cycle stops at a file already read.
 - **Order.** A required file's top-level statements run before those of the file that requires it. All `require`s of a file are read first. That is why `loading units` comes before `main` above.
