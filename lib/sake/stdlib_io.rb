@@ -1,7 +1,11 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "io/console"
+begin
+  require "io/console" # absent on ruby.wasm (the playground): IO.winsize/raw/noecho/getch then raise IOError
+rescue LoadError
+  nil
+end
 
 module Sake
   # An IO value: the program's stdin/stdout/stderr, or a file from File.open. stdout is the
