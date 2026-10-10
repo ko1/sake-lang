@@ -9,6 +9,6 @@ Sake on ruby.wasm (Ruby 4.0): an editor on the left, the result on the right.
 
 Build: `npm install && npm run build` (in this directory) makes `dist/`: `index.html`, `app.js`, `worker.js`, and `ruby.gz.wasm` (ruby+stdlib.wasm of @ruby/4.0-wasm-wasi, gzip-compressed; the page decompresses it). Rebuild after changing lib/ or sakelib/.
 
-Published (private artifact): <https://claude.ai/artifact/WUnGQBBr4qfGiZ8VbCBtaK>
+Published on GitHub Pages at <https://ko1.github.io/sake-lang/playground/> (built by `.github/workflows/pages.yml` from the current lib/ and sakelib/), and as a private artifact: <https://claude.ai/artifact/WUnGQBBr4qfGiZ8VbCBtaK>
 
 Limits: the wasm stack is shallower than bin/sake's, so deep recursion (about 9,000 Sake calls) stops with SystemStackError earlier than on the command line.

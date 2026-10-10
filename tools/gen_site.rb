@@ -6,6 +6,7 @@
 #                docs/manual/ and docs/guide.html point at the copies below
 #   manual/      docs/manual/build (the ligarb book, ja/en)
 #   guide.html   docs/guide.html
+#   playground/  ide/dist (the browser IDE on ruby.wasm; `npm ci && npm run build` in ide/ first)
 # usage: ruby tools/gen_site.rb [OUT_DIR]   (default: _site)
 
 require "fileutils"
@@ -18,6 +19,8 @@ out = File.expand_path(ARGV[0] || "_site", Dir.pwd)
 
 book = File.join(ROOT, "docs/manual/build/index.html")
 abort "#{book} is missing: run sh docs/manual/build.sh first" unless File.exist?(book)
+ide = File.join(ROOT, "ide/dist")
+abort "#{ide}/ruby.gz.wasm is missing: run npm ci && npm run build in ide/ first" unless File.exist?(File.join(ide, "ruby.gz.wasm"))
 
 # A relative link in README.md: the two documents that live on this site keep a local path,
 # everything else goes to the repository (a file to blob/, a directory to tree/).
@@ -71,6 +74,7 @@ page = <<~HTML
     <span class="name">Sake-lang</span>
     <a href="manual/">Reference manual (日本語 / English)</a>
     <a href="guide.html">Guide</a>
+    <a href="playground/">Playground</a>
     <a href="#{REPO}">GitHub</a>
   </nav>
   #{body}
@@ -85,5 +89,6 @@ FileUtils.mkdir_p(out)
 File.write(File.join(out, "index.html"), page)
 FileUtils.cp_r(File.dirname(book), File.join(out, "manual"))
 FileUtils.cp(File.join(ROOT, "docs/guide.html"), File.join(out, "guide.html"))
+FileUtils.cp_r(ide, File.join(out, "playground"))
 FileUtils.touch(File.join(out, ".nojekyll"))
-puts "Built #{out}: index.html, manual/, guide.html"
+puts "Built #{out}: index.html, manual/, guide.html, playground/"
