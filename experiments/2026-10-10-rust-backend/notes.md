@@ -22,3 +22,9 @@
 - **mixin の要件は `def area(s) = raise NotImplementedError` で宣言する**ことを、`undefined function Shape.area` のエラーで思い出した。hint は `area` を定義している型（Circle, Rect, Tri）を列挙してくれたが、「module に抽象の def を書け」とは言わない。prelude の `Enum.each` と同じ書き方なので、hint にその形を足すとよい。
 - 生成器側では、合併型 `Circle | Rect | Tri` を enum にし、`Shape.area(s)` を `match` にし、`case/in` の `in Circle` で変数を絞り込む、の 3 つで 1 時間弱。resolver のディスパッチ表（型名 → その型の関数）がそのまま `match` の腕になるので、型ごとの関数を実体化して並べるだけだった。
 - `case i % 3 in 0 then ... in 1 then ... else ...` のような値のパターンは、既存のプログラムでそのまま出てきたので、PValue / PType / PAlt だけ対応した。Tuple や Record のパターンは未対応。
+
+## Spinel を測ってみて
+
+- 「Ruby の部分集合コンパイラは実コードで失敗する」と最初に言ったのは言い過ぎだった。Spinel はクラス・継承・ブロック・例外・Fiber・Thread・正規表現まで通し、3,651 本のテストを通している。言語を削らずに、コンパイラ側で Ruby の意味論（動的なメソッド解決、`poly` への退避、GC）を引き受ける道は成立している。
+- その代わり解析器は 107,000 行の C になっている。Sake の resolver（1,600 行）と sabic の型推論（250 行）が小さいのは、同じ仕事を言語の規則が先にしているから。性能が同じ（loops、levenshtein）なら、この差が意味を持つのは「言語を変えてよいか」という問いに対してだけで、Ruby を使い続けたい人には Spinel の方が正しい答え。
+- shapes で Spinel が 2.5 倍遅かった理由は切り分けていない（ヒープ上のオブジェクトか、ブロック呼び出しか、`total` の捕捉か）。Spinel の `-S` で C を出して読めば分かる。

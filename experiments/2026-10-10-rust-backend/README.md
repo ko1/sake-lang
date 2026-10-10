@@ -50,6 +50,23 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 - **ただし Sake → Rust は手書きより 1.2 秒遅く、それはディスパッチとは別の費用。** 単相の shapes_mono でも 1.65 対 0.41 で、差は 1 反復あたり約 1.2 ns。生成コードは `Array.each` で要素を `Rc` の clone で取り出し（`a_.at(k_)`）、ディスパッチの引数でもう一度 clone する（`x.clone()`）。参照カウントの増減が 1 反復に 2 組、同じキャッシュ行への依存した読み書きで、これが 1 ns 程度に相当する。Sake の値が参照で共有されることを `Rc` で写した代償で、要素を借用で渡す（関数の引数を `&SRef<T>` にする）最適化で消せる見込み。未実施。
 - インタプリタは shapes と shapes_mono でほぼ同じ（44 対 46 秒）。ディスパッチ表の参照 1 回は、AST を歩く費用の中では見えない。
 
+## Spinel（matz の Ruby AOT コンパイラ）との比較
+
+[Spinel](https://github.com/matz/spinel) は Ruby の大きな部分集合（クラス・継承・ブロック・lambda・例外・パターンマッチ・Fiber・Thread・正規表現）を全プログラム型推論で C に落とし、世代別 GC を持つ。推論が揃わない場所は tagged union（`poly`）に落として `--warn-widen` で知らせる。同じ Ruby 版のプログラム（`bench/*.rb`。Spinel には Ruby がそのまま入力になる）を sp4 で Spinel dd29ea35（2026-10-10 取得、gcc 15.2、既定の `-O2`）でコンパイルして測った。`--warn-widen` の警告は 5 本とも利用者のコードには出ていない（levenshtein の 75 行は Spinel 自身の builtins/enumerator.rb に対するもの）。生の結果は `results-spinel.txt`。
+
+| ベンチ（秒、中央値） | Ruby `--yjit` | Spinel → C | Sake → Rust | 手書き Rust |
+|---|---|---|---|---|
+| loops（10^9 回） | 7.6 | 1.43 | 1.27 | 1.16 |
+| fib 38 | 0.496 | 0.006（C コンパイラが畳む。比較不能） | 0.185 | 0.205 |
+| levenshtein 100 語 | 0.318 | 0.038 | 0.034 | 0.021 |
+| shapes_mono（10^9 回） | 18.0 | 4.45 | 1.65 | 0.41 |
+| shapes（10^9 回、3 型） | 20.0 | 4.58 | 1.90 | 0.60 |
+
+- **loops と levenshtein は同じ速さ**（Spinel 1.43 / 0.038、Sake→Rust 1.27 / 0.034）。整数と配列だけのコードでは、どちらも型を全部決めてネイティブの整数演算に落としていて、残る差は配列の添字検査の書き方。
+- **fib は Spinel が 0.006 秒**で、Spinel の README 自身が「C コンパイラがビルド時に大半を畳む」と注意している通り、再帰が定数畳み込みされている。gcc が再帰関数を部分的に評価したもので、Rust（LLVM）は畳まなかった。比較には使えない。
+- **shapes は Spinel が 2.4〜2.7 倍遅い**（4.45 / 4.58 対 1.65 / 1.90）。ディスパッチの増分は Spinel も +0.13 秒（0.13 ns/回）と小さく、差は 1 反復あたり約 2.8 ns の定数部分。Spinel のオブジェクトは GC 管理のヒープ上にあり、`shapes.each { |s| total += s.area }` のブロックと外側の `total` への書き込みがどう落ちているかで決まる。Sake→Rust は `Array.each` のブロックをループ本体に展開し、`total` はローカル変数のままで、オブジェクトは `Rc` 経由の読み出し。Spinel の生成 C を読んで切り分けるのは今後の課題。
+- **解析器の大きさは桁が違う。** Spinel は `src/analyze*.c` が 107,000 行、`src/codegen*.c` が 141,000 行、ランタイム `lib/*.c` が 41,000 行。Sake は resolver 1,600 行 + `rust.rb` 1,100 行（うち型推論は約 250 行、Rust 側ランタイム約 350 行）。Spinel が Ruby の意味論（メソッドの動的解決、open class、`poly` への退避、GC）をコンパイラ側で引き受けているのに対し、Sake は言語の側で削っている（呼び出し先は resolver が決める、値へのメソッド呼び出しが無い、ブロックは第二級、継承なし）。性能が同じなら、この差は「どちらが書きやすいか」の問題に戻る。
+
 ## 限界
 
 - 対象は部分集合で、Hash・Set・Regexp・例外の rescue・mixin ディスパッチ・`(A|B).f`・Thread は未対応（exit 3 で断る）。sakelib の移植 73 本のような普通のプログラムはまだ通らない。
@@ -65,7 +82,7 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 
 ## まとめの頁
 
-`report.html`（artifact: <https://claude.ai/artifact/KkyJRUA32P5nsSkMQyfbx6>、非公開）。
+`report.html`（artifact: <https://claude.ai/artifact/KkyJRUA32P5nsSkMQyfbx6>。リンクを知っている人が閲覧できる設定）。
 
 ## ファイル
 
@@ -73,3 +90,4 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 - `bench/run.sh`: 計測スクリプト（sp4 で `RUBY=... SAKE=... ./run.sh > results.txt 2> results.log`。`BENCHES="shapes shapes_mono"` で対象を絞れる）
 - `results-run1.txt` / `.log`, `results-run2.txt` / `.log`: 生の結果（loops / fib / levenshtein）
 - `results-shapes-small.txt`（10,000 round、インタプリタを含む）、`results-shapes.txt`（末尾が 1,000,000 round）、`results-shapes.log`: shapes の生の結果
+- `results-spinel.txt`: Spinel で同じ Ruby 版を測った結果（末尾に Spinel のソース行数）
