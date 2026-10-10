@@ -162,8 +162,9 @@ Not yet: `case`/`when`, first-class blocks, and built-in constants such as `Math
 ```
 bin/sake                 the command
 bin/sabic                the compiler to native code through Rust (sabi, 錆, is rust)
+bin/ceec                 the compiler to native code through C
 lib/sake/                resolver (checks before running), lower (Prism AST to SakeAST), interpreter
-                         and typer (type inference), both on SakeAST, the Rust backend (rust.rb),
+                         and typer (type inference), both on SakeAST, the Rust and C backends (rust.rb, c.rb),
                          standard library (stdlib*.rb)
 test/                    golden tests (test/samples/*.sake with *.expected) and CLI tests
 examples/                example programs by category, each with its expected output (examples/README.md)
@@ -181,7 +182,8 @@ ruby test/test_examples.rb      # examples/**/*.sake print their *.expected (UPD
 ruby test/test_sakelib.rb       # the library ports: each test/sakelib/X.sake prints what X.rb prints
 ruby test/test_sake_suite.rb    # Sake's test suite written in Sake (test/sake/*_test.sake, on sakelib/minitest.sake)
 ruby test/test_ide.rb           # the playground's Ruby side (lib/sake/ide.rb)
-ruby test/test_rust.rb          # the Rust backend: test/rust/*.sake compiled and compared with the interpreter (needs rustc)
+ruby test/test_rust.rb          # the Rust backend: test/native/*.sake compiled and compared with the interpreter (needs rustc)
+ruby test/test_c.rb             # the C backend: the same programs through bin/ceec (needs cc)
 ruby tools/check_reference.rb   # the built-in reference (docs/manual/*/ref): signatures, coverage, and every example
 ```
 

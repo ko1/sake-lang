@@ -46,6 +46,17 @@ module Sake
       # --- driver ---
 
       def generate
+        main = infer
+        fns = @order.map { fn_code(_1) }
+        entry = main_code(main)
+        structs = structs_code # the Rust types come last: generating the code is what finds the unions
+        [prelude, structs, unions_code, *fns, entry].join("\n")
+      end
+
+      def backend_name = "Rust"
+
+      # Types every slot, field and instantiation to a fixed point; returns the top level's instantiation.
+      def infer
         main = Inst.new(fn: nil, func: @ast.main, args: [], given: [], name: "main", slots: [], ret: :nil, types: {})
         10.times do
           @changed = false
@@ -58,15 +69,12 @@ module Sake
           break unless @changed
         end
         raise Unsupported, "types did not settle" if @changed
-        fns = @order.map { fn_code(_1) }
-        entry = main_code(main)
-        structs = structs_code # the Rust types come last: generating the code is what finds the unions
-        [prelude, structs, unions_code, *fns, entry].join("\n")
+        main
       end
 
       def unsupported(node, msg)
         line = node&.origin&.location&.start_line
-        raise Unsupported, "#{@path}:#{line}: #{msg} (not supported by the Rust backend)"
+        raise Unsupported, "#{@path}:#{line}: #{msg} (not supported by the #{backend_name} backend)"
       end
 
       # --- types ---
@@ -97,7 +105,7 @@ module Sake
         in [UnionT, ObjT] then a.names.include?(b.name) ? a : UnionT.new((a.names + [b.name]).sort)
         in [ObjT, UnionT] then unify(b, a, node)
         in [UnionT, UnionT] then a.names == b.names ? a : UnionT.new((a.names | b.names).sort)
-        else unsupported(node, "a value may be #{show(a)} or #{show(b)}; the Rust backend needs one type")
+        else unsupported(node, "a value may be #{show(a)} or #{show(b)}; the #{backend_name} backend needs one type")
         end
       end
 

@@ -1,0 +1,45 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# ceec: compile a Sake program to a native executable through C (sake -> C, "see-c").
+#   bin/ceec FILE.sake [-o OUT] [--emit]
+# Writes OUT.c (OUT defaults to FILE without .sake) and builds OUT with $CC (default cc) -O2. --emit stops
+# after the C source. Exit status: 2 for a static error in the program, 3 when the C backend does not
+# support something in it (the message says what and where), 4 when the C compiler fails.
+
+require_relative "../lib/sake"
+require_relative "../lib/sake/c"
+
+args = ARGV.dup
+out = nil
+emit = false
+path = nil
+until args.empty?
+  a = args.shift
+  case a
+  when "-o" then out = args.shift
+  when "--emit" then emit = true
+  when /\A-/ then abort "ceec: unknown option #{a}"
+  else path = a
+  end
+end
+abort "usage: ceec FILE.sake [-o OUT] [--emit]" unless path
+out ||= path.sub(/\.sake\z/, "")
+abort "ceec: output path equals input" if out == path
+
+begin
+  program = Sake.load(File.read(path), path)
+  code = Sake::C.generate(program)
+rescue Sake::StaticErrors => e
+  warn e.message
+  exit 2
+rescue Sake::C::Unsupported => e
+  warn "ceec: #{e.message}"
+  exit 3
+end
+
+File.write("#{out}.c", code)
+exit 0 if emit
+cc = ENV.fetch("CC", "cc")
+cmd = [cc, "-std=gnu11", "-O2", "-Wall", "-o", out, "#{out}.c", "-lm"]
+system(*cmd) or (warn "ceec: #{cc} failed (the C source is in #{out}.c)"; exit 4)
