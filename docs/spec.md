@@ -238,9 +238,10 @@ module, resolved statically:
 - **Requirements.** The unqualified names that the bodies of `M`'s functions call (`each(x)`, say)
   and the fields `@x` they read, minus what `M` itself, the top level and `Kernel` define, are `M`'s
   requirements. Nothing is declared; they are collected from the bodies. If `X` lacks one (no
-  `each`, no field `x`), `include M` is a static error naming the function and the name. Calling a
-  function with requirements directly, as in `M.total(x)`, is a static error too, with a hint to
-  call it through an includer.
+  `each`, no field `x`), `include M` is a static error naming the function and the name. For a mixin
+  function, `M.total(x)` is the dispatch form of §5.6 and runs the includer's copy; calling a *module
+  function* with requirements as `M.total(x)` is a static error, with a hint to call it through an
+  includer.
 - **Restrictions.** Only modules can be included, and include cycles are errors.
 - **Not inheritance.** `include` adds no subtype relation.
 

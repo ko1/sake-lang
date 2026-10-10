@@ -24,3 +24,10 @@
 - 環境: 同じ scratchpad を複数体が共有すると他人の `g*.sake` が自分の glob に入る（1 体は個別ディレクトリに移った）。`lib/` を同時に直していた時間帯は `bin/sake` が一時的に壊れ、1 体は `git archive HEAD` の写しで検証して最後に本体で再確認した。sandbox はこの機械で起動せず、全員が外して走らせた。
 
 ## 入れ子の名前空間（同日に実装、agent の報告は sakelib の書き換え後に追記）
+
+## 02 章（入れ子の名前空間を入れたあとに 1 体）
+
+- `p(x in T)` は構文エラーで `p((x in T))` が要る（hint は明確だが 2 度踏んだ）。真偽を見せる例は必ず二重括弧になる。
+- `# !>` にはエラーの文だけが載り hint が落ちるので、「`upcase` は `String.upcase`、`Symbol.upcase` にある」のような一番役に立つ部分は文で補った。
+- `module_function :f` を def の後に書くのが、mixin 関数と module 関数を 1 つの module に並べる書き方。裸の `module_function` は以降を全部 module 関数にする（それで Shape の例が誤報告になった → TODO）。
+- 良い: resolver の文がそのまま文書になる（`include Summary in Empty: Summary.total needs \`items\`, which Empty does not define (used at line 2)`）。「require は先に全部読む」規則は両ファイルの `puts` で簡単に示せた。

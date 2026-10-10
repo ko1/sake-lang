@@ -95,3 +95,4 @@
 - [ ] `sakelib/notes/not-ported.md` と `notes/timeout.md` が「Sake に `Thread.raise` が無い」「net_http に TLS が無い」と言うが、どちらも今はある（`Thread.raise`、`Socket.connect_ssl`）。notes を直す。
 - [ ] リファレンスの検査器（`tools/check_reference.rb`）: 1 つの fence で実行時エラーは 1 つしか見せられず、静的エラーがあると実行時の行は走らない。`ruby error --strict=0` のような fence があれば、level 2 で静的に止まるものの実行時の形も検証に乗る（08 章は文で引用した）。
 - [ ] `Enum` module（ko1、10-10）: `Enum.each(x) { }` / `Enum.map` … を Array・Hash・Set・Range・Tuple（と `each` を定義して include した自分の型）に第 1 引数の型でディスパッチする、Enumerable の短い名前の module。mixin のディスパッチの仕組みで書けるか、組み込み型の include 表（`Operators::BUILTIN` 相当）と typer の結果型の扱いを設計する。
+- [ ] `module_function` の後の `def area(s) = raise NotImplementedError`（必須の関数）を include したクラスが定義していても、「Sq includes Shape but does not define area」と誤って報告する（`module_function` 無しなら正しく動く）。02 章の書き直しで発見。
