@@ -83,3 +83,15 @@
 - [x] D13. (10-09) Struct 値の型を構築場所ごとに分ける（`Expectation@L4#1`）: `expect(42)` と `expect("abc")` が別の型になり、rspec / Promise / Heap の `[mixed]` が消える。鍵は `new` のノード × 引数の平らな形 × ブロック。費用は SQL エンジンで 1.4〜2.6 倍（`experiments/2026-10-09-struct-sites/`）。typer2 は未対応（型ごとの表のまま）。
 - [ ] D14. (10-10) 表示の protocol（`to_s` / `inspect`）を `Comparable` のようなモジュールに分けるか。分けない: 表示には常に既定の形があり、opt-in にしても検査が増えない。`to_str` 相当の暗黙変換（String を要る場所に Struct 値を渡す）は、引数の型が protocol の有無で決まることになるので足さない（操作に型を書く原則）。代わりに「自分の `to_s` を持たない Struct 値を補間・`puts` している」を厳格レベルで報告する案を残す。
 - [?] D12. フィールドの既定値が前のフィールドを読めない（`attr_reader src, len = String.bytesize(src)`。`sakelib/notes/json_bug_field_default_reads_earlier_field.sake`）。spec §10.1 は「引数の既定値のよう」と言うが、引数の既定値は前の引数を読める（§6）。案: 読めるようにする（initialize に写すのと同じ）か、spec に「読めない」と書く。
+
+## 実装課題（マニュアルの書き直しで見つかったもの、2026-10-10）
+
+言語の章を読みやすく書き直したエージェント 7 体の報告から（`experiments/2026-10-10-manual-readability/`）。
+
+- [ ] **`Thread.new { break }` / ブロック内の `return` で処理系が落ちる**: `t = Thread.new { break }; Thread.join(t)` が `--strict=0` で Ruby の生の `NoMethodError: undefined method 'origin' for an instance of Prism::CallNode`（`interpreter.rb:90`、`thread_body`）。spec は LocalJumpError と言う。`--strict=2` では検査器が `break v` を `Thread.new` の結果型に加えてしまい、`Thread.join(t)` に `[nil]` が出る。静的に「スレッドのブロックから `break`/`return` はできない」と弾くのが筋。
+- [ ] `rescue` の検査が `Thread.new { raise "x" }` の raise を見ない: `begin Thread.value(t) rescue RuntimeError` が level 1 で「never raises」。hint は Thread.raise だけを挙げる。ブロック内の raise も Thread.value/join に流すか、hint に書く。
+- [ ] `@y ||= 0` がフィールドを絞らない: 直後の `@y * @y` が `[nil]` のまま（`Point.new(3, nil)` があるとき）。
+- [ ] hint: 関数の中で読んだトップレベルのローカル（`def bump = count + 1`）に `String.count()`… の 5 候補が出る。「トップレベルのローカルは関数の中から見えない」と言うべき。`f = proc { }` は「undefined function `proc`」だけで、ブロックが値でないことを言わない（`->` は「unsupported syntax: lambda」と言う）。
+- [ ] `sakelib/notes/not-ported.md` と `notes/timeout.md` が「Sake に `Thread.raise` が無い」「net_http に TLS が無い」と言うが、どちらも今はある（`Thread.raise`、`Socket.connect_ssl`）。notes を直す。
+- [ ] リファレンスの検査器（`tools/check_reference.rb`）: 1 つの fence で実行時エラーは 1 つしか見せられず、静的エラーがあると実行時の行は走らない。`ruby error --strict=0` のような fence があれば、level 2 で静的に止まるものの実行時の形も検証に乗る（08 章は文で引用した）。
+- [ ] `Enum` module（ko1、10-10）: `Enum.each(x) { }` / `Enum.map` … を Array・Hash・Set・Range・Tuple（と `each` を定義して include した自分の型）に第 1 引数の型でディスパッチする、Enumerable の短い名前の module。mixin のディスパッチの仕組みで書けるか、組み込み型の include 表（`Operators::BUILTIN` 相当）と typer の結果型の扱いを設計する。

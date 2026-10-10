@@ -21,7 +21,8 @@ Because every operation names its type:
   the checks before running miss still stops at the exact operation.
 
 The motivation was to make a language that is easy for AI to write. **The evaluation did not
-support it, and development has stopped (2026-10-08).** See [Status](#status).
+support it (2026-10-08); development continues at a small scale**, from what using the language turns
+up. See [Status](#status).
 
 > **Writing Sake with a language model?** Give it [docs/cheatsheet.md](docs/cheatsheet.md): the
 > rules on four pages plus the compact list of operations, about 10k tokens, and all a model needs
@@ -155,7 +156,9 @@ ruby tools/check_reference.rb   # the built-in reference (docs/manual/*/ref): si
 
 ## Status
 
-**Concluded (2026-10-08). The interpreter is kept as it is, and nothing more is planned.**
+**The evaluation concluded on 2026-10-08. Development goes on at a small scale: fixes and features
+that come from using the language (on 2026-10-10, about 40 findings of the built-in reference, and
+nested namespaces).**
 
 This was a research prototype. The hypothesis was that writing types on **operations** is better
 than writing them on **variables**, for AI to write and to understand code. The evaluation
