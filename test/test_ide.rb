@@ -16,7 +16,10 @@ class TestIDE < Minitest::Test
   end
 
   def test_analyze_gives_errors_at_the_level_and_warnings_above_it
-    r = call(cmd: "analyze", src: "Node = Struct.new(:value, :next)\ndef second(n) = Node.value(Node.next(n))\np(second(Node.new(1, Node.new(2, nil))))\n", level: 1)
+    # One construction site, so the type shows as `Node`; nil reaches `next` through the loop.
+    src = "Node = Struct.new(:value, :next)\ndef second(n) = Node.value(Node.next(n))\nhead = nil\n" \
+          "Array.each(Array[2, 1]) { |v| head = Node.new(v, head) }\np(second(head)) if head\n"
+    r = call(cmd: "analyze", src:, level: 1)
     d = r["diagnostics"].first
     assert_equal ["warning", 2, 2], d.values_at("severity", "level", "line")
     assert_equal [{ "name" => "second", "line" => 2, "params" => [%w[n Node]], "returns" => "Integer" }], r["functions"]
@@ -42,6 +45,7 @@ class TestIDE < Minitest::Test
     names = c["namespaces"]["Array"].map { _1["name"] }
     assert_includes names, "sum"
     refute_includes names, "+"
-    assert_equal "Array.sum(x, [Integer|Float|Rational|Complex]) [{ }]", c["namespaces"]["Array"].find { _1["name"] == "sum" }["signature"]
+    # The start value is Any since dbeb3963: a type that includes Arithmetic is summed with its own +.
+    assert_equal "Array.sum(x, [Any]) [{ }]", c["namespaces"]["Array"].find { _1["name"] == "sum" }["signature"]
   end
 end
