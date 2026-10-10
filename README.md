@@ -93,8 +93,9 @@ running.
 - [docs/manual/](docs/manual/): the reference manual in Japanese and English, a [ligarb](https://github.com/ko1/ligarb)
   book (`docs/manual/build.sh` builds `docs/manual/build/index.html`). Part 2 documents every built-in
   operation, one chapter per type, with examples that `ruby tools/check_reference.rb` runs and compares.
-  GitHub Pages serves the built book at <https://ko1.github.io/sake-lang/> and the guide at
-  <https://ko1.github.io/sake-lang/guide.html> (`.github/workflows/pages.yml`, no Jekyll).
+  GitHub Pages serves the built book at <https://ko1.github.io/sake-lang/manual/> and the guide at
+  <https://ko1.github.io/sake-lang/guide.html>; the front page <https://ko1.github.io/sake-lang/> is
+  this README (`.github/workflows/pages.yml` and `tools/gen_site.rb`, no Jekyll).
 - [DESIGN.md](DESIGN.md): the design notes, with the reasons behind each decision (in Japanese).
 
 ## What is in the language
