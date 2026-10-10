@@ -63,6 +63,10 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 
 `notes.md`。
 
+## まとめの頁
+
+`report.html`（artifact: <https://claude.ai/artifact/KkyJRUA32P5nsSkMQyfbx6>、非公開）。
+
 ## ファイル
 
 - `bench/*.sake`, `bench/*.rb`, `bench/loops_fn.rb`, `bench/hand/*.rs`: プログラム（shapes の手書きは `shapes_enum.rs`、`shapes_dyn.rs`、`shapes_mono.rs`）

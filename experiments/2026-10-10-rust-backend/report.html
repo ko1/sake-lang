@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sake Rust Backend</title>
+<style>
+  :root {
+    --bg: #faf8f4; --fg: #1d1b18; --muted: #6b665c; --line: #ddd6c8; --accent: #9a3b2a; --card: #ffffff;
+    --bar-ruby: #c9a227; --bar-interp: #8a8a8a; --bar-sake: #9a3b2a; --bar-hand: #3b6a9a; --thead: #f1ece2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17161a; --fg: #ece8e0; --muted: #a39d92; --line: #3a373f; --accent: #e0775f; --card: #201f24;
+      --bar-ruby: #d9b84a; --bar-interp: #777; --bar-sake: #e0775f; --bar-hand: #6fa0d6; --thead: #2a282f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17161a; --fg: #ece8e0; --muted: #a39d92; --line: #3a373f; --accent: #e0775f; --card: #201f24;
+    --bar-ruby: #d9b84a; --bar-interp: #777; --bar-sake: #e0775f; --bar-hand: #6fa0d6; --thead: #2a282f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.65; }
+  main { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 40px 0 12px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  p { margin: 10px 0; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; background: var(--thead); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--thead); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 0.88em; }
+  pre code { background: none; padding: 0; }
+  .lead { font-size: 1.05rem; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 12px 16px; border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.93rem; background: var(--card); }
+  th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: right; white-space: nowrap; }
+  th { background: var(--thead); font-weight: 600; }
+  td:first-child, th:first-child { text-align: left; }
+  .tablewrap { overflow-x: auto; }
+  .bars { margin: 12px 0 4px; }
+  .bar { display: grid; grid-template-columns: 9.5em 1fr 5em; align-items: center; gap: 8px; margin: 4px 0; font-size: 0.9rem; }
+  .bar span:first-child { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar i { display: block; height: 14px; border-radius: 3px; min-width: 2px; }
+  .bar b { font-weight: 500; }
+  .ruby i { background: var(--bar-ruby); } .interp i { background: var(--bar-interp); } .sake i { background: var(--bar-sake); } .hand i { background: var(--bar-hand); }
+  .note { color: var(--muted); font-size: 0.9rem; }
+  ul { padding-left: 1.3em; } li { margin: 4px 0; }
+  .strong { color: var(--accent); font-weight: 600; }
+  @media (max-width: 600px) { .bar { grid-template-columns: 7em 1fr 4.5em; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Sake の Rust バックエンド: マイクロベンチマーク</h1>
+<p class="sub">2026-10-10 (JST) · sp4（16 コア、専用）· Ruby 4.0.6 +YJIT · rustc 1.93.1 · <a href="https://github.com/ko1/sake-lang/tree/main/experiments/2026-10-10-rust-backend">experiments/2026-10-10-rust-backend</a></p>
+
+<p class="lead"><code>bin/sabic</code>（錆 + c）は Sake のプログラムを Rust に変換してネイティブにする。loops / fib / levenshtein の 3 本で、生成コードは <span class="strong">Ruby 4.0 (YJIT) の 3〜21 倍</span>、JIT なしの Ruby の 8〜53 倍速く、手書き Rust の 0.9〜1.6 倍以内。mixin のディスパッチ（<code>Shape.area(s)</code>）は 1 回 <span class="strong">0.25 ns</span> で、Rust の <code>dyn Trait</code>（1.03 ns）より速く、手書きの enum（0.19 ns）とほぼ同じ。</p>
+
+<h2>方法</h2>
+<ul>
+  <li><b>変換</b>: 検査済みの SakeAST を入力に、関数を引数の型ごとに単相化して Rust を出し、<code>rustc -O -C overflow-checks=on</code> で実行ファイルにする。Integer は i64（溢れたらエラー）、nil は <code>Option</code>、Array とオブジェクトは <code>Rc&lt;UnsafeCell&lt;…&gt;&gt;</code>（Sake の値は参照なので共有する）、合併型は enum、mixin 呼び出しは <code>match</code>、<code>yield</code> だけのブロックは <code>&amp;mut impl FnMut</code>、<code>Array.each</code> などのブロックはループに展開。対象外は行番号付きで断る。</li>
+  <li><b>比較</b>: Ruby（<code>--yjit</code> と <code>--disable-yjit</code>）、Sake インタプリタ、Sake → Rust、手書き Rust。同じアルゴリズムを同じ形で書き、出力の一致を確かめた。各 3 回の中央値（インタプリタは 1 回）、壁時計。</li>
+  <li><b>入力</b>: loops は 10,000 × 100,000 回、fib は 38（インタプリタは 32）、levenshtein は 40 文字 × 100 語の全組、shapes は 1,000 個 × 1,000,000 round（インタプリタは 10,000 round）。</li>
+</ul>
+
+<h2>結果: loops / fib / levenshtein（秒）</h2>
+<div class="tablewrap">
+<table>
+<tr><th>ベンチ</th><th>Ruby JIT なし</th><th>Ruby --yjit</th><th>Sake interp</th><th>Sake → Rust</th><th>手書き Rust</th><th>Ruby(YJIT) / Sake→Rust</th></tr>
+<tr><td>loops（10<sup>9</sup> 回）</td><td>26.4</td><td>27.4 / <b>7.6</b>*</td><td>（10<sup>7</sup> 回で 44.2）</td><td><b>1.27</b></td><td>1.16</td><td>21.6x / <b>6.0x</b></td></tr>
+<tr><td>fib 38</td><td>4.19</td><td>0.496</td><td>（fib 32 で 43.5）</td><td><b>0.185</b></td><td>0.205</td><td>2.7x</td></tr>
+<tr><td>levenshtein 100 語</td><td>1.81</td><td>0.318</td><td>229</td><td><b>0.034</b></td><td>0.021</td><td>9.4x</td></tr>
+</table>
+</div>
+<p class="note">* loops の Ruby はトップレベル（またはただ 1 回呼ばれるメソッド）にループがあり、YJIT の既定（30 回呼ばれたら compile）に届かないので JIT なしと同じ 27 秒になる。<code>--yjit-call-threshold=1</code> で 7.6 秒。SNS の比較で Ruby の loops が遅く見える原因はこれで、Ruby の実力は 7.6 秒の方。</p>
+
+<div class="bars">
+<div class="bar ruby"><span>loops: Ruby YJIT (閾値 1)</span><i style="width:100%"></i><b>7.6 s</b></div>
+<div class="bar sake"><span>loops: Sake → Rust</span><i style="width:16.7%"></i><b>1.27 s</b></div>
+<div class="bar hand"><span>loops: 手書き Rust</span><i style="width:15.3%"></i><b>1.16 s</b></div>
+</div>
+<div class="bars">
+<div class="bar ruby"><span>fib 38: Ruby YJIT</span><i style="width:100%"></i><b>0.50 s</b></div>
+<div class="bar sake"><span>fib 38: Sake → Rust</span><i style="width:37.3%"></i><b>0.185 s</b></div>
+<div class="bar hand"><span>fib 38: 手書き Rust</span><i style="width:41.3%"></i><b>0.205 s</b></div>
+</div>
+<div class="bars">
+<div class="bar ruby"><span>levenshtein: Ruby YJIT</span><i style="width:100%"></i><b>0.318 s</b></div>
+<div class="bar sake"><span>levenshtein: Sake → Rust</span><i style="width:10.7%"></i><b>0.034 s</b></div>
+<div class="bar hand"><span>levenshtein: 手書き Rust</span><i style="width:6.6%"></i><b>0.021 s</b></div>
+</div>
+
+<ul>
+  <li><b>インタプリタは Ruby(YJIT) の 150〜760 倍遅い。</b> AST を歩く Ruby のインタプリタで、1 操作ごとに型タグを検査している。</li>
+  <li><b>fib の差が 2.7 倍にとどまるのは Ruby 4.0 の YJIT が速いから。</b> 約 1.3 億回の再帰呼び出しを 0.5 秒。基本ブロック内では一度 guard した型を使い回し、残る費用はメソッド呼び出しのフレームと戻り値の guard。</li>
+  <li><b>手書き Rust との差（loops 9%、levenshtein 1.6 倍）</b>は Ruby の意味論を保つ検査の分: <code>Array.fetch</code> の負の添字の正規化と範囲検査、<code>a[i] = v</code> の「末尾なら push」の分岐。床除算は原因ではない（手書きを床除算にしても 1.161 秒、切り捨てで 1.162 秒）。</li>
+</ul>
+
+<h2>結果: mixin ディスパッチ（shapes、10<sup>9</sup> 回、秒）</h2>
+<p>Circle・Rect・Tri を 1,000 個混ぜた Array をなめて <code>Shape.area(s)</code> を足す。対照の shapes_mono は全部 Circle（呼び出し先が静的に決まる）。10<sup>9</sup> 回なので「増分の秒数 = 1 回あたりの ns」。</p>
+<div class="tablewrap">
+<table>
+<tr><th></th><th>Ruby --yjit</th><th>Sake interp（10<sup>7</sup> 回）</th><th>Sake → Rust</th><th>手書き Rust</th></tr>
+<tr><td>shapes_mono（静的）</td><td>18.0</td><td>46.0</td><td>1.65</td><td>0.41</td></tr>
+<tr><td>shapes（3 型）</td><td>20.0</td><td>44.2</td><td>1.90</td><td>enum 0.60 / <code>dyn</code> 1.44</td></tr>
+<tr><td>ディスパッチの増分</td><td>+2.0 ns</td><td>（見えない）</td><td><b>+0.25 ns</b></td><td>enum +0.19 / <code>dyn</code> +1.03</td></tr>
+</table>
+</div>
+<div class="bars">
+<div class="bar ruby"><span>Ruby 多相呼び出し</span><i style="width:100%"></i><b>+2.0 ns</b></div>
+<div class="bar hand"><span>Rust dyn Trait</span><i style="width:51.5%"></i><b>+1.03 ns</b></div>
+<div class="bar sake"><span>Sake mixin (enum match)</span><i style="width:12.5%"></i><b>+0.25 ns</b></div>
+<div class="bar hand"><span>Rust 手書き enum</span><i style="width:9.5%"></i><b>+0.19 ns</b></div>
+</div>
+<ul>
+  <li><b>Sake の mixin ディスパッチは enum の <code>match</code> になる。</b> include している型の集合が静的に閉じているので、vtable は要らず、本体（<code>3 * r * r</code>）が呼び出し側に展開される。Rust の <code>dyn Trait</code> は呼び出し先が決まらないので展開できず、約 4 倍の費用。</li>
+  <li><b>ただし生成コードには別の 1.2 ns/反復がある。</b> 単相の shapes_mono でも 1.65 対 0.41。<code>Array.each</code> の要素取り出しとディスパッチの引数で <code>Rc</code> を clone しており、参照カウントの増減が 1 反復に 2 組。Sake の参照の意味論を <code>Rc</code> で写した代償で、引数を借用で渡す最適化で消せる見込み（未実施）。</li>
+</ul>
+
+<h2>限界</h2>
+<ul>
+  <li>対象は部分集合。Hash・Set・Regexp・rescue・<code>(A|B).f</code>・Thread・Tuple/Record のパターンは未対応で、sakelib の移植のような普通のプログラムはまだ通らない。</li>
+  <li>型推論は typer とは別に生成器の中に書いた小さなもの。typer が式ごとの型を保持するようになれば置き換える。</li>
+  <li>Integer は 64 ビット。<code>Rc</code> は循環を回収しない。</li>
+  <li>マイクロベンチマーク 4 本だけ。文字列処理や Hash の多いプログラムでは別の結果になる。</li>
+</ul>
+
+<h2>ファイル</h2>
+<pre><code>bin/sabic                                   コンパイラ（ruby）
+lib/sake/rust.rb                            生成器（約 1,100 行、半分は Rust 側ランタイム）
+test/test_rust.rb, test/rust/*.sake         生成コードの出力をインタプリタと比較するテスト
+experiments/2026-10-10-rust-backend/        プログラム、run.sh、生の結果、notes.md（利用感）</code></pre>
+</main>
+</body>
+</html>
