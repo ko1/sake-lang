@@ -7,7 +7,7 @@ String.upcase(name)        # Sake
 name.upcase                # Ruby の書き方。Sake では静的エラー（上の形を hint で示す）
 ```
 
-この本は、v0 インタプリタ（`bin/sake`）が実装している言語の参照マニュアルです。入門には [tutorial.md](https://github.com/ko1/sake-lang/blob/main/docs/tutorial.md) を、設計の経緯には `DESIGN.md` を参照してください。
+この本は、v0 インタプリタ（`bin/sake`）が実装している言語の参照マニュアルです。入門には [tutorial.md](https://github.com/ko1/sake-lang/blob/main/docs/tutorial.md) を、短い要約には [cheatsheet.md](https://github.com/ko1/sake-lang/blob/main/docs/cheatsheet.md)（約 1 万トークン。AI に渡す用）を、設計の経緯には `DESIGN.md` を参照してください。
 
 ## 原則
 

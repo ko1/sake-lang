@@ -7,7 +7,7 @@ String.upcase(name)        # Sake
 name.upcase                # Ruby's spelling: a static error in Sake, whose hint gives the line above
 ```
 
-This book is the reference manual of the language as implemented by the v0 interpreter (`bin/sake`). For a guided introduction see [tutorial.md](https://github.com/ko1/sake-lang/blob/main/docs/tutorial.md); the design notes and their reasons are in `DESIGN.md` (in Japanese).
+This book is the reference manual of the language as implemented by the v0 interpreter (`bin/sake`). For a guided introduction see [tutorial.md](https://github.com/ko1/sake-lang/blob/main/docs/tutorial.md); for a short summary to hand to a language model, [cheatsheet.md](https://github.com/ko1/sake-lang/blob/main/docs/cheatsheet.md) (about 10k tokens); the design notes and their reasons are in `DESIGN.md` (in Japanese).
 
 ## Principles
 

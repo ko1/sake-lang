@@ -85,6 +85,9 @@ running.
   by running the program.
 - [docs/spec.md](docs/spec.md): the language as implemented.
 - [docs/builtins.md](docs/builtins.md): all built-in operations, generated from the interpreter.
+- [docs/cheatsheet.md](docs/cheatsheet.md): the rules on four pages plus the compact list of
+  operations, about 10k tokens, for a language model (or a Ruby programmer) writing Sake. Its
+  examples are run on every build.
 - [docs/guide.html](docs/guide.html): the tutorial and the specification on one page. It is also
   published at <https://claude.ai/artifact/EdrbscXRGUtkKppprRKohP>.
 - [docs/manual/](docs/manual/): the reference manual in Japanese and English, a [ligarb](https://github.com/ko1/ligarb)

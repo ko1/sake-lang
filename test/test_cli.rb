@@ -65,6 +65,11 @@ class TestCLI < Minitest::Test
     assert st.success?, "docs/guide.html is stale; run `ruby tools/gen_guide.rb`"
   end
 
+  def test_cheatsheet_is_up_to_date
+    _, _, st = Open3.capture3(RbConfig.ruby, File.join(ROOT, "tools/gen_cheatsheet.rb"), "--check")
+    assert st.success?, "docs/cheatsheet.md is stale; run `ruby tools/gen_cheatsheet.rb`"
+  end
+
   def test_tutorial_is_up_to_date
     _, _, st = Open3.capture3(RbConfig.ruby, File.join(ROOT, "tools/gen_tutorial.rb"), "--check")
     assert st.success?, "docs/tutorial.md is stale; run `ruby tools/gen_tutorial.rb`"
