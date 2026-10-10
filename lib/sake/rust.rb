@@ -635,6 +635,40 @@ module Sake
         acc
       end
 
+      # The slots a function body assigns (not its parameters' initial values, nor a block's bindings).
+      def assigned_slots(func)
+        (@assigned ||= {}.compare_by_identity)[func] ||= collect_assigned(func.body, [])
+      end
+
+      def collect_assigned(n, acc)
+        case n
+        when LVarSet, ArgDefault then acc << n.slot
+        when MultiWrite then n.targets.each { acc << _1.slot if _1.is_a?(TLocal) && _1.slot }
+        end
+        if ast_node?(n)
+          n.each_pair do |k, v|
+            next if k == :origin
+            case v
+            when Array then v.each { collect_assigned(_1, acc) if ast_node?(_1) }
+            else collect_assigned(v, acc) if ast_node?(v)
+            end
+          end
+        end
+        acc
+      end
+
+      # A parameter is passed by reference (&T) when its value is shared, not copied, and the body never
+      # reassigns it: that saves a reference count per call. slot: the parameter's slot.
+      def byref?(inst, slot)
+        t = inst.slots[slot]
+        !copy?(t) && t != :nil && !assigned_slots(inst.func).include?(slot)
+      end
+
+      # An argument for a by-reference parameter: a variable is borrowed in place, anything else as a temporary.
+      def arg_ref(a, i)
+        a.is_a?(LVarGet) && !(@narrow ||= {})[[i, a.slot]] ? "&v#{a.slot}" : "&(#{expr(a, i)})"
+      end
+
       def fn_code(inst)
         @cur = inst
         @ctx = []
@@ -643,7 +677,7 @@ module Sake
         k = 0
         inst.given.each_with_index do |g, s|
           next unless g
-          params << "v#{s}: #{rt(inst.args[k], inst.func.body)}"
+          params << "v#{s}: #{byref?(inst, s) ? "&" : ""}#{rt(inst.args[k], inst.func.body)}"
           k += 1
         end
         if inst.block
@@ -651,7 +685,7 @@ module Sake
           params << "blk: &mut impl FnMut(#{ps}) -> #{rt(inst.blk_ret, inst.func.body)}"
         end
         ret = inst.ret
-        rebind = inst.given.each_with_index.filter_map { |g, s| "    let mut v#{s} = v#{s};" if g }.join("\n")
+        rebind = inst.given.each_with_index.filter_map { |g, s| "    let mut v#{s} = v#{s};" if g && !byref?(inst, s) }.join("\n")
         body = ret == :nil || ret == :never ? stmt(inst.func.body, inst) : "    #{coerce(expr(inst.func.body, inst), ty(inst.func.body, inst), ret, inst.func.body)}"
         sig = "fn #{inst.name}(#{params.join(", ")})#{ret == :nil || ret == :never ? "" : " -> #{rt(ret, inst.func.body)}"}"
         "#{sig} {\n#{rebind}\n#{decls(inst)}\n#{body}\n}\n"
@@ -913,7 +947,8 @@ module Sake
 
       def user_call_code(n, i)
         inst = call_user(n, i)
-        args = n.args.each_with_index.filter_map { |a, k| expr(a, i) unless ty(a, i) == :missing }
+        slots = inst.given.each_index.select { inst.given[_1] }
+        args = n.args.reject { ty(_1, i) == :missing }.each_with_index.map { |a, k| byref?(inst, slots[k]) ? arg_ref(a, i) : expr(a, i) }
         if n.block.is_a?(Block)
           args << closure_code(n.block, i, inst)
         elsif n.block.is_a?(BlockPass)
@@ -1040,10 +1075,10 @@ module Sake
           "#{a}.push_all(vec![#{n.args.drop(1).each_with_index.map { |x, k| coerce(args[k + 1], ty(x, i), e, n) }.join(", ")}])"
         when "Array.each"
           lab = "'b#{@label += 1}"
-          "{ let a_ = #{args[0]}; let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.at(k_); k_ += 1; #{inline_body(n.block, i, lab)} } }"
+          "{ let a_ = #{args[0]}; let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.#{elem_fetch(n, i)}(k_); k_ += 1; #{inline_body(n.block, i, lab)} } }"
         when "Array.each_with_index"
           lab = "'b#{@label += 1}"
-          "{ let a_ = #{args[0]}; let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.at(k_); let p1 = k_; k_ += 1; #{inline_body(n.block, i, lab)} } }"
+          "{ let a_ = #{args[0]}; let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.#{elem_fetch(n, i)}(k_); let p1 = k_; k_ += 1; #{inline_body(n.block, i, lab)} } }"
         when "Array.map"
           lab = "'b#{@label += 1}"
           "{ let a_ = #{args[0]}; let mut t_ = Vec::with_capacity(a_.len() as usize); let mut k_ = 0i64; #{lab}: while k_ < a_.len() { let p0 = a_.at(k_); k_ += 1; t_.push(#{coerce(inline_value(n.block, i, lab), ty(n.block.body, i), cell(n).root.elem, n)}); } SArr::new(t_) }"
@@ -1084,6 +1119,14 @@ module Sake
         end
       end
 
+      # How an inlined `Array.each` takes each element: by reference when the element is shared, not copied,
+      # and the block never reassigns its parameter (that saves a reference count per element).
+      def elem_fetch(n, i)
+        e = elem_of(ty(n.args[0], i), n)
+        slot = n.block.params[0]
+        !copy?(e) && slot && !assigned_slots(i.func).include?(slot) ? "at_ref" : "at"
+      end
+
       def loop_code(range, block, i)
         lab = "'b#{@label += 1}"
         "{ #{lab}: for p0 in #{range} { #{inline_body(block, i, lab)} } }"
@@ -1095,17 +1138,18 @@ module Sake
       def dispatch_code(n, i)
         a0 = ty(n.args[0], i)
         arg_types = n.args.map { ty(_1, i) }
-        rest = n.args.drop(1).map { expr(_1, i) }
+        rest = ->(inst) { n.args.drop(1).each_with_index.map { |a, k| byref?(inst, k + 1) ? arg_ref(a, i) : expr(a, i) } }
         tail = ->(inst) { n.block.is_a?(Block) ? [closure_code(n.block, i, inst)] : (n.block.is_a?(BlockPass) ? ["&mut *blk"] : []) }
         case a0
         when ObjT
           inst = dispatch_inst(n, i, a0.name, arg_types)
-          "#{inst.name}(#{[expr(n.args[0], i), *rest, *tail[inst]].join(", ")})"
+          first = byref?(inst, 0) ? arg_ref(n.args[0], i) : expr(n.args[0], i)
+          "#{inst.name}(#{[first, *rest[inst], *tail[inst]].join(", ")})"
         when UnionT
           ret = ty(n, i)
           arms = a0.names.map do |name|
             inst = dispatch_inst(n, i, name, arg_types)
-            call = "#{inst.name}(#{["x.clone()", *rest, *tail[inst]].join(", ")})"
+            call = "#{inst.name}(#{[byref?(inst, 0) ? "x" : "x.clone()", *rest[inst], *tail[inst]].join(", ")})"
             "#{rt(a0, n)}::#{rs_name(name)}(x) => #{coerce(call, inst.ret, ret, n)}"
           end
           "match &#{recv(n.args[0], i)} { #{arms.join(", ")} }"
@@ -1229,6 +1273,12 @@ module Sake
               #[inline] pub fn new(v: Vec<T>) -> Self { SArr(Rc::new(UnsafeCell::new(v))) }
               #[inline] fn v(&self) -> &mut Vec<T> { unsafe { &mut *self.0.get() } }
               #[inline] pub fn len(&self) -> i64 { self.v().len() as i64 }
+              #[inline] pub fn at_ref(&self, k: i64) -> &T { &self.v()[k as usize] }
+          }
+          impl<T: Show + ?Sized> Show for &T {
+              fn to_s_(&self) -> String { (**self).to_s_() }
+              fn inspect_(&self) -> String { (**self).inspect_() }
+              fn puts_lines(&self) { (**self).puts_lines() }
           }
           impl<T: Clone> SArr<T> {
               #[inline] fn pos(&self, i: i64) -> Option<usize> {

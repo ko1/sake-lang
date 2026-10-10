@@ -100,9 +100,9 @@ bin/sabic FILE.sake --emit     # only the Rust source
 On three micro benchmarks (loops, fib, levenshtein) the compiled program ran 3 to 21 times faster than
 Ruby 4.0 with YJIT, 8 to 53 times faster than Ruby without it, and within 0.9 to 1.6 times of Rust
 written by hand ([experiments/2026-10-10-rust-backend/](experiments/2026-10-10-rust-backend/README.md)).
-A mixin call dispatched on the argument's type costs 0.25 ns, about the same as a hand-written `enum`
-and a quarter of Rust's `dyn Trait`. Against [Spinel](https://github.com/matz/spinel), the Ruby AOT
-compiler, the same programs ran at the same speed on loops and levenshtein and 2.5 times faster on
+A mixin call dispatched on the argument's type costs 0.12 ns, about the same as a hand-written `enum`
+and an eighth of Rust's `dyn Trait`. Against [Spinel](https://github.com/matz/spinel), the Ruby AOT
+compiler, the same programs ran at the same speed on loops and levenshtein and 8 times faster on
 the dispatch benchmark, with an analyzer of 1,100 lines of Ruby where Spinel's is 107,000 lines of C,
 because Sake's rules do that work in the language. The interpreter is 150 to 760 times slower than
 Ruby with YJIT.

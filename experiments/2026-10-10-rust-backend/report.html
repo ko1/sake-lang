@@ -52,7 +52,7 @@
 <h1>Sake の Rust バックエンド: マイクロベンチマーク</h1>
 <p class="sub">2026-10-10 (JST) · sp4（16 コア、専用）· Ruby 4.0.6 +YJIT · rustc 1.93.1 · <a href="https://github.com/ko1/sake-lang/tree/main/experiments/2026-10-10-rust-backend">experiments/2026-10-10-rust-backend</a></p>
 
-<p class="lead"><code>bin/sabic</code>（錆 + c）は Sake のプログラムを Rust に変換してネイティブにする。loops / fib / levenshtein の 3 本で、生成コードは <span class="strong">Ruby 4.0 (YJIT) の 3〜21 倍</span>、JIT なしの Ruby の 8〜53 倍速く、手書き Rust の 0.9〜1.6 倍以内。mixin のディスパッチ（<code>Shape.area(s)</code>）は 1 回 <span class="strong">0.25 ns</span> で、Rust の <code>dyn Trait</code>（1.03 ns）より速く、手書きの enum（0.19 ns）とほぼ同じ。</p>
+<p class="lead"><code>bin/sabic</code>（錆 + c）は Sake のプログラムを Rust に変換してネイティブにする。loops / fib / levenshtein の 3 本で、生成コードは <span class="strong">Ruby 4.0 (YJIT) の 3〜21 倍</span>、JIT なしの Ruby の 8〜53 倍速く、手書き Rust の 0.9〜1.6 倍以内。mixin のディスパッチ（<code>Shape.area(s)</code>）は 1 回 <span class="strong">0.12 ns</span> で、Rust の <code>dyn Trait</code>（1.03 ns）より速く、手書きの enum（0.19 ns）と同じ桁。matz の Spinel（Ruby → C）とは loops・levenshtein で同じ速さ、shapes では 8 倍速い。</p>
 
 <h2>方法</h2>
 <ul>
@@ -98,21 +98,22 @@
 <p>Circle・Rect・Tri を 1,000 個混ぜた Array をなめて <code>Shape.area(s)</code> を足す。対照の shapes_mono は全部 Circle（呼び出し先が静的に決まる）。10<sup>9</sup> 回なので「増分の秒数 = 1 回あたりの ns」。</p>
 <div class="tablewrap">
 <table>
-<tr><th></th><th>Ruby --yjit</th><th>Sake interp（10<sup>7</sup> 回）</th><th>Sake → Rust</th><th>手書き Rust</th></tr>
-<tr><td>shapes_mono（静的）</td><td>18.0</td><td>46.0</td><td>1.65</td><td>0.41</td></tr>
-<tr><td>shapes（3 型）</td><td>20.0</td><td>44.2</td><td>1.90</td><td>enum 0.60 / <code>dyn</code> 1.44</td></tr>
-<tr><td>ディスパッチの増分</td><td>+2.0 ns</td><td>（見えない）</td><td><b>+0.25 ns</b></td><td>enum +0.19 / <code>dyn</code> +1.03</td></tr>
+<tr><th></th><th>Ruby --yjit</th><th>Sake interp（10<sup>7</sup> 回）</th><th>Sake → Rust（最初）</th><th>Sake → Rust（借用渡し）</th><th>手書き Rust</th></tr>
+<tr><td>shapes_mono（静的）</td><td>18.0</td><td>46.0</td><td>1.65</td><td><b>0.477</b></td><td>0.41</td></tr>
+<tr><td>shapes（3 型）</td><td>20.0</td><td>44.2</td><td>1.90</td><td><b>0.596</b></td><td>enum 0.60 / <code>dyn</code> 1.44</td></tr>
+<tr><td>ディスパッチの増分</td><td>+2.0 ns</td><td>（見えない）</td><td>+0.25 ns</td><td><b>+0.12 ns</b></td><td>enum +0.19 / <code>dyn</code> +1.03</td></tr>
 </table>
 </div>
 <div class="bars">
 <div class="bar ruby"><span>Ruby 多相呼び出し</span><i style="width:100%"></i><b>+2.0 ns</b></div>
 <div class="bar hand"><span>Rust dyn Trait</span><i style="width:51.5%"></i><b>+1.03 ns</b></div>
-<div class="bar sake"><span>Sake mixin (enum match)</span><i style="width:12.5%"></i><b>+0.25 ns</b></div>
 <div class="bar hand"><span>Rust 手書き enum</span><i style="width:9.5%"></i><b>+0.19 ns</b></div>
+<div class="bar sake"><span>Sake mixin (enum match)</span><i style="width:6%"></i><b>+0.12 ns</b></div>
 </div>
 <ul>
-  <li><b>Sake の mixin ディスパッチは enum の <code>match</code> になる。</b> include している型の集合が静的に閉じているので、vtable は要らず、本体（<code>3 * r * r</code>）が呼び出し側に展開される。Rust の <code>dyn Trait</code> は呼び出し先が決まらないので展開できず、約 4 倍の費用。</li>
-  <li><b>ただし生成コードには別の 1.2 ns/反復がある。</b> 単相の shapes_mono でも 1.65 対 0.41。<code>Array.each</code> の要素取り出しとディスパッチの引数で <code>Rc</code> を clone しており、参照カウントの増減が 1 反復に 2 組。Sake の参照の意味論を <code>Rc</code> で写した代償で、引数を借用で渡す最適化で消せる見込み（未実施）。</li>
+  <li><b>Sake の mixin ディスパッチは enum の <code>match</code> になる。</b> include している型の集合が静的に閉じているので、vtable は要らず、本体（<code>3 * r * r</code>）が呼び出し側に展開される。Rust の <code>dyn Trait</code> は呼び出し先が決まらないので展開できず、約 8 倍の費用。</li>
+  <li><b>最初の生成器が手書きより 1.2 秒遅かったのは、ディスパッチではなく <code>Rc</code> の参照カウント。</b> 生成コードを手で直して切り分けた: ディスパッチ引数の clone を借用にすると 1.65 → 1.18、<code>Array.each</code> の要素取り出しも借用にすると 0.477。1 反復に 2 組あった参照カウントの増減で 1.15 秒、残り 0.07 秒が <code>Rc</code> 経由の間接参照。</li>
+  <li><b>生成器を直した。</b> 本体で再代入されない非 Copy の引数（オブジェクト・配列・文字列）は <code>&amp;T</code> で渡し、<code>Array.each</code> の要素も借用で取り出す。shapes は手書き enum と同じ 0.60 秒、shapes_mono は手書きの 1.16 倍。</li>
 </ul>
 
 <h2>Spinel（matz の Ruby AOT コンパイラ）との比較（秒）</h2>
@@ -123,14 +124,14 @@
 <tr><td>loops（10<sup>9</sup> 回）</td><td>7.6</td><td>1.43</td><td><b>1.27</b></td><td>1.16</td></tr>
 <tr><td>fib 38</td><td>0.496</td><td>0.006*</td><td>0.185</td><td>0.205</td></tr>
 <tr><td>levenshtein 100 語</td><td>0.318</td><td>0.038</td><td><b>0.034</b></td><td>0.021</td></tr>
-<tr><td>shapes_mono（10<sup>9</sup> 回）</td><td>18.0</td><td>4.45</td><td><b>1.65</b></td><td>0.41</td></tr>
-<tr><td>shapes（10<sup>9</sup> 回、3 型）</td><td>20.0</td><td>4.58</td><td><b>1.90</b></td><td>0.60</td></tr>
+<tr><td>shapes_mono（10<sup>9</sup> 回）</td><td>18.0</td><td>4.45</td><td><b>0.477</b></td><td>0.41</td></tr>
+<tr><td>shapes（10<sup>9</sup> 回、3 型）</td><td>20.0</td><td>4.58</td><td><b>0.596</b></td><td>0.60</td></tr>
 </table>
 </div>
 <p class="note">* Spinel の README 自身が注意している通り、gcc が再帰を定数畳み込みしたもので比較には使えない。</p>
 <ul>
   <li><b>整数と配列だけの loops・levenshtein は同じ速さ。</b> どちらも型を全部決めてネイティブの整数演算に落としている。</li>
-  <li><b>shapes は Spinel が 2.4〜2.7 倍遅い。</b> ディスパッチの増分は Spinel も 0.13 ns と小さく、差は 1 反復あたり約 2.8 ns の定数部分（GC 管理のヒープ上のオブジェクトとブロック呼び出し。生成 C を読んでの切り分けは今後）。</li>
+  <li><b>shapes は Spinel が 8〜9 倍遅い。</b> ディスパッチの増分は Spinel も 0.13 ns と小さく、差は 1 反復あたり約 4 ns の定数部分（GC 管理のヒープ上のオブジェクトとブロック呼び出し。生成 C を読んでの切り分けは今後）。</li>
   <li><b>解析器の大きさは桁が違う。</b> Spinel は解析 107,000 行 + コード生成 141,000 行 + ランタイム 41,000 行の C。Sake は resolver 1,600 行 + 生成器 1,100 行の Ruby。Spinel が Ruby の意味論をコンパイラ側で引き受けているのに対し、Sake は言語の側で削っている。性能が同じなら、残る問いは「どちらが書きやすいか」。</li>
 </ul>
 
