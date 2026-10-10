@@ -15,6 +15,7 @@ module Sake
     # Dictionary order, as Ruby's Array (nil when some pair of elements cannot be compared).
     def <=>(other) = other.is_a?(Tuple) ? @elems <=> other.elems : nil
     def to_s = Values.inspect(self) # for Ruby methods such as join and format
+    def inspect = Values.inspect(self) # for format's %p
     alias eql? ==
     def hash = [Tuple, @elems].hash
   end
@@ -80,6 +81,7 @@ module Sake
 
     def ==(other) = other.is_a?(RecordValue) && @shape.equal?(other.shape) && @values == other.values
     def to_s = Values.inspect(self)
+    def inspect = Values.inspect(self) # for format's %p
     alias eql? ==
     def hash = [RecordValue, @shape.fields, @values].hash
   end
@@ -89,6 +91,7 @@ module Sake
     attr_reader :type, :values
 
     def to_s = Values.to_s(self) # for Ruby methods such as format
+    def inspect = Values.inspect(self) # for format's %p
 
     # Used by Ruby methods (include?, sort, ...): the type's own == and <=> when the interpreter runs.
     def ==(other)

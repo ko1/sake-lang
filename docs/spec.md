@@ -144,7 +144,7 @@ Every value can be shown, in two forms:
 | Form | Used by | Built-in form |
 |---|---|---|
 | `to_s` | `puts`, `print`, `"#{x}"`, `Array.join`, `format`'s `%s`, `:"#{x}"`, `/#{x}/` | as Ruby's `to_s`: `nil` shows as empty, Arrays and Tuples as `inspect` |
-| `inspect` | `p`, and elements inside an Array, Tuple, Hash, or Record | as Ruby's `inspect`: `#<struct Point x=1, y=2>` |
+| `inspect` | `p`, `Kernel.inspect`, `format`'s `%p`, and elements inside an Array, Tuple, Hash, or Record | as Ruby's `inspect`: `#<struct Point x=1, y=2>` |
 
 - **Your own form.** A Struct type can define its own `to_s` and `inspect` in its class:
   `def to_s(p) = "(#{@x}, #{@y})"`. Each takes exactly one argument and must return a String;

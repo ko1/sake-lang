@@ -32,7 +32,7 @@
 | 形 | 使う場所 | 組み込みの形 |
 |---|---|---|
 | `to_s` | `puts`, `print`, `"#{x}"`, `Array.join`, `format` の `%s`, `:"#{x}"`, `/#{x}/` | Ruby の `to_s` と同じ。`nil` は空、Array と Tuple は `inspect` |
-| `inspect` | `p`、および Array・Tuple・Hash・Record の中の要素 | Ruby の `inspect` と同じ。`#<struct Point x=1, y=2>` |
+| `inspect` | `p`、`Kernel.inspect`、`format` の `%p`、および Array・Tuple・Hash・Record の中の要素 | Ruby の `inspect` と同じ。`#<struct Point x=1, y=2>` |
 
 - **自分の形。** Struct 型は class の中に自分の `to_s` と `inspect` を定義できます: `def to_s(p) = "(#{@x}, #{@y})"`。必須の引数は値 1 つで（既定値付きの引数は続けられる: `to_s(n, base = 10)`）、String を返さなければなりません。String でない結果は実行前に `type` の問題、実行時は `TypeError` です。
 - **どれが走るか。** 型の集合は閉じているので、値の型が分かればどの `to_s` が走るかも分かります。
