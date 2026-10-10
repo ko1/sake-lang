@@ -6,7 +6,7 @@ Ruby の `Symbol#to_proc`（`&:name`）はありません。ブロックは値�
 
 `case s in :a ... in :b ... end` のようにリテラルで分岐するとき、`s` がリテラル以外から来た Symbol（`String.to_sym` の結果など）なら、`--strict=3` は取りこぼす値があることを `exhaustive` として報告します（`else` を足します。[制御構造](../06-control.md)）。
 
-Symbol に使える演算子は `==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>` で、比較は Symbol 同士に限ります（右側が String や Integer だと `<` などは静的に `type` の問題）。`:a == "a"` は false ですが、関数形 `Symbol.==(:a, "a")` は実行時に `TypeError` です。`Symbol.<(x, y)` などはその演算子の関数形です（[演算子と添字](../05-operators.md)）。
+Symbol に使える演算子は `==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>` で、比較は Symbol 同士に限ります（右側が String や Integer だと `<` などは静的に `type` の問題）。`:a == "a"` は false で、関数形 `Symbol.==(:a, "a")` も false です。`Symbol.<(x, y)` などはその演算子の関数形です（[演算子と添字](../05-operators.md)）。
 
 文字列風の操作（`upcase`、`slice`、`match`、`start_with?` など）は、名前を String として処理した結果を返します。Symbol を返すもの（`upcase` など）と String を返すもの（`slice`）があります。どれも Symbol 自体を変えません（Symbol は不変です）。
 
@@ -218,7 +218,7 @@ p(Symbol.casecmp(:a, "b"))         # !> Symbol.casecmp: argument 2 must be Symbo
 
 `Symbol.casecmp?(x, Symbol)`
 
-大文字小文字を区別せず（Unicode の case folding で）2 つの Symbol の名前が等しければ true。`casecmp` と同じく結果は型の上で nil になりえます。
+大文字小文字を区別せず（Unicode の case folding で）2 つの Symbol の名前が等しければ true。`casecmp` と違い、結果は Boolean で nil にはなりません: Ruby のメソッドが nil を返すところ（エンコーディングが互換でないとき）は false です。
 
 ```ruby
 p(Symbol.casecmp?(:a, :A))         # => true
@@ -232,17 +232,15 @@ p(Symbol.casecmp?(:Straße, :STRASSE))   # => true
 
 `Symbol.!=(x, Any)`
 
-同じ名前の Symbol なら true（`!=` はその否定）。演算子 `:a == "a"` は false ですが、関数形 `Symbol.==(:a, "a")` は右側が Symbol でないと実行時に `TypeError` です。
+同じ名前の Symbol なら true（`!=` はその否定）。右側が Symbol でないもの（String、Integer、nil）なら、演算子でも関数形でもただ等しくないだけです: `Symbol.==(:a, "a")` は false で、誤りにはなりません。
 
 ```ruby
 p(:a == :a)                        # => true
 p(:a != :b)                        # => true
 p(:a == "a")                       # => false
 p(Symbol.==(:a, :a))               # => true
-```
-
-```ruby error
-p(Symbol.==(:a, "a"))              # !> TypeError: Symbol.==: no implementation for (Symbol, String)
+p(Symbol.==(:a, "a"))              # => false
+p(Symbol.!=(:a, "a"))              # => true
 ```
 
 ## <, <=, >, >=

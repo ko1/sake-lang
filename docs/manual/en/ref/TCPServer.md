@@ -4,7 +4,7 @@ TCPServer is the type of a listening socket that accepts TCP connections (Ruby's
 
 A failure (the port cannot be opened because it is in use or not permitted, `accept` on a closed server, ...) is an `IOError` ([Exceptions](../08-exceptions.md)).
 
-TCPServer has no operators (`==` is not defined either). The examples listen on port 0 of `127.0.0.1` (the OS picks a free port) and connect from a Thread of the same program.
+The only operators on TCPServers are `==` and `!=` (equal for the same server). The examples listen on port 0 of `127.0.0.1` (the OS picks a free port) and connect from a Thread of the same program.
 
 ## new
 
@@ -28,7 +28,7 @@ TCPServer.new("127.0.0.1", TCPServer.port(srv))   # !> IOError: TCPServer.new: A
 
 `TCPServer.port(x)`
 
-The port number being listened on (an Integer), to learn the actual port after `TCPServer.new` with 0. On a closed server it stops the program with Ruby's `IOError` (not in a form that can be rescued).
+The port number being listened on (an Integer), to learn the actual port after `TCPServer.new` with 0. A closed server is an `IOError` (`closed stream`).
 
 ```ruby
 srv = TCPServer.new("127.0.0.1", 0)
@@ -36,6 +36,12 @@ port = TCPServer.port(srv)
 p(port >= 1024)                     # => true
 p(TCPServer.port(srv) == port)      # => true
 TCPServer.close(srv)
+```
+
+```ruby error
+srv = TCPServer.new("127.0.0.1", 0)
+TCPServer.close(srv)
+TCPServer.port(srv)                 # !> IOError: TCPServer.port: closed stream
 ```
 
 ## accept
@@ -68,7 +74,8 @@ Array.each(clients) { |_|
   end
   Socket.close(c)
 }
-p(Array.sort(Array.map(clients) { |t| Thread.value(t) }))   # => ["hi a\n", "hi b\n"]
+replies = Array.compact(Array.map(clients) { |t| Thread.value(t) })   # Socket.gets may be nil: compact before sorting
+p(Array.sort(replies))              # => ["hi a\n", "hi b\n"]
 p(Array.sort(served))               # => ["a", "b"]
 TCPServer.close(srv)
 ```
@@ -93,4 +100,23 @@ p(TCPServer.close(srv))             # => nil
 again = TCPServer.new("127.0.0.1", port)
 p(TCPServer.port(again) == port)    # => true
 TCPServer.close(again)
+```
+
+## ==, !=
+
+`TCPServer.==(x, Any)`
+
+`TCPServer.!=(x, Any)`
+
+Two values are equal when they are the same server (`!=` is the negation). Every `TCPServer.new` is a different value. A value that is not a TCPServer is never equal; the function form gives false for it too (no error).
+
+```ruby
+srv = TCPServer.new("127.0.0.1", 0)
+other = TCPServer.new("127.0.0.1", 0)
+p(srv == srv)                       # => true
+p(srv == other)                     # => false
+p(srv != other)                     # => true
+p(TCPServer.==(srv, 1))             # => false
+TCPServer.close(srv)
+TCPServer.close(other)
 ```

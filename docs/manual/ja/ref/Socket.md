@@ -4,13 +4,13 @@ Socket は TCP 接続の型です。値は `Socket.connect(host, port)`（平文
 
 接続できない・切れた・名前が解けないといったネットワークの失敗は `IOError` です（Ruby の `Errno::ECONNREFUSED`、`SocketError`、`OpenSSL::SSL::SSLError` などをまとめたもの。[例外](../08-exceptions.md)）。読み書きの待ち時間は `set_timeout` で決め、過ぎると `IOError`。`gets` と `read` が返す String はバイナリ（エンコーディング `ASCII-8BIT`）で、文字列として使うには `String.force_encoding(s, "UTF-8")` を通します。UDP や Unix ドメインソケットはありません。
 
-Socket に演算子はありません（`==` も定義されておらず、同じ値どうしを `==` で比べても false です。同じかどうかは `Kernel.equal?`）。例は `127.0.0.1` のポート 0 に `TCPServer` を立て、同じプログラムの Thread から接続します。
+Socket に使える演算子は `==`、`!=` だけです（同じ接続なら等しい）。例は `127.0.0.1` のポート 0 に `TCPServer` を立て、同じプログラムの Thread から接続します。
 
 ## connect
 
 `Socket.connect(String, Integer, [Integer|Float|Rational])`
 
-`host`（名前か IP アドレス）の `port` に TCP で接続し、Socket を返します。第 3 引数は接続を待つ秒数で、過ぎると `IOError`（省略時は OS の既定まで待ちます）。接続を拒まれたときも `IOError`。名前が解けないときは Ruby の `Socket::ResolutionError` でプログラムが止まります（`IOError` になりません）。
+`host`（名前か IP アドレス）の `port` に TCP で接続し、Socket を返します。第 3 引数は接続を待つ秒数で、過ぎると `IOError`（省略時は OS の既定まで待ちます）。接続を拒まれたときも、名前が解けないとき（Ruby の `Socket::ResolutionError`）も `IOError` です。名前が解けないときのメッセージはリゾルバのもの（`getaddrinfo(3): Name or service not known` など）です。
 
 ```ruby
 srv = TCPServer.new("127.0.0.1", 0)
@@ -32,6 +32,10 @@ TCPServer.close(srv)
 
 ```ruby error
 Socket.connect("127.0.0.1", 1)      # !> IOError: Socket.connect: Connection refused
+```
+
+```ruby error
+Socket.connect("no-such-host.invalid", 80)   # !> IOError: Socket.connect: getaddrinfo
 ```
 
 ## connect_ssl
@@ -65,7 +69,7 @@ Socket.connect_ssl("127.0.0.1", port)   # !> IOError: Socket.connect_ssl:
 ```ruby
 srv = TCPServer.new("127.0.0.1", 0)
 s = Socket.connect("127.0.0.1", TCPServer.port(srv))
-p(Kernel.equal?(Socket.set_timeout(s, 0.05), s))   # => true
+p(Socket.set_timeout(s, 0.05) == s)   # => true
 begin
   Socket.gets(s)
 rescue IOError => e
@@ -199,5 +203,26 @@ srv = TCPServer.new("127.0.0.1", 0)
 s = Socket.connect("127.0.0.1", TCPServer.port(srv))
 p(Socket.close(s))                  # => nil
 p(Socket.close(s))                  # => nil
+TCPServer.close(srv)
+```
+
+## ==, !=
+
+`Socket.==(x, Any)`
+
+`Socket.!=(x, Any)`
+
+2 つの値が同じ Socket なら等しい（`!=` はその否定）。1 つの接続の両端（クライアントの `connect` とサーバの `accept`）は別の Socket です。Socket 以外の値とは等しくなく、関数形でも false になります（エラーにはなりません）。
+
+```ruby
+srv = TCPServer.new("127.0.0.1", 0)
+s = Socket.connect("127.0.0.1", TCPServer.port(srv))
+c = TCPServer.accept(srv)
+p(s == s)                           # => true
+p(s == c)                           # => false
+p(s != c)                           # => true
+p(Socket.==(s, 1))                  # => false
+Socket.close(s)
+Socket.close(c)
 TCPServer.close(srv)
 ```

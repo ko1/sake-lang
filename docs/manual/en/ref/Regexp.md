@@ -10,7 +10,7 @@ The operators on Regexps are `=~` (the position of a match in a String, or nil),
 
 `Regexp.new(String, [String])`
 
-Makes a Regexp from a source String. The second argument is a String of flag letters ("" by default); only `i`, `m` and `x` are accepted, and any other letter (`n` too) is an `ArgumentError` at run time. A source that is not a valid regular expression is a `RegexpError` (Ruby's Integer flags such as `Regexp::IGNORECASE` are not taken). To match the special characters of the source literally, pass it through `Regexp.escape`.
+Makes a Regexp from a source String. The second argument is a String of flag letters ("" by default): the literal's `i`, `m`, `x` and `n`; any other letter is an `ArgumentError` at run time. A source that is not a valid regular expression is a `RegexpError`, which can be rescued (Ruby's Integer flags such as `Regexp::IGNORECASE` are not taken). To match the special characters of the source literally, pass it through `Regexp.escape`.
 
 ```ruby
 p(Regexp.new("a.b"))                        # => /a.b/
@@ -18,10 +18,20 @@ re = Regexp.new("ab+", "i")
 p(re)                                       # => /ab+/i
 p(Regexp.match?(re, "ABB"))                 # => true
 p(Regexp.options(Regexp.new("a", "mi")))    # => 5
+p(Regexp.new("a", "n"))                     # => /a/n
+begin
+  p(Regexp.new("("))
+rescue RegexpError => e
+  puts(Exception.message(e))                # => end pattern with unmatched parenthesis: /(/
+end
 ```
 
 ```ruby error
 p(Regexp.new("a", "q"))        # !> ArgumentError: Regexp.new: unknown regexp option: q
+```
+
+```ruby error
+p(Regexp.new("("))             # !> RegexpError: Regexp.new: end pattern with unmatched parenthesis: /(/
 ```
 
 ## escape
@@ -202,12 +212,18 @@ p(/a/ == "a")                  # => false
 
 ## union
 
-`Regexp.union(*String|Regexp)`
+`Regexp.union(*String|Regexp|Array)`
 
-A Regexp that matches any of the arguments: Strings are escaped, Regexps keep their flags, and all are joined with `|`. With no arguments it is `/(?!)/`, which matches nothing. The arguments are listed one by one (passing one Array, as Ruby allows, is a `type` problem statically).
+A Regexp that matches any of the arguments: Strings are escaped, Regexps keep their flags, and all are joined with `|`. With no arguments it is `/(?!)/`, which matches nothing. The patterns are listed one by one, or, as Ruby allows, given as **one** Array of Strings and Regexps (`Regexp.union(Array["a", "b"])`); an Array among other arguments, or an element that is neither a String nor a Regexp, is a `TypeError` at run time.
 
 ```ruby
 p(Regexp.union("a.b", /c/i))                              # => /a\.b|(?i-mx:c)/
 p(Regexp.match?(Regexp.union("cat", "dog"), "hotdog"))    # => true
 p(Regexp.union())                                         # => /(?!)/
+p(Regexp.union(Array["a", "b"]))                          # => /a|b/
+p(Regexp.union(Array["a.b", /c/]))                        # => /a\.b|(?-mix:c)/
+```
+
+```ruby error
+p(Regexp.union("a", Array["b"]))    # !> TypeError: Regexp.union: no implicit conversion of Array into String
 ```

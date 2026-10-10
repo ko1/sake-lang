@@ -4,13 +4,13 @@ Socket is the type of a TCP connection. Values come from `Socket.connect(host, p
 
 A network failure (cannot connect, connection lost, name not resolved) is an `IOError` (Ruby's `Errno::ECONNREFUSED`, `SocketError`, `OpenSSL::SSL::SSLError`, and the like, all in one; see [Exceptions](../08-exceptions.md)). How long a read or write waits is set by `set_timeout`; past it, an `IOError`. The Strings that `gets` and `read` return are binary (encoding `ASCII-8BIT`); pass them through `String.force_encoding(s, "UTF-8")` to use them as text. There is no UDP and no Unix domain socket.
 
-Socket has no operators (`==` is not defined either: comparing a value with itself by `==` gives false; identity is `Kernel.equal?`). The examples start a `TCPServer` on port 0 of `127.0.0.1` and connect from a Thread of the same program.
+The only operators on Sockets are `==` and `!=` (equal for the same connection). The examples start a `TCPServer` on port 0 of `127.0.0.1` and connect from a Thread of the same program.
 
 ## connect
 
 `Socket.connect(String, Integer, [Integer|Float|Rational])`
 
-Connects by TCP to `port` of `host` (a name or an IP address) and returns a Socket. The third argument is how many seconds to wait for the connection; past it, an `IOError` (when omitted, the OS's default applies). A refused connection is an `IOError` too. A name that cannot be resolved stops the program with Ruby's `Socket::ResolutionError` (not an `IOError`).
+Connects by TCP to `port` of `host` (a name or an IP address) and returns a Socket. The third argument is how many seconds to wait for the connection; past it, an `IOError` (when omitted, the OS's default applies). A refused connection is an `IOError` too, and so is a name that cannot be resolved (Ruby's `Socket::ResolutionError`; the message is the resolver's, `getaddrinfo(3): Name or service not known` or the like).
 
 ```ruby
 srv = TCPServer.new("127.0.0.1", 0)
@@ -32,6 +32,10 @@ TCPServer.close(srv)
 
 ```ruby error
 Socket.connect("127.0.0.1", 1)      # !> IOError: Socket.connect: Connection refused
+```
+
+```ruby error
+Socket.connect("no-such-host.invalid", 80)   # !> IOError: Socket.connect: getaddrinfo
 ```
 
 ## connect_ssl
@@ -65,7 +69,7 @@ Sets how many seconds the following `gets`, `read`, and `write` wait, and return
 ```ruby
 srv = TCPServer.new("127.0.0.1", 0)
 s = Socket.connect("127.0.0.1", TCPServer.port(srv))
-p(Kernel.equal?(Socket.set_timeout(s, 0.05), s))   # => true
+p(Socket.set_timeout(s, 0.05) == s)   # => true
 begin
   Socket.gets(s)
 rescue IOError => e
@@ -199,5 +203,26 @@ srv = TCPServer.new("127.0.0.1", 0)
 s = Socket.connect("127.0.0.1", TCPServer.port(srv))
 p(Socket.close(s))                  # => nil
 p(Socket.close(s))                  # => nil
+TCPServer.close(srv)
+```
+
+## ==, !=
+
+`Socket.==(x, Any)`
+
+`Socket.!=(x, Any)`
+
+Two values are equal when they are the same Socket (`!=` is the negation). The two ends of one connection (the client's `connect` and the server's `accept`) are different Sockets. A value that is not a Socket is never equal; the function form gives false for it too (no error).
+
+```ruby
+srv = TCPServer.new("127.0.0.1", 0)
+s = Socket.connect("127.0.0.1", TCPServer.port(srv))
+c = TCPServer.accept(srv)
+p(s == s)                           # => true
+p(s == c)                           # => false
+p(s != c)                           # => true
+p(Socket.==(s, 1))                  # => false
+Socket.close(s)
+Socket.close(c)
 TCPServer.close(srv)
 ```

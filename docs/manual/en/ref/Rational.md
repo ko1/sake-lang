@@ -1,6 +1,6 @@
 # Rational
 
-A Rational is a rational number with an Integer numerator and denominator, always kept in lowest terms. The literals are Ruby's: `2r`, `1/3r` (the division `1 / 3r`), `0.5r` (`1/2`); `Rational(1, 3)` and `Rational("1/3")` are Kernel operations (they do not take a Float as `Rational(0.5)` would in Ruby; from a Float use `Float.to_r` or `Float.rationalize`, see [Values and types](../03-values.md)). `p` shows a Rational as `(1/3)`.
+A Rational is a rational number with an Integer numerator and denominator, always kept in lowest terms. The literals are Ruby's: `2r`, `1/3r` (the division `1 / 3r`), `0.5r` (`1/2`); `Rational(1, 3)`, `Rational("1/3")` and `Rational(0.5)` (which is `(1/2)`, as in Ruby) are Kernel operations; `Float.to_r` and `Float.rationalize` also convert a Float (see [Values and types](../03-values.md)). `p` shows a Rational as `(1/3)`.
 
 The operators on Rationals are `+`, `-`, `*`, `/`, `%`, `**` and `==`, `!=`, `<`, `<=`, `>`, `>=`, `<=>`. The right operand may be an Integer, a Float, a Rational or a Complex, and the result type follows the closed table: with an Integer the result is a Rational, with a Float a Float, with a Complex a Complex ([Operators and indexing](../05-operators.md)). `1 + 1r/2`, with the Integer on the left, is a Rational too. An Integer raised to a negative Integer, `2 ** -1`, is a Rational in Ruby but an `ArgumentError` in Sake: write `2r ** -1`. The entries `Rational.+(x, y)` and so on below are the function forms of those operators.
 
@@ -37,7 +37,7 @@ Array.push(Rational[], 1)        # !> Array.push: an element must be Rational, b
 
 `Rational.**(x, Any)`
 
-The function forms of `x + y` and the others with a Rational on the left. The right operand `y` is an Integer, a Float, a Rational or a Complex. With an Integer or a Rational the result is a Rational, with a Float a Float, with a Complex a Complex. Any other type is a `type` problem statically and a `TypeError` at run time. A right operand of zero (`0`, `0r`) in `/` or `%` is a `ZeroDivisionError` (`0.0` follows the Float rules and gives `Infinity`). `%` is Ruby's `Rational#%`: the result takes the sign of the right operand. `**` is Ruby's: an integral power stays a Rational, but a fractional or Float power gives a Float (a Complex for a negative base). The checker decides on the right operand's type alone and takes the result to be a Rational, so using the `2.0` of `4r ** (1r/2)` as a Rational is a `TypeError` at run time.
+The function forms of `x + y` and the others with a Rational on the left. The right operand `y` is an Integer, a Float, a Rational or a Complex. With an Integer or a Rational the result is a Rational, with a Float a Float, with a Complex a Complex. Any other type is a `type` problem statically and a `TypeError` at run time. A right operand of zero (`0`, `0r`) in `/` or `%` is a `ZeroDivisionError` (`0.0` follows the Float rules and gives `Infinity`). `%` is Ruby's `Rational#%`: the result takes the sign of the right operand. `**` with an Integer exponent is a Rational (a negative one too: `2r ** -1` is `(1/2)`) and with a Float exponent a Float. With a **Rational exponent** the result is a Rational when the exponent is integral (`4r ** 2r` is `(16/1)`) and a Float otherwise (`4r ** (1r/2)` is `2.0`), so the checker types it `Rational | Float`: narrow it with `case`/`in` before using it as one of the two (`Rational.numerator(4r ** 2r)` is a `type` problem). A negative base with a fractional exponent is a `Math::DomainError` (Ruby gives a Complex).
 
 ```ruby
 p(1r/3 + 1r/6)                   # => (1/2)
@@ -50,11 +50,25 @@ p(Rational./(1r/3, 2))           # => (1/6)
 p(Rational.%(7r/3, 1r/2))        # => (1/3)
 p(Rational.**(2r, -1))           # => (1/2)
 p(Rational.**(1r/2, 3))          # => (1/8)
+p(Rational.**(4r, 2r))           # => (16/1)
 p(Rational.**(2r, 1r/2))         # => 1.4142135623730951
+x = 4r ** (1r/2)
+case x
+in Rational then p(Rational.numerator(x))
+in Float then p(x)               # => 2.0
+end
 ```
 
 ```ruby error
 p(Rational./(1r, 0))             # !> ZeroDivisionError: Rational./: divided by 0
+```
+
+```ruby error
+p(Rational.numerator(4r ** 2r))  # !> Rational.numerator: argument 1 must be Rational, but can be Float
+```
+
+```ruby error
+p((-8r) ** (1r/2))               # !> Math::DomainError: Arithmetic.**: -8/1 ** 1/2 is not a real number (a negative base with a fractional exponent)
 ```
 
 ## ==, !=
@@ -63,17 +77,15 @@ p(Rational./(1r, 0))             # !> ZeroDivisionError: Rational./: divided by 
 
 `Rational.!=(x, Any)`
 
-The function form of `x == y`. A Rational compares by value with an Integer, a Float and a Complex: `1r/2 == 0.5` and `2r == 2` are true. The operator `==` accepts any two values and is false when the types differ, but the function form `Rational.==(x, y)` raises a `TypeError` at run time unless the right operand is a number (nil included); the checker does not catch this statically.
+The function form of `x == y`. A Rational compares by value with an Integer, a Float and a Complex: `1r/2 == 0.5` and `2r == 2` are true. A value of another type is never equal, and the function form `Rational.==(x, y)` gives the same false (and `!=` true) for any right operand of another type, as the operator does, without an error.
 
 ```ruby
 p(Rational.==(1r/2, 0.5))        # => true
 p(Rational.==(2r, 2))            # => true
 p(Rational.!=(1r/2, 1r/3))       # => true
 p(1r == nil)                     # => false
-```
-
-```ruby error
-p(Rational.==(1r/2, "x"))        # !> TypeError: Rational.==: no implementation for (Rational, String)
+p(Rational.==(1r/2, "x"))        # => false
+p(Rational.!=(1r/2, "x"))        # => true
 ```
 
 ## <, <=, >, >=

@@ -2,7 +2,7 @@
 
 An Integer is a whole number of any size, as Ruby's: `42`, `-7`, `1_000_000`, `0x1f`, `0b101`, `0o17`, `2 ** 100` ([Values and types](../03-values.md)). The conversion `Integer("42")` and `Integer(3.9)` is an operation of Kernel, not of this namespace (`Kernel.Integer`; an `ArgumentError` on bad input). Integers are values: no operation here changes its subject, and every result is a new value.
 
-The operators on Integers come from the modules Integer includes ([Operators and indexing](../05-operators.md)): `Arithmetic` gives `+ - * / % **` and unary `-x`, `Comparable` gives `<=> < <= > >=`, `Bitwise` gives `& | ^ << >>` and unary `~x`, and `==` and `!=` are Kernel's. `a + b` dispatches on the type of `a`, so with an Integer on the left it runs `Integer.+(a, b)`; the entries `Integer.+(x, y)` and so on below are those function forms. The right operand's type comes from a **closed table**: Integer with Integer gives an Integer, with a Float a Float, with a Rational a Rational, with a Complex a Complex; `<` and the like compare with Integer, Float, and Rational; the bit operators take an Integer only. A right operand of another type (a String, nil, a Symbol) is a `type` problem statically (`the operands are (Integer, String), which the left operand's type does not support`) and a `TypeError` at run time. The function form also requires its first argument to be an Integer (`Integer.+(1.0, 2)` is a `type` problem: use `Float.+`, or the operator).
+The operators on Integers come from the modules Integer includes ([Operators and indexing](../05-operators.md)): `Arithmetic` gives `+ - * / % **` and unary `-x`, `Comparable` gives `<=> < <= > >=`, `Bitwise` gives `& | ^ << >>` and unary `~x`, and `==` and `!=` are Kernel's. `a + b` dispatches on the type of `a`, so with an Integer on the left it runs `Integer.+(a, b)`; the entries `Integer.+(x, y)` and so on below are those function forms. The right operand's type comes from a **closed table**: Integer with Integer gives an Integer, with a Float a Float, with a Rational a Rational (except `**`, whose result with a Rational exponent is `Rational | Float`), with a Complex a Complex; `<` and the like compare with Integer, Float, and Rational; the bit operators take an Integer only. A right operand of another type (a String, nil, a Symbol) is a `type` problem statically (`the operands are (Integer, String), which the left operand's type does not support`) and a `TypeError` at run time. The function form also requires its first argument to be an Integer (`Integer.+(1.0, 2)` is a `type` problem: use `Float.+`, or the operator).
 
 Two things differ from Ruby: `Integer ** negative Integer` raises `ArgumentError` instead of giving a Rational, so that the type of `a ** b` never depends on the value of `b`, and no method is called on a value (`1.+(2)` is rejected; write `Integer.+(1, 2)` or `1 + 2`). `/` and `%` floor as Ruby's do (`-7 / 2` is -4), and dividing by zero raises `ZeroDivisionError`.
 
@@ -73,18 +73,32 @@ p(Integer./(1, 0))           # !> ZeroDivisionError: Integer./: divided by 0
 
 `Integer.**(x, Any)`
 
-Exponentiation. Integer with a non-negative Integer exponent is an exact Integer; a Float exponent gives a Float, a Rational one a Rational. Unlike Ruby, a **negative Integer exponent is an `ArgumentError`** (Ruby gives a Rational); the message tells how to ask for a Rational (`2r ** -1`). `**` binds tighter than unary minus, so `-2 ** 2` is -4, as in Ruby; it is right-associative (`2 ** 3 ** 2` is 512). See also `pow`.
+Exponentiation. Integer with a non-negative Integer exponent is an exact Integer; a Float exponent gives a Float. A **Rational exponent** gives a Rational when it is integral (`2 ** 2r` is `(4/1)`) and a Float otherwise (`2 ** (1r/2)` is `1.4142135623730951`), so the checker types that result `Rational | Float`: narrow it with `case`/`in` before using it as one of the two. Unlike Ruby, a **negative Integer exponent is an `ArgumentError`** (Ruby gives a Rational); the message tells how to ask for a Rational (`2r ** -1`). A negative base with a fractional exponent (`(-8) ** 0.5`) is a `Math::DomainError`, where Ruby gives a Complex. `**` binds tighter than unary minus, so `-2 ** 2` is -4, as in Ruby; it is right-associative (`2 ** 3 ** 2` is 512). See also `pow`.
 
 ```ruby
 p(2 ** 10)                   # => 1024
 p(Integer.**(2, 0))          # => 1
 p(2 ** 0.5)                  # => 1.4142135623730951
 p(2 ** 2r)                   # => (4/1)
+p(2 ** (1r/2))               # => 1.4142135623730951
 p(-2 ** 2)                   # => -4
+x = 2 ** 2r
+case x
+in Rational then p(Rational.numerator(x))   # => 4
+in Float then p(x)
+end
 ```
 
 ```ruby error
 p(2 ** -1)                   # !> ArgumentError: Arithmetic.**: Integer ** negative Integer (2 ** -1) is an error; for a Rational, write 2r ** -1
+```
+
+```ruby error
+p((-8) ** 0.5)               # !> Math::DomainError: Arithmetic.**: -8 ** 0.5 is not a real number (a negative base with a fractional exponent)
+```
+
+```ruby error
+p(Rational.numerator(2 ** 2r))   # !> Rational.numerator: argument 1 must be Rational, but can be Float
 ```
 
 ## ==, !=
@@ -93,7 +107,7 @@ p(2 ** -1)                   # !> ArgumentError: Arithmetic.**: Integer ** negat
 
 `Integer.!=(x, Any)`
 
-Equality (`!=` is its negation). Numbers compare across types: `1 == 1.0`, `1 == 1r`, and `1 == Complex(1, 0)` are true. With the **operator**, a value of another type is never equal (`1 == "1"` is false, `1 == nil` is false), as in Ruby. The **function form** `Integer.==(x, y)` only has rows for a number or nil on the right: `Integer.==(1, "a")` passes the checker (the right operand is `Any`) but raises `TypeError` at run time (`no implementation for (Integer, String)`). Use the operator when the right side may be of another type.
+Equality (`!=` is its negation). Numbers compare across types: `1 == 1.0`, `1 == 1r`, and `1 == Complex(1, 0)` are true. A value of another type is never equal (`1 == "1"` is false, `1 == nil` is false), as in Ruby; the function form `Integer.==(x, y)` gives the same false (and `!=` true) for a right operand of any other type, without an error.
 
 ```ruby
 p(1 == 1)                    # => true
@@ -102,10 +116,8 @@ p(1 != 1)                    # => false
 p(1 == "1")                  # => false
 p(1 == nil)                  # => false
 p(Integer.==(1, nil))        # => false
-```
-
-```ruby error
-p(Integer.==(1, "a"))        # !> TypeError: Integer.==: no implementation for (Integer, String)
+p(Integer.==(1, "a"))        # => false
+p(Integer.!=(1, "a"))        # => true
 ```
 
 ## <, <=, >, >=
@@ -279,17 +291,26 @@ p(Integer.fdiv(1, 0))        # => Infinity
 
 `Integer.pow(x, Integer, [Integer])`
 
-`Integer.pow(a, b)` is `a ** b` for an Integer exponent, with the same `ArgumentError` for a negative one. `Integer.pow(a, b, m)` is `a ** b` modulo `m`, computed without building the large power, as Ruby's; the result takes the sign of `m`. With a modulus, a negative exponent fails with Ruby's `RangeError` and a modulus of 0 with Ruby's `ZeroDivisionError`.
+`Integer.pow(a, b)` is `a ** b` for an Integer exponent, with the same `ArgumentError` for a negative one. `Integer.pow(a, b, m)` is `a ** b` modulo `m`, computed without building the large power, as Ruby's; the result takes the sign of `m`. With a modulus, a negative exponent is a `RangeError` (Ruby's message, which counts the exponent as the 1st argument) and a modulus of 0 a `ZeroDivisionError`; both can be rescued.
 
 ```ruby
 p(Integer.pow(2, 10))        # => 1024
 p(Integer.pow(2, 10, 1000))  # => 24
 p(Integer.pow(3, 100, 7))    # => 4
 p(Integer.pow(2, 10, -7))    # => -5
+begin
+  Integer.pow(2, 3, 0)
+rescue ZeroDivisionError => e
+  p(Exception.message(e))    # => "divided by 0"
+end
 ```
 
 ```ruby error
 p(Integer.pow(2, -1))        # !> ArgumentError: Integer.pow: Integer ** negative Integer (2 ** -1) is an error; for a Rational, write 2r ** -1
+```
+
+```ruby error
+p(Integer.pow(2, -1, 7))     # !> RangeError: Integer.pow: Integer#pow() 1st argument cannot be negative when 2nd argument specified
 ```
 
 ## gcd, lcm
@@ -323,12 +344,16 @@ p([g, l])                    # => [2, 12]
 
 `Integer.sqrt(x)`
 
-The integer square root: the largest Integer whose square does not exceed the number (Ruby's `Integer.sqrt`), exact at any size, where `Math.sqrt` would give a Float. A negative number fails with Ruby's `Math::DomainError`.
+The integer square root: the largest Integer whose square does not exceed the number (Ruby's `Integer.sqrt`), exact at any size, where `Math.sqrt` would give a Float. A negative number raises `Math::DomainError` (Ruby's message), which can be rescued.
 
 ```ruby
 p(Integer.sqrt(16))          # => 4
 p(Integer.sqrt(17))          # => 4
 p(Integer.sqrt(10 ** 20))    # => 10000000000
+```
+
+```ruby error
+p(Integer.sqrt(-1))          # !> Math::DomainError: Integer.sqrt: Numerical argument is out of domain - "isqrt"
 ```
 
 ## abs, magnitude
@@ -470,12 +495,16 @@ Integer.step(1, 10, 0) { |i| puts(i) }      # !> ArgumentError: Integer.step: st
 
 `Integer.clamp(x, Integer, Integer)`
 
-The number limited to the interval: `lo` when below it, `hi` when above it, otherwise itself. Unlike Ruby's, there is no Range form (`clamp(1..10)`). A `lo` above `hi` fails with Ruby's `ArgumentError`.
+The number limited to the interval: `lo` when below it, `hi` when above it, otherwise itself. Unlike Ruby's, there is no Range form (`clamp(1..10)`). A `lo` above `hi` is an `ArgumentError` (`min argument must be less than or equal to max argument`).
 
 ```ruby
 p(Integer.clamp(5, 1, 10))   # => 5
 p(Integer.clamp(-5, 1, 10))  # => 1
 p(Integer.clamp(50, 1, 10))  # => 10
+```
+
+```ruby error
+p(Integer.clamp(5, 10, 1))   # !> ArgumentError: Integer.clamp: min argument must be less than or equal to max argument
 ```
 
 ## between?
@@ -539,12 +568,23 @@ p(Integer.truncate(-1234, -2))   # => -1200
 
 `Integer.digits(x)`
 
-A new Array of the decimal digits, least significant first, as Ruby's `digits` without a base (`Integer.digits(1234)` is `[4, 3, 2, 1]`; 0 gives `[0]`). It is an ordinary Array whose element type the checker infers as Integer, not an `Integer[]`. A negative number fails with Ruby's `Math::DomainError`. Unlike Ruby's, there is no base argument: use `to_s(n, base)` and `String.chars`.
+A new Array of the decimal digits, least significant first, as Ruby's `digits` without a base (`Integer.digits(1234)` is `[4, 3, 2, 1]`; 0 gives `[0]`). It is a typed `Integer[]`: pushing a value of another type is a `type` problem. A negative number raises `Math::DomainError` (`out of domain`). Unlike Ruby's, there is no base argument: use `to_s(n, base)` and `String.chars`.
 
 ```ruby
 p(Integer.digits(1234))      # => [4, 3, 2, 1]
 p(Integer.digits(0))         # => [0]
 p(Array.sum(Integer.digits(999)))   # => 27
+d = Integer.digits(12)
+Array.push(d, 9)
+p(d)                         # => [2, 1, 9]
+```
+
+```ruby error
+Array.push(Integer.digits(12), "x")   # !> Array.push: an element must be Integer, but is String
+```
+
+```ruby error
+p(Integer.digits(-1))        # !> Math::DomainError: Integer.digits: out of domain
 ```
 
 ## to_s
@@ -646,13 +686,22 @@ p(Integer.size(2 ** 100))    # => 13
 
 `Integer.chr(x)`
 
-A one-character String whose byte is the number, which must be 0 to 255; outside that it fails with Ruby's `RangeError` (`256 out of char range`). As Ruby's `chr` without an encoding, 0 to 127 give an ASCII String and 128 to 255 a one-byte binary String, which raises `EncodingError` when joined with UTF-8 text. `String.ord` is the reverse. For a code point above 255 build the String another way (`format("%c", n)`).
+A one-character String whose byte is the number, which must be 0 to 255; outside that it raises `RangeError` (`256 out of char range`), which can be rescued. As Ruby's `chr` without an encoding, 0 to 127 give an ASCII String and 128 to 255 a one-byte binary String, which raises `EncodingError` when joined with UTF-8 text. `String.ord` is the reverse. For a code point above 255 build the String another way (`format("%c", n)`).
 
 ```ruby
 p(Integer.chr(65))           # => "A"
 puts(Integer.chr(97))        # => a
 p(Integer.chr(10))           # => "\n"
 p(String.ord(Integer.chr(200)))   # => 200
+begin
+  Integer.chr(200) + "é"
+rescue EncodingError => e
+  p(Exception.message(e))    # => "incompatible character encodings: BINARY (ASCII-8BIT) and UTF-8"
+end
+```
+
+```ruby error
+p(Integer.chr(256))          # !> RangeError: Integer.chr: 256 out of char range
 ```
 
 ## ord

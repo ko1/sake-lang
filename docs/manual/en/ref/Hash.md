@@ -4,7 +4,7 @@ A Hash maps keys to values and keeps insertion order. There is no literal like R
 
 A key may be an Integer, Float, String, Symbol, true, false, nil, Time, or a Tuple, Record, Array, Hash, Set, or Struct value made only of these. A Regexp, a Range, or a value of a Struct type that defines its own equality (`==` or `Comparable`) cannot be a key: `TypeError` at run time. Tuple and Record keys are copied when stored, so writing to the original later does not change the key (an Array key, as in Ruby, becomes unfindable when changed). `"a"` and `:a` are different keys, and so are `1` and `1.0`.
 
-`h[k]` gives nil on a miss (the default, for a Hash made by `Hash.new(default)`). Using that nil unchecked is reported only at `--strict=3`, as `index-nil` (level 2 does not report it). To make a miss an exception, use `Hash.fetch`. The nil of `Hash.delete`, `Hash.key`, `Hash.dig`, `Hash.first`, `Hash.shift`, `Hash.find` and the like is reported at level 2.
+`h[k]` gives nil on a miss (the default, for a Hash made by `Hash.new(default)`). Using that nil unchecked is reported only at `--strict=3`, as `index-nil` (level 2 does not report it). To make a miss an exception, use `Hash.fetch`. The nil of `Hash.dig`, `Hash.min_by` and `Hash.max_by` is a miss too (level 3). The nil of `Hash.delete`, `Hash.key`, `Hash.first`, `Hash.shift`, `Hash.find` and the like is reported at level 2.
 
 An operation that takes a block passes each entry as one Tuple `[key, value]`: `|k, v|` takes it apart, `|kv|` receives the Tuple. `each_with_object` takes `|(k, v), memo|` and `reduce` takes `|acc, (k, v)|`. Iteration follows insertion order. The pairs returned by `to_a`, `sort_by`, `take`, `first` and others are `[k, v]` Tuples too.
 
@@ -121,21 +121,27 @@ p(Hash.fetch(Hash["a" => 1], "b")) # !> KeyError: Hash.fetch: key not found: "b"
 
 ## dig
 
-`Hash.dig(x, Any)`
+`Hash.dig(x, Any, *Any)`
 
-The value under key `k`, or nil (the default is not used). Ruby's `dig` takes any number of keys and digs through them; Sake's takes one key, and differs from `h[k]` in that its nil is reported at level 2. To dig into a nested Hash, check with `if` and call `dig` again.
+Digs through nested containers with the keys in order, as Ruby's `dig`: `dig(h, k)` is `h[k]`, and each further key indexes the value found so far (a Hash by key, an Array or a Tuple by position). The result is the value reached, or nil as soon as a key is missing on the way (for a miss in a Hash made by `Hash.new(default)` the default is given, as by `h[k]`, and the checker adds the default's type to the result). That nil is the nil of a miss, as with `h[k]`: using it unchecked is reported only at `--strict=3`, as `index-nil`; level 2 does not report it. The checker follows the keys through the types: a key applied to a value that is not a Hash, an Array, or a Tuple (an Integer, a String, a Record) is a `type` problem statically (`the value must be Array|Hash|Tuple, but is Integer`). A key of the wrong kind for the container reached (a String for an Array) is a `TypeError` at run time (`an index into Array must be Integer, got String`).
 
 ```ruby
-h = Hash["a" => Hash["b" => 1]]
-inner = Hash.dig(h, "a")
-if inner
-  p(Hash.dig(inner, "b"))          # => 1
-end
+h = Hash["a" => Hash["b" => Array[10, 20]]]
+p(Hash.dig(h, "a", "b", 1))        # => 20
+p(Hash.dig(h, "a", "zz", 1))       # => nil
 p(Hash.dig(h, "zz"))               # => nil
+t = Hash["t" => [1, "x"]]
+p(Hash.dig(t, "t", 1))             # => "x"
+p(Hash.dig(t, "t", 5))             # => nil
+p(Hash.dig(Hash.new(0), "q") + 1)  # => 1
+x = Hash.dig(h, "a", "b", 0)
+if x
+  p(x + 1)                         # => 11
+end
 ```
 
 ```ruby error
-p(Hash.dig(Hash["a" => 1], "a") + 1)   # !> the operands may be nil
+p(Hash.dig(Hash["a" => 1], "a", "b"))   # !> Hash.dig: the value must be Array|Hash|Tuple, but is Integer
 ```
 
 ## fetch_values
@@ -435,15 +441,16 @@ p(Hash.map(h) { |kv| kv })                      # => [["a", 1], ["b", 2]]
 
 `Hash.flat_map(x) { }`
 
-Calls the block for each entry and returns a new Array of all the Arrays it returned, joined. The block must return an **Array**; a Tuple or a scalar is a `TypeError` at run time (Ruby keeps a non-Array result as one element).
+Calls the block for each entry and returns a new Array of all the Arrays it returned, joined. The block must return an **Array or a Tuple** (a Tuple's elements are joined in like an Array's); a scalar is a `TypeError` at run time (`the block must return an Array or a Tuple, got Integer`; Ruby keeps a non-Array result as one element).
 
 ```ruby
 h = Hash["a" => 1, "b" => 2]
 p(Hash.flat_map(h) { |k, v| Array[k, v] })   # => ["a", 1, "b", 2]
+p(Hash.flat_map(h) { |k, v| [k, v] })        # => ["a", 1, "b", 2]
 ```
 
 ```ruby error
-Hash.flat_map(Hash["a" => 1]) { |k, v| [k, v] }   # !> TypeError: Hash.flat_map: the block must return an Array, got Tuple
+Hash.flat_map(Hash["a" => 1]) { |k, v| v }   # !> TypeError: Hash.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## filter_map
@@ -538,7 +545,7 @@ k, v = kv                          # !> multiple assignment: argument 1 may be n
 
 `Hash.max_by(x) { }`
 
-The entry for which the block result is smallest or largest, as a Tuple `[k, v]`, or nil for an empty Hash (reported at level 2). The block results must compare with each other; mixing Integers and Strings is an `ArgumentError` at run time.
+The entry for which the block result is smallest or largest, as a Tuple `[k, v]`, or nil for an empty Hash. That nil is the nil of a miss (as `Array.min_by`): using it unchecked is reported only at `--strict=3`. The block results must compare with each other: a block whose result type mixes types that cannot be compared (Integer and String) is rejected statically as a `type` problem, and one whose result may be nil as a `nil` problem; when the checker cannot see it (`Float.NAN`) it is an `ArgumentError` at run time.
 
 ```ruby
 h = Hash["a" => 3, "b" => 1, "c" => 2]
@@ -548,14 +555,14 @@ p(Hash.max_by(Hash[]) { |k, v| v })   # => nil
 ```
 
 ```ruby error
-Hash.min_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> ArgumentError: Hash.min_by: cannot compare block results of types Integer, String
+Hash.min_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> Hash.min_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## sort_by
 
 `Hash.sort_by(x) { }`
 
-The entries in ascending order of the block result, as an Array of `[k, v]` Tuples (an Array, not a Hash, as in Ruby). Block results that do not compare are an `ArgumentError`. For descending order negate in the block or use `Array.reverse`. A Tuple result sorts in dictionary order ([Tuple](Tuple.md)).
+The entries in ascending order of the block result, as an Array of `[k, v]` Tuples (an Array, not a Hash, as in Ruby). The block results must compare with each other: a result type that mixes types that cannot be compared is rejected statically (`type`), as with `min_by`. For descending order negate in the block or use `Array.reverse`. A Tuple result sorts in dictionary order ([Tuple](Tuple.md)).
 
 ```ruby
 h = Hash["a" => 3, "b" => 1, "c" => 2]
@@ -564,7 +571,7 @@ p(Hash.sort_by(h) { |k, v| -v })   # => [["a", 3], ["c", 2], ["b", 1]]
 ```
 
 ```ruby error
-Hash.sort_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> ArgumentError: Hash.sort_by: cannot compare block results of types Integer, String
+Hash.sort_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> Hash.sort_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## any?, all?, none?
@@ -604,7 +611,7 @@ p(Hash.one?(h) { |k, v| v > 0 })   # => false
 
 `Hash.sum(x, [Integer|Float|Rational|Complex]) { }`
 
-Calls the block for each entry and adds the results to `init` (0 when omitted). The block is required (Ruby's blockless form does not exist), and `init` must be a number (a String is a `type` problem statically; to join strings use `reduce`). The result type follows from `init` and the numeric type of the block results.
+Calls the block for each entry and adds the results to `init` (0 when omitted). The block is required (Ruby's blockless form does not exist), and `init` must be a number (a String is a `type` problem statically; to join strings use `reduce`). A block result that is not a number is a `TypeError` at run time (`String can't be coerced into Integer`). The result type follows from `init` and the numeric type of the block results.
 
 ```ruby
 h = Hash["a" => 1, "b" => 2]
@@ -899,12 +906,14 @@ p(Hash.empty?(h))                  # => true
 
 `Hash.!=(x, Any)`
 
-True when the two Hashes have the same set of keys and the values under each key are `==` (`!=` is the negation). Insertion order does not matter, and neither does the default. The operator `h == nil` is false, but the function form `Hash.==(h, nil)` raises `TypeError` at run time when the right operand is not a Hash. A Record `{a: 1}` and `Hash[a: 1]` differ in type and are not equal.
+True when the two Hashes have the same set of keys and the values under each key are `==` (`!=` is the negation). Insertion order does not matter, and neither does the default. A right operand that is not a Hash (nil, an Integer, an Array) is never equal, with the function form as with the operator: `Hash.==(h, nil)` is false. A Record `{a: 1}` and `Hash[a: 1]` differ in type and are not equal.
 
 ```ruby
 a = Hash["a" => 1, "b" => 2]
 p(a == Hash["b" => 2, "a" => 1])   # => true
 p(a != Hash["a" => 1])             # => true
 p(Hash.==(a, Hash[]))              # => false
+p(Hash.==(a, nil))                 # => false
+p(Hash.!=(a, 1))                   # => true
 p(Hash[a: 1] == {a: 1})            # => false
 ```

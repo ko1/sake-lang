@@ -78,23 +78,29 @@ p(Tuple.length([]))              # => 0
 
 `Tuple.min(x)`
 
-The largest or smallest element (Ruby's `[a, b].max`). The elements must be comparable with each other; a pair that is not (an Integer and a String, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. The empty Tuple `[]` gives nil. Struct values compare with their type's `<=>` (`include Comparable`).
+The largest or smallest element (Ruby's `[a, b].max`). Since each position's type is known, whether the elements are comparable with each other is checked statically: an incomparable pair (an Integer and a String, say) is a `type` problem (`elements compared in order may be (Integer, String), which cannot be compared`), and a position that may be nil a `nil` problem. A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. The empty Tuple `[]` gives nil. Struct values compare with their type's `<=>` (`include Comparable`). The result's type is the join of the positions' types; for a non-empty Tuple it is never nil.
 
 ```ruby
 p(Tuple.max([3, 1, 2]))          # => 3
 p(Tuple.min([3, 1, 2]))          # => 1
 p(Tuple.max([2, 1.5]))           # => 2
+p(Tuple.max([3, 1]) + 1)         # => 4
+p(Tuple.max([]))                 # => nil
 ```
 
 ```ruby error
-p(Tuple.max([1, "a"]))           # !> ArgumentError: Tuple.max: cannot compare elements of types Integer, String
+p(Tuple.max([1, "a"]))           # !> Tuple.max: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+p(Tuple.max([1.0, Float.NAN]))   # !> ArgumentError: Tuple.max: cannot compare elements of types Float
 ```
 
 ## minmax
 
 `Tuple.minmax(x)`
 
-The two-element Tuple `[min, max]`. The comparison rules are those of `min` and `max`.
+The two-element Tuple `[min, max]`. The comparison rules are those of `min` and `max` (an incomparable pair is a `type` problem statically).
 
 ```ruby
 lo, hi = Tuple.minmax([3, 1, 2])

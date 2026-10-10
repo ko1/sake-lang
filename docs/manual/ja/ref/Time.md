@@ -173,11 +173,18 @@ p(Time.to_i(Time.at(100, in: "+09:00")))   # => 100
 
 `Time.to_a(x)`
 
-Ruby の `t.to_a`: `[sec, min, hour, day, month, year, wday, yday, isdst, zone]` の 10 要素の Tuple。最後の `zone` は `Time.zone` と同じで、UTC なら `"UTC"`、固定オフセットの Time では nil です（検査器はこの位置を String と見るので、nil になりうることに注意してください）。
+Ruby の `t.to_a`: `[sec, min, hour, day, month, year, wday, yday, isdst, zone]` の 10 要素の Tuple。最後の `zone` は `Time.zone` と同じで、UTC なら `"UTC"`、`in: "+09:00"` のような固定オフセットの Time では nil です。この要素の型は `String | nil` なので、確かめずに String として使うと `--strict`（レベル 2）が `nil` の問題として止めます。他の 9 つは Integer と Boolean です。
 
 ```ruby
 p(Time.to_a(Time.at(0, in: "UTC")))        # => [0, 0, 0, 1, 1, 1970, 4, 1, false, "UTC"]
 p(Time.to_a(Time.at(0, in: "+09:00")))     # => [0, 0, 9, 1, 1, 1970, 4, 1, false, nil]
+sec, min, hour, day, month, year, wday, yday, isdst, zone = Time.to_a(Time.at(0, in: "UTC"))
+p(zone ? String.size(zone) : 0)            # => 3
+```
+
+```ruby error
+zone = Time.to_a(Time.at(0, in: "+09:00"))[9]
+p(String.size(zone))                       # !> String.size: argument 1 may be nil
 ```
 
 ## to_s
@@ -377,7 +384,7 @@ p(a + a)                               # !> the operands are (Time, Time), which
 
 `Time.!=(x, Any)`
 
-同じ時刻なら true（`!=` はその否定）。ゾーンは比べないので、`Time.at(100, in: "UTC")` と `Time.at(100, in: "+09:00")` は等しいです。演算子の形 `t == v` で右が Time でない値（nil など）なら false。関数の形 `Time.==(t, v)` は右も Time でなければならず、他の型は実行時に `TypeError` です。
+同じ時刻なら true（`!=` はその否定）。ゾーンは比べないので、`Time.at(100, in: "UTC")` と `Time.at(100, in: "+09:00")` は等しいです。右が Time でない値（nil、Integer など）なら `==` は false、`!=` は true で、演算子の形 `t == v` も関数の形 `Time.==(t, v)` も同じです。関数の形はどんな値も受け取り、例外にはなりません。
 
 ```ruby
 a = Time.at(100, in: "UTC")
@@ -385,6 +392,8 @@ p(a == Time.at(100, in: "+09:00"))     # => true
 p(a != a + 1)                          # => true
 p(a == nil)                            # => false
 p(Time.==(a, Time.at(100.0, in: "UTC")))   # => true
+p(Time.==(a, 100))                     # => false
+p(Time.!=(a, 100))                     # => true
 ```
 
 ## <, <=, >, >=
@@ -397,7 +406,7 @@ p(Time.==(a, Time.at(100.0, in: "UTC")))   # => true
 
 `Time.>=(x, Any)`
 
-時刻の前後で比べます（早い方が小さい）。右は Time でなければならず、Integer などは静的に `type` の問題です。
+時刻の前後で比べます（早い方が小さい）。右は Time でなければならず、Integer などは関数の形 `Time.<(t, 100)` でも静的に `type` の問題です（false を返すだけの `==` とは違います）。
 
 ```ruby
 a = Time.at(100, in: "UTC")

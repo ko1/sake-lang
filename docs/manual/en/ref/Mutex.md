@@ -22,7 +22,7 @@ p(Mutex.locked?(m))                 # => false
 
 `Mutex.synchronize(x) { }`
 
-Takes the lock, runs the block, releases the lock when the block ends (also by an exception), and returns the block's value. While another thread holds the lock it waits. Usually this form is all that is needed. Nesting `synchronize` on a Mutex the thread already holds stops the program with Ruby's `ThreadError` (unlike `lock`, it is not in a form that can be rescued).
+Takes the lock, runs the block, releases the lock when the block ends (also by an exception), and returns the block's value. While another thread holds the lock it waits. Usually this form is all that is needed. Nesting `synchronize` on a Mutex the thread already holds is a `ThreadError` (`deadlock; recursive locking`), as with `lock`; it can be rescued, and the outer `synchronize` releases the lock on the way out.
 
 ```ruby
 m = Mutex.new
@@ -35,6 +35,17 @@ p(count)                            # => 400
 r = Mutex.synchronize(m) { p(Mutex.locked?(m)); "val" }   # => true
 p(r)                                # => "val"
 p(Mutex.locked?(m))                 # => false
+begin
+  Mutex.synchronize(m) { Mutex.synchronize(m) { 1 } }
+rescue ThreadError => e
+  p(Exception.message(e))           # => "deadlock; recursive locking"
+end
+p(Mutex.locked?(m))                 # => false
+```
+
+```ruby error
+m = Mutex.new
+Mutex.synchronize(m) { Mutex.synchronize(m) { 1 } }   # !> ThreadError: Mutex.synchronize: deadlock; recursive locking
 ```
 
 ## lock

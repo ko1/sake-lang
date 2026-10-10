@@ -4,7 +4,7 @@ TCPServer は TCP の接続を受け付ける待ち受けソケットの型で�
 
 ポートを開けない（使用中、権限が無い）、閉じたサーバで accept する、などの失敗は `IOError` です（[例外](../08-exceptions.md)）。
 
-TCPServer に演算子はありません（`==` も定義されていません）。例は `127.0.0.1` のポート 0（空いているポートを OS が選ぶ）で立て、同じプログラムの Thread から接続します。
+TCPServer に使える演算子は `==`、`!=` だけです（同じサーバなら等しい）。例は `127.0.0.1` のポート 0（空いているポートを OS が選ぶ）で立て、同じプログラムの Thread から接続します。
 
 ## new
 
@@ -28,7 +28,7 @@ TCPServer.new("127.0.0.1", TCPServer.port(srv))   # !> IOError: TCPServer.new: A
 
 `TCPServer.port(x)`
 
-待ち受けているポート番号（Integer）。`TCPServer.new` に 0 を渡したときに、実際のポートを知るために使います。閉じたサーバでは Ruby の `IOError` でプログラムが止まります（rescue できる形になりません）。
+待ち受けているポート番号（Integer）。`TCPServer.new` に 0 を渡したときに、実際のポートを知るために使います。閉じたサーバでは `IOError`（`closed stream`）。
 
 ```ruby
 srv = TCPServer.new("127.0.0.1", 0)
@@ -36,6 +36,12 @@ port = TCPServer.port(srv)
 p(port >= 1024)                     # => true
 p(TCPServer.port(srv) == port)      # => true
 TCPServer.close(srv)
+```
+
+```ruby error
+srv = TCPServer.new("127.0.0.1", 0)
+TCPServer.close(srv)
+TCPServer.port(srv)                 # !> IOError: TCPServer.port: closed stream
 ```
 
 ## accept
@@ -68,7 +74,8 @@ Array.each(clients) { |_|
   end
   Socket.close(c)
 }
-p(Array.sort(Array.map(clients) { |t| Thread.value(t) }))   # => ["hi a\n", "hi b\n"]
+replies = Array.compact(Array.map(clients) { |t| Thread.value(t) })   # Socket.gets は nil かもしれないので、並べ替える前に compact
+p(Array.sort(replies))              # => ["hi a\n", "hi b\n"]
 p(Array.sort(served))               # => ["a", "b"]
 TCPServer.close(srv)
 ```
@@ -93,4 +100,23 @@ p(TCPServer.close(srv))             # => nil
 again = TCPServer.new("127.0.0.1", port)
 p(TCPServer.port(again) == port)    # => true
 TCPServer.close(again)
+```
+
+## ==, !=
+
+`TCPServer.==(x, Any)`
+
+`TCPServer.!=(x, Any)`
+
+2 つの値が同じサーバなら等しい（`!=` はその否定）。`TCPServer.new` の結果はそれぞれ別の値です。TCPServer 以外の値とは等しくなく、関数形でも false になります（エラーにはなりません）。
+
+```ruby
+srv = TCPServer.new("127.0.0.1", 0)
+other = TCPServer.new("127.0.0.1", 0)
+p(srv == srv)                       # => true
+p(srv == other)                     # => false
+p(srv != other)                     # => true
+p(TCPServer.==(srv, 1))             # => false
+TCPServer.close(srv)
+TCPServer.close(other)
 ```

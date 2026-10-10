@@ -173,11 +173,18 @@ p(Time.to_i(Time.at(100, in: "+09:00")))   # => 100
 
 `Time.to_a(x)`
 
-Ruby's `t.to_a`: the ten-element Tuple `[sec, min, hour, day, month, year, wday, yday, isdst, zone]`. The last element is `Time.zone`: `"UTC"` for a UTC Time, nil for a Time at a fixed offset (the checker sees a String at this position, so mind that it may be nil).
+Ruby's `t.to_a`: the ten-element Tuple `[sec, min, hour, day, month, year, wday, yday, isdst, zone]`. The last element is `Time.zone`: `"UTC"` for a UTC Time, nil for a Time at a fixed offset such as `in: "+09:00"`. Its type is `String | nil`, so using it unchecked as a String is a `nil` problem under `--strict` (level 2); the other nine are Integers and a Boolean.
 
 ```ruby
 p(Time.to_a(Time.at(0, in: "UTC")))        # => [0, 0, 0, 1, 1, 1970, 4, 1, false, "UTC"]
 p(Time.to_a(Time.at(0, in: "+09:00")))     # => [0, 0, 9, 1, 1, 1970, 4, 1, false, nil]
+sec, min, hour, day, month, year, wday, yday, isdst, zone = Time.to_a(Time.at(0, in: "UTC"))
+p(zone ? String.size(zone) : 0)            # => 3
+```
+
+```ruby error
+zone = Time.to_a(Time.at(0, in: "+09:00"))[9]
+p(String.size(zone))                       # !> String.size: argument 1 may be nil
 ```
 
 ## to_s
@@ -377,7 +384,7 @@ p(a + a)                               # !> the operands are (Time, Time), which
 
 `Time.!=(x, Any)`
 
-True for the same instant (`!=` is the negation). The zone is not compared: `Time.at(100, in: "UTC")` and `Time.at(100, in: "+09:00")` are equal. In the operator form `t == v`, a right operand that is not a Time (nil, say) gives false. The function form `Time.==(t, v)` requires a Time on the right too; any other type is a `TypeError` at run time.
+True for the same instant (`!=` is the negation). The zone is not compared: `Time.at(100, in: "UTC")` and `Time.at(100, in: "+09:00")` are equal. A right operand that is not a Time (nil, an Integer, ...) gives false for `==` and true for `!=`, in the operator form `t == v` and in the function form `Time.==(t, v)` alike: the function forms accept any value and never raise.
 
 ```ruby
 a = Time.at(100, in: "UTC")
@@ -385,6 +392,8 @@ p(a == Time.at(100, in: "+09:00"))     # => true
 p(a != a + 1)                          # => true
 p(a == nil)                            # => false
 p(Time.==(a, Time.at(100.0, in: "UTC")))   # => true
+p(Time.==(a, 100))                     # => false
+p(Time.!=(a, 100))                     # => true
 ```
 
 ## <, <=, >, >=
@@ -397,7 +406,7 @@ p(Time.==(a, Time.at(100.0, in: "UTC")))   # => true
 
 `Time.>=(x, Any)`
 
-Compare two instants (the earlier is smaller). The right operand must be a Time; an Integer or the like is a `type` problem statically.
+Compare two instants (the earlier is smaller). The right operand must be a Time; an Integer or the like is a `type` problem statically, in the function form `Time.<(t, 100)` too (unlike `==`, which just gives false).
 
 ```ruby
 a = Time.at(100, in: "UTC")

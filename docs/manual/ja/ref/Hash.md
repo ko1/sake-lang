@@ -4,7 +4,7 @@ Hash はキーから値への対応で、挿入順を保ちます。Ruby の `{"
 
 キーに使えるのは Integer、Float、String、Symbol、true、false、nil、Time と、それらだけからなる Tuple、Record、Array、Hash、Set、Struct 値です。Regexp、Range、独自の等価性（`==` や `Comparable`）を定義した Struct 型の値はキーにできず、実行時に `TypeError` です。Tuple と Record のキーは格納時に複製されるので、元の値を後で書き換えてもキーは変わりません（Array などのキーは Ruby と同じく、書き換えると見つからなくなります）。`"a"` と `:a`、`1` と `1.0` は別のキーです。
 
-`h[k]` は見つからないと nil（`Hash.new(default)` で作った Hash なら default）を返します。この nil をそのまま使うことは `--strict=3` でだけ `index-nil` として報告されます（level 2 は報告しません）。見つからないことを例外にしたいときは `Hash.fetch` を使います。`Hash.delete`、`Hash.key`、`Hash.dig`、`Hash.first`、`Hash.shift`、`Hash.find` などの nil は level 2 で報告されます。
+`h[k]` は見つからないと nil（`Hash.new(default)` で作った Hash なら default）を返します。この nil をそのまま使うことは `--strict=3` でだけ `index-nil` として報告されます（level 2 は報告しません）。見つからないことを例外にしたいときは `Hash.fetch` を使います。`Hash.dig`、`Hash.min_by`、`Hash.max_by` の nil も外れの nil です（level 3）。`Hash.delete`、`Hash.key`、`Hash.first`、`Hash.shift`、`Hash.find` などの nil は level 2 で報告されます。
 
 ブロックを取る操作は、各要素を `[key, value]` の Tuple 1 つとして渡します。`|k, v|` と書けば分解され、`|kv|` なら Tuple のまま受け取ります。`each_with_object` は `|(k, v), memo|`、`reduce` は `|acc, (k, v)|` と書きます。繰り返しの順序は挿入順です。`to_a`、`sort_by`、`take`、`first` などが返す組も `[k, v]` の Tuple です。
 
@@ -121,21 +121,27 @@ p(Hash.fetch(Hash["a" => 1], "b")) # !> KeyError: Hash.fetch: key not found: "b"
 
 ## dig
 
-`Hash.dig(x, Any)`
+`Hash.dig(x, Any, *Any)`
 
-キー `k` の値、無ければ nil（default は見ません）。Ruby の `dig` はキーを何個でも取って掘り進みますが、Sake のは 1 個だけで、`h[k]` との違いは nil が level 2 で報告される点です。入れ子を掘るには、`if` で確かめてから次の `dig` を呼びます。
+Ruby の `dig` と同じく、キーを順に使って入れ子の容器を掘り進みます: `dig(h, k)` は `h[k]` で、以降のキーはそこまでに見つかった値への添字です（Hash ならキー、Array と Tuple なら位置）。結果は辿り着いた値で、途中でキーが見つからなければそこで nil です（`Hash.new(default)` で作った Hash での外れは `h[k]` と同じく default で、検査器も default の型を結果に加えます）。この nil は `h[k]` と同じ外れの nil で、そのまま使うことは `--strict=3` でだけ `index-nil` として報告されます（level 2 は報告しません）。検査器はキーを型の上で辿り、Hash・Array・Tuple でない値（Integer、String、Record）にキーを当てるのは静的に `type` の問題です（`the value must be Array|Hash|Tuple, but is Integer`）。辿り着いた容器に合わない種類のキー（Array に String）は実行時に `TypeError`（`an index into Array must be Integer, got String`）。
 
 ```ruby
-h = Hash["a" => Hash["b" => 1]]
-inner = Hash.dig(h, "a")
-if inner
-  p(Hash.dig(inner, "b"))          # => 1
-end
+h = Hash["a" => Hash["b" => Array[10, 20]]]
+p(Hash.dig(h, "a", "b", 1))        # => 20
+p(Hash.dig(h, "a", "zz", 1))       # => nil
 p(Hash.dig(h, "zz"))               # => nil
+t = Hash["t" => [1, "x"]]
+p(Hash.dig(t, "t", 1))             # => "x"
+p(Hash.dig(t, "t", 5))             # => nil
+p(Hash.dig(Hash.new(0), "q") + 1)  # => 1
+x = Hash.dig(h, "a", "b", 0)
+if x
+  p(x + 1)                         # => 11
+end
 ```
 
 ```ruby error
-p(Hash.dig(Hash["a" => 1], "a") + 1)   # !> the operands may be nil
+p(Hash.dig(Hash["a" => 1], "a", "b"))   # !> Hash.dig: the value must be Array|Hash|Tuple, but is Integer
 ```
 
 ## fetch_values
@@ -435,15 +441,16 @@ p(Hash.map(h) { |kv| kv })                      # => [["a", 1], ["b", 2]]
 
 `Hash.flat_map(x) { }`
 
-各組についてブロックを呼び、ブロックが返した Array をすべてつなげた新しい Array を返します。ブロックは **Array** を返さなければならず、Tuple やスカラーを返すと実行時に `TypeError`（Ruby は Array 以外をそのまま並べます）。
+各組についてブロックを呼び、ブロックが返した Array をすべてつなげた新しい Array を返します。ブロックは **Array か Tuple** を返さなければならず（Tuple の要素も Array と同じくつなげられます）、スカラーを返すと実行時に `TypeError`（`the block must return an Array or a Tuple, got Integer`。Ruby は Array 以外をそのまま並べます）。
 
 ```ruby
 h = Hash["a" => 1, "b" => 2]
 p(Hash.flat_map(h) { |k, v| Array[k, v] })   # => ["a", 1, "b", 2]
+p(Hash.flat_map(h) { |k, v| [k, v] })        # => ["a", 1, "b", 2]
 ```
 
 ```ruby error
-Hash.flat_map(Hash["a" => 1]) { |k, v| [k, v] }   # !> TypeError: Hash.flat_map: the block must return an Array, got Tuple
+Hash.flat_map(Hash["a" => 1]) { |k, v| v }   # !> TypeError: Hash.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## filter_map
@@ -538,7 +545,7 @@ k, v = kv                          # !> multiple assignment: argument 1 may be n
 
 `Hash.max_by(x) { }`
 
-ブロックの結果が最小・最大になる組 `[k, v]` を Tuple で返します。空なら nil（level 2 で報告）。ブロックの結果同士は比べられなければならず、Integer と String などが混ざると実行時に `ArgumentError`。
+ブロックの結果が最小・最大になる組 `[k, v]` を Tuple で返します。空なら nil で、これは外れの nil です（`Array.min_by` と同じく、そのまま使うことは `--strict=3` でだけ報告）。ブロックの結果同士は比べられなければなりません: 比べられない型（Integer と String）が結果の型に混ざるブロックは静的に `type` の問題として退けられ、nil になりうる結果は `nil` の問題です。検査器に見えないとき（`Float.NAN`）は実行時に `ArgumentError`。
 
 ```ruby
 h = Hash["a" => 3, "b" => 1, "c" => 2]
@@ -548,14 +555,14 @@ p(Hash.max_by(Hash[]) { |k, v| v })   # => nil
 ```
 
 ```ruby error
-Hash.min_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> ArgumentError: Hash.min_by: cannot compare block results of types Integer, String
+Hash.min_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> Hash.min_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## sort_by
 
 `Hash.sort_by(x) { }`
 
-ブロックの結果の昇順に組を並べ、`[k, v]` の Tuple の Array で返します（Ruby と同じく Hash ではなく Array）。比べられない結果の組は `ArgumentError`。降順にはブロックで符号を反転するか `Array.reverse` を使います。Tuple を返せば辞書順です（[Tuple](Tuple.md)）。
+ブロックの結果の昇順に組を並べ、`[k, v]` の Tuple の Array で返します（Ruby と同じく Hash ではなく Array）。ブロックの結果同士は比べられなければならず、比べられない型が結果の型に混ざると `min_by` と同じく静的に退けられます（`type`）。降順にはブロックで符号を反転するか `Array.reverse` を使います。Tuple を返せば辞書順です（[Tuple](Tuple.md)）。
 
 ```ruby
 h = Hash["a" => 3, "b" => 1, "c" => 2]
@@ -564,7 +571,7 @@ p(Hash.sort_by(h) { |k, v| -v })   # => [["a", 3], ["c", 2], ["b", 1]]
 ```
 
 ```ruby error
-Hash.sort_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> ArgumentError: Hash.sort_by: cannot compare block results of types Integer, String
+Hash.sort_by(Hash["a" => 1, "b" => "x"]) { |k, v| v }   # !> Hash.sort_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## any?, all?, none?
@@ -604,7 +611,7 @@ p(Hash.one?(h) { |k, v| v > 0 })   # => false
 
 `Hash.sum(x, [Integer|Float|Rational|Complex]) { }`
 
-各組についてブロックを呼び、その結果を `init`（省略時 0）に足し合わせます。ブロックは必須で（Ruby のブロック無しの形はありません）、`init` は数値に限ります（String を渡すのは静的に `type` の問題。文字列の連結は `reduce`）。結果の型は `init` とブロックの結果の数値型から決まります。
+各組についてブロックを呼び、その結果を `init`（省略時 0）に足し合わせます。ブロックは必須で（Ruby のブロック無しの形はありません）、`init` は数値に限ります（String を渡すのは静的に `type` の問題。文字列の連結は `reduce`）。数でない結果を返すブロックは実行時に `TypeError`（`String can't be coerced into Integer`）。結果の型は `init` とブロックの結果の数値型から決まります。
 
 ```ruby
 h = Hash["a" => 1, "b" => 2]
@@ -899,12 +906,14 @@ p(Hash.empty?(h))                  # => true
 
 `Hash.!=(x, Any)`
 
-2 つの Hash が同じキーの集合を持ち、各キーの値が `==` で等しいときに true（`!=` はその否定）。挿入順は関係ありません。default も見ません。演算子 `h == nil` は false ですが、関数形 `Hash.==(h, nil)` は右側が Hash でないと実行時に `TypeError` です。Record `{a: 1}` と `Hash[a: 1]` は型が違うので等しくありません。
+2 つの Hash が同じキーの集合を持ち、各キーの値が `==` で等しいときに true（`!=` はその否定）。挿入順は関係ありません。default も見ません。右側が Hash でない値（nil、Integer、Array）とは等しくなく、関数形も演算子と同じです: `Hash.==(h, nil)` は false。Record `{a: 1}` と `Hash[a: 1]` は型が違うので等しくありません。
 
 ```ruby
 a = Hash["a" => 1, "b" => 2]
 p(a == Hash["b" => 2, "a" => 1])   # => true
 p(a != Hash["a" => 1])             # => true
 p(Hash.==(a, Hash[]))              # => false
+p(Hash.==(a, nil))                 # => false
+p(Hash.!=(a, 1))                   # => true
 p(Hash[a: 1] == {a: 1})            # => false
 ```

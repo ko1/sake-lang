@@ -72,11 +72,13 @@ p(a)                             # => [1, {k: 2}]
 
 `Kernel.sprintf(String, *Any)`
 
-Makes a String with Ruby's `format` directives: `%d`, `%f`, `%e`, `%g`, `%x`, `%o`, `%b`, `%c`, `%s`, `%p`, `%%`, with width, precision and the flags `-`, `+`, `0`. `%s` uses a value's `to_s` (a Struct type's own `to_s(x)` included), `%p` its `inspect`. `%<name>d` and `%{name}` take one Hash with Symbol keys (`Hash[a: 1]`); a Record `{a: 1}` is not a Hash and is refused (`ArgumentError: one hash required`). Too few or too many arguments, a value that is not a number for a numeric directive, and a missing key are all `ArgumentError`.
+Makes a String with Ruby's `format` directives: `%d`, `%f`, `%e`, `%g`, `%x`, `%o`, `%b`, `%c`, `%s`, `%p`, `%%`, with width, precision and the flags `-`, `+`, `0`. `%s` uses a value's `to_s` (a Struct type's own `to_s(x)` included), `%p` its `inspect`. `%<name>d` and `%{name}` take one Record (`{a: 1}`) or one Hash with Symbol keys (`Hash[a: 1]`) as the single argument; the same holds for the operator form `fmt % x` ([String](String.md)). Too few or too many arguments, a value that is not a number for a numeric directive, and a missing key (`key<a> not found`) are all `ArgumentError`.
 
 ```ruby
 p(format("%05.2f|%-4s|%p|%x", 3.14159, :ab, "q", 255))   # => "03.14|ab  |\"q\"|ff"
 p(sprintf("%+d %s %s", 3, nil, true))                     # => "+3  true"
+p(format("%<a>d-%<b>s", {a: 1, b: "x"}))                  # => "1-x"
+p("%<a>05d" % {a: 42})                                    # => "00042"
 p(format("%<n>d-%{s}", Hash[n: 1, s: "x"]))               # => "1-x"
 Point = Struct.new(:x, :y)
 p(format("%s", Point.new(1, 2)))                          # => "#<struct Point x=1, y=2>"
@@ -84,6 +86,10 @@ p(format("%s", Point.new(1, 2)))                          # => "#<struct Point x
 
 ```ruby error
 p(format("%d %d", 1))            # !> ArgumentError: Kernel.format: too few arguments
+```
+
+```ruby error
+p(format("%<a>d", {b: 1}))       # !> ArgumentError: Kernel.format: key<a> not found
 ```
 
 ## gets
@@ -120,7 +126,7 @@ exit(2)
 
 `Kernel.Integer(String|Integer|Float)`
 
-Ruby's strict `Integer()`. A String must be a decimal integer or one with a `0x`, `0b`, `0o` or `0` prefix; `_` separators and surrounding whitespace are allowed, anything else (`"12abc"`, `""`, `"1e3"`) is an `ArgumentError`. A Float is truncated, an Integer returned as is. `String.to_i` silently reads as far as it can; this operation fails unless the whole String is an integer. For a NaN or infinite Float, Ruby's `FloatDomainError` currently escapes and ends the program (it cannot be rescued).
+Ruby's strict `Integer()`. A String must be a decimal integer or one with a `0x`, `0b`, `0o` or `0` prefix; `_` separators and surrounding whitespace are allowed, anything else (`"12abc"`, `""`, `"1e3"`) is an `ArgumentError`. A Float is truncated, an Integer returned as is. `String.to_i` silently reads as far as it can; this operation fails unless the whole String is an integer. A NaN or infinite Float is a `FloatDomainError` (the message is the value's name, `NaN` or `Infinity`), rescuable like the others.
 
 ```ruby
 p(Integer("42"))                 # => 42
@@ -132,6 +138,10 @@ p(String.to_i("12abc"))          # => 12
 
 ```ruby error
 p(Integer("12abc"))              # !> ArgumentError: Kernel.Integer: invalid value for Integer(): "12abc"
+```
+
+```ruby error
+p(Integer(Float.NAN))            # !> FloatDomainError: Kernel.Integer: NaN
 ```
 
 ## Float
@@ -152,15 +162,19 @@ p(Float("abc"))                  # !> ArgumentError: Kernel.Float: invalid value
 
 ## Rational
 
-`Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
+`Kernel.Rational(Integer|Float|Rational|String, [Integer|Rational])`
 
-Ruby's `Rational(a, b = 1)`. `a` is an Integer, a Rational, or a String of the form `"1/3"`, `"0.75"` or `"3"`; `b` is an Integer or a Rational; the result is `a / b` reduced. Floats are not accepted (a `type` problem statically; use `Float.to_r` or `Float.rationalize`). A String that cannot be read is an `ArgumentError`, a `b` of 0 a `ZeroDivisionError`.
+Ruby's `Rational(a, b = 1)`. `a` is an Integer, a Float, a Rational, or a String of the form `"1/3"`, `"0.75"` or `"3"`; `b` is an Integer or a Rational; the result is `a / b` reduced. A Float is taken exactly, as `Float.to_r` takes it: `Rational(0.5)` is `(1/2)`, but `Rational(0.1)` is the long binary fraction `0.1` really stands for (for the short `(1/10)` use `Float.rationalize`). A String that cannot be read is an `ArgumentError`, a `b` of 0 a `ZeroDivisionError`, a NaN or infinite Float a `FloatDomainError`.
 
 ```ruby
 p(Rational(3, 6))                # => (1/2)
 p(Rational("0.75"))              # => (3/4)
 p(Rational("1/3"))               # => (1/3)
 p(Rational(1r/2, 1r/4))          # => (2/1)
+p(Rational(0.5))                 # => (1/2)
+p(Rational(1.5, 1r/2))           # => (3/1)
+p(Rational(0.1) == Float.to_r(0.1))   # => true
+p(Float.rationalize(0.1))        # => (1/10)
 ```
 
 ```ruby error
@@ -315,7 +329,7 @@ rec(1)                           # !> SystemStackError: once: the block reached 
 
 `Kernel.rand([Integer|Float])`
 
-Ruby's `rand`. Without an argument, a Float at least 0.0 and below 1.0. With an Integer `n`, an Integer at least 0 and below `|n|` (the checker sees an Integer; as in Ruby an `n` of 0 gives a Float instead, so do not pass 0). With a Float `x`, a Float at least 0.0 and below `x`. A Range is not accepted (a `type` problem statically).
+Ruby's `rand`, with a stricter argument. Without an argument, a Float at least 0.0 and below 1.0. With an Integer `n`, an Integer at least 0 and below `n`. With a Float `x`, a Float at least 0.0 and below `x`. The bound must be positive: 0, 0.0 and a negative number are an `ArgumentError` (`invalid argument - 0`), where Ruby takes `|n|` and gives a Float for 0. A Range is not accepted (a `type` problem statically).
 
 ```ruby
 f = rand
@@ -324,6 +338,10 @@ i = rand(6)
 p(i >= 0 && i < 6)               # => true
 g = rand(2.5)
 p(g >= 0.0 && g < 2.5)           # => true
+```
+
+```ruby error
+p(rand(0))                       # !> ArgumentError: Kernel.rand: invalid argument - 0
 ```
 
 ## srand

@@ -7,10 +7,10 @@ The checker keeps the type of the ends with the Range (`Range[Integer]`), and th
 - **Walking the values** (`each`, `map`, `to_a`, `select`, `find`, `count`, ...) needs a Range that starts with an Integer or a String. `"a".."e"` walks with Ruby's `String#succ`. A Range of another type, such as `1.0..2.0`, is a `type` problem statically (`the Range's first value must be Integer|String, but is Float`) and a `TypeError` at run time.
 - `step`, `sum`, and `size` need an Integer start; a String Range is a `type` problem for them.
 - **Finite** is required where the whole Range is used (`to_a`, `map`, `sum`, `last`, `min`, `max`, ...): on an endless Range those raise `RangeError` (`cannot do this on an endless Range 1..`). Operations that can stop early (`each`, `find`, `take`, `first(r, n)`, `each_slice`, `bsearch`) accept an endless Range; `each` on one runs until `break`.
-- `include?`, `cover?`, `member?`, `overlap?`, `begin`, `end`, and `exclude_end?` compare with the ends only and take any Range, Float and endless ones included.
+- `cover?`, `overlap?`, `begin`, `end`, and `exclude_end?` compare with the ends only and take any Range, Float and endless ones included. `include?` and `member?` do the same on a Range of numbers, but walk a String Range, as Ruby's do.
 - A Range whose beginning is above its end (`5..1`) has no values: walking it does nothing, `to_a` is `[]`, `min` is nil; `first`, `last`, `begin`, and `end` still give the ends.
 
-The operators on Ranges are `==` and `!=` (two Ranges are equal when their ends and `exclude_end?` are). Indexing with a Range (`a[1..3]`, `s[0...2]`) is an operation of Array and String ([Operators and indexing](../05-operators.md)). A Range cannot be a Hash key or a Set element (`TypeError`). Results that may be nil (`first`, `last`, `min`, `max`, `begin`, `end`, `find`, `find_index`, `bsearch`, `min_by`, `max_by`, the elements of `minmax`) are typed `T | nil`: `--strict` (level 2) reports using them unchecked; none of them is the level 3 "nil of a miss".
+The operators on Ranges are `==` and `!=` (two Ranges are equal when their ends and `exclude_end?` are). Indexing with a Range (`a[1..3]`, `s[0...2]`) is an operation of Array and String ([Operators and indexing](../05-operators.md)). A Range cannot be a Hash key or a Set element (`TypeError`). Results that may be nil (`first`, `last`, `min`, `max`, `begin`, `end`, `find`, `find_index`, `bsearch`, `min_by`, `max_by`) are typed `T | nil`: `--strict` (level 2) reports using them unchecked. Only the elements of the Tuples of `minmax` and `minmax_by` are the "nil of a miss" (as `a, b = tuple`), which level 3 alone reports.
 
 Many operations are Ruby's Enumerable methods. Unlike Ruby, every block is **required** where the signature shows `{ }` (except `count` and `sum`, whose block is optional), `reduce` and `inject` need the initial value, and the block of `each`, `map`, and the others takes exactly one parameter (`each_with_index`, `each_with_object`, `chunk_while`, `slice_when` take two); a block with the wrong number of parameters is an `ArgumentError` at run time.
 
@@ -52,7 +52,7 @@ p(Range.exclude_end?(1..))       # => false
 
 `Range.!=(x, Any)`
 
-Two Ranges are equal when both ends are `==` and `exclude_end?` agrees (`!=` is the negation). `1..5` and `1...5` differ. With the operator, a right operand that is not a Range is never equal (`(1..5) == 5` is false); the function form `Range.==(r, x)` only has a row for a Range on the right, and another type is a `TypeError` at run time (`no implementation for (Range, Integer)`).
+Two Ranges are equal when both ends are `==` and `exclude_end?` agrees (`!=` is the negation). `1..5` and `1...5` differ. A right operand that is not a Range (an Integer, nil) is never equal, with the function form as with the operator: `(1..5) == 5` and `Range.==(1..5, 5)` are both false.
 
 ```ruby
 p((1..5) == (1..5))          # => true
@@ -60,10 +60,8 @@ p((1..5) == (1...5))         # => false
 p((1..5) != (1...6))         # => true
 p((1..5) == 5)               # => false
 p(Range.==(1..5, 1..5))      # => true
-```
-
-```ruby error
-p(Range.==(1..5, 5))         # !> TypeError: Range.==: no implementation for (Range, Integer)
+p(Range.==(1..5, 5))         # => false
+p(Range.!=(1..5, nil))       # => true
 ```
 
 ## include?, cover?, member?
@@ -74,17 +72,24 @@ p(Range.==(1..5, 5))         # !> TypeError: Range.==: no implementation for (Ra
 
 `Range.member?(x, Any)`
 
-True when the value lies between the ends (`begin <= v <= end`, or `< end` for `...`). All three are Ruby's `cover?`: they compare with the ends and never walk the Range, so they work on endless, beginless, and Float Ranges, and a Float is found in an Integer Range. This differs from Ruby's `include?` on String Ranges, which walks: here `("a".."z")` includes `"mm"` because `"a" <= "mm" <= "z"`. A value of another type than the ends (`"a"` in `1..5`, nil) gives false. A Range as the value asks whether it lies entirely inside, as Ruby's `cover?`.
+True when the value is in the Range. `cover?` is Ruby's `cover?`: it compares with the ends only (`begin <= v <= end`, or `< end` for `...`) and never walks the Range, so it works on endless, beginless, and Float Ranges, and a Float is found in an Integer Range. `include?` and `member?` are Ruby's `include?`: on a Range of numbers they are the same as `cover?`, but a **String Range is walked** with `String#succ`, so `"a".."z"` includes `"m"` but not `"mm"` (which `cover?` accepts, since `"a" <= "mm" <= "z"`), and an endless or beginless String Range is a `TypeError` (`cannot determine inclusion in beginless/endless ranges`). A value of another type than the ends (`"a"` in `1..5`, nil) gives false. A Range as the value: `cover?` asks whether it lies entirely inside, as Ruby's; `include?` and `member?` answer false.
 
 ```ruby
-p(Range.include?(1..5, 5))       # => true
-p(Range.include?(1...5, 5))      # => false
-p(Range.cover?(1..5, 2.5))       # => true
-p(Range.member?(1..5, 0))        # => false
-p(Range.include?(1.., 100))      # => true
-p(Range.cover?("a".."z", "mm"))  # => true
-p(Range.include?(1..5, "a"))     # => false
-p(Range.cover?(1..5, 2..3))      # => true
+p(Range.include?(1..5, 5))         # => true
+p(Range.include?(1...5, 5))        # => false
+p(Range.cover?(1..5, 2.5))         # => true
+p(Range.member?(1..5, 0))          # => false
+p(Range.include?(1.., 100))        # => true
+p(Range.include?("a".."z", "m"))   # => true
+p(Range.include?("a".."z", "mm"))  # => false
+p(Range.cover?("a".."z", "mm"))    # => true
+p(Range.include?(1..5, "a"))       # => false
+p(Range.cover?(1..5, 2..3))        # => true
+p(Range.include?(1..5, 2..3))      # => false
+```
+
+```ruby error
+p(Range.include?("a".., "b"))      # !> TypeError: Range.include?: cannot determine inclusion in beginless/endless ranges
 ```
 
 ## overlap?
@@ -192,7 +197,7 @@ p(Range.reverse_each(1..3) { |i| puts(i) })  # => 3
 
 `Range.step(x, Integer) { }`
 
-Calls the block with the beginning, the beginning plus the step, and so on while the value lies in the Range, and returns the Range. Only for an Integer Range (`type` for a String or Float one). An endless Range needs a `break`. A negative step walks a descending Range (`10..1` with -3 gives 10, 7, 4, 1) and gives nothing on an ascending one. A step of 0 fails with Ruby's `ArgumentError` (`step can't be 0`).
+Calls the block with the beginning, the beginning plus the step, and so on while the value lies in the Range, and returns the Range. Only for an Integer Range (`type` for a String or Float one). An endless Range needs a `break`. A negative step walks a descending Range (`10..1` with -3 gives 10, 7, 4, 1) and gives nothing on an ascending one. A step of 0 is an `ArgumentError` (`step can't be 0`).
 
 ```ruby
 p(Range.step(1..10, 3) { |i| puts(i) })    # => 1
@@ -202,10 +207,18 @@ p(Range.step(1..10, 3) { |i| puts(i) })    # => 1
                                            # => 1..10
 Range.step(1...9, 4) { |i| p(i) }          # => 1
                                            # => 5
+Range.step(10..1, -3) { |i| p(i) }         # => 10
+                                           # => 7
+                                           # => 4
+                                           # => 1
 ```
 
 ```ruby error
 Range.step("a".."z", 2) { |s| p(s) }       # !> the Range's first value must be Integer, but is String
+```
+
+```ruby error
+Range.step(1..5, 0) { |i| p(i) }           # !> ArgumentError: Range.step: step can't be 0
 ```
 
 ## each_slice
@@ -282,7 +295,7 @@ p(Range.to_a(1..))           # !> RangeError: Range.to_a: cannot do this on an e
 
 `Range.first(x, [Integer])`
 
-Without a count: the beginning of the Range, whatever the Range contains (`Range.first(5..1)` is 5, `Range.first(1...1)` is 1, `Range.first(1.0..2.0)` is 1.0). The type is `T | nil` and `--strict` asks for a check before arithmetic; the nil case is a beginless Range, which fails with Ruby's `RangeError`. With a count n: a new Array of the first n values (fewer when the Range is shorter), walking the Range, so an Integer or String Range is needed; an endless Range is fine. A negative count is a `RangeError`.
+Without a count: the beginning of the Range, whatever the Range contains (`Range.first(5..1)` is 5, `Range.first(1...1)` is 1, `Range.first(1.0..2.0)` is 1.0). The type is `T | nil` and `--strict` asks for a check before arithmetic; a beginless Range does not give nil but raises `RangeError` (`cannot get the first element of beginless range`). With a count n: a new Array of the first n values (fewer when the Range is shorter), walking the Range, so an Integer or String Range is needed (a Float Range is a `TypeError` at run time, `can't iterate from Float`); an endless Range is fine. A negative count is a `RangeError` (`negative array size (or size too big)`).
 
 ```ruby
 p(Range.first(1..5))         # => 1
@@ -290,6 +303,14 @@ p(Range.first(1..5, 2))      # => [1, 2]
 p(Range.first(1..5, 10))     # => [1, 2, 3, 4, 5]
 p(Range.first(1.., 3))       # => [1, 2, 3]
 p(Range.first("a".."c", 2))  # => ["a", "b"]
+```
+
+```ruby error
+p(Range.first(..5))          # !> RangeError: Range.first: cannot get the first element of beginless range
+```
+
+```ruby error
+p(Range.first(1.0..2.0, 2))  # !> TypeError: Range.first: can't iterate from Float
 ```
 
 ## last
@@ -378,14 +399,15 @@ p(Range.map(1..) { |i| i })                      # !> RangeError: Range.map: can
 
 `Range.collect_concat(x) { }`
 
-A new Array that joins the Arrays the block returns, one level deep. The block must return an Array: another value is a `TypeError` (`the block must return an Array`). Needs a finite Range.
+A new Array that joins the Arrays (or Tuples) the block returns, one level deep. The block must return an Array or a Tuple: another value is a `TypeError` at run time (`the block must return an Array or a Tuple, got Integer`). Needs a finite Range.
 
 ```ruby
 p(Range.flat_map(1..3) { |i| Array[i, i] })      # => [1, 1, 2, 2, 3, 3]
+p(Range.flat_map(1..2) { |i| [i, i * 10] })      # => [1, 10, 2, 20]
 ```
 
 ```ruby error
-p(Range.flat_map(1..2) { |i| i })                # !> TypeError: Range.flat_map: the block must return an Array, got Integer
+p(Range.flat_map(1..2) { |i| i })                # !> TypeError: Range.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## select, filter, find_all
@@ -506,12 +528,16 @@ p(Range.find_index(1..10) { |i| i > 100 })     # => nil
 
 `Range.bsearch(x) { }`
 
-Binary search over an Integer Range, as Ruby's: in find-minimum mode the block gives true for the wanted value and every value above it, and the result is the smallest such value, or nil when the block is never true (`T | nil`). An endless Range is fine. A String Range is an `ArgumentError` at run time (`can't do binary search for String`).
+Binary search over an Integer Range, as Ruby's: in find-minimum mode the block gives true for the wanted value and every value above it, and the result is the smallest such value, or nil when the block is never true (`T | nil`). An endless Range is fine. A String Range is a `TypeError` at run time (`can't do binary search for String`).
 
 ```ruby
 p(Range.bsearch(1..100) { |i| i * i >= 50 })   # => 8
 p(Range.bsearch(1..100) { |i| i > 1000 })      # => nil
 p(Range.bsearch(1..) { |i| i * i >= 50 })      # => 8
+```
+
+```ruby error
+p(Range.bsearch("a".."z") { |s| s >= "m" })    # !> TypeError: Range.bsearch: can't do binary search for String
 ```
 
 ## all?, any?, none?, one?
@@ -557,18 +583,23 @@ p(Range.inject(1..5) { |acc, i| acc + i })   # !> wrong number of arguments for 
 
 `Range.sum(x, [Integer|Float|Rational|Complex]) [{ }]`
 
-The sum of the values, or of the block's results, added to the initial value (default 0). Only for an Integer Range (`type` for a String Range), and a finite one (`RangeError`). The result's type follows the initial value and the block: Integer values with an Integer start give an Integer; a Float start gives a Float. As Ruby's `Range#sum`, an Integer Range with a Rational initial value gives a Float (`Range.sum(1..3, 2r)` is 8.0), and a Complex initial value fails. A block whose results are not numbers is a `type` problem.
+The sum of the values, or of the block's results, added to the initial value (default 0). Only for an Integer Range (`type` for a String Range), and a finite one (`RangeError`). The result's type follows the initial value and the block: Integer values with an Integer start give an Integer; a Float start gives a Float. As Ruby's `Range#sum`, an Integer Range with a Rational initial value gives a Float (`Range.sum(1..3, 2r)` is 8.0), and a Complex initial value is a `RangeError` at run time (`can't convert 1+2i into Float`). A block whose results are not numbers is a `type` problem.
 
 ```ruby
 p(Range.sum(1..100))                 # => 5050
 p(Range.sum(1..10, 100))             # => 155
 p(Range.sum(1..3) { |i| i * 2 })     # => 12
 p(Range.sum(1..3, 0.5))              # => 6.5
+p(Range.sum(1..3, 2r))               # => 8.0
 p(Range.sum(1..0))                   # => 0
 ```
 
 ```ruby error
 p(Range.sum("a".."c"))               # !> the Range's first value must be Integer, but is String
+```
+
+```ruby error
+p(Range.sum(1..3, Complex(1, 2)))    # !> RangeError: Range.sum: can't convert 1+2i into Float
 ```
 
 ## min, max
@@ -577,7 +608,7 @@ p(Range.sum("a".."c"))               # !> the Range's first value must be Intege
 
 `Range.max(x)`
 
-The smallest and the largest value, or nil when the Range has no values (`5..1`): the type is `T | nil`. `max` respects an excluded end (`Range.max(1...5)` is 4). Needs a finite Range (`RangeError`). Both accept a Float Range with an included end (`Range.max(1.0..2.5)` is 2.5), as Ruby's; `max` of a Float Range with an excluded end fails with Ruby's `TypeError` (`cannot exclude non Integer end value`).
+The smallest and the largest value, or nil when the Range has no values (`5..1`): the type is `T | nil`. `max` respects an excluded end (`Range.max(1...5)` is 4). Needs a finite Range (`RangeError`). Both accept a Float Range with an included end (`Range.max(1.0..2.5)` is 2.5), as Ruby's; `max` of a Float Range with an excluded end is a `TypeError` (`cannot exclude non Integer end value`; `min` of it is fine).
 
 ```ruby
 p(Range.min(1..5))           # => 1
@@ -585,6 +616,7 @@ p(Range.max(1...5))          # => 4
 p(Range.max(5..1))           # => nil
 p(Range.min("a".."c"))       # => "a"
 p(Range.max(1.0..2.5))       # => 2.5
+p(Range.min(1.0...2.5))      # => 1.0
 ```
 
 ```ruby error
@@ -592,16 +624,26 @@ x = Range.min(1..5)
 p(x + 1)                     # !> the operands may be nil
 ```
 
+```ruby error
+p(Range.max(1.0...2.5))      # !> TypeError: Range.max: cannot exclude non Integer end value
+```
+
 ## minmax
 
 `Range.minmax(x)`
 
-The Tuple `[min, max]`; both are nil on a Range with no values. Unlike `min` and `max`, it walks the Range, so it needs an Integer or String Range (a Float Range is a `type` problem) and a finite one.
+The Tuple `[min, max]`; both are nil on a Range with no values (`5..1`, `2.5..1.0`). Those are the nil of a miss: using an element unchecked is reported only at `--strict=3`. Needs a finite Range (`RangeError`). As `min` and `max`, it accepts a Float Range with an included end (`Range.minmax(1.0..2.5)` is `[1.0, 2.5]`); a Float Range with an excluded end is a `TypeError` (`cannot exclude non Integer end value`).
 
 ```ruby
 lo, hi = Range.minmax(1..5)
 p([lo, hi])                  # => [1, 5]
 p(Range.minmax(5..1))        # => [nil, nil]
+p(Range.minmax(1.0..2.5))    # => [1.0, 2.5]
+p(Range.minmax("a".."c"))    # => ["a", "c"]
+```
+
+```ruby error
+p(Range.minmax(1.0...2.5))   # !> TypeError: Range.minmax: cannot exclude non Integer end value
 ```
 
 ## min_by, max_by
@@ -622,7 +664,7 @@ p(Range.min_by(5..1) { |i| i })                # => nil
 
 `Range.minmax_by(x) { }`
 
-The Tuple of the values with the smallest and the largest block result; `[nil, nil]` on a Range with no values. Needs a finite Range.
+The Tuple of the values with the smallest and the largest block result; `[nil, nil]` on a Range with no values (the nil of a miss, reported only at `--strict=3`). Needs a finite Range.
 
 ```ruby
 p(Range.minmax_by(1..5) { |i| -i })    # => [5, 1]

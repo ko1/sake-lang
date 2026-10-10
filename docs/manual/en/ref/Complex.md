@@ -4,7 +4,7 @@ A Complex is a complex number with a real and an imaginary part, each an Integer
 
 The operators on Complexes are `+`, `-`, `*`, `/`, `**` and `==`, `!=`. A Complex has no order, so there is no `<` and the like, and no `%` (both are `type` problems statically). The right operand may be an Integer, a Float, a Rational or a Complex, and the result is always a Complex; with an Integer, a Float or a Rational on the left and a Complex on the right the result is a Complex as well ([Operators and indexing](../05-operators.md)). The entries `Complex.+(x, y)` and so on below are the function forms of those operators.
 
-The parts keep their types inside the value: `Complex(1, 2) / 2` is `((1/2)+1i)`, with a Rational real part (as in Ruby). That is why `real` and `imag` have the result type `Integer | Float | Rational`; to use a part as an Integer, narrow it with `case`/`in`. The differences from Ruby: a part cannot be a Complex, and the function form `Complex.==(x, y)` accepts only numbers.
+The parts keep their types inside the value: `Complex(1, 2) / 2` is `((1/2)+1i)`, with a Rational real part (as in Ruby). That is why `real` and `imag` have the result type `Integer | Float | Rational`; to use a part as an Integer, narrow it with `case`/`in`. The difference from Ruby: a part cannot be a Complex.
 
 ## Complex[]
 
@@ -62,7 +62,7 @@ p(Complex./(Complex(1, 2), 0))     # !> ZeroDivisionError: Complex./: divided by
 
 `Complex.!=(x, Any)`
 
-The function form of `x == y`. True when the real parts and the imaginary parts are each `==`; `Complex(1, 0) == 1` and `Complex(1.0, 0) == 1` are true. The operator `==` accepts any two values and is false when the types differ (`Complex(1, 2) == "x"` is false), but the function form `Complex.==(x, y)` raises a `TypeError` at run time unless the right operand is a number (nil included); the checker does not catch this statically.
+The function form of `x == y`. True when the real parts and the imaginary parts are each `==`; `Complex(1, 0) == 1` and `Complex(1.0, 0) == 1` are true. A value of another type is never equal (`Complex(1, 2) == "x"` is false), and the function form `Complex.==(x, y)` gives the same false (and `!=` true) for any right operand of another type, as the operator does, without an error.
 
 ```ruby
 p(Complex.==(Complex(1, 2), Complex(1, 2)))    # => true
@@ -70,10 +70,8 @@ p(Complex.==(Complex(1, 0), 1))                # => true
 p(Complex.==(Complex(2, 0), 2.0))              # => true
 p(Complex.!=(Complex(1, 2), Complex(2, 1)))    # => true
 p(Complex(1, 2) == "x")                        # => false
-```
-
-```ruby error
-p(Complex.==(Complex(1, 2), "x"))  # !> TypeError: Complex.==: no implementation for (Complex, String)
+p(Complex.==(Complex(1, 2), "x"))              # => false
+p(Complex.==(Complex(1, 2), nil))              # => false
 ```
 
 ## real, imag, imaginary
@@ -115,12 +113,13 @@ p(re + im)                                 # => 3
 
 `Complex.polar(x)`
 
-The polar form as the Tuple `[r, θ]`: `r` is the absolute value (as `abs`, `Integer | Float`) and `θ` the argument (as `arg`, a Float; `0.0` or `π` on the real axis).
+The polar form as the Tuple `[r, θ]`: `r` is the absolute value exactly as `abs` gives it (`Integer | Float`; a Rational magnitude becomes a Float, `Complex.polar(Complex(3r, 0))` is `[3.0, 0.0]`) and `θ` the argument (as `arg`, a Float; `0.0` or `π` on the real axis).
 
 ```ruby
 p(Complex.polar(Complex(3, 4)))    # => [5.0, 0.9272952180016122]
 p(Complex.polar(Complex(0, 2)))    # => [2, 1.5707963267948966]
 p(Complex.polar(Complex(-2, 0)))   # => [2, 3.141592653589793]
+p(Complex.polar(Complex(3r, 0)))   # => [3.0, 0.0]
 r, th = Complex.polar(Complex(3, 4))
 p(r)                               # => 5.0
 ```
@@ -131,12 +130,13 @@ p(r)                               # => 5.0
 
 `Complex.magnitude(x)`
 
-The absolute value `sqrt(re² + im²)`. Usually a Float, but as in Ruby, when one part is an exact 0 the absolute value of the other part is returned as it is, so `Complex(3, 0)` gives the Integer `3`. The type is `Integer | Float` (a Rational part gives a Rational, which the checker does not see). The two are the same operation.
+The absolute value `sqrt(re² + im²)`. Usually a Float, but as in Ruby, when one part is an exact 0 the absolute value of the other part is returned as it is, so `Complex(3, 0)` gives the Integer `3`. Unlike Ruby's, a Rational magnitude becomes a Float (`Complex.abs(Complex(3r, 0))` is `3.0`), so the type is exactly `Integer | Float`. The two are the same operation.
 
 ```ruby
 p(Complex.abs(Complex(3, 4)))      # => 5.0
 p(Complex.abs(Complex(3, 0)))      # => 3
 p(Complex.abs(Complex(0, -2)))     # => 2
+p(Complex.abs(Complex(3r, 0)))     # => 3.0
 p(Complex.magnitude(Complex(1, 1))) # => 1.4142135623730951
 a = Complex.abs(Complex(3, 4))
 p(a + 1)                           # => 6.0
@@ -278,7 +278,7 @@ p(Complex.numerator(Complex(3, 4)))    # => (3+4i)
 
 `Complex.rationalize(x, [Rational])`
 
-Convert the real part to an Integer, a Float or a Rational (`rationalize` is the real part's `rationalize`, with a Rational tolerance `eps`), but only when the imaginary part is an exact 0 (the Integer `0` or `0r`). When it is not 0, or is `0.0` (the Float zero), the result is Ruby's `RangeError` (`can't convert 1+2i into Float`).
+Convert the real part to an Integer, a Float or a Rational (`rationalize` is the real part's `rationalize`, with a Rational tolerance `eps`), but only when the imaginary part is an exact 0 (the Integer `0` or `0r`). When it is not 0, or is `0.0` (the Float zero), a `RangeError` is raised (Ruby's message: `can't convert 1+2i into Float`), which can be rescued.
 
 ```ruby
 p(Complex.to_i(Complex(1.9, 0)))           # => 1

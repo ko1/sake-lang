@@ -4,7 +4,7 @@ Complex は実部と虚部を持つ複素数で、各部は Integer、Float、Ra
 
 Complex に使える演算子は `+`、`-`、`*`、`/`、`**` と `==`、`!=` です。Complex には順序が無いので `<` などの比較は無く、`%` もありません（静的に `type` の問題）。右側は Integer、Float、Rational、Complex のどれでもよく、結果は常に Complex です。Integer・Float・Rational が左側でも、右側が Complex なら結果は Complex です（[演算子と添字](../05-operators.md)）。ここに挙げた `Complex.+(x, y)` などはその演算子を関数の形で呼ぶものです。
 
-各部の型は値の中に残り、`Complex(1, 2) / 2` は `((1/2)+1i)` と Rational の実部になります（Ruby と同じ）。実部・虚部を取り出す `real`・`imag` の結果の型が `Integer | Float | Rational` なのはそのためで、Integer として使うには `case`/`in` などで型を確かめます。Ruby との違いは、各部に Complex を渡せないこと、`Complex.==(x, y)` の関数形が数以外を受け付けないことです。
+各部の型は値の中に残り、`Complex(1, 2) / 2` は `((1/2)+1i)` と Rational の実部になります（Ruby と同じ）。実部・虚部を取り出す `real`・`imag` の結果の型が `Integer | Float | Rational` なのはそのためで、Integer として使うには `case`/`in` などで型を確かめます。Ruby との違いは、各部に Complex を渡せないことです。
 
 ## Complex[]
 
@@ -62,7 +62,7 @@ p(Complex./(Complex(1, 2), 0))     # !> ZeroDivisionError: Complex./: divided by
 
 `Complex.!=(x, Any)`
 
-`x == y` の関数形。実部と虚部がそれぞれ `==` なら true で、`Complex(1, 0) == 1` や `Complex(1.0, 0) == 1` も true です。演算子の `==` はどんな 2 値にも使えて型が違えば false ですが（`Complex(1, 2) == "x"` は false）、関数形の `Complex.==(x, y)` は右側が数でなければ（nil でも）実行時に `TypeError` です（検査器はこれを静的には見つけません）。
+`x == y` の関数形。実部と虚部がそれぞれ `==` なら true で、`Complex(1, 0) == 1` や `Complex(1.0, 0) == 1` も true です。別の型の値とは決して等しくなく（`Complex(1, 2) == "x"` は false）、関数形の `Complex.==(x, y)` も演算子と同じく、右側が他のどんな型でも false（`!=` は true）を返し、エラーにはなりません。
 
 ```ruby
 p(Complex.==(Complex(1, 2), Complex(1, 2)))    # => true
@@ -70,10 +70,8 @@ p(Complex.==(Complex(1, 0), 1))                # => true
 p(Complex.==(Complex(2, 0), 2.0))              # => true
 p(Complex.!=(Complex(1, 2), Complex(2, 1)))    # => true
 p(Complex(1, 2) == "x")                        # => false
-```
-
-```ruby error
-p(Complex.==(Complex(1, 2), "x"))  # !> TypeError: Complex.==: no implementation for (Complex, String)
+p(Complex.==(Complex(1, 2), "x"))              # => false
+p(Complex.==(Complex(1, 2), nil))              # => false
 ```
 
 ## real, imag, imaginary
@@ -115,12 +113,13 @@ p(re + im)                                 # => 3
 
 `Complex.polar(x)`
 
-極形式の Tuple `[r, θ]`。`r` は絶対値（`abs` と同じ、`Integer | Float`）、`θ` は偏角（`arg` と同じ Float。実軸上の値では `0.0`・`π`）です。
+極形式の Tuple `[r, θ]`。`r` は `abs` とまったく同じ絶対値（`Integer | Float`。Rational の絶対値は Float になり、`Complex.polar(Complex(3r, 0))` は `[3.0, 0.0]`）、`θ` は偏角（`arg` と同じ Float。実軸上の値では `0.0`・`π`）です。
 
 ```ruby
 p(Complex.polar(Complex(3, 4)))    # => [5.0, 0.9272952180016122]
 p(Complex.polar(Complex(0, 2)))    # => [2, 1.5707963267948966]
 p(Complex.polar(Complex(-2, 0)))   # => [2, 3.141592653589793]
+p(Complex.polar(Complex(3r, 0)))   # => [3.0, 0.0]
 r, th = Complex.polar(Complex(3, 4))
 p(r)                               # => 5.0
 ```
@@ -131,12 +130,13 @@ p(r)                               # => 5.0
 
 `Complex.magnitude(x)`
 
-絶対値 `sqrt(re² + im²)`。普通は Float ですが、Ruby と同じく片方の部が正確な 0 ならもう一方の部の絶対値をそのまま返すので、`Complex(3, 0)` では Integer の `3` です。型は `Integer | Float`（Rational の部なら Rational が返りますが、検査器はそれを見ません）。2 つは同じ働きです。
+絶対値 `sqrt(re² + im²)`。普通は Float ですが、Ruby と同じく片方の部が正確な 0 ならもう一方の部の絶対値をそのまま返すので、`Complex(3, 0)` では Integer の `3` です。Ruby と違い、Rational の絶対値は Float になります（`Complex.abs(Complex(3r, 0))` は `3.0`）。型はちょうど `Integer | Float` です。2 つは同じ働きです。
 
 ```ruby
 p(Complex.abs(Complex(3, 4)))      # => 5.0
 p(Complex.abs(Complex(3, 0)))      # => 3
 p(Complex.abs(Complex(0, -2)))     # => 2
+p(Complex.abs(Complex(3r, 0)))     # => 3.0
 p(Complex.magnitude(Complex(1, 1))) # => 1.4142135623730951
 a = Complex.abs(Complex(3, 4))
 p(a + 1)                           # => 6.0
@@ -278,7 +278,7 @@ p(Complex.numerator(Complex(3, 4)))    # => (3+4i)
 
 `Complex.rationalize(x, [Rational])`
 
-虚部が正確な 0（Integer の `0` か `0r`）のときだけ、実部を Integer・Float・Rational にします（`rationalize` は実部の `rationalize`。許容誤差 `eps` は Rational）。虚部が 0 でないとき、または `0.0`（Float の 0）のときは Ruby と同じく `RangeError`（`can't convert 1+2i into Float`）です。
+虚部が正確な 0（Integer の `0` か `0r`）のときだけ、実部を Integer・Float・Rational にします（`rationalize` は実部の `rationalize`。許容誤差 `eps` は Rational）。虚部が 0 でないとき、または `0.0`（Float の 0）のときは `RangeError`（メッセージは Ruby のもの: `can't convert 1+2i into Float`）を投げ、`rescue` できます。
 
 ```ruby
 p(Complex.to_i(Complex(1.9, 0)))           # => 1

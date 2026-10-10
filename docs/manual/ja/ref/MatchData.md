@@ -99,7 +99,7 @@ p(MatchData.values_at(m))             # => []
 
 `MatchData.match(x, Integer)`
 
-番号のグループの String（参加しなければ nil、`--strict` レベル 2 で報告）。`m[i]` との違いは、範囲外の番号が nil ではなく実行時に `IndexError` になることです。
+番号のグループの String（参加しなければ nil。「外れの nil」（`index-nil`）なので `--strict` レベル 3 でのみ報告）。`m[i]` との違いは、範囲外の番号が nil ではなく実行時に `IndexError` になることです。
 
 ```ruby
 m = Regexp.match(/(\d+)-(\d+)?/, "12-") or raise("no match")
@@ -116,7 +116,7 @@ p(MatchData.match(m, 5))      # !> IndexError: MatchData.match: index 5 out of m
 
 `MatchData.match_length(x, Integer)`
 
-番号のグループが一致した文字数（Integer）。参加しなければ nil（`--strict` レベル 2 で報告）、範囲外の番号は `IndexError`。
+番号のグループが一致した文字数（Integer）。参加しなければ nil（「外れの nil」、`index-nil`、レベル 3）、範囲外の番号は `IndexError`。
 
 ```ruby
 m = Regexp.match(/(\d+)-(\d+)?/, "12-") or raise("no match")
@@ -144,14 +144,26 @@ p(MatchData.post_match(m))    # => " cd"
 
 `MatchData.end(x, Integer)`
 
-番号のグループが一致した始めの位置と終わりの位置（文字単位の Integer。`end` は最後の文字の次）。検査器はこれを Integer と見ますが、参加しなかったグループでは実行時に **nil** が返り、静的には報告されません。そのグループが省略可能なら、先に `m[i]` で確かめてください。範囲外の番号は `IndexError`。
+番号のグループが一致した始めの位置と終わりの位置（文字単位の Integer。`end` は最後の文字の次）。参加しなかったグループでは **nil** です。結果の型は `Integer | nil` で、この nil は「外れの nil」（`index-nil`）なので `--strict` レベル 3 でのみ報告されます（`bytebegin`、`byteend`、`offset`、`byteoffset`、`match`、`match_length` の nil も同じです）。範囲外の番号は `IndexError`（`index 5 out of matches`）で、rescue できます。
 
 ```ruby
-m = Regexp.match(/(\d+)-(\d+)/, "ab 12-34") or raise("no match")
+m = Regexp.match(/(\d+)-(\d+)?/, "ab 12-") or raise("no match")
 p(MatchData.begin(m, 0))      # => 3
-p(MatchData.end(m, 0))        # => 8
-p(MatchData.begin(m, 2))      # => 6
-p(MatchData.end(m, 2))        # => 8
+p(MatchData.end(m, 0))        # => 6
+p(MatchData.begin(m, 1))      # => 3
+p(MatchData.end(m, 1))        # => 5
+p(MatchData.begin(m, 2))      # => nil
+b = MatchData.begin(m, 2)
+if b
+  p(b)
+else
+  puts("group 2 did not take part")      # => group 2 did not take part
+end
+```
+
+```ruby error
+m = Regexp.match(/(a)/, "a") or raise("no match")
+p(MatchData.begin(m, 5))      # !> IndexError: MatchData.begin: index 5 out of matches
 ```
 
 ## offset
@@ -177,7 +189,7 @@ p(MatchData.offset(m, 5))     # !> IndexError: MatchData.offset: index 5 out of 
 
 `MatchData.byteend(x, Integer)`
 
-`begin`、`end` のバイト単位の版（Integer）。マルチバイト文字を含む String で文字の位置と違ってきます。参加しなかったグループは nil（`--strict` レベル 2 で報告）、範囲外の番号は `IndexError`。
+`begin`、`end` のバイト単位の版（Integer）。マルチバイト文字を含む String で文字の位置と違ってきます。参加しなかったグループは nil（「外れの nil」、`index-nil`、レベル 3）、範囲外の番号は `IndexError`。
 
 ```ruby
 m = Regexp.match(/(い)/, "あいう") or raise("no match")

@@ -14,7 +14,7 @@ The only operators on IO are `==` and `!=` (equal when the two values are the sa
 
 `IO.stderr()`
 
-The program's standard input, standard output, and standard error as IO values. Every call gives the same value: `IO.stdout == IO.stdout` is true. `Kernel.puts` and `Kernel.p` write to `IO.stdout`; `Kernel.gets` reads from `IO.stdin`. Writing to `IO.stderr` flushes stdout first, so the lines of the two streams keep their order. Do not `IO.close` a standard stream: afterwards any output (`p`, ...) stops the program with Ruby's `IOError`.
+The program's standard input, standard output, and standard error as IO values. Every call gives the same value: `IO.stdout == IO.stdout` is true. `Kernel.puts` and `Kernel.p` write to `IO.stdout`; `Kernel.gets` reads from `IO.stdin`. Writing to `IO.stderr` flushes stdout first, so the lines of the two streams keep their order. Closing a standard stream with `IO.close` is allowed but rarely useful: afterwards every write to it (`p`, `puts`, `IO.write`) is an `IOError` (`closed stream`), which can be rescued; `IO.stderr` keeps working.
 
 ```ruby
 out = IO.stdout
@@ -22,6 +22,11 @@ IO.puts(out, "hello")            # => hello
 p(IO.stdout == out)              # => true
 p(IO.stdout == IO.stderr)        # => false
 p(IO.stdin)                      # => #<IO:<STDIN>>
+```
+
+```ruby error
+IO.close(IO.stdout)
+puts("x")                        # !> IOError: Kernel.puts: closed stream
 ```
 
 ## puts
@@ -177,7 +182,7 @@ p(IO.eof?(io))                   # => true
 
 `IO.seek(x, Integer, [Integer|Symbol])`
 
-Moves the read/write position and returns 0 (Ruby's `io.seek`). The second argument is the offset, the third the origin, the start of the file (`0`) when omitted: `0`/`:SET` counts from the start, `1`/`:CUR` from the current position, `2`/`:END` from the end (with a negative offset). Only these three Symbols exist; another Symbol stops the program with Ruby's `NameError`. A stream that cannot seek (`IO.stdin` as a pipe) is an `IOError`.
+Moves the read/write position and returns 0 (Ruby's `io.seek`). The second argument is the offset, the third the origin, the start of the file (`0`) when omitted: `0`/`:SET` counts from the start, `1`/`:CUR` from the current position, `2`/`:END` from the end (with a negative offset). Only these three Symbols exist; another Symbol is an `ArgumentError`. A stream that cannot seek (`IO.stdin` as a pipe) is an `IOError`.
 
 ```ruby
 File.write("a.txt", "hello\n")
@@ -189,6 +194,12 @@ p(IO.read(f))                    # => "o\n"
 p(IO.seek(f, 1, :SET))           # => 0
 p(IO.getc(f))                    # => "e"
 IO.close(f)
+```
+
+```ruby error
+File.write("a.txt", "hello\n")
+f = File.open("a.txt")
+IO.seek(f, 1, :FOO)              # !> ArgumentError: IO.seek: unknown whence: :FOO (0/1/2 or :SET/:CUR/:END)
 ```
 
 ## pos
@@ -225,13 +236,17 @@ IO.close(f)
 
 `IO.size(x)`
 
-The size of the open file in bytes (an Integer), including writes not yet flushed. It does not apply to an IO that is not a file (a stream such as `IO.stdin`): that stops the program with Ruby's `NoMethodError`, not an `IOError`.
+The size of the open file in bytes (an Integer), including writes not yet flushed. An IO that is not a file (a stream such as `IO.stdin`) is an `IOError` (`not a file`).
 
 ```ruby
 f = File.open("a.txt", "w")
 IO.write(f, "abc")
 p(IO.size(f))                    # => 3
 IO.close(f)
+```
+
+```ruby error
+IO.size(IO.stdin)                # !> IOError: IO.size: not a file
 ```
 
 ## truncate
@@ -290,12 +305,72 @@ p(IO.closed?(IO.stdout))         # => false
 
 `IO.tty?(x)`
 
-True when the IO is a terminal (Ruby's `io.tty?`); false for a file or a pipe. Under the checker the standard streams are pipes, so it is false there too.
+True when the IO is a terminal (Ruby's `io.tty?`); false for a file or a pipe. Under the checker the standard streams are pipes, so it is false there too. The terminal operations below (`winsize`, `raw`, `noecho`, `getch`) work only when this is true.
 
 ```ruby
 f = File.open("a.txt", "w")
 p(IO.tty?(f))                    # => false
 IO.close(f)
+```
+
+## winsize
+
+`IO.winsize(x)`
+
+The size of the terminal that `x` is connected to, as the Tuple `[rows, columns]` (Integer, Integer; Ruby's `io.winsize` of `io/console`). Take it apart with `rows, cols = IO.winsize(IO.stdout)`. An IO that is not a terminal (a file, a pipe, the standard streams under the checker) is an `IOError` (`not a terminal`). In a terminal:
+
+```
+rows, cols = IO.winsize(IO.stdout)
+p([rows, cols])                  # [24, 80] for an 80x24 terminal
+```
+
+Under the checker stdin is a pipe, so only the error can be shown:
+
+```ruby
+begin
+  IO.winsize(IO.stdin)
+rescue IOError => e
+  p(Exception.message(e))        # => "not a terminal"
+end
+```
+
+## raw, noecho
+
+`IO.raw(x) { }`
+
+`IO.noecho(x) { }`
+
+Run the block with the terminal of `x` in raw mode (`raw`: a key is delivered at once, without waiting for a line, and is not echoed) or with echo off (`noecho`: lines are still read as lines, but what is typed is not shown), restore the terminal afterwards (also when the block raises), and return the block's value (Ruby's `io.raw { }` and `io.noecho { }`). The result has the block's type. The block is required and takes no parameters. An IO that is not a terminal is an `IOError` (`not a terminal`). In a terminal, a password is read without showing it, and one key without waiting for Enter:
+
+```
+pw = IO.noecho(IO.stdin) { IO.gets(IO.stdin) }   # "secret\n" after typing secret and Enter
+k = IO.raw(IO.stdin) { IO.getch(IO.stdin) }      # "x" as soon as x is pressed
+```
+
+```ruby
+begin
+  IO.noecho(IO.stdin) { IO.gets(IO.stdin) }
+rescue IOError => e
+  p(Exception.message(e))        # => "not a terminal"
+end
+```
+
+## getch
+
+`IO.getch(x)`
+
+Reads one key from the terminal of `x` and returns it as a String, without waiting for Enter and without echo (Ruby's `io.getch`). The result is `String | nil` (nil at the end of input), so `--strict` (level 2) reports using it unchecked as a `nil` problem. An IO that is not a terminal is an `IOError` (`not a terminal`); to read a byte from a pipe or a file use `IO.getc`. In a terminal:
+
+```
+k = IO.getch(IO.stdin)           # "y" as soon as y is pressed
+```
+
+```ruby
+begin
+  IO.getch(IO.stdin)
+rescue IOError => e
+  p(Exception.message(e))        # => "not a terminal"
+end
 ```
 
 ## ==, !=

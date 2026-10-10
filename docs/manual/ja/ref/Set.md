@@ -142,13 +142,19 @@ Set.merge(Set[1], Array[2])   # !> argument 2 must be Set, but is Array
 
 `Set.subtract(x, Any)`
 
-引数に含まれる要素をすべて取り除き、Set 自身を返します（その場で変更）。引数は Set か Array（Range も可）です。新しい Set が欲しいときは `-` か `difference` を使います。
+引数に含まれる要素をすべて取り除き、Set 自身を返します（その場で変更）。引数は Set、Array、Tuple、Range のいずれかです。検査器は調べず（署名は `Any`）、それ以外は実行時に `TypeError`（`argument 2 must be Set, Array, Tuple, or Range, got Integer`）。新しい Set が欲しいときは `-` か `difference` を使います。
 
 ```ruby
-s = Set[1, 2, 3]
-p(Set.subtract(s, Set[1]))    # => Set[2, 3]
-p(Set.subtract(s, Array[3]))  # => Set[2]
-p(s)                          # => Set[2]
+s = Set[1, 2, 3, 4, 5]
+p(Set.subtract(s, Set[1]))    # => Set[2, 3, 4, 5]
+p(Set.subtract(s, Array[2]))  # => Set[3, 4, 5]
+p(Set.subtract(s, [3]))       # => Set[4, 5]
+p(Set.subtract(s, 4..4))      # => Set[5]
+p(s)                          # => Set[5]
+```
+
+```ruby error
+Set.subtract(Set[1, 2], 1)    # !> TypeError: Set.subtract: argument 2 must be Set, Array, Tuple, or Range, got Integer
 ```
 
 ## replace
@@ -413,14 +419,15 @@ p(s)                          # => Set[1, 0]
 
 `Set.collect_concat(x) { }`
 
-ブロックは各要素に対して **Array** を返し、それらをつなげた 1 つの Array が結果です。ブロックが Array 以外を返すと実行時に `TypeError`（Ruby のように値をそのまま並べはしません）。
+ブロックは各要素に対して **Array か Tuple** を返し、それらをつなげた 1 つの Array が結果です。ブロックがどちらでもない値を返すと実行時に `TypeError`（`the block must return an Array or a Tuple, got Integer`。Ruby のように値をそのまま並べはしません）。
 
 ```ruby
 p(Set.flat_map(Set[1, 2]) { |x| Array[x, x * 10] })   # => [1, 10, 2, 20]
+p(Set.flat_map(Set[1, 2]) { |x| [x, x * 10] })        # => [1, 10, 2, 20]
 ```
 
 ```ruby error
-Set.flat_map(Set[1]) { |x| x }    # !> TypeError: Set.flat_map: the block must return an Array, got Integer
+Set.flat_map(Set[1]) { |x| x }    # !> TypeError: Set.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## select, filter, find_all
@@ -635,7 +642,7 @@ p(Set.count(s) { |x| x > 1 })     # => 2
 
 `Set.sum(x, [Integer|Float|Rational|Complex])`
 
-要素の和。初期値（省略時 0）に要素を順に足します。要素と初期値は数でなければならず、初期値に String などを渡すのは静的に `type` の問題、数でない要素は実行時に `ArgumentError` です（Ruby の `sum("")` で String をつなぐ形はありません。`join` を使います）。空の Set では初期値。
+要素の和。初期値（省略時 0）に要素を順に足します。要素と初期値は数でなければならず、初期値に String などを渡すのは静的に `type` の問題、数でない要素は実行時に `TypeError`（`String can't be coerced into Integer`）です（Ruby の `sum("")` で String をつなぐ形はありません。`join` を使います）。空の Set では初期値。
 
 ```ruby
 p(Set.sum(Set[1, 2, 3]))          # => 6
@@ -670,7 +677,7 @@ p(Set.reduce(Set[1]) { |a, b| a + b })   # !> wrong number of arguments for Set.
 
 `Set.max(x)`
 
-最小・最大の要素。要素は互いに比べられなければならず、比べられないと実行時に `ArgumentError`（`cannot compare the elements`）。空の Set では **nil** で、`--strict`（レベル 2）は確かめずに使うと報告します（`Array.min` の nil がレベル 3 なのとは違います）。
+最小・最大の要素。要素は互いに比べられなければなりません: 比べられない型が要素の型に混ざる Set（`Set[1, "a"]`）は検査器が静的に `type` の問題として退け、nil になりうる要素は `nil` の問題です。検査器に見えないとき（`Set[1.0, Float.NAN]`）は実行時に `ArgumentError`（`cannot compare the elements`）。空の Set では **nil** で、`Array.min` と同じ外れの nil です: 確かめずに使うことは `--strict=3` でだけ報告されます。
 
 ```ruby
 s = Set[3, 1, 2]
@@ -680,14 +687,18 @@ p(Set.max(Set[]))                 # => nil
 ```
 
 ```ruby error
-p(Set.min(Set[1, "a"]))           # !> ArgumentError: Set.min: cannot compare the elements
+p(Set.min(Set[1, "a"]))           # !> Set.min: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+p(Set.min(Set[1.0, Float.NAN]))   # !> ArgumentError: Set.min: cannot compare the elements
 ```
 
 ## minmax
 
 `Set.minmax(x)`
 
-最小と最大の Tuple `[min, max]`。空の Set では `[nil, nil]`。比較の規則は `min`、`max` と同じ。
+最小と最大の Tuple `[min, max]`。空の Set では `[nil, nil]` で、これは外れの nil です（要素を確かめずに使うことは `--strict=3` でだけ報告）。比較の規則は静的な検査を含めて `min`、`max` と同じ。
 
 ```ruby
 lo, hi = Set.minmax(Set[3, 1, 2])
@@ -701,19 +712,24 @@ p(Set.minmax(Set[]))              # => [nil, nil]
 
 `Set.max_by(x) { }`
 
-ブロックの結果が最小・最大になる要素。ブロックの結果同士が比べられないと実行時に `ArgumentError`。空の Set では **nil**（`--strict` レベル 2 で報告）。
+ブロックの結果が最小・最大になる要素。ブロックの結果同士は比べられなければならず、比べられない型が結果の型に混ざるブロックは `min` と同じく静的に退けられます（`type`）。空の Set では **nil** で、外れの nil です（`--strict=3` でだけ報告）。
 
 ```ruby
 s = Set["bb", "a", "ccc"]
 p(Set.min_by(s) { |x| String.size(x) })   # => "a"
 p(Set.max_by(s) { |x| String.size(x) })   # => "ccc"
+p(Set.max_by(Set[]) { |x| x })            # => nil
+```
+
+```ruby error
+p(Set.min_by(Set[1, 2]) { |x| x == 1 ? 1 : "a" })   # !> Set.min_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## minmax_by
 
 `Set.minmax_by(x) { }`
 
-ブロックの結果で見た最小と最大の要素の Tuple。空の Set では `[nil, nil]`。
+ブロックの結果で見た最小と最大の要素の Tuple。空の Set では `[nil, nil]`（外れの nil、レベル 3）。ブロックの結果の検査は `min_by` と同じ。
 
 ```ruby
 p(Set.minmax_by(Set[1, 2, 3]) { |x| -x })   # => [3, 1]
@@ -723,32 +739,36 @@ p(Set.minmax_by(Set[1, 2, 3]) { |x| -x })   # => [3, 1]
 
 `Set.sort(x)`
 
-要素を昇順に並べた Array。比べられない要素があると実行時に `ArgumentError`。
+要素を昇順に並べた Array。要素は互いに比べられなければなりません: 比べられない型が要素の型に混ざる Set は静的に退けられ（`type`）、nil になりうる要素は `nil` の問題です。検査器に見えないとき（`Set[1.0, Float.NAN]`）は実行時に `ArgumentError`（`cannot compare the elements`）。
 
 ```ruby
 p(Set.sort(Set[3, 1, 2]))         # => [1, 2, 3]
 ```
 
 ```ruby error
-p(Set.sort(Set[1, "a"]))          # !> ArgumentError: Set.sort: cannot compare the elements
+p(Set.sort(Set[1, "a"]))          # !> Set.sort: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## sort_by
 
 `Set.sort_by(x) { }`
 
-ブロックの結果の昇順に要素を並べた Array。Tuple を返すと辞書順で並びます。
+ブロックの結果の昇順に要素を並べた Array。Tuple を返すと辞書順で並びます。ブロックの結果同士は比べられなければならず、比べられない型が結果の型に混ざると静的に退けられます（`type`）。
 
 ```ruby
 p(Set.sort_by(Set["bb", "a", "ccc"]) { |x| String.size(x) })   # => ["a", "bb", "ccc"]
 p(Set.sort_by(Set[1, 2, 3]) { |x| -x })                        # => [3, 2, 1]
 ```
 
+```ruby error
+p(Set.sort_by(Set[1, 2]) { |x| x == 1 ? 1 : "a" })   # !> Set.sort_by: elements compared in order may be (Integer, String), which cannot be compared
+```
+
 ## first
 
 `Set.first(x)`
 
-最初に加えた要素。空の Set では **nil** で、`--strict`（レベル 2）は確かめずに使うと報告します（`Array.first` の nil がレベル 3 なのとは違います）。個数を指定する形はありません（`take` を使います）。
+最初に加えた要素。空の Set では **nil** で、`Array.first` と同じ外れの nil です: 確かめずに使うことは `--strict=3` でだけ報告されます。個数を指定する形はありません（`take` を使います）。
 
 ```ruby
 p(Set.first(Set[3, 1]))           # => 3

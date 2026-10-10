@@ -7,10 +7,10 @@ Range は 2 つの端と、終端を含むかどうかの印の組です: `1..5`
 - **値を順に辿る操作**（`each`、`map`、`to_a`、`select`、`find`、`count` など）には Integer か String で始まる Range が要ります。`"a".."e"` は Ruby の `String#succ` で進みます。それ以外の型の Range（`1.0..2.0` など）は静的に `type` の問題（`the Range's first value must be Integer|String, but is Float`）、実行時は `TypeError` です。
 - `step`、`sum`、`size` は Integer で始まる Range だけを取ります。String の Range は `type` の問題です。
 - Range 全体を使う操作（`to_a`、`map`、`sum`、`last`、`min`、`max` など）には**有限**の Range が要ります。終端の無い Range には `RangeError`（`cannot do this on an endless Range 1..`）を投げます。途中で止まれる操作（`each`、`find`、`take`、`first(r, n)`、`each_slice`、`bsearch`）は終端の無い Range も受け取り、`each` は `break` するまで走ります。
-- `include?`、`cover?`、`member?`、`overlap?`、`begin`、`end`、`exclude_end?` は端だけを見るので、Float や終端の無いものも含めてどんな Range でも使えます。
+- `cover?`、`overlap?`、`begin`、`end`、`exclude_end?` は端だけを見るので、Float や終端の無いものも含めてどんな Range でも使えます。`include?` と `member?` も数の Range では同じですが、String の Range は Ruby と同じく辿ります。
 - 始端が終端より大きい Range（`5..1`）には値がありません: 辿っても何も起きず、`to_a` は `[]`、`min` は nil です。`first`、`last`、`begin`、`end` は端をそのまま返します。
 
-Range に使える演算子は `==` と `!=` です（2 つの Range は端と `exclude_end?` が同じなら等しい）。Range での添字（`a[1..3]`、`s[0...2]`）は Array と String の操作です（[演算子と添字](../05-operators.md)）。Range は Hash のキーや Set の要素にはできません（`TypeError`）。nil になりうる結果（`first`、`last`、`min`、`max`、`begin`、`end`、`find`、`find_index`、`bsearch`、`min_by`、`max_by`、`minmax` の要素）の型は `T | nil` で、未検査のまま使うと `--strict`（レベル 2）が報告します。レベル 3 の「外れの nil」に当たるものはありません。
+Range に使える演算子は `==` と `!=` です（2 つの Range は端と `exclude_end?` が同じなら等しい）。Range での添字（`a[1..3]`、`s[0...2]`）は Array と String の操作です（[演算子と添字](../05-operators.md)）。Range は Hash のキーや Set の要素にはできません（`TypeError`）。nil になりうる結果（`first`、`last`、`min`、`max`、`begin`、`end`、`find`、`find_index`、`bsearch`、`min_by`、`max_by`）の型は `T | nil` で、未検査のまま使うと `--strict`（レベル 2）が報告します。レベル 3 の「外れの nil」に当たるのは `minmax` と `minmax_by` の Tuple の要素だけです（`a, b = tuple` と同じ扱い）。
 
 操作の多くは Ruby の Enumerable のメソッドです。Ruby と違い、署名に `{ }` のある操作のブロックは**必須**（例外は `count` と `sum` で、ブロックは省略可能）、`reduce` と `inject` には初期値が要り、`each` や `map` などのブロックはちょうど 1 つの引数を取ります（`each_with_index`、`each_with_object`、`chunk_while`、`slice_when` は 2 つ）。引数の数が違うブロックは実行時に `ArgumentError` です。
 
@@ -52,7 +52,7 @@ p(Range.exclude_end?(1..))       # => false
 
 `Range.!=(x, Any)`
 
-両端が `==` で等しく、`exclude_end?` も一致するときに 2 つの Range は等しい（`!=` はその否定）。`1..5` と `1...5` は違います。演算子では、右側が Range 以外なら等しくありません（`(1..5) == 5` は false）。関数形 `Range.==(r, x)` は右側が Range の行しか持たず、別の型は実行時に `TypeError`（`no implementation for (Range, Integer)`）です。
+両端が `==` で等しく、`exclude_end?` も一致するときに 2 つの Range は等しい（`!=` はその否定）。`1..5` と `1...5` は違います。右側が Range でない値（Integer、nil）とは等しくなく、関数形も演算子と同じです: `(1..5) == 5` も `Range.==(1..5, 5)` も false。
 
 ```ruby
 p((1..5) == (1..5))          # => true
@@ -60,10 +60,8 @@ p((1..5) == (1...5))         # => false
 p((1..5) != (1...6))         # => true
 p((1..5) == 5)               # => false
 p(Range.==(1..5, 1..5))      # => true
-```
-
-```ruby error
-p(Range.==(1..5, 5))         # !> TypeError: Range.==: no implementation for (Range, Integer)
+p(Range.==(1..5, 5))         # => false
+p(Range.!=(1..5, nil))       # => true
 ```
 
 ## include?, cover?, member?
@@ -74,17 +72,24 @@ p(Range.==(1..5, 5))         # !> TypeError: Range.==: no implementation for (Ra
 
 `Range.member?(x, Any)`
 
-値が両端の間にあれば true（`begin <= v <= end`、`...` なら `< end`）。3 つとも Ruby の `cover?` です: 端と比べるだけで Range を辿らないので、終端の無い Range、始端の無い Range、Float の Range でも使え、Integer の Range に Float も見つかります。String の Range を辿る Ruby の `include?` とは違い、ここでは `("a".."z")` に `"mm"` が含まれます（`"a" <= "mm" <= "z"` だから）。端と型の違う値（`1..5` に `"a"`、nil）は false。値に Range を渡すと、Ruby の `cover?` と同じく全体が内側にあるかを答えます。
+値が Range にあれば true。`cover?` は Ruby の `cover?` です: 端と比べるだけで（`begin <= v <= end`、`...` なら `< end`）Range を辿らないので、終端の無い Range、始端の無い Range、Float の Range でも使え、Integer の Range に Float も見つかります。`include?` と `member?` は Ruby の `include?` です: 数の Range では `cover?` と同じですが、**String の Range は `String#succ` で辿る**ので、`"a".."z"` に `"m"` は含まれ `"mm"` は含まれません（`cover?` は `"a" <= "mm" <= "z"` なので true）。端の無い String の Range は `TypeError`（`cannot determine inclusion in beginless/endless ranges`）。端と型の違う値（`1..5` に `"a"`、nil）は false。値に Range を渡したとき、`cover?` は Ruby と同じく全体が内側にあるかを答え、`include?` と `member?` は false です。
 
 ```ruby
-p(Range.include?(1..5, 5))       # => true
-p(Range.include?(1...5, 5))      # => false
-p(Range.cover?(1..5, 2.5))       # => true
-p(Range.member?(1..5, 0))        # => false
-p(Range.include?(1.., 100))      # => true
-p(Range.cover?("a".."z", "mm"))  # => true
-p(Range.include?(1..5, "a"))     # => false
-p(Range.cover?(1..5, 2..3))      # => true
+p(Range.include?(1..5, 5))         # => true
+p(Range.include?(1...5, 5))        # => false
+p(Range.cover?(1..5, 2.5))         # => true
+p(Range.member?(1..5, 0))          # => false
+p(Range.include?(1.., 100))        # => true
+p(Range.include?("a".."z", "m"))   # => true
+p(Range.include?("a".."z", "mm"))  # => false
+p(Range.cover?("a".."z", "mm"))    # => true
+p(Range.include?(1..5, "a"))       # => false
+p(Range.cover?(1..5, 2..3))        # => true
+p(Range.include?(1..5, 2..3))      # => false
+```
+
+```ruby error
+p(Range.include?("a".., "b"))      # !> TypeError: Range.include?: cannot determine inclusion in beginless/endless ranges
 ```
 
 ## overlap?
@@ -192,7 +197,7 @@ p(Range.reverse_each(1..3) { |i| puts(i) })  # => 3
 
 `Range.step(x, Integer) { }`
 
-始端、始端 + 刻み、... と Range の中にある間ブロックへ渡し、Range を返します。Integer の Range だけに使えます（String や Float の Range は `type`）。終端の無い Range には `break` が要ります。負の刻みは下る Range を辿り（`10..1` に -3 で 10, 7, 4, 1）、上る Range では何も渡しません。刻み 0 は Ruby の `ArgumentError`（`step can't be 0`）で失敗します。
+始端、始端 + 刻み、... と Range の中にある間ブロックへ渡し、Range を返します。Integer の Range だけに使えます（String や Float の Range は `type`）。終端の無い Range には `break` が要ります。負の刻みは下る Range を辿り（`10..1` に -3 で 10, 7, 4, 1）、上る Range では何も渡しません。刻み 0 は `ArgumentError`（`step can't be 0`）です。
 
 ```ruby
 p(Range.step(1..10, 3) { |i| puts(i) })    # => 1
@@ -202,10 +207,18 @@ p(Range.step(1..10, 3) { |i| puts(i) })    # => 1
                                            # => 1..10
 Range.step(1...9, 4) { |i| p(i) }          # => 1
                                            # => 5
+Range.step(10..1, -3) { |i| p(i) }         # => 10
+                                           # => 7
+                                           # => 4
+                                           # => 1
 ```
 
 ```ruby error
 Range.step("a".."z", 2) { |s| p(s) }       # !> the Range's first value must be Integer, but is String
+```
+
+```ruby error
+Range.step(1..5, 0) { |i| p(i) }           # !> ArgumentError: Range.step: step can't be 0
 ```
 
 ## each_slice
@@ -282,7 +295,7 @@ p(Range.to_a(1..))           # !> RangeError: Range.to_a: cannot do this on an e
 
 `Range.first(x, [Integer])`
 
-個数無しなら Range の始端を、中身にかかわらず返します（`Range.first(5..1)` は 5、`Range.first(1...1)` は 1、`Range.first(1.0..2.0)` は 1.0）。型は `T | nil` で、算術の前の検査を `--strict` が求めます。nil になるのは始端の無い Range の場合ですが、それは Ruby の `RangeError` で失敗します。個数 n 付きなら先頭 n 個の値の新しい Array（Range が短ければそれだけ）。Range を辿るので Integer か String の Range が要ります。終端の無い Range でも使えます。負の個数は `RangeError`。
+個数無しなら Range の始端を、中身にかかわらず返します（`Range.first(5..1)` は 5、`Range.first(1...1)` は 1、`Range.first(1.0..2.0)` は 1.0）。型は `T | nil` で、算術の前の検査を `--strict` が求めます。始端の無い Range は nil を返すのではなく `RangeError`（`cannot get the first element of beginless range`）です。個数 n 付きなら先頭 n 個の値の新しい Array（Range が短ければそれだけ）。Range を辿るので Integer か String の Range が要ります（Float の Range は実行時に `TypeError`、`can't iterate from Float`）。終端の無い Range でも使えます。負の個数は `RangeError`（`negative array size (or size too big)`）。
 
 ```ruby
 p(Range.first(1..5))         # => 1
@@ -290,6 +303,14 @@ p(Range.first(1..5, 2))      # => [1, 2]
 p(Range.first(1..5, 10))     # => [1, 2, 3, 4, 5]
 p(Range.first(1.., 3))       # => [1, 2, 3]
 p(Range.first("a".."c", 2))  # => ["a", "b"]
+```
+
+```ruby error
+p(Range.first(..5))          # !> RangeError: Range.first: cannot get the first element of beginless range
+```
+
+```ruby error
+p(Range.first(1.0..2.0, 2))  # !> TypeError: Range.first: can't iterate from Float
 ```
 
 ## last
@@ -378,14 +399,15 @@ p(Range.map(1..) { |i| i })                      # !> RangeError: Range.map: can
 
 `Range.collect_concat(x) { }`
 
-ブロックが返した Array を 1 段つなげた新しい Array。ブロックは Array を返さなければならず、他の値は `TypeError`（`the block must return an Array`）です。有限の Range が要ります。
+ブロックが返した Array（または Tuple）を 1 段つなげた新しい Array。ブロックは Array か Tuple を返さなければならず、他の値は実行時に `TypeError`（`the block must return an Array or a Tuple, got Integer`）です。有限の Range が要ります。
 
 ```ruby
 p(Range.flat_map(1..3) { |i| Array[i, i] })      # => [1, 1, 2, 2, 3, 3]
+p(Range.flat_map(1..2) { |i| [i, i * 10] })      # => [1, 10, 2, 20]
 ```
 
 ```ruby error
-p(Range.flat_map(1..2) { |i| i })                # !> TypeError: Range.flat_map: the block must return an Array, got Integer
+p(Range.flat_map(1..2) { |i| i })                # !> TypeError: Range.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## select, filter, find_all
@@ -506,12 +528,16 @@ p(Range.find_index(1..10) { |i| i > 100 })     # => nil
 
 `Range.bsearch(x) { }`
 
-Integer の Range の二分探索（Ruby と同じ）: find-minimum モードでは、求める値とそれより上のすべての値でブロックが true を返すようにし、結果はそのような最小の値です。ブロックが一度も true にならなければ nil（`T | nil`）。終端の無い Range でも使えます。String の Range は実行時に `ArgumentError`（`can't do binary search for String`）。
+Integer の Range の二分探索（Ruby と同じ）: find-minimum モードでは、求める値とそれより上のすべての値でブロックが true を返すようにし、結果はそのような最小の値です。ブロックが一度も true にならなければ nil（`T | nil`）。終端の無い Range でも使えます。String の Range は実行時に `TypeError`（`can't do binary search for String`）。
 
 ```ruby
 p(Range.bsearch(1..100) { |i| i * i >= 50 })   # => 8
 p(Range.bsearch(1..100) { |i| i > 1000 })      # => nil
 p(Range.bsearch(1..) { |i| i * i >= 50 })      # => 8
+```
+
+```ruby error
+p(Range.bsearch("a".."z") { |s| s >= "m" })    # !> TypeError: Range.bsearch: can't do binary search for String
 ```
 
 ## all?, any?, none?, one?
@@ -557,18 +583,23 @@ p(Range.inject(1..5) { |acc, i| acc + i })   # !> wrong number of arguments for 
 
 `Range.sum(x, [Integer|Float|Rational|Complex]) [{ }]`
 
-値（ブロック付きならブロックの結果）の合計に初期値（省略時 0）を足したもの。Integer の Range だけ（String の Range は `type`）で、有限なもの（`RangeError`）が要ります。結果の型は初期値とブロックに従います: Integer の値に Integer の初期値なら Integer、Float の初期値なら Float。Ruby の `Range#sum` と同じく、Integer の Range に Rational の初期値を与えると Float になり（`Range.sum(1..3, 2r)` は 8.0）、Complex の初期値は失敗します。数でない結果を返すブロックは `type` の問題です。
+値（ブロック付きならブロックの結果）の合計に初期値（省略時 0）を足したもの。Integer の Range だけ（String の Range は `type`）で、有限なもの（`RangeError`）が要ります。結果の型は初期値とブロックに従います: Integer の値に Integer の初期値なら Integer、Float の初期値なら Float。Ruby の `Range#sum` と同じく、Integer の Range に Rational の初期値を与えると Float になり（`Range.sum(1..3, 2r)` は 8.0）、Complex の初期値は実行時に `RangeError`（`can't convert 1+2i into Float`）です。数でない結果を返すブロックは `type` の問題です。
 
 ```ruby
 p(Range.sum(1..100))                 # => 5050
 p(Range.sum(1..10, 100))             # => 155
 p(Range.sum(1..3) { |i| i * 2 })     # => 12
 p(Range.sum(1..3, 0.5))              # => 6.5
+p(Range.sum(1..3, 2r))               # => 8.0
 p(Range.sum(1..0))                   # => 0
 ```
 
 ```ruby error
 p(Range.sum("a".."c"))               # !> the Range's first value must be Integer, but is String
+```
+
+```ruby error
+p(Range.sum(1..3, Complex(1, 2)))    # !> RangeError: Range.sum: can't convert 1+2i into Float
 ```
 
 ## min, max
@@ -577,7 +608,7 @@ p(Range.sum("a".."c"))               # !> the Range's first value must be Intege
 
 `Range.max(x)`
 
-最小と最大の値。値の無い Range（`5..1`）では nil で、型は `T | nil` です。`max` は除外された終端を数えません（`Range.max(1...5)` は 4）。有限の Range が要ります（`RangeError`）。終端を含む Float の Range はどちらも受け取ります（`Range.max(1.0..2.5)` は 2.5。Ruby と同じ）。終端を除く Float の Range の `max` は Ruby の `TypeError`（`cannot exclude non Integer end value`）で失敗します。
+最小と最大の値。値の無い Range（`5..1`）では nil で、型は `T | nil` です。`max` は除外された終端を数えません（`Range.max(1...5)` は 4）。有限の Range が要ります（`RangeError`）。終端を含む Float の Range はどちらも受け取ります（`Range.max(1.0..2.5)` は 2.5。Ruby と同じ）。終端を除く Float の Range の `max` は `TypeError`（`cannot exclude non Integer end value`。その `min` は使えます）。
 
 ```ruby
 p(Range.min(1..5))           # => 1
@@ -585,6 +616,7 @@ p(Range.max(1...5))          # => 4
 p(Range.max(5..1))           # => nil
 p(Range.min("a".."c"))       # => "a"
 p(Range.max(1.0..2.5))       # => 2.5
+p(Range.min(1.0...2.5))      # => 1.0
 ```
 
 ```ruby error
@@ -592,16 +624,26 @@ x = Range.min(1..5)
 p(x + 1)                     # !> the operands may be nil
 ```
 
+```ruby error
+p(Range.max(1.0...2.5))      # !> TypeError: Range.max: cannot exclude non Integer end value
+```
+
 ## minmax
 
 `Range.minmax(x)`
 
-Tuple `[min, max]`。値の無い Range では両方 nil です。`min`、`max` と違って Range を辿るので、Integer か String の Range（Float の Range は `type` の問題）で、有限なものが要ります。
+Tuple `[min, max]`。値の無い Range（`5..1`、`2.5..1.0`）では両方 nil で、これは外れの nil です（要素を確かめずに使うことは `--strict=3` でだけ報告）。有限の Range が要ります（`RangeError`）。`min`、`max` と同じく終端を含む Float の Range も受け取り（`Range.minmax(1.0..2.5)` は `[1.0, 2.5]`）、終端を除く Float の Range は `TypeError`（`cannot exclude non Integer end value`）です。
 
 ```ruby
 lo, hi = Range.minmax(1..5)
 p([lo, hi])                  # => [1, 5]
 p(Range.minmax(5..1))        # => [nil, nil]
+p(Range.minmax(1.0..2.5))    # => [1.0, 2.5]
+p(Range.minmax("a".."c"))    # => ["a", "c"]
+```
+
+```ruby error
+p(Range.minmax(1.0...2.5))   # !> TypeError: Range.minmax: cannot exclude non Integer end value
 ```
 
 ## min_by, max_by
@@ -622,7 +664,7 @@ p(Range.min_by(5..1) { |i| i })                # => nil
 
 `Range.minmax_by(x) { }`
 
-ブロックの結果が最小になる値と最大になる値の Tuple。値の無い Range では `[nil, nil]`。有限の Range が要ります。
+ブロックの結果が最小になる値と最大になる値の Tuple。値の無い Range では `[nil, nil]`（外れの nil で、`--strict=3` でだけ報告）。有限の Range が要ります。
 
 ```ruby
 p(Range.minmax_by(1..5) { |i| -i })    # => [5, 1]

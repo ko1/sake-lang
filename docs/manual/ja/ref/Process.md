@@ -20,7 +20,7 @@ p(String.to_i(out) == Process.pid)  # => true
 
 `Process.clock_gettime(Integer, [Symbol])`
 
-時計 `clock`（下の 3 つの操作のどれかの値）の現在値を秒の Float で返します（Ruby の `Process.clock_gettime`）。経過時間を測るには `Process.CLOCK_MONOTONIC` を使います: 壁時計の調整で戻ることがありません。第 2 引数は単位の Symbol で、Ruby と同じ `:float_second`（省略時）、`:float_millisecond`、`:float_microsecond`、`:second`、`:millisecond`、`:microsecond`、`:nanosecond`。知らない単位は `ArgumentError`。**整数の単位（`:millisecond` など）の値は実行時には Integer ですが、検査器は結果を常に Float と見ます**ので、`Integer.to_s` などの Integer の操作には静的に `type` の問題として渡せません。知らない時計の番号は Ruby の `Errno::EINVAL` でプログラムが止まります。
+時計 `clock`（下の 3 つの操作のどれかの値）の現在値を返します（Ruby の `Process.clock_gettime`）。経過時間を測るには `Process.CLOCK_MONOTONIC` を使います: 壁時計の調整で戻ることがありません。第 2 引数は Ruby と同じ単位の Symbol で、結果の型を決めます: 省略時と `:float_second`（既定）、`:float_millisecond`、`:float_microsecond` では Float、`:second`、`:millisecond`、`:microsecond`、`:nanosecond` では Integer です。検査器は Symbol リテラルで書かれた単位を読みます。変数に入れた単位では結果は `Integer | Float` になり、Integer や Float の操作に渡す前に `case`/`in` で分ける必要があります。知らない単位（`unexpected unit: bogus`）と知らない時計の番号（`Invalid argument - clock_gettime(999)`）は `ArgumentError` です。
 
 ```ruby
 t0 = Process.clock_gettime(Process.CLOCK_MONOTONIC)
@@ -29,10 +29,22 @@ p(t1 >= t0)                         # => true
 p(Process.clock_gettime(Process.CLOCK_REALTIME) > 1.0e9)   # => true
 ms = Process.clock_gettime(Process.CLOCK_MONOTONIC, :millisecond)
 p(ms > 0)                           # => true
+p(Integer.to_s(ms) == "#{ms}")      # => true
+f = Process.clock_gettime(Process.CLOCK_MONOTONIC, :float_millisecond)
+p(Float.floor(f) >= 0)              # => true
 ```
 
 ```ruby error
 Process.clock_gettime(Process.CLOCK_MONOTONIC, :bogus)   # !> ArgumentError: Process.clock_gettime: unexpected unit: bogus
+```
+
+```ruby error
+Process.clock_gettime(999)          # !> ArgumentError: Process.clock_gettime: Invalid argument - clock_gettime(999)
+```
+
+```ruby error
+unit = :millisecond
+p(Integer.to_s(Process.clock_gettime(Process.CLOCK_MONOTONIC, unit)))   # !> Integer.to_s: argument 1 must be Integer, but can be Float
 ```
 
 ## CLOCK_REALTIME, CLOCK_MONOTONIC, CLOCK_PROCESS_CPUTIME_ID

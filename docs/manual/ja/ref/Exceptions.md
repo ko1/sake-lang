@@ -7,8 +7,9 @@
 - `rescue E => e` は列挙した型だけを捕まえます。例外型に階層は無いので、`rescue IOError` は `EOFError` を捕まえず、`rescue IndexError` は `KeyError` を捕まえません（Ruby とは違います）。複数は `rescue A, B => e`、すべては `rescue => e`（`rescue StandardError`、`rescue Exception` も同じ）です。
 - `p(e)` は `#<E: message>`、`==` はフィールドで比べます。
 - 組み込みの操作が投げた例外のメッセージは Ruby の文（`divided by 0`）で、rescue されずにプログラムを終えたときの報告には操作名も付きます（`ZeroDivisionError: Kernel.Rational: divided by 0`）。
+- 組み込みの操作の中で Ruby が投げた例外が、バックトレース付きの生の Ruby エラーとして漏れることはありません。同じ種類の Sake の例外になり、他と同じく rescue でき、メッセージは Ruby のもの（Ruby の `Sake::Tuple` は `Tuple`）です。Ruby の `EOFError`・`Errno::*`・`ClosedQueueError` は `IOError`、`FrozenError` は `TypeError`、`Math::DomainError` はそのまま `Math::DomainError`、Ruby 自身の `RuntimeError`（不正な文字列の `String.undump`）は `ArgumentError` になります。Sake の `RuntimeError` はプログラム自身の `raise` からだけ生じます。
 
-`Math::DomainError` も組み込みの例外型で、`rescue Math::DomainError => e` と `raise Math::DomainError, "msg"` に書けますが、入れ子の名前なので `Math::DomainError.new(...)` と `Math::DomainError.message(e)` は書けません（`Exception.message(e)` で読みます）。`Math.sqrt(-1)`、`Math.log(-1)` などが投げます。`SystemStackError`（深すぎる再帰、`once` の再入）、`LocalJumpError`、`NotImplementedError` はプログラムの誤りで、rescue できず、`rescue` に書くのは静的エラーです。
+`Math::DomainError` も組み込みの例外型で、`rescue Math::DomainError => e` と `raise Math::DomainError, "msg"` に書けますが、入れ子の名前なので `Math::DomainError.new(...)` と `Math::DomainError.message(e)` は書けません（`Exception.message(e)` で読みます）。`Math.sqrt(-1)`、`Math.log(-1)`、`Integer.sqrt(-1)`、`Integer.digits(-1)`、負の Float `x` の `x ** 0.5`（`-8.0 ** 0.5 is not a real number (a negative base with a fractional exponent)`。Ruby は Complex を返します）が投げます。`SystemStackError`（深すぎる再帰、`once` の再入）、`LocalJumpError`、`NotImplementedError` はプログラムの誤りで、rescue できず、`rescue` に書くのは静的エラーです。
 
 型の誤り（`TypeError`）やパターンの不一致（`NoMatchingPatternError`）の多くは、実行前の検査が `type` の問題として止めるので、実行時に届くのは検査が見られなかった場所（`Any` を受ける操作、`--strict=0` で走らせたプログラム）だけです。
 
@@ -30,7 +31,7 @@ p(e == KeyError.new("other"))      # => true
 
 `RuntimeError.new(message)`
 
-`raise "msg"`（型を書かない `raise`）が投げる型です。組み込みの操作では `Thread.raise(t, msg)` が相手のスレッドに投げます。プログラムの「その他の失敗」に使います。
+`raise "msg"`（型を書かない `raise`）が投げる型です。組み込みの操作が自分から投げることはなく、`Thread.raise(t, msg)` だけが相手のスレッドに投げ、`Thread.value(t)` や `Thread.join(t)` がそれを届けます（操作の中の Ruby の `RuntimeError`、たとえば `String.undump` のものは `ArgumentError` になります）。プログラムの「その他の失敗」に使います。したがって検査器は、本体が `RuntimeError` を投げえない `rescue RuntimeError` を拒みます（`the begin body never raises RuntimeError [rescue]`。`Thread.value` / `Thread.join` は `Thread.raise` を呼ぶプログラムでだけ数える、というヒント付き）。
 
 ```ruby
 begin
@@ -40,36 +41,58 @@ rescue RuntimeError => e
 end
 ```
 
+```ruby error
+begin
+  String.undump("\"abc")
+rescue RuntimeError => e           # !> rescue RuntimeError: the begin body never raises RuntimeError [rescue]
+  p(e)
+end
+```
+
 ## ArgumentError
 
 `ArgumentError.new(message)`
 
-引数の値が受け付けられないとき。投げる操作: `Integer`、`Float`、`Rational` の読めない String、`format` の引数の過不足や数でない値、`Array.sort`・`max`・`min`・`Tuple.max` などの比べられない要素、負のサイズ（`Array.first(a, -1)`）、`Integer ** 負の Integer`、`Regexp.new(s, flags)` の不正なフラグ、`Time.new`・`Time.at`・`Time.now` の範囲外の値や不正なゾーン、`Integer.to_s(n, base)` の不正な基数、`String.unpack` の不正な書式、`Zlib` の壊れたデータ、ブロックの引数の数の不一致。
+引数の値が受け付けられないとき。投げる操作: `Integer`、`Float`、`Rational` の読めない String、`format` の引数の過不足・数でない値・無いキー、`rand(0)` と負の上限、負のサイズ（`Array.first(a, -1)`）、`Integer ** 負の Integer`、`Regexp.new(s, flags)` の不正なフラグ、`Time.new`・`Time.at`・`Time.now` の範囲外の値や不正なゾーン、`Integer.to_s(n, base)` の不正な基数、`String.unpack` の不正な書式、`String.ljust` の空の詰め文字、`tr` の逆向きの範囲、dump された文字列でないものの `String.undump`（`unterminated dumped string`。Ruby では RuntimeError）、`ENV.set("", v)` と `Process.clock_gettime(999)`（OS が拒む引数）、`Zlib` の壊れたデータ（`incorrect header check`）、ブロックの引数の数の不一致。比べられない要素（`Array.sort`・`max`・`min`・`Tuple.max`・`Set.sort` と、ブロックの結果を通じた `*_by` の形）は、検査器が要素の型を見られるなら静的な `type` の問題で、実行時の `ArgumentError` に届くのは NaN のように見られない場合だけです。
 
 ```ruby
 begin
-  Array.sort(Array[1, "a"])
+  Array.sort(Array[1.0, Float.NAN])
 rescue ArgumentError => e
-  puts(Exception.message(e))       # => cannot compare elements of types Integer, String
+  puts(Exception.message(e))       # => cannot compare elements of types Float
 end
 begin
   2 ** -1
 rescue ArgumentError => e
   puts(Exception.message(e))       # => Integer ** negative Integer (2 ** -1) is an error; for a Rational, write 2r ** -1
 end
+begin
+  String.undump("\"abc")
+rescue ArgumentError => e
+  puts(Exception.message(e))       # => unterminated dumped string
+end
+```
+
+```ruby error
+Array.sort(Array[1, "a"])          # !> Array.sort: elements compared in order may be (Integer, String), which cannot be compared [type]
 ```
 
 ## TypeError
 
 `TypeError.new(message)`
 
-値の型が合わないとき: 操作が受け取った引数が違う型、左のオペランドの型が支えない演算子、型付き Array（`Integer[]` など）への違う型の書き込み、Tuple でも Array でもない値からの多重代入、Hash のキー・Set の要素・`ARGV` の要素である凍結された String のその場での変更、`Exception.message` に例外でない値。これらの大半は実行前の検査が静的に止めるので、実行時に届くのは検査が通した場所だけです。
+値の型が合わないとき: 操作が受け取った引数が違う型、左のオペランドの型が支えない演算子、型付き Array（`Integer[]` など）への違う型の書き込み、Tuple でも Array でもない値からの多重代入、凍結された String（Hash のキー、Set の要素、Symbol の名前、`ARGV` の要素）のその場での変更（`cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`）、`Exception.message` に例外でない値。検査器が要素の型を見られなかった場所で操作の中の Ruby が `TypeError` や `NoMethodError` を出したときもこの型です: `Array.pack(Array["a"], "C")`（`no implicit conversion of String into Integer`）、`Range.first(1.0..2.0, 2)`（`can't iterate from Float`）、`--strict=0` で String でないキーや値を渡した `ENV.replace`（`keys and values must be String, got String => Integer`）。これらの大半は実行前の検査が静的に止めるので、実行時に届くのは検査が通した場所だけです。
 
 ```ruby
 begin
   Exception.message(1)
 rescue TypeError => e
   puts(Exception.message(e))       # => Exception.message: argument 1 must be an exception, got Integer
+end
+begin
+  Array.pack(Array["a"], "C")
+rescue TypeError => e
+  puts(Exception.message(e))       # => no implicit conversion of String into Integer
 end
 ```
 
@@ -97,7 +120,7 @@ p(Hash.fetch(h, "b", 0))           # => 0
 
 `IndexError.new(message)`
 
-範囲外の添字: `Array.fetch`、Tuple の外の添字（実行時に届いたもの。リテラルの添字は静的に止まります）、T の Array の末尾の先への書き込み（`Integer[1, 2][5] = 1`。隙間が nil になるため）、`Array.insert` の範囲外の位置。`x[k]` は範囲外で nil を返し、例外にはなりません。
+範囲外の添字: `Array.fetch`、Tuple の外の添字（実行時に届いたもの。リテラルの添字は静的に止まります）、T の Array の末尾の先への書き込み（`Integer[1, 2][5] = 1`。隙間が nil になるため）、`Array.insert` の末尾より先の位置（`index 3 is past the end of the Array (length 1); the gap would be nil`。Ruby は隙間を nil で埋めます）、Regexp に無いグループの `MatchData.begin(m, 5)`（`index 5 out of matches`）、長さの違う行の `Array.transpose`、文字の途中を指す `String.byteindex` のオフセット。`x[k]` は範囲外で nil を返し、例外にはなりません。
 
 ```ruby
 def at(t, i) = t[i]
@@ -132,7 +155,7 @@ p(1.0 / 0)                         # => Infinity
 
 `RangeError.new(message)`
 
-値が表せる範囲の外: 有限の Range が要る操作に終端の無い Range（`Range.to_a(1..)`、`Range.last(1..)`、`Range.sort` など）、`Integer.chr` の文字にならない Integer。
+値が表せる範囲の外: 有限の Range が要る操作に終端の無い Range（`Range.to_a(1..)`、`Range.last(1..)`、`Range.sort` など）、`Range.first` に始端の無い Range（`cannot get the first element of beginless range`）、`Integer.chr` の文字にならない Integer（`256 out of char range`）、`Integer.pow(2, -1, 7)` の負の指数、`Range.sum` の Complex の初期値。
 
 ```ruby
 begin
@@ -140,13 +163,18 @@ begin
 rescue RangeError => e
   puts(Exception.message(e))       # => cannot do this on an endless Range 1..
 end
+begin
+  Integer.chr(256)
+rescue RangeError => e
+  puts(Exception.message(e))       # => 256 out of char range
+end
 ```
 
 ## FloatDomainError
 
 `FloatDomainError.new(message)`
 
-NaN や Infinity を Integer や Rational にしようとしたとき: `Float.to_i`、`Arithmetic.to_i`、`Arithmetic.round`・`floor`・`ceil`・`truncate`、`Float.to_r`、`Float.rationalize`。メッセージは値の名前です。現在 `Arithmetic` の操作と `Integer(x)` からのものは Ruby の例外がそのまま出てプログラムを止め、rescue できません（処理系の不具合）。
+NaN や Infinity を Integer や Rational にしようとしたとき: `Float.to_i`、`Arithmetic.to_i`、`Arithmetic.round`・`floor`・`ceil`・`truncate`、`Float.to_r`、`Float.rationalize`、`Float.numerator`・`denominator`、`Kernel.Integer(x)`、`Kernel.Rational(x)`。メッセージは値の名前です。どれも rescue できます。
 
 ```ruby
 begin
@@ -159,19 +187,29 @@ begin
 rescue FloatDomainError => e
   puts(Exception.message(e))       # => NaN
 end
+begin
+  Integer(Float.NAN)
+rescue FloatDomainError => e
+  puts(Exception.message(e))       # => NaN
+end
 ```
 
 ## IOError
 
 `IOError.new(message)`
 
-入出力の失敗: `File.read`、`File.write`、`File.open`、`Dir.mkdir`、`Dir.children` など File と Dir の操作（Ruby の `Errno::ENOENT` などがこの 1 つの型になり、メッセージは Ruby のもの）、閉じた IO への操作、ソケットのエラー（接続拒否、リセット、未知のホスト、タイムアウト）、閉じた Queue への `Queue.push`。
+入出力の失敗: `File.read`、`File.write`、`File.open`、`Dir.mkdir`、`Dir.children` など File と Dir の操作（Ruby の `Errno::ENOENT` などがこの 1 つの型になり、メッセージは Ruby のもの）、閉じた IO への操作、ファイルでないストリームの `IO.size`（`not a file`）、端末でない IO への端末の操作（`IO.winsize` など。`not a terminal`）、ソケットのエラー（接続拒否、リセット、解決できない名前、タイムアウト）、閉じた Queue への `Queue.push`。操作の中の Ruby の `EOFError` も Sake の `EOFError` ではなくこの型になります。
 
 ```ruby
 begin
   File.read("no-such-file")
 rescue IOError => e
   puts(Exception.message(e))       # => No such file or directory @ rb_sysopen - no-such-file
+end
+begin
+  IO.size(IO.stdin)
+rescue IOError => e
+  puts(Exception.message(e))       # => not a file
 end
 q = Queue.new
 Queue.close(q)
@@ -186,7 +224,7 @@ end
 
 `EOFError.new(message)`
 
-入力の終わりに達した読み出し。Ruby では `IO#readline` などが投げますが、Sake の読み出し操作（`IO.read(io, n)`、`IO.gets`、`IO.getc`、`gets`）は終わりで nil を返すので、現在これを投げる組み込みの操作はありません。プログラム自身の「もう入力が無い」に使えます。`IOError` とは別の型で、`rescue IOError` では捕まりません。
+入力の終わりに達した読み出し。Ruby では `IO#readline` などが投げますが、Sake の読み出し操作（`IO.read(io, n)`、`IO.gets`、`IO.getc`、`gets`）は終わりで nil を返すので、これを投げる組み込みの操作はありません（操作の中の Ruby の `EOFError` は `IOError` になります）。プログラム自身の「もう入力が無い」に使えます。`IOError` とは別の型で、`rescue IOError` では捕まりません。
 
 ```ruby
 def next_token(xs) = Array.shift(xs) || raise(EOFError, "no more tokens")
@@ -215,7 +253,7 @@ end
 
 `RegexpError.new(message)`
 
-不正な正規表現: 式を埋め込んだリテラル `/#{s}/` のパターンが不正なとき、`Regexp.new(s)` の不正なパターン。リテラルに直接書いたパターンは構文エラーとして実行前に止まります。
+不正な正規表現: 式を埋め込んだリテラル `/#{s}/` のパターンが不正なとき、`Regexp.new(s)` の不正なパターン、String の操作に渡した不正なパターン String（`String.match?("a+c", "+")`）。リテラルに直接書いたパターンは構文エラーとして実行前に止まります。
 
 ```ruby
 s = "("
@@ -223,6 +261,16 @@ begin
   r = /#{s}/
 rescue RegexpError => e
   puts(Exception.message(e))       # => end pattern with unmatched parenthesis: /(/
+end
+begin
+  Regexp.new("(")
+rescue RegexpError => e
+  puts(Exception.message(e))       # => end pattern with unmatched parenthesis: /(/
+end
+begin
+  String.match?("a+c", "+")
+rescue RegexpError => e
+  puts(Exception.message(e))       # => target of repeat operator is not specified: /+/
 end
 ```
 
@@ -245,7 +293,7 @@ kind("s")                          # !> case/in: no `in` branch matches String
 
 `ThreadError.new(message)`
 
-スレッドの操作の誤り: 持っている Mutex をもう一度 `Mutex.lock`、持っていない Mutex の `Mutex.unlock`。すべてのスレッドが待ちになるデッドロックも Sake の `ThreadError` としてプログラムを終えます（[例外とエラー](../08-exceptions.md)）。
+スレッドの操作の誤り: 持っている Mutex をもう一度 `Mutex.lock` や `Mutex.synchronize`、持っていない Mutex の `Mutex.unlock`、今のスレッド自身の `Thread.join`。すべてのスレッドが待ちになるデッドロックも Sake の `ThreadError` としてプログラムを終えます（[例外とエラー](../08-exceptions.md)）。
 
 ```ruby
 m = Mutex.new
@@ -259,5 +307,10 @@ begin
   Mutex.unlock(Mutex.new)
 rescue ThreadError => e
   puts(Exception.message(e))       # => Attempt to unlock a mutex which is not locked
+end
+begin
+  Thread.join(Thread.current)
+rescue ThreadError => e
+  puts(Exception.message(e))       # => Target thread must not be current thread
 end
 ```

@@ -2,7 +2,7 @@
 
 Integer は Ruby と同じく大きさに上限の無い整数です: `42`、`-7`、`1_000_000`、`0x1f`、`0b101`、`0o17`、`2 ** 100`（[値と型](../03-values.md)）。変換 `Integer("42")`、`Integer(3.9)` はこの名前空間ではなく Kernel の操作です（`Kernel.Integer`。不正な入力は `ArgumentError`）。Integer は値であり、主語を変更する操作はここにはありません。すべての結果は新しい値です。
 
-Integer に使える演算子は Integer が include するモジュールから来ます（[演算子と添字](../05-operators.md)）: `Arithmetic` が `+ - * / % **` と単項の `-x`、`Comparable` が `<=> < <= > >=`、`Bitwise` が `& | ^ << >>` と単項の `~x` を与え、`==` と `!=` は Kernel のものです。`a + b` は `a` の型で振り分けられるので、左が Integer なら `Integer.+(a, b)` が走ります。以下の `Integer.+(x, y)` などはその関数形です。右側の型は**閉じた表**で決まります: Integer と Integer は Integer、Float とは Float、Rational とは Rational、Complex とは Complex。`<` などは Integer、Float、Rational と比べられ、ビット演算子は Integer だけを取ります。それ以外の型の右側（String、nil、Symbol）は静的に `type` の問題（`the operands are (Integer, String), which the left operand's type does not support`）、実行時は `TypeError` です。関数形は第 1 引数も Integer でなければなりません（`Integer.+(1.0, 2)` は `type` の問題。`Float.+` か演算子を使います）。
+Integer に使える演算子は Integer が include するモジュールから来ます（[演算子と添字](../05-operators.md)）: `Arithmetic` が `+ - * / % **` と単項の `-x`、`Comparable` が `<=> < <= > >=`、`Bitwise` が `& | ^ << >>` と単項の `~x` を与え、`==` と `!=` は Kernel のものです。`a + b` は `a` の型で振り分けられるので、左が Integer なら `Integer.+(a, b)` が走ります。以下の `Integer.+(x, y)` などはその関数形です。右側の型は**閉じた表**で決まります: Integer と Integer は Integer、Float とは Float、Rational とは Rational（`**` だけは Rational の指数で `Rational | Float`）、Complex とは Complex。`<` などは Integer、Float、Rational と比べられ、ビット演算子は Integer だけを取ります。それ以外の型の右側（String、nil、Symbol）は静的に `type` の問題（`the operands are (Integer, String), which the left operand's type does not support`）、実行時は `TypeError` です。関数形は第 1 引数も Integer でなければなりません（`Integer.+(1.0, 2)` は `type` の問題。`Float.+` か演算子を使います）。
 
 Ruby と違う点は 2 つ: `Integer ** 負の Integer` は Rational を返さず `ArgumentError` を投げます（`a ** b` の型が `b` の値に依存しないように）。また値に対するメソッド呼び出しはありません（`1.+(2)` は拒否され、`Integer.+(1, 2)` か `1 + 2` と書きます）。`/` と `%` は Ruby と同じく床へ丸め（`-7 / 2` は -4）、0 で割ると `ZeroDivisionError` です。
 
@@ -73,18 +73,32 @@ p(Integer./(1, 0))           # !> ZeroDivisionError: Integer./: divided by 0
 
 `Integer.**(x, Any)`
 
-べき乗。Integer に非負の Integer の指数なら正確な Integer。Float の指数は Float、Rational の指数は Rational を与えます。Ruby と違い、**負の Integer の指数は `ArgumentError`** です（Ruby は Rational を返す）。メッセージが Rational を得る書き方（`2r ** -1`）を教えます。`**` は単項マイナスより強く結合するので Ruby と同じく `-2 ** 2` は -4、右結合です（`2 ** 3 ** 2` は 512）。`pow` も参照。
+べき乗。Integer に非負の Integer の指数なら正確な Integer。Float の指数は Float を与えます。**Rational の指数**は、整数値なら Rational（`2 ** 2r` は `(4/1)`）、そうでなければ Float（`2 ** (1r/2)` は `1.4142135623730951`）になるので、検査器はその結果を `Rational | Float` とします。どちらかとして使う前に `case`/`in` で絞ってください。Ruby と違い、**負の Integer の指数は `ArgumentError`** です（Ruby は Rational を返す）。メッセージが Rational を得る書き方（`2r ** -1`）を教えます。負の底に分数の指数（`(-8) ** 0.5`）は `Math::DomainError` です（Ruby は Complex を返す）。`**` は単項マイナスより強く結合するので Ruby と同じく `-2 ** 2` は -4、右結合です（`2 ** 3 ** 2` は 512）。`pow` も参照。
 
 ```ruby
 p(2 ** 10)                   # => 1024
 p(Integer.**(2, 0))          # => 1
 p(2 ** 0.5)                  # => 1.4142135623730951
 p(2 ** 2r)                   # => (4/1)
+p(2 ** (1r/2))               # => 1.4142135623730951
 p(-2 ** 2)                   # => -4
+x = 2 ** 2r
+case x
+in Rational then p(Rational.numerator(x))   # => 4
+in Float then p(x)
+end
 ```
 
 ```ruby error
 p(2 ** -1)                   # !> ArgumentError: Arithmetic.**: Integer ** negative Integer (2 ** -1) is an error; for a Rational, write 2r ** -1
+```
+
+```ruby error
+p((-8) ** 0.5)               # !> Math::DomainError: Arithmetic.**: -8 ** 0.5 is not a real number (a negative base with a fractional exponent)
+```
+
+```ruby error
+p(Rational.numerator(2 ** 2r))   # !> Rational.numerator: argument 1 must be Rational, but can be Float
 ```
 
 ## ==, !=
@@ -93,7 +107,7 @@ p(2 ** -1)                   # !> ArgumentError: Arithmetic.**: Integer ** negat
 
 `Integer.!=(x, Any)`
 
-等価（`!=` はその否定）。数は型をまたいで比べられます: `1 == 1.0`、`1 == 1r`、`1 == Complex(1, 0)` は true。**演算子**では、Ruby と同じく別の型の値とは決して等しくありません（`1 == "1"` は false、`1 == nil` は false）。**関数形** `Integer.==(x, y)` は右側が数か nil の行しか持たず、`Integer.==(1, "a")` は検査器を通りますが（右側は `Any`）、実行時に `TypeError`（`no implementation for (Integer, String)`）になります。右側が別の型になりうるなら演算子を使います。
+等価（`!=` はその否定）。数は型をまたいで比べられます: `1 == 1.0`、`1 == 1r`、`1 == Complex(1, 0)` は true。Ruby と同じく、別の型の値とは決して等しくありません（`1 == "1"` は false、`1 == nil` は false）。関数形 `Integer.==(x, y)` も、右側が他のどんな型でも同じく false（`!=` は true）を返し、エラーにはなりません。
 
 ```ruby
 p(1 == 1)                    # => true
@@ -102,10 +116,8 @@ p(1 != 1)                    # => false
 p(1 == "1")                  # => false
 p(1 == nil)                  # => false
 p(Integer.==(1, nil))        # => false
-```
-
-```ruby error
-p(Integer.==(1, "a"))        # !> TypeError: Integer.==: no implementation for (Integer, String)
+p(Integer.==(1, "a"))        # => false
+p(Integer.!=(1, "a"))        # => true
 ```
 
 ## <, <=, >, >=
@@ -279,17 +291,26 @@ p(Integer.fdiv(1, 0))        # => Infinity
 
 `Integer.pow(x, Integer, [Integer])`
 
-`Integer.pow(a, b)` は Integer の指数の `a ** b` で、負の指数は同じ `ArgumentError`。`Integer.pow(a, b, m)` は `a ** b` を `m` で割った余りで、Ruby と同じく巨大なべきを作らずに計算します。結果は `m` の符号を取ります。法付きのとき、負の指数は Ruby の `RangeError`、法 0 は Ruby の `ZeroDivisionError` で失敗します。
+`Integer.pow(a, b)` は Integer の指数の `a ** b` で、負の指数は同じ `ArgumentError`。`Integer.pow(a, b, m)` は `a ** b` を `m` で割った余りで、Ruby と同じく巨大なべきを作らずに計算します。結果は `m` の符号を取ります。法付きのとき、負の指数は `RangeError`（メッセージは Ruby のもので、指数を 1 番目の引数と数えます）、法 0 は `ZeroDivisionError` で、どちらも `rescue` できます。
 
 ```ruby
 p(Integer.pow(2, 10))        # => 1024
 p(Integer.pow(2, 10, 1000))  # => 24
 p(Integer.pow(3, 100, 7))    # => 4
 p(Integer.pow(2, 10, -7))    # => -5
+begin
+  Integer.pow(2, 3, 0)
+rescue ZeroDivisionError => e
+  p(Exception.message(e))    # => "divided by 0"
+end
 ```
 
 ```ruby error
 p(Integer.pow(2, -1))        # !> ArgumentError: Integer.pow: Integer ** negative Integer (2 ** -1) is an error; for a Rational, write 2r ** -1
+```
+
+```ruby error
+p(Integer.pow(2, -1, 7))     # !> RangeError: Integer.pow: Integer#pow() 1st argument cannot be negative when 2nd argument specified
 ```
 
 ## gcd, lcm
@@ -323,12 +344,16 @@ p([g, l])                    # => [2, 12]
 
 `Integer.sqrt(x)`
 
-整数平方根: 2 乗が数を超えない最大の Integer（Ruby の `Integer.sqrt`）。どんな大きさでも正確で、`Math.sqrt` は Float を返すところです。負の数は Ruby の `Math::DomainError` で失敗します。
+整数平方根: 2 乗が数を超えない最大の Integer（Ruby の `Integer.sqrt`）。どんな大きさでも正確で、`Math.sqrt` は Float を返すところです。負の数は `Math::DomainError`（メッセージは Ruby のもの）を投げ、`rescue` できます。
 
 ```ruby
 p(Integer.sqrt(16))          # => 4
 p(Integer.sqrt(17))          # => 4
 p(Integer.sqrt(10 ** 20))    # => 10000000000
+```
+
+```ruby error
+p(Integer.sqrt(-1))          # !> Math::DomainError: Integer.sqrt: Numerical argument is out of domain - "isqrt"
 ```
 
 ## abs, magnitude
@@ -470,12 +495,16 @@ Integer.step(1, 10, 0) { |i| puts(i) }      # !> ArgumentError: Integer.step: st
 
 `Integer.clamp(x, Integer, Integer)`
 
-数を区間に収めたもの: `lo` より下なら `lo`、`hi` より上なら `hi`、それ以外はそのまま。Ruby と違い Range の形（`clamp(1..10)`）はありません。`lo` が `hi` より大きいと Ruby の `ArgumentError` で失敗します。
+数を区間に収めたもの: `lo` より下なら `lo`、`hi` より上なら `hi`、それ以外はそのまま。Ruby と違い Range の形（`clamp(1..10)`）はありません。`lo` が `hi` より大きいと `ArgumentError`（`min argument must be less than or equal to max argument`）です。
 
 ```ruby
 p(Integer.clamp(5, 1, 10))   # => 5
 p(Integer.clamp(-5, 1, 10))  # => 1
 p(Integer.clamp(50, 1, 10))  # => 10
+```
+
+```ruby error
+p(Integer.clamp(5, 10, 1))   # !> ArgumentError: Integer.clamp: min argument must be less than or equal to max argument
 ```
 
 ## between?
@@ -539,12 +568,23 @@ p(Integer.truncate(-1234, -2))   # => -1200
 
 `Integer.digits(x)`
 
-10 進の各桁を下の桁から並べた新しい Array（基数無しの Ruby の `digits`。`Integer.digits(1234)` は `[4, 3, 2, 1]`、0 は `[0]`）。検査器が要素の型を Integer と推論する普通の Array で、`Integer[]` ではありません。負の数は Ruby の `Math::DomainError` で失敗します。Ruby と違い基数の引数は無く、`to_s(n, base)` と `String.chars` を使います。
+10 進の各桁を下の桁から並べた新しい Array（基数無しの Ruby の `digits`。`Integer.digits(1234)` は `[4, 3, 2, 1]`、0 は `[0]`）。型付きの `Integer[]` で、別の型の値を push すると `type` の問題です。負の数は `Math::DomainError`（`out of domain`）を投げます。Ruby と違い基数の引数は無く、`to_s(n, base)` と `String.chars` を使います。
 
 ```ruby
 p(Integer.digits(1234))      # => [4, 3, 2, 1]
 p(Integer.digits(0))         # => [0]
 p(Array.sum(Integer.digits(999)))   # => 27
+d = Integer.digits(12)
+Array.push(d, 9)
+p(d)                         # => [2, 1, 9]
+```
+
+```ruby error
+Array.push(Integer.digits(12), "x")   # !> Array.push: an element must be Integer, but is String
+```
+
+```ruby error
+p(Integer.digits(-1))        # !> Math::DomainError: Integer.digits: out of domain
 ```
 
 ## to_s
@@ -646,13 +686,22 @@ p(Integer.size(2 ** 100))    # => 13
 
 `Integer.chr(x)`
 
-そのバイト値を持つ 1 文字の String。数は 0 から 255 でなければならず、外れると Ruby の `RangeError`（`256 out of char range`）で失敗します。エンコーディング無しの Ruby の `chr` と同じく、0 から 127 は ASCII の String、128 から 255 は 1 バイトのバイナリ String で、UTF-8 の文字列とつなぐと `EncodingError` を投げます。`String.ord` が逆の操作です。255 を超えるコードポイントの String は別の方法で作ります（`format("%c", n)`）。
+そのバイト値を持つ 1 文字の String。数は 0 から 255 でなければならず、外れると `RangeError`（`256 out of char range`）を投げます（`rescue` できます）。エンコーディング無しの Ruby の `chr` と同じく、0 から 127 は ASCII の String、128 から 255 は 1 バイトのバイナリ String で、UTF-8 の文字列とつなぐと `EncodingError` を投げます。`String.ord` が逆の操作です。255 を超えるコードポイントの String は別の方法で作ります（`format("%c", n)`）。
 
 ```ruby
 p(Integer.chr(65))           # => "A"
 puts(Integer.chr(97))        # => a
 p(Integer.chr(10))           # => "\n"
 p(String.ord(Integer.chr(200)))   # => 200
+begin
+  Integer.chr(200) + "é"
+rescue EncodingError => e
+  p(Exception.message(e))    # => "incompatible character encodings: BINARY (ASCII-8BIT) and UTF-8"
+end
+```
+
+```ruby error
+p(Integer.chr(256))          # !> RangeError: Integer.chr: 256 out of char range
 ```
 
 ## ord

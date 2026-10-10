@@ -99,7 +99,7 @@ p(MatchData.values_at(m))             # => []
 
 `MatchData.match(x, Integer)`
 
-The String of the group with that number (nil when it did not take part; reported at `--strict` level 2). It differs from `m[i]` in that a number out of range is an `IndexError` at run time rather than nil.
+The String of the group with that number (nil when it did not take part: the nil of a miss, `index-nil`, reported only at `--strict` level 3). It differs from `m[i]` in that a number out of range is an `IndexError` at run time rather than nil.
 
 ```ruby
 m = Regexp.match(/(\d+)-(\d+)?/, "12-") or raise("no match")
@@ -116,7 +116,7 @@ p(MatchData.match(m, 5))      # !> IndexError: MatchData.match: index 5 out of m
 
 `MatchData.match_length(x, Integer)`
 
-The number of characters the group with that number matched (an Integer). Nil when it did not take part (reported at `--strict` level 2); a number out of range is an `IndexError`.
+The number of characters the group with that number matched (an Integer). Nil when it did not take part (the nil of a miss, `index-nil`, level 3); a number out of range is an `IndexError`.
 
 ```ruby
 m = Regexp.match(/(\d+)-(\d+)?/, "12-") or raise("no match")
@@ -144,14 +144,26 @@ p(MatchData.post_match(m))    # => " cd"
 
 `MatchData.end(x, Integer)`
 
-The position where the group with that number starts and where it ends (Integers in characters; `end` is one past the last character). The checker types them as Integer, but for a group that did not take part they return **nil** at run time, which is not reported statically: check `m[i]` first when the group is optional. A number out of range is an `IndexError`.
+The position where the group with that number starts and where it ends (Integers in characters; `end` is one past the last character). For a group that did not take part they are **nil**; the result is `Integer | nil`, and the nil is that of a miss (`index-nil`), reported only at `--strict` level 3 (so are the nils of `bytebegin`, `byteend`, `offset`, `byteoffset`, `match` and `match_length`). A number out of range is an `IndexError` (`index 5 out of matches`), which can be rescued.
 
 ```ruby
-m = Regexp.match(/(\d+)-(\d+)/, "ab 12-34") or raise("no match")
+m = Regexp.match(/(\d+)-(\d+)?/, "ab 12-") or raise("no match")
 p(MatchData.begin(m, 0))      # => 3
-p(MatchData.end(m, 0))        # => 8
-p(MatchData.begin(m, 2))      # => 6
-p(MatchData.end(m, 2))        # => 8
+p(MatchData.end(m, 0))        # => 6
+p(MatchData.begin(m, 1))      # => 3
+p(MatchData.end(m, 1))        # => 5
+p(MatchData.begin(m, 2))      # => nil
+b = MatchData.begin(m, 2)
+if b
+  p(b)
+else
+  puts("group 2 did not take part")      # => group 2 did not take part
+end
+```
+
+```ruby error
+m = Regexp.match(/(a)/, "a") or raise("no match")
+p(MatchData.begin(m, 5))      # !> IndexError: MatchData.begin: index 5 out of matches
 ```
 
 ## offset
@@ -177,7 +189,7 @@ p(MatchData.offset(m, 5))     # !> IndexError: MatchData.offset: index 5 out of 
 
 `MatchData.byteend(x, Integer)`
 
-The byte versions of `begin` and `end` (Integers). They differ from the character positions in a String with multibyte characters. A group that did not take part gives nil (reported at `--strict` level 2); a number out of range is an `IndexError`.
+The byte versions of `begin` and `end` (Integers). They differ from the character positions in a String with multibyte characters. A group that did not take part gives nil (the nil of a miss, `index-nil`, level 3); a number out of range is an `IndexError`.
 
 ```ruby
 m = Regexp.match(/(い)/, "あいう") or raise("no match")

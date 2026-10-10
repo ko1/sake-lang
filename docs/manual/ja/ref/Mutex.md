@@ -22,7 +22,7 @@ p(Mutex.locked?(m))                 # => false
 
 `Mutex.synchronize(x) { }`
 
-錠を取り、ブロックを走らせ、ブロックが終わると（例外で抜けても）錠を離し、ブロックの値を返します。他のスレッドが持っている間は待ちます。普通はこの形だけで足ります。自分が持っている Mutex の `synchronize` を入れ子にすると Ruby の `ThreadError` でプログラムが止まります（`lock` と違い、rescue できる形になりません）。
+錠を取り、ブロックを走らせ、ブロックが終わると（例外で抜けても）錠を離し、ブロックの値を返します。他のスレッドが持っている間は待ちます。普通はこの形だけで足ります。自分が持っている Mutex の `synchronize` を入れ子にすると、`lock` と同じく `ThreadError`（`deadlock; recursive locking`）です。rescue でき、外側の `synchronize` は抜けるときに錠を離します。
 
 ```ruby
 m = Mutex.new
@@ -35,6 +35,17 @@ p(count)                            # => 400
 r = Mutex.synchronize(m) { p(Mutex.locked?(m)); "val" }   # => true
 p(r)                                # => "val"
 p(Mutex.locked?(m))                 # => false
+begin
+  Mutex.synchronize(m) { Mutex.synchronize(m) { 1 } }
+rescue ThreadError => e
+  p(Exception.message(e))           # => "deadlock; recursive locking"
+end
+p(Mutex.locked?(m))                 # => false
+```
+
+```ruby error
+m = Mutex.new
+Mutex.synchronize(m) { Mutex.synchronize(m) { 1 } }   # !> ThreadError: Mutex.synchronize: deadlock; recursive locking
 ```
 
 ## lock

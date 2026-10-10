@@ -1,12 +1,12 @@
 # String
 
-A String is a sequence of characters with an encoding, as Ruby's String. The literals are `"abc"`, `'abc'` and `"a#{x}"` (interpolation shows the value with `to_s`, see [Values and types](../03-values.md)); a literal is UTF-8, and every evaluation of a literal makes a new String. Strings are **mutable**: the operations whose names end in `!`, and `concat`, `append_as_bytes`, `prepend`, `insert`, `replace`, `clear`, `setbyte`, `bytesplice`, change their subject in place; every other operation leaves the subject alone and returns a new String. The Strings a program cannot change are Hash keys, Set elements and the program's arguments (`ARGV`): changing one of them in place is a `TypeError` at run time.
+A String is a sequence of characters with an encoding, as Ruby's String. The literals are `"abc"`, `'abc'` and `"a#{x}"` (interpolation shows the value with `to_s`, see [Values and types](../03-values.md)); a literal is UTF-8, and every evaluation of a literal makes a new String. Strings are **mutable**: the operations whose names end in `!`, and `concat`, `append_as_bytes`, `prepend`, `insert`, `replace`, `clear`, `setbyte`, `bytesplice`, `force_encoding`, change their subject in place; every other operation leaves the subject alone and returns a new String. The Strings a program cannot change are Hash keys, Set elements, the names of Symbols (`Symbol.name`), the String a MatchData holds (`MatchData.string`) and the program's arguments (`ARGV`): changing one of them in place is a `TypeError` at run time (`cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`).
 
 Every operation is written with its type: `String.upcase(s)`, never `s.upcase`. The operators on Strings are `+` (String, String), `*` (String, Integer), `%` (the format operator), `==`, `!=`, `<`, `<=`, `>`, `>=`, `<=>` (String, String), `=~`, `!~` (String, Regexp), and the index `s[i]`, `s[i, n]`, `s[range]` ([Operators and indexing](../05-operators.md)). The entries `String.+(x, y)` and so on below are the function forms of those operators. There is no `s[i] = v`: a String cannot be indexed for writing (a `type` problem statically); change it with `String.sub!`, `String.insert`, `String.bytesplice` or `String.replace`.
 
 Many operations give **nil** for a miss: `index`, `rindex`, `byteindex`, `byterindex`, `match`, `getbyte`, `casecmp`, `unpack1`, `slice!`, `sub!`, `gsub!`, and the in-place forms that give nil when nothing changed (`upcase!`, `strip!`, `chomp!`, `tr!`, ...). Using such a result unchecked is a `nil` problem at `--strict` level 2. Only the index forms `s[i]`, `s[i, n]`, `s[range]`, `String.slice` and `String.byteslice` give the nil of a miss (`index-nil`), which is reported only at level 3 ([Overview](../01-overview.md)).
 
-Where Sake differs from Ruby: `sub` and `gsub` need a replacement or a block; a `MatchData` is read with `m[i]` (there are no `$~`, `$1`); `scan`, `partition` and `rpartition` give Tuples where Ruby gives Arrays; `force_encoding` returns a new String; `chomp`, `delete`, `squeeze`, `count`, `start_with?`, `end_with?`, `include?` take one argument each (the `!` forms of `chomp`, `delete`, `squeeze` take Ruby's several); iteration (`each_char`, ...) needs a block. The table in [Built-in operations](../09-builtins.md) lists the operations in short.
+Where Sake differs from Ruby: `sub` and `gsub` need a replacement or a block; a `MatchData` is read with `m[i]` (there are no `$~`, `$1`); `scan`, `partition` and `rpartition` give Tuples where Ruby gives Arrays; `count`, `start_with?`, `end_with?`, `include?` take one argument each (`chomp`, `delete`, `squeeze` take what their `!` forms take: a separator, several sets); iteration (`each_char`, ...) needs a block. The table in [Built-in operations](../09-builtins.md) lists the operations in short.
 
 ## String[]
 
@@ -82,11 +82,16 @@ p("a" + 1)                   # !> the operands are (String, Integer)
 
 `String.*(x, Integer)`
 
-The function form of `s * n`: a new String with `s` repeated `n` times (`""` for 0). A negative `n` is an `ArgumentError`.
+The function form of `s * n`: a new String with `s` repeated `n` times (`""` for 0). A negative `n` is an `ArgumentError` (`negative argument`), from the operator as from the function form; it can be rescued.
 
 ```ruby
 p("ab" * 3)                  # => "ababab"
 p(String.*("-", 0))          # => ""
+begin
+  p("ab" * -1)
+rescue ArgumentError => e
+  puts(Exception.message(e))     # => negative argument
+end
 ```
 
 ```ruby error
@@ -97,7 +102,7 @@ p(String.*("ab", -1))        # !> ArgumentError: String.*: negative argument -1
 
 `String.%(x, Any)`
 
-The function form of `fmt % value`, Ruby's `format` with `fmt` as the format: `"%d items" % 3`. The right operand is one value (Integer, Float, String, Symbol, nil, true or false) or a Tuple of values for several directives (`"%s-%s" % [a, b]`); an Array is a `type` problem statically. The directives are Ruby's (`%d`, `%s`, `%f`, `%x`, `%05d`, `%-4s`, `%.2f`, `%p`, ...). A value that does not fit its directive (`"%d" % "x"`) or too few values is an `ArgumentError`; extra values are ignored.
+The function form of `fmt % value`, Ruby's `format` with `fmt` as the format: `"%d items" % 3`. The right operand is one value (Integer, Float, String, Symbol, nil, true or false), a Tuple of values for several directives (`"%s-%s" % [a, b]`), or a Record or a Hash with Symbol keys for the named directives `%<name>d` and `%{name}` (`"%<a>05d" % {a: 42}`, `"%<a>05d" % Hash[a: 42]`); an Array is a `type` problem statically. The directives are Ruby's (`%d`, `%s`, `%f`, `%x`, `%05d`, `%-4s`, `%.2f`, `%p`, ...). A value that does not fit its directive (`"%d" % "x"`) or too few values is an `ArgumentError`; a name the Record or Hash does not have is a `KeyError` (`key<b> not found`); extra values are ignored.
 
 ```ruby
 p("%05d|%-4s|%.2f|%x" % [42, "ab", 3.14159, 255])   # => "00042|ab  |3.14|ff"
@@ -105,6 +110,13 @@ p("%d items" % 3)            # => "3 items"
 p("%s" % :sym)               # => "sym"
 p("%p" % nil)                # => "nil"
 p(String.%("%03d", 7))       # => "007"
+p("%<a>05d" % {a: 42})       # => "00042"
+p("%{a}-%<b>s" % {a: 1, b: "x"})     # => "1-x"
+p("%<a>05d" % Hash[a: 42])   # => "00042"
+```
+
+```ruby error
+p("%<b>d" % {a: 42})         # !> KeyError: Arithmetic.%: key<b> not found
 ```
 
 ```ruby error
@@ -117,7 +129,7 @@ p("%d %d" % 1)               # !> ArgumentError: Arithmetic.%: too few arguments
 
 `String.!=(x, Any)`
 
-True when both are Strings with the same characters (`!=` is the negation); comparison is by content, not identity. With the operators, a right operand of another type (an Integer, a Symbol, nil) is simply not equal. The function forms accept only a String or nil as the right operand: `String.==("a", 1)` is a `TypeError` at run time.
+True when both are Strings with the same characters (`!=` is the negation); comparison is by content, not identity. A right operand of another type (an Integer, a Symbol, nil) is simply not equal, with the function forms as with the operators: `String.==("a", 1)` is false and `String.!=("a", 1)` is true (no error).
 
 ```ruby
 p("a" == "a")                # => true
@@ -125,10 +137,8 @@ p("a" != "b")                # => true
 p("1" == 1)                  # => false
 p("a" == nil)                # => false
 p(String.==("a", nil))       # => false
-```
-
-```ruby error
-p(String.==("a", 1))         # !> TypeError: String.==: no implementation for (String, Integer)
+p(String.==("a", 1))         # => false
+p(String.!=("a", 1))         # => true
 ```
 
 ## <, <=, >, >=
@@ -213,11 +223,12 @@ p(String.casecmp("a", "b") + 1)     # !> the operands may be nil
 
 `String.casecmp?(x, String)`
 
-True when the two Strings are equal after Unicode case folding. The checker types the result as true/false; with incompatible encodings Ruby's method returns nil, and so does this one.
+True when the two Strings are equal after Unicode case folding. The result is a Boolean, never nil: with incompatible encodings (where Ruby's method returns nil and `casecmp` gives nil) it is **false**.
 
 ```ruby
 p(String.casecmp?("a", "A"))        # => true
 p(String.casecmp?("a", "b"))        # => false
+p(String.casecmp?("a", String.encode("a", "UTF-16LE")))   # => false
 ```
 
 ## =~
@@ -251,7 +262,7 @@ p(String.!~("ab", /b/))      # => false
 
 `String.[](x, Any, [Integer])`
 
-The function form of `s[i]`, `s[i, n]` and `s[range]`. `s[i]` is the one-character String at position `i` (an Integer; a negative one counts from the end), or nil outside the String. `s[i, n]` is the substring of up to `n` characters starting at `i`: nil when `i` is past the end or `n` is negative, `""` when `i` equals the length. `s[range]` is the characters in the Range, nil when its start is past the end. The index must be an Integer or a Range: a String or a Float index is a `type` problem statically (Ruby's `s["b"]` and `s[/re/]` do not exist; use `String.index`, `String.match` or `String.slice!`), and a Range with a count is a `TypeError`. The result is `String | nil`; the nil is the nil of a miss (`index-nil`), reported only at `--strict` level 3.
+The function form of `s[i]`, `s[i, n]` and `s[range]`. `s[i]` is the one-character String at position `i` (an Integer; a negative one counts from the end), or nil outside the String. `s[i, n]` is the substring of up to `n` characters starting at `i`: nil when `i` is past the end or `n` is negative, `""` when `i` equals the length. `s[range]` is the characters in the Range, nil when its start is past the end. The index must be an Integer or a Range: a String or a Float index is a `type` problem statically (Ruby's `s["b"]` and `s[/re/]` do not exist as operators; `String.slice(s, "b")` and `String.slice(s, /re/)` do), and a Range with a count is a `TypeError`. The result is `String | nil`; the nil is the nil of a miss (`index-nil`), reported only at `--strict` level 3.
 
 ```ruby
 s = "hello"
@@ -272,9 +283,9 @@ p("abc"["b"])                # !> the index must be Integer, but is String
 
 ## slice
 
-`String.slice(x, Integer|Range, [Integer])`
+`String.slice(x, Integer|Range|String|Regexp, [Integer])`
 
-`s[i]`, `s[i, n]` or `s[range]` written as an operation: the same results and the same nil (`index-nil`, level 3). Unlike Ruby's `slice` and unlike `slice!`, it does not take a String or a Regexp (a `type` problem statically).
+`s[i]`, `s[i, n]` or `s[range]` written as an operation: the same results and the same nil (`index-nil`, level 3). It also takes what `slice!` takes, as Ruby's `slice`: a String gives its first occurrence (a new String) or nil, and a Regexp gives the first match, or, with a group number as the second argument, that group's String (nil when the group did not take part). A count after a String or a Range is a `TypeError`.
 
 ```ruby
 s = "hello"
@@ -282,10 +293,14 @@ p(String.slice(s, 1))        # => "e"
 p(String.slice(s, 1, 2))     # => "el"
 p(String.slice(s, 1..2))     # => "el"
 p(String.slice(s, 9))        # => nil
+p(String.slice(s, "ll"))     # => "ll"
+p(String.slice(s, "zz"))     # => nil
+p(String.slice(s, /l+/))     # => "ll"
+p(String.slice(s, /(l)(o)/, 2))      # => "o"
 ```
 
 ```ruby error
-p(String.slice("abc", "b"))  # !> argument 2 must be Integer|Range, but is String
+p(String.slice("hello", "ll", 1))    # !> TypeError: String.slice: no implicit conversion of String into Integer
 ```
 
 ## slice!
@@ -310,13 +325,15 @@ p(String.upcase(c))          # !> argument 1 may be nil
 
 ## byteslice
 
-`String.byteslice(x, Integer, [Integer])`
+`String.byteslice(x, Integer|Range, [Integer])`
 
-The byte at byte offset `i` (one-byte String), or the `n` bytes from `i`, in the subject's encoding; the result may be an invalid String when it cuts a multibyte character. nil when `i` is past the end or `n` is negative (`index-nil`, level 3). Only an Integer start is accepted (Ruby also takes a Range).
+The byte at byte offset `i` (one-byte String), the `n` bytes from `i`, or the bytes in a Range of byte offsets, in the subject's encoding; the result may be an invalid String when it cuts a multibyte character. nil when `i` (or the Range's start) is past the end or `n` is negative (`index-nil`, level 3). As Ruby's.
 
 ```ruby
 p(String.byteslice("héllo", 1))      # => "\xC3"
 p(String.byteslice("héllo", 1, 2))   # => "é"
+p(String.byteslice("héllo", 1..2))   # => "é"
+p(String.byteslice("hello", 9..10))  # => nil
 p(String.byteslice("héllo", 9))      # => nil
 ```
 
@@ -451,14 +468,17 @@ p(String.lstrip!("a"))       # => nil
 
 ## chomp
 
-`String.chomp(x)`
+`String.chomp(x, [String])`
 
-A new String without one trailing line end (`"\n"`, `"\r\n"` or `"\r"`); a String without one is returned unchanged. Unlike Ruby's `chomp`, it takes no separator argument (`chomp!` does).
+A new String without one trailing line end (`"\n"`, `"\r\n"` or `"\r"`); a String without one is returned unchanged. With `suffix`, that suffix is removed instead (as Ruby's: `""` removes every trailing newline).
 
 ```ruby
 p(String.chomp("a\n"))       # => "a"
 p(String.chomp("a\r\n"))     # => "a"
 p(String.chomp("a"))         # => "a"
+p(String.chomp("abc!", "!"))         # => "abc"
+p(String.chomp("abc", "x"))          # => "abc"
+p(String.chomp("abc\n\n", ""))       # => "abc"
 ```
 
 ## chomp!
@@ -603,12 +623,17 @@ p(String.rindex("abc", "b") + 1) # !> the operands may be nil
 
 `String.byteindex(x, String|Regexp, [Integer])`
 
-As `index`, but the result and `pos` are **byte** offsets. nil when there is no occurrence (a `nil` problem at `--strict` level 2 when used unchecked). `pos` must fall on a character boundary: an offset inside a multibyte character stops the program (Ruby's `IndexError`; at present it is not reported as a Sake exception and cannot be rescued).
+As `index`, but the result and `pos` are **byte** offsets. nil when there is no occurrence (a `nil` problem at `--strict` level 2 when used unchecked). `pos` must fall on a character boundary: an offset inside a multibyte character is an `IndexError` (`offset 2 does not land on character boundary`), which can be rescued.
 
 ```ruby
 p(String.index("héllo", "l"))        # => 2
 p(String.byteindex("héllo", "l"))    # => 3
 p(String.byteindex("héllo", "z"))    # => nil
+p(String.byteindex("héllo", "l", 3)) # => 3
+```
+
+```ruby error
+p(String.byteindex("héllo", "l", 2))   # !> IndexError: String.byteindex: offset 2 does not land on character boundary
 ```
 
 ## byterindex
@@ -630,7 +655,7 @@ p(String.byterindex("abc", "b") + 1)    # !> the operands may be nil
 
 `String.match(x, String|Regexp, [Integer])`
 
-The `MatchData` of the first match of the Regexp at or after position `pos` (default 0), or nil when it does not match; using the result unchecked (`m[1]` without an `if m`) is a `nil` problem at `--strict` level 2. A String pattern is compiled as a Regexp, as Ruby's (`"."` matches any character; an invalid pattern such as `"+"` stops the program with Ruby's `RegexpError`). There are no `$~` and `$1`: read the groups from the MatchData with `m[0]`, `m[1]`, `m["name"]`.
+The `MatchData` of the first match of the Regexp at or after position `pos` (default 0), or nil when it does not match; using the result unchecked (`m[1]` without an `if m`) is a `nil` problem at `--strict` level 2. A String pattern is compiled as a Regexp, as Ruby's (`"."` matches any character; an invalid pattern such as `"+"` is a `RegexpError`, which can be rescued). There are no `$~` and `$1`: read the groups from the MatchData with `m[0]`, `m[1]`, `m["name"]`.
 
 ```ruby
 m = String.match("hello world", /(w)(o)/)
@@ -642,6 +667,10 @@ p(String.match("hello", "zzz"))      # => nil
 ```
 
 ```ruby error
+p(String.match("a+c", "+"))  # !> RegexpError: String.match: target of repeat operator is not specified: /+/
+```
+
+```ruby error
 m = String.match("abc", /b/)
 p(m[0])                      # !> the operands may be nil (MatchData | nil)
 ```
@@ -650,12 +679,17 @@ p(m[0])                      # !> the operands may be nil (MatchData | nil)
 
 `String.match?(x, String|Regexp, [Integer])`
 
-True when the pattern matches at or after position `pos` (default 0), without building a MatchData. A String pattern is compiled as a Regexp.
+True when the pattern matches at or after position `pos` (default 0), without building a MatchData. A String pattern is compiled as a Regexp; an invalid one is a `RegexpError`, as with `match`.
 
 ```ruby
 p(String.match?("hello", /l+/))      # => true
 p(String.match?("hello", "o", 8))    # => false
 p(String.match?("abc", "b."))        # => true
+begin
+  p(String.match?("a+c", "+"))
+rescue RegexpError => e
+  puts(Exception.message(e))         # => target of repeat operator is not specified: /+/
+end
 ```
 
 ## scan
@@ -675,13 +709,17 @@ p(String.scan("a1 b", /(\w)(\d)?/))  # => [["a", "1"], ["b", nil]]
 
 `String.count(x, String)`
 
-The number of characters (an Integer) that belong to the set `chars`, written as in Ruby's `tr`: `"lo"` lists characters, `"a-z"` is a range, a leading `^` negates. Only one set is accepted (Ruby intersects several). A reversed range such as `"z-a"` is Ruby's `ArgumentError`.
+The number of characters (an Integer) that belong to the set `chars`, written as in Ruby's `tr`: `"lo"` lists characters, `"a-z"` is a range, a leading `^` negates. Only one set is accepted (Ruby intersects several). A reversed range such as `"z-a"` is an `ArgumentError` (`invalid range "z-a" in string transliteration`), here as in `tr`, `delete` and `squeeze`.
 
 ```ruby
 s = "hello world"
 p(String.count(s, "lo"))     # => 5
 p(String.count(s, "a-z"))    # => 10
 p(String.count(s, "^l"))     # => 8
+```
+
+```ruby error
+p(String.count("abc", "z-a"))    # !> ArgumentError: String.count: invalid range "z-a" in string transliteration
 ```
 
 ## partition, rpartition
@@ -750,13 +788,17 @@ p(String.sub!(s, "x", "y") + "!")    # !> the operands may be nil
 
 `String.tr(x, String, String)`
 
-A new String in which each character of the set `from` is replaced by the character at the same position in `to` (Ruby's `tr`): `"a-y"` is a range, a leading `^` in `from` negates, a `to` shorter than `from` repeats its last character, and an empty `to` deletes. A reversed range is Ruby's `ArgumentError`.
+A new String in which each character of the set `from` is replaced by the character at the same position in `to` (Ruby's `tr`): `"a-y"` is a range, a leading `^` in `from` negates, a `to` shorter than `from` repeats its last character, and an empty `to` deletes. A reversed range is an `ArgumentError` (`invalid range "z-a" in string transliteration`).
 
 ```ruby
 p(String.tr("hello", "el", "ip"))    # => "hippo"
 p(String.tr("hello", "a-y", "b-z"))  # => "ifmmp"
 p(String.tr("hello", "^l", "*"))     # => "**ll*"
 p(String.tr("hello", "lo", ""))      # => "he"
+```
+
+```ruby error
+p(String.tr("abc", "z-a", "x"))      # !> ArgumentError: String.tr: invalid range "z-a" in string transliteration
 ```
 
 ## tr!
@@ -796,14 +838,16 @@ p(String.tr_s!(s, "z", "x"))     # => nil
 
 ## delete
 
-`String.delete(x, String)`
+`String.delete(x, String, *String)`
 
-A new String without the characters of the set `chars` (`tr` syntax: `"a-k"`, `"^l"`). One set only (Ruby intersects several; `delete!` does too).
+A new String without the characters that belong to every set given (`tr` syntax: `"a-k"`, `"^l"`). Several sets intersect, as Ruby's: `delete("hello", "l", "o")` deletes nothing, since no character is in both sets. A reversed range is an `ArgumentError`.
 
 ```ruby
 p(String.delete("hello", "l"))     # => "heo"
 p(String.delete("hello", "a-k"))   # => "llo"
 p(String.delete("hello", "^l"))    # => "ll"
+p(String.delete("hello", "l", "o"))        # => "hello"
+p(String.delete("hello", "a-z", "^l"))     # => "ll"
 ```
 
 ## delete!
@@ -825,14 +869,15 @@ p(String.delete!("a", "z-a"))          # !> ArgumentError: String.delete!: inval
 
 ## squeeze
 
-`String.squeeze(x, [String])`
+`String.squeeze(x, *String)`
 
-A new String in which runs of the same character are reduced to one; with `chars`, only runs of characters in that set.
+A new String in which runs of the same character are reduced to one; with sets, only runs of characters that belong to every set (several sets intersect, as Ruby's).
 
 ```ruby
 p(String.squeeze("aaabbb  c"))         # => "ab c"
 p(String.squeeze("aaabbb  c", "a"))    # => "abbb  c"
 p(String.squeeze("aaabbb  c", "a-b"))  # => "ab  c"
+p(String.squeeze("aaabbb  c", "a-b", "b"))     # => "aaab  c"
 ```
 
 ## squeeze!
@@ -1070,7 +1115,7 @@ p(s)                         # => "cba"
 
 `String.center(x, Integer, [String])`
 
-A new String of `width` characters: the subject padded on the right (`ljust`), on the left (`rjust`), or on both sides (`center`, the extra padding going right) with repetitions of `pad` (default `" "`), cut to fit. A `width` not greater than the length gives an unchanged copy. An empty `pad` is Ruby's `ArgumentError` (`zero width padding`).
+A new String of `width` characters: the subject padded on the right (`ljust`), on the left (`rjust`), or on both sides (`center`, the extra padding going right) with repetitions of `pad` (default `" "`), cut to fit. A `width` not greater than the length gives an unchanged copy. An empty `pad` is an `ArgumentError` (`zero width padding`).
 
 ```ruby
 p(String.ljust("ab", 5))         # => "ab   "
@@ -1078,6 +1123,10 @@ p(String.rjust("ab", 5, "0"))    # => "000ab"
 p(String.center("ab", 6, "*"))   # => "**ab**"
 p(String.ljust("ab", 5, "xy"))   # => "abxyx"
 p(String.center("ab", 1))        # => "ab"
+```
+
+```ruby error
+p(String.ljust("a", 3, ""))      # !> ArgumentError: String.ljust: zero width padding
 ```
 
 ## to_s
@@ -1319,12 +1368,16 @@ p(String.encoding(String.b("é")))    # => "ASCII-8BIT"
 
 `String.force_encoding(x, String)`
 
-A **new** String with the same bytes labelled as encoding `enc` (Ruby's `force_encoding` relabels the subject in place; Sake's leaves it alone). The bytes are not converted; `valid_encoding?` tells whether they are valid in the new encoding. An unknown encoding name is an `ArgumentError`.
+Relabels the subject's bytes as encoding `enc` **in place** and returns the subject, as Ruby's `force_encoding`. The bytes are not converted; `valid_encoding?` tells whether they are valid in the new encoding. An unknown encoding name is an `ArgumentError`; a String that cannot be changed (a Hash key, a Symbol's name, ...) is a `TypeError`.
 
 ```ruby
-s = String.force_encoding("\xC3\xA9", "UTF-8")
+s = String.b("\xC3\xA9")
+p(String.encoding(s))                # => "ASCII-8BIT"
+t = String.force_encoding(s, "UTF-8")
+p(String.encoding(s))                # => "UTF-8"
+p(Kernel.equal?(s, t))               # => true
 p(s)                                 # => "é"
-p(String.valid_encoding?(s))         # => true
+p(String.valid_encoding?(String.force_encoding("\xff", "UTF-8")))   # => false
 ```
 
 ```ruby error
@@ -1459,11 +1512,20 @@ p(String.dump("a\né"))  # => "\"a\\n\\u00E9\""
 
 `String.undump(x)`
 
-The String that `dump` produced the subject from: the quotes are removed and the escapes read. A String that is not in `dump`'s form stops the program (Ruby's `RuntimeError`; at present it is not reported as a Sake exception and cannot be rescued).
+The String that `dump` produced the subject from: the quotes are removed and the escapes read. A String that is not in `dump`'s form is an `ArgumentError` with Ruby's message (Ruby's method raises RuntimeError; in Sake a RuntimeError comes only from `raise "msg"` and `Thread.raise`).
 
 ```ruby
 p(String.undump("\"a\\n\""))         # => "a\n"
 p(String.undump(String.dump("é")))   # => "é"
+begin
+  p(String.undump("abc"))
+rescue ArgumentError => e
+  puts(Exception.message(e))         # => invalid dumped string; not wrapped with '"' nor '"...".force_encoding("...")' form
+end
+```
+
+```ruby error
+p(String.undump("abc"))      # !> ArgumentError: String.undump: invalid dumped string
 ```
 
 ## unpack

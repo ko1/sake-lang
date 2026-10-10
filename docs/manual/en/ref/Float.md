@@ -4,7 +4,7 @@ A Float is an IEEE 754 double-precision floating-point number. The literals are 
 
 The operators on Floats are `+`, `-`, `*`, `/`, `%`, `**` and `==`, `!=`, `<`, `<=`, `>`, `>=`, `<=>`. The right operand may be an Integer, a Float, a Rational or a Complex, and the result type follows the closed table: with an Integer or a Rational the result is a Float, with a Complex it is a Complex ([Operators and indexing](../05-operators.md)). The entries `Float.+(x, y)` and so on below are the function forms of those operators; since the left operand is known to be a Float, the checker is stricter about the right one.
 
-As in Ruby, dividing by zero gives `Infinity`, `-Infinity` or `NaN` rather than an exception (`%` and `divmod` are the exceptions), and the operations that turn a NaN or an Infinity into an Integer (`to_i`, `floor`, `ceil`, `round`, `truncate`, `to_r`) raise `FloatDomainError`. Ruby's constants `Float::INFINITY` and so on are read in Sake as operations without arguments, `Float.INFINITY` (Sake has no value constants). The main differences from Ruby: `round(f, 2)` with a digit count always returns a Float, `divmod` returns a Tuple, and the checker follows the nil of `<=>` and `infinite?`.
+As in Ruby, dividing by zero gives `Infinity`, `-Infinity` or `NaN` rather than an exception (`%`, `modulo` and `divmod` are the exceptions: `ZeroDivisionError`), and the operations that turn a NaN or an Infinity into an Integer (`to_i`, `floor`, `ceil`, `round`, `truncate`, `to_r`, `numerator`, `denominator`) raise `FloatDomainError`. Ruby's constants `Float::INFINITY` and so on are read in Sake as operations without arguments, `Float.INFINITY` (Sake has no value constants). The main differences from Ruby: `round(f, 2)` with a digit count always returns a Float, a negative base with a fractional exponent (`(-8.0) ** 0.5`) is a `Math::DomainError` instead of a Complex, `divmod` returns a Tuple, and the checker follows the nil of `<=>` and `infinite?`.
 
 ## Float[]
 
@@ -65,7 +65,7 @@ p(Float.MIN)                   # => 2.2250738585072014e-308
 
 The function forms of `x + y` and the others with a Float on the left. The right operand `y` is an Integer, a Float, a Rational or a Complex. With an Integer or a Rational the result is a Float, with a Complex a Complex. Any other type (a String, nil) is a `type` problem statically (`the operands are (Float, String), which the left operand's type does not support`) and a `TypeError` at run time.
 
-Division follows IEEE: `1.0 / 0` is `Infinity` and `0.0 / 0` is `NaN`, without an exception. `%` is Ruby's `Float#%` (the result takes the sign of the right operand); `7.5 % 0.0` is `NaN`, but dividing by the **Integer** 0, `7.5 % 0`, is a `ZeroDivisionError`. That exception is currently not turned into a Sake exception: it stops the program as a Ruby error and cannot be rescued. `**` is Ruby's: a negative Float raised to a non-integer power gives a Complex (the checker takes the result to be a Float).
+Division follows IEEE: `1.0 / 0` is `Infinity` and `0.0 / 0` is `NaN`, without an exception. `%` is Ruby's `Float#%` (the result takes the sign of the right operand), but dividing by zero with it, the Integer `0` or the Float `0.0`, is a `ZeroDivisionError` (rescuable; Ruby 4 raises it too). `**` with an Integer, Float or Rational exponent is a Float; unlike Ruby, a negative base with a fractional exponent (`(-8.0) ** 0.5`) is a `Math::DomainError` rather than a Complex, so the result is always a Float.
 
 ```ruby
 p(1.5 + 2)                     # => 3.5
@@ -78,10 +78,25 @@ p(Float.%(7.5, 2))             # => 1.5
 p(-7.5 % 2)                    # => 0.5
 p(Float.**(2.0, 3))            # => 8.0
 p(Float.**(2.0, 0.5))          # => 1.4142135623730951
+p(Float.**(2.0, 2r))           # => 4.0
+p((-8.0) ** 2)                 # => 64.0
+begin
+  7.5 % 0.0
+rescue ZeroDivisionError => e
+  p(Exception.message(e))      # => "divided by 0"
+end
 ```
 
 ```ruby error
 p(Float.+(1.5, "a"))           # !> the operands are (Float, String), which the left operand's type does not support
+```
+
+```ruby error
+p(Float.%(7.5, 0))             # !> ZeroDivisionError: Float.%: divided by 0
+```
+
+```ruby error
+p(Float.**(-8.0, 0.5))         # !> Math::DomainError: Float.**: -8.0 ** 0.5 is not a real number (a negative base with a fractional exponent)
 ```
 
 ## ==, !=
@@ -90,7 +105,7 @@ p(Float.+(1.5, "a"))           # !> the operands are (Float, String), which the 
 
 `Float.!=(x, Any)`
 
-The function form of `x == y`. A Float compares by value with an Integer, a Rational and a Complex: `1.0 == 1` is true. A NaN equals nothing, itself included. The operator `==` accepts any two values and is false when the types differ (`1.0 == "1"` is false), but the function form `Float.==(x, y)` raises a `TypeError` at run time unless the right operand is a number or nil (the checker does not catch this statically).
+The function form of `x == y`. A Float compares by value with an Integer, a Rational and a Complex: `1.0 == 1` is true. A NaN equals nothing, itself included. A value of another type is never equal (`1.0 == "1"` is false), and the function form `Float.==(x, y)` gives the same false (and `!=` true) for any right operand of another type, as the operator does, without an error.
 
 ```ruby
 p(Float.==(1.0, 1))            # => true
@@ -98,10 +113,8 @@ p(Float.==(1.0, 1r))           # => true
 p(1.5 != 1.5)                  # => false
 p(Float.!=(1.0, Float.NAN))    # => true
 p(1.0 == "1")                  # => false
-```
-
-```ruby error
-p(Float.==(1.0, "1"))          # !> TypeError: Float.==: no implementation for (Float, String)
+p(Float.==(1.0, "1"))          # => false
+p(Float.!=(1.0, nil))          # => true
 ```
 
 ## <, <=, >, >=
@@ -248,9 +261,9 @@ p(Float.floor(Float.INFINITY)) # !> FloatDomainError: Float.floor: Infinity
 
 ## round
 
-`Float.round(x, [Integer])`
+`Float.round(x, [Integer], [half: Symbol])`
 
-Rounds. Without a digit count it returns the nearest Integer, rounding halves away from zero (`Float.round(2.5)` is 3 and `-2.5` gives -3, as Ruby's `round`; not banker's rounding). With a digit count `n` it returns a **Float** rounded to n decimal places. A negative count rounds to a power of ten, but the result is still a Float (Ruby's `1234.5.round(-2)` is the Integer 1200; Sake gives `1200.0`). The result type depends on whether a count is given because the checker looks at the number of arguments. A NaN or an Infinity without a count is a `FloatDomainError`; with a count it is returned unchanged.
+Rounds. Without a digit count it returns the nearest Integer, rounding halves away from zero by default (`Float.round(2.5)` is 3 and `-2.5` gives -3, as Ruby's `round`). With a digit count `n` it returns a **Float** rounded to n decimal places. A negative count rounds to a power of ten, but the result is still a Float (Ruby's `1234.5.round(-2)` is the Integer 1200; Sake gives `1200.0`). The result type depends on whether a count is given because the checker looks at the number of arguments. The keyword `half:` chooses how an exact half is rounded, as Ruby's: `:up` (the default, away from zero), `:even` (to the even neighbour, banker's rounding), `:down` (toward zero); another Symbol is an `ArgumentError` (`invalid rounding mode: foo`), and a non-Symbol is a `type` problem. A NaN or an Infinity without a count is a `FloatDomainError`; with a count it is returned unchanged.
 
 ```ruby
 p(Float.round(1.5))            # => 2
@@ -261,17 +274,27 @@ p(Float.round(3.14159, 3))     # => 3.142
 p(Float.round(1234.5, -2))     # => 1200.0
 p(Float.round(1.5, 0))         # => 2.0
 p(Float.round(Float.NAN, 2))   # => NaN
+p(Float.round(2.5, half: :even))      # => 2
+p(Float.round(3.5, half: :even))      # => 4
+p(Float.round(2.5, half: :down))      # => 2
+p(Float.round(2.5, 0, half: :even))   # => 2.0
+p(Float.round(1.25, 1, half: :even))  # => 1.2
+p(Float.round(1250.0, -2, half: :even))  # => 1200.0
 ```
 
 ```ruby error
 p(Float.round(-Float.INFINITY))  # !> FloatDomainError: Float.round: -Infinity
 ```
 
+```ruby error
+p(Float.round(2.5, half: :foo))  # !> ArgumentError: Float.round: invalid rounding mode: foo
+```
+
 ## divmod
 
 `Float.divmod(x, Any)`
 
-The Tuple `[q, r]` of quotient and remainder: `q` is `x / y` floored, an **Integer**, and `r` is `x - q * y`, a Float with the sign of `y` (as Ruby's `7.5.divmod(2)` is `[3, 1.5]`). `y` is a Float or an Integer; any other type, a Rational included, is a `type` problem statically. Dividing by the Integer 0 is a `ZeroDivisionError`. Dividing by the Float `0.0`, or an `x` that is a NaN or an Infinity, is Ruby's `ZeroDivisionError` / `FloatDomainError` too, but these are currently not turned into Sake exceptions and stop the program as Ruby errors.
+The Tuple `[q, r]` of quotient and remainder: `q` is `x / y` floored, an **Integer**, and `r` is `x - q * y`, a Float with the sign of `y` (as Ruby's `7.5.divmod(2)` is `[3, 1.5]`). `y` is a Float or an Integer; any other type, a Rational included, is a `type` problem statically. Dividing by zero, the Integer `0` or the Float `0.0`, is a `ZeroDivisionError`; an `x` that is a NaN or an Infinity is a `FloatDomainError` (its message is the value). Both can be rescued.
 
 ```ruby
 p(Float.divmod(7.5, 2))        # => [3, 1.5]
@@ -279,10 +302,19 @@ p(Float.divmod(-7.5, 2.0))     # => [-4, 0.5]
 q, r = Float.divmod(7.5, 2)
 p(q + 1)                       # => 4
 p(r + 0.5)                     # => 2.0
+begin
+  Float.divmod(Float.NAN, 2)
+rescue FloatDomainError => e
+  p(Exception.message(e))      # => "NaN"
+end
 ```
 
 ```ruby error
 p(Float.divmod(7.5, 0))        # !> ZeroDivisionError: Float.divmod: divided by 0
+```
+
+```ruby error
+p(Float.divmod(7.5, 0.0))      # !> ZeroDivisionError: Float.divmod: divided by 0
 ```
 
 ## fdiv, quo
@@ -303,7 +335,7 @@ p(Float.fdiv(1.0, 0))          # => Infinity
 
 `Float.modulo(x, Integer|Float|Rational)`
 
-The remainder of `x % y` (a Float with the sign of `y`). Unlike the operator, dividing by zero (the Integer 0 or `0.0`) raises Sake's `ZeroDivisionError` (the operator's `7.5 % 0.0` is NaN).
+The remainder of `x % y` (a Float with the sign of `y`), the same operation as `%`. Dividing by zero (the Integer 0 or `0.0`) raises `ZeroDivisionError`.
 
 ```ruby
 p(Float.modulo(7.5, 2))        # => 1.5
@@ -335,7 +367,7 @@ p(Float.between?(1.5, 1, 2))       # !> Float.between?: argument 2 must be Float
 
 `Float.clamp(x, Float, Float)`
 
-The Float `x` confined to `lo..hi` (`lo` when x is below it, `hi` when above). `lo` and `hi` are Floats only. `lo > hi` is Ruby's `ArgumentError`, which is currently not turned into a Sake exception and stops the program as a Ruby error.
+The Float `x` confined to `lo..hi` (`lo` when x is below it, `hi` when above). `lo` and `hi` are Floats only. `lo > hi` is an `ArgumentError` (`min argument must be less than or equal to max argument`), which can be rescued.
 
 ```ruby
 p(Float.clamp(2.5, 1.0, 2.0))  # => 2.0
@@ -345,6 +377,10 @@ p(Float.clamp(1.5, 1.0, 2.0))  # => 1.5
 
 ```ruby error
 p(Float.clamp(1.5, 1, 2))      # !> Float.clamp: argument 2 must be Float, but is Integer
+```
+
+```ruby error
+p(Float.clamp(1.5, 2.0, 1.0))  # !> ArgumentError: Float.clamp: min argument must be less than or equal to max argument
 ```
 
 ## next_float, prev_float
@@ -389,13 +425,17 @@ p(Float.to_r(Float.NAN))       # !> FloatDomainError: Float.to_r: NaN
 
 `Float.denominator(x)`
 
-The numerator and denominator of `Float.to_r(x)` (Integers). The denominator of `0.1` is `36028797018963968`, the value of the binary representation. As in Ruby, a NaN or an Infinity is not an error: `numerator` returns the NaN or Infinity itself (still a Float) and `denominator` returns 1. The checker takes the result to be an Integer, so using the `numerator` of a NaN as an Integer is a `TypeError` at run time.
+The numerator and denominator of `Float.to_r(x)` (Integers). The denominator of `0.1` is `36028797018963968`, the value of the binary representation. Unlike Ruby's, where `numerator` of a NaN is the NaN itself and `denominator` is 1, a NaN or an Infinity is a `FloatDomainError`, so the result is always an Integer.
 
 ```ruby
 p(Float.numerator(0.75))       # => 3
 p(Float.denominator(0.75))     # => 4
 p(Float.numerator(1.5))        # => 3
 p(Float.denominator(0.1))      # => 36028797018963968
+```
+
+```ruby error
+p(Float.numerator(Float.NAN))  # !> FloatDomainError: Float.numerator: NaN
 ```
 
 ## angle, arg, phase

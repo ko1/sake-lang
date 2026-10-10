@@ -4,7 +4,7 @@ Float は IEEE 754 の倍精度浮動小数点数です。リテラルは `1.5`�
 
 Float に使える演算子は `+`、`-`、`*`、`/`、`%`、`**` と `==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>` です。右側は Integer、Float、Rational、Complex のどれでもよく、結果の型は閉じた表で決まります: Integer・Rational との演算は Float、Complex との演算は Complex（[演算子と添字](../05-operators.md)）。ここに挙げた `Float.+(x, y)` などはその演算子を関数の形で呼ぶもので、左側が Float と決まっている分だけ検査が細かくなります。
 
-Ruby と同じく、0 で割ると例外ではなく `Infinity`・`-Infinity`・`NaN` になり（`%` と `divmod` は例外）、NaN・Infinity を Integer に変える操作（`to_i`、`floor`、`ceil`、`round`、`truncate`、`to_r`）は `FloatDomainError` を投げます。Ruby の `Float::INFINITY` などの定数は、Sake では `Float.INFINITY` のように引数なしの操作として読みます（Sake に値の定数はありません）。Ruby との大きな違いは、`round(f, 2)` が桁数を付けると常に Float を返すこと、`divmod` が Tuple を返すこと、`<=>` と `infinite?` の nil を検査器が追うことです。
+Ruby と同じく、0 で割ると例外ではなく `Infinity`・`-Infinity`・`NaN` になり（`%`・`modulo`・`divmod` は例外で `ZeroDivisionError`）、NaN・Infinity を Integer に変える操作（`to_i`、`floor`、`ceil`、`round`、`truncate`、`to_r`、`numerator`、`denominator`）は `FloatDomainError` を投げます。Ruby の `Float::INFINITY` などの定数は、Sake では `Float.INFINITY` のように引数なしの操作として読みます（Sake に値の定数はありません）。Ruby との大きな違いは、`round(f, 2)` が桁数を付けると常に Float を返すこと、負の底に分数の指数（`(-8.0) ** 0.5`）が Complex ではなく `Math::DomainError` になること、`divmod` が Tuple を返すこと、`<=>` と `infinite?` の nil を検査器が追うことです。
 
 ## Float[]
 
@@ -65,7 +65,7 @@ p(Float.MIN)                   # => 2.2250738585072014e-308
 
 `x + y` などの関数形で、左側が Float のものです。右側 `y` は Integer、Float、Rational、Complex のどれか。Integer・Rational との結果は Float、Complex との結果は Complex です。それ以外の型（String、nil など）は静的に `type` の問題（`the operands are (Float, String), which the left operand's type does not support`）、実行時は `TypeError` です。
 
-割り算は IEEE に従い、`1.0 / 0` は `Infinity`、`0.0 / 0` は `NaN` で、例外は出ません。`%` は Ruby の `Float#%`（結果の符号は右側に従う）で、`7.5 % 0.0` は `NaN` ですが、`7.5 % 0` のように **Integer の 0** で割ると `ZeroDivisionError` です。現在この例外は Sake の例外として整えられておらず、Ruby のエラーとしてプログラムを止めます（`rescue` できません）。`**` は Ruby と同じで、負の Float の非整数乗は Complex になります（検査器は Float とみなします）。
+割り算は IEEE に従い、`1.0 / 0` は `Infinity`、`0.0 / 0` は `NaN` で、例外は出ません。`%` は Ruby の `Float#%`（結果の符号は右側に従う）ですが、0（Integer の `0` でも Float の `0.0` でも）で割ると `ZeroDivisionError` です（`rescue` できます。Ruby 4 も同じく投げます）。`**` は Integer・Float・Rational の指数で Float を返します。Ruby と違い、負の底に分数の指数（`(-8.0) ** 0.5`）は Complex ではなく `Math::DomainError` なので、結果は常に Float です。
 
 ```ruby
 p(1.5 + 2)                     # => 3.5
@@ -78,10 +78,25 @@ p(Float.%(7.5, 2))             # => 1.5
 p(-7.5 % 2)                    # => 0.5
 p(Float.**(2.0, 3))            # => 8.0
 p(Float.**(2.0, 0.5))          # => 1.4142135623730951
+p(Float.**(2.0, 2r))           # => 4.0
+p((-8.0) ** 2)                 # => 64.0
+begin
+  7.5 % 0.0
+rescue ZeroDivisionError => e
+  p(Exception.message(e))      # => "divided by 0"
+end
 ```
 
 ```ruby error
 p(Float.+(1.5, "a"))           # !> the operands are (Float, String), which the left operand's type does not support
+```
+
+```ruby error
+p(Float.%(7.5, 0))             # !> ZeroDivisionError: Float.%: divided by 0
+```
+
+```ruby error
+p(Float.**(-8.0, 0.5))         # !> Math::DomainError: Float.**: -8.0 ** 0.5 is not a real number (a negative base with a fractional exponent)
 ```
 
 ## ==, !=
@@ -90,7 +105,7 @@ p(Float.+(1.5, "a"))           # !> the operands are (Float, String), which the 
 
 `Float.!=(x, Any)`
 
-`x == y` の関数形。Float は Integer・Rational・Complex と値で比べられ、`1.0 == 1` は true です。NaN は自分自身を含むどの値とも等しくありません。演算子の `==` はどんな 2 値にも使えて、型が違えば false ですが（`1.0 == "1"` は false）、関数形の `Float.==(x, y)` は右側が数か nil でなければ実行時に `TypeError` です（検査器はこれを静的には見つけません）。
+`x == y` の関数形。Float は Integer・Rational・Complex と値で比べられ、`1.0 == 1` は true です。NaN は自分自身を含むどの値とも等しくありません。別の型の値とは決して等しくなく（`1.0 == "1"` は false）、関数形の `Float.==(x, y)` も演算子と同じく、右側が他のどんな型でも false（`!=` は true）を返し、エラーにはなりません。
 
 ```ruby
 p(Float.==(1.0, 1))            # => true
@@ -98,10 +113,8 @@ p(Float.==(1.0, 1r))           # => true
 p(1.5 != 1.5)                  # => false
 p(Float.!=(1.0, Float.NAN))    # => true
 p(1.0 == "1")                  # => false
-```
-
-```ruby error
-p(Float.==(1.0, "1"))          # !> TypeError: Float.==: no implementation for (Float, String)
+p(Float.==(1.0, "1"))          # => false
+p(Float.!=(1.0, nil))          # => true
 ```
 
 ## <, <=, >, >=
@@ -248,9 +261,9 @@ p(Float.floor(Float.INFINITY)) # !> FloatDomainError: Float.floor: Infinity
 
 ## round
 
-`Float.round(x, [Integer])`
+`Float.round(x, [Integer], [half: Symbol])`
 
-四捨五入します。桁数を省くと最も近い Integer を返し、.5 は 0 から遠い方に丸めます（`Float.round(2.5)` は 3、`-2.5` は -3。Ruby の `round` と同じで、偶数丸めではありません）。桁数 `n` を付けると小数第 n 位に丸めた **Float** を返します。負の桁数は 10 の冪に丸めますが、結果はやはり Float です（Ruby の `1234.5.round(-2)` は Integer 1200 ですが、Sake では `1200.0`）。結果の型が桁数の有無で決まるのは、検査器が引数の個数を見るからです。桁数なしの NaN・Infinity は `FloatDomainError`、桁数付きならそのまま NaN・Infinity を返します。
+四捨五入します。桁数を省くと最も近い Integer を返し、.5 は既定では 0 から遠い方に丸めます（`Float.round(2.5)` は 3、`-2.5` は -3。Ruby の `round` と同じ）。桁数 `n` を付けると小数第 n 位に丸めた **Float** を返します。負の桁数は 10 の冪に丸めますが、結果はやはり Float です（Ruby の `1234.5.round(-2)` は Integer 1200 ですが、Sake では `1200.0`）。結果の型が桁数の有無で決まるのは、検査器が引数の個数を見るからです。キーワード `half:` は Ruby と同じく、ちょうど .5 のときの丸め方を選びます: `:up`（既定。0 から遠い方へ）、`:even`（偶数側へ。銀行家の丸め）、`:down`（0 に近い方へ）。他の Symbol は `ArgumentError`（`invalid rounding mode: foo`）、Symbol 以外は `type` の問題です。桁数なしの NaN・Infinity は `FloatDomainError`、桁数付きならそのまま NaN・Infinity を返します。
 
 ```ruby
 p(Float.round(1.5))            # => 2
@@ -261,17 +274,27 @@ p(Float.round(3.14159, 3))     # => 3.142
 p(Float.round(1234.5, -2))     # => 1200.0
 p(Float.round(1.5, 0))         # => 2.0
 p(Float.round(Float.NAN, 2))   # => NaN
+p(Float.round(2.5, half: :even))      # => 2
+p(Float.round(3.5, half: :even))      # => 4
+p(Float.round(2.5, half: :down))      # => 2
+p(Float.round(2.5, 0, half: :even))   # => 2.0
+p(Float.round(1.25, 1, half: :even))  # => 1.2
+p(Float.round(1250.0, -2, half: :even))  # => 1200.0
 ```
 
 ```ruby error
 p(Float.round(-Float.INFINITY))  # !> FloatDomainError: Float.round: -Infinity
 ```
 
+```ruby error
+p(Float.round(2.5, half: :foo))  # !> ArgumentError: Float.round: invalid rounding mode: foo
+```
+
 ## divmod
 
 `Float.divmod(x, Any)`
 
-商と余りの Tuple `[q, r]` を返します。`q` は `x / y` を floor した **Integer**、`r` は `x - q * y` の Float で、符号は `y` に従います（Ruby の `7.5.divmod(2)` が `[3, 1.5]` なのと同じ）。`y` は Float か Integer で、他の型（Rational を含む）は静的に `type` の問題です。Integer の 0 で割ると `ZeroDivisionError`。Float の `0.0` で割ったときと、`x` が NaN・Infinity のときも Ruby の `ZeroDivisionError` / `FloatDomainError` になりますが、現在それらは Sake の例外として整えられておらず、Ruby のエラーとしてプログラムを止めます。
+商と余りの Tuple `[q, r]` を返します。`q` は `x / y` を floor した **Integer**、`r` は `x - q * y` の Float で、符号は `y` に従います（Ruby の `7.5.divmod(2)` が `[3, 1.5]` なのと同じ）。`y` は Float か Integer で、他の型（Rational を含む）は静的に `type` の問題です。0（Integer の `0` でも Float の `0.0` でも）で割ると `ZeroDivisionError`、`x` が NaN・Infinity なら `FloatDomainError`（メッセージはその値）です。どちらも `rescue` できます。
 
 ```ruby
 p(Float.divmod(7.5, 2))        # => [3, 1.5]
@@ -279,10 +302,19 @@ p(Float.divmod(-7.5, 2.0))     # => [-4, 0.5]
 q, r = Float.divmod(7.5, 2)
 p(q + 1)                       # => 4
 p(r + 0.5)                     # => 2.0
+begin
+  Float.divmod(Float.NAN, 2)
+rescue FloatDomainError => e
+  p(Exception.message(e))      # => "NaN"
+end
 ```
 
 ```ruby error
 p(Float.divmod(7.5, 0))        # !> ZeroDivisionError: Float.divmod: divided by 0
+```
+
+```ruby error
+p(Float.divmod(7.5, 0.0))      # !> ZeroDivisionError: Float.divmod: divided by 0
 ```
 
 ## fdiv, quo
@@ -303,7 +335,7 @@ p(Float.fdiv(1.0, 0))          # => Infinity
 
 `Float.modulo(x, Integer|Float|Rational)`
 
-`x % y` と同じ余り（Float。符号は `y` に従う）。演算子と違い、0（Integer の 0 でも `0.0` でも）で割ると Sake の `ZeroDivisionError` を投げます（演算子 `%` の `7.5 % 0.0` は NaN）。
+`x % y` と同じ余り（Float。符号は `y` に従う）で、`%` と同じ働きです。0（Integer の 0 でも `0.0` でも）で割ると `ZeroDivisionError` を投げます。
 
 ```ruby
 p(Float.modulo(7.5, 2))        # => 1.5
@@ -335,7 +367,7 @@ p(Float.between?(1.5, 1, 2))       # !> Float.between?: argument 2 must be Float
 
 `Float.clamp(x, Float, Float)`
 
-`x` を `lo..hi` に収めた Float を返します（`lo` 未満なら `lo`、`hi` より大きければ `hi`）。`lo`、`hi` は Float のみ。`lo > hi` は Ruby の `ArgumentError` ですが、現在は Sake の例外として整えられておらず、Ruby のエラーとしてプログラムを止めます。
+`x` を `lo..hi` に収めた Float を返します（`lo` 未満なら `lo`、`hi` より大きければ `hi`）。`lo`、`hi` は Float のみ。`lo > hi` は `ArgumentError`（`min argument must be less than or equal to max argument`）で、`rescue` できます。
 
 ```ruby
 p(Float.clamp(2.5, 1.0, 2.0))  # => 2.0
@@ -345,6 +377,10 @@ p(Float.clamp(1.5, 1.0, 2.0))  # => 1.5
 
 ```ruby error
 p(Float.clamp(1.5, 1, 2))      # !> Float.clamp: argument 2 must be Float, but is Integer
+```
+
+```ruby error
+p(Float.clamp(1.5, 2.0, 1.0))  # !> ArgumentError: Float.clamp: min argument must be less than or equal to max argument
 ```
 
 ## next_float, prev_float
@@ -389,13 +425,17 @@ p(Float.to_r(Float.NAN))       # !> FloatDomainError: Float.to_r: NaN
 
 `Float.denominator(x)`
 
-`Float.to_r(x)` の分子・分母（Integer）。`0.1` の分母は `36028797018963968` のように 2 進表現の値になります。Ruby と同じく NaN・Infinity では例外にならず、`numerator` は NaN・Infinity をそのまま（Float のまま）返し、`denominator` は 1 を返します。検査器は Integer とみなすので、NaN の `numerator` を Integer として使うと実行時に `TypeError` です。
+`Float.to_r(x)` の分子・分母（Integer）。`0.1` の分母は `36028797018963968` のように 2 進表現の値になります。Ruby では NaN の `numerator` は NaN そのもの、`denominator` は 1 ですが、Sake では NaN・Infinity は `FloatDomainError` で、結果は常に Integer です。
 
 ```ruby
 p(Float.numerator(0.75))       # => 3
 p(Float.denominator(0.75))     # => 4
 p(Float.numerator(1.5))        # => 3
 p(Float.denominator(0.1))      # => 36028797018963968
+```
+
+```ruby error
+p(Float.numerator(Float.NAN))  # !> FloatDomainError: Float.numerator: NaN
 ```
 
 ## angle, arg, phase

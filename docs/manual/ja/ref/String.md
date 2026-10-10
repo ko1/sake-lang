@@ -1,12 +1,12 @@
 # String
 
-String は Ruby の String と同じく、エンコーディングを持つ文字の並びです。リテラルは `"abc"`、`'abc'`、`"a#{x}"`（補間は値を `to_s` で表示します。[値と型](../03-values.md)）で、リテラルは UTF-8、評価のたびに新しい String を作ります。String は**可変**です: 名前が `!` で終わる操作と `concat`、`append_as_bytes`、`prepend`、`insert`、`replace`、`clear`、`setbyte`、`bytesplice` は主語をその場で変え、それ以外の操作は主語に触れず新しい String を返します。プログラムが変えられない String は Hash のキー、Set の要素、プログラムの引数（`ARGV`）で、それらをその場で変えようとすると実行時に `TypeError` です。
+String は Ruby の String と同じく、エンコーディングを持つ文字の並びです。リテラルは `"abc"`、`'abc'`、`"a#{x}"`（補間は値を `to_s` で表示します。[値と型](../03-values.md)）で、リテラルは UTF-8、評価のたびに新しい String を作ります。String は**可変**です: 名前が `!` で終わる操作と `concat`、`append_as_bytes`、`prepend`、`insert`、`replace`、`clear`、`setbyte`、`bytesplice`、`force_encoding` は主語をその場で変え、それ以外の操作は主語に触れず新しい String を返します。プログラムが変えられない String は Hash のキー、Set の要素、Symbol の名前（`Symbol.name`）、MatchData が持つ String（`MatchData.string`）、プログラムの引数（`ARGV`）で、それらをその場で変えようとすると実行時に `TypeError` です（`cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`）。
 
 操作はすべて型を付けて書きます: `String.upcase(s)` であって `s.upcase` ではありません。String に使える演算子は `+`（String, String）、`*`（String, Integer）、`%`（書式）、`==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>`（String, String）、`=~`、`!~`（String, Regexp）、添字 `s[i]`、`s[i, n]`、`s[range]` です（[演算子と添字](../05-operators.md)）。以下の `String.+(x, y)` などは、その演算子を関数の形で呼ぶものです。`s[i] = v` はありません: String は添字への書き込みができず（静的に `type` の問題）、`String.sub!`、`String.insert`、`String.bytesplice`、`String.replace` で変えます。
 
 多くの操作が「外れ」に **nil** を返します: `index`、`rindex`、`byteindex`、`byterindex`、`match`、`getbyte`、`casecmp`、`unpack1`、`slice!`、`sub!`、`gsub!`、および何も変わらなかったときに nil を返すその場の形（`upcase!`、`strip!`、`chomp!`、`tr!`、...）です。その結果を検査せずに使うことは `--strict` レベル 2 で `nil` の問題になります。添字の形 `s[i]`、`s[i, n]`、`s[range]`、`String.slice`、`String.byteslice` の nil だけは「外れの nil」（`index-nil`）で、レベル 3 でのみ報告されます（[概観](../01-overview.md)）。
 
-Ruby との違い: `sub` と `gsub` には置換文字列かブロックが要ります。`MatchData` は `m[i]` で読みます（`$~`、`$1` はありません）。`scan`、`partition`、`rpartition` は Ruby が Array を返すところで Tuple を返します。`force_encoding` は新しい String を返します。`chomp`、`delete`、`squeeze`、`count`、`start_with?`、`end_with?`、`include?` は引数を 1 つだけ取ります（`chomp!`、`delete!`、`squeeze!` の `!` 形は Ruby と同じく複数取れます）。反復（`each_char` など）にはブロックが要ります。[組み込みの操作](../09-builtins.md)の表に操作の一覧があります。
+Ruby との違い: `sub` と `gsub` には置換文字列かブロックが要ります。`MatchData` は `m[i]` で読みます（`$~`、`$1` はありません）。`scan`、`partition`、`rpartition` は Ruby が Array を返すところで Tuple を返します。`count`、`start_with?`、`end_with?`、`include?` は引数を 1 つだけ取ります（`chomp`、`delete`、`squeeze` はそれぞれの `!` 形と同じもの、つまり区切りや複数の集合を取れます）。反復（`each_char` など）にはブロックが要ります。[組み込みの操作](../09-builtins.md)の表に操作の一覧があります。
 
 ## String[]
 
@@ -82,11 +82,16 @@ p("a" + 1)                   # !> the operands are (String, Integer)
 
 `String.*(x, Integer)`
 
-`s * n` の関数形。`s` を `n` 回繰り返した新しい String（0 なら `""`）。負の `n` は `ArgumentError` です。
+`s * n` の関数形。`s` を `n` 回繰り返した新しい String（0 なら `""`）。負の `n` は演算子でも関数形でも `ArgumentError`（`negative argument`）で、rescue できます。
 
 ```ruby
 p("ab" * 3)                  # => "ababab"
 p(String.*("-", 0))          # => ""
+begin
+  p("ab" * -1)
+rescue ArgumentError => e
+  puts(Exception.message(e))     # => negative argument
+end
 ```
 
 ```ruby error
@@ -97,7 +102,7 @@ p(String.*("ab", -1))        # !> ArgumentError: String.*: negative argument -1
 
 `String.%(x, Any)`
 
-`fmt % value` の関数形で、`fmt` を書式とする Ruby の `format` です: `"%d items" % 3`。右辺は値 1 つ（Integer、Float、String、Symbol、nil、true、false）か、複数の指示子に対する値の Tuple（`"%s-%s" % [a, b]`）です。Array は静的に `type` の問題です。指示子は Ruby のもの（`%d`、`%s`、`%f`、`%x`、`%05d`、`%-4s`、`%.2f`、`%p`、...）。指示子に合わない値（`"%d" % "x"`）や値の不足は `ArgumentError`、余った値は無視されます。
+`fmt % value` の関数形で、`fmt` を書式とする Ruby の `format` です: `"%d items" % 3`。右辺は値 1 つ（Integer、Float、String、Symbol、nil、true、false）か、複数の指示子に対する値の Tuple（`"%s-%s" % [a, b]`）か、名前付き指示子 `%<name>d`、`%{name}` に対する Record または Symbol キーの Hash（`"%<a>05d" % {a: 42}`、`"%<a>05d" % Hash[a: 42]`）です。Array は静的に `type` の問題です。指示子は Ruby のもの（`%d`、`%s`、`%f`、`%x`、`%05d`、`%-4s`、`%.2f`、`%p`、...）。指示子に合わない値（`"%d" % "x"`）や値の不足は `ArgumentError`、Record や Hash に無い名前は `KeyError`（`key<b> not found`）、余った値は無視されます。
 
 ```ruby
 p("%05d|%-4s|%.2f|%x" % [42, "ab", 3.14159, 255])   # => "00042|ab  |3.14|ff"
@@ -105,6 +110,13 @@ p("%d items" % 3)            # => "3 items"
 p("%s" % :sym)               # => "sym"
 p("%p" % nil)                # => "nil"
 p(String.%("%03d", 7))       # => "007"
+p("%<a>05d" % {a: 42})       # => "00042"
+p("%{a}-%<b>s" % {a: 1, b: "x"})     # => "1-x"
+p("%<a>05d" % Hash[a: 42])   # => "00042"
+```
+
+```ruby error
+p("%<b>d" % {a: 42})         # !> KeyError: Arithmetic.%: key<b> not found
 ```
 
 ```ruby error
@@ -117,7 +129,7 @@ p("%d %d" % 1)               # !> ArgumentError: Arithmetic.%: too few arguments
 
 `String.!=(x, Any)`
 
-両方が String で同じ文字の並びのとき true（`!=` はその否定）。同一性ではなく内容の比較です。演算子では、右辺が別の型（Integer、Symbol、nil）ならただ等しくないだけです。関数形は右辺に String か nil しか受け付けません: `String.==("a", 1)` は実行時に `TypeError` です。
+両方が String で同じ文字の並びのとき true（`!=` はその否定）。同一性ではなく内容の比較です。右辺が別の型（Integer、Symbol、nil）なら、演算子でも関数形でもただ等しくないだけです: `String.==("a", 1)` は false、`String.!=("a", 1)` は true で、誤りにはなりません。
 
 ```ruby
 p("a" == "a")                # => true
@@ -125,10 +137,8 @@ p("a" != "b")                # => true
 p("1" == 1)                  # => false
 p("a" == nil)                # => false
 p(String.==("a", nil))       # => false
-```
-
-```ruby error
-p(String.==("a", 1))         # !> TypeError: String.==: no implementation for (String, Integer)
+p(String.==("a", 1))         # => false
+p(String.!=("a", 1))         # => true
 ```
 
 ## <, <=, >, >=
@@ -213,11 +223,12 @@ p(String.casecmp("a", "b") + 1)     # !> the operands may be nil
 
 `String.casecmp?(x, String)`
 
-Unicode のケースフォールディングの後で 2 つが等しいとき true。検査器は結果を true/false の型と見ますが、エンコーディングが互換でないとき Ruby のメソッドは nil を返し、この操作もそうです。
+Unicode のケースフォールディングの後で 2 つが等しいとき true。結果は Boolean で nil にはなりません: エンコーディングが互換でないとき（Ruby のメソッドが nil を返し、`casecmp` も nil になるところ）は **false** です。
 
 ```ruby
 p(String.casecmp?("a", "A"))        # => true
 p(String.casecmp?("a", "b"))        # => false
+p(String.casecmp?("a", String.encode("a", "UTF-16LE")))   # => false
 ```
 
 ## =~
@@ -251,7 +262,7 @@ p(String.!~("ab", /b/))      # => false
 
 `String.[](x, Any, [Integer])`
 
-`s[i]`、`s[i, n]`、`s[range]` の関数形。`s[i]` は位置 `i`（Integer。負の値は末尾から）の 1 文字の String、範囲外なら nil。`s[i, n]` は `i` から最大 `n` 文字の部分文字列で、`i` が末尾を越えるか `n` が負なら nil、`i` が長さに等しければ `""`。`s[range]` は Range の範囲の文字で、始点が末尾を越えていれば nil。添字は Integer か Range でなければならず、String や Float の添字は静的に `type` の問題です（Ruby の `s["b"]` や `s[/re/]` はありません。`String.index`、`String.match`、`String.slice!` を使います）。Range と個数の組は `TypeError` です。結果の型は `String | nil` で、この nil は「外れの nil」（`index-nil`）なので `--strict` レベル 3 でのみ報告されます。
+`s[i]`、`s[i, n]`、`s[range]` の関数形。`s[i]` は位置 `i`（Integer。負の値は末尾から）の 1 文字の String、範囲外なら nil。`s[i, n]` は `i` から最大 `n` 文字の部分文字列で、`i` が末尾を越えるか `n` が負なら nil、`i` が長さに等しければ `""`。`s[range]` は Range の範囲の文字で、始点が末尾を越えていれば nil。添字は Integer か Range でなければならず、String や Float の添字は静的に `type` の問題です（演算子としての Ruby の `s["b"]` や `s[/re/]` はありません。`String.slice(s, "b")`、`String.slice(s, /re/)` はあります）。Range と個数の組は `TypeError` です。結果の型は `String | nil` で、この nil は「外れの nil」（`index-nil`）なので `--strict` レベル 3 でのみ報告されます。
 
 ```ruby
 s = "hello"
@@ -272,9 +283,9 @@ p("abc"["b"])                # !> the index must be Integer, but is String
 
 ## slice
 
-`String.slice(x, Integer|Range, [Integer])`
+`String.slice(x, Integer|Range|String|Regexp, [Integer])`
 
-`s[i]`、`s[i, n]`、`s[range]` を操作として書いたもの。結果も nil（`index-nil`、レベル 3）も同じです。Ruby の `slice` や `slice!` と違い、String や Regexp は取れません（静的に `type` の問題）。
+`s[i]`、`s[i, n]`、`s[range]` を操作として書いたもの。結果も nil（`index-nil`、レベル 3）も同じです。Ruby の `slice` と同じく、`slice!` が取るものも取れます: String はその最初の出現（新しい String）か nil、Regexp は最初の一致、第 2 引数にグループ番号を添えればそのグループの String（グループが一致に関与しなければ nil）です。String や Range の後に個数を添えると `TypeError` です。
 
 ```ruby
 s = "hello"
@@ -282,10 +293,14 @@ p(String.slice(s, 1))        # => "e"
 p(String.slice(s, 1, 2))     # => "el"
 p(String.slice(s, 1..2))     # => "el"
 p(String.slice(s, 9))        # => nil
+p(String.slice(s, "ll"))     # => "ll"
+p(String.slice(s, "zz"))     # => nil
+p(String.slice(s, /l+/))     # => "ll"
+p(String.slice(s, /(l)(o)/, 2))      # => "o"
 ```
 
 ```ruby error
-p(String.slice("abc", "b"))  # !> argument 2 must be Integer|Range, but is String
+p(String.slice("hello", "ll", 1))    # !> TypeError: String.slice: no implicit conversion of String into Integer
 ```
 
 ## slice!
@@ -310,13 +325,15 @@ p(String.upcase(c))          # !> argument 1 may be nil
 
 ## byteslice
 
-`String.byteslice(x, Integer, [Integer])`
+`String.byteslice(x, Integer|Range, [Integer])`
 
-バイト位置 `i` のバイト（1 バイトの String）、または `i` から `n` バイト。主語のエンコーディングのままなので、多バイト文字を切ると不正な String になりえます。`i` が末尾を越えるか `n` が負なら nil（`index-nil`、レベル 3）。始点は Integer だけです（Ruby は Range も取ります）。
+バイト位置 `i` のバイト（1 バイトの String）、`i` から `n` バイト、またはバイト位置の Range の範囲のバイト列。主語のエンコーディングのままなので、多バイト文字を切ると不正な String になりえます。`i`（または Range の始点）が末尾を越えるか `n` が負なら nil（`index-nil`、レベル 3）。Ruby と同じです。
 
 ```ruby
 p(String.byteslice("héllo", 1))      # => "\xC3"
 p(String.byteslice("héllo", 1, 2))   # => "é"
+p(String.byteslice("héllo", 1..2))   # => "é"
+p(String.byteslice("hello", 9..10))  # => nil
 p(String.byteslice("héllo", 9))      # => nil
 ```
 
@@ -451,14 +468,17 @@ p(String.lstrip!("a"))       # => nil
 
 ## chomp
 
-`String.chomp(x)`
+`String.chomp(x, [String])`
 
-末尾の行末 1 つ（`"\n"`、`"\r\n"`、`"\r"`）を除いた新しい String。行末が無ければそのままの複製です。Ruby の `chomp` と違い、区切りの引数は取りません（`chomp!` は取ります）。
+末尾の行末 1 つ（`"\n"`、`"\r\n"`、`"\r"`）を除いた新しい String。行末が無ければそのままの複製です。`suffix` を渡すと代わりにその接尾辞を除きます（Ruby と同じく、`""` は末尾の改行をすべて除きます）。
 
 ```ruby
 p(String.chomp("a\n"))       # => "a"
 p(String.chomp("a\r\n"))     # => "a"
 p(String.chomp("a"))         # => "a"
+p(String.chomp("abc!", "!"))         # => "abc"
+p(String.chomp("abc", "x"))          # => "abc"
+p(String.chomp("abc\n\n", ""))       # => "abc"
 ```
 
 ## chomp!
@@ -603,12 +623,17 @@ p(String.rindex("abc", "b") + 1) # !> the operands may be nil
 
 `String.byteindex(x, String|Regexp, [Integer])`
 
-`index` と同じですが、結果と `pos` は**バイト**位置です。出現が無ければ nil（検査せずに使うと `--strict` レベル 2 で `nil` の問題）。`pos` は文字の境界になければならず、多バイト文字の途中の位置はプログラムを止めます（Ruby の `IndexError`。現在は Sake の例外として報告されず、rescue できません）。
+`index` と同じですが、結果と `pos` は**バイト**位置です。出現が無ければ nil（検査せずに使うと `--strict` レベル 2 で `nil` の問題）。`pos` は文字の境界になければならず、多バイト文字の途中の位置は `IndexError`（`offset 2 does not land on character boundary`）で、rescue できます。
 
 ```ruby
 p(String.index("héllo", "l"))        # => 2
 p(String.byteindex("héllo", "l"))    # => 3
 p(String.byteindex("héllo", "z"))    # => nil
+p(String.byteindex("héllo", "l", 3)) # => 3
+```
+
+```ruby error
+p(String.byteindex("héllo", "l", 2))   # !> IndexError: String.byteindex: offset 2 does not land on character boundary
 ```
 
 ## byterindex
@@ -630,7 +655,7 @@ p(String.byterindex("abc", "b") + 1)    # !> the operands may be nil
 
 `String.match(x, String|Regexp, [Integer])`
 
-位置 `pos`（既定 0）以降で Regexp が最初に一致したところの `MatchData`。一致しなければ nil で、結果を検査せずに使うこと（`if m` 無しの `m[1]`）は `--strict` レベル 2 で `nil` の問題です。String のパターンは Ruby と同じく Regexp として解釈されます（`"."` は任意の 1 文字。`"+"` のような不正なパターンは Ruby の `RegexpError` でプログラムを止めます）。`$~` や `$1` は無く、グループは MatchData から `m[0]`、`m[1]`、`m["name"]` で読みます。
+位置 `pos`（既定 0）以降で Regexp が最初に一致したところの `MatchData`。一致しなければ nil で、結果を検査せずに使うこと（`if m` 無しの `m[1]`）は `--strict` レベル 2 で `nil` の問題です。String のパターンは Ruby と同じく Regexp として解釈されます（`"."` は任意の 1 文字。`"+"` のような不正なパターンは `RegexpError` で、rescue できます）。`$~` や `$1` は無く、グループは MatchData から `m[0]`、`m[1]`、`m["name"]` で読みます。
 
 ```ruby
 m = String.match("hello world", /(w)(o)/)
@@ -642,6 +667,10 @@ p(String.match("hello", "zzz"))      # => nil
 ```
 
 ```ruby error
+p(String.match("a+c", "+"))  # !> RegexpError: String.match: target of repeat operator is not specified: /+/
+```
+
+```ruby error
 m = String.match("abc", /b/)
 p(m[0])                      # !> the operands may be nil (MatchData | nil)
 ```
@@ -650,12 +679,17 @@ p(m[0])                      # !> the operands may be nil (MatchData | nil)
 
 `String.match?(x, String|Regexp, [Integer])`
 
-位置 `pos`（既定 0）以降でパターンが一致するとき true。MatchData は作りません。String のパターンは Regexp として解釈されます。
+位置 `pos`（既定 0）以降でパターンが一致するとき true。MatchData は作りません。String のパターンは Regexp として解釈され、不正なパターンは `match` と同じく `RegexpError` です。
 
 ```ruby
 p(String.match?("hello", /l+/))      # => true
 p(String.match?("hello", "o", 8))    # => false
 p(String.match?("abc", "b."))        # => true
+begin
+  p(String.match?("a+c", "+"))
+rescue RegexpError => e
+  puts(Exception.message(e))         # => target of repeat operator is not specified: /+/
+end
 ```
 
 ## scan
@@ -675,13 +709,17 @@ p(String.scan("a1 b", /(\w)(\d)?/))  # => [["a", "1"], ["b", nil]]
 
 `String.count(x, String)`
 
-集合 `chars` に属する文字の個数（Integer）。集合は Ruby の `tr` の書き方です: `"lo"` は文字の列挙、`"a-z"` は範囲、先頭の `^` は否定。集合は 1 つだけです（Ruby は複数の積を取ります）。`"z-a"` のような逆順の範囲は Ruby の `ArgumentError` です。
+集合 `chars` に属する文字の個数（Integer）。集合は Ruby の `tr` の書き方です: `"lo"` は文字の列挙、`"a-z"` は範囲、先頭の `^` は否定。集合は 1 つだけです（Ruby は複数の積を取ります）。`"z-a"` のような逆順の範囲は `ArgumentError`（`invalid range "z-a" in string transliteration`）で、`tr`、`delete`、`squeeze` でも同じです。
 
 ```ruby
 s = "hello world"
 p(String.count(s, "lo"))     # => 5
 p(String.count(s, "a-z"))    # => 10
 p(String.count(s, "^l"))     # => 8
+```
+
+```ruby error
+p(String.count("abc", "z-a"))    # !> ArgumentError: String.count: invalid range "z-a" in string transliteration
 ```
 
 ## partition, rpartition
@@ -750,13 +788,17 @@ p(String.sub!(s, "x", "y") + "!")    # !> the operands may be nil
 
 `String.tr(x, String, String)`
 
-集合 `from` の各文字を、`to` の同じ位置の文字で置き換えた新しい String（Ruby の `tr`）。`"a-y"` は範囲、`from` の先頭の `^` は否定、`from` より短い `to` は最後の文字を繰り返し、空の `to` は削除です。逆順の範囲は Ruby の `ArgumentError` です。
+集合 `from` の各文字を、`to` の同じ位置の文字で置き換えた新しい String（Ruby の `tr`）。`"a-y"` は範囲、`from` の先頭の `^` は否定、`from` より短い `to` は最後の文字を繰り返し、空の `to` は削除です。逆順の範囲は `ArgumentError`（`invalid range "z-a" in string transliteration`）です。
 
 ```ruby
 p(String.tr("hello", "el", "ip"))    # => "hippo"
 p(String.tr("hello", "a-y", "b-z"))  # => "ifmmp"
 p(String.tr("hello", "^l", "*"))     # => "**ll*"
 p(String.tr("hello", "lo", ""))      # => "he"
+```
+
+```ruby error
+p(String.tr("abc", "z-a", "x"))      # !> ArgumentError: String.tr: invalid range "z-a" in string transliteration
 ```
 
 ## tr!
@@ -796,14 +838,16 @@ p(String.tr_s!(s, "z", "x"))     # => nil
 
 ## delete
 
-`String.delete(x, String)`
+`String.delete(x, String, *String)`
 
-集合 `chars`（`tr` の書き方: `"a-k"`、`"^l"`）の文字を除いた新しい String。集合は 1 つだけです（Ruby は複数の積を取ります。`delete!` も取ります）。
+渡したすべての集合（`tr` の書き方: `"a-k"`、`"^l"`）に属する文字を除いた新しい String。複数の集合は Ruby と同じく積です: `delete("hello", "l", "o")` は両方の集合に属する文字が無いので何も除きません。逆順の範囲は `ArgumentError` です。
 
 ```ruby
 p(String.delete("hello", "l"))     # => "heo"
 p(String.delete("hello", "a-k"))   # => "llo"
 p(String.delete("hello", "^l"))    # => "ll"
+p(String.delete("hello", "l", "o"))        # => "hello"
+p(String.delete("hello", "a-z", "^l"))     # => "ll"
 ```
 
 ## delete!
@@ -825,14 +869,15 @@ p(String.delete!("a", "z-a"))          # !> ArgumentError: String.delete!: inval
 
 ## squeeze
 
-`String.squeeze(x, [String])`
+`String.squeeze(x, *String)`
 
-同じ文字の連続を 1 つに縮めた新しい String。`chars` を渡すと、その集合の文字の連続だけを縮めます。
+同じ文字の連続を 1 つに縮めた新しい String。集合を渡すと、そのすべてに属する文字の連続だけを縮めます（複数の集合は Ruby と同じく積）。
 
 ```ruby
 p(String.squeeze("aaabbb  c"))         # => "ab c"
 p(String.squeeze("aaabbb  c", "a"))    # => "abbb  c"
 p(String.squeeze("aaabbb  c", "a-b"))  # => "ab  c"
+p(String.squeeze("aaabbb  c", "a-b", "b"))     # => "aaab  c"
 ```
 
 ## squeeze!
@@ -1070,7 +1115,7 @@ p(s)                         # => "cba"
 
 `String.center(x, Integer, [String])`
 
-`width` 文字の新しい String: 主語の右（`ljust`）、左（`rjust`）、両側（`center`。余りは右）に `pad`（既定 `" "`）の繰り返しを、幅に合わせて切って詰めます。`width` が長さ以下なら、そのままの複製です。空の `pad` は Ruby の `ArgumentError`（`zero width padding`）です。
+`width` 文字の新しい String: 主語の右（`ljust`）、左（`rjust`）、両側（`center`。余りは右）に `pad`（既定 `" "`）の繰り返しを、幅に合わせて切って詰めます。`width` が長さ以下なら、そのままの複製です。空の `pad` は `ArgumentError`（`zero width padding`）です。
 
 ```ruby
 p(String.ljust("ab", 5))         # => "ab   "
@@ -1078,6 +1123,10 @@ p(String.rjust("ab", 5, "0"))    # => "000ab"
 p(String.center("ab", 6, "*"))   # => "**ab**"
 p(String.ljust("ab", 5, "xy"))   # => "abxyx"
 p(String.center("ab", 1))        # => "ab"
+```
+
+```ruby error
+p(String.ljust("a", 3, ""))      # !> ArgumentError: String.ljust: zero width padding
 ```
 
 ## to_s
@@ -1319,12 +1368,16 @@ p(String.encoding(String.b("é")))    # => "ASCII-8BIT"
 
 `String.force_encoding(x, String)`
 
-同じバイト列にエンコーディング `enc` のラベルを付けた**新しい** String（Ruby の `force_encoding` は主語をその場で付け替えますが、Sake のは主語に触れません）。バイト列は変換されず、新しいエンコーディングで妥当かは `valid_encoding?` で分かります。未知のエンコーディング名は `ArgumentError` です。
+主語のバイト列にエンコーディング `enc` のラベルを**その場で**付け替え、主語を返します（Ruby の `force_encoding` と同じ）。バイト列は変換されず、新しいエンコーディングで妥当かは `valid_encoding?` で分かります。未知のエンコーディング名は `ArgumentError`、変えられない String（Hash のキー、Symbol の名前など）は `TypeError` です。
 
 ```ruby
-s = String.force_encoding("\xC3\xA9", "UTF-8")
+s = String.b("\xC3\xA9")
+p(String.encoding(s))                # => "ASCII-8BIT"
+t = String.force_encoding(s, "UTF-8")
+p(String.encoding(s))                # => "UTF-8"
+p(Kernel.equal?(s, t))               # => true
 p(s)                                 # => "é"
-p(String.valid_encoding?(s))         # => true
+p(String.valid_encoding?(String.force_encoding("\xff", "UTF-8")))   # => false
 ```
 
 ```ruby error
@@ -1459,11 +1512,20 @@ p(String.dump("a\né"))  # => "\"a\\n\\u00E9\""
 
 `String.undump(x)`
 
-`dump` が主語を作った元の String: 引用符を外し、エスケープを読みます。`dump` の形でない String はプログラムを止めます（Ruby の `RuntimeError`。現在は Sake の例外として報告されず、rescue できません）。
+`dump` が主語を作った元の String: 引用符を外し、エスケープを読みます。`dump` の形でない String は Ruby のメッセージを持つ `ArgumentError` です（Ruby のメソッドは RuntimeError を投げますが、Sake の RuntimeError は `raise "msg"` と `Thread.raise` からしか生まれません）。
 
 ```ruby
 p(String.undump("\"a\\n\""))         # => "a\n"
 p(String.undump(String.dump("é")))   # => "é"
+begin
+  p(String.undump("abc"))
+rescue ArgumentError => e
+  puts(Exception.message(e))         # => invalid dumped string; not wrapped with '"' nor '"...".force_encoding("...")' form
+end
+```
+
+```ruby error
+p(String.undump("abc"))      # !> ArgumentError: String.undump: invalid dumped string
 ```
 
 ## unpack

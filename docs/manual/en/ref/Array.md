@@ -4,7 +4,7 @@ An Array is a sequence whose length varies. `Array[1, 2, 3]` makes an Array. Rub
 
 The checker gives one Array (one construction site) a single element type for the whole program. After an in-place rewrite such as `Array.map!` puts another type in, the Array is taken to hold both types from then on, and operations that fit only one of them become `type` (partial) problems ([Values and types](../03-values.md)).
 
-Two kinds of operation use nil for "no element". The nil of a miss (`x[k]`, `first`, `last`, `pop`, `shift`, `min`, `max`, `at`, `sample`, `delete_at`: an empty Array or an index outside it), used unchecked, is an `index-nil` problem at `--strict=3` only; `--strict` (level 2) lets it pass. Every other nil (`find`, `index`, `find_index`, `rindex`, `bsearch`, `delete`, `min_by`, `dig`, `slice`, `uniq!`, ...) is a level 2 `nil` problem ([Overview](../01-overview.md)).
+Two kinds of operation use nil for "no element". The nil of a miss (`x[k]`, `first`, `last`, `pop`, `shift`, `min`, `max`, `minmax`, `min_by`, `max_by`, `minmax_by`, `at`, `slice`, `slice!`, `dig`, `sample`, `delete_at`: an empty Array or an index outside it), used unchecked, is an `index-nil` problem at `--strict=3` only; `--strict` (level 2) lets it pass. Every other nil (`find`, `index`, `find_index`, `rindex`, `bsearch`, `delete`, `uniq!`, ...) is a level 2 `nil` problem ([Overview](../01-overview.md)).
 
 The operators on Arrays are `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `<=>` (two Arrays compare in dictionary order) and the index `a[i]`, `a[i, n]`, `a[range]`, `a[i] = v`. The entries `Array.+(x, y)` and so on are the function forms of those operators ([Operators and indexing](../05-operators.md)). Operations that compare elements (`sort`, `min`, `max`, `<`, ...) need elements of comparable types: Integers and Floats compare with each other, Tuples element by element, Struct values with their type's `<=>` (`include Comparable`).
 
@@ -202,7 +202,7 @@ Array.first(Array[1], -1)      # !> ArgumentError: Array.first: negative size -1
 
 `Array.slice(x, Integer|Range, [Integer])`
 
-The same results as `a[i]`, `a[i, n]` and `a[range]`: `slice(a, i)` is an element or nil, `slice(a, i, n)` and `slice(a, range)` a new Array or nil (when the start is past the end). Unlike `a[i]`'s, this nil is reported as a level 2 `nil` problem.
+The same results as `a[i]`, `a[i, n]` and `a[range]`: `slice(a, i)` is an element or nil, `slice(a, i, n)` and `slice(a, range)` a new Array or nil (when the start is past the end). Like `a[i]`'s, this nil is the nil of a miss: used unchecked it is an `index-nil` problem at `--strict=3` only (level 2 does not report it). For an exception instead, use `Array.fetch`.
 
 ```ruby
 xs = Array[3, 1, 2]
@@ -210,23 +210,34 @@ p(Array.slice(xs, 1))          # => 1
 p(Array.slice(xs, 1, 5))       # => [1, 2]
 p(Array.slice(xs, 1..))        # => [1, 2]
 p(Array.slice(xs, 9))          # => nil
-```
-
-```ruby error
-y = Array.slice(Array[3, 1, 2], 0)
-p(y + 1)                       # !> the operands may be nil
+y = Array.slice(xs, 0)
+p(y + 1) if y                  # => 4
 ```
 
 ## dig
 
-`Array.dig(x, Integer)`
+`Array.dig(x, Integer, *Any)`
 
-The element at position `i` or nil (the same as `a[i]`). Ruby's `dig` takes any number of indexes and digs into nested values; in Sake it takes exactly one. The nil is a level 2 `nil` problem.
+The element at position `i` or nil (the same as `a[i]`). With two or more keys it digs into nested values as Ruby's `dig` does: each further key is applied to the value the previous one gave (an Integer position for an Array, the key for a Hash), and a nil on the way stays nil. The values on the way must be Arrays, Tuples or Hashes; another type (Integer, String, Record, ...) is a `type` problem statically and, run without the check, a `TypeError` (`Integer cannot be dug into (not an Array, a Tuple, or a Hash)`). A non-Integer key applied to an Array or a Tuple is a `TypeError`. The nil is the nil of a miss, reported at level 3 only.
 
 ```ruby
 xs = Array[Array[1, 2], Array[3]]
 p(Array.dig(xs, 0))            # => [1, 2]
 p(Array.dig(xs, 5))            # => nil
+p(Array.dig(xs, 0, 1))         # => 2
+p(Array.dig(xs, 1, 5))         # => nil
+p(Array.dig(xs, 5, 0))         # => nil
+p(Array.dig(Array[Hash[a: 1]], 0, :a))     # => 1
+p(Array.dig(Array[[1, "x"]], 0, 1))        # => "x"
+p(Array.dig(Array[[1, "x"]], 0, 5))        # => nil
+```
+
+```ruby error
+p(Array.dig(Array[Array[1, 2]], 0, 1, 2))  # !> Array.dig: the value must be Array|Hash|Tuple, but is Integer
+```
+
+```ruby error
+p(Array.dig(Array[Array[1]], 0, "k"))      # !> TypeError: Array.dig: an index into Array must be Integer, got String
 ```
 
 ## values_at
@@ -290,13 +301,25 @@ p(Array.prepend(xs, 0))        # => [0, 1, 2, 3]
 
 `Array.insert(x, Integer, *Any)`
 
-Inserts the values (any number) before position `i` and returns the subject. A negative `i` counts from the end (`-1` appends). When `i` is beyond the length the gap is filled with nil, as in Ruby (currently also in a typed Array: it is not an `IndexError`). A typed Array checks the inserted values' types.
+Inserts the values (any number) before position `i` and returns the subject. An `i` equal to the length appends. A negative `i` counts from the end (`-1` appends, `-size - 1` prepends). When `i` is beyond the length Ruby fills the gap with nil; Sake raises `IndexError` instead (in an untyped Array too: it does not create nils silently). A negative `i` below `-size - 1` (before the start) is also an `IndexError`. A typed Array checks the inserted values' types (`type` statically, `TypeError` at run time).
 
 ```ruby
 xs = Array[1, 2, 3]
 p(Array.insert(xs, 1, 9, 9))   # => [1, 9, 9, 2, 3]
 p(Array.insert(xs, -2, 7))     # => [1, 9, 9, 2, 7, 3]
-p(Array.insert(Array[1], 3, 2))    # => [1, nil, nil, 2]
+p(Array.insert(xs, 6, 8))      # => [1, 9, 9, 2, 7, 3, 8]
+```
+
+```ruby error
+Array.insert(Array[1], 3, 2)   # !> IndexError: Array.insert: index 3 is past the end of the Array (length 1); the gap would be nil
+```
+
+```ruby error
+Array.insert(Array[1, 2], -4, 0)   # !> IndexError: Array.insert: index -4 is before the start of the Array (length 2)
+```
+
+```ruby error
+Array.insert(Integer[1], 0, "a")   # !> Array.insert: an element must be Integer, but is String
 ```
 
 ## concat
@@ -318,7 +341,7 @@ Array.concat(Integer[1], Array["a"])   # !> Array.concat: an element must be Int
 
 `Array.fill(x, Any)`
 
-Replaces every element with `v` and returns the subject (the length does not change). Ruby's range and block forms do not exist. A typed Array checks the type of `v` at run time (`TypeError`; not reported statically).
+Replaces every element with `v` and returns the subject (the length does not change). Ruby's range and block forms do not exist. A typed Array checks the type of `v` (`type` statically; `TypeError` when run without the check).
 
 ```ruby
 xs = Array[1, 2, 3]
@@ -326,14 +349,14 @@ p(Array.fill(xs, 0))           # => [0, 0, 0]
 ```
 
 ```ruby error
-Array.fill(Integer[1], "a")    # !> TypeError: Array.fill: Integer[] element must be Integer, got String
+Array.fill(Integer[1], "a")    # !> Array.fill: an element must be Integer, but is String
 ```
 
 ## replace
 
 `Array.replace(x, Array)`
 
-Replaces the subject's contents with the other Array's elements and returns the subject (unlike `a = other`, every place that shares the Array sees it). A typed Array checks the elements' types statically (there is no run-time check).
+Replaces the subject's contents with the other Array's elements and returns the subject (unlike `a = other`, every place that shares the Array sees it). A typed Array checks the elements' types (`type` statically, `TypeError` at run time).
 
 ```ruby
 xs = Array[1, 2, 3]
@@ -404,7 +427,7 @@ p(Array.delete_at(xs, 99))     # => nil
 
 `Array.slice!(x, Integer|Range, [Integer])`
 
-Returns what `slice` returns and removes it from the subject: `slice!(a, i)` an element or nil, `slice!(a, i, n)` and `slice!(a, range)` a new Array or nil. The nil is a level 2 `nil` problem.
+Returns what `slice` returns and removes it from the subject: `slice!(a, i)` an element or nil, `slice!(a, i, n)` and `slice!(a, range)` a new Array or nil. The nil is the nil of a miss, reported at level 3 only.
 
 ```ruby
 xs = Array[1, 2, 3, 4]
@@ -492,7 +515,7 @@ Array.reverse_each(Array[1, 2, 3]) { |x| puts(x) }
 
 `Array.each_cons(x, Integer) [{ }]`
 
-`each_slice(a, n)` passes the elements cut into Arrays of n, and `each_cons(a, n)` each window of n consecutive elements, to the block, and returns the subject. Without a block they return, instead of Ruby's Enumerator, a new Array of those Arrays (`each_cons` gives `[]` when n exceeds the length). n must be at least 1 (a negative n is an `ArgumentError`; 0 is currently an error too, but Ruby's exception leaks through).
+`each_slice(a, n)` passes the elements cut into Arrays of n, and `each_cons(a, n)` each window of n consecutive elements, to the block, and returns the subject. Without a block they return, instead of Ruby's Enumerator, a new Array of those Arrays (`each_cons` gives `[]` when n exceeds the length). n must be at least 1; 0 and a negative n are an `ArgumentError`.
 
 ```ruby
 xs = Array[1, 2, 3]
@@ -503,6 +526,10 @@ Array.each_slice(xs, 2) { |s| p(s) }
 # => [3]
 p(Array.each_cons(xs, 2) { |s| s })    # => [1, 2, 3]
 p(Array.each_cons(xs, 5))              # => []
+```
+
+```ruby error
+Array.each_slice(Array[1], 0)          # !> ArgumentError: Array.each_slice: invalid slice size
 ```
 
 ## each_with_object
@@ -571,14 +598,15 @@ p(Array.sum(xs))               # !> Array.sum: an element must be Integer|Float|
 
 `Array.flat_map(x) { }`
 
-A new Array that joins the Arrays the block returns for each element. The block must return an Array (not a Tuple either); any other value is a `TypeError` at run time. Unlike Ruby's, it does not keep a non-Array value as it is.
+A new Array that joins the sequences the block returns for each element. The block must return an Array or a Tuple; any other value is a `TypeError` at run time. Unlike Ruby's, it does not keep a non-Array value as it is.
 
 ```ruby
 p(Array.flat_map(Array[1, 2]) { |x| Array[x, x * 10] })   # => [1, 10, 2, 20]
+p(Array.flat_map(Array[1, 2]) { |x| [x, x] })             # => [1, 1, 2, 2]
 ```
 
 ```ruby error
-Array.flat_map(Array[1]) { |x| [x, x] }    # !> TypeError: Array.flat_map: the block must return an Array, got Tuple
+Array.flat_map(Array[1]) { |x| x }    # !> TypeError: Array.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## filter_map
@@ -905,7 +933,7 @@ Array.reduce(Array[1, 2]) { |acc, x| acc + x }    # !> wrong number of arguments
 
 `Array.max(x)`
 
-The smallest or largest element. On an empty Array nil (the nil of a miss, reported at level 3 only). The elements must be comparable with each other; a pair that is not (an Integer and a String, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. Struct values compare with their type's `<=>` (`include Comparable`). Ruby's `min(n)` and block forms do not exist.
+The smallest or largest element. On an empty Array nil (the nil of a miss, reported at level 3 only). The elements must be comparable with each other: a pair of incomparable types in the element type (an Integer and a String, say) is a `type` problem statically (`elements compared in order may be (Integer, String), which cannot be compared`), and an element that may be nil a `nil` problem. A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. Struct values compare with their type's `<=>` (`include Comparable`). Ruby's `min(n)` and block forms do not exist.
 
 ```ruby
 xs = Array[3, 1, 4, 1, 5]
@@ -916,18 +944,24 @@ p(Array.min(Array[]))          # => nil
 ```
 
 ```ruby error
-Array.min(Array[1, "a"])       # !> ArgumentError: Array.min: cannot compare elements of types Integer, String
+Array.min(Array[1, "a"])       # !> Array.min: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+Array.max(Array[1.0, Float.NAN])   # !> ArgumentError: Array.max: cannot compare elements of types Float
 ```
 
 ## minmax
 
 `Array.minmax(x)`
 
-The two-element Tuple `[min, max]`. On an empty Array `[nil, nil]`, and each position's type is the element type joined with nil (unlike `min` and `max`, this one is reported as a level 2 `nil` problem). The comparison rules are those of `min` and `max`; an incomparable pair is an `ArgumentError`.
+The two-element Tuple `[min, max]`. On an empty Array `[nil, nil]`, and each position's type is the element type joined with nil (the nil of a miss, like `min`'s and `max`'s: reported at level 3 only). The comparison rules are those of `min` and `max`: incomparable types are a `type` problem statically, a failure at run time an `ArgumentError`.
 
 ```ruby
 p(Array.minmax(Array[3, 1, 4]))    # => [1, 4]
 p(Array.minmax(Array[]))           # => [nil, nil]
+lo, hi = Array.minmax(Array[3, 1, 4])
+p(lo + hi)                         # => 5
 ```
 
 ## min_by, max_by
@@ -936,7 +970,7 @@ p(Array.minmax(Array[]))           # => [nil, nil]
 
 `Array.max_by(x) { }`
 
-The element for which the block's value is smallest or largest. On an empty Array nil (a level 2 `nil` problem). The block's values must be comparable with each other; an incomparable pair is an `ArgumentError`.
+The element for which the block's value is smallest or largest. On an empty Array nil (the nil of a miss, reported at level 3 only, like `min`'s and `max`'s). The block's values must be comparable with each other: incomparable types are a `type` problem statically, a failure the checker cannot see an `ArgumentError` at run time.
 
 ```ruby
 ws = Array["bb", "a", "ccc"]
@@ -946,14 +980,14 @@ p(Array.min_by(Array[]) { |s| s })             # => nil
 ```
 
 ```ruby error
-Array.min_by(Array[1, "a"]) { |x| x }  # !> ArgumentError: Array.min_by: cannot compare block results of types Integer, String
+Array.min_by(Array[1, "a"]) { |x| x }  # !> Array.min_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## minmax_by
 
 `Array.minmax_by(x) { }`
 
-The two-element Tuple of the element with the smallest block value and the one with the largest. On an empty Array `[nil, nil]` (each position a level 2 `nil`).
+The two-element Tuple of the element with the smallest block value and the one with the largest. On an empty Array `[nil, nil]` (each position the nil of a miss, reported at level 3 only). The comparison rules are those of `min_by` and `max_by`.
 
 ```ruby
 lo, hi = Array.minmax_by(Array["bb", "a", "ccc"]) { |s| String.size(s) }
@@ -976,7 +1010,7 @@ p(Array.tally(Array["a", "b", "a"]))   # => {"a" => 2, "b" => 1}
 
 `Array.sort!(x)`
 
-A new Array of the elements in ascending order (`sort`), or the subject sorted in place and returned (`sort!`). Ruby's comparison block is not accepted (a static error); for another order use `sort_by`. The elements must be comparable with each other; an incomparable pair is an `ArgumentError` at run time. Integers and Floats compare with each other, Tuples element by element, Struct values with their type's `<=>`.
+A new Array of the elements in ascending order (`sort`), or the subject sorted in place and returned (`sort!`). Ruby's comparison block is not accepted (a static error); for another order use `sort_by`. The elements must be comparable with each other: a pair of incomparable types in the element type is a `type` problem statically, and an element that may be nil a `nil` problem (`compact` removes the nils). A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other, Tuples element by element, Struct values with their type's `<=>`.
 
 ```ruby
 xs = Array[3, 1, 2]
@@ -992,7 +1026,15 @@ Array.sort(Array[1, 2]) { |a, b| b <=> a }     # !> Array.sort does not take a b
 ```
 
 ```ruby error
-Array.sort(Array[1, "a"])      # !> ArgumentError: Array.sort: cannot compare elements of types Integer, String
+Array.sort(Array[1, "a"])      # !> Array.sort: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+Array.sort(Array[1, nil])      # !> Array.sort: argument elements may be nil
+```
+
+```ruby error
+Array.sort(Array[1.0, Float.NAN])  # !> ArgumentError: Array.sort: cannot compare elements of types Float
 ```
 
 ## sort_by, sort_by!
@@ -1001,7 +1043,7 @@ Array.sort(Array[1, "a"])      # !> ArgumentError: Array.sort: cannot compare el
 
 `Array.sort_by!(x) { }`
 
-A new Array of the elements in ascending order of the block's values (the keys), or the subject sorted in place and returned (`sort_by!`). The keys must be comparable with each other; an incomparable pair is an `ArgumentError`. A descending order is a negated key; several keys are a Tuple `[k1, k2]` (Tuples compare in dictionary order).
+A new Array of the elements in ascending order of the block's values (the keys), or the subject sorted in place and returned (`sort_by!`). The keys must be comparable with each other: incomparable types are a `type` problem statically, a key that may be nil a `nil` problem, and a failure the checker cannot see an `ArgumentError` at run time. A descending order is a negated key; several keys are a Tuple `[k1, k2]` (Tuples compare in dictionary order).
 
 ```ruby
 ws = Array["bb", "a", "ccc"]
@@ -1146,10 +1188,11 @@ p(Array.product(Array[1], Array[]))               # => []
 
 `Array.transpose(x)`
 
-Takes an Array of Arrays as a matrix and returns a new Array with rows and columns exchanged. The elements must all be Arrays of the same length: a different length is an `IndexError`, and a Tuple element an `ArgumentError` (a sequence of Tuples such as `zip`'s result cannot be transposed as it is).
+Takes an Array of Arrays as a matrix and returns a new Array with rows and columns exchanged. A row may be an Array or a Tuple (a sequence of Tuples such as `zip`'s result transposes too); the result's rows are Arrays. The rows must all have the same length: a different length is an `IndexError`. An element that is neither an Array nor a Tuple is a `TypeError`.
 
 ```ruby
 p(Array.transpose(Array[Array[1, 2], Array[3, 4]]))   # => [[1, 3], [2, 4]]
+p(Array.transpose(Array.zip(Array[1, 2], Array["a", "b"])))   # => [[1, 2], ["a", "b"]]
 ```
 
 ```ruby error
@@ -1258,11 +1301,15 @@ p(Array.to_set(Array[1, 2, 1]))    # => Set[1, 2]
 
 `Array.pack(x, String)`
 
-Ruby's `Array#pack`: the elements as a byte String according to the format `fmt`. An invalid format is an `ArgumentError`. An element that does not fit the format (a String for `"C*"`, say) currently leaks Ruby's `TypeError`. The reverse is `String.unpack`.
+Ruby's `Array#pack`: the elements as a byte String according to the format `fmt`. An invalid format is an `ArgumentError`; an element that does not fit the format (a String for `"C*"`, say) a `TypeError`. The reverse is `String.unpack`.
 
 ```ruby
 p(Array.pack(Array[65, 66], "C*"))     # => "AB"
 p(Array.pack(Array[1, 2], "n*"))       # => "\x00\x01\x00\x02"
+```
+
+```ruby error
+Array.pack(Array["a"], "C")    # !> TypeError: Array.pack: no implicit conversion of String into Integer
 ```
 
 ## +, -, *

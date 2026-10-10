@@ -142,13 +142,19 @@ Set.merge(Set[1], Array[2])   # !> argument 2 must be Set, but is Array
 
 `Set.subtract(x, Any)`
 
-Removes every element contained in the argument and returns the Set itself (in place). The argument is a Set or an Array (a Range works too). For a new Set use `-` or `difference`.
+Removes every element contained in the argument and returns the Set itself (in place). The argument is a Set, an Array, a Tuple, or a Range; the checker does not check it (the signature says `Any`), and anything else is a `TypeError` at run time (`argument 2 must be Set, Array, Tuple, or Range, got Integer`). For a new Set use `-` or `difference`.
 
 ```ruby
-s = Set[1, 2, 3]
-p(Set.subtract(s, Set[1]))    # => Set[2, 3]
-p(Set.subtract(s, Array[3]))  # => Set[2]
-p(s)                          # => Set[2]
+s = Set[1, 2, 3, 4, 5]
+p(Set.subtract(s, Set[1]))    # => Set[2, 3, 4, 5]
+p(Set.subtract(s, Array[2]))  # => Set[3, 4, 5]
+p(Set.subtract(s, [3]))       # => Set[4, 5]
+p(Set.subtract(s, 4..4))      # => Set[5]
+p(s)                          # => Set[5]
+```
+
+```ruby error
+Set.subtract(Set[1, 2], 1)    # !> TypeError: Set.subtract: argument 2 must be Set, Array, Tuple, or Range, got Integer
 ```
 
 ## replace
@@ -413,14 +419,15 @@ p(s)                          # => Set[1, 0]
 
 `Set.collect_concat(x) { }`
 
-The block returns an **Array** for each element, and the result is the one Array of all of them joined. A block result that is not an Array is a `TypeError` at run time (the value is not kept as is, as Ruby would).
+The block returns an **Array or a Tuple** for each element, and the result is the one Array of all of them joined. A block result that is neither is a `TypeError` at run time (`the block must return an Array or a Tuple, got Integer`; the value is not kept as is, as Ruby would).
 
 ```ruby
 p(Set.flat_map(Set[1, 2]) { |x| Array[x, x * 10] })   # => [1, 10, 2, 20]
+p(Set.flat_map(Set[1, 2]) { |x| [x, x * 10] })        # => [1, 10, 2, 20]
 ```
 
 ```ruby error
-Set.flat_map(Set[1]) { |x| x }    # !> TypeError: Set.flat_map: the block must return an Array, got Integer
+Set.flat_map(Set[1]) { |x| x }    # !> TypeError: Set.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## select, filter, find_all
@@ -635,7 +642,7 @@ p(Set.count(s) { |x| x > 1 })     # => 2
 
 `Set.sum(x, [Integer|Float|Rational|Complex])`
 
-The sum of the elements: the initial value (0 by default) plus each element in turn. Elements and the initial value must be numbers: a String or other initial value is a `type` problem statically, and an element that is not a number is an `ArgumentError` at run time (Ruby's `sum("")` for joining Strings does not exist; use `join`). The empty Set gives the initial value.
+The sum of the elements: the initial value (0 by default) plus each element in turn. Elements and the initial value must be numbers: a String or other initial value is a `type` problem statically, and an element that is not a number is a `TypeError` at run time (`String can't be coerced into Integer`; Ruby's `sum("")` for joining Strings does not exist; use `join`). The empty Set gives the initial value.
 
 ```ruby
 p(Set.sum(Set[1, 2, 3]))          # => 6
@@ -670,7 +677,7 @@ p(Set.reduce(Set[1]) { |a, b| a + b })   # !> wrong number of arguments for Set.
 
 `Set.max(x)`
 
-The smallest or largest element. The elements must be comparable with each other; otherwise an `ArgumentError` at run time (`cannot compare the elements`). The empty Set gives **nil**, which `--strict` (level 2) reports when used unchecked (unlike the nil of `Array.min`, which is level 3).
+The smallest or largest element. The elements must be comparable with each other: the checker rejects a Set whose element type mixes types that cannot be compared (`Set[1, "a"]`) statically as a `type` problem, and an element that may be nil as a `nil` problem. When the checker cannot see it (`Set[1.0, Float.NAN]`), it is an `ArgumentError` at run time (`cannot compare the elements`). The empty Set gives **nil**, the nil of a miss, as with `Array.min`: using it unchecked is reported only at `--strict=3`.
 
 ```ruby
 s = Set[3, 1, 2]
@@ -680,14 +687,18 @@ p(Set.max(Set[]))                 # => nil
 ```
 
 ```ruby error
-p(Set.min(Set[1, "a"]))           # !> ArgumentError: Set.min: cannot compare the elements
+p(Set.min(Set[1, "a"]))           # !> Set.min: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+p(Set.min(Set[1.0, Float.NAN]))   # !> ArgumentError: Set.min: cannot compare the elements
 ```
 
 ## minmax
 
 `Set.minmax(x)`
 
-The Tuple `[min, max]`. The empty Set gives `[nil, nil]`. The comparison rules are those of `min` and `max`.
+The Tuple `[min, max]`. The empty Set gives `[nil, nil]`; those are the nil of a miss, reported only at `--strict=3` when an element is used unchecked. The comparison rules are those of `min` and `max`, static check included.
 
 ```ruby
 lo, hi = Set.minmax(Set[3, 1, 2])
@@ -701,19 +712,24 @@ p(Set.minmax(Set[]))              # => [nil, nil]
 
 `Set.max_by(x) { }`
 
-The element for which the block's result is smallest or largest. Block results that cannot be compared are an `ArgumentError` at run time. The empty Set gives **nil** (reported at `--strict` level 2).
+The element for which the block's result is smallest or largest. The block's results must be comparable with each other: a block whose result type mixes types that cannot be compared is rejected statically (`type`), as with `min`. The empty Set gives **nil**, the nil of a miss (reported only at `--strict=3`).
 
 ```ruby
 s = Set["bb", "a", "ccc"]
 p(Set.min_by(s) { |x| String.size(x) })   # => "a"
 p(Set.max_by(s) { |x| String.size(x) })   # => "ccc"
+p(Set.max_by(Set[]) { |x| x })            # => nil
+```
+
+```ruby error
+p(Set.min_by(Set[1, 2]) { |x| x == 1 ? 1 : "a" })   # !> Set.min_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## minmax_by
 
 `Set.minmax_by(x) { }`
 
-The Tuple of the elements with the smallest and the largest block result. The empty Set gives `[nil, nil]`.
+The Tuple of the elements with the smallest and the largest block result. The empty Set gives `[nil, nil]` (the nil of a miss, level 3). The block's results are checked as for `min_by`.
 
 ```ruby
 p(Set.minmax_by(Set[1, 2, 3]) { |x| -x })   # => [3, 1]
@@ -723,32 +739,36 @@ p(Set.minmax_by(Set[1, 2, 3]) { |x| -x })   # => [3, 1]
 
 `Set.sort(x)`
 
-The Array of the elements in ascending order. Elements that cannot be compared are an `ArgumentError` at run time.
+The Array of the elements in ascending order. The elements must be comparable with each other: a Set whose element type mixes types that cannot be compared is rejected statically (`type`), one whose elements may be nil as a `nil` problem; when the checker cannot see it (`Set[1.0, Float.NAN]`), `ArgumentError` at run time (`cannot compare the elements`).
 
 ```ruby
 p(Set.sort(Set[3, 1, 2]))         # => [1, 2, 3]
 ```
 
 ```ruby error
-p(Set.sort(Set[1, "a"]))          # !> ArgumentError: Set.sort: cannot compare the elements
+p(Set.sort(Set[1, "a"]))          # !> Set.sort: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## sort_by
 
 `Set.sort_by(x) { }`
 
-The Array of the elements in ascending order of the block's results. A Tuple result sorts in dictionary order.
+The Array of the elements in ascending order of the block's results. A Tuple result sorts in dictionary order. The block's results must be comparable with each other; a result type that mixes types that cannot be compared is rejected statically (`type`).
 
 ```ruby
 p(Set.sort_by(Set["bb", "a", "ccc"]) { |x| String.size(x) })   # => ["a", "bb", "ccc"]
 p(Set.sort_by(Set[1, 2, 3]) { |x| -x })                        # => [3, 2, 1]
 ```
 
+```ruby error
+p(Set.sort_by(Set[1, 2]) { |x| x == 1 ? 1 : "a" })   # !> Set.sort_by: elements compared in order may be (Integer, String), which cannot be compared
+```
+
 ## first
 
 `Set.first(x)`
 
-The element added first. The empty Set gives **nil**, which `--strict` (level 2) reports when used unchecked (unlike the nil of `Array.first`, which is level 3). There is no form with a count (use `take`).
+The element added first. The empty Set gives **nil**, the nil of a miss as with `Array.first`: using it unchecked is reported only at `--strict=3`. There is no form with a count (use `take`).
 
 ```ruby
 p(Set.first(Set[3, 1]))           # => 3

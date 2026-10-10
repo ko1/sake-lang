@@ -10,7 +10,7 @@ Regexp に使える演算子は `=~`（String との一致位置、無ければ 
 
 `Regexp.new(String, [String])`
 
-ソースの String から Regexp を作ります。第 2 引数はフラグの文字を並べた String（省略時 ""）で、使えるのは `i`、`m`、`x` だけです。それ以外の文字（`n` も）は実行時に `ArgumentError`。ソースが正規表現として正しくなければ `RegexpError`（Ruby の `Regexp.new(s, Regexp::IGNORECASE)` のような Integer のフラグは取りません）。ソースの特殊文字をそのまま一致させたいときは `Regexp.escape` を通します。
+ソースの String から Regexp を作ります。第 2 引数はフラグの文字を並べた String（省略時 ""）で、リテラルと同じ `i`、`m`、`x`、`n` が使えます。それ以外の文字は実行時に `ArgumentError`。ソースが正規表現として正しくなければ `RegexpError` で、rescue できます（Ruby の `Regexp.new(s, Regexp::IGNORECASE)` のような Integer のフラグは取りません）。ソースの特殊文字をそのまま一致させたいときは `Regexp.escape` を通します。
 
 ```ruby
 p(Regexp.new("a.b"))                        # => /a.b/
@@ -18,10 +18,20 @@ re = Regexp.new("ab+", "i")
 p(re)                                       # => /ab+/i
 p(Regexp.match?(re, "ABB"))                 # => true
 p(Regexp.options(Regexp.new("a", "mi")))    # => 5
+p(Regexp.new("a", "n"))                     # => /a/n
+begin
+  p(Regexp.new("("))
+rescue RegexpError => e
+  puts(Exception.message(e))                # => end pattern with unmatched parenthesis: /(/
+end
 ```
 
 ```ruby error
 p(Regexp.new("a", "q"))        # !> ArgumentError: Regexp.new: unknown regexp option: q
+```
+
+```ruby error
+p(Regexp.new("("))             # !> RegexpError: Regexp.new: end pattern with unmatched parenthesis: /(/
 ```
 
 ## escape
@@ -202,12 +212,18 @@ p(/a/ == "a")                  # => false
 
 ## union
 
-`Regexp.union(*String|Regexp)`
+`Regexp.union(*String|Regexp|Array)`
 
-引数のどれかに一致する Regexp。String は `escape` した上で、Regexp はそのフラグを保ったまま `|` でつなぎます。引数が無ければ何にも一致しない `/(?!)/`。引数は個々に並べます（Ruby のように Array を 1 つ渡す形は静的に `type` の問題）。
+引数のどれかに一致する Regexp。String は `escape` した上で、Regexp はそのフラグを保ったまま `|` でつなぎます。引数が無ければ何にも一致しない `/(?!)/`。パターンは個々に並べるか、Ruby と同じく String と Regexp の Array を **1 つ**だけ渡します（`Regexp.union(Array["a", "b"])`）。他の引数と並べた Array や、String でも Regexp でもない要素は実行時に `TypeError` です。
 
 ```ruby
 p(Regexp.union("a.b", /c/i))                              # => /a\.b|(?i-mx:c)/
 p(Regexp.match?(Regexp.union("cat", "dog"), "hotdog"))    # => true
 p(Regexp.union())                                         # => /(?!)/
+p(Regexp.union(Array["a", "b"]))                          # => /a|b/
+p(Regexp.union(Array["a.b", /c/]))                        # => /a\.b|(?-mix:c)/
+```
+
+```ruby error
+p(Regexp.union("a", Array["b"]))    # !> TypeError: Regexp.union: no implicit conversion of Array into String
 ```

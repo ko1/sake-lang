@@ -2,7 +2,7 @@
 
 ENV はプロセスの環境変数を読み書きする操作の集まりです。Ruby の `ENV["X"]` は `ENV.get("X")`、`ENV["X"] = v` は `ENV.set("X", v)` と書きます（Sake では `ENV` は値ではなく、添字を付けられません。[組み込み](../09-builtins.md)）。名前も値も String です。
 
-変更はこのプロセスと、以後に `Open3` や `Kernel.system` で起こす子プロセスに見えます。`ENV.to_h` は写しで、変えても環境は変わりません。
+変更はこのプロセスと、以後に `Open3` や `Kernel.system` で起こす子プロセスに見えます。`ENV.to_h` は写しで、変えても環境は変わりません。Hash 全体を環境として戻すのが `ENV.replace(h)` です。
 
 ENV に演算子はありません。例は `SAKE_DOC_` で始まる名前を使い、終わりに消します。
 
@@ -49,7 +49,7 @@ ENV.fetch("SAKE_DOC_NOPE")          # !> KeyError: ENV.fetch: key not found: "SA
 
 `ENV.set(String, String)`
 
-変数を設定し（あれば置き換え）、値を返します（Ruby の `ENV["X"] = v`）。値は String だけで、他の型は静的に `type` の問題です（消すのは `delete`）。空の名前や `=` を含む名前は OS が拒み、Ruby の `Errno::EINVAL` でプログラムが止まります（`IOError` にはなりません）。
+変数を設定し（あれば置き換え）、値を返します（Ruby の `ENV["X"] = v`）。値は String だけで、他の型は静的に `type` の問題です（消すのは `delete`）。空の名前や `=` を含む名前は OS が拒み、OS のメッセージを持つ `ArgumentError`（`Invalid argument - setenv()`）になります。rescue できます。
 
 ```ruby
 p(ENV.set("SAKE_DOC_C", "1"))       # => "1"
@@ -61,6 +61,10 @@ ENV.delete("SAKE_DOC_C")
 
 ```ruby error
 ENV.set("SAKE_DOC_C", 1)            # !> ENV.set: argument 2 must be String, but is Integer
+```
+
+```ruby error
+ENV.set("", "v")                    # !> ArgumentError: ENV.set: Invalid argument - setenv()
 ```
 
 ## key?
@@ -116,4 +120,24 @@ h["SAKE_DOC_H"] = "2"
 p(ENV.key?("SAKE_DOC_H"))           # => false
 ENV.delete("SAKE_DOC_G")
 p(Hash.key?(h, "SAKE_DOC_G"))       # => true
+```
+
+## replace
+
+`ENV.replace(Hash)`
+
+環境全体を Hash の組で置き換え、nil を返します（Ruby の `ENV.replace`）: Hash に無い変数はすべて消え、各組が設定されます。キーも値も String でなければなりません。検査器はキーや値の型が他のものである Hash を拒みます（`the value must be String, but is Integer`、`argument key must be String, but is :a`。関数の引数を通しても同じ）。型が見られない場所（`--strict=0` で走らせたプログラム）では、String でないキーや値は実行時に `TypeError`（`keys and values must be String, got String => Integer`）で、何かを変える前に投げられるので環境はそのままです。典型的な使い方は `ENV.to_h` で取った写しを戻すことです。
+
+```ruby
+saved = ENV.to_h
+p(ENV.replace(Hash["SAKE_DOC_R" => "1"]))   # => nil
+p(ENV.keys)                         # => ["SAKE_DOC_R"]
+p(ENV.get("SAKE_DOC_R"))            # => "1"
+ENV.replace(saved)
+p(ENV.key?("SAKE_DOC_R"))           # => false
+p(ENV.to_h == saved)                # => true
+```
+
+```ruby error
+ENV.replace(Hash["SAKE_DOC_R" => 1])   # !> ENV.replace: the value must be String, but is Integer [type]
 ```

@@ -78,23 +78,29 @@ p(Tuple.length([]))              # => 0
 
 `Tuple.min(x)`
 
-要素のうち最大・最小のものを返します（Ruby の `[a, b].max`）。要素は互いに比べられなければならず、比べられない組（Integer と String など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられます。空の Tuple `[]` では nil です。要素が Struct 値なら、その型の `<=>`（`include Comparable`）で比べます。
+要素のうち最大・最小のものを返します（Ruby の `[a, b].max`）。各位置の型は分かっているので、要素が互いに比べられるかは静的に見ます: 比べられない組（Integer と String など）は `type` の問題（`elements compared in order may be (Integer, String), which cannot be compared`）、nil になり得る位置は `nil` の問題です。検査器に見えない比較の失敗（`Float.NAN` など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられます。空の Tuple `[]` では nil です。要素が Struct 値なら、その型の `<=>`（`include Comparable`）で比べます。結果の型は各位置の型の和で、空でない Tuple では nil になりません。
 
 ```ruby
 p(Tuple.max([3, 1, 2]))          # => 3
 p(Tuple.min([3, 1, 2]))          # => 1
 p(Tuple.max([2, 1.5]))           # => 2
+p(Tuple.max([3, 1]) + 1)         # => 4
+p(Tuple.max([]))                 # => nil
 ```
 
 ```ruby error
-p(Tuple.max([1, "a"]))           # !> ArgumentError: Tuple.max: cannot compare elements of types Integer, String
+p(Tuple.max([1, "a"]))           # !> Tuple.max: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+p(Tuple.max([1.0, Float.NAN]))   # !> ArgumentError: Tuple.max: cannot compare elements of types Float
 ```
 
 ## minmax
 
 `Tuple.minmax(x)`
 
-最小と最大の 2 要素の Tuple `[min, max]` を返します。比較の規則は `min`、`max` と同じです。
+最小と最大の 2 要素の Tuple `[min, max]` を返します。比較の規則は `min`、`max` と同じです（比べられない組は静的に `type` の問題）。
 
 ```ruby
 lo, hi = Tuple.minmax([3, 1, 2])

@@ -6,7 +6,7 @@ There is no `Symbol#to_proc` (`&:name`). Blocks are not values, so `Array.map(xs
 
 When branching on literals, `case s in :a ... in :b ... end`, and `s` is a Symbol that did not come from a literal (the result of `String.to_sym`, say), `--strict=3` reports that some values fall through, as `exhaustive` (add an `else`; see [Control](../06-control.md)).
 
-The operators on Symbols are `==`, `!=`, `<`, `<=`, `>`, `>=` and `<=>`, and they compare Symbols with Symbols only (with a String or an Integer on the right, `<` and the others are a `type` problem statically). `:a == "a"` is false, but the function form `Symbol.==(:a, "a")` raises `TypeError` at run time. `Symbol.<(x, y)` and so on are the function forms of those operators ([Operators and indexing](../05-operators.md)).
+The operators on Symbols are `==`, `!=`, `<`, `<=`, `>`, `>=` and `<=>`, and they compare Symbols with Symbols only (with a String or an Integer on the right, `<` and the others are a `type` problem statically). `:a == "a"` is false, and so is the function form `Symbol.==(:a, "a")`. `Symbol.<(x, y)` and so on are the function forms of those operators ([Operators and indexing](../05-operators.md)).
 
 The string-like operations (`upcase`, `slice`, `match`, `start_with?`, ...) give the result of treating the name as a String. Some return a Symbol (`upcase` and friends), some a String (`slice`). None changes the Symbol itself (a Symbol is immutable).
 
@@ -218,7 +218,7 @@ p(Symbol.casecmp(:a, "b"))         # !> Symbol.casecmp: argument 2 must be Symbo
 
 `Symbol.casecmp?(x, Symbol)`
 
-True when the names of two Symbols are equal ignoring case (by Unicode case folding). As with `casecmp`, the result may be nil in its type.
+True when the names of two Symbols are equal ignoring case (by Unicode case folding). Unlike `casecmp`, the result is a Boolean and never nil: where Ruby's method gives nil (incompatible encodings) it is false.
 
 ```ruby
 p(Symbol.casecmp?(:a, :A))         # => true
@@ -232,17 +232,15 @@ p(Symbol.casecmp?(:Straße, :STRASSE))   # => true
 
 `Symbol.!=(x, Any)`
 
-True when the two are Symbols of the same name (`!=` is the negation). The operator `:a == "a"` is false, but the function form `Symbol.==(:a, "a")` raises `TypeError` at run time when the right operand is not a Symbol.
+True when the two are Symbols of the same name (`!=` is the negation). A right operand that is not a Symbol (a String, an Integer, nil) is simply not equal, with the function form as with the operator: `Symbol.==(:a, "a")` is false (no error).
 
 ```ruby
 p(:a == :a)                        # => true
 p(:a != :b)                        # => true
 p(:a == "a")                       # => false
 p(Symbol.==(:a, :a))               # => true
-```
-
-```ruby error
-p(Symbol.==(:a, "a"))              # !> TypeError: Symbol.==: no implementation for (Symbol, String)
+p(Symbol.==(:a, "a"))              # => false
+p(Symbol.!=(:a, "a"))              # => true
 ```
 
 ## <, <=, >, >=

@@ -1,6 +1,6 @@
 # Rational
 
-Rational は分子と分母が Integer の有理数で、常に既約で表されます。リテラルは Ruby と同じ `2r`、`1/3r`（`1 / 3r` の割り算）、`0.5r`（`1/2`）で、`Rational(1, 3)`・`Rational("1/3")` は Kernel の操作です（`Rational(0.5)` のように Float を渡すことはできず、Float からは `Float.to_r`・`Float.rationalize` を使います。[値と型](../03-values.md)）。Rational の値を `p` で表示すると `(1/3)` の形になります。
+Rational は分子と分母が Integer の有理数で、常に既約で表されます。リテラルは Ruby と同じ `2r`、`1/3r`（`1 / 3r` の割り算）、`0.5r`（`1/2`）で、`Rational(1, 3)`・`Rational("1/3")`・`Rational(0.5)`（Ruby と同じく `(1/2)`）は Kernel の操作です（Float からは `Float.to_r`・`Float.rationalize` でも変換できます。[値と型](../03-values.md)）。Rational の値を `p` で表示すると `(1/3)` の形になります。
 
 Rational に使える演算子は `+`、`-`、`*`、`/`、`%`、`**` と `==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>` です。右側は Integer、Float、Rational、Complex のどれでもよく、結果の型は閉じた表で決まります: Integer との演算は Rational、Float との演算は Float、Complex との演算は Complex（[演算子と添字](../05-operators.md)）。`1 + 1r/2` のように Integer が左でも Rational になります。Integer の負の冪 `2 ** -1` は Ruby なら Rational ですが Sake では `ArgumentError` で、`2r ** -1` と書きます。ここに挙げた `Rational.+(x, y)` などはその演算子を関数の形で呼ぶものです。
 
@@ -37,7 +37,7 @@ Array.push(Rational[], 1)        # !> Array.push: an element must be Rational, b
 
 `Rational.**(x, Any)`
 
-`x + y` などの関数形で、左側が Rational のものです。右側 `y` は Integer、Float、Rational、Complex のどれか。Integer・Rational との結果は Rational、Float との結果は Float、Complex との結果は Complex です。それ以外の型は静的に `type` の問題、実行時は `TypeError`。`/` と `%` の右側が 0（`0`・`0r`）なら `ZeroDivisionError`（`0.0` なら Float の規則で `Infinity`）。`%` は Ruby の `Rational#%` で、結果の符号は右側に従います。`**` は Ruby と同じで、整数乗は Rational のままですが、分数乗・Float 乗は Float（負の底なら Complex）になります。検査器は右側の型だけで Rational と判断するので、`4r ** (1r/2)` の結果 `2.0` を Rational として使うと実行時に `TypeError` です。
+`x + y` などの関数形で、左側が Rational のものです。右側 `y` は Integer、Float、Rational、Complex のどれか。Integer・Rational との結果は Rational、Float との結果は Float、Complex との結果は Complex です。それ以外の型は静的に `type` の問題、実行時は `TypeError`。`/` と `%` の右側が 0（`0`・`0r`）なら `ZeroDivisionError`（`0.0` なら Float の規則で `Infinity`）。`%` は Ruby の `Rational#%` で、結果の符号は右側に従います。`**` は Integer の指数なら Rational（負でもよく、`2r ** -1` は `(1/2)`）、Float の指数なら Float です。**Rational の指数**では、整数値なら Rational（`4r ** 2r` は `(16/1)`）、そうでなければ Float（`4r ** (1r/2)` は `2.0`）になるので、検査器はその結果を `Rational | Float` とします。どちらかとして使う前に `case`/`in` で絞ってください（`Rational.numerator(4r ** 2r)` は `type` の問題）。負の底に分数の指数は `Math::DomainError` です（Ruby は Complex を返す）。
 
 ```ruby
 p(1r/3 + 1r/6)                   # => (1/2)
@@ -50,11 +50,25 @@ p(Rational./(1r/3, 2))           # => (1/6)
 p(Rational.%(7r/3, 1r/2))        # => (1/3)
 p(Rational.**(2r, -1))           # => (1/2)
 p(Rational.**(1r/2, 3))          # => (1/8)
+p(Rational.**(4r, 2r))           # => (16/1)
 p(Rational.**(2r, 1r/2))         # => 1.4142135623730951
+x = 4r ** (1r/2)
+case x
+in Rational then p(Rational.numerator(x))
+in Float then p(x)               # => 2.0
+end
 ```
 
 ```ruby error
 p(Rational./(1r, 0))             # !> ZeroDivisionError: Rational./: divided by 0
+```
+
+```ruby error
+p(Rational.numerator(4r ** 2r))  # !> Rational.numerator: argument 1 must be Rational, but can be Float
+```
+
+```ruby error
+p((-8r) ** (1r/2))               # !> Math::DomainError: Arithmetic.**: -8/1 ** 1/2 is not a real number (a negative base with a fractional exponent)
 ```
 
 ## ==, !=
@@ -63,17 +77,15 @@ p(Rational./(1r, 0))             # !> ZeroDivisionError: Rational./: divided by 
 
 `Rational.!=(x, Any)`
 
-`x == y` の関数形。Rational は Integer・Float・Complex と値で比べられ、`1r/2 == 0.5` も `2r == 2` も true です。演算子の `==` はどんな 2 値にも使えて型が違えば false ですが、関数形の `Rational.==(x, y)` は右側が数でなければ（nil でも）実行時に `TypeError` です（検査器はこれを静的には見つけません）。
+`x == y` の関数形。Rational は Integer・Float・Complex と値で比べられ、`1r/2 == 0.5` も `2r == 2` も true です。別の型の値とは決して等しくなく、関数形の `Rational.==(x, y)` も演算子と同じく、右側が他のどんな型でも false（`!=` は true）を返し、エラーにはなりません。
 
 ```ruby
 p(Rational.==(1r/2, 0.5))        # => true
 p(Rational.==(2r, 2))            # => true
 p(Rational.!=(1r/2, 1r/3))       # => true
 p(1r == nil)                     # => false
-```
-
-```ruby error
-p(Rational.==(1r/2, "x"))        # !> TypeError: Rational.==: no implementation for (Rational, String)
+p(Rational.==(1r/2, "x"))        # => false
+p(Rational.!=(1r/2, "x"))        # => true
 ```
 
 ## <, <=, >, >=

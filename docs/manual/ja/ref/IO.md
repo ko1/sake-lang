@@ -14,7 +14,7 @@ IO に使える演算子は `==`、`!=` だけです（同じストリームか�
 
 `IO.stderr()`
 
-プログラムの標準入力・標準出力・標準エラー出力を IO として返します。何度呼んでも同じ値で、`IO.stdout == IO.stdout` は true です。`Kernel.puts` と `Kernel.p` は `IO.stdout` に書き、`Kernel.gets` は `IO.stdin` から読みます。`IO.stderr` への書き込みは先に stdout を flush するので、2 つのストリームの行の順序が保たれます。標準ストリームを `IO.close` で閉じてはいけません: 閉じると以後の `p` などの出力が Ruby の `IOError` でプログラムを止めます。
+プログラムの標準入力・標準出力・標準エラー出力を IO として返します。何度呼んでも同じ値で、`IO.stdout == IO.stdout` は true です。`Kernel.puts` と `Kernel.p` は `IO.stdout` に書き、`Kernel.gets` は `IO.stdin` から読みます。`IO.stderr` への書き込みは先に stdout を flush するので、2 つのストリームの行の順序が保たれます。標準ストリームを `IO.close` で閉じることはできますが、役に立つ場面はほとんどありません: 閉じた後はそこへの書き込み（`p`、`puts`、`IO.write`）がすべて `IOError`（`closed stream`）になります。rescue でき、`IO.stderr` はそのまま使えます。
 
 ```ruby
 out = IO.stdout
@@ -22,6 +22,11 @@ IO.puts(out, "hello")            # => hello
 p(IO.stdout == out)              # => true
 p(IO.stdout == IO.stderr)        # => false
 p(IO.stdin)                      # => #<IO:<STDIN>>
+```
+
+```ruby error
+IO.close(IO.stdout)
+puts("x")                        # !> IOError: Kernel.puts: closed stream
 ```
 
 ## puts
@@ -177,7 +182,7 @@ p(IO.eof?(io))                   # => true
 
 `IO.seek(x, Integer, [Integer|Symbol])`
 
-読み書きの位置を動かし、0 を返します（Ruby の `io.seek`）。第 2 引数はオフセット、第 3 引数は基準で、省略すると先頭（`0`）。`0`/`:SET` は先頭から、`1`/`:CUR` は現在位置から、`2`/`:END` は末尾から（オフセットは負）。Symbol はこの 3 つだけで、他の Symbol は Ruby の `NameError` でプログラムが止まります。seek できないストリーム（パイプの `IO.stdin` など）は `IOError`。
+読み書きの位置を動かし、0 を返します（Ruby の `io.seek`）。第 2 引数はオフセット、第 3 引数は基準で、省略すると先頭（`0`）。`0`/`:SET` は先頭から、`1`/`:CUR` は現在位置から、`2`/`:END` は末尾から（オフセットは負）。Symbol はこの 3 つだけで、他の Symbol は `ArgumentError` です。seek できないストリーム（パイプの `IO.stdin` など）は `IOError`。
 
 ```ruby
 File.write("a.txt", "hello\n")
@@ -189,6 +194,12 @@ p(IO.read(f))                    # => "o\n"
 p(IO.seek(f, 1, :SET))           # => 0
 p(IO.getc(f))                    # => "e"
 IO.close(f)
+```
+
+```ruby error
+File.write("a.txt", "hello\n")
+f = File.open("a.txt")
+IO.seek(f, 1, :FOO)              # !> ArgumentError: IO.seek: unknown whence: :FOO (0/1/2 or :SET/:CUR/:END)
 ```
 
 ## pos
@@ -225,13 +236,17 @@ IO.close(f)
 
 `IO.size(x)`
 
-開いたファイルの大きさ（バイト数、Integer）。まだ flush していない書き込みも含みます。ファイルでない IO（`IO.stdin` などのストリーム）には使えず、Ruby の `NoMethodError` でプログラムが止まります（`IOError` ではありません）。
+開いたファイルの大きさ（バイト数、Integer）。まだ flush していない書き込みも含みます。ファイルでない IO（`IO.stdin` などのストリーム）は `IOError`（`not a file`）です。
 
 ```ruby
 f = File.open("a.txt", "w")
 IO.write(f, "abc")
 p(IO.size(f))                    # => 3
 IO.close(f)
+```
+
+```ruby error
+IO.size(IO.stdin)                # !> IOError: IO.size: not a file
 ```
 
 ## truncate
@@ -290,12 +305,72 @@ p(IO.closed?(IO.stdout))         # => false
 
 `IO.tty?(x)`
 
-端末に繋がっていれば true（Ruby の `io.tty?`）。ファイルやパイプでは false。検査器の中では標準入出力もパイプなので false です。
+端末に繋がっていれば true（Ruby の `io.tty?`）。ファイルやパイプでは false。検査器の中では標準入出力もパイプなので false です。以下の端末の操作（`winsize`、`raw`、`noecho`、`getch`）はこれが true のときだけ使えます。
 
 ```ruby
 f = File.open("a.txt", "w")
 p(IO.tty?(f))                    # => false
 IO.close(f)
+```
+
+## winsize
+
+`IO.winsize(x)`
+
+`x` が繋がっている端末の大きさを Tuple `[rows, columns]`（Integer, Integer）で返します（Ruby の `io/console` の `io.winsize`）。`rows, cols = IO.winsize(IO.stdout)` と多重代入で受けます。端末でない IO（ファイル、パイプ、検査器の中の標準ストリーム）は `IOError`（`not a terminal`）。端末では:
+
+```
+rows, cols = IO.winsize(IO.stdout)
+p([rows, cols])                  # 80x24 の端末なら [24, 80]
+```
+
+検査器の中では stdin がパイプなので、示せるのはエラーだけです:
+
+```ruby
+begin
+  IO.winsize(IO.stdin)
+rescue IOError => e
+  p(Exception.message(e))        # => "not a terminal"
+end
+```
+
+## raw, noecho
+
+`IO.raw(x) { }`
+
+`IO.noecho(x) { }`
+
+`x` の端末を raw モード（`raw`: キーが行の終わりを待たずに 1 つずつ届き、エコーされない）またはエコー無し（`noecho`: 行単位の読み出しのまま、打った文字が表示されない）にしてブロックを走らせ、終わると（例外で抜けても）端末を元に戻し、ブロックの値を返します（Ruby の `io.raw { }`、`io.noecho { }`）。結果の型はブロックの型です。ブロックは必須で、引数は受け取りません。端末でない IO は `IOError`（`not a terminal`）。端末では、パスワードを表示せずに読む・Enter を待たずに 1 キー読む、と使います:
+
+```
+pw = IO.noecho(IO.stdin) { IO.gets(IO.stdin) }   # secret と Enter を打つと "secret\n"
+k = IO.raw(IO.stdin) { IO.getch(IO.stdin) }      # x を押した瞬間に "x"
+```
+
+```ruby
+begin
+  IO.noecho(IO.stdin) { IO.gets(IO.stdin) }
+rescue IOError => e
+  p(Exception.message(e))        # => "not a terminal"
+end
+```
+
+## getch
+
+`IO.getch(x)`
+
+`x` の端末からキーを 1 つ読み、Enter を待たず・エコーせずに String で返します（Ruby の `io.getch`）。結果は `String | nil`（入力の終端で nil）なので、`--strict`（レベル 2）はそのまま使うことを `nil` の問題として報告します。端末でない IO は `IOError`（`not a terminal`）。パイプやファイルから 1 文字読むには `IO.getc` を使います。端末では:
+
+```
+k = IO.getch(IO.stdin)           # y を押した瞬間に "y"
+```
+
+```ruby
+begin
+  IO.getch(IO.stdin)
+rescue IOError => e
+  p(Exception.message(e))        # => "not a terminal"
+end
 ```
 
 ## ==, !=

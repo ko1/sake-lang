@@ -2,7 +2,7 @@
 
 Math は Ruby の `Math` モジュールにあたる初等関数の集まりです。型ではなく名前空間で、Math の値はありません。どの関数も実数（Integer、Float、Rational）を取り、結果は常に **Float** です（`Math.sqrt(4)` は `2.0`。Complex は渡せません）。`atan2` と `hypot` の 2 引数の関数と `ldexp` の指数だけは Rational を取らず、Integer か Float です。
 
-Ruby の `Math::PI`・`Math::E` は Sake では引数なしの操作 `Math.PI`・`Math.E` です（Sake に値の定数はありません）。Ruby の `Math.log(x, base)` の底を指定する形はありません（`Math.log(x) / Math.log(base)` と書きます）。
+Ruby の `Math::PI`・`Math::E` は Sake では引数なしの操作 `Math.PI`・`Math.E` です（Sake に値の定数はありません）。`Math.log(x, base)` は Ruby と同じく底を取れます（Integer か Float）。
 
 定義域の外の引数（`sqrt(-1)`、`log(-1)`、`acos(2)` など）は Ruby と同じく `Math::DomainError` を投げ、`rescue Math::DomainError => e` で受けられます（[例外とエラー](../08-exceptions.md)）。NaN を渡せば NaN が返り、無限大は IEEE の規則に従います（`log(0)` は `-Infinity`、`exp(1000)` は `Infinity`。例外は出ません）。
 
@@ -175,13 +175,13 @@ p(Math.exp(-Float.INFINITY))       # => 0.0
 
 ## log, log2, log10
 
-`Math.log(Integer|Float|Rational)`
+`Math.log(Integer|Float|Rational, [Integer|Float])`
 
 `Math.log2(Integer|Float|Rational)`
 
 `Math.log10(Integer|Float|Rational)`
 
-自然対数・2 を底とする対数・10 を底とする対数（Float）。`log(0)` は `-Infinity`、負の引数は `Math::DomainError`。Ruby の `Math.log(x, base)` の 2 引数の形はありません（引数の個数が静的に `wrong number of arguments`）。他の底は `Math.log(x) / Math.log(base)` で求めます。大きな Integer も、Float に直せない大きさでも対数を取れます（Ruby と同じ）。
+自然対数・2 を底とする対数・10 を底とする対数（Float）。`log(0)` は `-Infinity`、負の引数は `Math::DomainError`。`Math.log(x, base)` は Ruby と同じく底 `base` の対数で、`Math.log(8, 2)` は `3.0` です。底は Integer か Float（Rational は静的に `type` の問題）。負の底は `Math::DomainError`、底 0 は Ruby と同じく `-0.0`、底 1 は `NaN` です。大きな Integer も、Float に直せない大きさでも対数を取れます（Ruby と同じ）。
 
 ```ruby
 p(Math.log(Math.E))                # => 1.0
@@ -190,12 +190,19 @@ p(Math.log(0))                     # => -Infinity
 p(Math.log2(8))                    # => 3.0
 p(Math.log10(0.001))               # => -3.0
 p(Math.log(8r))                    # => 2.0794415416798357
-p(Math.log(8) / Math.log(2))       # => 3.0
+p(Math.log(8, 2))                  # => 3.0
+p(Math.log(100, 10))               # => 2.0
+p(Math.log(8r, 2.0))               # => 3.0
 p(Math.log(10 ** 400))             # => 921.0340371976183
+p(Math.log(10 ** 400, 10))         # => 400.0
 ```
 
 ```ruby error
-p(Math.log(8, 2))                  # !> wrong number of arguments for Math.log (given 2, expected 1)
+p(Math.log(8, 2r))                 # !> Math.log: argument 2 must be Integer|Float, but is Rational
+```
+
+```ruby error
+p(Math.log(8, -2))                 # !> Math::DomainError: Math.log: Numerical argument is out of domain - log
 ```
 
 ## erf, erfc

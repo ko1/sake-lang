@@ -72,11 +72,13 @@ p(a)                             # => [1, {k: 2}]
 
 `Kernel.sprintf(String, *Any)`
 
-Ruby の `format` と同じ書式で String を作ります: `%d`、`%f`、`%e`、`%g`、`%x`、`%o`、`%b`、`%c`、`%s`、`%p`、`%%` と、幅・精度・`-`・`+`・`0` のフラグ。`%s` は値の `to_s`（Struct 型自身の `to_s(x)` も使われます）、`%p` は `inspect` です。`%<name>d` と `%{name}` は、Symbol をキーに持つ Hash（`Hash[a: 1]`）を 1 つ渡します。Record `{a: 1}` は Hash ではないので使えません（`ArgumentError: one hash required`）。引数が足りない・多すぎる、数値の指示子に数にならない値を渡す、無いキーを名乗る、はすべて `ArgumentError` です。
+Ruby の `format` と同じ書式で String を作ります: `%d`、`%f`、`%e`、`%g`、`%x`、`%o`、`%b`、`%c`、`%s`、`%p`、`%%` と、幅・精度・`-`・`+`・`0` のフラグ。`%s` は値の `to_s`（Struct 型自身の `to_s(x)` も使われます）、`%p` は `inspect` です。`%<name>d` と `%{name}` は、Record（`{a: 1}`）か Symbol をキーに持つ Hash（`Hash[a: 1]`）を唯一の引数として 1 つ渡します。演算子の形 `fmt % x` も同じです（[String](String.md)）。引数が足りない・多すぎる、数値の指示子に数にならない値を渡す、無いキーを名乗る（`key<a> not found`）、はすべて `ArgumentError` です。
 
 ```ruby
 p(format("%05.2f|%-4s|%p|%x", 3.14159, :ab, "q", 255))   # => "03.14|ab  |\"q\"|ff"
 p(sprintf("%+d %s %s", 3, nil, true))                     # => "+3  true"
+p(format("%<a>d-%<b>s", {a: 1, b: "x"}))                  # => "1-x"
+p("%<a>05d" % {a: 42})                                    # => "00042"
 p(format("%<n>d-%{s}", Hash[n: 1, s: "x"]))               # => "1-x"
 Point = Struct.new(:x, :y)
 p(format("%s", Point.new(1, 2)))                          # => "#<struct Point x=1, y=2>"
@@ -84,6 +86,10 @@ p(format("%s", Point.new(1, 2)))                          # => "#<struct Point x
 
 ```ruby error
 p(format("%d %d", 1))            # !> ArgumentError: Kernel.format: too few arguments
+```
+
+```ruby error
+p(format("%<a>d", {b: 1}))       # !> ArgumentError: Kernel.format: key<a> not found
 ```
 
 ## gets
@@ -120,7 +126,7 @@ exit(2)
 
 `Kernel.Integer(String|Integer|Float)`
 
-Ruby の厳密な `Integer()` です。String は 10 進の整数、または `0x`・`0b`・`0o`・`0` 接頭辞付きの整数で、`_` の区切りと前後の空白は許されます。それ以外（`"12abc"`、`""`、`"1e3"`）は `ArgumentError`。Float は切り捨て、Integer はそのままです。`String.to_i` は読めるところまでを黙って読みますが、こちらは全体が整数でなければ失敗します。NaN や Infinity の Float は現在 Ruby の `FloatDomainError` がそのまま出てプログラムが止まります（rescue できません）。
+Ruby の厳密な `Integer()` です。String は 10 進の整数、または `0x`・`0b`・`0o`・`0` 接頭辞付きの整数で、`_` の区切りと前後の空白は許されます。それ以外（`"12abc"`、`""`、`"1e3"`）は `ArgumentError`。Float は切り捨て、Integer はそのままです。`String.to_i` は読めるところまでを黙って読みますが、こちらは全体が整数でなければ失敗します。NaN や Infinity の Float は `FloatDomainError` で（メッセージは値の名前 `NaN`・`Infinity`）、他の例外と同じく rescue できます。
 
 ```ruby
 p(Integer("42"))                 # => 42
@@ -132,6 +138,10 @@ p(String.to_i("12abc"))          # => 12
 
 ```ruby error
 p(Integer("12abc"))              # !> ArgumentError: Kernel.Integer: invalid value for Integer(): "12abc"
+```
+
+```ruby error
+p(Integer(Float.NAN))            # !> FloatDomainError: Kernel.Integer: NaN
 ```
 
 ## Float
@@ -152,15 +162,19 @@ p(Float("abc"))                  # !> ArgumentError: Kernel.Float: invalid value
 
 ## Rational
 
-`Kernel.Rational(Integer|Rational|String, [Integer|Rational])`
+`Kernel.Rational(Integer|Float|Rational|String, [Integer|Rational])`
 
-Ruby の `Rational(a, b = 1)` です。`a` は Integer、Rational、または `"1/3"`・`"0.75"`・`"3"` の形の String、`b` は Integer か Rational で、`a / b` を既約の Rational にします。Float は受け付けません（静的に `type` の問題。`Float.to_r` か `Float.rationalize` を使います）。読めない String は `ArgumentError`、`b` が 0 なら `ZeroDivisionError`。
+Ruby の `Rational(a, b = 1)` です。`a` は Integer、Float、Rational、または `"1/3"`・`"0.75"`・`"3"` の形の String、`b` は Integer か Rational で、`a / b` を既約の Rational にします。Float は `Float.to_r` と同じく正確な値として読むので、`Rational(0.5)` は `(1/2)` ですが、`Rational(0.1)` は `0.1` が実際に表す長い 2 進の分数です（短い `(1/10)` が欲しければ `Float.rationalize`）。読めない String は `ArgumentError`、`b` が 0 なら `ZeroDivisionError`、NaN や Infinity の Float は `FloatDomainError`。
 
 ```ruby
 p(Rational(3, 6))                # => (1/2)
 p(Rational("0.75"))              # => (3/4)
 p(Rational("1/3"))               # => (1/3)
 p(Rational(1r/2, 1r/4))          # => (2/1)
+p(Rational(0.5))                 # => (1/2)
+p(Rational(1.5, 1r/2))           # => (3/1)
+p(Rational(0.1) == Float.to_r(0.1))   # => true
+p(Float.rationalize(0.1))        # => (1/10)
 ```
 
 ```ruby error
@@ -315,7 +329,7 @@ rec(1)                           # !> SystemStackError: once: the block reached 
 
 `Kernel.rand([Integer|Float])`
 
-Ruby の `rand`。引数が無ければ 0.0 以上 1.0 未満の Float。Integer `n` なら 0 以上 `|n|` 未満の Integer（検査器は Integer と見ます。ただし Ruby と同じく `n` が 0 のときは Float が返るので、0 は渡さないでください）。Float `x` なら 0.0 以上 `x` 未満の Float。Range は受け付けません（静的に `type` の問題）。
+Ruby の `rand` ですが、引数は厳密です。引数が無ければ 0.0 以上 1.0 未満の Float。Integer `n` なら 0 以上 `n` 未満の Integer。Float `x` なら 0.0 以上 `x` 未満の Float。上限は正でなければならず、0・0.0・負の数は `ArgumentError`（`invalid argument - 0`）です（Ruby は `|n|` を使い、0 なら Float を返します）。Range は受け付けません（静的に `type` の問題）。
 
 ```ruby
 f = rand
@@ -324,6 +338,10 @@ i = rand(6)
 p(i >= 0 && i < 6)               # => true
 g = rand(2.5)
 p(g >= 0.0 && g < 2.5)           # => true
+```
+
+```ruby error
+p(rand(0))                       # !> ArgumentError: Kernel.rand: invalid argument - 0
 ```
 
 ## srand

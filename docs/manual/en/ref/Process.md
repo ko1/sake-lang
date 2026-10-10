@@ -20,7 +20,7 @@ p(String.to_i(out) == Process.pid)  # => true
 
 `Process.clock_gettime(Integer, [Symbol])`
 
-The current value of the clock `clock` (the value of one of the three operations below) in seconds as a Float (Ruby's `Process.clock_gettime`). To measure elapsed time use `Process.CLOCK_MONOTONIC`: it never goes back when the wall clock is adjusted. The second argument is a unit Symbol, as Ruby's: `:float_second` (the default), `:float_millisecond`, `:float_microsecond`, `:second`, `:millisecond`, `:microsecond`, `:nanosecond`. An unknown unit is an `ArgumentError`. **With an integer unit (`:millisecond`, ...) the value is an Integer at run time, but the checker always sees the result as a Float**, so passing it to an Integer operation (`Integer.to_s`, ...) is a `type` problem statically. An unknown clock number stops the program with Ruby's `Errno::EINVAL`.
+The current value of the clock `clock` (the value of one of the three operations below), Ruby's `Process.clock_gettime`. To measure elapsed time use `Process.CLOCK_MONOTONIC`: it never goes back when the wall clock is adjusted. The second argument is a unit Symbol, as Ruby's, and decides the result's type: without it or with `:float_second` (the default), `:float_millisecond`, `:float_microsecond` the result is a Float; with `:second`, `:millisecond`, `:microsecond`, `:nanosecond` it is an Integer. The checker reads the unit when it is written as a literal Symbol; a unit held in a variable gives `Integer | Float`, which a `case`/`in` has to split before an Integer or Float operation takes it. An unknown unit (`unexpected unit: bogus`) and an unknown clock number (`Invalid argument - clock_gettime(999)`) are an `ArgumentError`.
 
 ```ruby
 t0 = Process.clock_gettime(Process.CLOCK_MONOTONIC)
@@ -29,10 +29,22 @@ p(t1 >= t0)                         # => true
 p(Process.clock_gettime(Process.CLOCK_REALTIME) > 1.0e9)   # => true
 ms = Process.clock_gettime(Process.CLOCK_MONOTONIC, :millisecond)
 p(ms > 0)                           # => true
+p(Integer.to_s(ms) == "#{ms}")      # => true
+f = Process.clock_gettime(Process.CLOCK_MONOTONIC, :float_millisecond)
+p(Float.floor(f) >= 0)              # => true
 ```
 
 ```ruby error
 Process.clock_gettime(Process.CLOCK_MONOTONIC, :bogus)   # !> ArgumentError: Process.clock_gettime: unexpected unit: bogus
+```
+
+```ruby error
+Process.clock_gettime(999)          # !> ArgumentError: Process.clock_gettime: Invalid argument - clock_gettime(999)
+```
+
+```ruby error
+unit = :millisecond
+p(Integer.to_s(Process.clock_gettime(Process.CLOCK_MONOTONIC, unit)))   # !> Integer.to_s: argument 1 must be Integer, but can be Float
 ```
 
 ## CLOCK_REALTIME, CLOCK_MONOTONIC, CLOCK_PROCESS_CPUTIME_ID

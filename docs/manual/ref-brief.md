@@ -26,7 +26,10 @@ and `docs/manual/en/ref/Tuple.md` are the model: read both first and follow thei
   checker runs the block under `--strict=2` (cwd an empty temp dir, stdin `"3\n1 2\n"`) and requires the
   stdout lines to equal the annotations in order, and no stderr. For a failing case use a ```ruby error
   block: it must be rejected or fail, and each `# !> text` must occur in its output. Only when an example
-  truly cannot run in the checker (outside network, a long sleep) use a plain ``` fence and say so.
+  truly cannot run in the checker (outside network, a long sleep, a terminal: the checker's stdin is a pipe)
+  use a plain ``` fence and say so; confirm a terminal example under a pty, e.g.
+  `printf 'x\n' | script -qc "bin/sake x.sake" /dev/null`. The checker runs a chapter's examples in one temp
+  dir, so file and directory names in examples must differ from section to section.
 
 ## Facts
 

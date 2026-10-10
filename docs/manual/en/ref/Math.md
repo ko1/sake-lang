@@ -2,7 +2,7 @@
 
 Math is the collection of elementary functions of Ruby's `Math` module. It is a namespace, not a type: there are no Math values. Every function takes a real number (Integer, Float, Rational) and the result is always a **Float** (`Math.sqrt(4)` is `2.0`; a Complex is not accepted). Only the two-argument functions `atan2` and `hypot`, and the exponent of `ldexp`, do not take a Rational: they take an Integer or a Float.
 
-Ruby's `Math::PI` and `Math::E` are the operations without arguments `Math.PI` and `Math.E` in Sake (Sake has no value constants). Ruby's `Math.log(x, base)` with a base does not exist (write `Math.log(x) / Math.log(base)`).
+Ruby's `Math::PI` and `Math::E` are the operations without arguments `Math.PI` and `Math.E` in Sake (Sake has no value constants). `Math.log(x, base)` takes a base as Ruby's does (an Integer or a Float).
 
 An argument outside the domain (`sqrt(-1)`, `log(-1)`, `acos(2)`, ...) raises `Math::DomainError`, as in Ruby, which `rescue Math::DomainError => e` catches ([Exceptions and errors](../08-exceptions.md)). A NaN argument gives a NaN, and infinities follow IEEE (`log(0)` is `-Infinity`, `exp(1000)` is `Infinity`; no exception).
 
@@ -175,13 +175,13 @@ p(Math.exp(-Float.INFINITY))       # => 0.0
 
 ## log, log2, log10
 
-`Math.log(Integer|Float|Rational)`
+`Math.log(Integer|Float|Rational, [Integer|Float])`
 
 `Math.log2(Integer|Float|Rational)`
 
 `Math.log10(Integer|Float|Rational)`
 
-The natural logarithm and the logarithms to base 2 and base 10 (Floats). `log(0)` is `-Infinity`; a negative argument is a `Math::DomainError`. Ruby's two-argument form `Math.log(x, base)` does not exist (the argument count is a static `wrong number of arguments`); for another base write `Math.log(x) / Math.log(base)`. A large Integer, even one too large for a Float, has a logarithm (as in Ruby).
+The natural logarithm and the logarithms to base 2 and base 10 (Floats). `log(0)` is `-Infinity`; a negative argument is a `Math::DomainError`. `Math.log(x, base)` is the logarithm to the given base, as Ruby's: `Math.log(8, 2)` is `3.0`. The base is an Integer or a Float (a Rational is a `type` problem statically); a negative base is a `Math::DomainError`, and as in Ruby a base of 0 gives `-0.0` and a base of 1 `NaN`. A large Integer, even one too large for a Float, has a logarithm (as in Ruby).
 
 ```ruby
 p(Math.log(Math.E))                # => 1.0
@@ -190,12 +190,19 @@ p(Math.log(0))                     # => -Infinity
 p(Math.log2(8))                    # => 3.0
 p(Math.log10(0.001))               # => -3.0
 p(Math.log(8r))                    # => 2.0794415416798357
-p(Math.log(8) / Math.log(2))       # => 3.0
+p(Math.log(8, 2))                  # => 3.0
+p(Math.log(100, 10))               # => 2.0
+p(Math.log(8r, 2.0))               # => 3.0
 p(Math.log(10 ** 400))             # => 921.0340371976183
+p(Math.log(10 ** 400, 10))         # => 400.0
 ```
 
 ```ruby error
-p(Math.log(8, 2))                  # !> wrong number of arguments for Math.log (given 2, expected 1)
+p(Math.log(8, 2r))                 # !> Math.log: argument 2 must be Integer|Float, but is Rational
+```
+
+```ruby error
+p(Math.log(8, -2))                 # !> Math::DomainError: Math.log: Numerical argument is out of domain - log
 ```
 
 ## erf, erfc

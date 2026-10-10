@@ -4,7 +4,7 @@ Array は長さが変わる並びです。`Array[1, 2, 3]` が Array を作り�
 
 検査器は、1 つの Array（構築した場所）に対してプログラム全体で 1 つの要素型を与えます。`Array.map!` などの書き換えで別の型を入れると、以後その Array は両方の型を持つものとして扱われ、片方の型にしか合わない操作が `type`（partial）になります（[値と型](../03-values.md)）。
 
-要素が無いことを nil で表す操作が 2 種類あります。「外した nil」（`x[k]`、`first`、`last`、`pop`、`shift`、`min`、`max`、`at`、`sample`、`delete_at`。空の Array や範囲外の添字）を未検査で使うのは `--strict=3` の `index-nil` の問題で、`--strict`（レベル 2）は見逃します。`find`、`index`、`find_index`、`rindex`、`bsearch`、`delete`、`min_by`、`dig`、`slice`、`uniq!` など、それ以外の nil はレベル 2 の `nil` の問題です（[概要](../01-overview.md)）。
+要素が無いことを nil で表す操作が 2 種類あります。「外した nil」（`x[k]`、`first`、`last`、`pop`、`shift`、`min`、`max`、`minmax`、`min_by`、`max_by`、`minmax_by`、`at`、`slice`、`slice!`、`dig`、`sample`、`delete_at`。空の Array や範囲外の添字）を未検査で使うのは `--strict=3` の `index-nil` の問題で、`--strict`（レベル 2）は見逃します。`find`、`index`、`find_index`、`rindex`、`bsearch`、`delete`、`uniq!` など、それ以外の nil はレベル 2 の `nil` の問題です（[概要](../01-overview.md)）。
 
 Array に使える演算子は `+`、`-`、`*`、`==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>`（2 つの Array を辞書順に比べる）と添字 `a[i]`、`a[i, n]`、`a[range]`、`a[i] = v` です。`Array.+(x, y)` などはその演算子を関数の形で呼ぶものです（[演算子と添字](../05-operators.md)）。要素を比べる操作（`sort`、`min`、`max`、`<` など）は、要素が互いに比べられる型でなければなりません。Integer と Float は混ぜて比べられ、Tuple は要素ごとに、Struct 値はその型の `<=>`（`include Comparable`）で比べます。
 
@@ -202,7 +202,7 @@ Array.first(Array[1], -1)      # !> ArgumentError: Array.first: negative size -1
 
 `Array.slice(x, Integer|Range, [Integer])`
 
-`a[i]`、`a[i, n]`、`a[range]` と同じ結果を返します: `slice(a, i)` は要素か nil、`slice(a, i, n)` と `slice(a, range)` は新しい Array か nil（開始位置が末尾を越えたとき）。`a[i]` と違い、この nil はレベル 2 の `nil` の問題として報告されます。
+`a[i]`、`a[i, n]`、`a[range]` と同じ結果を返します: `slice(a, i)` は要素か nil、`slice(a, i, n)` と `slice(a, range)` は新しい Array か nil（開始位置が末尾を越えたとき）。`a[i]` と同じく、この nil は「外した nil」で、未検査で使うのは `--strict=3` の `index-nil` の問題です（レベル 2 では報告されません）。例外にしたいときは `Array.fetch` を使います。
 
 ```ruby
 xs = Array[3, 1, 2]
@@ -210,23 +210,34 @@ p(Array.slice(xs, 1))          # => 1
 p(Array.slice(xs, 1, 5))       # => [1, 2]
 p(Array.slice(xs, 1..))        # => [1, 2]
 p(Array.slice(xs, 9))          # => nil
-```
-
-```ruby error
-y = Array.slice(Array[3, 1, 2], 0)
-p(y + 1)                       # !> the operands may be nil
+y = Array.slice(xs, 0)
+p(y + 1) if y                  # => 4
 ```
 
 ## dig
 
-`Array.dig(x, Integer)`
+`Array.dig(x, Integer, *Any)`
 
-位置 `i` の要素か nil（`a[i]` と同じ）。Ruby の `dig` は添字を何個でも取って入れ子を掘りますが、Sake では添字は 1 つだけです。nil はレベル 2 の `nil` の問題です。
+位置 `i` の要素か nil（`a[i]` と同じ）。添字を 2 つ以上与えると、Ruby の `dig` のように入れ子を順に掘ります: 2 つ目以降の添字は 1 つ前で得た値に当て（Array なら Integer の位置、Hash ならそのキー）、途中で nil になればそのまま nil です。途中の値は Array、Tuple、Hash のどれかでなければならず、他の型（Integer、String、Record など）は静的に `type` の問題、検査を通さずに実行すれば `TypeError`（`Integer cannot be dug into (not an Array, a Tuple, or a Hash)`）です。Array や Tuple に Integer 以外の添字を当てると `TypeError`。nil は「外した nil」で、レベル 3 だけが報告します。
 
 ```ruby
 xs = Array[Array[1, 2], Array[3]]
 p(Array.dig(xs, 0))            # => [1, 2]
 p(Array.dig(xs, 5))            # => nil
+p(Array.dig(xs, 0, 1))         # => 2
+p(Array.dig(xs, 1, 5))         # => nil
+p(Array.dig(xs, 5, 0))         # => nil
+p(Array.dig(Array[Hash[a: 1]], 0, :a))     # => 1
+p(Array.dig(Array[[1, "x"]], 0, 1))        # => "x"
+p(Array.dig(Array[[1, "x"]], 0, 5))        # => nil
+```
+
+```ruby error
+p(Array.dig(Array[Array[1, 2]], 0, 1, 2))  # !> Array.dig: the value must be Array|Hash|Tuple, but is Integer
+```
+
+```ruby error
+p(Array.dig(Array[Array[1]], 0, "k"))      # !> TypeError: Array.dig: an index into Array must be Integer, got String
 ```
 
 ## values_at
@@ -290,13 +301,25 @@ p(Array.prepend(xs, 0))        # => [0, 1, 2, 3]
 
 `Array.insert(x, Integer, *Any)`
 
-位置 `i` の前に値を差し込み（何個でも）、主語を返します。負の `i` は末尾から数えます（`-1` なら末尾に追加）。`i` が長さより大きければ、Ruby と同じく間が nil で埋まります（型付き Array でも現在は同じで、`IndexError` にはなりません）。型付き Array では差し込む値の型を検査します。
+位置 `i` の前に値を差し込み（何個でも）、主語を返します。`i` が長さと等しければ末尾に追加します。負の `i` は末尾から数えます（`-1` なら末尾に追加、`-size - 1` なら先頭）。`i` が長さより大きいとき、Ruby は間を nil で埋めますが、Sake では `IndexError` です（型付きでない Array でも。nil を黙って作らないためです）。`-size - 1` より小さい負の `i`（先頭より前）も `IndexError`。型付き Array では差し込む値の型を検査します（静的に `type`、実行時は `TypeError`）。
 
 ```ruby
 xs = Array[1, 2, 3]
 p(Array.insert(xs, 1, 9, 9))   # => [1, 9, 9, 2, 3]
 p(Array.insert(xs, -2, 7))     # => [1, 9, 9, 2, 7, 3]
-p(Array.insert(Array[1], 3, 2))    # => [1, nil, nil, 2]
+p(Array.insert(xs, 6, 8))      # => [1, 9, 9, 2, 7, 3, 8]
+```
+
+```ruby error
+Array.insert(Array[1], 3, 2)   # !> IndexError: Array.insert: index 3 is past the end of the Array (length 1); the gap would be nil
+```
+
+```ruby error
+Array.insert(Array[1, 2], -4, 0)   # !> IndexError: Array.insert: index -4 is before the start of the Array (length 2)
+```
+
+```ruby error
+Array.insert(Integer[1], 0, "a")   # !> Array.insert: an element must be Integer, but is String
 ```
 
 ## concat
@@ -318,7 +341,7 @@ Array.concat(Integer[1], Array["a"])   # !> Array.concat: an element must be Int
 
 `Array.fill(x, Any)`
 
-すべての要素を `v` に置き換え、主語を返します（長さは変わりません）。Ruby の範囲やブロックの形はありません。型付き Array では実行時に `v` の型を検査します（`TypeError`。静的には報告されません）。
+すべての要素を `v` に置き換え、主語を返します（長さは変わりません）。Ruby の範囲やブロックの形はありません。型付き Array では `v` の型を検査します（静的に `type`、検査を通らずに実行すれば `TypeError`）。
 
 ```ruby
 xs = Array[1, 2, 3]
@@ -326,14 +349,14 @@ p(Array.fill(xs, 0))           # => [0, 0, 0]
 ```
 
 ```ruby error
-Array.fill(Integer[1], "a")    # !> TypeError: Array.fill: Integer[] element must be Integer, got String
+Array.fill(Integer[1], "a")    # !> Array.fill: an element must be Integer, but is String
 ```
 
 ## replace
 
 `Array.replace(x, Array)`
 
-主語の内容をもう 1 つの Array の要素で置き換え、主語を返します（`a = other` と違い、同じ Array を共有している場所すべてに見えます）。型付き Array では要素の型を静的に検査します（実行時の検査はありません）。
+主語の内容をもう 1 つの Array の要素で置き換え、主語を返します（`a = other` と違い、同じ Array を共有している場所すべてに見えます）。型付き Array では要素の型を検査します（静的に `type`、実行時は `TypeError`）。
 
 ```ruby
 xs = Array[1, 2, 3]
@@ -404,7 +427,7 @@ p(Array.delete_at(xs, 99))     # => nil
 
 `Array.slice!(x, Integer|Range, [Integer])`
 
-`slice` と同じものを返し、同時にそれを主語から取り除きます: `slice!(a, i)` は要素か nil、`slice!(a, i, n)` と `slice!(a, range)` は新しい Array か nil。nil はレベル 2 の `nil` の問題です。
+`slice` と同じものを返し、同時にそれを主語から取り除きます: `slice!(a, i)` は要素か nil、`slice!(a, i, n)` と `slice!(a, range)` は新しい Array か nil。nil は「外した nil」で、レベル 3 だけが報告します。
 
 ```ruby
 xs = Array[1, 2, 3, 4]
@@ -492,7 +515,7 @@ Array.reverse_each(Array[1, 2, 3]) { |x| puts(x) }
 
 `Array.each_cons(x, Integer) [{ }]`
 
-`each_slice(a, n)` は要素を n 個ずつに切った Array を、`each_cons(a, n)` は連続する n 個の窓を順にブロックに渡し、主語を返します。ブロック無しでは Ruby の Enumerator ではなく、それらの Array を並べた新しい Array を返します（`each_cons` で n が長さを越えると `[]`）。n は 1 以上でなければなりません（負の n は `ArgumentError`。0 も現在はエラーですが Ruby の例外がそのまま出ます）。
+`each_slice(a, n)` は要素を n 個ずつに切った Array を、`each_cons(a, n)` は連続する n 個の窓を順にブロックに渡し、主語を返します。ブロック無しでは Ruby の Enumerator ではなく、それらの Array を並べた新しい Array を返します（`each_cons` で n が長さを越えると `[]`）。n は 1 以上でなければならず、0 や負の n は `ArgumentError` です。
 
 ```ruby
 xs = Array[1, 2, 3]
@@ -503,6 +526,10 @@ Array.each_slice(xs, 2) { |s| p(s) }
 # => [3]
 p(Array.each_cons(xs, 2) { |s| s })    # => [1, 2, 3]
 p(Array.each_cons(xs, 5))              # => []
+```
+
+```ruby error
+Array.each_slice(Array[1], 0)          # !> ArgumentError: Array.each_slice: invalid slice size
 ```
 
 ## each_with_object
@@ -571,14 +598,15 @@ p(Array.sum(xs))               # !> Array.sum: an element must be Integer|Float|
 
 `Array.flat_map(x) { }`
 
-各要素にブロックを適用し、その結果の Array をつなげた新しい Array。ブロックは Array を返さなければならず（Tuple も不可）、他の値は実行時に `TypeError` です。Ruby のように Array 以外の値をそのまま並べることはありません。
+各要素にブロックを適用し、その結果の並びをつなげた新しい Array。ブロックは Array か Tuple を返さなければならず、他の値は実行時に `TypeError` です。Ruby のように Array 以外の値をそのまま並べることはありません。
 
 ```ruby
 p(Array.flat_map(Array[1, 2]) { |x| Array[x, x * 10] })   # => [1, 10, 2, 20]
+p(Array.flat_map(Array[1, 2]) { |x| [x, x] })             # => [1, 1, 2, 2]
 ```
 
 ```ruby error
-Array.flat_map(Array[1]) { |x| [x, x] }    # !> TypeError: Array.flat_map: the block must return an Array, got Tuple
+Array.flat_map(Array[1]) { |x| x }    # !> TypeError: Array.flat_map: the block must return an Array or a Tuple, got Integer
 ```
 
 ## filter_map
@@ -905,7 +933,7 @@ Array.reduce(Array[1, 2]) { |acc, x| acc + x }    # !> wrong number of arguments
 
 `Array.max(x)`
 
-最小・最大の要素。空の Array では nil（「外した nil」。レベル 3 だけが報告します）。要素は互いに比べられなければならず、比べられない組（Integer と String など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられます。Struct 値はその型の `<=>`（`include Comparable`）で比べます。Ruby の `min(n)` やブロック形はありません。
+最小・最大の要素。空の Array では nil（「外した nil」。レベル 3 だけが報告します）。要素は互いに比べられなければなりません: 比べられない型の組（Integer と String など）が要素型にあれば静的に `type` の問題（`elements compared in order may be (Integer, String), which cannot be compared`）、要素が nil になり得れば `nil` の問題です。検査器に見えない比較の失敗（`Float.NAN` など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられます。Struct 値はその型の `<=>`（`include Comparable`）で比べます。Ruby の `min(n)` やブロック形はありません。
 
 ```ruby
 xs = Array[3, 1, 4, 1, 5]
@@ -916,18 +944,24 @@ p(Array.min(Array[]))          # => nil
 ```
 
 ```ruby error
-Array.min(Array[1, "a"])       # !> ArgumentError: Array.min: cannot compare elements of types Integer, String
+Array.min(Array[1, "a"])       # !> Array.min: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+Array.max(Array[1.0, Float.NAN])   # !> ArgumentError: Array.max: cannot compare elements of types Float
 ```
 
 ## minmax
 
 `Array.minmax(x)`
 
-最小と最大の 2 要素 Tuple `[min, max]`。空の Array では `[nil, nil]` で、各位置の型は要素型と nil の和です（`min`、`max` と違い、こちらはレベル 2 の `nil` の問題として報告されます）。比較の規則は `min`、`max` と同じで、比べられない組は `ArgumentError`。
+最小と最大の 2 要素 Tuple `[min, max]`。空の Array では `[nil, nil]` で、各位置の型は要素型と nil の和です（`min`、`max` と同じ「外した nil」で、レベル 3 だけが報告します）。比較の規則は `min`、`max` と同じで、比べられない型の組は静的に `type` の問題、実行時の失敗は `ArgumentError`。
 
 ```ruby
 p(Array.minmax(Array[3, 1, 4]))    # => [1, 4]
 p(Array.minmax(Array[]))           # => [nil, nil]
+lo, hi = Array.minmax(Array[3, 1, 4])
+p(lo + hi)                         # => 5
 ```
 
 ## min_by, max_by
@@ -936,7 +970,7 @@ p(Array.minmax(Array[]))           # => [nil, nil]
 
 `Array.max_by(x) { }`
 
-ブロックの値が最小・最大になる要素。空の Array では nil（レベル 2 の `nil` の問題）。ブロックの値どうしが比べられなければならず、比べられない組は `ArgumentError`。
+ブロックの値が最小・最大になる要素。空の Array では nil（「外した nil」。`min`、`max` と同じくレベル 3 だけが報告します）。ブロックの値どうしが比べられなければならず、比べられない型の組は静的に `type` の問題、検査器に見えない失敗は実行時に `ArgumentError`。
 
 ```ruby
 ws = Array["bb", "a", "ccc"]
@@ -946,14 +980,14 @@ p(Array.min_by(Array[]) { |s| s })             # => nil
 ```
 
 ```ruby error
-Array.min_by(Array[1, "a"]) { |x| x }  # !> ArgumentError: Array.min_by: cannot compare block results of types Integer, String
+Array.min_by(Array[1, "a"]) { |x| x }  # !> Array.min_by: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ## minmax_by
 
 `Array.minmax_by(x) { }`
 
-ブロックの値が最小になる要素と最大になる要素の 2 要素 Tuple。空の Array では `[nil, nil]`（各位置はレベル 2 の `nil`）。
+ブロックの値が最小になる要素と最大になる要素の 2 要素 Tuple。空の Array では `[nil, nil]`（各位置は「外した nil」で、レベル 3 だけが報告します）。比較の規則は `min_by`、`max_by` と同じです。
 
 ```ruby
 lo, hi = Array.minmax_by(Array["bb", "a", "ccc"]) { |s| String.size(s) }
@@ -976,7 +1010,7 @@ p(Array.tally(Array["a", "b", "a"]))   # => {"a" => 2, "b" => 1}
 
 `Array.sort!(x)`
 
-要素を昇順に並べた新しい Array（`sort`）、または主語をその場で並べ替えて返します（`sort!`）。Ruby の比較ブロックは取れず（静的エラー）、別の順で並べるには `sort_by` を使います。要素は互いに比べられなければならず、比べられない組は実行時に `ArgumentError`。Integer と Float は混ぜて比べられ、Tuple は要素ごとに、Struct 値はその型の `<=>` で比べます。
+要素を昇順に並べた新しい Array（`sort`）、または主語をその場で並べ替えて返します（`sort!`）。Ruby の比較ブロックは取れず（静的エラー）、別の順で並べるには `sort_by` を使います。要素は互いに比べられなければなりません: 比べられない型の組が要素型にあれば静的に `type` の問題、要素が nil になり得れば `nil` の問題（nil を除くには `compact`）。検査器に見えない比較の失敗（`Float.NAN` など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられ、Tuple は要素ごとに、Struct 値はその型の `<=>` で比べます。
 
 ```ruby
 xs = Array[3, 1, 2]
@@ -992,7 +1026,15 @@ Array.sort(Array[1, 2]) { |a, b| b <=> a }     # !> Array.sort does not take a b
 ```
 
 ```ruby error
-Array.sort(Array[1, "a"])      # !> ArgumentError: Array.sort: cannot compare elements of types Integer, String
+Array.sort(Array[1, "a"])      # !> Array.sort: elements compared in order may be (Integer, String), which cannot be compared
+```
+
+```ruby error
+Array.sort(Array[1, nil])      # !> Array.sort: argument elements may be nil
+```
+
+```ruby error
+Array.sort(Array[1.0, Float.NAN])  # !> ArgumentError: Array.sort: cannot compare elements of types Float
 ```
 
 ## sort_by, sort_by!
@@ -1001,7 +1043,7 @@ Array.sort(Array[1, "a"])      # !> ArgumentError: Array.sort: cannot compare el
 
 `Array.sort_by!(x) { }`
 
-ブロックの値（キー）の昇順に並べた新しい Array（`sort_by`）、または主語をその場で並べ替えて返します（`sort_by!`）。キーどうしが比べられなければならず、比べられない組は `ArgumentError`。降順は負のキーで、複数のキーは Tuple `[k1, k2]` で表します（Tuple は辞書順）。
+ブロックの値（キー）の昇順に並べた新しい Array（`sort_by`）、または主語をその場で並べ替えて返します（`sort_by!`）。キーどうしが比べられなければならず、比べられない型の組は静的に `type` の問題、nil になり得るキーは `nil` の問題、検査器に見えない失敗は実行時に `ArgumentError`。降順は負のキーで、複数のキーは Tuple `[k1, k2]` で表します（Tuple は辞書順）。
 
 ```ruby
 ws = Array["bb", "a", "ccc"]
@@ -1146,10 +1188,11 @@ p(Array.product(Array[1], Array[]))               # => []
 
 `Array.transpose(x)`
 
-Array の Array を行列と見て、行と列を入れ替えた新しい Array を返します。要素はすべて同じ長さの Array でなければならず、長さが違えば `IndexError`、要素が Tuple なら `ArgumentError`（`zip` の結果のような Tuple の並びはそのままでは転置できません）。
+Array の Array を行列と見て、行と列を入れ替えた新しい Array を返します。行は Array でも Tuple でもよく（`zip` の結果のような Tuple の並びも転置できます）、結果の行は Array です。行はすべて同じ長さでなければならず、長さが違えば `IndexError`。Array でも Tuple でもない要素は `TypeError`。
 
 ```ruby
 p(Array.transpose(Array[Array[1, 2], Array[3, 4]]))   # => [[1, 3], [2, 4]]
+p(Array.transpose(Array.zip(Array[1, 2], Array["a", "b"])))   # => [[1, 2], ["a", "b"]]
 ```
 
 ```ruby error
@@ -1258,11 +1301,15 @@ p(Array.to_set(Array[1, 2, 1]))    # => Set[1, 2]
 
 `Array.pack(x, String)`
 
-Ruby の `Array#pack`。要素を書式 `fmt` に従ってバイト列（String）にします。不正な書式は `ArgumentError`。書式に合わない要素（`"C*"` に String など）は現在 Ruby の `TypeError` がそのまま出ます。逆は `String.unpack`。
+Ruby の `Array#pack`。要素を書式 `fmt` に従ってバイト列（String）にします。不正な書式は `ArgumentError`、書式に合わない要素（`"C*"` に String など）は `TypeError`。逆は `String.unpack`。
 
 ```ruby
 p(Array.pack(Array[65, 66], "C*"))     # => "AB"
 p(Array.pack(Array[1, 2], "n*"))       # => "\x00\x01\x00\x02"
+```
+
+```ruby error
+Array.pack(Array["a"], "C")    # !> TypeError: Array.pack: no implicit conversion of String into Integer
 ```
 
 ## +, -, *
