@@ -172,5 +172,6 @@ p(2 + m)                 # => #<struct Money cents=250>
 ## 設計の資料
 
 - `DESIGN.md`（日本語）: 設計の経緯と各決定の理由。
+- `docs/comparison.md`（日本語）: Sake の新規性。軸ごとに Elm・Crystal・Rust・Elixir・TypeScript・Clojure や型推論の研究と比べ、何が新しく何が既存かを判定する。
 - `TODO.md`: 開いている課題と設計判断（D1〜D13）。
 - `experiments/`: 各実験の方法・結果・限界（README 付き）。

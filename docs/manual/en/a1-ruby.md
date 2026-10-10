@@ -172,5 +172,6 @@ Each of these is rejected statically with a "not supported" error. Most wait on 
 ## Design material
 
 - `DESIGN.md` (Japanese): the design notes, with the reasons behind each decision.
+- `docs/comparison.md` (Japanese): what is new in Sake and what is not, axis by axis against Elm, Crystal, Rust, Elixir, TypeScript, Clojure and the type-inference literature.
 - `TODO.md`: open items and design questions (D1 to D13).
 - `experiments/`: each experiment with its method, results, and limits (README).

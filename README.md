@@ -105,6 +105,8 @@ running.
 - [ide/](ide/README.md): the playground, a browser IDE on ruby.wasm with completion, diagnostics as
   you type, and the inferred types on hover.
 - [DESIGN.md](DESIGN.md): the design notes, with the reasons behind each decision (in Japanese).
+- [docs/comparison.md](docs/comparison.md): what is new in Sake and what is not, axis by axis against
+  Elm, Crystal, Rust, Elixir, TypeScript, Clojure and the type-inference literature (in Japanese).
 
 ## What is in the language
 
