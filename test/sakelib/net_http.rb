@@ -76,7 +76,7 @@ server = Thread.new { serve(srv) }
 server.report_on_exception = false
 def url(port, path) = "http://127.0.0.1:#{port}#{path}"
 
-puts("-- NetHTTP.get")
+puts("-- Net::HTTP.get")
 p(Net::HTTP.get(URI.parse(url(port, "/hello"))))
 p(Net::HTTP.get("127.0.0.1", "/hello", port))
 p(Net::HTTP.get(URI.parse(url(port, "/chunked"))))
@@ -109,14 +109,14 @@ p([res.code, res.message, res.body, res.is_a?(Net::HTTPSuccess), res.is_a?(Net::
 begin
   res.value
 rescue Net::HTTPClientException => e
-  puts("NetHTTPClientException: #{e.message} #{e.response.code}")
+  puts("Net::HTTPClientException: #{e.message} #{e.response.code}")
 end
 res = Net::HTTP.get_response(URI.parse(url(port, "/error")))
 p(res)
 begin
   res.value
 rescue Net::HTTPFatalError => e
-  puts("NetHTTPFatalError: #{e.message}")
+  puts("Net::HTTPFatalError: #{e.message}")
 end
 
 puts("-- chunked, no body, redirect (not followed)")
@@ -129,7 +129,7 @@ p([res, res.is_a?(Net::HTTPRedirection), res["location"], res.body])
 begin
   res.value
 rescue Net::HTTPRetriableError => e
-  puts("NetHTTPRetriableError: #{e.message}")
+  puts("Net::HTTPRetriableError: #{e.message}")
 end
 res = Net::HTTP.get_response(URI.parse(url(port, "/html")))
 body = res.body || ""
@@ -242,7 +242,7 @@ puts("-- OpenURI.open")
 text = URI.open(url(port, "/hello")) { |f| f.read }
 p(text)
 f = URI.open(url(port, "/hello"))
-puts("#<OpenURIMeta #{f.status.join(" ")} #{f.content_type} #{f.size} bytes>")   # Sake's inspect; Ruby's shows an address
+puts("#<OpenURI::Meta #{f.status.join(" ")} #{f.content_type} #{f.size} bytes>")   # Sake's inspect; Ruby's shows an address
 p(f.status)
 p(f.content_type)
 p(f.charset)
@@ -280,12 +280,12 @@ end
 begin
   URI.open(url(port, "/redirect"), redirect: false)
 rescue OpenURI::HTTPRedirect => e
-  puts("OpenURIHTTPRedirect: #{e.message} -> #{e.uri.path}")
+  puts("OpenURI::HTTPRedirect: #{e.message} -> #{e.uri.path}")
 end
 begin
   URI.open(url(port, "/loop"), max_redirects: 1)
 rescue OpenURI::TooManyRedirects => e
-  puts("OpenURITooManyRedirects: #{e.message} #{e.io.status}")
+  puts("OpenURI::TooManyRedirects: #{e.message} #{e.io.status}")
 end
 
 puts("-- errors")
@@ -293,12 +293,12 @@ begin
   URI.open(url(port, "/missing"))
 rescue OpenURI::HTTPError => e
   io = e.io
-  puts("OpenURIHTTPError: #{e.message} #{io.status} #{io.read.inspect}")
+  puts("OpenURI::HTTPError: #{e.message} #{io.status} #{io.read.inspect}")
 end
 begin
   URI.open(url(port, "/error"))
 rescue OpenURI::HTTPError => e
-  puts("OpenURIHTTPError: #{e.message}")
+  puts("OpenURI::HTTPError: #{e.message}")
 end
 begin
   URI.open("http://user:pw@127.0.0.1:#{port}/hello")

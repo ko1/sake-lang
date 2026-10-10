@@ -4,8 +4,8 @@
 
 `StringScanner` is a Struct type (`class StringScanner` with `attr_reader ...`); every Ruby instance method
 is an operation with the scanner first. It includes `Indexable` (for `ss[1]`) and `Bitwise` (for
-`ss << "x"`). Ruby's `StringScanner::Error` is `ScanError` (Ruby's old top-level alias, still
-defined): Sake has no nested names.
+`ss << "x"`). Ruby's `StringScanner::Error` is `StringScanner::Error` (nested since 2026-10-10; it was
+`ScanError`, Ruby's old top-level alias, while Sake had no nested names; the alias is not provided).
 
 ## API
 
@@ -26,7 +26,7 @@ defined): Sake has no nested names.
 | `ss.scan_integer(base: 16)` | `StringScanner.scan_integer(ss, base: 16)` | same (optional `0x`; other bases raise Ruby's ArgumentError) |
 | `ss.peek(n)` | `StringScanner.peek(ss, n)` | same (n bytes, may cut a character, as Ruby) |
 | `ss.peek_byte` | `StringScanner.peek_byte(ss)` | same |
-| `ss.unscan` | `StringScanner.unscan(ss)` | same (raises `ScanError`) |
+| `ss.unscan` | `StringScanner.unscan(ss)` | same (raises `StringScanner::Error`) |
 | `ss.pos` / `ss.pointer` | `StringScanner.pos(ss)` / `pointer` | same (bytes) |
 | `ss.pos = n` / `ss.pointer = n` | `StringScanner.set_pos(ss, n)` | differs: name; `n` inside a multibyte character raises `ArgumentError` |
 | `ss.charpos` | `StringScanner.charpos(ss)` | same |
@@ -147,7 +147,7 @@ defined): Sake has no nested names.
 - `def initialize(ss)`: `@string => String` (Ruby raises TypeError for `StringScanner.new(1)`; Sake
   raises NoMatchingPatternError) and resets the pointer, so the internal fields given to `new` by
   mistake cannot start the scanner elsewhere. `set_string` asserts `s => String` likewise.
-- `ScanError` is `class ScanError < Exception` (was `ScanError = Exception.new`).
+- `ScanError` is `class ScanError < Exception` (was `ScanError = Exception.new`). 2026-10-10: it is now `StringScanner::Error`, nested as Ruby's; the top-level alias `ScanError` is not provided.
 
 ## 2026-10-05
 

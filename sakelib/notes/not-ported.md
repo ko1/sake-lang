@@ -53,7 +53,7 @@
 | BigDecimal の算術、`Liquid error:` の埋め込み | liquid | 設計 | Float で代用。エラーは raise（埋め込みは gem の挙動） |
 | 生の HTML、表、脚注、IAL、smart quotes | kramdown | 予算 | 規則の数。GFM の fence は入れた |
 | keep-alive、chunked、CGI/FileHandler/認証/HTTPS | webrick | 予算 / 組み込み | 1 接続 1 スレッドで `Connection: close`。TLS のサーバ側は組み込みに無い |
-| Builder DSL、Lint、Session、Multipart、Static | rack | 予算 | app は `RackApp` を include する型、middleware は次の app を持つ型 |
+| Builder DSL、Lint、Session、Multipart、Static | rack | 予算 | app は `Rack::App` を include する型、middleware は次の app を持つ型 |
 | ロケール、I18n の単位、`delimiter_pattern:` | active_support | 予算 | i18n.sake はあるが接続していない |
 | `endian_precedence`、数詞、範囲 | chronic | 予算 | |
 | ストリーム API（`Zip::InputStream`）、暗号化、permission | rubyzip | 予算 | 全体を読む/書く API のみ |

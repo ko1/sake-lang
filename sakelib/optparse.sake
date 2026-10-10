@@ -2,36 +2,37 @@
 # Blocks are not values, so `on` stores no block: parse(op, argv, into: h) fills the Hash h
 # (Ruby's `parse(argv, into: h)`) and returns the remaining arguments. argv defaults to ARGV.
 
-class OptionParserError < Exception
-  attr_reader kind, args
-  # Ruby's ParseError#reason: "invalid option" for InvalidOption, ...
-  def reason(e)
-    case OptionParserError.kind(e)
-    in "InvalidOption" then "invalid option"
-    in "MissingArgument" then "missing argument"
-    in "InvalidArgument" then "invalid argument"
-    in "NeedlessArgument" then "needless argument"
-    in "AmbiguousOption" then "ambiguous option"
-    in "AmbiguousArgument" then "ambiguous argument"
-    else "parse error"
+# Fields start as Ruby's OptionParser.new(banner = nil, width = 32, indent = " " * 4).
+class OptionParser
+  # Ruby's OptionParser::ParseError and its subclasses (InvalidOption, ...) in one type with a `kind`.
+  class ParseError < Exception
+    attr_reader kind, args
+    # Ruby's ParseError#reason: "invalid option" for InvalidOption, ...
+    def reason(e)
+      case ParseError.kind(e)
+      in "InvalidOption" then "invalid option"
+      in "MissingArgument" then "missing argument"
+      in "InvalidArgument" then "invalid argument"
+      in "NeedlessArgument" then "needless argument"
+      in "AmbiguousOption" then "ambiguous option"
+      in "AmbiguousArgument" then "ambiguous argument"
+      else "parse error"
+      end
+    end
+
+    def make(kind, args)
+      e = ParseError.new("", kind, args)
+      ParseError.set_message(e, "#{ParseError.reason(e)}: #{Array.join(args, " ")}")
+      e
     end
   end
 
-  def make(kind, args)
-    e = OptionParserError.new("", kind, args)
-    OptionParserError.set_message(e, "#{OptionParserError.reason(e)}: #{Array.join(args, " ")}")
-    e
+  # One declared option. kind: :none, :required, :optional. conv: :String, :Integer, :Float, :choice.
+  class Switch
+    attr_reader short, long, arg, kind, negatable, conv, choices, desc, tail
+    def key(sw) = String.to_sym(@long != "" ? @long : @short)
   end
-end
 
-# One declared option. kind: :none, :required, :optional. conv: :String, :Integer, :Float, :choice.
-class OptionParserSwitch
-  attr_reader short, long, arg, kind, negatable, conv, choices, desc, tail
-  def key(sw) = String.to_sym(@long != "" ? @long : @short)
-end
-
-# Fields start as Ruby's OptionParser.new(banner = nil, width = 32, indent = " " * 4).
-class OptionParser
   attr_accessor banner, summary_width, summary_indent, program_name, version
   private attr_reader list
   def initialize(o)
@@ -111,7 +112,7 @@ class OptionParser
     if arg != ""
       kind = String.include?(arg, "[") ? :optional : :required
     end
-    sw = OptionParserSwitch.new(s, l, arg, kind, neg, conv, choices, desc, tail: at == :tail)
+    sw = Switch.new(s, l, arg, kind, neg, conv, choices, desc, tail: at == :tail)
     if at == :head
       Array.unshift(@list, sw)
     else
@@ -128,13 +129,13 @@ class OptionParser
       case it
       in String
         out += String.end_with?(it, "\n") ? it : it + "\n"
-      in OptionParserSwitch
-        out += summarize(op, it) unless OptionParserSwitch.tail(it)
+      in Switch
+        out += summarize(op, it) unless Switch.tail(it)
       end
     end
     Array.each(@list) do |it|
-      if it in OptionParserSwitch
-        out += summarize(op, it) if OptionParserSwitch.tail(it)
+      if it in Switch
+        out += summarize(op, it) if Switch.tail(it)
       end
     end
     out
@@ -146,13 +147,13 @@ class OptionParser
   def summarize(op, sw)
     width = @summary_width
     indent = @summary_indent
-    s = OptionParserSwitch.short(sw)
-    l = OptionParserSwitch.long(sw)
-    arg = OptionParserSwitch.arg(sw)
+    s = Switch.short(sw)
+    l = Switch.long(sw)
+    arg = Switch.arg(sw)
     left = String[s != "" ? "-" + s : ""]
-    right = Array.dup(OptionParserSwitch.desc(sw))
+    right = Array.dup(Switch.desc(sw))
     if l != ""
-      lopt = "--" + (OptionParserSwitch.negatable(sw) ? "[no-]" : "") + l
+      lopt = "--" + (Switch.negatable(sw) ? "[no-]" : "") + l
       len = String.size(Array.fetch(left, -1)) + String.size(lopt)
       len += String.size(arg) if Array.size(left) == 1
       Array.push(left, "") unless len < width - 1 || s == ""
@@ -254,7 +255,7 @@ class OptionParser
 
   def run(op, argv, into, in_order)
     rest = String[]
-    sws = Array.filter_map(@list) { |it| (it in OptionParserSwitch) ? it : nil }
+    sws = Array.filter_map(@list) { |it| (it in Switch) ? it : nil }
     n = Array.size(argv)
     i = 0
     while i < n
@@ -279,17 +280,17 @@ class OptionParser
   end
 
   def fail(kind, args)
-    raise OptionParserError.make(kind, args)
+    raise ParseError.make(kind, args)
   end
 
   def parse_long(op, sws, argv, i, a, into)
     name, eq, val = String.partition(String.delete_prefix(a, "--"), "=")
     has_eq = eq != ""
     sw, neg = find_long(op, sws, name, a)
-    kind = OptionParserSwitch.kind(sw)
+    kind = Switch.kind(sw)
     if kind == :none
       fail("NeedlessArgument", String[a]) if has_eq
-      into[OptionParserSwitch.key(sw)] = !neg
+      into[Switch.key(sw)] = !neg
       return i
     end
     v = nil
@@ -306,7 +307,7 @@ class OptionParser
       i += 1
       args = String[a, v]
     end
-    into[OptionParserSwitch.key(sw)] = convert(sw, v, args)
+    into[Switch.key(sw)] = convert(sw, v, args)
     i
   end
 
@@ -315,12 +316,12 @@ class OptionParser
     j = 1
     while j < len
       c = String.[](a, j)
-      sw = Array.find(sws) { |x| OptionParserSwitch.short(x) == c }
+      sw = Array.find(sws) { |x| Switch.short(x) == c }
       fail("InvalidOption", String["-#{c}"]) unless sw
       j += 1
-      kind = OptionParserSwitch.kind(sw)
+      kind = Switch.kind(sw)
       if kind == :none
-        into[OptionParserSwitch.key(sw)] = true
+        into[Switch.key(sw)] = true
         next
       end
       v = nil
@@ -338,7 +339,7 @@ class OptionParser
         i += 1
         args = String["-#{c}", v]
       end
-      into[OptionParserSwitch.key(sw)] = convert(sw, v, args)
+      into[Switch.key(sw)] = convert(sw, v, args)
     end
     i
   end
@@ -347,10 +348,10 @@ class OptionParser
   def find_long(op, sws, name, a)
     cands = Array[]
     Array.each(sws) do |sw|
-      l = OptionParserSwitch.long(sw)
+      l = Switch.long(sw)
       next if l == ""
       Array.push(cands, [l, sw, false])
-      Array.push(cands, ["no-" + l, sw, true]) if OptionParserSwitch.negatable(sw)
+      Array.push(cands, ["no-" + l, sw, true]) if Switch.negatable(sw)
     end
     exact = Array.find(cands) { |(nm, _, _)| nm == name }
     if exact
@@ -383,7 +384,7 @@ class OptionParser
 
   def convert(sw, v, args)
     return nil if v == nil
-    case OptionParserSwitch.conv(sw)
+    case Switch.conv(sw)
     in :String then v
     in :Integer
       re = /\A[-+]?(?:0(?:[0-7]+(?:_[0-7]+)*|b[01]+(?:_[01]+)*|x[\da-f]+(?:_[\da-f]+)*)?|\d+(?:_\d+)*)\z/i
@@ -398,7 +399,7 @@ class OptionParser
       fail("InvalidArgument", args) unless Regexp.match?(re, v)
       String.to_f(v)
     in :choice
-      choices = OptionParserSwitch.choices(sw)
+      choices = Switch.choices(sw)
       return v if Array.include?(choices, v)
       hits = Array.select(choices) { |c| String.start_with?(c, v) }
       fail("InvalidArgument", args) if Array.empty?(hits)

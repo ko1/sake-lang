@@ -1,5 +1,5 @@
 # Reference implementation of semver (Semantic Versioning 2.0.0) in plain Ruby, for test/sakelib/semver.rb.
-# SemVer: parse, compare, bump. SemVerRequirement: Gem::Requirement-like constraints ("~> 1.2", ">= 1.0, < 2", "^1.2").
+# SemVer: parse, compare, bump. SemVer::Requirement: Gem::Requirement-like constraints ("~> 1.2", ">= 1.0, < 2", "^1.2").
 
 class SemVerError < StandardError; end
 
@@ -90,15 +90,15 @@ class SemVer
 
   def inspect = "#<SemVer #{self}>"
 
-  def satisfies?(req) = SemVerRequirement.parse(req).satisfied_by?(self)
+  def satisfies?(req) = SemVer::Requirement.parse(req).satisfied_by?(self)
 
   def self.max_satisfying(versions, req)
-    r = SemVerRequirement.parse(req)
+    r = SemVer::Requirement.parse(req)
     versions.select { |v| r.satisfied_by?(v) }.max
   end
 end
 
-class SemVerRequirement
+class SemVer::Requirement
   OP = /\A(~>|>=|<=|!=|=|>|<|\^)?\s*(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*))?(?:-([0-9A-Za-z.-]+))?\z/
 
   # Each constraint: [op, version, the number of segments written].
@@ -143,7 +143,7 @@ class SemVerRequirement
       when "<" then v < w
       when ">=" then v >= w
       when "<=" then v <= w
-      else v >= w && v < SemVerRequirement.upper(op, w, segs)
+      else v >= w && v < SemVer::Requirement.upper(op, w, segs)
       end
     end
   end

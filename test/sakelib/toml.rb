@@ -7,7 +7,7 @@ end
 def try(src)
   show(src.inspect, TOML.parse(src))
 rescue TOML::ParseError => e
-  puts("TOMLParseError: #{e.message} (line #{e.line})")
+  puts("TOML::ParseError: #{e.message} (line #{e.line})")
 end
 
 doc = <<~'TOML'

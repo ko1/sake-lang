@@ -78,8 +78,8 @@ p(ss.pos)
 begin
   ss.scan(/zz/)
   ss.unscan
-rescue ScanError => e
-  puts("ScanError: #{e.message}")
+rescue StringScanner::Error => e
+  puts("StringScanner::Error: #{e.message}")
 end
 begin
   ss.pos = 99

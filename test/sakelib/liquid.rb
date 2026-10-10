@@ -5,7 +5,7 @@ def liquid_render(t, assigns = {}) = Liquid::Template.parse(t).render(assigns)
 def show(label, t, assigns = {})
   puts("#{label}: #{liquid_render(t, assigns).inspect}")
 rescue Liquid::SyntaxError => e
-  puts("#{label}: LiquidSyntaxError: #{e.message}")
+  puts("#{label}: Liquid::SyntaxError: #{e.message}")
 rescue ZeroDivisionError => e
   puts("#{label}: ZeroDivisionError: #{e.message}")
 end

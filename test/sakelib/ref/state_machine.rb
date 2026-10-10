@@ -2,18 +2,20 @@
 # plain Ruby. As in AASM, guards and callbacks are named by Symbols and called with `send`; the
 # machine is data built once per class (AASM builds it from a DSL block).
 
-class AASMInvalidTransition < StandardError
-  attr_reader :event, :state
-  def initialize(message, event, state)
-    super(message)
-    @event = event
-    @state = state
+module AASM
+  class InvalidTransition < StandardError
+    attr_reader :event, :state
+    def initialize(message, event, state)
+      super(message)
+      @event = event
+      @state = state
+    end
   end
 end
 
-AASMTransition = Struct.new(:from, :to, :guard, :after)
+module AASM; module Core; Transition = Struct.new(:from, :to, :guard, :after); end; end
 
-class AASMMachine
+class AASM::StateMachine
   attr_reader :initial, :states, :events, :enters, :exits
 
   def initialize(initial)
@@ -38,7 +40,7 @@ class AASMMachine
     [*froms, to].each do |s|
       raise ArgumentError, "unknown state #{s.inspect} in event #{name.inspect}" unless @states.include?(s)
     end
-    (@events[name] ||= []) << AASMTransition.new(froms, to, guard, after)
+    (@events[name] ||= []) << AASM::Core::Transition.new(froms, to, guard, after)
     self
   end
 
@@ -72,7 +74,7 @@ module AASM
 
   def fire!(event)
     return true if fire(event)
-    raise AASMInvalidTransition.new("Event '#{event}' cannot transition from '#{current_state}'.", event, current_state)
+    raise AASM::InvalidTransition.new("Event '#{event}' cannot transition from '#{current_state}'.", event, current_state)
   end
 
   def states = aasm.states

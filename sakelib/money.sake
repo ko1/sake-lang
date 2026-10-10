@@ -5,10 +5,10 @@
 #   m + Money.new(1, "USD"); m * 2; m / 3; -m; m < n; Array.sort(Money[...])
 #   Money.format(m)                       # "$12.34"; EUR "€1.234,57"; JPY "¥1,000"
 #   Money.allocate(m, Array[1, 1, 1]); Money.split(m, 3)
-#   Bank.add_rate(Money.default_bank, "USD", "EUR", 0.9); Money.exchange_to(m, "EUR")
+#   Money::Bank::VariableExchange.add_rate(Money.default_bank, "USD", "EUR", 0.9); Money.exchange_to(m, "EUR")
 #
-# Ruby's nested names are flattened: Money::Currency -> Currency, Money::Bank::VariableExchange -> Bank,
-# Money::Bank::UnknownRate -> MoneyUnknownRate, Money::Currency::UnknownCurrency -> MoneyUnknownCurrency.
+# The gem's nested names are kept: Money::Currency, Money::Currency::UnknownCurrency, Money::Bank::VariableExchange
+# (the rate table; Money::Bank is its namespace, as in the gem), Money::Bank::UnknownRate.
 # Amounts are exact: a Float is read with Float.rationalize (0.9 is 9/10, as the gem's BigDecimal reads it)
 # and rounded to the smallest unit half to even, the gem's default rounding mode. `Money.amount` is a Float
 # (the gem: a BigDecimal); `Money.to_d` is a Rational. Currency data for USD, EUR, JPY, GBP, CHF, CAD, AUD,
@@ -16,89 +16,91 @@
 # `Money.rounding_mode` (half even only), `Money::Bank::VariableExchange#export_rates`, `2 * money`
 # (Ruby's `coerce`: an operator dispatches on its left operand, and Integer's `*` has no Money row).
 
-class MoneyUnknownRate < Exception          # Ruby: Money::Bank::UnknownRate
-end
-class MoneyUnknownCurrency < Exception      # Ruby: Money::Currency::UnknownCurrency
-end
+class Money
+  # Ruby: Money::Currency. `symbol_first` says where the symbol goes in `format`.
+  class Currency
+    class UnknownCurrency < Exception
+    end
+    attr_reader iso_code, name, symbol, subunit_to_unit, decimal_mark, thousands_separator, symbol_first, priority
+    include Comparable
 
-# Ruby: Money::Currency. `symbol_first` says where the symbol goes in `format`.
-class Currency
-  attr_reader iso_code, name, symbol, subunit_to_unit, decimal_mark, thousands_separator, symbol_first, priority
-  include Comparable
+    def table = once do
+      h = Hash[]
+      Array.each(Array[
+        ["USD", "United States Dollar", "$", 100, ".", ",", true, 1],
+        ["EUR", "Euro", "€", 100, ",", ".", true, 2],
+        ["GBP", "British Pound", "£", 100, ".", ",", true, 3],
+        ["AUD", "Australian Dollar", "$", 100, ".", ",", true, 4],
+        ["CAD", "Canadian Dollar", "$", 100, ".", ",", true, 5],
+        ["JPY", "Japanese Yen", "¥", 1, ".", ",", true, 6],
+        ["CHF", "Swiss Franc", "CHF", 100, ".", ",", true, 100],
+        ["CNY", "Chinese Renminbi Yuan", "¥", 100, ".", ",", true, 100],
+        ["INR", "Indian Rupee", "₹", 100, ".", ",", true, 100],
+        ["KRW", "South Korean Won", "₩", 1, ".", ",", true, 100]
+      ]) { |code, nm, sym, sub, dm, ts, first, pri| h[code] = Currency.new(code, nm, sym, sub, dm, ts, first, pri) }
+      h
+    end
 
-  def table = once do
-    h = Hash[]
-    Array.each(Array[
-      ["USD", "United States Dollar", "$", 100, ".", ",", true, 1],
-      ["EUR", "Euro", "€", 100, ",", ".", true, 2],
-      ["GBP", "British Pound", "£", 100, ".", ",", true, 3],
-      ["AUD", "Australian Dollar", "$", 100, ".", ",", true, 4],
-      ["CAD", "Canadian Dollar", "$", 100, ".", ",", true, 5],
-      ["JPY", "Japanese Yen", "¥", 1, ".", ",", true, 6],
-      ["CHF", "Swiss Franc", "CHF", 100, ".", ",", true, 100],
-      ["CNY", "Chinese Renminbi Yuan", "¥", 100, ".", ",", true, 100],
-      ["INR", "Indian Rupee", "₹", 100, ".", ",", true, 100],
-      ["KRW", "South Korean Won", "₩", 1, ".", ",", true, 100]
-    ]) { |code, nm, sym, sub, dm, ts, first, pri| h[code] = Currency.new(code, nm, sym, sub, dm, ts, first, pri) }
-    h
+    # Ruby: Money::Currency.find("usd") -> the Currency, or nil
+    def find(id) = table[String.upcase("#{id}")]
+
+    # Ruby: Money::Currency.wrap(x): a Currency stays, a code is looked up (UnknownCurrency if none)
+    def wrap(x)
+      case x
+      in Currency then x
+      in String | Symbol
+        c = find(x)
+        raise UnknownCurrency, "Unknown currency '#{String.downcase("#{x}")}'" unless c
+        c
+      end
+    end
+
+    def all = Array.sort(Hash.values(table))
+    def id(c) = String.to_sym(String.downcase(@iso_code))
+    def code(c) = @symbol
+    def decimal_places(c) = Integer.to_s(@subunit_to_unit) == "1" ? 0 : String.length(Integer.to_s(@subunit_to_unit)) - 1
+    def symbol_first?(c) = @symbol_first
+    def <=>(a, b) = [@priority, @iso_code] <=> [Currency.priority(b), Currency.iso_code(b)]
+    def to_s(c) = @iso_code
+    def to_str(c) = @iso_code
+    def inspect(c) = "#<Money::Currency id: #{String.downcase(@iso_code)}, priority: #{@priority}, symbol_first: #{@symbol_first}, thousands_separator: #{@thousands_separator}, decimal_mark: #{@decimal_mark}, iso_code: #{@iso_code}, name: #{@name}, symbol: #{@symbol}, subunit_to_unit: #{@subunit_to_unit}>"
   end
 
-  # Ruby: Money::Currency.find("usd") -> the Currency, or nil
-  def find(id) = table[String.upcase("#{id}")]
+  # Ruby: Money::Bank::VariableExchange, a table of rates. Money.default_bank is the shared one.
+  module Bank
+    class UnknownRate < Exception
+    end
 
-  # Ruby: Money::Currency.wrap(x): a Currency stays, a code is looked up (UnknownCurrency if none)
-  def wrap(x)
-    case x
-    in Currency then x
-    in String | Symbol
-      c = find(x)
-      raise MoneyUnknownCurrency, "Unknown currency '#{String.downcase("#{x}")}'" unless c
-      c
+    class VariableExchange
+      attr_reader rates
+
+      def initialize(b)
+        @rates = Hash[] if @rates == nil
+      end
+
+      def rate_key(from, to) = "#{Currency.iso_code(Currency.wrap(from))}_TO_#{Currency.iso_code(Currency.wrap(to))}"
+
+      # Ruby: bank.add_rate("USD", "EUR", 0.9) -> the rate
+      def add_rate(b, from, to, rate)
+        rate => Integer | Float | Rational
+        @rates[rate_key(from, to)] = rate
+        rate
+      end
+
+      def set_rate(b, from, to, rate) = add_rate(b, from, to, rate)
+      def get_rate(b, from, to) = @rates[rate_key(from, to)]
+
+      # Ruby: bank.exchange_with(money, "EUR") -> a Money of that currency (UnknownRate without a rate)
+      def exchange_with(b, from, to_currency)
+        to = Currency.wrap(to_currency)
+        return from if Money.currency(from) == to
+        rate = get_rate(b, Money.currency(from), to)
+        raise UnknownRate, "No conversion rate known for '#{Money.currency(from)}' -> '#{to}'" unless rate
+        Money.from_amount(Money.to_d(from) * Money.to_r(rate), to)
+      end
     end
   end
 
-  def all = Array.sort(Hash.values(table))
-  def id(c) = String.to_sym(String.downcase(@iso_code))
-  def code(c) = @symbol
-  def decimal_places(c) = Integer.to_s(@subunit_to_unit) == "1" ? 0 : String.length(Integer.to_s(@subunit_to_unit)) - 1
-  def symbol_first?(c) = @symbol_first
-  def <=>(a, b) = [@priority, @iso_code] <=> [Currency.priority(b), Currency.iso_code(b)]
-  def to_s(c) = @iso_code
-  def to_str(c) = @iso_code
-  def inspect(c) = "#<Money::Currency id: #{String.downcase(@iso_code)}, priority: #{@priority}, symbol_first: #{@symbol_first}, thousands_separator: #{@thousands_separator}, decimal_mark: #{@decimal_mark}, iso_code: #{@iso_code}, name: #{@name}, symbol: #{@symbol}, subunit_to_unit: #{@subunit_to_unit}>"
-end
-
-# Ruby: Money::Bank::VariableExchange, a table of rates. Money.default_bank is the shared one.
-class Bank
-  attr_reader rates
-
-  def initialize(b)
-    @rates = Hash[] if @rates == nil
-  end
-
-  def rate_key(from, to) = "#{Currency.iso_code(Currency.wrap(from))}_TO_#{Currency.iso_code(Currency.wrap(to))}"
-
-  # Ruby: bank.add_rate("USD", "EUR", 0.9) -> the rate
-  def add_rate(b, from, to, rate)
-    rate => Integer | Float | Rational
-    @rates[rate_key(from, to)] = rate
-    rate
-  end
-
-  def set_rate(b, from, to, rate) = add_rate(b, from, to, rate)
-  def get_rate(b, from, to) = @rates[rate_key(from, to)]
-
-  # Ruby: bank.exchange_with(money, "EUR") -> a Money of that currency (UnknownRate without a rate)
-  def exchange_with(b, from, to_currency)
-    to = Currency.wrap(to_currency)
-    return from if Money.currency(from) == to
-    rate = get_rate(b, Money.currency(from), to)
-    raise MoneyUnknownRate, "No conversion rate known for '#{Money.currency(from)}' -> '#{to}'" unless rate
-    Money.from_amount(Money.to_d(from) * Money.to_r(rate), to)
-  end
-end
-
-class Money
   attr_reader fractional, currency
   include Arithmetic
   include Comparable
@@ -113,7 +115,7 @@ class Money
   end
 
   def default_currency = "USD"
-  def default_bank = once { Bank.new(Hash[]) }
+  def default_bank = once { Bank::VariableExchange.new(Hash[]) }
 
   # Ruby: Money.from_amount(12.34, "USD") (units, not the smallest unit)
   def from_amount(amount, currency = nil)
@@ -129,7 +131,7 @@ class Money
   def pound_sterling(cents) = Money.new(cents, "GBP")
 
   # Ruby: Money.add_rate(from, to, rate) on the default bank
-  def add_rate(from, to, rate) = Bank.add_rate(default_bank, from, to, rate)
+  def add_rate(from, to, rate) = Bank::VariableExchange.add_rate(default_bank, from, to, rate)
 
   # A Float is read as the decimal it prints as (0.9 -> 9/10), as the gem's BigDecimal does.
   def to_r(x)
@@ -203,7 +205,7 @@ class Money
     if Money.currency(b) != @currency
       begin
         other = exchange_to(b, @currency)
-      rescue MoneyUnknownRate
+      rescue Money::Bank::UnknownRate
         return nil
       end
     end
@@ -238,7 +240,7 @@ class Money
   def split(m, n) = allocate(m, n)
 
   # Ruby: money.exchange_to("EUR") through the default bank, or exchange_to("EUR", bank)
-  def exchange_to(m, other_currency, bank = nil) = Bank.exchange_with(bank == nil ? default_bank : bank, m, other_currency)
+  def exchange_to(m, other_currency, bank = nil) = Bank::VariableExchange.exchange_with(bank == nil ? default_bank : bank, m, other_currency)
 
   # Ruby: money.format(**rules). Rules kept: symbol (true, false, or a String), no_cents, no_cents_if_whole,
   # with_currency, thousands_separator, decimal_mark, sign_before_symbol, symbol_position (:before / :after),

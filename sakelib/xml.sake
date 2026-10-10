@@ -1,9 +1,9 @@
 # xml: a subset of Ruby's REXML (rexml 3.4): parse a document into elements, attributes, text, CDATA
 # and comments; read it with Document#root, Element#elements / attributes / text, and simple XPath.
 #
-# Names without nesting: REXML::Document is REXMLDocument, REXML::Element REXMLElement, REXML::Text
-# REXMLText, REXML::CData REXMLCData, REXML::Comment REXMLComment, REXML::XPath REXMLXPath,
-# REXML::ParseException REXMLParseException.
+# Names without nesting: REXML::Document is Document, REXML::Element Element, REXML::Text
+# Text, REXML::CData CData, REXML::Comment Comment, REXML::XPath XPath,
+# REXML::ParseException ParseException.
 # XPath: absolute and relative paths of name, *, . and .. steps joined by / or //, with predicates
 # [n], [last()], [@attr], [@attr='v'], [name]. It selects elements only (no @attr or text() steps,
 # no axes, no functions besides last()).
@@ -11,414 +11,414 @@
 # processing instructions are kept as written but not interpreted.
 # Element#== compares name, attributes and children (REXML compares identity).
 
-class REXMLParseException < Exception
-end
-
-class REXMLText
-  attr_reader raw
-
-  def value(t) = REXML.unescape(@raw)
-  def to_s(t) = @raw
-  def inspect(t) = Kernel.inspect(@raw)
-end
-
-class REXMLCData
-  attr_reader value
-
-  def to_s(c) = @value
-  def inspect(c) = Kernel.inspect(@value)
-end
-
-class REXMLComment
-  attr_reader string
-
-  def to_s(c) = @string
-  def inspect(c) = "<!--#{@string}-->"
-end
-
-# A DOCTYPE or a processing instruction, kept as written.
-class REXMLInstruction
-  attr_reader raw
-
-  def to_s(i) = @raw
-  def inspect(i) = @raw
-end
-
-class REXMLXMLDecl
-  attr_reader version, encoding
-  def initialize(r)
-    @version = "1.0" if @version == nil
-  end
-
-  def to_s(x) = "<?xml version='#{@version}'#{@encoding ? " encoding='#{@encoding}'" : ""}?>"
-  def inspect(x) = to_s(x)
-end
-
-class REXMLElement
-  include Indexable
-
-  attr_reader name
-  attr_reader attributes, children
-  attr_accessor parent
-
-  def initialize(el)
-    @attributes = Hash[] if @attributes == nil
-    @children = Array[]
-    @name => String
-  end
-
-  # Ruby compares Elements by identity; this compares their content (not the parent).
-  def ==(a, b) = (b in REXMLElement) && @name == REXMLElement.name(b) && @attributes == REXMLElement.attributes(b) && @children == REXMLElement.children(b)
-
-  # el["attr"] is an attribute's value; el[i] the i-th child node (from 0), as in REXML.
-  def [](el, k)
-    case k
-    in String then @attributes[k]
-    in Integer then @children[k]
-    end
-  end
-
-  def elements(el) = REXMLElements.new(el)
-  def element_children(el) = Array.filter_map(@children) { |c| (c in REXMLElement) ? c : nil }
-  def has_elements?(el) = Array.any?(@children) { |c| c in REXMLElement }
-  def has_attributes?(el) = !Hash.empty?(@attributes)
-  def has_text?(el) = Array.any?(@children) { |c| (c in REXMLText) || (c in REXMLCData) }
-  # The top element above el (below its Document).
-  def root(el)
-    up = @parent
-    return el if up == nil || REXMLElement.name(up) == ""
-    REXMLElement.root(up)
-  end
-  def attribute(el, k) = @attributes[k]
-
-  # The value of the first text (or CDATA) child of el, or of the element at path; nil when none.
-  def text(el, path = nil)
-    e = path ? REXMLXPath.first(el, path) : el
-    return nil unless e
-    t = Array.find(REXMLElement.children(e)) { |c| (c in REXMLText) || (c in REXMLCData) }
-    case t
-    in REXMLText then REXMLText.value(t)
-    in REXMLCData then REXMLCData.value(t)
-    else nil
-    end
-  end
-
-  def texts(el) = Array.filter_map(@children) { |c| ((c in REXMLText) || (c in REXMLCData)) ? c : nil }
-  def cdatas(el) = Array.filter_map(@children) { |c| (c in REXMLCData) ? c : nil }
-  def comments(el) = Array.filter_map(@children) { |c| (c in REXMLComment) ? c : nil }
-  def get_elements(el, path) = REXMLXPath.match(el, path)
-
-  def each_element(el, path = "*")
-    Array.each(REXMLXPath.match(el, path)) { |e| yield(e) }
-    el
-  end
-
-  def add_element(el, name, attrs = Hash[])
-    e = REXMLElement.new(name, parent: el)
-    Hash.each(attrs) { |k, v| REXMLElement.add_attribute(e, k, v) }
-    Array.push(@children, e)
-    e
-  end
-
-  def add_attribute(el, k, v)
-    k => String
-    v => String
-    @attributes[k] = v
-    el
-  end
-
-  def delete_attribute(el, k) = Hash.delete(@attributes, k)
-
-  def add_text(el, s)
-    s => String
-    Array.push(@children, REXMLText.new(REXML.escape_text(s)))
-    el
-  end
-
-  def start_tag(el) = "<#{@name}#{Array.join(Hash.map(@attributes) { |k, v| " #{k}='#{REXML.escape_attr(v)}'" }, "")}"
-
-  def to_s(el)
-    return start_tag(el) + "/>" if Array.empty?(@children)
-    "#{start_tag(el)}>#{Array.join(Array.map(@children) { |c| REXML.write(c) }, "")}</#{@name}>"
-  end
-
-  def inspect(el) = Array.empty?(@children) ? start_tag(el) + "/>" : start_tag(el) + "> ... </>"
-end
-
-# Ruby's Element#elements: element children by position (from 1) or by XPath.
-class REXMLElements
-  include Indexable
-
-  attr_reader element
-
-  def [](es, k)
-    case k
-    in Integer then REXMLElement.element_children(@element)[k - 1]
-    in String then REXMLXPath.first(@element, k)
-    end
-  end
-
-  def each(es, path = "*")
-    Array.each(REXMLXPath.match(@element, path)) { |e| yield(e) }
-    es
-  end
-
-  def to_a(es, path = "*") = REXMLXPath.match(@element, path)
-  def size(es) = Array.size(REXMLElement.element_children(@element))
-  def empty?(es) = size(es) == 0
-end
-
-class REXMLDocument
-  attr_reader source
-  private attr_reader node
-
-  def initialize(doc)
-    @source = "" if @source == nil
-    @node = REXMLElement.new("")
-    @source => String
-    REXMLParser.parse(REXMLParser.new(@source, @node))
-  end
-
-  def root(doc) = Array.first(REXMLElement.element_children(@node))
-  def children(doc) = REXMLElement.children(@node)
-  def elements(doc) = REXMLElements.new(@node)
-  def container(doc) = @node
-  def add_element(doc, name, attrs = Hash[]) = REXMLElement.add_element(@node, name, attrs)
-
-  def xml_decl(doc) = Array.filter_map(REXMLElement.children(@node)) { |c| (c in REXMLXMLDecl) ? c : nil }.Array.first
-  def version(doc)
-    d = xml_decl(doc)
-    (d in REXMLXMLDecl) ? REXMLXMLDecl.version(d) : "1.0"
-  end
-  def encoding(doc)
-    d = xml_decl(doc)
-    e = (d in REXMLXMLDecl) ? REXMLXMLDecl.encoding(d) : nil
-    e || "UTF-8"
-  end
-
-  def to_s(doc) = Array.join(Array.map(REXMLElement.children(@node)) { |c| REXML.write(c) }, "")
-  def inspect(doc) = "<UNDEFINED> ... </>"
-end
-
-class REXMLParser
-  attr_reader src, top
-  private attr_accessor pos
-  def initialize(r) = @pos = 0
-
-  def fail(rp, msg)
-    line = String.count(@src[0, @pos] || "", "\n") + 1
-    raise REXMLParseException, "#{msg} (line #{line})"
-  end
-
-  def at?(rp, s) = String.start_with?(@src[@pos, String.size(s)] || "", s)
-
-  # Text up to the next s (which is skipped), or a failure.
-  def read_until(rp, s, what)
-    k = String.index(@src, s, @pos)
-    fail(rp, "unclosed #{what}") unless k
-    body = @src[@pos, k - @pos] || ""
-    @pos = k + String.size(s)
-    body
-  end
-
-  def parse(rp)
-    stack = REXMLElement[@top]
-    len = String.size(@src)
-    while @pos < len
-      cur = Array.last(stack)
-      cur => REXMLElement
-      kids = REXMLElement.children(cur)
-      if at?(rp, "<?")
-        start = @pos
-        @pos += 2
-        body = read_until(rp, "?>", "processing instruction")
-        if String.start_with?(body, "xml ") || body == "xml"
-          fail(rp, "misplaced XML declaration") unless start == 0
-          attrs = attributes(rp, body[3, String.size(body)] || "")
-          Array.push(kids, REXMLXMLDecl.new(attrs["version"] || "1.0", attrs["encoding"]))
-        else
-          Array.push(kids, REXMLInstruction.new("<?#{body}?>"))
-        end
-      elsif at?(rp, "<!--")
-        @pos += 4
-        Array.push(kids, REXMLComment.new(read_until(rp, "-->", "comment")))
-      elsif at?(rp, "<![CDATA[")
-        fail(rp, "CDATA outside the root element") if Array.size(stack) == 1
-        @pos += 9
-        Array.push(kids, REXMLCData.new(read_until(rp, "]]>", "CDATA section")))
-      elsif at?(rp, "<!DOCTYPE")
-        m = String.match(@src, /\G<!DOCTYPE[^\[>]*(?:\[.*?\]\s*)?>/m, @pos)
-        fail(rp, "malformed DOCTYPE") unless m
-        Array.push(kids, REXMLInstruction.new(MatchData.to_s(m)))
-        @pos += String.size(MatchData.to_s(m))
-        # REXML drops the whitespace after a DOCTYPE
-        ws = String.match(@src, /\G\s*/, @pos)
-        @pos += String.size(MatchData.to_s(ws)) if ws
-      elsif at?(rp, "</")
-        m = String.match(@src, /\G<\/([^\s>]+)\s*>/, @pos)
-        fail(rp, "malformed end tag") unless m
-        name = m[1] || ""
-        fail(rp, "unexpected end tag </#{name}>") if Array.size(stack) == 1
-        fail(rp, "missing end tag for '#{REXMLElement.name(cur)}' (got '#{name}')") unless name == REXMLElement.name(cur)
-        Array.pop(stack)
-        @pos += String.size(MatchData.to_s(m))
-      elsif at?(rp, "<")
-        m = String.match(@src, /\G<([A-Za-z_:][-\w.:]*)((?:\s+[^\s=\/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/, @pos)
-        fail(rp, "malformed start tag") unless m
-        if Array.size(stack) == 1 && Array.any?(kids) { |c| c in REXMLElement }
-          fail(rp, "extra content at the end of the document")
-        end
-        e = REXMLElement.new(m[1] || "", attributes(rp, m[2] || ""), parent: cur)
-        Array.push(kids, e)
-        Array.push(stack, e) if m[3] == ""
-        @pos += String.size(MatchData.to_s(m))
-      else
-        k = String.index(@src, "<", @pos) || len
-        raw = @src[@pos, k - @pos] || ""
-        if Array.size(stack) == 1 && String.strip(raw) != ""
-          fail(rp, "content at the document level")
-        end
-        # REXML drops the whitespace after the root element
-        Array.push(kids, REXMLText.new(raw)) unless Array.size(stack) == 1 && Array.any?(kids) { |c| c in REXMLElement }
-        @pos = k
-      end
-    end
-    last = Array.last(stack)
-    fail(rp, "no close tag for /#{REXMLElement.name(last)}") if last && Array.size(stack) > 1
-    rp
-  end
-
-  def attributes(rp, text)
-    h = Hash[]
-    rest = String.strip(text)
-    while rest != ""
-      m = String.match(rest, /\A([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')\s*/)
-      fail(rp, "malformed attribute") unless m
-      k = m[1] || ""
-      fail(rp, "duplicate attribute '#{k}'") if Hash.key?(h, k)
-      v = m[2] || m[3] || ""
-      fail(rp, "'<' in an attribute value") if String.include?(v, "<")
-      h[k] = REXML.unescape(v)
-      rest = MatchData.post_match(m)
-    end
-    h
-  end
-end
-
-module REXMLXPath
-  module_function
-
-  def context(node)
-    case node
-    in REXMLDocument then REXMLDocument.container(node)
-    in REXMLElement then node
-    end
-  end
-
-  # The top container above an element (the Document's, for a parsed one).
-  def top(e)
-    t = e
-    while true
-      up = REXMLElement.parent(t)
-      break unless up
-      t = up
-    end
-    t
-  end
-
-  def first(node, path) = Array.first(match(node, path))
-
-  def each(node, path)
-    Array.each(match(node, path)) { |e| yield(e) }
-    nil
-  end
-
-  # The steps of a path: [axis, test, predicates], axis :child or :descendant.
-  def steps(path)
-    out = Tuple[]
-    s = path
-    abs = String.start_with?(s, "/") && !String.start_with?(s, "//")
-    s = String.delete_prefix(s, "/") if abs
-    pos = 0
-    while pos < String.size(s)
-      m = String.match(s, /\G(\/\/|\/)?([^\/\[]+)((?:\[[^\]]*\])*)/, pos)
-      raise ArgumentError, "unsupported XPath: #{path}" unless m
-      axis = m[1] == "//" ? :descendant : :child
-      preds = String.scan(m[3] || "", /\[[^\]]*\]/).Array.map { |t| String.strip(t[1, String.size(t) - 2] || "") }
-      Array.push(out, [axis, String.strip(m[2] || ""), preds])
-      pos += String.size(MatchData.to_s(m))
-    end
-    [abs, out]
-  end
-
-  def match(node, path)
-    ctx = context(node)
-    abs, ss = steps(path)
-    nodes = REXMLElement[abs ? top(ctx) : ctx]
-    Array.each(ss) do |axis, test, preds|
-      out = REXMLElement[]
-      Array.each(nodes) do |n|
-        if test == "."
-          Array.push(out, n) if axis == :child
-          descendants(out, n) if axis == :descendant
-          next
-        end
-        if test == ".."
-          up = REXMLElement.parent(n)
-          Array.push(out, up) if up
-          next
-        end
-        select_children(out, n, test, preds, axis == :descendant)
-      end
-      nodes = out
-    end
-    nodes
-  end
-
-  def descendants(out, e)
-    Array.each(REXMLElement.element_children(e)) do |c|
-      Array.push(out, c)
-      descendants(out, c)
-    end
-    out
-  end
-
-  def test?(e, test) = test == "*" || REXMLElement.name(e) == test
-
-  # The children of e that pass the test and the predicates (a position counts among the children that
-  # pass the test), and with deep, those of every descendant too, in document order.
-  def select_children(out, e, test, preds, deep)
-    kids = REXMLElement.element_children(e)
-    last = Array.count(kids) { |c| test?(c, test) }
-    pos = 0
-    Array.each(kids) do |c|
-      if test?(c, test)
-        pos += 1
-        Array.push(out, c) if Array.all?(preds) { |pr| pred?(c, pr, pos, last) }
-      end
-      select_children(out, c, test, preds, deep) if deep
-    end
-    out
-  end
-
-  def pred?(e, pr, pos, last)
-    if String.match?(pr, /\A\d+\z/)
-      pos == String.to_i(pr)
-    elsif pr == "last()"
-      pos == last
-    elsif (m = String.match(pr, /\A@([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')\z/))
-      REXMLElement.attributes(e)[m[1] || ""] == (m[2] || m[3])
-    elsif (m = String.match(pr, /\A@([\w:.-]+)\z/))
-      Hash.key?(REXMLElement.attributes(e), m[1] || "")
-    elsif String.match?(pr, /\A[\w:.-]+\z/)
-      Array.any?(REXMLElement.element_children(e)) { |c| REXMLElement.name(c) == pr }
-    else
-      raise ArgumentError, "unsupported XPath predicate: [#{pr}]"
-    end
-  end
-end
-
 module REXML
+  class ParseException < Exception
+  end
+
+  class Text
+    attr_reader raw
+
+    def value(t) = REXML.unescape(@raw)
+    def to_s(t) = @raw
+    def inspect(t) = Kernel.inspect(@raw)
+  end
+
+  class CData
+    attr_reader value
+
+    def to_s(c) = @value
+    def inspect(c) = Kernel.inspect(@value)
+  end
+
+  class Comment
+    attr_reader string
+
+    def to_s(c) = @string
+    def inspect(c) = "<!--#{@string}-->"
+  end
+
+  # A DOCTYPE or a processing instruction, kept as written.
+  class Instruction
+    attr_reader raw
+
+    def to_s(i) = @raw
+    def inspect(i) = @raw
+  end
+
+  class XMLDecl
+    attr_reader version, encoding
+    def initialize(r)
+      @version = "1.0" if @version == nil
+    end
+
+    def to_s(x) = "<?xml version='#{@version}'#{@encoding ? " encoding='#{@encoding}'" : ""}?>"
+    def inspect(x) = to_s(x)
+  end
+
+  class Element
+    include Indexable
+
+    attr_reader name
+    attr_reader attributes, children
+    attr_accessor parent
+
+    def initialize(el)
+      @attributes = Hash[] if @attributes == nil
+      @children = Array[]
+      @name => String
+    end
+
+    # Ruby compares Elements by identity; this compares their content (not the parent).
+    def ==(a, b) = (b in Element) && @name == Element.name(b) && @attributes == Element.attributes(b) && @children == Element.children(b)
+
+    # el["attr"] is an attribute's value; el[i] the i-th child node (from 0), as in REXML.
+    def [](el, k)
+      case k
+      in String then @attributes[k]
+      in Integer then @children[k]
+      end
+    end
+
+    def elements(el) = Elements.new(el)
+    def element_children(el) = Array.filter_map(@children) { |c| (c in Element) ? c : nil }
+    def has_elements?(el) = Array.any?(@children) { |c| c in Element }
+    def has_attributes?(el) = !Hash.empty?(@attributes)
+    def has_text?(el) = Array.any?(@children) { |c| (c in Text) || (c in CData) }
+    # The top element above el (below its Document).
+    def root(el)
+      up = @parent
+      return el if up == nil || Element.name(up) == ""
+      Element.root(up)
+    end
+    def attribute(el, k) = @attributes[k]
+
+    # The value of the first text (or CDATA) child of el, or of the element at path; nil when none.
+    def text(el, path = nil)
+      e = path ? XPath.first(el, path) : el
+      return nil unless e
+      t = Array.find(Element.children(e)) { |c| (c in Text) || (c in CData) }
+      case t
+      in Text then Text.value(t)
+      in CData then CData.value(t)
+      else nil
+      end
+    end
+
+    def texts(el) = Array.filter_map(@children) { |c| ((c in Text) || (c in CData)) ? c : nil }
+    def cdatas(el) = Array.filter_map(@children) { |c| (c in CData) ? c : nil }
+    def comments(el) = Array.filter_map(@children) { |c| (c in Comment) ? c : nil }
+    def get_elements(el, path) = XPath.match(el, path)
+
+    def each_element(el, path = "*")
+      Array.each(XPath.match(el, path)) { |e| yield(e) }
+      el
+    end
+
+    def add_element(el, name, attrs = Hash[])
+      e = Element.new(name, parent: el)
+      Hash.each(attrs) { |k, v| Element.add_attribute(e, k, v) }
+      Array.push(@children, e)
+      e
+    end
+
+    def add_attribute(el, k, v)
+      k => String
+      v => String
+      @attributes[k] = v
+      el
+    end
+
+    def delete_attribute(el, k) = Hash.delete(@attributes, k)
+
+    def add_text(el, s)
+      s => String
+      Array.push(@children, Text.new(REXML.escape_text(s)))
+      el
+    end
+
+    def start_tag(el) = "<#{@name}#{Array.join(Hash.map(@attributes) { |k, v| " #{k}='#{REXML.escape_attr(v)}'" }, "")}"
+
+    def to_s(el)
+      return start_tag(el) + "/>" if Array.empty?(@children)
+      "#{start_tag(el)}>#{Array.join(Array.map(@children) { |c| REXML.write(c) }, "")}</#{@name}>"
+    end
+
+    def inspect(el) = Array.empty?(@children) ? start_tag(el) + "/>" : start_tag(el) + "> ... </>"
+  end
+
+  # Ruby's Element#elements: element children by position (from 1) or by XPath.
+  class Elements
+    include Indexable
+
+    attr_reader element
+
+    def [](es, k)
+      case k
+      in Integer then Element.element_children(@element)[k - 1]
+      in String then XPath.first(@element, k)
+      end
+    end
+
+    def each(es, path = "*")
+      Array.each(XPath.match(@element, path)) { |e| yield(e) }
+      es
+    end
+
+    def to_a(es, path = "*") = XPath.match(@element, path)
+    def size(es) = Array.size(Element.element_children(@element))
+    def empty?(es) = size(es) == 0
+  end
+
+  class Document
+    attr_reader source
+    private attr_reader node
+
+    def initialize(doc)
+      @source = "" if @source == nil
+      @node = Element.new("")
+      @source => String
+      Parser.parse(Parser.new(@source, @node))
+    end
+
+    def root(doc) = Array.first(Element.element_children(@node))
+    def children(doc) = Element.children(@node)
+    def elements(doc) = Elements.new(@node)
+    def container(doc) = @node
+    def add_element(doc, name, attrs = Hash[]) = Element.add_element(@node, name, attrs)
+
+    def xml_decl(doc) = Array.filter_map(Element.children(@node)) { |c| (c in XMLDecl) ? c : nil }.Array.first
+    def version(doc)
+      d = xml_decl(doc)
+      (d in XMLDecl) ? XMLDecl.version(d) : "1.0"
+    end
+    def encoding(doc)
+      d = xml_decl(doc)
+      e = (d in XMLDecl) ? XMLDecl.encoding(d) : nil
+      e || "UTF-8"
+    end
+
+    def to_s(doc) = Array.join(Array.map(Element.children(@node)) { |c| REXML.write(c) }, "")
+    def inspect(doc) = "<UNDEFINED> ... </>"
+  end
+
+  class Parser
+    attr_reader src, top
+    private attr_accessor pos
+    def initialize(r) = @pos = 0
+
+    def fail(rp, msg)
+      line = String.count(@src[0, @pos] || "", "\n") + 1
+      raise ParseException, "#{msg} (line #{line})"
+    end
+
+    def at?(rp, s) = String.start_with?(@src[@pos, String.size(s)] || "", s)
+
+    # Text up to the next s (which is skipped), or a failure.
+    def read_until(rp, s, what)
+      k = String.index(@src, s, @pos)
+      fail(rp, "unclosed #{what}") unless k
+      body = @src[@pos, k - @pos] || ""
+      @pos = k + String.size(s)
+      body
+    end
+
+    def parse(rp)
+      stack = Element[@top]
+      len = String.size(@src)
+      while @pos < len
+        cur = Array.last(stack)
+        cur => Element
+        kids = Element.children(cur)
+        if at?(rp, "<?")
+          start = @pos
+          @pos += 2
+          body = read_until(rp, "?>", "processing instruction")
+          if String.start_with?(body, "xml ") || body == "xml"
+            fail(rp, "misplaced XML declaration") unless start == 0
+            attrs = attributes(rp, body[3, String.size(body)] || "")
+            Array.push(kids, XMLDecl.new(attrs["version"] || "1.0", attrs["encoding"]))
+          else
+            Array.push(kids, Instruction.new("<?#{body}?>"))
+          end
+        elsif at?(rp, "<!--")
+          @pos += 4
+          Array.push(kids, Comment.new(read_until(rp, "-->", "comment")))
+        elsif at?(rp, "<![CDATA[")
+          fail(rp, "CDATA outside the root element") if Array.size(stack) == 1
+          @pos += 9
+          Array.push(kids, CData.new(read_until(rp, "]]>", "CDATA section")))
+        elsif at?(rp, "<!DOCTYPE")
+          m = String.match(@src, /\G<!DOCTYPE[^\[>]*(?:\[.*?\]\s*)?>/m, @pos)
+          fail(rp, "malformed DOCTYPE") unless m
+          Array.push(kids, Instruction.new(MatchData.to_s(m)))
+          @pos += String.size(MatchData.to_s(m))
+          # REXML drops the whitespace after a DOCTYPE
+          ws = String.match(@src, /\G\s*/, @pos)
+          @pos += String.size(MatchData.to_s(ws)) if ws
+        elsif at?(rp, "</")
+          m = String.match(@src, /\G<\/([^\s>]+)\s*>/, @pos)
+          fail(rp, "malformed end tag") unless m
+          name = m[1] || ""
+          fail(rp, "unexpected end tag </#{name}>") if Array.size(stack) == 1
+          fail(rp, "missing end tag for '#{Element.name(cur)}' (got '#{name}')") unless name == Element.name(cur)
+          Array.pop(stack)
+          @pos += String.size(MatchData.to_s(m))
+        elsif at?(rp, "<")
+          m = String.match(@src, /\G<([A-Za-z_:][-\w.:]*)((?:\s+[^\s=\/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/, @pos)
+          fail(rp, "malformed start tag") unless m
+          if Array.size(stack) == 1 && Array.any?(kids) { |c| c in Element }
+            fail(rp, "extra content at the end of the document")
+          end
+          e = Element.new(m[1] || "", attributes(rp, m[2] || ""), parent: cur)
+          Array.push(kids, e)
+          Array.push(stack, e) if m[3] == ""
+          @pos += String.size(MatchData.to_s(m))
+        else
+          k = String.index(@src, "<", @pos) || len
+          raw = @src[@pos, k - @pos] || ""
+          if Array.size(stack) == 1 && String.strip(raw) != ""
+            fail(rp, "content at the document level")
+          end
+          # REXML drops the whitespace after the root element
+          Array.push(kids, Text.new(raw)) unless Array.size(stack) == 1 && Array.any?(kids) { |c| c in Element }
+          @pos = k
+        end
+      end
+      last = Array.last(stack)
+      fail(rp, "no close tag for /#{Element.name(last)}") if last && Array.size(stack) > 1
+      rp
+    end
+
+    def attributes(rp, text)
+      h = Hash[]
+      rest = String.strip(text)
+      while rest != ""
+        m = String.match(rest, /\A([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')\s*/)
+        fail(rp, "malformed attribute") unless m
+        k = m[1] || ""
+        fail(rp, "duplicate attribute '#{k}'") if Hash.key?(h, k)
+        v = m[2] || m[3] || ""
+        fail(rp, "'<' in an attribute value") if String.include?(v, "<")
+        h[k] = REXML.unescape(v)
+        rest = MatchData.post_match(m)
+      end
+      h
+    end
+  end
+
+  module XPath
+    module_function
+
+    def context(node)
+      case node
+      in Document then Document.container(node)
+      in Element then node
+      end
+    end
+
+    # The top container above an element (the Document's, for a parsed one).
+    def top(e)
+      t = e
+      while true
+        up = Element.parent(t)
+        break unless up
+        t = up
+      end
+      t
+    end
+
+    def first(node, path) = Array.first(match(node, path))
+
+    def each(node, path)
+      Array.each(match(node, path)) { |e| yield(e) }
+      nil
+    end
+
+    # The steps of a path: [axis, test, predicates], axis :child or :descendant.
+    def steps(path)
+      out = Tuple[]
+      s = path
+      abs = String.start_with?(s, "/") && !String.start_with?(s, "//")
+      s = String.delete_prefix(s, "/") if abs
+      pos = 0
+      while pos < String.size(s)
+        m = String.match(s, /\G(\/\/|\/)?([^\/\[]+)((?:\[[^\]]*\])*)/, pos)
+        raise ArgumentError, "unsupported XPath: #{path}" unless m
+        axis = m[1] == "//" ? :descendant : :child
+        preds = String.scan(m[3] || "", /\[[^\]]*\]/).Array.map { |t| String.strip(t[1, String.size(t) - 2] || "") }
+        Array.push(out, [axis, String.strip(m[2] || ""), preds])
+        pos += String.size(MatchData.to_s(m))
+      end
+      [abs, out]
+    end
+
+    def match(node, path)
+      ctx = context(node)
+      abs, ss = steps(path)
+      nodes = Element[abs ? top(ctx) : ctx]
+      Array.each(ss) do |axis, test, preds|
+        out = Element[]
+        Array.each(nodes) do |n|
+          if test == "."
+            Array.push(out, n) if axis == :child
+            descendants(out, n) if axis == :descendant
+            next
+          end
+          if test == ".."
+            up = Element.parent(n)
+            Array.push(out, up) if up
+            next
+          end
+          select_children(out, n, test, preds, axis == :descendant)
+        end
+        nodes = out
+      end
+      nodes
+    end
+
+    def descendants(out, e)
+      Array.each(Element.element_children(e)) do |c|
+        Array.push(out, c)
+        descendants(out, c)
+      end
+      out
+    end
+
+    def test?(e, test) = test == "*" || Element.name(e) == test
+
+    # The children of e that pass the test and the predicates (a position counts among the children that
+    # pass the test), and with deep, those of every descendant too, in document order.
+    def select_children(out, e, test, preds, deep)
+      kids = Element.element_children(e)
+      last = Array.count(kids) { |c| test?(c, test) }
+      pos = 0
+      Array.each(kids) do |c|
+        if test?(c, test)
+          pos += 1
+          Array.push(out, c) if Array.all?(preds) { |pr| pred?(c, pr, pos, last) }
+        end
+        select_children(out, c, test, preds, deep) if deep
+      end
+      out
+    end
+
+    def pred?(e, pr, pos, last)
+      if String.match?(pr, /\A\d+\z/)
+        pos == String.to_i(pr)
+      elsif pr == "last()"
+        pos == last
+      elsif (m = String.match(pr, /\A@([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')\z/))
+        Element.attributes(e)[m[1] || ""] == (m[2] || m[3])
+      elsif (m = String.match(pr, /\A@([\w:.-]+)\z/))
+        Hash.key?(Element.attributes(e), m[1] || "")
+      elsif String.match?(pr, /\A[\w:.-]+\z/)
+        Array.any?(Element.element_children(e)) { |c| Element.name(c) == pr }
+      else
+        raise ArgumentError, "unsupported XPath predicate: [#{pr}]"
+      end
+    end
+  end
+
   module_function
 
   def entities = once { Hash["lt" => "<", "gt" => ">", "amp" => "&", "quot" => "\"", "apos" => "'"] }
@@ -439,8 +439,8 @@ module REXML
   # A node as it is written inside an element (CDATA and comments with their delimiters).
   def write(node)
     case node
-    in REXMLCData then "<![CDATA[#{REXMLCData.value(node)}]]>"
-    in REXMLComment then "<!--#{REXMLComment.string(node)}-->"
+    in CData then "<![CDATA[#{CData.value(node)}]]>"
+    in Comment then "<!--#{Comment.string(node)}-->"
     else Kernel.to_s(node)
     end
   end

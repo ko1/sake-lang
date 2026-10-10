@@ -1,8 +1,8 @@
 # monitor
 
 `sakelib/monitor.sake`: Ruby's Monitor (reentrant lock), its condition variables (Ruby's
-`MonitorMixin::ConditionVariable`, here `MonitorCond`), `MonitorMixin`, and the exception type `ThreadError`.
-Monitor: 18 functions (12 of Ruby's API plus aliases and 3 internal ones); MonitorCond: 6; MonitorMixin: 10.
+`MonitorMixin::ConditionVariable`, the same name here since 2026-10-10, `MonitorCond` before), `MonitorMixin`, and the exception type `ThreadError`.
+Monitor: 18 functions (12 of Ruby's API plus aliases and 3 internal ones); MonitorMixin::ConditionVariable: 6; MonitorMixin: 10.
 The test (threads, a bounded buffer, broadcast, the mixin) prints 29 lines, identical to `monitor.rb`, in 5 of 5 runs.
 
 ## What Sake has and what the port is built from
@@ -38,10 +38,10 @@ thread** (no `Thread.current`). So:
 | `m.mon_locked?` | same | same |
 | `m.mon_owned?` | `Monitor.mon_owned?(m, me)` | differs: asks about `me`, not the current thread |
 | `m.mon_check_owner` | `Monitor.mon_check_owner(m, me = nil)` | same |
-| `m.new_cond` | `Monitor.new_cond(m)` → MonitorCond | same |
-| `cond.wait(timeout = nil)` | `MonitorCond.wait(c, me = nil)` | differs: no timeout (`Queue.pop` has none) |
-| `cond.wait_while { }`, `wait_until { }` | `MonitorCond.wait_while(c, me = nil) { }`, `wait_until` | same |
-| `cond.signal`, `broadcast` | `MonitorCond.signal(c, me = nil)`, `broadcast` | same; `ThreadError` unless the monitor is held |
+| `m.new_cond` | `Monitor.new_cond(m)` → MonitorMixin::ConditionVariable | same |
+| `cond.wait(timeout = nil)` | `MonitorMixin::ConditionVariable.wait(c, me = nil)` | differs: no timeout (`Queue.pop` has none) |
+| `cond.wait_while { }`, `wait_until { }` | `MonitorMixin::ConditionVariable.wait_while(c, me = nil) { }`, `wait_until` | same |
+| `cond.signal`, `broadcast` | `MonitorMixin::ConditionVariable.signal(c, me = nil)`, `broadcast` | same; `ThreadError` unless the monitor is held |
 | `include MonitorMixin` (`mon_initialize`) | `private attr_accessor mon_data`, `@mon_data = Monitor.new` in initialize, `include MonitorMixin` | differs: the field is declared and set by the type; the checker reports a type that forgets to set it (nil at `Monitor.enter`) |
 | `mon_enter`, `mon_exit`, `mon_try_enter`, `try_mon_enter`, `mon_synchronize`, `synchronize`, `mon_locked?`, `mon_owned?`, `mon_check_owner`, `new_cond` on the includer | `Account.mon_enter(a, me = nil)` etc. | same, with `me` |
 | `Monitor#wait_for_cond(cond, timeout)` | `Monitor.release_for_wait`, `restore_count` (internal) | differs |
@@ -84,7 +84,7 @@ thread** (no `Thread.current`). So:
 ## Types
 
 - `Monitor.owner: Integer | nil | :consumer | :main | :producer | :t` (every identity the program passes),
-  `Monitor.waiters: Array[[Queue[true|false], me] ...]`, `MonitorCond.waiters: Array[Queue[true|false]]`.
+  `Monitor.waiters: Array[[Queue[true|false], me] ...]`, `MonitorMixin::ConditionVariable.waiters: Array[Queue[true|false]]`.
   All checks proven at `--types`.
 
 ## Later the same day (2026-10-09)

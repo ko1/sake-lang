@@ -19,10 +19,10 @@
 
 | Ruby | Sake | |
 |---|---|---|
-| `Date.new(y = -4712, m = 1, d = 1)`, `Date.civil(...)` | same | same (since 2026-10-05: field defaults + `initialize`, which raises `DateError` for an invalid date). The fourth argument is Ruby's `start` (since the second 2026-10-05 change; only `Date.ITALY`, else `ArgumentError`). A non-Integer year/month/day is a `type` report at the call (`@year => Integer` in initialize); Ruby raises `TypeError` |
+| `Date.new(y = -4712, m = 1, d = 1)`, `Date.civil(...)` | same | same (since 2026-10-05: field defaults + `initialize`, which raises `Date::Error` for an invalid date). The fourth argument is Ruby's `start` (since the second 2026-10-05 change; only `Date.ITALY`, else `ArgumentError`). A non-Integer year/month/day is a `type` report at the call (`@year => Integer` in initialize); Ruby raises `TypeError` |
 | `Date.new(y, -1, -1)` (negative month/day) | same | same |
 | `Date.new`, `Date.new(y)`, `Date.new(y, m)` (defaults) | same | same |
-| `Date::Error` | `DateError` | differs: no nested names (`A::B`). In Ruby it is an `ArgumentError` subclass; Sake has no hierarchy, so `rescue ArgumentError` does not catch it. Message `invalid date`, same |
+| `Date::Error` | `Date::Error` | same name (nested in `class Date` since 2026-10-10; was `DateError`). In Ruby it is an `ArgumentError` subclass; Sake has no hierarchy, so `rescue ArgumentError` does not catch it. Message `invalid date`, same |
 | `Date.valid_date?` / `valid_civil?` / `valid_ordinal?` / `valid_commercial?` / `valid_jd?` | same names | same |
 | `Date.leap?(y)`, `Date.gregorian_leap?(y)`, `Date.julian_leap?(y)` | same | same |
 | `d.leap?` | `Date.leap?(d)` | same (one op takes an Integer or a Date, by `case/in`) |
@@ -138,10 +138,10 @@ Result: about 3% faster, at the edge of the spread: the per-directive `case` and
 
 - `Date.new(y, m, d)` is Ruby's validating constructor: fields reordered to `year = -4712, month = 1, day = 1,
   jd = nil`, and `def initialize(d)` asserts Integers (`@year => Integer`), computes `@jd` with
-  `DateCore.valid_civil_jd`, raises `DateError` when invalid, and resolves negative month/day.
+  `DateCore.valid_civil_jd`, raises `Date::Error` when invalid, and resolves negative month/day.
   `Date.civil` is now `= Date.new(y, m, d)`, as in Ruby (an alias). The test uses `Date.new` like `date.rb`.
-- `DateError = Exception.new` → `class DateError < Exception`.
-- Remaining frictions: `DateError` for `Date::Error` (no nested names; no `ArgumentError` parent);
+- `DateError = Exception.new` → `class DateError < Exception` (now `class Error < Exception` inside `class Date`).
+- Remaining frictions: `Date::Error` has no `ArgumentError` parent (its name matches Ruby since 2026-10-10; was `DateError`);
   Date as a Hash key; one operation for Ruby's class and instance methods of the same name
   (`Date.jd`, `leap?`, `iso8601`, by `case x in Integer`); the strptime cursor as a Tuple `[pos]`.
 

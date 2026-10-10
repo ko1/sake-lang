@@ -28,14 +28,14 @@ Tarjan's algorithm as Ruby's `tsort.rb` writes it (recursive), so components com
    `TSort.each_strongly_connected_component_hash(h) { }`. A child that is not a key is a leaf.
    These stand in for Ruby's module functions `TSort.tsort(each_node, each_child)`, which take two
    callables (`h.method(:each_key)`, a lambda); Sake has no first-class blocks. Inside, they wrap the
-   Hash in an internal Struct type `TSortHashGraph` that includes TSort.
+   Hash in an internal Struct type `TSort::HashGraph` (was `TSortHashGraph`) that includes TSort.
 
 **Trade-off.** The mixin is the general form: any node source (a field, a computed set, a file),
 nodes of any type, and the graph's own representation; the cost is two definitions in the user's
 type. It is resolved statically (`Build.tsort` is fixed before running; `TSort.tsort(x)` checks that
 `x`'s type includes TSort). The Hash form costs nothing to call but fixes the representation, and
 because a Struct field has one type for the whole program, every Hash passed to `tsort_hash` merges
-into the field type of `TSortHashGraph.h` (`--types` shows a union of all callers' Hashes); this is
+into the field type of `TSort::HashGraph.h` (`--types` shows a union of all callers' Hashes); this is
 harmless here because nodes are only used as Hash keys and compared with `==`. Making `Hash` include
 TSort inside the library would give `Hash.tsort(h)` for free, but it would decide Hash's
 `tsort_each_child` for every program (missing key: leaf or KeyError?) and clash with a user's own
@@ -54,7 +54,7 @@ includes TSort is fine.
 | `obj.each_strongly_connected_component { }` | `T.each_strongly_connected_component(obj) { }` | same |
 | `obj.each_strongly_connected_component_from(n, id_map = {}, stack = []) { }` | `T.each_strongly_connected_component_from(obj, n, id_map = Hash[], stack = Array[]) { }` | same (returns the minimum id as Ruby) |
 | `obj.tsort_each`, `obj.each_strongly_connected_component` (no block → Enumerator) | `T.tsort_each(obj)`, `T.each_strongly_connected_component(obj)` | same as the Enumerator's `to_a`: an Array, as the built-in blockless `each_slice` (2026-10-05) |
-| `TSort::Cyclic` | `TSortCyclic` | differs: name (no nested names) |
+| `TSort::Cyclic` | `TSort::Cyclic` | same (nested since 2026-10-10; was `TSortCyclic`). Inside `def tsort` it is spelled in full (a bare `Cyclic` in a mixin body resolved at the include site until a fix on 2026-10-10; either form works now) |
 | `TSort.tsort(each_node, each_child)` and the other module functions on callables | `TSort.tsort_hash(h)`, `strongly_connected_components_hash`, `tsort_each_hash`, `each_strongly_connected_component_hash` | differs: a Hash graph instead of two callables |
 | `TSort.each_strongly_connected_component_from(node, each_child, ...)` | — | missing (use the mixin) |
 
@@ -111,7 +111,7 @@ None for the algorithm. Language-level: first-class blocks (Ruby's callable form
 
 ## Review 2026-10-05 (passing blocks on, exception class)
 
-- `TSortCyclic` is `class TSortCyclic < Exception` (was `Exception.new`).
+- `TSortCyclic` is `class TSortCyclic < Exception` (was `Exception.new`). 2026-10-10: now `TSort::Cyclic`, nested as Ruby's.
 - The Hash-graph `tsort_each_hash` / `each_strongly_connected_component_hash` and the internal
   `tsort_each_node` pass their block on with `&b` (`Hash.each_key(@h, &b)`, as Ruby's
   `each_key(&block)`), instead of `{ |n| yield(n) }`.
@@ -121,7 +121,7 @@ None for the algorithm. Language-level: first-class blocks (Ruby's callable form
 - `tsort_each` and `each_strongly_connected_component` without a block return an Array (Ruby's
   Enumerator, as `to_a`), like the built-in blockless `each_cons` / `each_slice`; the test compares
   them with Ruby's `.to_a`.
-- `TSortHashGraph`'s Hash is `private attr_reader h`: no `TSortHashGraph.h` reader outside.
+- `TSort::HashGraph`'s Hash is `private attr_reader h`: no `TSort::HashGraph.h` reader outside.
 - Nothing else changed: the module has no keyword or rest parameters in Ruby, and no internal
   state besides the includer. Still differs: `TSort::Cyclic` (no nested names) and the callable
   module functions (`TSort.tsort(each_node, each_child)`).

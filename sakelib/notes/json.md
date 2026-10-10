@@ -35,16 +35,16 @@ order of checks and messages.
 | `JSON.load_file(path)`, `(path, symbolize_names: true, ...)` | `JSON.load_file(path)`, `(path, symbolize_names: true, ...)` | same |
 | `obj.to_json` | `Hash.to_json(h)`, `Array.to_json(a)`, `String.to_json(s)`, `Integer.to_json(n)`, `Float.to_json(f)` | differs; `nil.to_json`, `true.to_json` missing (nil and true/false have no namespace) |
 | `JSON[s]`, `JSON(s)` | | missing (`JSON[...]` would be a typed-Array literal) |
-| `JSON::ParserError` | `JSONParserError` | differs (no nested names) |
-| `JSON::NestingError` | raised as `JSONParserError`, Ruby's message | differs (no subtype; Ruby's NestingError is a ParserError, so `rescue JSONParserError` catches it as in Ruby, also from `generate`) |
-| `JSON::GeneratorError` | `JSONGeneratorError` | differs (name) |
-| `JSON::ParserError#line`, `#column` | `JSONParserError.line(e)`, `e.JSONParserError.column` | same (nil for a nesting error, as Ruby; 2026-10-05) |
+| `JSON::ParserError` | `JSON::ParserError` | same name (nested since 2026-10-10; was `JSONParserError`) |
+| `JSON::NestingError` | raised as `JSON::ParserError`, Ruby's message | differs (no subtype; Ruby's NestingError is a ParserError, so `rescue JSON::ParserError` catches it as in Ruby, also from `generate`) |
+| `JSON::GeneratorError` | `JSON::GeneratorError` | same name (was `JSONGeneratorError`) |
+| `JSON::ParserError#line`, `#column` | `JSON::ParserError.line(e)`, `e.JSON::ParserError.column` | same (nil for a nesting error, as Ruby; 2026-10-05) |
 | `JSON::Fragment`, `JSON::Coder`, `json/add/*`, `to_json(state)` protocol | | missing |
 
 Generating takes nil, true, false, Integer, Float, String, Symbol (as a String), Array, Tuple (as an
 array), Hash (keys by `to_s`, as Ruby), and anything else by its `to_s` as a JSON string. That last case
 matches Ruby's `Object#to_json`, for example a Struct value gives `"#<struct Point x=1, y=2>"`. A
-Record raises `JSONGeneratorError`, because Sake cannot list a Record's fields. A binary String that is
+Record raises `JSON::GeneratorError`, because Sake cannot list a Record's fields. A binary String that is
 valid UTF-8 is accepted, as in json 2.20 (without the deprecation warning). Any other binary String
 raises with Ruby's message.
 
@@ -56,9 +56,11 @@ raises with Ruby's message.
   `JSON.parse(s, symbolize_name: true)` → `error: JSON.parse has no keyword parameter
   `symbolize_name`` / `hint: did you mean `symbolize_names:`?`. Ruby's positional opts Hash is not
   taken (`k: v` to a Sake function is always a keyword).
-- **Exception names.** `JSON::ParserError` cannot be written, because namespaces do not nest. Sake also
-  has no exception hierarchy, so `NestingError` is not its own type: it is raised as
-  `JSONParserError`, which is what `rescue JSON::ParserError` catches in Ruby anyway.
+- **Exception names.** `JSON::ParserError` and `JSON::GeneratorError` are nested in `module JSON` as in
+  Ruby (since 2026-10-10; before that they were `JSONParserError` / `JSONGeneratorError`), and the two
+  state types are `JSON::Parser` / `JSON::State`, Ruby's names (were `JSONParserState` /
+  `JSONGeneratorState`). Sake has no exception hierarchy, so `NestingError` is not its own type: it is
+  raised as `JSON::ParserError`, which is what `rescue JSON::ParserError` catches in Ruby anyway.
 - **`to_json` per type.** Ruby's `obj.to_json` is dispatch on the receiver. In Sake it is one operation
   per built-in type (`class Hash; def to_json(h)`). nil, true, and false have no namespace to add it to.
 - **Error columns** are byte columns, as in Ruby. The quoted fragment is cut at 32 bytes on character
@@ -104,9 +106,9 @@ callers narrow with `if v in Hash`. The test's config example does this.
    correct, but the second message reads oddly for a Hash lookup (as the earlier library's notes say).
 7. `Array.size(JSON.parse(...))` → a 300-character union in the message → assign it to a local and
    narrow with `if x in Array`.
-8. When I made the generator's nesting error a `JSONParserError` (as Ruby's), the test's
-   `rescue JSONGeneratorError` around `generate(deep)` was reported:
-   `the begin body never raises JSONGeneratorError [rescue]`. This was a real catch, reported before
+8. When I made the generator's nesting error a `JSON::ParserError` (as Ruby's), the test's
+   `rescue JSON::GeneratorError` around `generate(deep)` was reported:
+   `the begin body never raises JSON::GeneratorError [rescue]`. This was a real catch, reported before
    running.
 9. `--strict=3`: `c = @src[@pos]` after a `@pos >= @len` guard gave `[index-nil]` (the guard is on a
    field, and `x[k]` is not narrowed by it), and `mant, ex = String.split(t, "e")` did too →
@@ -165,7 +167,7 @@ callers narrow with `if v in Hash`. The test's config example does this.
 
 ## Review against the 2026-10-05 language
 
-- `JSONParserState` / `JSONGeneratorState` convert their options in `initialize` (flags to
+- `JSON::Parser` / `JSON::State` convert their options in `initialize` (flags to
   true/false, `max_nesting` false/nil to 0, the source's byte size), as Ruby's `JSON::Parser.new` /
   `JSON::State.new`; `pos`/`depth` have defaults, so `JSON.parse` passes only the source and options.
 - `JSON.load` matches `in IO` (the workaround for `json_bug_io_not_a_pattern_type.sake`, fixed, is
@@ -176,15 +178,15 @@ callers narrow with `if v in Hash`. The test's config example does this.
 
 ## 2026-10-05
 
-- Internal state is private: `JSONParserState` and `JSONGeneratorState` declare their fields with
+- Internal state is private: `JSON::Parser` and `JSON::State` declare their fields with
   `private attr_reader` / `private attr_accessor`, so no reader leaks outside. The parse driver
   (`skip_ws`, `value`, the end-of-stream check), which `JSON.parse` wrote with
-  `JSONParserState.pos(ps)` / `len(ps)`, moved into `JSONParserState.parse(ps)`.
+  `JSON::Parser.pos(ps)` / `len(ps)`, moved into `JSON::Parser.parse(ps)`.
 - The states take their options by keyword, with Ruby's names and defaults on the fields:
-  `JSONParserState.new(s, symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:)`,
-  `JSONGeneratorState.new(indent:, space:, ...)`, as Ruby's `JSON::Parser.new(src, **opts)` /
+  `JSON::Parser.new(s, symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:)`,
+  `JSON::State.new(indent:, space:, ...)`, as Ruby's `JSON::Parser.new(src, **opts)` /
   `JSON::State.new(**opts)`.
-- New: `JSON.parse!(s)`, and `JSONParserError` has Ruby's `line` / `column` fields (nil for a nesting
+- New: `JSON.parse!(s)`, and `JSON::ParserError` has Ruby's `line` / `column` fields (nil for a nesting
   error). The test checks both.
 - `Float::NAN` / `Float::INFINITY` replace `0.0 / 0.0` / `1.0 / 0.0` in the parser and the test.
 - Still not Ruby's API: `fast_generate` / `pretty_generate` / `load_file` / `parse!` still repeat the

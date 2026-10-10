@@ -1,7 +1,7 @@
 # timeout
 
 `sakelib/timeout.sake`: `Timeout.timeout(sec, klass = nil, message = nil) { }` and the exception type
-`TimeoutError` (Ruby's `Timeout::Error`). 1 function. The test prints 14 lines, identical to `timeout.rb`
+`Timeout::Error` (Ruby's name; `TimeoutError` before 2026-10-10). 1 function. The test prints 14 lines, identical to `timeout.rb`
 (times are checked with generous margins and printed as pass/fail).
 
 ## The gap: Sake cannot interrupt a block
@@ -13,7 +13,7 @@ until the deadline:
 
 - finished in time: `Thread.value` gives the block's value, or raises the exception the block raised, as itself
   (`rescue RuntimeError`, `ArgumentError` around the call work as in Ruby);
-- not finished: `TimeoutError` ("execution expired", or `message`) is raised in the caller, and **the block
+- not finished: `Timeout::Error` ("execution expired", or `message`) is raised in the caller, and **the block
   keeps running** in its thread until it ends by itself or the program ends. Its side effects after the
   deadline still happen (Ruby's would not), and a block that never ends keeps a thread busy. The test does not
   print anything that depends on this (it would differ from Ruby by design).
@@ -32,7 +32,7 @@ calling thread, as Ruby.
 | `Timeout.timeout(sec, nil, message) { }` | same | same |
 | `Timeout.timeout(nil) { }`, `(0) { }` | same | same: no limit |
 | negative `sec` | `ArgumentError "Timeout sec must be a non-negative number"` | same |
-| `Timeout::Error` | `TimeoutError` | differs: no nested names |
+| `Timeout::Error` | `Timeout::Error` | same (nested since 2026-10-10; was `TimeoutError`) |
 | `Timeout::ExitException`, `Timeout.timeout` inside `Timeout.timeout` cancelling the outer | inner raises first, outer thread keeps waiting on the inner's thread | partial |
 
 ## Built-ins needed (requests)
@@ -61,4 +61,4 @@ Thread.join(t, limit) is built in (it would replace the polling loop). Thread.ra
 
 ## Later the same day, again (2026-10-09)
 
-With `Thread.join(t, limit)` and `Thread.raise(t, message)` built in, `Timeout.timeout` now interrupts the block where it is (its ensure clauses run) and raises TimeoutError, as Ruby's. The polling loop and the "the block keeps running" caveat are gone. A block with a bare `rescue` swallows the interruption, as in Ruby.
+With `Thread.join(t, limit)` and `Thread.raise(t, message)` built in, `Timeout.timeout` now interrupts the block where it is (its ensure clauses run) and raises Timeout::Error, as Ruby's. The polling loop and the "the block keeps running" caveat are gone. A block with a bare `rescue` swallows the interruption, as in Ruby.

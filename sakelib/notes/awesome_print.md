@@ -32,14 +32,15 @@ Hash: `AwesomePrint.ai(h, plain: true, indent: 2)`.
 | `ap obj.methods` (the methods table) | — | missing (no `methods`) |
 | `AwesomePrint.defaults`, `~/.aprc`, `AwesomePrint.force_colors!`, `Kernel#ai` monkey patch, IRB/Pry/Rails hooks | — | missing |
 
-2 module functions with 6 options; the walk is 11 operations of the Struct type `AwesomeInspector`.
+2 module functions with 6 options; the walk is 11 operations of the Struct type `AwesomePrint::Inspector` (the gem's
+name; nested since 2026-10-10, before that `AwesomeInspector`).
 
 ## できたこと / できなかったこと
 
 - **Done.** The layout for every built-in value: arrays, hashes with any key type (a Tuple key prints as `[ 1, 2 ]`
   on one line, as the gem prints an Array key), nesting, the three `indent` modes, one-line mode, `sort_keys`,
   `ruby19_syntax`, colours. The gem's `Inspector` keeps the current indentation and the options in an object; here
-  that is the Struct type `AwesomeInspector`, and `indented(ai) { ... }` is the gem's `indented` block (a function
+  that is the Struct type `AwesomePrint::Inspector`, and `indented(ai) { ... }` is the gem's `indented` block (a function
   that yields, with `ensure` restoring the level). `plain_single_line` flips two fields and restores them.
 - **Dispatch by type tag.** `awesome(ai, v)` is `case v in Array ... in Hash ... in String ...` as `pp.sake`'s
   walk is. The gem's `cast` (by `object.class`) and `awesome_#{type}` by `send` have no counterpart; the closed

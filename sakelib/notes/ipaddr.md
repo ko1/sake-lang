@@ -12,7 +12,7 @@ with about 45 public operations, the four exception types, and `Socket.AF_UNSPEC
 |---|---|---|
 | `IPAddr.new(s = "::")`, `IPAddr.new(int, Socket::AF_INET)` | `IPAddr.new(s)`, `IPAddr.new(int, Socket.AF_INET)` | same: `initialize` parses the first field (a String, or an Integer with a family), with `"[v6]"`, `"%zone"`, `"/len"`, `"/mask"` |
 | `Socket::AF_INET`, `AF_INET6`, `AF_UNSPEC` | `Socket.AF_INET` ... | differs: functions (2, 10, 0, as Linux) |
-| `IPAddr::InvalidAddressError`, `AddressFamilyError`, `InvalidPrefixError`, `Error` | `IPAddrInvalidAddressError` ... | differs: no nested names, and no hierarchy (Ruby: InvalidPrefixError < InvalidAddressError < Error < ArgumentError), so `rescue ArgumentError` or `rescue IPAddrInvalidAddressError` does not catch an InvalidPrefixError; list them. Messages same |
+| `IPAddr::InvalidAddressError`, `AddressFamilyError`, `InvalidPrefixError`, `Error` | `IPAddr::InvalidAddressError` ... (nested since 2026-10-10; were `IPAddrInvalidAddressError` ...) | same names, but no hierarchy (Ruby: InvalidPrefixError < InvalidAddressError < Error < ArgumentError), so `rescue ArgumentError` or `rescue IPAddr::InvalidAddressError` does not catch an InvalidPrefixError; list them. Messages same |
 | `to_s`, `to_string`, `to_i`, `inspect`, `cidr`, `netmask`, `wildcard_mask`, `prefix`, `family` | `IPAddr.to_s(ip)` ... | same (`#<IPAddr: IPv4:192.168.1.0/255.255.255.0>`) |
 | `ip.prefix = n`, `ip.zone_id = z` | `ip.IPAddr.prefix = n`, `ip.IPAddr.zone_id = z` | same (`def prefix=(ip, n)`) |
 | `mask(len or "mask")`, `include?`, `===` | same | same (String / Integer / IPAddr argument) |

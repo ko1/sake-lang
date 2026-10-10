@@ -9,7 +9,7 @@
 # JSON.generate), so a token is byte for byte the gem's.
 #
 # The gem's exception classes all descend from JWT::DecodeError; Sake has no hierarchy, so each is its
-# own type (JWT::ExpiredSignature -> JWTExpiredSignature) and `rescue JWTDecodeError` catches only that
+# own type nested in `module JWT`, as the gem's (`JWT::ExpiredSignature`), and `rescue JWT::DecodeError` catches only that
 # one. JWT.decode_error?(e) tells whether e is any of them, for a `rescue => e`.
 #
 # Ruby's options Hash is keywords: JWT.decode(token, key, true, algorithm: "HS512", leeway: 10).
@@ -17,34 +17,34 @@
 require "digest"
 require "json"
 
-class JWTDecodeError < Exception
-end
-class JWTEncodeError < Exception
-end
-class JWTVerificationError < Exception
-end
-class JWTExpiredSignature < Exception
-end
-class JWTImmatureSignature < Exception
-end
-class JWTInvalidIatError < Exception
-end
-class JWTIncorrectAlgorithm < Exception
-end
-class JWTInvalidIssuerError < Exception
-end
-class JWTInvalidAudError < Exception
-end
-class JWTInvalidSubError < Exception
-end
-class JWTInvalidJtiError < Exception
-end
-class JWTInvalidPayload < Exception
-end
-class JWTBase64DecodeError < Exception
-end
-
 module JWT
+  class DecodeError < Exception
+  end
+  class EncodeError < Exception
+  end
+  class VerificationError < Exception
+  end
+  class ExpiredSignature < Exception
+  end
+  class ImmatureSignature < Exception
+  end
+  class InvalidIatError < Exception
+  end
+  class IncorrectAlgorithm < Exception
+  end
+  class InvalidIssuerError < Exception
+  end
+  class InvalidAudError < Exception
+  end
+  class InvalidSubError < Exception
+  end
+  class InvalidJtiError < Exception
+  end
+  class InvalidPayload < Exception
+  end
+  class Base64DecodeError < Exception
+  end
+
   module_function
 
   # ---- Base64url (RFC 7515 §2) ----
@@ -55,12 +55,12 @@ module JWT
   def base64url_decode(s)
     t = String.tr(s, "-_", "+/")
     r = String.length(t) % 4
-    raise JWTBase64DecodeError, "Invalid base64 encoding" if r == 1
+    raise Base64DecodeError, "Invalid base64 encoding" if r == 1
     t += "=" * (4 - r) if r > 0
     begin
       String.unpack1(t, "m0") || ""
     rescue ArgumentError => e
-      raise JWTBase64DecodeError, "Invalid base64 encoding"
+      raise Base64DecodeError, "Invalid base64 encoding"
     end
   end
 
@@ -75,18 +75,18 @@ module JWT
   end
 
   def hmac_sha256(key, msg)
-    inner = SHA256.digest(hmac_key(key, 64, 0x36) { |k| SHA256.digest(k) } + String.b(msg))
-    SHA256.digest(hmac_key(key, 64, 0x5c) { |k| SHA256.digest(k) } + inner)
+    inner = Digest::SHA256.digest(hmac_key(key, 64, 0x36) { |k| Digest::SHA256.digest(k) } + String.b(msg))
+    Digest::SHA256.digest(hmac_key(key, 64, 0x5c) { |k| Digest::SHA256.digest(k) } + inner)
   end
 
   def hmac_sha384(key, msg)
-    inner = SHA384.digest(hmac_key(key, 128, 0x36) { |k| SHA384.digest(k) } + String.b(msg))
-    SHA384.digest(hmac_key(key, 128, 0x5c) { |k| SHA384.digest(k) } + inner)
+    inner = Digest::SHA384.digest(hmac_key(key, 128, 0x36) { |k| Digest::SHA384.digest(k) } + String.b(msg))
+    Digest::SHA384.digest(hmac_key(key, 128, 0x5c) { |k| Digest::SHA384.digest(k) } + inner)
   end
 
   def hmac_sha512(key, msg)
-    inner = SHA512.digest(hmac_key(key, 128, 0x36) { |k| SHA512.digest(k) } + String.b(msg))
-    SHA512.digest(hmac_key(key, 128, 0x5c) { |k| SHA512.digest(k) } + inner)
+    inner = Digest::SHA512.digest(hmac_key(key, 128, 0x36) { |k| Digest::SHA512.digest(k) } + String.b(msg))
+    Digest::SHA512.digest(hmac_key(key, 128, 0x5c) { |k| Digest::SHA512.digest(k) } + inner)
   end
 
   def algorithms = Array["HS256", "HS384", "HS512", "none"]
@@ -100,13 +100,13 @@ module JWT
   # The signature of the signing input for alg; "" for none.
   def sign(alg, key, input)
     return "" if alg == "none"
-    raise JWTDecodeError, "No verification key available" if key == nil
-    raise JWTDecodeError, "HMAC key cannot be empty" if key == ""
+    raise DecodeError, "No verification key available" if key == nil
+    raise DecodeError, "HMAC key cannot be empty" if key == ""
     case alg
     in "HS256" then hmac_sha256(key, input)
     in "HS384" then hmac_sha384(key, input)
     in "HS512" then hmac_sha512(key, input)
-    else raise JWTEncodeError, "Unsupported signing method"
+    else raise EncodeError, "Unsupported signing method"
     end
   end
 
@@ -132,7 +132,7 @@ module JWT
       next unless Hash.key?(payload, name)
       v = payload[name]
       next if v in Integer | Float | Rational
-      raise JWTInvalidPayload, "#{name} claim must be a Numeric value but it is a #{type_name(v)}"
+      raise InvalidPayload, "#{name} claim must be a Numeric value but it is a #{type_name(v)}"
     end
     nil
   end
@@ -144,7 +144,7 @@ module JWT
     in Integer | Float | Rational then Arithmetic.to_i(v)
     in String then String.to_i(v)
     in nil then 0
-    else raise JWTInvalidPayload, "#{name} claim must be a Numeric value but it is a #{type_name(v)}"
+    else raise InvalidPayload, "#{name} claim must be a Numeric value but it is a #{type_name(v)}"
     end
   end
 
@@ -163,38 +163,38 @@ module JWT
                     verify_jti)
     if verify_expiration && Hash.key?(payload, "exp")
       l = exp_leeway == nil ? leeway : exp_leeway
-      raise JWTExpiredSignature, "Signature has expired" if numeric_claim(payload, "exp") <= now - l
+      raise ExpiredSignature, "Signature has expired" if numeric_claim(payload, "exp") <= now - l
     end
     if verify_not_before && Hash.key?(payload, "nbf")
       l = nbf_leeway == nil ? leeway : nbf_leeway
-      raise JWTImmatureSignature, "Signature nbf has not been reached" if numeric_claim(payload, "nbf") > now + l
+      raise ImmatureSignature, "Signature nbf has not been reached" if numeric_claim(payload, "nbf") > now + l
     end
     if verify_iat && Hash.key?(payload, "iat")
       # The gem (3.2) applies no leeway to iat, whatever leeway: or iat_leeway: says.
       iat = payload["iat"]
-      raise JWTInvalidIatError, "Invalid iat" unless iat in Integer | Float | Rational
-      raise JWTInvalidIatError, "Invalid iat" if Arithmetic.to_i(iat) > now
+      raise InvalidIatError, "Invalid iat" unless iat in Integer | Float | Rational
+      raise InvalidIatError, "Invalid iat" if Arithmetic.to_i(iat) > now
     end
     if verify_iss
       actual = payload["iss"]
       unless claim_matches?(iss, actual)
         expected = (iss in Array) ? iss : Array[iss]
-        raise JWTInvalidIssuerError, "Invalid issuer. Expected #{Kernel.inspect(expected)}, received #{shown(actual)}"
+        raise InvalidIssuerError, "Invalid issuer. Expected #{Kernel.inspect(expected)}, received #{shown(actual)}"
       end
     end
     if verify_aud
       actual = payload["aud"]
       unless claim_matches?(aud, actual)
-        raise JWTInvalidAudError, "Invalid audience. Expected #{shown(aud)}, received #{shown(actual)}"
+        raise InvalidAudError, "Invalid audience. Expected #{shown(aud)}, received #{shown(actual)}"
       end
     end
     if verify_sub
       actual = payload["sub"]
-      raise JWTInvalidSubError, "Invalid subject. Expected #{shown(sub)}, received #{shown(actual)}" if actual != sub
+      raise InvalidSubError, "Invalid subject. Expected #{shown(sub)}, received #{shown(actual)}" if actual != sub
     end
     if verify_jti
       jti = payload["jti"]
-      raise JWTInvalidJtiError, "Missing jti" if jti == nil || jti == ""
+      raise InvalidJtiError, "Missing jti" if jti == nil || jti == ""
     end
     nil
   end
@@ -205,7 +205,7 @@ module JWT
   # Symbol keys, written in order), header_fields a Hash put before "alg" in the header, as the gem.
   def encode(payload, key, algorithm = "HS256", header_fields = nil)
     alg = canonical_alg(algorithm)
-    raise JWTEncodeError, "Unsupported signing method" unless Array.include?(algorithms, alg)
+    raise EncodeError, "Unsupported signing method" unless Array.include?(algorithms, alg)
     validate_numeric_claims(payload)
     header = Hash[]
     Hash.each(header_fields) { |k, v| header[Kernel.to_s(k)] = v } if header_fields != nil
@@ -218,8 +218,8 @@ module JWT
   def segment_object(s)
     v = begin
       JSON.parse(String.force_encoding(base64url_decode(s), "UTF-8"))
-    rescue JSONParserError => e
-      raise JWTDecodeError, "Invalid segment encoding"
+    rescue JSON::ParserError => e
+      raise DecodeError, "Invalid segment encoding"
     end
     v => Hash
     v
@@ -231,7 +231,7 @@ module JWT
     return nil if n == 3
     return nil if n == 2 && !verify
     return nil if n == 2 && segment_object(Array.fetch(segments, 0))["alg"] == "none"
-    raise JWTDecodeError, "Not enough or too many segments"
+    raise DecodeError, "Not enough or too many segments"
   end
 
   # JWT.decode(token, key = nil, verify = true, options...): [payload, header]. With verify, the
@@ -250,12 +250,12 @@ module JWT
       alg = header["alg"]
       alg = canonical_alg(alg) if alg in String
       allowed = Array.map(algorithms == nil ? Array[algorithm] : algorithms) { |a| canonical_alg(a) }
-      raise JWTIncorrectAlgorithm, "Expected a different algorithm" unless Array.include?(allowed, alg)
+      raise IncorrectAlgorithm, "Expected a different algorithm" unless Array.include?(allowed, alg)
       alg => String
       signature = n == 3 ? base64url_decode(Array.fetch(segments, 2)) : ""
       input = Array.fetch(segments, 0) + "." + Array.fetch(segments, 1)
       unless alg == "none" || signature == sign(alg, key, input)
-        raise JWTVerificationError, "Signature verification failed"
+        raise VerificationError, "Signature verification failed"
       end
       verify_claims(payload, Time.to_i(Time.now), leeway, exp_leeway, nbf_leeway, verify_expiration, verify_not_before, verify_iat, verify_iss, iss, verify_aud, aud,
                     verify_sub, sub, verify_jti)
@@ -265,8 +265,8 @@ module JWT
 
   # True for every exception type of this library (the gem's `rescue JWT::DecodeError`).
   def decode_error?(e)
-    e in JWTDecodeError | JWTVerificationError | JWTExpiredSignature | JWTImmatureSignature |
-         JWTInvalidIatError | JWTIncorrectAlgorithm | JWTInvalidIssuerError | JWTInvalidAudError |
-         JWTInvalidSubError | JWTInvalidJtiError | JWTInvalidPayload | JWTBase64DecodeError
+    e in DecodeError | VerificationError | ExpiredSignature | ImmatureSignature |
+         InvalidIatError | IncorrectAlgorithm | InvalidIssuerError | InvalidAudError |
+         InvalidSubError | InvalidJtiError | InvalidPayload | Base64DecodeError
   end
 end

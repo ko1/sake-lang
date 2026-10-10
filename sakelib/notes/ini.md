@@ -15,7 +15,7 @@ the same 72 lines as `ini.rb`. 151 lines, 19 functions.
 | `ini.each { \|s, k, v\| }`, `each_section { \|s\| }` | `IniFile.each(ini) { \|s, k, v\| }`, ... | same |
 | `ini.merge(other)` | `IniFile.merge(ini, other)` | same |
 | `ini.to_s`, `ini.write(filename:)`, `ini.filename=` | `IniFile.to_s(ini)`, `IniFile.write(ini, filename:)`, `IniFile.set_filename` | same |
-| `IniFile::Error` | `IniFileError` | differs (no nested names) |
+| `IniFile::Error` | `IniFile::Error` | same (nested since 2026-10-10; was `IniFileError`) |
 | `merge!`, `encoding:`, `escape:` option, `\` line continuations, `ini.each` without a block | | missing |
 
 Values are typecast as the gem does: `true`/`false`, Integer, Float, otherwise a String; `"quoted"`
@@ -23,7 +23,7 @@ values stay Strings and take `\n \t \\ \"` escapes; an inline comment needs a sp
 
 ## What differs, and why
 
-- `IniFile::Error` → `IniFileError` (no nested names).
+- `IniFile::Error` is `IniFile::Error`, declared inside `class IniFile` (2026-10-10; it was `IniFileError` while names could not nest).
 - `ini["missing"]` creates and stores an empty section, as the gem's `Hash.new { }` default does; Sake has
   no block default, so `[]` does `@ini[section] ||= Hash[]`.
 

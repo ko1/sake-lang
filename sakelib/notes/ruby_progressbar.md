@@ -7,8 +7,8 @@ unknown total, the limits, the warnings, the exact bytes a terminal would receiv
 the readers of the gem's options.
 
 Ruby's `ProgressBar.create(opts)` returns a `ProgressBar::Base`; here `ProgressBar` is the type and
-`ProgressBar.create` takes the gem's options as keywords. `ProgressBar::InvalidProgressError` is
-`InvalidProgressError` (no nested names).
+`ProgressBar.create` takes the gem's options as keywords. `ProgressBar::InvalidProgressError` is the gem's name,
+nested in the class (2026-10-10; before namespaces nested it was `InvalidProgressError`).
 
 ## API
 
@@ -19,7 +19,7 @@ Ruby's `ProgressBar.create(opts)` returns a `ProgressBar::Base`; here `ProgressB
 | `time: ProgressBar::Time.new(clock)` (a time source) | `clock: Time.at(...)`, `ProgressBar.set_clock(bar, t)` | differs: a fixed Time instead of an object with `now`; nil = `Time.now` |
 | `output: io` (tty or not), `output: ProgressBar::Outputs::Null` | `output: io` (IO or StringIO), `output: nil` | differs: always the TTY behaviour (below) |
 | `bar.increment`, `decrement`, `finish`, `reset`, `pause`, `stop`, `resume`, `start(at:)` | `ProgressBar.increment(bar)`, ... | same (`start` needs `at:`) |
-| `bar.progress = n`, `bar.total = n` | `ProgressBar.set_progress(bar, n)`, `set_total` | differs: name (no setters); raises `InvalidProgressError` as the gem |
+| `bar.progress = n`, `bar.total = n` | `ProgressBar.set_progress(bar, n)`, `set_total` | differs: name (no setters); raises `ProgressBar::InvalidProgressError` as the gem |
 | `bar.title = s`, `format = s`, `progress_mark = s`, `remainder_mark = s` | `ProgressBar.set_title(bar, s)`, ... | differs: name; each redraws, as the gem |
 | `bar.progress`, `total`, `title`, `format`, `length` | `ProgressBar.progress(bar)`, ... | same |
 | `bar.to_s`, `bar.to_s(new_format)` | `ProgressBar.to_s(bar)`, `to_s(bar, fmt)` | same (the new format stays) |

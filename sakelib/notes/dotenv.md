@@ -2,7 +2,7 @@
 
 `sakelib/dotenv.sake`: the dotenv gem (3.2.0, installed; the Ruby twin `test/sakelib/dotenv.rb` runs the real
 gem). `.env` files into ENV: `Dotenv.load`, `overload`, `parse`, `update`, `modify`, `require_keys`, and the
-parser `DotenvParser.call(text)` with the gem's whole syntax (comments, `export`, `KEY: value`, single and
+parser `Dotenv::Parser.call(text)` with the gem's whole syntax (comments, `export`, `KEY: value`, single and
 double quotes, `\"` / `\\` unescaping, `$VAR` / `${VAR}` substitution, `$(cmd)` command substitution,
 `DOTENV_LINEBREAK_MODE`). 11 operations, 2 exception types; the test prints 51 lines, identical to the gem's.
 
@@ -14,11 +14,11 @@ double quotes, `\"` / `\\` unescaping, `$VAR` / `${VAR}` substitution, `$(cmd)` 
 | `Dotenv.load!(*files)` (Errno::ENOENT) | `Dotenv.load!(*files)` (IOError) | differs: exception type |
 | `Dotenv.overwrite` / `overload` / `overwrite!` / `overload!` | same names | same |
 | `Dotenv.parse(*files, overwrite:, ignore:)` → Hash | `Dotenv.parse(*files, ...)` | same (no block per file) |
-| `Dotenv::Parser.call(text, overwrite:)` → Hash | `DotenvParser.call(text, overwrite:)` | differs: flattened name |
+| `Dotenv::Parser.call(text, overwrite:)` → Hash | `Dotenv::Parser.call(text, overwrite:)` | same (nested, as Ruby; was `DotenvParser` before 2026-10-10) |
 | `Dotenv.update(env, overwrite:)` → Hash of changed keys | `Dotenv.update(env, overwrite:)` | same (`overwrite: :warn` missing) |
 | `Dotenv.modify(env) { }` | `Dotenv.modify(env) { }` | same |
-| `Dotenv.require_keys(*keys)` (Dotenv::MissingKeys) | `Dotenv.require_keys(*keys)` (DotenvMissingKeys) | same message |
-| `Dotenv::FormatError` (a SyntaxError) | `DotenvFormatError` | same message |
+| `Dotenv.require_keys(*keys)` (Dotenv::MissingKeys) | `Dotenv.require_keys(*keys)` (Dotenv::MissingKeys) | same message |
+| `Dotenv::FormatError` (a SyntaxError) | `Dotenv::FormatError` | same name and message (was `DotenvFormatError` before 2026-10-10) |
 | `Dotenv.save` / `Dotenv.restore` | — | missing (`modify` restores by itself; no `ENV.replace`) |
 | `Dotenv.instrumenter`, Rails railtie, `dotenv/autorestore`, `dotenv/tasks`, `Dotenv::Template`, the `dotenv` CLI | — | missing: Rails / Minitest hooks and ActiveSupport::Notifications |
 
@@ -38,8 +38,10 @@ double quotes, `\"` / `\\` unescaping, `$VAR` / `${VAR}` substitution, `$(cmd)` 
   stores an object with a `instrument` method (duck typing). The Rails/Minitest integrations patch other
   libraries' classes.
 - `Dotenv::FormatError < SyntaxError`: not a StandardError in Ruby, so `rescue => e` misses it (I hit that
-  probing the gem). Sake has no exception hierarchy; `rescue DotenvFormatError` is the only form, and the
+  probing the gem). Sake has no exception hierarchy; `rescue Dotenv::FormatError` is the only form, and the
   trap does not exist.
+- Names (2026-10-10): `Dotenv::Parser`, `Dotenv::FormatError`, `Dotenv::MissingKeys` are declared inside
+  `module Dotenv` and match Ruby; they were `DotenvParser` / `DotenvFormatError` / `DotenvMissingKeys`.
 
 ## 書き心地
 

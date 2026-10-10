@@ -4,334 +4,334 @@
 # reads a file; TOML.dump(h) gives TOML text.
 # Supported: comments, bare / quoted / dotted keys, [tables], [[arrays of tables]], basic, literal and
 # multi-line strings, integers (decimal, 0x, 0o, 0b, underscores), floats (inf, nan), booleans, arrays,
-# inline tables. Not supported: dates and times (they raise TOMLParseError).
-# Ruby's TomlRB::ParseError is TOMLParseError, with the line number as a field.
-
-class TOMLParseError < Exception
-  attr_reader line
-  def initialize(t)
-    @line = 0 if @line == nil
-  end
-end
-
-class TOMLParser
-  attr_reader src, symbolize
-  private attr_accessor pos, len
-  private attr_reader root, current, headers, array_tables
-
-  def initialize(tp)
-    @symbolize = false if @symbolize == nil
-    @pos = 0
-    @len = 0
-    @root = Hash[]
-    @current = nil
-    @headers = Set[]
-    @array_tables = Set[]
-    @src => String
-    @len = String.size(@src)
-    @current = @root
-  end
-
-  def peek(tp) = @src[@pos]
-  def at?(tp, s) = String.start_with?(@src[@pos, String.size(s)] || "", s)
-
-  def fail(tp, msg)
-    line = String.count(@src[0, @pos] || "", "\n") + 1
-    raise TOMLParseError.new("#{msg} at line #{line}", line)
-  end
-
-  def skip_ws(tp)
-    @pos += 1 while @pos < @len && (peek(tp) == " " || peek(tp) == "\t")
-    tp
-  end
-
-  def skip_comment(tp)
-    if peek(tp) == "#"
-      @pos += 1 while @pos < @len && peek(tp) != "\n"
-    end
-    tp
-  end
-
-  # Spaces, comments and newlines (inside arrays).
-  def skip_all(tp)
-    while @pos < @len
-      skip_ws(tp)
-      skip_comment(tp)
-      c = peek(tp)
-      break unless c == "\n" || c == "\r"
-      @pos += 1
-    end
-    tp
-  end
-
-  def end_of_line(tp)
-    skip_ws(tp)
-    skip_comment(tp)
-    @pos += 1 if at?(tp, "\r\n")
-    return tp if @pos >= @len
-    fail(tp, "expected end of line, got #{Kernel.inspect(peek(tp))}") unless peek(tp) == "\n"
-    @pos += 1
-    tp
-  end
-
-  def parse(tp)
-    while true
-      skip_all(tp)
-      break if @pos >= @len
-      if at?(tp, "[[")
-        @pos += 2
-        path = key_path(tp)
-        expect(tp, "]]")
-        array_table(tp, path)
-      elsif peek(tp) == "["
-        @pos += 1
-        path = key_path(tp)
-        expect(tp, "]")
-        table(tp, path)
-      else
-        cur = @current
-        cur => Hash
-        key_value(tp, cur)
-      end
-      end_of_line(tp)
-    end
-    @root
-  end
-
-  def expect(tp, s)
-    skip_ws(tp)
-    fail(tp, "expected #{Kernel.inspect(s)}") unless at?(tp, s)
-    @pos += String.size(s)
-    tp
-  end
-
-  # ---- keys ----
-
-  def key(tp, k) = @symbolize ? String.to_sym(k) : k
-
-  def simple_key(tp)
-    skip_ws(tp)
-    c = peek(tp)
-    return basic_string(tp) if c == "\""
-    return literal_string(tp) if c == "'"
-    m = String.match(@src, /\G[A-Za-z0-9_-]+/, @pos)
-    fail(tp, "expected a key") unless m
-    @pos += String.size(MatchData.to_s(m))
-    MatchData.to_s(m)
-  end
-
-  def key_path(tp)
-    path = String[simple_key(tp)]
-    while true
-      skip_ws(tp)
-      break unless peek(tp) == "."
-      @pos += 1
-      Array.push(path, simple_key(tp))
-    end
-    path
-  end
-
-  # The table at path below h, made when missing; through an array of tables, its last element.
-  def descend(tp, h, path, header)
-    t = h
-    Array.each_with_index(path) do |k, i|
-      kk = key(tp, k)
-      v = t[kk]
-      if v == nil
-        n = Hash[]
-        t[kk] = n
-        t = n
-      elsif v in Hash
-        t = v
-      elsif header && (v in Array) && Set.include?(@array_tables, Array.first(path, i + 1))
-        last = Array.last(v)
-        last => Hash
-        t = last
-      else
-        fail(tp, "key #{k} is already defined")
-      end
-    end
-    t
-  end
-
-  def table(tp, path)
-    name = Array.join(path, ".")
-    fail(tp, "table #{name} is defined twice") if Set.include?(@headers, path)
-    fail(tp, "table #{name} is an array of tables") if Set.include?(@array_tables, path)
-    Set.add(@headers, path)
-    @current = descend(tp, @root, path, true)
-    tp
-  end
-
-  def array_table(tp, path)
-    parent = descend(tp, @root, Array.first(path, Array.size(path) - 1), true)
-    k = key(tp, Array.last(path) || "")
-    a = parent[k]
-    if a == nil
-      a = Array[]
-      parent[k] = a
-      Set.add(@array_tables, path)
-    end
-    fail(tp, "key #{Array.join(path, ".")} is not an array of tables") unless (a in Array) && Set.include?(@array_tables, path)
-    t = Hash[]
-    Array.push(a, t)
-    @current = t
-    # a header below this array of tables may be used again in the next element
-    Set.delete_if(@headers) { |h| Array.size(h) > Array.size(path) && Array.first(h, Array.size(path)) == path }
-    tp
-  end
-
-  def key_value(tp, h)
-    path = key_path(tp)
-    expect(tp, "=")
-    skip_ws(tp)
-    v = value(tp)
-    t = descend(tp, h, Array.first(path, Array.size(path) - 1), false)
-    last = path[-1] || ""
-    k = key(tp, last)
-    fail(tp, "duplicate key #{last}") if Hash.key?(t, k)
-    t[k] = v
-    h
-  end
-
-  # ---- values ----
-
-  def value(tp)
-    c = peek(tp)
-    fail(tp, "expected a value") if c == nil || c == "\n"
-    case c
-    in "\"" then at?(tp, "\"\"\"") ? multiline_basic(tp) : basic_string(tp)
-    in "'" then at?(tp, "'''") ? multiline_literal(tp) : literal_string(tp)
-    in "[" then array(tp)
-    in "{" then inline_table(tp)
-    else
-      if at?(tp, "true")
-        @pos += 4
-        true
-      elsif at?(tp, "false")
-        @pos += 5
-        false
-      else
-        number(tp)
-      end
-    end
-  end
-
-  def array(tp)
-    a = Array[]
-    @pos += 1
-    while true
-      skip_all(tp)
-      if peek(tp) == "]"
-        @pos += 1
-        break
-      end
-      Array.push(a, value(tp))
-      skip_all(tp)
-      c = peek(tp)
-      if c == ","
-        @pos += 1
-      elsif c == "]"
-        @pos += 1
-        break
-      else
-        fail(tp, "expected ',' or ']' in an array")
-      end
-    end
-    a
-  end
-
-  def inline_table(tp)
-    h = Hash[]
-    @pos += 1
-    skip_ws(tp)
-    if peek(tp) == "}"
-      @pos += 1
-      return h
-    end
-    while true
-      key_value(tp, h)
-      skip_ws(tp)
-      c = peek(tp)
-      if c == ","
-        @pos += 1
-      elsif c == "}"
-        @pos += 1
-        break
-      else
-        fail(tp, "expected ',' or '}' in an inline table")
-      end
-    end
-    h
-  end
-
-  def number(tp)
-    m = String.match(@src, /\G[0-9A-Za-z_+\-.:]+/, @pos)
-    fail(tp, "expected a value") unless m
-    s = MatchData.to_s(m)
-    fail(tp, "dates and times are not supported") if String.match?(s, /\A\d{4}-\d\d-\d\d|\A\d\d:\d\d/)
-    v = TOML.number(s)
-    fail(tp, "invalid value #{s}") if v == nil
-    @pos += String.size(s)
-    v
-  end
-
-  # ---- strings ----
-
-  def escapes = once { Hash["b" => "\b", "t" => "\t", "n" => "\n", "f" => "\f", "r" => "\r", "\"" => "\"", "\\" => "\\"] }
-
-  # Unescapes a basic string body; a backslash before a newline trims the following whitespace.
-  def unescape(tp, body)
-    String.gsub(body, /\\(?:u(\h{4})|U(\h{8})|[ \t]*\r?\n[ \t\r\n]*|(.))/m) do |m|
-      md = String.match(m, /\A\\(?:u(\h{4})|U(\h{8})|(.))?/m)
-      md => MatchData
-      hex = md[1] || md[2]
-      e = md[3]
-      if hex
-        format("%c", String.hex(hex))
-      elsif String.match?(m, /\A\\[ \t]*\r?\n/)
-        ""
-      else
-        r = escapes[e]
-        fail(tp, "invalid escape \\#{e}") unless r
-        r
-      end
-    end
-  end
-
-  def basic_string(tp)
-    m = String.match(@src, /\G"((?:[^"\\\n]|\\.)*)"/, @pos)
-    fail(tp, "unterminated string") unless m
-    @pos += String.size(MatchData.to_s(m))
-    unescape(tp, m[1] || "")
-  end
-
-  def literal_string(tp)
-    m = String.match(@src, /\G'([^'\n]*)'/, @pos)
-    fail(tp, "unterminated string") unless m
-    @pos += String.size(MatchData.to_s(m))
-    m[1] || ""
-  end
-
-  def multiline_basic(tp)
-    m = String.match(@src, /\G"""\r?\n?((?:[^\\]|\\.)*?"{0,2})"""/m, @pos)
-    fail(tp, "unterminated string") unless m
-    @pos += String.size(MatchData.to_s(m))
-    unescape(tp, m[1] || "")
-  end
-
-  def multiline_literal(tp)
-    m = String.match(@src, /\G'''\r?\n?(.*?'{0,2})'''/m, @pos)
-    fail(tp, "unterminated string") unless m
-    @pos += String.size(MatchData.to_s(m))
-    m[1] || ""
-  end
-end
+# inline tables. Not supported: dates and times (they raise TOML::ParseError).
+# Ruby's TomlRB::ParseError is TOML::ParseError, with the line number as a field.
 
 module TOML
+  class ParseError < Exception
+    attr_reader line
+    def initialize(t)
+      @line = 0 if @line == nil
+    end
+  end
+
+  class Parser
+    attr_reader src, symbolize
+    private attr_accessor pos, len
+    private attr_reader root, current, headers, array_tables
+
+    def initialize(tp)
+      @symbolize = false if @symbolize == nil
+      @pos = 0
+      @len = 0
+      @root = Hash[]
+      @current = nil
+      @headers = Set[]
+      @array_tables = Set[]
+      @src => String
+      @len = String.size(@src)
+      @current = @root
+    end
+
+    def peek(tp) = @src[@pos]
+    def at?(tp, s) = String.start_with?(@src[@pos, String.size(s)] || "", s)
+
+    def fail(tp, msg)
+      line = String.count(@src[0, @pos] || "", "\n") + 1
+      raise ParseError.new("#{msg} at line #{line}", line)
+    end
+
+    def skip_ws(tp)
+      @pos += 1 while @pos < @len && (peek(tp) == " " || peek(tp) == "\t")
+      tp
+    end
+
+    def skip_comment(tp)
+      if peek(tp) == "#"
+        @pos += 1 while @pos < @len && peek(tp) != "\n"
+      end
+      tp
+    end
+
+    # Spaces, comments and newlines (inside arrays).
+    def skip_all(tp)
+      while @pos < @len
+        skip_ws(tp)
+        skip_comment(tp)
+        c = peek(tp)
+        break unless c == "\n" || c == "\r"
+        @pos += 1
+      end
+      tp
+    end
+
+    def end_of_line(tp)
+      skip_ws(tp)
+      skip_comment(tp)
+      @pos += 1 if at?(tp, "\r\n")
+      return tp if @pos >= @len
+      fail(tp, "expected end of line, got #{Kernel.inspect(peek(tp))}") unless peek(tp) == "\n"
+      @pos += 1
+      tp
+    end
+
+    def parse(tp)
+      while true
+        skip_all(tp)
+        break if @pos >= @len
+        if at?(tp, "[[")
+          @pos += 2
+          path = key_path(tp)
+          expect(tp, "]]")
+          array_table(tp, path)
+        elsif peek(tp) == "["
+          @pos += 1
+          path = key_path(tp)
+          expect(tp, "]")
+          table(tp, path)
+        else
+          cur = @current
+          cur => Hash
+          key_value(tp, cur)
+        end
+        end_of_line(tp)
+      end
+      @root
+    end
+
+    def expect(tp, s)
+      skip_ws(tp)
+      fail(tp, "expected #{Kernel.inspect(s)}") unless at?(tp, s)
+      @pos += String.size(s)
+      tp
+    end
+
+    # ---- keys ----
+
+    def key(tp, k) = @symbolize ? String.to_sym(k) : k
+
+    def simple_key(tp)
+      skip_ws(tp)
+      c = peek(tp)
+      return basic_string(tp) if c == "\""
+      return literal_string(tp) if c == "'"
+      m = String.match(@src, /\G[A-Za-z0-9_-]+/, @pos)
+      fail(tp, "expected a key") unless m
+      @pos += String.size(MatchData.to_s(m))
+      MatchData.to_s(m)
+    end
+
+    def key_path(tp)
+      path = String[simple_key(tp)]
+      while true
+        skip_ws(tp)
+        break unless peek(tp) == "."
+        @pos += 1
+        Array.push(path, simple_key(tp))
+      end
+      path
+    end
+
+    # The table at path below h, made when missing; through an array of tables, its last element.
+    def descend(tp, h, path, header)
+      t = h
+      Array.each_with_index(path) do |k, i|
+        kk = key(tp, k)
+        v = t[kk]
+        if v == nil
+          n = Hash[]
+          t[kk] = n
+          t = n
+        elsif v in Hash
+          t = v
+        elsif header && (v in Array) && Set.include?(@array_tables, Array.first(path, i + 1))
+          last = Array.last(v)
+          last => Hash
+          t = last
+        else
+          fail(tp, "key #{k} is already defined")
+        end
+      end
+      t
+    end
+
+    def table(tp, path)
+      name = Array.join(path, ".")
+      fail(tp, "table #{name} is defined twice") if Set.include?(@headers, path)
+      fail(tp, "table #{name} is an array of tables") if Set.include?(@array_tables, path)
+      Set.add(@headers, path)
+      @current = descend(tp, @root, path, true)
+      tp
+    end
+
+    def array_table(tp, path)
+      parent = descend(tp, @root, Array.first(path, Array.size(path) - 1), true)
+      k = key(tp, Array.last(path) || "")
+      a = parent[k]
+      if a == nil
+        a = Array[]
+        parent[k] = a
+        Set.add(@array_tables, path)
+      end
+      fail(tp, "key #{Array.join(path, ".")} is not an array of tables") unless (a in Array) && Set.include?(@array_tables, path)
+      t = Hash[]
+      Array.push(a, t)
+      @current = t
+      # a header below this array of tables may be used again in the next element
+      Set.delete_if(@headers) { |h| Array.size(h) > Array.size(path) && Array.first(h, Array.size(path)) == path }
+      tp
+    end
+
+    def key_value(tp, h)
+      path = key_path(tp)
+      expect(tp, "=")
+      skip_ws(tp)
+      v = value(tp)
+      t = descend(tp, h, Array.first(path, Array.size(path) - 1), false)
+      last = path[-1] || ""
+      k = key(tp, last)
+      fail(tp, "duplicate key #{last}") if Hash.key?(t, k)
+      t[k] = v
+      h
+    end
+
+    # ---- values ----
+
+    def value(tp)
+      c = peek(tp)
+      fail(tp, "expected a value") if c == nil || c == "\n"
+      case c
+      in "\"" then at?(tp, "\"\"\"") ? multiline_basic(tp) : basic_string(tp)
+      in "'" then at?(tp, "'''") ? multiline_literal(tp) : literal_string(tp)
+      in "[" then array(tp)
+      in "{" then inline_table(tp)
+      else
+        if at?(tp, "true")
+          @pos += 4
+          true
+        elsif at?(tp, "false")
+          @pos += 5
+          false
+        else
+          number(tp)
+        end
+      end
+    end
+
+    def array(tp)
+      a = Array[]
+      @pos += 1
+      while true
+        skip_all(tp)
+        if peek(tp) == "]"
+          @pos += 1
+          break
+        end
+        Array.push(a, value(tp))
+        skip_all(tp)
+        c = peek(tp)
+        if c == ","
+          @pos += 1
+        elsif c == "]"
+          @pos += 1
+          break
+        else
+          fail(tp, "expected ',' or ']' in an array")
+        end
+      end
+      a
+    end
+
+    def inline_table(tp)
+      h = Hash[]
+      @pos += 1
+      skip_ws(tp)
+      if peek(tp) == "}"
+        @pos += 1
+        return h
+      end
+      while true
+        key_value(tp, h)
+        skip_ws(tp)
+        c = peek(tp)
+        if c == ","
+          @pos += 1
+        elsif c == "}"
+          @pos += 1
+          break
+        else
+          fail(tp, "expected ',' or '}' in an inline table")
+        end
+      end
+      h
+    end
+
+    def number(tp)
+      m = String.match(@src, /\G[0-9A-Za-z_+\-.:]+/, @pos)
+      fail(tp, "expected a value") unless m
+      s = MatchData.to_s(m)
+      fail(tp, "dates and times are not supported") if String.match?(s, /\A\d{4}-\d\d-\d\d|\A\d\d:\d\d/)
+      v = TOML.number(s)
+      fail(tp, "invalid value #{s}") if v == nil
+      @pos += String.size(s)
+      v
+    end
+
+    # ---- strings ----
+
+    def escapes = once { Hash["b" => "\b", "t" => "\t", "n" => "\n", "f" => "\f", "r" => "\r", "\"" => "\"", "\\" => "\\"] }
+
+    # Unescapes a basic string body; a backslash before a newline trims the following whitespace.
+    def unescape(tp, body)
+      String.gsub(body, /\\(?:u(\h{4})|U(\h{8})|[ \t]*\r?\n[ \t\r\n]*|(.))/m) do |m|
+        md = String.match(m, /\A\\(?:u(\h{4})|U(\h{8})|(.))?/m)
+        md => MatchData
+        hex = md[1] || md[2]
+        e = md[3]
+        if hex
+          format("%c", String.hex(hex))
+        elsif String.match?(m, /\A\\[ \t]*\r?\n/)
+          ""
+        else
+          r = escapes[e]
+          fail(tp, "invalid escape \\#{e}") unless r
+          r
+        end
+      end
+    end
+
+    def basic_string(tp)
+      m = String.match(@src, /\G"((?:[^"\\\n]|\\.)*)"/, @pos)
+      fail(tp, "unterminated string") unless m
+      @pos += String.size(MatchData.to_s(m))
+      unescape(tp, m[1] || "")
+    end
+
+    def literal_string(tp)
+      m = String.match(@src, /\G'([^'\n]*)'/, @pos)
+      fail(tp, "unterminated string") unless m
+      @pos += String.size(MatchData.to_s(m))
+      m[1] || ""
+    end
+
+    def multiline_basic(tp)
+      m = String.match(@src, /\G"""\r?\n?((?:[^\\]|\\.)*?"{0,2})"""/m, @pos)
+      fail(tp, "unterminated string") unless m
+      @pos += String.size(MatchData.to_s(m))
+      unescape(tp, m[1] || "")
+    end
+
+    def multiline_literal(tp)
+      m = String.match(@src, /\G'''\r?\n?(.*?'{0,2})'''/m, @pos)
+      fail(tp, "unterminated string") unless m
+      @pos += String.size(MatchData.to_s(m))
+      m[1] || ""
+    end
+  end
+
   module_function
 
-  def parse(s, symbolize_keys: false) = TOMLParser.parse(TOMLParser.new(s, symbolize_keys))
+  def parse(s, symbolize_keys: false) = Parser.parse(Parser.new(s, symbolize_keys))
 
   def load_file(path, symbolize_keys: false) = parse(File.read(path), symbolize_keys:)
 

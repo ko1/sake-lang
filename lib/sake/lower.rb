@@ -255,7 +255,7 @@ module Sake
       while clause
         ref = clause.reference
         # `rescue StandardError` catches everything rescuable, as a bare rescue (names: []).
-        names = clause.exceptions.map(&:slice)
+        names = clause.exceptions.map { |e| @program.const_names.fetch(e) { e.slice } }
         names = [] if names.any? { Resolver::CATCH_ALL.include?(_1) }
         rescues << Rescue.new(names:, slot: ref && slot(ref.depth, ref.name),
                               body: lower(clause.statements), origin: clause)

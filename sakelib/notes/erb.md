@@ -59,8 +59,8 @@ values in the program and pass them in the Hash.
 | `erb.result(binding)`, `erb.run` | — | missing: no `binding` in Sake (by design) |
 | `erb.src` | `ERB.src(erb)` | differs: gives the template text (Ruby: the generated Ruby code) |
 | — | `ERB.check(erb)` | Sake only: parses the template without rendering it (raises `ERBError`) |
-| `ERB::Util.h(s)`, `html_escape` | `ERB.h(s)`, `ERB.html_escape(s)` | same output (no nested `ERB::Util` namespace) |
-| `ERB::Util.u(s)`, `url_encode` | `ERB.u(s)`, `ERB.url_encode(s)` | same output |
+| `ERB::Util.h(s)`, `html_escape` | `ERB::Util.h(s)`, `ERB::Util.html_escape(s)` | same output and name (`module Util` inside `class ERB` since 2026-10-10; they were `ERB.h` & co. while names could not nest) |
+| `ERB::Util.u(s)`, `url_encode` | `ERB::Util.u(s)`, `ERB::Util.url_encode(s)` | same output |
 | `erb.def_method`, `def_class`, `ERB::DefMethod`, `ERB.version`, `erb.filename=`, `lineno=`, `location=`, `encoding` | — | missing: they define Ruby methods from the compiled source |
 | `NameError`, `NoMethodError`, `SyntaxError` from a template | `ERBError` | differs: one exception type with a message |
 

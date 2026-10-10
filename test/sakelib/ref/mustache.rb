@@ -1,8 +1,6 @@
 # Reference implementation for sakelib/mustache.sake: Mustache.render(template, view, partials:) after
 # the mustache gem, with the spec's standalone lines and partial indentation.
 module Mustache
-  class SyntaxError < StandardError; end
-
   Node = Struct.new(:kind, :name, :text, :indent, :children) do
     def initialize(kind, name, text = "", indent = "") = super(kind, name, text, indent, [])
   end
@@ -12,6 +10,8 @@ module Mustache
   ESCAPES = { "&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;" }.freeze
 
   class Parser
+    class SyntaxError < StandardError; end
+
     def initialize(tmpl)
       @tmpl = tmpl
       @pos = 0

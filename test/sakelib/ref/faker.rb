@@ -23,7 +23,7 @@ module Faker
   end
 end
 
-module FakerName
+module Faker::Name
   module_function
 
   FIRST_NAMES = %w[Alice Bob Carol David Emma Frank Grace Henry Iris Jack Karen Liam Mia Noah Olivia Paul Quinn Rose Sam Tina]
@@ -50,7 +50,7 @@ module FakerName
   def initials(number = 3) = Faker.letterify("?" * number)
 end
 
-module FakerInternet
+module Faker::Internet
   module_function
 
   DOMAIN_SUFFIXES = %w[com net org io dev info]
@@ -65,8 +65,8 @@ module FakerInternet
     parts.map { |x| x.gsub(/[^A-Za-z0-9]/, "") }.join(sep).downcase
   end
 
-  def first_part = FakerName.first_name
-  def last_part = FakerName.last_name
+  def first_part = Faker::Name.first_name
+  def last_part = Faker::Name.last_name
 
   def email(name = nil, domain = nil)
     u = username(name)
@@ -76,7 +76,7 @@ module FakerInternet
 
   def free_email(name = nil) = "#{username(name)}@#{Faker.pick(FREE_EMAIL_DOMAINS)}"
 
-  def domain_word = FakerName.last_name.gsub(/[^A-Za-z]/, "").downcase
+  def domain_word = Faker::Name.last_name.gsub(/[^A-Za-z]/, "").downcase
   def domain_suffix = Faker.pick(DOMAIN_SUFFIXES)
   def domain_name = "#{domain_word}.#{domain_suffix}"
 
@@ -92,13 +92,13 @@ module FakerInternet
   def password(min_length = 8) = Faker.bothify(Array.new(min_length) { rand(2) == 0 ? "?" : "#" }.join)
 
   def slug(words = nil, glue = nil)
-    w = words.nil? ? FakerLorem.words(2).join(" ") : words
+    w = words.nil? ? Faker::Lorem.words(2).join(" ") : words
     g = glue.nil? ? Faker.pick(["-", "_"]) : glue
     w.gsub(" ", g).downcase
   end
 end
 
-module FakerLorem
+module Faker::Lorem
   module_function
 
   WORDS = %w[alias consequatur aut perferendis sit voluptatem accusantium doloremque aperiam eaque ipsa quae ab illo
@@ -126,7 +126,7 @@ module FakerLorem
   def question(word_count = 4) = words(word_count).join(" ").capitalize + "?"
 end
 
-module FakerNumber
+module Faker::Number
   module_function
 
   def digit = rand(10)
@@ -155,7 +155,7 @@ module FakerNumber
   def binary(digits = 4) = Array.new(digits) { rand(2).to_s }.join
 end
 
-module FakerAddress
+module Faker::Address
   module_function
 
   CITY_PREFIXES = %w[North East West South New Lake Port]
@@ -175,14 +175,14 @@ module FakerAddress
 
   def city
     case rand(4)
-    when 0 then "#{city_prefix} #{FakerName.first_name}#{city_suffix}"
-    when 1 then "#{city_prefix} #{FakerName.first_name}"
-    when 2 then "#{FakerName.first_name}#{city_suffix}"
-    else "#{FakerName.last_name}#{city_suffix}"
+    when 0 then "#{city_prefix} #{Faker::Name.first_name}#{city_suffix}"
+    when 1 then "#{city_prefix} #{Faker::Name.first_name}"
+    when 2 then "#{Faker::Name.first_name}#{city_suffix}"
+    else "#{Faker::Name.last_name}#{city_suffix}"
     end
   end
 
-  def street_name = rand(2) == 0 ? "#{FakerName.last_name} #{street_suffix}" : "#{FakerName.first_name} #{street_suffix}"
+  def street_name = rand(2) == 0 ? "#{Faker::Name.last_name} #{street_suffix}" : "#{Faker::Name.first_name} #{street_suffix}"
   def building_number = Faker.numerify(Faker.pick(["#####", "####", "###"]))
   def secondary_address = Faker.numerify(Faker.pick(["Apt. ###", "Suite ###"]))
 
@@ -199,7 +199,7 @@ module FakerAddress
   def longitude = rand * 360.0 - 180.0
 end
 
-module FakerCompany
+module Faker::Company
   module_function
 
   SUFFIXES = ["Inc", "and Sons", "LLC", "Group"]
@@ -216,9 +216,9 @@ module FakerCompany
 
   def name
     case rand(3)
-    when 0 then "#{FakerName.last_name} #{suffix}"
-    when 1 then "#{FakerName.last_name}-#{FakerName.last_name}"
-    else "#{FakerName.last_name}, #{FakerName.last_name} and #{FakerName.last_name}"
+    when 0 then "#{Faker::Name.last_name} #{suffix}"
+    when 1 then "#{Faker::Name.last_name}-#{Faker::Name.last_name}"
+    else "#{Faker::Name.last_name}, #{Faker::Name.last_name} and #{Faker::Name.last_name}"
     end
   end
 
@@ -227,18 +227,18 @@ module FakerCompany
   def ein = Faker.numerify("##-#######")
 end
 
-module FakerBoolean
+module Faker::Boolean
   module_function
 
   def boolean(true_ratio = 0.5) = rand < true_ratio
 end
 
-module FakerColor
+module Faker::Color
   module_function
 
   COLOR_NAMES = %w[red green blue yellow orange purple black white gray teal]
 
   def color_name = Faker.pick(COLOR_NAMES)
-  def hex_color = "#" + FakerNumber.hexadecimal(6)
+  def hex_color = "#" + Faker::Number.hexadecimal(6)
   def rgb_color = Array.new(3) { rand(256) }
 end

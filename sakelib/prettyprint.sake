@@ -2,113 +2,113 @@
 #
 # PrettyPrint.format(output, maxwidth) { |q| ... } drives a printer `q` with
 # PrettyPrint.text(q, s), breakable(q), group(q, indent, open, close) { }, nest(q, indent) { }.
-# The output is a String appended in place. Ruby's PrettyPrint::Text, Breakable, Group, GroupQueue and
-# SingleLine are the top-level types Text, Breakable, Group, GroupQueue; single-line mode is a flag of
-# PrettyPrint (Ruby: a separate class) so the same block works for both formats.
-
-# A run of text waiting in the buffer.
-class Text
-  attr_reader width
-  private attr_reader objs
-
-  def initialize(t)
-    @objs = String[]
-    @width = 0
-  end
-
-  def output(t, q, output_width)
-    Array.each(@objs) { |s| String.concat(PrettyPrint.output(q), s) }
-    output_width + @width
-  end
-
-  def add(t, obj, width)
-    Array.push(@objs, obj)
-    @width += width
-    nil
-  end
-end
-
-# A group of breakables that break together. `id` tells groups apart (Struct == compares fields).
-class Group
-  attr_reader depth, id
-  attr_reader breakables
-  private attr_reader broken
-
-  def initialize(g)
-    @breakables = Array[]
-    @broken = false
-  end
-
-  # Ruby's name; the keyword does not get in the way of a qualified call, Group.break(g)
-  def break(g)
-    @broken = true
-    nil
-  end
-
-  def break?(g) = @broken
-end
-
-# A breakable waiting in the buffer: `obj` is written when its group fits, a newline and `indent` spaces otherwise.
-class Breakable
-  attr_reader obj, width, indent
-  private attr_reader group
-
-  def output(b, q, output_width)
-    Array.shift(Group.breakables(@group))
-    if Group.break?(@group)
-      String.concat(PrettyPrint.output(q), PrettyPrint.newline(q), " " * @indent)
-      @indent
-    else
-      GroupQueue.delete(PrettyPrint.group_queue(q), @group) if Array.empty?(Group.breakables(@group))
-      String.concat(PrettyPrint.output(q), @obj)
-      output_width + @width
-    end
-  end
-end
-
-# Groups by depth, so the outermost one with breakables is broken first.
-class GroupQueue
-  private attr_reader queue
-
-  def initialize(gq)
-    @queue = Array[]
-  end
-
-  def enq(gq, group)
-    depth = Group.depth(group)
-    Array.push(@queue, Array[]) until depth < Array.length(@queue)
-    Array.push(@queue[depth], group)
-    nil
-  end
-
-  # The shallowest group that still has breakables, marked broken; groups it skips are broken too.
-  def deq(gq)
-    Array.each(@queue) do |gs|
-      Integer.downto(Array.length(gs) - 1, 0) do |i|
-        g = gs[i]
-        unless Array.empty?(Group.breakables(g))
-          Array.delete_at(gs, i)
-          Group.break(g)
-          return g
-        end
-      end
-      Array.each(gs) { |g| Group.break(g) }
-      Array.clear(gs)
-    end
-    nil
-  end
-
-  def delete(gq, group)
-    gs = @queue[Group.depth(group)]
-    id = Group.id(group)
-    Array.delete_if(gs) { |g| Group.id(g) == id } if gs
-    nil
-  end
-end
+# The output is a String appended in place. Ruby's PrettyPrint::Text, Breakable, Group and GroupQueue
+# keep their names (nested in PrettyPrint); single-line mode is a flag of PrettyPrint (Ruby: a separate
+# class, PrettyPrint::SingleLine) so the same block works for both formats.
 
 # PrettyPrint.new(output = "", maxwidth = 79, newline = "\n", singleline = false): trailing fields may be
 # left out (Ruby's 4th argument, genspace, is always `" " * n`).
 class PrettyPrint
+  # A run of text waiting in the buffer.
+  class Text
+    attr_reader width
+    private attr_reader objs
+
+    def initialize(t)
+      @objs = String[]
+      @width = 0
+    end
+
+    def output(t, q, output_width)
+      Array.each(@objs) { |s| String.concat(PrettyPrint.output(q), s) }
+      output_width + @width
+    end
+
+    def add(t, obj, width)
+      Array.push(@objs, obj)
+      @width += width
+      nil
+    end
+  end
+
+  # A group of breakables that break together. `id` tells groups apart (Struct == compares fields).
+  class Group
+    attr_reader depth, id
+    attr_reader breakables
+    private attr_reader broken
+
+    def initialize(g)
+      @breakables = Array[]
+      @broken = false
+    end
+
+    # Ruby's name; the keyword does not get in the way of a qualified call, Group.break(g)
+    def break(g)
+      @broken = true
+      nil
+    end
+
+    def break?(g) = @broken
+  end
+
+  # A breakable waiting in the buffer: `obj` is written when its group fits, a newline and `indent` spaces otherwise.
+  class Breakable
+    attr_reader obj, width, indent
+    private attr_reader group
+
+    def output(b, q, output_width)
+      Array.shift(Group.breakables(@group))
+      if Group.break?(@group)
+        String.concat(PrettyPrint.output(q), PrettyPrint.newline(q), " " * @indent)
+        @indent
+      else
+        GroupQueue.delete(PrettyPrint.group_queue(q), @group) if Array.empty?(Group.breakables(@group))
+        String.concat(PrettyPrint.output(q), @obj)
+        output_width + @width
+      end
+    end
+  end
+
+  # Groups by depth, so the outermost one with breakables is broken first.
+  class GroupQueue
+    private attr_reader queue
+
+    def initialize(gq)
+      @queue = Array[]
+    end
+
+    def enq(gq, group)
+      depth = Group.depth(group)
+      Array.push(@queue, Array[]) until depth < Array.length(@queue)
+      Array.push(@queue[depth], group)
+      nil
+    end
+
+    # The shallowest group that still has breakables, marked broken; groups it skips are broken too.
+    def deq(gq)
+      Array.each(@queue) do |gs|
+        Integer.downto(Array.length(gs) - 1, 0) do |i|
+          g = gs[i]
+          unless Array.empty?(Group.breakables(g))
+            Array.delete_at(gs, i)
+            Group.break(g)
+            return g
+          end
+        end
+        Array.each(gs) { |g| Group.break(g) }
+        Array.clear(gs)
+      end
+      nil
+    end
+
+    def delete(gq, group)
+      gs = @queue[Group.depth(group)]
+      id = Group.id(group)
+      Array.delete_if(gs) { |g| Group.id(g) == id } if gs
+      nil
+    end
+  end
+
   attr_reader output, maxwidth, newline, singleline
   attr_reader indent, group_queue
   private attr_reader output_width, buffer_width, buffer, group_stack, serial

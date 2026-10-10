@@ -1,12 +1,12 @@
 # thor: a command-line framework in the shape of the thor gem, with the commands as data.
 #
 # Thor finds a command's method by name and calls it with `send`; Sake has neither, so a CLI is a type that
-# holds its command table (a ThorApp, built with the gem's DSL as functions) and includes ThorCLI, whose
+# holds its command table (a Thor::App, built with the gem's DSL as functions) and includes Thor::CLI, whose
 # required `run(cli, name, args, options)` is the one place that dispatches, by `case name`:
 #
 #   class Repo
-#     attr_reader thor                         # the ThorApp: ThorCLI's functions read it as thor(cli)
-#     include ThorCLI
+#     attr_reader thor                         # the Thor::App: Thor::CLI's functions read it as thor(cli)
+#     include Thor::CLI
 #     def run(cli, name, args, options)
 #       case name
 #       in "greet" then puts "Hello, #{Array.fetch(args, 0)}!"
@@ -25,167 +25,167 @@
 # (--name=value, --name value, --flag / --no-flag / --skip-flag, -n value, -n5, -ab for -a -b, arrays and
 # hashes taking the following values, -- ending the options, unknown switches passed through as arguments),
 # and `options` is a Hash with Symbol keys; Thor.flag?, Thor.integer, Thor.string, Thor.number, Thor.array,
-# Thor.hash read one value with its type checked. Errors are ThorError (thor's messages, with the error's
+# Thor.hash read one value with its type checked. Errors are Thor::Error (thor's messages, with the error's
 # class as `kind`); `start` prints them to stderr as thor does, or raises them with debug: true.
 
-class ThorError < Exception
-  attr_reader kind          # :undefined_command, :ambiguous_command, :invocation, :malformatted_argument, :required_argument_missing
-end
-
-# Ruby: Thor::Option. type: :boolean, :string, :numeric, :array, :hash. aliases: Strings such as "-s".
-class ThorOption
-  attr_reader name, type, desc, default, required, aliases, banner, enum, hide
-
-  def initialize(o)
-    @name => String
-    @type = :string if @type == nil
-    @required = false if @required == nil
-    @aliases = String[] if @aliases == nil
-    @hide = false if @hide == nil
-    unless Array.include?(Symbol[:boolean, :string, :numeric, :array, :hash], @type)
-      raise ArgumentError, "Type :#{@type} is not valid for options."
-    end
-    raise ArgumentError, "An option cannot be boolean and required." if @type == :boolean && @required
-    @banner = default_banner(o) if @banner == nil
-  end
-
-  def default_banner(o)
-    case @type
-    in :boolean then nil
-    in :string then String.upcase(human_name(o))
-    in :numeric then "N"
-    in :hash then "key:value"
-    else "one two three"
-    end
-  end
-
-  def dasherized?(o) = String.start_with?(@name, "-")
-  def dasherize(s) = (String.size(s) > 1 ? "--" : "-") + String.tr(s, "_", "-")
-  def undasherize(s) = String.sub(s, /\A-{1,2}/, "")
-
-  # Ruby: option.switch_name => "--shout"; option.human_name => "shout"
-  def switch_name(o) = dasherized?(o) ? @name : dasherize(@name)
-  def human_name(o) = dasherized?(o) ? undasherize(@name) : @name
-  def key(o) = String.to_sym(human_name(o))
-
-  def boolean?(o) = @type == :boolean
-  def required?(o) = @required
-
-  # Ruby: option.usage(padding): "-s, [--shout], [--no-shout], [--skip-shout]", "-m, --message=MSG".
-  def usage(o, padding = 0)
-    b = @banner
-    sample = b != nil && b != "" ? "#{switch_name(o)}=#{b}" : switch_name(o)
-    sample = "[#{sample}]" unless @required
-    if boolean?(o) && @name != "force" && !String.match?(@name, /\A(no|skip)[\-_]/)
-      sample += ", [#{dasherize("no-" + human_name(o))}], [#{dasherize("skip-" + human_name(o))}]"
-    end
-    String.ljust(aliases_for_usage(o), padding) + sample
-  end
-
-  def aliases_for_usage(o) = Array.empty?(@aliases) ? "" : Array.join(@aliases, ", ") + ", "
-
-  # Ruby: show_default?: a Boolean always, a non-empty Array/String/Hash, any other non-nil value.
-  def show_default?(o)
-    d = @default
-    case d
-    in true | false then true
-    in Array then !Array.empty?(d)
-    in String then d != ""
-    in Hash then !Hash.empty?(d)
-    in nil then false
-    else true
-    end
-  end
-
-  def print_default(o)
-    d = @default
-    (d in Array) ? Array.join(Array.map(d) { |x| Kernel.inspect(x) }, " ") : Kernel.to_s(d)
-  end
-
-  def enum_to_s(o)
-    e = @enum
-    e == nil ? "" : Array.join(Array.map(e) { |x| Kernel.to_s(x) }, ", ")
-  end
-end
-
-# Ruby: Thor::Command. min_args / max_args (nil: any number) come from the usage.
-class ThorCommand
-  attr_reader name, usage, description, long_description, wrap_long_description, options, hidden
-  attr_reader min_args, max_args
-
-  def hidden?(c) = @hidden
-
-  # Ruby: command.formatted_usage(klass): the usage followed by the required options' usages, sorted.
-  def formatted_usage(c)
-    req = Array.sort(Array.filter_map(@options) { |o| ThorOption.required?(o) ? ThorOption.usage(o) : nil })
-    String.strip("#{@usage} #{Array.join(req, " ")}")
-  end
-end
-
-# The command table of one CLI (Ruby: the class-level state of a Thor subclass).
-class ThorApp
-  attr_reader basename
-  attr_accessor commands, class_options, mappings, default_command, package_name
-  attr_accessor pending_usage, pending_desc, pending_hide, pending_long_desc, pending_wrap, pending_options
-
-  def initialize(a)
-    @basename => String
-    @commands = ThorCommand[]
-    @class_options = ThorOption[]
-    @mappings = Hash[]
-    @default_command = "help"
-    @package_name = nil
-    @pending_options = ThorOption[]
-    @pending_usage = nil
-    @pending_desc = nil
-    @pending_hide = false
-    @pending_long_desc = nil
-    @pending_wrap = true
-    # thor's own commands and HELP_MAPPINGS; they are run by ThorCLI.dispatch, never by `run`
-    Array.push(@commands, ThorCommand.new("help", "help [COMMAND]", "Describe available commands or one specific command", nil, true, ThorOption[], false, 0, 1))
-    Array.push(@commands, ThorCommand.new("tree", "tree", "Print a tree of all available commands", nil, true, ThorOption[], false, 0, 0))
-    Array.each(String["-h", "-?", "--help", "-D"]) { |m| @mappings[m] = "help" }
-  end
-end
-
 module Thor
+  class Error < Exception
+    attr_reader kind          # :undefined_command, :ambiguous_command, :invocation, :malformatted_argument, :required_argument_missing
+  end
+
+  # Ruby: Thor::Option. type: :boolean, :string, :numeric, :array, :hash. aliases: Strings such as "-s".
+  class Option
+    attr_reader name, type, desc, default, required, aliases, banner, enum, hide
+
+    def initialize(o)
+      @name => String
+      @type = :string if @type == nil
+      @required = false if @required == nil
+      @aliases = String[] if @aliases == nil
+      @hide = false if @hide == nil
+      unless Array.include?(Symbol[:boolean, :string, :numeric, :array, :hash], @type)
+        raise ArgumentError, "Type :#{@type} is not valid for options."
+      end
+      raise ArgumentError, "An option cannot be boolean and required." if @type == :boolean && @required
+      @banner = default_banner(o) if @banner == nil
+    end
+
+    def default_banner(o)
+      case @type
+      in :boolean then nil
+      in :string then String.upcase(human_name(o))
+      in :numeric then "N"
+      in :hash then "key:value"
+      else "one two three"
+      end
+    end
+
+    def dasherized?(o) = String.start_with?(@name, "-")
+    def dasherize(s) = (String.size(s) > 1 ? "--" : "-") + String.tr(s, "_", "-")
+    def undasherize(s) = String.sub(s, /\A-{1,2}/, "")
+
+    # Ruby: option.switch_name => "--shout"; option.human_name => "shout"
+    def switch_name(o) = dasherized?(o) ? @name : dasherize(@name)
+    def human_name(o) = dasherized?(o) ? undasherize(@name) : @name
+    def key(o) = String.to_sym(human_name(o))
+
+    def boolean?(o) = @type == :boolean
+    def required?(o) = @required
+
+    # Ruby: option.usage(padding): "-s, [--shout], [--no-shout], [--skip-shout]", "-m, --message=MSG".
+    def usage(o, padding = 0)
+      b = @banner
+      sample = b != nil && b != "" ? "#{switch_name(o)}=#{b}" : switch_name(o)
+      sample = "[#{sample}]" unless @required
+      if boolean?(o) && @name != "force" && !String.match?(@name, /\A(no|skip)[\-_]/)
+        sample += ", [#{dasherize("no-" + human_name(o))}], [#{dasherize("skip-" + human_name(o))}]"
+      end
+      String.ljust(aliases_for_usage(o), padding) + sample
+    end
+
+    def aliases_for_usage(o) = Array.empty?(@aliases) ? "" : Array.join(@aliases, ", ") + ", "
+
+    # Ruby: show_default?: a Boolean always, a non-empty Array/String/Hash, any other non-nil value.
+    def show_default?(o)
+      d = @default
+      case d
+      in true | false then true
+      in Array then !Array.empty?(d)
+      in String then d != ""
+      in Hash then !Hash.empty?(d)
+      in nil then false
+      else true
+      end
+    end
+
+    def print_default(o)
+      d = @default
+      (d in Array) ? Array.join(Array.map(d) { |x| Kernel.inspect(x) }, " ") : Kernel.to_s(d)
+    end
+
+    def enum_to_s(o)
+      e = @enum
+      e == nil ? "" : Array.join(Array.map(e) { |x| Kernel.to_s(x) }, ", ")
+    end
+  end
+
+  # Ruby: Thor::Command. min_args / max_args (nil: any number) come from the usage.
+  class Command
+    attr_reader name, usage, description, long_description, wrap_long_description, options, hidden
+    attr_reader min_args, max_args
+
+    def hidden?(c) = @hidden
+
+    # Ruby: command.formatted_usage(klass): the usage followed by the required options' usages, sorted.
+    def formatted_usage(c)
+      req = Array.sort(Array.filter_map(@options) { |o| Option.required?(o) ? Option.usage(o) : nil })
+      String.strip("#{@usage} #{Array.join(req, " ")}")
+    end
+  end
+
+  # The command table of one CLI (Ruby: the class-level state of a Thor subclass).
+  class App
+    attr_reader basename
+    attr_accessor commands, class_options, mappings, default_command, package_name
+    attr_accessor pending_usage, pending_desc, pending_hide, pending_long_desc, pending_wrap, pending_options
+
+    def initialize(a)
+      @basename => String
+      @commands = Command[]
+      @class_options = Option[]
+      @mappings = Hash[]
+      @default_command = "help"
+      @package_name = nil
+      @pending_options = Option[]
+      @pending_usage = nil
+      @pending_desc = nil
+      @pending_hide = false
+      @pending_long_desc = nil
+      @pending_wrap = true
+      # thor's own commands and HELP_MAPPINGS; they are run by Thor::CLI.dispatch, never by `run`
+      Array.push(@commands, Command.new("help", "help [COMMAND]", "Describe available commands or one specific command", nil, true, Option[], false, 0, 1))
+      Array.push(@commands, Command.new("tree", "tree", "Print a tree of all available commands", nil, true, Option[], false, 0, 0))
+      Array.each(String["-h", "-?", "--help", "-D"]) { |m| @mappings[m] = "help" }
+    end
+  end
+
   module_function
 
   # --- the DSL (Ruby: the class-level calls in `class MyCLI < Thor`) ---
 
   # Ruby: class MyCLI < Thor with `def self.basename = name` (thor takes it from $PROGRAM_NAME).
-  def app(basename) = ThorApp.new(basename)
+  def app(basename) = App.new(basename)
 
   # Ruby: desc "usage", "description", hide: false
   def desc(app, usage, description, hide: false)
-    ThorApp.set_pending_usage(app, usage)
-    ThorApp.set_pending_desc(app, description)
-    ThorApp.set_pending_hide(app, hide)
+    App.set_pending_usage(app, usage)
+    App.set_pending_desc(app, description)
+    App.set_pending_hide(app, hide)
     app
   end
 
   # Ruby: long_desc "text", wrap: true
   def long_desc(app, text, wrap: true)
-    ThorApp.set_pending_long_desc(app, text)
-    ThorApp.set_pending_wrap(app, wrap)
+    App.set_pending_long_desc(app, text)
+    App.set_pending_wrap(app, wrap)
     app
   end
 
   # Ruby: method_option :name, type:, desc:, default:, required:, aliases:, banner:, enum:, hide:
   def method_option(app, name, type: :string, desc: nil, default: nil, required: false, aliases: nil, banner: nil, enum: nil, hide: false)
-    Array.push(ThorApp.pending_options(app), build_option(name, type, desc, default, required, aliases, banner, enum, hide))
+    Array.push(App.pending_options(app), build_option(name, type, desc, default, required, aliases, banner, enum, hide))
     app
   end
 
   # Ruby: option (an alias of method_option)
   def option(app, name, type: :string, desc: nil, default: nil, required: false, aliases: nil, banner: nil, enum: nil, hide: false)
-    Array.push(ThorApp.pending_options(app), build_option(name, type, desc, default, required, aliases, banner, enum, hide))
+    Array.push(App.pending_options(app), build_option(name, type, desc, default, required, aliases, banner, enum, hide))
     app
   end
 
   # Ruby: class_option :name, ...: an option of every command.
   def class_option(app, name, type: :string, desc: nil, default: nil, required: false, aliases: nil, banner: nil, enum: nil, hide: false)
-    Array.push(ThorApp.class_options(app), build_option(name, type, desc, default, required, aliases, banner, enum, hide))
+    Array.push(App.class_options(app), build_option(name, type, desc, default, required, aliases, banner, enum, hide))
     app
   end
 
@@ -195,27 +195,27 @@ module Thor
           in String then String[aliases]
           in Array then aliases
           end
-    ThorOption.new(Kernel.to_s(name), type, desc, default, required, als, banner, enum, hide)
+    Option.new(Kernel.to_s(name), type, desc, default, required, als, banner, enum, hide)
   end
 
   # Ruby: `def name(...)` after desc/method_option lines: registers the command with the pending lines.
   def command(app, name)
-    usage = ThorApp.pending_usage(app)
-    desc = ThorApp.pending_desc(app)
+    usage = App.pending_usage(app)
+    desc = App.pending_desc(app)
     if usage == nil || desc == nil
       raise ArgumentError, "Attempted to create command #{Kernel.inspect(name)} without usage or description. Call desc if you want this method to be available as command or declare it inside a no_commands{} block."
     end
     raise ArgumentError, "command #{Kernel.inspect(name)} is already defined" if find_command(app, name) != nil
     min, max = arity_of(usage)
-    c = ThorCommand.new(name, usage, desc, ThorApp.pending_long_desc(app), ThorApp.pending_wrap(app),
-                        ThorApp.pending_options(app), ThorApp.pending_hide(app), min, max)
-    Array.push(ThorApp.commands(app), c)
-    ThorApp.set_pending_usage(app, nil)
-    ThorApp.set_pending_desc(app, nil)
-    ThorApp.set_pending_hide(app, false)
-    ThorApp.set_pending_long_desc(app, nil)
-    ThorApp.set_pending_wrap(app, true)
-    ThorApp.set_pending_options(app, ThorOption[])
+    c = Command.new(name, usage, desc, App.pending_long_desc(app), App.pending_wrap(app),
+                        App.pending_options(app), App.pending_hide(app), min, max)
+    Array.push(App.commands(app), c)
+    App.set_pending_usage(app, nil)
+    App.set_pending_desc(app, nil)
+    App.set_pending_hide(app, false)
+    App.set_pending_long_desc(app, nil)
+    App.set_pending_wrap(app, true)
+    App.set_pending_options(app, Option[])
     c
   end
 
@@ -239,27 +239,27 @@ module Thor
   # Ruby: map "ci" => :commit; map ["--version", "-V"] => :version
   def map(app, from, to)
     names = (from in Array) ? from : String[from]
-    Array.each(names) { |f| ThorApp.mappings(app)[f] = Kernel.to_s(to) }
+    Array.each(names) { |f| App.mappings(app)[f] = Kernel.to_s(to) }
     app
   end
 
   def default_command(app, name)
-    ThorApp.set_default_command(app, name)
+    App.set_default_command(app, name)
     app
   end
 
   def package_name(app, name)
-    ThorApp.set_package_name(app, name)
+    App.set_package_name(app, name)
     app
   end
 
-  def find_command(app, name) = Array.find(ThorApp.commands(app)) { |c| ThorCommand.name(c) == name }
+  def find_command(app, name) = Array.find(App.commands(app)) { |c| Command.name(c) == name }
 
   # --- running ---
 
-  # Ruby: MyCLI.start(argv): run the command named by argv; a ThorError is printed to stderr (raised with
+  # Ruby: MyCLI.start(argv): run the command named by argv; a Thor::Error is printed to stderr (raised with
   # debug: true, as thor's config[:debug]), then exit 1 when exit_on_failure (thor's exit_on_failure?).
-  def start(cli, argv = ARGV, debug: false, exit_on_failure: false) = ThorCLI.start(cli, argv, debug: debug, exit_on_failure: exit_on_failure)
+  def start(cli, argv = ARGV, debug: false, exit_on_failure: false) = CLI.start(cli, argv, debug: debug, exit_on_failure: exit_on_failure)
 
   # --- reading the parsed options (a Hash of Symbol keys with values of every option type) ---
 
@@ -306,19 +306,19 @@ module Thor
   def retrieve_command_name(app, args)
     return nil if Array.empty?(args)
     meth = Array.fetch(args, 0)
-    return nil unless Hash.key?(ThorApp.mappings(app), meth) || !String.start_with?(meth, "-")
+    return nil unless Hash.key?(App.mappings(app), meth) || !String.start_with?(meth, "-")
     Array.shift(args)
     meth
   end
 
   # A mapped name, a unique prefix of a name, or the name itself (which may not exist).
   def normalize_command_name(app, meth)
-    return String.tr(ThorApp.default_command(app), "-", "_") if meth == nil
+    return String.tr(App.default_command(app), "-", "_") if meth == nil
     possibilities = find_command_possibilities(app, meth)
     if Array.size(possibilities) > 1
-      raise ThorError.new("Ambiguous command #{meth} matches [#{Array.join(possibilities, ", ")}]", :ambiguous_command)
+      raise Error.new("Ambiguous command #{meth} matches [#{Array.join(possibilities, ", ")}]", :ambiguous_command)
     end
-    mapped = ThorApp.mappings(app)[meth]
+    mapped = App.mappings(app)[meth]
     name = if Array.empty?(possibilities) then meth
            elsif mapped != nil then mapped
            else Array.fetch(possibilities, 0)
@@ -328,10 +328,10 @@ module Thor
 
   def find_command_possibilities(app, meth)
     len = String.size(meth)
-    names = Array.filter_map(ThorApp.commands(app)) { |c| ThorCommand.hidden?(c) ? nil : ThorCommand.name(c) }
-    Array.concat(names, Hash.keys(ThorApp.mappings(app)))
+    names = Array.filter_map(App.commands(app)) { |c| Command.hidden?(c) ? nil : Command.name(c) }
+    Array.concat(names, Hash.keys(App.mappings(app)))
     possibilities = Array.sort(Array.select(names) { |n| String.[](n, 0, len) == meth })
-    unique = Array.uniq(Array.map(possibilities) { |k| ThorApp.mappings(app)[k] || k })
+    unique = Array.uniq(Array.map(possibilities) { |k| App.mappings(app)[k] || k })
     if Array.include?(possibilities, meth)
       String[meth]
     elsif Array.size(unique) == 1
@@ -357,7 +357,7 @@ module Thor
     w < 10 ? 80 : w
   end
 
-  def banner(app, c) = "#{ThorApp.basename(app)} #{ThorCommand.formatted_usage(c)}"
+  def banner(app, c) = "#{App.basename(app)} #{Command.formatted_usage(c)}"
 
   # Ruby: shell.print_table(rows, indent:, truncate:): columns padded by two, the last one not; a row longer
   # than `truncate` is cut to `truncate - 3 - indent` characters plus "...".
@@ -406,388 +406,388 @@ module Thor
   # Ruby: print_options(shell, options): "Options:" and one row per option, its default and its enum.
   def options_help(options)
     return "" if Array.empty?(options)
-    padding = Array.reduce(options, 0) { |m, o| Tuple.max([m, String.size(ThorOption.aliases_for_usage(o))]) }
+    padding = Array.reduce(options, 0) { |m, o| Tuple.max([m, String.size(Option.aliases_for_usage(o))]) }
     rows = Array[]
     Array.each(options) do |o|
-      next if ThorOption.hide(o)
-      d = ThorOption.desc(o)
-      Array.push(rows, String[ThorOption.usage(o, padding), d == nil ? "" : "# #{d}"])
-      Array.push(rows, String["", "# Default: #{ThorOption.print_default(o)}"]) if ThorOption.show_default?(o)
-      Array.push(rows, String["", "# Possible values: #{ThorOption.enum_to_s(o)}"]) if ThorOption.enum(o) != nil
+      next if Option.hide(o)
+      d = Option.desc(o)
+      Array.push(rows, String[Option.usage(o, padding), d == nil ? "" : "# #{d}"])
+      Array.push(rows, String["", "# Default: #{Option.print_default(o)}"]) if Option.show_default?(o)
+      Array.push(rows, String["", "# Possible values: #{Option.enum_to_s(o)}"]) if Option.enum(o) != nil
     end
     "Options:\n" + table(rows, 2) + "\n"
   end
 
   # Ruby: MyCLI.help(shell): the command list (sorted, hidden ones left out) and the class options.
   def help_text(app)
-    rows = Array.filter_map(ThorApp.commands(app)) do |c|
-      next nil if ThorCommand.hidden?(c)
-      String[banner(app, c), "# #{String.gsub(ThorCommand.description(c), /\s+/m, " ")}"]
+    rows = Array.filter_map(App.commands(app)) do |c|
+      next nil if Command.hidden?(c)
+      String[banner(app, c), "# #{String.gsub(Command.description(c), /\s+/m, " ")}"]
     end
     Array.sort_by!(rows) { |r| Array.fetch(r, 0) }
-    pkg = ThorApp.package_name(app)
+    pkg = App.package_name(app)
     out = (pkg == nil ? "Commands:" : "#{pkg} commands:") + "\n"
     out += table(rows, 2, terminal_width)
     out += "\n"
-    out + options_help(ThorApp.class_options(app))
+    out + options_help(App.class_options(app))
   end
 
   # Ruby: MyCLI.command_help(shell, name): usage, the command's then the class options, the description.
   def command_help_text(app, command_name)
     meth = normalize_command_name(app, command_name)
     c = find_command(app, meth)
-    raise ThorError.new("Could not find command #{Kernel.inspect(meth)}.", :undefined_command) if c == nil
+    raise Error.new("Could not find command #{Kernel.inspect(meth)}.", :undefined_command) if c == nil
     out = "Usage:\n  #{banner(app, c)}\n\n"
-    out += options_help(ThorCommand.options(c) + ThorApp.class_options(app))
-    long = ThorCommand.long_description(c)
+    out += options_help(Command.options(c) + App.class_options(app))
+    long = Command.long_description(c)
     if long != nil
       out += "Description:\n"
-      out += ThorCommand.wrap_long_description(c) ? wrapped(long, 2) : long + "\n"
+      out += Command.wrap_long_description(c) ? wrapped(long, 2) : long + "\n"
     else
-      out += ThorCommand.description(c) + "\n"
+      out += Command.description(c) + "\n"
     end
     out
   end
 
   # Ruby (thor 1.5): the `tree` command. Thor prints the class's namespace; here the basename.
   def tree_text(app)
-    out = ThorApp.basename(app) + "\n"
-    cs = Array.reject(ThorApp.commands(app)) { |c| ThorCommand.hidden?(c) || ThorCommand.name(c) == "help" || ThorCommand.name(c) == "tree" }
-    Array.sort_by!(cs) { |c| ThorCommand.name(c) }
+    out = App.basename(app) + "\n"
+    cs = Array.reject(App.commands(app)) { |c| Command.hidden?(c) || Command.name(c) == "help" || Command.name(c) == "tree" }
+    Array.sort_by!(cs) { |c| Command.name(c) }
     Array.each_with_index(cs) do |c, i|
-      d = Array.fetch(String.split(ThorCommand.description(c), "\n"), 0, "")
-      out += "  " + (i == Array.size(cs) - 1 ? "└─" : "├─") + " " + ThorCommand.name(c)
+      d = Array.fetch(String.split(Command.description(c), "\n"), 0, "")
+      out += "  " + (i == Array.size(cs) - 1 ? "└─" : "├─") + " " + Command.name(c)
       out += " (#{d})\n" unless d == ""        # thor writes no newline after a command without a description
     end
     out
   end
-end
 
-# Ruby: Thor::Options, the parser's state: the arguments still to read (pile), the ones that were not
-# options (extra), the values so far (assigns), and the switch tables.
-class ThorOptionParser
-  attr_accessor pile, extra, assigns, switches, shorts, non_assigned_required, parsing_options, is_treated_as_value
+  # Ruby: Thor::Options, the parser's state: the arguments still to read (pile), the ones that were not
+  # options (extra), the values so far (assigns), and the switch tables.
+  class Options
+    attr_accessor pile, extra, assigns, switches, shorts, non_assigned_required, parsing_options, is_treated_as_value
 
-  def initialize(pr)
-    @pile = String[]
-    @extra = String[]
-    @assigns = Hash[]
-    @switches = Hash[]
-    @shorts = Hash[]
-    @non_assigned_required = ThorOption[]
-    @parsing_options = true
-    @is_treated_as_value = false
-  end
-
-  # Ruby: Thor::Options.new(options): defaults are assigned first; required options without one are noted.
-  def declare(pr, options)
-    Array.each(options) do |o|
-      @switches[ThorOption.switch_name(o)] = o
-      Array.each(ThorOption.aliases(o)) { |a| @shorts[a] = ThorOption.switch_name(o) unless Hash.key?(@shorts, a) }
-      d = ThorOption.default(o)
-      if d != nil
-        @assigns[ThorOption.key(o)] = d
-      elsif ThorOption.required?(o)
-        Array.push(@non_assigned_required, o)
-      end
+    def initialize(pr)
+      @pile = String[]
+      @extra = String[]
+      @assigns = Hash[]
+      @switches = Hash[]
+      @shorts = Hash[]
+      @non_assigned_required = Option[]
+      @parsing_options = true
+      @is_treated_as_value = false
     end
-    pr
-  end
 
-  def long_re = /\A(--\w+(?:-\w+)*)\z/
-  def short_re = /\A(-[a-z])\z/i
-  def eq_re = /\A(--\w+(?:-\w+)*|-[a-z])=(.*)\z/i
-  def short_sq_re = /\A-([a-z]{2,})\z/i
-  def short_num_re = /\A(-[a-z])[-+]?(\d*\.\d+|\d+)\z/i      # thor's $2 is the digits without the sign
-  def numeric_re = /\A[-+]?(\d*\.\d+|\d+)\z/
+    # Ruby: Thor::Options.new(options): defaults are assigned first; required options without one are noted.
+    def declare(pr, options)
+      Array.each(options) do |o|
+        @switches[Option.switch_name(o)] = o
+        Array.each(Option.aliases(o)) { |a| @shorts[a] = Option.switch_name(o) unless Hash.key?(@shorts, a) }
+        d = Option.default(o)
+        if d != nil
+          @assigns[Option.key(o)] = d
+        elsif Option.required?(o)
+          Array.push(@non_assigned_required, o)
+        end
+      end
+      pr
+    end
 
-  # Ruby: Thor::Options#parse(args) => the assigns; `remaining` (extra) are the non-option arguments.
-  def parse(pr, args)
-    @pile = Array.dup(args)
-    @is_treated_as_value = false
-    @parsing_options = true
-    while peek(pr) != nil
-      if parsing_options?(pr)
-        match, is_switch = current_is_switch?(pr)
-        shifted = shift(pr)
-        shifted => String
-        if is_switch
-          switch = ""
-          m = String.match(shifted, short_sq_re)
-          if m
-            unshift_all(pr, Array.map(String.chars(MatchData.[](m, 1) || "")) { |f| "-#{f}" })
-            next
-          end
-          m = String.match(shifted, eq_re)
-          if m
-            unshift(pr, MatchData.[](m, 2) || "", true)
-            switch = MatchData.[](m, 1) || ""
-          else
-            m = String.match(shifted, short_num_re)
+    def long_re = /\A(--\w+(?:-\w+)*)\z/
+    def short_re = /\A(-[a-z])\z/i
+    def eq_re = /\A(--\w+(?:-\w+)*|-[a-z])=(.*)\z/i
+    def short_sq_re = /\A-([a-z]{2,})\z/i
+    def short_num_re = /\A(-[a-z])[-+]?(\d*\.\d+|\d+)\z/i      # thor's $2 is the digits without the sign
+    def numeric_re = /\A[-+]?(\d*\.\d+|\d+)\z/
+
+    # Ruby: Thor::Options#parse(args) => the assigns; `remaining` (extra) are the non-option arguments.
+    def parse(pr, args)
+      @pile = Array.dup(args)
+      @is_treated_as_value = false
+      @parsing_options = true
+      while peek(pr) != nil
+        if parsing_options?(pr)
+          match, is_switch = current_is_switch?(pr)
+          shifted = shift(pr)
+          shifted => String
+          if is_switch
+            switch = ""
+            m = String.match(shifted, short_sq_re)
             if m
-              unshift(pr, MatchData.[](m, 2) || "", false)
+              unshift_all(pr, Array.map(String.chars(MatchData.[](m, 1) || "")) { |f| "-#{f}" })
+              next
+            end
+            m = String.match(shifted, eq_re)
+            if m
+              unshift(pr, MatchData.[](m, 2) || "", true)
               switch = MatchData.[](m, 1) || ""
             else
-              switch = shifted
+              m = String.match(shifted, short_num_re)
+              if m
+                unshift(pr, MatchData.[](m, 2) || "", false)
+                switch = MatchData.[](m, 1) || ""
+              else
+                switch = shifted
+              end
             end
-          end
-          switch = normalize_switch(pr, switch)
-          option = switch_option(pr, switch)
-          option => ThorOption
-          @assigns[ThorOption.key(option)] = parse_peek(pr, switch, option)
-        elsif match
-          Array.push(@extra, shifted)
-          loop do
-            pk = peek(pr)
-            break if pk == nil || String.start_with?(pk, "-")
-            Array.push(@extra, pk)
-            shift(pr)
+            switch = normalize_switch(pr, switch)
+            option = switch_option(pr, switch)
+            option => Option
+            @assigns[Option.key(option)] = parse_peek(pr, switch, option)
+          elsif match
+            Array.push(@extra, shifted)
+            loop do
+              pk = peek(pr)
+              break if pk == nil || String.start_with?(pk, "-")
+              Array.push(@extra, pk)
+              shift(pr)
+            end
+          else
+            Array.push(@extra, shifted)
           end
         else
-          Array.push(@extra, shifted)
+          s = shift(pr)
+          Array.push(@extra, s) if s != nil
         end
-      else
-        s = shift(pr)
-        Array.push(@extra, s) if s != nil
       end
+      check_requirement!(pr)
+      @assigns
     end
-    check_requirement!(pr)
-    @assigns
-  end
 
-  # Ruby: peek: "--" ends the options and is skipped.
-  def peek(pr)
-    return Array.first(@pile) unless @parsing_options
-    result = Array.first(@pile)
-    if result == "--"
-      shift(pr)
-      @parsing_options = false
-      return Array.first(@pile)
-    end
-    result
-  end
-
-  def shift(pr)
-    @is_treated_as_value = false
-    Array.shift(@pile)
-  end
-
-  def unshift(pr, arg, is_value)
-    @is_treated_as_value = is_value
-    Array.unshift(@pile, arg)
-  end
-
-  def unshift_all(pr, args)
-    @is_treated_as_value = false
-    Array.unshift(@pile, *args)
-  end
-
-  def last?(pr) = Array.empty?(@pile)
-
-  def parsing_options?(pr)
-    peek(pr)
-    @parsing_options
-  end
-
-  def current_is_value?(pr)
-    return true if @is_treated_as_value
-    pk = peek(pr)
-    pk != nil && (!parsing_options?(pr) || !String.match?(pk, /\A-{1,2}\S+/))
-  end
-
-  # [looks like a switch, is a declared switch]
-  def current_is_switch?(pr)
-    return [false, false] if @is_treated_as_value
-    pk = peek(pr)
-    return [false, false] if pk == nil
-    Array.each(Array[long_re, short_re, eq_re, short_num_re]) do |re|
-      m = String.match(pk, re)
-      return [true, switch?(pr, MatchData.[](m, 1) || "")] if m
-    end
-    m = String.match(pk, short_sq_re)
-    return [true, Array.any?(String.chars(MatchData.[](m, 1) || "")) { |f| switch?(pr, "-#{f}") }] if m
-    [false, false]
-  end
-
-  def current_is_switch_formatted?(pr)
-    return false if @is_treated_as_value
-    pk = peek(pr)
-    return false if pk == nil
-    Array.any?(Array[long_re, short_re, eq_re, short_num_re, short_sq_re]) { |re| String.match?(pk, re) }
-  end
-
-  def switch?(pr, arg) = switch_option(pr, normalize_switch(pr, arg)) != nil
-
-  def switch_option(pr, arg)
-    m = no_or_skip?(arg)
-    m != nil ? (@switches[arg] || @switches["--#{m}"]) : @switches[arg]
-  end
-
-  # Ruby: no_or_skip?("--no-shout") => "shout"
-  def no_or_skip?(arg)
-    md = String.match(arg, /\A--(no|skip)-([\w-]+)\z/)
-    md ? MatchData.[](md, 2) : nil
-  end
-
-  def normalize_switch(pr, arg) = String.tr(@shorts[arg] || arg, "_", "-")
-
-  # Ruby: parse_peek: a switch with no value next (another switch, or the end) is fine for a boolean, nil for
-  # --no-x, the default (or the name) for an optional string, and an error otherwise.
-  def parse_peek(pr, switch, option)
-    type = ThorOption.type(option)
-    if parsing_options?(pr) && (current_is_switch_formatted?(pr) || last?(pr))
-      if type == :boolean
-        nil
-      elsif no_or_skip?(switch) != nil
-        return nil
-      elsif type == :string && !ThorOption.required?(option)
-        return ThorOption.default(option) || ThorOption.human_name(option)
-      else
-        raise ThorError.new("No value provided for option '#{switch}'", :malformatted_argument)
+    # Ruby: peek: "--" ends the options and is skipped.
+    def peek(pr)
+      return Array.first(@pile) unless @parsing_options
+      result = Array.first(@pile)
+      if result == "--"
+        shift(pr)
+        @parsing_options = false
+        return Array.first(@pile)
       end
+      result
     end
-    Array.delete(@non_assigned_required, option)
-    case type
-    in :boolean then parse_boolean(pr, switch)
-    in :string then parse_string(pr, switch)
-    in :numeric then parse_numeric(pr, switch)
-    in :array then parse_array(pr, switch)
-    in :hash then parse_hash(pr, switch)
-    end
-  end
 
-  def parse_boolean(pr, switch)
-    if current_is_value?(pr)
+    def shift(pr)
+      @is_treated_as_value = false
+      Array.shift(@pile)
+    end
+
+    def unshift(pr, arg, is_value)
+      @is_treated_as_value = is_value
+      Array.unshift(@pile, arg)
+    end
+
+    def unshift_all(pr, args)
+      @is_treated_as_value = false
+      Array.unshift(@pile, *args)
+    end
+
+    def last?(pr) = Array.empty?(@pile)
+
+    def parsing_options?(pr)
+      peek(pr)
+      @parsing_options
+    end
+
+    def current_is_value?(pr)
+      return true if @is_treated_as_value
       pk = peek(pr)
-      if pk in "true" | "TRUE" | "t" | "T"
-        shift(pr)
-        return true
-      elsif pk in "false" | "FALSE" | "f" | "F"
-        shift(pr)
-        return false
+      pk != nil && (!parsing_options?(pr) || !String.match?(pk, /\A-{1,2}\S+/))
+    end
+
+    # [looks like a switch, is a declared switch]
+    def current_is_switch?(pr)
+      return [false, false] if @is_treated_as_value
+      pk = peek(pr)
+      return [false, false] if pk == nil
+      Array.each(Array[long_re, short_re, eq_re, short_num_re]) do |re|
+        m = String.match(pk, re)
+        return [true, switch?(pr, MatchData.[](m, 1) || "")] if m
+      end
+      m = String.match(pk, short_sq_re)
+      return [true, Array.any?(String.chars(MatchData.[](m, 1) || "")) { |f| switch?(pr, "-#{f}") }] if m
+      [false, false]
+    end
+
+    def current_is_switch_formatted?(pr)
+      return false if @is_treated_as_value
+      pk = peek(pr)
+      return false if pk == nil
+      Array.any?(Array[long_re, short_re, eq_re, short_num_re, short_sq_re]) { |re| String.match?(pk, re) }
+    end
+
+    def switch?(pr, arg) = switch_option(pr, normalize_switch(pr, arg)) != nil
+
+    def switch_option(pr, arg)
+      m = no_or_skip?(arg)
+      m != nil ? (@switches[arg] || @switches["--#{m}"]) : @switches[arg]
+    end
+
+    # Ruby: no_or_skip?("--no-shout") => "shout"
+    def no_or_skip?(arg)
+      md = String.match(arg, /\A--(no|skip)-([\w-]+)\z/)
+      md ? MatchData.[](md, 2) : nil
+    end
+
+    def normalize_switch(pr, arg) = String.tr(@shorts[arg] || arg, "_", "-")
+
+    # Ruby: parse_peek: a switch with no value next (another switch, or the end) is fine for a boolean, nil for
+    # --no-x, the default (or the name) for an optional string, and an error otherwise.
+    def parse_peek(pr, switch, option)
+      type = Option.type(option)
+      if parsing_options?(pr) && (current_is_switch_formatted?(pr) || last?(pr))
+        if type == :boolean
+          nil
+        elsif no_or_skip?(switch) != nil
+          return nil
+        elsif type == :string && !Option.required?(option)
+          return Option.default(option) || Option.human_name(option)
+        else
+          raise Error.new("No value provided for option '#{switch}'", :malformatted_argument)
+        end
+      end
+      Array.delete(@non_assigned_required, option)
+      case type
+      in :boolean then parse_boolean(pr, switch)
+      in :string then parse_string(pr, switch)
+      in :numeric then parse_numeric(pr, switch)
+      in :array then parse_array(pr, switch)
+      in :hash then parse_hash(pr, switch)
       end
     end
-    Hash.key?(@switches, switch) || no_or_skip?(switch) == nil
-  end
 
-  def parse_string(pr, name)
-    return nil if no_or_skip?(name) != nil
-    value = shift(pr)
-    value => String
-    validate_enum_value!(pr, name, value, "Expected '%s' to be one of %s; got %s")
-    value
-  end
-
-  def parse_numeric(pr, name)
-    pk = peek(pr)
-    unless pk != nil && String.match?(pk, numeric_re)
-      raise ThorError.new("Expected numeric value for '#{name}'; got #{Kernel.inspect(pk)}", :malformatted_argument)
+    def parse_boolean(pr, switch)
+      if current_is_value?(pr)
+        pk = peek(pr)
+        if pk in "true" | "TRUE" | "t" | "T"
+          shift(pr)
+          return true
+        elsif pk in "false" | "FALSE" | "f" | "F"
+          shift(pr)
+          return false
+        end
+      end
+      Hash.key?(@switches, switch) || no_or_skip?(switch) == nil
     end
-    shift(pr)
-    value = String.include?(pk, ".") ? String.to_f(pk) : String.to_i(pk)
-    validate_enum_value!(pr, name, value, "Expected '%s' to be one of %s; got %s")
-    value
-  end
 
-  def parse_array(pr, name)
-    array = String[]
-    while current_is_value?(pr)
+    def parse_string(pr, name)
+      return nil if no_or_skip?(name) != nil
       value = shift(pr)
       value => String
-      validate_enum_value!(pr, name, value, "Expected all values of '%s' to be one of %s; got %s") if value != ""
-      Array.push(array, value)
+      validate_enum_value!(pr, name, value, "Expected '%s' to be one of %s; got %s")
+      value
     end
-    array
-  end
 
-  def parse_hash(pr, name)
-    hash = Hash[]
-    loop do
-      break unless current_is_value?(pr)
+    def parse_numeric(pr, name)
       pk = peek(pr)
-      break if pk == nil || !String.include?(pk, ":")
-      shift(pr)
-      key, value = String.split(pk, ":", 2)
-      if Hash.key?(hash, key)
-        raise ThorError.new("You can't specify '#{key}' more than once in option '#{name}'; got #{key}:#{hash[key]} and #{key}:#{value}", :malformatted_argument)
+      unless pk != nil && String.match?(pk, numeric_re)
+        raise Error.new("Expected numeric value for '#{name}'; got #{Kernel.inspect(pk)}", :malformatted_argument)
       end
-      hash[key] = value
+      shift(pr)
+      value = String.include?(pk, ".") ? String.to_f(pk) : String.to_i(pk)
+      validate_enum_value!(pr, name, value, "Expected '%s' to be one of %s; got %s")
+      value
     end
-    hash
-  end
 
-  def validate_enum_value!(pr, name, value, message)
-    sw = @switches[name]
-    return nil if sw == nil
-    enum = ThorOption.enum(sw)
-    return nil if enum == nil
-    unless Array.include?(enum, value)
-      raise ThorError.new(format(message, name, ThorOption.enum_to_s(sw), Kernel.to_s(value)), :malformatted_argument)
+    def parse_array(pr, name)
+      array = String[]
+      while current_is_value?(pr)
+        value = shift(pr)
+        value => String
+        validate_enum_value!(pr, name, value, "Expected all values of '%s' to be one of %s; got %s") if value != ""
+        Array.push(array, value)
+      end
+      array
     end
-    nil
-  end
 
-  def check_requirement!(pr)
-    return nil if Array.empty?(@non_assigned_required)
-    names = Array.join(Array.map(@non_assigned_required) { |o| ThorOption.switch_name(o) }, "', '")
-    raise ThorError.new("No value provided for required options '#{names}'", :required_argument_missing)
-  end
-end
+    def parse_hash(pr, name)
+      hash = Hash[]
+      loop do
+        break unless current_is_value?(pr)
+        pk = peek(pr)
+        break if pk == nil || !String.include?(pk, ":")
+        shift(pr)
+        key, value = String.split(pk, ":", 2)
+        if Hash.key?(hash, key)
+          raise Error.new("You can't specify '#{key}' more than once in option '#{name}'; got #{key}:#{hash[key]} and #{key}:#{value}", :malformatted_argument)
+        end
+        hash[key] = value
+      end
+      hash
+    end
 
-# The mixin of a CLI type: it needs `thor(cli)` (the ThorApp, usually a field) and defines `run`.
-module ThorCLI
-  # Ruby: the method named by the command. `name` is a registered command's name, `args` the positional
-  # arguments (already counted against the usage), `options` the Hash of parsed options.
-  def run(cli, name, args, options) = raise(NotImplementedError)
-
-  # Ruby: MyCLI.start(argv, config). ThorErrors go to stderr (raised with debug: true); exit 1 when exit_on_failure.
-  def start(cli, argv = ARGV, debug: false, exit_on_failure: false)
-    begin
-      dispatch(cli, Array.dup(argv))
-    rescue ThorError => e
-      raise if debug
-      IO.puts(IO.stderr, Exception.message(e))
-      exit(1) if exit_on_failure
+    def validate_enum_value!(pr, name, value, message)
+      sw = @switches[name]
+      return nil if sw == nil
+      enum = Option.enum(sw)
+      return nil if enum == nil
+      unless Array.include?(enum, value)
+        raise Error.new(format(message, name, Option.enum_to_s(sw), Kernel.to_s(value)), :malformatted_argument)
+      end
       nil
     end
-  end
 
-  # Ruby: Thor.dispatch(nil, args, nil, config): find the command, parse its options, check the arguments, run.
-  def dispatch(cli, given_args)
-    app = thor(cli)
-    meth = Thor.retrieve_command_name(app, given_args)
-    name = Thor.normalize_command_name(app, meth)
-    c = Thor.find_command(app, name)
-    raise ThorError.new("Could not find command #{Kernel.inspect(name)}.", :undefined_command) if c == nil
-    args, opts = Thor.split_args(given_args)
-    parser = ThorOptionParser.new
-    ThorOptionParser.declare(parser, ThorApp.class_options(app) + ThorCommand.options(c))
-    options = ThorOptionParser.parse(parser, opts)
-    all_args = args + ThorOptionParser.extra(parser)
-    n = Array.size(all_args)
-    min = ThorCommand.min_args(c)
-    max = ThorCommand.max_args(c)
-    if n < min || (max != nil && n > max)
-      msg = "ERROR: \"#{ThorApp.basename(app)} #{name}\" was called with "
-      msg += n == 0 ? "no arguments" : "arguments #{Kernel.inspect(all_args)}"
-      msg += "\nUsage: \"#{Thor.banner(app, c)}\""
-      raise ThorError.new(msg, :invocation)
-    end
-    case name
-    in "help" then help(cli, all_args[0])
-    in "tree" then tree(cli)
-    else run(cli, name, all_args, options)
+    def check_requirement!(pr)
+      return nil if Array.empty?(@non_assigned_required)
+      names = Array.join(Array.map(@non_assigned_required) { |o| Option.switch_name(o) }, "', '")
+      raise Error.new("No value provided for required options '#{names}'", :required_argument_missing)
     end
   end
 
-  # Ruby: help(command = nil): the command list, or one command's help.
-  def help(cli, command = nil)
-    print(command == nil ? Thor.help_text(thor(cli)) : Thor.command_help_text(thor(cli), command))
-    nil
-  end
+  # The mixin of a CLI type: it needs `thor(cli)` (the Thor::App, usually a field) and defines `run`.
+  module CLI
+    # Ruby: the method named by the command. `name` is a registered command's name, `args` the positional
+    # arguments (already counted against the usage), `options` the Hash of parsed options.
+    def run(cli, name, args, options) = raise(NotImplementedError)
 
-  def tree(cli)
-    print(Thor.tree_text(thor(cli)))
-    nil
+    # Ruby: MyCLI.start(argv, config). ThorErrors go to stderr (raised with debug: true); exit 1 when exit_on_failure.
+    def start(cli, argv = ARGV, debug: false, exit_on_failure: false)
+      begin
+        dispatch(cli, Array.dup(argv))
+      rescue Thor::Error => e
+        raise if debug
+        IO.puts(IO.stderr, Exception.message(e))
+        exit(1) if exit_on_failure
+        nil
+      end
+    end
+
+    # Ruby: Thor.dispatch(nil, args, nil, config): find the command, parse its options, check the arguments, run.
+    def dispatch(cli, given_args)
+      app = thor(cli)
+      meth = Thor.retrieve_command_name(app, given_args)
+      name = Thor.normalize_command_name(app, meth)
+      c = Thor.find_command(app, name)
+      raise Thor::Error.new("Could not find command #{Kernel.inspect(name)}.", :undefined_command) if c == nil
+      args, opts = Thor.split_args(given_args)
+      parser = Thor::Options.new
+      Thor::Options.declare(parser, Thor::App.class_options(app) + Thor::Command.options(c))
+      options = Thor::Options.parse(parser, opts)
+      all_args = args + Thor::Options.extra(parser)
+      n = Array.size(all_args)
+      min = Thor::Command.min_args(c)
+      max = Thor::Command.max_args(c)
+      if n < min || (max != nil && n > max)
+        msg = "ERROR: \"#{Thor::App.basename(app)} #{name}\" was called with "
+        msg += n == 0 ? "no arguments" : "arguments #{Kernel.inspect(all_args)}"
+        msg += "\nUsage: \"#{Thor.banner(app, c)}\""
+        raise Thor::Error.new(msg, :invocation)
+      end
+      case name
+      in "help" then help(cli, all_args[0])
+      in "tree" then tree(cli)
+      else run(cli, name, all_args, options)
+      end
+    end
+
+    # Ruby: help(command = nil): the command list, or one command's help.
+    def help(cli, command = nil)
+      print(command == nil ? Thor.help_text(thor(cli)) : Thor.command_help_text(thor(cli), command))
+      nil
+    end
+
+    def tree(cli)
+      print(Thor.tree_text(thor(cli)))
+      nil
+    end
   end
 end

@@ -3,54 +3,56 @@
 # jaro_winkler gem, WordWrap ActionView's word_wrap. The modules are top-level (no Text:: prefix) so
 # that the Sake test reads the same.
 
-module Levenshtein
-  module_function
+module Text
+  module Levenshtein
+    module_function
 
-  # Edit distance (insert, delete, substitute) over characters; with max_distance, a larger
-  # distance is reported as max_distance.
-  def distance(a, b, max_distance = nil)
-    a => String
-    b => String
-    s = a.chars
-    t = b.chars
-    prev = (0..t.size).to_a
-    s.each_with_index do |sc, i|
-      cur = [i + 1]
-      t.each_with_index do |tc, j|
-        cost = sc == tc ? 0 : 1
-        cur << [cur[j] + 1, prev[j + 1] + 1, prev[j] + cost].min
+    # Edit distance (insert, delete, substitute) over characters; with max_distance, a larger
+    # distance is reported as max_distance.
+    def distance(a, b, max_distance = nil)
+      a => String
+      b => String
+      s = a.chars
+      t = b.chars
+      prev = (0..t.size).to_a
+      s.each_with_index do |sc, i|
+        cur = [i + 1]
+        t.each_with_index do |tc, j|
+          cost = sc == tc ? 0 : 1
+          cur << [cur[j] + 1, prev[j + 1] + 1, prev[j] + cost].min
+        end
+        prev = cur
       end
-      prev = cur
+      d = prev.last
+      max_distance && d > max_distance ? max_distance : d
     end
-    d = prev.last
-    max_distance && d > max_distance ? max_distance : d
   end
-end
 
-module Soundex
-  module_function
+  module Soundex
+    module_function
 
-  CODES = { "B" => "1", "F" => "1", "P" => "1", "V" => "1",
-            "C" => "2", "G" => "2", "J" => "2", "K" => "2", "Q" => "2", "S" => "2", "X" => "2", "Z" => "2",
-            "D" => "3", "T" => "3", "L" => "4", "M" => "5", "N" => "5", "R" => "6" }
+    CODES = { "B" => "1", "F" => "1", "P" => "1", "V" => "1",
+              "C" => "2", "G" => "2", "J" => "2", "K" => "2", "Q" => "2", "S" => "2", "X" => "2", "Z" => "2",
+              "D" => "3", "T" => "3", "L" => "4", "M" => "5", "N" => "5", "R" => "6" }
 
-  # American Soundex: the first letter, then up to three digits; nil when there is no letter.
-  def soundex(str)
-    letters = str.upcase.gsub(/[^A-Z]/, "")
-    return nil if letters.empty?
-    out = letters[0]
-    last = CODES[letters[0]]
-    letters.chars.drop(1).each do |c|
-      code = CODES[c]
-      if code
-        out << code if code != last
-        last = code
-      elsif c != "H" && c != "W"
-        last = nil
+    # American Soundex: the first letter, then up to three digits; nil when there is no letter.
+    def soundex(str)
+      letters = str.upcase.gsub(/[^A-Z]/, "")
+      return nil if letters.empty?
+      out = letters[0]
+      last = CODES[letters[0]]
+      letters.chars.drop(1).each do |c|
+        code = CODES[c]
+        if code
+          out << code if code != last
+          last = code
+        elsif c != "H" && c != "W"
+          last = nil
+        end
+        break if out.size == 4
       end
-      break if out.size == 4
+      out.ljust(4, "0")
     end
-    out.ljust(4, "0")
   end
 end
 

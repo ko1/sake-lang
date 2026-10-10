@@ -18,710 +18,710 @@
 # strip_newlines. An unknown filter leaves its input unchanged (Liquid's lax mode).
 # Not supported: cycle, increment/decrement, tablerow, include/render, liquid, {% # %}, named filter
 # arguments (allow_false:), "now"/"today" for date (not reproducible), strict/warn modes, inline
-# "Liquid error:" messages (errors raise: LiquidSyntaxError at parse, ZeroDivisionError at render).
+# "Liquid error:" messages (errors raise: SyntaxError at parse, ZeroDivisionError at render).
 # Arithmetic is Float arithmetic where Liquid goes through BigDecimal (0.1 + 0.2 differs).
 
 require "time"
 
-class LiquidSyntaxError < Exception   # Liquid::SyntaxError
-end
-
-# An expression: a literal (:lit, value), a variable (:var, name and the lookups in path: literal keys
-# or expressions), or a range (:range, from and to).
-class LExpr
-  attr_reader kind, value, name, path, from, to
-
-  def initialize(e)
-    @kind => Symbol
-    @name = "" if @name == nil
-    @path = LExpr[] if @path == nil
-  end
-end
-
-class LFilter
-  attr_reader name, args                # String, LExpr[]
-end
-
-# One comparison, chained to the next with and/or: Liquid evaluates `a and b or c` as a and (b or c).
-class LCond
-  attr_reader left, op, right           # LExpr, String ("" alone: truthiness), LExpr or nil
-  attr_accessor rel, rest               # :none | :and | :or, LCond or nil
-  def initialize(c)
-    @rel = :none if @rel == nil
-  end
-end
-
-# A node of a template: :text, :output, :if, :unless, :for, :assign, :capture, :case, :comment,
-# :break, :continue. Branches of if/unless/case are conds[i] with bodies[i], then else_body.
-class LNode
-  attr_reader kind
-  attr_accessor text, expr, filters, conds, bodies, else_body, limit, offset, reversed
-
-  def initialize(n)
-    @kind => Symbol
-    @text = "" if @text == nil
-    @filters = LFilter[] if @filters == nil
-    @conds = LCond[] if @conds == nil
-    @bodies = Array[] if @bodies == nil
-    @reversed = false if @reversed == nil
-  end
-end
-
-# A token of the source: :text, :var ({{ }}) or :tag ({% %}); src is the original text.
-class LTok
-  attr_reader kind, text, src, trim_left, trim_right
-end
-
-class Template
-  attr_reader nodes
-
-  def parse(src)
-    src => String
-    Template.new(LParser.parse(LParser.new(LParser.tokenize(src))))
-  end
-
-  def render(t, assigns = Hash[])
-    assigns => Hash
-    ctx = LContext.new(Array[Hash.dup(assigns)])
-    out = String[]
-    LRender.render_nodes(ctx, @nodes, out)
-    Array.join(out, "")
-  end
-end
-
 module Liquid
-  module_function
-
-  def parse(src) = Template.parse(src)
-  def render(src, assigns = Hash[]) = Template.render(Template.parse(src), assigns)
-end
-
-class LParser
-  attr_reader toks
-  private attr_accessor pos, trim, tag, markup
-
-  def initialize(p)
-    @pos = 0
-    @trim = false
-    @tag = ""
-    @markup = ""
+  class SyntaxError < Exception
   end
 
-  def tokenize(src)
-    toks = LTok[]
-    pos = 0
-    n = String.size(src)
-    while pos < n
-      start = String.index(src, /\{[{%]/, pos)
-      unless start
-        Array.push(toks, LTok.new(:text, src[pos, n - pos] || "", src[pos, n - pos] || "", false, false))
-        break
-      end
-      Array.push(toks, LTok.new(:text, src[pos, start - pos] || "", src[pos, start - pos] || "", false, false)) if start > pos
-      var = src[start, 2] == "{{"
-      close = String.index(src, var ? "}}" : "%}", start + 2)
-      raise LiquidSyntaxError, "#{var ? "Variable" : "Tag"} '#{src[start, 2]}' was not properly terminated" unless close
-      whole = src[start, close + 2 - start] || ""
-      inner = whole[2, String.size(whole) - 4] || ""
-      tl = String.start_with?(inner, "-")
-      tr = String.end_with?(inner, "-")
-      inner = inner[1, String.size(inner) - 1] || "" if tl
-      inner = inner[0, String.size(inner) - 1] || "" if tr
-      Array.push(toks, LTok.new(var ? :var : :tag, String.strip(inner), whole, tl, tr))
-      pos = close + 2
+  # An expression: a literal (:lit, value), a variable (:var, name and the lookups in path: literal keys
+  # or expressions), or a range (:range, from and to).
+  class Expr
+    attr_reader kind, value, name, path, from, to
+
+    def initialize(e)
+      @kind => Symbol
+      @name = "" if @name == nil
+      @path = Expr[] if @path == nil
     end
-    toks
   end
 
-  def parse(p) = parse_block(p, "", String[])
+  class Filter
+    attr_reader name, args                # String, Expr[]
+  end
 
-  def trim_before(p, nodes, t)
-    last = Array.last(nodes)
-    if LTok.trim_left(t) && last && LNode.kind(last) == :text
-      LNode.set_text(last, String.rstrip(LNode.text(last)))
+  # One comparison, chained to the next with and/or: Liquid evaluates `a and b or c` as a and (b or c).
+  class Cond
+    attr_reader left, op, right           # Expr, String ("" alone: truthiness), Expr or nil
+    attr_accessor rel, rest               # :none | :and | :or, Cond or nil
+    def initialize(c)
+      @rel = :none if @rel == nil
     end
-    @trim = LTok.trim_right(t)
   end
 
-  def split_tag(s)
-    m = String.match(s, /\A(\w+)\s*(.*)\z/m)
-    raise LiquidSyntaxError, "Unknown tag '#{s}'" unless m
-    [m[1] || "", m[2] || ""]
+  # A node of a template: :text, :output, :if, :unless, :for, :assign, :capture, :case, :comment,
+  # :break, :continue. Branches of if/unless/case are conds[i] with bodies[i], then else_body.
+  class Node
+    attr_reader kind
+    attr_accessor text, expr, filters, conds, bodies, else_body, limit, offset, reversed
+
+    def initialize(n)
+      @kind => Symbol
+      @text = "" if @text == nil
+      @filters = Filter[] if @filters == nil
+      @conds = Cond[] if @conds == nil
+      @bodies = Array[] if @bodies == nil
+      @reversed = false if @reversed == nil
+    end
   end
 
-  # Nodes up to a tag named in closers (left in @tag/@markup), or the end when closers is empty.
-  def parse_block(p, opener, closers)
-    nodes = LNode[]
-    while @pos < Array.size(@toks)
-      t = Array.fetch(@toks, @pos)
-      @pos += 1
-      case LTok.kind(t)
-      in :text
-        s = LTok.text(t)
-        s = String.lstrip(s) if @trim
-        @trim = false
-        Array.push(nodes, LNode.new(:text, text: s)) unless s == ""
-      in :var
-        trim_before(p, nodes, t)
-        Array.push(nodes, parse_output(:output, LTok.text(t)))
-      in :tag
-        trim_before(p, nodes, t)
-        name, markup = split_tag(LTok.text(t))
-        if Array.include?(closers, name)
-          @tag = name
-          @markup = markup
-          return nodes
+  # A token of the source: :text, :var ({{ }}) or :tag ({% %}); src is the original text.
+  class Tok
+    attr_reader kind, text, src, trim_left, trim_right
+  end
+
+  class Template
+    attr_reader nodes
+
+    def parse(src)
+      src => String
+      Template.new(Parser.parse(Parser.new(Parser.tokenize(src))))
+    end
+
+    def render(t, assigns = Hash[])
+      assigns => Hash
+      ctx = Context.new(Array[Hash.dup(assigns)])
+      out = String[]
+      Render.render_nodes(ctx, @nodes, out)
+      Array.join(out, "")
+    end
+  end
+
+  class Parser
+    attr_reader toks
+    private attr_accessor pos, trim, tag, markup
+
+    def initialize(p)
+      @pos = 0
+      @trim = false
+      @tag = ""
+      @markup = ""
+    end
+
+    def tokenize(src)
+      toks = Tok[]
+      pos = 0
+      n = String.size(src)
+      while pos < n
+        start = String.index(src, /\{[{%]/, pos)
+        unless start
+          Array.push(toks, Tok.new(:text, src[pos, n - pos] || "", src[pos, n - pos] || "", false, false))
+          break
         end
-        raise LiquidSyntaxError, "Unexpected outer '#{name}' tag" if String.start_with?(name, "end") || name == "else" || name == "elsif" || name == "when"
-        Array.push(nodes, parse_tag(p, name, markup))
+        Array.push(toks, Tok.new(:text, src[pos, start - pos] || "", src[pos, start - pos] || "", false, false)) if start > pos
+        var = src[start, 2] == "{{"
+        close = String.index(src, var ? "}}" : "%}", start + 2)
+        raise SyntaxError, "#{var ? "Variable" : "Tag"} '#{src[start, 2]}' was not properly terminated" unless close
+        whole = src[start, close + 2 - start] || ""
+        inner = whole[2, String.size(whole) - 4] || ""
+        tl = String.start_with?(inner, "-")
+        tr = String.end_with?(inner, "-")
+        inner = inner[1, String.size(inner) - 1] || "" if tl
+        inner = inner[0, String.size(inner) - 1] || "" if tr
+        Array.push(toks, Tok.new(var ? :var : :tag, String.strip(inner), whole, tl, tr))
+        pos = close + 2
       end
+      toks
     end
-    raise LiquidSyntaxError, "'#{opener}' tag was never closed" unless opener == ""
-    nodes
-  end
 
-  def parse_tag(p, name, markup)
-    case name
-    in "if" | "unless"
-      node = LNode.new(name == "if" ? :if : :unless)
-      Array.push(LNode.conds(node), parse_cond(markup))
-      Array.push(LNode.bodies(node), parse_block(p, name, String["elsif", "else", "end#{name}"]))
-      while @tag == "elsif"
-        Array.push(LNode.conds(node), parse_cond(@markup))
-        Array.push(LNode.bodies(node), parse_block(p, name, String["elsif", "else", "end#{name}"]))
+    def parse(p) = parse_block(p, "", String[])
+
+    def trim_before(p, nodes, t)
+      last = Array.last(nodes)
+      if Tok.trim_left(t) && last && Node.kind(last) == :text
+        Node.set_text(last, String.rstrip(Node.text(last)))
       end
-      if @tag == "else"
-        LNode.set_else_body(node, parse_block(p, name, String["end#{name}"]))
-      end
-      node
-    in "case"
-      node = LNode.new(:case, expr: parse_expr(markup))
-      parse_block(p, "case", String["when", "else", "endcase"])   # text before the first when is dropped
-      while @tag == "when"
-        subject = LNode.expr(node)
-        subject => LExpr
-        Array.push(LNode.conds(node), when_cond(subject, @markup))
-        Array.push(LNode.bodies(node), parse_block(p, "case", String["when", "else", "endcase"]))
-      end
-      LNode.set_else_body(node, parse_block(p, "case", String["endcase"])) if @tag == "else"
-      node
-    in "for"
-      m = String.match(markup, /\A([\w\-]+)\s+in\s+(\S+)(.*)\z/m)
-      raise LiquidSyntaxError, "Syntax Error in 'for loop' - Valid syntax: for [item] in [collection]" unless m
-      rest = m[3] || ""
-      node = LNode.new(:for, text: m[1] || "", expr: parse_expr(m[2] || ""), reversed: String.match?(rest, /\breversed\b/))
-      Array.each(String.scan(rest, /(\w+)\s*:\s*("[^"]*"|'[^']*'|[^\s,]+)/)) do |key, val|
-        LNode.set_limit(node, parse_expr(val || "")) if key == "limit"
-        LNode.set_offset(node, parse_expr(val || "")) if key == "offset"
-      end
-      Array.push(LNode.bodies(node), parse_block(p, "for", String["else", "endfor"]))
-      LNode.set_else_body(node, parse_block(p, "for", String["endfor"])) if @tag == "else"
-      node
-    in "assign"
-      m = String.match(markup, /\A([\w\-]+)\s*=\s*(.*)\z/m)
-      raise LiquidSyntaxError, "Syntax Error in 'assign' - Valid syntax: assign [var] = [source]" unless m
-      node = parse_output(:assign, m[2] || "")
-      LNode.set_text(node, m[1] || "")
-      node
-    in "capture"
-      node = LNode.new(:capture, text: String.strip(markup))
-      Array.push(LNode.bodies(node), parse_block(p, "capture", String["endcapture"]))
-      node
-    in "echo" then parse_output(:output, markup)
-    in "break" then LNode.new(:break)
-    in "continue" then LNode.new(:continue)
-    in "comment"
-      depth = 1
-      while depth > 0
-        raise LiquidSyntaxError, "'comment' tag was never closed" if @pos >= Array.size(@toks)
+      @trim = Tok.trim_right(t)
+    end
+
+    def split_tag(s)
+      m = String.match(s, /\A(\w+)\s*(.*)\z/m)
+      raise SyntaxError, "Unknown tag '#{s}'" unless m
+      [m[1] || "", m[2] || ""]
+    end
+
+    # Nodes up to a tag named in closers (left in @tag/@markup), or the end when closers is empty.
+    def parse_block(p, opener, closers)
+      nodes = Node[]
+      while @pos < Array.size(@toks)
         t = Array.fetch(@toks, @pos)
         @pos += 1
-        next unless LTok.kind(t) == :tag
-        tname = String.sub(LTok.text(t), /\s.*\z/m, "")
-        depth += 1 if tname == "comment"
-        depth -= 1 if tname == "endcomment"
-        trim_before(p, LNode[], t) if depth == 0
-      end
-      LNode.new(:comment)
-    in "raw"
-      buf = String[]
-      while true
-        raise LiquidSyntaxError, "'raw' tag was never closed" if @pos >= Array.size(@toks)
-        t = Array.fetch(@toks, @pos)
-        @pos += 1
-        if LTok.kind(t) == :tag && LTok.text(t) == "endraw"
-          s = Array.join(buf, "")
+        case Tok.kind(t)
+        in :text
+          s = Tok.text(t)
           s = String.lstrip(s) if @trim
-          s = String.rstrip(s) if LTok.trim_left(t)
-          @trim = LTok.trim_right(t)
-          return LNode.new(:text, text: s)
+          @trim = false
+          Array.push(nodes, Node.new(:text, text: s)) unless s == ""
+        in :var
+          trim_before(p, nodes, t)
+          Array.push(nodes, parse_output(:output, Tok.text(t)))
+        in :tag
+          trim_before(p, nodes, t)
+          name, markup = split_tag(Tok.text(t))
+          if Array.include?(closers, name)
+            @tag = name
+            @markup = markup
+            return nodes
+          end
+          raise SyntaxError, "Unexpected outer '#{name}' tag" if String.start_with?(name, "end") || name == "else" || name == "elsif" || name == "when"
+          Array.push(nodes, parse_tag(p, name, markup))
         end
-        Array.push(buf, LTok.src(t))
       end
-      LNode.new(:comment)
-    else
-      raise LiquidSyntaxError, "Unknown tag '#{name}'"
+      raise SyntaxError, "'#{opener}' tag was never closed" unless opener == ""
+      nodes
     end
-  end
 
-  # `expr | filter: a, b | filter2` into an :output or :assign node.
-  def parse_output(kind, markup)
-    parts = split_outside_quotes(markup, "|")
-    node = LNode.new(kind, expr: parse_expr(Array.fetch(parts, 0)))
-    Array.each(Array.drop(parts, 1)) do |f|
-      m = String.match(String.strip(f), /\A(\w+)\s*(?::\s*(.*))?\z/m)
-      next unless m
-      args = m[2] == nil ? String[] : split_outside_quotes(m[2] || "", ",")
-      Array.push(LNode.filters(node), LFilter.new(m[1] || "", LExpr[*Array.map(args) { |a| parse_expr(a) }]))
-    end
-    node
-  end
-
-  def split_outside_quotes(s, sep)
-    out = String[]
-    cur = ""
-    q = ""
-    String.each_char(s) do |c|
-      if q != ""
-        q = "" if c == q
-        cur += c
-      elsif c == "\"" || c == "'"
-        q = c
-        cur += c
-      elsif c == sep
-        Array.push(out, cur)
-        cur = ""
+    def parse_tag(p, name, markup)
+      case name
+      in "if" | "unless"
+        node = Node.new(name == "if" ? :if : :unless)
+        Array.push(Node.conds(node), parse_cond(markup))
+        Array.push(Node.bodies(node), parse_block(p, name, String["elsif", "else", "end#{name}"]))
+        while @tag == "elsif"
+          Array.push(Node.conds(node), parse_cond(@markup))
+          Array.push(Node.bodies(node), parse_block(p, name, String["elsif", "else", "end#{name}"]))
+        end
+        if @tag == "else"
+          Node.set_else_body(node, parse_block(p, name, String["end#{name}"]))
+        end
+        node
+      in "case"
+        node = Node.new(:case, expr: parse_expr(markup))
+        parse_block(p, "case", String["when", "else", "endcase"])   # text before the first when is dropped
+        while @tag == "when"
+          subject = Node.expr(node)
+          subject => Expr
+          Array.push(Node.conds(node), when_cond(subject, @markup))
+          Array.push(Node.bodies(node), parse_block(p, "case", String["when", "else", "endcase"]))
+        end
+        Node.set_else_body(node, parse_block(p, "case", String["endcase"])) if @tag == "else"
+        node
+      in "for"
+        m = String.match(markup, /\A([\w\-]+)\s+in\s+(\S+)(.*)\z/m)
+        raise SyntaxError, "Syntax Error in 'for loop' - Valid syntax: for [item] in [collection]" unless m
+        rest = m[3] || ""
+        node = Node.new(:for, text: m[1] || "", expr: parse_expr(m[2] || ""), reversed: String.match?(rest, /\breversed\b/))
+        Array.each(String.scan(rest, /(\w+)\s*:\s*("[^"]*"|'[^']*'|[^\s,]+)/)) do |key, val|
+          Node.set_limit(node, parse_expr(val || "")) if key == "limit"
+          Node.set_offset(node, parse_expr(val || "")) if key == "offset"
+        end
+        Array.push(Node.bodies(node), parse_block(p, "for", String["else", "endfor"]))
+        Node.set_else_body(node, parse_block(p, "for", String["endfor"])) if @tag == "else"
+        node
+      in "assign"
+        m = String.match(markup, /\A([\w\-]+)\s*=\s*(.*)\z/m)
+        raise SyntaxError, "Syntax Error in 'assign' - Valid syntax: assign [var] = [source]" unless m
+        node = parse_output(:assign, m[2] || "")
+        Node.set_text(node, m[1] || "")
+        node
+      in "capture"
+        node = Node.new(:capture, text: String.strip(markup))
+        Array.push(Node.bodies(node), parse_block(p, "capture", String["endcapture"]))
+        node
+      in "echo" then parse_output(:output, markup)
+      in "break" then Node.new(:break)
+      in "continue" then Node.new(:continue)
+      in "comment"
+        depth = 1
+        while depth > 0
+          raise SyntaxError, "'comment' tag was never closed" if @pos >= Array.size(@toks)
+          t = Array.fetch(@toks, @pos)
+          @pos += 1
+          next unless Tok.kind(t) == :tag
+          tname = String.sub(Tok.text(t), /\s.*\z/m, "")
+          depth += 1 if tname == "comment"
+          depth -= 1 if tname == "endcomment"
+          trim_before(p, Node[], t) if depth == 0
+        end
+        Node.new(:comment)
+      in "raw"
+        buf = String[]
+        while true
+          raise SyntaxError, "'raw' tag was never closed" if @pos >= Array.size(@toks)
+          t = Array.fetch(@toks, @pos)
+          @pos += 1
+          if Tok.kind(t) == :tag && Tok.text(t) == "endraw"
+            s = Array.join(buf, "")
+            s = String.lstrip(s) if @trim
+            s = String.rstrip(s) if Tok.trim_left(t)
+            @trim = Tok.trim_right(t)
+            return Node.new(:text, text: s)
+          end
+          Array.push(buf, Tok.src(t))
+        end
+        Node.new(:comment)
       else
-        cur += c
+        raise SyntaxError, "Unknown tag '#{name}'"
       end
     end
-    Array.push(out, cur)
-    out
-  end
 
-  def parse_expr(s)
-    s = String.strip(s)
-    if (m = String.match(s, /\A"(.*)"\z/m)) || (m = String.match(s, /\A'(.*)'\z/m))
-      LExpr.new(:lit, value: m[1] || "")
-    elsif s == "nil" || s == "null" || s == ""
-      LExpr.new(:lit, value: nil)
-    elsif s == "true" then LExpr.new(:lit, value: true)
-    elsif s == "false" then LExpr.new(:lit, value: false)
-    elsif s == "empty" then LExpr.new(:lit, value: :empty)
-    elsif s == "blank" then LExpr.new(:lit, value: :blank)
-    elsif String.match?(s, /\A-?\d+\z/) then LExpr.new(:lit, value: String.to_i(s))
-    elsif String.match?(s, /\A-?\d+\.\d+\z/) then LExpr.new(:lit, value: String.to_f(s))
-    elsif (m = String.match(s, /\A\((\S+)\.\.(\S+)\)\z/))
-      LExpr.new(:range, from: parse_expr(m[1] || ""), to: parse_expr(m[2] || ""))
-    else
-      segs = String.scan(s, /\[[^\]]+\]|[\w\-]+\??/)
-      name = Array.first(segs) || s
-      path = LExpr[]
-      Array.each(Array.drop(segs, 1)) do |seg|
-        if String.start_with?(seg, "[")
-          Array.push(path, parse_expr(seg[1, String.size(seg) - 2] || ""))
+    # `expr | filter: a, b | filter2` into an :output or :assign node.
+    def parse_output(kind, markup)
+      parts = split_outside_quotes(markup, "|")
+      node = Node.new(kind, expr: parse_expr(Array.fetch(parts, 0)))
+      Array.each(Array.drop(parts, 1)) do |f|
+        m = String.match(String.strip(f), /\A(\w+)\s*(?::\s*(.*))?\z/m)
+        next unless m
+        args = m[2] == nil ? String[] : split_outside_quotes(m[2] || "", ",")
+        Array.push(Node.filters(node), Filter.new(m[1] || "", Expr[*Array.map(args) { |a| parse_expr(a) }]))
+      end
+      node
+    end
+
+    def split_outside_quotes(s, sep)
+      out = String[]
+      cur = ""
+      q = ""
+      String.each_char(s) do |c|
+        if q != ""
+          q = "" if c == q
+          cur += c
+        elsif c == "\"" || c == "'"
+          q = c
+          cur += c
+        elsif c == sep
+          Array.push(out, cur)
+          cur = ""
         else
-          Array.push(path, LExpr.new(:lit, value: seg))
+          cur += c
         end
       end
-      LExpr.new(:var, name:, path:)
+      Array.push(out, cur)
+      out
     end
-  end
 
-  # `a == b and c or d > e`: a chain of LCond.
-  def parse_cond(markup)
-    toks = String.scan(markup, /"[^"]*"|'[^']*'|\S+/)
-    first = nil
-    cur = nil
-    i = 0
-    while i < Array.size(toks)
-      left = parse_expr(Array.fetch(toks, i))
-      i += 1
-      op = ""
-      right = nil
-      nxt = toks[i]
-      if nxt && nxt != "and" && nxt != "or" && String.match?(nxt, /\A(?:==|!=|<>|<=|>=|<|>|contains)\z/)
-        op = nxt
-        right = parse_expr(toks[i + 1] || "")
-        i += 2
-      end
-      c = LCond.new(left, op, right)
-      if cur
-        LCond.set_rest(cur, c)
+    def parse_expr(s)
+      s = String.strip(s)
+      if (m = String.match(s, /\A"(.*)"\z/m)) || (m = String.match(s, /\A'(.*)'\z/m))
+        Expr.new(:lit, value: m[1] || "")
+      elsif s == "nil" || s == "null" || s == ""
+        Expr.new(:lit, value: nil)
+      elsif s == "true" then Expr.new(:lit, value: true)
+      elsif s == "false" then Expr.new(:lit, value: false)
+      elsif s == "empty" then Expr.new(:lit, value: :empty)
+      elsif s == "blank" then Expr.new(:lit, value: :blank)
+      elsif String.match?(s, /\A-?\d+\z/) then Expr.new(:lit, value: String.to_i(s))
+      elsif String.match?(s, /\A-?\d+\.\d+\z/) then Expr.new(:lit, value: String.to_f(s))
+      elsif (m = String.match(s, /\A\((\S+)\.\.(\S+)\)\z/))
+        Expr.new(:range, from: parse_expr(m[1] || ""), to: parse_expr(m[2] || ""))
       else
-        first = c
+        segs = String.scan(s, /\[[^\]]+\]|[\w\-]+\??/)
+        name = Array.first(segs) || s
+        path = Expr[]
+        Array.each(Array.drop(segs, 1)) do |seg|
+          if String.start_with?(seg, "[")
+            Array.push(path, parse_expr(seg[1, String.size(seg) - 2] || ""))
+          else
+            Array.push(path, Expr.new(:lit, value: seg))
+          end
+        end
+        Expr.new(:var, name:, path:)
       end
-      cur = c
-      nxt = toks[i]
-      if nxt == "and" || nxt == "or"
-        LCond.set_rel(c, nxt == "and" ? :and : :or)
+    end
+
+    # `a == b and c or d > e`: a chain of Cond.
+    def parse_cond(markup)
+      toks = String.scan(markup, /"[^"]*"|'[^']*'|\S+/)
+      first = nil
+      cur = nil
+      i = 0
+      while i < Array.size(toks)
+        left = parse_expr(Array.fetch(toks, i))
         i += 1
-      else
-        break
+        op = ""
+        right = nil
+        nxt = toks[i]
+        if nxt && nxt != "and" && nxt != "or" && String.match?(nxt, /\A(?:==|!=|<>|<=|>=|<|>|contains)\z/)
+          op = nxt
+          right = parse_expr(toks[i + 1] || "")
+          i += 2
+        end
+        c = Cond.new(left, op, right)
+        if cur
+          Cond.set_rest(cur, c)
+        else
+          first = c
+        end
+        cur = c
+        nxt = toks[i]
+        if nxt == "and" || nxt == "or"
+          Cond.set_rel(c, nxt == "and" ? :and : :or)
+          i += 1
+        else
+          break
+        end
       end
+      raise SyntaxError, "Syntax Error in tag 'if' - Valid syntax: if [expression]" unless first
+      first
     end
-    raise LiquidSyntaxError, "Syntax Error in tag 'if' - Valid syntax: if [expression]" unless first
-    first
-  end
 
-  # `when a or b, c`: subject == a or subject == b or ...
-  def when_cond(subject, markup)
-    vals = Array.flat_map(split_outside_quotes(markup, ",")) { |part| String.split(part, /\s+or\s+/) }
-    first = nil
-    cur = nil
-    Array.each(vals) do |v|
-      v = String.strip(v)
-      next if v == ""
-      c = LCond.new(subject, "==", parse_expr(v))
-      LCond.set_rel(cur, :or) if cur
-      LCond.set_rest(cur, c) if cur
-      first = c unless first
-      cur = c
-    end
-    first || LCond.new(subject, "==", LExpr.new(:lit, value: nil))
-  end
-end
-
-class LContext
-  attr_reader scopes                    # Array of Hash; scopes[0] is the outermost (assign writes there)
-  attr_accessor interrupt               # :none, :break, :continue
-  def initialize(c) = @interrupt = :none
-
-  def lookup(c, name)
-    Array.reverse_each(@scopes) do |sc|
-      return sc[name] if Hash.key?(sc, name)
-    end
-    nil
-  end
-
-  def assign(c, name, v)
-    top = Array.fetch(@scopes, 0)
-    top => Hash
-    top[name] = v
-    v
-  end
-end
-
-module LRender
-  module_function
-
-  def truthy?(v) = !(v == nil || v == false)
-
-  def empty?(v) = ((v in String) && v == "") || ((v in Array) && Array.empty?(v)) || ((v in Hash) && Hash.empty?(v))
-
-  def blank?(v)
-    case v
-    in nil | false then true
-    in String then String.strip(v) == ""
-    in Array then Array.empty?(v)
-    in Hash then Hash.empty?(v)
-    else false
+    # `when a or b, c`: subject == a or subject == b or ...
+    def when_cond(subject, markup)
+      vals = Array.flat_map(split_outside_quotes(markup, ",")) { |part| String.split(part, /\s+or\s+/) }
+      first = nil
+      cur = nil
+      Array.each(vals) do |v|
+        v = String.strip(v)
+        next if v == ""
+        c = Cond.new(subject, "==", parse_expr(v))
+        Cond.set_rel(cur, :or) if cur
+        Cond.set_rest(cur, c) if cur
+        first = c unless first
+        cur = c
+      end
+      first || Cond.new(subject, "==", Expr.new(:lit, value: nil))
     end
   end
 
-  # Liquid's output of a value: nil is "", an Array is its elements joined, a Hash its inspect.
-  def out_s(v)
-    case v
-    in nil then ""
-    in Array then Array.join(Array.map(v) { |x| out_s(x) }, "")
-    in Symbol then ""
-    else Kernel.to_s(v)
-    end
-  end
+  class Context
+    attr_reader scopes                    # Array of Hash; scopes[0] is the outermost (assign writes there)
+    attr_accessor interrupt               # :none, :break, :continue
+    def initialize(c) = @interrupt = :none
 
-  def eval_expr(ctx, e)
-    case LExpr.kind(e)
-    in :lit then LExpr.value(e)
-    in :range
-      a = eval_expr(ctx, LExpr.from(e) || raise("range"))
-      b = eval_expr(ctx, LExpr.to(e) || raise("range"))
-      Range.to_a(to_i(a)..to_i(b))
-    in :var
-      v = LContext.lookup(ctx, LExpr.name(e))
-      Array.each(LExpr.path(e)) { |seg| v = index(v, eval_expr(ctx, seg)) }
+    def lookup(c, name)
+      Array.reverse_each(@scopes) do |sc|
+        return sc[name] if Hash.key?(sc, name)
+      end
+      nil
+    end
+
+    def assign(c, name, v)
+      top = Array.fetch(@scopes, 0)
+      top => Hash
+      top[name] = v
       v
     end
   end
 
-  # x[key] of Liquid: a Hash key, an Array index, or the commands size, first, last.
-  def index(v, key)
-    case v
-    in Hash
-      return v[key] if Hash.key?(v, key)
-      command(v, key)
-    in Array
-      return v[key] if key in Integer
-      command(v, key)
-    in String then key == "size" ? String.size(v) : nil
-    else nil
-    end
-  end
+  module Render
+    module_function
 
-  def command(v, key)
-    case key
-    in "size" then (Array|Hash).size(v)
-    in "first" then (v in Array) ? Array.first(v) : nil
-    in "last" then (v in Array) ? Array.last(v) : nil
-    else nil
-    end
-  end
+    def truthy?(v) = !(v == nil || v == false)
 
-  def eval_cond(ctx, c)
-    l = eval_expr(ctx, LCond.left(c))
-    r = LCond.right(c)
-    op = LCond.op(c)
-    v = op == "" ? truthy?(l) : compare(l, op, r == nil ? nil : eval_expr(ctx, r))
-    rest = LCond.rest(c)
-    case LCond.rel(c)
-    in :none then v
-    in :and then v && (rest == nil ? false : eval_cond(ctx, rest))
-    in :or then v || (rest == nil ? false : eval_cond(ctx, rest))
-    end
-  end
+    def empty?(v) = ((v in String) && v == "") || ((v in Array) && Array.empty?(v)) || ((v in Hash) && Hash.empty?(v))
 
-  def eq?(l, r)
-    return empty?(l) if r == :empty
-    return blank?(l) if r == :blank
-    return empty?(r) if l == :empty
-    return blank?(r) if l == :blank
-    l == r
-  end
-
-  def compare(l, op, r)
-    case op
-    in "==" then eq?(l, r)
-    in "!=" | "<>" then !eq?(l, r)
-    in "contains"
-      case l
-      in String then r != nil && String.include?(l, out_s(r))
-      in Array then r != nil && Array.include?(l, r)
-      in Hash then r != nil && Hash.key?(l, r)
+    def blank?(v)
+      case v
+      in nil | false then true
+      in String then String.strip(v) == ""
+      in Array then Array.empty?(v)
+      in Hash then Hash.empty?(v)
       else false
       end
-    in "<" | ">" | "<=" | ">="
-      case l                              # a type pattern narrows l; a number?(l) helper would not
-      in Integer | Float then (r in Integer | Float) ? ordered?((l <=> r) || 0, op) : false
-      in String then (r in String) ? ordered?(l <=> r, op) : false
-      else false                          # Liquid raises "comparison of X with Y failed"
+    end
+
+    # Liquid's output of a value: nil is "", an Array is its elements joined, a Hash its inspect.
+    def out_s(v)
+      case v
+      in nil then ""
+      in Array then Array.join(Array.map(v) { |x| out_s(x) }, "")
+      in Symbol then ""
+      else Kernel.to_s(v)
       end
-    else raise LiquidSyntaxError, "Unknown operator #{op}"
     end
-  end
 
-  def ordered?(cmp, op)
-    case op
-    in "<" then cmp < 0
-    in ">" then cmp > 0
-    in "<=" then cmp <= 0
-    else cmp >= 0
+    def eval_expr(ctx, e)
+      case Expr.kind(e)
+      in :lit then Expr.value(e)
+      in :range
+        a = eval_expr(ctx, Expr.from(e) || raise("range"))
+        b = eval_expr(ctx, Expr.to(e) || raise("range"))
+        Range.to_a(to_i(a)..to_i(b))
+      in :var
+        v = Context.lookup(ctx, Expr.name(e))
+        Array.each(Expr.path(e)) { |seg| v = index(v, eval_expr(ctx, seg)) }
+        v
+      end
     end
-  end
 
-  def render_nodes(ctx, nodes, out)
-    Array.each(nodes) do |node|
-      break if LContext.interrupt(ctx) != :none
-      case LNode.kind(node)
-      in :text then Array.push(out, LNode.text(node))
-      in :output then Array.push(out, out_s(eval_output(ctx, node)))
-      in :assign then LContext.assign(ctx, LNode.text(node), eval_output(ctx, node))
-      in :capture
-        buf = String[]
-        render_nodes(ctx, Array.fetch(LNode.bodies(node), 0), buf)
-        LContext.assign(ctx, LNode.text(node), Array.join(buf, ""))
-      in :if | :unless
-        render_if(ctx, node, out)
-      in :case
-        matched = false
-        Array.each_with_index(LNode.conds(node)) do |c, i|
-          next unless eval_cond(ctx, c)
-          matched = true
-          render_nodes(ctx, Array.fetch(LNode.bodies(node), i), out)
+    # x[key] of Liquid: a Hash key, an Array index, or the commands size, first, last.
+    def index(v, key)
+      case v
+      in Hash
+        return v[key] if Hash.key?(v, key)
+        command(v, key)
+      in Array
+        return v[key] if key in Integer
+        command(v, key)
+      in String then key == "size" ? String.size(v) : nil
+      else nil
+      end
+    end
+
+    def command(v, key)
+      case key
+      in "size" then (Array|Hash).size(v)
+      in "first" then (v in Array) ? Array.first(v) : nil
+      in "last" then (v in Array) ? Array.last(v) : nil
+      else nil
+      end
+    end
+
+    def eval_cond(ctx, c)
+      l = eval_expr(ctx, Cond.left(c))
+      r = Cond.right(c)
+      op = Cond.op(c)
+      v = op == "" ? truthy?(l) : compare(l, op, r == nil ? nil : eval_expr(ctx, r))
+      rest = Cond.rest(c)
+      case Cond.rel(c)
+      in :none then v
+      in :and then v && (rest == nil ? false : eval_cond(ctx, rest))
+      in :or then v || (rest == nil ? false : eval_cond(ctx, rest))
+      end
+    end
+
+    def eq?(l, r)
+      return empty?(l) if r == :empty
+      return blank?(l) if r == :blank
+      return empty?(r) if l == :empty
+      return blank?(r) if l == :blank
+      l == r
+    end
+
+    def compare(l, op, r)
+      case op
+      in "==" then eq?(l, r)
+      in "!=" | "<>" then !eq?(l, r)
+      in "contains"
+        case l
+        in String then r != nil && String.include?(l, out_s(r))
+        in Array then r != nil && Array.include?(l, r)
+        in Hash then r != nil && Hash.key?(l, r)
+        else false
         end
-        eb = LNode.else_body(node)
-        render_nodes(ctx, eb, out) if !matched && eb
-      in :for then render_for(ctx, node, out)
-      in :comment then nil
-      in :break then LContext.set_interrupt(ctx, :break)
-      in :continue then LContext.set_interrupt(ctx, :continue)
+      in "<" | ">" | "<=" | ">="
+        case l                              # a type pattern narrows l; a number?(l) helper would not
+        in Integer | Float then (r in Integer | Float) ? ordered?((l <=> r) || 0, op) : false
+        in String then (r in String) ? ordered?(l <=> r, op) : false
+        else false                          # Liquid raises "comparison of X with Y failed"
+        end
+      else raise SyntaxError, "Unknown operator #{op}"
       end
     end
-    out
-  end
 
-  def render_if(ctx, node, out)
-    conds = LNode.conds(node)
-    Array.each_with_index(conds) do |c, i|
-      v = eval_cond(ctx, c)
-      v = !v if i == 0 && LNode.kind(node) == :unless
-      if v
-        render_nodes(ctx, Array.fetch(LNode.bodies(node), i), out)
+    def ordered?(cmp, op)
+      case op
+      in "<" then cmp < 0
+      in ">" then cmp > 0
+      in "<=" then cmp <= 0
+      else cmp >= 0
+      end
+    end
+
+    def render_nodes(ctx, nodes, out)
+      Array.each(nodes) do |node|
+        break if Context.interrupt(ctx) != :none
+        case Node.kind(node)
+        in :text then Array.push(out, Node.text(node))
+        in :output then Array.push(out, out_s(eval_output(ctx, node)))
+        in :assign then Context.assign(ctx, Node.text(node), eval_output(ctx, node))
+        in :capture
+          buf = String[]
+          render_nodes(ctx, Array.fetch(Node.bodies(node), 0), buf)
+          Context.assign(ctx, Node.text(node), Array.join(buf, ""))
+        in :if | :unless
+          render_if(ctx, node, out)
+        in :case
+          matched = false
+          Array.each_with_index(Node.conds(node)) do |c, i|
+            next unless eval_cond(ctx, c)
+            matched = true
+            render_nodes(ctx, Array.fetch(Node.bodies(node), i), out)
+          end
+          eb = Node.else_body(node)
+          render_nodes(ctx, eb, out) if !matched && eb
+        in :for then render_for(ctx, node, out)
+        in :comment then nil
+        in :break then Context.set_interrupt(ctx, :break)
+        in :continue then Context.set_interrupt(ctx, :continue)
+        end
+      end
+      out
+    end
+
+    def render_if(ctx, node, out)
+      conds = Node.conds(node)
+      Array.each_with_index(conds) do |c, i|
+        v = eval_cond(ctx, c)
+        v = !v if i == 0 && Node.kind(node) == :unless
+        if v
+          render_nodes(ctx, Array.fetch(Node.bodies(node), i), out)
+          return nil
+        end
+      end
+      eb = Node.else_body(node)
+      render_nodes(ctx, eb, out) if eb
+      nil
+    end
+
+    def render_for(ctx, node, out)
+      coll = eval_expr(ctx, Node.expr(node) || raise("for"))
+      items = case coll
+              in Array then coll
+              in Hash then Hash.map(coll) { |k, v| Array[k, v] }
+              in String then Array[coll]
+              else Array[]
+              end
+      lim = Node.limit(node)
+      off = Node.offset(node)
+      from = off == nil ? 0 : to_i(eval_expr(ctx, off))
+      items = Array.drop(items, from)
+      items = Array.take(items, to_i(eval_expr(ctx, lim))) if lim != nil
+      items = Array.reverse(items) if Node.reversed(node)
+      if Array.empty?(items)
+        eb = Node.else_body(node)
+        render_nodes(ctx, eb, out) if eb
         return nil
       end
+      name = Node.text(node)
+      n = Array.size(items)
+      scope = Hash[]
+      Array.push(Context.scopes(ctx), scope)
+      Array.each_with_index(items) do |item, i|
+        scope[name] = item
+        scope["forloop"] = Hash["length" => n, "index" => i + 1, "index0" => i, "rindex" => n - i, "rindex0" => n - i - 1,
+                                "first" => i == 0, "last" => i == n - 1, "name" => "#{name}-#{Expr.name(Node.expr(node) || raise("for"))}"]
+        render_nodes(ctx, Array.fetch(Node.bodies(node), 0), out)
+        intr = Context.interrupt(ctx)
+        Context.set_interrupt(ctx, :none)
+        break if intr == :break
+      end
+      Array.pop(Context.scopes(ctx))
+      nil
     end
-    eb = LNode.else_body(node)
-    render_nodes(ctx, eb, out) if eb
-    nil
-  end
 
-  def render_for(ctx, node, out)
-    coll = eval_expr(ctx, LNode.expr(node) || raise("for"))
-    items = case coll
-            in Array then coll
-            in Hash then Hash.map(coll) { |k, v| Array[k, v] }
-            in String then Array[coll]
-            else Array[]
-            end
-    lim = LNode.limit(node)
-    off = LNode.offset(node)
-    from = off == nil ? 0 : to_i(eval_expr(ctx, off))
-    items = Array.drop(items, from)
-    items = Array.take(items, to_i(eval_expr(ctx, lim))) if lim != nil
-    items = Array.reverse(items) if LNode.reversed(node)
-    if Array.empty?(items)
-      eb = LNode.else_body(node)
-      render_nodes(ctx, eb, out) if eb
-      return nil
+    def eval_output(ctx, node)
+      v = eval_expr(ctx, Node.expr(node) || raise("output"))
+      Array.each(Node.filters(node)) do |f|
+        args = Array.map(Filter.args(f)) { |a| eval_expr(ctx, a) }
+        v = apply_filter(Filter.name(f), v, args)
+      end
+      v
     end
-    name = LNode.text(node)
-    n = Array.size(items)
-    scope = Hash[]
-    Array.push(LContext.scopes(ctx), scope)
-    Array.each_with_index(items) do |item, i|
-      scope[name] = item
-      scope["forloop"] = Hash["length" => n, "index" => i + 1, "index0" => i, "rindex" => n - i, "rindex0" => n - i - 1,
-                              "first" => i == 0, "last" => i == n - 1, "name" => "#{name}-#{LExpr.name(LNode.expr(node) || raise("for"))}"]
-      render_nodes(ctx, Array.fetch(LNode.bodies(node), 0), out)
-      intr = LContext.interrupt(ctx)
-      LContext.set_interrupt(ctx, :none)
-      break if intr == :break
-    end
-    Array.pop(LContext.scopes(ctx))
-    nil
-  end
 
-  def eval_output(ctx, node)
-    v = eval_expr(ctx, LNode.expr(node) || raise("output"))
-    Array.each(LNode.filters(node)) do |f|
-      args = Array.map(LFilter.args(f)) { |a| eval_expr(ctx, a) }
-      v = apply_filter(LFilter.name(f), v, args)
-    end
-    v
-  end
-
-  # Liquid's Utils.to_number: Strings that look like numbers convert, anything else is 0.
-  def to_number(v)
-    case v
-    in Integer | Float then v
-    in String then String.match?(String.strip(v), /\A-?\d+\.\d+\z/) ? String.to_f(v) : String.to_i(v)
-    else 0
-    end
-  end
-
-  def to_i(v)
-    n = to_number(v)
-    (n in Float) ? Float.to_i(n) : n
-  end
-
-  def arith(op, a, b)
-    x = to_number(a)
-    y = to_number(b)
-    case op
-    in :plus then x + y
-    in :minus then x - y
-    in :times then x * y
-    in :divided_by then x / y
-    in :modulo then x % y
-    end
-  end
-
-  def escape_table = once { Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"] }
-
-  # sort of template data: all Strings or all numbers (Ruby's sort would fail on anything else at run time;
-  # Sake rejects sorting a union statically, so the kinds are told apart first).
-  def sort_values(v)
-    return Array.sort_by(v) { |x| (x in String) ? x : "" } if Array.all?(v) { |x| x in String }
-    return Array.sort_by(v) { |x| (x in Integer | Float) ? x : 0 } if Array.all?(v) { |x| x in Integer | Float }
-    raise ArgumentError, "comparison of mixed values failed"
-  end
-
-  def apply_filter(name, v, args)
-    a0 = args[0]
-    a1 = args[1]
-    case name
-    in "upcase" then String.upcase(out_s(v))
-    in "downcase" then String.downcase(out_s(v))
-    in "capitalize" then String.capitalize(out_s(v))
-    in "strip" then String.strip(out_s(v))
-    in "lstrip" then String.lstrip(out_s(v))
-    in "rstrip" then String.rstrip(out_s(v))
-    in "strip_newlines" then String.gsub(out_s(v), /\r?\n/, "")
-    in "newline_to_br" then String.gsub(out_s(v), /\r?\n/, "<br />\n")
-    in "escape" then v == nil ? nil : String.gsub(out_s(v), /[&<>"']/, escape_table)
-    in "size"
+    # Liquid's Utils.to_number: Strings that look like numbers convert, anything else is 0.
+    def to_number(v)
       case v
-      in String | Array | Hash then (String|Array|Hash).size(v)
-      in Integer then Integer.size(v)   # Ruby's Integer#size, as Liquid gives
+      in Integer | Float then v
+      in String then String.match?(String.strip(v), /\A-?\d+\.\d+\z/) ? String.to_f(v) : String.to_i(v)
       else 0
       end
-    in "join"
-      glue = a0 == nil ? " " : out_s(a0)
-      items = (v in Array) ? v : Array[v]
-      Array.join(Array.map(items) { |x| out_s(x) }, glue)
-    in "first" then (v in Array) ? Array.first(v) : nil
-    in "last" then (v in Array) ? Array.last(v) : nil
-    in "reverse" then (v in Array) ? Array.reverse(v) : v
-    in "sort" then (v in Array) ? sort_values(v) : v
-    in "uniq" then (v in Array) ? Array.uniq(v) : v
-    in "compact" then (v in Array) ? Array.compact(v) : v
-    in "concat" then (v in Array) && (a0 in Array) ? v + a0 : v
-    in "sum" then (v in Array) ? Array.sum(Array.map(v) { |x| to_number(x) }) : 0
-    in "split" then String.split(out_s(v), out_s(a0))
-    in "plus" then arith(:plus, v, a0)
-    in "minus" then arith(:minus, v, a0)
-    in "times" then arith(:times, v, a0)
-    in "divided_by" then arith(:divided_by, v, a0)
-    in "modulo" then arith(:modulo, v, a0)
-    in "abs" then Arithmetic.abs(to_number(v))
-    in "floor" then Arithmetic.to_i(Arithmetic.floor(to_number(v)))
-    in "ceil" then Arithmetic.to_i(Arithmetic.ceil(to_number(v)))
-    in "default" then truthy?(v) && !empty?(v) ? v : (a0 == nil ? "" : a0)
-    in "replace" then String.gsub(out_s(v), out_s(a0), out_s(a1))
-    in "replace_first" then String.sub(out_s(v), out_s(a0), out_s(a1))
-    in "remove" then String.gsub(out_s(v), out_s(a0), "")
-    in "remove_first" then String.sub(out_s(v), out_s(a0), "")
-    in "append" then out_s(v) + out_s(a0)
-    in "prepend" then out_s(a0) + out_s(v)
-    in "truncate"
-      return nil if v == nil
-      len = a0 == nil ? 50 : to_i(a0)
-      tail = a1 == nil ? "..." : out_s(a1)
-      s = out_s(v)
-      l = Integer.clamp(len - String.size(tail), 0, len)
-      String.size(s) > len ? (s[0, l] || "") + tail : s
-    in "truncatewords"
-      return nil if v == nil
-      n = a0 == nil ? 15 : to_i(a0)
-      n = 1 if n < 1
-      tail = a1 == nil ? "..." : out_s(a1)
-      words = String.split(out_s(v))
-      Array.size(words) > n ? Array.join(Array.take(words, n), " ") + tail : out_s(v)
-    in "date" then date(v, a0)
-    else v                                # an unknown filter leaves the value (Liquid's lax mode)
+    end
+
+    def to_i(v)
+      n = to_number(v)
+      (n in Float) ? Float.to_i(n) : n
+    end
+
+    def arith(op, a, b)
+      x = to_number(a)
+      y = to_number(b)
+      case op
+      in :plus then x + y
+      in :minus then x - y
+      in :times then x * y
+      in :divided_by then x / y
+      in :modulo then x % y
+      end
+    end
+
+    def escape_table = once { Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"] }
+
+    # sort of template data: all Strings or all numbers (Ruby's sort would fail on anything else at run time;
+    # Sake rejects sorting a union statically, so the kinds are told apart first).
+    def sort_values(v)
+      return Array.sort_by(v) { |x| (x in String) ? x : "" } if Array.all?(v) { |x| x in String }
+      return Array.sort_by(v) { |x| (x in Integer | Float) ? x : 0 } if Array.all?(v) { |x| x in Integer | Float }
+      raise ArgumentError, "comparison of mixed values failed"
+    end
+
+    def apply_filter(name, v, args)
+      a0 = args[0]
+      a1 = args[1]
+      case name
+      in "upcase" then String.upcase(out_s(v))
+      in "downcase" then String.downcase(out_s(v))
+      in "capitalize" then String.capitalize(out_s(v))
+      in "strip" then String.strip(out_s(v))
+      in "lstrip" then String.lstrip(out_s(v))
+      in "rstrip" then String.rstrip(out_s(v))
+      in "strip_newlines" then String.gsub(out_s(v), /\r?\n/, "")
+      in "newline_to_br" then String.gsub(out_s(v), /\r?\n/, "<br />\n")
+      in "escape" then v == nil ? nil : String.gsub(out_s(v), /[&<>"']/, escape_table)
+      in "size"
+        case v
+        in String | Array | Hash then (String|Array|Hash).size(v)
+        in Integer then Integer.size(v)   # Ruby's Integer#size, as Liquid gives
+        else 0
+        end
+      in "join"
+        glue = a0 == nil ? " " : out_s(a0)
+        items = (v in Array) ? v : Array[v]
+        Array.join(Array.map(items) { |x| out_s(x) }, glue)
+      in "first" then (v in Array) ? Array.first(v) : nil
+      in "last" then (v in Array) ? Array.last(v) : nil
+      in "reverse" then (v in Array) ? Array.reverse(v) : v
+      in "sort" then (v in Array) ? sort_values(v) : v
+      in "uniq" then (v in Array) ? Array.uniq(v) : v
+      in "compact" then (v in Array) ? Array.compact(v) : v
+      in "concat" then (v in Array) && (a0 in Array) ? v + a0 : v
+      in "sum" then (v in Array) ? Array.sum(Array.map(v) { |x| to_number(x) }) : 0
+      in "split" then String.split(out_s(v), out_s(a0))
+      in "plus" then arith(:plus, v, a0)
+      in "minus" then arith(:minus, v, a0)
+      in "times" then arith(:times, v, a0)
+      in "divided_by" then arith(:divided_by, v, a0)
+      in "modulo" then arith(:modulo, v, a0)
+      in "abs" then Arithmetic.abs(to_number(v))
+      in "floor" then Arithmetic.to_i(Arithmetic.floor(to_number(v)))
+      in "ceil" then Arithmetic.to_i(Arithmetic.ceil(to_number(v)))
+      in "default" then truthy?(v) && !empty?(v) ? v : (a0 == nil ? "" : a0)
+      in "replace" then String.gsub(out_s(v), out_s(a0), out_s(a1))
+      in "replace_first" then String.sub(out_s(v), out_s(a0), out_s(a1))
+      in "remove" then String.gsub(out_s(v), out_s(a0), "")
+      in "remove_first" then String.sub(out_s(v), out_s(a0), "")
+      in "append" then out_s(v) + out_s(a0)
+      in "prepend" then out_s(a0) + out_s(v)
+      in "truncate"
+        return nil if v == nil
+        len = a0 == nil ? 50 : to_i(a0)
+        tail = a1 == nil ? "..." : out_s(a1)
+        s = out_s(v)
+        l = Integer.clamp(len - String.size(tail), 0, len)
+        String.size(s) > len ? (s[0, l] || "") + tail : s
+      in "truncatewords"
+        return nil if v == nil
+        n = a0 == nil ? 15 : to_i(a0)
+        n = 1 if n < 1
+        tail = a1 == nil ? "..." : out_s(a1)
+        words = String.split(out_s(v))
+        Array.size(words) > n ? Array.join(Array.take(words, n), " ") + tail : out_s(v)
+      in "date" then date(v, a0)
+      else v                                # an unknown filter leaves the value (Liquid's lax mode)
+      end
+    end
+
+    # Liquid's date filter: a Time, an Integer (seconds since the epoch), or a parsable String.
+    def date(v, fmt)
+      return v if fmt == nil || out_s(fmt) == ""
+      t = case v
+          in Time then v
+          in Integer then Time.at(v)
+          in String then Time.parse(v)
+          else nil
+          end
+      return v if t == nil
+      Time.strftime(t, out_s(fmt))
+    rescue ArgumentError
+      v
     end
   end
 
-  # Liquid's date filter: a Time, an Integer (seconds since the epoch), or a parsable String.
-  def date(v, fmt)
-    return v if fmt == nil || out_s(fmt) == ""
-    t = case v
-        in Time then v
-        in Integer then Time.at(v)
-        in String then Time.parse(v)
-        else nil
-        end
-    return v if t == nil
-    Time.strftime(t, out_s(fmt))
-  rescue ArgumentError
-    v
-  end
+  module_function
+
+  def parse(src) = Template.parse(src)
+  def render(src, assigns = Hash[]) = Template.render(Template.parse(src), assigns)
 end

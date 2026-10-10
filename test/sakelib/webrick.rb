@@ -109,7 +109,7 @@ rescue SystemCallError
   puts("refused")
 end
 
-puts("-- HTTPStatus, HTTPUtils")
+puts("-- WEBrick::HTTPStatus, WEBrick::HTTPUtils")
 p([WEBrick::HTTPStatus.reason_phrase(200), WEBrick::HTTPStatus.reason_phrase(422), WEBrick::HTTPStatus.reason_phrase(599)])
 p([WEBrick::HTTPStatus.success?(204), WEBrick::HTTPStatus.redirect?(301), WEBrick::HTTPStatus.client_error?(404), WEBrick::HTTPStatus.server_error?(503), WEBrick::HTTPStatus.error?(200)])
 p(WEBrick::HTTPUtils.parse_query("a=1&b=x+y%21&a=2;c&=d").transform_values(&:to_s))

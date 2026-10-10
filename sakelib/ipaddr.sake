@@ -1,20 +1,8 @@
 # ipaddr: Ruby's IPAddr (ipaddr 1.2.8) in Sake: IPv4 and IPv6 addresses and networks.
 #
 # IPAddr.new("192.168.1.0/24"), IPAddr.new(3232235777, Socket.AF_INET); operators & | ~ << >> + -
-# == <=> (Comparable) and include?. Ruby's IPAddr::InvalidAddressError & co. are IPAddrInvalidAddressError
-# & co. (no nested names, no hierarchy); Socket::AF_INET is Socket.AF_INET.
-
-class IPAddrError < Exception
-end
-
-class IPAddrInvalidAddressError < Exception
-end
-
-class IPAddrAddressFamilyError < Exception
-end
-
-class IPAddrInvalidPrefixError < Exception
-end
+# == <=> (Comparable) and include?. Ruby's IPAddr::InvalidAddressError & co. keep their names (no
+# hierarchy: `rescue IPAddr::Error` does not catch the others); Socket::AF_INET is Socket.AF_INET.
 
 class Socket
   def AF_UNSPEC = 0
@@ -23,6 +11,15 @@ class Socket
 end
 
 class IPAddr
+  class Error < Exception
+  end
+  class InvalidAddressError < Exception
+  end
+  class AddressFamilyError < Exception
+  end
+  class InvalidPrefixError < Exception
+  end
+
   include Comparable
   include Bitwise
   include Arithmetic
@@ -53,8 +50,8 @@ class IPAddr
         @mask_addr = family == Socket.AF_INET ? in4mask : in6mask
         return
       end
-      raise IPAddrAddressFamilyError, "address family must be specified" if family == Socket.AF_UNSPEC
-      raise IPAddrAddressFamilyError, "unsupported address family: #{family}"
+      raise AddressFamilyError, "address family must be specified" if family == Socket.AF_UNSPEC
+      raise AddressFamilyError, "unsupported address family: #{family}"
     end
     src => String
     prefix, prefixlen = String.split(src, "/", 2)
@@ -80,8 +77,8 @@ class IPAddr
       found = Socket.AF_INET6
     end
     @zone_id_ = zone_id
-    raise IPAddrAddressFamilyError, "address family mismatch" if family != Socket.AF_UNSPEC && found != family
-    raise IPAddrInvalidAddressError, "invalid address: #{src}" unless addr && found
+    raise AddressFamilyError, "address family mismatch" if family != Socket.AF_UNSPEC && found != family
+    raise InvalidAddressError, "invalid address: #{src}" unless addr && found
     @addr = addr
     @family = found
     if prefixlen
@@ -101,9 +98,9 @@ class IPAddr
   def octets(parts, addr)
     Array.reduce(parts, 0) do |i, s|
       n = String.to_i(s)
-      raise IPAddrInvalidAddressError, "invalid address: #{addr}" unless n < 256
+      raise InvalidAddressError, "invalid address: #{addr}" unless n < 256
       if s != "0" && String.start_with?(s, "0")
-        raise IPAddrInvalidAddressError, "zero-filled number in IPv4 address is ambiguous: #{addr}"
+        raise InvalidAddressError, "zero-filled number in IPv4 address is ambiguous: #{addr}"
       end
       (i << 8) | n
     end
@@ -122,20 +119,20 @@ class IPAddr
     elsif (m = String.match(left, ipv6_compressed_re))
       l1 = m[1] || ""
       if m[4]
-        raise IPAddrInvalidAddressError, "invalid address: " unless String.count(left, ":") <= 6
+        raise InvalidAddressError, "invalid address: " unless String.count(left, ":") <= 6
         addr = octets(Array[m[4] || "", m[5] || "", m[6] || "", m[7] || ""], src)
         left = l1
         right = (m[3] || "") + "0:0"
       else
         r2 = m[2] || ""
         limit = l1 == "" || r2 == "" ? 8 : 7
-        raise IPAddrInvalidAddressError, "invalid address: " unless String.count(left, ":") <= limit
+        raise InvalidAddressError, "invalid address: " unless String.count(left, ":") <= limit
         left = l1
         right = r2
         addr = 0
       end
     else
-      raise IPAddrInvalidAddressError, "invalid address: "
+      raise InvalidAddressError, "invalid address: "
     end
     l = String.split(left, ":")
     r = String.split(right, ":")
@@ -148,11 +145,11 @@ class IPAddr
 
   def set!(ip, addr, family = @family)
     if family == Socket.AF_INET
-      raise IPAddrInvalidAddressError, "invalid address: #{addr}" if addr < 0 || addr > in4mask
+      raise InvalidAddressError, "invalid address: #{addr}" if addr < 0 || addr > in4mask
     elsif family == Socket.AF_INET6
-      raise IPAddrInvalidAddressError, "invalid address: #{addr}" if addr < 0 || addr > in6mask
+      raise InvalidAddressError, "invalid address: #{addr}" if addr < 0 || addr > in6mask
     else
-      raise IPAddrAddressFamilyError, "unsupported address family"
+      raise AddressFamilyError, "unsupported address family"
     end
     @addr = addr
     if family != @family
@@ -167,13 +164,13 @@ class IPAddr
       if String.match?(mask, /\A(0|[1-9]+\d*)\z/)
         prefixlen = String.to_i(mask)
       elsif String.match?(mask, /\A\d+\z/)
-        raise IPAddrInvalidPrefixError, "leading zeros in prefix"
+        raise InvalidPrefixError, "leading zeros in prefix"
       else
         m = IPAddr.new(mask)
-        raise IPAddrInvalidPrefixError, "address family is not same" if IPAddr.family(m) != @family
+        raise InvalidPrefixError, "address family is not same" if IPAddr.family(m) != @family
         @mask_addr = to_i(m)
         n = @mask_addr ^ IPAddr.raw_mask(m)
-        raise IPAddrInvalidPrefixError, "invalid mask #{mask}" unless ((n + 1) & n) == 0
+        raise InvalidPrefixError, "invalid mask #{mask}" unless ((n + 1) & n) == 0
         @addr = @addr & @mask_addr
         return ip
       end
@@ -182,7 +179,7 @@ class IPAddr
       prefixlen = mask
     end
     bits = @family == Socket.AF_INET ? 32 : 128
-    raise IPAddrInvalidPrefixError, "invalid length" if prefixlen < 0 || prefixlen > bits
+    raise InvalidPrefixError, "invalid length" if prefixlen < 0 || prefixlen > bits
     masklen = bits - prefixlen
     @mask_addr = ((full_mask(ip) >> masklen) << masklen)
     @addr = ((@addr >> masklen) << masklen)
@@ -212,12 +209,12 @@ class IPAddr
 
   def ntop(addr)
     if String.encoding(addr) != "ASCII-8BIT"
-      raise IPAddrInvalidAddressError, "invalid encoding (given #{String.encoding(addr)}, expected BINARY)"
+      raise InvalidAddressError, "invalid encoding (given #{String.encoding(addr)}, expected BINARY)"
     end
     case String.bytesize(addr)
     in 4 then Array.join(String.unpack(addr, "C4"), ".")
     in 16 then format("%.4x:%.4x:%.4x:%.4x:%.4x:%.4x:%.4x:%.4x", *String.unpack(addr, "n8"))
-    in Integer then raise IPAddrAddressFamilyError, "unsupported address family"
+    in Integer then raise AddressFamilyError, "unsupported address family"
     end
   end
 
@@ -237,7 +234,7 @@ class IPAddr
     return false if (b in nil)
     o = begin
       coerce(a, b)
-    rescue IPAddrInvalidAddressError, IPAddrAddressFamilyError, IPAddrInvalidPrefixError
+    rescue IPAddr::InvalidAddressError, IPAddr::AddressFamilyError, IPAddr::InvalidPrefixError
       nil
     end
     (o in IPAddr) && @family == IPAddr.family(o) && @addr == to_i(o)
@@ -247,7 +244,7 @@ class IPAddr
     return nil if (b in nil)
     o = begin
       coerce(a, b)
-    rescue IPAddrInvalidAddressError, IPAddrAddressFamilyError, IPAddrInvalidPrefixError
+    rescue IPAddr::InvalidAddressError, IPAddr::AddressFamilyError, IPAddr::InvalidPrefixError
       nil
     end
     return nil unless (o in IPAddr) && IPAddr.family(o) == @family
@@ -347,7 +344,7 @@ class IPAddr
 
   # Ruby's ip.prefix = n, written ip.IPAddr.prefix = n.
   def prefix=(ip, n)
-    raise IPAddrInvalidPrefixError, "prefix must be an integer" unless n in Integer
+    raise InvalidPrefixError, "prefix must be an integer" unless n in Integer
     mask!(ip, n)
   end
 
@@ -397,13 +394,13 @@ class IPAddr
   # ---- conversions between families ----
 
   def ipv4_mapped(ip)
-    raise IPAddrInvalidAddressError, "not an IPv4 address: #{@addr}" unless ipv4?(ip)
+    raise InvalidAddressError, "not an IPv4 address: #{@addr}" unless ipv4?(ip)
     c = copy_with(ip, @addr | 0xffff00000000, Socket.AF_INET6)
     widen_mask!(c, @mask_addr)
   end
 
   def ipv4_compat(ip)
-    raise IPAddrInvalidAddressError, "not an IPv4 address: #{@addr}" unless ipv4?(ip)
+    raise InvalidAddressError, "not an IPv4 address: #{@addr}" unless ipv4?(ip)
     c = copy_with(ip, @addr, Socket.AF_INET6)
     widen_mask!(c, @mask_addr)
   end
@@ -423,12 +420,12 @@ class IPAddr
   end
 
   def ip6_arpa(ip)
-    raise IPAddrInvalidAddressError, "not an IPv6 address: #{@addr}" unless ipv6?(ip)
+    raise InvalidAddressError, "not an IPv6 address: #{@addr}" unless ipv6?(ip)
     reverse_of(ip) + ".ip6.arpa"
   end
 
   def ip6_int(ip)
-    raise IPAddrInvalidAddressError, "not an IPv6 address: #{@addr}" unless ipv6?(ip)
+    raise InvalidAddressError, "not an IPv6 address: #{@addr}" unless ipv6?(ip)
     reverse_of(ip) + ".ip6.int"
   end
 
@@ -445,14 +442,14 @@ class IPAddr
   # ---- zone id ----
 
   def zone_id(ip)
-    raise IPAddrInvalidAddressError, "not an IPv6 address" unless ipv6?(ip)
+    raise InvalidAddressError, "not an IPv6 address" unless ipv6?(ip)
     @zone_id_
   end
 
   def zone_id=(ip, zid)
-    raise IPAddrInvalidAddressError, "not an IPv6 address" unless ipv6?(ip)
+    raise InvalidAddressError, "not an IPv6 address" unless ipv6?(ip)
     unless zid == nil || ((zid in String) && String.match?(zid, /\A%(\w+)\z/))
-      raise IPAddrInvalidAddressError, "invalid zone identifier for address"
+      raise InvalidAddressError, "invalid zone identifier for address"
     end
     @zone_id_ = zid
   end

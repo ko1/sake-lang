@@ -1,31 +1,32 @@
 # digest
 
 `require "digest"` gives MD5, SHA1, SHA256, SHA384, and SHA512, written in Sake over a String's bytes
-with Integer bit operations (`sakelib/digest.sake`). Ruby's `Digest::MD5` is the type `MD5`: Sake
-cannot write `::` (namespaces do not nest). The shared code is the mixin module `Digest`, which each
-type includes, as Ruby's `Digest::Instance`.
+with Integer bit operations (`sakelib/digest.sake`). The types are Ruby's `Digest::MD5` & co., nested in
+`module Digest` (since 2026-10-10; they were the top-level `MD5` & co. while `::` could not be written). The
+shared code is the mixin module `Digest::Instance`, Ruby's name too, which each type includes; `Digest.hexencode`
+is a module function of `Digest`.
 
 ## API
 
 | Ruby | Sake | |
 |---|---|---|
-| `Digest::MD5.hexdigest(s)` (also SHA1, SHA256, SHA384, SHA512) | `MD5.hexdigest(s)` | same |
-| `Digest::MD5.digest(s)` | `MD5.digest(s)` | same (a binary String) |
-| `Digest::MD5.base64digest(s)` | `MD5.base64digest(s)` | same |
-| `Digest::MD5.new` | `MD5.new` | same |
-| `md.update(s)`, `md << s` | `MD5.update(md, s)`, `md << s` | same (returns md) |
-| `md.digest`, `md.hexdigest`, `md.base64digest` | `MD5.digest(md)`, `MD5.hexdigest(md)`, `MD5.base64digest(md)` | same (md is left as it is) |
-| `md.digest!`, `md.hexdigest!`, `md.base64digest!` | `MD5.digest!(md)`, ... | same (returns, then resets) |
-| `md.reset` | `MD5.reset(md)` | same |
-| `md.to_s`, `"#{md}"` | `MD5.to_s(md)`, `"#{md}"` | same (the hex digest) |
+| `Digest::MD5.hexdigest(s)` (also SHA1, SHA256, SHA384, SHA512) | `Digest::MD5.hexdigest(s)` | same |
+| `Digest::MD5.digest(s)` | `Digest::MD5.digest(s)` | same (a binary String) |
+| `Digest::MD5.base64digest(s)` | `Digest::MD5.base64digest(s)` | same |
+| `Digest::MD5.new` | `Digest::MD5.new` | same |
+| `md.update(s)`, `md << s` | `Digest::MD5.update(md, s)`, `md << s` | same (returns md) |
+| `md.digest`, `md.hexdigest`, `md.base64digest` | `Digest::MD5.digest(md)`, `Digest::MD5.hexdigest(md)`, `Digest::MD5.base64digest(md)` | same (md is left as it is) |
+| `md.digest!`, `md.hexdigest!`, `md.base64digest!` | `Digest::MD5.digest!(md)`, ... | same (returns, then resets) |
+| `md.reset` | `Digest::MD5.reset(md)` | same |
+| `md.to_s`, `"#{md}"` | `Digest::MD5.to_s(md)`, `"#{md}"` | same (the hex digest) |
 | `p md` | `p(md)` | same (`#<Digest::MD5: ...>`) |
-| `md.digest_length`, `md.block_length`, `md.size`, `md.length` | `MD5.digest_length(md)`, ... | same |
+| `md.digest_length`, `md.block_length`, `md.size`, `md.length` | `Digest::MD5.digest_length(md)`, ... | same |
 | `md1 == md2` | `md1 == md2` | same for two digests of one type |
 | `md == "hexstring"` | | differs: false (a String is never equal to an MD5) |
-| `Digest::MD5.file(path)` | `MD5.file(path)` | same; a missing file raises `IOError`, not `Errno::ENOENT` |
+| `Digest::MD5.file(path)` | `Digest::MD5.file(path)` | same; a missing file raises `IOError`, not `Errno::ENOENT` |
 | `Digest.hexencode(s)` | `Digest.hexencode(s)` | same |
-| `md.file(path)` (instance) | `MD5.file(md, path)` | same (2026-10-05; one name, as `hexdigest`) |
-| `md.digest(s)`, `md.hexdigest(s)`, `md.base64digest(s)` (reset, digest s, reset) | `MD5.digest(md, s)`, ... | same (phase 2) |
+| `md.file(path)` (instance) | `Digest::MD5.file(md, path)` | same (2026-10-05; one name, as `hexdigest`) |
+| `md.digest(s)`, `md.hexdigest(s)`, `md.base64digest(s)` (reset, digest s, reset) | `Digest::MD5.digest(md, s)`, ... | same (phase 2) |
 | `md.dup` | `dup(md)` | same (2026-10-05; the state Array is copied) |
 | `md.clone` | | missing |
 | `Digest::SHA2.new(bitlen)`, `Digest::RMD160`, `Digest(:MD5)` | | missing |
@@ -33,13 +34,13 @@ type includes, as Ruby's `Digest::Instance`.
 Also visible, though Ruby has no such names: the functions each algorithm defines for the mixin
 (`initial_state`, `compress`, `word_bytes`, `little_endian?`, `words`,
 `pack_words`, `name`), the mixin's `finish`, `finish_hex`, `compress_words`, `digest_of`, and the tables
-`MD5.k`, `MD5.shifts`, `SHA256.k`, `SHA512.k`. Sake has no private functions.
+`Digest::MD5.k`, `Digest::MD5.shifts`, `Digest::SHA256.k`, `Digest::SHA512.k`. Sake has no private functions.
 
 ## What differs from Ruby, and why
 
 - **One name for Ruby's class method and instance method.** Ruby has `Digest::MD5.hexdigest(str)`
-  and `md.hexdigest(str = nil)`; in Sake both are `MD5.hexdigest(x, s = nil)`, one function that
-  passes a fresh `MD5.new` to the mixin's `digest_of(fresh, x, s)`, which does `case x in String
+  and `md.hexdigest(str = nil)`; in Sake both are `Digest::MD5.hexdigest(x, s = nil)`, one function that
+  passes a fresh `Digest::MD5.new` to the mixin's `digest_of(fresh, x, s)`, which does `case x in String
   ... else` (x a digest). Another argument type is still rejected before running, by `finish(x)`.
 - **State.** (Until 2026-10-05, fields `h0`..`h7`, since a default had to be a literal; now one
   private field `h = initial_state`, see the 2026-10-05 section.) `pending` is a binary String.
@@ -101,10 +102,10 @@ arithmetic, because it does 80 rounds per 128 bytes against 64 per 64 bytes.
   `module_function` would also turn the mixin functions after it into module functions).
 - `md << "ab"` with only `def <<(md, s)` in the mixin → "Bitwise.<<: SHA256 does not include
   Bitwise" → `include Bitwise` in the mixin `Digest`.
-- Wanted a field `buf: Integer[]` with a default so that `MD5.new` needs no arguments → defaults
+- Wanted a field `buf: Integer[]` with a default so that `Digest::MD5.new` needs no arguments → defaults
   must be literal numbers, Strings, ... → one Integer field per state word, and a String for the
   pending bytes.
-- Wanted `MD5.hexdigest(str)` and `MD5.hexdigest(md)` as two definitions → a name is defined once
+- Wanted `Digest::MD5.hexdigest(str)` and `Digest::MD5.hexdigest(md)` as two definitions → a name is defined once
   per namespace → one function with `case x in String ... in MD5 ...`.
 - At `--strict=3`, each byte read `x[j]` is reported (`index-nil`, 161 reports); level 2 (the test
   level) is clean. Indexes are in range by construction (whole blocks only); `Array.fetch` would
@@ -123,7 +124,7 @@ arithmetic, because it does 80 rounds per 128 bytes against 64 per 64 bytes.
   `words(md, s)` / `pack_words(md, ws)` with its own format.
 - The pending bytes stay a binary String (`String.b`, `String.byteslice`) instead of being
   converted to an Array and back on every update.
-- The round constants (`MD5.k`, `MD5.shifts`, `SHA256.k`, `SHA2_64.k`) are `once { ... }`.
+- The round constants (`Digest::MD5.k`, `Digest::MD5.shifts`, `Digest::SHA256.k`, `SHA2_64.k`) are `once { ... }`.
 - `Digest.hexencode(s)` is `String.unpack1(s, "H*")`.
 - Checked again against Ruby after the rewrite: random binary Strings of every length 0..140 and of
   255, 256, 257, 1000 bytes, all five algorithms, `Zlib.crc32` / `adler32(s, 7)`, and SHA512/MD5 fed
@@ -154,7 +155,7 @@ Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matri
   field defaults are placeholders (`h0 = 0`), and the initial words are written once, in
   `initial_state`, instead of twice (defaults and `initial_state`).
 - `digest`, `hexdigest`, `base64digest`, `file` moved from the five classes into the mixin; the fresh
-  digest is the unqualified `new`, which is the including type's (`MD5.new` in MD5).
+  digest is the unqualified `new`, which is the including type's (`Digest::MD5.new` in MD5).
 - `class SHA384 < SHA512`: SHA384 writes only `digest_length`, `name`, `initial_state`; the module
   `SHA2_64` is gone (its `k` and compression are SHA512's). As in Ruby, a SHA384 is not a SHA512.
   451 → 419 lines. `--strict=1`/`2`: 0 reports before and after.
@@ -172,7 +173,7 @@ Raw: `experiments/2026-10-03-sakelib-port/phase2/results_digest_zlib_prime_matri
   readers outside the class, as Ruby's digest state.
 - `dup(md)` (Ruby's `md.dup`): the mixin defines `dup` to copy the word Array, since the
   built-in shallow `dup` would share it.
-- `MD5.file(md, path)` (Ruby's `md.file(path)`) next to `MD5.file(path)`.
+- `Digest::MD5.file(md, path)` (Ruby's `md.file(path)`) next to `Digest::MD5.file(path)`.
 - `@len += n` in place of `@len = @len + n`.
-- Still differs: `md == "hex"`, `md.clone`, `Digest::SHA2`, `Digest::MD5` written `MD5`, and the
+- Still differs: `md == "hex"`, `md.clone`, `Digest::SHA2`, `Digest::MD5` written `MD5` (nested since 2026-10-10), and the
   mixin's helpers (`compress`, `words`, `initial_state`, ...) are public functions.

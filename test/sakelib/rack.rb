@@ -50,7 +50,7 @@ end
 # Rack 3 headers are a Rack::Headers; shown as a plain Hash, as Sake's are.
 def plain(triple) = [triple[0], triple[1].to_h, triple[2]]
 
-puts("-- RackUtils")
+puts("-- Rack::Utils")
 p(Rack::Utils.parse_query("a=1&a=2&b=x+y%21&c&d="))
 p(Rack::Utils.parse_query("a=1;a=2", ";"))
 p(Rack::Utils.parse_nested_query("a[b]=1&a[c][d]=2&x[]=1&x[]=2&y[][k]=1&y[][k]=2&z&w=&v=1&v=2&q[=1"))
@@ -97,7 +97,7 @@ p([Rack::Utils.valid_path?("/ok"), Rack::Utils.valid_path?("/n\0")])
 p(Rack::Utils.q_values("text/html;q=0.9, */*;q=0.1, application/json"))
 p([Rack::Utils.best_q_match("gzip;q=0.5, deflate", ["gzip", "deflate", "identity"]), Rack::Utils.best_q_match("br", ["gzip"])])
 
-puts("-- RackMockRequest.env_for, RackRequest")
+puts("-- Rack::MockRequest.env_for, Rack::Request")
 env = Rack::MockRequest.env_for("/")
 p(env.reject { |k, v| k.start_with?("rack.") })
 env = Rack::MockRequest.env_for("https://example.com:8443/a/b?x=1&y[z]=2", method: :post, input: "k=v&list[]=1", "CONTENT_TYPE" => "application/x-www-form-urlencoded", "HTTP_COOKIE" => "a=1; b=x%20y", "HTTP_USER_AGENT" => "sake")
@@ -127,7 +127,7 @@ env = Rack::MockRequest.env_for("/p", "HTTP_HOST" => "[::1]:3000", "HTTP_ACCEPT_
 req = Rack::Request.new(env)
 p([req.host, req.hostname, req.port, req.url, req.accept_language])
 
-puts("-- RackResponse")
+puts("-- Rack::Response")
 res = Rack::Response.new
 p(plain(res.finish))
 p([res.status, res.ok?, res.successful?, res.body, res.headers.to_h])
@@ -168,7 +168,7 @@ parts = []
 Rack::Response.new(["x", "y"]).each { |s| parts.push(s) }
 p(parts)
 
-puts("-- the app through RackMockRequest")
+puts("-- the app through Rack::MockRequest")
 app = Counter.new(Hello.new)
 status, headers, body = app.call(Rack::MockRequest.env_for("/?name=Sake"))
 p([status, headers.to_h, body])

@@ -15,7 +15,7 @@
 | algorithms `HS256`, `HS384`, `HS512`, `none`; case-insensitive names | same | same |
 | `RS256`, `ES256`, `PS256`, `EdDSA` | — | missing: no RSA / EC (would be a bignum RSA in Sake; `OpenSSL` is not a built-in) |
 | `JWT.decode(token, key, verify, {algorithm:, algorithms:, leeway:, exp_leeway:, nbf_leeway:, verify_expiration:, verify_not_before:, verify_iat:, verify_iss:, iss:, verify_aud:, aud:, verify_sub:, sub:, verify_jti:})` | `JWT.decode(token, key = nil, verify = true, algorithm: "HS256", ...)` | same; the options Hash is keyword parameters; gives the Tuple `[payload, header]` |
-| `JWT::ExpiredSignature`, `ImmatureSignature`, `InvalidIatError`, `VerificationError`, `IncorrectAlgorithm`, `InvalidIssuerError`, `InvalidAudError`, `InvalidSubError`, `InvalidJtiError`, `InvalidPayload`, `Base64DecodeError`, `DecodeError`, `EncodeError` | `JWTExpiredSignature`, ... `JWTDecodeError`, `JWTEncodeError` | same names and messages; **no hierarchy**: `rescue JWTDecodeError` catches only that one; `JWT.decode_error?(e)` is `rescue JWT::DecodeError` |
+| `JWT::ExpiredSignature`, `ImmatureSignature`, `InvalidIatError`, `VerificationError`, `IncorrectAlgorithm`, `InvalidIssuerError`, `InvalidAudError`, `InvalidSubError`, `InvalidJtiError`, `InvalidPayload`, `Base64DecodeError`, `DecodeError`, `EncodeError` | `JWT::ExpiredSignature`, ... `JWT::DecodeError`, `JWT::EncodeError` | same names (nested in `module JWT` since 2026-10-10; were `JWTDecodeError` & co.) and messages; **no hierarchy**: `rescue JWT::DecodeError` catches only that one; `JWT.decode_error?(e)` is `rescue JWT::DecodeError` |
 | `verify_jti: proc`, `verify_iss: proc`, `required_claims:`, `JWT.decode { \|header\| key }` (key finder block), JWK, `JWT::Token`/`EncodedToken` (3.x object API), `JWT.configuration` | — | missing: callables, or beyond the brief |
 | `iat_leeway:` | — | missing on purpose: the gem (3.2) ignores it (no leeway on `iat`), and so does Sake |
 | `JWT::Base64.url_encode/url_decode` | `JWT.base64url_encode/decode` | same (strict decoding, `Base64DecodeError`) |
@@ -45,7 +45,7 @@
    `Array.map` inside; `exp_leway:` is `has no keyword parameter` before running. The 17 keywords are
    written once, in the signature, instead of `options.fetch(:leeway, 0)` fifteen times.
 4. **The claim's type is stated where it is read**: `v = payload[name]; case v in Integer | Float | Rational
-   then Arithmetic.to_i(v) in String then String.to_i(v) in nil then 0 else raise JWTInvalidPayload`. The
+   then Arithmetic.to_i(v) in String then String.to_i(v) in nil then 0 else raise JWT::InvalidPayload`. The
    gem writes `payload['exp'].to_i`, which is why its decode of `{"exp":"x"}` says *ExpiredSignature*
    (`"x".to_i == 0`) while its encode says *InvalidPayload*; the diff found the difference, the `case` made
    it explicit. With `--strict`, `Arithmetic.to_i(v)` on `v = payload[name]` (a Hash value: anything) is a
@@ -55,7 +55,7 @@
    `SHA256.digest(k_opad + SHA256.digest(k_ipad + String.b(msg)))`. Binary and UTF-8 Strings concatenated
    without an `EncodingError` as long as the UTF-8 side is ASCII (`String.b(msg)` for the message to be safe).
 6. **Exception types without hierarchy**: 13 `class JWTX < Exception; end` lines, and the test's
-   `show_error(e)` is a 13-branch `case e in JWTDecodeError then ...`. The Ruby twin's `case/when` needs
+   `show_error(e)` is a 13-branch `case e in JWT::DecodeError then ...`. The Ruby twin's `case/when` needs
    `JWT::DecodeError` *last* (the subclasses match it first); Sake's has no such order trap, but also no way
    to say "any JWT error" except the `decode_error?` pattern `e in A | B | ... | M`.
 7. **Where the checker helped**: `numeric_claim` returned `Arithmetic.to_i(v)` on `v => Integer | Float |
@@ -69,7 +69,7 @@
   (digest.sake's SHA256 is interpreted Sake: ~1 ms per block).
 - `String.force_encoding` exists; a `String.unpack1(s, "m0")` that gives UTF-8 when the bytes are valid UTF-8
   would remove the one encoding trap found (or a `JSON.parse` that forces UTF-8, as Ruby's does).
-- Exception families: a way to name a set of exception types once (`rescue JWTErrors`) instead of the
+- Exception families: a way to name a set of exception types once (`rescue JWT::Errors`) instead of the
   `decode_error?(e)` pattern; Sake's "no hierarchy" is fine, a named union would do.
 - `Integer.pow(a, b, mod)` exists; RS256 needs only PKCS#1 v1.5 padding and an ASN.1/PEM reader on top, if
   the port is ever wanted.

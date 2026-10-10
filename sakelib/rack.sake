@@ -1,741 +1,745 @@
-# rack: Rack's utilities, Request, Response, and MockRequest.env_for (Rack 3). Ruby's nested names are flattened:
-# Rack::Utils -> RackUtils, Rack::Request -> RackRequest, Rack::Response -> RackResponse,
-# Rack::MockRequest -> RackMockRequest; Rack::QueryParser's errors -> RackParamsTooDeepError, RackParameterTypeError.
+# rack: Rack's utilities, Request, Response, and MockRequest.env_for (Rack 3), with Ruby's names nested in
+# `module Rack`: Rack::Utils, Rack::Request, Rack::Response, Rack::MockRequest, and Rack::QueryParser's errors
+# Rack::QueryParser::ParamsTooDeepError and Rack::QueryParser::ParameterTypeError.
 #
 # A Rack app is `call(env)` on any object, usually a lambda. Sake has no stored blocks and no dispatch on a
-# value, so an app is a value of a Struct type that includes RackApp and defines `call(app, env)` returning
+# value, so an app is a value of a Struct type that includes Rack::App and defines `call(app, env)` returning
 # the triple `[status, headers, body]` (a Tuple: an Integer, a Hash of downcased name => String, an Array of
 # String). The type is the code; its fields are what the lambda would have closed over. A middleware is a
-# type holding the next app and calling `RackApp.call(@app, env)`, which dispatches to that app's type:
+# type holding the next app and calling `Rack::App.call(@app, env)`, which dispatches to that app's type:
 #
 #   class Hello
-#     include RackApp
+#     include Rack::App
 #     def call(app, env) = [200, Hash["content-type" => "text/plain"], String["hello"]]
 #   end
 #   class Timer                                  # middleware: Rack's `use Timer`
 #     attr_reader app
-#     include RackApp
+#     include Rack::App
 #     def call(mw, env)
-#       status, headers, body = RackApp.call(@app, env)
+#       status, headers, body = Rack::App.call(@app, env)
 #       headers["x-timer"] = "0"
 #       [status, headers, body]
 #     end
 #   end
 #   app = Timer.new(Hello.new)                   # Rack::Builder's `use Timer; run Hello.new`
-#   status, headers, body = RackApp.call(app, RackMockRequest.env_for("/"))
+#   status, headers, body = Rack::App.call(app, Rack::MockRequest.env_for("/"))
 #
 # The env is a Hash of String => String only (CGI keys, HTTP_* headers, "rack.url_scheme", and "rack.input",
 # the request body as a String, where Rack has an IO). Rack also caches parsed Hashes in the env
-# ("rack.request.query_hash"); here they are fields of RackRequest, so that every env value stays a String.
+# ("rack.request.query_hash"); here they are fields of Rack::Request, so that every env value stays a String.
 # The response headers Hash has downcased names, as Rack 3's Rack::Headers; a repeated header
 # (set-cookie) is an Array of String, as in Rack 3.
 
 require "uri"
 
-module RackApp
-  def call(app, env) = raise(NotImplementedError)
-end
-
-class RackParamsTooDeepError < Exception          # Rack::QueryParser::ParamsTooDeepError
-end
-class RackParameterTypeError < Exception          # Rack::QueryParser::ParameterTypeError
-end
-
-# ---------------------------------------------------------------------------------------------------------
-module RackUtils
-  module_function
-
-  # Rack::Utils::HTTP_STATUS_CODES (Sake has no value constants, so a function)
-  def http_status_codes = once do
-    Hash[100 => "Continue", 101 => "Switching Protocols", 102 => "Processing", 103 => "Early Hints", 200 => "OK",
-         201 => "Created", 202 => "Accepted", 203 => "Non-Authoritative Information", 204 => "No Content",
-         205 => "Reset Content", 206 => "Partial Content", 207 => "Multi-Status", 208 => "Already Reported",
-         226 => "IM Used", 300 => "Multiple Choices", 301 => "Moved Permanently", 302 => "Found", 303 => "See Other",
-         304 => "Not Modified", 305 => "Use Proxy", 307 => "Temporary Redirect", 308 => "Permanent Redirect",
-         400 => "Bad Request", 401 => "Unauthorized", 402 => "Payment Required", 403 => "Forbidden", 404 => "Not Found",
-         405 => "Method Not Allowed", 406 => "Not Acceptable", 407 => "Proxy Authentication Required",
-         408 => "Request Timeout", 409 => "Conflict", 410 => "Gone", 411 => "Length Required",
-         412 => "Precondition Failed", 413 => "Content Too Large", 414 => "URI Too Long", 415 => "Unsupported Media Type",
-         416 => "Range Not Satisfiable", 417 => "Expectation Failed", 421 => "Misdirected Request",
-         422 => "Unprocessable Content", 423 => "Locked", 424 => "Failed Dependency", 425 => "Too Early",
-         426 => "Upgrade Required", 428 => "Precondition Required", 429 => "Too Many Requests",
-         431 => "Request Header Fields Too Large", 451 => "Unavailable For Legal Reasons",
-         500 => "Internal Server Error", 501 => "Not Implemented", 502 => "Bad Gateway", 503 => "Service Unavailable",
-         504 => "Gateway Timeout", 505 => "HTTP Version Not Supported", 506 => "Variant Also Negotiates",
-         507 => "Insufficient Storage", 508 => "Loop Detected", 511 => "Network Authentication Required"]
+module Rack
+  module App
+    def call(app, env) = raise(NotImplementedError)
   end
 
-  # Rack::Utils::SYMBOL_TO_STATUS_CODE: "Not Found" -> :not_found
-  def symbol_to_status_code = once do
-    h = Hash[]
-    Hash.each(http_status_codes) { |code, msg| h[String.to_sym(String.gsub(String.downcase(msg), /\s|-|'/, "_"))] = code }
-    h
-  end
-
-  # Rack: status_code(:not_found) -> 404; an Integer (or a numeric String) gives its Integer.
-  def status_code(status)
-    case status
-    in Symbol
-      code = symbol_to_status_code[status]
-      raise ArgumentError, "Unrecognized status code #{Kernel.inspect(status)}" unless code
-      code
-    in Integer then status
-    in String then String.to_i(status)
+  module QueryParser
+    class ParamsTooDeepError < Exception
+    end
+    class ParameterTypeError < Exception
     end
   end
 
-  # --- escaping ---
-  def escape(s) = URI.encode_www_form_component(s)
-  def unescape(s, encoding = "UTF-8") = URI.decode_www_form_component(s, encoding)
+  # ---------------------------------------------------------------------------------------------------------
+  module Utils
+    module_function
 
-  # Rack's URI_PARSER.escape (RFC 2396): every byte outside the unreserved and reserved sets becomes %XX.
-  def escape_path(s) = String.force_encoding(String.gsub(String.b(s), /[^\-_.!~*'()a-zA-Z\d;\/?:@&=+$,\[\]]/) { |m| format("%%%02X", String.ord(m)) }, "UTF-8")
-  def unescape_path(s) = String.force_encoding(String.gsub(String.b(s), /%(\h\h)/) { |m| Array.pack(Array[m[1, 2] || ""], "H2") }, "UTF-8")
+    # Utils::HTTP_STATUS_CODES (Sake has no value constants, so a function)
+    def http_status_codes = once do
+      Hash[100 => "Continue", 101 => "Switching Protocols", 102 => "Processing", 103 => "Early Hints", 200 => "OK",
+           201 => "Created", 202 => "Accepted", 203 => "Non-Authoritative Information", 204 => "No Content",
+           205 => "Reset Content", 206 => "Partial Content", 207 => "Multi-Status", 208 => "Already Reported",
+           226 => "IM Used", 300 => "Multiple Choices", 301 => "Moved Permanently", 302 => "Found", 303 => "See Other",
+           304 => "Not Modified", 305 => "Use Proxy", 307 => "Temporary Redirect", 308 => "Permanent Redirect",
+           400 => "Bad Request", 401 => "Unauthorized", 402 => "Payment Required", 403 => "Forbidden", 404 => "Not Found",
+           405 => "Method Not Allowed", 406 => "Not Acceptable", 407 => "Proxy Authentication Required",
+           408 => "Request Timeout", 409 => "Conflict", 410 => "Gone", 411 => "Length Required",
+           412 => "Precondition Failed", 413 => "Content Too Large", 414 => "URI Too Long", 415 => "Unsupported Media Type",
+           416 => "Range Not Satisfiable", 417 => "Expectation Failed", 421 => "Misdirected Request",
+           422 => "Unprocessable Content", 423 => "Locked", 424 => "Failed Dependency", 425 => "Too Early",
+           426 => "Upgrade Required", 428 => "Precondition Required", 429 => "Too Many Requests",
+           431 => "Request Header Fields Too Large", 451 => "Unavailable For Legal Reasons",
+           500 => "Internal Server Error", 501 => "Not Implemented", 502 => "Bad Gateway", 503 => "Service Unavailable",
+           504 => "Gateway Timeout", 505 => "HTTP Version Not Supported", 506 => "Variant Also Negotiates",
+           507 => "Insufficient Storage", 508 => "Loop Detected", 511 => "Network Authentication Required"]
+    end
 
-  # --- query strings ---
-  def param_depth_limit = 32
+    # Utils::SYMBOL_TO_STATUS_CODE: "Not Found" -> :not_found
+    def symbol_to_status_code = once do
+      h = Hash[]
+      Hash.each(http_status_codes) { |code, msg| h[String.to_sym(String.gsub(String.downcase(msg), /\s|-|'/, "_"))] = code }
+      h
+    end
 
-  def _query_sep(sep) = sep == nil ? /& */ : Regexp.new("[#{Regexp.escape(sep)}] *")
-
-  # Yields each `key, value` (value nil without "="), both unescaped, as Rack's QueryParser#each_query_pair.
-  def _each_pair(qs, sep)
-    if qs != nil && qs != ""
-      Array.each(String.split(qs, _query_sep(sep))) do |pair|
-        next if pair == ""
-        k, eq, v = String.partition(pair, "=")
-        yield(unescape(k), eq == "" ? nil : unescape(v))
+    # Rack: status_code(:not_found) -> 404; an Integer (or a numeric String) gives its Integer.
+    def status_code(status)
+      case status
+      in Symbol
+        code = symbol_to_status_code[status]
+        raise ArgumentError, "Unrecognized status code #{Kernel.inspect(status)}" unless code
+        code
+      in Integer then status
+      in String then String.to_i(status)
       end
     end
-    nil
-  end
 
-  # Rack: parse_query("a=1&a=2&b") -> {"a" => ["1", "2"], "b" => nil}
-  def parse_query(qs, sep = nil)
-    params = Hash[]
-    _each_pair(qs, sep) do |k, v|
-      cur = params[k]
-      if cur in Array
-        Array.push(cur, v)
-      elsif cur != nil
-        params[k] = Array[cur, v]
-      else
-        params[k] = v
+    # --- escaping ---
+    def escape(s) = URI.encode_www_form_component(s)
+    def unescape(s, encoding = "UTF-8") = URI.decode_www_form_component(s, encoding)
+
+    # Rack's URI_PARSER.escape (RFC 2396): every byte outside the unreserved and reserved sets becomes %XX.
+    def escape_path(s) = String.force_encoding(String.gsub(String.b(s), /[^\-_.!~*'()a-zA-Z\d;\/?:@&=+$,\[\]]/) { |m| format("%%%02X", String.ord(m)) }, "UTF-8")
+    def unescape_path(s) = String.force_encoding(String.gsub(String.b(s), /%(\h\h)/) { |m| Array.pack(Array[m[1, 2] || ""], "H2") }, "UTF-8")
+
+    # --- query strings ---
+    def param_depth_limit = 32
+
+    def _query_sep(sep) = sep == nil ? /& */ : Regexp.new("[#{Regexp.escape(sep)}] *")
+
+    # Yields each `key, value` (value nil without "="), both unescaped, as Rack's QueryParser#each_query_pair.
+    def _each_pair(qs, sep)
+      if qs != nil && qs != ""
+        Array.each(String.split(qs, _query_sep(sep))) do |pair|
+          next if pair == ""
+          k, eq, v = String.partition(pair, "=")
+          yield(unescape(k), eq == "" ? nil : unescape(v))
+        end
       end
+      nil
     end
-    params
-  end
 
-  # Rack: parse_nested_query("a[b]=1&x[]=1&y[][k]=2") -> {"a" => {"b" => "1"}, "x" => ["1"], "y" => [{"k" => "2"}]}
-  def parse_nested_query(qs, sep = nil)
-    params = Hash[]
-    _each_pair(qs, sep) { |k, v| _normalize_params(params, k, v, 0) }
-    params
-  end
-
-  def _type_name(x)
-    case x
-    in nil then "NilClass"
-    in String then "String"
-    in Array then "Array"
-    in Hash then "Hash"
-    else "Object"
-    end
-  end
-
-  # Rack's QueryParser#_normalize_params; returns the params Hash (or `[v]` for a bare "[]" below the top).
-  def _normalize_params(params, name, v, depth)
-    raise RackParamsTooDeepError, "Rack::QueryParser::QueryLimitError" if depth >= param_depth_limit   # Rack's message is the class name
-    k = name
-    after = ""
-    if depth == 0
-      start = String.index(name, "[", 1)
-      if start
-        k = String.[](name, 0, start) || ""
-        after = String.[](name, start..) || ""
-      end
-    elsif String.start_with?(name, "[]")
-      k = "[]"
-      after = String.[](name, 2..) || ""
-    elsif String.start_with?(name, "[")
-      close = String.index(name, "]", 1)
-      if close
-        k = String.[](name, 1, close - 1) || ""
-        after = String.[](name, close + 1..) || ""
-      end
-    end
-    return nil if k == ""
-
-    if after == ""
-      return Array[v] if k == "[]" && depth != 0
-      params[k] = v
-    elsif after == "["
-      params[name] = v
-    elsif after == "[]"
-      list = params[k] ||= Array[]
-      raise RackParameterTypeError, "expected Array (got #{_type_name(list)}) for param `#{k}'" unless list in Array
-      Array.push(list, v)
-    elsif String.start_with?(after, "[]")
-      # x[][y]: a Hash inside an Array; other nested array parameters keep the rest as the child key
-      child_key = String.[](after, 2..) || ""
-      inner = String.[](after, 3, String.length(after) - 4) || ""
-      if after[2] == "[" && String.end_with?(after, "]") && inner != "" && !String.include?(inner, "[") && !String.include?(inner, "]")
-        child_key = inner
-      end
-      list = params[k] ||= Array[]
-      raise RackParameterTypeError, "expected Array (got #{_type_name(list)}) for param `#{k}'" unless list in Array
-      last = Array.last(list)
-      if last in Hash
-        if Hash.key?(last, child_key)
-          Array.push(list, _normalize_params(Hash[], child_key, v, depth + 1))
+    # Rack: parse_query("a=1&a=2&b") -> {"a" => ["1", "2"], "b" => nil}
+    def parse_query(qs, sep = nil)
+      params = Hash[]
+      _each_pair(qs, sep) do |k, v|
+        cur = params[k]
+        if cur in Array
+          Array.push(cur, v)
+        elsif cur != nil
+          params[k] = Array[cur, v]
         else
-          _normalize_params(last, child_key, v, depth + 1)
-        end
-      else
-        Array.push(list, _normalize_params(Hash[], child_key, v, depth + 1))
-      end
-    else
-      sub = params[k] ||= Hash[]
-      raise RackParameterTypeError, "expected Hash (got #{_type_name(sub)}) for param `#{k}'" unless sub in Hash
-      params[k] = _normalize_params(sub, after, v, depth + 1)
-    end
-    params
-  end
-
-  # Rack: build_query({"a" => "1", "b" => ["x", "y"], "c" => nil}) -> "a=1&b=x&b=y&c"
-  def build_query(params)
-    parts = String[]
-    Hash.each(params) do |k, v|
-      if v in Array
-        Array.each(v) { |x| Array.push(parts, x == nil ? escape(k) : "#{escape(k)}=#{escape(x)}") }
-      elsif v == nil
-        Array.push(parts, escape(k))
-      else
-        Array.push(parts, "#{escape(k)}=#{escape(v)}")
-      end
-    end
-    Array.join(parts, "&")
-  end
-
-  # Rack: build_nested_query({"a" => {"b" => "1"}, "x" => ["1", "2"]}) -> "a%5Bb%5D=1&x%5B%5D=1&x%5B%5D=2"
-  def build_nested_query(value, prefix = nil)
-    case value
-    in Array
-      Array.join(Array.map(value) { |v| build_nested_query(v, "#{prefix}[]") }, "&")
-    in Hash
-      parts = Hash.map(value) { |k, v| build_nested_query(v, prefix ? "#{prefix}[#{k}]" : "#{k}") }
-      Array.join(Array.reject(parts) { |s| s == "" }, "&")
-    in nil
-      escape(prefix)
-    else
-      raise ArgumentError, "value must be a Hash" if prefix == nil
-      "#{escape(prefix)}=#{escape(value)}"
-    end
-  end
-
-  # --- cookies ---
-  # Rack: parse_cookies_header("a=1; b=x%20y") -> {"a" => "1", "b" => "x y"} (the first of a repeated name wins)
-  def parse_cookies_header(value)
-    cookies = Hash[]
-    return cookies if value == nil
-    Array.each(String.split(value, /; */)) do |cookie|
-      next if cookie == ""
-      key, eq, v = String.partition(cookie, "=")
-      next if Hash.key?(cookies, key)
-      cookies[key] = eq == "" ? nil : (unescape(v) rescue v)
-    end
-    cookies
-  end
-
-  def parse_cookies(env) = parse_cookies_header(env["HTTP_COOKIE"])
-
-  def _httpdate(t) = Time.strftime(Time.utc(t), "%a, %d %b %Y %H:%M:%S GMT")
-
-  # Rack: set_cookie_header("s", {value: "1", path: "/", http_only: true}) -> "s=1; path=/; httponly". The value is a
-  # String, an Array of String (joined with &), or a Hash of Symbol keys: value, domain, path, max_age, expires (a Time),
-  # secure, httponly / http_only, same_site (:lax, :strict, :none), partitioned.
-  def set_cookie_header(key, value)
-    raise ArgumentError, "invalid cookie key: #{Kernel.inspect(key)}" unless String.match?(key, /\A[!#$%&'*+\-.^_`|~0-9a-zA-Z]+\z/)
-    attrs = ""
-    v = value
-    if value in Hash
-      attrs += "; domain=#{value[:domain]}" if value[:domain]
-      attrs += "; path=#{value[:path]}" if value[:path]
-      attrs += "; max-age=#{value[:max_age]}" if value[:max_age]
-      ex = value[:expires]
-      attrs += "; expires=#{_httpdate(ex)}" if ex in Time
-      attrs += "; secure" if value[:secure]
-      attrs += "; httponly" if Hash.key?(value, :httponly) ? value[:httponly] : value[:http_only]
-      ss = value[:same_site]
-      case ss
-      in nil | false then nil
-      in :none | "None" | :None then attrs += "; samesite=none"
-      in :lax | "Lax" | :Lax then attrs += "; samesite=lax"
-      in true | :strict | "Strict" | :Strict then attrs += "; samesite=strict"
-      else raise ArgumentError, "Invalid :same_site value: #{Kernel.inspect(ss)}"
-      end
-      attrs += "; partitioned" if value[:partitioned]
-      v = value[:value]
-    end
-    vs = (v in Array) ? v : Array[v]
-    "#{key}=#{Array.join(Array.map(vs) { |x| escape(x) }, "&")}#{attrs}"
-  end
-
-  # Rack: delete_set_cookie_header("s", {path: "/"}) -> "s=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT"
-  def delete_set_cookie_header(key, value = Hash[])
-    set_cookie_header(key, Hash.merge(Hash[value: "", path: nil, domain: nil, max_age: "0", expires: Time.at(0)], value))
-  end
-
-  # Rack: add_cookie_to_header-style update of a set-cookie header value (nil, a String, or an Array of String).
-  def set_cookie_header!(headers, key, value)
-    cur = headers["set-cookie"]
-    headers["set-cookie"] = _add_value(cur, set_cookie_header(key, value))
-    nil
-  end
-
-  def delete_set_cookie_header!(header, key, value = Hash[]) = _add_value(header, delete_set_cookie_header(key, value))
-
-  def _add_value(cur, v)
-    case cur
-    in nil then v
-    in Array
-      Array.push(cur, v)
-      cur
-    else Array[cur, v]
-    end
-  end
-
-  # --- paths and misc ---
-  # Rack: clean_path_info("/a/../b/./c//") -> "/b/c"
-  def clean_path_info(path_info)
-    parts = String.split(path_info, /\/+/)
-    clean = String[]
-    Array.each(parts) do |part|
-      next if part == "" || part == "."
-      part == ".." ? Array.pop(clean) : Array.push(clean, part)
-    end
-    joined = Array.join(clean, "/")
-    Array.empty?(parts) || Array.first(parts) == "" ? "/" + joined : joined
-  end
-
-  def valid_path?(path) = String.valid_encoding?(path) && !String.include?(path, "\0")
-  def bytesize(s) = String.bytesize(s)
-
-  # Rack: secure_compare(a, b): equal Strings, compared in constant time (here plainly; see notes)
-  def secure_compare(a, b) = a == b
-
-  # Rack: q_values("text/html;q=0.9, */*;q=0.1") -> [["text/html", 0.9], ["*/*", 0.1]]
-  def q_values(q_value_header, skip_empty = false)
-    out = Array[]
-    Array.each(String.split("#{q_value_header}", ",")) do |part|
-      part = String.strip(part)
-      next if skip_empty && part == ""
-      attribute, _sc, parameters = String.partition(part, ";")
-      attribute = String.strip(attribute)
-      quality = 1.0
-      m = String.match(String.strip(parameters), /\Aq=([\d.]+)/)
-      quality = String.to_f(m[1] || "1") if m
-      Array.push(out, [attribute, quality])
-    end
-    out
-  end
-
-  # Rack::Request's private parse_http_accept_header (q_values that drops empty parts)
-  def parse_http_accept_header(header) = q_values(header, true)
-
-  # Rack: best_q_match("gzip, deflate", ["gzip", "identity"]) -> "gzip"
-  def best_q_match(q_value_header, available_mimes)
-    best = nil
-    best_q = -1.0
-    Array.each(q_values(q_value_header)) do |req_mime, quality|
-      Array.each(available_mimes) do |mime|
-        if (req_mime == "*/*" || req_mime == "*" || mime == req_mime) && quality > best_q
-          best = mime
-          best_q = quality
+          params[k] = v
         end
       end
+      params
     end
-    best
-  end
-end
 
-# ---------------------------------------------------------------------------------------------------------
-# Rack::Request.new(env). Parsed Hashes are kept in fields, not in the env (see the top).
-class RackRequest
-  attr_reader env
-  private attr_accessor query_hash, form_hash, cookie_hash
-
-  def initialize(req)
-    @env => Hash
-    @query_hash = nil
-    @form_hash = nil
-    @cookie_hash = nil
-  end
-
-  def get_header(req, name) = @env[name]
-  def has_header?(req, name) = Hash.key?(@env, name)
-  def set_header(req, name, v)
-    @env[name] = v
-    v
-  end
-  def delete_header(req, name) = Hash.delete(@env, name)
-  def fetch_header(req, name) = Hash.fetch(@env, name)
-
-  def request_method(req) = @env["REQUEST_METHOD"]
-  def script_name(req) = "#{@env["SCRIPT_NAME"]}"
-  def path_info(req) = "#{@env["PATH_INFO"]}"
-  def query_string(req) = "#{@env["QUERY_STRING"]}"
-  def content_length(req) = @env["CONTENT_LENGTH"]
-  def user_agent(req) = @env["HTTP_USER_AGENT"]
-  def referer(req) = @env["HTTP_REFERER"]
-  def referrer(req) = referer(req)
-  def server_name(req) = @env["SERVER_NAME"]
-  def server_port(req) = @env["SERVER_PORT"]
-  def ip(req) = @env["REMOTE_ADDR"]
-
-  # Rack: the body as an IO (rack.input); here the String itself. nil without one.
-  def body(req) = @env["rack.input"]
-
-  def content_type(req)
-    ct = @env["CONTENT_TYPE"]
-    ct == nil || ct == "" ? nil : ct
-  end
-
-  # Rack::MediaType.type: "text/html; charset=utf-8" -> "text/html"
-  def media_type(req)
-    ct = content_type(req)
-    return nil unless ct
-    String.downcase(String.strip(String.partition(ct, ";")[0]))
-  end
-
-  # Rack::MediaType.params: {"charset" => "utf-8"}
-  def media_type_params(req)
-    h = Hash[]
-    ct = content_type(req)
-    return h unless ct
-    Array.each(Array.drop(String.split(ct, ";"), 1)) do |s|
-      k, _eq, v = String.partition(String.strip(s), "=")
-      h[String.downcase(k)] = String.gsub(v, /\A"|"\z/, "")
+    # Rack: parse_nested_query("a[b]=1&x[]=1&y[][k]=2") -> {"a" => {"b" => "1"}, "x" => ["1"], "y" => [{"k" => "2"}]}
+    def parse_nested_query(qs, sep = nil)
+      params = Hash[]
+      _each_pair(qs, sep) { |k, v| _normalize_params(params, k, v, 0) }
+      params
     end
-    h
-  end
 
-  def content_charset(req) = media_type_params(req)["charset"]
-
-  def scheme(req)
-    return "https" if @env["HTTPS"] == "on" || @env["HTTP_X_FORWARDED_SSL"] == "on"
-    fs = @env["HTTP_X_FORWARDED_SCHEME"]
-    return fs if fs
-    fp = @env["HTTP_X_FORWARDED_PROTO"]
-    return String.strip(String.partition(fp, ",")[0]) if fp
-    @env["rack.url_scheme"]
-  end
-  def ssl?(req) = scheme(req) == "https"
-
-  def default_ports = once { Hash["http" => 80, "https" => 443, "coffee" => 80] }
-
-  def host_authority(req) = @env["HTTP_HOST"]
-  def server_authority(req)
-    host = @env["SERVER_NAME"]
-    port = @env["SERVER_PORT"]
-    return nil unless host
-    port ? "#{host}:#{port}" : host
-  end
-  def forwarded_authority(req)
-    v = @env["HTTP_X_FORWARDED_HOST"]
-    return nil unless v
-    String.strip(Array.last(String.split(v, ",")) || "")
-  end
-  def authority(req) = forwarded_authority(req) || host_authority(req) || server_authority(req)
-
-  # [host (brackets kept for IPv6), address, port or nil], as Rack's split_authority
-  def _split_authority(authority)
-    return [nil, nil, nil] if authority == nil
-    m = String.match(authority, /\A(\[([0-9a-fA-F:.]+)\]|([-a-zA-Z0-9._~%!$&'()*+,;=]*?))(?::(\d+))?\z/)
-    return [nil, nil, nil] unless m
-    port = m[4]
-    [m[1], m[2] || m[3], port ? String.to_i(port) : nil]
-  end
-
-  def host(req) = _split_authority(authority(req))[0]
-  def hostname(req) = _split_authority(authority(req))[1]
-
-  # Rack: the port of the authority, else X-Forwarded-Port, else the scheme's default, else SERVER_PORT (an Integer here)
-  def port(req)
-    _h, _a, p = _split_authority(authority(req))
-    return p if p
-    fp = @env["HTTP_X_FORWARDED_PORT"]
-    return String.to_i(String.strip(Array.last(String.split(fp, ",")) || "")) if fp
-    d = default_ports[scheme(req)]
-    return d if d
-    sp = @env["SERVER_PORT"]
-    sp ? String.to_i(sp) : nil
-  end
-
-  def host_with_port(req)
-    a = authority(req)
-    _h, _addr, p = _split_authority(a)
-    p == default_ports[scheme(req)] ? host(req) : a
-  end
-
-  def base_url(req) = "#{scheme(req)}://#{host_with_port(req)}"
-  def path(req) = script_name(req) + path_info(req)
-  def fullpath(req)
-    qs = query_string(req)
-    qs == "" ? path(req) : "#{path(req)}?#{qs}"
-  end
-  def url(req) = base_url(req) + fullpath(req)
-
-  def get?(req) = request_method(req) == "GET"
-  def post?(req) = request_method(req) == "POST"
-  def put?(req) = request_method(req) == "PUT"
-  def patch?(req) = request_method(req) == "PATCH"
-  def delete?(req) = request_method(req) == "DELETE"
-  def head?(req) = request_method(req) == "HEAD"
-  def options?(req) = request_method(req) == "OPTIONS"
-  def link?(req) = request_method(req) == "LINK"
-  def unlink?(req) = request_method(req) == "UNLINK"
-  def trace?(req) = request_method(req) == "TRACE"
-  def xhr?(req) = @env["HTTP_X_REQUESTED_WITH"] == "XMLHttpRequest"
-
-  def form_data?(req)
-    t = media_type(req)
-    meth = @env["rack.methodoverride.original_method"] || request_method(req)
-    (meth == "POST" && t == nil) || t == "application/x-www-form-urlencoded" || t == "multipart/form-data"
-  end
-  def parseable_data?(req)
-    t = media_type(req)
-    t == "multipart/related" || t == "multipart/mixed"
-  end
-
-  # Rack: req.GET, the query string as nested params (cached)
-  def GET(req)
-    q = @query_hash
-    return q if q
-    q = RackUtils.parse_nested_query(query_string(req), "&")
-    @query_hash = q
-    q
-  end
-
-  # Rack: req.POST, the form body as nested params (an empty Hash without rack.input or for other media types;
-  # multipart bodies are not parsed)
-  def POST(req)
-    f = @form_hash
-    return f if f
-    input = @env["rack.input"]
-    f = if input != nil && form_data?(req) && media_type(req) != "multipart/form-data"
-      RackUtils.parse_nested_query(input, "&")
-    else
-      Hash[]
-    end
-    @form_hash = f
-    f
-  end
-
-  def params(req) = Hash.merge(GET(req), POST(req))
-
-  def cookies(req)
-    c = @cookie_hash
-    return c if c
-    c = RackUtils.parse_cookies_header(@env["HTTP_COOKIE"])
-    @cookie_hash = c
-    c
-  end
-
-  def accept_encoding(req) = RackUtils.parse_http_accept_header(@env["HTTP_ACCEPT_ENCODING"])
-  def accept_language(req) = RackUtils.parse_http_accept_header(@env["HTTP_ACCEPT_LANGUAGE"])
-
-  def inspect(req) = "#<Rack::Request #{request_method(req)} #{fullpath(req)}>"
-  def to_s(req) = inspect(req)
-end
-
-# ---------------------------------------------------------------------------------------------------------
-# Rack::Response.new(body = nil, status = 200, headers = {}): RackResponse.new, RackResponse.new("text"),
-# RackResponse.new(String["a", "b"], 201, Hash["Content-Type" => "text/plain"]). `body` is always an Array of String
-# afterwards; `headers` has downcased names.
-class RackResponse
-  attr_accessor body, status, headers                # in the order of Rack's Response.new(body, status, headers)
-  private attr_accessor length, buffered
-
-  def initialize(res)
-    @status = 200 if @status == nil
-    @status = Integer(@status)
-    given = @headers
-    hdrs = Hash[]
-    Hash.each(given) { |k, v| hdrs[String.downcase(k)] = v } if given != nil
-    @headers = hdrs
-    b = @body
-    if b == nil
-      @body = Array[]
-      @buffered = true
-      @length = nil
-    elsif b in String
-      @body = Array[b]
-      @buffered = true
-      @length = String.bytesize(b)
-    else
-      b => Array
-      @buffered = false
-      @length = nil
-    end
-  end
-
-  def get_header(res, key) = @headers[key]
-  def has_header?(res, key) = Hash.key?(@headers, key)
-  def include?(res, key) = has_header?(res, key)
-  def set_header(res, key, v)
-    @headers[key] = v
-    v
-  end
-  def delete_header(res, key) = Hash.delete(@headers, key)
-
-  # Rack: add_header("vary", "cookie") keeps earlier values (an Array once there are two); nil returns the current.
-  def add_header(res, key, value)
-    return @headers[key] if value == nil
-    @headers[key] = RackUtils._add_value(@headers[key], "#{value}")
-  end
-
-  def chunked?(res) = @headers["transfer-encoding"] == "chunked"
-  def no_entity_body?(res) = @status == 204 || @status == 304 || (@status >= 100 && @status < 200)
-
-  # Rack: res.write(chunk) appends to the body and counts its bytes (Content-Length at finish).
-  def write(res, chunk)
-    _buffer!(res)
-    s = "#{chunk}"
-    Array.push(@body, s)
-    len = @length
-    @length = len ? len + String.bytesize(s) : String.bytesize(s)
-    s
-  end
-
-  def _buffer!(res)
-    return nil if @buffered
-    @body = Array.compact(@body)
-    @length = Array.sum(Array.map(@body) { |part| String.bytesize(part) })
-    @buffered = true
-    nil
-  end
-
-  # Rack: res.finish -> [status, headers, body]; a 204/304/1xx has no body and no content-type/length.
-  def finish(res)
-    if no_entity_body?(res)
-      Hash.delete(@headers, "content-type")
-      Hash.delete(@headers, "content-length")
-      return [@status, @headers, Array[]]
-    end
-    len = @length
-    @headers["content-length"] = Integer.to_s(len) if len != nil && !chunked?(res)
-    [@status, @headers, @body]
-  end
-  def to_a(res) = finish(res)
-
-  def each(res)
-    Array.each(@body) { |part| yield(part) }
-    res
-  end
-
-  def redirect(res, target, status = 302)
-    @status = status
-    @headers["location"] = target
-    target
-  end
-
-  def set_cookie(res, key, value) = add_header(res, "set-cookie", RackUtils.set_cookie_header(key, value))
-  def delete_cookie(res, key, value = Hash[])
-    @headers["set-cookie"] = RackUtils.delete_set_cookie_header!(@headers["set-cookie"], key, value)
-    nil
-  end
-  def set_cookie_header(res) = @headers["set-cookie"]
-
-  def content_type(res) = @headers["content-type"]
-  def set_content_type(res, t) = set_header(res, "content-type", t)
-  def media_type(res)
-    ct = content_type(res)
-    ct ? String.downcase(String.strip(String.partition("#{ct}", ";")[0])) : nil
-  end
-  def content_length(res)
-    cl = @headers["content-length"]
-    cl ? String.to_i("#{cl}") : nil
-  end
-  def location(res) = @headers["location"]
-  def set_location(res, l) = set_header(res, "location", l)
-  def cache_control(res) = @headers["cache-control"]
-  def set_cache_control(res, v) = set_header(res, "cache-control", v)
-  def etag(res) = @headers["etag"]
-  def set_etag(res, v) = set_header(res, "etag", v)
-  def do_not_cache!(res)
-    @headers["cache-control"] = "no-cache, must-revalidate"
-    @headers["expires"] = RackUtils._httpdate(Time.now)
-    nil
-  end
-
-  def invalid?(res) = @status < 100 || @status >= 600
-  def informational?(res) = @status >= 100 && @status < 200
-  def successful?(res) = @status >= 200 && @status < 300
-  def redirection?(res) = @status >= 300 && @status < 400
-  def client_error?(res) = @status >= 400 && @status < 500
-  def server_error?(res) = @status >= 500 && @status < 600
-  def ok?(res) = @status == 200
-  def created?(res) = @status == 201
-  def accepted?(res) = @status == 202
-  def no_content?(res) = @status == 204
-  def moved_permanently?(res) = @status == 301
-  def bad_request?(res) = @status == 400
-  def unauthorized?(res) = @status == 401
-  def forbidden?(res) = @status == 403
-  def not_found?(res) = @status == 404
-  def method_not_allowed?(res) = @status == 405
-  def not_acceptable?(res) = @status == 406
-  def request_timeout?(res) = @status == 408
-  def precondition_failed?(res) = @status == 412
-  def unprocessable?(res) = @status == 422
-  def redirect?(res) = Array.include?(Integer[301, 302, 303, 307, 308], @status)
-
-  def inspect(res) = "#<Rack::Response #{@status}>"
-  def to_s(res) = inspect(res)
-end
-
-# ---------------------------------------------------------------------------------------------------------
-# Rack::MockRequest.env_for(uri, method: "POST", input: "k=v", params: Hash[...], headers: Hash["HTTP_COOKIE" => "a=1"]).
-# `headers` are env entries (Rack takes them as String-keyed opts). "rack.input" is the input String (none without one).
-module RackMockRequest
-  module_function
-
-  def env_for(uri = "", method: nil, input: nil, params: nil, script_name: "", http_version: "HTTP/1.1", headers: nil)
-    u = URI.parse(uri)
-    path = URI.path(u) || ""
-    path = "/" + path unless String.start_with?(path, "/")
-    env = Hash[]
-    env["REQUEST_METHOD"] = method ? String.upcase("#{method}") : "GET"
-    env["SERVER_NAME"] = URI.host(u) || "example.org"
-    prt = URI.port(u)
-    env["SERVER_PORT"] = prt ? Integer.to_s(prt) : "80"
-    env["SERVER_PROTOCOL"] = http_version
-    env["QUERY_STRING"] = "#{URI.query(u)}"
-    env["PATH_INFO"] = path
-    env["rack.url_scheme"] = URI.scheme(u) || "http"
-    env["HTTPS"] = env["rack.url_scheme"] == "https" ? "on" : "off"
-    env["SCRIPT_NAME"] = script_name
-    body = input
-    if params != nil
-      if env["REQUEST_METHOD"] == "GET"
-        ps = (params in String) ? RackUtils.parse_nested_query(params) : params
-        ps => Hash
-        env["QUERY_STRING"] = RackUtils.build_nested_query(Hash.merge(ps, RackUtils.parse_nested_query(env["QUERY_STRING"])))
-      elsif input == nil
-        env["CONTENT_TYPE"] = "application/x-www-form-urlencoded"
-        body = (params in Hash) ? RackUtils.build_nested_query(params) : "#{params}"
+    def _type_name(x)
+      case x
+      in nil then "NilClass"
+      in String then "String"
+      in Array then "Array"
+      in Hash then "Hash"
+      else "Object"
       end
     end
-    if body != nil
-      env["rack.input"] = body
-      env["CONTENT_LENGTH"] = Integer.to_s(String.bytesize(body))
+
+    # Rack's QueryParser#_normalize_params; returns the params Hash (or `[v]` for a bare "[]" below the top).
+    def _normalize_params(params, name, v, depth)
+      raise QueryParser::ParamsTooDeepError, "Rack::QueryParser::QueryLimitError" if depth >= param_depth_limit   # Rack's message is the class name
+      k = name
+      after = ""
+      if depth == 0
+        start = String.index(name, "[", 1)
+        if start
+          k = String.[](name, 0, start) || ""
+          after = String.[](name, start..) || ""
+        end
+      elsif String.start_with?(name, "[]")
+        k = "[]"
+        after = String.[](name, 2..) || ""
+      elsif String.start_with?(name, "[")
+        close = String.index(name, "]", 1)
+        if close
+          k = String.[](name, 1, close - 1) || ""
+          after = String.[](name, close + 1..) || ""
+        end
+      end
+      return nil if k == ""
+
+      if after == ""
+        return Array[v] if k == "[]" && depth != 0
+        params[k] = v
+      elsif after == "["
+        params[name] = v
+      elsif after == "[]"
+        list = params[k] ||= Array[]
+        raise QueryParser::ParameterTypeError, "expected Array (got #{_type_name(list)}) for param `#{k}'" unless list in Array
+        Array.push(list, v)
+      elsif String.start_with?(after, "[]")
+        # x[][y]: a Hash inside an Array; other nested array parameters keep the rest as the child key
+        child_key = String.[](after, 2..) || ""
+        inner = String.[](after, 3, String.length(after) - 4) || ""
+        if after[2] == "[" && String.end_with?(after, "]") && inner != "" && !String.include?(inner, "[") && !String.include?(inner, "]")
+          child_key = inner
+        end
+        list = params[k] ||= Array[]
+        raise QueryParser::ParameterTypeError, "expected Array (got #{_type_name(list)}) for param `#{k}'" unless list in Array
+        last = Array.last(list)
+        if last in Hash
+          if Hash.key?(last, child_key)
+            Array.push(list, _normalize_params(Hash[], child_key, v, depth + 1))
+          else
+            _normalize_params(last, child_key, v, depth + 1)
+          end
+        else
+          Array.push(list, _normalize_params(Hash[], child_key, v, depth + 1))
+        end
+      else
+        sub = params[k] ||= Hash[]
+        raise QueryParser::ParameterTypeError, "expected Hash (got #{_type_name(sub)}) for param `#{k}'" unless sub in Hash
+        params[k] = _normalize_params(sub, after, v, depth + 1)
+      end
+      params
     end
-    Hash.each(headers) { |k, v| env[k] = v } if headers != nil
-    env
+
+    # Rack: build_query({"a" => "1", "b" => ["x", "y"], "c" => nil}) -> "a=1&b=x&b=y&c"
+    def build_query(params)
+      parts = String[]
+      Hash.each(params) do |k, v|
+        if v in Array
+          Array.each(v) { |x| Array.push(parts, x == nil ? escape(k) : "#{escape(k)}=#{escape(x)}") }
+        elsif v == nil
+          Array.push(parts, escape(k))
+        else
+          Array.push(parts, "#{escape(k)}=#{escape(v)}")
+        end
+      end
+      Array.join(parts, "&")
+    end
+
+    # Rack: build_nested_query({"a" => {"b" => "1"}, "x" => ["1", "2"]}) -> "a%5Bb%5D=1&x%5B%5D=1&x%5B%5D=2"
+    def build_nested_query(value, prefix = nil)
+      case value
+      in Array
+        Array.join(Array.map(value) { |v| build_nested_query(v, "#{prefix}[]") }, "&")
+      in Hash
+        parts = Hash.map(value) { |k, v| build_nested_query(v, prefix ? "#{prefix}[#{k}]" : "#{k}") }
+        Array.join(Array.reject(parts) { |s| s == "" }, "&")
+      in nil
+        escape(prefix)
+      else
+        raise ArgumentError, "value must be a Hash" if prefix == nil
+        "#{escape(prefix)}=#{escape(value)}"
+      end
+    end
+
+    # --- cookies ---
+    # Rack: parse_cookies_header("a=1; b=x%20y") -> {"a" => "1", "b" => "x y"} (the first of a repeated name wins)
+    def parse_cookies_header(value)
+      cookies = Hash[]
+      return cookies if value == nil
+      Array.each(String.split(value, /; */)) do |cookie|
+        next if cookie == ""
+        key, eq, v = String.partition(cookie, "=")
+        next if Hash.key?(cookies, key)
+        cookies[key] = eq == "" ? nil : (unescape(v) rescue v)
+      end
+      cookies
+    end
+
+    def parse_cookies(env) = parse_cookies_header(env["HTTP_COOKIE"])
+
+    def _httpdate(t) = Time.strftime(Time.utc(t), "%a, %d %b %Y %H:%M:%S GMT")
+
+    # Rack: set_cookie_header("s", {value: "1", path: "/", http_only: true}) -> "s=1; path=/; httponly". The value is a
+    # String, an Array of String (joined with &), or a Hash of Symbol keys: value, domain, path, max_age, expires (a Time),
+    # secure, httponly / http_only, same_site (:lax, :strict, :none), partitioned.
+    def set_cookie_header(key, value)
+      raise ArgumentError, "invalid cookie key: #{Kernel.inspect(key)}" unless String.match?(key, /\A[!#$%&'*+\-.^_`|~0-9a-zA-Z]+\z/)
+      attrs = ""
+      v = value
+      if value in Hash
+        attrs += "; domain=#{value[:domain]}" if value[:domain]
+        attrs += "; path=#{value[:path]}" if value[:path]
+        attrs += "; max-age=#{value[:max_age]}" if value[:max_age]
+        ex = value[:expires]
+        attrs += "; expires=#{_httpdate(ex)}" if ex in Time
+        attrs += "; secure" if value[:secure]
+        attrs += "; httponly" if Hash.key?(value, :httponly) ? value[:httponly] : value[:http_only]
+        ss = value[:same_site]
+        case ss
+        in nil | false then nil
+        in :none | "None" | :None then attrs += "; samesite=none"
+        in :lax | "Lax" | :Lax then attrs += "; samesite=lax"
+        in true | :strict | "Strict" | :Strict then attrs += "; samesite=strict"
+        else raise ArgumentError, "Invalid :same_site value: #{Kernel.inspect(ss)}"
+        end
+        attrs += "; partitioned" if value[:partitioned]
+        v = value[:value]
+      end
+      vs = (v in Array) ? v : Array[v]
+      "#{key}=#{Array.join(Array.map(vs) { |x| escape(x) }, "&")}#{attrs}"
+    end
+
+    # Rack: delete_set_cookie_header("s", {path: "/"}) -> "s=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    def delete_set_cookie_header(key, value = Hash[])
+      set_cookie_header(key, Hash.merge(Hash[value: "", path: nil, domain: nil, max_age: "0", expires: Time.at(0)], value))
+    end
+
+    # Rack: add_cookie_to_header-style update of a set-cookie header value (nil, a String, or an Array of String).
+    def set_cookie_header!(headers, key, value)
+      cur = headers["set-cookie"]
+      headers["set-cookie"] = _add_value(cur, set_cookie_header(key, value))
+      nil
+    end
+
+    def delete_set_cookie_header!(header, key, value = Hash[]) = _add_value(header, delete_set_cookie_header(key, value))
+
+    def _add_value(cur, v)
+      case cur
+      in nil then v
+      in Array
+        Array.push(cur, v)
+        cur
+      else Array[cur, v]
+      end
+    end
+
+    # --- paths and misc ---
+    # Rack: clean_path_info("/a/../b/./c//") -> "/b/c"
+    def clean_path_info(path_info)
+      parts = String.split(path_info, /\/+/)
+      clean = String[]
+      Array.each(parts) do |part|
+        next if part == "" || part == "."
+        part == ".." ? Array.pop(clean) : Array.push(clean, part)
+      end
+      joined = Array.join(clean, "/")
+      Array.empty?(parts) || Array.first(parts) == "" ? "/" + joined : joined
+    end
+
+    def valid_path?(path) = String.valid_encoding?(path) && !String.include?(path, "\0")
+    def bytesize(s) = String.bytesize(s)
+
+    # Rack: secure_compare(a, b): equal Strings, compared in constant time (here plainly; see notes)
+    def secure_compare(a, b) = a == b
+
+    # Rack: q_values("text/html;q=0.9, */*;q=0.1") -> [["text/html", 0.9], ["*/*", 0.1]]
+    def q_values(q_value_header, skip_empty = false)
+      out = Array[]
+      Array.each(String.split("#{q_value_header}", ",")) do |part|
+        part = String.strip(part)
+        next if skip_empty && part == ""
+        attribute, _sc, parameters = String.partition(part, ";")
+        attribute = String.strip(attribute)
+        quality = 1.0
+        m = String.match(String.strip(parameters), /\Aq=([\d.]+)/)
+        quality = String.to_f(m[1] || "1") if m
+        Array.push(out, [attribute, quality])
+      end
+      out
+    end
+
+    # Request's private parse_http_accept_header (q_values that drops empty parts)
+    def parse_http_accept_header(header) = q_values(header, true)
+
+    # Rack: best_q_match("gzip, deflate", ["gzip", "identity"]) -> "gzip"
+    def best_q_match(q_value_header, available_mimes)
+      best = nil
+      best_q = -1.0
+      Array.each(q_values(q_value_header)) do |req_mime, quality|
+        Array.each(available_mimes) do |mime|
+          if (req_mime == "*/*" || req_mime == "*" || mime == req_mime) && quality > best_q
+            best = mime
+            best_q = quality
+          end
+        end
+      end
+      best
+    end
   end
 
-  # Rack: MockRequest.new(app).get(uri, opts) -> a MockResponse. Here: the app's triple.
-  def request(app, method, uri, input: nil, params: nil, headers: nil) = RackApp.call(app, env_for(uri, method: method, input: input, params: params, headers: headers))
-  def get(app, uri, params: nil, headers: nil) = request(app, "GET", uri, params: params, headers: headers)
-  def post(app, uri, input: nil, params: nil, headers: nil) = request(app, "POST", uri, input: input, params: params, headers: headers)
+  # ---------------------------------------------------------------------------------------------------------
+  # Request.new(env). Parsed Hashes are kept in fields, not in the env (see the top).
+  class Request
+    attr_reader env
+    private attr_accessor query_hash, form_hash, cookie_hash
+
+    def initialize(req)
+      @env => Hash
+      @query_hash = nil
+      @form_hash = nil
+      @cookie_hash = nil
+    end
+
+    def get_header(req, name) = @env[name]
+    def has_header?(req, name) = Hash.key?(@env, name)
+    def set_header(req, name, v)
+      @env[name] = v
+      v
+    end
+    def delete_header(req, name) = Hash.delete(@env, name)
+    def fetch_header(req, name) = Hash.fetch(@env, name)
+
+    def request_method(req) = @env["REQUEST_METHOD"]
+    def script_name(req) = "#{@env["SCRIPT_NAME"]}"
+    def path_info(req) = "#{@env["PATH_INFO"]}"
+    def query_string(req) = "#{@env["QUERY_STRING"]}"
+    def content_length(req) = @env["CONTENT_LENGTH"]
+    def user_agent(req) = @env["HTTP_USER_AGENT"]
+    def referer(req) = @env["HTTP_REFERER"]
+    def referrer(req) = referer(req)
+    def server_name(req) = @env["SERVER_NAME"]
+    def server_port(req) = @env["SERVER_PORT"]
+    def ip(req) = @env["REMOTE_ADDR"]
+
+    # Rack: the body as an IO (rack.input); here the String itself. nil without one.
+    def body(req) = @env["rack.input"]
+
+    def content_type(req)
+      ct = @env["CONTENT_TYPE"]
+      ct == nil || ct == "" ? nil : ct
+    end
+
+    # Rack::MediaType.type: "text/html; charset=utf-8" -> "text/html"
+    def media_type(req)
+      ct = content_type(req)
+      return nil unless ct
+      String.downcase(String.strip(String.partition(ct, ";")[0]))
+    end
+
+    # Rack::MediaType.params: {"charset" => "utf-8"}
+    def media_type_params(req)
+      h = Hash[]
+      ct = content_type(req)
+      return h unless ct
+      Array.each(Array.drop(String.split(ct, ";"), 1)) do |s|
+        k, _eq, v = String.partition(String.strip(s), "=")
+        h[String.downcase(k)] = String.gsub(v, /\A"|"\z/, "")
+      end
+      h
+    end
+
+    def content_charset(req) = media_type_params(req)["charset"]
+
+    def scheme(req)
+      return "https" if @env["HTTPS"] == "on" || @env["HTTP_X_FORWARDED_SSL"] == "on"
+      fs = @env["HTTP_X_FORWARDED_SCHEME"]
+      return fs if fs
+      fp = @env["HTTP_X_FORWARDED_PROTO"]
+      return String.strip(String.partition(fp, ",")[0]) if fp
+      @env["rack.url_scheme"]
+    end
+    def ssl?(req) = scheme(req) == "https"
+
+    def default_ports = once { Hash["http" => 80, "https" => 443, "coffee" => 80] }
+
+    def host_authority(req) = @env["HTTP_HOST"]
+    def server_authority(req)
+      host = @env["SERVER_NAME"]
+      port = @env["SERVER_PORT"]
+      return nil unless host
+      port ? "#{host}:#{port}" : host
+    end
+    def forwarded_authority(req)
+      v = @env["HTTP_X_FORWARDED_HOST"]
+      return nil unless v
+      String.strip(Array.last(String.split(v, ",")) || "")
+    end
+    def authority(req) = forwarded_authority(req) || host_authority(req) || server_authority(req)
+
+    # [host (brackets kept for IPv6), address, port or nil], as Rack's split_authority
+    def _split_authority(authority)
+      return [nil, nil, nil] if authority == nil
+      m = String.match(authority, /\A(\[([0-9a-fA-F:.]+)\]|([-a-zA-Z0-9._~%!$&'()*+,;=]*?))(?::(\d+))?\z/)
+      return [nil, nil, nil] unless m
+      port = m[4]
+      [m[1], m[2] || m[3], port ? String.to_i(port) : nil]
+    end
+
+    def host(req) = _split_authority(authority(req))[0]
+    def hostname(req) = _split_authority(authority(req))[1]
+
+    # Rack: the port of the authority, else X-Forwarded-Port, else the scheme's default, else SERVER_PORT (an Integer here)
+    def port(req)
+      _h, _a, p = _split_authority(authority(req))
+      return p if p
+      fp = @env["HTTP_X_FORWARDED_PORT"]
+      return String.to_i(String.strip(Array.last(String.split(fp, ",")) || "")) if fp
+      d = default_ports[scheme(req)]
+      return d if d
+      sp = @env["SERVER_PORT"]
+      sp ? String.to_i(sp) : nil
+    end
+
+    def host_with_port(req)
+      a = authority(req)
+      _h, _addr, p = _split_authority(a)
+      p == default_ports[scheme(req)] ? host(req) : a
+    end
+
+    def base_url(req) = "#{scheme(req)}://#{host_with_port(req)}"
+    def path(req) = script_name(req) + path_info(req)
+    def fullpath(req)
+      qs = query_string(req)
+      qs == "" ? path(req) : "#{path(req)}?#{qs}"
+    end
+    def url(req) = base_url(req) + fullpath(req)
+
+    def get?(req) = request_method(req) == "GET"
+    def post?(req) = request_method(req) == "POST"
+    def put?(req) = request_method(req) == "PUT"
+    def patch?(req) = request_method(req) == "PATCH"
+    def delete?(req) = request_method(req) == "DELETE"
+    def head?(req) = request_method(req) == "HEAD"
+    def options?(req) = request_method(req) == "OPTIONS"
+    def link?(req) = request_method(req) == "LINK"
+    def unlink?(req) = request_method(req) == "UNLINK"
+    def trace?(req) = request_method(req) == "TRACE"
+    def xhr?(req) = @env["HTTP_X_REQUESTED_WITH"] == "XMLHttpRequest"
+
+    def form_data?(req)
+      t = media_type(req)
+      meth = @env["rack.methodoverride.original_method"] || request_method(req)
+      (meth == "POST" && t == nil) || t == "application/x-www-form-urlencoded" || t == "multipart/form-data"
+    end
+    def parseable_data?(req)
+      t = media_type(req)
+      t == "multipart/related" || t == "multipart/mixed"
+    end
+
+    # Rack: req.GET, the query string as nested params (cached)
+    def GET(req)
+      q = @query_hash
+      return q if q
+      q = Utils.parse_nested_query(query_string(req), "&")
+      @query_hash = q
+      q
+    end
+
+    # Rack: req.POST, the form body as nested params (an empty Hash without rack.input or for other media types;
+    # multipart bodies are not parsed)
+    def POST(req)
+      f = @form_hash
+      return f if f
+      input = @env["rack.input"]
+      f = if input != nil && form_data?(req) && media_type(req) != "multipart/form-data"
+        Utils.parse_nested_query(input, "&")
+      else
+        Hash[]
+      end
+      @form_hash = f
+      f
+    end
+
+    def params(req) = Hash.merge(GET(req), POST(req))
+
+    def cookies(req)
+      c = @cookie_hash
+      return c if c
+      c = Utils.parse_cookies_header(@env["HTTP_COOKIE"])
+      @cookie_hash = c
+      c
+    end
+
+    def accept_encoding(req) = Utils.parse_http_accept_header(@env["HTTP_ACCEPT_ENCODING"])
+    def accept_language(req) = Utils.parse_http_accept_header(@env["HTTP_ACCEPT_LANGUAGE"])
+
+    def inspect(req) = "#<Rack::Request #{request_method(req)} #{fullpath(req)}>"
+    def to_s(req) = inspect(req)
+  end
+
+  # ---------------------------------------------------------------------------------------------------------
+  # Response.new(body = nil, status = 200, headers = {}): Response.new, Response.new("text"),
+  # Response.new(String["a", "b"], 201, Hash["Content-Type" => "text/plain"]). `body` is always an Array of String
+  # afterwards; `headers` has downcased names.
+  class Response
+    attr_accessor body, status, headers                # in the order of Rack's Response.new(body, status, headers)
+    private attr_accessor length, buffered
+
+    def initialize(res)
+      @status = 200 if @status == nil
+      @status = Integer(@status)
+      given = @headers
+      hdrs = Hash[]
+      Hash.each(given) { |k, v| hdrs[String.downcase(k)] = v } if given != nil
+      @headers = hdrs
+      b = @body
+      if b == nil
+        @body = Array[]
+        @buffered = true
+        @length = nil
+      elsif b in String
+        @body = Array[b]
+        @buffered = true
+        @length = String.bytesize(b)
+      else
+        b => Array
+        @buffered = false
+        @length = nil
+      end
+    end
+
+    def get_header(res, key) = @headers[key]
+    def has_header?(res, key) = Hash.key?(@headers, key)
+    def include?(res, key) = has_header?(res, key)
+    def set_header(res, key, v)
+      @headers[key] = v
+      v
+    end
+    def delete_header(res, key) = Hash.delete(@headers, key)
+
+    # Rack: add_header("vary", "cookie") keeps earlier values (an Array once there are two); nil returns the current.
+    def add_header(res, key, value)
+      return @headers[key] if value == nil
+      @headers[key] = Utils._add_value(@headers[key], "#{value}")
+    end
+
+    def chunked?(res) = @headers["transfer-encoding"] == "chunked"
+    def no_entity_body?(res) = @status == 204 || @status == 304 || (@status >= 100 && @status < 200)
+
+    # Rack: res.write(chunk) appends to the body and counts its bytes (Content-Length at finish).
+    def write(res, chunk)
+      _buffer!(res)
+      s = "#{chunk}"
+      Array.push(@body, s)
+      len = @length
+      @length = len ? len + String.bytesize(s) : String.bytesize(s)
+      s
+    end
+
+    def _buffer!(res)
+      return nil if @buffered
+      @body = Array.compact(@body)
+      @length = Array.sum(Array.map(@body) { |part| String.bytesize(part) })
+      @buffered = true
+      nil
+    end
+
+    # Rack: res.finish -> [status, headers, body]; a 204/304/1xx has no body and no content-type/length.
+    def finish(res)
+      if no_entity_body?(res)
+        Hash.delete(@headers, "content-type")
+        Hash.delete(@headers, "content-length")
+        return [@status, @headers, Array[]]
+      end
+      len = @length
+      @headers["content-length"] = Integer.to_s(len) if len != nil && !chunked?(res)
+      [@status, @headers, @body]
+    end
+    def to_a(res) = finish(res)
+
+    def each(res)
+      Array.each(@body) { |part| yield(part) }
+      res
+    end
+
+    def redirect(res, target, status = 302)
+      @status = status
+      @headers["location"] = target
+      target
+    end
+
+    def set_cookie(res, key, value) = add_header(res, "set-cookie", Utils.set_cookie_header(key, value))
+    def delete_cookie(res, key, value = Hash[])
+      @headers["set-cookie"] = Utils.delete_set_cookie_header!(@headers["set-cookie"], key, value)
+      nil
+    end
+    def set_cookie_header(res) = @headers["set-cookie"]
+
+    def content_type(res) = @headers["content-type"]
+    def set_content_type(res, t) = set_header(res, "content-type", t)
+    def media_type(res)
+      ct = content_type(res)
+      ct ? String.downcase(String.strip(String.partition("#{ct}", ";")[0])) : nil
+    end
+    def content_length(res)
+      cl = @headers["content-length"]
+      cl ? String.to_i("#{cl}") : nil
+    end
+    def location(res) = @headers["location"]
+    def set_location(res, l) = set_header(res, "location", l)
+    def cache_control(res) = @headers["cache-control"]
+    def set_cache_control(res, v) = set_header(res, "cache-control", v)
+    def etag(res) = @headers["etag"]
+    def set_etag(res, v) = set_header(res, "etag", v)
+    def do_not_cache!(res)
+      @headers["cache-control"] = "no-cache, must-revalidate"
+      @headers["expires"] = Utils._httpdate(Time.now)
+      nil
+    end
+
+    def invalid?(res) = @status < 100 || @status >= 600
+    def informational?(res) = @status >= 100 && @status < 200
+    def successful?(res) = @status >= 200 && @status < 300
+    def redirection?(res) = @status >= 300 && @status < 400
+    def client_error?(res) = @status >= 400 && @status < 500
+    def server_error?(res) = @status >= 500 && @status < 600
+    def ok?(res) = @status == 200
+    def created?(res) = @status == 201
+    def accepted?(res) = @status == 202
+    def no_content?(res) = @status == 204
+    def moved_permanently?(res) = @status == 301
+    def bad_request?(res) = @status == 400
+    def unauthorized?(res) = @status == 401
+    def forbidden?(res) = @status == 403
+    def not_found?(res) = @status == 404
+    def method_not_allowed?(res) = @status == 405
+    def not_acceptable?(res) = @status == 406
+    def request_timeout?(res) = @status == 408
+    def precondition_failed?(res) = @status == 412
+    def unprocessable?(res) = @status == 422
+    def redirect?(res) = Array.include?(Integer[301, 302, 303, 307, 308], @status)
+
+    def inspect(res) = "#<Rack::Response #{@status}>"
+    def to_s(res) = inspect(res)
+  end
+
+  # ---------------------------------------------------------------------------------------------------------
+  # MockRequest.env_for(uri, method: "POST", input: "k=v", params: Hash[...], headers: Hash["HTTP_COOKIE" => "a=1"]).
+  # `headers` are env entries (Rack takes them as String-keyed opts). "rack.input" is the input String (none without one).
+  module MockRequest
+    module_function
+
+    def env_for(uri = "", method: nil, input: nil, params: nil, script_name: "", http_version: "HTTP/1.1", headers: nil)
+      u = URI.parse(uri)
+      path = URI.path(u) || ""
+      path = "/" + path unless String.start_with?(path, "/")
+      env = Hash[]
+      env["REQUEST_METHOD"] = method ? String.upcase("#{method}") : "GET"
+      env["SERVER_NAME"] = URI.host(u) || "example.org"
+      prt = URI.port(u)
+      env["SERVER_PORT"] = prt ? Integer.to_s(prt) : "80"
+      env["SERVER_PROTOCOL"] = http_version
+      env["QUERY_STRING"] = "#{URI.query(u)}"
+      env["PATH_INFO"] = path
+      env["rack.url_scheme"] = URI.scheme(u) || "http"
+      env["HTTPS"] = env["rack.url_scheme"] == "https" ? "on" : "off"
+      env["SCRIPT_NAME"] = script_name
+      body = input
+      if params != nil
+        if env["REQUEST_METHOD"] == "GET"
+          ps = (params in String) ? Utils.parse_nested_query(params) : params
+          ps => Hash
+          env["QUERY_STRING"] = Utils.build_nested_query(Hash.merge(ps, Utils.parse_nested_query(env["QUERY_STRING"])))
+        elsif input == nil
+          env["CONTENT_TYPE"] = "application/x-www-form-urlencoded"
+          body = (params in Hash) ? Utils.build_nested_query(params) : "#{params}"
+        end
+      end
+      if body != nil
+        env["rack.input"] = body
+        env["CONTENT_LENGTH"] = Integer.to_s(String.bytesize(body))
+      end
+      Hash.each(headers) { |k, v| env[k] = v } if headers != nil
+      env
+    end
+
+    # Rack: MockRequest.new(app).get(uri, opts) -> a MockResponse. Here: the app's triple.
+    def request(app, method, uri, input: nil, params: nil, headers: nil) = App.call(app, env_for(uri, method: method, input: input, params: params, headers: headers))
+    def get(app, uri, params: nil, headers: nil) = request(app, "GET", uri, params: params, headers: headers)
+    def post(app, uri, input: nil, params: nil, headers: nil) = request(app, "POST", uri, input: input, params: params, headers: headers)
+  end
 end

@@ -7,8 +7,9 @@ values follow the gem's test suite as remembered (now = 2006-08-16 14:00: "tomor
 "aug 24" this year, "3 days ago" 13th 14:00); they are not verified against the gem.
 
 Shape: `Chronic.parse(text, now: Time, context: :future, ambiguous_time_range: 6)` → `Time` (in `now`'s zone)
-or nil. `Chronic.parse_span(...)` → `ChronicSpan` (the gem's `guess: false`). Types: `ChronicToken` (word,
-kind, num, sym, parts) and `ChronicSpan` (from, to).
+or nil. `Chronic.parse_span(...)` → `Chronic::Span` (the gem's `guess: false`). Types: `Chronic::Token` (word,
+kind, num, sym, parts) and `Chronic::Span` (from, to), nested in `Chronic` as the gem's are (2026-10-10; before
+namespaces nested they were `Chronic::Token` and `Chronic::Span`).
 
 ## API
 
@@ -21,7 +22,7 @@ kind, num, sym, parts) and `ChronicSpan` (from, to).
 | `Chronic.parse(text, endian_precedence: :little)` | — | missing: `7/1/2024` is always month/day/year |
 | `Chronic.parse(text, hours24:, week_start:, guess: :begin)` | — | missing |
 | `Chronic.time_class = ...`, `Chronic.debug` | — | missing (no module state) |
-| `Chronic::Span#begin/end/width` | `ChronicSpan.from(s)` / `to` / `width` | differs: `begin`/`end` are reserved words |
+| `Chronic::Span#begin/end/width` | `Chronic::Span.from(s)` / `to` / `width` | differs: `begin`/`end` are reserved words |
 | `Chronic.pre_normalize`, `Chronic::Parser#tokenize` | `Chronic.pre_normalize(text)`, `Chronic.tokenize(text)` | same idea; tokens have one kind, not a list of tags |
 | `Chronic.guess(span)` | `Chronic.guess(span)` | same |
 | `Chronic.numerize("twenty one")` | — | missing (number words) |
@@ -40,7 +41,7 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
 
 - **The gem's structure survived.** Normalize (the gem's list of `gsub`s: "tomorrow" → "next day", "noon" →
   "12:00 pm", "ago" → "past", "from" → "future", "an" → "1"), tokenize (one regexp: dates and `h:mm[:ss]`
-  stay one token), tag (`ChronicToken.kind`), then handlers. The gem dispatches on the *sequence of tag
+  stay one token), tag (`Chronic::Token.kind`), then handlers. The gem dispatches on the *sequence of tag
   classes* with ~40 handler patterns (`[Scalar, Repeater, Pointer]`, `[RepeaterMonthName, ScalarDay,
   SeparatorAt?, 'time?']`); here the sequence is an Array of Symbols compared with `==` (`ks == Array[:month,
   :scalar, :scalar]`) after splitting off the time-of-day tokens, which removes the `'time?'` suffix of every
@@ -59,9 +60,9 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
 ## 書き心地
 
 - **The token-based parser.** The design question was how to hold a token that is "a number, or a month, or a
-  time of day" without the gem's list of tag objects. Wrote one Struct type `ChronicToken` with a `kind`
+  time of day" without the gem's list of tag objects. Wrote one Struct type `Chronic::Token` with a `kind`
   Symbol and three payload fields (`num`, `sym`, `parts`), each nil unless the kind uses it. Reading them
-  needed `num(t) = ChronicToken.num(t) || 0`, `sym(t) = ... || :none`: two one-liners, after which `--strict`
+  needed `num(t) = Chronic::Token.num(t) || 0`, `sym(t) = ... || :none`: two one-liners, after which `--strict`
   never complained about a nil payload. The dispatch on the kind sequence is `ks == Array[:grabber, :unit]`
   in an `if`/`elsif` ladder in `day_span`; it is the gem's handler table written out, and shorter.
   Alternatives considered: a signature String joined by spaces and matched with Regexps (would carry the gem's
@@ -69,17 +70,17 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
   because every handler reads two or three tokens and `num(a)`, `sym(b)` is all it needs.
 - **The checker had almost nothing to say on 300 lines.** First run of `chronic.sake` under `--strict`: one
   syntax error (`(atr in Integer ? atr : 6)` → `x in T needs its own parentheses: (x in T)`, fixed as the hint
-  said) and then it ran. The reason is structural: every handler returns `ChronicSpan | nil` and `handle` checks
+  said) and then it ran. The reason is structural: every handler returns `Chronic::Span | nil` and `handle` checks
   `return nil if span == nil` before using it, and `Time` arithmetic (`t + 86400`, `t - t`) is closed over one
-  type. The nils in the Array destructuring `h, m, s = ChronicToken.parts(time)` needed `h ||= 0` lines, which
+  type. The nils in the Array destructuring `h, m, s = Chronic::Token.parts(time)` needed `h ||= 0` lines, which
   is also what the Ruby reference needs.
 - **Return type as a function, not a flag.** The gem's `guess: false` makes `parse` return a `Span` instead of a
   `Time`; a user doing `Time.strftime(Chronic.parse(s, guess: false))` would be a type error only at that call.
-  Rather than make `parse`'s result `Time | ChronicSpan | nil` for every caller, `parse_span` is its own
+  Rather than make `parse`'s result `Time | Chronic::Span | nil` for every caller, `parse_span` is its own
   function and `parse` is `guess(parse_span(...))`. The same decision as strscan's `do_scan` note: a flag does
   not specialize the result type, a function does.
 - **A field cannot be named `begin` or `end`.** `attr_reader begin, end` for the gem's `Span#begin/#end` does
-  not parse; the spec's `attr_reader :begin` form would read as `ChronicSpan.begin(s)`, which is still odd next
+  not parse; the spec's `attr_reader :begin` form would read as `Chronic::Span.begin(s)`, which is still odd next
   to `begin ... end` blocks, so the fields are `from`/`to`.
 - **Hash literals for tables.** The month/day/unit tables are `def months = once { Hash["jan" => 1, ...] }`;
   reading one gives `Integer | nil`, so `months[String.[](w, 0, 3)] || 0` where Ruby writes `MONTHS[w[0, 3]]`.
@@ -88,7 +89,7 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
 - **Where Sake helped**: the twin is a transliteration (`Array.find(cands) { |c| c >= lower }` ↔
   `cands.find { ... }`, `Time.wday(d)` ↔ `d.wday`), and their outputs matched on the first diff after the Sake
   side was debugged, over 130 inputs. The Sake code carries the types of every step (`Time.year(now)`,
-  `ChronicSpan.from(span)`), which made the hour-arithmetic bugs (a `+ 1` hour on "this week") easy to find by
+  `Chronic::Span.from(span)`), which made the hour-arithmetic bugs (a `+ 1` hour on "this week") easy to find by
   reading. Modifier `while` (`d += step while Time.wday(d) != wd`) and `case portion in :morning then [6, 12]`
   returning a Tuple to `lo, hi = ...` read as well as Ruby.
 

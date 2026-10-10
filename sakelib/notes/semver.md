@@ -17,13 +17,13 @@ prints 60 lines, identical to `semver.rb`; 18 functions (public API: 15).
 | `v.bump(:major / :minor / :patch / :pre)` | `SemVer.bump(v, :major)` | same |
 | `v.to_s`, `v.inspect` (`#<SemVer 1.2.3>`) | `to_s`, `inspect` of the type | same |
 | `v.satisfies?("~> 1.2")`, `SemVer.max_satisfying(vs, req)` | `SemVer.satisfies?(v, req)`, `SemVer.max_satisfying(vs, req)` | same |
-| `SemVer::Requirement.parse(s)` | `SemVerRequirement.parse(s)` | differs: no nested names |
-| `req.satisfied_by?(v)`, `req.to_s` | `SemVerRequirement.satisfied_by?(r, v)`, `to_s` | same |
+| `SemVer::Requirement.parse(s)` | `SemVer::Requirement.parse(s)` | same (nested since 2026-10-10; was `SemVerRequirement`) |
+| `req.satisfied_by?(v)`, `req.to_s` | `SemVer::Requirement.satisfied_by?(r, v)`, `to_s` | same |
 | `SemVerError` (a StandardError) | `class SemVerError < Exception` | same name; no hierarchy |
 
 ## What differs from Ruby, and why
 
-- `SemVer::Requirement` is `SemVerRequirement`: namespaces do not nest.
+- `SemVer::Requirement` is written `class SemVer::Requirement` (Ruby's spelling; `SemVerRequirement` before 2026-10-10).
 - `<=>` with a non-SemVer returns nil in Ruby. In Sake, `==` with another type is false without calling
   `<=>`, and `<` with another type is a type report before running, so `<=>` assumes a SemVer.
 - Requirements compare by precedence only, as `Gem::Requirement` does: `2.0.0-alpha` satisfies `~> 1.2`

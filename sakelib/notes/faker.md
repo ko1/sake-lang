@@ -4,8 +4,9 @@
 `test/sakelib/ref/faker.rb`, a plain-Ruby twin with the same word lists and the same draws, because the gem's lists
 are large and its output cannot be matched (the gem is not installed either).
 
-The gem's nested modules are flattened to one module each: `Faker::Name.first_name` → `FakerName.first_name`,
-`Faker::Internet.email` → `FakerInternet.email`, … (Sake has no nested names). Every module is `module_function`.
+The gem's nested modules are kept (2026-10-10): `Faker::Name`, `Faker::Internet`, `Faker::Lorem`, `Faker::Number`,
+`Faker::Address`, `Faker::Company`, `Faker::Boolean`, `Faker::Color` are modules inside `Faker` (before namespaces
+nested they were `Faker::Name`, `Faker::Internet`, …). Every module is `module_function`.
 The word lists are functions returning `once { String[...] }`: Sake has no value constants, and `once` gives one
 shared Array for the program.
 
@@ -24,22 +25,22 @@ type; seeding is global.
 | `Faker::Config.random = Random.new(n)` | `Faker.seed(n)` | differs: the global generator (Kernel.srand) |
 | `Faker::Base.numerify("##")`, `letterify("??")`, `bothify` | `Faker.numerify(s)`, `letterify`, `bothify` | same (letters are capitals, as the gem's) |
 | `Faker::Base.sample(list)` / `shuffle` | `Faker.pick(list)` / `Faker.pick_distinct(list, n)` | differs: names; `pick_distinct` keeps list order |
-| `Faker::Name.name` | `FakerName.name` | same formats (`First Last`, `Prefix First Last`, `First Last Suffix`), own lists |
-| `Faker::Name.first_name`, `last_name`, `prefix`, `suffix`, `name_with_middle` | `FakerName.first_name`, … | same shape, own lists |
-| `Faker::Name.initials(number: 3)` | `FakerName.initials(3)` | differs: positional argument |
-| `Faker::Internet.username(specifier:, separators:)` | `FakerInternet.username(specifier = nil, seps)` | differs: positional; two name parts, not shuffled |
-| `Faker::Internet.email(name:, domain:)`, `free_email` | `FakerInternet.email(name = nil, domain = nil)` | same shape |
-| `Faker::Internet.domain_name`, `domain_word`, `domain_suffix` | `FakerInternet.domain_name`, … | same shape |
+| `Faker::Name.name` | `Faker::Name.name` | same formats (`First Last`, `Prefix First Last`, `First Last Suffix`), own lists |
+| `Faker::Name.first_name`, `last_name`, `prefix`, `suffix`, `name_with_middle` | `Faker::Name.first_name`, … | same shape, own lists |
+| `Faker::Name.initials(number: 3)` | `Faker::Name.initials(3)` | differs: positional argument |
+| `Faker::Internet.username(specifier:, separators:)` | `Faker::Internet.username(specifier = nil, seps)` | differs: positional; two name parts, not shuffled |
+| `Faker::Internet.email(name:, domain:)`, `free_email` | `Faker::Internet.email(name = nil, domain = nil)` | same shape |
+| `Faker::Internet.domain_name`, `domain_word`, `domain_suffix` | `Faker::Internet.domain_name`, … | same shape |
 | `Faker::Internet.ip_v4_address`, `mac_address` | same names | ip octets are 1..254 (the gem checks reserved ranges) |
-| `Faker::Internet.url(host:, path:, scheme:)` | `FakerInternet.url(host = nil, path = nil, scheme = "http")` | positional |
-| `Faker::Internet.password(min_length:)` | `FakerInternet.password(min_length = 8)` | differs: letters and digits only, exactly min_length |
-| `Faker::Internet.slug(words:, glue:)` | `FakerInternet.slug(words = nil, glue = nil)` | positional |
-| `Faker::Lorem.word`, `words(number:)`, `sentence(word_count:, random_words_to_add:)`, `sentences`, `paragraph(sentence_count:, random_sentences_to_add:)`, `paragraphs`, `question`, `character(s)` | `FakerLorem.word`, `words(3)`, `sentence(4, 0)`, … | positional; 40 Latin words |
-| `Faker::Number.number(digits:)`, `leading_zero_number`, `decimal(l_digits:, r_digits:)`, `between(from:, to:)`, `within(range:)`, `positive`, `negative`, `digit`, `non_zero_digit`, `hexadecimal`, `binary` | `FakerNumber.number(10)`, … | positional; `between` is Integer only; `within` needs a finite Range |
-| `Faker::Address.city`, `street_name`, `street_address(include_secondary:)`, `secondary_address`, `building_number`, `zip_code`/`zip`/`postcode`, `state`, `state_abbr`, `country`, `full_address`, `latitude`, `longitude`, `city_prefix`, `city_suffix`, `street_suffix` | `FakerAddress.city`, … | same formats as the gem's en locale, own lists |
-| `Faker::Company.name`, `suffix`, `industry`, `buzzword`, `bs`, `catch_phrase`, `ein` | `FakerCompany.name`, … | same formats, own lists |
-| `Faker::Boolean.boolean(true_ratio:)` | `FakerBoolean.boolean(0.5)` | positional |
-| `Faker::Color.color_name`, `hex_color`, `rgb_color` | `FakerColor.color_name`, … | same shape |
+| `Faker::Internet.url(host:, path:, scheme:)` | `Faker::Internet.url(host = nil, path = nil, scheme = "http")` | positional |
+| `Faker::Internet.password(min_length:)` | `Faker::Internet.password(min_length = 8)` | differs: letters and digits only, exactly min_length |
+| `Faker::Internet.slug(words:, glue:)` | `Faker::Internet.slug(words = nil, glue = nil)` | positional |
+| `Faker::Lorem.word`, `words(number:)`, `sentence(word_count:, random_words_to_add:)`, `sentences`, `paragraph(sentence_count:, random_sentences_to_add:)`, `paragraphs`, `question`, `character(s)` | `Faker::Lorem.word`, `words(3)`, `sentence(4, 0)`, … | positional; 40 Latin words |
+| `Faker::Number.number(digits:)`, `leading_zero_number`, `decimal(l_digits:, r_digits:)`, `between(from:, to:)`, `within(range:)`, `positive`, `negative`, `digit`, `non_zero_digit`, `hexadecimal`, `binary` | `Faker::Number.number(10)`, … | positional; `between` is Integer only; `within` needs a finite Range |
+| `Faker::Address.city`, `street_name`, `street_address(include_secondary:)`, `secondary_address`, `building_number`, `zip_code`/`zip`/`postcode`, `state`, `state_abbr`, `country`, `full_address`, `latitude`, `longitude`, `city_prefix`, `city_suffix`, `street_suffix` | `Faker::Address.city`, … | same formats as the gem's en locale, own lists |
+| `Faker::Company.name`, `suffix`, `industry`, `buzzword`, `bs`, `catch_phrase`, `ein` | `Faker::Company.name`, … | same formats, own lists |
+| `Faker::Boolean.boolean(true_ratio:)` | `Faker::Boolean.boolean(0.5)` | positional |
+| `Faker::Color.color_name`, `hex_color`, `rgb_color` | `Faker::Color.color_name`, … | same shape |
 | `Faker::Date`, `Time`, `Commerce`, `Food`, every other generator; locales; `unique` | — | missing (see below) |
 
 72 operations in 9 modules (plus the list functions).
@@ -77,8 +78,8 @@ type; seeding is global.
   anyway (an Integer is open), which matches what the gem's formats need.
 - Writing the Ruby twin at the same time as the port was the pleasant part: every function is one line in each,
   `Faker.pick(list)` ↔ `list.fetch(rand(list.size))`, and the diff of the two programs was empty on the second run.
-- A habit caught in the test program: `FakerName.name.upcase` →
-  `error: method call on a value ... is not allowed` / `hint: String.upcase(FakerName.name)`. The first hint is the
+- A habit caught in the test program: `Faker::Name.name.upcase` →
+  `error: method call on a value ... is not allowed` / `hint: String.upcase(Faker::Name.name)`. The first hint is the
   right one; the second (`Symbol.upcase`) shows the checker does not yet know `name` returns a String here.
 
 ## Built-ins requested

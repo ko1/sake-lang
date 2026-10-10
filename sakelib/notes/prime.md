@@ -37,14 +37,14 @@ division by the wheel of 30, then deterministic Miller-Rabin with Ruby's base ta
   Struct types with a `succ` operation passed as the (now possible) optional argument, but the only
   point of passing one, which is to choose the algorithm, does not survive without dispatch on a
   generator protocol. Not ported.
-- **The shared sieve cache** (phase 2). As Ruby's `EratosthenesSieve.instance`, the primes found so far
+- **The shared sieve cache** (phase 2). As Ruby's `Prime::EratosthenesSieve.instance` (the same nested name since 2026-10-10; `EratosthenesSieve` before), the primes found so far
   are kept for the whole program: `Prime.primes = once { Integer[] }` and the bound sieved to,
   `Prime.sieved_to = once { Integer[0] }` (a one-element Array, since `once` keeps a value, not a
   variable). `Prime.extend_primes` sieves again up to twice the bound (128 first) and appends the new
   primes, so the list only grows and `each` can walk it by index while it grows. Ruby's sieve
   extends by segments; this one sieves from 2 again, which costs at most as much as all the sieves
   before it. Also visible (Ruby keeps them private): `Prime.sieve`. Since 2026-10-05 the cache is
-  `EratosthenesSieve.instance` (see below).
+  `Prime::EratosthenesSieve.instance` (see below).
 - **Enumerators.** `Prime.each(30).to_a`, `Prime.lazy.select { }.first(5)`, and `Prime.each_with_index`
   need first-class iterators, which Sake does not have (blocks are not values). The common cases have
   their own operations (`to_a`, `each_with_index`, `take_while`, `find`).
@@ -120,8 +120,8 @@ Bug found: a `yield` inside a `while` loop is reported as "no block is given" ev
 
 ## 2026-10-05
 
-- The cache is now a type, as Ruby's: `EratosthenesSieve` with `private attr_reader primes =
-  Integer[], max_checked = 0`, `EratosthenesSieve.instance = once { EratosthenesSieve.new }`, and
+- The cache is now a type, as Ruby's: `Prime::EratosthenesSieve` with `private attr_reader primes =
+  Integer[], max_checked = 0`, `Prime::EratosthenesSieve.instance = once { Prime::EratosthenesSieve.new }`, and
   `get_nth_prime(sieve, i)` / `compute_primes(sieve)` (Ruby's names). It replaces
   `once { Integer[] }` plus a one-element Array standing for the bound (`Prime.primes`,
   `sieved_to`, `extend_primes` are gone).

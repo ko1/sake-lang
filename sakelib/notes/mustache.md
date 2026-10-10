@@ -11,7 +11,7 @@
 | `Mustache.render(template, hash)` | `Mustache.render(template, view)` | same (String or Symbol keys) |
 | partials: subclass overriding `partial(name)`, or `template_path` files | `Mustache.render(t, view, partials: Hash["name" => "..."])` | differs (a keyword Hash) |
 | `{{x}}`, `{{{x}}}`, `{{& x}}`, `{{a.b}}`, `{{.}}`, `{{#s}}`, `{{^s}}`, `{{! c}}`, `{{> p}}` | same | same, with the spec's standalone lines and partial indentation |
-| `Mustache::Parser::SyntaxError` | `MustacheSyntaxError` | differs (name; messages are this port's own) |
+| `Mustache::Parser::SyntaxError` | `Mustache::Parser::SyntaxError` | same name (nested since 2026-10-10; was `MustacheSyntaxError`); messages are this port's own |
 | view classes (`class Simple < Mustache; def name`), lambdas, `{{=<% %>=}}` | | missing |
 
 Escaping is `CGI.escapeHTML`'s (`&amp; &lt; &gt; &quot; &#39;`). Sections: false/nil/`[]` skip, an Array
@@ -24,7 +24,7 @@ iterates, a Hash or any other truthy value is pushed once as the context.
 
 ## Frictions
 
-1. `case MustacheNode.kind(node)` without `else` → `case/in: no in branch matches :root [type]`. Correct:
+1. `case Mustache::Node.kind(node)` without `else` → `case/in: no in branch matches :root [type]`. Correct:
    the kind field also holds the root's `:root` → `else nil`.
 2. A recursive partial test whose leaves had no `kids` key looked `kids` up in the outer context and
    recursed forever (my test's bug; Ruby stops with `SystemStackError` in 0.3 s). Sake ran 60 s / 3 GB
@@ -34,8 +34,8 @@ iterates, a Hash or any other truthy value is pushed once as the context.
 
 ## New language features used
 
-- `T.new` keywords: `MustacheNode.new(kind, name, indent:)`; defaults `text = ""`, `indent = ""`,
-  `children = MustacheNode[]` (a fresh typed Array per node). Helped.
+- `T.new` keywords: `Mustache::Node.new(kind, name, indent:)`; defaults `text = ""`, `indent = ""`,
+  `children = Mustache::Node[]` (a fresh typed Array per node). Helped.
 - `initialize` checks `@kind => Symbol`, `@name => String`; `render` asserts `template => String`,
   `partials => Hash`.
 - Optional positional + keyword: `def render(template, view = Hash[], partials: Hash[])`, as the gem's
@@ -51,6 +51,6 @@ iterates, a Hash or any other truthy value is pushed once as the context.
 
 ## Types (`--types`)
 
-- `MustacheNode.kind`: `:inverted | :partial | :raw | :root | :section | :text | :var` (all literal
+- `Mustache::Node.kind`: `:inverted | :partial | :raw | :root | :section | :text | :var` (all literal
   Symbols, so the `case` is checked for completeness). No unions elsewhere; the view's values are the
   recursive union the test builds, reached through `case` / `in Hash` / `in Array`.

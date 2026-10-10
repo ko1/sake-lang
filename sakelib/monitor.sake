@@ -10,7 +10,7 @@
 #   Monitor.synchronize(m, :worker1) { ... }    # with one: re-entering under the same `me` is counted, as Ruby
 #
 # `mon_owned?(m, me)` needs the identity. Condition variables: `cond = Monitor.new_cond(m)`,
-# `MonitorCond.wait(cond, me = nil)`, `signal`, `broadcast`, `wait_while(cond, me = nil) { }`, `wait_until`.
+# `MonitorMixin::ConditionVariable.wait(cond, me = nil)`, `signal`, `broadcast`, `wait_while(cond, me = nil) { }`, `wait_until`.
 # `wait(timeout)` is missing: Queue.pop has no timeout.
 #
 # MonitorMixin: a type declares `private attr_accessor mon_data`, sets `@mon_data = Monitor.new` in
@@ -124,9 +124,9 @@ class Monitor
   # Whether `me` holds the monitor. Ruby asks for the current thread; Sake needs the identity.
   def mon_owned?(m, me) = Mutex.synchronize(@lock) { @locked && @owner == me }
 
-  def new_cond(m) = MonitorCond.new(m)
+  def new_cond(m) = MonitorMixin::ConditionVariable.new(m)
 
-  # For MonitorCond.wait: gives the lock up entirely, returning the saved count; ThreadError if not held.
+  # For MonitorMixin::ConditionVariable.wait: gives the lock up entirely, returning the saved count; ThreadError if not held.
   def release_for_wait(m, me)
     Mutex.synchronize(@lock) do
       check_owner(m, me)
@@ -137,16 +137,16 @@ class Monitor
     end
   end
 
-  # For MonitorCond.wait: after re-entering, restores the count saved by release_for_wait.
+  # For MonitorMixin::ConditionVariable.wait: after re-entering, restores the count saved by release_for_wait.
   def restore_count(m, saved)
     Mutex.synchronize(@lock) { @count = saved }
     nil
   end
 end
 
-# Ruby's MonitorMixin::ConditionVariable: wait registers a Queue while the monitor is held, releases it,
+# Ruby's MonitorMixin::ConditionVariable (the same name): wait registers a Queue while the monitor is held, releases it,
 # and blocks on the Queue; signal and broadcast (called while holding the monitor) push to the Queues.
-class MonitorCond
+class MonitorMixin::ConditionVariable
   private attr_reader monitor
   private attr_accessor waiters
   def initialize(c) = @waiters = Array[]

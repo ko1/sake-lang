@@ -62,7 +62,7 @@ reqs = ["~> 1.2", "~> 1.2.3", "~> 1", ">= 1.0, < 2", "^1.2.3", "^0.2.3", "^0.0.3
 cands = ["0.0.3", "0.0.4", "0.2.5", "0.3.0", "1.0.0-beta.2", "1.0.0", "1.2.0", "1.2.3",
          "1.2.9", "1.3.0", "1.9.9", "2.0.0-alpha", "2.0.0"].map { |s| SemVer.parse(s) }
 reqs.each do |rs|
-  r = SemVerRequirement.parse(rs)
+  r = SemVer::Requirement.parse(rs)
   ok = cands.select { |c| r.satisfied_by?(c) }
   puts "#{rs} (#{r}): #{ok.join(" ")}"
 end
@@ -71,7 +71,7 @@ p SemVer.max_satisfying(cands, ">= 1.0, < 1.3")
 p SemVer.max_satisfying(cands, "> 5")
 ["", "~>", ">= x", "1.2.3.4", ">= 1.0,", "=> 1.0"].each do |s|
   begin
-    SemVerRequirement.parse(s)
+    SemVer::Requirement.parse(s)
     puts "#{s.inspect}: parsed?"
   rescue SemVerError => e
     puts "#{s.inspect}: #{e.message}"

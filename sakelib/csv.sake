@@ -2,16 +2,16 @@
 #
 # Options are Ruby's keyword arguments: CSV.parse(s, col_sep: ";", headers: true).
 # A row is an Array of String | nil (nil for an empty unquoted field, as in Ruby).
-# With `headers:` in the options, the result is a CSVTable of CSVRow (Ruby's CSV::Table / CSV::Row).
-
-# Ruby's CSV::MalformedCSVError: the message and the line number.
-class MalformedCSVError < Exception
-  attr_reader line_number
-end
+# With `headers:` in the options, the result is a CSV::Table of CSV::Row (Ruby's CSV::Table / CSV::Row).
 
 # A writer (Ruby's CSV object for output): `csv << row` appends a line, to a String (generate) or to
 # an IO: `CSV.new(IO.stdout, col_sep: ";")`, or the file of `CSV.open`.
 class CSV
+  # Ruby's CSV::MalformedCSVError: the message and the line number.
+  class MalformedCSVError < Exception
+    attr_reader line_number
+  end
+
   private attr_reader io
   attr_reader col_sep, row_sep, quote_char, headers
   private attr_reader force_quotes, quote_empty, write_headers
@@ -191,13 +191,13 @@ class CSV
          end
     hs = Array.map(hs ? hs : Array[]) { it }
     hs = convert_headers(hs, header_converters)
-    CSVTable.new(hs, Array.map(rows) { |r| CSVRow.new(hs, convert_row(r, c)) })
+    Table.new(hs, Array.map(rows) { |r| Row.new(hs, convert_row(r, c)) })
   end
 
   # ---- parsing API ----
 
-  # Without `headers:` (or with nil) -> Array of rows; with `headers:` -> CSVTable.
-  # With a block, as Ruby: yields each row (a CSVRow with headers:) and gives nil.
+  # Without `headers:` (or with nil) -> Array of rows; with `headers:` -> Table.
+  # With a block, as Ruby: yields each row (a Row with headers:) and gives nil.
   def parse(text, col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
             header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "")
     rows = raw_rows(text, col_sep, row_sep, quote_char, skip_blanks, skip_lines)
@@ -211,7 +211,7 @@ class CSV
     # if/else, not `return result unless block_given?`: notes/csv_bug_return_unless_block_given.sake
     if block_given?
       case result
-      in CSVTable then CSVTable.each(result) { |r| yield(r) }
+      in Table then Table.each(result) { |r| yield(r) }
       in Array then Array.each(result) { |r| yield(r) }
       end
       nil
@@ -243,7 +243,7 @@ class CSV
   # Ruby's CSV.table: headers, numeric converters, Symbol headers.
   def table(path) = read(path, headers: true, converters: :numeric, header_converters: :symbol)
 
-  # Ruby's foreach(path, mode = "r", **opts): yields CSVRows when `headers:` is given, otherwise Arrays.
+  # Ruby's foreach(path, mode = "r", **opts): yields Rows when `headers:` is given, otherwise Arrays.
   # The file is read whole through File.open (a quoted field may span lines).
   def foreach(path, mode = "r", col_sep: ",", row_sep: :auto, quote_char: "\"", headers: nil, converters: nil,
               header_converters: nil, skip_blanks: false, skip_lines: nil, nil_value: nil, empty_value: "", &b)
@@ -271,7 +271,7 @@ class CSV
     case row
     in Array then row
     in Tuple then Tuple.to_a(row)
-    in CSVRow then CSVRow.fields(row)
+    in Row then Row.fields(row)
     in Hash
       hs = @headers
       raise ArgumentError, "a Hash row needs headers:" unless hs
@@ -356,207 +356,209 @@ class CSV
   def inspect(c) = "#<CSV #{io_desc(c)} lineno:#{@lineno} col_sep:#{Kernel.inspect(@col_sep)} row_sep:#{Kernel.inspect(@row_sep)} quote_char:#{Kernel.inspect(@quote_char)}>"
 end
 
-# Ruby's CSV::Row: headers and fields of the same length.
-class CSVRow
-  attr_reader headers, fields
-  include Indexable
-  include Bitwise
+class CSV
+  # Ruby's CSV::Row: headers and fields of the same length.
+  class Row
+    attr_reader headers, fields
+    include Indexable
+    include Bitwise
 
-  # As Ruby's Row.new(headers, fields): copies both and pads the shorter side with nil.
-  def initialize(r)
-    @headers = Array.dup(@headers)
-    @fields = Array.dup(@fields)
-    Array.push(@fields, nil) while Array.size(@fields) < Array.size(@headers)
-    Array.push(@headers, nil) while Array.size(@headers) < Array.size(@fields)
-  end
-
-  def headers(r) = Array.dup(@headers)
-  def fields(r) = Array.dup(@fields)
-  def to_a(r) = Array.zip(@headers, @fields)
-
-  # An Integer is a position; anything else is a header.
-  def [](r, k)
-    case k
-    in Integer then @fields[k]
-    else
-      i = Array.index(@headers, k)
-      i ? @fields[i] : nil
+    # As Ruby's Row.new(headers, fields): copies both and pads the shorter side with nil.
+    def initialize(r)
+      @headers = Array.dup(@headers)
+      @fields = Array.dup(@fields)
+      Array.push(@fields, nil) while Array.size(@fields) < Array.size(@headers)
+      Array.push(@headers, nil) while Array.size(@headers) < Array.size(@fields)
     end
-  end
 
-  def field(r, k) = r[k]
+    def headers(r) = Array.dup(@headers)
+    def fields(r) = Array.dup(@fields)
+    def to_a(r) = Array.zip(@headers, @fields)
 
-  def []=(r, k, v)
-    case k
-    in Integer
-      @fields[k] = v
-    else
-      i = Array.index(@headers, k)
-      if i
-        @fields[i] = v
+    # An Integer is a position; anything else is a header.
+    def [](r, k)
+      case k
+      in Integer then @fields[k]
       else
-        Array.push(@headers, k)
-        Array.push(@fields, v)
+        i = Array.index(@headers, k)
+        i ? @fields[i] : nil
       end
     end
-    v
-  end
 
-  # As Ruby's fetch(header, *default) { |header| }: a missing header gives the block's value, then
-  # the default, then KeyError.
-  def fetch(r, h, *default)
-    raise ArgumentError, "Too many arguments" if Array.size(default) > 1
-    i = Array.index(@headers, h)
-    return @fields[i] if i
-    if block_given?
-      yield(h)
-    elsif Array.empty?(default)
-      raise KeyError, "key not found: #{h}"
-    else
-      default[0]
+    def field(r, k) = r[k]
+
+    def []=(r, k, v)
+      case k
+      in Integer
+        @fields[k] = v
+      else
+        i = Array.index(@headers, k)
+        if i
+          @fields[i] = v
+        else
+          Array.push(@headers, k)
+          Array.push(@fields, v)
+        end
+      end
+      v
+    end
+
+    # As Ruby's fetch(header, *default) { |header| }: a missing header gives the block's value, then
+    # the default, then KeyError.
+    def fetch(r, h, *default)
+      raise ArgumentError, "Too many arguments" if Array.size(default) > 1
+      i = Array.index(@headers, h)
+      return @fields[i] if i
+      if block_given?
+        yield(h)
+      elsif Array.empty?(default)
+        raise KeyError, "key not found: #{h}"
+      else
+        default[0]
+      end
+    end
+
+    def has_key?(r, h) = Array.include?(@headers, h)
+    def header?(r, h) = has_key?(r, h)
+    def include?(r, h) = has_key?(r, h)
+    def key?(r, h) = has_key?(r, h)
+    def member?(r, h) = has_key?(r, h)
+    def field?(r, v) = Array.include?(@fields, v)
+    def index(r, h) = Array.index(@headers, h)
+    def size(r) = Array.size(@fields)
+    def length(r) = size(r)
+    def empty?(r) = Array.empty?(@fields)
+    def header_row?(r) = false
+    def field_row?(r) = true
+    def values_at(r, *hs) = Array.map(hs) { |h| r[h] }
+
+    # Appends a field (with a nil header), or a [header, field] Tuple.
+    def <<(r, x)
+      case x
+      in Tuple
+        h, v = x
+        Array.push(@headers, h)
+        Array.push(@fields, v)
+      else
+        Array.push(@headers, nil)
+        Array.push(@fields, x)
+      end
+      r
+    end
+
+    # Removes the field of header h (or at position h); returns [header, field] or nil.
+    def delete(r, h)
+      i = (h in Integer) ? h : Array.index(@headers, h)
+      return nil unless i
+      return nil unless i < Array.size(@fields)
+      [Array.delete_at(@headers, i), Array.delete_at(@fields, i)]
+    end
+
+    def to_h(r)
+      h = Hash[]
+      Array.each(Array.zip(@headers, @fields)) { |k, v| h[k] = v unless Hash.key?(h, k) }
+      h
+    end
+    def to_hash(r) = to_h(r)
+
+    def each(r)
+      Array.each(Array.zip(@headers, @fields)) { |h, v| yield(h, v) }
+      r
+    end
+
+    def to_csv(r) = CSV.generate_line(@fields)
+    def to_s(r) = to_csv(r)
+
+    def ==(a, b) = (b in Row) && Row.headers(a) == Row.headers(b) && Row.fields(a) == Row.fields(b)
+
+    def inspect(r)
+      parts = Array.map(Array.zip(@headers, @fields)) do |h, v|
+        hs = (h in Symbol) ? Symbol.to_s(h) : Kernel.inspect(h)
+        " #{hs}:#{Kernel.inspect(v)}"
+      end
+      "#<CSV::Row#{Array.join(parts)}>"
     end
   end
 
-  def has_key?(r, h) = Array.include?(@headers, h)
-  def header?(r, h) = has_key?(r, h)
-  def include?(r, h) = has_key?(r, h)
-  def key?(r, h) = has_key?(r, h)
-  def member?(r, h) = has_key?(r, h)
-  def field?(r, v) = Array.include?(@fields, v)
-  def index(r, h) = Array.index(@headers, h)
-  def size(r) = Array.size(@fields)
-  def length(r) = size(r)
-  def empty?(r) = Array.empty?(@fields)
-  def header_row?(r) = false
-  def field_row?(r) = true
-  def values_at(r, *hs) = Array.map(hs) { |h| r[h] }
+  # Ruby's CSV::Table (row mode only): rows sharing the headers.
+  class Table
+    private attr_reader header_list
+    attr_reader rows
+    include Indexable
+    include Bitwise
 
-  # Appends a field (with a nil header), or a [header, field] Tuple.
-  def <<(r, x)
-    case x
-    in Tuple
-      h, v = x
-      Array.push(@headers, h)
-      Array.push(@fields, v)
-    else
-      Array.push(@headers, nil)
-      Array.push(@fields, x)
+    # The first row's headers, or those it was made with when it has no rows.
+    def headers(t)
+      first = Array.first(@rows)
+      first ? Row.headers(first) : Array.dup(@header_list)
     end
-    r
-  end
 
-  # Removes the field of header h (or at position h); returns [header, field] or nil.
-  def delete(r, h)
-    i = (h in Integer) ? h : Array.index(@headers, h)
-    return nil unless i
-    return nil unless i < Array.size(@fields)
-    [Array.delete_at(@headers, i), Array.delete_at(@fields, i)]
-  end
-
-  def to_h(r)
-    h = Hash[]
-    Array.each(Array.zip(@headers, @fields)) { |k, v| h[k] = v unless Hash.key?(h, k) }
-    h
-  end
-  def to_hash(r) = to_h(r)
-
-  def each(r)
-    Array.each(Array.zip(@headers, @fields)) { |h, v| yield(h, v) }
-    r
-  end
-
-  def to_csv(r) = CSV.generate_line(@fields)
-  def to_s(r) = to_csv(r)
-
-  def ==(a, b) = (b in CSVRow) && CSVRow.headers(a) == CSVRow.headers(b) && CSVRow.fields(a) == CSVRow.fields(b)
-
-  def inspect(r)
-    parts = Array.map(Array.zip(@headers, @fields)) do |h, v|
-      hs = (h in Symbol) ? Symbol.to_s(h) : Kernel.inspect(h)
-      " #{hs}:#{Kernel.inspect(v)}"
+    # An Integer gives a row; a header gives the column (an Array of fields).
+    def [](t, k)
+      case k
+      in Integer then @rows[k]
+      else Array.map(@rows) { |r| r[k] }
+      end
     end
-    "#<CSV::Row#{Array.join(parts)}>"
-  end
-end
 
-# Ruby's CSV::Table (row mode only): rows sharing the headers.
-class CSVTable
-  private attr_reader header_list
-  attr_reader rows
-  include Indexable
-  include Bitwise
-
-  # The first row's headers, or those it was made with when it has no rows.
-  def headers(t)
-    first = Array.first(@rows)
-    first ? CSVRow.headers(first) : Array.dup(@header_list)
-  end
-
-  # An Integer gives a row; a header gives the column (an Array of fields).
-  def [](t, k)
-    case k
-    in Integer then @rows[k]
-    else Array.map(@rows) { |r| r[k] }
+    def []=(t, k, v)
+      case k
+      in Integer then @rows[k] = v
+      else
+        Array.each_with_index(@rows) { |r, i| r[k] = (v in Array) ? v[i] : v }
+      end
+      v
     end
-  end
 
-  def []=(t, k, v)
-    case k
-    in Integer then @rows[k] = v
-    else
-      Array.each_with_index(@rows) { |r, i| r[k] = (v in Array) ? v[i] : v }
+    def size(t) = Array.size(@rows)
+    def length(t) = size(t)
+    def empty?(t) = Array.empty?(@rows)
+
+    def each(t, &b)
+      Array.each(@rows, &b)
+      t
     end
-    v
-  end
 
-  def size(t) = Array.size(@rows)
-  def length(t) = size(t)
-  def empty?(t) = Array.empty?(@rows)
+    def map(t, &b) = Array.map(@rows, &b)
+    def select(t, &b) = Array.select(@rows, &b)
+    def find(t, &b) = Array.find(@rows, &b)
 
-  def each(t, &b)
-    Array.each(@rows, &b)
-    t
-  end
-
-  def map(t, &b) = Array.map(@rows, &b)
-  def select(t, &b) = Array.select(@rows, &b)
-  def find(t, &b) = Array.find(@rows, &b)
-
-  def <<(t, row)
-    case row
-    in CSVRow then Array.push(@rows, row)
-    in Tuple then Array.push(@rows, CSVRow.new(headers(t), Tuple.to_a(row)))
-    in Array then Array.push(@rows, CSVRow.new(headers(t), row))
+    def <<(t, row)
+      case row
+      in Row then Array.push(@rows, row)
+      in Tuple then Array.push(@rows, Row.new(headers(t), Tuple.to_a(row)))
+      in Array then Array.push(@rows, Row.new(headers(t), row))
+      end
+      t
     end
-    t
-  end
-  def push(t, row) = t << row
+    def push(t, row) = t << row
 
-  # Deletes a row (Integer) or a column (header); returns what was removed.
-  def delete(t, k)
-    case k
-    in Integer then Array.delete_at(@rows, k)
-    else Array.map(@rows) { |r| (x = CSVRow.delete(r, k)) ? x[1] : nil }
+    # Deletes a row (Integer) or a column (header); returns what was removed.
+    def delete(t, k)
+      case k
+      in Integer then Array.delete_at(@rows, k)
+      else Array.map(@rows) { |r| (x = Row.delete(r, k)) ? x[1] : nil }
+      end
     end
-  end
 
-  def values_at(t, *is) = Array.map(is) { |i| @rows[i] }
+    def values_at(t, *is) = Array.map(is) { |i| @rows[i] }
 
-  def to_a(t)
-    out = Array[headers(t)]
-    Array.each(@rows) { |r| Array.push(out, CSVRow.fields(r)) }
-    out
-  end
+    def to_a(t)
+      out = Array[headers(t)]
+      Array.each(@rows) { |r| Array.push(out, Row.fields(r)) }
+      out
+    end
 
-  def to_csv(t)
-    CSV.generate_line(headers(t)) + Array.join(Array.map(@rows) { |r| CSVRow.to_csv(r) })
-  end
-  def to_s(t) = to_csv(t)
+    def to_csv(t)
+      CSV.generate_line(headers(t)) + Array.join(Array.map(@rows) { |r| Row.to_csv(r) })
+    end
+    def to_s(t) = to_csv(t)
 
-  # Ruby's: a summary line, then the CSV of the headers and the first 5 rows.
-  def inspect(t)
-    first = CSVTable.new(@header_list, Array.take(@rows, 5))
-    "#<CSV::Table mode:col_or_row row_count:#{Array.size(@rows) + 1}>\n#{to_csv(first)}"
+    # Ruby's: a summary line, then the CSV of the headers and the first 5 rows.
+    def inspect(t)
+      first = Table.new(@header_list, Array.take(@rows, 5))
+      "#<CSV::Table mode:col_or_row row_count:#{Array.size(@rows) + 1}>\n#{to_csv(first)}"
+    end
   end
 end
 

@@ -3,118 +3,118 @@
 #   r = Redis.new(host: "127.0.0.1", port: 6379)    # or Redis.new("127.0.0.1", 6379); connects at the first command
 #   Redis.set(r, "k", "v"); Redis.get(r, "k"); Redis.incr(r, "n"); Redis.hgetall(r, "h"); Redis.lrange(r, "l", 0, -1)
 #   Redis.call(r, "GET", "k")                         # any command; the raw reply (String, Integer, nil, Array)
-#   Redis.pipelined(r) { |pipe| RedisPipeline.set(pipe, "a", 1); RedisPipeline.get(pipe, "a") }  # the replies
+#   Redis.pipelined(r) { |pipe| Redis::PipelinedConnection.set(pipe, "a", 1); Redis::PipelinedConnection.get(pipe, "a") }  # the replies
 #   Redis.multi(r) { |tx| ... }                       # MULTI ... EXEC, the replies of EXEC
 #
 # Each command is an operation that asserts the shape of its reply (`get` a String or nil, `incr` an Integer,
 # `hgetall` a Hash, `expire` true/false), as the gem's methods convert theirs. The same operations exist on
-# RedisPipeline, where they queue the command and give nil; the gem's `pipe.get` gives a Future. Ruby's nested
-# names are flattened: Redis::CommandError -> RedisCommandError, Redis::CannotConnectError ->
-# RedisCannotConnectError, Redis::ConnectionError -> RedisConnectionError, Redis::ProtocolError ->
-# RedisProtocolError, Redis::PipelinedConnection -> RedisPipeline. Not ported: RESP3 (HELLO 3), pub/sub,
+# Redis::PipelinedConnection, where they queue the command and give nil; the gem's `pipe.get` gives a Future. The
+# gem's nested names are kept, inside `class Redis`: Redis::CommandError, Redis::CannotConnectError,
+# Redis::ConnectionError, Redis::ProtocolError, Redis::PipelinedConnection. Not ported: RESP3 (HELLO 3), pub/sub,
 # `url:`, `ssl:`, sentinel/cluster, `scan` enumerators, blocking pops with timeouts, `Redis.current`.
 
-class RedisCommandError < Exception          # an error reply ("-ERR ...")
-end
-class RedisCannotConnectError < Exception    # Socket.connect failed
-end
-class RedisConnectionError < Exception       # the server closed the connection mid-reply
-end
-class RedisProtocolError < Exception         # a reply that is not RESP2
-end
-
-# The commands, over a type with `call(x, *args)` and the reply shapers `_str`, `_int`, `_bool`, `_okbool`,
-# `_positive`, `_arr`, `_hash`.
-module RedisCommands
-  # --- connection, server ---
-  def ping(r, message = nil) = _str(r, message == nil ? call(r, "PING") : call(r, "PING", message))
-  def echo(r, message) = _str(r, call(r, "ECHO", message))
-  def select(r, db) = _str(r, call(r, "SELECT", db))
-  def flushdb(r) = _str(r, call(r, "FLUSHDB"))
-  def flushall(r) = _str(r, call(r, "FLUSHALL"))
-  def dbsize(r) = _int(r, call(r, "DBSIZE"))
-
-  # --- keys ---
-  def del(r, *keys) = _int(r, call(r, "DEL", *keys))
-  def exists(r, *keys) = _int(r, call(r, "EXISTS", *keys))
-  def exists?(r, *keys) = _positive(r, call(r, "EXISTS", *keys))
-  def expire(r, key, seconds) = _bool(r, call(r, "EXPIRE", key, seconds))
-  def ttl(r, key) = _int(r, call(r, "TTL", key))
-  def keys(r, pattern = "*") = _arr(r, call(r, "KEYS", pattern))
-  def type(r, key) = _str(r, call(r, "TYPE", key))
-
-  # --- strings ---
-  def get(r, key) = _str(r, call(r, "GET", key))
-
-  # Ruby: set(key, value, ex:, px:, nx:, xx:) -> "OK"; with nx or xx, true/false
-  def set(r, key, value, ex: nil, px: nil, nx: false, xx: false)
-    args = Array["SET", key, value]
-    Array.push(args, "EX", ex) if ex != nil
-    Array.push(args, "PX", px) if px != nil
-    Array.push(args, "NX") if nx
-    Array.push(args, "XX") if xx
-    (nx || xx) ? _okbool(r, call(r, *args)) : _str(r, call(r, *args))
-  end
-
-  def setnx(r, key, value) = _bool(r, call(r, "SETNX", key, value))
-  def mget(r, *keys) = _arr(r, call(r, "MGET", *keys))
-  def mset(r, *pairs) = _str(r, call(r, "MSET", *pairs))
-  def incr(r, key) = _int(r, call(r, "INCR", key))
-  def decr(r, key) = _int(r, call(r, "DECR", key))
-  def incrby(r, key, n) = _int(r, call(r, "INCRBY", key, n))
-  def decrby(r, key, n) = _int(r, call(r, "DECRBY", key, n))
-  def append(r, key, value) = _int(r, call(r, "APPEND", key, value))
-  def strlen(r, key) = _int(r, call(r, "STRLEN", key))
-
-  # --- hashes ---
-  # Ruby: hset(key, field, value, ...) or hset(key, a_hash) -> the number of new fields
-  def hset(r, key, *pairs) = _int(r, call(r, "HSET", key, *_pairs(pairs)))
-  def hget(r, key, field) = _str(r, call(r, "HGET", key, field))
-  def hmget(r, key, *fields) = _arr(r, call(r, "HMGET", key, *fields))
-  def hgetall(r, key) = _hash(r, call(r, "HGETALL", key))
-  def hdel(r, key, *fields) = _int(r, call(r, "HDEL", key, *fields))
-  def hexists(r, key, field) = _bool(r, call(r, "HEXISTS", key, field))
-  def hkeys(r, key) = _arr(r, call(r, "HKEYS", key))
-  def hvals(r, key) = _arr(r, call(r, "HVALS", key))
-  def hlen(r, key) = _int(r, call(r, "HLEN", key))
-
-  # --- lists ---
-  def lpush(r, key, *values) = _int(r, call(r, "LPUSH", key, *values))
-  def rpush(r, key, *values) = _int(r, call(r, "RPUSH", key, *values))
-  def lpop(r, key) = _str(r, call(r, "LPOP", key))
-  def rpop(r, key) = _str(r, call(r, "RPOP", key))
-  def lrange(r, key, start, stop) = _arr(r, call(r, "LRANGE", key, start, stop))
-  def llen(r, key) = _int(r, call(r, "LLEN", key))
-  def lindex(r, key, index) = _str(r, call(r, "LINDEX", key, index))
-
-  # --- sets ---
-  def sadd(r, key, *members) = _int(r, call(r, "SADD", key, *members))
-  def sadd?(r, key, member) = _bool(r, call(r, "SADD", key, member))
-  def srem(r, key, *members) = _int(r, call(r, "SREM", key, *members))
-  def srem?(r, key, member) = _bool(r, call(r, "SREM", key, member))
-  def smembers(r, key) = _arr(r, call(r, "SMEMBERS", key))
-  def sismember(r, key, member) = _bool(r, call(r, "SISMEMBER", key, member))
-  def scard(r, key) = _int(r, call(r, "SCARD", key))
-
-  # A Hash argument becomes field, value, field, value, ...
-  def _pairs(pairs)
-    out = Array[]
-    Array.each(pairs) do |x|
-      if x in Hash
-        Hash.each(x) { |k, v| Array.push(out, k, v) }
-      else
-        Array.push(out, x)
-      end
-    end
-    out
-  end
-end
-
-# Ruby: Redis.new(host: "127.0.0.1", port: 6379, db: 0, timeout: 5.0)
 class Redis
+  class CommandError < Exception          # an error reply ("-ERR ...")
+  end
+  class CannotConnectError < Exception    # Socket.connect failed
+  end
+  class ConnectionError < Exception       # the server closed the connection mid-reply
+  end
+  class ProtocolError < Exception         # a reply that is not RESP2
+  end
+
+  # The commands, over a type with `call(x, *args)` and the reply shapers `_str`, `_int`, `_bool`, `_okbool`,
+  # `_positive`, `_arr`, `_hash`.
+  module Commands
+    # --- connection, server ---
+    def ping(r, message = nil) = _str(r, message == nil ? call(r, "PING") : call(r, "PING", message))
+    def echo(r, message) = _str(r, call(r, "ECHO", message))
+    def select(r, db) = _str(r, call(r, "SELECT", db))
+    def flushdb(r) = _str(r, call(r, "FLUSHDB"))
+    def flushall(r) = _str(r, call(r, "FLUSHALL"))
+    def dbsize(r) = _int(r, call(r, "DBSIZE"))
+
+    # --- keys ---
+    def del(r, *keys) = _int(r, call(r, "DEL", *keys))
+    def exists(r, *keys) = _int(r, call(r, "EXISTS", *keys))
+    def exists?(r, *keys) = _positive(r, call(r, "EXISTS", *keys))
+    def expire(r, key, seconds) = _bool(r, call(r, "EXPIRE", key, seconds))
+    def ttl(r, key) = _int(r, call(r, "TTL", key))
+    def keys(r, pattern = "*") = _arr(r, call(r, "KEYS", pattern))
+    def type(r, key) = _str(r, call(r, "TYPE", key))
+
+    # --- strings ---
+    def get(r, key) = _str(r, call(r, "GET", key))
+
+    # Ruby: set(key, value, ex:, px:, nx:, xx:) -> "OK"; with nx or xx, true/false
+    def set(r, key, value, ex: nil, px: nil, nx: false, xx: false)
+      args = Array["SET", key, value]
+      Array.push(args, "EX", ex) if ex != nil
+      Array.push(args, "PX", px) if px != nil
+      Array.push(args, "NX") if nx
+      Array.push(args, "XX") if xx
+      (nx || xx) ? _okbool(r, call(r, *args)) : _str(r, call(r, *args))
+    end
+
+    def setnx(r, key, value) = _bool(r, call(r, "SETNX", key, value))
+    def mget(r, *keys) = _arr(r, call(r, "MGET", *keys))
+    def mset(r, *pairs) = _str(r, call(r, "MSET", *pairs))
+    def incr(r, key) = _int(r, call(r, "INCR", key))
+    def decr(r, key) = _int(r, call(r, "DECR", key))
+    def incrby(r, key, n) = _int(r, call(r, "INCRBY", key, n))
+    def decrby(r, key, n) = _int(r, call(r, "DECRBY", key, n))
+    def append(r, key, value) = _int(r, call(r, "APPEND", key, value))
+    def strlen(r, key) = _int(r, call(r, "STRLEN", key))
+
+    # --- hashes ---
+    # Ruby: hset(key, field, value, ...) or hset(key, a_hash) -> the number of new fields
+    def hset(r, key, *pairs) = _int(r, call(r, "HSET", key, *_pairs(pairs)))
+    def hget(r, key, field) = _str(r, call(r, "HGET", key, field))
+    def hmget(r, key, *fields) = _arr(r, call(r, "HMGET", key, *fields))
+    def hgetall(r, key) = _hash(r, call(r, "HGETALL", key))
+    def hdel(r, key, *fields) = _int(r, call(r, "HDEL", key, *fields))
+    def hexists(r, key, field) = _bool(r, call(r, "HEXISTS", key, field))
+    def hkeys(r, key) = _arr(r, call(r, "HKEYS", key))
+    def hvals(r, key) = _arr(r, call(r, "HVALS", key))
+    def hlen(r, key) = _int(r, call(r, "HLEN", key))
+
+    # --- lists ---
+    def lpush(r, key, *values) = _int(r, call(r, "LPUSH", key, *values))
+    def rpush(r, key, *values) = _int(r, call(r, "RPUSH", key, *values))
+    def lpop(r, key) = _str(r, call(r, "LPOP", key))
+    def rpop(r, key) = _str(r, call(r, "RPOP", key))
+    def lrange(r, key, start, stop) = _arr(r, call(r, "LRANGE", key, start, stop))
+    def llen(r, key) = _int(r, call(r, "LLEN", key))
+    def lindex(r, key, index) = _str(r, call(r, "LINDEX", key, index))
+
+    # --- sets ---
+    def sadd(r, key, *members) = _int(r, call(r, "SADD", key, *members))
+    def sadd?(r, key, member) = _bool(r, call(r, "SADD", key, member))
+    def srem(r, key, *members) = _int(r, call(r, "SREM", key, *members))
+    def srem?(r, key, member) = _bool(r, call(r, "SREM", key, member))
+    def smembers(r, key) = _arr(r, call(r, "SMEMBERS", key))
+    def sismember(r, key, member) = _bool(r, call(r, "SISMEMBER", key, member))
+    def scard(r, key) = _int(r, call(r, "SCARD", key))
+
+    # A Hash argument becomes field, value, field, value, ...
+    def _pairs(pairs)
+      out = Array[]
+      Array.each(pairs) do |x|
+        if x in Hash
+          Hash.each(x) { |k, v| Array.push(out, k, v) }
+        else
+          Array.push(out, x)
+        end
+      end
+      out
+    end
+  end
+
+  # Ruby: Redis.new(host: "127.0.0.1", port: 6379, db: 0, timeout: 5.0)
+
   attr_reader host, port, db, timeout
   private attr_accessor sock
-  include RedisCommands
+  include Commands
 
   def initialize(r)
     @host = "127.0.0.1" if @host == nil
@@ -148,7 +148,7 @@ class Redis
     begin
       s = Socket.connect(@host, @port, @timeout)
     rescue IOError => e
-      raise RedisCannotConnectError, "Error connecting to Redis on #{@host}:#{@port} (#{Exception.message(e)})"
+      raise CannotConnectError, "Error connecting to Redis on #{@host}:#{@port} (#{Exception.message(e)})"
     end
     Socket.set_timeout(s, @timeout)
     @sock = s
@@ -181,7 +181,7 @@ class Redis
     line = Socket.gets(s)
     if line == nil
       close(r)
-      raise RedisConnectionError, "Connection lost (ECONNRESET)"
+      raise ConnectionError, "Connection lost (ECONNRESET)"
     end
     String.chomp(line)
   end
@@ -194,7 +194,7 @@ class Redis
       chunk = Socket.read(s, n - got)
       if chunk == nil || chunk == ""
         close(r)
-        raise RedisConnectionError, "Connection lost (ECONNRESET)"
+        raise ConnectionError, "Connection lost (ECONNRESET)"
       end
       got += String.bytesize(chunk)
       Array.push(out, chunk)
@@ -208,7 +208,7 @@ class Redis
     rest = String.[](line, 1, String.length(line) - 1) || ""
     case kind
     in "+" then rest
-    in "-" then raise RedisCommandError, rest
+    in "-" then raise CommandError, rest
     in ":" then String.to_i(rest)
     in "$"
       n = String.to_i(rest)
@@ -228,7 +228,7 @@ class Redis
         items
       end
     else
-      raise RedisProtocolError, "Got '#{kind}' as initial reply byte"
+      raise ProtocolError, "Got '#{kind}' as initial reply byte"
     end
   end
 
@@ -254,27 +254,27 @@ class Redis
 
   def _hash(r, v)
     v => Array
-    RedisPipeline._pairs_to_hash(v)
+    PipelinedConnection._pairs_to_hash(v)
   end
 
   # Ruby: redis.pipelined { |pipe| pipe.set(...); pipe.get(...) } -> the Array of replies, shaped as the
   # commands shape theirs (`pipe.get` is a String or nil, `pipe.hgetall` a Hash)
   def pipelined(r)
-    pipe = RedisPipeline.new(Array[], Symbol[])
+    pipe = PipelinedConnection.new(Array[], Symbol[])
     yield(pipe)
-    cmds = RedisPipeline.commands(pipe)
+    cmds = PipelinedConnection.commands(pipe)
     return Array[] if Array.empty?(cmds)
     s = connection(r)
     Socket.write(s, Array.join(Array.map(cmds) { |c| _command(c) }))
     replies = Array.map(cmds) { |_c| _read_reply(r, s) }
-    RedisPipeline._shape(pipe, replies)
+    PipelinedConnection._shape(pipe, replies)
   end
 
   # Ruby: redis.multi { |tx| ... } -> the replies of EXEC (MULTI, the commands, EXEC in one round trip)
   def multi(r)
-    pipe = RedisPipeline.new(Array[], Symbol[])
+    pipe = PipelinedConnection.new(Array[], Symbol[])
     yield(pipe)
-    cmds = RedisPipeline.commands(pipe)
+    cmds = PipelinedConnection.commands(pipe)
     s = connection(r)
     out = String[_command(Array["MULTI"])]
     Array.each(cmds) { |c| Array.push(out, _command(c)) }
@@ -284,48 +284,48 @@ class Redis
     Array.each(cmds) { |_c| _read_reply(r, s) }
     replies = _read_reply(r, s)
     replies => Array
-    RedisPipeline._shape(pipe, replies)
-  end
-end
-
-# Ruby: Redis::PipelinedConnection, the `pipe` of `pipelined` and `multi`. Its commands queue and give nil;
-# `tags` remembers each reply's shape for Redis.pipelined to apply.
-class RedisPipeline
-  attr_reader commands, tags
-  include RedisCommands
-
-  def call(p, *args)
-    Array.push(@commands, args)
-    nil
+    PipelinedConnection._shape(pipe, replies)
   end
 
-  def _tag(p, t)
-    Array.push(@tags, t)
-    nil
-  end
+  # Ruby: PipelinedConnection, the `pipe` of `pipelined` and `multi`. Its commands queue and give nil;
+  # `tags` remembers each reply's shape for Redis.pipelined to apply.
+  class PipelinedConnection
+    attr_reader commands, tags
+    include Commands
 
-  def _str(p, v) = _tag(p, :str)
-  def _int(p, v) = _tag(p, :int)
-  def _bool(p, v) = _tag(p, :bool)
-  def _okbool(p, v) = _tag(p, :okbool)
-  def _positive(p, v) = _tag(p, :positive)
-  def _arr(p, v) = _tag(p, :arr)
-  def _hash(p, v) = _tag(p, :hash)
+    def call(p, *args)
+      Array.push(@commands, args)
+      nil
+    end
 
-  def _pairs_to_hash(items)
-    h = Hash[]
-    Array.each(Array.each_slice(items, 2)) { |k, v| h[k] = v }
-    h
-  end
+    def _tag(p, t)
+      Array.push(@tags, t)
+      nil
+    end
 
-  def _shape(p, replies)
-    Array.map(Array.zip(replies, @tags)) do |v, tag|
-      case tag
-      in :bool then v == 1
-      in :okbool then v == "OK"
-      in :positive then (v in Integer) && v > 0
-      in :hash then (v in Array) ? _pairs_to_hash(v) : v
-      else v
+    def _str(p, v) = _tag(p, :str)
+    def _int(p, v) = _tag(p, :int)
+    def _bool(p, v) = _tag(p, :bool)
+    def _okbool(p, v) = _tag(p, :okbool)
+    def _positive(p, v) = _tag(p, :positive)
+    def _arr(p, v) = _tag(p, :arr)
+    def _hash(p, v) = _tag(p, :hash)
+
+    def _pairs_to_hash(items)
+      h = Hash[]
+      Array.each(Array.each_slice(items, 2)) { |k, v| h[k] = v }
+      h
+    end
+
+    def _shape(p, replies)
+      Array.map(Array.zip(replies, @tags)) do |v, tag|
+        case tag
+        in :bool then v == 1
+        in :okbool then v == "OK"
+        in :positive then (v in Integer) && v > 0
+        in :hash then (v in Array) ? _pairs_to_hash(v) : v
+        else v
+        end
       end
     end
   end

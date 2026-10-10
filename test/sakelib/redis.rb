@@ -426,7 +426,7 @@ p(r.keys("?"))
 begin
   r.incr("name")
 rescue Redis::CommandError => e
-  puts("RedisCommandError: #{e.message}")
+  puts("Redis::CommandError: #{e.message}")
 end
 
 puts("-- expiry")
@@ -465,7 +465,7 @@ p(r.type("user"))
 begin
   r.get("user")
 rescue Redis::CommandError => e
-  puts("RedisCommandError: #{e.message}")
+  puts("Redis::CommandError: #{e.message}")
 end
 
 puts("-- lists")
@@ -489,7 +489,7 @@ p(r.type("q"))
 begin
   r.lpush("name", "x")
 rescue Redis::CommandError => e
-  puts("RedisCommandError: #{e.message}")
+  puts("Redis::CommandError: #{e.message}")
 end
 
 puts("-- sets")
@@ -519,12 +519,12 @@ p(r.call("DEL", ["raw", "name"]))
 begin
   r.call("NOSUCH", "a", "b")
 rescue Redis::CommandError => e
-  puts("RedisCommandError: #{e.message}")
+  puts("Redis::CommandError: #{e.message}")
 end
 begin
   r.call("GET")
 rescue Redis::CommandError => e
-  puts("RedisCommandError: #{e.message}")
+  puts("Redis::CommandError: #{e.message}")
 end
 
 puts("-- pipelined, multi")
@@ -572,7 +572,7 @@ bad = Redis.new(host: "127.0.0.1", port: closed_port)
 begin
   bad.get("x")
 rescue Redis::CannotConnectError => e
-  puts("RedisCannotConnectError: #{e.message.start_with?("Error connecting to Redis on 127.0.0.1:")}")
+  puts("Redis::CannotConnectError: #{e.message.start_with?("Error connecting to Redis on 127.0.0.1:")}")
 end
 p(bad.connected?)
 

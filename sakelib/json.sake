@@ -5,485 +5,485 @@
 #
 # Options are Ruby's keyword arguments: JSON.parse(s, symbolize_names: true),
 # JSON.generate(v, space: " "). (Ruby's positional opts Hash is not taken.)
-# Ruby's JSON::ParserError / JSON::GeneratorError are JSONParserError / JSONGeneratorError (no nested
-# names). JSON::NestingError is raised as JSONParserError with Ruby's message.
+# JSON::ParserError / JSON::GeneratorError / JSON::Parser / JSON::State are nested as Ruby's.
+# JSON::NestingError is raised as JSON::ParserError with Ruby's message.
 #
 # Error messages follow json 2.20's, including "at line L column C".
 
-# Ruby's ParserError#line / #column; nil for a nesting error, as Ruby's NestingError.
-class JSONParserError < Exception
-  attr_reader line, column
-end
-
-class JSONGeneratorError < Exception
-end
-
-# ---- parser ----
-
-# Ruby's JSON::Parser.new(source, opts): the options become flags, max_nesting an Integer (0: no limit).
-class JSONParserState
-  private attr_reader src, symbolize_names, allow_nan, allow_trailing_comma,
-                      max_nesting, len
-  private attr_accessor pos, depth
-
-  def initialize(ps)
-    @symbolize_names = false if @symbolize_names == nil
-    @allow_nan = false if @allow_nan == nil
-    @allow_trailing_comma = false if @allow_trailing_comma == nil
-    @max_nesting = 100 if @max_nesting == nil
-    @len = 0
-    @pos = 0
-    @depth = 0
-    @len = String.bytesize(@src)
-    @symbolize_names = @symbolize_names == true
-    @allow_nan = @allow_nan == true
-    @allow_trailing_comma = @allow_trailing_comma == true
-    @max_nesting = JSON.nesting(@max_nesting)
+module JSON
+  # Ruby's ParserError#line / #column; nil for a nesting error, as Ruby's NestingError.
+  class ParserError < Exception
+    attr_reader line, column
   end
 
-  # The whole source is one value, with only whitespace and comments around it.
-  def parse(ps)
-    skip_ws(ps)
-    end_of_input(ps) if @pos >= @len
-    v = value(ps)
-    skip_ws(ps)
-    fail(ps, "unexpected token at end of stream %s") if @pos < @len
-    v
+  class GeneratorError < Exception
   end
 
-  # Positions are byte offsets (`len` is the byte size), so reading at a position costs O(1) on
-  # non-ASCII text. A read gives one byte as a String, or nil past the end.
-  def byte_at(ps, i) = i < @len ? String.byteslice(@src, i, 1) : nil
-  def peek(ps) = byte_at(ps, @pos)
+  # ---- parser ----
 
-  def ws?(c) = c == " " || c == "\n" || c == "\t" || c == "\r"
+  # Ruby's JSON::Parser.new(source, opts): the options become flags, max_nesting an Integer (0: no limit).
+  class Parser
+    private attr_reader src, symbolize_names, allow_nan, allow_trailing_comma,
+                        max_nesting, len
+    private attr_accessor pos, depth
 
-  # Ruby's error text: a quoted fragment of the source at `at` (up to 32 bytes, up to whitespace),
-  # then the line and the byte column.
-  def fail_at(ps, msg, at)
-    frag = "EOF"
-    if at < @len
-      rest = String.byteslice(@src, at, @len - at) || ""
-      if ws?(byte_at(ps, at))
-        frag = rest
-      else
-        chars = String[]
-        bytes = 0
-        Array.each(String.chars(rest[0, 33] || "")) do |c|
-          break if ws?(c) || c == "\0"
-          b = String.bytesize(c)
-          break if bytes + b > 32
-          Array.push(chars, c)
-          bytes += b
-        end
-        last = Array.last(chars)
-        Array.pop(chars) if last && String.bytesize(last) > 1
-        frag = "'#{Array.join(chars, "")}'"
-      end
+    def initialize(ps)
+      @symbolize_names = false if @symbolize_names == nil
+      @allow_nan = false if @allow_nan == nil
+      @allow_trailing_comma = false if @allow_trailing_comma == nil
+      @max_nesting = 100 if @max_nesting == nil
+      @len = 0
+      @pos = 0
+      @depth = 0
+      @len = String.bytesize(@src)
+      @symbolize_names = @symbolize_names == true
+      @allow_nan = @allow_nan == true
+      @allow_trailing_comma = @allow_trailing_comma == true
+      @max_nesting = JSON.nesting(@max_nesting)
     end
-    # not String.sub: a backslash in frag would be read as a back reference
-    k = String.index(msg, "%s")
-    text = k ? "#{msg[0, k]}#{frag}#{msg[k + 2, String.size(msg)]}" : msg
-    # Ruby counts bytes back from the cursor; a cursor on "\n" is column 0 of the next line
-    prefix = String.byteslice(@src, 0, at) || ""
-    line = String.count(prefix, "\n") + 1
-    nl = String.rindex(prefix, "\n")
-    column = String.bytesize(nl ? prefix[nl + 1, String.size(prefix)] || "" : prefix) + 1
-    if byte_at(ps, at) == "\n"
-      line += 1
-      column = 0
-    end
-    raise JSONParserError.new("#{text} at line #{line} column #{column}", line, column)
-  end
 
-  def fail(ps, msg) = fail_at(ps, msg, @pos)
-
-  # Whitespace and comments (json 2.20 still accepts /* */ and // comments by default).
-  def skip_ws(ps)
-    while @pos < @len
-      @pos = String.byteindex(@src, /[^ \t\r\n]/, @pos) || @len
-      break unless byte_at(ps, @pos) == "/"
-      skip_comment(ps)
-    end
-    ps
-  end
-
-  def skip_comment(ps)
-    start = @pos
-    n = byte_at(ps, @pos + 1)
-    if n == "/"
-      nl = String.byteindex(@src, "\n", @pos)
-      @pos = nl ? nl + 1 : @len
-    elsif n == "*"
-      close = String.byteindex(@src, "*/", @pos + 2)
-      fail_at(ps, "unterminated comment, expected closing '*/'", start) unless close
-      @pos = close + 2
-    else
-      fail_at(ps, "unexpected token %s", start)
-    end
-    ps
-  end
-
-  def nest(ps)
-    @depth += 1
-    raise JSONParserError.new("nesting of #{@depth} is too deep") if @max_nesting > 0 && @depth > @max_nesting
-    ps
-  end
-
-  def value(ps)
-    skip_ws(ps)
-    c = peek(ps)
-    raise JSONParserError.new("unexpected end of input") unless c
-    case c
-    in "{" then object(ps)
-    in "[" then array(ps)
-    in "\"" then string(ps)
-    in "t" then keyword(ps, "true", true)
-    in "f" then keyword(ps, "false", false)
-    in "n" then keyword(ps, "null", nil)
-    in "N"
-      fail(ps, "unexpected token %s") unless @allow_nan
-      keyword(ps, "NaN", Float::NAN)
-    in "I"
-      fail(ps, "unexpected token %s") unless @allow_nan
-      keyword(ps, "Infinity", Float::INFINITY)
-    in "-"
-      if @allow_nan && byte_at(ps, @pos + 1) == "I"
-        keyword(ps, "-Infinity", -Float::INFINITY)
-      else
-        number(ps)
-      end
-    else
-      b = String.getbyte(@src, @pos) || 0
-      if b >= 48 && b <= 57
-        number(ps)
-      elsif c == "\0"
-        fail(ps, "unexpected NULL byte: %s")
-      else
-        fail(ps, "unexpected character: %s")
-      end
-    end
-  end
-
-  def keyword(ps, word, v)
-    n = String.size(word)
-    fail(ps, "unexpected token %s") unless String.byteslice(@src, @pos, n) == word
-    @pos += n
-    v
-  end
-
-  def end_of_input(ps)
-    fail(ps, "unexpected end of input")
-  end
-
-  def array(ps)
-    a = Array[]
-    @pos += 1
-    skip_ws(ps)
-    if peek(ps) == "]"
-      @pos += 1
-      return a
-    end
-    nest(ps)
-    while true
+    # The whole source is one value, with only whitespace and comments around it.
+    def parse(ps)
       skip_ws(ps)
       end_of_input(ps) if @pos >= @len
-      Array.push(a, value(ps))
+      v = value(ps)
+      skip_ws(ps)
+      fail(ps, "unexpected token at end of stream %s") if @pos < @len
+      v
+    end
+
+    # Positions are byte offsets (`len` is the byte size), so reading at a position costs O(1) on
+    # non-ASCII text. A read gives one byte as a String, or nil past the end.
+    def byte_at(ps, i) = i < @len ? String.byteslice(@src, i, 1) : nil
+    def peek(ps) = byte_at(ps, @pos)
+
+    def ws?(c) = c == " " || c == "\n" || c == "\t" || c == "\r"
+
+    # Ruby's error text: a quoted fragment of the source at `at` (up to 32 bytes, up to whitespace),
+    # then the line and the byte column.
+    def fail_at(ps, msg, at)
+      frag = "EOF"
+      if at < @len
+        rest = String.byteslice(@src, at, @len - at) || ""
+        if ws?(byte_at(ps, at))
+          frag = rest
+        else
+          chars = String[]
+          bytes = 0
+          Array.each(String.chars(rest[0, 33] || "")) do |c|
+            break if ws?(c) || c == "\0"
+            b = String.bytesize(c)
+            break if bytes + b > 32
+            Array.push(chars, c)
+            bytes += b
+          end
+          last = Array.last(chars)
+          Array.pop(chars) if last && String.bytesize(last) > 1
+          frag = "'#{Array.join(chars, "")}'"
+        end
+      end
+      # not String.sub: a backslash in frag would be read as a back reference
+      k = String.index(msg, "%s")
+      text = k ? "#{msg[0, k]}#{frag}#{msg[k + 2, String.size(msg)]}" : msg
+      # Ruby counts bytes back from the cursor; a cursor on "\n" is column 0 of the next line
+      prefix = String.byteslice(@src, 0, at) || ""
+      line = String.count(prefix, "\n") + 1
+      nl = String.rindex(prefix, "\n")
+      column = String.bytesize(nl ? prefix[nl + 1, String.size(prefix)] || "" : prefix) + 1
+      if byte_at(ps, at) == "\n"
+        line += 1
+        column = 0
+      end
+      raise ParserError.new("#{text} at line #{line} column #{column}", line, column)
+    end
+
+    def fail(ps, msg) = fail_at(ps, msg, @pos)
+
+    # Whitespace and comments (json 2.20 still accepts /* */ and // comments by default).
+    def skip_ws(ps)
+      while @pos < @len
+        @pos = String.byteindex(@src, /[^ \t\r\n]/, @pos) || @len
+        break unless byte_at(ps, @pos) == "/"
+        skip_comment(ps)
+      end
+      ps
+    end
+
+    def skip_comment(ps)
+      start = @pos
+      n = byte_at(ps, @pos + 1)
+      if n == "/"
+        nl = String.byteindex(@src, "\n", @pos)
+        @pos = nl ? nl + 1 : @len
+      elsif n == "*"
+        close = String.byteindex(@src, "*/", @pos + 2)
+        fail_at(ps, "unterminated comment, expected closing '*/'", start) unless close
+        @pos = close + 2
+      else
+        fail_at(ps, "unexpected token %s", start)
+      end
+      ps
+    end
+
+    def nest(ps)
+      @depth += 1
+      raise ParserError.new("nesting of #{@depth} is too deep") if @max_nesting > 0 && @depth > @max_nesting
+      ps
+    end
+
+    def value(ps)
       skip_ws(ps)
       c = peek(ps)
-      if c == ","
+      raise ParserError.new("unexpected end of input") unless c
+      case c
+      in "{" then object(ps)
+      in "[" then array(ps)
+      in "\"" then string(ps)
+      in "t" then keyword(ps, "true", true)
+      in "f" then keyword(ps, "false", false)
+      in "n" then keyword(ps, "null", nil)
+      in "N"
+        fail(ps, "unexpected token %s") unless @allow_nan
+        keyword(ps, "NaN", Float::NAN)
+      in "I"
+        fail(ps, "unexpected token %s") unless @allow_nan
+        keyword(ps, "Infinity", Float::INFINITY)
+      in "-"
+        if @allow_nan && byte_at(ps, @pos + 1) == "I"
+          keyword(ps, "-Infinity", -Float::INFINITY)
+        else
+          number(ps)
+        end
+      else
+        b = String.getbyte(@src, @pos) || 0
+        if b >= 48 && b <= 57
+          number(ps)
+        elsif c == "\0"
+          fail(ps, "unexpected NULL byte: %s")
+        else
+          fail(ps, "unexpected character: %s")
+        end
+      end
+    end
+
+    def keyword(ps, word, v)
+      n = String.size(word)
+      fail(ps, "unexpected token %s") unless String.byteslice(@src, @pos, n) == word
+      @pos += n
+      v
+    end
+
+    def end_of_input(ps)
+      fail(ps, "unexpected end of input")
+    end
+
+    def array(ps)
+      a = Array[]
+      @pos += 1
+      skip_ws(ps)
+      if peek(ps) == "]"
         @pos += 1
-        if @allow_trailing_comma
+        return a
+      end
+      nest(ps)
+      while true
+        skip_ws(ps)
+        end_of_input(ps) if @pos >= @len
+        Array.push(a, value(ps))
+        skip_ws(ps)
+        c = peek(ps)
+        if c == ","
+          @pos += 1
+          if @allow_trailing_comma
+            skip_ws(ps)
+            if peek(ps) == "]"
+              @pos += 1
+              break
+            end
+          end
+        elsif c == "]"
+          @pos += 1
+          break
+        else
+          fail(ps, "expected ',' or ']' after array value")
+        end
+      end
+      @depth -= 1
+      a
+    end
+
+    def key(ps, s) = @symbolize_names ? String.to_sym(s) : s
+
+    def object(ps)
+      h = Hash[]
+      @pos += 1
+      skip_ws(ps)
+      if peek(ps) == "}"
+        @pos += 1
+        return h
+      end
+      nest(ps)
+      first = true
+      while true
+        skip_ws(ps)
+        unless peek(ps) == "\""
+          fail(ps, first ? "expected object key, got %s" : "expected object key, got: %s")
+        end
+        k = string(ps)
+        skip_ws(ps)
+        unless peek(ps) == ":"
+          fail(ps, first ? "expected ':' after object key" : "expected ':' after object key, got: %s")
+        end
+        @pos += 1
+        skip_ws(ps)
+        end_of_input(ps) if @pos >= @len
+        h[key(ps, k)] = value(ps)
+        first = false
+        skip_ws(ps)
+        c = peek(ps)
+        if c == ","
+          @pos += 1
           skip_ws(ps)
-          if peek(ps) == "]"
+          if @allow_trailing_comma && peek(ps) == "}"
             @pos += 1
             break
           end
-        end
-      elsif c == "]"
-        @pos += 1
-        break
-      else
-        fail(ps, "expected ',' or ']' after array value")
-      end
-    end
-    @depth -= 1
-    a
-  end
-
-  def key(ps, s) = @symbolize_names ? String.to_sym(s) : s
-
-  def object(ps)
-    h = Hash[]
-    @pos += 1
-    skip_ws(ps)
-    if peek(ps) == "}"
-      @pos += 1
-      return h
-    end
-    nest(ps)
-    first = true
-    while true
-      skip_ws(ps)
-      unless peek(ps) == "\""
-        fail(ps, first ? "expected object key, got %s" : "expected object key, got: %s")
-      end
-      k = string(ps)
-      skip_ws(ps)
-      unless peek(ps) == ":"
-        fail(ps, first ? "expected ':' after object key" : "expected ':' after object key, got: %s")
-      end
-      @pos += 1
-      skip_ws(ps)
-      end_of_input(ps) if @pos >= @len
-      h[key(ps, k)] = value(ps)
-      first = false
-      skip_ws(ps)
-      c = peek(ps)
-      if c == ","
-        @pos += 1
-        skip_ws(ps)
-        if @allow_trailing_comma && peek(ps) == "}"
+        elsif c == "}"
           @pos += 1
           break
+        else
+          fail(ps, "expected ',' or '}' after object value, got: %s")
         end
-      elsif c == "}"
-        @pos += 1
-        break
-      else
-        fail(ps, "expected ',' or '}' after object value, got: %s")
       end
+      @depth -= 1
+      h
     end
-    @depth -= 1
-    h
-  end
 
-  # Four hex digits at i, or nil.
-  def hex4(ps, i)
-    return nil unless String.byteindex(@src, /\G\h{4}/, i) == i
-    String.hex(String.byteslice(@src, i, 4) || "")
-  end
-
-  # UTF-8 of a code point; a lone surrogate gives its 3 bytes, as Ruby's parser does.
-  def utf8(cp)
-    if cp >= 0xD800 && cp <= 0xDFFF
-      bytes = Integer[0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F)]
-      return String.force_encoding(Array.pack(bytes, "C*"), "UTF-8")
+    # Four hex digits at i, or nil.
+    def hex4(ps, i)
+      return nil unless String.byteindex(@src, /\G\h{4}/, i) == i
+      String.hex(String.byteslice(@src, i, 4) || "")
     end
-    format("%c", cp)
-  end
 
-  # The byte length of the UTF-8 character whose first byte is b.
-  def char_len(b) = b < 0x80 ? 1 : (b < 0xE0 ? 2 : (b < 0xF0 ? 3 : 4))
-
-  # First scan to the closing quote (control characters, end of input), then unescape, as Ruby does.
-  def string(ps)
-    @pos += 1
-    start = @pos
-    while true
-      i = String.byteindex(@src, /["\\\x00-\x1f]/, @pos)
-      unless i
-        @pos = @len
-        fail(ps, "unexpected end of input, expected closing \"")
+    # UTF-8 of a code point; a lone surrogate gives its 3 bytes, as Ruby's parser does.
+    def utf8(cp)
+      if cp >= 0xD800 && cp <= 0xDFFF
+        bytes = Integer[0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F)]
+        return String.force_encoding(Array.pack(bytes, "C*"), "UTF-8")
       end
-      @pos = i
-      c = byte_at(ps, i)
-      break if c == "\""
-      fail(ps, "invalid ASCII control character in string: %s") unless c == "\\"
-      b = String.getbyte(@src, i + 1)
-      @pos = i + 1 + (b ? char_len(b) : 1)
+      format("%c", cp)
     end
-    finish = @pos
-    @pos += 1
-    unescape(ps, start, finish)
-  end
 
-  def unescape(ps, start, finish)
-    body = String.byteslice(@src, start, finish - start) || ""
-    return body unless String.include?(body, "\\")
-    out = String[]
-    seg = start
-    i = start
-    while true
-      j = String.byteindex(@src, "\\", i)
-      break unless j && j < finish
-      i = j
-      Array.push(out, String.byteslice(@src, seg, i - seg) || "") if i > seg
-      e = byte_at(ps, i + 1) || ""
-      case e
-      in "\"" then Array.push(out, "\"")
-      in "/" then Array.push(out, "/")
-      in "\\" then Array.push(out, "\\")
-      in "n" then Array.push(out, "\n")
-      in "r" then Array.push(out, "\r")
-      in "t" then Array.push(out, "\t")
-      in "b" then Array.push(out, "\b")
-      in "f" then Array.push(out, "\f")
-      in "u"
-        cp = hex4(ps, i + 2)
-        fail_at(ps, "incomplete unicode character escape sequence at %s", i) unless cp
-        if (cp & 0xFC00) == 0xD800
-          lo = String.byteslice(@src, i + 6, 2) == "\\u" && i + 12 <= finish ? hex4(ps, i + 8) : nil
-          fail_at(ps, "incomplete surrogate pair at %s", seg) unless lo
-          fail_at(ps, "invalid surrogate pair at %s", seg) unless (lo & 0xFC00) == 0xDC00
-          cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
-          i += 6
+    # The byte length of the UTF-8 character whose first byte is b.
+    def char_len(b) = b < 0x80 ? 1 : (b < 0xE0 ? 2 : (b < 0xF0 ? 3 : 4))
+
+    # First scan to the closing quote (control characters, end of input), then unescape, as Ruby does.
+    def string(ps)
+      @pos += 1
+      start = @pos
+      while true
+        i = String.byteindex(@src, /["\\\x00-\x1f]/, @pos)
+        unless i
+          @pos = @len
+          fail(ps, "unexpected end of input, expected closing \"")
         end
-        Array.push(out, utf8(cp))
-        i += 4
-      else
-        fail_at(ps, "Invalid unescaped newline character (\\n) in string: %s", i) if e == "\n"
-        eb = String.getbyte(@src, i + 1)
-        fail_at(ps, "invalid ASCII control character in string: %s", i) if eb && eb < 0x20
-        fail_at(ps, "invalid escape character in string: %s", i)
+        @pos = i
+        c = byte_at(ps, i)
+        break if c == "\""
+        fail(ps, "invalid ASCII control character in string: %s") unless c == "\\"
+        b = String.getbyte(@src, i + 1)
+        @pos = i + 1 + (b ? char_len(b) : 1)
       end
-      i += 2
-      seg = i
+      finish = @pos
+      @pos += 1
+      unescape(ps, start, finish)
     end
-    Array.push(out, String.byteslice(@src, seg, finish - seg) || "") if finish > seg
-    Array.join(out, "")
-  end
 
-  def digits(ps)
-    j = String.byteindex(@src, /[^0-9]/, @pos) || @len
-    n = j - @pos
-    @pos = j
-    n
-  end
+    def unescape(ps, start, finish)
+      body = String.byteslice(@src, start, finish - start) || ""
+      return body unless String.include?(body, "\\")
+      out = String[]
+      seg = start
+      i = start
+      while true
+        j = String.byteindex(@src, "\\", i)
+        break unless j && j < finish
+        i = j
+        Array.push(out, String.byteslice(@src, seg, i - seg) || "") if i > seg
+        e = byte_at(ps, i + 1) || ""
+        case e
+        in "\"" then Array.push(out, "\"")
+        in "/" then Array.push(out, "/")
+        in "\\" then Array.push(out, "\\")
+        in "n" then Array.push(out, "\n")
+        in "r" then Array.push(out, "\r")
+        in "t" then Array.push(out, "\t")
+        in "b" then Array.push(out, "\b")
+        in "f" then Array.push(out, "\f")
+        in "u"
+          cp = hex4(ps, i + 2)
+          fail_at(ps, "incomplete unicode character escape sequence at %s", i) unless cp
+          if (cp & 0xFC00) == 0xD800
+            lo = String.byteslice(@src, i + 6, 2) == "\\u" && i + 12 <= finish ? hex4(ps, i + 8) : nil
+            fail_at(ps, "incomplete surrogate pair at %s", seg) unless lo
+            fail_at(ps, "invalid surrogate pair at %s", seg) unless (lo & 0xFC00) == 0xDC00
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
+            i += 6
+          end
+          Array.push(out, utf8(cp))
+          i += 4
+        else
+          fail_at(ps, "Invalid unescaped newline character (\\n) in string: %s", i) if e == "\n"
+          eb = String.getbyte(@src, i + 1)
+          fail_at(ps, "invalid ASCII control character in string: %s", i) if eb && eb < 0x20
+          fail_at(ps, "invalid escape character in string: %s", i)
+        end
+        i += 2
+        seg = i
+      end
+      Array.push(out, String.byteslice(@src, seg, finish - seg) || "") if finish > seg
+      Array.join(out, "")
+    end
 
-  # Ruby's json_parse_number: "01", "-", "1.", "1e" are invalid numbers.
-  def number(ps)
-    start = @pos
-    # Fast path: the run of number characters is one valid number; otherwise the checks below.
-    j = String.byteindex(@src, /[^\-+0-9.eE]/, @pos) || @len
-    text = String.byteslice(@src, @pos, j - @pos) || ""
-    m = String.match(text, /\A-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?\z/)
-    if m
+    def digits(ps)
+      j = String.byteindex(@src, /[^0-9]/, @pos) || @len
+      n = j - @pos
       @pos = j
-      return m[1] || m[2] ? Float(text) : Integer(text)
+      n
     end
-    neg = peek(ps) == "-"
-    @pos += 1 if neg
-    first = peek(ps)
-    n = digits(ps)
-    fail_at(ps, "invalid number: %s", start) if (first == "0" && n > 1) || n == 0
-    float = false
-    if peek(ps) == "."
-      float = true
-      @pos += 1
-      fail_at(ps, "invalid number: %s", start) if digits(ps) == 0
-    end
-    if peek(ps) == "e" || peek(ps) == "E"
-      float = true
-      @pos += 1
-      @pos += 1 if peek(ps) == "+" || peek(ps) == "-"
-      fail_at(ps, "invalid number: %s", start) if digits(ps) == 0
-    end
-    text = String.byteslice(@src, start, @pos - start) || ""
-    float ? Float(text) : Integer(text)
-  end
-end
 
-# ---- generator ----
-
-# Ruby's JSON::State.new(opts).
-class JSONGeneratorState
-  private attr_reader indent, space, space_before, object_nl, array_nl, allow_nan,
-                      max_nesting
-
-  def initialize(gs)
-    @indent = "" if @indent == nil
-    @space = "" if @space == nil
-    @space_before = "" if @space_before == nil
-    @object_nl = "" if @object_nl == nil
-    @array_nl = "" if @array_nl == nil
-    @allow_nan = false if @allow_nan == nil
-    @max_nesting = 100 if @max_nesting == nil
-    @allow_nan = @allow_nan == true
-    @max_nesting = JSON.nesting(@max_nesting)
-  end
-
-  # What each character that JSON escapes becomes.
-  def escapes = once do
-    t = Hash["\"" => "\\\"", "\\" => "\\\\", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t", "\b" => "\\b", "\f" => "\\f"]
-    Integer.times(0x20) { |o| t[format("%c", o)] = format("\\u%04x", o) unless Hash.key?(t, format("%c", o)) }
-    t
-  end
-
-  def escape(gs, str)
-    s = str
-    if String.encoding(s) == "ASCII-8BIT"
-      # json 2.20 takes a binary String that is valid UTF-8 (with a deprecation warning)
-      u = String.force_encoding(String.b(s), "UTF-8")
-      unless String.valid_encoding?(u)
-        bad = Array.find(String.bytes(s)) { |b| b >= 0x80 } || 0
-        raise JSONGeneratorError, format("\"\\x%02X\" from ASCII-8BIT to UTF-8", bad)
+    # Ruby's json_parse_number: "01", "-", "1.", "1e" are invalid numbers.
+    def number(ps)
+      start = @pos
+      # Fast path: the run of number characters is one valid number; otherwise the checks below.
+      j = String.byteindex(@src, /[^\-+0-9.eE]/, @pos) || @len
+      text = String.byteslice(@src, @pos, j - @pos) || ""
+      m = String.match(text, /\A-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?\z/)
+      if m
+        @pos = j
+        return m[1] || m[2] ? Float(text) : Integer(text)
       end
-      s = u
+      neg = peek(ps) == "-"
+      @pos += 1 if neg
+      first = peek(ps)
+      n = digits(ps)
+      fail_at(ps, "invalid number: %s", start) if (first == "0" && n > 1) || n == 0
+      float = false
+      if peek(ps) == "."
+        float = true
+        @pos += 1
+        fail_at(ps, "invalid number: %s", start) if digits(ps) == 0
+      end
+      if peek(ps) == "e" || peek(ps) == "E"
+        float = true
+        @pos += 1
+        @pos += 1 if peek(ps) == "+" || peek(ps) == "-"
+        fail_at(ps, "invalid number: %s", start) if digits(ps) == 0
+      end
+      text = String.byteslice(@src, start, @pos - start) || ""
+      float ? Float(text) : Integer(text)
     end
-    raise JSONGeneratorError, "source sequence is illegal/malformed utf-8" unless String.valid_encoding?(s)
-    "\"#{String.gsub(s, /["\\\x00-\x1f]/, escapes)}\""
   end
 
-  def key(gs, k)
-    case k
-    in String then escape(gs, k)
-    in Symbol then escape(gs, Symbol.to_s(k))
-    else escape(gs, Kernel.to_s(k))
-    end
-  end
+  # ---- generator ----
 
-  def float(gs, f)
-    unless Float.finite?(f)
-      raise JSONGeneratorError, "#{Float.to_s(f)} not allowed in JSON" unless @allow_nan
-      return Float.to_s(f)
-    end
-    JSON.float_s(f)
-  end
+  # Ruby's JSON::State.new(opts).
+  class State
+    private attr_reader indent, space, space_before, object_nl, array_nl, allow_nan,
+                        max_nesting
 
-  def nest(gs, depth)
-    if @max_nesting > 0 && depth > @max_nesting
-      raise JSONParserError.new("nesting of #{depth - 1} is too deep. Did you try to serialize objects with circular references?")
+    def initialize(gs)
+      @indent = "" if @indent == nil
+      @space = "" if @space == nil
+      @space_before = "" if @space_before == nil
+      @object_nl = "" if @object_nl == nil
+      @array_nl = "" if @array_nl == nil
+      @allow_nan = false if @allow_nan == nil
+      @max_nesting = 100 if @max_nesting == nil
+      @allow_nan = @allow_nan == true
+      @max_nesting = JSON.nesting(@max_nesting)
     end
-    gs
-  end
 
-  def emit(gs, v, depth)
-    case v
-    in nil then "null"
-    in true then "true"
-    in false then "false"
-    in Integer then Integer.to_s(v)
-    in Float then float(gs, v)
-    in String then escape(gs, v)
-    in Symbol then escape(gs, Symbol.to_s(v))
-    in Array then list(gs, v, depth)
-    in Tuple then list(gs, Tuple.to_a(v), depth)
-    in Hash
+    # What each character that JSON escapes becomes.
+    def escapes = once do
+      t = Hash["\"" => "\\\"", "\\" => "\\\\", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t", "\b" => "\\b", "\f" => "\\f"]
+      Integer.times(0x20) { |o| t[format("%c", o)] = format("\\u%04x", o) unless Hash.key?(t, format("%c", o)) }
+      t
+    end
+
+    def escape(gs, str)
+      s = str
+      if String.encoding(s) == "ASCII-8BIT"
+        # json 2.20 takes a binary String that is valid UTF-8 (with a deprecation warning)
+        u = String.force_encoding(String.b(s), "UTF-8")
+        unless String.valid_encoding?(u)
+          bad = Array.find(String.bytes(s)) { |b| b >= 0x80 } || 0
+          raise GeneratorError, format("\"\\x%02X\" from ASCII-8BIT to UTF-8", bad)
+        end
+        s = u
+      end
+      raise GeneratorError, "source sequence is illegal/malformed utf-8" unless String.valid_encoding?(s)
+      "\"#{String.gsub(s, /["\\\x00-\x1f]/, escapes)}\""
+    end
+
+    def key(gs, k)
+      case k
+      in String then escape(gs, k)
+      in Symbol then escape(gs, Symbol.to_s(k))
+      else escape(gs, Kernel.to_s(k))
+      end
+    end
+
+    def float(gs, f)
+      unless Float.finite?(f)
+        raise GeneratorError, "#{Float.to_s(f)} not allowed in JSON" unless @allow_nan
+        return Float.to_s(f)
+      end
+      JSON.float_s(f)
+    end
+
+    def nest(gs, depth)
+      if @max_nesting > 0 && depth > @max_nesting
+        raise ParserError.new("nesting of #{depth - 1} is too deep. Did you try to serialize objects with circular references?")
+      end
+      gs
+    end
+
+    def emit(gs, v, depth)
+      case v
+      in nil then "null"
+      in true then "true"
+      in false then "false"
+      in Integer then Integer.to_s(v)
+      in Float then float(gs, v)
+      in String then escape(gs, v)
+      in Symbol then escape(gs, Symbol.to_s(v))
+      in Array then list(gs, v, depth)
+      in Tuple then list(gs, Tuple.to_a(v), depth)
+      in Hash
+        nest(gs, depth + 1)
+        return "{}" if Hash.empty?(v)
+        inner = @indent * (depth + 1)
+        parts = Hash.map(v) do |k, x|
+          "#{@object_nl}#{inner}#{key(gs, k)}#{@space_before}:#{@space}#{emit(gs, x, depth + 1)}"
+        end
+        "{#{Array.join(parts, ",")}#{@object_nl}#{@indent * depth}}"
+      in Record
+        raise GeneratorError, "a Record cannot be generated; build a Hash with Hash[...]"
+      else
+        escape(gs, Kernel.to_s(v))
+      end
+    end
+
+    def list(gs, a, depth)
       nest(gs, depth + 1)
-      return "{}" if Hash.empty?(v)
+      return "[]" if Array.empty?(a)
       inner = @indent * (depth + 1)
-      parts = Hash.map(v) do |k, x|
-        "#{@object_nl}#{inner}#{key(gs, k)}#{@space_before}:#{@space}#{emit(gs, x, depth + 1)}"
-      end
-      "{#{Array.join(parts, ",")}#{@object_nl}#{@indent * depth}}"
-    in Record
-      raise JSONGeneratorError, "a Record cannot be generated; build a Hash with Hash[...]"
-    else
-      escape(gs, Kernel.to_s(v))
+      parts = Array.map(a) { |x| "#{@array_nl}#{inner}#{emit(gs, x, depth + 1)}" }
+      "[#{Array.join(parts, ",")}#{@array_nl}#{@indent * depth}]"
     end
   end
 
-  def list(gs, a, depth)
-    nest(gs, depth + 1)
-    return "[]" if Array.empty?(a)
-    inner = @indent * (depth + 1)
-    parts = Array.map(a) { |x| "#{@array_nl}#{inner}#{emit(gs, x, depth + 1)}" }
-    "[#{Array.join(parts, ",")}#{@array_nl}#{@indent * depth}]"
-  end
-end
-
-module JSON
   module_function
 
   # max_nesting: an Integer, or false/nil/0 for no limit
@@ -492,7 +492,7 @@ module JSON
   # ---- parsing ----
 
   def parse(s, symbolize_names: false, allow_nan: false, allow_trailing_comma: false, max_nesting: 100)
-    JSONParserState.parse(JSONParserState.new(s, symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:))
+    Parser.parse(Parser.new(s, symbolize_names:, allow_nan:, allow_trailing_comma:, max_nesting:))
   end
 
   # Ruby's parse!: NaN allowed, no nesting limit.
@@ -520,8 +520,8 @@ module JSON
 
   def generate(v, indent: "", space: "", space_before: "", object_nl: "", array_nl: "", allow_nan: false,
                max_nesting: 100)
-    gs = JSONGeneratorState.new(indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)
-    JSONGeneratorState.emit(gs, v, 0)
+    gs = State.new(indent:, space:, space_before:, object_nl:, array_nl:, allow_nan:, max_nesting:)
+    State.emit(gs, v, 0)
   end
 
   def fast_generate(v, indent: "", space: "", space_before: "", object_nl: "", array_nl: "", allow_nan: false,

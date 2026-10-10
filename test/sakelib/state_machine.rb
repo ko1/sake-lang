@@ -12,7 +12,7 @@ class Job
   end
 
   def aasm
-    @@machine ||= AASMMachine.new(:sleeping).tap do |m|
+    @@machine ||= AASM::StateMachine.new(:sleeping).tap do |m|
       m.state(:running, enter: :start_clock, exit: :stop_clock)
       m.state(:cleaning)
       m.state(:failed)
@@ -40,7 +40,7 @@ end
 class TrafficLight
   include AASM
   def aasm
-    @@machine ||= AASMMachine.new(:green).tap do |m|
+    @@machine ||= AASM::StateMachine.new(:green).tap do |m|
       m.state(:yellow)
       m.state(:red)
       m.event(:next, from: :green, to: :yellow)
@@ -59,7 +59,7 @@ p j.may_fire_event?(:run)
 p j.fire(:run)
 begin
   j.fire!(:run)
-rescue AASMInvalidTransition => e
+rescue AASM::InvalidTransition => e
   puts e.message
   p [e.event, e.state]
 end
@@ -95,7 +95,7 @@ p light.is?(:yellow)
 
 # a bad machine
 begin
-  m = AASMMachine.new(:a)
+  m = AASM::StateMachine.new(:a)
   m.event(:go, from: :a, to: :b)
 rescue ArgumentError => e
   puts e.message

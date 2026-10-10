@@ -81,19 +81,19 @@ def bounded_buffer(n, capacity)
     total = 0
     Integer.times(n) do
       Monitor.synchronize(m, :consumer) do
-        MonitorCond.wait_while(not_empty, :consumer) { Array.empty?(buf) }
+        MonitorMixin::ConditionVariable.wait_while(not_empty, :consumer) { Array.empty?(buf) }
         x = Array.shift(buf)
         total += x if x != nil
-        MonitorCond.signal(not_full, :consumer)
+        MonitorMixin::ConditionVariable.signal(not_full, :consumer)
       end
     end
     total
   end
   Integer.times(n) do |i|
     Monitor.synchronize(m, :producer) do
-      MonitorCond.wait_until(not_full, :producer) { Array.size(buf) < capacity }
+      MonitorMixin::ConditionVariable.wait_until(not_full, :producer) { Array.size(buf) < capacity }
       Array.push(buf, i + 1)
-      MonitorCond.signal(not_empty, :producer)
+      MonitorMixin::ConditionVariable.signal(not_empty, :producer)
     end
   end
   Thread.value(consumer)
@@ -111,7 +111,7 @@ def broadcast_all(k)
     Thread.new do
       Monitor.synchronize(m, i) do
         waiting += 1
-        MonitorCond.wait_until(cond, i) { ready }
+        MonitorMixin::ConditionVariable.wait_until(cond, i) { ready }
         woken += 1
       end
     end
@@ -120,7 +120,7 @@ def broadcast_all(k)
   sleep 0.01 until Monitor.synchronize(m, :main) { waiting == k }
   Monitor.synchronize(m, :main) do
     ready = true
-    MonitorCond.broadcast(cond, :main)
+    MonitorMixin::ConditionVariable.broadcast(cond, :main)
   end
   Array.each(ts) { |t| Thread.join(t) }
   woken
@@ -130,7 +130,7 @@ p broadcast_all(3)
 # signal without holding the monitor
 cond = Monitor.new_cond(m)
 begin
-  MonitorCond.signal(cond)
+  MonitorMixin::ConditionVariable.signal(cond)
 rescue ThreadError => e
   puts "ThreadError: #{Exception.message(e)}"
 end
@@ -162,4 +162,4 @@ Account.mon_exit(acct, :main)
 Account.mon_exit(acct, :main)
 p Account.mon_locked?(acct)
 c = Account.new_cond(acct)
-p Account.mon_synchronize(acct, :main) { MonitorCond.signal(c, :main); :ok }
+p Account.mon_synchronize(acct, :main) { MonitorMixin::ConditionVariable.signal(c, :main); :ok }

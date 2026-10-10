@@ -5,43 +5,43 @@ identical output; the `.rb` twin uses the real gem (rubyzip 3.4.1), and both rea
 rubyzip (embedded as base64: zip64 extra fields, a UTF-8 name, an archive comment). A Sake-written archive was
 also checked with `unzip -t` and read back by rubyzip (dev check, not in the test).
 
-Shape: a `Zip::File` is an **Array of `ZipEntry`** here. `Zip.read(path)` / `Zip.parse(bytes)` give the entries,
+Shape: a `Zip::File` is an **Array of `Zip::Entry`** here. `Zip.read(path)` / `Zip.parse(bytes)` give the entries,
 `Zip.write(path, entries)` / `Zip.generate(entries)` make an archive, the rest of `Zip::File`'s API are module
-functions over that Array (`Zip.find_entry(entries, name)`, `Zip.glob(...)`). `Zip::Entry` → `ZipEntry`,
-`Zip::Error` → `ZipError` (no nested names).
+functions over that Array (`Zip.find_entry(entries, name)`, `Zip.glob(...)`). `Zip::Entry` and `Zip::Error` are
+the gem's names (nested since 2026-10-10; before that `Zip::Entry` and `Zip::Error`).
 
 ## API
 
 | Ruby (rubyzip 3) | Sake | |
 |---|---|---|
-| `Zip::File.open(path)` / `zf.entries` | `Zip.read(path)` → `ZipEntry[]` | differs: an Array, no block form, no lazy reading |
+| `Zip::File.open(path)` / `zf.entries` | `Zip.read(path)` → `Zip::Entry[]` | differs: an Array, no block form, no lazy reading |
 | `Zip::File.open_buffer(bytes)` | `Zip.parse(bytes)` | differs: name |
 | `Zip::File.open(path, create: true) { ... }` + commit | `Zip.write(path, entries, comment: "")` | differs: entries are built first, written once |
 | `Zip::OutputStream.write_buffer` | `Zip.generate(entries, comment: "")` → bytes | differs: name |
 | `zf.get_output_stream(name, time:, compression_method:) { \|f\| f.write s }` | `Zip.add(entries, name, data, compression_method: 8, time: nil)` | differs: data as a String, no stream |
 | `zf.add(name, path)` | `Zip.add_file(entries, path, name = basename, compression_method: 8)` | same (keeps mtime) |
-| `zf.mkdir(name)` | `Zip.mkdir(entries, name, time: nil)` | same (raises `ZipError` if it exists) |
+| `zf.mkdir(name)` | `Zip.mkdir(entries, name, time: nil)` | same (raises `Zip::Error` if it exists) |
 | `zf.remove(name)` | `Zip.remove(entries, name)` | same |
 | `zf.find_entry(name)` | `Zip.find_entry(entries, name)` | same |
-| `zf.read(name)` | `Zip.entry_data(entries, name)` | differs: name; `ZipError` (Ruby: `Errno::ENOENT`), same message |
+| `zf.read(name)` | `Zip.entry_data(entries, name)` | differs: name; `Zip::Error` (Ruby: `Errno::ENOENT`), same message |
 | `zf.glob(pattern)` | `Zip.glob(entries, pattern)` | same for `*`, `?`, `**` (a directory entry matches as `dir`, as the gem) |
 | `zf.entries.map(&:name)` | `Zip.names(entries)` | added |
 | `zf.size` | `Array.size(entries)` | same |
 | `zf.comment` / `zf.comment = s` | `comment:` of `write`/`generate` | differs: the archive comment is not kept when reading |
 | `entry.extract(destination_directory: dir)` | `Zip.extract(entries, dir)` | differs: all entries; refuses paths escaping `dir` |
-| `Zip::Entry.new(nil, name, ...)` | `ZipEntry.new(name, data = "", compression_method: 8, time: Time.now, comment: "")` | differs: holds its data |
-| `entry.name`, `size`, `compressed_size`, `compression_method`, `crc`, `time`, `comment` | `ZipEntry.name(e)` … | same (`time` is a `Time`, Ruby: `Zip::DOSTime`) |
-| `entry.directory?`, `file?`, `ftype`, `to_s` | `ZipEntry.directory?(e)` … | same |
-| `entry.get_input_stream.read` | `ZipEntry.data(e)` | differs: the data is inflated when the archive is read |
-| `entry.name = s`, `time = t`, `comment = s` | `ZipEntry.set_name(e, s)`, `set_time`, `set_comment` | differs: setter names |
-| (a new output stream) | `ZipEntry.set_data(e, s)` | added: replaces the data, recomputes the CRC |
+| `Zip::Entry.new(nil, name, ...)` | `Zip::Entry.new(name, data = "", compression_method: 8, time: Time.now, comment: "")` | differs: holds its data |
+| `entry.name`, `size`, `compressed_size`, `compression_method`, `crc`, `time`, `comment` | `Zip::Entry.name(e)` … | same (`time` is a `Time`, Ruby: `Zip::DOSTime`) |
+| `entry.directory?`, `file?`, `ftype`, `to_s` | `Zip::Entry.directory?(e)` … | same |
+| `entry.get_input_stream.read` | `Zip::Entry.data(e)` | differs: the data is inflated when the archive is read |
+| `entry.name = s`, `time = t`, `comment = s` | `Zip::Entry.set_name(e, s)`, `set_time`, `set_comment` | differs: setter names |
+| (a new output stream) | `Zip::Entry.set_data(e, s)` | added: replaces the data, recomputes the CRC |
 | `Zip::Entry::STORED`, `DEFLATED` | `0`, `8` | differs: no constants in Sake; the method is the Integer |
 | `Zip.crc32(s)` | `Zip.crc32(s)` (= `Zlib.crc32`) | same |
 | `Zip::InputStream`, `Zip::OutputStream` (streaming) | — | missing: everything is in memory |
 | encryption (`Zip::TraditionalDecrypter`), `Zip::FileSystem`, `unix_perms`, `extra` fields of entries, `zf.commit` / `close` | — | missing |
 | `Zip.on_exists_proc`, `Zip.continue_on_exists_proc`, `Zip.default_compression`, `Zip.unicode_names` ... | — | missing (settings) |
 
-18 module functions of `Zip` and 17 operations of `ZipEntry` ported.
+18 module functions of `Zip` and 17 operations of `Zip::Entry` ported.
 
 ## できたこと / できなかったこと
 
@@ -51,7 +51,7 @@ functions over that Array (`Zip.find_entry(entries, name)`, `Zip.glob(...)`). `Z
   streamed entry: the local header says `0xffffffff`), the local header (only to find the data). Method 0
   (stored; CRC checked) and 8 (deflated). DOS date/time → `Time` (local, 2-second resolution). Names and
   comments are tagged UTF-8 (rubyzip leaves them binary, so its `p e.name` shows bytes; the test prints names with
-  `puts`). Encrypted entries and other methods raise `ZipError`.
+  `puts`). Encrypted entries and other methods raise `Zip::Error`.
 - **Writing**: local headers with known sizes (no data descriptor), central directory (version made by 0x0314 =
   Unix 2.0, external attributes `0100644`/`040755|0x10`), end record, the UTF-8 flag (bit 11) for non-ASCII
   names, the archive comment. `unzip -t` and rubyzip accept the result.
@@ -60,7 +60,7 @@ functions over that Array (`Zip.find_entry(entries, name)`, `Zip.glob(...)`). `Z
   computed before inflating. A ZIP entry is raw deflate, but its headers carry exactly what a *gzip* trailer
   holds: the CRC-32 and the size. So `inflate_raw(raw, crc, size)` = `Zlib.gunzip(gzip header + raw + [crc,
   size].pack("VV"))`, and gunzip also verifies the CRC for free (a wrong CRC is Ruby's
-  `invalid compressed data -- crc error`, re-raised as `ZipError`). Deflating is `Zlib.deflate` minus its 2-byte
+  `invalid compressed data -- crc error`, re-raised as `Zip::Error`). Deflating is `Zlib.deflate` minus its 2-byte
   header and 4-byte trailer. Compressed sizes match rubyzip's byte for byte (same zlib, same default level).
 - **Not ported**: streaming (`Zip::InputStream`/`OutputStream`): there is no IO-like value a user block could
   write into; `Zip.add` takes the data as a String instead. Encryption, `Zip::FileSystem`, permissions, extra
@@ -73,7 +73,7 @@ functions over that Array (`Zip.find_entry(entries, name)`, `Zip.glob(...)`). `Z
 
 - **Field order is the `attr_*` line order, not the order I meant.** Wrote
   `attr_accessor name, compression_method, time, comment` / `attr_reader data, crc`, then
-  `ZipEntry.new(name, data, compression_method: m, ...)` → `error: field `compression_method` is already given
+  `Zip::Entry.new(name, data, compression_method: m, ...)` → `error: field `compression_method` is already given
   as argument 2`. The positional order of `new` is the order the fields are declared, across all `attr_*` lines.
   Rewrote the declarations in the intended order (`attr_accessor name` / `attr_reader data` /
   `attr_accessor compression_method, time, comment` / ...), with a comment, since the grouping by access that
@@ -83,7 +83,7 @@ functions over that Array (`Zip.find_entry(entries, name)`, `Zip.glob(...)`). `Z
   long String.
 - **`String.unpack1` is `T | nil`**, so `usize = String.unpack1(bytes_at(extra, j, 8), "Q<")` made `usize`, and then
   `size % 4294967296` four functions away, `[nil]` reports under `--strict`. True (unpack1 of a bad `"m"` is
-  nil), but not for `"Q<"` on 8 bytes. Wrote one checked `u64(b, i)` that raises `ZipError` on nil. By contrast
+  nil), but not for `"Q<"` on 8 bytes. Wrote one checked `u64(b, i)` that raises `Zip::Error` on nil. By contrast
   multiple assignment from `String.unpack(s, "vvvvvvVVVvvvvvVV")` (16 fields) passed at level 2: its nil is the
   `index-nil` item (level 3), and the typed element (Integer) came from the literal format. Good: a binary
   header read as `a, b, c, ... = String.unpack(...)` reads like the C struct it mirrors.

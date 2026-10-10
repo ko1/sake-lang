@@ -11,7 +11,7 @@ module Sake
   # abstract: the body is only `raise NotImplementedError`: each type that includes the module defines it.
   # params: every parameter's name, positional ones first; defaults: the default expressions of the
   # trailing optional positional ones; keywords: keyword parameter name => default expression (nil: required).
-  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords, :block_optional, :block_param, :rest_param, :kwrest_param, :pasted) do
+  UserFunction = Struct.new(:namespace, :name, :params, :body, :node, :yields, :origin, :include_node, :module_function, :abstract, :defaults, :keywords, :block_optional, :block_param, :rest_param, :kwrest_param, :pasted, :lexical) do
     def full_name = namespace ? "#{namespace}.#{name}" : name
     # params: required, optional, `*rest`, keywords, `**opts`, in that order.
     def positional = params.size - (keywords || {}).size - (rest_param ? 1 : 0) - (kwrest_param ? 1 : 0)
@@ -256,6 +256,10 @@ module Sake
     end
 
     def enclosing(ns) = ns&.include?("::") ? ns.rpartition("::").first : nil
+
+    # Constants in a function body resolve where the function was written (Ruby's lexical scope), also
+    # after the function is copied into an includer or a `class B < A`; elsewhere, in the current namespace.
+    def lexical(ctx) = ctx.fn&.lexical || ctx.ns
 
     # The field names of `Struct.new(:x, :y)` / `Exception.new(:line)`.
     def struct_new_fields(v)
@@ -502,6 +506,7 @@ module Sake
 
       name = node.name.to_s
       fn = UserFunction.new(ns, name, collect_params(node), node.body, node, yields?(node.body))
+      fn.lexical = ns
       # `&b` (or `&`): the function's block, which it may pass on as `&b`; it then takes a block too.
       if (bp = node.parameters&.block)
         fn.block_param = bp.name&.to_s || "&"
@@ -748,7 +753,7 @@ module Sake
           check(root.receiver, ctx) if root.receiver
           return error(node, "`#{first_line(node.slice)}` needs an operation after the type: `#{first_line(node.slice)}.op(...)`")
         end
-        return error(node, "type `#{const_text(node)}` cannot be used as a value") if known_namespace?(resolve_const(node, ctx.ns))
+        return error(node, "type `#{const_text(node)}` cannot be used as a value") if known_namespace?(resolve_const(node, lexical(ctx)))
         error(node, "`#{node.slice}` is not defined", ["built-in constants: #{BUILTIN_CONSTANTS.flat_map { |ns, cs| cs.map { "#{ns}::#{_1}" } }.join(", ")}"])
       when Prism::ConstantReadNode
         # ARGV: the program's arguments (an operation, Kernel.ARGV; Sake has no value constants).
@@ -841,7 +846,7 @@ module Sake
     # `x.T.f += v` (also ||=, &&=): T.set_f(x, T.f(x) + v), with x evaluated once.
     def check_field_op_write(node, ctx)
       step = chain_step(node)
-      tname = step && resolve_name(step[1], ctx.ns)
+      tname = step && resolve_name(step[1], lexical(ctx))
       unless step && (dt = @struct_types[tname]) && dt.fields.include?(field = node.read_name.to_s)
         return error(node, "`#{first_line(node.slice)}`: write a field with its type, as `x.Point.count += 1`",
                      ["(the left side is `value.Type.field`, a field of a class)"])
@@ -883,7 +888,7 @@ module Sake
     def check_pattern(pat, ctx)
       case pat
       when Prism::ConstantReadNode, Prism::ConstantPathNode
-        name = resolve_const(pat, ctx.ns)
+        name = resolve_const(pat, lexical(ctx))
         return if @struct_types.key?(name) || PATTERN_TYPES.include?(name)
         error(pat, "`#{name}` is not a type", spell(name, PATTERN_TYPES + @struct_types.keys).map { "did you mean `#{_1}`?" })
       when Prism::NilNode, Prism::TrueNode, Prism::FalseNode, Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::SymbolNode
@@ -922,7 +927,7 @@ module Sake
       check(node.ensure_clause&.statements, ctx)
     end
 
-    def exception_name(n, ctx) = constant?(n) ? resolve_const(n, ctx.ns) : nil
+    def exception_name(n, ctx) = constant?(n) ? resolve_const(n, lexical(ctx)) : nil
 
     def check_rescued_type(n, ctx)
       name = exception_name(n, ctx)
@@ -1028,7 +1033,7 @@ module Sake
       if (step = chain_step(node))
         # `x.T.f(args)` is `T.f(x, args)`.
         subject, tname = step
-        tname = resolve_name(tname, ctx.ns)
+        tname = resolve_name(tname, lexical(ctx))
         name = node.name.to_s
         # `x.T.f = v` is T.set_f(x, v)
         name = "set_#{name.delete_suffix("=")}" if name.end_with?("=") && @struct_types[tname]&.fields&.include?(name.delete_suffix("="))
@@ -1048,7 +1053,7 @@ module Sake
         target = resolve_unqualified(node, ctx)
       elsif constant?(recv) && !builtin_constant?(recv) && (node.call_operator_loc || node.name == :[])
         # `T[...]` is the constructor syntax; `T.[](x, k)` is T's index operation. `A::B.f` names a nested namespace.
-        target = resolve_qualified(node, resolve_const(recv, ctx.ns), node.call_operator_loc ? node.name.to_s : CTOR, from: ctx.ns)
+        target = resolve_qualified(node, resolve_const(recv, lexical(ctx)), node.call_operator_loc ? node.name.to_s : CTOR, from: ctx.ns)
       elsif node.call_operator_loc.nil? && BINARY_OPS.include?(node.name) && args.size == 1
         error(node, "operator `#{node.name}` is not supported") unless binary_op?(node.name)
         set_call(node, ctx, Operators::Call.new(Operators::MODULE_OF[node.name.to_s], node.name.to_s))
@@ -1323,7 +1328,7 @@ module Sake
       if (n = type_nodes.find { _1.is_a?(Prism::NilNode) })
         return error(n, "nil cannot be listed in `(...)`: check for nil first (`if x`), then call the operation")
       end
-      types = type_nodes.map { resolve_const(_1, ctx.ns) }
+      types = type_nodes.map { resolve_const(_1, lexical(ctx)) }
       return error(node.receiver, "list a type at most once in `(#{types.join("|")})`") if types.uniq.size != types.size
       if args.empty?
         return error(node, "(#{types.join("|")}).#{node.name} needs an argument to dispatch on")

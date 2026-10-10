@@ -47,8 +47,8 @@ and compares the help text and the errors with Ruby's.
 | `op.permute(argv, into: h)`, `permute!` | `OptionParser.permute(op, argv, into: h)`, `permute!` | same |
 | `op.getopts(argv, "ab:", "foo", "bar:")` | `OptionParser.getopts(op, argv, "ab:", "foo", "bar:")` | same (`*long_specs`, 2026-10-05). Stops at the first non-option, as Ruby |
 | `op.getopts("ab:")` (ARGV) | — | differs: argv is required here (it comes before the short spec) |
-| `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | one type `OptionParserError`, with `get_kind(e)` = `"InvalidOption"`, ... | differs: no hierarchy, so `rescue OptionParserError` stands for `rescue OptionParser::ParseError` |
-| `e.message`, `e.args`, `e.reason` | `Exception.message(e)`, `OptionParserError.args(e)`, `OptionParserError.reason(e)` | same text |
+| `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | one type `OptionParser::ParseError` (nested as Ruby's since 2026-10-10; was `OptionParserError`), with `kind(e)` = `"InvalidOption"`, ... | differs: no hierarchy, so `rescue OptionParser::ParseError` is the one form |
+| `e.message`, `e.args`, `e.reason` | `Exception.message(e)`, `OptionParser::ParseError.args(e)`, `OptionParser::ParseError.reason(e)` | same text |
 | `--help`, `--version` handled by OptionParser itself (prints and exits) | same | same (phase 2): an undeclared `--help` (or a prefix, `--he`) prints the help and exits 0; `--version` prints `ver` and exits, or aborts with `prog: version unknown`. Declared options win, as Ruby |
 | `op.warn(msg)`, `op.abort(msg)` | `OptionParser.warn(op, msg)`, `OptionParser.abort(op, msg)` | same: `prog: msg` on stderr (`IO.stderr`); abort exits 1. The message is required (Ruby defaults to `$!`) |
 | `ARGV` as the default argv | `parse(op)`, `parse!(op)`, ... | same, but `parse!(op)` cannot shorten ARGV: Sake's `ARGV` gives a new Array at each use ([optparse_bug_argv_copy.sake](optparse_bug_argv_copy.sake)). Write `args = ARGV; OptionParser.parse!(op, args)` |
@@ -99,8 +99,8 @@ and compares the help text and the errors with Ruby's.
 - `require "optparse"` in `test/sakelib/optparse.sake` → `undefined type or module OptionParser`
   (the require found the test file itself) → `require "../../sakelib/optparse"`. The maintainer
   fixed the loader during the port, and the plain form now works.
-- `Array.filter_map(xs) { |it| it in OptionParserSwitch ? it : nil }` → `syntax error: unexpected
-  '?'` → `(it in OptionParserSwitch) ? it : nil` (Prism parses it this way, as Ruby does).
+- `Array.filter_map(xs) { |it| it in OptionParser::Switch ? it : nil }` → `syntax error: unexpected
+  '?'` → `(it in OptionParser::Switch) ? it : nil` (Prism parses it this way, as Ruby does).
 - `def new = OptionParser.new(Array[], nil, ...)` inside the class, to give the switch list an
   empty Array → `OptionParser.new is a built-in operation and cannot be redefined`. A default must
   be a literal, so `Array[]` cannot be one. The list's default is `nil`, and `items(op)` creates the
@@ -154,7 +154,7 @@ optional, but a block still cannot be stored for `parse` to call later.
   Array, no longer `nil | Array`.
 - `getopts` declares its switches with the optional arguments left out (`on(g, "-#{c}")`).
 - Still missing: `OptionParser.new { |o| ... }` (`new` takes no block); the exception hierarchy
-  (`InvalidOption < ParseError`) is one type with a `kind`, built by `OptionParserError.make`
+  (`InvalidOption < ParseError`) is one type with a `kind`, built by `OptionParser::ParseError.make`
   because `message` is the first field and is computed from the others.
 
 ## 2026-10-05

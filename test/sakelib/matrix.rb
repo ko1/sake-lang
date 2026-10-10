@@ -1,7 +1,5 @@
 require "matrix"
 
-include ExceptionForMatrix
-ZeroVectorError = Vector::ZeroVectorError
 
 def show(label, x) = puts("#{label}: #{x.inspect}")
 
@@ -194,14 +192,14 @@ show("to_matrix", a.to_matrix)
 def try(label)
   begin
     show(label, yield)
-  rescue ErrDimensionMismatch => e
-    puts("#{label}: ErrDimensionMismatch: #{e.message}")
-  rescue ErrNotRegular => e
-    puts("#{label}: ErrNotRegular: #{e.message}")
-  rescue ErrOperationNotDefined => e
-    puts("#{label}: ErrOperationNotDefined: #{e.message}")
-  rescue ZeroVectorError => e
-    puts("#{label}: ZeroVectorError: #{e.message}")
+  rescue Matrix::ErrDimensionMismatch => e
+    puts("#{label}: Matrix::ErrDimensionMismatch: #{e.message}")
+  rescue Matrix::ErrNotRegular => e
+    puts("#{label}: Matrix::ErrNotRegular: #{e.message}")
+  rescue Matrix::ErrOperationNotDefined => e
+    puts("#{label}: Matrix::ErrOperationNotDefined: #{e.message}")
+  rescue Vector::ZeroVectorError => e
+    puts("#{label}: Vector::ZeroVectorError: #{e.message}")
   rescue ArgumentError => e
     puts("#{label}: ArgumentError: #{e.message}")
   rescue IndexError => e

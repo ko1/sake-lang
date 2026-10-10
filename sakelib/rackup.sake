@@ -1,74 +1,78 @@
-# rackup: Rackup::Handler::WEBrick, the bridge from the webrick port to a Rack app. Flattened name:
-# RackupHandlerWEBrick. It is a webrick handler (includes HTTPHandler) holding the app:
+# rackup: Rackup::Handler::WEBrick, the bridge from the webrick port to a Rack app (Ruby's name, nested). It is
+# a webrick handler (includes WEBrick::HTTPHandler) holding the app:
 #
-#   srv = HTTPServer.new("127.0.0.1", 0)
-#   HTTPServer.mount(srv, "/", RackupHandlerWEBrick.new(app))        # Ruby: server.mount "/", Rackup::Handler::WEBrick, app
-#   t = Thread.new { HTTPServer.start(srv) }
+#   srv = WEBrick::HTTPServer.new("127.0.0.1", 0)
+#   WEBrick::HTTPServer.mount(srv, "/", Rackup::Handler::WEBrick.new(app))        # Ruby: server.mount "/", Rackup::Handler::WEBrick, app
+#   t = Thread.new { WEBrick::HTTPServer.start(srv) }
 #
-# or RackupHandlerWEBrick.run(app, host, port), which serves until shutdown (Ruby's `run` with Host:/Port:).
+# or Rackup::Handler::WEBrick.run(app, host, port), which serves until shutdown (Ruby's `run` with Host:/Port:).
 # The env is built as Rackup's: CGI keys, HTTP_* for each header, "rack.input" (the body String), and the mounted
 # path as SCRIPT_NAME. The triple's body parts are joined; its headers are written out (an Array value as repeated lines).
 
 require "rack"
 require "webrick"
 
-class RackupHandlerWEBrick
-  attr_reader app
-  include HTTPHandler
-  def allow?(h, method) = true        # Rackup's servlet overrides `service`: every method reaches the app
+module Rackup
+  module Handler
+    class WEBrick
+      attr_reader app
+      include WEBrick::HTTPHandler
+      def allow?(h, method) = true        # Rackup's servlet overrides `service`: every method reaches the app
 
-  def call(h, req, res)
-    env = env_for(h, req)
-    status, headers, body = RackApp.call(@app, env)
-    HTTPResponse.set_status(res, status)
-    cookies = HTTPResponse.cookies(res)
-    Hash.each(headers) do |k, v|
-      vs = (v in Array) ? v : Array[v]
-      if k == "set-cookie"
-        Array.each(vs) { |x| Array.push(cookies, "#{x}") }    # one Set-Cookie line each, as Rackup's res.cookies
-      else
-        res[k] = Array.join(Array.map(vs) { |x| "#{x}" }, ", ")  # WEBrick takes one value per name
+      def call(h, req, res)
+        env = env_for(h, req)
+        status, headers, body = Rack::App.call(@app, env)
+        WEBrick::HTTPResponse.set_status(res, status)
+        cookies = WEBrick::HTTPResponse.cookies(res)
+        Hash.each(headers) do |k, v|
+          vs = (v in Array) ? v : Array[v]
+          if k == "set-cookie"
+            Array.each(vs) { |x| Array.push(cookies, "#{x}") }    # one Set-Cookie line each, as Rackup's res.cookies
+          else
+            res[k] = Array.join(Array.map(vs) { |x| "#{x}" }, ", ")  # WEBrick takes one value per name
+          end
+        end
+        res.WEBrick::HTTPResponse.body = Array.join(body)
+        nil
+      end
+
+      # Rackup::Handler::WEBrick#service's env (Rack::MockRequest.env_for plus the request's own values).
+      def env_for(h, req)
+        env = Hash[]
+        env["REQUEST_METHOD"] = WEBrick::HTTPRequest.request_method(req)
+        env["SCRIPT_NAME"] = WEBrick::HTTPRequest.script_name(req)
+        env["PATH_INFO"] = WEBrick::HTTPRequest.path_info(req)
+        env["QUERY_STRING"] = "#{WEBrick::HTTPRequest.query_string(req)}"
+        env["SERVER_PROTOCOL"] = "HTTP/#{WEBrick::HTTPRequest.http_version(req)}"
+        env["rack.url_scheme"] = "http"
+        env["HTTPS"] = "off"
+        host = WEBrick::HTTPRequest.host(req) || "localhost"
+        env["SERVER_NAME"] = host
+        hh = req["host"]
+        m = hh ? String.match(hh, /:(\d+)\z/) : nil
+        env["SERVER_PORT"] = m ? (m[1] || "80") : "80"
+        env["REMOTE_ADDR"] = "127.0.0.1"
+        env["REQUEST_PATH"] = WEBrick::HTTPRequest.path(req)
+        env["REQUEST_URI"] = "http://#{hh || host}#{WEBrick::HTTPRequest.unparsed_uri(req)}"
+        Hash.each(WEBrick::HTTPRequest.header(req)) do |k, vs|
+          v = Array.join(vs, ", ")
+          key = String.gsub(String.upcase(k), "-", "_")
+          key = "HTTP_" + key unless key == "CONTENT_TYPE" || key == "CONTENT_LENGTH"
+          env[key] = v
+        end
+        body = WEBrick::HTTPRequest.body(req)
+        env["rack.input"] = body || ""
+        env
+      end
+
+      # Ruby: Rackup::Handler::WEBrick.run(app, Host: host, Port: port) { |server| ... } (blocks until shutdown)
+      def run(app, host = "localhost", port = 8080)
+        srv = WEBrick::HTTPServer.new(host, port)
+        WEBrick::HTTPServer.mount(srv, "/", Rackup::Handler::WEBrick.new(app))
+        yield(srv) if block_given?
+        WEBrick::HTTPServer.start(srv)
+        nil
       end
     end
-    res.HTTPResponse.body = Array.join(body)
-    nil
-  end
-
-  # Rackup::Handler::WEBrick#service's env (Rack::MockRequest.env_for plus the request's own values).
-  def env_for(h, req)
-    env = Hash[]
-    env["REQUEST_METHOD"] = HTTPRequest.request_method(req)
-    env["SCRIPT_NAME"] = HTTPRequest.script_name(req)
-    env["PATH_INFO"] = HTTPRequest.path_info(req)
-    env["QUERY_STRING"] = "#{HTTPRequest.query_string(req)}"
-    env["SERVER_PROTOCOL"] = "HTTP/#{HTTPRequest.http_version(req)}"
-    env["rack.url_scheme"] = "http"
-    env["HTTPS"] = "off"
-    host = HTTPRequest.host(req) || "localhost"
-    env["SERVER_NAME"] = host
-    hh = req["host"]
-    m = hh ? String.match(hh, /:(\d+)\z/) : nil
-    env["SERVER_PORT"] = m ? (m[1] || "80") : "80"
-    env["REMOTE_ADDR"] = "127.0.0.1"
-    env["REQUEST_PATH"] = HTTPRequest.path(req)
-    env["REQUEST_URI"] = "http://#{hh || host}#{HTTPRequest.unparsed_uri(req)}"
-    Hash.each(HTTPRequest.header(req)) do |k, vs|
-      v = Array.join(vs, ", ")
-      key = String.gsub(String.upcase(k), "-", "_")
-      key = "HTTP_" + key unless key == "CONTENT_TYPE" || key == "CONTENT_LENGTH"
-      env[key] = v
-    end
-    body = HTTPRequest.body(req)
-    env["rack.input"] = body || ""
-    env
-  end
-
-  # Ruby: Rackup::Handler::WEBrick.run(app, Host: host, Port: port) { |server| ... } (blocks until shutdown)
-  def run(app, host = "localhost", port = 8080)
-    srv = HTTPServer.new(host, port)
-    HTTPServer.mount(srv, "/", RackupHandlerWEBrick.new(app))
-    yield(srv) if block_given?
-    HTTPServer.start(srv)
-    nil
   end
 end

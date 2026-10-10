@@ -5,7 +5,7 @@ require "tmpdir"
 ENV.keys.select { |k| k.start_with?("SAKE_DOTENV_") }.each { |k| ENV.delete(k) }
 ENV.delete("DOTENV_LINEBREAK_MODE")
 
-puts("-- DotenvParser.call")
+puts("-- Dotenv::Parser.call")
 text = "# comment\n" +
   "SAKE_DOTENV_A=1\n" +
   "export SAKE_DOTENV_B=two words # trailing\n" +
@@ -32,7 +32,7 @@ puts("-- errors")
 begin
   Dotenv::Parser.call("export SAKE_DOTENV_Z")
 rescue Dotenv::FormatError => e
-  puts("DotenvFormatError: #{e.message}")
+  puts("Dotenv::FormatError: #{e.message}")
 end
 p(Dotenv.load("/nonexistent/.env"))
 begin
@@ -43,7 +43,7 @@ end
 begin
   Dotenv.require_keys("SAKE_DOTENV_NOPE1", "SAKE_DOTENV_NOPE2")
 rescue Dotenv::MissingKeys => e
-  puts("DotenvMissingKeys: #{e.message}")
+  puts("Dotenv::MissingKeys: #{e.message}")
 end
 
 puts("-- existing values")

@@ -1,13 +1,13 @@
 # benchmark
 
-`require "benchmark"`. `Benchmark::Tms` and `Benchmark::Report` become the types `BenchmarkTms`
-and `BenchmarkReport`, because Sake has no nested namespaces.
+`require "benchmark"`. `Benchmark::Tms` and `Benchmark::Report` become the types `Benchmark::Tms`
+and `Benchmark::Report`, because Sake has no nested namespaces.
 
 ```ruby
 t = Benchmark.realtime { work }                  # Float seconds
 Benchmark.bm(7) do |x|
-  BenchmarkReport.report(x, "sort:") { Array.sort(xs) }
-  BenchmarkReport.report(x, "min:") { Array.min(xs) }
+  Benchmark::Report.report(x, "sort:") { Array.sort(xs) }
+  Benchmark::Report.report(x, "min:") { Array.min(xs) }
 end
 ```
 
@@ -24,19 +24,19 @@ only the structure: result types, labels, `Tms` arithmetic and `format` on fixed
 | `Benchmark.ms { }` | `Benchmark.ms { }` | same, with the same clock caveat |
 | `Benchmark.measure { }` | `Benchmark.measure { }` | differs: utime/stime/cutime/cstime are always 0.0 |
 | `Benchmark.measure(label = "") { }` | `Benchmark.measure(label = "") { }` | same (phase 2; `measure_label` removed) |
-| `Benchmark.bm(width = 0) { \|x\| x.report("l") { } }` | `Benchmark.bm(width = 0) { \|x\| BenchmarkReport.report(x, "l") { } }` | same output layout (default since phase 2) |
+| `Benchmark.bm(width = 0) { \|x\| x.report("l") { } }` | `Benchmark.bm(width = 0) { \|x\| Benchmark::Report.report(x, "l") { } }` | same output layout (default since phase 2) |
 | `bm(w, *labels) { [tms, ...] }` (extra total lines) | `Benchmark.bm(w, *labels) { [tms, ...] }` | same (2026-10-05); the block may return an Array or a Tuple |
 | `Benchmark.benchmark(caption = "", width = nil, format = nil, *labels) { }` | `Benchmark.benchmark(caption = "", width = 0, format = Benchmark.FORMAT, *labels) { }` | same |
-| `Benchmark.bmbm(width = 0) { \|x\| x.report(...) { } }` | `Benchmark.bmbm(width = 0) { \|x\| BenchmarkReport.report(x, ...) { } }` | differs: the outer block runs three times (see below) |
-| `x.report(label = "", *format) { }`, `x.item` | `BenchmarkReport.report(x, label = "", *format) { }`, `item` | same (the format arguments are ignored, as Ruby) |
+| `Benchmark.bmbm(width = 0) { \|x\| x.report(...) { } }` | `Benchmark.bmbm(width = 0) { \|x\| Benchmark::Report.report(x, ...) { } }` | differs: the outer block runs three times (see below) |
+| `x.report(label = "", *format) { }`, `x.item` | `Benchmark::Report.report(x, label = "", *format) { }`, `item` | same (the format arguments are ignored, as Ruby) |
 | `Benchmark::CAPTION`, `Benchmark::FORMAT` | `Benchmark.CAPTION`, `Benchmark.FORMAT` | differs: functions, not constants |
-| `Benchmark::Tms.new(u, s, cu, cs, real, label)` | `BenchmarkTms.new(...)`, also `BenchmarkTms.new(label: "x")` | same (all fields have defaults; the label becomes a String, as Ruby's `label.to_s`) |
-| `tms.utime`, `stime`, `cutime`, `cstime`, `real`, `label`, `total` | `BenchmarkTms.utime(t)`, ..., `BenchmarkTms.total(t)` | same |
+| `Benchmark::Tms.new(u, s, cu, cs, real, label)` | `Benchmark::Tms.new(...)`, also `Benchmark::Tms.new(label: "x")` | same (all fields have defaults; the label becomes a String, as Ruby's `label.to_s`) |
+| `tms.utime`, `stime`, `cutime`, `cstime`, `real`, `label`, `total` | `Benchmark::Tms.utime(t)`, ..., `Benchmark::Tms.total(t)` | same |
 | `tms + tms`, `-`, `*`, `/` (with a Tms or a number) | the same operators | same |
-| `tms.format(fmt = nil, *args)` (`%u %y %U %Y %t %r %n` with flags) | `BenchmarkTms.format(t, fmt = nil, *args)` | same: Ruby's seven `gsub` steps, then `str % args` when a format is given (`%%`, `ArgumentError` on a stray `%`) |
-| `tms.format`, `to_s` | `BenchmarkTms.format(t)`, `BenchmarkTms.to_s(t)`, `puts(t)` | same |
-| `tms.to_a`, `to_h` | `BenchmarkTms.to_a`, `to_h` | same |
-| `tms.add { }`, `add! { }` | `BenchmarkTms.add(t) { }`, `add!(t) { }` | same |
+| `tms.format(fmt = nil, *args)` (`%u %y %U %Y %t %r %n` with flags) | `Benchmark::Tms.format(t, fmt = nil, *args)` | same: Ruby's seven `gsub` steps, then `str % args` when a format is given (`%%`, `ArgumentError` on a stray `%`) |
+| `tms.format`, `to_s` | `Benchmark::Tms.format(t)`, `Benchmark::Tms.to_s(t)`, `puts(t)` | same |
+| `tms.to_a`, `to_h` | `Benchmark::Tms.to_a`, `to_h` | same |
+| `tms.add { }`, `add! { }` | `Benchmark::Tms.add(t) { }`, `add!(t) { }` | same |
 
 ## Differences from Ruby, and why
 
@@ -48,8 +48,9 @@ only the structure: result types, labels, `Tms` arithmetic and `format` on fixed
   them. The second run is the rehearsal, and the third is the real run. The output is Ruby's. Code
   in the outer block, outside `report`, runs three times, where Ruby runs it once. Ruby also calls
   `GC.start` before each real item; Sake has no GC control.
-- **Names.** `Benchmark::Tms` is `BenchmarkTms`, because `A::B` namespaces are rejected. The
-  constants become functions with uppercase names.
+- **Names.** `Benchmark::Tms` and `Benchmark::Report` are Ruby's names (nested since 2026-10-10; they
+  were `BenchmarkTms` / `BenchmarkReport` while `A::B` namespaces were rejected). The constants become
+  functions with uppercase names.
 
 ## Built-ins requested
 
@@ -105,10 +106,10 @@ required in Ruby too, so `block_given?` is not used.
 - `print`/`puts` instead of `IO.print(IO.stdout, ...)`: Ruby's `benchmark.rb` calls `print` too.
 - Blocks are passed on with `&b`, as Ruby's code does: `bm(width = 0, &b) = benchmark(..., &b)`,
   `Tms#add(&b) = t + Benchmark.measure(&b)`, `add!`, `Report#report`, `item = report`.
-- `BenchmarkReport.new(width = 0, format = nil, mode = :report)`: `initialize` starts the list
-  empty, as Ruby's `Report#initialize`, so callers no longer pass `BenchmarkTms[]`.
+- `Benchmark::Report.new(width = 0, format = nil, mode = :report)`: `initialize` starts the list
+  empty, as Ruby's `Report#initialize`, so callers no longer pass `Benchmark::Tms[]`.
 - The array-slice checker bug (`benchmark_bug_array_slice_type.sake`) is fixed.
-- Still differs: `Benchmark::Tms` is `BenchmarkTms` (no nested names); `total` is a function, where
+- Still differs: `Benchmark::Tms` was `BenchmarkTms` (no nested names then; nested since 2026-10-10); `total` is a function, where
   Ruby's `initialize` stores it in a field; the CPU times are 0.0 (no `Process.times`).
 
 ## 2026-10-05 (rest parameters, keywords to new, private fields)
@@ -117,13 +118,13 @@ required in Ruby too, so `block_given?` is not used.
   returns an Array (or a Tuple, which `[a, b]` is in Sake) its Tms values are printed after the
   reports, labeled from `labels`, as Ruby's `>total:` / `>avg:` lines. `report`/`item` take
   `*format` and `Tms#format` takes `*args` (passed to `Kernel.format(str, *args)`).
-- `BenchmarkReport`: `list = BenchmarkTms[]` is a field default (the `initialize` is gone); the
+- `Benchmark::Report`: `list = Benchmark::Tms[]` is a field default (the `initialize` is gone); the
   bmbm mode is `private attr_reader mode = :report`, given as `new(w, fmt, mode: :rehearsal)`.
-- `BenchmarkTms`: `initialize` makes the label a String (`label.to_s`); `memberwise` leaves the
-  label to its default; fields are read as `x.BenchmarkTms.utime`.
+- `Benchmark::Tms`: `initialize` makes the label a String (`label.to_s`); `memberwise` leaves the
+  label to its default; fields are read as `x.Benchmark::Tms.utime`.
 - `bm` cannot pass `*labels` on to `benchmark` with a splat (only built-ins take splats), so both
   call `benchmark_labels(..., labels)`:
   [benchmark_bug_splat_to_rest.sake](benchmark_bug_splat_to_rest.sake).
-- Still differs: `BenchmarkTms`/`BenchmarkReport` names, CPU times 0.0, bmbm runs its block three
+- Still differs: `Benchmark::Tms`/`Benchmark::Report` names, CPU times 0.0, bmbm runs its block three
   times, `total` is a function (a field would be a 7th argument of `new`), `memberwise`/`apply` are
   public.

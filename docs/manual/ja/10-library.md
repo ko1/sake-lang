@@ -10,7 +10,7 @@
 - **`/` を含む名前。** Ruby の `net/http`、`open-uri` は `net_http`、`open_uri` と書きます。
 - **モジュール関数は Ruby のまま。** `JSON.parse(s)`、`Base64.encode64(s)` は Ruby と同じ字面です。
 - **インスタンスメソッドは主語が先。** Ruby の `ss.scan(/\w+/)` は `StringScanner.scan(ss, /\w+/)` です。連鎖なら `ss.StringScanner.scan(/\w+/)` と書きます（[プログラムの構造と名前解決](02-program.md)）。
-- **入れ子の名前は平らに。** Sake に入れ子の名前は無いので、`Net::HTTP` は `NetHTTP`、`Concurrent::Future` は `ConcurrentFuture` です。対応表は各ライブラリの notes にあります。
+- **入れ子の名前は Ruby のまま。** 名前空間は入れ子にできるので（[プログラムの構造と名前解決](02-program.md)）、`Net::HTTP`、`Concurrent::Future`、`JSON::ParserError`、`Benchmark::Tms` は Ruby と同じ字面です: `Net::HTTP.get(http, path)`、`rescue JSON::ParserError`。外側が組み込み型の名前だけは作れません（`Enumerable` が無いので、ActiveSupport の `Enumerable::SoleItemExpectedError` はトップレベルの `SoleItemExpectedError` です）。対応表は各ライブラリの notes にあります。
 
 ```ruby
 require "base64"
@@ -59,7 +59,7 @@ end
 
 - **yaml** は Psych の部分集合、**xml** は REXML の部分集合です。
 - **digest** は MD5 と SHA を Sake で計算します（遅い）。**zlib** は CRC-32 と Adler-32 のチェックサムだけで、圧縮はありません。
-- **net_http** の `Net::HTTP` は `NetHTTP` です。https は組み込みの `Socket.connect_ssl` を使います。
+- **net_http** は `Net::HTTP`、`Net::HTTPResponse`、`Net::HTTP::Get` など Ruby の名前のままです。https は組み込みの `Socket.connect_ssl` を使います。
 - **timeout** はブロックを別の Thread で走らせ、時間が来たら組み込みの `Thread.raise` で本当に止めます。
 - **pp** は組み込みの `pp`（1 行）とは別に、幅で折り返す PP です。
 
@@ -86,7 +86,7 @@ Ruby では require するが Sake では組み込みの操作になっている
 
 ## gem の移植
 
-よく使われる gem も、Sake で書ける範囲で移植しています。各移植は gem の名前を Sake で書ける限り保ちます（`Inflector.pluralize(s)`、`Redis.get(r, k)`）。
+よく使われる gem も、Sake で書ける範囲で移植しています。各移植は gem の名前を Sake で書ける限り保ちます（`ActiveSupport::Inflector.pluralize(s)`、`Redis.get(r, k)`）。
 
 | 分野 | ライブラリ |
 |---|---|
@@ -99,9 +99,9 @@ Ruby では require するが Sake では組み込みの操作になっている
 
 ### 補足
 
-- **active_support_core_ext** は `Blank`、`StringExt`、`ArrayExt`、`HashExt`、`Duration` の各 module です。
+- **active_support_core_ext** は `Blank`、`StringExt`、`ArrayExt`、`HashExt` の各 module と、クラス `ActiveSupport::Duration` です。
 - **kramdown** は GFM 方言、**redis** は RESP2 のクライアント、**jwt** は HS256/384/512 です。
-- **concurrent_ruby** は `ConcurrentFuture`、`ConcurrentPromise`、`ConcurrentAtom`、`ConcurrentMap`、`Semaphore` などです。
+- **concurrent_ruby** は `Concurrent::Future`、`Concurrent::Promise`、`Concurrent::Atom`、`Concurrent::Map`、`Concurrent::Semaphore` などです。
 - **rspec** は minitest と同じ形で、例を名乗って書きます: `RSpec.expect(ex, x).To.eq(y)`。
 
 ### 落とした機能
@@ -164,7 +164,7 @@ Finished in 0.026718s
 
 ### 失敗とエラー
 
-失敗したアサーションは `AssertionFailed` を投げ、失敗（F）として記録されます。他の例外はエラー（E）として記録されます。Ruby の Minitest と同じです。
+失敗したアサーションは `Minitest::Assertion` を投げ、失敗（F）として記録されます。他の例外はエラー（E）として記録されます。Ruby の Minitest と同じです。
 
 ```ruby
 require "minitest"

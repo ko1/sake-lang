@@ -6,8 +6,8 @@ end
 
 def try(t, view = {})
   show(t.inspect, Mustache.render(t, view))
-rescue Mustache::SyntaxError => e
-  puts("MustacheSyntaxError: #{e.message}")
+rescue Mustache::Parser::SyntaxError => e
+  puts("Mustache::Parser::SyntaxError: #{e.message}")
 end
 
 puts("== variables")

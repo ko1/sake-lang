@@ -24,7 +24,7 @@ p([Money.us_dollar(100), Money.euro(100), Money.pound_sterling(100), Money.zero(
 begin
   Money.new(100, "XYZ")
 rescue Money::Currency::UnknownCurrency => e
-  puts("MoneyUnknownCurrency: #{e.message}")
+  puts("Money::Currency::UnknownCurrency: #{e.message}")
 end
 
 puts("-- predicates")
@@ -62,7 +62,7 @@ end
 begin
   a + Money.new(1, "EUR")
 rescue Money::Bank::UnknownRate => e
-  puts("MoneyUnknownRate: #{e.message}")
+  puts("Money::Bank::UnknownRate: #{e.message}")
 end
 
 puts("-- comparison")
@@ -142,7 +142,7 @@ p(bank.exchange_with(Money.new(5, "USD"), :eur))
 begin
   Money.new(1000, "USD").exchange_to("GBP", bank)
 rescue Money::Bank::UnknownRate => e
-  puts("MoneyUnknownRate: #{e.message}")
+  puts("Money::Bank::UnknownRate: #{e.message}")
 end
 p(Money.add_rate("USD", "EUR", 0.5))
 Money.default_bank.add_rate("EUR", "USD", 2)

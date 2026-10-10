@@ -9,443 +9,443 @@
 # Not supported: anchors and aliases (&a, *a), tags (!!str), complex keys (? ), several documents, sexagesimal
 # and comma numbers, dates (they stay Strings, where Psych makes a Date or refuses one).
 # Dumping follows Psych's choice of plain, 'single', "double" and | styles; long lines are not folded.
-# Ruby's Psych::SyntaxError is YAMLSyntaxError; messages are this port's own.
-
-class YAMLSyntaxError < Exception
-end
-
-class YAMLParser
-  attr_reader lines, symbolize, final_newline
-  private attr_accessor i, fsrc, fpos
-
-  def initialize(yp)
-    @symbolize = false if @symbolize == nil
-    @final_newline = true if @final_newline == nil
-    @i = 0
-    @fsrc = ""
-    @fpos = 0
-    @lines => Array
-  end
-
-  def fail(yp, msg)
-    raise YAMLSyntaxError, "#{msg} at line #{@i + 1}"
-  end
-
-  def indent_of(line) = String.size(line) - String.size(String.lstrip(line))
-  def blank?(line)
-    t = String.strip(line)
-    t == "" || String.start_with?(t, "#")
-  end
-
-  def skip_blank(yp)
-    while @i < Array.size(@lines)
-      line = Array.fetch(@lines, @i)
-      break unless blank?(line)
-      @i += 1
-    end
-    yp
-  end
-
-  def eof?(yp) = @i >= Array.size(@lines)
-  def cur(yp) = Array.fetch(@lines, @i)
-
-  def seq_item?(text) = text == "-" || String.start_with?(text, "- ") || String.start_with?(text, "-\t")
-
-  # The key part of a "key: value" line and the rest, or nil.
-  def split_key(text)
-    m = String.match(text, /\A("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#'"\[\]{},&*!|>%@`?-][^#]*?|-[^\s#][^#]*?|\?[^\s#][^#]*?)[ \t]*:(?:[ \t]+|\z)/)
-    m ? [m[1] || "", MatchData.post_match(m)] : nil
-  end
-
-  def key(yp, k)
-    v =
-      if String.start_with?(k, "\"") || String.start_with?(k, "'")
-        r = quoted(yp, k)
-        r ? r[0] : k
-      else
-        YAML.resolve(k)
-      end
-    (@symbolize && (v in String)) ? String.to_sym(v) : v
-  end
-
-  def parse(yp)
-    # directives and document markers
-    while !eof?(yp) && String.start_with?(cur(yp), "%")
-      @i += 1
-    end
-    skip_blank(yp)
-    if !eof?(yp) && String.match?(cur(yp), /\A---(?:[ \t]|\z)/)
-      @lines[@i] = String.lstrip(String.delete_prefix(cur(yp), "---"))
-      @i += 1 if blank?(cur(yp))
-    end
-    stop = Array.find_index(@lines) { |l| String.match?(l, /\A(?:\.\.\.|---)(?:[ \t]|\z)/) }
-    if stop && stop >= @i
-      @lines = Array.first(@lines, stop)
-      @final_newline = true
-    end
-    v = node(yp, 0)
-    skip_blank(yp)
-    fail(yp, "unexpected content #{Kernel.inspect(String.strip(cur(yp)))}") unless eof?(yp)
-    v
-  end
-
-  # The value whose lines start here, indented at least min; nil when there is none.
-  def node(yp, min)
-    skip_blank(yp)
-    return nil if eof?(yp)
-    line = cur(yp)
-    ind = indent_of(line)
-    return nil if ind < min
-    text = String.strip(line)
-    return seq(yp, ind) if seq_item?(text)
-    return map(yp, ind) if split_key(text)
-    @i += 1
-    inline(yp, text, ind - 1)
-  end
-
-  def seq(yp, ind)
-    a = Array[]
-    while true
-      skip_blank(yp)
-      break if eof?(yp)
-      line = cur(yp)
-      text = String.strip(line)
-      break unless indent_of(line) == ind && seq_item?(text)
-      rest = String.size(text) > 1 ? text[1, String.size(text) - 1] || "" : ""
-      if blank?(rest)
-        @i += 1
-        Array.push(a, node(yp, ind + 1))
-      else
-        # the item's content takes the place of "-", so "- k: v" and "- - x" nest as in a block
-        @lines[@i] = " " * (ind + 1) + rest
-        Array.push(a, node(yp, ind + 1))
-      end
-    end
-    a
-  end
-
-  def map(yp, ind)
-    h = Hash[]
-    while true
-      skip_blank(yp)
-      break if eof?(yp)
-      line = cur(yp)
-      break unless indent_of(line) == ind
-      text = String.strip(line)
-      kv = split_key(text)
-      fail(yp, "expected a mapping key, got #{Kernel.inspect(text)}") unless kv
-      k, rest = kv
-      @i += 1
-      h[key(yp, k)] =
-        if blank?(rest)
-          skip_blank(yp)
-          if eof?(yp)
-            nil
-          elsif indent_of(cur(yp)) > ind
-            node(yp, ind + 1)
-          elsif indent_of(cur(yp)) == ind && seq_item?(String.strip(cur(yp)))
-            seq(yp, ind)
-          end
-        elsif String.start_with?(rest, "|") || String.start_with?(rest, ">")
-          block_scalar(yp, rest, ind)
-        else
-          inline(yp, rest, ind)
-        end
-    end
-    h
-  end
-
-  # A value written after "key: " (or alone on its line); its line is already consumed.
-  # Continuation lines are those indented more than ind.
-  def inline(yp, text, ind)
-    if String.start_with?(text, "!!str ")
-      # the one tag read: the scalar stays a String
-      v = inline(yp, String.lstrip(String.delete_prefix(text, "!!str ")), ind)
-      return (v in String) ? v : String.strip(String.delete_prefix(text, "!!str "))
-    end
-    c = text[0]
-    if c == "[" || c == "{"
-      src = text
-      until flow_closed?(src)
-        fail(yp, "unterminated flow collection") if eof?(yp)
-        src = src + "\n" + cur(yp)
-        @i += 1
-      end
-      @fsrc = src
-      @fpos = 0
-      v = flow_value(yp)
-      flow_skip(yp)
-      fail(yp, "unexpected text after a flow collection") if @fpos < String.size(@fsrc)
-      return v
-    end
-    if c == "|" || c == ">"
-      return block_scalar(yp, text, ind)
-    end
-    if c == "\"" || c == "'"
-      src = text
-      r = quoted(yp, src)
-      while r == nil
-        fail(yp, "unterminated quoted scalar") if eof?(yp)
-        src = src + "\n" + String.strip(cur(yp))
-        @i += 1
-        r = quoted(yp, src)
-      end
-      r => Tuple
-      s, rest = r
-      fail(yp, "unexpected text after a quoted scalar") unless blank?(rest)
-      return s
-    end
-    s = plain(text)
-    while true
-      skip_blank(yp)
-      break if eof?(yp) || indent_of(cur(yp)) <= ind
-      s = s + " " + plain(String.strip(cur(yp)))
-      @i += 1
-    end
-    fail(yp, "mapping values are not allowed here") if String.match?(s, /:(?:\s|\z)/)
-    YAML.resolve(s)
-  end
-
-  # A plain scalar's text: up to a comment, without surrounding spaces.
-  def plain(text)
-    k = String.index(text, /(?:\A|[ \t])#/)
-    String.strip(k ? text[0, k] || "" : text)
-  end
-
-  # Whether the brackets of a flow collection are closed (outside quotes and comments).
-  def flow_closed?(src)
-    depth = 0
-    q = nil
-    prev = " "
-    comment = false
-    String.each_char(src) do |ch|
-      if comment
-        comment = false if ch == "\n"
-      elsif q
-        q = nil if ch == q && prev != "\\"
-      elsif ch == "\"" || ch == "'"
-        q = ch
-      elsif ch == "#" && (prev == " " || prev == "\n")
-        comment = true
-      elsif ch == "[" || ch == "{"
-        depth += 1
-      elsif ch == "]" || ch == "}"
-        depth -= 1
-      end
-      prev = ch
-    end
-    depth <= 0
-  end
-
-  # A quoted scalar at the start of src: [value, rest of src], or nil when it is not closed.
-  def quoted(yp, src)
-    if String.start_with?(src, "'")
-      m = String.match(src, /\A'((?:[^']|'')*)'/)
-      return nil unless m
-      return [fold(String.gsub(m[1] || "", "''", "'")), MatchData.post_match(m)]
-    end
-    m = String.match(src, /\A"((?:[^"\\]|\\.)*)"/m)
-    return nil unless m
-    [unescape(yp, fold(m[1] || "")), MatchData.post_match(m)]
-  end
-
-  # Line breaks inside a quoted scalar: one becomes a space, an empty line a newline.
-  def fold(s) = String.gsub(s, /[ \t]*\n[ \t]*(\n*)/) { |m| String.count(m, "\n") > 1 ? "\n" * (String.count(m, "\n") - 1) : " " }
-
-  def escapes = once do
-    Hash["0" => "\0", "a" => "\a", "b" => "\b", "t" => "\t", "\t" => "\t", "n" => "\n", "v" => "\v",
-         "f" => "\f", "r" => "\r", "e" => "\e", " " => " ", "\"" => "\"", "/" => "/", "\\" => "\\",
-         "N" => "\u0085", "_" => "\u00a0", "L" => "\u2028", "P" => "\u2029"]
-  end
-
-  def unescape(yp, s)
-    String.gsub(s, /\\(?:x(\h{2})|u(\h{4})|U(\h{8})|(.))/m) do |m|
-      e = m[1] || ""
-      if e == "x" || e == "u" || e == "U"
-        format("%c", String.hex(m[2, String.size(m) - 2] || ""))
-      else
-        r = escapes[e]
-        fail(yp, "invalid escape \\#{e}") unless r
-        r
-      end
-    end
-  end
-
-  # A literal (|) or folded (>) block scalar: its lines are those indented more than ind.
-  def block_scalar(yp, header, ind)
-    hm = String.match(header, /\A([|>])([-+]?)([1-9]?)([-+]?)\s*(?:#.*)?\z/)
-    fail(yp, "invalid block scalar header #{Kernel.inspect(header)}") unless hm
-    style = hm[1]
-    chomp = (hm[2] || "") + (hm[4] || "")
-    body = String[]
-    block_indent = nil
-    explicit = hm[3] || ""
-    block_indent = (ind < 0 ? 0 : ind) + Integer(explicit) if explicit != ""
-    while !eof?(yp)
-      line = cur(yp)
-      if String.strip(line) == ""
-        Array.push(body, "")
-        @i += 1
-        next
-      end
-      li = indent_of(line)
-      break if li <= ind
-      block_indent ||= li
-      break if li < block_indent
-      Array.push(body, line[block_indent, String.size(line)] || "")
-      @i += 1
-    end
-    trailing = 0
-    while Array.last(body) == ""
-      Array.pop(body)
-      trailing += 1
-    end
-    text = style == "|" ? Array.join(body, "\n") : fold_block(body)
-    return "" if Array.empty?(body) && chomp != "+"
-    # the last line has a line break unless it ends the source without one
-    brk = (eof?(yp) && !@final_newline) ? "" : "\n"
-    case chomp
-    in "-" then text
-    in "+" then text + "\n" * trailing + brk
-    else trailing > 0 ? text + "\n" : text + brk
-    end
-  end
-
-  # Folding of a > block: lines join with a space, empty lines give newlines, more-indented lines keep theirs.
-  def fold_block(body)
-    out = ""
-    prev = nil
-    blanks = 0
-    Array.each(body) do |l|
-      if l == ""
-        blanks += 1
-        next
-      end
-      if prev != nil
-        more = String.start_with?(l, " ") || String.start_with?(l, "\t") || String.start_with?(prev, " ") || String.start_with?(prev, "\t")
-        out += more ? "\n" * (blanks + 1) : (blanks == 0 ? " " : "\n" * blanks)
-      end
-      out += l
-      prev = l
-      blanks = 0
-    end
-    out
-  end
-
-  # ---- flow collections ----
-
-  def flow_skip(yp)
-    while @fpos < String.size(@fsrc)
-      c = @fsrc[@fpos]
-      if c == " " || c == "\t" || c == "\n" || c == "\r"
-        @fpos += 1
-      elsif c == "#"
-        nl = String.index(@fsrc, "\n", @fpos)
-        @fpos = nl || String.size(@fsrc)
-      else
-        break
-      end
-    end
-    yp
-  end
-
-  def flow_value(yp)
-    flow_skip(yp)
-    c = @fsrc[@fpos]
-    fail(yp, "unterminated flow collection") if c == nil
-    if c == "["
-      @fpos += 1
-      a = Array[]
-      while true
-        flow_skip(yp)
-        if @fsrc[@fpos] == "]"
-          @fpos += 1
-          break
-        end
-        item = flow_value(yp)
-        flow_skip(yp)
-        if @fsrc[@fpos] == ":"
-          # [k: v] is a sequence of one single-pair mapping
-          @fpos += 1
-          flow_skip(yp)
-          e = @fsrc[@fpos]
-          v = (e == "," || e == "]") ? nil : flow_value(yp)
-          item = Hash[((@symbolize && (item in String)) ? String.to_sym(item) : item) => v]
-          flow_skip(yp)
-        end
-        Array.push(a, item)
-        d = @fsrc[@fpos]
-        if d == ","
-          @fpos += 1
-        elsif d == "]"
-          @fpos += 1
-          break
-        else
-          fail(yp, "did not find expected ',' or ']'")
-        end
-      end
-      return a
-    end
-    if c == "{"
-      @fpos += 1
-      h = Hash[]
-      while true
-        flow_skip(yp)
-        if @fsrc[@fpos] == "}"
-          @fpos += 1
-          break
-        end
-        k = flow_scalar(yp, true)
-        flow_skip(yp)
-        v = nil
-        if @fsrc[@fpos] == ":"
-          @fpos += 1
-          flow_skip(yp)
-          d = @fsrc[@fpos]
-          v = flow_value(yp) unless d == "," || d == "}"
-        end
-        h[(@symbolize && (k in String)) ? String.to_sym(k) : k] = v
-        flow_skip(yp)
-        d = @fsrc[@fpos]
-        if d == ","
-          @fpos += 1
-        elsif d == "}"
-          @fpos += 1
-          break
-        else
-          fail(yp, "did not find expected ',' or '}'")
-        end
-      end
-      return h
-    end
-    flow_scalar(yp, false)
-  end
-
-  def flow_scalar(yp, is_key)
-    c = @fsrc[@fpos]
-    if c == "\"" || c == "'"
-      r = quoted(yp, @fsrc[@fpos, String.size(@fsrc)] || "")
-      fail(yp, "unterminated quoted scalar") unless r
-      s, rest = r
-      @fpos = String.size(@fsrc) - String.size(rest)
-      return s
-    end
-    m = String.match(@fsrc, /\G(?:[^,\[\]{}:#\n]|:(?![\s,\[\]{}])|(?<=\S)#)*/, @fpos)
-    text = m ? MatchData.to_s(m) : ""
-    fail(yp, "unexpected character #{Kernel.inspect(c)}") if text == "" && !(c == ":" && is_key)
-    @fpos += String.size(text)
-    YAML.resolve(String.strip(text))
-  end
-end
+# Ruby's Psych::SyntaxError is YAML::SyntaxError (Ruby spells it so too, YAML being Psych); messages are this port's own.
 
 module YAML
+  class SyntaxError < Exception
+  end
+
+  class Parser
+    attr_reader lines, symbolize, final_newline
+    private attr_accessor i, fsrc, fpos
+
+    def initialize(yp)
+      @symbolize = false if @symbolize == nil
+      @final_newline = true if @final_newline == nil
+      @i = 0
+      @fsrc = ""
+      @fpos = 0
+      @lines => Array
+    end
+
+    def fail(yp, msg)
+      raise SyntaxError, "#{msg} at line #{@i + 1}"
+    end
+
+    def indent_of(line) = String.size(line) - String.size(String.lstrip(line))
+    def blank?(line)
+      t = String.strip(line)
+      t == "" || String.start_with?(t, "#")
+    end
+
+    def skip_blank(yp)
+      while @i < Array.size(@lines)
+        line = Array.fetch(@lines, @i)
+        break unless blank?(line)
+        @i += 1
+      end
+      yp
+    end
+
+    def eof?(yp) = @i >= Array.size(@lines)
+    def cur(yp) = Array.fetch(@lines, @i)
+
+    def seq_item?(text) = text == "-" || String.start_with?(text, "- ") || String.start_with?(text, "-\t")
+
+    # The key part of a "key: value" line and the rest, or nil.
+    def split_key(text)
+      m = String.match(text, /\A("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#'"\[\]{},&*!|>%@`?-][^#]*?|-[^\s#][^#]*?|\?[^\s#][^#]*?)[ \t]*:(?:[ \t]+|\z)/)
+      m ? [m[1] || "", MatchData.post_match(m)] : nil
+    end
+
+    def key(yp, k)
+      v =
+        if String.start_with?(k, "\"") || String.start_with?(k, "'")
+          r = quoted(yp, k)
+          r ? r[0] : k
+        else
+          YAML.resolve(k)
+        end
+      (@symbolize && (v in String)) ? String.to_sym(v) : v
+    end
+
+    def parse(yp)
+      # directives and document markers
+      while !eof?(yp) && String.start_with?(cur(yp), "%")
+        @i += 1
+      end
+      skip_blank(yp)
+      if !eof?(yp) && String.match?(cur(yp), /\A---(?:[ \t]|\z)/)
+        @lines[@i] = String.lstrip(String.delete_prefix(cur(yp), "---"))
+        @i += 1 if blank?(cur(yp))
+      end
+      stop = Array.find_index(@lines) { |l| String.match?(l, /\A(?:\.\.\.|---)(?:[ \t]|\z)/) }
+      if stop && stop >= @i
+        @lines = Array.first(@lines, stop)
+        @final_newline = true
+      end
+      v = node(yp, 0)
+      skip_blank(yp)
+      fail(yp, "unexpected content #{Kernel.inspect(String.strip(cur(yp)))}") unless eof?(yp)
+      v
+    end
+
+    # The value whose lines start here, indented at least min; nil when there is none.
+    def node(yp, min)
+      skip_blank(yp)
+      return nil if eof?(yp)
+      line = cur(yp)
+      ind = indent_of(line)
+      return nil if ind < min
+      text = String.strip(line)
+      return seq(yp, ind) if seq_item?(text)
+      return map(yp, ind) if split_key(text)
+      @i += 1
+      inline(yp, text, ind - 1)
+    end
+
+    def seq(yp, ind)
+      a = Array[]
+      while true
+        skip_blank(yp)
+        break if eof?(yp)
+        line = cur(yp)
+        text = String.strip(line)
+        break unless indent_of(line) == ind && seq_item?(text)
+        rest = String.size(text) > 1 ? text[1, String.size(text) - 1] || "" : ""
+        if blank?(rest)
+          @i += 1
+          Array.push(a, node(yp, ind + 1))
+        else
+          # the item's content takes the place of "-", so "- k: v" and "- - x" nest as in a block
+          @lines[@i] = " " * (ind + 1) + rest
+          Array.push(a, node(yp, ind + 1))
+        end
+      end
+      a
+    end
+
+    def map(yp, ind)
+      h = Hash[]
+      while true
+        skip_blank(yp)
+        break if eof?(yp)
+        line = cur(yp)
+        break unless indent_of(line) == ind
+        text = String.strip(line)
+        kv = split_key(text)
+        fail(yp, "expected a mapping key, got #{Kernel.inspect(text)}") unless kv
+        k, rest = kv
+        @i += 1
+        h[key(yp, k)] =
+          if blank?(rest)
+            skip_blank(yp)
+            if eof?(yp)
+              nil
+            elsif indent_of(cur(yp)) > ind
+              node(yp, ind + 1)
+            elsif indent_of(cur(yp)) == ind && seq_item?(String.strip(cur(yp)))
+              seq(yp, ind)
+            end
+          elsif String.start_with?(rest, "|") || String.start_with?(rest, ">")
+            block_scalar(yp, rest, ind)
+          else
+            inline(yp, rest, ind)
+          end
+      end
+      h
+    end
+
+    # A value written after "key: " (or alone on its line); its line is already consumed.
+    # Continuation lines are those indented more than ind.
+    def inline(yp, text, ind)
+      if String.start_with?(text, "!!str ")
+        # the one tag read: the scalar stays a String
+        v = inline(yp, String.lstrip(String.delete_prefix(text, "!!str ")), ind)
+        return (v in String) ? v : String.strip(String.delete_prefix(text, "!!str "))
+      end
+      c = text[0]
+      if c == "[" || c == "{"
+        src = text
+        until flow_closed?(src)
+          fail(yp, "unterminated flow collection") if eof?(yp)
+          src = src + "\n" + cur(yp)
+          @i += 1
+        end
+        @fsrc = src
+        @fpos = 0
+        v = flow_value(yp)
+        flow_skip(yp)
+        fail(yp, "unexpected text after a flow collection") if @fpos < String.size(@fsrc)
+        return v
+      end
+      if c == "|" || c == ">"
+        return block_scalar(yp, text, ind)
+      end
+      if c == "\"" || c == "'"
+        src = text
+        r = quoted(yp, src)
+        while r == nil
+          fail(yp, "unterminated quoted scalar") if eof?(yp)
+          src = src + "\n" + String.strip(cur(yp))
+          @i += 1
+          r = quoted(yp, src)
+        end
+        r => Tuple
+        s, rest = r
+        fail(yp, "unexpected text after a quoted scalar") unless blank?(rest)
+        return s
+      end
+      s = plain(text)
+      while true
+        skip_blank(yp)
+        break if eof?(yp) || indent_of(cur(yp)) <= ind
+        s = s + " " + plain(String.strip(cur(yp)))
+        @i += 1
+      end
+      fail(yp, "mapping values are not allowed here") if String.match?(s, /:(?:\s|\z)/)
+      YAML.resolve(s)
+    end
+
+    # A plain scalar's text: up to a comment, without surrounding spaces.
+    def plain(text)
+      k = String.index(text, /(?:\A|[ \t])#/)
+      String.strip(k ? text[0, k] || "" : text)
+    end
+
+    # Whether the brackets of a flow collection are closed (outside quotes and comments).
+    def flow_closed?(src)
+      depth = 0
+      q = nil
+      prev = " "
+      comment = false
+      String.each_char(src) do |ch|
+        if comment
+          comment = false if ch == "\n"
+        elsif q
+          q = nil if ch == q && prev != "\\"
+        elsif ch == "\"" || ch == "'"
+          q = ch
+        elsif ch == "#" && (prev == " " || prev == "\n")
+          comment = true
+        elsif ch == "[" || ch == "{"
+          depth += 1
+        elsif ch == "]" || ch == "}"
+          depth -= 1
+        end
+        prev = ch
+      end
+      depth <= 0
+    end
+
+    # A quoted scalar at the start of src: [value, rest of src], or nil when it is not closed.
+    def quoted(yp, src)
+      if String.start_with?(src, "'")
+        m = String.match(src, /\A'((?:[^']|'')*)'/)
+        return nil unless m
+        return [fold(String.gsub(m[1] || "", "''", "'")), MatchData.post_match(m)]
+      end
+      m = String.match(src, /\A"((?:[^"\\]|\\.)*)"/m)
+      return nil unless m
+      [unescape(yp, fold(m[1] || "")), MatchData.post_match(m)]
+    end
+
+    # Line breaks inside a quoted scalar: one becomes a space, an empty line a newline.
+    def fold(s) = String.gsub(s, /[ \t]*\n[ \t]*(\n*)/) { |m| String.count(m, "\n") > 1 ? "\n" * (String.count(m, "\n") - 1) : " " }
+
+    def escapes = once do
+      Hash["0" => "\0", "a" => "\a", "b" => "\b", "t" => "\t", "\t" => "\t", "n" => "\n", "v" => "\v",
+           "f" => "\f", "r" => "\r", "e" => "\e", " " => " ", "\"" => "\"", "/" => "/", "\\" => "\\",
+           "N" => "\u0085", "_" => "\u00a0", "L" => "\u2028", "P" => "\u2029"]
+    end
+
+    def unescape(yp, s)
+      String.gsub(s, /\\(?:x(\h{2})|u(\h{4})|U(\h{8})|(.))/m) do |m|
+        e = m[1] || ""
+        if e == "x" || e == "u" || e == "U"
+          format("%c", String.hex(m[2, String.size(m) - 2] || ""))
+        else
+          r = escapes[e]
+          fail(yp, "invalid escape \\#{e}") unless r
+          r
+        end
+      end
+    end
+
+    # A literal (|) or folded (>) block scalar: its lines are those indented more than ind.
+    def block_scalar(yp, header, ind)
+      hm = String.match(header, /\A([|>])([-+]?)([1-9]?)([-+]?)\s*(?:#.*)?\z/)
+      fail(yp, "invalid block scalar header #{Kernel.inspect(header)}") unless hm
+      style = hm[1]
+      chomp = (hm[2] || "") + (hm[4] || "")
+      body = String[]
+      block_indent = nil
+      explicit = hm[3] || ""
+      block_indent = (ind < 0 ? 0 : ind) + Integer(explicit) if explicit != ""
+      while !eof?(yp)
+        line = cur(yp)
+        if String.strip(line) == ""
+          Array.push(body, "")
+          @i += 1
+          next
+        end
+        li = indent_of(line)
+        break if li <= ind
+        block_indent ||= li
+        break if li < block_indent
+        Array.push(body, line[block_indent, String.size(line)] || "")
+        @i += 1
+      end
+      trailing = 0
+      while Array.last(body) == ""
+        Array.pop(body)
+        trailing += 1
+      end
+      text = style == "|" ? Array.join(body, "\n") : fold_block(body)
+      return "" if Array.empty?(body) && chomp != "+"
+      # the last line has a line break unless it ends the source without one
+      brk = (eof?(yp) && !@final_newline) ? "" : "\n"
+      case chomp
+      in "-" then text
+      in "+" then text + "\n" * trailing + brk
+      else trailing > 0 ? text + "\n" : text + brk
+      end
+    end
+
+    # Folding of a > block: lines join with a space, empty lines give newlines, more-indented lines keep theirs.
+    def fold_block(body)
+      out = ""
+      prev = nil
+      blanks = 0
+      Array.each(body) do |l|
+        if l == ""
+          blanks += 1
+          next
+        end
+        if prev != nil
+          more = String.start_with?(l, " ") || String.start_with?(l, "\t") || String.start_with?(prev, " ") || String.start_with?(prev, "\t")
+          out += more ? "\n" * (blanks + 1) : (blanks == 0 ? " " : "\n" * blanks)
+        end
+        out += l
+        prev = l
+        blanks = 0
+      end
+      out
+    end
+
+    # ---- flow collections ----
+
+    def flow_skip(yp)
+      while @fpos < String.size(@fsrc)
+        c = @fsrc[@fpos]
+        if c == " " || c == "\t" || c == "\n" || c == "\r"
+          @fpos += 1
+        elsif c == "#"
+          nl = String.index(@fsrc, "\n", @fpos)
+          @fpos = nl || String.size(@fsrc)
+        else
+          break
+        end
+      end
+      yp
+    end
+
+    def flow_value(yp)
+      flow_skip(yp)
+      c = @fsrc[@fpos]
+      fail(yp, "unterminated flow collection") if c == nil
+      if c == "["
+        @fpos += 1
+        a = Array[]
+        while true
+          flow_skip(yp)
+          if @fsrc[@fpos] == "]"
+            @fpos += 1
+            break
+          end
+          item = flow_value(yp)
+          flow_skip(yp)
+          if @fsrc[@fpos] == ":"
+            # [k: v] is a sequence of one single-pair mapping
+            @fpos += 1
+            flow_skip(yp)
+            e = @fsrc[@fpos]
+            v = (e == "," || e == "]") ? nil : flow_value(yp)
+            item = Hash[((@symbolize && (item in String)) ? String.to_sym(item) : item) => v]
+            flow_skip(yp)
+          end
+          Array.push(a, item)
+          d = @fsrc[@fpos]
+          if d == ","
+            @fpos += 1
+          elsif d == "]"
+            @fpos += 1
+            break
+          else
+            fail(yp, "did not find expected ',' or ']'")
+          end
+        end
+        return a
+      end
+      if c == "{"
+        @fpos += 1
+        h = Hash[]
+        while true
+          flow_skip(yp)
+          if @fsrc[@fpos] == "}"
+            @fpos += 1
+            break
+          end
+          k = flow_scalar(yp, true)
+          flow_skip(yp)
+          v = nil
+          if @fsrc[@fpos] == ":"
+            @fpos += 1
+            flow_skip(yp)
+            d = @fsrc[@fpos]
+            v = flow_value(yp) unless d == "," || d == "}"
+          end
+          h[(@symbolize && (k in String)) ? String.to_sym(k) : k] = v
+          flow_skip(yp)
+          d = @fsrc[@fpos]
+          if d == ","
+            @fpos += 1
+          elsif d == "}"
+            @fpos += 1
+            break
+          else
+            fail(yp, "did not find expected ',' or '}'")
+          end
+        end
+        return h
+      end
+      flow_scalar(yp, false)
+    end
+
+    def flow_scalar(yp, is_key)
+      c = @fsrc[@fpos]
+      if c == "\"" || c == "'"
+        r = quoted(yp, @fsrc[@fpos, String.size(@fsrc)] || "")
+        fail(yp, "unterminated quoted scalar") unless r
+        s, rest = r
+        @fpos = String.size(@fsrc) - String.size(rest)
+        return s
+      end
+      m = String.match(@fsrc, /\G(?:[^,\[\]{}:#\n]|:(?![\s,\[\]{}])|(?<=\S)#)*/, @fpos)
+      text = m ? MatchData.to_s(m) : ""
+      fail(yp, "unexpected character #{Kernel.inspect(c)}") if text == "" && !(c == ":" && is_key)
+      @fpos += String.size(text)
+      YAML.resolve(String.strip(text))
+    end
+  end
+
   module_function
 
   def load(s, symbolize_names: false)
     s => String
     src = String.gsub(s, "\r\n", "\n")
     lines = String.lines(src).Array.map { |l| String.chomp(l) }
-    YAMLParser.parse(YAMLParser.new(lines, symbolize_names, String.end_with?(src, "\n")))
+    Parser.parse(Parser.new(lines, symbolize_names, String.end_with?(src, "\n")))
   end
 
   def safe_load(s, symbolize_names: false) = load(s, symbolize_names:)

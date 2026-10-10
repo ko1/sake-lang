@@ -3,58 +3,57 @@
 #   I18n.backend.store_translations(:en, h)  ->  I18n.backend_store(:en, h)   (also I18n.load_yaml(path))
 #   I18n.locale = :ja                        ->  I18n.set_locale(:ja)         (no setter syntax on a module)
 #   I18n.fallbacks = [:en]                   ->  I18n.set_fallbacks(Array[:en]); I18n.fallbacks(:ja) is [:ja, :en]
-#   I18n::MissingTranslationData & co.       ->  MissingTranslationData, InvalidLocale, MissingInterpolationArgument,
-#                                                InvalidPluralizationData, I18nArgumentError (no nested names)
+#   I18n::MissingTranslationData & co.       ->  the same names, nested in `module I18n` (I18n::ArgumentError too)
 # A translation is a String, a Hash (a subtree, or plural forms :zero/:one/:other), an Array, or any YAML value.
 require "yaml"
 require "date"
 
-class MissingTranslationData < Exception
-end
-
-class InvalidLocale < Exception
-end
-
-class MissingInterpolationArgument < Exception
-end
-
-class InvalidPluralizationData < Exception
-end
-
-class I18nArgumentError < Exception
-end
-
-# The gem's I18n.config: one per program.
-class I18nConfig
-  attr_accessor locale, default_locale, fallbacks, enforce_available_locales
-  attr_reader translations                      # locale Symbol => Hash of Symbol keys
-end
-
 module I18n
+  class MissingTranslationData < Exception
+  end
+
+  class InvalidLocale < Exception
+  end
+
+  class MissingInterpolationArgument < Exception
+  end
+
+  class InvalidPluralizationData < Exception
+  end
+
+  class ArgumentError < Exception
+  end
+
+  # The gem's I18n.config: one per program.
+  class Config
+    attr_accessor locale, default_locale, fallbacks, enforce_available_locales
+    attr_reader translations                      # locale Symbol => Hash of Symbol keys
+  end
+
   module_function
 
-  def config = once { I18nConfig.new(:en, :en, Array[], true, Hash[]) }
+  def config = once { Config.new(:en, :en, Array[], true, Hash[]) }
 
   # --- locales ---
 
-  def locale = I18nConfig.locale(config)
-  def default_locale = I18nConfig.default_locale(config)
+  def locale = Config.locale(config)
+  def default_locale = Config.default_locale(config)
 
   def set_locale(l)
     enforce_available!(l)
-    I18nConfig.set_locale(config, l)
+    Config.set_locale(config, l)
   end
 
   def set_default_locale(l)
     enforce_available!(l)
-    I18nConfig.set_default_locale(config, l)
+    Config.set_default_locale(config, l)
   end
 
   # The locales with translations, in the order they were stored (the gem's).
-  def available_locales = Hash.keys(I18nConfig.translations(config))
-  def locale_available?(l) = Hash.key?(I18nConfig.translations(config), l)
-  def enforce_available_locales = I18nConfig.enforce_available_locales(config)
-  def set_enforce_available_locales(b) = I18nConfig.set_enforce_available_locales(config, b)
+  def available_locales = Hash.keys(Config.translations(config))
+  def locale_available?(l) = Hash.key?(Config.translations(config), l)
+  def enforce_available_locales = Config.enforce_available_locales(config)
+  def set_enforce_available_locales(b) = Config.set_enforce_available_locales(config, b)
 
   def enforce_available!(l)
     raise InvalidLocale, "#{Kernel.inspect(l)} is not a valid locale" if enforce_available_locales && !locale_available?(l)
@@ -64,11 +63,11 @@ module I18n
   # The locales tried for `l`: itself, then the default fallbacks (the gem's I18n.fallbacks[l]).
   def fallbacks(l = nil)
     l = locale if l == nil
-    Array.uniq(Array[l, *I18nConfig.fallbacks(config)])
+    Array.uniq(Array[l, *Config.fallbacks(config)])
   end
 
   # I18n.fallbacks = [:en]; an empty Array (the start) means no fallbacks, as a gem without the Fallbacks backend.
-  def set_fallbacks(locales) = I18nConfig.set_fallbacks(config, Array[*locales])
+  def set_fallbacks(locales) = Config.set_fallbacks(config, Array[*locales])
 
   def with_locale(l)
     saved = locale
@@ -76,7 +75,7 @@ module I18n
     begin
       yield
     ensure
-      I18nConfig.set_locale(config, saved)
+      Config.set_locale(config, saved)
     end
   end
 
@@ -84,7 +83,7 @@ module I18n
 
   # Deep-merges `data` (a Hash; String keys become Symbols) into the locale's translations.
   def backend_store(l, data)
-    all = I18nConfig.translations(config)
+    all = Config.translations(config)
     current = all[l]
     current = Hash[] if current == nil
     all[l] = deep_merge(current, symbolize(data))
@@ -132,7 +131,7 @@ module I18n
   def translate(key, locale: nil, scope: nil, default: nil, count: nil, separator: ".", **values) =
     translate_with(key, locale, scope, default, count, separator, values, false)
 
-  # As t, raising MissingTranslationData instead of giving the message.
+  # As t, raising I18n::MissingTranslationData instead of giving the message.
   def t!(key, locale: nil, scope: nil, default: nil, count: nil, separator: ".", **values) =
     translate_with(key, locale, scope, default, count, separator, values, true)
 
@@ -144,7 +143,7 @@ module I18n
       return Array.map(key) { |k| translate_with(k, l, scope, default, count, separator, values, strict) }
     end
     keys = normalize_keys(key, scope, separator)
-    raise I18nArgumentError, "I18nArgumentError" if Array.empty?(keys)
+    raise ArgumentError, "I18n::ArgumentError" if Array.empty?(keys)
     entry = lookup(l, keys)
     entry = resolve_default(l, default, scope, count, separator, values) if entry == nil && default != nil
     if entry == nil
@@ -186,7 +185,7 @@ module I18n
 
   # The entry at keys in the locale, or in its fallbacks; nil when none has it.
   def lookup(l, keys)
-    all = I18nConfig.translations(config)
+    all = Config.translations(config)
     Array.each(fallbacks(l)) do |loc|
       v = all[loc]
       Array.each(keys) do |k|
@@ -249,7 +248,7 @@ module I18n
       fmt = format_for(l, :date, format)
       Date.strftime(obj, localize_names(l, fmt, Date.wday(obj), Date.month(obj), nil))
     else
-      raise I18nArgumentError, "Object must be a Date, DateTime or Time object. #{Kernel.inspect(obj)} given."
+      raise ArgumentError, "Object must be a Date, DateTime or Time object. #{Kernel.inspect(obj)} given."
     end
   end
 
@@ -258,7 +257,7 @@ module I18n
   def format_for(l, type, format)
     return format if format in String
     f = t!(String.to_sym("#{type}.formats.#{format}"), locale: l)
-    (f in String) ? f : raise(I18nArgumentError, "format #{Kernel.inspect(f)} is not a String")
+    (f in String) ? f : raise(ArgumentError, "format #{Kernel.inspect(f)} is not a String")
   end
 
   def localize_names(l, fmt, wday, mon, hour)
@@ -284,7 +283,7 @@ module I18n
   def name_at(l, type, key, i)
     v = t!(String.to_sym("#{type}.#{key}"), locale: l)
     return Kernel.to_s(v) if i == nil
-    raise I18nArgumentError, "#{type}.#{key} is not an Array" unless v in Array
+    raise ArgumentError, "#{type}.#{key} is not an Array" unless v in Array
     Kernel.to_s(v[i])
   end
 

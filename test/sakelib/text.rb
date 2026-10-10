@@ -3,11 +3,11 @@ require_relative "ref/text"
 # Levenshtein
 pairs = [["kitten", "sitting"], ["flaw", "lawn"], ["", "abc"], ["abc", ""], ["", ""], ["same", "same"],
          ["gumbo", "gambol"], ["日本語", "日本"], ["Saturday", "Sunday"]]
-pairs.each { |a, b| puts "levenshtein(#{a.inspect}, #{b.inspect}) = #{Levenshtein.distance(a, b)}" }
-p Levenshtein.distance("kitten", "sitting", 2)
-p Levenshtein.distance("kitten", "sitting", 5)
+pairs.each { |a, b| puts "levenshtein(#{a.inspect}, #{b.inspect}) = #{Text::Levenshtein.distance(a, b)}" }
+p Text::Levenshtein.distance("kitten", "sitting", 2)
+p Text::Levenshtein.distance("kitten", "sitting", 5)
 begin
-  Levenshtein.distance("a", ["a", 1].fetch(1))
+  Text::Levenshtein.distance("a", ["a", 1].fetch(1))
 rescue NoMatchingPatternError => e
   puts "error: not a String"
 end
@@ -15,8 +15,8 @@ end
 # Soundex
 names = ["Robert", "Rupert", "Rubin", "Ashcraft", "Ashcroft", "Tymczak", "Pfister", "Honeyman",
          "Lee", "Washington", "O'Hara", "a", "", "123"]
-names.each { |n| puts "soundex(#{n.inspect}) = #{Soundex.soundex(n).inspect}" }
-p Soundex.soundex("Robert") == Soundex.soundex("Rupert")
+names.each { |n| puts "soundex(#{n.inspect}) = #{Text::Soundex.soundex(n).inspect}" }
+p Text::Soundex.soundex("Robert") == Text::Soundex.soundex("Rupert")
 
 # Jaro-Winkler
 jw = [["MARTHA", "MARHTA"], ["DWAYNE", "DUANE"], ["DIXON", "DICKSONX"], ["abc", "abc"], ["abc", "xyz"],

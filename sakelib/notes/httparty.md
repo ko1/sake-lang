@@ -3,8 +3,8 @@
 `require "httparty"` → `sakelib/httparty.sake`, over `net_http.sake`, `uri.sake`, `json.sake`. The gem is not
 installed here, so `test/sakelib/ref/httparty.rb` is a plain-Ruby reference (Net::HTTP) of the same API, and
 `test/sakelib/httparty.rb` requires it; both sides serve the test API with WEBrick (Ruby: a servlet; Sake: the
-`webrick.sake` port). Flattened names: `HTTParty::Response` → `HTTPartyResponse`, `HTTParty::RedirectionTooDeep` →
-`HTTPartyRedirectionTooDeep`; the class-level DSL (`include HTTParty; base_uri ...`) → a `HTTPartyClient` value.
+`webrick.sake` port). `HTTParty::Response` and `HTTParty::RedirectionTooDeep` are nested in the module, as the gem's (since 2026-10-10; they
+were `HTTPartyResponse` / `HTTPartyRedirectionTooDeep`); the class-level DSL (`include HTTParty; base_uri ...`) → a `HTTPartyClient` value.
 
 ## API
 
@@ -12,10 +12,10 @@ installed here, so `test/sakelib/ref/httparty.rb` is a plain-Ruby reference (Net
 |---|---|---|
 | `HTTParty.get(url, query:, headers:, basic_auth:, timeout:, follow_redirects:)` | `HTTParty.get(url, query:, headers:, basic_auth:, timeout: 60, follow_redirects: true)` | same (`url` a String or URI; `query` appended to the URL; `basic_auth: Hash[username:, password:]`) |
 | `HTTParty.post(url, body:, ...)`, `put`, `patch`, `delete`, `head`, `options` | same names | same: a Hash body is form-encoded (`HashConversions.to_params`, `a[b]=1&c[]=2`) with `application/x-www-form-urlencoded`; a String body as given (JSON: set `headers: Hash["Content-Type" => "application/json"]`) |
-| redirects: followed (limit 5), 303 and 301/302 after POST → GET | same | same; `HTTPartyRedirectionTooDeep` past the limit (`follow_redirects: false` returns the 3xx) |
+| redirects: followed (limit 5), 303 and 301/302 after POST → GET | same | same; `HTTParty::RedirectionTooDeep` past the limit (`follow_redirects: false` returns the 3xx) |
 | `HTTParty::HashConversions.to_params(h)`, `normalize_param(k, v)` | `HTTParty.to_params(h)`, `normalize_param(k, v)` | same |
-| `response.code` (Integer), `body`, `headers`, `message`, `request_uri`, `response` (the Net::HTTPResponse) | `HTTPartyResponse.code(r)`, `body`, `headers`, `message`, `request_uri`, `response` (a NetHTTPResponse) | same (`headers` is a Hash of downcased name => values joined with ", "; HTTParty's is a `Headers` object with the same `[]`) |
-| `response.parsed_response` | `HTTPartyResponse.parsed_response(r)` | same for JSON (`application/json`, `text/json`, `+json`, `application/x-javascript`) and plain text (the String); differs: XML, CSV, HTML parsers not ported (would need rexml/csv) |
+| `response.code` (Integer), `body`, `headers`, `message`, `request_uri`, `response` (the Net::HTTPResponse) | `HTTParty::Response.code(r)`, `body`, `headers`, `message`, `request_uri`, `response` (a Net::HTTPResponse) | same (`headers` is a Hash of downcased name => values joined with ", "; HTTParty's is a `Headers` object with the same `[]`) |
+| `response.parsed_response` | `HTTParty::Response.parsed_response(r)` | same for JSON (`application/json`, `text/json`, `+json`, `application/x-javascript`) and plain text (the String); differs: XML, CSV, HTML parsers not ported (would need rexml/csv) |
 | `response["key"]` | `r["key"]` | same (a Hash/Array index into the parsed JSON, a String index into a text body: `(Hash\|Array\|String).[]`) |
 | `success?`, `ok?`, `redirection?`, `client_error?`, `server_error?`, `not_found?`, `unauthorized?`, `forbidden?`, `bad_request?`, `nil?` | same names | same (`nil?` is the gem's: no body) |
 | `content_type`, `content_length`, `headers["name"]` / `response.header(name)` | `content_type(r)`, `content_length(r)`, `header(r, name)` | same |
@@ -23,7 +23,7 @@ installed here, so `test/sakelib/ref/httparty.rb` is a plain-Ruby reference (Net
 | `class API; include HTTParty; base_uri "..."; headers "X" => "y"; default_params k: v; basic_auth u, p; format :json; end` then `API.get("/path")` | `api = HTTPartyClient.new(base, Hash["X" => "y"], Hash["k" => "v"])`, `HTTPartyClient.get(api, "/path", query:, headers:)`, `post(... body:)`, … | differs: the class macros become fields of a value (see below); `format` is not needed (the content type decides); `debug_output`, `logger`, `pem`, `ssl_*`, `digest_auth`, `cookies`, `maintain_method_across_redirects`, `parser`, `connection_adapter` missing |
 | `HTTParty.get(url) { \|chunk\| }` (streaming), `stream_body`, `multipart` bodies, `HTTParty::Parser` subclasses, `HTTParty::Error` classes, `response.request` | — | missing |
 
-~35 operations ported (HTTParty 10, HTTPartyResponse 19, HTTPartyClient 8).
+~35 operations ported (HTTParty 10, HTTParty::Response 19, HTTPartyClient 8).
 
 ## できたこと / できなかったこと
 
@@ -63,9 +63,9 @@ installed here, so `test/sakelib/ref/httparty.rb` is a plain-Ruby reference (Net
   the `in`.
 - **First `--strict` run passed** on the whole httparty file; the reference Ruby took longer to get right than the
   Sake port (WEBrick's 405, `Net::HTTPGenericRequest.new(method, has_body, response_has_body, path, headers)`).
-- **Skipping an internal field in `new`.** Wrote `HTTPartyResponse.new(code, body, hdrs, u, res, nil, message)`:
+- **Skipping an internal field in `new`.** Wrote `HTTParty::Response.new(code, body, hdrs, u, res, nil, message)`:
   the `nil` stands for `parsed_response`, which `initialize` computes. Then remembered §10.1: `new` takes a later
-  field by keyword and the skipped one is nil for initialize, so it is `HTTPartyResponse.new(code, body, hdrs, u,
+  field by keyword and the skipped one is nil for initialize, so it is `HTTParty::Response.new(code, body, hdrs, u,
   res, message: m)` now. Positional-then-keyword `new` is the right tool for "fields the constructor fills"; the
   first draft shows it is not the first thing one reaches for. HTTParty's `Response#inspect` shows an object address;
   dropped from the test (`p(r)` would be unrepeatable on both sides anyway).

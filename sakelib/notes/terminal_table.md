@@ -9,9 +9,9 @@ functions; the test prints 46 lines, identical to `terminal_table.rb`.
 
 | Ruby (terminal-table) | Sake | |
 |---|---|---|
-| `Terminal::Table.new(title:, headings:, rows:)` | `TerminalTable.new(title:, headings:, rows:)` | differs: no nested names |
+| `Terminal::Table.new(title:, headings:, rows:)` | `Terminal::Table.new(title:, headings:, rows:)` | same name (nested since 2026-10-10; was `TerminalTable`) |
 | `style: {border: :unicode, alignment: :center}` | `border: :unicode, alignment: :center` | differs: two keywords |
-| `t.add_row(row)`, `t << row`, `t.add_separator` | `TerminalTable.add_row(t, row)`, `TerminalTable.<<(t, row)`, `add_separator` | same |
+| `t.add_row(row)`, `t << row`, `t.add_separator` | `Terminal::Table.add_row(t, row)`, `Terminal::Table.<<(t, row)`, `add_separator` | same |
 | `t.align_column(i, :right)` | same | same |
 | `t.to_s`, `puts t` | `to_s` of the type, `puts t` | same |
 | `t.number_of_columns`, `title`, `headings`, `rows` | same | same |
@@ -39,7 +39,7 @@ functions; the test prints 46 lines, identical to `terminal_table.rb`.
 
 ## Language features used
 
-- `T.new` keywords for all fields with defaults: `TerminalTable.new(title: "Population", headings: ...,
+- `T.new` keywords for all fields with defaults: `Terminal::Table.new(title: "Population", headings: ...,
   rows: rows)`: the gem's own call shape; helped most here.
 - `initialize` for validation (border, alignment, no title in markdown) and for copying the rows.
 - Expression defaults (`headings = Array[]`, `rows = Array[]`, `border = :ascii`); `private attr_reader
@@ -53,8 +53,8 @@ functions; the test prints 46 lines, identical to `terminal_table.rb`.
 
 ## Types
 
-- `TerminalTable.rows`: a union of Arrays of the test's rows (`Array[Integer | String]`, `Array[Float |
+- `Terminal::Table.rows`: a union of Arrays of the test's rows (`Array[Integer | String]`, `Array[Float |
   Integer | nil]`, ...) and `:separator`; cells are shown with `Kernel.to_s`, which takes anything.
-- `TerminalTable.border: Symbol`, `alignment: Symbol` (not literal unions: the error tests pass `:fancy`).
+- `Terminal::Table.border: Symbol`, `alignment: Symbol` (not literal unions: the error tests pass `:fancy`).
 - partial: the three `case ... in :left` over an alignment whose type is `Symbol` (from those error
   tests), so the cases are reported only at `--strict=3` (`exhaustive`). No unknowns.

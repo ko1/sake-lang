@@ -3,8 +3,12 @@
 `sakelib/money.sake`: the core of the money gem (6.x; not installed, so the reference is
 `test/sakelib/ref/money.rb`, plain Ruby written from the gem's documented behavior). `Money.new(cents, currency)`,
 `from_amount`, arithmetic, Comparable, `allocate` / `split`, `format` with the gem's per-currency defaults,
-`Currency` (10 currencies), `Bank` (Money::Bank::VariableExchange) and `exchange_to`. 36 Money operations,
+`Money::Currency` (10 currencies), `Money::Bank::VariableExchange` and `exchange_to`. 36 Money operations,
 11 Currency operations (+ 8 readers), 5 Bank operations; the test prints 128 lines, identical to the reference.
+Names (2026-10-10): the gem's nested names are kept, declared inside `class Money`: `Money::Currency`,
+`Money::Currency::UnknownCurrency`, `Money::Bank::VariableExchange` (the rate table; `Money::Bank` is its namespace,
+a module as in the gem) and `Money::Bank::UnknownRate`. Before namespaces nested they were `Currency`, `Bank`,
+`MoneyUnknownCurrency`, `MoneyUnknownRate`.
 
 ## API
 
@@ -26,9 +30,9 @@
 | `m.to_s` (currency's decimal mark, no symbol), `inspect` | same | same |
 | `m.exchange_to("EUR")`, `exchange_to("EUR", bank)` | `Money.exchange_to(m, "EUR", [bank])` | same |
 | `Money.default_bank`, `Money.add_rate(from, to, rate)` | `Money.default_bank` (a `once` value), `Money.add_rate` | same |
-| `Money::Bank::VariableExchange.new`, `add_rate`, `set_rate`, `get_rate`, `exchange_with`, `rates` | `Bank.new`, `Bank.add_rate(b, …)`, … | differs: flattened name; `export_rates` / `import_rates` missing |
+| `Money::Bank::VariableExchange.new`, `add_rate`, `set_rate`, `get_rate`, `exchange_with`, `rates` | `Money::Bank::VariableExchange.new`, `Money::Bank::VariableExchange.add_rate(b, …)`, … | same name (nested since 2026-10-10); `export_rates` / `import_rates` missing |
 | `Money::Currency.find`, `wrap`, `all`, `iso_code`, `name`, `symbol`, `subunit_to_unit`, `decimal_mark`, `thousands_separator`, `symbol_first?`, `decimal_places`, `priority`, `id`, `code`, `<=>`, `to_s` | `Currency.find`, … | same (10 currencies: USD EUR GBP AUD CAD JPY CHF CNY INR KRW; the gem's ~170 and `register` missing) |
-| `Money::Bank::UnknownRate`, `Money::Currency::UnknownCurrency` | `MoneyUnknownRate`, `MoneyUnknownCurrency` | differs: flattened; same messages |
+| `Money::Bank::UnknownRate`, `Money::Currency::UnknownCurrency` | `Money::Bank::UnknownRate`, `Money::Currency::UnknownCurrency` | same names and messages (nested since 2026-10-10) |
 | `Money.rounding_mode`, `infinite_precision`, `Money.locale_backend`, `round`, `round_to_nearest_cash_value`, `divmod`, `modulo`, `remainder` | — | missing |
 
 ## できたこと / できなかったこと
@@ -41,8 +45,8 @@
 - `include Arithmetic` + `+ - * / -@ +@`, `include Comparable` + `<=>`: `a + b`, `a * 1.5`, `-(a + b)`,
   `Array.sort(Money[...])`, `Array.max` all read as the gem's. `Money * Money` raises `TypeError` (Sake lets a
   library raise the built-in `TypeError` with the gem's message).
-- `Money.default_bank` is `once { Bank.new(Hash[]) }`: class-level mutable state (the gem's `@@default_bank`) as a
-  shared value computed once. `Bank.add_rate(Money.default_bank, "USD", "EUR", 0.5)` then
+- `Money.default_bank` is `once { Bank::VariableExchange.new(Hash[]) }`: class-level mutable state (the gem's `@@default_bank`) as a
+  shared value computed once. `Money::Bank::VariableExchange.add_rate(Money.default_bank, "USD", "EUR", 0.5)` then
   `Money.new(1000, "USD") + Money.new(1000, "EUR")` works as in the gem.
 - Not done: `2 * money`. An operator dispatches on its left operand, and Integer's `*` is a closed table, so
   there is no `coerce` to join (the checker says so before running, see below). `Money` cannot be a Hash key
@@ -79,8 +83,9 @@
 - `Currency` with `include Comparable` and `<=>` on `[@priority, @iso_code]` (a Tuple comparison): `Money.currency(b)
   == @currency` then compares by `<=>`, as the gem's `Currency#==` compares ids. Rates are keyed by the String
   `"USD_TO_EUR"`, as the gem does, which also sidesteps Currency not being allowed as a Hash key.
-- `once { Bank.new(Hash[]) }` for the default bank: a one-liner where the gem has a class variable, a reader and
-  a writer. `Money.default_bank.Bank.exchange_with(m, "EUR")` (a chain) reads like `Money.default_bank.exchange_with`.
+- `once { Bank::VariableExchange.new(Hash[]) }` for the default bank: a one-liner where the gem has a class variable, a reader and
+  a writer. `Money.default_bank.Money::Bank::VariableExchange.exchange_with(m, "EUR")` (a chain) reads like
+  `Money.default_bank.exchange_with`, if longer since the names nest.
 
 ## Built-ins requested
 

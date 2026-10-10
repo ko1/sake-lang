@@ -31,3 +31,11 @@
 - `# !>` にはエラーの文だけが載り hint が落ちるので、「`upcase` は `String.upcase`、`Symbol.upcase` にある」のような一番役に立つ部分は文で補った。
 - `module_function :f` を def の後に書くのが、mixin 関数と module 関数を 1 つの module に並べる書き方。裸の `module_function` は以降を全部 module 関数にする（それで Shape の例が誤報告になった → TODO）。
 - 良い: resolver の文がそのまま文書になる（`include Summary in Empty: Summary.total needs \`items\`, which Empty does not define (used at line 2)`）。「require は先に全部読む」規則は両ファイルの `puts` で簡単に示せた。
+
+sakelib の約 45 ライブラリを入れ子名に書き換えたエージェント（並列の fork 数体）の報告:
+
+- **一発で動いたもの**: class を名前空間にする、module を同じファイル内・ファイルをまたいで開き直す、3 段の入れ子、入れ子の mixin の `include`、`A::B[]`、`in A::B`、`(A::B|C).f`、`#<struct Benchmark::Tms …>` が Ruby の表示と一致。
+- **処理系のバグ 2 件**（同日に直した。`lexical`、`rescue` 名の解決）: `class A` の中の `rescue E`（A::E）や相対の `rescue B::E` が本体の raise と照合されず「never raises」になり、typer が `B::E` という幻の型を作った。mixin module の本体の裸の名前（`Cond.new`、`raise E, msg`）が include 先で解決されて「undefined type or module」になった（Ruby と同じく書いた場所で解決すべき）。全ライブラリで完全な名前に逃げてあり、そのままでも動く。
+- **Ruby と違うところ**: `class Rackup::Handler::WEBrick` の中で裸の `WEBrick::HTTPResponse` がトップレベルの module に解決される（Ruby なら `::WEBrick` が要る）。便利だが差分。入れ子の class の本体から外側の module の module 関数を型無しで呼べない（Ruby と同じ）。
+- **作業上の罠**: 名前空間の中で `A::` を機械的に剥がす sed が文字列リテラル（`"#<CSV::Row …"`、`"I18n::ArgumentError"`）にも当たり、テスト失敗の唯一の原因になった。
+- **平らなまま残したもの**: `SoleItemExpectedError`（Ruby は `Enumerable::` だが Sake に Enumerable が無い）、Sake 独自の mixin（Blank、StringExt…）、ERB の内部型、rspec の `expect(...).to` の連鎖の装置、など。

@@ -75,11 +75,11 @@ puts("== errors")
   begin
     IniFile.new(content: bad)
   rescue IniFile::Error => e
-    puts("IniFileError: #{e.message}")
+    puts("IniFile::Error: #{e.message}")
   end
 end
 begin
   IniFile.new(content: "a=1").write
 rescue IniFile::Error => e
-  puts("IniFileError: #{e.message}")
+  puts("IniFile::Error: #{e.message}")
 end

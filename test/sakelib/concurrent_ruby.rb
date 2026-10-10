@@ -1,7 +1,7 @@
 require "concurrent"
 
-# The Sake program (concurrent_ruby.sake) with the real gem. Concurrent::X is ConcurrentX there, the class
-# methods Promise.fulfill / reject are ConcurrentPromise.fulfilled / rejected, and every call names its type.
+# The Sake program (concurrent_ruby.sake) with the real gem. The names are the same there (Concurrent::X); the class
+# methods Promise.fulfill / reject are Concurrent::Promise.fulfilled / rejected, and every call names its type.
 
 # 1. Future
 puts "-- Future"

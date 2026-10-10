@@ -8,7 +8,7 @@ fixed (a user program may add to `class String`, a library should not take the n
 receiver, so each extension is a function in a module named after the class it extends, with the value first:
 `"x".squish` → `StringExt.squish(s)`, `xs.in_groups_of(3)` → `ArrayExt.in_groups_of(xs, 3)`, `h.deep_merge(o)` →
 `HashExt.deep_merge(h, o)`, `7.ordinalize` → `IntegerExt.ordinalize(7)`, `x.blank?` on anything → `Blank.blank?(x)`,
-`2.hours` → `Duration.hours(2)`. The `Ext` suffix says "this is the extension, not the type"; `Blank` is named for
+`2.hours` → `ActiveSupport::Duration.hours(2)` (Ruby's name, nested since 2026-10-10; was `Duration`). The `Ext` suffix says "this is the extension, not the type"; `Blank` is named for
 what it tests, since `Object` is not a Sake namespace.
 
 ## API
@@ -28,9 +28,9 @@ what it tests, since `Object` is not a Sake namespace.
 | `h.except`, `slice`, `extract!`, `to_query`, `to_xml`, `with_indifferent_access` | — | `except`/`slice` are built in; the rest need Rack / a new type |
 | `n.ordinalize`, `ordinal`, `multiple_of?` | `IntegerExt.*(n, ...)` | same |
 | `n.in_milliseconds` | `NumericExt.in_milliseconds(n)` | same (`bytes`/`kilobytes`... missing, trivial) |
-| `n.seconds`/`minutes`/`hours`/`days`/`weeks`/`fortnights`/`months`/`years` | `Duration.seconds(n)` ... | same |
-| `Duration.build(s)`, `parse(iso)`, `d.value`, `parts`, `to_i`, `to_f`, `to_s`, `inspect` (`p d`), `iso8601(precision:)`, `in_seconds`..`in_years`, `+`, `-`, `-@`, `*`, `/`, `%`, `<=>`, `==`, `<` ..., `ago`/`until`/`before`, `since`/`from_now`/`after`, `abs`, `zero?`, `positive?`, `negative?` | `Duration.*(d, ...)`; the operators as operators | same on the test's 60 cases: `1.month.since(Jan 31)` → Feb 29, `13.months` → Feb 28 2025, `1.5.days` → +1 day 12 h; `parse` raises `ArgumentError` with Ruby's message (Ruby: `ISO8601Parser::ParsingError < ArgumentError`) |
-| `Time.current`, `d.since` with no Time (uses `Time.current`) | `Duration.since(d, time = Time.now)` | differs: no `Time.zone` |
+| `n.seconds`/`minutes`/`hours`/`days`/`weeks`/`fortnights`/`months`/`years` | `ActiveSupport::Duration.seconds(n)` ... | same |
+| `ActiveSupport::Duration.build(s)`, `parse(iso)`, `d.value`, `parts`, `to_i`, `to_f`, `to_s`, `inspect` (`p d`), `iso8601(precision:)`, `in_seconds`..`in_years`, `+`, `-`, `-@`, `*`, `/`, `%`, `<=>`, `==`, `<` ..., `ago`/`until`/`before`, `since`/`from_now`/`after`, `abs`, `zero?`, `positive?`, `negative?` | `ActiveSupport::Duration.*(d, ...)`; the operators as operators | same on the test's 60 cases: `1.month.since(Jan 31)` → Feb 29, `13.months` → Feb 28 2025, `1.5.days` → +1 day 12 h; `parse` raises `ArgumentError` with Ruby's message (Ruby: `ISO8601Parser::ParsingError < ArgumentError`) |
+| `Time.current`, `d.since` with no Time (uses `Time.current`) | `ActiveSupport::Duration.since(d, time = Time.now)` | differs: no `Time.zone` |
 | `Date` arithmetic, `Duration#to_s` of parts, `Scalar` | — | missing: no Date type; `Scalar` is Ruby's coercion plumbing |
 
 About 135 operations ported across six modules and the `Duration` type (the inflection wrappers and aliases counted); about 20 missing (listed).
@@ -47,8 +47,8 @@ About 135 operations ported across six modules and the `Duration` type (the infl
   - **A method name as a value** (`pluck(:id)` on objects, `minimum(:price)`, `in_order_of(:key, ...)`): no `send`,
     so these take a block for the key. `pluck`/`pick` keep the key argument because they index (`e[k]`).
   - **`Time.current` / `Time.zone`**: no time zones beyond fixed offsets; `since`/`ago` default to `Time.now`.
-  - `Enumerable::SoleItemExpectedError` is `SoleItemExpectedError` (no nested names).
-- Differences kept: `in_groups_of(xs, n) { }` returns the groups (Ruby: the receiver). `Duration.parse` raises
+  - `Enumerable::SoleItemExpectedError` is the top-level `SoleItemExpectedError`: Sake has no `Enumerable` to nest it in (names nest since 2026-10-10).
+- Differences kept: `in_groups_of(xs, n) { }` returns the groups (Ruby: the receiver). `ActiveSupport::Duration.parse` raises
   `ArgumentError` (the test prints Ruby's class name by hand).
 
 ## 書き心地
@@ -73,11 +73,11 @@ About 135 operations ported across six modules and the `Duration` type (the infl
   `&b` to the recursive call — accepted: `yield` and passing `&b` on mix in one function as in Ruby, and the
   checker followed the block through the recursion.
 - `Duration`: `include Arithmetic` + `def +(d, other)`, `include Comparable` + `def <=>`, own `==` so that
-  `Duration.hours(1) == 3600` is true as in Ruby; then `d - 60`, `-d`, `Array.min(Array[d1, d2])`, `d1 > d2` all
+  `ActiveSupport::Duration.hours(1) == 3600` is true as in Ruby; then `d - 60`, `-d`, `Array.min(Array[d1, d2])`, `d1 > d2` all
   read as Ruby. `p d` prints `2 hours` through the type's own `inspect(d)`. `@value` / `@parts` inside the type's
-  functions are the Ruby `@ivar`s; `Duration.new(value, parts)` with `initialize` dropping zero parts is Ruby's
+  functions are the Ruby `@ivar`s; `ActiveSupport::Duration.new(value, parts)` with `initialize` dropping zero parts is Ruby's
   `initialize` line for line. This was the most Ruby-like file of the three.
-- `Duration.parse`: `Array.each(String.scan(s, /(\d+)([YMWD])/)) do |num, unit|` → `String.match?: argument 1 may
+- `ActiveSupport::Duration.parse`: `Array.each(String.scan(s, /(\d+)([YMWD])/)) do |num, unit|` → `String.match?: argument 1 may
   be nil (nil | String) [nil]`: the Tuples of `scan` have `nil | String` groups. `num || ""` is the honest fix; the
   group cannot be nil for that regexp, but the checker cannot know it.
 - `StringExt.presence("")` then `String.upcase(s)` → `argument 1 may be nil (nil | String) [nil]`: the gem's

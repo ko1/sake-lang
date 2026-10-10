@@ -90,11 +90,11 @@ RSpec.run      # documentation format, Pending:, Failures:, "N examples, M failu
 3. **`def xit(g, description) = record(...)`** then `RSpec.xit(g, "...") { ... }` in the test →
    `RSpec.xit does not take a block (it has no yield)`. Added an unused `&b` to accept and drop it. Right
    call by the checker (a block that nothing runs is suspicious); the fix is one token.
-4. **`private attr_reader lines, results` on `ExampleGroup`**, read from `module RSpec` → `field lines of
-   ExampleGroup is private (private attr_*) / hint: only the functions of class ExampleGroup read or write
+4. **`private attr_reader lines, results` on `RSpec::Core::ExampleGroup`**, read from `module RSpec` → `field lines of
+   RSpec::Core::ExampleGroup is private (private attr_*) / hint: only the functions of class RSpec::Core::ExampleGroup read or write
    it`. Private means the class's functions, not the library; made them public readers.
 5. **Collateral reports.** With the mistyped `expect(42).To.match(/4/)` the checker also says `rescue
-   RSpecExpectationNotMet: the begin body never raises RSpecExpectationNotMet [rescue]` at `RSpec.it`: once
+   RSpec::Expectations::ExpectationNotMetError: the begin body never raises RSpec::Expectations::ExpectationNotMetError [rescue]` at `RSpec.it`: once
    the matcher's path is a type error, the typer no longer sees its `raise`, so the rescue looks dead. Two
    reports for one mistake; the first is the real one.
 6. **What read as well as Ruby**: the `report` function (`Array.select(results) { |r| r[1] == :failed }`,

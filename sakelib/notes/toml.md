@@ -12,8 +12,8 @@ lines as `toml.rb` (a full document, numbers, strings, 21 malformed inputs, dump
 | `TomlRB.parse(s)`, `(s, symbolize_keys: true)` | `TOML.parse(s)`, `(s, symbolize_keys: true)` | same |
 | `TomlRB.load_file(path, symbolize_keys:)` | `TOML.load_file(path, symbolize_keys:)` | same |
 | `TomlRB.dump(h)` | `TOML.dump(h)` | same (own layout, below) |
-| `TomlRB::ParseError` | `TOMLParseError` (fields `message`, `line`) | differs (name; line as a field) |
-| dates, times, offset date-times | | missing (raise `TOMLParseError`) |
+| `TomlRB::ParseError` | `TOML::ParseError` (fields `message`, `line`) | differs: the module is `TOML`, so `TOML::ParseError` (nested since 2026-10-10; was `TOMLParseError`); line as a field |
+| dates, times, offset date-times | | missing (raise `TOML::ParseError`) |
 
 Supported: comments; bare, quoted and dotted keys; `[tables]` and `[[arrays of tables]]` (also nested);
 basic, literal and multi-line strings with all escapes (`\uXXXX`, `\UXXXXXXXX`, line-ending backslash);
@@ -27,7 +27,7 @@ own), `[[name]]` for an Array of Hashes, other Arrays and Hashes inline (`{ x = 
 
 ## What differs, and why
 
-- No nested names: `TOMLParseError`, with `line` as a field (`TOMLParseError.line(e)`), since an
+- `TOML::ParseError` and `TOML::Parser` are nested in `module TOML` (since 2026-10-10; `TOMLParseError` / `TOMLParser` before). `line` is a field (`TOML::ParseError.line(e)`), since an
   exception type is a Struct type with fields.
 - Inline tables are not closed: `a = {b = 1}` followed by `[a.c]` is accepted. The check wants a set of
   Hash *identities*; Sake's Set compares by content (two empty inline tables are one element), so I
@@ -48,7 +48,7 @@ own), `[[name]]` for an Array of Hashes, other Arrays and Hashes inline (`{ x = 
 
 ## New language features used
 
-- `T.new` + `initialize`: `TOMLParser.new(s, symbolize_keys)`; `initialize` checks `@src => String`,
+- `T.new` + `initialize`: `TOML::Parser.new(s, symbolize_keys)`; `initialize` checks `@src => String`,
   computes `@len`, sets `@current = @root`. Helped.
 - `private attr_reader root = Hash[], current = nil, headers = Set[], array_tables = Set[]` and
   `private attr_accessor pos = 0`: the parser's state, invisible outside, fresh per `new`. Helped.
@@ -63,7 +63,7 @@ own), `[[name]]` for an Array of Hashes, other Arrays and Hashes inline (`{ x = 
 
 ## Types (`--types`)
 
-- `TOMLParser.root`, `current`: the recursive value union `Hash[String | Symbol => true|false | Float |
+- `TOML::Parser.root`, `current`: the recursive value union `Hash[String | Symbol => true|false | Float |
   Integer | String | Array[...] | Hash[...]]`. Symbol comes from `symbolize_keys:` and leaks into every
   parse, as json's `symbolize_names` does: a flag cannot select a type.
 - `headers`, `array_tables`: `Set[String[]]` (key paths). Two `partial` checks: the `t => Hash` in `dump`

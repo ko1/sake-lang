@@ -3,29 +3,29 @@
 `require "active_support_inflector"` → `sakelib/active_support_inflector.sake`. Test:
 `test/sakelib/active_support_inflector.{sake,rb}` (identical output; the `.rb` uses activesupport 8.1.3).
 
-`ActiveSupport::Inflector` is the module `Inflector` (nested names are flattened). The inflection rules of
+`ActiveSupport::Inflector` is `module Inflector` inside `module ActiveSupport`, Ruby's name (nested since 2026-10-10; it was the top-level `Inflector` while names could not nest). The inflection rules of
 `active_support/inflections.rb` are **data**: a Record `{plurals:, singulars:, uncountables:, humans:, acronyms:}`
-built by `once` (`Inflector.inflections`), filled in ActiveSupport's order so that the irregulars come first and
+built by `once` (`ActiveSupport::Inflector.inflections`), filled in ActiveSupport's order so that the irregulars come first and
 `/$/ → "s"` last. Ruby's `inflections { |inflect| inflect.plural ... }` block is the module functions
-`Inflector.plural/singular/irregular/uncountable/human/acronym`, which add to that table.
+`ActiveSupport::Inflector.plural/singular/irregular/uncountable/human/acronym`, which add to that table.
 
 ## API
 
 | Ruby | Sake | |
 |---|---|---|
-| `Inflector.pluralize(w)` / `singularize(w)` | `Inflector.pluralize(w)` / `singularize(w)` | same (all default rules; "person" → "people", "sheep", "octopus" → "octopi", "CamelOctopus" → "CamelOctopi", "cactus" → "cactu" as Ruby) |
+| `ActiveSupport::Inflector.pluralize(w)` / `singularize(w)` | `ActiveSupport::Inflector.pluralize(w)` / `singularize(w)` | same (all default rules; "person" → "people", "sheep", "octopus" → "octopi", "CamelOctopus" → "CamelOctopi", "cactus" → "cactu" as Ruby) |
 | `pluralize(w, :es)` (locale) | — | missing: one language; the table has no locale key |
-| `camelize(s, uppercase_first_letter = true)` | `Inflector.camelize(s, true \| false \| :lower)` | same |
-| `underscore(s)` | `Inflector.underscore(s)` | same (acronyms: Ruby's one regexp with an optional look-behind group is two passes) |
+| `camelize(s, uppercase_first_letter = true)` | `ActiveSupport::Inflector.camelize(s, true \| false \| :lower)` | same |
+| `underscore(s)` | `ActiveSupport::Inflector.underscore(s)` | same (acronyms: Ruby's one regexp with an optional look-behind group is two passes) |
 | `humanize(s, capitalize:, keep_id_suffix:)` | same keywords | same |
 | `titleize(s, keep_id_suffix:)` | same | same |
 | `upcase_first` / `downcase_first` | same | same |
 | `tableize` / `classify` / `dasherize` / `demodulize` / `deconstantize` / `foreign_key(s, sep = true)` | same | same |
 | `ordinal(n)` / `ordinalize(n)` | same | same (Integer or Float, as the en locale lambda: 1.5 → "1.5st") |
-| `transliterate(s, replacement = "?", locale:)` | `Inflector.transliterate(s, replacement = "?")` | same output for UTF-8 input (the i18n gem's default approximations as a `once` Hash; `:none` keeps the character); missing: `locale:`, non-UTF-8 encodings, `tidy_bytes` of invalid bytes |
+| `transliterate(s, replacement = "?", locale:)` | `ActiveSupport::Inflector.transliterate(s, replacement = "?")` | same output for UTF-8 input (the i18n gem's default approximations as a `once` Hash; `:none` keeps the character); missing: `locale:`, non-UTF-8 encodings, `tidy_bytes` of invalid bytes |
 | `parameterize(s, separator:, preserve_case:, locale:)` | without `locale:` | same |
-| `inflections { \|i\| i.plural(re, rep) }` etc. | `Inflector.plural(re, rep)`, `singular`, `irregular(s, p)`, `uncountable(*words)`, `human(rule, rep)`, `acronym(w)` | differs: no block, the table is global (it is in Ruby too) |
-| `inflections.clear(:all)` | — | missing (`Array.clear(Inflector.plurals)` works) |
+| `inflections { \|i\| i.plural(re, rep) }` etc. | `ActiveSupport::Inflector.plural(re, rep)`, `singular`, `irregular(s, p)`, `uncountable(*words)`, `human(rule, rep)`, `acronym(w)` | differs: no block, the table is global (it is in Ruby too) |
+| `inflections.clear(:all)` | — | missing (`Array.clear(ActiveSupport::Inflector.plurals)` works) |
 | `constantize` / `safe_constantize` | — | missing: no reflection; a String cannot name a type |
 
 24 operations ported (18 transformations + 6 table editors); 3 missing (`constantize`, `safe_constantize`, `clear`).
@@ -61,7 +61,7 @@ built by `once` (`Inflector.inflections`), filled in ActiveSupport's order so th
   recurses once.
 - `inflections => {plurals:}` to read one field of the Record: one line per accessor (`def plurals`). A Record is
   read by pattern, never by `t.plurals`; it is the one place the Ruby would have been shorter (`@plurals`).
-- A caller's mistake is caught at the caller: `Inflector.pluralize(nil)` → `active_support_inflector.sake:165:5:
+- A caller's mistake is caught at the caller: `ActiveSupport::Inflector.pluralize(nil)` → `active_support_inflector.sake:165:5:
   error: Regexp.match?: argument 2 must be String, but is nil [type] / hint: reached by the call at line 3 →
   ...:178 → ...:171`. Ruby raises `NoMethodError` inside `apply_inflections` at run time; here it is reported
   before running, with the chain from the user's line (3) into the library (178 → 171). Ruby would blame

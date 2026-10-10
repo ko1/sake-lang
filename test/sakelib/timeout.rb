@@ -17,7 +17,7 @@ begin
   Timeout.timeout(0.2) { sleep 3 }
   puts "no error"
 rescue Timeout::Error => e
-  puts "TimeoutError: #{e.message}"
+  puts "Timeout::Error: #{e.message}"
 end
 elapsed = now - t0
 puts(elapsed >= 0.2 && elapsed < 1.5 ? "pass: raised near the deadline" : "fail: #{elapsed}")

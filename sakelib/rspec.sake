@@ -28,22 +28,31 @@
 # The documentation format is RSpec's without the timing line ("Finished in ...") and the "Failed
 # examples:" list (there are no file:line positions in Sake).
 
-class RSpecExpectationNotMet < StandardError
-end
+module RSpec
+  module Expectations
+    class ExpectationNotMetError < StandardError
+    end
+  end
 
-class RSpecPending < StandardError
-end
+  module Core
+    # `pending` and `skip` stop the example (RSpec's skip; RSpec's pending runs on and demands a failure).
+    module Pending
+      class SkipDeclaredInExample < StandardError
+      end
+    end
 
-# A describe/context group. lines (the documentation output) and results are shared by every group
-# of one run: a child gets its parent's.
-class ExampleGroup
-  attr_reader description, depth, full_description, lines, results
-end
+    # A describe/context group. lines (the documentation output) and results are shared by every group
+    # of one run: a child gets its parent's.
+    class ExampleGroup
+      attr_reader description, depth, full_description, lines, results
+    end
 
-# The example a block is running: what the expectations count against.
-class Example
-  attr_reader group, description
-  attr_accessor expectations
+    # The example a block is running: what the expectations count against.
+    class Example
+      attr_reader group, description
+      attr_accessor expectations
+    end
+  end
 end
 
 # One expectation is the Tuple [example, actual] that RSpec.expect gives (nil actual for a block
@@ -55,11 +64,11 @@ module Expectation
 
   def count(e)
     ex, a = e
-    Example.set_expectations(ex, Example.expectations(ex) + 1)
+    RSpec::Core::Example.set_expectations(ex, RSpec::Core::Example.expectations(ex) + 1)
     nil
   end
 
-  def fail_with(message) = raise(RSpecExpectationNotMet, message)
+  def fail_with(message) = raise(RSpec::Expectations::ExpectationNotMetError, message)
 
   def two_lines(expected, got) = "expected: #{expected}\n     got: #{got}"
 
@@ -361,29 +370,29 @@ module RSpec
 
   # describe(description) { |g| ... }: a top-level group; the block defines its examples and contexts.
   def describe(description)
-    g = ExampleGroup.new(description, 0, description, world_lines, world_results)
+    g = RSpec::Core::ExampleGroup.new(description, 0, description, world_lines, world_results)
     Array.push(world_lines, "") unless Array.empty?(world)
     Array.push(world, g)
-    Array.push(ExampleGroup.lines(g), description)
+    Array.push(RSpec::Core::ExampleGroup.lines(g), description)
     yield(g)
     g
   end
 
   # context(g, description) { |g2| ... }: a nested group, one level deeper.
   def context(g, description)
-    child = ExampleGroup.new(description, ExampleGroup.depth(g) + 1,
-                             "#{ExampleGroup.full_description(g)} #{description}",
-                             ExampleGroup.lines(g), ExampleGroup.results(g))
-    Array.push(ExampleGroup.lines(g), indent(g) + description)
+    child = RSpec::Core::ExampleGroup.new(description, RSpec::Core::ExampleGroup.depth(g) + 1,
+                             "#{RSpec::Core::ExampleGroup.full_description(g)} #{description}",
+                             RSpec::Core::ExampleGroup.lines(g), RSpec::Core::ExampleGroup.results(g))
+    Array.push(RSpec::Core::ExampleGroup.lines(g), indent(g) + description)
     yield(child)
     child
   end
 
-  def indent(g) = "  " * (ExampleGroup.depth(g) + 1)
+  def indent(g) = "  " * (RSpec::Core::ExampleGroup.depth(g) + 1)
 
   def record(g, description, status, message)
-    results = ExampleGroup.results(g)
-    Array.push(results, ["#{ExampleGroup.full_description(g)} #{description}", status, message])
+    results = RSpec::Core::ExampleGroup.results(g)
+    Array.push(results, ["#{RSpec::Core::ExampleGroup.full_description(g)} #{description}", status, message])
     line = indent(g) + description
     if status == :failed
       n = Array.count(results) { |r| r[1] == :failed }
@@ -391,20 +400,20 @@ module RSpec
     elsif status == :pending
       line += " (PENDING: #{message})"
     end
-    Array.push(ExampleGroup.lines(g), line)
+    Array.push(RSpec::Core::ExampleGroup.lines(g), line)
     nil
   end
 
   # it(g, description) { |ex| ... }: runs the example now and records it; without a block it is pending.
   def it(g, description)
     return record(g, description, :pending, "Not yet implemented") unless block_given?
-    ex = Example.new(g, description, 0)
+    ex = RSpec::Core::Example.new(g, description, 0)
     begin
       yield(ex)
       record(g, description, :passed, "")
-    rescue RSpecExpectationNotMet => e
+    rescue RSpec::Expectations::ExpectationNotMetError => e
       record(g, description, :failed, Exception.message(e))
-    rescue RSpecPending => e
+    rescue RSpec::Core::Pending::SkipDeclaredInExample => e
       record(g, description, :pending, Exception.message(e))
     rescue => e
       record(g, description, :failed, Exception.message(e))
@@ -420,8 +429,8 @@ module RSpec
 
   # pending(ex, reason): inside an example, marks it pending (RSpec runs on and expects a failure;
   # here the example stops, as `skip` does).
-  def pending(ex, reason = "No reason given") = raise(RSpecPending, reason)
-  def skip(ex, reason = "No reason given") = raise(RSpecPending, reason)
+  def pending(ex, reason = "No reason given") = raise(RSpec::Core::Pending::SkipDeclaredInExample, reason)
+  def skip(ex, reason = "No reason given") = raise(RSpec::Core::Pending::SkipDeclaredInExample, reason)
 
   # expect(ex, actual = nil): the expectation [ex, actual]; without a value, for a block matcher.
   def expect(ex, actual = nil) = [ex, actual]

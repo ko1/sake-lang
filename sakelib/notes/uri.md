@@ -34,8 +34,8 @@ turns a String port into an Integer (`""` → the default), and sets the default
 |---|---|---|
 | `URI.parse(s)` | `URI.parse(s)` | same (scheme lower-cased; port Integer, the default when absent or empty; `path` nil only for an opaque URI) |
 | `URI(s)` | — | missing: a function cannot be named like a type |
-| `URI::InvalidURIError` | `InvalidURIError` | differs: no nested names; same messages (`bad URI (is not URI?): "..."`, `URI must be ascii only "..."` with Ruby's `dump` form) |
-| `URI::BadURIError` | `BadURIError` | differs: name (`both URI are relative`) |
+| `URI::InvalidURIError` | `URI::InvalidURIError` | same name (nested since 2026-10-10; was `InvalidURIError`); same messages (`bad URI (is not URI?): "..."`, `URI must be ascii only "..."` with Ruby's `dump` form) |
+| `URI::BadURIError` | `URI::BadURIError` | same (nested since 2026-10-10; was `BadURIError`); message `both URI are relative` |
 | `u.scheme`, `userinfo`, `user`, `password`, `host`, `hostname`, `port`, `path`, `opaque`, `query`, `fragment` | `URI.scheme(u)` ... (also `URI.x(u)`) | same |
 | `u.host = v`, `port=`, `path=`, `query=`, `fragment=` | `u.URI.host = v` / `URI.set_host(u, v)` ... (also `u.URI.query \|\|= v`) | differs: no validation of the new value (Ruby checks it against the grammar); `port` must be an Integer |
 | `u.scheme=`, `userinfo=`, `user=`, `password=`, `opaque=` | — | missing (reader fields) |
@@ -68,7 +68,7 @@ private functions.
 ## Differences and why
 
 - **One type for all schemes**: no inheritance in Sake; `inspect` reproduces Ruby's class names.
-- **Exceptions are not nested** (`InvalidURIError`): Sake rejects `A::B`.
+- **Exceptions are nested** in the class since 2026-10-10 (`URI::InvalidURIError`, `URI::BadURIError`); before, Sake rejected `A::B` and they were `InvalidURIError` / `BadURIError`.
 - **Setters do not validate**; Ruby's check each component against the grammar. Easy to add later
   (one function per field with the regex), skipped for time.
 - **Equality** is Struct equality, not normalized equality: defining `==` on URI would also forbid

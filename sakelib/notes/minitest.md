@@ -16,6 +16,14 @@ Ruby's Minitest, in Sake, for tests written in Sake (`test/sake/*_test.sake`).
 - **No `assert_output`, `capture_io`, `skip`, `assert_predicate`, `assert_kind_of`** (no output capture, no
   types as values). `assert_includes` takes an Array, String, Hash, Set, or Range.
 
+## Names
+
+- `Minitest::Assertion` (the failed-assertion exception, Ruby's name), `Minitest::Test` (the running test the
+  assertions name) and `Minitest::TestSuite` (a suite; Ruby has no such object) are nested in `module Minitest`
+  since 2026-10-10; before, the top-level `AssertionFailed`, `TestCase`, `TestSuite`. The tests in `test/sake/` only
+  call `Minitest.*` functions, so nothing there changed. Its `rescue` spells `Minitest::Assertion` in full (a bare `rescue Assertion` inside the class was not matched to the
+  raise until a fix on 2026-10-10; either form works now).
+
 ## Built-ins used
 
 `Time.now`, `Arithmetic.abs`, the union call `(Array|String|Hash|Set|Range).include?`, `Kernel.exit`.

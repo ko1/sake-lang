@@ -10,8 +10,8 @@ Types: `class Matrix` (`private attr_reader row_array`, `attr_reader column_coun
 include `Arithmetic` (so `+ - * / ** -@ +@` work) and `Indexable` (so `m[i, j]`, `m[i, j] = x`, `v[i]`,
 and `v[i] = x` work). `==` is the built-in Struct equality, which compares the same fields as Ruby's
 `Matrix#==` (`rows` and `column_count`), so 1 == 1.0 holds element by element. Matrices therefore stay
-usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, `ErrNotRegular`,
-`ErrOperationNotDefined`, and `ZeroVectorError`, and their messages are Ruby's.
+usable as Hash keys. Exceptions are `Matrix::ErrDimensionMismatch`, `Matrix::ErrNotRegular`,
+`Matrix::ErrOperationNotDefined`, and `Vector::ZeroVectorError` (Ruby's spellings, nested since 2026-10-10), and their messages are Ruby's.
 
 ## API
 
@@ -58,7 +58,7 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
 | `Vector.basis(size: 3, index: 1)` | `Vector.basis(size: 3, index: 1)` | same |
 | `v[i]`, `v[i] = x`, `element`, `component` | same | same for Integer indexes (no Ranges) |
 | `size`, `to_a`, `each`, `each2`, `map`/`collect`, `map2`, `collect2` | same | same |
-| `+ - * /`, `-v`, `+v` | same | same (Vector * Vector raises ErrOperationNotDefined, as in Ruby) |
+| `+ - * /`, `-v`, `+v` | same | same (Vector * Vector raises Matrix::ErrOperationNotDefined, as in Ruby) |
 | `inner_product`, `dot` | same | same (conjugates a Complex right operand) |
 | `cross_product(*vs)`, `cross` | `Vector.cross_product(v, *vs)` | same for 2 and 3 dimensions (2026-10-05); above 3 (Ruby's `laplace_expansion`) raises NotImplementedError |
 | `magnitude`, `norm`, `r`, `normalize` | same | same |
@@ -75,8 +75,9 @@ usable as Hash keys. Exceptions are the top-level types `ErrDimensionMismatch`, 
   `Vector.cross_product(v, *vs)`. `Vector.basis(size:, index:)` takes Ruby's required keywords.
 - **Scalars go on the right.** `2 * m` is `Integer.*(2, m)`. Integer's `*` does not take a Matrix, and
   there is no `coerce`, so only `m * 2` works.
-- **Exceptions are top-level names.** Ruby's `Matrix::ErrDimensionMismatch` and
-  `Vector::ZeroVectorError` cannot be nested, because Sake has no `A::B`.
+- **Exceptions are nested names** (since 2026-10-10): `class Matrix::ErrDimensionMismatch < StandardError` and
+  `class Vector::ZeroVectorError`, Ruby's spellings (Ruby defines the three Matrix ones in `ExceptionForMatrix`
+  and includes it; `Matrix::ErrDimensionMismatch` resolves there too). Before, they were top-level names.
 - **Element types are one union per program** (see Friction). Ruby allows a `Matrix` of Strings and
   `m.collect(&:to_s)`. In Sake you can build one, but once any matrix in the program holds Strings,
   every arithmetic operation in matrix.sake is reported as `(Integer, String) not supported`. The test
@@ -172,11 +173,11 @@ Enumerator gives with `.to_a`; there is no Enumerator. `build`, `collect`/`map`,
 
 ## Phase 4 (2026-10-05 review)
 
-- `def initialize(m)` checks that every row has `column_count` elements (`ErrDimensionMismatch`,
+- `def initialize(m)` checks that every row has `column_count` elements (`Matrix::ErrDimensionMismatch`,
   Ruby's "row size differs" message). Ruby checks in `Matrix.rows` because its `new` is private;
   Sake's `Matrix.new` is public, so the check is where every matrix is made. `Matrix.rows` only
   copies and measures. (No measurable cost on the test: 0.33-0.35 s CPU before and after.)
-- Exceptions are `class ErrDimensionMismatch < StandardError` (and the other three) instead of
+- Exceptions are `class Matrix::ErrDimensionMismatch < StandardError` (and the other three) instead of
   `Exception.new`, as Ruby declares them.
 - `Vector.elements(array, copy = true)`, as Ruby.
 - Blocks passed on with `&b`: `Matrix.map(m, which, &b) = collect(m, which, &b)`, `Vector.map`,

@@ -10,7 +10,7 @@ A library is loaded with `require "json"`. The names of the libraries and of the
 - **Names with `/`.** Ruby's `net/http` and `open-uri` are written `net_http` and `open_uri`.
 - **Module functions as in Ruby.** `JSON.parse(s)` and `Base64.encode64(s)` are spelled as in Ruby.
 - **Instance methods take the subject first.** Ruby's `ss.scan(/\w+/)` is `StringScanner.scan(ss, /\w+/)`; in a chain, `ss.StringScanner.scan(/\w+/)` ([Program structure and name resolution](02-program.md)).
-- **Nested names are flattened.** Sake has no nested names, so `Net::HTTP` is `NetHTTP` and `Concurrent::Future` is `ConcurrentFuture`. Each library's notes have the table.
+- **Nested names are Ruby's.** Namespaces nest ([Program structure and name resolution](02-program.md)), so `Net::HTTP`, `Concurrent::Future`, `JSON::ParserError` and `Benchmark::Tms` are spelled as in Ruby: `Net::HTTP.get(http, path)`, `rescue JSON::ParserError`. Only a nested name whose outer name is a built-in type cannot exist (there is no `Enumerable`, so ActiveSupport's `Enumerable::SoleItemExpectedError` is the top-level `SoleItemExpectedError`). Each library's notes have the table.
 
 ```ruby
 require "base64"
@@ -59,7 +59,7 @@ end
 
 - **yaml** is a subset of Psych; **xml** a subset of REXML.
 - **digest** computes MD5 and SHA in Sake (slowly). **zlib** has only the CRC-32 and Adler-32 checksums, no compression.
-- **net_http** names `Net::HTTP` `NetHTTP`. https goes through the built-in `Socket.connect_ssl`.
+- **net_http** is `Net::HTTP`, `Net::HTTPResponse`, `Net::HTTP::Get` and the rest, as in Ruby. https goes through the built-in `Socket.connect_ssl`.
 - **timeout** runs the block in a Thread of its own and, when the time is up, really stops it with the built-in `Thread.raise`.
 - **pp** is the PP that wraps at a width, distinct from the built-in one-line `pp`.
 
@@ -86,7 +86,7 @@ In the table above, toml (toml-rb), ini (inifile), mustache, units (ruby-units),
 
 ## Ports of gems
 
-Popular gems are ported too, as far as Sake can express them. Each port keeps the gem's names where Sake can (`Inflector.pluralize(s)`, `Redis.get(r, k)`).
+Popular gems are ported too, as far as Sake can express them. Each port keeps the gem's names where Sake can (`ActiveSupport::Inflector.pluralize(s)`, `Redis.get(r, k)`).
 
 | Area | Libraries |
 |---|---|
@@ -99,9 +99,9 @@ Popular gems are ported too, as far as Sake can express them. Each port keeps th
 
 ### Notes
 
-- **active_support_core_ext** is the modules `Blank`, `StringExt`, `ArrayExt`, `HashExt` and `Duration`.
+- **active_support_core_ext** is the modules `Blank`, `StringExt`, `ArrayExt`, `HashExt` and the class `ActiveSupport::Duration`.
 - **kramdown** is the GFM dialect, **redis** a RESP2 client, **jwt** HS256/384/512.
-- **concurrent_ruby** has `ConcurrentFuture`, `ConcurrentPromise`, `ConcurrentAtom`, `ConcurrentMap`, `Semaphore` and more.
+- **concurrent_ruby** has `Concurrent::Future`, `Concurrent::Promise`, `Concurrent::Atom`, `Concurrent::Map`, `Concurrent::Semaphore` and more.
 - **rspec** is written in the shape of minitest, naming the example: `RSpec.expect(ex, x).To.eq(y)`.
 
 ### Dropped features
@@ -164,7 +164,7 @@ There is no `assert_output`: a Sake program cannot capture its own output, so pr
 
 ### Failures and errors
 
-A failed assertion raises `AssertionFailed` and is recorded as a failure (F). Any other exception is recorded as an error (E), as in Ruby's Minitest.
+A failed assertion raises `Minitest::Assertion` and is recorded as a failure (F). Any other exception is recorded as an error (E), as in Ruby's Minitest.
 
 ```ruby
 require "minitest"

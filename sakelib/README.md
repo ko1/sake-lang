@@ -12,7 +12,7 @@ Each library's notes (what differs from Ruby and why, what is missing): `sakelib
 Besides the standard library, ports of well-known gems (2026-10-09): colorize, ruby_progressbar, highline,
 active_support_{inflector,core_ext,number_helper}, kramdown (GFM), liquid, rack, rackup, webrick, httparty, redis,
 dotenv, money, rubyzip, chronic, i18n, faker, thor, awesome_print, concurrent_ruby, jwt, rspec. Each keeps the
-gem's names where Sake can (`Inflector.pluralize(s)`, `Redis.get(r, k)`); what it drops and why is in its notes.
+gem's names where Sake can (`ActiveSupport::Inflector.pluralize(s)`, `Redis.get(r, k)`); nested names are Ruby's (`Benchmark::Tms`, `JSON::ParserError`); what it drops and why is in its notes.
 Libraries not ported, with the reason: `notes/not-ported.md`.
 
 `minitest.sake` is a test framework for programs written in Sake; Sake's own test suite written in Sake is

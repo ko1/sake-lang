@@ -2,7 +2,7 @@
 
 `sakelib/csv.sake` ports Ruby's `csv` (checked against csv 3.3.5 on Ruby 4.0.2): parsing (quotes, `""`
 escapes, quoted newlines, `\r\n`/`\r` row separators, Ruby's error messages and line numbers),
-the options people actually pass, headers (`CSVRow`, `CSVTable`), converters, generating, and files.
+the options people actually pass, headers (`CSV::Row`, `CSV::Table`), converters, generating, and files.
 Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 
 ## Conventions
@@ -13,16 +13,17 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 - **`headers:` decides the result type.** Its default is nil (Ruby's is false; both mean "no
   headers"), and nil is a type of its own, so `case headers in nil` selects the branch when the
   program is checked: `CSV.parse(s)` is an Array of rows, `CSV.parse(s, headers: true)` a
-  `CSVTable`, with no `Array | CSVTable` union at the call site. `true` and `false` share one type,
+  `CSV::Table`, with no `Array | CSV::Table` union at the call site. `true` and `false` share one type,
   so `headers: false` cannot select Arrays; it raises ArgumentError ("omit headers:").
 - **Cells.** An unquoted empty field is `nil`, as in Ruby, so a row is an Array of `String | nil`
   (`String[]` cannot hold nil). With `converters:`, cells become `String | Integer | Float | nil`,
   and `--strict` asks for a `case`/`in` before arithmetic, which is the honest type.
-- **Names.** `CSV::Row` → `CSVRow`, `CSV::Table` → `CSVTable`, `CSV::MalformedCSVError` →
-  `MalformedCSVError` (no nested namespaces). Its `line_number` is a field:
-  `MalformedCSVError.line_number(e)`; the message is Ruby's (`"Illegal quoting in line 2."`).
+- **Names.** `CSV::Row`, `CSV::Table`, `CSV::MalformedCSVError` are Ruby's names, nested in `class CSV`
+  (since 2026-10-10; they were `CSVRow`, `CSVTable`, `MalformedCSVError` while namespaces did not nest).
+  `CSV::MalformedCSVError`'s `line_number` is a field:
+  `CSV::MalformedCSVError.line_number(e)`; the message is Ruby's (`"Illegal quoting in line 2."`).
 - `CSV` is a type: the writer that `CSV.generate { |csv| csv << row }` yields. `<<` is its operator
-  (`include Bitwise`), so `csv << [1, "a"]` reads as in Ruby. Rows may be Arrays, Tuples, `CSVRow`s,
+  (`include Bitwise`), so `csv << [1, "a"]` reads as in Ruby. Rows may be Arrays, Tuples, `CSV::Row`s,
   or Hashes (with `headers:`).
 
 ## API
@@ -31,8 +32,8 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 |---|---|---|
 | `CSV.parse(s)` | `CSV.parse(s)` | same |
 | `CSV.parse(s, col_sep: ";", ...)` | `CSV.parse(s, col_sep: ";", ...)` | same |
-| `CSV.parse(s, headers: true)` | `CSV.parse(s, headers: true)` → CSVTable | same |
-| `CSV.parse(s, **opts) { \|row\| }` | `CSV.parse(s, **opts) { \|row\| }` | same (phase 3, `block_given?`): yields Arrays, or CSVRows with `headers:`, and gives nil |
+| `CSV.parse(s, headers: true)` | `CSV.parse(s, headers: true)` → CSV::Table | same |
+| `CSV.parse(s, **opts) { \|row\| }` | `CSV.parse(s, **opts) { \|row\| }` | same (phase 3, `block_given?`): yields Arrays, or CSV::Rows with `headers:`, and gives nil |
 | `CSV.parse_line(s, **opts)` | `CSV.parse_line(s, **opts)` | same (only the first row is parsed, as Ruby); no `headers:` / `header_converters:` |
 | `CSV.read(path, **opts)`, `readlines` | `CSV.read(p, **opts)`, `readlines(p, **opts)` | same |
 | `CSV.foreach(path, **opts) { }` | `CSV.foreach(p, **opts) { }` | same |
@@ -52,17 +53,17 @@ Test: `test/sakelib/csv.sake` vs `csv.rb` (identical output, `--strict`).
 | `csv.lineno`, `csv.inspect` | `CSV.lineno(c)`, `CSV.inspect(c)` | same for writers (the StringIO's `encoding:` is not shown) |
 | `csv << row`, `add_row`, `puts` | `csv << row`, `CSV.add_row(c, r)`, `CSV.puts(c, r)` | same |
 | `"a,b".parse_csv`, `[..].to_csv` | `String.parse_csv(s)`, `Array.to_csv(a)`, `Tuple.to_csv(t)` | same |
-| `Row.new(headers, fields)` | `CSVRow.new(hs, fs)` | same (2026-10-05: copies and pads in `initialize`; `CSVRow.pad` is gone) |
-| `row[h]`, `row[i]`, `row[h] = v`, `row.field(h)` | same with `CSVRow.` / indexing | same |
-| `row.fetch(h)` | `CSVRow.fetch(r, h)` (KeyError "key not found: h") | same |
-| `row.fetch(h, default)`, `row.fetch(h) { \|h\| }` | `CSVRow.fetch(r, h, default)`, `CSVRow.fetch(r, h) { \|h\| }` | same (2026-10-05, `*default` and `block_given?`) |
+| `Row.new(headers, fields)` | `CSV::Row.new(hs, fs)` | same (2026-10-05: copies and pads in `initialize`; `CSV::Row.pad` is gone) |
+| `row[h]`, `row[i]`, `row[h] = v`, `row.field(h)` | same with `CSV::Row.` / indexing | same |
+| `row.fetch(h)` | `CSV::Row.fetch(r, h)` (KeyError "key not found: h") | same |
+| `row.fetch(h, default)`, `row.fetch(h) { \|h\| }` | `CSV::Row.fetch(r, h, default)`, `CSV::Row.fetch(r, h) { \|h\| }` | same (2026-10-05, `*default` and `block_given?`) |
 | `row.dig` | — | missing |
-| `headers fields to_a to_h to_hash each size length empty? index values_at delete << to_s to_csv == inspect` | `CSVRow.` same names | same (2026-10-05: `values_at(r, *hs)`, was one Array) |
+| `headers fields to_a to_h to_hash each size length empty? index values_at delete << to_s to_csv == inspect` | `CSV::Row.` same names | same (2026-10-05: `values_at(r, *hs)`, was one Array) |
 | `header? has_key? include? key? member? field? header_row? field_row?` | same | same |
-| `table.headers size length empty? each map select find to_a to_s to_csv delete values_at << push inspect` | `CSVTable.` same names | same (2026-10-05: `values_at(t, *is)`) |
+| `table.headers size length empty? each map select find to_a to_s to_csv delete values_at << push inspect` | `CSV::Table.` same names | same (2026-10-05: `values_at(t, *is)`) |
 | `table[i]`, `table[h]`, `table[i] = row`, `table[h] = v / [vs]` | same | same |
 | `table.by_col`, `by_row`, `mode`, `dig`, `each` in column mode | — | missing |
-| Enumerable on Table (`sort_by`, `group_by`, ...) | via `CSVTable.rows(t)` + Array ops | differs |
+| Enumerable on Table (`sort_by`, `group_by`, ...) | via `CSV::Table.rows(t)` + Array ops | differs |
 
 Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a String), `quote_char`,
 `headers` (`true`, Array/Tuple, or a header line String), `converters` (`:integer`, `:float`,
@@ -82,7 +83,7 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 - `headers: false` raises ArgumentError ("omit headers:"): `true` and `false` are one type, so a
   `false` could not give an Array where `true` gives a table.
 - ~~`CSV.foreach(path, mode)` has no mode argument.~~ It has one (phase 3).
-- ~~`CSVRow.new` is the Struct constructor and does not pad.~~ It pads in `initialize` (2026-10-05).
+- ~~`CSV::Row.new` is the Struct constructor and does not pad.~~ It pads in `initialize` (2026-10-05).
 - `CSV.read` of a missing file raises `IOError` (Ruby: `Errno::ENOENT`), as Sake's `File.read` does.
 - ~~`values_at` takes one Array.~~ It takes `*rest` (2026-10-05).
 
@@ -127,17 +128,17 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
   (empty fields are nil; a converter leaves non-numbers as Strings); Sake makes them visible.
 - Nothing in the library needed a change for `--strict` (level 2) once written. At `--strict=3` the
   test gets 16 `index-nil` reports, all located inside `sakelib/csv.sake`: 2 are the parser's
-  `chars[i]` lookups, and 14 come from the test's `r = t[0]` (a CSVRow or nil) reaching
-  `CSVRow.fields` etc. Those 14 are the caller's nil, but the message points into the library
+  `chars[i]` lookups, and 14 come from the test's `r = t[0]` (a CSV::Row or nil) reaching
+  `CSV::Row.fields` etc. Those 14 are the caller's nil, but the message points into the library
   (the "reached by" hint names the call).
 
 ## Surprises
 
 - Record options worked better than expected: the checker specializes per Record shape, so
-  `{headers: true}` gives a `CSVTable` and `{converters: :numeric}` adds Integer | Float only where
+  `{headers: true}` gives a `CSV::Table` and `{converters: :numeric}` adds Integer | Float only where
   it is given.
 - A user-defined `[]` that returns a row for an Integer and a column for a String is typed per call
-  (`t[0]` is a CSVRow, `t["age"]` an Array), with no union.
+  (`t[0]` is a CSV::Row, `t["age"]` an Array), with no union.
 
 ## Phase 2
 
@@ -188,12 +189,12 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
 
 ## Review against the 2026-10-05 language
 
-- `MalformedCSVError` is `class MalformedCSVError < Exception` with `attr_reader line_number` (was
+- `CSV::MalformedCSVError` is `class MalformedCSVError < Exception` with `attr_reader line_number` (was
   `Exception.new(:line_number)`), as Ruby's class.
-- `CSVRow.new(headers, fields)` copies both Arrays and pads the shorter with nil in `initialize`, as
-  Ruby's `Row.new`; `CSVRow.pad` and the callers' `Array.dup` are gone.
+- `CSV::Row.new(headers, fields)` copies both Arrays and pads the shorter with nil in `initialize`, as
+  Ruby's `Row.new`; `CSV::Row.pad` and the callers' `Array.dup` are gone.
 - Keywords passed on with the `k:` shorthand (`read`, `readlines`, `foreach`); `foreach` and
-  `CSVTable.each/map/select/find` pass their block on with `&b`.
+  `CSV::Table.each/map/select/find` pass their block on with `&b`.
 - Still unlike Ruby: no `**opts`, so `read`/`readlines`/`foreach` repeat the 11 keywords
   (csv.sake:199-220); `CSV.new` is the Struct constructor (9 positional fields), so `writer`
   (csv.sake:273) stands in for Ruby's `CSV.new(io, **opts)`.
@@ -208,8 +209,8 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
   `generate*` and `open` call `CSV.new(...)` with `k:` shorthands.
 - Internal state is `private attr_reader`: `io`, `lines = String[]`, `force_quotes`, `quote_empty`,
   `write_headers` (Ruby's `force_quotes?`, `quote_empty?`, `to_io` are functions);
-  `CSVTable.header_list` too. `lineno` is a reader with `@lineno += 1` (it was an accessor).
-- `CSVRow.values_at(r, *hs)`, `CSVTable.values_at(t, *is)`, `CSVRow.fetch(r, h, *default) { |h| }`.
+  `CSV::Table.header_list` too. `lineno` is a reader with `@lineno += 1` (it was an accessor).
+- `CSV::Row.values_at(r, *hs)`, `CSV::Table.values_at(t, *is)`, `CSV::Row.fetch(r, h, *default) { |h| }`.
 - The test adds a "2026-10-05" section (fetch default/block, `values_at`, `CSV.new(IO.stdout, ...)`
   with its readers).
 - **Still not Ruby's: options are not passed on with `**opts`.** `f(**opts)` is "`**` is not

@@ -7,7 +7,7 @@ separators and widths, another newline, single-line mode, `new`/`flush`).
 Ruby's algorithm is ported line by line: a buffer of `Text` and `Breakable` entries, a stack of `Group`s and a
 `GroupQueue` by depth that breaks the outermost group first. The printer `q` is a Struct type `PrettyPrint`;
 Ruby's `q.text(s)` is `PrettyPrint.text(q, s)`. The nested classes `PrettyPrint::Text`, `::Breakable`, `::Group`,
-`::GroupQueue` are the top-level types `Text`, `Breakable`, `Group`, `GroupQueue` (Sake has no nested names);
+`::GroupQueue` keep their names (nested in `class PrettyPrint` since 2026-10-10; before, the top-level types `Text`, `Breakable`, `Group`, `GroupQueue`);
 they are internal, as in Ruby.
 
 ## API

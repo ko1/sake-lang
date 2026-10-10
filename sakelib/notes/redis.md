@@ -3,8 +3,8 @@
 `sakelib/redis.sake`: a client for the redis gem's API (redis-rb 5; not installed, so the reference is
 `test/sakelib/ref/redis.rb`, a plain-Ruby client with the gem's method names and reply conversions). RESP2 over
 `Socket.connect`; 47 commands (connection, keys, strings, hashes, lists, sets), `call` for any command,
-`pipelined` and `multi` over a `RedisPipeline`, `close` / `connected?` / `id`; 55 operations on Redis, 48 on
-RedisPipeline. The test starts a RESP server in a thread (`TCPServer`, an in-memory Hash, 42 commands, MULTI/EXEC,
+`pipelined` and `multi` over a `Redis::PipelinedConnection`, `close` / `connected?` / `id`; 55 operations on Redis, 48 on
+Redis::PipelinedConnection. The test starts a RESP server in a thread (`TCPServer`, an in-memory Hash, 42 commands, MULTI/EXEC,
 expiry) in Sake and the same server in Ruby; both print 136 identical lines.
 
 ## API
@@ -19,29 +19,30 @@ expiry) in Sake and the same server in Ruby; both print 136 identical lines.
 | `lpush`, `rpush`, `lpop`, `rpop`, `lrange`, `llen`, `lindex` | same | same (`blpop`, `lrem`, `lset`, `ltrim`, `linsert` missing) |
 | `sadd` → Integer, `sadd?` → bool, `srem`, `srem?`, `smembers`, `sismember` → bool, `scard` | same | same (`sunion`/`sinter`/`sdiff`, `spop`, `sscan` missing) |
 | `redis.call("GET", "k")` → the raw reply | `Redis.call(r, "GET", "k")` | same (String, Integer, nil, Array; a Symbol or nested Array argument spread as the gem's) |
-| `redis.pipelined { \|pipe\| pipe.set(…); pipe.get(…) }` → replies | `Redis.pipelined(r) { \|pipe\| RedisPipeline.set(pipe, …) }` | differs: `pipe.get` gives a Future in Ruby, nil here; the replies Array is shaped the same |
+| `redis.pipelined { \|pipe\| pipe.set(…); pipe.get(…) }` → replies | `Redis.pipelined(r) { \|pipe\| Redis::PipelinedConnection.set(pipe, …) }` | differs: `pipe.get` gives a Future in Ruby, nil here; the replies Array is shaped the same |
 | `redis.multi { \|tx\| … }` → EXEC's replies | `Redis.multi(r) { \|tx\| … }` | same (`watch`/`unwatch`/`discard` missing) |
 | `redis.close`, `disconnect!`, `connected?`, `id`, `inspect` | same | `inspect` lacks the gem's version string |
-| `Redis::CommandError`, `CannotConnectError`, `ConnectionError`, `ProtocolError` | `RedisCommandError`, … | differs: flattened; `Redis::BaseError` hierarchy missing (no hierarchy) |
+| `Redis::CommandError`, `CannotConnectError`, `ConnectionError`, `ProtocolError` | `Redis::CommandError`, … | same names (nested in `class Redis` since 2026-10-10; were `RedisCommandError` & co.); `Redis::BaseError` hierarchy missing (no hierarchy) |
 | sorted sets, pub/sub, scripting (`eval`), `scan_each` enumerators, RESP3 (`protocol: 3`), sentinel, cluster, `Redis.current`, `with_reconnect`, `Redis::Distributed` | — | missing: not in the budget (zsets), blocks as values (pub/sub `subscribe { \|on\| on.message { } }` stores blocks), RESP3's map/set/push types |
 
 ## できたこと / できなかったこと
 
-- The gem's "Commands" modules became one mixin, `RedisCommands`, included by both `Redis` and `RedisPipeline`.
+- The gem's "Commands" modules became one mixin, `Redis::Commands`, included by both `Redis` and `Redis::PipelinedConnection`.
+- Names (2026-10-10): the exception types, `Redis::Commands` and `Redis::PipelinedConnection` are nested in `class Redis`, as the gem's; they were `RedisCommandError` & co., `RedisCommands`, `RedisPipeline`.
   Each command is one line: `def get(r, key) = _str(r, call(r, "GET", key))`. `call` and the seven reply shapers
   (`_str`, `_int`, `_bool`, `_okbool`, `_positive`, `_arr`, `_hash`) are the includer's own: in `Redis` they
   send and **assert the reply's shape** (`v => String | nil`, `v => Integer`, `v == 1`, pairs → Hash); in
-  `RedisPipeline`, `call` queues the command and the shaper pushes a tag, applied to the replies after the
+  `Redis::PipelinedConnection`, `call` queues the command and the shaper pushes a tag, applied to the replies after the
   round trip. This gives the gem's conversions (`exists?` → true/false, `hgetall` → Hash) in both modes and
   replaces the gem's Futures with nil + a shaped Array, which is what `pipelined` returns anyway.
 - RESP2 reading is the gem's: first byte picks `+ - : $ *`, bulk replies read exactly `n + 2` bytes in a loop
-  (`Socket.read` may stop short), an error reply raises `RedisCommandError` with the server's text, EOF raises
-  `RedisConnectionError` and closes. Connecting is lazy (the gem's too), `SELECT db` on connect, `Socket.connect`'s
-  `IOError` becomes `RedisCannotConnectError` with the gem's `Error connecting to Redis on host:port (...)`.
+  (`Socket.read` may stop short), an error reply raises `Redis::CommandError` with the server's text, EOF raises
+  `Redis::ConnectionError` and closes. Connecting is lazy (the gem's too), `SELECT db` on connect, `Socket.connect`'s
+  `IOError` becomes `Redis::CannotConnectError` with the gem's `Error connecting to Redis on host:port (...)`.
 - Not done, Sake rules: pub/sub (`subscribe` keeps callbacks per channel: blocks are not values); the Future
   object of a pipelined call (a value whose `value` method is read later: a Struct could hold it, but its
   type would be the union of every command's reply; the tag approach keeps each command's shape instead);
-  `Redis::BaseError` as a common rescue (no hierarchy: `rescue RedisCommandError, RedisConnectionError`).
+  `Redis::BaseError` as a common rescue (no hierarchy: `rescue Redis::CommandError, Redis::ConnectionError`).
   Not done for time: sorted sets, scan, blocking pops, more string/hash/list commands (the server side has to
   be written twice as well).
 
@@ -75,9 +76,9 @@ expiry) in Sake and the same server in Ruby; both print 136 identical lines.
   (`@port = 6379 if @port == nil`, then `@port => Integer`), so `Redis.new(host: "x", port: "6379")` is
   `` `=> Integer`: the value is String, which does not match [type] `` at the initialize line, with
   `reached by the call at line 3` (verified).
-- The mixin: `include RedisCommands` in two types, with `call` resolved in each includer, is exactly the gem's
+- The mixin: `include Redis::Commands` in two types, with `call` resolved in each includer, is exactly the gem's
   structure (`Redis::Commands` included in `Redis` and `Redis::PipelinedConnection`), and the typer analyzes
-  the one body twice: `Redis.get` is `String | nil`, `RedisPipeline.get` is nil. A missing shaper in one
+  the one body twice: `Redis.get` is `String | nil`, `Redis::PipelinedConnection.get` is nil. A missing shaper in one
   includer would be a static error at the `include` line, which is how the design was checked while writing it.
 - `Array.flatten(args)` in `_command` spreads a nested Array argument (`del(["a", "b"])`) as the gem does;
   `"#{a}"` for every argument (Integer, Symbol, Float) is the gem's `to_s`. `Array.push(args, "EX", ex) if ex != nil`

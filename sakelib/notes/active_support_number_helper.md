@@ -3,7 +3,7 @@
 `require "active_support_number_helper"` → `sakelib/active_support_number_helper.sake`. Test:
 `test/sakelib/active_support_number_helper.{sake,rb}` (identical output; the `.rb` uses activesupport 8.1.3).
 
-`ActiveSupport::NumberHelper.number_to_currency(n, options)` is `NumberHelper.number_to_currency(n, **keywords)`:
+`ActiveSupport::NumberHelper.number_to_currency(n, options)` is `ActiveSupport::NumberHelper.number_to_currency(n, **keywords)` (Ruby's name, nested since 2026-10-10; was `NumberHelper`):
 Ruby's options Hash is keyword parameters whose defaults are ActiveSupport's en defaults (`separator: "."`,
 `delimiter: ","`, `precision: 2` for currency, `format: "%u%n"`...). A Record argument (`{precision: 3}`) was
 considered and rejected: a Record is read by a pattern that raises `KeyError` for a missing field, so every call
@@ -53,7 +53,7 @@ a misspelled one.
   `(number in String) && ...`. Ruby parses this the same surprising way; Sake named it and the hint was the fix.
 - Wrote `Regexp.new(src, Regexp::MULTILINE)` → `wrong number of arguments for Regexp.new (given 2, expected 1)` and
   `undefined function Regexp.MULTILINE` → `Regexp.new("(?m)" + src)`.
-- `NumberHelper.number_to_currency(1, precison: 3)` → `error: NumberHelper.number_to_currency has no keyword
+- `ActiveSupport::NumberHelper.number_to_currency(1, precison: 3)` → `error: ActiveSupport::NumberHelper.number_to_currency has no keyword
   parameter precison / hint: did you mean precision:?`. ActiveSupport ignores an unknown option silently; this is
   the one place the port is stricter than the gem, and better for it.
 - Wrote `Kernel.Float(r)` for a Rational → `Kernel.Float: argument 1 must be String|Integer|Float, but is Rational` →

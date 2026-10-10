@@ -1,7 +1,7 @@
 require "jwt"
 require "openssl"
 
-# The Sake program (jwt.sake) with the real gem (jwt 3.2). JWT::X errors are JWTX there; Ruby's options
+# The Sake program (jwt.sake) with the real gem (jwt 3.2). the JWT::X errors have the same names there; Ruby's options
 # Hash is Sake's keywords; JWT.base64url_encode / hmac_sha256 are JWT::Base64.url_encode / OpenSSL::HMAC.
 
 def show_error(e)
