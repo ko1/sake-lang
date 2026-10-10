@@ -99,3 +99,10 @@
 - [ ] **`if @x` が枝を刈らない**（examples/ の整備で判明、500 本中約 20 本の level 1 の偽陽性の主因）: `Node.new(nil)` の構築場所でフィールドがちょうど nil のとき、`if @word then String.upcase(@word)` の then 枝で `@word` が nil のまま報告される。ローカルに写せば通る（`w = @word; if w`）。フィールドの読みの絞り込みを、構築場所ごとの型にも効かせる。
 - [ ] `Float.round` / `Float.abs` / `Rational.*` に `Integer | Float` の値を渡す偽陽性（コーパス v3 で約 13 本）: 書き手は `Arithmetic.round` を知らない。hint で `Arithmetic.round` を示すか、`Float.round` が Integer も受けるか。
 - [ ] 1 行目に `coding:` を含むコメント（「Huffman coding:」）が Ruby の magic comment として読まれてプログラムが壊れる。先頭行の `# ... coding: ...` は Prism/Ruby の仕様だが、hint が出せるとよい。
+
+## Rust バックエンド（2026-10-10、experiments/2026-10-10-rust-backend）
+
+- `tools/sakec.rb` は部分集合だけ。Hash・Set・Regexp・rescue・mixin ディスパッチ・`(A|B).f`・Thread を足す。
+- 生成器が自前の型推論を持っている。typer が式ごとの型を保持するようにして、それを使う。
+- Integer は 64 ビット（溢れたらエラー）。多倍長への昇格を入れるか、言語の意味論を 64 ビットにするかは未決。
+- 命名: Sake → Rust の変換器の名前（錆＋酒）。

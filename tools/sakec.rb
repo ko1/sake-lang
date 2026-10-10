@@ -1,0 +1,45 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# sakec: compile a Sake program to a native executable through Rust.
+#   ruby tools/sakec.rb FILE.sake [-o OUT] [--emit] [--release]
+# Writes OUT.rs (OUT defaults to FILE without .sake) and builds OUT with rustc -O. --emit stops after the
+# Rust source. Exit status: 2 for a static error in the program, 3 when the Rust backend does not support
+# something in it (the message says what and where), 4 when rustc fails.
+
+require_relative "../lib/sake"
+require_relative "../lib/sake/rust"
+
+args = ARGV.dup
+out = nil
+emit = false
+path = nil
+until args.empty?
+  a = args.shift
+  case a
+  when "-o" then out = args.shift
+  when "--emit" then emit = true
+  when /\A-/ then abort "sakec: unknown option #{a}"
+  else path = a
+  end
+end
+abort "usage: sakec FILE.sake [-o OUT] [--emit]" unless path
+out ||= path.sub(/\.sake\z/, "")
+abort "sakec: output path equals input" if out == path
+
+begin
+  program = Sake.load(File.read(path), path)
+  rust = Sake::Rust.generate(program)
+rescue Sake::StaticErrors => e
+  warn e.message
+  exit 2
+rescue Sake::Rust::Unsupported => e
+  warn "sakec: #{e.message}"
+  exit 3
+end
+
+File.write("#{out}.rs", rust)
+exit 0 if emit
+crate = File.basename(out).gsub(/[^A-Za-z0-9_]/, "_").sub(/\A(?=\d)/, "_")
+cmd = ["rustc", "--edition", "2021", "-O", "-C", "overflow-checks=on", "--crate-name", crate, "-o", out, "#{out}.rs"]
+system(*cmd) or (warn "sakec: rustc failed (the Rust source is in #{out}.rs)"; exit 4)

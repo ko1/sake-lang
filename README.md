@@ -84,6 +84,23 @@ bin/sake --dump=ast FILE.sake   # print the SakeAST (the resolved program that r
 The exit status is 0 on success, 1 for an error while running, and 2 for a problem found before
 running.
 
+### Native code through Rust (experimental)
+
+`tools/sakec.rb` compiles a program to a native executable by way of Rust, for the subset whose types
+the generator can fix: Integer (as 64-bit, an overflow is an error), Float, true/false, nil as
+`Option`, String, Array, Tuple, classes, and blocks. Anything outside the subset is reported with its
+line, and the program still runs on the interpreter.
+
+```
+ruby tools/sakec.rb FILE.sake            # writes FILE.rs and builds FILE with rustc -O
+ruby tools/sakec.rb FILE.sake --emit     # only the Rust source
+```
+
+On three micro benchmarks (loops, fib, levenshtein) the compiled program ran 3 to 21 times faster than
+Ruby 4.0 with YJIT, 8 to 53 times faster than Ruby without it, and within 0.9 to 1.6 times of Rust
+written by hand ([experiments/2026-10-10-rust-backend/](experiments/2026-10-10-rust-backend/README.md)).
+The interpreter is 150 to 760 times slower than Ruby with YJIT.
+
 ## Documentation
 
 - [docs/tutorial.md](docs/tutorial.md): a tour with small programs. Every output in it was produced
@@ -139,7 +156,7 @@ Not yet: `case`/`when`, first-class blocks, and built-in constants such as `Math
 ```
 bin/sake                 the command
 lib/sake/                resolver (checks before running), lower (Prism AST to SakeAST), interpreter
-                         and typer (type inference), both on SakeAST,
+                         and typer (type inference), both on SakeAST, the Rust backend (rust.rb),
                          standard library (stdlib*.rb)
 test/                    golden tests (test/samples/*.sake with *.expected) and CLI tests
 examples/                example programs by category, each with its expected output (examples/README.md)
@@ -157,6 +174,7 @@ ruby test/test_examples.rb      # examples/**/*.sake print their *.expected (UPD
 ruby test/test_sakelib.rb       # the library ports: each test/sakelib/X.sake prints what X.rb prints
 ruby test/test_sake_suite.rb    # Sake's test suite written in Sake (test/sake/*_test.sake, on sakelib/minitest.sake)
 ruby test/test_ide.rb           # the playground's Ruby side (lib/sake/ide.rb)
+ruby test/test_rust.rb          # the Rust backend: test/rust/*.sake compiled and compared with the interpreter (needs rustc)
 ruby tools/check_reference.rb   # the built-in reference (docs/manual/*/ref): signatures, coverage, and every example
 ```
 
