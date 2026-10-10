@@ -1,6 +1,6 @@
 # Built-in operations
 
-The tables below are a guide to the most used operations. **The complete list, generated from the interpreter, is the appendix "Built-in operations".** The names follow Ruby's core library; "→" gives the result type. Operations marked "block" require one.
+The tables below are a guide to the most used operations. **Every operation is documented in detail (arguments, result, nil, exceptions, examples) in Part 2, the built-in reference, one chapter per type ([Array](ref/Array.md), [String](ref/String.md), [Hash](ref/Hash.md), [Kernel](ref/Kernel.md), ...).** The names follow Ruby's core library; "→" gives the result type. Operations marked "block" require one.
 
 ## Kernel
 
@@ -21,7 +21,7 @@ The tables below are a guide to the most used operations. **The complete list, g
 | `system(cmd)` | true / false / nil | Ruby's `system` |
 | `at_exit { }` | nil | a block run when the program ends |
 | `ARGV` | Array of String | the program's arguments; written like Ruby's constant, but an operation (`Kernel.ARGV`); every use gives the same Array, so `Array.shift(ARGV)` works |
-| `PROGRAM_NAME` | String | |
+| `Kernel.PROGRAM_NAME` | String | the running file's name; unlike `ARGV` it cannot be written bare (a capitalized name is a type) |
 | `equal?(a, b)` | true/false | identity |
 | `block_given?` | true/false | whether the current function got a block |
 

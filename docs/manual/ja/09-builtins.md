@@ -1,6 +1,6 @@
 # 組み込み操作
 
-以下の表はよく使う操作の案内です。**処理系から生成した完全な一覧は付録「Built-in operations」にあります。** 名前は Ruby のコアライブラリに従い、「→」は結果の型です。「ブロック」と記したものはブロックが必須です。
+以下の表はよく使う操作の案内です。**各操作の詳細（引数・戻り値・nil・例外・例）は第 2 部「組み込みリファレンス」に、型ごとに 1 章ずつあります（[Array](ref/Array.md)、[String](ref/String.md)、[Hash](ref/Hash.md)、[Kernel](ref/Kernel.md)、…）。** 名前は Ruby のコアライブラリに従い、「→」は結果の型です。「ブロック」と記したものはブロックが必須です。
 
 ## Kernel
 
@@ -21,7 +21,7 @@
 | `system(cmd)` | true / false / nil | Ruby の `system` |
 | `at_exit { }` | nil | プログラムの終わりに走るブロック |
 | `ARGV` | Array of String | プログラムの引数。Ruby の定数のように書くが操作（`Kernel.ARGV`）。毎回同じ Array なので `Array.shift(ARGV)` が効く |
-| `PROGRAM_NAME` | String | |
+| `Kernel.PROGRAM_NAME` | String | 走っているファイルの名前。`ARGV` と違い、裸では書けない（大文字の名前は型） |
 | `equal?(a, b)` | true/false | 同一性 |
 | `block_given?` | true/false | 今の関数がブロックを受けたか |
 

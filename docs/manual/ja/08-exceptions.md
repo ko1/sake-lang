@@ -21,7 +21,7 @@ end
 ```
 
 - **例外型。** `attr_reader field` を持つ `class Name < Exception`（または `Name = Exception.new(:field, ...)`）が例外型を宣言します。最初のフィールドが `message` の Struct 型なので、`Name.new("msg", ...)`、`Name.message`、`Name.field`、`@field` が他の Struct 型と同じく使えます。例外型に階層はありません。
-- **組み込みの例外型。** 操作が投げるもので、`message` だけを持ちます: `RuntimeError`, `ArgumentError`, `TypeError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EOFError`, `RegexpError`, `FloatDomainError`, `EncodingError`, `FrozenError`, `ThreadError`, `NoMatchingPatternError`, `Math::DomainError`。
+- **組み込みの例外型。** 操作が投げるもので、`message` だけを持ちます: `RuntimeError`, `ArgumentError`, `TypeError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EOFError`, `RegexpError`, `FloatDomainError`, `EncodingError`, `ThreadError`, `NoMatchingPatternError`, `Math::DomainError`。
 - **`raise` の形:**
   - `raise "msg"` は `RuntimeError` を投げます。
   - `raise T, "msg"` は `T.new("msg")` を投げます。T は `message` 以外のフィールドを持たないもの。
@@ -64,7 +64,7 @@ end
 | `RangeError` | 有限の Range が要る操作に終端の無い Range |
 | `RegexpError` | 不正なパターンの `Regexp.new` |
 | `IOError` | `File.read`、`Dir.mkdir` などの失敗（Ruby の `Errno::ENOENT` など。メッセージは Ruby のもの）。ソケットのエラー（拒否、リセット、未知のホスト） |
-| `EOFError` | 終端に達した読み出し（`IO.read(io, n)` など） |
+| `EOFError` | 組み込みは投げません（終端の読み出しは nil や `""` を返し、Ruby の EOFError は `IOError` に畳みます）。`rescue` に書くことはできます |
 | `FloatDomainError` | NaN や Infinity の Integer への変換 |
 | `Math::DomainError` | `Math.sqrt(-1)` など |
 | `SystemStackError` | 10,000 より深い再帰 |

@@ -42,7 +42,7 @@ def operations
   end
   named, scoped = Sake::Resolver::BUILTIN_EXCEPTIONS.partition { !_1.include?("::") }
   out << "\n### Exception types\n\n#{named.map { "`#{_1}`" }.join(" · ")}: each has `T.new(message)`, "
-  out << "`T.get_message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. "
+  out << "`T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. "
   out << "Only in `rescue`: #{scoped.map { "`#{_1}`" }.join(" · ")}.\n"
   out
 end

@@ -64,7 +64,7 @@ Static errors are reported all together, sorted by position, and nothing runs.
 | `RangeError` | an operation that needs a finite Range, given an endless one |
 | `RegexpError` | `Regexp.new` with an invalid pattern |
 | `IOError` | `File.read`, `Dir.mkdir`, and the like failing (Ruby: `Errno::ENOENT` & co.; the message is Ruby's); socket errors (refused, reset, unknown host) |
-| `EOFError` | a read at the end of the stream (`IO.read(io, n)` and the like) |
+| `EOFError` | raised by no built-in (a read at the end gives nil or `""`; Ruby's EOFError is folded into `IOError`); it can be named in `rescue` |
 | `FloatDomainError` | converting NaN or Infinity to Integer |
 | `Math::DomainError` | e.g. `Math.sqrt(-1)` |
 | `SystemStackError` | recursion deeper than 10,000 |

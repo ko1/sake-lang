@@ -477,4 +477,4 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Exception types
 
-`RuntimeError` · `ArgumentError` · `KeyError` · `IndexError` · `ZeroDivisionError` · `RangeError` · `IOError` · `EncodingError` · `RegexpError` · `FloatDomainError` · `NoMatchingPatternError` · `TypeError` · `EOFError` · `ThreadError`: each has `T.new(message)`, `T.get_message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. Only in `rescue`: `Math::DomainError`.
+`RuntimeError` · `ArgumentError` · `KeyError` · `IndexError` · `ZeroDivisionError` · `RangeError` · `IOError` · `EncodingError` · `RegexpError` · `FloatDomainError` · `NoMatchingPatternError` · `TypeError` · `EOFError` · `ThreadError`: each has `T.new(message)`, `T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. Only in `rescue`: `Math::DomainError`.

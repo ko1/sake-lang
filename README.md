@@ -91,7 +91,8 @@ running.
 - [docs/guide.html](docs/guide.html): the tutorial and the specification on one page. It is also
   published at <https://claude.ai/artifact/EdrbscXRGUtkKppprRKohP>.
 - [docs/manual/](docs/manual/): the reference manual in Japanese and English, a [ligarb](https://github.com/ko1/ligarb)
-  book (`docs/manual/build.sh` builds `docs/manual/build/index.html`).
+  book (`docs/manual/build.sh` builds `docs/manual/build/index.html`). Part 2 documents every built-in
+  operation, one chapter per type, with examples that `ruby tools/check_reference.rb` runs and compares.
 - [DESIGN.md](DESIGN.md): the design notes, with the reasons behind each decision (in Japanese).
 
 ## What is in the language
@@ -137,6 +138,7 @@ ruby test/test_samples.rb       # UPDATE=1 rewrites the expected outputs
 ruby test/test_cli.rb           # the command line, and whether the generated docs are up to date
 ruby test/test_sakelib.rb       # the library ports: each test/sakelib/X.sake prints what X.rb prints
 ruby test/test_sake_suite.rb    # Sake's test suite written in Sake (test/sake/*_test.sake, on sakelib/minitest.sake)
+ruby tools/check_reference.rb   # the built-in reference (docs/manual/*/ref): signatures, coverage, and every example
 ```
 
 ## Status
