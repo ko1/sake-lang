@@ -8,7 +8,7 @@ Here are output and input (`puts`, `print`, `p`, `pp`, `format`, `gets`, `warn`)
 
 `Kernel.puts(*Any)`
 
-Writes each argument on its own line to the output and returns nil (Ruby's `puts`). A String is written as is (a newline is added when it has none), nil is an empty line, any other value is written in its `to_s` form. Arrays and Tuples are written one element per line, nested ones flattened (an empty Array is an empty line). Without arguments it writes an empty line. A Struct value is written with its type's own `to_s(x)` when there is one, otherwise in the `#<struct ...>` form that `p` uses ([to_s](#to_s)).
+Writes each argument on its own line to the output and returns nil (Ruby's `puts`). A String is written as is (a newline is added when it has none), nil is an empty line, any other value is written in its `to_s` form. Arrays and Tuples are written one element per line, nested ones flattened (an empty Array is an empty line). Without arguments it writes an empty line. A class instance is written with its type's own `to_s(x)` when there is one, otherwise in the `#<struct ...>` form that `p` uses ([to_s](#to_s)).
 
 ```ruby
 puts("a", 1, :sym)
@@ -39,7 +39,7 @@ print(Array[1, 2], [3, 4], "\n") # => [1, 2][3, 4]
 
 `Kernel.p(*Any)`
 
-Writes each argument in its `inspect` form, one per line (Ruby's `p`): Strings quoted, Symbols as `:sym`, Struct values as `#<struct Point x=1, y=2>`, exception values as `#<KeyError: msg>`. The result is Ruby's: the value when there is one argument, a Tuple of the arguments when there are several, nil when there are none (the checker sees it the same way). A Struct value whose type defines `inspect(x)` is written with that.
+Writes each argument in its `inspect` form, one per line (Ruby's `p`): Strings quoted, Symbols as `:sym`, class instances as `#<struct Point x=1, y=2>`, exception values as `#<KeyError: msg>`. The result is Ruby's: the value when there is one argument, a Tuple of the arguments when there are several, nil when there are none (the checker sees it the same way). A class instance whose type defines `inspect(x)` is written with that.
 
 ```ruby
 x = p(1, "a")
@@ -197,7 +197,7 @@ p(Complex(1r, 2.5))              # => ((1/1)+2.5i)
 
 `Kernel.to_s(Any)`
 
-The String that `puts`, interpolation `"#{x}"` and `format`'s `%s` use for a value. A String is itself, nil is `""`, a Symbol is its name, numbers use Ruby's `to_s`, and Arrays, Tuples, Hashes, Sets, Records and Ranges are written as `inspect` writes them. A Struct value uses its type's `to_s(x)` when the type defines one (also one that comes from an included module), otherwise `#<struct T ...>`. It corresponds to Ruby's `x.to_s`; since Sake has no method calls on values, this one operation turns a value of any type into a String.
+The String that `puts`, interpolation `"#{x}"` and `format`'s `%s` use for a value. A String is itself, nil is `""`, a Symbol is its name, numbers use Ruby's `to_s`, and Arrays, Tuples, Hashes, Sets, Records and Ranges are written as `inspect` writes them. A class instance uses its type's `to_s(x)` when the type defines one (also one that comes from an included module), otherwise `#<struct T ...>`. It corresponds to Ruby's `x.to_s`; since Sake has no method calls on values, this one operation turns a value of any type into a String.
 
 ```ruby
 class Temp
@@ -216,7 +216,7 @@ p(to_s(:sym))                    # => "sym"
 
 `Kernel.inspect(Any)`
 
-The String that `p` writes for a value (Ruby's `x.inspect`): a String with quotes and escapes, a Symbol as `:sym`, nil as `"nil"`, a container with its elements inspected. A Struct value uses its type's `inspect(x)` when the type defines one (also from an included module), otherwise `#<struct T f=v, ...>`; an exception value is `#<E: message>`. `p`, `pp`, `format`'s `%p` and the elements inside a container are shown with it.
+The String that `p` writes for a value (Ruby's `x.inspect`): a String with quotes and escapes, a Symbol as `:sym`, nil as `"nil"`, a container with its elements inspected. A class instance uses its type's `inspect(x)` when the type defines one (also from an included module), otherwise `#<struct T f=v, ...>`; an exception value is `#<E: message>`. `p`, `pp`, `format`'s `%p` and the elements inside a container are shown with it.
 
 ```ruby
 module Pretty
@@ -236,7 +236,7 @@ p(Array[Box.new(1)])             # => [<pretty>]
 
 `Kernel.dup(Any)`
 
-A shallow copy of a value (Ruby's `obj.dup`): an Array, Tuple, Hash, Set, Record, Struct value or String becomes a new container holding the same elements (the elements' containers are shared). An Integer, Symbol, nil, true/false or Range is returned as is. The type is the original's. A Struct value whose type defines `dup(x)` gets that function (the result has the function's type). Inside a type's functions, copy an element with `Kernel.dup(@items)`: a bare `dup` resolves to the type's own.
+A shallow copy of a value (Ruby's `obj.dup`): an Array, Tuple, Hash, Set, Record, class instance or String becomes a new container holding the same elements (the elements' containers are shared). An Integer, Symbol, nil, true/false or Range is returned as is. The type is the original's. A class instance whose type defines `dup(x)` gets that function (the result has the function's type). Inside a type's functions, copy an element with `Kernel.dup(@items)`: a bare `dup` resolves to the type's own.
 
 ```ruby
 a = Array[Array[1], Array[2]]

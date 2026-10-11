@@ -21,7 +21,7 @@ Each row is the Ruby spelling (left), the Sake spelling (middle), and the reason
 | `{a: 1}` (a Hash) | `Hash[a: 1]`; `{a: 1}` is a Record | same |
 | `%w[a b]`, `%i[a b]` | `String["a", "b"]`, `Symbol[:a, :b]` | undecided (Tuple or Array) |
 | `PI = 3.14` | `def pi = 3.14`; a table is `once { ... }` | no value constants |
-| `Math::PI`, `ARGV`, `$stdout` | `Math.PI`, `ARGV`, `IO.stdout` | read as operations |
+| `Math::PI`, `ARGV`, `$stdout` | `Math.PI` (or `Math::PI`), `ARGV`, `IO.stdout` | read as operations |
 | `case x when Integer` | `case x in Integer` | there is no `===` |
 | `for x in xs` | `Array.each(xs) { \|x\| }` | iteration is an operation |
 | `$1`, `$~` | `m = String.match(s, re)`, then `m[1]` | no global variables |

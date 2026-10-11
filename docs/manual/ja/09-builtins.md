@@ -40,7 +40,7 @@ p(Math.PI > 3)                   # => true
 | `equal?(a, b)` | true/false | 同一性 |
 | `block_given?` | true/false | 今の関数がブロックを受けたか |
 
-- **定数は操作。** `Math::PI`、`Math::E`、`Float::INFINITY`、`Float::NAN`、`Float::EPSILON`、`Float::MAX`、`Float::MIN` は、`ARGV` と同じく操作として読みます（`Math.PI`）。Sake に値の定数は無く、他の入れ子の名前もありません。
+- **定数は操作。** `Math::PI`、`Math::E`、`Float::INFINITY`、`Float::NAN`、`Float::EPSILON`、`Float::MAX`、`Float::MIN` は、`ARGV` と同じく操作として読みます（`Math.PI`）。Sake に値の定数は無く、組み込みの定数もこれだけです（`A::B` のような入れ子の名前は名前空間で、値ではありません）。
 
 ## Integer / Float
 

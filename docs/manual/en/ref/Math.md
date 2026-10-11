@@ -2,7 +2,7 @@
 
 Math is the collection of elementary functions of Ruby's `Math` module. It is a namespace, not a type: there are no Math values. Every function takes a real number (Integer, Float, Rational) and the result is always a **Float** (`Math.sqrt(4)` is `2.0`; a Complex is not accepted). Only the two-argument functions `atan2` and `hypot`, and the exponent of `ldexp`, do not take a Rational: they take an Integer or a Float.
 
-Ruby's `Math::PI` and `Math::E` are the operations without arguments `Math.PI` and `Math.E` in Sake (Sake has no value constants). `Math.log(x, base)` takes a base as Ruby's does (an Integer or a Float).
+Ruby's `Math::PI` and `Math::E` are the operations without arguments `Math.PI` and `Math.E` in Sake (Sake has no value constants); `Math::PI` is also read in Ruby's form, as the same operation. `Math.log(x, base)` takes a base as Ruby's does (an Integer or a Float).
 
 An argument outside the domain (`sqrt(-1)`, `log(-1)`, `acos(2)`, ...) raises `Math::DomainError`, as in Ruby, which `rescue Math::DomainError => e` catches ([Exceptions and errors](../08-exceptions.md)). A NaN argument gives a NaN, and infinities follow IEEE (`log(0)` is `-Infinity`, `exp(1000)` is `Infinity`; no exception).
 

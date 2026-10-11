@@ -89,11 +89,13 @@ A program is a file and the files it requires. Its top level may contain:
   name order (the requiring file itself excepted); a glob that matches nothing is an error. Since
   definitions are collected first, the order matters only for top-level statements.
 
-- **Function definitions**: `def name(params) ... end` and `def name(params) = expr`.
+- **Function definitions**: `def name(params) ... end` and `def name(params) = expr` (by convention for a
+  short expression, as in Ruby style).
 - **Namespaced function definitions**: `def Type.name(params) ...`. This is equivalent to defining
   `name` inside `class Type`.
 - **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only
-  `def name(...)` (no receiver), `include Module`, and in a class `attr_reader`/`attr_accessor`/
+  `def name(...)` (no receiver), `include Module`, `module_function`, a nested `class` / `module`,
+  `Name = Struct.new(...)` (or `Exception.new(...)`), and in a class `attr_reader`/`attr_accessor`/
   `attr_writer` lines (§10.1).
   - `class` declares a **type** (a class) or adds operations to one, or to a built-in type
     such as `String`.
@@ -118,7 +120,7 @@ Rules:
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
-- Constants can only be assigned from `Struct.new`. Sake has **no value constants**. For a named
+- Constants can only be assigned from `Struct.new` (or `Exception.new`). Sake has **no value constants**. For a named
   value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error
   whose hint gives that function, and each use of `PI` gets the hint `pi`.
 
@@ -215,8 +217,9 @@ The error suggests the qualified form, and for a single step also the chain form
 
 A call without a receiver, `f(args)`, is resolved statically. The first match wins:
 
-1. the enclosing class or module, including its built-in operations, Struct accessors, and the
-   functions it includes ([§5.5](#55-include));
+1. the enclosing class or module, including its built-in operations, field readers and writers, and
+   the functions it includes ([§5.5](#55-include)); only the innermost one: inside `A::B`, a function
+   of `A` is called as `A.f(...)` (type and constant names, unlike functions, are looked up outward);
 2. top-level functions;
 3. `Kernel` (`puts`, `print`, `p`).
 
@@ -452,7 +455,7 @@ module's function (`Arithmetic.*: ...`).
   class that defines `coerce(b, a)`, giving a Tuple `[left, right]` as Ruby's protocol does,
   has the pair converted first and the operator run on it: `def coerce(m, other) = [Money.new(other * 100), m]`
   makes `2 + money` into `Money.new(200) + money`. The checker follows the conversion.
-- **Equality.** `==` on Struct values compares the type and the fields, as Ruby's Struct does,
+- **Equality.** `==` on class instances compares the type and the fields, as Ruby's Struct does,
   unless the type defines its own `==`. A type that includes `Comparable` and defines `<=>` (and not
   `==`) is equal to a value of the same type when `<=>` gives 0, as Ruby's `Comparable#==`; a value
   of another type, such as nil, is never equal, and `<=>` is not called. `Array.include?`, `index`, and similar operations use the
@@ -577,7 +580,7 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
 ```ruby
 class Account
   attr_reader owner
-  attr_accessor balance = 0
+  attr_accessor balance
   ...
 end
 ```
@@ -622,8 +625,8 @@ Every `class` is a type. Its fields are declared in the body of its first `class
 - **`class B < A`.** Shorthand for writing A's definitions in B: A's fields come first (then B's),
   A's functions are B's too (with unqualified names and `@x` inside them meaning B's), and A's
   `include`s are B's. B's own definition of a function wins over A's. Nothing relates A and B
-  afterwards: a B is not an A, and `A.f(b)` is a type error. `<` takes a class of the program (or a
-  `Struct.new` type); a module is included with `include`.
+  afterwards: a B is not an A, and `A.f(b)` is a type error. `<` takes any class of the program (also
+  `Struct.new(...)` written in place); a module is included with `include`.
 - **`class E < Exception`** (or `< StandardError`) declares an exception type: `message` is its first
   field, then the fields of its `attr_*` lines.
 - **`Struct.new(:x, :y)`.** Shorthand for `class C` with `attr_accessor x, y`; `class C < Struct.new(:x, :y)`
@@ -670,9 +673,9 @@ This defines the namespace `Point` with the following operations:
   - The usual runtime check applies: the first argument must be a Point.
   - `@x` is a static error in each of these cases: outside a function of a class, in a function
     with no parameters, and when the field does not exist.
-- **Printing.** `p` prints a Struct value as `#<struct Point x=1, y=2>`. `puts` prints it the same way.
-- **`Struct.new` restrictions.** It must be assigned to a top-level constant. It takes symbols
-  only, and no block.
+- **Printing.** `p` prints a class instance as `#<struct Point x=1, y=2>`. `puts` prints it the same way.
+- **`Struct.new` restrictions.** It must be assigned to a constant, at the top level or directly in a
+  class or module body (`Geo::Point`). It takes symbols only, and no block.
 - **No `Data.define`.** `Data.define` is rejected with a hint to use `Struct.new`. Ruby's `Data` is
   immutable, but Sake's named types are mutable, which is what Ruby's `Struct` provides.
 
@@ -738,7 +741,7 @@ shape fixes its type at creation. A growable collection is made by an operation 
   - A field the Record does not have raises `KeyError`.
   - A value that is not a Record raises `TypeError`.
 - **Restrictions.** Field names are written as labels (`x:`). An empty `{}` and `{key => value}`
-  are static errors, because a Hash is not available yet.
+  are static errors, with a hint to write `Hash[]` / `Hash[key => value]`: the braces are a Record's.
 
 **Array.** `Array[a, ...]` creates an Array with no declared element type. Any value can be added
 to it.
@@ -773,10 +776,10 @@ followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
 - **Keys and elements.** Hash keys and Set elements compare as Ruby's `eql?` does: by value, with the type
   included, so `1` and `1.0` are different keys (`Hash[1 => "a"][1.0]` is nil; `Set[1, 1.0]` has two elements),
   while `1 == 1.0` is true. Allowed: Integer, Float,
-  String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and Struct values
+  String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and class instances
   made of these. Not allowed (`TypeError`): Regexp, Range, and values of a class that defines
   its own equality (`==`, or `Comparable` with `<=>`), whose keys could disagree with that equality.
-  As in Ruby, changing an Array, Hash, Set, or Struct value after using it as a key makes it
+  As in Ruby, changing an Array, Hash, Set, or class instance after using it as a key makes it
   unfindable.
 - **Keys are copied.** A Tuple or Record key is copied when it is stored, so a later write to the
   original does not change the key.
@@ -907,7 +910,7 @@ one.
 | `Integer(x)`, `Float(x)` | Integer, Float | Ruby's strict conversions; `ArgumentError` on bad input |
 | `rand`, `rand(n)` | Float, or Integer/Float below n | |
 | `loop { }` | the value of a `break` | runs the block until a `break` |
-| `dup(x)` | a copy of x | Ruby's `obj.dup`: new containers and Struct values, the same elements; a type that defines `dup` gets its own |
+| `dup(x)` | a copy of x | Ruby's `obj.dup`: new containers and class instances, the same elements; a type that defines `dup` gets its own |
 
 `Math::PI`, `Math::E`, `Float::INFINITY`, `Float::NAN`, `Float::EPSILON`, `Float::MAX`, `Float::MIN` are read as
 operations (`Math.PI`), as `ARGV` is: Sake has no value constants (a nested name such as `A::B` is a

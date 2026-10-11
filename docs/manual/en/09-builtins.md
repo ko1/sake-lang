@@ -40,7 +40,7 @@ p(Math.PI > 3)                   # => true
 | `equal?(a, b)` | true/false | identity |
 | `block_given?` | true/false | whether the current function got a block |
 
-- **Constants are operations.** `Math::PI`, `Math::E`, `Float::INFINITY`, `Float::NAN`, `Float::EPSILON`, `Float::MAX`, `Float::MIN` are read as operations (`Math.PI`), as `ARGV` is. Sake has no value constants, and no other nested names.
+- **Constants are operations.** `Math::PI`, `Math::E`, `Float::INFINITY`, `Float::NAN`, `Float::EPSILON`, `Float::MAX`, `Float::MIN` are read as operations (`Math.PI`), as `ARGV` is. Sake has no value constants, and no other built-in constants (a nested name such as `A::B` is a namespace, never a value).
 
 ## Integer / Float
 

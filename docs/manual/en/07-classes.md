@@ -205,7 +205,7 @@ p(String.upcase(Heap.top(words)))    # => "JOB"
 - A's `include`s are B's.
 - B's own definition of a function wins over A's.
 - Nothing relates A and B afterwards. A B is not an A: `A.f(b)` is a type error, and `b in A` is false.
-- `<` takes a class of the program (or a `Struct.new` type). A module is included with `include`.
+- `<` takes any class of the program, also `Struct.new(...)` written in place (`class P < Struct.new(:x)`). A module is included with `include`.
 
 ```ruby
 class Shape
@@ -371,11 +371,11 @@ def far(pt) = @x > 100               # !> `@x` means a field of the first argume
 
 ### Printing
 
-`p` prints a Struct value as `#<struct Point x=1, y=2>`. `puts` prints it the same way.
+`p` prints a class instance as `#<struct Point x=1, y=2>`. `puts` prints it the same way.
 
 ### Restrictions of Struct.new
 
-`Struct.new` must be assigned to a top-level constant. It takes symbols only, and no block; functions are defined in `class Point`.
+`Struct.new` must be assigned to a constant, at the top level or directly in a class or module body (`module Geo` with `Point = Struct.new(:x, :y)` makes `Geo::Point`). It takes symbols only, and no block; functions are defined in `class Point`.
 
 There is no `Data.define`: it is rejected with a hint to use `Struct.new`. Ruby's `Data` is immutable, but Sake's named types are mutable, which is what Ruby's `Struct` provides.
 
@@ -385,7 +385,7 @@ Point = Data.define(:x, :y)          # !> Sake's named types are mutable, so the
 
 ### Copying: Kernel.dup
 
-`Kernel.dup(x)` is a shallow copy: new containers and Struct values, the same elements. A type that defines `dup` gets its own.
+`Kernel.dup(x)` is a shallow copy: new containers and class instances, the same elements. A type that defines `dup` gets its own.
 
 ```ruby
 Point = Struct.new(:x, :y)

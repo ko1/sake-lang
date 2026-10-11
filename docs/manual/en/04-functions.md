@@ -4,7 +4,7 @@ This chapter covers the functions defined with `def` and the blocks passed to ca
 
 ## Functions
 
-A function is defined with `def`, and its calls are checked against its parameter count and keyword names. Both the one-line `def f(x) = expr` and the form closed by `end` are available.
+A function is defined with `def`, and its calls are checked against its parameter count and keyword names. Both the one-line `def f(x) = expr` and the form closed by `end` are available; as in Ruby style, the one-line form is for a short expression, and a body of several steps goes in `def ... end`.
 
 ```ruby
 def area(w, h) = w * h

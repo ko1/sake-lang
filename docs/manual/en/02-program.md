@@ -286,7 +286,7 @@ p(pt.x)                      # !> method call on a value `pt.x` is not allowed
 
 A call without a receiver, `f(args)`, is resolved before running. The search goes in this order, and the first match wins.
 
-1. The enclosing class or module, including its built-in operations, Struct accessors, and the functions it includes.
+1. The enclosing class or module, including its built-in operations, field readers and writers, and the functions it includes. Only the innermost one: inside `A::B`, a function of `A` is called as `A.f(...)` (names of types, unlike functions, are looked up outward).
 2. Top-level functions.
 3. `Kernel` (`puts`, `print`, `p`).
 

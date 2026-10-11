@@ -2,7 +2,7 @@
 
 Math は Ruby の `Math` モジュールにあたる初等関数の集まりです。型ではなく名前空間で、Math の値はありません。どの関数も実数（Integer、Float、Rational）を取り、結果は常に **Float** です（`Math.sqrt(4)` は `2.0`。Complex は渡せません）。`atan2` と `hypot` の 2 引数の関数と `ldexp` の指数だけは Rational を取らず、Integer か Float です。
 
-Ruby の `Math::PI`・`Math::E` は Sake では引数なしの操作 `Math.PI`・`Math.E` です（Sake に値の定数はありません）。`Math.log(x, base)` は Ruby と同じく底を取れます（Integer か Float）。
+Ruby の `Math::PI`・`Math::E` は Sake では引数なしの操作 `Math.PI`・`Math.E` です（Sake に値の定数はありません）。`Math::PI` と Ruby の形で書いても同じ操作として読みます。`Math.log(x, base)` は Ruby と同じく底を取れます（Integer か Float）。
 
 定義域の外の引数（`sqrt(-1)`、`log(-1)`、`acos(2)` など）は Ruby と同じく `Math::DomainError` を投げ、`rescue Math::DomainError => e` で受けられます（[例外とエラー](../08-exceptions.md)）。NaN を渡せば NaN が返り、無限大は IEEE の規則に従います（`log(0)` は `-Infinity`、`exp(1000)` は `Infinity`。例外は出ません）。
 

@@ -44,7 +44,7 @@ p(format("%05.1f|%-3s|%3d", 3.14159, "a", 7), Integer.to_s(255, 16))
 - `Set[1, 2]`, `1..5`, `1...n`, `1..`, `:sym`, `/re/i`, `2r`, `"a#{x}"` as in Ruby. `Regexp.new(s, "i")`.
 - No `%w[]`/`%i[]`, no `<<` on String or Array (use `s += t`, `Array.push(xs, x)`).
 - No value constants: `LIMIT = 10` is rejected; write `def limit = 10`. Constants hold only
-  `Struct.new` and `Exception.new`. `Math.PI`, `Float.INFINITY`, `ARGV` are operations.
+  `Struct.new` and `Exception.new`. `Math.PI` (also `Math::PI`), `Float.INFINITY`, `ARGV` are operations.
 
 ```ruby
 t = [1, "one"]
@@ -134,7 +134,7 @@ p(Array.each(Array[3, 12, 5]) { |x| break x if x > 10 })
 ```
 
 ### Functions, classes, fields
-- `def f(a, b = 1, *rest, k: 2, **opts)`, `def f(x) = expr`; `return a, b` returns a Tuple.
+- `def f(a, b = 1, *rest, k: 2, **opts)`, `def f(x) = expr` (short expressions only); `return a, b` returns a Tuple.
   Top-level functions cannot see top-level locals. `*rest` is an Array, so its elements share one
   type; to keep a type per position, pass a Tuple (`f(["AAPL", 120])`). `f(**opts)` cannot pass
   keywords on (pass the Hash positionally).
@@ -227,7 +227,9 @@ module Util
 end
 class Log
   attr_reader lines
-  def print(l, *xs) = Array.push(@lines, Array.join(Array.map(xs) { Kernel.to_s(it) }, ""))
+  def print(l, *xs)
+    Array.push(@lines, Array.join(Array.map(xs) { Kernel.to_s(it) }, ""))
+  end
 end
 def out(io, a, b) = (IO|Log).print(io, a, b)
 p(Shape.describe(Sq.new(3)))

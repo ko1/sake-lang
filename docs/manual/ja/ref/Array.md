@@ -6,7 +6,7 @@ Array は長さが変わる並びです。`Array[1, 2, 3]` が Array を作り�
 
 要素が無いことを nil で表す操作が 2 種類あります。「外した nil」（`x[k]`、`first`、`last`、`pop`、`shift`、`min`、`max`、`minmax`、`min_by`、`max_by`、`minmax_by`、`at`、`slice`、`slice!`、`dig`、`sample`、`delete_at`。空の Array や範囲外の添字）を未検査で使うのは `--strict=3` の `index-nil` の問題で、`--strict`（レベル 2）は見逃します。`find`、`index`、`find_index`、`rindex`、`bsearch`、`delete`、`uniq!` など、それ以外の nil はレベル 2 の `nil` の問題です（[概要](../01-overview.md)）。
 
-Array に使える演算子は `+`、`-`、`*`、`==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>`（2 つの Array を辞書順に比べる）と添字 `a[i]`、`a[i, n]`、`a[range]`、`a[i] = v` です。`Array.+(x, y)` などはその演算子を関数の形で呼ぶものです（[演算子と添字](../05-operators.md)）。要素を比べる操作（`sort`、`min`、`max`、`<` など）は、要素が互いに比べられる型でなければなりません。Integer と Float は混ぜて比べられ、Tuple は要素ごとに、Struct 値はその型の `<=>`（`include Comparable`）で比べます。
+Array に使える演算子は `+`、`-`、`*`、`==`、`!=`、`<`、`<=`、`>`、`>=`、`<=>`（2 つの Array を辞書順に比べる）と添字 `a[i]`、`a[i, n]`、`a[range]`、`a[i] = v` です。`Array.+(x, y)` などはその演算子を関数の形で呼ぶものです（[演算子と添字](../05-operators.md)）。要素を比べる操作（`sort`、`min`、`max`、`<` など）は、要素が互いに比べられる型でなければなりません。Integer と Float は混ぜて比べられ、Tuple は要素ごとに、クラスのインスタンスはその型の `<=>`（`include Comparable`）で比べます。
 
 ブロックを取る操作は Ruby と同じ形で書きます（`Array.map(xs) { |x| x * 2 }`）。Ruby の Enumerator（ブロック無しの `each` など）はありません。ブロックが省ける操作（`each_with_index`、`each_slice`、`each_cons`）は、ブロック無しでは結果を Array で返します。
 
@@ -752,7 +752,7 @@ p(Array.drop_while(xs) { |x| x < 3 })  # => [3, 4]
 
 `Array.include?(x, Any)`
 
-`v` と `==` で等しい要素があるとき true。Struct 値はその型の等しさで比べます（[演算子と添字](../05-operators.md)）。
+`v` と `==` で等しい要素があるとき true。クラスのインスタンスはその型の等しさで比べます（[演算子と添字](../05-operators.md)）。
 
 ```ruby
 p(Array.include?(Array[1, 2], 2))          # => true
@@ -933,7 +933,7 @@ Array.reduce(Array[1, 2]) { |acc, x| acc + x }    # !> wrong number of arguments
 
 `Array.max(x)`
 
-最小・最大の要素。空の Array では nil（「外した nil」。レベル 3 だけが報告します）。要素は互いに比べられなければなりません: 比べられない型の組（Integer と String など）が要素型にあれば静的に `type` の問題（`elements compared in order may be (Integer, String), which cannot be compared`）、要素が nil になり得れば `nil` の問題です。検査器に見えない比較の失敗（`Float.NAN` など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられます。Struct 値はその型の `<=>`（`include Comparable`）で比べます。Ruby の `min(n)` やブロック形はありません。
+最小・最大の要素。空の Array では nil（「外した nil」。レベル 3 だけが報告します）。要素は互いに比べられなければなりません: 比べられない型の組（Integer と String など）が要素型にあれば静的に `type` の問題（`elements compared in order may be (Integer, String), which cannot be compared`）、要素が nil になり得れば `nil` の問題です。検査器に見えない比較の失敗（`Float.NAN` など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられます。クラスのインスタンスはその型の `<=>`（`include Comparable`）で比べます。Ruby の `min(n)` やブロック形はありません。
 
 ```ruby
 xs = Array[3, 1, 4, 1, 5]
@@ -1010,7 +1010,7 @@ p(Array.tally(Array["a", "b", "a"]))   # => {"a" => 2, "b" => 1}
 
 `Array.sort!(x)`
 
-要素を昇順に並べた新しい Array（`sort`）、または主語をその場で並べ替えて返します（`sort!`）。Ruby の比較ブロックは取れず（静的エラー）、別の順で並べるには `sort_by` を使います。要素は互いに比べられなければなりません: 比べられない型の組が要素型にあれば静的に `type` の問題、要素が nil になり得れば `nil` の問題（nil を除くには `compact`）。検査器に見えない比較の失敗（`Float.NAN` など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられ、Tuple は要素ごとに、Struct 値はその型の `<=>` で比べます。
+要素を昇順に並べた新しい Array（`sort`）、または主語をその場で並べ替えて返します（`sort!`）。Ruby の比較ブロックは取れず（静的エラー）、別の順で並べるには `sort_by` を使います。要素は互いに比べられなければなりません: 比べられない型の組が要素型にあれば静的に `type` の問題、要素が nil になり得れば `nil` の問題（nil を除くには `compact`）。検査器に見えない比較の失敗（`Float.NAN` など）は実行時に `ArgumentError`。Integer と Float は混ぜて比べられ、Tuple は要素ごとに、クラスのインスタンスはその型の `<=>` で比べます。
 
 ```ruby
 xs = Array[3, 1, 2]
@@ -1263,7 +1263,7 @@ p(Array.intersect?(Array[1, 2], Array[9]))     # => false
 
 `Array.join(x, [String])`
 
-各要素を `to_s` で文字列にして、`sep`（既定 `""`）で区切ってつなげた String。`to_s` は `puts` と同じ規則で、nil は空、Array と Tuple は `inspect` の形、Struct 値はその型の `to_s` です（[値と型](../03-values.md)）。
+各要素を `to_s` で文字列にして、`sep`（既定 `""`）で区切ってつなげた String。`to_s` は `puts` と同じ規則で、nil は空、Array と Tuple は `inspect` の形、クラスのインスタンスはその型の `to_s` です（[値と型](../03-values.md)）。
 
 ```ruby
 p(Array.join(Array[1, 2, 3], ", "))            # => "1, 2, 3"

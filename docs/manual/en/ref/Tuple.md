@@ -78,7 +78,7 @@ p(Tuple.length([]))              # => 0
 
 `Tuple.min(x)`
 
-The largest or smallest element (Ruby's `[a, b].max`). Since each position's type is known, whether the elements are comparable with each other is checked statically: an incomparable pair (an Integer and a String, say) is a `type` problem (`elements compared in order may be (Integer, String), which cannot be compared`), and a position that may be nil a `nil` problem. A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. The empty Tuple `[]` gives nil. Struct values compare with their type's `<=>` (`include Comparable`). The result's type is the join of the positions' types; for a non-empty Tuple it is never nil.
+The largest or smallest element (Ruby's `[a, b].max`). Since each position's type is known, whether the elements are comparable with each other is checked statically: an incomparable pair (an Integer and a String, say) is a `type` problem (`elements compared in order may be (Integer, String), which cannot be compared`), and a position that may be nil a `nil` problem. A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. The empty Tuple `[]` gives nil. class instances compare with their type's `<=>` (`include Comparable`). The result's type is the join of the positions' types; for a non-empty Tuple it is never nil.
 
 ```ruby
 p(Tuple.max([3, 1, 2]))          # => 3

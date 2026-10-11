@@ -377,7 +377,7 @@ module Sake
           spec.merge!(fields: dt.fields.dup, readers: dt.fields.dup, writers: dt.fields.dup, exception: dt.exception, parent: pname)
         else
           error(sup, "`class #{name} < #{pname}`: #{pname} is not a class of this program",
-                @module_names.include?(pname) ? ["to borrow a module's functions, write `include #{pname}` in the body"] : [])
+                @module_names.include?(pname) ? ["to copy a module's functions, write `include #{pname}` in the body"] : [])
         end
       end
       attr_lines(first).each do |st|
@@ -1393,7 +1393,7 @@ module Sake
 
     def resolve_qualified(node, ns, name = node.name.to_s, argc: nil, from: nil)
       if (ns == "Struct" && name == "new") || (ns == "Data" && name == "define")
-        return error(node, "Struct.new must be assigned to a top-level constant: `Point = Struct.new(:x, :y)`")
+        return error(node, "Struct.new must be assigned to a constant (at the top level or in a class/module body): `Point = Struct.new(:x, :y)`")
       end
       if name == "initialize" && @struct_types.key?(ns)
         return error(node, "#{ns}.initialize is called by #{ns}.new; call #{ns}.new instead")

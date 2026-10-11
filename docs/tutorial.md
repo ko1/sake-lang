@@ -28,7 +28,8 @@ A program can be split into files: `require "lib/web"` at the top of a file read
 next to it, once. The argument is a string literal, so the files are known before running, and
 messages name the file of each line. `bin/sake -c FILE.sake` only checks the program. Exit status is 0 on success, 1 for an error while
 running, and 2 for a problem found before running. To try Sake in a browser, with completion and the
-inferred types on hover, build the playground in [ide/](../ide/README.md).
+inferred types on hover, open the playground at <https://ko1.github.io/sake-lang/playground/>
+([ide/](../ide/README.md) builds it).
 
 How much is checked before running is set with `--strict`:
 
@@ -274,7 +275,8 @@ $ sake functions.sake
 [1, 2]
 ```
 
-- `def f(x) = expr` is the one-line form.
+- `def f(x) = expr` is the one-line form, for a short expression; a body of several steps goes in
+  `def ... end`.
 - `return a, b` and the literal `[a, b]` both make a **Tuple**. `x, y = t` takes it apart.
 - Parameters may have defaults, and keyword parameters come last, as in Ruby:
   `def greet(name, greeting = "Hello", punct: "!")`, called as `greet("Ruby", punct: "?")`. The callee
@@ -863,8 +865,8 @@ $ sake modules.sake
 ```
 
 A module states what each includer must define with a function whose body is only
-`raise NotImplementedError`. A missing definition, a `class` that is not a type, and a direct call
-to a function that needs its includer are reported before running:
+`raise NotImplementedError`. A missing definition and a direct call to a function that needs its
+includer are reported before running:
 
 ```ruby
 module Shape                             # a body of only `raise NotImplementedError`: each includer defines it
@@ -899,16 +901,13 @@ end
 module Empty
   include Summary
 end
-class Helpers
-  def twice(x) = x * 2
-end
 puts(Summary.total(1))
 ```
 
 ```
 $ sake module_errors.sake
 module_errors.sake:5:3: error: `include Summary` in Empty: Summary.total needs `each`, which Empty does not define (used at line 2)
-module_errors.sake:10:14: error: Summary.total is a mixin function, and no type includes Summary
+module_errors.sake:7:14: error: Summary.total is a mixin function, and no type includes Summary
   hint: to call it as Summary.total(...), mark it with `module_function`
 (exit status 2)
 ```
@@ -1032,6 +1031,20 @@ door: door
 top: top
 door: door
 ```
+
+### Nested namespaces
+
+Namespaces nest as in Ruby: a `class B` (or `module B`, or `B = Struct.new(...)`) written inside
+`module A` is `A::B`, called from outside as `A::B.f(x)` and matched as `x in A::B`. Inside `A`, a bare
+`B` means `A::B`. Functions are not looked up outward: inside `A::B`, a module function of `A` is
+`A.f(...)`.
+
+### Enum
+
+The prelude, read before every program, defines `Enum`: Ruby's Enumerable under a short name.
+`Enum.map(x) { }`, `Enum.select`, `Enum.reduce(x, init) { }` and the others dispatch on `x`'s type,
+an Array, Hash, Set or Range. A class joins with `include Enum` and a `def each(c)` that yields each
+element; the other functions are then copied into it, so `C.map(c) { }` works too.
 
 ## 9. Tuples, Records, and arrays
 
@@ -1231,7 +1244,7 @@ note: RENT DUE
 
 ### Where a type is worth writing
 
-A function needs no type: its operations say what it accepts. A Struct's field needs none either:
+A function needs no type: its operations say what it accepts. A class's field needs none either:
 its type comes from the values written to it, which `T.new` and `T.set_x` show. The one place a type
 pays is an Array that is filled later. Made with `Array[]`, its element type is whatever gets pushed,
 so a wrong value is reported where the elements are used, far from where it went in:
@@ -1415,7 +1428,8 @@ $ sake --strict strict.sake
 ## 12. Exceptions
 
 `raise`, `rescue`, `else`, `ensure`, and `retry` work as in Ruby. An exception type is declared with
-`Exception.new`: it is a class whose first field is `message`. There is no hierarchy, so a
+`class E < Exception` and its `attr_reader` lines, or with the shorthand `Exception.new(:field)`: it
+is a class whose first field is `message`. There is no hierarchy, so a
 `rescue` lists the types it catches.
 
 ```ruby
@@ -1568,8 +1582,8 @@ fields:
 
 ## 15. Putting it together
 
-A bank account with a transaction history. Its fields are read-only from outside (`reader:`); the
-functions in its class change them through `@balance` and `@history`. The history is made with
+A bank account with a transaction history. Its fields are read-only from outside (`attr_reader`);
+the functions in its class change them through `@balance` and `@history`. The history is made with
 `Tuple[]` and holds `[kind, amount]` Tuples tagged by a Symbol, which a `do |kind, amount|` block
 takes apart.
 

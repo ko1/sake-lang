@@ -8,7 +8,7 @@ Kernel はプログラム全体から名前だけで呼べる操作の集まり�
 
 `Kernel.puts(*Any)`
 
-各引数を 1 行ずつ出力に書き、nil を返します（Ruby の `puts`）。String はそのまま（末尾に改行が無ければ足す）、nil は空行、他の値は `to_s` の形です。Array と Tuple は要素を 1 行ずつ、入れ子も平らにして書きます（空の Array は空行）。引数が無ければ空行です。Struct 値は型自身の `to_s(x)` があればそれで、無ければ `p` と同じ `#<struct ...>` の形で書きます（[to_s](#to_s)）。
+各引数を 1 行ずつ出力に書き、nil を返します（Ruby の `puts`）。String はそのまま（末尾に改行が無ければ足す）、nil は空行、他の値は `to_s` の形です。Array と Tuple は要素を 1 行ずつ、入れ子も平らにして書きます（空の Array は空行）。引数が無ければ空行です。クラスのインスタンスは型自身の `to_s(x)` があればそれで、無ければ `p` と同じ `#<struct ...>` の形で書きます（[to_s](#to_s)）。
 
 ```ruby
 puts("a", 1, :sym)
@@ -39,7 +39,7 @@ print(Array[1, 2], [3, 4], "\n") # => [1, 2][3, 4]
 
 `Kernel.p(*Any)`
 
-各引数を `inspect` の形で 1 行ずつ書きます（Ruby の `p`）。String は引用符付き、Symbol は `:sym`、Struct 値は `#<struct Point x=1, y=2>`、例外値は `#<KeyError: msg>` です。戻り値は Ruby と同じく、引数が 1 つならその値、複数なら引数の Tuple、無ければ nil（検査器もそう見ます）。型自身の `inspect(x)` を持つ Struct 値はそれで書きます。
+各引数を `inspect` の形で 1 行ずつ書きます（Ruby の `p`）。String は引用符付き、Symbol は `:sym`、クラスのインスタンスは `#<struct Point x=1, y=2>`、例外値は `#<KeyError: msg>` です。戻り値は Ruby と同じく、引数が 1 つならその値、複数なら引数の Tuple、無ければ nil（検査器もそう見ます）。型自身の `inspect(x)` を持つ クラスのインスタンスはそれで書きます。
 
 ```ruby
 x = p(1, "a")
@@ -197,7 +197,7 @@ p(Complex(1r, 2.5))              # => ((1/1)+2.5i)
 
 `Kernel.to_s(Any)`
 
-値を `puts`・文字列補間 `"#{x}"`・`format` の `%s` が使う形の String にします。String はそのまま、nil は `""`、Symbol は名前、数は Ruby の `to_s`、Array・Tuple・Hash・Set・Record・Range は `inspect` と同じ形です。Struct 値は、その型が `to_s(x)` を定義していればそれを呼び（`include` したモジュールのものでも）、無ければ `#<struct T ...>` です。Ruby の `x.to_s` に相当しますが、Sake では値へのメソッド呼び出しが無いので、どの型の値もこの 1 つの操作で文字列にします。
+値を `puts`・文字列補間 `"#{x}"`・`format` の `%s` が使う形の String にします。String はそのまま、nil は `""`、Symbol は名前、数は Ruby の `to_s`、Array・Tuple・Hash・Set・Record・Range は `inspect` と同じ形です。クラスのインスタンスは、その型が `to_s(x)` を定義していればそれを呼び（`include` したモジュールのものでも）、無ければ `#<struct T ...>` です。Ruby の `x.to_s` に相当しますが、Sake では値へのメソッド呼び出しが無いので、どの型の値もこの 1 つの操作で文字列にします。
 
 ```ruby
 class Temp
@@ -216,7 +216,7 @@ p(to_s(:sym))                    # => "sym"
 
 `Kernel.inspect(Any)`
 
-値を `p` が書く形の String にします（Ruby の `x.inspect`）: String は引用符とエスケープ付き、Symbol は `:sym`、nil は `"nil"`、容器は要素を `inspect` した形です。Struct 値は、その型が `inspect(x)` を定義していればそれ（`include` したモジュールのものでも）、無ければ `#<struct T f=v, ...>`、例外値は `#<E: message>` です。`p`、`pp`、`format` の `%p`、容器の中の要素の表示がこれを使います。
+値を `p` が書く形の String にします（Ruby の `x.inspect`）: String は引用符とエスケープ付き、Symbol は `:sym`、nil は `"nil"`、容器は要素を `inspect` した形です。クラスのインスタンスは、その型が `inspect(x)` を定義していればそれ（`include` したモジュールのものでも）、無ければ `#<struct T f=v, ...>`、例外値は `#<E: message>` です。`p`、`pp`、`format` の `%p`、容器の中の要素の表示がこれを使います。
 
 ```ruby
 module Pretty
@@ -236,7 +236,7 @@ p(Array[Box.new(1)])             # => [<pretty>]
 
 `Kernel.dup(Any)`
 
-値の浅い複製（Ruby の `obj.dup`）: Array、Tuple、Hash、Set、Record、Struct 値、String は新しい容器になり、中の要素は同じ値のままです（要素の容器は共有されます）。Integer、Symbol、nil、true/false、Range はそのままの値が返ります。型は元と同じです。その型が `dup(x)` を定義している Struct 値には、それを呼びます（戻り値はその関数の型）。型の関数の中で要素を複製するときは `Kernel.dup(@items)` と書きます。裸の `dup` は型自身の `dup` に解決されるからです。
+値の浅い複製（Ruby の `obj.dup`）: Array、Tuple、Hash、Set、Record、クラスのインスタンス、String は新しい容器になり、中の要素は同じ値のままです（要素の容器は共有されます）。Integer、Symbol、nil、true/false、Range はそのままの値が返ります。型は元と同じです。その型が `dup(x)` を定義している クラスのインスタンスには、それを呼びます（戻り値はその関数の型）。型の関数の中で要素を複製するときは `Kernel.dup(@items)` と書きます。裸の `dup` は型自身の `dup` に解決されるからです。
 
 ```ruby
 a = Array[Array[1], Array[2]]

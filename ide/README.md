@@ -2,8 +2,8 @@
 
 Sake on ruby.wasm (Ruby 4.0): an editor on the left, the result on the right.
 
-- **Editor** (CodeMirror 6): completion of operations after `T.` (built-in and your own: `new`, `get_x`, functions), of type names after `x.` (a chain `x.T.op`), and of variables, functions and keywords; diagnostics as you type (errors at the chosen strict level, warnings for the items above it, with hints); hover for the inferred type of a variable or call, and a function's signature on its `def`. Ctrl/Cmd-Enter runs.
-- **Result**: Output (what `sake --strict=LEVEL` prints, with stdin), Types (problems, functions' inferred signatures, Struct fields, Arrays), SakeAST.
+- **Editor** (CodeMirror 6): completion of operations after `T.` (built-in and your own: `new`, field readers and writers `x` / `set_x`, functions), of type names after `x.` (a chain `x.T.op`), and of variables, functions and keywords; diagnostics as you type (errors at the chosen strict level, warnings for the items above it, with hints); hover for the inferred type of a variable or call, and a function's signature on its `def`. Ctrl/Cmd-Enter runs.
+- **Result**: Output (what `sake --strict=LEVEL` prints, with stdin), Types (problems, functions' inferred signatures, the fields of classes, Arrays), SakeAST.
 - Two Web Workers run Ruby: one analyzes as you type, the other runs the program. A run longer than 10 s, or Stop, restarts the running one only.
 - Ruby side: `lib/sake/ide.rb` (`Sake::IDE.dispatch`, JSON in and out; tests in `test/test_ide.rb`). `src/sake_loader.rb` loads lib/ from bundled strings in place of files, and writes the bundled `sakelib/*.sake` into the VM's in-memory file system, so `require "json"` works. The Types pane and the diagnostics show the editor's file only; a static error in a required file shows on line 1 naming that file.
 

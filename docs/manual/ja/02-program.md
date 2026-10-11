@@ -285,7 +285,7 @@ p(pt.x)                      # !> method call on a value `pt.x` is not allowed
 
 レシーバ無しの `f(args)` は実行前に解決されます。次の順に探し、最初に見つかったものが勝ちます。
 
-1. 囲んでいる class か module。その組み込みの操作、Struct のアクセサ、include した関数を含みます。
+1. 囲んでいる class か module。その組み込みの操作、フィールドの reader と writer、include した関数を含みます。一番内側のものだけで、`A::B` の中から `A` の関数は `A.f(...)` と呼びます（型の名前は関数と違って外側へ探します）。
 2. トップレベルの関数。
 3. `Kernel`（`puts`、`print`、`p`）。
 

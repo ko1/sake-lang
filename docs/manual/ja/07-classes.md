@@ -205,7 +205,7 @@ p(String.upcase(Heap.top(words)))    # => "JOB"
 - A の `include` は B のものです。
 - B 自身の定義が A のものに勝ちます。
 - その後 A と B は無関係です。B は A ではなく、`A.f(b)` は型エラーで、`b in A` は偽です。
-- `<` はプログラムの class（または `Struct.new` の型）を取ります。module は `include` します。
+- `<` はプログラムのどの class でも取り、その場に書いた `Struct.new(...)` も取ります（`class P < Struct.new(:x)`）。module は `include` します。
 
 ```ruby
 class Shape
@@ -371,11 +371,11 @@ def far(pt) = @x > 100               # !> `@x` means a field of the first argume
 
 ### 印字
 
-`p` は Struct 値を `#<struct Point x=1, y=2>` と印字します。`puts` も同じです。
+`p` は クラスのインスタンスを `#<struct Point x=1, y=2>` と印字します。`puts` も同じです。
 
 ### Struct.new の制限
 
-`Struct.new` はトップレベルの定数に代入しなければなりません。Symbol だけを取り、ブロックは取りません。関数は `class Point` の中で定義します。
+`Struct.new` は定数に代入しなければなりません。定数はトップレベルか、class / module の本体の直下に置きます（`module Geo` の中の `Point = Struct.new(:x, :y)` は `Geo::Point`）。Symbol だけを取り、ブロックは取りません。関数は `class Point` の中で定義します。
 
 `Data.define` は無く、`Struct.new` を使う hint 付きで拒否されます。Ruby の `Data` は不変ですが、Sake の名前付き型は可変で、それは Ruby の `Struct` が提供するものです。
 
@@ -385,7 +385,7 @@ Point = Data.define(:x, :y)          # !> Sake's named types are mutable, so the
 
 ### 複製: Kernel.dup
 
-`Kernel.dup(x)` は浅い複製です。新しい容器と Struct 値を作り、要素は同じものを共有します。型が `dup` を定義していればそれが呼ばれます。
+`Kernel.dup(x)` は浅い複製です。新しい容器と クラスのインスタンスを作り、要素は同じものを共有します。型が `dup` を定義していればそれが呼ばれます。
 
 ```ruby
 Point = Struct.new(:x, :y)

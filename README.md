@@ -145,8 +145,9 @@ Ruby with YJIT.
   sequence of operations reads in order while each step still names its type.
 - **Functions and blocks**: functions are polymorphic and take no annotations. Blocks are passed
   with `yield`.
-- **Modules**: `module` with `include` works like Ruby's modules, resolved statically. Namespaces
-  nest (`A::B`). There is no inheritance.
+- **Modules**: `module` with `include` works like Ruby's modules, resolved statically: `include M`
+  copies M's functions. Namespaces nest (`A::B`). `class B < A` copies A's definitions into B; there
+  is no inheritance (a B is not an A).
 - **nil**: a value that may be nil has the type `nil | T`, narrowed by `if x`, `x != nil`, and
   early returns.
 - **Patterns**: `x in Integer` and `case x in ...` narrow types, and the checker verifies that a
@@ -157,7 +158,8 @@ Ruby with YJIT.
   is Enumerable under a short name: `Enum.map(x) { }` dispatches to Array, Hash, Set or Range, and a
   class joins with `include Enum` and `def each`.
 
-Not yet: `case`/`when`, first-class blocks, and built-in constants such as `Math::PI`.
+Not yet: `case`/`when`, and first-class blocks. Built-in constants such as `Math::PI` are read as
+operations (`Math.PI`); a program has no value constants (`def pi = 3.14159` instead).
 
 ## Repository layout
 
@@ -166,9 +168,11 @@ bin/sake                 the command
 bin/sabic                the compiler to native code through Rust (sabi, 錆, is rust)
 bin/ceec                 the compiler to native code through C
 lib/sake/                resolver (checks before running), lower (Prism AST to SakeAST), interpreter
-                         and typer (type inference), both on SakeAST, the Rust and C backends (rust.rb, c.rb),
-                         standard library (stdlib*.rb)
-test/                    golden tests (test/samples/*.sake with *.expected) and CLI tests
+                         and typer (type inference), both on SakeAST, the Rust and C backends (rust.rb, c.rb)
+                         with their range analysis (ranges.rb), standard library (stdlib*.rb)
+sakelib/                 the library written in Sake: the prelude (Enum) and ports of Ruby's libraries and gems
+test/                    golden tests (test/samples/*.sake with *.expected), CLI tests, test/native/ (programs
+                         both native backends must print like the interpreter)
 examples/                example programs by category, each with its expected output (examples/README.md)
 docs/                    tutorial, specification, built-in list, one-page guide, examples
 tools/                   generators for the docs (they run the examples)

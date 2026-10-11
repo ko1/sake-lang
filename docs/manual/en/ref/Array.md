@@ -6,7 +6,7 @@ The checker gives one Array (one construction site) a single element type for th
 
 Two kinds of operation use nil for "no element". The nil of a miss (`x[k]`, `first`, `last`, `pop`, `shift`, `min`, `max`, `minmax`, `min_by`, `max_by`, `minmax_by`, `at`, `slice`, `slice!`, `dig`, `sample`, `delete_at`: an empty Array or an index outside it), used unchecked, is an `index-nil` problem at `--strict=3` only; `--strict` (level 2) lets it pass. Every other nil (`find`, `index`, `find_index`, `rindex`, `bsearch`, `delete`, `uniq!`, ...) is a level 2 `nil` problem ([Overview](../01-overview.md)).
 
-The operators on Arrays are `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `<=>` (two Arrays compare in dictionary order) and the index `a[i]`, `a[i, n]`, `a[range]`, `a[i] = v`. The entries `Array.+(x, y)` and so on are the function forms of those operators ([Operators and indexing](../05-operators.md)). Operations that compare elements (`sort`, `min`, `max`, `<`, ...) need elements of comparable types: Integers and Floats compare with each other, Tuples element by element, Struct values with their type's `<=>` (`include Comparable`).
+The operators on Arrays are `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `<=>` (two Arrays compare in dictionary order) and the index `a[i]`, `a[i, n]`, `a[range]`, `a[i] = v`. The entries `Array.+(x, y)` and so on are the function forms of those operators ([Operators and indexing](../05-operators.md)). Operations that compare elements (`sort`, `min`, `max`, `<`, ...) need elements of comparable types: Integers and Floats compare with each other, Tuples element by element, class instances with their type's `<=>` (`include Comparable`).
 
 Operations with a block are written as in Ruby (`Array.map(xs) { |x| x * 2 }`). There is no Enumerator (no blockless `each`). The operations whose block is optional (`each_with_index`, `each_slice`, `each_cons`) return an Array when called without one.
 
@@ -752,7 +752,7 @@ p(Array.drop_while(xs) { |x| x < 3 })  # => [3, 4]
 
 `Array.include?(x, Any)`
 
-True when some element is `==` to `v`. Struct values compare with their type's equality ([Operators and indexing](../05-operators.md)).
+True when some element is `==` to `v`. class instances compare with their type's equality ([Operators and indexing](../05-operators.md)).
 
 ```ruby
 p(Array.include?(Array[1, 2], 2))          # => true
@@ -933,7 +933,7 @@ Array.reduce(Array[1, 2]) { |acc, x| acc + x }    # !> wrong number of arguments
 
 `Array.max(x)`
 
-The smallest or largest element. On an empty Array nil (the nil of a miss, reported at level 3 only). The elements must be comparable with each other: a pair of incomparable types in the element type (an Integer and a String, say) is a `type` problem statically (`elements compared in order may be (Integer, String), which cannot be compared`), and an element that may be nil a `nil` problem. A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. Struct values compare with their type's `<=>` (`include Comparable`). Ruby's `min(n)` and block forms do not exist.
+The smallest or largest element. On an empty Array nil (the nil of a miss, reported at level 3 only). The elements must be comparable with each other: a pair of incomparable types in the element type (an Integer and a String, say) is a `type` problem statically (`elements compared in order may be (Integer, String), which cannot be compared`), and an element that may be nil a `nil` problem. A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other. class instances compare with their type's `<=>` (`include Comparable`). Ruby's `min(n)` and block forms do not exist.
 
 ```ruby
 xs = Array[3, 1, 4, 1, 5]
@@ -1010,7 +1010,7 @@ p(Array.tally(Array["a", "b", "a"]))   # => {"a" => 2, "b" => 1}
 
 `Array.sort!(x)`
 
-A new Array of the elements in ascending order (`sort`), or the subject sorted in place and returned (`sort!`). Ruby's comparison block is not accepted (a static error); for another order use `sort_by`. The elements must be comparable with each other: a pair of incomparable types in the element type is a `type` problem statically, and an element that may be nil a `nil` problem (`compact` removes the nils). A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other, Tuples element by element, Struct values with their type's `<=>`.
+A new Array of the elements in ascending order (`sort`), or the subject sorted in place and returned (`sort!`). Ruby's comparison block is not accepted (a static error); for another order use `sort_by`. The elements must be comparable with each other: a pair of incomparable types in the element type is a `type` problem statically, and an element that may be nil a `nil` problem (`compact` removes the nils). A comparison failure the checker cannot see (`Float.NAN`, say) is an `ArgumentError` at run time. Integers and Floats compare with each other, Tuples element by element, class instances with their type's `<=>`.
 
 ```ruby
 xs = Array[3, 1, 2]
@@ -1263,7 +1263,7 @@ p(Array.intersect?(Array[1, 2], Array[9]))     # => false
 
 `Array.join(x, [String])`
 
-A String of the elements converted with `to_s`, separated by `sep` (default `""`). `to_s` follows the rules of `puts`: nil is empty, Arrays and Tuples take their `inspect` form, and a Struct value uses its type's `to_s` ([Values and types](../03-values.md)).
+A String of the elements converted with `to_s`, separated by `sep` (default `""`). `to_s` follows the rules of `puts`: nil is empty, Arrays and Tuples take their `inspect` form, and a class instance uses its type's `to_s` ([Values and types](../03-values.md)).
 
 ```ruby
 p(Array.join(Array[1, 2, 3], ", "))            # => "1, 2, 3"

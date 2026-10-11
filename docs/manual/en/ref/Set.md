@@ -10,7 +10,7 @@ The operators on Sets are `|` (union), `&` (intersection), `-` (difference), `==
 
 `Set[*Any]`
 
-Makes a Set of the listed elements. Unlike the other types' `T[...]`, which make "an Array of T", `Set[...]` makes **a Set itself**. Duplicate elements collapse into one. A value that cannot be an element (a Regexp, a Range, a Struct value with its own equality) is a `TypeError` at run time. `Set[]` is the empty Set; elements added later with `Set.add` widen its element type.
+Makes a Set of the listed elements. Unlike the other types' `T[...]`, which make "an Array of T", `Set[...]` makes **a Set itself**. Duplicate elements collapse into one. A value that cannot be an element (a Regexp, a Range, a class instance with its own equality) is a `TypeError` at run time. `Set[]` is the empty Set; elements added later with `Set.add` widen its element type.
 
 ```ruby
 s = Set[1, 2, 2, 3]

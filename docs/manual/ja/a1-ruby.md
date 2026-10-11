@@ -21,7 +21,7 @@ Sake の構文は Ruby のものですが、Ruby の書き方のいくつかは�
 | `{a: 1}`（Hash） | `Hash[a: 1]`。`{a: 1}` は Record | 同上 |
 | `%w[a b]`, `%i[a b]` | `String["a", "b"]`, `Symbol[:a, :b]` | 未決（Tuple か Array か） |
 | `PI = 3.14` | `def pi = 3.14`。表は `once { ... }` | 値の定数は無い |
-| `Math::PI`, `ARGV`, `$stdout` | `Math.PI`, `ARGV`, `IO.stdout` | 操作として読む |
+| `Math::PI`, `ARGV`, `$stdout` | `Math.PI`（`Math::PI` も可）、`ARGV`、`IO.stdout` | 操作として読む |
 | `case x when Integer` | `case x in Integer` | `===` は無い |
 | `for x in xs` | `Array.each(xs) { \|x\| }` | 反復は操作 |
 | `$1`, `$~` | `m = String.match(s, re)` の後 `m[1]` | グローバル変数は無い |

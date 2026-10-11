@@ -1,6 +1,7 @@
 # sakelib: Sake's library
 
-Ports of Ruby's standard library. `require "json"` finds `sakelib/json.sake` when there is no
+Ports of Ruby's standard library, and `prelude.sake`, which every program reads first (it defines `Enum`,
+Ruby's Enumerable under a short name). `require "json"` finds `sakelib/json.sake` when there is no
 `json.sake` next to the requiring file. Names follow Ruby's: `JSON.parse(s)`, `Base64.encode64(s)`.
 A Ruby instance method becomes an operation with the subject first: `StringScanner.scan(ss, /\w+/)`.
 
