@@ -127,6 +127,9 @@ Ruby with YJIT.
   <https://ko1.github.io/sake-lang/guide.html> and the playground at
   <https://ko1.github.io/sake-lang/playground/>; the front page <https://ko1.github.io/sake-lang/> is
   this README (`.github/workflows/pages.yml` and `tools/gen_site.rb`, no Jekyll).
+- <https://ko1.github.io/sake-lang/compare.html>: Ruby and Sake side by side. Each library port's test program
+  written with Ruby's own library next to the same program in Sake (they print the same output), and the port
+  (`tools/gen_compare.rb`).
 - [ide/](ide/README.md): the playground, a browser IDE on ruby.wasm with completion, diagnostics as
   you type, and the inferred types on hover.
 - [DESIGN.md](DESIGN.md): the design notes, with the reasons behind each decision (in Japanese).

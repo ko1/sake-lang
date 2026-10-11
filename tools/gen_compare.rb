@@ -40,7 +40,7 @@ total_r = libs.sum { _1[:rl] }
 total_s = libs.sum { _1[:sl] }
 ratios = libs.map { _1[:sl].to_f / [_1[:rl], 1].max }.sort
 median = ratios.empty? ? 0 : ratios[ratios.size / 2]
-data = JSON.generate(libs).gsub("</", "<\\/")
+data = JSON.generate(libs, ascii_only: true).gsub("</", "<\\/") # ascii_only: tests may hold U+FFFD on purpose
 stamp = Time.now.utc.strftime("%Y-%m-%d")
 
 page = ERB.new(<<~'HTML', trim_mode: "-").result(binding)
