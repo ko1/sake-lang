@@ -86,6 +86,25 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 - **shapes の残り 0.14 秒（1 反復 0.14 ns）は切り分けていない。** 溢れ検査を外して 0.607、手書きは 0.471。候補は合併値の構造体コピーと、ループのたびに `arr->len` と `arr->p` を読み直すこと（生成コードは `Array.each` 中の push を許すため読み直す）。
 - **書きやすさ**: Rust 版で手間だった所有権・`Rc`・借用渡しが C では存在しない。その代わりメモリを解放しない。ブロックの閉包はフレーム構造体で足り、型推論は 1 行も書き足していない。生成器は約 1,150 行（半分は C 側ランタイム）。
 
+## 範囲解析で検査を外す（2026-10-11）
+
+`lib/sake/ranges.rb` は各関数を抽象解釈し、整数の変数に上下界（定数か「別の変数 + 定数」）、配列の変数に長さの下界を持たせる。`while j <= n` の本体では j ≤ n、`return n if n < 2` の後では n ≥ 2 とし、代入はその変数に触れる界を消し、ループは拡大（widening）つきで不動点まで回す。証明できた溢れ検査と添字検査を、C 版は素の演算と `p[i]` に、Rust 版は `wrapping_*` と `get_unchecked` に落とす（`--keep-checks` で全部残す）。Rust 版は、絞り込み後の `nil | T` の読み出しも `unwrap()` から検査なしの取り出しにした。型の検査は生成コードにもともと無い。生成された関数本体の検査付き演算の数は、fib 6 → 3、levenshtein 26 → 4、loops 11 → 4、shapes 12 → 7。残るのは値の範囲が分からない所（配列要素やフィールドへの演算、関数の戻り値の和、入力値での割り算）。消してはいけない検査（1 つ多く回るループ、実際の溢れ、負の添字、ブロックの中で書き換わる変数）が残ることは `test/test_c.rb` と `test/test_rust.rb` で確かめている。
+
+sp4、2026-10-11 02:10 UTC（JST 11:10）、`bench/run_elide.sh`、中央値（秒）。生の結果は `results-elide.txt`（loops の OUTPUT DIFFERS は `rand` の値が実行ごとに違うため）。
+
+| ベンチ | C 検査あり | C 範囲解析 | Rust 検査あり | Rust 範囲解析 | 手書き C | 手書き Rust |
+|---|---|---|---|---|---|---|
+| loops（10^9 回） | 1.362 | 1.356 | 1.268 | **1.175** | 1.355 | 1.162 |
+| fib 38 | 0.185 | 0.009* | 0.185 | 0.185 | 0.064 | 0.206 |
+| levenshtein | 0.031 | **0.026** | 0.033 | **0.025** | 0.015 | 0.021 |
+| shapes（10^9 回） | 0.673 | 0.674 | 0.572 | 0.582 | 0.471 | 0.606 |
+| shapes_mono（10^9 回） | 0.482 | 0.483 | 0.479 | 0.479 | 0.354 | 0.408 |
+
+- **levenshtein は 16〜24% 速くなった。** 添字検査 11 個が全部消えた分。残る差（手書き C の 1.7 倍）は、配列要素への `+ 1` の溢れ検査 4 個と、`Array.fetch` の負の添字の扱いを除いた後も残る配列の間接参照（`a->p[i]` は毎回 `a` から `p` を読む）。
+- **Rust の loops は手書き Rust と同じになった**（1.175 対 1.162）。C は変わらない（gcc は検査付きでも同じ速さだった）。
+- **shapes は変わらない。** 内側のループの検査（面積の掛け算と合計の加算）は値の範囲が分からず残る。
+- **\* fib の C 0.009 秒は比べられない数字。** 計測を疑って確かめた: 出力は正しく、n を 4 増やすと 0.01 → 0.06 → 0.33 秒と指数的に伸びる（検査あり 0.31 → 1.96 → 12.8 秒）。`n - 1` と `n - 2` の検査が消えると gcc が再帰を何段も展開し（`fib_0` の中に `call` が 21 個）、副作用の無い関数として重複する部分呼び出しをまとめるので、伸び方の底まで下がる。Spinel の README が注意している「C コンパイラが fib を畳む」と同じ現象で、Rust（LLVM）では起きず、手書き C（0.064）でもこの形では起きなかった。言語や変換器の速さではなく、gcc がこの形の再帰に何をするかを測っている。
+
 ## 限界
 
 - 対象は部分集合で、Hash・Set・Regexp・例外の rescue・mixin ディスパッチ・`(A|B).f`・Thread は未対応（exit 3 で断る）。sakelib の移植 73 本のような普通のプログラムはまだ通らない。
@@ -109,6 +128,7 @@ run 1（clone していた生成器）との差: levenshtein の Sake→Rust は
 - `bench/run.sh`: 計測スクリプト（sp4 で `RUBY=... SAKE=... ./run.sh > results.txt 2> results.log`。`BENCHES="shapes shapes_mono"` で対象を絞れる）
 - `results-run1.txt` / `.log`, `results-run2.txt` / `.log`: 生の結果（loops / fib / levenshtein）
 - `results-shapes-small.txt`（10,000 round、インタプリタを含む）、`results-shapes.txt`（末尾が 1,000,000 round）、`results-shapes.log`: shapes の生の結果
+- `results-elide.txt` / `.log`、`bench/run_elide.sh`: 範囲解析で検査を外した版と外さない版（C と Rust）
 - `results-c.txt` / `.log`: C バックエンドと手書き C（末尾に溢れ検査を外した版）
 - `results-spinel.txt`: Spinel で同じ Ruby 版を測った結果（末尾に Spinel のソース行数）
 - `results-run3.txt` / `.log`: 借用渡しにした生成器での再計測（loops / fib_big / levenshtein、shapes の 1,000,000 round。インタプリタは走らせていないので log の「sake-interp OUTPUT DIFFERS」は出力ファイルが無いだけ）
