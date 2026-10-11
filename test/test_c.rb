@@ -44,4 +44,32 @@ class TestC < Minitest::Test
       assert_match(/u\.sake:1: a Hash literal \(not supported by the C backend\)/, err)
     end
   end
+
+  # Checks the range analysis must not remove: each program fails at run time, as on the interpreter
+  # (overflow fails only natively).
+  MUST_FAIL = {
+    "off_by_one" => "xs = Array.new(3, 0)\ni = 0\nwhile i <= 3\n  puts(Array.fetch(xs, i))\n  i += 1\nend\n",
+    "overflow" => "x = 9223372036854775806\ni = 0\nwhile i < 3\n  x += 1\n  i += 1\nend\nputs(x)\n",
+    "negative" => "xs = Array.new(3, 0)\ni = 0\nwhile i < 3\n  puts(Array.fetch(xs, i - 4))\n  i += 1\nend\n",
+    "closure" => "def twice\n  yield\n  yield\nend\nxs = Array.new(3, 0)\ni = 0\ntwice { i += 5 }\nputs(Array.fetch(xs, i))\n",
+  }.freeze
+
+  MUST_FAIL.each do |name, src|
+    define_method("test_check_stays_#{name}") do
+      skip "the compiler is not installed" unless HAVE_CC
+      Dir.mktmpdir do |tmp|
+        path = File.join(tmp, "#{name}.sake")
+        File.write(path, src)
+        _, _, st = Open3.capture3(SAKE, path)
+        # The interpreter's Integer has no limit; the native one stops at 64 bits.
+        assert_equal 1, st.exitstatus, "#{name}: the interpreter should fail" unless name == "overflow"
+        exe = File.join(tmp, name)
+        _, err, st = Open3.capture3(CEEC, path, "-o", exe)
+        assert_equal 0, st.exitstatus, err
+        _, err, st = Open3.capture3(exe)
+        refute_equal 0, st.exitstatus, "#{name}: the compiled program should fail like the interpreter"
+        assert_match(/IndexError|overflow/, err)
+      end
+    end
+  end
 end

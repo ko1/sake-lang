@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "lower"
+require_relative "ranges"
 
 module Sake
   # Compiles a checked program to Rust, for the subset whose types the generator can fix: Integer (as i64,
@@ -10,7 +11,7 @@ module Sake
   module Rust
     class Unsupported < StandardError; end
 
-    def self.generate(program) = Gen.new(program).generate
+    def self.generate(program, elide: true) = Gen.new(program, elide:).generate
 
     # An Array's element type is a cell shared by every value that may be the same array (union-find), so
     # a push anywhere fixes the type everywhere.
@@ -33,8 +34,10 @@ module Sake
 
       COPY = %i[int float bool nil never].freeze
 
-      def initialize(program)
+      # elide: leave out the overflow and index checks that the range analysis (ranges.rb) proves unneeded.
+      def initialize(program, elide: true)
         @program = program
+        @elide = elide
         @ast = Lower.program(program)
         @insts = {}         # key => Inst
         @order = []         # Insts in discovery order
@@ -54,6 +57,14 @@ module Sake
       end
 
       def backend_name = "Rust"
+
+      # Whether the range analysis proved node's check of this kind unneeded, in the instantiation being generated.
+      def safe?(node, kind)
+        return false unless @elide
+        @shrinks = Ranges.shrinks?(@ast) if @shrinks.nil?
+        r = (@range_results ||= {}.compare_by_identity)[@cur] ||= Ranges.new(self, @shrinks).analyze(@cur)
+        r.safe?(node, kind)
+      end
 
       # Types every slot, field and instantiation to a fixed point; returns the top level's instantiation.
       def infer
@@ -774,7 +785,9 @@ module Sake
         when Return then "    return#{n.value ? " #{coerce(expr(n.value, i), ty(n.value, i), i.ret, n)}" : ""};"
         when Next, Break then "    #{expr(n, i)};"
         when FieldSet then "    { let t = #{coerce(expr(n.value, i), ty(n.value, i), @fields[n.type][n.field], n)}; #{recv(n.subject, i)}.with(|o| o.#{n.field} = t); }"
-        when IndexSet then "    { let t = #{coerce(expr(n.value, i), ty(n.value, i), elem_of(ty(n.recv, i), n), n)}; #{recv(n.recv, i)}.set(#{expr(n.key, i)}, t, #{line(n)}); }"
+        when IndexSet
+          setter = safe?(n, :index) ? "set_u(#{expr(n.key, i)}, t)" : "set(#{expr(n.key, i)}, t, #{line(n)})"
+          "    { let t = #{coerce(expr(n.value, i), ty(n.value, i), elem_of(ty(n.recv, i), n), n)}; #{recv(n.recv, i)}.#{setter}; }"
         when CaseIn then case_code(n, i, false)
         when ArgDefault then i.given[n.slot] ? "" : "    v#{n.slot} = #{expr(n.value, i)};"
         when MultiWrite
@@ -800,7 +813,8 @@ module Sake
         return nil unless t
         decl = i.slots[slot]
         case decl
-        when OptT then copy?(decl) ? "v#{slot}.unwrap()" : (borrow ? "v#{slot}.as_ref().unwrap()" : "v#{slot}.clone().unwrap()")
+        # The checker narrowed the variable to its non-nil type here, so the Option is never None.
+        when OptT then copy?(decl) ? "unsafe { v#{slot}.unwrap_unchecked() }" : (borrow ? "unsafe { v#{slot}.as_ref().unwrap_unchecked() }" : "unsafe { v#{slot}.clone().unwrap_unchecked() }")
         when UnionT then "(match &v#{slot} { #{rt(decl)}::#{rs_name(t.name)}(x) => x.clone(), _ => unreachable!() })"
         else "v#{slot}"
         end
@@ -860,17 +874,23 @@ module Sake
           when OptT then "(#{e}).is_#{n.negate ? "some" : "none"}()"
           else n.negate ? "{ let _ = #{e}; true }" : "{ let _ = #{e}; false }"
           end
-        when UnOp then "(-#{expr(n.value, i)})"
+        when UnOp
+          v = expr(n.value, i)
+          next_t = ty(n.value, i)
+          n.op == "+" ? v : (next_t == :int && safe?(n, :arith) ? "#{v}.wrapping_neg()" : "(-#{v})")
         when FieldGet then "#{recv(n.subject, i)}.with(|o| o.#{n.field}.clone())"
         when FieldSet then "{ let t = #{coerce(expr(n.value, i), ty(n.value, i), @fields[n.type][n.field], n)}; #{recv(n.subject, i)}.with(|o| o.#{n.field} = t.clone()); t }"
         when IndexGet
           r = ty(n.recv, i)
           case r
           when TupT then "#{recv(n.recv, i)}.#{n.key.value}.clone()"
-          when ArrT then "#{recv(n.recv, i)}.get(#{expr(n.key, i)})"
+          when ArrT then safe?(n, :index) ? "Some(#{recv(n.recv, i)}.at_u(#{expr(n.key, i)}))" : "#{recv(n.recv, i)}.get(#{expr(n.key, i)})"
           end
-        when IndexSet then "{ let t = #{coerce(expr(n.value, i), ty(n.value, i), elem_of(ty(n.recv, i), n), n)}; #{recv(n.recv, i)}.set(#{expr(n.key, i)}, t.clone(), #{line(n)}); t }"
-        when IndexUpdate then "#{recv(n.recv, i)}.update(#{expr(n.key, i)}, |x| x #{n.op} #{expr(n.value, i)}, #{line(n)})"
+        when IndexSet
+          setter = safe?(n, :index) ? "set_u(#{expr(n.key, i)}, t.clone())" : "set(#{expr(n.key, i)}, t.clone(), #{line(n)})"
+          "{ let t = #{coerce(expr(n.value, i), ty(n.value, i), elem_of(ty(n.recv, i), n), n)}; #{recv(n.recv, i)}.#{setter}; t }"
+        when IndexUpdate
+          safe?(n, :index) ? "#{recv(n.recv, i)}.update_u(#{expr(n.key, i)}, |x| x #{n.op} #{expr(n.value, i)})" : "#{recv(n.recv, i)}.update(#{expr(n.key, i)}, |x| x #{n.op} #{expr(n.value, i)}, #{line(n)})"
         when ArgDefault then stmt(n, i).strip.chomp(";")
         when Yield then i.block ? "blk(#{n.args.each_with_index.map { |a, k| coerce(expr(a, i), ty(a, i), i.blk_params[k], n) }.join(", ")})" : "fail(#{line(n)}, \"LocalJumpError\", \"no block given (yield)\")"
         when BlockGiven then i.block ? "true" : "false"
@@ -921,6 +941,11 @@ module Sake
           b = "{ #{b}; <#{rt(l, n)} as Default>::default() }"
         end
         if l == :int && r == :int
+          if %w[+ - *].include?(op) && safe?(n, :arith)
+            return "#{a}.wrapping_#{{ "+" => "add", "-" => "sub", "*" => "mul" }.fetch(op)}(#{b})"
+          elsif %w[/ %].include?(op) && safe?(n, :plain)
+            return "(#{a} #{op} #{b})"
+          end
           case op
           when "/" then "idiv(#{a}, #{b}, #{line(n)})"
           when "%" then "imod(#{a}, #{b}, #{line(n)})"
@@ -1076,7 +1101,7 @@ module Sake
           else
             "SArr::new(vec![#{coerce(b, ty(n.args[1], i), cell(n).root.elem, n)}; nonneg(#{a}, #{ln})])"
           end
-        when "Array.fetch" then "#{a}.fetch(#{b}, #{ln})"
+        when "Array.fetch" then safe?(n, :index) ? "#{a}.at_u(#{b})" : "#{a}.fetch(#{b}, #{ln})"
         when "Array.length", "Array.size" then "#{a}.len()"
         when "Array.push", "Array.<<", "Array.append"
           e = elem_of(ty(n.args[0], i), n)
@@ -1295,6 +1320,10 @@ module Sake
                   if k < 0 || k >= n { None } else { Some(k as usize) }
               }
               #[inline] pub fn at(&self, k: i64) -> T { self.v()[k as usize].clone() }
+              // 0 <= k < len, proved by the range analysis (lib/sake/ranges.rb).
+              #[inline] pub fn at_u(&self, k: i64) -> T { unsafe { self.v().get_unchecked(k as usize).clone() } }
+              #[inline] pub fn set_u(&self, k: i64, x: T) { unsafe { *self.v().get_unchecked_mut(k as usize) = x; } }
+              #[inline] pub fn update_u(&self, k: i64, f: impl FnOnce(T) -> T) -> T { unsafe { let p = self.v().get_unchecked_mut(k as usize); let x = f(p.clone()); *p = x.clone(); x } }
               #[inline] pub fn fetch(&self, i: i64, line: u32) -> T {
                   match self.pos(i) { Some(k) => self.v()[k].clone(), None => fail(line, "IndexError", &format!("index {} outside of array bounds: {}...{}", i, -self.len(), self.len())) }
               }

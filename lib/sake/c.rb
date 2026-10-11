@@ -17,7 +17,7 @@ module Sake
     OptT = Rust::OptT
     UnionT = Rust::UnionT
 
-    def self.generate(program) = Gen.new(program).generate
+    def self.generate(program, elide: true) = Gen.new(program, elide:).generate
 
     class Gen < Rust::Gen
       PRIMS = %w[i64 f64 bool Nil Str].freeze
@@ -396,7 +396,10 @@ module Sake
           "    #{n.value ? stmt(n.value, i).strip : ""} goto b#{@ctx[idx][1]};"
         when Raise then "    #{raise_code(n, i)};"
         when FieldSet then "    #{recv(n.subject, i)}->#{cfield(n.field)} = #{val(n.value, i, field_type(n.type, n.field))};"
-        when IndexSet then "    #{cn(ty(n.recv, i))}_set(#{recv(n.recv, i)}, #{val(n.key, i, :int)}, #{val(n.value, i, elem_of(ty(n.recv, i), n))}, #{line(n)});"
+        when IndexSet
+          v = val(n.value, i, elem_of(ty(n.recv, i), n))
+          return "    (#{recv(n.recv, i)})->p[#{val(n.key, i, :int)}] = #{v};" if safe?(n, :index)
+          "    #{cn(ty(n.recv, i))}_set(#{recv(n.recv, i)}, #{val(n.key, i, :int)}, #{v}, #{line(n)});"
         when CaseIn then case_code(n, i, false)
         when ArgDefault then i.given[n.slot] ? "" : "    #{sv(n.slot)} = #{val(n.value, i, i.slots[n.slot])};"
         when MultiWrite
@@ -498,7 +501,7 @@ module Sake
         when UnOp
           v = expr(n.value, i)
           next_t = ty(n.value, i)
-          n.op == "+" ? v : (next_t == :int ? "neg_(#{v}, #{line(n)})" : "(-(#{v}))")
+          n.op == "+" ? v : (next_t == :int && !safe?(n, :arith) ? "neg_(#{v}, #{line(n)})" : "(-(#{v}))")
         when FieldGet then "(#{recv(n.subject, i)})->#{cfield(n.field)}"
         when FieldSet
           s = tmp
@@ -508,12 +511,15 @@ module Sake
           r = ty(n.recv, i)
           case r
           when TupT then "(#{recv(n.recv, i)}).f#{n.key.value}"
-          when ArrT then "#{ct(r)}_get(#{recv(n.recv, i)}, #{val(n.key, i, :int)})"
+          when ArrT
+            return "((#{ct(OptT.new(r.root.elem))}){true, (#{recv(n.recv, i)})->p[#{val(n.key, i, :int)}]})" if safe?(n, :index)
+            "#{ct(r)}_get(#{recv(n.recv, i)}, #{val(n.key, i, :int)})"
           end
         when IndexSet
           r = ty(n.recv, i)
           e = elem_of(r, n)
           s = tmp
+          return "({ #{ct(e)} #{s} = #{val(n.value, i, e)}; (#{recv(n.recv, i)})->p[#{val(n.key, i, :int)}] = #{s}; #{s}; })" if safe?(n, :index)
           "({ #{ct(e)} #{s} = #{val(n.value, i, e)}; #{ct(r)}_set(#{recv(n.recv, i)}, #{val(n.key, i, :int)}, #{s}, #{line(n)}); #{s}; })"
         when IndexUpdate
           r = ty(n.recv, i)
@@ -524,6 +530,7 @@ module Sake
           v = val(n.value, i, e)
           op = e == :int ? { "+" => "add_", "-" => "sub_", "*" => "mul_" }.fetch(n.op) : nil
           upd = op ? "#{op}(#{cur}, #{v}, #{line(n)})" : "(#{cur} #{n.op} #{v})"
+          return "({ #{ct(r)} #{a} = #{recv(n.recv, i)}; i64 #{k} = #{val(n.key, i, :int)}; #{cur} = #{upd}; #{cur}; })" if safe?(n, :index)
           "({ #{ct(r)} #{a} = #{recv(n.recv, i)}; i64 #{k} = #{ct(r)}_pos(#{a}, #{val(n.key, i, :int)}); if (#{k} < 0) sk_fail(#{line(n)}, \"NoMethodError\", \"x[k] is nil: the index is outside of the array\"); #{cur} = #{upd}; #{cur}; })"
         when Yield
           return "sk_fail(#{line(n)}, \"LocalJumpError\", \"no block given (yield)\")" unless i.block
@@ -567,6 +574,13 @@ module Sake
         b = val(n.right, i, r)
         ln = line(n)
         if l == :int && r == :int
+          if %w[+ - *].include?(op) && safe?(n, :arith)
+            return "(#{a} #{op} #{b})"
+          elsif %w[/ %].include?(op) && safe?(n, :plain)
+            return "(#{a} #{op} #{b})"
+          elsif %w[/ %].include?(op) && safe?(n, :div)
+            return "#{op == "/" ? "idiv_p" : "imod_p"}(#{a}, #{b})"
+          end
           case op
           when "+" then "add_(#{a}, #{b}, #{ln})"
           when "-" then "sub_(#{a}, #{b}, #{ln})"
@@ -812,7 +826,7 @@ module Sake
           else
             "#{ct(c)}_fill(#{a}, #{val(n.args[1], i, e)}, #{ln})"
           end
-        when "Array.fetch" then "#{ct(at)}_fetch(#{a}, #{b}, #{ln})"
+        when "Array.fetch" then safe?(n, :index) ? "(#{a})->p[#{b}]" : "#{ct(at)}_fetch(#{a}, #{b}, #{ln})"
         when "Array.length", "Array.size" then "(#{a})->len"
         when "Array.push", "Array.<<", "Array.append"
           e = elem_of(at, n)
@@ -954,6 +968,8 @@ module Sake
               return r;
           }
           SF i64 nonneg(i64 n, int ln) { if (n < 0) sk_fail(ln, "ArgumentError", "negative array size"); return n; }
+          SF i64 idiv_p(i64 a, i64 b) { i64 q = a / b; return (a % b != 0 && a < 0) ? q - 1 : q; } /* b > 0, proved */
+          SF i64 imod_p(i64 a, i64 b) { i64 r = a % b; return r < 0 ? r + b : r; }
           SF f64 fmod_(f64 a, f64 b) { f64 r = fmod(a, b); if (r != 0 && ((r < 0) != (b < 0))) r += b; return r; }
           SF f64 sk_sqrt(f64 x, int ln) { if (x < 0) sk_fail(ln, "Math::DomainError", "Numerical argument is out of domain - \\"sqrt\\""); return sqrt(x); }
 

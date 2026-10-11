@@ -2,9 +2,10 @@
 # frozen_string_literal: true
 
 # ceec: compile a Sake program to a native executable through C (sake -> C, "see-c").
-#   bin/ceec FILE.sake [-o OUT] [--emit]
+#   bin/ceec FILE.sake [-o OUT] [--emit] [--keep-checks]
 # Writes OUT.c (OUT defaults to FILE without .sake) and builds OUT with $CC (default cc) -O2. --emit stops
-# after the C source. Exit status: 2 for a static error in the program, 3 when the C backend does not
+# after the C source. --keep-checks keeps every overflow and index check (by default the range analysis
+# in lib/sake/ranges.rb leaves out the ones it proves unneeded). Exit status: 2 for a static error in the program, 3 when the C backend does not
 # support something in it (the message says what and where), 4 when the C compiler fails.
 
 require_relative "../lib/sake"
@@ -13,23 +14,25 @@ require_relative "../lib/sake/c"
 args = ARGV.dup
 out = nil
 emit = false
+elide = true
 path = nil
 until args.empty?
   a = args.shift
   case a
   when "-o" then out = args.shift
   when "--emit" then emit = true
+  when "--keep-checks" then elide = false
   when /\A-/ then abort "ceec: unknown option #{a}"
   else path = a
   end
 end
-abort "usage: ceec FILE.sake [-o OUT] [--emit]" unless path
+abort "usage: ceec FILE.sake [-o OUT] [--emit] [--keep-checks]" unless path
 out ||= path.sub(/\.sake\z/, "")
 abort "ceec: output path equals input" if out == path
 
 begin
   program = Sake.load(File.read(path), path)
-  code = Sake::C.generate(program)
+  code = Sake::C.generate(program, elide:)
 rescue Sake::StaticErrors => e
   warn e.message
   exit 2
