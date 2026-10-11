@@ -1,0 +1,164 @@
+# mini_mime: MIME type lookup after the mini_mime gem 1.1.5.
+#
+# Reads the gem's own data files (lib/db/ext_mime.db, lib/db/content_type_mime.db) at run time, as Ruby
+# does: fixed-length rows, sorted, searched by binary search with a seek and a read per probe, and a
+# hit cache and a miss cache of 100 entries each. The files are found with `gem which mini_mime`
+# (Ruby: next to mini_mime.rb), or set with Configuration.set_ext_db_path / set_content_type_db_path.
+
+module MiniMime
+  module_function
+
+  def lookup_by_filename(filename) = Db.lookup_by_filename(filename)
+  def lookup_by_extension(extension) = Db.lookup_by_extension(extension)
+  def lookup_by_content_type(mime) = Db.lookup_by_content_type(mime)
+
+  # Ruby: MiniMime::Configuration.ext_db_path (and =); module state lives in a table made once.
+  module Configuration
+    module_function
+
+    def paths = once { Hash[] }
+
+    def gem_db_dir
+      once do
+        out, _ = Open3.capture2("gem", "which", "mini_mime")
+        File.join(File.dirname(String.strip(out)), "db")
+      end
+    end
+
+    def ext_db_path = paths["ext"] || File.join(gem_db_dir, "ext_mime.db")
+    def content_type_db_path = paths["content_type"] || File.join(gem_db_dir, "content_type_mime.db")
+    def set_ext_db_path(path) = paths["ext"] = path
+    def set_content_type_db_path(path) = paths["content_type"] = path
+  end
+
+  # Ruby: Info.new(buffer), one row of a db file: extension, content type, encoding.
+  class Info
+    private attr_reader buffer
+    attr_accessor extension, content_type, encoding
+    include Indexable
+
+    def binary_encodings = String["base64", "8bit"]
+
+    def initialize(info)
+      @buffer => String
+      @extension, @content_type, @encoding = String.split(@buffer, /\s+/)
+    end
+
+    def [](info, idx)
+      if idx == 0
+        @extension
+      elsif idx == 1
+        @content_type
+      elsif idx == 2
+        @encoding
+      end
+    end
+
+    def binary?(info) = Array.include?(binary_encodings, @encoding)
+  end
+
+  class Db
+    attr_reader ext_db, content_type_db
+
+    # Ruby: Db.new opens both files from the Configuration
+    def initialize(db)
+      @ext_db = RandomAccessDb.new(Configuration.ext_db_path, 0)
+      @content_type_db = RandomAccessDb.new(Configuration.content_type_db_path, 1)
+    end
+
+    # Ruby's @db ||= new
+    def db = once { Db.new }
+
+    def lookup_by_filename(filename)
+      extension = File.extname(filename)
+      return nil if String.empty?(extension)
+      lookup_by_extension(extension[1..] || "")
+    end
+
+    # Ruby's class methods; the instance methods of the same names are RandomAccessDb.lookup.
+    def lookup_by_extension(extension)
+      d = Db.ext_db(db)
+      RandomAccessDb.lookup(d, extension) || RandomAccessDb.lookup(d, String.downcase(extension))
+    end
+
+    def lookup_by_content_type(content_type) = RandomAccessDb.lookup(Db.content_type_db(db), content_type)
+
+    # Ruby: Db::Cache.new(size), a Hash that forgets its oldest entry beyond size.
+    class Cache
+      attr_reader size
+      private attr_reader hash
+      include Indexable
+
+      def initialize(c) = @hash = Hash[]
+
+      def []=(c, key, val)
+        @hash[key] = val
+        Hash.shift(@hash) if Hash.length(@hash) > @size
+        val
+      end
+
+      def fetch(c, key)
+        return @hash[key] if Hash.key?(@hash, key)
+        yield(key)
+      end
+    end
+
+    class RandomAccessDb
+      attr_reader path, sort_order
+      private attr_reader file, row_length, file_length, rows, hit_cache, miss_cache
+
+      def max_cached = 100
+
+      def initialize(db)
+        @path => String
+        @file = File.open(@path, "rb")
+        @row_length = String.length(IO.gets(@file) || "")
+        @file_length = File.size(@path)
+        @rows = @file_length / @row_length
+        @hit_cache = Cache.new(max_cached)
+        @miss_cache = Cache.new(max_cached)
+      end
+
+      def lookup(db, val)
+        Cache.fetch(@hit_cache, val) do
+          Cache.fetch(@miss_cache, val) do
+            data = lookup_uncached(db, val)
+            if data
+              @hit_cache[val] = data
+            else
+              @miss_cache[val] = nil
+            end
+            data
+          end
+        end
+      end
+
+      # lifted from marcandre/backports
+      def lookup_uncached(db, val)
+        from = 0
+        to = @rows - 1
+        result = nil
+        while from <= to
+          midpoint = from + Integer.div(to - from, 2)
+          current = resolve(db, midpoint)
+          data = current[@sort_order] || ""
+          if data > val
+            to = midpoint - 1
+          elsif data < val
+            from = midpoint + 1
+          else
+            result = current
+            break
+          end
+        end
+        result
+      end
+
+      # Ruby: File#pread(row_length, offset)
+      def resolve(db, row)
+        IO.seek(@file, row * @row_length)
+        Info.new(String.force_encoding(IO.read(@file, @row_length) || "", "UTF-8"))
+      end
+    end
+  end
+end

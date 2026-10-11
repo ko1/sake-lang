@@ -311,6 +311,16 @@ module Sake
       end)
     end
 
+    # The element types flatten gives for one element atom: an inner Array's or Tuple's elements, else itself.
+    def flat_elem(e)
+      return [e] unless e.is_a?(Array)
+      case e[0]
+      when :array then elem_of([e])
+      when :tuple then u(*e[1])
+      else [e]
+      end
+    end
+
     def builtin_result_ext(name, args, blk, node)
       if (kind = SHOWS[name])
         (%w[Kernel.format Kernel.sprintf IO.puts IO.print].include?(name) ? args.drop(1) : args).each { show_deep(_1, kind, node) }
@@ -441,7 +451,7 @@ module Sake
         else
           aux_site(node, "#{name} slices", slice)
         end
-      when "Array.flatten" then new_site(node, " #{name}", u(*elem_of(a0).map { |e| e.is_a?(Array) && e[0] == :array ? elem_of([e]) : [e] }))
+      when "Array.flatten" then new_site(node, " #{name}", u(*elem_of(a0).map { |e| flat_elem(e) }))
       when "Array.compact" then new_site(node, " #{name}", without_nil(elem_of(a0)))
       when "Array.uniq", "Array.rotate", "Array.shuffle" then new_site(node, " #{name}", elem_of(a0))
       when "Array.sample", "Array.delete_at" then u(elem_of(a0), t("IndexNil"))
@@ -605,7 +615,7 @@ module Sake
         write_elems(a0, [bres], node, name)
         a0
       when :recv_flatten # flatten!: the inner Arrays' elements join
-        write_elems(a0, [u(*elem.map { |e| e.is_a?(Array) && e[0] == :array ? elem_of([e]) : [e] })], node, name)
+        write_elems(a0, [u(*elem.map { |e| flat_elem(e) })], node, name)
         u(a0, t("Nil"))
       when :recv_elems_of # replace: the other Array's elements join
         write_elems(a0, [elem_of(args[1])], node, name)

@@ -176,7 +176,7 @@ p(pi * 2)                    # => 6.28318
 ```
 
 ```ruby error
-PI = 3.14                    # !> Sake has no value constants; only a class made with Struct.new can be assigned to a constant
+PI = 3.14                    # !> Sake has no value constants; a constant names a class (`Point = Struct.new(:x, :y)`, `Err = Exception.new(:msg)`), and a value goes in a function
 p(PI * 2)                    # !> `PI` is not defined (Sake has no value constants)
 ```
 

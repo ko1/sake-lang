@@ -262,7 +262,7 @@ p(String.!~("ab", /b/))      # => false
 
 `String.[](x, Any, [Integer])`
 
-`s[i]`、`s[i, n]`、`s[range]` の関数形。`s[i]` は位置 `i`（Integer。負の値は末尾から）の 1 文字の String、範囲外なら nil。`s[i, n]` は `i` から最大 `n` 文字の部分文字列で、`i` が末尾を越えるか `n` が負なら nil、`i` が長さに等しければ `""`。`s[range]` は Range の範囲の文字で、始点が末尾を越えていれば nil。添字は Integer か Range でなければならず、String や Float の添字は静的に `type` の問題です（演算子としての Ruby の `s["b"]` や `s[/re/]` はありません。`String.slice(s, "b")`、`String.slice(s, /re/)` はあります）。Range と個数の組は `TypeError` です。結果の型は `String | nil` で、この nil は「外れの nil」（`index-nil`）なので `--strict` レベル 3 でのみ報告されます。
+`s[i]`、`s[i, n]`、`s[range]` の関数形。`s[i]` は位置 `i`（Integer。負の値は末尾から）の 1 文字の String、範囲外なら nil。`s[i, n]` は `i` から最大 `n` 文字の部分文字列で、`i` が末尾を越えるか `n` が負なら nil、`i` が長さに等しければ `""`。`s[range]` は Range の範囲の文字で、始点が末尾を越えていれば nil。Ruby と同じく String と Regexp も添字にでき、`s["b"]` はその最初の出現（新しい String）か nil、`s[/re/]` は最初の一致、`s[/re/, 1]` はそのグループです（`String.slice` と同じ。2026-10-11 から）。Float などの添字は静的に `type` の問題で、Range と個数の組は `TypeError` です。結果の型は `String | nil` で、この nil は「外れの nil」（`index-nil`）なので `--strict` レベル 3 でのみ報告されます。
 
 ```ruby
 s = "hello"
@@ -277,8 +277,16 @@ p(s[2..])                    # => "llo"
 p(String.[](s, 0))           # => "h"
 ```
 
+```ruby
+s = "hello world"
+p(s["wor"])                  # => "wor"
+p(s["xyz"])                  # => nil
+p(s[/o w/])                  # => "o w"
+p(s[/(\w+) (\w+)/, 2])        # => "world"
+```
+
 ```ruby error
-p("abc"["b"])                # !> the index must be Integer, but is String
+p("abc"[1.5])                # !> the index must be Integer, but is Float
 ```
 
 ## slice

@@ -1,0 +1,96 @@
+require "crass"
+
+# one line per token: its type, the raw text, and the value when it has one
+def show(tokens)
+  Array.each(tokens) do |t|
+    puts("#{t[:node]} #{Kernel.inspect(t[:raw])} #{Kernel.inspect(t[:value])}")
+  end
+end
+
+# tokens: identifiers, hashes, strings, numbers, operators
+show(Crass::Tokenizer.tokenize("#main .x-y > a:hover::before { content: 'hi\\26 there' }"))
+show(Crass::Tokenizer.tokenize("12 +3.5 -.5e2 1e3 50% 2em -webkit-x --var"))
+show(Crass::Tokenizer.tokenize("a ~= b |= c ^= d $= e *= f || g"))
+show(Crass::Tokenizer.tokenize("<!-- @import url(foo.css) url( 'q.css' ) url(a b) -->"))
+show(Crass::Tokenizer.tokenize("\"unterminated\nx #12 #-a \\41 B \\"))
+
+# unicode ranges and number details
+Array.each(Crass::Tokenizer.tokenize("U+26 u+0-7F U+4?? 1.0 007 -0 1e400")) do |t|
+  p([t[:node], t[:start], t[:end], t[:value], t[:type], t[:repr]])
+end
+
+# comments are dropped unless preserve_comments
+show(Crass::Tokenizer.tokenize("a/* c1 */b /* open"))
+show(Crass::Tokenizer.tokenize("a/* c1 */b", Hash[:preserve_comments => true]))
+
+# a stylesheet: style rules, at-rules, !important
+css = "a.b > c { color: red !important; margin: 1px 2.5em -3% }\n@media screen { p { x: y } }\n@charset \"utf-8\";"
+tree = Crass.parse(css)
+Array.each(tree) do |node|
+  case node[:node]
+  in :style_rule
+    sel = node[:selector]
+    sel => Hash
+    puts("rule #{Kernel.inspect(sel[:value])}")
+    children = node[:children]
+    children => Array
+    Array.each(children) do |prop|
+      next unless prop[:node] == :property
+      puts("  #{prop[:name]}: #{Kernel.inspect(prop[:value])} important=#{prop[:important]}")
+    end
+  in :at_rule
+    puts("at #{node[:name]} prelude=#{Crass::Parser.stringify(node[:prelude])} block=#{node[:block] != nil}")
+  else
+    puts(node[:node])
+  end
+end
+puts(Crass::Parser.stringify(tree))
+p(Crass::Parser.stringify(tree) == css)
+
+# the whole tree of a small rule, as Ruby prints it
+p(Crass.parse("a{b:c}"))
+
+# style attribute contents
+props = Crass.parse_properties("color: blue; font: 12px/1.5 'A B', serif !IMPORTANT; ;bad; 3x: y")
+Array.each(props) do |prop|
+  if prop[:node] == :property
+    puts("#{prop[:name]} = #{Kernel.inspect(prop[:value])} #{prop[:important]}")
+  else
+    puts("#{prop[:node]} #{Kernel.inspect(prop[:value])}")
+  end
+end
+
+# comments in the tree, and stringify without them
+with = Crass.parse("/* top */ a { b: c /* in */ }", Hash[:preserve_comments => true])
+puts(Crass::Parser.stringify(with))
+puts(Crass::Parser.stringify(with, Hash[:exclude_comments => true]))
+
+# the IE * hack
+show(Crass::Tokenizer.tokenize("*zoom: 1", Hash[:preserve_hacks => true]))
+show(Crass::Tokenizer.tokenize("*zoom: 1"))
+
+# functions and nested blocks; maximum_depth discards deeper nesting
+rule = Crass.parse("a { width: calc(100% - (2 * var(--x))) }")
+p(Crass::Parser.stringify(rule))
+deep = Crass.parse_properties("x: f(g(h(1)))", Hash[:maximum_depth => 2])
+Array.each(deep) do |prop|
+  p(prop[:value])
+  kids = prop[:children]
+  kids => Array
+  Array.each(kids) { |k| p([k[:node], k[:value]]) }
+end
+
+# Parser instance methods on a fresh parser
+p(Crass::Parser.parse_rule(Crass::Parser.new("  @page :first { margin: 0 }  "))[:node])
+p(Crass::Parser.parse_rule(Crass::Parser.new("a {} b {}"))[:value])
+p(Crass::Parser.parse_rule(Crass::Parser.new("   "))[:value])
+p(Crass::Parser.parse_declaration(Crass::Parser.new(" color : red"))[:name])
+p(Crass::Parser.parse_declaration(Crass::Parser.new("1px"))[:value])
+p(Crass::Parser.parse_component_value(Crass::Parser.new(" (a) "))[:node])
+p(Crass::Parser.parse_component_value(Crass::Parser.new("a b"))[:value])
+p(Array.size(Crass::Parser.parse_component_values(Crass::Parser.new("a [b] c(d)"))))
+p(Crass::Parser.parse_rules("<!-- a{} -->").Array.map { |r| r[:node] })
+p(Crass::Parser.parse_stylesheet("<!-- a{} -->").Array.map { |r| r[:node] })
+
+# CRLF and form feeds become newlines; NUL becomes U+FFFD
+show(Crass::Tokenizer.tokenize("a\r\nb\fc\u0000"))

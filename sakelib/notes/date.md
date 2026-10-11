@@ -69,7 +69,7 @@
   the civil date and then `Date.new` converts it back to check it (about 7% slower on `phase2/bench_date.sake`,
   1.61-1.66 s → 1.74-1.89 s user, 3 runs each, load 5.5). Ruby has a private raw constructor for this.
 - **Helpers live in `module DateCore`** (module functions), since Sake has no private methods; they are
-  visible to user code.
+  visible to user code. (Nested as `Date::Core` since 2026-10-11.)
 
 ## Built-ins Sake lacks (requests)
 

@@ -156,7 +156,7 @@ module Sake
     # For messages about table rows keyed by internal type names.
     def display_type(t) = { "Nil" => "nil", "Boolean" => "true|false" }.fetch(t, t)
 
-    def truthy?(v) = !(v.nil? || v == false)
+    def truthy?(v) = !(v.nil? || v.equal?(false)) # identity: a class's own == is not truthiness
 
     # Hash keys and Set elements: values compared by content. A Struct, Array, Hash or Set is not one,
     # because equality of those types is undecided (protocols).

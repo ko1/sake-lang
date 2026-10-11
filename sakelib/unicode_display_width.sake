@@ -1,0 +1,379 @@
+# unicode_display_width: the monospace display width of a String (the unicode-display_width gem 3.2):
+# East Asian Width (ambiguous characters 1 or 2 columns), zero-width and control characters, emoji
+# sequences by terminal mode, and per-codepoint overwrites.
+#
+# Data, read at run time from the installed gems (nothing is copied into this file):
+# - the width index: unicode-display_width's data/display_width.marshal.gz, gunzipped and decoded by
+#   a reader for the part of Ruby's Marshal format it uses (Hash, Symbol, Array, Integer, nil, String);
+#   the gem's trie (17 planes, then 16-way levels) is flattened into sorted ranges [start, width].
+# - the emoji regexps: unicode-emoji's lib/unicode/emoji/generated/regex_*.rb, whose one regexp
+#   literal is taken out of the source and compiled with Regexp.new.
+# The files are found through the environment variables UNICODE_DISPLAY_WIDTH_DATA and
+# UNICODE_EMOJI_DIR, or else with `gem which`.
+
+module Unicode
+  class DisplayWidth
+    attr_reader ambiguous, overwrite, emoji
+
+    def DEFAULT_AMBIGUOUS = 1
+    def VERSION = "3.2.0"
+    def UNICODE_VERSION = "17.0.0"
+
+    # Ruby: DisplayWidth.new(ambiguous: 1, overwrite: {}, emoji: true).
+    def initialize(dw)
+      @ambiguous = 1 if @ambiguous == nil
+      @overwrite = Hash.new(0) if @overwrite == nil
+      @emoji = true if @emoji == nil
+    end
+
+    # Ruby: DisplayWidth::EmojiSupport.recommended: the emoji mode the terminal is guessed to use.
+    module EmojiSupport
+      module_function
+
+      def recommended = once { EmojiSupport._recommended }
+
+      def _recommended
+        return :rqi if ENV.get("CI")               # sic: the gem's spelling, which counts no emoji
+        prog = ENV.get("TERM_PROGRAM")
+        return :all if prog == "iTerm.app"
+        return :rgi_at if prog == "Apple_Terminal"
+        return :all_no_vs16 if prog == "WezTerm"
+        term = ENV.get("TERM") || ""
+        return :all if term == "contour" || term == "foot"
+        return :vs16 if String.match?(term, /kitty/)
+        return :vs16 if ENV.get("WT_SESSION")
+        :none
+      end
+    end
+
+    # Decodes the gem's display_width.marshal.gz into ranges: starts (sorted) and the width from each
+    # start up to the next.
+    class IndexReader
+      attr_reader bytes
+      attr_accessor pos
+      private attr_reader symbols, starts, widths
+
+      def initialize(r)
+        @pos = 0
+        @symbols = String[]
+        @starts = Integer[]
+        @widths = Integer[]
+      end
+
+      def byte(r)
+        b = @bytes[@pos] || 0
+        @pos += 1
+        b
+      end
+
+      # Marshal's packed Integer.
+      def int(r)
+        c = byte(r)
+        c -= 256 if c > 127
+        return 0 if c == 0
+        return c - 5 if c > 4
+        return c + 5 if c < -4
+        n = 0
+        Integer.times(Integer.abs(c)) { |i| n |= byte(r) << (8 * i) }
+        c > 0 ? n : n - (1 << (8 * -c))
+      end
+
+      def raw_string(r)
+        len = int(r)
+        s = Array.pack(Array.slice(@bytes, @pos, len) || Integer[], "C*")
+        @pos += len
+        String.force_encoding(s, "UTF-8")
+      end
+
+      def symbol(r)
+        t = byte(r)
+        if t == 58                                   # ':'
+          s = raw_string(r)
+          Array.push(@symbols, s)
+          s
+        elsif t == 59                                # ';' a symbol seen before
+          @symbols[int(r)] || ""
+        else
+          raise ArgumentError, "unsupported Marshal symbol type #{t}"
+        end
+      end
+
+      # Skips one object of any supported type.
+      def skip(r)
+        t = byte(r)
+        if t == 123                                  # '{'
+          Integer.times(int(r)) { |_| symbol_or_skip(r); skip(r) }
+        elsif t == 91                                # '['
+          Integer.times(int(r)) { |_| skip(r) }
+        elsif t == 73                                # 'I' an object with instance variables
+          skip(r)
+          Integer.times(int(r)) { |_| symbol(r); skip(r) }
+        elsif t == 34                                # '"'
+          raw_string(r)
+        elsif t == 58 || t == 59
+          @pos -= 1
+          symbol(r)
+        elsif t == 105                               # 'i'
+          int(r)
+        elsif t != 48 && t != 84 && t != 70          # '0' 'T' 'F'
+          raise ArgumentError, "unsupported Marshal type #{t}"
+        end
+        nil
+      end
+
+      def symbol_or_skip(r)
+        t = @bytes[@pos] || 0
+        t == 58 || t == 59 ? symbol(r) : skip(r)
+      end
+
+      def emit(r, start, w)
+        width = w || 1
+        return nil if Array.last(@widths) == width && !Array.empty?(@starts)
+        Array.push(@starts, start)
+        Array.push(@widths, width)
+        nil
+      end
+
+      # One node of the trie covering size codepoints from start: an Integer, nil, or 16 children.
+      def walk(r, start, size)
+        t = byte(r)
+        if t == 48
+          emit(r, start, nil)
+        elsif t == 105
+          emit(r, start, int(r))
+        elsif t == 91
+          n = int(r)
+          child = size / 16
+          Integer.times(n) { |i| walk(r, start + i * child, child) }
+          emit(r, start + n * child, nil) if n < 16
+        else
+          raise ArgumentError, "unsupported Marshal type #{t} in the index"
+        end
+      end
+
+      # Ruby's INDEX: {META: ..., WIDTH_ONE: trie, WIDTH_TWO: trie} → {WIDTH_ONE: [starts, widths], ...}.
+      def read(r)
+        raise ArgumentError, "not Marshal 4.8" unless byte(r) == 4 && byte(r) == 8
+        raise ArgumentError, "the index is not a Hash" unless byte(r) == 123
+        result = Hash[]
+        Integer.times(int(r)) do |_|
+          key = symbol(r)
+          if key == "WIDTH_ONE" || key == "WIDTH_TWO"
+            @starts = Integer[]
+            @widths = Integer[]
+            walk(r, 0, 0x100000)
+            result[String.to_sym(key)] = [@starts, @widths]
+          else
+            skip(r)
+          end
+        end
+        result
+      end
+    end
+
+    def gem_dir(name, env)
+      dir = ENV.get(env)
+      return dir if dir
+      out, _ = Open3.capture2("gem", "which", name)
+      File.dirname(String.strip(out))
+    end
+
+    def INDEX_FILENAME
+      once do
+        env = ENV.get("UNICODE_DISPLAY_WIDTH_DATA")
+        env ? env : File.expand_path("../../data/display_width.marshal.gz", DisplayWidth.gem_dir("unicode/display_width", "NONE"))
+      end
+    end
+
+    def INDEX
+      once do
+        data = String.b(Zlib.gunzip(File.read(DisplayWidth.INDEX_FILENAME)))
+        IndexReader.new(String.bytes(data)).IndexReader.read
+      end
+    end
+
+    # The width of codepoint cp in the index (Ruby: `w || 1` of the trie lookup).
+    def lookup(name, cp)
+      ranges = DisplayWidth.INDEX[name]
+      return 1 unless ranges
+      starts, widths = ranges
+      i = Array.bsearch_index(starts) { it > cp }
+      i = i ? i - 1 : Array.size(starts) - 1
+      widths[i] || 1
+    end
+
+    # unicode-emoji's generated regexps (Unicode::Emoji::REGEX_...), taken from their source files.
+    def emoji_regex(name)
+      dir = ENV.get("UNICODE_EMOJI_DIR") || File.expand_path("emoji/generated", gem_dir("unicode/emoji", "NONE"))
+      src = File.read(File.join(dir, "#{String.downcase(name)}.rb"))
+      m = String.match(src, /#{name} = \/(.*)\/([a-z]*)$/)
+      raise ArgumentError, "no #{name} in #{dir}" unless m
+      Regexp.new(m[1] || "")
+    end
+
+    def REGEX_TEXT_PRESENTATION = once { DisplayWidth.emoji_regex("REGEX_TEXT_PRESENTATION") }
+    def REGEX_EMOJI_KEYCAP = once { DisplayWidth.emoji_regex("REGEX_EMOJI_KEYCAP") }
+    def REGEX_INCLUDE_MQE_UQE = once { DisplayWidth.emoji_regex("REGEX_INCLUDE_MQE_UQE") }
+    def REGEX_WELL_FORMED = once { DisplayWidth.emoji_regex("REGEX_WELL_FORMED") }
+
+    def REGEX_EMOJI_VS16
+      once do
+        Regexp.union(Regexp.new(Regexp.source(DisplayWidth.REGEX_TEXT_PRESENTATION) + "(?<![#*0-9])" + "\u{FE0F}"),
+                     DisplayWidth.REGEX_EMOJI_KEYCAP)
+      end
+    end
+
+    def REGEX_EMOJI_ALL_SEQUENCES
+      once do
+        Regexp.union(/.[\u{1F3FB}-\u{1F3FF}\u{FE0F}]?(\u{200D}.[\u{1F3FB}-\u{1F3FF}\u{FE0F}]?)+|.[\u{1F3FB}-\u{1F3FF}]/,
+                     DisplayWidth.REGEX_EMOJI_KEYCAP)
+      end
+    end
+
+    def REGEX_EMOJI_ALL_SEQUENCES_AND_VS16
+      once { Regexp.union(DisplayWidth.REGEX_EMOJI_ALL_SEQUENCES, DisplayWidth.REGEX_EMOJI_VS16) }
+    end
+
+    def not_common_narrow(name) = name == :WIDTH_ONE ? /[^\u{10}-\u{2FF}]/m : /[^\u{10}-\u{A1}]/m
+
+    # Ruby: DisplayWidth.of(string, ambiguous = nil, overwrite = nil, old_options = {}, **options), and
+    # an instance's dw.of(string, **options). One name is one function, so `of` takes either:
+    #   DisplayWidth.of(s), .of(s, 2), .of(s, {emoji: :all, overwrite: Hash[0x2588 => 2]}), .of(s, 2, {...})
+    #   DisplayWidth.of(dw, s), .of(dw, s, {ambiguous: 1})
+    # The options Record may hold ambiguous:, overwrite: (a Hash of codepoint => width), emoji:.
+    def of(x, a = nil, b = nil)
+      case x
+      in DisplayWidth
+        a => String
+        dw = x
+        amb = DisplayWidth.ambiguous(dw)
+        ow = DisplayWidth.overwrite(dw)
+        em = DisplayWidth.emoji(dw)
+        if b
+          h = Record.to_h(b)
+          v = h[:ambiguous]
+          amb = v if v in Integer
+          o = h[:overwrite]
+          ow = o if o in Hash
+          e = h[:emoji]
+          em = e if e in Symbol | true | false
+        end
+        width(a, amb, ow, em)
+      in String
+        amb = 1
+        ow = Hash.new(0)
+        em = nil
+        opts = (a in Integer) ? b : a
+        if opts
+          h = Record.to_h(opts)
+          v = h[:ambiguous]
+          amb = v if v in Integer
+          o = h[:overwrite]
+          ow = o if o in Hash
+          e = h[:emoji]
+          em = e if e in Symbol | true | false
+        end
+        amb = a if a in Integer
+        width(x, amb, ow, em)
+      end
+    end
+
+    def width(string, ambiguous, overwrite, emoji)
+      if ambiguous != 1 && ambiguous != 2
+        raise ArgumentError, "Unicode::DisplayWidth: Ambiguous width must be 1 or 2"
+      end
+      mode = if emoji == nil || emoji == true || emoji == :auto
+               EmojiSupport.recommended
+             elsif emoji == false
+               :none
+             else
+               emoji
+             end
+      w = 0
+      s = string
+      unless Hash.empty?(overwrite)
+        w, s = width_custom(s, overwrite)
+      end
+      return w + width_ascii(s) if String.ascii_only?(s)
+      name = ambiguous == 1 ? :WIDTH_ONE : :WIDTH_TWO
+      return w + String.size(s) unless String.match?(s, not_common_narrow(name))
+      if mode != :none
+        e_width, s = emoji_width(s, mode, ambiguous)
+        w += e_width
+        return w + String.size(s) unless String.match?(s, not_common_narrow(name))
+      end
+      first_ambiguous = ambiguous == 1 ? 768 : 161
+      String.each_codepoint(s) do |cp|
+        if cp > 15 && cp < first_ambiguous
+          w += 1
+        elsif cp == 0x1000
+          w += 1                                     # past the gem's 4096-entry fast table
+        else
+          w += lookup(name, cp)
+        end
+      end
+      w < 0 ? 0 : w
+    end
+
+    def width_custom(string, overwrite)
+      w = 0
+      kept = Array.select(String.codepoints(string)) do |cp|
+        ow = overwrite[cp]
+        if ow
+          w += ow
+          false
+        else
+          true
+        end
+      end
+      [w, Array.pack(kept, "U*")]
+    end
+
+    # Ruby: ASCII \0 \x05 \a \b \n-\x0F count 0, and a backspace takes one column back.
+    def width_ascii(string)
+      if String.match?(string, /[\0\x05\a\b\n-\x0F]/)
+        res = String.bytesize(String.delete(string, "\0\x05\a\b\n-\x0F")) - String.count(string, "\b")
+        return res < 0 ? 0 : res
+      end
+      String.bytesize(string)
+    end
+
+    def emoji_width(string, mode, ambiguous)
+      res = 0
+      if mode == :rgi || mode == :rgi_at
+        return emoji_width_via_possible(string, DisplayWidth.REGEX_INCLUDE_MQE_UQE, mode == :rgi_at, ambiguous)
+      elsif mode == :possible
+        return emoji_width_via_possible(string, DisplayWidth.REGEX_WELL_FORMED, false, ambiguous)
+      elsif mode == :all_no_vs16
+        rest = String.gsub(string, DisplayWidth.REGEX_EMOJI_ALL_SEQUENCES) { |_| res += 2; "" }
+        return [res, rest]
+      elsif mode == :vs16
+        rest = String.gsub(string, DisplayWidth.REGEX_EMOJI_VS16) { |_| res += 2; "" }
+        return [res, rest]
+      elsif mode == :all
+        rest = String.gsub(string, DisplayWidth.REGEX_EMOJI_ALL_SEQUENCES_AND_VS16) { |_| res += 2; "" }
+        return [res, rest]
+      end
+      [0, string]
+    end
+
+    def emoji_width_via_possible(string, emoji_set_regex, strict_eaw, ambiguous)
+      res = 0
+      rest = String.gsub(string, DisplayWidth.REGEX_EMOJI_ALL_SEQUENCES_AND_VS16) do |candidate|
+        if candidate == String.slice(candidate, emoji_set_regex)
+          if strict_eaw
+            res += width(String.slice(candidate, 0, 1) || "", ambiguous, Hash.new(0), false)
+          else
+            res += 2
+          end
+          ""
+        elsif !strict_eaw
+          String.gsub(candidate, DisplayWidth.REGEX_EMOJI_VS16) { |_| res += 2; "" }
+        else
+          candidate
+        end
+      end
+      [res, rest]
+    end
+  end
+end

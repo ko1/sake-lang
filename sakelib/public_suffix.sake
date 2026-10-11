@@ -1,0 +1,367 @@
+# public_suffix: domain names split by the Public Suffix List (the public_suffix gem 7.0).
+#
+# PublicSuffix.parse("www.example.co.uk") is a Domain (trd "www", sld "example", tld "co.uk").
+# The list is the gem's own data/list.txt, read when first needed: the file named by the environment
+# variable PUBLIC_SUFFIX_LIST, or else the one next to the installed gem (found with `gem which`).
+# Ruby's keyword options (list:, default_rule:, ignore_private:, private_domains:, private:) are an
+# options Record here: PublicSuffix.parse(name, {ignore_private: true}).
+
+module PublicSuffix
+  class Error < StandardError
+  end
+  # Ruby: DomainInvalid < Error and DomainNotAllowed < DomainInvalid; Sake has no exception hierarchy,
+  # so `rescue PublicSuffix::Error` is written `rescue PublicSuffix::DomainInvalid, PublicSuffix::DomainNotAllowed`.
+  class DomainInvalid < StandardError
+  end
+  class DomainNotAllowed < StandardError
+  end
+
+  class Domain
+    attr_reader tld, sld, trd
+
+    def initialize(d)
+      nil
+    end
+
+    def name_to_labels(name) = String.split(name, ".")
+
+    def to_s(d) = name(d)
+    def to_a(d) = [@trd, @sld, @tld]
+    def name(d) = Array.join(Array.compact(Array[@trd, @sld, @tld]), ".")
+
+    def domain(d)
+      return nil unless domain?(d)
+      "#{@sld}.#{@tld}"
+    end
+
+    def subdomain(d)
+      return nil unless subdomain?(d)
+      "#{@trd}.#{@sld}.#{@tld}"
+    end
+
+    def domain?(d) = !(@tld == nil || @sld == nil)
+    def subdomain?(d) = !(@tld == nil || @sld == nil || @trd == nil)
+  end
+
+  module Rule
+    # The List's compact form of a rule; Ruby keeps the rule's class in `type`, Sake a Symbol.
+    Entry = Struct.new(:type, :length, :private)
+
+    # Ruby: class Base, the superclass of Normal, Wildcard and Exception. Here it is a mixin, so that
+    # Rule::Base.decompose(rule, name) dispatches on the rule's class.
+    module Base
+      def value(r) = raise(NotImplementedError)
+      def length(r) = raise(NotImplementedError)
+      def private(r) = raise(NotImplementedError)
+      def parts(r) = raise(NotImplementedError)
+      def rule(r) = raise(NotImplementedError)
+
+      def match?(r, name)
+        diff = String.chomp(name, value(r))
+        String.empty?(diff) || String.end_with?(diff, ".")
+      end
+
+      def decompose(r, domain)
+        suffix = Array.join(suffix_parts(r), "\\.")
+        m = String.match(domain, Regexp.new("^(.*)\\.(#{suffix})$"))
+        m ? [m[1], m[2]] : [nil, nil]
+      end
+
+      def suffix_parts(r) = parts(r)
+    end
+
+    class Normal
+      attr_reader value, length, private
+      include Base
+
+      def initialize(r)
+        @length = String.count(@value, ".") + 1 if @length == nil
+        @private = false if @private == nil
+      end
+
+      def build(content, opts = nil)
+        Normal.new(value: content, private: Rule.private_option(opts))
+      end
+
+      def rule(r) = @value
+      def parts(r) = String.split(@value, ".")
+    end
+
+    class Wildcard
+      attr_reader value, length, private
+      include Base
+
+      # Ruby: the "*" counts as one more label, unless a length is given.
+      def initialize(r)
+        @length = String.count(@value, ".") + 2 if @length == nil
+        @private = false if @private == nil
+      end
+
+      def build(content, opts = nil)
+        Wildcard.new(value: String.slice(content, 2..) || "", private: Rule.private_option(opts))
+      end
+
+      def rule(r) = @value == "" ? "*" : "*.#{@value}"
+      def parts(r) = String.split(@value, ".")
+      def suffix_parts(r) = Array[".*?"] + parts(r)
+    end
+
+    class Exception
+      attr_reader value, length, private
+      include Base
+
+      def initialize(r)
+        @length = String.count(@value, ".") + 1 if @length == nil
+        @private = false if @private == nil
+      end
+
+      def build(content, opts = nil)
+        Exception.new(value: String.slice(content, 1..) || "", private: Rule.private_option(opts))
+      end
+
+      def rule(r) = "!#{@value}"
+      def parts(r) = Array.slice(String.split(@value, "."), 1..) || String[]
+    end
+
+    module_function
+
+    def private_option(opts)
+      return false unless opts
+      Record.to_h(opts)[:private] == true
+    end
+
+    # Ruby: Rule.factory(content, private: false); "*.x" is a Wildcard, "!x" an Exception, else Normal.
+    def factory(content, opts = nil)
+      case String.slice(content, 0, 1)
+      in "*" then Wildcard.build(content, opts)
+      in "!" then Exception.build(content, opts)
+      else Normal.build(content, opts)
+      end
+    end
+
+    def default = factory("*")
+
+    def from_entry(entry, value)
+      Entry.type(entry) => Symbol
+      len = Entry.length(entry)
+      priv = Entry.private(entry)
+      case Entry.type(entry)
+      in :wildcard then Wildcard.new(value: value, length: len, private: priv)
+      in :exception then Exception.new(value: value, length: len, private: priv)
+      else Normal.new(value: value, length: len, private: priv)
+      end
+    end
+
+    def to_entry(rule)
+      type = case rule
+             in Wildcard then :wildcard
+             in Exception then :exception
+             else :normal
+             end
+      Entry.new(type, Base.length(rule), Base.private(rule))
+    end
+  end
+
+  # Ruby keeps List.default in a class instance variable; here a holder made once.
+  class DefaultList
+    attr_accessor list
+  end
+
+  class List
+    attr_reader rules
+    include Enum
+    include Bitwise                      # for <<
+
+    def initialize(l)
+      @rules = Hash[] if @rules == nil
+      Hash.set_default(@rules, nil)
+    end
+
+    def holder = once { DefaultList.new(nil) }
+
+    # The gem's data/list.txt (see the top of this file).
+    def DEFAULT_LIST_PATH
+      once do
+        env = ENV.get("PUBLIC_SUFFIX_LIST")
+        if env
+          env
+        else
+          out, _ = Open3.capture2("gem", "which", "public_suffix")
+          File.expand_path("../data/list.txt", File.dirname(String.strip(out)))
+        end
+      end
+    end
+
+    # Ruby: List.default(**options): parsed from the bundled file on first use.
+    def default(opts = nil)
+      h = holder
+      l = DefaultList.list(h)
+      return l if l
+      l2 = List.parse(File.read(List.DEFAULT_LIST_PATH), opts)
+      DefaultList.set_list(h, l2)
+      l2
+    end
+
+    def set_default(value) = DefaultList.set_list(holder, value)
+
+    # Ruby: List.parse(input, private_domains: true).
+    def parse(input, opts = nil)
+      private_domains = opts ? Record.to_h(opts)[:private_domains] != false : true
+      list = List.new
+      section = 1
+      Array.each(String.lines(input)) do |raw|
+        line = String.strip(raw)
+        next if String.empty?(line)
+        if String.include?(line, "===BEGIN PRIVATE DOMAINS===")
+          break unless private_domains
+          section = 2
+        elsif String.start_with?(line, "//")
+          next
+        else
+          add_line(list, line, section == 2)
+        end
+      end
+      list
+    end
+
+    # add(Rule.factory(line, private: priv)) without making the Rule: the entry straight from the line.
+    def add_line(l, line, priv)
+      first = String.slice(line, 0, 1)
+      if first == "*"
+        value = String.slice(line, 2..) || ""
+        @rules[value] = Rule::Entry.new(:wildcard, String.count(value, ".") + 2, priv)
+      elsif first == "!"
+        value = String.slice(line, 1..) || ""
+        @rules[value] = Rule::Entry.new(:exception, String.count(value, ".") + 1, priv)
+      else
+        @rules[line] = Rule::Entry.new(:normal, String.count(line, ".") + 1, priv)
+      end
+      l
+    end
+
+    def each(l)
+      Hash.each(@rules) { |key, entry| yield(Rule.from_entry(entry, key)) }
+    end
+
+    def add(l, rule)
+      @rules[Rule::Base.value(rule)] = Rule.to_entry(rule)
+      l
+    end
+
+    def <<(l, rule) = add(l, rule)
+    def size(l) = Hash.size(@rules)
+    def empty?(l) = Hash.empty?(@rules)
+
+    def clear(l)
+      Hash.clear(@rules)
+      l
+    end
+
+    def default_rule(l) = Rule.default
+
+    # Ruby: list.find(name, default: default_rule, ignore_private: false): the longest matching rule,
+    # an exception rule first.
+    def find(l, name, opts = nil)
+      h = opts ? Record.to_h(opts) : nil
+      default = Rule.default
+      has_default = false
+      ignore_private = false
+      if h
+        ignore_private = h[:ignore_private] == true
+        if Hash.key?(h, :default)
+          has_default = true
+        end
+      end
+      found = nil
+      Array.each(select(l, name, ignore_private)) do |r|
+        return r if r in Rule::Exception
+        cur = found
+        found = r if cur == nil || Rule::Base.length(r) >= Rule::Base.length(cur)
+      end
+      return found if found
+      has_default ? nil : default
+    end
+
+    def select(l, name, ignore_private)
+      parts = Array.reverse(String.split(name, "."))
+      rules = Array[]
+      query = parts[0] || ""
+      index = 0
+      loop do
+        entry = @rules[query]
+        if entry != nil && (ignore_private == false || Rule::Entry.private(entry) == false)
+          Array.push(rules, Rule.from_entry(entry, query))
+        end
+        index += 1
+        break if index >= Array.size(parts)
+        query = (parts[index] || "") + "." + query
+      end
+      rules
+    end
+  end
+
+  module_function
+
+  def DOT = "."
+  def BANG = "!"
+  def STAR = "*"
+  def VERSION = "7.0.5"
+
+  def options(opts)
+    list = nil
+    ignore_private = false
+    if opts
+      h = Record.to_h(opts)
+      l = h[:list]
+      list = l if l in List
+      ignore_private = h[:ignore_private] == true
+    end
+    [list || List.default, ignore_private]
+  end
+
+  # Ruby: PublicSuffix.parse(name, list: List.default, default_rule: list.default_rule, ignore_private: false).
+  def parse(name, opts = nil)
+    what = normalize(name)
+    raise what if what in DomainInvalid
+    list, ignore_private = options(opts)
+    rule = List.find(list, what, {ignore_private: ignore_private})
+    raise DomainInvalid, "`#{what}` is not a valid domain" if rule == nil
+    _, right = Rule::Base.decompose(rule, what)
+    raise DomainNotAllowed, "`#{what}` is not allowed according to Registry policy" if right == nil
+    decompose(what, rule)
+  end
+
+  def valid?(name, opts = nil)
+    what = normalize(name)
+    return false if what in DomainInvalid
+    list, ignore_private = options(opts)
+    rule = List.find(list, what, {ignore_private: ignore_private})
+    return false if rule == nil
+    _, right = Rule::Base.decompose(rule, what)
+    right != nil
+  end
+
+  # Ruby: PublicSuffix.domain(name, **options): nil instead of an error.
+  def domain(name, opts = nil)
+    Domain.domain(parse(name, opts))
+  rescue DomainInvalid, DomainNotAllowed
+    nil
+  end
+
+  def decompose(name, rule)
+    left, right = Rule::Base.decompose(rule, name)
+    parts = String.split(left || "", ".")
+    sld = Array.pop(parts)
+    trd = Array.empty?(parts) ? nil : Array.join(parts, ".")
+    Domain.new(right, sld, trd)
+  end
+
+  # The name stripped, without a trailing dot, downcased; or a DomainInvalid (returned, not raised).
+  def normalize(input)
+    name = String.downcase(String.chomp(String.strip(input), "."))
+    return DomainInvalid.new("Name is blank") if String.empty?(name)
+    return DomainInvalid.new("Name starts with a dot") if String.start_with?(name, ".")
+    return DomainInvalid.new(format("%s is not expected to contain a scheme", name)) if String.include?(name, "://")
+    name
+  end
+end

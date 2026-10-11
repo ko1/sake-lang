@@ -1,0 +1,1568 @@
+# addressable: Addressable::URI (RFC 3986: parse, normalize, join, route, encode) and
+# Addressable::Template (RFC 6570 levels 1-4: expand, partial_expand, extract, match), after the
+# addressable gem 2.9.
+#
+# A URI keeps its eight components as fields; the setters (`set_scheme`, `set_host`, ...) validate as
+# Ruby's `scheme=` and friends do. Ruby caches the normalized components; this port recomputes them.
+# IDNA is the gem's pure-Ruby fallback: NFKC, downcase, punycode (String.downcase stands in for the
+# gem's own Unicode lowercase table). `tld` and `domain` use sakelib/public_suffix.sake.
+require "public_suffix"
+
+module Addressable
+  # Internationalized domain names (Addressable::IDNA, the pure-Ruby implementation).
+  module IDNA
+    class PunycodeBadInput < StandardError
+    end
+    class PunycodeBigOutput < StandardError
+    end
+    class PunycodeOverflow < StandardError
+    end
+
+    module_function
+
+    def ACE_PREFIX = "xn--"
+
+    # Ruby's UTF8_REGEX && UTF8_REGEX_MULTIBYTE: valid UTF-8, only printable ASCII, and some non-ASCII.
+    def multibyte_utf8?(s)
+      String.valid_encoding?(s) && !String.ascii_only?(s) && !String.match?(s, /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/)
+    end
+
+    def to_ascii(input)
+      s = String.unicode_normalize(String.force_encoding(dup(input), "UTF-8"), :nfkc)
+      return s unless multibyte_utf8?(s)
+      parts = String.split(String.downcase(s), ".")
+      parts = Array.map(parts) { |part| multibyte_utf8?(part) ? IDNA.ACE_PREFIX + punycode_encode(part) : part }
+      Array.join(parts, ".")
+    end
+
+    def to_unicode(input)
+      parts = Array.map(String.split(input, ".")) do |part|
+        label = String.slice(part, /^xn--(.+)/, 1)
+        if label
+          begin
+            punycode_decode(label)
+          rescue PunycodeBadInput
+            part
+          end
+        else
+          part
+        end
+      end
+      String.force_encoding(Array.join(parts, "."), "UTF-8")
+    end
+
+    def punycode_threshold(k, bias)
+      return 1 if k <= bias
+      return 26 if k >= bias + 26
+      k - bias
+    end
+
+    def punycode_encode_digit(d) = d + 22 + 75 * (d < 26 ? 1 : 0)
+
+    def punycode_decode_digit(c)
+      return c - 22 if c - 48 < 10
+      return c - 65 if c - 65 < 26
+      return c - 97 if c - 97 < 26
+      36
+    end
+
+    def punycode_adapt(delta, numpoints, firsttime)
+      delta = firsttime ? delta / 700 : delta >> 1
+      delta += delta / numpoints
+      k = 0
+      while delta > (35 * 26) / 2
+        delta /= 35
+        k += 36
+      end
+      k + 36 * delta / (delta + 38)
+    end
+
+    # RFC 3492 encoding of one label (the gem's punycode_encode; its fixed buffers become an Array).
+    def punycode_encode(unicode)
+      input = String.codepoints(unicode)
+      output = Integer[]
+      Array.each(input) { |c| Array.push(output, c) if c < 0x80 }
+      h = Array.size(output)
+      b = h
+      Array.push(output, 0x2D) if b > 0
+      n = 0x80
+      delta = 0
+      bias = 72
+      while h < Array.size(input)
+        m = Array.min(Array.select(input) { it >= n }) || n
+        delta += (m - n) * (h + 1)
+        n = m
+        Array.each(input) do |c|
+          delta += 1 if c < n
+          if c == n
+            q = delta
+            k = 36
+            loop do
+              raise PunycodeBigOutput, "Output would exceed the space provided." if Array.size(output) >= 256
+              t = punycode_threshold(k, bias)
+              break if q < t
+              Array.push(output, punycode_encode_digit(t + (q - t) % (36 - t)))
+              q = (q - t) / (36 - t)
+              k += 36
+            end
+            Array.push(output, punycode_encode_digit(q))
+            bias = punycode_adapt(delta, h + 1, h == b)
+            delta = 0
+            h += 1
+          end
+        end
+        delta += 1
+        n += 1
+      end
+      Array.join(Array.map(output) { Integer.chr(it) }, "")
+    end
+
+    def punycode_decode(punycode)
+      raise PunycodeBigOutput, "Output would exceed the space provided." if 512 < String.size(punycode)
+      input = String.bytes(punycode)
+      Array.each(input) { |c| raise PunycodeBadInput, "Input is invalid." if c > 127 }
+      b = 0
+      Array.each_with_index(input) { |c, j| b = j if c == 0x2D }
+      output = Integer[]
+      Integer.times(b) do |j|
+        c = input[j] || 0
+        raise PunycodeBadInput, "Input is invalid." unless c < 0x80
+        Array.push(output, c)
+      end
+      n = 0x80
+      i = 0
+      bias = 72
+      pos = b > 0 ? b + 1 : 0
+      while pos < Array.size(input)
+        oldi = i
+        w = 1
+        k = 36
+        loop do
+          raise PunycodeBadInput, "Input is invalid." if pos >= Array.size(input)
+          digit = punycode_decode_digit(input[pos] || 0)
+          pos += 1
+          raise PunycodeBadInput, "Input is invalid." if digit >= 36
+          i += digit * w
+          t = punycode_threshold(k, bias)
+          break if digit < t
+          w *= 36 - t
+          k += 36
+        end
+        out = Array.size(output)
+        bias = punycode_adapt(i - oldi, out + 1, oldi == 0)
+        n += i / (out + 1)
+        i %= out + 1
+        raise PunycodeBigOutput, "Output would exceed the space provided." if out >= 256
+        Array.insert(output, i, n)
+        i += 1
+      end
+      Array.pack(output, "U*")
+    end
+  end
+
+  class URI
+    class InvalidURIError < StandardError
+    end
+
+    # Ruby's constants (Strings for a character class body) are functions.
+    module CharacterClasses
+      module_function
+      def ALPHA = "a-zA-Z"
+      def DIGIT = "0-9"
+      def GEN_DELIMS = "\\:\\/\\?\\#\\[\\]\\@"
+      def SUB_DELIMS = "\\!\\$\\&\\'\\(\\)\\*\\+\\,\\;\\="
+      def RESERVED = CharacterClasses.GEN_DELIMS + CharacterClasses.SUB_DELIMS
+      def UNRESERVED = CharacterClasses.ALPHA + CharacterClasses.DIGIT + "\\-\\.\\_\\~"
+      def RESERVED_AND_UNRESERVED = CharacterClasses.RESERVED + CharacterClasses.UNRESERVED
+      def PCHAR = CharacterClasses.UNRESERVED + CharacterClasses.SUB_DELIMS + "\\:\\@"
+      def SCHEME = CharacterClasses.ALPHA + CharacterClasses.DIGIT + "\\-\\+\\."
+      def HOST = CharacterClasses.UNRESERVED + CharacterClasses.SUB_DELIMS + "\\[\\:\\]"
+      def AUTHORITY = CharacterClasses.PCHAR + "\\[\\]"
+      def PATH = CharacterClasses.PCHAR + "\\/"
+      def QUERY = CharacterClasses.PCHAR + "\\/\\?"
+      def FRAGMENT = CharacterClasses.PCHAR + "\\/\\?"
+    end
+
+    # The complement of each class, as a Regexp (Ruby's CharacterClassesRegexps).
+    module CharacterClassesRegexps
+      module_function
+      def neg(cc) = Regexp.new("[^#{cc}]")
+      def AUTHORITY = once { CharacterClassesRegexps.neg(CharacterClasses.AUTHORITY) }
+      def FRAGMENT = once { CharacterClassesRegexps.neg(CharacterClasses.FRAGMENT) }
+      def HOST = once { CharacterClassesRegexps.neg(CharacterClasses.HOST) }
+      def PATH = once { CharacterClassesRegexps.neg(CharacterClasses.PATH) }
+      def QUERY = once { CharacterClassesRegexps.neg(CharacterClasses.QUERY) }
+      def RESERVED = once { CharacterClassesRegexps.neg(CharacterClasses.RESERVED) }
+      def RESERVED_AND_UNRESERVED = once { CharacterClassesRegexps.neg(CharacterClasses.RESERVED_AND_UNRESERVED) }
+      def SCHEME = once { CharacterClassesRegexps.neg(CharacterClasses.SCHEME) }
+      def UNRESERVED = once { CharacterClassesRegexps.neg(CharacterClasses.UNRESERVED) }
+    end
+
+    module NormalizeCharacterClasses
+      module_function
+      def HOST = CharacterClassesRegexps.HOST
+      def UNRESERVED = CharacterClassesRegexps.UNRESERVED
+      def PCHAR = once { CharacterClassesRegexps.neg(CharacterClasses.PCHAR) }
+      def SCHEME = CharacterClassesRegexps.SCHEME
+      def FRAGMENT = CharacterClassesRegexps.FRAGMENT
+      def QUERY = %r{[^a-zA-Z0-9\-\.\_\~\!\$\'\(\)\*\+\,\=\:\@\/\?%]|%(?!2B|2b)}
+    end
+
+    attr_reader scheme, user, password, host, port
+    private attr_reader path
+    attr_reader query, fragment
+    private attr_reader validation_deferred
+    include Arithmetic
+
+    def URIREGEX = /^(([^:\/?#]+):)?(\/\/([^\/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?$/
+    def NORMPATH = /^(?!\/)[^\/:]*:.*$/
+
+    def port_mapping
+      once do
+        Hash["http" => 80, "https" => 443, "ftp" => 21, "tftp" => 69, "sftp" => 22, "ssh" => 22,
+             "svn+ssh" => 22, "telnet" => 23, "nntp" => 119, "gopher" => 70, "wais" => 210,
+             "ldap" => 389, "prospero" => 1525]
+      end
+    end
+
+    def ip_based_schemes = Hash.keys(port_mapping)
+
+    # For Template, where MatchData names Addressable::Template::MatchData (Ruby's scan(re).flatten:
+    # Array.flatten does not flatten scan's groups here, see notes).
+    def match_captures(md) = MatchData.captures(md)
+
+    # Ruby's path is "" when not given.
+    def path(u) = @path || ""
+
+    # Ruby: URI.new(scheme: ..., host: ..., ...) sets each given component through its setter,
+    # validates once at the end, and assembles the String (which rejects an ambiguous path).
+    def initialize(u)
+      sch = @scheme
+      usr = @user
+      pw = @password
+      hst = @host
+      prt = @port
+      pth = @path
+      qry = @query
+      frg = @fragment
+      reset_ivs(u)
+      defer_validation(u) do
+        set_scheme(u, sch) if sch
+        set_user(u, usr) if usr
+        set_password(u, pw) if pw
+        set_host(u, hst) if hst
+        set_port(u, prt) if prt
+        set_path(u, pth) if pth
+        set_query(u, qry) if qry
+        set_fragment(u, frg) if frg
+      end
+      to_s(u)
+    end
+
+    def reset_ivs(u)
+      @scheme = nil
+      @user = nil
+      @password = nil
+      @host = nil
+      @port = nil
+      @path = ""
+      @query = nil
+      @fragment = nil
+      @validation_deferred = false
+    end
+
+    # --- parsing ---
+
+    # Ruby: URI.parse(nil) is nil, URI.parse(uri) a copy; here the argument is a String or a URI.
+    def parse(uri)
+      return URI.dup(uri) if uri in URI
+      fragments = String.match(uri, URI.URIREGEX)
+      raise InvalidURIError, "Invalid URI: #{uri}" unless fragments
+      authority = fragments[4]
+      user = nil
+      password = nil
+      host = nil
+      port = nil
+      if authority != nil
+        userinfo = String.slice(authority, /^([^\[\]]*)@/, 1)
+        if userinfo != nil
+          user = String.slice(String.strip(userinfo), /^([^:]*):?/, 1)
+          password = String.slice(String.strip(userinfo), /:(.*)$/, 1)
+        end
+        host = String.sub(String.sub(authority, /^([^\[\]]*)@/, ""), /:([^:@\[\]]*?)$/, "")
+        port = String.slice(authority, /:([^:@\[\]]*?)$/, 1)
+        port = nil if port == ""
+      end
+      u = URI.new
+      defer_validation(u) do
+        set_scheme(u, fragments[2])
+        set_user(u, user) if user
+        set_password(u, password) if password
+        set_host(u, host) if host
+        set_port(u, port) if port
+        set_path(u, fragments[5] || "")
+        set_query(u, fragments[7])
+        set_fragment(u, fragments[9])
+      end
+      to_s(u)
+      u
+    end
+
+    # Ruby: URI.heuristic_parse(uri, hints = {}); hints is a Hash of Symbol => String here.
+    def heuristic_parse(input, hints = nil)
+      return URI.dup(input) if input in URI
+      uri = String.strip(input)
+      scheme_hint = (hints ? hints[:scheme] : nil) || "http"
+      if String.match?(uri, /^http:\//i)
+        uri = String.sub(uri, /^http:\/+/i, "http://")
+      elsif String.match?(uri, /^https:\//i)
+        uri = String.sub(uri, /^https:\/+/i, "https://")
+      elsif String.match?(uri, /^feed:\/+http:\//i)
+        uri = String.sub(uri, /^feed:\/+http:\/+/i, "feed:http://")
+      elsif String.match?(uri, /^feed:\//i)
+        uri = String.sub(uri, /^feed:\/+/i, "feed://")
+      elsif String.match?(uri, %r[^file:/{4}]i)
+        uri = String.sub(uri, %r[^file:/+]i, "file:////")
+      elsif String.match?(uri, %r[^file://localhost/]i)
+        uri = String.sub(uri, %r[^file://localhost/+]i, "file:///")
+      elsif String.match?(uri, %r[^file:/+]i)
+        uri = String.sub(uri, %r[^file:/+]i, "file:///")
+      elsif String.match?(uri, /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/)
+        uri = scheme_hint + "://" + uri
+      elsif String.match?(uri, /\A\d+\..*:\d+\z/)
+        uri = "#{scheme_hint}://#{uri}"
+      end
+      match = String.match(uri, URI.URIREGEX)
+      raise InvalidURIError, "Invalid URI: #{uri}" unless match
+      authority = match[4]
+      if authority && String.size(authority) > 0
+        new_authority = String.gsub(String.tr(authority, "\\", "/"), " ", "%20")
+        b = MatchData.begin(match, 4)
+        e = MatchData.end(match, 4)
+        uri = (String.slice(uri, 0, b) || "") + new_authority + (String.slice(uri, e, String.size(uri) - e) || "")
+      end
+      parsed = parse(uri)
+      if String.match?(parsed.URI.scheme || "", /^[^\/?#\.]+\.[^\/?#]+$/)
+        parsed = parse(scheme_hint + "://" + uri)
+      end
+      ppath = URI.path(parsed)
+      if String.include?(ppath, ".")
+        new_host = String.slice(ppath, /^([^\/]+\.[^\/]*)/, 1)
+        if String.match?(ppath, /\b@\b/)
+          set_scheme(parsed, "mailto") unless URI.scheme(parsed)
+        elsif new_host
+          defer_validation(parsed) do
+            new_path = String.sub(ppath, Regexp.new("^" + Regexp.escape(new_host)), "")
+            set_host(parsed, new_host)
+            set_path(parsed, new_path)
+            set_scheme(parsed, scheme_hint) unless URI.scheme(parsed)
+          end
+        end
+      end
+      parsed
+    end
+
+    # Ruby: URI.convert_path(path): a file system path to a file: URI.
+    def convert_path(input)
+      return input if input in URI
+      path = String.strip(input)
+      path = String.sub(path, /^file:\/?\/?/, "") if String.match?(path, /^file:\/?\/?/)
+      path = "/" + path if String.match?(path, /^([a-zA-Z])[\|:]/)
+      uri = parse(path)
+      if URI.scheme(uri) == nil
+        p2 = String.sub(URI.path(uri), /^\/?([a-zA-Z])[\|:][\\\/]/) { |m| "/#{String.downcase(m[1] || "")}:/" }
+        p2 = String.tr(p2, "\\", "/")
+        if File.exist?(p2) && File.directory?(p2)
+          p2 = String.chomp(p2, "/") + "/"
+        end
+        set_path(uri, p2)
+        if String.start_with?(p2, "/")
+          set_scheme(uri, "file")
+          set_host(uri, "")
+        end
+        uri = normalize(uri)
+      end
+      uri
+    end
+
+    # Ruby has URI.join(*uris) and uri.join(other); one function covers both (a copy of the first, joined
+    # with each of the rest).
+    def join(base, *uris)
+      result = (base in URI) ? base : parse(base)
+      Array.each(uris) { |other| result = join1(result, other) }
+      (base in URI) && Array.empty?(uris) ? URI.dup(base) : result
+    end
+
+    def +(u, other) = join1(u, other)
+
+    def join1(u, other)
+      uri = (other in URI) ? other : parse(other)
+      return URI.dup(u) if String.empty?(to_s(uri))
+      joined_scheme = nil
+      joined_user = nil
+      joined_password = nil
+      joined_host = nil
+      joined_port = nil
+      joined_path = nil
+      joined_query = nil
+      if URI.scheme(uri) != nil
+        joined_scheme = URI.scheme(uri)
+        joined_user = URI.user(uri)
+        joined_password = URI.password(uri)
+        joined_host = URI.host(uri)
+        joined_port = URI.port(uri)
+        joined_path = normalize_path(URI.path(uri))
+        joined_query = URI.query(uri)
+      else
+        if authority(uri) != nil
+          joined_user = URI.user(uri)
+          joined_password = URI.password(uri)
+          joined_host = URI.host(uri)
+          joined_port = URI.port(uri)
+          joined_path = normalize_path(URI.path(uri))
+          joined_query = URI.query(uri)
+        else
+          upath = URI.path(uri)
+          if String.empty?(upath)
+            joined_path = path(u)
+            joined_query = URI.query(uri) != nil ? URI.query(uri) : @query
+          else
+            if String.start_with?(upath, "/")
+              joined_path = normalize_path(upath)
+            else
+              base_path = normalize_path(path(u)) || ""
+              if String.include?(base_path, "/")
+                base_path = String.sub(base_path, /\/[^\/]+$/, "/")
+              else
+                base_path = ""
+              end
+              base_path = "/" if String.empty?(base_path) && authority(u) != nil
+              joined_path = normalize_path(base_path + upath)
+            end
+            joined_query = URI.query(uri)
+          end
+          joined_user = @user
+          joined_password = @password
+          joined_host = @host
+          joined_port = @port
+        end
+        joined_scheme = @scheme
+      end
+      URI.new(scheme: joined_scheme, user: joined_user, password: joined_password, host: joined_host,
+              port: joined_port, path: joined_path, query: joined_query, fragment: URI.fragment(uri))
+    end
+
+    # Ruby: uri.join!(other): joins in place.
+    def join!(u, other) = replace_self(u, join1(u, other))
+
+    # --- encoding ---
+
+    def to_component(v)
+      case v
+      in String then v
+      in Integer | Float | Symbol | true | false then Kernel.to_s(v)
+      in nil then nil
+      end
+    end
+
+    def class_regexp(character_class)
+      case character_class
+      in String then Regexp.new("[^#{character_class}]")
+      in Regexp then character_class
+      end
+    end
+
+    # Ruby: URI.encode_component(component, character_class = RESERVED_AND_UNRESERVED, upcase_encoded = '').
+    # character_class is a Regexp of what to encode, or a String: the body of a class of what to keep.
+    def encode_component(component, character_class = CharacterClassesRegexps.RESERVED_AND_UNRESERVED, upcase_encoded = "")
+      s = to_component(component)
+      return nil if s == nil
+      re = class_regexp(character_class)
+      out = String.gsub(String.b(s), re) { |c| format("%%%02X", String.ord(c)) }
+      if String.size(upcase_encoded) > 0
+        codes = Array.map(String.bytes(upcase_encoded)) { format("%02x", it) }
+        out = String.gsub(out, Regexp.new("%(#{Array.join(codes, "|")})")) { String.upcase(it) }
+      end
+      out
+    end
+
+    def escape_component(component, character_class = CharacterClassesRegexps.RESERVED_AND_UNRESERVED, upcase_encoded = "")
+      encode_component(component, character_class, upcase_encoded)
+    end
+
+    # Ruby: URI.unencode(uri, return_type = String, leave_encoded = ''). There are no class values to
+    # pass as return_type, so it is left out: the result is a String (URI.parse it for a URI).
+    def unencode(uri, leave_encoded = "")
+      return nil if uri == nil
+      result = String.gsub(String.b(uri), /%[0-9a-f]{2}/i) do |seq|
+        c = Integer.chr(String.to_i(String.slice(seq, 1, 2) || "", 16))
+        String.include?(String.b(leave_encoded), c) ? seq : c
+      end
+      String.force_encoding(result, "UTF-8")
+    end
+
+    def unescape(uri, leave_encoded = "") = unencode(uri, leave_encoded)
+    def unencode_component(uri, leave_encoded = "") = unencode(uri, leave_encoded)
+    def unescape_component(uri, leave_encoded = "") = unencode(uri, leave_encoded)
+
+    # Ruby: URI.normalize_component(component, character_class = RESERVED_AND_UNRESERVED, leave_encoded = '').
+    def normalize_component(component, character_class = CharacterClassesRegexps.RESERVED_AND_UNRESERVED, leave_encoded = "")
+      return nil if component == nil
+      re = case character_class
+           in Regexp then character_class
+           in String
+             cc = character_class
+             if String.size(leave_encoded) > 0
+               cc = "#{cc}%" unless String.include?(cc, "%")
+               pat = Array.join(Array.map(String.bytes(leave_encoded)) { format("%02x", it) }, "|")
+               Regexp.new("[^#{cc}]|%(?!#{pat}|#{String.upcase(pat)})")
+             else
+               Regexp.new("[^#{cc}]")
+             end
+           end
+      unencoded = unencode_component(String.b(component), leave_encoded) || ""
+      encoded = begin
+        encode_component(String.unicode_normalize(unencoded, :nfc), re, leave_encoded)
+      rescue ArgumentError
+        encode_component(unencoded)
+      end
+      String.force_encoding(encoded || "", "UTF-8")
+    end
+
+    # Ruby: URI.encode(uri, return_type = String), alias escape; return_type is left out (a String).
+    def encode(uri)
+      o = (uri in URI) ? uri : parse(uri)
+      e = URI.new
+      defer_validation(e) do
+        set_scheme(e, encode_component(URI.scheme(o), CharacterClassesRegexps.SCHEME))
+        set_authority(e, encode_component(authority(o), CharacterClassesRegexps.AUTHORITY))
+        set_path(e, encode_component(URI.path(o), CharacterClassesRegexps.PATH))
+        set_query(e, encode_component(URI.query(o), CharacterClassesRegexps.QUERY))
+        set_fragment(e, encode_component(URI.fragment(o), CharacterClassesRegexps.FRAGMENT))
+      end
+      to_s(e)
+    end
+
+    def escape(uri) = encode(uri)
+
+    def nfc(s)
+      return nil if s == nil
+      begin
+        String.unicode_normalize(s, :nfc)
+      rescue ArgumentError
+        s
+      end
+    end
+
+    # Ruby: URI.normalized_encode(uri, return_type = String); return_type is left out (a String).
+    def normalized_encode(uri)
+      o = (uri in URI) ? uri : parse(uri)
+      prt = URI.port(o)
+      e = URI.new(
+        scheme: encode_component(nfc(unencode_component(URI.scheme(o))), CharacterClassesRegexps.SCHEME),
+        user: encode_component(nfc(unencode_component(URI.user(o))), CharacterClassesRegexps.UNRESERVED),
+        password: encode_component(nfc(unencode_component(URI.password(o))), CharacterClassesRegexps.UNRESERVED),
+        host: nfc(unencode_component(URI.host(o))),
+        port: prt,
+        path: encode_component(nfc(unencode_component(URI.path(o))), CharacterClassesRegexps.PATH),
+        query: encode_component(nfc(unencode_component(URI.query(o))), CharacterClassesRegexps.QUERY),
+        fragment: encode_component(nfc(unencode_component(URI.fragment(o))), CharacterClassesRegexps.FRAGMENT))
+      to_s(e)
+    end
+
+    def form_escape(s) = String.gsub(encode_component(String.gsub(s, /(\r\n|\n|\r)/, "\r\n"), CharacterClassesRegexps.UNRESERVED) || "", "%20", "+")
+
+    # Ruby: URI.form_encode(form_values, sort = false): a Hash or an Array of pairs; an Array value
+    # gives one pair per element.
+    def form_encode(form_values, sort = false)
+      pairs = Tuple[]
+      Enum.each(form_values) do |key, value|
+        case value
+        in Array then Array.each(value) { |v| Array.push(pairs, [Kernel.to_s(key), Kernel.to_s(v)]) }
+        else Array.push(pairs, [Kernel.to_s(key), Kernel.to_s(value)])
+        end
+      end
+      pairs = Array.sort(pairs) if sort
+      Array.join(Array.map(pairs) { |k, v| "#{form_escape(k)}=#{form_escape(v)}" }, "&")
+    end
+
+    def form_unescape(s) = String.gsub(unencode_component(String.gsub(s, "+", "%20")) || "", /(\r\n|\n|\r)/, "\n")
+
+    # Ruby: URI.form_unencode(s): an Array of [key, value] pairs (value nil when there is no "=").
+    def form_unencode(encoded_value)
+      Array.map(String.split(encoded_value, "&")) do |pair|
+        kv = String.split(pair, "=", 2)
+        k = kv[0]
+        v = kv[1]
+        [k ? form_unescape(k) : nil, v ? form_unescape(v) : nil]
+      end
+    end
+
+    # --- validation ---
+
+    def defer_validation(u)
+      @validation_deferred = true
+      yield
+      @validation_deferred = false
+      validate(u)
+    ensure
+      @validation_deferred = false
+    end
+
+    def validate(u)
+      return nil if @validation_deferred
+      h = @host
+      if @scheme != nil && ip_based?(u) && (h == nil || String.empty?(h)) && String.empty?(path(u))
+        raise InvalidURIError, "Absolute URI missing hierarchical segment: '#{to_s(u)}'"
+      end
+      if h == nil && (@port != nil || @user != nil || @password != nil)
+        raise InvalidURIError, "Hostname not supplied: '#{to_s(u)}'"
+      end
+      if !String.empty?(path(u)) && !String.start_with?(path(u), "/") && authority(u) != nil
+        raise InvalidURIError, "Cannot have a relative path with an authority set: '#{to_s(u)}'"
+      end
+      if String.start_with?(path(u), "//") && authority(u) == nil
+        raise InvalidURIError, "Cannot have a path with two leading slashes without an authority set: '#{to_s(u)}'"
+      end
+      if h != nil
+        inner = String.slice(h, /^\[(.*)\]$/, 1)
+        ok_inner = Regexp.new("^[#{CharacterClasses.UNRESERVED}#{CharacterClasses.SUB_DELIMS}:]*$")
+        if String.match?(h, /[<>{}\/\\\?\#\@"[[:space:]]]/) || (inner != nil && !String.match?(inner, ok_inner))
+          raise InvalidURIError, "Invalid character in host: '#{h}'"
+        end
+      end
+      nil
+    end
+
+    def str_component(v)
+      case v
+      in String | nil then v
+      in Integer then raise TypeError, "Can't convert Integer into String."
+      end
+    end
+
+    # --- components and their setters ---
+
+    def set_scheme(u, new_scheme)
+      if new_scheme && !String.match?(new_scheme, /\A[a-z][a-z0-9\.\+\-]*\z/i)
+        raise InvalidURIError, "Invalid scheme format: '#{new_scheme}'"
+      end
+      @scheme = new_scheme
+      @scheme = nil if String.empty?(String.strip(Kernel.to_s(new_scheme)))
+      validate(u)
+    end
+
+    def normalized_scheme(u)
+      s = @scheme
+      return nil unless s
+      return "svn+ssh" if String.match?(s, /^\s*ssh\+svn\s*$/i)
+      normalize_component(String.downcase(String.strip(s)), NormalizeCharacterClasses.SCHEME)
+    end
+
+    def set_user(u, new_user)
+      @user = new_user
+      @user = "" if @password != nil && @user == nil
+      validate(u)
+    end
+
+    def normalized_user(u)
+      usr = @user
+      return nil unless usr
+      pw = @password
+      if String.match?(normalized_scheme(u) || "", /https?/) && String.empty?(String.strip(usr)) &&
+         (!pw || String.empty?(String.strip(pw)))
+        return nil
+      end
+      normalize_component(String.strip(usr), NormalizeCharacterClasses.UNRESERVED)
+    end
+
+    def set_password(u, new_password)
+      @password = new_password
+      set_user(u, "") if new_password != nil && @user == nil
+      validate(u)
+    end
+
+    def normalized_password(u)
+      pw = @password
+      return nil unless pw
+      usr = @user
+      if String.match?(normalized_scheme(u) || "", /https?/) && String.empty?(String.strip(pw)) &&
+         (!usr || String.empty?(String.strip(usr)))
+        return nil
+      end
+      normalize_component(String.strip(pw), NormalizeCharacterClasses.UNRESERVED)
+    end
+
+    def userinfo(u)
+      usr = @user
+      pw = @password
+      return nil unless usr
+      pw ? "#{usr}:#{pw}" : usr
+    end
+
+    def normalized_userinfo(u)
+      return nil unless userinfo(u)
+      usr = normalized_user(u)
+      pw = normalized_password(u)
+      return nil if !usr && !pw
+      return "#{usr}:#{pw}" if usr && pw
+      usr
+    end
+
+    # Ruby quirk kept: a userinfo without ":" sets neither user nor password.
+    def set_userinfo(u, new_userinfo)
+      new_user = nil
+      new_password = nil
+      if new_userinfo
+        new_user = String.slice(String.strip(new_userinfo), /^(.*):/, 1)
+        new_password = String.slice(String.strip(new_userinfo), /:(.*)$/, 1)
+      end
+      set_password(u, new_password)
+      set_user(u, new_user)
+      validate(u)
+    end
+
+    def set_host(u, new_host)
+      @host = new_host
+      validate(u)
+    end
+
+    def normalized_host(u)
+      h = @host
+      return nil unless h
+      return "" if String.empty?(String.strip(h))
+      result = IDNA.to_ascii(unencode_component(String.downcase(String.strip(h))) || "")
+      result = String.slice(result, 0, String.size(result) - 1) || "" if String.match?(result, /[^\.]\.$/)
+      normalize_component(result, NormalizeCharacterClasses.HOST)
+    end
+
+    def hostname(u)
+      h = @host
+      return nil unless h
+      String.slice(h, /\A\[(.*)\]\z/, 1) || h
+    end
+
+    def set_hostname(u, new_hostname)
+      v = new_hostname
+      v = "[#{v}]" if v && !String.match?(v, /\A\[.*\]\z/) && String.include?(v, ":")
+      set_host(u, v)
+    end
+
+    def authority(u)
+      h = @host
+      return nil unless h
+      s = ""
+      ui = userinfo(u)
+      s += "#{ui}@" if ui != nil
+      s += h
+      s += ":#{@port}" if @port != nil
+      s
+    end
+
+    def normalized_authority(u)
+      return nil unless authority(u)
+      s = ""
+      ui = normalized_userinfo(u)
+      s += "#{ui}@" if ui != nil
+      s += normalized_host(u) || ""
+      np = normalized_port(u)
+      s += ":#{np}" if np != nil
+      s
+    end
+
+    def set_authority(u, new_authority)
+      new_user = nil
+      new_password = nil
+      new_host = nil
+      new_port = nil
+      if new_authority
+        new_userinfo = String.slice(new_authority, /^([^\[\]]*)@/, 1)
+        if new_userinfo
+          new_user = String.slice(String.strip(new_userinfo), /^([^:]*):?/, 1)
+          new_password = String.slice(String.strip(new_userinfo), /:(.*)$/, 1)
+        end
+        new_host = String.sub(String.sub(new_authority, /^([^\[\]]*)@/, ""), /:([^:@\[\]]*?)$/, "")
+        new_port = String.slice(new_authority, /:([^:@\[\]]*?)$/, 1)
+      end
+      set_password(u, new_password)
+      set_user(u, new_user)
+      set_host(u, new_host)
+      set_port(u, new_port)
+      validate(u)
+    end
+
+    def origin(u)
+      return "null" unless @scheme && authority(u)
+      np = normalized_port(u)
+      base = "#{normalized_scheme(u)}://#{normalized_host(u)}"
+      np ? base + ":#{np}" : base
+    end
+
+    def set_origin(u, new_origin)
+      new_scheme = nil
+      new_host = nil
+      new_port = nil
+      if new_origin
+        new_scheme = String.slice(new_origin, /^([^:\/?#]+):\/\//, 1)
+        raise InvalidURIError, "An origin cannot omit the scheme." unless new_scheme
+        new_host = String.slice(new_origin, /:\/\/([^\/?#:]+)/, 1)
+        raise InvalidURIError, "An origin cannot omit the host." unless new_host
+        new_port = String.slice(new_origin, /:([^:@\[\]\/]*?)$/, 1)
+      end
+      set_scheme(u, new_scheme)
+      set_host(u, new_host)
+      set_port(u, new_port)
+      set_userinfo(u, nil)
+      validate(u)
+    end
+
+    # Ruby's port= takes a String or an Integer; a String is unencoded first.
+    def set_port(u, new_port)
+      s = case new_port
+          in String then unencode_component(new_port) || ""
+          in Integer then Integer.to_s(new_port)
+          in nil then nil
+          end
+      raise InvalidURIError, "Invalid encoding in port" if s && !String.valid_encoding?(s)
+      if s != nil && !String.match?(s, /^\d+$/)
+        raise InvalidURIError, "Invalid port number: #{Kernel.inspect(s)}"
+      end
+      @port = String.to_i(s || "")
+      @port = nil if @port == 0
+      validate(u)
+    end
+
+    def normalized_port(u)
+      prt = @port
+      return nil unless prt
+      port_mapping[normalized_scheme(u) || ""] == prt ? nil : prt
+    end
+
+    def inferred_port(u)
+      prt = @port
+      prt == nil ? default_port(u) : prt
+    end
+
+    def default_port(u)
+      s = @scheme
+      s ? port_mapping[String.downcase(String.strip(s))] : nil
+    end
+
+    def site(u)
+      a = authority(u)
+      return nil unless @scheme || a
+      s = ""
+      s += "#{@scheme}:" if @scheme != nil
+      s += "//#{a}" if a != nil
+      s
+    end
+
+    def normalized_site(u)
+      return nil unless site(u)
+      s = ""
+      ns = normalized_scheme(u)
+      s += "#{ns}:" if ns != nil
+      na = normalized_authority(u)
+      s += "//#{na}" if na != nil
+      s
+    end
+
+    def set_site(u, new_site)
+      if new_site
+        set_scheme(u, String.slice(new_site, /^(?:([^:\/?#]+):)?(?:\/\/(?:[^\/?#]*))?$/, 1))
+        set_authority(u, String.slice(new_site, /^(?:(?:[^:\/?#]+):)?(?:\/\/([^\/?#]*))?$/, 1))
+      else
+        set_scheme(u, nil)
+        set_authority(u, nil)
+      end
+    end
+
+    def set_path(u, new_path)
+      pth = new_path || ""
+      pth = "/#{pth}" if !String.empty?(pth) && !String.start_with?(pth, "/") && @host != nil
+      @path = pth
+      validate(u)
+    end
+
+    def normalized_path(u)
+      pth = path(u)
+      pth = String.sub(pth, ":", "%2F") if @scheme == nil && String.match?(pth, URI.NORMPATH)
+      segments = Array.map(String.split(String.strip(pth), "/", -1)) do |segment|
+        normalize_component(segment, NormalizeCharacterClasses.PCHAR)
+      end
+      result = normalize_path(Array.join(segments, "/")) || ""
+      if String.empty?(result) && Array.include?(Array["http", "https", "ftp", "tftp"], normalized_scheme(u))
+        result = "/"
+      end
+      result
+    end
+
+    def basename(u) = String.sub(File.basename(path(u)), /;[^\/]*$/, "")
+    def extname(u) = File.extname(basename(u))
+
+    def set_query(u, new_query)
+      @query = new_query
+    end
+
+    # Ruby: uri.normalized_query(*flags), flags :compacted and :sorted. (Ruby caches the first result
+    # whatever the flags; this recomputes.)
+    def normalized_query(u, *flags)
+      q = @query
+      return nil unless q
+      pairs = String.split(q, "&", -1)
+      if Array.include?(flags, :compacted)
+        Array.delete_if(pairs) { String.empty?(it) }
+        Array.uniq!(pairs)
+      end
+      Array.sort!(pairs) if Array.include?(flags, :sorted)
+      component = Array.join(Array.map(pairs) { |pair| normalize_component(pair, NormalizeCharacterClasses.QUERY, "+") }, "&")
+      component == "" ? nil : component
+    end
+
+    def query_pairs(u)
+      q = @query
+      return nil if q == nil
+      plus = Array.include?(Array["http", "https", nil], @scheme)
+      Array.filter_map(String.split(q, "&")) do |pair|
+        next nil if String.empty?(pair)
+        kv = String.split(pair, "=", 2)
+        k = unencode_component(kv[0] || "") || ""
+        v = kv[1]
+        v = String.tr(v, "+", " ") if v && plus
+        [k, v ? unencode_component(v) : nil]
+      end
+    end
+
+    # Ruby: uri.query_values (Hash) and uri.query_values(Array): there are no class values to pass, so the
+    # Array form is query_values_array.
+    def query_values(u)
+      pairs = query_pairs(u)
+      return nil if pairs == nil
+      h = Hash[]
+      Array.each(pairs) { |k, v| h[k] = v }
+      h
+    end
+
+    def query_values_array(u) = query_pairs(u)
+
+    # Ruby: uri.query_values = {...} (sorted by key) or [[k, v], ...] (kept in order); a value is a
+    # String, nil (the key alone) or an Array (one pair per element).
+    def set_query_values(u, new_query_values)
+      if new_query_values == nil
+        set_query(u, nil)
+        return nil
+      end
+      pairs = case new_query_values
+              in Hash then Array.sort_by(Hash.to_a(new_query_values)) { |k, _| Kernel.to_s(k) }
+              in Array then new_query_values
+              end
+      buffer = ""
+      Array.each(pairs) do |key, value|
+        encoded_key = encode_component(key, CharacterClassesRegexps.UNRESERVED)
+        case value
+        in nil then buffer += "#{encoded_key}&"
+        in Array
+          Array.each(value) do |sub_value|
+            buffer += "#{encoded_key}=#{encode_component(sub_value, CharacterClassesRegexps.UNRESERVED)}&"
+          end
+        else buffer += "#{encoded_key}=#{encode_component(value, CharacterClassesRegexps.UNRESERVED)}&"
+        end
+      end
+      set_query(u, String.chop(buffer))
+    end
+
+    def request_uri(u)
+      return nil if absolute?(u) && !String.match?(@scheme || "", /^https?$/i)
+      (String.empty?(path(u)) ? "/" : path(u)) + (@query ? "?#{@query}" : "")
+    end
+
+    def set_request_uri(u, new_request_uri)
+      if absolute?(u) && !String.match?(@scheme || "", /^https?$/i)
+        raise InvalidURIError, "Cannot set an HTTP request URI for a non-HTTP URI."
+      end
+      path_component = String.slice(new_request_uri, /^([^\?]*)\??(?:.*)$/, 1) || ""
+      query_component = String.slice(new_request_uri, /^(?:[^\?]*)\?(.*)$/, 1)
+      set_path(u, String.empty?(path_component) ? "/" : path_component)
+      set_query(u, query_component)
+    end
+
+    def set_fragment(u, new_fragment)
+      @fragment = new_fragment
+      validate(u)
+    end
+
+    def normalized_fragment(u)
+      f = @fragment
+      return nil unless f
+      component = normalize_component(f, NormalizeCharacterClasses.FRAGMENT)
+      component == "" ? nil : component
+    end
+
+    def ip_based?(u)
+      s = @scheme
+      s ? Array.include?(ip_based_schemes, String.downcase(String.strip(s))) : false
+    end
+
+    def relative?(u) = @scheme == nil
+    def absolute?(u) = !relative?(u)
+
+    # The TLD and registrable domain of the host, by the Public Suffix List (ICANN section only).
+    def tld(u) = PublicSuffix::Domain.tld(PublicSuffix.parse(@host || "", {ignore_private: true}))
+    def domain(u) = PublicSuffix.domain(@host || "", {ignore_private: true})
+
+    def set_tld(u, new_tld)
+      replaced = String.sub(@host || "", Regexp.new("#{tld(u)}\\z"), new_tld)
+      set_host(u, PublicSuffix::Domain.to_s(PublicSuffix::Domain.new(replaced)))
+    end
+
+    # --- operations on whole URIs ---
+
+    # Ruby: uri.merge(hash) (Symbol keys); a non-String value for a String component raises TypeError.
+    def merge(u, hash)
+      if Hash.key?(hash, :authority) && Array.any?(Array[:userinfo, :user, :password, :host, :port]) { Hash.key?(hash, it) }
+        raise ArgumentError, "Cannot specify both an authority and any of the components within the authority."
+      end
+      if Hash.key?(hash, :userinfo) && (Hash.key?(hash, :user) || Hash.key?(hash, :password))
+        raise ArgumentError, "Cannot specify both a userinfo and either the user or password."
+      end
+      uri = URI.new
+      defer_validation(uri) do
+        set_scheme(uri, Hash.key?(hash, :scheme) ? str_component(hash[:scheme]) : @scheme)
+        set_authority(uri, str_component(hash[:authority])) if Hash.key?(hash, :authority)
+        set_userinfo(uri, str_component(hash[:userinfo])) if Hash.key?(hash, :userinfo)
+        if !Hash.key?(hash, :userinfo) && !Hash.key?(hash, :authority)
+          set_user(uri, Hash.key?(hash, :user) ? str_component(hash[:user]) : @user)
+          set_password(uri, Hash.key?(hash, :password) ? str_component(hash[:password]) : @password)
+        end
+        if !Hash.key?(hash, :authority)
+          set_host(uri, Hash.key?(hash, :host) ? str_component(hash[:host]) : @host)
+          set_port(uri, Hash.key?(hash, :port) ? hash[:port] : @port)
+        end
+        set_path(uri, Hash.key?(hash, :path) ? str_component(hash[:path]) : path(u))
+        set_query(uri, Hash.key?(hash, :query) ? str_component(hash[:query]) : @query)
+        set_fragment(uri, Hash.key?(hash, :fragment) ? str_component(hash[:fragment]) : @fragment)
+      end
+      uri
+    end
+
+    def merge!(u, hash) = replace_self(u, merge(u, hash))
+
+    def split_path(path)
+      parts = String.split(path, "/")
+      Array.push(parts, "") if String.end_with?(path, "/")
+      parts
+    end
+
+    def route_from(u, other)
+      uri = normalize(parse(other))
+      ns = normalize(u)
+      raise ArgumentError, "Expected absolute URI, got: #{to_s(u)}" if relative?(ns)
+      raise ArgumentError, "Expected absolute URI, got: #{to_s(uri)}" if relative?(uri)
+      return parse("##{URI.fragment(ns)}") if ns == uri
+      c_scheme = URI.scheme(ns)
+      c_user = URI.user(ns)
+      c_password = URI.password(ns)
+      c_host = URI.host(ns)
+      c_port = URI.port(ns)
+      c_path = URI.path(ns)
+      c_query = URI.query(ns)
+      if URI.scheme(ns) == URI.scheme(uri)
+        c_scheme = nil
+        if authority(ns) == authority(uri)
+          c_user = nil
+          c_password = nil
+          c_host = nil
+          c_port = nil
+          if URI.path(ns) == URI.path(uri)
+            c_path = nil
+            c_query = nil if URI.query(ns) == URI.query(uri)
+          elsif URI.path(uri) != "/" && c_path
+            self_parts = split_path(c_path)
+            uri_parts = split_path(URI.path(uri))
+            self_dir = Array.shift(self_parts)
+            uri_dir = Array.shift(uri_parts)
+            while !Array.empty?(self_parts) && !Array.empty?(uri_parts) && self_dir == uri_dir
+              self_dir = Array.shift(self_parts)
+              uri_dir = Array.shift(uri_parts)
+            end
+            Array.fill(uri_parts, "..")
+            c_path = Array.join(uri_parts + Array[self_dir || ""] + self_parts, "/")
+          end
+        end
+      end
+      c_scheme = URI.scheme(ns) if c_host != nil
+      URI.new(scheme: c_scheme, user: c_user, password: c_password, host: c_host, port: c_port,
+              path: c_path, query: c_query, fragment: URI.fragment(ns))
+    end
+
+    def route_to(u, other) = route_from(parse(other), u)
+
+    def normalize(u)
+      if normalized_scheme(u) == "feed"
+        s = to_s(u)
+        inner = String.slice(s, /^feed:\/*(http:\/*.*)/, 1)
+        return normalize(parse(inner)) if String.match?(s, /^feed:\/*http:\/*/) && inner
+      end
+      uri = URI.new
+      defer_validation(uri) do
+        set_scheme(uri, normalized_scheme(u))
+        set_authority(uri, normalized_authority(u))
+        set_path(uri, normalized_path(u))
+        set_query(uri, normalized_query(u))
+        set_fragment(uri, normalized_fragment(u))
+      end
+      to_s(uri)
+      uri
+    end
+
+    def normalize!(u) = replace_self(u, normalize(u))
+
+    def display_uri(u)
+      d = normalize(u)
+      set_host(d, IDNA.to_unicode(URI.host(d) || ""))
+      d
+    end
+
+    # Ruby's ===: compares normalized forms; the other side may be a String (false if it does not parse).
+    def ===(u, other)
+      s = begin
+        case other
+        in URI then to_s(normalize(other))
+        in String then to_s(normalize(parse(other)))
+        end
+      rescue InvalidURIError
+        return false
+      end
+      to_s(normalize(u)) == s
+    end
+
+    def ==(a, b) = to_s(normalize(a)) == to_s(normalize(b))
+    def eql?(a, b) = to_s(a) == to_s(b)
+
+    def dup(u)
+      URI.new(scheme: @scheme, user: @user, password: @password, host: @host, port: @port,
+              path: path(u), query: @query, fragment: @fragment)
+    end
+
+    def omit(u, *components)
+      known = Array[:scheme, :user, :password, :userinfo, :host, :port, :authority, :path, :query, :fragment]
+      invalid = components - known
+      raise ArgumentError, "Invalid component names: #{Kernel.inspect(invalid)}." unless Array.empty?(invalid)
+      d = URI.dup(u)
+      defer_validation(d) do
+        Array.each(components) do |c|
+          case c
+          in :scheme then set_scheme(d, nil)
+          in :user then set_user(d, nil)
+          in :password then set_password(d, nil)
+          in :userinfo then set_userinfo(d, nil)
+          in :host then set_host(d, nil)
+          in :port then set_port(d, nil)
+          in :authority then set_authority(d, nil)
+          in :path then set_path(d, nil)
+          in :query then set_query(d, nil)
+          in :fragment then set_fragment(d, nil)
+          else nil
+          end
+        end
+        set_user(d, normalized_user(d))
+      end
+      d
+    end
+
+    def omit!(u, *components) = replace_self(u, omit(u, *components))
+
+    def empty?(u) = String.empty?(to_s(u))
+
+    def to_s(u)
+      if @scheme == nil && !String.empty?(path(u)) && String.match?(path(u), URI.NORMPATH)
+        raise InvalidURIError, "Cannot assemble URI string with ambiguous path: '#{path(u)}'"
+      end
+      s = ""
+      s += "#{@scheme}:" if @scheme != nil
+      a = authority(u)
+      s += "//#{a}" if a != nil
+      s += path(u)
+      s += "?#{@query}" if @query != nil
+      s += "##{@fragment}" if @fragment != nil
+      String.force_encoding(s, "UTF-8")
+    end
+
+    def to_str(u) = to_s(u)
+
+    def to_hash(u)
+      Hash[:scheme => @scheme, :user => @user, :password => @password, :host => @host, :port => @port,
+           :path => path(u), :query => @query, :fragment => @fragment]
+    end
+
+    # Ruby shows the object id (#<Addressable::URI:0x... URI:...>); there is none here.
+    def inspect(u) = "#<Addressable::URI URI:#{to_s(u)}>"
+
+    def replace_self(u, other)
+      @scheme = URI.scheme(other)
+      @user = URI.user(other)
+      @password = URI.password(other)
+      @host = URI.host(other)
+      @port = URI.port(other)
+      @path = URI.path(other)
+      @query = URI.query(other)
+      @fragment = URI.fragment(other)
+      u
+    end
+
+    # RFC 3986 5.2.4, remove_dot_segments (the gem's rules 2A-2D).
+    def normalize_path(path)
+      return nil if path == nil
+      np = path
+      loop do
+        mod = nil
+        t = String.gsub(np, /\/\.\/|\/\.$/, "/")
+        mod = t if t != np
+        np = t
+        pair = String.match(np, /\/([^\/]*)\/\.\.\/|\/([^\/]*)\/\.\.$/)
+        parent = pair ? pair[1] : nil
+        current = pair ? pair[2] : nil
+        regexp = "/#{Regexp.escape(Kernel.to_s(parent))}/\\.\\./|(/#{Regexp.escape(Kernel.to_s(current))}/\\.\\.$)"
+        if mod == nil && pair && ((parent != "." && parent != "..") || (current != "." && current != ".."))
+          t = String.gsub(np, Regexp.new(regexp), "/")
+          mod = t if t != np
+          np = t
+        end
+        if mod == nil
+          t = String.sub(np, /^\.\.?\/?/, "")
+          mod = t if t != np
+          np = t
+        end
+        if mod == nil
+          t = String.gsub(np, /^\/\.\.?\/|^(\/\.\.?)+\/?$/, "/")
+          mod = t if t != np
+          np = t
+        end
+        break if mod == nil
+      end
+      np
+    end
+  end
+
+  class Template
+    class InvalidTemplateValueError < StandardError
+    end
+    class InvalidTemplateOperatorError < StandardError
+    end
+    class TemplateOperatorAbortedError < StandardError
+    end
+
+    # Ruby's Addressable::Template::MatchData: the URI, the template, and the variables' values.
+    class MatchData
+      attr_reader uri, template, mapping
+      include Indexable
+
+      def variables(m) = Template.variables(@template)
+      def keys(m) = variables(m)
+      def names(m) = variables(m)
+      def values(m) = Array.map(variables(m)) { |k| @mapping[k] }
+      def captures(m) = values(m)
+      def to_s(m) = URI.to_s(@uri)
+      def string(m) = to_s(m)
+      def to_a(m) = Array[to_s(m)] + values(m)
+
+      # Ruby: md[i], md["name"], md[i, len].
+      def [](m, key, len = nil)
+        case key
+        in String then @mapping[key]
+        in Integer
+          len ? (Array.slice(to_a(m), key, len) || Array[]) : Array.at(to_a(m), key)
+        end
+      end
+
+      def values_at(m, *indexes) = Array.map(indexes) { |i| MatchData.[](m, i) }
+      def pre_match(m) = ""
+      def post_match(m) = ""
+      def inspect(m) = "#<Addressable::Template::MatchData RESULT:#{Kernel.inspect(@mapping)}>"
+    end
+
+    attr_reader pattern
+
+    def initialize(t)
+      @pattern => String
+    end
+
+    def anything = URI::CharacterClasses.RESERVED + URI::CharacterClasses.UNRESERVED
+    def var_char = "(?>(?:[#{URI::CharacterClasses.ALPHA + URI::CharacterClasses.DIGIT}_]|%[a-fA-F0-9][a-fA-F0-9])+)"
+    def RESERVED = "(?:[#{anything}]|%[a-fA-F0-9][a-fA-F0-9])"
+    def RESERVED_NO_COMMA = "(?:[#{String.delete(anything, ",")}]|%[a-fA-F0-9][a-fA-F0-9])"
+    def UNRESERVED = "(?:[#{URI::CharacterClasses.UNRESERVED}]|%[a-fA-F0-9][a-fA-F0-9])"
+    def variable = "(?:#{var_char}(?:\\.?#{var_char})*)"
+    def varspec = "(?:(#{variable})(\\*|:\\d+)?)"
+    def VARNAME = once { Regexp.new("^#{variable}$") }
+    def VARSPEC = once { Regexp.new("^#{varspec}$") }
+    def VARIABLE_LIST = once { Regexp.new("^#{varspec}(?:,#{varspec})*$") }
+    def EXPRESSION = once { Regexp.new("\\{([+#./;?&=,!@|])?(#{varspec}(?:,#{varspec})*)\\}") }
+    def LEADERS = once { Hash["?" => "?", "/" => "/", "#" => "#", "." => ".", ";" => ";", "&" => "&"] }
+    def JOINERS = once { Hash["?" => "&", "." => ".", ";" => ";", "&" => "&", "/" => "/"] }
+
+    # Ruby shows the object id; there is none here.
+    def inspect(t) = "#<Addressable::Template PATTERN:#{@pattern}>"
+
+    # [operator or nil, varlist] of one "{...}" expression.
+    def split_expression(expr)
+      m = String.match(expr, Template.EXPRESSION)
+      m ? [m[1], m[2] || ""] : [nil, ""]
+    end
+
+    # [name, modifier] of one varspec.
+    def split_varspec(spec)
+      m = String.match(spec, Template.VARSPEC)
+      m ? [m[1] || "", m[2]] : ["", nil]
+    end
+
+    def extract(t, uri)
+      md = match(t, uri)
+      md ? MatchData.mapping(md) : nil
+    end
+
+    def unencode_value(value)
+      case value
+      in Hash
+        h = Hash[]
+        Hash.each(value) { |k, v| h[URI.unencode_component(k) || ""] = URI.unencode_component(v) || "" }
+        h
+      in Array then Array.map(value) { URI.unencode_component(it) || "" }
+      in String then URI.unencode_component(value)
+      in nil then nil
+      end
+    end
+
+    def match(t, input)
+      uri = (input in URI) ? input : URI.parse(input)
+      mapping = Hash[]
+      expansions, expansion_regexp = parse_template_pattern(@pattern)
+      str = URI.to_str(uri)
+      md = String.match(str, expansion_regexp)
+      return nil unless md
+      unparsed_values = URI.match_captures(md)
+      return MatchData.new(uri, t, mapping) if str == @pattern
+      return nil if Array.empty?(expansions)
+      index = 0
+      Array.each(expansions) do |expansion|
+        operator, varlist = split_expression(expansion)
+        Array.each(String.split(varlist, ",")) do |spec|
+          name, modifier = split_varspec(spec)
+          mapping[name] = nil unless Hash.key?(mapping, name)
+          raw = unparsed_values[index]
+          value = nil
+          if operator == nil || Array.include?(Array["+", "#", "/", "."], operator)
+            if raw && modifier == "*"
+              joiner = Template.JOINERS[operator || ""]
+              value = joiner ? String.split(raw, joiner) : String.split(raw)
+            else
+              value = raw
+            end
+          elsif modifier == "*"
+            if raw
+              h = Hash[]
+              Array.each(String.split(raw, Template.JOINERS[operator] || "&")) do |v|
+                kv = String.split(v, "=")
+                h[kv[0] || ""] = kv[1] || ""
+              end
+              value = h
+            end
+          elsif raw
+            kv = String.split(raw, "=")
+            name = kv[0] || ""
+            value = kv[1] || ""
+          end
+          value = unencode_value(value)
+          mapping[name] = value if !Hash.key?(mapping, name) || mapping[name] == nil
+          index += 1
+        end
+      end
+      MatchData.new(uri, t, mapping)
+    end
+
+    # Ruby: template.expand(mapping, processor = nil, normalize_values = true). Processors (objects
+    # answering transform/validate/match) are not ported; the third argument is normalize_values.
+    def expand(t, mapping, normalize_values = true)
+      m = normalize_keys(mapping)
+      result = String.gsub(@pattern, Template.EXPRESSION) { |capture| transform_capture(m, capture, normalize_values) }
+      URI.parse(result)
+    end
+
+    def partial_expand(t, mapping, normalize_values = true)
+      m = normalize_keys(mapping)
+      result = String.gsub(@pattern, Template.EXPRESSION) { |capture| transform_partial_capture(m, capture, normalize_values) }
+      Template.new(result)
+    end
+
+    def variables(t)
+      expansions, _ = parse_template_pattern(@pattern)
+      names = String[]
+      Array.each(expansions) do |capture|
+        _, varlist = split_expression(capture)
+        Array.each(String.split(varlist, ",")) { |spec| Array.push(names, split_varspec(spec)[0]) }
+      end
+      Array.uniq(names)
+    end
+
+    def keys(t) = variables(t)
+    def names(t) = variables(t)
+
+    # Ruby builds this from (name, nil) pairs and drops the nils, so it is always empty.
+    def variable_defaults(t) = Hash.new("")
+
+    def to_regexp(t)
+      _, re = parse_template_pattern(@pattern)
+      re
+    end
+
+    def source(t) = Regexp.source(to_regexp(t))
+    def named_captures(t) = Regexp.named_captures(to_regexp(t))
+
+    def transform_partial_capture(mapping, capture, normalize_values)
+      operator, varlist = split_expression(capture)
+      vars = String.split(varlist, ",")
+      if operator == "?"
+        first = Array.find(vars) do |spec|
+          name, _ = split_varspec(spec)
+          Hash.key?(mapping, name) && mapping[name] != nil
+        end
+        vars = Array[first] + Array.reject(vars) { it == first } if first
+      end
+      op = operator || ""
+      acc = ""
+      Array.each(vars) do |spec|
+        name, _ = split_varspec(spec)
+        next_val = Hash.key?(mapping, name) ? transform_capture(mapping, "{#{op}#{spec}}", normalize_values) : "{#{op}#{spec}}"
+        op = "&" if op == "?" && next_val != ""
+        acc += next_val
+      end
+      acc
+    end
+
+    def normalize_value(value)
+      case value
+      in Array then Array.map(value) { normalize_value(it) }
+      in Hash
+        h = Hash[]
+        Hash.each(value) { |k, v| h[normalize_value(k)] = normalize_value(v) }
+        h
+      in String then String.unicode_normalize(String.force_encoding(dup(value), "UTF-8"), :nfc)
+      else String.unicode_normalize(Kernel.to_s(value), :nfc)
+      end
+    end
+
+    def stringify(v)
+      case v
+      in String then v
+      in Integer | Float | Symbol | true | false then Kernel.to_s(v)
+      end
+    end
+
+    def transform_capture(mapping, capture, normalize_values)
+      operator, varlist = split_expression(capture)
+      return_value = Tuple[]
+      Array.each(String.split(varlist, ",")) do |spec|
+        name, modifier = split_varspec(spec)
+        value = mapping[name]
+        next if value == nil || ((value in Hash) && Hash.empty?(value))
+        allow_reserved = operator == "+" || operator == "#"
+        length = String.match?(modifier || "", /^:\d+/) ? String.to_i(String.delete(modifier || "", ":")) : nil
+        encode_map = allow_reserved ? anything : URI::CharacterClasses.UNRESERVED
+        transformed = case value
+                      in Array
+                        vals = Array.map(value) do |val|
+                          v = normalize_values ? normalize_value(stringify(val)) : stringify(val)
+                          URI.encode_component(length ? (String.slice(v, 0, length) || "") : v, encode_map) || ""
+                        end
+                        modifier == "*" ? vals : Array.join(vals, ",")
+                      in Hash
+                        sep = modifier == "*" ? "=" : ","
+                        vals = Array.map(Hash.to_a(value)) do |k, val|
+                          kk = normalize_values ? normalize_value(stringify(k)) : stringify(k)
+                          vv = normalize_values ? normalize_value(stringify(val)) : stringify(val)
+                          "#{URI.encode_component(kk, encode_map)}#{sep}#{URI.encode_component(vv, encode_map)}"
+                        end
+                        modifier == "*" ? vals : Array.join(vals, ",")
+                      else
+                        v = normalize_values ? normalize_value(stringify(value)) : stringify(value)
+                        URI.encode_component(length ? (String.slice(v, 0, length) || "") : v, encode_map) || ""
+                      end
+        Array.push(return_value, [name, transformed])
+      end
+      return "" if Array.empty?(return_value)
+      join_values(operator, return_value)
+    end
+
+    def join_values(operator, return_value)
+      op = operator || ""
+      leader = Hash.fetch(Template.LEADERS, op, "")
+      joiner = Hash.fetch(Template.JOINERS, op, ",")
+      if op == "&" || op == "?"
+        parts = Array.map(return_value) do |k, v|
+          case v
+          in Array
+            String.match?(Array.first(v) || "", /=/) ? Array.join(v, joiner) : Array.join(Array.map(v) { "#{k}=#{it}" }, joiner)
+          in String then "#{k}=#{v}"
+          end
+        end
+        leader + Array.join(parts, joiner)
+      elsif op == ";"
+        parts = Array.map(return_value) do |k, v|
+          case v
+          in Array
+            if String.match?(Array.first(v) || "", /=/)
+              ";" + Array.join(v, ";")
+            else
+              ";" + Array.join(Array.map(v) { "#{k}=#{it}" }, ";")
+            end
+          in String then v != "" ? ";#{k}=#{v}" : ";#{k}"
+          end
+        end
+        Array.join(parts, "")
+      else
+        leader + Array.join(Array.map(return_value) { |_, v| (v in String) ? v : Array.join(v, joiner) }, joiner)
+      end
+    end
+
+    # Ruby accepts String or Symbol keys; the mapping here is keyed by Strings or by Symbols.
+    def normalize_keys(mapping)
+      h = Hash[]
+      Hash.each(mapping) { |k, v| h[(k in Symbol) ? Symbol.to_s(k) : k] = v }
+      h
+    end
+
+    def parse_template_pattern(pattern)
+      escaped = String.gsub(Regexp.escape(pattern), /\\\{(.*?)\\\}/) { |e| String.gsub(e, /\\(.)/, "\\1") }
+      expansions = String[]
+      regexp_string = String.gsub(escaped, Template.EXPRESSION) do |expansion|
+        Array.push(expansions, expansion)
+        operator, varlist = split_expression(expansion)
+        op = operator || ""
+        leader = Regexp.escape(Hash.fetch(Template.LEADERS, op, ""))
+        joiner = Regexp.escape(Hash.fetch(Template.JOINERS, op, ","))
+        specs = String.split(varlist, ",")
+        combined = Array.map(specs) do |spec|
+          name, modifier = split_varspec(spec)
+          group = case op
+                  in "+" | "#" then "#{Template.RESERVED}*?"
+                  in "." then "#{String.gsub(Template.UNRESERVED, "\\.", "")}*?"
+                  in ";" then "#{Template.UNRESERVED}*=?#{Template.UNRESERVED}*?"
+                  in "?" | "&" then "#{Template.UNRESERVED}*=#{Template.UNRESERVED}*?"
+                  else "#{Template.UNRESERVED}*?"
+                  end
+          if modifier == "*"
+            seg = (op == "+" || op == "#") ? "#{Template.RESERVED_NO_COMMA}*+" : group
+            joiner_pattern = operator == nil ? joiner : "#{joiner}?"
+            "(?<#{name}>#{seg}(?:#{joiner_pattern}#{seg})*)?"
+          elsif Array.size(specs) > 1 && (op == "+" || op == "#") && spec != Array.last(specs)
+            "(?<#{name}>#{Template.RESERVED_NO_COMMA}*+)?"
+          else
+            "(?<#{name}>#{group})?"
+          end
+        end
+        "(?:|#{leader}#{Array.join(combined, "#{joiner}?")})"
+      end
+      [expansions, Regexp.new("\\A#{regexp_string}\\z")]
+    end
+  end
+end

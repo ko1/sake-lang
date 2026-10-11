@@ -1,0 +1,163 @@
+require "jmespath"
+
+# Evaluates one expression and prints the result, or the error's class and message.
+def show(expr, data)
+  p([expr, JMESPath.search(expr, data)])
+rescue JMESPath::Errors::SyntaxError => e
+  puts("#{expr} => SyntaxError: #{Exception.message(e)}")
+rescue JMESPath::Errors::InvalidTypeError => e
+  puts("#{expr} => InvalidTypeError: #{Exception.message(e)}")
+rescue JMESPath::Errors::InvalidArityError => e
+  puts("#{expr} => InvalidArityError: #{Exception.message(e)}")
+rescue JMESPath::Errors::InvalidValueError => e
+  puts("#{expr} => InvalidValueError: #{Exception.message(e)}")
+rescue JMESPath::Errors::UnknownFunctionError => e
+  puts("#{expr} => UnknownFunctionError: #{Exception.message(e)}")
+end
+
+# the example from the gem's README
+p(JMESPath.search("foo.bar", JSON.parse('{"foo": {"bar": "value"}}')))
+p(JMESPath.search("foo.bar.baz", JSON.parse('{"foo": {"bar": {"baz": "value"}}}')))
+p(JMESPath.search("foo.bar.missing", JSON.parse('{"foo": {"bar": {"baz": "value"}}}')))
+
+data = JSON.parse('{"a": {"b": {"c": [1, 2, 3]}}, "s": "hello", "n": null, "e": [], "f": 1.5,
+  "people": [{"name": "ann", "age": 30, "tags": ["x", "y"]},
+             {"name": "bob", "age": 25, "tags": ["y"]},
+             {"name": "cy", "age": 35, "tags": []},
+             {"name": "dee", "age": 25}],
+  "ops": {"o1": {"state": "up"}, "o2": {"state": "down"}, "o3": {"state": "up"}},
+  "nested": [[1, 2], [3, [4, 5]], 6]}')
+
+# fields, indexes, sub-expressions, pipes
+show("a.b.c", data)
+show("a.b.c[0]", data)
+show("a.b.c[-1]", data)
+show("a.b.c[9]", data)
+show("\"a\".\"b\"", data)
+show("x.y.z", data)
+show("a | b | c[1]", data)
+show("@", JSON.parse("[1, 2]"))
+
+# slices: Ruby's optimizer turns a[1:3] into value[1, 2], so a start past the end gives null
+show("a.b.c[0:2]", data)
+show("a.b.c[1:]", data)
+show("a.b.c[::-1]", data)
+show("a.b.c[::2]", data)
+show("a.b.c[-2:]", data)
+show("a.b.c[5:9]", data)
+show("a.b.c[0:9]", data)
+show("s[1:3]", data)
+show("a.b.c[1:2:0]", data)
+
+# projections: list, object, flatten, filter
+show("people[*].name", data)
+show("people[].tags[]", data)
+show("people[*].tags[0]", data)
+show("ops.*.state", data)
+show("nested[]", data)
+show("nested[][]", data)
+show("people[?age > `26`].name", data)
+show("people[?age == `25`].name", data)
+show("people[?age != `25`] | [].name", data)
+show("people[?tags].name", data)
+show("people[?!tags].name", data)
+show("people[?age >= `30` && name != 'ann'].name", data)
+show("people[?age < `26` || name == 'cy'].name", data)
+show("people[?name > `1`].name", data)
+show("a.b.c[?@ <= `2`]", data)
+
+# multi-select, literals, or/and/not
+show("{first: people[0].name, ages: people[*].age}", data)
+show("people[0].[name, age]", data)
+show("people[*].{n: name, t: length(tags || `[]`)}", data)
+show("`{\"k\": [1, true, null]}`", data)
+show("`foo`", data)
+show("'it''s'", data)
+show("'it\\'s'", data)
+show("n || s", data)
+show("e || 'empty'", data)
+show("s && f", data)
+show("e && f", data)
+show("!e", data)
+show("!s", data)
+
+# functions
+show("abs(`-3`)", data)
+show("avg(a.b.c)", data)
+show("avg(e)", data)
+show("ceil(f)", data)
+show("floor(f)", data)
+show("contains(s, 'ell')", data)
+show("contains(a.b.c, `2`)", data)
+show("ends_with(s, 'lo')", data)
+show("starts_with(s, 'lo')", data)
+show("join(', ', people[*].name)", data)
+show("keys(ops)", data)
+show("values(ops)[0]", data)
+show("length(s)", data)
+show("length(people)", data)
+show("length(ops)", data)
+show("map(&name, people)", data)
+show("map(&tags[0], people)", data)
+show("max(people[*].age)", data)
+show("min(people[*].name)", data)
+show("max(e)", data)
+show("max_by(people, &age).name", data)
+show("min_by(people, &age).name", data)
+show("merge(`{\"a\": 1}`, `{\"b\": 2}`, `{\"a\": 3}`)", data)
+show("not_null(n, `null`, s)", data)
+show("not_null(n)", data)
+show("reverse(s)", data)
+show("reverse(a.b.c)", data)
+show("sort(`[3, 1.5, 2]`)", data)
+show("sort(people[*].name)", data)
+show("sort_by(people, &age)[*].name", data)
+show("sort_by(people, &name)[-1].name", data)
+show("sum(a.b.c)", data)
+show("sum(e)", data)
+show("to_array(s)", data)
+show("to_array(a.b.c)", data)
+show("to_number('12')", data)
+show("to_number('1.0')", data)
+show("to_number('1.25')", data)
+show("to_number('x')", data)
+show("to_number(`true`)", data)
+show("to_string(a)", data)
+show("to_string(s)", data)
+show("type(s)", data)
+show("type(f)", data)
+show("type(n)", data)
+show("type(e)", data)
+show("type(a)", data)
+show("type(`true`)", data)
+show("type(&s)", data)
+
+# errors: syntax, unknown function, arity, types
+show("a.", data)
+show("a[", data)
+show("||", data)
+show("(a", data)
+show("a b", data)
+show("[1:2:3:4]", data)
+show("\"f\"(a)", data)
+show("people[?age > `1`", data)
+show("`{bad`", data)
+show("~", data)
+show("nope(a)", data)
+show("abs(s)", data)
+show("abs(f, f)", data)
+show("length(f)", data)
+show("max(`[1, \"a\"]`)", data)
+show("max(`[true]`)", data)
+show("sort(`[1, \"a\"]`)", data)
+show("sort_by(people, &tags)", data)
+show("min_by(people, &tags)", data)
+show("sum(`[1, \"a\"]`)", data)
+show("join(`1`, a.b.c)", data)
+show("map(s, a)", data)
+show("avg(`[1, \"a\"]`)", data)
+
+# disable_visit_errors: type and arity errors give null instead
+p(JMESPath.search("abs(s)", data, Hash[disable_visit_errors: true]))
+p(JMESPath.search("length(f, f)", data, Hash[disable_visit_errors: true]))
+p(JMESPath.search("a.b.c[0]", data, Hash[cache_expressions: false]))

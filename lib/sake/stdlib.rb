@@ -307,7 +307,7 @@ module Sake
       raise Fail.new("ArgumentError", "cannot compare #{keys ? "block results" : "elements"} of types #{types.join(", ")}#{hint}")
     end
 
-    INDEX_ROWS = "(Array, Integer), (Array, Range), (String, Integer), (String, Range), (Tuple, Integer), " \
+    INDEX_ROWS = "(Array, Integer), (Array, Range), (String, Integer), (String, Range), (String, String), (String, Regexp), (Tuple, Integer), " \
                  "(Hash, any key), (MatchData, Integer), (MatchData, String)"
     INDEX_SET_ROWS = "(Array, Integer), (Tuple, Integer), (Hash, any key)"
 
@@ -324,6 +324,7 @@ module Sake
 
     # `s[start, length]` / `a[start, length]`: a slice, or nil when start is past the end.
     def slice(x, k, n)
+      return x[k, n] if x.is_a?(String) && k.is_a?(Regexp) # `s[/re/, group]`
       raise Fail.new("TypeError", "the start must be Integer, got #{Values.describe(k)}") unless k.is_a?(Integer)
       x[k, n]
     end
@@ -331,6 +332,7 @@ module Sake
     def index_get(x, k)
       case [x, k]
       in [Array | String, Integer | Range] then x[k]
+      in [String, String | Regexp] then x[k]
       in [Tuple, Integer] then x.elems[tuple_pos(x, k)]
       in [Hash, _] then x[k]
       in [MatchData, Integer | String | Symbol]

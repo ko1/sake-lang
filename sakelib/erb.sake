@@ -7,36 +7,37 @@
 
 require "cgi"
 
-# A template that Sake's ERB does not accept, or a name it cannot find (Ruby: SyntaxError,
-# NameError, NoMethodError).
-class ERBError < Exception
-end
-
-# One piece of a template. kind: :text, :out, :if, :unless, :each, :each_with_index.
-# `text` is the text or the expression; `vars` the block's parameters; `alt` the else branch.
-class ERBNode
-  attr_reader kind, text, vars, body, alt
-  def initialize(e)
-    @vars = String[]
-    @body = ERBNode[]
-    @alt = ERBNode[]
-  end
-end
-
-# A block being parsed: the node, whether its else branch is being filled, and whether it came
-# from an elsif (closed by the same `end` as the if it continues).
-class ERBFrame
-  attr_reader node, chained
-  attr_accessor in_alt
-  def initialize(e)
-    @chained = false if @chained == nil
-    @in_alt = false
-  end
-end
-
 class ERB
   private attr_reader template, trim_mode
   def initialize(e) = nil
+
+  # A template that Sake's ERB does not accept, or a name it cannot find (Ruby: SyntaxError,
+  # NameError, NoMethodError).
+  class Error < Exception
+  end
+
+  # One piece of a template. kind: :text, :out, :if, :unless, :each, :each_with_index.
+  # `text` is the text or the expression; `vars` the block's parameters; `alt` the else branch.
+  class Node
+    attr_reader kind, text, vars, body, alt
+    def initialize(e)
+      @vars = String[]
+      @body = Node[]
+      @alt = Node[]
+    end
+  end
+
+  # A block being parsed: the node, whether its else branch is being filled, and whether it came
+  # from an elsif (closed by the same `end` as the if it continues).
+  class Frame
+    attr_reader node, chained
+    attr_accessor in_alt
+    def initialize(e)
+      @chained = false if @chained == nil
+      @in_alt = false
+    end
+  end
+
   # Ruby's ERB::Util (its escapers call CGI's).
   module Util
     module_function
@@ -106,36 +107,36 @@ class ERB
         end
       end
     end
-    raise ERBError, "unterminated tag in template" if kind != nil
+    raise Error, "unterminated tag in template" if kind != nil
     Array.push(out, [:text, pending_ws]) if pending_ws != ""
     out
   end
 
-  # --- parsing: tokens become a tree of ERBNode ---
+  # --- parsing: tokens become a tree of Node ---
   def _add(stack, n)
     f = Array.last(stack)
-    raise ERBError, "template stack is empty" unless f
-    nd = ERBFrame.node(f)
-    if ERBFrame.in_alt(f)
-      Array.push(ERBNode.alt(nd), n)
+    raise Error, "template stack is empty" unless f
+    nd = Frame.node(f)
+    if Frame.in_alt(f)
+      Array.push(Node.alt(nd), n)
     else
-      Array.push(ERBNode.body(nd), n)
+      Array.push(Node.body(nd), n)
     end
   end
 
   def _top_kind(stack)
     f = Array.last(stack)
     return nil unless f
-    ERBNode.kind(ERBFrame.node(f))
+    Node.kind(Frame.node(f))
   end
 
   def _compile(erb)
-    root = ERBNode.new(:root, "")
-    stack = ERBFrame[ERBFrame.new(root)]
+    root = Node.new(:root, "")
+    stack = Frame[Frame.new(root)]
     Array.each(_scan(erb)) do |kind, text|
       case kind
-      in :text then _add(stack, ERBNode.new(:text, text))
-      in :out then _add(stack, ERBNode.new(:out, String.strip(text)))
+      in :text then _add(stack, Node.new(:text, text))
+      in :out then _add(stack, Node.new(:out, String.strip(text)))
       else
         stmt = String.strip(text)
         m_if = String.match(stmt, /\A(if|unless|elsif)\s+(.+?)(?:\s+then)?\z/m)
@@ -143,47 +144,47 @@ class ERB
         if stmt == ""
           next
         elsif m_if && m_if[1] == "elsif"
-          raise ERBError, "elsif without if" unless _top_kind(stack) == :if
+          raise Error, "elsif without if" unless _top_kind(stack) == :if
           f = Array.last(stack)
           next unless f
-          n = ERBNode.new(:if, "#{m_if[2]}")
-          Array.push(ERBNode.alt(ERBFrame.node(f)), n)
-          f.ERBFrame.in_alt = true
-          Array.push(stack, ERBFrame.new(n, true))
+          n = Node.new(:if, "#{m_if[2]}")
+          Array.push(Node.alt(Frame.node(f)), n)
+          f.Frame.in_alt = true
+          Array.push(stack, Frame.new(n, true))
         elsif m_if
-          n = ERBNode.new(m_if[1] == "if" ? :if : :unless, "#{m_if[2]}")
+          n = Node.new(m_if[1] == "if" ? :if : :unless, "#{m_if[2]}")
           _add(stack, n)
-          Array.push(stack, ERBFrame.new(n))
+          Array.push(stack, Frame.new(n))
         elsif m_each
-          n = ERBNode.new(m_each[2] == "each" ? :each : :each_with_index, "#{m_each[1]}")
+          n = Node.new(m_each[2] == "each" ? :each : :each_with_index, "#{m_each[1]}")
           params = m_each[3] || m_each[4] || ""
-          Array.each(String.split(params, ",")) { |v| Array.push(ERBNode.vars(n), String.strip(v)) }
+          Array.each(String.split(params, ",")) { |v| Array.push(Node.vars(n), String.strip(v)) }
           _add(stack, n)
-          Array.push(stack, ERBFrame.new(n))
+          Array.push(stack, Frame.new(n))
         elsif stmt == "else"
           k = _top_kind(stack)
-          raise ERBError, "else without if" unless k == :if || k == :unless
+          raise Error, "else without if" unless k == :if || k == :unless
           f = Array.last(stack)
-          f.ERBFrame.in_alt = true if f
+          f.Frame.in_alt = true if f
         elsif stmt == "end" || stmt == "}"
-          raise ERBError, "unexpected end" if Array.size(stack) <= 1
+          raise Error, "unexpected end" if Array.size(stack) <= 1
           f = Array.pop(stack)
-          while f && ERBFrame.chained(f)
+          while f && Frame.chained(f)
             f = Array.pop(stack)
           end
         else
-          raise ERBError, "unsupported code in template: #{stmt}"
+          raise Error, "unsupported code in template: #{stmt}"
         end
       end
     end
-    raise ERBError, "missing end in template" if Array.size(stack) != 1
+    raise Error, "missing end in template" if Array.size(stack) != 1
     root
   end
 
   # --- evaluating expressions ---
   def _lookup(env, name)
     key = String.to_sym(name)
-    raise ERBError, "undefined local variable or method '#{name}'" unless Hash.key?(env, key)
+    raise Error, "undefined local variable or method '#{name}'" unless Hash.key?(env, key)
     env[key]
   end
 
@@ -191,12 +192,12 @@ class ERB
     case v
     in Hash then v[k]
     in Array
-      raise ERBError, "no implicit conversion into Integer" unless k in Integer
+      raise Error, "no implicit conversion into Integer" unless k in Integer
       v[k]
     in String
-      raise ERBError, "no implicit conversion into Integer" unless k in Integer
+      raise Error, "no implicit conversion into Integer" unless k in Integer
       v[k]
-    else raise ERBError, "undefined method '[]' for #{Kernel.inspect(v)}"
+    else raise Error, "undefined method '[]' for #{Kernel.inspect(v)}"
     end
   end
 
@@ -225,7 +226,7 @@ class ERB
       in "capitalize" then String.capitalize(v)
       in "strip" then String.strip(v)
       in "reverse" then String.reverse(v)
-      else raise ERBError, "undefined method '#{meth}' for a String"
+      else raise Error, "undefined method '#{meth}' for a String"
       end
     in Array
       case meth
@@ -237,7 +238,7 @@ class ERB
       in "reverse" then Array.reverse(v)
       in "sort" then sort_values(v)
       in "join" then Array.join(v, arg || "")
-      else raise ERBError, "undefined method '#{meth}' for an Array"
+      else raise Error, "undefined method '#{meth}' for an Array"
       end
     in Hash
       case meth
@@ -246,9 +247,9 @@ class ERB
       in "any?" then !Hash.empty?(v)
       in "keys" then Hash.keys(v)
       in "values" then Hash.values(v)
-      else raise ERBError, "undefined method '#{meth}' for a Hash"
+      else raise Error, "undefined method '#{meth}' for a Hash"
       end
-    else raise ERBError, "undefined method '#{meth}' for #{Kernel.inspect(v)}"
+    else raise Error, "undefined method '#{meth}' for #{Kernel.inspect(v)}"
     end
   end
 
@@ -300,7 +301,7 @@ class ERB
       end
     else
     end
-    raise ERBError, "comparison of #{Kernel.inspect(a)} with #{Kernel.inspect(b)} failed"
+    raise Error, "comparison of #{Kernel.inspect(a)} with #{Kernel.inspect(b)} failed"
   end
 
   def _order(op, c)
@@ -336,7 +337,7 @@ class ERB
     m = String.match(e, /\A"([^"\\#]*)"\z|\A'([^'\\]*)'\z/)
     return m[1] || m[2] if m
     m = String.match(e, /\A[a-z_][A-Za-z0-9_]*/)
-    raise ERBError, "unsupported expression in template: #{e}" unless m
+    raise Error, "unsupported expression in template: #{e}" unless m
     v = _lookup(env, MatchData.to_s(m))
     pos = MatchData.end(m, 0) || 0
     n = String.size(e)
@@ -350,7 +351,7 @@ class ERB
       elsif (m = String.match(e, /\G\.(\w+[?]?)(?:\(\s*(?:"([^"\\#]*)"|'([^'\\]*)')\s*\))?/, pos))
         v = _call(v, "#{m[1]}", m[2] || m[3])
       else
-        raise ERBError, "unsupported expression in template: #{e}"
+        raise Error, "unsupported expression in template: #{e}"
       end
       pos = MatchData.end(m, 0) || n
     end
@@ -374,42 +375,42 @@ class ERB
 
   def _render(nodes, env, out)
     Array.each(nodes) do |n|
-      text = ERBNode.text(n)
-      case ERBNode.kind(n)
+      text = Node.text(n)
+      case Node.kind(n)
       in :text then Array.push(out, text)
       in :out then Array.push(out, "#{_eval(text, env)}")
       in :if
         if _eval(text, env)
-          _render(ERBNode.body(n), env, out)
+          _render(Node.body(n), env, out)
         else
-          _render(ERBNode.alt(n), env, out)
+          _render(Node.alt(n), env, out)
         end
       in :unless
         if _eval(text, env)
-          _render(ERBNode.alt(n), env, out)
+          _render(Node.alt(n), env, out)
         else
-          _render(ERBNode.body(n), env, out)
+          _render(Node.body(n), env, out)
         end
       in :each | :each_with_index
         coll = _eval(text, env)
         items = case coll
                 in Array then coll
                 in Hash then Hash.to_a(coll)
-                else raise ERBError, "undefined method 'each' for #{Kernel.inspect(coll)}"
+                else raise Error, "undefined method 'each' for #{Kernel.inspect(coll)}"
                 end
-        vars = ERBNode.vars(n)
+        vars = Node.vars(n)
         Array.each_with_index(items) do |item, i|
           inner = Hash.merge(env, Hash[])
-          if ERBNode.kind(n) == :each
+          if Node.kind(n) == :each
             _bind(inner, vars, item)
           else
             _bind(inner, Array.take(vars, 1), item)
             v2 = vars[1]
             inner[String.to_sym(v2)] = i if v2
           end
-          _render(ERBNode.body(n), inner, out)
+          _render(Node.body(n), inner, out)
         end
-      else raise ERBError, "unknown template node"
+      else raise Error, "unknown template node"
       end
     end
     out
@@ -418,7 +419,7 @@ class ERB
   # Ruby's ERB#result_with_hash: the Hash's keys (Symbols) are the names the template reads.
   def result_with_hash(erb, vars)
     root = _compile(erb)
-    Array.join(_render(ERBNode.body(root), Hash.merge(vars, Hash[]), String[]))
+    Array.join(_render(Node.body(root), Hash.merge(vars, Hash[]), String[]))
   end
 
   # Checks the template without rendering it (Ruby compiles in ERB.new).

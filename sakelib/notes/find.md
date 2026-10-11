@@ -18,7 +18,7 @@ not list a directory, raised IOError when it would descend.
 | `Find.find(*paths)` (no block, Enumerator) | same | an Array of the paths |
 | `Find.find(..., ignore_error: false)` | same | same: an unlistable directory raises IOError |
 | missing path | IOError before anything is yielded | same order as Ruby (Ruby: `Errno::ENOENT`) |
-| `Find.prune` | same | same effect; an exception (`FindPrune`) that Find.find rescues, where Ruby uses `throw :prune`. Outside Find.find, `FindPrune` reaches the top (Ruby: `UncaughtThrowError`) |
+| `Find.prune` | same | same effect; an exception (`Find::Prune`) that Find.find rescues, where Ruby uses `throw :prune`. Outside Find.find, `Find::Prune` reaches the top (Ruby: `UncaughtThrowError`) |
 | `Pathname#find` | `Pathname.find(pn) {}` | same, "./" dropped for ".", as Ruby |
 
 ## Frictions

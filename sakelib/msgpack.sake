@@ -1,0 +1,579 @@
+# msgpack: MessagePack (the msgpack gem 1.8) in Sake, written in Sake where the gem is C.
+#
+#   s = MessagePack.pack(Hash["a" => Array[1, 2.5, nil]])   # => "\x81\xA1a\x93\x01\xCB@\x04\x00..."
+#   MessagePack.unpack(s)                                     # => {"a" => [1, 2.5, nil]}
+#   pk = MessagePack::Packer.new
+#   MessagePack::Packer.write(MessagePack::Packer.write_array_header(pk, 2), 1)
+#   u = MessagePack::Unpacker.new
+#   MessagePack::Unpacker.feed_each(u, s) { |obj| p(obj) }
+#
+# Values: nil, true, false, Integer (-2**63 .. 2**64-1), Float (always float 64), String (UTF-8 as
+# str, ASCII-8BIT as bin), Symbol (as str), Array, Hash, MessagePack::ExtensionValue. Unpacking gives
+# Strings in UTF-8 (str) or ASCII-8BIT (bin), and an ExtensionValue for an ext type when
+# allow_unknown_ext is set. Options are Hashes with Ruby's Symbol keys: MessagePack.unpack(s,
+# Hash[symbolize_keys: true]), MessagePack::Packer.new(nil, Hash[compatibility_mode: true]).
+# Not ported: registering ext types (they take a Class and a Proc), Factory, IO sources and sinks,
+# Bigint, the Time ext. Errors are Ruby's classes, without their hierarchy (UnpackError is not the
+# parent of the others).
+
+module MessagePack
+  class UnpackError < StandardError
+  end
+  class MalformedFormatError < StandardError
+  end
+  class StackError < StandardError
+  end
+  class UnexpectedTypeError < StandardError
+  end
+  class UnknownExtTypeError < StandardError
+  end
+
+  # Ruby's Struct.new(:type, :payload).
+  ExtensionValue = Struct.new(:type, :payload)
+
+  class Timestamp
+    attr_reader sec, nsec
+
+    def type_id = -1
+    def timestamp32_max_sec = (1 << 32) - 1
+    def timestamp64_max_sec = (1 << 34) - 1
+
+    def from_msgpack_ext(data)
+      case String.bytesize(data)
+      in 4
+        sec = String.unpack1(data, "L>")
+        sec => Integer
+        Timestamp.new(sec, 0)
+      in 8
+        n, s = String.unpack(data, "L>2")
+        n => Integer
+        s => Integer
+        Timestamp.new(((n & 0b11) << 32) | s, n >> 2)
+      in 12
+        nsec, sec = String.unpack(data, "L>q>")
+        nsec => Integer
+        sec => Integer
+        Timestamp.new(sec, nsec)
+      else
+        raise MalformedFormatError, "Invalid timestamp data size: #{String.bytesize(data)}"
+      end
+    end
+
+    # Ruby's Timestamp.to_msgpack_ext(sec, nsec) and Timestamp#to_msgpack_ext: one operation, taking
+    # either the two numbers or a Timestamp.
+    def to_msgpack_ext(x, nsec = 0)
+      sec = x
+      if x in Timestamp
+        sec = Timestamp.sec(x)
+        nsec = Timestamp.nsec(x)
+      end
+      sec => Integer
+      if sec >= 0 && nsec >= 0 && sec <= timestamp64_max_sec
+        if nsec == 0 && sec <= timestamp32_max_sec
+          Array.pack(Array[sec], "L>")
+        else
+          nsec30 = nsec << 2
+          sec_high2 = sec >> 32 # high 2 bits (`x & 0b11` is redandunt)
+          sec_low32 = sec & 0xffffffff # low 32 bits
+          Array.pack(Array[nsec30 | sec_high2, sec_low32], "L>2")
+        end
+      else
+        Array.pack(Array[nsec, sec], "L>q>")
+      end
+    end
+
+    def ==(a, b) = (b in Timestamp) && @sec == Timestamp.sec(b) && @nsec == Timestamp.nsec(b)
+  end
+
+  # ---- packer (packer.h) ----
+
+  class Packer
+    # Ruby's Packer.new(io = nil, options = nil); io must be nil (no IO sink).
+    attr_reader io, options
+    private attr_reader buffer, compatibility_mode
+
+    def initialize(pk)
+      raise ArgumentError, "MessagePack::Packer: IO is not supported" if @io != nil
+      @buffer = String.b("")
+      @options = Hash[] if @options == nil
+      @compatibility_mode = Hash.fetch(@options, :compatibility_mode, false) == true
+    end
+
+    def byte(pk, b)
+      String.append_as_bytes(@buffer, b)
+      pk
+    end
+
+    def bytes(pk, b, data)
+      String.append_as_bytes(@buffer, b, data)
+      pk
+    end
+
+    def write(pk, v)
+      case v
+      in nil then write_nil(pk)
+      in true then write_true(pk)
+      in false then write_false(pk)
+      in Integer then write_int(pk, v)
+      in Float then write_float(pk, v)
+      in String then write_string(pk, v)
+      in Symbol then write_symbol(pk, v)
+      in Array then write_array(pk, v)
+      in Hash then write_hash(pk, v)
+      in ExtensionValue then write_extension(pk, v)
+      else
+        # Ruby: NoMethodError (undefined method 'to_msgpack'), which Sake has not
+        raise TypeError, "undefined method 'to_msgpack' for #{Kernel.inspect(v)}"
+      end
+    end
+
+    def write_nil(pk) = byte(pk, 0xc0)
+    def write_true(pk) = byte(pk, 0xc3)
+    def write_false(pk) = byte(pk, 0xc2)
+
+    # msgpack_packer_write_long / _u64: the shortest form.
+    def write_int(pk, v)
+      if v < -32
+        if v < -32768
+          if v < -(1 << 31)
+            raise RangeError, "bignum too big to convert into 'long long'" if v < -(1 << 63)
+            bytes(pk, 0xd3, Array.pack(Array[v], "q>"))
+          else
+            bytes(pk, 0xd2, Array.pack(Array[v], "l>"))
+          end
+        elsif v < -128
+          bytes(pk, 0xd1, Array.pack(Array[v], "s>"))
+        else
+          bytes(pk, 0xd0, Array.pack(Array[v], "c"))
+        end
+      elsif v < 128
+        byte(pk, v & 0xff)
+      elsif v < 256
+        bytes(pk, 0xcc, Array.pack(Array[v], "C"))
+      elsif v < 65536
+        bytes(pk, 0xcd, Array.pack(Array[v], "n"))
+      elsif v < (1 << 32)
+        bytes(pk, 0xce, Array.pack(Array[v], "N"))
+      else
+        raise RangeError, "bignum too big to convert into 'unsigned long long'" if v >= (1 << 64)
+        bytes(pk, 0xcf, Array.pack(Array[v], "Q>"))
+      end
+    end
+
+    def write_float(pk, v) = bytes(pk, 0xcb, Array.pack(Array[v], "G"))
+    def write_float32(pk, v) = bytes(pk, 0xca, Array.pack(Array[Arithmetic.to_f(v)], "g"))
+
+    def write_raw_header(pk, n)
+      if n < 32
+        byte(pk, 0xa0 | n)
+      elsif n < 256 && !@compatibility_mode
+        bytes(pk, 0xd9, Array.pack(Array[n], "C"))
+      elsif n < 65536
+        bytes(pk, 0xda, Array.pack(Array[n], "n"))
+      else
+        bytes(pk, 0xdb, Array.pack(Array[n], "N"))
+      end
+    end
+
+    def write_bin_header(pk, n)
+      if n < 256
+        bytes(pk, 0xc4, Array.pack(Array[n], "C"))
+      elsif n < 65536
+        bytes(pk, 0xc5, Array.pack(Array[n], "n"))
+      else
+        bytes(pk, 0xc6, Array.pack(Array[n], "N"))
+      end
+    end
+
+    # ASCII-8BIT Strings are bin, others str (in UTF-8); compatibility mode writes every String as str.
+    def write_string(pk, v)
+      if @compatibility_mode
+        write_raw_header(pk, String.bytesize(v))
+      elsif String.encoding(v) == "ASCII-8BIT"
+        write_bin_header(pk, String.bytesize(v))
+      else
+        v = String.encode(v, "UTF-8") unless String.encoding(v) == "UTF-8" || String.encoding(v) == "US-ASCII"
+        write_raw_header(pk, String.bytesize(v))
+      end
+      String.append_as_bytes(@buffer, v)
+      pk
+    end
+
+    def write_bin(pk, v)
+      write_bin_header(pk, String.bytesize(v))
+      String.append_as_bytes(@buffer, v)
+      pk
+    end
+
+    def write_symbol(pk, v) = write_string(pk, Symbol.to_s(v))
+
+    def write_array_header(pk, n)
+      if n < 16
+        byte(pk, 0x90 | n)
+      elsif n < 65536
+        bytes(pk, 0xdc, Array.pack(Array[n], "n"))
+      else
+        bytes(pk, 0xdd, Array.pack(Array[n], "N"))
+      end
+    end
+
+    def write_map_header(pk, n)
+      if n < 16
+        byte(pk, 0x80 | n)
+      elsif n < 65536
+        bytes(pk, 0xde, Array.pack(Array[n], "n"))
+      else
+        bytes(pk, 0xdf, Array.pack(Array[n], "N"))
+      end
+    end
+
+    def write_array(pk, a)
+      write_array_header(pk, Array.size(a))
+      Array.each(a) { |v| write(pk, v) }
+      pk
+    end
+
+    def write_hash(pk, h)
+      write_map_header(pk, Hash.size(h))
+      Hash.each(h) do |k, v|
+        write(pk, k)
+        write(pk, v)
+      end
+      pk
+    end
+
+    def write_ext(pk, type, payload)
+      raise RangeError, "integer #{type} too big to convert to `signed char'" if type < -128 || type > 127
+      n = String.bytesize(payload)
+      case n
+      in 1 then byte(pk, 0xd4)
+      in 2 then byte(pk, 0xd5)
+      in 4 then byte(pk, 0xd6)
+      in 8 then byte(pk, 0xd7)
+      in 16 then byte(pk, 0xd8)
+      else
+        if n < 256
+          bytes(pk, 0xc7, Array.pack(Array[n], "C"))
+        elsif n < 65536
+          bytes(pk, 0xc8, Array.pack(Array[n], "n"))
+        else
+          bytes(pk, 0xc9, Array.pack(Array[n], "N"))
+        end
+      end
+      bytes(pk, type & 0xff, payload)
+    end
+
+    def write_extension(pk, e) = write_ext(pk, ExtensionValue.type(e), ExtensionValue.payload(e))
+
+    def to_s(pk) = dup(@buffer)
+    def to_str(pk) = to_s(pk)
+    def full_pack(pk) = to_s(pk)
+    def to_a(pk) = Array[to_s(pk)]
+    def size(pk) = String.bytesize(@buffer)
+    def empty?(pk) = String.empty?(@buffer)
+
+    def reset(pk)
+      @buffer = String.b("")
+      pk
+    end
+
+    def clear(pk) = reset(pk)
+    def flush(pk) = pk
+    def registered_types(pk) = Array[]
+  end
+
+  # ---- unpacker (unpacker.c) ----
+
+  class Unpacker
+    # Ruby's Unpacker.new(io = nil, options = nil); io must be nil (no IO source).
+    attr_reader io, options
+    private attr_accessor buf, pos
+    private attr_reader symbolize_keys, freeze, allow_unknown_ext
+
+    def initialize(u)
+      raise ArgumentError, "MessagePack::Unpacker: IO is not supported" if @io != nil
+      @options = Hash[] if @options == nil
+      @buf = String.b("")
+      @pos = 0
+      @symbolize_keys = Hash.fetch(@options, :symbolize_keys, false) == true
+      @freeze = Hash.fetch(@options, :freeze, false) == true
+      @allow_unknown_ext = Hash.fetch(@options, :allow_unknown_ext, false) == true
+    end
+
+    def stack_capacity = 128
+
+    def symbolize_keys?(u) = @symbolize_keys
+    def freeze?(u) = @freeze
+    def allow_unknown_ext?(u) = @allow_unknown_ext
+
+    def feed(u, data)
+      String.append_as_bytes(@buf, data)
+      u
+    end
+
+    def feed_reference(u, data) = feed(u, data)
+
+    # The bytes fed and not read yet.
+    def buffer(u) = String.byteslice(@buf, @pos, String.bytesize(@buf) - @pos) || ""
+
+    def reset(u)
+      @buf = String.b("")
+      @pos = 0
+      u
+    end
+
+    def take(u, n)
+      raise EOFError, "end of buffer reached" if @pos + n > String.bytesize(@buf)
+      s = String.byteslice(@buf, @pos, n) || ""
+      @pos += n
+      s
+    end
+
+    def take_byte(u)
+      b = String.getbyte(@buf, @pos)
+      raise EOFError, "end of buffer reached" unless b
+      @pos += 1
+      b
+    end
+
+    # String.unpack1 gives Integer | Float | String | nil; these give the one type the directive makes.
+    def uint(u, n)
+      v = String.unpack1(take(u, n), Array.fetch(Array["C", "n", "", "N", "", "", "", "Q>"], n - 1))
+      v => Integer
+      v
+    end
+
+    def sint(u, n)
+      v = String.unpack1(take(u, n), Array.fetch(Array["c", "s>", "", "l>", "", "", "", "q>"], n - 1))
+      v => Integer
+      v
+    end
+
+    def float(u, n)
+      v = String.unpack1(take(u, n), n == 4 ? "g" : "G")
+      v => Float
+      v
+    end
+
+    def str(u, n)
+      s = take(u, n)
+      String.force_encoding(s, "UTF-8")
+    end
+
+    def ext(u, n)
+      type = sint(u, 1)
+      payload = take(u, n)
+      raise UnknownExtTypeError, "unexpected extension type" unless @allow_unknown_ext
+      ExtensionValue.new(type, payload)
+    end
+
+    def read_array(u, n, depth)
+      raise StackError, "stack level too deep" if depth >= stack_capacity
+      a = Array[]
+      Integer.times(n) { Array.push(a, read_obj(u, depth + 1)) }
+      a
+    end
+
+    def read_map(u, n, depth)
+      raise StackError, "stack level too deep" if depth >= stack_capacity
+      h = Hash[]
+      Integer.times(n) do
+        k = read_obj(u, depth + 1)
+        k = String.to_sym(k) if @symbolize_keys && (k in String)
+        h[k] = read_obj(u, depth + 1)
+      end
+      h
+    end
+
+    def read_obj(u, depth)
+      b = take_byte(u)
+      if b <= 0x7f
+        b
+      elsif b <= 0x8f
+        read_map(u, b & 0x0f, depth)
+      elsif b <= 0x9f
+        read_array(u, b & 0x0f, depth)
+      elsif b <= 0xbf
+        str(u, b & 0x1f)
+      elsif b >= 0xe0
+        b - 256
+      else
+        case b
+        in 0xc0 then nil
+        in 0xc2 then false
+        in 0xc3 then true
+        in 0xc4 then take(u, uint(u, 1))
+        in 0xc5 then take(u, uint(u, 2))
+        in 0xc6 then take(u, uint(u, 4))
+        in 0xc7 then ext(u, uint(u, 1))
+        in 0xc8 then ext(u, uint(u, 2))
+        in 0xc9 then ext(u, uint(u, 4))
+        in 0xca then float(u, 4)
+        in 0xcb then float(u, 8)
+        in 0xcc then uint(u, 1)
+        in 0xcd then uint(u, 2)
+        in 0xce then uint(u, 4)
+        in 0xcf then uint(u, 8)
+        in 0xd0 then sint(u, 1)
+        in 0xd1 then sint(u, 2)
+        in 0xd2 then sint(u, 4)
+        in 0xd3 then sint(u, 8)
+        in 0xd4 then ext(u, 1)
+        in 0xd5 then ext(u, 2)
+        in 0xd6 then ext(u, 4)
+        in 0xd7 then ext(u, 8)
+        in 0xd8 then ext(u, 16)
+        in 0xd9 then str(u, uint(u, 1))
+        in 0xda then str(u, uint(u, 2))
+        in 0xdb then str(u, uint(u, 4))
+        in 0xdc then read_array(u, uint(u, 2), depth)
+        in 0xdd then read_array(u, uint(u, 4), depth)
+        in 0xde then read_map(u, uint(u, 2), depth)
+        in 0xdf then read_map(u, uint(u, 4), depth)
+        else raise MalformedFormatError, "invalid byte"
+        end
+      end
+    end
+
+    # Drops the bytes already read.
+    def compact(u)
+      @buf = buffer(u)
+      @pos = 0
+      u
+    end
+
+    # One whole object; EOFError when the buffer ends inside it (the bytes stay for the next feed).
+    def read(u)
+      start = @pos
+      begin
+        v = read_obj(u, 0)
+      rescue EOFError
+        @pos = start
+        raise EOFError, "end of buffer reached"
+      end
+      compact(u)
+      v
+    end
+
+    def skip(u)
+      read(u)
+      nil
+    end
+
+    def skip_nil(u)
+      b = String.getbyte(@buf, @pos)
+      raise EOFError, "end of buffer reached" unless b
+      # Ruby's skip_nil only looks: the nil stays for the next read
+      b == 0xc0
+    end
+
+    def read_array_header(u)
+      b = String.getbyte(@buf, @pos)
+      raise EOFError, "end of buffer reached" unless b
+      if b >= 0x90 && b <= 0x9f
+        @pos += 1
+        return b & 0x0f
+      end
+      raise UnexpectedTypeError, "unexpected type" unless b == 0xdc || b == 0xdd
+      @pos += 1
+      uint(u, b == 0xdc ? 2 : 4)
+    end
+
+    def read_map_header(u)
+      b = String.getbyte(@buf, @pos)
+      raise EOFError, "end of buffer reached" unless b
+      if b >= 0x80 && b <= 0x8f
+        @pos += 1
+        return b & 0x0f
+      end
+      raise UnexpectedTypeError, "unexpected type" unless b == 0xde || b == 0xdf
+      @pos += 1
+      uint(u, b == 0xde ? 2 : 4)
+    end
+
+    # Every whole object in the buffer; a partial one at the end waits for more data.
+    def each(u)
+      while @pos < String.bytesize(@buf)
+        start = @pos
+        v = begin
+              read_obj(u, 0)
+            rescue EOFError
+              @pos = start
+              break
+            end
+        yield(v)
+      end
+      compact(u)
+      nil
+    end
+
+    def feed_each(u, data)
+      feed(u, data)
+      each(u) { |v| yield(v) }
+    end
+
+    # The buffer must hold exactly one object.
+    def full_unpack(u)
+      v = read_obj(u, 0)
+      extra = String.bytesize(@buf) - @pos
+      raise MalformedFormatError, "#{extra} extra bytes after the deserialized object" if extra > 0
+      reset(u)
+      v
+    end
+
+    def registered_types(u) = Array[]
+  end
+
+  module_function
+
+  # Ruby's MessagePack.pack(v, io = nil, options = nil); io must be nil here.
+  def pack(v, io = nil, options = Hash[])
+    raise ArgumentError, "MessagePack.pack: IO is not supported" if io != nil
+    pk = Packer.new(nil, options)
+    Packer.write(pk, v)
+    Packer.full_pack(pk)
+  end
+
+  def dump(v, io = nil, options = Hash[]) = pack(v, io, options)
+
+  # Ruby's MessagePack.unpack(src, options = nil) for a String src.
+  def unpack(src, options = Hash[])
+    u = Unpacker.new(nil, options)
+    Unpacker.feed_reference(u, src)
+    Unpacker.full_unpack(u)
+  end
+
+  def load(src, options = Hash[]) = unpack(src, options)
+end
+
+# Ruby's CoreExt: obj.to_msgpack, or obj.to_msgpack(packer) to write into a Packer.
+module MsgpackCoreExt
+  def to_msgpack(x, packer = nil)
+    return MessagePack.pack(x) unless packer
+    MessagePack::Packer.write(packer, x)
+  end
+end
+
+class Hash
+  include MsgpackCoreExt
+end
+
+class Array
+  include MsgpackCoreExt
+end
+
+class String
+  include MsgpackCoreExt
+end
+
+class Integer
+  include MsgpackCoreExt
+end
+
+class Float
+  include MsgpackCoreExt
+end
+
+class Symbol
+  include MsgpackCoreExt
+end

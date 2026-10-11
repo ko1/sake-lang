@@ -1,8 +1,9 @@
 # kramdown
 
 `sakelib/kramdown.sake`: Markdown → HTML after the kramdown gem (2.5.2, installed), for the common
-subset. 690 lines, 52 functions, 4 types (`KNode`, `KBlocks`, `KSpans`, `KHtml`) and the module
-`Kramdown`. Test: `test/sakelib/kramdown.{sake,rb}` print the same 223 lines; the `.rb` uses the real gem
+subset. 690 lines, 52 functions, the module `Kramdown` with 4 types nested in it (`Element`, `Blocks`,
+`Spans`, `Html`; since 2026-10-11, were the flat `KNode`, `KBlocks`, `KSpans`, `KHtml`). Test:
+`test/sakelib/kramdown.{sake,rb}` print the same 223 lines; the `.rb` uses the real gem
 with `Kramdown::Document.new(md, input: "GFM", hard_wrap: false, gfm_quirks: [:paragraph_end,
 :no_auto_typographic], smart_quotes: %w[apos apos quot quot]).to_html`, which is the dialect the port
 follows (see "Where it follows GFM/CommonMark").
@@ -12,7 +13,7 @@ follows (see "Where it follows GFM/CommonMark").
 | kramdown gem | Sake | |
 |---|---|---|
 | `Kramdown::Document.new(text, input: "GFM", ...).to_html` | `Kramdown.to_html(text)` | same output for the subset (options fixed as above) |
-| `Kramdown::Document.new(text).root` (the element tree) | `Kramdown.parse(text)` → `KNode[]` | differs: an Array of `KNode` (kind, text, level, href, title, lang, children), not `Kramdown::Element` |
+| `Kramdown::Document.new(text).root` (the element tree) | `Kramdown.parse(text)` → `Kramdown::Element[]` | differs: an Array of `Kramdown::Element` (kind, text, level, href, title, lang, children), not the gem's `Kramdown::Element` (type, value, attr, options, children) |
 | `Kramdown::Converter::Html.convert(root)` | `Kramdown.render(nodes)` | same HTML |
 | ATX / setext headings, GFM auto ids (`id="a-b"`, `-1` for repeats) | same | same |
 | paragraphs, `*em*` `_em_` `**strong**` `__strong__`, `` `code` `` | same | same, including kramdown's closing rules (`**a* and *b**`) |

@@ -1,0 +1,1072 @@
+# jmespath: JMESPath (the jmespath gem 1.6) in Sake: JMESPath.search(expression, data).
+#
+#   data = JSON.parse('{"people": [{"name": "a", "age": 30}, {"name": "b", "age": 20}]}')
+#   JMESPath.search("people[?age > `25`].name", data)          # => ["a"]
+#
+# Data are plain JSON values, as JSON.parse returns them: Hash (String keys), Array, String, Integer,
+# Float, true/false, nil. Ruby's lexer, Pratt parser, node types and the 26 built-in functions are
+# ported; nodes are one class, Nodes::Node, tagged with a kind named after Ruby's class (:field,
+# :subexpression, :projection ...), and evaluated by one `visit` with a case on the kind.
+# Ruby's runtime options Hash is a Hash here: JMESPath.search(e, d, Hash[disable_visit_errors: true]).
+
+require "json"
+
+module JMESPath
+  module Errors
+    class SyntaxError < Exception
+    end
+    class InvalidTypeError < Exception
+    end
+    class InvalidValueError < Exception
+    end
+    class InvalidArityError < Exception
+    end
+    class UnknownFunctionError < Exception
+    end
+  end
+
+  # Ruby's Token < Struct.new(:type, :value, :position, :binding_power).
+  class Token
+    attr_accessor type, value, position, binding_power
+
+    def initialize(t)
+      @binding_power = Token.power(@type)
+    end
+
+    def power(type) = Hash.fetch(Token.binding_powers, type, 0)
+
+    def binding_powers = once do
+      Hash[:unknown => 0, :eof => 0, :quoted_identifier => 0, :identifier => 0, :rbracket => 0,
+           :rparen => 0, :comma => 0, :rbrace => 0, :number => 0, :current => 0, :expref => 0,
+           :colon => 0, :pipe => 1, :or => 2, :and => 3, :comparator => 5, :flatten => 9, :star => 20,
+           :filter => 21, :dot => 40, :not => 45, :lbrace => 50, :lbracket => 55, :lparen => 60]
+    end
+
+    def null_token = Token.make(:eof, "", nil)
+
+    # Every token is made here, so the checker sees one Token type.
+    def make(type, value, position) = Token.new(type, value, position)
+  end
+
+  class Lexer
+    # Ruby's TRANSLATION_TABLE maps a character to a STATE_ constant; the states are Symbols here.
+    def translation_table = once do
+      t = Hash["<" => :lt, ">" => :gt, "=" => :eq, "!" => :not, "[" => :lbracket, "|" => :pipe,
+               "&" => :and, "`" => :json_literal, "\"" => :quoted_string, "'" => :string_literal,
+               "-" => :number, " " => :whitespace, "\t" => :whitespace, "\n" => :whitespace,
+               "\r" => :whitespace]
+      Array.each(String.chars(".*],:@(){}")) { |c| t[c] = :single_char }
+      Array.each(String.chars("0123456789")) { |c| t[c] = :number }
+      Array.each(String.chars("_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")) { |c| t[c] = :identifier }
+      t
+    end
+
+    def valid_identifiers = once { Array.to_set(String.chars("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_0123456789")) }
+    def numbers = once { Array.to_set(String.chars("0123456789")) }
+
+    def simple_tokens = once do
+      Hash["." => :dot, "*" => :star, "]" => :rbracket, "," => :comma, ":" => :colon, "@" => :current,
+           "(" => :lparen, ")" => :rparen, "{" => :lbrace, "}" => :rbrace]
+    end
+
+    def tokenize(lexer, expression)
+      tokens = Array[]
+      chars = CharacterStream.new(String.chars(expression), 0)
+
+      while (cur = CharacterStream.current(chars))
+        case translation_table[cur]
+        in nil
+          Array.push(tokens, Token.make(:unknown, cur, CharacterStream.position(chars)))
+          CharacterStream.next(chars)
+        in :single_char
+          # consume simple tokens like ".", ",", "@", etc.
+          Array.push(tokens, Token.make(simple_tokens[cur], cur, CharacterStream.position(chars)))
+          CharacterStream.next(chars)
+        in :identifier
+          start = CharacterStream.position(chars)
+          buffer = Array[cur]
+          c = CharacterStream.next(chars)
+          while c && Set.include?(valid_identifiers, c)
+            Array.push(buffer, c)
+            c = CharacterStream.next(chars)
+          end
+          Array.push(tokens, Token.make(:identifier, Array.join(buffer), start))
+        in :whitespace
+          # skip whitespace
+          CharacterStream.next(chars)
+        in :lbracket
+          # consume "[", "[?" and "[]"
+          position = CharacterStream.position(chars)
+          actual = CharacterStream.next(chars)
+          if actual == "]"
+            CharacterStream.next(chars)
+            Array.push(tokens, Token.make(:flatten, "[]", position))
+          elsif actual == "?"
+            CharacterStream.next(chars)
+            Array.push(tokens, Token.make(:filter, "[?", position))
+          else
+            Array.push(tokens, Token.make(:lbracket, "[", position))
+          end
+        in :string_literal
+          # consume raw string literals
+          t = inside(chars, "'", :literal)
+          v = Token.value(t)
+          Token.set_value(t, String.gsub(v, "\\'", "'")) if v in String
+          Array.push(tokens, t)
+        in :pipe
+          # consume pipe and OR
+          Array.push(tokens, match_or(chars, "|", "|", :or, :pipe))
+        in :json_literal
+          # consume JSON literals
+          token = inside(chars, "`", :literal)
+          if Token.type(token) == :literal
+            v = Token.value(token)
+            Token.set_value(token, String.gsub(v, "\\`", "`")) if v in String
+            token = parse_json(token, false)
+          end
+          Array.push(tokens, token)
+        in :number
+          start = CharacterStream.position(chars)
+          buffer = Array[cur]
+          c = CharacterStream.next(chars)
+          while c && Set.include?(numbers, c)
+            Array.push(buffer, c)
+            c = CharacterStream.next(chars)
+          end
+          Array.push(tokens, Token.make(:number, String.to_i(Array.join(buffer)), start))
+        in :quoted_string
+          # consume quoted identifiers
+          token = inside(chars, "\"", :quoted_identifier)
+          if Token.type(token) == :quoted_identifier
+            Token.set_value(token, "\"#{Token.value(token)}\"")
+            token = parse_json(token, true)
+          end
+          Array.push(tokens, token)
+        in :eq
+          # consume equals
+          Array.push(tokens, match_or(chars, "=", "=", :comparator, :unknown))
+        in :and
+          Array.push(tokens, match_or(chars, "&", "&", :and, :expref))
+        in :not
+          # consume not equals
+          Array.push(tokens, match_or(chars, "!", "=", :comparator, :not))
+        else
+          # either '<' or '>'
+          # consume less than and greater than
+          Array.push(tokens, match_or(chars, cur, "=", :comparator, :comparator))
+        end
+      end
+      Array.push(tokens, Token.make(:eof, nil, CharacterStream.position(chars)))
+      tokens
+    end
+
+
+    def match_or(chars, current, expected, type, or_type)
+      if CharacterStream.next(chars) == expected
+        CharacterStream.next(chars)
+        Token.make(type, current + expected, CharacterStream.position(chars) - 1)
+      else
+        Token.make(or_type, current, CharacterStream.position(chars) - 1)
+      end
+    end
+
+    def inside(chars, delim, type)
+      position = CharacterStream.position(chars)
+      current = CharacterStream.next(chars)
+      buffer = Array[]
+      while current != delim
+        if current == "\\"
+          Array.push(buffer, current)
+          current = CharacterStream.next(chars)
+        end
+        # unclosed delimiter
+        return Token.make(:unknown, Array.join(buffer), position) if current == nil
+        Array.push(buffer, current)
+        current = CharacterStream.next(chars)
+      end
+      CharacterStream.next(chars)
+      Token.make(type, Array.join(buffer), position)
+    end
+
+    # Ruby's json 2.x parses scalars, so this is the gem's non-wrapping branch.
+    def parse_json(token, quoted)
+      v = Token.value(token)
+      v => String
+      begin
+        if quoted
+          Token.set_value(token, JSON.parse(v))
+        else
+          parsed = begin
+                     JSON.parse(v)
+                   rescue JSON::ParserError
+                     JSON.parse(format("\"%s\"", String.lstrip(v)))
+                   end
+          Token.set_value(token, parsed)
+        end
+      rescue JSON::ParserError
+        Token.set_type(token, :unknown)
+      end
+      token
+    end
+  end
+
+  class CharacterStream
+    attr_reader chars, position
+
+    def current(cs) = @chars[@position]
+
+    def next(cs)
+      @position += 1
+      @chars[@position]
+    end
+  end
+
+  class TokenStream
+    attr_reader expression, tokens, token, position
+
+    # Ruby's TokenStream.new(expression, tokens) starts at the first token.
+    def start(expression, tokens)
+      ts = TokenStream.new(expression, tokens, Token.null_token, -1)
+      TokenStream.next(ts)
+      ts
+    end
+
+    # Ruby's next(match: set): the Set of allowed token types, or nil for any.
+    def next(ts, match = nil)
+      validate_match(_next(ts), match)
+    end
+
+    def lookahead(ts, count) = @tokens[@position + count] || Token.null_token
+
+
+    def _next(ts)
+      @position += 1
+      @token = @tokens[@position] || Token.null_token
+    end
+
+    def validate_match(token, match)
+      raise Errors::SyntaxError, "type missmatch" if match && !Set.include?(match, Token.type(token))
+      token
+    end
+  end
+
+  module Nodes
+    # One class for Ruby's node classes. kind: :current, :expression, :not, :field (key: String or Integer;
+    # Ruby's Index is Field), :function_name, :literal (value), :multi_select_hash (keys, children),
+    # :multi_select_list (children), :comparator (name: "==" ...), :subexpression (left, right; Ruby's
+    # Pipe is Subexpression), :condition (left: test, right: child), :array_projection and
+    # :object_projection (left: target, right: projection), :flatten (left), :function (name, children,
+    # quiet: Ruby's disable_visit_errors), :or, :and, :slice (nums: start, stop, step), :simple_slice.
+    class Node
+      attr_reader kind, left, right, children, key, value, name, keys, nums, quiet
+    end
+
+    module_function
+
+    # Every node is made here, so the checker sees one Node type.
+    def node(kind, left: nil, right: nil, children: Array[], key: nil, value: nil, name: "",
+             keys: String[], nums: Array[nil, nil, nil], quiet: false)
+      Node.new(kind, left, right, children, key, value, name, keys, nums, quiet)
+    end
+
+    def current = node(:current)
+  end
+
+  class Parser
+    attr_reader disable_visit_errors
+
+    def initialize(ps)
+      @disable_visit_errors = @disable_visit_errors == true
+    end
+
+    def after_dot = once { Set[:identifier, :quoted_identifier, :star, :lbrace, :lbracket, :filter] }
+    def num_colon_rbracket = once { Set[:number, :colon, :rbracket] }
+    def colon_rbracket = once { Set[:colon, :rbracket] }
+
+    def parse(ps, expression)
+      tokens = Lexer.tokenize(Lexer.new, expression)
+      stream = TokenStream.start(expression, tokens)
+      result = expr(ps, stream, 0)
+      t = TokenStream.token(stream)
+      raise Errors::SyntaxError, "expected :eof got #{Token.type(t)}" if Token.type(t) != :eof
+      result
+    end
+
+
+    def type(stream) = Token.type(TokenStream.token(stream))
+
+    # Ruby's send("nud_#{type}") / send("led_#{type}"), with method_missing's error for the rest.
+    def expr(ps, stream, rbp)
+      left = nud(ps, stream)
+      while rbp < (Token.binding_power(TokenStream.token(stream)) || 0)
+        left = led(ps, stream, left)
+      end
+      left
+    end
+
+    def nud(ps, stream)
+      case type(stream)
+      in :current
+        TokenStream.next(stream)
+        Nodes.current
+      in :expref
+        TokenStream.next(stream)
+        Nodes.node(:expression, left: expr(ps, stream, Token.power(:expref)))
+      in :not
+        TokenStream.next(stream)
+        Nodes.node(:not, left: expr(ps, stream, Token.power(:not)))
+      in :lparen
+        TokenStream.next(stream)
+        result = expr(ps, stream, 0)
+        raise Errors::SyntaxError, "Unclosed `(`" if type(stream) != :rparen
+        TokenStream.next(stream)
+        result
+      in :filter then led_filter(ps, stream, Nodes.current)
+      in :flatten then led_flatten(ps, stream, Nodes.current)
+      in :identifier
+        token = TokenStream.token(stream)
+        n = TokenStream.next(stream)
+        if Token.type(n) == :lparen
+          Nodes.node(:function_name, name: Kernel.to_s(Token.value(token)))
+        else
+          Nodes.node(:field, key: Token.value(token))
+        end
+      in :lbrace then nud_lbrace(ps, stream)
+      in :lbracket
+        TokenStream.next(stream)
+        t = type(stream)
+        if t == :number || t == :colon
+          parse_array_index_expression(ps, stream)
+        elsif t == :star && Token.type(TokenStream.lookahead(stream, 1)) == :rbracket
+          parse_wildcard_array(ps, stream, nil)
+        else
+          parse_multi_select_list(ps, stream)
+        end
+      in :literal
+        value = Token.value(TokenStream.token(stream))
+        TokenStream.next(stream)
+        Nodes.node(:literal, value: value)
+      in :quoted_identifier
+        token = TokenStream.token(stream)
+        next_token = TokenStream.next(stream)
+        raise Errors::SyntaxError, "quoted identifiers are not allowed for function names" if Token.type(next_token) == :lparen
+        Nodes.node(:field, key: Token.value(token))
+      in :star then parse_wildcard_object(ps, stream, Nodes.current)
+      in :unknown
+        raise Errors::SyntaxError, "unknown token #{Kernel.inspect(Token.value(TokenStream.token(stream)))}"
+      else
+        raise Errors::SyntaxError, "unexpected token #{type(stream)}"
+      end
+    end
+
+    def led(ps, stream, left)
+      case type(stream)
+      in :comparator
+        token = TokenStream.token(stream)
+        TokenStream.next(stream)
+        right = expr(ps, stream, Token.power(:comparator))
+        Nodes.node(:comparator, name: Kernel.to_s(Token.value(token)), left: left, right: right)
+      in :dot
+        TokenStream.next(stream, after_dot)
+        if type(stream) == :star
+          parse_wildcard_object(ps, stream, left)
+        else
+          right = parse_dot(ps, stream, Token.power(:dot))
+          Nodes.node(:subexpression, left: left, right: right)
+        end
+      in :filter then led_filter(ps, stream, left)
+      in :flatten then led_flatten(ps, stream, left)
+      in :lbracket
+        TokenStream.next(stream, Set[:number, :colon, :star])
+        t = type(stream)
+        if t == :number || t == :colon
+          right = parse_array_index_expression(ps, stream)
+          Nodes.node(:subexpression, left: left, right: right)
+        else
+          parse_wildcard_array(ps, stream, left)
+        end
+      in :lparen
+        args = Array[]
+        raise Errors::SyntaxError, "invalid function invocation" unless Nodes::Node.kind(left) == :function_name
+        name = Nodes::Node.name(left)
+        TokenStream.next(stream)
+        while type(stream) != :rparen
+          Array.push(args, expr(ps, stream, 0))
+          TokenStream.next(stream) if type(stream) == :comma
+        end
+        TokenStream.next(stream)
+        Function.create(name, args, @disable_visit_errors)
+      in :or
+        TokenStream.next(stream)
+        right = expr(ps, stream, Token.power(:or))
+        Nodes.node(:or, left: left, right: right)
+      in :and
+        TokenStream.next(stream)
+        right = expr(ps, stream, Token.power(:or))
+        Nodes.node(:and, left: left, right: right)
+      in :pipe
+        TokenStream.next(stream)
+        right = expr(ps, stream, Token.power(:pipe))
+        Nodes.node(:subexpression, left: left, right: right)
+      else
+        raise Errors::SyntaxError, "unexpected token #{type(stream)}"
+      end
+    end
+
+    def nud_lbrace(ps, stream)
+      valid_keys = Set[:quoted_identifier, :identifier]
+      TokenStream.next(stream, valid_keys)
+      keys = String[]
+      values = Array[]
+      while true
+        # parse_key_value_pair
+        Array.push(keys, Kernel.to_s(Token.value(TokenStream.token(stream))))
+        TokenStream.next(stream, Set[:colon])
+        TokenStream.next(stream)
+        Array.push(values, expr(ps, stream, 0))
+        TokenStream.next(stream, valid_keys) if type(stream) == :comma
+        break if type(stream) == :rbrace
+      end
+      TokenStream.next(stream)
+      Nodes.node(:multi_select_hash, keys: keys, children: values)
+    end
+
+    def led_filter(ps, stream, left)
+      TokenStream.next(stream)
+      expression = expr(ps, stream, 0)
+      raise Errors::SyntaxError, "expected a closing rbracket for the filter" if type(stream) != :rbracket
+      TokenStream.next(stream)
+      rhs = parse_projection(ps, stream, Token.power(:filter))
+      right = Nodes.node(:condition, left: expression, right: rhs)
+      Nodes.node(:array_projection, left: left, right: right)
+    end
+
+    def led_flatten(ps, stream, left)
+      TokenStream.next(stream)
+      left = Nodes.node(:flatten, left: left)
+      right = parse_projection(ps, stream, Token.power(:flatten))
+      Nodes.node(:array_projection, left: left, right: right)
+    end
+
+    def parse_array_index_expression(ps, stream)
+      pos = 0
+      parts = Array[nil, nil, nil]
+      expected = num_colon_rbracket
+      while true
+        if type(stream) == :colon
+          pos += 1
+          expected = num_colon_rbracket
+        elsif type(stream) == :number
+          v = Token.value(TokenStream.token(stream))
+          v => Integer
+          # Ruby writes parts[3] (growing the Array) before the too-many-colons check
+          parts[pos] = v if pos < 3
+          expected = colon_rbracket
+        end
+        TokenStream.next(stream, expected)
+        break if type(stream) == :rbracket
+      end
+
+      TokenStream.next(stream) # consume the closing bracket
+
+      if pos == 0
+        Nodes.node(:field, key: parts[0])
+      elsif pos > 2
+        raise Errors::SyntaxError, "invalid array slice syntax: too many colons"
+      else
+        raise Errors::InvalidValueError, "slice step cannot be 0" if parts[2] == 0
+        Nodes.node(:array_projection, left: Nodes.node(:slice, nums: parts),
+                                      right: parse_projection(ps, stream, Token.power(:star)))
+      end
+    end
+
+    def parse_dot(ps, stream, binding_power)
+      if type(stream) == :lbracket
+        TokenStream.next(stream)
+        parse_multi_select_list(ps, stream)
+      else
+        expr(ps, stream, binding_power)
+      end
+    end
+
+    def parse_multi_select_list(ps, stream)
+      nodes = Array[]
+      while true
+        Array.push(nodes, expr(ps, stream, 0))
+        if type(stream) == :comma
+          TokenStream.next(stream)
+          raise Errors::SyntaxError, "expression epxected, found rbracket" if type(stream) == :rbracket
+        end
+        break if type(stream) == :rbracket
+      end
+      TokenStream.next(stream)
+      Nodes.node(:multi_select_list, children: nodes)
+    end
+
+    def parse_projection(ps, stream, binding_power)
+      t = type(stream)
+      if (Token.binding_power(TokenStream.token(stream)) || 0) < 10
+        Nodes.current
+      elsif t == :dot
+        TokenStream.next(stream, after_dot)
+        parse_dot(ps, stream, binding_power)
+      elsif t == :lbracket || t == :filter
+        expr(ps, stream, binding_power)
+      else
+        raise Errors::SyntaxError, "syntax error after projection"
+      end
+    end
+
+    def parse_wildcard_array(ps, stream, left)
+      TokenStream.next(stream, Set[:rbracket])
+      TokenStream.next(stream)
+      right = parse_projection(ps, stream, Token.power(:star))
+      Nodes.node(:array_projection, left: left || Nodes.current, right: right)
+    end
+
+    def parse_wildcard_object(ps, stream, left)
+      TokenStream.next(stream)
+      right = parse_projection(ps, stream, Token.power(:star))
+      Nodes.node(:object_projection, left: left || Nodes.current, right: right)
+    end
+  end
+
+  # Ruby's CachingParser: a Parser with a cache of parsed expressions (cleared at 1000 entries).
+  class CachingParser
+    attr_reader parser, cache
+
+    def initialize(cp)
+      @cache = Hash[]
+    end
+
+    def parse(cp, expression)
+      hit = @cache[expression]
+      return hit if hit
+      Hash.clear(@cache) if Hash.size(@cache) >= 1000
+      @cache[expression] = Parser.parse(@parser, expression)
+    end
+  end
+
+  module Util
+    module_function
+
+    # Determines if a value is false as defined by JMESPath.
+    def falsey?(value)
+      case value
+      in nil | false then true
+      in Array then Array.empty?(value)
+      in Hash then Hash.empty?(value)
+      in String then String.empty?(value)
+      else false
+      end
+    end
+  end
+
+  module Function
+    module_function
+
+    def names = once do
+      Set["abs", "avg", "ceil", "contains", "floor", "length", "map", "max", "min", "type", "keys",
+          "values", "join", "to_string", "to_number", "sum", "not_null", "sort", "sort_by", "max_by",
+          "min_by", "ends_with", "starts_with", "merge", "reverse", "to_array"]
+    end
+
+    def create(name, children, quiet)
+      raise Errors::UnknownFunctionError, "unknown function #{name}()" unless Set.include?(names, name)
+      Nodes.node(:function, name: name, children: children, quiet: quiet)
+    end
+
+    def maybe_raise_type(fn, message)
+      raise Errors::InvalidTypeError, message unless Nodes::Node.quiet(fn)
+      nil
+    end
+
+    def maybe_raise_arity(fn, message)
+      raise Errors::InvalidArityError, message unless Nodes::Node.quiet(fn)
+      nil
+    end
+
+    # TypeChecker#get_type: the TYPE_NAMES text is the type here.
+    def get_type(value)
+      case value
+      in String then "string"
+      in true | false then "boolean"
+      in nil then "null"
+      in Integer | Float then "number"
+      in Hash then "object"
+      in Array then "array"
+      in Nodes::Node then "expression"
+      end
+    end
+
+    # Ruby's error messages print the type constants' numbers (0..6), as TypeChecker's.
+    def type_number(t) = Array.index(Array["array", "boolean", "expression", "null", "number", "object", "string"], t)
+
+    def call(fn, args)
+      name = Nodes::Node.name(fn)
+      n = Array.size(args)
+      case name
+      in "abs" | "ceil" | "floor"
+        return maybe_raise_arity(fn, "function #{name}() expects one argument") if n != 1
+        value = args[0]
+        case value
+        in Integer | Float
+          return Arithmetic.abs(value) if name == "abs"
+          name == "ceil" ? Arithmetic.ceil(value) : Arithmetic.floor(value)
+        else
+          maybe_raise_type(fn, name == "abs" ? "function abs() expects a number" : "function #{name}() expects a numeric value")
+        end
+      in "avg"
+        return maybe_raise_arity(fn, "function avg() expects one argument") if n != 1
+        values = args[0]
+        case values
+        in Array
+          return nil if Array.empty?(values)
+          total = 0
+          Array.each(values) do |v|
+            case v
+            in Integer | Float then total += v
+            else return maybe_raise_type(fn, "function avg() expects numeric values")
+            end
+          end
+          total / Integer.to_f(Array.size(values))
+        else
+          maybe_raise_type(fn, "function avg() expects a number")
+        end
+      in "contains"
+        return maybe_raise_arity(fn, "function contains() expects 2 arguments") if n != 2
+        haystack = args[0]
+        needle = args[1]
+        case haystack
+        in String
+          needle => String
+          String.include?(haystack, needle)
+        in Array then Array.any?(haystack) { |e| e == needle }
+        else maybe_raise_type(fn, "contains expects 2nd arg to be a list")
+        end
+      in "length"
+        return maybe_raise_arity(fn, "function length() expects one argument") if n != 1
+        value = args[0]
+        case value
+        in Hash then Hash.size(value)
+        in Array then Array.size(value)
+        in String then String.size(value)
+        else maybe_raise_type(fn, "function length() expects string, array or object")
+        end
+      in "map"
+        return maybe_raise_arity(fn, "function map() expects two arguments") if n != 2
+        expr = args[0]
+        list = args[1]
+        return maybe_raise_type(fn, "function map() expects the first argument to be an expression") unless expr in Nodes::Node
+        return maybe_raise_type(fn, "function map() expects the second argument to be an list") unless list in Array
+        Array.map(list) { |value| JMESPath.eval_expr(expr, value) }
+      in "max" | "min"
+        return maybe_raise_arity(fn, "function #{name}() expects one argument") if n != 1
+        values = args[0]
+        return maybe_raise_type(fn, "function #{name}() expects an array") unless values in Array
+        return nil if Array.empty?(values)
+        best = values[0]
+        best_type = get_type(best)
+        unless best_type == "number" || best_type == "string"
+          return maybe_raise_type(fn, "function #{name}() expects numeric or string values")
+        end
+        Array.each(values) do |v|
+          v_type = get_type(v)
+          if best_type != v_type
+            return maybe_raise_type(fn, "function #{name}() encountered a type mismatch in sequence: #{type_number(best_type)}, #{type_number(v_type)}")
+          end
+          best = v if name == "max" ? JMESPath.greater?(v, best) : JMESPath.greater?(best, v)
+        end
+        best
+      in "type"
+        return maybe_raise_arity(fn, "function type() expects one argument") if n != 1
+        get_type(args[0])
+      in "keys"
+        return maybe_raise_arity(fn, "function keys() expects one argument") if n != 1
+        value = args[0]
+        return maybe_raise_type(fn, "function keys() expects a hash") unless value in Hash
+        Array.map(Hash.keys(value)) { |k| Kernel.to_s(k) }
+      in "values"
+        return maybe_raise_arity(fn, "function values() expects one argument") if n != 1
+        value = args[0]
+        case value
+        in Hash then Hash.values(value)
+        in Array then value
+        else maybe_raise_type(fn, "function values() expects an array or a hash")
+        end
+      in "join"
+        return maybe_raise_arity(fn, "function join() expects an array of strings") if n != 2
+        glue = args[0]
+        values = args[1]
+        return maybe_raise_type(fn, "function join() expects the first argument to be a string") unless glue in String
+        if (values in Array) && Array.all?(values) { |v| v in String }
+          Array.join(values, glue)
+        else
+          maybe_raise_type(fn, "function join() expects values to be an array of strings")
+        end
+      in "to_string"
+        return maybe_raise_arity(fn, "function to_string() expects one argument") if n != 1
+        value = args[0]
+        (value in String) ? value : JSON.generate(value)
+      in "to_number"
+        return maybe_raise_arity(fn, "function to_number() expects one argument") if n != 1
+        JMESPath.to_number(args[0])
+      in "sum"
+        values = args[0]
+        return maybe_raise_arity(fn, "function sum() expects one argument") unless n == 1 && (values in Array)
+        total = 0
+        Array.each(values) do |v|
+          case v
+          in Integer | Float then total += v
+          else return maybe_raise_type(fn, "function sum() expects values to be numeric")
+          end
+        end
+        total
+      in "not_null"
+        return maybe_raise_arity(fn, "function not_null() expects one or more arguments") if n == 0
+        Array.find(args) { |value| value != nil }
+      in "sort"
+        return maybe_raise_arity(fn, "function sort() expects one argument") if n != 1
+        value = args[0]
+        return maybe_raise_type(fn, "function sort() expects values to be an array of numbers or integers") unless value in Array
+        sort_values(fn, value, value)
+      in "sort_by"
+        return maybe_raise_arity(fn, "function sort_by() expects two arguments") if n != 2
+        values = args[0]
+        expression = args[1]
+        unless (values in Array) && (expression in Nodes::Node)
+          return maybe_raise_type(fn, "function sort_by() expects an array and an expression")
+        end
+        sort_values(fn, values, Array.map(values) { |v| JMESPath.eval_expr(expression, v) })
+      in "max_by" | "min_by"
+        compare_by(fn, name, args)
+      in "ends_with" | "starts_with"
+        return maybe_raise_arity(fn, "function #{name}() expects two arguments") if n != 2
+        search = args[0]
+        affix = args[1]
+        return maybe_raise_type(fn, "function #{name}() expects first argument to be a string") unless search in String
+        return maybe_raise_type(fn, "function #{name}() expects second argument to be a string") unless affix in String
+        name == "ends_with" ? String.end_with?(search, affix) : String.start_with?(search, affix)
+      in "merge"
+        return maybe_raise_arity(fn, "function merge() expects 1 or more arguments") if n == 0
+        h = Hash[]
+        Array.each(args) do |v|
+          v => Hash
+          h = Hash.merge(h, v)
+        end
+        h
+      in "reverse"
+        return maybe_raise_arity(fn, "function reverse() expects 1 or more arguments") if n == 0
+        value = args[0]
+        case value
+        in Array then Array.reverse(value)
+        in String then String.reverse(value)
+        else maybe_raise_type(fn, "function reverse() expects an array or string")
+        end
+      in "to_array"
+        value = args[0]
+        (value in Array) ? value : Array[value]
+      end
+    end
+
+    # Ruby's sort / sort_by: the keys (the values themselves for sort) must be all numbers or all
+    # strings; ties keep their order (Ruby sorts by [key, n]). Keys are split by type so that
+    # Array.sort_by sees comparable keys.
+    def sort_values(fn, values, keys)
+      array_type = get_type(keys[0])
+      unless array_type == "string" || array_type == "number" || Array.empty?(values)
+        return maybe_raise_type(fn, "function sort() expects values to be an array of numbers or integers")
+      end
+      Array.each(keys) do |k|
+        if get_type(k) != array_type
+          return maybe_raise_type(fn, "function sort() expects values to be an array of only numbers, or only integers")
+        end
+      end
+      idx = Array.each_with_index(keys).Array.map { |k, i| i }
+      order = array_type == "string" ?
+        Array.sort_by(idx) { |i| [JMESPath.as_string(keys[i]), i] } :
+        Array.sort_by(idx) { |i| [JMESPath.as_number(keys[i]), i] }
+      result = Array[]
+      Array.each(order) { |i| Array.push(result, values[i]) }
+      result
+    end
+
+    def compare_by(fn, mode, args)
+      return maybe_raise_arity(fn, "function #{mode}() expects two arguments") if Array.size(args) != 2
+      values = args[0]
+      expression = args[1]
+      unless (values in Array) && (expression in Nodes::Node)
+        return maybe_raise_type(fn, "function #{mode}() expects an array and an expression")
+      end
+      type = get_type(JMESPath.eval_expr(expression, values[0]))
+      if type != "number" && type != "string"
+        return maybe_raise_type(fn, "function #{mode}() expects values to be strings or numbers")
+      end
+      best = nil
+      best_key = nil
+      Array.each(values) do |entry|
+        value = JMESPath.eval_expr(expression, entry)
+        value_type = get_type(value)
+        if value_type != type
+          return maybe_raise_type(fn, "function #{mode}() encountered a type mismatch in sequence: #{type_number(type)}, #{type_number(value_type)}")
+        end
+        # Ruby's max_by keeps the first of equal keys, and so does min_by
+        if best_key == nil || (mode == "max_by" ? JMESPath.greater?(value, best_key) : JMESPath.greater?(best_key, value))
+          best = entry
+          best_key = value
+        end
+      end
+      best
+    end
+  end
+
+  # Ruby's Runtime: a parser (a CachingParser unless cache_expressions: false) and search.
+  class Runtime
+    attr_reader parser
+
+    def search(rt, expression, data)
+      p = @parser
+      tree = case p
+             in CachingParser then CachingParser.parse(p, expression)
+             in Parser then Parser.parse(p, expression)
+             end
+      JMESPath.visit(JMESPath.optimize(tree), data)
+    end
+  end
+
+  module_function
+
+  # Ruby's Runtime.new(options): options is a Hash with Symbol keys (:cache_expressions,
+  # :disable_visit_errors).
+  def runtime(options = Hash[])
+    quiet = Hash.fetch(options, :disable_visit_errors, false) == true
+    parser = Parser.new(quiet)
+    return Runtime.new(parser) if Hash.fetch(options, :cache_expressions, true) == false
+    Runtime.new(CachingParser.new(parser))
+  end
+
+  def default_runtime = once { runtime }
+
+  # Ruby's JMESPath.search(expression, data, runtime_options = {}).
+  def search(expression, data, runtime_options = nil)
+    rt = runtime_options ? runtime(runtime_options) : default_runtime
+    Runtime.search(rt, expression, data)
+  end
+
+  # ---- Ruby's Node#optimize: only the rewrite that changes results is kept ----
+  # Ruby's optimize also makes ChainedField, Chain, Fast*Projection and the *Condition nodes, which
+  # give the same results as the nodes they replace. Slice becomes SimpleSlice (value[start, len]),
+  # which differs: a start past the end gives nil where Slice gives [] or "".
+  def optimize(node)
+    return node unless node
+    Nodes::Node.kind(node) => kind
+    if kind == :slice
+      start, stop, step = Nodes::Node.nums(node)
+      if (step == nil || step == 1) && start && stop && start > 0 && stop > start
+        return Nodes.node(:simple_slice, nums: Array[start, stop, 1])
+      end
+      return node
+    end
+    l = Nodes::Node.left(node)
+    r = Nodes::Node.right(node)
+    Nodes::Node.new(kind, l ? optimize(l) : nil, r ? optimize(r) : nil,
+                    Array.map(Nodes::Node.children(node)) { |c| optimize(c) },
+                    Nodes::Node.key(node), Nodes::Node.value(node), Nodes::Node.name(node),
+                    Nodes::Node.keys(node), Nodes::Node.nums(node), Nodes::Node.quiet(node))
+  end
+
+  # ---- evaluation: Ruby's Node#visit, one branch per node class ----
+
+  def visit(node, value)
+    case Nodes::Node.kind(node)
+    in :current then value
+    in :expression then node
+    in :literal then Nodes::Node.value(node)
+    in :field
+      key = Nodes::Node.key(node)
+      case value
+      in Array then (key in Integer) ? value[key] : nil
+      in Hash
+        v = value[key]
+        if v != nil
+          v
+        elsif key in String
+          value[String.to_sym(key)]
+        end
+      else nil
+      end
+    in :subexpression
+      visit(child(node, :right), visit(child(node, :left), value))
+    in :not then Util.falsey?(visit(child(node, :left), value))
+    in :or
+      result = visit(child(node, :left), value)
+      Util.falsey?(result) ? visit(child(node, :right), value) : result
+    in :and
+      result = visit(child(node, :left), value)
+      Util.falsey?(result) ? result : visit(child(node, :right), value)
+    in :comparator
+      compare(Nodes::Node.name(node), visit(child(node, :left), value), visit(child(node, :right), value))
+    in :condition
+      Util.falsey?(visit(child(node, :left), value)) ? nil : visit(child(node, :right), value)
+    in :array_projection
+      targets = visit(child(node, :left), value)
+      (targets in Array) ? project(node, targets) : nil
+    in :object_projection
+      targets = visit(child(node, :left), value)
+      (targets in Hash) ? project(node, Hash.values(targets)) : nil
+    in :flatten
+      v = visit(child(node, :left), value)
+      if v in Array
+        values = Array[]
+        Array.each(v) do |e|
+          if e in Array
+            Array.concat(values, e)
+          else
+            Array.push(values, e)
+          end
+        end
+        values
+      end
+    in :multi_select_list
+      return nil if value == nil
+      Array.map(Nodes::Node.children(node)) { |n| visit(n, value) }
+    in :multi_select_hash
+      return nil if value == nil
+      hash = Hash[]
+      Array.each_with_index(Nodes::Node.keys(node)) do |k, i|
+        hash[k] = visit(Nodes::Node.children(node)[i] || Nodes.current, value)
+      end
+      hash
+    in :function
+      Function.call(node, Array.map(Nodes::Node.children(node)) { |c| visit(c, value) })
+    in :slice then slice(Nodes::Node.nums(node), value)
+    in :simple_slice
+      start, stop, _ = Nodes::Node.nums(node)
+      start => Integer
+      stop => Integer
+      case value
+      in String then value[start, stop - start]
+      in Array then value[start, stop - start]
+      else nil
+      end
+    in :function_name then nil
+    end
+  end
+
+  # Ruby's Expression#eval.
+  def eval_expr(expr, value)
+    expr => Nodes::Node
+    visit(child(expr, :left), value)
+  end
+
+  def child(node, side)
+    c = side == :left ? Nodes::Node.left(node) : Nodes::Node.right(node)
+    c || Nodes.current
+  end
+
+  def project(node, targets)
+    list = Array[]
+    pr = child(node, :right)
+    Array.each(targets) do |v|
+      vv = visit(pr, v)
+      Array.push(list, vv) unless vv == nil
+    end
+    list
+  end
+
+  # Comparators: == and != compare JSON values; the others need two numbers or two strings, else nil.
+  def compare(relation, l, r)
+    return l == r if relation == "=="
+    return l != r if relation == "!="
+    return nil unless comparable?(l, r)
+    case relation
+    in ">" then greater?(l, r)
+    in ">=" then !greater?(r, l)
+    in "<" then greater?(r, l)
+    in "<=" then !greater?(l, r)
+    end
+  end
+
+  def comparable?(l, r)
+    ((l in Integer | Float) && (r in Integer | Float)) || ((l in String) && (r in String))
+  end
+
+  def as_number(v)
+    v => Integer | Float
+    v
+  end
+
+  def as_string(v)
+    v => String
+    v
+  end
+
+  # l > r for two numbers or two strings.
+  def greater?(l, r)
+    case l
+    in String then l > as_string(r)
+    else as_number(l) > as_number(r)
+    end
+  end
+
+  # Ruby's to_number: Float(v), then an Integer when it is integral; nil when Float raises.
+  def to_number(v)
+    f = case v
+        in String | Integer | Float then Float(v)
+        else nil
+        end
+    return nil unless f
+    Float.finite?(f) && Float.to_i(f) == f ? Float.to_i(f) : f
+  rescue ArgumentError
+    nil
+  end
+
+  def slice(nums, value)
+    start, stop, step = nums
+    case value
+    in String
+      s, e, st = adjust_slice(String.size(value), start, stop, step)
+      Array.join(slice_indexes(s, e, st).Array.map { |i| value[i] || "" })
+    in Array
+      s, e, st = adjust_slice(Array.size(value), start, stop, step)
+      slice_indexes(s, e, st).Array.map { |i| value[i] }
+    else nil
+    end
+  end
+
+  def slice_indexes(start, stop, step)
+    result = Integer[]
+    i = start
+    if step > 0
+      while i < stop
+        Array.push(result, i)
+        i += step
+      end
+    else
+      while i > stop
+        Array.push(result, i)
+        i += step
+      end
+    end
+    result
+  end
+
+  def adjust_slice(length, start, stop, step)
+    step = 1 if step == nil
+    start = start == nil ? (step < 0 ? length - 1 : 0) : adjust_endpoint(length, start, step)
+    stop = stop == nil ? (step < 0 ? -1 : length) : adjust_endpoint(length, stop, step)
+    [start, stop, step]
+  end
+
+  def adjust_endpoint(length, endpoint, step)
+    if endpoint < 0
+      endpoint += length
+      endpoint = step < 0 ? -1 : 0 if endpoint < 0
+      endpoint
+    elsif endpoint >= length
+      step < 0 ? length - 1 : length
+    else
+      endpoint
+    end
+  end
+end

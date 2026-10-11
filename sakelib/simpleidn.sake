@@ -1,0 +1,217 @@
+# simpleidn: internationalized domain names, a port of the simpleidn gem.
+# SimpleIDN.to_ascii("møllerriis.com") => "xn--mllerriis-l8a.com" and back with to_unicode: the UTS #46
+# mapping (lower case, compatibility forms, deletions), NFC, then Punycode (RFC 3492) per label.
+# Sake's Strings are UTF-8, so the gem's conversions back to the input's encoding are left out.
+
+require "simpleidn/uts46mapping"
+
+module SimpleIDN
+  # Ruby: ConversionError < RangeError; Sake has no hierarchy, so rescue SimpleIDN::ConversionError.
+  class ConversionError < StandardError
+  end
+
+  module Punycode
+    module_function
+
+    # Ruby's constants INITIAL_N, INITIAL_BIAS, ... are functions (Sake constants hold no values).
+    def initial_n = 0x80
+    def initial_bias = 72
+    def delimiter = 0x2D
+    def base = 36
+    def damp = 700
+    def tmin = 1
+    def tmax = 26
+    def skew = 38
+    def maxint = 0x7FFFFFFF
+    def ascii_max = 0x7F
+
+    # The value of a basic code point as a digit, or base when it is none.
+    def decode_digit(cp)
+      cp - 48 < 10 ? cp - 22 : cp - 65 < 26 ? cp - 65 : cp - 97 < 26 ? cp - 97 : base
+    end
+
+    # 0..25 map to a..z, 26..35 to 0..9.
+    def encode_digit(d) = d + 22 + 75 * (d < 26 ? 1 : 0)
+
+    # Bias adaptation (RFC 3492 6.1).
+    def adapt(delta, numpoints, firsttime)
+      delta = firsttime ? delta / damp : delta >> 1
+      delta += delta / numpoints
+      k = 0
+      while delta > ((base - tmin) * tmax) / 2
+        delta /= base - tmin
+        k += base
+      end
+      k + (base - tmin + 1) * delta / (delta + skew)
+    end
+
+    def threshold(k, bias)
+      k <= bias ? tmin : k >= bias + tmax ? tmax : k - bias
+    end
+
+    def decode(input)
+      input = String.codepoints(input)
+      output = Integer[]
+      n = initial_n
+      i = 0
+      bias = initial_bias
+
+      # The basic code points: those before the last delimiter.
+      basic = Array.rindex(input, delimiter) || 0
+      Array.each(Array.first(input, basic)) do |char|
+        raise ConversionError, "Illegal input >= 0x80" if char > ascii_max
+        Array.push(output, char)
+      end
+
+      ic = basic > 0 ? basic + 1 : 0
+      while ic < Array.size(input)
+        # A generalized variable-length integer, added to i.
+        oldi = i
+        w = 1
+        k = base
+        loop do
+          raise ConversionError, "punycode_bad_input(1)" if ic >= Array.size(input)
+          digit = decode_digit(Array.fetch(input, ic))
+          ic += 1
+          raise ConversionError, "punycode_bad_input(2)" if digit >= base
+          raise ConversionError, "punycode_overflow(1)" if digit > (maxint - i) / w
+          i += digit * w
+          t = threshold(k, bias)
+          break if digit < t
+          raise ConversionError, "punycode_overflow(2)" if w > maxint / (base - t)
+          w *= base - t
+          k += base
+        end
+
+        out = Array.size(output) + 1
+        bias = adapt(i - oldi, out, oldi == 0)
+        # i wraps around from out to 0, incrementing n each time
+        raise ConversionError, "punycode_overflow(3)" if i / out > maxint - n
+        n += i / out
+        i %= out
+        Array.insert(output, i, n)
+        i += 1
+      end
+      Array.pack(output, "U*")
+    end
+
+    def encode(input)
+      input = String.codepoints(input)
+      n = initial_n
+      delta = 0
+      bias = initial_bias
+
+      # The basic code points first.
+      output = Array.select(input) { |char| char <= ascii_max }
+      h = Array.size(output)
+      b = h
+      Array.push(output, delimiter) if b > 0
+
+      while h < Array.size(input)
+        # The smallest code point not handled yet.
+        m = maxint
+        Array.each(input) { |char| m = char if char >= n && char < m }
+
+        raise ConversionError, "punycode_overflow (1)" if m - n > (maxint - delta) / (h + 1)
+        delta += (m - n) * (h + 1)
+        n = m
+
+        Array.each(input) do |char|
+          if char < n
+            delta += 1
+            raise ConversionError, "punycode_overflow(2)" if delta > maxint
+          end
+          next unless char == n
+
+          # delta as a generalized variable-length integer
+          q = delta
+          k = base
+          loop do
+            t = threshold(k, bias)
+            break if q < t
+            Array.push(output, encode_digit(t + (q - t) % (base - t)))
+            q = (q - t) / (base - t)
+            k += base
+          end
+          Array.push(output, encode_digit(q))
+          bias = adapt(delta, h + 1, h == b)
+          delta = 0
+          h += 1
+        end
+
+        delta += 1
+        n += 1
+      end
+      Array.pack(output, "U*")
+    end
+  end
+
+  module_function
+
+  def ace_prefix = "xn--"
+  def ascii_max = 0x7F
+  def dot = "."
+  def label_separator_re = /[.．。｡]/
+
+  # Ruby's UTS64MAPPING: code point => the code points it maps to ([] deletes it).
+  def uts46mapping
+    once do
+      table = Hash[]
+      Array.each(String.split(uts46mapping_data, ";")) do |entry|
+        cp, targets = String.split(entry, "=", -1)
+        table[String.hex(cp)] = Array.map(String.split(targets || "", ".")) { String.hex(it) }
+      end
+      table
+    end
+  end
+
+  # UTS #46 Table 1: the deviations mapped only in transitional processing.
+  def transitional_mapping
+    once { Hash[0x00DF => Integer[0x0073, 0x0073], 0x03C2 => Integer[0x03C3], 0x200C => Integer[], 0x200D => Integer[]] }
+  end
+
+  # Applies the UTS #46 mapping; returns the String in NFC.
+  def uts46map(str, transitional = false)
+    table = uts46mapping
+    mapped = Array.flat_map(String.codepoints(str)) { |cp| table[cp] || Integer[cp] }
+    if transitional
+      trans = transitional_mapping
+      mapped = Array.flat_map(mapped) { |cp| trans[cp] || Integer[cp] }
+    end
+    String.unicode_normalize(Array.pack(mapped, "U*"), :nfc)
+  end
+
+  def labels(mapped_domain) = String.split(mapped_domain, label_separator_re, -1)
+
+  # SimpleIDN.to_ascii("møllerriis.com") => "xn--mllerriis-l8a.com"; nil gives nil.
+  def to_ascii(domain, transitional = false)
+    return nil if domain == nil
+    mapped_domain = uts46map(domain, transitional)
+    out = String[]
+    content = false
+    Array.each(labels(mapped_domain)) do |s|
+      # leading empty labels are skipped
+      next if String.empty?(s) && !content
+      content = true
+      Array.push(out, Array.any?(String.codepoints(s)) { |cp| cp > ascii_max } ? ace_prefix + Punycode.encode(s) : s)
+    end
+    # only dots: "."
+    out = String[dot] if Array.empty?(out) && !String.empty?(mapped_domain)
+    Array.join(out, dot)
+  end
+
+  # SimpleIDN.to_unicode("xn--mllerriis-l8a.com") => "møllerriis.com"; nil gives nil.
+  def to_unicode(domain, transitional = false)
+    return nil if domain == nil
+    mapped_domain = uts46map(domain, transitional)
+    out = String[]
+    content = false
+    Array.each(labels(mapped_domain)) do |s|
+      next if String.empty?(s) && !content
+      content = true
+      Array.push(out, String.start_with?(s, ace_prefix) ? Punycode.decode(String.[](s, String.size(ace_prefix)..) || "") : s)
+    end
+    out = String[dot] if Array.empty?(out) && !String.empty?(mapped_domain)
+    Array.join(out, dot)
+  end
+end

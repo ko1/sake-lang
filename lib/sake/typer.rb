@@ -883,7 +883,8 @@ module Sake
           failing << a
           next
         end
-        next unless key.include?("Integer") # other index types are reported below
+        # other index types are reported below; a String is also indexed by a String or a Regexp (a substring or nil)
+        next unless key.include?("Integer") || (a == "String" && (key.include?("String") || key.include?("Regexp")))
         case a
         when "String" then results << t("String") << t("IndexNil")
         else
@@ -901,7 +902,8 @@ module Sake
       verdict = failing.empty? ? :proven : (failing.size == recv.size ? :error : :partial)
       add_check(node, "Indexable.[]", "pair", "(Array|String|Tuple, Integer)", recv, verdict, failing)
       if recv.any? { _1 == "String" || (_1.is_a?(Array) && %i[array tuple].include?(_1[0])) }
-        bad = key.reject { _1 == "Integer" || (_1.is_a?(Array) && _1[0] == :range) }
+        strings = recv.all? { _1 == "String" }
+        bad = key.reject { _1 == "Integer" || (_1.is_a?(Array) && _1[0] == :range) || (strings && %w[String Regexp].include?(_1)) }
         add_check(node, "Indexable.[]", "index", "Integer", key, bad.empty? ? :proven : (bad.size == key.size ? :error : :partial), bad)
       end
       u(*results)

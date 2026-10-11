@@ -1,0 +1,158 @@
+require "msgpack"
+
+# Packs a value, prints the bytes, and unpacks them again.
+def round_trip(v)
+  s = MessagePack.pack(v)
+  p([s, String.encoding(s), MessagePack.unpack(s)])
+end
+
+# scalars and the shortest integer forms
+round_trip(nil)
+round_trip(true)
+round_trip(false)
+Array.each(Array[0, 1, 127, 128, 255, 256, 65535, 65536, 4294967295, 4294967296, 18446744073709551615,
+ -1, -32, -33, -128, -129, -32768, -32769, -2147483648, -2147483649, -9223372036854775808]) do |n|
+  p([n, MessagePack.pack(n)])
+end
+round_trip(1.5)
+round_trip(-0.0)
+round_trip(1e100)
+
+# strings: UTF-8 is str, ASCII-8BIT is bin; Symbols are packed as str
+round_trip("")
+round_trip("hello")
+round_trip("日本語")
+round_trip("a" * 31)
+round_trip("a" * 32)
+round_trip("a" * 256)
+round_trip(String.b("\xFF\x00"))
+round_trip(:sym)
+p(String.bytesize(MessagePack.pack("a" * 40)))
+
+# containers
+round_trip(Array[])
+round_trip(Array[1, Array[2, Array[3]], Hash["k" => "v"]])
+round_trip(Hash["a" => 1, "b" => Array[true, nil], "c" => Hash["d" => 1.25]])
+round_trip(Hash[1 => "int key", nil => "nil key"])
+round_trip(Array.new(16) { |i| i })
+p(String.bytesize(MessagePack.pack(Array.new(16) { |i| i })))
+p(MessagePack.pack(Range.map(0...16) { |i| [i, i] }.Array.to_h)[0, 3])
+p(MessagePack.pack(Hash[a: 1, b: :c]))
+p(MessagePack.unpack(MessagePack.pack(Hash["a" => Hash["b" => 1]]), Hash[symbolize_keys: true]))
+
+# to_msgpack on core types, and dump/load
+p(String.to_msgpack("abc"))
+p(Array.to_msgpack(Array[1, 2]))
+p(Hash.to_msgpack(Hash["x" => 1]))
+p(Integer.to_msgpack(42))
+p(MessagePack.load(MessagePack.dump(Array[1, "two", 3.0])))
+
+# Packer: write calls chain; headers for hand-built containers
+pk = MessagePack::Packer.new
+pk.MessagePack::Packer.write_array_header(3).MessagePack::Packer.write(1).MessagePack::Packer.write_string("two").MessagePack::Packer.write_nil
+p(MessagePack::Packer.to_s(pk))
+p(MessagePack::Packer.size(pk))
+p(MessagePack::Packer.empty?(pk))
+MessagePack::Packer.reset(pk)
+p(MessagePack::Packer.empty?(pk))
+pk.MessagePack::Packer.write_map_header(1).MessagePack::Packer.write_symbol(:k).MessagePack::Packer.write_float32(1.5)
+p(MessagePack::Packer.to_s(pk))
+p(MessagePack.unpack(MessagePack::Packer.to_s(pk)))
+pk = MessagePack::Packer.new
+pk.MessagePack::Packer.write_true.MessagePack::Packer.write_false.MessagePack::Packer.write_int(-1).MessagePack::Packer.write_bin("\x01\x02").MessagePack::Packer.write_hash(Hash["a" => Array[1]])
+p(MessagePack::Packer.to_s(pk))
+p(MessagePack::Packer.new(nil, Hash[compatibility_mode: true]).MessagePack::Packer.write("a" * 40).MessagePack::Packer.to_s.String.bytesize)
+p(MessagePack::Packer.new(nil, Hash[compatibility_mode: true]).MessagePack::Packer.write(String.b("\x01")).MessagePack::Packer.to_s)
+
+# Unpacker: streaming with partial input
+u = MessagePack::Unpacker.new
+MessagePack::Unpacker.feed(u, "\x93\x01")
+MessagePack::Unpacker.each(u) { |obj| p(obj) }
+MessagePack::Unpacker.feed(u, "\x02\x03\xA1a\xC3")
+MessagePack::Unpacker.each(u) { |obj| p(obj) }
+p(String.bytesize(MessagePack::Unpacker.buffer(u)))
+MessagePack::Unpacker.feed_each(u, MessagePack.pack("x") + MessagePack.pack(Hash["k" => nil])) { |obj| p(obj) }
+MessagePack::Unpacker.feed(u, "\x01\x02")
+p(MessagePack::Unpacker.read(u))
+p(MessagePack::Unpacker.read(u))
+begin
+  MessagePack::Unpacker.read(u)
+rescue EOFError => e
+  puts("EOFError: #{Exception.message(e)}")
+end
+MessagePack::Unpacker.feed(u, "\x92\x01\x02")
+p(MessagePack::Unpacker.read_array_header(u))
+p(MessagePack::Unpacker.read(u))
+p(MessagePack::Unpacker.read(u))
+MessagePack::Unpacker.feed(u, "\x81\xA1k\xC0\xC0\x05")
+p(MessagePack::Unpacker.read_map_header(u))
+p(MessagePack::Unpacker.read(u))
+p(MessagePack::Unpacker.skip_nil(u))
+p(MessagePack::Unpacker.skip_nil(u))
+p(MessagePack::Unpacker.skip_nil(u))
+p(MessagePack::Unpacker.read(u))
+MessagePack::Unpacker.feed(u, "\x01")
+begin
+  MessagePack::Unpacker.read_map_header(u)
+rescue MessagePack::UnexpectedTypeError => e
+  puts("UnexpectedTypeError: #{Exception.message(e)}")
+end
+u = MessagePack::Unpacker.new(nil, Hash[symbolize_keys: true])
+MessagePack::Unpacker.feed(u, MessagePack.pack(Hash["a" => 1]))
+p(MessagePack::Unpacker.read(u))
+
+# ext types: ExtensionValue round trips with allow_unknown_ext
+Array.each(Array[1, 2, 3, 4, 8, 16, 17, 300]) do |n|
+  s = MessagePack.pack(MessagePack::ExtensionValue.new(5, "x" * n))
+  e = MessagePack.unpack(s, Hash[allow_unknown_ext: true])
+  e => MessagePack::ExtensionValue
+  p([n, s[0, 4], MessagePack::ExtensionValue.type(e), String.bytesize(MessagePack::ExtensionValue.payload(e)), String.encoding(MessagePack::ExtensionValue.payload(e))])
+end
+p(MessagePack::Packer.new.MessagePack::Packer.write_ext(-3, "ab").MessagePack::Packer.to_s)
+p(MessagePack::ExtensionValue.new(1, "a") == MessagePack::ExtensionValue.new(1, "a"))
+
+# Timestamp's ext payload (type -1): 32, 64 and 96 bit forms
+Array.each(Array[[0, 0], [1, 0], [4294967295, 0], [4294967296, 0], [1, 500], [17179869183, 999999999], [17179869184, 1], [-1, 0]]) do |sec, nsec|
+  data = MessagePack::Timestamp.to_msgpack_ext(sec, nsec)
+  t = MessagePack::Timestamp.from_msgpack_ext(data)
+  p([sec, nsec, String.bytesize(data), MessagePack::Timestamp.sec(t), MessagePack::Timestamp.nsec(t), t == MessagePack::Timestamp.new(sec, nsec)])
+end
+p(MessagePack::Timestamp.to_msgpack_ext(MessagePack::Timestamp.new(5, 6)))
+p(MessagePack::Timestamp.new(5, 6) == MessagePack::Timestamp.new(5, 7))
+
+# errors
+def try_unpack(s, options = Hash[])
+  p(MessagePack.unpack(s, options))
+rescue EOFError => e
+  puts("EOFError: #{Exception.message(e)}")
+rescue MessagePack::MalformedFormatError => e
+  puts("MalformedFormatError: #{Exception.message(e)}")
+rescue MessagePack::StackError => e
+  puts("StackError: #{Exception.message(e)}")
+rescue MessagePack::UnknownExtTypeError => e
+  puts("UnknownExtTypeError: #{Exception.message(e)}")
+end
+try_unpack("")
+try_unpack("\x92\x01")
+try_unpack("\xA5abc")
+try_unpack("\xC1")
+try_unpack("\x01\x02\x03")
+try_unpack("\xD4\x01\x02")
+try_unpack("\x91" * 128 + "\x01")
+try_unpack("\x91" * 129 + "\x01")
+try_unpack("\x81" * 129 + "\x01")
+begin
+  MessagePack.pack(2**64)
+rescue RangeError => e
+  puts("RangeError: #{Exception.message(e)}")
+end
+begin
+  MessagePack.pack(-2**63 - 1)
+rescue RangeError => e
+  puts("RangeError: #{Exception.message(e)}")
+end
+begin
+  MessagePack::Timestamp.from_msgpack_ext("abc")
+rescue MessagePack::MalformedFormatError => e
+  puts("MalformedFormatError: #{Exception.message(e)}")
+end

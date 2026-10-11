@@ -1,0 +1,796 @@
+# rss: RSS 2.0 and Atom feeds, parsed and made, after Ruby's rss gem (0.3.2), on sakelib/xml.sake.
+#
+#   feed = RSS::Parser.parse(xml)               # RSS::Rss, RSS::Atom::Feed, or nil (not a feed)
+#   feed => RSS::Rss
+#   RSS::Rss::Channel.title(RSS::Rss.channel(feed))   # Ruby: feed.channel.title
+#   made = RSS::Maker.make("2.0") do |maker|    # or "atom"
+#     ch = RSS::Maker::RSSBase.channel(maker)
+#     ch.RSS::Maker::ChannelBase.title = "x"    # Ruby: maker.channel.title = "x"
+#     RSS::Maker::ItemsBase.new_item(RSS::Maker::RSSBase.items(maker)) { |item| ... }
+#   end
+#   puts(made)                                  # the XML, formatted as the gem does
+#
+# The gem builds its classes from tables with module_eval; here each element is a class with its
+# fields, read and written by the same names (camelCase as in RSS: pubDate, isPermaLink). Atom's
+# per-element classes (Feed::Title, Feed::Id, Feed::Updated, ...) share a few construct classes:
+# TextConstruct (title, subtitle, rights, summary), DateConstruct (updated, published), Value (id,
+# icon, logo, a person's name / uri / email), PersonConstruct, Link, Category, Generator, Content.
+
+require "xml"
+require "time"
+
+module RSS
+  class NotWellFormedError < StandardError
+  end
+  class MissingTagError < StandardError
+    attr_reader tag, parent
+  end
+  class NotAvailableValueError < StandardError
+    attr_reader tag, value
+  end
+  class NotSetError < StandardError
+    attr_reader name, variables
+  end
+  class UnsupportedMakerVersionError < StandardError
+    attr_reader version
+  end
+
+  class Rss
+    attr_accessor feed_version, channel, version, encoding
+
+    class Channel
+      attr_accessor title, link, description, language, copyright, managingEditor, webMaster, rating
+      attr_accessor pubDate, lastBuildDate, docs, generator, ttl, image, items, categories, dc_date
+
+      class Image
+        attr_accessor url, title, link, width, height, description
+      end
+
+      class Item
+        attr_accessor title, link, description, categories, source, enclosure, comments, author
+        attr_accessor pubDate, guid, dc_date
+
+        class Category
+          attr_accessor domain, content
+        end
+
+        class Source
+          attr_accessor url, content
+        end
+
+        class Enclosure
+          attr_accessor url, length, type
+        end
+
+        class Guid
+          attr_accessor isPermaLink, content
+
+          # Ruby: isPermaLink unset means a permalink.
+          def PermaLink?(g) = @isPermaLink != false
+        end
+
+        def initialize(i)
+          @categories = Category[]
+        end
+
+        def date(i) = @pubDate
+      end
+
+      def initialize(c)
+        @items = Item[]
+        @categories = Item::Category[]
+      end
+
+      def date(c) = @pubDate
+    end
+
+    def feed_type(r) = "rss"
+    def rss_version(r) = @feed_version
+
+    def items(r)
+      ch = @channel
+      ch ? Channel.items(ch) : Array[]
+    end
+
+    def image(r)
+      ch = @channel
+      ch ? Channel.image(ch) : nil
+    end
+
+    def to_s(r) = Writer.rss(r)
+  end
+
+  module Atom
+    module_function
+
+    def uri = "http://www.w3.org/2005/Atom"
+
+    class TextConstruct
+      attr_accessor type, content
+
+      def initialize(x)
+      end
+    end
+
+    class DateConstruct
+      attr_accessor content
+
+      def initialize(x)
+      end
+    end
+
+    class Value
+      attr_accessor content
+
+      def initialize(x)
+      end
+    end
+
+    class PersonConstruct
+      attr_accessor name, uri, email
+    end
+
+    class Link
+      attr_accessor href, rel, type, hreflang, title, length
+    end
+
+    class Category
+      attr_accessor term, scheme, label
+    end
+
+    class Generator
+      attr_accessor content, uri, version
+    end
+
+    class Content
+      attr_accessor type, src, content
+    end
+
+    class Feed
+      attr_accessor authors, categories, contributors, generator, icon, id, links, logo, rights
+      attr_accessor subtitle, title, updated, entries, dc_date, version, encoding
+
+      class Entry
+        attr_accessor authors, categories, content, contributors, id, links, published, rights
+        attr_accessor summary, title, updated, dc_date
+
+        def initialize(e)
+          @authors = PersonConstruct[]
+          @categories = Category[]
+          @contributors = PersonConstruct[]
+          @links = Link[]
+        end
+
+        def author(e) = Array.first(@authors)
+        def link(e) = Array.first(@links)
+      end
+
+      def initialize(f)
+        @authors = PersonConstruct[]
+        @categories = Category[]
+        @contributors = PersonConstruct[]
+        @links = Link[]
+        @entries = Entry[]
+      end
+
+      def feed_type(f) = "atom"
+      def author(f) = Array.first(@authors)
+      def link(f) = Array.first(@links)
+      def items(f) = @entries
+      def to_s(f) = Writer.atom(f)
+    end
+  end
+
+  # Ruby's RSS::Parser.parse(xml, do_validate = true): RSS 2.0 (and 0.9x) and Atom 1.0. Returns nil
+  # for a document that is not a feed; RSS 1.0 (rdf:RDF) is not supported and gives nil too.
+  module Parser
+    module_function
+
+    def parse(xml, do_validate = true)
+      doc = begin
+        REXML::Document.new(xml)
+      rescue REXML::ParseException => e
+        raise NotWellFormedError, Exception.message(e)
+      end
+      root = REXML::Document.root(doc)
+      return nil unless root
+      enc = REXML::Document.encoding(doc)
+      decl = REXML::Document.xml_decl(doc)
+      ver = decl ? REXML::XMLDecl.version(decl) : nil
+      case REXML::Element.name(root)
+      in "rss" then parse_rss(root, do_validate, ver, decl ? enc : nil)
+      in "feed" then parse_atom(root, do_validate, ver, decl ? enc : nil)
+      else nil
+      end
+    end
+
+    # All the text (and CDATA) of an element, unescaped.
+    def text_of(el) = Array.join(Array.map(REXML::Element.texts(el)) { |t| (t in REXML::Text) ? REXML::Text.value(t) : REXML::CData.value(t) }, "")
+
+    def kids(el, name) = Array.select(REXML::Element.element_children(el)) { |c| REXML::Element.name(c) == name }
+    def child(el, name) = Array.find(REXML::Element.element_children(el)) { |c| REXML::Element.name(c) == name }
+
+    def text(el, name)
+      c = child(el, name)
+      c ? text_of(c) : nil
+    end
+
+    def int(el, name)
+      s = text(el, name)
+      s ? String.to_i(String.strip(s)) : nil
+    end
+
+    def required(el, parent, names, do_validate)
+      return unless do_validate
+      Array.each(names) do |n|
+        raise MissingTagError.new("tag <#{n}> is missing in tag <#{parent}>", n, parent) unless child(el, n)
+      end
+    end
+
+    # Ruby's date_writer: rfc822 for RSS, w3cdtf for Atom; NotAvailableValueError when invalid.
+    def date(el, name, rfc, do_validate)
+      s = text(el, name)
+      return nil unless s
+      begin
+        rfc ? Time.rfc2822(String.strip(s)) : Time.xmlschema(String.strip(s))
+      rescue ArgumentError
+        raise NotAvailableValueError.new("value <#{s}> of tag <#{name}> is not available.", name, s) if do_validate
+        nil
+      end
+    end
+
+    def parse_rss(root, v, ver, enc)
+      rss = Rss.new(REXML::Element.attribute(root, "version") || "", nil, ver, enc)
+      ce = child(root, "channel")
+      required(root, "rss", Array["channel"], v)
+      return rss unless ce
+      required(ce, "channel", Array["title", "link", "description"], v)
+      ch = Rss::Channel.new(text(ce, "title"), text(ce, "link"), text(ce, "description"))
+      ch.Rss::Channel.language = text(ce, "language")
+      ch.Rss::Channel.copyright = text(ce, "copyright")
+      ch.Rss::Channel.managingEditor = text(ce, "managingEditor")
+      ch.Rss::Channel.webMaster = text(ce, "webMaster")
+      ch.Rss::Channel.rating = text(ce, "rating")
+      ch.Rss::Channel.pubDate = date(ce, "pubDate", true, v)
+      ch.Rss::Channel.lastBuildDate = date(ce, "lastBuildDate", true, v)
+      ch.Rss::Channel.docs = text(ce, "docs")
+      ch.Rss::Channel.generator = text(ce, "generator")
+      ch.Rss::Channel.ttl = int(ce, "ttl")
+      ie = child(ce, "image")
+      if ie
+        required(ie, "image", Array["url", "title", "link"], v)
+        ch.Rss::Channel.image = Rss::Channel::Image.new(text(ie, "url"), text(ie, "title"), text(ie, "link"),
+                                                        int(ie, "width"), int(ie, "height"), text(ie, "description"))
+      end
+      Array.each(kids(ce, "category")) { |c| Array.push(Rss::Channel.categories(ch), rss_category(c)) }
+      Array.each(kids(ce, "item")) { |c| Array.push(Rss::Channel.items(ch), parse_item(c, v)) }
+      rss.Rss.channel = ch
+      rss
+    end
+
+    def rss_category(c) = Rss::Channel::Item::Category.new(REXML::Element.attribute(c, "domain"), text_of(c))
+
+    def parse_item(ie, v)
+      item = Rss::Channel::Item.new(text(ie, "title"), text(ie, "link"), text(ie, "description"))
+      Array.each(kids(ie, "category")) { |c| Array.push(Rss::Channel::Item.categories(item), rss_category(c)) }
+      se = child(ie, "source")
+      item.Rss::Channel::Item.source = Rss::Channel::Item::Source.new(REXML::Element.attribute(se, "url"), text_of(se)) if se
+      ee = child(ie, "enclosure")
+      if ee
+        len = REXML::Element.attribute(ee, "length")
+        item.Rss::Channel::Item.enclosure = Rss::Channel::Item::Enclosure.new(REXML::Element.attribute(ee, "url"), len ? String.to_i(len) : nil, REXML::Element.attribute(ee, "type"))
+      end
+      item.Rss::Channel::Item.comments = text(ie, "comments")
+      item.Rss::Channel::Item.author = text(ie, "author")
+      item.Rss::Channel::Item.pubDate = date(ie, "pubDate", true, v)
+      ge = child(ie, "guid")
+      if ge
+        pl = REXML::Element.attribute(ge, "isPermaLink")
+        item.Rss::Channel::Item.guid = Rss::Channel::Item::Guid.new(pl ? pl == "true" : nil, text_of(ge))
+      end
+      item
+    end
+
+    def atom_text(el, name)
+      c = child(el, name)
+      c ? Atom::TextConstruct.new(REXML::Element.attribute(c, "type"), text_of(c)) : nil
+    end
+
+    def atom_value(el, name)
+      s = text(el, name)
+      s ? Atom::Value.new(s) : nil
+    end
+
+    def atom_date(el, name, v)
+      t = date(el, name, false, v)
+      t ? Atom::DateConstruct.new(t) : nil
+    end
+
+    def person(pe) = Atom::PersonConstruct.new(atom_value(pe, "name"), atom_value(pe, "uri"), atom_value(pe, "email"))
+
+    def link(le)
+      a = REXML::Element.attributes(le)
+      Atom::Link.new(a["href"], a["rel"], a["type"], a["hreflang"], a["title"], a["length"])
+    end
+
+    def category(ce)
+      a = REXML::Element.attributes(ce)
+      Atom::Category.new(a["term"], a["scheme"], a["label"])
+    end
+
+    def parse_atom(root, v, ver, enc)
+      required(root, "feed", Array["id", "title", "updated"], v)
+      feed = Atom::Feed.new
+      feed.Atom::Feed.version = ver
+      feed.Atom::Feed.encoding = enc
+      Array.each(kids(root, "author")) { |c| Array.push(Atom::Feed.authors(feed), person(c)) }
+      Array.each(kids(root, "category")) { |c| Array.push(Atom::Feed.categories(feed), category(c)) }
+      Array.each(kids(root, "contributor")) { |c| Array.push(Atom::Feed.contributors(feed), person(c)) }
+      ge = child(root, "generator")
+      if ge
+        a = REXML::Element.attributes(ge)
+        feed.Atom::Feed.generator = Atom::Generator.new(text_of(ge), a["uri"], a["version"])
+      end
+      feed.Atom::Feed.icon = atom_value(root, "icon")
+      feed.Atom::Feed.id = atom_value(root, "id")
+      Array.each(kids(root, "link")) { |c| Array.push(Atom::Feed.links(feed), link(c)) }
+      feed.Atom::Feed.logo = atom_value(root, "logo")
+      feed.Atom::Feed.rights = atom_text(root, "rights")
+      feed.Atom::Feed.subtitle = atom_text(root, "subtitle")
+      feed.Atom::Feed.title = atom_text(root, "title")
+      feed.Atom::Feed.updated = atom_date(root, "updated", v)
+      Array.each(kids(root, "entry")) { |c| Array.push(Atom::Feed.entries(feed), parse_entry(c, v)) }
+      feed
+    end
+
+    def parse_entry(ee, v)
+      required(ee, "entry", Array["id", "title", "updated"], v)
+      e = Atom::Feed::Entry.new
+      Array.each(kids(ee, "author")) { |c| Array.push(Atom::Feed::Entry.authors(e), person(c)) }
+      Array.each(kids(ee, "category")) { |c| Array.push(Atom::Feed::Entry.categories(e), category(c)) }
+      ce = child(ee, "content")
+      e.Atom::Feed::Entry.content = Atom::Content.new(REXML::Element.attribute(ce, "type"), REXML::Element.attribute(ce, "src"), text_of(ce)) if ce
+      Array.each(kids(ee, "contributor")) { |c| Array.push(Atom::Feed::Entry.contributors(e), person(c)) }
+      e.Atom::Feed::Entry.id = atom_value(ee, "id")
+      Array.each(kids(ee, "link")) { |c| Array.push(Atom::Feed::Entry.links(e), link(c)) }
+      e.Atom::Feed::Entry.published = atom_date(ee, "published", v)
+      e.Atom::Feed::Entry.rights = atom_text(ee, "rights")
+      e.Atom::Feed::Entry.summary = atom_text(ee, "summary")
+      e.Atom::Feed::Entry.title = atom_text(ee, "title")
+      e.Atom::Feed::Entry.updated = atom_date(ee, "updated", v)
+      e
+    end
+  end
+
+  # The gem's to_s: two-space indentation, a second and later attribute each on its own line, text
+  # escaped with CGI.escapeHTML, dates as rfc822 (RSS) or w3cdtf (Atom, dc:date).
+  module Writer
+    module_function
+
+    def h(s) = String.gsub(s, /[&<>"']/, Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"])
+
+    def xml_decl(version, encoding)
+      enc = encoding ? " encoding=\"#{String.upcase(encoding)}\"" : ""
+      "<?xml version=\"#{version || "1.0"}\"#{enc}?>"
+    end
+
+    # <name a="1"\n  b="2">content</name>, or .../> without content; nil attributes are left out.
+    def tag(out, indent, name, attrs, content)
+      given = Array.select(attrs) { |(_, v)| v != nil }
+      s = "#{indent}<#{name}"
+      Array.each_with_index(given) do |(k, v), i|
+        s += i == 0 ? " " : "\n#{indent}  "
+        s += "#{k}=\"#{h(v || "")}\""
+      end
+      s += content == nil ? "/>" : ">#{h(content)}</#{name}>"
+      Array.push(out, s)
+    end
+
+    def text(out, indent, name, value)
+      tag(out, indent, name, Array[], value) if value != nil
+    end
+
+    def int(out, indent, name, value)
+      tag(out, indent, name, Array[], Integer.to_s(value)) if value != nil
+    end
+
+    # Dates are written in UTC: what the gem printed for every test document on this machine (it
+    # converts parsed dates to local time, and keeps the offset of some documents).
+    # (Not time.sake's Time.rfc2822 / xmlschema: each is parser and formatter, typed String | Time.)
+    def rfc822(t) = Time.strftime(Time.getutc(t), "%a, %d %b %Y %H:%M:%S -0000")
+
+    def w3cdtf(t) = Time.iso8601(Time.getutc(t))
+
+    def rss(r)
+      out = String[]
+      Array.push(out, xml_decl(Rss.version(r), Rss.encoding(r)))
+      Array.push(out, "<rss version=\"#{h(Rss.feed_version(r))}\"")
+      Array.push(out, "  xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"")
+      Array.push(out, "  xmlns:dc=\"http://purl.org/dc/elements/1.1/\"")
+      Array.push(out, "  xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\"")
+      Array.push(out, "  xmlns:trackback=\"http://madskills.com/public/xml/rss/module/trackback/\">")
+      ch = Rss.channel(r)
+      channel(out, ch) if ch
+      Array.push(out, "</rss>")
+      Array.join(out, "\n")
+    end
+
+    def channel(out, ch)
+      i = "    "
+      Array.push(out, "  <channel>")
+      text(out, i, "title", Rss::Channel.title(ch))
+      text(out, i, "link", Rss::Channel.link(ch))
+      text(out, i, "description", Rss::Channel.description(ch))
+      text(out, i, "language", Rss::Channel.language(ch))
+      text(out, i, "copyright", Rss::Channel.copyright(ch))
+      text(out, i, "managingEditor", Rss::Channel.managingEditor(ch))
+      text(out, i, "webMaster", Rss::Channel.webMaster(ch))
+      text(out, i, "rating", Rss::Channel.rating(ch))
+      pd = Rss::Channel.pubDate(ch)
+      text(out, i, "pubDate", rfc822(pd)) if pd
+      lb = Rss::Channel.lastBuildDate(ch)
+      text(out, i, "lastBuildDate", rfc822(lb)) if lb
+      text(out, i, "docs", Rss::Channel.docs(ch))
+      im = Rss::Channel.image(ch)
+      if im
+        Array.push(out, "#{i}<image>")
+        j = i + "  "
+        text(out, j, "url", Rss::Channel::Image.url(im))
+        text(out, j, "title", Rss::Channel::Image.title(im))
+        text(out, j, "link", Rss::Channel::Image.link(im))
+        int(out, j, "width", Rss::Channel::Image.width(im))
+        int(out, j, "height", Rss::Channel::Image.height(im))
+        text(out, j, "description", Rss::Channel::Image.description(im))
+        Array.push(out, "#{i}</image>")
+      end
+      Array.each(Rss::Channel.items(ch)) { |it| item(out, i, it) }
+      text(out, i, "generator", Rss::Channel.generator(ch))
+      int(out, i, "ttl", Rss::Channel.ttl(ch))
+      Array.each(Rss::Channel.categories(ch)) { |c| category(out, i, c) }
+      dd = Rss::Channel.dc_date(ch)
+      text(out, i, "dc:date", w3cdtf(dd)) if dd
+      Array.push(out, "  </channel>")
+    end
+
+    def category(out, i, c)
+      tag(out, i, "category", Array[["domain", Rss::Channel::Item::Category.domain(c)]], Rss::Channel::Item::Category.content(c))
+    end
+
+    def item(out, indent, it)
+      i = indent + "  "
+      Array.push(out, "#{indent}<item>")
+      text(out, i, "title", Rss::Channel::Item.title(it))
+      text(out, i, "link", Rss::Channel::Item.link(it))
+      text(out, i, "description", Rss::Channel::Item.description(it))
+      Array.each(Rss::Channel::Item.categories(it)) { |c| category(out, i, c) }
+      src = Rss::Channel::Item.source(it)
+      tag(out, i, "source", Array[["url", Rss::Channel::Item::Source.url(src)]], Rss::Channel::Item::Source.content(src)) if src
+      enc = Rss::Channel::Item.enclosure(it)
+      if enc
+        len = Rss::Channel::Item::Enclosure.length(enc)
+        tag(out, i, "enclosure", Array[["url", Rss::Channel::Item::Enclosure.url(enc)],
+                                       ["length", len ? Integer.to_s(len) : nil],
+                                       ["type", Rss::Channel::Item::Enclosure.type(enc)]], nil)
+      end
+      text(out, i, "comments", Rss::Channel::Item.comments(it))
+      text(out, i, "author", Rss::Channel::Item.author(it))
+      pd = Rss::Channel::Item.pubDate(it)
+      text(out, i, "pubDate", rfc822(pd)) if pd
+      g = Rss::Channel::Item.guid(it)
+      if g
+        pl = Rss::Channel::Item::Guid.isPermaLink(g)
+        tag(out, i, "guid", Array[["isPermaLink", pl == nil ? nil : Kernel.to_s(pl)]], Rss::Channel::Item::Guid.content(g))
+      end
+      dd = Rss::Channel::Item.dc_date(it)
+      text(out, i, "dc:date", w3cdtf(dd)) if dd
+      Array.push(out, "#{indent}</item>")
+    end
+
+    def atom(f)
+      out = String[]
+      Array.push(out, xml_decl(Atom::Feed.version(f), Atom::Feed.encoding(f)))
+      Array.push(out, "<feed xmlns=\"#{Atom.uri}\"")
+      Array.push(out, "  xmlns:dc=\"http://purl.org/dc/elements/1.1/\">")
+      i = "  "
+      Array.each(Atom::Feed.authors(f)) { |a| person(out, i, "author", a) }
+      Array.each(Atom::Feed.categories(f)) { |c| atom_category(out, i, c) }
+      Array.each(Atom::Feed.contributors(f)) { |a| person(out, i, "contributor", a) }
+      g = Atom::Feed.generator(f)
+      tag(out, i, "generator", Array[["uri", Atom::Generator.uri(g)], ["version", Atom::Generator.version(g)]], Atom::Generator.content(g)) if g
+      value(out, i, "icon", Atom::Feed.icon(f))
+      value(out, i, "id", Atom::Feed.id(f))
+      Array.each(Atom::Feed.links(f)) { |l| atom_link(out, i, l) }
+      value(out, i, "logo", Atom::Feed.logo(f))
+      text_construct(out, i, "rights", Atom::Feed.rights(f))
+      text_construct(out, i, "subtitle", Atom::Feed.subtitle(f))
+      text_construct(out, i, "title", Atom::Feed.title(f))
+      date_construct(out, i, "updated", Atom::Feed.updated(f))
+      Array.each(Atom::Feed.entries(f)) { |e| entry(out, i, e) }
+      dd = Atom::Feed.dc_date(f)
+      text(out, i, "dc:date", w3cdtf(dd)) if dd
+      Array.push(out, "</feed>")
+      Array.join(out, "\n")
+    end
+
+    def value(out, i, name, v)
+      text(out, i, name, Atom::Value.content(v)) if v
+    end
+
+    def text_construct(out, i, name, t)
+      tag(out, i, name, Array[["type", Atom::TextConstruct.type(t)]], Atom::TextConstruct.content(t) || "") if t
+    end
+
+    def date_construct(out, i, name, d)
+      return unless d
+      t = Atom::DateConstruct.content(d)
+      text(out, i, name, w3cdtf(t)) if t
+    end
+
+    def person(out, indent, name, pc)
+      i = indent + "  "
+      Array.push(out, "#{indent}<#{name}>")
+      value(out, i, "name", Atom::PersonConstruct.name(pc))
+      value(out, i, "uri", Atom::PersonConstruct.uri(pc))
+      value(out, i, "email", Atom::PersonConstruct.email(pc))
+      Array.push(out, "#{indent}</#{name}>")
+    end
+
+    def atom_category(out, i, c)
+      tag(out, i, "category", Array[["term", Atom::Category.term(c)], ["scheme", Atom::Category.scheme(c)], ["label", Atom::Category.label(c)]], nil)
+    end
+
+    def atom_link(out, i, l)
+      tag(out, i, "link", Array[["href", Atom::Link.href(l)], ["rel", Atom::Link.rel(l)], ["type", Atom::Link.type(l)],
+                                ["hreflang", Atom::Link.hreflang(l)], ["title", Atom::Link.title(l)], ["length", Atom::Link.length(l)]], nil)
+    end
+
+    def entry(out, indent, e)
+      i = indent + "  "
+      Array.push(out, "#{indent}<entry>")
+      Array.each(Atom::Feed::Entry.authors(e)) { |a| person(out, i, "author", a) }
+      Array.each(Atom::Feed::Entry.categories(e)) { |c| atom_category(out, i, c) }
+      c = Atom::Feed::Entry.content(e)
+      tag(out, i, "content", Array[["type", Atom::Content.type(c)], ["src", Atom::Content.src(c)]], Atom::Content.content(c)) if c
+      Array.each(Atom::Feed::Entry.contributors(e)) { |a| person(out, i, "contributor", a) }
+      value(out, i, "id", Atom::Feed::Entry.id(e))
+      Array.each(Atom::Feed::Entry.links(e)) { |l| atom_link(out, i, l) }
+      date_construct(out, i, "published", Atom::Feed::Entry.published(e))
+      text_construct(out, i, "rights", Atom::Feed::Entry.rights(e))
+      text_construct(out, i, "summary", Atom::Feed::Entry.summary(e))
+      text_construct(out, i, "title", Atom::Feed::Entry.title(e))
+      date_construct(out, i, "updated", Atom::Feed::Entry.updated(e))
+      dd = Atom::Feed::Entry.dc_date(e)
+      text(out, i, "dc:date", w3cdtf(dd)) if dd
+      Array.push(out, "#{indent}</entry>")
+    end
+  end
+
+  # Ruby's RSS::Maker: RSS::Maker.make("2.0" | "atom") { |maker| ... } returns the feed (RSS::Rss or
+  # RSS::Atom::Feed). The gem's maker classes per version (RSS20::Channel, Atom::Feed::Items::Item,
+  # ...) are one set here, named after the gem's base classes.
+  module Maker
+    class GuidBase
+      attr_accessor content, isPermaLink
+
+      def initialize(x)
+      end
+    end
+
+    class CategoryBase
+      attr_accessor domain, content, term, scheme, label
+
+      def initialize(x)
+      end
+    end
+
+    class CategoriesBase
+      attr_reader categories
+
+      def new_category(cs)
+        c = CategoryBase.new
+        Array.push(@categories, c)
+        yield(c) if block_given?
+        c
+      end
+    end
+
+    class LinkBase
+      attr_accessor href, rel, type, hreflang, title, length
+
+      def initialize(x)
+      end
+    end
+
+    class LinksBase
+      attr_reader links
+
+      def new_link(ls)
+        l = LinkBase.new
+        Array.push(@links, l)
+        yield(l) if block_given?
+        l
+      end
+    end
+
+    class EnclosureBase
+      attr_accessor url, length, type
+
+      def initialize(x)
+      end
+    end
+
+    class ItemBase
+      attr_accessor title, link, description, author, comments, updated, summary, id
+      attr_reader guid, categories, enclosure
+
+      def initialize(i)
+        @guid = GuidBase.new
+        @categories = CategoriesBase.new(CategoryBase[])
+        @enclosure = EnclosureBase.new
+      end
+
+      def pubDate(i) = @updated
+      def set_pubDate(i, t) = @updated = t
+      def date(i) = @updated
+      def set_date(i, t) = @updated = t
+    end
+
+    class ItemsBase
+      attr_reader items
+
+      def new_item(is)
+        item = ItemBase.new
+        Array.push(@items, item)
+        yield(item) if block_given?
+        item
+      end
+    end
+
+    class ChannelBase
+      attr_accessor title, link, description, language, copyright, managingEditor, webMaster
+      attr_accessor updated, lastBuildDate, docs, generator, ttl, about, author, subtitle, rights
+      attr_accessor icon, logo
+      attr_reader links, categories
+
+      def initialize(c)
+        @links = LinksBase.new(LinkBase[])
+        @categories = CategoriesBase.new(CategoryBase[])
+      end
+
+      def pubDate(c) = @updated
+      def set_pubDate(c, t) = @updated = t
+      def date(c) = @updated
+      def set_date(c, t) = @updated = t
+      def id(c) = @about
+      def set_id(c, v) = @about = v
+    end
+
+    class RSSBase
+      attr_reader version, channel, items, encoding
+
+      def initialize(m)
+        @channel = ChannelBase.new
+        @items = ItemsBase.new(ItemBase[])
+        @encoding = "UTF-8"
+      end
+    end
+
+    module_function
+
+    def versions = String["2.0", "atom"]
+
+    def make(version)
+      unless Array.include?(versions, version)
+        raise UnsupportedMakerVersionError.new("Maker doesn't support version: #{version}", version)
+      end
+      maker = RSSBase.new(version)
+      yield(maker)
+      version == "atom" ? make_atom(maker) : make_rss(maker)
+    end
+
+    def not_set(name, missing)
+      raise NotSetError.new("required variables of #{name} are not set: #{Array.join(missing, ", ")}", name, missing)
+    end
+
+    def make_rss(maker)
+      ch = RSSBase.channel(maker)
+      missing = String[]
+      Array.push(missing, "title") if ChannelBase.title(ch) == nil
+      Array.push(missing, "link") if ChannelBase.link(ch) == nil
+      Array.push(missing, "description") if ChannelBase.description(ch) == nil
+      not_set("maker.channel", missing) unless Array.empty?(missing)
+      c = Rss::Channel.new(ChannelBase.title(ch), ChannelBase.link(ch), ChannelBase.description(ch))
+      c.Rss::Channel.language = ChannelBase.language(ch)
+      c.Rss::Channel.copyright = ChannelBase.copyright(ch)
+      c.Rss::Channel.managingEditor = ChannelBase.managingEditor(ch)
+      c.Rss::Channel.webMaster = ChannelBase.webMaster(ch)
+      c.Rss::Channel.pubDate = ChannelBase.updated(ch)
+      c.Rss::Channel.dc_date = ChannelBase.updated(ch)
+      c.Rss::Channel.lastBuildDate = ChannelBase.lastBuildDate(ch)
+      c.Rss::Channel.docs = ChannelBase.docs(ch)
+      c.Rss::Channel.generator = ChannelBase.generator(ch)
+      c.Rss::Channel.ttl = ChannelBase.ttl(ch)
+      Array.each(CategoriesBase.categories(ChannelBase.categories(ch))) do |cb|
+        Array.push(Rss::Channel.categories(c), Rss::Channel::Item::Category.new(CategoryBase.domain(cb), CategoryBase.content(cb)))
+      end
+      Array.each(ItemsBase.items(RSSBase.items(maker))) do |ib|
+        # the gem leaves out an item with neither a title nor a description
+        next if ItemBase.title(ib) == nil && ItemBase.description(ib) == nil
+        it = Rss::Channel::Item.new(ItemBase.title(ib), ItemBase.link(ib), ItemBase.description(ib))
+        Array.each(CategoriesBase.categories(ItemBase.categories(ib))) do |cb|
+          content = CategoryBase.content(cb)
+          next unless content
+          Array.push(Rss::Channel::Item.categories(it), Rss::Channel::Item::Category.new(CategoryBase.domain(cb), content))
+        end
+        eb = ItemBase.enclosure(ib)
+        if EnclosureBase.url(eb)
+          it.Rss::Channel::Item.enclosure = Rss::Channel::Item::Enclosure.new(EnclosureBase.url(eb), EnclosureBase.length(eb), EnclosureBase.type(eb))
+        end
+        it.Rss::Channel::Item.comments = ItemBase.comments(ib)
+        it.Rss::Channel::Item.author = ItemBase.author(ib)
+        it.Rss::Channel::Item.pubDate = ItemBase.updated(ib)
+        it.Rss::Channel::Item.dc_date = ItemBase.updated(ib)
+        gb = ItemBase.guid(ib)
+        if GuidBase.content(gb)
+          it.Rss::Channel::Item.guid = Rss::Channel::Item::Guid.new(GuidBase.isPermaLink(gb), GuidBase.content(gb))
+        end
+        Array.push(Rss::Channel.items(c), it)
+      end
+      Rss.new("2.0", c, "1.0", RSSBase.encoding(maker))
+    end
+
+    def text_c(s) = s ? Atom::TextConstruct.new(nil, s) : nil
+    def value_c(s) = s ? Atom::Value.new(s) : nil
+    def date_c(t) = t ? Atom::DateConstruct.new(t) : nil
+
+    def link_c(lb)
+      Atom::Link.new(LinkBase.href(lb), LinkBase.rel(lb), LinkBase.type(lb), LinkBase.hreflang(lb), LinkBase.title(lb), LinkBase.length(lb))
+    end
+
+    def make_atom(maker)
+      ch = RSSBase.channel(maker)
+      missing = String[]
+      Array.push(missing, "id") if ChannelBase.about(ch) == nil
+      Array.push(missing, "title") if ChannelBase.title(ch) == nil
+      Array.push(missing, "updated") if ChannelBase.updated(ch) == nil
+      Array.push(missing, "author") if ChannelBase.author(ch) == nil
+      not_set("maker.channel", missing) unless Array.empty?(missing)
+      f = Atom::Feed.new
+      f.Atom::Feed.version = "1.0"
+      f.Atom::Feed.encoding = RSSBase.encoding(maker)
+      Array.push(Atom::Feed.authors(f), Atom::PersonConstruct.new(value_c(ChannelBase.author(ch)), nil, nil))
+      Array.each(CategoriesBase.categories(ChannelBase.categories(ch))) do |cb|
+        Array.push(Atom::Feed.categories(f), Atom::Category.new(CategoryBase.term(cb) || CategoryBase.content(cb), CategoryBase.scheme(cb), CategoryBase.label(cb)))
+      end
+      gen = ChannelBase.generator(ch)
+      f.Atom::Feed.generator = Atom::Generator.new(gen, nil, nil) if gen
+      f.Atom::Feed.icon = value_c(ChannelBase.icon(ch))
+      f.Atom::Feed.id = value_c(ChannelBase.about(ch))
+      Array.each(LinksBase.links(ChannelBase.links(ch))) { |lb| Array.push(Atom::Feed.links(f), link_c(lb)) }
+      f.Atom::Feed.logo = value_c(ChannelBase.logo(ch))
+      f.Atom::Feed.rights = text_c(ChannelBase.rights(ch))
+      f.Atom::Feed.subtitle = text_c(ChannelBase.subtitle(ch))
+      f.Atom::Feed.title = text_c(ChannelBase.title(ch))
+      f.Atom::Feed.updated = date_c(ChannelBase.updated(ch))
+      Array.each(ItemsBase.items(RSSBase.items(maker))) do |ib|
+        id = ItemBase.id(ib) || ItemBase.link(ib)
+        # the gem leaves out an entry without an id (or link) or a title
+        next if id == nil || ItemBase.title(ib) == nil
+        e = Atom::Feed::Entry.new
+        author = ItemBase.author(ib)
+        Array.push(Atom::Feed::Entry.authors(e), Atom::PersonConstruct.new(value_c(author), nil, nil)) if author
+        e.Atom::Feed::Entry.id = value_c(id)
+        link = ItemBase.link(ib)
+        Array.push(Atom::Feed::Entry.links(e), Atom::Link.new(link, nil, nil, nil, nil, nil)) if link
+        e.Atom::Feed::Entry.summary = text_c(ItemBase.summary(ib) || ItemBase.description(ib))
+        e.Atom::Feed::Entry.title = text_c(ItemBase.title(ib))
+        updated = ItemBase.updated(ib) || ChannelBase.updated(ch)
+        e.Atom::Feed::Entry.updated = date_c(updated)
+        e.Atom::Feed::Entry.dc_date = updated
+        Array.push(Atom::Feed.entries(f), e)
+      end
+      f.Atom::Feed.dc_date = ChannelBase.updated(ch)
+      f
+    end
+  end
+end

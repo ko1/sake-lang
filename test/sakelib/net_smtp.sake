@@ -1,0 +1,218 @@
+require "net_smtp"
+require "digest"
+
+# --- a tiny SMTP server: one connection per call, in a thread; the thread's value is what it heard ---
+def reply(c, text) = Socket.write(c, text + "\r\n")
+
+def auth_reply(c, ok) = reply(c, ok ? "235 2.7.0 Authentication successful" : "535 5.7.8 Authentication credentials invalid")
+
+def b64(s) = String.unpack1(s, "m") || ""
+
+def handle(c, mode, log)
+  reply(c, "220 test.example ESMTP ready")
+  while (line = Socket.gets(c))
+    line = String.chomp(line)
+    Array.push(log, line)
+    if String.start_with?(line, "EHLO ")
+      if mode == "helo_only"
+        reply(c, "502 5.5.2 EHLO not supported")
+      else
+        reply(c, "250-test.example greets #{String.[](line, 5..)}\r\n250-SIZE 1000000\r\n250-8BITMIME\r\n250-AUTH PLAIN LOGIN CRAM-MD5 XOAUTH2\r\n250 SMTPUTF8")
+      end
+    elsif String.start_with?(line, "HELO ")
+      reply(c, "250 test.example")
+    elsif String.start_with?(line, "MAIL FROM:")
+      reply(c, String.include?(line, "blocked") ? "553 5.7.1 Sender address rejected" : "250 2.1.0 Ok")
+    elsif String.start_with?(line, "RCPT TO:")
+      if String.include?(line, "nobody@")
+        reply(c, "550 5.1.1 No such user")
+      elsif String.include?(line, "busy@")
+        reply(c, "450 4.2.1 Mailbox busy, try later")
+      else
+        reply(c, "250 2.1.5 Ok")
+      end
+    elsif line == "DATA"
+      reply(c, "354 End data with <CR><LF>.<CR><LF>")
+      body = ""
+      while (l = Socket.gets(c)) && l != ".\r\n"
+        body += l
+      end
+      Array.push(log, "message: #{Kernel.inspect(String.force_encoding(body, "UTF-8"))}")
+      reply(c, "250 2.0.0 Ok: queued as 42")
+    elsif String.start_with?(line, "AUTH PLAIN ")
+      auth_reply(c, b64(String.[](line, 11..) || "") == "\0alice\0s3cret")
+    elsif line == "AUTH LOGIN"
+      reply(c, "334 VXNlcm5hbWU6")
+      user = b64(String.chomp(Socket.gets(c) || ""))
+      reply(c, "334 UGFzc3dvcmQ6")
+      pass = b64(String.chomp(Socket.gets(c) || ""))
+      Array.push(log, "login: #{user} #{pass}")
+      auth_reply(c, user == "alice" && pass == "s3cret")
+    elsif line == "AUTH CRAM-MD5"
+      reply(c, "334 " + Array.pack(Array["<1896.697170952@test.example>"], "m0"))
+      Array.push(log, "cram: #{b64(String.chomp(Socket.gets(c) || ""))}")
+      auth_reply(c, true)
+    elsif String.start_with?(line, "AUTH XOAUTH2 ")
+      Array.push(log, "xoauth2: #{Kernel.inspect(b64(String.[](line, 13..) || ""))}")
+      auth_reply(c, true)
+    elsif line == "RSET" || line == "NOOP"
+      reply(c, "250 2.0.0 Ok")
+    elsif line == "QUIT"
+      reply(c, "221 2.0.0 Bye")
+      break
+    else
+      reply(c, "502 5.5.2 Error: command not recognized")
+    end
+  end
+  Array.push(log, "(closed)")
+  Socket.close(c)
+  log
+end
+
+def serve(server, mode)
+  Thread.new do
+    c = TCPServer.accept(server)
+    handle(c, mode, String[])
+  end
+end
+
+def show(log) = Array.each(log) { |l| puts("  S| #{l}") }
+
+server = TCPServer.new("127.0.0.1", 0)
+port = TCPServer.port(server)
+
+msg = "Subject: hello\nFrom: alice@example.com\n\nHi Bob,\n.a line that starts with a dot\r\nbye"
+
+# a session with a block: EHLO capabilities, one message to two recipients
+th = serve(server, "normal")
+result = Net::SMTP.start("127.0.0.1", port, "client.example") do |smtp|
+  p([Net::SMTP.started?(smtp), Net::SMTP.esmtp?(smtp), Net::SMTP.capabilities(smtp)])
+  p([Net::SMTP.capable_auth_types(smtp), Net::SMTP.capable_plain_auth?(smtp), Net::SMTP.capable_cram_md5_auth?(smtp), Net::SMTP.capable_starttls?(smtp), Net::SMTP.capable?(smtp, "SIZE")])
+  res = Net::SMTP.send_message(smtp, msg, "alice@example.com", "bob@example.com", "carol@example.com")
+  p([Net::SMTP::Response.status(res), Net::SMTP::Response.string(res), Net::SMTP::Response.success?(res), Net::SMTP::Response.message(res)])
+  Net::SMTP.rset(smtp).Net::SMTP::Response.status
+end
+p(result)
+show(Thread.value(th))
+
+# EHLO refused: the client falls back to HELO
+th = serve(server, "helo_only")
+Net::SMTP.start("127.0.0.1", port, "old.example") do |smtp|
+  p([Net::SMTP.esmtp?(smtp), Net::SMTP.capabilities(smtp), Net::SMTP.capable?(smtp, "SIZE"), Net::SMTP.capable_auth_types(smtp)])
+  Net::SMTP.send_message(smtp, "", "a@example.com", "b@example.com")
+end
+show(Thread.value(th))
+
+# authentication: PLAIN, LOGIN, CRAM-MD5, XOAUTH2
+Array.each(Array[:plain, :login, :cram_md5, :xoauth2]) do |authtype|
+  th = serve(server, "normal")
+  Net::SMTP.start("127.0.0.1", port, "client.example", "alice", "s3cret", authtype) do |smtp|
+    p([authtype, Net::SMTP.started?(smtp)])
+  end
+  show(Thread.value(th))
+end
+
+# bad credentials: SMTPAuthenticationError, and the connection is closed without QUIT
+th = serve(server, "normal")
+begin
+  Net::SMTP.start("127.0.0.1", port, "client.example", "alice", "wrong", :plain) { |smtp| p(smtp) }
+rescue Net::SMTPAuthenticationError => e
+  p([Exception.message(e), Net::SMTPAuthenticationError.response(e).Net::SMTP::Response.status])
+end
+show(Thread.value(th))
+
+# server errors in a session: 5xx, 4xx; after an error QUIT is not sent
+th = serve(server, "normal")
+begin
+  Net::SMTP.start("127.0.0.1", port) do |smtp|
+    Net::SMTP.send_message(smtp, msg, "alice@example.com", "nobody@example.com")
+  end
+rescue Net::SMTPFatalError => e
+  p([Exception.message(e), Net::SMTPFatalError.response(e).Net::SMTP::Response.status, Net::SMTPFatalError.response(e).Net::SMTP::Response.string])
+end
+show(Thread.value(th))
+th = serve(server, "normal")
+begin
+  Net::SMTP.start("127.0.0.1", port) do |smtp|
+    Net::SMTP.send_message(smtp, msg, "alice@example.com", "busy@example.com")
+  end
+rescue Net::SMTPServerBusy => e
+  p([Exception.message(e), Net::SMTPServerBusy.response(e).Net::SMTP::Response.status])
+end
+show(Thread.value(th))
+th = serve(server, "normal")
+begin
+  Net::SMTP.start("127.0.0.1", port) do |smtp|
+    Net::SMTP.send_message(smtp, msg, "blocked@example.com", "bob@example.com")
+  end
+rescue Net::SMTPFatalError => e
+  p([Exception.message(e), Net::SMTPFatalError.response(e).Net::SMTP::Response.status])
+end
+show(Thread.value(th))
+
+# without a block: new, start, the commands one by one, a message stream, finish
+th = serve(server, "normal")
+smtp = Net::SMTP.new("127.0.0.1", port)
+p([Net::SMTP.address(smtp), Net::SMTP.port(smtp) == port, Net::SMTP.started?(smtp), Net::SMTP.tls?(smtp), Net::SMTP.starttls?(smtp), Net::SMTP.esmtp?(smtp), Net::SMTP.capabilities(smtp)])
+Net::SMTP.start_session(smtp, "streams.example")
+p(Net::SMTP.started?(smtp))
+p(Net::SMTP.mailfrom(smtp, "alice@example.com").Net::SMTP::Response.string)
+p(Net::SMTP.rcptto(smtp, "bob@example.com").Net::SMTP::Response.string)
+begin
+  Net::SMTP.mailfrom(smtp, "evil@example.com\r\nRCPT TO:<x@example.com>")
+rescue ArgumentError => e
+  p(Exception.message(e))
+end
+p(Net::SMTP.rset(smtp).Net::SMTP::Response.status)
+res = Net::SMTP.open_message_stream(smtp, "alice@example.com", "bob@example.com") do |f|
+  Net::SMTP::MessageStream.puts(f, "Subject: stream")
+  Net::SMTP::MessageStream.puts(f)
+  Net::SMTP::MessageStream.print(f, "line 1\nline 2\n")
+  f << ".hidden\n"
+  Net::SMTP::MessageStream.printf(f, "%d items\n", 3)
+end
+p(Net::SMTP::Response.status(res))
+p(Net::SMTP.send_message(smtp, "Subject: ünïcode\n\nhi", "alice@example.com", "bøb@example.com").Net::SMTP::Response.status)
+Net::SMTP.finish(smtp)
+p(Net::SMTP.started?(smtp))
+show(Thread.value(th))
+begin
+  Net::SMTP.finish(smtp)
+rescue IOError => e
+  p(Exception.message(e))
+end
+begin
+  Net::SMTP.send_message(smtp, msg, "a@example.com", "b@example.com")
+rescue IOError => e
+  p(Exception.message(e))
+end
+
+# argument errors before connecting
+begin
+  Net::SMTP.start("127.0.0.1", port, "client.example", "alice", nil, :plain) { |smtp| p(smtp) }
+rescue ArgumentError => e
+  p(Exception.message(e))
+end
+begin
+  Net::SMTP.start("127.0.0.1", port, "client.example", "alice", "s3cret", :foo) { |smtp| p(smtp) }
+rescue ArgumentError => e
+  p(Exception.message(e))
+end
+
+# a connection refused: the port is closed now
+TCPServer.close(server)
+begin
+  Net::SMTP.start("127.0.0.1", port) { |smtp| p(smtp) }
+rescue IOError => e
+  puts("connection failed")
+end
+
+# replies and addresses on their own
+res = Net::SMTP::Response.parse("250-mail.example\n250-AUTH LOGIN PLAIN\n250 8BITMIME\n")
+p([Net::SMTP::Response.status(res), Net::SMTP::Response.success?(res), Net::SMTP::Response.continue?(res), Net::SMTP::Response.status_type_char(res), Net::SMTP::Response.message(res), Net::SMTP::Response.capabilities(res)])
+res = Net::SMTP::Response.parse("334 PDE4OTYuNjk3MTcwOTUyQHBvc3RvZmZpY2UucmVzdG9uLm1jaS5uZXQ+\n")
+p([Net::SMTP::Response.continue?(res), Net::SMTP::Response.cram_md5_challenge(res), Net::SMTP::Response.capabilities(res)])
+addr = Net::SMTP::Address.new("ü@example.com", String["SMTPUTF8", "SMTPUTF8"])
+p([Net::SMTP::Address.address(addr), Net::SMTP::Address.parameters(addr), Net::SMTP::Address.to_s(addr)])
+p([Net::SMTP.default_port, Net::SMTP.default_submission_port, Net::SMTP.default_tls_port, Net::SMTP.default_ssl_port])
+p(Net::SMTP.new("mail.example.com").Net::SMTP.inspect)

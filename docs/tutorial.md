@@ -1507,7 +1507,7 @@ eval("1 + 1")
 
 ```
 $ sake forbidden.sake
-forbidden.sake:2:1: error: Sake has no value constants; only a class made with Struct.new can be assigned to a constant
+forbidden.sake:2:1: error: Sake has no value constants; a constant names a class (`Point = Struct.new(:x, :y)`, `Err = Exception.new(:msg)`), and a value goes in a function
   hint: define a function instead: `def pi = 3.14159`
 forbidden.sake:4:16: error: Sake has no `self`
 forbidden.sake:6:1: error: `eval` is not allowed in Sake (it defeats static analysis)

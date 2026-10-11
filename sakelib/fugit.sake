@@ -1,0 +1,1056 @@
+# fugit: cron and duration parsing after the fugit gem (1.12.2).
+#
+#   c = Fugit::Cron.parse("*/15 9-17 * * mon-fri")       # Ruby: Fugit::Cron.parse(s) / Fugit.parse_cron(s)
+#   Fugit::Cron.next_time(c, t)                          # Ruby: c.next_time(t)
+#   Fugit::Cron.previous_time(c, t) / match?(c, t)
+#   d = Fugit::Duration.parse("1h30m")                   # Ruby: Fugit::Duration.parse(s)
+#   Fugit::Duration.to_plain_s(d)                        # Ruby: d.to_plain_s
+#
+# Times are Sake's Time (Ruby's gem returns EtOrbi::EoTime). Zones are UTC and fixed offsets only:
+# a cron's timezone may be an offset ("+09:00") or "UTC"/"GMT"/"Etc/UTC"; other names (tzinfo) make
+# the cron invalid (nil). The raabro grammar is rewritten as anchored regexps (atomic groups keep
+# the PEG's no-backtracking), one field after another.
+
+module Fugit
+  module_function
+
+  def day_s = 24 * 3600
+  def year_s = 365 * day_s
+
+  # A Time seen in a zone: nil keeps it, "UTC" (and friends) gives UTC, an offset gives that offset.
+  def translate(t, zone)
+    return t if zone == nil
+    return Time.getutc(t) if zone == "UTC"
+    Time.getlocal(t, zone)
+  end
+
+  # The zone of a Time, in translate's terms.
+  def zone_of(t) = Time.utc?(t) ? "UTC" : Time.utc_offset(t)
+
+  # Time.new(y, m, d) in t's zone, days past the month's end rolled over (Time.new(2024, 2, 31, .., "UTC")
+  # keeps Feb 31 in its fields, in Ruby too).
+  def make(t, y, m, d = 1, hh = 0, mm = 0, ss = 0)
+    z = zone_of(t)
+    base = Time.new(y, m, 1, hh, mm, ss, z == "UTC" ? "UTC" : z)
+    base + (d - 1) * day_s
+  end
+
+  # Days in month m of year y.
+  def month_days(y, m)
+    return 29 if m == 2 && (y % 4 == 0 && y % 100 != 0 || y % 400 == 0)
+    Array[0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m] || 0
+  end
+
+  class Cron
+    attr_reader original, zone
+    attr_reader seconds, minutes, hours, monthdays, months, timezone
+    private attr_reader wdays, day_and, cron_s
+
+    # One weekday of the cron: `wday`, plus a hash (1#2: second Monday) or a modulo (tue%2+1).
+    class Weekday
+      attr_reader wday, hsh, mod
+    end
+
+    # Ruby's Fugit::Cron::TimeCursor: a Time moved by the next_time / previous_time loops.
+    class TimeCursor
+      attr_reader cron, t
+
+      def time(tc) = @t
+      def to_i(tc) = Time.to_i(@t)
+
+      def inc(tc, i)
+        @t = @t + i
+        tc
+      end
+
+      def dec(tc, i) = inc(tc, -i)
+
+      def inc_month(tc)
+        y = Time.year(@t)
+        m = Time.month(@t) + 1
+        if m == 13
+          m = 1
+          y += 1
+        end
+        @t = Fugit.make(@t, y, m)
+        tc
+      end
+
+      # Fixed offsets have no DST, so Ruby's PeriodNotFound branch is not needed.
+      def inc_day(tc) = inc(tc, (24 - Time.hour(@t)) * 3600 - Time.min(@t) * 60 - Time.sec(@t))
+      def inc_hour(tc) = inc(tc, (60 - Time.min(@t)) * 60 - Time.sec(@t))
+      def inc_min(tc) = inc(tc, 60 - Time.sec(@t))
+
+      def inc_sec(tc)
+        now = Time.sec(@t)
+        secs = Cron.seconds(@cron) || Integer[]
+        sec = Array.find(secs) { |s| s > now }
+        if sec
+          inc(tc, sec - now)
+        else
+          inc(tc, 60 - now + (Array.first(secs) || 0))
+        end
+      end
+
+      def dec_month(tc)
+        dec(tc, (Time.day(@t) - 1) * Fugit.day_s + Time.hour(@t) * 3600 + Time.min(@t) * 60 + Time.sec(@t) + 1)
+      end
+
+      def dec_day(tc) = dec(tc, Time.hour(@t) * 3600 + Time.min(@t) * 60 + Time.sec(@t) + 1)
+      def dec_hour(tc) = dec(tc, Time.min(@t) * 60 + Time.sec(@t) + 1)
+      def dec_min(tc) = dec(tc, Time.sec(@t) + 1)
+
+      def dec_sec(tc)
+        now = Time.sec(@t)
+        secs = Cron.seconds(@cron) || Integer[]
+        target = Array.find(Array.reverse(secs)) { |s| s < now } || Array.last(secs) || 0
+        inc(tc, target - now - (now > target ? 0 : 60))
+      end
+    end
+
+    # Ruby's Fugit::Cron::CronIterator (Fugit::Cron.next / prev): an endless Enum of times.
+    class CronIterator
+      attr_reader cron, start, current, direction
+      include Enum
+
+      def each(ci)
+        loop do
+          @current = @direction == :next_time ? Cron.next_time(@cron, @current) : Cron.previous_time(@cron, @current)
+          yield(@current)
+        end
+      end
+    end
+
+    def specials = once {
+      Hash["@yearly" => "0 0 1 1 *", "@annually" => "0 0 1 1 *", "@monthly" => "0 0 1 * *",
+           "@weekly" => "0 0 * * 0", "@daily" => "0 0 * * *", "@midnight" => "0 0 * * *",
+           "@noon" => "0 12 * * *", "@hourly" => "0 * * * *"]
+    }
+
+    def maxdays = once { Array[0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] }
+    def weekds = once { String["sun", "mon", "tue", "wed", "thu", "fri", "sat"] }
+    def month_names = once { String["-", "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"] }
+    def max_iteration_count = 2048
+
+    # --- parsing ---
+
+    # Ruby's Fugit::Cron.parse; nil when s is not a cron string.
+    def parse(s)
+      s0 = s
+      s = String.strip(s)
+      if String.[](s, 0, 1) == "@"
+        ss = String.split(s, /\s+/, 2)
+        head = specials[Array.fetch(ss, 0)] || Array.fetch(ss, 0)
+        s = Array.join(Array[head] + Array.drop(ss, 1), " ")
+      end
+      h = parse_tree(s)
+      return nil unless h
+      init(s0, h)
+    end
+
+    def do_parse(s) = parse(s) || raise(ArgumentError, "invalid cron string #{trunc(s)}")
+
+    def trunc(s)
+      r = String.length(s) > 28 ? "#{String.[](s, 0, 28)}... len #{String.length(s)}" : s
+      Kernel.inspect(r)
+    end
+
+    # The atom of each field kind: Ruby's mos / hou / dom / mon / dow rexes, made atomic.
+    def atom(k)
+      case k
+      in :sec | :min then "(?>[0-5]?\\d)"
+      in :hou then "(?>2[0-4]|[01]?[0-9])"
+      in :dom then "(?>-?(?:3[01]|[12][0-9]|0?[1-9])|last|l)"
+      in :mon then "(?>1[0-2]|0?[1-9]|#{Array.join(Array.drop(month_names, 1), "|")})"
+      in :dow then "(?>[0-7]|#{Array.join(weekds, "|")})"
+      end
+    end
+
+    # One list element: Ruby's *_elt (slash | (star | a[-z]) slash?), and for dow also a#h and a%m+p.
+    def elt_regexp(k) = once_regexps[k] ||= Regexp.new(elt_source(k), "i")
+    def once_regexps = once { Hash[] }
+
+    def elt_source(k)
+      a = atom(k)
+      base = "(\\/\\d\\d?)|(?:(\\*)|(#{a})(?:-(#{a}))?)(\\/\\d\\d?)?"
+      return "\\A(?:(#{a})#(-?[1-5]|last|l)|(#{a})(%\\d+(?:\\+\\d+)?)|#{base})\\z" if k == :dow
+      "\\A(?:()()()()#{base})\\z"
+    end
+
+    # Ruby's rewrite_bound: month and day names to numbers, L (last) to -1.
+    def rewrite_bound(k, s)
+      s = String.downcase(s)
+      return Array.index(month_names, s) || 0 if k == :mon && Array.include?(month_names, s)
+      return Array.index(weekds, s) || 0 if k == :dow && Array.include?(weekds, s)
+      return -1 if k == :dom && String.[](s, 0, 1) == "l"
+      String.to_i(s)
+    end
+
+    # Ruby's rewrite_elt: [a, z, slash, hash, mod], nil when the element does not parse.
+    def parse_elt(k, s)
+      m = Regexp.match(elt_regexp(k), s)
+      return nil unless m
+      a = nil
+      z = nil
+      sl = nil
+      ha = nil
+      mo = nil
+      if (hs = m[2])
+        a = rewrite_bound(k, m[1] || "")
+        ha = String.start_with?(String.upcase(hs), "L") ? -1 : String.to_i(hs)
+      elsif (ms = m[4])
+        a = rewrite_bound(k, m[3] || "")
+        nums = Array.map(Array.reject(String.split(ms, /[%+]/)) { String.empty?(it) }) { String.to_i(it) }
+        mo = [Array.fetch(nums, 0), Array.fetch(nums, 1, 0)]
+      else
+        slash = m[5] || m[9]
+        sl = String.to_i(String.[](slash, 1..) || "") if slash
+        av = m[7]
+        zv = m[8]
+        a = rewrite_bound(k, av) if av
+        z = rewrite_bound(k, zv) if zv
+      end
+      [a, z, sl, ha, mo]
+    end
+
+    # A field: a comma list (leading, trailing and doubled commas allowed), with `&` after dom / dow.
+    def parse_field(k, s)
+      s = String.delete_suffix(s, "&") if k == :dom || k == :dow
+      return nil unless String.match?(s, /\A[^,]|\A,+[^,]/)
+      out = Array[]
+      Array.each(String.split(s, /,+/)) do |part|
+        next if String.empty?(part)
+        e = parse_elt(k, part)
+        return nil unless e
+        Array.push(out, e)
+      end
+      return nil if Array.empty?(out)
+      out
+    end
+
+    def tz_name?(s) = String.match?(s, /\A[A-Z][a-zA-Z0-9+\-]+(\/[A-Z][a-zA-Z0-9+\-_]+){0,2}\z/)
+    def tz_delta?(s) = String.match?(s, /\A[-+]([01][0-9]|2[0-4]):?(00|15|30|45)\z/)
+
+    # Ruby's EtOrbi.get_tzone, for what Sake's Time can show: UTC and fixed offsets.
+    def get_tzone(s)
+      return "UTC" if Array.include?(String["UTC", "GMT", "Etc/UTC", "Etc/GMT"], s)
+      return nil unless tz_delta?(s)
+      digits = String.delete(s, ":")
+      "#{String.[](digits, 0, 3)}:#{String.[](digits, 3, 2)}"
+    end
+
+    # Ruby's Parser.parse + rewrite_cron: second_cron (6 fields) is tried before classic_cron (5),
+    # each with an optional zone after them. Returns a Hash of field => elements and the zone.
+    def parse_tree(s)
+      tokens = String.split(s, /[ \t]+/)
+      tokens = Array.drop(tokens, 1) if Array.first(tokens) == ""
+      Array.each(Array[6, 5]) do |n|
+        size = Array.size(tokens)
+        next unless size == n || size == n + 1
+        keys = n == 6 ? Array[:sec, :min, :hou, :dom, :mon, :dow] : Array[:min, :hou, :dom, :mon, :dow]
+        fields = Hash[]
+        ok = true
+        Array.each_with_index(keys) do |k, i|
+          f = parse_field(k, Array.fetch(tokens, i))
+          if f
+            fields[k] = f
+          else
+            ok = false
+          end
+        end
+        next unless ok
+        tz = nil
+        if size == n + 1
+          z = Array.fetch(tokens, n)
+          next unless tz_name?(z) || tz_delta?(z)
+          tz = z
+        end
+        return nil if tz && get_tzone(tz) == nil
+        return {fields:, tz:, day_and: String.include?(s, "&")}
+      end
+      nil
+    end
+
+    # --- determining the field values (Ruby's init / determine_*) ---
+
+    def init(original, h)
+      h => {fields:, tz:, day_and:}
+      no_sec = Array[[0, nil, nil, nil, nil]]
+      ok, secs = do_determine(:seconds, fields[:sec] || no_sec, 0, 59)
+      return nil unless ok
+      ok, mins = do_determine(:minutes, fields[:min] || no_sec, 0, 59)
+      return nil unless ok
+      ok, hous = do_determine(:hours, fields[:hou] || no_sec, 0, 23)
+      return nil unless ok
+      ok, doms = do_determine(:monthdays, fields[:dom] || no_sec, 1, 31)
+      return nil unless ok
+      ok, mons = do_determine(:months, fields[:mon] || no_sec, 1, 12)
+      return nil unless ok
+      wds = determine_weekdays(fields[:dow] || Array[])
+      c = Cron.new(original, tz, secs, mins, hous, doms, mons, tz ? get_tzone(tz) : nil, wds, day_and, nil)
+      return nil unless compact_month_days(c)
+      c
+    end
+
+    # Ruby's expand: the values of one element, Array[nil] for "any", nil when invalid (Ruby's false).
+    def expand(min, max, e)
+      sta, edn, sla, _, _ = e
+      return nil if sla && sla < 1
+      edn = max if sla && edn == nil
+      return Array[nil] if sta == nil && edn == nil && sla == nil
+      return Array[sta] if sta && edn == nil
+      sla ||= 1
+      sta ||= min
+      edn = max if edn == nil || edn < 0 && sta > 0
+      range(min, max, sta, edn, sla)
+    end
+
+    def range(min, max, sta, edn, sla)
+      return Array[nil] if sta == min && edn == max && sla == 1
+      if (sta < 0 && edn > 0) || (edn < 0 && sta > 0)
+        raise ArgumentError, "both start and end must be negative in {min: #{min}, max: #{max}, sta: #{sta}, edn: #{edn}, sla: #{sla}}"
+      end
+      a = Array[]
+      omax = max
+      if sta < 0
+        min = -max
+        max = -1
+      end
+      cur = sta
+      loop do
+        Array.push(a, cur)
+        break if cur == edn
+        cur += 1
+        if cur > max
+          cur = min
+          edn = edn - max - 1 if edn > max
+        end
+        raise "too many loops for #range, breaking" if Array.size(a) > 2 * omax
+      end
+      out = Array[]
+      Array.each_with_index(a) { |v, i| Array.push(out, v) if i % sla == 0 }
+      Array.uniq(out)
+    end
+
+    # [valid, values]: values nil means "any" (Ruby: nil), valid false means the cron is invalid.
+    def do_determine(key, elts, min, max)
+      r = Integer[]
+      null = false
+      Array.each(elts) do |e|
+        vs = expand(min, max, e)
+        return [false, nil] unless vs
+        Array.each(vs) do |v|
+          if v == nil
+            null = true
+          else
+            Array.push(r, key == :hours && v == 24 ? 0 : v)
+          end
+        end
+      end
+      return [true, nil] if null
+      [true, Array.sort(Array.uniq(r))]
+    end
+
+    def determine_weekdays(elts)
+      wds = Array[]
+      Array.each(elts) do |e|
+        a, z, sl, ha, mo = e
+        if ha || mo
+          Array.push(wds, Weekday.new(a || 0, ha, mo))
+        elsif sl
+          Range.step((a || 0)..(z || a || 6), sl < 1 ? 1 : sl) { |i| Array.push(wds, Weekday.new(i, nil, nil)) }
+        elsif z
+          a ||= 0
+          z += 7 if a > z
+          Range.each(a..z) { |i| Array.push(wds, Weekday.new(i > 6 ? i - 7 : i, nil, nil)) }
+        elsif a
+          Array.push(wds, Weekday.new(a, nil, nil))
+        end
+      end
+      wds = Array.map(wds) { |w| Weekday.wday(w) == 7 ? Weekday.new(0, Weekday.hsh(w), Weekday.mod(w)) : w }
+      seen = Set[]
+      wds = Array.select(wds) { |w| Set.add?(seen, weekday_key(w)) != nil }
+      wds = Array.sort_by(wds) { |w| weekday_key(w) }
+      Array.empty?(wds) ? nil : wds
+    end
+
+    # Ruby sorts [wd], [wd, h] and [wd, [m, p]] as Arrays; this key orders them the same way.
+    def weekday_key(w)
+      mo = Weekday.mod(w)
+      h = Weekday.hsh(w)
+      return [Weekday.wday(w), 0, 0, 0] if h == nil && mo == nil
+      return [Weekday.wday(w), 1, h, 0] if h
+      m, plus = mo || [0, 0]
+      [Weekday.wday(w), 2, m, plus]
+    end
+
+    def compact_month_days(c)
+      mons = @months
+      doms = @monthdays
+      return true if mons == nil || doms == nil
+      ms = Integer[]
+      ds = Integer[]
+      Array.each(mons) do |m|
+        Array.each(doms) do |d|
+          next if d > maxdays[m]
+          Array.push(ms, m)
+          Array.push(ds, d)
+        end
+      end
+      @months = Array.uniq(ms)
+      @monthdays = Array.uniq(ds)
+      !Array.empty?(ms) && !Array.empty?(ds)
+    end
+
+    # --- reading ---
+
+    # Ruby's c.weekdays: [[1], [5]], [[1, 2]] (hash), [[2, [2, 1]]] (modulo).
+    def weekdays(c)
+      wds = @wdays
+      return nil unless wds
+      Array.map(wds) do |w|
+        a = Array[]
+        Array.push(a, Weekday.wday(w))
+        h = Weekday.hsh(w)
+        mo = Weekday.mod(w)
+        Array.push(a, h) if h
+        if mo
+          m, plus = mo
+          Array.push(a, Array[m, plus])
+        end
+        a
+      end
+    end
+
+    def to_a(c) = [@seconds, @minutes, @hours, @monthdays, @months, weekdays(c)]
+
+    def to_h(c)
+      Hash[seconds: @seconds, minutes: @minutes, hours: @hours, monthdays: @monthdays, months: @months,
+           weekdays: weekdays(c)]
+    end
+
+    def ==(a, b)
+      return false unless b in Cron
+      Cron.to_a(a) == Cron.to_a(b)
+    end
+
+    def list_s(xs) = xs ? Array.join(Array.map(xs) { Integer.to_s(it) }, ",") : "*"
+
+    def weekdays_to_cron_s(c)
+      wds = @wdays
+      return "*" unless wds
+      s = Array.join(Array.map(wds) do |w|
+        h = Weekday.hsh(w)
+        mo = Weekday.mod(w)
+        if h
+          "#{Weekday.wday(w)}##{h}"
+        elsif mo
+          m, plus = mo
+          off = plus < 0 ? Integer.to_s(plus) : plus > 0 ? "+#{plus}" : ""
+          "#{Weekday.wday(w)}%#{m}#{off}"
+        else
+          Integer.to_s(Weekday.wday(w))
+        end
+      end, ",")
+      s + (@day_and ? "&" : "")
+    end
+
+    def to_cron_s(c)
+      cached = @cron_s
+      return cached if cached
+      secs = @seconds
+      parts = String[]
+      Array.push(parts, list_s(secs)) unless secs == Array[0]
+      Array.push(parts, list_s(@minutes), list_s(@hours), list_s(@monthdays), list_s(@months), weekdays_to_cron_s(c))
+      z = @zone
+      Array.push(parts, z) if z
+      s = Array.join(parts, " ")
+      @cron_s = s
+      s
+    end
+
+    def to_s(c) = to_cron_s(c)
+
+    # --- matching ---
+
+    def month_match?(c, t)
+      ms = @months
+      ms == nil || Array.include?(ms, Time.month(t))
+    end
+
+    def hour_match?(c, t)
+      hs = @hours
+      hs == nil || Array.include?(hs, Time.hour(t))
+    end
+
+    def min_match?(c, t)
+      ms = @minutes
+      ms == nil || Array.include?(ms, Time.min(t))
+    end
+
+    def sec_match?(c, t)
+      ss = @seconds
+      ss == nil || Array.include?(ss, Time.sec(t))
+    end
+
+    # EtOrbi's wday_in_month: [n, -m]: the n-th such weekday of the month, the m-th from its end.
+    def wday_in_month(t)
+      d = Time.day(t)
+      last = Fugit.month_days(Time.year(t), Time.month(t))
+      [(d - 1) / 7 + 1, -((last - d) / 7 + 1)]
+    end
+
+    # EtOrbi's rweek: weeks since Monday 2018-12-31 (the default rweek_ref), at noon of t's day.
+    def rweek(t)
+      noon = Fugit.make(t, Time.year(t), Time.month(t), Time.day(t), 12)
+      ref = Fugit.make(t, 2018, 12, 31, 12)
+      Float.floor(Float.to_f(noon - ref) / Fugit.day_s) / 7
+    end
+
+    def weekday_match?(c, t)
+      wds = @wdays
+      return true if wds == nil
+      Array.any?(wds) do |w|
+        next false unless Time.wday(t) == Weekday.wday(w)
+        h = Weekday.hsh(w)
+        mo = Weekday.mod(w)
+        if h
+          ph, nh = wday_in_month(t)
+          h == ph || h == nh
+        elsif mo
+          m, plus = mo
+          rweek(t) % m == plus % m
+        else
+          true
+        end
+      end
+    end
+
+    def monthday_match?(c, t)
+      ds = @monthdays
+      return true if ds == nil
+      last = Fugit.month_days(Time.year(t), Time.month(t)) + 1
+      Array.include?(Array.map(ds) { |d| d < 1 ? last + d : d }, Time.day(t))
+    end
+
+    def day_match?(c, t)
+      if @wdays && @monthdays
+        return weekday_match?(c, t) && monthday_match?(c, t) if @day_and
+        return weekday_match?(c, t) || monthday_match?(c, t)
+      end
+      weekday_match?(c, t) && monthday_match?(c, t)
+    end
+
+    def match?(c, t)
+      t = Fugit.translate(t, @timezone)
+      month_match?(c, t) && day_match?(c, t) && hour_match?(c, t) && min_match?(c, t) && sec_match?(c, t)
+    end
+
+    # --- next / previous ---
+
+    def next_time(c, from = Time.now)
+      ifrom = Time.to_i(from)
+      tc = TimeCursor.new(c, Time.floor(Fugit.translate(from, @timezone)))
+      i = 0
+      loop do
+        i += 1
+        if i > max_iteration_count
+          raise "too many loops for #{Kernel.inspect(@original)} #next_time, breaking, cron expression most likely invalid (Feb 30th like?), please fill an issue at https://git.io/fjJC9"
+        end
+        t = TimeCursor.time(tc)
+        if ifrom == Time.to_i(t)
+          TimeCursor.inc(tc, 1)
+          next
+        end
+        unless month_match?(c, t)
+          TimeCursor.inc_month(tc)
+          next
+        end
+        unless day_match?(c, t)
+          TimeCursor.inc_day(tc)
+          next
+        end
+        unless hour_match?(c, t)
+          TimeCursor.inc_hour(tc)
+          next
+        end
+        unless min_match?(c, t)
+          TimeCursor.inc_min(tc)
+          next
+        end
+        unless sec_match?(c, t)
+          TimeCursor.inc_sec(tc)
+          next
+        end
+        break
+      end
+      Fugit.translate(TimeCursor.time(tc), Fugit.zone_of(from))
+    end
+
+    def previous_time(c, from = Time.now)
+      tc = TimeCursor.new(c, Time.floor(Fugit.translate(from - 1, @timezone)))
+      i = 0
+      loop do
+        i += 1
+        if i > max_iteration_count
+          raise "too many loops for #{Kernel.inspect(@original)} #previous_time, breaking, cron expression most likely invalid (Feb 30th like?), please fill an issue at https://git.io/fjJCQ"
+        end
+        t = TimeCursor.time(tc)
+        unless month_match?(c, t)
+          TimeCursor.dec_month(tc)
+          next
+        end
+        unless day_match?(c, t)
+          TimeCursor.dec_day(tc)
+          next
+        end
+        unless hour_match?(c, t)
+          TimeCursor.dec_hour(tc)
+          next
+        end
+        unless min_match?(c, t)
+          TimeCursor.dec_min(tc)
+          next
+        end
+        unless sec_match?(c, t)
+          TimeCursor.dec_sec(tc)
+          next
+        end
+        break
+      end
+      Fugit.translate(TimeCursor.time(tc), Fugit.zone_of(from))
+    end
+
+    def next(c, from = Time.now) = CronIterator.new(c, from, from, :next_time)
+    def prev(c, from = Time.now) = CronIterator.new(c, from, from, :previous_time)
+
+    # Ruby's within(t0, t1) (or within(t0..t1)): the times after t0 and before t1. A Range of
+    # Times cannot be made in Sake, so the two-argument form only.
+    def within(c, sta, ned)
+      out = Array[]
+      t = sta
+      loop do
+        t = next_time(c, t)
+        break unless t < ned
+        Array.push(out, t)
+      end
+      out
+    end
+
+    def slots = Array[[:seconds, 1, 60], [:minutes, 60, 60], [:hours, 3600, 24], [:days, Fugit.day_s, 365]]
+
+    def rough_days(c)
+      wds = @wdays
+      doms = @monthdays
+      return nil if wds == nil && doms == nil
+      months = @months || Range.to_a(1..12)
+      md = Integer[]
+      Array.each(months) do |m|
+        Array.each(doms || Integer[]) do |d|
+          d = 31 + d if d < 0
+          Array.push(md, (m - 1) * 30 + d)
+        end
+      end
+      wd = Integer[]
+      Array.each(wds || Array[]) do |w|
+        h = Weekday.hsh(w)
+        d = Weekday.wday(w)
+        if h
+          Array.push(wd, d + (h - 1) * 7)
+        else
+          Range.each(0..3) { |ww| Array.push(wd, d + ww * 7) }
+        end
+      end
+      Array.each(months) { |m| Array.each(wd) { |d| Array.push(md, (m - 1) * 30 + d) } }
+      Array.sort(md)
+    end
+
+    # Ruby's rough_frequency: the smallest gap between occurrences, in seconds (roughly).
+    def rough_frequency(c)
+      lists = Array[@seconds, @minutes, @hours, rough_days(c)]
+      sl = Array.zip(slots, lists)
+      Array.each(sl) do |(slot, a)|
+        _, v0, _ = slot
+        next if a == Array[0]
+        break if a != nil
+        return v0
+      end
+      Array.each(sl) do |(slot, a)|
+        _, v0, v1 = slot
+        next unless a && Array.size(a) > 1
+        all = a + Array[(Array.first(a) || 0) + v1]
+        deltas = Array.select(Array.map(Array.each_cons(all, 2)) { |(x, y)| y - x }) { it > 0 }
+        return (Array.min(deltas) || 0) * v0
+      end
+      Array.each(Array.reverse(sl)) do |(slot, a)|
+        _, v0, v1 = slot
+        return v0 * v1 if a && Array.size(a) == 1
+      end
+      1
+    end
+  end
+
+  class Duration
+    attr_reader original, h, options
+    include Arithmetic
+
+    # Ruby's KEYS: [key, plain, rufus, iso, seconds, inflatable, long name].
+    def keys = Array[[:yea, "Y", "y", "Y", year_s, false, "year"],
+                [:mon, "M", "M", "M", 30 * day_s, false, "month"],
+                [:wee, "W", "w", "W", 7 * day_s, true, "week"],
+                [:day, "D", "d", "D", day_s, true, "day"],
+                [:hou, "h", "h", "H", 3600, true, "hour"],
+                [:min, "m", "m", "M", 60, true, "minute"],
+                [:sec, "s", "s", "S", 1, true, "second"]]
+    def key_list = once { Array[:yea, :mon, :wee, :day, :hou, :min, :sec] }
+    def day_s = Fugit.day_s
+    def year_s = Fugit.year_s
+    def second_round = 9
+
+    def key_seconds(k)
+      case k
+      in :yea then year_s
+      in :mon then 30 * day_s
+      in :wee then 7 * day_s
+      in :day then day_s
+      in :hou then 3600
+      in :min then 60
+      else 1
+      end
+    end
+
+    def inflatable?(k) = k != :yea && k != :mon
+
+    def make(original, options, h)
+      unless Hash.fetch(options, :literal, false)
+        h = Hash.reject(h) { |_, v| v == 0 }
+        h[:sec] = 0 if Hash.empty?(h)
+      end
+      Duration.new(original, h, options)
+    end
+
+    # --- parsing (Ruby's Parser and IsoParser) ---
+
+    def num = "(?:\\d+\\.\\d*|(?:\\d*\\.)?\\d+)"
+
+    # Ruby's elt: alt(yea, mon, wee, day, hou, min, sec, sek), tried in order at position i.
+    def elt_regexps = once {
+      n = num
+      Array[[:yea, Regexp.new("\\G#{n} *y(?:ears?)?", "i")],
+            [:mon, Regexp.new("\\G#{n} *(?:M|months?)")],
+            [:wee, Regexp.new("\\G#{n} *w(?:eeks?)?", "i")],
+            [:day, Regexp.new("\\G#{n} *d(?:ays?)?", "i")],
+            [:hou, Regexp.new("\\G#{n} *h(?:ours?)?", "i")],
+            [:min, Regexp.new("\\G#{n} *m(?:in(?:ute)?s?)?")],
+            [:sec, Regexp.new("\\G#{n} *s(?:ec(?:ond)?)?s?", "i")],
+            [:sec, Regexp.new("\\G(?:\\d+\\.\\d*|\\.\\d+|\\d+)$")]]
+    }
+
+    def number_of(s) = String.include?(s, ".") ? String.to_f(s) : String.to_i(s)
+
+    # Ruby's dur: jseq(sdur, sep) where sdur is sign? elt+; the whole String must be consumed.
+    def plain_parse(s)
+      h = Hash[]
+      i = 0
+      n = String.length(s)
+      first = true
+      loop do
+        start = i
+        unless first
+          sm = Regexp.match(/\G(?:[ \t,]+|and)*/i, s, i)
+          i = MatchData.end(sm, 0) if sm
+        end
+        sign = 1
+        if (gm = Regexp.match(/\G[-+]?/, s, i))
+          sign = -1 if gm[0] == "-"
+          i = MatchData.end(gm, 0)
+        end
+        part = Hash[]
+        loop do
+          found = Array.find(elt_regexps) { |(_, re)| Regexp.match?(re, s, i) }
+          break unless found
+          k, re = found
+          m = Regexp.match(re, s, i)
+          break unless m
+          part[k] = (part[k] || 0) + number_of(m[0] || "")
+          i = MatchData.end(m, 0)
+        end
+        if Hash.empty?(part)
+          i = start
+          break
+        end
+        Hash.each(part) { |k, v| h[k] = (h[k] || 0) + sign * v }
+        first = false
+        break if i >= n
+      end
+      return nil if i < n                    # jseq takes zero elements: "" parses to {}
+      h
+    end
+
+    # Ruby's IsoParser: P date? (T time)?, the whole String.
+    def iso_parse(s)
+      m = Regexp.match(/\AP((?:-?\d+[YMWD])*)(?:T((?:-?(?:\d*\.)?\d+[HMS])+))?\z/, s)
+      return nil unless m
+      h = Hash[]
+      date = m[1] || ""
+      dm = Regexp.match(/\A(-?\d+Y)?(-?\d+M)?(-?\d+W)?(-?\d+D)?\z/, date)
+      return nil unless dm
+      time = m[2] || ""
+      tm = Regexp.match(/\A(-?\d+H)?(-?\d+M)?(-?(?:\d*\.)?\d+S)?\z/, time)
+      return nil unless tm
+      Array.each_with_index(Array[:yea, :mon, :wee, :day]) { |k, i| (v = dm[i + 1]) && h[k] = (h[k] || 0) + number_of(v) }
+      Array.each_with_index(Array[:hou, :min, :sec]) { |k, i| (v = tm[i + 1]) && h[k] = (h[k] || 0) + number_of(v) }
+      h
+    end
+
+    # Ruby's Fugit::Duration.parse(s, opts): s is a String, a number (seconds), or a Duration.
+    # opts: Hash[iso: true] (ISO 8601 only), Hash[plain: true], Hash[stricter: true].
+    def parse(s, opts = Hash[])
+      case s
+      in Duration then return s
+      in Integer | Float then str = "#{s}s"
+      in String then str = s
+      end
+      original = s
+      str = String.strip(str)
+      iso_s = Hash.fetch(opts, :stricter, false) ? str : String.upcase(str)
+      h = if Hash.fetch(opts, :iso, false)
+            iso_parse(iso_s)
+          elsif Hash.fetch(opts, :plain, false)
+            plain_parse(str)
+          else
+            plain_parse(str) || iso_parse(iso_s)
+          end
+      return nil unless h
+      make(Kernel.to_s(original), opts, h)
+    end
+
+    def do_parse(s, opts = Hash[]) = parse(s, opts) || raise(ArgumentError, "not a duration #{Kernel.inspect(s)}")
+
+    # --- printing ---
+
+    def fmt_num(v) = Kernel.to_s(v)
+
+    def to_s_with(d, col)
+      out = ""
+      sign = "+"
+      Array.each(keys) do |row|
+        k = row[0]
+        v = @h[k]
+        next unless v
+        sign1 = v < 0 ? "-" : "+"
+        out += sign1 if sign1 != sign
+        out += fmt_num(Arithmetic.abs(v)) + (col == 1 ? row[1] : row[2])
+        sign = sign1
+      end
+      out
+    end
+
+    # Ruby's d.to_plain_s / Fugit::Duration.to_plain_s(o) (the latter parses and deflates first).
+    def to_plain_s(d)
+      d = deflate(do_parse(d)) unless d in Duration
+      to_s_with(d, 1)
+    end
+
+    def to_rufus_s(d) = to_s_with(d, 2)
+
+    def to_iso_s(d)
+      d = deflate(do_parse(d)) unless d in Duration
+      t = false
+      out = "P"
+      Array.each_with_index(keys) do |row, i|
+        k = row[0]
+        v = @h[k]
+        next unless v
+        if i > 3 && t == false
+          t = true
+          out += "T"
+        end
+        out += fmt_num(v) + row[3]
+      end
+      out
+    end
+
+    # Ruby's to_long_s(oxford: false): "1 hour, and 30 minutes".
+    def to_long_s(d, opts = Hash[])
+      d = deflate(do_parse(d)) unless d in Duration
+      ox = Hash.fetch(opts, :oxford, true)
+      adn = ox == false ? " and " : ", and "
+      a = Hash.to_a(@h)
+      out = ""
+      while (kv = Array.shift(a))
+        k, v = kv
+        row = Array.find(keys) { it[0] == k }
+        next unless row
+        out += Integer.to_s(Arithmetic.to_i(v))
+        out += " " + row[6]
+        out += "s" if v > 1
+        out += Array.size(a) == 1 ? adn : ", " if Array.size(a) > 0
+      end
+      out
+    end
+
+    def to_h(d) = @h
+
+    def to_rufus_h(d)
+      out = Hash[]
+      Array.each(keys) do |row|
+        v = @h[row[0]]
+        out[String.to_sym(row[2])] = v if v
+      end
+      out
+    end
+
+    def to_sec(d)
+      s = 0
+      Array.each(key_list) do |k|
+        v = @h[k]
+        s += v * key_seconds(k) if v
+      end
+      s
+    end
+
+    def inflate(d)
+      params = Hash[:sec => 0]
+      Hash.each(@h) do |k, v|
+        if inflatable?(k)
+          params[:sec] = (params[:sec] || 0) + v * key_seconds(k)
+        else
+          params[k] = v
+        end
+      end
+      make(@original, Hash[], params)
+    end
+
+    # Ruby's deflate(month: true / 30 / "30d", year: ...): Hash[month: true] etc.
+    def deflate(d, opts = Hash[])
+      id = inflate(d)
+      h = Hash.dup(Duration.h(id))
+      s = Hash.delete(h, :sec) || 0
+      ks = Array.map(Array[:wee, :day, :hou, :min]) { [it, key_seconds(it)] }
+      mon = opts[:month]
+      yea = opts[:year]
+      Array.unshift(ks, [:mon, deflate_unit(mon, 30)]) if mon
+      Array.unshift(ks, [:yea, deflate_unit(yea, 365)]) if yea
+      Array.each(ks) do |(k, vs)|
+        next if s < vs
+        h[k] = (h[k] || 0) + Arithmetic.to_i(s) / vs
+        s = s % vs
+      end
+      h[:sec] = (s in Float) ? Float.round(s, second_round) : s
+      make(@original, Hash[], h)
+    end
+
+    def deflate_unit(v, days)
+      case v
+      in true then days * day_s
+      in Integer then v * day_s
+      in String then to_sec(do_parse(v))
+      else days * day_s
+      end
+    end
+
+    def opposite(d)
+      make(nil, Hash[], Hash.transform_values(@h) { -it })
+    end
+
+    def -@(d) = opposite(d)
+
+    def add_numeric(d, n)
+      h = Hash.dup(@h)
+      h[:sec] = (h[:sec] || 0) + Arithmetic.to_i(n)
+      make(nil, Hash[], h)
+    end
+
+    def add_duration(d, o)
+      h = Hash.dup(@h)
+      Hash.each(Duration.h(o)) { |k, v| h[k] = (h[k] || 0) + v }
+      make(nil, Hash[], h)
+    end
+
+    def add_to_time(d, t)
+      Array.each(key_list) do |k|
+        v = @h[k]
+        t = t + v * key_seconds(k) if v && inflatable?(k)
+      end
+      Array.each(Array[:yea, :mon]) do |k|
+        v = @h[k]
+        next unless v
+        y = Time.year(t)
+        mo = Time.month(t)
+        if k == :yea
+          y += Arithmetic.to_i(v)
+        else
+          mo += Arithmetic.to_i(v)
+        end
+        if mo > 12
+          y += mo / 12
+          mo = mo % 12
+        elsif mo < 1
+          y -= (-mo) / 12 + 1
+          mo = (11 + mo) % 12 + 1
+        end
+        t = Fugit.make(t, y, mo, Time.day(t), Time.hour(t), Time.min(t), Time.sec(t))
+      end
+      t
+    end
+
+    # Ruby's d + x / d.add(x): x is a number (seconds), a Duration or a duration String. Ruby's
+    # d + time is add_to_time(d, t): one operation returns one type.
+    def add(d, a)
+      case a
+      in Integer | Float then add_numeric(d, a)
+      in Duration then add_duration(d, a)
+      in String then add_duration(d, do_parse(a))
+      end
+    end
+
+    def subtract(d, a)
+      case a
+      in Integer | Float then add_numeric(d, -a)
+      in Duration then add_duration(d, opposite(a))
+      in String then add_duration(d, opposite(do_parse(a)))
+      end
+    end
+
+    def subtract_from_time(d, t) = add_to_time(opposite(d), t)
+
+    def +(a, b) = add(a, b)
+    def -(a, b) = subtract(a, b)
+
+    def ==(a, b)
+      return false unless b in Duration
+      Duration.h(a) == Duration.h(b)
+    end
+
+    def next_time(d, from = Time.now) = add_to_time(d, from)
+
+    def drop_seconds(d)
+      h = Hash.dup(@h)
+      Hash.delete(h, :sec)
+      h[:min] = 0 if Hash.empty?(h)
+      make(nil, Hash[:literal => true], h)
+    end
+
+    def to_s(d) = to_plain_s(d)
+  end
+
+  def parse_cron(s) = Cron.parse(s)
+  def parse_duration(s) = Duration.parse(s)
+  def parse_in(s) = Duration.parse(s)
+  def do_parse_cron(s) = Cron.do_parse(s)
+  def do_parse_duration(s) = Duration.do_parse(s)
+  def do_parse_in(s) = Duration.do_parse(s)
+
+  # Ruby's Fugit.parse(s): a Cron, else a Duration, else nil (no natural-language or `at` forms).
+  def parse(s)
+    c = Cron.parse(s)
+    return c if c
+    Duration.parse(s)
+  end
+
+  def do_parse(s) = parse(s) || raise(ArgumentError, "found no time information in #{Kernel.inspect(s)}")
+
+  def time_to_plain_s(t, z = true) = Time.strftime(t, "%Y-%m-%d %H:%M:%S") + (z && Time.utc?(t) ? " Z" : "")
+  def time_to_zone_s(t) = Time.strftime(t, "%Y-%m-%d %H:%M:%S %Z %z")
+end

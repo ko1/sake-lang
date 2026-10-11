@@ -4,7 +4,7 @@
 installed here, so `test/sakelib/ref/httparty.rb` is a plain-Ruby reference (Net::HTTP) of the same API, and
 `test/sakelib/httparty.rb` requires it; both sides serve the test API with WEBrick (Ruby: a servlet; Sake: the
 `webrick.sake` port). `HTTParty::Response` and `HTTParty::RedirectionTooDeep` are nested in the module, as the gem's (since 2026-10-10; they
-were `HTTPartyResponse` / `HTTPartyRedirectionTooDeep`); the class-level DSL (`include HTTParty; base_uri ...`) → a `HTTPartyClient` value.
+were `HTTPartyResponse` / `HTTPartyRedirectionTooDeep`); the class-level DSL (`include HTTParty; base_uri ...`) → a `HTTParty::Client` value (`HTTPartyClient` until 2026-10-11).
 
 ## API
 
@@ -20,10 +20,10 @@ were `HTTPartyResponse` / `HTTPartyRedirectionTooDeep`); the class-level DSL (`i
 | `success?`, `ok?`, `redirection?`, `client_error?`, `server_error?`, `not_found?`, `unauthorized?`, `forbidden?`, `bad_request?`, `nil?` | same names | same (`nil?` is the gem's: no body) |
 | `content_type`, `content_length`, `headers["name"]` / `response.header(name)` | `content_type(r)`, `content_length(r)`, `header(r, name)` | same |
 | `to_s` (the body), `inspect` | same | same shape (`inspect` without the object address) |
-| `class API; include HTTParty; base_uri "..."; headers "X" => "y"; default_params k: v; basic_auth u, p; format :json; end` then `API.get("/path")` | `api = HTTPartyClient.new(base, Hash["X" => "y"], Hash["k" => "v"])`, `HTTPartyClient.get(api, "/path", query:, headers:)`, `post(... body:)`, … | differs: the class macros become fields of a value (see below); `format` is not needed (the content type decides); `debug_output`, `logger`, `pem`, `ssl_*`, `digest_auth`, `cookies`, `maintain_method_across_redirects`, `parser`, `connection_adapter` missing |
+| `class API; include HTTParty; base_uri "..."; headers "X" => "y"; default_params k: v; basic_auth u, p; format :json; end` then `API.get("/path")` | `api = HTTParty::Client.new(base, Hash["X" => "y"], Hash["k" => "v"])`, `HTTParty::Client.get(api, "/path", query:, headers:)`, `post(... body:)`, … | differs: the class macros become fields of a value (see below); `format` is not needed (the content type decides); `debug_output`, `logger`, `pem`, `ssl_*`, `digest_auth`, `cookies`, `maintain_method_across_redirects`, `parser`, `connection_adapter` missing |
 | `HTTParty.get(url) { \|chunk\| }` (streaming), `stream_body`, `multipart` bodies, `HTTParty::Parser` subclasses, `HTTParty::Error` classes, `response.request` | — | missing |
 
-~35 operations ported (HTTParty 10, HTTParty::Response 19, HTTPartyClient 8).
+~35 operations ported (HTTParty 10, HTTParty::Response 19, HTTParty::Client 8).
 
 ## できたこと / できなかったこと
 

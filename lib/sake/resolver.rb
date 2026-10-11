@@ -254,7 +254,10 @@ module Sake
 
     # The namespace a constant names, seen from inside `ns`: as Ruby's lexical lookup, `B` written in
     # `module A` is A::B when that exists, else B. The full name is kept for the lowering (patterns, raise).
-    def resolve_const(n, ns) = @const_names[n] = resolve_name(const_text(n), ns)
+    # `::Name` names the top level, so it skips the enclosing namespaces.
+    def resolve_const(n, ns) = @const_names[n] = (top_level_const?(n) ? const_text(n) : resolve_name(const_text(n), ns))
+
+    def top_level_const?(n) = n.slice.lstrip.start_with?("::")
 
     def resolve_name(text, ns)
       parts = ns ? ns.split("::") : []
@@ -285,7 +288,7 @@ module Sake
       unless struct_new?(v) || exception
         fn = node.name.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
         @value_constants[node.name] = fn
-        return error(node, "Sake has no value constants; only a class made with Struct.new can be assigned to a constant",
+        return error(node, "Sake has no value constants; a constant names a class (`Point = Struct.new(:x, :y)`, `Err = Exception.new(:msg)`), and a value goes in a function",
                      ["define a function instead: `def #{fn} = #{first_line(v.slice)}`"])
       end
       return error(v.block, "#{v.receiver.name}.new with a block is not supported; define functions in `class #{node.name}`") if v.block
@@ -1037,6 +1040,10 @@ module Sake
         return check_union_call(node, types, args, blk, ctx)
       end
       if (step = chain_step(node))
+        # `x&.T.f` would read as `x.T.f` without the nil test, so the safe navigation is refused.
+        if node.safe_navigation? || chain_safe_navigation?(node)
+          return error(node, "`&.` is not supported: test the value first (`if x`, `x != nil`), then write `x.T.f`")
+        end
         # `x.T.f(args)` is `T.f(x, args)`.
         subject, tname = step
         tname = resolve_name(tname, lexical(ctx))
@@ -1378,6 +1385,13 @@ module Sake
     end
 
     def chain_subject(node) = chain_step(node)&.first
+
+    # Whether the type step of `x.T.f` was written `x&.T`.
+    def chain_safe_navigation?(node)
+      r = node.receiver
+      r = r.parent while r.is_a?(Prism::ConstantPathNode)
+      r.is_a?(Prism::CallNode) && r.safe_navigation?
+    end
 
     # argc: the number of arguments when node's own count is not it (a chain adds its subject).
     # A private field's reader and writer are for the functions of its class (on any of its values).

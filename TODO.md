@@ -107,3 +107,12 @@
 - 生成器が自前の型推論を持っている。typer が式ごとの型を保持するようにして、それを使う。
 - Integer は 64 ビット（溢れたらエラー）。多倍長への昇格を入れるか、言語の意味論を 64 ビットにするかは未決。
 - 命名: Sake → Rust の変換器の名前（錆＋酒）。
+
+## 2026-10-11 の移植（18 gem）で見つかったもの（experiments/2026-10-11-libraries3）
+
+- 仕様変更を 2 つ入れた（ko1 の判断待ち）: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。`Array.flatten` が Tuple も展開する。
+- `initialize` から呼んだ補助関数が設定したフィールドを、検査器が「nil かもしれない」と見る（3 体が報告）。
+- フィールド（`attr_reader leftovers`）が mixin の同名の関数を隠しても何も言われない。`def port` が `attr_reader port` を置き換えるのも黙って通る。
+- 型エラーの報告位置がライブラリ内部の行になり、呼び出し側は「reached by the call at line N」だけ。大きな合併型でメッセージが切れる。
+- `String.getbyte` の nil がレベル 2 で毎回 `|| 0` を要求する。`String.unpack1` の結果に型が付かない（`v => Integer` が要る）。
+- 要望の多い組み込み: 例外の階層（4 体）、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。

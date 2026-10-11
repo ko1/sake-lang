@@ -1,0 +1,120 @@
+require "pstore"
+
+Dir.mktmpdir do |dir|
+  path = File.join(dir, "data.pstore")
+  store = PStore.new(path)
+  p(PStore.path(store) == path)
+  p(File.exist?(path))
+
+  # a read-only transaction on a missing file sees an empty table and creates nothing
+  p(PStore.transaction(store, true) { |s| PStore.keys(s) })
+  p(File.exist?(path))
+
+  # write, then read back in a new transaction; the block's value is the transaction's value
+  r = PStore.transaction(store) do |s|
+    s["name"] = "sake"
+    s["list"] = Array[1, 2.5, nil, true]
+    s["hash"] = Hash["a" => Hash["b" => Array[1]]]
+    s[42] = "int key"
+    :done
+  end
+  p(r)
+  p(File.exist?(path))
+  PStore.transaction(store, true) do |s|
+    p(PStore.keys(s))
+    p(s["name"])
+    p(s["list"])
+    p(s["hash"])
+    p(s[42])
+    p(s["missing"])
+    p(PStore.fetch(s, "name"))
+    p(PStore.fetch(s, "missing", "default"))
+    p(PStore.key?(s, "name"))
+    p(PStore.root?(s, "nope"))
+    p(Array.size(PStore.roots(s)))
+  end
+
+  # another PStore on the same file sees the data
+  other = PStore.new(path)
+  p(PStore.transaction(other, true) { |s| s["list"] })
+
+  # changes, delete
+  PStore.transaction(store) do |s|
+    list = s["list"]
+    list => Array
+    s["list"] = list + Array["more"]
+    p(PStore.delete(s, "hash"))
+    p(PStore.delete(s, "hash"))
+  end
+  p(PStore.transaction(store, true) { |s| [PStore.keys(s), s["list"]] })
+
+  # abort throws away the changes; commit ends the block early but keeps them
+  PStore.transaction(store) do |s|
+    s["name"] = "changed"
+    PStore.abort(s)
+    s["never"] = 1
+  end
+  p(PStore.transaction(store, true) { |s| [s["name"], PStore.key?(s, "never")] })
+  PStore.transaction(store) do |s|
+    s["name"] = "committed"
+    PStore.commit(s)
+    s["never"] = 1
+  end
+  p(PStore.transaction(store, true) { |s| [s["name"], PStore.key?(s, "never")] })
+
+  # an exception in the block aborts the transaction, and the store is usable afterwards
+  begin
+    PStore.transaction(store) do |s|
+      s["name"] = "boom"
+      raise ArgumentError, "oops"
+    end
+  rescue ArgumentError => e
+    puts("ArgumentError: #{Exception.message(e)}")
+  end
+  p(PStore.transaction(store, true) { |s| s["name"] })
+
+  # ultra_safe writes a new file and renames it
+  store.PStore.ultra_safe = true
+  p(PStore.ultra_safe(store))
+  PStore.transaction(store) { |s| s["safe"] = "yes" }
+  p(PStore.transaction(store, true) { |s| s["safe"] })
+  p(Array.sort(Dir.children(dir)))
+
+  # errors
+  begin
+    store["name"]
+  rescue PStore::Error => e
+    puts("PStore::Error: #{Exception.message(e)}")
+  end
+  begin
+    PStore.transaction(store, true) { |s| s["x"] = 1 }
+  rescue PStore::Error => e
+    puts("PStore::Error: #{Exception.message(e)}")
+  end
+  begin
+    PStore.transaction(store, true) { |s| PStore.delete(s, "name") }
+  rescue PStore::Error => e
+    puts("PStore::Error: #{Exception.message(e)}")
+  end
+  begin
+    PStore.transaction(store) { |s| PStore.transaction(store) { |t| t["x"] = 1 } }
+  rescue PStore::Error => e
+    puts("PStore::Error: #{Exception.message(e)}")
+  end
+  begin
+    PStore.transaction(store, true) { |s| PStore.fetch(s, "missing") }
+  rescue PStore::Error => e
+    puts("PStore::Error: #{Exception.message(e)}")
+  end
+  begin
+    PStore.new(File.join(dir, "no/such/dir/x.pstore"))
+  rescue PStore::Error => e
+    puts("PStore::Error: #{String.sub(Exception.message(e), dir, "DIR")}")
+  end
+  thread_safe = PStore.new(File.join(dir, "ts.pstore"), true)
+  begin
+    PStore.transaction(thread_safe) { |s| PStore.transaction(thread_safe) { |t| 1 } }
+  rescue PStore::Error => e
+    puts("PStore::Error: #{Exception.message(e)}")
+  end
+end

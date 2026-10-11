@@ -1152,11 +1152,11 @@ p(Array.compact!(xs))                  # => nil
 
 `Array.flatten!(x)`
 
-A new Array with every nested Array expanded into its elements (`flatten`), or the subject flattened in place and returned (`flatten!`). Only Arrays are expanded; Tuple elements stay as they are. `flatten!` returns nil when there was nothing nested, and using that result unchecked is a level 2 `nil` problem. Ruby's depth argument does not exist.
+A new Array with every nested Array expanded into its elements (`flatten`), or the subject flattened in place and returned (`flatten!`). Tuple elements are expanded too, as in Ruby (for example the group pairs of `String.scan`; since 2026-10-11). `flatten!` returns nil when there was nothing nested, and using that result unchecked is a level 2 `nil` problem. Ruby's depth argument does not exist.
 
 ```ruby
 p(Array.flatten(Array[1, Array[2, Array[3]], 4]))     # => [1, 2, 3, 4]
-p(Array.flatten(Array[[1, 2], 3]))                    # => [[1, 2], 3]
+p(Array.flatten(Array[[1, 2], 3]))                    # => [1, 2, 3]
 xs = Array[1, Array[2]]
 p(Array.flatten!(xs))                                 # => [1, 2]
 p(Array.flatten!(xs))                                 # => nil

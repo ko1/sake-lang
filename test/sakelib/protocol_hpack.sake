@@ -1,0 +1,139 @@
+require "protocol_hpack"
+
+def hex(s) = String.unpack1(s, "H*")
+
+def show_table(ctx)
+  puts("table size=#{Protocol::HPACK::Context.table_size(ctx)} used=#{Protocol::HPACK::Context.compute_current_table_size(ctx)} entries=#{Array.size(Protocol::HPACK::Context.table(ctx))}")
+  Array.each_with_index(Protocol::HPACK::Context.table(ctx)) { |(k, v), i| puts("  [#{i + 62}] #{k}: #{v}") }
+end
+
+# integers (RFC 7541 C.1): 10 on 5 bits, 1337 on 5 bits, 42 on 8 bits
+Array.each(Array[[10, 5], [1337, 5], [42, 8], [31, 5], [0, 7]]) do |value, bits|
+  buffer = String.b("")
+  compressor = Protocol::HPACK::Compressor.new(buffer)
+  Protocol::HPACK::Compressor.write_integer(compressor, value, bits)
+  decompressor = Protocol::HPACK::Decompressor.new(buffer)
+  puts("#{value}/#{bits}: #{hex(buffer)} -> #{Protocol::HPACK::Decompressor.read_integer(decompressor, bits)}")
+end
+
+# Huffman coding (RFC 7541 C.4.1)
+encoded = Protocol::HPACK::Huffman.encode("www.example.com")
+puts(hex(encoded))
+p(Protocol::HPACK::Huffman.decode(encoded))
+Array.each(Array["", "a", "no-cache", "custom-key", "Mon, 21 Oct 2013 20:13:21 GMT", "\x00\xff~"]) do |s|
+  e = Protocol::HPACK::Huffman.encode(String.b(s))
+  puts("#{String.bytesize(s)} -> #{String.bytesize(e)}: #{hex(e)} #{Protocol::HPACK::Huffman.decode(e) == String.b(s)}")
+end
+
+# malformed Huffman input
+Array.each(Array[String.b("\xff\xff\xff\xff"), String.b("\x00"), String.b("\xfe")]) do |bad|
+  begin
+    p(Protocol::HPACK::Huffman.decode(bad))
+  rescue Protocol::HPACK::CompressionError => e
+    puts("error: #{Exception.message(e)}")
+  end
+end
+
+# requests without Huffman (RFC 7541 C.3), one context across three header lists
+requests = Array[
+  Array[[":method", "GET"], [":scheme", "http"], [":path", "/"], [":authority", "www.example.com"]],
+  Array[[":method", "GET"], [":scheme", "http"], [":path", "/"], [":authority", "www.example.com"], ["cache-control", "no-cache"]],
+  Array[[":method", "GET"], [":scheme", "https"], [":path", "/index.html"], [":authority", "www.example.com"], ["custom-key", "custom-value"]],
+]
+compressor_context = Protocol::HPACK::Context.new(nil, huffman: :never)
+decompressor_context = Protocol::HPACK::Context.new
+Array.each(requests) do |headers|
+  buffer = String.b("")
+  compressor = Protocol::HPACK::Compressor.new(buffer, compressor_context)
+  puts(hex(Protocol::HPACK::Compressor.encode(compressor, headers)))
+  decompressor = Protocol::HPACK::Decompressor.new(buffer, decompressor_context)
+  p(Protocol::HPACK::Decompressor.decode(decompressor))
+end
+show_table(decompressor_context)
+
+# the same requests with Huffman (RFC 7541 C.4)
+compressor_context = Protocol::HPACK::Context.new(nil, huffman: :always)
+decompressor_context = Protocol::HPACK::Context.new
+Array.each(requests) do |headers|
+  buffer = String.b("")
+  puts(hex(Protocol::HPACK::Compressor.new(buffer, compressor_context).Protocol::HPACK::Compressor.encode(headers)))
+  p(Protocol::HPACK::Decompressor.new(buffer, decompressor_context).Protocol::HPACK::Decompressor.decode == headers)
+end
+show_table(decompressor_context)
+
+# responses with a 256-byte table: entries are evicted (RFC 7541 C.5)
+responses = Array[
+  Array[[":status", "302"], ["cache-control", "private"], ["date", "Mon, 21 Oct 2013 20:13:21 GMT"], ["location", "https://www.example.com"]],
+  Array[[":status", "307"], ["cache-control", "private"], ["date", "Mon, 21 Oct 2013 20:13:21 GMT"], ["location", "https://www.example.com"]],
+  Array[[":status", "200"], ["cache-control", "private"], ["date", "Mon, 21 Oct 2013 20:13:22 GMT"], ["location", "https://www.example.com"], ["content-encoding", "gzip"], ["set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"]],
+]
+compressor_context = Protocol::HPACK::Context.new(nil, huffman: :shorter, table_size: 256)
+decompressor_context = Protocol::HPACK::Context.new(nil, table_size: 256)
+Array.each(responses) do |headers|
+  buffer = String.b("")
+  puts(hex(Protocol::HPACK::Compressor.new(buffer, compressor_context).Protocol::HPACK::Compressor.encode(headers)))
+  p(Protocol::HPACK::Decompressor.new(buffer, decompressor_context).Protocol::HPACK::Decompressor.decode.Array.size)
+  show_table(decompressor_context)
+end
+
+# index modes: :never and :static never touch the dynamic table
+Array.each(Array[:never, :static, :all]) do |mode|
+  context = Protocol::HPACK::Context.new(nil, huffman: :never, index: mode)
+  commands = Protocol::HPACK::Context.encode(context, Array[[":method", "GET"], ["x-a", "1"], ["x-a", "1"], ["host", "h"]])
+  puts("#{mode}: #{Array.map(commands) { |c| "#{Protocol::HPACK::Command.type(c)}:#{Protocol::HPACK::Command.name(c)}" }.Array.join(" ")} table=#{Array.size(Protocol::HPACK::Context.table(context))}")
+end
+
+# commands read back from a buffer
+buffer = String.b("")
+compressor = Protocol::HPACK::Compressor.new(buffer, Protocol::HPACK::Context.new(nil, huffman: :never, index: :never))
+Protocol::HPACK::Compressor.encode(compressor, Array[["x-key", "v"]])
+decompressor = Protocol::HPACK::Decompressor.new(buffer)
+command = Protocol::HPACK::Decompressor.read_header(decompressor)
+p([Protocol::HPACK::Command.type(command), Protocol::HPACK::Command.name(command), Protocol::HPACK::Command.value(command), Protocol::HPACK::Decompressor.offset(decompressor), Protocol::HPACK::Decompressor.end?(decompressor)])
+
+# a table size update before the headers; a limit on the decoder
+buffer = String.b("")
+compressor = Protocol::HPACK::Compressor.new(buffer, Protocol::HPACK::Context.new, table_size_limit: 100)
+puts(hex(Protocol::HPACK::Compressor.encode(compressor, Array[["x-long-header", "v" * 80]])))
+p(Array.size(Protocol::HPACK::Context.table(Protocol::HPACK::Compressor.context(compressor))))
+decompressor = Protocol::HPACK::Decompressor.new(buffer, Protocol::HPACK::Context.new, table_size_limit: 100)
+p(Protocol::HPACK::Decompressor.decode(decompressor))
+p(Protocol::HPACK::Context.table_size(Protocol::HPACK::Decompressor.context(decompressor)))
+begin
+  Protocol::HPACK::Decompressor.new(dup(buffer), Protocol::HPACK::Context.new, table_size_limit: 50).Protocol::HPACK::Decompressor.decode
+rescue Protocol::HPACK::CompressionError => e
+  puts("error: #{Exception.message(e)}")
+end
+
+# shrinking the table evicts entries
+context = Protocol::HPACK::Context.new
+Protocol::HPACK::Context.encode(context, Array[["a", "1"], ["b", "2"], ["c", "3"]])
+show_table(context)
+command = Protocol::HPACK::Context.change_table_size(context, 70)
+p([Protocol::HPACK::Command.type(command), Protocol::HPACK::Command.value(command)])
+show_table(context)
+
+# dereference: static, dynamic, too large
+p(Protocol::HPACK::Context.dereference(context, 1))
+p(Protocol::HPACK::Context.dereference(context, 61))
+begin
+  Protocol::HPACK::Context.dereference(context, 70)
+rescue Protocol::HPACK::CompressionError => e
+  puts("error: #{Exception.message(e)}")
+end
+
+# malformed buffers
+Array.each(Array[String.b("\x80"), String.b("\xff\x00"), String.b("\x20"), String.b("\x00\x05ab")]) do |bad|
+  begin
+    p(Protocol::HPACK::Decompressor.new(bad).Protocol::HPACK::Decompressor.decode)
+  rescue Protocol::HPACK::CompressionError => e
+    puts("error: #{Exception.message(e)}")
+  end
+end
+
+# UTF-8 values pass through as bytes
+buffer = String.b("")
+Protocol::HPACK::Compressor.new(buffer).Protocol::HPACK::Compressor.encode(Array[["x-name", "café ☕"]])
+pair = Protocol::HPACK::Decompressor.new(buffer).Protocol::HPACK::Decompressor.decode.Array.first
+p(pair)
+p(String.encoding(pair[1])) if pair

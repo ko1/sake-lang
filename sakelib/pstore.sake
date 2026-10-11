@@ -1,0 +1,196 @@
+# pstore: PStore (the pstore gem 0.2.1), a Hash kept in a file and changed in transactions.
+#
+#   store = PStore.new("data.pstore")
+#   PStore.transaction(store) { |s| s["count"] = 1 }              # Ruby: store.transaction { ... }
+#   PStore.transaction(store, true) { |s| p(PStore.fetch(s, "count")) }
+#
+# The file holds JSON where Ruby's holds Marshal data: the table is written as a JSON array of
+# [key, value] pairs, so keys may be Strings, Integers, Floats, true/false or nil, and values are JSON
+# values (Hash, Array, String, Integer, Float, true/false, nil). Symbols come back as Strings, Hash keys
+# inside values come back as Strings, and other objects cannot be stored (JSON::GeneratorError at commit).
+# Ruby's commit/abort throw to the end of the transaction; here they raise PStore::TransactionEnd,
+# which the transaction rescues (a bare `rescue` in the block would catch it too).
+# No file locking (Sake has no flock); the checksum of the old data is replaced by comparing the data.
+
+require "json"
+
+class PStore
+  attr_reader filename, thread_safe
+  attr_accessor ultra_safe
+  private attr_accessor aborted, rdonly, table, lock
+  include Indexable                     # for s[key] and s[key] = value
+
+  class Error < StandardError
+  end
+
+  # Ruby's throw :pstore_abort_transaction.
+  class TransactionEnd < StandardError
+  end
+
+  def version = "0.2.1"
+
+  def initialize(st)
+    dir = File.dirname(@filename)
+    raise PStore::Error, format("directory %s does not exist", dir) unless File.directory?(dir)
+    if File.exist?(@filename) && !File.readable?(@filename)
+      raise PStore::Error, format("file %s not readable", @filename)
+    end
+    @thread_safe = @thread_safe == true
+    @aborted = false
+    @ultra_safe = false
+    @rdonly = false
+    @table = Hash[]
+    @lock = Mutex.new
+  end
+
+  def in_transaction(st)
+    raise PStore::Error, "not in transaction" unless Mutex.locked?(@lock)
+  end
+
+  def in_transaction_wr(st)
+    in_transaction(st)
+    raise PStore::Error, "in read-only transaction" if @rdonly
+  end
+
+  def [](st, key)
+    in_transaction(st)
+    @table[key]
+  end
+
+  # Ruby's fetch(key, default = PStore::Error): without a default, a missing key raises.
+  def fetch(st, key, *default)
+    in_transaction(st)
+    unless Hash.key?(@table, key)
+      raise PStore::Error, format("undefined key '%s'", key) if Array.empty?(default)
+      return default[0]
+    end
+    @table[key]
+  end
+
+  def []=(st, key, value)
+    in_transaction_wr(st)
+    @table[key] = value
+  end
+
+  def delete(st, key)
+    in_transaction_wr(st)
+    Hash.delete(@table, key)
+  end
+
+  def keys(st)
+    in_transaction(st)
+    Hash.keys(@table)
+  end
+
+  def roots(st) = keys(st)
+
+  def key?(st, key)
+    in_transaction(st)
+    Hash.key?(@table, key)
+  end
+
+  def root?(st, key) = key?(st, key)
+
+  def path(st) = @filename
+
+  def commit(st)
+    in_transaction(st)
+    @aborted = false
+    raise TransactionEnd, "commit"
+  end
+
+  def abort(st)
+    in_transaction(st)
+    @aborted = true
+    raise TransactionEnd, "abort"
+  end
+
+  def transaction(st, read_only = false)
+    value = nil
+    if !@thread_safe
+      raise PStore::Error, "nested transaction" unless Mutex.try_lock(@lock)
+    else
+      begin
+        Mutex.lock(@lock)
+      rescue ThreadError
+        raise PStore::Error, "nested transaction"
+      end
+    end
+    begin
+      @rdonly = read_only
+      @aborted = false
+      if read_only && !File.exist?(@filename)
+        @table = Hash[]
+        begin
+          value = yield(st)
+        rescue TransactionEnd
+          nil
+        end
+      else
+        data = load_data(st, read_only)
+        begin
+          value = yield(st)
+        rescue TransactionEnd
+          nil
+        end
+        save_data(st, data) if !@aborted && !read_only
+      end
+    ensure
+      Mutex.unlock(@lock)
+    end
+    value
+  end
+
+  def empty_data = JSON.generate(Array[])
+
+  # Reads the table; returns the file's data (an empty file counts as an empty table's data), which
+  # save_data compares with the new data.
+  def load_data(st, read_only)
+    # Ruby opens the file with CREAT for a read-write transaction
+    File.write(@filename, "") if !read_only && !File.exist?(@filename)
+    data = File.read(@filename)
+    if String.empty?(data)
+      @table = Hash[]
+      return empty_data
+    end
+    @table = load(st, data)
+    data
+  end
+
+  def save_data(st, original_data)
+    new_data = dump(st, @table)
+    return if new_data == original_data
+    if @ultra_safe
+      save_data_with_atomic_file_rename_strategy(st, new_data)
+    else
+      save_data_with_fast_strategy(st, new_data)
+    end
+  end
+
+  def save_data_with_atomic_file_rename_strategy(st, data)
+    temp_filename = "#{@filename}.tmp.#{Process.pid}.#{rand(1000000)}"
+    begin
+      File.write(temp_filename, data)
+      File.rename(temp_filename, @filename)
+    rescue IOError
+      File.unlink(temp_filename) if File.exist?(temp_filename)
+      raise
+    end
+  end
+
+  def save_data_with_fast_strategy(st, data) = File.write(@filename, data)
+
+  # Ruby's Marshal.dump(table) / Marshal.load(content).
+  def dump(st, table) = JSON.generate(Hash.to_a(table))
+
+  def load(st, content)
+    pairs = JSON.parse(content)
+    raise PStore::Error, "PStore file seems to be corrupted." unless pairs in Array
+    table = Hash[]
+    Array.each(pairs) do |pair|
+      raise PStore::Error, "PStore file seems to be corrupted." unless (pair in Array) && Array.size(pair) == 2
+      table[pair[0]] = pair[1]
+    end
+    table
+  end
+end

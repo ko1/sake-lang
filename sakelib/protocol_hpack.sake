@@ -1,0 +1,524 @@
+# protocol_hpack: HPACK header compression for HTTP/2 (RFC 7541), a port of the protocol-hpack gem.
+#
+# Protocol::HPACK::Compressor writes header lists into a binary String buffer, Decompressor reads them
+# back; both keep a Context (the dynamic table). Ruby's commands are Hashes ({name:, value:, type:});
+# here they are Protocol::HPACK::Command values with the same three fields.
+# Huffman decoding walks the code bit by bit through a table keyed by (length, code) instead of the gem's
+# generated 4-bit state machine (274 lines of data); results and error messages are the same.
+
+module Protocol
+  module HPACK
+    # Ruby: CompressionError and DecompressionError are subclasses of Error; Sake has no hierarchy.
+    class Error < StandardError
+    end
+
+    class CompressionError < StandardError
+    end
+
+    class DecompressionError < StandardError
+    end
+
+    # Ruby's command Hash. type: :indexed, :incremental, :no_index, :never_indexed, :change_table_size.
+    # name: a zero-based table index or a String; value: a String, or the size of :change_table_size.
+    class Command
+      attr_accessor type, name, value
+    end
+
+    # Ruby's HEADER_REPRESENTATION: [prefix bits, pattern] per command type.
+    module Representation
+      module_function
+      def prefix(type)
+        case type
+        in :indexed then 7
+        in :incremental then 6
+        in :change_table_size then 5
+        else 4
+        end
+      end
+
+      def pattern(type)
+        case type
+        in :indexed then 0x80
+        in :incremental then 0x40
+        in :change_table_size then 0x20
+        in :never_indexed then 0x10
+        else 0x00
+        end
+      end
+    end
+
+    class Huffman
+      def eos = 256
+
+      # RFC 7541 Appendix B: [code, bit length] for bytes 0..255 and EOS.
+      def codes = once { Array[
+      [0x1ff8, 13], [0x7fffd8, 23], [0xfffffe2, 28], [0xfffffe3, 28], [0xfffffe4, 28], [0xfffffe5, 28], [0xfffffe6, 28], [0xfffffe7, 28],
+      [0xfffffe8, 28], [0xffffea, 24], [0x3ffffffc, 30], [0xfffffe9, 28], [0xfffffea, 28], [0x3ffffffd, 30], [0xfffffeb, 28], [0xfffffec, 28],
+      [0xfffffed, 28], [0xfffffee, 28], [0xfffffef, 28], [0xffffff0, 28], [0xffffff1, 28], [0xffffff2, 28], [0x3ffffffe, 30], [0xffffff3, 28],
+      [0xffffff4, 28], [0xffffff5, 28], [0xffffff6, 28], [0xffffff7, 28], [0xffffff8, 28], [0xffffff9, 28], [0xffffffa, 28], [0xffffffb, 28],
+      [0x14, 6], [0x3f8, 10], [0x3f9, 10], [0xffa, 12], [0x1ff9, 13], [0x15, 6], [0xf8, 8], [0x7fa, 11],
+      [0x3fa, 10], [0x3fb, 10], [0xf9, 8], [0x7fb, 11], [0xfa, 8], [0x16, 6], [0x17, 6], [0x18, 6],
+      [0x0, 5], [0x1, 5], [0x2, 5], [0x19, 6], [0x1a, 6], [0x1b, 6], [0x1c, 6], [0x1d, 6],
+      [0x1e, 6], [0x1f, 6], [0x5c, 7], [0xfb, 8], [0x7ffc, 15], [0x20, 6], [0xffb, 12], [0x3fc, 10],
+      [0x1ffa, 13], [0x21, 6], [0x5d, 7], [0x5e, 7], [0x5f, 7], [0x60, 7], [0x61, 7], [0x62, 7],
+      [0x63, 7], [0x64, 7], [0x65, 7], [0x66, 7], [0x67, 7], [0x68, 7], [0x69, 7], [0x6a, 7],
+      [0x6b, 7], [0x6c, 7], [0x6d, 7], [0x6e, 7], [0x6f, 7], [0x70, 7], [0x71, 7], [0x72, 7],
+      [0xfc, 8], [0x73, 7], [0xfd, 8], [0x1ffb, 13], [0x7fff0, 19], [0x1ffc, 13], [0x3ffc, 14], [0x22, 6],
+      [0x7ffd, 15], [0x3, 5], [0x23, 6], [0x4, 5], [0x24, 6], [0x5, 5], [0x25, 6], [0x26, 6],
+      [0x27, 6], [0x6, 5], [0x74, 7], [0x75, 7], [0x28, 6], [0x29, 6], [0x2a, 6], [0x7, 5],
+      [0x2b, 6], [0x76, 7], [0x2c, 6], [0x8, 5], [0x9, 5], [0x2d, 6], [0x77, 7], [0x78, 7],
+      [0x79, 7], [0x7a, 7], [0x7b, 7], [0x7ffe, 15], [0x7fc, 11], [0x3ffd, 14], [0x1ffd, 13], [0xffffffc, 28],
+      [0xfffe6, 20], [0x3fffd2, 22], [0xfffe7, 20], [0xfffe8, 20], [0x3fffd3, 22], [0x3fffd4, 22], [0x3fffd5, 22], [0x7fffd9, 23],
+      [0x3fffd6, 22], [0x7fffda, 23], [0x7fffdb, 23], [0x7fffdc, 23], [0x7fffdd, 23], [0x7fffde, 23], [0xffffeb, 24], [0x7fffdf, 23],
+      [0xffffec, 24], [0xffffed, 24], [0x3fffd7, 22], [0x7fffe0, 23], [0xffffee, 24], [0x7fffe1, 23], [0x7fffe2, 23], [0x7fffe3, 23],
+      [0x7fffe4, 23], [0x1fffdc, 21], [0x3fffd8, 22], [0x7fffe5, 23], [0x3fffd9, 22], [0x7fffe6, 23], [0x7fffe7, 23], [0xffffef, 24],
+      [0x3fffda, 22], [0x1fffdd, 21], [0xfffe9, 20], [0x3fffdb, 22], [0x3fffdc, 22], [0x7fffe8, 23], [0x7fffe9, 23], [0x1fffde, 21],
+      [0x7fffea, 23], [0x3fffdd, 22], [0x3fffde, 22], [0xfffff0, 24], [0x1fffdf, 21], [0x3fffdf, 22], [0x7fffeb, 23], [0x7fffec, 23],
+      [0x1fffe0, 21], [0x1fffe1, 21], [0x3fffe0, 22], [0x1fffe2, 21], [0x7fffed, 23], [0x3fffe1, 22], [0x7fffee, 23], [0x7fffef, 23],
+      [0xfffea, 20], [0x3fffe2, 22], [0x3fffe3, 22], [0x3fffe4, 22], [0x7ffff0, 23], [0x3fffe5, 22], [0x3fffe6, 22], [0x7ffff1, 23],
+      [0x3ffffe0, 26], [0x3ffffe1, 26], [0xfffeb, 20], [0x7fff1, 19], [0x3fffe7, 22], [0x7ffff2, 23], [0x3fffe8, 22], [0x1ffffec, 25],
+      [0x3ffffe2, 26], [0x3ffffe3, 26], [0x3ffffe4, 26], [0x7ffffde, 27], [0x7ffffdf, 27], [0x3ffffe5, 26], [0xfffff1, 24], [0x1ffffed, 25],
+      [0x7fff2, 19], [0x1fffe3, 21], [0x3ffffe6, 26], [0x7ffffe0, 27], [0x7ffffe1, 27], [0x3ffffe7, 26], [0x7ffffe2, 27], [0xfffff2, 24],
+      [0x1fffe4, 21], [0x1fffe5, 21], [0x3ffffe8, 26], [0x3ffffe9, 26], [0xffffffd, 28], [0x7ffffe3, 27], [0x7ffffe4, 27], [0x7ffffe5, 27],
+      [0xfffec, 20], [0xfffff3, 24], [0xfffed, 20], [0x1fffe6, 21], [0x3fffe9, 22], [0x1fffe7, 21], [0x1fffe8, 21], [0x7ffff3, 23],
+      [0x3fffea, 22], [0x3fffeb, 22], [0x1ffffee, 25], [0x1ffffef, 25], [0xfffff4, 24], [0xfffff5, 24], [0x3ffffea, 26], [0x7ffff4, 23],
+      [0x3ffffeb, 26], [0x7ffffe6, 27], [0x3ffffec, 26], [0x3ffffed, 26], [0x7ffffe7, 27], [0x7ffffe8, 27], [0x7ffffe9, 27], [0x7ffffea, 27],
+      [0x7ffffeb, 27], [0xffffffe, 28], [0x7ffffec, 27], [0x7ffffed, 27], [0x7ffffee, 27], [0x7ffffef, 27], [0x7fffff0, 27], [0x3ffffee, 26],
+      [0x3fffffff, 30]
+      ] }
+
+      # (length << 32 | code) => symbol, for decoding.
+      def decode_table
+        once do
+          t = Hash[]
+          Array.each_with_index(codes) { |(code, len), sym| t[(len << 32) | code] = sym }
+          t
+        end
+      end
+
+      # Encodes str (its bytes); the last byte is padded with 1 bits. Returns a binary String.
+      def encode(str)
+        out = String.b("")
+        acc = 0
+        nbits = 0
+        String.each_byte(str) do |chr|
+          code, len = Array.fetch(codes, chr)
+          acc = (acc << len) | code
+          nbits += len
+          while nbits >= 8
+            nbits -= 8
+            String.append_as_bytes(out, (acc >> nbits) & 0xff)
+          end
+          acc &= (1 << nbits) - 1
+        end
+        if nbits > 0
+          pad = 8 - nbits
+          String.append_as_bytes(out, ((acc << pad) | ((1 << pad) - 1)) & 0xff)
+        end
+        out
+      end
+
+      # Decodes a Huffman-coded String; raises CompressionError when it is malformed.
+      def decode(buffer)
+        emit = String.b("")
+        table = decode_table
+        code = 0
+        len = 0
+        String.each_byte(buffer) do |c|
+          Integer.downto(7, 0) do |shift|
+            code = (code << 1) | ((c >> shift) & 1)
+            len += 1
+            sym = table[(len << 32) | code]
+            if sym != nil
+              raise CompressionError, "Huffman decode error (EOS found)" if sym == eos
+              String.append_as_bytes(emit, sym)
+              code = 0
+              len = 0
+            end
+          end
+        end
+        # what is left must be a prefix of EOS (all 1 bits) shorter than a byte
+        unless len < 8 && code == (1 << len) - 1
+          raise CompressionError, "Huffman decode error (EOS invalid)"
+        end
+        emit
+      end
+    end
+
+    # The dynamic table and the options that choose how headers are encoded.
+    # Context.new(table = nil, huffman: :shorter, index: :all, table_size: 4096) as Ruby.
+    class Context
+      attr_reader table, huffman, index, table_size
+      private attr_reader current_table_size
+
+      def initialize(c)
+        t = @table
+        @table = t ? Array.dup(t) : Array[]
+        @huffman = :shorter if @huffman == nil
+        @index = :all if @index == nil
+        @table_size = 4096 if @table_size == nil
+        @current_table_size = nil
+      end
+
+      # RFC 7541 Appendix A.
+      def static_table = once { Array[
+      [":authority", ""], [":method", "GET"], [":method", "POST"],
+      [":path", "/"], [":path", "/index.html"], [":scheme", "http"],
+      [":scheme", "https"], [":status", "200"], [":status", "204"],
+      [":status", "206"], [":status", "304"], [":status", "400"],
+      [":status", "404"], [":status", "500"], ["accept-charset", ""],
+      ["accept-encoding", "gzip, deflate"], ["accept-language", ""], ["accept-ranges", ""],
+      ["accept", ""], ["access-control-allow-origin", ""], ["age", ""],
+      ["allow", ""], ["authorization", ""], ["cache-control", ""],
+      ["content-disposition", ""], ["content-encoding", ""], ["content-language", ""],
+      ["content-length", ""], ["content-location", ""], ["content-range", ""],
+      ["content-type", ""], ["cookie", ""], ["date", ""],
+      ["etag", ""], ["expect", ""], ["expires", ""],
+      ["from", ""], ["host", ""], ["if-match", ""],
+      ["if-modified-since", ""], ["if-none-match", ""], ["if-range", ""],
+      ["if-unmodified-since", ""], ["last-modified", ""], ["link", ""],
+      ["location", ""], ["max-forwards", ""], ["proxy-authenticate", ""],
+      ["proxy-authorization", ""], ["range", ""], ["referer", ""],
+      ["refresh", ""], ["retry-after", ""], ["server", ""],
+      ["set-cookie", ""], ["strict-transport-security", ""], ["transfer-encoding", ""],
+      ["user-agent", ""], ["vary", ""], ["via", ""],
+      ["www-authenticate", ""]
+      ] }
+
+      # name => [[value, index], ...] and name => first index.
+      def static_exact_lookup
+        once do
+          h = Hash[]
+          Array.each_with_index(static_table) do |(name, value), i|
+            h[name] = Array[] unless Hash.key?(h, name)
+            Array.push(Hash.fetch(h, name), [value, i])
+          end
+          h
+        end
+      end
+
+      def static_name_lookup
+        once do
+          h = Hash[]
+          Array.each_with_index(static_table) { |(name, _value), i| h[name] = i unless Hash.key?(h, name) }
+          h
+        end
+      end
+
+      # Ruby's dup (initialize_copy): the table is the only mutable state.
+      def dup(c) = Context.new(@table, @huffman, @index, @table_size)
+
+      # Zero-based index: the static table first, then the dynamic table.
+      def dereference(c, index)
+        st = static_table
+        value = Array.at(st, index) || (index >= Array.size(st) ? Array.at(@table, index - Array.size(st)) : nil)
+        raise CompressionError, "Index #{index} too large!" if value == nil
+        value
+      end
+
+      # Applies a command to the table; returns the header [name, value] it emits, or nil.
+      def decode(c, command)
+        emit = nil
+        type = Command.type(command)
+        case type
+        in :change_table_size
+          size = Command.value(command)
+          size => Integer
+          set_table_size(c, size)
+        in :indexed
+          idx = Command.name(command)
+          idx => Integer
+          k, v = dereference(c, idx)
+          emit = [k, v]
+        in :incremental | :no_index | :never_indexed
+          name = Command.name(command)
+          value = Command.value(command)
+          value => String
+          if name in Integer
+            k, _v = dereference(c, name)
+            name = k
+          end
+          name => String
+          emit = [name, value]
+          add_to_table(c, emit) if type == :incremental
+        else
+          raise CompressionError, "Invalid type: #{type}"
+        end
+        emit
+      end
+
+      # Plans the commands for headers ([[name, value], ...]) and applies them to the table.
+      def encode(c, headers)
+        commands = Array[]
+        no_index = @index == :static || @index == :never
+        Array.each(headers) do |field, value|
+          command = add_command(c, field, value)
+          Command.set_type(command, :no_index) if no_index && Command.type(command) == :incremental
+          Array.push(commands, command)
+          decode(c, command)
+        end
+        commands
+      end
+
+      # Prefers the static table over the dynamic one, and an exact match over a name-only match.
+      def add_command(c, name, value)
+        exact = nil
+        name_only = nil
+        st_size = Array.size(static_table)
+        if @index == :all || @index == :static
+          values_and_indices = static_exact_lookup[name]
+          if values_and_indices
+            Array.each(values_and_indices) do |known_value, index|
+              if value == known_value
+                exact = index
+                break
+              end
+            end
+          end
+          if exact == nil
+            static_value = static_name_lookup[name]
+            name_only = static_value if static_value != nil
+          end
+        end
+        if @index == :all && exact == nil
+          Array.each_with_index(@table) do |(n, v), i|
+            if n == name
+              if v == value
+                exact ||= i + st_size
+                break
+              else
+                name_only ||= i + st_size
+              end
+            end
+          end
+        end
+        if exact != nil
+          Command.new(:indexed, exact, nil)
+        elsif name_only != nil
+          Command.new(:incremental, name_only, value)
+        else
+          Command.new(:incremental, name, value)
+        end
+      end
+
+      # Ruby's table_size=: entries are evicted to fit the new size.
+      def set_table_size(c, size)
+        @table_size = size
+        size_check(c, nil)
+        size
+      end
+
+      def change_table_size(c, size)
+        set_table_size(c, size)
+        Command.new(:change_table_size, nil, size)
+      end
+
+      def compute_current_table_size(c) = Array.sum(@table) { |k, v| String.bytesize(k) + String.bytesize(v) + 32 }
+
+      # --- private in Ruby ---
+
+      def add_to_table(c, command)
+        return unless size_check(c, command)
+        Array.unshift(@table, command)
+        @current_table_size = (@current_table_size || 0) + entry_size(command)
+      end
+
+      def entry_size(e)
+        k, v = e
+        String.bytesize(k) + String.bytesize(v) + 32
+      end
+
+      # Evicts entries from the end until command fits; returns whether it fits at all.
+      def size_check(c, command)
+        cur = @current_table_size || compute_current_table_size(c)
+        cmdsize = command == nil ? 0 : entry_size(command)
+        while cur + cmdsize > @table_size
+          break if Array.empty?(@table)
+          e = Array.pop(@table)
+          cur -= entry_size(e) if e
+        end
+        @current_table_size = cur
+        cmdsize <= @table_size
+      end
+    end
+
+    # Compressor.new(buffer, context = Context.new, table_size_limit: nil) as Ruby.
+    class Compressor
+      attr_reader buffer, context, table_size_limit
+
+      def initialize(cm)
+        @context = Context.new if @context == nil
+      end
+
+      def write_bytes(cm, bytes) = String.append_as_bytes(@buffer, bytes)
+
+      # RFC 7541 5.1: value on a bits-wide prefix, then 7 bits per byte.
+      def write_integer(cm, value, bits)
+        limit = (1 << bits) - 1
+        return String.append_as_bytes(@buffer, value) if value < limit
+        String.append_as_bytes(@buffer, limit) unless bits == 0
+        value -= limit
+        while value >= 128
+          String.append_as_bytes(@buffer, (value & 0x7f) + 128)
+          value /= 128
+        end
+        String.append_as_bytes(@buffer, value)
+      end
+
+      def huffman(cm) = Context.huffman(@context)
+
+      # RFC 7541 5.2. huffman: :never, :always, or :shorter (only when strictly shorter).
+      def write_string(cm, string, huffman = huffman(cm))
+        encoded = nil
+        if huffman != :never
+          encoded = Huffman.encode(string)
+          encoded = nil if huffman == :shorter && String.bytesize(encoded) >= String.bytesize(string)
+        end
+        if encoded
+          first = String.bytesize(@buffer)
+          write_integer(cm, String.bytesize(encoded), 7)
+          write_bytes(cm, encoded)
+          String.setbyte(@buffer, first, (String.getbyte(@buffer, first) || 0) | 0x80)
+        else
+          write_integer(cm, String.bytesize(string), 7)
+          write_bytes(cm, String.b(string))
+        end
+      end
+
+      def write_header(cm, command)
+        type = Command.type(command)
+        prefix = Representation.prefix(type)
+        name = Command.name(command)
+        value = Command.value(command)
+        first = String.bytesize(@buffer)
+        case type
+        in :indexed
+          name => Integer
+          write_integer(cm, name + 1, prefix)
+        in :change_table_size
+          value => Integer
+          write_integer(cm, value, prefix)
+        else
+          case name
+          in Integer then write_integer(cm, name + 1, prefix)
+          in String
+            write_integer(cm, 0, prefix)
+            write_string(cm, name)
+          end
+          value => String
+          write_string(cm, value)
+        end
+        # the representation's pattern goes on the first byte
+        String.setbyte(@buffer, first, (String.getbyte(@buffer, first) || 0) | Representation.pattern(type))
+      end
+
+      # Encodes headers ([[name, value], ...]) into the buffer and returns it.
+      def encode(cm, headers, table_size = @table_size_limit)
+        if table_size && table_size != Context.table_size(@context)
+          write_header(cm, Context.change_table_size(@context, table_size))
+        end
+        Array.each(Context.encode(@context, headers)) { |command| write_header(cm, command) }
+        @buffer
+      end
+    end
+
+    # Decompressor.new(buffer, context = Context.new, table_size_limit: nil) as Ruby.
+    class Decompressor
+      attr_reader buffer, context, table_size_limit, offset
+
+      def initialize(d)
+        @context = Context.new if @context == nil
+        @offset = 0
+      end
+
+      def end?(d) = @offset >= String.bytesize(@buffer)
+
+      def read_byte(d)
+        byte = String.getbyte(@buffer, @offset)
+        @offset += 1 if byte
+        byte
+      end
+
+      def peek_byte(d) = String.getbyte(@buffer, @offset)
+
+      def read_bytes(d, length)
+        slice = String.byteslice(@buffer, @offset, length) || ""
+        @offset += length
+        slice
+      end
+
+      # Ruby calls Integer#& on the nil of a missing byte (NoMethodError); here it is a CompressionError.
+      def need(byte)
+        raise CompressionError, "Unexpected end of buffer!" unless byte
+        byte
+      end
+
+      def read_integer(d, bits)
+        limit = 2 ** bits - 1
+        value = bits == 0 ? 0 : need(read_byte(d)) & limit
+        if value == limit
+          shift = 0
+          while (byte = read_byte(d))
+            value += (byte & 127) << shift
+            shift += 7
+            break if (byte & 128) == 0
+          end
+        end
+        value
+      end
+
+      # Reads a string literal; returns it as UTF-8.
+      def read_string(d)
+        huffman = (need(peek_byte(d)) & 0x80) == 0x80
+        length = read_integer(d, 7)
+        string = read_bytes(d, length)
+        unless String.bytesize(string) == length
+          raise CompressionError, "Invalid string length, got #{String.bytesize(string)}, expecting #{length}!"
+        end
+        string = Huffman.decode(string) if huffman
+        String.force_encoding(string, "UTF-8")
+      end
+
+      # Reads one header command.
+      def read_header(d)
+        pattern = need(peek_byte(d))
+        type =
+          if pattern & 0x80 == 0x80 then :indexed
+          elsif pattern & 0xc0 == 0x40 then :incremental
+          elsif pattern & 0xe0 == 0x20 then :change_table_size
+          elsif pattern & 0xf0 == 0x10 then :never_indexed
+          else :no_index
+          end
+        header_name = read_integer(d, Representation.prefix(type))
+        case type
+        in :indexed
+          raise CompressionError if header_name == 0
+          Command.new(type, header_name - 1, nil)
+        in :change_table_size
+          limit = @table_size_limit
+          if limit && header_name > limit
+            raise CompressionError, "Table size #{header_name} exceeds limit #{limit}!"
+          end
+          Command.new(type, header_name, header_name)
+        else
+          name = header_name == 0 ? read_string(d) : header_name - 1
+          Command.new(type, name, read_string(d))
+        end
+      end
+
+      # Decodes every header in the buffer; returns [[name, value], ...].
+      def decode(d, list = Array[])
+        command = nil
+        until end?(d)
+          command = read_header(d)
+          pair = Context.decode(@context, command)
+          Array.push(list, pair) if pair
+        end
+        if command && Command.type(command) == :change_table_size
+          raise CompressionError, "Trailing table size update!"
+        end
+        list
+      end
+    end
+  end
+end

@@ -1,0 +1,185 @@
+require "websocket"
+
+# the random key and accept lines are replaced so that the output is reproducible
+def hide(s) = String.gsub(s, /^(Sec-WebSocket-(Key|Accept)): \S+/, "\\1: <...>")
+def hex(s) = String.unpack1(s, "H*")
+
+# client handshake from a URL
+client = WebSocket::Handshake::Client.new(url: "ws://example.com:8080/chat?room=1", origin: "http://example.com")
+p([WebSocket::Handshake::Client.host(client), WebSocket::Handshake::Client.port(client), WebSocket::Handshake::Client.path(client), WebSocket::Handshake::Client.query(client), WebSocket::Handshake::Client.secure(client), WebSocket::Handshake::Client.version(client), WebSocket::Handshake::Client.uri(client), WebSocket::Handshake::Client.state(client)])
+puts(Kernel.inspect(hide(WebSocket::Handshake::Client.to_s(client))))
+p(WebSocket::Handshake::Client.should_respond?(client))
+
+# the server reads the request
+server = WebSocket::Handshake::Server.new
+server << WebSocket::Handshake::Client.to_s(client)
+p([WebSocket::Handshake::Server.state(server), WebSocket::Handshake::Server.finished?(server), WebSocket::Handshake::Server.valid?(server), WebSocket::Handshake::Server.version(server), WebSocket::Handshake::Server.path(server), WebSocket::Handshake::Server.query(server), WebSocket::Handshake::Server.host(server), WebSocket::Handshake::Server.port(server), WebSocket::Handshake::Server.uri(server)])
+p(WebSocket::Handshake::Server.headers(server)["sec-websocket-version"])
+puts(Kernel.inspect(hide(WebSocket::Handshake::Server.to_s(server))))
+p(WebSocket::Handshake::Server.should_respond?(server))
+
+# the client checks the response; bytes after the header are the leftovers
+client << WebSocket::Handshake::Server.to_s(server) + "  leftover data\n"
+p([WebSocket::Handshake::Client.state(client), WebSocket::Handshake::Client.valid?(client), WebSocket::Handshake::Client.error(client)])
+p(WebSocket::Handshake::Client.leftovers(client))
+
+# the example of RFC 6455 1.3: a known key gives a known accept
+server = WebSocket::Handshake::Server.new
+server << "GET /chat HTTP/1.1\r\nHost: server.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" \
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nOrigin: http://example.com\r\n" \
+          "Sec-WebSocket-Protocol: chat, superchat\r\nSec-WebSocket-Version: 13\r\n\r\n"
+p(WebSocket::Handshake::Server.valid?(server))
+puts(Kernel.inspect(WebSocket::Handshake::Server.to_s(server)))
+
+# a request in two pieces: unfinished until the empty line
+server = WebSocket::Handshake::Server.new(protocols: String["superchat"])
+server << "GET /x HTTP/1.1\r\nHost: localhost:9000\r\n"
+p([WebSocket::Handshake::Server.state(server), WebSocket::Handshake::Server.finished?(server), WebSocket::Handshake::Server.valid?(server)])
+server << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: chat\r\nSec-WebSocket-Protocol: superchat\r\nSec-WebSocket-Version: 8\r\n\r\n"
+p([WebSocket::Handshake::Server.state(server), WebSocket::Handshake::Server.valid?(server), WebSocket::Handshake::Server.version(server), WebSocket::Handshake::Server.host(server), WebSocket::Handshake::Server.port(server), WebSocket::Handshake::Server.uri(server)])
+p(WebSocket::Handshake::Server.headers(server)["sec-websocket-protocol"])
+puts(Kernel.inspect(WebSocket::Handshake::Server.to_s(server)))
+
+# subprotocols, wss, extra headers, the older Sec-WebSocket-Origin of drafts before 11
+client = WebSocket::Handshake::Client.new(url: "wss://example.com/", protocols: String["chat", "superchat"], headers: Hash["X-Token" => "abc"], origin: "http://o.example", version: 8)
+p([WebSocket::Handshake::Client.secure(client), WebSocket::Handshake::Client.port(client), WebSocket::Handshake::Client.uri(client)])
+puts(Kernel.inspect(hide(WebSocket::Handshake::Client.to_s(client))))
+server = WebSocket::Handshake::Server.new(protocols: String["superchat"], secure: true)
+server << WebSocket::Handshake::Client.to_s(client)
+puts(Kernel.inspect(hide(WebSocket::Handshake::Server.to_s(server))))
+client << WebSocket::Handshake::Server.to_s(server)
+p([WebSocket::Handshake::Client.valid?(client), WebSocket::Handshake::Client.error(client)])
+client = WebSocket::Handshake::Client.new(host: "example.com", path: "/p", protocols: String["mqtt"])
+server = WebSocket::Handshake::Server.new(protocols: String["chat"])
+server << WebSocket::Handshake::Client.to_s(client)
+client << WebSocket::Handshake::Server.to_s(server)
+p([WebSocket::Handshake::Client.uri(client), WebSocket::Handshake::Client.valid?(client), WebSocket::Handshake::Client.error(client), WebSocket::Handshake::Client.state(client)])
+
+# handshake errors: the error is kept as a Symbol
+client = WebSocket::Handshake::Client.new(path: "/nohost")
+p([WebSocket::Handshake::Client.state(client), WebSocket::Handshake::Client.error(client), WebSocket::Handshake::Client.to_s(client)])
+client = WebSocket::Handshake::Client.new(url: "ws://a.example/", version: 99)
+p([WebSocket::Handshake::Client.state(client), WebSocket::Handshake::Client.error(client)])
+client = WebSocket::Handshake::Client.new(url: "ws://a.example/")
+client << "HTTP/1.1 200 OK\r\n\r\n"
+p([WebSocket::Handshake::Client.state(client), WebSocket::Handshake::Client.error(client), WebSocket::Handshake::Client.valid?(client)])
+client = WebSocket::Handshake::Client.new(url: "ws://a.example/")
+client << "HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Accept: wrong\r\n\r\n"
+p([WebSocket::Handshake::Client.state(client), WebSocket::Handshake::Client.valid?(client), WebSocket::Handshake::Client.error(client)])
+client = WebSocket::Handshake::Client.new(url: "ws://a.example/")
+client << "garbage\r\n\r\n"
+p([WebSocket::Handshake::Client.state(client), WebSocket::Handshake::Client.error(client)])
+server = WebSocket::Handshake::Server.new
+server << "POST /chat HTTP/1.1\r\nSec-WebSocket-Version: 13\r\n\r\n"
+p([WebSocket::Handshake::Server.state(server), WebSocket::Handshake::Server.error(server), WebSocket::Handshake::Server.valid?(server), WebSocket::Handshake::Server.to_s(server)])
+server = WebSocket::Handshake::Server.new
+server << "GET /chat HTTP/1.1\r\nSec-WebSocket-Version: 13\r\n\r\n"
+p([WebSocket::Handshake::Server.state(server), WebSocket::Handshake::Server.valid?(server), WebSocket::Handshake::Server.error(server)])
+
+# from a Rack env
+server = WebSocket::Handshake::Server.new
+WebSocket::Handshake::Server.from_rack(server, Hash["HTTP_HOST" => "example.org:81", "HTTP_SEC_WEBSOCKET_KEY" => "dGhlIHNhbXBsZSBub25jZQ==", "HTTP_SEC_WEBSOCKET_VERSION" => "13", "REQUEST_PATH" => "/rack", "QUERY_STRING" => "a=b"])
+p([WebSocket::Handshake::Server.state(server), WebSocket::Handshake::Server.valid?(server), WebSocket::Handshake::Server.version(server), WebSocket::Handshake::Server.path(server), WebSocket::Handshake::Server.query(server), WebSocket::Handshake::Server.host(server), WebSocket::Handshake::Server.port(server), WebSocket::Handshake::Server.uri(server)])
+
+# outgoing server frames (unmasked)
+Array.each(Array[[:text, "Hello"], [:binary, String.b("\x00\xff")], [:ping, "p"], [:pong, ""], [:text, "é"]]) do |type, data|
+  frame = WebSocket::Frame::Outgoing::Server.new(version: 13, data: data, type: type)
+  puts("#{type}: #{hex(WebSocket::Frame::Outgoing::Server.to_s(frame))} #{WebSocket::Frame::Outgoing::Server.supported?(frame)} #{WebSocket::Frame::Outgoing::Server.require_sending?(frame)}")
+end
+frame = WebSocket::Frame::Outgoing::Server.new(version: 13, data: "bye", type: :close, code: 1001)
+puts(hex(WebSocket::Frame::Outgoing::Server.to_s(frame)))
+frame = WebSocket::Frame::Outgoing::Server.new(version: 13, type: :close)
+puts(hex(WebSocket::Frame::Outgoing::Server.to_s(frame)))
+frame = WebSocket::Frame::Outgoing::Server.new(version: 13, data: "x", type: :close, code: 999)
+WebSocket::Frame::Outgoing::Server.to_s(frame)
+p([WebSocket::Frame::Outgoing::Server.error(frame), WebSocket::Frame::Outgoing::Server.error?(frame), WebSocket::Frame::Outgoing::Server.require_sending?(frame)])
+frame = WebSocket::Frame::Outgoing::Server.new(version: 13, data: "x", type: :continuation)
+WebSocket::Frame::Outgoing::Server.to_s(frame)
+p([WebSocket::Frame::Outgoing::Server.error(frame), WebSocket::Frame::Outgoing::Server.supported?(frame)])
+
+# the length takes 1, 3 or 9 bytes
+Array.each(Array[125, 126, 65535, 65536]) do |n|
+  s = WebSocket::Frame::Outgoing::Server.new(version: 13, data: "a" * n, type: :binary).WebSocket::Frame::Outgoing::Server.to_s
+  puts("#{n}: #{String.bytesize(s)} #{hex(String.byteslice(s, 0, 10) || "")}")
+end
+
+# older drafts: other opcodes, and no FIN bit before draft 04
+Array.each(Array[3, 4, 5, 7]) do |version|
+  s = WebSocket::Frame::Outgoing::Server.new(version: version, data: "a", type: :text).WebSocket::Frame::Outgoing::Server.to_s
+  c = WebSocket::Frame::Outgoing::Server.new(version: version, data: "", type: :close).WebSocket::Frame::Outgoing::Server.to_s
+  puts("#{version}: #{hex(s)} #{hex(c)}")
+end
+frame = WebSocket::Frame::Outgoing::Server.new(version: 99, data: "x", type: :text)
+p(WebSocket::Frame::Outgoing::Server.error(frame))
+
+# a client masks its frames; the server unmasks them
+outgoing = WebSocket::Frame::Outgoing::Client.new(version: 13, data: "Hello, server", type: :text)
+s = WebSocket::Frame::Outgoing::Client.to_s(outgoing)
+p([String.bytesize(s), String.getbyte(s, 0), (String.getbyte(s, 1) || 0) & 0x80, (String.getbyte(s, 1) || 0) & 0x7f])
+incoming = WebSocket::Frame::Incoming::Server.new(version: 13)
+incoming << s
+frame = WebSocket::Frame::Incoming::Server.next(incoming)
+p([WebSocket::Frame::Incoming::Server.type(frame), WebSocket::Frame::Incoming::Server.data(frame), WebSocket::Frame::Incoming::Server.decoded?(frame), WebSocket::Frame::Incoming::Server.version(frame)]) if frame
+p(WebSocket::Frame::Incoming::Server.next(incoming))
+
+# frames arriving byte by byte, and two frames in one buffer
+incoming = WebSocket::Frame::Incoming::Client.new(version: 13)
+String.each_char(String.b("\x81\x05Hello")) do |c|
+  incoming << c
+  frame = WebSocket::Frame::Incoming::Client.next(incoming)
+  p(frame && [WebSocket::Frame::Incoming::Client.type(frame), WebSocket::Frame::Incoming::Client.data(frame)])
+end
+incoming << String.b("\x89\x01!\x82\x02\x01\x02")
+frame = WebSocket::Frame::Incoming::Client.next(incoming)
+p([WebSocket::Frame::Incoming::Client.type(frame), WebSocket::Frame::Incoming::Client.data(frame)]) if frame
+frame = WebSocket::Frame::Incoming::Client.next(incoming)
+p([WebSocket::Frame::Incoming::Client.type(frame), hex(WebSocket::Frame::Incoming::Client.data(frame))]) if frame
+
+# a fragmented message: text without FIN, then continuations
+incoming = WebSocket::Frame::Incoming::Client.new(version: 13)
+incoming << String.b("\x01\x03Hel") + String.b("\x00\x01l") + String.b("\x80\x01o")
+frame = WebSocket::Frame::Incoming::Client.next(incoming)
+p([WebSocket::Frame::Incoming::Client.type(frame), WebSocket::Frame::Incoming::Client.data(frame)]) if frame
+
+# a close frame carries a code
+incoming = WebSocket::Frame::Incoming::Client.new(version: 13)
+incoming << WebSocket::Frame::Outgoing::Server.new(version: 13, data: "going away", type: :close, code: 1001).WebSocket::Frame::Outgoing::Server.to_s
+frame = WebSocket::Frame::Incoming::Client.next(incoming)
+p([WebSocket::Frame::Incoming::Client.type(frame), WebSocket::Frame::Incoming::Client.code(frame), WebSocket::Frame::Incoming::Client.data(frame)]) if frame
+
+# a long frame
+incoming = WebSocket::Frame::Incoming::Client.new(version: 13)
+incoming << WebSocket::Frame::Outgoing::Server.new(version: 13, data: "z" * 70000, type: :binary).WebSocket::Frame::Outgoing::Server.to_s
+frame = WebSocket::Frame::Incoming::Client.next(incoming)
+p([WebSocket::Frame::Incoming::Client.type(frame), String.bytesize(WebSocket::Frame::Incoming::Client.data(frame))]) if frame
+
+# malformed frames: next gives nil and keeps the error
+bad = Array[String.b("\xf1\x00"), String.b("\x83\x00"), String.b("\x81\x02\xff\xfe"), String.b("\x88\x02\x03\xe7"), String.b("\x09\x00"), String.b("\x80\x01a"), String.b("\x89\x7e\x00\x80"), String.b("\x01\x01a\x81\x01b")]
+Array.each(bad) do |bytes|
+  incoming = WebSocket::Frame::Incoming::Client.new(version: 13)
+  incoming << bytes
+  frame = WebSocket::Frame::Incoming::Client.next(incoming)
+  p([hex(bytes), frame, WebSocket::Frame::Incoming::Client.error(incoming), WebSocket::Frame::Incoming::Client.error?(incoming)])
+end
+WebSocket.set_max_frame_size(10)
+incoming = WebSocket::Frame::Incoming::Client.new(version: 13)
+incoming << (String.b("\x82\x0b") + "a" * 11)
+p([WebSocket::Frame::Incoming::Client.next(incoming), WebSocket::Frame::Incoming::Client.error(incoming), WebSocket.max_frame_size])
+WebSocket.set_max_frame_size(20 * 1024 * 1024)
+
+# should_raise: the error is raised instead
+WebSocket.set_should_raise(true)
+incoming = WebSocket::Frame::Incoming::Client.new(version: 13)
+incoming << String.b("\x83\x00")
+begin
+  WebSocket::Frame::Incoming::Client.next(incoming)
+rescue WebSocket::Error::Frame::UnknownOpcode => e
+  puts("error: #{Exception.message(e)}")
+end
+begin
+  WebSocket::Handshake::Client.new(path: "/")
+rescue WebSocket::Error::Handshake::NoHostProvided => e
+  puts("error: #{Exception.message(e)}")
+end
+WebSocket.set_should_raise(false)
+p(WebSocket.should_raise)

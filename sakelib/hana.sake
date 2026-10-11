@@ -1,0 +1,287 @@
+# hana: JSON Pointer (RFC 6901) and JSON Patch (RFC 6902) after the hana gem (1.3.7).
+#
+#   patch = Hana::Patch.new(JSON.parse('[{"op": "add", "path": "/baz", "value": "qux"}]'))
+#   Hana::Patch.apply(patch, JSON.parse('{"foo": "bar"}'))     # => {"foo" => "bar", "baz" => "qux"}
+#   Hana::Pointer.eval(Hana::Pointer.new("/foo/0"), doc)
+#
+# Documents are plain JSON values (Hash with String keys, Array, String, numbers, true/false, nil), as
+# JSON.parse returns them; a patch changes them in place, as Ruby's does.
+# Ruby's Pointer#eval(object) and Pointer.eval(list, object) are one operation here, Pointer.eval(x,
+# object), taking a Pointer or a parsed list. Exception classes keep Ruby's names, but rescuing
+# Hana::Patch::Exception does not catch its subclasses: Sake's exceptions have no hierarchy.
+
+module Hana
+  def version = "1.3.7"
+
+  class Pointer
+    attr_reader path
+    include Enum
+
+    class Exception < StandardError
+    end
+
+    class FormatError < StandardError
+    end
+
+    def initialize(ptr)
+      @path => String
+      @path = Pointer.parse(@path)
+    end
+
+    def each(ptr)
+      Array.each(@path) { |part| yield(part) }
+    end
+
+    def esc = once { Hash["^/" => "/", "^^" => "^", "~0" => "~", "~1" => "/"] }
+
+    # Ruby's Pointer#eval(object) when x is a Pointer, Pointer.eval(list, object) when x is a list.
+    def eval(x, object)
+      list = case x
+             in Pointer then Pointer.path(x)
+             in Array then x
+             end
+      o = object
+      Array.each(list) do |part|
+        return nil unless o
+        o = case o
+            in Array
+              raise Patch::IndexError unless part =~ /\A(?:\d|[1-9]\d+)\Z/
+              o[String.to_i(part)]
+            in Hash then o[part]
+            in String then String.slice(o, part) # not o[part]: notes/hana_bug_string_index_string.sake
+            else raise TypeError, "no implicit conversion of String into Integer"
+            end
+      end
+      o
+    end
+
+    def parse(path)
+      return Array[""] if path == "/"
+      return Array[] if path == ""
+
+      raise FormatError, "JSON Pointer should start with a slash" unless String.start_with?(path, "/")
+
+      parts = String.split(String.sub(path, /^\//, ""), /(?<!\^)\//).Array.map do |part|
+        String.gsub(part, /\^[\/^]|~[01]/) { |m| esc[m] || m }
+      end
+
+      Array.push(parts, "") if path[-1] == "/"
+      parts
+    end
+  end
+
+  class Patch
+    attr_reader is
+
+    class Exception < StandardError
+    end
+
+    # Ruby's FailedTestException.new(path, value): the message is "expected #{value} at #{path}".
+    class FailedTestException < StandardError
+      attr_accessor path, value
+    end
+
+    class OutOfBoundsException < StandardError
+    end
+
+    class ObjectOperationOnArrayException < StandardError
+    end
+
+    class InvalidObjectOperationException < StandardError
+    end
+
+    class IndexError < StandardError
+    end
+
+    class MissingTargetException < StandardError
+    end
+
+    class InvalidPath < StandardError
+    end
+
+    def failed_test(path, value) = FailedTestException.new("expected #{value} at #{path}", path, value)
+
+    # Ruby's send(VALID.fetch(op), ins, doc): a case on the operation's name.
+    def apply(patch, doc)
+      d = doc
+      list = @is
+      list => Array
+      Array.each(list) do |ins|
+        ins => Hash
+        op = ins["op"]
+        op => String
+        d = case String.strip(op)
+            in "add" then add(ins, d)
+            in "move" then move(ins, d)
+            in "test" then test(ins, d)
+            in "replace" then replace(ins, d)
+            in "remove" then remove(ins, d)
+            in "copy" then copy(ins, d)
+            else raise Exception, "bad method `#{String.strip(op)}`"
+            end
+      end
+      d
+    end
+
+    def add(ins, doc)
+      path = get_path(ins)
+      list = Pointer.parse(path)
+      key = Array.pop(list)
+      dest = Pointer.eval(list, doc)
+      obj = Hash.fetch(ins, "value")
+
+      raise MissingTargetException, "target location '#{ins["path"]}' does not exist" unless dest
+
+      if key
+        add_op(dest, key, obj)
+      elsif Kernel.equal?(doc, dest)
+        doc = obj
+      else
+        # Ruby's dest.replace(obj): the same container type only
+        case dest
+        in Hash
+          obj => Hash
+          Hash.replace(dest, obj)
+        in Array
+          obj => Array
+          Array.replace(dest, obj)
+        in String
+          obj => String
+          String.replace(dest, obj)
+        else
+          # Ruby: NoMethodError (replace on a number, true or false)
+          raise TypeError, "undefined method 'replace' for #{Kernel.inspect(dest)}"
+        end
+      end
+      doc
+    end
+
+    def move(ins, doc)
+      path = get_path(ins)
+      from = Pointer.parse(from_path(ins))
+      to = Pointer.parse(path)
+      from_key = Array.pop(from)
+      key = Array.pop(to)
+      src = Pointer.eval(from, doc)
+      dest = Pointer.eval(to, doc)
+
+      raise MissingTargetException, "target location '#{ins["path"]}' does not exist" unless dest
+
+      obj = rm_op(src, from_key)
+      add_op(dest, key, obj)
+      doc
+    end
+
+    def copy(ins, doc)
+      path = get_path(ins)
+      from = Pointer.parse(from_path(ins))
+      to = Pointer.parse(path)
+      from_key = Array.pop(from)
+      key = Array.pop(to)
+      src = Pointer.eval(from, doc)
+      dest = Pointer.eval(to, doc)
+
+      obj = case src
+            in Array
+              unless from_key && from_key =~ /\A\d+\Z/
+                raise ObjectOperationOnArrayException, "cannot apply non-numeric key '#{key}' to array"
+              end
+              Array.fetch(src, String.to_i(from_key))
+            in Hash
+              begin
+                Hash.fetch(src, from_key)
+              rescue KeyError
+                raise MissingTargetException, "'from' location '#{from_path(ins)}' does not exist"
+              end
+            else
+              # Ruby: NoMethodError on fetch, rescued into the same error
+              raise MissingTargetException, "'from' location '#{from_path(ins)}' does not exist"
+            end
+
+      raise MissingTargetException, "target location '#{ins["path"]}' does not exist" unless dest
+
+      add_op(dest, key, obj)
+      doc
+    end
+
+    def test(ins, doc)
+      path = get_path(ins)
+      expected = Pointer.eval(Pointer.new(path), doc)
+
+      raise failed_test(ins["path"], ins["value"]) unless expected == Hash.fetch(ins, "value")
+      doc
+    end
+
+    def replace(ins, doc)
+      path = get_path(ins)
+      list = Pointer.parse(path)
+      key = Array.pop(list)
+      obj = Pointer.eval(list, doc)
+
+      return Hash.fetch(ins, "value") unless key
+
+      rm_op(obj, key)
+      add_op(obj, key, Hash.fetch(ins, "value"))
+      doc
+    end
+
+    def remove(ins, doc)
+      path = get_path(ins)
+      list = Pointer.parse(path)
+      key = Array.pop(list)
+      obj = Pointer.eval(list, doc)
+      rm_op(obj, key)
+      doc
+    end
+
+    def from_path(ins)
+      f = Hash.fetch(ins, "from")
+      f => String
+      f
+    end
+
+    def get_path(ins)
+      raise InvalidPath, "missing 'path' parameter" unless Hash.key?(ins, "path")
+      path = ins["path"]
+      raise InvalidPath, "null is not valid value for 'path'" unless path
+      path => String
+      path
+    end
+
+    def check_index(obj, key)
+      return -1 if key == "-"
+
+      raise ObjectOperationOnArrayException, "cannot apply non-numeric key '#{key}' to array" unless key =~ /\A-?\d+\Z/
+      idx = String.to_i(key)
+      raise OutOfBoundsException, "key '#{key}' is out of bounds for array" if idx > Array.size(obj) || idx < 0
+      idx
+    end
+
+    def add_op(dest, key, obj)
+      case dest
+      in Array then Array.insert(dest, check_index(dest, key || ""), obj)
+      in Hash then dest[key] = obj
+      else raise InvalidObjectOperationException, "cannot add key '#{key}' to non-object"
+      end
+    end
+
+    def rm_op(obj, key)
+      case obj
+      in Array
+        raise ObjectOperationOnArrayException, "cannot apply non-numeric key '#{key}' to array" unless key && key =~ /\A\d+\Z/
+        k = String.to_i(key)
+        raise OutOfBoundsException, "key '#{k}' is out of bounds for array" if k >= Array.size(obj)
+        Array.delete_at(obj, k)
+      in Hash
+        raise MissingTargetException, "key '#{key}' not found" unless Hash.key?(obj, key)
+        Hash.delete(obj, key)
+      in nil
+        # Ruby: obj&.key? is nil
+        raise MissingTargetException, "key '#{key}' not found"
+      else
+        # Ruby: NoMethodError on key?, rescued
+        raise InvalidObjectOperationException, "cannot remove key '#{key}' from non-object"
+      end
+    end
+  end
+end

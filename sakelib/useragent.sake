@@ -1,0 +1,1122 @@
+# useragent: HTTP User-Agent parsing after the useragent gem 0.16.11 (UserAgent.parse).
+#
+# UserAgent.parse(s) splits the string into products (UserAgent: product, version, comment) and returns
+# one of the browser classes of UserAgent::Browsers (Chrome, Gecko, Webkit, ...), as Ruby does.
+# Ruby's browser classes are subclasses of Array (`Browsers::Base < Array`); here each is a class with the
+# products in a field `agents`, and Browsers::Base is a mixin that they include, so
+# `UserAgent::Browsers::Base.browser(ua)` runs the browser's own `browser` (Ruby: `ua.browser`).
+# Ruby's plain Browsers::Base (no browser recognized) is Browsers::Generic.
+# Ruby's method_missing (`ua.chrome`, `ua.respond_to?("Iron")`) is Base.detect_product(ua, "chrome").
+
+class UserAgent
+  # Ruby's UserAgent::Comparable: operators are false when <=> gives nil (Ruby: false). Renamed: a module
+  # named Comparable here hides the built-in one from `include ::Comparable` (notes/useragent_bug_*).
+  module PartialComparable
+    def <(a, b)
+      c = a <=> b
+      c ? c == -1 : false
+    end
+
+    def <=(a, b)
+      c = a <=> b
+      c ? c == -1 || c == 0 : false
+    end
+
+    def ==(a, b)
+      return false if Kernel.equal?(b, false) # a truthiness test calls == with false (notes/useragent_bug_*)
+      c = a <=> b
+      c ? c == 0 : false
+    end
+
+    def >(a, b)
+      c = a <=> b
+      c ? c == 1 : false
+    end
+
+    def >=(a, b)
+      c = a <=> b
+      c ? c == 1 || c == 0 : false
+    end
+  end
+
+  # Ruby: UserAgent::Version.new(str = nil); Version.new(version) of Ruby is UserAgent.version_of(v).
+  class Version
+    attr_reader str
+    private attr_reader blank, sequences, comparable
+    include ::Comparable
+
+    def initialize(v)
+      @str = "" if @str == nil
+      s = @str
+      if String.match?(s, /^\s*$/)
+        @blank = true
+        @sequences = Array[s]
+        Array.clear(@sequences)
+        @comparable = false
+      elsif String.match?(s, /^\d+$/) || String.match?(s, /^\d+\./)
+        @blank = false
+        @sequences = Array.map(String.scan(s, /\d+|[A-Za-z][0-9A-Za-z-]*$/)) { |x| String.match?(x, /^\d+$/) ? String.to_i(x) : x }
+        @comparable = true
+      else
+        @blank = false
+        @sequences = Array[s]
+        @comparable = false
+      end
+    end
+
+    # Ruby's Version#nil?: the version string is blank.
+    def nil?(v) = @blank
+    def to_a(v) = Array.dup(@sequences)
+    def to_str(v) = @str
+    def to_s(v) = @str
+    def inspect(v) = "#<UserAgent::Version #{@str}>"
+    def eql?(v, other) = (other in Version) && @str == Version.str(other)
+
+    def ==(v, other)
+      return false if Kernel.equal?(other, false) # a truthiness test calls == with false (notes/useragent_bug_*)
+      case other
+      in Version then eql?(v, other)
+      in String then eql?(v, Version.new(other))
+      in nil then nil?(v)
+      end
+    end
+
+    def <=>(v, other)
+      case other
+      in Version
+        if @comparable
+          mine = @sequences
+          theirs = Version.to_a(other)
+          6.Integer.times do |i|
+            a = mine[i] || 0
+            b = theirs[i] || 0
+            r = case a
+                in String
+                  case b
+                  in Integer then -1
+                  in String then a <=> b
+                  end
+                in Integer
+                  case b
+                  in String then 1
+                  in Integer then a <=> b
+                  end
+                end
+            return r if r != 0
+          end
+          0
+        elsif @str == Version.str(other)
+          0
+        else
+          -1
+        end
+      in String | nil
+        v <=> Version.new(other)
+      end
+    end
+  end
+
+  attr_reader product
+  private attr_reader version_str, comment_str
+  attr_reader version, comment
+  include Comparable
+  include PartialComparable
+
+  def default_user_agent = "Mozilla/4.0 (compatible)"
+  def matcher = /^['"]*([^\/\s]+)\/?([^\s,]*)(\s\(([^\)]*)\)|,gzip\(gfe\))?/
+
+  # Ruby: UserAgent.new(product, version = nil, comment = nil) with Strings; the comment is split at "; ".
+  def initialize(ua)
+    raise ArgumentError, "expected a value for product" unless @product
+    vs = @version_str
+    @version = vs && !String.empty?(vs) ? Version.new(vs) : Version.new
+    cs = @comment_str
+    @comment = cs ? String.split(cs, "; ") : nil
+  end
+
+  def parse(string)
+    s = string || ""
+    s = default_user_agent if String.strip(s) == ""
+    agents = UserAgent[]
+    while (m = String.match(s, matcher))
+      Array.push(agents, UserAgent.new(m[1], m[2], m[4]))
+      s = String.strip(s[String.length(m[0] || "")..] || "")
+    end
+    Browsers.extend(agents)
+  end
+
+  # Ruby's Version.new(x) for a Version, a String or nil.
+  def version_of(x)
+    case x
+    in Version then x
+    in String | nil then Version.new(x)
+    end
+  end
+
+  # Ruby's `s =~ re` where s may be nil.
+  def m?(s, re) = s != nil && String.match?(s, re)
+
+  def detect_comment(ua)
+    c = @comment
+    c ? Array.find(c) { |s| yield(s) } : nil
+  end
+
+  # Different products: nil (Ruby: false), so every operator is false.
+  def <=>(a, b) = @product == UserAgent.product(b) ? @version <=> UserAgent.version(b) : nil
+
+  def eql?(a, b) = @product == UserAgent.product(b) && @version == UserAgent.version(b) && @comment == UserAgent.comment(b)
+
+  def to_s(ua)
+    c = @comment
+    if !Version.nil?(@version) && c
+      "#{@product}/#{@version} (#{Array.join(c, "; ")})"
+    elsif !Version.nil?(@version)
+      "#{@product}/#{@version}"
+    elsif c
+      "#{@product} (#{Array.join(c, "; ")})"
+    else
+      @product
+    end
+  end
+
+  def to_str(ua) = to_s(ua)
+
+  module OperatingSystems
+    module_function
+
+    def ios_version_regex = /CPU (?:iPhone |iPod )?OS ([\d_]+) like Mac OS X/
+
+    def windows
+      once do
+        Hash["Windows NT 10.0" => "Windows 10", "Windows NT 6.3" => "Windows 8.1", "Windows NT 6.2" => "Windows 8",
+             "Windows NT 6.1" => "Windows 7", "Windows NT 6.0" => "Windows Vista",
+             "Windows NT 5.2" => "Windows XP x64 Edition", "Windows NT 5.1" => "Windows XP",
+             "Windows NT 5.01" => "Windows 2000, Service Pack 1 (SP1)", "Windows NT 5.0" => "Windows 2000",
+             "Windows NT 4.0" => "Windows NT 4.0", "Windows 98" => "Windows 98", "Windows 95" => "Windows 95",
+             "Windows CE" => "Windows CE"]
+      end
+    end
+
+    def normalize_os(os)
+      return nil unless os
+      windows[os] || normalize_mac_os_x(os) || normalize_ios(os) || normalize_chrome_os(os) || os
+    end
+
+    def normalize_chrome_os(os)
+      m = String.match(os, /CrOS\s([^\s]+)\s(\d+(\.\d+)*)/)
+      m ? "ChromeOS #{m[2]}" : nil
+    end
+
+    def normalize_ios(os)
+      m = String.match(os, ios_version_regex)
+      return nil unless m
+      v = m[1]
+      v ? "iOS #{String.tr(v, "_", ".")}" : "iOS"
+    end
+
+    def normalize_mac_os_x(os)
+      m = String.match(os, /(?:Intel|PPC) Mac OS X\s*([0-9_\.]+)?/)
+      return nil unless m
+      v = m[1]
+      v ? "OS X #{String.tr(v, "_", ".")}" : "OS X"
+    end
+  end
+
+  module Browsers
+    # Ruby's Browsers::Security
+    def security(k) = Hash["N" => :none, "U" => :strong, "I" => :weak][k]
+
+    # Ruby's Browsers.extend(array): the first class of ALL whose extend? accepts the products.
+    def extend(array)
+      return Edge.new(array) if Edge.extend?(array)
+      return InternetExplorer.new(array) if InternetExplorer.extend?(array)
+      return Opera.new(array) if Opera.extend?(array)
+      return WechatBrowser.new(array) if WechatBrowser.extend?(array)
+      return Vivaldi.new(array) if Vivaldi.extend?(array)
+      return Chrome.new(array) if Chrome.extend?(array)
+      return ITunes.new(array) if ITunes.extend?(array)
+      return PlayStation.new(array) if PlayStation.extend?(array)
+      return PodcastAddict.new(array) if PodcastAddict.extend?(array)
+      return Webkit.new(array) if Webkit.extend?(array)
+      return Gecko.new(array) if Gecko.extend?(array)
+      return WindowsMediaPlayer.new(array) if WindowsMediaPlayer.extend?(array)
+      return AppleCoreMedia.new(array) if AppleCoreMedia.extend?(array)
+      return Libavformat.new(array) if Libavformat.extend?(array)
+      Generic.new(array)
+    end
+    module_function :security, :extend
+
+    # Ruby's Browsers::Base < Array. Includers have the field `agents` (an Array of UserAgent).
+    module Base
+      include Comparable
+      include PartialComparable
+
+      def <=>(b, other)
+        return nil unless Base.browser(b) == Base.browser(other)
+        v = Base.version(b)
+        v ? v <=> UserAgent.version_of(Base.version(other)) : nil
+      end
+
+      def eql?(b, other) = b == other
+      def to_a(b) = @agents
+      def first(b) = Array.first(@agents)
+      def last(b) = Array.last(@agents)
+      def length(b) = Array.length(@agents)
+      def to_s(b) = Array.join(Array.map(@agents) { UserAgent.to_s(it) }, " ")
+      def to_str(b) = to_s(b)
+
+      def application(b) = Array.first(@agents)
+
+      # Ruby's Base#browser / #version, also what the browsers' `super` calls
+      def base_browser(b)
+        a = application(b)
+        a ? UserAgent.product(a) : nil
+      end
+
+      def base_version(b)
+        a = application(b)
+        a ? UserAgent.version(a) : nil
+      end
+
+      def browser(b) = base_browser(b)
+      def version(b) = base_version(b)
+      def platform(b) = nil
+      def os(b) = nil
+
+      # The application's comment, or nil
+      def app_comment(b)
+        a = application(b)
+        a ? UserAgent.comment(a) : nil
+      end
+
+      def mobile?(b)
+        a = application(b)
+        if detect_product(b, "Mobile") || detect_comment(b, "Mobile")
+          true
+        elsif UserAgent.m?(os(b), /Android/)
+          true
+        elsif a && UserAgent.detect_comment(a) { |c| String.match?(c, /^IEMobile/) }
+          true
+        else
+          false
+        end
+      end
+
+      def bot?(b)
+        a = application(b)
+        if !a
+          true
+        elsif detect_comment_match(b, /bot/i)
+          true
+        elsif detect_product(b, "Chrome-Lighthouse")
+          true
+        else
+          String.include?(UserAgent.product(a), "bot")
+        end
+      end
+
+      def to_h(b)
+        a = application(b)
+        return nil unless a
+        hash = Hash[:browser => browser(b), :platform => platform(b), :os => os(b), :mobile => mobile?(b), :bot => bot?(b)]
+        v = version(b)
+        hash[:version] = v ? Version.to_a(v) : nil
+        c = UserAgent.comment(a)
+        hash[:comment] = c ? Array.dup(c) : nil
+        hash
+      end
+
+      # Ruby's method_missing / respond_to?: the product of that name, case-insensitively
+      def detect_product(b, product)
+        Array.find(@agents) { |ua| String.downcase(UserAgent.product(ua)) == String.downcase(product) }
+      end
+
+      def detect_comment(b, comment)
+        Array.find(@agents) { |ua| UserAgent.detect_comment(ua) { |c| c == comment } }
+      end
+
+      def detect_comment_match(b, regexp)
+        Array.each(@agents) do |ua|
+          c = UserAgent.comment(ua)
+          next unless c
+          Array.each(c) do |s|
+            m = String.match(s, regexp)
+            return m if m
+          end
+        end
+        nil
+      end
+
+      # The first product that has a comment (Chrome, Webkit, Vivaldi, AppleCoreMedia)
+      def commented_application(b)
+        Array.find(@agents) do |ua|
+          c = UserAgent.comment(ua)
+          c != nil && !Array.empty?(c)
+        end
+      end
+
+      # The os of Chrome, Vivaldi, WechatBrowser, AppleCoreMedia from the application's comment
+      def comment_os(c)
+        if UserAgent.m?(c[0], /Windows NT/)
+          OperatingSystems.normalize_os(c[0])
+        elsif c[2] == nil
+          OperatingSystems.normalize_os(c[1])
+        elsif UserAgent.m?(c[1], /Android/)
+          OperatingSystems.normalize_os(c[1])
+        else
+          OperatingSystems.normalize_os(c[2])
+        end
+      end
+    end
+
+    # Ruby's plain Browsers::Base: nothing recognized.
+    class Generic
+      attr_reader agents
+      include Base
+    end
+
+    class Chrome
+      attr_reader agents
+      include Base
+
+      def extend?(agent) = Array.any?(agent) { |ua| Array.include?(String["Chrome", "CriOS"], UserAgent.product(ua)) }
+
+      def browser(b) = detect_product(b, "Iron") ? "Iron" : "Chrome"
+
+      def build(b)
+        w = webkit(b)
+        w ? UserAgent.version(w) : nil
+      end
+
+      def version(b)
+        pr = detect_product(b, "CriOs") || detect_product(b, "chrome")
+        pr => UserAgent
+        UserAgent.version(pr)
+      end
+
+      def application(b) = commented_application(b)
+
+      def platform(b)
+        c = app_comment(b)
+        return nil unless c
+        if UserAgent.m?(c[0], /Windows/)
+          "Windows"
+        elsif Array.any?(c) { |s| String.match?(s, /CrOS/) }
+          "ChromeOS"
+        elsif Array.any?(c) { |s| String.match?(s, /Android/) }
+          "Android"
+        else
+          c[0]
+        end
+      end
+
+      def webkit(b) = Array.find(@agents) { |ua| UserAgent.product(ua) == "AppleWebKit" }
+
+      def os(b)
+        c = app_comment(b)
+        c ? comment_os(c) : nil
+      end
+
+      def localization(b)
+        c = app_comment(b)
+        c ? c[3] : nil
+      end
+    end
+
+    class Edge
+      attr_reader agents
+      include Base
+
+      def os_regexp = /Windows NT [\d\.]+|Windows Phone (OS )?[\d\.]+/
+      def extend?(agent)
+        l = Array.last(agent)
+        l ? UserAgent.product(l) == "Edge" : false
+      end
+
+      def browser(b) = "Edge"
+
+      def version(b)
+        l = last(b)
+        l ? UserAgent.version(l) : nil
+      end
+
+      def platform(b) = "Windows"
+
+      def os(b)
+        m = detect_comment_match(b, os_regexp)
+        OperatingSystems.normalize_os(m ? MatchData.to_s(m) : "")
+      end
+    end
+
+    class Gecko
+      attr_reader agents
+      include Base
+
+      def extend?(agent)
+        a = Array.first(agent)
+        a ? UserAgent.product(a) == "Mozilla" : false
+      end
+
+      def gecko_browsers = String["PaleMoon", "Firefox", "Camino", "Iceweasel", "Seamonkey"]
+
+      def browser(b) = Array.find(gecko_browsers) { |name| detect_product(b, name) } || base_browser(b)
+
+      def version(b)
+        pr = detect_product(b, browser(b) || "")
+        v = pr ? UserAgent.version(pr) : nil
+        v == nil || Version.nil?(v) ? base_version(b) : v
+      end
+
+      def platform(b)
+        c = app_comment(b)
+        return nil unless c
+        if c[0] == "compatible" || c[0] == "Mobile"
+          nil
+        elsif UserAgent.m?(c[0], /^Windows /)
+          "Windows"
+        else
+          c[0]
+        end
+      end
+
+      def security(b)
+        c = app_comment(b)
+        (c ? Browsers.security(c[1]) : nil) || :strong
+      end
+
+      def os(b)
+        c = app_comment(b)
+        return nil unless c
+        i = if c[1] == "U"
+              2
+            elsif UserAgent.m?(c[0], /^Windows /) || UserAgent.m?(c[0], /^Android/)
+              0
+            elsif c[0] == "Mobile"
+              nil
+            else
+              1
+            end
+        return nil if i == nil
+        OperatingSystems.normalize_os(c[i])
+      end
+
+      def localization(b)
+        c = app_comment(b)
+        c ? c[3] : nil
+      end
+    end
+
+    class InternetExplorer
+      attr_reader agents
+      include Base
+
+      def trident_engines = Hash["Trident/8.0" => "11.0", "Trident/7.0" => "11.0", "Trident/6.0" => "10.0",
+                                 "Trident/5.0" => "9.0", "Trident/4.0" => "8.0"]
+
+      def extend?(agent)
+        a = Array.first(agent)
+        return false unless a
+        c = UserAgent.comment(a)
+        return false unless c
+        UserAgent.m?(c[1], /MSIE/) || String.match?(Array.join(c, "; "), /Trident.+rv:/)
+      end
+
+      def browser(b) = "Internet Explorer"
+
+      def joined_comment(b) = Array.join(app_comment(b) || String[], "; ")
+
+      def version(b)
+        m = String.match(joined_comment(b), /(MSIE\s|rv:)([\d\.]+)/)
+        Version.new(m ? m[2] : nil)
+      end
+
+      def trident_version(b)
+        trident = Array.find(app_comment(b) || String[]) { |c| String.include?(c, "Trident/") }
+        trident ? Version.new(Hash.fetch(trident_engines, trident, trident)) : nil
+      end
+
+      # Ruby sorts [trident_version, version], which fails without a Trident version
+      def real_version(b)
+        t = trident_version(b)
+        v = version(b)
+        t && t > v ? t : v
+      end
+
+      def compatibility_view?(b) = trident_version(b) ? version(b) < real_version(b) : false
+
+      # true (a bare "chromeframe" comment), the chromeframe product, or nil
+      def chromeframe(b)
+        c = app_comment(b) || String[]
+        return true if Array.include?(c, "chromeframe")
+        cf = detect_product(b, "chromeframe")
+        return cf if cf
+        cf_comment = Array.find(c) { |s| String.include?(s, "chromeframe/") }
+        return nil unless cf_comment
+        name, ver = String.split(cf_comment, "/", 2)
+        UserAgent.new(name, ver)
+      end
+
+      def platform(b) = "Windows"
+
+      def os(b)
+        m = String.match(joined_comment(b), /Windows NT [\d\.]+|Windows Phone (OS )?[\d\.]+/)
+        OperatingSystems.normalize_os(m ? MatchData.to_s(m) : "")
+      end
+    end
+
+    class Opera
+      attr_reader agents
+      include Base
+
+      def extend?(agent)
+        f = Array.first(agent)
+        l = Array.last(agent)
+        (f ? UserAgent.product(f) == "Opera" : false) || (l ? UserAgent.product(l) == "OPR" : false)
+      end
+
+      def browser(b) = "Opera"
+
+      def version(b)
+        if mini?(b)
+          c = Array.find(app_comment(b) || String[]) { |s| String.match?(s, /Opera Mini/) } || ""
+          m = String.match(c, /Opera Mini\/([\d\.]+)/)
+          Version.new(m ? m[1] : nil)
+        elsif (pr = detect_product(b, "Version"))
+          UserAgent.version(pr)
+        elsif (pr = detect_product(b, "OPR"))
+          UserAgent.version(pr)
+        else
+          base_version(b)
+        end
+      end
+
+      def platform(b)
+        c = app_comment(b)
+        return nil unless c
+        UserAgent.m?(c[0], /Windows/) ? "Windows" : c[0]
+      end
+
+      def security(b)
+        c = app_comment(b)
+        if c == nil
+          :strong
+        elsif macintosh?(b)
+          Browsers.security(c[2])
+        elsif mini?(b)
+          Browsers.security(c[-2])
+        else
+          Browsers.security(c[1])
+        end
+      end
+
+      def mobile?(b) = mini?(b)
+
+      def os(b)
+        c = app_comment(b)
+        return nil unless c
+        UserAgent.m?(c[0], /Windows/) ? OperatingSystems.normalize_os(c[0]) : c[1]
+      end
+
+      def localization(b)
+        c = app_comment(b)
+        return nil unless c
+        macintosh?(b) ? c[3] : c[2]
+      end
+
+      # Ruby: /Opera Mini/ === application, which matches the product's to_str
+      def mini?(b)
+        a = application(b)
+        a ? String.match?(UserAgent.to_s(a), /Opera Mini/) : false
+      end
+
+      def macintosh?(b) = platform(b) == "Macintosh"
+    end
+
+    class Webkit
+      attr_reader agents
+      include Base
+
+      def webkit_product_regexp = /\AAppleWebKit\z/i
+      def webkit_version_regexp = /\A(?<webkit>AppleWebKit)\/(?<version>[\d\.]+)/i
+
+      def extend?(agent)
+        Array.any?(agent) do |ua|
+          String.match?(UserAgent.product(ua), webkit_product_regexp) ||
+            UserAgent.detect_comment(ua) { |c| String.match?(c, webkit_version_regexp) } != nil
+        end
+      end
+
+      def browser(b)
+        if UserAgent.m?(os(b), /Android/)
+          "Android"
+        elsif platform(b) == "BlackBerry"
+          "BlackBerry"
+        else
+          "Safari"
+        end
+      end
+
+      def build(b) = webkit_build(b)
+
+      def webkit_build(b)
+        w = webkit(b)
+        w ? UserAgent.version(w) : nil
+      end
+
+      def build_versions
+        once do
+          Hash["85.7" => "1.0", "85.8.5" => "1.0.3", "85.8.2" => "1.0.3", "124" => "1.2", "125.2" => "1.2.2",
+               "125.4" => "1.2.3", "125.5.5" => "1.2.4", "125.5.6" => "1.2.4", "125.5.7" => "1.2.4",
+               "312.1.1" => "1.3", "312.1" => "1.3", "312.5" => "1.3.1", "312.5.1" => "1.3.1",
+               "312.5.2" => "1.3.1", "312.8" => "1.3.2", "312.8.1" => "1.3.2", "412" => "2.0", "412.6" => "2.0",
+               "412.6.2" => "2.0", "412.7" => "2.0.1", "416.11" => "2.0.2", "416.12" => "2.0.2",
+               "417.9" => "2.0.3", "418" => "2.0.3", "418.8" => "2.0.4", "418.9" => "2.0.4",
+               "418.9.1" => "2.0.4", "419" => "2.0.4", "425.13" => "2.2", "534.52.7" => "5.1.2"]
+        end
+      end
+
+      def version(b)
+        pr = detect_product(b, "Version")
+        return UserAgent.version(pr) if pr
+        m = String.match(os(b) || "", /iOS ([\d\.]+)/)
+        if m && browser(b) == "Safari"
+          Version.new(String.tr(m[1] || "", "_", "."))
+        else
+          bv = build(b)
+          Version.new(build_versions[bv ? Version.to_s(bv) : ""])
+        end
+      end
+
+      def application(b) = commented_application(b)
+
+      def platform(b)
+        c = app_comment(b)
+        return nil unless c
+        if UserAgent.m?(c[0], /Windows/)
+          "Windows"
+        elsif c[0] == "BB10"
+          "BlackBerry"
+        elsif Array.any?(c) { |s| String.match?(s, /Android/) }
+          "Android"
+        else
+          c[0]
+        end
+      end
+
+      def webkit(b)
+        pm = Array.find(@agents) { |ua| String.match?(UserAgent.product(ua), webkit_product_regexp) }
+        return pm if pm
+        cm = detect_comment_match(b, webkit_version_regexp)
+        cm ? UserAgent.new(cm["webkit"], cm["version"]) : nil
+      end
+
+      def security(b)
+        c = app_comment(b)
+        c ? Browsers.security(c[1]) : nil
+      end
+
+      def os(b) = webkit_os(b)
+
+      def webkit_os(b)
+        c = app_comment(b)
+        return nil unless c
+        if UserAgent.m?(c[0], /Windows NT/)
+          OperatingSystems.normalize_os(c[0])
+        elsif c[2] == nil
+          OperatingSystems.normalize_os(c[1])
+        elsif UserAgent.m?(c[1], /Android/)
+          OperatingSystems.normalize_os(c[1])
+        elsif (os_string = Array.find(c) { |s| String.match?(s, OperatingSystems.ios_version_regex) })
+          OperatingSystems.normalize_os(os_string)
+        else
+          OperatingSystems.normalize_os(c[2])
+        end
+      end
+
+      def localization(b)
+        c = app_comment(b)
+        c ? c[3] : nil
+      end
+    end
+
+    class ITunes < Webkit
+      def extend?(agent) = Array.any?(agent) { |ua| UserAgent.product(ua) == "iTunes" }
+
+      def browser(b) = "iTunes"
+
+      def version(b)
+        pr = detect_product(b, "iTunes")
+        pr ? UserAgent.version(pr) : nil
+      end
+
+      def security(b) = nil
+      def build(b) = webkit(b) ? webkit_build(b) : nil
+
+      def os(b)
+        full = full_os(b)
+        c = app_comment(b)
+        if c && UserAgent.m?(c[0], /Windows/)
+          if UserAgent.m?(full, /Windows 8\.1/)
+            "Windows 8.1"
+          elsif UserAgent.m?(full, /Windows 8/)
+            "Windows 8"
+          elsif UserAgent.m?(full, /Windows 7/)
+            "Windows 7"
+          elsif UserAgent.m?(full, /Windows Vista/)
+            "Windows Vista"
+          elsif UserAgent.m?(full, /Windows XP/)
+            "Windows XP"
+          else
+            "Windows"
+          end
+        else
+          webkit_os(b)
+        end
+      end
+
+      def full_os(b)
+        c = app_comment(b)
+        return nil unless c && Array.length(c) > 1
+        full = c[1] || ""
+        # The regex chops the ) off
+        full = "#{full})" if String.match?(full, /\(Build [0-9][0-9][0-9][0-9]\z/)
+        full
+      end
+    end
+
+    class Vivaldi
+      attr_reader agents
+      include Base
+
+      def extend?(agent) = Array.any?(agent) { |ua| UserAgent.product(ua) == "Vivaldi" }
+      def browser(b) = "Vivaldi"
+
+      def build(b)
+        w = webkit(b)
+        w ? UserAgent.version(w) : nil
+      end
+
+      def version(b)
+        l = last(b)
+        l ? UserAgent.version(l) : nil
+      end
+
+      def application(b) = commented_application(b)
+
+      def platform(b)
+        c = app_comment(b)
+        return nil unless c
+        if UserAgent.m?(c[0], /Windows/)
+          "Windows"
+        elsif Array.any?(c) { |s| String.match?(s, /CrOS/) }
+          "ChromeOS"
+        elsif Array.any?(c) { |s| String.match?(s, /Android/) }
+          "Android"
+        else
+          c[0]
+        end
+      end
+
+      def webkit(b) = detect_product(b, "AppleWebKit")
+
+      def os(b)
+        c = app_comment(b)
+        c ? comment_os(c) : nil
+      end
+
+      def localization(b)
+        c = app_comment(b)
+        c ? c[3] : nil
+      end
+    end
+
+    class WechatBrowser
+      attr_reader agents
+      include Base
+
+      def extend?(agent) = Array.any?(agent) { |ua| String.match?(UserAgent.product(ua), /MicroMessenger/i) }
+      def browser(b) = "Wechat Browser"
+
+      def version(b)
+        mm = detect_product(b, "MicroMessenger")
+        mm => UserAgent
+        UserAgent.version(mm)
+      end
+
+      def platform(b)
+        c = app_comment(b)
+        return nil unless c
+        if UserAgent.m?(c[0], /iPhone/)
+          "iPhone"
+        elsif Array.any?(c) { |s| String.match?(s, /Android/) }
+          "Android"
+        else
+          c[0]
+        end
+      end
+
+      def os(b)
+        c = app_comment(b)
+        c ? comment_os(c) : nil
+      end
+    end
+
+    class AppleCoreMedia
+      attr_reader agents
+      include Base
+
+      def extend?(agent) = Array.any?(agent) { |ua| UserAgent.product(ua) == "AppleCoreMedia" }
+      def browser(b) = "AppleCoreMedia"
+      def application(b) = commented_application(b)
+
+      def platform(b)
+        c = app_comment(b)
+        return nil unless c
+        UserAgent.m?(c[0], /Windows/) ? "Windows" : c[0]
+      end
+
+      def security(b)
+        c = app_comment(b)
+        c ? Browsers.security(c[1]) : nil
+      end
+
+      def os(b)
+        c = app_comment(b)
+        c ? comment_os(c) : nil
+      end
+
+      def localization(b)
+        c = app_comment(b)
+        c ? c[3] : nil
+      end
+    end
+
+    class Libavformat
+      attr_reader agents
+      include Base
+
+      def extend?(agent)
+        f = Array.first(agent)
+        Array.any?(agent) do |ua|
+          UserAgent.product(ua) == "Lavf" ||
+            (UserAgent.product(ua) == "NSPlayer" && (f ? UserAgent.version(f) == "4.1.0.3856" : false))
+        end
+      end
+
+      def browser(b) = "libavformat"
+      def version(b) = detect_product(b, "NSPlayer") ? nil : base_version(b)
+      def os(b) = nil
+      def platform(b) = nil
+    end
+
+    class PlayStation
+      attr_reader agents
+      include Base
+
+      def extend?(agent)
+        a = Array.first(agent)
+        return false unless a
+        c = UserAgent.comment(a)
+        return false unless c && !Array.empty?(c)
+        f = c[0] || ""
+        String.include?(f, "PLAYSTATION 3") || String.include?(f, "PlayStation Vita") || String.include?(f, "PlayStation 4")
+      end
+
+      def first_comment(b) = (app_comment(b) || String[])[0] || ""
+
+      def browser(b)
+        l = last(b)
+        if String.include?(first_comment(b), "PLAYSTATION 3")
+          "PS3 Internet Browser"
+        elsif l && UserAgent.product(l) == "Silk"
+          "Silk"
+        elsif String.include?(first_comment(b), "PlayStation 4")
+          "PS4 Internet Browser"
+        else
+          nil
+        end
+      end
+
+      def mobile?(b) = platform(b) == "PlayStation Vita"
+      def os(b) = Array.join(app_comment(b) || String[], " ")
+
+      def platform(b)
+        o = os(b)
+        if String.include?(o, "PLAYSTATION 3")
+          "PlayStation 3"
+        elsif String.include?(o, "PlayStation 4")
+          "PlayStation 4"
+        elsif String.include?(o, "PlayStation Vita")
+          "PlayStation Vita"
+        else
+          nil
+        end
+      end
+
+      def version(b)
+        pf = platform(b)
+        l = last(b)
+        if browser(b) == "Silk" && l
+          UserAgent.version(l)
+        elsif pf == "PlayStation 3"
+          Version.new(Array.last(String.split(os(b), "PLAYSTATION 3 ")))
+        elsif pf == "PlayStation 4"
+          Version.new(Array.last(String.split(os(b), "PlayStation 4 ")))
+        elsif pf == "PlayStation Vita"
+          Version.new(Array.last(String.split(os(b), "PlayStation Vita ")))
+        else
+          nil
+        end
+      end
+    end
+
+    class PodcastAddict
+      attr_reader agents
+      include Base
+
+      def extend?(agent)
+        return false unless Array.length(agent) >= 3
+        a0 = agent[0]
+        a1 = agent[1]
+        a2 = agent[2]
+        return false unless a0 && a1 && a2
+        UserAgent.product(a0) == "Podcast" && UserAgent.product(a1) == "Addict" && UserAgent.product(a2) == "-"
+      end
+
+      def browser(b) = "Podcast Addict"
+
+      # The fourth product (the device's own user agent), or nil
+      def device_agent(b) = Array.length(@agents) >= 4 ? @agents[3] : nil
+
+      def device_comment(b)
+        d = device_agent(b)
+        d ? UserAgent.comment(d) || String[] : String[]
+      end
+
+      def device(b)
+        last = Array.last(device_comment(b)) || ""
+        return nil unless String.include?(last, " Build/")
+        Array.first(String.split(last, " Build/"))
+      end
+
+      def device_build(b)
+        last = Array.last(device_comment(b)) || ""
+        return nil unless String.include?(last, " Build/")
+        Array.last(String.split(last, " Build/"))
+      end
+
+      def localization(b)
+        c = device_comment(b)
+        return nil unless String.include?(Array.last(c) || "", "ALCATEL ")
+        return nil unless Array.length(c) >= 5
+        c[3]
+      end
+
+      def mobile?(b) = true
+
+      def dalvik_or_mozilla?(b)
+        d = device_agent(b)
+        d ? UserAgent.product(d) == "Dalvik" || UserAgent.product(d) == "Mozilla" : false
+      end
+
+      def os(b)
+        c = device_comment(b)
+        if dalvik_or_mozilla?(b) && Array.length(c) > 3
+          c[2]
+        elsif dalvik_or_mozilla?(b) && Array.length(c) == 3
+          "Android"
+        else
+          nil
+        end
+      end
+
+      # Ruby raises NoMethodError when os is nil; here nil
+      def platform(b) = UserAgent.m?(os(b), /Android/) ? "Android" : nil
+
+      def security(b)
+        return nil unless dalvik_or_mozilla?(b)
+        Browsers.security(device_comment(b)[1])
+      end
+
+      def version(b) = nil
+    end
+
+    class WindowsMediaPlayer
+      attr_reader agents
+      include Base
+
+      def extend?(agent)
+        f = Array.first(agent)
+        v = f ? UserAgent.version(f) : nil
+        Array.any?(agent) do |ua|
+          # 4.1.0.3856 is libavformat; 7.10.0.3059 and 7.0.0.1956 are VLC
+          Array.include?(String["NSPlayer", "Windows-Media-Player", "WMFSDK"], UserAgent.product(ua)) &&
+            v != "4.1.0.3856" && v != "7.10.0.3059" && v != "7.0.0.1956"
+        end
+      end
+
+      def wmfsdk_version(b)
+        pr = detect_product(b, "WMFSDK")
+        pr ? UserAgent.version(pr) : nil
+      end
+
+      def has_wmfsdk?(b, version)
+        w = wmfsdk_version(b)
+        w ? String.match?(Version.to_s(w), Regexp.new("\\A#{version}")) : false
+      end
+
+      def browser(b) = "Windows Media Player"
+      def platform(b) = "Windows"
+
+      def seq(b, i)
+        v = version(b)
+        v ? Version.to_a(v)[i] : nil
+      end
+
+      def classic?(b)
+        major = seq(b, 0)
+        major => Integer
+        major <= 4
+      end
+
+      def mobile?(b) = Array.include?(String["Windows Phone 8", "Windows Phone 8.1"], os(b))
+
+      def os(b)
+        major = seq(b, 0)
+        if classic?(b)
+          case seq(b, 3)
+          in 3564 | 3925 then "Windows 98"
+          in 3857 then "Windows 9x"
+          in 3936 then "Windows XP"
+          in 3938 then "Windows 2000"
+          else "Windows"
+          end
+        elsif major == 7
+          seq(b, 3) == 3055 ? "Windows 98" : "Windows"
+        elsif major == 8
+          "Windows XP"
+        elsif major == 9 || major == 10
+          case seq(b, 3)
+          in 2980 then "Windows 98/2000"
+          in 3268 | 3367 | 3270 then "Windows 2000"
+          in 3802 | 4503 then "Windows XP"
+          else "Windows"
+          end
+        elsif major == 11 || major == 12
+          case seq(b, 2)
+          in 9841 | 9858 | 9860 | 9879 then "Windows 10"
+          in 9651 then "Windows Phone 8.1"
+          in 9600 then "Windows 8.1"
+          in 9200 then "Windows 8"
+          in 7600 | 7601 then "Windows 7"
+          in 6000 | 6001 | 6002 then "Windows Vista"
+          in 5721 then "Windows XP"
+          else "Windows"
+          end
+        else
+          "Windows"
+        end
+      end
+    end
+  end
+end

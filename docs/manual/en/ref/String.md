@@ -262,7 +262,7 @@ p(String.!~("ab", /b/))      # => false
 
 `String.[](x, Any, [Integer])`
 
-The function form of `s[i]`, `s[i, n]` and `s[range]`. `s[i]` is the one-character String at position `i` (an Integer; a negative one counts from the end), or nil outside the String. `s[i, n]` is the substring of up to `n` characters starting at `i`: nil when `i` is past the end or `n` is negative, `""` when `i` equals the length. `s[range]` is the characters in the Range, nil when its start is past the end. The index must be an Integer or a Range: a String or a Float index is a `type` problem statically (Ruby's `s["b"]` and `s[/re/]` do not exist as operators; `String.slice(s, "b")` and `String.slice(s, /re/)` do), and a Range with a count is a `TypeError`. The result is `String | nil`; the nil is the nil of a miss (`index-nil`), reported only at `--strict` level 3.
+The function form of `s[i]`, `s[i, n]` and `s[range]`. `s[i]` is the one-character String at position `i` (an Integer; a negative one counts from the end), or nil outside the String. `s[i, n]` is the substring of up to `n` characters starting at `i`: nil when `i` is past the end or `n` is negative, `""` when `i` equals the length. `s[range]` is the characters in the Range, nil when its start is past the end. As in Ruby, a String or a Regexp is an index too: `s["b"]` is its first occurrence (a new String) or nil, `s[/re/]` the first match, and `s[/re/, 1]` that group (the same as `String.slice`; since 2026-10-11). Another index type such as a Float is a `type` problem statically, and a Range with a count is a `TypeError`. The result is `String | nil`; the nil is the nil of a miss (`index-nil`), reported only at `--strict` level 3.
 
 ```ruby
 s = "hello"
@@ -277,8 +277,16 @@ p(s[2..])                    # => "llo"
 p(String.[](s, 0))           # => "h"
 ```
 
+```ruby
+s = "hello world"
+p(s["wor"])                  # => "wor"
+p(s["xyz"])                  # => nil
+p(s[/o w/])                  # => "o w"
+p(s[/(\w+) (\w+)/, 2])        # => "world"
+```
+
 ```ruby error
-p("abc"["b"])                # !> the index must be Integer, but is String
+p("abc"[1.5])                # !> the index must be Integer, but is Float
 ```
 
 ## slice

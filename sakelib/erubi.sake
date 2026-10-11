@@ -1,0 +1,235 @@
+# erubi: Erubi::Engine after the erubi gem 1.13.1: an ERB template compiled to Ruby source.
+#
+# Erubi::Engine.new(template, properties).src is the same Ruby source Ruby's Erubi generates (Ruby then
+# `eval`s it). Sake has no eval, so the source can be printed or saved but not run; to render, Engine.render
+# replays what the compiler emitted (text, expressions, code) as a template for Sake's ERB (sakelib/erb.sake)
+# without trimming, and renders it with a Hash of values (ERB.result_with_hash). The code inside tags
+# must then be within the subset that Sake's ERB interprets (notes/erb.md): if / unless / each / names /
+# [] / a few methods. Properties are a Hash: Erubi::Engine.new(t, Hash[:escape => true]).
+
+require "erb"
+
+module Erubi
+  module_function
+
+  def version = "1.13.1"
+
+  # Ruby: Erubi.h(value), ERB::Escape.html_escape(value.to_s)
+  def h(value) = CGI.escapeHTML(Kernel.to_s(value))
+
+  class Engine
+    attr_reader input, properties
+    attr_reader src, filename, bufvar
+    private attr_reader escape, escapefunc, chain_appends, text_end, parts
+    private attr_accessor buffer_on_stack
+
+    def default_regexp = /<%(={1,2}|-|\#|%)?(.*?)([-=])?%>([ \t]*\r?\n)?/m
+
+    # Ruby's properties.fetch(k) narrowed to a String / a flag
+    def opt_s(props, k)
+      v = props[k]
+      (v in String) ? v : nil
+    end
+
+    def opt?(props, k) = props[k] != nil && props[k] != false
+
+    def initialize(e)
+      @input => String
+      @properties = Hash[] if @properties == nil
+      props = @properties
+      @parts = Array[[:text, ""]]
+      Array.clear(@parts)
+      @escape = Hash.key?(props, :escape) ? opt?(props, :escape) : opt?(props, :escape_html)
+      escape = @escape
+      trim = props[:trim] != false
+      @filename = opt_s(props, :filename)
+      bufvar = opt_s(props, :bufvar) || opt_s(props, :outvar) || "_buf"
+      @bufvar = bufvar
+      bufval = opt_s(props, :bufval) || "::String.new"
+      re = props[:regexp]
+      regexp = (re in Regexp) ? re : default_regexp
+      literal_prefix = opt_s(props, :literal_prefix) || "<%"
+      literal_postfix = opt_s(props, :literal_postfix) || "%>"
+      preamble = opt_s(props, :preamble) || "#{bufvar} = #{bufval};"
+      postamble = opt_s(props, :postamble) || "#{bufvar}.to_s\n"
+      @chain_appends = opt?(props, :chain_appends)
+      freeze_literals = Hash.key?(props, :freeze_template_literals) ? opt?(props, :freeze_template_literals) : true
+      @text_end = freeze_literals ? "'.freeze" : "'"
+      @buffer_on_stack = false
+      @src = opt_s(props, :src) || ""
+      @src += "# frozen_string_literal: true\n" if opt?(props, :freeze)
+      if opt?(props, :ensure)
+        @src += "begin; __original_outvar = #{bufvar}"
+        if String.match?(bufvar, /\A@[^@]/)
+          @src += "; "
+        else
+          @src += " if defined?(#{bufvar}); "
+        end
+      end
+      @escapefunc = opt_s(props, :escapefunc)
+      unless @escapefunc
+        if escape
+          @escapefunc = "__erubi.h"
+          @src += "__erubi = ::Erubi; "
+        else
+          @escapefunc = "::Erubi.h"
+        end
+      end
+      @src += preamble
+
+      input = @input
+      pos = 0
+      is_bol = true
+      while (match = Regexp.match(regexp, input, pos))
+        indicator = match[1]
+        code = match[2] || ""
+        tailch = match[3]
+        rspace = match[4]
+        len = MatchData.begin(match, 0) - pos
+        text = input[pos, len] || ""
+        pos = MatchData.end(match, 0)
+        # an empty match would not move on (Ruby's String#scan steps over it)
+        break if len == 0 && MatchData.end(match, 0) == MatchData.begin(match, 0)
+        ch = indicator ? indicator[0] : nil
+
+        lspace = nil
+        unless ch == "="
+          if String.empty?(text)
+            lspace = "" if is_bol
+          elsif text[-1] == "\n"
+            lspace = ""
+          else
+            rindex = String.rindex(text, "\n")
+            if rindex
+              s = text[rindex + 1..] || ""
+              if String.match?(s, /\A[ \t]*\z/)
+                lspace = s
+                text = text[0, rindex + 1] || ""
+              end
+            elsif is_bol && String.match?(text, /\A[ \t]*\z/)
+              lspace = text
+              text = ""
+            end
+          end
+        end
+
+        is_bol = rspace != nil
+        add_text(e, text)
+        if ch == "="
+          rspace = nil if tailch && !String.empty?(tailch)
+          add_expression(e, indicator, code)
+          add_text(e, rspace) if rspace
+        elsif ch == nil || ch == "-"
+          if trim && lspace && rspace
+            add_code(e, "#{lspace}#{code}#{rspace}")
+          else
+            add_text(e, lspace) if lspace
+            add_code(e, code)
+            add_text(e, rspace) if rspace
+          end
+        elsif ch == "#"
+          n = String.count(code, "\n") + (rspace ? 1 : 0)
+          if trim && lspace && rspace
+            add_code(e, "\n" * n)
+          else
+            add_text(e, lspace) if lspace
+            add_code(e, "\n" * n)
+            add_text(e, rspace) if rspace
+          end
+        elsif ch == "%"
+          add_text(e, "#{lspace}#{literal_prefix}#{code}#{tailch}#{literal_postfix}#{rspace}")
+        else
+          handle(e, indicator, code, tailch, rspace, lspace)
+        end
+      end
+      rest = pos == 0 ? input : input[pos..] || ""
+      add_text(e, rest)
+
+      @src += "\n" unless @src[-1] == "\n"
+      add_postamble(e, postamble)
+      @src += "; ensure\n  " + bufvar + " = __original_outvar\nend\n" if opt?(props, :ensure)
+    end
+
+    # Add raw text to the template.
+    def add_text(e, text)
+      return if String.empty?(text)
+      Array.push(@parts, [:text, text])
+      quoted = String.gsub(text, /['\\]/) { |c| "\\" + c }
+      with_buffer(e) { @src += " << '" + quoted + @text_end }
+    end
+
+    # Add ruby code to the template
+    def add_code(e, code)
+      Array.push(@parts, [:code, code])
+      terminate_expression(e)
+      @src += code
+      @src += ";" unless code[-1] == "\n"
+      @buffer_on_stack = false
+    end
+
+    # escaped unless `<%==` (with :escape, the other way round)
+    def add_expression(e, indicator, code)
+      if (indicator == "=") != @escape # Ruby: ^ (Bitwise.^ takes only Integers)
+        add_expression_result(e, code)
+      else
+        add_expression_result_escaped(e, code)
+      end
+    end
+
+    def add_expression_result(e, code)
+      Array.push(@parts, [:expression, code])
+      with_buffer(e) { @src += " << (" + code + ").to_s" }
+    end
+
+    def add_expression_result_escaped(e, code)
+      Array.push(@parts, [:escaped, code])
+      with_buffer(e) { @src += " << " + (@escapefunc || "") + "((" + code + "))" }
+    end
+
+    def add_postamble(e, postamble)
+      terminate_expression(e)
+      @src += postamble
+    end
+
+    # The base engine knows no other indicators.
+    def handle(e, indicator, code, tailch, rspace, lspace)
+      raise ArgumentError, "Invalid indicator: #{indicator}"
+    end
+
+    def with_buffer(e)
+      if @chain_appends
+        @src += "; " + @bufvar unless @buffer_on_stack
+        yield
+        @buffer_on_stack = true
+      else
+        @src += " " + @bufvar
+        yield
+        @src += ";"
+      end
+    end
+
+    def terminate_expression(e)
+      @src += "; " if @chain_appends
+    end
+
+    # --- Sake only: rendering without eval ---
+
+    # The template as Sake's ERB reads it: the trimmed text, with every tag as the compiler saw it.
+    def erb_template(e)
+      out = ""
+      Array.each(@parts) do |kind, s|
+        case kind
+        in :text then out += String.gsub(s, "<%", "<%%")
+        in :expression then out += "<%= #{s} %>"
+        in :escaped then out += "<%= h(#{s}) %>"
+        in :code then out += "<% #{s} %>" unless String.match?(s, /\A\s*\z/)
+        else nil
+        end
+      end
+      out
+    end
+
+    # Ruby: eval(engine.src) with the Hash's keys as local variables.
+    def render(e, vars) = ERB.result_with_hash(ERB.new(erb_template(e)), vars)
+  end
+end

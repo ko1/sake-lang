@@ -45,7 +45,7 @@ Expressions:
 | `!e`, `a == b`, `!=`, `<`, `<=`, `>`, `>=`, `a && b`, `a \|\| b` | as Ruby; `<` and friends on two numbers or two Strings |
 
 Anything else (assignments, other method calls, method calls with blocks other than `each`,
-arithmetic, `case`, `while`, string interpolation, calling your own functions) is an `ERBError`
+arithmetic, `case`, `while`, string interpolation, calling your own functions) is an `ERB::Error`
 (`unsupported code in template: ...` / `unsupported expression in template: ...`). Compute such
 values in the program and pass them in the Hash.
 
@@ -58,11 +58,11 @@ values in the program and pass them in the Hash.
 | `erb.result_with_hash(hash)` | `ERB.result_with_hash(erb, hash)` | same for templates within the subset; keys are Symbols |
 | `erb.result(binding)`, `erb.run` | — | missing: no `binding` in Sake (by design) |
 | `erb.src` | `ERB.src(erb)` | differs: gives the template text (Ruby: the generated Ruby code) |
-| — | `ERB.check(erb)` | Sake only: parses the template without rendering it (raises `ERBError`) |
+| — | `ERB.check(erb)` | Sake only: parses the template without rendering it (raises `ERB::Error`) |
 | `ERB::Util.h(s)`, `html_escape` | `ERB::Util.h(s)`, `ERB::Util.html_escape(s)` | same output and name (`module Util` inside `class ERB` since 2026-10-10; they were `ERB.h` & co. while names could not nest) |
 | `ERB::Util.u(s)`, `url_encode` | `ERB::Util.u(s)`, `ERB::Util.url_encode(s)` | same output |
 | `erb.def_method`, `def_class`, `ERB::DefMethod`, `ERB.version`, `erb.filename=`, `lineno=`, `location=`, `encoding` | — | missing: they define Ruby methods from the compiled source |
-| `NameError`, `NoMethodError`, `SyntaxError` from a template | `ERBError` | differs: one exception type with a message |
+| `NameError`, `NoMethodError`, `SyntaxError` from a template | `ERB::Error` | differs: one exception type with a message (`ERB::Error`, `ERB::Node`, `ERB::Frame` nested in `class ERB` since 2026-10-11; they were `ERBError`, `ERBNode`, `ERBFrame`) |
 
 ## Differences and why
 

@@ -1,0 +1,667 @@
+# websocket: WebSocket handshakes and frames (RFC 6455 and the hybi drafts 03-17), a port of the websocket gem.
+#
+#   hs = WebSocket::Handshake::Client.new(url: "ws://example.com/chat")
+#   request = WebSocket::Handshake::Client.to_s(hs)
+#   frame = WebSocket::Frame::Outgoing::Client.new(version: 13, data: "Hello", type: :text)
+#   bytes = WebSocket::Frame::Outgoing::Client.to_s(frame)
+#
+# Ruby's per-version handler objects (Handler03 ... Handler07, Client04, Client11, Server04) are functions that
+# look at the version. Ruby's `rescue_method` (a WebSocket::Error inside `next`, `to_s`, `<<`, `valid?`, `new`
+# sets `error` to the message Symbol and returns nil/''/false, or re-raises when WebSocket.should_raise) is written
+# out in each of those functions. Drafts 75/76 (and hybi 00-02) are not ported: they give :unknown_protocol_version.
+
+require "digest"
+
+module WebSocket
+  # Ruby's error classes, nested as in Ruby. Ruby's `message` is a Symbol (:frame_too_long); here the message is
+  # the String "frame_too_long", and `error` holds the Symbol. Sake has no hierarchy: WebSocket::Error does not
+  # catch WebSocket::Error::Frame::TooLong.
+  class Error < StandardError
+    class Frame < StandardError
+      class ControlFramePayloadTooLong < StandardError
+      end
+      class DataFrameInsteadContinuation < StandardError
+      end
+      class FragmentedControlFrame < StandardError
+      end
+      class Invalid < StandardError
+      end
+      class InvalidPayloadEncoding < StandardError
+      end
+      class MaskTooShort < StandardError
+      end
+      class ReservedBitUsed < StandardError
+      end
+      class TooLong < StandardError
+      end
+      class UnexpectedContinuationFrame < StandardError
+      end
+      class UnknownFrameType < StandardError
+      end
+      class UnknownOpcode < StandardError
+      end
+      class UnknownCloseCode < StandardError
+      end
+      class UnknownVersion < StandardError
+      end
+    end
+
+    class Handshake < StandardError
+      class GetRequestRequired < StandardError
+      end
+      class InvalidAuthentication < StandardError
+      end
+      class InvalidHeader < StandardError
+      end
+      class UnsupportedProtocol < StandardError
+      end
+      class InvalidStatusCode < StandardError
+      end
+      class NoHostProvided < StandardError
+      end
+      class UnknownVersion < StandardError
+      end
+    end
+  end
+
+  module_function
+
+  def default_version = 13
+
+  # Ruby's module attributes WebSocket.max_frame_size / should_raise (and their writers).
+  def max_frame_size_box = once { Hash[:v => 20 * 1024 * 1024] }
+  def should_raise_box = once { Hash[:v => false] }
+  def max_frame_size = Hash.fetch(max_frame_size_box, :v)
+  def set_max_frame_size(val) = max_frame_size_box[:v] = val
+  def should_raise = Hash.fetch(should_raise_box, :v)
+  def set_should_raise(val) = should_raise_box[:v] = val
+
+  def guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+  # [s].pack("m") without the newline (Ruby's .strip / .chomp).
+  def base64(s) = String.strip(Array.pack(Array[s], "m"))
+
+  module Handshake
+    # Ruby's Handshake::Base and the handlers' to_s. The includers have the fields host, path, query, state,
+    # version, secure, headers, protocols, port, error, data, leftovers.
+    module Base
+      def finished?(h) = @state == :finished || @state == :error
+
+      def default_port(h) = @secure ? 443 : 80
+
+      def default_port?(h) = port(h) == default_port(h)
+
+      def uri(h)
+        uri = @secure ? "wss://" : "ws://"
+        uri += host(h)
+        uri += ":#{port(h)}" unless default_port?(h)
+        uri += @path || ""
+        q = @query
+        uri += "?#{q}" if q
+        uri
+      end
+
+      def leftovers(h)
+        n = reserved_leftover_lines(h)
+        lines = String.split(@rest || "", "\n", n + 1)
+        String.strip(lines[n] || "")
+      end
+
+      def reserved_leftover_lines(h) = 0
+
+      # Ruby's handler to_s: the first line, "Key: value" lines, an empty line, the finishing line.
+      def render(h, header_line, keys)
+        result = String[header_line]
+        Array.each(keys) { |k, v| Array.push(result, "#{k}: #{v}") }
+        Array.push(result, "")
+        Array.push(result, "")
+        Array.join(result, "\r\n")
+      end
+
+      # Ruby's rescue_method: the error is kept as a Symbol and the state becomes :error.
+      def fail_with(h, e)
+        @state = :error
+        @error = String.to_sym(Exception.message(e))
+        raise e if WebSocket.should_raise
+      end
+
+      def header_re = /^([^:]+):\s*(.+)$/
+
+      # Splits off the header block; false while it is incomplete.
+      def parse_data(h)
+        data = @data || ""
+        header, rest = String.split(data, "\r\n\r\n", 2)
+        return false if rest == nil
+        @rest = rest
+        lines = String.split(header || "", "\r\n")
+        first_line = Array.shift(lines) || ""
+        parse_first_line(h, first_line)
+        Array.each(lines) do |line|
+          m = Regexp.match(header_re, line)
+          next unless m
+          key = String.downcase(String.strip(m[1] || ""))
+          val = String.strip(m[2] || "")
+          old = @headers[key]
+          if old && String.match?(key, /^(sec-)?websocket-protocol$/)
+            @headers[key] = old + ", #{val}"
+          else
+            @headers[key] = val
+          end
+        end
+        @state = :finished
+        true
+      end
+    end
+
+    # Handshake::Client.new(url: "ws://host:port/path?query", version: 13, origin:, headers:, protocols:,
+    # secure:, host:, port:, path:, query:) as Ruby (Ruby's uri: alias of url is left out).
+    class Client
+      attr_reader host, path, query, state, version, secure, headers, protocols, origin, url, port, error
+      private attr_reader data, rest, key
+      include Base
+      include Bitwise                          # for hs << data
+
+      def initialize(h)
+        @state = :new
+        @data = ""
+        @headers = Hash[] if @headers == nil
+        @protocols = String[] if @protocols == nil
+        @key = nil
+        @rest = nil
+        @error = nil
+        begin
+          u = @url
+          if u
+            m = Regexp.match(/\A(wss?):\/\/([^\/:?#]*)(?::(\d+))?([^?#]*)(?:\?([^#]*))?/, u)
+            if m
+              @secure ||= m[1] == "wss"
+              @host ||= m[2]
+              pt = m[3]
+              @port ||= pt ? String.to_i(pt) : default_port(h)
+              @path ||= m[4]
+              @query ||= m[5]
+            end
+          end
+          @secure = false if @secure == nil
+          p0 = @path
+          @path = "/" if p0 == nil || String.empty?(p0)
+          @version = WebSocket.default_version if @version == nil
+          raise Error::Handshake::NoHostProvided, "no_host_provided" unless @host
+          include_version(h)
+        rescue => e
+          fail_with(h, e)
+        end
+      end
+
+      def host(h) = @host || ""
+
+      def port(h) = @port || default_port(h)
+
+      def include_version(h)
+        v = @version || 0
+        raise Error::Handshake::UnknownVersion, "unknown_protocol_version" unless v >= 4 && v <= 17
+      end
+
+      def <<(h, data)
+        @data = (@data || "") + data
+        parse_data(h)
+      rescue => e
+        fail_with(h, e)
+        nil
+      end
+
+      def should_respond?(h) = false
+
+      def parse_first_line(h, line)
+        m = Regexp.match(/^HTTP\/1\.1 (\d{3})[\w\s]*$/, line)
+        raise Error::Handshake::InvalidHeader, "invalid_header" unless m
+        raise Error::Handshake::InvalidStatusCode, "invalid_status_code" unless m[1] == "101"
+      end
+
+      # Ruby's Client04 key: 16 random bytes in Base64, made once.
+      def key(h)
+        k = @key
+        return k if k
+        k = WebSocket.base64(Array.pack(Array.map(Array.new(16, 0)) { rand(255) }, "C*"))
+        @key = k
+        k
+      end
+
+      def accept(h) = WebSocket.base64(Digest::SHA1.digest(key(h) + WebSocket.guid))
+
+      def handshake_keys(h)
+        keys = Array[["Upgrade", "websocket"], ["Connection", "Upgrade"]]
+        host = host(h)
+        host += ":#{port(h)}" unless default_port?(h)
+        Array.push(keys, ["Host", host])
+        Hash.each(@headers) { |k, v| Array.push(keys, [k, v]) }
+        o = @origin
+        Array.push(keys, [(@version || 0) >= 11 ? "Origin" : "Sec-WebSocket-Origin", o]) if o
+        Array.push(keys, ["Sec-WebSocket-Version", Integer.to_s(@version || 0)])
+        Array.push(keys, ["Sec-WebSocket-Key", key(h)])
+        Array.push(keys, ["Sec-WebSocket-Protocol", Array.join(@protocols, ", ")]) unless Array.empty?(@protocols)
+        keys
+      end
+
+      # The request to send; '' after an error.
+      def to_s(h)
+        return "" if @state == :error
+        path = @path || "/"
+        q = @query
+        path += "?" + q if q
+        render(h, "GET #{path} HTTP/1.1", handshake_keys(h))
+      end
+
+      def valid?(h)
+        return false unless finished?(h) && @error == nil
+        raise Error::Handshake::InvalidAuthentication, "invalid_handshake_authentication" unless @headers["sec-websocket-accept"] == accept(h)
+        unless Array.empty?(@protocols)
+          provided = String.split(@headers["sec-websocket-protocol"] || "", / *, */)
+          raise Error::Handshake::UnsupportedProtocol, "unsupported_protocol" if Array.empty?(Array.intersection(provided, @protocols))
+        end
+        true
+      rescue => e
+        fail_with(h, e)
+        false
+      end
+    end
+
+    # Handshake::Server.new(secure: false, protocols: [...]) as Ruby; feed the request with <<.
+    class Server
+      attr_reader host, path, query, state, version, secure, headers, protocols, port, error
+      private attr_reader data, rest
+      include Base
+      include Bitwise                          # for hs << data
+
+      def initialize(h)
+        @state = :new
+        @data = ""
+        @headers = Hash[] if @headers == nil
+        @protocols = String[] if @protocols == nil
+        @secure = false if @secure == nil
+        @rest = nil
+        @error = nil
+      end
+
+      def <<(h, data)
+        @data = (@data || "") + data
+        set_version(h) if parse_data(h)
+        nil
+      rescue => e
+        fail_with(h, e)
+        nil
+      end
+
+      # Ruby's from_rack(env) for an env of Strings (Ruby also reads rack.input for draft 76).
+      def from_rack(h, env)
+        @headers = Hash[]
+        Hash.each(env) do |key, value|
+          next unless String.start_with?(key, "HTTP_")
+          @headers[String.downcase(String.tr(String.sub(key, /\AHTTP_/, ""), "_", "-"))] = value
+        end
+        @path = env["REQUEST_PATH"]
+        @query = env["QUERY_STRING"]
+        set_version(h)
+        @state = :finished
+      rescue => e
+        fail_with(h, e)
+        nil
+      end
+
+      def should_respond?(h) = true
+
+      def host(h) = @host || String.split(@headers["host"] || "", ":")[0] || ""
+
+      def port(h) = @port || String.to_i(String.split(@headers["host"] || "", ":")[1] || Integer.to_s(default_port(h)))
+
+      def set_version(h)
+        sv = @headers["sec-websocket-version"]
+        dv = @headers["sec-websocket-draft"]
+        v = if sv then String.to_i(sv)
+            elsif dv then String.to_i(dv)
+            elsif @headers["sec-websocket-key1"] then 76
+            else 75
+            end
+        @version = v
+        raise Error::Handshake::UnknownVersion, "unknown_protocol_version" unless v >= 4 && v <= 17
+      end
+
+      def parse_first_line(h, line)
+        m = Regexp.match(/^(\w+) (\/[^\s]*) HTTP\/1\.1$/, line)
+        raise Error::Handshake::InvalidHeader, "invalid_header" unless m
+        raise Error::Handshake::GetRequestRequired, "get_request_required" unless String.strip(m[1] || "") == "GET"
+        resource_name = String.strip(m[2] || "")
+        path, query = String.split(resource_name, "?", 2)
+        @path = path
+        @query = query
+      end
+
+      def key(h) = @headers["sec-websocket-key"]
+
+      def signature(h)
+        k = key(h)
+        return nil unless k
+        WebSocket.base64(Digest::SHA1.digest(k + WebSocket.guid))
+      end
+
+      # Ruby's Server04#protocol: the first offered protocol the server supports.
+      def protocol_keys(h)
+        offered = @headers["sec-websocket-protocol"]
+        return Array[] unless offered
+        protos = Array.intersection(String.split(offered, / *, */), @protocols)
+        Array[["Sec-WebSocket-Protocol", Array.first(protos) || ""]]
+      end
+
+      # The response to send; '' after an error.
+      def to_s(h)
+        return "" if @state == :error || @version == nil
+        keys = Array[["Upgrade", "websocket"], ["Connection", "Upgrade"], ["Sec-WebSocket-Accept", signature(h) || ""]]
+        render(h, "HTTP/1.1 101 Switching Protocols", keys + protocol_keys(h))
+      end
+
+      def valid?(h)
+        return false unless finished?(h) && @error == nil && @version != nil
+        raise Error::Handshake::InvalidAuthentication, "invalid_handshake_authentication" unless key(h)
+        true
+      rescue => e
+        fail_with(h, e)
+        false
+      end
+    end
+  end
+
+  module Frame
+    # Ruby's Frame::Base, Frame::Data and the frame handlers 03 to 07. The includers have the fields type, data,
+    # code, version, decoded, error, buffer, buffer_type and define incoming_masking?, outgoing_masking? and
+    # make (Ruby's @frame.class.new for a decoded frame).
+    module Base
+      def initialize(f)
+        @data = String.b(@data || "")
+        @version = WebSocket.default_version if @version == nil
+        @decoded = false if @decoded == nil
+        @error = nil
+        @buffer = nil
+        @buffer_type = nil
+        begin
+          v = @version || 0
+          raise Error::Frame::UnknownVersion, "unknown_protocol_version" unless v >= 3 && v <= 13
+        rescue => e
+          fail_with(f, e)
+        end
+      end
+
+      def fail_with(f, e)
+        @error = String.to_sym(Exception.message(e))
+        raise e if WebSocket.should_raise
+      end
+
+      def error?(f) = @error != nil
+
+      def decoded?(f) = @decoded
+
+      def supported_frames(f) = Symbol[:text, :binary, :close, :ping, :pong]
+
+      def support_type?(f) = Array.include?(supported_frames(f), @type)
+
+      # --- Ruby's handlers, chosen by the version ---
+
+      def fin(f) = (@version || 0) >= 4
+
+      def masking?(f) = (@version || 0) >= 5
+
+      def frame_types(f)
+        if (@version || 0) >= 7
+          Hash[:continuation => 0, :text => 1, :binary => 2, :close => 8, :ping => 9, :pong => 10]
+        else
+          Hash[:continuation => 0, :close => 1, :ping => 2, :pong => 3, :text => 4, :binary => 5]
+        end
+      end
+
+      def type_to_opcode(f, frame_type)
+        op = frame_types(f)[frame_type]
+        raise Error::Frame::UnknownFrameType, "unknown_frame_type" unless op
+        op
+      end
+
+      def opcode_to_type(f, opcode)
+        type = Hash.key(frame_types(f), opcode)
+        raise Error::Frame::UnknownOpcode, "unknown_opcode" unless type
+        type
+      end
+
+      def control_frame?(frame_type) = !Array.include?(Symbol[:text, :binary, :continuation], frame_type)
+
+      def data_frame?(frame_type) = Array.include?(Symbol[:text, :binary], frame_type)
+
+      def valid_code?(code) = Array.include?(Integer[1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011], code) || (3000..4999).Range.cover?(code)
+
+      # Ruby's Data#mask: payload bytes XOR the 4-byte key.
+      def mask(payload, key)
+        ks = String.bytes(key)
+        out = Integer[]
+        String.each_byte(payload) { |b| Array.push(out, b ^ ks[Array.size(out) % 4]) }
+        Array.pack(out, "C*")
+      end
+
+      def encode_frame(f)
+        if (@version || 0) >= 7 && @type == :close
+          code = @code || 1000
+          raise Error::Frame::UnknownCloseCode, "unknown_close_code" unless valid_code?(code)
+          @data = Array.pack(Integer[code], "n") + @data
+          @code = nil
+        end
+        payload =
+          if outgoing_masking?(f)
+            masking_key = Array.pack(Array.map(Integer[0, 0, 0, 0]) { rand(256) }, "C*")
+            masking_key + mask(@data, masking_key)
+          else
+            @data
+          end
+        encode_header(f) + payload
+      end
+
+      def encode_header(f)
+        type = @type
+        type => Symbol
+        m = outgoing_masking?(f) ? 0b10000000 : 0
+        first = type_to_opcode(f, type) | (fin(f) ? 0b10000000 : 0)
+        Array.pack(Integer[first], "C") + encode_payload_length(String.bytesize(@data), m)
+      end
+
+      def encode_payload_length(length, m)
+        if length <= 125
+          Array.pack(Integer[length | m], "C")
+        elsif length < 65_536
+          Array.pack(Integer[126 | m, length], "Cn")
+        else
+          Array.pack(Integer[127 | m, length >> 32, length & 0xFFFFFFFF], "CNN")
+        end
+      end
+
+      def byte(f, i) = String.getbyte(@data, i)
+
+      def buffer_exists?(f, n) = byte(f, n - 1) != nil
+
+      # Decodes the next complete frame in the buffer, or nil.
+      def decode_frame(f)
+        result = decode_frame03(f)
+        if result && (@version || 0) >= 7
+          rtype = type(result)
+          rdata = data(result)
+          if rtype == :close && !String.empty?(rdata)
+            code = String.unpack1(String.slice!(rdata, 0..1) || "", "n")
+            code => Integer
+            set_code(result, code)
+            raise Error::Frame::UnknownCloseCode, "unknown_close_code" unless valid_code?(code)
+          end
+        end
+        result
+      end
+
+      def decode_frame03(f)
+        while String.bytesize(@data) > 1
+          header = decode_header(f)
+          return nil unless header
+          more, frame_type, masked, payload_length = header
+          application_data = decode_payload(f, payload_length, masked)
+          if more
+            buf = @buffer || String.b("")
+            @buffer = buf + application_data
+            @buffer_type ||= frame_type
+          elsif frame_type == :continuation
+            return decode_finish_continuation_frame(f, application_data)
+          else
+            if frame_type == :text && !String.valid_encoding?(application_data)
+              raise Error::Frame::InvalidPayloadEncoding, "invalid_payload_encoding"
+            end
+            return make(f, frame_type, application_data)
+          end
+        end
+        nil
+      end
+
+      # [more, frame_type, masked, payload_length], or nil while the frame is incomplete.
+      def decode_header(f)
+        first_byte = byte(f, 0) || 0
+        raise Error::Frame::ReservedBitUsed, "reserved_bit_used" if first_byte & 0b01110000 != 0
+        more = ((first_byte & 0b10000000) == 0b10000000) != fin(f)
+        frame_type = opcode_to_type(f, first_byte & 0b00001111)
+        raise Error::Frame::FragmentedControlFrame, "fragmented_control_frame" if more && control_frame?(frame_type)
+        if data_frame?(frame_type) && @buffer != nil
+          raise Error::Frame::DataFrameInsteadContinuation, "data_frame_instead_continuation"
+        end
+
+        second_byte = byte(f, 1) || 0
+        masked = incoming_masking?(f) && (second_byte & 0b10000000) == 0b10000000
+        length = second_byte & 0b01111111
+        raise Error::Frame::ControlFramePayloadTooLong, "control_frame_payload_too_long" if length > 125 && control_frame?(frame_type)
+        header_length = 2
+        payload_length = length
+        if length == 127
+          return nil unless buffer_exists?(f, 10)
+          header_length = 10
+          payload_length = String.unpack1(String.byteslice(@data, 6, 4) || "", "N") || 0
+        elsif length == 126
+          return nil unless buffer_exists?(f, 4)
+          header_length = 4
+          payload_length = String.unpack1(String.byteslice(@data, 2, 2) || "", "n") || 0
+        end
+        payload_length => Integer
+
+        frame_length = header_length + payload_length
+        frame_length += 4 if masked
+        raise Error::Frame::TooLong, "frame_too_long" if frame_length > WebSocket.max_frame_size
+        return nil unless buffer_exists?(f, frame_length)
+        String.slice!(@data, 0...header_length)
+        [more, frame_type, masked, payload_length]
+      end
+
+      def decode_payload(f, payload_length, masked)
+        pointer = 0
+        if masked
+          raise Error::Frame::MaskTooShort, "mask_is_too_short" if String.bytesize(@data) < 4
+          pointer = 4
+        end
+        payload = String.byteslice(@data, pointer, payload_length) || ""
+        payload = mask(payload, String.byteslice(@data, 0, 4) || "") if masked
+        String.slice!(@data, 0...pointer + payload_length)
+        String.force_encoding(payload, "UTF-8")
+      end
+
+      def decode_finish_continuation_frame(f, application_data)
+        frame_type = @buffer_type
+        raise Error::Frame::UnexpectedContinuationFrame, "unexpected_continuation_frame" unless frame_type
+        buffer = String.force_encoding((@buffer || String.b("")) + application_data, "UTF-8")
+        if frame_type == :text && !String.valid_encoding?(buffer)
+          raise Error::Frame::InvalidPayloadEncoding, "invalid_payload_encoding"
+        end
+        @buffer = nil
+        @buffer_type = nil
+        make(f, frame_type, buffer)
+      end
+    end
+
+    # Ruby's Frame::Incoming: feed bytes with <<, take frames with next (nil while incomplete or on an error).
+    module Incoming
+      def <<(f, data)
+        @data = @data + String.b(data)
+        f
+      end
+
+      def next(f)
+        return nil if @decoded
+        decode_frame(f)
+      rescue => e
+        fail_with(f, e)
+        nil
+      end
+
+      # Incoming::Client.new(version: 13) / Incoming::Server.new(version: 13) as Ruby; also the decoded frames.
+      class Client
+        attr_reader type, version, error, decoded
+        attr_accessor data, code
+        private attr_reader buffer, buffer_type
+        include Base
+        include Incoming
+        include Bitwise                        # for frame << data
+        def incoming_masking?(f) = false
+        def outgoing_masking?(f) = masking?(f)
+        def make(f, type, data) = Client.new(type: type, data: data, version: @version, decoded: true)
+        def to_s(f) = @data
+      end
+
+      class Server
+        attr_reader type, version, error, decoded
+        attr_accessor data, code
+        private attr_reader buffer, buffer_type
+        include Base
+        include Incoming
+        include Bitwise
+        def incoming_masking?(f) = masking?(f)
+        def outgoing_masking?(f) = false
+        def make(f, type, data) = Server.new(type: type, data: data, version: @version, decoded: true)
+        def to_s(f) = @data
+      end
+    end
+
+    # Ruby's Frame::Outgoing: to_s encodes the frame ('' and an error for an unsupported type).
+    module Outgoing
+      def supported?(f) = support_type?(f)
+
+      def require_sending?(f) = !error?(f)
+
+      def encode(f)
+        raise Error::Frame::UnknownFrameType, "unknown_frame_type" unless supported?(f)
+        encode_frame(f)
+      rescue => e
+        fail_with(f, e)
+        ""
+      end
+
+      # Outgoing::Client.new(version: 13, data: "Hello", type: :text) as Ruby; the client masks its frames.
+      class Client
+        attr_reader type, version, error, decoded
+        attr_accessor data, code
+        private attr_reader buffer, buffer_type
+        include Base
+        include Outgoing
+        def incoming_masking?(f) = false
+        def outgoing_masking?(f) = masking?(f)
+        def make(f, type, data) = Client.new(type: type, data: data, version: @version, decoded: true)
+        def to_s(f) = encode(f)
+      end
+
+      class Server
+        attr_reader type, version, error, decoded
+        attr_accessor data, code
+        private attr_reader buffer, buffer_type
+        include Base
+        include Outgoing
+        def incoming_masking?(f) = masking?(f)
+        def outgoing_masking?(f) = false
+        def make(f, type, data) = Server.new(type: type, data: data, version: @version, decoded: true)
+        def to_s(f) = encode(f)
+      end
+    end
+  end
+end

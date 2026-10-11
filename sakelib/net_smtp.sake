@@ -1,0 +1,511 @@
+# net_smtp: an SMTP client (RFC 5321), a port of the net-smtp gem.
+#
+#   Net::SMTP.start("mail.example.com", 25, "client.example") do |smtp|
+#     Net::SMTP.send_message(smtp, msg, "from@example.com", "to@example.com")
+#   end
+#
+# Sessions go over Sake's Socket (lines end with CRLF; a message is dot-stuffed and ends with ".").
+# SMTPS (tls: true) connects with Socket.connect_ssl; STARTTLS cannot be ported (a Socket cannot be upgraded
+# to TLS), so a session that would need it raises SMTPUnsupportedCommand. Ruby's keyword arguments are
+# positional here (Ruby also accepts start's helo, user, secret, authtype positionally).
+
+require "digest"
+
+module Net
+  # Ruby's SMTPError mixin and its classes (SMTPAuthenticationError < ProtoAuthError ...). Sake has no hierarchy:
+  # rescue the classes themselves. `response` is the server's Net::SMTP::Response (nil when raised with a String).
+  class SMTPAuthenticationError < StandardError
+    attr_reader response
+  end
+
+  class SMTPServerBusy < StandardError
+    attr_reader response
+  end
+
+  class SMTPSyntaxError < StandardError
+    attr_reader response
+  end
+
+  class SMTPFatalError < StandardError
+    attr_reader response
+  end
+
+  class SMTPUnknownError < StandardError
+    attr_reader response
+  end
+
+  class SMTPUnsupportedCommand < StandardError
+    attr_reader response
+  end
+
+  # Net::SMTP.new(address, port = 25, tls = false, starttls = :auto) (Ruby: tls:, starttls: keywords).
+  class SMTP
+    attr_reader address, port, tls, starttls
+    attr_accessor esmtp, open_timeout, read_timeout
+    attr_reader capabilities
+    private attr_reader socket, started, error_occurred, debug_output, closed
+
+    def initialize(smtp)
+      @port = SMTP.default_port if @port == nil
+      @tls = false if @tls == nil
+      @starttls = :auto if @starttls == nil
+      @esmtp = true
+      @capabilities = nil
+      @socket = nil
+      @closed = true
+      @started = false
+      @open_timeout = 30
+      @read_timeout = 60
+      @error_occurred = false
+      @debug_output = nil
+    end
+
+    def default_port = 25
+    def default_submission_port = 587
+    def default_tls_port = 465
+    def default_ssl_port = 465
+
+    def inspect(smtp) = "#<Net::SMTP #{@address}:#{@port} started=#{@started}>"
+
+    def esmtp?(smtp) = @esmtp
+
+    def capable?(smtp, key)
+      caps = @capabilities
+      return nil unless caps
+      Hash.key?(caps, key)
+    end
+
+    def capable_starttls?(smtp) = capable?(smtp, "STARTTLS")
+    def capable_plain_auth?(smtp) = auth_capable?(smtp, "PLAIN")
+    def capable_login_auth?(smtp) = auth_capable?(smtp, "LOGIN")
+    def capable_cram_md5_auth?(smtp) = auth_capable?(smtp, "CRAM-MD5")
+
+    def auth_capable?(smtp, type)
+      caps = @capabilities
+      return nil unless caps
+      auth = caps["AUTH"]
+      return false unless auth
+      Array.include?(auth, type)
+    end
+
+    def capable_auth_types(smtp)
+      caps = @capabilities
+      return String[] unless caps
+      caps["AUTH"] || String[]
+    end
+
+    def tls?(smtp) = @tls
+    def ssl?(smtp) = @tls
+
+    def enable_tls(smtp)
+      raise ArgumentError, "SMTPS and STARTTLS is exclusive" if @starttls == :always
+      @tls = true
+    end
+
+    def disable_tls(smtp) = @tls = false
+
+    def starttls?(smtp) = @starttls
+    def starttls_always?(smtp) = @starttls == :always
+    def starttls_auto?(smtp) = @starttls == :auto
+
+    def enable_starttls(smtp)
+      raise ArgumentError, "SMTPS and STARTTLS is exclusive" if @tls
+      @starttls = :always
+    end
+
+    def enable_starttls_auto(smtp)
+      raise ArgumentError, "SMTPS and STARTTLS is exclusive" if @tls
+      @starttls = :auto
+    end
+
+    def disable_starttls(smtp) = @starttls = false
+
+    # Ruby's debug_output= / set_debug_output: an IO that gets the session's lines.
+    def set_debug_output(smtp, io) = @debug_output = io
+
+    def started?(smtp) = @started
+
+    # Ruby's SMTP.start(address, port, helo, user, secret, authtype) { |smtp| }: a session, finished after the block.
+    def start(address, port = nil, helo = "localhost", user = nil, secret = nil, authtype = nil, &block)
+      smtp = SMTP.new(address, port)
+      return start_session(smtp, helo, user, secret, authtype) unless block_given?
+      start_session(smtp, helo, user, secret, authtype, &block)
+    end
+
+    # Ruby's instance method smtp.start(helo, user, secret, authtype) (one name is one function in Sake).
+    def start_session(smtp, helo = "localhost", user = nil, secret = nil, authtype = nil)
+      if block_given?
+        begin
+          do_start(smtp, helo, user, secret, authtype)
+          return yield(smtp)
+        ensure
+          do_finish(smtp)
+        end
+      end
+      do_start(smtp, helo, user, secret, authtype)
+      smtp
+    end
+
+    def finish(smtp)
+      raise IOError, "not yet started" unless @started
+      do_finish(smtp)
+    end
+
+    # --- private in Ruby ---
+
+    def do_start(smtp, helo_domain, user, secret, authtype)
+      raise IOError, "SMTP session already started" if @started
+      check_auth_args(smtp, authtype, user, secret) if user || secret || authtype
+      begin
+        s = @tls ? Socket.connect_ssl(@address, @port, @open_timeout) : Socket.connect(@address, @port, @open_timeout)
+        Socket.set_timeout(s, @read_timeout)
+        @socket = s
+        @closed = false
+        logging(smtp, "Connection opened: #{@address}:#{@port}")
+        check_response(critical(smtp) { recv_response(smtp) })
+        do_helo(smtp, helo_domain)
+        if !@tls && (starttls_always?(smtp) || (capable_starttls?(smtp) && starttls_auto?(smtp)))
+          raise SMTPUnsupportedCommand.new("STARTTLS is not supported on this server", nil) unless capable_starttls?(smtp)
+          raise SMTPUnsupportedCommand.new("STARTTLS is not supported by Sake's Socket", nil)
+        end
+        authenticate(smtp, user, secret, authtype || :plain) if user
+        @started = true
+      ensure
+        close_socket(smtp) unless @started
+      end
+    end
+
+    def do_helo(smtp, helo_domain)
+      res = @esmtp ? ehlo(smtp, helo_domain) : helo(smtp, helo_domain)
+      @capabilities = Response.capabilities(res)
+    rescue SMTPServerBusy, SMTPSyntaxError, SMTPFatalError, SMTPUnknownError, SMTPAuthenticationError => e
+      if @esmtp
+        @esmtp = false
+        @error_occurred = false
+        retry
+      end
+      raise e
+    end
+
+    def close_socket(smtp)
+      s = @socket
+      Socket.close(s) if s && !@closed
+      @closed = true
+      @socket = nil
+    end
+
+    def do_finish(smtp)
+      quit(smtp) if @socket && !@closed && !@error_occurred
+    ensure
+      @started = false
+      @error_occurred = false
+      close_socket(smtp)
+    end
+
+    def requires_smtputf8(address)
+      case address
+      in Address then !String.ascii_only?(Address.address(address))
+      in String then !String.ascii_only?(address)
+      end
+    end
+
+    # A non-ASCII recipient makes MAIL FROM carry SMTPUTF8 when the server supports it.
+    def from_for(smtp, from_addr, to_addrs)
+      return from_addr unless Array.any?(to_addrs) { requires_smtputf8(it) } && capable?(smtp, "SMTPUTF8")
+      case from_addr
+      in Address then Address.new(Address.address(from_addr), Address.parameters(from_addr) + String["SMTPUTF8"])
+      in String then Address.new(from_addr, String["SMTPUTF8"])
+      end
+    end
+
+    # Ruby: send_message(msgstr, from_addr, *to_addrs) (to_addrs may be Arrays, flattened); also send_mail, sendmail.
+    def send_message(smtp, msgstr, from_addr, *to_addrs)
+      raise IOError, "closed session" unless @socket
+      mailfrom(smtp, from_for(smtp, from_addr, to_addrs))
+      rcptto_list(smtp, to_addrs)
+      data(smtp, msgstr)
+    end
+
+    def send_mail(smtp, msgstr, from_addr, *to_addrs) = send_message(smtp, msgstr, from_addr, *to_addrs)
+
+    # The block writes the message to a Net::SMTP::MessageStream (puts, print, write, <<).
+    def open_message_stream(smtp, from_addr, *to_addrs)
+      raise IOError, "closed session" unless @socket
+      mailfrom(smtp, from_for(smtp, from_addr, to_addrs))
+      rcptto_list(smtp, to_addrs)
+      stream = MessageStream.new("")
+      yield(stream)
+      data(smtp, MessageStream.buffer(stream))
+    end
+
+    # authtype: :plain, :login, :cram_md5, :xoauth2 (Ruby's Authenticator registry is a fixed list here).
+    def authenticate(smtp, user, secret, authtype = :plain)
+      check_auth_args(smtp, authtype, user, secret)
+      u = user || ""
+      sec = secret || ""
+      case auth_type_name(authtype)
+      in "PLAIN"
+        auth_finish(smtp, "AUTH PLAIN " + base64_encode("\0#{u}\0#{sec}"))
+      in "LOGIN"
+        auth_continue(smtp, "AUTH LOGIN")
+        auth_continue(smtp, base64_encode(u))
+        auth_finish(smtp, base64_encode(sec))
+      in "CRAM-MD5"
+        challenge = auth_continue(smtp, "AUTH CRAM-MD5")
+        crammed = cram_md5_response(sec, String.unpack1(challenge, "m") || "")
+        auth_finish(smtp, base64_encode("#{u} #{crammed}"))
+      else
+        auth_finish(smtp, "AUTH XOAUTH2 #{base64_encode("user=#{u}\1auth=Bearer #{sec}\1\1")}")
+      end
+    end
+
+    def auth_type_name(type) = String.tr(String.upcase(Kernel.to_s(type)), "_", "-")
+
+    def check_auth_args(smtp, type, user, secret)
+      name = auth_type_name(type || :plain)
+      unless Array.include?(String["PLAIN", "LOGIN", "CRAM-MD5", "XOAUTH2"], name)
+        raise ArgumentError, "wrong authentication type #{type}"
+      end
+      raise ArgumentError, "SMTP-AUTH requested but missing user name" unless user
+      raise ArgumentError, "SMTP-AUTH requested but missing secret phrase" unless secret
+    end
+
+    def base64_encode(str) = Array.pack(Array[str], "m0")
+
+    # Ruby's Authenticator#continue: the 334 reply's argument.
+    def auth_continue(smtp, arg)
+      res = get_response(smtp, arg)
+      raise_for(res) unless Response.continue?(res)
+      String.split(Response.string(res))[1] || ""
+    end
+
+    def auth_finish(smtp, arg)
+      res = get_response(smtp, arg)
+      raise SMTPAuthenticationError.new(Response.message(res), res) unless Response.success?(res)
+      res
+    end
+
+    # HMAC-MD5 (RFC 2195).
+    def cram_md5_response(secret, challenge)
+      tmp = Digest::MD5.digest(cram_secret(secret, 0x36) + challenge)
+      Digest::MD5.hexdigest(cram_secret(secret, 0x5c) + tmp)
+    end
+
+    def cram_secret(secret, mask)
+      s = String.bytesize(secret) > 64 ? Digest::MD5.digest(secret) : String.b(secret)
+      bytes = String.bytes(s)
+      Array.push(bytes, 0) while Array.size(bytes) < 64
+      Array.pack(Array.map(bytes) { it ^ mask }, "C*")
+    end
+
+    def rset(smtp) = getok(smtp, "RSET")
+    def starttls(smtp) = getok(smtp, "STARTTLS")
+    def helo(smtp, domain) = getok(smtp, "HELO #{domain}")
+    def ehlo(smtp, domain) = getok(smtp, "EHLO #{domain}")
+
+    # from_addr: a String or a Net::SMTP::Address (with parameters).
+    def mailfrom(smtp, from_addr)
+      addr =
+        case from_addr
+        in Address
+          extra = requires_smtputf8(from_addr) && capable?(smtp, "SMTPUTF8") ? String["SMTPUTF8"] : String[]
+          Address.new(Address.address(from_addr), Address.parameters(from_addr) + extra)
+        in String
+          requires_smtputf8(from_addr) && capable?(smtp, "SMTPUTF8") ? Address.new(from_addr, String["SMTPUTF8"]) : Address.new(from_addr)
+        end
+      getok(smtp, Array.join(String["MAIL FROM:<#{Address.address(addr)}>"] + Address.parameters(addr), " "))
+    end
+
+    def rcptto_list(smtp, to_addrs)
+      raise ArgumentError, "mail destination not given" if Array.empty?(to_addrs)
+      Array.each(to_addrs) { |addr| rcptto(smtp, addr) }
+    end
+
+    def rcptto(smtp, to_addr) = getok(smtp, "RCPT TO:<#{to_addr}>")
+
+    # Sends DATA and the message (Ruby's block form is open_message_stream).
+    def data(smtp, msgstr)
+      res = critical(smtp) do
+        check_continue(get_response(smtp, "DATA"))
+        write_message(smtp, msgstr)
+        recv_response(smtp)
+      end
+      check_response(res)
+      res
+    end
+
+    def quit(smtp) = getok(smtp, "QUIT")
+
+    def get_response(smtp, reqline)
+      validate_line(reqline)
+      writeline(smtp, reqline)
+      recv_response(smtp)
+    end
+
+    def validate_line(line)
+      raise ArgumentError, "A line must not contain CR or LF" if String.match?(line, /[\r\n]/)
+    end
+
+    def getok(smtp, reqline)
+      validate_line(reqline)
+      res = critical(smtp) do
+        writeline(smtp, reqline)
+        recv_response(smtp)
+      end
+      check_response(res)
+      res
+    end
+
+    # --- Ruby's InternetMessageIO ---
+
+    def sock(smtp)
+      s = @socket
+      raise IOError, "closed session" unless s && !@closed
+      s
+    end
+
+    def write0(smtp, str)
+      logging(smtp, "<- #{Kernel.inspect(str)}")
+      Socket.write(sock(smtp), str)
+    end
+
+    def writeline(smtp, line) = write0(smtp, line + "\r\n")
+
+    def readline(smtp)
+      line = Socket.gets(sock(smtp))
+      raise EOFError, "end of file reached" unless line
+      logging(smtp, "-> #{Kernel.inspect(line)}")
+      String.chomp(line)
+    end
+
+    # Each line ends with CRLF; a line starting with "." gets another; then ".".
+    def write_message(smtp, src)
+      out = ""
+      rest = src
+      while (m = String.match(rest, /\A[^\r\n]*(?:\n|\r(?:\n|(?!\z)))/))
+        line = m[0] || ""
+        rest = String.byteslice(rest, String.bytesize(line), String.bytesize(rest)) || ""
+        out += String.sub(String.chomp(line, "\n"), /\A\./, "..") + "\r\n"
+      end
+      if !String.empty?(rest)
+        out += String.sub(String.chomp(rest), /\A\./, "..") + "\r\n"
+      elsif String.empty?(out)
+        out = "\r\n"
+      end
+      write0(smtp, out + ".\r\n")
+    end
+
+    def recv_response(smtp)
+      buf = ""
+      loop do
+        line = readline(smtp)
+        buf += line + "\n"
+        break unless String.[](line, 3, 1) == "-"
+      end
+      Response.parse(buf)
+    end
+
+    # After an error the session sends nothing more (QUIT is skipped).
+    def critical(smtp)
+      return Response.parse("200 dummy reply code") if @error_occurred
+      begin
+        yield
+      rescue => e
+        @error_occurred = true
+        raise e
+      end
+    end
+
+    def check_response(res)
+      raise_for(res) unless Response.success?(res)
+    end
+
+    def check_continue(res)
+      unless Response.continue?(res)
+        raise SMTPUnknownError.new("could not get 3xx (#{Response.status(res)}: #{Response.string(res)})", res)
+      end
+    end
+
+    # Ruby's raise res.exception_class.new(res).
+    def raise_for(res)
+      st = Response.status(res)
+      msg = Response.message(res)
+      raise SMTPServerBusy.new(msg, res) if String.start_with?(st, "4")
+      raise SMTPSyntaxError.new(msg, res) if String.start_with?(st, "50")
+      raise SMTPAuthenticationError.new(msg, res) if String.start_with?(st, "53")
+      raise SMTPFatalError.new(msg, res) if String.start_with?(st, "5")
+      raise SMTPUnknownError.new(msg, res)
+    end
+
+    def logging(smtp, msg)
+      io = @debug_output
+      IO.write(io, msg + "\n") if io
+    end
+
+    # A server reply: the 3-digit status and the whole text (lines joined with "\n").
+    class Response
+      attr_reader status, string
+
+      def parse(str) = Response.new(String.[](str, 0, 3) || "", str)
+
+      def status_type_char(res) = String.[](@status, 0, 1) || ""
+
+      def success?(res) = status_type_char(res) == "2"
+
+      def continue?(res) = status_type_char(res) == "3"
+
+      def message(res) = Array.first(String.lines(@string)) || ""
+
+      def cram_md5_challenge(res) = String.unpack1(String.split(@string, / /)[1] || "", "m") || ""
+
+      # EHLO keywords: "AUTH PLAIN LOGIN" => {"AUTH" => ["PLAIN", "LOGIN"]}.
+      def capabilities(res)
+        h = Hash[]
+        return h unless String.[](@string, 3, 1) == "-"
+        Array.each(Array.drop(String.lines(@string), 1)) do |line|
+          words = String.split(String.[](line, 4..) || "", " ")
+          k = Array.shift(words)
+          h[k] = words if k
+        end
+        h
+      end
+    end
+
+    # Net::SMTP::Address.new(address, parameters = []) (Ruby: Address.new(address, *args, **kw)).
+    class Address
+      attr_reader address, parameters
+
+      def initialize(a)
+        @parameters = String[] if @parameters == nil
+        @parameters = Array.uniq(@parameters)
+      end
+
+      def to_s(a) = @address
+    end
+
+    # What open_message_stream yields (Ruby's WriteAdapter).
+    class MessageStream
+      attr_reader buffer
+      include Bitwise                            # for stream << s
+
+      def write(st, str)
+        @buffer += str
+        String.bytesize(str)
+      end
+
+      def print(st, str) = write(st, str)
+
+      def <<(st, str)
+        write(st, str)
+        st
+      end
+
+      def puts(st, str = "") = write(st, String.chomp(str, "\n") + "\n")
+
+      def printf(st, fmt, *args) = write(st, format(fmt, *args))
+    end
+  end
+
+  # Ruby's old name.
+  # SMTPSession = SMTP is not provided (a constant holds no class alias in Sake).
+end

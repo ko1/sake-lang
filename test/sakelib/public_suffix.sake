@@ -1,0 +1,106 @@
+require "public_suffix"
+
+def show(d)
+  p([PublicSuffix::Domain.trd(d), PublicSuffix::Domain.sld(d), PublicSuffix::Domain.tld(d), PublicSuffix::Domain.name(d), PublicSuffix::Domain.domain(d), PublicSuffix::Domain.subdomain(d), PublicSuffix::Domain.domain?(d), PublicSuffix::Domain.subdomain?(d)])
+end
+
+def show_rule(r)
+  if r == nil
+    puts("no rule")
+  else
+    kind = case r
+           in PublicSuffix::Rule::Normal then "Normal"
+           in PublicSuffix::Rule::Wildcard then "Wildcard"
+           in PublicSuffix::Rule::Exception then "Exception"
+           end
+    puts("#{kind} #{PublicSuffix::Rule::Base.rule(r)} value=#{Kernel.inspect(PublicSuffix::Rule::Base.value(r))} length=#{PublicSuffix::Rule::Base.length(r)} private=#{PublicSuffix::Rule::Base.private(r)}")
+  end
+end
+
+# parse: the registrable domain and its parts
+show(PublicSuffix.parse("google.com"))
+show(PublicSuffix.parse("www.google.com"))
+show(PublicSuffix.parse("a.b.www.example.co.uk"))
+show(PublicSuffix.parse("  WWW.Example.COM.  "))
+show(PublicSuffix.parse("a.b.blogspot.com"))
+show(PublicSuffix.parse("a.b.blogspot.com", {ignore_private: true}))
+show(PublicSuffix.parse("www.city.kawasaki.jp"))
+show(PublicSuffix.parse("www.ck"))
+show(PublicSuffix.parse("x.www.ck"))
+show(PublicSuffix.parse("example.unknowntld"))
+show(PublicSuffix.parse("日本.jp"))
+d = PublicSuffix.parse("blog.example.org")
+p(PublicSuffix::Domain.to_s(d), PublicSuffix::Domain.to_a(d))
+p(PublicSuffix::Domain.name_to_labels("a.b.c"))
+show(PublicSuffix::Domain.new("com", "example", "www"))
+show(PublicSuffix::Domain.new("com"))
+
+# domain and valid?
+p(PublicSuffix.domain("www.google.com"), PublicSuffix.domain("google.com"), PublicSuffix.domain("com"))
+p(PublicSuffix.domain("www.example.co.uk"), PublicSuffix.domain("city.kawasaki.jp"), PublicSuffix.domain("foo.ck"))
+p(PublicSuffix.domain("a.b.github.io"), PublicSuffix.domain("a.b.github.io", {ignore_private: true}))
+p(PublicSuffix.domain(""), PublicSuffix.domain(".example.com"), PublicSuffix.domain("http://example.com"))
+p(PublicSuffix.valid?("google.com"), PublicSuffix.valid?("com"), PublicSuffix.valid?("foo.ck"))
+p(PublicSuffix.valid?("www.ck"), PublicSuffix.valid?("example.unknowntld"), PublicSuffix.valid?(""))
+p(PublicSuffix.valid?("github.io"), PublicSuffix.valid?("github.io", {ignore_private: true}))
+
+# errors
+Array.each(Array["", ".example.com", "http://example.com", "com", "foo.ck", "co.uk"]) do |name|
+  begin
+    show(PublicSuffix.parse(name))
+  rescue PublicSuffix::DomainNotAllowed => e
+    puts("DomainNotAllowed: #{Exception.message(e)}")
+  rescue PublicSuffix::DomainInvalid => e
+    puts("DomainInvalid: #{Exception.message(e)}")
+  end
+end
+p(PublicSuffix.normalize("  Foo.COM. "))
+p(Exception.message(PublicSuffix.normalize("")))
+
+# rules
+Array.each(Array["com", "*.ck", "!www.ck", "co.uk", "*"]) do |s|
+  show_rule(PublicSuffix::Rule.factory(s))
+end
+show_rule(PublicSuffix::Rule.factory("blogspot.com", {private: true}))
+show_rule(PublicSuffix::Rule.default)
+p(PublicSuffix::Rule.factory("co.uk").PublicSuffix::Rule::Base.match?("example.co.uk"), PublicSuffix::Rule.factory("co.uk").PublicSuffix::Rule::Base.match?("example.xco.uk"))
+p(PublicSuffix::Rule.factory("co.uk").PublicSuffix::Rule::Base.decompose("www.example.co.uk"))
+p(PublicSuffix::Rule.factory("*.ck").PublicSuffix::Rule::Base.decompose("a.b.ck"))
+p(PublicSuffix::Rule.factory("!www.ck").PublicSuffix::Rule::Base.decompose("x.www.ck"))
+p(PublicSuffix::Rule.factory("co.uk").PublicSuffix::Rule::Base.decompose("co.uk"))
+p(PublicSuffix::Rule.factory("*.ck").PublicSuffix::Rule::Base.parts, PublicSuffix::Rule.factory("!www.ck").PublicSuffix::Rule::Base.parts)
+p(PublicSuffix::Rule::Normal.new(value: "a.b").PublicSuffix::Rule::Normal.length, PublicSuffix::Rule::Wildcard.new(value: "a").PublicSuffix::Rule::Wildcard.length)
+
+# the default list and a list of one's own
+list = PublicSuffix::List.default
+p(PublicSuffix::List.size(list) > 9000, PublicSuffix::List.empty?(list))
+show_rule(PublicSuffix::List.find(list, "www.ck"))
+show_rule(PublicSuffix::List.find(list, "example.co.uk"))
+show_rule(PublicSuffix::List.find(list, "a.b.blogspot.com"))
+show_rule(PublicSuffix::List.find(list, "a.b.blogspot.com", {ignore_private: true}))
+show_rule(PublicSuffix::List.find(list, "example.unknowntld"))
+l = PublicSuffix::List.parse("com\n*.jp\n!city.kawasaki.jp\n// a comment\n\n===BEGIN PRIVATE DOMAINS===\nblogspot.com\n")
+p(PublicSuffix::List.size(l))
+PublicSuffix::List.each(l) { |r| show_rule(r) }
+show_rule(PublicSuffix::List.find(l, "x.blogspot.com"))
+show_rule(PublicSuffix::List.find(l, "x.blogspot.com", {ignore_private: true}))
+show_rule(PublicSuffix::List.find(l, "unknown.zz"))
+show_rule(PublicSuffix::List.find(l, "unknown.zz", {default: nil}))
+show_rule(PublicSuffix::List.find(l, "www.city.kawasaki.jp"))
+p(PublicSuffix.parse("x.blogspot.com", {list: l}).PublicSuffix::Domain.to_a)
+p(PublicSuffix::List.parse("com\n===BEGIN PRIVATE DOMAINS===\nblogspot.com\n", {private_domains: false}).PublicSuffix::List.size)
+l << PublicSuffix::Rule.factory("org")
+p(PublicSuffix::List.size(l))
+PublicSuffix::List.add(l, PublicSuffix::Rule.factory("net"))
+p(PublicSuffix::List.size(l), PublicSuffix::List.default_rule(l).PublicSuffix::Rule::Base.rule)
+l2 = PublicSuffix::List.new
+p(PublicSuffix::List.empty?(l2), l2 == PublicSuffix::List.new)
+l2 << PublicSuffix::Rule.factory("com")
+p(l2 == PublicSuffix::List.new, PublicSuffix::List.size(l2))
+PublicSuffix::List.clear(l2)
+p(PublicSuffix::List.size(l2))
+
+# List.default= replaces the default list
+PublicSuffix::List.set_default(l)
+show(PublicSuffix.parse("a.b.blogspot.com"))
+p(PublicSuffix.domain("www.example.co.uk"))

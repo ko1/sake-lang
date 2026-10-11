@@ -2,8 +2,8 @@
 
 `sakelib/time.sake`: operations added to the built-in `Time` (`class Time`): `Time.parse`,
 `Time.strptime`, `Time.xmlschema`, `Time.httpdate`, `Time.rfc2822` / `rfc822` (each both the parser,
-given a String, and the formatter, given a Time), `Time.zone_offset`; helpers in `module TimeCore` and a
-`TimeParts` class (Ruby's `Date._parse` hash). 7 operations covering 13 Ruby methods. Test:
+given a String, and the formatter, given a Time), `Time.zone_offset`; helpers in `module Time::Core` and a
+`Time::Parts` class (named `TimeCore` / `TimeParts` until 2026-10-11; Ruby's `Date._parse` hash). 7 operations covering 13 Ruby methods. Test:
 `test/sakelib/time.{sake,rb}`, identical output with `--strict` (also clean at `--strict=1 -c` and
 `--strict=2 -c`), and also identical with `TZ=Asia/Tokyo`, `America/New_York`, `Australia/Lord_Howe`.
 
