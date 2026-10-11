@@ -14,6 +14,8 @@ module Sake
     def set_sites = (@set_sites ||= {})
     # Thread.new's site keeps the block's value type; Queue.new's the types pushed (like a Set's elements).
     def thread_sites = (@thread_sites ||= {})
+    # thread site id => {exception type => raise nodes} that its block may raise (value / join raise them).
+    def thread_raises = (@thread_raises ||= {})
     def queue_sites = (@queue_sites ||= {})
 
     def thread_site(node)
@@ -245,10 +247,22 @@ module Sake
       a0 = args[0]
       case name
       when "Thread.new"
-        thread_site(node).tap { |s| site = thread_sites[s[0][1]]; site.elem = u(site.elem, call_block(blk, [])) }
+        # What the block raises does not reach this call: the thread keeps it, and value / join raise it.
+        thread_site(node).tap do |s|
+          id = s[0][1]
+          site = thread_sites[id]
+          @raised.push({})
+          begin
+            site.elem = u(site.elem, call_block(blk, []))
+          ensure
+            raised = @raised.pop
+          end
+          thread_raises[id] = merge_into(thread_raises[id] || {}, raised)
+        end
       when "Thread.value", "Thread.join"
         # Thread.raise(t, msg) raises a RuntimeError in t, which value / join bring to the caller.
         merge_raised("RuntimeError" => [node]) if thread_raise_used?
+        atoms_of(a0, :thread).each { |a| merge_raised(thread_raises[a[1]]) if thread_raises[a[1]] }
         next_result = name == "Thread.value" ? u(*atoms_of(a0, :thread).map { thread_sites[_1[1]].elem }) : (args.size == 2 ? u(a0, t("Nil")) : a0)
         next_result
       when "Thread.current" then t("Thread")
@@ -311,14 +325,21 @@ module Sake
       end)
     end
 
-    # The element types flatten gives for one element atom: an inner Array's or Tuple's elements, else itself.
+    # flatten leaves a Tuple whole (it is a value, not a collection); elements that are Tuples are reported,
+    # since Ruby's flatten would have opened them.
+    def check_flatten_tuples(node, name, a0)
+      elems = elem_of(a0)
+      tuples = elems.select { _1.is_a?(Array) && _1[0] == :tuple }
+      return if tuples.empty?
+      add_check(node, name, "flatten_tuple", "Array", of_atoms(tuples),
+                tuples.size == elems.size ? :error : :partial, tuples)
+    end
+
+    # The element types flatten gives for one element atom: an inner Array's elements, else itself (a Tuple
+    # stays whole).
     def flat_elem(e)
       return [e] unless e.is_a?(Array)
-      case e[0]
-      when :array then elem_of([e])
-      when :tuple then u(*e[1])
-      else [e]
-      end
+      e[0] == :array ? elem_of([e]) : [e]
     end
 
     def builtin_result_ext(name, args, blk, node)
@@ -451,7 +472,9 @@ module Sake
         else
           aux_site(node, "#{name} slices", slice)
         end
-      when "Array.flatten" then new_site(node, " #{name}", u(*elem_of(a0).map { |e| flat_elem(e) }))
+      when "Array.flatten"
+        check_flatten_tuples(node, name, a0)
+        new_site(node, " #{name}", u(*elem_of(a0).map { |e| flat_elem(e) }))
       when "Array.compact" then new_site(node, " #{name}", without_nil(elem_of(a0)))
       when "Array.uniq", "Array.rotate", "Array.shuffle" then new_site(node, " #{name}", elem_of(a0))
       when "Array.sample", "Array.delete_at" then u(elem_of(a0), t("IndexNil"))
@@ -615,6 +638,7 @@ module Sake
         write_elems(a0, [bres], node, name)
         a0
       when :recv_flatten # flatten!: the inner Arrays' elements join
+        check_flatten_tuples(node, name, a0)
         write_elems(a0, [u(*elem.map { |e| flat_elem(e) })], node, name)
         u(a0, t("Nil"))
       when :recv_elems_of # replace: the other Array's elements join

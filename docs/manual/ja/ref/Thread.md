@@ -3,7 +3,7 @@
 Thread はブロックを並行に走らせるスレッドの型です。`Thread.new { ... }` が作り、`Thread.value(t)` か `Thread.join(t)` で終わりを待ちます。Ruby の `Thread` と同じ仕組み（Ruby のスレッドそのもの）ですが、操作はここに挙げたものだけで、`Thread#[]`、`status`、`priority`、`Thread.pass` などはありません。Thread のリテラルはなく、値は `Thread.new` と `Thread.current` から来ます（[値と型](../03-values.md)、[組み込み](../09-builtins.md)）。
 
 - **変数。** ブロックは周りの変数を共有しますが、スレッドでは `Thread.new` を囲むブロックの変数（引数とローカル）とスレッドブロック自身の変数は開始時に複製され、関数（トップレベル）の変数は共有のままです。共有カウンタは `Mutex.synchronize` の中で更新します（[Mutex](Mutex.md)）。
-- **抜け方。** スレッドブロックからの `break` と `return` は `LocalJumpError` です。`next v` が `v` で終えます。
+- **抜け方。** スレッドブロックからの `break` と `return` は静的エラーです（ブロックは `Thread.new` が戻った後で走る）。`next v` が `v` で終えます。
 - **エラー。** スレッドの中の例外はそこでは報告されず、`Thread.value` か `Thread.join` を呼んだ側で上がります。エラーで終わったのに `Thread.value` / `Thread.join` で読まれなかったスレッドは、プログラムの終了時に stderr に報告されます（終了ステータスは変わりません）: `PATH: a thread ended with an error that no Thread.value / Thread.join read:` の後に、そのエラーの報告が字下げされて続きます。メインプログラムが終わるとすべてのスレッドが止まり、そのときまだ走っていたスレッドは報告されません。
 - **検査。** 検査器はブロックを `Thread.new` の場所で 1 度走らせ、その値を `Thread.value` の型にします。実行の交互は解析せず、各操作が実行時に引数を検査します。
 

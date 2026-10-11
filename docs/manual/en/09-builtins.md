@@ -346,7 +346,7 @@ p(got)                                     # => [1, 2, 3]
 | `Socket.gets(s)` · `read(s, n)` · `write(s, str)` · `close_write(s)` · `close(s)` | String or nil · String or nil · Integer · nil · nil |
 
 - **Variables in a thread.** A block shares the variables around it, as every block does. For a thread, the variables of the blocks around `Thread.new` (their parameters and locals), and the thread block's own, are copied when the thread starts; the function's variables stay shared. So `Array.map(xs) { |w| Thread.new { ... w ... } }` in the example gives each thread its own `w`, and the shared counter `count` is a function variable updated inside `Mutex.synchronize`.
-- **Leaving a thread block.** `break` and `return` out of a `Thread.new` block are errors (`LocalJumpError`); `next v` ends it with `v`.
+- **Leaving a thread block.** `break` and `return` out of a `Thread.new` block (and `return` in a block inside it) are static errors, since the block runs after the call has returned; `next v` ends it with `v`.
 - **Errors.** An error inside a thread is raised by `Thread.value` or `Thread.join`. A thread that is never joined ends silently when it fails, and every thread stops when the main program ends.
 - **Checking.** The typer runs a thread's block once, at `Thread.new`: its value is the type of `Thread.value`; a Queue's element type is the union of what is pushed (`Queue.pop` adds nil). Interleavings are not analyzed; each operation still checks its arguments while running.
 

@@ -1152,14 +1152,17 @@ p(Array.compact!(xs))                  # => nil
 
 `Array.flatten!(x)`
 
-入れ子の Array をすべて展開して平らにした新しい Array（`flatten`）、または主語をその場で平らにして返します（`flatten!`）。Ruby と同じく要素の Tuple も展開します（`String.scan` のグループの組を平らにするなど。2026-10-11 から）。`flatten!` は入れ子が無かったとき nil を返し、その結果を未検査で使うのはレベル 2 の `nil` の問題です。Ruby の深さ引数はありません。
+入れ子の Array をすべて展開して平らにした新しい Array（`flatten`）、または主語をその場で平らにして返します（`flatten!`）。展開するのは Array だけで、Tuple は 1 つの値なので開きません（Ruby の `flatten` は開くので、Tuple が要素に来ると静的に `type` の問題として知らせます。開くには `Array.flat_map(xs) { |t| Tuple.to_a(t) }`）。`flatten!` は入れ子が無かったとき nil を返し、その結果を未検査で使うのはレベル 2 の `nil` の問題です。Ruby の深さ引数はありません。
 
 ```ruby
 p(Array.flatten(Array[1, Array[2, Array[3]], 4]))     # => [1, 2, 3, 4]
-p(Array.flatten(Array[[1, 2], 3]))                    # => [1, 2, 3]
 xs = Array[1, Array[2]]
 p(Array.flatten!(xs))                                 # => [1, 2]
 p(Array.flatten!(xs))                                 # => nil
+```
+
+```ruby error
+p(Array.flatten(Array[[1, 2], [3, 4]]))   # !> which flatten leaves whole
 ```
 
 ## zip

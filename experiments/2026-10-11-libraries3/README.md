@@ -41,7 +41,7 @@ ko1 の依頼（2026-10-11 朝、数時間不在の間に）: (1) ライブラ�
 ### 見つかった処理系のバグ（直した）
 
 1. `s["b"]`、`s[/re/]`、`s[/re/, 1]`（String の String・Regexp 添字）が型エラーだった。仕様として「演算子としては無い」と書いてあったが、`String.slice` は同じものを取り、移植 2 体がつまずいたので Ruby に合わせて通した。**仕様の変更なので ko1 の判断を仰ぐ**（戻すのは型規則 2 行と実行時 1 行）。
-2. `Array.flatten` が Tuple を展開しなかった（`String.scan` のグループの組が平らにならない）。これも仕様として書かれていたが、Ruby の `[[1, 2], [3, 4]].flatten` の慣用に合わせて展開するようにした。**同じく判断を仰ぐ**。
+2. `Array.flatten` が Tuple を展開しなかった（`String.scan` のグループの組が平らにならない）。いったん Ruby に合わせて展開するようにしたが、ko1 と話して戻した: Sake の Tuple は「長さの決まった配列」ではなく「位置で区別する名前の無い Record」（prelude のコメント「Tuple は Enum を include しない」、D1「`[1, 2] == Array[1, 2]` は false」）で、集まりではなく 1 つの値。Ruby の `flatten` は `to_ary` を持つもの（配列）を開くので、Sake で配列に当たるのは Array だけ。代わりに、Tuple が flatten に来たら静的に `type` として知らせ、`Array.flat_map(xs) { |t| Tuple.to_a(t) }` を hint で示す（`test/samples/flatten_tuple_errors`）。
 3. `if u` などの真偽判定が、クラスに定義された `==` を `false` 相手に呼んでいた（`Values.truthy?` の `v == false`）。同一性の比較にした。
 4. `x&.T.f`（連鎖の段の `&.`）が受理され、nil で止まらない `.` として走っていた。静的エラーにした。
 5. `include ::Comparable` の `::` が読み捨てられ、外側の名前空間の `Comparable` を指していた。先頭の `::` は最上位から解決するようにした。

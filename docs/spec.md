@@ -1191,8 +1191,9 @@ block's results over every call that may compute it.
   thread block's own, are copied when the thread starts; the function's variables stay shared. So
   `Array.map(xs) { |w| Thread.new { ... w ... } }` gives each thread its own `w`, and a shared
   counter is a function variable updated inside `Mutex.synchronize`.
-- **Leaving a thread block.** `break` and `return` out of a `Thread.new` block are errors
-  (`LocalJumpError`); `next v` ends it with `v`.
+- **Leaving a thread block.** `break` and `return` out of a `Thread.new` (or `Kernel.at_exit`) block are
+  static errors, and so is `return` in a block inside it: the block runs later, when the call it would leave
+  has returned. `next v` ends it with `v`.
 - **Errors.** An error inside a thread is raised by `Thread.value` or `Thread.join`. A thread that is
   never joined ends silently when it fails, and every thread stops when the main program ends.
 - **Checking.** The typer runs a thread's block once, at `Thread.new`: its value is the type of

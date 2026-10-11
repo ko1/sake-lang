@@ -704,6 +704,7 @@ module Sake
         end
       when Prism::ReturnNode
         error(node, "`return` outside a function") unless ctx.fn
+        error(node, "`return` in a block that runs later (Thread.new, at_exit): there is no function to return from then", ["end the block with its value instead (`next v` leaves the block early)"]) if %i[detached inside_detached].include?(ctx.in_block)
         check_args(node.arguments, ctx)
       when Prism::YieldNode
         error(node, "`yield` outside a function") unless ctx.fn
@@ -713,6 +714,7 @@ module Sake
         check_jump_args(node, ctx)
       when Prism::BreakNode
         error(node, "`break` outside a loop or block") unless ctx.in_loop || ctx.in_block
+        error(node, "`break` in a block that runs later (Thread.new, at_exit): the call it would leave has already returned", ["use `next v` to end the block with a value"]) if ctx.in_block == :detached && !ctx.in_loop
         check_jump_args(node, ctx)
       when Prism::CallNode then check_call(node, ctx)
       when Prism::HashNode then check_record_literal(node, ctx)
@@ -1100,7 +1102,10 @@ module Sake
       end
       kws = target_keywords(target)
       check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)))
-      check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
+      if blk.is_a?(Prism::BlockNode)
+        detached = target.is_a?(Builtin) && DETACHED_BLOCKS.include?(target.full_name)
+        check_block(blk, ctx, detached:)
+      end
       return unless target
 
       if target.is_a?(Dispatch) && target.table.empty? && ctx.fn.nil? # reached for sure: the top level runs
@@ -1258,9 +1263,19 @@ module Sake
       error(args[i], "#{type}[]: element #{i + 1} must be #{type}, got #{literal_type(args[i])}", hints)
     end
 
-    def check_block(blk, ctx)
+    # Built-ins that keep the block and run it later, on another thread or at exit: there is no call to
+    # leave with `break` and no frame to `return` from when it runs.
+    DETACHED_BLOCKS = %w[Thread.new Kernel.at_exit].freeze
+
+    def check_block(blk, ctx, detached: false)
       @blocks[blk] = block_params(blk)
-      check(blk.body, ctx.dup.tap { _1.in_block = true; _1.in_loop = false })
+      # :detached for the block run later; :inside_detached for a block within it (`break` leaves that inner
+      # call, but `return` would still leave a function that has returned).
+      kind = if detached then :detached
+             elsif %i[detached inside_detached].include?(ctx.in_block) then :inside_detached
+             else true
+             end
+      check(blk.body, ctx.dup.tap { _1.in_block = kind; _1.in_loop = false })
     end
 
     # A block parameter: its name, or for `(a, (b, c))` the nested names, taken apart like `a, b = x`.
@@ -1428,7 +1443,9 @@ module Sake
         return error(node.receiver, "undefined type or module `#{ns}`", hints)
       end
       found = lookup(ns, name)
-      return mixin_call(node, ns, name, found, argc) if found.is_a?(UserFunction) && @modules.key?(ns) && !found.module_function
+      # A required function (`raise NotImplementedError`) dispatches to the includers even under module_function:
+      # called directly it could only raise.
+      return mixin_call(node, ns, name, found, argc) if found.is_a?(UserFunction) && @modules.key?(ns) && (!found.module_function || found.abstract)
       return private_field_error(node, ns, name) if found.is_a?(Builtin) && private_access?(ns, name, from)
       if found
         @direct_calls << [node, found] if found.is_a?(UserFunction)

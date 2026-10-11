@@ -346,7 +346,7 @@ p(got)                                     # => [1, 2, 3]
 | `Socket.gets(s)` · `read(s, n)` · `write(s, str)` · `close_write(s)` · `close(s)` | String か nil · String か nil · Integer · nil · nil |
 
 - **スレッドの変数。** ブロックは周りの変数を共有します。スレッドでは、`Thread.new` を囲むブロックの変数（引数とローカル）とスレッドブロック自身の変数は開始時に複製され、関数の変数は共有のままです。上の例の `Array.map(xs) { |w| Thread.new { ... w ... } }` は各スレッドに自分の `w` を与え、共有カウンタ `count` は `Mutex.synchronize` の中で更新する関数の変数です。
-- **スレッドブロックを抜ける。** `Thread.new` のブロックからの `break` と `return` はエラー（`LocalJumpError`）です。`next v` は `v` で終えます。
+- **スレッドブロックを抜ける。** `Thread.new` のブロックからの `break` と `return`（その中のブロックの `return` も）は静的エラーです。ブロックは呼び出しが戻った後で走るからです。`next v` は `v` で終えます。
 - **エラー。** スレッドの中のエラーは `Thread.value` か `Thread.join` で上がります。join されないスレッドは失敗しても黙って終わり、メインが終わればすべてのスレッドが止まります。
 - **検査。** 型推論はスレッドのブロックを `Thread.new` で 1 度走らせます。その値が `Thread.value` の型、Queue の要素型は push されたものの和です（`Queue.pop` は nil を加える）。交互実行は解析せず、各操作が実行時に引数を検査します。
 

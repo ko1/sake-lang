@@ -105,6 +105,9 @@ module Sake
           return ["#{c.op}: #{t} includes #{mod} but does not define #{op}", ["define `def #{op}(a)` in class #{t}"]]
         end
         ["#{c.op}: the operand #{maybe.sub("are", "is")}#{typer.show_failing(c)}, which has no #{op}; defined for #{c.expected.split("|").join(", ")}", []]
+      when ->(_) { c.arg == "flatten_tuple" }
+        ["#{c.op}: #{c.verdict == :error ? "the elements are" : "some elements are"} Tuples #{typer.show_failing(c)}, which flatten leaves whole (it opens only Arrays; a Tuple is one value)",
+         ["to open them: `Array.flat_map(xs) { |t| Tuple.to_a(t) }`", "for growable Arrays inside, write `Array[...]` instead of `[...]`"]]
       when ->(_) { c.arg == "elements" }
         ["#{c.op}: elements compared in order #{maybe}#{typer.show_failing(c)}, which cannot be compared", []]
       when ->(op) { op == "case/in" && c.arg == "value" }

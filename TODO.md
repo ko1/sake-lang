@@ -6,7 +6,7 @@
 
 ### ko1 の判断が要るもの
 
-1. **仕様変更 2 つ（10-11 に入れた、戻すのは数行）**: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。`Array.flatten` が Tuple も展開する。
+1. **仕様変更（10-11 に入れた、戻すのは数行）**: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。（`Array.flatten` が Tuple も展開する変更は、Tuple は 1 つの値で集まりではないという立場（prelude、D1）とぶつかるので同日に戻した。代わりに Tuple が flatten に来ると静的に知らせ、`flat_map` と `Tuple.to_a` を hint で示す。ko1、10-11）
 2. **型の別名**（`Client = WebSocket::Handshake::Client`）: あってよいが後で考える（ko1、10-11）。深い入れ子を毎回書く長さは、浅い名前空間を選ばせる圧力として働く。移植の方針「Ruby の名前と入れ子を保つ」との関係も合わせて決める。
 3. **例外の階層**: 4 体が要望（`rescue WebSocket::Error` で下位を捕まえたい）。今は「列挙した型だけ」の設計。
 4. **Integer の幅（ネイティブ）**: sabic / ceec は 64 ビットで溢れたらエラー。多倍長への昇格か、64 ビットの意味論か。
@@ -17,7 +17,7 @@
 - `initialize` から呼んだ補助関数が設定したフィールドを「nil かもしれない」と見る（3 体）。
 - `if @x` が枝を刈らない（構築場所ごとの型でフィールドがちょうど nil のとき。examples の偽陽性の主因）。`@y ||= 0` もフィールドを絞らない。
 - 型エラーの位置がライブラリ内部の行になり、呼び出し側は「reached by the call at line N」だけ。大きな合併型でメッセージが切れて肝心の nil が見えない。`[mixed]` が Hash の値の union を Struct のフィールドのせいにする（thor）。
-- `module_function` の後の `def f = raise NotImplementedError` を、include したクラスが定義していても「does not define」と誤報する。
+- [x] (10-11) `module_function` の後の `def f = raise NotImplementedError` を、include したクラスが定義していても「does not define」と誤報する（必須の関数は module_function でも振り分ける）。
 - `Float.round` などに `Integer | Float` を渡す偽陽性（hint で `Arithmetic.round` を示すか）。
 - フィールドが mixin の同名の関数を隠す、`def port` が `attr_reader port` を置き換える、を黙って通す。
 - hint: 関数の中から読んだトップレベルのローカル、`proc { }`、1 行目の `coding:` を含むコメント。
@@ -25,9 +25,9 @@
 
 ### 処理系のバグ
 
-- `Thread.new { break }` / スレッドのブロックの `return` で処理系が落ちる（静的に弾くのが筋）。
-- `Thread.new { raise "x" }` の raise を `rescue` の検査が見ない。
-- ブロックの引数が関数のローカルなので、スレッドで後から走るブロックがループ変数の最後の値を読む（ブロックごとのフレームが要る）。
+- [x] (10-11) `Thread.new { break }` / スレッドのブロックの `return`: 静的に弾く（`Thread.new` と `Kernel.at_exit` のブロック、その中のブロックの `return`）。
+- [x] (10-11) `Thread.new { raise "x" }` の raise: スレッドが持ち、`Thread.value` / `Thread.join` の呼び出しで起きるものとして検査する。
+- [x] (10-11) スレッドで後から走るブロックがループ変数の最後の値を読む: スレッドを作るとき、yield の先のブロックのフレームについてもブロックの変数を写す（`Interpreter#thread_block_val`）。
 
 ### 組み込みの不足
 
@@ -157,7 +157,7 @@
 
 ## 2026-10-11 の移植（18 gem）で見つかったもの（experiments/2026-10-11-libraries3）
 
-- 仕様変更を 2 つ入れた（ko1 の判断待ち）: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。`Array.flatten` が Tuple も展開する。
+- 仕様変更: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す（判断待ち）。`Array.flatten` の Tuple 展開は入れて同日に戻した（Tuple は値。flatten に来たら静的に知らせる）。
 - `initialize` から呼んだ補助関数が設定したフィールドを、検査器が「nil かもしれない」と見る（3 体が報告）。
 - フィールド（`attr_reader leftovers`）が mixin の同名の関数を隠しても何も言われない。`def port` が `attr_reader port` を置き換えるのも黙って通る。
 - 型エラーの報告位置がライブラリ内部の行になり、呼び出し側は「reached by the call at line N」だけ。大きな合併型でメッセージが切れる。

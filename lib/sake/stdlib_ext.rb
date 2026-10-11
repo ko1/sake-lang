@@ -8,8 +8,6 @@ module Sake
   module Stdlib
     module_function
 
-    def flatten_all(xs) = xs.flat_map { |x| x.is_a?(Array) ? flatten_all(x) : (x.is_a?(Tuple) ? flatten_all(x.elems) : [x]) }
-
     def install_ext(reg, out, input)
       install_ext_body(reg, out, input)
       Operators::MODULES.each { reg.add_namespace(_1) }
@@ -424,9 +422,8 @@ module Sake
           a
         end
       end
-      # A Tuple is an Array in Ruby, so flatten opens it too (`String.scan` with groups gives Tuples).
-      reg.define("Array", :flatten, ["Array"]) { |a| flatten_all(a) }
-      reg.define("Array", :flatten!, ["Array"]) { |a| (f = flatten_all(a)) == a ? nil : a.replace(f) }
+      # Only Arrays are opened: a Tuple is one value (a record by position), not a collection.
+      reg.define("Array", :flatten, ["Array"], &:flatten)
       reg.define("Array", :compact, ["Array"], &:compact)
       # Struct values compare by their type's == (fields by default), not by Ruby's hash/eql?.
       reg.define("Array", :uniq, ["Array"]) do |a|

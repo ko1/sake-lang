@@ -519,9 +519,7 @@ module Sake
       child.instance_variable_set(:@running_blocks, [])
       hooks = [Thread.current[:sake_show_hooks], Thread.current[:sake_struct_ops]]
       path = @program.path
-      f = blk.frame
-      own = block_slots(f.name)
-      thread_blk = BlockVal.new(blk.node, Frame.new(f.name, ThreadSlots.new(f.slots, own), f.block))
+      thread_blk = thread_block_val(blk)
       lambda do
         Thread.current[:sake_show_hooks], Thread.current[:sake_struct_ops] = hooks
         child.send(:call_block, thread_blk, [], node)
@@ -531,6 +529,15 @@ module Sake
         e.path ||= path
         raise
       end
+    end
+
+    # A block as a thread sees it: its frame's block variables (parameters and locals) are copied now, and so
+    # are those of the block it may yield to, and so on up, because in Ruby each block call has its own
+    # variables (a loop's `|i|` must not be read later as the loop's last value). Function locals stay shared.
+    def thread_block_val(bv)
+      return nil unless bv
+      f = bv.frame
+      BlockVal.new(bv.node, Frame.new(f.name, ThreadSlots.new(f.slots, block_slots(f.name)), thread_block_val(f.block)))
     end
 
     # The slots of a function's blocks (their parameters and locals).

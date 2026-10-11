@@ -3,7 +3,7 @@
 Thread is the type of a thread that runs a block concurrently. `Thread.new { ... }` makes one; `Thread.value(t)` or `Thread.join(t)` waits for its end. It is Ruby's `Thread` (a Ruby thread), but only the operations listed here exist: no `Thread#[]`, `status`, `priority`, or `Thread.pass`. There is no Thread literal; values come from `Thread.new` and `Thread.current` ([Values and types](../03-values.md), [Built-ins](../09-builtins.md)).
 
 - **Variables.** A block shares the variables around it, but for a thread the variables of the blocks around `Thread.new` (their parameters and locals) and the thread block's own are copied when the thread starts; the function's (or the top level's) variables stay shared. A shared counter is updated inside `Mutex.synchronize` ([Mutex](Mutex.md)).
-- **Leaving the block.** `break` and `return` out of a thread block are a `LocalJumpError`; `next v` ends it with `v`.
+- **Leaving the block.** `break` and `return` out of a thread block are static errors (the block runs after `Thread.new` has returned); `next v` ends it with `v`.
 - **Errors.** An exception inside a thread is not reported there; it is raised in the caller of `Thread.value` or `Thread.join`. A thread that ended with an error that no `Thread.value` / `Thread.join` read is reported on stderr when the program ends (the exit status is not changed): `PATH: a thread ended with an error that no Thread.value / Thread.join read:` followed by the error's report, indented. Every thread stops when the main program ends; one that is still running then is not reported.
 - **Checking.** The checker runs the block once, at `Thread.new`, and makes its value the type of `Thread.value`. Interleavings are not analyzed; each operation still checks its arguments at run time.
 
