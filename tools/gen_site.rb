@@ -6,10 +6,12 @@
 #                docs/manual/ and docs/guide.html point at the copies below
 #   manual/      docs/manual/build (the ligarb book, ja/en)
 #   guide.html   docs/guide.html
+#   compare.html the library tests in Ruby and in Sake side by side (tools/gen_compare.rb)
 #   playground/  ide/dist (the browser IDE on ruby.wasm; `npm ci && npm run build` in ide/ first)
 # usage: ruby tools/gen_site.rb [OUT_DIR]   (default: _site)
 
 require "fileutils"
+require "rbconfig"
 require "kramdown"
 require "kramdown-parser-gfm"
 
@@ -74,6 +76,7 @@ page = <<~HTML
     <span class="name">Sake-lang</span>
     <a href="manual/">Reference manual (日本語 / English)</a>
     <a href="guide.html">Guide</a>
+    <a href="compare.html">Ruby vs Sake</a>
     <a href="playground/">Playground</a>
     <a href="#{REPO}">GitHub</a>
   </nav>
@@ -89,6 +92,7 @@ FileUtils.mkdir_p(out)
 File.write(File.join(out, "index.html"), page)
 FileUtils.cp_r(File.dirname(book), File.join(out, "manual"))
 FileUtils.cp(File.join(ROOT, "docs/guide.html"), File.join(out, "guide.html"))
+system(RbConfig.ruby, File.join(ROOT, "tools/gen_compare.rb"), File.join(out, "compare.html"), exception: true)
 FileUtils.cp_r(ide, File.join(out, "playground"))
 FileUtils.touch(File.join(out, ".nojekyll"))
-puts "Built #{out}: index.html, manual/, guide.html, playground/"
+puts "Built #{out}: index.html, manual/, guide.html, compare.html, playground/"
