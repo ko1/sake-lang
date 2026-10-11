@@ -1,4 +1,51 @@
-# TODO（2026-10-09、ライブラリ移植と Sake 製テストで出た課題）
+# TODO
+
+## 未解決の課題のまとめ（2026-10-11）
+
+下の各節（日付ごとの記録）から、まだ開いているものを種類で並べ直したもの。詳細と出典は各節。
+
+### ko1 の判断が要るもの
+
+1. **仕様変更 2 つ（10-11 に入れた、戻すのは数行）**: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。`Array.flatten` が Tuple も展開する。
+2. **型の別名**（`Client = WebSocket::Handshake::Client`）: あってよいが後で考える（ko1、10-11）。深い入れ子を毎回書く長さは、浅い名前空間を選ばせる圧力として働く。移植の方針「Ruby の名前と入れ子を保つ」との関係も合わせて決める。
+3. **例外の階層**: 4 体が要望（`rescue WebSocket::Error` で下位を捕まえたい）。今は「列挙した型だけ」の設計。
+4. **Integer の幅（ネイティブ）**: sabic / ceec は 64 ビットで溢れたらエラー。多倍長への昇格か、64 ビットの意味論か。
+5. D11 `f(**opts)` の受け渡し、D12 フィールドの既定値が前のフィールドを読めるか、D14 表示の protocol。
+
+### 検査器（偽陽性・メッセージ）
+
+- `initialize` から呼んだ補助関数が設定したフィールドを「nil かもしれない」と見る（3 体）。
+- `if @x` が枝を刈らない（構築場所ごとの型でフィールドがちょうど nil のとき。examples の偽陽性の主因）。`@y ||= 0` もフィールドを絞らない。
+- 型エラーの位置がライブラリ内部の行になり、呼び出し側は「reached by the call at line N」だけ。大きな合併型でメッセージが切れて肝心の nil が見えない。`[mixed]` が Hash の値の union を Struct のフィールドのせいにする（thor）。
+- `module_function` の後の `def f = raise NotImplementedError` を、include したクラスが定義していても「does not define」と誤報する。
+- `Float.round` などに `Integer | Float` を渡す偽陽性（hint で `Arithmetic.round` を示すか）。
+- フィールドが mixin の同名の関数を隠す、`def port` が `attr_reader port` を置き換える、を黙って通す。
+- hint: 関数の中から読んだトップレベルのローカル、`proc { }`、1 行目の `coding:` を含むコメント。
+- `String.getbyte` の nil が level 2 で毎回 `|| 0` を要る。`String.unpack1` の結果に型が付かない。
+
+### 処理系のバグ
+
+- `Thread.new { break }` / スレッドのブロックの `return` で処理系が落ちる（静的に弾くのが筋）。
+- `Thread.new { raise "x" }` の raise を `rescue` の検査が見ない。
+- ブロックの引数が関数のローカルなので、スレッドで後から走るブロックがループ変数の最後の値を読む（ブロックごとのフレームが要る）。
+
+### 組み込みの不足
+
+- `gsub` / `scan` のブロックに MatchData、`Random` 型、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。
+
+### ネイティブ（sabic / ceec）
+
+- 部分集合だけ: Hash・Set・Regexp・rescue・`(A|B).f`・Thread・Tuple/Record パターン。ceec はメモリを解放しない（GC なし）。
+- 生成器が自前の型推論を持つ（typer の式ごとの型を使えるようにする）。
+- 範囲解析は配列要素・フィールド・関数の戻り値の範囲を追わない（levenshtein の残りの溢れ検査、shapes の掛け算）。
+
+### 道具
+
+- `tools/check_reference.rb`: 1 つの fence で実行時エラーを 1 つしか見せられない。
+
+---
+
+# 記録（2026-10-09 から、ライブラリ移植と Sake 製テストで出た課題）
 
 出典: `experiments/2026-10-09-stdlib-port/notes.md`（集計）、`sakelib/notes/*.md`、`experiments/2026-10-03-sakelib-port/builtin-requests.md`。
 状態: `[ ]` 未着手、`[x]` 済み（日付）、`[?]` 設計判断が要る（ko1 に聞く）。簡単なものから。
@@ -92,7 +139,7 @@
 - [ ] `rescue` の検査が `Thread.new { raise "x" }` の raise を見ない: `begin Thread.value(t) rescue RuntimeError` が level 1 で「never raises」。hint は Thread.raise だけを挙げる。ブロック内の raise も Thread.value/join に流すか、hint に書く。
 - [ ] `@y ||= 0` がフィールドを絞らない: 直後の `@y * @y` が `[nil]` のまま（`Point.new(3, nil)` があるとき）。
 - [ ] hint: 関数の中で読んだトップレベルのローカル（`def bump = count + 1`）に `String.count()`… の 5 候補が出る。「トップレベルのローカルは関数の中から見えない」と言うべき。`f = proc { }` は「undefined function `proc`」だけで、ブロックが値でないことを言わない（`->` は「unsupported syntax: lambda」と言う）。
-- [ ] `sakelib/notes/not-ported.md` と `notes/timeout.md` が「Sake に `Thread.raise` が無い」「net_http に TLS が無い」と言うが、どちらも今はある（`Thread.raise`、`Socket.connect_ssl`）。notes を直す。
+- [x] (10-11) `sakelib/notes/not-ported.md` が「Sake に `Thread.raise` が無い」「net_http に TLS が無い」と言っていた。直した。
 - [ ] リファレンスの検査器（`tools/check_reference.rb`）: 1 つの fence で実行時エラーは 1 つしか見せられず、静的エラーがあると実行時の行は走らない。`ruby error --strict=0` のような fence があれば、level 2 で静的に止まるものの実行時の形も検証に乗る（08 章は文で引用した）。
 - [x] (10-10, prelude の `sakelib/prelude.sake` に Sake で実装。組み込み 4 型は自分の操作で答え、自分のクラスは `include Enum` + `def each`) `Enum` module（ko1、10-10）: `Enum.each(x) { }` / `Enum.map` … を Array・Hash・Set・Range・Tuple（と `each` を定義して include した自分の型）に第 1 引数の型でディスパッチする、Enumerable の短い名前の module。mixin のディスパッチの仕組みで書けるか、組み込み型の include 表（`Operators::BUILTIN` 相当）と typer の結果型の扱いを設計する。
 - [ ] `module_function` の後の `def area(s) = raise NotImplementedError`（必須の関数）を include したクラスが定義していても、「Sq includes Shape but does not define area」と誤って報告する（`module_function` 無しなら正しく動く）。02 章の書き直しで発見。
@@ -106,7 +153,7 @@
 - 2026-10-10 対応済み: 再代入されない非 Copy の引数は `&T` で渡し、`Array.each` の要素も借用で取り出す（shapes_mono 1.65 → 0.48 秒、手書きの 1.16 倍）。残りは `Array.map`/`select` の要素、閉包のブロック引数、戻り値の clone。
 - 生成器が自前の型推論を持っている。typer が式ごとの型を保持するようにして、それを使う。
 - Integer は 64 ビット（溢れたらエラー）。多倍長への昇格を入れるか、言語の意味論を 64 ビットにするかは未決。
-- 命名: Sake → Rust の変換器の名前（錆＋酒）。
+- [x] (10-10) 命名: Rust は `bin/sabic`、C は `bin/ceec`。
 
 ## 2026-10-11 の移植（18 gem）で見つかったもの（experiments/2026-10-11-libraries3）
 

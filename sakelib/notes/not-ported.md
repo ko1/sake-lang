@@ -18,9 +18,9 @@
 | open3 | 不要 | `Open3.capture2 / capture2e / capture3` と `Kernel.system` が組み込み（2026-10-09）。`popen3` のストリーム版は無い |
 | pp | 一部 | `pp` は組み込み（1 行）。幅で折り返す PP は `sakelib/pp.sake`（2026-10-09 に移植） |
 | prettyprint | 移植 | `sakelib/prettyprint.sake`（2026-10-09） |
-| monitor, mutex_m, observer, timeout, stringio, tempfile, getoptlong, bigdecimal, net/http (`net_http`), open-uri (`open_uri`) | 移植 | 2026-10-09 に移植（それぞれの notes を参照）。timeout はブロックを止められない（`Thread.raise` が無い）、net_http は http のみ（TLS が無い） |
+| monitor, mutex_m, observer, timeout, stringio, tempfile, getoptlong, bigdecimal, net/http (`net_http`), open-uri (`open_uri`) | 移植 | 2026-10-09 に移植（それぞれの notes を参照）。timeout は `Thread.raise` でブロックを止める、net_http は https も `Socket.connect_ssl` で扱う（どちらも 2026-10-09 の後半に組み込みが入った） |
 | resolv, resolv-replace | 組み込み | DNS は UDP ソケットが要る。Sake に UDP は無い |
-| openssl, net/https, digest の OpenSSL 版 | 組み込み | TLS と暗号。`digest.sake` は MD5/SHA を Sake で計算する（遅い）。TLS は組み込みで提供するしかない |
+| openssl, digest の OpenSSL 版 | 組み込み | 暗号。`digest.sake` は MD5/SHA を Sake で計算する（遅い）。TLS のクライアントは組み込みの `Socket.connect_ssl`（net/https は net_http.sake が扱う）。接続済みソケットを TLS にする（STARTTLS）とサーバ側は無い |
 | net/ftp, net/imap, net/pop, net/smtp | 組み込みの不足 | TCP の上に書けるが、試験に使える相手（サーバ）が無い。net/http は試験の中でサーバを立てた |
 | drb, rinda | 言語 | 分散オブジェクト。`Marshal` と `method_missing` に乗る |
 | io-console, io-wait, io-nonblock, readline, reline | 組み込み | 端末と非同期 I/O。Sake の IO は同期の read/gets/puts のみ |
@@ -36,7 +36,7 @@
 
 - 移せないものの大半は「言語」側で、`method_missing`・`define_method`・特殊変数・Enumerator・第一級のブロックの 4 つに集約される。
   これは Sake が静的解析のために意図して捨てたもの（DESIGN.md「禁止するもの」）で、代わりの書き方（操作を 1 つずつ書く、once、Record）はある。
-- 「組み込み」側は TLS・UDP・端末の 3 つで、ライブラリを Sake で書いても届かない。使いたいなら処理系に足す。
+- 「組み込み」側は UDP と、TLS のうちサーバ側と STARTTLS（端末と TLS のクライアントは 2026-10-10 までに組み込みに入った）。ライブラリを Sake で書いても届かないので、使いたいなら処理系に足す。
 
 ## gem のうち移さなかった部分（2026-10-09、24 本の移植から）
 
