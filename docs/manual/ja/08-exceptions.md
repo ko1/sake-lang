@@ -173,6 +173,32 @@ rescue ZeroDivisionError => e
 end
 ```
 
+### バックトレースと原因
+
+`Exception.backtrace(e)` は、例外が投げられたときの呼び出しの列を、Ruby と同じ `"FILE:LINE:in 'FUNCTION'"` の String の Array で返します。内側が先です。まだ投げていない例外値（`E.new` で作っただけのもの）では nil です。`raise e` や引数のない `raise` で投げ直しても、最初に投げたときの列のままです。
+
+`Exception.cause(e)` は、`e` が投げられたときに rescue 節で扱っていた例外を返します。無ければ nil です。どちらも nil になりうるので、`--strict` では使う前に確かめます。
+
+Ruby と違い、組み込みの操作の中の行（Ruby の `'Integer#/'` など）は列に入りません。
+
+```ruby
+def parse(s)
+  Integer(s)
+rescue ArgumentError
+  raise "not a number: #{s}"
+end
+
+begin
+  parse("x")
+rescue => e
+  bt = Exception.backtrace(e)
+  p(Array.map(bt) { |l| String.sub(l, /\A.*?:/, "") }) if bt   # => ["4:in 'parse'", "8:in '<main>'"]
+  c = Exception.cause(e)
+  p(c) if c                                # => #<ArgumentError: invalid value for Integer(): "x">
+end
+p(Exception.backtrace(RuntimeError.new("not raised")))   # => nil
+```
+
 ### プログラムの誤り
 
 `SystemStackError`、`LocalJumpError`、`NotImplementedError` はプログラムの誤りで、rescue できません。`rescue` に書くのは静的エラーです。

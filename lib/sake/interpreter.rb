@@ -268,8 +268,14 @@ module Sake
     def exception_type(name) = @program.struct_types.fetch(name)
 
     # The exception value of an error, built from its kind and message when an operation raised it.
+    # Raising a value keeps the backtrace and cause it got when first raised, as Ruby's raise does.
     def exception_value(e)
-      e.value ||= StructValue.new(exception_type(e.kind), [e.message])
+      v = e.value ||= StructValue.new(exception_type(e.kind), [e.message])
+      unless v.backtrace
+        v.backtrace = e.backtrace(@program.path)
+        v.cause = exception_value(e.cause) if e.cause
+      end
+      v
     end
 
     def do_raise(n, f)
@@ -306,10 +312,15 @@ module Sake
     rescue RunError => e
       clause = rescuable?(e) && n.rescues.find { |c| c.names.empty? || c.names.include?(e.kind) }
       raise unless clause
+      # Raised while an enclosing rescue clause runs (and caught before leaving it): that one is the cause.
+      e.cause ||= @handling.last unless @handling.last.equal?(e)
       @handling.push(e)
       begin
         f.slots[clause.slot] = exception_value(e) if clause.slot
         ev(clause.body, f)
+      rescue RunError => raised
+        raised.cause ||= e unless raised.equal?(e)
+        raise
       ensure
         @handling.pop
       end

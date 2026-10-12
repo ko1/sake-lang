@@ -4,6 +4,7 @@
 
 - `E.new(message)` が例外値を作ります（`message` は普通 String ですが、型は検査されません）。`raise E, "msg"` は `raise E.new("msg")` の略、`raise E` はメッセージを型名にします。`raise "msg"` は `RuntimeError` です。`raise` は構文で、[例外とエラー](../08-exceptions.md)にあります。
 - `E.message(e)` がメッセージを読み、`E.set_message(e, s)` が書き換えます（`e.E.message` も同じ）。古い `E.get_message` は拒まれ、`E.message` に直すよう案内されます。どの型の例外値でも読めるのが `Exception.message(e)` で、`rescue => e` のように型が和になっているときに使います。
+- `Exception.backtrace(e)` は投げられたときの呼び出しの列（`"FILE:LINE:in 'FUNCTION'"` の Array、内側が先）、`Exception.cause(e)` はそのとき rescue 節で扱っていた例外です。まだ投げていない値ではどちらも nil です（[バックトレースと原因](../08-exceptions.md)）。
 - `rescue E => e` は列挙した型を捕まえます。組み込みの型は Ruby の親子関係のとおりで、`rescue IndexError` は `KeyError` も、`rescue IOError` は `EOFError` も、`rescue RangeError` は `FloatDomainError` も、`rescue ArgumentError` は `Math::DomainError` も捕まえます。それを親に書いたクラス（`class E < RangeError`）も捕まえます。ユーザの `class B < A` は書き写しなので `rescue A` は B を捕まえません。まとめるには、型が include したモジュールを書きます（`rescue M`）。複数は `rescue A, B => e`、すべては `rescue => e`（`rescue StandardError`、`rescue Exception` も同じ）です。
 - `p(e)` は `#<E: message>`、`==` はフィールドで比べます。
 - 組み込みの操作が投げた例外のメッセージは Ruby の文（`divided by 0`）で、rescue されずにプログラムを終えたときの報告には操作名も付きます（`ZeroDivisionError: Kernel.Rational: divided by 0`）。
@@ -84,11 +85,6 @@ Array.sort(Array[1, "a"])          # !> Array.sort: elements compared in order m
 値の型が合わないとき: 操作が受け取った引数が違う型、左のオペランドの型が支えない演算子、型付き Array（`Integer[]` など）への違う型の書き込み、Tuple でも Array でもない値からの多重代入、凍結された String（Hash のキー、Set の要素、Symbol の名前、`ARGV` の要素）のその場での変更（`cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`）、`Exception.message` に例外でない値。検査器が要素の型を見られなかった場所で操作の中の Ruby が `TypeError` や `NoMethodError` を出したときもこの型です: `Array.pack(Array["a"], "C")`（`no implicit conversion of String into Integer`）、`Range.first(1.0..2.0, 2)`（`can't iterate from Float`）、`--strict=0` で String でないキーや値を渡した `ENV.replace`（`keys and values must be String, got String => Integer`）。これらの大半は実行前の検査が静的に止めるので、実行時に届くのは検査が通した場所だけです。
 
 ```ruby
-begin
-  Exception.message(1)
-rescue TypeError => e
-  puts(Exception.message(e))       # => Exception.message: argument 1 must be an exception, got Integer
-end
 begin
   Array.pack(Array["a"], "C")
 rescue TypeError => e

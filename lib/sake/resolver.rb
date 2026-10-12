@@ -87,6 +87,14 @@ module Sake
         raise Fail.new("TypeError", "Exception.message: argument 1 must be an exception, got #{Values.describe(e)}") unless e.is_a?(StructValue) && e.type.exception
         e.values[0]
       end
+      @registry.define("Exception", :backtrace, ["Any"]) do |e|
+        raise Fail.new("TypeError", "Exception.backtrace: argument 1 must be an exception, got #{Values.describe(e)}") unless e.is_a?(StructValue) && e.type.exception
+        e.backtrace&.dup
+      end
+      @registry.define("Exception", :cause, ["Any"]) do |e|
+        raise Fail.new("TypeError", "Exception.cause: argument 1 must be an exception, got #{Values.describe(e)}") unless e.is_a?(StructValue) && e.type.exception
+        e.cause
+      end
       @toplevel = []
       @calls = {}.compare_by_identity
       @blocks = {}.compare_by_identity

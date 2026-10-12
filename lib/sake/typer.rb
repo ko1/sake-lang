@@ -552,7 +552,11 @@ module Sake
 
     # --- checks ---
 
-    def atom_matches?(atom, want) = atom_type_name(atom) == want
+    # "Exception" (Exception.message and the others' argument) takes any exception type.
+    def atom_matches?(atom, want)
+      return struct_atom?(atom) && struct_type(struct_name(atom))&.exception if want == "Exception"
+      atom_type_name(atom) == want
+    end
 
     def record(node, op, arg, want, actual)
       return if want == "Any" || actual.empty?
@@ -1556,7 +1560,13 @@ module Sake
           acc = nxt
         end
         acc
-      when "Exception.message" then t("String")
+      when "Exception.message" then record(node, name, 1, "Exception", a0); t("String")
+      when "Exception.backtrace"
+        record(node, name, 1, "Exception", a0)
+        u(new_site(node, " #{name}", t("String")), t("Nil"))
+      when "Exception.cause"
+        record(node, name, 1, "Exception", a0)
+        u(of_atoms(@program.struct_types.select { |k, st| st.exception && !Resolver::NOT_RESCUABLE.include?(k) }.keys), t("Nil"))
       else unknown("no signature for #{name}")
       end
     end

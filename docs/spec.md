@@ -840,6 +840,11 @@ end
 - **Reading the message.** `Exception.message(e)` reads the message of any exception value. For an
   exception raised by a built-in operation it is Ruby's text (`divided by 0`); the report of an
   unrescued one also names the operation (`ZeroDivisionError: Arithmetic./: divided by 0`).
+- **Backtrace and cause.** `Exception.backtrace(e)` is Ruby's backtrace: an Array of
+  `"FILE:LINE:in 'FUNCTION'"`, innermost first, without frames inside built-in operations; nil for a
+  value never raised. Raising a value again (`raise e`, a bare `raise`) keeps the first backtrace.
+  `Exception.cause(e)` is the exception a rescue clause was handling when `e` was first raised, or nil.
+  The argument of `Exception.message`, `backtrace` and `cause` must be an exception (level 1).
 - **Program errors.** `SystemStackError`, `LocalJumpError`, and `NotImplementedError` cannot be
   rescued, and naming them in `rescue` is a static error. `TypeError` (an operation given a value of
   the wrong type) and `NoMatchingPatternError` can be rescued, as in Ruby: the checks before running

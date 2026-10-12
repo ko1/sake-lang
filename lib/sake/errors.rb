@@ -45,6 +45,15 @@ module Sake
     def nil_value? = @nil_value
 
     attr_accessor :value
+    attr_accessor :cause # the RunError being rescued when this one was raised (Ruby's cause)
+
+    # Ruby's Exception#backtrace: innermost first, "FILE:LINE:in 'FUNCTION'".
+    def backtrace(main_path)
+      callers = ["<main>", *frames.map(&:first)]
+      [["#{file || main_path}:#{line}", callers.last],
+       *frames.each_with_index.reverse_each.map { |(_, l, f), i| ["#{f || main_path}:#{l}", callers[i]] }]
+        .map { |at, fn| "#{at}:in '#{fn}'" }
+    end
 
     MAX_FRAMES = 12
 

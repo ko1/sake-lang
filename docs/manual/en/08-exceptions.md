@@ -173,6 +173,32 @@ rescue ZeroDivisionError => e
 end
 ```
 
+### Backtrace and cause
+
+`Exception.backtrace(e)` gives the calls in effect when the exception was raised, as an Array of Strings in Ruby's form `"FILE:LINE:in 'FUNCTION'"`, innermost first. It is nil for an exception value that was never raised (made with `E.new` only). Raising it again with `raise e` or a bare `raise` keeps the backtrace of the first raise.
+
+`Exception.cause(e)` gives the exception a rescue clause was handling when `e` was raised, or nil. Both may be nil, so under `--strict` check them before use.
+
+Unlike Ruby, lines inside built-in operations (Ruby's `'Integer#/'` and the like) are not in the list.
+
+```ruby
+def parse(s)
+  Integer(s)
+rescue ArgumentError
+  raise "not a number: #{s}"
+end
+
+begin
+  parse("x")
+rescue => e
+  bt = Exception.backtrace(e)
+  p(Array.map(bt) { |l| String.sub(l, /\A.*?:/, "") }) if bt   # => ["4:in 'parse'", "8:in '<main>'"]
+  c = Exception.cause(e)
+  p(c) if c                                # => #<ArgumentError: invalid value for Integer(): "x">
+end
+p(Exception.backtrace(RuntimeError.new("not raised")))   # => nil
+```
+
 ### Program errors
 
 `SystemStackError`, `LocalJumpError`, and `NotImplementedError` are program errors and cannot be rescued. Naming one in `rescue` is a static error.

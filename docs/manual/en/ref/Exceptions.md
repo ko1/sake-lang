@@ -4,6 +4,7 @@ The built-in exception types. Built-in operations raise them when they fail at r
 
 - `E.new(message)` makes an exception value (`message` is usually a String; its type is not checked). `raise E, "msg"` is short for `raise E.new("msg")`, and `raise E` uses the type's name as the message. `raise "msg"` raises a `RuntimeError`. `raise` is syntax, described in [Exceptions and errors](../08-exceptions.md).
 - `E.message(e)` reads the message and `E.set_message(e, s)` replaces it (`e.E.message` is the same read). The old `E.get_message` is rejected with a hint to use `E.message`. `Exception.message(e)` reads the message of an exception value of any type: use it where the type is a union, as after `rescue => e`.
+- `Exception.backtrace(e)` gives the calls in effect when it was raised (an Array of `"FILE:LINE:in 'FUNCTION'"`, innermost first), and `Exception.cause(e)` the exception a rescue clause was handling then. Both are nil for a value never raised ([Backtrace and cause](../08-exceptions.md)).
 - `rescue E => e` catches the listed types. The built-in types keep Ruby's parents: `rescue IndexError` also catches `KeyError`, `rescue IOError` `EOFError`, `rescue RangeError` `FloatDomainError`, `rescue ArgumentError` `Math::DomainError`, and each also catches a class declared under it (`class E < RangeError`). A user type `class B < A` is a copy, so `rescue A` does not catch B; a module that the types include groups them (`rescue M`). Several types are `rescue A, B => e`; every type is `rescue => e` (`rescue StandardError` and `rescue Exception` mean the same).
 - `p(e)` prints `#<E: message>`, and `==` compares the fields.
 - The message of an exception raised by a built-in operation is Ruby's text (`divided by 0`); the report of one that ends the program also names the operation (`ZeroDivisionError: Kernel.Rational: divided by 0`).
@@ -84,11 +85,6 @@ Array.sort(Array[1, "a"])          # !> Array.sort: elements compared in order m
 A value of the wrong type: an operation given an argument of another type, an operator the left operand's type does not support, a write of another type into a typed Array (`Integer[]`, ...), multiple assignment from a value that is neither a Tuple nor an Array, an in-place change of a frozen String (a Hash key, a Set element, a Symbol's name, an element of `ARGV`: `cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`), `Exception.message` given a value that is not an exception. A Ruby `TypeError` or `NoMethodError` inside an operation is this type too, where the checker could not see the element types: `Array.pack(Array["a"], "C")` (`no implicit conversion of String into Integer`), `Range.first(1.0..2.0, 2)` (`can't iterate from Float`), `ENV.replace` with a non-String key or value under `--strict=0` (`keys and values must be String, got String => Integer`). The checks before running stop most of these statically; at run time only the places the checker let through reach it.
 
 ```ruby
-begin
-  Exception.message(1)
-rescue TypeError => e
-  puts(Exception.message(e))       # => Exception.message: argument 1 must be an exception, got Integer
-end
 begin
   Array.pack(Array["a"], "C")
 rescue TypeError => e

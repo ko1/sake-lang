@@ -24,7 +24,9 @@ def build
   out << "\n## Exception types\n\n"
   named, scoped = Sake::Resolver::BUILTIN_EXCEPTIONS.partition { !_1.include?("::") }
   out << "Each of #{named.map { "`#{_1}`" }.join(", ")} has `T.new(message)`, "
-  out << "`T.message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception; "
+  out << "`T.message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception, "
+  out << "`Exception.backtrace(e)` its backtrace (an Array of `\"FILE:LINE:in 'FUNCTION'\"`, nil before it is raised) "
+  out << "and `Exception.cause(e)` the exception being rescued when it was raised (or nil); "
   out << "`Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). "
   out << "#{scoped.map { "`#{_1}`" }.join(", ")} can only be named in `rescue`.\n"
   out

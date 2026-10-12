@@ -303,6 +303,7 @@ p(i + 1) if i != nil
   parents); bare `rescue => e` catches all.
 - `raise "msg"` (RuntimeError), `raise ArgumentError, "msg"` (only for types without extra fields),
   `raise E.new("msg", 7)`. Read: `Exception.message(e)`, `E.code(e)`. No `e.message`.
+  `Exception.backtrace(e)` / `Exception.cause(e)` (nil if never raised / no cause).
 - `expr rescue fallback`, `def ... rescue ... end`, `ensure`, `retry` work. Built-ins:
   ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError TypeError RuntimeError
   NoMatchingPatternError StopIteration ... (Part 2 lists them). Their messages are Ruby's.

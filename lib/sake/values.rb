@@ -89,6 +89,8 @@ module Sake
   # An instance of a Struct.new type; fields are mutable.
   class StructValue
     attr_reader :type, :values
+    # An exception's backtrace (Array of String, set when first raised) and cause; not fields, so == ignores them.
+    attr_accessor :backtrace, :cause
 
     def to_s = Values.to_s(self) # for Ruby methods such as format
     def inspect = Values.inspect(self) # for format's %p
