@@ -1,0 +1,824 @@
+# sinatra: Sinatra 4.2.1 (Sinatra::Base, Request, Response, Helpers, Templates' erb) over sakelib/rack.sake,
+# with routes compiled by sakelib/mustermann.sake. Ruby's names, nested in `module Sinatra`.
+#
+# Ruby's Sinatra stores each route's block (`get "/" do ... end`) in a class-level table. Sake keeps no blocks,
+# so the class body becomes one function, `routes(app)`, and Sinatra runs it again for every request, once per
+# phase (settings, before filters, routes, after filters, error handlers). Each DSL call (`get`, `before`,
+# `error`, `set` ...) looks at the phase and either does nothing or runs its block right away, the way a
+# router of Roda's kind does; the first route that matches throws (Ruby: `throw :halt`), so later ones are
+# not reached. The app reads like Sinatra's, with the instance named:
+#
+#   class App < Sinatra::Base                    # Ruby: class App < Sinatra::Base
+#     def routes(app)                            # Ruby: the class body
+#       enable(app, :sessions)                   #   enable :sessions
+#       before(app) { headers(app, Hash["x-before" => "1"]) }
+#       get(app, "/hello/:name") do              #   get "/hello/:name" do
+#         "Hello, #{params(app)["name"]}!"       #     "Hello, #{params["name"]}!"
+#       end
+#       not_found(app) { "no route" }
+#     end
+#   end
+#   Rack::App.call(App.new, Rack::MockRequest.env_for("/hello/world"))   # Ruby: App.call(env)
+#
+# `App.new` runs the settings phase once (Ruby: the class body at load time); `Rack::App.call(app, env)` copies
+# the app (Ruby: `dup.call!(env)`) and runs the request on the copy, so the per-request fields (env, request,
+# response, params) are the copy's. A field the app declares (`attr_accessor user`) is an instance variable of
+# Ruby's app (`@user` set in a before filter, read in a route).
+
+require "rack"
+require "rackup"
+require "erb"
+require "erubi"
+require "json"
+require "base64"
+require "digest"
+require "mustermann"
+
+module Sinatra
+  class Error < StandardError
+  end
+  # Ruby: Sinatra::BadRequest < Sinatra::Error (http_status 400), Sinatra::NotFound (404)
+  class BadRequest < StandardError
+  end
+  class NotFound < StandardError
+  end
+
+  # Ruby: `throw :halt, response` and `throw :pass`. A rescue of everything (`rescue => e`) in a route also
+  # catches these, where Ruby's throw passes through a rescue.
+  class Halt < Exception
+    attr_reader status, headers, body
+  end
+  class Pass < Exception
+  end
+
+  # ---------------------------------------------------------------------------------------------------------
+  # Ruby: Sinatra::Request < Rack::Request (a copy here: Sinatra::Request.path_info(req), not Rack::Request's)
+  class Request < Rack::Request
+    def secure?(req) = ssl?(req)
+    def forwarded?(req) = has_header?(req, "HTTP_X_FORWARDED_HOST")
+    def safe?(req) = get?(req) || head?(req) || options?(req) || trace?(req)
+    def idempotent?(req) = safe?(req) || put?(req) || delete?(req) || link?(req) || unlink?(req)
+
+    # Ruby: request.accept, the Accept header's media types by quality (entries as Strings here).
+    def accept(req)
+      header = get_header(req, "HTTP_ACCEPT") || ""
+      return String["*/*"] if String.strip(header) == ""
+      entries = Array.map(String.split(header, /\s*,\s*/)) do |e|
+        type, _, ps = String.partition(e, ";")
+        q = String.match(ps, /q=([\d.]+)/)
+        [String.strip(type), q ? String.to_f("#{q[1]}") : 1.0]
+      end
+      Array.map(Array.sort_by(Array.each_with_index(entries)) { |(e, i)| [-Tuple.[](e, 1), i] }) { |(e, i)| Tuple.[](e, 0) }
+    end
+
+    def accept?(req, type) = Array.any?(accept(req)) { |t| t == type || t == "*/*" || (String.end_with?(t, "/*") && String.start_with?(type, String.delete_suffix(t, "*"))) }
+
+    def preferred_type(req, *types)
+      return Array.first(accept(req)) if Array.empty?(types)
+      Array.each(accept(req)) do |t|
+        found = Array.find(types) { |x| x == t || t == "*/*" || (String.end_with?(t, "/*") && String.start_with?(x, String.delete_suffix(t, "*"))) }
+        return found if found
+      end
+      nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------------------------------------
+  # Ruby: Sinatra::Response < Rack::Response, with its own finish: no content info for 204/304/1xx, and a
+  # Content-Length computed from the body when there is a content-type and none was set.
+  class Response < Rack::Response
+    def drop_body?(res) = @status == 204 || @status == 304
+    def drop_content_info?(res) = informational?(res) || drop_body?(res)
+
+    def finish(res)
+      result = @body
+      if drop_content_info?(res)
+        Hash.delete(@headers, "content-length")
+        Hash.delete(@headers, "content-type")
+      end
+      result = String[] if drop_body?(res)
+      if @headers["content-type"] != nil && @headers["content-length"] == nil
+        @headers["content-length"] = Integer.to_s(Array.sum(Array.map(@body) { |part| String.bytesize(part) }))
+      end
+      [@status, @headers, result]
+    end
+  end
+
+  # ---------------------------------------------------------------------------------------------------------
+  # Ruby: the settings are the app class's singleton methods (`set :views, ...` defines `settings.views`).
+  # Sinatra's own options are typed fields here; any other name goes to `custom` (`settings(app)[:title]`).
+  class Settings
+    attr_accessor environment, root, views, public_folder, static, sessions, session_secret
+    attr_accessor default_content_type, default_encoding, add_charset, absolute_redirects, prefixed_redirects
+    attr_accessor strict_paths, empty_path_info, x_cascade, protection, raise_errors, show_exceptions, dump_errors
+    attr_accessor templates, custom
+    include Indexable
+
+    def initialize(st)
+      @environment = String.to_sym(ENV.get("APP_ENV") || ENV.get("RACK_ENV") || "development")
+      @root = nil
+      @views = nil
+      @public_folder = nil
+      @static = nil
+      @sessions = false
+      @session_secret = Digest::SHA256.hexdigest("#{Time.now} #{rand}") + Digest::SHA256.hexdigest("#{rand}")
+      @default_content_type = "text/html"
+      @default_encoding = "utf-8"
+      @add_charset = String["application/javascript", "application/xml", "application/xhtml+xml"]
+      @absolute_redirects = true
+      @prefixed_redirects = false
+      @strict_paths = true
+      @empty_path_info = false
+      @x_cascade = true
+      @protection = true
+      @raise_errors = false
+      @show_exceptions = false
+      @dump_errors = false
+      @templates = Hash[:__ => ""]
+      Hash.clear(@templates)
+      @custom = Hash[]
+    end
+
+    def development?(st) = @environment == :development
+    def production?(st) = @environment == :production
+    def test?(st) = @environment == :test
+
+    # Ruby: settings.views is root/views (or ./views); settings.public_folder is root/public.
+    def views_dir(st) = @views || ((r = @root) ? File.join(r, "views") : "./views")
+    def public_dir(st) = @public_folder || ((r = @root) ? File.join(r, "public") : nil)
+    def static?(st)
+      s = @static
+      return s if s != nil
+      dir = public_dir(st)
+      dir != nil && File.exist?(dir)
+    end
+
+    def [](st, name) = @custom[name]
+    def []=(st, name, v)
+      @custom[name] = v
+    end
+  end
+
+  # ---------------------------------------------------------------------------------------------------------
+  # Ruby: class MyApp < Sinatra::Base. Helpers and Templates are in the class (Ruby: modules included in Base).
+  class Base
+    attr_accessor env, request, response, params
+    attr_reader settings
+    private attr_accessor phase, error_value, pinned_response, error_key, error_target, error_seen, session_hash
+    include Rack::App
+
+    def routes(app) = raise(NotImplementedError)     # the app's class body: settings, filters, routes, handlers
+
+    def initialize(app)
+      @settings = Settings.new
+      @env = Hash["REQUEST_METHOD" => "GET"]
+      @request = Request.new(@env)
+      @response = Response.new
+      @params = Rack::Request.params(Rack::Request.new(@env))
+      @error_value = nil
+      @pinned_response = false
+      @error_key = 0
+      @error_target = 0
+      @error_seen = 0
+      @session_hash = nil
+      @phase = :settings
+      routes(app)
+      @phase = :none
+    end
+
+    # --- the Rack interface ---
+    def call(app, env) = call!(dup(app), env)
+
+    def call!(app, env)
+      @env = env
+      @request = Request.new(env)
+      @response = Response.new
+      @params = Hash.dup(Request.params(@request))
+      @error_value = nil
+      @pinned_response = false
+      @session_hash = nil
+      _protect_path(app)
+      invoke(app) { dispatch!(app) }
+      invoke(app) { error_block!(app, Response.status(@response)) } unless @error_value
+      content_type(app, Settings.default_content_type(@settings)) unless Response.get_header(@response, "content-type")
+      _commit_session(app)
+      status, headers, body = Response.finish(@response)
+      _protection_headers(app, headers)                 # Ruby: Rack::Protection, outside the app
+      body = String[] if Request.head?(@request)      # Ruby: Rack::Head
+      [status, headers, body]
+    end
+
+    def settings(app) = @settings
+    def development?(app) = Settings.development?(@settings)
+    def production?(app) = Settings.production?(@settings)
+    def test?(app) = Settings.test?(@settings)
+
+    # --- the class-level DSL (Ruby: Sinatra::Base's singleton methods), run in the settings phase ---
+    # Ruby: set :name, value. Sinatra's own options are checked for their type; others go to settings[:name].
+    def set(app, option, value)
+      return nil unless @phase == :settings
+      st = @settings
+      case option
+      in :environment then value => Symbol; Settings.set_environment(st, value)
+      in :root then value => String; Settings.set_root(st, value)
+      in :views then value => String; Settings.set_views(st, value)
+      in :public_folder | :public_dir then value => String; Settings.set_public_folder(st, value)
+      in :static then value => true | false; Settings.set_static(st, value)
+      in :sessions then value => true | false; Settings.set_sessions(st, value)
+      in :session_secret then value => String; Settings.set_session_secret(st, value)
+      in :default_content_type then value => String; Settings.set_default_content_type(st, value)
+      in :default_encoding then value => String; Settings.set_default_encoding(st, value)
+      in :absolute_redirects then value => true | false; Settings.set_absolute_redirects(st, value)
+      in :prefixed_redirects then value => true | false; Settings.set_prefixed_redirects(st, value)
+      in :strict_paths then value => true | false; Settings.set_strict_paths(st, value)
+      in :empty_path_info then value => true | false; Settings.set_empty_path_info(st, value)
+      in :x_cascade then value => true | false; Settings.set_x_cascade(st, value)
+      in :protection then value => true | false; Settings.set_protection(st, value)
+      in :raise_errors then value => true | false; Settings.set_raise_errors(st, value)
+      in :show_exceptions then value => true | false; Settings.set_show_exceptions(st, value)
+      in :dump_errors then value => true | false; Settings.set_dump_errors(st, value)
+      else st[option] = value
+      end
+      nil
+    end
+
+    def enable(app, *opts)
+      Array.each(opts) { |o| set(app, o, true) }
+      nil
+    end
+
+    def disable(app, *opts)
+      Array.each(opts) { |o| set(app, o, false) }
+      nil
+    end
+
+    # Ruby: configure(:production) { ... } runs the block when the environment is one of envs (or always).
+    def configure(app, *envs)
+      return nil unless @phase == :settings
+      yield if Array.empty?(envs) || Array.include?(envs, Settings.environment(@settings))
+      nil
+    end
+
+    # Ruby: template(:name) { "source" }; layout { "source" } is template(:layout). The block's String is kept.
+    def template(app, name)
+      return nil unless @phase == :settings
+      Settings.templates(@settings)[name] = yield
+      nil
+    end
+
+    def layout(app, name = :layout)
+      return nil unless @phase == :settings
+      Settings.templates(@settings)[name] = yield
+      nil
+    end
+
+    # --- filters and routes ---
+    # Ruby: before(path = /.*/) { }. Runs in the before phase when the pattern matches (all paths without one).
+    def before(app, path = nil)
+      return nil unless @phase == :before
+      _filter(app, path) { yield }
+    end
+
+    def after(app, path = nil)
+      return nil unless @phase == :after
+      _filter(app, path) { yield }
+    end
+
+    def _filter(app, path)
+      saved = @params
+      if path != nil
+        ps = _match(app, path)
+        return nil unless ps
+        @params = Hash.merge(@params, ps)
+      end
+      begin
+        yield
+      ensure
+        @params = saved
+      end
+      nil
+    end
+
+    # Ruby: get(path) { } (also HEAD), post, put, patch, delete, head, options, link, unlink.
+    def get(app, path, &b) = _route(app, "GET", path, &b)
+    def post(app, path, &b) = _route(app, "POST", path, &b)
+    def put(app, path, &b) = _route(app, "PUT", path, &b)
+    def patch(app, path, &b) = _route(app, "PATCH", path, &b)
+    def delete(app, path, &b) = _route(app, "DELETE", path, &b)
+    def head(app, path, &b) = _route(app, "HEAD", path, &b)
+    def options(app, path, &b) = _route(app, "OPTIONS", path, &b)
+    def link(app, path, &b) = _route(app, "LINK", path, &b)
+    def unlink(app, path, &b) = _route(app, "UNLINK", path, &b)
+
+    # Ruby: route! + process_route + route_eval: on a match, the block's value is thrown as the response.
+    def _route(app, verb, path)
+      return nil unless @phase == :route
+      m = Request.request_method(@request)
+      return nil unless m == verb || (verb == "GET" && m == "HEAD")
+      Response.delete_header(@response, "content-type") unless @pinned_response
+      ps = _match(app, path)
+      return nil unless ps
+      saved = @params
+      @params = Hash.merge(@params, ps)
+      Hash.store(@env, "sinatra.route", "#{verb} #{(path in Regexp) ? Regexp.source(path) : path}")
+      begin
+        result = yield
+      rescue => e                       # a bare rescue: `rescue Pass` is an error in an app that never passes
+        raise e unless e in Pass
+        @params = saved
+        return nil
+      end
+      raise _halt_value(result)
+    end
+
+    # The request path against a pattern: Mustermann's params (a Regexp pattern adds "captures"), or nil.
+    def _match(app, path)
+      route = Request.path_info(@request)
+      route = "/" if route == "" && !Settings.empty_path_info(@settings)
+      route = String.delete_suffix(route, "/") if !Settings.strict_paths(@settings) && route != "/"
+      pattern = _compiled(path)
+      ps = Mustermann::Pattern.params(pattern, route)
+      return nil unless ps
+      if pattern in Mustermann::Regular
+        caps = Mustermann::Regular.captures(pattern, route) || Array[]
+        ps["captures"] = Array.compact(caps) unless Array.empty?(caps)
+      end
+      ps
+    end
+
+    def _patterns = once { Hash["" => Mustermann.new("")] }
+    def _compiled(path)
+      key = (path in Regexp) ? "\0#{Regexp.source(path)}" : path
+      cache = _patterns
+      found = cache[key]
+      return found if found
+      pattern = Mustermann.new(path)
+      cache[key] = pattern
+      pattern
+    end
+
+    # Ruby: error(*codes) { |e| } (no codes: Exception, i.e. server errors), not_found { }. Without a block,
+    # Helpers#error(code, body) / not_found(body): halt with that status.
+    def error(app, *codes)
+      return _error_handler(app, codes) { |e| yield(e) } if block_given?
+      return nil if @phase == :settings || @phase == :error
+      code = codes[0]
+      body = codes[1]
+      if code in String
+        body = code
+        code = 500
+      end
+      body => String | nil
+      code => Integer
+      Response.set_body(@response, String[body]) if body != nil
+      halt(app, code)
+    end
+
+    def not_found(app, body = nil)
+      return _error_handler(app, Array[404]) { |e| yield(e) } if block_given?
+      return nil if @phase == :settings || @phase == :error
+      error(app, 404, body)
+    end
+
+    # Ruby's error_block!(key): the handlers for key are tried last-defined first; a nil result tries the one
+    # defined before it. Here routes(app) runs once to count the matching handlers, then once per handler tried.
+    def _error_handler(app, codes)
+      return nil unless @phase == :error
+      key = @error_key
+      hit = if Array.empty?(codes)
+        key == -1
+      else
+        Array.any?(codes) { |c| (c in Range) ? Range.include?(c, key) : c == key }
+      end
+      return nil unless hit
+      @error_seen += 1
+      return nil unless @error_seen == @error_target
+      result = yield(@error_value)
+      raise _halt_value(result) if result != nil
+      nil
+    end
+
+    def error_block!(app, key)
+      saved = @phase
+      @phase = :error
+      @error_key = key
+      @error_target = -1
+      @error_seen = 0
+      routes(app)
+      count = @error_seen
+      i = count
+      while i >= 1
+        @error_target = i
+        @error_seen = 0
+        routes(app)                     # raises Halt when handler i returns a value
+        i -= 1
+      end
+      @phase = saved
+      count > 0
+    ensure
+      @phase = saved
+    end
+
+    # --- the request cycle (Ruby: invoke, dispatch!, filter!, route!, handle_exception!) ---
+    # Ruby: invoke { } catches :halt and applies [status, headers, body] / a status / a body to the response.
+    def invoke(app)
+      begin
+        yield
+      rescue => e
+        case e
+        in Halt
+          code = Halt.status(e)
+          Response.set_status(@response, code) if code
+          hs = Halt.headers(e)
+          Hash.merge!(Response.headers(@response), hs) if hs
+          b = Halt.body(e)
+          body(app, b) if b
+        else raise e
+        end
+      end
+      nil
+    end
+
+    def dispatch!(app)
+      begin
+        invoke(app) do
+          static!(app) if Settings.static?(@settings) && (Request.get?(@request) || Request.head?(@request))
+          filter!(app, :before)
+          route!(app)
+        end
+      rescue => e
+        invoke(app) { handle_exception!(app, e) }
+      end
+      begin
+        filter!(app, :after) unless @env["sinatra.static_file"]
+      rescue => e
+        raise e if e in Halt
+        invoke(app) { handle_exception!(app, e) } unless @error_value
+      end
+      nil
+    end
+
+    def filter!(app, type)
+      saved = @phase
+      @phase = type
+      begin
+        routes(app)
+      ensure
+        @phase = saved
+      end
+      @pinned_response = Response.get_header(@response, "content-type") != nil if type == :before
+      nil
+    end
+
+    def route!(app)
+      saved = @phase
+      @phase = :route
+      begin
+        routes(app)
+      ensure
+        @phase = saved
+      end
+      route_missing(app)
+    end
+
+    def route_missing(app) = raise(NotFound, "Sinatra::NotFound")
+
+    def handle_exception!(app, boom)
+      @error_value = boom
+      code = case boom
+             in NotFound then 404
+             in BadRequest then 400
+             else 500
+             end
+      status(app, code)
+      if server_error?(app)
+        dump_errors!(app, boom) if Settings.dump_errors(@settings)
+        raise boom if Settings.show_exceptions(@settings)
+      elsif not_found?(app)
+        Response.set_header(@response, "x-cascade", "pass") if Settings.x_cascade(@settings)
+      end
+      return nil if error_block!(app, code)
+      if not_found?(app) || bad_request?(app)
+        msg = Exception.message(boom)
+        if msg != "Sinatra::NotFound" && msg != "Sinatra::BadRequest"
+          body(app, ERB::Util.html_escape(msg))
+        else
+          content_type(app, "text/html")
+          body(app, "<h1>#{not_found?(app) ? "Not Found" : "Bad Request"}</h1>")
+        end
+      end
+      return nil unless server_error?(app)
+      raise boom if Settings.raise_errors(@settings)
+      return nil if error_block!(app, -1)
+      # Ruby: Base's own `error ::Exception do` handler
+      Response.set_status(@response, 500)
+      content_type(app, "text/html")
+      body(app, "<h1>Internal Server Error</h1>")
+      nil
+    end
+
+    def dump_errors!(app, boom)
+      bt = Exception.backtrace(boom) || String[]
+      warn("#{Time.strftime(Time.now, "%Y-%m-%d %H:%M:%S")} - #{Exception.message(boom)}:\n\t#{Array.join(bt, "\n\t")}")
+    end
+
+    # Ruby: halt(*response): halt 404 / halt "body" / halt 401, "body" / halt 200, {headers}, "body"
+    def halt(app, *response)
+      raise Halt.new("halt", nil, nil, nil) if Array.empty?(response)
+      first = response[0]
+      if Array.size(response) == 1
+        raise _halt_value(first)
+      end
+      code = first
+      code => Integer
+      last = Array.last(response)
+      hs = Array.size(response) == 3 ? response[1] : nil
+      hs => Hash | nil
+      last => String
+      raise Halt.new("halt", code, hs, String[last])
+    end
+
+    # Ruby: invoke's reading of a route's value: an Integer is the status, a String the body, a Tuple
+    # [status, body] / [status, headers, body] the response, an Array of String the body, nil nothing.
+    def _halt_value(res)
+      case res
+      in nil then Halt.new("halt", nil, nil, nil)
+      in Integer then Halt.new("halt", res, nil, nil)
+      in String then Halt.new("halt", nil, nil, String[res])
+      in [Integer, String]
+        code, b = res
+        Halt.new("halt", code, nil, String[b])
+      in [Integer, Hash, String]
+        code, hs, b = res
+        Halt.new("halt", code, hs, String[b])
+      in Array then Halt.new("halt", nil, nil, Array.map(res) { |s| "#{s}" })
+      else Halt.new("halt", nil, nil, String["#{res}"])
+      end
+    end
+
+    # Ruby: pass. The route stops and the next matching one is tried.
+    def pass(app) = raise(Pass, "pass")
+
+    # --- Helpers (Ruby: Sinatra::Helpers) ---
+    def status(app, value = nil)
+      Response.set_status(@response, Rack::Utils.status_code(value)) if value != nil
+      Response.status(@response)
+    end
+
+    # Ruby: body(value) sets the body (dropping a Content-Length), body() reads it.
+    def body(app, value = nil)
+      if value != nil
+        Response.delete_header(@response, "content-length") unless Request.head?(@request)
+        Response.set_body(@response, (value in String) ? String[value] : value)   # Ruby: response.body = value
+      end
+      Response.body(@response)
+    end
+
+    def headers(app, hash = nil)
+      Hash.merge!(Response.headers(@response), hash) if hash != nil
+      Response.headers(@response)
+    end
+
+    def session(app)
+      s = @session_hash
+      return s if s
+      s = _load_session(app)
+      @session_hash = s
+      s
+    end
+
+    def redirect(app, uri, *args)
+      if Hash.fetch(@env, "SERVER_PROTOCOL", "") == "HTTP/1.1" && @env["REQUEST_METHOD"] != "GET"
+        status(app, 303)
+      else
+        status(app, 302)
+      end
+      Response.set_header(@response, "location", uri(app, uri, Settings.absolute_redirects(@settings), Settings.prefixed_redirects(@settings)))
+      halt(app, *args)
+    end
+
+    # Ruby: uri(addr = nil, absolute = true, add_script_name = true), also url and to.
+    def uri(app, addr = nil, absolute = true, add_script_name = true)
+      return addr if addr != nil && Regexp.match?(/\A[a-z][a-z0-9+.\-]*:/i, addr)
+      req = @request
+      parts = String[]
+      host = ""
+      if absolute
+        host += "http#{Request.secure?(req) ? "s" : ""}://"
+        host += if Request.forwarded?(req) || Request.port(req) != (Request.secure?(req) ? 443 : 80)
+                  "#{Request.host_with_port(req)}"
+                else
+                  "#{Request.host(req)}"
+                end
+      end
+      Array.push(parts, host)
+      Array.push(parts, Request.script_name(req)) if add_script_name
+      Array.push(parts, addr || Request.path_info(req))
+      File.join(parts)
+    end
+    def url(app, addr = nil, absolute = true, add_script_name = true) = uri(app, addr, absolute, add_script_name)
+    def to(app, addr = nil, absolute = true, add_script_name = true) = uri(app, addr, absolute, add_script_name)
+
+    def back(app) = Request.referer(@request)
+
+    # Ruby: mime_type(:json) via Rack::Mime (a table of the common types here).
+    def mime_type(app, type)
+      return nil if type == nil
+      s = "#{type}"
+      return s if String.include?(s, "/")
+      Sinatra.mime_types[String.delete_prefix(s, ".")]
+    end
+
+    # Ruby: content_type(:json) / content_type("text/plain", charset: "x"); text/* and the add_charset types
+    # get the default charset.
+    def content_type(app, type = nil, params = nil)
+      return Response.get_header(@response, "content-type") if type == nil
+      mt = mime_type(app, type)
+      raise "Unknown media type: #{Kernel.inspect(type)}" unless mt
+      ps = Hash[]
+      Hash.each(params) { |k, v| ps["#{k}"] = "#{v}" } if params != nil
+      charset_type = String.start_with?(mt, "text/") || Array.include?(Settings.add_charset(@settings), mt)
+      ps["charset"] = Settings.default_encoding(@settings) if charset_type && !Hash.key?(ps, "charset")
+      Hash.delete(ps, "charset") if String.include?(mt, "charset")
+      unless Hash.empty?(ps)
+        mt += ";" + Array.join(Hash.map(ps) { |k, v| Regexp.match?(/[";,]/, v) ? "#{k}=#{Kernel.inspect(v)}" : "#{k}=#{v}" }, ";")
+      end
+      Response.set_header(@response, "content-type", mt)
+    end
+
+    # Ruby: attachment(filename) sets Content-Disposition.
+    def attachment(app, filename = nil, disposition = "attachment")
+      Response.set_header(@response, "content-disposition", filename ? "#{disposition}; filename=\"#{File.basename(filename)}\"" : disposition)
+      nil
+    end
+
+    # Ruby: send_file(path, type:, disposition:, filename:, last_modified:): the file as the body, halts.
+    def send_file(app, path, opts = nil)
+      o = opts || Hash[]
+      t = o[:type]
+      content_type(app, t || File.extname(path)) if t != nil || mime_type(app, File.extname(path)) != nil
+      content_type(app, "application/octet-stream") unless Response.get_header(@response, "content-type")
+      d = o[:disposition]
+      attachment(app, "#{o[:filename] || path}", "#{d}") if d != nil
+      raise NotFound, "Sinatra::NotFound" unless File.file?(path)
+      data = File.read(path)
+      Response.set_header(@response, "last-modified", Rack::Utils._httpdate(File.mtime(path)))
+      Response.set_header(@response, "content-length", Integer.to_s(String.bytesize(data)))
+      halt(app, data)
+    end
+
+    def cache_control(app, *values)
+      Response.set_header(@response, "cache-control", Array.join(Array.map(values) { |v| String.tr("#{v}", "_", "-") }, ", "))
+      nil
+    end
+
+    def informational?(app) = Response.informational?(@response)
+    def success?(app) = Response.successful?(@response)
+    def redirect?(app) = Response.redirection?(@response)
+    def client_error?(app) = Response.client_error?(@response)
+    def server_error?(app) = Response.server_error?(@response)
+    def not_found?(app) = Response.status(@response) == 404
+    def bad_request?(app) = Response.status(@response) == 400
+
+    # --- Templates (Ruby: Sinatra::Templates#erb over Tilt's Erubi) ---
+    # erb(:name) reads views/name.erb (or a `template :name`), erb("source") renders the String; options are
+    # a Hash: Hash[locals: Hash[...], layout: false | :name, views: dir]. Locals are the template's variables;
+    # the layout gets the page as `yield`. Templates are interpreted by Sake's ERB (sakelib/notes/erb.md).
+    def erb(app, template, options = nil, locals = nil)
+      opts = options || Hash[]
+      loc = opts[:locals] || locals || Hash[]
+      loc => Hash
+      views = opts[:views] || Settings.views_dir(@settings)
+      views => String
+      explicit = Hash.key?(opts, :layout)
+      lay = opts[:layout]
+      lay = :layout if lay == nil || lay == true
+      output = _render_erb(app, template, views, loc, false)
+      return output if lay == false
+      lay => Symbol
+      laid = _render_erb(app, lay, views, Hash.merge(loc, Hash[yield: output]), !explicit)
+      laid || output
+    end
+
+    # nil when a missing layout may be skipped (Ruby: throw :layout_missing)
+    def _render_erb(app, template, views, locals, eat_errors)
+      src = case template
+            in String then template
+            in Symbol
+              named = Settings.templates(@settings)[template]
+              if named
+                named
+              else
+                file = File.join(views, "#{template}.erb")
+                return nil if eat_errors && !File.exist?(file)
+                raise "No such file or directory @ rb_sysopen - #{file}" unless File.exist?(file)
+                File.read(file)
+              end
+            end
+      Erubi::Engine.render(Erubi::Engine.new(src), locals)
+    end
+
+    # --- what Ruby's default middleware does (Rack::Protection, Rack::Session::Cookie) ---
+    def _protect_path(app)
+      return nil unless Settings.protection(@settings)
+      pi = "#{@env["PATH_INFO"]}"
+      return nil unless String.include?(pi, "/.") || Regexp.match?(/%2e|%2f/i, pi)
+      cleaned = Rack::Utils.clean_path_info(String.gsub(String.gsub(pi, /%2e/i, "."), /%2f/i, "/"))
+      cleaned += "/" if String.end_with?(pi, "/") && cleaned != "/"
+      @env["PATH_INFO"] = cleaned
+      @request = Request.new(@env)
+      nil
+    end
+
+    # Rack::Protection's XSSHeader (x-xss-protection and nosniff) and FrameOptions (html responses only).
+    def _protection_headers(app, hs)
+      return nil unless Settings.protection(@settings)
+      ct = "#{hs["content-type"]}"
+      m = String.match(ct, /\A\w+\/\w+/)
+      html = m != nil && Array.include?(String["text/html", "application/xhtml", "text/xml", "application/xml"], m[0])
+      hs["x-xss-protection"] = "1; mode=block" if html && !Hash.key?(hs, "x-xss-protection")
+      hs["x-content-type-options"] = "nosniff" unless Hash.key?(hs, "x-content-type-options")
+      hs["x-frame-options"] = "SAMEORIGIN" if html && !Hash.key?(hs, "x-frame-options")
+      nil
+    end
+
+    # The session cookie "rack.session": Base64 of the session as JSON, "--", and its HMAC-SHA256 with the
+    # session secret (Rack::Session::Cookie: Marshal, encrypted). A cookie that does not verify is ignored.
+    def _load_session(app)
+      empty = JSON.parse("{}")
+      empty => Hash
+      return empty unless Settings.sessions(@settings)
+      raw = Rack::Request.cookies(Rack::Request.new(@env))["rack.session"]
+      return empty unless raw
+      data, _, mac = String.rpartition(raw, "--")
+      return empty unless Rack::Utils.secure_compare(Sinatra.hmac_hex(Settings.session_secret(@settings), data), mac)
+      v = begin
+        JSON.parse(Base64.strict_decode64(data))
+      rescue JSON::ParserError, ArgumentError
+        nil
+      end
+      (v in Hash) ? v : empty
+    end
+
+    def _commit_session(app)
+      return nil unless Settings.sessions(@settings)
+      data = Base64.strict_encode64(JSON.generate(session(app)))
+      value = "#{data}--#{Sinatra.hmac_hex(Settings.session_secret(@settings), data)}"
+      Response.set_cookie(@response, "rack.session", Hash[value: value, path: "/", httponly: true])
+      nil
+    end
+
+    # Ruby: App.run!(bind: host, port: n) { |server| }: serve on Rackup::Handler::WEBrick until shutdown
+    # (options are a Hash here; port 0 takes a free port, WEBrick::HTTPServer.port(server) tells which).
+    def run!(app, options = nil)
+      opts = options || Hash[]
+      host = opts[:bind] || (development?(app) ? "localhost" : "0.0.0.0")
+      host => String
+      port = opts[:port] || 4567
+      port => Integer
+      srv = WEBrick::HTTPServer.new(host, port)
+      WEBrick::HTTPServer.mount(srv, "/", Rackup::Handler::WEBrick.new(app))
+      warn("== Sinatra (v#{Sinatra.version}) has taken the stage on #{WEBrick::HTTPServer.port(srv)} for #{Settings.environment(@settings)} with backup from WEBrick (Sake)")
+      yield(srv) if block_given?
+      WEBrick::HTTPServer.start(srv)
+      nil
+    end
+
+    # Ruby: static! serves public_folder/path_info when it is a file under it.
+    def static!(app)
+      dir = Settings.public_dir(@settings)
+      return nil unless dir
+      path = "#{dir}#{Mustermann.unescape(Request.path_info(@request))}"
+      return nil unless Rack::Utils.valid_path?(path)
+      path = File.expand_path(path)
+      return nil unless String.start_with?(path, "#{File.expand_path(dir)}/")
+      return nil unless File.file?(path)
+      @env["sinatra.static_file"] = path
+      send_file(app, path)
+    end
+  end
+
+  module_function
+
+  def version = "4.2.1"
+
+  # Rack::Mime's table for the common extensions.
+  def mime_types = once do
+    Hash["html" => "text/html", "htm" => "text/html", "txt" => "text/plain", "text" => "text/plain",
+         "css" => "text/css", "js" => "text/javascript", "json" => "application/json", "xml" => "application/xml",
+         "csv" => "text/csv", "md" => "text/markdown", "svg" => "image/svg+xml", "png" => "image/png",
+         "jpg" => "image/jpeg", "jpeg" => "image/jpeg", "gif" => "image/gif", "ico" => "image/vnd.microsoft.icon",
+         "pdf" => "application/pdf", "zip" => "application/zip", "atom" => "application/atom+xml",
+         "rss" => "application/rss+xml", "xhtml" => "application/xhtml+xml", "wasm" => "application/wasm"]
+  end
+
+  # HMAC-SHA256 (RFC 2104) over digest.sake, as hex.
+  def hmac_hex(key, msg)
+    k = String.bytesize(key) > 64 ? Digest::SHA256.digest(key) : String.b(key)
+    bytes = String.bytes(k)
+    Array.push(bytes, 0) while Array.size(bytes) < 64
+    ipad = Array.pack(Array.map(bytes) { |b| b ^ 0x36 }, "C*")
+    opad = Array.pack(Array.map(bytes) { |b| b ^ 0x5c }, "C*")
+    Digest.hexencode(Digest::SHA256.digest(opad + Digest::SHA256.digest(ipad + String.b(msg))))
+  end
+end

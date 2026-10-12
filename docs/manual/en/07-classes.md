@@ -331,7 +331,7 @@ p(pt)                                # => #<struct Point x=3, y=0>
 
 ### Adding operations
 
-Add your own operations in `class Point ... end` or with `def Point.f`. Inside them, the readers and writers can be called unqualified (`x(p)`, `set_x(p, v)`). A function named like a field (`def x(p) = ...`) replaces its reader, as a method after `attr_reader` does in Ruby; `@x` still reads the field.
+Add your own operations in `class Point ... end` or with `def Point.f`. Inside them, the readers and writers can be called unqualified (`x(p)`, `set_x(p, v)`). A function named like a field (`def x(p) = ...`) replaces its reader, and one named like its writer (`def set_x(p, v)`) replaces the writer, also for `p.Point.x = v` and `+=`, as a method after `attr_accessor` does in Ruby; `@x` still reads and writes the field.
 
 ```ruby
 Point = Struct.new(:x, :y)

@@ -1,0 +1,234 @@
+# ActionController 8.1's core in Sake: Base (process, before_action, render, redirect_to, head, params, flash,
+# session, content_for), Parameters (require, permit, expect), the flash (ActionDispatch::Flash::FlashHash) and a
+# server-side session store.
+#
+#   Ruby                                          Sake (an action is a function; the controller comes first)
+#   class PostsController < ApplicationController class PostsController < ApplicationController
+#     before_action :set_post, only: %i[show]       attr_accessor post, posts      (Rails: instance variables)
+#     def index                                     def before_action(c, action)   (Rails: the callback list)
+#       @posts = Post.all                             set_post(c) if action == :show
+#     end                                           end
+#     def create                                    def index(c) = @posts = Post.all
+#       ...                                         def create(c)
+#       redirect_to @post, notice: "Created."         ...
+#                                                     redirect_to c, @post, {notice: "Created."}
+#
+# Rails finds the action with `send(action_name)` and the template by its file name; Sake has neither, so
+# bin/rails generate writes, per controller, `send_action(c, action)` (a case over the routed actions) and
+# `_render_template(c, name)` (a case over app/views/<controller>/*.html.erb, each compiled to a function).
+
+require "rack"
+require "securerandom"
+require "action_view"
+require "active_record"
+
+module AbstractController
+  class ActionNotFound < StandardError
+  end
+end
+
+module ActionView
+  class MissingTemplate < StandardError
+  end
+end
+
+module ActionController
+  class ParameterMissing < StandardError
+  end
+
+  # Ruby: ActionController::Parameters. The values are Rack's nested params (String, Array, Hash, nil).
+  class Parameters
+    attr_reader hash
+    include Indexable
+    # Ruby: params[:id]  (a String, or nil when absent or not a String)
+    def [](p, key)
+      v = @hash[Symbol.to_s(key)]
+      (v in String) ? v : nil
+    end
+    def key?(p, key) = Hash.key?(@hash, Symbol.to_s(key))
+    # Ruby: params.require(:post)  (`require` is Sake's file inclusion, a reserved name; hence require_)
+    def require_(p, key)
+      v = @hash[Symbol.to_s(key)]
+      raise ParameterMissing, "param is missing or the value is empty or invalid: #{key}" unless v in Hash
+      raise ParameterMissing, "param is missing or the value is empty or invalid: #{key}" if Hash.empty?(v)
+      Parameters.new(v)
+    end
+    # Ruby: params.require(:post).permit(:title, :body) => the permitted scalars (a Hash of Strings here)
+    def permit(p, *keys)
+      out = Hash[]
+      Array.each(keys) do |k|
+        v = @hash[Symbol.to_s(k)]
+        out[Symbol.to_s(k)] = v if v in String
+      end
+      out
+    end
+    # Ruby 8: params.expect(post: [:title, :body])  (require + permit; 400 Bad Request when the shape is wrong)
+    def expect(p, spec)
+      out = Hash[]
+      Hash.each(Record.to_h(spec)) { |k, keys| out = permit(require_(p, k), *keys) }
+      out
+    end
+    def to_s(p) = Kernel.inspect(@hash)
+  end
+
+  # Ruby: ActionDispatch::Flash::FlashHash. Values set in this request survive to the next one; values that came
+  # from the previous request are dropped at the end of this one (`discard`).
+  class Flash
+    attr_reader values, discard
+    include Indexable
+    def [](f, key) = @values[Symbol.to_s(key)]
+    def []=(f, key, v)
+      k = Symbol.to_s(key)
+      @values[k] = v
+      Set.delete(@discard, k)
+    end
+    def to_session_value(f) = Hash.reject(@values) { |k, _| Set.include?(@discard, k) }
+  end
+
+  # The session: an id in the cookie and the data on the server (Rails' default is the encrypted CookieStore;
+  # ActionDispatch::Session::CacheStore is this shape).
+  class SessionStore
+    attr_reader data, flashes
+    def instance = once { SessionStore.new(Hash[], Hash[]) }
+    def cookie_name = "_blog_session"
+  end
+
+  module Compiled
+    # Written by bin/rails generate for each controller (Ruby: send(action_name) and the template lookup).
+    def send_action(c, action) = raise(NotImplementedError)
+    def _render_template(c, name) = raise(NotImplementedError)
+    def _layout(c) = raise(NotImplementedError)        # the compiled layouts/application.html.erb (it yields)
+  end
+
+  class Base
+    attr_reader request, params, session_id, session, flash, action_name, content_for_hash
+    attr_accessor status, headers, response_body, performed
+    include ActionView::Helpers
+    include Compiled
+
+    def initialize(c)
+      @status = 200
+      @headers = Hash["content-type" => "text/html; charset=utf-8"]
+      @response_body = ""
+      @performed = false
+      @content_for_hash = Hash[]
+      @action_name = "" if @action_name == nil
+      @session_id = "" if @session_id == nil
+      @session = Hash[] if @session == nil
+      @flash = Flash.new(Hash[], Set[]) if @flash == nil
+    end
+
+    # Ruby: before_action :x, only: [...]  (the controller defines this to run its callbacks; the default runs none)
+    def before_action(c, action) = nil
+
+    # Ruby: AbstractController::Base#process (callbacks, the action, then the implicit render)
+    def process(c)
+      action = String.to_sym(@action_name)
+      before_action(c, action)
+      send_action(c, action) unless @performed
+      render(c, action) unless @performed
+      c
+    end
+
+    # Ruby: render :new, status: :unprocessable_content / render plain: "x" / render json: h
+    def render(c, what, opts = nil)
+      case opts
+      in {status:} then @status = Rack::Utils.status_code(status)
+      else
+      end
+      case what
+      in Symbol | String
+        content = _render_template(c, Kernel.to_s(what))
+        @response_body = ActiveSupport::SafeBuffer.to_s(_layout(c) { |name| name == nil ? content : content_for(c, name) })
+      else
+        case what
+        in {plain:}
+          @headers["content-type"] = "text/plain; charset=utf-8"
+          @response_body = plain
+        in {json:}
+          @headers["content-type"] = "application/json; charset=utf-8"
+          @response_body = json
+        else
+        end
+      end
+      @performed = true
+      nil
+    end
+
+    # Ruby: redirect_to @post, notice: "Post was successfully created.", status: :see_other
+    def redirect_to(c, target, opts = nil)
+      @status = 302
+      case opts
+      in {notice:} then Flash.[]=(@flash, :notice, notice)
+      else
+      end
+      case opts
+      in {alert:} then Flash.[]=(@flash, :alert, alert)
+      else
+      end
+      case opts
+      in {status:} then @status = Rack::Utils.status_code(status)
+      else
+      end
+      @headers["location"] = Rack::Request.base_url(@request) + url_for(target)
+      @headers["content-type"] = "text/html; charset=utf-8"
+      @response_body = ""
+      @performed = true
+      nil
+    end
+
+    # Ruby: head :no_content
+    def head(c, status)
+      @status = Rack::Utils.status_code(status)
+      @response_body = ""
+      @performed = true
+      nil
+    end
+
+    # Ruby (view helpers): notice, alert, flash[:x]
+    def notice(c) = Flash.[](@flash, :notice)
+    def alert(c) = Flash.[](@flash, :alert)
+
+    # Ruby: content_for :title, "Posts" / content_for(:title)  (the layout reads it with yield(:title))
+    def content_for(c, name, content = nil)
+      k = Symbol.to_s(name)
+      if content != nil
+        @content_for_hash[k] = ERB::Util.html_escape(content)
+        return nil
+      end
+      v = @content_for_hash[k]
+      v ? raw(v) : nil
+    end
+
+    # The Rack triple, with the session cookie and the flash kept for the next request.
+    def to_rack(c)
+      store = SessionStore.instance
+      SessionStore.data(store)[@session_id] = @session
+      SessionStore.flashes(store)[@session_id] = Flash.to_session_value(@flash)
+      Rack::Utils.set_cookie_header!(@headers, SessionStore.cookie_name, Hash[value: @session_id, path: "/", httponly: true, same_site: "Lax"])
+      [@status, @headers, String[@response_body]]
+    end
+  end
+
+  # The controller's request state, from the Rack request and the route's path parameters (Ruby: the dispatcher's
+  # ActionDispatch::Request with path_parameters; the session from the cookie).
+  module Dispatch
+    module_function
+    def params_for(req, path_params)
+      h = Hash.merge(Rack::Request.GET(req), Rack::Request.POST(req))
+      Hash.each(path_params) { |k, v| h[k] = v }
+      Parameters.new(h)
+    end
+    def session_id(req)
+      id = Rack::Request.cookies(req)[SessionStore.cookie_name]
+      store = SessionStore.instance
+      return id if id && Hash.key?(SessionStore.data(store), id)
+      SecureRandom.hex(16)
+    end
+    def session_for(id) = SessionStore.data(SessionStore.instance)[id] || Hash[]
+    def flash_for(id)
+      v = Hash.delete(SessionStore.flashes(SessionStore.instance), id) || Hash[]
+      Flash.new(v, Set[*Hash.keys(v)])
+    end
+  end
+end

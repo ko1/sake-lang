@@ -1,0 +1,186 @@
+# ActionDispatch 8.1's routing in Sake: the route set, the Mapper DSL (root, get/post/patch/put/delete,
+# resources with nesting, only/except), recognition, path generation, and `rails routes`' table.
+#
+# Ruby:                                         Sake (config/routes.sake):
+#   Rails.application.routes.draw do              class ActionDispatch::Routing::Mapper
+#     root "posts#index"                            def draw(map)
+#     resources :posts do                             root map, "posts#index"
+#       resources :comments, only: [:create]          resources map, :posts do
+#     end                                               resources map, :comments, {only: Array[:create]}
+#   end                                               end
+#                                                   end
+#                                                 end
+# Rails runs the block with instance_exec on a Mapper, so its bare calls are the Mapper's; in Sake that is a function
+# of the Mapper class (the app reopens it), and the Mapper is its first argument.
+#
+# Rails defines a method per named route (posts_path, post_path(post)) with define_method; Sake cannot define
+# functions while running, so `bin/rails generate` writes them out (tmp/generated/routes.sake), from this table.
+
+require "active_support"
+
+module ActionDispatch
+  module Routing
+    class Route
+      attr_reader name, verb, path, controller, action
+      # "/posts/:post_id/comments/:id(.:format)" => ["post_id", "id"]
+      def param_names(r) = Array.map(String.scan(@path, /:\w+/)) { |m| String.delete_prefix(Kernel.to_s(m), ":") }.Array.reject { |n| n == "format" }
+      # the path without "(.:format)", with each :name replaced by the next value
+      def generate(r, values)
+        i = -1
+        String.gsub(String.delete_suffix(@path, "(.:format)"), /:\w+/) do |_m|
+          i += 1
+          Kernel.to_s(values[i])
+        end
+      end
+      def regexp(r)
+        src = Regexp.escape(String.delete_suffix(@path, "(.:format)"))
+        src = String.gsub(src, /:(\w+)/) { |m| "(?<#{String.delete_prefix(m, ":")}>[^/.?]+)" }
+        Regexp.new("\\A#{src}(?:\\.(?<format>[^/.?]+))?\\z")
+      end
+      def requirements(r) = "#{@controller}##{@action}"
+    end
+
+    class RouteSet
+      attr_reader routes
+      def initialize(s)
+        @routes = Route[] if @routes == nil
+      end
+
+      # Ruby: Rails.application.routes.draw do ... end  (the app's Mapper.draw holds the block's body)
+      def draw(set)
+        Array.clear(@routes)
+        Mapper.draw(Mapper.new(set, Array[]))
+        set
+      end
+      def add_route(set, name, verb, path, controller, action) = Array.push(@routes, Route.new(name, verb, path, controller, action))
+      def named_routes(set) = Array.select(@routes) { |r| Route.name(r) != nil }
+
+      # Ruby: Rails.application.routes.recognize_path("/posts/1", method: :get) => {controller:, action:, id:}
+      # Here: the Route and the path parameters (a Hash of Strings), or nil.
+      def recognize(set, verb, path)
+        Array.each(@routes) do |r|
+          next unless Route.verb(r) == verb
+          m = Regexp.match(Route.regexp(r), path)
+          next unless m
+          params = Hash[]
+          Array.each(MatchData.names(m)) { |n| params[n] = m[n] if m[n] != nil }
+          return [r, params]
+        end
+        nil
+      end
+      # Is there any route for this path (another verb)? Rails answers 404 either way; kept for the error page.
+      def path_known?(set, path) = Array.any?(@routes) { |r| Regexp.match?(Route.regexp(r), path) }
+
+      # Ruby: url_helpers.post_comment_path(1, 2)
+      def path_for(set, name, values)
+        r = Array.find(@routes) { |x| Route.name(x) == name }
+        raise ArgumentError, "no route named #{name}" unless r
+        Route.generate(r, values)
+      end
+
+      # `bin/rails routes` (Rails' RoutesInspector with ConsoleFormatter::Sheet)
+      def inspect_routes(set)
+        rows = Array.map(@routes) { |r| [Route.name(r) || "", Route.verb(r), Route.path(r), Route.requirements(r)] }
+        all = Array[["Prefix", "Verb", "URI Pattern", "Controller#Action"]] + rows
+        nw = Array.max(Array.map(all) { |r| String.length(r[0]) }) || 0
+        vw = Array.max(Array.map(all) { |r| String.length(r[1]) }) || 0
+        pw = Array.max(Array.map(all) { |r| String.length(r[2]) }) || 0
+        Array.map(all) { |n, v, pa, rq| "#{String.rjust(n, nw)} #{String.ljust(v, vw)} #{String.ljust(pa, pw)} #{rq}" }
+          .Array.join("\n")
+      end
+    end
+
+    # One level of nesting: `resources :posts do ... end` puts "/posts/:post_id" and "post_" in front of what the
+    # block draws.
+    Scope = Struct.new(:path, :name_prefix)
+
+    class Mapper
+      attr_reader set, scopes
+      # The app's routes: config/routes.sake reopens Mapper and defines `draw(map)` (not declared here: a class
+      # cannot leave a function to be defined later, and a second definition is an error).
+
+      def _prefix_path(m) = Array.join(Array.map(@scopes) { |s| Scope.path(s) })
+      def _prefix_name(m) = Array.join(Array.map(@scopes) { |s| Scope.name_prefix(s) })
+      def _name(m, name) = name == nil ? nil : _prefix_name(m) + name
+
+      # Ruby: root "posts#index"
+      def root(m, to)
+        controller, action = String.split(to, "#")
+        RouteSet.add_route(@set, "root", "GET", _prefix_path(m) + "/", controller || "", action || "")
+      end
+
+      # Ruby: get "/about", to: "pages#about", as: :about  /  Sake: get map, "/about", {to: "pages#about", as: :about}
+      def match(m, verb, path, opts)
+        to = ""
+        as = nil
+        case opts
+        in {to:} then to = to
+        else
+        end
+        case opts
+        in {as:} then as = Symbol.to_s(as)
+        else
+        end
+        controller, action = String.split(to, "#")
+        RouteSet.add_route(@set, _name(m, as), verb, _prefix_path(m) + path + "(.:format)", controller || "", action || "")
+      end
+      def get(m, path, opts) = match(m, "GET", path, opts)
+      def post(m, path, opts) = match(m, "POST", path, opts)
+      def patch(m, path, opts) = match(m, "PATCH", path, opts)
+      def put(m, path, opts) = match(m, "PUT", path, opts)
+      def delete(m, path, opts) = match(m, "DELETE", path, opts)
+
+      def default_actions = Array[:index, :create, :new, :edit, :show, :update, :destroy]
+
+      # Ruby: resources :posts, only: [...], except: [...] do ... end  (the block draws nested routes first, as Rails)
+      def resources(m, name, opts = nil)
+        plural = Symbol.to_s(name)
+        singular = ActiveSupport::Inflector.singularize(plural)
+        actions = default_actions
+        case opts
+        in {only:} then actions = Array.select(actions) { |a| Array.include?(only, a) }
+        else
+        end
+        case opts
+        in {except:} then actions = Array.reject(actions) { |a| Array.include?(except, a) }
+        else
+        end
+        if block_given?
+          Array.push(@scopes, Scope.new("/#{plural}/:#{singular}_id", "#{singular}_"))
+          yield
+          Array.pop(@scopes)
+        end
+        base = _prefix_path(m) + "/#{plural}"
+        member = base + "/:id"
+        named_collection = false
+        if Array.include?(actions, :index)
+          RouteSet.add_route(@set, _name(m, plural), "GET", base + "(.:format)", plural, "index")
+          named_collection = true
+        end
+        if Array.include?(actions, :create)
+          RouteSet.add_route(@set, named_collection ? nil : _name(m, plural), "POST", base + "(.:format)", plural, "create")
+        end
+        if Array.include?(actions, :new)
+          RouteSet.add_route(@set, _name(m, "new_" + singular), "GET", base + "/new(.:format)", plural, "new")
+        end
+        if Array.include?(actions, :edit)
+          RouteSet.add_route(@set, _name(m, "edit_" + singular), "GET", member + "/edit(.:format)", plural, "edit")
+        end
+        named_member = false
+        if Array.include?(actions, :show)
+          RouteSet.add_route(@set, _name(m, singular), "GET", member + "(.:format)", plural, "show")
+          named_member = true
+        end
+        if Array.include?(actions, :update)
+          RouteSet.add_route(@set, named_member ? nil : _name(m, singular), "PATCH", member + "(.:format)", plural, "update")
+          named_member = true
+          RouteSet.add_route(@set, nil, "PUT", member + "(.:format)", plural, "update")
+        end
+        if Array.include?(actions, :destroy)
+          RouteSet.add_route(@set, named_member ? nil : _name(m, singular), "DELETE", member + "(.:format)", plural, "destroy")
+        end
+        nil
+      end
+    end
+  end
+end

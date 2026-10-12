@@ -1,0 +1,250 @@
+# ActiveRecord 8.1's model API in Sake, over an in-memory table per model persisted as JSON (one file per table).
+#
+#   Ruby                                   Sake
+#   Post.all / Post.find(1)                Post.all / Post.find(1)
+#   Post.find_by(title: "x")               Post.find_by({title: "x"})
+#   Post.where(post_id: 1).order(created_at: :desc)
+#                                          Post.where({post_id: 1}).ActiveRecord::Relation.order({created_at: :desc})
+#   (a relation is an Array of records here: Array.size(Post.all), Enum.each(@posts) { ... })
+#   Post.new(params) / Post.create(params) Post.build(params) / Post.create(params)   (new is Sake's constructor)
+#   post.save / post.update(params) / post.destroy
+#                                          Post.save(post) / Post.update(post, params) / Post.destroy(post)
+#
+# Why no SQLite: Sake has no C extension or SQLite binding. Why not a SQL subset: Rails apps write `where`/`order`,
+# not SQL, and a SQL layer would add a parser and a type mapping in front of the same Hash of rows. The table is a
+# Hash id => record, loaded on first use from db/<env>/<table>.json and written back after each change.
+#
+# The columns come from db/schema.sake (Rails' schema.rb) through `bin/rails generate`, which writes each model's
+# fields and the attribute functions Rails gets by reflection (tmp/generated/models.sake).
+
+require "json"
+
+require "active_model"
+
+module ActiveRecord
+  class RecordNotFound < StandardError
+  end
+  class RecordInvalid < StandardError
+  end
+
+  # The functions bin/rails generate writes for each model (Rails: attribute methods from the schema).
+  module Attributes
+    def table_name = raise(NotImplementedError)
+    def _table = raise(NotImplementedError)                     # Hash id => record (loaded once)
+    def _from_row(row) = raise(NotImplementedError)             # a record from a JSON row
+    def _to_row(r) = raise(NotImplementedError)                 # a JSON row (Hash String => Integer|String|nil)
+    def _id(r) = raise(NotImplementedError)
+    def _set_id(r, id) = raise(NotImplementedError)
+    def _write_attribute(r, name, value) = raise(NotImplementedError)  # name a String, value a String (cast by the column)
+    def _touch(r, now, created) = raise(NotImplementedError)    # timestamps
+    def before_destroy(r) = nil                                 # Ruby: has_many ..., dependent: :destroy
+  end
+
+  # The database: a directory of JSON files (DATABASE_DIR, default db/development) and one lock.
+  module Store
+    module_function
+    def dir = ENV.get("DATABASE_DIR") || "db/development"
+    def lock = once { Mutex.new }
+    def path(table) = File.join(dir, "#{table}.json")
+    def read(table)
+      p = path(table)
+      return Array[] unless File.exist?(p)
+      rows = JSON.parse(File.read(p))
+      rows => Array
+      Array.map(rows) { |row| row => Hash; row }
+    end
+    def write(table, rows)
+      Dir.mkdir(dir) unless Dir.exist?(dir)
+      File.write(path(table), JSON.pretty_generate(rows) + "\n")
+    end
+  end
+
+  # Ruby: ActiveRecord::Relation. Here a relation is an Array of records, already filtered, and these are its
+  # operations (a Relation class holding the Array was the first design: the checker gives a class built inside a
+  # shared function one field type, so Post and Comment relations met in `records`; built-in Arrays stay apart).
+  module Relation
+    module_function
+    # Ruby: rel.where(post_id: 1) (equality on each attribute given)
+    def where(records, conds)
+      cs = Record.to_h(conds)
+      Array.select(records) do |r|
+        Hash.all?(cs) { |k, v| ActiveModel::Model.read_attribute_for_validation(r, k) == v }
+      end
+    end
+    # Ruby: rel.order(:title) / rel.order(created_at: :desc)
+    def order(records, spec)
+      keys = case spec
+             in Symbol then Array[[spec, :asc]]
+             else Array.map(Hash.to_a(Record.to_h(spec))) { |k, d| [k, d] }
+             end
+      Array.sort_by(records) do |r|
+        SortKey.new(Array.map(keys) { |k, d| [ActiveModel::Model.read_attribute_for_validation(r, k), d] })
+      end
+    end
+    # Ruby: rel.find(id) (within the relation)
+    def find(records, id)
+      key = (id in Integer) ? id : String.to_i(Kernel.to_s(id))
+      r = Array.find(records) { |x| ActiveModel::Model.read_attribute_for_validation(x, :id) == key }
+      raise RecordNotFound, "Couldn't find record with 'id'=#{id}" unless r
+      r
+    end
+  end
+
+  # A row's sort key over mixed column types (Rails leaves this to SQL's ORDER BY); nil sorts first, as SQLite's.
+  class SortKey
+    attr_reader parts
+    include Comparable
+    def <=>(a, b)
+      other = SortKey.parts(b)
+      Array.each_with_index(@parts) do |(x, dir), i|
+        y, _ = other[i] || [nil, :asc]
+        c = SortKey.cmp(x, y)
+        c = -c if dir == :desc
+        return c if c != 0
+      end
+      0
+    end
+    def cmp(x, y)
+      case [x, y]
+      in [nil, nil] then 0
+      in [nil, _] then -1
+      in [_, nil] then 1
+      in [Integer, Integer] then x <=> y
+      in [String, String] then x <=> y
+      in [Time, Time] then x <=> y
+      else Kernel.to_s(x) <=> Kernel.to_s(y)
+      end
+    end
+  end
+
+  # Ruby: class ApplicationRecord < ActiveRecord::Base
+  class Base
+    attr_reader errors
+    include ActiveModel::Model
+    include Attributes
+
+    def initialize(r) = @errors = ActiveModel::Errors.new
+    def persisted?(r) = _id(r) != nil
+    def new_record?(r) = _id(r) == nil
+    def to_key(r)
+      id = _id(r)
+      id ? Array[id] : nil
+    end
+
+    # --- querying (Ruby: ActiveRecord::Querying) ---
+    def all = Array.sort_by(Hash.values(_table)) { |r| _id(r) || 0 }
+    def find(id)
+      key = case id
+            in Integer then id
+            in String then String.to_i(id)
+            else 0
+            end
+      r = _table[key]
+      raise RecordNotFound, "Couldn't find #{ActiveSupport::Inflector.classify(table_name)} with 'id'=#{id}" unless r
+      r
+    end
+    def find_by(conds) = Array.first(Relation.where(all, conds))
+    def where(conds) = Relation.where(all, conds)
+    def order(spec) = Relation.order(all, spec)
+    def first = Array.first(all)
+    def last = Array.last(all)
+    def count = Hash.size(_table)
+
+    # --- persistence (Ruby: ActiveRecord::Persistence) ---
+    # Ruby: Post.new(title: "x") / Post.build(params): params is a Hash of Strings (permitted params) or a Record
+    def build(attrs = nil)
+      r = new
+      assign_attributes(r, attrs) if attrs != nil
+      r
+    end
+    def assign_attributes(r, attrs)
+      case attrs
+      in Hash then Hash.each(attrs) { |k, v| _write_attribute(r, Kernel.to_s(k), v) }
+      else Hash.each(Record.to_h(attrs)) { |k, v| _write_attribute(r, Symbol.to_s(k), v) }
+      end
+      r
+    end
+    def create(attrs)
+      r = build(attrs)
+      save(r)
+      r
+    end
+    def save(r)
+      return false unless valid?(r)
+      Store.lock.Mutex.synchronize do
+        t = _table
+        now = Time.now(in: "UTC")
+        if _id(r) == nil
+          _set_id(r, (Array.max(Hash.keys(t)) || 0) + 1)
+          _touch(r, now, true)
+        else
+          _touch(r, now, false)
+        end
+        id = _id(r)
+        t[id] = r if id
+        _flush
+      end
+      true
+    end
+    def save!(r)
+      raise RecordInvalid, "Validation failed: #{Array.join(ActiveModel::Errors.full_messages(errors(r)), ", ")}" unless save(r)
+      true
+    end
+    def update(r, attrs)
+      assign_attributes(r, attrs)
+      save(r)
+    end
+    def destroy(r)
+      before_destroy(r)
+      Store.lock.Mutex.synchronize do
+        id = _id(r)
+        Hash.delete(_table, id) if id
+        _flush
+      end
+      r
+    end
+    def _flush = Store.write(table_name, Array.map(Array.sort_by(Hash.values(_table)) { |x| _id(x) || 0 }) { |x| _to_row(x) })
+    def _load
+      t = Hash[]
+      Array.each(Store.read(table_name)) do |row|
+        r = _from_row(row)
+        id = _id(r)
+        t[id] = r if id
+      end
+      t
+    end
+  end
+
+  # db/schema.sake (Rails' schema.rb):
+  #   class ActiveRecord::Schema
+  #     def define(s)
+  #       create_table s, "posts" do |t|
+  #         string t, "title"
+  #         ...
+  class Schema
+    attr_reader tables
+    Table = Struct.new(:name, :columns)
+    Column = Struct.new(:name, :type)
+    def initialize(s)
+      @tables = Table[] if @tables == nil
+    end
+    # Ruby: create_table "posts" do |t| ... end (an "id" integer column first, as Rails')
+    def create_table(s, name)
+      t = Table.new(name, Array[Column.new("id", :integer)])
+      Array.push(@tables, t)
+      yield(t)
+      t
+    end
+    def column(t, name, type) = Array.push(Table.columns(t), Column.new(name, type))
+    def string(t, name) = column(t, name, :string)
+    def text(t, name) = column(t, name, :text)
+    def integer(t, name) = column(t, name, :integer)
+    def datetime(t, name) = column(t, name, :datetime)
+    # Ruby: t.references :post  (=> post_id)
+    def references(t, name) = column(t, "#{name}_id", :integer)
+    def timestamps(t)
+      column(t, "created_at", :datetime)
+      column(t, "updated_at", :datetime)
+    end
+  end
+end

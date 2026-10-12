@@ -11,6 +11,8 @@
 3. ~~**例外の階層**~~ → モジュールでまとめる（`rescue M`）、組み込みは Ruby の親子関係（ko1、10-12。DESIGN.md）。
 4. **Integer の幅（ネイティブ）**: sabic / ceec は 64 ビットで溢れたらエラー。多倍長への昇格か、64 ビットの意味論か。
 5. D11 `f(**opts)` の受け渡し、D12 フィールドの既定値が前のフィールドを読めるか、D14 表示の protocol。
+6. **ライブラリの rescue と「never raised」**（10-12 ウェブ、experiments/2026-10-12-web）: Sinatra 内部の `rescue Pass` は、アプリが `pass` を呼ばないとプログラム全体の検査で level 1 のエラーになる。案: require したライブラリの中の rescue には出さない。
+7. **型のフィールドをデータとして**（`T.fields`、`T.read_field(x, :title)`）と、**生成・マクロの段**（10-12 ウェブ）: Rails のモデル・ルートヘルパ・テンプレートは生成の段で書き出すしかなく、生成物が古いことを誰も知らせない。
 
 ### 検査器（偽陽性・メッセージ）
 
@@ -31,6 +33,7 @@
 
 ### 組み込みの不足
 
+- (10-12 ウェブ) HMAC（`OpenSSL::HMAC`）、`Time.utc(y, m, d, h, mi, s)`、`__dir__`、パターンでの束縛（`in [Integer => code, …]`）、`Rack::Response#[]`。
 - `gsub` / `scan` のブロックに MatchData、`Random` 型、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。
 
 ### ネイティブ（sabic / ceec）

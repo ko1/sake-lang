@@ -1,0 +1,232 @@
+# ActionView 8.1's helpers in Sake: OutputBuffer, TagHelper (tag, content_tag), UrlHelper (link_to, button_to),
+# FormHelper (form_with + FormBuilder), TextHelper (pluralize), RecordIdentifier (dom_id), DateHelper
+# (time_ago_in_words). The template compiler (ERB to Sake functions) is ActionView::Template, at the end.
+#
+# The helpers are a mixin (ActionView::Helpers) that ActionController::Base includes, so a template, compiled into a
+# function of its controller, calls them bare as Rails' views do: `link_to "Show", post`. Options are a Record
+# (`{class: "nav"}`) where Rails takes keyword options (`class: "nav"`).
+#
+# The app (or the generated routes) defines `polymorphic_path(record)`: Rails' url_for(record).
+
+require "active_support"
+require "active_model"
+
+module ActionView
+  # Rails' output buffer is a SafeBuffer that `<%= %>` appends to; a compiled template here pushes parts on an Array.
+  module OutputBuffer
+    module_function
+    # Ruby: @output_buffer.safe_append= x  (<%= x %>): escaped unless it is a SafeBuffer
+    def append(buf, x) = Array.push(buf, ERB::Util.html_escape(x))
+    # Ruby: @output_buffer.safe_append= "literal text"
+    def safe_append(buf, s) = Array.push(buf, s)
+    def to_s(buf) = ActiveSupport::SafeBuffer.new(Array.join(buf))
+  end
+
+  module Helpers
+    # Ruby: raw(s)
+    def raw(s) = ActiveSupport::SafeBuffer.new("#{s}")
+    def h(x) = ERB::Util.html_escape(x)
+
+    # --- TagHelper ---------------------------------------------------------------------------------------------
+    # Rails' tag_options: ` name="value"` for each pair, values escaped; true gives `name="name"`, nil/false nothing.
+    def tag_options(pairs)
+      Array.join(Array.map(pairs) { |k, v| " #{k}=\"#{ERB::Util.html_escape(v)}\"" })
+    end
+    # A Record of options as [name, value] pairs (Ruby: the options Hash); `_` in a name stays (`data_x` is not data-x).
+    def option_pairs(opts)
+      pairs = Array[]
+      return pairs if opts == nil
+      Hash.each(Record.to_h(opts)) do |k, v|
+        case v
+        in nil | false then nil
+        in true then Array.push(pairs, [Symbol.to_s(k), Symbol.to_s(k)])
+        else Array.push(pairs, [Symbol.to_s(k), Kernel.to_s(v)])
+        end
+      end
+      pairs
+    end
+    def void_element?(name) = Array.include?(Array["br", "hr", "img", "input", "meta", "link"], name)
+    # Ruby: tag.br, tag(:br) (HTML5 void elements have no slash)
+    def tag(name, opts = nil) = raw("<#{name}#{tag_options(option_pairs(opts))}>")
+    # Ruby: content_tag(:p, "text", class: "x"), or with a block
+    def content_tag(name, content = nil, opts = nil)
+      inner = block_given? ? yield : content
+      raw("<#{name}#{tag_options(option_pairs(opts))}>#{ERB::Util.html_escape(inner)}</#{name}>")
+    end
+    def _input(pairs) = raw("<input#{tag_options(pairs)} />")
+
+    # --- UrlHelper ---------------------------------------------------------------------------------------------
+    # Ruby: url_for("/x") / url_for(post) / url_for([post, comment])
+    def url_for(target)
+      case target
+      in String then target
+      else polymorphic_path(target)
+      end
+    end
+    # Ruby: link_to "Show", post, class: "x"
+    def link_to(name, target, opts = nil)
+      pairs = option_pairs(opts)
+      Array.push(pairs, ["href", url_for(target)])
+      raw("<a#{tag_options(pairs)}>#{ERB::Util.html_escape(name)}</a>")
+    end
+    # Ruby: button_to "Destroy", post, method: :delete  (Rails 7+: a <button>, button_to_generates_button_tag)
+    def button_to(name, target, opts = nil)
+      method = "post"
+      case opts
+      in {method:} then method = Symbol.to_s(method)
+      else
+      end
+      form_method = method == "get" ? "get" : "post"
+      hidden = method == "get" || method == "post" ? "" : ActiveSupport::SafeBuffer.to_s(_input(Array[["type", "hidden"], ["name", "_method"], ["value", method], ["autocomplete", "off"]]))
+      raw("<form class=\"button_to\" method=\"#{form_method}\" action=\"#{ERB::Util.html_escape(url_for(target))}\">#{hidden}<button type=\"submit\">#{ERB::Util.html_escape(name)}</button></form>")
+    end
+
+    # --- TextHelper ------------------------------------------------------------------------------------------------
+    # Ruby: pluralize(2, "error") => "2 errors"
+    def pluralize(count, singular, plural = nil)
+      word = count == 1 ? singular : (plural || ActiveSupport::Inflector.pluralize(singular))
+      "#{count} #{word}"
+    end
+
+    # --- RecordIdentifier ------------------------------------------------------------------------------------------
+    # Ruby: dom_id(post) => "post_3", dom_id(Post.new) => "new_post", dom_id(post, :edit) => "edit_post_3"
+    def dom_id(record, prefix = nil)
+      singular = ActiveModel::Name.singular(ActiveModel::Model.model_name(record))
+      param = ActiveModel::Model.to_param(record)
+      base = param ? "#{singular}_#{param}" : singular
+      if prefix
+        "#{prefix}_#{base}"
+      elsif param
+        base
+      else
+        "new_#{base}"
+      end
+    end
+
+    # --- DateHelper ----------------------------------------------------------------------------------------------
+    # Ruby: distance_of_time_in_words(from, to) (without include_seconds; English messages)
+    def distance_of_time_in_words(from, to)
+      minutes = Float.round((to - from) / 60.0)
+      return minutes == 0 ? "less than a minute" : "1 minute" if minutes < 1
+      return pluralize(minutes, "minute") if minutes < 45
+      return "about 1 hour" if minutes < 90
+      return "about #{Float.round(Integer.to_f(minutes) / 60.0)} hours" if minutes < 1440
+      return "1 day" if minutes < 2520
+      return pluralize(Float.round(Integer.to_f(minutes) / 1440.0), "day") if minutes < 43200
+      return "about #{pluralize(Float.round(Integer.to_f(minutes) / 43200.0), "month")}" if minutes < 86400
+      return pluralize(Float.round(Integer.to_f(minutes) / 43200.0), "month") if minutes < 525600
+      from_year = Time.year(from) + (Time.month(from) >= 3 ? 1 : 0)
+      to_year = Time.year(to) - (Time.month(to) < 3 ? 1 : 0)
+      leaps = from_year > to_year ? 0 : Range.count(from_year..to_year) { |y| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 }
+      m = minutes - leaps * 1440
+      years = m / 525600
+      rest = m % 525600
+      return "about #{pluralize(years, "year")}" if rest < 131400
+      return "over #{pluralize(years, "year")}" if rest < 394200
+      "almost #{pluralize(years + 1, "year")}"
+    end
+    # Ruby: time_ago_in_words(t)
+    def time_ago_in_words(from) = distance_of_time_in_words(from, Time.now)
+
+    # --- FormHelper --------------------------------------------------------------------------------------------
+    # Ruby: form_with(model: post) do |form| ... end
+    #       form_with(model: [post, comment]) / form_with(url: "/search", method: :get)
+    # Sake: form_with({model: post}) do |form| ... end   (the options are a Record)
+    def form_with(opts)
+      model = nil
+      url = nil
+      method = nil
+      case opts
+      in {model:} then model = model
+      else
+      end
+      case opts
+      in {url:} then url = url
+      else
+      end
+      case opts
+      in {method:} then method = Symbol.to_s(method)
+      else
+      end
+      object = FormBuilder.object_of(model)
+      persisted = object != nil && ActiveModel::Model.persisted?(object)
+      action = url || (model != nil ? url_for(model) : "")
+      if method == nil
+        method = persisted ? "patch" : "post"
+      end
+      object_name = object != nil ? ActiveModel::Name.param_key(ActiveModel::Model.model_name(object)) : nil
+      builder = FormBuilder.new(object_name, object)
+      inner = yield(builder)
+      form_method = method == "get" ? "get" : "post"
+      hidden = method == "get" || method == "post" ? "" : ActiveSupport::SafeBuffer.to_s(_input(Array[["type", "hidden"], ["name", "_method"], ["value", method], ["autocomplete", "off"]]))
+      raw("<form action=\"#{ERB::Util.html_escape(action)}\" accept-charset=\"UTF-8\" method=\"#{form_method}\">#{hidden}#{ERB::Util.html_escape(inner)}</form>")
+    end
+
+    # Ruby: form.label :title, style: "display: block"  /  Sake: label form, :title, {style: "display: block"}
+    def label(form, method, opts = nil)
+      pairs = option_pairs(opts)
+      Array.push(pairs, ["for", FormBuilder.field_id(form, method)])
+      text = ActiveSupport::Inflector.humanize(Symbol.to_s(method))
+      raw("<label#{tag_options(pairs)}>#{ERB::Util.html_escape(text)}</label>")
+    end
+    def _field(form, type, method, opts)
+      pairs = Array[["type", type]]
+      v = FormBuilder.value(form, method)
+      Array.push(pairs, ["value", v]) if v != nil
+      Array.concat(pairs, option_pairs(opts))
+      Array.push(pairs, ["name", FormBuilder.field_name(form, method)])
+      Array.push(pairs, ["id", FormBuilder.field_id(form, method)])
+      _input(pairs)
+    end
+    # Ruby: form.text_field :title
+    def text_field(form, method, opts = nil) = _field(form, "text", method, opts)
+    def hidden_field(form, method, opts = nil) = _field(form, "hidden", method, opts)
+    def password_field(form, method, opts = nil) = _field(form, "password", method, opts)
+    # Ruby: form.text_area :body  (Rails writes a newline after <textarea>)
+    def text_area(form, method, opts = nil)
+      pairs = option_pairs(opts)
+      Array.push(pairs, ["name", FormBuilder.field_name(form, method)])
+      Array.push(pairs, ["id", FormBuilder.field_id(form, method)])
+      v = FormBuilder.value(form, method)
+      raw("<textarea#{tag_options(pairs)}>\n#{ERB::Util.html_escape(v || "")}</textarea>")
+    end
+    # Ruby: form.submit / form.submit "Search"  ("Create Post" / "Update Post" from the model)
+    def submit(form, value = nil)
+      v = value || FormBuilder.submit_default_value(form)
+      _input(Array[["type", "submit"], ["name", "commit"], ["value", v], ["data-disable-with", v]])
+    end
+
+    # Ruby: ActionView::Helpers::FormBuilder (object_name, object)
+    class FormBuilder
+      attr_reader object_name, object
+      # form_with's model: a record, or [parent, record] for a nested resource (the form is for the last)
+      def object_of(model)
+        case model
+        in nil then nil
+        in [_, last] then last
+        else model
+        end
+      end
+      def value(form, method)
+        o = @object
+        return nil if o == nil
+        v = ActiveModel::Model.read_attribute_for_validation(o, method)
+        v == nil ? nil : Kernel.to_s(v)
+      end
+      def field_name(form, method)
+        n = @object_name
+        n ? "#{n}[#{method}]" : Symbol.to_s(method)
+      end
+      def field_id(form, method)
+        n = @object_name
+        n ? "#{n}_#{method}" : Symbol.to_s(method)
+      end
+      def submit_default_value(form)
+        o = @object
+        return "Save changes" if o == nil
+        human = ActiveModel::Name.human(ActiveModel::Model.model_name(o))
+        ActiveModel::Model.persisted?(o) ? "Update #{human}" : "Create #{human}"
+      end
+    end
+  end
+end

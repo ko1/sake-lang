@@ -177,7 +177,14 @@ module Sake
           when Prism::CallOperatorWriteNode then BinOp.new(op: n.binary_operator.to_s, left: cur, right: lower(n.value), origin: n)
           else lower(n.value)
           end
-        set = field_set(writer, subj, newv, n)
+        set =
+          if writer.is_a?(UserFunction) # a setter the type defines itself; the assignment's value is the new value, as in Ruby
+            val = @scopes[-1].slot(:"(value #{n.location.start_offset})")
+            Seq.new(body: [LVarSet.new(slot: val, value: newv, origin: n),
+                           CallUser.new(fn: writer, args: [subj, get(val, n)], block: nil, origin: n), get(val, n)], origin: n)
+          else
+            field_set(writer, subj, newv, n)
+          end
         body = case n
                when Prism::CallOrWriteNode then Or.new(left: cur, right: set, origin: n)
                when Prism::CallAndWriteNode then And.new(left: cur, right: set, origin: n)

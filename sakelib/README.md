@@ -19,6 +19,8 @@ read side by side (<https://ko1.github.io/sake-lang/compare.html>): jmespath, ha
 pstore, crass (CSS), useragent, mini_mime, erubi, protocol_hpack (HPACK), simpleidn (punycode / IDNA), websocket,
 net_smtp, fugit (cron, durations), rss (RSS 2.0 and Atom), rainbow, addressable (URI, URI templates), public_suffix,
 unicode_display_width. mini_mime, public_suffix and unicode_display_width read the installed gem's data files.
+Sinatra 4.2.1 (2026-10-12): sinatra and mustermann, served by rackup/webrick; a demo app and a Rails-shaped
+framework with a blog are in `experiments/2026-10-12-web/`.
 Libraries not ported, with the reason: `notes/not-ported.md`.
 
 `minitest.sake` is a test framework for programs written in Sake; Sake's own test suite written in Sake is

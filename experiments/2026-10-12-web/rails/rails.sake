@@ -1,0 +1,76 @@
+# Rails::Application in Sake: the Rack app that routes a request to a controller (Ruby: require "rails/all" and
+# Rails.application). It needs the app's generated files (tmp/generated/*.sake, from bin/rails generate), which
+# define _rails_dispatch and the route helpers.
+#
+# Per request: Rack::MethodOverride (_method), the router, the session cookie and the flash, the controller's
+# #process, and the errors Rails turns into statuses (RecordNotFound 404, ParameterMissing 400). Requests run one at
+# a time (Ruby: Rack::Lock; Rails is thread-safe, this framework's session store and tables are not locked apart).
+
+require "action_dispatch"
+require "action_controller"
+require "action_view"
+require "active_record"
+require "rack"
+
+module Rails
+  class Application
+    attr_reader name, routes, log
+    include Rack::App
+
+    def initialize(app)
+      @routes = ActionDispatch::Routing::RouteSet.draw(ActionDispatch::Routing::RouteSet.new) if @routes == nil
+      @log = IO.stderr if @log == nil
+    end
+    def lock = once { Mutex.new }
+
+    def call(app, env) = Mutex.synchronize(Application.lock) { handle(app, env) }
+
+    # Ruby: Rack::MethodOverride (POST with _method=patch/put/delete)
+    def request_method(req)
+      m = Rack::Request.request_method(req) || "GET"
+      return m unless m == "POST"
+      o = Rack::Request.POST(req)["_method"]
+      (o in String) ? String.upcase(o) : m
+    end
+
+    def handle(app, env)
+      t0 = Process.clock_gettime(Process.CLOCK_MONOTONIC)
+      req = Rack::Request.new(env)
+      verb = request_method(req)
+      path = Rack::Request.path_info(req)
+      IO.puts(@log, "Started #{verb} \"#{Rack::Request.fullpath(req)}\" for #{Rack::Request.ip(req)}")
+      found = ActionDispatch::Routing::RouteSet.recognize(@routes, verb, path)
+      result = if found
+                 route, path_params = found
+                 controller = ActionDispatch::Routing::Route.controller(route)
+                 action = ActionDispatch::Routing::Route.action(route)
+                 params = ActionController::Dispatch.params_for(req, path_params)
+                 IO.puts(@log, "Processing by #{ActiveSupport::Inflector.camelize(controller)}Controller##{action} as HTML")
+                 IO.puts(@log, "  Parameters: #{ActionController::Parameters.to_s(params)}")
+                 sid = ActionController::Dispatch.session_id(req)
+                 begin
+                   _rails_dispatch(controller, action, req, params, sid, ActionController::Dispatch.session_for(sid), ActionController::Dispatch.flash_for(sid))
+                 rescue ActiveRecord::RecordNotFound => e
+                   IO.puts(@log, "ActiveRecord::RecordNotFound (#{Exception.message(e)})")
+                   error_page(404, "The page you were looking for doesn't exist.")
+                 rescue ActionController::ParameterMissing => e
+                   IO.puts(@log, "ActionController::ParameterMissing (#{Exception.message(e)})")
+                   error_page(400, "Bad Request")
+                 end
+               else
+                 IO.puts(@log, "ActionController::RoutingError (No route matches [#{verb}] \"#{path}\")")
+                 error_page(404, "The page you were looking for doesn't exist.")
+               end
+      status, _, _ = result
+      ms = Float.round((Process.clock_gettime(Process.CLOCK_MONOTONIC) - t0) * 1000.0, 1)
+      IO.puts(@log, "Completed #{status} #{Rack::Utils.http_status_codes[status] || ""} in #{ms}ms\n")
+      result
+    end
+
+    # Ruby (production): public/404.html
+    def error_page(status, message)
+      body = "<!DOCTYPE html>\n<html>\n<head><title>#{status}</title></head>\n<body><h1>#{message}</h1></body>\n</html>\n"
+      [status, Hash["content-type" => "text/html; charset=utf-8"], String[body]]
+    end
+  end
+end

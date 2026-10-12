@@ -1,0 +1,198 @@
+# mustermann: Mustermann 3.1.1's `sinatra` pattern type (the one Sinatra compiles every route with) and its
+# `regular` type (a Regexp route), with Ruby's names: Mustermann.new(pattern) -> Mustermann::Sinatra or
+# Mustermann::Regular; Mustermann::Pattern.params(m, path) / match / === / to_regexp / names dispatch on either.
+#
+#   m = Mustermann.new("/hello/:name")
+#   Mustermann::Pattern.params(m, "/hello/world")      # => {"name" => "world"}
+#   Mustermann::Pattern.params(Mustermann.new("/say/*/to/*"), "/say/hi/to/bob")   # => {"splat" => ["hi", "bob"]}
+#
+# Syntax (Mustermann's sinatra type): `:name` and `{name}` capture one segment (`[^/?#]+`), `*` captures
+# anything as "splat" (an Array of every splat), `*name` a named splat, `(...)` groups, `|` inside a group,
+# `?` makes the previous character, capture or group optional, `\x` is a literal x. A capture followed by an
+# optional group that starts with a literal (`/:id(.:format)?`) stops before that literal at the end, as
+# Mustermann's look-ahead. Captured values are unescaped (%XX). Mustermann also matches a literal written
+# percent-encoded (`/h%65llo` for `/hello`); this port matches literals as written.
+
+require "uri"
+
+module Mustermann
+  # Ruby: Mustermann::Error, the parent of CompileError, ParseError and ExpandError (never raised itself).
+  module Error
+  end
+  class CompileError < StandardError
+    include Error
+  end
+  class ParseError < StandardError
+    include Error
+  end
+  class ExpandError < StandardError
+    include Error
+  end
+
+  # Ruby: Mustermann::Pattern, the superclass of every pattern type.
+  module Pattern
+    def to_regexp(m) = raise(NotImplementedError)
+    def names(m) = raise(NotImplementedError)
+    def to_s(m) = raise(NotImplementedError)
+    def params(m, path) = raise(NotImplementedError)
+
+    def match(m, path) = Regexp.match(to_regexp(m), path)
+    def ===(m, path) = Regexp.match?(to_regexp(m), path)
+    def =~(m, path)
+      md = match(m, path)
+      md ? MatchData.begin(md, 0) : nil
+    end
+    def peek_regexp(m) = raise(NotImplementedError)
+    # Ruby: pattern.peek_size(path), the length of the longest prefix of path the pattern matches
+    def peek_size(m, path)
+      md = Regexp.match(peek_regexp(m), path)
+      md ? String.size("#{md[0]}") : nil
+    end
+  end
+
+  class Sinatra
+    attr_reader pattern
+    private attr_accessor regexp, peek, keys
+    include Pattern
+
+    def initialize(m)
+      @keys = String[]
+      src = _compile(m, @pattern)
+      @regexp = Regexp.new("\\A#{src}\\z")
+      @peek = Regexp.new("\\A#{src}")
+    end
+
+    def peek_regexp(m) = @peek
+
+    def to_regexp(m) = @regexp
+    def to_s(m) = @pattern
+    def inspect(m) = "#<Mustermann::Sinatra:#{Kernel.inspect(@pattern)}>"
+    def names(m) = Array.uniq(@keys)
+
+    # Ruby: pattern.params("/hello/world") -> {"name" => "world"}, nil when it does not match.
+    def params(m, path)
+      md = Regexp.match(@regexp, path)
+      return nil unless md
+      result = Hash[]
+      Array.each_with_index(@keys) do |key, i|
+        raw = md[i + 1]
+        value = raw ? Mustermann.unescape(raw) : nil
+        if key == "splat" || Array.count(@keys, key) > 1
+          list = result[key]
+          list = String[] unless list in Array
+          Array.push(list, value) if value
+          result[key] = list
+        else
+          result[key] = value
+        end
+      end
+      result
+    end
+
+    # --- the compiler: the pattern string to the source of a Regexp, positional groups in @keys' order ---
+    def _seg = "[^/?#]+"
+
+    def _compile(m, src)
+      out = ""
+      i = 0
+      n = String.size(src)
+      stack = String[]                       # the source compiled before each open group
+      while i < n
+        c = src[i] || ""
+        if c == ":" || c == "{"
+          md = c == ":" ? String.match(src, /\G:(\w+)/, i) : String.match(src, /\G\{(\w+)\}/, i)
+          raise CompileError, "capture name can't be empty: #{Kernel.inspect(src)}" unless md
+          Array.push(@keys, "#{md[1]}")
+          i = MatchData.end(md, 0) || n
+          out += "(#{_capture_body(src, i)})"
+        elsif c == "*"
+          md = String.match(src, /\G\*(\w+)?/, i)
+          name = md ? md[1] : nil
+          Array.push(@keys, name || "splat")
+          i += 1 + String.size(name || "")
+          out += "(.*?)"
+        elsif c == "("
+          Array.push(stack, out)
+          out = ""
+          i += 1
+        elsif c == ")"
+          before = Array.pop(stack)
+          raise ParseError, "unexpected ) while parsing #{Kernel.inspect(src)}" unless before
+          out = before + "(?:#{out})"
+          i += 1
+        elsif c == "|" && !Array.empty?(stack)
+          out += "|"
+          i += 1
+        elsif c == "?"
+          out = _optional(out)
+          i += 1
+        elsif c == "\\"
+          out += Regexp.escape(src[i + 1] || "")
+          i += 2
+        else
+          out += "(?:#{Regexp.escape(c)})"
+          i += 1
+        end
+      end
+      raise ParseError, "unexpected end of string while parsing #{Kernel.inspect(src)}" unless Array.empty?(stack)
+      out
+    end
+
+    # `x?`: the last element of the compiled source (a group, a capture, or one literal) becomes optional.
+    def _optional(out)
+      return "#{out}?" if String.end_with?(out, ")")
+      out
+    end
+
+    # One segment, or (before an optional group that starts with a literal c, as `(.:format)?`) one segment that
+    # does not end in c followed by a last part: Mustermann's look-ahead.
+    def _capture_body(src, i)
+      md = String.match(src, /\G\(([^:*{(\\])/, i)
+      return _seg unless md
+      close = String.index(src, ")", i)
+      return _seg unless close && src[close + 1] == "?"
+      c = Regexp.escape("#{md[1]}")
+      "(?:(?!#{c}(?:(?!#{c})[^/?#])+?\\z)[^/?#])+"
+    end
+  end
+
+  # Ruby: Mustermann::Regular, a pattern from a Regexp; params are its named captures.
+  class Regular
+    attr_reader regexp_source
+    include Pattern
+
+    def to_regexp(m) = Regexp.new("\\A(?:#{Regexp.source(@regexp_source)})\\z")
+    def peek_regexp(m) = Regexp.new("\\A(?:#{Regexp.source(@regexp_source)})")
+    def to_s(m) = Regexp.source(@regexp_source)
+    def inspect(m) = "#<Mustermann::Regular:#{Kernel.inspect(Regexp.source(@regexp_source))}>"
+    def names(m) = Regexp.names(@regexp_source)
+    def captures(m, path)
+      md = match(m, path)
+      return nil unless md
+      Array.map(MatchData.captures(md)) { |c| c ? Mustermann.unescape(c) : nil }
+    end
+    def params(m, path)
+      md = match(m, path)
+      return nil unless md
+      result = Hash[]
+      Array.each(Regexp.names(@regexp_source)) do |name|
+        v = md[name]
+        result[name] = v ? Mustermann.unescape(v) : nil
+      end
+      result
+    end
+  end
+
+  module_function
+
+  # Ruby: Mustermann.new(string) (type :sinatra, the default) or Mustermann.new(regexp) (a Mustermann::Regular).
+  def new(pattern)
+    case pattern
+    in Regexp then Regular.new(pattern)
+    in String then Sinatra.new(pattern)
+    end
+  end
+
+  # Mustermann's unescape of a captured value: %XX only ('+' stays), as URI::RFC2396_Parser#unescape.
+  def unescape(s) = String.force_encoding(String.gsub(String.b(s), /%(\h\h)/) { |m| Array.pack(Array[m[1, 2] || ""], "H2") }, "UTF-8")
+end

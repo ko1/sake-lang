@@ -1,0 +1,135 @@
+# ActiveModel 8.1's core in Sake: Name, Errors, Error, validations (presence, length), Conversion.
+#
+# Ruby's model is any object answering model_name, to_key, persisted?, errors, read_attribute_for_validation.
+# Here it is a type that includes ActiveModel::Model and defines the required functions below (a record of
+# ActiveRecord gets them from the generated code; compare.sake writes them by hand).
+
+require "active_support"
+
+module ActiveModel
+  class UnknownAttributeError < StandardError
+  end
+
+  # Ruby: Post.model_name => #<ActiveModel::Name ...> (singular "post", plural "posts", route_key, param_key, human)
+  class Name
+    attr_reader name, singular, plural, element, human, param_key, route_key, singular_route_key, i18n_key
+    def initialize(n)
+      @singular = ActiveSupport::Inflector.underscore(@name)
+      @plural = ActiveSupport::Inflector.pluralize(@singular)
+      @element = @singular
+      @human = ActiveSupport::Inflector.humanize(@singular)
+      @param_key = @singular
+      @route_key = @plural
+      @singular_route_key = @singular
+      @i18n_key = String.to_sym(@singular)
+    end
+    def to_s(n) = @name
+  end
+
+  # Ruby: ActiveModel::Error (attribute, type, message, options)
+  class Error
+    attr_reader attribute, type, message, base_name
+    # Ruby: "#{attribute.humanize} #{message}" (base errors have no prefix)
+    def full_message(e)
+      return @message if @attribute == :base
+      "#{ActiveSupport::Inflector.humanize(Symbol.to_s(@attribute))} #{@message}"
+    end
+    def to_s(e) = full_message(e)
+  end
+
+  # Ruby: record.errors
+  class Errors
+    attr_reader errors
+    def initialize(es)
+      @errors = Error[] if @errors == nil
+    end
+    def add(es, attribute, type, message = nil)
+      msg = message || Errors.generate_message(type, nil)
+      Array.push(@errors, Error.new(attribute, type, msg, ""))
+      nil
+    end
+    # the default English messages (activemodel/lib/active_model/locale/en.yml)
+    def generate_message(type, count)
+      case type
+      in :blank then "can't be blank"
+      in :too_short then "is too short (minimum is #{count} #{count == 1 ? "character" : "characters"})"
+      in :too_long then "is too long (maximum is #{count} #{count == 1 ? "character" : "characters"})"
+      in :wrong_length then "is the wrong length (should be #{count} #{count == 1 ? "character" : "characters"})"
+      in :taken then "has already been taken"
+      in :invalid then "is invalid"
+      in :required then "must exist"
+      else "is invalid"
+      end
+    end
+    def clear(es) = Array.clear(@errors)
+    def count(es) = Array.size(@errors)
+    def size(es) = Array.size(@errors)
+    def empty?(es) = Array.empty?(@errors)
+    def any?(es) = !Array.empty?(@errors)
+    def each(es) = Array.each(@errors) { |e| yield(e) }
+    def full_messages(es) = Array.map(@errors) { |e| Error.full_message(e) }
+    def full_messages_for(es, attribute) = Array.filter_map(@errors) { |e| Error.attribute(e) == attribute ? Error.full_message(e) : nil }
+    def [](es, attribute) = Array.filter_map(@errors) { |e| Error.attribute(e) == attribute ? Error.message(e) : nil }
+    def include?(es, attribute) = Array.any?(@errors) { |e| Error.attribute(e) == attribute }
+    def attribute_names(es) = Array.uniq(Array.map(@errors) { |e| Error.attribute(e) })
+  end
+
+  # Ruby: include ActiveModel::Model (Naming, Conversion, Validations). The required functions are what Rails
+  # finds by reflection (attributes) or class-level declarations (validates); Sake has neither, so the type says them.
+  module Model
+    def model_name(r) = raise(NotImplementedError)                  # Ruby: r.model_name (Post => ActiveModel::Name)
+    def errors(r) = raise(NotImplementedError)                      # Ruby: r.errors
+    def persisted?(r) = raise(NotImplementedError)
+    def read_attribute_for_validation(r, name) = raise(NotImplementedError)  # name is a Symbol
+    def validate(r) = raise(NotImplementedError)                    # Ruby: the class body's `validates` lines
+    def to_key(r) = raise(NotImplementedError)                      # Ruby: [id] or nil
+
+    # Ruby: r.to_param / r.to_partial_path (ActiveModel::Conversion)
+    def to_param(r)
+      k = to_key(r)
+      k ? Array.join(Array.map(k) { |x| Kernel.to_s(x) }, "-") : nil
+    end
+    def to_partial_path(r)
+      n = model_name(r)
+      "#{Name.route_key(n)}/#{Name.element(n)}"
+    end
+
+    # Ruby: r.valid? runs the validations into a cleared r.errors
+    def valid?(r)
+      es = errors(r)
+      Errors.clear(es)
+      validate(r)
+      Errors.empty?(es)
+    end
+    def invalid?(r) = !valid?(r)
+
+    # Ruby (class body): validates :title, presence: true, length: { minimum: 5 }
+    # Sake (in `def validate(post)`): validates post, :title, {presence: true, length: {minimum: 5}}
+    def validates(r, attribute, opts)
+      v = read_attribute_for_validation(r, attribute)
+      es = errors(r)
+      blank = v == nil || ((v in String) && String.match?(v, /\A[[:space:]]*\z/))
+      case opts
+      in {presence:}
+        Errors.add(es, attribute, :blank) if presence && blank
+      else
+      end
+      case opts
+      in {length:}
+        len = (v in String) ? String.length(v) : 0
+        case length
+        in {minimum:}
+          Errors.add(es, attribute, :too_short, Errors.generate_message(:too_short, minimum)) if len < minimum
+        else
+        end
+        case length
+        in {maximum:}
+          Errors.add(es, attribute, :too_long, Errors.generate_message(:too_long, maximum)) if len > maximum
+        else
+        end
+      else
+      end
+      nil
+    end
+  end
+end

@@ -331,7 +331,7 @@ p(pt)                                # => #<struct Point x=3, y=0>
 
 ### 操作を足す
 
-`class Point ... end` か `def Point.f` で自分の操作を足します。その中ではリーダとライタを型無しで呼べます（`x(p)`、`set_x(p, v)`）。フィールドと同名の関数（`def x(p) = ...`）は、Ruby で attr_reader の後にメソッドを定義したのと同じくリーダを置き換えます。`@x` は常にフィールドを読みます。
+`class Point ... end` か `def Point.f` で自分の操作を足します。その中ではリーダとライタを型無しで呼べます（`x(p)`、`set_x(p, v)`）。フィールドと同名の関数（`def x(p) = ...`）は、Ruby で attr_accessor の後にメソッドを定義したのと同じくリーダを置き換え、ライタと同名の関数（`def set_x(p, v)`）はライタを置き換えます（`p.Point.x = v` と `+=` もそれを呼びます）。`@x` は常にフィールドを読み書きします。
 
 ```ruby
 Point = Struct.new(:x, :y)

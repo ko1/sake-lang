@@ -546,8 +546,14 @@ module Sake
       fn.abstract = abstract_body?(node.body)
       if (prev = @functions.dig(ns, name))
         error(node, "`#{fn.full_name}` is already defined at line #{prev.node.location.start_line}")
-      elsif ns && @registry.lookup(ns, name) && @struct_types[ns]&.fields&.include?(name)
-        # A function named like a field replaces its reader, as a method after attr_reader in Ruby (`@x` still reads it).
+      elsif ns && @registry.lookup(ns, name) && name.start_with?("set_") && fn.params.size != 2 &&
+            @struct_types[ns]&.fields&.include?(field = name.delete_prefix("set_"))
+        error(node, "`#{fn.full_name}` is the writer of field `#{field}` (from `attr_accessor #{field}`), which takes the object and the new value",
+              ["declare the field with `attr_reader #{field}` (functions still write `@#{field}`), or rename the function"])
+      elsif ns && @registry.lookup(ns, name) && (@struct_types[ns]&.fields&.include?(name) ||
+                                                 (name.start_with?("set_") && @struct_types[ns]&.fields&.include?(name.delete_prefix("set_"))))
+        # A function named like a field (or its setter) replaces the generated reader (or setter), as a method after
+        # attr_accessor in Ruby (`@x` still reads and writes the field).
         @registry.undefine(ns, name)
         (@functions[ns] ||= {})[name] = fn
       elsif ns && @registry.lookup(ns, name)
@@ -880,7 +886,7 @@ module Sake
       check(node.value, ctx)
       return private_field_error(node, dt.name, field) if private_access?(dt.name, field, ctx.ns)
       reader = lookup(dt.name, field)
-      writer = @registry.lookup(dt.name, "set_#{field}")
+      writer = lookup(dt.name, "set_#{field}")
       return error(node, "field `#{field}` of #{dt.name} has no reader") unless reader
       return error(node, "field `#{field}` of #{dt.name} is read-only (attr_reader)", ["declare it with `attr_accessor #{field}`"]) unless writer
       set_call(node, ctx, [reader, writer])

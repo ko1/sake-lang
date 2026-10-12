@@ -1,0 +1,241 @@
+# Sinatra: one app and its requests, on sakelib/sinatra.sake (sinatra 4.2.1, mustermann 3.1.1, rack 3.2.6);
+# sinatra.rb is the same program on the real gem. Read the two side by side.
+require "sinatra"
+require "json"
+
+class MyError < StandardError
+end
+
+class App < Sinatra::Base
+  def routes(app)                            # Ruby: the class body (run here once per request phase)
+    # settings (Ruby: the class body runs once)
+    set(app, :environment, :production)
+    set(app, :views, File.join(File.dirname(Kernel.PROGRAM_NAME), "sinatra_views"))
+    set(app, :public_folder, File.join(File.dirname(Kernel.PROGRAM_NAME), "sinatra_public"))
+    set(app, :title, "Sake")
+    enable(app, :sessions)
+    set(app, :session_secret, "0123456789abcdef" * 4)
+
+                                               # (h() is built into Sake's templates)
+    template(app, :named) do
+      "named <%= who %>"
+    end
+
+    # filters
+    before(app) do
+      headers(app, Hash["x-before" => "yes"])
+    end
+
+    before(app, "/admin/*") do
+      halt(app, 401, "admin only") unless params(app)["key"] == "secret"
+    end
+
+    after(app) do
+      headers(app, Hash["x-after" => Integer.to_s(Sinatra::Response.status(response(app)))])
+    end
+
+    # routes
+    get(app, "/") do
+      "Hello, world"
+    end
+
+    get(app, "/hello/:name") do
+      "Hello, #{params(app)["name"]}!"
+    end
+
+    get(app, "/say/*/to/*") do
+      splat = params(app)["splat"]
+      splat => Array                         # params' values are String | Array | Hash | nil
+      "say #{Array.join(splat, " | ")}"
+    end
+
+    get(app, "/posts/:id(.:format)?") do
+      "post #{params(app)["id"]} format=#{Kernel.inspect(params(app)["format"])}"
+    end
+
+    get(app, %r{/num/(\d+)}) do
+      captures = params(app)["captures"]
+      captures => Array
+      "num #{Array.first(captures)}"
+    end
+
+    get(app, "/query") do
+      "q=#{params(app)["q"]} list=#{Kernel.inspect(params(app)["list"])}"
+    end
+
+    post(app, "/form") do
+      "posted #{params(app)["name"]} (#{Sinatra::Request.content_type(request(app))})"
+    end
+
+    put(app, "/item/:id") do
+      "put #{params(app)["id"]} v=#{params(app)["v"]}"
+    end
+
+    delete(app, "/item/:id") do
+      status(app, 204)
+    end
+
+    get(app, "/status") do
+      status(app, 201)
+      headers(app, Hash["x-custom" => "1"])
+      content_type(app, :txt)
+      "created"
+    end
+
+    get(app, "/halt") do
+      halt(app, 418, Hash["x-halt" => "1"], "teapot")
+      "not reached"
+    end
+
+    get(app, "/forbidden") do
+      halt(app, 403, "nope")
+    end
+
+    get(app, "/tuple") do
+      [202, Hash["x-t" => "1"], "tuple body"]
+    end
+
+    get(app, "/redirect") do
+      redirect(app, "/")
+    end
+
+    post(app, "/redirect") do
+      redirect(app, to(app, "/done"))
+    end
+
+    get(app, "/uri") do
+      "#{uri(app, "/x")} #{url(app, "/y", false)} #{to(app, "z")}"
+    end
+
+    get(app, "/pass/:who") do
+      pass(app) unless params(app)["who"] == "me"
+      "it is me"
+    end
+
+    get(app, "/pass/*") do
+      splat = params(app)["splat"]
+      splat => Array
+      "passed #{Array.first(splat)}"
+    end
+
+    get(app, "/json") do
+      content_type(app, :json)
+      JSON.generate(Hash["ok" => true, "items" => Array[1, 2]])
+    end
+
+    get(app, "/erb") do
+      erb(app, :index, Hash[locals: Hash[title: "Todo <list>", items: Array[Hash[name: "write", done: true], Hash[name: "test & ship", done: false]]]])
+    end
+
+    get(app, "/inline") do
+      erb(app, "<b><%= name %></b>", Hash[layout: false, locals: Hash[name: "inline"]])
+    end
+
+    get(app, "/named") do
+      erb(app, :named, Hash[layout: false, locals: Hash[who: "template"]])
+    end
+
+    get(app, "/counter") do
+      n = session(app)["count"] || 0
+      n => Integer
+      session(app)["count"] = n + 1
+      "count=#{session(app)["count"]}"
+    end
+
+    get(app, "/settings") do
+      "title=#{settings(app)[:title]} sessions=#{Sinatra::Settings.sessions(settings(app))}"
+    end
+
+    get(app, "/admin/panel") do
+      "admin panel"
+    end
+
+    get(app, "/boom") do
+      raise MyError, "it broke"
+    end
+
+    get(app, "/plain-error") do
+      raise "plain"
+    end
+
+    get(app, "/strict") do
+      "strict"
+    end
+
+    # error handlers
+    not_found(app) do
+      "no route for #{Sinatra::Request.path_info(request(app))}"
+    end
+
+    error(app, 403) do
+      "403 handler"
+    end
+
+    error(app) do |e|
+      "error: #{Kernel.inspect(e)}"
+    end
+  end
+end
+
+def show(label, triple)
+  status, headers, body = triple
+  parts = String[]
+  Array.each(body) { |s| Array.push(parts, s) }
+  puts("== #{label} -> #{status}")
+  Array.each(Hash.sort_by(headers) { |k, v| k }) do |k, v|
+    v = String.sub("#{v}", /\A([^=]*)=[^;]*/) { |m| "#{String.partition(m, "=")[0]}=..." } if k == "set-cookie"
+    puts("#{k}: #{v}")
+  end
+  puts(Array.join(parts)) unless Array.empty?(parts)
+end
+
+def req(app, method, path, input = nil, cookie = nil)
+  hs = Hash[]
+  hs["CONTENT_TYPE"] = "application/x-www-form-urlencoded" if input
+  hs["HTTP_COOKIE"] = cookie if cookie
+  Rack::App.call(app, Rack::MockRequest.env_for(path, method: method, input: input, headers: hs))
+end
+
+app = App.new
+show("GET /", req(app, "GET", "/"))
+show("GET /hello/Sake%20lang", req(app, "GET", "/hello/Sake%20lang"))
+show("GET /say/hi/to/the/world", req(app, "GET", "/say/hi/to/the/world"))
+show("GET /posts/7.json", req(app, "GET", "/posts/7.json"))
+show("GET /posts/7", req(app, "GET", "/posts/7"))
+show("GET /num/42", req(app, "GET", "/num/42"))
+show("GET /query", req(app, "GET", "/query?q=a+b&list[]=1&list[]=2"))
+show("POST /form", req(app, "POST", "/form", "name=ko1&x=1"))
+show("PUT /item/3", req(app, "PUT", "/item/3", "v=1"))
+show("DELETE /item/3", req(app, "DELETE", "/item/3"))
+show("GET /status", req(app, "GET", "/status"))
+show("GET /halt", req(app, "GET", "/halt"))
+show("GET /forbidden", req(app, "GET", "/forbidden"))
+show("GET /tuple", req(app, "GET", "/tuple"))
+show("GET /redirect", req(app, "GET", "/redirect"))
+show("POST /redirect", req(app, "POST", "/redirect", ""))
+show("GET /uri", req(app, "GET", "/uri"))
+show("GET /pass/me", req(app, "GET", "/pass/me"))
+show("GET /pass/you", req(app, "GET", "/pass/you"))
+show("GET /json", req(app, "GET", "/json"))
+show("GET /erb", req(app, "GET", "/erb"))
+show("GET /inline", req(app, "GET", "/inline"))
+show("GET /named", req(app, "GET", "/named"))
+show("GET /settings", req(app, "GET", "/settings"))
+show("GET /admin/panel", req(app, "GET", "/admin/panel"))
+show("GET /admin/panel?key=secret", req(app, "GET", "/admin/panel?key=secret"))
+show("GET /boom", req(app, "GET", "/boom"))
+show("GET /plain-error", req(app, "GET", "/plain-error"))
+show("GET /missing", req(app, "GET", "/missing"))
+show("GET /strict/", req(app, "GET", "/strict/"))
+show("HEAD /", req(app, "HEAD", "/"))
+show("GET /hello.txt", req(app, "GET", "/hello.txt"))
+
+puts("-- session")
+cookie = nil
+Integer.times(3) do
+  status, headers, body = req(app, "GET", "/counter", nil, cookie)
+  cookie = String.partition("#{headers["set-cookie"]}", ";")[0]
+  parts = String[]
+  Array.each(body) { |s| Array.push(parts, s) }
+  puts("#{status} #{Array.join(parts)}")
+end

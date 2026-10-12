@@ -1,0 +1,34 @@
+# Requests through the whole stack without a server (Ruby: an integration test with Rack::MockRequest).
+# Run from the app's directory: DATABASE_DIR=$(mktemp -d) bin/sake test/requests.sake
+require "../config/application"
+
+def show(label, triple)
+  status, headers, body = triple
+  puts "== #{label}: #{status} #{headers["location"] || ""}"
+  puts Array.join(body)
+end
+def cookie_of(triple)
+  _, headers, _ = triple
+  c = headers["set-cookie"]
+  s = (c in String) ? c : ""
+  String.split(s, ";")[0] || ""
+end
+
+app = Blog.application
+r = Rack::MockRequest.get(app, "/posts")
+show("index", r)
+ck = cookie_of(r)
+h = Hash["HTTP_COOKIE" => ck]
+show("new", Rack::MockRequest.get(app, "/posts/new", headers: h))
+show("create (invalid)", Rack::MockRequest.post(app, "/posts", params: Hash["post" => Hash["title" => "Hi", "body" => ""]], headers: h))
+r = Rack::MockRequest.post(app, "/posts", params: Hash["post" => Hash["title" => "Hello Sake", "body" => "Types on <operations>."]], headers: h)
+show("create", r)
+show("show", Rack::MockRequest.get(app, "/posts/1", headers: h))
+show("comment", Rack::MockRequest.post(app, "/posts/1/comments", params: Hash["comment" => Hash["commenter" => "ko1", "body" => "nice"]], headers: h))
+show("show", Rack::MockRequest.get(app, "/posts/1", headers: h))
+show("edit", Rack::MockRequest.get(app, "/posts/1/edit", headers: h))
+show("update", Rack::MockRequest.post(app, "/posts/1", params: Hash["_method" => "patch", "post" => Hash["title" => "Hello again", "body" => "x"]], headers: h))
+show("index", Rack::MockRequest.get(app, "/posts", headers: h))
+show("destroy", Rack::MockRequest.post(app, "/posts/1", params: Hash["_method" => "delete"], headers: h))
+show("index", Rack::MockRequest.get(app, "/posts", headers: h))
+show("missing", Rack::MockRequest.get(app, "/posts/99", headers: h))

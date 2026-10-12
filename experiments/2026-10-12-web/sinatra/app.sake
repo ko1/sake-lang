@@ -1,0 +1,67 @@
+# A todo list on Sinatra (sakelib/sinatra.sake; app.rb is the Ruby twin): a form, redirects, a JSON endpoint,
+# a session counter, a 404 page; served by WEBrick on 127.0.0.1 and a free port (printed as "port N").
+require "sinatra"
+require "json"
+
+class TodoApp < Sinatra::Base
+  def store = once { Array[Hash[id: 1, title: "Try Sake-lang", done: true]] }
+  def lock = once { Mutex.new }
+                                                    # (Ruby: helpers do)
+  def todos(app) = Mutex.synchronize(lock) { Array.map(store) { |t| Hash.dup(t) } }
+  def find(app, id) = Mutex.synchronize(lock) { Array.find(store) { |t| t[:id] == String.to_i(id) } }
+                                                    # (Ruby: end)
+
+  def routes(app)
+    set(app, :environment, :production)
+    set(app, :server, "webrick")
+    set(app, :views, File.join(File.dirname(Kernel.PROGRAM_NAME), "views"))
+    enable(app, :sessions)
+    set(app, :session_secret, "demo-secret-" * 6)
+                                                    # (h() is built into Sake's templates)
+
+    before(app) do
+      visits = session(app)["visits"] || 0
+      visits => Integer                             # the session holds JSON values: say which
+      session(app)["visits"] = visits + 1
+    end
+
+    get(app, "/") do
+      erb(app, :index, Hash[locals: Hash[todos: todos(app), visits: session(app)["visits"]]])
+    end
+
+    get(app, "/todos.json") do
+      content_type(app, :json)
+      JSON.generate(todos(app))
+    end
+
+    get(app, "/todos/:id") do
+      todo = find(app, "#{params(app)["id"]}")
+      halt(app, 404) unless todo
+      erb(app, :show, Hash[locals: Hash[todo: todo, visits: session(app)["visits"]]])
+    end
+
+    post(app, "/todos") do
+      title = String.strip("#{params(app)["title"]}")
+      halt(app, 400, "title is empty") if String.empty?(title)
+      Mutex.synchronize(lock) { Array.push(store, Hash[id: Array.size(store) + 1, title: title, done: false]) }
+      redirect(app, "/")
+    end
+
+    post(app, "/todos/:id/done") do
+      todo = find(app, "#{params(app)["id"]}")
+      halt(app, 404) unless todo
+      Mutex.synchronize(lock) { todo[:done] = true }
+      redirect(app, to(app, "/"))
+    end
+
+    not_found(app) do
+      "<h1>Not found</h1><p>#{ERB::Util.html_escape(Sinatra::Request.path_info(request(app)))}</p>"
+    end
+  end
+end
+
+app = TodoApp.new
+TodoApp.run!(app, Hash[bind: "127.0.0.1", port: 0]) do |server|
+  puts("port #{WEBrick::HTTPServer.port(server)}")
+  IO.flush(IO.stdout)
+end
