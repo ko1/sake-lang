@@ -697,8 +697,12 @@ Option wrapper.
   | `return unless x`, `next unless x`, `break unless x`, and other early exits | non-nil after the statement |
   | `String.size(x)`, or any built-in operation taking `x` as an argument | after the call, a type that the operation accepts (it checks its arguments while running) |
 
-  Field reads (`Node.next(n)`) are **not** narrowed, because fields are mutable. Copy the field
-  into a local variable first, then test the local.
+  A field read from a local variable (`Node.next(n)`, `@next`) is narrowed in the same way, until
+  an operation that may change the field: a field write, a call of a user function, a call that
+  passes a block or `yield`, or an assignment to the variable (fields are mutable, so another name may
+  change them). A block body does not see a field narrowed outside it. A field write also narrows:
+  after `@n ||= 0`, `@n` is an Integer. Where a call comes in between, copy the field into a local
+  variable first, then test the local.
 - **`--strict`.** Level 2 reports, before running, every operation that may receive an unchecked
   `nil`. Level 3 also covers results of `x[k]` ([§2.1](#21-strictness)).
 

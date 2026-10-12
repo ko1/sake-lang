@@ -276,8 +276,9 @@ p(v + 1)
 - A **local variable** is narrowed by `if x`, `x ? a : b`, `x != nil`, `return unless x`,
   `next unless x`, `x && ...`, `x => T`, `case x in`. `x.nil?` is rejected: write `x == nil`.
 - Defaults: `y = x || 0`, `Hash.fetch(h, k, 0)`, `Array.fetch(a, i, 0)`, `Hash.new(0)`.
-- **Field reads are never narrowed** (fields are mutable): copy to a local first.
-  `if Node.nxt(n) then Node.v(Node.nxt(n))` is rejected; `m = Node.nxt(n); Node.v(m) if m` is fine.
+- A **field read** (`Node.nxt(n)`, `@nxt`) is narrowed until something may change it (a field write,
+  a user function call, a block, an assignment to `n`): `if Node.nxt(n) then Node.v(Node.nxt(n))` is
+  fine, but not with `f(n)` between the two. There, copy to a local first: `m = Node.nxt(n)`.
 
 ```ruby
 Node = Struct.new(:v, :nxt)

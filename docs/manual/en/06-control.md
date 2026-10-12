@@ -188,9 +188,9 @@ p(size_or_zero(Array["abc"]))        # => 3
 p(size_or_zero(Array[]))             # => 0
 ```
 
-### Fields are not narrowed
+### When a field's narrowing ends
 
-Only **local variables** are narrowed. A field read such as `Node.next(n)` is mutable, so a second read inside `if Node.next(n)` may still be nil. Copy the field into a local variable first, then test the local.
+A field read from a local variable (`Node.next(n)`, `@next`) is narrowed to non-nil inside `if Node.next(n)` too. Fields are mutable, though, so an operation that may change the field between the test and the use ends the narrowing: a field write, a call of a user function, a call that passes a block and `yield`, and an assignment to the variable. Inside a block, a field narrowed outside it is not narrowed either. In those places, copy the field into a local variable first, then test the local.
 
 ```ruby
 class Node
@@ -214,8 +214,10 @@ p(next_value(a))                     # => 0
 class Node
   attr_accessor value, :next
 end
+def bump(n) = Node.set_value(n, Node.value(n) + 1)
 def next_value(n)
   if Node.next(n)
+    bump(n)
     Node.value(Node.next(n))         # !> Node.value: argument 1 must be Node, but is nil [type]
   else
     0

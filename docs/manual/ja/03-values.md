@@ -315,21 +315,24 @@ p(twice(Array[1, 4]))          # => 8
 p(twice(Array[1, 3]))          # => 0
 ```
 
-フィールドの読み出し（`Node.next(n)`）は絞られ**ません**。フィールドは可変だからです。
+フィールドの読み出し（`Node.next(n)`、クラスの関数の中では `@next`）も、ローカル変数から読むものは絞られます。ただし、確かめてから使うまでの間にフィールドを書き換えうる操作があると、絞り込みはそこで切れます。フィールドは可変で、別の名前から書き換えられうるからです。書き換えうる操作は、フィールドへの書き込み、ユーザ関数の呼び出し、ブロックを渡す呼び出しと `yield`、その変数への代入です。ブロックの中では、外で絞ったフィールドは絞られていません。
 
 ```ruby error
 class Node
   attr_accessor value, :next
 end
 def mk(v) = Node.new(v, nil)
+def drop_next(n) = Node.set_next(n, nil)
 a = mk(1)
 Node.set_next(a, mk(2))
 if Node.next(a)
+  p(Node.value(Node.next(a)))  # 絞られている
+  drop_next(a)
   p(Node.value(Node.next(a)))  # !> Node.value: argument 1 may be nil (nil | Node) [nil]
 end
 ```
 
-フィールドをローカル変数に写してから検査してください。
+間に呼び出しを挟むなら、フィールドをローカル変数に写してから検査してください。
 
 ```ruby
 class Node

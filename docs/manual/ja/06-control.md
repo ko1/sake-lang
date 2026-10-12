@@ -188,9 +188,9 @@ p(size_or_zero(Array["abc"]))        # => 3
 p(size_or_zero(Array[]))             # => 0
 ```
 
-### フィールドは絞られない
+### フィールドの絞り込みが切れるとき
 
-絞られるのは**ローカル変数**だけです。フィールドの読み出し `Node.next(n)` は可変なので、`if Node.next(n)` の中でもう一度読んだ値は nil かもしれないままです。フィールドはいったんローカル変数に写し、そのローカルを調べます。
+ローカル変数から読むフィールド（`Node.next(n)`、`@next`）も、`if Node.next(n)` の中では非 nil に絞られます。ただしフィールドは可変なので、確かめてから使うまでの間に、フィールドを書き換えうる操作があると絞り込みが切れます。フィールドへの書き込み、ユーザ関数の呼び出し、ブロックを渡す呼び出しと `yield`、その変数への代入です。ブロックの中でも、外で絞ったフィールドは絞られていません。そういう所では、フィールドをいったんローカル変数に写し、そのローカルを調べます。
 
 ```ruby
 class Node
@@ -214,8 +214,10 @@ p(next_value(a))                     # => 0
 class Node
   attr_accessor value, :next
 end
+def bump(n) = Node.set_value(n, Node.value(n) + 1)
 def next_value(n)
   if Node.next(n)
+    bump(n)
     Node.value(Node.next(n))         # !> Node.value: argument 1 must be Node, but is nil [type]
   else
     0

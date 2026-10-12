@@ -24,7 +24,9 @@ module Sake
         @links = links
       end
 
-      def owns?(slot) = @own.nil? || @own.include?(slot)
+      # A field read's narrowing ([:fread, ...]) is kept by each level: a block body does not see the
+      # enclosing one (the block may run after a call that changed the field).
+      def owns?(slot) = @own.nil? || @own.include?(slot) || Typer.fread?(slot)
 
       def level(slot)
         e = self
@@ -149,12 +151,15 @@ module Sake
           given = !env.frame.block.nil?
           add_check(n.origin, "yield", "block", "a block", given ? t("Block") : t("no block"), given ? :proven : :error, given ? [] : ["no block"])
         end
-        call_block(env.frame.block, args)
+        call_block(env.frame.block, args).tap { forget_fields(env) }
       when CallBuiltin
-        call(n, env).tap { env.dead = true if n.fn.full_name == "Kernel.exit" } # exit ends the path
+        call(n, env).tap do
+          env.dead = true if n.fn.full_name == "Kernel.exit" # exit ends the path
+          forget_fields(env) if n.block
+        end
       when CallUser, CallDispatch, CallUnion
         # A call that never returns (the function always raises) ends this path, as `raise` does.
-        call(n, env).tap { |r| env.dead = true if r.empty? }
+        call(n, env).tap { |r| env.dead = true if r.empty?; forget_fields(env) }
       when BinOp then binop(n.origin, n.op, ev(n.left, env), ev(n.right, env))
       when UnOp then unop(n.origin, n.op, ev(n.value, env))
       when IsNil then binop(n.origin, n.negate ? "!=" : "==", ev(n.value, env), t("Nil"))
@@ -182,7 +187,16 @@ module Sake
           env.lookup([:field, n.field]) || []
         else
           # Written as `T.x(s)`, it is a call like any other; `@x` reads the function's subject.
-          n.origin.is_a?(Prism::CallNode) ? builtin_call(n, n.fn, nodes, args, nil, env) : call_builtin(n.fn, args, nil, n.origin)
+          r = n.origin.is_a?(Prism::CallNode) ? builtin_call(n, n.fn, nodes, args, nil, env) : call_builtin(n.fn, args, nil, n.origin)
+          key = fread_key(env, n)
+          if n.is_a?(FieldSet)
+            forget_fields(env)
+            env.vars[key] = args[1] if key # `@y ||= 0`: the field holds what was just written
+            r
+          else
+            # A read is remembered on this path, so that a test of it narrows the reads that follow.
+            key ? (env.lookup(key) || (env.vars[key] = r)) : r
+          end
         end
       when Raise, ReRaise then typer_raise(n, env)
       when Unresolved then unknown("unresolved")
@@ -192,8 +206,35 @@ module Sake
 
     def lit_of(n) = n.is_a?(Lit) && n.value.is_a?(Integer) ? n.value : nil
 
+    def self.fread?(slot) = slot.is_a?(Array) && slot[0] == :fread
+
+    # `@x` (or `T.x(s)`) read from a local: the reads of that field of that variable are followed like a
+    # local, from a test to the uses after it, until something may change the field: a field write, a call
+    # of a user function or a block, or an assignment to the variable.
+    def fread_key(env, n)
+      return unless @narrow && (n.is_a?(FieldGet) || n.is_a?(FieldSet)) && n.subject.is_a?(LVarGet) && !init_field?(env, n)
+      [:fread, n.subject.slot, n.field]
+    end
+
+    def forget_fields(env, slot = nil)
+      env.vars.delete_if { |k, _| Typer.fread?(k) && (slot.nil? || k[1] == slot) }
+    end
+
+    # A field read's narrowing holds after a join only when it holds on every path.
+    def join_vars(env, live)
+      live.flat_map { _1.vars.keys }.uniq.each do |k|
+        if Typer.fread?(k)
+          next env.vars.delete(k) unless live.all? { _1.vars.key?(k) }
+          env.vars[k] = u(*live.map { _1.vars[k] })
+        else
+          env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } })
+        end
+      end
+    end
+
     # Writes from inside a block to an outer variable are weak (the block may run zero or more times).
     def assign(env, slot, ty)
+      forget_fields(env, slot) if slot.is_a?(Integer)
       lv = env.level(slot)
       lv.links.delete(slot)
       return lv.vars[slot] = ty if lv.equal?(env)
@@ -237,9 +278,7 @@ module Sake
         live = [a, b]
       end
       live = live.reject(&:void) if live.any?(&:void) && !live.all?(&:void)
-      (a.vars.keys | b.vars.keys).each do |k|
-        env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } })
-      end
+      join_vars(env, live)
       env.links = common_links(live)
     end
 
@@ -296,6 +335,7 @@ module Sake
         env.dead = false
         return t("Nil")
       end
+      forget_fields(env)
       env.vars.transform_values! { unknown("loop did not converge") }
       t("Nil")
     ensure
@@ -306,13 +346,13 @@ module Sake
     def narrow_slot(env, n)
       return n.slot if n.is_a?(LVarGet) || n.is_a?(LVarSet) # `while (x = f()) != nil` tests the x just assigned
       return [:field, n.field] if n.is_a?(FieldGet) && init_field?(env, n)
-      nil
+      fread_key(env, n)
     end
 
     # Narrows a local variable's type on the path where `pred` is truthy (or falsy).
-    # Forms: `x`, `x != nil`, `x == nil`, `x in T`, `a && b`, `a || b`. Field reads are never narrowed
-    # (values are mutable, so another alias may change the field between the test and the use), except
-    # the new instance's fields inside initialize, which are followed like locals.
+    # Forms: `x`, `x != nil`, `x == nil`, `x in T`, `a && b`, `a || b`. A field read from a local (`@x`)
+    # is narrowed until something may change the field (fread_key); the new instance's fields inside
+    # initialize are followed like locals.
     def narrow(env, pred, truthy)
       return unless @narrow
       case pred
@@ -580,7 +620,7 @@ module Sake
         env.dead = true
         live = envs
       end
-      live.flat_map { _1.vars.keys }.uniq.each { |k| env.vars[k] = u(*live.map { _1.vars.fetch(k) { env.outside(k) } }) }
+      join_vars(env, live)
       env.links = common_links(live)
     end
 
@@ -626,7 +666,9 @@ module Sake
         when TLocal then assign(env, t.slot, ty)
         when TRest then assign(env, t.slot, ty) if t.slot
         when TIndex then index_set(t.origin, places[i][0], places[i][1], lit_of(t.key), ty)
-        when TField then call_builtin(t.fn, [places[i], ty], nil, t.origin)
+        when TField
+          call_builtin(t.fn, [places[i], ty], nil, t.origin)
+          forget_fields(env)
         end
       end
       link_spread(env, n.targets.map { _1.is_a?(TLocal) ? _1.slot : nil }, v) unless ri

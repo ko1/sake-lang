@@ -315,21 +315,24 @@ p(twice(Array[1, 4]))          # => 8
 p(twice(Array[1, 3]))          # => 0
 ```
 
-Field reads (`Node.next(n)`) are **not** narrowed, because fields are mutable.
+A field read from a local variable (`Node.next(n)`, or `@next` in a function of the class) is narrowed too. But an operation that may change the field, between the test and the use, ends the narrowing there, because fields are mutable and another name may change them. Those operations are a field write, a call of a user function, a call that passes a block and `yield`, and an assignment to the variable. Inside a block, a field narrowed outside it is not narrowed.
 
 ```ruby error
 class Node
   attr_accessor value, :next
 end
 def mk(v) = Node.new(v, nil)
+def drop_next(n) = Node.set_next(n, nil)
 a = mk(1)
 Node.set_next(a, mk(2))
 if Node.next(a)
+  p(Node.value(Node.next(a)))  # narrowed
+  drop_next(a)
   p(Node.value(Node.next(a)))  # !> Node.value: argument 1 may be nil (nil | Node) [nil]
 end
 ```
 
-Copy the field into a local variable first, then test the local.
+When a call comes in between, copy the field into a local variable first, then test the local.
 
 ```ruby
 class Node
