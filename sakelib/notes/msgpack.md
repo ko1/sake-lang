@@ -26,7 +26,7 @@ ext, Timestamp, errors; identical output).
 | `MessagePack::ExtensionValue.new(type, payload)` | same (`Struct.new(:type, :payload)`) | same; `p` prints a Sake struct, not `#<struct ...>` |
 | `MessagePack::Timestamp.new(sec, nsec)`, `.from_msgpack_ext(data)`, `.to_msgpack_ext(sec, nsec)`, `#to_msgpack_ext`, `==` | same; the instance form is `Timestamp.to_msgpack_ext(ts)` | same (one name: the class and instance methods share it) |
 | `MessagePack::Factory`, `register_type`, `MessagePack::Time`, Bigint, `MessagePack::Buffer` | — | missing |
-| `UnpackError`, `MalformedFormatError`, `StackError`, `UnexpectedTypeError`, `UnknownExtTypeError` | same names | same, without the hierarchy |
+| `UnpackError`, `MalformedFormatError`, `StackError`, `UnexpectedTypeError`, `UnknownExtTypeError` | same names | same; `UnpackError` is a module the other four include (2026-10-12), so `rescue MessagePack::UnpackError` catches them (Ruby raises UnpackError itself only for "logically unknown error"). The obsolete `MessagePack::TypeError` module is missing |
 
 About 50 operations.
 

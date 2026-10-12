@@ -89,4 +89,9 @@ p(Dotenv::Parser.call("SAKE_DOTENV_W=\"a\\nb\\rc\""))
 ENV.delete("DOTENV_LINEBREAK_MODE")
 p(Dotenv::Parser.call("DOTENV_LINEBREAK_MODE=legacy\nSAKE_DOTENV_W=\"a\\nb\""))
 p(Dotenv::Parser.call("SAKE_DOTENV_W=\"a\\nb\""))
+begin
+  Dotenv.require_keys("SAKE_DOTENV_NOPE3")
+rescue Dotenv::Error => e
+  puts("Dotenv::Error: #{e.message}")
+end
 puts("end")

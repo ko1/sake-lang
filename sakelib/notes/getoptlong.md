@@ -9,8 +9,10 @@ and shifts it in place, so `GetoptLong.argv(g)` (or the Array the caller holds) 
 would be after parsing. Ruby's constants are Symbols: `NO_ARGUMENT` → `:no_argument`,
 `REQUIRED_ARGUMENT` → `:required_argument`, `OPTIONAL_ARGUMENT` → `:optional_argument`;
 `PERMUTE` → `:permute`, `REQUIRE_ORDER` → `:require_order`, `RETURN_IN_ORDER` → `:return_in_order`.
-Ruby's `GetoptLong::Error` and its four subclasses are one exception type `GetoptLong::Error` (nested as Ruby's since 2026-10-10; was `GetoptLongError`) with a
-`kind` field (`:ambiguous_option`, `:needless_argument`, `:missing_argument`, `:invalid_option`).
+Ruby's four error classes `GetoptLong::AmbiguousOption`, `NeedlessArgument`, `MissingArgument`, `InvalidOption`
+are the same classes; their parent `GetoptLong::Error`, never raised itself in Ruby, is a module they include
+(2026-10-12; before that one class with a `kind` field). `GetoptLong::Error.kind(e)` gives the Symbol that
+`error(g)` gives (`:ambiguous_option`, `:needless_argument`, `:missing_argument`, `:invalid_option`).
 
 ## API
 
@@ -26,7 +28,7 @@ Ruby's `GetoptLong::Error` and its four subclasses are one exception type `Getop
 | `g.each { \|name, arg\| }` / `g.each_option` | `GetoptLong.each(g) { \|name, arg\| }` / `each_option` | same (returns g; Ruby returns nil) |
 | `g.terminate` / `g.terminated?` | `GetoptLong.terminate(g)` / `terminated?(g)` | same (non-option arguments go back to the front of argv) |
 | `g.error` / `g.error?` / `g.error_message` | `GetoptLong.error(g)` / `error?(g)` / `error_message(g)` | differs: the error is the kind Symbol, not a class |
-| `GetoptLong::InvalidOption` & co. | `rescue GetoptLong::Error => e`, `GetoptLong::Error.kind(e)` | differs: one type, a `kind` field |
+| `GetoptLong::InvalidOption` & co. | `rescue GetoptLong::Error => e` or `rescue GetoptLong::InvalidOption`, `GetoptLong::Error.kind(e)` | same classes; `GetoptLong::Error` is a module (`kind(e)` for `e.class`) |
 | `ARGV` after parsing | `GetoptLong.argv(g)` | differs: the Array given to `new` |
 | `ENV["POSIXLY_CORRECT"]` | — | missing: Sake has no ENV; the ordering is `:permute` unless set |
 | `GetoptLong::VERSION` | — | missing (constant) |
@@ -42,7 +44,8 @@ printed to stderr as `sake: message` (Ruby: `#{$0}: message`).
   as Ruby does; but tests and programs want to parse any Array, and a Struct type has nowhere else to keep
   state. `GetoptLong.new(argv)` is the only constructor (`new` takes fields), so the specs come as one
   Array in the second field or through `set_options(g, *specs)`.
-- **No class hierarchy for errors.** `rescue GetoptLong::Error` with `kind`; `error(g)` returns the kind.
+- **Errors.** `GetoptLong::Error` is a module the four classes include, so `rescue GetoptLong::Error` catches
+  them all as in Ruby; `error(g)` returns the kind Symbol (a class is not a value).
 - **Setters** are `set_ordering`, `set_quiet` (no `x.y = v` on values).
 - **`get` returns a Tuple or nil.** Ruby's `each` writes `name, arg = get_option` and tests `name == nil`;
   in Sake multiple assignment from nil is a TypeError, so `each` tests the result first.

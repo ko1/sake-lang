@@ -38,6 +38,7 @@ order of checks and messages.
 | `JSON::ParserError` | `JSON::ParserError` | same name (nested since 2026-10-10; was `JSONParserError`) |
 | `JSON::NestingError` | raised as `JSON::ParserError`, Ruby's message | differs (no subtype; Ruby's NestingError is a ParserError, so `rescue JSON::ParserError` catches it as in Ruby, also from `generate`) |
 | `JSON::GeneratorError` | `JSON::GeneratorError` | same name (was `JSONGeneratorError`) |
+| `JSON::JSONError` | `JSON::JSONError`, a module both include | same for `rescue JSON::JSONError` (2026-10-12) |
 | `JSON::ParserError#line`, `#column` | `JSON::ParserError.line(e)`, `e.JSON::ParserError.column` | same (nil for a nesting error, as Ruby; 2026-10-05) |
 | `JSON::Fragment`, `JSON::Coder`, `json/add/*`, `to_json(state)` protocol | | missing |
 
@@ -59,8 +60,10 @@ raises with Ruby's message.
 - **Exception names.** `JSON::ParserError` and `JSON::GeneratorError` are nested in `module JSON` as in
   Ruby (since 2026-10-10; before that they were `JSONParserError` / `JSONGeneratorError`), and the two
   state types are `JSON::Parser` / `JSON::State`, Ruby's names (were `JSONParserState` /
-  `JSONGeneratorState`). Sake has no exception hierarchy, so `NestingError` is not its own type: it is
-  raised as `JSON::ParserError`, which is what `rescue JSON::ParserError` catches in Ruby anyway.
+  `JSONGeneratorState`). Ruby's parent `JSON::JSONError` is a module both include (2026-10-12; Ruby raises
+  it itself only from json/add), so `rescue JSON::JSONError` catches both. A class cannot have subclasses in
+  Sake, so `NestingError` is not its own type: it is raised as `JSON::ParserError`, which is what
+  `rescue JSON::ParserError` catches in Ruby anyway.
 - **`to_json` per type.** Ruby's `obj.to_json` is dispatch on the receiver. In Sake it is one operation
   per built-in type (`class Hash; def to_json(h)`). nil, true, and false have no namespace to add it to.
 - **Error columns** are byte columns, as in Ruby. The quoted fragment is cut at 32 bytes on character

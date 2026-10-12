@@ -17,7 +17,8 @@ double quotes, `\"` / `\\` unescaping, `$VAR` / `${VAR}` substitution, `$(cmd)` 
 | `Dotenv::Parser.call(text, overwrite:)` → Hash | `Dotenv::Parser.call(text, overwrite:)` | same (nested, as Ruby; was `DotenvParser` before 2026-10-10) |
 | `Dotenv.update(env, overwrite:)` → Hash of changed keys | `Dotenv.update(env, overwrite:)` | same (`overwrite: :warn` missing) |
 | `Dotenv.modify(env) { }` | `Dotenv.modify(env) { }` | same |
-| `Dotenv.require_keys(*keys)` (Dotenv::MissingKeys) | `Dotenv.require_keys(*keys)` (Dotenv::MissingKeys) | same message |
+| `Dotenv.require_keys(*keys)` (Dotenv::MissingKeys) | `Dotenv.require_keys(*keys)` (Dotenv::MissingKeys) | same message ("key" for one key since 2026-10-12; was always "keys") |
+| `Dotenv::Error` (MissingKeys' parent) | `Dotenv::Error`, a module MissingKeys includes | same for `rescue Dotenv::Error` (Ruby never raises Error itself) |
 | `Dotenv::FormatError` (a SyntaxError) | `Dotenv::FormatError` | same name and message (was `DotenvFormatError` before 2026-10-10) |
 | `Dotenv.save` / `Dotenv.restore` | — | missing (`modify` restores by itself; no `ENV.replace`) |
 | `Dotenv.instrumenter`, Rails railtie, `dotenv/autorestore`, `dotenv/tasks`, `Dotenv::Template`, the `dotenv` CLI | — | missing: Rails / Minitest hooks and ActiveSupport::Notifications |
@@ -38,8 +39,8 @@ double quotes, `\"` / `\\` unescaping, `$VAR` / `${VAR}` substitution, `$(cmd)` 
   stores an object with a `instrument` method (duck typing). The Rails/Minitest integrations patch other
   libraries' classes.
 - `Dotenv::FormatError < SyntaxError`: not a StandardError in Ruby, so `rescue => e` misses it (I hit that
-  probing the gem). Sake has no exception hierarchy; `rescue Dotenv::FormatError` is the only form, and the
-  trap does not exist.
+  probing the gem). Here FormatError is its own class (Sake has no SyntaxError); `rescue Dotenv::FormatError`
+  is the only form that catches it, and the trap does not exist.
 - Names (2026-10-10): `Dotenv::Parser`, `Dotenv::FormatError`, `Dotenv::MissingKeys` are declared inside
   `module Dotenv` and match Ruby; they were `DotenvParser` / `DotenvFormatError` / `DotenvMissingKeys`.
 

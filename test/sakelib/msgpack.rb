@@ -155,3 +155,12 @@ begin
 rescue MessagePack::MalformedFormatError => e
   puts("MalformedFormatError: #{e.message}")
 end
+# UnpackError catches each unpack error, and EOFError passes through
+def try_unpack_any(s)
+  p(MessagePack.unpack(s))
+rescue MessagePack::UnpackError => e
+  puts("UnpackError: #{e.message}")
+end
+try_unpack_any("\xC1")
+try_unpack_any("\x91" * 129 + "\x01")
+try_unpack_any("\x01\x02")

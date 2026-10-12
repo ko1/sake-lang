@@ -164,3 +164,11 @@ p JSON.parse!("[" * 200 + "]" * 200).size
 rescue JSON::ParserError => e
   p [e.line, e.column]
 end
+# JSONError catches both
+["[1,", "[NaN]"].each do |s|
+  begin
+    JSON.generate(JSON.parse(s, allow_nan: true))
+  rescue JSON::JSONError => e
+    puts "JSONError: #{e.message}"
+  end
+end
