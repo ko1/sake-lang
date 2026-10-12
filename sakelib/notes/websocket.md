@@ -24,7 +24,7 @@ The random parts (the client key, the masking key) are hidden or checked by deco
 | `Frame::Incoming::Client/Server.new(version:)`, `frame << bytes`, `frame.next` | `Incoming::Client.new(version: 13)`, `f << s`, `Incoming::Client.next(f)` | same |
 | decoded `frame.type` / `data` / `code` / `decoded?` / `version` / `to_s` | `Incoming::Client.type(fr)` / … | same |
 | `WebSocket.max_frame_size` / `max_frame_size=` / `should_raise` / `should_raise=` | `WebSocket.max_frame_size` / `set_max_frame_size(n)` / `should_raise` / `set_should_raise(b)` | differs: setter names |
-| `WebSocket::Error::Frame::TooLong` etc. (13 frame + 7 handshake errors) | same nested names | differs: message is the String "frame_too_long" (Ruby: the Symbol); no hierarchy |
+| `WebSocket::Error::Frame::TooLong` etc. (13 frame + 7 handshake errors) | same nested names | differs: message is the String "frame_too_long" (Ruby: the Symbol); the parents `WebSocket::Error`, `Error::Frame`, `Error::Handshake` are modules |
 | drafts 75/76 and hybi 00-02 (Client75, Client76, Client01, Server75, Server76, Handler75) | — | missing: `:unknown_protocol_version` |
 | `inspect` (NiceInspect, with the object address) | `p(frame)` prints the fields | differs |
 
@@ -41,9 +41,9 @@ About 45 operations ported.
   `Server`). Ruby's `@frame.class.new(...)` for a decoded frame becomes a `make` function each class defines.
 - **rescue_method.** Ruby wraps `new`, `<<`, `to_s`, `valid?`, `next` so a `WebSocket::Error` sets `error` (the
   message Symbol) and returns nil/''/false, or re-raises when `should_raise`. Each of those functions here ends with
-  `rescue => e` + `fail_with`. Because Sake has no exception hierarchy, there is no way to say "any
-  WebSocket::Error" short of listing the 20 classes (and level 1 rejects listing ones a body never raises), so the
-  bare rescue also catches non-WebSocket errors that Ruby would let through.
+  `rescue Error => e` + `fail_with`. Ruby's abstract parents are modules that the 20 error classes include, and a
+  module in `rescue` catches the exception types that include it (added 2026-10-12; before, this was a bare
+  `rescue => e` that also caught non-WebSocket errors Ruby lets through).
 - **Module attributes** (`WebSocket.should_raise`, `max_frame_size`) live in a `once` Hash (no globals).
 - **URL parsing** uses one regexp instead of `URI.parse` (ws/wss scheme, host, port, path, query).
 - **Masking keys and the client key** use `rand` (Ruby: `SecureRandom.random_bytes(4)` and `rand(255)`).
@@ -53,7 +53,6 @@ About 45 operations ported.
 ## Built-ins Sake lacks
 
 - Class values (`@frame.class.new`): written as a `make` function per class.
-- An exception hierarchy (see rescue_method).
 - `SecureRandom.random_bytes`: `sakelib/securerandom.sake` exists; I used `rand` to keep the dependency small.
 
 ## Friction

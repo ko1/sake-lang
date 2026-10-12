@@ -871,16 +871,22 @@ module Sake
       raised = @raised.pop
       envs = [body_env]
       results = [result]
+      all_raised = raised
+      taken = {} # type => the name an earlier clause caught it by
       n.rescues.each do |clause|
         names = clause.names
         if names.empty?
           caught = raised.keys + Resolver::BUILTIN_EXCEPTIONS
         else
-          names.each do |name|
-            next unless user_raised?(name)
-            # Reported when no evaluation (call, block given) of the begin body raises it.
-            add_check(clause.origin, "rescue", name, "raised in the begin body", [], raised.key?(name) ? :proven : :error, raised.key?(name) ? [] : [name])
+          clause.groups.each do |name, members|
+            next unless members.any? { user_raised?(_1) }
+            # Reported when no evaluation (call, block given) of the begin body raises it (or, for a module, any of its types).
+            hit = members.any? { raised.key?(_1) }
+            by = members.select { all_raised.key?(_1) }.filter_map { taken[_1] }.uniq
+            add_check(clause.origin, "rescue", name, "raised in the begin body", [], hit ? :proven : :error,
+                      hit ? [] : (by.empty? ? [name] : [[:earlier, by]]))
           end
+          clause.groups.each { |w, members| members.each { taken[_1] ||= w } }
           caught = names
         end
         e = env.dup_level

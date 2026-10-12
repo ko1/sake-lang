@@ -255,9 +255,12 @@ module Sake
       while clause
         ref = clause.reference
         # `rescue StandardError` catches everything rescuable, as a bare rescue (names: []).
-        names = clause.exceptions.map { |e| @program.const_names.fetch(e) { e.slice } }
-        names = [] if names.any? { Resolver::CATCH_ALL.include?(_1) }
-        rescues << Rescue.new(names:, slot: ref && slot(ref.depth, ref.name),
+        written = clause.exceptions.map { |e| @program.const_names.fetch(e) { e.slice } }
+        # A module (or a built-in with Ruby subclasses) stands for the types it catches.
+        groups = written.map { |w| [w, @program.rescue_members.fetch(w) { [w] }] }
+        names = groups.flat_map(&:last).uniq
+        names = groups = [] if written.any? { Resolver::CATCH_ALL.include?(_1) }
+        rescues << Rescue.new(names:, groups:, slot: ref && slot(ref.depth, ref.name),
                               body: lower(clause.statements), origin: clause)
         clause = clause.subsequent
       end
@@ -276,7 +279,11 @@ module Sake
 
     def pattern(pat)
       case pat
-      when Prism::ConstantReadNode, Prism::ConstantPathNode then PType.new(name: @program.const_names.fetch(pat) { pat.name.to_s }, origin: pat)
+      when Prism::ConstantReadNode, Prism::ConstantPathNode
+        name = @program.const_names.fetch(pat) { pat.name.to_s }
+        # A module (or a built-in exception with Ruby subclasses) takes each of its types: `A | B | ...`.
+        types = @program.pattern_members.fetch(name) { [name] }.map { PType.new(name: _1, origin: pat) }
+        types.reduce { |l, r| PAlt.new(left: l, right: r, origin: pat) }
       when Prism::AlternationPatternNode then PAlt.new(left: pattern(pat.left), right: pattern(pat.right), origin: pat)
       when Prism::HashPatternNode
         keys, slots = record_targets(pat)

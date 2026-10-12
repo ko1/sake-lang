@@ -17,7 +17,7 @@ as Ruby's does.
 | `ptr.each` / `ptr.to_a` / `ptr.map` (Enumerable) | `Enum.to_a(ptr)`, `Enum.map(ptr) { }` | same (`include Enum`) |
 | `Hana::Patch.new(ops).apply(doc)` | `Hana::Patch.apply(Hana::Patch.new(ops), doc)` | same |
 | `Hana::Patch::FailedTestException#path / #value` | `Hana::Patch::FailedTestException.path(e)` / `.value(e)` | same |
-| the 7 `Hana::Patch::*Exception` / `IndexError` / `InvalidPath`, `Hana::Pointer::FormatError` | same names | same, without the hierarchy |
+| the 7 `Hana::Patch::*Exception` / `IndexError` / `InvalidPath`, `Hana::Pointer::FormatError` | same names | same, without the hierarchy (see below) |
 | `Hana::VERSION` | `Hana.version` | differs: no value constants |
 
 13 operations (7 public, the 6 patch operations private in Ruby but callable here).
@@ -28,8 +28,10 @@ as Ruby's does.
   is one function, so `Pointer.eval(x, object)` takes either a Pointer or a parsed list (a `case`).
 - **`send(op, ins, doc)`** is a `case` on the operation's name.
 - **Exception hierarchy.** In Ruby every patch error is a `Hana::Patch::Exception` (and FormatError a
-  `Hana::Pointer::Exception`); `rescue Hana::Patch::Exception` catches them all. Sake's exceptions have no
-  hierarchy: rescue each class. The nested names `Exception` and `IndexError` (which shadow the built-in
+  `Hana::Pointer::Exception`); `rescue Hana::Patch::Exception` catches them all. Sake groups exceptions with a
+  module that they include (`rescue M`), and a module cannot be raised, but hana raises `Hana::Patch::Exception`
+  itself; so it stays a class, and rescuing it catches only itself. The test rescues each class first, as Ruby's
+  does, so the output is the same. The nested names `Exception` and `IndexError` (which shadow the built-in
   names inside `Hana`) work.
 - **NoMethodError.** Ruby relies on NoMethodError in places (`src.fetch` on a non-Hash in `copy`,
   `obj.key?` on a non-Hash in `remove`, `dest.replace` on a number) and rescues it; here the types are

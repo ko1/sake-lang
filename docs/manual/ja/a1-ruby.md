@@ -28,7 +28,7 @@ Sake の構文は Ruby のものですが、Ruby の書き方のいくつかは�
 | `proc`, `lambda`, `->`, `&:sym`, `method(:f)` | 無し。ブロックは `yield` か `&b` で渡すだけ | ブロックは第二級 |
 | `obj.send(:f)`, `define_method`, `method_missing`, `eval` | 無し | 呼び出し先は静的 |
 | `g(**opts)` | 無し。Hash を位置で渡す | 設計判断中（D11） |
-| `rescue A`（階層で捕まえる） | `rescue A, B`（列挙した型だけ） | 例外型に階層は無い |
+| `rescue A` で A の子クラスも捕まえる | `rescue M`（型が include したモジュール） | `class B < A` は書き写し |
 | `1 + money` | Money に `coerce(m, other)` を定義 | 左のオペランドが決める |
 
 ### 操作に型を書く
@@ -126,7 +126,7 @@ Array.push(xs, 3)        # !> Array.push: argument 1 must be Array, but is [Inte
 
 ### 例外
 
-例外型に階層は無いので、`rescue A, B => e` は列挙した型だけを捕まえます（[例外とエラー](08-exceptions.md)）。`class MyErr < StandardError` と書いても MyErr は StandardError の部分型ではなく、`<` は書き写しです。ただし `rescue => e`、`rescue StandardError => e`、`rescue Exception => e` の 3 つは、Ruby の「どの例外も」という意味を保って、rescue できるすべての例外を捕まえます。
+`rescue A, B => e` は列挙した型を捕まえます（[例外とエラー](08-exceptions.md)）。`class MyErr < StandardError` と書いても MyErr は StandardError の部分型ではなく、`<` は書き写しなので、`rescue A` は `class B < A` を捕まえません。まとめて捕まえるには、型にモジュールを include させて `rescue M` と書きます。組み込みの型は Ruby の親子関係のとおりです（`rescue IndexError` は KeyError も捕まえる）。ただし `rescue => e`、`rescue StandardError => e`、`rescue Exception => e` の 3 つは、Ruby の「どの例外も」という意味を保って、rescue できるすべての例外を捕まえます。
 
 ```ruby
 class MyErr < StandardError

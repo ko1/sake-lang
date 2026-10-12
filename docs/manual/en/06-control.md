@@ -228,7 +228,7 @@ p(next_value(Node.new(1, nil)))
 
 ### Narrowing to a type
 
-`x in Integer` is true when `x` is an Integer, and inside that branch `x` is narrowed to Integer. `elsif` and `else` see the types that are left. The `in` branches of `case x` work the same way.
+`x in Integer` is true when `x` is an Integer, and inside that branch `x` is narrowed to Integer. `elsif` and `else` see the types that are left. The `in` branches of `case x` work the same way. A module name matches any type that includes it (`in Shape` is `in Circle | Square`), and a built-in exception type includes its Ruby subclasses (`in IndexError` also matches KeyError).
 
 ```ruby
 def pick(flag) = flag ? 1 : "one"

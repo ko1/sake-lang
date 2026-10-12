@@ -22,7 +22,7 @@ expiry) in Sake and the same server in Ruby; both print 136 identical lines.
 | `redis.pipelined { \|pipe\| pipe.set(…); pipe.get(…) }` → replies | `Redis.pipelined(r) { \|pipe\| Redis::PipelinedConnection.set(pipe, …) }` | differs: `pipe.get` gives a Future in Ruby, nil here; the replies Array is shaped the same |
 | `redis.multi { \|tx\| … }` → EXEC's replies | `Redis.multi(r) { \|tx\| … }` | same (`watch`/`unwatch`/`discard` missing) |
 | `redis.close`, `disconnect!`, `connected?`, `id`, `inspect` | same | `inspect` lacks the gem's version string |
-| `Redis::CommandError`, `CannotConnectError`, `ConnectionError`, `ProtocolError` | `Redis::CommandError`, … | same names (nested in `class Redis` since 2026-10-10; were `RedisCommandError` & co.); `Redis::BaseError` hierarchy missing (no hierarchy) |
+| `Redis::CommandError`, `CannotConnectError`, `ConnectionError`, `ProtocolError` | `Redis::CommandError`, … | same names (nested in `class Redis` since 2026-10-10; were `RedisCommandError` & co.); `Redis::BaseError` and `Redis::BaseConnectionError` are modules they include, so `rescue Redis::BaseError` catches all four (since 2026-10-12; was no hierarchy). The gem raises BaseError itself only for a nested `multi`, which has no Sake form |
 | sorted sets, pub/sub, scripting (`eval`), `scan_each` enumerators, RESP3 (`protocol: 3`), sentinel, cluster, `Redis.current`, `with_reconnect`, `Redis::Distributed` | — | missing: not in the budget (zsets), blocks as values (pub/sub `subscribe { \|on\| on.message { } }` stores blocks), RESP3's map/set/push types |
 
 ## できたこと / できなかったこと
@@ -41,8 +41,8 @@ expiry) in Sake and the same server in Ruby; both print 136 identical lines.
   `IOError` becomes `Redis::CannotConnectError` with the gem's `Error connecting to Redis on host:port (...)`.
 - Not done, Sake rules: pub/sub (`subscribe` keeps callbacks per channel: blocks are not values); the Future
   object of a pipelined call (a value whose `value` method is read later: a Struct could hold it, but its
-  type would be the union of every command's reply; the tag approach keeps each command's shape instead);
-  `Redis::BaseError` as a common rescue (no hierarchy: `rescue Redis::CommandError, Redis::ConnectionError`).
+  type would be the union of every command's reply; the tag approach keeps each command's shape instead).
+  `Redis::BaseError` as a common rescue was in this list until 2026-10-12; it is now a module the four errors include.
   Not done for time: sorted sets, scan, blocking pops, more string/hash/list commands (the server side has to
   be written twice as well).
 

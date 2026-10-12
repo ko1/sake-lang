@@ -22,7 +22,7 @@ malformed buffers and Huffman input.
 | `ctx.table` / `huffman` / `index` / `table_size` / `compute_current_table_size` / `dup` | `Context.table(ctx)` / … / `Context.dup(ctx)` | same |
 | `Huffman.encode(s)` / `Huffman.decode(s)` | `Protocol::HPACK::Huffman.encode(s)` / `decode(s)` | same output and error messages |
 | command Hash `{name:, value:, type:}` | `Protocol::HPACK::Command` with `type`, `name`, `value` | differs (see below) |
-| `CompressionError`, `DecompressionError`, `Error` | same names | differs: no hierarchy (`rescue Error` does not catch `CompressionError`) |
+| `CompressionError`, `DecompressionError`, `Error` | same names | same: `Error` (never raised) is a module the two include, so `rescue Error` catches both (since 2026-10-12; was no hierarchy) |
 | `NAIVE`, `LINEAR`, … `MODES`, `HEADER_REPRESENTATION`, `*_TYPE` constants | `Representation.prefix(type)` / `pattern(type)` | missing (constants hold no values); the presets are just option sets for Context |
 | `STATIC_TABLE`, `STATIC_EXACT_LOOKUP`, `STATIC_NAME_LOOKUP`, `Huffman::CODES` | `Context.static_table` / `static_exact_lookup` / `static_name_lookup`, `Huffman.codes` | differs: functions made `once` |
 

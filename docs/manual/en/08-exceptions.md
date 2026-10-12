@@ -1,6 +1,6 @@
 # Exceptions and errors
 
-Exceptions in Sake are written as in Ruby: `raise` throws one, `begin`/`rescue`/`else`/`ensure` receives it, and `retry` starts over. Two things differ. An exception type is an ordinary class, and there is no hierarchy among the types. And the checker tracks, before the program runs, which exceptions may leave each function. The first half of this chapter is how to write exceptions; the second half lists the kinds of static and runtime error. The format of the reports is in [Overview](01-overview.md).
+Exceptions in Sake are written as in Ruby: `raise` throws one, `begin`/`rescue`/`else`/`ensure` receives it, and `retry` starts over. Two things differ. An exception type is an ordinary class, and types are grouped by a module, not by inheritance. And the checker tracks, before the program runs, which exceptions may leave each function. The first half of this chapter is how to write exceptions; the second half lists the kinds of static and runtime error. The format of the reports is in [Overview](01-overview.md).
 
 ## Exceptions
 
@@ -45,7 +45,7 @@ p(e)                                     # => #<ParseError: empty line=1>
 ```
 
 - **Two spellings.** `class Name < Exception` with `attr_reader field` lines, and its shorthand `Name = Exception.new(:field, ...)`, declare the same thing.
-- **No hierarchy.** Exception types have no parent-child relation. `rescue IOError` does not catch `EOFError`, and `rescue IndexError` does not catch `KeyError`.
+- **Grouped by a module.** `class B < A` is a copy, and `rescue A` does not catch B. To group exception types, include a module in them and write `rescue M` ([below](#grouping-with-a-module)). The built-in types follow Ruby's parents: `rescue IndexError` also catches `KeyError`, `rescue IOError` `EOFError`, `rescue RangeError` `FloatDomainError`, and `rescue ArgumentError` `Math::DomainError`. A class declared under a built-in exception, such as `class ConvError < RangeError`, is caught by `rescue RangeError` too.
 - **Built-in exception types.** These are raised by built-in operations, and each has only `message`: `RuntimeError`, `ArgumentError`, `TypeError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EOFError`, `RegexpError`, `FloatDomainError`, `EncodingError`, `ThreadError`, `NoMatchingPatternError`, `Math::DomainError`. Each is described in the reference's [Exceptions](ref/Exceptions.md).
 
 ### Forms of raise
@@ -86,7 +86,7 @@ raise E, "msg"                           # !> E has fields besides message; rais
 
 ### rescue
 
-`rescue A, B => e` catches the listed types only. Since there is no hierarchy, the types you write are exactly the types caught.
+`rescue A, B => e` catches the listed types. A name that is a module catches the exception types that include it, and a built-in parent (`IndexError` and the others) also catches its Ruby subclasses.
 
 To catch everything, write `rescue => e`. `rescue StandardError => e` and `rescue Exception => e` mean the same. The type of `e` is then a union, so to handle each type differently, narrow it with `case e in A ...` ([Control flow and patterns](06-control.md)).
 
@@ -103,6 +103,59 @@ rescue ArgumentError, ZeroDivisionError => e
       in ZeroDivisionError then "zero"
       end
   p(v)                                   # => "argument"
+end
+```
+
+
+### Grouping with a module
+
+A Ruby library makes its exceptions children of `class Error < StandardError` and catches them together with `rescue MyLib::Error`. In Sake the parent is a module that each exception type includes. `rescue M => e` catches every exception type that includes M (also through a module that includes M), and `e` is their union. A function of the module, `M.f(e)`, dispatches to each type's definition.
+
+```ruby
+module ParseFailure
+  def describe(e) = "parse: " + Exception.message(e)
+end
+class BadToken < StandardError
+  include ParseFailure
+end
+class Unclosed < StandardError
+  include ParseFailure
+  attr_reader line
+end
+def parse(s)
+  raise BadToken, "bad token" if s == "?"
+  raise Unclosed.new("unclosed", 3) if s == "("
+  s
+end
+begin
+  parse("(")
+rescue ParseFailure => e
+  p(ParseFailure.describe(e))            # => "parse: unclosed"
+  case e
+  in Unclosed then p(Unclosed.line(e))   # => 3
+  in BadToken then p("token")
+  end
+end
+```
+
+A module is not raised (`raise ParseFailure, "x"` is a static error). When the Ruby code raises the parent class itself, add one concrete type that includes the module. Level 1 reports a `rescue M` whose begin body raises none of the module's types, and a `rescue A` for a type an earlier `rescue M` already catches.
+
+```ruby error
+module ParseFailure
+end
+class BadToken < StandardError
+  include ParseFailure
+end
+def parse(s)
+  raise BadToken, "bad token" if s == "?"
+  s
+end
+begin
+  parse("?")
+rescue ParseFailure => e
+  p(1)
+rescue BadToken => e                     # !> rescue BadToken: an earlier rescue (ParseFailure) already catches it [rescue]
+  p(2)
 end
 ```
 

@@ -32,7 +32,7 @@ non-ASCII recipient, finish twice, a closed session, argument errors, a refused 
 | `Net::SMTP::Response.parse(s)`, `status`, `string`, `success?`, `continue?`, `message`, `capabilities`, `cram_md5_challenge`, `status_type_char` | same | same |
 | `res.exception_class` | — | missing (no class values; raising is internal: `raise_for`) |
 | `Net::SMTP::Address.new(addr, *params)` / `address` / `parameters` / `to_s` | `Net::SMTP::Address.new(addr, String[params])` | differs: params as one Array; keyword params (`size: 100`) missing |
-| `SMTPAuthenticationError`, `SMTPServerBusy`, `SMTPSyntaxError`, `SMTPFatalError`, `SMTPUnknownError`, `SMTPUnsupportedCommand` (+ `#response`) | same names, `Net::SMTPFatalError.response(e)` | differs: no hierarchy (`rescue Net::SMTPError` / `Net::ProtocolError` is impossible) |
+| `SMTPAuthenticationError`, `SMTPServerBusy`, `SMTPSyntaxError`, `SMTPFatalError`, `SMTPUnknownError`, `SMTPUnsupportedCommand` (+ `#response`) | same names, `Net::SMTPFatalError.response(e)`, `Net::SMTPError.response(e)` | same: `SMTPError` and the net/protocol parents (`ProtocolError`, `ProtoAuthError`, ...; never raised by the gem) are modules the classes include, so `rescue Net::SMTPError` / `Net::ProtocolError` catch them (since 2026-10-12; was no hierarchy) |
 | `tls: true` (SMTPS, port 465) | `Net::SMTP.new(a, 465, tls: true)` | via `Socket.connect_ssl` (untested: no TLS server in the test) |
 | STARTTLS | — | missing: raises SMTPUnsupportedCommand when the session would need it |
 | `ssl_context_params`, `tls_verify`, `tls_hostname`, custom Authenticator classes (`auth_type :foo`) | — | missing |
@@ -48,8 +48,8 @@ About 60 operations ported.
   gem also accepts.
 - **Raising by reply code.** `raise res.exception_class.new(res)` needs a class as a value; `raise_for(res)` picks
   the class with `if`s. The exceptions carry the Response as a field after the message.
-- **SMTPError as a group.** `do_helo` rescues "any SMTPError" to fall back to HELO; here it lists the five
-  classes. `critical` (which marks the session broken on any exception) uses a bare rescue, as Ruby's `rescue Exception`.
+- **SMTPError as a group.** `do_helo` rescues "any SMTPError" to fall back to HELO, with `rescue SMTPError`
+  as Ruby (it listed the five classes before 2026-10-12). `critical` (which marks the session broken on any exception) uses a bare rescue, as Ruby's `rescue Exception`.
 - **STARTTLS** needs an existing Socket upgraded to TLS, which Sake's Socket cannot do. Ruby without openssl
   also fails there; here the error is explicit (`SMTPUnsupportedCommand`) instead of sending in the clear.
 - **Timeouts** go to `Socket.connect(host, port, open_timeout)` and `Socket.set_timeout(read_timeout)`; Ruby's
@@ -62,14 +62,15 @@ About 60 operations ported.
 ## Built-ins Sake lacks (requests)
 
 - `Socket.start_tls(sock, hostname)` (upgrade a connected Socket): for STARTTLS here, and for IMAP/POP3/FTP.
-- Class values or an exception hierarchy (`rescue Net::SMTPError`).
+- Class values (`res.exception_class`). (`rescue Net::SMTPError` works since 2026-10-12: modules group exceptions.)
 
 ## Friction
 
 - Ruby's `start` twice (class and instance) → "one name is one function" → `start_session` for the instance.
 - `res.exception_class.new(res)` → no class values → `raise_for(res)` with five `raise ... if String.start_with?`.
 - `rescue SMTPError` (a mixin of exceptions) → no hierarchy → list the classes; level 1 would reject one that the
-  body never raises, so the list has to be exactly the ones getok can raise.
+  body never raises, so the list has to be exactly the ones getok can raise. Since 2026-10-12 it is `rescue SMTPError`,
+  Ruby's line.
 - In the test, `Net::SMTPAuthenticationError.response(e)&.Net::SMTP::Response.status` (from habit) was
   accepted, although `&.` is listed as rejected; it runs as `.` (no nil short-circuit). Repro:
   `sakelib/notes/net_smtp_bug_safe_nav_chain.sake`. Removed the `&` (the field is never nil for that class, and

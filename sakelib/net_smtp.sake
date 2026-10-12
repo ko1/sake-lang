@@ -12,29 +12,65 @@
 require "digest"
 
 module Net
-  # Ruby's SMTPError mixin and its classes (SMTPAuthenticationError < ProtoAuthError ...). Sake has no hierarchy:
-  # rescue the classes themselves. `response` is the server's Net::SMTP::Response (nil when raised with a String).
+  # Ruby's net/protocol parents (ProtoAuthError < ProtocolError ...) are never raised by net-smtp: modules, as
+  # its SMTPError mixin, so `rescue Net::SMTPError` and `rescue Net::ProtocolError` catch the classes below.
+  # `response` is the server's Net::SMTP::Response (nil when raised with a String).
+  module ProtocolError
+  end
+  module ProtoSyntaxError
+    include ProtocolError
+  end
+  module ProtoFatalError
+    include ProtocolError
+  end
+  module ProtoUnknownError
+    include ProtocolError
+  end
+  module ProtoServerError
+    include ProtocolError
+  end
+  module ProtoAuthError
+    include ProtocolError
+  end
+
+  module SMTPError
+    # Net::SMTPError.response(e) for any of them, as Ruby's e.response after `rescue Net::SMTPError => e`.
+    def response(e) = @response
+  end
+
   class SMTPAuthenticationError < StandardError
+    include ProtoAuthError
+    include SMTPError
     attr_reader response
   end
 
   class SMTPServerBusy < StandardError
+    include ProtoServerError
+    include SMTPError
     attr_reader response
   end
 
   class SMTPSyntaxError < StandardError
+    include ProtoSyntaxError
+    include SMTPError
     attr_reader response
   end
 
   class SMTPFatalError < StandardError
+    include ProtoFatalError
+    include SMTPError
     attr_reader response
   end
 
   class SMTPUnknownError < StandardError
+    include ProtoUnknownError
+    include SMTPError
     attr_reader response
   end
 
   class SMTPUnsupportedCommand < StandardError
+    include ProtocolError
+    include SMTPError
     attr_reader response
   end
 
@@ -178,7 +214,7 @@ module Net
     def do_helo(smtp, helo_domain)
       res = @esmtp ? ehlo(smtp, helo_domain) : helo(smtp, helo_domain)
       @capabilities = Response.capabilities(res)
-    rescue SMTPServerBusy, SMTPSyntaxError, SMTPFatalError, SMTPUnknownError, SMTPAuthenticationError => e
+    rescue SMTPError => e
       if @esmtp
         @esmtp = false
         @error_occurred = false

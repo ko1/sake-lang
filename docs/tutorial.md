@@ -1429,8 +1429,8 @@ $ sake --strict strict.sake
 
 `raise`, `rescue`, `else`, `ensure`, and `retry` work as in Ruby. An exception type is declared with
 `class E < Exception` and its `attr_reader` lines, or with the shorthand `Exception.new(:field)`: it
-is a class whose first field is `message`. There is no hierarchy, so a
-`rescue` lists the types it catches.
+is a class whose first field is `message`. `class B < A` is a copy, so `rescue A` does not catch B;
+to catch several types together, include a module in them and write `rescue M`.
 
 ```ruby
 ParseError = Exception.new(:line)        # an exception type: message, then its own fields
@@ -1444,7 +1444,7 @@ end
 Array.each(Array["", "123456", "42"]) do |s|
   begin
     p(parse(s))
-  rescue ParseError => e                 # list the types to rescue; there is no hierarchy
+  rescue ParseError => e                 # list the types to rescue (a module groups several)
     puts("line #{ParseError.line(e)}")
   rescue ArgumentError => e
     puts(Exception.message(e))

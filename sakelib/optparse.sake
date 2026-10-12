@@ -4,27 +4,54 @@
 
 # Fields start as Ruby's OptionParser.new(banner = nil, width = 32, indent = " " * 4).
 class OptionParser
-  # Ruby's OptionParser::ParseError and its subclasses (InvalidOption, ...) in one type with a `kind`.
-  class ParseError < Exception
-    attr_reader kind, args
-    # Ruby's ParseError#reason: "invalid option" for InvalidOption, ...
-    def reason(e)
-      case ParseError.kind(e)
-      in "InvalidOption" then "invalid option"
-      in "MissingArgument" then "missing argument"
-      in "InvalidArgument" then "invalid argument"
-      in "NeedlessArgument" then "needless argument"
-      in "AmbiguousOption" then "ambiguous option"
-      in "AmbiguousArgument" then "ambiguous argument"
-      else "parse error"
-      end
-    end
+  # Ruby's ParseError is never raised itself: a module that its subclasses (InvalidOption, ...) include, so
+  # `rescue OptionParser::ParseError` catches them all. kind(e) is Ruby's e.class.name without the namespace.
+  module ParseError
+    def args(e) = @args
+    def reason(e) = "parse error"
+    def kind(e) = "ParseError"
+  end
 
-    def make(kind, args)
-      e = ParseError.new("", kind, args)
-      ParseError.set_message(e, "#{ParseError.reason(e)}: #{Array.join(args, " ")}")
-      e
-    end
+  class AmbiguousOption < Exception
+    include ParseError
+    attr_reader args
+    def reason(e) = "ambiguous option"
+    def kind(e) = "AmbiguousOption"
+  end
+
+  class NeedlessArgument < Exception
+    include ParseError
+    attr_reader args
+    def reason(e) = "needless argument"
+    def kind(e) = "NeedlessArgument"
+  end
+
+  class MissingArgument < Exception
+    include ParseError
+    attr_reader args
+    def reason(e) = "missing argument"
+    def kind(e) = "MissingArgument"
+  end
+
+  class InvalidOption < Exception
+    include ParseError
+    attr_reader args
+    def reason(e) = "invalid option"
+    def kind(e) = "InvalidOption"
+  end
+
+  class InvalidArgument < Exception
+    include ParseError
+    attr_reader args
+    def reason(e) = "invalid argument"
+    def kind(e) = "InvalidArgument"
+  end
+
+  class AmbiguousArgument < Exception
+    include ParseError
+    attr_reader args
+    def reason(e) = "ambiguous argument"
+    def kind(e) = "AmbiguousArgument"
   end
 
   # One declared option. kind: :none, :required, :optional. conv: :String, :Integer, :Float, :choice.
@@ -280,7 +307,15 @@ class OptionParser
   end
 
   def fail(kind, args)
-    raise ParseError.make(kind, args)
+    a = Array.join(args, " ")
+    case kind
+    in "AmbiguousOption" then raise AmbiguousOption.new("ambiguous option: #{a}", args)
+    in "NeedlessArgument" then raise NeedlessArgument.new("needless argument: #{a}", args)
+    in "MissingArgument" then raise MissingArgument.new("missing argument: #{a}", args)
+    in "InvalidOption" then raise InvalidOption.new("invalid option: #{a}", args)
+    in "InvalidArgument" then raise InvalidArgument.new("invalid argument: #{a}", args)
+    in "AmbiguousArgument" then raise AmbiguousArgument.new("ambiguous argument: #{a}", args)
+    end
   end
 
   def parse_long(op, sws, argv, i, a, into)

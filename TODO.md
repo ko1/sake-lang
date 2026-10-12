@@ -8,7 +8,7 @@
 
 1. **仕様変更（10-11 に入れた、戻すのは数行）**: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。（`Array.flatten` が Tuple も展開する変更は、Tuple は 1 つの値で集まりではないという立場（prelude、D1）とぶつかるので同日に戻した。代わりに Tuple が flatten に来ると静的に知らせ、`flat_map` と `Tuple.to_a` を hint で示す。ko1、10-11）
 2. **型の別名**（`Client = WebSocket::Handshake::Client`）: あってよいが後で考える（ko1、10-11）。深い入れ子を毎回書く長さは、浅い名前空間を選ばせる圧力として働く。移植の方針「Ruby の名前と入れ子を保つ」との関係も合わせて決める。
-3. **例外の階層**: 4 体が要望（`rescue WebSocket::Error` で下位を捕まえたい）。今は「列挙した型だけ」の設計。
+3. ~~**例外の階層**~~ → モジュールでまとめる（`rescue M`）、組み込みは Ruby の親子関係（ko1、10-12。DESIGN.md）。
 4. **Integer の幅（ネイティブ）**: sabic / ceec は 64 ビットで溢れたらエラー。多倍長への昇格か、64 ビットの意味論か。
 5. D11 `f(**opts)` の受け渡し、D12 フィールドの既定値が前のフィールドを読めるか、D14 表示の protocol。
 
@@ -38,6 +38,7 @@
 - 部分集合だけ: Hash・Set・Regexp・rescue・`(A|B).f`・Thread・Tuple/Record パターン。ceec はメモリを解放しない（GC なし）。
 - 生成器が自前の型推論を持つ（typer の式ごとの型を使えるようにする）。
 - 範囲解析は配列要素・フィールド・関数の戻り値の範囲を追わない（levenshtein の残りの溢れ検査、shapes の掛け算）。
+- (10-12) `ruby test/test_rust.rb` が 1 回だけ 1 件落ちた（48/52 assertions、失敗の本文は取れていない）。直後の 9 回はすべて通った。再発したら本文を保存して調べる。
 
 ### 道具
 
@@ -162,4 +163,4 @@
 - フィールド（`attr_reader leftovers`）が mixin の同名の関数を隠しても何も言われない。`def port` が `attr_reader port` を置き換えるのも黙って通る。
 - 型エラーの報告位置がライブラリ内部の行になり、呼び出し側は「reached by the call at line N」だけ。大きな合併型でメッセージが切れる。
 - `String.getbyte` の nil がレベル 2 で毎回 `|| 0` を要求する。`String.unpack1` の結果に型が付かない（`v => Integer` が要る）。
-- 要望の多い組み込み: 例外の階層（4 体）、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。
+- 要望の多い組み込み: 例外の階層（4 体、10-12 にモジュールで入れた）、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。

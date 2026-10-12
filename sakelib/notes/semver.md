@@ -19,7 +19,7 @@ prints 60 lines, identical to `semver.rb`; 18 functions (public API: 15).
 | `v.satisfies?("~> 1.2")`, `SemVer.max_satisfying(vs, req)` | `SemVer.satisfies?(v, req)`, `SemVer.max_satisfying(vs, req)` | same |
 | `SemVer::Requirement.parse(s)` | `SemVer::Requirement.parse(s)` | same (nested since 2026-10-10; was `SemVerRequirement`) |
 | `req.satisfied_by?(v)`, `req.to_s` | `SemVer::Requirement.satisfied_by?(r, v)`, `to_s` | same |
-| `SemVerError` (a StandardError) | `class SemVerError < Exception` | same name; no hierarchy |
+| `SemVerError` (a StandardError) | `class SemVerError < StandardError` | same: one class, caught by `rescue SemVerError` or a bare `rescue` (was `< Exception` before 2026-10-12, which Sake treated the same) |
 
 ## What differs from Ruby, and why
 

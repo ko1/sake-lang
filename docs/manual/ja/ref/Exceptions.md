@@ -4,7 +4,7 @@
 
 - `E.new(message)` が例外値を作ります（`message` は普通 String ですが、型は検査されません）。`raise E, "msg"` は `raise E.new("msg")` の略、`raise E` はメッセージを型名にします。`raise "msg"` は `RuntimeError` です。`raise` は構文で、[例外とエラー](../08-exceptions.md)にあります。
 - `E.message(e)` がメッセージを読み、`E.set_message(e, s)` が書き換えます（`e.E.message` も同じ）。古い `E.get_message` は拒まれ、`E.message` に直すよう案内されます。どの型の例外値でも読めるのが `Exception.message(e)` で、`rescue => e` のように型が和になっているときに使います。
-- `rescue E => e` は列挙した型だけを捕まえます。例外型に階層は無いので、`rescue IOError` は `EOFError` を捕まえず、`rescue IndexError` は `KeyError` を捕まえません（Ruby とは違います）。複数は `rescue A, B => e`、すべては `rescue => e`（`rescue StandardError`、`rescue Exception` も同じ）です。
+- `rescue E => e` は列挙した型を捕まえます。組み込みの型は Ruby の親子関係のとおりで、`rescue IndexError` は `KeyError` も、`rescue IOError` は `EOFError` も、`rescue RangeError` は `FloatDomainError` も、`rescue ArgumentError` は `Math::DomainError` も捕まえます。それを親に書いたクラス（`class E < RangeError`）も捕まえます。ユーザの `class B < A` は書き写しなので `rescue A` は B を捕まえません。まとめるには、型が include したモジュールを書きます（`rescue M`）。複数は `rescue A, B => e`、すべては `rescue => e`（`rescue StandardError`、`rescue Exception` も同じ）です。
 - `p(e)` は `#<E: message>`、`==` はフィールドで比べます。
 - 組み込みの操作が投げた例外のメッセージは Ruby の文（`divided by 0`）で、rescue されずにプログラムを終えたときの報告には操作名も付きます（`ZeroDivisionError: Kernel.Rational: divided by 0`）。
 - 組み込みの操作の中で Ruby が投げた例外が、バックトレース付きの生の Ruby エラーとして漏れることはありません。同じ種類の Sake の例外になり、他と同じく rescue でき、メッセージは Ruby のもの（Ruby の `Sake::Tuple` は `Tuple`）です。Ruby の `EOFError`・`Errno::*`・`ClosedQueueError` は `IOError`、`FrozenError` は `TypeError`、`Math::DomainError` はそのまま `Math::DomainError`、Ruby 自身の `RuntimeError`（不正な文字列の `String.undump`）は `ArgumentError` になります。Sake の `RuntimeError` はプログラム自身の `raise` からだけ生じます。

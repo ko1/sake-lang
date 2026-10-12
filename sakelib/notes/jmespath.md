@@ -19,7 +19,7 @@ and all 26 built-in functions are ported, with the gem's error classes and messa
 | `JMESPath::Lexer.new.tokenize(e)` | `JMESPath::Lexer.tokenize(JMESPath::Lexer.new, e)` | same (Array of `Token`) |
 | `node.visit(data)` / `node.optimize` | `JMESPath.visit(node, data)` / `JMESPath.optimize(node)` | differs: functions of the module, not of each node class |
 | `JMESPath::Util.falsey?(v)` | `JMESPath::Util.falsey?(v)` | same for JSON values |
-| `JMESPath::Errors::SyntaxError` & co. | same names | same, but no `Errors::Error` parent (see below) |
+| `JMESPath::Errors::SyntaxError` & co. | same names | same; `Errors::Error` is a module they include (see below) |
 | `JMESPath.search(e, Pathname / IO)` | — | missing: data must already be parsed |
 | Struct data (`value.respond_to?(@key)`) | — | missing: no reflection |
 
@@ -45,15 +45,14 @@ not_null sort sort_by max_by min_by ends_with starts_with merge reverse to_array
 - **Comparisons** (`>`, `max`, `sort`) on values of a union type go through `greater?`, which narrows
   both sides with `=>`; `sort`/`sort_by` sort an index Array by `[key, i]` with the keys narrowed to
   String or number first, because `Array.sort_by` rejects keys that are not comparable with each other.
-- **Error hierarchy.** `rescue JMESPath::Errors::Error` (the parent) is not possible: Sake's exception
-  classes have no hierarchy; rescue the specific classes. `Errors::RuntimeError` (never raised by the gem)
-  is left out.
+- **Error hierarchy.** `Errors::Error` (never raised by the gem) is a module the five classes include, so
+  `rescue JMESPath::Errors::Error` catches them all, as Ruby's (since 2026-10-12; before, only the specific
+  classes could be rescued). `Errors::RuntimeError` (never raised by the gem) is left out.
 - **TYPE constants.** `TypeChecker`'s integer constants appear in messages ("type mismatch in sequence: 4,
   6"); here `get_type` returns the type's name and `type_number` gives Ruby's number for those messages.
 
 ## Built-ins Sake lacks
 
-- A class hierarchy for exceptions (to rescue `Errors::Error`).
 - `Set.new(array)`: Ruby's spelling; Sake has `Array.to_set` / `Set[...]`, but the hint for `Set.new` lists
   every other `new` and not these.
 

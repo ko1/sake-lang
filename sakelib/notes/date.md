@@ -22,7 +22,7 @@
 | `Date.new(y = -4712, m = 1, d = 1)`, `Date.civil(...)` | same | same (since 2026-10-05: field defaults + `initialize`, which raises `Date::Error` for an invalid date). The fourth argument is Ruby's `start` (since the second 2026-10-05 change; only `Date.ITALY`, else `ArgumentError`). A non-Integer year/month/day is a `type` report at the call (`@year => Integer` in initialize); Ruby raises `TypeError` |
 | `Date.new(y, -1, -1)` (negative month/day) | same | same |
 | `Date.new`, `Date.new(y)`, `Date.new(y, m)` (defaults) | same | same |
-| `Date::Error` | `Date::Error` | same name (nested in `class Date` since 2026-10-10; was `DateError`). In Ruby it is an `ArgumentError` subclass; Sake has no hierarchy, so `rescue ArgumentError` does not catch it. Message `invalid date`, same |
+| `Date::Error` | `Date::Error` | same name (nested in `class Date` since 2026-10-10; was `DateError`). In Ruby it is an `ArgumentError` subclass; ArgumentError is a built-in class raised itself, not a module a class can include, so `rescue ArgumentError` does not catch it. Message `invalid date`, same |
 | `Date.valid_date?` / `valid_civil?` / `valid_ordinal?` / `valid_commercial?` / `valid_jd?` | same names | same |
 | `Date.leap?(y)`, `Date.gregorian_leap?(y)`, `Date.julian_leap?(y)` | same | same |
 | `d.leap?` | `Date.leap?(d)` | same (one op takes an Integer or a Date, by `case/in`) |

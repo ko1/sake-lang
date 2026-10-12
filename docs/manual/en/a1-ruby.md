@@ -28,7 +28,7 @@ Each row is the Ruby spelling (left), the Sake spelling (middle), and the reason
 | `proc`, `lambda`, `->`, `&:sym`, `method(:f)` | none; a block is only passed, with `yield` or `&b` | blocks are second-class |
 | `obj.send(:f)`, `define_method`, `method_missing`, `eval` | none | call targets are static |
 | `g(**opts)` | none; pass the Hash positionally | an open design question (D11) |
-| `rescue A` (catching by hierarchy) | `rescue A, B` (the listed types only) | exception types have no hierarchy |
+| `rescue A` catching the subclasses of A | `rescue M`, a module the types include | `class B < A` is a copy |
 | `1 + money` | define `coerce(m, other)` in Money | the left operand decides |
 
 ### The type is written on the operation
@@ -126,7 +126,7 @@ Array.push(xs, 3)        # !> Array.push: argument 1 must be Array, but is [Inte
 
 ### Exceptions
 
-Exception types have no hierarchy, so `rescue A, B => e` catches the listed types only ([Exceptions and errors](08-exceptions.md)). Writing `class MyErr < StandardError` does not make MyErr a subtype of StandardError; the `<` is a copy. The three forms `rescue => e`, `rescue StandardError => e` and `rescue Exception => e` keep Ruby's meaning of "any exception" and catch every rescuable exception.
+`rescue A, B => e` catches the listed types ([Exceptions and errors](08-exceptions.md)). Writing `class MyErr < StandardError` does not make MyErr a subtype of StandardError; the `<` is a copy, so `rescue A` does not catch a `class B < A`. To catch a group, include a module in the types and write `rescue M`. The built-in types keep Ruby's parents (`rescue IndexError` catches KeyError). The three forms `rescue => e`, `rescue StandardError => e` and `rescue Exception => e` keep Ruby's meaning of "any exception" and catch every rescuable exception.
 
 ```ruby
 class MyErr < StandardError

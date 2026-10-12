@@ -414,8 +414,8 @@ reports every unchecked use before running. A local variable you have tested cou
 
 `raise`, `rescue`, `else`, `ensure`, and `retry` work as in Ruby. An exception type is declared with
 `class E < Exception` and its `attr_reader` lines, or with the shorthand `Exception.new(:field)`: it
-is a class whose first field is `message`. There is no hierarchy, so a
-`rescue` lists the types it catches.
+is a class whose first field is `message`. `class B < A` is a copy, so `rescue A` does not catch B;
+to catch several types together, include a module in them and write `rescue M`.
 
 @@example exceptions
 

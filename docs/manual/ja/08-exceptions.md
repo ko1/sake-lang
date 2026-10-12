@@ -1,6 +1,6 @@
 # 例外とエラー
 
-Sake の例外は Ruby と同じ字面で書きます: `raise` で投げ、`begin`/`rescue`/`else`/`ensure` で受け、`retry` でやり直します。違いは 2 つです。例外型は普通のクラスで、型どうしに階層が無いこと。そして検査器が、各関数からどの例外が漏れうるかを実行前に追うことです。この章の前半が例外の書き方、後半が静的エラーと実行時エラーの種類の一覧です。エラーの表示形式は[概要と実行](01-overview.md)にあります。
+Sake の例外は Ruby と同じ字面で書きます: `raise` で投げ、`begin`/`rescue`/`else`/`ensure` で受け、`retry` でやり直します。違いは 2 つです。例外型は普通のクラスで、型をまとめるのは継承ではなくモジュールであること。そして検査器が、各関数からどの例外が漏れうるかを実行前に追うことです。この章の前半が例外の書き方、後半が静的エラーと実行時エラーの種類の一覧です。エラーの表示形式は[概要と実行](01-overview.md)にあります。
 
 ## 例外
 
@@ -45,7 +45,7 @@ p(e)                                     # => #<ParseError: empty line=1>
 ```
 
 - **2 つの書き方。** `class Name < Exception` に `attr_reader field` の行を書く形と、その略記 `Name = Exception.new(:field, ...)` は同じものです。
-- **階層は無い。** 例外型どうしに親子関係はありません。`rescue IOError` は `EOFError` を捕まえず、`rescue IndexError` は `KeyError` を捕まえません。
+- **まとめるのはモジュール。** `class B < A` は書き写しで、`rescue A` は B を捕まえません。例外型をまとめるには、モジュールを include させて `rescue M` と書きます（[下](#モジュールでまとめる)）。組み込みの型は Ruby の親子関係のとおりで、`rescue IndexError` は `KeyError` を、`rescue IOError` は `EOFError` を、`rescue RangeError` は `FloatDomainError` を、`rescue ArgumentError` は `Math::DomainError` も捕まえます。`class ConvError < RangeError` のように組み込みの例外を親に書いたクラスも、`rescue RangeError` で捕まります。
 - **組み込みの例外型。** 組み込みの操作が投げる型で、フィールドは `message` だけです: `RuntimeError`、`ArgumentError`、`TypeError`、`KeyError`、`IndexError`、`ZeroDivisionError`、`RangeError`、`IOError`、`EOFError`、`RegexpError`、`FloatDomainError`、`EncodingError`、`ThreadError`、`NoMatchingPatternError`、`Math::DomainError`。それぞれの詳細は[組み込みリファレンスの Exceptions](ref/Exceptions.md)にあります。
 
 ### raise の形
@@ -86,7 +86,7 @@ raise E, "msg"                           # !> E has fields besides message; rais
 
 ### rescue
 
-`rescue A, B => e` は列挙した型だけを捕まえます。階層が無いので、書いた型がそのまま捕まえる型です。
+`rescue A, B => e` は列挙した型を捕まえます。書いた名前がモジュールなら、それを include した例外型を、組み込みの親（`IndexError` など）なら Ruby の子も捕まえます。
 
 すべてを捕まえるには `rescue => e` と書きます。`rescue StandardError => e` と `rescue Exception => e` も同じ意味です。このとき `e` の型は和なので、型ごとに処理を分けるには `case e in A ...` で絞ります（[制御構造とパターン](06-control.md)）。
 
@@ -103,6 +103,59 @@ rescue ArgumentError, ZeroDivisionError => e
       in ZeroDivisionError then "zero"
       end
   p(v)                                   # => "argument"
+end
+```
+
+
+### モジュールでまとめる
+
+Ruby のライブラリは、例外を `class Error < StandardError` の子にして `rescue MyLib::Error` でまとめて受けます。Sake では親をモジュールにして、各例外型に include させます。`rescue M => e` は M を include したすべての例外型（M を include したモジュールを include する型も）を捕まえ、`e` の型はそれらの和です。モジュールの関数 `M.f(e)` は、型ごとの定義に振り分けられます。
+
+```ruby
+module ParseFailure
+  def describe(e) = "parse: " + Exception.message(e)
+end
+class BadToken < StandardError
+  include ParseFailure
+end
+class Unclosed < StandardError
+  include ParseFailure
+  attr_reader line
+end
+def parse(s)
+  raise BadToken, "bad token" if s == "?"
+  raise Unclosed.new("unclosed", 3) if s == "("
+  s
+end
+begin
+  parse("(")
+rescue ParseFailure => e
+  p(ParseFailure.describe(e))            # => "parse: unclosed"
+  case e
+  in Unclosed then p(Unclosed.line(e))   # => 3
+  in BadToken then p("token")
+  end
+end
+```
+
+モジュールは投げられません（`raise ParseFailure, "x"` は静的エラー）。Ruby で親クラス自身も投げているなら、具体的な型を 1 つ足して include させます。レベル 1 は、begin の本体がモジュールのどの型も投げない `rescue M` と、前の `rescue M` がもう受けている型の `rescue A` を報告します。
+
+```ruby error
+module ParseFailure
+end
+class BadToken < StandardError
+  include ParseFailure
+end
+def parse(s)
+  raise BadToken, "bad token" if s == "?"
+  s
+end
+begin
+  parse("?")
+rescue ParseFailure => e
+  p(1)
+rescue BadToken => e                     # !> rescue BadToken: an earlier rescue (ParseFailure) already catches it [rescue]
+  p(2)
 end
 ```
 

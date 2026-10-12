@@ -547,6 +547,7 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
 | Pattern | Matches |
 |---|---|
 | a type name: `Integer`, `String`, `Tuple`, `Hash`, `Point`, `Record`, ... | a value of that type (its type tag) |
+| a module name: `Shape`, `Enum` | a value of a type that includes the module (`Circle \| Square`) |
 | `nil`, `true`, `false`, `1`, `"s"`, `:ok` | an equal value of the same type |
 | `P \| Q` | either |
 | `{x:, y: name}` | a Record with those fields; binds the locals `x` and `name` |
@@ -554,7 +555,8 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
 | `x` (a bare name inside `[...]`, or alone) | anything; binds the local `x` |
 
 - **No dispatch.** Matching compares type tags and values. There is no `===`, so `case`/`when` is
-  not supported.
+  not supported. A module name stands for the types that include it, and a built-in exception
+  type for itself and its Ruby subclasses (`in IndexError` takes KeyError), as `rescue` does.
 - **Narrowing.** In `if x in Integer`, and in each `in` branch of `case x`, a local `x` is narrowed
   to the matching types. The `else` branch, and each later branch, sees the types that are left.
   This is how a union such as `Integer | String` is used without a `type` report.
@@ -816,7 +818,8 @@ end
 - **Exception types.** `class Name < Exception` with `attr_reader field` (or
   `Name = Exception.new(:field, ...)`) declares an exception type. It is a class whose first
   field is `message`, so `Name.new("msg", ...)`, `Name.message`, `Name.field`, and `@field`
-  work as for other classes. Exception types have no hierarchy.
+  work as for other classes. `class B < A` is a copy, so `rescue A` does not catch B; a module groups
+  exception types (below).
 - **Built-in exception types.** These are raised by operations, each with only `message`:
   `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`,
   `IOError`, `RegexpError`, `FloatDomainError`, `Math::DomainError`.
@@ -825,7 +828,13 @@ end
   - `raise T, "msg"` raises `T.new("msg")`, where T has no fields besides `message`.
   - `raise value` raises an exception value.
   - A bare `raise` re-raises inside a rescue clause.
-- **`rescue`.** `rescue A, B => e` catches the listed types only, since there is no hierarchy.
+- **`rescue`.** `rescue A, B => e` catches the listed types. A name that is a module catches the
+  exception types that include it (directly or through another module); `e` is their union, so
+  `M.f(e)` dispatches. A module cannot be raised. A built-in type also catches its Ruby subclasses
+  among the built-ins: `IndexError` catches `KeyError`, `IOError` `EOFError`, `RangeError`
+  `FloatDomainError`, `ArgumentError` `Math::DomainError`, and a class of the program declared
+  `class E < RangeError` is caught by `rescue RangeError` too. Level 1 reports a `rescue M` whose begin
+  body raises none of M's types, and a `rescue A` for a type an earlier clause already catches.
   `rescue => e` catches every rescuable exception; `e` is a union, so narrow it with
   `case e in A ...`.
 - **Reading the message.** `Exception.message(e)` reads the message of any exception value. For an

@@ -37,7 +37,8 @@ module Sake
   # namespaces resolves once per namespace. blocks: node => parameter names.
   # includes: namespace => names of the modules it includes (for dispatch through modules and operators).
   # path: the main file; sources: Prism source => file (for the file of a node, see Sake.file_of).
-  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, :const_names, keyword_init: true)
+  Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, :const_names,
+                       :rescue_members, :pattern_members, :exception_copies, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -55,6 +56,9 @@ module Sake
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
                             RegexpError FloatDomainError Math::DomainError NoMatchingPatternError TypeError EOFError ThreadError].freeze
     NOT_RESCUABLE = %w[SystemStackError NotImplementedError LocalJumpError].freeze
+    # Ruby's subclasses among the built-in exceptions: `rescue IndexError` also catches KeyError.
+    BUILTIN_EXCEPTION_PARENT = { "KeyError" => "IndexError", "EOFError" => "IOError", "FloatDomainError" => "RangeError",
+                                 "Math::DomainError" => "ArgumentError" }.freeze
     CATCH_ALL = %w[StandardError Exception].freeze # Ruby's names for "any rescuable error" (a bare rescue in Sake)
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
@@ -71,6 +75,8 @@ module Sake
       @struct_types = {}
       @value_constants = {} # rejected `NAME = value` => suggested function name
       @const_names = {}.compare_by_identity # constant node => the full namespace name it resolved to (A::B)
+      @rescue_members = {} # a name written in rescue => the exception types it catches (a module: its includers)
+      @pattern_members = {} # a name written as a type pattern => the types it takes (a module: its includers)
       @modules = {}         # module name => ModuleNode
       @module_function_names = {} # module => names given to `module_function :name`
       @includes = {} # namespace => [[module name, include node]]
@@ -95,7 +101,7 @@ module Sake
       diags = @diags.uniq { [_1.path, _1.line, _1.column, _1.message] }.sort_by { [order.fetch(_1.path, 0), _1.line, _1.column] }
       raise StaticErrors.new(diags) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks, sources: @sources,
-                  functions: @functions, struct_types: @struct_types, const_names: @const_names,
+                  functions: @functions, struct_types: @struct_types, const_names: @const_names, rescue_members: @rescue_members, pattern_members: @pattern_members, exception_copies: exception_copies,
                   includes: @linearized.transform_values { |l| l.map(&:first) })
     end
 
@@ -900,7 +906,15 @@ module Sake
       case pat
       when Prism::ConstantReadNode, Prism::ConstantPathNode
         name = resolve_const(pat, lexical(ctx))
+        if (members = builtin_exception_members(name)) # `in IndexError` also takes KeyError, as Ruby's ===
+          return @pattern_members[name] = members
+        end
         return if @struct_types.key?(name) || PATTERN_TYPES.include?(name)
+        if @modules.key?(name) # `in M`: the types that include M
+          members = @linearized.select { |ns, l| (@struct_types.key?(ns) || PATTERN_TYPES.include?(ns)) && l.any? { _1[0] == name } }.keys.sort
+          return @pattern_members[name] = members unless members.empty?
+          return error(pat, "`in #{name}`: no type includes #{name}", ["a module in a pattern takes the types that `include #{name}`"])
+        end
         error(pat, "`#{name}` is not a type", spell(name, PATTERN_TYPES + @struct_types.keys).map { "did you mean `#{_1}`?" })
       when Prism::NilNode, Prism::TrueNode, Prism::FalseNode, Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::SymbolNode
         nil
@@ -945,10 +959,43 @@ module Sake
       return if CATCH_ALL.include?(name) # `rescue StandardError => e`: every rescuable error, as a bare rescue
       if NOT_RESCUABLE.include?(name)
         error(n, "#{name} cannot be rescued: it is a program error, which the checks before running report")
+      elsif name && @modules.key?(name) # `rescue M`: the exception types that include M
+        members = @struct_types.select { |ns, st| st.exception && @linearized.fetch(ns, []).any? { _1[0] == name } }.keys.sort
+        return @rescue_members[name] = members unless members.empty?
+        error(n, "`rescue #{name}`: no exception type includes #{name}", ["a module in rescue catches the exception types that `include #{name}`"])
+      elsif name && (members = builtin_exception_members(name))
+        @rescue_members[name] = members
       elsif !(name && @struct_types[name]&.exception)
         hint = @struct_types[name.to_s] ? ["declare it with `#{name} = Exception.new(...)`"] : []
         error(n, "`#{n.slice}` is not an exception type", hint)
       end
+    end
+
+    # A built-in exception type with its Ruby subclasses: the built-in ones (KeyError for IndexError) and
+    # the classes of this program declared `class E < RangeError`. nil when there are none.
+    def builtin_exception_members(name)
+      return unless BUILTIN_EXCEPTIONS.include?(name)
+      set = [name]
+      loop do
+        more = BUILTIN_EXCEPTION_PARENT.select { |c, p| set.include?(p) }.keys +
+               @class_specs.select { |c, spec| spec && BUILTIN_EXCEPTIONS.include?(spec[:parent]) && set.include?(spec[:parent]) }.keys
+        break if (more - set).empty?
+        set |= more
+      end
+      set.size > 1 ? set : nil
+    end
+
+    # Exception type => the classes declared `class B < it` (copies, which its rescue does not catch).
+    def exception_copies
+      @class_specs.each_with_object({}) do |(c, spec), h|
+        (h[spec[:parent]] ||= []) << c if spec && @struct_types[c]&.exception && spec[:parent] && !BUILTIN_EXCEPTIONS.include?(spec[:parent])
+      end
+    end
+
+    def module_raise_hint(n, ctx)
+      name = exception_name(n, ctx)
+      return [] unless name && @modules.key?(name)
+      ["a module is not raised, only rescued (it catches the exception types that include it); raise one of those, or define a class for it"]
     end
 
     # raise; raise "message"; raise exception_value; raise ExceptionType, "message"
@@ -960,13 +1007,13 @@ module Sake
       when 0 then error(node, "a bare `raise` re-raises, so it is only allowed in a rescue clause") unless ctx.in_rescue
       when 1
         if type_only && !@struct_types[exception_name(args[0], ctx)]&.exception
-          error(args[0], "`raise T` needs an exception type, got `#{args[0].slice}`")
+          error(args[0], "`raise T` needs an exception type, got `#{args[0].slice}`", module_raise_hint(args[0], ctx))
         end
       when 2
         name = exception_name(args[0], ctx)
         dt = name && @struct_types[name]
         if !dt&.exception
-          error(args[0], "`raise T, message` needs an exception type, got `#{args[0].slice}`")
+          error(args[0], "`raise T, message` needs an exception type, got `#{args[0].slice}`", module_raise_hint(args[0], ctx))
         elsif dt.fields.size > 1
           error(args[0], "#{name} has fields besides message; raise it with `raise #{name}.new(...)`")
         end
@@ -1549,6 +1596,10 @@ module Sake
           "Sake has no method calls on values; call an operation with its type: `Type.#{node.name}(#{node.receiver.slice}, ...)`"
         end
       hints = suggestions.empty? ? [generic] : suggestions
+      if hints.size > 6 # the rest on one line
+        rest = hints.drop(5).map { _1[/\A[A-Z][\w:]*(?=\.)/] || _1 }
+        hints = [*hints.take(5), "also defined by #{rest.join(", ")}"]
+      end
       # The chain form of the first suggestion, for a single step: `x.T.f(args)`.
       if suggestions.any? && !lowercase_call?(node.receiver) && !node.attribute_write? && (op = suggestions.first[/\A[A-Z][\w:]*\.[^(\s]+/])
         args = (node.arguments&.arguments || []).map(&:slice)
@@ -1578,6 +1629,12 @@ module Sake
           ops = namespaces_defining(name)
           if (lit = literal_type(node.receiver)) && ops.include?(lit)
             ops = [lit]
+          end
+          # `e.message`: Exception.message reads any exception, so the exception types are not listed one by one.
+          if ops.include?("Exception")
+            excs = ops.select { BUILTIN_EXCEPTIONS.include?(_1) || NOT_RESCUABLE.include?(_1) || @struct_types[_1]&.exception }
+            getters -= excs.map { "#{_1}.#{name}" }
+            ops -= excs
           end
           ops = ops.map { "#{_1}.#{name}" }
           if (getters + ops).empty?

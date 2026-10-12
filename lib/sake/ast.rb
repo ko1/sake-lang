@@ -58,7 +58,7 @@ module Sake
     node :Raise, :type, :args               # type: name for `raise T, msg`, else nil
     node :ReRaise
     node :Begin, :body, :rescues, :else_, :ensure_
-    node :Rescue, :names, :slot, :body      # names: [] catches every rescuable error; slot: nil or `=> e`
+    node :Rescue, :names, :groups, :slot, :body # names: [] catches every rescuable error; groups: [[written name, its names]]; slot: nil or `=> e`
     node :RescueMod, :expr, :rescue_
     node :MultiWrite, :targets, :value      # targets: TLocal / TIndex / TField, assigned left to right
     node :TLocal, :slot

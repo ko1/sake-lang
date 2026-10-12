@@ -228,7 +228,7 @@ p(next_value(Node.new(1, nil)))
 
 ### 型で絞る
 
-`x in Integer` は `x` が Integer のとき真で、その分岐の中で `x` は Integer に絞られます。`elsif` と `else` は残りの型を見ます。`case x` の `in` 分岐も同じです。
+`x in Integer` は `x` が Integer のとき真で、その分岐の中で `x` は Integer に絞られます。`elsif` と `else` は残りの型を見ます。`case x` の `in` 分岐も同じです。モジュールの名前は、それを include した型のどれかに合います（`in Shape` は `in Circle | Square`）。組み込みの例外型は Ruby の子も含みます（`in IndexError` は KeyError にも合う）。
 
 ```ruby
 def pick(flag) = flag ? 1 : "one"

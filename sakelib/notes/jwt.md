@@ -15,7 +15,7 @@
 | algorithms `HS256`, `HS384`, `HS512`, `none`; case-insensitive names | same | same |
 | `RS256`, `ES256`, `PS256`, `EdDSA` | — | missing: no RSA / EC (would be a bignum RSA in Sake; `OpenSSL` is not a built-in) |
 | `JWT.decode(token, key, verify, {algorithm:, algorithms:, leeway:, exp_leeway:, nbf_leeway:, verify_expiration:, verify_not_before:, verify_iat:, verify_iss:, iss:, verify_aud:, aud:, verify_sub:, sub:, verify_jti:})` | `JWT.decode(token, key = nil, verify = true, algorithm: "HS256", ...)` | same; the options Hash is keyword parameters; gives the Tuple `[payload, header]` |
-| `JWT::ExpiredSignature`, `ImmatureSignature`, `InvalidIatError`, `VerificationError`, `IncorrectAlgorithm`, `InvalidIssuerError`, `InvalidAudError`, `InvalidSubError`, `InvalidJtiError`, `InvalidPayload`, `Base64DecodeError`, `DecodeError`, `EncodeError` | `JWT::ExpiredSignature`, ... `JWT::DecodeError`, `JWT::EncodeError` | same names (nested in `module JWT` since 2026-10-10; were `JWTDecodeError` & co.) and messages; **no hierarchy**: `rescue JWT::DecodeError` catches only that one; `JWT.decode_error?(e)` is `rescue JWT::DecodeError` |
+| `JWT::ExpiredSignature`, `ImmatureSignature`, `InvalidIatError`, `VerificationError`, `IncorrectAlgorithm`, `InvalidIssuerError`, `InvalidAudError`, `InvalidSubError`, `InvalidJtiError`, `InvalidPayload`, `Base64DecodeError`, `DecodeError`, `EncodeError` | `JWT::ExpiredSignature`, ... `JWT::DecodeError`, `JWT::EncodeError` | same names (nested in `module JWT` since 2026-10-10; were `JWTDecodeError` & co.) and messages; **no hierarchy**: the gem raises `DecodeError` itself, so it stays a class rather than a module the others include, and `rescue JWT::DecodeError` catches only that one; `JWT.decode_error?(e)` is `rescue JWT::DecodeError` |
 | `verify_jti: proc`, `verify_iss: proc`, `required_claims:`, `JWT.decode { \|header\| key }` (key finder block), JWK, `JWT::Token`/`EncodedToken` (3.x object API), `JWT.configuration` | — | missing: callables, or beyond the brief |
 | `iat_leeway:` | — | missing on purpose: the gem (3.2) ignores it (no leeway on `iat`), and so does Sake |
 | `JWT::Base64.url_encode/url_decode` | `JWT.base64url_encode/decode` | same (strict decoding, `Base64DecodeError`) |
@@ -31,7 +31,8 @@
   Expected ["you"], received me`, `Missing jti`). `none` is rejected unless `algorithm: "none"` is passed.
 - **できなかった**: RSA/ECDSA (no bignum-exponentiation-based crypto worth writing in two hours; `Integer.pow(a,
   b, mod)` exists, so RS256 is possible later), the key-finder block of `decode` and the proc verifiers
-  (stored callables), `rescue JWT::DecodeError` as a family (no exception hierarchy; `decode_error?` instead).
+  (stored callables), `rescue JWT::DecodeError` as a family (a module groups exception types in `rescue`, but `DecodeError` is
+  raised itself and a module cannot be; `decode_error?` instead).
 
 ## 書き心地
 
@@ -70,6 +71,7 @@
 - `String.force_encoding` exists; a `String.unpack1(s, "m0")` that gives UTF-8 when the bytes are valid UTF-8
   would remove the one encoding trap found (or a `JSON.parse` that forces UTF-8, as Ruby's does).
 - Exception families: a way to name a set of exception types once (`rescue JWT::Errors`) instead of the
-  `decode_error?(e)` pattern; Sake's "no hierarchy" is fine, a named union would do.
+  `decode_error?(e)` pattern. Since 2026-10-12 a module that exception classes include is that name, but the
+  gem's family is a class that is raised itself (`DecodeError`), which a module cannot stand for.
 - `Integer.pow(a, b, mod)` exists; RS256 needs only PKCS#1 v1.5 padding and an ASN.1/PEM reader on top, if
   the port is ever wanted.

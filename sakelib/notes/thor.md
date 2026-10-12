@@ -32,7 +32,9 @@ dispatch by name nor reflection. So:
   type, so a value is read with its type: `Thor.flag?(options, :shout)`, `Thor.integer(options, :times)`,
   `Thor.number`, `Thor.string`, `Thor.array`, `Thor.hash` (each a `=>` assertion on the value; see 書き心地).
 - **Errors are one type**, `Thor::Error` with a `kind` (`:undefined_command`, `:ambiguous_command`, `:invocation`,
-  `:malformatted_argument`, `:required_argument_missing`), since exception types have no hierarchy. `start` prints
+  `:malformatted_argument`, `:required_argument_missing`): thor raises `Thor::Error` and `InvocationError`
+  themselves and also uses them as parents, and a module, which groups exception types in `rescue`, cannot be
+  raised. `start` prints
   the message to stderr as thor's `shell.error` does and gives nil, exits 1 with `exit_on_failure: true`
   (thor's `exit_on_failure?`), or raises with `debug: true` (thor's `config[:debug]`).
 

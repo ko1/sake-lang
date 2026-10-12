@@ -299,8 +299,10 @@ p(i + 1) if i != nil
 
 ### Exceptions
 - Declare: `class E < StandardError` (or `< Exception`) with optional `attr_reader` fields after
-  the implicit first field `message`; or `E = Exception.new(:code)`. No hierarchy: `rescue` lists
-  every type it catches (`rescue A, B => e`); bare `rescue => e` catches all.
+  the implicit first field `message`; or `E = Exception.new(:code)`. `rescue A, B => e` catches the
+  listed types (`class B < A` is a copy: `rescue A` does not catch B); `rescue M => e` with a module M
+  catches the types that `include M`; `rescue IndexError` also catches KeyError (Ruby's built-in
+  parents); bare `rescue => e` catches all.
 - `raise "msg"` (RuntimeError), `raise ArgumentError, "msg"` (only for types without extra fields),
   `raise E.new("msg", 7)`. Read: `Exception.message(e)`, `E.code(e)`. No `e.message`.
 - `expr rescue fallback`, `def ... rescue ... end`, `ensure`, `retry` work. Built-ins:

@@ -186,9 +186,21 @@ module Sake
             end
             [msg, hints]
           when "rescue"
-            hints = ["remove this rescue, or raise #{c.arg} in the body"]
-            hints << "Thread.value / Thread.join raise RuntimeError only in a program that calls Thread.raise" if c.arg == "RuntimeError"
-            ["rescue #{c.arg}: the begin body never raises #{c.arg}", hints]
+            members = program.rescue_members[c.arg]
+            if c.failing.first in [:earlier, by]
+              ["rescue #{c.arg}: an earlier rescue (#{by.join(", ")}) already catches it", ["remove this rescue, or move it before `rescue #{by.first}`"]]
+            elsif members && !Resolver::BUILTIN_EXCEPTIONS.include?(c.arg) # a module
+              ["rescue #{c.arg}: the begin body raises no exception type that includes #{c.arg} (#{members.join(", ")})",
+               ["remove this rescue, or raise one of them in the body"]]
+            else
+              hints = ["remove this rescue, or raise #{c.arg} in the body"]
+              hints << "Thread.value / Thread.join raise RuntimeError only in a program that calls Thread.raise" if c.arg == "RuntimeError"
+              if (copies = program.exception_copies[c.arg])
+                hints << "#{copies.join(", ")} #{copies.size == 1 ? "is" : "are"} declared `< #{c.arg}`, which copies #{c.arg} and does not make #{copies.size == 1 ? "it" : "them"} caught by `rescue #{c.arg}`; " \
+                         "to catch them together, make #{c.arg} a module that they include"
+              end
+              ["rescue #{c.arg}: the begin body never raises #{c.arg}", hints]
+            end
           when "unrescued"
             ["raise: #{c.arg} may reach the top level without being rescued", ["rescue it, or check with a level below 4"]]
           when "nil"

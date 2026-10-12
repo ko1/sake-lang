@@ -47,7 +47,7 @@ and compares the help text and the errors with Ruby's.
 | `op.permute(argv, into: h)`, `permute!` | `OptionParser.permute(op, argv, into: h)`, `permute!` | same |
 | `op.getopts(argv, "ab:", "foo", "bar:")` | `OptionParser.getopts(op, argv, "ab:", "foo", "bar:")` | same (`*long_specs`, 2026-10-05). Stops at the first non-option, as Ruby |
 | `op.getopts("ab:")` (ARGV) | — | differs: argv is required here (it comes before the short spec) |
-| `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | one type `OptionParser::ParseError` (nested as Ruby's since 2026-10-10; was `OptionParserError`), with `kind(e)` = `"InvalidOption"`, ... | differs: no hierarchy, so `rescue OptionParser::ParseError` is the one form |
+| `OptionParser::InvalidOption`, `MissingArgument`, `InvalidArgument`, `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` | same names; `OptionParser::ParseError` is a module they include (never raised itself in Ruby), with `kind(e)` = `"InvalidOption"`, ... for `e.class.name` | same: `rescue OptionParser::ParseError` catches all six, `rescue OptionParser::InvalidOption` one (since 2026-10-12; was one type `ParseError` with a `kind`) |
 | `e.message`, `e.args`, `e.reason` | `Exception.message(e)`, `OptionParser::ParseError.args(e)`, `OptionParser::ParseError.reason(e)` | same text |
 | `--help`, `--version` handled by OptionParser itself (prints and exits) | same | same (phase 2): an undeclared `--help` (or a prefix, `--he`) prints the help and exits 0; `--version` prints `ver` and exits, or aborts with `prog: version unknown`. Declared options win, as Ruby |
 | `op.warn(msg)`, `op.abort(msg)` | `OptionParser.warn(op, msg)`, `OptionParser.abort(op, msg)` | same: `prog: msg` on stderr (`IO.stderr`); abort exits 1. The message is required (Ruby defaults to `$!`) |
@@ -75,9 +75,10 @@ and compares the help text and the errors with Ruby's.
   takes `:Integer`, `:Float`, or `:String`, or an Array of allowed Strings. The checks for
   Integer and Float use Ruby's own patterns (`0x10`, `1_000`, `-5`, `.5`, `1e3`; `08` and
   `1.5` are rejected for Integer).
-- **Exceptions.** There is no hierarchy, and nested names (`OptionParser::InvalidOption`) do not
-  exist. One exception type carries the kind as a String, and `message`, `args`, and `reason` are
-  Ruby's.
+- **Exceptions.** Ruby's six classes, each including the module `OptionParser::ParseError`, so
+  `rescue OptionParser::ParseError` catches them all. `ParseError.args(e)`, `reason(e)` and `kind(e)`
+  dispatch on the class (`kind` stands for `e.class.name`, as there are no class values); `message`,
+  `args`, and `reason` are Ruby's.
 - **Abbreviations.** A long option can be shortened to a prefix that only one name has, counting
   `no-` names. An exact name wins: `--n` is ambiguous between `--name`, `--nice`, and
   `--no-verbose`. Ruby's completion also ignores case and matches parts of words separately
@@ -170,3 +171,10 @@ optional, but a block still cannot be stored for `parse` to call later.
 - Still not Ruby's: no blocks for `on`/`new`; the type is a Symbol (`:Integer`); `parse(op, argv)`
   takes one Array, not `parse(*argv)`; one exception type with a `kind`.
 - No new bugs.
+
+## 2026-10-12
+
+- Exceptions follow Ruby's classes: `InvalidOption`, `MissingArgument`, `InvalidArgument`,
+  `NeedlessArgument`, `AmbiguousOption`, `AmbiguousArgument` include the module `ParseError` (a module
+  in `rescue` catches the exception types that include it), replacing the one type with a `kind` field
+  and `ParseError.make`. The test is unchanged; `rescue OptionParser::InvalidOption` now works too.

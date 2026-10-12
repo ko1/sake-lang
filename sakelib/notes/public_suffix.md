@@ -27,7 +27,7 @@ The rules come from the gem's own `data/list.txt`, read at run time on first use
 | `List.parse(text, private_domains: false)` | `List.parse(text, {private_domains: false})` | same, options Record |
 | `List.new`, `list.add(r)`, `list << r`, `size`, `empty?`, `clear`, `each`, `==`, `default_rule` | `PublicSuffix::List.add(l, r)`, `l << r`, ... | same (`each` without a block: use `Enum.map(l)` etc.) |
 | `list.find(name, default: nil, ignore_private: true)` | `List.find(l, name, {default: nil, ignore_private: true})` | same, except `default:` can only be nil |
-| `PublicSuffix::Error`, `DomainInvalid`, `DomainNotAllowed` | same names | differs: no hierarchy (see below) |
+| `PublicSuffix::Error`, `DomainInvalid`, `DomainNotAllowed` | same names | `Error` as Ruby's; `DomainInvalid` does not catch `DomainNotAllowed` (see below) |
 | `PublicSuffix::VERSION` | `PublicSuffix.VERSION` | function |
 
 About 45 operations ported.
@@ -42,9 +42,10 @@ About 45 operations ported.
 - **The List stores entries, not rules** (as Ruby: `Rule::Entry` of type, length, private), with the type as
   a Symbol instead of a class (classes are not values). `List.parse` builds entries straight from the lines
   without making a Rule for each (the gem makes one and throws it away); this cuts the load time by about a third.
-- **Exceptions.** No exception hierarchy in Sake: `rescue PublicSuffix::Error` catches nothing raised here;
-  write `rescue PublicSuffix::DomainInvalid, PublicSuffix::DomainNotAllowed` (and rescue
-  `DomainNotAllowed` before or apart from `DomainInvalid`, which Ruby's subclassing makes optional).
+- **Exceptions.** `PublicSuffix::Error` (never raised) is a module the two include, so
+  `rescue PublicSuffix::Error` catches both, as Ruby's (since 2026-10-12; `domain` uses it, as the gem does).
+  `DomainInvalid` is raised itself, so it stays a class: `rescue PublicSuffix::DomainInvalid` does not catch
+  `DomainNotAllowed` (Ruby's subclass); rescue `DomainNotAllowed` before or apart from it.
 - **Keyword options are a Record** (`{ignore_private: true}`), per the convention for Sake functions; read
   with `Record.to_h`. `default_rule:` is not taken; `find`'s `default:` can only be `nil` (a rule value
   would make the option Record's value type a union with the three rule classes).

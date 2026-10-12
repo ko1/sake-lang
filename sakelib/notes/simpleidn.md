@@ -16,7 +16,7 @@ nil, and malformed Punycode.
 | `SimpleIDN.uts46map(str, transitional = false)` | `SimpleIDN.uts46map(str, transitional)` | same |
 | `SimpleIDN::Punycode.encode(s)` / `decode(s)` | `SimpleIDN::Punycode.encode(s)` / `decode(s)` | same, same error messages |
 | `Punycode.encode_digit` / `decode_digit` / `adapt` | same | same |
-| `SimpleIDN::ConversionError` | `SimpleIDN::ConversionError` | differs: not a RangeError (no hierarchy) |
+| `SimpleIDN::ConversionError` | `SimpleIDN::ConversionError` | differs: not a RangeError (RangeError is raised itself, so it is a class and cannot be included as a group) |
 | `UTS64MAPPING` (Hash) | `SimpleIDN.uts46mapping` | differs: a function (Hash parsed once); values are always Arrays of code points |
 | `TRANSITIONAL`, `ACE_PREFIX`, `DOT`, `Punycode::BASE`, `TMIN`, … | `SimpleIDN.transitional_mapping`, `ace_prefix`, `dot`, `Punycode.base`, … | differs: functions (constants hold no values) |
 
