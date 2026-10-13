@@ -13,6 +13,7 @@ class App < Sinatra::Base
   set :views, File.join(__dir__, "sinatra_views")
   set :public_folder, File.join(__dir__, "sinatra_public")
   set :title, "Sake"
+  set :port, 8080
   enable :sessions
   set :session_secret, "0123456789abcdef" * 4
 
@@ -142,7 +143,7 @@ class App < Sinatra::Base
   end
 
   get "/settings" do
-    "title=#{settings.title} sessions=#{settings.sessions}"
+    "title=#{settings.title} sessions=#{settings.sessions} port=#{settings.port} bind=#{settings.bind.inspect}"
   end
 
   get "/admin/panel" do

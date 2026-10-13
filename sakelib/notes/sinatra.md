@@ -64,7 +64,8 @@ serves it.
 |---|---|---|
 | `class App < Sinatra::Base` + class body | `class App < Sinatra::Base` + `def routes(app)` | differs: the body is a function run per phase (above) |
 | `App.call(env)` / `run App` | `Rack::App.call(App.new, env)` / `Rackup::Handler::WEBrick.new(App.new)` | same responses |
-| `App.run!(bind:, port:) { \|server\| }` | `App.run!(app, Hash[bind:, port:]) { \|server\| }` | same (WEBrick only; port 0 → `WEBrick::HTTPServer.port(server)`) |
+| `App.run!(bind:, port:, **options) { \|server\| }` | `App.run!(app, bind:, port:) { \|server\| }` | same: the keywords are `set` first, then `settings.bind`/`settings.port` are read (WEBrick only; port 0 → `WEBrick::HTTPServer.port(server)`) |
+| `set :port, 8080`, `set :bind, "0.0.0.0"`, `settings.port`, `settings.bind` | `set(app, :port, 8080)`, …, `Settings.port(settings(app))` | same (bind's default is `localhost` in development, else `0.0.0.0`; port's is `ENV["PORT"]` or 4567) |
 | `get/post/put/patch/delete/head/options/link/unlink(path) { }` | `get(app, path) { }` … | same (GET also answers HEAD; Rack::Head drops the body) |
 | route options (`provides:`, `host_name:`, `user_agent:`, `condition`) | — | missing |
 | `before(path = /.*/) { }`, `after` | `before(app, path = nil) { }`, `after` | same (filter params merged for the block, restored after) |

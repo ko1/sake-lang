@@ -57,8 +57,12 @@ module Sinatra
   class Request < Rack::Request
     def secure?(req) = ssl?(req)
     def forwarded?(req) = has_header?(req, "HTTP_X_FORWARDED_HOST")
-    def safe?(req) = get?(req) || head?(req) || options?(req) || trace?(req)
-    def idempotent?(req) = safe?(req) || put?(req) || delete?(req) || link?(req) || unlink?(req)
+    def safe?(req)
+      get?(req) || head?(req) || options?(req) || trace?(req)
+    end
+    def idempotent?(req)
+      safe?(req) || put?(req) || delete?(req) || link?(req) || unlink?(req)
+    end
 
     # Ruby: request.accept, the Accept header's media types by quality (entries as Strings here).
     def accept(req)
@@ -72,7 +76,9 @@ module Sinatra
       Array.map(Array.sort_by(Array.each_with_index(entries)) { |(e, i)| [-Tuple.[](e, 1), i] }) { |(e, i)| Tuple.[](e, 0) }
     end
 
-    def accept?(req, type) = Array.any?(accept(req)) { |t| t == type || t == "*/*" || (String.end_with?(t, "/*") && String.start_with?(type, String.delete_suffix(t, "*"))) }
+    def accept?(req, type)
+      Array.any?(accept(req)) { |t| t == type || t == "*/*" || (String.end_with?(t, "/*") && String.start_with?(type, String.delete_suffix(t, "*"))) }
+    end
 
     def preferred_type(req, *types)
       return Array.first(accept(req)) if Array.empty?(types)
@@ -112,6 +118,7 @@ module Sinatra
     attr_accessor environment, root, views, public_folder, static, sessions, session_secret
     attr_accessor default_content_type, default_encoding, add_charset, absolute_redirects, prefixed_redirects
     attr_accessor strict_paths, empty_path_info, x_cascade, protection, raise_errors, show_exceptions, dump_errors
+    attr_accessor bind, port
     attr_accessor templates, custom
     include Indexable
 
@@ -135,6 +142,9 @@ module Sinatra
       @raise_errors = false
       @show_exceptions = false
       @dump_errors = false
+      @bind = nil
+      port = ENV.get("PORT")
+      @port = port && port != "" ? Integer(port) : 4567
       @templates = Hash[:__ => ""]
       Hash.clear(@templates)
       @custom = Hash[]
@@ -142,11 +152,18 @@ module Sinatra
 
     def development?(st) = @environment == :development
     def production?(st) = @environment == :production
+    def bind(st)
+      @bind || (development?(st) ? "localhost" : "0.0.0.0")
+    end   # Ruby: a Proc read each time
     def test?(st) = @environment == :test
 
     # Ruby: settings.views is root/views (or ./views); settings.public_folder is root/public.
-    def views_dir(st) = @views || ((r = @root) ? File.join(r, "views") : "./views")
-    def public_dir(st) = @public_folder || ((r = @root) ? File.join(r, "public") : nil)
+    def views_dir(st)
+      @views || ((r = @root) ? File.join(r, "views") : "./views")
+    end
+    def public_dir(st)
+      @public_folder || ((r = @root) ? File.join(r, "public") : nil)
+    end
     def static?(st)
       s = @static
       return s if s != nil
@@ -218,6 +235,10 @@ module Sinatra
     # Ruby: set :name, value. Sinatra's own options are checked for their type; others go to settings[:name].
     def set(app, option, value)
       return nil unless @phase == :settings
+      _set(app, option, value)
+    end
+
+    def _set(app, option, value)
       st = @settings
       case option
       in :environment then value => Symbol; Settings.set_environment(st, value)
@@ -238,6 +259,8 @@ module Sinatra
       in :raise_errors then value => true | false; Settings.set_raise_errors(st, value)
       in :show_exceptions then value => true | false; Settings.set_show_exceptions(st, value)
       in :dump_errors then value => true | false; Settings.set_dump_errors(st, value)
+      in :bind then value => String; Settings.set_bind(st, value)
+      in :port then value => Integer; Settings.set_port(st, value)
       else st[option] = value
       end
       nil
@@ -764,15 +787,11 @@ module Sinatra
       nil
     end
 
-    # Ruby: App.run!(bind: host, port: n) { |server| }: serve on Rackup::Handler::WEBrick until shutdown
-    # (options are a Hash here; port 0 takes a free port, WEBrick::HTTPServer.port(server) tells which).
-    def run!(app, options = nil)
-      opts = options || Hash[]
-      host = opts[:bind] || (development?(app) ? "localhost" : "0.0.0.0")
-      host => String
-      port = opts[:port] || 4567
-      port => Integer
-      srv = WEBrick::HTTPServer.new(host, port)
+    # Ruby: App.run!(bind: host, port: n) { |server| }: `set options`, then serve on Rackup::Handler::WEBrick
+    # until shutdown (port 0 takes a free port, WEBrick::HTTPServer.port(server) tells which).
+    def run!(app, **options)
+      Hash.each(options) { |k, v| _set(app, k, v) }
+      srv = WEBrick::HTTPServer.new(Settings.bind(@settings), Settings.port(@settings))
       WEBrick::HTTPServer.mount(srv, "/", Rackup::Handler::WEBrick.new(app))
       warn("== Sinatra (v#{Sinatra.version}) has taken the stage on #{WEBrick::HTTPServer.port(srv)} for #{Settings.environment(@settings)} with backup from WEBrick (Sake)")
       yield(srv) if block_given?
