@@ -205,9 +205,9 @@ module Sake
 
       def with_narrow(i, c, branch)
         pairs = narrowings(c, i, branch)
-        @narrow ||= {}
-        saved = pairs.map { |s, t| [[i, s], @narrow[[i, s]]] }
-        pairs.each { |s, t| @narrow[[i, s]] = t }
+        @narrow ||= {} # keyed by the instantiation's identity: an Inst's contents (and so its hash) change while typing
+        saved = pairs.map { |s, t| [[i.__id__, s], @narrow[[i.__id__, s]]] }
+        pairs.each { |s, t| @narrow[[i.__id__, s]] = t }
         yield
       ensure
         saved&.each { |k, v| v ? @narrow[k] = v : @narrow.delete(k) }
@@ -239,7 +239,7 @@ module Sake
         when Str then :str
         when Interp then (n.parts.each { ty(_1, i) }; :str)
         when ToS then (ty(n.value, i); :str)
-        when LVarGet then (@narrow ||= {})[[i, n.slot]] || i.slots[n.slot] || :unknown
+        when LVarGet then (@narrow ||= {})[[i.__id__, n.slot]] || i.slots[n.slot] || :unknown
         when LVarSet
           t = ty(n.value, i)
           set_slot(i, n.slot, t, n)
@@ -686,7 +686,7 @@ module Sake
 
       # An argument for a by-reference parameter: a variable is borrowed in place, anything else as a temporary.
       def arg_ref(a, i)
-        a.is_a?(LVarGet) && !(@narrow ||= {})[[i, a.slot]] ? "&v#{a.slot}" : "&(#{expr(a, i)})"
+        a.is_a?(LVarGet) && !(@narrow ||= {})[[i.__id__, a.slot]] ? "&v#{a.slot}" : "&(#{expr(a, i)})"
       end
 
       def fn_code(inst)
@@ -810,7 +810,7 @@ module Sake
 
       # A narrowed variable: the value inside the Option, or the class inside the union. nil when not narrowed.
       def narrowed(slot, i, borrow)
-        t = (@narrow ||= {})[[i, slot]]
+        t = (@narrow ||= {})[[i.__id__, slot]]
         return nil unless t
         decl = i.slots[slot]
         case decl
@@ -1234,7 +1234,7 @@ module Sake
       def with_case_narrow(i, subject, pat, st)
         if subject.is_a?(LVarGet) && pat.is_a?(PType) && st.is_a?(UnionT)
           @narrow ||= {}
-          key = [i, subject.slot]
+          key = [i.__id__, subject.slot]
           saved = @narrow[key]
           @narrow[key] = ObjT.new(pat.name)
           begin
