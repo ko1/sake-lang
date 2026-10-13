@@ -7,7 +7,7 @@
 ### ko1 の判断が要るもの
 
 1. ~~**仕様変更（10-11 に入れた、戻すのは数行）**~~ → 残す（ko1、10-13）: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。（`Array.flatten` が Tuple も展開する変更は、Tuple は 1 つの値で集まりではないという立場（prelude、D1）とぶつかるので同日に戻した。代わりに Tuple が flatten に来ると静的に知らせ、`flat_map` と `Tuple.to_a` を hint で示す。ko1、10-11）
-2. ~~**型の別名**（`Client = WebSocket::Handshake::Client`）~~ → 入れた。スコープは Ruby の定数と同じ（書いた名前空間に属し、型の名前と同じ規則で探し、外からは `Outer::Client`）。名前の解決で指す先の型に置き換える（ko1、10-13。DESIGN.md）。
+2. ~~**型の別名**（`Client = WebSocket::Handshake::Client`）~~ → 入れた。スコープは Ruby の定数と同じ（書いた名前空間に属し、型の名前と同じ規則で探し、外からは `Outer::Client`）。名前の解決で指す先の型に置き換える（ko1、10-13。DESIGN.md）。残り（ペンディング、ko1 10-13）: その場だけの短い別名。関数の中の `T = A::B::C` は Ruby の構文エラー（dynamic constant assignment）で書けず、`private_constant :T`（名前空間の中だけ）は一時的な名前には冗長。
 3. ~~**例外の階層**~~ → モジュールでまとめる（`rescue M`）、組み込みは Ruby の親子関係（ko1、10-12。DESIGN.md）。
 4. ~~**Integer の幅（ネイティブ）**~~ → 処理系ごとでよい（ko1、10-13。spec §3 の表）: インタプリタは多倍長、sabic / ceec は 64 ビットで溢れたらエラー。
 5. ~~D11 `f(**opts)` の受け渡し~~（10-13 に入れた。DESIGN.md）。~~D12~~（既定値は a12be1dc で廃止済み）、~~D14~~（分けない、ko1、10-13）。
