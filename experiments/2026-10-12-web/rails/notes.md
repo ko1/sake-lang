@@ -17,7 +17,7 @@ rails/
                          text_area/hidden_field/password_field/submit, pluralize, dom_id,
                          distance_of_time_in_words, time_ago_in_words, raw, h
   rails.sake             Rails::Application (a Rack::App: MethodOverride, router, session, errors → 404/400, log)
-  rails_generate.sake    bin/rails generate / routes, and the ERB → Sake template compiler
+  rails_generate.sake    bin/rails source / routes, and the ERB → Sake template compiler
   blog/                  the app, laid out as a Rails app (see below)
   compare.rb/.sake       helper HTML, route helpers, routes table, model errors: identical output (67 lines)
   run.sh, run.out        the demo: the real server on 127.0.0.1:<free port>, curl through the scenario
@@ -28,12 +28,12 @@ blog/config/routes.sake  db/schema.sake  app/models/{application_record,post,com
 blog/app/controllers/{application,posts,comments}_controller.sake
 blog/app/views/layouts/application.html.erb  app/views/posts/{index,show,new,edit,_form,_post}.html.erb
 blog/app/views/comments/{_comment,_form}.html.erb
-blog/bin/rails.sake (generate, routes)  bin/server.sake (rails server)  config/application.sake (the require list)
+blog/bin/rails.sake (source, routes)  bin/server.sake (rails server)  config/application.sake (requires, `generate`)
 blog/test/requests.sake (the scenario through Rack::MockRequest, no server)
-blog/tmp/generated/*.sake (written by bin/rails generate)
+(no generated file: `generate "../bin/rails", "source"` joins it at every start; `bin/sake --dump=generated` shows it)
 ```
 
-Run: `./run.sh` (prints the routes, generates, starts the server, 16 requests (restarting the server halfway), the database files, the server log,
+Run: `./run.sh` (prints the routes, the generated source's size, starts the server, 16 requests (restarting the server halfway), the database files, the server log,
 stops the server; `run.out` is a run). `bin/sake --strict compare.sake` and `ruby compare.rb` print the same.
 
 ## The three Ruby mechanisms Rails stands on, and what each became
@@ -45,7 +45,7 @@ callbacks, `has_many` options). Each got one Sake shape:
 | Ruby mechanism | Where Rails uses it | Sake shape |
 |---|---|---|
 | `routes.draw do ... end` (`instance_exec` on a Mapper); `Schema.define do ... end` | config/routes.rb, db/schema.rb | **a function of the DSL class.** The app reopens `ActionDispatch::Routing::Mapper` and writes `def draw(map)`; inside, `resources map, :posts do ... end` is a bare call of the Mapper's own function, as the Ruby block's bare calls are the Mapper's. The DSL object is the first argument instead of `self`. Same for `ActiveRecord::Schema.define(s)`. |
-| `define_method` per named route; attribute methods from the table; `send(action_name)`; `const_get("PostsController")`; ERB compiled to a method with `eval` | url_helpers, models, AbstractController, the dispatcher, ActionView::Template | **a generation step**, `bin/sake bin/rails.sake generate`, writes these as Sake source into `tmp/generated/` (routes 30 lines, models 33, views 183, controllers 47; models was 114 before `T.read_field`, below), which `config/application.sake` requires. Rails does this at boot; Sake does it before the program exists, and then the checker checks the result, templates included. |
+| `define_method` per named route; attribute methods from the table; `send(action_name)`; `const_get("PostsController")`; ERB compiled to a method with `eval` | url_helpers, models, AbstractController, the dispatcher, ActionView::Template | **a generation step**: `bin/rails.sake source` prints these as Sake source (models 33 lines, routes 30, views 183 + origin lines, controllers 47; models was 114 before `T.read_field`, below), and `generate "../bin/rails", "source"` in `config/application.sake` runs it before the app is checked, at every start (2026-10-13; before, `bin/rails generate` wrote `tmp/generated/`). Rails does this at boot; Sake does it before the program exists, and then the checker checks the result, templates included. |
 | `before_action :set_post, only: %i[...]`; `has_many :comments, dependent: :destroy`; `validates :title, presence: true` | controllers and models' class bodies | **a hook function the framework calls**, written by the app: `def before_action(c, action)` with a `case` over the actions, `def validate(post)` with `validates post, :title, {...}` lines, `def before_destroy(post)`, `def comments(post) = Comment.where({post_id: @id})`. Rails' declaration is data the framework interprets; here it is the code that declaration would run. |
 
 The controller is also the view context: a template is compiled into a function of its controller class, so `@post`
@@ -131,7 +131,7 @@ end                                               end
                                                 end
 ```
 
-`class Post < ApplicationRecord` with the columns is in `tmp/generated/models.sake`, written from `db/schema.sake`
+`class Post < ApplicationRecord` with the columns is generated from `db/schema.sake`
 (the first `class Post` declares the fields, so the model file can only add functions to it; a second `< ApplicationRecord`
 is rejected: "`<` goes on the first `class Post`"). So, as in Rails, the model file does not list its columns.
 
@@ -184,7 +184,7 @@ per model because `once` is one value per place in the program, and Base's funct
   <%= form.text_field :title %>                    <%= text_field form, :title %>
 ```
 
-Templates are Sake code inside ERB tags, compiled by `bin/rails generate` into functions (`def PostsController._view_posts_index(view)`,
+Templates are Sake code inside ERB tags, compiled by `bin/rails source` into functions (`def PostsController._view_posts_index(view)`,
 partials into `ApplicationController`) and type-checked with the program. Three Rails forms are recognised by the compiler
 and turned into calls: `render "form", post: @post` (the partial `posts/_form`, keyword locals), `render x` (the
 partial named by x's class: `_render_object`, a `case` over the models), and the layout's bare `yield` (→ `yield(nil)`,
@@ -294,8 +294,9 @@ What read well: paren-less calls (`link_to "Show this post", post`, `resources m
 through `include Indexable`; option Records with `case opts in {notice:}` are Rails' option Hashes with a checked
 shape; the generated code is ordinary Sake that the checker reads, so a template calling `Post.titel(post)` is
 an error before the server starts (`undefined function Post.titel / hint: did you mean Post.title?`) where Rails finds
-it on the first request. The message points at `tmp/generated/views.sake:95`, not at the template's line (the
-function's comment names the .html.erb file); Rails' error page shows the template line.
+it on the first request. The message pointed at `tmp/generated/views.sake:95`, not at the template's line (the
+function's comment names the .html.erb file); Rails' error page shows the template line. Since 2026-10-13 (`generate`
+with `# sake-origin:` lines) it is `app/views/posts/show.html.erb:3`.
 
 ### --strict
 
@@ -309,9 +310,9 @@ might be unsaved). The checker cannot follow "before_action ran set_post, so @po
 
 - ~~**A class's fields as data**~~: added 2026-10-13 as `T.field_names`, `T.read_field`, `T.write_field`; models.sake
   went from 114 lines to 33 (above).
-- **A supported generation step** (or compile-time macros): `bin/rails generate` writes Sake that a later program
-  requires; nothing tells the checker that `tmp/generated/` is stale after a template changes (run.sh always
-  regenerates). Rails' boot-time metaprogramming has no other honest translation.
+- ~~**A supported generation step**~~: added 2026-10-13 as `generate "gen", args` (stage 0, regenerated and checked at
+  every start; `# sake-origin:` lines map errors to the .erb line, so the message above is now
+  `app/views/posts/show.html.erb:3`).
 - **HMAC / a cipher** (OpenSSL::HMAC, `ActiveSupport::MessageVerifier`): needed for Rails' cookie session store and
   CSRF tokens. (HMAC added 2026-10-13; a cipher not.)
 - ~~`Time.utc(y, m, d, h, mi, s)`~~ (added 2026-10-13).

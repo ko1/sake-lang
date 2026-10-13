@@ -3,12 +3,28 @@
 module Sake
   class Error < StandardError; end
 
+  # Generated sources ("(generate at FILE:LINE)") => origin_map: where each generated line came from.
+  def self.origins = @origins ||= {}
+
+  # [path, line] of a generated line with a `# sake-origin:` marker, else nil.
+  def self.origin(path, line) = origins[path]&.[](line)
+
+  # "FILE:LINE" for a report: a generated line as the origin its generator gave.
+  def self.at(path, line) = (o = origin(path, line)) ? "#{o[0]}:#{o[1]}" : "#{path}:#{line}"
+
   # A static (pre-execution) error with optional fix suggestions.
   Diagnostic = Struct.new(:path, :line, :column, :message, :hints) do
     def to_s
-      s = +"#{path}:#{line}:#{column + 1}: error: #{message}"
-      hints.each { |h| s << "\n  hint: #{h}" }
+      o = Sake.origin(path, line)
+      s = o ? +"#{o[0]}:#{o[1]}: error: #{message}" : +"#{path}:#{line}:#{column + 1}: error: #{message}"
+      all = Sake.origins.key?(path) ? [*hints, generated_hint] : hints
+      all.each { |h| s << "\n  hint: #{h}" }
       s
+    end
+
+    def generated_hint
+      shown = "`sake --dump=generated` shows the generated source"
+      Sake.origin(path, line) ? "generated line #{line}:#{column + 1} of #{path}; #{shown}" : shown
     end
   end
 
@@ -50,8 +66,8 @@ module Sake
     # Ruby's Exception#backtrace: innermost first, "FILE:LINE:in 'FUNCTION'".
     def backtrace(main_path)
       callers = ["<main>", *frames.map(&:first)]
-      [["#{file || main_path}:#{line}", callers.last],
-       *frames.each_with_index.reverse_each.map { |(_, l, f), i| ["#{f || main_path}:#{l}", callers[i]] }]
+      [[Sake.at(file || main_path, line), callers.last],
+       *frames.each_with_index.reverse_each.map { |(_, l, f), i| [Sake.at(f || main_path, l), callers[i]] }]
         .map { |at, fn| "#{at}:in '#{fn}'" }
     end
 
@@ -60,14 +76,14 @@ module Sake
     # frames: [callee, call line], outermost first.
     def report
       callers = ["<main>", *frames.map(&:first)]
-      s = +"#{file || path}:#{line}: in #{callers.last}: #{kind}: #{op ? "#{op}: " : ""}#{message}"
+      s = +"#{Sake.at(file || path, line)}: in #{callers.last}: #{kind}: #{op ? "#{op}: " : ""}#{message}"
       shown = frames.each_with_index.reverse_each.to_a
       if shown.size > MAX_FRAMES
         omitted = shown.size - MAX_FRAMES
         shown = shown.first(MAX_FRAMES - 2) + [nil] + shown.last(2)
       end
       shown.each do |(_, l, f), i|
-        s << (i ? "\n  from #{f || path}:#{l}: in #{callers[i]}" : "\n  ... #{omitted} frames omitted ...")
+        s << (i ? "\n  from #{Sake.at(f || path, l)}: in #{callers[i]}" : "\n  ... #{omitted} frames omitted ...")
       end
       hints.each { |h| s << "\n  hint: #{h}" }
       s

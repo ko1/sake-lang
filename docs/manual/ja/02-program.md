@@ -24,7 +24,7 @@ puts(Util.origin)                    # => (0, 0)
 
 ### トップレベルに書けるもの
 
-- **`require "path"`**: 別のファイルを読みます。次の節で述べます。
+- **`require "path"`**: 別のファイルを読みます。**`generate "gen"`** は生成器が印字したソースを繋ぎます。次の節で述べます。
 - **関数定義**: `def name(params) ... end` と `def name(params) = expr`。
 - **名前空間付きの関数定義**: `def Type.name(params) ...`。`class Type` の中で `name` を定義するのと同じです。
 - **名前空間**: `class Name ... end` と `module Name ... end`。
@@ -55,6 +55,29 @@ puts(km_to_m(3))             # => 3000
 - **定義は 1 つの集まり。** すべてのファイルの定義はまとめて集められるので、ファイルをまたいで名前を任意の順で使えます。同じ名前を 2 つのファイルで定義するのは、1 つのファイルの中と同じくエラーです。
 - **メッセージ。** エラーメッセージは各行のファイルを名乗ります（`lib/units.sake:4`、`from lib/broken.sake:3`）。
 - **ライブラリ。** `require "json"` のように兄弟に無い名前は、処理系に付属する [ライブラリ](10-library.md)（`sakelib/`）から探します。
+
+### `generate`: 実行前に作るコード
+
+Sake は実行中に関数を定義しません。Ruby なら起動時に作るコード（スキーマの列ごとの関数、関数にコンパイルしたテンプレート）は、1 つ前の段で `generate "gen", "arg", ...` が作ります。プログラムを検査する前に、`gen.sake` を独立したプログラムとして検査して走らせ（残りの引数がその `ARGV`）、**それが印字したものを、その位置で require したファイルのようにプログラムに繋ぎます**。そのあと、生成したコードも含めてプログラム全体を検査して走らせます。
+
+```ruby
+# gen.sake: cols.txt の各行（"name"、"age"）の読み出し関数
+Array.each_with_index(String.lines(File.read("cols.txt"))) do |c, i|
+  puts "# sake-origin: cols.txt:#{i + 1}"
+  puts "def #{String.strip(c)}(row) = row[#{Kernel.inspect(String.strip(c))}]"
+end
+```
+
+```ruby
+# main.sake
+generate "gen"
+p(name(Hash["name" => "ko1"]))
+```
+
+- **毎回。** 生成器は起動のたびに走るので、生成したコードは古くならず、常に検査されます。生成器は生成先のプログラムを見られません。同じ生成器と同じ引数は 1 回だけ走ります。
+- **`require` と同じ。** 引数は文字列リテラル、`generate` はファイルのトップレベルの文です（それ以外の場所の `generate(...)` は普通の呼び出し）。生成器のファイルは `require` と同じように探します。
+- **エラーの位置。** 生成したコードは `(generate at main.sake:2)` と名乗ります。生成器が `# sake-origin: FILE:LINE` の行を書くと、次の同じ行までの行は FILE:LINE（ここでは `cols.txt:1`）として報告されます（静的エラー、実行時エラー、backtrace）。`# sake-origin: none` で終わります。生成器自身の問題や、生成器が終わったエラーは `generate` の行で報告され、何も走りません。
+- **見る。** `bin/sake --dump=generated main.sake` が生成したソースを印字します。
 
 ### 名前空間: `class` と `module`
 

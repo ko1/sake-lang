@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "prism"
+require "stringio"
 require_relative "sake/errors"
 require_relative "sake/values"
 require_relative "sake/registry"
@@ -25,13 +26,19 @@ module Sake
   # Parses and resolves; raises StaticErrors with every problem found. `require "lib/x"` (a string
   # literal, at the top level of a file) reads lib/x.sake next to the requiring file, once; the
   # required files come first, as their top-level statements run before the requiring file's.
-  def load(source, path, out: $stdout, input: $stdin)
+  #
+  # `generate "gen", "arg", ...` (string literals, at the top level of a file) is stage 0: the generator gen.sake is
+  # loaded, checked (by `generator`) and run first with the arguments as its ARGV, and what it prints is parsed and
+  # joined into the program as if required, under the name "(generate at FILE:LINE)". It cannot see the program.
+  # generated: when an Array, gets [site, generator path, args, source] for each generated source.
+  def load(source, path, out: $stdout, input: $stdin, generator: nil, generated: nil)
     Sake.program_name = path
+    generator ||= method(:run_generator)
     files = [] # [path, ProgramNode], required files before the files that require them
     sources = {}.compare_by_identity # Prism source => path, to name the file of any node
     diags = []
     seen = { File.expand_path(path) => true }
-    visit = lambda do |file, src|
+    visit = lambda do |file, src, dir = File.dirname(file)|
       result = Prism.parse(src, filepath: file)
       unless result.errors.empty?
         lines = src.lines
@@ -45,6 +52,10 @@ module Sake
       root = result.value
       sources[root.location.send(:source)] = file
       root.statements.body.each do |st|
+        if Resolver.generate_call?(st)
+          generate_stage0(st, file, dir, generator, generated, seen, diags) { |name, text, gdir| visit.(name, text, gdir) }
+          next
+        end
         next unless Resolver.require_call?(st)
         loc = st.location
         arg = st.arguments&.arguments
@@ -55,7 +66,7 @@ module Sake
         end
         name = arg[0].unescaped
         name += ".sake" if File.extname(name).empty?
-        target = File.dirname(file) == "." || File.absolute_path?(name) ? name : File.join(File.dirname(file), name)
+        target = dir == "." || File.absolute_path?(name) ? name : File.join(dir, name)
         if name.match?(/[*?\[{]/)
           # `require "sql/*"`: every matching .sake file next to the requiring file, in name order (the
           # requiring file itself excepted). Definitions are collected before anything runs, so the order
@@ -104,6 +115,87 @@ module Sake
     Resolver.new(path, files, registry, sources).resolve
   end
 
+  # One `generate` statement: runs its generator and hands the source it printed to visit (name, source, dir).
+  def generate_stage0(st, file, dir, generator, generated, seen, diags)
+    loc = st.location
+    args = st.arguments&.arguments || []
+    unless !args.empty? && args.all?(Prism::StringNode) && st.block.nil?
+      diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate takes string literals, as in `generate \"gen\", \"arg\"`",
+                              ["the generator and its arguments (its ARGV) are decided before running"])
+      return
+    end
+    name, *argv = args.map(&:unescaped)
+    name += ".sake" if File.extname(name).empty?
+    target = dir == "." || File.absolute_path?(name) ? name : File.join(dir, name)
+    target = File.join(SAKELIB, name) if !File.exist?(target) && File.exist?(File.join(SAKELIB, name))
+    site = "(generate at #{file}:#{loc.start_line})"
+    key = [:generate, File.expand_path(target), argv]
+    return if seen[key]
+    seen[key] = true
+    unless File.exist?(target)
+      diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate: cannot read #{target}", [])
+      return
+    end
+    active = (Thread.current[:sake_generating] ||= [])
+    if active.include?(File.expand_path(target))
+      diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate: #{target} is already generating (a cycle)", [])
+      return
+    end
+    begin
+      active << File.expand_path(target)
+      text = generator.(target, argv)
+    rescue StaticErrors => e
+      diags.concat(e.diagnostics)
+      diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate: the generator #{target} has the problems above", [])
+      return
+    rescue RunError => e
+      e.path ||= target
+      diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate: the generator #{target} failed:\n  #{e.report.gsub("\n", "\n  ")}", [])
+      return
+    ensure
+      active.pop
+    end
+    generated&.push([site, target, argv, text])
+    Sake.origins[site] = origin_map(text)
+    yield site, text, dir
+  end
+
+  # `# sake-origin: FILE:LINE` in generated source: the lines after it, up to the next marker, came from FILE:LINE
+  # (a generator usually writes several lines for one line of its input); `# sake-origin: none` ends it.
+  # origin_map(text)[n] is [FILE, LINE] for generated line n, or nil.
+  def origin_map(text)
+    map = [nil]
+    at = nil
+    text.each_line do |l|
+      if (m = l.match(/\A\s*# sake-origin: (?:(.+):(\d+)|none)\s*\z/))
+        map << nil
+        at = m[1] && [m[1], m[2].to_i]
+      else
+        map << at
+      end
+    end
+    map
+  end
+
+  # Runs a generator program and returns what it printed (stage 0 of `generate`). check: the static check of the
+  # generator program beyond resolving (the CLI's --strict level).
+  def run_generator(path, argv, check: nil)
+    saved = [Sake.program_name, Sake.argv]
+    buf = StringIO.new
+    Sake.argv = argv
+    program = load(File.read(path), path, out: buf, input: StringIO.new,
+                                          generator: ->(p, a) { run_generator(p, a, check:) })
+    check&.call(program)
+    begin
+      execute(program)
+    rescue Exit => e
+      raise RunError.new("SystemExit", "exit #{e.status}", 0, file: path) unless e.status.zero?
+    end
+    buf.string
+  ensure
+    Sake.program_name, Sake.argv = saved
+  end
+
   # Whether a file is a library: its top level holds only definitions (class, module, def, `X = Struct.new`)
   # and requires. A file that also runs something is a program, which a `require` next to it does not mean.
   def library_file?(path)
@@ -112,7 +204,7 @@ module Sake
     result.value.statements.body.all? do |st|
       case st
       when Prism::ClassNode, Prism::ModuleNode, Prism::DefNode, Prism::ConstantWriteNode then true
-      when Prism::CallNode then Resolver.require_call?(st)
+      when Prism::CallNode then Resolver.require_call?(st) || Resolver.generate_call?(st)
       else false
       end
     end

@@ -626,7 +626,7 @@ module Sake
     end
 
     # A call site for `via`: its line, or "file:line" in a required file.
-    def call_site(node) = (f = other_file(node)) ? "#{f}:#{node.location.start_line}" : node.location.start_line
+    def call_site(node) = (f = other_file(node)) ? Sake.at(f, node.location.start_line) : node.location.start_line
 
     # [check, item] for every check that may fail, where item is a strict item name:
     # "type" (surely fails, or may fail for a non-nil type), "nil", or "index-nil" (a nil from x[k]).

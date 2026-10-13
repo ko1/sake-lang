@@ -2,6 +2,8 @@
 # Serves the blog (blog/, on the Sake framework in this directory) with WEBrick on 127.0.0.1 and a free port, walks
 # the scenario with curl (index, new, create with a validation error, create, show, comment, edit, update, delete,
 # a missing post), prints each raw response, then the server's log. The server started here is stopped here.
+# The models, route helpers and templates are generated as the server starts (`generate` in
+# config/application.sake); no generated file is on disk.
 # The database is a fresh temporary directory (DATABASE_DIR), removed at the end.
 set -u
 cd "$(dirname "$0")/blog"
@@ -14,8 +16,9 @@ trap cleanup EXIT
 
 echo "######## bin/rails routes"
 $SAKE --strict bin/rails.sake routes
-echo "######## bin/rails generate"
-$SAKE --strict bin/rails.sake generate || exit 1
+echo "######## the generated source (bin/rails source, joined in by generate in config/application.sake)"
+$SAKE --strict --dump=generated config/application.sake > "$OUT/generated.sake" || exit 1
+echo "$(wc -l < "$OUT/generated.sake") lines (bin/sake --dump=generated config/application.sake)"
 
 start_server() {
   $SAKE bin/server.sake 0 > "$OUT/server.out" 2>> "$OUT/server.log" &

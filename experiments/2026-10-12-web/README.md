@@ -73,7 +73,7 @@ Rails が立っている Ruby の 3 つの機構に、Sake の形を 1 つずつ
 
 - **判断**: 上の 1（ライブラリの rescue）。案: 読み込んだライブラリの中の rescue には「never raised」を出さない。
 - ~~**判断**: 型のフィールドをデータとして扱う操作~~ → 入れた（10-13、下の追記）。
-- **判断**: 生成・マクロの段を言語として持つか（今は `tmp/generated/` を手で作り直す）。
+- **判断**: 生成・マクロの段を言語として持つか（今は `tmp/generated/` を手で作り直す）。→ 10-13 に `generate` として入れた（下の追記）。
 - ~~追加するだけで済むもの~~ → 入れた（10-13）: HMAC（`OpenSSL::HMAC`、sakelib/openssl.sake）、`Time.utc(y, m, d, h, mi, s)` と `Time.gm`、`__dir__`（と `__FILE__`・`__LINE__`）、パターンでの束縛（`in [Integer => code, …]`）、`Rack::Response#[]`。Sinatra の移植・テスト・デモはセッションの署名、Halt の変換、views の場所をこれらで書き直した（応答は変わらず「same responses」）。
 
 ## 追記（2026-10-13）: フィールドを名前で読み書きする
@@ -92,6 +92,27 @@ ko1「そもそも防衛的にライブラリじゃなくても書くよね？�
 
 - `sakelib/sinatra.sake` の `_route` は `rescue Pass` に戻した。`pass` を呼ばないアプリ（このデモ）は sinatra.sake を指す警告が 1 つ出て、走る。
 - `run.sh` は前と同じ応答（same responses）、sakelib の Sinatra テストも同じ。
+
+## 追記（2026-10-13）: 生成の段 `generate`
+
+ko1 が承認した「実行前の段で eval、毎回検査」（DESIGN.md、仕様は docs/spec.md §3）を入れ、Rails 型の生成の段を置き換えた。
+
+- 言語: ファイルの最上位の文 `generate "gen", "arg", ...`（`require` と同じく文字列リテラル）。プログラムを検査する前に gen.sake を独立したプログラムとして同じレベルで検査して走らせ（引数が ARGV）、標準出力をソースとしてその位置に繋ぎ、全体を検査して走らせる。生成物の位置は `(generate at FILE:LINE):N`。生成器が `# sake-origin: FILE:LINE` を書くと、そこから次の印までの行はその位置として報告される（静的エラー、実行時エラー、backtrace、「reached by」）。`bin/sake --dump=generated FILE` で生成物を見る。
+- ブログ: `config/application.sake` の 4 つの `require "../tmp/generated/..."` を `generate "../bin/rails", "source"` の 1 行にした。`bin/rails.sake` は `routes` と `source`（4 つの生成物を続けて印字）だけで、`generate`（ファイルへの書き出し）と `tmp/generated/` は**消した**（古い経路は残していない）。テンプレートのコンパイラは `.erb` の各部分の前に `# sake-origin: app/views/...:行` を書く（生成物 293 行 → 印 135 行込みで 429 行）。`run.sh` から生成の手順が無くなり、代わりに `--strict --dump=generated` で生成物の行数を出す。
+- 結果: `run.sh` の応答は前と同じ（セッション id・ポート・時刻・所要時間を除いて diff なし）。`--strict -c test/requests.sake` は前と同じ 8 件・同じ中身（すべて nil）。違いは位置で、3 件が .erb の行（`app/views/posts/_form.html.erb:3`、`index.html.erb:8`、`show.html.erb:3`）、2 件が印の無い生成物（ルートヘルパの `_to_param`、`_render_object` の `case`）を `(generate at test/../config/application.sake:6):N` で、3 件は手書きのファイルのまま。テンプレートの綴り間違い（`Post.titel(@post)`）は `app/views/posts/show.html.erb:3: error: undefined function Post.titel / hint: did you mean Post.title?` になった（前は `tmp/generated/views.sake:95`）。
+- 起動の費用（このマシン、負荷平均 6〜8 / 16 コアの共有環境、各 5 回）: `bin/sake -c bin/server.sake` が前 1.76〜1.82 秒、後 2.01〜2.25 秒で、約 0.3 秒増えた。生成器を単独で走らせると 1.23〜1.33 秒（Ruby の起動と sakelib の読み込みを含む。前の `bin/rails generate` は 1.07〜1.22 秒）なので、段の正味は起動の共有分だけ安い。サーバの起動ごと・`-c` ごとに払う。
+
+利用感（良くなったこと）:
+- **生成物が古くならない。** テンプレートを直してサーバを起動し直すだけ。「generate を忘れた」が起きない。手順が 1 つ減り、生成ファイル 4 つ（374 行）がリポジトリから消えた。
+- **誤りがテンプレートの行を指す。** origin の印は生成器が 1 行書くだけで、テンプレートのコンパイラの変更は約 5 行。
+- 生成器は「ソースを印字する普通のプログラム」なので、単体で `bin/sake bin/rails.sake source` と走らせて見られ、`--dump=generated` と同じものが出る。新しい API を覚えなくてよかった。
+
+利用感（悪くなったこと・気になること）:
+- **起動が毎回 0.3 秒遅い。** 生成器のプログラム（action_dispatch・active_record などを require する）を毎回検査する。生成器とアプリはライブラリを共有するので、検査は二重。キャッシュには「生成器が読んだファイル」を知る手段が要る（TODO 7）。
+- **生成物が目に見えない。** 読むには `--dump=generated` を打つ。エラーの hint にそれを書いた。
+- **生成器の `puts` はすべてソースになる。** デバッグの印字は `warn`（標準エラー）に出す必要がある。
+- 位置の名前が長い: 「reached by」の連鎖に `(generate at test/../config/application.sake:6):425` が何度も出る。`nil is stored at line 421` は生成物に限らずファイル名を持たない（前は `controllers.sake` の 40 行で、同じく曖昧だった）。
+- `generate` を置く位置が意味を持つ: モデルの `class Post < ApplicationRecord` は `app/models/*` より前に要る（`<` は最初の `class Post` に書く規則）ので、`generate` を `require "../app/models/*"` の前に置いた。
 
 ## ファイル
 

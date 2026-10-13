@@ -24,7 +24,7 @@ puts(Util.origin)                    # => (0, 0)
 
 ### What the top level may contain
 
-- **`require "path"`**: reads another file. See the next section.
+- **`require "path"`**: reads another file; **`generate "gen"`** joins the source a generator prints. See the next sections.
 - **Function definitions**: `def name(params) ... end` and `def name(params) = expr`.
 - **Namespaced function definitions**: `def Type.name(params) ...`, equivalent to defining `name` inside `class Type`.
 - **Namespaces**: `class Name ... end` and `module Name ... end`.
@@ -56,6 +56,29 @@ A **glob**, `require "sql/*"`, reads every file matching `sql/*.sake` next to th
 - **One collection of definitions.** The definitions of every file are collected together, so names may be used across files in any order. Defining a name in two files is an error, as it is in one file.
 - **Messages.** Error messages name the file of each line (`lib/units.sake:4`, `from lib/broken.sake:3`).
 - **Library.** A name with no sibling file, such as `require "json"`, is looked up in the [library](10-library.md) shipped with the interpreter (`sakelib/`).
+
+### `generate`: code made before the program runs
+
+Sake defines no function while running. Code that Ruby would make while booting (a function per column of a schema, a template compiled to a function) is made one stage earlier by `generate "gen", "arg", ...`: before the program is checked, `gen.sake` is checked and run as a program of its own (the other arguments are its `ARGV`), and **what it prints is joined into the program as if it were a required file** at that point. Then the whole program, generated code included, is checked and run.
+
+```ruby
+# gen.sake: a reader per line of cols.txt ("name", "age")
+Array.each_with_index(String.lines(File.read("cols.txt"))) do |c, i|
+  puts "# sake-origin: cols.txt:#{i + 1}"
+  puts "def #{String.strip(c)}(row) = row[#{Kernel.inspect(String.strip(c))}]"
+end
+```
+
+```ruby
+# main.sake
+generate "gen"
+p(name(Hash["name" => "ko1"]))
+```
+
+- **Every run.** The generator runs at every start, so the generated code is never stale, and it is always checked. It cannot see the program it generates for. The same generator with the same arguments runs once.
+- **Like `require`.** The arguments are string literals, and `generate` is a statement at the top level of a file (elsewhere, `generate(...)` is an ordinary call). The generator is found as `require` finds a file.
+- **Where errors point.** Generated code is named `(generate at main.sake:2)`. A line `# sake-origin: FILE:LINE` written by the generator makes the lines after it, up to the next such line, report as FILE:LINE (here `cols.txt:1`), in static errors, runtime errors and backtraces; `# sake-origin: none` ends it. A problem in the generator itself, or an error it ends with, is reported at the `generate` line, and nothing runs.
+- **Seeing it.** `bin/sake --dump=generated main.sake` prints the generated source.
 
 ### Namespaces: `class` and `module`
 

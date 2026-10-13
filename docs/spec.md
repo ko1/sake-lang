@@ -31,6 +31,7 @@ bin/sake FILE.sake              # check, then run
 bin/sake -c FILE.sake           # check only
 bin/sake --strict FILE.sake     # check more strictly (level 2), then run
 bin/sake --types FILE.sake      # experimental: print the inferred types instead of running
+bin/sake --dump=generated FILE.sake   # print the source each `generate` joins into the program (§3)
 ```
 
 | Exit status | Meaning |
@@ -92,6 +93,33 @@ A program is a file and the files it requires. Its top level may contain:
   A **glob**, `require "sql/*"`, reads every matching `.sake` file next to the requiring file, in
   name order (the requiring file itself excepted); a glob that matches nothing is an error. Since
   definitions are collected first, the order matters only for top-level statements.
+- **`generate "gen", "arg", ...`**: code generation before the program exists (stage 0). `gen.sake`
+  (found as `require` finds a file: next to the file, else in sakelib/) is a program of its own: it
+  is checked at the same level as the program, then run with the other arguments as its `ARGV`, in
+  the directory sake runs in. **What it prints is Sake source**, which is joined into the program as
+  if it were a required file at this point, named `(generate at FILE:LINE)`; then the whole program
+  is checked and run. The arguments are string literals and `generate` is a statement at the top
+  level of a file, like `require` (elsewhere, `generate(...)` is an ordinary call). The generator runs
+  at every start, so the generated code is never stale and always checked; it cannot see the program
+  it generates for, nor read its own output. The same generator with the same arguments is run once.
+  A problem in a generator, or an error it ends with, is reported at the `generate` statement and
+  nothing runs (exit 2). `bin/sake --dump=generated FILE.sake` prints each generated source.
+  **Origins**: a generated line `# sake-origin: FILE:LINE` says that the lines after it, up to the
+  next marker, came from FILE:LINE (a template, a schema); static and runtime errors, backtraces and
+  "reached by" hints in those lines name FILE:LINE, with the generated line in a hint.
+  `# sake-origin: none` ends it. Without an origin, a line is named `(generate at FILE:LINE):N`.
+
+  ```ruby
+  # gen.sake: a reader function per line of cols.txt
+  Array.each_with_index(String.lines(File.read("cols.txt"))) do |c, i|
+    puts "# sake-origin: cols.txt:#{i + 1}"
+    puts "def #{String.strip(c)}(row) = row[#{Kernel.inspect(String.strip(c))}]"
+  end
+
+  # main.sake
+  generate "gen"
+  p(name(Hash["name" => "ko1"]))
+  ```
 - **`__FILE__`, `__LINE__`, `__dir__`** are Ruby's, fixed before running: the file (the main file as
   given, a required file's full path), the line, and the full path of the file's directory
   (`File.join(__dir__, "views")`).

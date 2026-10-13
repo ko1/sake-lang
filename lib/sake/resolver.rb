@@ -64,6 +64,9 @@ module Sake
 
     # `require "x"`: a call with no receiver, read by Sake.load before resolving.
     def self.require_call?(node) = node.is_a?(Prism::CallNode) && node.name == :require && node.receiver.nil?
+    # `generate "gen"` as a statement at the top level of a file: stage 0 (Sake.load); elsewhere an ordinary call.
+    def self.generate_call?(node) = node.is_a?(Prism::CallNode) && node.name == :generate && node.receiver.nil?
+    def self.load_statement?(node) = require_call?(node) || generate_call?(node)
 
     # files: [path, ProgramNode], in the order their top-level statements run.
     def initialize(path, files, registry, sources = {}.compare_by_identity)
@@ -124,7 +127,7 @@ module Sake
     # --- collect definitions ---
 
     def collect
-      stmts = @files.flat_map { |_, root| root.statements.body }.reject { Resolver.require_call?(_1) }
+      stmts = @files.flat_map { |_, root| root.statements.body }.reject { Resolver.load_statement?(_1) }
       # Namespaces nest: `class B` inside `module A` is A::B, as `class A::B` is. Every definition is
       # collected under its full name. Classes first, so that `class Point` bodies can see their accessors.
       nodes = namespace_nodes(stmts, nil)
@@ -661,7 +664,7 @@ module Sake
       @toplevel.each do |st|
         body = @files.map { |_, root| root.statements.body }.find { |b| b.any? { _1.equal?(st) } }
         i = body.index { _1.equal?(st) }
-        prev = i.positive? && !definition?(body[i - 1]) && !Resolver.require_call?(body[i - 1])
+        prev = i.positive? && !definition?(body[i - 1]) && !Resolver.load_statement?(body[i - 1])
         check(st, Ctx.new(nil, nil, false, false, false, false, prev))
       end
       @direct_calls.each do |node, fn|

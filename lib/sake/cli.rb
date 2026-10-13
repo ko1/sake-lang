@@ -6,7 +6,7 @@ require_relative "../sake"
 module Sake
   module CLI
     USAGE = <<~TEXT
-      usage: sake [-c] [--strict[=SPEC]] [--types] [--dump=ast] FILE.sake [ARGS...]
+      usage: sake [-c] [--strict[=SPEC]] [--types] [--dump=ast|generated] FILE.sake [ARGS...]
 
         -c               check only: report problems, do not run
         --strict[=SPEC]  how strictly to check before running (default: level 1)
@@ -25,6 +25,7 @@ module Sake
                          --strict=2,index-nil       level 2 plus an item; `-item` removes one
         --types          experimental: print the inferred types instead of running
         --dump=ast       print the SakeAST (the resolved program the interpreter runs)
+        --dump=generated print the source each `generate "gen"` joins into the program
 
       exit status: 0 = ok, 1 = runtime error, 2 = problem found before running
     TEXT
@@ -302,6 +303,7 @@ module Sake
         when "-c" then check_only = true
         when "--types" then types = true
         when "--dump=ast" then ast = true
+        when "--dump=generated" then ast = :generated
         when "--strict" then items = STRICT_LEVELS[RECOMMENDED_LEVEL]
         when /\A--strict=(.*)\z/ then items = parse_strict($1)
         when "-h", "--help"
@@ -325,7 +327,15 @@ module Sake
     # What `sake` does with a program's source; returns the exit status. thread: false runs the
     # program on the current thread (where threads are not available, as in ruby.wasm).
     def run_source(source, path, items:, check_only: false, types: false, ast: false, out: $stdout, err: $stderr, thread: true)
-      program = Sake.load(source, path, out:)
+      generated = []
+      # stage 0: a generator is checked at the program's level, then run
+      check = items.empty? ? nil : ->(prog) { strict_check(prog, items, err) }
+      begin
+        program = Sake.load(source, path, out:, generated:, generator: ->(gen, argv) { Sake.run_generator(gen, argv, check:) })
+      ensure
+        generated.each { |site, gen, argv, text| out.puts("# #{site}: generate #{[gen, *argv].map(&:inspect).join(", ")}", text) } if ast == :generated
+      end
+      return 0 if ast == :generated
       if ast
         code = Lower.program(program)
         out.puts AST.dump(code.main)
