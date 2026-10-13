@@ -37,6 +37,7 @@ p(Math.PI > 3)                   # => true
 | `at_exit { }` | nil | a block run when the program ends |
 | `ARGV` | Array of String | the program's arguments; written like Ruby's constant, but an operation (`Kernel.ARGV`); every use gives the same Array, so `Array.shift(ARGV)` works |
 | `Kernel.PROGRAM_NAME` | String | the running file's name; unlike `ARGV` it cannot be written bare (a capitalized name is a type) |
+| `__FILE__`, `__LINE__`, `__dir__` | String, Integer, String | this file (the main file as given, a required file's full path), this line, and this file's directory as a full path, as Ruby's: `File.join(__dir__, "views")` |
 | `equal?(a, b)` | true/false | identity |
 | `block_given?` | true/false | whether the current function got a block |
 

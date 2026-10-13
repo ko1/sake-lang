@@ -242,9 +242,9 @@ puts(Time.asctime(t))                  # => Thu Feb 29 12:30:45 2024
 p(Time.ctime(t) == Time.asctime(t))    # => true
 ```
 
-## utc, getutc, gmtime, getgm
+## utc, getutc, gmtime, getgm, gm
 
-`Time.utc(x)`
+`Time.utc(Time|Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational])`
 
 `Time.getutc(x)`
 
@@ -252,7 +252,9 @@ p(Time.ctime(t) == Time.asctime(t))    # => true
 
 `Time.getgm(x)`
 
-同じ時刻を UTC モードで表す新しい Time（Ruby の `t.getutc`）。4 つは同じもので、Ruby の `t.utc`・`t.gmtime` のように主語を書き換えることはありません。結果は `utc?` が true、`zone` が `"UTC"`、元の Time と `==` です。
+`Time.gm(Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational])`
+
+Time を渡すと、同じ時刻を UTC モードで表す新しい Time（Ruby の `t.getutc`）。4 つは同じもので、Ruby の `t.utc`・`t.gmtime` のように主語を書き換えることはありません。結果は `utc?` が true、`zone` が `"UTC"`、元の Time と `==` です。年（と、`new` と同じくその後の部分）を渡すと、`Time.utc` と `Time.gm` はその時刻を UTC で作ります（Ruby のクラスメソッド `Time.utc(y, m, d, h, min, s)` と `Time.gm`）。Time にさらに引数を付けると `ArgumentError` です。
 
 ```ruby
 t = Time.new(2024, 2, 29, 12, 30, 45, in: "+09:00")
@@ -260,6 +262,8 @@ u = Time.utc(t)
 puts(Time.to_s(u))                     # => 2024-02-29 03:30:45 UTC
 puts(Time.to_s(t))                     # => 2024-02-29 12:30:45 +0900
 p(Time.utc?(u))                        # => true
+puts(Time.utc(2024, 2, 29, 3, 30, 45)) # => 2024-02-29 03:30:45 UTC
+puts(Time.gm(2024))                    # => 2024-01-01 00:00:00 UTC
 p(u == t)                              # => true
 p(Time.getutc(t) == Time.gmtime(t) && Time.getgm(t) == u)   # => true
 ```

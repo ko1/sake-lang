@@ -1061,6 +1061,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Time.getgm(x)`
 - `Time.getlocal(x, [String|Integer])`
 - `Time.getutc(x)`
+- `Time.gm(Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational])`
 - `Time.gmt?(x)`
 - `Time.gmt_offset(x)`
 - `Time.gmtime(x)`
@@ -1094,7 +1095,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Time.tv_sec(x)`
 - `Time.tv_usec(x)`
 - `Time.usec(x)`
-- `Time.utc(x)`
+- `Time.utc(Time|Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational])`
 - `Time.utc?(x)`
 - `Time.utc_offset(x)`
 - `Time.wday(x)`

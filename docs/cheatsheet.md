@@ -153,6 +153,9 @@ p(Array.each(Array[3, 12, 5]) { |x| break x if x > 10 })
   `@x += v`, `@x ||= v` write it. `@x` outside a class function is rejected; no globals (`$x`).
 - From anywhere: reader `C.x(v)` or `v.C.x`; writer (attr_accessor/attr_writer only)
   `C.set_x(v, w)` or `v.C.x = w` (also `v.C.x += 1`). `v.x` is rejected.
+- Fields by name: `C.field_names` (Symbols, in order), `C.read_field(v, :x)`, `C.write_field(v, :x, w)`
+  (Ruby's Struct `members`, `[]`, `[]=`). A literal (or a Symbol narrowed by `case name in :x | :y`)
+  keeps each field's type; any Symbol reads the union of the fields.
 - `def C.f(c)` outside the class = `def f(c)` inside. `def self.f` is rejected: one name is one function.
 - `Point = Struct.new(:x, :y)` = `class Point` with `attr_accessor x, y` (no block allowed).
 - `to_s(c)` / `inspect(c)` in the class are used by `puts`/`"#{}"` and `p`. `==` compares fields.
@@ -189,6 +192,7 @@ Point = Struct.new(:x, :y)
 pt = Point.new(1, 2)
 Point.set_x(pt, 5)
 p(pt)
+p(Array.map(Point.field_names) { |f| [f, Point.read_field(pt, f)] })
 ```
 
 ### Modules, operators for your types
@@ -243,7 +247,8 @@ puts("", Log.lines(log))
 
 ### Pattern matching (instead of `case/when`, `is_a?`)
 - `case x` with `in Integer | Float then ...`, `in String`, `in nil`, `in :ok`, `in "s"`,
-  `in {name:}`, `in [Integer, String]`, `in [a, b]` (binds), `in Point`, `else`. `case/when` is
+  `in {name:}`, `in [Integer, String]`, `in [a, b]` (binds), `in [Integer => n, String => s]` (binds
+  what matched), `in Point`, `else`. `case/when` is
   rejected. No `*rest` in Tuple patterns, no find patterns, pins, guards.
 - `x in T` is a boolean test (parenthesize as an argument: `p((x in Integer))`).
 - `x => T` asserts (raises NoMatchingPatternError) and narrows x; also clears nil.
@@ -478,7 +483,7 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Time
 
-`!=(x, Any)` · `+(x, Any)` · `-(x, Any)` · `<(x, Any)` · `<=(x, Any)` · `<=>(x, Any)` · `==(x, Any)` · `>(x, Any)` · `>=(x, Any)` · `asctime(x)` · `at(Integer|Float|Rational|Time, [in: String|Integer])` · `ceil(x, [Integer])` · `ctime(x)` · `day(x)` · `dst?(x)` · `floor(x, [Integer])` · `friday?(x)` · `getgm(x)` · `getlocal(x, [String|Integer])` · `getutc(x)` · `gmt?(x)` · `gmt_offset(x)` · `gmtime(x)` · `gmtoff(x)` · `hour(x)` · `isdst(x)` · `iso8601(x, [Integer])` · `localtime(x, [String|Integer])` · `mday(x)` · `min(x)` · `mon(x)` · `monday?(x)` · `month(x)` · `new(Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational], [String|Integer], [in: String|Integer])` · `now([in: String|Integer])` · `nsec(x)` · `round(x, [Integer])` · `saturday?(x)` · `sec(x)` · `strftime(x, String)` · `subsec(x)` · `sunday?(x)` · `thursday?(x)` · `to_a(x)` · `to_f(x)` · `to_i(x)` · `to_r(x)` · `to_s(x)` · `tuesday?(x)` · `tv_nsec(x)` · `tv_sec(x)` · `tv_usec(x)` · `usec(x)` · `utc(x)` · `utc?(x)` · `utc_offset(x)` · `wday(x)` · `wednesday?(x)` · `yday(x)` · `year(x)` · `zone(x)`
+`!=(x, Any)` · `+(x, Any)` · `-(x, Any)` · `<(x, Any)` · `<=(x, Any)` · `<=>(x, Any)` · `==(x, Any)` · `>(x, Any)` · `>=(x, Any)` · `asctime(x)` · `at(Integer|Float|Rational|Time, [in: String|Integer])` · `ceil(x, [Integer])` · `ctime(x)` · `day(x)` · `dst?(x)` · `floor(x, [Integer])` · `friday?(x)` · `getgm(x)` · `getlocal(x, [String|Integer])` · `getutc(x)` · `gm(Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational])` · `gmt?(x)` · `gmt_offset(x)` · `gmtime(x)` · `gmtoff(x)` · `hour(x)` · `isdst(x)` · `iso8601(x, [Integer])` · `localtime(x, [String|Integer])` · `mday(x)` · `min(x)` · `mon(x)` · `monday?(x)` · `month(x)` · `new(Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational], [String|Integer], [in: String|Integer])` · `now([in: String|Integer])` · `nsec(x)` · `round(x, [Integer])` · `saturday?(x)` · `sec(x)` · `strftime(x, String)` · `subsec(x)` · `sunday?(x)` · `thursday?(x)` · `to_a(x)` · `to_f(x)` · `to_i(x)` · `to_r(x)` · `to_s(x)` · `tuesday?(x)` · `tv_nsec(x)` · `tv_sec(x)` · `tv_usec(x)` · `usec(x)` · `utc(Time|Integer, [Integer], [Integer], [Integer], [Integer], [Integer|Float|Rational])` · `utc?(x)` · `utc_offset(x)` · `wday(x)` · `wednesday?(x)` · `yday(x)` · `year(x)` · `zone(x)`
 
 ### Tuple
 

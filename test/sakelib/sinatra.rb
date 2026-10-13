@@ -10,8 +10,8 @@ class App < Sinatra::Base
   # (Sake: def routes(app), the class body run once per request phase)
   # settings (Ruby: the class body runs once)
   set :environment, :production
-  set :views, File.join(File.dirname($PROGRAM_NAME), "sinatra_views")
-  set :public_folder, File.join(File.dirname($PROGRAM_NAME), "sinatra_public")
+  set :views, File.join(__dir__, "sinatra_views")
+  set :public_folder, File.join(__dir__, "sinatra_public")
   set :title, "Sake"
   enable :sessions
   set :session_secret, "0123456789abcdef" * 4

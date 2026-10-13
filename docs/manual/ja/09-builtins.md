@@ -37,6 +37,7 @@ p(Math.PI > 3)                   # => true
 | `at_exit { }` | nil | プログラムの終わりに走るブロック |
 | `ARGV` | Array of String | プログラムの引数。Ruby の定数のように書くが操作（`Kernel.ARGV`）。毎回同じ Array なので `Array.shift(ARGV)` が効く |
 | `Kernel.PROGRAM_NAME` | String | 走っているファイルの名前。`ARGV` と違い、裸では書けない（大文字の名前は型） |
+| `__FILE__`、`__LINE__`、`__dir__` | String、Integer、String | このファイル（主ファイルは与えた名前、require したファイルはフルパス）、この行、このファイルのディレクトリのフルパス。Ruby と同じ: `File.join(__dir__, "views")` |
 | `equal?(a, b)` | true/false | 同一性 |
 | `block_given?` | true/false | 今の関数がブロックを受けたか |
 

@@ -38,7 +38,7 @@ module Sake
   # includes: namespace => names of the modules it includes (for dispatch through modules and operators).
   # path: the main file; sources: Prism source => file (for the file of a node, see Sake.file_of).
   Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, :const_names,
-                       :rescue_members, :pattern_members, :exception_copies, keyword_init: true)
+                       :rescue_members, :pattern_members, :exception_copies, :field_limits, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -109,7 +109,7 @@ module Sake
       diags = @diags.uniq { [_1.path, _1.line, _1.column, _1.message] }.sort_by { [order.fetch(_1.path, 0), _1.line, _1.column] }
       raise StaticErrors.new(diags) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks, sources: @sources,
-                  functions: @functions, struct_types: @struct_types, const_names: @const_names, rescue_members: @rescue_members, pattern_members: @pattern_members, exception_copies: exception_copies,
+                  functions: @functions, struct_types: @struct_types, const_names: @const_names, rescue_members: @rescue_members, pattern_members: @pattern_members, exception_copies: exception_copies, field_limits: @field_limits,
                   includes: @linearized.transform_values { |l| l.map(&:first) })
     end
 
@@ -132,6 +132,7 @@ module Sake
       @class_nodes = nodes.select { |st, _| st.is_a?(Prism::ClassNode) }.group_by { |_, full| full }.transform_values { |l| l.map(&:first) }
       @class_specs = {}
       @private_fields = {} # type name => fields declared with private attr_*
+      @field_limits = {}.compare_by_identity # T.read_field/write_field outside T, by node => {T => the fields it may name}
       @module_names = nodes.filter_map { |st, full| full if st.is_a?(Prism::ModuleNode) }.to_set | Operators::MODULES
       @class_nodes.each_key { class_spec(_1, []) }
       stmts.each do |st|
@@ -331,6 +332,44 @@ module Sake
         @registry.define(name, f, [name], &dt.getters[f].impl) if readers.include?(f) # `T.x(v)`: the field's reader
         @registry.define(name, "set_#{f}", [name, "Any"], &dt.setters[f].impl) if writers.include?(f)
       end
+      define_field_access(dt)
+    end
+
+    FIELD_ACCESS = %w[field_names read_field write_field].freeze
+
+    # The fields as data (Ruby's Struct.members, Struct#[] and #[]=): `T.field_names` is the Array of the
+    # field names as Symbols, in order; `T.read_field(x, :f)` / `T.write_field(x, :f, v)` read and write
+    # the field the Symbol names (as `@f` does, past a function that replaces the reader or writer). A field
+    # named like one of these keeps its reader.
+    def define_field_access(dt)
+      name = dt.name
+      index = lambda do |sym|
+        dt.fields.index(sym.to_s) or raise Fail.new("KeyError", "no field `#{sym}` in #{name}")
+      end
+      defs = {
+        "field_names" => [[], -> { dt.fields.map(&:to_sym) }],
+        "read_field" => [[name, "Symbol"], ->(r, sym) { r.values[index.(sym)] }],
+        "write_field" => [[name, "Symbol", "Any"], ->(r, sym, v) { r.values[index.(sym)] = v }]
+      }
+      defs.each { |op, (params, impl)| @registry.define(name, op, params, &impl) unless dt.fields.include?(op) }
+    end
+
+    # `T.read_field(x, :f)` / `T.write_field(x, :f, v)` outside T's functions: the field must have a public
+    # reader / writer, as `T.f(x)` / `T.set_f(x, v)` would. A name that is not a literal is checked by the typer
+    # against the fields it may name (field_limits).
+    def check_field_access(node, ns, name, from)
+      return unless %w[read_field write_field].include?(name) && (dt = @struct_types[ns]) && from != ns
+      write = name == "write_field"
+      open = dt.fields.select do |f|
+        op = write ? "set_#{f}" : f
+        lookup(ns, op) && !private_access?(ns, op, from)
+      end
+      arg = node.arguments&.arguments&.[](1)
+      return ((@field_limits[node] ||= {})[ns] = open) && nil unless arg.is_a?(Prism::SymbolNode)
+      f = arg.unescaped
+      return if !dt.fields.include?(f) || open.include?(f) # a name that is no field: the typer reports it
+      error(node, "#{ns}.#{name}: field `#{f}` of #{ns} cannot be #{write ? "written (attr_reader or private)" : "read (attr_writer or private)"} outside `class #{ns}`",
+            ["inside `class #{ns}`, any field can be #{write ? "written" : "read"}"])
     end
 
     RESERVED_WORDS = %w[alias and begin break case class def defined? do else elsif end ensure false for if in module next nil
@@ -798,7 +837,7 @@ module Sake
       when Prism::InstanceVariableReadNode, Prism::InstanceVariableWriteNode, Prism::InstanceVariableOperatorWriteNode,
            Prism::InstanceVariableOrWriteNode
         check_field_shorthand(node, ctx)
-      when Prism::SymbolNode, Prism::RegularExpressionNode then nil
+      when Prism::SymbolNode, Prism::RegularExpressionNode, Prism::SourceFileNode, Prism::SourceLineNode then nil
       when Prism::RangeNode
         error(node, "a Range needs at least one end") if node.left.nil? && node.right.nil?
         check_each(ctx, node.left, node.right)
@@ -944,8 +983,9 @@ module Sake
         return error(pat, "a Tuple pattern names each position: `in [Integer, x]` (no `*rest`)") unless ok
         pat.requireds.each { check_pattern(_1, ctx) }
       when Prism::LocalVariableTargetNode then nil # binds the value (inside a Tuple pattern, or alone)
+      when Prism::CapturePatternNode then check_pattern(pat.value, ctx) # `Integer => n`: binds the value it matched
       else
-        error(pat, "unsupported pattern `#{first_line(pat.slice)}`; use a type (`in Integer`), a literal, `A | B`, `{x:}`, or `[p, q]`")
+        error(pat, "unsupported pattern `#{first_line(pat.slice)}`; use a type (`in Integer`), a literal, `A | B`, `{x:}`, `[p, q]`, or `P => name`")
       end
     end
 
@@ -1098,6 +1138,11 @@ module Sake
         return if ctx.prev
         return error(node, "`_` is the previous statement's value, and no statement precedes it here",
                      ["`_` reads the statement just before, in the same body (a function, block, or branch)"])
+      end
+      # `__dir__`: the directory of this file, as Ruby's (fixed before running, as `__FILE__` and `__LINE__`).
+      if recv.nil? && node.name == :__dir__
+        return error(node, "`__dir__` takes no arguments") if !args.empty? || blk
+        return
       end
       if (types = union_receiver(recv))
         return check_union_call(node, types, args, blk, ctx)
@@ -1508,6 +1553,7 @@ module Sake
       # called directly it could only raise.
       return mixin_call(node, ns, name, found, argc) if found.is_a?(UserFunction) && @modules.key?(ns) && (!found.module_function || found.abstract)
       return private_field_error(node, ns, name) if found.is_a?(Builtin) && private_access?(ns, name, from)
+      return check_field_access(node, ns, name, from) || found if found.is_a?(Builtin) && node.is_a?(Prism::CallNode)
       if found
         @direct_calls << [node, found] if found.is_a?(UserFunction)
         return found

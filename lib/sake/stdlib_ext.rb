@@ -163,7 +163,15 @@ module Sake
       reg.define("Time", :to_i, ["Time"], &:to_i)
       reg.define("Time", :to_f, ["Time"], &:to_f)
       reg.define("Time", :to_s, ["Time"], &:to_s)
-      reg.define("Time", :utc, ["Time"]) { _1.dup.utc }
+      # Time.utc(t): Ruby's t.utc. Time.utc(year, month, day, hour, min, sec) / Time.gm: Ruby's class method, in UTC.
+      reg.define("Time", :utc, [%w[Time Integer]], optional: [*%w[Integer Integer Integer Integer], REAL]) do |t, *xs|
+        next ruby_error("ArgumentError") { Time.utc(t, *xs) } if t.is_a?(Integer)
+        raise Fail.new("ArgumentError", "Time.utc(t) takes one Time (or a year and the parts after it)") unless xs.empty?
+        t.dup.utc
+      end
+      reg.define("Time", :gm, ["Integer"], optional: [*%w[Integer Integer Integer Integer], REAL]) do |*xs|
+        ruby_error("ArgumentError") { Time.gm(*xs) }
+      end
       reg.define("Time", :strftime, %w[Time String]) { |t, f| t.strftime(f) }
       %w[Integer Float Rational].each do |n|
         reg.define_binary(:+, "Time", n) { |t, s| t + s }

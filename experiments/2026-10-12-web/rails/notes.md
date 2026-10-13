@@ -45,7 +45,7 @@ callbacks, `has_many` options). Each got one Sake shape:
 | Ruby mechanism | Where Rails uses it | Sake shape |
 |---|---|---|
 | `routes.draw do ... end` (`instance_exec` on a Mapper); `Schema.define do ... end` | config/routes.rb, db/schema.rb | **a function of the DSL class.** The app reopens `ActionDispatch::Routing::Mapper` and writes `def draw(map)`; inside, `resources map, :posts do ... end` is a bare call of the Mapper's own function, as the Ruby block's bare calls are the Mapper's. The DSL object is the first argument instead of `self`. Same for `ActiveRecord::Schema.define(s)`. |
-| `define_method` per named route; attribute methods from the table; `send(action_name)`; `const_get("PostsController")`; ERB compiled to a method with `eval` | url_helpers, models, AbstractController, the dispatcher, ActionView::Template | **a generation step**, `bin/sake bin/rails.sake generate`, writes these as Sake source into `tmp/generated/` (routes 30 lines, models 114, views 183, controllers 47), which `config/application.sake` requires. Rails does this at boot; Sake does it before the program exists, and then the checker checks the result, templates included. |
+| `define_method` per named route; attribute methods from the table; `send(action_name)`; `const_get("PostsController")`; ERB compiled to a method with `eval` | url_helpers, models, AbstractController, the dispatcher, ActionView::Template | **a generation step**, `bin/sake bin/rails.sake generate`, writes these as Sake source into `tmp/generated/` (routes 30 lines, models 33, views 183, controllers 47; models was 114 before `T.read_field`, below), which `config/application.sake` requires. Rails does this at boot; Sake does it before the program exists, and then the checker checks the result, templates included. |
 | `before_action :set_post, only: %i[...]`; `has_many :comments, dependent: :destroy`; `validates :title, presence: true` | controllers and models' class bodies | **a hook function the framework calls**, written by the app: `def before_action(c, action)` with a `case` over the actions, `def validate(post)` with `validates post, :title, {...}` lines, `def before_destroy(post)`, `def comments(post) = Comment.where({post_id: @id})`. Rails' declaration is data the framework interprets; here it is the code that declaration would run. |
 
 The controller is also the view context: a template is compiled into a function of its controller class, so `@post`
@@ -135,6 +135,34 @@ end                                               end
 (the first `class Post` declares the fields, so the model file can only add functions to it; a second `< ApplicationRecord`
 is rejected: "`<` goes on the first `class Post`"). So, as in Rails, the model file does not list its columns.
 
+**Attributes by name (2026-10-13).** After this experiment Sake got `T.field_names`, `T.read_field(x, name)` and
+`T.write_field(x, name, v)` (Ruby's `Struct.members`, `Struct#[]`, `#[]=`). The attribute functions Rails gets by
+reflection are now `ActiveRecord::Base`'s, written once (`read_attribute_for_validation(r, name) = read_field(r, name)`,
+`_to_row`/`_from_row` over `field_names`, `_id(r) = read_field(r, :id)`, timestamps when the table has them), and the
+generated model is its fields and one cast by column type:
+
+```ruby
+class Post < ApplicationRecord
+  attr_accessor id, title, body, created_at, updated_at
+end
+def Post.table_name = "posts"
+def Post._table = once { _load }
+def Post._cast(r, name, value)
+  case name
+  in :id then write_field(r, name, ActiveRecord::Type.integer(value))
+  in :title then write_field(r, name, ActiveRecord::Type.string(value))
+  in :body then write_field(r, name, ActiveRecord::Type.string(value))
+  in :created_at | :updated_at then write_field(r, name, ActiveRecord::Type.datetime(value))
+  else raise(ActiveModel::UnknownAttributeError, "unknown attribute '#{name}' for Post.")
+  end
+end
+```
+
+Each `in` narrows `name` to its literals, so `write_field` gives a field only its column's type (`Post.title` stays
+`String | nil`); a write with an unnarrowed Symbol would give every field the value's type. The cast stays generated
+because the column types are in db/schema.sake, and the checker needs each field's type in the source. `_table` stays
+per model because `once` is one value per place in the program, and Base's functions are copies of one place.
+
 ### a template
 
 ```erb
@@ -220,6 +248,7 @@ The Ruby side uses ActionView/ActiveModel outside an app with the four `load_def
    id` (a class is checked on its own; its subclasses' fields do not exist there) → the framework calls functions the
    generated model defines (`_id(r)`), declared as required functions (`raise NotImplementedError`) of a module
    `Base` includes. Rails' "the base class calls what the subclass will have" needs that module every time.
+   (2026-10-13: `read_field(r, :id)` in Base reads the model's field, so `_id` is Base's now.)
 2. `def new(c)` (the `new` action) → `` `PostsController.new` is a built-in operation and cannot be redefined `` →
    `new_` (the generated `send_action` maps `:new` to it). Same reason: `Post.new(params)` → `Post.build(params)`.
 3. `attr_accessor post` and the scaffold's `def set_post(c)` → `` `PostsController.set_post` is a built-in operation and
@@ -278,14 +307,14 @@ might be unsaved). The checker cannot follow "before_action ran set_post, so @po
 
 ## Built-ins Sake lacks (requests)
 
-- **A class's fields as data**: `T.fields` (names) and a reader/writer by Symbol (`T.read_field(x, :title)`, typed as
-  the union of the fields). Half of `models.sake` (`read_attribute_for_validation`, `_to_row`, `_from_row`) is that.
+- ~~**A class's fields as data**~~: added 2026-10-13 as `T.field_names`, `T.read_field`, `T.write_field`; models.sake
+  went from 114 lines to 33 (above).
 - **A supported generation step** (or compile-time macros): `bin/rails generate` writes Sake that a later program
   requires; nothing tells the checker that `tmp/generated/` is stale after a template changes (run.sh always
   regenerates). Rails' boot-time metaprogramming has no other honest translation.
 - **HMAC / a cipher** (OpenSSL::HMAC, `ActiveSupport::MessageVerifier`): needed for Rails' cookie session store and
-  CSRF tokens.
-- `Time.utc(y, m, d, h, mi, s)` (and `Time.gm`).
+  CSRF tokens. (HMAC added 2026-10-13; a cipher not.)
+- ~~`Time.utc(y, m, d, h, mi, s)`~~ (added 2026-10-13).
 - (Checker) a way to say "this field is set before this function runs" (Rails' before_action → action → template
   chain), or narrowing a field across a call when the callee does not write it; otherwise level 2 asks every template
   to check `@post`.
@@ -296,12 +325,12 @@ might be unsaved). The checker cannot follow "before_action ran set_post, so @po
 |---|---|---|
 | ActionPack (dispatch, controller) | 28,132 | action_dispatch 186 + action_controller 234 + rails 76 |
 | ActionView | 19,780 | action_view 232 + template compiler (in rails_generate) ~110 |
-| ActiveRecord | 67,692 | active_record 250 |
+| ActiveRecord | 67,692 | active_record 304 |
 | ActiveModel | 8,655 | active_model 135 |
 | ActiveSupport (used part) | — | active_support 39 (+ sakelib's inflector) |
-| Railties (generators, commands) | 15,325 | rails_generate ~240 |
-| **total** | ~140,000 | **1,362** |
+| Railties (generators, commands) | 15,325 | rails_generate ~205 |
+| **total** | ~140,000 | **1,383** (1,362 before the attribute functions moved into Base) |
 
 The blog: 393 lines of Sake and ERB (controllers 103, models 43, views 137, routes 15, schema 29, config/bin 32,
-test 34); the generator writes 374 more. The same app in Rails (scaffold + guide, without jbuilder) is roughly 250 lines; the
+test 34); the generator writes 293 more (374 before `T.read_field`). The same app in Rails (scaffold + guide, without jbuilder) is roughly 250 lines; the
 difference is the `Ruby:` comments, the declared fields, and the explicit `before_action`/`validate` bodies.

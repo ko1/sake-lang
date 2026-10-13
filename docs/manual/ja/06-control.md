@@ -270,7 +270,7 @@ nil かもしれない値を検査せずに操作に渡すと、レベル 2（`-
 
 ### 束縛
 
-Record パターンと Tuple パターンは、要素をローカル変数に取り出します。`{x:}` はフィールド `x` を同名のローカルに、`{y: name}` はフィールド `y` をローカル `name` に束縛します。
+Record パターンと Tuple パターンは、要素をローカル変数に取り出します。`{x:}` はフィールド `x` を同名のローカルに、`{y: name}` はフィールド `y` をローカル `name` に束縛します。`P => name` は、パターン `P` が一致したものを、`P` の型に絞って束縛します: `in [Integer => code, String => body]`。
 
 ```ruby
 pt = {x: 3, y: 4}
@@ -283,6 +283,9 @@ in [n, s] then p([s, n])             # => ["one", 1]
 end
 p((pair in [Integer, String]))       # => true
 p((pair in [String, Integer]))       # => false
+case pair
+in [Integer => n, String => s] then p(String.upcase(s) * n)   # => "ONE"
+end
 ```
 
 ### 絞り込み

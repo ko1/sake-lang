@@ -349,6 +349,24 @@ p(Point.norm2(pt))                   # => 32
 p(Point.x(pt))                       # => 100
 ```
 
+### Fields by name
+
+`Point.field_names` is the Array of the fields' names as Symbols, in order (Ruby's `Struct.members`). `Point.read_field(p, name)` and `Point.write_field(p, name, v)` read and write the field a Symbol names, as `@x` does (Ruby's `p[name]` and `p[name] = v` on a Struct). Code that walks every field, such as a conversion to a Hash or from a row of a table, is written once with them.
+
+```ruby
+Point = Struct.new(:x, :y)
+pt = Point.new(3, 4)
+p(Point.field_names)                 # => [:x, :y]
+p(Array.map(Point.field_names) { |f| Point.read_field(pt, f) })   # => [3, 4]
+Point.write_field(pt, :y, 10)
+p(Point.read_field(pt, :y) + 1)      # => 11
+```
+
+- A literal name is that field: `Point.read_field(pt, :y)` has the type of `y`, and `:z` is a static error ("Point has no field :z"). A Symbol narrowed to literals (`case name in :x | :y`) reaches those fields only.
+- Any other Symbol reads the union of the fields' types, and writes the value into every field as far as the checker knows. To keep each field's type, write in a `case` over the names: `in :id then Post.write_field(post, name, Integer(v))`.
+- A Symbol that names no field raises `KeyError`.
+- Outside the class's functions, the fields a name may reach must have a public reader (`read_field`) or writer (`write_field`). Inside them, every field, private ones too; a base class's function (`class B < A`) reads B's fields with `read_field(b, :id)` even though A has no `id`.
+
 ### Field shorthand @x
 
 Inside a function of a class (in `class Point` or `def Point.f`), `@x` means field `x` of the function's **first parameter**. The first parameter is the subject by convention.

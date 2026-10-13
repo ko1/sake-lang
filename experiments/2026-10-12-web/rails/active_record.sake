@@ -15,7 +15,8 @@
 # Hash id => record, loaded on first use from db/<env>/<table>.json and written back after each change.
 #
 # The columns come from db/schema.sake (Rails' schema.rb) through `bin/rails generate`, which writes each model's
-# fields and the attribute functions Rails gets by reflection (tmp/generated/models.sake).
+# fields and a cast by column type (tmp/generated/models.sake); the attribute functions Rails gets by reflection
+# are Base's, over T.field_names, T.read_field and T.write_field.
 
 require "json"
 
@@ -27,17 +28,33 @@ module ActiveRecord
   class RecordInvalid < StandardError
   end
 
-  # The functions bin/rails generate writes for each model (Rails: attribute methods from the schema).
+  # The functions bin/rails generate writes for each model from db/schema.sake: the fields (the columns, as
+  # `attr_accessor`), and these.
   module Attributes
     def table_name = raise(NotImplementedError)
     def _table = raise(NotImplementedError)                     # Hash id => record (loaded once)
-    def _from_row(row) = raise(NotImplementedError)             # a record from a JSON row
-    def _to_row(r) = raise(NotImplementedError)                 # a JSON row (Hash String => Integer|String|nil)
-    def _id(r) = raise(NotImplementedError)
-    def _set_id(r, id) = raise(NotImplementedError)
-    def _write_attribute(r, name, value) = raise(NotImplementedError)  # name a String, value a String (cast by the column)
-    def _touch(r, now, created) = raise(NotImplementedError)    # timestamps
+    def _cast(r, name, value) = raise(NotImplementedError)      # write a column from a row or a form, cast by its type
     def before_destroy(r) = nil                                 # Ruby: has_many ..., dependent: :destroy
+  end
+
+  # Ruby: ActiveModel::Type::String / Integer / DateTime#cast (a form gives Strings, a JSON row Integers and Strings)
+  module Type
+    module_function
+    def string(v) = v == nil ? nil : Kernel.to_s(v)
+    def integer(v)
+      case v
+      in Integer then v
+      in nil then nil
+      else String.to_i(Kernel.to_s(v))
+      end
+    end
+    def datetime(v)
+      case v
+      in Time then v
+      in Integer then Time.at(v, in: "UTC")
+      else nil
+      end
+    end
   end
 
   # The database: a directory of JSON files (DATABASE_DIR, default db/development) and one lock.
@@ -129,6 +146,43 @@ module ActiveRecord
     def to_key(r)
       id = _id(r)
       id ? Array[id] : nil
+    end
+
+    # --- attributes (Ruby: ActiveRecord::AttributeMethods, by reflection on the schema): a field by its name ---
+    # Base has no `id` field; its functions are each model's, where `read_field(r, :id)` reads the model's.
+    def _id(r) = read_field(r, :id)
+    def _set_id(r, v) = write_field(r, :id, v)
+    def model_name(r) = ActiveModel::Name.new(ActiveSupport::Inflector.classify(table_name))
+    def read_attribute_for_validation(r, name) = read_field(r, name)
+    # Ruby: Post.column_names (Symbols here): the fields besides ActiveModel's errors
+    def column_names = Array.reject(field_names) { |f| f == :errors }
+    def _write_attribute(r, name, value) = _cast(r, String.to_sym(name), value)
+    def _to_row(r)
+      row = Hash[]
+      Array.each(field_names) do |f|
+        case f
+        in :errors then nil
+        else
+          v = read_field(r, f)
+          row[Symbol.to_s(f)] = (v in Time) ? Time.to_i(v) : v
+        end
+      end
+      row
+    end
+    def _from_row(row)
+      r = new
+      Array.each(column_names) { |c| _cast(r, c, row[Symbol.to_s(c)]) }
+      r
+    end
+    # Ruby: the timestamps, when the table has them
+    def _touch(r, now, created)
+      Array.each(field_names) do |f|
+        case f
+        in :created_at then write_field(r, f, now) if created
+        in :updated_at then write_field(r, f, now)
+        else nil
+        end
+      end
     end
 
     # --- querying (Ruby: ActiveRecord::Querying) ---

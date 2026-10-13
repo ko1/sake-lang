@@ -88,6 +88,9 @@ A program is a file and the files it requires. Its top level may contain:
   A **glob**, `require "sql/*"`, reads every matching `.sake` file next to the requiring file, in
   name order (the requiring file itself excepted); a glob that matches nothing is an error. Since
   definitions are collected first, the order matters only for top-level statements.
+- **`__FILE__`, `__LINE__`, `__dir__`** are Ruby's, fixed before running: the file (the main file as
+  given, a required file's full path), the line, and the full path of the file's directory
+  (`File.join(__dir__, "views")`).
 
 - **Function definitions**: `def name(params) ... end` and `def name(params) = expr` (by convention for a
   short expression, as in Ruby style).
@@ -553,13 +556,15 @@ matches and there is no `else`, it raises `NoMatchingPatternError`.
 | `{x:, y: name}` | a Record with those fields; binds the locals `x` and `name` |
 | `[P, Q]` | a Tuple of that length whose positions match `P` and `Q` (nested patterns allowed) |
 | `x` (a bare name inside `[...]`, or alone) | anything; binds the local `x` |
+| `P => x` | what `P` matches; binds the local `x` to it (`in [Integer => code, String => body]`), narrowed as `P` |
 
 - **No dispatch.** Matching compares type tags and values. There is no `===`, so `case`/`when` is
   not supported. A module name stands for the types that include it, and a built-in exception
   type for itself and its Ruby subclasses (`in IndexError` takes KeyError), as `rescue` does.
 - **Narrowing.** In `if x in Integer`, and in each `in` branch of `case x`, a local `x` is narrowed
   to the matching types. The `else` branch, and each later branch, sees the types that are left.
-  This is how a union such as `Integer | String` is used without a `type` report.
+  This is how a union such as `Integer | String` is used without a `type` report. A Symbol that
+  matches a literal (`in :title`) is that literal, also when it was made at run time (`String.to_sym`).
 - **Exhaustiveness.** A `case` without `else` that may leave a **type** unmatched is reported as
   `type` ([§2.1](#21-strictness)): the set of types is closed, so this can be checked. Symbol
   literals are tracked as values, so `case op in :add ... in :sub` is complete when `op` only ever
@@ -661,6 +666,15 @@ This defines the namespace `Point` with the following operations:
   named like a field (`def x(p) = ...`) replaces its reader, and one named like its writer
   (`def set_x(p, v)`) replaces the writer, also for `p.Point.x = v` and `p.Point.x += v`, as a method
   after `attr_accessor` does in Ruby; `@x` still reads and writes the field.
+- **Fields by name.** `Point.field_names` is the Array of the field names as Symbols, in order
+  (Ruby's `Struct.members`); `Point.read_field(p, name)` and `Point.write_field(p, name, v)` read and
+  write the field a Symbol names, as `@x` does (Ruby's `Struct#[]` and `#[]=`); a Symbol that names no
+  field raises `KeyError`. For the checker, a Symbol literal (or a Symbol narrowed to literals, as in
+  `case name in :id | :title`) reads and writes those fields only, so each keeps its own type; any other
+  Symbol reads the union of the fields and writes the value into every field. A literal that names no
+  field is reported as `type`. Outside the class's functions, the fields a name may reach must have a
+  public reader (for `read_field`) or writer (for `write_field`), as `Point.x`/`Point.set_x` would; inside
+  them, every field. A field named `field_names`, `read_field` or `write_field` keeps its reader instead.
 - **Field shorthand `@x`.** Inside a function of a class (in `class Point` or `def Point.f`),
   `@x` means field `x` of the function's **first parameter**, which is the subject by convention:
 

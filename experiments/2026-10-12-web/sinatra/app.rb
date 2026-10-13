@@ -14,7 +14,7 @@ class TodoApp < Sinatra::Base
   # (Sake: def routes(app), the class body run once per request phase)
   set :environment, :production
   set :server, "webrick"
-  set :views, File.join(File.dirname($PROGRAM_NAME), "views")
+  set :views, File.join(__dir__, "views")
   enable :sessions
   set :session_secret, "demo-secret-" * 6
   helpers ERB::Util                                 # h() in templates

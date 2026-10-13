@@ -147,6 +147,8 @@ p(res.set_cookie_header)
 res.add_header("vary", "accept-encoding")
 res.add_header("vary", "cookie")
 p([res.get_header("vary"), res.add_header("vary", nil)])
+res["x-index"] = "7"
+p([res["x-index"], res["vary"], res["nope"]])
 res.redirect("/elsewhere")
 p([res.status, res.location, res.redirect?, res.redirection?])
 res = Rack::Response.new("gone", 204, {"content-type" => "text/plain"})

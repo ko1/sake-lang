@@ -74,6 +74,7 @@ module Sake
     node :PValue, :value
     node :PTuple, :elems                    # `in [p, q]`: a Tuple of that length whose positions match
     node :PBind, :slot                      # `in x` inside a Tuple pattern: matches anything, binds it
+    node :PCapture, :pattern, :slot         # `in Integer => n`: matches the pattern, binds the value
     node :Unresolved, :message              # a call never resolved here (unreachable when checks pass)
 
     # nslots: the frame size (parameters first); slot_names: slot => variable name (for messages).

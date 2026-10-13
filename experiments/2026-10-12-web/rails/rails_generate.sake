@@ -1,9 +1,10 @@
 # `bin/rails generate` and `bin/rails routes`: what Rails does by metaprogramming while booting, done ahead of
-# time, since Sake defines no function while running (no define_method, send, eval or instance_variable_get):
+# time, since Sake defines no function while running (no define_method, send or eval; a field is read and written
+# by name with T.read_field / T.write_field, so the attribute functions are ActiveRecord::Base's):
 #
 #   Rails, at boot or first use                       here, written to tmp/generated/
 #   route helpers (define_method per named route)     routes.sake: posts_path, post_path(post), polymorphic_path
-#   attribute methods from the schema (reflection)    models.sake: each model's fields and attribute functions
+#   attribute methods from the schema (reflection)    models.sake: each model's fields and their casts
 #   send(action_name) in AbstractController           controllers.sake: send_action(c, action), a case
 #   templates compiled to methods (ActionView::Template)  views.sake: one function per .html.erb
 #   const_get("PostsController")                      controllers.sake: _rails_dispatch, a case
@@ -88,51 +89,17 @@ module Rails
         Array.push(out, "\n# #{model}: the columns of \"#{table}\" (db/schema.sake)\n")
         Array.push(out, "class #{model} < ApplicationRecord\n  attr_accessor #{Array.join(names, ", ")}\nend\n")
         Array.push(out, "def #{model}.table_name = #{Kernel.inspect(table)}\n")
-        Array.push(out, "def #{model}.model_name(r) = ActiveModel::Name.new(#{Kernel.inspect(model)})\n")
         Array.push(out, "def #{model}._table = once { _load }\n")
-        Array.push(out, "def #{model}._id(r) = @id\n")
-        Array.push(out, "def #{model}._set_id(r, v) = @id = v\n")
-        # read_attribute_for_validation: a Symbol to the field
-        Array.push(out, "def #{model}.read_attribute_for_validation(r, name)\n  case name\n")
-        Array.each(names) { |n| Array.push(out, "  in :#{n} then @#{n}\n") }
-        Array.push(out, "  else nil\n  end\nend\n")
-        # _write_attribute: a String value cast by the column type (Rails: ActiveModel::Type)
-        Array.push(out, "def #{model}._write_attribute(r, name, value)\n  case name\n")
-        Array.each(cols) do |c|
-          n = ActiveRecord::Schema::Column.name(c)
-          next if n == "id" || n == "created_at" || n == "updated_at"
-          cast = case ActiveRecord::Schema::Column.type(c)
-                 in :integer then "(value in Integer) ? value : String.to_i(Kernel.to_s(value))"
-                 in :datetime then "(value in Time) ? value : nil"
-                 else "value == nil ? nil : Kernel.to_s(value)"
-                 end
-          Array.push(out, "  in #{Kernel.inspect(n)} then @#{n} = #{cast}\n")
+        # _cast: a value from a row or a form, by the column's type (Rails: ActiveModel::Type); each branch names
+        # the columns of one type, so write_field gives each field only its type's values
+        Array.push(out, "def #{model}._cast(r, name, value)\n  case name\n")
+        groups = Array.group_by(cols) { |c| ActiveRecord::Schema::Column.type(c) }
+        Hash.each(groups) do |type, cs|
+          lits = Array.join(Array.map(cs) { |c| ":#{ActiveRecord::Schema::Column.name(c)}" }, " | ")
+          cast = type == :text ? :string : type
+          Array.push(out, "  in #{lits} then write_field(r, name, ActiveRecord::Type.#{cast}(value))\n")
         end
         Array.push(out, "  else raise(ActiveModel::UnknownAttributeError, \"unknown attribute '\#{name}' for #{model}.\")\n  end\nend\n")
-        # rows
-        Array.push(out, "def #{model}._to_row(r)\n  row = Hash[]\n")
-        Array.each(cols) do |c|
-          n = ActiveRecord::Schema::Column.name(c)
-          v = ActiveRecord::Schema::Column.type(c) == :datetime ? "@#{n} ? Time.to_i(@#{n}) : nil" : "@#{n}"
-          Array.push(out, "  row[#{Kernel.inspect(n)}] = #{v}\n")
-        end
-        Array.push(out, "  row\nend\n")
-        Array.push(out, "def #{model}._from_row(row)\n  r = new\n")
-        Array.each(cols) do |c|
-          n = ActiveRecord::Schema::Column.name(c)
-          v = case ActiveRecord::Schema::Column.type(c)
-              in :integer then "(v in Integer) ? v : nil"
-              in :datetime then "(v in Integer) ? Time.at(v, in: \"UTC\") : nil"
-              else "(v in String) ? v : nil"
-              end
-          Array.push(out, "  v = row[#{Kernel.inspect(n)}]\n  #{model}.set_#{n}(r, #{v})\n")
-        end
-        Array.push(out, "  r\nend\n")
-        if Array.include?(names, "created_at")
-          Array.push(out, "def #{model}._touch(r, now, created)\n  @created_at = now if created\n  @updated_at = now\nend\n")
-        else
-          Array.push(out, "def #{model}._touch(r, now, created) = nil\n")
-        end
       end
       Array.join(out)
     end

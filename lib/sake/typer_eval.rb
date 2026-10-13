@@ -489,7 +489,7 @@ module Sake
 
     def binds?(pat)
       case pat
-      when PBind, PRecord, MatchRecord then true
+      when PBind, PRecord, MatchRecord, PCapture then true
       when PAlt then binds?(pat.left) || binds?(pat.right)
       when PTuple then pat.elems.any? { binds?(_1) }
       else false
@@ -519,14 +519,16 @@ module Sake
       when PValue
         v = pat.value
         return ty.partition { nil_atom?(_1) } if v.is_a?(Lit) && v.value.nil?
-        # A Symbol literal decides a Symbol-literal atom exactly; other literals rule nothing out.
+        # A Symbol literal decides a Symbol-literal atom exactly, and a value of any Symbol that matches it is that
+        # literal; other literals rule nothing out.
         if v.is_a?(Lit) && v.value.is_a?(Symbol)
           exact = [:sym, v.value.to_s]
-          return [ty.select { _1 == exact || _1 == "Symbol" }, ty - [exact]]
+          return [ty.select { _1 == exact || _1 == "Symbol" }.map { _1 == "Symbol" ? exact : _1 }.uniq, ty - [exact]]
         end
         lit = v.is_a?(Str) ? "String" : LIT_TYPES.fetch(v.value.class)
         [ty.select { atom_type_name(_1) == lit }, ty]
       when PBind then [ty, []]
+      when PCapture then match_atoms(ty, pat.pattern)
       when PTuple # Tuples of the pattern's length whose every position may match; a position that may not keeps the Tuple on both sides
         matched = []
         rest = []
@@ -550,6 +552,9 @@ module Sake
         bind_pattern(env, pat.left, matched)
         bind_pattern(env, pat.right, matched)
       when PBind then assign(env, pat.slot, unknown?(matched) ? unknown("pattern") : of_atoms(matched))
+      when PCapture
+        bind_pattern(env, pat.pattern, matched)
+        assign(env, pat.slot, unknown?(matched) ? unknown("pattern") : of_atoms(matched))
       when PTuple
         pat.elems.each_with_index do |sub, i|
           tuples = matched.select { _1.is_a?(Array) && _1[0] == :tuple }

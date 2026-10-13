@@ -105,6 +105,16 @@ module Sake
           return ["#{c.op}: #{t} includes #{mod} but does not define #{op}", ["define `def #{op}(a)` in class #{t}"]]
         end
         ["#{c.op}: the operand #{maybe.sub("are", "is")}#{typer.show_failing(c)}, which has no #{op}; defined for #{c.expected.split("|").join(", ")}", []]
+      when ->(_) { c.arg == "field name" }
+        t = c.op.split(".")[0..-2].join(".")
+        bad = typer.show_failing(c)
+        hints = c.failing.flat_map { |a| DidYouMean::SpellChecker.new(dictionary: c.expected.split("|")).correct(":#{a[1]}") }.map { "did you mean `#{_1}`?" }
+        ["#{c.op}: #{t} has no field #{bad}; its fields are #{c.expected.split("|").join(", ")}", c.verdict == :error ? hints : hints + ["the Symbol can be one that names no field"]]
+      when ->(_) { c.arg == "field access" }
+        t = c.op.split(".")[0..-2].join(".")
+        how = c.op.end_with?("write_field") ? "written" : "read"
+        ["#{c.op}: the name #{c.verdict == :error ? "is" : "can be"} #{typer.show_failing(c)}, a field of #{t} that cannot be #{how} outside `class #{t}` (attr_reader, attr_writer or private)",
+         ["narrow the name to the fields #{c.expected.split("|").join(", ")} (`case name in :a | :b`), or call it inside `class #{t}`"]]
       when ->(_) { c.arg == "flatten_tuple" }
         ["#{c.op}: #{c.verdict == :error ? "the elements are" : "some elements are"} Tuples #{typer.show_failing(c)}, which flatten leaves whole (it opens only Arrays; a Tuple is one value)",
          ["to open them: `Array.flat_map(xs) { |t| Tuple.to_a(t) }`", "for growable Arrays inside, write `Array[...]` instead of `[...]`"]]

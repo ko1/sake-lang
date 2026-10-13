@@ -106,7 +106,7 @@ module Sake
       "Float" => %w[Kernel.Float Float.clamp Rational.to_f Integer.fdiv Time.to_f Complex.arg],
       "Rational" => %w[Kernel.Rational Integer.to_r Float.to_r Float.rationalize Rational.abs],
       "Complex" => %w[Kernel.Complex Complex.conjugate],
-      "Time" => %w[Time.now Time.at Time.new Time.utc],
+      "Time" => %w[Time.now Time.at Time.new Time.utc Time.gm],
       "String" => %w[Kernel.to_s Kernel.inspect Symbol.to_s Regexp.source Regexp.escape MatchData.to_s MatchData.pre_match MatchData.post_match
                      String.center String.tr String.delete String.squeeze String.succ String.next
                      Kernel.format Kernel.sprintf Integer.chr File.read Rational.to_s Complex.to_s

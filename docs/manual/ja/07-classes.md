@@ -349,6 +349,24 @@ p(Point.norm2(pt))                   # => 32
 p(Point.x(pt))                       # => 100
 ```
 
+### 名前でフィールドを扱う
+
+`Point.field_names` はフィールドの名前を Symbol で並べた Array です（Ruby の `Struct.members`）。`Point.read_field(p, name)` と `Point.write_field(p, name, v)` は、Symbol が名指すフィールドを `@x` と同じく読み書きします（Struct での Ruby の `p[name]` と `p[name] = v`）。Hash への変換や表の行からの読み込みのように、全フィールドをたどるコードを 1 度だけ書けます。
+
+```ruby
+Point = Struct.new(:x, :y)
+pt = Point.new(3, 4)
+p(Point.field_names)                 # => [:x, :y]
+p(Array.map(Point.field_names) { |f| Point.read_field(pt, f) })   # => [3, 4]
+Point.write_field(pt, :y, 10)
+p(Point.read_field(pt, :y) + 1)      # => 11
+```
+
+- リテラルの名前はそのフィールドです。`Point.read_field(pt, :y)` は `y` の型を持ち、`:z` は静的なエラーです（「Point has no field :z」）。リテラルに絞られた Symbol（`case name in :x | :y`）はそのフィールドだけに届きます。
+- それ以外の Symbol は、全フィールドの型の和を読み、検査器から見ると値を全フィールドに書きます。フィールドごとの型を保つには、名前の `case` の中で書きます: `in :id then Post.write_field(post, name, Integer(v))`。
+- どのフィールドも名指さない Symbol は `KeyError` です。
+- クラスの関数の外では、名前が届きうるフィールドに公開のリーダ（`read_field`）かライタ（`write_field`）が要ります。中では private も含めた全フィールドです。基底クラスの関数（`class B < A`）は、A に `id` が無くても `read_field(b, :id)` で B のフィールドを読めます。
+
 ### フィールドの略記 @x
 
 クラスの関数（`class Point` の中、または `def Point.f`）の中で、`@x` は関数の**第 1 引数**のフィールド `x` です。第 1 引数は慣習として主語です。

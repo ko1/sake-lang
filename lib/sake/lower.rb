@@ -154,7 +154,13 @@ module Sake
       when Prism::NextNode then Next.new(value: jump_value(n), origin: n)
       when Prism::BreakNode then Break.new(value: jump_value(n), target: (@jump_targets || []).last || :loop, origin: n)
       when Prism::YieldNode then Yield.new(args: args(n.arguments), origin: n)
-      when Prism::CallNode then call(n)
+      when Prism::CallNode
+        return Str.new(string: File.dirname(File.realpath(Sake.file_of(@program, n))).freeze, origin: n) if n.receiver.nil? && n.name == :__dir__
+        call(n)
+      when Prism::SourceFileNode # as Ruby's: the main file as given, a required file's full path
+        f = Sake.file_of(@program, n)
+        Str.new(string: (f == @program.path ? f : File.expand_path(f)).dup.freeze, origin: n)
+      when Prism::SourceLineNode then lit(n.location.start_line, n)
       when Prism::ConstantReadNode, Prism::ConstantPathNode then CallBuiltin.new(fn: target(n), args: [], block: nil, origin: n) # ARGV, Math::PI
       when Prism::InstanceVariableReadNode
         fa = target(n) or return unresolved(n)
@@ -297,6 +303,8 @@ module Sake
         PRecord.new(keys:, slots:, origin: pat)
       when Prism::ArrayPatternNode then PTuple.new(elems: pat.requireds.map { pattern(_1) }, origin: pat)
       when Prism::LocalVariableTargetNode then PBind.new(slot: slot(pat.depth, pat.name), origin: pat)
+      when Prism::CapturePatternNode
+        PCapture.new(pattern: pattern(pat.value), slot: slot(pat.target.depth, pat.target.name), origin: pat)
       else PValue.new(value: lower(pat), origin: pat)
       end
     end
@@ -404,6 +412,10 @@ module Sake
           f = field_name(t)
           return field_get(t, xs[0], n) if t.name == f && dt.fields.include?(f) && xs.size == 1
           return field_set(t, xs[0], xs[1], n) if t.name == "set_#{f}" && dt.fields.include?(f) && xs.size == 2
+          # `T.read_field(x, :f)` / `T.write_field(x, :f, v)` with a literal: `@f` / `@f = v`.
+          lit = xs[1].is_a?(Lit) && xs[1].value.is_a?(Symbol) && dt.fields.include?(xs[1].value.to_s) ? xs[1].value.to_s : nil
+          return field_get(dt.getters[lit], xs[0], n) if lit && t.name == "read_field" && xs.size == 2
+          return field_set(dt.setters[lit], xs[0], xs[2], n) if lit && t.name == "write_field" && xs.size == 3
         end
         CallBuiltin.new(fn: t, args: xs, block: blk, origin: n)
       end

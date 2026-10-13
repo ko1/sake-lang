@@ -1,0 +1,46 @@
+# OpenSSL::HMAC (Ruby's openssl, HMAC only): a keyed digest (RFC 2104) over sakelib/digest.sake.
+#
+#   Ruby                                          Sake
+#   OpenSSL::HMAC.hexdigest("SHA256", key, data)  the same
+#   OpenSSL::HMAC.digest("SHA256", key, data)     the same (a binary String)
+#   OpenSSL::HMAC.base64digest("SHA256", ...)     the same
+#
+# The digest is named by a String (MD5, SHA1, SHA256, SHA384, SHA512, any case), not an OpenSSL::Digest object.
+# An unknown name raises OpenSSL::Digest::DigestError, as Ruby's (the message has only its first part).
+
+require "digest"
+
+module OpenSSL
+  module Digest
+    class DigestError < StandardError
+    end
+  end
+
+  module HMAC
+    module_function
+
+    def digest(alg, key, data)
+      case String.upcase(alg)
+      in "MD5" then hmac(key, data, 64) { |s| ::Digest::MD5.digest(s) }
+      in "SHA1" then hmac(key, data, 64) { |s| ::Digest::SHA1.digest(s) }
+      in "SHA256" then hmac(key, data, 64) { |s| ::Digest::SHA256.digest(s) }
+      in "SHA384" then hmac(key, data, 128) { |s| ::Digest::SHA384.digest(s) }
+      in "SHA512" then hmac(key, data, 128) { |s| ::Digest::SHA512.digest(s) }
+      else raise OpenSSL::Digest::DigestError, "unsupported digest algorithm: #{alg}"
+      end
+    end
+
+    def hexdigest(alg, key, data) = ::Digest.hexencode(digest(alg, key, data))
+    def base64digest(alg, key, data) = Array.pack(Array[digest(alg, key, data)], "m0")
+
+    # H(K ^ opad, H(K ^ ipad, data)), with the key hashed when longer than the block and zero-padded to it.
+    def hmac(key, data, block)
+      k = String.bytesize(key) > block ? yield(String.b(key)) : String.b(key)
+      bytes = String.bytes(k)
+      Array.push(bytes, 0) while Array.size(bytes) < block
+      ipad = Array.pack(Array.map(bytes) { |b| b ^ 0x36 }, "C*")
+      opad = Array.pack(Array.map(bytes) { |b| b ^ 0x5c }, "C*")
+      yield(opad + yield(ipad + String.b(data)))
+    end
+  end
+end

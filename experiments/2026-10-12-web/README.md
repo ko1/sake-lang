@@ -42,7 +42,7 @@ Rails が立っている Ruby の 3 つの機構に、Sake の形を 1 つずつ
 | Ruby の機構 | Rails での使いどころ | Sake の形 |
 |---|---|---|
 | `instance_exec` で DSL オブジェクトにブロックを走らせる | routes.rb、schema.rb | DSL クラスを開き直して関数を書く（`def draw(map)`）。DSL オブジェクトは `self` ではなく第 1 引数 |
-| 起動時のコード定義（`define_method`、`send`、`eval` でのテンプレートのコンパイル） | ルートヘルパ、モデルの属性、アクションの呼び出し、ERB | **生成の段**: `bin/sake bin/rails.sake generate` が `tmp/generated/` に Sake を書き出す（ルート 30 行、モデル 114、ビュー 183、コントローラ 47）。検査器がそれを読むので、テンプレートの誤り（`Post.titel(post)`）がサーバを起動する前に出る |
+| 起動時のコード定義（`define_method`、`send`、`eval` でのテンプレートのコンパイル） | ルートヘルパ、モデルの属性、アクションの呼び出し、ERB | **生成の段**: `bin/sake bin/rails.sake generate` が `tmp/generated/` に Sake を書き出す（ルート 30 行、モデル 33（10-13 に 114 から。下の追記）、ビュー 183、コントローラ 47）。検査器がそれを読むので、テンプレートの誤り（`Post.titel(post)`）がサーバを起動する前に出る |
 | コードをデータとして持つ（`before_action :x`、`has_many`、`validates`） | コントローラとモデルのクラス本体 | アプリが書くフック関数: `def before_action(c, action)` に `case`、`def validate(post)` に `validates post, :title, {...}` の行、`def comments(post) = Comment.where({post_id: @id})` |
 
 テンプレートは Rails の書き方のまま中身が Sake の式で（`<%= link_to "Show this post", post %>`、`render "form", post: @post`）、「既に HTML」を型（`ActiveSupport::SafeBuffer`）にしたので、エスケープも Rails と同じに効き、検査器がどの値が HTML か知っている。無いもの: CSRF、暗号化 Cookie セッション（サーバのメモリに置いた）、respond_to/JSON、before_action と before_destroy 以外のコールバック、`has_many` の宣言（関数を手で書く）、presence と length 以外の検証、マイグレーション、Rails の双子アプリ。保存は JSON ファイル（SQLite の結合が無く、Rails の `where`/`order` の API のほうが SQL より大事なので）。規模: フレームワーク 1,362 行、ブログ 393 行 + 生成 374 行。
@@ -57,9 +57,9 @@ Rails が立っている Ruby の 3 つの機構に、Sake の形を 1 つずつ
 
 つらかったこと（重い順）:
 1. **ライブラリの `rescue` が、アプリ次第で「投げられない」エラーになる。** Sinatra 内部の `rescue Pass` は、アプリが `pass` を一度も呼ばないとプログラム全体の検査で「never raised」になる。全部受けの `rescue => e` にして `Pass` 以外を投げ直すしかなかった。
-2. **実行時に定義するコードが書けない。** Rails の大半（ルートヘルパ、属性、`send(action)`、テンプレート）は生成の段で書き出すしかなく、生成物が古いことを誰も知らせない。型のフィールドをデータとして読む手段（`T.fields`、Symbol でのフィールド読み書き）があれば、生成するモデルのコードの大半が要らなくなる。
+2. **実行時に定義するコードが書けない。** Rails の大半（ルートヘルパ、属性、`send(action)`、テンプレート）は生成の段で書き出すしかなく、生成物が古いことを誰も知らせない。型のフィールドをデータとして読む手段（`T.fields`、Symbol でのフィールド読み書き）があれば、生成するモデルのコードの大半が要らなくなる。（10-13: 入れた。下の追記）
 3. **Rails の名前が Sake の組み込みとぶつかる。** `new` アクション → `new_`、`Post.new(params)` → `Post.build(params)`、`params.require` → `require_`（`require` は文）。`attr_accessor post` の書き込み関数 `set_post` が、scaffold の callback 名 `set_post` とぶつかる（→ `attr_reader post`）。
-4. **基底クラスは子のフィールドを使えない。** Rails の「基底クラスが、子が持つはずのものを呼ぶ」は、必須関数のモジュールを毎回挟む。
+4. **基底クラスは子のフィールドを使えない。** Rails の「基底クラスが、子が持つはずのものを呼ぶ」は、必須関数のモジュールを毎回挟む。（10-13: `read_field(r, :id)` で読めるようになった）
 5. **1 か所で作るクラスはフィールドの型が 1 つ。** 共通の関数で作る `Relation` が Post と Comment の両方を持って混ざった（`mixed`）。Relation は Array にし、`Post.where(...).order(...)` の連鎖は失った。
 6. **params の値の型が長い再帰的な和**（String、Array、Hash、nil）で、使うたびに `x => Array` が要り、エラーには約 600 文字の型が出る。
 7. 細かいもの: ブロックの引数の数が厳密（レイアウトの裸の `yield` を `yield(nil)` に）、テンプレートの誤りの位置が生成ファイルの行で .erb の行でない、`puts` の後に `IO.flush` が要る（Ruby と同じ）、`Time.utc` が 6 引数を取らない、`{}` が空の Record で Hash でない。
@@ -72,9 +72,19 @@ Rails が立っている Ruby の 3 つの機構に、Sake の形を 1 つずつ
 ## 頼まれた組み込み・ko1 の判断が要るもの
 
 - **判断**: 上の 1（ライブラリの rescue）。案: 読み込んだライブラリの中の rescue には「never raised」を出さない。
-- **判断**: 型のフィールドをデータとして扱う操作（`T.fields`、`T.read_field(x, :title)`）。型は和になる。
+- ~~**判断**: 型のフィールドをデータとして扱う操作~~ → 入れた（10-13、下の追記）。
 - **判断**: 生成・マクロの段を言語として持つか（今は `tmp/generated/` を手で作り直す）。
-- 追加するだけで済むもの: HMAC（`OpenSSL::HMAC`）、`Time.utc(y, m, d, h, mi, s)`、`__dir__`、パターンでの束縛（`in [Integer => code, …]`）、`Rack::Response#[]`。
+- ~~追加するだけで済むもの~~ → 入れた（10-13）: HMAC（`OpenSSL::HMAC`、sakelib/openssl.sake）、`Time.utc(y, m, d, h, mi, s)` と `Time.gm`、`__dir__`（と `__FILE__`・`__LINE__`）、パターンでの束縛（`in [Integer => code, …]`）、`Rack::Response#[]`。Sinatra の移植・テスト・デモはセッションの署名、Halt の変換、views の場所をこれらで書き直した（応答は変わらず「same responses」）。
+
+## 追記（2026-10-13）: フィールドを名前で読み書きする
+
+ko1「2は追加して書き直して」。`T.field_names`・`T.read_field(x, name)`・`T.write_field(x, name, v)`（Ruby の `Struct.members`・`#[]`・`#[]=`）を入れ、Rails 型のモデルを書き直した。
+
+- Rails が反射で得る属性関数（`read_attribute_for_validation`、行との変換 `_to_row`/`_from_row`、`_id`、タイムスタンプ、`model_name`、フォームからの代入）は `ActiveRecord::Base` に 1 度だけ書いた。生成するモデルはフィールドと列の型による変換だけで、114 行 → 33 行。
+- 型は保たれる: 変換は `case name in :title then write_field(r, name, ActiveRecord::Type.string(value))` の形で、各 `in` が名前をリテラルに絞るので、フィールドはそれぞれ自分の型だけを持つ（`Post.title` は `String | nil` のまま）。この過程で、`String.to_sym` から来た Symbol が `in :title` で絞られない穴が見つかり、直した（絞らないと全フィールドに String と Integer が入り、`Post.errors` まで汚れて 10 件の `[mixed]` が出た）。
+- 変換が生成に残る理由: 列の型は db/schema.sake にあり、検査器はフィールドの型をソースから知る必要がある。`_table` が残る理由: `once` はプログラムの場所ごとに 1 つの値で、Base の関数は 1 つの場所の写しなので。
+- 結果: `run.sh` の応答は前と同じ（違いはタイムスタンプと所要時間だけ）、`--strict` の報告は前と同じ 8 件、`compare` は Rails と同じ（compare.sake の手書きの `read_attribute_for_validation` も `read_field` 1 行にした）。
+- 規模: active_record 250 → 304 行、rails_generate 346 → 313 行、生成物 374 → 293 行。
 
 ## ファイル
 

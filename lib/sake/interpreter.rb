@@ -352,6 +352,10 @@ module Sake
       when PBind
         f.slots[pat.slot] = v
         true
+      when PCapture
+        return false unless pattern_match?(v, pat.pattern, f)
+        f.slots[pat.slot] = v
+        true
       end
     end
 

@@ -32,6 +32,7 @@ require "erubi"
 require "json"
 require "base64"
 require "digest"
+require "openssl"
 require "mustermann"
 
 module Sinatra
@@ -545,12 +546,8 @@ module Sinatra
       in nil then Halt.new("halt", nil, nil, nil)
       in Integer then Halt.new("halt", res, nil, nil)
       in String then Halt.new("halt", nil, nil, String[res])
-      in [Integer, String]
-        code, b = res
-        Halt.new("halt", code, nil, String[b])
-      in [Integer, Hash, String]
-        code, hs, b = res
-        Halt.new("halt", code, hs, String[b])
+      in [Integer => code, String => b] then Halt.new("halt", code, nil, String[b])
+      in [Integer => code, Hash => hs, String => b] then Halt.new("halt", code, hs, String[b])
       in Array then Halt.new("halt", nil, nil, Array.map(res) { |s| "#{s}" })
       else Halt.new("halt", nil, nil, String["#{res}"])
       end
@@ -751,7 +748,7 @@ module Sinatra
       raw = Rack::Request.cookies(Rack::Request.new(@env))["rack.session"]
       return empty unless raw
       data, _, mac = String.rpartition(raw, "--")
-      return empty unless Rack::Utils.secure_compare(Sinatra.hmac_hex(Settings.session_secret(@settings), data), mac)
+      return empty unless Rack::Utils.secure_compare(OpenSSL::HMAC.hexdigest("SHA256", Settings.session_secret(@settings), data), mac)
       v = begin
         JSON.parse(Base64.strict_decode64(data))
       rescue JSON::ParserError, ArgumentError
@@ -763,7 +760,7 @@ module Sinatra
     def _commit_session(app)
       return nil unless Settings.sessions(@settings)
       data = Base64.strict_encode64(JSON.generate(session(app)))
-      value = "#{data}--#{Sinatra.hmac_hex(Settings.session_secret(@settings), data)}"
+      value = "#{data}--#{OpenSSL::HMAC.hexdigest("SHA256", Settings.session_secret(@settings), data)}"
       Response.set_cookie(@response, "rack.session", Hash[value: value, path: "/", httponly: true])
       nil
     end
@@ -810,15 +807,5 @@ module Sinatra
          "jpg" => "image/jpeg", "jpeg" => "image/jpeg", "gif" => "image/gif", "ico" => "image/vnd.microsoft.icon",
          "pdf" => "application/pdf", "zip" => "application/zip", "atom" => "application/atom+xml",
          "rss" => "application/rss+xml", "xhtml" => "application/xhtml+xml", "wasm" => "application/wasm"]
-  end
-
-  # HMAC-SHA256 (RFC 2104) over digest.sake, as hex.
-  def hmac_hex(key, msg)
-    k = String.bytesize(key) > 64 ? Digest::SHA256.digest(key) : String.b(key)
-    bytes = String.bytes(k)
-    Array.push(bytes, 0) while Array.size(bytes) < 64
-    ipad = Array.pack(Array.map(bytes) { |b| b ^ 0x36 }, "C*")
-    opad = Array.pack(Array.map(bytes) { |b| b ^ 0x5c }, "C*")
-    Digest.hexencode(Digest::SHA256.digest(opad + Digest::SHA256.digest(ipad + String.b(msg))))
   end
 end

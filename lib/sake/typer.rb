@@ -1420,7 +1420,30 @@ module Sake
       when /\Aset_(.+)\z/
         field_write(dt.name, $1, args[1], node, atoms: args[0])
         args[1]
+      when "field_names"
+        new_site(node, " #{dt.name}.field_names", u(*dt.fields.map { one([:sym, _1]) }))
+      when "read_field"
+        u(*named_fields(dt, name, args[1], node).map { data_op(dt, _1, args[0..0], node) })
+      when "write_field"
+        named_fields(dt, name, args[1], node).each { field_write(dt.name, _1, args[2], node, atoms: args[0]) }
+        args[2]
       end
+    end
+
+    # The fields a Symbol type names: a literal's field (another literal is reported), all for any Symbol.
+    def named_fields(dt, op, sym, node)
+      lits = sym.select { _1.is_a?(Array) && _1[0] == :sym }.map { _1[1] }
+      bad = lits - dt.fields
+      unless bad.empty?
+        add_check(node, "#{dt.name}.#{op}", "field name", dt.fields.map { ":#{_1}" }.join("|"), sym, bad.size == lits.size && !sym.include?("Symbol") ? :error : :partial,
+                  bad.map { [:sym, _1] })
+      end
+      named = sym.include?("Symbol") ? dt.fields : lits & dt.fields
+      if (open = @program.field_limits&.dig(node, dt.name)) && !(shut = named - open).empty?
+        add_check(node, "#{dt.name}.#{op}", "field access", open.map { ":#{_1}" }.join("|"), sym, shut == named ? :error : :partial,
+                  shut.map { [:sym, _1] })
+      end
+      named
     end
 
     def new_site(node, label, elem) = site_for(node, label, init: elem).tap { |ty| write_elems(ty, [elem], node, "") }

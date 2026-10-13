@@ -1,0 +1,44 @@
+# The fields as data: T.field_names, T.read_field(x, name), T.write_field(x, name, v) (Ruby's Struct.members,
+# Struct#[] and #[]=). A field named by a literal (or narrowed by `case name in :title`) keeps its own type.
+class Post
+  attr_accessor id, title, published_at
+end
+
+post = Post.new(1, "Hello", nil)
+p Post.field_names                                   # [:id, :title, :published_at]
+p Post.read_field(post, :title)                      # "Hello"
+p String.upcase(Post.read_field(post, :title))       # the field's own type: String
+Post.write_field(post, :title, "Hi")
+p post
+
+# A row from outside (JSON, a form): each field's value converted by its column.
+def cast(post, name, v)
+  case name
+  in :id then Post.write_field(post, name, Kernel.Integer(v))
+  in :title then Post.write_field(post, name, v)
+  in :published_at then Post.write_field(post, name, v == "" ? nil : Time.at(Kernel.Integer(v), in: "UTC"))
+  end
+end
+row = Hash["id" => "7", "title" => "Row", "published_at" => "0"]
+loaded = Post.new(0, "", nil)
+Array.each(Post.field_names) { |f| cast(loaded, f, row[Symbol.to_s(f)] || "") }
+p Post.id(loaded) + 1                                # 8: id holds Integers only
+at = Post.published_at(loaded)
+p Time.year(at) if at
+
+# Any name: the union of the fields' types.
+p Array.map(Post.field_names) { |f| Post.read_field(loaded, f) }
+begin
+  Post.read_field(loaded, String.to_sym("titel"))
+rescue KeyError => e
+  puts Exception.message(e)
+end
+
+# Inside the class, every field, a private one too.
+class Draft
+  attr_accessor title
+  private attr_reader token
+
+  def to_h(d) = Array.to_h(Array.map(field_names) { |f| [f, read_field(d, f)] })
+end
+p Draft.to_h(Draft.new("Notes", "s3cret"))

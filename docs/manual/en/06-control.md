@@ -270,7 +270,7 @@ A match compares type tags and values. There is no `===`, so `case`/`when` is no
 
 ### Binding
 
-Record and Tuple patterns take the elements out into local variables. `{x:}` binds field `x` to a local of the same name; `{y: name}` binds field `y` to the local `name`.
+Record and Tuple patterns take the elements out into local variables. `{x:}` binds field `x` to a local of the same name; `{y: name}` binds field `y` to the local `name`. `P => name` binds what the pattern `P` matched, narrowed as `P`: `in [Integer => code, String => body]`.
 
 ```ruby
 pt = {x: 3, y: 4}
@@ -283,6 +283,9 @@ in [n, s] then p([s, n])             # => ["one", 1]
 end
 p((pair in [Integer, String]))       # => true
 p((pair in [String, Integer]))       # => false
+case pair
+in [Integer => n, String => s] then p(String.upcase(s) * n)   # => "ONE"
+end
 ```
 
 ### Narrowing

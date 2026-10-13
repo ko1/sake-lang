@@ -116,17 +116,16 @@ serves it.
 
 ## Built-ins Sake lacks (requests)
 
-- **`__dir__`** (and `__FILE__`): views and public folders are found next to the app in Ruby with
-  `File.join(__dir__, "views")`; Sake needs `File.dirname(Kernel.PROGRAM_NAME)`, which is only right when the
-  app is the program.
-- **Binding names in patterns** (`in [Integer => code, String => b]`): rejected ("unsupported pattern"); the
-  Halt conversion matches the shape, then destructures again.
+- ~~**`__dir__`** (and `__FILE__`)~~: added 2026-10-13; the test and the demo say `File.join(__dir__, "views")` as
+  Ruby's (they said `File.dirname(Kernel.PROGRAM_NAME)`, right only when the app is the program).
+- ~~**Binding names in patterns**~~ (`in [Integer => code, String => b]`): added 2026-10-13; `_halt_value` uses it.
 - **A rescue of a library's own control-flow exception** in a program that never raises it is a level-1 error
   (`rescue Sinatra::Pass: the begin body never raises Sinatra::Pass`) when the app never calls `pass`. A library
   cannot know whether its user will; written as a bare `rescue => e` + `raise e unless e in Pass`. Some way to
   mark a rescue as "only if reachable" would help libraries (Ruby's catch/throw would also do).
-- `Rack::Response#[]` / `[]=` (Rack::Response is not `Indexable` in rack.sake): Sinatra writes
-  `response['Location'] = ...`; here `Response.set_header`.
+- ~~`Rack::Response#[]` / `[]=`~~: added to rack.sake 2026-10-13 (the port still says `Response.get_header`).
+- ~~HMAC~~: `OpenSSL::HMAC` (sakelib/openssl.sake) added 2026-10-13; the session cookie uses it (it had its own
+  HMAC-SHA256).
 - `Marshal` (for Rack-compatible session cookies) and AES (`Rack::Session::Encryptor`): not needed for Sake-to-Sake.
 
 ## 書き心地 (what I wrote → the message → what I wrote instead)
