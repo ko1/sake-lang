@@ -119,10 +119,11 @@ serves it.
 - ~~**`__dir__`** (and `__FILE__`)~~: added 2026-10-13; the test and the demo say `File.join(__dir__, "views")` as
   Ruby's (they said `File.dirname(Kernel.PROGRAM_NAME)`, right only when the app is the program).
 - ~~**Binding names in patterns**~~ (`in [Integer => code, String => b]`): added 2026-10-13; `_halt_value` uses it.
-- **A rescue of a library's own control-flow exception** in a program that never raises it is a level-1 error
-  (`rescue Sinatra::Pass: the begin body never raises Sinatra::Pass`) when the app never calls `pass`. A library
-  cannot know whether its user will; written as a bare `rescue => e` + `raise e unless e in Pass`. Some way to
-  mark a rescue as "only if reachable" would help libraries (Ruby's catch/throw would also do).
+- ~~**A rescue of a library's own control-flow exception**~~ in a program that never raises it was a level-1 error
+  (`rescue Sinatra::Pass: the begin body never raises Sinatra::Pass`) when the app never calls `pass`; the port
+  wrote a bare `rescue => e` + `raise e unless e in Pass`. Since 2026-10-13 that report is the item `unused-rescue`,
+  a warning at every level (ko1: defensive rescues are written in apps too, not only in libraries), and `_route`
+  says `rescue Pass` again. An app that never passes gets the warning, pointing into sinatra.sake, and runs.
 - ~~`Rack::Response#[]` / `[]=`~~: added to rack.sake 2026-10-13 (the port still says `Response.get_header`).
 - ~~HMAC~~: `OpenSSL::HMAC` (sakelib/openssl.sake) added 2026-10-13; the session cookie uses it (it had its own
   HMAC-SHA256).
@@ -156,7 +157,7 @@ serves it.
   (the cheat sheet lists it among Kernel's, but not as callable bare).
 - `@response["content-type"]` → `Indexable.[]: the receiver is Sinatra::Response@L176#1 | Sinatra::Response@L195#1,
   which cannot be indexed` → `Response.get_header(@response, "content-type")` (19 places, by a regexp).
-- Library vs. the whole-program checks: `rescue Pass` (above). The same rule caught nothing wrong in the app.
+- Library vs. the whole-program checks: `rescue Pass` (above; now a warning). The same rule caught nothing wrong in the app.
 - **What the twins found** (not Sake's issues, but they show the comparison works): the protection headers
   must be added after Sinatra's `finish` (a 204 has no content-type, so no `x-frame-options`); the error
   handlers' lookup in Ruby does not climb from `NotFound` to `Exception`; the development 404 page comes from a

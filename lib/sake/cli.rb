@@ -14,11 +14,13 @@ module Sake
                          --strict=N     level N:
                                           0  syntax, names, arguments, calls on values, ...
                                           1  + type       a type that is not nil does not fit
-                                             + rescue     a rescue clause for an exception never raised
+                                             + rescue     a rescue clause an earlier clause already covers
                                           2  + nil        a value that may be nil is used unchecked
                                           3  + index-nil  the result of x[k] is used unchecked
                                              + exhaustive a case/in may get a value no branch takes
                                           4  + unrescued  a raise that may reach the top level
+                                          not in any level (a warning unless chosen):
+                                             unused-rescue  a rescue clause for an exception never raised
                          --strict=type,nil          exactly these items
                          --strict=2,index-nil       level 2 plus an item; `-item` removes one
         --types          experimental: print the inferred types instead of running
@@ -29,10 +31,12 @@ module Sake
 
     # mixed: a type report whose value came through a field (or a container in a field) that holds
     # both fitting and non-fitting types: likely instances of one type used for different values.
-    STRICT_ITEMS = %w[type rescue nil mixed index-nil exhaustive unrescued].freeze
+    STRICT_ITEMS = %w[type rescue unused-rescue nil mixed index-nil exhaustive unrescued].freeze
     STRICT_LEVELS = [[], %w[type rescue], %w[type rescue nil mixed], %w[type rescue nil mixed index-nil exhaustive],
                      %w[type rescue nil mixed index-nil exhaustive unrescued]].freeze
-    WARN_ITEMS = %w[mixed].freeze # shown as warnings at the levels where they do not stop the program
+    # unused-rescue: a defensive rescue is fine, and whether anything raises it depends on the whole program
+    # (removing a `pass` elsewhere would stop a library's `rescue Pass`), so it stops the program only when chosen.
+    WARN_ITEMS = %w[mixed unused-rescue].freeze # shown as warnings at the levels where they do not stop the program
     DEFAULT_LEVEL = 1
     RECOMMENDED_LEVEL = 2
 
@@ -195,7 +199,7 @@ module Sake
               hints << "an Array here holds several types, one per position; to keep each position's type, make it a Tuple `[a, b]` (or a Record `{name: a}`)"
             end
             [msg, hints]
-          when "rescue"
+          when "rescue", "unused-rescue"
             members = program.rescue_members[c.arg]
             if c.failing.first in [:earlier, by]
               ["rescue #{c.arg}: an earlier rescue (#{by.join(", ")}) already catches it", ["remove this rescue, or move it before `rescue #{by.first}`"]]

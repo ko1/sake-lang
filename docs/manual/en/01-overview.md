@@ -60,12 +60,12 @@ The interpreter is written in Ruby and needs Ruby 4.0 (tested with 4.0.2 and Pri
 | Level | Option | Items added | Stops |
 |---|---|---|---|
 | 0 | `--strict=0` | (none) | what is always checked |
-| 1 | default | `type`, `rescue` | a type that does not fit; a useless `rescue` |
+| 1 | default | `type`, `rescue` | a type that does not fit; a `rescue` an earlier clause already covers |
 | 2 | `--strict` | `nil`, `mixed` | an unchecked nil; types that met in a field |
 | 3 | `--strict=3` | `index-nil`, `exhaustive` | the nil of a missed index; a `case` that is not exhaustive |
 | 4 | `--strict=4` | `unrescued` | a `raise` that reaches the top level |
 
-Each level includes the items of the levels below it.
+Each level includes the items of the levels below it. One item, `unused-rescue`, is in no level: it is a warning unless it is chosen (`--strict=2,unused-rescue`).
 
 ### Always checked (level 0)
 
@@ -84,14 +84,20 @@ The report points at `n / 2` inside `half`. Its hint, `reached by the call at li
 
 ### `rescue` (level 1)
 
+A `rescue` clause that an earlier clause of the same `begin` already covers, so it is never reached. For an example, see "Grouping with a module" in [Exceptions](08-exceptions.md).
+
+### `unused-rescue` (a warning)
+
 A `rescue` of an exception the begin body never raises. It covers the exception types the program declares, and `RuntimeError`. Built-in kinds such as `KeyError` and `ZeroDivisionError` can come from ordinary operations, so they are always assumed possible and never reported.
 
-```ruby error
+It is a warning and the program runs. A defensive `rescue` is normal, and whether anything raises the exception depends on the whole program: in a library, a `rescue` for something only some apps raise would otherwise stop every other app. Choose the item to make it an error: `--strict=2,unused-rescue`.
+
+```ruby
 class ParseError < StandardError
 end
 begin
-  p(10 / 2)
-rescue ParseError              # !> the begin body never raises ParseError [rescue]
+  p(10 / 2)                    # => 5
+rescue ParseError              # warning: the begin body never raises ParseError [unused-rescue]
   p(0)
 end
 ```

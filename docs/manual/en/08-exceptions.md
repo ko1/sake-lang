@@ -138,7 +138,7 @@ rescue ParseFailure => e
 end
 ```
 
-A module is not raised (`raise ParseFailure, "x"` is a static error). When the Ruby code raises the parent class itself, add one concrete type that includes the module. Level 1 reports a `rescue M` whose begin body raises none of the module's types, and a `rescue A` for a type an earlier `rescue M` already catches.
+A module is not raised (`raise ParseFailure, "x"` is a static error). When the Ruby code raises the parent class itself, add one concrete type that includes the module. Level 1 stops a `rescue A` for a type an earlier `rescue M` already catches; a `rescue M` whose begin body raises none of the module's types is an `unused-rescue` warning.
 
 ```ruby error
 module ParseFailure
@@ -253,14 +253,14 @@ p(tries)                                 # => 3
 
 The checker tracks which explicitly raised types may leave each function. Two items use this (the levels are in [Overview](01-overview.md)).
 
-- **`rescue` (level 1, the default).** The checker reports a rescue clause for a type that the begin body never raises. Built-in kinds such as `ZeroDivisionError` can come from ordinary operations, so they are always assumed possible and never reported.
+- **`unused-rescue` (a warning at every level).** The checker reports a rescue clause for a type that the begin body never raises. Built-in kinds such as `ZeroDivisionError` can come from ordinary operations, so they are always assumed possible and never reported. The program still runs: a defensive `rescue` is normal, and whether anything raises depends on the whole program (a library's `rescue` for what only some apps raise). `--strict=2,unused-rescue` makes it an error. The related `rescue` item (level 1) stops a clause an earlier clause already covers.
 - **`unrescued` (level 4).** The checker reports a `raise` that may reach the top level without being rescued, as `raise: RuntimeError may reach the top level without being rescued [unrescued]`.
 
-```ruby error
+```ruby
 ParseError = Exception.new(:line)
 begin
-  p(Integer("1"))
-rescue ParseError => e                   # !> rescue ParseError: the begin body never raises ParseError [rescue]
+  p(Integer("1"))                        # => 1
+rescue ParseError => e                   # warning: the begin body never raises ParseError [unused-rescue]
   p(e)
 end
 ```

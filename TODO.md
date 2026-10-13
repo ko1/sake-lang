@@ -11,7 +11,7 @@
 3. ~~**例外の階層**~~ → モジュールでまとめる（`rescue M`）、組み込みは Ruby の親子関係（ko1、10-12。DESIGN.md）。
 4. **Integer の幅（ネイティブ）**: sabic / ceec は 64 ビットで溢れたらエラー。多倍長への昇格か、64 ビットの意味論か。
 5. D11 `f(**opts)` の受け渡し、D12 フィールドの既定値が前のフィールドを読めるか、D14 表示の protocol。
-6. **ライブラリの rescue と「never raised」**（10-12 ウェブ、experiments/2026-10-12-web）: Sinatra 内部の `rescue Pass` は、アプリが `pass` を呼ばないとプログラム全体の検査で level 1 のエラーになる。案: require したライブラリの中の rescue には出さない。
+6. ~~**ライブラリの rescue と「never raised」**~~ → 「決して投げない例外の `rescue`」は警告の項目 `unused-rescue`（どのレベルにも入らない。選べばエラー）。前の節が既に捕まえる節は `rescue` で level 1 のまま。ライブラリに限らず防御的な rescue は書く（ko1、10-13。DESIGN.md）。Sinatra は `rescue Pass` に戻した。
 7. ~~**型のフィールドをデータとして**~~ → `T.field_names`・`T.read_field`・`T.write_field`（ko1、10-13。DESIGN.md）。残り: **生成・マクロの段**（10-12 ウェブ）: Rails のルートヘルパ・テンプレート・モデルのフィールドと列の型は生成の段で書き出すしかなく、生成物が古いことを誰も知らせない。
 
 ### 検査器（偽陽性・メッセージ）
@@ -140,7 +140,7 @@
 言語の章を読みやすく書き直したエージェント 7 体の報告から（`experiments/2026-10-10-manual-readability/`）。
 
 - [ ] **`Thread.new { break }` / ブロック内の `return` で処理系が落ちる**: `t = Thread.new { break }; Thread.join(t)` が `--strict=0` で Ruby の生の `NoMethodError: undefined method 'origin' for an instance of Prism::CallNode`（`interpreter.rb:90`、`thread_body`）。spec は LocalJumpError と言う。`--strict=2` では検査器が `break v` を `Thread.new` の結果型に加えてしまい、`Thread.join(t)` に `[nil]` が出る。静的に「スレッドのブロックから `break`/`return` はできない」と弾くのが筋。
-- [ ] `rescue` の検査が `Thread.new { raise "x" }` の raise を見ない: `begin Thread.value(t) rescue RuntimeError` が level 1 で「never raises」。hint は Thread.raise だけを挙げる。ブロック内の raise も Thread.value/join に流すか、hint に書く。
+- [ ] `rescue` の検査が `Thread.new { raise "x" }` の raise を見ない: `begin Thread.value(t) rescue RuntimeError` が「never raises」（10-13 から `unused-rescue` の警告で、止まらない）。hint は Thread.raise だけを挙げる。ブロック内の raise も Thread.value/join に流すか、hint に書く。
 - [ ] `@y ||= 0` がフィールドを絞らない: 直後の `@y * @y` が `[nil]` のまま（`Point.new(3, nil)` があるとき）。
 - [ ] hint: 関数の中で読んだトップレベルのローカル（`def bump = count + 1`）に `String.count()`… の 5 候補が出る。「トップレベルのローカルは関数の中から見えない」と言うべき。`f = proc { }` は「undefined function `proc`」だけで、ブロックが値でないことを言わない（`->` は「unsupported syntax: lambda」と言う）。
 - [x] (10-11) `sakelib/notes/not-ported.md` が「Sake に `Thread.raise` が無い」「net_http に TLS が無い」と言っていた。直した。

@@ -32,7 +32,7 @@ p(e == KeyError.new("other"))      # => true
 
 `RuntimeError.new(message)`
 
-`raise "msg"`（型を書かない `raise`）が投げる型です。組み込みの操作が自分から投げることはなく、`Thread.raise(t, msg)` だけが相手のスレッドに投げ、`Thread.value(t)` や `Thread.join(t)` がそれを届けます（操作の中の Ruby の `RuntimeError`、たとえば `String.undump` のものは `ArgumentError` になります）。プログラムの「その他の失敗」に使います。したがって検査器は、本体が `RuntimeError` を投げえない `rescue RuntimeError` を拒みます（`the begin body never raises RuntimeError [rescue]`。`Thread.value` / `Thread.join` は `Thread.raise` を呼ぶプログラムでだけ数える、というヒント付き）。
+`raise "msg"`（型を書かない `raise`）が投げる型です。組み込みの操作が自分から投げることはなく、`Thread.raise(t, msg)` だけが相手のスレッドに投げ、`Thread.value(t)` や `Thread.join(t)` がそれを届けます（操作の中の Ruby の `RuntimeError`、たとえば `String.undump` のものは `ArgumentError` になります）。プログラムの「その他の失敗」に使います。したがって検査器は、本体が `RuntimeError` を投げえない `rescue RuntimeError` に警告を出します（`the begin body never raises RuntimeError [unused-rescue]`。`Thread.value` / `Thread.join` は `Thread.raise` を呼ぶプログラムでだけ数える、というヒント付き）。下の例ではこの節は何も捕まえず、`String.undump` の `ArgumentError` でプログラムが止まります。
 
 ```ruby
 begin
@@ -45,7 +45,7 @@ end
 ```ruby error
 begin
   String.undump("\"abc")
-rescue RuntimeError => e           # !> rescue RuntimeError: the begin body never raises RuntimeError [rescue]
+rescue RuntimeError => e           # !> warning: rescue RuntimeError: the begin body never raises RuntimeError [unused-rescue]
   p(e)
 end
 ```

@@ -36,12 +36,13 @@ How much is checked before running is set with `--strict`:
 | Level | How to ask | Also stops before running |
 |---|---|---|
 | 0 | `--strict=0` | only syntax, names, argument counts, calls on values, and the like |
-| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation; **rescue**: a rescue of an exception never raised |
+| 1 | (the default) | **type**: a value whose type (other than nil) does not fit the operation; **rescue**: a rescue clause an earlier clause already covers |
 | 2 | `--strict` | **nil**: a value that may be nil, used without a check; **mixed**: a type report where values of different types met in a field (a warning at level 1) |
 | 3 | `--strict=3` | **index-nil**: the result of `x[k]`, used without a check; **exhaustive**: a `case` whose literal branches may miss some value |
 | 4 | `--strict=4` | **unrescued**: a `raise` that may reach the top level |
 
-Items can also be named: `--strict=type,nil`, or `--strict=3,-index-nil`. Whatever is not checked
+Items can also be named: `--strict=type,nil`, or `--strict=3,-index-nil`. One item is in no level:
+**unused-rescue**, a rescue of an exception never raised, is a warning unless named. Whatever is not checked
 before running is still checked while running, by each operation.
 
 ## 1. Hello
@@ -1475,15 +1476,15 @@ too long
 -1
 ```
 
-The checker tracks which exceptions each function may raise. By default it reports a `rescue`
-that can never match. Level 4 also reports a `raise` that nothing rescues:
+The checker tracks which exceptions each function may raise. It warns about a `rescue`
+that can never match (`unused-rescue`; the program still runs). Level 4 also reports a `raise` that nothing rescues:
 
 ```
 $ sake --strict=4 exceptions_flow.sake
+exceptions_flow.sake:11:1: warning: rescue OtherError: the begin body never raises OtherError [unused-rescue]
+  hint: remove this rescue, or raise OtherError in the body
 exceptions_flow.sake:5:3: error: raise: ParseError may reach the top level without being rescued [unrescued]
   hint: rescue it, or check with a level below 4
-exceptions_flow.sake:11:1: error: rescue OtherError: the begin body never raises OtherError [rescue]
-  hint: remove this rescue, or raise OtherError in the body
 (exit status 2)
 ```
 

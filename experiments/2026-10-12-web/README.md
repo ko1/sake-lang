@@ -56,13 +56,13 @@ Rails が立っている Ruby の 3 つの機構に、Sake の形を 1 つずつ
 - **既定レベルでブログの報告は 0。** `--strict` では 8 件で、すべて「before_action が `@post` を入れたので、後のテンプレートでは nil でない」という Rails の慣用句（検査器はこの順序を追えない）。
 
 つらかったこと（重い順）:
-1. **ライブラリの `rescue` が、アプリ次第で「投げられない」エラーになる。** Sinatra 内部の `rescue Pass` は、アプリが `pass` を一度も呼ばないとプログラム全体の検査で「never raised」になる。全部受けの `rescue => e` にして `Pass` 以外を投げ直すしかなかった。
+1. **ライブラリの `rescue` が、アプリ次第で「投げられない」エラーになる。** Sinatra 内部の `rescue Pass` は、アプリが `pass` を一度も呼ばないとプログラム全体の検査で「never raised」になる。全部受けの `rescue => e` にして `Pass` 以外を投げ直すしかなかった。（10-13: 「never raised」は警告の項目 `unused-rescue` になった。下の追記）
 2. **実行時に定義するコードが書けない。** Rails の大半（ルートヘルパ、属性、`send(action)`、テンプレート）は生成の段で書き出すしかなく、生成物が古いことを誰も知らせない。型のフィールドをデータとして読む手段（`T.fields`、Symbol でのフィールド読み書き）があれば、生成するモデルのコードの大半が要らなくなる。（10-13: 入れた。下の追記）
 3. **Rails の名前が Sake の組み込みとぶつかる。** `new` アクション → `new_`、`Post.new(params)` → `Post.build(params)`、`params.require` → `require_`（`require` は文）。`attr_accessor post` の書き込み関数 `set_post` が、scaffold の callback 名 `set_post` とぶつかる（→ `attr_reader post`）。
 4. **基底クラスは子のフィールドを使えない。** Rails の「基底クラスが、子が持つはずのものを呼ぶ」は、必須関数のモジュールを毎回挟む。（10-13: `read_field(r, :id)` で読めるようになった）
 5. **1 か所で作るクラスはフィールドの型が 1 つ。** 共通の関数で作る `Relation` が Post と Comment の両方を持って混ざった（`mixed`）。Relation は Array にし、`Post.where(...).order(...)` の連鎖は失った。
 6. **params の値の型が長い再帰的な和**（String、Array、Hash、nil）で、使うたびに `x => Array` が要り、エラーには約 600 文字の型が出る。
-7. 細かいもの: ブロックの引数の数が厳密（レイアウトの裸の `yield` を `yield(nil)` に）、テンプレートの誤りの位置が生成ファイルの行で .erb の行でない、`puts` の後に `IO.flush` が要る（Ruby と同じ）、`Time.utc` が 6 引数を取らない、`{}` が空の Record で Hash でない。
+7. 細かいもの: ブロックの引数の数が厳密（レイアウトの裸の `yield` を `yield(nil)` に）、テンプレートの誤りの位置が生成ファイルの行で .erb の行でない、`puts` の後に `IO.flush` が要る（Ruby と同じ）、~~`Time.utc` が 6 引数を取らない~~（10-13 に入れた）、`{}` が空の Record で Hash でない。
 
 ## 見つかったバグと直したもの
 
@@ -85,6 +85,13 @@ ko1「2は追加して書き直して」。`T.field_names`・`T.read_field(x, na
 - 変換が生成に残る理由: 列の型は db/schema.sake にあり、検査器はフィールドの型をソースから知る必要がある。`_table` が残る理由: `once` はプログラムの場所ごとに 1 つの値で、Base の関数は 1 つの場所の写しなので。
 - 結果: `run.sh` の応答は前と同じ（違いはタイムスタンプと所要時間だけ）、`--strict` の報告は前と同じ 8 件、`compare` は Rails と同じ（compare.sake の手書きの `read_attribute_for_validation` も `read_field` 1 行にした）。
 - 規模: active_record 250 → 304 行、rails_generate 346 → 313 行、生成物 374 → 293 行。
+
+### 「never raised」を警告に（つらかったこと 1）
+
+ko1「そもそも防衛的にライブラリじゃなくても書くよね？」。ライブラリだけ外す案はやめ、「begin 本体が決して投げない例外の `rescue`」をどのレベルにも入らない項目 `unused-rescue` に分けた。既定では警告でプログラムは走り、`--strict=2,unused-rescue` と選んだときだけエラー。「前の節が既に捕まえる `rescue`」（必ず届かない節）は `rescue` 項目としてレベル 1 のエラーのまま。理由: 防御的な `rescue` は普通に書くもので、投げるものがあるかはプログラム全体で決まり、離れた場所の変更（アプリから `pass` を消す）が触っていないライブラリを止める。
+
+- `sakelib/sinatra.sake` の `_route` は `rescue Pass` に戻した。`pass` を呼ばないアプリ（このデモ）は sinatra.sake を指す警告が 1 つ出て、走る。
+- `run.sh` は前と同じ応答（same responses）、sakelib の Sinatra テストも同じ。
 
 ## ファイル
 

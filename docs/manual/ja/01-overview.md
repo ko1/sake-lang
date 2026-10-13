@@ -60,12 +60,12 @@ bin/sake --dump=ast FILE.sake   # 解決済みのプログラム（SakeAST）を
 | レベル | オプション | 加わる項目 | 止めるもの |
 |---|---|---|---|
 | 0 | `--strict=0` | （無し） | 常に検査されるもの |
-| 1 | 既定 | `type`, `rescue` | 型の不一致、無駄な `rescue` |
+| 1 | 既定 | `type`, `rescue` | 型の不一致、前の節が既に捕まえる `rescue` |
 | 2 | `--strict` | `nil`, `mixed` | 検査していない nil、フィールドに出会った型 |
 | 3 | `--strict=3` | `index-nil`, `exhaustive` | 添字の「外れ」の nil、網羅していない `case` |
 | 4 | `--strict=4` | `unrescued` | トップレベルまで届く `raise` |
 
-各レベルは、下のレベルの項目をすべて含みます。
+各レベルは、下のレベルの項目をすべて含みます。`unused-rescue` だけはどのレベルにも入らず、選ばない限り警告です（`--strict=2,unused-rescue`）。
 
 ### 常に検査されるもの（レベル 0）
 
@@ -84,14 +84,20 @@ puts(half("ten"))              # !> the operands are (String, Integer), which th
 
 ### `rescue`（レベル 1）
 
+同じ `begin` の前の節が既に捕まえるので、決して届かない `rescue` 節です。例は[例外](08-exceptions.md)の「モジュールでまとめる」にあります。
+
+### `unused-rescue`（警告）
+
 begin 本体が決して投げない例外の `rescue` です。対象は、プログラムが宣言した例外型と `RuntimeError` です。`KeyError` や `ZeroDivisionError` のような組み込みの種類は、普通の操作からも上がりうるので、常に起こりうるものとして扱われ、報告されません。
 
-```ruby error
+警告で、プログラムは走ります。防御的な `rescue` は普通に書くものですし、その例外を投げるものがあるかはプログラム全体で決まります。ライブラリの中の、一部のアプリしか投げない例外の `rescue` が、他のアプリを全部止めてしまうことになります。エラーにするには項目を選びます: `--strict=2,unused-rescue`。
+
+```ruby
 class ParseError < StandardError
 end
 begin
-  p(10 / 2)
-rescue ParseError              # !> the begin body never raises ParseError [rescue]
+  p(10 / 2)                    # => 5
+rescue ParseError              # warning: the begin body never raises ParseError [unused-rescue]
   p(0)
 end
 ```

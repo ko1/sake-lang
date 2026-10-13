@@ -633,7 +633,7 @@ module Sake
     def findings
       @checks.values.filter_map do |c|
         next if %i[proven unknown].include?(c.verdict)
-        next [c, "rescue"] if c.op == "rescue"
+        next [c, c.failing.any? { _1 in [:earlier, *] } ? "rescue" : "unused-rescue"] if c.op == "rescue"
         next [c, "unrescued"] if c.op == "raise"
         next [c, "exhaustive"] if c.op == "case/in" && c.arg == "value"
         # `x => T` that may not match is a check at run time (rescuable); one that surely fails is a type error.

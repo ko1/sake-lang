@@ -32,7 +32,7 @@ p(e == KeyError.new("other"))      # => true
 
 `RuntimeError.new(message)`
 
-The type that `raise "msg"` (a `raise` without a type) raises. No built-in operation raises it on its own: only `Thread.raise(t, msg)` does, in the other thread, where `Thread.value(t)` or `Thread.join(t)` deliver it (a Ruby `RuntimeError` inside an operation, as from `String.undump`, becomes `ArgumentError`). It is the type for a program's "other failures". Accordingly the checker rejects a `rescue RuntimeError` whose body cannot raise one (`the begin body never raises RuntimeError [rescue]`, with the hint that `Thread.value` / `Thread.join` count only in a program that calls `Thread.raise`).
+The type that `raise "msg"` (a `raise` without a type) raises. No built-in operation raises it on its own: only `Thread.raise(t, msg)` does, in the other thread, where `Thread.value(t)` or `Thread.join(t)` deliver it (a Ruby `RuntimeError` inside an operation, as from `String.undump`, becomes `ArgumentError`). It is the type for a program's "other failures". Accordingly the checker warns about a `rescue RuntimeError` whose body cannot raise one (`the begin body never raises RuntimeError [unused-rescue]`, with the hint that `Thread.value` / `Thread.join` count only in a program that calls `Thread.raise`). In the example below the clause catches nothing, and the `ArgumentError` from `String.undump` stops the program.
 
 ```ruby
 begin
@@ -45,7 +45,7 @@ end
 ```ruby error
 begin
   String.undump("\"abc")
-rescue RuntimeError => e           # !> rescue RuntimeError: the begin body never raises RuntimeError [rescue]
+rescue RuntimeError => e           # !> warning: rescue RuntimeError: the begin body never raises RuntimeError [unused-rescue]
   p(e)
 end
 ```

@@ -138,7 +138,7 @@ rescue ParseFailure => e
 end
 ```
 
-モジュールは投げられません（`raise ParseFailure, "x"` は静的エラー）。Ruby で親クラス自身も投げているなら、具体的な型を 1 つ足して include させます。レベル 1 は、begin の本体がモジュールのどの型も投げない `rescue M` と、前の `rescue M` がもう受けている型の `rescue A` を報告します。
+モジュールは投げられません（`raise ParseFailure, "x"` は静的エラー）。Ruby で親クラス自身も投げているなら、具体的な型を 1 つ足して include させます。レベル 1 は、前の `rescue M` がもう受けている型の `rescue A` で止めます。begin の本体がモジュールのどの型も投げない `rescue M` は `unused-rescue` の警告です。
 
 ```ruby error
 module ParseFailure
@@ -253,14 +253,14 @@ p(tries)                                 # => 3
 
 検査器は、明示的に `raise` した型のうちどれが各関数から出うるかを追います。2 つの項目がこれを使います（レベルは[概要と実行](01-overview.md)）。
 
-- **`rescue`（レベル 1、既定）。** begin 本体が決して投げない型の rescue 節を報告します。`ZeroDivisionError` のような組み込みの種類は普通の操作から来うるので、常にありうるとみなし、報告しません。
+- **`unused-rescue`（どのレベルでも警告）。** begin 本体が決して投げない型の rescue 節を報告します。`ZeroDivisionError` のような組み込みの種類は普通の操作から来うるので、常にありうるとみなし、報告しません。プログラムは走ります。防御的な `rescue` は普通に書くもので、投げるものがあるかはプログラム全体で決まるからです（一部のアプリしか投げない例外を受けるライブラリの `rescue`）。`--strict=2,unused-rescue` でエラーになります。関連する `rescue` 項目（レベル 1）は、前の節が既に捕まえる節で止めます。
 - **`unrescued`（レベル 4）。** rescue されずにトップレベルまで届きうる `raise` を報告します。`raise: RuntimeError may reach the top level without being rescued [unrescued]` のような報告です。
 
-```ruby error
+```ruby
 ParseError = Exception.new(:line)
 begin
-  p(Integer("1"))
-rescue ParseError => e                   # !> rescue ParseError: the begin body never raises ParseError [rescue]
+  p(Integer("1"))                        # => 1
+rescue ParseError => e                   # warning: the begin body never raises ParseError [unused-rescue]
   p(e)
 end
 ```

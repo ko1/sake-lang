@@ -4,8 +4,8 @@
 
 Sake is Ruby syntax where **every operation names its type**: `String.upcase(s)`, never `s.upcase`.
 Run: `bin/sake FILE.sake` (`-c` checks only). Exit 0 ok, 1 runtime error, 2 rejected before running.
-`--strict=N`: 0 names/arity/syntax only; 1 (default) + wrong types and a `rescue` of what is never
-raised; 2 + a maybe-nil value used unchecked (except the nil of a miss: `x[k]`, `Array.first/last/
+`--strict=N`: 0 names/arity/syntax only; 1 (default) + wrong types and a `rescue` an earlier clause
+covers (a `rescue` of what is never raised is a warning, item `unused-rescue`); 2 + a maybe-nil value used unchecked (except the nil of a miss: `x[k]`, `Array.first/last/
 pop/shift/min/max/minmax/at/slice/dig`, `Hash.dig`, `Set.first/min/max`); 3 + those misses and a non-exhaustive literal `case`; 4 + a `raise` never rescued.
 Part 1 gives the rules; Part 2 lists every built-in operation (only those exist).
 
@@ -314,7 +314,7 @@ p(i + 1) if i != nil
 - `expr rescue fallback`, `def ... rescue ... end`, `ensure`, `retry` work. Built-ins:
   ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError TypeError RuntimeError
   NoMatchingPatternError StopIteration ... (Part 2 lists them). Their messages are Ruby's.
-- Level 1 rejects a `rescue` of a type the body never raises.
+- A `rescue` of a type the body never raises is a warning (`unused-rescue`; an error only when chosen).
 
 ```ruby
 class ParseError < StandardError
