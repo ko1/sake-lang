@@ -7,7 +7,7 @@
 ### ko1 の判断が要るもの
 
 1. ~~**仕様変更（10-11 に入れた、戻すのは数行）**~~ → 残す（ko1、10-13）: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。（`Array.flatten` が Tuple も展開する変更は、Tuple は 1 つの値で集まりではないという立場（prelude、D1）とぶつかるので同日に戻した。代わりに Tuple が flatten に来ると静的に知らせ、`flat_map` と `Tuple.to_a` を hint で示す。ko1、10-11）
-2. **型の別名**（`Client = WebSocket::Handshake::Client`）: あってよいが後で考える（ko1、10-11）。深い入れ子を毎回書く長さは、浅い名前空間を選ばせる圧力として働く。移植の方針「Ruby の名前と入れ子を保つ」との関係も合わせて決める。
+2. ~~**型の別名**（`Client = WebSocket::Handshake::Client`）~~ → 入れた。スコープは Ruby の定数と同じ（書いた名前空間に属し、型の名前と同じ規則で探し、外からは `Outer::Client`）。名前の解決で指す先の型に置き換える（ko1、10-13。DESIGN.md）。
 3. ~~**例外の階層**~~ → モジュールでまとめる（`rescue M`）、組み込みは Ruby の親子関係（ko1、10-12。DESIGN.md）。
 4. ~~**Integer の幅（ネイティブ）**~~ → 処理系ごとでよい（ko1、10-13。spec §3 の表）: インタプリタは多倍長、sabic / ceec は 64 ビットで溢れたらエラー。
 5. ~~D11 `f(**opts)` の受け渡し~~（10-13 に入れた。DESIGN.md）。~~D12~~（既定値は a12be1dc で廃止済み）、~~D14~~（分けない、ko1、10-13）。
@@ -167,3 +167,4 @@
 - 型エラーの報告位置がライブラリ内部の行になり、呼び出し側は「reached by the call at line N」だけ。大きな合併型でメッセージが切れる。
 - `String.getbyte` の nil がレベル 2 で毎回 `|| 0` を要求する。`String.unpack1` の結果に型が付かない（`v => Integer` が要る）。
 - 要望の多い組み込み: 例外の階層（4 体、10-12 にモジュールで入れた）、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。
+- [ ] C・Rust 版: `else` の無い `case/in` で「not supported」の理由が空になる（`path::  (not supported by the C backend)`。2026-10-13、型の別名の作業で main でも再現）。

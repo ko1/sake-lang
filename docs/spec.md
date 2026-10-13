@@ -130,7 +130,7 @@ A program is a file and the files it requires. Its top level may contain:
   `name` inside `class Type`.
 - **Namespaces**: `class Name ... end` and `module Name ... end`. Their bodies may contain only
   `def name(...)` (no receiver), `include Module`, `module_function`, a nested `class` / `module`,
-  `Name = Struct.new(...)` (or `Exception.new(...)`), and in a class `attr_reader`/`attr_accessor`/
+  `Name = Struct.new(...)` (or `Exception.new(...)`), a type alias `Name = A::B`, and in a class `attr_reader`/`attr_accessor`/
   `attr_writer` lines (§10.1).
   - `class` declares a **type** (a class) or adds operations to one, or to a built-in type
     such as `String`.
@@ -150,12 +150,25 @@ Rules:
   (Ruby's lexical lookup, innermost namespace first), else the top-level `B`. `def A::B.f` is not Ruby
   syntax: a module function of a nested module is defined inside it (`module A::B`, `module_function`).
   A namespace is not a value (`p(A::B)` is an error), and `A::B` alone has no meaning.
+- **Type aliases** (ko1, 2026-10-13). `Client = WebSocket::Handshake::Client` gives another name to an
+  existing type: a class, a module, or a built-in type (`Str = String`). As in Ruby, the right-hand side is a
+  constant path, and the alias is a constant of the namespace it is written in: the top level, or a
+  `class`/`module` body (`Client` written in `module WebSocket` is `WebSocket::Client`). It is looked up as
+  a type name is (the innermost namespace first, then outward, then the top level), and from outside as
+  `WebSocket::Client`. The right-hand side is resolved where the alias is written (`Client = Client` in
+  `module A` names the outer `Client`), and it may be another alias. An alias is a name, not a new type:
+  `Client.new`, `Client.f(x)`, `x.Client.f`, `def Client.f`, `include`, `class C < Client`, `in Client`,
+  `rescue Client`, `raise Client`, `(Client|B).f(x)` and `Client::Inner` all mean the type it names, and
+  messages name that type (an undefined function's hint says which type the alias names). Static errors:
+  an alias whose name is already a type or an alias of its namespace (a duplicate definition), a
+  right-hand side that names no type, a cycle of aliases, and `class Client::Inner` written through an
+  alias (define it under the type's own name). `Pi = Math::PI` and `Args = ARGV` stay value constants.
 - Classes do not inherit. For any class, `class B < A` is shorthand for writing A's definitions in B
   (§10.1); afterwards A and B are unrelated types, and `A.f` takes only A's.
 - `def self.x` is rejected, because Sake has no `self`.
 - Defining the same name twice in one namespace is an error. Redefining a built-in operation is
   also an error.
-- Constants can only be assigned from `Struct.new` (or `Exception.new`). Sake has **no value constants**. For a named
+- Constants can only be assigned from `Struct.new` (or `Exception.new`), or a type's name (a type alias). Sake has **no value constants**. For a named
   value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error
   whose hint gives that function, and each use of `PI` gets the hint `pi`.
 

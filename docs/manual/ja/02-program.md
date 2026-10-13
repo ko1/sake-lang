@@ -89,6 +89,7 @@ p(name(Hash["name" => "ko1"]))
 - `include Module`
 - `module_function`（module の中。後述の「module の関数の呼び方」）
 - 入れ子の `class` / `module`、`Name = Struct.new(...)`
+- 型の別名 `Name = A::B`（後述の「型の別名」）
 - class では `attr_reader` / `attr_accessor` / `attr_writer` の行（[クラス](07-classes.md)）
 
 それ以外の文を本体に置くのは静的エラーです。型に `module` を使うのも静的エラーで、hint が `class` を示します。
@@ -134,6 +135,43 @@ module Geo
   Point = Struct.new(:x, :y)
 end
 p(Geo::Point)                # !> type `Geo::Point` cannot be used as a value
+```
+
+### 型の別名
+
+`Client = Handshake::Client` は、既にある型（class、module、`Str = String` のような組み込み型）に別の名前を付けます。別名は定数で、スコープは Ruby と同じです。書いた名前空間（トップレベル、または `class` / `module` の本体）に属し、型の名前と同じ規則で探され（内側の名前空間から外へ、最後にトップレベル）、外からは `WebSocket::Client` と書きます。右辺は定数のパスで、別名を書いた場所で解決します。右辺が別名でも構いません。
+
+```ruby
+module WebSocket
+  module Handshake
+    class Client
+      attr_reader url
+      def host(c) = String.split(@url, "/")[2]
+    end
+  end
+  Client = Handshake::Client           # WebSocket::Client
+  module Session
+    module_function
+    def open(url) = Client.new(url)    # ここでの Client は WebSocket::Client
+  end
+end
+C = WebSocket::Client                  # 別名の別名
+c = WebSocket::Session.open("ws://example.com/chat")
+p(C.host(c))                           # => "example.com"
+p(c.WebSocket::Client.host)            # => "example.com"
+p((c in WebSocket::Handshake::Client)) # => true
+```
+
+- **名前であって新しい型ではない。** `Client.new`、`Client.f(x)`、`x.Client.f`、`def Client.f`、`include`、`class C < Client`、`in Client`、`rescue Client`、`raise Client`、`Client::Inner` はどれも指す先の型を意味します。メッセージは指す先の型の名前で出ます。未定義の関数の hint は、別名がどの型を指すかを示します。
+- **名前空間ごとに 1 つの名前。** その名前空間に同じ名前の型か別名が既にあれば、重複した定義と同じく静的エラーです。別名を通してクラスを定義すること（`class Client::Inner`）もできません。型自身の名前で書きます。
+- **型だけ。** 右辺が型を指さないとき、別名が循環するときは静的エラーです。`Pi = Math::PI` はこれまでどおり値の定数です（hint は `def pi = Math::PI`）。
+
+```ruby error
+module Net
+  class Conn
+  end
+  Socket = Net::Con          # !> `Socket = Net::Con`: Net::Con is not a type (a constant set to a constant is another name for a class or a module)
+end
 ```
 
 ### クラスは継承しない
@@ -190,7 +228,7 @@ def String.upcase(s) = s     # !> `String.upcase` is a built-in operation and ca
 
 ### 値の定数は無い
 
-定数に代入できるのは `Struct.new` だけです。名前付きの値は関数にして（`def pi = 3.14159`）呼びます（`pi`）。`PI = 3.14` は静的エラーで、hint がその関数を示します。`PI` を使う各行にも、`pi` と呼ぶ hint が付きます。1 度だけ計算する値には `once { ... }` があります（[組み込み操作](09-builtins.md)）。
+定数に代入できるのは `Struct.new`（と `Exception.new`）か、型の名前（上の型の別名）だけです。名前付きの値は関数にして（`def pi = 3.14159`）呼びます（`pi`）。`PI = 3.14` は静的エラーで、hint がその関数を示します。`PI` を使う各行にも、`pi` と呼ぶ hint が付きます。1 度だけ計算する値には `once { ... }` があります（[組み込み操作](09-builtins.md)）。
 
 ```ruby
 def pi = 3.14159

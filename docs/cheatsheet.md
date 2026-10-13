@@ -44,7 +44,7 @@ p(format("%05.1f|%-3s|%3d", 3.14159, "a", 7), Integer.to_s(255, 16))
 - `Set[1, 2]`, `1..5`, `1...n`, `1..`, `:sym`, `/re/i`, `2r`, `"a#{x}"` as in Ruby. `Regexp.new(s, "i")`.
 - No `%w[]`/`%i[]`, no `<<` on String or Array (use `s += t`, `Array.push(xs, x)`).
 - No value constants: `LIMIT = 10` is rejected; write `def limit = 10`. Constants hold only
-  `Struct.new` and `Exception.new`. `Math.PI` (also `Math::PI`), `Float.INFINITY`, `ARGV` are operations.
+  `Struct.new`, `Exception.new`, or a type (`Client = A::B`, a type alias). `Math.PI` (also `Math::PI`), `Float.INFINITY`, `ARGV` are operations.
 
 ```ruby
 t = [1, "one"]
@@ -142,7 +142,8 @@ p(Array.each(Array[3, 12, 5]) { |x| break x if x > 10 })
   `attr_accessor :next` only for reserved words) declares a type with fields in that order.
   `private attr_reader x` hides the reader outside the class. No field defaults (`attr_reader a = 1`
   is rejected); no code in the body. Namespaces nest: `class B` inside `module A` (or `class A::B`) is
-  `A::B`, used as `A::B.f(x)`; inside `A`, a bare `B` means `A::B` when it exists.
+  `A::B`, used as `A::B.f(x)`; inside `A`, a bare `B` means `A::B` when it exists. `Client = A::B` (top
+  level or in a class/module body) is another name for the type, scoped as a Ruby constant.
 - `C.new(x, y)` takes fields positionally (or by keyword: `C.new(1, y: 2)`; prefer keywords when
   there are several fields). Without `initialize` every field is required. `def initialize(c)`
   (exactly one parameter: the new instance, **not** the field values) runs after `new` stored the

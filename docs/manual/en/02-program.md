@@ -90,6 +90,7 @@ The body of a namespace may contain only the following.
 - `include Module`
 - `module_function` (in a module; see "Calling a module's functions" below)
 - a nested `class` / `module`, or `Name = Struct.new(...)`
+- a type alias `Name = A::B` (see "Type aliases" below)
 - in a class, `attr_reader` / `attr_accessor` / `attr_writer` lines ([Classes](07-classes.md))
 
 Any other statement in a body is a static error. `module` on a type is a static error too, with a hint that gives `class`.
@@ -135,6 +136,43 @@ module Geo
   Point = Struct.new(:x, :y)
 end
 p(Geo::Point)                # !> type `Geo::Point` cannot be used as a value
+```
+
+### Type aliases
+
+`Client = Handshake::Client` gives another name to an existing type: a class, a module, or a built-in type (`Str = String`). The alias is a constant, with Ruby's scope: it belongs to the namespace it is written in (the top level, or a `class` / `module` body), it is found as a type name is (the innermost namespace first, then outward, then the top level), and from outside it is `WebSocket::Client`. The right-hand side is a constant path, resolved where the alias is written; it may be another alias.
+
+```ruby
+module WebSocket
+  module Handshake
+    class Client
+      attr_reader url
+      def host(c) = String.split(@url, "/")[2]
+    end
+  end
+  Client = Handshake::Client           # WebSocket::Client
+  module Session
+    module_function
+    def open(url) = Client.new(url)    # Client here is WebSocket::Client
+  end
+end
+C = WebSocket::Client                  # an alias of an alias
+c = WebSocket::Session.open("ws://example.com/chat")
+p(C.host(c))                           # => "example.com"
+p(c.WebSocket::Client.host)            # => "example.com"
+p((c in WebSocket::Handshake::Client)) # => true
+```
+
+- **A name, not a new type.** `Client.new`, `Client.f(x)`, `x.Client.f`, `def Client.f`, `include`, `class C < Client`, `in Client`, `rescue Client`, `raise Client` and `Client::Inner` all mean the type it names. Messages name that type; an undefined function's hint says which type the alias names.
+- **One name per namespace.** An alias whose name is already a type or an alias of its namespace is a static error, as a duplicate definition is. A class is not defined through an alias (`class Client::Inner`): use the type's own name.
+- **Only types.** A right-hand side that names no type, and a cycle of aliases, are static errors. `Pi = Math::PI` stays a value constant (an error with the hint `def pi = Math::PI`).
+
+```ruby error
+module Net
+  class Conn
+  end
+  Socket = Net::Con          # !> `Socket = Net::Con`: Net::Con is not a type (a constant set to a constant is another name for a class or a module)
+end
 ```
 
 ### Classes do not inherit
@@ -191,7 +229,7 @@ def String.upcase(s) = s     # !> `String.upcase` is a built-in operation and ca
 
 ### No value constants
 
-Constants can only be assigned from `Struct.new`. For a named value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error whose hint gives that function, and each use of `PI` gets the hint to call `pi`. `once { ... }` computes a value once ([Built-in operations](09-builtins.md)).
+Constants can only be assigned from `Struct.new` (or `Exception.new`), or a type's name (a type alias, above). For a named value, define a function (`def pi = 3.14159`) and call it (`pi`). `PI = 3.14` is a static error whose hint gives that function, and each use of `PI` gets the hint to call `pi`. `once { ... }` computes a value once ([Built-in operations](09-builtins.md)).
 
 ```ruby
 def pi = 3.14159

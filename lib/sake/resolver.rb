@@ -77,6 +77,10 @@ module Sake
       @functions = {} # namespace (nil = top level) => name => UserFunction
       @struct_types = {}
       @value_constants = {} # rejected `NAME = value` => suggested function name
+      @alias_nodes = []     # [`Client = A::B` node, full name], as written
+      @aliases = {}         # full alias name => [node, namespace it is written in] (without the clashing ones)
+      @alias_targets = {}   # full alias name => the full name of the type it names (nil: an error was reported)
+      @alias_stack = []     # aliases being resolved, for cycles
       @const_names = {}.compare_by_identity # constant node => the full namespace name it resolved to (A::B)
       @rescue_members = {} # a name written in rescue => the exception types it catches (a module: its includers)
       @pattern_members = {} # a name written as a type pattern => the types it takes (a module: its includers)
@@ -131,12 +135,17 @@ module Sake
       # Namespaces nest: `class B` inside `module A` is A::B, as `class A::B` is. Every definition is
       # collected under its full name. Classes first, so that `class Point` bodies can see their accessors.
       nodes = namespace_nodes(stmts, nil)
-      nodes.each { |st, full| collect_constant(st, full) if st.is_a?(Prism::ConstantWriteNode) }
+      # `Client = A::B`: another name for a type, a constant of the namespace it is written in (as Ruby's).
+      nodes.each do |st, full|
+        next unless st.is_a?(Prism::ConstantWriteNode)
+        type_alias?(st) ? @alias_nodes << [st, full] : collect_constant(st, full)
+      end
       @class_nodes = nodes.select { |st, _| st.is_a?(Prism::ClassNode) }.group_by { |_, full| full }.transform_values { |l| l.map(&:first) }
       @class_specs = {}
       @private_fields = {} # type name => fields declared with private attr_*
       @field_limits = {}.compare_by_identity # T.read_field/write_field outside T, by node => {T => the fields it may name}
       @module_names = nodes.filter_map { |st, full| full if st.is_a?(Prism::ModuleNode) }.to_set | Operators::MODULES
+      check_aliases(nodes)
       @class_nodes.each_key { class_spec(_1, []) }
       stmts.each do |st|
         case st
@@ -267,19 +276,84 @@ module Sake
     end
 
     def known_namespace?(name)
-      @registry.namespace?(name) || @module_names.include?(name) || @class_nodes.key?(name) || @struct_types.key?(name)
+      @registry.namespace?(name) || @module_names.include?(name) || @class_nodes.key?(name) || @struct_types.key?(name) || @aliases.key?(name)
+    end
+
+    # `X = Y` / `X = A::B` (not Math::PI, ARGV): a type alias; whether Y names a type is checked later.
+    def type_alias?(node)
+      v = node.value
+      constant?(v) && !builtin_constant?(v) && !(v.is_a?(Prism::ConstantReadNode) && v.name == :ARGV)
+    end
+
+    # A name with every alias in it replaced by its type: Client::Frame => WebSocket::Handshake::Client::Frame.
+    def unalias(name)
+      return name if @aliases.empty?
+      name.split("::").inject(nil) do |acc, part|
+        full = qualify(acc, part)
+        @aliases.key?(full) ? (alias_target(full) || full) : full
+      end
+    end
+
+    def alias_target(full)
+      return @alias_targets[full] if @alias_targets.key?(full)
+      node, ns = @aliases.fetch(full)
+      if (i = @alias_stack.index(full))
+        cycle = @alias_stack[i..] + [full]
+        error(node, "type alias `#{full}` makes a cycle: #{cycle.join(" -> ")}")
+        cycle.each { @alias_targets[_1] = nil }
+        return nil
+      end
+      @alias_stack.push(full)
+      v = node.value
+      target = top_level_const?(v) ? unalias(const_text(v)) : resolve_name(const_text(v), ns, except: full)
+      @alias_stack.pop
+      return @alias_targets[full] if @alias_targets.key?(full) # in a cycle, reported once
+      unless known_namespace?(target) && !@aliases.key?(target)
+        types = [*@struct_types.keys, *@module_names, *@class_nodes.keys, *@aliases.keys, *BUILTIN_TYPES] - [full]
+        hints = spell(target, types).map { "did you mean `#{_1}`?" }
+        hints << "Sake has no value constants; a value goes in a function" if @value_constants.key?(target.to_sym)
+        error(v, "`#{node.name} = #{first_line(v.slice)}`: #{target} is not a type (a constant set to a constant is another name for a class or a module)", hints)
+        target = nil
+      end
+      @alias_targets[full] = target
+    end
+
+    # Each alias names a type, and no other type or alias of its namespace has its name.
+    def check_aliases(nodes)
+      return if @alias_nodes.empty?
+      @alias_nodes.each do |st, full|
+        other = @aliases.dig(full, 0)
+        if other || @struct_types.key?(full) || @module_names.include?(full) || @class_nodes.key?(full) || @registry.namespace?(full)
+          error(st, "`#{full}` is already defined#{" (line #{other.location.start_line})" if other}", ["a type alias is a new name; `#{st.name}` already names a type here"])
+        else
+          @aliases[full] = [st, enclosing(full)]
+        end
+      end
+      @aliases.each_key { alias_target(_1) }
+      nodes.each do |st, full|
+        if (st.is_a?(Prism::ClassNode) || st.is_a?(Prism::ModuleNode)) && (a = @aliases.keys.find { full.start_with?("#{_1}::") })
+          kind = st.is_a?(Prism::ClassNode) ? "class" : "module"
+          error(st.constant_path, "`#{kind} #{full}`: #{a} is another name for #{alias_target(a) || "a type"}; define it under that name")
+        end
+      end
     end
 
     # The namespace a constant names, seen from inside `ns`: as Ruby's lexical lookup, `B` written in
     # `module A` is A::B when that exists, else B. The full name is kept for the lowering (patterns, raise).
     # `::Name` names the top level, so it skips the enclosing namespaces.
-    def resolve_const(n, ns) = @const_names[n] = (top_level_const?(n) ? const_text(n) : resolve_name(const_text(n), ns))
+    def resolve_const(n, ns) = @const_names[n] = (top_level_const?(n) ? unalias(const_text(n)) : resolve_name(const_text(n), ns))
 
     def top_level_const?(n) = n.slice.lstrip.start_with?("::")
 
-    def resolve_name(text, ns)
+    # except: the alias being resolved, which its own right-hand side does not see (`Client = Client` in
+    # `module A` names the outer Client, as in Ruby, where A::Client is set after the right-hand side runs).
+    def resolve_name(text, ns, except: nil)
       parts = ns ? ns.split("::") : []
-      parts.size.downto(1).map { "#{parts.first(_1).join("::")}::#{text}" }.find { known_namespace?(_1) } || text
+      found = parts.size.downto(1).map { "#{parts.first(_1).join("::")}::#{text}" }.find do |c|
+        next false if except && (c == except || c.start_with?("#{except}::"))
+        known_namespace?(c) || (!@aliases.empty? && known_namespace?(unalias(c)))
+      end
+      unalias(found || text)
     end
 
     def enclosing(ns) = ns&.include?("::") ? ns.rpartition("::").first : nil
@@ -561,7 +635,7 @@ module Sake
       case node.receiver
       when nil then nil
       when Prism::ConstantReadNode, Prism::ConstantPathNode
-        ns = const_text(node.receiver)
+        ns = unalias(const_text(node.receiver)) # `def Client.f` defines f of the type Client names
         @registry.add_namespace(ns)
       when Prism::SelfNode
         return error(node, "Sake has no `self`; inside `class Foo`, `def #{node.name}` defines Foo.#{node.name}")
@@ -1604,6 +1678,9 @@ module Sake
         if dt.fields.include?(field)
           hints << (name.end_with?("=") ? "#{ns}.set_#{field}(obj, value)" : "#{ns}.#{field}(obj)")
         end
+      end
+      if !@aliases.empty? && node.respond_to?(:receiver) && constant?(node.receiver) && (w = const_text(node.receiver)) != ns && !ns.end_with?("::#{w}")
+        hints << "`#{w}` is another name for #{ns}"
       end
       error(node, "undefined function `#{ns}.#{name}`", hints)
     end
