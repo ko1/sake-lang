@@ -6,11 +6,11 @@
 
 ### ko1 の判断が要るもの
 
-1. **仕様変更（10-11 に入れた、戻すのは数行）**: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。（`Array.flatten` が Tuple も展開する変更は、Tuple は 1 つの値で集まりではないという立場（prelude、D1）とぶつかるので同日に戻した。代わりに Tuple が flatten に来ると静的に知らせ、`flat_map` と `Tuple.to_a` を hint で示す。ko1、10-11）
+1. ~~**仕様変更（10-11 に入れた、戻すのは数行）**~~ → 残す（ko1、10-13）: String の String・Regexp 添字（`s["b"]`、`s[/re/, 1]`）を演算子でも通す。（`Array.flatten` が Tuple も展開する変更は、Tuple は 1 つの値で集まりではないという立場（prelude、D1）とぶつかるので同日に戻した。代わりに Tuple が flatten に来ると静的に知らせ、`flat_map` と `Tuple.to_a` を hint で示す。ko1、10-11）
 2. **型の別名**（`Client = WebSocket::Handshake::Client`）: あってよいが後で考える（ko1、10-11）。深い入れ子を毎回書く長さは、浅い名前空間を選ばせる圧力として働く。移植の方針「Ruby の名前と入れ子を保つ」との関係も合わせて決める。
 3. ~~**例外の階層**~~ → モジュールでまとめる（`rescue M`）、組み込みは Ruby の親子関係（ko1、10-12。DESIGN.md）。
-4. **Integer の幅（ネイティブ）**: sabic / ceec は 64 ビットで溢れたらエラー。多倍長への昇格か、64 ビットの意味論か。
-5. D11 `f(**opts)` の受け渡し、D12 フィールドの既定値が前のフィールドを読めるか、D14 表示の protocol。
+4. ~~**Integer の幅（ネイティブ）**~~ → 処理系ごとでよい（ko1、10-13。spec §3 の表）: インタプリタは多倍長、sabic / ceec は 64 ビットで溢れたらエラー。
+5. ~~D11 `f(**opts)` の受け渡し~~（10-13 に入れた。DESIGN.md）。~~D12~~（既定値は a12be1dc で廃止済み）、~~D14~~（分けない、ko1、10-13）。
 6. ~~**ライブラリの rescue と「never raised」**~~ → 「決して投げない例外の `rescue`」は警告の項目 `unused-rescue`（どのレベルにも入らない。選べばエラー）。前の節が既に捕まえる節は `rescue` で level 1 のまま。ライブラリに限らず防御的な rescue は書く（ko1、10-13。DESIGN.md）。Sinatra は `rescue Pass` に戻した。
 7. ~~**型のフィールドをデータとして**~~ → `T.field_names`・`T.read_field`・`T.write_field`（ko1、10-13。DESIGN.md）。残り: **生成・マクロの段**（10-12 ウェブ）: Rails のルートヘルパ・テンプレート・モデルのフィールドと列の型は生成の段で書き出すしかなく、生成物が古いことを誰も知らせない。
 
@@ -130,10 +130,10 @@
 - [x] D8. (10-09, 変えない) `def NAN` を型の中から裸で呼べない（大文字は型）。
 - [x] D9. (10-09, キーワードの `new` は既にある。spec §10.1 で勧める) 位置の `new` でフィールド順の誤りが静かに通る（キーワードの `new` はある）。
 - [x] D10. (10-09) `Kernel.at_exit { }`: 組み込みがブロックを持つ（Thread.new と同じ）。finalizer は無し（GC と結びつく）。
-- [?] D11. `**opts` を次の関数に渡す `f(**opts)`（csv, i18n, thor。`sakelib/notes/csv_bug_double_splat_pass_on.sake`）。Hash を位置で渡すと値が 1 つの union になって型が落ちる。案: `f(**opts)` を「opts の各キーを f のキーワードに静的に展開」として、f のキーワード集合 ⊆ opts の集合（`**` で集めた関数のキーワード）のときだけ許す。
+- [x] D11. (10-13, ko1「それで済むならそれで」) `g(**opts)` は関数自身の `**opts` の各キーを g の同名のキーワードへ（型をキーごとに保つ）。DESIGN.md。元の記述: `**opts` を次の関数に渡す `f(**opts)`（csv, i18n, thor。`sakelib/notes/csv_bug_double_splat_pass_on.sake`）。Hash を位置で渡すと値が 1 つの union になって型が落ちる。案: `f(**opts)` を「opts の各キーを f のキーワードに静的に展開」として、f のキーワード集合 ⊆ opts の集合（`**` で集めた関数のキーワード）のときだけ許す。
 - [x] D13. (10-09) Struct 値の型を構築場所ごとに分ける（`Expectation@L4#1`）: `expect(42)` と `expect("abc")` が別の型になり、rspec / Promise / Heap の `[mixed]` が消える。鍵は `new` のノード × 引数の平らな形 × ブロック。費用は SQL エンジンで 1.4〜2.6 倍（`experiments/2026-10-09-struct-sites/`）。typer2 は未対応（型ごとの表のまま）。
-- [ ] D14. (10-10) 表示の protocol（`to_s` / `inspect`）を `Comparable` のようなモジュールに分けるか。分けない: 表示には常に既定の形があり、opt-in にしても検査が増えない。`to_str` 相当の暗黙変換（String を要る場所に Struct 値を渡す）は、引数の型が protocol の有無で決まることになるので足さない（操作に型を書く原則）。代わりに「自分の `to_s` を持たない Struct 値を補間・`puts` している」を厳格レベルで報告する案を残す。
-- [?] D12. フィールドの既定値が前のフィールドを読めない（`attr_reader src, len = String.bytesize(src)`。`sakelib/notes/json_bug_field_default_reads_earlier_field.sake`）。spec §10.1 は「引数の既定値のよう」と言うが、引数の既定値は前の引数を読める（§6）。案: 読めるようにする（initialize に写すのと同じ）か、spec に「読めない」と書く。
+- [x] D14. (10-10; ko1 10-13: 分けない、で決着。報告の案は入れない) 表示の protocol（`to_s` / `inspect`）を `Comparable` のようなモジュールに分けるか。分けない: 表示には常に既定の形があり、opt-in にしても検査が増えない。`to_str` 相当の暗黙変換（String を要る場所に Struct 値を渡す）は、引数の型が protocol の有無で決まることになるので足さない（操作に型を書く原則）。代わりに「自分の `to_s` を持たない Struct 値を補間・`puts` している」を厳格レベルで報告する案を残す。
+- [x] D12. (10-13: a12be1dc でフィールドの既定値そのものを廃止し、spec §10.1「No default values」で initialize が `@src` を読む。ko1 も「読めない」で可) フィールドの既定値が前のフィールドを読めない（`attr_reader src, len = String.bytesize(src)`。`sakelib/notes/json_bug_field_default_reads_earlier_field.sake`）。spec §10.1 は「引数の既定値のよう」と言うが、引数の既定値は前の引数を読める（§6）。案: 読めるようにする（initialize に写すのと同じ）か、spec に「読めない」と書く。
 
 ## 実装課題（マニュアルの書き直しで見つかったもの、2026-10-10）
 

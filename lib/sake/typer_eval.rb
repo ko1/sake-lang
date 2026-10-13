@@ -79,9 +79,16 @@ module Sake
       when LVarSet then assign(env, n.slot, ev(n.value, env))
       when MultiWrite then multi_write(n, env)
       when ArgDefault # the call did not give this parameter: the default's type
-        assign(env, n.slot, ev(n.value, env)) if env.lookup(n.slot) == MISSING
+        cur = env.lookup(n.slot)
+        if cur == MISSING
+          assign(env, n.slot, ev(n.value, env))
+        elsif cur&.include?(MISSING[0]) # `**opts` may or may not have it
+          assign(env, n.slot, u(cur - MISSING, ev(n.value, env)))
+        end
         t("Nil")
       when Missing then MISSING
+      when KwArg then kw_arg_type(n, env)
+      when KwRest then kw_rest_type(n, env)
       when BlockGiven then t("Boolean")
       when IndexUpdate then index_update(n, env)
       when If then branch(env, n.cond, n.then_, n.else_)
@@ -947,6 +954,51 @@ module Sake
       e = env
       e = e.parent until e.nil? || e.dead
       !e.nil?
+    end
+
+    # `g(**opts)`: keyword key's type, from each Hash value of opts (its literal keys' own types when it is a
+    # `**` Hash not written since); MISSING joins where opts may lack the key.
+    def kw_arg_type(n, env)
+      h = ev(n.hash, env)
+      fb = n.fallback ? ev(n.fallback, env) : MISSING
+      r = u(*atoms_of(h, :hash).map { |a| s = hash_sites[a[1]]; (kw = kw_known(s)) ? (kw[n.key] || fb) : u(s.val, fb) })
+      return r unless n.required && r.include?(MISSING[0])
+      add_check(n.origin, n.callee, "keyword missing", n.key, [], r == MISSING ? :error : :partial, [n.key])
+      r == MISSING ? unknown("missing keyword") : u(r - MISSING) # (not empty: the rest of the program is still checked)
+    end
+
+    # The keys of opts that g has no keyword for: a new Hash for g's `**`, or else a report of each such key.
+    def kw_rest_type(n, env)
+      h = ev(n.hash, env)
+      sites = atoms_of(h, :hash).map { hash_sites[_1[1]] }
+      unless n.rest
+        known = sites.flat_map { |s| (kw = kw_known(s)) ? kw.keys - n.names : [] }.uniq
+        maybe = sites.flat_map { |s| kw_known(s) ? [] : s.key.filter_map { _1[1] if _1.is_a?(Array) && _1[0] == :sym } - n.names }.uniq - known
+        bad = known + maybe
+        unless bad.empty?
+          add_check(n.origin, n.callee, "keyword name", n.names.map { ":#{_1}" }.join("|"), [], known.empty? ? :partial : :error, bad.map { [:sym, _1] })
+        end
+        return t("Nil")
+      end
+      pairs = ->(m) { atoms_of(ev(m, env), :pairs).flat_map { _1[1] } }
+      before = pairs.(n.before)
+      after = pairs.(n.after)
+      site = hash_site(n.origin, " **")
+      s2 = hash_sites[site[0][1]]
+      own = []
+      sites.each do |s|
+        if (kw = kw_known(s))
+          kw.each { |k, v| own << [one([:sym, k]), v] unless n.names.include?(k) }
+        else
+          s2.key = u(s2.key, s.key)
+          s2.val = u(s2.val, s.val)
+          s2.kw = :open
+        end
+      end
+      all = before + own + after
+      all.each { |k, v| s2.key = u(s2.key, k); s2.val = u(s2.val, v) }
+      s2.kw = kw_record(s2.kw, all)
+      site
     end
 
     def run_body(fn, args, blk)

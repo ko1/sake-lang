@@ -47,6 +47,8 @@ module Sake
     node :IndexUpdate, :recv, :key, :op, :value # `x[k] OP= v` (op: "||" for ||=); x and k evaluated once
     node :ArgDefault, :slot, :value         # an optional parameter's default, when the call did not give it
     node :Missing                           # an argument the call does not give (an omitted keyword, ...)
+    node :KwArg, :hash, :key, :fallback, :required, :callee # `g(**opts)`: keyword key of opts (a `**` Hash), else fallback (written before), else Missing
+    node :KwRest, :hash, :names, :before, :after, :rest, :callee # the keys of opts that are not names: g's `**` Hash (rest), or else an ArgumentError
     node :Block, :params, :locals, :body, :rest # params/locals: slots; locals are cleared on entry; rest: `|a, *r|`'s index in params
     node :Yield, :args
     node :BlockPass                         # `&b`: the function's own block, passed on to a call

@@ -217,5 +217,8 @@ Options supported: parsing `col_sep` (any length), `row_sep` (`:auto` or a Strin
   supported", and passing the collected Hash makes every option one union of types, which `--strict`
   rejects and which loses the `headers: nil` → Array typing (`csv_bug_double_splat_pass_on.sake`).
   So `read`/`readlines`/`foreach`/`generate*`/`open` still list their keywords.
+  **Resolved 2026-10-13:** `f(**opts)` passes the keywords on, each with its own type (D11);
+  `read`, `readlines` and `foreach` are `def read(path, **opts) = parse(File.read(path), **opts)` and the like.
+  `generate*`/`open` still list them: they give them to `CSV.new`, a Struct constructor, which `**` does not reach.
 - `@row_sep = "\n" if @row_sep == :auto` in `initialize` left the field `Symbol | String` (`==` does
   not narrow); `case @row_sep in String then @row_sep else "\n" end` does.

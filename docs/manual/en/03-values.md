@@ -4,7 +4,7 @@ Sake's values look much like Ruby's, but every value carries one type tag, and e
 
 | Type | How it is written (a literal, or the operation that makes it) | Notes |
 |---|---|---|
-| Integer | `42`, `-7` | arbitrary precision |
+| Integer | `42`, `-7` | arbitrary precision (the interpreter; the width is the implementation's: the C and Rust generators use 64 bits, and an overflow is an error) |
 | Float | `1.5`, `2.0` | |
 | String | `"abc"`, `'abc'`, `"a#{x}"` | interpolation uses `to_s` (see "Showing values") |
 | true / false | `true`, `false` | internally one type, `Boolean`, which cannot be written in source |

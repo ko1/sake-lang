@@ -1085,7 +1085,7 @@ module Sake
     end
 
     # keywords: the callee's keyword parameters (name => default or nil), when `k: v` arguments are its.
-    def check_args(args_node, ctx, hash_pairs: false, splat: false, keywords: nil, callee: nil)
+    def check_args(args_node, ctx, hash_pairs: false, splat: false, keywords: nil, callee: nil, target: nil)
       (args_node&.arguments || []).each do |a|
         case a
         when Prism::SplatNode
@@ -1100,7 +1100,12 @@ module Sake
               check(el.value, ctx)
             end
           elsif keywords
+            splats = 0
             a.elements.each do |el|
+              if el.is_a?(Prism::AssocSplatNode)
+                check_kw_splat(el, ctx, target, splats += 1)
+                next
+              end
               next error(el, "`**` is not supported") unless el.is_a?(Prism::AssocNode)
               check(el.value, ctx)
             end
@@ -1161,7 +1166,7 @@ module Sake
         target = resolve_qualified(node, tname, name, argc: args.size + 1, from: ctx.ns)
         check(subject, ctx)
         kws = target_keywords(target)
-        check_args(node.arguments, ctx, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)))
+        check_args(node.arguments, ctx, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)), target:)
         check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
         return unless target
         set_call(node, ctx, target)
@@ -1207,7 +1212,7 @@ module Sake
         error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
       end
       kws = target_keywords(target)
-      check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)))
+      check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)), target:)
       if blk.is_a?(Prism::BlockNode)
         detached = target.is_a?(Builtin) && DETACHED_BLOCKS.include?(target.full_name)
         check_block(blk, ctx, detached:)
@@ -1257,6 +1262,22 @@ module Sake
         check_arity(node, target, args.size + offset, !node.block.nil?)
       end
       true
+    end
+
+    # `f(**opts)`: the keywords the caller collected with its own `**opts` go on to f's keyword parameters, each by
+    # its name (lowered per keyword of f; the type checker follows each key's type and reports a key f does not take).
+    def check_kw_splat(el, ctx, target, count)
+      return error(el, "only one `**` per call") if count > 1
+      fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
+      unless fn.is_a?(UserFunction)
+        return error(el, "`**` passes keywords on only to a function defined with `def`", ["write each keyword: `k: Hash.fetch(opts, :k)`"])
+      end
+      own = ctx.fn&.kwrest_param
+      unless own && el.value.is_a?(Prism::LocalVariableReadNode) && el.value.name.to_s == own
+        return error(el, "`**` passes on only the keywords the function collected with its own `**` parameter (`def f(**opts) = g(**opts)`)",
+                     own ? ["write `**#{own}`"] : ["add `**opts` to the parameters of #{ctx.fn ? "`#{ctx.fn.name}`" : "a function"} and pass that on"])
+      end
+      check(el.value, ctx)
     end
 
     # The keyword parameters of a call's target: a user function's, or (a dispatch) the module function's.
@@ -1316,7 +1337,8 @@ module Sake
         end
         seen[name] = true
       end
-      missing = kws.select { |k, d| d.nil? && !seen[k] }.keys
+      # A required keyword may come in `**opts`: the type checker reports it when opts may lack it.
+      missing = kw&.elements&.any?(Prism::AssocSplatNode) ? [] : kws.select { |k, d| d.nil? && !seen[k] }.keys
       error(node, "#{target_name(target)} needs keyword argument#{"s" if missing.size > 1} #{missing.map { "`#{_1}:`" }.join(", ")}") if missing.any?
       args.size - (kw ? 1 : 0)
     end

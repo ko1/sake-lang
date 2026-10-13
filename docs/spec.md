@@ -135,7 +135,7 @@ Rules:
 
 | Type | Literals / constructors | Notes |
 |---|---|---|
-| Integer | `42`, `-7` | arbitrary precision |
+| Integer | `42`, `-7` | arbitrary precision in the interpreter; the width is the implementation's (the C and Rust generators use 64 bits, and an overflow is an error) |
 | Float | `1.5`, `2.0` | |
 | String | `"abc"`, `'abc'`, `"a#{x}"` | interpolation uses `to_s` ([§4.1](#41-showing-values)) |
 | true / false | `true`, `false` | internally one type, `Boolean`, which cannot be written in source |
@@ -380,7 +380,16 @@ end
   position, pass a Tuple: `notify(stock, ["AAPL", 120])`, then `name, price = event`),
   and `**opts` at the end the keywords that are not parameters in a Hash of Symbol keys; both are
   built at the call, since the callee is known (a function with `**opts` accepts any keyword, so a
-  misspelled one is no longer an error there). Parameters after `*rest` and nameless `*` / `**` are
+  misspelled one is no longer an error there). `g(**opts)` passes those keywords on to a function
+  `g` defined with `def`, as in Ruby: each key of opts goes to g's keyword of that name, and g's own
+  `**` gets the rest. Only the function's own `**` parameter can be passed on (not any Hash). Since
+  opts is built at the calls, the checker follows each key's type through (`read(s, sep: ";",
+  headers: true)` gives g's `sep` a String and `headers` a Boolean, not their union), and reports a
+  key g has no keyword for and a required keyword opts lacks (at run time, Ruby's `ArgumentError`:
+  `unknown keyword: :x`, `missing keyword: :k`). A keyword written before `**opts` is a default that
+  opts overrides; one written after overrides opts. Once opts is written to (`Hash.delete(opts, :k)`,
+  `Hash.store`, `opts[k] = v`), its keys are no longer followed one by one: each keyword gets the
+  union of its values, and a key may be one g does not take. Parameters after `*rest` and nameless `*` / `**` are
   rejected. A call gives between the required positional count and all of them (any number with
   `*rest`); a mixin function's definitions must agree on the counts, the keyword names, and on having
   `*rest` / `**opts`.

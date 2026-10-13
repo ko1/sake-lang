@@ -114,6 +114,15 @@ module Sake
         bad = typer.show_failing(c)
         hints = c.failing.flat_map { |a| DidYouMean::SpellChecker.new(dictionary: c.expected.split("|")).correct(":#{a[1]}") }.map { "did you mean `#{_1}`?" }
         ["#{c.op}: #{t} has no field #{bad}; its fields are #{c.expected.split("|").join(", ")}", c.verdict == :error ? hints : hints + ["the Symbol can be one that names no field"]]
+      when ->(_) { c.arg == "keyword name" }
+        names = c.expected.split("|")
+        bad = c.failing.map { ":#{_1[1]}" }
+        hints = c.failing.flat_map { |a| DidYouMean::SpellChecker.new(dictionary: names).correct(":#{a[1]}") }.map { "did you mean `#{_1.delete_prefix(":")}:`?" }
+        ["#{c.op}: the keywords passed on with `**` #{c.verdict == :error ? "hold" : "may hold"} #{bad.join(", ")}, which #{c.op} has no keyword parameter for; " \
+         "#{names.empty? ? "it takes none" : "its keywords are #{names.join(", ")}"}", hints + ["or give #{c.op} a `**` parameter of its own"]]
+      when ->(_) { c.arg == "keyword missing" }
+        ["#{c.op} needs keyword argument `#{c.expected}:`, which the keywords passed on with `**` #{c.verdict == :error ? "do not hold" : "may not hold"}",
+         ["give `#{c.expected}:` at the call that collects them, or write `#{c.expected}: ...` before `**` here as a default"]]
       when ->(_) { c.arg == "field access" }
         t = c.op.split(".")[0..-2].join(".")
         how = c.op.end_with?("write_field") ? "written" : "read"

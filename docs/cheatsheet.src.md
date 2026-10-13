@@ -134,8 +134,8 @@ p(Array.each(Array[3, 12, 5]) { |x| break x if x > 10 })
 ### Functions, classes, fields
 - `def f(a, b = 1, *rest, k: 2, **opts)`, `def f(x) = expr` (short expressions only); `return a, b` returns a Tuple.
   Top-level functions cannot see top-level locals. `*rest` is an Array, so its elements share one
-  type; to keep a type per position, pass a Tuple (`f(["AAPL", 120])`). `f(**opts)` cannot pass
-  keywords on (pass the Hash positionally).
+  type; to keep a type per position, pass a Tuple (`f(["AAPL", 120])`). `g(**opts)` passes the
+  function's own `**opts` on to g's keywords, each key keeping its type (only that parameter, not any Hash).
 - `class C` with `attr_reader x, y` / `attr_accessor n` / `attr_writer w` (names bare, not Symbols;
   `attr_accessor :next` only for reserved words) declares a type with fields in that order.
   `private attr_reader x` hides the reader outside the class. No field defaults (`attr_reader a = 1`

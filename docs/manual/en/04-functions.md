@@ -96,7 +96,34 @@ p(tag("div", id: "main", hidden: true))  # => ["div", {id: "main", hidden: true}
 
 - **Misspellings.** A function with `**opts` accepts any keyword, so a misspelled one is no longer an error there.
 - **A nameless `**`** is an error before running.
-- **Passing on.** Passing the collected keywords on with `f(**opts)` is not available yet.
+
+### Passing keywords on: `g(**opts)`
+
+`g(**opts)` passes the collected keywords on to a function `g` defined with `def`, as in Ruby. Each key goes to `g`'s keyword of that name, and `g`'s own `**` gets the rest.
+
+```ruby
+def parse(s, sep: ",", upcase: false)
+  fields = String.split(s, sep)
+  upcase ? Array.map(fields) { String.upcase(_1) } : fields
+end
+def read(s, **opts) = parse(s, **opts)
+p(read("a;b", sep: ";"))                # => ["a", "b"]
+p(read("a;b", sep: ";", upcase: true))  # => ["A", "B"]
+```
+
+- **Each key keeps its type.** The checker follows each key from the call that collected it, so here `sep` is a String and `upcase` a Boolean, not the union of both.
+- **Only the function's own `**` parameter** can be passed on, not any Hash.
+- **Checked like written keywords.** A key `g` has no keyword for, and a required keyword the keywords lack, are errors before running (at run time, Ruby's `ArgumentError`).
+- **Keywords written beside it.** One written before `**opts` is a default that opts overrides (`parse(s, sep: ";", **opts)`); one written after overrides opts.
+- **Changing opts first.** Once opts is written to (`Hash.delete(opts, :k)`, `opts[k] = v`), its keys are no longer followed one by one: each keyword gets the union of the values, and a key may be one `g` does not take.
+
+```ruby error
+def parse(s, sep: ",") = String.split(s, sep)
+def read(s, **opts) = parse(s, **opts)
+p(read("a;b", sepp: ";"))
+```
+
+The last line is reported at `**opts`: `parse: the keywords passed on with ** hold :sepp, which parse has no keyword parameter for`, with the hint `did you mean sep:?`.
 
 ### The block parameter `&b`
 

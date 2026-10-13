@@ -108,7 +108,8 @@ Struct types, the parser (23 operations, internal), 8 text builders. The test ru
 - **Keywords as the gem's option Hash.** `Thor.method_option(app, :shout, typ: :boolean)` →
   `error: Thor.method_option has no keyword parameter `typ`` / `hint: did you mean `type:`?`. Thor itself ignores
   an unknown option key. Six DSL functions repeat the same nine keywords, because `**opts` cannot be passed on
-  (`csv_bug_double_splat_pass_on.sake`); `build_option` takes them positionally.
+  (`csv_bug_double_splat_pass_on.sake`); `build_option` takes them positionally. (2026-10-13: `f(**opts)` now passes
+  keywords on; the DSL functions are not rewritten yet, since `build_option` would take them as keywords first.)
 - **Transcribing the parser.** Ruby's `case shifted when SHORT_SQ_RE ... when EQ_RE` with `$1`/`$2` became
   `m = String.match(shifted, short_sq_re); if m ... MatchData.[](m, 1) || ""`: four `if m` blocks where Ruby has one
   `case`, and `|| ""` on every group (a group may be nil). `peek`/`shift`/`unshift` with their flag side effects
@@ -128,6 +129,6 @@ Struct types, the parser (23 operations, internal), 8 text builders. The test ru
 
 - A way for a checker to relate a String literal set to a `case`: registered command names are Strings made at
   run time, so `run`'s `case name` cannot be checked for completeness. (A design question rather than a built-in.)
-- `**opts` pass-through, to write the nine option keywords once.
+- ~~`**opts` pass-through, to write the nine option keywords once.~~ (2026-10-13: there; thor is not rewritten to it yet)
 - `Kernel.PROGRAM_NAME` is there; `File.basename(PROGRAM_NAME)` is what thor's default `basename` would be, and
   a test cannot control it, so `Thor.app` takes the name.

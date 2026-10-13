@@ -102,8 +102,9 @@ module Sake
       when Prism::RegularExpressionNode then lit(Regexp.new(n.unescaped, regexp_options(n)), n)
       when Prism::RangeNode then MakeRange.new(left: lower(n.left), right: lower(n.right), exclusive: n.exclude_end?, origin: n)
       when Prism::ImplicitNode then lower(n.value)
-      when Prism::KeywordHashNode
-        MakePairs.new(keys: n.elements.map { lower(_1.key) }, values: n.elements.map { lower(_1.value) }, origin: n)
+      when Prism::KeywordHashNode # (a `**opts` in it is passed on by keyword_args)
+        els = n.elements.grep(Prism::AssocNode)
+        MakePairs.new(keys: els.map { lower(_1.key) }, values: els.map { lower(_1.value) }, origin: n)
       when Prism::TrueNode then lit(true, n)
       when Prism::FalseNode then lit(false, n)
       when Prism::NilNode then lit(nil, n)
@@ -348,12 +349,19 @@ module Sake
       return xs unless fn.is_a?(UserFunction) && (fn.keywords&.any? || fn.rest_param || fn.kwrest_param)
       kw = n.arguments&.arguments&.last
       given = {}
+      splat = nil # `**opts`: the caller's own `**` Hash, passed on key by key
+      early = {}  # keywords written before `**opts`, which opts overrides
       if kw.is_a?(Prism::KeywordHashNode)
         xs = xs[0...-1]
-        kw.elements.each { given[_1.key.unescaped] = _1.value }
+        kw.elements.each do |el|
+          next splat = el if el.is_a?(Prism::AssocSplatNode)
+          given[el.key.unescaped] = el.value
+          early[el.key.unescaped] = true unless splat
+        end
       end if fn.keywords&.any? || fn.kwrest_param
       names = fn.keywords.keys
-      in_order = given.keys == names.select { given.key?(_1) }
+      # With `**opts`, every argument is evaluated first, then opts is looked into (as Ruby raises on an unknown key at the call).
+      in_order = !splat && given.keys == names.select { given.key?(_1) }
       temp = lambda do |x, o|
         tmp = @scopes[-1].slot(:"(argument #{@arg_temps = (@arg_temps || 0) + 1})")
         temps << LVarSet.new(slot: tmp, value: x, origin: o)
@@ -367,9 +375,25 @@ module Sake
       rest = fn.rest_param ? [CallBuiltin.new(fn: @program.registry.lookup("Array", CTOR), args: xs.drop(fn.positional), block: nil, origin: n)] : []
       # `**opts`: the keywords that are not parameters, as a Hash of Symbol keys
       extra = given.keys - names
-      opts = fn.kwrest_param ? [CallBuiltin.new(fn: @program.registry.lookup("Hash", CTOR), block: nil, origin: kw || n,
-                                                args: [MakePairs.new(keys: extra.map { lit(_1.to_sym, n) }, values: extra.map { vals[_1] }, origin: n)])] : []
-      [*fixed, *pad, *rest, *names.map { vals[_1] || Missing.new(origin: nil) }, *opts]
+      pairs = ->(ks) { MakePairs.new(keys: ks.map { lit(_1.to_sym, n) }, values: ks.map { vals[_1] }, origin: n) }
+      if splat
+        # g's `**` Hash: opts without g's keywords; for a g without one, the check that opts has no other key
+        others = KwRest.new(hash: lower(splat.value), names:, before: pairs.(extra.select { early[_1] }), after: pairs.(extra.reject { early[_1] }),
+                            rest: !fn.kwrest_param.nil?, callee: fn.full_name, origin: splat)
+        temps << others unless fn.kwrest_param
+      end
+      opts = if splat
+               fn.kwrest_param ? [others] : []
+             elsif fn.kwrest_param
+               [CallBuiltin.new(fn: @program.registry.lookup("Hash", CTOR), block: nil, origin: kw || n, args: [pairs.(extra)])]
+             else
+               []
+             end
+      kws = names.map do |k|
+        next vals[k] || Missing.new(origin: nil) unless splat && (early[k] || !given.key?(k))
+        KwArg.new(hash: lower(splat.value), key: k, fallback: vals[k], required: fn.keywords[k].nil? && !given.key?(k), callee: fn.full_name, origin: splat)
+      end
+      [*fixed, *pad, *rest, *kws, *opts]
     end
 
     # T.new(a, level: :warn): the fields in order, Missing where neither a position nor a keyword gives one

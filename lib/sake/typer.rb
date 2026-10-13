@@ -40,7 +40,7 @@ module Sake
               CHANGED_AT[self] = (GEN[0] += 1)
               self[n] = v
               (h = ON_DIRTY[0]) && h.call(self)
-              (w = ON_WRITE[0]) && w.call(self, v)
+              (w = ON_WRITE[0]) && v.is_a?(Array) && w.call(self, v) # a type (kw and rewritten are not)
               next v
             end
             self[n] = v
@@ -373,7 +373,7 @@ module Sake
     def snapshot
 
       [@raises.transform_values(&:dup), @sites.transform_values { [_1.elem] }, @fields.transform_values(&:dup), @returns.dup,
-       hash_sites.transform_values { [_1.key, _1.val] }, set_sites.transform_values { [_1.elem] },
+       hash_sites.transform_values { [_1.key, _1.val, _1.kw, _1.rewritten] }, set_sites.transform_values { [_1.elem] },
        thread_sites.transform_values { [_1.elem] }, queue_sites.transform_values { [_1.elem] }, (@once_types || {}).dup]
     end
 
@@ -924,6 +924,7 @@ module Sake
         next unless a.is_a?(Array)
         if a[0] == :hash
           s = hash_sites[a[1]]
+          s.rewritten = true
           s.key = u(s.key, key)
           s.val = u(s.val, val)
         elsif a[0] == :array
@@ -1193,6 +1194,7 @@ module Sake
       if (r = constructor_ext(ns, name, args, node))
         return r
       end
+      mark_rewritten(args[0]) if ns == "Hash" && HASH_REWRITES.include?(fn.full_name)
       if name == CTOR
         if ns == "Array"
           # Every instantiation adds its element types (the site is made once, by the first).

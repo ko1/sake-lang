@@ -95,6 +95,29 @@ module Sake
       f == @program.path ? nil : f
     end
 
+    # `g(**opts)`: one keyword of g from opts (Ruby raises for a required one that is missing).
+    def kw_arg(n, f)
+      h = ev(n.hash, f)
+      key = n.key.to_sym
+      return h[key] if h.key?(key)
+      return ev(n.fallback, f) if n.fallback
+      fail_at(n, "ArgumentError", "missing keyword: :#{n.key}") if n.required
+      MISSING
+    end
+
+    # The keys of opts that g has no keyword for: g's `**` Hash, or else Ruby's unknown keyword error.
+    def kw_rest(n, f)
+      h = ev(n.hash, f)
+      names = n.names.map(&:to_sym)
+      others = h.reject { |k, _| names.include?(k) }
+      unless n.rest
+        return nil if others.empty?
+        fail_at(n, "ArgumentError", "unknown keyword#{"s" if others.size > 1}: #{others.keys.map(&:inspect).join(", ")}")
+      end
+      pairs = ->(m) { ev(m, f).pairs.to_h }
+      pairs.(n.before).merge(others, pairs.(n.after))
+    end
+
     def fail_at(node, kind, message, **opts)
       raise RunError.new(kind, message, line(node), @stack.dup, file: where_file(node), **opts)
     end
@@ -166,6 +189,8 @@ module Sake
       when Interp then encoding_error(n) { n.parts.map { ev(_1, f) }.join }
       when ArgDefault then f.slots[n.slot].equal?(MISSING) ? f.slots[n.slot] = ev(n.value, f) : nil
       when Missing then MISSING
+      when KwArg then kw_arg(n, f)
+      when KwRest then kw_rest(n, f)
       when BlockGiven then !f.block.nil?
       when ToS then Values.to_s(ev(n.value, f))
       when ToSym then ev(n.value, f).to_sym

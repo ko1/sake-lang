@@ -21,6 +21,8 @@ module Sake
                  Hash.store Hash.delete Hash.clear Hash.merge! Hash.update Hash.transform_values! Hash.transform_keys!
                  Hash.select! Hash.reject! Hash.delete_if Hash.keep_if Hash.compact!
                  Set.add Set.add? Set.delete Set.merge Set.clear Set.subtract Queue.push Queue.pop Queue.close].freeze
+    # Hash built-ins that change their subject's keys or values (a `**opts` passed on then follows them roughly).
+    HASH_REWRITES = (WRITERS.grep(/\AHash\./) + %w[Hash.[]= Hash.replace Hash.shift Hash.filter!]).freeze
     RETURNS_SUBJECT = (%w[Kernel.p Kernel.pp Kernel.dup Hash.dup Array.dup Array.push Array.append Array.unshift Array.concat
                           Array.insert Array.delete_if Array.clear Array.each Array.each_with_index Array.cycle
                           Hash.each Hash.each_pair Hash.each_key Hash.each_value Hash.clear Set.add Set.delete Set.each

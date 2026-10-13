@@ -5,8 +5,10 @@ module Sake
   # A Hash or Set carries its allocation site, like an Array; a Range carries its element type.
   class Typer
     # default: the type a missing key gives (nil unless made by Hash.new(default)).
-    HashSite = Struct.new(:id, :label, :key, :val, :default)
-    Tracked.setter(HashSite, :key, :val)
+    # kw: for a Hash made of literal Symbol keys (`**opts` of a call), key name => its value type, or :open;
+    # rewritten: written after it was made (store, delete, ...), so kw no longer tells its keys.
+    HashSite = Struct.new(:id, :label, :key, :val, :default, :kw, :rewritten)
+    Tracked.setter(HashSite, :key, :val, :kw, :rewritten)
     SetSite = Struct.new(:id, :label, :elem)
     Tracked.setter(SetSite, :elem)
 
@@ -34,9 +36,25 @@ module Sake
 
     def hash_site(node, label = "")
       id = site_id(node)
-      hash_sites[id] ||= HashSite.new(id, site_label(id, node, label), [], [], t("Nil"))
+      hash_sites[id] ||= HashSite.new(id, site_label(id, node, label), [], [], t("Nil"), nil, false)
       site_type(:hash, id)
     end
+
+    # The key => value types of literal Symbol pairs joined into kw (nil: none yet); :open for any other key.
+    def kw_record(kw, pairs)
+      return kw if kw == :open
+      rec = (kw || {}).dup
+      pairs.each do |k, v|
+        return :open unless k.size == 1 && k[0].is_a?(Array) && k[0][0] == :sym
+        rec[k[0][1]] = u(rec[k[0][1]] || [], v)
+      end
+      rec == kw ? kw : rec.freeze
+    end
+
+    # What `g(**opts)` knows of opts' keys, per Hash value of it: key => type, or nil when not known.
+    def kw_known(s) = s.kw.is_a?(Hash) && !s.rewritten ? s.kw : nil
+
+    def mark_rewritten(ty) = atoms_of(ty, :hash).each { hash_sites[_1[1]].rewritten = true }
 
     def set_site(node, label = "")
       id = site_id(node)
@@ -70,6 +88,7 @@ module Sake
         site = hash_site(node)
         s = hash_sites[site[0][1]]
         args.each { |ty| atoms_of(ty, :pairs).each { |p| p[1].each { |k, v| s.key = u(s.key, k); s.val = u(s.val, v) } } }
+        s.kw = kw_record(s.kw, args.flat_map { |ty| atoms_of(ty, :pairs).flat_map { _1[1] } })
         site
       when %w[Hash new]
         site = hash_site(node)

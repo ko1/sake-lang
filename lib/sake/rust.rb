@@ -350,7 +350,8 @@ module Sake
       KIND_WORDS = { MakePairs: "a Hash literal", MakeRecord: "a Record", MakeRegexp: "a Regexp", Begin: "begin/rescue/ensure",
                      RescueMod: "a rescue modifier", CaseIn: "case/in", MatchP: "pattern matching", MatchRecord: "a Record pattern",
                      CallDispatch: "a mixin call", CallUnion: "a `(A|B).f` call", Splat: "a splat", ToSym: "to_sym", Retry: "retry",
-                     ReRaise: "a bare raise", BlockPass: "`&b` here", Unresolved: "an unresolved call" }.freeze
+                     ReRaise: "a bare raise", BlockPass: "`&b` here", Unresolved: "an unresolved call",
+                     KwArg: "`**` (keywords passed on)", KwRest: "`**` (keywords passed on)" }.freeze
 
       def kind_words(n) = KIND_WORDS.fetch(AST::KINDS.key(n.class), AST::KINDS.key(n.class).to_s)
 

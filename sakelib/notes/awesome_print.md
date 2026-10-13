@@ -74,7 +74,8 @@ name; nested since 2026-10-10, before that `AwesomeInspector`).
   shape survived unchanged: `def indented(ai) ... yield ... ensure ... end`.
 - Keyword parameters carry the gem's option Hash one for one. `ap` repeats `ai`'s six keywords to pass them on
   (`ai(v, indent: indent, plain: plain, ...)`): `f(**opts)` is "`**` is not supported" (an open design question, recorded in
-  `csv_bug_double_splat_pass_on.sake`), so the signature is written twice.
+  `csv_bug_double_splat_pass_on.sake`), so the signature is written twice. (2026-10-13: `def ap(v, **opts)` passes
+  them on with `ai(v, **opts)`, each keyword keeping its type.)
 - `case v ... in Range | Regexp | Complex | Time | IO | MatchData then Kernel.inspect(v) ... else` - the `else` is
   "Struct values" only because the list of built-in types is closed and written out; a new built-in type would
   silently fall into the `struct` colour. A type pattern for "any Struct type" would make the intent explicit.
@@ -83,4 +84,4 @@ name; nested since 2026-10-10, before that `AwesomeInspector`).
 
 - `IO.tty?(io)`: the gem's `colorize?` (colours only on a terminal), so `ap` could default like the gem.
 - A pattern for "a value of any Struct type" (the complement of the built-in types) for `case v`.
-- `**opts` pass-through (`ai(v, **opts)`), to write the option list once.
+- ~~`**opts` pass-through (`ai(v, **opts)`), to write the option list once.~~ (2026-10-13)

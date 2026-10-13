@@ -96,7 +96,34 @@ p(tag("div", id: "main", hidden: true))  # => ["div", {id: "main", hidden: true}
 
 - **綴り間違い。** `**opts` を持つ関数はどのキーワードも受けるので、綴り間違いはそこではエラーになりません。
 - **名前の無い `**`** は実行前のエラーです。
-- **渡し直し。** 集めたキーワードを `f(**opts)` と次の関数に渡すことはまだできません。
+
+### キーワードを渡し直す: `g(**opts)`
+
+`g(**opts)` は、集めたキーワードを `def` で定義した関数 `g` にそのまま渡します（Ruby と同じ）。各キーは `g` の同じ名前のキーワードに入り、残りは `g` 自身の `**` に入ります。
+
+```ruby
+def parse(s, sep: ",", upcase: false)
+  fields = String.split(s, sep)
+  upcase ? Array.map(fields) { String.upcase(_1) } : fields
+end
+def read(s, **opts) = parse(s, **opts)
+p(read("a;b", sep: ";"))                # => ["a", "b"]
+p(read("a;b", sep: ";", upcase: true))  # => ["A", "B"]
+```
+
+- **キーごとに型を保つ。** 検査器はキーワードを集めた呼び出しから各キーを追うので、ここで `sep` は String、`upcase` は Boolean で、両者の union にはなりません。
+- **渡せるのは関数自身の `**` 引数だけ**です。任意の Hash は渡せません。
+- **書いたキーワードと同じく検査します。** `g` に無いキーや、足りない必須キーワードは実行前のエラーです（実行時なら Ruby と同じ `ArgumentError`）。
+- **並べて書いたキーワード。** `**opts` より前に書いたものは opts が上書きする既定値（`parse(s, sep: ";", **opts)`）、後に書いたものは opts を上書きします。
+- **先に opts を変えると。** opts に書き込むと（`Hash.delete(opts, :k)`、`opts[k] = v`）、キーを 1 つずつは追わなくなります。各キーワードは値全体の union になり、`g` に無いキーが入りうるとみなします。
+
+```ruby error
+def parse(s, sep: ",") = String.split(s, sep)
+def read(s, **opts) = parse(s, **opts)
+p(read("a;b", sepp: ";"))
+```
+
+最後の行は `**opts` の場所で報告されます: `parse: the keywords passed on with ** hold :sepp, which parse has no keyword parameter for`、ヒントは `did you mean sep:?`。
 
 ### ブロック引数 `&b`
 
