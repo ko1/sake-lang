@@ -8,7 +8,7 @@ Each row is the Ruby spelling (left), the Sake spelling (middle), and the reason
 
 | Ruby | Sake | Why |
 |---|---|---|
-| `s.upcase` | `String.upcase(s)`, `s.String.upcase` | the type is written on the operation |
+| `s.upcase` | `String.upcase(s)` | the type is written on the operation |
 | `p.x`, `p.x = v` | `Point.x(p)`, `p.Point.x = v`; inside the functions, `@x`, `@x = v` | field reads and writes name their type too |
 | `x.nil?` | `x == nil` | no calls on values |
 | `def self.f` | `def f`; in a module, `module_function` | one name in a namespace is one function |
@@ -33,7 +33,7 @@ Each row is the Ruby spelling (left), the Sake spelling (middle), and the reason
 
 ### The type is written on the operation
 
-In Sake only operations name a type. A method call on a value such as `s.upcase` is a static error, and the checker's hint gives `String.upcase(s)` and the chain form `s.String.upcase` ([Program structure and name resolution](02-program.md)). Field reads and writes are the same: `p.x` is `Point.x(p)` and `p.x = v` is `p.Point.x = v`. Inside a class's functions, `@x` means field `x` of the first parameter ([Classes](07-classes.md)).
+In Sake only operations name a type. A method call on a value such as `s.upcase` is a static error, and the checker's hint gives `String.upcase(s)` (for `s.strip.upcase`, the chain form `String.strip(s).String.upcase`; [Program structure and name resolution](02-program.md)). Field reads and writes are the same: `p.x` is `Point.x(p)` and `p.x = v` is `p.Point.x = v`. Inside a class's functions, `@x` means field `x` of the first parameter ([Classes](07-classes.md)).
 
 ```ruby
 Point = Struct.new(:x, :y)

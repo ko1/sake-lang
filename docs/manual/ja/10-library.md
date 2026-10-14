@@ -9,7 +9,7 @@
 - **探す場所。** `require "name"` は、まず require するファイルと同じディレクトリの `name.sake` を探します。無ければ処理系に付属する `sakelib/name.sake` を読みます。隣にある `name.sake` が require している自分自身か、ライブラリでないプログラムのときも sakelib のほうを読みます。どのディレクトリから実行しても `require "json"` は同じ `sakelib/json.sake` です。
 - **`/` を含む名前。** Ruby の `net/http`、`open-uri` は `net_http`、`open_uri` と書きます。
 - **モジュール関数は Ruby のまま。** `JSON.parse(s)`、`Base64.encode64(s)` は Ruby と同じ字面です。
-- **インスタンスメソッドは主語が先。** Ruby の `ss.scan(/\w+/)` は `StringScanner.scan(ss, /\w+/)` です。連鎖なら `ss.StringScanner.scan(/\w+/)` と書きます（[プログラムの構造と名前解決](02-program.md)）。
+- **インスタンスメソッドは主語が先。** Ruby の `ss.scan(/\w+/)` は `StringScanner.scan(ss, /\w+/)` です（[プログラムの構造と名前解決](02-program.md)）。
 - **入れ子の名前は Ruby のまま。** 名前空間は入れ子にできるので（[プログラムの構造と名前解決](02-program.md)）、`Net::HTTP`、`Concurrent::Future`、`JSON::ParserError`、`Benchmark::Tms` は Ruby と同じ字面です: `Net::HTTP.get(http, path)`、`rescue JSON::ParserError`。外側が組み込み型の名前だけは作れません（`Enumerable` が無いので、ActiveSupport の `Enumerable::SoleItemExpectedError` はトップレベルの `SoleItemExpectedError` です）。対応表は各ライブラリの notes にあります。
 
 ```ruby

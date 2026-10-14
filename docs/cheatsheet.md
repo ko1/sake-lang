@@ -12,7 +12,7 @@ Part 1 gives the rules; Part 2 lists every built-in operation (only those exist)
 ## Part 1. Rules
 
 ### Calls
-- Built-in and user operations: `Type.op(subject, args...)`. Chain form: `x.T.op(args)` is `T.op(x, args)`.
+- Built-in and user operations: `Type.op(subject, args...)`. Chain form: `T.f(x).T.op(args)` is `T.op(T.f(x), args)`; start a chain with `T.f(x)`.
   A call on a value (`s.strip`, `xs.size`, `3.times`, `1.to_s`, `x.nil?`) is rejected.
 - Kernel functions are called bare: `puts print p pp format sprintf gets loop raise rand srand sleep
   exit warn system at_exit Integer(s) Float(s) Rational(..) Complex(..) dup(x) block_given? once ARGV`.
@@ -29,7 +29,7 @@ Part 1 gives the rules; Part 2 lists every built-in operation (only those exist)
 ```ruby
 s = "  Hello World  "
 puts(String.upcase(String.strip(s)))
-puts(s.String.strip.String.downcase)
+puts(String.strip(s).String.downcase)
 puts(String.split("b a c", " ").Array.sort.Array.join(","))
 p(Array.reduce(Any[1, 2, 3], 0) { |acc, x| acc + x })
 p(format("%05.1f|%-3s|%3d", 3.14159, "a", 7), Integer.to_s(255, 16))

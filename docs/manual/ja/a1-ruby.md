@@ -8,7 +8,7 @@ Sake の構文は Ruby のものですが、Ruby の書き方のいくつかは�
 
 | Ruby | Sake | 理由 |
 |---|---|---|
-| `s.upcase` | `String.upcase(s)`、`s.String.upcase` | 操作に型を書く |
+| `s.upcase` | `String.upcase(s)` | 操作に型を書く |
 | `p.x`, `p.x = v` | `Point.x(p)`, `p.Point.x = v`。関数の中では `@x`, `@x = v` | フィールドの読み書きも型を名乗る |
 | `x.nil?` | `x == nil` | 値へのメソッド呼び出しは無い |
 | `def self.f` | `def f`。module では `module_function` | 名前空間に 1 つの名前は 1 つの関数 |
@@ -33,7 +33,7 @@ Sake の構文は Ruby のものですが、Ruby の書き方のいくつかは�
 
 ### 操作に型を書く
 
-Sake では型を名乗るのは操作だけです。`s.upcase` のような値へのメソッド呼び出しは静的エラーで、検査器は `String.upcase(s)` と連鎖の形 `s.String.upcase` を hint で示します（[プログラムの構造と名前解決](02-program.md)）。フィールドの読み書きも同じで、`p.x` は `Point.x(p)`、`p.x = v` は `p.Point.x = v` です。クラスの関数の中では `@x` が第 1 引数のフィールド `x` を指します（[クラス](07-classes.md)）。
+Sake では型を名乗るのは操作だけです。`s.upcase` のような値へのメソッド呼び出しは静的エラーで、検査器は `String.upcase(s)` を hint で示します（`s.strip.upcase` には連鎖の形 `String.strip(s).String.upcase`）（[プログラムの構造と名前解決](02-program.md)）。フィールドの読み書きも同じで、`p.x` は `Point.x(p)`、`p.x = v` は `p.Point.x = v` です。クラスの関数の中では `@x` が第 1 引数のフィールド `x` を指します（[クラス](07-classes.md)）。
 
 ```ruby
 Point = Struct.new(:x, :y)

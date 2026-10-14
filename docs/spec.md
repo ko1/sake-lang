@@ -231,7 +231,8 @@ still naming its type:
 
 - **Chain.** `x.T.f(args...)` is `T.f(x, args...)`: the step `.T` names a type or module, and the
   value to its left becomes the first argument. Steps can follow one another, also with the dot at
-  the start of the next line. `x.T` with no operation after it is a static error.
+  the start of the next line. `x.T` with no operation after it is a static error. A chain is written
+  starting with `T.f(x)`; starting from a variable (`x.T.f`) is allowed, but the hints never suggest it.
 
   ```ruby
   String.split(line, ",")
@@ -254,10 +255,11 @@ still naming its type:
 ### 5.3 No calls on values
 
 A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error.
-The error suggests the qualified form, and for a single step also the chain form (`x.T.op(...)`).
+The error suggests the qualified form, and when the receiver is a qualified call also the chain form
+(`T.f(x).T.op(...)`).
 
-- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.upcase(String.strip(s))`.
-- **Field access** gets the reader: `p.x` suggests `Point.x(p)` (or `p.Point.x`), and `p.x = v`
+- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.strip(s).String.upcase`.
+- **Field access** gets the reader: `p.x` suggests `Point.x(p)`, and `p.x = v`
   suggests `p.Point.x = v`.
 - **Literal receivers** narrow the suggestions to the literal's type.
 - **`x.nil?`** suggests `x == nil`.

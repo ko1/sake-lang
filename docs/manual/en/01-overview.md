@@ -231,7 +231,6 @@ The `name.upcase` example at the top of this chapter prints:
 greet.sake:2:11: error: method call on a value `name.upcase` is not allowed
   hint: String.upcase(name)
   hint: Symbol.upcase(name)
-  hint: name.String.upcase
 ```
 
 ## Format of runtime errors

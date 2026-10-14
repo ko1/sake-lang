@@ -1801,8 +1801,10 @@ module Sake
         rest = hints.drop(5).map { _1[/\A[A-Z][\w:]*(?=\.)/] || _1 }
         hints = [*hints.take(5), "also defined by #{rest.join(", ")}"]
       end
-      # The chain form of the first suggestion, for a single step: `x.T.f(args)`.
-      if suggestions.any? && !lowercase_call?(node.receiver) && !node.attribute_write? && (op = suggestions.first[/\A[A-Z][\w:]*\.[^(\s]+/])
+      # The chain form of the first suggestion, for a step after a call: `T.g(x).T.f(args)`. A chain starts
+      # with `T.f(x)`, never `x.T.f` (ko1, 10-14: hard to read), so a variable or literal receiver gets none.
+      if suggestions.any? && node.receiver.is_a?(Prism::CallNode) && !lowercase_call?(node.receiver) && !node.attribute_write? &&
+         (op = suggestions.first[/\A[A-Z][\w:]*\.[^(\s]+/])
         args = (node.arguments&.arguments || []).map(&:slice)
         blk = node.block.is_a?(Prism::BlockNode) ? " #{node.block.slice.include?("\n") ? "{ ... }" : node.block.slice}" : ""
         hints << "#{first_line(node.receiver.slice)}.#{op}#{args.empty? ? "" : "(#{args.join(", ")})"}#{blk}"
@@ -1846,6 +1848,10 @@ module Sake
         end
       if node.attribute_write? # `p.x = v`: the chain form `p.Point.x = v`
         return candidates.map { |c| "#{recv}.#{c.split(".").first}.#{name.delete_suffix("=")} = #{args.join(", ")}" }
+      end
+      # After a rewritten step the chain goes on: `String.strip(s).String.upcase`, not nested calls.
+      if recvs.size == 1 && lowercase_call?(node.receiver)
+        return candidates.map { "#{recv}.#{_1}#{args.empty? ? "" : "(#{args.join(", ")})"}#{blk}" }
       end
       candidates.map { "#{_1}(#{[recv, *args].join(", ")})#{blk}" }
     end

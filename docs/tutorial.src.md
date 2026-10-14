@@ -67,7 +67,8 @@ chance to fail halfway through:
 @@example typo
 
 Nested calls read inside out. Two forms let them read in order instead, with every step still
-naming its type: `x.T.f(...)` is `T.f(x, ...)`, and `_` is the value of the previous statement:
+naming its type: `T.g(x).T.f(...)` is `T.f(T.g(x), ...)`, and `_` is the value of the previous
+statement:
 
 @@example chains
 

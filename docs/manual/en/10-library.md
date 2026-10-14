@@ -9,7 +9,7 @@ A library is loaded with `require "json"`. The names of the libraries and of the
 - **Where it looks.** `require "name"` first looks for `name.sake` in the directory of the requiring file. When there is none, it reads `sakelib/name.sake`, shipped with the interpreter. The sakelib copy is also taken when the `name.sake` next door is the requiring file itself, or a program rather than a library. From whatever directory the program runs, `require "json"` reads the same `sakelib/json.sake`.
 - **Names with `/`.** Ruby's `net/http` and `open-uri` are written `net_http` and `open_uri`.
 - **Module functions as in Ruby.** `JSON.parse(s)` and `Base64.encode64(s)` are spelled as in Ruby.
-- **Instance methods take the subject first.** Ruby's `ss.scan(/\w+/)` is `StringScanner.scan(ss, /\w+/)`; in a chain, `ss.StringScanner.scan(/\w+/)` ([Program structure and name resolution](02-program.md)).
+- **Instance methods take the subject first.** Ruby's `ss.scan(/\w+/)` is `StringScanner.scan(ss, /\w+/)` ([Program structure and name resolution](02-program.md)).
 - **Nested names are Ruby's.** Namespaces nest ([Program structure and name resolution](02-program.md)), so `Net::HTTP`, `Concurrent::Future`, `JSON::ParserError` and `Benchmark::Tms` are spelled as in Ruby: `Net::HTTP.get(http, path)`, `rescue JSON::ParserError`. Only a nested name whose outer name is a built-in type cannot exist (there is no `Enumerable`, so ActiveSupport's `Enumerable::SoleItemExpectedError` is the top-level `SoleItemExpectedError`). Each library's notes have the table.
 
 ```ruby

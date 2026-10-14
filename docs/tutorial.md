@@ -81,10 +81,9 @@ $ sake method_call.sake
 method_call.sake:2:11: error: method call on a value `name.upcase` is not allowed
   hint: String.upcase(name)
   hint: Symbol.upcase(name)
-  hint: name.String.upcase
 method_call.sake:3:17: error: method call on a value `name.strip.capitalize` is not allowed
-  hint: String.capitalize(String.strip(name))
-  hint: Symbol.capitalize(String.strip(name))
+  hint: String.strip(name).String.capitalize
+  hint: String.strip(name).Symbol.capitalize
 (exit status 2)
 ```
 
@@ -109,7 +108,8 @@ typo.sake:3:14: error: undefined function `Integer.to_string`
 ```
 
 Nested calls read inside out. Two forms let them read in order instead, with every step still
-naming its type: `x.T.f(...)` is `T.f(x, ...)`, and `_` is the value of the previous statement:
+naming its type: `T.g(x).T.f(...)` is `T.f(T.g(x), ...)`, and `_` is the value of the previous
+statement:
 
 ```ruby
 line = "pear, Apple ,fig"
@@ -726,7 +726,6 @@ puts(Point.new(1))
 $ sake instance_errors.sake
 instance_errors.sake:5:9: error: method call on a value `pt.x` is not allowed
   hint: Point.x(pt)
-  hint: pt.Point.x
 instance_errors.sake:6:7: error: field `x` of Point is read-only (attr_reader)
   hint: inside `class Point`, use `@x = value`; or declare it with `attr_accessor x`
 instance_errors.sake:7:12: error: undefined function `Point.z`

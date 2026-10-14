@@ -231,7 +231,6 @@ FILE:LINE:COLUMN: error: MESSAGE
 greet.sake:2:11: error: method call on a value `name.upcase` is not allowed
   hint: String.upcase(name)
   hint: Symbol.upcase(name)
-  hint: name.String.upcase
 ```
 
 ## 実行時エラーの形式

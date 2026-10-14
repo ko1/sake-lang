@@ -267,6 +267,8 @@ Two forms let a sequence of operations read from left to right, top to bottom. I
 
 `x.T.f(args...)` is `T.f(x, args...)`: the step `.T` names a type or module, and the value to its left becomes the first argument. Steps can follow one another, also with the dot at the start of the next line.
 
+A chain starts with `T.f(x)` and goes on with `.T.g`. Starting from a variable, `x.T.f`, is allowed but not recommended: the type's name sits in the middle of the line and is hard to read, and the checker's hints do not suggest it.
+
 ```ruby
 line = "a, b ,c"
 r = String.split(line, ",")
@@ -321,15 +323,15 @@ p(_)                         # !> `_` is the previous statement's value, but her
 
 ## No calls on values
 
-A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error. The error suggests the qualified form, and for a single step also the chain form (`x.T.op(...)`).
+A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error. The error suggests the qualified form, and when the receiver is a qualified call also the chain form (`T.f(x).T.op(...)`).
 
 ```ruby error
 s = " a "
 puts(s.strip.upcase)         # !> method call on a value `s.strip.upcase` is not allowed
 ```
 
-- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.upcase(String.strip(s))`. In the chain form, it is `s.String.strip.String.upcase`.
-- **Field access** gets the reader: `p.x` suggests `Point.x(p)` (or `p.Point.x`), and `p.x = v` suggests `p.Point.x = v`. With a setter function, write `Point.set_x(p, v)`.
+- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.strip(s).String.upcase`, the first step as `T.f(x)` and the others after it.
+- **Field access** gets the reader: `p.x` suggests `Point.x(p)`, and `p.x = v` suggests `p.Point.x = v`. With a setter function, write `Point.set_x(p, v)`.
 - **Literal receivers** narrow the suggestions to the literal's type: `"lit".upcase` suggests only `String.upcase("lit")`.
 - **`x.nil?`** suggests `x == nil`.
 

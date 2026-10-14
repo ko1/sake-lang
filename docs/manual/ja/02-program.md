@@ -266,6 +266,8 @@ puts(Integer.upcase("a"))    # !> undefined function `Integer.upcase`
 
 `x.T.f(args...)` は `T.f(x, args...)` です。段 `.T` が型かモジュールを名乗り、その左の値が第 1 引数になります。段は続けて書け、次の行の先頭にドットを置くこともできます。
 
+連鎖は `T.f(x)` で始め、`.T.g` で続けます。変数から始める `x.T.f` も書けますが、型の名前が行の途中に挟まって読みにくいので勧めません。検査器の hint も示しません。
+
 ```ruby
 line = "a, b ,c"
 r = String.split(line, ",")
@@ -320,15 +322,15 @@ p(_)                         # !> `_` is the previous statement's value, but her
 
 ## 値へのメソッド呼び出しは無い
 
-小文字のレシーバを持つ呼び出し、`x.op(...)`、`"lit".op`、`3.times` は静的エラーです。エラーは型付きの形を提案し、1 段なら連鎖の形（`x.T.op(...)`）も提案します。
+小文字のレシーバを持つ呼び出し、`x.op(...)`、`"lit".op`、`3.times` は静的エラーです。エラーは型付きの形を提案し、レシーバが型付きの呼び出しなら連鎖の形（`T.f(x).T.op(...)`）も提案します。
 
 ```ruby error
 s = " a "
 puts(s.strip.upcase)         # !> method call on a value `s.strip.upcase` is not allowed
 ```
 
-- **連鎖**は全体を書き直します。`s.strip.upcase` には `String.upcase(String.strip(s))` を提案します。連鎖の形で書くなら `s.String.strip.String.upcase` です。
-- **フィールドアクセス**にはリーダを提案します。`p.x` には `Point.x(p)`（または `p.Point.x`）、`p.x = v` には `p.Point.x = v` です。関数のセッタなら `Point.set_x(p, v)` と書きます。
+- **連鎖**は全体を書き直します。`s.strip.upcase` には `String.strip(s).String.upcase` を提案します。最初の段が `T.f(x)` になり、後の段が続きます。
+- **フィールドアクセス**にはリーダを提案します。`p.x` には `Point.x(p)`、`p.x = v` には `p.Point.x = v` です。関数のセッタなら `Point.set_x(p, v)` と書きます。
 - **リテラルのレシーバ**は候補をそのリテラルの型に絞ります。`"lit".upcase` には `String.upcase("lit")` だけです。
 - **`x.nil?`** には `x == nil` を提案します。
 
