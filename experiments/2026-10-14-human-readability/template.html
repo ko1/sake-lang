@@ -1,0 +1,237 @@
+<title>Ruby と Sake のぱっと見</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one narrow column, one task per screen; the code block is the only framed object. */
+:root {
+  --bg: #f6f7f5; --surface: #ffffff; --fg: #1d2421; --muted: #5d6863; --line: #d7ddd9;
+  --accent: #23646b; --accent-fg: #ffffff; --code-bg: #f0f3f1; --good: #2f7a3e; --bad: #a23b2a;
+  --font-body: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-code: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #151a18; --surface: #1c2220; --fg: #e3e8e5; --muted: #9aa6a0; --line: #33403b;
+  --accent: #6fb7be; --accent-fg: #0f1a1b; --code-bg: #111614; --good: #7cc58a; --bad: #e58b78; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #151a18; --surface: #1c2220; --fg: #e3e8e5; --muted: #9aa6a0; --line: #33403b;
+  --accent: #6fb7be; --accent-fg: #0f1a1b; --code-bg: #111614; --good: #7cc58a; --bad: #e58b78; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.7; }
+main { max-width: 46rem; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: grid; gap: 20px; }
+h1 { font-size: 1.5rem; line-height: 1.35; margin: 0; text-wrap: balance; }
+h2 { font-size: 1.15rem; margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.eyebrow { font-size: 0.75rem; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.stack { display: grid; gap: 12px; }
+.muted { color: var(--muted); }
+code, pre { font-family: var(--font-code); }
+code { background: var(--code-bg); padding: 0 0.3em; border-radius: 3px; font-size: 0.92em; }
+pre.code { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px;
+  font-size: 0.9rem; line-height: 1.6; overflow-x: auto; white-space: pre; }
+.lang { font-family: var(--font-code); font-size: 0.8rem; color: var(--muted); }
+.spec { border-left: 3px solid var(--accent); padding: 6px 12px; background: var(--surface); }
+.choices { display: grid; gap: 8px; }
+button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+  padding: 10px 14px; text-align: left; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); text-align: center; font-weight: 500; }
+button:disabled { opacity: 0.5; cursor: default; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > button { flex: 1 1 8rem; text-align: center; }
+.scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.scale button { text-align: center; padding: 8px 4px; font-variant-numeric: tabular-nums; }
+.scale-labels { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pair > div { min-width: 0; display: grid; gap: 6px; align-content: start; }
+@media (max-width: 640px) { .pair { grid-template-columns: 1fr; } }
+.bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+label { display: grid; gap: 4px; }
+select, textarea, input[type=text] { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+textarea { min-height: 6rem; resize: vertical; }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+th, td { border-bottom: 1px solid var(--line); padding: 4px 10px; text-align: right; }
+th:first-child, td:first-child { text-align: left; }
+.table-wrap { overflow-x: auto; }
+.note { font-size: 0.85rem; color: var(--muted); }
+.ok { color: var(--good); } .ng { color: var(--bad); }
+</style>
+
+<main id="app">
+  <p class="muted">読み込み中…</p>
+</main>
+
+<script type="application/json" id="items">/*ITEMS*/[]</script>
+<script>
+"use strict";
+const ITEMS = JSON.parse(document.getElementById("items").textContent);
+const PAIR_IDS = ["R3", "R5", "G2", "G6"];
+const app = document.getElementById("app");
+
+let db = null, user = null, uid = null, isOwner = false;
+const state = { group: Math.random() < 0.5 ? 0 : 1, order: [], step: 0, background: {}, answers: [], prefs: [], comment: "",
+  started: new Date().toISOString() };
+
+function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v !== undefined) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return e;
+}
+function show(...nodes) { app.replaceChildren(...nodes); window.scrollTo(0, 0); }
+// Each person sees every item once, in one language; half the items in each, by a random group.
+function langOf(item) { return (ITEMS.indexOf(item) + state.group) % 2 === 0 ? "sake" : "ruby"; }
+const LANG_NAME = { ruby: "Ruby", sake: "Sake" };
+
+function intro() {
+  const exp = el("select", { id: "exp" }, ["", "使ったことがない", "1 年未満", "1〜5 年", "5 年以上"].map(v => el("option", { value: v }, v || "選んでください")));
+  const seen = el("select", { id: "seen" }, ["", "ない", "少し見たことがある", "書いたことがある"].map(v => el("option", { value: v }, v || "選んでください")));
+  const start = el("button", { class: "primary", disabled: "", onclick: () => {
+    state.background = { ruby: exp.value, sake: seen.value };
+    state.order = shuffle(ITEMS);
+    task();
+  } }, "はじめる（約 10 分）");
+  const check = () => { start.disabled = !(exp.value && seen.value); };
+  exp.addEventListener("change", check); seen.addEventListener("change", check);
+  show(
+    el("p", { class: "eyebrow" }, "コードの見やすさの調査"),
+    el("h1", {}, "Ruby と Sake、ぱっと見で読めるのはどちらか"),
+    el("p", {}, "AI が書いたコードを人がレビューするとき、一行ずつ精読するより、流し読みで済ませることが多くなりそうです。この調査では、短いコードをぱっと見たときに、何をしているか・仕様どおりかがどれだけ掴めるかを、Ruby と Sake の 2 つの書き方で比べます。"),
+    el("div", { class: "stack spec" },
+      el("p", {}, "Sake は Ruby によく似た言語で、値にメソッドを呼ぶ代わりに、型の名前を付けた関数として呼びます。"),
+      el("pre", { class: "code" }, "# Ruby                          # Sake\nxs.map { |x| x * 2 }            Array.map(xs) { |x| x * 2 }\nu.name                          User.name(u)\nxs.select { }.map { }           xs.Array.select { }.Array.map { }"),
+      el("p", { class: "note" }, "ほかは Ruby と同じです（ブロック、if、文字列の式展開など）。")),
+    el("div", { class: "stack" },
+      el("h2", {}, "進め方"),
+      el("p", {}, "12 問あります。1 問ごとに Ruby か Sake のどちらかで出ます。レビューで流し読みするつもりで、じっくり読まずに答えてください。答えるまでの時間も記録します。"),
+      el("p", {}, "「仕様どおりか」を聞く問題では、型の誤り（存在しないメソッド、型の取り違え）は入っていません。検査を通ったコードだと思って読んでください。"),
+      el("p", {}, "答えたあとに、そのコードがぱっと見て見やすかったかを 5 段階で聞きます。最後に、同じコードの 2 つの書き方を並べて比べる問題が 4 つあります。")),
+    el("div", { class: "stack" },
+      el("label", {}, "Ruby の経験", exp),
+      el("label", {}, "Sake を見たことは", seen)),
+    start,
+    el("p", { class: "note" }, "回答は、この調査を作った人だけが読めます。名前は記録しません。"));
+}
+
+function progress() {
+  const n = state.order.length + PAIR_IDS.length, i = state.step;
+  return el("div", { class: "stack" }, el("p", { class: "eyebrow" }, `${i + 1} / ${n}`), el("div", { class: "bar" }, el("i", { style: `width:${(i / n) * 100}%` })));
+}
+
+function easeScale(onpick) {
+  return el("div", { class: "stack" },
+    el("p", {}, "このコードは、ぱっと見て見やすかったですか？"),
+    el("div", { class: "scale" }, [1, 2, 3, 4, 5].map(v => el("button", { onclick: () => onpick(v) }, v))),
+    el("div", { class: "scale-labels" }, el("span", {}, "見にくい"), el("span", {}, "見やすい")));
+}
+
+function task() {
+  const k = state.step;
+  if (k >= state.order.length) return pairTask(0);
+  const item = state.order[k], lang = langOf(item);
+  const t0 = performance.now();
+  const rec = { id: item.id, kind: item.kind, lang };
+  const finish = (answer, correct) => {
+    rec.answer = answer; rec.correct = correct; rec.ms = Math.round(performance.now() - t0);
+    show(progress(), el("pre", { class: "code" }, item[lang]), easeScale(v => { rec.ease = v; state.answers.push(rec); state.step++; task(); }));
+  };
+  const code = [el("p", { class: "lang" }, LANG_NAME[lang]), el("pre", { class: "code" }, item[lang])];
+  if (item.kind === "review") {
+    show(progress(), el("p", { class: "eyebrow" }, "仕様どおりか"), el("p", { class: "spec" }, item.spec), ...code,
+      el("div", { class: "row" },
+        el("button", { onclick: () => finish("ok", !item.bug) }, "仕様どおり"),
+        el("button", { onclick: () => finish("bug", item.bug) }, "誤りがある")));
+  } else {
+    const opts = shuffle(item.choices.map((c, i) => ({ c, i })));
+    show(progress(), el("p", { class: "eyebrow" }, "何をするコードか"), ...code,
+      el("div", { class: "choices" }, opts.map(o => el("button", { onclick: () => finish(o.i, o.i === 0) }, o.c))));
+  }
+}
+
+function pairTask(j) {
+  if (j >= PAIR_IDS.length) return commentPage();
+  const item = ITEMS.find(i => i.id === PAIR_IDS[j]);
+  const left = Math.random() < 0.5 ? "ruby" : "sake", right = left === "ruby" ? "sake" : "ruby";
+  const pick = v => { state.prefs.push({ id: item.id, left, choice: v }); state.step++; pairTask(j + 1); };
+  show(progress(), el("p", { class: "eyebrow" }, "2 つの書き方を比べる"),
+    el("p", {}, "同じ処理を 2 つの書き方で書いたものです。ぱっと見て見やすいのはどちらですか？"),
+    el("div", { class: "pair" },
+      el("div", {}, el("p", { class: "lang" }, "左: " + LANG_NAME[left]), el("pre", { class: "code" }, item[left])),
+      el("div", {}, el("p", { class: "lang" }, "右: " + LANG_NAME[right]), el("pre", { class: "code" }, item[right]))),
+    el("div", { class: "scale" }, [-2, -1, 0, 1, 2].map(v => el("button", { onclick: () => pick(v) },
+      { "-2": "左がずっと", "-1": "左がやや", "0": "同じ", "1": "右がやや", "2": "右がずっと" }[v]))));
+}
+
+function commentPage() {
+  const ta = el("textarea", { id: "comment", placeholder: "気づいたこと、読みにくかった箇所など（任意）" });
+  show(el("p", { class: "eyebrow" }, "最後に"), el("h2", {}, "感想があれば書いてください"), ta,
+    el("button", { class: "primary", onclick: () => { state.comment = ta.value.trim(); submit(); } }, "送信する"));
+}
+
+async function submit() {
+  state.finished = new Date().toISOString();
+  const record = { v: 1, ...state, order: state.order.map(i => i.id) };
+  show(el("p", { class: "muted" }, "送信しています…"));
+  let saved = false;
+  if (db && uid) {
+    try { await db.doc("responses/" + uid).set(record); saved = true; } catch (e) { saved = false; }
+  }
+  const nodes = [el("h1", {}, saved ? "ありがとうございました" : "回答を保存できませんでした")];
+  const right = state.answers.filter(a => a.correct).length;
+  nodes.push(el("p", {}, `正解は ${state.answers.length} 問中 ${right} 問でした。`));
+  if (!saved) {
+    const text = JSON.stringify(record);
+    const box = el("textarea", { id: "result-code", readonly: "" }); box.value = text;
+    nodes.push(el("p", {}, "このページでは回答を保存できない設定でした（共有の範囲によっては保存できません）。お手数ですが、下の文字列をそのまま調査した人に送ってください。"),
+      box, el("button", { onclick: async () => { try { await navigator.clipboard.writeText(text); } catch { box.select(); } } }, "コピーする"));
+  }
+  if (isOwner) nodes.push(el("button", { onclick: results }, "集計を見る（作成者のみ）"));
+  show(...nodes);
+}
+
+function median(xs) { if (!xs.length) return null; const s = xs.slice().sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+function mean(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; }
+function fmt(x, d = 1) { return x == null ? "—" : x.toFixed(d); }
+
+async function results() {
+  show(el("p", { class: "muted" }, "読み込み中…"));
+  let docs = [];
+  try { docs = (await db.collection("responses").get()).docs.map(d => d.data()); } catch (e) { show(el("p", {}, "読み込めませんでした: " + (e && e.code))); return; }
+  const answers = docs.flatMap(d => d.answers || []);
+  const row = (label, xs) => el("tr", {}, el("td", {}, label), el("td", {}, xs.length),
+    el("td", {}, xs.length ? fmt(100 * xs.filter(a => a.correct).length / xs.length, 0) + "%" : "—"),
+    el("td", {}, fmt(median(xs.map(a => a.ms / 1000)))), el("td", {}, fmt(mean(xs.map(a => a.ease)), 2)));
+  const head = el("tr", {}, ["", "回答数", "正答率", "時間の中央値（秒）", "見やすさの平均（1〜5）"].map(h => el("th", {}, h)));
+  const rows = [];
+  for (const kind of ["review", "gist"]) for (const lang of ["ruby", "sake"])
+    rows.push(row(`${kind === "review" ? "仕様どおりか" : "何をするか"} · ${LANG_NAME[lang]}`, answers.filter(a => a.kind === kind && a.lang === lang)));
+  const perItem = ITEMS.map(it => el("tr", {}, el("td", {}, it.id),
+    ...["ruby", "sake"].flatMap(lang => { const xs = answers.filter(a => a.id === it.id && a.lang === lang);
+      return [el("td", {}, xs.length ? `${xs.filter(a => a.correct).length}/${xs.length}` : "—"), el("td", {}, fmt(median(xs.map(a => a.ms / 1000)))), el("td", {}, fmt(mean(xs.map(a => a.ease)), 2))]; })));
+  // A preference is turned into "toward Sake": +2 means Sake much easier at a glance.
+  const prefs = docs.flatMap(d => d.prefs || []).map(p => p.left === "sake" ? -p.choice : p.choice);
+  show(el("p", { class: "eyebrow" }, "集計（作成者のみ）"), el("h1", {}, `回答 ${docs.length} 人`),
+    el("div", { class: "table-wrap" }, el("table", {}, head, ...rows)),
+    el("h2", {}, "題ごと"),
+    el("div", { class: "table-wrap" }, el("table", {},
+      el("tr", {}, ["題", "Ruby 正答", "秒", "見やすさ", "Sake 正答", "秒", "見やすさ"].map(h => el("th", {}, h))), ...perItem)),
+    el("h2", {}, "並べて比べた結果"),
+    el("p", {}, `${prefs.length} 件。Sake 寄りを +、Ruby 寄りを − とした平均: ${fmt(mean(prefs), 2)}（−2〜+2）`),
+    el("p", { class: "note" }, "数が少ないうちは、差を読まないでください。生の回答は Claude が db から読めます。"));
+}
+
+async function boot() {
+  intro();
+  try {
+    if (!window.claude || !window.claude.use) return;
+    user = await window.claude.use("user");
+    db = await window.claude.use("db");
+    if (user) { uid = await user.id(); isOwner = (await user.isOwner()) || false; }
+    if (isOwner && db) app.append(el("button", { onclick: results }, "集計を見る（作成者のみ）"));
+  } catch (e) { db = null; }
+}
+boot();
+</script>
