@@ -11,8 +11,9 @@ name.upcase                # Ruby: an error in Sake, reported with the fix above
 
 Because every operation names its type:
 
-- **One line is enough to read it.** A line tells you which function runs, without looking up
-  declarations.
+- **One line is enough to read most calls.** For most calls, a line tells you which function runs,
+  without looking up declarations. A module function `M.f(x)`, a type list `(A|B).f(x)` and an
+  operator choose by the first argument's type, from a set of candidates fixed before running.
 - **Names are checked before running.** A misspelled operation or type is reported before the
   program starts.
 - **Types are inferred, never written.** The whole-program inference catches values that cannot

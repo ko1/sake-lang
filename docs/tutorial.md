@@ -10,9 +10,9 @@ String.upcase(s)      # Sake
 s.upcase              # Ruby — an error in Sake
 ```
 
-Because every operation names its type, a single line tells you which function runs, and the
-interpreter can check every name before the program starts. You never write a type on a variable,
-a parameter, or a return value.
+Because every operation names its type, for most calls a single line tells you which function
+runs, and the interpreter can check every name before the program starts. You never write a type
+on a variable, a parameter, or a return value.
 
 This tutorial walks through the language with small programs. **Every output below was produced by
 running the program** (`tools/gen_tutorial.rb` regenerates this file). The precise rules are in
