@@ -45,6 +45,28 @@ class TestRust < Minitest::Test
     end
   end
 
+  # A program the default checks stop (as `sake` does) is not compiled: the checker's message, exit 2.
+  def test_a_type_error_stops_before_generating
+    skip "rustc is not installed" unless HAVE_RUSTC
+    Dir.mktmpdir do |tmp|
+      src = File.join(tmp, "t.sake")
+      File.write(src, <<~SAKE)
+        class C
+          attr_reader x
+          def xx(obj) = @x + 1
+        end
+        class D
+          attr_reader x
+        end
+        v = Array.size(ARGV) > 0 ? D.new(1) : C.new(41)
+        p C.xx(v)
+      SAKE
+      out, err, st = Open3.capture3(SABIC, src, "--emit", "-o", File.join(tmp, "t"))
+      assert_equal 2, st.exitstatus, err
+      assert_match(/t\.sake:3:17: error: C\.x: argument 1 must be C, but can be D \[type\]/, err)
+    end
+  end
+
   # Checks the range analysis must not remove: each program fails at run time, as on the interpreter
   # (overflow fails only natively).
   MUST_FAIL = {

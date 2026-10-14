@@ -112,7 +112,8 @@ running.
 the generator can fix: Integer (as 64-bit, an overflow is an error), Float, true/false, nil as
 `Option`, String, Array, Tuple, classes, blocks, unions of classes as a Rust `enum` with mixin calls
 as a `match`, and `case`/`in` on values and types. Anything outside the subset is reported with its
-line, and the program still runs on the interpreter.
+line, and the program still runs on the interpreter. A program that the checks of `bin/sake` stop at its
+default level is not compiled either.
 
 ```
 bin/sabic FILE.sake            # writes FILE.rs and builds FILE with rustc -O
