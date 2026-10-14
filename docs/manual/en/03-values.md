@@ -174,7 +174,7 @@ h = {"a" => 1}                 # !> `{"a" => ...}` is not a Hash in Sake: `{name
 
 ### Array of T
 
-`T[a, ...]` creates an Array whose element type is T. T is a built-in type (`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`) or a class.
+`T[a, ...]` creates an Array whose element type is T. T is a built-in type (`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`), a class, or a module. A module's Array `M[...]` holds values of the types that include M, so a mixin function `M.f(x)` runs on each element.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer cannot go into `Float[]`.
 - **Static check.** If a literal argument of `T[...]` has another type, the error is reported before running. This catches `Point[1, 2]`, Ruby's spelling of `Point.new(1, 2)`.
@@ -197,6 +197,24 @@ pts = Point[Point.new(1, 2), Point.new(3, 4)]
 xs = Array.map(pts) { |pt| Point.x(pt) }
 Array.push(xs, "s")
 p(xs)                          # => [1, 3, "s"]
+```
+
+```ruby
+module Shape
+  def area(s) = raise NotImplementedError
+end
+class Sq
+  include Shape
+  attr_reader n
+  def area(s) = @n * @n
+end
+class Rect
+  include Shape
+  attr_reader w, h
+  def area(s) = @w * @h
+end
+shapes = Shape[Sq.new(2), Rect.new(2, 3)]
+p(Array.map(shapes) { |s| Shape.area(s) })   # => [4, 6]
 ```
 
 ### Ruby habits

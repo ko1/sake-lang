@@ -274,21 +274,22 @@ module Sake
     def check_elems(a, xs)
       return xs unless a.is_a?(TypedArray)
       xs.each do |x|
-        t = Values.type_of(x)
-        raise Fail.new("TypeError", "#{a.elem_type}[] element must be #{a.elem_type}, got #{Values.describe(x)}") if t != a.elem_type
+        raise Fail.new("TypeError", "#{a.elem_type}[] element must be #{a.wanted}, got #{Values.describe(x)}") unless a.accepts?(x)
       end
       xs
     end
 
-    # `T[...]` for a type T (built-in or Struct). `Array[...]` stays the untyped constructor.
-    def install_typed_array(reg, type, struct: false)
+    # `T[...]` for a type T (built-in or Struct), or a module T: its elements are of the types in accepts (those
+    # that include it). `Array[...]` stays the untyped constructor.
+    def install_typed_array(reg, type, struct: false, accepts: [type])
       reg.define(type, CTOR, [], rest: "Any") do |*xs|
+        a = TypedArray.new(type, [], accepts)
         xs.each_with_index do |x, i|
-          next if Values.type_of(x) == type
+          next if a.accepts?(x)
           hint = struct ? " (to create one #{type}, write #{type}.new(...))" : ""
-          raise Fail.new("TypeError", "element #{i + 1} must be #{type}, got #{Values.describe(x)}#{hint}")
+          raise Fail.new("TypeError", "element #{i + 1} must be #{a.wanted}, got #{Values.describe(x)}#{hint}")
         end
-        TypedArray.new(type, xs)
+        a.concat(xs)
       end
     end
 

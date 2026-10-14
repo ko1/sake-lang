@@ -503,9 +503,17 @@ module Sake
 
     def site_for(node, label_extra = nil, declared: nil, init: [])
       id = site_id(node)
-      elem = declared && !STRUCTURED.include?(declared) ? t(declared) : init
+      elem = declared && !STRUCTURED.include?(declared) ? u(*declared_types(declared).map { t(_1) }) : init
       @sites[id] ||= Site.new(id, node, site_label(id, node, label_extra), declared, init, elem).tap { note_contents(id, elem) }
       site_type(:array, id)
+    end
+
+    # The element types of a typed Array `T[...]`: T, or for a module T the types that include it.
+    def declared_types(d)
+      (@declared_types ||= {})[d] ||= begin
+        inc = @program.includes.select { |t, ms| ms.include?(d) && (@program.struct_types.key?(t) || Resolver::BUILTIN_TYPES.include?(t)) }.keys.sort
+        inc.empty? ? [d] : inc
+      end
     end
 
     def array_sites(ty) = ty.select { _1.is_a?(Array) && _1[0] == :array }.map { @sites[_1[1]] }
@@ -514,7 +522,8 @@ module Sake
     def write_elems(ty, xs, node, op)
       array_sites(ty).each do |s|
         if s.declared
-          xs.each { |x| record(node, op, "elem", s.declared, x) }
+          arg = declared_types(s.declared) == [s.declared] ? "elem" : "elem of #{s.declared}" # a module's Array
+          xs.each { |x| record(node, op, arg, declared_types(s.declared), x) }
           if STRUCTURED.include?(s.declared)
             s.elem = u(s.elem, *xs.map { |x| x.select { atom_type_name(_1) == s.declared } })
           end

@@ -168,3 +168,4 @@
 - `String.getbyte` の nil がレベル 2 で毎回 `|| 0` を要求する。`String.unpack1` の結果に型が付かない（`v => Integer` が要る）。
 - 要望の多い組み込み: 例外の階層（4 体、10-12 にモジュールで入れた）、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。
 - [ ] C・Rust 版: `else` の無い `case/in` で「not supported」の理由が空になる（`path::  (not supported by the C backend)`。2026-10-13、型の別名の作業で main でも再現）。
+- [ ] Rust・C 版: 空の型付き Array を `p` すると rustc が型を決められない（`p Integer[]`、`p P[]`: `error[E0283]: type annotations needed`。2026-10-14、`M[...]` の作業で発見）。生成器の CTOR が要素の型を引数からしか取らず、宣言された型（T、モジュールなら include した型）を使っていない。

@@ -484,7 +484,7 @@ module Sake
         nil
       end
       reg.define("Array", :clear, ["Array"], &:clear)
-      reg.define("Array", :dup, ["Array"]) { |a| a.is_a?(TypedArray) ? TypedArray.new(a.elem_type, a.to_a) : a.dup }
+      reg.define("Array", :dup, ["Array"]) { |a| a.is_a?(TypedArray) ? TypedArray.new(a.elem_type, a.to_a, a.accepts) : a.dup }
       count = reg.lookup("Array", "count")
       count.block = :optional
       count.optional = ["Any"]

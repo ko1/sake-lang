@@ -174,7 +174,7 @@ h = {"a" => 1}                 # !> `{"a" => ...}` is not a Hash in Sake: `{name
 
 ### T の Array
 
-`T[a, ...]` は要素型 T の Array を作ります。T は組み込み型（`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`）かクラスです。
+`T[a, ...]` は要素型 T の Array を作ります。T は組み込み型（`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`）、クラス、またはモジュールです。モジュールの Array `M[...]` には M を include した型の値が入り、各要素に mixin 関数 `M.f(x)` を使えます。
 
 - **書き込みの検査。** 作成、`Array.push`、`Array.append`、`Array.concat` のすべての書き込みが検査され、合わなければ `TypeError`。暗黙の変換は無く、Integer は `Float[]` に入りません。
 - **静的検査。** `T[...]` のリテラル引数が別の型なら実行前に報告されます。Ruby 流に書いた `Point[1, 2]`（`Point.new(1, 2)` のつもり）がここで捕まります。
@@ -197,6 +197,24 @@ pts = Point[Point.new(1, 2), Point.new(3, 4)]
 xs = Array.map(pts) { |pt| Point.x(pt) }
 Array.push(xs, "s")
 p(xs)                          # => [1, 3, "s"]
+```
+
+```ruby
+module Shape
+  def area(s) = raise NotImplementedError
+end
+class Sq
+  include Shape
+  attr_reader n
+  def area(s) = @n * @n
+end
+class Rect
+  include Shape
+  attr_reader w, h
+  def area(s) = @w * @h
+end
+shapes = Shape[Sq.new(2), Rect.new(2, 3)]
+p(Array.map(shapes) { |s| Shape.area(s) })   # => [4, 6]
 ```
 
 ### Ruby の癖

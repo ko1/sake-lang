@@ -20,14 +20,19 @@ module Sake
     def hash = [Tuple, @elems].hash
   end
 
-  # `T[...]`: an Array whose element type is declared; checked on every write.
+  # `T[...]`: an Array whose element type is declared; checked on every write. accepts: the types its elements
+  # may have (T, or for a module M the types that include M).
   class TypedArray < ::Array
-    attr_reader :elem_type
+    attr_reader :elem_type, :accepts
 
-    def initialize(elem_type, elems)
+    def initialize(elem_type, elems, accepts = [elem_type])
       super(elems)
       @elem_type = elem_type
+      @accepts = accepts
     end
+
+    def accepts?(v) = @accepts.include?(Values.type_of(v))
+    def wanted = @accepts == [@elem_type] ? @elem_type : "a type including #{@elem_type}"
   end
 
   # exception: made by Exception.new (or built in); its first field is message and it can be raised.
@@ -50,7 +55,7 @@ module Sake
     # A copy whose containers are new and whose elements are the same values (Ruby's dup).
     def self.shallow_copy(x)
       case x
-      when TypedArray then TypedArray.new(x.elem_type, x.to_a)
+      when TypedArray then TypedArray.new(x.elem_type, x.to_a, x.accepts)
       when ::Array, ::Hash, ::Set then x.dup
       when ::String then x.dup
       when Tuple then Tuple.new(x.elems.dup)

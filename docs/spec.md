@@ -823,7 +823,8 @@ shape fixes its type at creation. A growable collection is made by an operation 
 to it.
 
 **Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type
-(`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`) or a class.
+(`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`), a class, or a module: `M[a, ...]`
+holds values of the types that include M, so `M.f(x)` dispatches on each element.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and
   `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer

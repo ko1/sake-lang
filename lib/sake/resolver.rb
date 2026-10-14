@@ -161,6 +161,7 @@ module Sake
       # others. They keep their own operations only (nothing is copied into a built-in type).
       ENUM_TYPES.each { (@includes[_1] ||= []) << ["Enum", nil] } if @modules.key?("Enum")
       apply_includes
+      install_module_arrays
       apply_initialize_arity
     end
 
@@ -227,6 +228,18 @@ module Sake
             end
           end
         end
+      end
+    end
+
+    # `M[a, b]` for a module M: an Array of values whose types include M (checked on every write, as T[...]),
+    # so that `M.f(x)` on each element dispatches. @module_includers: M => those types.
+    def install_module_arrays
+      @module_includers = {}
+      @modules.each_key do |mod|
+        next if @registry.lookup(mod, CTOR) || @functions.dig(mod, CTOR)
+        types = @linearized.select { |t, l| (@struct_types.key?(t) || BUILTIN_TYPES.include?(t)) && l.any? { _1[0] == mod } }.keys.sort
+        @module_includers[mod] = types
+        Stdlib.install_typed_array(@registry, mod, accepts: types)
       end
     end
 
@@ -1485,10 +1498,12 @@ module Sake
     # `Point[1, 2]` is a Ruby-ism for Point.new; in Sake it is an Array of Point, so literals are certain failures.
     def check_typed_array_literals(node, target, args)
       type = target.namespace
-      i = args.index { (lit = literal_type(_1)) && lit != type }
+      accepts = @module_includers[type] || [type]
+      i = args.index { (lit = literal_type(_1)) && !accepts.include?(lit) }
       return unless i
       hints = @struct_types[type] ? ["#{type}.new(#{args.map(&:slice).join(", ")}) creates one #{type}; #{type}[...] is an Array of #{type}"] : []
-      error(args[i], "#{type}[]: element #{i + 1} must be #{type}, got #{literal_type(args[i])}", hints)
+      want = @module_includers.key?(type) ? "a type including #{type} (#{accepts.empty? ? "none does" : accepts.join(", ")})" : type
+      error(args[i], "#{type}[]: element #{i + 1} must be #{want}, got #{literal_type(args[i])}", hints)
     end
 
     # Built-ins that keep the block and run it later, on another thread or at exit: there is no call to
@@ -1682,8 +1697,8 @@ module Sake
       end
 
       if name == CTOR # `T[...]` for a T without a typed Array
-        typed = @registry.namespaces.select { |t| @registry.lookup(t, CTOR) && !@struct_types.key?(t) && !%w[Array Hash Set].include?(t) }
-        return error(node, "`#{ns}[...]`: #{ns} has no typed Array", ["Array[...] holds any values; typed Arrays: #{typed.sort.map { "#{_1}[]" }.join(", ")}, and T[] for your own types"])
+        typed = @registry.namespaces.select { |t| @registry.lookup(t, CTOR) && !@struct_types.key?(t) && !@modules.key?(t) && !%w[Array Hash Set].include?(t) }
+        return error(node, "`#{ns}[...]`: #{ns} has no typed Array", ["Array[...] holds any values; typed Arrays: #{typed.sort.map { "#{_1}[]" }.join(", ")}, and T[] for your own types and modules"])
       end
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
       others = namespaces_defining(name) - [ns]

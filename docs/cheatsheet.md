@@ -38,7 +38,8 @@ p(format("%05.1f|%-3s|%3d", 3.14159, "a", 7), Integer.to_s(255, 16))
 ### Literals (the #1 source of errors)
 - `[a, b]` is a **Tuple** (fixed length, per-position types). `[]` cannot grow.
 - `Array[a, b]` / `Array[]` is a growable Array. `Integer[]`, `String[]`, `Float[]`, `Tuple[]`,
-  `Point[]` make an Array whose element type is checked on every write. `Point[1, 2]` is NOT `Point.new`.
+  `Point[]` make an Array whose element type is checked on every write; `Shape[]` (a module) holds values of the types
+  that include Shape. `Point[1, 2]` is NOT `Point.new`.
 - `{k: v}` is a **Record** (read with a pattern `r => {k:}`; no field writes). `{}` and `{"a" => 1}` are errors.
 - `Hash["a" => 1]`, `Hash[]`, `Hash.new(0)` make a Hash. `Hash.new { ... }` is rejected.
 - `Set[1, 2]`, `1..5`, `1...n`, `1..`, `:sym`, `/re/i`, `2r`, `"a#{x}"` as in Ruby. `Regexp.new(s, "i")`.

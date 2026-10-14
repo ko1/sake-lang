@@ -156,7 +156,10 @@ module Sake
         if c.failing == ["Integer"] && c.actual.include?("Float") && c.expected.split("|").include?("Float")
           hint += ["if the value comes from `sum`, an empty collection sums to the Integer 0; give the start: `Array.sum(xs, 0.0)`"]
         end
-        subject = c.arg == "elem" ? "an element" : what
+        if c.arg.is_a?(String) && (mod = c.arg[/\Aelem of (.+)\z/, 1])
+          hint += ["#{mod}[...] holds values of the types that include #{mod}; to put #{got} in it, include #{mod} in its class"]
+        end
+        subject = c.arg.is_a?(String) && c.arg.start_with?("elem") ? "an element" : what
         ["#{c.op}: #{subject} must be #{c.expected}, but #{c.verdict == :error ? "is" : "can be"} #{got}", hint]
       end
     end
