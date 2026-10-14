@@ -67,6 +67,28 @@ mistakes.sake:3:13: error: undefined function `String.upcse`
   hint: did you mean `String.upcase`?
 ```
 
+## Samples
+
+- [examples/](examples/README.md): 59 programs in ten categories, each with the output it prints:
+  [text](examples/text/), [numbers](examples/numbers/), [algorithms](examples/algorithms/),
+  [data structures](examples/data-structures/), [data](examples/data/),
+  [grids and games](examples/grids-and-games/), [parsers and codecs](examples/parsers-and-codecs/),
+  [simulation](examples/simulation/), [types and errors](examples/types-and-errors/) and
+  [apps](examples/apps/). [first.sake](examples/first.sake) is the smallest tour, and the SQL engine in
+  [apps/sql/](examples/apps/sql/README.md) the largest program. The index says what each one does and
+  which features it shows.
+- Web: a todo app on the [Sinatra](sakelib/sinatra.sake) port
+  ([experiments/2026-10-12-web/sinatra/](experiments/2026-10-12-web/sinatra/README.md), with the same app
+  in Ruby next to it), and a blog with Rails' routes, controllers, views and models
+  ([experiments/2026-10-12-web/rails/](experiments/2026-10-12-web/rails/)). Both serve requests
+  over a real socket (WEBrick).
+- [sakelib/](sakelib/): Ruby's libraries and gems ported to Sake (JSON, CSV, ERB, Rack, Sinatra,
+  minitest, and more). Each one's test, [test/sakelib/](test/sakelib/), prints what the same program
+  prints with the Ruby library; <https://ko1.github.io/sake-lang/compare.html> shows the two side by side.
+- [test/samples/](test/samples/): about 200 small programs, mostly one feature each, with their
+  expected output, including the error messages.
+- [test/native/](test/native/): the programs that `bin/sabic` and `bin/ceec` compile to native code.
+
 ## Getting started
 
 The interpreter is written in Ruby, parses with [Prism](https://github.com/ruby/prism), and walks

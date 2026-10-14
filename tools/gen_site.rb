@@ -76,6 +76,7 @@ page = <<~HTML
     <span class="name">Sake-lang</span>
     <a href="manual/">Reference manual (日本語 / English)</a>
     <a href="guide.html">Guide</a>
+    <a href="https://github.com/ko1/sake-lang/blob/main/examples/README.md">Examples</a>
     <a href="compare.html">Ruby vs Sake</a>
     <a href="playground/">Playground</a>
     <a href="#{REPO}">GitHub</a>
