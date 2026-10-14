@@ -16,7 +16,7 @@ ko1 の仮説: AI が書いたコードのレビューは流し読み（ザッ�
 
 - `check/all.rb` と `check/all.sake` が、走らせて確かめたプログラム（データの準備と出力を含む）。両者の出力は一致する（`diff <(ruby check/all.rb) <(bin/sake check/all.sake)`）。Sake 版は既定の検査（レベル 1）を通る。`--strict=2` では G6 の `Array.zip` の nil で止まる（Ruby 版も同じ値になりうる）。
 - ページに出すコードは、`build.rb` がこの 2 つから準備と出力の行を除いて取り出す。`items.json` は仕様の文、誤りの有無、選択肢（先頭が正解）。`template.html` → `glance.html`。
-- Sake 版は、Ruby がメソッドの連鎖で書くところは連鎖の形（`xs.Array.select { }.Array.map { }`）、そうでないところは `Array.tally(words)` の形で書いた。演算子（`*`、`/`、`<=`）は両方同じ。
+- Sake 版は、Ruby がメソッドの連鎖で書くところは、最初を `T.op(x)` にして後を連鎖にした（`Array.select(xs) { }.Array.map { }`、ko1）。v1 は `xs.Array.select { }.Array.map { }` の形だったが、ko1 が「x.T.op は読みづらい」として v2 で直した（回答が入る前）。そうでないところは `Array.tally(words)` の形。演算子（`*`、`/`、`<=`）は両方同じ。
 
 ## 記録
 
@@ -30,4 +30,4 @@ ko1 の仮説: AI が書いたコードのレビューは流し読み（ザッ�
 - 題が短い（2〜4 行）。流し読みの対象としては現実より小さい。
 - Sake の導入の説明を読んでから答えるが、Ruby には説明がない。
 
-Artifact: https://claude.ai/artifact/RcmnoxDb7x5wr8Y8CGerao （v1、2026-10-14 公開。非公開で、共有は ko1 が Share メニューから行う）
+Artifact: https://claude.ai/artifact/RcmnoxDb7x5wr8Y8CGerao （v2、2026-10-14 公開。非公開で、共有は ko1 が Share メニューから行う）
