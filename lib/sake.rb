@@ -148,6 +148,9 @@ module Sake
       diags.concat(e.diagnostics)
       diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate: the generator #{target} has the problems above", [])
       return
+    rescue SystemCallError => e # a directory, or no permission
+      diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate: cannot read #{target} (#{e.message.sub(/ @ .*/, "")})", [])
+      return
     rescue RunError => e
       e.path ||= target
       diags << Diagnostic.new(file, loc.start_line, loc.start_column, "generate: the generator #{target} failed:\n  #{e.report.gsub("\n", "\n  ")}", [])

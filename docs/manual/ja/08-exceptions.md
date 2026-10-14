@@ -253,7 +253,7 @@ p(tries)                                 # => 3
 
 検査器は、明示的に `raise` した型のうちどれが各関数から出うるかを追います。2 つの項目がこれを使います（レベルは[概要と実行](01-overview.md)）。
 
-- **`unused-rescue`（どのレベルでも警告）。** begin 本体が決して投げない型の rescue 節を報告します。`ZeroDivisionError` のような組み込みの種類は普通の操作から来うるので、常にありうるとみなし、報告しません。プログラムは走ります。防御的な `rescue` は普通に書くもので、投げるものがあるかはプログラム全体で決まるからです（一部のアプリしか投げない例外を受けるライブラリの `rescue`）。`--strict=2,unused-rescue` でエラーになります。関連する `rescue` 項目（レベル 1）は、前の節が既に捕まえる節で止めます。
+- **`unused-rescue`（レベル 1〜4 で警告。レベル 0 は型推論を走らせない）。** begin 本体が決して投げない型の rescue 節を報告します。`ZeroDivisionError` のような組み込みの種類は普通の操作から来うるので、常にありうるとみなし、報告しません。プログラムは走ります。防御的な `rescue` は普通に書くもので、投げるものがあるかはプログラム全体で決まるからです（一部のアプリしか投げない例外を受けるライブラリの `rescue`）。`--strict=2,unused-rescue` でエラーになります。関連する `rescue` 項目（レベル 1）は、前の節が既に捕まえる節で止めます。
 - **`unrescued`（レベル 4）。** rescue されずにトップレベルまで届きうる `raise` を報告します。`raise: RuntimeError may reach the top level without being rescued [unrescued]` のような報告です。
 
 ```ruby

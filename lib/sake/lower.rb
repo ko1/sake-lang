@@ -156,11 +156,15 @@ module Sake
       when Prism::BreakNode then Break.new(value: jump_value(n), target: (@jump_targets || []).last || :loop, origin: n)
       when Prism::YieldNode then Yield.new(args: args(n.arguments), origin: n)
       when Prism::CallNode
-        return Str.new(string: File.dirname(File.realpath(Sake.file_of(@program, n))).freeze, origin: n) if n.receiver.nil? && n.name == :__dir__
+        if n.receiver.nil? && n.name == :__dir__ # generated source: the directory of the file with the generate line
+          f = Sake.file_of(@program, n)
+          f = Regexp.last_match(1) if f =~ /\A\(generate at (.+):\d+\)\z/
+          return Str.new(string: File.dirname(File.realpath(f)).freeze, origin: n)
+        end
         call(n)
-      when Prism::SourceFileNode # as Ruby's: the main file as given, a required file's full path
+      when Prism::SourceFileNode # as Ruby's: the main file as given, a required file's full path, "(generate at F:L)"
         f = Sake.file_of(@program, n)
-        Str.new(string: (f == @program.path ? f : File.expand_path(f)).dup.freeze, origin: n)
+        Str.new(string: (f == @program.path || f.start_with?("(generate at ") ? f : File.expand_path(f)).dup.freeze, origin: n)
       when Prism::SourceLineNode then lit(n.location.start_line, n)
       when Prism::ConstantReadNode, Prism::ConstantPathNode then CallBuiltin.new(fn: target(n), args: [], block: nil, origin: n) # ARGV, Math::PI
       when Prism::InstanceVariableReadNode
@@ -346,7 +350,8 @@ module Sake
     # call gives none. Keyword values written out of order are evaluated first, in written order.
     def keyword_args(t, n, xs, temps)
       fn = t.is_a?(Dispatch) ? (@program.functions.dig(t.module, t.name) || t.table.values.first) : t
-      return xs unless fn.is_a?(UserFunction) && (fn.keywords&.any? || fn.rest_param || fn.kwrest_param)
+      pass_on = Resolver.pass_on_only?(n)
+      return xs unless fn.is_a?(UserFunction) && (fn.keywords&.any? || fn.rest_param || fn.kwrest_param || pass_on)
       kw = n.arguments&.arguments&.last
       given = {}
       splat = nil # `**opts`: the caller's own `**` Hash, passed on key by key
@@ -358,8 +363,8 @@ module Sake
           given[el.key.unescaped] = el.value
           early[el.key.unescaped] = true unless splat
         end
-      end if fn.keywords&.any? || fn.kwrest_param
-      names = fn.keywords.keys
+      end if fn.keywords&.any? || fn.kwrest_param || pass_on
+      names = (fn.keywords || {}).keys
       # With `**opts`, every argument is evaluated first, then opts is looked into (as Ruby raises on an unknown key at the call).
       in_order = !splat && given.keys == names.select { given.key?(_1) }
       temp = lambda do |x, o|
@@ -368,7 +373,13 @@ module Sake
         get(tmp, o)
       end
       xs = xs.map { |x| [Lit, Str].include?(x.class) ? x : temp.(x, x.origin) } unless in_order
-      vals = given.transform_values { |v| in_order ? lower(v) : temp.(lower(v), v) }
+      # In written order; opts is copied where `**opts` stands (as Ruby's), so a later keyword's value that changes it is not seen.
+      vals = {}
+      splat_hash = nil
+      kw.elements.each do |el|
+        next splat_hash = temp.(CallBuiltin.new(fn: @program.registry.lookup("Hash", "dup"), args: [lower(el.value)], block: nil, origin: el), el) if el.is_a?(Prism::AssocSplatNode)
+        vals[el.key.unescaped] = in_order ? lower(el.value) : temp.(lower(el.value), el.value)
+      end unless given.empty? && !splat
       fixed = xs.take(fn.positional)
       pad = Array.new(fn.positional - fixed.size) { Missing.new(origin: nil) }
       # `*rest`: the positional arguments after the fixed ones, as a new Array
@@ -378,7 +389,7 @@ module Sake
       pairs = ->(ks) { MakePairs.new(keys: ks.map { lit(_1.to_sym, n) }, values: ks.map { vals[_1] }, origin: n) }
       if splat
         # g's `**` Hash: opts without g's keywords; for a g without one, the check that opts has no other key
-        others = KwRest.new(hash: lower(splat.value), names:, before: pairs.(extra.select { early[_1] }), after: pairs.(extra.reject { early[_1] }),
+        others = KwRest.new(hash: splat_hash, names:, before: pairs.(extra.select { early[_1] }), after: pairs.(extra.reject { early[_1] }),
                             rest: !fn.kwrest_param.nil?, callee: fn.full_name, origin: splat)
         temps << others unless fn.kwrest_param
       end
@@ -391,7 +402,7 @@ module Sake
              end
       kws = names.map do |k|
         next vals[k] || Missing.new(origin: nil) unless splat && (early[k] || !given.key?(k))
-        KwArg.new(hash: lower(splat.value), key: k, fallback: vals[k], required: fn.keywords[k].nil? && !given.key?(k), callee: fn.full_name, origin: splat)
+        KwArg.new(hash: splat_hash, key: k, fallback: vals[k], required: fn.keywords[k].nil? && !given.key?(k), callee: fn.full_name, origin: splat)
       end
       [*fixed, *pad, *rest, *kws, *opts]
     end

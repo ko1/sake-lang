@@ -278,9 +278,11 @@ module Sake
     end
 
     # Runs only on the error path: static analysis tells where the nil may have come from.
-    def add_nil_hints(error, source, path)
+    # generated: the sources the run's generators printed, reused so that no generator runs twice.
+    def add_nil_hints(error, source, path, generated)
       require_relative "typer"
-      typer = typer_class.new(Sake.load(source, path, out: StringIO.new)).run
+      replay = ->(gen, argv) { generated.find { |_, g, a, _| g == gen && a == argv }&.last || "" }
+      typer = typer_class.new(Sake.load(source, path, out: StringIO.new, generator: replay)).run
       error.hints = [*typer.nil_sources(error.expected), NIL_CHECK_HINT]
     rescue StandardError
       error.hints = [NIL_CHECK_HINT]
@@ -369,7 +371,7 @@ module Sake
       e.status
     rescue RunError => e
       flush_out(out)
-      add_nil_hints(e, source, path) if e.nil_value?
+      add_nil_hints(e, source, path, generated) if e.nil_value?
       err.puts e.report
       1
     end

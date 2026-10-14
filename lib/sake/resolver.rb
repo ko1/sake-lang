@@ -659,7 +659,7 @@ module Sake
       fn.keywords = (node.parameters&.keywords || []).to_h { [_1.name.to_s, _1.is_a?(Prism::OptionalKeywordParameterNode) ? _1.value : nil] }
       # `def M.f` outside the module is like Ruby's `def self.f`: callable as M.f.
       fn.module_function = true if constant?(node.receiver)
-      fn.abstract = abstract_body?(node.body)
+      fn.abstract = abstract_body?(node.body, ns)
       if (prev = @functions.dig(ns, name))
         error(node, "`#{fn.full_name}` is already defined at line #{prev.node.location.start_line}")
       elsif ns && @registry.lookup(ns, name) && name.start_with?("set_") && fn.params.size != 2 &&
@@ -891,8 +891,9 @@ module Sake
       when Prism::ConstantWriteNode then error(node, "constant assignment must be at the top level")
       when Prism::ConstantPathNode
         # Math::PI, Float::INFINITY: read as operations (Math.PI), as ARGV is; no other constants have values.
-        par = node.parent
-        fn = par.is_a?(Prism::ConstantReadNode) && BUILTIN_CONSTANTS.fetch(par.name.to_s, []).include?(node.name.to_s) && @registry.lookup(par.name.to_s, node.name.to_s)
+        par = node.parent # also through an alias, `M = Math; M::PI`
+        pname = constant?(par) ? resolve_const(par, lexical(ctx)) : nil
+        fn = pname && BUILTIN_CONSTANTS.fetch(pname, []).include?(node.name.to_s) && @registry.lookup(pname, node.name.to_s)
         return set_call(node, ctx, fn) if fn
         root = node
         root = root.parent while root.is_a?(Prism::ConstantPathNode)
@@ -1242,7 +1243,7 @@ module Sake
         name = "set_#{name.delete_suffix("=")}" if name.end_with?("=") && @struct_types[tname]&.fields&.include?(name.delete_suffix("="))
         target = resolve_qualified(node, tname, name, argc: args.size + 1, from: ctx.ns)
         check(subject, ctx)
-        kws = target_keywords(target)
+        kws = target_keywords(target, node)
         check_args(node.arguments, ctx, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)), target:)
         check_block(blk, ctx) if blk.is_a?(Prism::BlockNode)
         return unless target
@@ -1284,11 +1285,11 @@ module Sake
         return lowercase_receiver_error(node, ctx)
       end
 
-      hash_ctor = recv.is_a?(Prism::ConstantReadNode) && recv.name == :Hash && node.name == :[] && node.call_operator_loc.nil?
+      hash_ctor = constant?(recv) && @const_names[recv] == "Hash" && node.name == :[] && node.call_operator_loc.nil? # also `H = Hash; H[...]`
       if hash_ctor && !(args.empty? || (args.size == 1 && args[0].is_a?(Prism::KeywordHashNode)))
         error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
       end
-      kws = target_keywords(target)
+      kws = target_keywords(target, node)
       check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)), target:)
       if blk.is_a?(Prism::BlockNode)
         detached = target.is_a?(Builtin) && DETACHED_BLOCKS.include?(target.full_name)
@@ -1354,15 +1355,37 @@ module Sake
         return error(el, "`**` passes on only the keywords the function collected with its own `**` parameter (`def f(**opts) = g(**opts)`)",
                      own ? ["write `**#{own}`"] : ["add `**opts` to the parameters of #{ctx.fn ? "`#{ctx.fn.name}`" : "a function"} and pass that on"])
       end
+      if (w = local_write(ctx.fn.node.body, own))
+        return error(el, "`**#{own}` passes on the function's `**#{own}` parameter, but line #{w.location.start_line} assigns #{own}",
+                     ["assign another name (`more = Hash.merge(#{own}, ...)`) and pass the keywords on from `**#{own}`"])
+      end
       check(el.value, ctx)
     end
 
+    # The first assignment to local `name` in a function body (Prism nodes), or nil.
+    def local_write(node, name)
+      return nil unless node
+      writes = [Prism::LocalVariableWriteNode, Prism::LocalVariableOperatorWriteNode, Prism::LocalVariableOrWriteNode,
+                Prism::LocalVariableAndWriteNode, Prism::LocalVariableTargetNode]
+      return node if writes.any? { node.is_a?(_1) } && node.name.to_s == name
+      node.compact_child_nodes.each { |c| (w = local_write(c, name)) and return w }
+      nil
+    end
+
     # The keyword parameters of a call's target: a user function's, or (a dispatch) the module function's.
-    def target_keywords(target)
+    def target_keywords(target, node = nil)
       return struct_new_keywords(target) if struct_new_target?(target)
       return target.keyword_types.transform_values { true } if target.is_a?(Builtin) && target.keyword_types.any? # all optional
       fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
-      fn.is_a?(UserFunction) && (fn.keywords&.any? || fn.kwrest_param) ? fn.keywords : nil
+      return nil unless fn.is_a?(UserFunction)
+      return fn.keywords if fn.keywords&.any? || fn.kwrest_param
+      Resolver.pass_on_only?(node) ? {} : nil # `plain(**opts)`: as Ruby's, fine while opts is empty
+    end
+
+    # `g(**opts)` with no other keyword argument.
+    def self.pass_on_only?(call)
+      kw = call&.arguments&.arguments&.last
+      kw.is_a?(Prism::KeywordHashNode) && kw.elements.all?(Prism::AssocSplatNode)
     end
 
     def struct_new_target?(t) = t.is_a?(Builtin) && t.name == "new" && @struct_types.key?(t.namespace)
@@ -1687,10 +1710,11 @@ module Sake
 
     # M.f(x) for a mixin function: dispatch on the type of x among the types that include M.
     # `raise NotImplementedError` or `raise NotImplementedError, "..."`, alone.
-    def abstract_body?(body)
+    def abstract_body?(body, ns)
       st = body.is_a?(Prism::StatementsNode) && body.body.size == 1 ? body.body[0] : body
-      st.is_a?(Prism::CallNode) && st.name == :raise && st.receiver.nil? &&
-        st.arguments&.arguments&.first.is_a?(Prism::ConstantReadNode) && st.arguments.arguments.first.name == :NotImplementedError
+      return false unless st.is_a?(Prism::CallNode) && st.name == :raise && st.receiver.nil?
+      e = st.arguments&.arguments&.first
+      constant?(e) && resolve_name(const_text(e), ns) == "NotImplementedError" # also through an alias, `N = NotImplementedError`
     end
 
     def mixin_call(node, mod, name, fn, argc = nil)

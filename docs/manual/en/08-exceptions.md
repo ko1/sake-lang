@@ -253,7 +253,7 @@ p(tries)                                 # => 3
 
 The checker tracks which explicitly raised types may leave each function. Two items use this (the levels are in [Overview](01-overview.md)).
 
-- **`unused-rescue` (a warning at every level).** The checker reports a rescue clause for a type that the begin body never raises. Built-in kinds such as `ZeroDivisionError` can come from ordinary operations, so they are always assumed possible and never reported. The program still runs: a defensive `rescue` is normal, and whether anything raises depends on the whole program (a library's `rescue` for what only some apps raise). `--strict=2,unused-rescue` makes it an error. The related `rescue` item (level 1) stops a clause an earlier clause already covers.
+- **`unused-rescue` (a warning at levels 1 to 4; level 0 runs no type inference).** The checker reports a rescue clause for a type that the begin body never raises. Built-in kinds such as `ZeroDivisionError` can come from ordinary operations, so they are always assumed possible and never reported. The program still runs: a defensive `rescue` is normal, and whether anything raises depends on the whole program (a library's `rescue` for what only some apps raise). `--strict=2,unused-rescue` makes it an error. The related `rescue` item (level 1) stops a clause an earlier clause already covers.
 - **`unrescued` (level 4).** The checker reports a `raise` that may reach the top level without being rescued, as `raise: RuntimeError may reach the top level without being rescued [unrescued]`.
 
 ```ruby

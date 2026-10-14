@@ -53,7 +53,8 @@ whole-program type inference; whatever is not reported is still checked while ru
 | 3 | `--strict=3` | `type`, `rescue`, `nil`, `mixed`, `index-nil`, `exhaustive` | also the nil of a miss (`x[k]`, `Array.first` and the others above), used without a check; a `case`/`in` that may get a value of an open type (String, Integer, a Symbol not written as a literal, ...) that no literal branch takes |
 | 4 | `--strict=4` | all of the above, `unrescued` | also a `raise` that may reach the top level without being rescued (for a program; a library's raises are meant for its callers) |
 
-- **`unused-rescue`.** In no level: a warning unless chosen (`--strict=2,unused-rescue`). A `rescue`
+- **`unused-rescue`.** In no level: a warning unless chosen (`--strict=2,unused-rescue`), at levels 1 to 4
+  (level 0 runs no type inference, so it shows no warnings, `mixed` neither). A `rescue`
   of an exception the begin body never raises. The program runs: a defensive `rescue` is normal, and
   whether anything raises depends on the whole program (a library's `rescue Pass` would otherwise
   stop every app that never calls `pass`).

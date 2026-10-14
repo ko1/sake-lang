@@ -995,7 +995,10 @@ module Sake
           s2.kw = :open
         end
       end
-      all = before + own + after
+      # A keyword written after `**opts` always wins (Ruby's order), so the earlier values of its key do not reach g.
+      sym = ->(k) { k[0][1] if k.size == 1 && k[0].is_a?(Array) && k[0][0] == :sym }
+      later = after.filter_map { sym.(_1[0]) }
+      all = (before + own).reject { later.include?(sym.(_1[0])) } + after
       all.each { |k, v| s2.key = u(s2.key, k); s2.val = u(s2.val, v) }
       s2.kw = kw_record(s2.kw, all)
       site
