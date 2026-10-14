@@ -96,7 +96,7 @@
 - [x] (10-09) `case/in` の Symbol の抜けが、Symbol を持つ無関係なフィールドを `[mixed]` で責める: Symbol の値を持つフィールドがあるときだけ mixed。
 - [x] (10-09) `def initialize(x) = @x = x`（Ruby の癖）: x は新しいインスタンスなので循環する値ができた → 静的エラー。
 - [x] (10-09) hint: `ARGV[0]`（`Array.fetch(ARGV, 0)` を示す）、`ss.pos = 1`（`Type.set_pos(ss, v)` も示す）。
-- [ ] **ブロックの引数が関数のローカル**: ブロックをスレッドで後から走らせると、その時点の値（ループ変数の最後の値）を読む（`sakelib/notes/concurrent_ruby_bug_yield_in_thread_loop_var.sake`）。Ruby はブロック引数が呼び出しごとに新しい。直すにはブロックごとのフレーム（親リンク）が要る: lower / interpreter / typer にまたがる。スレッド無しでは観測できない。
+- [x] (10-11, 48c10916: スレッドで走るブロックは yield の連鎖に沿ってブロック変数を写す) **ブロックの引数が関数のローカル**: ブロックをスレッドで後から走らせると、その時点の値（ループ変数の最後の値）を読む（`sakelib/notes/concurrent_ruby_bug_yield_in_thread_loop_var.sake`）。Ruby はブロック引数が呼び出しごとに新しい。直すにはブロックごとのフレーム（親リンク）が要る: lower / interpreter / typer にまたがる。スレッド無しでは観測できない。
 - [x] (10-10, 本体が `param in Pattern` だけの関数は条件で引数を絞る) predicate のヘルパ（`def number?(l)`）が絞らないとき、union 全体（1,000 字）を印字する: 「`number?` は絞らない。`case l in Integer | Float` を」と言う（kramdown）。
 - [x] (10-10 に確認: 既に責めない) nil の hint がフィールドを責めるが、nil は `return nil` から来ている（`sakelib/notes/strscan_bug_nil_hint_blames_field.sake`）。[ ] `[mixed]` が Hash の値の union を Struct のフィールドのせいにする（thor の `Integer.times(options[:times])`）。
 - [x] (10-10, hint で「`= (body if cond)` と括る」と言う) `def initialize(c) = @x = 1 if @x == nil`: 修飾 if が endless def を飲み込み、class 本体の規則の文で報告される（liquid）。
@@ -139,14 +139,14 @@
 
 言語の章を読みやすく書き直したエージェント 7 体の報告から（`experiments/2026-10-10-manual-readability/`）。
 
-- [ ] **`Thread.new { break }` / ブロック内の `return` で処理系が落ちる**: `t = Thread.new { break }; Thread.join(t)` が `--strict=0` で Ruby の生の `NoMethodError: undefined method 'origin' for an instance of Prism::CallNode`（`interpreter.rb:90`、`thread_body`）。spec は LocalJumpError と言う。`--strict=2` では検査器が `break v` を `Thread.new` の結果型に加えてしまい、`Thread.join(t)` に `[nil]` が出る。静的に「スレッドのブロックから `break`/`return` はできない」と弾くのが筋。
-- [ ] `rescue` の検査が `Thread.new { raise "x" }` の raise を見ない: `begin Thread.value(t) rescue RuntimeError` が「never raises」（10-13 から `unused-rescue` の警告で、止まらない）。hint は Thread.raise だけを挙げる。ブロック内の raise も Thread.value/join に流すか、hint に書く。
+- [x] (10-11, 48c10916: 静的エラー) **`Thread.new { break }` / ブロック内の `return` で処理系が落ちる**: `t = Thread.new { break }; Thread.join(t)` が `--strict=0` で Ruby の生の `NoMethodError: undefined method 'origin' for an instance of Prism::CallNode`（`interpreter.rb:90`、`thread_body`）。spec は LocalJumpError と言う。`--strict=2` では検査器が `break v` を `Thread.new` の結果型に加えてしまい、`Thread.join(t)` に `[nil]` が出る。静的に「スレッドのブロックから `break`/`return` はできない」と弾くのが筋。
+- [x] (10-11, 48c10916: スレッドのブロックの raise が Thread.value/join に届く) `rescue` の検査が `Thread.new { raise "x" }` の raise を見ない: `begin Thread.value(t) rescue RuntimeError` が「never raises」（10-13 から `unused-rescue` の警告で、止まらない）。hint は Thread.raise だけを挙げる。ブロック内の raise も Thread.value/join に流すか、hint に書く。
 - [ ] `@y ||= 0` がフィールドを絞らない: 直後の `@y * @y` が `[nil]` のまま（`Point.new(3, nil)` があるとき）。
 - [ ] hint: 関数の中で読んだトップレベルのローカル（`def bump = count + 1`）に `String.count()`… の 5 候補が出る。「トップレベルのローカルは関数の中から見えない」と言うべき。`f = proc { }` は「undefined function `proc`」だけで、ブロックが値でないことを言わない（`->` は「unsupported syntax: lambda」と言う）。
 - [x] (10-11) `sakelib/notes/not-ported.md` が「Sake に `Thread.raise` が無い」「net_http に TLS が無い」と言っていた。直した。
 - [ ] リファレンスの検査器（`tools/check_reference.rb`）: 1 つの fence で実行時エラーは 1 つしか見せられず、静的エラーがあると実行時の行は走らない。`ruby error --strict=0` のような fence があれば、level 2 で静的に止まるものの実行時の形も検証に乗る（08 章は文で引用した）。
 - [x] (10-10, prelude の `sakelib/prelude.sake` に Sake で実装。組み込み 4 型は自分の操作で答え、自分のクラスは `include Enum` + `def each`) `Enum` module（ko1、10-10）: `Enum.each(x) { }` / `Enum.map` … を Array・Hash・Set・Range・Tuple（と `each` を定義して include した自分の型）に第 1 引数の型でディスパッチする、Enumerable の短い名前の module。mixin のディスパッチの仕組みで書けるか、組み込み型の include 表（`Operators::BUILTIN` 相当）と typer の結果型の扱いを設計する。
-- [ ] `module_function` の後の `def area(s) = raise NotImplementedError`（必須の関数）を include したクラスが定義していても、「Sq includes Shape but does not define area」と誤って報告する（`module_function` 無しなら正しく動く）。02 章の書き直しで発見。
+- [x] (10-11, 48c10916) `module_function` の後の `def area(s) = raise NotImplementedError`（必須の関数）を include したクラスが定義していても、「Sq includes Shape but does not define area」と誤って報告する（`module_function` 無しなら正しく動く）。02 章の書き直しで発見。
 - [x] (10-12, 局所変数から読むフィールドを書き換えうる操作まで絞る) **`if @x` が枝を刈らない**（examples/ の整備で判明、500 本中約 20 本の level 1 の偽陽性の主因）: `Node.new(nil)` の構築場所でフィールドがちょうど nil のとき、`if @word then String.upcase(@word)` の then 枝で `@word` が nil のまま報告される。ローカルに写せば通る（`w = @word; if w`）。フィールドの読みの絞り込みを、構築場所ごとの型にも効かせる。
 - [ ] `Float.round` / `Float.abs` / `Rational.*` に `Integer | Float` の値を渡す偽陽性（コーパス v3 で約 13 本）: 書き手は `Arithmetic.round` を知らない。hint で `Arithmetic.round` を示すか、`Float.round` が Integer も受けるか。
 - [ ] 1 行目に `coding:` を含むコメント（「Huffman coding:」）が Ruby の magic comment として読まれてプログラムが壊れる。先頭行の `# ... coding: ...` は Prism/Ruby の仕様だが、hint が出せるとよい。
