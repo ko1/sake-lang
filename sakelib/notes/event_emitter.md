@@ -61,10 +61,10 @@ with `call(*args)`; in Ruby a block would also do.
 - Mixin dispatch over includers (`Listener.call`) with a required function: the whole design; helped.
 - `*args` in `emit(e, event, *args)`: helped; calls read as Node's.
 - Optional parameter `event = nil` in `remove_all_listeners`.
-- `private attr_reader handlers = Hash[]`: the listener table, with `[listener, once?]` Tuples.
+- `private attr_reader handlers = Hash.new`: the listener table, with `[listener, once?]` Tuples.
 
 ## Types
 
-- `EventEmitter.handlers: Hash[Symbol => Array[[Counter | Printer | Recruiter | Summer, true|false]]]`:
+- `EventEmitter.handlers: Hash.of(Symbol => Any[[Counter | Printer | Recruiter | Summer, true|false]])`:
   the union of the listener types, all of which include `Listener`, so `Listener.call` is proven for each.
   No partial or unknown checks.

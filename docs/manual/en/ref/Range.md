@@ -254,7 +254,7 @@ p(Range.each_cons(1..4, 2) { |a| p(a) })     # => [1, 2]
 Calls the block with each value and the given object, and returns that object. Use it to fill a container; as in Ruby, a block that returns a new value does not change the object (`Range.each_with_object(1..3, 0) { |i, acc| acc + i }` returns 0: use `reduce`). An endless Range needs a `break`.
 
 ```ruby
-a = Range.each_with_object(1..3, Array[]) { |i, acc| Array.push(acc, i * i) }
+a = Range.each_with_object(1..3, Any[]) { |i, acc| Array.push(acc, i * i) }
 p(a)                                         # => [1, 4, 9]
 ```
 
@@ -402,7 +402,7 @@ p(Range.map(1..) { |i| i })                      # !> RangeError: Range.map: can
 A new Array that joins the Arrays (or Tuples) the block returns, one level deep. The block must return an Array or a Tuple: another value is a `TypeError` at run time (`the block must return an Array or a Tuple, got Integer`). Needs a finite Range.
 
 ```ruby
-p(Range.flat_map(1..3) { |i| Array[i, i] })      # => [1, 1, 2, 2, 3, 3]
+p(Range.flat_map(1..3) { |i| Any[i, i] })      # => [1, 1, 2, 2, 3, 3]
 p(Range.flat_map(1..2) { |i| [i, i * 10] })      # => [1, 10, 2, 20]
 ```
 
@@ -739,7 +739,7 @@ p(Range.to_set(1..3))        # => Set[1, 2, 3]
 A new Array of Tuples: the i-th Tuple holds the i-th value of the Range and the i-th element of each Array given. A shorter Array contributes nil (the Tuple's type says so). Without Arrays each Tuple holds one value. Needs a finite Integer or String Range.
 
 ```ruby
-p(Range.zip(1..3, Array["a", "b", "c"]))     # => [[1, "a"], [2, "b"], [3, "c"]]
-p(Range.zip(1..3, Array[10, 20]))            # => [[1, 10], [2, 20], [3, nil]]
+p(Range.zip(1..3, Any["a", "b", "c"]))     # => [[1, "a"], [2, "b"], [3, "c"]]
+p(Range.zip(1..3, Any[10, 20]))            # => [[1, 10], [2, 20], [3, nil]]
 p(Range.zip(1..2))                           # => [[1], [2]]
 ```

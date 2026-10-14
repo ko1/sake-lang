@@ -4,6 +4,27 @@ Kernel is the set of operations that any part of a program calls by name alone: 
 
 Here are output and input (`puts`, `print`, `p`, `pp`, `format`, `gets`, `warn`), the strict numeric conversions (`Integer`, `Float`, `Rational`, `Complex`), showing and copying values (`to_s`, `inspect`, `dup`, `equal?`), control (`loop`, `block_given?`, `once`), random numbers and time (`rand`, `srand`, `sleep`), and the process (`exit`, `at_exit`, `system`, `ARGV`, `PROGRAM_NAME`). `raise` is syntax, not an operation: see [Exceptions and errors](../08-exceptions.md). `Math.PI` and `Float.INFINITY` are read as operations too, but belong to the chapters of their namespaces (Sake has no value constants; a named value is made with `once`).
 
+## Kernel[]
+
+`Kernel[*Any]`
+
+Makes an Array of any values. Every type includes Kernel, so by the rule of `M[...]` for a module (an Array of the types that include it) this Array takes every value; the prelude names it `Any = Kernel`, and it is written `Any[...]`. The elements may be of any types, mixed, and any value can be added later (the checker adds the type of each added value to the element type). The empty Array is `Any[]`. The literal `[1, 2]` is a Tuple, so a sequence that grows is written `Any[...]`; a typed Array is made with the type's name, `Integer[1, 2]`, and `Array[...]` is an Array of Arrays.
+
+```ruby
+xs = Any[1, "a"]
+Array.push(xs, :sym)
+p(xs)                          # => [1, "a", :sym]
+e = Any[]
+Array.push(e, 1)
+p(e)                           # => [1]
+p([1, 2] == Any[1, 2])         # => false
+```
+
+```ruby error
+xs = [1, 2]
+Array.push(xs, 3)              # !> `[...]` is a Tuple with a fixed length; for a growable Array, write `Any[...]`
+```
+
 ## puts
 
 `Kernel.puts(*Any)`
@@ -15,11 +36,11 @@ puts("a", 1, :sym)
 # => a
 # => 1
 # => sym
-puts(Array[1, [2, 3]])
+puts(Any[1, [2, 3]])
 # => 1
 # => 2
 # => 3
-puts(Hash["k" => 1], 1..3)
+puts(Hash.of("k" => 1), 1..3)
 # => {"k" => 1}
 # => 1..3
 ```
@@ -32,7 +53,7 @@ Writes each argument in its `to_s` form with no newline between them and returns
 
 ```ruby
 print("a", 1, nil, "\n")        # => a1
-print(Array[1, 2], [3, 4], "\n") # => [1, 2][3, 4]
+print(Any[1, 2], [3, 4], "\n") # => [1, 2][3, 4]
 ```
 
 ## p
@@ -49,7 +70,7 @@ p(x)                             # => [1, "a"]
 p(p())                           # => nil
 Point = Struct.new(:x, :y)
 p(Point.new(1, 2))               # => #<struct Point x=1, y=2>
-p(Hash["a" => 1], Set[1], 2r)
+p(Hash.of("a" => 1), Set.of(1), 2r)
 # => {"a" => 1}
 # => Set[1]
 # => (2/1)
@@ -62,7 +83,7 @@ p(Hash["a" => 1], Set[1], 2r)
 Writes one value in the form `p` uses and returns the value. Ruby's `pp` wraps long values; in Sake it is the same as `p(x)`.
 
 ```ruby
-a = pp(Array[1, {k: 2}])        # => [1, {k: 2}]
+a = pp(Any[1, {k: 2}])        # => [1, {k: 2}]
 p(a)                             # => [1, {k: 2}]
 ```
 
@@ -72,14 +93,14 @@ p(a)                             # => [1, {k: 2}]
 
 `Kernel.sprintf(String, *Any)`
 
-Makes a String with Ruby's `format` directives: `%d`, `%f`, `%e`, `%g`, `%x`, `%o`, `%b`, `%c`, `%s`, `%p`, `%%`, with width, precision and the flags `-`, `+`, `0`. `%s` uses a value's `to_s` (a class's own `to_s(x)` included), `%p` its `inspect`. `%<name>d` and `%{name}` take one Record (`{a: 1}`) or one Hash with Symbol keys (`Hash[a: 1]`) as the single argument; the same holds for the operator form `fmt % x` ([String](String.md)). Too few or too many arguments, a value that is not a number for a numeric directive, and a missing key (`key<a> not found`) are all `ArgumentError`.
+Makes a String with Ruby's `format` directives: `%d`, `%f`, `%e`, `%g`, `%x`, `%o`, `%b`, `%c`, `%s`, `%p`, `%%`, with width, precision and the flags `-`, `+`, `0`. `%s` uses a value's `to_s` (a class's own `to_s(x)` included), `%p` its `inspect`. `%<name>d` and `%{name}` take one Record (`{a: 1}`) or one Hash with Symbol keys (`Hash.of(a: 1)`) as the single argument; the same holds for the operator form `fmt % x` ([String](String.md)). Too few or too many arguments, a value that is not a number for a numeric directive, and a missing key (`key<a> not found`) are all `ArgumentError`.
 
 ```ruby
 p(format("%05.2f|%-4s|%p|%x", 3.14159, :ab, "q", 255))   # => "03.14|ab  |\"q\"|ff"
 p(sprintf("%+d %s %s", 3, nil, true))                     # => "+3  true"
 p(format("%<a>d-%<b>s", {a: 1, b: "x"}))                  # => "1-x"
 p("%<a>05d" % {a: 42})                                    # => "00042"
-p(format("%<n>d-%{s}", Hash[n: 1, s: "x"]))               # => "1-x"
+p(format("%<n>d-%{s}", Hash.of(n: 1, s: "x")))               # => "1-x"
 Point = Struct.new(:x, :y)
 p(format("%s", Point.new(1, 2)))                          # => "#<struct Point x=1, y=2>"
 ```
@@ -208,7 +229,7 @@ t = Temp.new(21)
 p(to_s(t))                       # => "21C"
 puts("now #{t}")                 # => now 21C
 p(to_s(nil))                     # => ""
-p(to_s(Array[1, "a"]))           # => "[1, \"a\"]"
+p(to_s(Any[1, "a"]))           # => "[1, \"a\"]"
 p(to_s(:sym))                    # => "sym"
 ```
 
@@ -229,7 +250,7 @@ end
 p(inspect("a\n"))                # => "\"a\\n\""
 p(inspect(nil))                  # => "nil"
 p(inspect(Box.new(1)))           # => "<pretty>"
-p(Array[Box.new(1)])             # => [<pretty>]
+p(Any[Box.new(1)])             # => [<pretty>]
 ```
 
 ## dup
@@ -239,9 +260,9 @@ p(Array[Box.new(1)])             # => [<pretty>]
 A shallow copy of a value (Ruby's `obj.dup`): an Array, Tuple, Hash, Set, Record, class instance or String becomes a new container holding the same elements (the elements' containers are shared). An Integer, Symbol, nil, true/false or Range is returned as is. The type is the original's. A class instance whose type defines `dup(x)` gets that function (the result has the function's type). Inside a type's functions, copy an element with `Kernel.dup(@items)`: a bare `dup` resolves to the type's own.
 
 ```ruby
-a = Array[Array[1], Array[2]]
+a = Any[Any[1], Any[2]]
 b = dup(a)
-Array.push(b, Array[3])
+Array.push(b, Any[3])
 Array.push(b[0], 9)
 p(a)                             # => [[1, 9], [2]]
 p(b)                             # => [[1, 9], [2], [3]]
@@ -249,7 +270,7 @@ class Box
   attr_accessor items
   def dup(b) = Box.new(Kernel.dup(@items))
 end
-x = Box.new(Array[1])
+x = Box.new(Any[1])
 y = dup(x)
 Array.push(Box.items(y), 2)
 p(Box.items(x))                  # => [1]
@@ -263,7 +284,7 @@ p(Box.items(y))                  # => [1, 2]
 True when the two arguments are the same value (the same object), Ruby's `a.equal?(b)`. `==` compares contents; this is identity. The result of `dup` is `==` to the original but not `equal?`. Equal Integers, Symbols, nil and true/false are always identical; two String literals written separately are not.
 
 ```ruby
-a = Array[1]
+a = Any[1]
 b = a
 p(equal?(a, b))                  # => true
 p(a == dup(a))                   # => true
@@ -312,7 +333,7 @@ p(block_given?)                  # => false
 The block's value. The block runs once, the first time that place in the program is reached, and the value is kept for the rest of the program: every later evaluation (another call, another thread) gets the same value. Since Sake has no value constants, this is how a table or a named value is computed once: `def table = once { ... }`. What is kept is the value itself; an Array can still be changed afterwards (as Ruby's constants can). A block that reaches its own `once` again while computing it ends the program with `SystemStackError` (not rescuable).
 
 ```ruby
-def table = once { puts("computing"); Array[1, 2, 3] }
+def table = once { puts("computing"); Any[1, 2, 3] }
 p(table)
 # => computing
 # => [1, 2, 3]
@@ -352,9 +373,9 @@ Sets the seed of the random numbers and returns the previous seed (an Integer), 
 
 ```ruby
 srand(7)
-a = Array.map(Array[1, 2, 3]) { rand(1000) }
+a = Array.map(Any[1, 2, 3]) { rand(1000) }
 srand(7)
-b = Array.map(Array[1, 2, 3]) { rand(1000) }
+b = Array.map(Any[1, 2, 3]) { rand(1000) }
 p(a == b)                        # => true
 p(srand(1))                      # => 7
 ```

@@ -119,7 +119,7 @@ A program is a file and the files it requires. Its top level may contain:
 
   # main.sake
   generate "gen"
-  p(name(Hash["name" => "ko1"]))
+  p(name(Hash.of("name" => "ko1")))
   ```
 - **`__FILE__`, `__LINE__`, `__dir__`** are Ruby's, fixed before running: the file (the main file as
   given, a required file's full path), the line, and the full path of the file's directory
@@ -184,10 +184,10 @@ Rules:
 | nil | `nil` | see [§11](#11-nil) |
 | Tuple | `[a, b, ...]` | length and positional types fixed at creation |
 | Record | `{x: a, y: b}` | set of (field, type) pairs fixed at creation |
-| Array | `Array[a, ...]` | no declared element type |
+| Array | `Any[a, ...]` | no declared element type |
 | Array of T | `T[a, ...]`, e.g. `Float[]`, `Point[p]` | element type T, checked on every write |
-| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | keys compare as `==` ([§12.1](#121-hash-and-set)) |
-| Set | `Set[1, 2]` | elements compare as `==` |
+| Hash | `Hash.of("a" => 1, b: 2)`, `Hash.new(0)` | keys compare as `==` ([§12.1](#121-hash-and-set)) |
+| Set | `Set.of(1, 2)` | elements compare as `==` |
 | Symbol | `:name` | |
 | Range | `1..5`, `1...5`, `1..` | ends are Integer, Float, String, or nil |
 | Regexp, MatchData | `/(\d+)-(\d+)/`, `/#{x}/`, `String.match(s, re)` | |
@@ -367,11 +367,11 @@ The following are checked statically:
 - a built-in operation either requires a block or rejects one.
 
 **Splat arguments.** `*xs` spreads a Tuple or an Array (anything else raises `TypeError`), but only
-into a rest parameter: a built-in's (`puts(*lines)`, `format(fmt, *row)`, `Array[*xs, 0]`,
-`Set[*xs]`, `Array.push(a, *xs)`) or a user function's `*rest` (`join(*parts)`, §6). The arguments
+into a rest parameter: a built-in's (`puts(*lines)`, `format(fmt, *row)`, `Any[*xs, 0]`,
+`Set.of(*xs)`, `Array.push(a, *xs)`) or a user function's `*rest` (`join(*parts)`, §6). The arguments
 before it are written out, so their count is still checked. A splat into a function without
 `*rest`, or one that would fill a required or optional parameter, is a static error, as are splats
-into `Array.zip`/`Range.zip` (their Tuples are as long as the argument list) and `Hash[...]`. In the typer, a Tuple spreads position by position; an Array stands for any number of
+into `Array.zip`/`Range.zip` (their Tuples are as long as the argument list) and `Hash.of(...)`. In the typer, a Tuple spreads position by position; an Array stands for any number of
 arguments of its element types.
 
 ### 5.9 Enum: the prelude's module
@@ -413,7 +413,7 @@ end
   every call's callee is known before running, `k: v` goes to its parameter by name when the program
   is checked: an unknown or repeated keyword, or a missing required one, is an error, and `k: v` to a
   function without keyword parameters is an error (there is no implicit Hash argument; write
-  `Hash[k: v]` or a Record `{k: v}`). A few built-ins take Ruby's keywords too, checked the same way
+  `Hash.of(k: v)` or a Record `{k: v}`). A few built-ins take Ruby's keywords too, checked the same way
   (`Time.at(t, in: "+09:00")`, `Dir.glob(pat, base: dir)`; builtins.md lists them as `[k: T]`).
   `f(k:)` passes the variable `k`, as in Ruby. Arguments are
   evaluated in the order written. A block parameter `&b` (or `&`) may only be passed on (§7).
@@ -667,14 +667,14 @@ Every `class` is a type. Its fields are declared in the body of its first `class
   value `new` gave). An exception type's fields after `message` may always be left out of `E.new("msg")`
   (they are nil); `raise E, "msg"` is for a type with no field besides `message` (a type with more
   fields is raised as `raise E.new(...)`, a static error otherwise).
-- **No default values.** `attr_reader items = Array[]` is an error: a field's first value is set in
+- **No default values.** `attr_reader items = Any[]` is an error: a field's first value is set in
   `initialize`, the one place that runs for each new instance, where it can read the other fields
   (`@len = String.bytesize(@src)`). The checker follows the fields through initialize, so a field it
   always sets is not nil afterwards.
 - **Reserved words.** A field named like a reserved word is declared as a Symbol, `attr_accessor :next`
   (written bare it would not parse); its reader is `Node.next(n)` and `@next` as usual.
 - **`initialize`.** `def initialize(c)` in a class runs after `C.new` has stored the fields, with the
-  new instance: the place for first values (`@items = Array[]`), checks (`@port => Integer`) and
+  new instance: the place for first values (`@items = Any[]`), checks (`@port => Integer`) and
   conversions (`@celsius = Float(@celsius)`), as in Ruby. It takes exactly that one parameter, and calling `C.initialize` directly is an error.
   The checker analyzes it for each `C.new` call, where `@x` reads the value that call gave, so a
   wrong argument is reported for that call; the fields hold what initialize leaves in them.
@@ -782,7 +782,7 @@ Option wrapper.
 
 **Literals and constructors.** A literal (`[...]`, `{...}`) has no operation with a type, so its
 shape fixes its type at creation. A growable collection is made by an operation with a type
-(`Array[...]`, `T[...]`).
+(`Any[...]`, `T[...]`).
 
 - **Contents are mutable.** The contents of a literal may be replaced by values of the same type,
   and each write is checked. Tuples are written with `t[i] = v`. Records have no write syntax yet.
@@ -800,7 +800,7 @@ shape fixes its type at creation. A growable collection is made by an operation 
   Their receivers and indexes are evaluated first, then the right side.
 - `first, *rest = xs` puts the remaining elements in a new Array, as in Ruby (`a, *mid, z = xs`
   too; `x, * = xs` drops them). Only a local variable takes the rest. A splat inside `[...]` is
-  rejected, since a Tuple's length must be known; `Array[*xs, 1]` makes an Array.
+  rejected, since a Tuple's length must be known; `Any[*xs, 1]` makes an Array.
 - `t[0]` reads a position and `t[0] = v` replaces it with a value of the same type
   ([§8.2](#82-indexing)).
 - `Tuple.size` and `Tuple.length` give the number of elements.
@@ -817,14 +817,17 @@ shape fixes its type at creation. A growable collection is made by an operation 
   - A field the Record does not have raises `KeyError`.
   - A value that is not a Record raises `TypeError`.
 - **Restrictions.** Field names are written as labels (`x:`). An empty `{}` and `{key => value}`
-  are static errors, with a hint to write `Hash[]` / `Hash[key => value]`: the braces are a Record's.
+  are static errors, with a hint to write `Hash.new` / `Hash.of(key => value)`: the braces are a Record's.
 
-**Array.** `Array[a, ...]` creates an Array with no declared element type. Any value can be added
-to it.
+**Array.** `Any[a, ...]` creates an Array with no declared element type. Any value can be added
+to it. `Any` is the prelude's `Any = Kernel`: every type includes Kernel, so `Kernel[...]`, by the rule
+for a module below, takes every value.
 
-**Array of T.** `T[a, ...]` creates an Array whose element type is T. T is a built-in type
-(`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`), a class, or a module: `M[a, ...]`
-holds values of the types that include M, so `M.f(x)` dispatches on each element.
+**Array of T.** `T[a, ...]` creates an Array whose element type is T, for every T: a built-in type
+(`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`, and `Array`, `Hash`, `Set`:
+`Array[...]` is an Array of Arrays), a class, or a module: `M[a, ...]` holds values of the types that
+include M, so `M.f(x)` dispatches on each element. A Hash itself is made with `Hash.of(k => v, ...)` or
+`Hash.new`, a Set with `Set.of(a, ...)` or `Set.new(xs)`.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and
   `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer
@@ -837,7 +840,7 @@ holds values of the types that include M, so `M.f(x)` dispatches on each element
 Arrays are mutable and shared by reference.
 
 **Ruby habits.** A Tuple or Record passed where an Array is expected, such as `result = []`
-followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
+followed by `Array.push(result, x)`, fails with a hint to write `Any[]`.
 
 - **In-place operations that change the element type.** The checker gives a container one element type
   for the whole program, so after `Array.map!(xs) { |x| Integer.to_s(x) }` or `Hash.transform_keys!(h) { |k| ... }`
@@ -847,11 +850,11 @@ followed by `Array.push(result, x)`, fails with a hint to write `Array[]`.
 
 ### 12.1 Hash and Set
 
-- **Constructors.** `Hash[k => v, ...]` (also `Hash[name: v]`, whose keys are Symbols), `Hash[]`,
-  and `Hash.new(default)` create a Hash. `Set[x, ...]` creates a Set. The literal `{...}` is a
+- **Constructors.** `Hash.of(k => v, ...)` (also `Hash.of(name: v)`, whose keys are Symbols), `Hash.new`,
+  and `Hash.new(default)` create a Hash. `Set.of(x, ...)` creates a Set. The literal `{...}` is a
   Record, not a Hash.
 - **Keys and elements.** Hash keys and Set elements compare as Ruby's `eql?` does: by value, with the type
-  included, so `1` and `1.0` are different keys (`Hash[1 => "a"][1.0]` is nil; `Set[1, 1.0]` has two elements),
+  included, so `1` and `1.0` are different keys (`Hash.of(1 => "a")[1.0]` is nil; `Set.of(1, 1.0)` has two elements),
   while `1 == 1.0` is true. Allowed: Integer, Float,
   String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and class instances
   made of these. Not allowed (`TypeError`): Regexp, Range, and values of a class that defines
@@ -1062,7 +1065,7 @@ without digits gives an Integer). `Float.round` names a Float only.
 
 | Operation | Result |
 |---|---|
-| `Array[...]` | a new Array |
+| `Any[...]` | a new Array |
 | `first(a, n)` · `last(a, n)` · `fetch(a, i, default)` | the first / last n elements (a new Array) · the element, or default |
 | `each_cons(a, n)` · `each_slice(a, n)` · `each_with_index(a)` without a block | an Array of the slices, or of `[element, index]` Tuples (Ruby's enumerators, as Arrays: `Array.map(Array.each_cons(xs, 2)) { \|a, b\| ... }`) |
 | `Array.new(n)` · `Array.new(n, v)` · `Array.new(n) { \|i\| ... }` | n nils · n times the same v (as in Ruby, one object) · the block's values |
@@ -1154,7 +1157,7 @@ Range raise `RangeError` on an endless one.
 
 | Operation | Result |
 |---|---|
-| `Hash[k => v, ...]` · `Hash.new([default])` | a new Hash |
+| `Hash.of(k => v, ...)` · `Hash.new([default])` | a new Hash |
 | `length`, `size` · `empty?` | Integer · true/false |
 | `key?`, `has_key?`, `include?`, `member?` · `value?`, `has_value?` | true/false |
 | `fetch(h, k, [default])` | the value, the default, or `KeyError` |
@@ -1171,7 +1174,7 @@ Range raise `RangeError` on an endless one.
 
 | Operation | Result |
 |---|---|
-| `Set[...]` | a new Set |
+| `Set.of(...)` | a new Set |
 | `length`, `size` · `empty?` · `include?`, `member?` | Integer · true/false · true/false |
 | `add(s, x)` · `add?(s, x)` · `delete(s, x)` | s · s or nil · s |
 | `to_a` · `each` · `map` | Array · s (block) · Array (block) |

@@ -45,7 +45,7 @@ are module functions with the String first: `Colorize.red(s)`, or in a chain `"x
   `def red(s) = colorize(s, color: :red)`. Tedious, but each name is now a checked call target: a typo in
   `Colorize.ligth_red(s)` is a static error with a spelling hint, where Ruby's would be `NoMethodError` at run time.
 - `String.disable_colorization` is a class-level mutable flag; Sake has no globals and no constants. The
-  flag and the alias table (which `add_color_alias` mutates) are `once { Hash[...] }` values: a Hash made
+  flag and the alias table (which `add_color_alias` mutates) are `once { Hash.of(...) }` values: a Hash made
   once and shared, read and written through a function. It works; it is a trick, not a feature.
 - `add_color_alias` cannot create `Colorize.grey(s)`: a new operation would need `define_method`. The
   alias is in the table, so `colorize(s, :grey)` works.
@@ -53,7 +53,7 @@ are module functions with the String first: `Colorize.red(s)`, or in a chain `"x
 
 ## 書き心地
 
-- Wrote `h = params in Record ? Record.to_h(params) : Hash[]` → `syntax error: unexpected '?'` with
+- Wrote `h = params in Record ? Record.to_h(params) : Hash.new` → `syntax error: unexpected '?'` with
   `hint: \`x in T\` needs its own parentheses here: \`(x in T)\`` → `(params in Record) ? ...`. The hint
   said exactly what to type. In the final code it became `if params in Symbol ... elsif params in Record`,
   which reads as Ruby.

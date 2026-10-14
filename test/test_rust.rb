@@ -38,7 +38,7 @@ class TestRust < Minitest::Test
     skip "rustc is not installed" unless HAVE_RUSTC
     Dir.mktmpdir do |tmp|
       src = File.join(tmp, "u.sake")
-      File.write(src, "h = Hash[a: 1]\nputs(Hash.size(h))\n")
+      File.write(src, "h = Hash.of(a: 1)\nputs(Hash.size(h))\n")
       out, err, st = Open3.capture3(SABIC, src, "--emit", "-o", File.join(tmp, "u"))
       assert_equal 3, st.exitstatus
       assert_match(/u\.sake:1: a Hash literal \(not supported by the Rust backend\)/, err)

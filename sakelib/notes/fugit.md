@@ -24,12 +24,12 @@ Names nest as in Ruby: `Fugit::Cron`, `Fugit::Cron::TimeCursor`, `Fugit::Cron::C
 | `c.within(t0..t1)` / `c.within(t0, t1)` | `Fugit::Cron.within(c, t0, t1)` | differs: no Range form (a Range of Times cannot be made) |
 | `c.rough_frequency` | `Fugit::Cron.rough_frequency(c)` | same |
 | `c.brute_frequency`, `Frequency` | — | missing (a year of next_time calls; slow in the interpreter) |
-| `Fugit::Duration.parse(s, opts)` / `Fugit.parse_duration(s)` / `parse_in` | `Fugit::Duration.parse(s, Hash[iso: true])` … | same (s a String, Integer, Float or Duration); opts a Hash |
+| `Fugit::Duration.parse(s, opts)` / `Fugit.parse_duration(s)` / `parse_in` | `Fugit::Duration.parse(s, Hash.of(iso: true))` … | same (s a String, Integer, Float or Duration); opts a Hash |
 | `Fugit::Duration.do_parse(s)` | same | same |
 | `d.h` / `d.to_h`, `d.original`, `d.options` | `Fugit::Duration.h(d)` … | same (`original` is always a String: `"3700"` for 3700) |
-| `d.to_plain_s`, `to_iso_s`, `to_long_s(oxford: false)`, `to_rufus_s`, `to_rufus_h`, `to_sec` | `Fugit::Duration.to_plain_s(d)` …, `to_long_s(d, Hash[oxford: false])` | same |
+| `d.to_plain_s`, `to_iso_s`, `to_long_s(oxford: false)`, `to_rufus_s`, `to_rufus_h`, `to_sec` | `Fugit::Duration.to_plain_s(d)` …, `to_long_s(d, Hash.of(oxford: false))` | same |
 | `Fugit::Duration.to_plain_s(s)` (parse, deflate, print) | `Fugit::Duration.to_plain_s(s)` | same: one operation takes a Duration or a String |
-| `d.inflate`, `d.deflate(month: true, year: 365)` | `Fugit::Duration.inflate(d)`, `deflate(d, Hash[month: true])` | same |
+| `d.inflate`, `d.deflate(month: true, year: 365)` | `Fugit::Duration.inflate(d)`, `deflate(d, Hash.of(month: true))` | same |
 | `d.opposite`, `-d` | `Fugit::Duration.opposite(d)`, `-d` | same (`include Arithmetic`, `def -@`) |
 | `d + 60`, `d + d2`, `d + "1d"`, `d - d2` / `add` / `subtract` | same | same |
 | `d + time` / `d.add(time)` | `Fugit::Duration.add_to_time(d, t)` | differs: `+` returns a Duration, so the Time case is its own operation |
@@ -58,7 +58,7 @@ About 45 operations.
   `Regexp.match(re, s, pos)` with `\G` regexps tried in Ruby's order.
 - **Weekdays.** Ruby keeps `[[1], [5, -1], [2, [2, 1]]]`: Arrays of different shapes. A Sake Array has one
   element type, so the cron keeps a `Weekday` class (wday, hash, mod) and `weekdays(c)` builds Ruby's
-  shape on demand (an `Array[Integer | Array[Integer]]`). Sorting uses a key that orders like Ruby's
+  shape on demand (an `Any[Integer | Any[Integer]]`). Sorting uses a key that orders like Ruby's
   Array comparison.
 - **Ruby's `false` vs `nil` in `do_determine`** (false: invalid, nil: any): returns `[valid, values]`.
 - **`wday_in_month` / `rweek`** are computed (`(day - 1) / 7 + 1`, days since 2018-12-31 / 7) instead
@@ -75,12 +75,12 @@ About 45 operations.
 ## Friction
 
 - `{seconds: ..., minutes: ...}` for Ruby's `to_h` → printed `{hours: ..., minutes: ..., ...seconds: ...}`
-  (a Record shows its fields sorted, Ruby's Hash keeps insertion order) → `Hash[seconds: ...]`.
+  (a Record shows its fields sorted, Ruby's Hash keeps insertion order) → `Hash.of(seconds: ...)`.
 - `h[:sec] = s in Float ? Float.round(s, 9) : s` → `syntax error: unexpected '?'` (hint: `x in T` needs
   its own parentheses) → `(s in Float) ? ...`. The hint was exact.
 - `Array.uniq(wds) { |w| key(w) }` → `Array.uniq does not take a block` → a `Set.add?` filter.
 - `def keys = [[:yea, "Y", ...], ...]` → `Array.each: argument 1 must be Array, but is [[:yea, String, ...` →
-  `Array[[...], ...]`. The `[...]` is a Tuple rule bites on every table literal.
+  `Any[[...], ...]`. The `[...]` is a Tuple rule bites on every table literal.
 - `Fugit::Cron.within(c, t0..t1)` → runtime `TypeError: a Range end must be Integer, Float, or String,
   got Time` (not a static error) → two arguments.
 - `def ==(a, b) = Cron.to_a(a) == Cron.to_a(b)` → `Fugit::Cron.wdays: argument 1 must be Fugit::Cron, but

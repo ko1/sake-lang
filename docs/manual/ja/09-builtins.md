@@ -109,10 +109,10 @@ p(s + "!")                       # => "Hello, World!"
 
 ## Array
 
-Array は長さが変わる並びです。`Array[1, 2]` で作ります（リテラル `[1, 2]` は Tuple です）。最初に使うのは `Array.push`、`Array.each`、`Array.map` と `Array.select` です。詳細は [Array](ref/Array.md)。
+Array は長さが変わる並びです。`Any[1, 2]` で作ります（リテラル `[1, 2]` は Tuple です）。最初に使うのは `Array.push`、`Array.each`、`Array.map` と `Array.select` です。詳細は [Array](ref/Array.md)。
 
 ```ruby
-xs = Array[3, 1, 2]
+xs = Any[3, 1, 2]
 Array.push(xs, 5)
 p(xs)                                      # => [3, 1, 2, 5]
 p(Array.map(xs) { |x| x * 2 })             # => [6, 2, 4, 10]
@@ -121,12 +121,12 @@ p(Array.sort(xs))                          # => [1, 2, 3, 5]
 p(Array.reduce(xs, 0) { |acc, x| acc + x })   # => 11
 p(Array.first(xs))                         # => 3
 p(Array.join(xs, "-"))                     # => "3-1-2-5"
-p(Array.tally(Array["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
+p(Array.tally(Any["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
 ```
 
 | 目的 | 操作 | 結果 |
 |---|---|---|
-| 作る | `Array[...]` · `Array.new(n)`, `Array.new(n, v)`, `Array.new(n) { \|i\| }` | 新しい Array |
+| 作る | `Any[...]` · `Array.new(n)`, `Array.new(n, v)`, `Array.new(n) { \|i\| }` | 新しい Array |
 | 長さと問い合わせ | `length`, `size` · `empty?`, `include?(a, x)` | Integer · true/false |
 | 足す・消す（その場で） | `push(a, *xs)`, `append`, `unshift`, `concat(a, b)`, `insert(a, i, *xs)`, `delete_if`, `clear` | a |
 | 1 要素を取る | `first`, `last`, `min`, `max`, `pop`, `shift`, `at(a, i)`, `sample`, `delete(a, x)`, `delete_at(a, i)` | 要素、または nil |
@@ -152,8 +152,8 @@ p(Array.tally(Array["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
 Enum は Ruby の Enumerable を短い名前にした module で、プログラムを読む前に読まれる prelude（`sakelib/prelude.sake`）が定義します。`Enum.map(x) { }` などは第 1 引数の型でディスパッチし、Array・Hash・Set・Range は自分の操作で答えます（`Enum.map(xs)` は xs が Array なら `Array.map(xs)`）。自分のクラスは `include Enum` と `def each(c) = ... yield(v) ...` を書けば、残りの関数（`map`、`select`、`reject`、`find`、`reduce`、`sum`、`count`、`include?`、`any?`/`all?`/`none?`/`one?`、`min_by`/`max_by`、`sort_by`、`to_a`、`first`、`take`/`drop`、`group_by`、`partition`、`each_with_object`、`compact`、`filter_map`、`flat_map`）が `each` の上に書かれているので全部使えます。詳細は [Enum](ref/Enum.md)。
 
 ```ruby
-p(Enum.map(Array[3, 1, 2]) { |v| v * 10 })        # => [30, 10, 20]
-p(Enum.map(Hash[a: 1, b: 2]) { |k, v| "#{k}=#{v}" })   # => ["a=1", "b=2"]
+p(Enum.map(Any[3, 1, 2]) { |v| v * 10 })        # => [30, 10, 20]
+p(Enum.map(Hash.of(a: 1, b: 2)) { |k, v| "#{k}=#{v}" })   # => ["a=1", "b=2"]
 p(Enum.count(1..4) { |v| v > 2 })                 # => 2
 
 class Deck
@@ -161,7 +161,7 @@ class Deck
   attr_reader cards
   def each(d) = Array.each(@cards) { |c| yield(c) }
 end
-d = Deck.new(Array["A", "K", "Q"])
+d = Deck.new(Any["A", "K", "Q"])
 p(Deck.select(d) { |c| c < "K" })                  # => ["A"]
 p(Enum.first(d), Deck.count(d))                   # => "A"
                                                   # => 3
@@ -196,10 +196,10 @@ p(Range.first(1.., 3))           # => [1, 2, 3]
 
 ## Hash, Set
 
-Hash はキーから値への対応で、`Hash["a" => 1]` か `Hash.new(default)` で作ります（`{a: 1}` は Record です）。Set は重複の無い要素の集まりで、`Set[1, 2]` で作ります。最初に使うのは添字 `h[k]` と `h[k] = v`、`Hash.each`、`Hash.fetch`、そして `Set.add` と `Set.include?` です。詳細は [Hash](ref/Hash.md)、[Set](ref/Set.md)。
+Hash はキーから値への対応で、`Hash.of("a" => 1)` か `Hash.new(default)` で作ります（`{a: 1}` は Record です）。Set は重複の無い要素の集まりで、`Set.of(1, 2)` で作ります。最初に使うのは添字 `h[k]` と `h[k] = v`、`Hash.each`、`Hash.fetch`、そして `Set.add` と `Set.include?` です。詳細は [Hash](ref/Hash.md)、[Set](ref/Set.md)。
 
 ```ruby
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 h["b"] = 2
 p(h)                                       # => {"a" => 1, "b" => 2}
 p(h["c"])                                  # => nil
@@ -208,16 +208,16 @@ p(Hash.map(h) { |k, v| [k, v * 10] })      # => [["a", 10], ["b", 20]]
 counts = Hash.new(0)
 counts["x"] += 1
 p(counts)                                  # => {"x" => 1}
-s = Set[1, 2]
+s = Set.of(1, 2)
 Set.add(s, 2)
 p(s)                                       # => Set[1, 2]
 p(Set.include?(s, 2))                      # => true
-p(Set.union(s, Set[9]))                    # => Set[1, 2, 9]
+p(Set.union(s, Set.of(9)))                    # => Set[1, 2, 9]
 ```
 
 | 目的 | 操作 | 結果 |
 |---|---|---|
-| 作る | `Hash[k => v, ...]` · `Hash.new([default])` · `Set[...]` | 新しい Hash · Set |
+| 作る | `Hash.of(k => v, ...)` · `Hash.new([default])` · `Set.of(...)` | 新しい Hash · Set |
 | 長さと問い合わせ | `length`, `size`, `empty?`, `key?`, `has_key?`, `include?`, `member?`, `value?` | Integer · true/false |
 | 1 つを取る | `fetch(h, k, [default])` · `dig(h, k)` · `delete(h, k)` · `key(h, v)` | 値 · 値か nil · 消した値か nil · キーか nil |
 | 書き換え（その場で） | `store(h, k, v)`, `merge!`, `update`, `clear`, `transform_values!`, `transform_keys!`, `select!`, `reject!`, `compact!` | h |
@@ -322,12 +322,12 @@ Thread はブロックを並行に走らせ、Mutex が排他、Queue がスレ�
 ```ruby
 count = 0
 m = Mutex.new
-ts = Array.map(Array[1, 2, 3]) { |w| Thread.new { Mutex.synchronize(m) { count += w }; w * 10 } }
+ts = Array.map(Any[1, 2, 3]) { |w| Thread.new { Mutex.synchronize(m) { count += w }; w * 10 } }
 p(Array.map(ts) { |t| Thread.value(t) })   # => [10, 20, 30]
 p(count)                                   # => 6
 q = Queue.new
 producer = Thread.new { Range.each(1..3) { |i| Queue.push(q, i) }; Queue.close(q) }
-got = Array[]
+got = Any[]
 loop do
   x = Queue.pop(q)
   break if x == nil

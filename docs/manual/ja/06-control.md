@@ -49,7 +49,7 @@ p(i)                                 # => 0
 
 ```ruby
 i = 0
-out = Array[]
+out = Any[]
 r = while i < 10
   i += 1
   next if i % 2 == 0
@@ -65,10 +65,10 @@ p(r)                                 # => nil
 `for` は未対応です。列を回すときは、`Array.each`、`Integer.times`、`Range.each` のようなブロックを取る操作に書きます（[関数とブロック](04-functions.md)）。ブロックの中の `break v` は、そのブロックを渡した呼び出しを値 `v` で終えます。`next v` はそのブロックの 1 回分を `v` で終えます。
 
 ```ruby
-xs = Array[3, 8, 12, 5]
+xs = Any[3, 8, 12, 5]
 big = Array.each(xs) { |x| break x if x > 10 }
 p(big)                               # => 12
-squares = Array[]
+squares = Any[]
 Integer.times(4) { |i| next if i == 0; Array.push(squares, i * i) }
 p(squares)                           # => [1, 4, 9]
 ```
@@ -184,8 +184,8 @@ def size_or_zero(xs)
   return 0 unless x
   String.size(x)
 end
-p(size_or_zero(Array["abc"]))        # => 3
-p(size_or_zero(Array[]))             # => 0
+p(size_or_zero(Any["abc"]))        # => 3
+p(size_or_zero(Any[]))             # => 0
 ```
 
 ### フィールドの絞り込みが切れるとき

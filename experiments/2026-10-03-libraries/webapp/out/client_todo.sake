@@ -67,7 +67,7 @@ end
 module Html
   module_function
 
-  def escapes = once { Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"] }
+  def escapes = once { Hash.of("&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;") }
   def escape(x) = String.gsub("#{x}", /[&<>"']/, escapes)
 
   def raw(s) = SafeHtml.new(s)
@@ -102,7 +102,7 @@ module Html
   end
 
   def page(title, body)
-    render(<<~HTML, Hash["title" => title, "body" => body])
+    render(<<~HTML, Hash.of("title" => title, "body" => body))
       <!doctype html>
       <html><head><meta charset="utf-8"><title>{{title}}</title></head>
       <body>
@@ -148,11 +148,11 @@ end
 module Tsv
   module_function
 
-  def esc(s) = String.gsub(s, /[\t\n\\]/, Hash["\t" => "\\t", "\n" => "\\n", "\\" => "\\\\"])
-  def unesc(s) = String.gsub(s, /\\(.)/m) { |m| Hash.fetch(Hash["t" => "\t", "n" => "\n"], m[1], m[1]) }
+  def esc(s) = String.gsub(s, /[\t\n\\]/, Hash.of("\t" => "\\t", "\n" => "\\n", "\\" => "\\\\"))
+  def unesc(s) = String.gsub(s, /\\(.)/m) { |m| Hash.fetch(Hash.of("t" => "\t", "n" => "\n"), m[1], m[1]) }
 
   def load(path)
-    rows = Array[]
+    rows = Any[]
     return rows unless File.exist?(path)
     Array.each(File.readlines(path)) do |line|
       line = String.chomp(line)
@@ -238,7 +238,7 @@ module Web
 
   # "a=1&b=2" (or "a=1; b=2" for cookies) to a Hash of decoded Strings.
   def parse_pairs(s, sep)
-    h = Hash[]
+    h = Hash.new
     Array.each(String.split(s, sep)) do |pair|
       pair = String.strip(pair)
       next if String.empty?(pair)
@@ -256,7 +256,7 @@ module Web
     verb, target, version = String.split(String.chomp(line), " ")
     raise HttpError.new("bad request line", 400) unless verb && target && version
     path, q, query = String.partition(target, "?")
-    headers = Hash[]
+    headers = Hash.new
     while true
       l = gets
       break unless l
@@ -274,10 +274,10 @@ module Web
       body = body + l
     end
     ctype = headers["content-type"]
-    form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash[]
+    form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash.new
     cookie = headers["cookie"]
-    cookies = cookie ? parse_pairs(cookie, ";") : Hash[]
-    Request.new(verb, path, parse_pairs(query, "&"), headers, cookies, form, body, Hash[])
+    cookies = cookie ? parse_pairs(cookie, ";") : Hash.new
+    Request.new(verb, path, parse_pairs(query, "&"), headers, cookies, form, body, Hash.new)
   end
 
   # ---- routing ----
@@ -287,7 +287,7 @@ module Web
     ps = String.split(pattern, "/")
     xs = String.split(path, "/")
     return nil unless Array.size(ps) == Array.size(xs)
-    params = Hash[]
+    params = Hash.new
     Array.each_with_index(ps) do |seg, i|
       x = Array.fetch(xs, i)
       if String.start_with?(seg, ":")
@@ -324,7 +324,7 @@ module Web
 
   def error_page(status, message)
     html(status, Html.page("#{status} #{status_text(status)}",
-      Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash["s" => status, "t" => status_text(status), "m" => message])))
+      Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash.of("s" => status, "t" => status_text(status), "m" => message))))
   end
 
   # The whole request cycle. The block gets (handler, request) for a matched route and gives a Response.
@@ -349,7 +349,7 @@ end
 class Todo
   attr_reader id, title, created_at
   attr_accessor done
-  def to_json(t) = Hash["id" => @id, "title" => @title, "done" => @done, "created_at" => @created_at]
+  def to_json(t) = Hash.of("id" => @id, "title" => @title, "done" => @done, "created_at" => @created_at)
 end
 
 module Todos
@@ -401,14 +401,14 @@ def routes = Tuple[
 
 def index_page(todos, title, errors, flash)
   items = Html.each(todos) do |t|
-    Html.render(<<~HTML, Hash["id" => Todo.id(t), "title" => Todo.title(t), "mark" => Todo.done(t) ? "[x]" : "[ ]", "label" => Todo.done(t) ? "undo" : "done"])
+    Html.render(<<~HTML, Hash.of("id" => Todo.id(t), "title" => Todo.title(t), "mark" => Todo.done(t) ? "[x]" : "[ ]", "label" => Todo.done(t) ? "undo" : "done"))
       <li>{{mark}} <a href="/todos/{{id}}">{{title}}</a>
         <form method="post" action="/todos/{{id}}/toggle" style="display:inline"><button>{{label}}</button></form>
         <form method="post" action="/todos/{{id}}/delete" style="display:inline"><button>delete</button></form></li>
     HTML
   end
-  error_list = Html.each(errors) { |e| Html.render("<li>{{e}}</li>", Hash["e" => e]) }
-  Html.page("Todos", Html.render(<<~HTML, Hash["flash" => flash, "items" => items, "errors" => error_list, "title" => title, "n" => Array.size(todos)]))
+  error_list = Html.each(errors) { |e| Html.render("<li>{{e}}</li>", Hash.of("e" => e)) }
+  Html.page("Todos", Html.render(<<~HTML, Hash.of("flash" => flash, "items" => items, "errors" => error_list, "title" => title, "n" => Array.size(todos))))
     <h1>Todos ({{n}})</h1>
     <p class="flash">{{flash}}</p>
     <ul>{{items}}</ul>
@@ -420,7 +420,7 @@ def index_page(todos, title, errors, flash)
 end
 
 def show_page(t)
-  Html.page(Todo.title(t), Html.render(<<~HTML, Hash["id" => Todo.id(t), "title" => Todo.title(t), "state" => Todo.done(t) ? "done" : "open", "at" => Todo.created_at(t)]))
+  Html.page(Todo.title(t), Html.render(<<~HTML, Hash.of("id" => Todo.id(t), "title" => Todo.title(t), "state" => Todo.done(t) ? "done" : "open", "at" => Todo.created_at(t))))
     <h1>{{id}}: {{title}}</h1>
     <p>state: {{state}}, created {{at}}</p>
     <p><a href="/">back</a></p>

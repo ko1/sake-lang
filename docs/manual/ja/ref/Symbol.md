@@ -1,6 +1,6 @@
 # Symbol
 
-Symbol は名前そのものを値にしたもので、リテラル `:name` が作ります（空白などを含む名前は `:"hello world"`。[値と型](../03-values.md)）。同じ名前の Symbol は常に同じ 1 つの値で、Hash のキー（`Hash[name: 1]` のラベルは Symbol キー）や `case`/`in` の分岐の目印に使います。String から作るには `String.to_sym(s)`（`String.intern`）、String に戻すには `Symbol.to_s`。Ruby の `%i[a b]` はまだ使えず（静的に拒否）、Symbol の Array は `Symbol[:a, :b]` と書きます。
+Symbol は名前そのものを値にしたもので、リテラル `:name` が作ります（空白などを含む名前は `:"hello world"`。[値と型](../03-values.md)）。同じ名前の Symbol は常に同じ 1 つの値で、Hash のキー（`Hash.of(name: 1)` のラベルは Symbol キー）や `case`/`in` の分岐の目印に使います。String から作るには `String.to_sym(s)`（`String.intern`）、String に戻すには `Symbol.to_s`。Ruby の `%i[a b]` はまだ使えず（静的に拒否）、Symbol の Array は `Symbol[:a, :b]` と書きます。
 
 Ruby の `Symbol#to_proc`（`&:name`）はありません。ブロックは値ではないので、`Array.map(xs, &:to_s)` は静的に拒否され、`{ |x| Integer.to_s(x) }` と書きます（[関数とブロック](../04-functions.md)）。
 

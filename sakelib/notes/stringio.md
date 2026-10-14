@@ -104,7 +104,7 @@ lacks) is declared here as `class EOFError < Exception`; `tempfile.sake` require
 - A user's `p io.each(...)` is not the issue; `each` passing its block on with `&b` to `each_line`
   worked at the first try (`def each(io, sep = "\n", chomp: false, &b) = each_line(io, sep, chomp:, &b)`).
 - Ruby's `puts` needs `case x in Array` to flatten: `Kernel.to_s` of an Array gives its inspect, as in
-  Ruby, so `puts(io, Array["a"])` would have written `["a"]` without it.
+  Ruby, so `puts(io, Any["a"])` would have written `["a"]` without it.
 - What felt good: the whole first draft (54 operations) passed `--strict` with only the two problems
   above, and the Ruby twin of the 276-line test printed the same 201 lines after fixing one behaviour
   (`string=` on a closed StringIO) that Ruby 4.0 itself had changed. `attr_accessor lineno` gave

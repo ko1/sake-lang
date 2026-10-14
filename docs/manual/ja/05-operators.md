@@ -46,7 +46,7 @@ a = Money.new(150)
 b = Money.new(250)
 puts(a + b)                                        # => $4.00
 p(a < b)                                           # => true
-puts(Array.join(Array.sort(Array[b, a]), " "))     # => $1.50 $2.50
+puts(Array.join(Array.sort(Any[b, a]), " "))     # => $1.50 $2.50
 ```
 
 左のオペランドの型が、その演算子の module を include していない、または演算子を定義していないときは、実行前に `type` の問題、実行時は `TypeError` です。
@@ -80,7 +80,7 @@ Point = Struct.new(:x, :y)
 p(Point.new(1, 2) == Point.new(1, 2))   # => true
 p(Point.new(1, 2) == Point.new(2, 1))   # => false
 p(Point.new(1, 2) == "x")               # => false
-p(Array.include?(Array[Point.new(1, 2)], Point.new(1, 2)))   # => true
+p(Array.include?(Any[Point.new(1, 2)], Point.new(1, 2)))   # => true
 ```
 
 `Comparable` を include して `<=>` を定義した（`==` は定義しない）型は、Ruby の `Comparable#==` と同じく、同じ型の値と `<=>` が 0 のとき等しい。別の型の値（nil など）とは決して等しくなく、そのとき `<=>` は呼ばれません。上の Money では `a == Money.new(150)` が true、`a == nil` が false です。
@@ -108,9 +108,9 @@ p(Array.include?(Array[Point.new(1, 2)], Point.new(1, 2)))   # => true
 
 ```ruby
 p("ab" * 3)                    # => "ababab"
-p(Array[1, 2] + Array[3])      # => [1, 2, 3]
-p(Array[1, 2, 3] - Array[2])   # => [1, 3]
-p(Set[1, 2] | Set[2, 3])       # => Set[1, 2, 3]
+p(Any[1, 2] + Any[3])      # => [1, 2, 3]
+p(Any[1, 2, 3] - Any[2])   # => [1, 3]
+p(Set.of(1, 2) | Set.of(2, 3))       # => Set[1, 2, 3]
 p(5 & 3)                       # => 1
 p(1 << 4)                      # => 16
 p("abc" =~ /b/)                # => 1
@@ -176,17 +176,17 @@ Tuple、Array、Set、Hash、Record は中身が等しいとき等しい。2 つ
 
 ```ruby
 p([1, 2] == [1, 2])                 # => true
-p([1, 2] == Array[1, 2])            # => false
+p([1, 2] == Any[1, 2])            # => false
 p({x: 1} == {x: 1, y: 2})           # => false
-p(Set[1, 2] == Set[2, 1])           # => true
+p(Set.of(1, 2) == Set.of(2, 1))           # => true
 p([1, 2] < [1, 3])                  # => true
-p(Array[1, 2] <=> Array[1, 2, 0])   # => -1
+p(Any[1, 2] <=> Any[1, 2, 0])   # => -1
 ```
 
 比べられない要素があれば、`<` などは `ArgumentError`、`<=>` は nil です。検査器は、比べられない要素型を実行前に報告します。
 
 ```ruby error
-p(Array["a", 1] < Array["a", "b"])   # !> Comparable.<: elements compared in order may be (Integer, String), which cannot be compared
+p(Any["a", 1] < Any["a", "b"])   # !> Comparable.<: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ### 演算子ではないもの
@@ -210,7 +210,7 @@ p(1 && "second")       # => "second"
 `x[k]` は `Indexable.[](x, k)`、`x[k] = v` は `Indexable.[]=(x, k, v)` で、`x` の型の `[]` と `[]=` を走らせます。
 
 ```ruby
-xs = Array[10, 20, 30]
+xs = Any[10, 20, 30]
 p(xs[0])                  # => 10
 p(xs[-1])                 # => 30
 p(xs[1..])                # => [20, 30]
@@ -237,7 +237,7 @@ s = "hello"
 p(s[0])                   # => "h"
 p(s[1..2])                # => "el"
 p(s[1, 3])                # => "ell"
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 p(h["a"])                 # => 1
 p(h["z"])                 # => nil
 p(Hash.new(0)["z"])       # => 0
@@ -253,12 +253,12 @@ end
 負の添字は Ruby と同じく末尾から数えます。外れた添字の値は Ruby と同じく `nil` なので、`a[i]` の静的な型は `T | nil` です。結果を検査せずに使うと、レベル 3 の `index-nil` が報告します。レベル 2 は通し、実行時にその操作で止まります。`Array.fetch(a, i)` は代わりに `IndexError` を投げます。
 
 ```ruby error
-xs = Array[10, 20, 30]
+xs = Any[10, 20, 30]
 p(xs[5] + 1)              # !> TypeError: Arithmetic.+: no implementation for (nil, Integer)
 ```
 
 ```ruby error
-xs = Array[10, 20, 30]
+xs = Any[10, 20, 30]
 p(Array.fetch(xs, 5))     # !> IndexError: Array.fetch: index 5 outside of array bounds: -3...3
 ```
 
@@ -274,7 +274,7 @@ p(t[2])                   # !> Indexable.[]: the index is outside the Tuple [Int
 型無しの Array の末尾の先に書くと、Ruby と同じく隙間が nil で埋まります。T の Array は nil が T でないので `IndexError` です。T でない値の書き込みは実行前に `type` の問題です。Tuple への書き込みは、その位置の型の値だけです。String には書けません。
 
 ```ruby
-xs = Array[1]
+xs = Any[1]
 xs[3] = 4
 p(xs)                     # => [1, nil, nil, 4]
 ```
@@ -294,10 +294,10 @@ ys[0] = "a"               # !> Indexable.[]=: an element must be Integer, but is
 `x[k] OP= v` と `x[k] ||= v` は `x` と `k` を 1 度だけ評価します。ローカル変数の `y ||= v` は、`y` が nil か false のときだけ代入します。
 
 ```ruby
-h = Hash[]
-h[:a] ||= Array[]
+h = Hash.new
+h[:a] ||= Any[]
 Array.push(h[:a], 1)
-h[:a] ||= Array[]
+h[:a] ||= Any[]
 p(h)                      # => {a: [1]}
 y = nil
 y ||= 5
@@ -318,7 +318,7 @@ class Grid
     @cells[r * @w + c] = v
   end
 end
-g = Grid.new(2, Array[0, 0, 0, 0])
+g = Grid.new(2, Any[0, 0, 0, 0])
 g[1, 0] = 7
 p(g[1, 0])                # => 7
 p(Grid.cells(g))          # => [0, 0, 7, 0]

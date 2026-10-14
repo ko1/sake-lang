@@ -71,7 +71,7 @@ end
 ```ruby
 # main.sake
 generate "gen"
-p(name(Hash["name" => "ko1"]))
+p(name(Hash.of("name" => "ko1")))
 ```
 
 - **毎回。** 生成器は起動のたびに走るので、生成したコードは古くならず、常に検査されます。生成器は生成先のプログラムを見られません。同じ生成器と同じ引数は 1 回だけ走ります。
@@ -302,7 +302,7 @@ p(_)                         # => "a|b|c"
 ```ruby
 String.upcase("sake")
 puts("got #{_}")             # => got SAKE
-Array[1, 2]
+Any[1, 2]
 p((Array.size(_) + 1))       # => 3
 ```
 
@@ -357,7 +357,7 @@ class Box
   def size(b) = Array.size(@items)
   def describe(b) = "#{size(b)} items"   # Box.size
 end
-b = Box.new(Array[1, 2])
+b = Box.new(Any[1, 2])
 puts(Box.describe(b))        # => 2 items
 puts(size(b))                # => top-level size
 ```
@@ -389,7 +389,7 @@ class Basket
   include Summary
   attr_reader items
 end
-b = Basket.new(Array[1, 2, 3])
+b = Basket.new(Any[1, 2, 3])
 puts(Basket.report(b))       # => total=6
 puts(Summary.total(b))       # => 6
 ```
@@ -472,7 +472,7 @@ class Basket
   include Summary
   attr_reader items
 end
-puts(Summary.total(Basket.new(Array[1])))   # !> Summary.total needs `items` from a namespace that includes Summary
+puts(Summary.total(Basket.new(Any[1])))   # !> Summary.total needs `items` from a namespace that includes Summary
 ```
 
 ### 制限
@@ -613,10 +613,10 @@ Leaf = Struct.new(:weight)
 Node = Struct.new(:weight, :kids)
 def weight(t) = (Leaf|Node).weight(t)   # 2 つのクラスの同名のフィールド
 p(weight(Leaf.new(2)))                  # => 2
-p(weight(Node.new(5, Array[])))         # => 5
+p(weight(Node.new(5, Any[])))         # => 5
 def size_of(x) = (String|Array|Hash).size(x)
 p(size_of("abc"))                       # => 3
-p(size_of(Array[1, 2]))                 # => 2
+p(size_of(Any[1, 2]))                 # => 2
 ```
 
 実行前には 2 つのことが検査されます。
@@ -657,29 +657,29 @@ p(twice(3) { 1 })            # !> twice does not take a block (it has no `yield`
 ```
 
 ```ruby error
-p(Array.map(Array[1]))       # !> Array.map requires a block
+p(Array.map(Any[1]))       # !> Array.map requires a block
 ```
 
 ### スプラット引数
 
-`*xs` は Tuple か Array を展開します。他の値は `TypeError` です。展開先は rest 引数だけです。組み込みのもの（`puts(*lines)`、`format(fmt, *row)`、`Array[*xs, 0]`、`Set[*xs]`、`Array.push(a, *xs)`）か、ユーザ関数の `*rest`（`join(*parts)`、[関数とブロック](04-functions.md)）です。
+`*xs` は Tuple か Array を展開します。他の値は `TypeError` です。展開先は rest 引数だけです。組み込みのもの（`puts(*lines)`、`format(fmt, *row)`、`Any[*xs, 0]`、`Set.of(*xs)`、`Array.push(a, *xs)`）か、ユーザ関数の `*rest`（`join(*parts)`、[関数とブロック](04-functions.md)）です。
 
 ```ruby
 def join(sep, *parts) = Array.join(parts, sep)
-xs = Array["a", "b"]
+xs = Any["a", "b"]
 p(join("-", *xs))            # => "a-b"
 t = [1, 2]
-p(Array[*t, 0])              # => [1, 2, 0]
+p(Any[*t, 0])              # => [1, 2, 0]
 puts(*xs)                    # => a
                              # => b
 ```
 
 - **前の引数は書き切る。** スプラットの前の引数は 1 つずつ書くので、その数は検査されます。
-- **静的エラー。** `*rest` の無い関数へのスプラットと、必須か省略可能な引数を埋めるスプラットは静的エラーです。`Array.zip` / `Range.zip`（Tuple の長さが引数の数）と `Hash[...]` へのスプラットも同様です。
+- **静的エラー。** `*rest` の無い関数へのスプラットと、必須か省略可能な引数を埋めるスプラットは静的エラーです。`Array.zip` / `Range.zip`（Tuple の長さが引数の数）と `Hash.of(...)` へのスプラットも同様です。
 - **型推論。** Tuple は位置ごとに展開され、Array は要素型の任意個の引数を表します。
 
 ```ruby error
 def two(a, b) = a + b
 t = [1, 2]
-p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Array[...], Set[...], Array.push, ...)
+p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Any[...], Set.of(...), Array.push, ...)
 ```

@@ -42,8 +42,8 @@ functions; the test prints 46 lines, identical to `terminal_table.rb`.
 - `T.new` keywords for all fields with defaults: `Terminal::Table.new(title: "Population", headings: ...,
   rows: rows)`: the gem's own call shape; helped most here.
 - `initialize` for validation (border, alignment, no title in markdown) and for copying the rows.
-- Expression defaults (`headings = Array[]`, `rows = Array[]`, `border = :ascii`); `private attr_reader
-  aligns = Hash[]`.
+- Expression defaults (`headings = Any[]`, `rows = Any[]`, `border = :ascii`); `private attr_reader
+  aligns = Hash.new`.
 - Record pattern `=> {h:, v:, ...}`; `case a in :left ... in :center` (exhaustive over the literals).
 - The type's own `to_s`, so `puts t` prints the table.
 
@@ -53,7 +53,7 @@ functions; the test prints 46 lines, identical to `terminal_table.rb`.
 
 ## Types
 
-- `Terminal::Table.rows`: a union of Arrays of the test's rows (`Array[Integer | String]`, `Array[Float |
+- `Terminal::Table.rows`: a union of Arrays of the test's rows (`Any[Integer | String]`, `Any[Float |
   Integer | nil]`, ...) and `:separator`; cells are shown with `Kernel.to_s`, which takes anything.
 - `Terminal::Table.border: Symbol`, `alignment: Symbol` (not literal unions: the error tests pass `:fancy`).
 - partial: the three `case ... in :left` over an alignment whose type is `Symbol` (from those error

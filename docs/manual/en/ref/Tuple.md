@@ -1,6 +1,6 @@
 # Tuple
 
-A Tuple is a sequence of fixed length with a type per position. The literal `[1, "a"]` makes a Tuple (Ruby's `[1, "a"]` is an Array; in Sake the Array is `Array[1, "a"]`, see [Values and types](../03-values.md)). The number of elements and the type at each position are part of the value's type, so the checker sees index ranges and position types statically. A Tuple cannot grow or shrink; use an Array for a sequence of varying length.
+A Tuple is a sequence of fixed length with a type per position. The literal `[1, "a"]` makes a Tuple (Ruby's `[1, "a"]` is an Array; in Sake the Array is `Any[1, "a"]`, see [Values and types](../03-values.md)). The number of elements and the type at each position are part of the value's type, so the checker sees index ranges and position types statically. A Tuple cannot grow or shrink; use an Array for a sequence of varying length.
 
 Multiple assignment `a, b = t` and the Tuple pattern `in [Integer, String]` take a Tuple apart. A function's `return a, b` returns a Tuple.
 
@@ -127,12 +127,12 @@ p(t)                             # => [1, "a"]
 
 `Tuple.!=(x, Any)`
 
-True when the two Tuples have the same length and the elements at each position are `==` (`!=` is the negation). A right operand that is not a Tuple (an Array, nil) is never equal. `Array[1, 2]` and `[1, 2]` differ in type and are not equal.
+True when the two Tuples have the same length and the elements at each position are `==` (`!=` is the negation). A right operand that is not a Tuple (an Array, nil) is never equal. `Any[1, 2]` and `[1, 2]` differ in type and are not equal.
 
 ```ruby
 p([1, 2] == [1, 2])              # => true
 p([1, 2] != [1, 2, 3])           # => true
-p([1, 2] == Array[1, 2])         # => false
+p([1, 2] == Any[1, 2])         # => false
 ```
 
 ## <, <=, >, >=
@@ -167,5 +167,5 @@ The result of the dictionary-order comparison as -1, 0, or 1. The rules are thos
 ```ruby
 p([1, 2] <=> [1, 2])             # => 0
 p([1, 2] <=> [1, 2, 3])          # => -1
-p(Array.sort_by(Array["bb", "a", "c"]) { |s| [String.size(s), s] })   # => ["a", "c", "bb"]
+p(Array.sort_by(Any["bb", "a", "c"]) { |s| [String.size(s), s] })   # => ["a", "c", "bb"]
 ```

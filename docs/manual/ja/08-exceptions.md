@@ -332,6 +332,6 @@ Queue.pop(q)                             # !> ThreadError: deadlock: every threa
 - **`EOFError`。** 組み込みの操作は投げません。終端の読み出しは nil や `""` を返し、Ruby の EOFError は `IOError` に畳みます。型としては存在するので `rescue` に書けます。
 
 ```ruby error
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 p(Hash.fetch(h, "b"))                    # !> KeyError: Hash.fetch: key not found: "b"
 ```

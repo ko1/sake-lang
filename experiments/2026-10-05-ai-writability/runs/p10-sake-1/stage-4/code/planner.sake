@@ -6,11 +6,11 @@ module Planner
   # `outer` is the scope of the clause that holds the query when it is a subquery, else nil.
   def plan(db, st, outer)
     base = outer == nil ? 0 : Scope.base(outer) + Scope.width(outer)
-    refs = Array[]
+    refs = Any[]
     from = FromPlanner.plan(db, Select.from(st), outer, base, refs)
-    scope = Scope.new(db, FromPlan.sources(from), FromPlan.merged(from), base, Hash[], Hash[], nil, :function, outer, refs)
-    aggregates = Array[]
-    items = result_items(st, Scope.with_clause(scope, Hash[], Hash[], aggregates, :function), aggregates)
+    scope = Scope.new(db, FromPlan.sources(from), FromPlan.merged(from), base, Hash.new, Hash.new, nil, :function, outer, refs)
+    aggregates = Any[]
+    items = result_items(st, Scope.with_clause(scope, Hash.new, Hash.new, aggregates, :function), aggregates)
     aliases = alias_exprs(items)
 
     where = Resolver.resolve_optional(Select.where(st), Scope.with_clause(scope, aliases, blocked_aliases(items, :where), nil, :function))
@@ -21,17 +21,17 @@ module Planner
     condition = Select.having(st)
     if condition != nil
       raise SqlError.new("HAVING clause on a non-aggregate query") unless grouped
-      having = Resolver.resolve(condition, Scope.with_clause(scope, aliases, Hash[], aggregates, :function))
+      having = Resolver.resolve(condition, Scope.with_clause(scope, aliases, Hash.new, aggregates, :function))
     end
-    order_scope = Scope.with_clause(scope, aliases, Hash[], grouped ? aggregates : nil, :misuse)
+    order_scope = Scope.with_clause(scope, aliases, Hash.new, grouped ? aggregates : nil, :misuse)
     order = sort_keys(st, items, order_scope)
     Plan.new(base, Scope.width(scope), FromPlan.steps(from), items, where, group, aggregates, grouped, having,
-             Select.distinct(st), order, cut(db, Select.limit(st)), cut(db, Select.offset(st)), refs, Array[])
+             Select.distinct(st), order, cut(db, Select.limit(st)), cut(db, Select.offset(st)), refs, Any[])
   end
 
   # The result columns with `*` expanded and names resolved in `scope`.
   def result_items(st, scope, collector)
-    items = Array[]
+    items = Any[]
     Array.each(Select.items(st)) do |rc|
       e = ResultColumn.expr(rc)
       if e == nil
@@ -60,7 +60,7 @@ module Planner
   end
 
   def source_items(scope, src, skip_hidden)
-    items = Array[]
+    items = Any[]
     Array.each_with_index(Source.columns(src)) do |c, i|
       next if skip_hidden && Array.include?(Source.hidden(src), i)
       ref = Col.new(nil, SourceColumn.name(c), Scope.base(scope) + Source.offset(src) + i, SourceColumn.aff(c))
@@ -71,7 +71,7 @@ module Planner
 
   # lower-cased alias -> the aliased result column's expression (for WHERE, GROUP BY, HAVING and ORDER BY).
   def alias_exprs(items)
-    h = Hash[]
+    h = Hash.new
     Array.each(items) do |item|
       a = ResultItem.alias_name(item)
       h[Value.lower(a)] = ResultItem.expr(item) if a != nil
@@ -81,7 +81,7 @@ module Planner
 
   # lower-cased alias -> the aliased result column's position (for a bare name in ORDER BY).
   def alias_positions(items)
-    h = Hash[]
+    h = Hash.new
     Array.each_with_index(items) do |item, i|
       a = ResultItem.alias_name(item)
       h[Value.lower(a)] = i if a != nil
@@ -92,7 +92,7 @@ module Planner
   # The aliases of result columns that contain an aggregate call, with the error for using one in
   # `clause` (:where or :group_by).
   def blocked_aliases(items, clause)
-    h = Hash[]
+    h = Hash.new
     Array.each(items) do |item|
       a = ResultItem.alias_name(item)
       name = ResultItem.aggregate_name(item)
@@ -188,7 +188,7 @@ module Planner
   # The Integer value of a LIMIT / OFFSET expression (no row in scope), or nil if absent.
   def cut(db, e)
     return nil if e == nil
-    v = Evaluator.evaluate(Resolver.resolve(e, Resolver.empty_scope(db)), Array[])
+    v = Evaluator.evaluate(Resolver.resolve(e, Resolver.empty_scope(db)), Any[])
     return nil if v == nil
     n = Value.to_number(v)
     (n in Integer) ? n : Float.to_i(n)

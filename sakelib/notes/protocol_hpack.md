@@ -56,7 +56,7 @@ malformed buffers and Huffman input.
 - `String.getbyte(buf, first) | 0x80` → "Bitwise.|: the operands may be nil" → `(String.getbyte(buf, first) || 0) | 0x80`.
   getbyte's nil is not one of the "misses" level 2 lets through, unlike `x[i]`.
 - Module-level constants (`INDEXED_TYPE = {prefix: 7, pattern: 0x80}`, the static table) → not allowed →
-  `module Representation` with `prefix(type)` / `pattern(type)`, and tables as `def static_table = once { Array[...] }`.
+  `module Representation` with `prefix(type)` / `pattern(type)`, and tables as `def static_table = once { Any[...] }`.
 - The command Hash (see above) → a `Command` class plus `x => String` / `x => Integer` narrowing in five places.
 - Nothing else: the test passed on the first run once it checked.
 

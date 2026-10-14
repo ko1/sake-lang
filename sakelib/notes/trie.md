@@ -41,7 +41,7 @@ non-ASCII keys and the empty key.
 - `include Indexable` with `[]` / `[]=`: `t["zebra"] = 100` and `t[w]` as in Ruby: helped.
 - An expression default that makes a Struct value: `private attr_reader root = Trie::Node.new`, evaluated per
   `Trie.new`: helped (Ruby's `@root = Node.new(...)` in initialize).
-- `attr_accessor children = Hash[], value = nil, terminal = false`; optional parameter `value = true`.
+- `attr_accessor children = Hash.new, value = nil, terminal = false`; optional parameter `value = true`.
 - `return nil unless nxt` inside a block (returns from the function).
 
 ## Checker findings before the test passed
@@ -53,7 +53,7 @@ non-ASCII keys and the empty key.
 - `Trie::Node.value: true|false | Integer | nil`: the test stores Integers in one trie and `true` (the
   default) in another; nil after delete. A field has one type for all tries. Nothing reads the value as
   a number, so no report.
-- `Trie::Node.children: Hash[String => Trie::Node]`, `Trie.root: Trie::Node`.
+- `Trie::Node.children: Hash.of(String => Trie::Node)`, `Trie.root: Trie::Node`.
 - partial: `Trie::Node.children` gets `nil | Trie::Node` in `longest_prefix` and `find` (the local is
   reassigned from a Hash lookup and checked on the next line, which the inference sees as a union at the
   call); the `=> String` check. No unknowns.

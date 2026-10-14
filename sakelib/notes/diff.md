@@ -53,6 +53,6 @@ so the reference is `test/sakelib/ref/diff.rb`; its output for the gem README's 
 
 ## Types (`--types`)
 
-- `Diff::LCS::Change.action`: `nil | String | :bad`, from the test's bad value (taken from `Array[:bad, "-"]`).
+- `Diff::LCS::Change.action`: `nil | String | :bad`, from the test's bad value (taken from `Any[:bad, "-"]`).
 - `Diff::LCS::Change.element`, `Diff::LCS::ContextChange.old_element`/`new_element`: `nil | Integer | String` — the
   elements of the sequences the test diffs (nil: sdiff's missing side), as in the gem.

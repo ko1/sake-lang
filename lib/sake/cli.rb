@@ -131,7 +131,7 @@ module Sake
          ["narrow the name to the fields #{c.expected.split("|").join(", ")} (`case name in :a | :b`), or call it inside `class #{t}`"]]
       when ->(_) { c.arg == "flatten_tuple" }
         ["#{c.op}: #{c.verdict == :error ? "the elements are" : "some elements are"} Tuples #{typer.show_failing(c)}, which flatten leaves whole (it opens only Arrays; a Tuple is one value)",
-         ["to open them: `Array.flat_map(xs) { |t| Tuple.to_a(t) }`", "for growable Arrays inside, write `Array[...]` instead of `[...]`"]]
+         ["to open them: `Array.flat_map(xs) { |t| Tuple.to_a(t) }`", "for growable Arrays inside, write `Any[...]` instead of `[...]`"]]
       when ->(_) { c.arg == "elements" }
         ["#{c.op}: elements compared in order #{maybe}#{typer.show_failing(c)}, which cannot be compared", []]
       when ->(op) { op == "case/in" && c.arg == "value" }
@@ -147,7 +147,7 @@ module Sake
         hint = c.verdict == :error ? [] : ["the value has several types here; make each of them fit"]
         got = typer.show_failing(c)
         if c.expected.split("|").include?("Array") && c.failing.any? { _1.is_a?(Array) && _1[0] == :tuple }
-          hint = ["`[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`"]
+          hint = ["`[...]` is a Tuple with a fixed length; for a growable Array, write `Any[...]`"]
         end
         if (m = c.op.match(/\A(?:Integer|Float|Rational)\.(round|floor|ceil|truncate|abs|to_f|to_i)\z/)) &&
            c.failing.all? { %w[Integer Float Rational].include?(_1) }
@@ -205,7 +205,7 @@ module Sake
               failing = typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing
               hints += typer.field_sources(failing) unless typer.symbol_values?(failing) && !typer.field_holds_symbols?(failing)
             end
-            # Rows such as Array["Tokyo", 13_960_000, 2194.07]: each position has a type that the Array loses.
+            # Rows such as Any["Tokyo", 13_960_000, 2194.07]: each position has a type that the Array loses.
             fails = typer.type_names(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing) - ["Nil"]
             if %w[type mixed].include?(item) && c.node && !fails.empty? && field_reading_region(program, c.node).match?(/\w\[[^\]]+\]/) &&
                typer.mixed_arrays.any? { |names| (fails - names).empty? && !(names - fails).empty? }

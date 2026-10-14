@@ -10,10 +10,10 @@ class Deck
   attr_reader cards
   def each(d) = Array.each(@cards) { |c| yield(c) }
 end
-d = Deck.new(Array["A", "K", "Q", "J"])
+d = Deck.new(Any["A", "K", "Q", "J"])
 p(Deck.map(d) { |c| String.downcase(c) })     # => ["a", "k", "q", "j"]
 p(Enum.count(d))                              # => 4
-p(Enum.select(Array[3, 1, 2]) { |v| v > 1 })  # => [3, 2]
+p(Enum.select(Any[3, 1, 2]) { |v| v > 1 })  # => [3, 2]
 ```
 
 ```ruby error
@@ -29,7 +29,7 @@ p(Enum.map(5) { |v| v })                      # !> Enum.map dispatches on its fi
 必須の関数です。Enum を include するクラスが `def each(c)` を定義し、各要素に `yield(v)` します（Hash のように 2 つ渡してもよい）。`Enum.each(x) { }` は x の型の `each` にディスパッチします。定義していないクラスは、呼び出しが届く場所で `type` の問題、実行時は `NotImplementedError` です。
 
 ```ruby
-Enum.each(Hash[a: 1, b: 2]) { |k, v| puts("#{k}: #{v}") }
+Enum.each(Hash.of(a: 1, b: 2)) { |k, v| puts("#{k}: #{v}") }
 # => a: 1
 # => b: 2
 ```
@@ -42,7 +42,7 @@ Enum.each(Hash[a: 1, b: 2]) { |k, v| puts("#{k}: #{v}") }
 
 ```ruby
 p(Enum.map(1..3) { |v| v * v })               # => [1, 4, 9]
-p(Enum.map(Set[1, 2]) { |v| -v })             # => [-1, -2]
+p(Enum.map(Set.of(1, 2)) { |v| -v })             # => [-1, -2]
 ```
 
 ## select, filter
@@ -54,7 +54,7 @@ p(Enum.map(Set[1, 2]) { |v| -v })             # => [-1, -2]
 ブロックが真を返した要素の Array を返します。
 
 ```ruby
-p(Enum.select(Array[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [2, 4]
+p(Enum.select(Any[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [2, 4]
 p(Enum.filter(1..6) { |v| v > 4 })                     # => [5, 6]
 ```
 
@@ -65,7 +65,7 @@ p(Enum.filter(1..6) { |v| v > 4 })                     # => [5, 6]
 ブロックが偽を返した要素の Array を返します。
 
 ```ruby
-p(Enum.reject(Array[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [1, 3]
+p(Enum.reject(Any[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [1, 3]
 ```
 
 ## filter_map
@@ -75,7 +75,7 @@ p(Enum.reject(Array[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [1, 3]
 各要素にブロックを適用し、真の結果だけを集めた Array を返します（nil と false は落ちます）。
 
 ```ruby
-p(Enum.filter_map(Array["1", "x", "3"]) { |s| String.to_i(s) if String.match?(s, /\A\d+\z/) })   # => [1, 3]
+p(Enum.filter_map(Any["1", "x", "3"]) { |s| String.to_i(s) if String.match?(s, /\A\d+\z/) })   # => [1, 3]
 ```
 
 ## flat_map
@@ -85,7 +85,7 @@ p(Enum.filter_map(Array["1", "x", "3"]) { |s| String.to_i(s) if String.match?(s,
 ブロックが返す Array（か Tuple）を 1 段つなげた Array を返します。
 
 ```ruby
-p(Enum.flat_map(Array[1, 2]) { |v| Array[v, v * 10] })   # => [1, 10, 2, 20]
+p(Enum.flat_map(Any[1, 2]) { |v| Any[v, v * 10] })   # => [1, 10, 2, 20]
 ```
 
 ## find, detect
@@ -97,7 +97,7 @@ p(Enum.flat_map(Array[1, 2]) { |v| Array[v, v * 10] })   # => [1, 10, 2, 20]
 ブロックが真を返す最初の要素を返します。無ければ nil（自分のクラスでは level 2、`Array.find` などでは level 2）。
 
 ```ruby
-p(Enum.find(Array[3, 8, 5]) { |v| v > 4 })    # => 8
+p(Enum.find(Any[3, 8, 5]) { |v| v > 4 })    # => 8
 p(Enum.detect(1..3) { |v| v > 9 })            # => nil
 ```
 
@@ -110,7 +110,7 @@ p(Enum.detect(1..3) { |v| v > 9 })            # => nil
 `init` から始めて、各要素でブロックを `yield(acc, v)` と呼び、最後の累積値を返します。Ruby と違い、初期値は省略できません（要素型だけから結果の型が決まらないため。[Array](Array.md) の `reduce` と同じ）。
 
 ```ruby
-p(Enum.reduce(Array[1, 2, 3], 0) { |acc, v| acc + v })     # => 6
+p(Enum.reduce(Any[1, 2, 3], 0) { |acc, v| acc + v })     # => 6
 p(Enum.inject(1..4, 1) { |acc, v| acc * v })               # => 24
 ```
 
@@ -122,7 +122,7 @@ p(Enum.inject(1..4, 1) { |acc, v| acc * v })               # => 24
 
 ```ruby
 p(Enum.sum(1..4))                             # => 10
-p(Enum.sum(Array[1, 2, 3]) { |v| v * 10 })      # => 60
+p(Enum.sum(Any[1, 2, 3]) { |v| v * 10 })      # => 60
 ```
 
 ## count
@@ -132,7 +132,7 @@ p(Enum.sum(Array[1, 2, 3]) { |v| v * 10 })      # => 60
 要素の数、ブロックがあればブロックが真を返した要素の数を返します。
 
 ```ruby
-p(Enum.count(Set[1, 2, 3]))                   # => 3
+p(Enum.count(Set.of(1, 2, 3)))                   # => 3
 p(Enum.count(1..10) { |v| v % 3 == 0 })       # => 3
 ```
 
@@ -144,7 +144,7 @@ p(Enum.count(1..10) { |v| v % 3 == 0 })       # => 3
 
 ```ruby
 p(Enum.include?(1..5, 3))                     # => true
-p(Enum.include?(Array["a"], "b"))             # => false
+p(Enum.include?(Any["a"], "b"))             # => false
 ```
 
 ## any?, all?, none?, one?
@@ -160,7 +160,7 @@ p(Enum.include?(Array["a"], "b"))             # => false
 ブロックが真を返す要素が 1 つ以上ある / すべて / 無い / ちょうど 1 つ、のとき true。ブロックが無ければ要素自身の真偽を見ます。
 
 ```ruby
-xs = Array[1, 2, 3]
+xs = Any[1, 2, 3]
 p(Enum.any?(xs) { |v| v > 2 })                # => true
 p(Enum.all?(xs) { |v| v > 2 })                # => false
 p(Enum.none?(xs) { |v| v > 5 })               # => true
@@ -176,7 +176,7 @@ p(Enum.one?(xs) { |v| v > 2 })                # => true
 ブロックの値が最小 / 最大の要素を返します。空なら nil。ブロックの値は互いに比べられる型でなければなりません（検査器が静的に見ます）。
 
 ```ruby
-words = Array["pear", "fig", "banana"]
+words = Any["pear", "fig", "banana"]
 p(Enum.min_by(words) { |w| String.length(w) })   # => "fig"
 p(Enum.max_by(words) { |w| String.length(w) })   # => "banana"
 ```
@@ -188,7 +188,7 @@ p(Enum.max_by(words) { |w| String.length(w) })   # => "banana"
 ブロックの値の昇順に並べた Array を返します。
 
 ```ruby
-p(Enum.sort_by(Array["bb", "a", "ccc"]) { |s| -String.length(s) })   # => ["ccc", "bb", "a"]
+p(Enum.sort_by(Any["bb", "a", "ccc"]) { |s| -String.length(s) })   # => ["ccc", "bb", "a"]
 ```
 
 ## to_a
@@ -199,7 +199,7 @@ p(Enum.sort_by(Array["bb", "a", "ccc"]) { |s| -String.length(s) })   # => ["ccc"
 
 ```ruby
 p(Enum.to_a(1..3))                            # => [1, 2, 3]
-p(Enum.to_a(Hash[a: 1]))                      # => [[:a, 1]]
+p(Enum.to_a(Hash.of(a: 1)))                      # => [[:a, 1]]
 ```
 
 ## first
@@ -209,7 +209,7 @@ p(Enum.to_a(Hash[a: 1]))                      # => [[:a, 1]]
 最初の要素（空なら nil）、`n` を与えれば最初の `n` 個の Array を返します。
 
 ```ruby
-p(Enum.first(Array[7, 8, 9]))                 # => 7
+p(Enum.first(Any[7, 8, 9]))                 # => 7
 p(Enum.first(1..10, 3))                       # => [1, 2, 3]
 ```
 
@@ -255,7 +255,7 @@ p(no)                                         # => [1, 2, 3]
 各要素でブロックを `yield(v, memo)` と呼び、`memo` を返します。
 
 ```ruby
-p(Enum.each_with_object(Array[1, 2], Array[]) { |v, m| Array.unshift(m, v) })   # => [2, 1]
+p(Enum.each_with_object(Any[1, 2], Any[]) { |v, m| Array.unshift(m, v) })   # => [2, 1]
 ```
 
 ## compact
@@ -265,5 +265,5 @@ p(Enum.each_with_object(Array[1, 2], Array[]) { |v, m| Array.unshift(m, v) })   
 nil を除いた要素の Array を返します。
 
 ```ruby
-p(Enum.compact(Array[1, nil, 2]))             # => [1, 2]
+p(Enum.compact(Any[1, nil, 2]))             # => [1, 2]
 ```

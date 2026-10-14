@@ -20,7 +20,7 @@ Nearly every property of the language follows from this one rule.
 - **Types are inferred, never written.** The checker infers the types of the whole program and reports a value that does not fit an operation (`"" + 1`, an unchecked nil) before running; how much of that stops a run is chosen with `--strict`, levels 0 to 4.
 - **Run-time checks remain.** Values carry type tags and every operation checks its arguments, so what the checks before running miss still stops at that operation's line.
 
-A few spellings mean something else than in Ruby. `[a, b]` is a Tuple and `{x: 1}` a Record; an Array and a Hash are written `Array[...]` and `Hash[...]`. Inside a `class`, `@x` is "field x of the first argument", not an instance's own state. `class B < A` is shorthand for writing A's definitions in B, not inheritance. The chapters of this part take up these differences one by one.
+A few spellings mean something else than in Ruby. `[a, b]` is a Tuple and `{x: 1}` a Record; an Array and a Hash are written `Any[...]` and `Hash.of(...)`. Inside a `class`, `@x` is "field x of the first argument", not an instance's own state. `class B < A` is shorthand for writing A's definitions in B, not inheritance. The chapters of this part take up these differences one by one.
 
 ## The chapters
 

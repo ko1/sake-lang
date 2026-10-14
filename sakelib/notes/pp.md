@@ -73,7 +73,7 @@ pp.sake) and `module PP` has the class methods. A block given to `PrettyPrint.fo
 - Ruby's `PP#pp(obj)` (instance) and `PP.pp(obj, out, width)` (class) → in Sake both would be `PP.pp`, and a
   namespace holds one `pp` → the walk became `PrettyPrint.pp(q, v)` (a reopened `class PrettyPrint` in
   pp.sake, which Sake allows across files). A reader coming from Ruby looks for it under `PP`.
-- A user's `PP.pp(Hash[a: 1], 40)` (the width where `out` goes; Ruby would fail at run time with
+- A user's `PP.pp(Hash.of(a: 1), 40)` (the width where `out` goes; Ruby would fail at run time with
   `undefined method '<<' for an instance of Integer`) → `pp.sake:117:5: error: case/in: no `in` branch matches
   Integer [type] / hint: reached by the call at line 2 → pp.sake:96`: caught before running, but the error is at
   the library's `case out`, and the user's line is only in the hint chain. The report lands where the type is

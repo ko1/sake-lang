@@ -130,7 +130,7 @@ p(Hash.key?(h, "SAKE_DOC_G"))       # => true
 
 ```ruby
 saved = ENV.to_h
-p(ENV.replace(Hash["SAKE_DOC_R" => "1"]))   # => nil
+p(ENV.replace(Hash.of("SAKE_DOC_R" => "1")))   # => nil
 p(ENV.keys)                         # => ["SAKE_DOC_R"]
 p(ENV.get("SAKE_DOC_R"))            # => "1"
 ENV.replace(saved)
@@ -139,5 +139,5 @@ p(ENV.to_h == saved)                # => true
 ```
 
 ```ruby error
-ENV.replace(Hash["SAKE_DOC_R" => 1])   # !> ENV.replace: the value must be String, but is Integer [type]
+ENV.replace(Hash.of("SAKE_DOC_R" => 1))   # !> ENV.replace: the value must be String, but is Integer [type]
 ```

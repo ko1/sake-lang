@@ -109,10 +109,10 @@ p(s + "!")                       # => "Hello, World!"
 
 ## Array
 
-An Array is a sequence whose length varies. `Array[1, 2]` makes one (the literal `[1, 2]` is a Tuple). The first ones you use are `Array.push`, `Array.each`, `Array.map`, and `Array.select`. Details: [Array](ref/Array.md).
+An Array is a sequence whose length varies. `Any[1, 2]` makes one (the literal `[1, 2]` is a Tuple). The first ones you use are `Array.push`, `Array.each`, `Array.map`, and `Array.select`. Details: [Array](ref/Array.md).
 
 ```ruby
-xs = Array[3, 1, 2]
+xs = Any[3, 1, 2]
 Array.push(xs, 5)
 p(xs)                                      # => [3, 1, 2, 5]
 p(Array.map(xs) { |x| x * 2 })             # => [6, 2, 4, 10]
@@ -121,12 +121,12 @@ p(Array.sort(xs))                          # => [1, 2, 3, 5]
 p(Array.reduce(xs, 0) { |acc, x| acc + x })   # => 11
 p(Array.first(xs))                         # => 3
 p(Array.join(xs, "-"))                     # => "3-1-2-5"
-p(Array.tally(Array["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
+p(Array.tally(Any["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
 ```
 
 | Purpose | Operation | Result |
 |---|---|---|
-| make | `Array[...]` · `Array.new(n)`, `Array.new(n, v)`, `Array.new(n) { \|i\| }` | a new Array |
+| make | `Any[...]` · `Array.new(n)`, `Array.new(n, v)`, `Array.new(n) { \|i\| }` | a new Array |
 | length and query | `length`, `size` · `empty?`, `include?(a, x)` | Integer · true/false |
 | add and remove (in place) | `push(a, *xs)`, `append`, `unshift`, `concat(a, b)`, `insert(a, i, *xs)`, `delete_if`, `clear` | a |
 | one element | `first`, `last`, `min`, `max`, `pop`, `shift`, `at(a, i)`, `sample`, `delete(a, x)`, `delete_at(a, i)` | an element, or nil |
@@ -152,8 +152,8 @@ p(Array.tally(Array["a", "b", "a"]))       # => {"a" => 2, "b" => 1}
 Enum is Ruby's Enumerable under a short name, defined by the prelude (`sakelib/prelude.sake`), which is read before every program. `Enum.map(x) { }` and the others dispatch on the type of the first argument: an Array, Hash, Set or Range answers with its own operation (`Enum.map(xs)` is `Array.map(xs)` when xs is an Array). A class of your own joins with `include Enum` and `def each(c) = ... yield(v) ...`, and gets the rest (`map`, `select`, `reject`, `find`, `reduce`, `sum`, `count`, `include?`, `any?`/`all?`/`none?`/`one?`, `min_by`/`max_by`, `sort_by`, `to_a`, `first`, `take`/`drop`, `group_by`, `partition`, `each_with_object`, `compact`, `filter_map`, `flat_map`), which are written over `each`. Details: [Enum](ref/Enum.md).
 
 ```ruby
-p(Enum.map(Array[3, 1, 2]) { |v| v * 10 })        # => [30, 10, 20]
-p(Enum.map(Hash[a: 1, b: 2]) { |k, v| "#{k}=#{v}" })   # => ["a=1", "b=2"]
+p(Enum.map(Any[3, 1, 2]) { |v| v * 10 })        # => [30, 10, 20]
+p(Enum.map(Hash.of(a: 1, b: 2)) { |k, v| "#{k}=#{v}" })   # => ["a=1", "b=2"]
 p(Enum.count(1..4) { |v| v > 2 })                 # => 2
 
 class Deck
@@ -161,7 +161,7 @@ class Deck
   attr_reader cards
   def each(d) = Array.each(@cards) { |c| yield(c) }
 end
-d = Deck.new(Array["A", "K", "Q"])
+d = Deck.new(Any["A", "K", "Q"])
 p(Deck.select(d) { |c| c < "K" })                  # => ["A"]
 p(Enum.first(d), Deck.count(d))                   # => "A"
                                                   # => 3
@@ -196,10 +196,10 @@ p(Range.first(1.., 3))           # => [1, 2, 3]
 
 ## Hash, Set
 
-A Hash maps keys to values; `Hash["a" => 1]` or `Hash.new(default)` makes one (`{a: 1}` is a Record). A Set is a collection without duplicates, made with `Set[1, 2]`. The first ones you use are the index `h[k]` and `h[k] = v`, `Hash.each`, `Hash.fetch`, and `Set.add` and `Set.include?`. Details: [Hash](ref/Hash.md), [Set](ref/Set.md).
+A Hash maps keys to values; `Hash.of("a" => 1)` or `Hash.new(default)` makes one (`{a: 1}` is a Record). A Set is a collection without duplicates, made with `Set.of(1, 2)`. The first ones you use are the index `h[k]` and `h[k] = v`, `Hash.each`, `Hash.fetch`, and `Set.add` and `Set.include?`. Details: [Hash](ref/Hash.md), [Set](ref/Set.md).
 
 ```ruby
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 h["b"] = 2
 p(h)                                       # => {"a" => 1, "b" => 2}
 p(h["c"])                                  # => nil
@@ -208,16 +208,16 @@ p(Hash.map(h) { |k, v| [k, v * 10] })      # => [["a", 10], ["b", 20]]
 counts = Hash.new(0)
 counts["x"] += 1
 p(counts)                                  # => {"x" => 1}
-s = Set[1, 2]
+s = Set.of(1, 2)
 Set.add(s, 2)
 p(s)                                       # => Set[1, 2]
 p(Set.include?(s, 2))                      # => true
-p(Set.union(s, Set[9]))                    # => Set[1, 2, 9]
+p(Set.union(s, Set.of(9)))                    # => Set[1, 2, 9]
 ```
 
 | Purpose | Operation | Result |
 |---|---|---|
-| make | `Hash[k => v, ...]` · `Hash.new([default])` · `Set[...]` | a new Hash · Set |
+| make | `Hash.of(k => v, ...)` · `Hash.new([default])` · `Set.of(...)` | a new Hash · Set |
 | length and query | `length`, `size`, `empty?`, `key?`, `has_key?`, `include?`, `member?`, `value?` | Integer · true/false |
 | one entry | `fetch(h, k, [default])` · `dig(h, k)` · `delete(h, k)` · `key(h, v)` | the value · value or nil · removed value or nil · key or nil |
 | rewrite (in place) | `store(h, k, v)`, `merge!`, `update`, `clear`, `transform_values!`, `transform_keys!`, `select!`, `reject!`, `compact!` | h |
@@ -322,12 +322,12 @@ A Thread runs a block concurrently, a Mutex gives mutual exclusion, and a Queue 
 ```ruby
 count = 0
 m = Mutex.new
-ts = Array.map(Array[1, 2, 3]) { |w| Thread.new { Mutex.synchronize(m) { count += w }; w * 10 } }
+ts = Array.map(Any[1, 2, 3]) { |w| Thread.new { Mutex.synchronize(m) { count += w }; w * 10 } }
 p(Array.map(ts) { |t| Thread.value(t) })   # => [10, 20, 30]
 p(count)                                   # => 6
 q = Queue.new
 producer = Thread.new { Range.each(1..3) { |i| Queue.push(q, i) }; Queue.close(q) }
-got = Array[]
+got = Any[]
 loop do
   x = Queue.pop(q)
   break if x == nil

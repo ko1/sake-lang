@@ -84,7 +84,7 @@ thread** (no `Thread.current`). So:
 ## Types
 
 - `Monitor.owner: Integer | nil | :consumer | :main | :producer | :t` (every identity the program passes),
-  `Monitor.waiters: Array[[Queue[true|false], me] ...]`, `MonitorMixin::ConditionVariable.waiters: Array[Queue[true|false]]`.
+  `Monitor.waiters: Any[[Queue[true|false], me] ...]`, `MonitorMixin::ConditionVariable.waiters: Any[Queue[true|false]]`.
   All checks proven at `--types`.
 
 ## Later the same day (2026-10-09)

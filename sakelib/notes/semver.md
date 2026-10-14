@@ -47,7 +47,7 @@ prints 60 lines, identical to `semver.rb`; 18 functions (public API: 15).
 - Field defaults `pre = String[], build = String[]`: `SemVer.new(2, 0, 0)` as Ruby's optional arguments.
 - `include Comparable` + `<=>`: `Array.sort`, `Array.max`, `==` all work (`Array.sort(shuffled)` sorts the
   semver.org example).
-- `Array[*Array.take(@pre, n - 1), "x"]` (splat into a built-in) for `pre[0...-1] + [x]`.
+- `Any[*Array.take(@pre, n - 1), "x"]` (splat into a built-in) for `pre[0...-1] + [x]`.
 - Chain after a `do ... end` block: `Array.map(...) do ... end.Array.join(", ")` works.
 
 ## Checker findings before the test passed
@@ -58,6 +58,6 @@ prints 60 lines, identical to `semver.rb`; 18 functions (public API: 15).
 ## Types (`bin/sake --types test/sakelib/semver.sake`)
 
 - `SemVer.pre` and `SemVer.build`: a union of a dozen Array allocation sites, all of String elements
-  (`String[]`, `String.split`, `Array.take`, `Array[*...]`). Harmless: one element type.
+  (`String[]`, `String.split`, `Array.take`, `Any[*...]`). Harmless: one element type.
 - partial: `Comparable.<` and `SemVer.major` get `nil | SemVer` from `|a, b|` of `Array.each_cons(vs, 2)`
   (a destructured block parameter may be nil). No unknowns.

@@ -78,8 +78,8 @@ raises with Ruby's message.
 
 ## Typing note
 
-`parse` with and without `symbolize_names:` is one parser, so even `JSON.parse(s)` is inferred as `Hash[String | Symbol
-=> ...]`: the Symbol keys of `symbolize_names` leak into every call. A caller that treats a key as a
+`parse` with and without `symbolize_names:` is one parser, so even `JSON.parse(s)` is inferred as `Hash.of(String | Symbol
+=> ...)`: the Symbol keys of `symbolize_names` leak into every call. A caller that treats a key as a
 String must narrow it first. Avoiding this would take two copies of the parser, because a flag value
 cannot select a type. As with the earlier library, a parsed value is the full recursive union, and
 callers narrow with `if v in Hash`. The test's config example does this.

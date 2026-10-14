@@ -43,7 +43,7 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
   "12:00 pm", "ago" → "past", "from" → "future", "an" → "1"), tokenize (one regexp: dates and `h:mm[:ss]`
   stay one token), tag (`Chronic::Token.kind`), then handlers. The gem dispatches on the *sequence of tag
   classes* with ~40 handler patterns (`[Scalar, Repeater, Pointer]`, `[RepeaterMonthName, ScalarDay,
-  SeparatorAt?, 'time?']`); here the sequence is an Array of Symbols compared with `==` (`ks == Array[:month,
+  SeparatorAt?, 'time?']`); here the sequence is an Array of Symbols compared with `==` (`ks == Any[:month,
   :scalar, :scalar]`) after splitting off the time-of-day tokens, which removes the `'time?'` suffix of every
   pattern. The gem's Repeater classes (`RepeaterDay#this/next`, width ordering, `find_within`) became one
   `grabber_unit(g, unit, now, context)` with a `case unit`, plus `dayname_span`, `month_span`, `portion_span`,
@@ -63,7 +63,7 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
   time of day" without the gem's list of tag objects. Wrote one Struct type `Chronic::Token` with a `kind`
   Symbol and three payload fields (`num`, `sym`, `parts`), each nil unless the kind uses it. Reading them
   needed `num(t) = Chronic::Token.num(t) || 0`, `sym(t) = ... || :none`: two one-liners, after which `--strict`
-  never complained about a nil payload. The dispatch on the kind sequence is `ks == Array[:grabber, :unit]`
+  never complained about a nil payload. The dispatch on the kind sequence is `ks == Any[:grabber, :unit]`
   in an `if`/`elsif` ladder in `day_span`; it is the gem's handler table written out, and shorter.
   Alternatives considered: a signature String joined by spaces and matched with Regexps (would carry the gem's
   `'time?'` suffixes), or one Struct type per tag with `(Scalar|Month|Time).value(t)`; the single type won
@@ -82,7 +82,7 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
 - **A field cannot be named `begin` or `end`.** `attr_reader begin, end` for the gem's `Span#begin/#end` does
   not parse; the spec's `attr_reader :begin` form would read as `Chronic::Span.begin(s)`, which is still odd next
   to `begin ... end` blocks, so the fields are `from`/`to`.
-- **Hash literals for tables.** The month/day/unit tables are `def months = once { Hash["jan" => 1, ...] }`;
+- **Hash literals for tables.** The month/day/unit tables are `def months = once { Hash.of("jan" => 1, ...) }`;
   reading one gives `Integer | nil`, so `months[String.[](w, 0, 3)] || 0` where Ruby writes `MONTHS[w[0, 3]]`.
   Fine, but the `|| 0` is a lie the type forces (the regexp before it guarantees a hit); `Hash.fetch` would be
   honest and raise, at the price of a longer line.
@@ -99,7 +99,7 @@ Not understood (nil): unknown words, two times, two days, a lone number over 24,
   exists only to pass `Time.utc_offset(now)` as the zone every time.
 - `Time.to_date` / `Date.to_time` round trips with `sakelib/date.sake` (a parser of dates would like to return
   a Date for day spans).
-- `Hash.fetch` with a block, or a `Hash[...]` whose misses are a static error for literal keys: the `|| 0` after
+- `Hash.fetch` with a block, or a `Hash.of(...)` whose misses are a static error for literal keys: the `|| 0` after
   every table lookup is noise in a parser full of tables.
 - `String.scan` with named groups as Records (`{h:, m:}`) instead of Tuples of Strings: the time/date token
   splitting does `Array.map(String.split(w, ":")) { |x| String.to_i(x) }` then `h, m, s = ...` with `||= 0`.

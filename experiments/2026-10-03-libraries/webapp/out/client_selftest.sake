@@ -67,7 +67,7 @@ end
 module Html
   module_function
 
-  def escapes = once { Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"] }
+  def escapes = once { Hash.of("&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;") }
   def escape(x) = String.gsub("#{x}", /[&<>"']/, escapes)
 
   def raw(s) = SafeHtml.new(s)
@@ -102,7 +102,7 @@ module Html
   end
 
   def page(title, body)
-    render(<<~HTML, Hash["title" => title, "body" => body])
+    render(<<~HTML, Hash.of("title" => title, "body" => body))
       <!doctype html>
       <html><head><meta charset="utf-8"><title>{{title}}</title></head>
       <body>
@@ -148,11 +148,11 @@ end
 module Tsv
   module_function
 
-  def esc(s) = String.gsub(s, /[\t\n\\]/, Hash["\t" => "\\t", "\n" => "\\n", "\\" => "\\\\"])
-  def unesc(s) = String.gsub(s, /\\(.)/m) { |m| Hash.fetch(Hash["t" => "\t", "n" => "\n"], m[1], m[1]) }
+  def esc(s) = String.gsub(s, /[\t\n\\]/, Hash.of("\t" => "\\t", "\n" => "\\n", "\\" => "\\\\"))
+  def unesc(s) = String.gsub(s, /\\(.)/m) { |m| Hash.fetch(Hash.of("t" => "\t", "n" => "\n"), m[1], m[1]) }
 
   def load(path)
-    rows = Array[]
+    rows = Any[]
     return rows unless File.exist?(path)
     Array.each(File.readlines(path)) do |line|
       line = String.chomp(line)
@@ -238,7 +238,7 @@ module Web
 
   # "a=1&b=2" (or "a=1; b=2" for cookies) to a Hash of decoded Strings.
   def parse_pairs(s, sep)
-    h = Hash[]
+    h = Hash.new
     Array.each(String.split(s, sep)) do |pair|
       pair = String.strip(pair)
       next if String.empty?(pair)
@@ -256,7 +256,7 @@ module Web
     verb, target, version = String.split(String.chomp(line), " ")
     raise HttpError.new("bad request line", 400) unless verb && target && version
     path, q, query = String.partition(target, "?")
-    headers = Hash[]
+    headers = Hash.new
     while true
       l = gets
       break unless l
@@ -274,10 +274,10 @@ module Web
       body = body + l
     end
     ctype = headers["content-type"]
-    form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash[]
+    form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash.new
     cookie = headers["cookie"]
-    cookies = cookie ? parse_pairs(cookie, ";") : Hash[]
-    Request.new(verb, path, parse_pairs(query, "&"), headers, cookies, form, body, Hash[])
+    cookies = cookie ? parse_pairs(cookie, ";") : Hash.new
+    Request.new(verb, path, parse_pairs(query, "&"), headers, cookies, form, body, Hash.new)
   end
 
   # ---- routing ----
@@ -287,7 +287,7 @@ module Web
     ps = String.split(pattern, "/")
     xs = String.split(path, "/")
     return nil unless Array.size(ps) == Array.size(xs)
-    params = Hash[]
+    params = Hash.new
     Array.each_with_index(ps) do |seg, i|
       x = Array.fetch(xs, i)
       if String.start_with?(seg, ":")
@@ -324,7 +324,7 @@ module Web
 
   def error_page(status, message)
     html(status, Html.page("#{status} #{status_text(status)}",
-      Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash["s" => status, "t" => status_text(status), "m" => message])))
+      Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash.of("s" => status, "t" => status_text(status), "m" => message))))
   end
 
   # The whole request cycle. The block gets (handler, request) for a matched route and gives a Response.
@@ -356,39 +356,39 @@ check("url_decode bad %", Web.url_decode("100%zz%4"), "100%zz%4")
 check("url_decode bad utf8", Web.url_decode("%E3%81"), "\u{fffd}\u{fffd}")
 check("url_encode", Web.url_encode("a b&c=あ"), "a%20b%26c%3D%E3%81%82")
 check("round trip", Web.url_decode(Web.url_encode("x/y?z=1&ä")), "x/y?z=1&ä")
-check("pairs", Web.parse_pairs("a=1&b=x+y&c&a=2", "&"), Hash["a" => "2", "b" => "x y", "c" => ""])
-check("cookies", Web.parse_pairs("sid=abc; theme=dark", ";"), Hash["sid" => "abc", "theme" => "dark"])
+check("pairs", Web.parse_pairs("a=1&b=x+y&c&a=2", "&"), Hash.of("a" => "2", "b" => "x y", "c" => ""))
+check("cookies", Web.parse_pairs("sid=abc; theme=dark", ";"), Hash.of("sid" => "abc", "theme" => "dark"))
 
-check("match /", Web.match_path("/", "/"), Hash[])
-check("match :id", Web.match_path("/todos/:id", "/todos/42"), Hash["id" => "42"])
+check("match /", Web.match_path("/", "/"), Hash.new)
+check("match :id", Web.match_path("/todos/:id", "/todos/42"), Hash.of("id" => "42"))
 check("match miss", Web.match_path("/todos/:id", "/todos/42/x"), nil)
-check("match encoded", Web.match_path("/tags/:t", "/tags/a%2Fb"), Hash["t" => "a/b"])
+check("match encoded", Web.match_path("/tags/:t", "/tags/a%2Fb"), Hash.of("t" => "a/b"))
 
 check("escape", Html.escape("<a href=\"x\">'&'</a>"), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;")
-check("render", Html.render("<b>{{ x }}</b>{{y}}", Hash["x" => "<i>", "y" => Html.raw("<i>ok</i>")]).SafeHtml.source, "<b>&lt;i&gt;</b><i>ok</i>")
-check("render number", Html.render("{{n}}", Hash["n" => 3]).SafeHtml.source, "3")
-check("each", Html.each(String["a", "<"]) { |s| Html.render("<li>{{s}}</li>", Hash["s" => s]) }.SafeHtml.source, "<li>a</li><li>&lt;</li>")
+check("render", Html.render("<b>{{ x }}</b>{{y}}", Hash.of("x" => "<i>", "y" => Html.raw("<i>ok</i>"))).SafeHtml.source, "<b>&lt;i&gt;</b><i>ok</i>")
+check("render number", Html.render("{{n}}", Hash.of("n" => 3)).SafeHtml.source, "3")
+check("each", Html.each(String["a", "<"]) { |s| Html.render("<li>{{s}}</li>", Hash.of("s" => s)) }.SafeHtml.source, "<li>a</li><li>&lt;</li>")
 check("safe +", (Html.raw("<p>") + Html.raw("</p>")).SafeHtml.source, "<p></p>")
 begin
-  Html.render("{{nope}}", Hash["x" => 1])
+  Html.render("{{nope}}", Hash.of("x" => 1))
 rescue ArgumentError => e
   check("render missing", Exception.message(e), "template: no value for {{nope}}")
 end
 
-check("json", Json.encode(Hash["a" => Array[1, 2.5, nil, true], "b" => "q\"\n\\", "c" => :sym]), "{\"a\":[1,2.5,null,true],\"b\":\"q\\\"\\n\\\\\",\"c\":\"sym\"}")
+check("json", Json.encode(Hash.of("a" => Any[1, 2.5, nil, true], "b" => "q\"\n\\", "c" => :sym)), "{\"a\":[1,2.5,null,true],\"b\":\"q\\\"\\n\\\\\",\"c\":\"sym\"}")
 
 path = "selftest.tsv"
-Tsv.save(path, Array[String["1", "tab\there", "back\\slash"], String["2", "new\nline", ""]])
-check("tsv", Tsv.load(path), Array[Array["1", "tab\there", "back\\slash"], Array["2", "new\nline", ""]])
+Tsv.save(path, Any[String["1", "tab\there", "back\\slash"], String["2", "new\nline", ""]])
+check("tsv", Tsv.load(path), Any[Any["1", "tab\there", "back\\slash"], Any["2", "new\nline", ""]])
 
 routes = Tuple[["GET", "/", :index], ["GET", "/todos/:id", :show], ["POST", "/todos/:id", :update]]
-req = Request.new("POST", "/todos/7", Hash[], Hash[], Hash[], Hash["title" => "x"], "", Hash[])
+req = Request.new("POST", "/todos/7", Hash.new, Hash.new, Hash.new, Hash.of("title" => "x"), "", Hash.new)
 check("dispatch", Web.dispatch(routes, req), [:ok, :update])
 check("params", Request.int_param(req, "id"), 7)
 check("param form", Request.param(req, "title"), "x")
-req2 = Request.new("DELETE", "/todos/7", Hash[], Hash[], Hash[], Hash[], "", Hash[])
+req2 = Request.new("DELETE", "/todos/7", Hash.new, Hash.new, Hash.new, Hash.new, "", Hash.new)
 check("405", Web.dispatch(routes, req2), [:method_not_allowed, nil])
-req3 = Request.new("GET", "/nope", Hash[], Hash[], Hash[], Hash[], "", Hash[])
+req3 = Request.new("GET", "/nope", Hash.new, Hash.new, Hash.new, Hash.new, "", Hash.new)
 check("404", Web.dispatch(routes, req3), [:not_found, nil])
 res = Web.redirect("/")
 Response.set_cookie(res, "flash", "Added: あ")

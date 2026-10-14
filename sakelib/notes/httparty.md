@@ -10,8 +10,8 @@ were `HTTPartyResponse` / `HTTPartyRedirectionTooDeep`); the class-level DSL (`i
 
 | Ruby | Sake | |
 |---|---|---|
-| `HTTParty.get(url, query:, headers:, basic_auth:, timeout:, follow_redirects:)` | `HTTParty.get(url, query:, headers:, basic_auth:, timeout: 60, follow_redirects: true)` | same (`url` a String or URI; `query` appended to the URL; `basic_auth: Hash[username:, password:]`) |
-| `HTTParty.post(url, body:, ...)`, `put`, `patch`, `delete`, `head`, `options` | same names | same: a Hash body is form-encoded (`HashConversions.to_params`, `a[b]=1&c[]=2`) with `application/x-www-form-urlencoded`; a String body as given (JSON: set `headers: Hash["Content-Type" => "application/json"]`) |
+| `HTTParty.get(url, query:, headers:, basic_auth:, timeout:, follow_redirects:)` | `HTTParty.get(url, query:, headers:, basic_auth:, timeout: 60, follow_redirects: true)` | same (`url` a String or URI; `query` appended to the URL; `basic_auth: Hash.of(username:, password:)`) |
+| `HTTParty.post(url, body:, ...)`, `put`, `patch`, `delete`, `head`, `options` | same names | same: a Hash body is form-encoded (`HashConversions.to_params`, `a[b]=1&c[]=2`) with `application/x-www-form-urlencoded`; a String body as given (JSON: set `headers: Hash.of("Content-Type" => "application/json")`) |
 | redirects: followed (limit 5), 303 and 301/302 after POST → GET | same | same; `HTTParty::RedirectionTooDeep` past the limit (`follow_redirects: false` returns the 3xx) |
 | `HTTParty::HashConversions.to_params(h)`, `normalize_param(k, v)` | `HTTParty.to_params(h)`, `normalize_param(k, v)` | same |
 | `response.code` (Integer), `body`, `headers`, `message`, `request_uri`, `response` (the Net::HTTPResponse) | `HTTParty::Response.code(r)`, `body`, `headers`, `message`, `request_uri`, `response` (a Net::HTTPResponse) | same (`headers` is a Hash of downcased name => values joined with ", "; HTTParty's is a `Headers` object with the same `[]`) |
@@ -20,7 +20,7 @@ were `HTTPartyResponse` / `HTTPartyRedirectionTooDeep`); the class-level DSL (`i
 | `success?`, `ok?`, `redirection?`, `client_error?`, `server_error?`, `not_found?`, `unauthorized?`, `forbidden?`, `bad_request?`, `nil?` | same names | same (`nil?` is the gem's: no body) |
 | `content_type`, `content_length`, `headers["name"]` / `response.header(name)` | `content_type(r)`, `content_length(r)`, `header(r, name)` | same |
 | `to_s` (the body), `inspect` | same | same shape (`inspect` without the object address) |
-| `class API; include HTTParty; base_uri "..."; headers "X" => "y"; default_params k: v; basic_auth u, p; format :json; end` then `API.get("/path")` | `api = HTTParty::Client.new(base, Hash["X" => "y"], Hash["k" => "v"])`, `HTTParty::Client.get(api, "/path", query:, headers:)`, `post(... body:)`, … | differs: the class macros become fields of a value (see below); `format` is not needed (the content type decides); `debug_output`, `logger`, `pem`, `ssl_*`, `digest_auth`, `cookies`, `maintain_method_across_redirects`, `parser`, `connection_adapter` missing |
+| `class API; include HTTParty; base_uri "..."; headers "X" => "y"; default_params k: v; basic_auth u, p; format :json; end` then `API.get("/path")` | `api = HTTParty::Client.new(base, Hash.of("X" => "y"), Hash.of("k" => "v"))`, `HTTParty::Client.get(api, "/path", query:, headers:)`, `post(... body:)`, … | differs: the class macros become fields of a value (see below); `format` is not needed (the content type decides); `debug_output`, `logger`, `pem`, `ssl_*`, `digest_auth`, `cookies`, `maintain_method_across_redirects`, `parser`, `connection_adapter` missing |
 | `HTTParty.get(url) { \|chunk\| }` (streaming), `stream_body`, `multipart` bodies, `HTTParty::Parser` subclasses, `HTTParty::Error` classes, `response.request` | — | missing |
 
 ~35 operations ported (HTTParty 10, HTTParty::Response 19, HTTParty::Client 8).

@@ -17,7 +17,7 @@ usable as Hash keys. Exceptions are `Matrix::ErrDimensionMismatch`, `Matrix::Err
 
 | Ruby | Sake | |
 |---|---|---|
-| `Matrix[[1, 2], [3, 4]]` | `Matrix.rows(Array[Array[1, 2], Array[3, 4]])` | differs: `T[...]` is "Array of T" in Sake |
+| `Matrix[[1, 2], [3, 4]]` | `Matrix.rows(Any[Any[1, 2], Any[3, 4]])` | differs: `T[...]` is "Array of T" in Sake |
 | `Matrix.rows(rows, copy = true)` / `Matrix.columns(cols)` | same | same (phase 2: the `copy` flag) |
 | `Matrix.build(r, c = r) { \|i, j\| }` | same | same (phase 2: `c` defaults to `r`); no Enumerator form |
 | `Matrix.identity(n)`, `unit(n)` | same | same (`Matrix.I` is missing) |
@@ -53,7 +53,7 @@ usable as Hash keys. Exceptions are `Matrix::ErrDimensionMismatch`, `Matrix::Err
 | `hermitian?`, `normal?`, `unitary?`, `real?`, `conj`, `imaginary`, `real`, `rect` | | missing (Complex-specific; not ported for time) |
 | `eigensystem`/`eigen`, `lup`/`lup_decomposition` | | missing (the largest remaining parts) |
 | `laplace_expansion(row:)`, `rotate_entries`, `combine`, `index`, `freeze`, `collect!`, `coerce`, `hash`, `eql?`, `abs`, `elements_to_*` | | missing |
-| `Vector[1, 2]` | `Vector.elements(Array[1, 2])` | differs (as for Matrix) |
+| `Vector[1, 2]` | `Vector.elements(Any[1, 2])` | differs (as for Matrix) |
 | `Vector.elements(a)`, `Vector.zero(n)` | same | same |
 | `Vector.basis(size: 3, index: 1)` | `Vector.basis(size: 3, index: 1)` | same |
 | `v[i]`, `v[i] = x`, `element`, `component` | same | same for Integer indexes (no Ranges) |
@@ -112,7 +112,7 @@ usable as Hash keys. Exceptions are `Matrix::ErrDimensionMismatch`, `Matrix::Err
 - `def [](m, i, j)` was first written as `row = @rows[i]; row == nil ? nil : row[j]`. Then, in a client,
   `x = m[0, 0]; x + 1` gave `Arithmetic.+: the operands may be nil [nil]` at level 2, while `a[0] + 1`
   on an Array is only reported at level 3. The reason is that my code returned a literal `nil`, which
-  the checker treats as a real nil. Writing `(@rows[i] || Array[])[j]` makes the nil come only from
+  the checker treats as a real nil. Writing `(@rows[i] || Any[])[j]` makes the nil come only from
   indexing, so a user's `m[i, j]` is now treated like `a[k]` (level 3, `index-nil`). It is not a checker
   bug, but a library author has to know this to get Ruby's leniency.
 - `Vector.angle_with`: `if Matrix.abs(dot) >= prod` gave `Comparable.>: the operands may be (Complex,

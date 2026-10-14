@@ -2,7 +2,7 @@
 # localized times and dates, as Ruby's i18n gem (1.15, Simple backend). Differences in shape:
 #   I18n.backend.store_translations(:en, h)  ->  I18n.backend_store(:en, h)   (also I18n.load_yaml(path))
 #   I18n.locale = :ja                        ->  I18n.set_locale(:ja)         (no setter syntax on a module)
-#   I18n.fallbacks = [:en]                   ->  I18n.set_fallbacks(Array[:en]); I18n.fallbacks(:ja) is [:ja, :en]
+#   I18n.fallbacks = [:en]                   ->  I18n.set_fallbacks(Any[:en]); I18n.fallbacks(:ja) is [:ja, :en]
 #   I18n::MissingTranslationData & co.       ->  the same names, nested in `module I18n` (I18n::ArgumentError too)
 # A translation is a String, a Hash (a subtree, or plural forms :zero/:one/:other), an Array, or any YAML value.
 require "yaml"
@@ -33,7 +33,7 @@ module I18n
   module_function
 
   def config
-    once { Config.new(:en, :en, Array[], true, Hash[]) }
+    once { Config.new(:en, :en, Any[], true, Hash.new) }
   end
 
   # --- locales ---
@@ -65,11 +65,11 @@ module I18n
   # The locales tried for `l`: itself, then the default fallbacks (the gem's I18n.fallbacks[l]).
   def fallbacks(l = nil)
     l = locale if l == nil
-    Array.uniq(Array[l, *Config.fallbacks(config)])
+    Array.uniq(Any[l, *Config.fallbacks(config)])
   end
 
   # I18n.fallbacks = [:en]; an empty Array (the start) means no fallbacks, as a gem without the Fallbacks backend.
-  def set_fallbacks(locales) = Config.set_fallbacks(config, Array[*locales])
+  def set_fallbacks(locales) = Config.set_fallbacks(config, Any[*locales])
 
   def with_locale(l)
     saved = locale
@@ -87,7 +87,7 @@ module I18n
   def backend_store(l, data)
     all = Config.translations(config)
     current = all[l]
-    current = Hash[] if current == nil
+    current = Hash.new if current == nil
     all[l] = deep_merge(current, symbolize(data))
     nil
   end
@@ -106,7 +106,7 @@ module I18n
   def symbolize(v)
     case v
     in Hash
-      out = Hash[]
+      out = Hash.new
       Hash.each(v) { |k, x| out[(k in String) ? String.to_sym(k) : k] = symbolize(x) }
       out
     in Array then Array.map(v) { |x| symbolize(x) }
@@ -152,7 +152,7 @@ module I18n
     entry = lookup(l, keys)
     entry = resolve_default(l, default, scope, count, separator, values) if entry == nil && default != nil
     if entry == nil
-      message = "Translation missing: #{Array.join(Array[l, *keys], ".")}"
+      message = "Translation missing: #{Array.join(Any[l, *keys], ".")}"
       raise MissingTranslationData, message if strict
       return message
     end
@@ -172,8 +172,8 @@ module I18n
 
   # "scope.key" split on the separator, empty parts dropped: Symbols.
   def normalize_keys(key, scope, separator)
-    parts = Array[]
-    Array.each(Array[*scope_parts(scope), key]) do |k|
+    parts = Any[]
+    Array.each(Any[*scope_parts(scope), key]) do |k|
       next if k == nil
       Array.each(String.split(Kernel.to_s(k), separator)) { |s| Array.push(parts, String.to_sym(s)) unless s == "" }
     end
@@ -182,9 +182,9 @@ module I18n
 
   def scope_parts(scope)
     case scope
-    in nil then Array[]
+    in nil then Any[]
     in Array then scope
-    else Array[scope]
+    else Any[scope]
     end
   end
 
@@ -227,7 +227,7 @@ module I18n
 
   # %{name} from the values (count is one of them); a name not given raises, as the gem; no values: unchanged.
   def interpolate(s, count, values)
-    values = Hash.merge(Hash[count: count], values) if count != nil
+    values = Hash.merge(Hash.of(count: count), values) if count != nil
     return s if Hash.empty?(values)
     String.gsub(s, /%\{(\w+)\}/) do |m|
       name = String.to_sym(String.[](m, 2, String.size(m) - 3) || "")
@@ -302,7 +302,7 @@ module I18n
 
   def approximations = once do
     pairs = "À=A Á=A Â=A Ã=A Ä=A Å=A Æ=AE Ç=C È=E É=E Ê=E Ë=E Ì=I Í=I Î=I Ï=I Ð=D Ñ=N Ò=O Ó=O Ô=O Õ=O Ö=O ×=x Ø=O Ù=U Ú=U Û=U Ü=U Ý=Y Þ=Th ß=ss ẞ=SS à=a á=a â=a ã=a ä=a å=a æ=ae ç=c è=e é=e ê=e ë=e ì=i í=i î=i ï=i ð=d ñ=n ò=o ó=o ô=o õ=o ö=o ø=o ù=u ú=u û=u ü=u ý=y þ=th ÿ=y Ā=A ā=a Ă=A ă=a Ą=A ą=a Ć=C ć=c Ĉ=C ĉ=c Ċ=C ċ=c Č=C č=c Ď=D ď=d Đ=D đ=d Ē=E ē=e Ĕ=E ĕ=e Ė=E ė=e Ę=E ę=e Ě=E ě=e Ĝ=G ĝ=g Ğ=G ğ=g Ġ=G ġ=g Ģ=G ģ=g Ĥ=H ĥ=h Ħ=H ħ=h Ĩ=I ĩ=i Ī=I ī=i Ĭ=I ĭ=i Į=I į=i İ=I ı=i Ĳ=IJ ĳ=ij Ĵ=J ĵ=j Ķ=K ķ=k ĸ=k Ĺ=L ĺ=l Ļ=L ļ=l Ľ=L ľ=l Ŀ=L ŀ=l Ł=L ł=l Ń=N ń=n Ņ=N ņ=n Ň=N ň=n ŉ='n Ŋ=NG ŋ=ng Ō=O ō=o Ŏ=O ŏ=o Ő=O ő=o Œ=OE œ=oe Ŕ=R ŕ=r Ŗ=R ŗ=r Ř=R ř=r Ś=S ś=s Ŝ=S ŝ=s Ş=S ş=s Š=S š=s Ţ=T ţ=t Ť=T ť=t Ŧ=T ŧ=t Ũ=U ũ=u Ū=U ū=u Ŭ=U ŭ=u Ů=U ů=u Ű=U ű=u Ų=U ų=u Ŵ=W ŵ=w Ŷ=Y ŷ=y Ÿ=Y Ź=Z ź=z Ż=Z ż=z Ž=Z ž=z Ǫ=O ǫ=o Ǭ=O ǭ=o"
-    table = Hash[]
+    table = Hash.new
     Array.each(String.split(pairs, " ")) do |pair|
       k, v = String.split(pair, "=", 2)
       table[k] = v if k != nil && v != nil

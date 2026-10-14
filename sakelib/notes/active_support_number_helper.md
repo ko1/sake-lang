@@ -44,7 +44,7 @@ a misspelled one.
 ## 書き心地
 
 - Ruby's converters merge one `options` Hash over `DEFAULTS` and read `options[:precision]` everywhere. That shape
-  was not tried: a Hash of mixed values (`Hash[precision: 2, unit: "$"]`) would be `Integer | String` at every read.
+  was not tried: a Hash of mixed values (`Hash.of(precision: 2, unit: "$")`) would be `Integer | String` at every read.
   Keyword parameters type each option at the definition, and `rounded(number, precision, significant, ...)` takes
   them positionally so the seven converters share one implementation, which is how Ruby's
   `NumberToRoundedConverter` is called from the others anyway.

@@ -15,10 +15,10 @@ Each row is the Ruby spelling (left), the Sake spelling (middle), and the reason
 | `class B < A` (inheritance) | `class B < A` (copies A's definitions; no subtyping) | every call target is static |
 | `attr_reader :x` | `attr_reader x` | field names are written bare |
 | `def initialize(x) = @x = x` | `C.new(x)` stores the field; `initialize(c)` only checks and converts | the parameter is the new instance |
-| `@items = []` (a default) | `@items = Array[]` inside `initialize` | fields have no default values |
+| `@items = []` (a default) | `@items = Any[]` inside `initialize` | fields have no default values |
 | `Data.define` | `Struct.new` | classes are mutable |
-| `[1, 2]` (a growable array) | `Array[1, 2]`; `[1, 2]` is a Tuple (fixed length) | a literal's shape fixes its type |
-| `{a: 1}` (a Hash) | `Hash[a: 1]`; `{a: 1}` is a Record | same |
+| `[1, 2]` (a growable array) | `Any[1, 2]`; `[1, 2]` is a Tuple (fixed length) | a literal's shape fixes its type |
+| `{a: 1}` (a Hash) | `Hash.of(a: 1)`; `{a: 1}` is a Record | same |
 | `%w[a b]`, `%i[a b]` | `String["a", "b"]`, `Symbol[:a, :b]` | undecided (Tuple or Array) |
 | `PI = 3.14` | `def pi = 3.14`; a table is `once { ... }` | no value constants |
 | `Math::PI`, `ARGV`, `$stdout` | `Math.PI` (or `Math::PI`), `ARGV`, `IO.stdout` | read as operations |
@@ -60,7 +60,7 @@ A type a program defines is a class. Declaring it with `attr_*` lines in `class 
 - **No inheritance.** `class B < A` is shorthand for writing A's definitions (fields, functions, includes) into B. Afterwards A and B are unrelated types, and passing a B to `A.f(b)` is a type error.
 - **Field names are bare.** `attr_reader :x` is an error telling you to write `x` without the `:`.
 - **`initialize` takes no value.** After `C.new(x)` has stored the fields, `def initialize(c)` runs with the new instance. Ruby's `def initialize(x) = @x = x` would store the instance in its own field, so it is a static error.
-- **Defaults go in `initialize`.** `attr_reader items = Array[]` is an error; the first value is set inside `initialize` with `@items = Array[]`. `C.new` may then leave that field out.
+- **Defaults go in `initialize`.** `attr_reader items = Any[]` is an error; the first value is set inside `initialize` with `@items = Any[]`. `C.new` may then leave that field out.
 - **No `Data.define`.** Sake's classes are mutable, so use `Struct.new`, the counterpart of Ruby's `Struct`.
 
 ```ruby
@@ -87,19 +87,20 @@ end
 
 A literal's shape fixes its type ([Values and types](03-values.md)).
 
-- **`[1, 2]` is a Tuple**, of fixed length. A growable array is written `Array[1, 2]`, and the empty one `Array[]`. Passing a Tuple to `Array.push` is a type error whose hint says to write `Array[...]`.
-- **`{a: 1}` is a Record**; `Hash[a: 1]` is a Hash. A Record's fields are read with a pattern, `r => {a:}`.
+- **Ruby's `Array[1, 2]`, `Hash[...]` and `Set[...]` are Arrays of Arrays, of Hashes, of Sets** in Sake, as `T[...]` is an Array of T for every T. Make an Array of any values with `Any[...]`, a Hash with `Hash.of(k => v)` or `Hash.new`, a Set with `Set.of(a, b)` or `Set.new(xs)`.
+- **`[1, 2]` is a Tuple**, of fixed length. A growable array is written `Any[1, 2]`, and the empty one `Any[]`. Passing a Tuple to `Array.push` is a type error whose hint says to write `Any[...]`.
+- **`{a: 1}` is a Record**; `Hash.of(a: 1)` is a Hash. A Record's fields are read with a pattern, `r => {a:}`.
 - **`%w[a b]` and `%i[a b]` are not supported.** Whether they are a Tuple or an Array is undecided. `String["a", "b"]` and `Symbol[:a, :b]` give Arrays with an element type.
 - **No value constants.** `PI = 3.14` is a static error whose hint gives `def pi = 3.14`. A table computed once and kept is `def table = once { ... }` ([Functions and blocks](04-functions.md)). Only `Struct.new` and `Exception.new` may be assigned to a constant.
 - **Built-in constants are operations.** Call them as `Math.PI`, `ARGV`, `IO.stdout`. A few built-in ones such as `Math::PI` are also read in Ruby's form. There are no global variables such as `$stdout`.
 
 ```ruby
 t = [1, 2]
-xs = Array[1, 2]
+xs = Any[1, 2]
 Array.push(xs, 3)
 p(t, xs)                 # => [1, 2]
                          # => [1, 2, 3]
-h = Hash[a: 1]
+h = Hash.of(a: 1)
 h[:b] = 2
 p(h)                     # => {a: 1, b: 2}
 def pi = 3.14

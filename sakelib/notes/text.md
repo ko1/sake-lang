@@ -30,7 +30,7 @@ The Ruby reference uses the same module names (`Text::Levenshtein`, `Text::Sound
 
 1. `Text::Levenshtein.distance("a", 1)` in the test (to show the error) → `=> String: the value is Integer,
    which does not match [type]` before running, twice (once per analysis pass). The checker is right; to
-   test the run-time error, the test passes `Array.fetch(Array["a", 1], 1)`, whose type is a union.
+   test the run-time error, the test passes `Array.fetch(Any["a", 1], 1)`, whose type is a union.
 2. A constant Hash (`CODES`) → `def codes = once do ... end`.
 3. `[a, b].min` → `Tuple.min([a, b])` (Ruby's `[x, y].max` idiom reads well with Tuple.max).
 4. `a.select.with_index { }` (an Enumerator) → `Array.each_with_index(a)` without a block gives the

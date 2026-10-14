@@ -57,7 +57,7 @@ About 135 operations ported across six modules and the `Duration` type (the infl
   `error: Array.concat: an element must be String, but can be nil | true|false [type] / hint: reached by the call
   at line 13`. The test passes `String["1", "2", ...]`, a typed Array, and the padding is nil. **The checker found
   a real difference from Ruby**: `dup` of a `String[]` keeps the element type, so Ruby's "pad the copy with nil"
-  would raise at run time. Now `collection = Array.concat(Array[], xs)`, a fresh untyped Array, and the same for
+  would raise at run time. Now `collection = Array.concat(Any[], xs)`, a fresh untyped Array, and the same for
   each group in `in_groups`. The line reads as a decision ("this result is untyped") where the Ruby was implicit.
 - Wrote `deep_merge` with `elsif Hash.key?(result, k) && block_given?` → `error: yield: no block is given on this
   call [type] / hint: check block_given? before yield / reached by the call at line 57 → line 48`. A lone
@@ -73,7 +73,7 @@ About 135 operations ported across six modules and the `Duration` type (the infl
   `&b` to the recursive call — accepted: `yield` and passing `&b` on mix in one function as in Ruby, and the
   checker followed the block through the recursion.
 - `Duration`: `include Arithmetic` + `def +(d, other)`, `include Comparable` + `def <=>`, own `==` so that
-  `ActiveSupport::Duration.hours(1) == 3600` is true as in Ruby; then `d - 60`, `-d`, `Array.min(Array[d1, d2])`, `d1 > d2` all
+  `ActiveSupport::Duration.hours(1) == 3600` is true as in Ruby; then `d - 60`, `-d`, `Array.min(Any[d1, d2])`, `d1 > d2` all
   read as Ruby. `p d` prints `2 hours` through the type's own `inspect(d)`. `@value` / `@parts` inside the type's
   functions are the Ruby `@ivar`s; `ActiveSupport::Duration.new(value, parts)` with `initialize` dropping zero parts is Ruby's
   `initialize` line for line. This was the most Ruby-like file of the three.

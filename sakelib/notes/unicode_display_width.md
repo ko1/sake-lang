@@ -26,7 +26,7 @@ with unicode-emoji 4.2.0).
 |---|---|---|
 | `Unicode::DisplayWidth.of(s)` | `Unicode::DisplayWidth.of(s)` | same |
 | `Unicode::DisplayWidth.of(s, 2)` (ambiguous) | `Unicode::DisplayWidth.of(s, 2)` | same |
-| `.of(s, emoji: :all, overwrite: {0x2588 => 2}, ambiguous: 2)` | `.of(s, {emoji: :all, overwrite: Hash[0x2588 => 2], ambiguous: 2})` | differs: options Record |
+| `.of(s, emoji: :all, overwrite: {0x2588 => 2}, ambiguous: 2)` | `.of(s, {emoji: :all, overwrite: Hash.of(0x2588 => 2), ambiguous: 2})` | differs: options Record |
 | `.of(s, 1, {}, emoji: :all)` | `.of(s, 1, {emoji: :all})` | differs: no old positional `overwrite`/`old_options` |
 | emoji modes `true :auto nil false :none :all :all_no_vs16 :vs16 :rgi :rgi_at :possible` | same | same |
 | `DisplayWidth.new(ambiguous: 2, overwrite: {}, emoji: :all)` | `Unicode::DisplayWidth.new(ambiguous: 2, emoji: :all)` | same |

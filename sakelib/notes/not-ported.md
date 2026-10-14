@@ -12,7 +12,7 @@
 | English | 言語 | `$INPUT_RECORD_SEPARATOR` などの特殊変数の別名。Sake に特殊変数は無い |
 | did_you_mean, error_highlight, syntax_suggest | 不要 | 処理系の機能。Sake の検査器が `did you mean` の hint を出す |
 | un | 不要 | `ruby -run -e cp` のコマンド群。Sake の `fileutils.sake` と `bin/sake` のスクリプトで足りる |
-| set | 不要 | Sake の `Set` は組み込み（`Set[...]`、`Set.add` ...） |
+| set | 不要 | Sake の `Set` は組み込み（`Set.of(...)`、`Set.add` ...） |
 | tmpdir | 不要 | `Dir.mktmpdir` が組み込み |
 | socket | 不要 | `TCPServer` / `Socket` が組み込み（TCP のみ。UDP、UNIX ドメインは無い） |
 | open3 | 不要 | `Open3.capture2 / capture2e / capture3` と `Kernel.system` が組み込み（2026-10-09）。`popen3` のストリーム版は無い |

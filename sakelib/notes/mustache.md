@@ -9,7 +9,7 @@
 | Ruby (mustache gem) | Sake | |
 |---|---|---|
 | `Mustache.render(template, hash)` | `Mustache.render(template, view)` | same (String or Symbol keys) |
-| partials: subclass overriding `partial(name)`, or `template_path` files | `Mustache.render(t, view, partials: Hash["name" => "..."])` | differs (a keyword Hash) |
+| partials: subclass overriding `partial(name)`, or `template_path` files | `Mustache.render(t, view, partials: Hash.of("name" => "..."))` | differs (a keyword Hash) |
 | `{{x}}`, `{{{x}}}`, `{{& x}}`, `{{a.b}}`, `{{.}}`, `{{#s}}`, `{{^s}}`, `{{! c}}`, `{{> p}}` | same | same, with the spec's standalone lines and partial indentation |
 | `Mustache::Parser::SyntaxError` | `Mustache::Parser::SyntaxError` | same name (nested since 2026-10-10; was `MustacheSyntaxError`); messages are this port's own |
 | view classes (`class Simple < Mustache; def name`), lambdas, `{{=<% %>=}}` | | missing |
@@ -38,7 +38,7 @@ iterates, a Hash or any other truthy value is pushed once as the context.
   `children = Mustache::Node[]` (a fresh typed Array per node). Helped.
 - `initialize` checks `@kind => Symbol`, `@name => String`; `render` asserts `template => String`,
   `partials => Hash`.
-- Optional positional + keyword: `def render(template, view = Hash[], partials: Hash[])`, as the gem's
+- Optional positional + keyword: `def render(template, view = Hash.new, partials: Hash.new)`, as the gem's
   `render(data = template, ctx = {})`.
 - `once` for the sigil and escape tables; `private attr_accessor pos = 0`.
 - `first, *rest = String.split(name, ".")` for dotted names.

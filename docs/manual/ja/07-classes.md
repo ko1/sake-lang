@@ -94,7 +94,7 @@ Logger.new("app", lvl: :warn)        # !> Logger has no field `lvl`
 
 ### initialize
 
-class の `def initialize(c)` は、`C.new` がフィールドを格納した**後**に、新しいインスタンスを受けて走ります。Ruby と同じく、最初の値（`@items = Array[]`）、検査（`@port => Integer`）、変換（`@celsius = Float(@celsius)`）を書く場所です。`@level = :info if @level == nil` は `new` が与えた値を保ちます。
+class の `def initialize(c)` は、`C.new` がフィールドを格納した**後**に、新しいインスタンスを受けて走ります。Ruby と同じく、最初の値（`@items = Any[]`）、検査（`@port => Integer`）、変換（`@celsius = Float(@celsius)`）を書く場所です。`@level = :info if @level == nil` は `new` が与えた値を保ちます。
 
 - 引数はその 1 つ（新しいインスタンス）だけです。2 つ以上は静的エラーです。
 - `C.initialize` を直接呼ぶのは静的エラーです。`C.new` が呼びます。
@@ -137,11 +137,11 @@ end
 
 ### 既定値は無い
 
-`attr_reader items = Array[]` は静的エラーです。フィールドの最初の値は `initialize` で設定します。新しいインスタンスごとに走る唯一の場所がそこで、他のフィールドも読めます（`@len = String.bytesize(@src)`）。検査器は initialize を通してフィールドを追うので、initialize が常に設定するフィールドはその後 nil ではありません。
+`attr_reader items = Any[]` は静的エラーです。フィールドの最初の値は `initialize` で設定します。新しいインスタンスごとに走る唯一の場所がそこで、他のフィールドも読めます（`@len = String.bytesize(@src)`）。検査器は initialize を通してフィールドを追うので、initialize が常に設定するフィールドはその後 nil ではありません。
 
 ```ruby error
 class Bag
-  attr_reader items = Array[]        # !> a field has no default value; set it in initialize, which runs after Bag.new
+  attr_reader items = Any[]        # !> a field has no default value; set it in initialize, which runs after Bag.new
 end
 ```
 
@@ -149,7 +149,7 @@ end
 class Bag
   attr_reader items
   def initialize(b)
-    @items = Array[] if @items == nil
+    @items = Any[] if @items == nil
   end
   def add(b, x) = Array.push(@items, x)
 end
@@ -188,9 +188,9 @@ class Heap
   def push(h, x) = Array.push(@items, x)
   def top(h) = Array.first(@items)
 end
-ints = Heap.new(Array[])
+ints = Heap.new(Any[])
 Heap.push(ints, 3)
-words = Heap.new(Array[])
+words = Heap.new(Any[])
 Heap.push(words, "job")
 p(Heap.top(ints) + 1)                # => 4
 p(String.upcase(Heap.top(words)))    # => "JOB"
@@ -407,7 +407,7 @@ Point = Data.define(:x, :y)          # !> Sake's named types are mutable, so the
 
 ```ruby
 Point = Struct.new(:x, :y)
-a = Point.new(1, Array[2])
+a = Point.new(1, Any[2])
 b = Kernel.dup(a)
 Point.set_x(b, 9)
 Array.push(Point.y(b), 3)

@@ -19,7 +19,7 @@ Starts the block in a new thread and returns the Thread at once. The block's val
 t = Thread.new { 1 + 2 }
 p(t)                                # => #<Thread>
 p(Thread.value(t))                  # => 3
-ws = Array.map(Array[1, 2, 3]) { |i| Thread.new { i * 10 } }
+ws = Array.map(Any[1, 2, 3]) { |i| Thread.new { i * 10 } }
 p(Array.map(ws) { |w| Thread.value(w) })   # => [10, 20, 30]
 ```
 

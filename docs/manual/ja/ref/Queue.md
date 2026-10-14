@@ -50,10 +50,10 @@ Queue.push(q, 2)
 p(Queue.pop(q))                     # => 1
 p(Queue.pop(q, 5))                  # => 2
 p(Queue.pop(q, 0.01))               # => nil
-workers = Array.map(Array[1, 2]) { |i|
+workers = Array.map(Any[1, 2]) { |i|
   Thread.new { total = 0; while (x = Queue.pop(q)); total += x; end; total }
 }
-Array.each(Array[1, 2, 3, 4, 5, 6]) { |i| Queue.push(q, i) }
+Array.each(Any[1, 2, 3, 4, 5, 6]) { |i| Queue.push(q, i) }
 Queue.close(q)
 p(Array.sum(Array.map(workers) { |w| Thread.value(w) }))   # => 21
 ```

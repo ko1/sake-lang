@@ -214,16 +214,16 @@ p(/a/ == "a")                  # => false
 
 `Regexp.union(*String|Regexp|Array)`
 
-引数のどれかに一致する Regexp。String は `escape` した上で、Regexp はそのフラグを保ったまま `|` でつなぎます。引数が無ければ何にも一致しない `/(?!)/`。パターンは個々に並べるか、Ruby と同じく String と Regexp の Array を **1 つ**だけ渡します（`Regexp.union(Array["a", "b"])`）。他の引数と並べた Array や、String でも Regexp でもない要素は実行時に `TypeError` です。
+引数のどれかに一致する Regexp。String は `escape` した上で、Regexp はそのフラグを保ったまま `|` でつなぎます。引数が無ければ何にも一致しない `/(?!)/`。パターンは個々に並べるか、Ruby と同じく String と Regexp の Array を **1 つ**だけ渡します（`Regexp.union(Any["a", "b"])`）。他の引数と並べた Array や、String でも Regexp でもない要素は実行時に `TypeError` です。
 
 ```ruby
 p(Regexp.union("a.b", /c/i))                              # => /a\.b|(?i-mx:c)/
 p(Regexp.match?(Regexp.union("cat", "dog"), "hotdog"))    # => true
 p(Regexp.union())                                         # => /(?!)/
-p(Regexp.union(Array["a", "b"]))                          # => /a|b/
-p(Regexp.union(Array["a.b", /c/]))                        # => /a\.b|(?-mix:c)/
+p(Regexp.union(Any["a", "b"]))                          # => /a|b/
+p(Regexp.union(Any["a.b", /c/]))                        # => /a\.b|(?-mix:c)/
 ```
 
 ```ruby error
-p(Regexp.union("a", Array["b"]))    # !> TypeError: Regexp.union: no implicit conversion of Array into String
+p(Regexp.union("a", Any["b"]))    # !> TypeError: Regexp.union: no implicit conversion of Array into String
 ```

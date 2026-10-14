@@ -52,7 +52,7 @@ built by `once` (`ActiveSupport::Inflector.inflections`), filled in ActiveSuppor
 - Wrote `return found ? found.dup : ...` → `error: undefined function String.dup / hint: dup is defined in Kernel.dup` →
   `dup(found)`. Every `.dup` in the gem became `dup(x)`; a copy is a Kernel operation, not a String one.
 - Wrote `p a, b, c` to print several results → `wrong number of arguments for Kernel.p (given 4, expected 1)` →
-  `Array.each(Array[a, b, c]) { |x| p x }`, which the tests use through `show`. `p` with one argument is the rule;
+  `Array.each(Any[a, b, c]) { |x| p x }`, which the tests use through `show`. `p` with one argument is the rule;
   the message said so at once.
 - Wrote `def inflections = once { t = {...}; plural(...); t }` so the defaults would go through the public
   `plural`. That would re-enter `once` while computing it (a `SystemStackError` by the spec), so the defaults are

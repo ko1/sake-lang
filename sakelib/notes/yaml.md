@@ -73,6 +73,6 @@ Dumping follows Psych's `visit_String` and libyaml's check for plain scalars: `'
 
 - `YAML::Parser.lines`: three Array allocation sites of String (the field is replaced by
   `Array.first` when a document ends with `...`).
-- The loaded value is the recursive union `true|false | Float | nil | Integer | String | Array[...] |
-  Hash[...]`, with `Symbol` in Hash keys from `symbolize_names:`; one `partial` check remains, the
+- The loaded value is the recursive union `true|false | Float | nil | Integer | String | Any[...] |
+  Hash.of(...)`, with `Symbol` in Hash keys from `symbolize_names:`; one `partial` check remains, the
   test's `back => Hash`.

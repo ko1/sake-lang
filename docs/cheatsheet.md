@@ -31,18 +31,18 @@ s = "  Hello World  "
 puts(String.upcase(String.strip(s)))
 puts(s.String.strip.String.downcase)
 puts(String.split("b a c", " ").Array.sort.Array.join(","))
-p(Array.reduce(Array[1, 2, 3], 0) { |acc, x| acc + x })
+p(Array.reduce(Any[1, 2, 3], 0) { |acc, x| acc + x })
 p(format("%05.1f|%-3s|%3d", 3.14159, "a", 7), Integer.to_s(255, 16))
 ```
 
 ### Literals (the #1 source of errors)
 - `[a, b]` is a **Tuple** (fixed length, per-position types). `[]` cannot grow.
-- `Array[a, b]` / `Array[]` is a growable Array. `Integer[]`, `String[]`, `Float[]`, `Tuple[]`,
-  `Point[]` make an Array whose element type is checked on every write; `Shape[]` (a module) holds values of the types
-  that include Shape. `Point[1, 2]` is NOT `Point.new`.
+- `Any[a, b]` / `Any[]` is a growable Array of any values. `T[...]` is an Array of T for every T, checked on every
+  write: `Integer[]`, `String[]`, `Point[]`, `Shape[]` (a module: the types that include it), and `Array[...]` is
+  an Array of Arrays. `Point[1, 2]` is NOT `Point.new`.
 - `{k: v}` is a **Record** (read with a pattern `r => {k:}`; no field writes). `{}` and `{"a" => 1}` are errors.
-- `Hash["a" => 1]`, `Hash[]`, `Hash.new(0)` make a Hash. `Hash.new { ... }` is rejected.
-- `Set[1, 2]`, `1..5`, `1...n`, `1..`, `:sym`, `/re/i`, `2r`, `"a#{x}"` as in Ruby. `Regexp.new(s, "i")`.
+- `Hash.of("a" => 1)`, `Hash.new`, `Hash.new(0)` make a Hash; `Set.of(1, 2)`, `Set.new(xs)` a Set (`Hash[...]`, `Set[...]` are Arrays of them). `Hash.new { ... }` is rejected.
+- `Set.of(1, 2)`, `1..5`, `1...n`, `1..`, `:sym`, `/re/i`, `2r`, `"a#{x}"` as in Ruby. `Regexp.new(s, "i")`.
 - No `%w[]`/`%i[]`, no `<<` on String or Array (use `s += t`, `Array.push(xs, x)`).
 - No value constants: `LIMIT = 10` is rejected; write `def limit = 10`. Constants hold only
   `Struct.new`, `Exception.new`, or a type (`Client = A::B`, a type alias). `Math.PI` (also `Math::PI`), `Float.INFINITY`, `ARGV` are operations.
@@ -50,17 +50,17 @@ p(format("%05.1f|%-3s|%3d", 3.14159, "a", 7), Integer.to_s(255, 16))
 ```ruby
 t = [1, "one"]
 n, w = t
-xs = Array[3, 1]
+xs = Any[3, 1]
 Array.push(xs, 2)
 fs = Float[]
 Array.push(fs, 1.5)
 r = {name: "ann", age: 3}
 r => {name:, age:}
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 h["b"] = 2
 counts = Hash.new(0)
 Array.each(String.split("a b a", " ")) { |k| counts[k] += 1 }
-st = Set[1]
+st = Set.of(1)
 Set.add(st, 2)
 p([n, w, xs, fs, name, age, h, counts, Set.include?(st, 2)])
 ```
@@ -126,12 +126,12 @@ def maybe(x)
   x
 end
 def pass_on(xs, &b) = Array.map(xs, &b)
-each_pair(Array[1, 2]) { |x, sq| p([x, sq]) }
-p([maybe(1), maybe(1) { it + 1 }, pass_on(Array[1, 2]) { it * 10 }])
-p(Array.each_with_index(Array["a", "b"]).Array.map { |c, i| "#{i}#{c}" })
-p(Array.sort_by(Array[[2, "b"], [1, "c"]]) { |num, s| [-num, s] })
-Hash.each(Hash["x" => 1]) { |k, v| puts("#{k}=#{v}") }
-p(Array.each(Array[3, 12, 5]) { |x| break x if x > 10 })
+each_pair(Any[1, 2]) { |x, sq| p([x, sq]) }
+p([maybe(1), maybe(1) { it + 1 }, pass_on(Any[1, 2]) { it * 10 }])
+p(Array.each_with_index(Any["a", "b"]).Array.map { |c, i| "#{i}#{c}" })
+p(Array.sort_by(Any[[2, "b"], [1, "c"]]) { |num, s| [-num, s] })
+Hash.each(Hash.of("x" => 1)) { |k, v| puts("#{k}=#{v}") }
+p(Array.each(Any[3, 12, 5]) { |x| break x if x > 10 })
 ```
 
 ### Functions, classes, fields
@@ -239,7 +239,7 @@ class Log
 end
 def out(io, a, b) = (IO|Log).print(io, a, b)
 p(Shape.describe(Sq.new(3)))
-p([Sq.new(2) < Sq.new(3), Array.max(Array[Sq.new(2), Sq.new(5)]), Util.twice(4)])
+p([Sq.new(2) < Sq.new(3), Array.max(Any[Sq.new(2), Sq.new(5)]), Util.twice(4)])
 puts(Money.new(5) + Money.new(3), 3 + Money.new(5))
 log = Log.new(String[])
 out(IO.stdout, "a", 1)
@@ -267,8 +267,8 @@ def kind(x)
   else "other"
   end
 end
-p(Array.map(Array[1, "s", nil, {name: "n"}, [1, "x"], :ok, 2.0]) { kind(it) })
-v = Array.find(Array[1, 5]) { it > 3 }
+p(Array.map(Any[1, "s", nil, {name: "n"}, [1, "x"], :ok, 2.0]) { kind(it) })
+v = Array.find(Any[1, 5]) { it > 3 }
 v => Integer
 p(v + 1)
 ```
@@ -279,7 +279,7 @@ p(v + 1)
   without a check is rejected at level 2. The nil of a *miss* (`x[k]`, `Array.first/last/pop/
   shift/min/max/minmax/at/slice/dig`, `Hash.dig`, `Set.first/min/max` on an empty collection) is checked only at level 3.
 - `Array.sort/min/max/sort_by/min_by/max_by` (and `Set`'s, `Tuple.max/min`) are rejected statically when the
-  element (or key) types cannot all be compared with each other (`Array[1, "a"]`, a nil element).
+  element (or key) types cannot all be compared with each other (`Any[1, "a"]`, a nil element).
 - A **local variable** is narrowed by `if x`, `x ? a : b`, `x != nil`, `return unless x`,
   `next unless x`, `x && ...`, `x => T`, `case x in`. `x.nil?` is rejected: write `x == nil`.
 - Defaults: `y = x || 0`, `Hash.fetch(h, k, 0)`, `Array.fetch(a, i, 0)`, `Hash.new(0)`.
@@ -298,7 +298,7 @@ n = Node.new(1, Node.new(2, nil))
 p(second(n))
 m = Node.nxt(Node.new(1, nil)) || Node.new(0, nil)
 p(Node.v(m))
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 p([Hash.fetch(h, "zz", 0) + 1, (h["a"] || 0) + 1])
 i = String.index("abc", "c")
 p(i + 1) if i != nil
@@ -329,7 +329,7 @@ def parse(s)
   raise Oops.new("neg", 7) if String.start_with?(s, "-")
   Integer(s)
 end
-Array.each(Array["", "1234", "-1", "12"]) do |s|
+Array.each(Any["", "1234", "-1", "12"]) do |s|
   begin
     p(parse(s))
   rescue ParseError => e
@@ -357,7 +357,7 @@ p(v)
 
 ```ruby
 require "json"
-s = JSON.generate(Hash["a" => Array[1, 2]])
+s = JSON.generate(Hash.of("a" => Any[1, 2]))
 puts(s)
 p(JSON.parse(s))
 ```
@@ -405,7 +405,7 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Hash
 
-`!=(x, Any)` · `==(x, Any)` · `[](x, Any)` · `[]=(x, Any, Any)` · `all?(x) { }` · `any?(x) { }` · `assoc(x, Any)` · `clear(x)` · `compact(x)` · `compact!(x)` · `count(x) [{ }]` · `default(x)` · `delete(x, Any)` · `delete_if(x) { }` · `detect(x) { }` · `dig(x, Any, *Any)` · `drop(x, Integer)` · `dup(x)` · `each(x) { }` · `each_key(x) { }` · `each_pair(x) { }` · `each_value(x) { }` · `each_with_object(x, Any) { }` · `empty?(x)` · `except(x, *Any)` · `fetch(x, Any, [Any])` · `fetch_values(x, *Any)` · `filter(x) { }` · `filter!(x) { }` · `filter_map(x) { }` · `find(x) { }` · `first(x)` · `flat_map(x) { }` · `flatten(x)` · `group_by(x) { }` · `has_key?(x, Any)` · `has_value?(x, Any)` · `include?(x, Any)` · `inject(x, Any) { }` · `invert(x)` · `keep_if(x) { }` · `key(x, Any)` · `key?(x, Any)` · `keys(x)` · `length(x)` · `map(x) { }` · `max_by(x) { }` · `member?(x, Any)` · `merge(x, Hash)` · `merge!(x, Hash)` · `min_by(x) { }` · `new([Any])` · `Hash[*Any]` · `none?(x) { }` · `one?(x) { }` · `partition(x) { }` · `rassoc(x, Any)` · `reduce(x, Any) { }` · `reject(x) { }` · `reject!(x) { }` · `replace(x, Hash)` · `select(x) { }` · `select!(x) { }` · `set_default(x, Any)` · `shift(x)` · `size(x)` · `slice(x, *Any)` · `sort_by(x) { }` · `store(x, Any, Any)` · `sum(x, [Integer|Float|Rational|Complex]) { }` · `take(x, Integer)` · `to_a(x)` · `to_h(x)` · `transform_keys(x) { }` · `transform_keys!(x) { }` · `transform_values(x) { }` · `transform_values!(x) { }` · `update(x, Hash)` · `value?(x, Any)` · `values(x)` · `values_at(x, *Any)`
+`!=(x, Any)` · `==(x, Any)` · `[](x, Any)` · `[]=(x, Any, Any)` · `all?(x) { }` · `any?(x) { }` · `assoc(x, Any)` · `clear(x)` · `compact(x)` · `compact!(x)` · `count(x) [{ }]` · `default(x)` · `delete(x, Any)` · `delete_if(x) { }` · `detect(x) { }` · `dig(x, Any, *Any)` · `drop(x, Integer)` · `dup(x)` · `each(x) { }` · `each_key(x) { }` · `each_pair(x) { }` · `each_value(x) { }` · `each_with_object(x, Any) { }` · `empty?(x)` · `except(x, *Any)` · `fetch(x, Any, [Any])` · `fetch_values(x, *Any)` · `filter(x) { }` · `filter!(x) { }` · `filter_map(x) { }` · `find(x) { }` · `first(x)` · `flat_map(x) { }` · `flatten(x)` · `group_by(x) { }` · `has_key?(x, Any)` · `has_value?(x, Any)` · `include?(x, Any)` · `inject(x, Any) { }` · `invert(x)` · `keep_if(x) { }` · `key(x, Any)` · `key?(x, Any)` · `keys(x)` · `length(x)` · `map(x) { }` · `max_by(x) { }` · `member?(x, Any)` · `merge(x, Hash)` · `merge!(x, Hash)` · `min_by(x) { }` · `new([Any])` · `Hash[*Any]` · `none?(x) { }` · `of(*Any)` · `one?(x) { }` · `partition(x) { }` · `rassoc(x, Any)` · `reduce(x, Any) { }` · `reject(x) { }` · `reject!(x) { }` · `replace(x, Hash)` · `select(x) { }` · `select!(x) { }` · `set_default(x, Any)` · `shift(x)` · `size(x)` · `slice(x, *Any)` · `sort_by(x) { }` · `store(x, Any, Any)` · `sum(x, [Integer|Float|Rational|Complex]) { }` · `take(x, Integer)` · `to_a(x)` · `to_h(x)` · `transform_keys(x) { }` · `transform_keys!(x) { }` · `transform_values(x) { }` · `transform_values!(x) { }` · `update(x, Hash)` · `value?(x, Any)` · `values(x)` · `values_at(x, *Any)`
 
 ### IO
 
@@ -417,7 +417,7 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Kernel
 
-`ARGV()` · `Complex(Integer|Float|Rational, [Integer|Float|Rational])` · `Float(String|Integer|Float)` · `Integer(String|Integer|Float)` · `PROGRAM_NAME()` · `Rational(Integer|Float|Rational|String, [Integer|Rational])` · `at_exit() { }` · `block_given?()` · `dup(Any)` · `equal?(Any, Any)` · `exit([Integer|Boolean])` · `format(String, *Any)` · `gets()` · `inspect(Any)` · `loop() { }` · `once() { }` · `p(*Any)` · `pp(Any)` · `print(*Any)` · `puts(*Any)` · `rand([Integer|Float])` · `sleep([Integer|Float|Rational])` · `sprintf(String, *Any)` · `srand([Integer])` · `system(String, *String)` · `to_s(Any)` · `warn(*Any)`
+`ARGV()` · `Complex(Integer|Float|Rational, [Integer|Float|Rational])` · `Float(String|Integer|Float)` · `Integer(String|Integer|Float)` · `PROGRAM_NAME()` · `Rational(Integer|Float|Rational|String, [Integer|Rational])` · `at_exit() { }` · `block_given?()` · `dup(Any)` · `equal?(Any, Any)` · `exit([Integer|Boolean])` · `format(String, *Any)` · `gets()` · `inspect(Any)` · `loop() { }` · `Kernel[*Any]` · `once() { }` · `p(*Any)` · `pp(Any)` · `print(*Any)` · `puts(*Any)` · `rand([Integer|Float])` · `sleep([Integer|Float|Rational])` · `sprintf(String, *Any)` · `srand([Integer])` · `system(String, *String)` · `to_s(Any)` · `warn(*Any)`
 
 ### MatchData
 
@@ -461,7 +461,7 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Set
 
-`!=(x, Any)` · `&(x, Any)` · `-(x, Any)` · `==(x, Any)` · `add(x, Any)` · `add?(x, Any)` · `all?(x) { }` · `any?(x) { }` · `chunk_while(x) { }` · `classify(x) { }` · `clear(x)` · `collect(x) { }` · `collect!(x) { }` · `collect_concat(x) { }` · `compact(x)` · `count(x) [{ }]` · `cycle(x, Integer) { }` · `delete(x, Any)` · `delete?(x, Any)` · `delete_if(x) { }` · `detect(x) { }` · `difference(x, Set)` · `disjoint?(x, Set)` · `drop(x, Integer)` · `drop_while(x) { }` · `each(x) { }` · `each_cons(x, Integer) { }` · `each_entry(x) { }` · `each_slice(x, Integer) { }` · `each_with_index(x) { }` · `each_with_object(x, Any) { }` · `empty?(x)` · `entries(x)` · `filter(x) { }` · `filter!(x) { }` · `filter_map(x) { }` · `find(x) { }` · `find_all(x) { }` · `find_index(x) { }` · `first(x)` · `flat_map(x) { }` · `flatten(x)` · `group_by(x) { }` · `include?(x, Any)` · `inject(x, Any) { }` · `intersect?(x, Set)` · `intersection(x, Set)` · `join(x, [String])` · `keep_if(x) { }` · `length(x)` · `map(x) { }` · `map!(x) { }` · `max(x)` · `max_by(x) { }` · `member?(x, Any)` · `merge(x, Set)` · `min(x)` · `min_by(x) { }` · `minmax(x)` · `minmax_by(x) { }` · `Set[*Any]` · `none?(x) { }` · `one?(x) { }` · `partition(x) { }` · `proper_subset?(x, Set)` · `proper_superset?(x, Set)` · `reduce(x, Any) { }` · `reject(x) { }` · `reject!(x) { }` · `replace(x, Set)` · `reverse_each(x) { }` · `select(x) { }` · `select!(x) { }` · `size(x)` · `slice_after(x) { }` · `slice_before(x) { }` · `slice_when(x) { }` · `sort(x)` · `sort_by(x) { }` · `subset?(x, Set)` · `subtract(x, Any)` · `sum(x, [Integer|Float|Rational|Complex])` · `superset?(x, Set)` · `take(x, Integer)` · `take_while(x) { }` · `tally(x)` · `to_a(x)` · `to_set(x)` · `union(x, Set)` · `uniq(x)` · `zip(x, *Array)` · `|(x, Any)`
+`!=(x, Any)` · `&(x, Any)` · `-(x, Any)` · `==(x, Any)` · `add(x, Any)` · `add?(x, Any)` · `all?(x) { }` · `any?(x) { }` · `chunk_while(x) { }` · `classify(x) { }` · `clear(x)` · `collect(x) { }` · `collect!(x) { }` · `collect_concat(x) { }` · `compact(x)` · `count(x) [{ }]` · `cycle(x, Integer) { }` · `delete(x, Any)` · `delete?(x, Any)` · `delete_if(x) { }` · `detect(x) { }` · `difference(x, Set)` · `disjoint?(x, Set)` · `drop(x, Integer)` · `drop_while(x) { }` · `each(x) { }` · `each_cons(x, Integer) { }` · `each_entry(x) { }` · `each_slice(x, Integer) { }` · `each_with_index(x) { }` · `each_with_object(x, Any) { }` · `empty?(x)` · `entries(x)` · `filter(x) { }` · `filter!(x) { }` · `filter_map(x) { }` · `find(x) { }` · `find_all(x) { }` · `find_index(x) { }` · `first(x)` · `flat_map(x) { }` · `flatten(x)` · `group_by(x) { }` · `include?(x, Any)` · `inject(x, Any) { }` · `intersect?(x, Set)` · `intersection(x, Set)` · `join(x, [String])` · `keep_if(x) { }` · `length(x)` · `map(x) { }` · `map!(x) { }` · `max(x)` · `max_by(x) { }` · `member?(x, Any)` · `merge(x, Set)` · `min(x)` · `min_by(x) { }` · `minmax(x)` · `minmax_by(x) { }` · `new([Array])` · `Set[*Any]` · `none?(x) { }` · `of(*Any)` · `one?(x) { }` · `partition(x) { }` · `proper_subset?(x, Set)` · `proper_superset?(x, Set)` · `reduce(x, Any) { }` · `reject(x) { }` · `reject!(x) { }` · `replace(x, Set)` · `reverse_each(x) { }` · `select(x) { }` · `select!(x) { }` · `size(x)` · `slice_after(x) { }` · `slice_before(x) { }` · `slice_when(x) { }` · `sort(x)` · `sort_by(x) { }` · `subset?(x, Set)` · `subtract(x, Any)` · `sum(x, [Integer|Float|Rational|Complex])` · `superset?(x, Set)` · `take(x, Integer)` · `take_while(x) { }` · `tally(x)` · `to_a(x)` · `to_set(x)` · `union(x, Set)` · `uniq(x)` · `zip(x, *Array)` · `|(x, Any)`
 
 ### Socket
 

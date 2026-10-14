@@ -36,13 +36,13 @@ lines, identical to `units.rb`.
 2. The units table entry is `[factor, [l, m, t]]`, a Tuple: I wrote `Array.fetch(entry, 0)` →
    `Array.fetch: argument 1 must be Array, but is [Float, [Integer, Integer, Integer]]` → `entry[0]`.
    A good message, with the hint about Tuples.
-3. Constant tables → `def table = once do ... end`, `def kinds = once { Hash[[0, 0, 0] => :unitless, ...] }`
+3. Constant tables → `def table = once do ... end`, `def kinds = once { Hash.of([0, 0, 0] => :unitless, ...) }`
    (Tuple keys work).
 4. `@scalar => Integer | Float` in `initialize` would not narrow the field (see
    `lru_cache_bug_initialize_assert_field.sake`) → checked locals written back (`s = @scalar; s => ...;
    @scalar = Arithmetic.to_f(s)`).
 5. A wrong-typed scalar in the test (`Unit.new("5", "m")`) would be a `[type]` report before running →
-   `Array.fetch(Array[1, "5"], 1)` to reach the run-time `NoMatchingPatternError`.
+   `Array.fetch(Any[1, "5"], 1)` to reach the run-time `NoMatchingPatternError`.
 
 ## Language features used
 

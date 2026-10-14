@@ -39,7 +39,7 @@ puts("x")                        # !> IOError: Kernel.puts: closed stream
 out = IO.stdout
 IO.puts(out, "a", 1)             # => a
                                  # => 1
-IO.puts(out, [1, Array[2, 3]])   # => 1
+IO.puts(out, [1, Any[2, 3]])   # => 1
                                  # => 2
                                  # => 3
 IO.puts(out, "x\n")              # => x
@@ -56,7 +56,7 @@ p(IO.puts(out, :s))              # => s
 ```ruby
 out = IO.stdout
 IO.print(out, "a", 1, :s, "\n")  # => a1s
-IO.print(out, Array[1, 2], "\n") # => [1, 2]
+IO.print(out, Any[1, 2], "\n") # => [1, 2]
 ```
 
 ## write

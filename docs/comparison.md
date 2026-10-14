@@ -20,7 +20,7 @@
 | F. 厳格レベルと「外れの nil」 | 0〜4 の項目選択。`a[i]` の nil は level 3 | TypeScript の `strict*` / `noUncheckedIndexedAccess`、mypy `--strict`、Sorbet の sigil | **組** |
 | G. mixin ディスパッチ・写し・継承なし | `M.f(x)` は第 1 引数の型へ。`include` と `<` は写し | CLOS / Dylan / Julia の generic function（静的・単一にしたもの）、Rust の `Trait::f(&x)` と default method、Clojure protocol、Go の埋め込み | **既** |
 | H. `(A\|B).f(x)` | 呼び出しの場で型を列挙してディスパッチ | C++ `std::visit`、TypeScript の union、Typed Racket | **新**（小） |
-| I. Tuple / Record / Array / Hash、`T[...]` | リテラルは Tuple と Record、`Array[...]`、`Integer[1, 2]` | Elixir（`{}` と `[]`）、Elm/TS の構造的レコード、Julia の `Int[1, 2]` | **既** |
+| I. Tuple / Record / Array / Hash、`T[...]` | リテラルは Tuple と Record、`Any[...]`、`Integer[1, 2]` | Elixir（`{}` と `[]`）、Elm/TS の構造的レコード、Julia の `Int[1, 2]` | **既** |
 | J. 演算子は module の関数 | `a + b` は `Arithmetic.+(a, b)`、左の型に解決 | Rust `Add::add`、Haskell `Num`、Elixir `Kernel.+` | **既** |
 | K. 漏れる例外の推論 | `unrescued` を注釈なしに推論 | Nim の例外追跡、Koka の効果推論、Java の検査例外（宣言） | **既** |
 | L. 名前空間の入れ子、prelude の `Enum` | `A::B`、`Enum.map(x)` は型へディスパッチ | Ruby の Enumerable（each の上に書く）、Elixir の Enum/Enumerable protocol | **既** |
@@ -144,7 +144,7 @@ Sake: 呼び出しの場で型を列挙し、実行時は `x` の型で `A.f` �
 
 ## I. データの区別と `T[...]`
 
-Sake: `[a, b]` は Tuple（長さと位置ごとの型が固定）、`{x: 1}` は Record（構造的）、`Array[...]`、`Hash[...]`、`Integer[1, 2]` は Integer の Array。
+Sake: `[a, b]` は Tuple（長さと位置ごとの型が固定）、`{x: 1}` は Record（構造的）、`Any[...]`、`Hash.of(...)`、`Integer[1, 2]` は Integer の Array。
 
 先行: Elixir（`{a, b}` と `[a, b]`）、Python（tuple と list）、Rust（tuple と array）。構造的 Record と名前的クラスの対置は Elm・OCaml・TypeScript。`Integer[1, 2]` は Julia の `Int[1, 2]` と同じ字面と意味。判定: **既**。Sake 固有なのは Ruby の `[]` と `{}` に Tuple と Record を**割り当て直した**ことで、これは Ruby 使いの癖に逆らう判断（利用感レポートで毎回踏まれる）。
 

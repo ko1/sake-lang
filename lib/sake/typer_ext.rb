@@ -84,7 +84,7 @@ module Sake
 
     def constructor_ext(ns, name, args, node)
       case [ns, name]
-      when ["Hash", CTOR]
+      when %w[Hash of]
         site = hash_site(node)
         s = hash_sites[site[0][1]]
         args.each { |ty| atoms_of(ty, :pairs).each { |p| p[1].each { |k, v| s.key = u(s.key, k); s.val = u(s.val, v) } } }
@@ -94,9 +94,10 @@ module Sake
         site = hash_site(node)
         hash_sites[site[0][1]].default = args[0] || t("Nil")
         site
-      when ["Set", CTOR]
+      when %w[Set of], %w[Set new]
         site = set_site(node)
-        set_sites[site[0][1]].elem = u(set_sites[site[0][1]].elem, *args)
+        elems = name == "new" ? args.map { elem_of(_1) } : args
+        set_sites[site[0][1]].elem = u(set_sites[site[0][1]].elem, *elems)
         site
       end
     end

@@ -26,8 +26,8 @@ module Planner
 
   def plan(db, st)
     columns = source_columns(db, st)
-    aggregates = Array[]
-    items = result_items(st, columns, Scope.new(columns, Hash[], Hash[], aggregates, :function), aggregates)
+    aggregates = Any[]
+    items = result_items(st, columns, Scope.new(columns, Hash.new, Hash.new, aggregates, :function), aggregates)
     aliases = alias_exprs(items)
 
     where_scope = Scope.new(columns, aliases, blocked_aliases(items, :where), nil, :function)
@@ -39,9 +39,9 @@ module Planner
     condition = Select.having(st)
     if condition != nil
       raise SqlError.new("HAVING clause on a non-aggregate query") unless grouped
-      having = Resolver.resolve(condition, Scope.new(columns, aliases, Hash[], aggregates, :function))
+      having = Resolver.resolve(condition, Scope.new(columns, aliases, Hash.new, aggregates, :function))
     end
-    order_scope = Scope.new(columns, aliases, Hash[], grouped ? aggregates : nil, :misuse)
+    order_scope = Scope.new(columns, aliases, Hash.new, grouped ? aggregates : nil, :misuse)
     order = sort_keys(st, items, order_scope)
     Plan.new(Array.size(columns), items, where, group, aggregates, grouped, having, Select.distinct(st), order,
              cut(Select.limit(st)), cut(Select.offset(st)))
@@ -50,13 +50,13 @@ module Planner
   # The columns of the FROM table (none without FROM); SqlError if it does not exist.
   def source_columns(db, st)
     name = Select.from(st)
-    return Array[] if name == nil
+    return Any[] if name == nil
     Table.columns(Database.table(db, name))
   end
 
   # The result columns with `*` expanded and names resolved against the table's columns.
   def result_items(st, columns, scope, collector)
-    items = Array[]
+    items = Any[]
     Array.each(Select.items(st)) do |rc|
       e = ResultColumn.expr(rc)
       if e == nil
@@ -76,7 +76,7 @@ module Planner
 
   # lower-cased alias -> the aliased result column's expression (for WHERE, GROUP BY, HAVING and ORDER BY).
   def alias_exprs(items)
-    h = Hash[]
+    h = Hash.new
     Array.each(items) do |item|
       a = ResultItem.alias_name(item)
       h[Value.lower(a)] = ResultItem.expr(item) if a != nil
@@ -86,7 +86,7 @@ module Planner
 
   # lower-cased alias -> the aliased result column's position (for a bare name in ORDER BY).
   def alias_positions(items)
-    h = Hash[]
+    h = Hash.new
     Array.each_with_index(items) do |item, i|
       a = ResultItem.alias_name(item)
       h[Value.lower(a)] = i if a != nil
@@ -97,7 +97,7 @@ module Planner
   # The aliases of result columns that contain an aggregate call, with the error for using one in
   # `clause` (:where or :group_by).
   def blocked_aliases(items, clause)
-    h = Hash[]
+    h = Hash.new
     Array.each(items) do |item|
       a = ResultItem.alias_name(item)
       name = ResultItem.aggregate_name(item)
@@ -194,7 +194,7 @@ module Planner
   # The Integer value of a LIMIT / OFFSET expression (no row in scope), or nil if absent.
   def cut(e)
     return nil if e == nil
-    v = Evaluator.evaluate(Resolver.resolve(e, Resolver.empty_scope), Array[])
+    v = Evaluator.evaluate(Resolver.resolve(e, Resolver.empty_scope), Any[])
     return nil if v == nil
     n = Value.to_number(v)
     (n in Integer) ? n : Float.to_i(n)

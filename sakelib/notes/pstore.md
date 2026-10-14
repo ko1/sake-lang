@@ -61,9 +61,9 @@ array of `[key, value]` pairs (pairs rather than an object so that keys need not
 - Ruby's ivar `@abort` and its method `abort` share a name; in Sake a field gets a reader, so
   `attr_accessor abort` would collide with `def abort` → the field is `aborted` (renamed before running).
 - In the test, `s["list"] = s["list"] + ["more"]` → `s["list"]` is a value of the table's union type, so
-  `+` needs it narrowed: `list = s["list"]; list => Array; s["list"] = list + Array["more"]`.
+  `+` needs it narrowed: `list = s["list"]; list => Array; s["list"] = list + Any["more"]`.
 - In the test, `s["hash"] = {"a" => {"b" => [1]}}` → `{"a" => ...} is not a Hash in Sake` →
-  `Hash["a" => Hash["b" => Array[1]]]`.
+  `Hash.of("a" => Hash.of("b" => Any[1]))`.
 - `s[key]` / `s[key] = v` need `include Indexable` in PStore (added from the cheat sheet before running).
 
 ## Size

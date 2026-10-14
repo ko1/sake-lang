@@ -36,7 +36,7 @@
 
 ## 書き心地
 
-1. **`exp = expected in Array ? expected : Array[expected]`** → `syntax error: unexpected '?'` with the hint
+1. **`exp = expected in Array ? expected : Any[expected]`** → `syntax error: unexpected '?'` with the hint
    `x in T needs its own parentheses here: (x in T)`. Wrote `(expected in Array) ? ...`. The hint named the fix.
 2. **Decoded strings came back as `"\xC3\xA9"`**: Base64 gives a binary String and `JSON.parse` kept it
    binary. `String.force_encoding(s, "UTF-8")` before parsing; found by the diff with the gem, not by the

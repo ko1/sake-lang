@@ -90,7 +90,7 @@ modules `Liquid`, `Liquid::Render`. `liquid.sake` requires `time` (`Time.parse` 
   reverse direction is where the `|| ""` and `Array.fetch` appear.
 - **What helped.** `Liquid::Tok.new(:text, s, s, false, false)` positional for a plain record and
   `Liquid::Node.new(:for, text:, expr:, reversed:)` by keyword for a node with 10 fields; `Hash.new(-1)` with
-  `@ids[id] += 1` (kramdown); `Comparable.<=>(l, r)` parsing as a call; `once { Hash[...] }` for the
+  `@ids[id] += 1` (kramdown); `Comparable.<=>(l, r)` parsing as a call; `once { Hash.of(...) }` for the
   escape table; `return nodes` from inside `case` inside `while` behaving as Ruby.
 
 ## Built-ins requested

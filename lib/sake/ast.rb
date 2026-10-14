@@ -26,7 +26,7 @@ module Sake
     node :Or, :left, :right
     node :MakeTuple, :elems
     node :MakeRecord, :keys, :values
-    node :MakePairs, :keys, :values         # `Hash[k => v]` arguments
+    node :MakePairs, :keys, :values         # `Hash.of(k => v)` arguments
     node :MakeRange, :left, :right, :exclusive
     node :MakeRegexp, :parts, :options      # interpolated
     node :Interp, :parts                    # String parts; ToS around embedded values

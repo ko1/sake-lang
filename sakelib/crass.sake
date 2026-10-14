@@ -3,15 +3,15 @@
 # Nodes are Hashes with Symbol keys, as in Ruby: {node: :ident, pos: 0, raw: "a", value: "a"}.
 # Their values are one union (Symbol, String, Integer, Float, true/false, an Array of nodes, a node),
 # so a reader narrows: `v = node[:value]; v => String`. Crass.node_s / node_a / node_h do that.
-# Options are a Hash: Crass.parse(css, Hash[:preserve_comments => true]) (Ruby: a keyword Hash).
+# Options are a Hash: Crass.parse(css, Hash.of(:preserve_comments => true)) (Ruby: a keyword Hash).
 # Positions are characters, as Ruby's Crass::Scanner#pos.
 
 module Crass
   module_function
 
   # Ruby: Crass.parse(input, options = {})
-  def parse(input, options = Hash[]) = Parser.parse_stylesheet(input, options)
-  def parse_properties(input, options = Hash[]) = Parser.parse_properties(input, options)
+  def parse(input, options = Hash.new) = Parser.parse_stylesheet(input, options)
+  def parse_properties(input, options = Hash.new) = Parser.parse_properties(input, options)
 
   # Narrowing readers for a node's values (Ruby reads node[:k] and trusts the type).
   def node_s(n, k)
@@ -102,7 +102,7 @@ module Crass
     def collect(ts)
       start = @pos
       yield
-      @tokens[start...@pos] || Array[]
+      @tokens[start...@pos] || Any[]
     end
 
     def consume(ts)
@@ -146,17 +146,17 @@ module Crass
 
     def initialize(t)
       @input => String
-      @options = Hash[] if @options == nil
+      @options = Hash.new if @options == nil
       @s = Scanner.new(preprocess(@input))
     end
 
     # Ruby has both Tokenizer.tokenize(input, options) and Tokenizer#tokenize; one name is one
     # function, so the instance form is Tokenizer.run(t).
-    def tokenize(input, options = Hash[]) = run(Tokenizer.new(input, options))
+    def tokenize(input, options = Hash.new) = run(Tokenizer.new(input, options))
 
     def run(t)
       Scanner.reset(@s)
-      tokens = Array[]
+      tokens = Any[]
       while (token = consume(t))
         Array.push(tokens, token)
       end
@@ -184,7 +184,7 @@ module Crass
       in "#"
         if m?(Scanner.peek(sc), re_name) || valid_escape?(t, Scanner.peek(sc, 2))
           type = start_identifier?(t, Scanner.peek(sc, 3)) ? :id : :unrestricted
-          create_token(t, :hash, Hash[:type => type, :value => consume_name(t)])
+          create_token(t, :hash, Hash.of(:type => type, :value => consume_name(t)))
         else
           delim(t, char)
         end
@@ -244,7 +244,7 @@ module Crass
         end
       in "@"
         if start_identifier?(t, Scanner.peek(sc, 3))
-          create_token(t, :at_keyword, Hash[:value => consume_name(t)])
+          create_token(t, :at_keyword, Hash.of(:value => consume_name(t)))
         else
           delim(t, char)
         end
@@ -255,7 +255,7 @@ module Crass
           consume_ident(t)
         else
           # Parse error.
-          create_token(t, :delim, Hash[:error => true, :value => char])
+          create_token(t, :delim, Hash.of(:error => true, :value => char))
         end
       in "]" then create_token(t, :"]")
       in "^" then match_token(t, char, :prefix_match)
@@ -294,7 +294,7 @@ module Crass
       end
     end
 
-    def delim(t, char) = create_token(t, :delim, Hash[:value => char])
+    def delim(t, char) = create_token(t, :delim, Hash.of(:value => char))
 
     # `$=`, `^=`, `~=`
     def match_token(t, char, type)
@@ -333,7 +333,7 @@ module Crass
         # Parse error.
         text = Scanner.consume_rest(sc)
       end
-      create_token(t, :comment, Hash[:value => text])
+      create_token(t, :comment, Hash.of(:value => text))
     end
 
     def consume_escaped(t)
@@ -344,7 +344,7 @@ module Crass
         Scanner.consume(sc) if m?(Scanner.peek(sc), /[\n\u0009 ]/)
         codepoint = String.hex(hex_str)
         return "�" if codepoint == 0 || Integer.between?(codepoint, 0xD800, 0xDFFF) || codepoint > 0x10FFFF
-        return Array.pack(Array[codepoint], "U")
+        return Array.pack(Any[codepoint], "U")
       end
       Scanner.consume(sc)
     end
@@ -352,17 +352,17 @@ module Crass
     def consume_ident(t)
       sc = @s
       value = consume_name(t)
-      return create_token(t, :ident, Hash[:value => value]) unless Scanner.peek(sc) == "("
+      return create_token(t, :ident, Hash.of(:value => value)) unless Scanner.peek(sc) == "("
       Scanner.consume(sc)
       if String.downcase(value) == "url"
         Scanner.consume(sc) while m?(Scanner.peek(sc, 2), re_whitespace_anchored)
         if m?(Scanner.peek(sc, 2), re_quoted_url_start)
-          create_token(t, :function, Hash[:value => value])
+          create_token(t, :function, Hash.of(:value => value))
         else
           consume_url(t)
         end
       else
-        create_token(t, :function, Hash[:value => value])
+        create_token(t, :function, Hash.of(:value => value))
       end
     end
 
@@ -414,12 +414,12 @@ module Crass
       repr, num, type = consume_number(t)
       value = type == :integer ? Arithmetic.to_i(num) : Arithmetic.to_f(num)
       if start_identifier?(t, Scanner.peek(sc, 3))
-        create_token(t, :dimension, Hash[:repr => repr, :type => type, :unit => consume_name(t), :value => value])
+        create_token(t, :dimension, Hash.of(:repr => repr, :type => type, :unit => consume_name(t), :value => value))
       elsif Scanner.peek(sc) == "%"
         Scanner.consume(sc)
-        create_token(t, :percentage, Hash[:repr => repr, :type => type, :value => value])
+        create_token(t, :percentage, Hash.of(:repr => repr, :type => type, :value => value))
       else
-        create_token(t, :number, Hash[:repr => repr, :type => type, :value => value])
+        create_token(t, :number, Hash.of(:repr => repr, :type => type, :value => value))
       end
     end
 
@@ -433,7 +433,7 @@ module Crass
         if char == "\n"
           # Parse error.
           Scanner.reconsume(sc)
-          return create_token(t, :bad_string, Hash[:error => true, :value => value])
+          return create_token(t, :bad_string, Hash.of(:error => true, :value => value))
         elsif char == "\\"
           nx = Scanner.peek(sc)
           if nx == ""
@@ -448,7 +448,7 @@ module Crass
           value += char
         end
       end
-      create_token(t, :string, Hash[:value => value])
+      create_token(t, :string, Hash.of(:value => value))
     end
 
     def consume_unicode_range(t)
@@ -458,7 +458,7 @@ module Crass
         break unless Scanner.peek(sc) == "?"
         value += Scanner.consume(sc)
       end
-      range = Hash[]
+      range = Hash.new
       if String.include?(value, "?")
         range[:start] = String.hex(String.gsub(value, "?", "0"))
         range[:end] = String.hex(String.gsub(value, "?", "F"))
@@ -488,22 +488,22 @@ module Crass
             Scanner.consume(sc)
             break
           else
-            return create_token(t, :bad_url, Hash[:value => value + consume_bad_url(t)])
+            return create_token(t, :bad_url, Hash.of(:value => value + consume_bad_url(t)))
           end
         elsif char == "\"" || char == "'" || char == "(" || m?(char, re_non_printable)
           # Parse error.
-          return create_token(t, :bad_url, Hash[:error => true, :value => value + consume_bad_url(t)])
+          return create_token(t, :bad_url, Hash.of(:error => true, :value => value + consume_bad_url(t)))
         elsif char == "\\"
           unless valid_escape?(t, nil)
             # Parse error.
-            return create_token(t, :bad_url, Hash[:error => true, :value => value + consume_bad_url(t)])
+            return create_token(t, :bad_url, Hash.of(:error => true, :value => value + consume_bad_url(t)))
           end
           value += consume_escaped(t)
         else
           value += char
         end
       end
-      create_token(t, :url, Hash[:value => value])
+      create_token(t, :url, Hash.of(:value => value))
     end
 
     # 4.3.14: the spec's formula, exact (Rational) until the caller converts it.
@@ -528,8 +528,8 @@ module Crass
       value
     end
 
-    def create_token(t, type, properties = Hash[])
-      token = Hash[:node => type, :pos => Scanner.marker(@s), :raw => Scanner.marked(@s)]
+    def create_token(t, type, properties = Hash.new)
+      token = Hash.of(:node => type, :pos => Scanner.marker(@s), :raw => Scanner.marked(@s))
       Hash.merge!(token, properties)
     end
 
@@ -578,10 +578,10 @@ module Crass
     private attr_accessor depth, maximum_depth
 
     def default_maximum_depth = 25
-    def block_end(start) = once { Hash[:"{" => :"}", :"[" => :"]", :"(" => :")"] }[start]
+    def block_end(start) = once { Hash.of(:"{" => :"}", :"[" => :"]", :"(" => :")") }[start]
 
     def initialize(ps)
-      @options = Hash[] if @options == nil
+      @options = Hash.new if @options == nil
       @depth = 0
       md = @options[:maximum_depth]
       @maximum_depth = (md in Integer) ? md : default_maximum_depth
@@ -596,22 +596,22 @@ module Crass
 
     # --- class methods (Ruby's self.*) ---
 
-    def parse_properties(input, options = Hash[]) = Parser.properties(Parser.new(input, options), nil)
+    def parse_properties(input, options = Hash.new) = Parser.properties(Parser.new(input, options), nil)
 
-    def parse_rules(input, options = Hash[])
+    def parse_rules(input, options = Hash.new)
       parser = Parser.new(input, options)
       rules = consume_rules(parser, false)
       Array.map(rules) { |rule| rule[:node] == :qualified_rule ? create_style_rule(parser, rule) : rule }
     end
 
-    def parse_stylesheet(input, options = Hash[])
+    def parse_stylesheet(input, options = Hash.new)
       parser = Parser.new(input, options)
       rules = consume_rules(parser, true)
       Array.map(rules) { |rule| rule[:node] == :qualified_rule ? create_style_rule(parser, rule) : rule }
     end
 
     # Ruby: Parser.stringify(nodes, options); nodes is a node or an Array of them.
-    def stringify(nodes, options = Hash[])
+    def stringify(nodes, options = Hash.new)
       string = ""
       Array.each(list(nodes)) do |node|
         case node[:node]
@@ -648,8 +648,8 @@ module Crass
     def list(nodes)
       case nodes
       in Array then nodes
-      in Hash then Array[nodes]
-      else Array[]
+      in Hash then Any[nodes]
+      else Any[]
       end
     end
 
@@ -671,10 +671,10 @@ module Crass
     end
 
     def consume_at_rule(ps, input)
-      rule = Hash[]
+      rule = Hash.new
       rule[:tokens] = TokenScanner.collect(input) do
         rule[:name] = take(input)[:value]
-        prelude = Array[]
+        prelude = Any[]
         rule[:prelude] = prelude
         while (token = TokenScanner.consume(input))
           node = token[:node]
@@ -718,8 +718,8 @@ module Crass
     end
 
     def consume_declaration(ps, input)
-      declaration = Hash[]
-      value = Array[]
+      declaration = Hash.new
+      value = Any[]
       declaration[:tokens] = TokenScanner.collect(input) do
         declaration[:name] = take(input)[:value]
         next_token = TokenScanner.peek(input)
@@ -729,7 +729,7 @@ module Crass
         end
         unless next_token && next_token[:node] == :colon
           # Parse error (an error node, as Simon Sapin's tests expect).
-          return create_node(:error, Hash[:value => "invalid"])
+          return create_node(:error, Hash.of(:value => "invalid"))
         end
         TokenScanner.consume(input)
         until TokenScanner.peek(input) == nil
@@ -756,9 +756,9 @@ module Crass
       create_node(:declaration, declaration)
     end
 
-    # options: Hash[:strict => true] leaves out comments, semicolons and whitespace.
-    def consume_declarations(ps, input, options = Hash[])
-      declarations = Array[]
+    # options: Hash.of(:strict => true) leaves out comments, semicolons and whitespace.
+    def consume_declarations(ps, input, options = Hash.new)
+      declarations = Any[]
       while (token = TokenScanner.consume(input))
         case token[:node]
         in :comment | :semicolon | :whitespace
@@ -768,7 +768,7 @@ module Crass
           TokenScanner.reconsume(input)
           Array.push(declarations, consume_at_rule(ps, input))
         in :ident
-          decl_tokens = Array[token]
+          decl_tokens = Any[token]
           while (next_token = TokenScanner.peek(input))
             break if next_token[:node] == :semicolon
             Array.push(decl_tokens, component(ps, input))
@@ -777,7 +777,7 @@ module Crass
           Array.push(declarations, decl) if decl
         else
           # Parse error (invalid property name, etc.).
-          Array.push(declarations, create_node(:error, Hash[:value => "invalid"]))
+          Array.push(declarations, create_node(:error, Hash.of(:value => "invalid")))
           TokenScanner.reconsume(input)
           while (next_token = TokenScanner.peek(input))
             break if next_token[:node] == :semicolon
@@ -795,9 +795,9 @@ module Crass
         return discard_block(ps, input) if @depth > @maximum_depth
         cur = TokenScanner.current(input)
         cur => Hash
-        value = Array[]
-        tokens = Array[cur] # Non-standard, used for serialization.
-        function = Hash[:name => cur[:value], :value => value, :tokens => tokens]
+        value = Any[]
+        tokens = Any[cur] # Non-standard, used for serialization.
+        function = Hash.of(:name => cur[:value], :value => value, :tokens => tokens)
         Array.concat(tokens, TokenScanner.collect(input) {
           while (token = TokenScanner.consume(input))
             n = token[:node]
@@ -814,13 +814,13 @@ module Crass
     end
 
     def consume_qualified_rule(ps, input)
-      prelude = Array[]
-      rule = Hash[:prelude => prelude]
+      prelude = Any[]
+      rule = Hash.of(:prelude => prelude)
       rule[:tokens] = TokenScanner.collect(input) do
         while true
           token = TokenScanner.consume(input)
           # Parse error (an error node, as Simon Sapin's tests expect).
-          return create_node(:error, Hash[:value => "invalid"]) unless token
+          return create_node(:error, Hash.of(:value => "invalid")) unless token
           if token[:node] == :"{"
             rule[:block] = consume_simple_block(ps, input)[:value]
             break
@@ -838,7 +838,7 @@ module Crass
 
     # Ruby: consume_rules(top_level: true) drops <!-- and --> at the top level.
     def consume_rules(ps, top_level)
-      rules = Array[]
+      rules = Any[]
       ts = @tokens
       while (token = TokenScanner.consume(ts))
         case token[:node]
@@ -870,9 +870,9 @@ module Crass
         start_token = cur[:node]
         start_token => Symbol
         end_token = block_end(start_token)
-        value = Array[]
-        tokens = Array[cur] # Non-standard. Used for serialization.
-        block = Hash[:start => Symbol.to_s(start_token), :end => Kernel.to_s(end_token), :value => value, :tokens => tokens]
+        value = Any[]
+        tokens = Any[cur] # Non-standard. Used for serialization.
+        block = Hash.of(:start => Symbol.to_s(start_token), :end => Kernel.to_s(end_token), :value => value, :tokens => tokens)
         Array.concat(tokens, TokenScanner.collect(input) {
           while (token = TokenScanner.consume(input))
             break if token[:node] == end_token
@@ -891,8 +891,8 @@ module Crass
       opening = TokenScanner.current(input)
       opening => Hash
       first = opening[:node] == :function ? :")" : block_end(opening[:node])
-      stack = Array[first]
-      tokens = Array[opening] # Non-standard. Used for serialization.
+      stack = Any[first]
+      tokens = Any[opening] # Non-standard. Used for serialization.
       Array.concat(tokens, TokenScanner.collect(input) {
         until Array.empty?(stack)
           token = TokenScanner.consume(input)
@@ -907,19 +907,19 @@ module Crass
           end
         end
       })
-      create_node(:error, Hash[:value => "maximum-depth-exceeded", :tokens => tokens])
+      create_node(:error, Hash.of(:value => "maximum-depth-exceeded", :tokens => tokens))
     end
 
-    def create_node(type, properties = Hash[])
-      node = Hash[:node => type]
+    def create_node(type, properties = Hash.new)
+      node = Hash.of(:node => type)
       Hash.merge!(node, properties)
     end
 
-    def create_selector(ps, input) = create_node(:selector, Hash[:value => parse_value(ps, input), :tokens => input])
+    def create_selector(ps, input) = create_node(:selector, Hash.of(:value => parse_value(ps, input), :tokens => input))
 
     def create_style_rule(ps, rule)
-      create_node(:style_rule, Hash[:selector => create_selector(ps, Crass.node_a(rule, :prelude)),
-                                    :children => Parser.properties(ps, Crass.node_a(rule, :block))])
+      create_node(:style_rule, Hash.of(:selector => create_selector(ps, Crass.node_a(rule, :prelude)),
+                                    :children => Parser.properties(ps, Crass.node_a(rule, :block))))
     end
 
     def skip_whitespace(input)
@@ -931,15 +931,15 @@ module Crass
     def parse_component_value(ps, input = nil)
       ts = scanner(ps, input)
       skip_whitespace(ts)
-      return create_node(:error, Hash[:value => "empty"]) if TokenScanner.peek(ts) == nil
+      return create_node(:error, Hash.of(:value => "empty")) if TokenScanner.peek(ts) == nil
       value = component(ps, ts)
       skip_whitespace(ts)
-      TokenScanner.peek(ts) == nil ? value : create_node(:error, Hash[:value => "extra-input"])
+      TokenScanner.peek(ts) == nil ? value : create_node(:error, Hash.of(:value => "extra-input"))
     end
 
     def parse_component_values(ps, input = nil)
       ts = scanner(ps, input)
-      tokens = Array[]
+      tokens = Any[]
       while (token = consume_component_value(ps, ts))
         Array.push(tokens, token)
       end
@@ -950,19 +950,19 @@ module Crass
       ts = scanner(ps, input)
       skip_whitespace(ts)
       nx = TokenScanner.peek(ts)
-      return create_node(:error, Hash[:value => "empty"]) unless nx
-      return create_node(:error, Hash[:value => "invalid"]) if nx[:node] != :ident
+      return create_node(:error, Hash.of(:value => "empty")) unless nx
+      return create_node(:error, Hash.of(:value => "invalid")) if nx[:node] != :ident
       decl = consume_declaration(ps, ts)
       return decl if decl
-      create_node(:error, Hash[:value => "invalid"])
+      create_node(:error, Hash.of(:value => "invalid"))
     end
 
-    def parse_declarations(ps, input = nil, options = Hash[]) = consume_declarations(ps, scanner(ps, input), options)
+    def parse_declarations(ps, input = nil, options = Hash.new) = consume_declarations(ps, scanner(ps, input), options)
 
     # Ruby's Parser#parse_properties(input = @tokens); renamed because Parser.parse_properties(css)
     # is the class method.
     def properties(ps, input)
-      props = Array[]
+      props = Any[]
       Array.each(parse_declarations(ps, input)) do |decl|
         unless decl[:node] == :declaration
           Array.push(props, decl)
@@ -972,9 +972,9 @@ module Crass
         children = Array.dup(value)
         last = Array.last(children)
         Array.pop(children) if last && last[:node] == :semicolon
-        Array.push(props, create_node(:property, Hash[:name => decl[:name], :value => parse_value(ps, value),
+        Array.push(props, create_node(:property, Hash.of(:name => decl[:name], :value => parse_value(ps, value),
                                                       :children => children, :important => decl[:important],
-                                                      :tokens => decl[:tokens]]))
+                                                      :tokens => decl[:tokens])))
       end
       props
     end
@@ -983,10 +983,10 @@ module Crass
       ts = scanner(ps, input)
       skip_whitespace(ts)
       nx = TokenScanner.peek(ts)
-      return create_node(:error, Hash[:value => "empty"]) unless nx
+      return create_node(:error, Hash.of(:value => "empty")) unless nx
       rule = nx[:node] == :at_keyword ? consume_at_rule(ps, ts) : consume_qualified_rule(ps, ts)
       skip_whitespace(ts)
-      TokenScanner.peek(ts) == nil ? rule : create_node(:error, Hash[:value => "extra-input"])
+      TokenScanner.peek(ts) == nil ? rule : create_node(:error, Hash.of(:value => "extra-input"))
     end
 
     # The unescaped text of a selector or a property value.

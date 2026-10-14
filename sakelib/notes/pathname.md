@@ -88,4 +88,4 @@ index on a String). After the fixes, `--strict=1 -c` and `--strict=2 -c`: OK.
 ## `--types`
 
 Fields: `Pathname.path: String`. No unknowns. The only union is the test's own nested literal
-`File.join("a", Array["b", Array["c"]])` (`String | Array[String]`), which `File.join` flattens.
+`File.join("a", Any["b", Any["c"]])` (`String | Any[String]`), which `File.join` flattens.

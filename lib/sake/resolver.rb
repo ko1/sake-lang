@@ -849,7 +849,7 @@ module Sake
         end
         node.elements.each do |el|
           next check(el, ctx) unless el.is_a?(Prism::SplatNode)
-          error(el, "splat in `[...]` is not supported (a Tuple's size must be known)", ["Array[#{node.elements.map(&:slice).join(", ")}] makes an Array"])
+          error(el, "splat in `[...]` is not supported (a Tuple's size must be known)", ["Any[#{node.elements.map(&:slice).join(", ")}] makes an Array"])
         end
       when Prism::ReturnNode
         error(node, "`return` outside a function") unless ctx.fn
@@ -981,7 +981,7 @@ module Sake
 
     def check_record_literal(node, ctx)
       if node.elements.empty?
-        return error(node, "`{}` is an empty Record, not a Hash", ["for a Hash, write `Hash[]`; for a growable list, `Array[]`"])
+        return error(node, "`{}` is an empty Record, not a Hash", ["for a Hash, write `Hash.new`; for a growable list, `Any[]`"])
       end
       seen = []
       node.elements.each do |el|
@@ -992,7 +992,7 @@ module Sake
         key = el.key
         if !key.is_a?(Prism::SymbolNode)
           error(el, "`{#{key.slice} => ...}` is not a Hash in Sake: `{name: value}` makes a Record",
-                ["for a Hash, write `Hash[#{key.slice} => ...]`"])
+                ["for a Hash, write `Hash.of(#{key.slice} => ...)`"])
         elsif key.closing_loc&.slice != ":"
           error(el, "write a Record field as `#{key.unescaped}: value`")
         elsif seen.include?(key.unescaped)
@@ -1298,9 +1298,9 @@ module Sake
         return lowercase_receiver_error(node, ctx)
       end
 
-      hash_ctor = constant?(recv) && @const_names[recv] == "Hash" && node.name == :[] && node.call_operator_loc.nil? # also `H = Hash; H[...]`
+      hash_ctor = target.is_a?(Builtin) && target.full_name == "Hash.of"
       if hash_ctor && !(args.empty? || (args.size == 1 && args[0].is_a?(Prism::KeywordHashNode)))
-        error(node, "Hash[...] takes `key => value` pairs, like `Hash[\"a\" => 1]`")
+        error(node, "Hash.of takes `key => value` pairs, like `Hash.of(\"a\" => 1)`", ["`Hash[h, ...]` is an Array of Hashes; `Hash.new` an empty Hash"])
       end
       kws = target_keywords(target, node)
       check_args(node.arguments, ctx, hash_pairs: hash_ctor, splat: true, keywords: kws, callee: (target.full_name if target.respond_to?(:full_name)), target:)
@@ -1318,11 +1318,11 @@ module Sake
       return if check_splat(node, target, args, 0)
       return check_new_keywords(node, target, args) if struct_new_target?(target) && args.last.is_a?(Prism::KeywordHashNode)
       check_arity(node, target, check_keywords(node, target, args, kws), !blk.nil?)
-      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == CTOR && !%w[Array Hash Set].include?(target.namespace)
+      check_typed_array_literals(node, target, args) if target.is_a?(Builtin) && target.name == CTOR && target.namespace != "Kernel"
     end
 
     # The built-ins whose result depends on how many rest arguments there are (zip makes Tuples that long).
-    NO_SPLAT = %w[Array.zip Range.zip Hash[]].freeze
+    NO_SPLAT = %w[Array.zip Range.zip Hash.of].freeze
 
     # `*xs` may fill only a built-in's rest parameter: the arguments before it are then counted statically.
     # Returns true when the call has a splat (its arity is checked here).
@@ -1330,7 +1330,7 @@ module Sake
       i = args.index { _1.is_a?(Prism::SplatNode) }
       return false unless i
       if target.is_a?(Builtin) && NO_SPLAT.include?(target.full_name)
-        error(args[i], "`#{args[i].slice}`: #{target.full_name} takes its arguments written out (#{target.full_name == "Hash[]" ? "`key => value` pairs" : "it makes Tuples as long as the number of arguments"})")
+        error(args[i], "`#{args[i].slice}`: #{target.full_name} takes its arguments written out (#{target.full_name == "Hash.of" ? "`key => value` pairs" : "it makes Tuples as long as the number of arguments"})")
         return true
       end
       fn = target.is_a?(Dispatch) ? @functions.dig(target.module, target.name) : target
@@ -1342,7 +1342,7 @@ module Sake
       end
       unless target.is_a?(Builtin) && target.rest
         error(args[i], "`#{args[i].slice}`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments " \
-                       "(puts, format, Array[...], Set[...], Array.push, ...)",
+                       "(puts, format, Any[...], Set.of, Array.push, ...)",
               target.is_a?(Builtin) || target.is_a?(Operators::Call) ? [] : ["#{target_name(target)} has no `*rest` parameter; pass the arguments one by one"])
         return true
       end
@@ -1697,8 +1697,8 @@ module Sake
       end
 
       if name == CTOR # `T[...]` for a T without a typed Array
-        typed = @registry.namespaces.select { |t| @registry.lookup(t, CTOR) && !@struct_types.key?(t) && !@modules.key?(t) && !%w[Array Hash Set].include?(t) }
-        return error(node, "`#{ns}[...]`: #{ns} has no typed Array", ["Array[...] holds any values; typed Arrays: #{typed.sort.map { "#{_1}[]" }.join(", ")}, and T[] for your own types and modules"])
+        typed = @registry.namespaces.select { |t| @registry.lookup(t, CTOR) && !@struct_types.key?(t) && !@modules.key?(t) && t != "Kernel" }
+        return error(node, "`#{ns}[...]`: #{ns} has no typed Array", ["Any[...] holds any values; typed Arrays: #{typed.sort.map { "#{_1}[]" }.join(", ")}, and T[] for your own types and modules"])
       end
       hints = spell(name, names_in(ns)).map { "did you mean `#{ns}.#{_1}`?" }
       others = namespaces_defining(name) - [ns]

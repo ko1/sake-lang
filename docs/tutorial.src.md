@@ -122,7 +122,7 @@ below, `square` works on both Integer and Float.
   other keywords (a Hash). `T.new` takes fields by keyword too: `Logger.new(io, level: :warn)`.
 - `first, *rest = xs` and `|a, *rest|` collect the rest in an Array. `*xs` in arguments spreads
   only into built-ins that take any number of them: `puts(*lines)`, `format(fmt, *row)`,
-  `Array[*xs, 0]`.
+  `Any[*xs, 0]`.
 
 ## 5. Control flow
 
@@ -188,7 +188,7 @@ instance first:
 | `attr_reader x, y` | `C.x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
 | `attr_accessor n` | `C.n(c)` and `C.set_n(c, v)` from anywhere |
 | `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
-| `def initialize(c)` | runs after `new` stored the fields: set the others there (`@items = Array[]`); with it, `new` may leave out trailing fields, which are nil until initialize sets them. Fields have no default values |
+| `def initialize(c)` | runs after `new` stored the fields: set the others there (`@items = Any[]`); with it, `new` may leave out trailing fields, which are nil until initialize sets them. Fields have no default values |
 | `private attr_reader pos` | no `C.pos` outside the class (inside: `@pos`, or `C.pos(other)` for another C); `new` still takes it |
 | `class E < Exception` | an exception type: `message` comes first |
 
@@ -323,7 +323,7 @@ collection is made by an operation with a type:
   (`a, b = t`; an Array too, where missing elements are nil, as in Ruby).
 - **Record.** A literal `{x: a, y: b}` is a Record. Its type is its set of fields and their
   types. Take it apart with a pattern.
-- **Array.** `Array[...]` builds an Array with no declared element type.
+- **Array.** `Any[...]` builds an Array with no declared element type.
 - **Typed Array.** `T[...]` builds an Array whose element type is T. The element type is checked
   on every write.
 
@@ -369,7 +369,7 @@ An Array of Tuples whose first element is a Symbol tag keeps each kind apart. Te
 
 A function needs no type: its operations say what it accepts. A class's field needs none either:
 its type comes from the values written to it, which `T.new` and `T.set_x` show. The one place a type
-pays is an Array that is filled later. Made with `Array[]`, its element type is whatever gets pushed,
+pays is an Array that is filled later. Made with `Any[]`, its element type is whatever gets pushed,
 so a wrong value is reported where the elements are used, far from where it went in:
 
 @@example elements_untyped
@@ -385,7 +385,7 @@ Hash, Set, Symbol, Range, and Regexp work as in Ruby. Their operations carry the
 everything else (`Hash.each`, `Range.to_a`, `String.match`), while `h[k]`, `1..5`, `:name`, and
 `/re/` are written as in Ruby.
 
-- `Hash[k => v]` and `Hash.new(0)` make a Hash, because `{...}` is a Record.
+- `Hash.of(k => v)` and `Hash.new(0)` make a Hash, because `{...}` is a Record.
 - A missing key gives `nil`, or the default given to `Hash.new`.
 - A block over a Hash receives `[key, value]`, which `|k, v|` takes apart.
 

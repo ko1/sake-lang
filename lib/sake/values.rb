@@ -2,7 +2,7 @@
 
 module Sake
   # Literal `[a, b]`: length and positional types are fixed; elements may be replaced by the same type.
-  # Ruby Arrays are used as Sake Arrays (`Array[a, b]`).
+  # Ruby Arrays are used as Sake Arrays (`Any[a, b]`).
   class Tuple
     attr_reader :elems
 

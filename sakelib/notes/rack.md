@@ -20,7 +20,7 @@ end
 
 class Hello                                      # the app: Ruby's ->(env) { [200, {...}, ["hello"]] }
   include Rack::App
-  def call(app, env) = [200, Hash["content-type" => "text/plain"], String["hello"]]
+  def call(app, env) = [200, Hash.of("content-type" => "text/plain"), String["hello"]]
 end
 
 class Counter                                    # middleware: Ruby's `use Counter`
@@ -56,7 +56,7 @@ The triple is a Tuple `[Integer, Hash, Array]`; `Rack::Response.finish` returns 
 | `status_code(:not_found)` / `(404)` | `Rack::Utils.status_code(x)` | same (also a numeric String; obsolete symbols not mapped) |
 | `HTTP_STATUS_CODES`, `SYMBOL_TO_STATUS_CODE` | `Rack::Utils.http_status_codes`, `symbol_to_status_code` | differs: functions (Sake has no value constants); same 62 codes as Rack 3.2.6 |
 | `parse_cookies_header(s)`, `parse_cookies(env)` | same names | same |
-| `set_cookie_header(key, value)` | `Rack::Utils.set_cookie_header(key, value)` | same: a String, an Array, or a `Hash[value:, domain:, path:, max_age:, expires: Time, secure:, httponly:/http_only:, same_site:, partitioned:]` |
+| `set_cookie_header(key, value)` | `Rack::Utils.set_cookie_header(key, value)` | same: a String, an Array, or a `Hash.of(value:, domain:, path:, max_age:, expires: Time, secure:, httponly:/http_only:, same_site:, partitioned:)` |
 | `delete_set_cookie_header(key, value)`, `set_cookie_header!`, `delete_set_cookie_header!` | same names | same |
 | `clean_path_info`, `valid_path?`, `bytesize`, `q_values`, `best_q_match` | same names | same |
 | `secure_compare(a, b)` | `Rack::Utils.secure_compare(a, b)` | differs: `a == b`, not constant time |
@@ -78,7 +78,7 @@ The triple is a Tuple `[Integer, Hash, Array]`; `Rack::Response.finish` returns 
 | `content_type`, `content_type=`, `media_type`, `content_length`, `location`, `location=`, `cache_control(=)`, `etag(=)`, `do_not_cache!` | `content_type`, `set_content_type`, … | differs: setters are `set_x` |
 | `ok?`, `successful?`, `redirection?`, `client_error?`, `server_error?`, `invalid?`, `informational?`, `not_found?`, … (18 predicates), `redirect?` | same names | same |
 | `cache!`, `close`, `finish { }`, `Rack::Response::Raw` | — | missing |
-| `Rack::MockRequest.env_for(uri, method:, input:, params:, script_name:, "HTTP_X" => v)` | `Rack::MockRequest.env_for(uri, method:, input:, params:, script_name:, http_version:, headers: Hash[...])` | differs: the String-keyed opts are one `headers:` Hash; `rack.errors`, `:fatal`, `:lint`, multipart params not ported |
+| `Rack::MockRequest.env_for(uri, method:, input:, params:, script_name:, "HTTP_X" => v)` | `Rack::MockRequest.env_for(uri, method:, input:, params:, script_name:, http_version:, headers: Hash.of(...))` | differs: the String-keyed opts are one `headers:` Hash; `rack.errors`, `:fatal`, `:lint`, multipart params not ported |
 | `Rack::MockRequest.new(app).get(uri, opts)` → MockResponse | `Rack::MockRequest.get(app, uri, params:, headers:)`, `post(... input:)`, `request(app, method, uri, ...)` | differs: returns the app's triple, no MockResponse |
 | `Rackup::Handler::WEBrick` (servlet), `.run(app, Host:, Port:)` | `Rackup::Handler::WEBrick.new(app)` mounted on `HTTPServer`; `Rackup::Handler::WEBrick.run(app, host, port) { \|srv\| }` | same env keys (REQUEST_METHOD … HTTP_*, rack.input as a String); `REMOTE_ADDR` fixed to 127.0.0.1; repeated `set-cookie` as separate lines |
 | `Rack::Builder`, `Rack::Lint`, `Rack::Static`, `Rack::Files`, `Rack::Session`, `Rack::URLMap`, `Rack::Multipart`, `Rack::Logger`, `Rack::CommonLogger`, `Rack::Head`, `Rack::ContentLength` | — | missing: Builder's `use`/`run` is the middleware chain written as `A.new(B.new(app))`; the others are time |
@@ -91,7 +91,7 @@ The triple is a Tuple `[Integer, Hash, Array]`; `Rack::Response.finish` returns 
   instead of `Rack::Builder`'s `use`. Could not be a lambda, and `Rack::Builder`'s block DSL (`use`, `run`, `map`)
   is a block storing other blocks: not ported.
 - **Utils** are module functions: the whole query parser (`_normalize_params` with its Hash/Array/nil returns) ported
-  line for line; `x[k] ||= Array[]` and `raise ... unless list in Array` narrowed as hoped.
+  line for line; `x[k] ||= Any[]` and `raise ... unless list in Array` narrowed as hoped.
 - **Request** holds its caches (`query_hash`, `form_hash`, `cookie_hash`) as `private attr_accessor` fields instead
   of env keys (see below). `body` is the env's String.
 - **Response**'s body is always an Array of String after `initialize`; `write` tracks the byte length as Rack does
@@ -111,7 +111,7 @@ The triple is a Tuple `[Integer, Hash, Array]`; `Rack::Response.finish` returns 
 
 - **The checker found a field-order mistake at the caller's line.** First draft:
   `class Rack::Response; attr_accessor status, body, headers` (the order I think of them), and the test called
-  `Rack::Response.new(String["a", "bc"], 201, Hash[...])` (Rack's order: body, status, headers). Report before running:
+  `Rack::Response.new(String["a", "bc"], 201, Hash.of(...))` (Rack's order: body, status, headers). Report before running:
   `rack.sake:558: Kernel.Integer: argument 1 must be String|Integer|Float, but is String[] [mixed] / hint: reached by
   the call at line 131` and `rack.sake:573: => Array: the value is Integer`. Fixed the declaration to
   `attr_accessor body, status, headers`. In Ruby this is a runtime `TypeError` on the first request; here it was
@@ -128,7 +128,7 @@ The triple is a Tuple `[Integer, Hash, Array]`; `Rack::Response.finish` returns 
 - **Constants → functions.** `Rack::Utils::HTTP_STATUS_CODES` is `Rack::Utils.http_status_codes` (a `once` Hash) and
   `SYMBOL_TO_STATUS_CODE` is derived from it with the same `gsub(/\s|-|'/, "_")`. Reads fine; the loss is the
   Ruby-side literal spelling in user code.
-- **`Rack::Utils._add_value(cur, v)`** (nil → v, Array → push, else `Array[cur, v]`) replaced Rack's three
+- **`Rack::Utils._add_value(cur, v)`** (nil → v, Array → push, else `Any[cur, v]`) replaced Rack's three
   `if header.is_a?(Array)` blocks; `case cur in nil ... in Array ... else` is exactly the shape and reads better than
   the gem.
 - **Keyword parameters carried the API.** `env_for(uri, method:, input:, params:, script_name:, http_version:,

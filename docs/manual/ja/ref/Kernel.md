@@ -4,6 +4,27 @@ Kernel はプログラム全体から名前だけで呼べる操作の集まり�
 
 ここにあるのは入出力（`puts`、`print`、`p`、`pp`、`format`、`gets`、`warn`）、厳密な数値変換（`Integer`、`Float`、`Rational`、`Complex`）、値の表示（`to_s`、`inspect`）と複製（`dup`、`equal?`）、制御（`loop`、`block_given?`、`once`）、乱数と時間（`rand`、`srand`、`sleep`）、プロセス（`exit`、`at_exit`、`system`、`ARGV`、`PROGRAM_NAME`）です。`raise` は操作ではなく構文で、[例外とエラー](../08-exceptions.md)にあります。`Math.PI` や `Float.INFINITY` も操作として読みますが、それぞれの名前空間の章にあります（Sake に値の定数は無く、名前の付いた値は `once` で作ります）。
 
+## Kernel[]
+
+`Kernel[*Any]`
+
+何でも入る Array を作ります。どの型も Kernel を include しているので、モジュールの `M[...]`（M を include した型の Array）の規則により、この Array はどんな値も受けます。prelude が `Any = Kernel` と名付けていて、`Any[...]` と書きます。要素の型は何でもよく、混ぜてもよく、以後どんな値でも追加できます（検査器は追加された値の型を要素型の和に加えます）。空の Array は `Any[]`。リテラル `[1, 2]` は Tuple なので、伸ばせる並びは `Any[...]` と書きます。型付き Array は `Integer[1, 2]` のように型の名前で作り、`Array[...]` は Array の Array です。
+
+```ruby
+xs = Any[1, "a"]
+Array.push(xs, :sym)
+p(xs)                          # => [1, "a", :sym]
+e = Any[]
+Array.push(e, 1)
+p(e)                           # => [1]
+p([1, 2] == Any[1, 2])         # => false
+```
+
+```ruby error
+xs = [1, 2]
+Array.push(xs, 3)              # !> `[...]` is a Tuple with a fixed length; for a growable Array, write `Any[...]`
+```
+
 ## puts
 
 `Kernel.puts(*Any)`
@@ -15,11 +36,11 @@ puts("a", 1, :sym)
 # => a
 # => 1
 # => sym
-puts(Array[1, [2, 3]])
+puts(Any[1, [2, 3]])
 # => 1
 # => 2
 # => 3
-puts(Hash["k" => 1], 1..3)
+puts(Hash.of("k" => 1), 1..3)
 # => {"k" => 1}
 # => 1..3
 ```
@@ -32,7 +53,7 @@ puts(Hash["k" => 1], 1..3)
 
 ```ruby
 print("a", 1, nil, "\n")        # => a1
-print(Array[1, 2], [3, 4], "\n") # => [1, 2][3, 4]
+print(Any[1, 2], [3, 4], "\n") # => [1, 2][3, 4]
 ```
 
 ## p
@@ -49,7 +70,7 @@ p(x)                             # => [1, "a"]
 p(p())                           # => nil
 Point = Struct.new(:x, :y)
 p(Point.new(1, 2))               # => #<struct Point x=1, y=2>
-p(Hash["a" => 1], Set[1], 2r)
+p(Hash.of("a" => 1), Set.of(1), 2r)
 # => {"a" => 1}
 # => Set[1]
 # => (2/1)
@@ -62,7 +83,7 @@ p(Hash["a" => 1], Set[1], 2r)
 1 つの値を `p` と同じ形で書き、その値を返します。Ruby の `pp` は長い値を折り返しますが、Sake では `p(x)` と同じです。
 
 ```ruby
-a = pp(Array[1, {k: 2}])        # => [1, {k: 2}]
+a = pp(Any[1, {k: 2}])        # => [1, {k: 2}]
 p(a)                             # => [1, {k: 2}]
 ```
 
@@ -72,14 +93,14 @@ p(a)                             # => [1, {k: 2}]
 
 `Kernel.sprintf(String, *Any)`
 
-Ruby の `format` と同じ書式で String を作ります: `%d`、`%f`、`%e`、`%g`、`%x`、`%o`、`%b`、`%c`、`%s`、`%p`、`%%` と、幅・精度・`-`・`+`・`0` のフラグ。`%s` は値の `to_s`（クラス自身の `to_s(x)` も使われます）、`%p` は `inspect` です。`%<name>d` と `%{name}` は、Record（`{a: 1}`）か Symbol をキーに持つ Hash（`Hash[a: 1]`）を唯一の引数として 1 つ渡します。演算子の形 `fmt % x` も同じです（[String](String.md)）。引数が足りない・多すぎる、数値の指示子に数にならない値を渡す、無いキーを名乗る（`key<a> not found`）、はすべて `ArgumentError` です。
+Ruby の `format` と同じ書式で String を作ります: `%d`、`%f`、`%e`、`%g`、`%x`、`%o`、`%b`、`%c`、`%s`、`%p`、`%%` と、幅・精度・`-`・`+`・`0` のフラグ。`%s` は値の `to_s`（クラス自身の `to_s(x)` も使われます）、`%p` は `inspect` です。`%<name>d` と `%{name}` は、Record（`{a: 1}`）か Symbol をキーに持つ Hash（`Hash.of(a: 1)`）を唯一の引数として 1 つ渡します。演算子の形 `fmt % x` も同じです（[String](String.md)）。引数が足りない・多すぎる、数値の指示子に数にならない値を渡す、無いキーを名乗る（`key<a> not found`）、はすべて `ArgumentError` です。
 
 ```ruby
 p(format("%05.2f|%-4s|%p|%x", 3.14159, :ab, "q", 255))   # => "03.14|ab  |\"q\"|ff"
 p(sprintf("%+d %s %s", 3, nil, true))                     # => "+3  true"
 p(format("%<a>d-%<b>s", {a: 1, b: "x"}))                  # => "1-x"
 p("%<a>05d" % {a: 42})                                    # => "00042"
-p(format("%<n>d-%{s}", Hash[n: 1, s: "x"]))               # => "1-x"
+p(format("%<n>d-%{s}", Hash.of(n: 1, s: "x")))               # => "1-x"
 Point = Struct.new(:x, :y)
 p(format("%s", Point.new(1, 2)))                          # => "#<struct Point x=1, y=2>"
 ```
@@ -208,7 +229,7 @@ t = Temp.new(21)
 p(to_s(t))                       # => "21C"
 puts("now #{t}")                 # => now 21C
 p(to_s(nil))                     # => ""
-p(to_s(Array[1, "a"]))           # => "[1, \"a\"]"
+p(to_s(Any[1, "a"]))           # => "[1, \"a\"]"
 p(to_s(:sym))                    # => "sym"
 ```
 
@@ -229,7 +250,7 @@ end
 p(inspect("a\n"))                # => "\"a\\n\""
 p(inspect(nil))                  # => "nil"
 p(inspect(Box.new(1)))           # => "<pretty>"
-p(Array[Box.new(1)])             # => [<pretty>]
+p(Any[Box.new(1)])             # => [<pretty>]
 ```
 
 ## dup
@@ -239,9 +260,9 @@ p(Array[Box.new(1)])             # => [<pretty>]
 値の浅い複製（Ruby の `obj.dup`）: Array、Tuple、Hash、Set、Record、クラスのインスタンス、String は新しい容器になり、中の要素は同じ値のままです（要素の容器は共有されます）。Integer、Symbol、nil、true/false、Range はそのままの値が返ります。型は元と同じです。その型が `dup(x)` を定義している クラスのインスタンスには、それを呼びます（戻り値はその関数の型）。型の関数の中で要素を複製するときは `Kernel.dup(@items)` と書きます。裸の `dup` は型自身の `dup` に解決されるからです。
 
 ```ruby
-a = Array[Array[1], Array[2]]
+a = Any[Any[1], Any[2]]
 b = dup(a)
-Array.push(b, Array[3])
+Array.push(b, Any[3])
 Array.push(b[0], 9)
 p(a)                             # => [[1, 9], [2]]
 p(b)                             # => [[1, 9], [2], [3]]
@@ -249,7 +270,7 @@ class Box
   attr_accessor items
   def dup(b) = Box.new(Kernel.dup(@items))
 end
-x = Box.new(Array[1])
+x = Box.new(Any[1])
 y = dup(x)
 Array.push(Box.items(y), 2)
 p(Box.items(x))                  # => [1]
@@ -263,7 +284,7 @@ p(Box.items(y))                  # => [1, 2]
 2 つの引数が同じ値（同一のオブジェクト）なら true（Ruby の `a.equal?(b)`）。`==` は中身を比べますが、こちらは同一性です。`dup` の結果は元と `==` ですが `equal?` ではありません。同じ Integer、Symbol、nil、true/false は常に同一です。別々に書いた String リテラルは同一ではありません。
 
 ```ruby
-a = Array[1]
+a = Any[1]
 b = a
 p(equal?(a, b))                  # => true
 p(a == dup(a))                   # => true
@@ -312,7 +333,7 @@ p(block_given?)                  # => false
 ブロックの値を返します。ブロックはプログラム中のその場所が最初に実行されたとき 1 度だけ走り、値はプログラムの終わりまで保たれて、以後の実行（別の呼び出し、別のスレッド）はその同じ値を受け取ります。Sake には値の定数が無いので、表や名前付きの値を 1 度だけ計算する手段です: `def table = once { ... }`。保たれるのは値そのもので、Array なら後から変えられます（Ruby の定数と同じ）。計算中のブロックが自分の `once` にまた届くと `SystemStackError` でプログラムが止まります（rescue できません）。
 
 ```ruby
-def table = once { puts("computing"); Array[1, 2, 3] }
+def table = once { puts("computing"); Any[1, 2, 3] }
 p(table)
 # => computing
 # => [1, 2, 3]
@@ -352,9 +373,9 @@ p(rand(0))                       # !> ArgumentError: Kernel.rand: invalid argume
 
 ```ruby
 srand(7)
-a = Array.map(Array[1, 2, 3]) { rand(1000) }
+a = Array.map(Any[1, 2, 3]) { rand(1000) }
 srand(7)
-b = Array.map(Array[1, 2, 3]) { rand(1000) }
+b = Array.map(Any[1, 2, 3]) { rand(1000) }
 p(a == b)                        # => true
 p(srand(1))                      # => 7
 ```

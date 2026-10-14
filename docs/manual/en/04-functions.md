@@ -52,7 +52,7 @@ p(greet("Sake", punct:))             # => "Hello, Sake!!"
 Since the callee is known before running, the checker delivers `k: v` to its parameter by name. Each of the following is an error before running.
 
 - An unknown keyword, a keyword given twice, or a missing required keyword.
-- `k: v` to a function without keyword parameters. There is no implicit Hash argument: write `Hash[k: v]` for a Hash or `{k: v}` for a Record.
+- `k: v` to a function without keyword parameters. There is no implicit Hash argument: write `Hash.of(k: v)` for a Hash or `{k: v}` for a Record.
 
 ```ruby error
 def size(w:, h: w) = w * h
@@ -78,7 +78,7 @@ p(join("+", *xs))             # => "x+y"
 - **Element type.** `rest` is one Array, so its elements share one type: the union of everything any call passes. To keep a type per position, pass one Tuple: call `notify("stock", ["AAPL", 120])` and take it apart inside with `name, price = event`.
 - **Where it is built.** The Array is built at the call, since the callee is known.
 - **Order.** The parameters go required, optional, `*rest`, keywords, `**opts`. A positional parameter after `*rest`, and a nameless `*`, are errors before running.
-- **Where `*xs` may go.** `*xs` goes only to a `*rest` parameter or to a built-in that takes any number of arguments (`puts`, `format`, `Array[...]`, `Array.push`, ...). It cannot fill required or optional parameters.
+- **Where `*xs` may go.** `*xs` goes only to a `*rest` parameter or to a built-in that takes any number of arguments (`puts`, `format`, `Any[...]`, `Array.push`, ...). It cannot fill required or optional parameters.
 
 ```ruby error
 def f(*rest, z) = z   # !> parameters after `*rest` are not supported: required, optional, `*rest`, keywords, `**opts`, in that order
@@ -156,7 +156,7 @@ A function's value is the value of its last expression, or of `return expr`. `re
 
 ```ruby
 def minmax(xs) = return Array.min(xs), Array.max(xs)
-lo, hi = minmax(Array[3, 1, 2])
+lo, hi = minmax(Any[3, 1, 2])
 p([lo, hi])          # => [1, 3]
 ```
 
@@ -216,9 +216,9 @@ p(down(20_000))      # !> SystemStackError: stack level too deep
 A block is passed to a built-in operation or to a user function that yields. Most iteration is written with block-taking operations such as `Array.each`.
 
 ```ruby
-xs = Array[1, 2, 3]
+xs = Any[1, 2, 3]
 p(Array.map(xs) { |x| x * 2 })      # => [2, 4, 6]
-Hash.each(Hash[a: 1, b: 2]) do |k, v|
+Hash.each(Hash.of(a: 1, b: 2)) do |k, v|
   puts "#{k}=#{v}"                  # => a=1
                                     # => b=2
 end
@@ -240,8 +240,8 @@ f = proc { |x| x }   # !> undefined function `proc`
 `|a, b|` lists plain names. `it` and `_1` … `_9` work as in Ruby.
 
 ```ruby
-p(Array.map(Array[1, 2]) { _1 * 10 })   # => [10, 20]
-p(Array.map(Array[1, 2]) { it + 1 })    # => [2, 3]
+p(Array.map(Any[1, 2]) { _1 * 10 })   # => [10, 20]
+p(Array.map(Any[1, 2]) { it + 1 })    # => [2, 3]
 ```
 
 ### Destructuring
@@ -249,13 +249,13 @@ p(Array.map(Array[1, 2]) { it + 1 })    # => [2, 3]
 When a block declares two or more parameters and receives a single Tuple or Array, its elements become the parameters. Missing ones are nil and extra ones are dropped, as in Ruby. A parameter can itself be taken apart with `( )`.
 
 ```ruby
-pairs = Array[["a", 1], ["b", 2]]
+pairs = Any[["a", 1], ["b", 2]]
 Array.each(pairs) { |name, n| p("#{name}=#{n}") }              # => "a=1"
                                                                # => "b=2"
 Array.each_with_index(pairs) { |(name, n), i| p([i, name]) }   # => [0, "a"]
                                                                # => [1, "b"]
 p(Array.inject(pairs, 0) { |acc, (k, v)| acc + v })            # => 3
-Array.each(Array[[1, 2]]) { |a, b, c| p([a, b, c]) }           # => [1, 2, nil]
+Array.each(Any[[1, 2]]) { |a, b, c| p([a, b, c]) }           # => [1, 2, nil]
 ```
 
 ### Rest parameter
@@ -263,9 +263,9 @@ Array.each(Array[[1, 2]]) { |a, b, c| p([a, b, c]) }           # => [1, 2, nil]
 `|a, *rest|` (and `|a, *rest, z|`, `|*all|`) collects the remaining arguments, or the remaining elements of a destructured Tuple or Array, in a new Array, as `a, *rest = x` does. `|*all|` alone does not destructure.
 
 ```ruby
-Array.each(Array[[1, 2, 3]]) { |a, *rest| p([a, rest]) }      # => [1, [2, 3]]
-Array.each(Array[[1, 2, 3]]) { |a, *rest, z| p([a, rest, z]) } # => [1, [2], 3]
-Array.each(Array[[1, 2, 3]]) { |*all| p(all) }                # => [[1, 2, 3]]
+Array.each(Any[[1, 2, 3]]) { |a, *rest| p([a, rest]) }      # => [1, [2, 3]]
+Array.each(Any[[1, 2, 3]]) { |a, *rest, z| p([a, rest, z]) } # => [1, [2], 3]
+Array.each(Any[[1, 2, 3]]) { |*all| p(all) }                # => [[1, 2, 3]]
 ```
 
 ### Parameter count
@@ -278,7 +278,7 @@ Integer.times(2) { puts "hi" }      # => hi
 ```
 
 ```ruby error
-Array.each_with_index(Array["a"]) { |x| p(x) }   # !> ArgumentError: block takes 1 parameter(s) but was given 2
+Array.each_with_index(Any["a"]) { |x| p(x) }   # !> ArgumentError: block takes 1 parameter(s) but was given 2
 ```
 
 ### Scope
@@ -287,7 +287,7 @@ A block sees and can assign the enclosing local variables.
 
 ```ruby
 sum = 0
-Array.each(Array[1, 2, 3]) { |x| sum += x }
+Array.each(Any[1, 2, 3]) { |x| sum += x }
 p(sum)               # => 6
 ```
 
@@ -299,7 +299,7 @@ p(sum)               # => 6
 def each_twice(xs)
   Array.each(xs) { |x| yield x; yield x }
 end
-each_twice(Array[1, 2])   # !> each_twice uses `yield` but no block is given
+each_twice(Any[1, 2])   # !> each_twice uses `yield` but no block is given
 ```
 
 `block_given?` tells whether the current function got a block. A function that checks it may be called without one.
@@ -319,9 +319,9 @@ info { "from block" }         # => from block
 
 ```ruby
 def twice(xs, &b) = Array.map(xs, &b)
-p(twice(Array[1, 2]) { |x| x * 2 })      # => [2, 4]
+p(twice(Any[1, 2]) { |x| x * 2 })      # => [2, 4]
 def each_pair(h, &) = Hash.each(h, &)
-each_pair(Hash[a: 1]) { |k, v| p([k, v]) }   # => [:a, 1]
+each_pair(Hash.of(a: 1)) { |k, v| p([k, v]) }   # => [:a, 1]
 ```
 
 - **Calling without a block.** As in Ruby, a function that only passes its block on may be called without one. If nothing then reaches a call that needs a block, it is an error at the `type` level.
@@ -329,7 +329,7 @@ each_pair(Hash[a: 1]) { |k, v| p([k, v]) }   # => [:a, 1]
 
 ```ruby error
 def twice(xs, &b) = Array.map(xs, &b)   # !> the block passed on is missing here, and this call needs one
-p(twice(Array[1, 2]))
+p(twice(Any[1, 2]))
 ```
 
 ### `next`, `break`, and `return`
@@ -343,7 +343,7 @@ The three ways out are Ruby's.
 | `return [v]` | the enclosing **function** | `v` is the function's value |
 
 ```ruby
-xs = Array[1, 2, 3, 4]
+xs = Any[1, 2, 3, 4]
 p(Array.map(xs) { |x| next 0 if x % 2 == 0; x })   # => [1, 0, 3, 0]
 p(Array.each(xs) { |x| break x if x > 2 })          # => 3
 p(Array.each(xs) { |x| x })                         # => [1, 2, 3, 4]
@@ -365,7 +365,7 @@ p(first_big(xs))                                    # => 3
 `once { ... }` gives the block's value. The block runs the first time that place in the program is reached, and later passes through it give the same value, for the whole program and every thread. It is Sake's way to compute a table or a named value once, since there are no value constants.
 
 ```ruby
-def table = once { puts "computing"; Array.map(Array[1, 2, 3]) { |i| i * i } }
+def table = once { puts "computing"; Array.map(Any[1, 2, 3]) { |i| i * i } }
 p(table)             # => computing
                      # => [1, 4, 9]
 p(table)             # => [1, 4, 9]

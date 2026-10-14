@@ -22,7 +22,7 @@ class App < Sinatra::Base                      class App < Sinatra::Base
                                                  def routes(app)
   enable :sessions                                 enable(app, :sessions)
   before do                                        before(app) do
-    headers "x-before" => "yes"                      headers(app, Hash["x-before" => "yes"])
+    headers "x-before" => "yes"                      headers(app, Hash.of("x-before" => "yes"))
   end                                              end
   get "/hello/:name" do                            get(app, "/hello/:name") do
     "Hello, #{params["name"]}!"                      "Hello, #{params(app)["name"]}!"
@@ -73,19 +73,19 @@ serves it.
 | `params` (IndifferentHash) | `params(app)`: a Hash with String keys | differs: `params[:name]` (Symbol) is not found; values are `String \| Array \| Hash \| nil` |
 | `request`, `response`, `env` | `request(app)` (a `Sinatra::Request`), `response(app)`, `env(app)` | same |
 | `Sinatra::Request#accept`, `accept?`, `preferred_type`, `safe?`, `idempotent?`, `forwarded?`, `secure?` | `Sinatra::Request.accept(req)` … | same (`accept` gives Strings; Ruby: AcceptEntry) |
-| `status(code)`, `body(value)`, `headers(hash)` | `status(app, code)`, `body(app, v)`, `headers(app, Hash[...])` | same |
+| `status(code)`, `body(value)`, `headers(hash)` | `status(app, code)`, `body(app, v)`, `headers(app, Hash.of(...))` | same |
 | `halt`, `halt 404`, `halt "x"`, `halt 401, "x"`, `halt 418, {h}, "x"` | `halt(app, ...)` same forms | same |
 | route value: String, Integer, `[status, body]`, `[status, headers, body]`, Array of String | same | same |
 | `pass` | `pass(app)` | same (`pass { }` with a block: missing) |
 | `redirect(uri, *args)`, `uri/url/to(addr, absolute, script_name)`, `back` | same names, `app` first | same (302 / 303 for non-GET HTTP/1.1, absolute Location) |
-| `content_type(:json)`, `content_type("text/plain", charset: "x")`, `mime_type` | `content_type(app, :json)`, `content_type(app, t, Hash[charset: "x"])` | same (a table of 22 common types for Rack::Mime) |
+| `content_type(:json)`, `content_type("text/plain", charset: "x")`, `mime_type` | `content_type(app, :json)`, `content_type(app, t, Hash.of(charset: "x"))` | same (a table of 22 common types for Rack::Mime) |
 | `error(code, body)`, `not_found(body)` (helpers) | `error(app, code, body)`, `not_found(app, body)` without a block | same |
 | `error(*codes) { }`, `error(400..499)`, `error { \|e\| }`, `not_found { }` | `error(app, *codes) { \|e\| }`, `not_found(app) { }` | same order and fallback; `e` is nil for a status without an exception (as Ruby) |
 | `error MyError do ... end` | — | missing: a class is not a value in Sake; write `error(app) { \|e\| case e in MyError ... }` (server errors) |
 | `set :x, v`, `enable`, `disable`, `settings.x`, `configure(:env) { }` | `set(app, :x, v)`, `enable(app, ...)`, `settings(app)`, `configure(app, :production) { }` | Sinatra's own options are typed fields of `Sinatra::Settings` (`Sinatra::Settings.views(settings(app))`); any other name is `settings(app)[:x]` |
 | `set :x, proc { }` (lazy settings), `set` with a Hash merging | — | missing (a stored block); `views`/`public_folder` follow `root` as Ruby's procs do |
 | `development?`, `production?`, `test?` | same, `app` first | same (`APP_ENV`/`RACK_ENV`, default development) |
-| `erb :name`, `erb "src"`, `locals:`, `layout: false / :name`, `views:` | `erb(app, :name, Hash[locals: Hash[...], layout: false])` | same output (Tilt's Erubi trimming, via `erubi.sake`); template code within Sake's ERB subset (`notes/erb.md`); locals only, no `@ivars`/helpers inside templates except `h`/`u` |
+| `erb :name`, `erb "src"`, `locals:`, `layout: false / :name`, `views:` | `erb(app, :name, Hash.of(locals: Hash.of(...), layout: false))` | same output (Tilt's Erubi trimming, via `erubi.sake`); template code within Sake's ERB subset (`notes/erb.md`); locals only, no `@ivars`/helpers inside templates except `h`/`u` |
 | `template :name do "src" end`, `layout do ... end` | `template(app, :name) { "src" }`, `layout(app) { }` | same (the block's String is kept) |
 | `enable :sessions`, `session[...]` | same | differs: cookie `rack.session` = Base64(JSON) + "--" + HMAC-SHA256 hex (Rack: encrypted Marshal); values are JSON values |
 | static files from `public_folder` | same (`send_file`: content-type, content-length, last-modified) | same; filters skipped as Ruby |
@@ -133,7 +133,7 @@ serves it.
 ## 書き心地 (what I wrote → the message → what I wrote instead)
 
 - **The app text survived.** The test app is 120 lines in both languages, line for line; the differences are
-  `app` as the first argument of every helper, `Hash[...]` for `{...}`, and `Type.op` calls. `@user` in a before
+  `app` as the first argument of every helper, `Hash.of(...)` for `{...}`, and `Type.op` calls. `@user` in a before
   filter and a route works as Ruby's instance variable once declared (`attr_accessor user`).
 - `params(app)["splat"]` passed to `Array.join` → `Array.join: argument 1 must be Array, but can be nil | String
   | Hash@L200[String => nil | String | Array@L187[...` (a 600-character type; the params Hash comes from

@@ -62,9 +62,9 @@ None.
 - Two modules: `Observable` borrowed into the subject (its functions read the subject's fields),
   `Observer` as a dispatch module with a required function (`Observer.update`).
 - Splat into a user function's `*rest` (`Observer.update(obs, *args)`): fine, since 2026-10-05.
-- `@observer_peers || (@observer_peers = Array[])` for Ruby's lazy `||=` on a field that may be nil.
+- `@observer_peers || (@observer_peers = Any[])` for Ruby's lazy `||=` on a field that may be nil.
 
 ## Types
 
-- `Ticker.observer_peers: nil | Array[Bell | Recorder | Warner]`, `Ticker.observer_state: true|false | nil`;
+- `Ticker.observer_peers: nil | Any[Bell | Recorder | Warner]`, `Ticker.observer_state: true|false | nil`;
   `--types` reports all checks proven.

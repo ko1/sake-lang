@@ -94,7 +94,7 @@ Logger.new("app", lvl: :warn)        # !> Logger has no field `lvl`
 
 ### initialize
 
-`def initialize(c)` in a class runs **after** `C.new` has stored the fields, with the new instance. As in Ruby, it is the place for first values (`@items = Array[]`), checks (`@port => Integer`), and conversions (`@celsius = Float(@celsius)`). `@level = :info if @level == nil` keeps a value that `new` gave.
+`def initialize(c)` in a class runs **after** `C.new` has stored the fields, with the new instance. As in Ruby, it is the place for first values (`@items = Any[]`), checks (`@port => Integer`), and conversions (`@celsius = Float(@celsius)`). `@level = :info if @level == nil` keeps a value that `new` gave.
 
 - It takes exactly that one parameter, the new instance. Two or more is a static error.
 - Calling `C.initialize` directly is a static error; `C.new` calls it.
@@ -137,11 +137,11 @@ end
 
 ### No default values
 
-`attr_reader items = Array[]` is a static error. A field's first value is set in `initialize`: it is the one place that runs for each new instance, and it can read the other fields (`@len = String.bytesize(@src)`). The checker follows the fields through initialize, so a field that initialize always sets is not nil afterwards.
+`attr_reader items = Any[]` is a static error. A field's first value is set in `initialize`: it is the one place that runs for each new instance, and it can read the other fields (`@len = String.bytesize(@src)`). The checker follows the fields through initialize, so a field that initialize always sets is not nil afterwards.
 
 ```ruby error
 class Bag
-  attr_reader items = Array[]        # !> a field has no default value; set it in initialize, which runs after Bag.new
+  attr_reader items = Any[]        # !> a field has no default value; set it in initialize, which runs after Bag.new
 end
 ```
 
@@ -149,7 +149,7 @@ end
 class Bag
   attr_reader items
   def initialize(b)
-    @items = Array[] if @items == nil
+    @items = Any[] if @items == nil
   end
   def add(b, x) = Array.push(@items, x)
 end
@@ -188,9 +188,9 @@ class Heap
   def push(h, x) = Array.push(@items, x)
   def top(h) = Array.first(@items)
 end
-ints = Heap.new(Array[])
+ints = Heap.new(Any[])
 Heap.push(ints, 3)
-words = Heap.new(Array[])
+words = Heap.new(Any[])
 Heap.push(words, "job")
 p(Heap.top(ints) + 1)                # => 4
 p(String.upcase(Heap.top(words)))    # => "JOB"
@@ -407,7 +407,7 @@ Point = Data.define(:x, :y)          # !> Sake's named types are mutable, so the
 
 ```ruby
 Point = Struct.new(:x, :y)
-a = Point.new(1, Array[2])
+a = Point.new(1, Any[2])
 b = Kernel.dup(a)
 Point.set_x(b, 9)
 Array.push(Point.y(b), 3)

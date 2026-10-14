@@ -363,6 +363,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Hash.new([Any])`
 - `Hash[*Any]`
 - `Hash.none?(x) { }`
+- `Hash.of(*Any)`
 - `Hash.one?(x) { }`
 - `Hash.partition(x) { }`
 - `Hash.rassoc(x, Any)`
@@ -508,6 +509,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.gets()`
 - `Kernel.inspect(Any)`
 - `Kernel.loop() { }`
+- `Kernel[*Any]`
 - `Kernel.once() { }`
 - `Kernel.p(*Any)`
 - `Kernel.pp(Any)`
@@ -806,8 +808,10 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Set.min_by(x) { }`
 - `Set.minmax(x)`
 - `Set.minmax_by(x) { }`
+- `Set.new([Array])`
 - `Set[*Any]`
 - `Set.none?(x) { }`
+- `Set.of(*Any)`
 - `Set.one?(x) { }`
 - `Set.partition(x) { }`
 - `Set.proper_subset?(x, Set)`

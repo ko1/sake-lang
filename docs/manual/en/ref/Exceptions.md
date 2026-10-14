@@ -58,7 +58,7 @@ An argument's value is not acceptable. Raised by: `Integer`, `Float` and `Ration
 
 ```ruby
 begin
-  Array.sort(Array[1.0, Float.NAN])
+  Array.sort(Any[1.0, Float.NAN])
 rescue ArgumentError => e
   puts(Exception.message(e))       # => cannot compare elements of types Float
 end
@@ -75,18 +75,18 @@ end
 ```
 
 ```ruby error
-Array.sort(Array[1, "a"])          # !> Array.sort: elements compared in order may be (Integer, String), which cannot be compared [type]
+Array.sort(Any[1, "a"])          # !> Array.sort: elements compared in order may be (Integer, String), which cannot be compared [type]
 ```
 
 ## TypeError
 
 `TypeError.new(message)`
 
-A value of the wrong type: an operation given an argument of another type, an operator the left operand's type does not support, a write of another type into a typed Array (`Integer[]`, ...), multiple assignment from a value that is neither a Tuple nor an Array, an in-place change of a frozen String (a Hash key, a Set element, a Symbol's name, an element of `ARGV`: `cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`), `Exception.message` given a value that is not an exception. A Ruby `TypeError` or `NoMethodError` inside an operation is this type too, where the checker could not see the element types: `Array.pack(Array["a"], "C")` (`no implicit conversion of String into Integer`), `Range.first(1.0..2.0, 2)` (`can't iterate from Float`), `ENV.replace` with a non-String key or value under `--strict=0` (`keys and values must be String, got String => Integer`). The checks before running stop most of these statically; at run time only the places the checker let through reach it.
+A value of the wrong type: an operation given an argument of another type, an operator the left operand's type does not support, a write of another type into a typed Array (`Integer[]`, ...), multiple assignment from a value that is neither a Tuple nor an Array, an in-place change of a frozen String (a Hash key, a Set element, a Symbol's name, an element of `ARGV`: `cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`), `Exception.message` given a value that is not an exception. A Ruby `TypeError` or `NoMethodError` inside an operation is this type too, where the checker could not see the element types: `Array.pack(Any["a"], "C")` (`no implicit conversion of String into Integer`), `Range.first(1.0..2.0, 2)` (`can't iterate from Float`), `ENV.replace` with a non-String key or value under `--strict=0` (`keys and values must be String, got String => Integer`). The checks before running stop most of these statically; at run time only the places the checker let through reach it.
 
 ```ruby
 begin
-  Array.pack(Array["a"], "C")
+  Array.pack(Any["a"], "C")
 rescue TypeError => e
   puts(Exception.message(e))       # => no implicit conversion of String into Integer
 end
@@ -103,7 +103,7 @@ Array.push(Integer[], "a")         # !> Array.push: an element must be Integer, 
 A missing key: `Hash.fetch` (without a default and a block), `Hash.fetch_values`, `ENV.fetch`, a Record pattern naming a field the Record lacks. A missing key in `format`'s `%<name>` is an `ArgumentError`.
 
 ```ruby
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 begin
   Hash.fetch(h, "b")
 rescue KeyError => e
@@ -126,7 +126,7 @@ rescue IndexError => e
   puts(Exception.message(e))       # => index 5 is outside a Tuple of length 2
 end
 begin
-  Array.fetch(Array[3, 1], 9)
+  Array.fetch(Any[3, 1], 9)
 rescue IndexError => e
   puts(Exception.message(e))       # => index 9 outside of array bounds: -2...2
 end
@@ -225,7 +225,7 @@ A read at the end of the input. Ruby's `IO#readline` and the like raise it, but 
 ```ruby
 def next_token(xs) = Array.shift(xs) || raise(EOFError, "no more tokens")
 begin
-  next_token(Array[])
+  next_token(Any[])
 rescue EOFError => e
   puts(Exception.message(e))       # => no more tokens
 end

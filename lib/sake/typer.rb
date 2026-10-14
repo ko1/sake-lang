@@ -384,7 +384,7 @@ module Sake
     STRUCTURED = %w[Tuple Range].freeze
 
     # A container's site: the place that makes it, per instantiation of the function around it (the
-    # function's argument types), as a template is instantiated per type: `def index_by(rows) = Hash[]…`
+    # function's argument types), as a template is instantiated per type: `def index_by(rows) = Hash.new…`
     # called on Departments and on Employees makes two Hashes. When the instantiation's arguments already
     # hold (anywhere inside) a container made by this same function, or one made in the context of such a
     # container (recursion, or functions passing containers back and forth: f makes xs, g(xs) makes ys,
@@ -1205,7 +1205,7 @@ module Sake
       end
       mark_rewritten(args[0]) if ns == "Hash" && HASH_REWRITES.include?(fn.full_name)
       if name == CTOR
-        if ns == "Array"
+        if ns == "Kernel" # Any[...]
           # Every instantiation adds its element types (the site is made once, by the first).
           return site_for(node, init: u(*args)).tap { |ty| write_elems(ty, args, node, "") }
         end

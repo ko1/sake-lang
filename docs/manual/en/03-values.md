@@ -11,10 +11,10 @@ Sake's values look much like Ruby's, but every value carries one type tag, and e
 | nil | `nil` | see "nil" below |
 | Tuple | `[a, b, ...]` | length and positional types fixed at creation |
 | Record | `{x: a, y: b}` | set of (field, type) pairs fixed at creation |
-| Array | `Array[a, ...]` | no declared element type |
+| Array | `Any[a, ...]` | no declared element type |
 | Array of T | `T[a, ...]`, e.g. `Float[]`, `Point[p]` | element type T, checked on every write |
-| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | keys compare by value and type (Ruby's `eql?`) |
-| Set | `Set[1, 2]` | elements compare by value and type (Ruby's `eql?`) |
+| Hash | `Hash.of("a" => 1, b: 2)`, `Hash.new(0)` | keys compare by value and type (Ruby's `eql?`) |
+| Set | `Set.of(1, 2)` | elements compare by value and type (Ruby's `eql?`) |
 | Symbol | `:name` | |
 | Range | `1..5`, `1...5`, `1..` | ends are Integer, Float, String, or nil |
 | Regexp, MatchData | `/(\d+)-(\d+)/`, `/#{x}/`, `String.match(s, re)` | |
@@ -84,7 +84,7 @@ puts(Point.new(1, 2))          # !> Point.to_s must return a String, but returns
 
 ## Tuples, Records, and arrays
 
-The literals `[...]` and `{...}` have no operation with a type, so their **shape** fixes their type at creation: `[a, b]` is a Tuple and `{x: a, y: b}` is a Record. A growable collection is made by an operation with a type (`Array[...]`, `T[...]`, `Hash[...]`).
+The literals `[...]` and `{...}` have no operation with a type, so their **shape** fixes their type at creation: `[a, b]` is a Tuple and `{x: a, y: b}` is a Record. A growable collection is made by an operation with a type (`Any[...]`, `T[...]`, `Hash.of(...)`).
 
 ### What a literal is
 
@@ -94,7 +94,7 @@ The literals `[...]` and `{...}` have no operation with a type, so their **shape
 
 ```ruby error
 xs = []
-Array.push(xs, 1)              # !> `[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`
+Array.push(xs, 1)              # !> `[...]` is a Tuple with a fixed length; for a growable Array, write `Any[...]`
 ```
 
 ```ruby error
@@ -121,17 +121,17 @@ p(Tuple.max([3, 9, 4]))        # => 9
 - **An element that may be missing.** A variable that may get one has the type `nil | T`, as `x[k]` does (the `index-nil` item, level 3).
 - **Targets.** Elements and fields may be targets too: `a[i], a[j] = a[j], a[i]` swaps, and `@done, @rest = Array.partition(xs) { ... }` assigns to fields. Their receivers and indexes are evaluated first, then the right side.
 - **The rest.** `first, *rest = xs` puts the remaining elements in a new Array. `a, *mid, z = xs` does the same, and `x, * = xs` drops them. Only a local variable takes the rest.
-- **A splat inside `[...]`.** A Tuple's length must be known, so `[*xs, 1]` is rejected. `Array[*xs, 1]` makes an Array.
+- **A splat inside `[...]`.** A Tuple's length must be known, so `[*xs, 1]` is rejected. `Any[*xs, 1]` makes an Array.
 - **Indexing.** `t[0]` reads a position and `t[0] = v` replaces it with a value of the same type.
 - **Operations.** `Tuple.size` and `Tuple.length` give the number of elements. `Tuple.max([a, b])` is Ruby's `[a, b].max`; the length is known, so the result is never nil.
 
 ```ruby
-first, *rest = Array[1, 2, 3]
+first, *rest = Any[1, 2, 3]
 p(first)                       # => 1
 p(rest)                        # => [2, 3]
 key, value = String.split("a=1", "=")
 p(value)                       # => "1"
-a = Array[1, 2]
+a = Any[1, 2]
 a[0], a[1] = a[1], a[0]
 p(a)                           # => [2, 1]
 ```
@@ -145,7 +145,7 @@ The literal `{x: a, y: b}` is a Record: a small fixed group of values read by fi
 - **Not a class value.** A Record is never a value of a class, even when the fields match: classes are nominal, and Record types are structural.
 - **Reading fields.** Take fields apart with a pattern, `r => {x:, y: name}`. This binds the local `x` to field `x` and the local `name` to field `y`. Listing only some of the fields is allowed. `Record.to_h(r)`, `Record.keys(r)`, and `Record.values(r)` exist too.
 - **A missing field.** It is reported before running at `type`. If it is reached while running, a missing field raises `KeyError`, and a value that is not a Record raises `TypeError`.
-- **Restrictions.** Field names are written as labels (`x:`). An empty `{}` and `{key => value}` are static errors (a Hash is `Hash[...]`).
+- **Restrictions.** Field names are written as labels (`x:`). An empty `{}` and `{key => value}` are static errors (a Hash is `Hash.of(...)`).
 
 ```ruby
 Point = Struct.new(:x, :y)
@@ -170,11 +170,11 @@ h = {"a" => 1}                 # !> `{"a" => ...}` is not a Hash in Sake: `{name
 
 ### Array
 
-`Array[a, ...]` creates an Array with no declared element type. Any value can be added to it. Arrays are mutable and shared by reference.
+`Any[a, ...]` creates an Array with no declared element type. Any value can be added to it. Arrays are mutable and shared by reference. `Any` is the prelude's name for Kernel (`Any = Kernel`): every type includes Kernel, so its Array takes every value. `Array[...]` is not this Array: like `T[...]` for every T below, it is an Array of Arrays.
 
 ### Array of T
 
-`T[a, ...]` creates an Array whose element type is T. T is a built-in type (`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`), a class, or a module. A module's Array `M[...]` holds values of the types that include M, so a mixin function `M.f(x)` runs on each element.
+`T[a, ...]` creates an Array whose element type is T, for every T. T is a built-in type (`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`, and `Array`, `Hash`, `Set`, whose `[...]` makes an Array of Arrays, of Hashes, of Sets), a class, or a module. A Hash itself is made with `Hash.of(k => v)` or `Hash.new`, a Set with `Set.of(a, b)` or `Set.new(xs)`. A module's Array `M[...]` holds values of the types that include M, so a mixin function `M.f(x)` runs on each element.
 
 - **Write checks.** Every write is checked: creation, `Array.push`, `Array.append`, and `Array.concat`. A mismatch raises `TypeError`. There is no implicit conversion, so an Integer cannot go into `Float[]`.
 - **Static check.** If a literal argument of `T[...]` has another type, the error is reported before running. This catches `Point[1, 2]`, Ruby's spelling of `Point.new(1, 2)`.
@@ -219,11 +219,11 @@ p(Array.map(shapes) { |s| Shape.area(s) })   # => [4, 6]
 
 ### Ruby habits
 
-- **`[]` where an Array is expected.** A Tuple or Record passed where an Array is expected, such as `result = []` followed by `Array.push(result, x)`, fails with a hint to write `Array[]` (the example above).
+- **`[]` where an Array is expected.** A Tuple or Record passed where an Array is expected, such as `result = []` followed by `Array.push(result, x)`, fails with a hint to write `Any[]` (the example above).
 - **In-place operations that change the element type.** The checker gives a container one element type for the whole program. So after `Array.map!(xs) { |x| Integer.to_s(x) }` or `Hash.transform_keys!(h) { ... }` it takes the container to hold both the old and the new type, and reports operations that fit only one of them as `type` (partial). Use the in-place forms for a mapping within one type, and `Array.map` / `Hash.transform_keys` (a new container) to change it.
 
 ```ruby error
-xs = Array[1, 2]
+xs = Any[1, 2]
 Array.map!(xs) { |x| Integer.to_s(x) }
 p(Array.sum(xs))               # !> Array.sum: an element must be Integer|Float|Rational|Complex, but can be String [type]
 ```
@@ -234,10 +234,10 @@ A Hash and a Set are growable collections that find a key or an element by its v
 
 ### Constructors
 
-`Hash[k => v, ...]`, `Hash[]`, and `Hash.new(default)` create a Hash; `Set[x, ...]` creates a Set. The keys of `Hash[name: v]` are Symbols.
+`Hash.of(k => v, ...)`, `Hash.new`, and `Hash.new(default)` create a Hash; `Set.of(x, ...)` creates a Set. The keys of `Hash.of(name: v)` are Symbols.
 
 ```ruby
-h = Hash["a" => 1, b: 2]
+h = Hash.of("a" => 1, b: 2)
 p(h)                           # => {"a" => 1, b: 2}
 counts = Hash.new(0)
 Array.each(String.split("the cat the", " ")) { |w| counts[w] += 1 }
@@ -251,8 +251,8 @@ Hash.each(counts) { |k, v| puts("#{k}: #{v}") }   # => the: 2
 Hash keys and Set elements compare as Ruby's `eql?` does: by value, with the type included. `1` and `1.0` are different keys, while `1 == 1.0` is true.
 
 ```ruby
-p(Hash[1 => "a"][1.0])         # => nil
-p(Set[1, 1.0])                 # => Set[1, 1.0]
+p(Hash.of(1 => "a")[1.0])         # => nil
+p(Set.of(1, 1.0))                 # => Set[1, 1.0]
 p(1 == 1.0)                    # => true
 ```
 
@@ -262,12 +262,12 @@ p(1 == 1.0)                    # => true
 - **Keys are copied.** A Tuple or Record key is copied when it is stored, so a later write to the original does not change the key.
 
 ```ruby error
-h = Hash[/a/ => 1]             # !> Regexp cannot be a Hash key or Set element
+h = Hash.of(/a/ => 1)             # !> Regexp cannot be a Hash key or Set element
 ```
 
 ```ruby
 k = [1, 2]
-h = Hash[k => "a"]
+h = Hash.of(k => "a")
 k[0] = 9
 p(Hash.keys(h))                # => [[1, 2]]
 ```
@@ -277,7 +277,7 @@ p(Hash.keys(h))                # => [[1, 2]]
 `Hash.new(default)` gives `default` for a missing key, as in Ruby, and the same object is shared, as in Ruby. The block form `Hash.new { ... }` is not available, because blocks are not values.
 
 ```ruby
-h = Hash.new(Array[])
+h = Hash.new(Any[])
 Array.push(h[:a], 1)
 p(h[:b])                       # => [1]
 ```
@@ -300,7 +300,7 @@ h = Hash.new { |hh, k| 0 }     # !> Hash.new does not take a block
 An operation that receives `nil` where it needs T raises `TypeError ... got nil`. The interpreter then runs the static analysis, on the error path only, and adds hints naming the fields that may hold `nil` and the lines that store it.
 
 ```ruby error
-h = Hash["a" => "x"]
+h = Hash.of("a" => "x")
 puts(String.upcase(h["b"]))    # !> TypeError: String.upcase: argument 1 must be String, got nil
 ```
 
@@ -319,7 +319,7 @@ The static analysis narrows a **local variable** in the following places.
 
 ```ruby
 def find_even(xs) = Array.find(xs) { |x| x % 2 == 0 }
-x = find_even(Array[1, 4])
+x = find_even(Any[1, 4])
 if x
   p(x + 1)                     # => 5
 end
@@ -329,8 +329,8 @@ def twice(xs)
   return 0 unless x
   x * 2
 end
-p(twice(Array[1, 4]))          # => 8
-p(twice(Array[1, 3]))          # => 0
+p(twice(Any[1, 4]))          # => 8
+p(twice(Any[1, 3]))          # => 0
 ```
 
 A field read from a local variable (`Node.next(n)`, or `@next` in a function of the class) is narrowed too. But an operation that may change the field, between the test and the use, ends the narrowing there, because fields are mutable and another name may change them. Those operations are a field write, a call of a user function, a call that passes a block and `yield`, and an assignment to the variable. Inside a block, a field narrowed outside it is not narrowed.

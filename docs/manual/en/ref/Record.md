@@ -1,6 +1,6 @@
 # Record
 
-A Record is a set of (field name, value) pairs, made by the literal `{x: 1, y: "a"}` ([Values and types](../03-values.md)). In Ruby that spelling is a Hash; in Sake it is a **Record, not a Hash**. A Hash is made by `Hash[x: 1]` ([Hash](Hash.md)). `{}` (empty) and `{"a" => 1}` (the `=>` form) are rejected statically.
+A Record is a set of (field name, value) pairs, made by the literal `{x: 1, y: "a"}` ([Values and types](../03-values.md)). In Ruby that spelling is a Hash; in Sake it is a **Record, not a Hash**. A Hash is made by `Hash.of(x: 1)` ([Hash](Hash.md)). `{}` (empty) and `{"a" => 1}` (the `=>` form) are rejected statically.
 
 A Record's type is its set of (field, type) pairs, written `{x: Integer, y: String}`. Records with the same set have the same type. Field order is not part of the type: `{y: 2, x: 1}` prints as `{x: 1, y: 2}`. A Record is never a value of a class (classes are told apart by name, Record types by structure; see [Structs](../07-classes.md)).
 
@@ -23,7 +23,7 @@ p(Record.keys({y: 2, x: 1}))       # => [:x, :y]
 ```
 
 ```ruby error
-p(Record.keys(Hash[x: 1]))         # !> TypeError: Record.keys: argument 1 must be a Record, got Hash
+p(Record.keys(Hash.of(x: 1)))         # !> TypeError: Record.keys: argument 1 must be a Record, got Hash
 ```
 
 ## values

@@ -214,16 +214,16 @@ p(/a/ == "a")                  # => false
 
 `Regexp.union(*String|Regexp|Array)`
 
-A Regexp that matches any of the arguments: Strings are escaped, Regexps keep their flags, and all are joined with `|`. With no arguments it is `/(?!)/`, which matches nothing. The patterns are listed one by one, or, as Ruby allows, given as **one** Array of Strings and Regexps (`Regexp.union(Array["a", "b"])`); an Array among other arguments, or an element that is neither a String nor a Regexp, is a `TypeError` at run time.
+A Regexp that matches any of the arguments: Strings are escaped, Regexps keep their flags, and all are joined with `|`. With no arguments it is `/(?!)/`, which matches nothing. The patterns are listed one by one, or, as Ruby allows, given as **one** Array of Strings and Regexps (`Regexp.union(Any["a", "b"])`); an Array among other arguments, or an element that is neither a String nor a Regexp, is a `TypeError` at run time.
 
 ```ruby
 p(Regexp.union("a.b", /c/i))                              # => /a\.b|(?i-mx:c)/
 p(Regexp.match?(Regexp.union("cat", "dog"), "hotdog"))    # => true
 p(Regexp.union())                                         # => /(?!)/
-p(Regexp.union(Array["a", "b"]))                          # => /a|b/
-p(Regexp.union(Array["a.b", /c/]))                        # => /a\.b|(?-mix:c)/
+p(Regexp.union(Any["a", "b"]))                          # => /a|b/
+p(Regexp.union(Any["a.b", /c/]))                        # => /a\.b|(?-mix:c)/
 ```
 
 ```ruby error
-p(Regexp.union("a", Array["b"]))    # !> TypeError: Regexp.union: no implicit conversion of Array into String
+p(Regexp.union("a", Any["b"]))    # !> TypeError: Regexp.union: no implicit conversion of Array into String
 ```

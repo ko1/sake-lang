@@ -71,7 +71,7 @@ Some things Ruby requires are built-in operations in Sake. `require "tmpdir"` is
 |---|---|
 | `tmpdir` | `Dir.mktmpdir`, `Dir.tmpdir` (the latter added by tempfile) |
 | `open3` | `Open3.capture2`, `capture2e`, `capture3`, `Kernel.system` |
-| `set` | `Set[...]`, `Set.add`, ... ([Values and types](03-values.md)) |
+| `set` | `Set.of(...)`, `Set.add`, ... ([Values and types](03-values.md)) |
 | `socket` | `TCPServer`, `Socket` (TCP only) |
 
 ### Small libraries after gems
@@ -126,7 +126,7 @@ require "minitest"
 suite = Minitest.suite("strings")
 Minitest.test(suite, "upcase and split") do |t|
   Minitest.assert_equal(t, "ABC", String.upcase("abc"))
-  Minitest.assert_equal(t, Array["a", "b"], String.split("a,b", ","))
+  Minitest.assert_equal(t, Any["a", "b"], String.split("a,b", ","))
   Minitest.assert(t, String.empty?(""))
 end
 Minitest.run(suite)      # prints the report; exits with 1 when a test failed

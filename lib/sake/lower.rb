@@ -383,7 +383,7 @@ module Sake
       fixed = xs.take(fn.positional)
       pad = Array.new(fn.positional - fixed.size) { Missing.new(origin: nil) }
       # `*rest`: the positional arguments after the fixed ones, as a new Array
-      rest = fn.rest_param ? [CallBuiltin.new(fn: @program.registry.lookup("Array", CTOR), args: xs.drop(fn.positional), block: nil, origin: n)] : []
+      rest = fn.rest_param ? [CallBuiltin.new(fn: @program.registry.lookup("Kernel", CTOR), args: xs.drop(fn.positional), block: nil, origin: n)] : []
       # `**opts`: the keywords that are not parameters, as a Hash of Symbol keys
       extra = given.keys - names
       pairs = ->(ks) { MakePairs.new(keys: ks.map { lit(_1.to_sym, n) }, values: ks.map { vals[_1] }, origin: n) }
@@ -396,7 +396,7 @@ module Sake
       opts = if splat
                fn.kwrest_param ? [others] : []
              elsif fn.kwrest_param
-               [CallBuiltin.new(fn: @program.registry.lookup("Hash", CTOR), block: nil, origin: kw || n, args: [pairs.(extra)])]
+               [CallBuiltin.new(fn: @program.registry.lookup("Hash", "of"), block: nil, origin: kw || n, args: [pairs.(extra)])]
              else
                []
              end

@@ -58,7 +58,7 @@ end
 
 ```ruby
 begin
-  Array.sort(Array[1.0, Float.NAN])
+  Array.sort(Any[1.0, Float.NAN])
 rescue ArgumentError => e
   puts(Exception.message(e))       # => cannot compare elements of types Float
 end
@@ -75,18 +75,18 @@ end
 ```
 
 ```ruby error
-Array.sort(Array[1, "a"])          # !> Array.sort: elements compared in order may be (Integer, String), which cannot be compared [type]
+Array.sort(Any[1, "a"])          # !> Array.sort: elements compared in order may be (Integer, String), which cannot be compared [type]
 ```
 
 ## TypeError
 
 `TypeError.new(message)`
 
-値の型が合わないとき: 操作が受け取った引数が違う型、左のオペランドの型が支えない演算子、型付き Array（`Integer[]` など）への違う型の書き込み、Tuple でも Array でもない値からの多重代入、凍結された String（Hash のキー、Set の要素、Symbol の名前、`ARGV` の要素）のその場での変更（`cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`）、`Exception.message` に例外でない値。検査器が要素の型を見られなかった場所で操作の中の Ruby が `TypeError` や `NoMethodError` を出したときもこの型です: `Array.pack(Array["a"], "C")`（`no implicit conversion of String into Integer`）、`Range.first(1.0..2.0, 2)`（`can't iterate from Float`）、`--strict=0` で String でないキーや値を渡した `ENV.replace`（`keys and values must be String, got String => Integer`）。これらの大半は実行前の検査が静的に止めるので、実行時に届くのは検査が通した場所だけです。
+値の型が合わないとき: 操作が受け取った引数が違う型、左のオペランドの型が支えない演算子、型付き Array（`Integer[]` など）への違う型の書き込み、Tuple でも Array でもない値からの多重代入、凍結された String（Hash のキー、Set の要素、Symbol の名前、`ARGV` の要素）のその場での変更（`cannot change this String in place: it is a Hash key, a Set element, a Symbol's name, or a program argument`）、`Exception.message` に例外でない値。検査器が要素の型を見られなかった場所で操作の中の Ruby が `TypeError` や `NoMethodError` を出したときもこの型です: `Array.pack(Any["a"], "C")`（`no implicit conversion of String into Integer`）、`Range.first(1.0..2.0, 2)`（`can't iterate from Float`）、`--strict=0` で String でないキーや値を渡した `ENV.replace`（`keys and values must be String, got String => Integer`）。これらの大半は実行前の検査が静的に止めるので、実行時に届くのは検査が通した場所だけです。
 
 ```ruby
 begin
-  Array.pack(Array["a"], "C")
+  Array.pack(Any["a"], "C")
 rescue TypeError => e
   puts(Exception.message(e))       # => no implicit conversion of String into Integer
 end
@@ -103,7 +103,7 @@ Array.push(Integer[], "a")         # !> Array.push: an element must be Integer, 
 無いキー: `Hash.fetch`（既定値もブロックも無いとき）、`Hash.fetch_values`、`ENV.fetch`、無いフィールドを名乗る Record パターン。`format` の `%<name>` の無いキーは `ArgumentError` です。
 
 ```ruby
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 begin
   Hash.fetch(h, "b")
 rescue KeyError => e
@@ -126,7 +126,7 @@ rescue IndexError => e
   puts(Exception.message(e))       # => index 5 is outside a Tuple of length 2
 end
 begin
-  Array.fetch(Array[3, 1], 9)
+  Array.fetch(Any[3, 1], 9)
 rescue IndexError => e
   puts(Exception.message(e))       # => index 9 outside of array bounds: -2...2
 end
@@ -225,7 +225,7 @@ end
 ```ruby
 def next_token(xs) = Array.shift(xs) || raise(EOFError, "no more tokens")
 begin
-  next_token(Array[])
+  next_token(Any[])
 rescue EOFError => e
   puts(Exception.message(e))       # => no more tokens
 end

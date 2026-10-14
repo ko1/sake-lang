@@ -36,7 +36,7 @@ Dir.children("nope")                # !> IOError: Dir.children: No such file or 
 Dir.mkdir("d2")
 File.write("d2/x", "")
 File.write("d2/y", "")
-names = Array[]
+names = Any[]
 r = Dir.each_child("d2") { |n| Array.push(names, n) }
 p(Array.sort(names))                # => ["x", "y"]
 p(r)                                # => nil
@@ -56,7 +56,7 @@ Dir.mkdir("d3/sub")
 File.write("d3/sub/c.txt", "")
 p(Dir.glob("d3/*.rb"))              # => ["d3/b.rb"]
 p(Dir.glob("d3/**/*.txt"))          # => ["d3/a.txt", "d3/sub/c.txt"]
-p(Dir.glob(Array["d3/*.txt", "d3/*.rb"]))   # => ["d3/a.txt", "d3/b.rb"]
+p(Dir.glob(Any["d3/*.txt", "d3/*.rb"]))   # => ["d3/a.txt", "d3/b.rb"]
 p(Dir.glob("*", base: "d3"))        # => ["a.txt", "b.rb", "sub"]
 p(Dir.glob("nope/*"))               # => []
 ```

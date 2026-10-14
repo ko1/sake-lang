@@ -67,7 +67,7 @@ expiry) in Sake and the same server in Ruby; both print 136 identical lines.
   else wrongtype end`, the real server's `WRONGTYPE` reply.
 - `_read_reply` returns `String | Integer | nil | Array`; the typed wrappers narrow with `v => String | nil` etc.
   Writing `String.upcase(Redis.call(r, "GET", "k"))` is rightly refused under `--strict` (`argument 1 must be
-  String, but can be Integer | nil | Array[...]`, verified) while `String.upcase(Redis.get(r, "k") || "")` passes: the API's promise ("get gives a String or nil") is now
+  String, but can be Integer | nil | Any[...]`, verified) while `String.upcase(Redis.get(r, "k") || "")` passes: the API's promise ("get gives a String or nil") is now
   checked where the gem documents it in a comment.
 - `kind = String.[](line, 0) || ""` and `rest = String.[](line, 1, String.length(line) - 1) || ""`: slices are
   `String | nil` and `--strict` wants the `|| ""`; the gem's `line[0]`/`line[1..]` carry the same nil unchecked.

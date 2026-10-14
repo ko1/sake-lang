@@ -35,7 +35,7 @@ children that pass the test, as XPath's. It selects elements only (no `@attr` or
   `parent` field, so Struct's own `==` (all fields) would recurse through the cycle; the type defines
   `==`. Sake has no identity comparison, so the XPath code never asks "is this the same element": it
   counts positions while walking the tree.
-- `Element#attributes` is a plain `Hash[String => String]`: REXML's `Attributes` gives the same `[]` and
+- `Element#attributes` is a plain `Hash.of(String => String)`: REXML's `Attributes` gives the same `[]` and
   `each`, which is how it is used.
 - Error messages are this port's own (REXML's carry the parser's position and unconsumed text); the
   test prints only that the exception was raised, for 9 malformed documents (all of which REXML rejects
@@ -63,11 +63,11 @@ children that pass the test, as XPath's. It selects elements only (no `@attr` or
 - `initialize` for parsing: `REXML::Document.new(str)` parses in `initialize` into
   `private attr_reader node = REXML::Element.new("")` (an expression default: a fresh container per
   document). Helped: the call reads as Ruby's.
-- `T.new` keywords: `REXML::Element.new(name, attrs, parent: cur)`; defaults `attributes = Hash[]`,
-  `children = Array[]`, `parent = nil`.
+- `T.new` keywords: `REXML::Element.new(name, attrs, parent: cur)`; defaults `attributes = Hash.new`,
+  `children = Any[]`, `parent = nil`.
 - `x => T` where REXML raises: `@name => String`, `add_attribute`'s `k => String`, `v => String`.
 - Optional positional parameters: `text(el, path = nil)`, `each(es, path = "*")`,
-  `add_element(el, name, attrs = Hash[])`, as REXML's.
+  `add_element(el, name, attrs = Hash.new)`, as REXML's.
 - `once` for the entity table; `include Indexable` with `def [](el, k)` taking a String (attribute) or an
   Integer (child), narrowed by `case k in String / in Integer`.
 - `*rest`, `**opts`, `block_given?`, `&b`: not needed.
@@ -80,7 +80,7 @@ children that pass the test, as XPath's. It selects elements only (no `@attr` or
 
 ## Types (`--types`)
 
-- `REXML::Element.children`: `Array[REXML::CData | REXML::Comment | REXML::Element | REXML::Instruction |
+- `REXML::Element.children`: `Any[REXML::CData | REXML::Comment | REXML::Element | REXML::Instruction |
   REXML::Text | REXML::XMLDecl]`: a mixed node list, as REXML's; readers narrow with `in`.
 - `REXML::Element.parent`: `nil | REXML::Element` (a detached element or the document's container has none).
 - `REXML::XMLDecl.encoding`: `nil | String` (optional in the declaration).

@@ -52,7 +52,7 @@ includes TSort is fine.
 | `obj.tsort_each { }` | `T.tsort_each(obj) { }` | same |
 | `obj.strongly_connected_components` | `T.strongly_connected_components(obj)` | same |
 | `obj.each_strongly_connected_component { }` | `T.each_strongly_connected_component(obj) { }` | same |
-| `obj.each_strongly_connected_component_from(n, id_map = {}, stack = []) { }` | `T.each_strongly_connected_component_from(obj, n, id_map = Hash[], stack = Array[]) { }` | same (returns the minimum id as Ruby) |
+| `obj.each_strongly_connected_component_from(n, id_map = {}, stack = []) { }` | `T.each_strongly_connected_component_from(obj, n, id_map = Hash.new, stack = Any[]) { }` | same (returns the minimum id as Ruby) |
 | `obj.tsort_each`, `obj.each_strongly_connected_component` (no block → Enumerator) | `T.tsort_each(obj)`, `T.each_strongly_connected_component(obj)` | same as the Enumerator's `to_a`: an Array, as the built-in blockless `each_slice` (2026-10-05) |
 | `TSort::Cyclic` | `TSort::Cyclic` | same (nested since 2026-10-10; was `TSortCyclic`). Inside `def tsort` it is spelled in full (a bare `Cyclic` in a mixin body resolved at the include site until a fix on 2026-10-10; either form works now) |
 | `TSort.tsort(each_node, each_child)` and the other module functions on callables | `TSort.tsort_hash(h)`, `strongly_connected_components_hash`, `tsort_each_hash`, `each_strongly_connected_component_hash` | differs: a Hash graph instead of two callables |
@@ -99,7 +99,7 @@ None for the algorithm. Language-level: first-class blocks (Ruby's callable form
 
 ## Phase 2
 
-- `each_strongly_connected_component_from(g, node, id_map = Hash[], stack = Array[])` as in Ruby
+- `each_strongly_connected_component_from(g, node, id_map = Hash.new, stack = Any[])` as in Ruby
   (phase 1 had no id_map/stack). The test calls it twice with a shared `id_map`/`stack` and prints them.
 - The recursion collects components into an Array instead of chaining a yield block through every
   level (see "When components are yielded").

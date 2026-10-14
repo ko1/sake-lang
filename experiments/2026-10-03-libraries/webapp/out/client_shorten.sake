@@ -67,7 +67,7 @@ end
 module Html
   module_function
 
-  def escapes = once { Hash["&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;"] }
+  def escapes = once { Hash.of("&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&quot;", "'" => "&#39;") }
   def escape(x) = String.gsub("#{x}", /[&<>"']/, escapes)
 
   def raw(s) = SafeHtml.new(s)
@@ -102,7 +102,7 @@ module Html
   end
 
   def page(title, body)
-    render(<<~HTML, Hash["title" => title, "body" => body])
+    render(<<~HTML, Hash.of("title" => title, "body" => body))
       <!doctype html>
       <html><head><meta charset="utf-8"><title>{{title}}</title></head>
       <body>
@@ -148,11 +148,11 @@ end
 module Tsv
   module_function
 
-  def esc(s) = String.gsub(s, /[\t\n\\]/, Hash["\t" => "\\t", "\n" => "\\n", "\\" => "\\\\"])
-  def unesc(s) = String.gsub(s, /\\(.)/m) { |m| Hash.fetch(Hash["t" => "\t", "n" => "\n"], m[1], m[1]) }
+  def esc(s) = String.gsub(s, /[\t\n\\]/, Hash.of("\t" => "\\t", "\n" => "\\n", "\\" => "\\\\"))
+  def unesc(s) = String.gsub(s, /\\(.)/m) { |m| Hash.fetch(Hash.of("t" => "\t", "n" => "\n"), m[1], m[1]) }
 
   def load(path)
-    rows = Array[]
+    rows = Any[]
     return rows unless File.exist?(path)
     Array.each(File.readlines(path)) do |line|
       line = String.chomp(line)
@@ -238,7 +238,7 @@ module Web
 
   # "a=1&b=2" (or "a=1; b=2" for cookies) to a Hash of decoded Strings.
   def parse_pairs(s, sep)
-    h = Hash[]
+    h = Hash.new
     Array.each(String.split(s, sep)) do |pair|
       pair = String.strip(pair)
       next if String.empty?(pair)
@@ -256,7 +256,7 @@ module Web
     verb, target, version = String.split(String.chomp(line), " ")
     raise HttpError.new("bad request line", 400) unless verb && target && version
     path, q, query = String.partition(target, "?")
-    headers = Hash[]
+    headers = Hash.new
     while true
       l = gets
       break unless l
@@ -274,10 +274,10 @@ module Web
       body = body + l
     end
     ctype = headers["content-type"]
-    form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash[]
+    form = ctype && String.start_with?(ctype, "application/x-www-form-urlencoded") ? parse_pairs(body, "&") : Hash.new
     cookie = headers["cookie"]
-    cookies = cookie ? parse_pairs(cookie, ";") : Hash[]
-    Request.new(verb, path, parse_pairs(query, "&"), headers, cookies, form, body, Hash[])
+    cookies = cookie ? parse_pairs(cookie, ";") : Hash.new
+    Request.new(verb, path, parse_pairs(query, "&"), headers, cookies, form, body, Hash.new)
   end
 
   # ---- routing ----
@@ -287,7 +287,7 @@ module Web
     ps = String.split(pattern, "/")
     xs = String.split(path, "/")
     return nil unless Array.size(ps) == Array.size(xs)
-    params = Hash[]
+    params = Hash.new
     Array.each_with_index(ps) do |seg, i|
       x = Array.fetch(xs, i)
       if String.start_with?(seg, ":")
@@ -324,7 +324,7 @@ module Web
 
   def error_page(status, message)
     html(status, Html.page("#{status} #{status_text(status)}",
-      Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash["s" => status, "t" => status_text(status), "m" => message])))
+      Html.render("<h1>{{s}} {{t}}</h1><p>{{m}}</p>", Hash.of("s" => status, "t" => status_text(status), "m" => message))))
   end
 
   # The whole request cycle. The block gets (handler, request) for a matched route and gives a Response.
@@ -351,7 +351,7 @@ end
 class Link
   attr_reader code, url
   attr_accessor hits
-  def to_json(l) = Hash["code" => @code, "url" => @url, "hits" => @hits, "short" => "/s/#{@code}"]
+  def to_json(l) = Hash.of("code" => @code, "url" => @url, "hits" => @hits, "short" => "/s/#{@code}")
 end
 
 class Store
@@ -396,10 +396,10 @@ def my_codes(req) = String.split(Request.cookie(req, "mine") || "", ",")
 def home_page(links, mine, url, code, errors)
   rows = Html.each(Array.select(links) { Array.include?(mine, Link.code(it)) }) do |l|
     Html.render("<tr><td><a href=\"/s/{{c}}/info\">/s/{{c}}</a></td><td>{{u}}</td><td>{{h}}</td></tr>",
-      Hash["c" => Link.code(l), "u" => Link.url(l), "h" => Link.hits(l)])
+      Hash.of("c" => Link.code(l), "u" => Link.url(l), "h" => Link.hits(l)))
   end
-  errs = Html.each(errors) { |e| Html.render("<li>{{e}}</li>", Hash["e" => e]) }
-  Html.page("Shorten", Html.render(<<~HTML, Hash["rows" => rows, "errs" => errs, "url" => url, "code" => code, "total" => Array.size(links)]))
+  errs = Html.each(errors) { |e| Html.render("<li>{{e}}</li>", Hash.of("e" => e)) }
+  Html.page("Shorten", Html.render(<<~HTML, Hash.of("rows" => rows, "errs" => errs, "url" => url, "code" => code, "total" => Array.size(links))))
     <h1>Shorten a URL</h1>
     <ul class="errors">{{errs}}</ul>
     <form method="post" action="/links">
@@ -459,7 +459,7 @@ class Info
   def call(h, req)
     l = Store.find(@store, Store.links(@store), Request.param(req, "code", ""))
     Web.html(200, Html.page("/s/#{Link.code(l)}", Html.render("<h1>/s/{{c}}</h1><p>&rarr; <a href=\"{{u}}\">{{u}}</a></p><p>{{h}} hits</p><p><a href=\"/\">home</a></p>",
-      Hash["c" => Link.code(l), "u" => Link.url(l), "h" => Link.hits(l)])))
+      Hash.of("c" => Link.code(l), "u" => Link.url(l), "h" => Link.hits(l)))))
   end
 end
 
@@ -470,7 +470,7 @@ class ApiLinks
     links = Store.links(@store)
     min = Request.param(req, "min_hits")
     links = Array.select(links) { Link.hits(it) >= String.to_i(min) } if min
-    Web.json(200, Hash["count" => Array.size(links), "links" => Array.map(links) { Link.to_json(it) }])
+    Web.json(200, Hash.of("count" => Array.size(links), "links" => Array.map(links) { Link.to_json(it) }))
   end
 end
 

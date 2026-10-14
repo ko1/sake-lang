@@ -12,15 +12,15 @@ ext, Timestamp, errors; identical output).
 |---|---|---|
 | `MessagePack.pack(v)` / `dump` | `MessagePack.pack(v)` / `dump` | same |
 | `MessagePack.unpack(s)` / `load` | `MessagePack.unpack(s)` / `load` | same |
-| `MessagePack.unpack(s, symbolize_keys: true)` (also `freeze:`, `allow_unknown_ext:`) | `MessagePack.unpack(s, Hash[symbolize_keys: true])` | differs: options Hash (`freeze` is accepted and ignored) |
+| `MessagePack.unpack(s, symbolize_keys: true)` (also `freeze:`, `allow_unknown_ext:`) | `MessagePack.unpack(s, Hash.of(symbolize_keys: true))` | differs: options Hash (`freeze` is accepted and ignored) |
 | `MessagePack.pack(v, io)` / `unpack(io)` | — | missing: no IO sources and sinks (ArgumentError) |
 | `obj.to_msgpack` / `obj.to_msgpack(packer)` | `Hash.to_msgpack(h)` (Array, String, Integer, Float, Symbol too) | same; nil/true/false have no namespace to hang it on |
-| `MessagePack::Packer.new` / `.new(nil, compatibility_mode: true)` | `MessagePack::Packer.new` / `.new(nil, Hash[compatibility_mode: true])` | same shape |
+| `MessagePack::Packer.new` / `.new(nil, compatibility_mode: true)` | `MessagePack::Packer.new` / `.new(nil, Hash.of(compatibility_mode: true))` | same shape |
 | `pk.write(v)`, `write_nil/true/false/int/float/float32/string/bin/symbol/array/hash/extension` | `MessagePack::Packer.write(pk, v)`, ... | same (return the packer, so chains work: `pk.MessagePack::Packer.write(1).MessagePack::Packer.write_nil`) |
 | `pk.write_array_header(n)`, `write_map_header(n)`, `write_bin_header(n)`, `write_ext(type, payload)` | same | same |
 | `pk.to_s` / `to_str` / `to_a` / `full_pack` / `size` / `empty?` / `reset` / `clear` / `flush` | same | same |
 | `pk.register_type(...)`, `registered_types`, `type_registered?` | `registered_types` only (always `[]`) | missing (below) |
-| `MessagePack::Unpacker.new` / `.new(nil, symbolize_keys: true)` | `MessagePack::Unpacker.new` / `.new(nil, Hash[...])` | same shape |
+| `MessagePack::Unpacker.new` / `.new(nil, symbolize_keys: true)` | `MessagePack::Unpacker.new` / `.new(nil, Hash.of(...))` | same shape |
 | `u.feed(s)` / `feed_reference` / `each { }` / `feed_each(s) { }` / `read` / `skip` / `skip_nil` / `read_array_header` / `read_map_header` / `full_unpack` / `reset` | same | same |
 | `u.buffer` | `MessagePack::Unpacker.buffer(u)` | differs: a String of the unread bytes, not a `MessagePack::Buffer`; and see "partial objects" |
 | `MessagePack::ExtensionValue.new(type, payload)` | same (`Struct.new(:type, :payload)`) | same; `p` prints a Sake struct, not `#<struct ...>` |
@@ -63,7 +63,7 @@ About 50 operations.
   Float | nil | String`, and the same at `String.byteslice` and `+`; the hint blamed
   `ExtensionValue.type holds ... Float, String`, the field the value later flowed into, which sent me
   looking at the wrong place → `uint/sint/float` helpers that assert the type once.
-- `Packer.new(nil, Hash[compatibility_mode: true])`, Ruby's `(io, options)`: `new` takes the fields in
+- `Packer.new(nil, Hash.of(compatibility_mode: true))`, Ruby's `(io, options)`: `new` takes the fields in
   order, so the class starts with `attr_reader io, options` (io must be nil) and keeps the buffer in a
   later private field.
 - Adding `to_msgpack` to the core types: `module MsgpackCoreExt` + `class Hash; include MsgpackCoreExt;

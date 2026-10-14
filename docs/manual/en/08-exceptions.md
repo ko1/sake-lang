@@ -332,6 +332,6 @@ A runtime error stops the program at the line of the operation. The exit status 
 - **`EOFError`.** No built-in raises it. A read at the end gives nil or `""`, and Ruby's EOFError is folded into `IOError`. The type exists, so it can be named in `rescue`.
 
 ```ruby error
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 p(Hash.fetch(h, "b"))                    # !> KeyError: Hash.fetch: key not found: "b"
 ```

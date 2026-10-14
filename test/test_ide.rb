@@ -18,7 +18,7 @@ class TestIDE < Minitest::Test
   def test_analyze_gives_errors_at_the_level_and_warnings_above_it
     # One construction site, so the type shows as `Node`; nil reaches `next` through the loop.
     src = "Node = Struct.new(:value, :next)\ndef second(n) = Node.value(Node.next(n))\nhead = nil\n" \
-          "Array.each(Array[2, 1]) { |v| head = Node.new(v, head) }\np(second(head)) if head\n"
+          "Array.each(Any[2, 1]) { |v| head = Node.new(v, head) }\np(second(head)) if head\n"
     r = call(cmd: "analyze", src:, level: 1)
     d = r["diagnostics"].first
     assert_equal ["warning", 2, 2], d.values_at("severity", "level", "line")
@@ -27,7 +27,7 @@ class TestIDE < Minitest::Test
   end
 
   def test_analyze_shows_only_the_editor_file
-    r = call(cmd: "analyze", src: "require \"json\"\np(JSON.generate(Hash[a: 1]))\n", level: 4)
+    r = call(cmd: "analyze", src: "require \"json\"\np(JSON.generate(Hash.of(a: 1)))\n", level: 4)
     assert(r["diagnostics"].all? { _1["line"] <= 2 })
     assert(r["hovers"].all? { _1["from"][0] <= 2 })
     assert_empty r["functions"]

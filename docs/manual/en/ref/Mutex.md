@@ -27,7 +27,7 @@ Takes the lock, runs the block, releases the lock when the block ends (also by a
 ```ruby
 m = Mutex.new
 count = 0
-ths = Array.map(Array[1, 2, 3, 4]) { |i|
+ths = Array.map(Any[1, 2, 3, 4]) { |i|
   Thread.new { Array.each(Array.new(100, 0)) { |_| Mutex.synchronize(m) { count += 1 } } }
 }
 Array.each(ths) { |t| Thread.join(t) }

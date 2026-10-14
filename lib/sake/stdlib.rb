@@ -21,7 +21,7 @@ module Sake
       install_tuple(reg)
       install_math(reg)
       install_index(reg)
-      %w[Integer Float Rational Complex String Symbol Tuple].each { install_typed_array(reg, _1) }
+      %w[Integer Float Rational Complex String Symbol Tuple Array].each { install_typed_array(reg, _1) }
     end
 
     def int_pow(a, b)
@@ -206,7 +206,9 @@ module Sake
     end
 
     def install_array(reg)
-      reg.define("Array", CTOR, [], rest: "Any") { |*xs| xs }
+      # `Kernel[...]` (`Any[...]` through the prelude's `Any = Kernel`): an Array of any values, as every type includes
+      # Kernel. `Array[...]` is an Array of Arrays, as `T[...]` is for every T.
+      reg.define("Kernel", CTOR, [], rest: "Any") { |*xs| xs }
       reg.define("Array", :length, ["Array"], &:length)
       reg.define("Array", :size, ["Array"], &:size)
       reg.define("Array", :empty?, ["Array"], &:empty?)
@@ -280,7 +282,7 @@ module Sake
     end
 
     # `T[...]` for a type T (built-in or Struct), or a module T: its elements are of the types in accepts (those
-    # that include it). `Array[...]` stays the untyped constructor.
+    # that include it). Kernel[...] (Any[...]) is the untyped constructor.
     def install_typed_array(reg, type, struct: false, accepts: [type])
       reg.define(type, CTOR, [], rest: "Any") do |*xs|
         a = TypedArray.new(type, [], accepts)

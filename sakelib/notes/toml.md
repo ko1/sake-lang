@@ -50,7 +50,7 @@ own), `[[name]]` for an Array of Hashes, other Arrays and Hashes inline (`{ x = 
 
 - `T.new` + `initialize`: `TOML::Parser.new(s, symbolize_keys)`; `initialize` checks `@src => String`,
   computes `@len`, sets `@current = @root`. Helped.
-- `private attr_reader root = Hash[], current = nil, headers = Set[], array_tables = Set[]` and
+- `private attr_reader root = Hash.new, current = nil, headers = Set.new, array_tables = Set.new` and
   `private attr_accessor pos = 0`: the parser's state, invisible outside, fresh per `new`. Helped.
 - Keyword arguments: `TOML.parse(s, symbolize_keys: true)`, passed on with `symbolize_keys:` shorthand.
 - `once` for the escape tables; `x => T` (`h => Hash` in `dump`, as `TomlRB.dump` raises on a non-Hash).
@@ -63,8 +63,8 @@ own), `[[name]]` for an Array of Hashes, other Arrays and Hashes inline (`{ x = 
 
 ## Types (`--types`)
 
-- `TOML::Parser.root`, `current`: the recursive value union `Hash[String | Symbol => true|false | Float |
-  Integer | String | Array[...] | Hash[...]]`. Symbol comes from `symbolize_keys:` and leaks into every
+- `TOML::Parser.root`, `current`: the recursive value union `Hash.of(String | Symbol => true|false | Float |
+  Integer | String | Any[...] | Hash.of(...))`. Symbol comes from `symbolize_keys:` and leaks into every
   parse, as json's `symbolize_names` does: a flag cannot select a type.
-- `headers`, `array_tables`: `Set[String[]]` (key paths). Two `partial` checks: the `t => Hash` in `dump`
+- `headers`, `array_tables`: `Set.of(String[])` (key paths). Two `partial` checks: the `t => Hash` in `dump`
   (an Array of tables may hold anything) and `cur => Hash`.

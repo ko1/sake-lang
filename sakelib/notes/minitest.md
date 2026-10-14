@@ -11,8 +11,8 @@ Ruby's Minitest, in Sake, for tests written in Sake (`test/sake/*_test.sake`).
 - **No autorun.** `Minitest.run(suite)` at the end of the file prints the report and exits with 1 on failure.
 - **`assert_raises` gives the message, not the exception.** A test cannot name an exception type as a value,
   so it checks the message (`assert_match`).
-- **`assert_equal` is Sake's `==`**: a Tuple literal `[1, 2]` does not equal an Array `Array[1, 2]`; compare an
-  Array result with `Array[...]`.
+- **`assert_equal` is Sake's `==`**: a Tuple literal `[1, 2]` does not equal an Array `Any[1, 2]`; compare an
+  Array result with `Any[...]`.
 - **No `assert_output`, `capture_io`, `skip`, `assert_predicate`, `assert_kind_of`** (no output capture, no
   types as values). `assert_includes` takes an Array, String, Hash, Set, or Range.
 

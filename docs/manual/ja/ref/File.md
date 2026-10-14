@@ -363,7 +363,7 @@ p(File.split("c.rb"))               # => [".", "c.rb"]
 ```ruby
 p(File.join("a", "b", "c.rb"))      # => "a/b/c.rb"
 p(File.join("a/", "/b"))            # => "a/b"
-p(File.join(Array["a", "b"], "c"))  # => "a/b/c"
+p(File.join(Any["a", "b"], "c"))  # => "a/b/c"
 p(File.join())                      # => ""
 ```
 

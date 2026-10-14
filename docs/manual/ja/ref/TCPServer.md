@@ -53,7 +53,7 @@ TCPServer.port(srv)                 # !> IOError: TCPServer.port: closed stream
 ```ruby
 srv = TCPServer.new("127.0.0.1", 0)
 port = TCPServer.port(srv)
-clients = Array.map(Array["a", "b"]) { |name|
+clients = Array.map(Any["a", "b"]) { |name|
   Thread.new {
     s = Socket.connect("127.0.0.1", port)
     Socket.write(s, name + "\n")
@@ -62,7 +62,7 @@ clients = Array.map(Array["a", "b"]) { |name|
     reply
   }
 }
-served = Array[]
+served = Any[]
 Array.each(clients) { |_|
   c = TCPServer.accept(srv)
   p(c)                              # => #<Socket>

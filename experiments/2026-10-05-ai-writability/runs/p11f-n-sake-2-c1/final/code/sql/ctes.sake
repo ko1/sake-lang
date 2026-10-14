@@ -16,7 +16,7 @@ module Ctes
   # The database as the body of the WITH sees it: the ctes of the statement, each seeing the ones
   # before it, and hiding tables and views of the same name. Fails on a repeated name.
   def layer(db, with)
-    seen = Set[]
+    seen = Set.new
     Array.each(WithStmt.ctes(with)) do |cte|
       k = Catalog.key(CteDef.name(cte))
       Errors.sql_error("duplicate WITH table name: #{CteDef.name(cte)}") if Set.add?(seen, k) == nil
@@ -69,7 +69,7 @@ module Ctes
     parts = CompoundStmt.parts(q)
     initial = Planner.plan_select(db, parts[0], Scope[])
     columns = Planner.rename_columns(Planner.columns(initial), CteDef.columns(cte), CteDef.name(cte))
-    work = Table.new(CteDef.name(cte), columns, Array[], Key[], -1)
+    work = Table.new(CteDef.name(cte), columns, Any[], Key[], -1)
     ctes[Catalog.key(CteDef.name(cte))] = CteEntry.new(columns, WorkPlan.new(work))
     step = Planner.plan_select(db, parts[1], Scope[])
     if Array.size(SelectPlan.items(step)) != Array.size(columns)
@@ -81,7 +81,7 @@ module Ctes
     CteEntry.new(columns, plan)
   end
 
-  def work_rows(plan) = Array.map(Table.rows(WorkPlan.table(plan))) { |vals| SortRow.new(Array[], vals) }
+  def work_rows(plan) = Array.map(Table.rows(WorkPlan.table(plan))) { |vals| SortRow.new(Any[], vals) }
 
   # The rows of a recursive cte (SortRow[]): a queue that starts with the initial rows; each row
   # taken from its front is a row of the result and the step, run with the cte standing for that
@@ -91,19 +91,19 @@ module Ctes
     limit = RecursivePlan.limit(plan)
     offset = RecursivePlan.offset(plan)
     stop = limit >= 0 ? limit + (offset > 0 ? offset : 0) : -1
-    queue = Array[]
-    seen = Set[]
+    queue = Any[]
+    seen = Set.new
     keep_all = RecursivePlan.keep_all(plan)
     colls = RecursivePlan.colls(plan)
-    Array.each(Select.execute_select(RecursivePlan.initial(plan), Array[])) { |r| enqueue(queue, seen, keep_all, colls, SortRow.values(r)) }
+    Array.each(Select.execute_select(RecursivePlan.initial(plan), Any[])) { |r| enqueue(queue, seen, keep_all, colls, SortRow.values(r)) }
     head = 0
     while head < Array.size(queue) && (stop < 0 || head < stop)
-      Table.set_rows(work, Array[queue[head]])
+      Table.set_rows(work, Any[queue[head]])
       head += 1
-      Array.each(Select.execute_select(RecursivePlan.step(plan), Array[])) { |r| enqueue(queue, seen, keep_all, colls, SortRow.values(r)) }
+      Array.each(Select.execute_select(RecursivePlan.step(plan), Any[])) { |r| enqueue(queue, seen, keep_all, colls, SortRow.values(r)) }
     end
-    Table.set_rows(work, Array[])
-    rows = Array.map(stop >= 0 ? Array.take(queue, stop) : queue) { |vals| SortRow.new(Array[], vals) }
+    Table.set_rows(work, Any[])
+    rows = Array.map(stop >= 0 ? Array.take(queue, stop) : queue) { |vals| SortRow.new(Any[], vals) }
     Select.limit_rows(rows, offset, limit)
   end
 

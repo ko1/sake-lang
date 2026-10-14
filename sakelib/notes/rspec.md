@@ -13,7 +13,7 @@ example (the block's parameter):
 ```ruby
 RSpec.describe("Array") do |g|
   RSpec.it(g, "pushes") do |ex|
-    RSpec.expect(ex, a).To.eq(Array[1, 2])           # expect(a).to eq([1, 2])
+    RSpec.expect(ex, a).To.eq(Any[1, 2])           # expect(a).to eq([1, 2])
     RSpec.expect(ex, a).NotTo.be_empty               # expect(a).not_to be_empty
     RSpec.expect(ex).To.raise_error(/boom/) { ... }  # expect { ... }.to raise_error(/boom/)
   end
@@ -100,7 +100,7 @@ RSpec.run      # documentation format, Pending:, Failures:, "N examples, M failu
 6. **What read as well as Ruby**: the `report` function (`Array.select(results) { |r| r[1] == :failed }`,
    `Array.each_with_index(failed) do |r, i|`), the `case expected in nil ... in String ... in Regexp` of
    `to_raise_error`, and `(Array|String|Hash|Set|Range).include?(a, x)` for `include` across five types — the
-   union call is the one Sake form that is shorter than Ruby's duck typing while saying more. `once { Array[]
+   union call is the one Sake form that is shorter than Ruby's duck typing while saying more. `once { Any[]
    }` for the run's groups/lines/results replaced three module-level constants.
 7. **Not writing `let`**: the natural Sake replacement is a function (`def square(x) = x * x` in the test)
    called inside the example; `subject`/`let` memoization is not possible without a stored block, and in

@@ -102,7 +102,7 @@ p(String.*("ab", -1))        # !> ArgumentError: String.*: negative argument -1
 
 `String.%(x, Any)`
 
-`fmt % value` の関数形で、`fmt` を書式とする Ruby の `format` です: `"%d items" % 3`。右辺は値 1 つ（Integer、Float、String、Symbol、nil、true、false）か、複数の指示子に対する値の Tuple（`"%s-%s" % [a, b]`）か、名前付き指示子 `%<name>d`、`%{name}` に対する Record または Symbol キーの Hash（`"%<a>05d" % {a: 42}`、`"%<a>05d" % Hash[a: 42]`）です。Array は静的に `type` の問題です。指示子は Ruby のもの（`%d`、`%s`、`%f`、`%x`、`%05d`、`%-4s`、`%.2f`、`%p`、...）。指示子に合わない値（`"%d" % "x"`）や値の不足は `ArgumentError`、Record や Hash に無い名前は `KeyError`（`key<b> not found`）、余った値は無視されます。
+`fmt % value` の関数形で、`fmt` を書式とする Ruby の `format` です: `"%d items" % 3`。右辺は値 1 つ（Integer、Float、String、Symbol、nil、true、false）か、複数の指示子に対する値の Tuple（`"%s-%s" % [a, b]`）か、名前付き指示子 `%<name>d`、`%{name}` に対する Record または Symbol キーの Hash（`"%<a>05d" % {a: 42}`、`"%<a>05d" % Hash.of(a: 42)`）です。Array は静的に `type` の問題です。指示子は Ruby のもの（`%d`、`%s`、`%f`、`%x`、`%05d`、`%-4s`、`%.2f`、`%p`、...）。指示子に合わない値（`"%d" % "x"`）や値の不足は `ArgumentError`、Record や Hash に無い名前は `KeyError`（`key<b> not found`）、余った値は無視されます。
 
 ```ruby
 p("%05d|%-4s|%.2f|%x" % [42, "ab", 3.14159, 255])   # => "00042|ab  |3.14|ff"
@@ -112,7 +112,7 @@ p("%p" % nil)                # => "nil"
 p(String.%("%03d", 7))       # => "007"
 p("%<a>05d" % {a: 42})       # => "00042"
 p("%{a}-%<b>s" % {a: 1, b: "x"})     # => "1-x"
-p("%<a>05d" % Hash[a: 42])   # => "00042"
+p("%<a>05d" % Hash.of(a: 42))   # => "00042"
 ```
 
 ```ruby error
@@ -760,7 +760,7 @@ p(String.sub(s, "l", "L"))                 # => "heLlo"
 p(String.gsub(s, "l", "L"))                # => "heLLo"
 p(String.gsub(s, /l+/, "<\\0>"))           # => "he<ll>o"
 p(String.gsub(s, /(l)(o)/, "\\2\\1"))      # => "helol"
-p(String.gsub(s, /[el]/, Hash["e" => "3", "l" => 1]))   # => "h311o"
+p(String.gsub(s, /[el]/, Hash.of("e" => "3", "l" => 1)))   # => "h311o"
 p(String.gsub(s, /l/) { |m| String.upcase(m) })         # => "heLLo"
 p(String.sub(s, /l/) { |m| 7 })            # => "he7lo"
 p(s)                                       # => "hello"

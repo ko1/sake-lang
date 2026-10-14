@@ -1,6 +1,6 @@
 # Record
 
-Record はフィールド名と値の組の集まりで、リテラル `{x: 1, y: "a"}` が作ります（[値と型](../03-values.md)）。Ruby ではこの書き方は Hash ですが、Sake では **Record であって Hash ではありません**。Hash は `Hash[x: 1]` で作ります（[Hash](Hash.md)）。`{}`（空）と `{"a" => 1}`（`=>` 形）は静的に拒否されます。
+Record はフィールド名と値の組の集まりで、リテラル `{x: 1, y: "a"}` が作ります（[値と型](../03-values.md)）。Ruby ではこの書き方は Hash ですが、Sake では **Record であって Hash ではありません**。Hash は `Hash.of(x: 1)` で作ります（[Hash](Hash.md)）。`{}`（空）と `{"a" => 1}`（`=>` 形）は静的に拒否されます。
 
 Record の型はその (フィールド名, 型) の集合で、`{x: Integer, y: String}` のように表されます。同じ集合を持つ Record は同じ型です。フィールドの順序は型に関係なく、`{y: 2, x: 1}` は `{x: 1, y: 2}` と表示されます。クラスのインスタンスとは別物です（クラスは名前で、Record 型は構造で区別されます。[クラス](../07-classes.md)）。
 
@@ -23,7 +23,7 @@ p(Record.keys({y: 2, x: 1}))       # => [:x, :y]
 ```
 
 ```ruby error
-p(Record.keys(Hash[x: 1]))         # !> TypeError: Record.keys: argument 1 must be a Record, got Hash
+p(Record.keys(Hash.of(x: 1)))         # !> TypeError: Record.keys: argument 1 must be a Record, got Hash
 ```
 
 ## values

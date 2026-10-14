@@ -28,7 +28,7 @@ Nearly every property of Sake follows from four principles. Each chapter of this
 The checks of principle 4 catch what the checks before running let through. In the next example, `h["b"]` gives nil for the missing key, and `String.upcase` stops at that line.
 
 ```ruby error
-h = Hash["a" => "x"]
+h = Hash.of("a" => "x")
 puts(String.upcase(h["b"]))    # !> TypeError: String.upcase: argument 1 must be String, got nil
 ```
 
@@ -124,7 +124,7 @@ The checker gives a field one type per construction site ([Classes](07-classes.m
 class Heap
   attr_accessor items
   def initialize(h)
-    @items = Array[]
+    @items = Any[]
   end
   def push(h, x) = Array.push(@items, x)
   def top(h) = Array.first(@items)
@@ -146,7 +146,7 @@ The cost of this heuristic: a field that really got a wrong type at the same pla
 The nil of a miss (above), used without a check. The next program runs up to level 2 and prints `2`.
 
 ```ruby
-xs = Array[1, 2, 3]
+xs = Any[1, 2, 3]
 x = xs[0]
 p(x + 1)                       # => 2
 ```
@@ -246,7 +246,7 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 
 ```ruby error
 def third(xs) = Array.fetch(xs, 2)
-p(third(Array[1, 2]))          # !> IndexError: Array.fetch: index 2 outside of array bounds: -2...2
+p(third(Any[1, 2]))          # !> IndexError: Array.fetch: index 2 outside of array bounds: -2...2
 ```
 
 ```

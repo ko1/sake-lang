@@ -45,7 +45,7 @@ conversion back to String at every use.
   String; a NullPresenter stays plain even if colouring is enabled afterwards. Here the global switch
   is read by each operation. A disabled `color`/`background` does not check its arguments, as the
   NullPresenter ignores them.
-- **Tables** (`TERM_EFFECTS`, `Named::NAMES`, `X11ColorNames::NAMES`) are `once { Hash[...] }`
+- **Tables** (`TERM_EFFECTS`, `Named::NAMES`, `X11ColorNames::NAMES`) are `once { Hash.of(...) }`
   functions (no value constants); the X11 table was copied mechanically (145 entries).
 - `Color.build`'s class hierarchy (Indexed < Color, Named < Indexed, RGB < Indexed, X11Named < RGB)
   only computes the SGR codes, so it is one function `codes(ground, values)` with a `case`.

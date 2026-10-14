@@ -13,12 +13,12 @@ union (Symbol, String, Integer, Float, true/false, an Array of nodes, a node), s
 
 | Ruby | Sake | |
 |---|---|---|
-| `Crass.parse(css, opts = {})` | `Crass.parse(css, Hash[:preserve_comments => true])` | same; options are a Hash (no keyword arguments at call sites) |
+| `Crass.parse(css, opts = {})` | `Crass.parse(css, Hash.of(:preserve_comments => true))` | same; options are a Hash (no keyword arguments at call sites) |
 | `Crass.parse_properties(css, opts)` | `Crass.parse_properties(css, opts)` | same |
 | `Crass::Tokenizer.tokenize(css, opts)` | `Crass::Tokenizer.tokenize(css, opts)` | same |
 | `Crass::Tokenizer.new(css, opts).tokenize` | `Crass::Tokenizer.run(Crass::Tokenizer.new(css, opts))` | differs: name (one name is one function; `tokenize` is the class method) |
 | `Crass::Parser.parse_stylesheet` / `parse_rules` / `parse_properties` | same names | same |
-| `Crass::Parser.stringify(nodes, exclude_comments: true)` | `Crass::Parser.stringify(nodes, Hash[:exclude_comments => true])` | same |
+| `Crass::Parser.stringify(nodes, exclude_comments: true)` | `Crass::Parser.stringify(nodes, Hash.of(:exclude_comments => true))` | same |
 | `parser.parse_rule` / `parse_declaration` / `parse_component_value` / `parse_component_values` / `parse_declarations(input, strict: true)` | `Crass::Parser.parse_rule(parser, input = nil)` / ... | same; `input` nil means the parser's own tokens (Ruby's default `@tokens`), or a TokenScanner, or an Array of tokens |
 | `parser.parse_properties(input)` | `Crass::Parser.properties(parser, input)` | differs: name (the class method has Ruby's name) |
 | `parser.parse_value(nodes)`, `consume_*`, `create_node`, `create_selector`, `create_style_rule` | `Crass::Parser.parse_value(parser, nodes)`, ... | same (public in Ruby too) |
@@ -32,15 +32,15 @@ About 31 operations (16 public entry points, 15 Scanner/TokenScanner operations)
 
 ## What differs and why
 
-- **Options Hash.** Ruby's `options[:preserve_comments]` reads a keyword Hash; Sake takes a `Hash[Symbol =>
-  true | Integer]` positionally (the brief's convention). An unknown key is ignored, as Ruby.
+- **Options Hash.** Ruby's `options[:preserve_comments]` reads a keyword Hash; Sake takes a `Hash.of(Symbol =>
+  true | Integer)` positionally (the brief's convention). An unknown key is ignored, as Ruby.
 - **Scanner.** Ruby wraps a StringScanner and keeps byte and character positions; here positions are
   characters and `scan` is `Regexp.match(re, s, pos)` with patterns written `\G...` (Ruby's StringScanner
   anchors implicitly). `reconsume` steps one character back, which is what the tokenizer relies on.
 - **convert_string_to_number** computes the spec's formula exactly with Rationals (`10r ** -d`), as Ruby's
   `10**-d` does (Ruby gives a Rational for a negative Integer power; Sake raises for `10 ** -2`).
   `Float::MAX_10_EXP` is written as 308.
-- **Codepoints from escapes** are `Array.pack(Array[cp], "U")` (Ruby: `cp.chr(Encoding::UTF_8)`).
+- **Codepoints from escapes** are `Array.pack(Any[cp], "U")` (Ruby: `cp.chr(Encoding::UTF_8)`).
 - **Preprocessing** does not re-encode invalid UTF-8 (`encode(..., invalid: :replace)`); Sake's Strings are
   valid UTF-8 already.
 - `consume_component_value` returns nil at the end, as Ruby; where Ruby trusts that a value follows (the
@@ -70,7 +70,7 @@ About 31 operations (16 public entry points, 15 Scanner/TokenScanner operations)
 - `10 ** -d` → runtime `ArgumentError: Integer ** negative Integer ... write 10r ** -2` → `10r ** -d`. Clear,
   but only at run time, on the first CSS number with a fraction.
 - `Integer.chr(codepoint)` → runtime `RangeError: Integer.chr: 9786 out of char range` →
-  `Array.pack(Array[cp], "U")`.
+  `Array.pack(Any[cp], "U")`.
 - What went well: the whole tree as Symbol-keyed Hashes of a recursive union type-checked, and the test's
   first run printed Ruby's 160 lines, including the full `p` of a tree. `case char in "\"" | "'"` reads like
   Ruby's `case char.to_sym when`. The cost is the narrowing lines (`sel => Hash`) a reader writes.

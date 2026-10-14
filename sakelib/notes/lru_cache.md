@@ -27,7 +27,7 @@ The reference is `test/sakelib/ref/lru_cache.rb`. 18 operations; the test prints
 ## Friction
 
 1. `@max_size => Integer` in `initialize`, then `@max_size > 0` → with the test's wrong-typed
-   `LRUCache.new(Array.fetch(Array[1, "big"], 1))`, `--strict=2`: `Comparable.>: the operands may be
+   `LRUCache.new(Array.fetch(Any[1, "big"], 1))`, `--strict=2`: `Comparable.>: the operands may be
    (String, Integer) [mixed]`, `LRUCache.max_size holds String (written at line 74)`. The assertion does not
    narrow the field, though spec §10.1 says the fields hold what initialize leaves and §2.1 recommends
    this check: `sakelib/notes/lru_cache_bug_initialize_assert_field.sake`. Workaround:
@@ -46,7 +46,7 @@ The reference is `test/sakelib/ref/lru_cache.rb`. 18 operations; the test prints
 ## Language features used
 
 - `include Indexable` with `[]` / `[]=`: helped (`c[:a] = 1`).
-- `private attr_reader data = Hash[], hits = 0, misses = 0, evictions = 0`: per-instance state with
+- `private attr_reader data = Hash.new, hits = 0, misses = 0, evictions = 0`: per-instance state with
   defaults; `LRUCache.new(3)` takes only the size.
 - `initialize` for validation (with the workaround above).
 - `block_given?` in `fetch`: helped; `fetch(c, k) { }` and `fetch(c, k)` (KeyError) as Hash#fetch.
@@ -59,5 +59,5 @@ The reference is `test/sakelib/ref/lru_cache.rb`. 18 operations; the test prints
 
 ## Types
 
-- `LRUCache.data: Hash[Integer | String | Symbol => Integer]` (keys of all caches of the test).
+- `LRUCache.data: Hash.of(Integer | String | Symbol => Integer)` (keys of all caches of the test).
 - partial: the `=> Integer` check, which gets `Integer | String` from the error test. No unknowns.

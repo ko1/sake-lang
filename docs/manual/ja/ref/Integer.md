@@ -12,7 +12,7 @@ Ruby と違う点は 2 つ: `Integer ** 負の Integer` は Rational を返さ�
 
 `Integer[*Any]`
 
-**Integer の Array** を作ります: 要素がすべて Integer でなければならない型付き Array で、構築時と書き込み（`Array.push`、`a[i] = v` など）のたびに検査されます。別の型のリテラル要素は実行前に拒否され（`element 2 must be Integer, got String`）、別の型の書き込みは静的に `type` の問題、実行時は `TypeError` です。空の Integer の Array は `Integer[]` です。`Array[1, 2]` は要素の型が推論され、書き込まれたものに応じて広がる点が違います。
+**Integer の Array** を作ります: 要素がすべて Integer でなければならない型付き Array で、構築時と書き込み（`Array.push`、`a[i] = v` など）のたびに検査されます。別の型のリテラル要素は実行前に拒否され（`element 2 must be Integer, got String`）、別の型の書き込みは静的に `type` の問題、実行時は `TypeError` です。空の Integer の Array は `Integer[]` です。`Any[1, 2]` は要素の型が推論され、書き込まれたものに応じて広がる点が違います。
 
 ```ruby
 a = Integer[1, 2, 3]

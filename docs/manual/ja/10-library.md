@@ -71,7 +71,7 @@ Ruby では require するが Sake では組み込みの操作になっている
 |---|---|
 | `tmpdir` | `Dir.mktmpdir`、`Dir.tmpdir`（`Dir.tmpdir` は tempfile が足す） |
 | `open3` | `Open3.capture2`、`capture2e`、`capture3`、`Kernel.system` |
-| `set` | `Set[...]`、`Set.add` ...（[値と型](03-values.md)） |
+| `set` | `Set.of(...)`、`Set.add` ...（[値と型](03-values.md)） |
 | `socket` | `TCPServer`、`Socket`（TCP のみ） |
 
 ### gem に倣った小さなライブラリ
@@ -126,7 +126,7 @@ require "minitest"
 suite = Minitest.suite("strings")
 Minitest.test(suite, "upcase and split") do |t|
   Minitest.assert_equal(t, "ABC", String.upcase("abc"))
-  Minitest.assert_equal(t, Array["a", "b"], String.split("a,b", ","))
+  Minitest.assert_equal(t, Any["a", "b"], String.split("a,b", ","))
   Minitest.assert(t, String.empty?(""))
 end
 Minitest.run(suite)      # 報告を印字。失敗があれば終了コード 1

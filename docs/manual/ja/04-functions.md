@@ -52,7 +52,7 @@ p(greet("Sake", punct:))             # => "Hello, Sake!!"
 呼び出し先は実行前に分かるので、検査器は `k: v` を名前で引数に届けます。次はどれも実行前のエラーです。
 
 - 未知のキーワード、同じキーワードの重複、必須キーワードの欠落。
-- キーワード引数の無い関数への `k: v`。暗黙の Hash 引数は無いので、Hash が欲しければ `Hash[k: v]`、Record が欲しければ `{k: v}` と書きます。
+- キーワード引数の無い関数への `k: v`。暗黙の Hash 引数は無いので、Hash が欲しければ `Hash.of(k: v)`、Record が欲しければ `{k: v}` と書きます。
 
 ```ruby error
 def size(w:, h: w) = w * h
@@ -78,7 +78,7 @@ p(join("+", *xs))             # => "x+y"
 - **要素の型。** `rest` は 1 つの Array なので、要素は 1 つの型です。すべての呼び出しが渡すものの和になります。位置ごとの型を保ちたければ Tuple を 1 つ渡します: `notify("stock", ["AAPL", 120])` と呼び、関数の中で `name, price = event` と分けます。
 - **組む場所。** 呼び出し先が分かるので、Array は呼び出しの場で組まれます。
 - **順序。** 引数は必須、省略可能、`*rest`、キーワード、`**opts` の順です。`*rest` の後の位置引数と、名前の無い `*` は実行前のエラーです。
-- **`*xs` の行き先。** `*xs` は `*rest` と、任意個の引数を取る組み込み（`puts`、`format`、`Array[...]`、`Array.push` など）にだけ渡せます。必須や省略可能な引数を `*xs` で埋めることはできません。
+- **`*xs` の行き先。** `*xs` は `*rest` と、任意個の引数を取る組み込み（`puts`、`format`、`Any[...]`、`Array.push` など）にだけ渡せます。必須や省略可能な引数を `*xs` で埋めることはできません。
 
 ```ruby error
 def f(*rest, z) = z   # !> parameters after `*rest` are not supported: required, optional, `*rest`, keywords, `**opts`, in that order
@@ -156,7 +156,7 @@ p(Shape.area(Sq.new(2)))   # !> Shape.area dispatches to Rect.area, whose argume
 
 ```ruby
 def minmax(xs) = return Array.min(xs), Array.max(xs)
-lo, hi = minmax(Array[3, 1, 2])
+lo, hi = minmax(Any[3, 1, 2])
 p([lo, hi])          # => [1, 3]
 ```
 
@@ -216,9 +216,9 @@ p(down(20_000))      # !> SystemStackError: stack level too deep
 ブロックは、組み込みの操作か、`yield` するユーザ関数に渡します。繰り返しの多くは `Array.each` などのブロックを取る操作で書きます。
 
 ```ruby
-xs = Array[1, 2, 3]
+xs = Any[1, 2, 3]
 p(Array.map(xs) { |x| x * 2 })      # => [2, 4, 6]
-Hash.each(Hash[a: 1, b: 2]) do |k, v|
+Hash.each(Hash.of(a: 1, b: 2)) do |k, v|
   puts "#{k}=#{v}"                  # => a=1
                                     # => b=2
 end
@@ -240,8 +240,8 @@ f = proc { |x| x }   # !> undefined function `proc`
 `|a, b|` に名前を並べます。`it` と `_1` … `_9` は Ruby と同じです。
 
 ```ruby
-p(Array.map(Array[1, 2]) { _1 * 10 })   # => [10, 20]
-p(Array.map(Array[1, 2]) { it + 1 })    # => [2, 3]
+p(Array.map(Any[1, 2]) { _1 * 10 })   # => [10, 20]
+p(Array.map(Any[1, 2]) { it + 1 })    # => [2, 3]
 ```
 
 ### 分解
@@ -249,13 +249,13 @@ p(Array.map(Array[1, 2]) { it + 1 })    # => [2, 3]
 ブロックが 2 つ以上の引数を宣言し、1 つの Tuple か Array を受けると、その要素が引数になります。足りないものは nil、余りは捨てます。Ruby と同じです。引数自身も `( )` で分解できます。
 
 ```ruby
-pairs = Array[["a", 1], ["b", 2]]
+pairs = Any[["a", 1], ["b", 2]]
 Array.each(pairs) { |name, n| p("#{name}=#{n}") }              # => "a=1"
                                                                # => "b=2"
 Array.each_with_index(pairs) { |(name, n), i| p([i, name]) }   # => [0, "a"]
                                                                # => [1, "b"]
 p(Array.inject(pairs, 0) { |acc, (k, v)| acc + v })            # => 3
-Array.each(Array[[1, 2]]) { |a, b, c| p([a, b, c]) }           # => [1, 2, nil]
+Array.each(Any[[1, 2]]) { |a, b, c| p([a, b, c]) }           # => [1, 2, nil]
 ```
 
 ### rest 引数
@@ -263,9 +263,9 @@ Array.each(Array[[1, 2]]) { |a, b, c| p([a, b, c]) }           # => [1, 2, nil]
 `|a, *rest|`（`|a, *rest, z|`、`|*all|` も）は残りの引数、または分解した Tuple / Array の残りの要素を新しい Array に集めます。`a, *rest = x` と同じです。`|*all|` だけでは分解しません。
 
 ```ruby
-Array.each(Array[[1, 2, 3]]) { |a, *rest| p([a, rest]) }      # => [1, [2, 3]]
-Array.each(Array[[1, 2, 3]]) { |a, *rest, z| p([a, rest, z]) } # => [1, [2], 3]
-Array.each(Array[[1, 2, 3]]) { |*all| p(all) }                # => [[1, 2, 3]]
+Array.each(Any[[1, 2, 3]]) { |a, *rest| p([a, rest]) }      # => [1, [2, 3]]
+Array.each(Any[[1, 2, 3]]) { |a, *rest, z| p([a, rest, z]) } # => [1, [2], 3]
+Array.each(Any[[1, 2, 3]]) { |*all| p(all) }                # => [[1, 2, 3]]
 ```
 
 ### 引数の数
@@ -278,7 +278,7 @@ Integer.times(2) { puts "hi" }      # => hi
 ```
 
 ```ruby error
-Array.each_with_index(Array["a"]) { |x| p(x) }   # !> ArgumentError: block takes 1 parameter(s) but was given 2
+Array.each_with_index(Any["a"]) { |x| p(x) }   # !> ArgumentError: block takes 1 parameter(s) but was given 2
 ```
 
 ### スコープ
@@ -287,7 +287,7 @@ Array.each_with_index(Array["a"]) { |x| p(x) }   # !> ArgumentError: block takes
 
 ```ruby
 sum = 0
-Array.each(Array[1, 2, 3]) { |x| sum += x }
+Array.each(Any[1, 2, 3]) { |x| sum += x }
 p(sum)               # => 6
 ```
 
@@ -299,7 +299,7 @@ p(sum)               # => 6
 def each_twice(xs)
   Array.each(xs) { |x| yield x; yield x }
 end
-each_twice(Array[1, 2])   # !> each_twice uses `yield` but no block is given
+each_twice(Any[1, 2])   # !> each_twice uses `yield` but no block is given
 ```
 
 `block_given?` は今の関数がブロックを受けたかを言います。それを検査する関数はブロック無しで呼べます。
@@ -319,9 +319,9 @@ info { "from block" }         # => from block
 
 ```ruby
 def twice(xs, &b) = Array.map(xs, &b)
-p(twice(Array[1, 2]) { |x| x * 2 })      # => [2, 4]
+p(twice(Any[1, 2]) { |x| x * 2 })      # => [2, 4]
 def each_pair(h, &) = Hash.each(h, &)
-each_pair(Hash[a: 1]) { |k, v| p([k, v]) }   # => [:a, 1]
+each_pair(Hash.of(a: 1)) { |k, v| p([k, v]) }   # => [:a, 1]
 ```
 
 - **ブロック無しの呼び出し。** Ruby と同じく、ブロックを渡すだけの関数はブロック無しで呼べます。その先のブロックが要る呼び出しに何も届かなければ、`type` レベルのエラーです。
@@ -329,7 +329,7 @@ each_pair(Hash[a: 1]) { |k, v| p([k, v]) }   # => [:a, 1]
 
 ```ruby error
 def twice(xs, &b) = Array.map(xs, &b)   # !> the block passed on is missing here, and this call needs one
-p(twice(Array[1, 2]))
+p(twice(Any[1, 2]))
 ```
 
 ### `next`・`break`・`return`
@@ -343,7 +343,7 @@ Ruby と同じ 3 つの抜け方があります。
 | `return [v]` | 囲む**関数** | `v` が関数の値 |
 
 ```ruby
-xs = Array[1, 2, 3, 4]
+xs = Any[1, 2, 3, 4]
 p(Array.map(xs) { |x| next 0 if x % 2 == 0; x })   # => [1, 0, 3, 0]
 p(Array.each(xs) { |x| break x if x > 2 })          # => 3
 p(Array.each(xs) { |x| x })                         # => [1, 2, 3, 4]
@@ -365,7 +365,7 @@ p(first_big(xs))                                    # => 3
 `once { ... }` はブロックの値を与えます。ブロックはプログラムのその場所に最初に到達したときに走り、その後そこを通るたびに、プログラム全体・すべてのスレッドで同じ値を返します。値の定数が無い Sake で、表や名前付きの値を 1 度だけ計算する方法です。
 
 ```ruby
-def table = once { puts "computing"; Array.map(Array[1, 2, 3]) { |i| i * i } }
+def table = once { puts "computing"; Array.map(Any[1, 2, 3]) { |i| i * i } }
 p(table)             # => computing
                      # => [1, 4, 9]
 p(table)             # => [1, 4, 9]

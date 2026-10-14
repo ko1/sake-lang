@@ -9,8 +9,8 @@ op = OptionParser.new
 OptionParser.set_banner(op, "Usage: tool [options]")
 OptionParser.on(op, "-v", "--[no-]verbose", "Run verbosely")
 OptionParser.on(op, "-c", "--count N", :Integer, "How many")
-OptionParser.on(op, "--type T", Array["text", "binary"], "Select type")
-opts = Hash[]
+OptionParser.on(op, "--type T", Any["text", "binary"], "Select type")
+opts = Hash.new
 rest = OptionParser.parse(op, ARGV, opts)    # opts: {verbose: true, count: 3}; rest: non-options
 puts(OptionParser.help(op))
 ```
@@ -34,7 +34,7 @@ and compares the help text and the errors with Ruby's.
 | `op.summary_width=`, `summary_indent=` | `set_summary_width`, `set_summary_indent` | same |
 | `op.on("-v", "--[no-]verbose", "desc") { \|v\| ... }` | `OptionParser.on(op, "-v", "--[no-]verbose", "desc")` | differs: no block. `on(op, *args)`: any number of arguments, each sorted by content as Ruby does (`-x` short, `--xx` long, a type, else a description line) (2026-10-05) |
 | `op.on("-c", "--count N", Integer, "desc")` | `OptionParser.on(op, "-c", "--count N", :Integer, "desc")` | differs: the type is a Symbol (`:Integer`, `:Float`, `:String`) |
-| `op.on("-t", "--type T", ["a", "b"], "desc")` | `OptionParser.on(op, "-t", "--type T", Array["a", "b"], "desc")` | same (exact match, or a unique prefix) |
+| `op.on("-t", "--type T", ["a", "b"], "desc")` | `OptionParser.on(op, "-t", "--type T", Any["a", "b"], "desc")` | same (exact match, or a unique prefix) |
 | `op.on_tail(...)`, `op.on_head(...)` | `OptionParser.on_tail(op, ...)`, `OptionParser.on_head(op, ...)` | same, without a block (`on_head` 2026-10-05) |
 | `OptionParser.new(banner, width, indent)` | `OptionParser.new(banner, width, indent)` | same |
 | several description strings in `on` | the same | same: one help line each (2026-10-05) |
@@ -102,10 +102,10 @@ and compares the help text and the errors with Ruby's.
   fixed the loader during the port, and the plain form now works.
 - `Array.filter_map(xs) { |it| it in OptionParser::Switch ? it : nil }` → `syntax error: unexpected
   '?'` → `(it in OptionParser::Switch) ? it : nil` (Prism parses it this way, as Ruby does).
-- `def new = OptionParser.new(Array[], nil, ...)` inside the class, to give the switch list an
+- `def new = OptionParser.new(Any[], nil, ...)` inside the class, to give the switch list an
   empty Array → `OptionParser.new is a built-in operation and cannot be redefined`. A default must
-  be a literal, so `Array[]` cannot be one. The list's default is `nil`, and `items(op)` creates the
-  Array on first use. A constructor-like hook, or `default: {list: Array[]}` making a new Array per
+  be a literal, so `Any[]` cannot be one. The list's default is `nil`, and `items(op)` creates the
+  Array on first use. A constructor-like hook, or `default: {list: Any[]}` making a new Array per
   instance, would remove this pattern.
 - `p(opts)` printed `{:"dry-run" => true}`, where Ruby 3.4+ prints `{"dry-run": true}`. This is an
   interpreter bug: [optparse_bug_symbol_key_inspect.sake](optparse_bug_symbol_key_inspect.sake).
@@ -116,7 +116,7 @@ and compares the help text and the errors with Ruby's.
 - **One `on` again**: `on_type` is gone. `on(op, a, b = "", c = "", d = "")` and `on_tail` sort their
   arguments by content as Ruby, so the type goes in any position and `""` placeholders are no longer
   written (`on(op, "--nodesc")`, `on(op, "-q", "Quiet")`).
-- **Defaults**: `parse`/`order`/`permute` and their `!` forms take `argv = ARGV, into = Hash[]`;
+- **Defaults**: `parse`/`order`/`permute` and their `!` forms take `argv = ARGV, into = Hash.new`;
   `getopts(op, argv, short, long = String[])`.
 - **Built-ins used**: `exit` for Ruby's officious `--help` and `--version`, `warn` for `OptionParser.warn`
   / `abort`, `ARGV` as the default argv. New accessor `version` and `ver`.
@@ -135,7 +135,7 @@ Result: about 5% slower, outside the spread; nothing on the parse path changed e
 
 ## Keyword arguments
 
-- `parse`, `order`, `permute` and their `!` forms take `argv = ARGV, into: Hash[]`; the internal
+- `parse`, `order`, `permute` and their `!` forms take `argv = ARGV, into: Hash.new`; the internal
   call in `getopts` and the test use `into: h`, as `optparse.rb` does. New test cases:
   `permute`, `order`, `permute!` with `into:`.
 
@@ -163,7 +163,7 @@ optional, but a block still cannot be stored for `parse` to call later.
 - `on(op, *args)`, `on_tail(op, *args)`, and the new `on_head(op, *args)` take any number of
   arguments, as Ruby's `on(*opts)`; every description string is kept and gets its own help line.
 - `getopts(op, argv, short, *long_specs)`, as Ruby (was an Array of long specs).
-- The switch list is `private attr_reader list = Array[]` (was `attr_reader list = nil` filled by
+- The switch list is `private attr_reader list = Any[]` (was `attr_reader list = nil` filled by
   `initialize`, which is gone).
 - `summarize` is now Ruby's `Switch#summarize`: when `-s, --long ARG` does not fit the width, the
   long form goes on a line of its own (`-k K,` / `--kind`). Found by a new test with

@@ -1,6 +1,6 @@
 # Symbol
 
-A Symbol is a name as a value, made by the literal `:name` (a name with spaces or other characters is `:"hello world"`; see [Values and types](../03-values.md)). Symbols of the same name are always one and the same value; they serve as Hash keys (the labels of `Hash[name: 1]` are Symbol keys) and as the marks of `case`/`in` branches. `String.to_sym(s)` (`String.intern`) makes one from a String, and `Symbol.to_s` turns it back. Ruby's `%i[a b]` is not available yet (rejected statically); an Array of Symbols is written `Symbol[:a, :b]`.
+A Symbol is a name as a value, made by the literal `:name` (a name with spaces or other characters is `:"hello world"`; see [Values and types](../03-values.md)). Symbols of the same name are always one and the same value; they serve as Hash keys (the labels of `Hash.of(name: 1)` are Symbol keys) and as the marks of `case`/`in` branches. `String.to_sym(s)` (`String.intern`) makes one from a String, and `Symbol.to_s` turns it back. Ruby's `%i[a b]` is not available yet (rejected statically); an Array of Symbols is written `Symbol[:a, :b]`.
 
 There is no `Symbol#to_proc` (`&:name`). Blocks are not values, so `Array.map(xs, &:to_s)` is rejected statically; write `{ |x| Integer.to_s(x) }` ([Functions and blocks](../04-functions.md)).
 

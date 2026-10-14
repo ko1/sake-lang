@@ -13,7 +13,7 @@ constants (`CharacterClasses::UNRESERVED`, `Template::EXPRESSION`, ...) are func
 | Ruby | Sake | |
 |---|---|---|
 | `URI.parse(s)` / `URI.parse(uri)` | `Addressable::URI.parse(s)` | same (no `nil` → `nil`, no `to_str` objects) |
-| `URI.heuristic_parse(s, hints)` | `URI.heuristic_parse(s, Hash[:scheme => "https"])` | same |
+| `URI.heuristic_parse(s, hints)` | `URI.heuristic_parse(s, Hash.of(:scheme => "https"))` | same |
 | `URI.convert_path(path)` | `URI.convert_path(path)` | same |
 | `URI.join(*uris)` / `uri.join(other)` / `uri + other` | `URI.join(base, *uris)` / `base + other` | same; one function for both (see below) |
 | `uri.join!(other)` | `URI.join!(u, other)` | same |
@@ -25,10 +25,10 @@ constants (`CharacterClasses::UNRESERVED`, `Template::EXPRESSION`, ...) are func
 | `normalized_query(*flags)` | `URI.normalized_query(u, :compacted, :sorted)` | same (Ruby caches the first call's result whatever the flags) |
 | `x = v` for each component and `userinfo= authority= site= origin= hostname= request_uri=` | `URI.set_x(u, v)` | differs: name; `set_port` takes a String or an Integer |
 | `query_values` / `query_values(Array)` | `URI.query_values(u)` / `URI.query_values_array(u)` | differs: no class values to pass |
-| `query_values = hash_or_pairs` | `URI.set_query_values(u, Hash[...] / Array[[k, v]])` | same (Hash sorted by key, as Ruby) |
+| `query_values = hash_or_pairs` | `URI.set_query_values(u, Hash.of(...) / Any[[k, v]])` | same (Hash sorted by key, as Ruby) |
 | `normalize` / `normalize!` | `URI.normalize(u)` / `normalize!` | same (IDN hosts to punycode) |
 | `display_uri` | `URI.display_uri(u)` | same |
-| `merge(hash)` / `merge!(hash)` | `URI.merge(u, Hash[:path => "/x"])` / `merge!` | same, including the ArgumentErrors and TypeError |
+| `merge(hash)` / `merge!(hash)` | `URI.merge(u, Hash.of(:path => "/x"))` / `merge!` | same, including the ArgumentErrors and TypeError |
 | `route_from(uri)` / `route_to(uri)` | `URI.route_from(u, other)` / `route_to` | same |
 | `omit(*components)` / `omit!` | `URI.omit(u, :port, ...)` / `omit!` | same |
 | `==` `eql?` `===` | `a == b`, `URI.eql?(a, b)`, `URI.===(a, b)` | same |
@@ -64,8 +64,8 @@ About 95 operations ported (URI 70, Template 13 + MatchData 17, IDNA 2).
   is both. `+` is `join` through `include Arithmetic`.
 - **No `return_type` arguments** (`URI.unencode(s, URI)`, `query_values(Array)`): classes are not values.
   The Array form of `query_values` is `query_values_array`.
-- **Mapping and option Hashes have one key type.** `Template.expand` takes `Hash["id" => 42]` or
-  `Hash[:id => 42]` (both work, as in Ruby), but not keys of both types in one Hash. Values may be Strings,
+- **Mapping and option Hashes have one key type.** `Template.expand` takes `Hash.of("id" => 42)` or
+  `Hash.of(:id => 42)` (both work, as in Ruby), but not keys of both types in one Hash. Values may be Strings,
   numbers, Symbols, booleans, nil, Arrays and Hashes, as in Ruby: the Hash's value type is their union.
 - **No caching.** Ruby memoizes each normalized component and resets the cache in every setter; this port
   recomputes them, so there is no cache to invalidate. The only visible difference: Ruby's
@@ -80,7 +80,7 @@ About 95 operations ported (URI 70, Template 13 + MatchData 17, IDNA 2).
   Sake has no `respond_to?`. The third argument of `expand` is `normalize_values`.
 - **`inspect`** has no object id, so the test prints Ruby's with the id removed.
 - `TypeError`s for non-String arguments (`Can't convert X into String.`) mostly cannot happen: the checker
-  rejects them. The one kept is `merge(Hash[:path => 1])`, whose value type is a union.
+  rejects them. The one kept is `merge(Hash.of(:path => 1))`, whose value type is a union.
 
 ## Built-ins Sake lacks (requests)
 

@@ -254,7 +254,7 @@ p(Range.each_cons(1..4, 2) { |a| p(a) })     # => [1, 2]
 各値と渡したオブジェクトをブロックへ渡し、そのオブジェクトを返します。容器を埋めるのに使います。Ruby と同じく、ブロックが新しい値を返してもオブジェクトは変わりません（`Range.each_with_object(1..3, 0) { |i, acc| acc + i }` は 0 を返す。`reduce` を使う）。終端の無い Range には `break` が要ります。
 
 ```ruby
-a = Range.each_with_object(1..3, Array[]) { |i, acc| Array.push(acc, i * i) }
+a = Range.each_with_object(1..3, Any[]) { |i, acc| Array.push(acc, i * i) }
 p(a)                                         # => [1, 4, 9]
 ```
 
@@ -402,7 +402,7 @@ p(Range.map(1..) { |i| i })                      # !> RangeError: Range.map: can
 ブロックが返した Array（または Tuple）を 1 段つなげた新しい Array。ブロックは Array か Tuple を返さなければならず、他の値は実行時に `TypeError`（`the block must return an Array or a Tuple, got Integer`）です。有限の Range が要ります。
 
 ```ruby
-p(Range.flat_map(1..3) { |i| Array[i, i] })      # => [1, 1, 2, 2, 3, 3]
+p(Range.flat_map(1..3) { |i| Any[i, i] })      # => [1, 1, 2, 2, 3, 3]
 p(Range.flat_map(1..2) { |i| [i, i * 10] })      # => [1, 10, 2, 20]
 ```
 
@@ -739,7 +739,7 @@ p(Range.to_set(1..3))        # => Set[1, 2, 3]
 Tuple の新しい Array: i 番目の Tuple は Range の i 番目の値と、渡した各 Array の i 番目の要素を持ちます。短い Array のところは nil です（Tuple の型にそう出ます）。Array を渡さなければ各 Tuple は値 1 つです。有限の Integer か String の Range が要ります。
 
 ```ruby
-p(Range.zip(1..3, Array["a", "b", "c"]))     # => [[1, "a"], [2, "b"], [3, "c"]]
-p(Range.zip(1..3, Array[10, 20]))            # => [[1, 10], [2, 20], [3, nil]]
+p(Range.zip(1..3, Any["a", "b", "c"]))     # => [[1, "a"], [2, "b"], [3, "c"]]
+p(Range.zip(1..3, Any[10, 20]))            # => [[1, 10], [2, 20], [3, nil]]
 p(Range.zip(1..2))                           # => [[1], [2]]
 ```

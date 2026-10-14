@@ -31,7 +31,7 @@ or set with `Configuration.set_ext_db_path` / `set_content_type_db_path` before 
 ## What differs and why
 
 - **Module state.** Ruby keeps the paths in `class << self; attr_accessor` and the Db in `@db ||= new`.
-  Sake has no globals; both are tables made by `once` (`once { Hash[] }`, `once { Db.new }`).
+  Sake has no globals; both are tables made by `once` (`once { Hash.new }`, `once { Db.new }`).
 - **pread.** `IO.seek` + `IO.read` on a File opened once (`File.open(path, "rb")`); Sake has no `pread`.
 - **Info equality.** `==` compares fields in Sake, identity in Ruby; the test's cached-lookup comparison is
   true in both.

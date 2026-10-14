@@ -15,10 +15,10 @@ Sake の構文は Ruby のものですが、Ruby の書き方のいくつかは�
 | `class B < A`（継承） | `class B < A`（A の定義の書き写し。部分型ではない） | 呼び出し先は静的 |
 | `attr_reader :x` | `attr_reader x` | フィールド名は裸 |
 | `def initialize(x) = @x = x` | `C.new(x)` が格納する。`initialize(c)` は検査と変換だけ | 引数は新しいインスタンス |
-| `@items = []`（既定値） | `initialize` の中で `@items = Array[]` | フィールドの既定値は無い |
+| `@items = []`（既定値） | `initialize` の中で `@items = Any[]` | フィールドの既定値は無い |
 | `Data.define` | `Struct.new` | クラスは可変 |
-| `[1, 2]`（伸びる配列） | `Array[1, 2]`。`[1, 2]` は Tuple（長さ固定） | リテラルの形が型を決める |
-| `{a: 1}`（Hash） | `Hash[a: 1]`。`{a: 1}` は Record | 同上 |
+| `[1, 2]`（伸びる配列） | `Any[1, 2]`。`[1, 2]` は Tuple（長さ固定） | リテラルの形が型を決める |
+| `{a: 1}`（Hash） | `Hash.of(a: 1)`。`{a: 1}` は Record | 同上 |
 | `%w[a b]`, `%i[a b]` | `String["a", "b"]`, `Symbol[:a, :b]` | 未決（Tuple か Array か） |
 | `PI = 3.14` | `def pi = 3.14`。表は `once { ... }` | 値の定数は無い |
 | `Math::PI`, `ARGV`, `$stdout` | `Math.PI`（`Math::PI` も可）、`ARGV`、`IO.stdout` | 操作として読む |
@@ -60,7 +60,7 @@ p(pt)                    # => #<struct Point x=6, y=2>
 - **継承は無い。** `class B < A` は A の定義（フィールド、関数、include）を B に書き写す略記です。その後 A と B は無関係な型で、B の値を `A.f(b)` に渡すのは型エラーです。
 - **フィールド名は裸。** `attr_reader :x` は「`:` を付けずに `x` と書く」というエラーになります。
 - **`initialize` は値を受け取らない。** `C.new(x)` がフィールドを格納した後、`def initialize(c)` が新しいインスタンスを受けて走ります。Ruby の `def initialize(x) = @x = x` は、インスタンス自身を自分のフィールドに入れることになるので静的エラーです。
-- **既定値は `initialize` で。** `attr_reader items = Array[]` はエラーで、最初の値は `initialize` の中で `@items = Array[]` と設定します。`C.new` はそのフィールドを省略できます。
+- **既定値は `initialize` で。** `attr_reader items = Any[]` はエラーで、最初の値は `initialize` の中で `@items = Any[]` と設定します。`C.new` はそのフィールドを省略できます。
 - **`Data.define` は無い。** Sake のクラスは可変なので、Ruby の `Struct` に当たる `Struct.new` を使います。
 
 ```ruby
@@ -87,19 +87,20 @@ end
 
 リテラルは形で型が決まります（[値と型](03-values.md)）。
 
-- **`[1, 2]` は Tuple** で、長さが固定です。伸びる配列は `Array[1, 2]`、空なら `Array[]` と書きます。Tuple を `Array.push` に渡すと、`Array[...]` と書く hint 付きの型エラーです。
-- **`{a: 1}` は Record** で、`Hash[a: 1]` が Hash です。Record のフィールドはパターン `r => {a:}` で読みます。
+- **Ruby の `Array[1, 2]`、`Hash[...]`、`Set[...]` は、Sake では Array の Array、Hash の Array、Set の Array** です。どの T でも `T[...]` は T の Array だからです。何でも入る Array は `Any[...]`、Hash は `Hash.of(k => v)` か `Hash.new`、Set は `Set.of(a, b)` か `Set.new(xs)` で作ります。
+- **`[1, 2]` は Tuple** で、長さが固定です。伸びる配列は `Any[1, 2]`、空なら `Any[]` と書きます。Tuple を `Array.push` に渡すと、`Any[...]` と書く hint 付きの型エラーです。
+- **`{a: 1}` は Record** で、`Hash.of(a: 1)` が Hash です。Record のフィールドはパターン `r => {a:}` で読みます。
 - **`%w[a b]` と `%i[a b]` は未対応** です。Tuple にするか Array にするかが決まっていません。`String["a", "b"]`、`Symbol[:a, :b]` と書くと、要素型付きの Array になります。
 - **値の定数は無い。** `PI = 3.14` は静的エラーで、hint は `def pi = 3.14` を示します。計算して保持したい表は `def table = once { ... }` です（[関数とブロック](04-functions.md)）。定数に代入できるのは `Struct.new` と `Exception.new` だけです。
 - **組み込みの定数は操作。** `Math.PI`、`ARGV`、`IO.stdout` のように呼びます。`Math::PI` など組み込みの数個は Ruby の形でも読めます。`$stdout` のようなグローバル変数はありません。
 
 ```ruby
 t = [1, 2]
-xs = Array[1, 2]
+xs = Any[1, 2]
 Array.push(xs, 3)
 p(t, xs)                 # => [1, 2]
                          # => [1, 2, 3]
-h = Hash[a: 1]
+h = Hash.of(a: 1)
 h[:b] = 2
 p(h)                     # => {a: 1, b: 2}
 def pi = 3.14

@@ -22,7 +22,7 @@ methods, comparisons; `notes/erb.md`); anything else raises `ERB::Error` where R
 
 | Ruby | Sake | |
 |---|---|---|
-| `Erubi::Engine.new(t, opts = {})` | `Erubi::Engine.new(t, Hash[:escape => true])` | same; options are a Hash |
+| `Erubi::Engine.new(t, opts = {})` | `Erubi::Engine.new(t, Hash.of(:escape => true))` | same; options are a Hash |
 | options `escape escape_html trim filename bufvar outvar bufval regexp literal_prefix literal_postfix preamble postamble chain_appends freeze_template_literals src freeze ensure escapefunc` | same keys | same (all 18) |
 | `engine.src` / `filename` / `bufvar` | `Erubi::Engine.src(e)` / ... | same |
 | `eval(engine.src)` | `Erubi::Engine.render(e, vars)` | differs: no eval; the template's code must be in Sake's ERB subset |

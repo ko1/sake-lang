@@ -10,7 +10,7 @@ print identical output (including all three trim modes).
 ```ruby
 require "erb"
 erb = ERB.new("<% items.each do |it| %>- <%= h(it[:name]) %>\n<% end %>")
-ERB.result_with_hash(erb, Hash[items: Array[Hash[name: "<a>"]]])   # "- &lt;a&gt;\n"
+ERB.result_with_hash(erb, Hash.of(items: Any[Hash.of(name: "<a>")]))   # "- &lt;a&gt;\n"
 ```
 
 ## What a template may contain

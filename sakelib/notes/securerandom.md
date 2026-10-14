@@ -31,7 +31,7 @@ It reopens the device per call. Not available in the browser playground.
   `format("%x", n)` / `format("%012x", ms)`. Integer has no base argument in `to_s`.
 - `Array.map(1..2000) { ... }` in the test (Ruby habit) → `Array.map: argument 1 must be Array, but is
   Range[Integer]` (eight reports at `--strict=1`) → `Range.map(1..2000)`. Clear message.
-- `Array[*Range.to_a("A".."Z"), ...]` for the alphabet passed every check and failed at run time:
+- `Any[*Range.to_a("A".."Z"), ...]` for the alphabet passed every check and failed at run time:
   `TypeError: Range.to_a: this operation needs a Range that starts with an Integer` →
   `String.chars("ABC...789")`. Repro: `notes/securerandom_bug_string_range_to_a.sake` (the checker knows
   the Range is `Range[String]` but reports nothing even at `--strict=4`).

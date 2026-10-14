@@ -12,7 +12,7 @@ The rounding family `round`, `floor`, `ceil`, `truncate`, and `abs`, `to_f`, `to
 
 `Integer[*Any]`
 
-Makes an **Array of Integers**: a typed Array whose every element must be an Integer, checked on construction and on every write (`Array.push`, `a[i] = v`, ...). A literal element of another type is rejected before running (`element 2 must be Integer, got String`); a write of another type is a `type` problem statically and a `TypeError` at run time. The empty Array of Integers is `Integer[]`. Compare `Array[1, 2]`, whose element type is inferred and widens with what is written into it.
+Makes an **Array of Integers**: a typed Array whose every element must be an Integer, checked on construction and on every write (`Array.push`, `a[i] = v`, ...). A literal element of another type is rejected before running (`element 2 must be Integer, got String`); a write of another type is a `type` problem statically and a `TypeError` at run time. The empty Array of Integers is `Integer[]`. Compare `Any[1, 2]`, whose element type is inferred and widens with what is written into it.
 
 ```ruby
 a = Integer[1, 2, 3]

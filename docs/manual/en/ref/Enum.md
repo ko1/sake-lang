@@ -10,10 +10,10 @@ class Deck
   attr_reader cards
   def each(d) = Array.each(@cards) { |c| yield(c) }
 end
-d = Deck.new(Array["A", "K", "Q", "J"])
+d = Deck.new(Any["A", "K", "Q", "J"])
 p(Deck.map(d) { |c| String.downcase(c) })     # => ["a", "k", "q", "j"]
 p(Enum.count(d))                              # => 4
-p(Enum.select(Array[3, 1, 2]) { |v| v > 1 })  # => [3, 2]
+p(Enum.select(Any[3, 1, 2]) { |v| v > 1 })  # => [3, 2]
 ```
 
 ```ruby error
@@ -29,7 +29,7 @@ The functions whose result may be nil (`find`, `first`, `min_by`, `max_by`) retu
 The required function. A class that includes Enum defines `def each(c)` and calls `yield(v)` for each element (two values are fine, as Hash does). `Enum.each(x) { }` dispatches to the `each` of x's type. A class that does not define it is a `type` problem wherever a call can reach it, and `NotImplementedError` while running.
 
 ```ruby
-Enum.each(Hash[a: 1, b: 2]) { |k, v| puts("#{k}: #{v}") }
+Enum.each(Hash.of(a: 1, b: 2)) { |k, v| puts("#{k}: #{v}") }
 # => a: 1
 # => b: 2
 ```
@@ -42,7 +42,7 @@ An Array of the block's value for each element.
 
 ```ruby
 p(Enum.map(1..3) { |v| v * v })               # => [1, 4, 9]
-p(Enum.map(Set[1, 2]) { |v| -v })             # => [-1, -2]
+p(Enum.map(Set.of(1, 2)) { |v| -v })             # => [-1, -2]
 ```
 
 ## select, filter
@@ -54,7 +54,7 @@ p(Enum.map(Set[1, 2]) { |v| -v })             # => [-1, -2]
 An Array of the elements for which the block is true.
 
 ```ruby
-p(Enum.select(Array[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [2, 4]
+p(Enum.select(Any[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [2, 4]
 p(Enum.filter(1..6) { |v| v > 4 })                     # => [5, 6]
 ```
 
@@ -65,7 +65,7 @@ p(Enum.filter(1..6) { |v| v > 4 })                     # => [5, 6]
 An Array of the elements for which the block is false.
 
 ```ruby
-p(Enum.reject(Array[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [1, 3]
+p(Enum.reject(Any[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [1, 3]
 ```
 
 ## filter_map
@@ -75,7 +75,7 @@ p(Enum.reject(Array[1, 2, 3, 4]) { |v| v % 2 == 0 })   # => [1, 3]
 Applies the block to each element and keeps the true results (nil and false are dropped).
 
 ```ruby
-p(Enum.filter_map(Array["1", "x", "3"]) { |s| String.to_i(s) if String.match?(s, /\A\d+\z/) })   # => [1, 3]
+p(Enum.filter_map(Any["1", "x", "3"]) { |s| String.to_i(s) if String.match?(s, /\A\d+\z/) })   # => [1, 3]
 ```
 
 ## flat_map
@@ -85,7 +85,7 @@ p(Enum.filter_map(Array["1", "x", "3"]) { |s| String.to_i(s) if String.match?(s,
 The Arrays (or Tuples) the block returns, joined one level deep.
 
 ```ruby
-p(Enum.flat_map(Array[1, 2]) { |v| Array[v, v * 10] })   # => [1, 10, 2, 20]
+p(Enum.flat_map(Any[1, 2]) { |v| Any[v, v * 10] })   # => [1, 10, 2, 20]
 ```
 
 ## find, detect
@@ -97,7 +97,7 @@ p(Enum.flat_map(Array[1, 2]) { |v| Array[v, v * 10] })   # => [1, 10, 2, 20]
 The first element for which the block is true, or nil when there is none (level 2 in a class's copy, and for `Array.find` and its kin).
 
 ```ruby
-p(Enum.find(Array[3, 8, 5]) { |v| v > 4 })    # => 8
+p(Enum.find(Any[3, 8, 5]) { |v| v > 4 })    # => 8
 p(Enum.detect(1..3) { |v| v > 9 })            # => nil
 ```
 
@@ -110,7 +110,7 @@ p(Enum.detect(1..3) { |v| v > 9 })            # => nil
 Starting from `init`, calls the block as `yield(acc, v)` for each element and returns the last accumulated value. Unlike Ruby's, the initial value cannot be left out: the result type would not follow from the element type alone (as for [Array](Array.md)'s `reduce`).
 
 ```ruby
-p(Enum.reduce(Array[1, 2, 3], 0) { |acc, v| acc + v })     # => 6
+p(Enum.reduce(Any[1, 2, 3], 0) { |acc, v| acc + v })     # => 6
 p(Enum.inject(1..4, 1) { |acc, v| acc * v })               # => 24
 ```
 
@@ -122,7 +122,7 @@ The sum of the elements, or of the block's values, starting from `init` (default
 
 ```ruby
 p(Enum.sum(1..4))                             # => 10
-p(Enum.sum(Array[1, 2, 3]) { |v| v * 10 })      # => 60
+p(Enum.sum(Any[1, 2, 3]) { |v| v * 10 })      # => 60
 ```
 
 ## count
@@ -132,7 +132,7 @@ p(Enum.sum(Array[1, 2, 3]) { |v| v * 10 })      # => 60
 The number of elements, or of those for which the block is true.
 
 ```ruby
-p(Enum.count(Set[1, 2, 3]))                   # => 3
+p(Enum.count(Set.of(1, 2, 3)))                   # => 3
 p(Enum.count(1..10) { |v| v % 3 == 0 })       # => 3
 ```
 
@@ -144,7 +144,7 @@ True when some element is `==` to `v`.
 
 ```ruby
 p(Enum.include?(1..5, 3))                     # => true
-p(Enum.include?(Array["a"], "b"))             # => false
+p(Enum.include?(Any["a"], "b"))             # => false
 ```
 
 ## any?, all?, none?, one?
@@ -160,7 +160,7 @@ p(Enum.include?(Array["a"], "b"))             # => false
 True when the block is true for at least one element / for all / for none / for exactly one. Without a block, the elements' own truth counts.
 
 ```ruby
-xs = Array[1, 2, 3]
+xs = Any[1, 2, 3]
 p(Enum.any?(xs) { |v| v > 2 })                # => true
 p(Enum.all?(xs) { |v| v > 2 })                # => false
 p(Enum.none?(xs) { |v| v > 5 })               # => true
@@ -176,7 +176,7 @@ p(Enum.one?(xs) { |v| v > 2 })                # => true
 The element with the smallest / largest block value; nil when empty. The block's values must be comparable with each other (the checker sees to it statically).
 
 ```ruby
-words = Array["pear", "fig", "banana"]
+words = Any["pear", "fig", "banana"]
 p(Enum.min_by(words) { |w| String.length(w) })   # => "fig"
 p(Enum.max_by(words) { |w| String.length(w) })   # => "banana"
 ```
@@ -188,7 +188,7 @@ p(Enum.max_by(words) { |w| String.length(w) })   # => "banana"
 An Array of the elements in ascending order of the block's value.
 
 ```ruby
-p(Enum.sort_by(Array["bb", "a", "ccc"]) { |s| -String.length(s) })   # => ["ccc", "bb", "a"]
+p(Enum.sort_by(Any["bb", "a", "ccc"]) { |s| -String.length(s) })   # => ["ccc", "bb", "a"]
 ```
 
 ## to_a
@@ -199,7 +199,7 @@ A new Array of the elements.
 
 ```ruby
 p(Enum.to_a(1..3))                            # => [1, 2, 3]
-p(Enum.to_a(Hash[a: 1]))                      # => [[:a, 1]]
+p(Enum.to_a(Hash.of(a: 1)))                      # => [[:a, 1]]
 ```
 
 ## first
@@ -209,7 +209,7 @@ p(Enum.to_a(Hash[a: 1]))                      # => [[:a, 1]]
 The first element (nil when empty), or with `n` an Array of the first `n`.
 
 ```ruby
-p(Enum.first(Array[7, 8, 9]))                 # => 7
+p(Enum.first(Any[7, 8, 9]))                 # => 7
 p(Enum.first(1..10, 3))                       # => [1, 2, 3]
 ```
 
@@ -255,7 +255,7 @@ p(no)                                         # => [1, 2, 3]
 Calls the block as `yield(v, memo)` for each element and returns `memo`.
 
 ```ruby
-p(Enum.each_with_object(Array[1, 2], Array[]) { |v, m| Array.unshift(m, v) })   # => [2, 1]
+p(Enum.each_with_object(Any[1, 2], Any[]) { |v, m| Array.unshift(m, v) })   # => [2, 1]
 ```
 
 ## compact
@@ -265,5 +265,5 @@ p(Enum.each_with_object(Array[1, 2], Array[]) { |v, m| Array.unshift(m, v) })   
 An Array of the elements that are not nil.
 
 ```ruby
-p(Enum.compact(Array[1, nil, 2]))             # => [1, 2]
+p(Enum.compact(Any[1, nil, 2]))             # => [1, 2]
 ```

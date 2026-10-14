@@ -1,7 +1,7 @@
 # base64
 
 `sakelib/base64.sake` ports all of Ruby's `Base64` module (base64 0.3, a bundled gem in Ruby 4.0).
-Since phase 2 each function is one call of `Array.pack(Array[s], "m")` / `String.unpack1(s, "m")`
+Since phase 2 each function is one call of `Array.pack(Any[s], "m")` / `String.unpack1(s, "m")`
 (and the strict `"m0"` forms), as Ruby's own base64.rb is. Phase 1 had written pack.c's encoder and
 decoders in Sake.
 `test/sakelib/base64.sake` covers empty input, line wrapping at 60 characters, all 256 byte values,

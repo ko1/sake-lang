@@ -1,6 +1,6 @@
 # Time
 
-Time は 1 つの時刻です: 1970-01-01 00:00:00 UTC からの秒数（有理数の精度）と、表示に使う UTC からのオフセットを持ちます。リテラルは無く、`Time.now`、`Time.at(秒)`、`Time.new(年, 月, 日, ...)` で作ります（[値と型](../03-values.md)）。Ruby の Time と同じ値ですが、Ruby の `t.utc`、`t.localtime` が t 自身を書き換えるのに対し、Sake の操作はすべて新しい Time を返し、主語を変えません。Time に型付き Array `Time[]` は無く、Time の並びには `Array[...]` を使います。
+Time は 1 つの時刻です: 1970-01-01 00:00:00 UTC からの秒数（有理数の精度）と、表示に使う UTC からのオフセットを持ちます。リテラルは無く、`Time.now`、`Time.at(秒)`、`Time.new(年, 月, 日, ...)` で作ります（[値と型](../03-values.md)）。Ruby の Time と同じ値ですが、Ruby の `t.utc`、`t.localtime` が t 自身を書き換えるのに対し、Sake の操作はすべて新しい Time を返し、主語を変えません。Time に型付き Array `Time[]` は無く、Time の並びには `Any[...]` を使います。
 
 **ゾーン。** `in:` キーワードと `getlocal`・`new` のゾーン引数は固定の UTC オフセットです: `"+09:00"`・`"-05:00"`、`"UTC"`・`"Z"`、軍用の 1 文字 `"A".."I"`, `"K".."Z"`、または秒数の Integer。`"Asia/Tokyo"` のような地域名は受け付けません（`ArgumentError`）。`in:` を省くと実行環境のローカルゾーンになるので、出力が環境に依らない例はすべて `in:` を付けています。`"UTC"`・`"Z"` で作った Time は UTC モード（`utc?` が true、`to_s` の末尾が `UTC`）で、`"+00:00"` はオフセット 0 の普通の Time です（`utc?` は false、末尾は `+0000`）。
 
@@ -437,6 +437,6 @@ a = Time.at(100, in: "UTC")
 p(a <=> a + 1)                         # => -1
 p(a <=> a)                             # => 0
 p(Time.<=>(a + 1, a))                  # => 1
-xs = Array.sort(Array[a + 9, a, a + 3])
+xs = Array.sort(Any[a + 9, a, a + 3])
 p(Array.map(xs) { |t| Time.to_i(t) })  # => [100, 103, 109]
 ```

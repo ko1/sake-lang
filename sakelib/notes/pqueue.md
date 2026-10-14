@@ -42,7 +42,7 @@ Jobs (a Struct type with its own `<=>`) and `[priority, seq, task]` Tuples.
 1. Integer, String, Job and Tuple queues in one test → five `[mixed]` reports (`Comparable.<=>`,
    `Job.priority`, `Array.push`, multiple assignment) → one `class XQueue < PQueue` per element type.
 2. That still failed, with the same reports: `--types` showed `JobQueue.heap: Array@L21[Integer | Job |
-   String | ...]`, the Array made by `@heap = Array[]` in `initialize`, one allocation site shared by
+   String | ...]`, the Array made by `@heap = Any[]` in `initialize`, one allocation site shared by
    PQueue and all its copies. `sakelib/notes/pqueue_bug_subclass_shares_array_site.sake` →
    heapify the caller's Array in place.
 3. `(a <=> b) > 0` → `Comparable.>: the operands may be nil [nil]` (`<=>` gives nil for incomparable
@@ -56,7 +56,7 @@ Jobs (a Struct type with its own `<=>`) and `[priority, seq, task]` Tuples.
 - Keyword argument through `T.new`: `PQueue.new(nums, order: :min)` gives the field `order` by name: helped,
   it is the gem's call shape minus the block.
 - `initialize` for the order check and the heapify.
-- `private attr_reader heap = Array[]`, `attr_reader order = :max` (expression defaults).
+- `private attr_reader heap = Any[]`, `attr_reader order = :max` (expression defaults).
 - `*xs` rest parameter: `PQueue.push(q, 7, 10)`.
 - `class B < A`: one queue type per element type (above); the most useful feature here.
 - Multiple assignment to elements: `@heap[i], @heap[p] = ...` swaps.
@@ -68,6 +68,6 @@ Jobs (a Struct type with its own `<=>`) and `[priority, seq, task]` Tuples.
 
 ## Types
 
-- `PQueue.heap: Array[Integer]` (several call-site Arrays), `WordQueue.heap: Array[String]`,
-  `JobQueue.heap: Job[]`, `TaskQueue.heap: Array[[Integer, Integer, String]]`: one element type each,
+- `PQueue.heap: Any[Integer]` (several call-site Arrays), `WordQueue.heap: Any[String]`,
+  `JobQueue.heap: Job[]`, `TaskQueue.heap: Any[[Integer, Integer, String]]`: one element type each,
   which is what the per-type queues buy. No partial or unknown checks.

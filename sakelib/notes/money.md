@@ -45,7 +45,7 @@ a module as in the gem) and `Money::Bank::UnknownRate`. Before namespaces nested
 - `include Arithmetic` + `+ - * / -@ +@`, `include Comparable` + `<=>`: `a + b`, `a * 1.5`, `-(a + b)`,
   `Array.sort(Money[...])`, `Array.max` all read as the gem's. `Money * Money` raises `TypeError` (Sake lets a
   library raise the built-in `TypeError` with the gem's message).
-- `Money.default_bank` is `once { Bank::VariableExchange.new(Hash[]) }`: class-level mutable state (the gem's `@@default_bank`) as a
+- `Money.default_bank` is `once { Bank::VariableExchange.new(Hash.new) }`: class-level mutable state (the gem's `@@default_bank`) as a
   shared value computed once. `Money::Bank::VariableExchange.add_rate(Money.default_bank, "USD", "EUR", 0.5)` then
   `Money.new(1000, "USD") + Money.new(1000, "EUR")` works as in the gem.
 - Not done: `2 * money`. An operator dispatches on its left operand, and Integer's `*` is a closed table, so
@@ -83,7 +83,7 @@ a module as in the gem) and `Money::Bank::UnknownRate`. Before namespaces nested
 - `Currency` with `include Comparable` and `<=>` on `[@priority, @iso_code]` (a Tuple comparison): `Money.currency(b)
   == @currency` then compares by `<=>`, as the gem's `Currency#==` compares ids. Rates are keyed by the String
   `"USD_TO_EUR"`, as the gem does, which also sidesteps Currency not being allowed as a Hash key.
-- `once { Bank::VariableExchange.new(Hash[]) }` for the default bank: a one-liner where the gem has a class variable, a reader and
+- `once { Bank::VariableExchange.new(Hash.new) }` for the default bank: a one-liner where the gem has a class variable, a reader and
   a writer. `Money.default_bank.Money::Bank::VariableExchange.exchange_with(m, "EUR")` (a chain) reads like
   `Money.default_bank.exchange_with`, if longer since the names nest.
 
@@ -94,5 +94,5 @@ a module as in the gem) and `Money::Bank::UnknownRate`. Before namespaces nested
 - `Rational.divmod` / `Rational.truncate(r, digits)`: `Integer.divmod` and `Float.divmod` exist, Rational's does not.
 - (Language) a way for a Struct type to take part in `Integer * T` (`coerce`, or a right-operand row): the one
   gem idiom that cannot be written.
-- (Language) a Struct type with `<=>` as a Hash key when it also defines `eql?`/`hash`: `Hash[money => count]`
+- (Language) a Struct type with `<=>` as a Hash key when it also defines `eql?`/`hash`: `Hash.of(money => count)`
   is a common pattern (grouping by amount).

@@ -102,7 +102,7 @@ p(String.*("ab", -1))        # !> ArgumentError: String.*: negative argument -1
 
 `String.%(x, Any)`
 
-The function form of `fmt % value`, Ruby's `format` with `fmt` as the format: `"%d items" % 3`. The right operand is one value (Integer, Float, String, Symbol, nil, true or false), a Tuple of values for several directives (`"%s-%s" % [a, b]`), or a Record or a Hash with Symbol keys for the named directives `%<name>d` and `%{name}` (`"%<a>05d" % {a: 42}`, `"%<a>05d" % Hash[a: 42]`); an Array is a `type` problem statically. The directives are Ruby's (`%d`, `%s`, `%f`, `%x`, `%05d`, `%-4s`, `%.2f`, `%p`, ...). A value that does not fit its directive (`"%d" % "x"`) or too few values is an `ArgumentError`; a name the Record or Hash does not have is a `KeyError` (`key<b> not found`); extra values are ignored.
+The function form of `fmt % value`, Ruby's `format` with `fmt` as the format: `"%d items" % 3`. The right operand is one value (Integer, Float, String, Symbol, nil, true or false), a Tuple of values for several directives (`"%s-%s" % [a, b]`), or a Record or a Hash with Symbol keys for the named directives `%<name>d` and `%{name}` (`"%<a>05d" % {a: 42}`, `"%<a>05d" % Hash.of(a: 42)`); an Array is a `type` problem statically. The directives are Ruby's (`%d`, `%s`, `%f`, `%x`, `%05d`, `%-4s`, `%.2f`, `%p`, ...). A value that does not fit its directive (`"%d" % "x"`) or too few values is an `ArgumentError`; a name the Record or Hash does not have is a `KeyError` (`key<b> not found`); extra values are ignored.
 
 ```ruby
 p("%05d|%-4s|%.2f|%x" % [42, "ab", 3.14159, 255])   # => "00042|ab  |3.14|ff"
@@ -112,7 +112,7 @@ p("%p" % nil)                # => "nil"
 p(String.%("%03d", 7))       # => "007"
 p("%<a>05d" % {a: 42})       # => "00042"
 p("%{a}-%<b>s" % {a: 1, b: "x"})     # => "1-x"
-p("%<a>05d" % Hash[a: 42])   # => "00042"
+p("%<a>05d" % Hash.of(a: 42))   # => "00042"
 ```
 
 ```ruby error
@@ -760,7 +760,7 @@ p(String.sub(s, "l", "L"))                 # => "heLlo"
 p(String.gsub(s, "l", "L"))                # => "heLLo"
 p(String.gsub(s, /l+/, "<\\0>"))           # => "he<ll>o"
 p(String.gsub(s, /(l)(o)/, "\\2\\1"))      # => "helol"
-p(String.gsub(s, /[el]/, Hash["e" => "3", "l" => 1]))   # => "h311o"
+p(String.gsub(s, /[el]/, Hash.of("e" => "3", "l" => 1)))   # => "h311o"
 p(String.gsub(s, /l/) { |m| String.upcase(m) })         # => "heLLo"
 p(String.sub(s, /l/) { |m| 7 })            # => "he7lo"
 p(s)                                       # => "hello"

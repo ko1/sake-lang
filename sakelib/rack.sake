@@ -10,7 +10,7 @@
 #
 #   class Hello
 #     include Rack::App
-#     def call(app, env) = [200, Hash["content-type" => "text/plain"], String["hello"]]
+#     def call(app, env) = [200, Hash.of("content-type" => "text/plain"), String["hello"]]
 #   end
 #   class Timer                                  # middleware: Rack's `use Timer`
 #     attr_reader app
@@ -50,7 +50,7 @@ module Rack
 
     # Utils::HTTP_STATUS_CODES (Sake has no value constants, so a function)
     def http_status_codes = once do
-      Hash[100 => "Continue", 101 => "Switching Protocols", 102 => "Processing", 103 => "Early Hints", 200 => "OK",
+      Hash.of(100 => "Continue", 101 => "Switching Protocols", 102 => "Processing", 103 => "Early Hints", 200 => "OK",
            201 => "Created", 202 => "Accepted", 203 => "Non-Authoritative Information", 204 => "No Content",
            205 => "Reset Content", 206 => "Partial Content", 207 => "Multi-Status", 208 => "Already Reported",
            226 => "IM Used", 300 => "Multiple Choices", 301 => "Moved Permanently", 302 => "Found", 303 => "See Other",
@@ -65,12 +65,12 @@ module Rack
            431 => "Request Header Fields Too Large", 451 => "Unavailable For Legal Reasons",
            500 => "Internal Server Error", 501 => "Not Implemented", 502 => "Bad Gateway", 503 => "Service Unavailable",
            504 => "Gateway Timeout", 505 => "HTTP Version Not Supported", 506 => "Variant Also Negotiates",
-           507 => "Insufficient Storage", 508 => "Loop Detected", 511 => "Network Authentication Required"]
+           507 => "Insufficient Storage", 508 => "Loop Detected", 511 => "Network Authentication Required")
     end
 
     # Utils::SYMBOL_TO_STATUS_CODE: "Not Found" -> :not_found
     def symbol_to_status_code = once do
-      h = Hash[]
+      h = Hash.new
       Hash.each(http_status_codes) { |code, msg| h[String.to_sym(String.gsub(String.downcase(msg), /\s|-|'/, "_"))] = code }
       h
     end
@@ -96,7 +96,7 @@ module Rack
       String.force_encoding(String.gsub(String.b(s), /[^\-_.!~*'()a-zA-Z\d;\/?:@&=+$,\[\]]/) { |m| format("%%%02X", String.ord(m)) }, "UTF-8")
     end
     def unescape_path(s)
-      String.force_encoding(String.gsub(String.b(s), /%(\h\h)/) { |m| Array.pack(Array[m[1, 2] || ""], "H2") }, "UTF-8")
+      String.force_encoding(String.gsub(String.b(s), /%(\h\h)/) { |m| Array.pack(Any[m[1, 2] || ""], "H2") }, "UTF-8")
     end
 
     # --- query strings ---
@@ -120,13 +120,13 @@ module Rack
 
     # Rack: parse_query("a=1&a=2&b") -> {"a" => ["1", "2"], "b" => nil}
     def parse_query(qs, sep = nil)
-      params = Hash[]
+      params = Hash.new
       _each_pair(qs, sep) do |k, v|
         cur = params[k]
         if cur in Array
           Array.push(cur, v)
         elsif cur != nil
-          params[k] = Array[cur, v]
+          params[k] = Any[cur, v]
         else
           params[k] = v
         end
@@ -136,7 +136,7 @@ module Rack
 
     # Rack: parse_nested_query("a[b]=1&x[]=1&y[][k]=2") -> {"a" => {"b" => "1"}, "x" => ["1"], "y" => [{"k" => "2"}]}
     def parse_nested_query(qs, sep = nil)
-      params = Hash[]
+      params = Hash.new
       _each_pair(qs, sep) { |k, v| _normalize_params(params, k, v, 0) }
       params
     end
@@ -175,12 +175,12 @@ module Rack
       return nil if k == ""
 
       if after == ""
-        return Array[v] if k == "[]" && depth != 0
+        return Any[v] if k == "[]" && depth != 0
         params[k] = v
       elsif after == "["
         params[name] = v
       elsif after == "[]"
-        list = params[k] ||= Array[]
+        list = params[k] ||= Any[]
         raise QueryParser::ParameterTypeError, "expected Array (got #{_type_name(list)}) for param `#{k}'" unless list in Array
         Array.push(list, v)
       elsif String.start_with?(after, "[]")
@@ -190,20 +190,20 @@ module Rack
         if after[2] == "[" && String.end_with?(after, "]") && inner != "" && !String.include?(inner, "[") && !String.include?(inner, "]")
           child_key = inner
         end
-        list = params[k] ||= Array[]
+        list = params[k] ||= Any[]
         raise QueryParser::ParameterTypeError, "expected Array (got #{_type_name(list)}) for param `#{k}'" unless list in Array
         last = Array.last(list)
         if last in Hash
           if Hash.key?(last, child_key)
-            Array.push(list, _normalize_params(Hash[], child_key, v, depth + 1))
+            Array.push(list, _normalize_params(Hash.new, child_key, v, depth + 1))
           else
             _normalize_params(last, child_key, v, depth + 1)
           end
         else
-          Array.push(list, _normalize_params(Hash[], child_key, v, depth + 1))
+          Array.push(list, _normalize_params(Hash.new, child_key, v, depth + 1))
         end
       else
-        sub = params[k] ||= Hash[]
+        sub = params[k] ||= Hash.new
         raise QueryParser::ParameterTypeError, "expected Hash (got #{_type_name(sub)}) for param `#{k}'" unless sub in Hash
         params[k] = _normalize_params(sub, after, v, depth + 1)
       end
@@ -244,7 +244,7 @@ module Rack
     # --- cookies ---
     # Rack: parse_cookies_header("a=1; b=x%20y") -> {"a" => "1", "b" => "x y"} (the first of a repeated name wins)
     def parse_cookies_header(value)
-      cookies = Hash[]
+      cookies = Hash.new
       return cookies if value == nil
       Array.each(String.split(value, /; */)) do |cookie|
         next if cookie == ""
@@ -287,13 +287,13 @@ module Rack
         attrs += "; partitioned" if value[:partitioned]
         v = value[:value]
       end
-      vs = (v in Array) ? v : Array[v]
+      vs = (v in Array) ? v : Any[v]
       "#{key}=#{Array.join(Array.map(vs) { |x| escape(x) }, "&")}#{attrs}"
     end
 
     # Rack: delete_set_cookie_header("s", {path: "/"}) -> "s=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT"
-    def delete_set_cookie_header(key, value = Hash[])
-      set_cookie_header(key, Hash.merge(Hash[value: "", path: nil, domain: nil, max_age: "0", expires: Time.at(0)], value))
+    def delete_set_cookie_header(key, value = Hash.new)
+      set_cookie_header(key, Hash.merge(Hash.of(value: "", path: nil, domain: nil, max_age: "0", expires: Time.at(0)), value))
     end
 
     # Rack: add_cookie_to_header-style update of a set-cookie header value (nil, a String, or an Array of String).
@@ -303,7 +303,7 @@ module Rack
       nil
     end
 
-    def delete_set_cookie_header!(header, key, value = Hash[])
+    def delete_set_cookie_header!(header, key, value = Hash.new)
       _add_value(header, delete_set_cookie_header(key, value))
     end
 
@@ -313,7 +313,7 @@ module Rack
       in Array
         Array.push(cur, v)
         cur
-      else Array[cur, v]
+      else Any[cur, v]
       end
     end
 
@@ -340,7 +340,7 @@ module Rack
 
     # Rack: q_values("text/html;q=0.9, */*;q=0.1") -> [["text/html", 0.9], ["*/*", 0.1]]
     def q_values(q_value_header, skip_empty = false)
-      out = Array[]
+      out = Any[]
       Array.each(String.split("#{q_value_header}", ",")) do |part|
         part = String.strip(part)
         next if skip_empty && part == ""
@@ -424,7 +424,7 @@ module Rack
 
     # Rack::MediaType.params: {"charset" => "utf-8"}
     def media_type_params(req)
-      h = Hash[]
+      h = Hash.new
       ct = content_type(req)
       return h unless ct
       Array.each(Array.drop(String.split(ct, ";"), 1)) do |s|
@@ -447,7 +447,7 @@ module Rack
     def ssl?(req) = scheme(req) == "https"
 
     def default_ports
-      once { Hash["http" => 80, "https" => 443, "coffee" => 80] }
+      once { Hash.of("http" => 80, "https" => 443, "coffee" => 80) }
     end
 
     def host_authority(req) = @env["HTTP_HOST"]
@@ -544,7 +544,7 @@ module Rack
       f = if input != nil && form_data?(req) && media_type(req) != "multipart/form-data"
         Utils.parse_nested_query(input, "&")
       else
-        Hash[]
+        Hash.new
       end
       @form_hash = f
       f
@@ -575,7 +575,7 @@ module Rack
 
   # ---------------------------------------------------------------------------------------------------------
   # Response.new(body = nil, status = 200, headers = {}): Response.new, Response.new("text"),
-  # Response.new(String["a", "b"], 201, Hash["Content-Type" => "text/plain"]). `body` is always an Array of String
+  # Response.new(String["a", "b"], 201, Hash.of("Content-Type" => "text/plain")). `body` is always an Array of String
   # afterwards; `headers` has downcased names.
   class Response
     attr_accessor body, status, headers                # in the order of Rack's Response.new(body, status, headers)
@@ -586,16 +586,16 @@ module Rack
       @status = 200 if @status == nil
       @status = Integer(@status)
       given = @headers
-      hdrs = Hash[]
+      hdrs = Hash.new
       Hash.each(given) { |k, v| hdrs[String.downcase(k)] = v } if given != nil
       @headers = hdrs
       b = @body
       if b == nil
-        @body = Array[]
+        @body = Any[]
         @buffered = true
         @length = nil
       elsif b in String
-        @body = Array[b]
+        @body = Any[b]
         @buffered = true
         @length = String.bytesize(b)
       else
@@ -652,7 +652,7 @@ module Rack
       if no_entity_body?(res)
         Hash.delete(@headers, "content-type")
         Hash.delete(@headers, "content-length")
-        return [@status, @headers, Array[]]
+        return [@status, @headers, Any[]]
       end
       len = @length
       @headers["content-length"] = Integer.to_s(len) if len != nil && !chunked?(res)
@@ -674,7 +674,7 @@ module Rack
     def set_cookie(res, key, value)
       add_header(res, "set-cookie", Utils.set_cookie_header(key, value))
     end
-    def delete_cookie(res, key, value = Hash[])
+    def delete_cookie(res, key, value = Hash.new)
       @headers["set-cookie"] = Utils.delete_set_cookie_header!(@headers["set-cookie"], key, value)
       nil
     end
@@ -731,7 +731,7 @@ module Rack
   end
 
   # ---------------------------------------------------------------------------------------------------------
-  # MockRequest.env_for(uri, method: "POST", input: "k=v", params: Hash[...], headers: Hash["HTTP_COOKIE" => "a=1"]).
+  # MockRequest.env_for(uri, method: "POST", input: "k=v", params: Hash.of(...), headers: Hash.of("HTTP_COOKIE" => "a=1")).
   # `headers` are env entries (Rack takes them as String-keyed opts). "rack.input" is the input String (none without one).
   module MockRequest
     module_function
@@ -740,7 +740,7 @@ module Rack
       u = URI.parse(uri)
       path = URI.path(u) || ""
       path = "/" + path unless String.start_with?(path, "/")
-      env = Hash[]
+      env = Hash.new
       env["REQUEST_METHOD"] = method ? String.upcase("#{method}") : "GET"
       env["SERVER_NAME"] = URI.host(u) || "example.org"
       prt = URI.port(u)

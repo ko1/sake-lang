@@ -28,7 +28,7 @@ Sake の性質は、次の 4 つの原則からほぼすべて出てきます。
 原則 4 の検査は、実行前の検査が見逃したものを捕まえます。次の例では、無いキーの `h["b"]` が nil を返し、`String.upcase` がその行で止まります。
 
 ```ruby error
-h = Hash["a" => "x"]
+h = Hash.of("a" => "x")
 puts(String.upcase(h["b"]))    # !> TypeError: String.upcase: argument 1 must be String, got nil
 ```
 
@@ -124,7 +124,7 @@ puts(String.upcase(w))         # !> argument 1 may be nil (nil | String) [nil]
 class Heap
   attr_accessor items
   def initialize(h)
-    @items = Array[]
+    @items = Any[]
   end
   def push(h, x) = Array.push(@items, x)
   def top(h) = Array.first(@items)
@@ -146,7 +146,7 @@ p(Heap.top(ints) + 1)          # !> the operands may be (nil, Integer), (String,
 「外れ」の nil（上記）を検査なしに使うことです。次のプログラムはレベル 2 までは走り、`2` を印字します。
 
 ```ruby
-xs = Array[1, 2, 3]
+xs = Any[1, 2, 3]
 x = xs[0]
 p(x + 1)                       # => 2
 ```
@@ -246,7 +246,7 @@ FILE:LINE: in FUNCTION: KIND: MESSAGE
 
 ```ruby error
 def third(xs) = Array.fetch(xs, 2)
-p(third(Array[1, 2]))          # !> IndexError: Array.fetch: index 2 outside of array bounds: -2...2
+p(third(Any[1, 2]))          # !> IndexError: Array.fetch: index 2 outside of array bounds: -2...2
 ```
 
 ```

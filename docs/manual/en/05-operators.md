@@ -46,7 +46,7 @@ a = Money.new(150)
 b = Money.new(250)
 puts(a + b)                                        # => $4.00
 p(a < b)                                           # => true
-puts(Array.join(Array.sort(Array[b, a]), " "))     # => $1.50 $2.50
+puts(Array.join(Array.sort(Any[b, a]), " "))     # => $1.50 $2.50
 ```
 
 When the left operand's type does not include the operator's module, or does not define the operator, it is a `type` problem before running and a `TypeError` while running.
@@ -80,7 +80,7 @@ Point = Struct.new(:x, :y)
 p(Point.new(1, 2) == Point.new(1, 2))   # => true
 p(Point.new(1, 2) == Point.new(2, 1))   # => false
 p(Point.new(1, 2) == "x")               # => false
-p(Array.include?(Array[Point.new(1, 2)], Point.new(1, 2)))   # => true
+p(Array.include?(Any[Point.new(1, 2)], Point.new(1, 2)))   # => true
 ```
 
 A type that includes `Comparable` and defines `<=>` (and not `==`) is equal to a value of the same type when `<=>` gives 0, as Ruby's `Comparable#==`. A value of another type, such as nil, is never equal, and `<=>` is not called then. For the Money above, `a == Money.new(150)` is true and `a == nil` is false.
@@ -108,9 +108,9 @@ For the built-in types, the result type depends on both operand types, through a
 
 ```ruby
 p("ab" * 3)                    # => "ababab"
-p(Array[1, 2] + Array[3])      # => [1, 2, 3]
-p(Array[1, 2, 3] - Array[2])   # => [1, 3]
-p(Set[1, 2] | Set[2, 3])       # => Set[1, 2, 3]
+p(Any[1, 2] + Any[3])      # => [1, 2, 3]
+p(Any[1, 2, 3] - Any[2])   # => [1, 3]
+p(Set.of(1, 2) | Set.of(2, 3))       # => Set[1, 2, 3]
 p(5 & 3)                       # => 1
 p(1 << 4)                      # => 16
 p("abc" =~ /b/)                # => 1
@@ -176,17 +176,17 @@ Tuples, Arrays, Sets, Hashes, and Records are equal when their contents are. Two
 
 ```ruby
 p([1, 2] == [1, 2])                 # => true
-p([1, 2] == Array[1, 2])            # => false
+p([1, 2] == Any[1, 2])            # => false
 p({x: 1} == {x: 1, y: 2})           # => false
-p(Set[1, 2] == Set[2, 1])           # => true
+p(Set.of(1, 2) == Set.of(2, 1))           # => true
 p([1, 2] < [1, 3])                  # => true
-p(Array[1, 2] <=> Array[1, 2, 0])   # => -1
+p(Any[1, 2] <=> Any[1, 2, 0])   # => -1
 ```
 
 When two elements cannot be compared, `<` and the like raise `ArgumentError` and `<=>` gives nil. Before running, the checker reports element types that cannot be compared.
 
 ```ruby error
-p(Array["a", 1] < Array["a", "b"])   # !> Comparable.<: elements compared in order may be (Integer, String), which cannot be compared
+p(Any["a", 1] < Any["a", "b"])   # !> Comparable.<: elements compared in order may be (Integer, String), which cannot be compared
 ```
 
 ### Not operators
@@ -210,7 +210,7 @@ p(1 && "second")       # => "second"
 `x[k]` means `Indexable.[](x, k)`, and `x[k] = v` means `Indexable.[]=(x, k, v)`: they run the `[]` and `[]=` of `x`'s type.
 
 ```ruby
-xs = Array[10, 20, 30]
+xs = Any[10, 20, 30]
 p(xs[0])                  # => 10
 p(xs[-1])                 # => 30
 p(xs[1..])                # => [20, 30]
@@ -237,7 +237,7 @@ s = "hello"
 p(s[0])                   # => "h"
 p(s[1..2])                # => "el"
 p(s[1, 3])                # => "ell"
-h = Hash["a" => 1]
+h = Hash.of("a" => 1)
 p(h["a"])                 # => 1
 p(h["z"])                 # => nil
 p(Hash.new(0)["z"])       # => 0
@@ -253,12 +253,12 @@ end
 Negative indexes count from the end, as in Ruby. A miss gives `nil`, as in Ruby, so the static type of `a[i]` is `T | nil`. A result used unchecked is reported by `index-nil` at level 3; level 2 lets it pass, and the program stops at that operation while running. `Array.fetch(a, i)` raises `IndexError` instead.
 
 ```ruby error
-xs = Array[10, 20, 30]
+xs = Any[10, 20, 30]
 p(xs[5] + 1)              # !> TypeError: Arithmetic.+: no implementation for (nil, Integer)
 ```
 
 ```ruby error
-xs = Array[10, 20, 30]
+xs = Any[10, 20, 30]
 p(Array.fetch(xs, 5))     # !> IndexError: Array.fetch: index 5 outside of array bounds: -3...3
 ```
 
@@ -274,7 +274,7 @@ p(t[2])                   # !> Indexable.[]: the index is outside the Tuple [Int
 Writing past the end of an untyped Array fills the gap with nil, as in Ruby. An Array of T raises `IndexError` instead, because nil is not a T. Writing a value that is not a T is a `type` problem before running. A Tuple takes only a value of the position's type. A String cannot be written to.
 
 ```ruby
-xs = Array[1]
+xs = Any[1]
 xs[3] = 4
 p(xs)                     # => [1, nil, nil, 4]
 ```
@@ -294,10 +294,10 @@ ys[0] = "a"               # !> Indexable.[]=: an element must be Integer, but is
 `x[k] OP= v` and `x[k] ||= v` evaluate `x` and `k` once. On a local, `y ||= v` assigns only when `y` is nil or false.
 
 ```ruby
-h = Hash[]
-h[:a] ||= Array[]
+h = Hash.new
+h[:a] ||= Any[]
 Array.push(h[:a], 1)
-h[:a] ||= Array[]
+h[:a] ||= Any[]
 p(h)                      # => {a: [1]}
 y = nil
 y ||= 5
@@ -318,7 +318,7 @@ class Grid
     @cells[r * @w + c] = v
   end
 end
-g = Grid.new(2, Array[0, 0, 0, 0])
+g = Grid.new(2, Any[0, 0, 0, 0])
 g[1, 0] = 7
 p(g[1, 0])                # => 7
 p(Grid.cells(g))          # => [0, 0, 7, 0]

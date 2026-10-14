@@ -69,7 +69,7 @@ only the structure: result types, labels, `Tms` arithmetic and `format` on fixed
   block, so Ruby's `gsub!(/(%[-+.\d]*)u/) { "#{$1}f" % utime }` cannot be ported directly. A
   `String.gsub` that takes a block (it is a built-in, so the block is not stored) would make this
   one line per directive.
-- `Array.join(Array.[](cs, i + 1, len) || Array[])` → `Array.join: argument 1 must be Array, but
+- `Array.join(Array.[](cs, i + 1, len) || Any[])` → `Array.join: argument 1 must be Array, but
   can be String [type]`. This is a checker bug: `a[start, length]` is typed as an element, not as
   an Array. Repro: [benchmark_bug_array_slice_type.sake](benchmark_bug_array_slice_type.sake). I
   wrote `Array.take(Array.drop(cs, i + 1), len)` instead. (I had changed the scanner from

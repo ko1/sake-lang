@@ -72,7 +72,7 @@ end
 ```ruby
 # main.sake
 generate "gen"
-p(name(Hash["name" => "ko1"]))
+p(name(Hash.of("name" => "ko1")))
 ```
 
 - **Every run.** The generator runs at every start, so the generated code is never stale, and it is always checked. It cannot see the program it generates for. The same generator with the same arguments runs once.
@@ -303,7 +303,7 @@ p(_)                         # => "a|b|c"
 ```ruby
 String.upcase("sake")
 puts("got #{_}")             # => got SAKE
-Array[1, 2]
+Any[1, 2]
 p((Array.size(_) + 1))       # => 3
 ```
 
@@ -358,7 +358,7 @@ class Box
   def size(b) = Array.size(@items)
   def describe(b) = "#{size(b)} items"   # Box.size
 end
-b = Box.new(Array[1, 2])
+b = Box.new(Any[1, 2])
 puts(Box.describe(b))        # => 2 items
 puts(size(b))                # => top-level size
 ```
@@ -390,7 +390,7 @@ class Basket
   include Summary
   attr_reader items
 end
-b = Basket.new(Array[1, 2, 3])
+b = Basket.new(Any[1, 2, 3])
 puts(Basket.report(b))       # => total=6
 puts(Summary.total(b))       # => 6
 ```
@@ -473,7 +473,7 @@ class Basket
   include Summary
   attr_reader items
 end
-puts(Summary.total(Basket.new(Array[1])))   # !> Summary.total needs `items` from a namespace that includes Summary
+puts(Summary.total(Basket.new(Any[1])))   # !> Summary.total needs `items` from a namespace that includes Summary
 ```
 
 ### Restrictions
@@ -614,10 +614,10 @@ Leaf = Struct.new(:weight)
 Node = Struct.new(:weight, :kids)
 def weight(t) = (Leaf|Node).weight(t)   # a field of the same name in two classes
 p(weight(Leaf.new(2)))                  # => 2
-p(weight(Node.new(5, Array[])))         # => 5
+p(weight(Node.new(5, Any[])))         # => 5
 def size_of(x) = (String|Array|Hash).size(x)
 p(size_of("abc"))                       # => 3
-p(size_of(Array[1, 2]))                 # => 2
+p(size_of(Any[1, 2]))                 # => 2
 ```
 
 Two things are checked before running.
@@ -658,29 +658,29 @@ p(twice(3) { 1 })            # !> twice does not take a block (it has no `yield`
 ```
 
 ```ruby error
-p(Array.map(Array[1]))       # !> Array.map requires a block
+p(Array.map(Any[1]))       # !> Array.map requires a block
 ```
 
 ### Splat arguments
 
-`*xs` spreads a Tuple or an Array; anything else raises `TypeError`. It goes only into a rest parameter: a built-in's (`puts(*lines)`, `format(fmt, *row)`, `Array[*xs, 0]`, `Set[*xs]`, `Array.push(a, *xs)`) or a user function's `*rest` (`join(*parts)`, [Functions and blocks](04-functions.md)).
+`*xs` spreads a Tuple or an Array; anything else raises `TypeError`. It goes only into a rest parameter: a built-in's (`puts(*lines)`, `format(fmt, *row)`, `Any[*xs, 0]`, `Set.of(*xs)`, `Array.push(a, *xs)`) or a user function's `*rest` (`join(*parts)`, [Functions and blocks](04-functions.md)).
 
 ```ruby
 def join(sep, *parts) = Array.join(parts, sep)
-xs = Array["a", "b"]
+xs = Any["a", "b"]
 p(join("-", *xs))            # => "a-b"
 t = [1, 2]
-p(Array[*t, 0])              # => [1, 2, 0]
+p(Any[*t, 0])              # => [1, 2, 0]
 puts(*xs)                    # => a
                              # => b
 ```
 
 - **The arguments before it are written out.** So their count is still checked.
-- **Static errors.** A splat into a function without `*rest`, or one that would fill a required or optional parameter, is a static error. So are splats into `Array.zip` / `Range.zip` (their Tuples are as long as the argument list) and `Hash[...]`.
+- **Static errors.** A splat into a function without `*rest`, or one that would fill a required or optional parameter, is a static error. So are splats into `Array.zip` / `Range.zip` (their Tuples are as long as the argument list) and `Hash.of(...)`.
 - **In the typer.** A Tuple spreads position by position; an Array stands for any number of arguments of its element types.
 
 ```ruby error
 def two(a, b) = a + b
 t = [1, 2]
-p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Array[...], Set[...], Array.push, ...)
+p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Any[...], Set.of(...), Array.push, ...)
 ```

@@ -219,7 +219,7 @@ sort key of several parts. `-x` runs the `-@` of `x`'s type, and `!x` is `x ? fa
 p([1, "a"] == [1, "a"])             # Tuples, Arrays, Hashes, Sets and Records: by content
 p(1 == "1")
 p([2, "b"] < [2, "c"])               # Tuples and Arrays are ordered element by element
-scores = Array[["ann", 90], ["bob", 72], ["cy", 90]]
+scores = Any[["ann", 90], ["bob", 72], ["cy", 90]]
 p(Array.sort_by(scores) { |name, s| [-s, name] })   # a Tuple as the sort key: score down, name up
 x = 5
 p([-x, !(x > 3)])                    # -x runs the -@ of x's type; !x is `x ? false : true`
@@ -286,7 +286,7 @@ $ sake functions.sake
   other keywords (a Hash). `T.new` takes fields by keyword too: `Logger.new(io, level: :warn)`.
 - `first, *rest = xs` and `|a, *rest|` collect the rest in an Array. `*xs` in arguments spreads
   only into built-ins that take any number of them: `puts(*lines)`, `format(fmt, *row)`,
-  `Array[*xs, 0]`.
+  `Any[*xs, 0]`.
 
 ## 5. Control flow
 
@@ -394,7 +394,7 @@ end
 c = Config.new("example.com")
 Config.set_port(c, 8080)
 p(c)
-v = Array.first(Array[3, 4])  # Integer or nil
+v = Array.first(Any[3, 4])  # Integer or nil
 v => Integer                  # also a check for nil: v + 1 needs none
 p(v + 1)
 Config.set_port(c, "eighty")
@@ -433,15 +433,15 @@ Operations that take a block are called like any other operation, with the subje
 argument. Inside a block, you can name the single parameter `it` or `_1`, as in Ruby 3.4.
 
 ```ruby
-nums = Array[3, 1, 4, 1, 5, 9, 2, 6]
+nums = Any[3, 1, 4, 1, 5, 9, 2, 6]
 
-Array.each(Array[1, 2, 3]) { |x| print(x * 10, " ") }
+Array.each(Any[1, 2, 3]) { |x| print(x * 10, " ") }
 puts
 p(Array.map(nums) { |x| x * x })
 p(Array.select(nums) { it > 3 })                   # `it` names the only parameter
 p(Array.sort_by(nums) { -_1 })                     # so does _1
 puts(Array.reduce(nums, 0) { |acc, x| acc + x })
-Array.each_with_index(Array["a", "b"]) { |s, i| puts("#{s}#{i}") }
+Array.each_with_index(Any["a", "b"]) { |s, i| puts("#{s}#{i}") }
 Integer.times(3) { |i| print(i, " ") }
 puts
 ```
@@ -479,9 +479,9 @@ def first_over(a, limit)
 end
 
 puts(twice(3) { |x| x + 4 })
-each_pair(Array[1, 2, 3]) { |x, sq| puts("#{x} -> #{sq}") }   # ...destructured here
-puts(first_over(Array[1, 5, 10], 4))
-odd_only = Array.map(Array[1, 2, 3, 4]) { |x| next 0 if Integer.even?(x); x }
+each_pair(Any[1, 2, 3]) { |x, sq| puts("#{x} -> #{sq}") }   # ...destructured here
+puts(first_over(Any[1, 5, 10], 4))
+odd_only = Array.map(Any[1, 2, 3, 4]) { |x| next 0 if Integer.even?(x); x }
 p(odd_only)
 ```
 
@@ -496,12 +496,12 @@ $ sake yield.sake
 ```
 
 ```ruby
-nums = Array[3, 8, 12, 5]
+nums = Any[3, 8, 12, 5]
 found = Array.each(nums) { |n| break n if n > 10 }    # break ends the call; its value is the call's
 p(found)
-pairs = Array[["a", 1], ["b", 2]]
+pairs = Any[["a", 1], ["b", 2]]
 Array.each_with_index(pairs) { |(name, n), i| puts("#{i}: #{name}=#{n}") }  # a parameter taken apart
-Array.each(Array[[1, 2, 3], [4, 5, 6]]) { |head, *rest| p([head, rest]) }  # the rest, as an Array
+Array.each(Any[[1, 2, 3], [4, 5, 6]]) { |head, *rest| p([head, rest]) }  # the rest, as an Array
 ```
 
 ```
@@ -524,7 +524,7 @@ def add(a, b) = a + b
 
 puts(twice(1))
 puts(add(1, 2) { |x| x })
-Array.each(Array[1, 2])
+Array.each(Any[1, 2])
 ```
 
 ```
@@ -586,7 +586,7 @@ true
 | `attr_reader x, y` | `C.x(c)` from anywhere; written only inside `class C` (with `@x = v`) |
 | `attr_accessor n` | `C.n(c)` and `C.set_n(c, v)` from anywhere |
 | `attr_writer w` | `C.set_w(c, v)` from anywhere; read only inside the class |
-| `def initialize(c)` | runs after `new` stored the fields: set the others there (`@items = Array[]`); with it, `new` may leave out trailing fields, which are nil until initialize sets them. Fields have no default values |
+| `def initialize(c)` | runs after `new` stored the fields: set the others there (`@items = Any[]`); with it, `new` may leave out trailing fields, which are nil until initialize sets them. Fields have no default values |
 | `private attr_reader pos` | no `C.pos` outside the class (inside: `@pos`, or `C.pos(other)` for another C); `new` still takes it |
 | `class E < Exception` | an exception type: `message` comes first |
 
@@ -852,7 +852,7 @@ module Units                         # `module_function`: called directly, as Un
   def km(m) = m / 1000.0
 end
 
-b = Basket.new(Array[3, 4, 5])
+b = Basket.new(Any[3, 4, 5])
 puts(Basket.total(b))                # static: Basket's total (borrowed from Summary)
 puts(Summary.total(Countdown.new(4)))  # dispatch: the total of the argument's type
 puts(Units.km(2500))
@@ -933,10 +933,10 @@ a = Money.new(150)
 b = Money.new(275)
 puts(a + b)
 p(a < b)
-p(Array.sort(Array[b, a]))
-p(Array.max(Array[a, b]))
+p(Array.sort(Any[b, a]))
+p(Array.max(Any[a, b]))
 p(a == Money.new(150))
-p(Array.include?(Array[a], Money.new(150)))
+p(Array.include?(Any[a], Money.new(150)))
 class Grid
   attr_reader cells
   include Indexable
@@ -945,10 +945,10 @@ class Grid
     Array.[]=(@cells, k, v)
   end
 end
-g = Grid.new(Array[1, 2, 3])
+g = Grid.new(Any[1, 2, 3])
 g[1] = 20
 g[2] += 1
-p(Array[g[0], g[1], g[2]])
+p(Any[g[0], g[1], g[2]])
 ```
 
 ```
@@ -976,7 +976,7 @@ def weight(t) = (Leaf|Node).weight(t)
 def size_of(x) = (String|Array).size(x)
 
 puts(weight(Leaf.new(3)) + weight(Node.new(5, Leaf.new(1), Leaf.new(1))))
-puts(size_of("sake") + size_of(Array[1, 2]))
+puts(size_of("sake") + size_of(Any[1, 2]))
 puts(size_of(42))
 ```
 
@@ -1056,7 +1056,7 @@ collection is made by an operation with a type:
   (`a, b = t`; an Array too, where missing elements are nil, as in Ruby).
 - **Record.** A literal `{x: a, y: b}` is a Record. Its type is its set of fields and their
   types. Take it apart with a pattern.
-- **Array.** `Array[...]` builds an Array with no declared element type.
+- **Array.** `Any[...]` builds an Array with no declared element type.
 - **Typed Array.** `T[...]` builds an Array whose element type is T. The element type is checked
   on every write.
 
@@ -1066,7 +1066,7 @@ n, word = pair
 puts(word)
 puts(Tuple.size(pair))
 
-xs = Array[1, "two", 3.0]         # Array[...] has no declared element type
+xs = Any[1, "two", 3.0]         # Any[...] has no declared element type
 Array.push(xs, nil)
 p(xs)
 
@@ -1094,7 +1094,7 @@ def stats(xs)
   {count: Array.size(xs), total: total, mean: total / Array.size(xs)}
 end
 
-r = stats(Array[3, 5, 10])
+r = stats(Any[3, 5, 10])
 p(r)
 r => {mean:, count: n}        # take fields apart by name
 puts(mean)
@@ -1119,7 +1119,7 @@ Integer.times(3) { |i| Array.push(squares, i * i) }
 ```
 $ sake ruby_habits.sake
 ruby_habits.sake:2:24: error: Array.push: argument 1 must be Array, but is [] [type]
-  hint: `[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`
+  hint: `[...]` is a Tuple with a fixed length; for a growable Array, write `Any[...]`
 (exit status 2)
 ```
 
@@ -1131,9 +1131,9 @@ names = {"a" => 1}
 ```
 $ sake empty_braces.sake
 empty_braces.sake:1:10: error: `{}` is an empty Record, not a Hash
-  hint: for a Hash, write `Hash[]`; for a growable list, `Array[]`
+  hint: for a Hash, write `Hash.new`; for a growable list, `Any[]`
 empty_braces.sake:2:10: error: `{"a" => ...}` is not a Hash in Sake: `{name: value}` makes a Record
-  hint: for a Hash, write `Hash["a" => ...]`
+  hint: for a Hash, write `Hash.of("a" => ...)`
 (exit status 2)
 ```
 
@@ -1152,7 +1152,7 @@ p(words[10])                   # outside the Array: nil, as in Ruby
 words[1] = "slow"
 p(words)
 
-counts = Array[0, 0, 0]
+counts = Any[0, 0, 0]
 counts[1] += 1
 p(counts)
 
@@ -1161,7 +1161,7 @@ t[0] = 2                       # a Tuple keeps the type of each position
 p(t)
 
 best = nil
-best ||= Array.max(Array[3, 9, 4])
+best ||= Array.max(Any[3, 9, 4])
 p(best)
 p(t[2])                        # a Tuple's length is part of its type
 ```
@@ -1195,8 +1195,8 @@ value for `sum`, which an empty Array gives instead of the Integer 0:
 grid = Array.new(3, 0)                 # three zeros; Array.new(3) { |i| i * i } computes each
 squares = Array.new(4) { |i| i * i }
 p([grid, squares])
-p([Array[1, 2] + Array[3], Array[1, 2, 2, 3] - Array[2], Array[0] * 3])
-a = Array[1, 2, 3]
+p([Any[1, 2] + Any[3], Any[1, 2, 2, 3] - Any[2], Any[0] * 3])
+a = Any[1, 2, 3]
 a[0], a[2] = a[2], a[0]                # swap: elements (and fields) can be assignment targets
 p(a)
 p("sake-lang"[0, 4])                   # two indexes: start and length
@@ -1247,12 +1247,12 @@ note: RENT DUE
 
 A function needs no type: its operations say what it accepts. A class's field needs none either:
 its type comes from the values written to it, which `T.new` and `T.set_x` show. The one place a type
-pays is an Array that is filled later. Made with `Array[]`, its element type is whatever gets pushed,
+pays is an Array that is filled later. Made with `Any[]`, its element type is whatever gets pushed,
 so a wrong value is reported where the elements are used, far from where it went in:
 
 ```ruby
 def labels(n)
-  out = Array[]                          # any element type: it is whatever gets pushed
+  out = Any[]                          # any element type: it is whatever gets pushed
   Integer.times(n) { |i| Array.push(out, "#{i}") }
   out
 end
@@ -1290,7 +1290,7 @@ Hash, Set, Symbol, Range, and Regexp work as in Ruby. Their operations carry the
 everything else (`Hash.each`, `Range.to_a`, `String.match`), while `h[k]`, `1..5`, `:name`, and
 `/re/` are written as in Ruby.
 
-- `Hash[k => v]` and `Hash.new(0)` make a Hash, because `{...}` is a Record.
+- `Hash.of(k => v)` and `Hash.new(0)` make a Hash, because `{...}` is a Record.
 - A missing key gives `nil`, or the default given to `Hash.new`.
 - A block over a Hash receives `[key, value]`, which `|k, v|` takes apart.
 
@@ -1303,7 +1303,7 @@ top = Hash.max_by(counts) { |w, n| n }
 p(top)
 p(Array.tally(String.chars("banana")))
 
-ages = Hash["ann" => 31, "bob" => 25]
+ages = Hash.of("ann" => 31, "bob" => 25)
 ages["cy"] = 40
 Hash.each(ages) { |name, age| puts(format("%-4s %3d", name, age)) }
 p(ages["nobody"])                        # a missing key gives nil
@@ -1311,10 +1311,10 @@ p(Hash.fetch(ages, "nobody", 0))
 
 p(Range.to_a(1..5))
 p(Range.select(1..20) { it % 7 == 0 })
-p(Array[10, 20, 30, 40][1..2])
+p(Any[10, 20, 30, 40][1..2])
 
-seen = Set[]
-Array.each(Array[3, 1, 3, 2, 1]) { Set.add(seen, it) }
+seen = Set.new
+Array.each(Any[3, 1, 3, 2, 1]) { Set.add(seen, it) }
 p(seen)
 
 m = String.match("2026-10-01", /(\d+)-(\d+)-(\d+)/)
@@ -1442,7 +1442,7 @@ def parse(s)
   String.to_i(s)
 end
 
-Array.each(Array["", "123456", "42"]) do |s|
+Array.each(Any["", "123456", "42"]) do |s|
   begin
     p(parse(s))
   rescue ParseError => e                 # list the types to rescue (a module groups several)
@@ -1460,7 +1460,7 @@ rescue ZeroDivisionError
   0
 end
 p(safe_div(1, 0))
-v = Hash.fetch(Hash["a" => 1], "b") rescue -1
+v = Hash.fetch(Hash.of("a" => 1), "b") rescue -1
 p(v)
 ```
 

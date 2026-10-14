@@ -7,7 +7,7 @@
 # Float, true/false, nil. Ruby's lexer, Pratt parser, node types and the 26 built-in functions are
 # ported; nodes are one class, Nodes::Node, tagged with a kind named after Ruby's class (:field,
 # :subexpression, :projection ...), and evaluated by one `visit` with a case on the kind.
-# Ruby's runtime options Hash is a Hash here: JMESPath.search(e, d, Hash[disable_visit_errors: true]).
+# Ruby's runtime options Hash is a Hash here: JMESPath.search(e, d, Hash.of(disable_visit_errors: true)).
 
 require "json"
 
@@ -44,10 +44,10 @@ module JMESPath
     def power(type) = Hash.fetch(Token.binding_powers, type, 0)
 
     def binding_powers = once do
-      Hash[:unknown => 0, :eof => 0, :quoted_identifier => 0, :identifier => 0, :rbracket => 0,
+      Hash.of(:unknown => 0, :eof => 0, :quoted_identifier => 0, :identifier => 0, :rbracket => 0,
            :rparen => 0, :comma => 0, :rbrace => 0, :number => 0, :current => 0, :expref => 0,
            :colon => 0, :pipe => 1, :or => 2, :and => 3, :comparator => 5, :flatten => 9, :star => 20,
-           :filter => 21, :dot => 40, :not => 45, :lbrace => 50, :lbracket => 55, :lparen => 60]
+           :filter => 21, :dot => 40, :not => 45, :lbrace => 50, :lbracket => 55, :lparen => 60)
     end
 
     def null_token = Token.make(:eof, "", nil)
@@ -59,10 +59,10 @@ module JMESPath
   class Lexer
     # Ruby's TRANSLATION_TABLE maps a character to a STATE_ constant; the states are Symbols here.
     def translation_table = once do
-      t = Hash["<" => :lt, ">" => :gt, "=" => :eq, "!" => :not, "[" => :lbracket, "|" => :pipe,
+      t = Hash.of("<" => :lt, ">" => :gt, "=" => :eq, "!" => :not, "[" => :lbracket, "|" => :pipe,
                "&" => :and, "`" => :json_literal, "\"" => :quoted_string, "'" => :string_literal,
                "-" => :number, " " => :whitespace, "\t" => :whitespace, "\n" => :whitespace,
-               "\r" => :whitespace]
+               "\r" => :whitespace)
       Array.each(String.chars(".*],:@(){}")) { |c| t[c] = :single_char }
       Array.each(String.chars("0123456789")) { |c| t[c] = :number }
       Array.each(String.chars("_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")) { |c| t[c] = :identifier }
@@ -75,12 +75,12 @@ module JMESPath
     def numbers = once { Array.to_set(String.chars("0123456789")) }
 
     def simple_tokens = once do
-      Hash["." => :dot, "*" => :star, "]" => :rbracket, "," => :comma, ":" => :colon, "@" => :current,
-           "(" => :lparen, ")" => :rparen, "{" => :lbrace, "}" => :rbrace]
+      Hash.of("." => :dot, "*" => :star, "]" => :rbracket, "," => :comma, ":" => :colon, "@" => :current,
+           "(" => :lparen, ")" => :rparen, "{" => :lbrace, "}" => :rbrace)
     end
 
     def tokenize(lexer, expression)
-      tokens = Array[]
+      tokens = Any[]
       chars = CharacterStream.new(String.chars(expression), 0)
 
       while (cur = CharacterStream.current(chars))
@@ -94,7 +94,7 @@ module JMESPath
           CharacterStream.next(chars)
         in :identifier
           start = CharacterStream.position(chars)
-          buffer = Array[cur]
+          buffer = Any[cur]
           c = CharacterStream.next(chars)
           while c && Set.include?(valid_identifiers, c)
             Array.push(buffer, c)
@@ -137,7 +137,7 @@ module JMESPath
           Array.push(tokens, token)
         in :number
           start = CharacterStream.position(chars)
-          buffer = Array[cur]
+          buffer = Any[cur]
           c = CharacterStream.next(chars)
           while c && Set.include?(numbers, c)
             Array.push(buffer, c)
@@ -183,7 +183,7 @@ module JMESPath
     def inside(chars, delim, type)
       position = CharacterStream.position(chars)
       current = CharacterStream.next(chars)
-      buffer = Array[]
+      buffer = Any[]
       while current != delim
         if current == "\\"
           Array.push(buffer, current)
@@ -274,8 +274,8 @@ module JMESPath
     module_function
 
     # Every node is made here, so the checker sees one Node type.
-    def node(kind, left: nil, right: nil, children: Array[], key: nil, value: nil, name: "",
-             keys: String[], nums: Array[nil, nil, nil], quiet: false)
+    def node(kind, left: nil, right: nil, children: Any[], key: nil, value: nil, name: "",
+             keys: String[], nums: Any[nil, nil, nil], quiet: false)
       Node.new(kind, left, right, children, key, value, name, keys, nums, quiet)
     end
 
@@ -290,10 +290,10 @@ module JMESPath
     end
 
     def after_dot
-      once { Set[:identifier, :quoted_identifier, :star, :lbrace, :lbracket, :filter] }
+      once { Set.of(:identifier, :quoted_identifier, :star, :lbrace, :lbracket, :filter) }
     end
-    def num_colon_rbracket = once { Set[:number, :colon, :rbracket] }
-    def colon_rbracket = once { Set[:colon, :rbracket] }
+    def num_colon_rbracket = once { Set.of(:number, :colon, :rbracket) }
+    def colon_rbracket = once { Set.of(:colon, :rbracket) }
 
     def parse(ps, expression)
       tokens = Lexer.tokenize(Lexer.new, expression)
@@ -389,7 +389,7 @@ module JMESPath
       in :filter then led_filter(ps, stream, left)
       in :flatten then led_flatten(ps, stream, left)
       in :lbracket
-        TokenStream.next(stream, Set[:number, :colon, :star])
+        TokenStream.next(stream, Set.of(:number, :colon, :star))
         t = type(stream)
         if t == :number || t == :colon
           right = parse_array_index_expression(ps, stream)
@@ -398,7 +398,7 @@ module JMESPath
           parse_wildcard_array(ps, stream, left)
         end
       in :lparen
-        args = Array[]
+        args = Any[]
         raise Errors::SyntaxError, "invalid function invocation" unless Nodes::Node.kind(left) == :function_name
         name = Nodes::Node.name(left)
         TokenStream.next(stream)
@@ -426,14 +426,14 @@ module JMESPath
     end
 
     def nud_lbrace(ps, stream)
-      valid_keys = Set[:quoted_identifier, :identifier]
+      valid_keys = Set.of(:quoted_identifier, :identifier)
       TokenStream.next(stream, valid_keys)
       keys = String[]
-      values = Array[]
+      values = Any[]
       while true
         # parse_key_value_pair
         Array.push(keys, Kernel.to_s(Token.value(TokenStream.token(stream))))
-        TokenStream.next(stream, Set[:colon])
+        TokenStream.next(stream, Set.of(:colon))
         TokenStream.next(stream)
         Array.push(values, expr(ps, stream, 0))
         TokenStream.next(stream, valid_keys) if type(stream) == :comma
@@ -462,7 +462,7 @@ module JMESPath
 
     def parse_array_index_expression(ps, stream)
       pos = 0
-      parts = Array[nil, nil, nil]
+      parts = Any[nil, nil, nil]
       expected = num_colon_rbracket
       while true
         if type(stream) == :colon
@@ -502,7 +502,7 @@ module JMESPath
     end
 
     def parse_multi_select_list(ps, stream)
-      nodes = Array[]
+      nodes = Any[]
       while true
         Array.push(nodes, expr(ps, stream, 0))
         if type(stream) == :comma
@@ -530,7 +530,7 @@ module JMESPath
     end
 
     def parse_wildcard_array(ps, stream, left)
-      TokenStream.next(stream, Set[:rbracket])
+      TokenStream.next(stream, Set.of(:rbracket))
       TokenStream.next(stream)
       right = parse_projection(ps, stream, Token.power(:star))
       Nodes.node(:array_projection, left: left || Nodes.current, right: right)
@@ -548,7 +548,7 @@ module JMESPath
     attr_reader parser, cache
 
     def initialize(cp)
-      @cache = Hash[]
+      @cache = Hash.new
     end
 
     def parse(cp, expression)
@@ -578,9 +578,9 @@ module JMESPath
     module_function
 
     def names = once do
-      Set["abs", "avg", "ceil", "contains", "floor", "length", "map", "max", "min", "type", "keys",
+      Set.of("abs", "avg", "ceil", "contains", "floor", "length", "map", "max", "min", "type", "keys",
           "values", "join", "to_string", "to_number", "sum", "not_null", "sort", "sort_by", "max_by",
-          "min_by", "ends_with", "starts_with", "merge", "reverse", "to_array"]
+          "min_by", "ends_with", "starts_with", "merge", "reverse", "to_array")
     end
 
     def create(name, children, quiet)
@@ -613,7 +613,7 @@ module JMESPath
 
     # Ruby's error messages print the type constants' numbers (0..6), as TypeChecker's.
     def type_number(t)
-      Array.index(Array["array", "boolean", "expression", "null", "number", "object", "string"], t)
+      Array.index(Any["array", "boolean", "expression", "null", "number", "object", "string"], t)
     end
 
     def call(fn, args)
@@ -763,7 +763,7 @@ module JMESPath
         name == "ends_with" ? String.end_with?(search, affix) : String.start_with?(search, affix)
       in "merge"
         return maybe_raise_arity(fn, "function merge() expects 1 or more arguments") if n == 0
-        h = Hash[]
+        h = Hash.new
         Array.each(args) do |v|
           v => Hash
           h = Hash.merge(h, v)
@@ -779,7 +779,7 @@ module JMESPath
         end
       in "to_array"
         value = args[0]
-        (value in Array) ? value : Array[value]
+        (value in Array) ? value : Any[value]
       end
     end
 
@@ -800,7 +800,7 @@ module JMESPath
       order = array_type == "string" ?
         Array.sort_by(idx) { |i| [JMESPath.as_string(keys[i]), i] } :
         Array.sort_by(idx) { |i| [JMESPath.as_number(keys[i]), i] }
-      result = Array[]
+      result = Any[]
       Array.each(order) { |i| Array.push(result, values[i]) }
       result
     end
@@ -852,7 +852,7 @@ module JMESPath
 
   # Ruby's Runtime.new(options): options is a Hash with Symbol keys (:cache_expressions,
   # :disable_visit_errors).
-  def runtime(options = Hash[])
+  def runtime(options = Hash.new)
     quiet = Hash.fetch(options, :disable_visit_errors, false) == true
     parser = Parser.new(quiet)
     return Runtime.new(parser) if Hash.fetch(options, :cache_expressions, true) == false
@@ -877,7 +877,7 @@ module JMESPath
     if kind == :slice
       start, stop, step = Nodes::Node.nums(node)
       if (step == nil || step == 1) && start && stop && start > 0 && stop > start
-        return Nodes.node(:simple_slice, nums: Array[start, stop, 1])
+        return Nodes.node(:simple_slice, nums: Any[start, stop, 1])
       end
       return node
     end
@@ -931,7 +931,7 @@ module JMESPath
     in :flatten
       v = visit(child(node, :left), value)
       if v in Array
-        values = Array[]
+        values = Any[]
         Array.each(v) do |e|
           if e in Array
             Array.concat(values, e)
@@ -946,7 +946,7 @@ module JMESPath
       Array.map(Nodes::Node.children(node)) { |n| visit(n, value) }
     in :multi_select_hash
       return nil if value == nil
-      hash = Hash[]
+      hash = Hash.new
       Array.each_with_index(Nodes::Node.keys(node)) do |k, i|
         hash[k] = visit(Nodes::Node.children(node)[i] || Nodes.current, value)
       end
@@ -979,7 +979,7 @@ module JMESPath
   end
 
   def project(node, targets)
-    list = Array[]
+    list = Any[]
     pr = child(node, :right)
     Array.each(targets) do |v|
       vv = visit(pr, v)

@@ -49,7 +49,7 @@ through `AASM.current_state(x)` and friends).
 ## Friction
 
 1. None blocking: `--strict=1` and `--strict=2` passed on the first run of the test.
-2. `from: :a` or `from: Array[:a, :b]` → `(from in Symbol) ? Symbol[from] : Symbol[*from]` (Ruby's
+2. `from: :a` or `from: Any[:a, :b]` → `(from in Symbol) ? Symbol[from] : Symbol[*from]` (Ruby's
    `Array(from)`); `from in Symbol ? ...` without parentheses is a syntax error, as in Ruby.
 3. `once` is per place in the program, so each includer's `def aasm = once do ... end` is its own machine:
    exactly AASM's per-class machine. (A machine defined in the module would be one for all types.)
@@ -71,4 +71,4 @@ through `AASM.current_state(x)` and friends).
   `AASM::Core::Transition.to` is one field for all machines. Harmless (only compared), but the checker cannot
   tell that a traffic light is never `:sleeping`.
 - `AASM::Core::Transition.guard: nil | :ready?`, `AASM::Core::Transition.after: nil | :alert | :notify`,
-  `AASM::StateMachine.events: Hash[Symbol => AASM::Core::Transition[]]`. No partial or unknown checks.
+  `AASM::StateMachine.events: Hash.of(Symbol => AASM::Core::Transition[])`. No partial or unknown checks.

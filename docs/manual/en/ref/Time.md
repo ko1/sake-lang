@@ -1,6 +1,6 @@
 # Time
 
-A Time is one instant: the seconds since 1970-01-01 00:00:00 UTC (to rational precision) and the UTC offset it is shown in. There is no literal; `Time.now`, `Time.at(seconds)` and `Time.new(year, month, day, ...)` make one ([Values and types](../03-values.md)). The values are Ruby's Times, but where Ruby's `t.utc` and `t.localtime` change t itself, every operation in Sake returns a new Time and leaves its subject alone. Time has no typed Array `Time[]`; a sequence of Times is an `Array[...]`.
+A Time is one instant: the seconds since 1970-01-01 00:00:00 UTC (to rational precision) and the UTC offset it is shown in. There is no literal; `Time.now`, `Time.at(seconds)` and `Time.new(year, month, day, ...)` make one ([Values and types](../03-values.md)). The values are Ruby's Times, but where Ruby's `t.utc` and `t.localtime` change t itself, every operation in Sake returns a new Time and leaves its subject alone. Time has no typed Array `Time[]`; a sequence of Times is an `Any[...]`.
 
 **Zones.** The `in:` keyword and the zone argument of `getlocal` and `new` are fixed UTC offsets: `"+09:00"`, `"-05:00"`, `"UTC"` or `"Z"`, a military letter `"A".."I"`, `"K".."Z"`, or an Integer number of seconds. A region name such as `"Asia/Tokyo"` is not accepted (`ArgumentError`). Without `in:` the local zone of the machine applies, so every example whose output must not depend on the machine passes `in:`. A Time made with `"UTC"` or `"Z"` is in UTC mode (`utc?` is true and `to_s` ends in `UTC`); one made with `"+00:00"` is an ordinary Time at offset 0 (`utc?` is false, `to_s` ends in `+0000`).
 
@@ -437,6 +437,6 @@ a = Time.at(100, in: "UTC")
 p(a <=> a + 1)                         # => -1
 p(a <=> a)                             # => 0
 p(Time.<=>(a + 1, a))                  # => 1
-xs = Array.sort(Array[a + 9, a, a + 3])
+xs = Array.sort(Any[a + 9, a, a + 3])
 p(Array.map(xs) { |t| Time.to_i(t) })  # => [100, 103, 109]
 ```

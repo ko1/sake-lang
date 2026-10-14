@@ -49,7 +49,7 @@ p(i)                                 # => 0
 
 ```ruby
 i = 0
-out = Array[]
+out = Any[]
 r = while i < 10
   i += 1
   next if i % 2 == 0
@@ -65,10 +65,10 @@ p(r)                                 # => nil
 `for` is not supported. To walk a sequence, write a block-taking operation such as `Array.each`, `Integer.times`, or `Range.each` ([Functions and blocks](04-functions.md)). Inside the block, `break v` ends the call the block was given to, with the value `v`; `next v` ends the current block call with `v`.
 
 ```ruby
-xs = Array[3, 8, 12, 5]
+xs = Any[3, 8, 12, 5]
 big = Array.each(xs) { |x| break x if x > 10 }
 p(big)                               # => 12
-squares = Array[]
+squares = Any[]
 Integer.times(4) { |i| next if i == 0; Array.push(squares, i * i) }
 p(squares)                           # => [1, 4, 9]
 ```
@@ -184,8 +184,8 @@ def size_or_zero(xs)
   return 0 unless x
   String.size(x)
 end
-p(size_or_zero(Array["abc"]))        # => 3
-p(size_or_zero(Array[]))             # => 0
+p(size_or_zero(Any["abc"]))        # => 3
+p(size_or_zero(Any[]))             # => 0
 ```
 
 ### When a field's narrowing ends

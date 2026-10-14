@@ -28,7 +28,7 @@ All of the gem's API is ported (9 public functions + the constants as functions)
   (`.encode(domain.encoding)`, with a rescue for UTF-16 input). Sake's Strings are UTF-8, so those conversions
   are left out.
 - **The mapping table** (6509 entries) is a String of `"codepoint=target.target;"` entries in hex, generated from
-  the gem's Hash and parsed once by `SimpleIDN.uts46mapping`. A 6509-entry `Hash[...]` literal would have worked as
+  the gem's Hash and parsed once by `SimpleIDN.uts46mapping`. A 6509-entry `Hash.of(...)` literal would have worked as
   data too, but a String is 75 KB instead of 6500 lines, and it is only parsed when a domain is first mapped.
   Ruby's table mixes `65 => 97` and `168 => [32, 776]`; here every value is an Array, so `uts46map` does not need
   Ruby's `flatten` over Integer | Array.

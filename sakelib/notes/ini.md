@@ -25,7 +25,7 @@ values stay Strings and take `\n \t \\ \"` escapes; an inline comment needs a sp
 
 - `IniFile::Error` is `IniFile::Error`, declared inside `class IniFile` (2026-10-10; it was `IniFileError` while names could not nest).
 - `ini["missing"]` creates and stores an empty section, as the gem's `Hash.new { }` default does; Sake has
-  no block default, so `[]` does `@ini[section] ||= Hash[]`.
+  no block default, so `[]` does `@ini[section] ||= Hash.new`.
 
 ## Frictions
 
@@ -37,7 +37,7 @@ outputs were identical on the first run. One choice: Ruby's `Integer("010")` is 
 
 - `T.new` keywords + `initialize`: `IniFile.new(content: text, parameter: ":")`; `initialize` checks
   `@comment => String` and parses the content. Helped: it is exactly the gem's constructor.
-- `private attr_reader content = nil, ..., ini = Hash[]`: internal state with expression defaults, each
+- `private attr_reader content = nil, ..., ini = Hash.new`: internal state with expression defaults, each
   `new` gets its own Hash. Helped (no factory function).
 - A keyword default reading a field: `def write(ini, filename: @filename)`. Worked as in Ruby.
 - `once` for the unescape table; `x => T` for `[]` / `[]=` arguments (Ruby raises on a non-String too).
@@ -50,5 +50,5 @@ outputs were identical on the first run. One choice: Ruby's `Integer("010")` is 
 ## Types (`--types`)
 
 - `IniFile.filename`, `content`: `nil | String` (optional fields, by design).
-- `IniFile.ini`: `Hash[String => Hash[String => true|false | Float | Integer | String]]` (four Hash
+- `IniFile.ini`: `Hash.of(String => Hash.of(String => true|false | Float | Integer | String))` (four Hash
   allocation sites listed): the union is the typecast's result, as in the gem.

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Sake
-  # `Hash[k => v, ...]` passes its pairs as one argument of this type.
+  # `Hash.of(k => v, ...)` passes its pairs as one argument of this type.
   HashPairs = Struct.new(:pairs)
 
   # Ruby's Symbol, Range, Hash, Set, Regexp/MatchData, I/O, and more of Integer/Float/String/Array.
@@ -239,7 +239,8 @@ module Sake
     end
 
     def install_hash(reg)
-      reg.define("Hash", CTOR, [], rest: "Any") do |*args|
+      install_typed_array(reg, "Hash") # Hash[h, ...]: an Array of Hashes
+      reg.define("Hash", :of, [], rest: "Any") do |*args|
         h = {}
         args.each { |hp| hp.pairs.each { |k, v| h[key!(k)] = v } }
         h
@@ -298,7 +299,9 @@ module Sake
     end
 
     def install_set(reg)
-      reg.define("Set", CTOR, [], rest: "Any") { |*xs| Set.new(xs.map { key!(_1) }) }
+      install_typed_array(reg, "Set") # Set[s, ...]: an Array of Sets
+      reg.define("Set", :of, [], rest: "Any") { |*xs| Set.new(xs.map { key!(_1) }) }
+      reg.define("Set", :new, [], optional: ["Array"]) { |xs = []| Set.new(xs.map { key!(_1) }) }
       reg.define("Set", :length, ["Set"], &:length)
       reg.define("Set", :size, ["Set"], &:size)
       reg.define("Set", :empty?, ["Set"], &:empty?)

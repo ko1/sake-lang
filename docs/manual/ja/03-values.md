@@ -11,10 +11,10 @@ Sake の値は Ruby の値とほぼ同じ顔をしていますが、どの値も
 | nil | `nil` | 「nil」の節を参照 |
 | Tuple | `[a, b, ...]` | 長さと位置ごとの型が作成時に固定 |
 | Record | `{x: a, y: b}` | (フィールド, 型) の集合が作成時に固定 |
-| Array | `Array[a, ...]` | 要素型の宣言なし |
+| Array | `Any[a, ...]` | 要素型の宣言なし |
 | T の Array | `T[a, ...]`、例 `Float[]`, `Point[p]` | 要素型 T。書き込みごとに検査 |
-| Hash | `Hash["a" => 1, b: 2]`, `Hash.new(0)` | キーは値と型で比較（Ruby の `eql?`） |
-| Set | `Set[1, 2]` | 要素は値と型で比較（Ruby の `eql?`） |
+| Hash | `Hash.of("a" => 1, b: 2)`, `Hash.new(0)` | キーは値と型で比較（Ruby の `eql?`） |
+| Set | `Set.of(1, 2)` | 要素は値と型で比較（Ruby の `eql?`） |
 | Symbol | `:name` | |
 | Range | `1..5`, `1...5`, `1..` | 端は Integer, Float, String, nil |
 | Regexp, MatchData | `/(\d+)-(\d+)/`, `/#{x}/`, `String.match(s, re)` | |
@@ -84,7 +84,7 @@ puts(Point.new(1, 2))          # !> Point.to_s must return a String, but returns
 
 ## Tuple、Record、Array
 
-リテラル `[...]` と `{...}` には型を付けた操作が無いので、その**形**が作成時に型を決めます。`[a, b]` は Tuple、`{x: a, y: b}` は Record です。伸びる容器は、型を付けた操作（`Array[...]`、`T[...]`、`Hash[...]`）で作ります。
+リテラル `[...]` と `{...}` には型を付けた操作が無いので、その**形**が作成時に型を決めます。`[a, b]` は Tuple、`{x: a, y: b}` は Record です。伸びる容器は、型を付けた操作（`Any[...]`、`T[...]`、`Hash.of(...)`）で作ります。
 
 ### リテラルの性質
 
@@ -94,7 +94,7 @@ puts(Point.new(1, 2))          # !> Point.to_s must return a String, but returns
 
 ```ruby error
 xs = []
-Array.push(xs, 1)              # !> `[...]` is a Tuple with a fixed length; for a growable Array, write `Array[...]`
+Array.push(xs, 1)              # !> `[...]` is a Tuple with a fixed length; for a growable Array, write `Any[...]`
 ```
 
 ```ruby error
@@ -121,17 +121,17 @@ p(Tuple.max([3, 9, 4]))        # => 9
 - **足りないかもしれない要素。** それを受ける変数は `x[k]` と同じ `nil | T` の型です（`index-nil` 項目、レベル 3）。
 - **代入先。** 要素とフィールドも書けます。`a[i], a[j] = a[j], a[i]` は交換、`@done, @rest = Array.partition(xs) { ... }` はフィールドへの代入です。レシーバと添字を先に、右辺をその後に評価します。
 - **残りを受ける。** `first, *rest = xs` は残りを新しい Array に入れます。`a, *mid, z = xs` も同じで、`x, * = xs` は残りを捨てます。rest を受けられるのはローカル変数だけです。
-- **`[...]` の中のスプラット。** Tuple の長さは既知でなければならないので、`[*xs, 1]` は拒否されます。`Array[*xs, 1]` は Array を作ります。
+- **`[...]` の中のスプラット。** Tuple の長さは既知でなければならないので、`[*xs, 1]` は拒否されます。`Any[*xs, 1]` は Array を作ります。
 - **添字。** `t[0]` は位置を読み、`t[0] = v` は同じ型の値で置き換えます。
 - **操作。** `Tuple.size` と `Tuple.length` が要素数です。`Tuple.max([a, b])` は Ruby の `[a, b].max` です。長さが分かるので nil にはなりません。
 
 ```ruby
-first, *rest = Array[1, 2, 3]
+first, *rest = Any[1, 2, 3]
 p(first)                       # => 1
 p(rest)                        # => [2, 3]
 key, value = String.split("a=1", "=")
 p(value)                       # => "1"
-a = Array[1, 2]
+a = Any[1, 2]
 a[0], a[1] = a[1], a[0]
 p(a)                           # => [2, 1]
 ```
@@ -145,7 +145,7 @@ p(a)                           # => [2, 1]
 - **クラスの値ではない。** フィールドが一致しても Record はクラスの値ではありません。クラスは名前で、Record 型は構造で決まります。
 - **フィールドの読み出し。** パターンで分解します: `r => {x:, y: name}`。ローカル `x` にフィールド `x`、ローカル `name` にフィールド `y` が束縛されます。一部のフィールドだけ書いてもよい。`Record.to_h(r)`、`Record.keys(r)`、`Record.values(r)` もあります。
 - **無いフィールド。** 実行前に `type` で報告されます。実行時に届けば、無いフィールドは `KeyError`、Record でない値は `TypeError` です。
-- **制限。** フィールド名はラベル（`x:`）で書きます。空の `{}` と `{key => value}` は静的エラーです（Hash は `Hash[...]`）。
+- **制限。** フィールド名はラベル（`x:`）で書きます。空の `{}` と `{key => value}` は静的エラーです（Hash は `Hash.of(...)`）。
 
 ```ruby
 Point = Struct.new(:x, :y)
@@ -170,11 +170,11 @@ h = {"a" => 1}                 # !> `{"a" => ...}` is not a Hash in Sake: `{name
 
 ### Array
 
-`Array[a, ...]` は要素型を宣言しない Array を作ります。どの値も入ります。Array は可変で、参照で共有されます。
+`Any[a, ...]` は要素型を宣言しない Array を作ります。どの値も入ります。Array は可変で、参照で共有されます。`Any` は prelude が Kernel に付けた名前（`Any = Kernel`）です。どの型も Kernel を include しているので、その Array はどの値も受けます。`Array[...]` はこの Array ではなく、下の `T[...]` と同じく Array の Array です。
 
 ### T の Array
 
-`T[a, ...]` は要素型 T の Array を作ります。T は組み込み型（`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`）、クラス、またはモジュールです。モジュールの Array `M[...]` には M を include した型の値が入り、各要素に mixin 関数 `M.f(x)` を使えます。
+`T[a, ...]` は、どの T でも要素型 T の Array を作ります。T は組み込み型（`Integer`, `Float`, `Rational`, `Complex`, `String`, `Symbol`, `Tuple`、そして `Array`, `Hash`, `Set`。これらの `[...]` は Array の Array、Hash の Array、Set の Array）、クラス、またはモジュールです。Hash そのものは `Hash.of(k => v)` か `Hash.new`、Set は `Set.of(a, b)` か `Set.new(xs)` で作ります。モジュールの Array `M[...]` には M を include した型の値が入り、各要素に mixin 関数 `M.f(x)` を使えます。
 
 - **書き込みの検査。** 作成、`Array.push`、`Array.append`、`Array.concat` のすべての書き込みが検査され、合わなければ `TypeError`。暗黙の変換は無く、Integer は `Float[]` に入りません。
 - **静的検査。** `T[...]` のリテラル引数が別の型なら実行前に報告されます。Ruby 流に書いた `Point[1, 2]`（`Point.new(1, 2)` のつもり）がここで捕まります。
@@ -219,11 +219,11 @@ p(Array.map(shapes) { |s| Shape.area(s) })   # => [4, 6]
 
 ### Ruby の癖
 
-- **Array が要るところの `[]`。** Array が要るところに Tuple や Record を渡す（`result = []` の後の `Array.push(result, x)`）と、`Array[]` と書く hint 付きで失敗します（上の例）。
+- **Array が要るところの `[]`。** Array が要るところに Tuple や Record を渡す（`result = []` の後の `Array.push(result, x)`）と、`Any[]` と書く hint 付きで失敗します（上の例）。
 - **要素型を変える in-place 操作。** 検査器は容器にプログラム全体で 1 つの要素型を与えます。そのため `Array.map!(xs) { |x| Integer.to_s(x) }` や `Hash.transform_keys!(h) { ... }` の後は、容器が古い型と新しい型の両方を持つとみなし、片方にしか合わない操作を `type`（部分的）として報告します。in-place の形は 1 つの型の中の写像に使い、型を変えるときは `Array.map` / `Hash.transform_keys`（新しい容器）を使ってください。
 
 ```ruby error
-xs = Array[1, 2]
+xs = Any[1, 2]
 Array.map!(xs) { |x| Integer.to_s(x) }
 p(Array.sum(xs))               # !> Array.sum: an element must be Integer|Float|Rational|Complex, but can be String [type]
 ```
@@ -234,10 +234,10 @@ Hash と Set は、キーや要素を値で探す伸びる容器です。リテ�
 
 ### 構築
 
-`Hash[k => v, ...]`、`Hash[]`、`Hash.new(default)` が Hash を、`Set[x, ...]` が Set を作ります。`Hash[name: v]` と書くとキーは Symbol です。
+`Hash.of(k => v, ...)`、`Hash.new`、`Hash.new(default)` が Hash を、`Set.of(x, ...)` が Set を作ります。`Hash.of(name: v)` と書くとキーは Symbol です。
 
 ```ruby
-h = Hash["a" => 1, b: 2]
+h = Hash.of("a" => 1, b: 2)
 p(h)                           # => {"a" => 1, b: 2}
 counts = Hash.new(0)
 Array.each(String.split("the cat the", " ")) { |w| counts[w] += 1 }
@@ -251,8 +251,8 @@ Hash.each(counts) { |k, v| puts("#{k}: #{v}") }   # => the: 2
 Hash のキーと Set の要素は Ruby の `eql?` と同じく、値と型で比較します。`1` と `1.0` は別のキーですが、`1 == 1.0` は true です。
 
 ```ruby
-p(Hash[1 => "a"][1.0])         # => nil
-p(Set[1, 1.0])                 # => Set[1, 1.0]
+p(Hash.of(1 => "a")[1.0])         # => nil
+p(Set.of(1, 1.0))                 # => Set[1, 1.0]
 p(1 == 1.0)                    # => true
 ```
 
@@ -262,12 +262,12 @@ p(1 == 1.0)                    # => true
 - **キーは複製される。** Tuple や Record のキーは格納時に複製されるので、元を後で書いてもキーは変わりません。
 
 ```ruby error
-h = Hash[/a/ => 1]             # !> Regexp cannot be a Hash key or Set element
+h = Hash.of(/a/ => 1)             # !> Regexp cannot be a Hash key or Set element
 ```
 
 ```ruby
 k = [1, 2]
-h = Hash[k => "a"]
+h = Hash.of(k => "a")
 k[0] = 9
 p(Hash.keys(h))                # => [[1, 2]]
 ```
@@ -277,7 +277,7 @@ p(Hash.keys(h))                # => [[1, 2]]
 `Hash.new(default)` は無いキーに `default` を返し、Ruby と同じく同じオブジェクトを共有します。ブロックの形 `Hash.new { ... }` はありません（ブロックは値ではない）。
 
 ```ruby
-h = Hash.new(Array[])
+h = Hash.new(Any[])
 Array.push(h[:a], 1)
 p(h[:b])                       # => [1]
 ```
@@ -300,7 +300,7 @@ h = Hash.new { |hh, k| 0 }     # !> Hash.new does not take a block
 T が要る操作が `nil` を受けると `TypeError ... got nil` を投げます。インタプリタはそのエラーの経路でだけ静的解析を走らせ、nil を持ちうるフィールドと nil を格納する行を hint に加えます。
 
 ```ruby error
-h = Hash["a" => "x"]
+h = Hash.of("a" => "x")
 puts(String.upcase(h["b"]))    # !> TypeError: String.upcase: argument 1 must be String, got nil
 ```
 
@@ -319,7 +319,7 @@ puts(String.upcase(h["b"]))    # !> TypeError: String.upcase: argument 1 must be
 
 ```ruby
 def find_even(xs) = Array.find(xs) { |x| x % 2 == 0 }
-x = find_even(Array[1, 4])
+x = find_even(Any[1, 4])
 if x
   p(x + 1)                     # => 5
 end
@@ -329,8 +329,8 @@ def twice(xs)
   return 0 unless x
   x * 2
 end
-p(twice(Array[1, 4]))          # => 8
-p(twice(Array[1, 3]))          # => 0
+p(twice(Any[1, 4]))          # => 8
+p(twice(Any[1, 3]))          # => 0
 ```
 
 フィールドの読み出し（`Node.next(n)`、クラスの関数の中では `@next`）も、ローカル変数から読むものは絞られます。ただし、確かめてから使うまでの間にフィールドを書き換えうる操作があると、絞り込みはそこで切れます。フィールドは可変で、別の名前から書き換えられうるからです。書き換えうる操作は、フィールドへの書き込み、ユーザ関数の呼び出し、ブロックを渡す呼び出しと `yield`、その変数への代入です。ブロックの中では、外で絞ったフィールドは絞られていません。

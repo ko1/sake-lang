@@ -49,7 +49,7 @@ Ruby's `Time.local` / `Time.utc`.
   then TimeCore.parse_xmlschema(x) end`, which the checker narrows per call (date.md found the same).
 - `Regexp.new(src, Regexp::IGNORECASE)` → `wrong number of arguments for Regexp.new (given 2, expected 1)`
   and `undefined function Regexp.IGNORECASE` → `Regexp.new("(?i)...")`.
-- `Hash[...].fetch(m, m)` inside a block → call on a value → `Hash.fetch(table, m, m)` with the table from
+- `Hash.of(...).fetch(m, m)` inside a block → call on a value → `Hash.fetch(table, m, m)` with the table from
   `once`.
 - `def directive_re(c) = once do ... end[c]` (index the once'd Hash inline) → split into `directive_table`
   (once) and `directive_re(c) = directive_table[c]`.

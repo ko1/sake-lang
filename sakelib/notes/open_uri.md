@@ -15,10 +15,10 @@ operations are defined in one library, so this file cannot add `open` to it. Rub
 |---|---|---|
 | `URI.open(url)` / `URI.open(url) { \|f\| }` | `OpenURI.open(url)` / with a block | differs: namespace (above); `url` is a String or a URI |
 | `OpenURI.open_uri(url, options)` | `OpenURI.open_uri(url, options)` | same |
-| `URI.open(url, "User-Agent" => "x")` (String keys: request headers) | `OpenURI.open(url, Hash["User-Agent" => "x"])` | same (an options Hash, no keywords) |
-| `redirect: false` | `Hash[:redirect => false]` | same (raises `OpenURI::HTTPRedirect`) |
-| `max_redirects: n` | `Hash[:max_redirects => n]` | same (raises `OpenURI::TooManyRedirects`; default: unlimited, loops detected as Ruby's `"HTTP redirection loop: URL"` RuntimeError) |
-| `http_basic_authentication: [user, pass]` | `Hash[:http_basic_authentication => ["u", "p"]]` | same (not sent after a redirect, as Ruby) |
+| `URI.open(url, "User-Agent" => "x")` (String keys: request headers) | `OpenURI.open(url, Hash.of("User-Agent" => "x"))` | same (an options Hash, no keywords) |
+| `redirect: false` | `Hash.of(:redirect => false)` | same (raises `OpenURI::HTTPRedirect`) |
+| `max_redirects: n` | `Hash.of(:max_redirects => n)` | same (raises `OpenURI::TooManyRedirects`; default: unlimited, loops detected as Ruby's `"HTTP redirection loop: URL"` RuntimeError) |
+| `http_basic_authentication: [user, pass]` | `Hash.of(:http_basic_authentication => ["u", "p"])` | same (not sent after a redirect, as Ruby) |
 | `proxy:`, `proxy_http_basic_authentication:`, `ssl_verify_mode:`, `ssl_ca_cert:`, `read_timeout:`, `open_timeout:`, `progress_proc:`, `content_length_proc:`, `ftp_active_mode:`, `request_specific_fields:` | — | missing (no proxies, TLS, timeouts, or blocks as values) |
 | `https://`, `ftp://`, local file names | — | missing: `ArgumentError` for https (no TLS) and for anything not `http://host` |
 | `f.read`, `f.read(n)` | `OpenURI::Meta.read(f)`, `read(f, n)` | same (the rest / at most n bytes, nil at the end; `""` for `read(0)`) |
@@ -67,7 +67,7 @@ file; it is all Sake-level code over `net_http`.
   body's later assignments and reported `set_base_uri: argument 1 ... is nil` *instead of* the real error
   (repro: `open_uri_bug_while_body_after_type_error.sake`, reduced form shows the extra report; the
   full-library form showed only the wrong one).
-- Ruby's `URI.open(url, redirect: false)` becomes `OpenURI.open(url, Hash[:redirect => false])`; the Hash
+- Ruby's `URI.open(url, redirect: false)` becomes `OpenURI.open(url, Hash.of(:redirect => false))`; the Hash
   mixes String keys (headers) and Symbol keys (options) with String, Boolean, Integer and Tuple values,
   which the typer accepted without a report (values of a Hash are a union).
 - `String.scan(s, re)` with groups gives an Array of Tuples whose unmatched groups are nil; destructuring

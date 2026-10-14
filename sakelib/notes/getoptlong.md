@@ -18,7 +18,7 @@ are the same classes; their parent `GetoptLong::Error`, never raised itself in R
 
 | Ruby | Sake | |
 |---|---|---|
-| `GetoptLong.new(["--name", "-n", REQUIRED_ARGUMENT], ...)` | `GetoptLong.new(argv, Array[Array["--name", "-n", :required_argument], ...])` | differs: the argument Array is the first field; the specs are one Array (`new` takes fields) |
+| `GetoptLong.new(["--name", "-n", REQUIRED_ARGUMENT], ...)` | `GetoptLong.new(argv, Any[Any["--name", "-n", :required_argument], ...])` | differs: the argument Array is the first field; the specs are one Array (`new` takes fields) |
 | `GetoptLong.new` | `GetoptLong.new(argv)` | same (specs may follow with `set_options`) |
 | `g.set_options(spec, ...)` | `GetoptLong.set_options(g, spec, ...)` | same (Ruby's messages: `no argument-flag`, `an invalid option `x'`, `option redefined `x'`, ...) |
 | `g.ordering = PERMUTE` | `GetoptLong.set_ordering(g, :permute)` | differs: name; same errors (`ArgumentError` after the start, as Ruby's `set_error(ArgumentError, ...)`) |

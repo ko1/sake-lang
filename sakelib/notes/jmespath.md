@@ -11,8 +11,8 @@ and all 26 built-in functions are ported, with the gem's error classes and messa
 | Ruby | Sake | |
 |---|---|---|
 | `JMESPath.search(expr, data)` | `JMESPath.search(expr, data)` | same |
-| `JMESPath.search(expr, data, disable_visit_errors: true)` | `JMESPath.search(expr, data, Hash[disable_visit_errors: true])` | differs: the options are a Hash (Ruby's are a Hash too, passed as keywords) |
-| `... cache_expressions: false` | `Hash[cache_expressions: false]` | same, as above |
+| `JMESPath.search(expr, data, disable_visit_errors: true)` | `JMESPath.search(expr, data, Hash.of(disable_visit_errors: true))` | differs: the options are a Hash (Ruby's are a Hash too, passed as keywords) |
+| `... cache_expressions: false` | `Hash.of(cache_expressions: false)` | same, as above |
 | `JMESPath::Runtime.new(opts).search(e, d)` | `JMESPath::Runtime.search(JMESPath.runtime(opts), e, d)` | differs: the Runtime is made by `JMESPath.runtime(opts)` (its field is the parser) |
 | `JMESPath::Parser.new.parse(e)` | `JMESPath::Parser.parse(JMESPath::Parser.new, e)` | same (returns a `Nodes::Node`) |
 | `JMESPath::CachingParser` | `JMESPath::CachingParser.parse(cp, e)` | same (cache cleared at 1000 entries; no Mutex) |
@@ -53,7 +53,7 @@ not_null sort sort_by max_by min_by ends_with starts_with merge reverse to_array
 
 ## Built-ins Sake lacks
 
-- `Set.new(array)`: Ruby's spelling; Sake has `Array.to_set` / `Set[...]`, but the hint for `Set.new` lists
+- `Set.new(array)`: Ruby's spelling; Sake has `Array.to_set` / `Set.of(...)`, but the hint for `Set.new` lists
   every other `new` and not these.
 
 ## Friction
