@@ -124,7 +124,7 @@ puts(String.split(line, ",")
 
 # Top to bottom: `_` is the previous statement's value.
 String.split(line, ",")
-Array.map(_) { |s| String.size(String.strip(s)) }
+Array.map(_) { |s| String.strip(s).size }
 puts("longest: #{Array.max(_)}")
 ```
 
@@ -612,7 +612,7 @@ class Config
   def next_port(c) = @port + 1
 end
 p(Config.new("EXAMPLE.com"))
-p(Config.next_port(Config.new("h", 8080)))
+p(Config.new("h", 8080).next_port)
 
 class Temp
   attr_reader celsius
@@ -1073,7 +1073,7 @@ p(xs)
 
 ws = String.split("to be or not to be", " ")
 p(ws)
-puts(Array.join(Array.map(ws) { String.capitalize(it) }, " "))
+puts(Array.map(ws) { String.capitalize(it) }.join(" "))
 
 fs = Float[]                      # T[...] declares the element type
 Array.push(fs, 1.5, 2.5)
@@ -1382,7 +1382,7 @@ list = build(4)
 puts(sum(list))
 puts(second(list))
 puts(Node.next(list) == nil)
-puts(Node.value(Node.next(Node.next(Node.next(Node.next(list))))))
+puts(Node.next(list).next.next.next.value)
 ```
 
 ```
@@ -1403,7 +1403,7 @@ reports every unchecked use before running. A local variable you have tested cou
 ```ruby
 Node = Struct.new(:value, :next)
 
-def second(node) = Node.value(Node.next(node))
+def second(node) = Node.next(node).value
 
 def second_checked(node)
   rest = Node.next(node)
@@ -1461,7 +1461,7 @@ rescue ZeroDivisionError
   0
 end
 p(safe_div(1, 0))
-v = Hash.fetch(Hash.of("a" => 1), "b") rescue -1
+v = Hash.of("a" => 1).fetch("b") rescue -1
 p(v)
 ```
 
@@ -1540,7 +1540,7 @@ def total(items) = Array.reduce(items, 0) { |acc, it| acc + Item.price(it) * Ite
 items = Item[Item.new("apple", 120, 3), Item.new("pear", 200, 1)]
 puts(total(items))
 cheap = Array.select(items) { Item.price(it) < 150 }
-puts(Array.join(Array.map(cheap) { Item.name(it) }, ", "))
+puts(Array.map(cheap) { Item.name(it) }.join(", "))
 ```
 
 ```

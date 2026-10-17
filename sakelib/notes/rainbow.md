@@ -10,7 +10,7 @@ Presenters, so calls chain on the value. Sake has no String subclasses and no ca
 closest form is the chain form of module functions over a String:
 
 ```ruby
-Rainbow("text").Rainbow.red.Rainbow.bright      # Ruby: Rainbow("text").red.bright
+Rainbow("text").Rainbow.red.bright              # Ruby: Rainbow("text").red.bright
 Rainbow.bright(Rainbow.red("text"))             # the same, nested
 ```
 

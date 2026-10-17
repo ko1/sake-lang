@@ -128,7 +128,7 @@ end
 def pass_on(xs, &b) = Array.map(xs, &b)
 each_pair(Any[1, 2]) { |x, sq| p([x, sq]) }
 p([maybe(1), maybe(1) { it + 1 }, pass_on(Any[1, 2]) { it * 10 }])
-p(Array.each_with_index(Any["a", "b"]).Array.map { |c, i| "#{i}#{c}" })
+p(Array.each_with_index(Any["a", "b"]).map { |c, i| "#{i}#{c}" })
 p(Array.sort_by(Any[[2, "b"], [1, "c"]]) { |num, s| [-num, s] })
 Hash.each(Hash.of("x" => 1)) { |k, v| puts("#{k}=#{v}") }
 p(Array.each(Any[3, 12, 5]) { |x| break x if x > 10 })
@@ -187,7 +187,7 @@ st.Stack.push(2)
 Stack.set_limit(st, 5)
 st.Stack.limit += 1
 puts(st)
-p([Stack.limit(st), Stack.new(Integer[], 3).Stack.limit, Stack.new(Integer[], limit: 4).Stack.limit])
+p([Stack.limit(st), Stack.new(Integer[], 3).limit, Stack.new(Integer[], limit: 4).limit])
 t = Stack.top(st)
 p(t + 1) if t
 Point = Struct.new(:x, :y)
