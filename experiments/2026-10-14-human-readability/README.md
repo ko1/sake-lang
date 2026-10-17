@@ -66,3 +66,10 @@ Artifact: https://claude.ai/artifact/RcmnoxDb7x5wr8Y8CGerao （v2、2026-10-14 �
 
 - AI がレビュアーなら、Sake で差が出るのは弱いモデルが手を抜く場面だけで、向きは Sake が有利。理由は見やすさではなく、見慣れない書き方が精読を誘うこと。強いモデルでは差が無い。
 - 人の流し読みでも同じことが起きるかは分からない。起きるなら、人の調査では Sake の時間が長く、正答率が高く出るはずで、ページの時間の記録で区別できる。
+
+## 型を引き継ぐ連鎖の版（2026-10-17）
+
+ko1 が「`T.op(x).T.op.T.op` はやっぱりわかりづらいと言われた」（理由は、T が多いことと、x.y.z に慣れていること）。そこで、連鎖の型を省いた段が最後に名乗った型を引き継ぐ規則を入れた（DESIGN.md「型を省いた段は、連鎖が最後に名乗った型を引き継ぐ」）。
+
+- `check/all.inherit.sake` は、`check/all.sake` の連鎖をこの形にしたもの（7 か所）。出力は Ruby 版と同じ（`diff <(ruby check/all.rb) <(bin/sake check/all.inherit.sake)`）。型が変わる段（R3 の `.Hash.transform_values` と `.Array.each`、R6 の `Cart.items(cart).Array.sum`）は名乗ったまま。
+- 公開中のページ（v2）は `check/all.sake` のまま。この形を調査に入れるかは未定。

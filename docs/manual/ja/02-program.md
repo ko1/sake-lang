@@ -260,21 +260,47 @@ puts(Integer.upcase("a"))    # !> undefined function `Integer.upcase`
 
 ## 連鎖と `_`
 
-一連の操作を左から右・上から下に読める形が 2 つあります。どちらも各段が型を名乗ります。
+一連の操作を左から右・上から下に読める形が 2 つあります。どちらも、どの型の操作かは同じ行で分かります。
 
 ### 連鎖
 
 `x.T.f(args...)` は `T.f(x, args...)` です。段 `.T` が型かモジュールを名乗り、その左の値が第 1 引数になります。段は続けて書け、次の行の先頭にドットを置くこともできます。
 
-連鎖は `T.f(x)` で始め、`.T.g` で続けます。変数から始める `x.T.f` も書けますが、型の名前が行の途中に挟まって読みにくいので勧めません。検査器の hint も示しません。
+連鎖は `T.f(x)` で始めます。続く段は、値の型が同じなら `.g`、変わるなら `.U.g` と書きます（[型を省いた段](#型を省いた段)）。変数から始める `x.T.f` も書けますが、型の名前が行の途中に挟まって読みにくいので勧めません。検査器の hint も示しません。
 
 ```ruby
 line = "a, b ,c"
 r = String.split(line, ",")
   .Array.map { |s| String.strip(s) }
-  .Array.join("|")
+  .join("|")
 p(r)                         # => "a|b|c"
 ```
+
+### 型を省いた段
+
+連鎖の段で型を省くと、その連鎖が最後に名乗った型を引き継ぎます。`String.strip(s).upcase` は `String.strip(s).String.upcase` で、その次の段も String を引き継ぎます。型を書くのは、連鎖の始まりと、値の型が変わる段だけです。
+
+```ruby
+xs = Any[3, 1, 2]
+p(Array.sort(xs).reverse.first(2))           # => [3, 2]
+p(String.strip("  ab ").upcase.reverse)      # => "BA"
+words = Any["b", "a", "b"]
+p(Array.tally(words).Hash.keys.Array.sort)  # => ["a", "b"]
+```
+
+最後の例は、`Array.tally` が Hash を返すので `.Hash.keys` と名乗り直し、`Hash.keys` が Array を返すので `.Array.sort` と名乗り直しています。
+
+引き継ぐ型は、同じ行を左に読めば分かります。値の型を見て選ぶのではありません。レシーバが変数やリテラルなら型を名乗っていないので、`x.f` は今までどおり静的エラーです。
+
+- **引き継いだ型にその操作が無い**と静的エラーです。hint は、その名前を持つ型で名乗り直した形を示します。
+- **値が引き継いだ型でない**と型エラーです（`T.f(r)` と書いたときと同じ）。hint は、値の型で名乗り直した形を示します。
+
+```ruby error
+counts = Hash.of("a" => 2, "b" => 1)
+p(Hash.sort_by(counts) { |k, n| n }.first)  # !> Hash.first: argument 1 must be Hash, but is Array
+```
+
+`Hash.sort_by` は Array を返すので、`.Array.first` と名乗り直します。
 
 操作の無い `x.T` は静的エラーです。
 
@@ -322,14 +348,14 @@ p(_)                         # !> `_` is the previous statement's value, but her
 
 ## 値へのメソッド呼び出しは無い
 
-小文字のレシーバを持つ呼び出し、`x.op(...)`、`"lit".op`、`3.times` は静的エラーです。エラーは型付きの形を提案し、レシーバが型付きの呼び出しなら連鎖の形（`T.f(x).T.op(...)`）も提案します。
+小文字のレシーバを持つ呼び出し、`x.op(...)`、`"lit".op`、`3.times` は静的エラーです。エラーは型付きの形を提案し、レシーバが型を名乗らない呼び出し（`f(x).op`）なら連鎖の形（`f(x).T.op(...)`）も提案します。レシーバが型を名乗る呼び出しなら、エラーではなく型を引き継ぐ段です。
 
 ```ruby error
 s = " a "
 puts(s.strip.upcase)         # !> method call on a value `s.strip.upcase` is not allowed
 ```
 
-- **連鎖**は全体を書き直します。`s.strip.upcase` には `String.strip(s).String.upcase` を提案します。最初の段が `T.f(x)` になり、後の段が続きます。
+- **連鎖**は全体を書き直します。`s.strip.upcase` には `String.strip(s).upcase` を提案します。最初の段が `T.f(x)` になり、後の段は同じ型なら型を省き、違う型なら名乗ります。
 - **フィールドアクセス**にはリーダを提案します。`p.x` には `Point.x(p)`、`p.x = v` には `p.Point.x = v` です。関数のセッタなら `Point.set_x(p, v)` と書きます。
 - **リテラルのレシーバ**は候補をそのリテラルの型に絞ります。`"lit".upcase` には `String.upcase("lit")` だけです。
 - **`x.nil?`** には `x == nil` を提案します。
@@ -683,5 +709,5 @@ puts(*xs)                    # => a
 ```ruby error
 def two(a, b) = a + b
 t = [1, 2]
-p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Any[...], Set.of(...), Array.push, ...)
+p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Any[...], Set.of, Array.push, ...)
 ```

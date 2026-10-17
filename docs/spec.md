@@ -234,10 +234,17 @@ still naming its type:
   the start of the next line. `x.T` with no operation after it is a static error. A chain is written
   starting with `T.f(x)`; starting from a variable (`x.T.f`) is allowed, but the hints never suggest it.
 
+- **A step without a type** continues with the type the chain names last: when the receiver of
+  `r.f(args...)` (f lowercase) is a call that names a type, `T.g(...)` or `x.T.g(...)`, or is itself
+  such a step, the call is `r.T.f(args...)`. The type is found on the same line, by reading left;
+  nothing is looked up by the value's type. A step whose value has another type names it again. If
+  T has no f, it is a static error; if the value is not a T, it is a type error, as for `T.f(r)`. A
+  variable or a literal receiver names no type, so `x.f` stays an error.
+
   ```ruby
   String.split(line, ",")
     .Array.map { |s| String.strip(s) }
-    .Array.join("|")
+    .join("|")                      # Array.join: the chain named Array last
   ```
 
 - **`_`** is the value of the previous statement in the same body (a function, a block, a
@@ -255,10 +262,11 @@ still naming its type:
 ### 5.3 No calls on values
 
 A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error.
-The error suggests the qualified form, and when the receiver is a qualified call also the chain form
-(`T.f(x).T.op(...)`).
+The error suggests the qualified form, and when the receiver is a call that names no type (`f(x).op`)
+also the chain form (`f(x).T.op(...)`). On a call that names a type, `T.f(x).op` is not an error but
+a step that continues with T (§5.2).
 
-- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.strip(s).String.upcase`.
+- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.strip(s).upcase` (a step of the same type leaves the type out).
 - **Field access** gets the reader: `p.x` suggests `Point.x(p)`, and `p.x = v`
   suggests `p.Point.x = v`.
 - **Literal receivers** narrow the suggestions to the literal's type.

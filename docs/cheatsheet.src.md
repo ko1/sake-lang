@@ -10,7 +10,7 @@ Part 1 gives the rules; Part 2 lists every built-in operation (only those exist)
 ## Part 1. Rules
 
 ### Calls
-- Built-in and user operations: `Type.op(subject, args...)`. Chain form: `T.f(x).T.op(args)` is `T.op(T.f(x), args)`; start a chain with `T.f(x)`.
+- Built-in and user operations: `Type.op(subject, args...)`. Chain form: `T.f(x).U.op(args)` is `U.op(T.f(x), args)`; start a chain with `T.f(x)`. A step without a type continues with the type the chain named last: `T.f(x).op` is `T.f(x).T.op`; name the type where the value's type changes (`String.split(s, " ").Array.sort.join(",")`).
   A call on a value (`s.strip`, `xs.size`, `3.times`, `1.to_s`, `x.nil?`) is rejected.
 - Kernel functions are called bare: `puts print p pp format sprintf gets loop raise rand srand sleep
   exit warn system at_exit Integer(s) Float(s) Rational(..) Complex(..) dup(x) block_given? once ARGV`.
@@ -27,8 +27,8 @@ Part 1 gives the rules; Part 2 lists every built-in operation (only those exist)
 ```ruby
 s = "  Hello World  "
 puts(String.upcase(String.strip(s)))
-puts(String.strip(s).String.downcase)
-puts(String.split("b a c", " ").Array.sort.Array.join(","))
+puts(String.strip(s).downcase)
+puts(String.split("b a c", " ").Array.sort.join(","))
 p(Array.reduce(Any[1, 2, 3], 0) { |acc, x| acc + x })
 p(format("%05.1f|%-3s|%3d", 3.14159, "a", 7), Integer.to_s(255, 16))
 ```

@@ -261,21 +261,47 @@ The hint of the last one is `` `upcase` is defined in `String.upcase`, `Symbol.u
 
 ## Chains and `_`
 
-Two forms let a sequence of operations read from left to right, top to bottom. In both, every step still names its type.
+Two forms let a sequence of operations read from left to right, top to bottom. In both, the type of each operation is found on the same line.
 
 ### Chains
 
 `x.T.f(args...)` is `T.f(x, args...)`: the step `.T` names a type or module, and the value to its left becomes the first argument. Steps can follow one another, also with the dot at the start of the next line.
 
-A chain starts with `T.f(x)` and goes on with `.T.g`. Starting from a variable, `x.T.f`, is allowed but not recommended: the type's name sits in the middle of the line and is hard to read, and the checker's hints do not suggest it.
+A chain starts with `T.f(x)`. A step after it is written `.g` when the value has the same type, and `.U.g` when the type changes ([Steps without a type](#steps-without-a-type)). Starting from a variable, `x.T.f`, is allowed but not recommended: the type's name sits in the middle of the line and is hard to read, and the checker's hints do not suggest it.
 
 ```ruby
 line = "a, b ,c"
 r = String.split(line, ",")
   .Array.map { |s| String.strip(s) }
-  .Array.join("|")
+  .join("|")
 p(r)                         # => "a|b|c"
 ```
+
+### Steps without a type
+
+A chain step written without a type continues with the type the chain names last. `String.strip(s).upcase` is `String.strip(s).String.upcase`, and the step after it continues with String too. The type is written only where the chain starts and where the value's type changes.
+
+```ruby
+xs = Any[3, 1, 2]
+p(Array.sort(xs).reverse.first(2))           # => [3, 2]
+p(String.strip("  ab ").upcase.reverse)      # => "BA"
+words = Any["b", "a", "b"]
+p(Array.tally(words).Hash.keys.Array.sort)  # => ["a", "b"]
+```
+
+In the last one, `Array.tally` gives a Hash, so the step names `.Hash.keys`, and `Hash.keys` gives an Array, so the next one names `.Array.sort`.
+
+The type a step continues with is found by reading left on the same line, not chosen by the value's type. A variable or a literal receiver names no type, so `x.f` stays a static error.
+
+- **If the type has no such operation**, it is a static error. The hint names the types that have one.
+- **If the value is not of that type**, it is a type error, as `T.f(r)` would be. The hint names the value's type.
+
+```ruby error
+counts = Hash.of("a" => 2, "b" => 1)
+p(Hash.sort_by(counts) { |k, n| n }.first)  # !> Hash.first: argument 1 must be Hash, but is Array
+```
+
+`Hash.sort_by` gives an Array, so the step names it: `.Array.first`.
 
 `x.T` with no operation after it is a static error.
 
@@ -323,14 +349,14 @@ p(_)                         # !> `_` is the previous statement's value, but her
 
 ## No calls on values
 
-A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error. The error suggests the qualified form, and when the receiver is a qualified call also the chain form (`T.f(x).T.op(...)`).
+A call with a lowercase receiver, such as `x.op(...)`, `"lit".op`, or `3.times`, is a static error. The error suggests the qualified form, and when the receiver is a call that names no type (`f(x).op`) also the chain form (`f(x).T.op(...)`). A call on a call that names a type is not an error: it is a step that continues with that type.
 
 ```ruby error
 s = " a "
 puts(s.strip.upcase)         # !> method call on a value `s.strip.upcase` is not allowed
 ```
 
-- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.strip(s).String.upcase`, the first step as `T.f(x)` and the others after it.
+- **Chains** are rewritten as a whole: `s.strip.upcase` suggests `String.strip(s).upcase`, the first step as `T.f(x)`, and the steps after it without the type when it stays the same, with it when it changes.
 - **Field access** gets the reader: `p.x` suggests `Point.x(p)`, and `p.x = v` suggests `p.Point.x = v`. With a setter function, write `Point.set_x(p, v)`.
 - **Literal receivers** narrow the suggestions to the literal's type: `"lit".upcase` suggests only `String.upcase("lit")`.
 - **`x.nil?`** suggests `x == nil`.
@@ -684,5 +710,5 @@ puts(*xs)                    # => a
 ```ruby error
 def two(a, b) = a + b
 t = [1, 2]
-p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Any[...], Set.of(...), Array.push, ...)
+p(two(*t))                   # !> `*t`: splat arguments go only to a `*rest` parameter or to built-ins that take any number of arguments (puts, format, Any[...], Set.of, Array.push, ...)
 ```

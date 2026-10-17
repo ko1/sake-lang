@@ -200,6 +200,12 @@ module Sake
             next_msg = ["yield: no block is given on this call", ["check `block_given?` before `yield`"]] if c.op == "yield"
             next_msg = ["the block passed on is missing here, and this call needs one", ["check `block_given?` first"]] if c.op == "&block"
             msg, hints = next_msg || type_message(c, what, typer, program)
+            # `T.g(x).f` reads f as T.f; when the value is another type, the step names it.
+            if (t = program.chain_inherits&.[](c.node)) && c.arg.to_s == "1"
+              recv = c.node.receiver.slice.lines.first.chomp
+              hints = ["`.#{c.node.name}` continues the chain as #{t}.#{c.node.name} (the type the chain names last)",
+                       *(typer.type_names(c.failing) - ["Nil"]).first(3).map { "the value is #{_1} here: `#{recv}.#{_1}.#{c.node.name}`" }, *hints]
+            end
             # Where a field got the wrong type, when the function around the operation reads a field.
             if %w[type mixed].include?(item) && c.node && reads_field?(program, c.node)
               failing = typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing

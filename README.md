@@ -168,8 +168,9 @@ Ruby with YJIT.
   is the shorthand), and exception types `class E < Exception`.
 - **Operators**: `a + b` runs the `+` of `a`'s type, and `a[i]` its `[]`. Your own types join by
   including `Arithmetic`, `Comparable`, `Bitwise`, or `Indexable`.
-- **Chains**: `T.g(x).T.f(args)` is `T.f(T.g(x), args)`, and `_` is the previous statement's value, so a
-  sequence of operations reads in order while each step still names its type.
+- **Chains**: `T.g(x).U.f(args)` is `U.f(T.g(x), args)`, a step without a type continues with the type
+  the chain named last (`String.strip(s).upcase`), and `_` is the previous statement's value, so a
+  sequence of operations reads in order while the type of each step is on the same line.
 - **Functions and blocks**: functions are polymorphic and take no annotations. Blocks are passed
   with `yield`.
 - **Modules**: `module` with `include` works like Ruby's modules, resolved statically: `include M`

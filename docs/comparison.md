@@ -64,7 +64,7 @@ Elm 系が Sake に見えるのは、オブジェクトが無いので関数が�
 
 ## B. 値へのメソッド呼び出しが無い
 
-Sake: `x.op(...)` は静的エラーで、hint が `T.op(x)` を示す（連鎖なら `T.f(x).T.op`）。
+Sake: `x.op(...)` は静的エラーで、hint が `T.op(x)` を示す（連鎖なら `T.f(x).op`。型が変わる段だけ `.U.op` と名乗る）。
 
 先行: 関数型言語の多くと C 系の一部にメソッドは無い（上表）。Elixir と Erlang は module 関数だけ。Common Lisp（CLOS）・Dylan・Julia は generic function で、`(area shape)`、`area(shape)` と関数の形で呼び、引数の class で実行時に振り分ける。「オブジェクトにメッセージを送る」Smalltalk 系に対し「関数が引数で振り分ける」系譜がもともとあり、Sake の `T.f(x)` と mixin ディスパッチ（§G）はこちらに属する。Smalltalk・Ruby・Python はその逆。Roc は module 関数の形で始めて、2024 年末に `xs.map(f)` の形（型で静的に解決）へ移る決定をした。メソッドの形が好まれる証拠として重い。判定: **既**。Sake 固有なのは、Ruby の構文のままメソッド呼び出しを**禁ずる**こと（構文は通るが意味として拒む）と、拒むときに書き換え先を機械的に示すことである。
 

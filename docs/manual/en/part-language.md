@@ -10,12 +10,12 @@ A Sake program is written in Ruby's syntax, but instead of `name.upcase` you wri
 words = String.split("the cat and the hat", " ")
 counts = Hash.new(0)
 Array.each(words) { |w| counts[w] += 1 }
-p(Hash.to_a(counts).Array.sort_by { |w, n| -n }.Array.first(2))   # [["the", 2], ["cat", 1]]
+p(Hash.to_a(counts).Array.sort_by { |w, n| -n }.first(2))   # [["the", 2], ["cat", 1]]
 ```
 
 Nearly every property of the language follows from this one rule.
 
-- **One line is enough to read most calls.** `Array.each(words)` says which `each` runs without a declaration to look up; in a chain `Array.sort_by(xs) { }.Array.first(3)`, each step names its type too.
+- **One line is enough to read most calls.** `Array.each(words)` says which `each` runs without a declaration to look up; in a chain `Array.sort_by(xs) { }.first(3)`, `.first` is an operation of Array, the type the line named last.
 - **Call targets are fixed before running.** `String.upcase(s)` names one function. A module's mixin function `M.f(x)`, a listed call `(A|B).f(x)` and an operator `a + b` choose by the type of the first argument, but the set of candidates (the types that include `M`, the listed types, the operator table) is fixed before running, and a type outside the set is reported before running. Nothing searches the receiver at run time (no `method_missing`, no reflection), so a misspelled name (`String.upcse`) or a wrong number of arguments is also reported for the whole program before it starts.
 - **Types are inferred, never written.** The checker infers the types of the whole program and reports a value that does not fit an operation (`"" + 1`, an unchecked nil) before running; how much of that stops a run is chosen with `--strict`, levels 0 to 4.
 - **Run-time checks remain.** Values carry type tags and every operation checks its arguments, so what the checks before running miss still stops at that operation's line.
@@ -27,7 +27,7 @@ A few spellings mean something else than in Ruby. `[a, b]` is a Tuple and `{x: 1
 | Chapter | Contents |
 |---|---|
 | [Overview and running programs](01-overview.md) | The four principles, the command and its exit status, the `--strict` levels 0 to 4 and their items (`type`, `nil`, `mixed`, `index-nil`, `exhaustive`, `rescue`, `unrescued`), the format of static and runtime errors. |
-| [Program structure and name resolution](02-program.md) | Files and `require`, qualified calls `T.f(x)`, chains `x.T.f` and `_`, why there are no calls on values, unqualified calls (your own functions, `puts`, `p`), `include`, `module_function` and dispatch, listing the types `(A\|B).f(x)`, arity and blocks. |
+| [Program structure and name resolution](02-program.md) | Files and `require`, qualified calls `T.f(x)`, chains `T.f(x).g` and `_`, why there are no calls on values, unqualified calls (your own functions, `puts`, `p`), `include`, `module_function` and dispatch, listing the types `(A\|B).f(x)`, arity and blocks. |
 | [Values and types](03-values.md) | How values print, Tuple versus Record versus Array, Hash and Set, nil and the narrowing of `nil \| T`, Ruby's other types (Symbol, Range, Regexp, Time, Rational, Complex). |
 | [Functions and blocks](04-functions.md) | Polymorphic functions without annotations, optional and keyword parameters, blocks passed with `yield`, `once`. |
 | [Operators and indexing](05-operators.md) | `a + b` is short for `Arithmetic.+(a, b)`, resolved by the type of the left operand; `Arithmetic`, `Comparable`, `Bitwise` and `Indexable` give your own types operators; `a[i]` and `a[i] = v`. |

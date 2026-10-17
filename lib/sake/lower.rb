@@ -459,6 +459,7 @@ module Sake
     # `x.T.f(...)`: x (see Resolver#chain_subject).
     # `x.T.f(...)` / `x.A::B.f(...)`: the subject x (the resolver checked the step; see Resolver#chain_step).
     def chain_subject(n)
+      return n.receiver if @program.chain_inherits&.key?(n) # `T.g(x).f`: the step continues with T
       return nil unless n.call_operator_loc
       r = n.receiver
       r = r.parent while r.is_a?(Prism::ConstantPathNode)

@@ -210,6 +210,34 @@ function opsOf(ns) {
   return [...out.values()];
 }
 
+// The type a chain step after `text` continues with: the type the chain names last (`T.g(x) { }.` → T),
+// walking back over the steps and their argument lists and blocks; null when the chain names none.
+function chainType(text) {
+  const open = { ")": "(", "}": "{", "]": "[" };
+  const skipSpace = (j) => { while (j >= 0 && /\s/.test(text[j])) j--; return j; };
+  let j = text.length - 2; // text ends with the `.` of the step being typed
+  for (;;) {
+    j = skipSpace(j);
+    while (j >= 0 && open[text[j]]) { // the step's `(args)` and `{ block }`
+      let depth = 0;
+      for (; j >= 0; j--) {
+        if (open[text[j]]) depth++;
+        else if ("({[".includes(text[j]) && --depth === 0) break;
+      }
+      if (j < 0) return null;
+      j = skipSpace(j - 1);
+    }
+    const end = j + 1;
+    while (j >= 0 && /[\w?!]/.test(text[j])) j--;
+    if (!/^[a-z_]/.test(text.slice(j + 1, end)) || text[j] !== ".") return null;
+    let k = j - 1;
+    while (k >= 0 && /[\w:]/.test(text[k])) k--;
+    const prev = text.slice(k + 1, j);
+    if (/^[A-Z]/.test(prev)) return prev; // `T.name(...)` or `x.T.name(...)`
+    j = j - 1; // `... .name(...)`: a step that continues; keep walking back
+  }
+}
+
 function sakeCompletions(ctx) {
   const word = ctx.matchBefore(/[\w?!]*/);
   const before = ctx.state.sliceDoc(Math.max(0, word.from - 120), word.from);
@@ -223,15 +251,17 @@ function sakeCompletions(ctx) {
   if ((m = before.match(/(?:^|[^\w:])([A-Z]\w*(?:::[A-Z]\w*)*)\.$/))) {
     return { from: word.from, options: opsOf(m[1]), validFor };
   }
-  if (/[\w)\]"'?!]\.$/.test(before)) {
-    // `x.` continues as a chain `x.T.op(...)`: offer the types, then their operations.
-    const options = typeNames().map((n) => ({
+  if (/[\w)\]}"'?!]\.$/.test(before)) {
+    // After `T.g(x).` a step continues with T: offer T's operations first. Otherwise (and also) the types,
+    // which name the step's type, then their operations.
+    const inherited = chainType(ctx.state.sliceDoc(Math.max(0, word.from - 2000), word.from));
+    const options = [...(inherited ? opsOf(inherited).map((o) => ({ ...o, detail: inherited, boost: (o.boost ?? 0) + 10 })) : []), ...typeNames().map((n) => ({
       label: n, type: "class", detail: "chain",
       apply: (view, completion, from, to) => {
         view.dispatch({ changes: { from, to, insert: `${n}.` }, selection: { anchor: from + n.length + 1 } });
         startCompletion(view);
       },
-    }));
+    }))];
     return { from: word.from, options, validFor };
   }
   if (word.from === word.to && !ctx.explicit) return null;

@@ -82,7 +82,7 @@ method_call.sake:2:11: error: method call on a value `name.upcase` is not allowe
   hint: String.upcase(name)
   hint: Symbol.upcase(name)
 method_call.sake:3:17: error: method call on a value `name.strip.capitalize` is not allowed
-  hint: String.strip(name).String.capitalize
+  hint: String.strip(name).capitalize
   hint: String.strip(name).Symbol.capitalize
 (exit status 2)
 ```
@@ -107,18 +107,20 @@ typo.sake:3:14: error: undefined function `Integer.to_string`
 (exit status 2)
 ```
 
-Nested calls read inside out. Two forms let them read in order instead, with every step still
-naming its type: `T.g(x).T.f(...)` is `T.f(T.g(x), ...)`, and `_` is the value of the previous
+Nested calls read inside out. Two forms let them read in order instead: `T.g(x).U.f(...)` is
+`U.f(T.g(x), ...)`, where a step without a type continues with the type the chain named last
+(`String.strip(s).downcase` is `String.strip(s).String.downcase`), and `_` is the value of the previous
 statement:
 
 ```ruby
 line = "pear, Apple ,fig"
 
-# Left to right: each step names its type, and the value on its left is the first argument.
+# Left to right: the value on a step's left is its first argument. A step names its type where the
+# type changes (String.split gives an Array), and the others continue with the type named last.
 puts(String.split(line, ",")
-  .Array.map { |s| String.downcase(String.strip(s)) }
-  .Array.sort
-  .Array.join(" < "))
+  .Array.map { |s| String.strip(s).downcase }
+  .sort
+  .join(" < "))
 
 # Top to bottom: `_` is the previous statement's value.
 String.split(line, ",")

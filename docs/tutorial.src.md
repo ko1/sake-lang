@@ -66,8 +66,9 @@ chance to fail halfway through:
 
 @@example typo
 
-Nested calls read inside out. Two forms let them read in order instead, with every step still
-naming its type: `T.g(x).T.f(...)` is `T.f(T.g(x), ...)`, and `_` is the value of the previous
+Nested calls read inside out. Two forms let them read in order instead: `T.g(x).U.f(...)` is
+`U.f(T.g(x), ...)`, where a step without a type continues with the type the chain named last
+(`String.strip(s).downcase` is `String.strip(s).String.downcase`), and `_` is the value of the previous
 statement:
 
 @@example chains

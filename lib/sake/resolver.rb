@@ -38,7 +38,7 @@ module Sake
   # includes: namespace => names of the modules it includes (for dispatch through modules and operators).
   # path: the main file; sources: Prism source => file (for the file of a node, see Sake.file_of).
   Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, :const_names,
-                       :rescue_members, :pattern_members, :exception_copies, :field_limits, keyword_init: true)
+                       :rescue_members, :pattern_members, :exception_copies, :field_limits, :chain_inherits, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -82,6 +82,7 @@ module Sake
       @alias_targets = {}   # full alias name => the full name of the type it names (nil: an error was reported)
       @alias_stack = []     # aliases being resolved, for cycles
       @const_names = {}.compare_by_identity # constant node => the full namespace name it resolved to (A::B)
+      @chain_inherits = {}.compare_by_identity # `T.g(x).f` call node => the type it continues with (T)
       @rescue_members = {} # a name written in rescue => the exception types it catches (a module: its includers)
       @pattern_members = {} # a name written as a type pattern => the types it takes (a module: its includers)
       @modules = {}         # module name => ModuleNode
@@ -116,7 +117,7 @@ module Sake
       diags = @diags.uniq { [_1.path, _1.line, _1.column, _1.message] }.sort_by { [order.fetch(_1.path, 0), _1.line, _1.column] }
       raise StaticErrors.new(diags) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks, sources: @sources,
-                  functions: @functions, struct_types: @struct_types, const_names: @const_names, rescue_members: @rescue_members, pattern_members: @pattern_members, exception_copies: exception_copies, field_limits: @field_limits,
+                  functions: @functions, struct_types: @struct_types, const_names: @const_names, rescue_members: @rescue_members, pattern_members: @pattern_members, exception_copies: exception_copies, field_limits: @field_limits, chain_inherits: @chain_inherits,
                   includes: @linearized.transform_values { |l| l.map(&:first) })
     end
 
@@ -1243,15 +1244,20 @@ module Sake
       if (types = union_receiver(recv))
         return check_union_call(node, types, args, blk, ctx)
       end
-      if (step = chain_step(node))
+      inherited = !chain_step(node) && inherited_type(node, ctx)
+      if (step = chain_step(node) || (inherited && [node.receiver, inherited]))
         # `x&.T.f` would read as `x.T.f` without the nil test, so the safe navigation is refused.
         if node.safe_navigation? || chain_safe_navigation?(node)
           return error(node, "`&.` is not supported: test the value first (`if x`, `x != nil`), then write `x.T.f`")
         end
-        # `x.T.f(args)` is `T.f(x, args)`.
+        # `x.T.f(args)` is `T.f(x, args)`; `T.g(x).f(args)` is `T.g(x).T.f(args)`.
         subject, tname = step
-        tname = resolve_name(tname, lexical(ctx))
+        tname = resolve_name(tname, lexical(ctx)) unless inherited
         name = node.name.to_s
+        if inherited
+          @chain_inherits[node] = tname
+          return inherited_error(node, ctx, tname) unless lookup(tname, name.end_with?("=") ? "set_#{name.delete_suffix("=")}" : name)
+        end
         # `x.T.f = v` is T.set_f(x, v)
         name = "set_#{name.delete_suffix("=")}" if name.end_with?("=") && @struct_types[tname]&.fields&.include?(name.delete_suffix("="))
         target = resolve_qualified(node, tname, name, argc: args.size + 1, from: ctx.ns)
@@ -1644,6 +1650,37 @@ module Sake
 
     def chain_subject(node) = chain_step(node)&.first
 
+    # The type a chain step without one continues with: `T.g(x).f` is `T.g(x).T.f`, and so is the step after
+    # it (ko1, 10-17: many T's are hard to read, and people are used to x.y.z). The type is the last one the
+    # chain names, so the reader finds it on the same line; a step whose value has another type names it
+    # again (`Array.group_by(xs) { }.Hash.transform_values { }`). nil when the receiver names no type:
+    # `x.f` on a variable stays an error.
+    def inherited_type(node, ctx)
+      return nil unless node.call_operator_loc && node.name.to_s.match?(/\A[a-z_]/)
+      named_type(node.receiver, ctx)
+    end
+
+    def named_type(r, ctx)
+      return nil unless r.is_a?(Prism::CallNode) && r.call_operator_loc && r.name.to_s.match?(/\A[a-z_]/)
+      if (step = chain_step(r)) then resolve_name(step[1], lexical(ctx))
+      elsif constant?(r.receiver) && !builtin_constant?(r.receiver) then resolve_const(r.receiver, lexical(ctx))
+      else inherited_type(r, ctx)
+      end
+    end
+
+    def inherited_error(node, ctx, tname)
+      check(node.receiver, ctx)
+      check_args(node.arguments, ctx)
+      check_block(node.block, ctx) if node.block.is_a?(Prism::BlockNode)
+      name = node.name.to_s
+      recv = first_line(node.receiver.slice)
+      others = namespaces_defining(name) - [tname]
+      hints = others.first(5).map { "if the value is a #{_1}: `#{recv}.#{_1}.#{name}`" }
+      hints += spell(name, names_in(tname)).map { "did you mean `.#{_1}` (#{tname}.#{_1})?" }
+      error(node, "`.#{name}` continues the chain as #{tname}.#{name}, and #{tname} has no #{name}",
+            hints.empty? ? ["a step whose value has another type names it: `#{recv}.Type.#{name}`"] : hints)
+    end
+
     # Whether the type step of `x.T.f` was written `x&.T`.
     def chain_safe_navigation?(node)
       r = node.receiver
@@ -1849,11 +1886,17 @@ module Sake
       if node.attribute_write? # `p.x = v`: the chain form `p.Point.x = v`
         return candidates.map { |c| "#{recv}.#{c.split(".").first}.#{name.delete_suffix("=")} = #{args.join(", ")}" }
       end
-      # After a rewritten step the chain goes on: `String.strip(s).String.upcase`, not nested calls.
+      # After a rewritten step the chain goes on: `String.strip(s).upcase`, not nested calls. A step of the
+      # type the chain names last leaves it out (`T.g(x).f` is `T.g(x).T.f`); another type is named.
+      @suggested_type ||= {}
+      tail = args.empty? ? "" : "(#{args.join(", ")})"
       if recvs.size == 1 && lowercase_call?(node.receiver)
-        return candidates.map { "#{recv}.#{_1}#{args.empty? ? "" : "(#{args.join(", ")})"}#{blk}" }
+        return candidates.map do |c|
+          t, f = c.split(".", 2)
+          (t == @suggested_type[recv] ? "#{recv}.#{f}#{tail}#{blk}" : "#{recv}.#{c}#{tail}#{blk}").tap { @suggested_type[_1] = t }
+        end
       end
-      candidates.map { "#{_1}(#{[recv, *args].join(", ")})#{blk}" }
+      candidates.map { |c| "#{c}(#{[recv, *args].join(", ")})#{blk}".tap { @suggested_type[_1] = c.split(".", 2).first } }
     end
 
     def literal_type(n)

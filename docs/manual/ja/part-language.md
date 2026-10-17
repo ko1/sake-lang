@@ -10,12 +10,12 @@ Sake のプログラムは Ruby の構文で書きますが、`name.upcase` と�
 words = String.split("the cat and the hat", " ")
 counts = Hash.new(0)
 Array.each(words) { |w| counts[w] += 1 }
-p(Hash.to_a(counts).Array.sort_by { |w, n| -n }.Array.first(2))   # [["the", 2], ["cat", 1]]
+p(Hash.to_a(counts).Array.sort_by { |w, n| -n }.first(2))   # [["the", 2], ["cat", 1]]
 ```
 
 この一つの決まりから、言語の性質がほぼすべて出てきます。
 
-- **多くの呼び出しは 1 行で呼び出し先が分かる。** `Array.each(words)` はどの `each` か、宣言を探さなくても読めます。連鎖 `Array.sort_by(xs) { }.Array.first(3)` も、各段が型を名乗ります。
+- **多くの呼び出しは 1 行で呼び出し先が分かる。** `Array.each(words)` はどの `each` か、宣言を探さなくても読めます。連鎖 `Array.sort_by(xs) { }.first(3)` の `.first` は、同じ行で最後に名乗った Array の操作です。
 - **呼び出し先は実行前に決まる。** `String.upcase(s)` は 1 つの関数を名指しします。module の mixin 関数 `M.f(x)`、型の列挙 `(A|B).f(x)`、演算子 `a + b` は第 1 引数の型で 1 つを選びますが、候補の集合（`M` を include する型、列挙した型、演算子の表）は実行前に確定していて、集合の外の型は実行前に報告されます。レシーバで動的に探す仕組み（`method_missing`、リフレクション）は無いので、名前の誤り（`String.upcse`）や引数の数の誤りも、プログラム全体について実行前に報告されます。
 - **型は書かずに推論する。** 検査器はプログラム全体の型を推論し、操作に合わない値（`"" + 1`、検査していない nil）を実行前に報告します。どこまで止めるかは `--strict` のレベル 0〜4 で選びます。
 - **実行時の検査は残る。** 値は型タグを持ち、すべての操作が引数を検査するので、実行前の検査が見逃したものもその操作の行で止まります。
@@ -27,7 +27,7 @@ Ruby と字面が同じでも意味が違うものがいくつかあります。
 | 章 | 内容 |
 |---|---|
 | [概要と実行](01-overview.md) | 4 つの原則、コマンドと終了コード、`--strict` のレベル 0〜4 と各項目（`type`、`nil`、`mixed`、`index-nil`、`exhaustive`、`rescue`、`unrescued`）、静的・実行時エラーの形式。 |
-| [プログラムの構造と名前解決](02-program.md) | ファイルと `require`、型付きの呼び出し `T.f(x)`、連鎖 `x.T.f` と `_`、値へのメソッド呼び出しが無いこと、型を付けない呼び出し（自分の関数、`puts`、`p`）、`include`、`module_function` とディスパッチ、型の列挙 `(A\|B).f(x)`、引数の数とブロック。 |
+| [プログラムの構造と名前解決](02-program.md) | ファイルと `require`、型付きの呼び出し `T.f(x)`、連鎖 `T.f(x).g` と `_`、値へのメソッド呼び出しが無いこと、型を付けない呼び出し（自分の関数、`puts`、`p`）、`include`、`module_function` とディスパッチ、型の列挙 `(A\|B).f(x)`、引数の数とブロック。 |
 | [値と型](03-values.md) | 値の表示、Tuple・Record・Array の区別、Hash と Set、nil と `nil \| T` の絞り込み、Ruby の他の型（Symbol、Range、Regexp、Time、Rational、Complex）。 |
 | [関数とブロック](04-functions.md) | 注釈の無い多相な関数、省略できる引数とキーワード、`yield` で渡すブロック、`once`。 |
 | [演算子と添字](05-operators.md) | `a + b` は `Arithmetic.+(a, b)` の略記で、左のオペランドの型に解決されること、`Arithmetic`・`Comparable`・`Bitwise`・`Indexable` を include して自分の型に演算子を与えること、`a[i]` と `a[i] = v`。 |
