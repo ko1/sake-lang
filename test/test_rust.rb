@@ -45,6 +45,18 @@ class TestRust < Minitest::Test
     end
   end
 
+  # `Array.first(xs, n)` gives an Array; the generator used to drop the count and print one element.
+  def test_first_with_a_count_is_refused
+    skip "rustc is not installed" unless HAVE_RUSTC
+    Dir.mktmpdir do |tmp|
+      src = File.join(tmp, "f.sake")
+      File.write(src, "xs = Any[3, 1, 2]\np(Array.first(xs, 2))\n")
+      out, err, st = Open3.capture3(SABIC, src, "--emit", "-o", File.join(tmp, "f"))
+      assert_equal 3, st.exitstatus
+      assert_match(/f\.sake:2: `Array.first` with a count/, err)
+    end
+  end
+
   # A program the default checks stop (as `sake` does) is not compiled: the checker's message, exit 2.
   def test_a_type_error_stops_before_generating
     skip "rustc is not installed" unless HAVE_RUSTC

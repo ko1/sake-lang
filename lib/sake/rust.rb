@@ -587,7 +587,9 @@ module Sake
           e = elem_of(a0, n)
           unsupported(n, "`Array.sum` of #{show(e)}") unless %i[int float].include?(e)
           args[1] ? unify(e, args[1], n) : e
-        when "Array.first", "Array.last", "Array.pop", "Array.shift", "Array.min", "Array.max" then OptT.new(elem_of(a0, n))
+        when "Array.first", "Array.last", "Array.pop", "Array.shift", "Array.min", "Array.max"
+          unsupported(n, "`#{name}` with a count (it gives an Array)") if args.size > 1 # the generators take one element
+          OptT.new(elem_of(a0, n))
         when "Array.sort", "Array.reverse", "Array.dup", "Array.uniq" then a0
         when "Array.sort_by", "Array.min_by", "Array.max_by" then unsupported(n, "`#{name}`")
         else unsupported(n, "the built-in `#{name}`")
