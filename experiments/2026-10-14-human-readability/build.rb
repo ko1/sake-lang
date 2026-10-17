@@ -8,7 +8,7 @@ def sections(path)
   src.each_slice(2).to_h { |id, body| [id, body.lines.reject { _1 =~ SETUP }.join.strip] }
 end
 rb = sections("check/all.rb")
-sk = sections("check/all.sake")
+sk = sections("check/all.inherit.sake") # v3 (10-17): chain steps continue with the type named last; v2 was check/all.sake
 meta = JSON.parse(File.read("items.json"))
 items = meta.map { |m| m.merge("ruby" => rb.fetch(m["id"]), "sake" => sk.fetch(m["id"])) }
 html = File.read("template.html").sub("/*ITEMS*/[]", JSON.generate(items).gsub("</", "<\\/"))

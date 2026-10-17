@@ -30,7 +30,7 @@ ko1 の仮説: AI が書いたコードのレビューは流し読み（ザッ�
 - 題が短い（2〜4 行）。流し読みの対象としては現実より小さい。
 - Sake の導入の説明を読んでから答えるが、Ruby には説明がない。
 
-Artifact: https://claude.ai/artifact/RcmnoxDb7x5wr8Y8CGerao （v2、2026-10-14 公開。非公開で、共有は ko1 が Share メニューから行う）
+Artifact: https://claude.ai/artifact/RcmnoxDb7x5wr8Y8CGerao （v3、2026-10-17 差し替え。v2 は 2026-10-14 公開。非公開で、共有は ko1 が Share メニューから行う）
 
 ## AI に答えさせた pilot（2026-10-14、ko1:「問題、AI に答えさせたら何か優位な差は出るだろうか」）
 
@@ -72,4 +72,4 @@ Artifact: https://claude.ai/artifact/RcmnoxDb7x5wr8Y8CGerao （v2、2026-10-14 �
 ko1 が「`T.op(x).T.op.T.op` はやっぱりわかりづらいと言われた」（理由は、T が多いことと、x.y.z に慣れていること）。そこで、連鎖の型を省いた段が最後に名乗った型を引き継ぐ規則を入れた（DESIGN.md「型を省いた段は、連鎖が最後に名乗った型を引き継ぐ」）。
 
 - `check/all.inherit.sake` は、`check/all.sake` の連鎖をこの形にしたもの（7 か所）。出力は Ruby 版と同じ（`diff <(ruby check/all.rb) <(bin/sake check/all.inherit.sake)`）。型が変わる段（R3 の `.Hash.transform_values` と `.Array.each`、R6 の `Cart.items(cart).Array.sum`）は名乗ったまま。
-- 公開中のページ（v2）は `check/all.sake` のまま。この形を調査に入れるかは未定。
+- ページを v3 としてこの形に差し替えた（2026-10-17、回答 0 件の時点。ko1 の了承）。`build.rb` は `check/all.inherit.sake` から取る。導入の対応表にも 1 行足した（`xs.group_by { }.keys` → `Array.group_by(xs) { }.Hash.keys`、型が変わる段だけ書き直す、の説明付き）。v2 の形は `check/all.sake` に残す。
