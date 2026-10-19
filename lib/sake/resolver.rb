@@ -38,7 +38,7 @@ module Sake
   # includes: namespace => names of the modules it includes (for dispatch through modules and operators).
   # path: the main file; sources: Prism source => file (for the file of a node, see Sake.file_of).
   Program = Struct.new(:path, :registry, :toplevel, :calls, :blocks, :functions, :struct_types, :includes, :sources, :const_names,
-                       :rescue_members, :pattern_members, :exception_copies, :field_limits, :chain_inherits, keyword_init: true)
+                       :rescue_members, :pattern_members, :exception_copies, :field_limits, :chain_inherits, :module_includers, keyword_init: true)
 
   # Static pass: collects definitions, resolves every call, and reports all errors before running.
   class Resolver
@@ -118,7 +118,7 @@ module Sake
       raise StaticErrors.new(diags) unless @diags.empty?
       Program.new(path: @path, registry: @registry, toplevel: @toplevel, calls: @calls, blocks: @blocks, sources: @sources,
                   functions: @functions, struct_types: @struct_types, const_names: @const_names, rescue_members: @rescue_members, pattern_members: @pattern_members, exception_copies: exception_copies, field_limits: @field_limits, chain_inherits: @chain_inherits,
-                  includes: @linearized.transform_values { |l| l.map(&:first) })
+                  module_includers: @module_includers, includes: @linearized.transform_values { |l| l.map(&:first) })
     end
 
     private
@@ -167,6 +167,8 @@ module Sake
     end
 
     ENUM_TYPES = %w[Array Hash Set Range].freeze
+    BLOCK_NOT_VALUE_HINTS = ["a block cannot be stored or returned; define a function with `def` and call it, " \
+                             "or write the block on the call that takes it (`def f(xs) = Array.map(xs) { yield it }`)"].freeze
 
     # A type with initialize: C.new may leave out trailing fields (or skip them for a later keyword);
     # they are nil when initialize starts, and initialize sets them. Without one, C.new takes every field,
@@ -938,6 +940,8 @@ module Sake
               node.is_a?(Prism::NumberedReferenceReadNode) ? ["keep the match: `m = String.match(s, re)`, then `m[#{node.number}]`"] : [])
       when Prism::MatchWriteNode
         error(node, "named captures do not create local variables in Sake", ["keep the match: `m = Regexp.match(re, s)`, then `m[\"name\"]`"])
+      when Prism::LambdaNode
+        error(node, "a block is not a value in Sake (`->`)", BLOCK_NOT_VALUE_HINTS)
       else
         error(node, "unsupported syntax: #{node.type.to_s.delete_suffix("_node").tr("_", " ")} `#{first_line(node.slice)}`")
       end
@@ -1574,6 +1578,13 @@ module Sake
                                           "which #{ctx.ns} does not define (used at line #{node.location.start_line})")
       end
 
+      if node.variable_call? && ctx.fn && @files.any? { |_, prog| prog.locals.include?(node.name) }
+        return error(node, "`#{name}` is a top-level local variable, which a function cannot see",
+                     ["pass it as an argument: `def #{ctx.fn.name}(#{[*ctx.fn.node.parameters&.slice, name].join(", ")})`"])
+      end
+      if %w[proc lambda].include?(name) && node.block.is_a?(Prism::BlockNode)
+        return error(node, "a block is not a value in Sake (`#{name} { }`)", BLOCK_NOT_VALUE_HINTS)
+      end
       what = node.variable_call? ? "undefined local variable or function" : "undefined function"
       visible = (ctx.ns ? names_in(ctx.ns) : []) + @functions.fetch(nil, {}).keys + @registry.names("Kernel")
       hints = spell(name, visible).map { "did you mean `#{_1}`?" }

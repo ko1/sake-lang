@@ -182,7 +182,7 @@ Each function has its own scope. It has no access to the top-level locals.
 
 ```ruby error
 count = 10
-def bump = count + 1   # !> undefined local variable or function `count`
+def bump = count + 1   # !> `count` is a top-level local variable, which a function cannot see
 ```
 
 As in Ruby, reading a local whose assignment appears earlier in the text but has not run yet gives `nil`.
@@ -232,7 +232,7 @@ Integer.times(3) { p it }           # => 0
 Blocks are second-class. They cannot be stored in a variable or returned from a function. `proc`, `lambda`, and `->` are not available.
 
 ```ruby error
-f = proc { |x| x }   # !> undefined function `proc`
+f = proc { |x| x }   # !> a block is not a value in Sake (`proc { }`)
 ```
 
 ### Parameters

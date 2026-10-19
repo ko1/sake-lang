@@ -182,7 +182,7 @@ p(twice(:a))
 
 ```ruby error
 count = 10
-def bump = count + 1   # !> undefined local variable or function `count`
+def bump = count + 1   # !> `count` is a top-level local variable, which a function cannot see
 ```
 
 Ruby と同じく、代入が字面上は前にあって、まだ実行されていないローカルを読むと `nil` です。
@@ -232,7 +232,7 @@ Integer.times(3) { p it }           # => 0
 ブロックは第二級です。変数に格納することも、関数から返すこともできません。`proc`、`lambda`、`->` はありません。
 
 ```ruby error
-f = proc { |x| x }   # !> undefined function `proc`
+f = proc { |x| x }   # !> a block is not a value in Sake (`proc { }`)
 ```
 
 ### 引数

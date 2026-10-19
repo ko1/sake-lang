@@ -45,6 +45,8 @@ module Sake
         result.errors.each do |e|
           # `x in T` binds loosely (Ruby's grammar): `f(a, x in T)` and `x in T ? a : b` do not parse as meant.
           hint = lines[e.location.start_line - 1].to_s.match?(/\b\w+ in [A-Z]/) ? ["`x in T` needs its own parentheses here: `(x in T)`"] : []
+          # As in Ruby, a comment on the first line that contains `coding:` names the file's encoding.
+          hint = ["`coding:` in a comment on the first line names the file's encoding, as in Ruby; reword the comment or move it to a later line"] if e.message.include?("magic comment")
           diags << Diagnostic.new(file, e.location.start_line, e.location.start_column, "syntax error: #{e.message}", hint)
         end
         next
