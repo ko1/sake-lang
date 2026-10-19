@@ -16,8 +16,8 @@ module Sake
     # An Array's element type is a cell shared by every value that may be the same array (union-find), so
     # a push anywhere fixes the type everywhere.
     class ArrT
-      attr_accessor :elem, :parent
-      def initialize(elem) = (@elem = elem)
+      attr_accessor :elem, :parent, :node # node: where the Array is made, for errors
+      def initialize(elem, node = nil) = (@elem = elem; @node = node)
       def root = parent ? parent.root : self
     end
     TupT = Struct.new(:elems)
@@ -142,7 +142,7 @@ module Sake
         when :nil, :never then "()"
         when ArrT
           e = t.root.elem
-          unsupported(node, "the element type of an Array is never fixed") if e == :unknown || e.nil?
+          unsupported(node || t.root.node, "the element type of an Array is never fixed") if e == :unknown || e.nil?
           "SArr<#{rt(e, node)}>"
         when TupT then "(#{t.elems.map { rt(_1, node) }.join(", ")},)"
         when ObjT then "SRef<#{rs_name(t.name)}>"
@@ -280,7 +280,7 @@ module Sake
             check_pattern(pat, st, n)
             with_case_narrow(i, n.subject, pat, st) { ty(body, i) }
           end
-          ts << ty(n.else_, i)
+          ts << (n.else_ ? ty(n.else_, i) : :never)
           ts.reduce { unify(_1, _2, n) }
         when BinOp then binop_type(n, i)
         when IsNil then (ty(n.value, i); :bool)
@@ -500,7 +500,7 @@ module Sake
       # --- built-ins: types ---
 
       def cell(n, elem = :unknown)
-        @node_cells[n] ||= ArrT.new(elem)
+        @node_cells[n] ||= ArrT.new(elem, n)
       end
 
       def block_body_type(n, i, params)
@@ -518,6 +518,15 @@ module Sake
         if n.fn.name == CTOR
           c = cell(n)
           args.each { add_elem(c, _1, n) }
+          # `Integer[]`, `P[]`, `M[]`: the element type is the one written (for a module, the types that include it).
+          ns = n.fn.namespace
+          types = @program.module_includers&.dig(ns) || [ns]
+          declared = if SCALAR_NAMES.key?(ns) then SCALAR_NAMES[ns]
+                     elsif types.empty? || !types.all? { @program.struct_types.key?(_1) } then nil
+                     elsif types.size == 1 then ObjT.new(types[0])
+                     else UnionT.new(types.sort)
+                     end
+          add_elem(c, declared, n) if declared
           return c
         end
         if @program.struct_types.key?(n.fn.namespace)
@@ -1033,6 +1042,7 @@ module Sake
         ln = line(n)
         if n.fn.name == CTOR
           e = cell(n).root.elem
+          return "<#{rt(cell(n), n)}>::new(vec![])" if n.args.empty?
           return "SArr::new(vec![#{n.args.each_with_index.map { |x, k| coerce(args[k], ty(x, i), e, n) }.join(", ")}])"
         end
         if @program.struct_types.key?(n.fn.namespace)
@@ -1249,6 +1259,9 @@ module Sake
         end
       end
 
+      # The message of the NoMatchingPatternError of a case/in without else (the interpreter's, without the value).
+      def no_match_words(n) = n.origin.is_a?(Prism::MatchRequiredNode) ? "`=> #{n.origin.pattern.slice}` does not match" : "no `in` branch matches"
+
       def case_code(n, i, value)
         st = ty(n.subject, i)
         t = ty(n, i)
@@ -1257,7 +1270,10 @@ module Sake
           b = with_case_narrow(i, n.subject, pat, st) { value ? coerce(expr(body, i), ty(body, i), t, n) : stmt(body, i) }
           "if #{c} {\n#{b}\n    }"
         end
-        els = value ? coerce(expr(n.else_, i), ty(n.else_, i), t, n) : stmt(n.else_, i)
+        els = if n.else_.nil? then "    fail(#{line(n)}, \"NoMatchingPatternError\", #{rs_str(no_match_words(n))})"
+              elsif value then coerce(expr(n.else_, i), ty(n.else_, i), t, n)
+              else stmt(n.else_, i)
+              end
         "#{value ? "" : "    "}{ let s_ = #{expr(n.subject, i)}; #{branches.join(" else ")} else {\n#{els}\n    } }"
       end
 

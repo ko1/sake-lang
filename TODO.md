@@ -144,14 +144,14 @@
 - [x] (10-11, 48c10916: 静的エラー) **`Thread.new { break }` / ブロック内の `return` で処理系が落ちる**: `t = Thread.new { break }; Thread.join(t)` が `--strict=0` で Ruby の生の `NoMethodError: undefined method 'origin' for an instance of Prism::CallNode`（`interpreter.rb:90`、`thread_body`）。spec は LocalJumpError と言う。`--strict=2` では検査器が `break v` を `Thread.new` の結果型に加えてしまい、`Thread.join(t)` に `[nil]` が出る。静的に「スレッドのブロックから `break`/`return` はできない」と弾くのが筋。
 - [x] (10-11, 48c10916: スレッドのブロックの raise が Thread.value/join に届く) `rescue` の検査が `Thread.new { raise "x" }` の raise を見ない: `begin Thread.value(t) rescue RuntimeError` が「never raises」（10-13 から `unused-rescue` の警告で、止まらない）。hint は Thread.raise だけを挙げる。ブロック内の raise も Thread.value/join に流すか、hint に書く。
 - [ ] `@y ||= 0` がフィールドを絞らない: 直後の `@y * @y` が `[nil]` のまま（`Point.new(3, nil)` があるとき）。
-- [ ] hint: 関数の中で読んだトップレベルのローカル（`def bump = count + 1`）に `String.count()`… の 5 候補が出る。「トップレベルのローカルは関数の中から見えない」と言うべき。`f = proc { }` は「undefined function `proc`」だけで、ブロックが値でないことを言わない（`->` は「unsupported syntax: lambda」と言う）。
+- [x] (10-19: 「`count` is a top-level local variable, which a function cannot see」と引数にする hint、`proc`/`lambda`/`->` は「a block is not a value」) hint: 関数の中で読んだトップレベルのローカル（`def bump = count + 1`）に `String.count()`… の 5 候補が出る。「トップレベルのローカルは関数の中から見えない」と言うべき。`f = proc { }` は「undefined function `proc`」だけで、ブロックが値でないことを言わない（`->` は「unsupported syntax: lambda」と言う）。
 - [x] (10-11) `sakelib/notes/not-ported.md` が「Sake に `Thread.raise` が無い」「net_http に TLS が無い」と言っていた。直した。
 - [ ] リファレンスの検査器（`tools/check_reference.rb`）: 1 つの fence で実行時エラーは 1 つしか見せられず、静的エラーがあると実行時の行は走らない。`ruby error --strict=0` のような fence があれば、level 2 で静的に止まるものの実行時の形も検証に乗る（08 章は文で引用した）。
 - [x] (10-10, prelude の `sakelib/prelude.sake` に Sake で実装。組み込み 4 型は自分の操作で答え、自分のクラスは `include Enum` + `def each`) `Enum` module（ko1、10-10）: `Enum.each(x) { }` / `Enum.map` … を Array・Hash・Set・Range・Tuple（と `each` を定義して include した自分の型）に第 1 引数の型でディスパッチする、Enumerable の短い名前の module。mixin のディスパッチの仕組みで書けるか、組み込み型の include 表（`Operators::BUILTIN` 相当）と typer の結果型の扱いを設計する。
 - [x] (10-11, 48c10916) `module_function` の後の `def area(s) = raise NotImplementedError`（必須の関数）を include したクラスが定義していても、「Sq includes Shape but does not define area」と誤って報告する（`module_function` 無しなら正しく動く）。02 章の書き直しで発見。
 - [x] (10-12, 局所変数から読むフィールドを書き換えうる操作まで絞る) **`if @x` が枝を刈らない**（examples/ の整備で判明、500 本中約 20 本の level 1 の偽陽性の主因）: `Node.new(nil)` の構築場所でフィールドがちょうど nil のとき、`if @word then String.upcase(@word)` の then 枝で `@word` が nil のまま報告される。ローカルに写せば通る（`w = @word; if w`）。フィールドの読みの絞り込みを、構築場所ごとの型にも効かせる。
 - [ ] `Float.round` / `Float.abs` / `Rational.*` に `Integer | Float` の値を渡す偽陽性（コーパス v3 で約 13 本）: 書き手は `Arithmetic.round` を知らない。hint で `Arithmetic.round` を示すか、`Float.round` が Integer も受けるか。
-- [ ] 1 行目に `coding:` を含むコメント（「Huffman coding:」）が Ruby の magic comment として読まれてプログラムが壊れる。先頭行の `# ... coding: ...` は Prism/Ruby の仕様だが、hint が出せるとよい。
+- [x] (10-19: hint を出す) 1 行目に `coding:` を含むコメント（「Huffman coding:」）が Ruby の magic comment として読まれてプログラムが壊れる。先頭行の `# ... coding: ...` は Prism/Ruby の仕様だが、hint が出せるとよい。
 
 ## Rust バックエンド（2026-10-10、experiments/2026-10-10-rust-backend）
 
@@ -169,5 +169,5 @@
 - 型エラーの報告位置がライブラリ内部の行になり、呼び出し側は「reached by the call at line N」だけ。大きな合併型でメッセージが切れる。
 - `String.getbyte` の nil がレベル 2 で毎回 `|| 0` を要求する。`String.unpack1` の結果に型が付かない（`v => Integer` が要る）。
 - 要望の多い組み込み: 例外の階層（4 体、10-12 にモジュールで入れた）、`Socket.start_tls`、`Marshal.load`、gem のファイルの場所、`Integer.chr(cp, "UTF-8")`、catch/throw、`File#flock`、Time の Range、名前付きタイムゾーン。
-- [ ] C・Rust 版: `else` の無い `case/in` で「not supported」の理由が空になる（`path::  (not supported by the C backend)`。2026-10-13、型の別名の作業で main でも再現）。
-- [ ] Rust・C 版: 空の型付き Array を `p` すると rustc が型を決められない（`p Integer[]`、`p P[]`: `error[E0283]: type annotations needed`。2026-10-14、`M[...]` の作業で発見）。生成器の CTOR が要素の型を引数からしか取らず、宣言された型（T、モジュールなら include した型）を使っていない。
+- [x] (10-19: 合わなければ NoMatchingPatternError。C 版は型だけで決まるパターンで subject の一時変数を作らない（未使用変数の警告）) C・Rust 版: `else` の無い `case/in` で「not supported」の理由が空になる（`path::  (not supported by the C backend)`。2026-10-13、型の別名の作業で main でも再現）。
+- [x] (10-19: 要素の型を書いた型から取る。モジュールは include した型の合併。決まらない `Any[]` は作った行を言う) Rust・C 版: 空の型付き Array を `p` すると rustc が型を決められない（`p Integer[]`、`p P[]`: `error[E0283]: type annotations needed`。2026-10-14、`M[...]` の作業で発見）。生成器の CTOR が要素の型を引数からしか取らず、宣言された型（T、モジュールなら include した型）を使っていない。

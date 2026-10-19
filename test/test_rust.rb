@@ -57,6 +57,18 @@ class TestRust < Minitest::Test
     end
   end
 
+  # An Array whose element type nothing fixes is reported at the line that makes it.
+  def test_unfixed_array_is_reported_with_the_line
+    skip "rustc is not installed" unless HAVE_RUSTC
+    Dir.mktmpdir do |tmp|
+      src = File.join(tmp, "a.sake")
+      File.write(src, "x = 1\np(Any[])\n")
+      out, err, st = Open3.capture3(SABIC, src, "--emit", "-o", File.join(tmp, "a"))
+      assert_equal 3, st.exitstatus
+      assert_match(/a\.sake:2: the element type of an Array is never fixed \(not supported by the Rust backend\)/, err)
+    end
+  end
+
   # A program the default checks stop (as `sake` does) is not compiled: the checker's message, exit 2.
   def test_a_type_error_stops_before_generating
     skip "rustc is not installed" unless HAVE_RUSTC

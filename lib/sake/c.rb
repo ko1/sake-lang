@@ -48,7 +48,7 @@ module Sake
         when :nil, :never then "Nil"
         when ArrT
           e = t.root.elem
-          unsupported(node, "the element type of an Array is never fixed") if e == :unknown || e.nil?
+          unsupported(node || t.root.node, "the element type of an Array is never fixed") if e == :unknown || e.nil?
           "A_#{cn(e, node)}"
         when OptT then "O_#{cn(t.inner, node)}"
         when TupT then "T#{t.elems.size}_#{t.elems.map { cn(_1, node) }.join("_")}"
@@ -681,8 +681,13 @@ module Sake
           b = with_case_narrow(i, n.subject, pat, st) { r ? assign_or_stmt(r, body, i, t) : stmt(body, i) }
           "if (#{pattern_code(pat, st, i, s)}) {\n#{b}\n    }"
         end
-        els = r ? assign_or_stmt(r, n.else_, i, t) : stmt(n.else_, i)
-        code = "{ #{ct(st)} #{s} = #{val(n.subject, i, st)}; #{arms.join(" else ")} else {\n#{els}\n    } }"
+        els = if n.else_.nil? then "    sk_fail(#{line(n)}, \"NoMatchingPatternError\", #{c_str(no_match_words(n))});"
+              elsif r then assign_or_stmt(r, n.else_, i, t)
+              else stmt(n.else_, i)
+              end
+        # A pattern decided by the static type alone does not read the subject (`in Integer` on an Integer).
+        subj = arms.any? { _1.match?(/\b#{s}\b/) } ? "#{ct(st)} #{s} = #{val(n.subject, i, st)};" : "(void)(#{val(n.subject, i, st)});"
+        code = "{ #{subj} #{arms.join(" else ")} else {\n#{els}\n    } }"
         if r then "({ #{ct(t)} #{r}; #{code} #{r}; })"
         elsif value then "({ #{code} })"
         else "    #{code}"
