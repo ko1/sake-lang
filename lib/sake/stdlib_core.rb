@@ -72,6 +72,13 @@ module Sake
           end
         end
       end
+      # Zlib.crc32(s, crc = 0) / adler32: the checksums, continued from a previous value as Ruby's.
+      %i[crc32 adler32].each do |m|
+        reg.define("Zlib", m, ["String"], optional: ["Integer"]) do |s, start = nil|
+          require "zlib"
+          start.nil? ? ::Zlib.public_send(m, s) : ::Zlib.public_send(m, s, start)
+        end
+      end
       # Record.to_h(r) / keys / values: a Record's fields as data (Symbol keys), for code that walks any Record.
       reg.define("Record", :to_h, ["Any"]) { |r| record!(r).shape.fields.zip(r.values).to_h { |f, v| [f.to_sym, v] } }
       reg.define("Record", :keys, ["Any"]) { |r| record!(r).shape.fields.map(&:to_sym) }

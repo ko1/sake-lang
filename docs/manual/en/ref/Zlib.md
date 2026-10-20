@@ -1,6 +1,6 @@
 # Zlib
 
-Zlib is the group of operations that compress and decompress a String in the zlib and gzip formats (Ruby's `Zlib.deflate`, `inflate`, `gzip`, and `gunzip`; built in for speed, see [Built-ins](../09-builtins.md)). There is no compression level and no stream form (no `Zlib::Deflate` class).
+Zlib is the group of operations that compress and decompress a String in the zlib and gzip formats, and compute their checksums (Ruby's `Zlib.deflate`, `inflate`, `gzip`, `gunzip`, `crc32`, and `adler32`; built in for speed, see [Built-ins](../09-builtins.md)). There is no compression level and no stream form (no `Zlib::Deflate` class).
 
 Both the compressed and the decompressed result are binary Strings (encoding `ASCII-8BIT`). Decompressing a UTF-8 string gives the same bytes in a different encoding, so the result is not `==` to the original: pass it through `String.force_encoding(s, "UTF-8")` to use it as text. Corrupt input, or input of the other format (gzip data given to `inflate`), is an `ArgumentError` with zlib's message (`incorrect header check`, ...); there is no exception type for Ruby's `Zlib::DataError` and the like.
 
@@ -49,4 +49,18 @@ p(out)                              # => "hello"
 
 ```ruby error
 Zlib.gunzip(Zlib.deflate("x"))      # !> ArgumentError: Zlib.gunzip:
+```
+
+## crc32, adler32
+
+`Zlib.crc32(String, [Integer])`
+
+`Zlib.adler32(String, [Integer])`
+
+The CRC-32 and Adler-32 checksums of the String's bytes, as Integers (Ruby's `Zlib.crc32` and `Zlib.adler32`). The second argument (0 and 1 when left out) continues a checksum: the checksum of `a` then `b` is `Zlib.crc32(b, Zlib.crc32(a))`.
+
+```ruby
+p(Zlib.crc32("hello"))                      # => 907060870
+p(Zlib.crc32("lo", Zlib.crc32("hel")))      # => 907060870
+p(Zlib.adler32("hello"))                    # => 103547413
 ```

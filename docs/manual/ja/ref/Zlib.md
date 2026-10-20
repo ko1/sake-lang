@@ -1,6 +1,6 @@
 # Zlib
 
-Zlib は String を zlib 形式・gzip 形式で圧縮・展開する操作の集まりです（Ruby の `Zlib.deflate`、`inflate`、`gzip`、`gunzip`。速度のために組み込みです。[組み込み](../09-builtins.md)）。圧縮レベルやストリームの形（`Zlib::Deflate` クラスなど）はありません。
+Zlib は String を zlib 形式・gzip 形式で圧縮・展開し、そのチェックサムを求める操作の集まりです（Ruby の `Zlib.deflate`、`inflate`、`gzip`、`gunzip`、`crc32`、`adler32`。速度のために組み込みです。[組み込み](../09-builtins.md)）。圧縮レベルやストリームの形（`Zlib::Deflate` クラスなど）はありません。
 
 圧縮した結果と展開した結果はどちらもバイナリの String（エンコーディング `ASCII-8BIT`）です。UTF-8 の文字列を展開した結果と元の文字列は、バイトは同じでもエンコーディングが違うので `==` になりません: 文字列として使うなら `String.force_encoding(s, "UTF-8")` を通します。壊れた入力や形式の違う入力（`inflate` に gzip を渡す、など）は `ArgumentError` で、メッセージは zlib のもの（`incorrect header check` など。Ruby の `Zlib::DataError` 等に当たる例外型はありません）。
 
@@ -49,4 +49,18 @@ p(out)                              # => "hello"
 
 ```ruby error
 Zlib.gunzip(Zlib.deflate("x"))      # !> ArgumentError: Zlib.gunzip:
+```
+
+## crc32, adler32
+
+`Zlib.crc32(String, [Integer])`
+
+`Zlib.adler32(String, [Integer])`
+
+String のバイトの CRC-32 と Adler-32 のチェックサムを Integer で返します（Ruby の `Zlib.crc32` と `Zlib.adler32`）。2 つ目の引数（省略すると 0 と 1）で続きから計算します: `a` に続けて `b` のチェックサムは `Zlib.crc32(b, Zlib.crc32(a))` です。
+
+```ruby
+p(Zlib.crc32("hello"))                      # => 907060870
+p(Zlib.crc32("lo", Zlib.crc32("hel")))      # => 907060870
+p(Zlib.adler32("hello"))                    # => 103547413
 ```

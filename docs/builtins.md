@@ -1211,6 +1211,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Zlib
 
+- `Zlib.adler32(String, [Integer])`
+- `Zlib.crc32(String, [Integer])`
 - `Zlib.deflate(String)`
 - `Zlib.gunzip(String)`
 - `Zlib.gzip(String)`

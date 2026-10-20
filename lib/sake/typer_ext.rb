@@ -294,6 +294,7 @@ module Sake
       when "IO.seek", "IO.pos", "IO.rewind", "IO.truncate", "IO.size" then t("Integer")
       when "IO.getc" then u(t("String"), t("Nil"))
       when "Zlib.inflate", "Zlib.deflate", "Zlib.gzip", "Zlib.gunzip", "Kernel.PROGRAM_NAME" then t("String")
+      when "Zlib.crc32", "Zlib.adler32" then t("Integer")
       when "Kernel.equal?" then t("Boolean")
       when "Thread.alive?", "Queue.empty?", "Queue.closed?" then t("Boolean")
       when "Mutex.new" then t("Mutex")
