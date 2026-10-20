@@ -75,3 +75,10 @@ Rails の移植で同じ形が出るかを見ることにした。
   それぞれ `==` を持つ。**直した**（db3ea041）: 比べない組み込みでは呼ばない、同じインスタンス化・同じ引数の型では
   1 パスに 1 回、`shape_key` の並べ替えを `inspect` から `hash` に。80 → 28.6 秒、出力は Ruby と同じ（ローカル 1 回）。
   モデルごとに Base のモジュールと Relation の写しを持つ形なので、モデル数に対する伸び方はアプリの段で測る。
+- **検査の穴が見つかった（ブランチ checker-init-callee で修正中、main には未適用）。** `initialize` が新しいインスタンスを
+  別の関数に渡すと、その関数はフィールドを空として読み（フィールドは `initialize` が終わってから書かれる）、「戻らない」と
+  され、構築が「終われない」ことになり、プログラムの `T.new` より後ろが全部到達しないコードとして検査されていなかった
+  （その後ろの `1 + "x"` が通る。MessageEncryptor の担当が発見、`bugs/activesupport_call_after_initialize_callee_unchecked.sake`）。
+  直すと sakelib のテスト 24 本が、これまで検査されていなかったコードで level 2 に落ちる（httparty、tempfile、net_http、
+  time_with_zone、json、actionpack のコントローラのテストの大半）。**ここまでの検査時間の数字は、この穴で飛ばされた分だけ
+  短く出ている可能性がある。** 仕分けと移植の修正を別の作業ツリーで進めている。
