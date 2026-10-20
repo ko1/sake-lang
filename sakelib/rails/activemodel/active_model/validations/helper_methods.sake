@@ -1,0 +1,77 @@
+# Port of activemodel-8.1.3/lib/active_model/validations/helper_methods.rb, resolve_value.rb and comparability.rb (three small modules the validators include)
+#
+# validates_presence_of & co. (HelperMethods) are class-body lines, which the generator expands into
+# validates_with (generate/validations.sake). ResolveValue's `record.send(value)` for a Symbol option goes through
+# the record's read_attribute_for_validation, which the generator writes for every name a validation reads.
+
+module ActiveModel
+  module Validations
+    module ResolveValue
+      def resolve_value(v, record, value)
+        case value
+        in Symbol then ActiveModel::Validations.read_attribute_for_validation(record, value)
+        else value
+        end
+      end
+    end
+
+    module Comparability
+      def error_options(v, value, option_value)
+        opts = Hash.except(@options, *Comparability.COMPARE_CHECKS)
+        opts[:count] = option_value
+        opts[:value] = value
+        opts
+      end
+
+      module_function
+
+      def COMPARE_CHECKS = Symbol[:greater_than, :greater_than_or_equal_to, :equal_to, :less_than, :less_than_or_equal_to, :other_than]
+
+      # Ruby's value.public_send(COMPARE_CHECKS[option], option_value), with Ruby's ArgumentError when the two
+      # cannot be compared ("comparison of Integer with String failed").
+      def check(option, value, option_value)
+        if option == :equal_to || option == :other_than
+          eq = compare(value, option_value, false) == 0
+          return option == :equal_to ? eq : !eq
+        end
+        c = compare(value, option_value, true) || 0
+        case option
+        in :greater_than then c > 0
+        in :greater_than_or_equal_to then c >= 0
+        in :less_than then c < 0
+        in :less_than_or_equal_to then c <= 0
+        else false
+        end
+      end
+
+      def compare(a, b, strict)
+        c = case a
+            in Integer | Float | BigDecimal then (b in Integer | Float | BigDecimal) ? BigDecimal.<=>(BigDecimal.of(a), b) : nil
+            in String then (b in String) ? a <=> b : nil
+            in Date then (b in Date) ? Date.<=>(a, b) : nil
+            in Time then (b in Time) ? a <=> b : nil
+            else nil
+            end
+        raise ArgumentError, "comparison of #{class_name(a)} with #{class_name(b)} failed" if c == nil && strict
+        c
+      end
+
+      def class_name(x)
+        case x
+        in nil then "nil"
+        in Integer then "Integer"
+        in Float then "Float"
+        in BigDecimal then "BigDecimal"
+        in String then "String"
+        in Symbol then "Symbol"
+        in Date then "Date"
+        in Time then "Time"
+        in Array then "Array"
+        in true then "true"
+        in false then "false"
+        else "Object"
+        end
+      end
+    end
+  end
+end

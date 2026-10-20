@@ -1,0 +1,136 @@
+# ActiveModel::Model: attribute assignment, naming, conversion, validations (validates, validate, contexts,
+# conditions, strict), errors (messages, details, full messages, add/where/delete), validate! and i18n.
+require "rails/activemodel/active_model"
+generate "rails/activemodel/active_model/generate/active_model", "model_decl.rb"
+
+class Person
+  def not_reserved(r)
+    ActiveModel::Errors.add(errors(r), :name, :reserved, message: "is reserved") if @name == "root"
+  end
+  def guest?(r) = @role == "guest"
+  def persisted?(r) = @id != nil
+end
+
+E = ActiveModel::Errors
+N = ActiveModel::Name
+
+puts("assign:")
+pe = Person.build(Hash.of(:name => "Ann", "email" => "ann@example.com", :age => 3))
+p([Person.name(pe), Person.email(pe), Person.age(pe), Person.role(pe)])
+Person.assign_attributes(pe, Hash.of(role: "admin"))
+p(Person.role(pe))
+begin
+  Person.build(Hash.of(nope: 1))
+rescue ActiveModel::UnknownAttributeError => e
+  puts("UnknownAttributeError: #{Exception.message(e)}")
+end
+p(Person.slice(pe, :name, :age))
+p(Person.values_at(pe, :name, :role))
+
+puts("naming:")
+n = Person.model_name
+p([N.name(n), N.singular(n), N.plural(n), N.element(n), N.collection(n), N.param_key(n), N.route_key(n), N.singular_route_key(n), N.i18n_key(n), N.human(n)])
+p([N.name(Admin.model_name), N.route_key(Admin.model_name), Admin.lookup_ancestors])
+p([N.human(Tag.model_name), ActiveModel::Naming.plural(pe), ActiveModel::Naming.param_key(pe), ActiveModel::Naming.uncountable?(pe)])
+p([Person.human_attribute_name("email"), Person.human_attribute_name(:created_at), Person.i18n_scope])
+
+puts("conversion:")
+p([Person.to_model(pe) == pe, Person.to_key(pe), Person.to_param(pe), Person.persisted?(pe), Person.to_partial_path(pe)])
+pe.Person.id = 7
+p([Person.to_key(pe), Person.to_param(pe), Person.persisted?(pe)])
+pe.Person.id = nil
+
+puts("valid:")
+p([Person.valid?(pe), Person.invalid?(pe), E.empty?(Person.errors(pe)), E.size(Person.errors(pe))])
+bad = Person.build(name: "", email: "nope", age: -1)
+p(Person.valid?(bad))
+errs = Person.errors(bad)
+p(E.full_messages(errs))
+p(E.messages(errs))
+p(E.details(errs))
+p(errs[:name])
+p(errs[:nothing])
+p([E.include?(errs, :email), E.key?(errs, :role), E.attribute_names(errs)])
+p([E.added?(errs, :name, :blank), E.added?(errs, :age, :greater_than_or_equal_to, Hash.of(count: 0)), E.of_kind?(errs, :email, :invalid)])
+p(E.full_messages_for(errs, :age))
+p(Array.map(E.where(errs, :name)) { |x| ActiveModel::Error.type(x) })
+p(E.to_hash(errs, true))
+p(E.as_json(errs, Hash.of(full_messages: true)))
+first = Array.first(E.errors(errs))
+p(first ? ActiveModel::Error.full_message(first) : nil)
+p(E.map(errs) { |x| ActiveModel::Error.attribute(x) })
+
+puts("numbers:")
+Array.each(Any["12", "1.5", "abc", 4.0, "0x1A", nil]) do |a|
+  x = Person.build(name: "N", age: a)
+  Person.valid?(x)
+  p([a, Person.errors(x)[:age]])
+end
+
+puts("length:")
+long = Person.build(name: "abcdefghijkl")
+Person.valid?(long)
+p(E.full_messages(Person.errors(long)))
+
+puts("custom validate:")
+root = Person.build(name: "root")
+p([Person.valid?(root), E.full_messages(Person.errors(root)), E.details(Person.errors(root))])
+
+puts("context:")
+r = Person.build(name: "Bo", role: "boss")
+p([Person.valid?(r), Person.valid?(r, :create), E.full_messages(Person.errors(r)), Person.validation_context(r)])
+p(Person.valid?(r, Any[:create, :special]))
+
+puts("condition:")
+g = Person.build(name: "G", role: "guest", id: 3)
+p([Person.valid?(g), E.full_messages(Person.errors(g))])
+g.Person.role = "member"
+p(Person.valid?(g))
+
+puts("subclass:")
+a = Admin.build(name: "Al")
+p([Admin.valid?(a), E.full_messages(Admin.errors(a)), Array.map(Admin.validators_on(:level)) { |v| ActiveModel::AnyValidator.kind(v) }, Array.map(Person.validators_on(:level)) { |v| ActiveModel::AnyValidator.kind(v) }])
+p(Array.map(Person.validators) { |v| ActiveModel::AnyValidator.kind(v) })
+p(Array.map(Person.validators_on(:name, :email)) { |v| [ActiveModel::AnyValidator.kind(v), ActiveModel::AnyValidator.options(v)] })
+
+puts("errors API:")
+e = Person.errors(Person.build(name: "E"))
+E.add(e, :name, :too_short, count: 5)
+E.add(e, :base, "Something is off")
+E.add(e, :email, "is weird")
+p(E.full_messages(e))
+p(E.details(e))
+p(E.delete(e, :email))
+p([E.size(e), E.count(e), E.any?(e), E.to_a(e)])
+p(E.generate_message(e, :name, :blank))
+p(E.full_message(e, :name, "is fine"))
+p(String.include?(E.inspect(e), "ActiveModel::Errors"))
+E.clear(e)
+p(E.empty?(e))
+
+puts("strict:")
+begin
+  E.add(Person.errors(Person.build(name: "S")), :name, :invalid, strict: true)
+rescue ActiveModel::StrictValidationFailed => err
+  puts("StrictValidationFailed: #{Exception.message(err)}")
+end
+
+puts("validate!:")
+begin
+  Person.validate!(Person.build(name: ""))
+rescue ActiveModel::ValidationError => err
+  puts("ValidationError: #{Exception.message(err)}")
+  m = ActiveModel::ValidationError.model(err)
+  p((m in Person) ? Person.name(m) : nil)
+end
+
+puts("i18n:")
+ActiveModel.load_locale
+I18n.backend_store(:en, Hash.of(activemodel: Hash.of(
+  models: Hash.of(person: "Human"),
+  attributes: Hash.of(person: Hash.of(name: "Full name")),
+  errors: Hash.of(models: Hash.of(person: Hash.of(attributes: Hash.of(email: Hash.of(invalid: "looks wrong"))))))))
+p([N.human(Person.model_name), Person.human_attribute_name(:name), Admin.human_attribute_name(:name)])
+x = Person.build(name: "", email: "bad")
+Person.valid?(x)
+p(E.full_messages(Person.errors(x)))

@@ -1,0 +1,99 @@
+# Port of activemodel-8.1.3/lib/active_model/validations.rb (partial: validates_each with a block; validate with a block)
+#
+# The instance side is the mixin, as in Ruby. Its state is two fields the includer declares (the generator
+# does): `__errors` (Ruby's @errors) and `__context_for_validation`. The class side (Ruby's ClassMethods and the
+# class body's `validates`/`validate` lines) is the generator's (generate/validations.sake): each validator is a
+# `once` of its class, run by a generated method that the :validate callback chain names (Ruby stores the
+# validator object in the chain), `_validators` is a generated Hash, and `read_attribute_for_validation`
+# (Ruby's alias of send) is a generated `case` over the names the class's validations read.
+
+require "rails/activesupport/active_support/callbacks"
+require "rails/activesupport/active_support/core_ext/object/blank"
+require "rails/activesupport/active_support/core_ext/array/wrap"
+require "rails/activesupport/active_support/core_ext/array/conversions"
+require "errors"
+require "validator"
+require "send"
+
+module ActiveModel
+  module Validations
+    include ActiveSupport::Callbacks
+    include ActiveModel::Naming
+    include ActiveModel::Translation
+    include ActiveModel::Send
+
+    # Required: the fields @errors and @context_for_validation (the generated class declares them).
+    def __errors(r) = raise(NotImplementedError)
+    def set___errors(r, v) = raise(NotImplementedError)
+    def __context_for_validation(r) = raise(NotImplementedError)
+    def set___context_for_validation(r, v) = raise(NotImplementedError)
+    # Required (generated): the class's validators by attribute (Ruby's class_attribute :_validators).
+    def _validators = raise(NotImplementedError)
+    # Required (generated, through ActiveSupport::Callbacks::Generate): Ruby's _run_validate_callbacks.
+    def _run_validate_callbacks(r) = raise(NotImplementedError)
+    # Required (generated): NumericalityValidator's value before type cast (nil, or an attributes model's).
+    def __raw_value_for_validation(r, attr_name) = raise(NotImplementedError)
+
+    # Ruby: alias :read_attribute_for_validation :send
+    def read_attribute_for_validation(r, name) = __send(r, name)
+
+    def errors(r) = __errors(r) || set___errors(r, Errors.new(r))
+
+    def valid?(r, context = nil)
+      current_context = validation_context(r)
+      ValidationContext.set_context(context_for_validation(r), context)
+      Errors.clear(errors(r))
+      run_validations!(r)
+    ensure
+      ValidationContext.set_context(context_for_validation(r), current_context)
+    end
+
+    def validate(r, context = nil) = valid?(r, context)
+    def invalid?(r, context = nil) = !valid?(r, context)
+    def validate!(r, context = nil) = valid?(r, context) || raise_validation_error(r)
+
+    def validation_context(r) = ValidationContext.context(context_for_validation(r))
+    def set_validation_context(r, context) = ValidationContext.set_context(context_for_validation(r), context)
+    def context_for_validation(r) = __context_for_validation(r) || set___context_for_validation(r, ValidationContext.new(nil))
+
+    # Ruby's run_validations!; Validations::Callbacks wraps it and calls this body (no super in Sake).
+    def run_validations!(r) = super_run_validations!(r)
+    def super_run_validations!(r)
+      _run_validate_callbacks(r)
+      Errors.empty?(errors(r))
+    end
+
+    def raise_validation_error(r) = raise(ValidationError.build(r))
+
+    # Ruby's predicate_for_validation_context lambda: the record's context (a Symbol or an Array) is one of contexts.
+    def validation_context_in?(r, contexts)
+      vc = validation_context(r)
+      case vc
+      in Array then Array.any?(vc) { |c| Array.include?(contexts, c) }
+      else Array.include?(contexts, vc)
+      end
+    end
+
+    # Ruby's ClassMethods#validators, validators_on (the class's, without an instance).
+    def validators = Array.flat_map(Hash.values(_validators)) { |vs| vs }.Array.uniq
+    def validators_on(*attributes) = Array.flat_map(attributes) { |a| Hash.fetch(_validators, Kernel.to_s(a).String.to_sym, ActiveModel::AnyValidator[]) }
+
+    class ValidationContext
+      attr_accessor context
+    end
+  end
+
+  class ValidationError < StandardError
+    attr_reader model
+
+    def build(model)
+      errors = Array.join(Errors.full_messages(ActiveModel::Validations.errors(model)), ", ")
+      scope = ActiveModel::Translation.i18n_scope_of(model)
+      ActiveModel.load_locale
+      message = I18n.translate_with(String.to_sym("#{scope}.errors.messages.model_invalid"), nil, nil, :"errors.messages.model_invalid", nil, ".", Hash.of(errors: errors), false)
+      ValidationError.new(Kernel.to_s(message), model)
+    end
+  end
+end
+
+require "validations/*"

@@ -1,0 +1,66 @@
+# ActiveModel::Callbacks (define_model_callbacks: before/around/after, halting with throw :abort, after
+# callbacks skipped when the block returns false) and ActiveModel::Validations::Callbacks (on: contexts).
+require "rails/activemodel/active_model"
+generate "rails/activemodel/active_model/generate/active_model", "callbacks_decl.rb"
+
+class Account
+  def normalize_name(a)
+    puts("  normalize_name")
+    n = @name
+    @name = String.strip(n) if n
+  end
+  def set_default_balance(a)
+    puts("  set_default_balance")
+    @balance ||= 0
+  end
+  def log_validation(a) = puts("  after_validation errors=#{ActiveModel::Errors.size(errors(a))}")
+  def check_frozen(a)
+    puts("  check_frozen")
+    throw :abort if @frozen_account
+  end
+  def big?(a) = (@balance || 0) > 100
+  def announce(a) = puts("  announce big balance")
+  def wrap(a)
+    puts("  wrap {")
+    yield
+    puts("  } wrap")
+  end
+  def saved(a) = puts("  after_save")
+  def audit(a) = puts("  audit")
+  def quiet?(a) = @name == "quiet"
+  def closing(a) = puts("  closing")
+  def closed(a) = puts("  closed")
+
+  def save(a, ok = true)
+    return false unless valid?(a, :create)
+    _run_save_callbacks(a) do
+      puts("  saving #{Kernel.inspect(@name)} #{Kernel.inspect(@balance)}")
+      ok
+    end
+  end
+  def close(a) = _run_close_callbacks(a) { puts("  closing now"); true }
+end
+
+def kinds_filters(chain) = Enum.map(chain) { |c| [ActiveSupport::Callbacks::Callback.kind(c), ActiveSupport::Callbacks::Callback.filter(c)] }
+
+# Sake: `new` stores attr_accessor fields by keyword, each with its own type (build would assign them all from one Hash)
+puts("save:")
+a = Account.new(name: "  Ann ")
+p(Account.save(a))
+puts("big:")
+p(Account.save(Account.new(name: "Rich", balance: 500)))
+puts("invalid:")
+p(Account.save(Account.new(name: "  ")))
+puts("frozen:")
+p(Account.save(Account.new(name: "F", frozen_account: true)))
+puts("block false:")
+p(Account.save(Account.new(name: "B"), false))
+puts("quiet:")
+p(Account.save(Account.new(name: "quiet")))
+puts("valid? without context:")
+b = Account.new(name: " x ")
+p([Account.valid?(b), Account.name(b), Account.balance(b)])
+puts("close:")
+p(Account.close(Account.new(name: "C")))
+p(kinds_filters(Account._save_callbacks))
+p(kinds_filters(Account._validation_callbacks))

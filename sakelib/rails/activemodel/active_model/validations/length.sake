@@ -1,0 +1,81 @@
+# Port of activemodel-8.1.3/lib/active_model/validations/length.rb (partial: no Proc limits)
+
+module ActiveModel
+  module Validations
+    class LengthValidator < EachValidator
+      include ResolveValue
+
+      def MESSAGES = Hash.of(is: :wrong_length, minimum: :too_short, maximum: :too_long)
+      def CHECKS = Symbol[:is, :minimum, :maximum]
+      def RESERVED_OPTIONS = Symbol[:minimum, :maximum, :within, :is, :too_short, :too_long]
+
+      def initialize(v)
+        opts = Hash.dup(@options)
+        range = Hash.delete(opts, :in) || Hash.delete(opts, :within)
+        if range
+          raise ArgumentError, ":in and :within must be a Range" unless range in Range
+          b = Range.begin(range)
+          e = Range.end(range)
+          opts[:minimum] = Range.min(range) if b != nil
+          opts[:maximum] = (Range.exclude_end?(range) && (e in Integer) ? e - 1 : e) if e != nil
+        end
+        if opts[:allow_blank] == false && opts[:minimum] == nil && opts[:is] == nil
+          opts[:minimum] = 1
+        end
+        @options = opts
+        super_initialize(v)
+      end
+
+      def check_validity!(v)
+        keys = Array.select(LengthValidator.CHECKS) { |k| Hash.key?(@options, k) }
+        if Array.empty?(keys)
+          raise ArgumentError, "Range unspecified. Specify the :in, :within, :maximum, :minimum, or :is option."
+        end
+        Array.each(keys) do |key|
+          value = @options[key]
+          ok = case value
+               in Integer then value >= 0
+               in Float then value == Float.INFINITY || value == -Float.INFINITY
+               in Symbol then true
+               else false
+               end
+          raise ArgumentError, ":#{key} must be a non-negative Integer, Infinity, Symbol, or Proc" unless ok
+        end
+      end
+
+      def validate_each(v, record, attribute, value)
+        value_length = case value
+                       in String then String.length(value)
+                       in Array then Array.length(value)
+                       in Hash then Hash.length(value)
+                       else String.length(Kernel.to_s(value))
+                       end
+        errors_options = Hash.except(@options, *LengthValidator.RESERVED_OPTIONS)
+        Array.each(LengthValidator.CHECKS) do |key|
+          check_value = @options[key]
+          next unless check_value
+          if !(value in nil) || skip_nil_check?(v, key)
+            check_value = resolve_value(v, record, check_value)
+            ok = case check_value
+                 in Integer | Float
+                   case key
+                   in :is then value_length == check_value
+                   in :minimum then value_length >= check_value
+                   else value_length <= check_value
+                   end
+                 else raise ArgumentError, ":#{key} must resolve to a number"
+                 end
+            next if ok
+          end
+          errors_options[:count] = check_value
+          message_key = LengthValidator.MESSAGES[key] || :invalid
+          default_message = @options[message_key]
+          errors_options[:message] ||= default_message if default_message
+          ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, message_key, errors_options)
+        end
+      end
+
+      def skip_nil_check?(v, key) = key == :maximum && @options[:allow_nil] == nil && @options[:allow_blank] == nil
+    end
+  end
+end

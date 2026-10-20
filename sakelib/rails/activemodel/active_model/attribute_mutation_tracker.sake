@@ -1,0 +1,138 @@
+# Port of activemodel-8.1.3/lib/active_model/attribute_mutation_tracker.rb
+#
+# Ruby's three trackers (ForcedMutationTracker < AttributeMutationTracker, NullMutationTracker) are classes here
+# too, with MutationTracker (Sake only) as their common type: a model's mutations_before_last_save is one of them
+# or the null one. Ruby's `changed?(attr_name, from: OPTION_NOT_GIVEN, to: OPTION_NOT_GIVEN)` takes the options
+# as a Hash (a key that is absent was not given). ForcedMutationTracker's `attributes` is the model, read with
+# AttributeMethods._read_attribute (Ruby's `attributes.send(:_read_attribute, attr_name)`).
+
+require "rails/activesupport/active_support/hash_with_indifferent_access"
+
+module ActiveModel
+  module MutationTracker
+    def changed_attribute_names(t) = raise(NotImplementedError)
+    def changed_values(t) = raise(NotImplementedError)
+    def changes(t) = raise(NotImplementedError)
+    def change_to_attribute(t, attr_name) = raise(NotImplementedError)
+    def any_changes?(t) = raise(NotImplementedError)
+    def changed?(t, attr_name, options = Hash.new) = raise(NotImplementedError)
+    def changed_in_place?(t, attr_name) = raise(NotImplementedError)
+    def original_value(t, attr_name) = raise(NotImplementedError)
+    def forget_change(t, attr_name) = raise(NotImplementedError)
+    def force_change(t, attr_name) = raise(NotImplementedError)
+    def finalize_changes(t) = nil
+  end
+
+  class AttributeMutationTracker
+    include MutationTracker
+    private attr_reader attributes
+    private attr_accessor forced_changes_
+
+    def initialize(t) = nil
+
+    def changed_attribute_names(t) = Array.select(attr_names(t)) { |attr_name| changed?(t, attr_name) }
+
+    def changed_values(t)
+      result = ActiveSupport::HashWithIndifferentAccess.new(Hash.new)
+      Array.each(attr_names(t)) do |attr_name|
+        ActiveSupport::HashWithIndifferentAccess.store(result, attr_name, original_value(t, attr_name)) if changed?(t, attr_name)
+      end
+      result
+    end
+
+    def changes(t)
+      result = ActiveSupport::HashWithIndifferentAccess.new(Hash.new)
+      Array.each(attr_names(t)) do |attr_name|
+        change = change_to_attribute(t, attr_name)
+        ActiveSupport::HashWithIndifferentAccess.store(result, attr_name, change) if change
+      end
+      result
+    end
+
+    def change_to_attribute(t, attr_name) = super_change_to_attribute(t, attr_name)
+    def super_change_to_attribute(t, attr_name)
+      changed?(t, attr_name) ? Any[original_value(t, attr_name), fetch_value(t, attr_name)] : nil
+    end
+
+    def any_changes?(t) = Array.any?(attr_names(t)) { |attr| changed?(t, attr) }
+
+    def changed?(t, attr_name, options = Hash.new)
+      attribute_changed?(t, attr_name) &&
+        (!Hash.key?(options, :from) || original_value(t, attr_name) == type_cast(t, attr_name, options[:from])) &&
+        (!Hash.key?(options, :to) || fetch_value(t, attr_name) == type_cast(t, attr_name, options[:to]))
+    end
+
+    def changed_in_place?(t, attr_name) = ActiveModel::Attribute.changed_in_place?(@attributes[attr_name])
+
+    def forget_change(t, attr_name)
+      @attributes[attr_name] = ActiveModel::Attribute.forgetting_assignment(@attributes[attr_name])
+      Hash.delete(forced_changes(t), attr_name)
+    end
+
+    def original_value(t, attr_name) = ActiveModel::Attribute.original_value(@attributes[attr_name])
+
+    def force_change(t, attr_name)
+      forced_changes(t)[attr_name] = fetch_value(t, attr_name)
+    end
+
+    def forced_changes(t) = @forced_changes_ ||= Hash.new
+    def attr_names(t) = ActiveModel::AttributeSet.keys(@attributes)
+
+    def attribute_changed?(t, attr_name)
+      Hash.include?(forced_changes(t), attr_name) || !!ActiveModel::Attribute.changed?(@attributes[attr_name])
+    end
+
+    def fetch_value(t, attr_name) = ActiveModel::AttributeSet.fetch_value(@attributes, attr_name)
+    def type_cast(t, attr_name, value) = ActiveModel::Attribute.type_cast(@attributes[attr_name], value)
+  end
+
+  class ForcedMutationTracker < AttributeMutationTracker
+    private attr_accessor finalized_changes
+
+    def changed_in_place?(t, attr_name) = false
+
+    def change_to_attribute(t, attr_name)
+      fc = @finalized_changes
+      if fc != nil && ActiveSupport::HashWithIndifferentAccess.include?(fc, attr_name)
+        dup(ActiveSupport::HashWithIndifferentAccess.[](fc, attr_name))
+      else
+        super_change_to_attribute(t, attr_name)
+      end
+    end
+
+    def forget_change(t, attr_name) = Hash.delete(forced_changes(t), attr_name)
+
+    def original_value(t, attr_name)
+      changed?(t, attr_name) ? forced_changes(t)[attr_name] : fetch_value(t, attr_name)
+    end
+
+    def force_change(t, attr_name)
+      forced_changes(t)[attr_name] = clone_value(t, attr_name) unless attribute_changed?(t, attr_name)
+    end
+
+    def finalize_changes(t) = @finalized_changes = changes(t)
+
+    def attr_names(t) = Hash.keys(forced_changes(t))
+    def attribute_changed?(t, attr_name) = Hash.include?(forced_changes(t), attr_name)
+    def fetch_value(t, attr_name) = ActiveModel::AttributeMethods._read_attribute(@attributes, attr_name)
+    def clone_value(t, attr_name) = dup(fetch_value(t, attr_name))
+    def type_cast(t, attr_name, value) = value
+  end
+
+  class NullMutationTracker
+    include MutationTracker
+
+    def instance = once { NullMutationTracker.new }
+
+    def changed_attribute_names(t) = String[]
+    def changed_values(t) = ActiveSupport::HashWithIndifferentAccess.new(Hash.new)
+    def changes(t) = ActiveSupport::HashWithIndifferentAccess.new(Hash.new)
+    def change_to_attribute(t, attr_name) = nil
+    def any_changes?(t) = false
+    def changed?(t, attr_name, options = Hash.new) = false
+    def changed_in_place?(t, attr_name) = false
+    def original_value(t, attr_name) = nil
+    def forget_change(t, attr_name) = nil
+    def force_change(t, attr_name) = nil
+  end
+end

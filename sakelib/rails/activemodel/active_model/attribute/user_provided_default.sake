@@ -1,0 +1,43 @@
+# Port of activemodel-8.1.3/lib/active_model/attribute/user_provided_default.rb (partial: no Proc defaults, no marshal), with Attribute#with_type and #dup_or_share (attribute.rb), which attribute.sake leaves out and AttributeRegistration needs
+#
+# Ruby's `self.class.new(name, value_before_type_cast, type, original_attribute)` in with_type is one function
+# per class here (FromDatabase, FromUser, WithCastValue; Null and Uninitialized have theirs in attribute.sake).
+
+require "../attribute"
+
+module ActiveModel
+  module Attribute
+    def with_type(a, type) = raise(NotImplementedError)
+
+    def with_user_default(a, value)
+      oa = (a in FromDatabase) ? a : @original_attribute
+      UserProvidedDefault.new(@name, value, @type, oa)
+    end
+
+    def dup_or_share(a) = ActiveModel::Type::Value.mutable?(@type) ? dup(a) : a
+
+    class FromDatabase
+      def with_type(a, type)
+        return Attribute.with_type(with_value_from_user(a, value(a)), type) if changed_in_place?(a)
+        FromDatabase.new(@name, @value_before_type_cast, type, @original_attribute)
+      end
+    end
+
+    class FromUser
+      def with_type(a, type)
+        return Attribute.with_type(with_value_from_user(a, value(a)), type) if changed_in_place?(a)
+        FromUser.new(@name, @value_before_type_cast, type, @original_attribute)
+      end
+    end
+
+    class WithCastValue
+      def with_type(a, type) = WithCastValue.new(@name, @value_before_type_cast, type, @original_attribute)
+    end
+
+    # Ruby's UserProvidedDefault < FromUser: the class attribute's default (`attribute :age, default: 0`).
+    class UserProvidedDefault < FromUser
+      def user_provided_value(a) = @value_before_type_cast
+      def with_type(a, type) = UserProvidedDefault.new(@name, @value_before_type_cast, type, @original_attribute)
+    end
+  end
+end

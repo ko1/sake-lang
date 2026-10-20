@@ -1,0 +1,148 @@
+# Port of activemodel-8.1.3/lib/active_model/errors.rb (partial: no Proc types, no deep_dup/copy! of another record's errors; strict: takes true, not an exception class)
+#
+# Ruby's keyword options (`errors.add(:name, :too_short, count: 3)`) are collected by `add`, and the validators,
+# which hold their options in a Hash, call `add_with(errors, attribute, type, options)`: a Hash cannot be
+# spread into keywords in Sake (as I18n's translate_with). The same for where/delete/added?.
+
+require "error"
+
+module ActiveModel
+  class Errors
+    include Enum
+    include Indexable
+    attr_reader base
+    attr_reader errors
+
+    def initialize(es)
+      @errors = Error[] if @errors == nil
+    end
+
+    def each(es)
+      Array.each(@errors) { |e| yield(e) }
+    end
+    def objects(es) = @errors
+    def clear(es) = Array.clear(@errors)
+    def empty?(es) = Array.empty?(@errors)
+    def any?(es) = !Array.empty?(@errors)
+    def size(es) = Array.size(@errors)
+    def count(es) = Array.size(@errors)
+    def uniq!(es) = Array.uniq!(@errors)
+
+    def import(es, error, override_options = Hash.new)
+      opts = Hash.dup(override_options)
+      Array.each(Symbol[:attribute, :type]) do |key|
+        v = opts[key]
+        opts[key] = String.to_sym(Kernel.to_s(v)) if Hash.key?(opts, key)
+      end
+      Array.push(@errors, NestedError.new(@base, error, opts))
+    end
+
+    def merge!(es, other)
+      return @errors if Kernel.equal?(es, other)
+      Array.each(Errors.errors(other)) { |error| import(es, error) }
+      @errors
+    end
+
+    def where(es, attribute, type = nil, **options) = where_with(es, attribute, type, options)
+    def where_with(es, attribute, type, options)
+      attr = Kernel.to_s(attribute).String.to_sym
+      Array.select(@errors) { |error| Error.match?(error, attr, type, options) }
+    end
+
+    def include?(es, attribute)
+      attr = Kernel.to_s(attribute).String.to_sym
+      Array.any?(@errors) { |error| Error.match?(error, attr) }
+    end
+    def has_key?(es, attribute) = include?(es, attribute)
+    def key?(es, attribute) = include?(es, attribute)
+
+    def delete(es, attribute, type = nil, **options)
+      matches = where_with(es, attribute, type, options)
+      Array.each(matches) { |error| Array.delete(@errors, error) }
+      messages = Array.map(matches) { |e| Error.message(e) }
+      Array.empty?(messages) ? nil : messages
+    end
+
+    def [](es, attribute) = messages_for(es, attribute)
+
+    def attribute_names(es) = Array.map(@errors) { |e| Error.attribute(e) }.Array.uniq
+
+    def as_json(es, options = nil)
+      full = options != nil && options[:full_messages]
+      to_hash(es, full ? true : false)
+    end
+
+    def to_hash(es, full_messages = false)
+      h = Hash.new
+      Hash.each(group_by_attribute(es)) do |attribute, errors|
+        h[attribute] = Array.map(errors) { |e| full_messages ? Error.full_message(e) : Error.message(e) }
+      end
+      h
+    end
+
+    # Ruby's messages: to_hash with [] as the default (Hash.fetch(messages, :x, []) reads it here).
+    def messages(es) = to_hash(es)
+
+    def details(es)
+      h = Hash.new
+      Hash.each(group_by_attribute(es)) { |attribute, errors| h[attribute] = Array.map(errors) { |e| Error.details(e) } }
+      h
+    end
+
+    def group_by_attribute(es) = Array.group_by(@errors) { |e| Error.attribute(e) }
+
+    # Ruby: add(attribute, type = :invalid, **options)
+    def add(es, attribute, type = :invalid, **options) = add_with(es, attribute, type, options)
+
+    def add_with(es, attribute, type, options)
+      attr = Kernel.to_s(attribute).String.to_sym
+      error = Error.new(@base, attr, type, options)
+      if options[:strict]
+        raise StrictValidationFailed, Error.full_message(error)
+      end
+      Array.push(@errors, error)
+      error
+    end
+
+    def added?(es, attribute, type = :invalid, options = Hash.new)
+      attr = Kernel.to_s(attribute).String.to_sym
+      case type
+      in Symbol then Array.any?(@errors) { |error| Error.strict_match?(error, attr, type, options) }
+      else Array.include?(messages_for(es, attr), type)
+      end
+    end
+
+    def of_kind?(es, attribute, type = :invalid)
+      attr = Kernel.to_s(attribute).String.to_sym
+      case type
+      in Symbol then !Array.empty?(where_with(es, attr, type, Hash.new))
+      else Array.include?(messages_for(es, attr), type)
+      end
+    end
+
+    def full_messages(es) = Array.map(@errors) { |e| Error.full_message(e) }
+    def to_a(es) = full_messages(es)
+
+    def full_messages_for(es, attribute) = Array.map(where_with(es, attribute, nil, Hash.new)) { |e| Error.full_message(e) }
+
+    def messages_for(es, attribute) = Array.map(where_with(es, attribute, nil, Hash.new)) { |e| Error.message(e) }
+
+    def full_message(es, attribute, message) = Error.full_message_for(attribute, message, @base)
+
+    def generate_message(es, attribute, type = :invalid, options = Hash.new)
+      Error.generate_message_for(attribute, type, @base, options)
+    end
+
+    def inspect(es) = "#<ActiveModel::Errors [#{Array.join(Array.map(@errors) { |e| Error.inspect(e) }, ", ")}]>"
+  end
+
+  class StrictValidationFailed < StandardError
+  end
+
+  # (ActiveModel::RangeError is in type/integer.sake, which raises it.)
+
+  # Ruby's UnknownAttributeError < NoMethodError: "unknown attribute 'x' for Person."
+  class UnknownAttributeError < NoMethodError
+    attr_reader record, attribute
+  end
+end

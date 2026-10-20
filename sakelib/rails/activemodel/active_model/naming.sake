@@ -1,0 +1,109 @@
+# Port of activemodel-8.1.3/lib/active_model/naming.rb (partial: no use_relative_model_naming? namespaces found through module_parents (the namespace is given); Name's delegation of =~ !~ match? as_json)
+#
+# Ruby's Name.new(klass, namespace = nil, name = nil, locale = :en) asks the class for its name, lookup_ancestors
+# and i18n_scope. Sake has no class values, so the class is described by its name (`klass`), and the two answers
+# Translation would give are fields (`ancestors`: the names of the classes Rails' lookup_ancestors returns,
+# `scope`: the class's i18n_scope); a Name made without them has no i18n keys, as for a class without Translation.
+#
+# The class method `Person.model_name` is generated (once per class, as Ruby's @_model_name); the instance's
+# `person.model_name` (Ruby's delegate to the class) is `model_name_of(person)`: one name cannot be both.
+
+require "rails/activesupport/active_support/inflector"
+require "i18n"
+
+module ActiveModel
+  class Name
+    include Comparable
+    attr_reader klass, namespace
+    attr_accessor name
+    private attr_reader locale, ancestors, scope
+    attr_accessor singular, plural, element, collection, singular_route_key, route_key, param_key, i18n_key
+    private attr_accessor unnamespaced, human_, uncountable
+
+    def initialize(n)
+      @name ||= @klass
+      @locale ||= :en
+      raise ArgumentError, "Class name cannot be blank. You need to supply a name argument when anonymous class given" if String.blank?(@name)
+      ns = @namespace
+      @unnamespaced = String.delete_prefix(@name, "#{ns}::") if ns != nil
+      @singular = _singularize(n, @name)
+      @plural = ActiveSupport::Inflector.pluralize(@singular, @locale)
+      @uncountable = @plural == @singular
+      @element = ActiveSupport::Inflector.underscore(ActiveSupport::Inflector.demodulize(@name))
+      @human_ = ActiveSupport::Inflector.humanize(@element)
+      @collection = ActiveSupport::Inflector.tableize(@name)
+      @param_key = ns != nil ? _singularize(n, @unnamespaced || "") : @singular
+      @i18n_key = String.to_sym(ActiveSupport::Inflector.underscore(@name))
+      @route_key = ns != nil ? ActiveSupport::Inflector.pluralize(@param_key, @locale) : dup(@plural)
+      @singular_route_key = ActiveSupport::Inflector.singularize(@route_key, @locale)
+      @route_key += "_index" if @uncountable
+    end
+
+    def cache_key(n) = @collection
+    def to_s(n) = @name
+    def to_str(n) = @name
+    def <=>(a, b) = @name <=> Name.name(b)
+    def ==(a, b)
+      case b
+      in String then @name == b
+      in Name then @name == Name.name(b)
+      else false
+      end
+    end
+
+    def MISSING_TRANSLATION = -(2**60)
+
+    # Ruby's human(options = {}): the model's name in the locale (activemodel.models.person), else humanized.
+    def human(n, options = Hash.new)
+      keys = i18n_keys(n)
+      s = i18n_scope(n)
+      return @human_ if Array.empty?(keys) || Array.empty?(s)
+      key = keys[0]
+      defaults = Array.drop(keys, 1)
+      default = options[:default]
+      Array.push(defaults, default) if default
+      Array.push(defaults, Name.MISSING_TRANSLATION)
+      ActiveModel.load_locale
+      count = Hash.fetch(options, :count, 1)
+      values = Hash.except(options, :default, :count, :scope)
+      translation = I18n.translate_with(key, nil, s, defaults, count, ".", values, false)
+      translation = @human_ if translation == Name.MISSING_TRANSLATION
+      Kernel.to_s(translation)
+    end
+
+    def uncountable?(n) = @uncountable
+
+    def _singularize(n, string) = String.tr(ActiveSupport::Inflector.underscore(string), "/", "_")
+
+    # Ruby: @klass.lookup_ancestors.map { |klass| klass.model_name.i18n_key }
+    def i18n_keys(n)
+      as = @ancestors
+      return Symbol[] if as == nil
+      Array.map(as) { |k| String.to_sym(ActiveSupport::Inflector.underscore(k)) }
+    end
+
+    def i18n_scope(n)
+      sc = @scope
+      sc == nil ? Any[] : Any[sc, :models]
+    end
+  end
+
+  # Ruby's Naming, which a model extends. `model_name` is the class's (generated); the module functions
+  # ActiveModel::Naming.plural(record) & co. dispatch on the record's class.
+  module Naming
+    def model_name = raise(NotImplementedError)
+    def model_name_of(r) = model_name
+
+    def plural(r) = Name.plural(model_name_of(r))
+    def singular(r) = Name.singular(model_name_of(r))
+    def uncountable?(r) = Name.uncountable?(model_name_of(r))
+    def singular_route_key(r) = Name.singular_route_key(model_name_of(r))
+    def route_key(r) = Name.route_key(model_name_of(r))
+    def param_key(r) = Name.param_key(model_name_of(r))
+  end
+
+  module_function
+
+  # Rails adds active_model/locale/en.yml to I18n.load_path when it loads; here it is loaded at the first translation.
+  def load_locale = once { I18n.load_yaml(File.join(__dir__, "locale/en.yml")) }
+end

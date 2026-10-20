@@ -1,0 +1,68 @@
+# Port of activemodel-8.1.3/lib/active_model/translation.rb (partial: no raise_on_missing_translations)
+#
+# Ruby's Translation is extended: i18n_scope, lookup_ancestors and human_attribute_name are class methods. Here
+# they are functions of the includer without an instance (`Person.human_attribute_name("name")`), and code that
+# has a record, as Ruby's `record.class.human_attribute_name(...)`, calls the `_of` form, which dispatches on it.
+# `lookup_ancestors` is the class names (the generator writes it from the class lineage).
+
+require "naming"
+
+module ActiveModel
+  module Translation
+    include ActiveModel::Naming
+
+    def i18n_scope = :activemodel
+    def lookup_ancestors = raise(NotImplementedError)
+
+    def i18n_scope_of(r) = i18n_scope
+    def lookup_ancestors_of(r) = lookup_ancestors
+    def human_attribute_name_of(r, attribute, options = Hash.new) = human_attribute_name(attribute, options)
+
+    # Ruby's human_attribute_name(attribute, options = {}).
+    def human_attribute_name(attribute, options = Hash.new)
+      attribute = Kernel.to_s(attribute)
+      namespace = ""
+      keys = Symbol[]
+      if String.include?(attribute, ".")
+        namespace, _, attribute = String.rpartition(attribute, ".")
+        namespace = String.tr(namespace, ".", "/")
+        if String.present?(attribute)
+          key = "#{namespace}.#{attribute}"
+          separator = "/"
+        else
+          key = namespace
+          separator = "."
+        end
+        Array.each(lookup_ancestors) do |klass|
+          Array.push(keys, String.to_sym("#{i18n_scope}.attributes.#{Translation.i18n_key(klass)}#{separator}#{key}"))
+        end
+        Array.push(keys, String.to_sym("#{i18n_scope}.attributes.#{key}"))
+        Array.push(keys, String.to_sym("attributes.#{key}"))
+      else
+        Array.each(lookup_ancestors) do |klass|
+          Array.push(keys, String.to_sym("#{i18n_scope}.attributes.#{Translation.i18n_key(klass)}.#{attribute}"))
+        end
+      end
+      defaults = Any[*keys]
+      Array.push(defaults, String.to_sym("attributes.#{attribute}"))
+      default = options[:default]
+      Array.push(defaults, default) if default
+      Array.push(defaults, Translation.MISSING_TRANSLATION)
+      ActiveModel.load_locale
+      first = Array.shift(defaults)
+      values = Hash.except(options, :default, :count, :raise, :base)
+      translation = I18n.translate_with(first, nil, nil, defaults, 1, ".", values, false)
+      if translation == Translation.MISSING_TRANSLATION
+        translation = String.present?(attribute) ? ActiveSupport::Inflector.humanize(attribute) : ActiveSupport::Inflector.humanize(namespace)
+      end
+      Kernel.to_s(translation)
+    end
+
+    module_function
+
+    def MISSING_TRANSLATION = -(2**60)
+
+    # Ruby's klass.model_name.i18n_key for an ancestor named klass.
+    def i18n_key(klass) = ActiveSupport::Inflector.underscore(klass)
+  end
+end

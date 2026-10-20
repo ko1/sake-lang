@@ -1,0 +1,88 @@
+# Port of activemodel-8.1.3/lib/active_model/dirty.rb (partial: no as_json's except of the trackers, no init_attributes for dup)
+#
+# The attribute methods Dirty adds in Ruby's included block (`*_changed?`, `*_change`, `*_will_change!`, `*_was`,
+# `*_previously_changed?`, `*_previous_change`, `*_previously_was`, `restore_*!`, `clear_*_change`) are
+# generated per attribute (generate/attribute_methods.sake) and call these functions. The trackers are the
+# fields `__mutations_from_database` and `__mutations_before_last_save`; Ruby's `defined?(@attributes)` is
+# `__attributes(r) != nil` (the field is declared for every AttributeMethods includer, nil without Attributes).
+
+require "attribute_methods"
+require "attribute_mutation_tracker"
+
+module ActiveModel
+  module Dirty
+    include ActiveModel::AttributeMethods
+
+    # Required: the fields @mutations_from_database and @mutations_before_last_save; Ruby's `__send__("#{name}=")`.
+    def __mutations_from_database(r) = raise(NotImplementedError)
+    def set___mutations_from_database(r, v) = raise(NotImplementedError)
+    def __mutations_before_last_save(r) = raise(NotImplementedError)
+    def set___mutations_before_last_save(r, v) = raise(NotImplementedError)
+    def _assign_attribute(r, k, v) = raise(NotImplementedError)
+
+    def changes_applied(r)
+      MutationTracker.finalize_changes(mutations_from_database(r)) if __attributes(r) == nil
+      set___mutations_before_last_save(r, mutations_from_database(r))
+      forget_attribute_assignments(r)
+      set___mutations_from_database(r, nil)
+    end
+
+    def changed?(r) = MutationTracker.any_changes?(mutations_from_database(r))
+    def changed(r) = MutationTracker.changed_attribute_names(mutations_from_database(r))
+
+    def attribute_changed?(r, attr_name, **options) = MutationTracker.changed?(mutations_from_database(r), Kernel.to_s(attr_name), options)
+    def attribute_was(r, attr_name) = MutationTracker.original_value(mutations_from_database(r), Kernel.to_s(attr_name))
+    def attribute_previously_changed?(r, attr_name, **options) = MutationTracker.changed?(mutations_before_last_save(r), Kernel.to_s(attr_name), options)
+    def attribute_previously_was(r, attr_name) = MutationTracker.original_value(mutations_before_last_save(r), Kernel.to_s(attr_name))
+
+    def restore_attributes(r, attr_names = nil)
+      Array.each(attr_names || changed(r)) { |attr_name| restore_attribute!(r, attr_name) }
+    end
+
+    def clear_changes_information(r)
+      set___mutations_before_last_save(r, nil)
+      forget_attribute_assignments(r)
+      set___mutations_from_database(r, nil)
+    end
+
+    def clear_attribute_changes(r, attr_names)
+      Array.each(attr_names) { |attr_name| clear_attribute_change(r, attr_name) }
+    end
+
+    def changed_attributes(r) = MutationTracker.changed_values(mutations_from_database(r))
+    def changes(r) = MutationTracker.changes(mutations_from_database(r))
+    def previous_changes(r) = MutationTracker.changes(mutations_before_last_save(r))
+    def attribute_changed_in_place?(r, attr_name) = MutationTracker.changed_in_place?(mutations_from_database(r), Kernel.to_s(attr_name))
+
+    def clear_attribute_change(r, attr_name) = MutationTracker.forget_change(mutations_from_database(r), Kernel.to_s(attr_name))
+
+    def mutations_from_database(r)
+      m = __mutations_from_database(r)
+      return m if m != nil
+      s = __attributes(r)
+      tracker = s != nil ? ActiveModel::AttributeMutationTracker.new(s) : ActiveModel::ForcedMutationTracker.new(r)
+      set___mutations_from_database(r, tracker)
+      tracker
+    end
+
+    def forget_attribute_assignments(r)
+      s = __attributes(r)
+      set___attributes(r, ActiveModel::AttributeSet.map(s) { |a| ActiveModel::Attribute.forgetting_assignment(a) }) if s != nil
+    end
+
+    def mutations_before_last_save(r) = __mutations_before_last_save(r) || ActiveModel::NullMutationTracker.instance
+
+    def attribute_change(r, attr_name) = MutationTracker.change_to_attribute(mutations_from_database(r), Kernel.to_s(attr_name))
+    def attribute_previous_change(r, attr_name) = MutationTracker.change_to_attribute(mutations_before_last_save(r), Kernel.to_s(attr_name))
+    def attribute_will_change!(r, attr_name) = MutationTracker.force_change(mutations_from_database(r), Kernel.to_s(attr_name))
+
+    # Ruby's restore_attribute!: `__send__("#{attr_name}=", attribute_was(attr_name))`, the generated _assign_attribute.
+    def restore_attribute!(r, attr_name)
+      name = Kernel.to_s(attr_name)
+      if attribute_changed?(r, name)
+        _assign_attribute(r, name, attribute_was(r, name))
+        clear_attribute_change(r, name)
+      end
+    end
+  end
+end

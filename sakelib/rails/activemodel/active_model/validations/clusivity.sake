@@ -1,0 +1,74 @@
+# Port of activemodel-8.1.3/lib/active_model/validations/clusivity.rb, inclusion.rb and exclusion.rb (one file: the module and its two validators; partial: no Proc delimiters)
+
+module ActiveModel
+  module Validations
+    module Clusivity
+      include ResolveValue
+
+      def check_validity!(v)
+        d = delimiter(v)
+        ok = case d
+             in Array | Range | Set | Hash | String | Symbol then true
+             else false
+             end
+        raise ArgumentError, Clusivity.ERROR_MESSAGE unless ok
+      end
+
+      def include?(v, record, value)
+        members = resolve_value(v, record, delimiter(v))
+        case value
+        in Array then Array.all?(value) { |x| Clusivity.member?(members, x) }
+        else Clusivity.member?(members, value)
+        end
+      end
+
+      def delimiter(v) = @options[:in] || @options[:within]
+
+      module_function
+
+      def ERROR_MESSAGE = "An object with the method #include? or a proc, lambda or symbol is required, " +
+        "and must be supplied as the :in (or :within) option of the configuration hash"
+
+      # members.public_send(inclusion_method(members), value): cover? for a Range of numbers, times or dates.
+      def member?(members, value)
+        case members
+        in Array then Array.include?(members, value)
+        in Set then Set.include?(members, value)
+        in Hash then Hash.key?(members, value)
+        in String then (value in String) && String.include?(members, value)
+        in Range
+          b = Range.begin(members) || Range.end(members)
+          case b
+          in Integer | Float | Time | Date then Range.cover?(members, value)
+          else Range.include?(members, value)
+          end
+        else raise ArgumentError, Clusivity.ERROR_MESSAGE
+        end
+      end
+    end
+
+    class InclusionValidator < EachValidator
+      include Clusivity
+
+      def validate_each(v, record, attribute, value)
+        unless include?(v, record, value)
+          opts = Hash.except(@options, :in, :within)
+          opts[:value] = value
+          ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, :inclusion, opts)
+        end
+      end
+    end
+
+    class ExclusionValidator < EachValidator
+      include Clusivity
+
+      def validate_each(v, record, attribute, value)
+        if include?(v, record, value)
+          opts = Hash.except(@options, :in, :within)
+          opts[:value] = value
+          ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, :exclusion, opts)
+        end
+      end
+    end
+  end
+end

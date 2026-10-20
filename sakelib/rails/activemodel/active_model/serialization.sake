@@ -1,0 +1,80 @@
+# Port of activemodel-8.1.3/lib/active_model/serialization.rb
+#
+# Ruby's `send(m)` (methods:, include:, read_attribute_for_serialization) is the record's generated __send, which
+# knows the class's attributes, accessors and the names its declarations use (methods are named there:
+# `serialize_methods :full_name` is not Rails; see the notes). `attributes` is the includer's (Ruby requires it
+# of a plain model; ActiveModel::Attributes has one). Included records are serialized with
+# ActiveModel::Serialization.serializable_hash, which dispatches on their class.
+
+require "send"
+
+module ActiveModel
+  module Serialization
+    include ActiveModel::Send
+    # Required (generated): Ruby's `attributes` (the includer's or ActiveModel::Attributes').
+    def __attributes_for_serialization(r) = raise(NotImplementedError)
+
+    def serializable_hash(r, options = nil)
+      names = attribute_names_for_serialization(r)
+      return serializable_attributes(r, names) if options == nil || Hash.empty?(options)
+      only = options[:only]
+      except = options[:except]
+      if only
+        wanted = Array.map(Array.wrap(only)) { |x| Kernel.to_s(x) }
+        names = Array.select(wanted) { |n| Array.include?(names, n) }
+      elsif except
+        unwanted = Array.map(Array.wrap(except)) { |x| Kernel.to_s(x) }
+        names = Array.reject(names) { |n| Array.include?(unwanted, n) }
+      end
+      hash = serializable_attributes(r, names)
+      Array.each(Array.wrap(options[:methods])) { |m| hash[Kernel.to_s(m)] = __send(r, Kernel.to_s(m).String.to_sym) }
+      serializable_add_includes(r, options) do |association, records, opts|
+        hash[Kernel.to_s(association)] = case records
+                                         in Array then Array.map(records) { |a| Serialization.serialize_one(a, opts) }
+                                         else Serialization.serialize_one(records, opts)
+                                         end
+      end
+      hash
+    end
+
+    def read_attribute_for_serialization(r, name) = __send(r, Kernel.to_s(name).String.to_sym)
+
+    def attribute_names_for_serialization(r) = Hash.keys(__attributes_for_serialization(r)).Array.map { |k| Kernel.to_s(k) }
+
+    def serializable_attributes(r, attribute_names)
+      h = Hash.new
+      Array.each(attribute_names) { |n| h[n] = read_attribute_for_serialization(r, n) }
+      h
+    end
+
+    def serializable_add_includes(r, options)
+      includes = options[:include]
+      return nil unless includes
+      pairs = Any[]
+      case includes
+      in Hash then Hash.each(includes) { |k, v| Array.push(pairs, [k, v]) }
+      else
+        Array.each(Array.wrap(includes)) do |n|
+          case n
+          in Hash then Hash.each(n) { |k, v| Array.push(pairs, [k, v]) }
+          else Array.push(pairs, [n, Hash.new])
+          end
+        end
+      end
+      Array.each(pairs) do |pair|
+        association, opts = pair
+        records = __send(r, Kernel.to_s(association).String.to_sym)
+        yield(association, records, opts) if records
+      end
+    end
+
+    module_function
+
+    def serialize_one(record, opts)
+      case record
+      in ActiveModel::Serialization then ActiveModel::Serialization.serializable_hash(record, (opts in Hash) ? opts : nil)
+      else record
+      end
+    end
+  end
+end

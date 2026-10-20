@@ -1,0 +1,86 @@
+# Port of activemodel-8.1.3/lib/active_model/validator.rb (partial: no BlockValidator (validates_each takes a block, which cannot be stored))
+#
+# Validator and EachValidator are classes, as in Ruby, so a custom validator is written as in Rails:
+# `class EmailValidator < ActiveModel::EachValidator` with `def validate_each(v, record, attribute, value)`.
+# `<` pastes the base's fields (options, attributes) and functions into it; EachValidator's validate calls the
+# validate_each of the class it was pasted into. A model's validators of different classes are kept together
+# as AnyValidator (Sake only), which every validator includes: `ActiveModel::AnyValidator.kind(v)` dispatches.
+# Ruby's `self.class.kind` ("EmailValidator" → :email) is computed from Kernel.class_name.
+
+module ActiveModel
+  module AnyValidator
+    def options(v) = raise(NotImplementedError)
+    def kind(v) = raise(NotImplementedError)
+    def validate(v, record) = raise(NotImplementedError)
+
+    module_function
+
+    # Ruby's Validator.kind: name.split("::").last.underscore.chomp("_validator").to_sym
+    def kind_of_class(name)
+      last = Array.last(String.split(name, "::")) || name
+      String.to_sym(String.delete_suffix(ActiveSupport::Inflector.underscore(last), "_validator"))
+    end
+
+    # Ruby's v.class.name
+    def class_name(v) = Kernel.class_name(v)
+  end
+
+  class Validator
+    attr_reader options
+    include AnyValidator
+
+    def initialize(v) = super_initialize(v)
+    def super_initialize(v)
+      @options = Hash.except(@options || Hash.new, :class)
+    end
+
+    def kind(v) = AnyValidator.kind_of_class(AnyValidator.class_name(v))
+
+    def validate(v, record)
+      raise NotImplementedError, "Subclasses must implement a validate(record) method."
+    end
+  end
+
+  class EachValidator
+    attr_reader options, attributes
+    include AnyValidator
+
+    # Ruby: initialize(options): @attributes = Array(options.delete(:attributes)), super, check_validity!
+    def initialize(v) = super_initialize(v)
+    def super_initialize(v)
+      opts = Hash.dup(@options || Hash.new)
+      attrs = Hash.delete(opts, :attributes)
+      list = Symbol[]
+      Array.each(Array.wrap(attrs)) do |a|
+        case a
+        in Symbol then Array.push(list, a)
+        in String then Array.push(list, String.to_sym(a))
+        else raise ArgumentError, "an attribute name must be a Symbol"
+        end
+      end
+      @attributes = list
+      raise ArgumentError, ":attributes cannot be blank" if Array.empty?(list)
+      @options = Hash.except(opts, :class)
+      check_validity!(v)
+    end
+
+    def kind(v) = AnyValidator.kind_of_class(AnyValidator.class_name(v))
+
+    def validate(v, record)
+      Array.each(@attributes || Symbol[]) do |attribute|
+        value = ActiveModel::Validations.read_attribute_for_validation(record, attribute)
+        next if ((value in nil) && @options[:allow_nil]) || (Object.blank?(value) && @options[:allow_blank])
+        value = prepare_value_for_validation(v, value, record, attribute)
+        validate_each(v, record, attribute, value)
+      end
+    end
+
+    def validate_each(v, record, attribute, value)
+      raise NotImplementedError, "Subclasses must implement a validate_each(record, attribute, value) method"
+    end
+
+    def check_validity!(v) = nil
+
+    def prepare_value_for_validation(v, value, record, attr_name) = value
+  end
+end

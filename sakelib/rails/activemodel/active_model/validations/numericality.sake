@@ -1,0 +1,129 @@
+# Port of activemodel-8.1.3/lib/active_model/validations/numericality.rb (partial: no Proc options)
+#
+# Ruby's parse_float is `raw_value.round(scale).to_d(precision)`: here BigDecimal.from_f(f, precision).
+# prepare_value_for_validation reads the value before type cast (Ruby: `#{attr}_before_type_cast` when the
+# attribute came from the user) through the record's generated __raw_value_for_validation.
+
+module ActiveModel
+  module Validations
+    class NumericalityValidator < EachValidator
+      include Comparability
+      include ResolveValue
+
+      def NUMBER_CHECKS = Symbol[:odd, :even]
+      def RANGE_CHECKS = Symbol[:in]
+      def RESERVED_OPTIONS = Comparability.COMPARE_CHECKS + NumericalityValidator.NUMBER_CHECKS + NumericalityValidator.RANGE_CHECKS + Symbol[:only_integer, :only_numeric]
+      def INTEGER_REGEX = /\A[+-]?\d+\z/
+      def HEXADECIMAL_REGEX = /\A[+-]?0[xX]/
+      def DIG = 15
+
+      def check_validity!(v)
+        Hash.each(Hash.slice(@options, *Comparability.COMPARE_CHECKS)) do |option, value|
+          ok = case value
+               in Integer | Float | BigDecimal | Rational | Symbol then true
+               else false
+               end
+          raise ArgumentError, ":#{option} must be a number, a symbol or a proc" unless ok
+        end
+        Hash.each(Hash.slice(@options, *NumericalityValidator.RANGE_CHECKS)) do |option, value|
+          raise ArgumentError, ":#{option} must be a range" unless value in Range
+        end
+      end
+
+      def validate_each(v, record, attr_name, value)
+        precision = NumericalityValidator.DIG
+        errors = ActiveModel::Validations.errors(record)
+        unless is_number?(v, value, precision, nil)
+          ActiveModel::Errors.add_with(errors, attr_name, :not_a_number, filtered_options(v, value))
+          return nil
+        end
+        if allow_only_integer?(v, record) && !is_integer?(v, value)
+          ActiveModel::Errors.add_with(errors, attr_name, :not_an_integer, filtered_options(v, value))
+          return nil
+        end
+        number = parse_as_number(v, value, precision, nil)
+        Hash.each(Hash.slice(@options, *NumericalityValidator.RESERVED_OPTIONS)) do |option, option_value|
+          if Array.include?(NumericalityValidator.NUMBER_CHECKS, option)
+            i = case number
+                in Integer then number
+                in Float then Float.to_i(number)
+                in BigDecimal then BigDecimal.to_i(number)
+                else 0
+                end
+            ok = option == :odd ? Integer.odd?(i) : Integer.even?(i)
+            ActiveModel::Errors.add_with(errors, attr_name, option, filtered_options(v, number)) unless ok
+          elsif Array.include?(NumericalityValidator.RANGE_CHECKS, option)
+            range = option_value
+            next unless range in Range
+            unless Range.cover?(range, number)
+              opts = filtered_options(v, number)
+              opts[:count] = option_value
+              ActiveModel::Errors.add_with(errors, attr_name, option, opts)
+            end
+          elsif Array.include?(Comparability.COMPARE_CHECKS, option)
+            ov = option_as_number(v, record, option_value, precision, nil)
+            unless Comparability.check(option, number, ov)
+              opts = filtered_options(v, number)
+              opts[:count] = ov
+              ActiveModel::Errors.add_with(errors, attr_name, option, opts)
+            end
+          end
+        end
+      end
+
+      def option_as_number(v, record, option_value, precision, scale)
+        parse_as_number(v, resolve_value(v, record, option_value), precision, scale)
+      end
+
+      def parse_as_number(v, raw_value, precision, scale)
+        case raw_value
+        in Float then parse_float(v, raw_value, precision, scale)
+        in BigDecimal then scale ? BigDecimal.round(raw_value, scale) : raw_value
+        in Integer then raw_value
+        in Rational then BigDecimal.from_r(raw_value, precision)
+        else
+          if is_integer?(v, raw_value)
+            String.to_i(Kernel.to_s(raw_value))
+          elsif !is_hexadecimal_literal?(v, raw_value)
+            parse_float(v, Float(Kernel.to_s(raw_value)), precision, scale)
+          end
+        end
+      end
+
+      def parse_float(v, raw_value, precision, scale)
+        f = scale ? Float.round(raw_value, scale) : raw_value
+        BigDecimal.from_f(f, precision)
+      end
+
+      def is_number?(v, raw_value, precision, scale)
+        if @options[:only_numeric]
+          numeric = case raw_value
+                    in Integer | Float | BigDecimal | Rational then true
+                    else false
+                    end
+          return false unless numeric
+        end
+        parse_as_number(v, raw_value, precision, scale) != nil
+      rescue ArgumentError, TypeError
+        false
+      end
+
+      def is_integer?(v, raw_value) = Regexp.match?(NumericalityValidator.INTEGER_REGEX, Kernel.to_s(raw_value))
+      def is_hexadecimal_literal?(v, raw_value) = Regexp.match?(NumericalityValidator.HEXADECIMAL_REGEX, Kernel.to_s(raw_value))
+
+      def filtered_options(v, value)
+        filtered = Hash.except(@options, *NumericalityValidator.RESERVED_OPTIONS)
+        filtered[:value] = value
+        filtered
+      end
+
+      def allow_only_integer?(v, record) = !!resolve_value(v, record, @options[:only_integer])
+
+      # Ruby: the value before type cast when it came from the user (an attributes model), else the value.
+      def prepare_value_for_validation(v, value, record, attr_name)
+        raw_value = ActiveModel::Validations.__raw_value_for_validation(record, attr_name)
+        (raw_value in nil) ? value : raw_value
+      end
+    end
+  end
+end

@@ -1,0 +1,116 @@
+# Port of activemodel-8.1.3/lib/active_model/error.rb and nested_error.rb (one file: NestedError is an Error with an inner error; partial: no i18n_customize_full_message, no Proc messages)
+#
+# Ruby's class methods Error.full_message(attribute, message, base) and Error.generate_message(...) share their
+# names with the instance methods, so here they are full_message_for and generate_message_for.
+# `base` is the record; what Ruby asks of `base.class` (human_attribute_name, i18n_scope, lookup_ancestors) is
+# asked through the `_of` functions of ActiveModel::Translation, which dispatch on the record.
+# Ruby's I18n.translate(..., throw: true) inside catch(:exception) (try the model's keys, then fall back) is
+# one translate with every key as a default, which gives the same message.
+
+require "translation"
+
+module ActiveModel
+  class Error
+    attr_reader base, attribute, raw_type, options
+    private attr_reader inner_error_   # NestedError's @inner_error
+    attr_reader type
+
+    def CALLBACKS_OPTIONS = Symbol[:if, :unless, :on, :allow_nil, :allow_blank, :strict]
+    def MESSAGE_OPTIONS = Symbol[:message]
+
+    # Ruby: Error.new(base, attribute, type = :invalid, **options); here new(base, attribute, raw_type, options).
+    def initialize(e)
+      @type ||= @raw_type || :invalid
+      @options ||= Hash.new
+    end
+
+    def full_message_for(attribute, message, base)
+      return message if attribute == :base
+      attribute = Kernel.to_s(attribute)
+      defaults = Any[:"errors.format", "%{attribute} %{message}"]
+      attr_name = ActiveSupport::Inflector.humanize(String.tr(String.sub(attribute, /\.base\z/, ""), ".", "_"))
+      attr_name = ActiveModel::Translation.human_attribute_name_of(base, attribute, Hash.of(default: attr_name, base: base))
+      ActiveModel.load_locale
+      first = Array.shift(defaults)
+      Kernel.to_s(I18n.translate_with(first, nil, nil, defaults, nil, ".", Hash.of(attribute: attr_name, message: message), false))
+    end
+
+    def generate_message_for(attribute, type, base, options)
+      options = Hash.dup(options)
+      if options[:message] in Symbol
+        m = Hash.delete(options, :message)
+        type = m if m in Symbol
+      end
+      value = attribute != :base ? ActiveModel::Validations.read_attribute_for_validation(base, attribute) : nil
+      values = Hash.of(
+        model: ActiveModel::Name.human(ActiveModel::Naming.model_name_of(base)),
+        attribute: ActiveModel::Translation.human_attribute_name_of(base, attribute, Hash.of(base: base)),
+        value: value)   # (Ruby also passes object: base; a record in the values makes every value's type hold it)
+      Hash.merge!(values, options)
+      i18n_scope = Kernel.to_s(ActiveModel::Translation.i18n_scope_of(base))
+      attr = String.gsub(Kernel.to_s(attribute), /\[\d+\]/, "")
+      defaults = Any[]
+      # (Ruby tries these keys with throw: true unless a message is given; the first stays the key either way.)
+      Array.each(ActiveModel::Translation.lookup_ancestors_of(base)) do |klass|
+        key = ActiveModel::Translation.i18n_key(klass)
+        Array.push(defaults, String.to_sym("#{i18n_scope}.errors.models.#{key}.attributes.#{attr}.#{type}"))
+        Array.push(defaults, String.to_sym("#{i18n_scope}.errors.models.#{key}.#{type}"))
+      end
+      Array.push(defaults, String.to_sym("#{i18n_scope}.errors.messages.#{type}"))
+      Array.push(defaults, String.to_sym("errors.attributes.#{attr}.#{type}"))
+      Array.push(defaults, String.to_sym("errors.messages.#{type}"))
+      key = Array.shift(defaults)
+      message = Hash.delete(values, :message)
+      count = Hash.delete(values, :count)
+      default = message ? message : defaults
+      ActiveModel.load_locale
+      Kernel.to_s(I18n.translate_with(key, nil, nil, default, count, ".", values, false))
+    end
+
+    def message(e)
+      inner = @inner_error_
+      return Error.message(inner) if inner != nil
+      t = @raw_type
+      case t
+      in Symbol then generate_message_for(@attribute, t, @base, Hash.except(@options, *Error.CALLBACKS_OPTIONS))
+      else Kernel.to_s(t)
+      end
+    end
+
+    def details(e)
+      d = Hash.of(error: @raw_type)
+      Hash.merge!(d, Hash.except(@options, *(Error.CALLBACKS_OPTIONS + Error.MESSAGE_OPTIONS)))
+    end
+    def detail(e) = details(e)
+
+    def full_message(e) = full_message_for(@attribute, message(e), @base)
+
+    # Ruby: match?(attribute, type = nil, **options)
+    def match?(e, attribute, type = nil, options = Hash.new)
+      return false if @attribute != attribute || (type != nil && @type != type)
+      Hash.all?(options) { |key, value| @options[key] == value }
+    end
+
+    def strict_match?(e, attribute, type, options = Hash.new)
+      return false unless match?(e, attribute, type)
+      options == Hash.except(@options, *(Error.CALLBACKS_OPTIONS + Error.MESSAGE_OPTIONS))
+    end
+
+    def inner_error(e) = @inner_error_
+
+    def inspect(e) = "#<ActiveModel::Error attribute=#{@attribute}, type=#{@type}, options=#{Kernel.inspect(@options)}>"
+    def to_s(e) = inspect(e)
+  end
+
+  # Ruby's NestedError < Error: an Error whose message is its inner error's.
+  module NestedError
+    module_function
+
+    # Ruby: NestedError.new(base, inner_error, override_options = {})
+    def new(base, inner_error, override_options = Hash.new)
+      attribute = Hash.fetch(override_options, :attribute, nil) || Error.attribute(inner_error)
+      type = Hash.fetch(override_options, :type, nil) || Error.type(inner_error)
+      Error.new(base, attribute, Error.raw_type(inner_error), Error.options(inner_error), inner_error, type)
+    end
+  end
+end

@@ -1,0 +1,124 @@
+# Port of the class side of activemodel-8.1.3/lib/active_model/callbacks.rb and validations/callbacks.rb (Sake only): the generator
+#
+# Ruby's define_model_callbacks :save defines before_save/around_save/after_save with define_singleton_method,
+# each a set_callback; before_validation/after_validation are ClassMethods doing the same for :validation.
+# Here they are callbacks lines for ActiveSupport::Callbacks::Generate:
+#
+#   define_model_callbacks :save          define_callbacks :save, skip_after_callbacks_if_terminated: true, scope: [:kind, :name]
+#   before_save :a, if: :b                set_callback :save, :before, :a, if: [:b]
+#   after_save :c                         set_callback :save, :after, :c, prepend: true, if: [:__callback_value_not_false?]
+#   before_validation :d, on: :create     set_callback :validation, :before, :d, if: [:__on_create?]
+#
+# and `_run_save_callbacks` keeps the block's value for after_save's condition (ActiveModel::Callbacks).
+
+require "model"
+require "validations"
+
+module ActiveModel
+  module Callbacks
+    module Generate
+      module_function
+
+      def MODEL_TYPES = String["before", "around", "after"]
+
+      # The model callbacks a class's chain defines: [kind, types].
+      def kinds(info)
+        found = Any[]
+        all = Array.flat_map(ActiveModel::Generate::Info.decls(info)) { |x| x[1] }
+        Array.each(all) do |d|
+          next unless ActiveSupport::Generate::Declaration.call(d) == "define_model_callbacks"
+          pos, opts = ActiveModel::Generate.split(d)
+          only = ActiveModel::Generate.opt(opts, "only")
+          types = only ? ActiveModel::Generate.symbol_list(only) : Generate.MODEL_TYPES
+          Array.each(ActiveModel::Generate.symbols(pos, ActiveSupport::Generate::Declaration.line(d), ActiveModel::Generate::Info.path(info))) { |k| Array.push(found, [k, types]) }
+        end
+        found
+      end
+
+      # Whether a declaration is one of these generators' (define_model_callbacks, before_*/after_*/around_* of a
+      # defined kind, before_validation/after_validation).
+      def known?(info, call)
+        return true if call == "define_model_callbacks" || call == "before_validation" || call == "after_validation"
+        Array.any?(kinds(info)) { |x| Array.any?(x[1]) { |t| call == "#{t}_#{x[0]}" } }
+      end
+
+      def expand(info, decls, callbacks)
+        path = ActiveModel::Generate::Info.path(info)
+        defined = kinds(info)
+        Array.each(decls) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          call = ActiveSupport::Generate::Declaration.call(d)
+          pos, opts = ActiveModel::Generate.split(d)
+          if call == "define_model_callbacks"
+            extra = Array.reject(opts) { |o| o[0] == "only" || o[0] == "skip_after_callbacks_if_terminated" || o[0] == "scope" }
+            skip = ActiveModel::Generate.opt(opts, "skip_after_callbacks_if_terminated") || "true"
+            scope = ActiveModel::Generate.opt(opts, "scope") || "[:kind, :name]"
+            Array.each(ActiveModel::Generate.symbols(pos, n, path)) do |k|
+              args = String[":#{k}", "skip_after_callbacks_if_terminated: #{skip}", "scope: #{scope}"]
+              Array.each(extra) { |o| Array.push(args, "#{o[0]}: #{o[1]}") }
+              Array.push(callbacks, ActiveSupport::Generate::Declaration.new(n, "define_callbacks", args))
+            end
+            next
+          end
+          if call == "before_validation" || call == "after_validation"
+            type = call == "before_validation" ? "before" : "after"
+            Array.push(callbacks, line(info, n, "validation", type, pos, opts, type == "after", false, true))
+            next
+          end
+          Array.each(defined) do |x|
+            kind, types = x
+            Array.each(types) do |type|
+              next unless call == "#{type}_#{kind}"
+              Array.each(opts) do |o|
+                unless o[0] == "if" || o[0] == "unless" || o[0] == "prepend"
+                  raise ArgumentError, "#{path}:#{n}: Unknown key: :#{o[0]}. Valid keys are: :if, :unless, :prepend"
+                end
+              end
+              Array.push(callbacks, line(info, n, kind, type, pos, opts, type == "after", type == "after", false))
+            end
+          end
+        end
+      end
+
+      def line(info, n, kind, type, pos, opts, prepend, value_condition, contexts)
+        args = String[":#{kind}", ":#{type}"]
+        Array.each(pos) do |a|
+          raise ArgumentError, "#{ActiveModel::Generate::Info.path(info)}:#{n}: `#{a}` has no Sake form here (a block or an object: name a method instead)" unless ActiveSupport::Generate.symbol?(a)
+          Array.push(args, a)
+        end
+        ifs = String[]
+        unlesses = String[]
+        if contexts
+          on = ActiveModel::Generate.opt(opts, "on")
+          Array.push(ifs, ":#{ActiveModel::Validations::Generate.context_predicate(info, "on", on)}") if on
+          except_on = ActiveModel::Generate.opt(opts, "except_on")
+          Array.push(unlesses, ":#{ActiveModel::Validations::Generate.context_predicate(info, "except_on", except_on)}") if except_on
+        end
+        cond = ActiveModel::Generate.opt(opts, "if")
+        Array.each(ActiveModel::Generate.symbol_list(cond)) { |s| Array.push(ifs, ":#{s}") } if cond
+        Array.push(ifs, ":__callback_value_not_false?") if value_condition
+        ucond = ActiveModel::Generate.opt(opts, "unless")
+        Array.each(ActiveModel::Generate.symbol_list(ucond)) { |s| Array.push(unlesses, ":#{s}") } if ucond
+        Array.push(args, "if: [#{Array.join(ifs, ", ")}]") if !Array.empty?(ifs)
+        Array.push(args, "unless: [#{Array.join(unlesses, ", ")}]") if !Array.empty?(unlesses)
+        p = ActiveModel::Generate.opt(opts, "prepend")
+        Array.push(args, "prepend: true") if prepend || p == "true"
+        ActiveSupport::Generate::Declaration.new(n, "set_callback", args)
+      end
+
+      # ActiveSupport's `_run_save_callbacks(t, &b) = run_callbacks(t, :save, &b)`, keeping the block's value.
+      def run_source(info, source)
+        k = ActiveModel::Generate::Info.name(info)
+        Array.each(kinds(info)) do |x|
+          kind = x[0]
+          plain = "def #{k}._run_#{kind}_callbacks(t, &b) = run_callbacks(t, :#{kind}, &b)\n"
+          wrapped = "def #{k}._run_#{kind}_callbacks(t)\n  ActiveModel::Callbacks.record_value(false)\n" +
+            "  return run_callbacks(t, :#{kind}) { ActiveModel::Callbacks.record_value(yield) } if block_given?\n" +
+            "  ActiveModel::Callbacks.record_value(true)\n  run_callbacks(t, :#{kind})\nend\n"
+          source = String.sub(source, plain, wrapped)
+        end
+        source
+      end
+    end
+  end
+end

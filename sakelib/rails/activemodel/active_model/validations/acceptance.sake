@@ -1,0 +1,55 @@
+# Port of activemodel-8.1.3/lib/active_model/validations/acceptance.rb and confirmation.rb (two validators that add accessors)
+#
+# Ruby's setup!(klass) defines the accessors on the model at class-load time (LazilyDefineAttributes,
+# klass.attr_reader); here the generator declares them as fields when the class body has the validation.
+
+module ActiveModel
+  module Validations
+    class AcceptanceValidator < EachValidator
+      def initialize(v)
+        opts = Hash.of(allow_nil: true, accept: Any["1", true])
+        Hash.merge!(opts, @options)
+        @options = opts
+        super_initialize(v)
+      end
+
+      def validate_each(v, record, attribute, value)
+        unless acceptable_option?(v, value)
+          ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, :accepted, Hash.except(@options, :accept, :allow_nil))
+        end
+      end
+
+      def acceptable_option?(v, value) = Array.include?(Array.wrap(@options[:accept]), value)
+    end
+
+    class ConfirmationValidator < EachValidator
+      def initialize(v)
+        opts = Hash.of(case_sensitive: true)
+        Hash.merge!(opts, @options)
+        @options = opts
+        super_initialize(v)
+      end
+
+      def validate_each(v, record, attribute, value)
+        name = String.to_sym("#{attribute}_confirmation")
+        confirmed = ActiveModel::Validations.read_attribute_for_validation(record, name)
+        if !(confirmed in nil)
+          unless confirmation_value_equal?(v, record, attribute, value, confirmed)
+            human_attribute_name = ActiveModel::Translation.human_attribute_name_of(record, attribute)
+            opts = Hash.except(@options, :case_sensitive)
+            opts[:attribute] = human_attribute_name
+            ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), name, :confirmation, opts)
+          end
+        end
+      end
+
+      def confirmation_value_equal?(v, record, attribute, value, confirmed)
+        if !@options[:case_sensitive] && (value in String)
+          (confirmed in String) && String.casecmp(value, confirmed) == 0
+        else
+          value == confirmed
+        end
+      end
+    end
+  end
+end

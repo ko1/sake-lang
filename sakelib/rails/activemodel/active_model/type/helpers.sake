@@ -16,7 +16,7 @@ module ActiveModel
       module Mutable
         def cast(t, value) = deserialize(t, serialize(t, value))
         def changed_in_place?(t, raw_old_value, new_value)
-          raw_old_value != serialize(t, new_value)
+          !ActiveModel::Type.same_value?(raw_old_value, serialize(t, new_value))
         end
         def mutable?(t) = true
       end
@@ -38,7 +38,7 @@ module ActiveModel
         end
 
         def changed?(t, old_value, new_value, new_value_before_type_cast)
-          (old_value != new_value || number_to_non_number?(t, old_value, new_value_before_type_cast)) &&
+          (!ActiveModel::Type.same_value?(old_value, new_value) || number_to_non_number?(t, old_value, new_value_before_type_cast)) &&
             !equal_nan?(t, old_value, new_value_before_type_cast)
         end
 
@@ -47,7 +47,7 @@ module ActiveModel
         end
 
         def number_to_non_number?(t, old_value, new_value_before_type_cast)
-          old_value != nil && !(new_value_before_type_cast in ::Integer | ::Float | ::Rational | BigDecimal) &&
+          !(old_value in nil) && !(new_value_before_type_cast in ::Integer | ::Float | ::Rational | BigDecimal) &&
             non_numeric_string?(t, Kernel.to_s(new_value_before_type_cast))
         end
 
@@ -135,8 +135,9 @@ module ActiveModel
         def value_from_multiparameter_assignment(t, values_hash)
           Hash.each(multiparameter_defaults(t)) { |k, v| values_hash[k] ||= v }
           return nil unless values_hash[1] && values_hash[2] && values_hash[3]
-          values = Hash.sort_by(values_hash) { |k, v| k }.Array.map { |k, v| v }
-          ::Time.utc(values[0], values[1], values[2], values[3] || 0, values[4] || 0, values[5] || 0)
+          # the keys are 1..6 (Ruby's multiparameter "written_on(1i)"); a value of another type is 0
+          values = Hash.sort_by(values_hash) { |k, v| (k in ::Integer) ? k : 0 }.Array.map { |k, v| (v in ::Integer) ? v : 0 }
+          ::Time.utc(values[0] || 0, values[1] || 0, values[2] || 0, values[3] || 0, values[4] || 0, values[5] || 0)
         end
       end
     end

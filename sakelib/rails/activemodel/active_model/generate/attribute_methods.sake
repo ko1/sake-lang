@@ -1,0 +1,158 @@
+# Port of the class side of activemodel-8.1.3/lib/active_model/attribute_methods.rb, attributes.rb, attribute_registration.rb and dirty.rb's included block (Sake only): the generator
+#
+# Ruby's AttributeMethodPattern (prefix, suffix, parameters, proxy_target "#{prefix}attribute#{suffix}") and
+# define_attribute_method / define_proxy_call, which define `"#{prefix}#{attr}#{suffix}"` calling the proxy
+# target with the attribute's name; alias_attribute's methods call the old name's; `attribute :name, :type`
+# defines the reader and writer (Ruby's define_method_attribute= is `_write_attribute`) and registers the
+# type and the default (pending modifications applied to _default_attributes). The reader is typed by the
+# attribute's type:
+#
+#   def Person.age(r)
+#     v = attribute(r, "age")
+#     case v
+#     in ::Integer | nil then v
+#     else raise TypeError, ...
+#   def Person.age=(r, value) = _write_attribute(r, "age", value)
+#   def Person.age_changed?(r, **options) = attribute_changed?(r, "age", **options)
+
+require "model"
+
+module ActiveModel
+  module AttributeMethods
+    module Generate
+      module_function
+
+      def CALLS = String["attribute", "define_attribute_methods", "define_attribute_method", "alias_attribute",
+        "attribute_method_prefix", "attribute_method_suffix", "attribute_method_affix"]
+
+      # Ruby's AttributeMethodPattern.new(prefix:, suffix:, parameters:): [prefix, suffix, parameters].
+      class Pattern
+        attr_reader prefix, suffix, parameters
+
+        def proxy_target(p) = "#{@prefix}attribute#{@suffix}"
+        def method_name(p, attr_name) = "#{@prefix}#{attr_name}#{@suffix}"
+      end
+
+      # The patterns in Ruby's order: the plain one, Attributes' "=", Dirty's, then the class body's.
+      def patterns(info)
+        list = Pattern[Pattern.new("", "", nil)]
+        Array.push(list, Pattern.new("", "=", "value")) if ActiveModel::Generate.attributes?(info)
+        if ActiveModel::Generate.dirty?(info)
+          Array.push(list, Pattern.new("", "_previously_changed?", "**options"), Pattern.new("", "_changed?", "**options"))
+          Array.push(list, Pattern.new("", "_change", "false"), Pattern.new("", "_will_change!", "false"), Pattern.new("", "_was", "false"))
+          Array.push(list, Pattern.new("", "_previous_change", "false"), Pattern.new("", "_previously_was", "false"))
+          Array.push(list, Pattern.new("restore_", "!", "false"), Pattern.new("clear_", "_change", "false"))
+        end
+        Array.each(ActiveModel::Generate::Info.patterns(info)) do |x|
+          prefix, suffix, params, _ = x
+          Array.push(list, Pattern.new(prefix, suffix, params))
+        end
+        list
+      end
+
+      def ruby_type(type)
+        case type
+        in "string" | "immutable_string" then "::String"
+        in "integer" | "big_integer" then "::Integer"
+        in "float" then "::Float"
+        in "decimal" then "BigDecimal"
+        in "boolean" then "true | false"
+        in "date" then "::Date"
+        in "datetime" | "time" then "::Time"
+        else nil
+        end
+      end
+
+      def field?(info, name) = Array.any?(ActiveModel::Generate::Info.fields(info)) { |f| f[0] == name }
+
+      # A method of a pattern for an attribute: Ruby's define_proxy_call (`send(proxy_target, attr_name, ...)`).
+      def proxy_call(k, pattern, name, target_call)
+        method = Pattern.method_name(pattern, name)
+        params = Pattern.parameters(pattern)
+        case params
+        in "value" then "def #{k}.#{method}(r, value)\n  #{target_call}(r, #{Kernel.inspect(name)}, value)\nend\n"
+        in "**options" then ActiveModel::Generate.defn("#{k}.#{method}(r, **options)", "#{target_call}(r, #{Kernel.inspect(name)}, **options)")
+        else ActiveModel::Generate.defn("#{k}.#{method}(r)", "#{target_call}(r, #{Kernel.inspect(name)})")
+        end
+      end
+
+      def source(info)
+        k = ActiveModel::Generate::Info.name(info)
+        path = ActiveModel::Generate::Info.path(info)
+        s = ""
+        aliases = ActiveModel::Generate::Info.aliases(info)
+        if ActiveModel::Generate.attribute_methods?(info)
+          pairs = Array.map(aliases) { |x| "#{Kernel.inspect(x[0])} => #{Kernel.inspect(x[1])}" }
+          s += "def #{k}.attribute_aliases = once { #{Array.empty?(pairs) ? "Hash.new" : "Hash.of(#{Array.join(pairs, ", ")})"} }\n"
+        end
+        attrs = ActiveModel::Generate::Info.attributes(info)
+        if ActiveModel::Generate.attributes?(info)
+          s += "def #{k}._default_attributes = once do\n  s = ActiveModel::AttributeSet.new(Hash.new)\n"
+          Array.each(attrs) do |a|
+            name = ActiveModel::Generate::AttributeDecl.name(a)
+            resolved = (Array.find(aliases) { |x| x[0] == name } || [name, name])[1]
+            type = ActiveModel::Generate::AttributeDecl.type(a)
+            opts = ActiveModel::Generate::AttributeDecl.options(a)
+            s += "# sake-origin: #{path}:#{ActiveModel::Generate::AttributeDecl.line(a)}\n"
+            if type != nil || ActiveModel::Generate::AttributeDecl.default(a) == nil
+              t = type == nil ? "nil" : (Array.empty?(opts) ? "ActiveModel::Type.lookup(:#{type})" : "ActiveModel::Type.lookup(:#{type}, {#{Array.join(lookup_options(opts), ", ")}})")
+              s += "  ActiveModel::AttributeRegistration.apply_type(s, #{Kernel.inspect(resolved)}, #{t})\n"
+            end
+            d = ActiveModel::Generate::AttributeDecl.default(a)
+            s += "  ActiveModel::AttributeRegistration.apply_default(s, #{Kernel.inspect(resolved)}, #{d})\n" if d != nil
+          end
+          s += "# sake-origin: none\n  s\nend\n"
+        end
+        names = ActiveModel::Generate::Info.attr_method_names(info)
+        pats = patterns(info)
+        Array.each(names) do |name|
+          decl = Array.find(attrs) { |a| ActiveModel::Generate::AttributeDecl.name(a) == name }
+          line = decl ? ActiveModel::Generate::AttributeDecl.line(decl) : 0
+          s += "# sake-origin: #{path}:#{line}\n" if line > 0
+          Array.each(pats) do |pattern|
+            proxy = Pattern.proxy_target(pattern)
+            if proxy == "attribute"
+              next if field?(info, name)
+              t = decl ? ruby_type(ActiveModel::Generate::AttributeDecl.type(decl) || "") : nil
+              if t == nil
+                s += ActiveModel::Generate.defn("#{k}.#{name}(r)", "attribute(r, #{Kernel.inspect(name)})")
+              else
+                s += "def #{k}.#{name}(r)\n  v = attribute(r, #{Kernel.inspect(name)})\n  case v\n  in #{t} | nil then v\n"
+                s += "  else raise TypeError, \"#{name} is not #{t}\"\n  end\nend\n"
+              end
+            elsif proxy == "attribute="
+              next if field?(info, name)
+              s += "def #{k}.#{name}=(r, value)\n  _write_attribute(r, #{Kernel.inspect(name)}, value)\nend\n"
+            else
+              s += proxy_call(k, pattern, name, proxy)
+            end
+          end
+          s += "# sake-origin: none\n" if line > 0
+        end
+        Array.each(aliases) do |x|
+          new_name, old_name, n = x
+          s += "# sake-origin: #{path}:#{n}\n"
+          Array.each(pats) do |pattern|
+            method = Pattern.method_name(pattern, new_name)
+            target = Pattern.method_name(pattern, old_name)
+            case Pattern.parameters(pattern)
+            in "value" then s += "def #{k}.#{method}(r, value)\n  r.#{k}.#{old_name} = value\nend\n"
+            in "**options" then s += ActiveModel::Generate.defn("#{k}.#{method}(r, **options)", "#{target}(r, **options)")
+            else s += ActiveModel::Generate.defn("#{k}.#{method}(r)", "#{target}(r)") if Pattern.proxy_target(pattern) != "attribute=" || !field?(info, old_name)
+            end
+          end
+          s += "# sake-origin: none\n"
+        end
+        s
+      end
+
+      # Type.lookup's Record: precision, scale, limit (each nil unless given).
+      def lookup_options(opts)
+        Array.map(String["precision", "scale", "limit"]) do |key|
+          found = Array.find(opts) { |o| String.start_with?(o, "#{key}: ") }
+          found || "#{key}: nil"
+        end
+      end
+    end
+  end
+end

@@ -1,0 +1,55 @@
+# Port of activemodel-8.1.3/lib/active_model/validations/format.rb (partial: no Proc patterns)
+
+module ActiveModel
+  module Validations
+    class FormatValidator < EachValidator
+      include ResolveValue
+
+      def validate_each(v, record, attribute, value)
+        if @options[:with]
+          regexp = resolve_value(v, record, @options[:with])
+          regexp => Regexp
+          record_error(v, record, attribute, :with, value) unless Regexp.match?(regexp, Kernel.to_s(value))
+        elsif @options[:without]
+          regexp = resolve_value(v, record, @options[:without])
+          regexp => Regexp
+          record_error(v, record, attribute, :without, value) if Regexp.match?(regexp, Kernel.to_s(value))
+        end
+      end
+
+      def check_validity!(v)
+        unless Hash.include?(@options, :with) != Hash.include?(@options, :without)   # Ruby: ^
+          raise ArgumentError, "Either :with or :without must be supplied (but not both)"
+        end
+        check_options_validity(v, :with)
+        check_options_validity(v, :without)
+      end
+
+      def record_error(v, record, attribute, name, value)
+        opts = Hash.except(@options, name)
+        opts[:value] = value
+        ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, :invalid, opts)
+      end
+
+      def check_options_validity(v, name)
+        option = @options[name]
+        return nil unless option
+        case option
+        in Regexp
+          if @options[:multiline] != true && regexp_using_multiline_anchors?(v, option)
+            raise ArgumentError, "The provided regular expression is using multiline anchors (^ or $), " +
+              "which may present a security risk. Did you mean to use \\A and \\z, or forgot to add the " +
+              ":multiline => true option?"
+          end
+        in Symbol then nil
+        else raise ArgumentError, "A regular expression or a proc or lambda must be supplied as :#{name}"
+        end
+      end
+
+      def regexp_using_multiline_anchors?(v, regexp)
+        source = Regexp.source(regexp)
+        String.start_with?(source, "^") || (String.end_with?(source, "$") && !String.end_with?(source, "\\$"))
+      end
+    end
+  end
+end

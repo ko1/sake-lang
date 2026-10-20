@@ -1,0 +1,58 @@
+# Port of activemodel-8.1.3/lib/active_model/serializers/json.rb
+#
+# The class attribute include_root_in_json is a function the class may define (default false). A model is
+# also an ActiveSupport::AsJson, so ActiveSupport::JSON.encode(person) and Object.as_json reach its as_json.
+# Ruby's to_json is ActiveSupport's Object#to_json: `to_json(r, options)` here.
+
+require "rails/activesupport/active_support/json"
+require "../serialization"
+
+module ActiveModel
+  module Serializers
+    module JSON
+      include ActiveModel::Serialization
+      include ActiveModel::Naming
+      include ActiveSupport::AsJson
+
+      def include_root_in_json = false
+      def _assign_attribute(r, k, v) = raise(NotImplementedError)
+
+      def as_json(r, options = nil)
+        root = options != nil && Hash.key?(options, :root) ? options[:root] : include_root_in_json
+        hash = Object.as_json(JSON.big_decimals_as_json(serializable_hash(r, options)))
+        if root
+          key = root == true ? ActiveModel::Name.element(model_name) : Kernel.to_s(root)
+          Hash.of(key => hash)
+        else
+          hash
+        end
+      end
+
+      def to_json(r, options = nil) = ActiveSupport::JSON.encode(as_json(r, options))
+
+      def from_json(r, json, include_root = include_root_in_json)
+        hash = ActiveSupport::JSON.decode(json)
+        hash => Hash
+        if include_root
+          first = Array.first(Hash.values(hash))
+          first => Hash
+          hash = first
+        end
+        Hash.each(hash) { |k, v| _assign_attribute(r, Kernel.to_s(k), v) }   # Ruby: self.attributes = hash
+        r
+      end
+
+      module_function
+
+      # ActiveSupport's BigDecimal#as_json is its to_s ("9.5"); core_ext/object/json has no BigDecimal yet.
+      def big_decimals_as_json(v)
+        case v
+        in BigDecimal then BigDecimal.format(v, "F")
+        in Hash then Hash.transform_values(v) { |x| big_decimals_as_json(x) }
+        in Array then Array.map(v) { |x| big_decimals_as_json(x) }
+        else v
+        end
+      end
+    end
+  end
+end

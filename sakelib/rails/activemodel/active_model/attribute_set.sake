@@ -1,0 +1,70 @@
+# Port of activemodel-8.1.3/lib/active_model/attribute_set.rb and attribute_set/builder.rb (partial: Builder and LazyAttributeSet/LazyAttributeHash (the database side is ActiveRecord's), no YAML encoder, no freeze)
+#
+# A Hash of attribute names (Strings) to ActiveModel::Attribute values (the module's includers).
+
+require "attribute/user_provided_default"
+
+module ActiveModel
+  class AttributeSet
+    include Indexable
+    private attr_accessor attributes
+
+    def [](s, name) = @attributes[name] || ActiveModel::Attribute.null(name)
+    def []=(s, name, value)
+      @attributes[name] = value
+    end
+
+    def each_value(s) = Hash.each_value(@attributes) { |v| yield(v) }
+    def fetch(s, name) = Hash.fetch(@attributes, name)
+    def except(s, *names) = Hash.except(@attributes, *names)
+
+    def cast_types(s) = Hash.transform_values(@attributes) { |a| ActiveModel::Attribute.type(a) }
+    def values_before_type_cast(s) = Hash.transform_values(@attributes) { |a| ActiveModel::Attribute.value_before_type_cast(a) }
+    def values_for_database(s) = Hash.transform_values(@attributes) { |a| ActiveModel::Attribute.value_for_database(a) }
+
+    def to_hash(s)
+      h = Hash.new
+      Array.each(keys(s)) { |name| h[name] = ActiveModel::Attribute.value(s[name]) }
+      h
+    end
+    def to_h(s) = to_hash(s)
+
+    def key?(s, name) = Hash.key?(@attributes, name) && ActiveModel::Attribute.initialized?(s[name])
+    def include?(s, name) = key?(s, name)
+
+    def keys(s) = Array.select(Hash.keys(@attributes)) { |name| ActiveModel::Attribute.initialized?(s[name]) }
+
+    def fetch_value(s, name) = ActiveModel::Attribute.value(s[name])
+
+    def write_from_database(s, name, value)
+      @attributes[name] = ActiveModel::Attribute.with_value_from_database(s[name], value)
+    end
+
+    def write_from_user(s, name, value)
+      @attributes[name] = ActiveModel::Attribute.with_value_from_user(s[name], value)
+      value
+    end
+
+    def write_cast_value(s, name, value)
+      @attributes[name] = ActiveModel::Attribute.with_cast_value_of(s[name], value)
+    end
+
+    def deep_dup(s) = AttributeSet.new(Hash.transform_values(@attributes) { |a| ActiveModel::Attribute.dup_or_share(a) })
+    def dup(s) = AttributeSet.new(Hash.dup(@attributes))
+
+    def reset(s, key)
+      write_from_database(s, key, nil) if key?(s, key)
+    end
+
+    def accessed(s) = Array.select(Hash.keys(@attributes)) { |name| ActiveModel::Attribute.has_been_read?(s[name]) }
+
+    def map(s) = AttributeSet.new(Hash.transform_values(@attributes) { |a| yield(a) })
+
+    def reverse_merge!(s, target_attributes)
+      Hash.each(AttributeSet.attributes(target_attributes)) { |k, v| @attributes[k] = v unless Hash.key?(@attributes, k) }
+      s
+    end
+
+    def ==(s, other) = (other in AttributeSet) && @attributes == AttributeSet.attributes(other)
+  end
+end

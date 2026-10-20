@@ -1,0 +1,111 @@
+# ActiveModel::Attributes (types, defaults, casting, attribute_names, attributes), AttributeMethods (an
+# alias, a custom suffix), Dirty (changes with an AttributeSet, and with plain accessors through
+# *_will_change!) and Serializers::JSON (serializable_hash with only/except/methods, as_json, to_json, from_json).
+require "rails/activemodel/active_model"
+generate "rails/activemodel/active_model/generate/active_model", "attributes_decl.rb"
+
+class Product
+  def attribute_present?(r, attr) = !(attribute(r, attr) in nil)
+  def label(r) = "#{Product.name(r)} x#{Product.quantity(r)}"
+  def __send_missing(r, name)   # Ruby's send(:label) for methods: (the generated __send knows the attributes)
+    case name
+    in :label then label(r)
+    else raise NoMethodError, "undefined method '#{name}' for an instance of Product"
+    end
+  end
+  def save(r)
+    changes_applied(r)
+    true
+  end
+end
+
+class Person
+  def set_first(pe, v)
+    first_will_change!(pe) unless v == @first
+    @first = v
+  end
+  def set_last(pe, v)
+    last_will_change!(pe) unless v == @last
+    @last = v
+  end
+  def attributes(pe) = Hash.of("first" => nil, "last" => nil)
+  def save(pe) = changes_applied(pe)
+end
+
+# Ruby prints a BigDecimal with ActiveSupport's to_s ("F" format).
+def show(v)
+  case v
+  in BigDecimal then BigDecimal.format(v, "F")
+  else Kernel.to_s(v)
+  end
+end
+
+puts("attributes:")
+pr = Product.build(name: "Pen", price: "1.256", quantity: "3", released_on: "2026-10-20", weight: "2")
+p([Product.name(pr), show(Product.price(pr)), Product.quantity(pr), Product.available(pr), show(Product.released_on(pr)), Product.weight(pr), Product.notes(pr)])
+p(Hash.keys(Product.attributes(pr)))
+p(Product.attribute_names)
+p([ActiveModel::Type::Value.type(Product.type_for_attribute(:price)), ActiveModel::AnyValidator.class_name(Product.type_for_attribute("quantity")), Array.size(Product.attribute_names_of(pr))])
+pr.Product.quantity = "12abc"
+pr.Product.available = "0"
+pr.Product.notes = 42
+p([Product.quantity(pr), Product.available(pr), Product.notes(pr)])
+p(Product.quantity(Product.build))
+
+puts("alias and suffix:")
+p([Product.name_present?(pr), Product.notes_present?(pr), Product.name_present?(Product.build)])
+
+puts("dirty:")
+d = Product.build(name: "Cup", quantity: 2)
+Product.save(d)
+p([Product.changed?(d), Product.changes(d)])
+d.Product.name = "Mug"
+d.Product.quantity = "2"
+p([Product.changed?(d), Product.changed(d), Product.changes(d), Product.name_changed?(d), Product.quantity_changed?(d), Product.name_was(d), Product.name_change(d)])
+p([Product.name_changed?(d, from: "Cup"), Product.name_changed?(d, from: "Cup", to: "Mug"), Product.name_changed?(d, to: "Tea")])
+p(Product.changed_attributes(d))
+Product.save(d)
+p([Product.changed?(d), Product.previous_changes(d), Product.name_previously_changed?(d), Product.name_previously_was(d), Product.name_previous_change(d)])
+d.Product.name = "Bowl"
+Product.restore_name!(d)
+p([Product.name(d), Product.changed?(d)])
+d.Product.name = "Bowl"
+Product.clear_name_change(d)
+p([Product.name(d), Product.changed?(d)])
+d.Product.quantity = 9
+Product.restore_attributes(d)
+p(Product.quantity(d))
+d.Product.name = "Jar"
+Product.clear_changes_information(d)
+p([Product.changed?(d), Product.previous_changes(d)])
+
+puts("forced:")
+pe = Person.new
+pe.Person.first = "Ko"
+p([Person.changed?(pe), Person.changes(pe), Person.first_changed?(pe), Person.first_was(pe)])
+Person.save(pe)
+pe.Person.first = "Ichi"
+p([Person.changes(pe), Person.previous_changes(pe), Person.first_previously_changed?(pe)])
+Person.restore_attributes(pe)
+p([Person.first(pe), Person.changed?(pe)])
+pe.Person.first = "Taro"
+p([Person.given(pe), Person.given_changed?(pe), Person.given_change(pe), Person.given_was(pe), Person.attribute_alias?(:given), Person.attribute_alias(:given)])
+
+puts("validations:")
+bad = Product.build(name: "", quantity: 0)
+p([Product.valid?(bad), ActiveModel::Errors.full_messages(Product.errors(bad))])
+num = Product.build(name: "N", quantity: "abc")
+p([Product.valid?(num), ActiveModel::Errors.full_messages(Product.errors(num)), Product.quantity(num)])
+
+puts("json:")
+j = Product.build(name: "Box", price: "9.5", quantity: 4, released_on: "2026-01-02")
+p(Hash.transform_values(Product.serializable_hash(j)) { |v| show(v) })
+p(Product.serializable_hash(j, Hash.of(only: Any[:name, :quantity])))
+p(Product.serializable_hash(j, Hash.of(except: Any[:price, :weight, :notes, :released_on], methods: :label)))
+p(Product.as_json(j, Hash.of(only: :name, root: true)))
+puts(Product.to_json(j, Hash.of(only: Any[:name, :available, :released_on])))
+k = Product.from_json(Product.build, "{\"name\":\"Bag\",\"quantity\":7}")
+p([Product.name(k), Product.quantity(k)])
+pa = Person.new
+pa.Person.first = "A"
+p(Person.as_json(pa))

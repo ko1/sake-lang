@@ -1,0 +1,339 @@
+# Port of nothing (Sake only): the class side of ActiveModel's modules, for the generator (generate/active_model.sake)
+#
+# Ruby runs a model's class body when the class is loaded: `include ActiveModel::Model`, `attr_accessor :name`,
+# `attribute :age, :integer`, `validates ...`, `define_model_callbacks :save`, `before_save :x`. Here the class
+# body is a file (Ruby requires the same file) that the generator reads (ActiveSupport::Generate.parse, after
+# joining a declaration's continuation lines). This file collects what a class and its parents declare
+# (`Info`) and writes the parts every model has: the class with its fields and includes, model_name,
+# lookup_ancestors, __class_name, Ruby's send (`__send`) and public_send("x=") (`_assign_attribute`), build,
+# initialize. validations.sake, callbacks.sake and attribute_methods.sake write the rest.
+
+require "rails/activesupport/active_support/generate/class_body"
+require "rails/activesupport/active_support/inflector"
+require "secure_password"
+
+module ActiveModel
+  module Generate
+    # What a class (with its parents in the same file) declares.
+    class Info
+      attr_reader name, parent, body, path, chain
+      attr_accessor mods, fields, readers, writers, attributes, validators, contexts, decls, aliases, patterns, attr_method_names, settings, secure_passwords, current
+    end
+
+    # One `attribute` line: name, type (a Symbol's text or nil), the Type.lookup options, the default (Sake source or nil).
+    class AttributeDecl
+      attr_reader name, type, options, default, line
+    end
+
+    module_function
+
+    # A declaration's continuation lines (after a trailing comma, or inside open brackets) joined into its first
+    # line; the joined lines become blank so that line numbers stay.
+    def join_continuations(text)
+      lines = Array.map(String.lines(text)) { |l| String.chomp(l) }
+      out = String[]
+      i = 0
+      while i < Array.size(lines)
+        joined = lines[i] || ""
+        count = 0
+        while (depth(joined) > 0 || String.end_with?(String.rstrip(joined), ",")) && i + count + 1 < Array.size(lines)
+          count += 1
+          joined = "#{joined} #{String.strip(lines[i + count] || "")}"
+        end
+        Array.push(out, joined)
+        Integer.times(count) { Array.push(out, "") }
+        i += count + 1
+      end
+      Array.join(out, "\n") + "\n"
+    end
+
+    def depth(s)
+      d = 0
+      in_str = false
+      String.each_char(s) do |c|
+        if c == "\""
+          in_str = !in_str
+          next
+        end
+        next if in_str
+        d += 1 if c == "[" || c == "{" || c == "("
+        d -= 1 if c == "]" || c == "}" || c == ")"
+      end
+      d
+    end
+
+    # `include`/`extend` lines of each class, in order (ActiveSupport::Generate.parse skips them).
+    def modules(text)
+      mods = Hash.new
+      current = nil
+      String.lines(text).Array.each do |raw|
+        line = String.strip(raw)
+        m = String.match(line, /\Aclass ([A-Z][\w:]*)/)
+        if m
+          current = Kernel.to_s(m[1])
+          mods[current] = String[]
+          next
+        end
+        current = nil if line == "end"
+        im = String.match(line, /\A(?:include|extend) ([A-Z][\w:]*)\z/)
+        if im && current != nil
+          list = mods[current]
+          Array.push(list, Kernel.to_s(im[1])) if list != nil
+        end
+      end
+      mods
+    end
+
+    # A Ruby literal as Sake: ActiveSupport's (Symbols, Strings, numbers, true/false/nil, Arrays, constants), and
+    # Hashes, Ranges, Regexps, %w[]/%i[], single-quoted Strings, Float::INFINITY.
+    def value(v, n, path)
+      v = String.strip(v)
+      return "Float.INFINITY" if v == "Float::INFINITY"
+      return "-Float.INFINITY" if v == "-Float::INFINITY"
+      if String.start_with?(v, "{") && String.end_with?(v, "}")
+        inner = String.strip(String.slice(v, 1...-1) || "")
+        return "Hash.new" if inner == ""
+        pairs = Array.map(ActiveSupport::Generate.split_args(inner)) { |a| hash_pair(String.strip(a), n, path) }
+        return "Hash.of(#{Array.join(pairs, ", ")})"
+      end
+      wm = String.match(v, /\A%([wi])\[(.*)\]\z/)
+      if wm
+        words = String.split(Kernel.to_s(wm[2]), " ")
+        items = Array.map(words) { |w| wm[1] == "w" ? Kernel.inspect(w) : ":#{w}" }
+        return "Any[#{Array.join(items, ", ")}]"
+      end
+      if String.start_with?(v, "[") && String.end_with?(v, "]")
+        items = Array.map(ActiveSupport::Generate.split_args(String.slice(v, 1...-1) || "")) { |x| value(String.strip(x), n, path) }
+        return "Any[#{Array.join(items, ", ")}]"
+      end
+      rm = String.match(v, /\A(-?\d+(?:\.\d+)?|"[^"]*")(\.\.\.?)(-?\d+(?:\.\d+)?|"[^"]*")?\z/)
+      return "(#{rm[1]}#{rm[2]}#{rm[3] || ""})" if rm
+      return v if String.match?(v, /\A\/.*\/[imx]*\z/)
+      sq = String.match(v, /\A'([^'\\]*)'\z/)
+      return Kernel.inspect(Kernel.to_s(sq[1])) if sq
+      return v if String.match?(v, /\A"(?:[^"\\#]|\\.)*"\z/)
+      return v if String.match?(v, /\A:"[\w ?!]*"\z/)
+      ActiveSupport::Generate.value(v, n, path)
+    end
+
+    # `key: value` or `:key => value` inside a Hash literal.
+    def hash_pair(a, n, path)
+      m = String.match(a, /\A(\w+[?!]?): (.*)\z/m)
+      return "#{m[1]}: #{value(Kernel.to_s(m[2]), n, path)}" if m
+      m2 = String.match(a, /\A(:\w+|"[^"]*") => (.*)\z/m)
+      return "#{m2[1]} => #{value(Kernel.to_s(m2[2]), n, path)}" if m2
+      raise ArgumentError, "#{path}:#{n}: `#{a}` is not a Hash entry this generator knows"
+    end
+
+    # A declaration's arguments: the positional ones (Ruby text) and the options ([key, Ruby text] in order).
+    def split(d)
+      pos = String[]
+      opts = Any[]
+      Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+        o = ActiveSupport::Generate.option(a)
+        o == nil ? Array.push(pos, a) : Array.push(opts, o)
+      end
+      [pos, opts]
+    end
+
+    def opt(opts, key)
+      found = Array.find(opts) { |o| o[0] == key }
+      found ? found[1] : nil
+    end
+
+    def symbols(pos, n, path)
+      Array.map(pos) do |a|
+        raise ArgumentError, "#{path}:#{n}: `#{a}` is not a Symbol" unless ActiveSupport::Generate.symbol?(a)
+        String.delete_prefix(a, ":")
+      end
+    end
+
+    # Ruby's Array(x) of a Ruby literal: the Symbols' names.
+    def symbol_list(v)
+      Array.map(String.scan(v, /:(\w+[?!]?)/)) { |s| Kernel.to_s(s[0]) }
+    end
+
+    def has?(info, mod) = Array.include?(Info.mods(info), mod)
+    def validations?(info) = has?(info, "ActiveModel::Model") || has?(info, "ActiveModel::API") || has?(info, "ActiveModel::Validations") || has?(info, "ActiveModel::SecurePassword")
+    def assignment?(info) = has?(info, "ActiveModel::Model") || has?(info, "ActiveModel::API") || has?(info, "ActiveModel::AttributeAssignment")
+    def naming?(info) = validations?(info) || has?(info, "ActiveModel::Naming") || has?(info, "ActiveModel::Translation") || has?(info, "ActiveModel::Serializers::JSON")
+    def translation?(info) = validations?(info) || has?(info, "ActiveModel::Translation")
+    def attributes?(info) = has?(info, "ActiveModel::Attributes")
+    def dirty?(info) = has?(info, "ActiveModel::Dirty")
+    def attribute_methods?(info) = attributes?(info) || dirty?(info) || has?(info, "ActiveModel::AttributeMethods")
+    def serialization?(info) = has?(info, "ActiveModel::Serialization") || has?(info, "ActiveModel::Serializers::JSON")
+    def model_callbacks?(info) = has?(info, "ActiveModel::Callbacks")
+    def validation_callbacks?(info) = has?(info, "ActiveModel::Validations::Callbacks")
+    def send?(info) = validations?(info) || attribute_methods?(info) || serialization?(info) || has?(info, "ActiveModel::Model")
+
+    # The bodies from the root to body, with their includes; each class's Info carries what its chain declares.
+    def collect(body, bodies, mods, path)
+      chain = ActiveSupport::Generate.lineage(body, bodies)
+      all_mods = String[]
+      Array.each(chain) do |b|
+        Array.each(Hash.fetch(mods, ActiveSupport::Generate::ClassBody.name(b), String[])) { |m| Array.push(all_mods, m) unless Array.include?(all_mods, m) }
+      end
+      info = Info.new(ActiveSupport::Generate::ClassBody.name(body), ActiveSupport::Generate.parent_name(body, bodies), body, path, chain,
+        all_mods, Any[], String[], String[], AttributeDecl[], Any[], Hash.new, Any[], Any[], Any[], String[], Any[], Any[], "")
+      Array.each(chain) { |b| collect_body(info, b) }
+      info
+    end
+
+    def collect_body(info, b)
+      path = Info.path(info)
+      own = ActiveSupport::Generate::ClassBody.name(b) == Info.name(info)
+      rest = ActiveSupport::Generate::Declaration[]
+      Info.set_current(info, ActiveSupport::Generate::ClassBody.name(b))
+      Array.push(Info.decls(info), [ActiveSupport::Generate::ClassBody.name(b), rest])
+      Array.each(ActiveSupport::Generate::ClassBody.declarations(b)) do |d|
+        n = ActiveSupport::Generate::Declaration.line(d)
+        call = ActiveSupport::Generate::Declaration.call(d)
+        pos, opts = split(d)
+        case call
+        in "attr_accessor" | "attr_reader" | "attr_writer"
+          Array.each(symbols(pos, n, path)) do |a|
+            Array.push(Info.fields(info), [a, call, own, n])
+            Array.push(Info.readers(info), a) if call != "attr_writer"
+            Array.push(Info.writers(info), a) if call != "attr_reader"
+          end
+        in "attribute"
+          name = String.delete_prefix(pos[0] || "", ":")
+          type = pos[1] ? String.delete_prefix(pos[1] || "", ":") : nil
+          default = nil
+          lookup = String[]
+          Array.each(opts) do |o|
+            key, v = o
+            if key == "default"
+              default = value(v, n, path)
+            else
+              Array.push(lookup, "#{key}: #{value(v, n, path)}")
+            end
+          end
+          Array.push(Info.attributes(info), AttributeDecl.new(name, type, lookup, default, n))
+          Array.push(Info.readers(info), name)
+          Array.push(Info.writers(info), name)
+          Array.push(Info.attr_method_names(info), name) unless Array.include?(Info.attr_method_names(info), name)
+        in "define_attribute_methods" | "define_attribute_method"
+          Array.each(symbols(pos, n, path)) { |a| Array.push(Info.attr_method_names(info), a) unless Array.include?(Info.attr_method_names(info), a) }
+        in "alias_attribute"
+          new_name, old_name = symbols(pos, n, path)
+          Array.push(Info.aliases(info), [new_name, old_name, n])
+          Array.push(Info.readers(info), new_name)
+          Array.push(Info.writers(info), new_name) if attributes?(info)   # Ruby: only with the "=" pattern
+        in "attribute_method_prefix" | "attribute_method_suffix"
+          params = opt(opts, "parameters")
+          Array.each(pos) do |a|
+            s = Kernel.to_s(String.undump(a))
+            Array.push(Info.patterns(info), call == "attribute_method_prefix" ? [s, "", params, n] : ["", s, params, n])
+          end
+        in "has_secure_password"
+          ActiveModel::SecurePassword::Generate.expand(info, d, rest)
+          Array.each(ActiveModel::SecurePassword::Generate.fields(info, String.delete_prefix(pos[0] || ":password", ":"))) do |a|
+            Array.push(Info.fields(info), [a, "attr_accessor", own, n]) unless Array.any?(Info.fields(info)) { |f| f[0] == a }
+            Array.push(Info.readers(info), a)
+            Array.push(Info.writers(info), a)
+          end
+        in "attribute_method_affix"
+          prefix = opt(opts, "prefix")
+          suffix = opt(opts, "suffix")
+          Array.push(Info.patterns(info), [prefix ? Kernel.to_s(String.undump(prefix)) : "", suffix ? Kernel.to_s(String.undump(suffix)) : "", opt(opts, "parameters"), n])
+        else
+          if String.start_with?(call, "self.")
+            Array.push(Info.settings(info), [String.delete_prefix(call, "self."), d])
+          else
+            Array.push(rest, d)
+          end
+        end
+      end
+    end
+
+    # --- the class ---
+
+    def field_line(names, kind, private_)
+      return "" if Array.empty?(names)
+      "  #{private_ ? "private " : ""}#{kind} #{Array.join(names, ", ")}\n"
+    end
+
+    def class_source(info, own_mods, extra_fields, root)
+      k = Info.name(info)
+      parent = Info.parent(info)
+      s = "# sake-origin: #{Info.path(info)}:#{ActiveSupport::Generate::ClassBody.line(Info.body(info))}\n"
+      s += parent == nil ? "class #{k}\n" : "class #{k} < #{parent}\n"
+      Array.each(Symbol[:attr_accessor, :attr_reader, :attr_writer]) do |kind|
+        names = Array.select(Info.fields(info)) { |f| f[2] && f[1] == Symbol.to_s(kind) }.Array.map { |f| f[0] }
+        s += field_line(names, Symbol.to_s(kind), false)
+      end
+      s += field_line(extra_fields, "attr_accessor", false)
+      if root
+        internals = String[]
+        Array.push(internals, "__errors", "__context_for_validation") if validations?(info)
+        Array.push(internals, "__attributes") if attribute_methods?(info)
+        Array.push(internals, "__mutations_from_database", "__mutations_before_last_save") if dirty?(info)
+        s += field_line(internals, "attr_accessor", true)
+      end
+      Array.each(own_mods) { |m| s += "  include #{m}\n" }
+      s += "# sake-origin: none\nend\n"
+      s
+    end
+
+    def defn(sig, body)
+      line = "def #{sig} = #{body}"
+      String.size(line) <= 80 && !String.include?(sig, "=(") ? "#{line}\n" : "def #{sig}\n  #{body}\nend\n"
+    end
+
+    # model_name, lookup_ancestors, __class_name, __id, build, initialize.
+    def naming_source(info)
+      k = Info.name(info)
+      s = defn("#{k}.__class_name", Kernel.inspect(k))
+      if naming?(info)
+        ancestors = Array.reverse(Array.map(Info.chain(info)) { |b| Kernel.inspect(ActiveSupport::Generate::ClassBody.name(b)) })
+        if translation?(info)
+          s += defn("#{k}.lookup_ancestors", "String[#{Array.join(ancestors, ", ")}]")
+          s += "def #{k}.model_name = once { ActiveModel::Name.new(#{Kernel.inspect(k)}, nil, nil, :en, #{k}.lookup_ancestors, #{k}.i18n_scope) }\n"
+        else
+          s += "def #{k}.model_name = once { ActiveModel::Name.new(#{Kernel.inspect(k)}) }\n"
+        end
+      end
+      s += defn("#{k}.__id(r)", "id(r)") if Array.include?(Info.readers(info), "id")
+      if assignment?(info)
+        s += "def #{k}.build(attributes = nil, **kw)\n  r = #{k}.new\n  assign_attributes(r, attributes) if attributes != nil\n"
+        s += "  assign_attributes(r, kw) if !Hash.empty?(kw)\n  r\nend\n"
+      end
+      s += "def #{k}.initialize(r)\n"
+      s += attributes?(info) ? "  init_attributes(r)\n" : "  nil\n"
+      s += "end\n"
+      Array.each(Info.settings(info)) do |x|
+        name, d = x
+        args = ActiveSupport::Generate::Declaration.args(d)
+        rhs = String.strip(String.delete_prefix(Array.join(args, ", "), "="))
+        s += "# sake-origin: #{Info.path(info)}:#{ActiveSupport::Generate::Declaration.line(d)}\n"
+        s += defn("#{k}.#{name}", value(rhs, ActiveSupport::Generate::Declaration.line(d), Info.path(info)))
+      end
+      s
+    end
+
+    # Ruby's send(name): the class's readers and the names its declarations read; others go to __send_missing.
+    def send_source(info)
+      k = Info.name(info)
+      names = Array.uniq(Info.readers(info))
+      s = "def #{k}.__send(r, __name)\n  case __name\n"
+      Array.each(names) { |n| s += "  in :#{n} then #{n}(r)\n" }
+      s += "  else __send_missing(r, __name)\n  end\nend\n"
+      # Ruby's numericality asks `#{attr}_came_from_user?`, which ActiveModel's attributes do not define (ActiveRecord's
+      # do: its generator writes `attribute_raw_value_for_validation(r, attr_name)` here).
+      s += "def #{k}.__raw_value_for_validation(r, attr_name) = nil\n" if validations?(info)
+      s += defn("#{k}.__attributes_for_serialization(r)", "attributes(r)") if serialization?(info)
+      s
+    end
+
+    # Ruby's public_send("#{k}=", v) in _assign_attribute.
+    def assign_source(info)
+      k = Info.name(info)
+      s = "def #{k}._assign_attribute(r, k, v)\n  case k\n"
+      Array.each(Array.uniq(Info.writers(info))) { |n| s += "  in #{Kernel.inspect(n)} then r.#{k}.#{n} = v\n" }
+      missing = assignment?(info) ? "attribute_writer_missing(r, k, v)" : "raise(ActiveModel::UnknownAttributeError.new(\"unknown attribute '\#{k}' for #{k}.\", r, k))"
+      s += "  else #{missing}\n  end\nend\n"
+      s
+    end
+  end
+end

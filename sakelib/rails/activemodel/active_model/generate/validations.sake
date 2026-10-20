@@ -1,0 +1,225 @@
+# Port of the class side of activemodel-8.1.3/lib/active_model/validations.rb, validations/validates.rb, validations/with.rb and the validates_*_of helpers (Sake only): the generator
+#
+# Ruby's validates/validates!/validates_with/validates_*_of make validator objects (`klass.new(options)`) and
+# put them into the :validate callback chain (`set_callback(:validate, validator, options)`), and
+# `validate :method, on: :create` puts a method name there with a lambda condition for the context. Here:
+#
+#   def Person.__validator_0 = once { ActiveModel::Validations::PresenceValidator.new(Hash.of(attributes: Any[:name], class: "Person")) }
+#   def Person.__validate_0(r) = ActiveModel::Validations::PresenceValidator.validate(Person.__validator_0, r)
+#   set_callback :validate, :__validate_0, if: [:__on_create?, :admin?]     (a callbacks line for callbacks.sake)
+#   def Person.__on_create?(r) = validation_context_in?(r, Symbol[:create])  (Ruby's predicate_for_validation_context)
+#   def Person._validators = once { Hash.of(:name => ActiveModel::AnyValidator[Person.__validator_0]) }
+#
+# A validator class is found as Rails' const_get finds it: a key of `validates` (`presence:`) is
+# ActiveModel::Validations::PresenceValidator when ActiveModel has it, else a class of the program (`email:` is
+# EmailValidator); `known` lists the namespaces' validators (ActiveRecord adds its own).
+
+require "model"
+
+module ActiveModel
+  module Validations
+    module Generate
+      module_function
+
+      def CALLS = String["validates", "validates!", "validate", "validates_with", "validates_each",
+        "validates_presence_of", "validates_absence_of", "validates_length_of", "validates_size_of",
+        "validates_numericality_of", "validates_format_of", "validates_inclusion_of", "validates_exclusion_of",
+        "validates_acceptance_of", "validates_confirmation_of", "validates_comparison_of"]
+
+      def DEFAULT_KEYS = String["if", "unless", "on", "allow_blank", "allow_nil", "strict", "except_on"]
+      def VALID_OPTIONS_FOR_VALIDATE = String["on", "if", "unless", "prepend", "except_on"]
+
+      # Namespaces and the validators they define (Ruby's const_get from the model's class).
+      def known = Any[["ActiveModel::Validations", String["absence", "acceptance", "comparison", "confirmation",
+        "exclusion", "format", "inclusion", "length", "numericality", "presence", "with"]]]
+
+      def validator_class(key)
+        camel = "#{ActiveSupport::Inflector.camelize(key)}Validator"
+        Array.each(known) do |x|
+          ns, kinds = x
+          return "#{ns}::#{camel}" if Array.include?(kinds, key)
+        end
+        camel
+      end
+
+      # Ruby's _parse_validates_options: true → {}, a Hash → itself, a Range or Array → {in: v}, else {with: v}.
+      def parse_validates_options(v, n, path)
+        return Any[] if v == "true"
+        if String.start_with?(v, "{")
+          inner = String.strip(String.slice(v, 1...-1) || "")
+          return Any[] if inner == ""
+          return Array.map(ActiveSupport::Generate.split_args(inner)) do |a|
+            m = String.match(String.strip(a), /\A(\w+[?!]?): (.*)\z/)
+            raise ArgumentError, "#{path}:#{n}: `#{a}` is not an option" if m == nil
+            [Kernel.to_s(m[1]), ActiveModel::Generate.value(Kernel.to_s(m[2]), n, path)]
+          end
+        end
+        sake = ActiveModel::Generate.value(v, n, path)
+        if String.start_with?(v, "[") || String.start_with?(v, "%w") || String.start_with?(v, "%i") || String.include?(v, "..")
+          Any[["in", sake]]
+        else
+          Any[["with", sake]]
+        end
+      end
+
+      # Ruby's Hash#merge of [key, value] lists: a key keeps its place, the later value wins.
+      def merge(a, b)
+        out = Array.map(a) { |x| [x[0], x[1]] }
+        Array.each(b) do |x|
+          i = Array.index(Array.map(out) { |o| o[0] }, x[0])
+          if i == nil
+            Array.push(out, [x[0], x[1]])
+          else
+            out[i] = [x[0], x[1]]
+          end
+        end
+        out
+      end
+
+      def hash_source(pairs) = "Hash.of(#{Array.join(Array.map(pairs) { |x| "#{x[0]}: #{x[1]}" }, ", ")})"
+
+      # The class body's validation lines, in order: validators into info.validators, callbacks lines into info.decls.
+      def expand(info, decls, callbacks)
+        path = ActiveModel::Generate::Info.path(info)
+        Array.each(decls) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          call = ActiveSupport::Generate::Declaration.call(d)
+          pos, opts = ActiveModel::Generate.split(d)
+          case call
+          in "validates" | "validates!"
+            attrs = ActiveModel::Generate.symbols(pos, n, path)
+            raise ArgumentError, "#{path}:#{n}: You need to supply at least one attribute" if Array.empty?(attrs)
+            defaults = Array.select(opts) { |o| Array.include?(Generate.DEFAULT_KEYS, o[0]) }
+            validations = Array.reject(opts) { |o| Array.include?(Generate.DEFAULT_KEYS, o[0]) }
+            raise ArgumentError, "#{path}:#{n}: You need to supply at least one validation" if Array.empty?(validations)
+            defaults = Array.map(defaults) { |o| [o[0], ActiveModel::Generate.value(o[1], n, path)] }
+            defaults = merge(defaults, Any[["strict", "true"]]) if call == "validates!"
+            raw = Array.select(opts) { |o| Array.include?(Generate.DEFAULT_KEYS, o[0]) }
+            Array.each(validations) do |o|
+              key, v = o
+              next if v == "false" || v == "nil"
+              options = merge(merge(defaults, Any[["attributes", "Any[#{Array.join(Array.map(attrs) { |a| ":#{a}" }, ", ")}]"]]), parse_validates_options(v, n, path))
+              validates_with(info, validator_class(key), options, attrs, raw, n, callbacks)
+            end
+          in "validates_with"
+            classes = Array.select(pos) { |a| String.match?(a, /\A[A-Z][\w:]*\z/) }
+            raise ArgumentError, "#{path}:#{n}: validates_with takes validator classes" if Array.empty?(classes)
+            attrs = nil
+            options = Any[]
+            Array.each(opts) do |o|
+              key, v = o
+              if key == "attributes"
+                attrs = ActiveModel::Generate.symbol_list(v)
+                options = merge(options, Any[["attributes", "Any[#{Array.join(Array.map(attrs) { |a| ":#{a}" }, ", ")}]"]])
+              else
+                options = merge(options, Any[[key, ActiveModel::Generate.value(v, n, path)]])
+              end
+            end
+            Array.each(classes) { |c| validates_with(info, c, options, attrs, opts, n, callbacks) }
+          in "validate"
+            names = ActiveModel::Generate.symbols(pos, n, path)
+            Array.each(opts) do |o|
+              unless Array.include?(Generate.VALID_OPTIONS_FOR_VALIDATE, o[0])
+                raise ArgumentError, "#{path}:#{n}: Unknown key: :#{o[0]}. Valid keys are: :on, :if, :unless, :prepend, :except_on. Perhaps you meant to call `validates` instead of `validate`?"
+              end
+            end
+            Array.each(names) { |m| Array.push(callbacks, callback_line(info, n, ":#{m}", opts)) }
+          in "validates_each"
+            raise ArgumentError, "#{path}:#{n}: validates_each takes a block, which has no Sake form here: write a validator class or `validate :method`"
+          else
+            # validates_presence_of :a, :b, opts (Ruby's HelperMethods: validates_with XValidator, _merge_attributes(attr_names))
+            kind = String.delete_suffix(String.delete_prefix(call, "validates_"), "_of")
+            kind = "length" if kind == "size"
+            attrs = ActiveModel::Generate.symbols(pos, n, path)
+            options = Array.map(opts) { |o| [o[0], ActiveModel::Generate.value(o[1], n, path)] }
+            options = merge(options, Any[["attributes", "Any[#{Array.join(Array.map(attrs) { |a| ":#{a}" }, ", ")}]"]])
+            validates_with(info, validator_class(kind), options, attrs, opts, n, callbacks)
+          end
+        end
+      end
+
+      # Ruby's validates_with(klass, options): the validator, its place in _validators, and validate(validator, options).
+      def validates_with(info, klass, options, attrs, raw_opts, n, callbacks)
+        k = ActiveModel::Generate::Info.name(info)
+        list = ActiveModel::Generate::Info.validators(info)
+        idx = Array.size(list)
+        options = merge(options, Any[["class", Kernel.inspect(k)]])
+        Array.push(list, [idx, klass, hash_source(options), attrs, n, ActiveModel::Generate::Info.current(info)])
+        Array.each(options) do |o|
+          key, v = o
+          next unless key == "with" || key == "without" || key == "in" || key == "within" || key == "minimum" || key == "maximum" || key == "is" || key == "only_integer" || Array.include?(Generate.compare_keys, key)
+          Array.each(String.scan(v, /\A:(\w+[?!]?)\z/)) { |s| Array.push(ActiveModel::Generate::Info.readers(info), Kernel.to_s(s[0])) }
+        end
+        if klass == "ActiveModel::Validations::ConfirmationValidator"
+          Array.each(attrs || String[]) { |a| Array.push(ActiveModel::Generate::Info.readers(info), "#{a}_confirmation") }
+        end
+        Array.each(attrs || String[]) { |a| Array.push(ActiveModel::Generate::Info.readers(info), a) }
+        Array.push(callbacks, callback_line(info, n, ":__validate_#{idx}", raw_opts))
+      end
+
+      def compare_keys = String["greater_than", "greater_than_or_equal_to", "equal_to", "less_than", "less_than_or_equal_to", "other_than"]
+
+      # Ruby's validate(*args, options): on:/except_on: become a generated predicate in if:/unless:.
+      def callback_line(info, n, filter, opts)
+        args = String[":validate", filter]
+        ifs = String[]
+        unlesses = String[]
+        on = ActiveModel::Generate.opt(opts, "on")
+        Array.push(ifs, ":#{context_predicate(info, "on", on)}") if on
+        except_on = ActiveModel::Generate.opt(opts, "except_on")
+        Array.push(unlesses, ":#{context_predicate(info, "except_on", except_on)}") if except_on
+        cond = ActiveModel::Generate.opt(opts, "if")
+        Array.each(ActiveModel::Generate.symbol_list(cond)) { |s| Array.push(ifs, ":#{s}") } if cond
+        ucond = ActiveModel::Generate.opt(opts, "unless")
+        Array.each(ActiveModel::Generate.symbol_list(ucond)) { |s| Array.push(unlesses, ":#{s}") } if ucond
+        if (cond && String.include?(cond, "->")) || (ucond && String.include?(ucond, "->"))
+          raise ArgumentError, "#{ActiveModel::Generate::Info.path(info)}:#{n}: a lambda condition has no Sake form here (name a method instead)"
+        end
+        Array.push(args, "if: [#{Array.join(ifs, ", ")}]") if !Array.empty?(ifs)
+        Array.push(args, "unless: [#{Array.join(unlesses, ", ")}]") if !Array.empty?(unlesses)
+        prepend = ActiveModel::Generate.opt(opts, "prepend")
+        Array.push(args, "prepend: #{prepend}") if prepend
+        ActiveSupport::Generate::Declaration.new(n, "set_callback", args)
+      end
+
+      # The name of the predicate for these contexts (Ruby sorts an Array of them).
+      def context_predicate(info, kind, v)
+        contexts = Array.sort(ActiveModel::Generate.symbol_list(v))
+        name = "__#{kind}_#{Array.join(contexts, "_")}?"
+        ActiveModel::Generate::Info.contexts(info)[name] = contexts
+        name
+      end
+
+      def source(info)
+        k = ActiveModel::Generate::Info.name(info)
+        path = ActiveModel::Generate::Info.path(info)
+        s = ""
+        by_attr = Hash.new
+        order = Any[]
+        Array.each(ActiveModel::Generate::Info.validators(info)) do |x|
+          idx, klass, options, attrs, n, owner = x
+          if owner == k
+            s += "# sake-origin: #{path}:#{n}\n"
+            s += "def #{k}.__validator_#{idx} = once { #{klass}.new(#{options}) }\n"
+            s += "def #{k}.__validate_#{idx}(r) = #{klass}.validate(#{k}.__validator_#{idx}, r)\n"
+          end
+          keys = attrs == nil ? Any[nil] : Array.map(attrs) { |a| a }
+          Array.each(keys) do |a|
+            key = a == nil ? "nil" : ":#{a}"
+            Array.push(order, key) unless Array.include?(order, key)
+            list = by_attr[key] || String[]
+            Array.push(list, "#{owner}.__validator_#{idx}")
+            by_attr[key] = list
+          end
+        end
+        s += "# sake-origin: none\n"
+        entries = Array.map(order) { |key| "#{key} => ActiveModel::AnyValidator[#{Array.join(by_attr[key] || String[], ", ")}]" }
+        s += Array.empty?(entries) ? "def #{k}._validators = once { Hash.of(nil => ActiveModel::AnyValidator[]) }\n" : "def #{k}._validators = once { Hash.of(#{Array.join(entries, ", ")}) }\n"
+        Hash.each(ActiveModel::Generate::Info.contexts(info)) do |name, contexts|
+          s += "def #{k}.#{name}(r) = validation_context_in?(r, Symbol[#{Array.join(Array.map(contexts) { |c| ":#{c}" }, ", ")}])\n"
+        end
+        s
+      end
+    end
+  end
+end

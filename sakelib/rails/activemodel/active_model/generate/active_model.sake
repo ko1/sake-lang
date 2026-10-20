@@ -1,0 +1,113 @@
+# Port of nothing (Sake only): the program `generate` runs for ActiveModel class bodies
+#
+#   generate "rails/activemodel/active_model/generate/active_model", "app/models/person.rb"
+#
+# Each argument is a file of class bodies, as Ruby writes them (Ruby requires the same file). For each class it
+# prints the class (its fields: attr_accessor lines, the accessors Confirmation/Acceptance add, the modules'
+# own fields; its includes) and its functions: ActiveModel's (model.sake, validations.sake, callbacks.sake,
+# attribute_methods.sake) and ActiveSupport's (callbacks, class_attribute), which these feed with callbacks lines.
+# A line no generator knows is an error at that line. `Generate.program_source(text, path)` is the whole
+# output, for a generator of its own (ActiveRecord's) to call.
+
+require "model"
+require "validations"
+require "callbacks"
+require "attribute_methods"
+require "rails/activesupport/active_support/generate/callbacks"
+require "rails/activesupport/active_support/generate/class_attribute"
+require "rails/activesupport/active_support/generate/rescuable"
+
+module ActiveModel
+  module Generate
+    module_function
+
+    def known?(info, call)
+      return true if Array.include?(ActiveModel::Validations::Generate.CALLS, call)
+      return true if ActiveModel::Callbacks::Generate.known?(info, call)
+      Array.include?(ActiveSupport::Callbacks::Generate.CALLS + ActiveSupport::ClassAttribute::Generate.CALLS + ActiveSupport::Rescuable::Generate.CALLS, call)
+    end
+
+    def as_call?(call) = Array.include?(ActiveSupport::Callbacks::Generate.CALLS + ActiveSupport::ClassAttribute::Generate.CALLS + ActiveSupport::Rescuable::Generate.CALLS, call)
+
+    # Ruby's include/extend of a model as Sake includes.
+    def include_name(m)
+      m
+    end
+
+    def program_source(raw, path)
+      text = join_continuations(raw)
+      mods = modules(text)
+      bodies = ActiveSupport::Generate.parse(text, path)
+      infos = Array.map(bodies) { |b| collect(b, bodies, mods, path) }
+      expanded = ActiveSupport::Generate::ClassBody[]
+      extras = Hash.new
+      Array.each(infos) do |info|
+        k = Info.name(info)
+        parent_info = Array.find(infos) { |i| Info.name(i) == Info.parent(info) }
+        own = ActiveSupport::Generate::Declaration[]
+        line = ActiveSupport::Generate::ClassBody.line(Info.body(info))
+        if validations?(info) && (parent_info == nil || !validations?(parent_info))
+          Array.push(own, ActiveSupport::Generate::Declaration.new(line, "define_callbacks", String[":validate", "scope: :name"]))
+        end
+        if validation_callbacks?(info) && (parent_info == nil || !validation_callbacks?(parent_info))
+          Array.push(own, ActiveSupport::Generate::Declaration.new(line, "define_callbacks", String[":validation", "skip_after_callbacks_if_terminated: true", "scope: [:kind, :name]"]))
+        end
+        Array.each(Info.decls(info)) do |x|
+          bname, ds = x
+          Info.set_current(info, bname)
+          Array.each(ds) do |d|
+            call = ActiveSupport::Generate::Declaration.call(d)
+            next if known?(info, call)
+            raise ArgumentError, "#{path}:#{ActiveSupport::Generate::Declaration.line(d)}: `#{call}` is not a class-body declaration a generator knows"
+          end
+          callbacks = ActiveSupport::Generate::Declaration[]
+          am = Array.reject(ds) { |d| as_call?(ActiveSupport::Generate::Declaration.call(d)) }
+          ActiveModel::Validations::Generate.expand(info, Array.select(am) { |d| Array.include?(ActiveModel::Validations::Generate.CALLS, ActiveSupport::Generate::Declaration.call(d)) }, callbacks)
+          ActiveModel::Callbacks::Generate.expand(info, Array.reject(am) { |d| Array.include?(ActiveModel::Validations::Generate.CALLS, ActiveSupport::Generate::Declaration.call(d)) }, callbacks)
+          next unless bname == k
+          Array.each(callbacks) { |c| Array.push(own, c) }
+          Array.each(ds) { |d| Array.push(own, d) if as_call?(ActiveSupport::Generate::Declaration.call(d)) }
+        end
+        Array.push(expanded, ActiveSupport::Generate::ClassBody.new(k, ActiveSupport::Generate::ClassBody.parent(Info.body(info)), line, own))
+        # the accessors ConfirmationValidator and AcceptanceValidator define on the class (Ruby's setup!)
+        extra = String[]
+        Array.each(Info.validators(info)) do |v|
+          _, klass, _, attrs, _, owner = v
+          next unless owner == k
+          names = case klass
+                  in "ActiveModel::Validations::ConfirmationValidator" then Array.map(attrs || String[]) { |a| "#{a}_confirmation" }
+                  in "ActiveModel::Validations::AcceptanceValidator" then attrs || String[]
+                  else String[]
+                  end
+          Array.each(names) do |a|
+            next if Array.any?(Info.fields(info)) { |f| f[0] == a } || Array.any?(Info.attributes(info)) { |x| AttributeDecl.name(x) == a } || Array.include?(extra, a)
+            Array.push(extra, a)
+            Array.push(Info.readers(info), a)
+            Array.push(Info.writers(info), a)
+          end
+        end
+        extras[k] = extra
+      end
+      s = ""
+      Array.each(infos) do |info|
+        k = Info.name(info)
+        own_mods = Array.map(Hash.fetch(mods, k, String[])) { |m| include_name(m) }
+        s += class_source(info, own_mods, extras[k] || String[], Info.parent(info) == nil)
+        s += naming_source(info)
+        s += send_source(info) if send?(info)
+        s += assign_source(info) if assignment?(info) || dirty?(info) || has?(info, "ActiveModel::Serializers::JSON")
+        s += ActiveModel::Validations::Generate.source(info) if validations?(info)
+        s += ActiveModel::AttributeMethods::Generate.source(info) if attribute_methods?(info)
+        s += ActiveModel::SecurePassword::Generate.source(info)
+        body = Array.find(expanded) { |b| ActiveSupport::Generate::ClassBody.name(b) == k }
+        next if body == nil
+        s += ActiveSupport::ClassAttribute::Generate.class_source(body, expanded, path)
+        s += ActiveModel::Callbacks::Generate.run_source(info, ActiveSupport::Callbacks::Generate.class_source(body, expanded, path))
+        s += ActiveSupport::Rescuable::Generate.class_source(body, expanded, path)
+      end
+      s
+    end
+  end
+end
+
+Array.each(ARGV) { |path| print(ActiveModel::Generate.program_source(File.read(path), path)) }
