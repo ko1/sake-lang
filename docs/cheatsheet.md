@@ -531,7 +531,7 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Zlib
 
-`adler32(String, [Integer])` · `crc32(String, [Integer])` · `deflate(String)` · `gunzip(String)` · `gzip(String)` · `inflate(String)`
+`adler32([String|Nil], [Integer])` · `crc32([String|Nil], [Integer])` · `deflate(String)` · `gunzip(String)` · `gzip(String)` · `inflate(String)`
 
 ### Exception types
 

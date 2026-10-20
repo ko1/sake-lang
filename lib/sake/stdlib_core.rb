@@ -72,11 +72,12 @@ module Sake
           end
         end
       end
-      # Zlib.crc32(s, crc = 0) / adler32: the checksums, continued from a previous value as Ruby's.
+      # Zlib.crc32(s, crc = 0) / adler32: the checksums, continued from a previous value as Ruby's; no String (or
+      # nil) gives the initial value, whatever the running one.
       %i[crc32 adler32].each do |m|
-        reg.define("Zlib", m, ["String"], optional: ["Integer"]) do |s, start = nil|
+        reg.define("Zlib", m, [], optional: [%w[String Nil], "Integer"]) do |s = nil, start = nil|
           require "zlib"
-          start.nil? ? ::Zlib.public_send(m, s) : ::Zlib.public_send(m, s, start)
+          s.nil? || start.nil? ? ::Zlib.public_send(m, *[s].compact) : ::Zlib.public_send(m, s, start)
         end
       end
       # Record.to_h(r) / keys / values: a Record's fields as data (Symbol keys), for code that walks any Record.

@@ -233,7 +233,8 @@ module Sake
             next if fn.origin
             # As Ruby's ancestors (B, B's modules, A): a module B includes itself wins over what `B < A` pasted.
             have = lookup(ns, name)
-            next if have && !(have.is_a?(UserFunction) && have.pasted && nearer?(ns, @include_owner[node], have.pasted))
+            # A required function (`raise NotImplementedError`) is a declaration: what was pasted fulfils it.
+            next if have && !(have.is_a?(UserFunction) && have.pasted && !fn.abstract && nearer?(ns, @include_owner[node], have.pasted))
             # A module function stays M's (Ruby runs it with M as self): its unqualified calls mean M's names.
             next (@functions[ns] ||= {})[name] = fn if fn.module_function
             (@functions[ns] ||= {})[name] = fn.dup.tap do |c|
@@ -268,17 +269,31 @@ module Sake
 
     # Modules included by ns in Ruby's ancestor order: the last `include` first, each module once.
     # Earlier entries win, so a later include wins over an earlier one. The include node is the one in ns.
+    # As Ruby's include: each `include M` puts M and M's own ancestors right after ns, skipping a module already
+    # there and going on after it, so a module that comes in again through another include does not move up.
     def linearize(ns, seen)
       return [] if seen.include?(ns)
-      @includes.fetch(ns, []).reverse.flat_map do |mod, node|
-        next [[mod, node]] if Operators::MODULES.include?(mod)
-        next [] unless @modules.key?(mod)
-        if seen.include?(mod) || mod == ns
-          error(node, "`include #{mod}` makes a cycle")
-          next []
+      out = []
+      @includes.fetch(ns, []).each do |mod, node|
+        chain =
+          if Operators::MODULES.include?(mod) then [mod]
+          elsif !@modules.key?(mod) then []
+          elsif seen.include?(mod) || mod == ns
+            error(node, "`include #{mod}` makes a cycle")
+            []
+          else [mod, *linearize(mod, seen + [ns]).map(&:first)]
+          end
+        at = 0
+        chain.each do |m|
+          if (i = out.index { _1[0] == m })
+            at = i + 1 if i >= at
+          else
+            out.insert(at, [m, node])
+            at += 1
+          end
         end
-        [[mod, node], *linearize(mod, seen + [ns]).map { |m, _| [m, node] }]
-      end.uniq(&:first)
+      end
+      out
     end
 
     def constant_call?(v, recv, name)

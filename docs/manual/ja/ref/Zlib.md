@@ -53,11 +53,11 @@ Zlib.gunzip(Zlib.deflate("x"))      # !> ArgumentError: Zlib.gunzip:
 
 ## crc32, adler32
 
-`Zlib.crc32(String, [Integer])`
+`Zlib.crc32([String|Nil], [Integer])`
 
-`Zlib.adler32(String, [Integer])`
+`Zlib.adler32([String|Nil], [Integer])`
 
-String のバイトの CRC-32 と Adler-32 のチェックサムを Integer で返します（Ruby の `Zlib.crc32` と `Zlib.adler32`）。2 つ目の引数（省略すると 0 と 1）で続きから計算します: `a` に続けて `b` のチェックサムは `Zlib.crc32(b, Zlib.crc32(a))` です。
+String のバイトの CRC-32 と Adler-32 のチェックサムを Integer で返します（Ruby の `Zlib.crc32` と `Zlib.adler32`）。String を渡さない（または nil の）ときは初期値の 0 と 1 です。2 つ目の引数（省略すると 0 と 1）で続きから計算します: `a` に続けて `b` のチェックサムは `Zlib.crc32(b, Zlib.crc32(a))` です。
 
 ```ruby
 p(Zlib.crc32("hello"))                      # => 907060870

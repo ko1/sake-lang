@@ -53,11 +53,11 @@ Zlib.gunzip(Zlib.deflate("x"))      # !> ArgumentError: Zlib.gunzip:
 
 ## crc32, adler32
 
-`Zlib.crc32(String, [Integer])`
+`Zlib.crc32([String|Nil], [Integer])`
 
-`Zlib.adler32(String, [Integer])`
+`Zlib.adler32([String|Nil], [Integer])`
 
-The CRC-32 and Adler-32 checksums of the String's bytes, as Integers (Ruby's `Zlib.crc32` and `Zlib.adler32`). The second argument (0 and 1 when left out) continues a checksum: the checksum of `a` then `b` is `Zlib.crc32(b, Zlib.crc32(a))`.
+The CRC-32 and Adler-32 checksums of the String's bytes, as Integers (Ruby's `Zlib.crc32` and `Zlib.adler32`). With no String (or nil) the result is the initial value, 0 and 1. The second argument (0 and 1 when left out) continues a checksum: the checksum of `a` then `b` is `Zlib.crc32(b, Zlib.crc32(a))`.
 
 ```ruby
 p(Zlib.crc32("hello"))                      # => 907060870
