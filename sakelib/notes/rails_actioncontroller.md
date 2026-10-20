@@ -151,6 +151,8 @@ Tests (all print what the gem prints; `bin/sake -c --strict` time and memory, lo
 
 ## Left out, and why
 
+- (Third wave: templates, layouts, view_context, helper_method and ActionController::TestCase are ported now; see
+  `rails_actioncontroller_view.md`. The two items below are the second wave's state.)
 - **Templates.** ActionView is being ported by another part; its renderer and template handlers did not exist when
   this part was written (its renderer/ landed at the very end and is not wired in yet). `ViewRendering` (Sake only) answers
   `template_exists?` false, so `render :edit`/implicit template rendering is not reached; render plain/html/body/

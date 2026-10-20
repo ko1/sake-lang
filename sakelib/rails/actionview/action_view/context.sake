@@ -6,6 +6,7 @@
 require "buffers"
 require "flows"
 require "template"
+require "renderer/renderer"
 
 module ActionView
   module Context
@@ -18,7 +19,9 @@ module ActionView
     def current_template(v) = raise(NotImplementedError)
     def set_current_template(v, t) = raise(NotImplementedError)
     def lookup_context(v) = raise(NotImplementedError)
+    def set_lookup_context(v, l) = raise(NotImplementedError)
     def view_renderer(v) = raise(NotImplementedError)
+    def set_view_renderer(v, r) = raise(NotImplementedError)
     def prefix_partial_path_with_controller_namespace(v) = raise(NotImplementedError)
 
     # Ruby: ActionView::Base#_run(method, template, locals, buffer, add_to_stack:, has_strict_locals:, &block):
@@ -35,6 +38,25 @@ module ActionView
         set_output_buffer(v, old_output_buffer)
         set_virtual_path(v, old_virtual_path)
         set_current_template(v, old_template)
+      end
+    end
+
+    # Ruby: ActionView::Base#in_rendering_context(options): the controller's `formats:` option renders with a
+    # lookup context (and renderer) of those formats first
+    def in_rendering_context(v, formats)
+      old_view_renderer = view_renderer(v)
+      old_lookup_context = lookup_context(v)
+      if formats && !LookupContext.html_fallback_for_js(old_lookup_context)
+        fs = formats == Symbol[:js] ? Symbol[:js, :html] : formats
+        lc = LookupContext.with_prepended_formats(old_lookup_context, fs)
+        set_lookup_context(v, lc)
+        set_view_renderer(v, Renderer.new(lc))
+      end
+      begin
+        yield(view_renderer(v))
+      ensure
+        set_view_renderer(v, old_view_renderer)
+        set_lookup_context(v, old_lookup_context)
       end
     end
 

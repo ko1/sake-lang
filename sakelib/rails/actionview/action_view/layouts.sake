@@ -1,0 +1,75 @@
+# Port of actionview-8.1.3/lib/action_view/layouts.rb (partial: no Proc layouts; `layout` lines are read from the class body by the controller generator, which writes `_layout` (Rails' _write_layout_method with class_eval) through generate/layout_method.sake)
+#
+#   Ruby                                             Sake
+#   layout "admin", except: :home                    the class-body line, generated into
+#                                                    def PagesController._layout(c, lookup_context, formats, keys)
+#                                                      if !Array.include?(String["home"], action_name(c)) then "admin" else ... end
+#   options[:layout] = Proc.new { |lc, f, keys|      options[:layout] = :default (or :require for `layout: true`);
+#     _default_layout(lc, f, keys, false) }          the renderer calls back through a block (ActionView::Rendering)
+
+require "rendering"
+
+module ActionView
+  module Layouts
+    def _action_has_layout(c) = raise(NotImplementedError)
+    def set__action_has_layout(c, v) = raise(NotImplementedError)
+    def action_name(c) = raise(NotImplementedError)
+    def _class_name(c) = raise(NotImplementedError)
+
+    # Ruby's private _layout(lookup_context, formats, keys), written per controller from its `layout` line
+    def _layout(c, lookup_context, formats, keys) = nil
+
+    def _process_render_template_options(c, options)
+      view_rendering_process_render_template_options(c, options)
+      if _include_layout?(c, options)
+        layout = Hash.key?(options, :layout) ? Hash.delete(options, :layout) : :default
+        options[:layout] = _layout_for_option(c, layout)
+      end
+      nil
+    end
+
+    def action_has_layout?(c) = _action_has_layout(c) != false
+    def set_action_has_layout(c, value) = set__action_has_layout(c, value)
+
+    # private
+    def _layout_for_option(c, name)
+      case name
+      in String then Layouts.normalize_layout(name)
+      in true then :require
+      in :default then :default
+      in false | nil then nil
+      else raise ArgumentError, "String, Proc, :default, true, or false, expected for `layout'; you passed #{Kernel.inspect(name)}"
+      end
+    end
+
+    # Returns the default layout for this controller. Optionally raises an exception if the layout could not be found.
+    def _default_layout(c, lookup_context, formats, keys, require_layout)
+      value = action_has_layout?(c) ? _layout(c, lookup_context, formats, keys) : nil
+      if require_layout && action_has_layout?(c) && !value
+        raise ArgumentError, "There was no default layout for #{_class_name(c)} in #<ActionView::PathSet @paths=#{Kernel.inspect(PathSet.to_ary(view_paths(c)))}>"
+      end
+      Layouts.normalize_layout(value)
+    end
+
+    def _include_layout?(c, options)
+      !Array.intersect?(Hash.keys(options), Symbol[:body, :plain, :html, :inline, :partial]) || Hash.key?(options, :layout)
+    end
+
+    module_function
+
+    # Ruby: _normalize_layout(value)
+    def normalize_layout(value)
+      case value
+      in String then String.match?(value, /\blayouts/) ? value : "layouts/#{value}"
+      else value
+      end
+    end
+
+    # Ruby's generated default: lookup_context.find_all(name, prefixes, false, keys, { formats: formats }).first
+    def find_implied(lookup_context, name, prefixes, keys, formats)
+      d = LookupContext::Details.dup(LookupContext.details(lookup_context))
+      LookupContext::Details.set_formats(d, formats)
+      Array.first(LookupContext.find_all(lookup_context, name, prefixes, false, keys, d))
+    end
+  end
+end

@@ -10,21 +10,26 @@
 #   before_action/around_action/skip_*_action lines   ActiveSupport::Callbacks' four functions + the class body
 #   rescue_from lines                                 ActiveSupport::Rescuable::Generate's three
 #   "posts" => PostsController (constantize)          class ActionController::ControllerSet: Routing::Controllers' dispatch
+#   view_context_class.new(lookup_context,            view_context(c): the app's view class with the controller's fields
+#     view_assigns, self)                             (`view=AppView`; nil without one), _view_paths(c): the view class's
+#   layout lines (_write_layout_method)               _layout(c, lookup_context, formats, keys) (action_view/generate/layouts)
+#   helper_method :current_user                       def AppView.current_user(v): a `case` over the view's controller
 #
-# The inputs are the class bodies (a Ruby file, as ActiveSupport's generators read: Ruby requires the same file)
-# and the Sake source of the controllers. Generated source is read before the program, so it only adds
+# The inputs are the class bodies (a Ruby file, as ActiveSupport's generators read: Ruby requires the same file),
+# the Sake source of the controllers, and `view=NAME`, the app's view class (generate/view_class.sake). Generated source is read before the program, so it only adds
 # `def K.f` functions to the program's classes and declares the one new class ControllerSet.
 
 require "rails/activesupport/active_support/generate/class_body"
 require "rails/activesupport/active_support/generate/rescuable"
 require "rails/activesupport/active_support/inflector"
 require "settings"
+require "rails/actionview/action_view/generate/layouts"
 
 module ActionController
   module Generate
     # A controller class found in Sake source: its name, parent, line, path and public one-argument functions.
     class SakeClass
-      attr_reader name, parent, line, path, actions
+      attr_reader name, parent, line, path, actions, fields, defs
     end
 
     module_function
@@ -32,7 +37,7 @@ module ActionController
     def CALLBACK_CALLS = String["before_action", "after_action", "around_action", "append_before_action", "append_after_action",
       "append_around_action", "prepend_before_action", "prepend_after_action", "prepend_around_action",
       "skip_before_action", "skip_after_action", "skip_around_action"]
-    def CALLS = Generate.CALLBACK_CALLS + String["rescue_from"] + Settings.CALLS
+    def CALLS = Generate.CALLBACK_CALLS + String["rescue_from", "layout", "helper_method"] + Settings.CALLS
     def ROOTS = String["ActionController::Base", "ActionController::API", "ActionController::Metal"]
 
     # The classes of a Sake file, with full names (module nesting), and their action functions.
@@ -50,7 +55,7 @@ module ActionController
           full = Array.join(names + String[Kernel.to_s(m[3])], "::")
           Array.push(stack, [indent, Kernel.to_s(m[3]), full])
           if m[2] == "class" && m[4] != nil
-            Array.push(classes, SakeClass.new(full, Kernel.to_s(m[4]), n, path, String[]))
+            Array.push(classes, SakeClass.new(full, Kernel.to_s(m[4]), n, path, String[], String[], Hash.new))
           end
           next
         end
@@ -69,6 +74,18 @@ module ActionController
           private_from[top[2]] = n
           next
         end
+        a = String.match(line, /\A(\s*)(?:private )?attr_(?:reader|accessor|writer) (.*)\z/)
+        if a && String.size(Kernel.to_s(a[1])) == body_indent
+          Array.each(String.split(String.sub(Kernel.to_s(a[2]), /\s*#.*\z/, ""), ",")) do |f|
+            name = String.strip(f)
+            Array.push(SakeClass.fields(k), name) unless String.start_with?(name, "_") || name == ""
+          end
+          next
+        end
+        sig = String.match(line, /\A(\s*)def ([a-z_]\w*[?!]?)\(/)
+        if sig && String.size(Kernel.to_s(sig[1])) == body_indent
+          SakeClass.defs(k)[Kernel.to_s(sig[2])] = ActiveSupport::Generate.split_args(param_text(String.[](line, String.size(Kernel.to_s(sig[0])).. ) || "")).Array.map { |x| String.strip(x) }.Array.drop(1).Array.join(", ")
+        end
         d = String.match(line, /\A(\s*)def ([a-z_]\w*[?!]?)\((\w+)\)/)
         next if d == nil || String.size(Kernel.to_s(d[1])) != body_indent || Hash.key?(private_from, top[2])
         name = Kernel.to_s(d[2])
@@ -77,6 +94,58 @@ module ActionController
         Array.push(SakeClass.actions(k), name)
       end
       classes
+    end
+
+    # The text up to the parenthesis that closes a def's parameters
+    def param_text(rest)
+      depth = 0
+      out = ""
+      String.each_char(rest) do |ch|
+        depth += 1 if ch == "("
+        if ch == ")"
+          break if depth == 0
+          depth -= 1
+        end
+        out += ch
+      end
+      out
+    end
+
+    # A helper method's parameters for the view's function and the call of the controller's: the required ones as
+    # they are, optional ones through *args/**kw (a default may name the controller's functions)
+    def helper_params(params)
+      sig = String[]
+      call = String[]
+      rest = false
+      kw = false
+      Array.each(ActiveSupport::Generate.split_args(params)) do |raw|
+        pr = String.strip(raw)
+        next if pr == ""
+        if String.start_with?(pr, "*") || String.start_with?(pr, "&")
+          Array.push(sig, pr)
+          Array.push(call, pr)
+        elsif String.match?(pr, /\A\w+:\z/)
+          name = String.delete_suffix(pr, ":")
+          Array.push(sig, pr)
+          Array.push(call, "#{name}: #{name}")
+        elsif String.match?(pr, /\A\w+:/)
+          kw = true
+        elsif String.include?(pr, "=")
+          rest = true
+        else
+          Array.push(sig, pr)
+          Array.push(call, pr)
+        end
+      end
+      if rest
+        Array.push(sig, "*args")
+        Array.push(call, "*args")
+      end
+      if kw
+        Array.push(sig, "**kw")
+        Array.push(call, "**kw")
+      end
+      [Array.join(Array.map(sig) { |x| ", #{x}" }, ""), Array.join(Array.map(call) { |x| ", #{x}" }, "")]
     end
 
     # The controller classes: those whose parents lead to ActionController::Base, API or Metal.
@@ -209,8 +278,90 @@ module ActionController
       "def #{name}.__rescue_handlers(t) = Any[[\"\", :none]]\ndef #{name}.__rescue_match?(t, class_name, e) = false\ndef #{name}.__rescue_call(t, handler, e) = nil\n"
     end
 
+    # The fields of k and its controller parents (Ruby's view_assigns: the instance variables a view gets)
+    def assigns_of(chain)
+      list = String[]
+      Array.each(chain) { |sk| Array.each(SakeClass.fields(sk)) { |f| Array.push(list, f) unless Array.include?(list, f) } }
+      list
+    end
+
+    # ActionView::Rendering#view_context (view_context_class.new(lookup_context, view_assigns, self)) and the view
+    # paths the view class was compiled from
+    def view_source(k, chain, view)
+      name = SakeClass.name(k)
+      return "def #{name}.view_context(c) = nil\ndef #{name}._view_paths(c) = String[]\n" if view == nil
+      kws = Array.map(assigns_of(chain)) { |f| ", #{f}: @#{f}" }
+      s = "# sake-origin: #{SakeClass.path(k)}:#{SakeClass.line(k)}\ndef #{name}.view_context(c)\n  #{view}.new(controller: c, lookup_context: lookup_context(c), request: request(c), routes: _routes(c)#{Array.join(kws, "")})\nend\n"
+      s + "def #{name}._view_paths(c) = #{view}.compiled_view_paths\n"
+    end
+
+    # ActionView::Layouts' _layout from the nearest `layout` line of the lineage (Ruby's class attribute)
+    def layout_source(k, chain, bodies, path)
+      levels = ActionView::Generate::LayoutLevel[]
+      value = nil
+      cond = nil
+      actions = String[]
+      origin = nil
+      Array.each(chain) do |sk|
+        b = body_for(SakeClass.name(sk), bodies)
+        decls = b ? ActiveSupport::Generate.declarations(b, String["layout"]) : ActiveSupport::Generate::Declaration[]
+        Array.each(decls) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          origin = "# sake-origin: #{path}:#{n}\n"
+          cond = nil
+          actions = String[]
+          value = nil
+          Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+            o = ActiveSupport::Generate.option(a)
+            if o == nil
+              ok = ActiveSupport::Generate.symbol?(a) || String.match?(a, /\A"[^"\\#]*"\z/) || a == "false" || a == "nil"
+              raise ArgumentError, "#{path}:#{n}: `layout #{a}`: a layout is a String, a Symbol naming a method, false or nil (a Proc has no Sake form here)" unless ok
+              value = a
+              next
+            end
+            key, v = o
+            raise ArgumentError, "#{path}:#{n}: unknown key: :#{key}. Valid keys are: :only, :except" unless key == "only" || key == "except"
+            cond = key
+            actions = Array.map(String.scan(v, /:(\w+[?!]?)|"([^"]*)"/)) { |m| Kernel.to_s(m[0] || m[1]) }
+          end
+        end
+        Array.push(levels, ActionView::Generate::LayoutLevel.new(SakeClass.name(sk), controller_path(SakeClass.name(sk)), value, cond, Array.dup(actions)))
+      end
+      (origin || "") + ActionView::Generate.layout_source(SakeClass.name(k), levels)
+    end
+
+    # helper_method lines: a function of the view class per name, calling the view's controller (Rails' _helpers
+    # module: `controller.send(name, ...)`), for the controllers below the class that declares it
+    def helper_methods_source(ks, classes, bodies, path, view)
+      return "" if view == nil
+      s = ""
+      done = String[]
+      Array.each(bodies) do |b|
+        Array.each(ActiveSupport::Generate.declarations(b, String["helper_method"])) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+            raise ArgumentError, "#{path}:#{n}: `helper_method #{a}`: name a method with a Symbol" unless ActiveSupport::Generate.symbol?(a)
+            m = String.delete_prefix(a, ":")
+            next if Array.include?(done, m)
+            Array.push(done, m)
+            owners = Array.select(ks) { |k| Array.any?(lineage(k, classes)) { |sk| SakeClass.name(sk) == ActiveSupport::Generate::ClassBody.name(b) } }
+            params = nil
+            Array.each(owners) do |k|
+              Array.each(Array.reverse(lineage(k, classes))) { |sk| params = SakeClass.defs(sk)[m] if params == nil }
+            end
+            raise ArgumentError, "#{path}:#{n}: `helper_method :#{m}`: no controller defines #{m}(c)" if params == nil
+            sig, call = helper_params(params || "")
+            s += "# sake-origin: #{path}:#{n}\ndef #{view}.#{m}(v#{sig})\n  case #{view}.controller(v)\n"
+            Array.each(owners) { |k| s += "  in ::#{SakeClass.name(k)} => c then ::#{SakeClass.name(k)}.#{m}(c#{call})\n" }
+            s += "  else raise NoMethodError, \"undefined method '#{m}' for an instance of #{view}\"\n  end\nend\n# sake-origin: none\n"
+          end
+        end
+      end
+      s
+    end
+
     # The Sake source of one controller class.
-    def class_source(k, classes, bodies, path)
+    def class_source(k, classes, bodies, path, view)
       name = SakeClass.name(k)
       chain = lineage(k, classes)
       actions = String[]
@@ -235,6 +386,10 @@ module ActionController
       if root != "ActionController::Metal"
         s += callbacks_source(k, chain, bodies, path)
         s += rescue_source(k, chain, bodies, path)
+      end
+      if root == "ActionController::Base"
+        s += view_source(k, chain, view)
+        s += layout_source(k, chain, bodies, path)
       end
       parent = Array.size(chain) > 1 ? SakeClass.name(Array.fetch(chain, -2)) : nil
       s += Settings.class_source(name, parent, body_for(name, bodies), path)
@@ -270,8 +425,11 @@ module ActionController
       classes = SakeClass[]
       bodies = ActiveSupport::Generate::ClassBody[]
       decl_path = ""
+      view = nil
       Array.each(paths) do |path|
-        if String.end_with?(path, ".rb")
+        if String.start_with?(path, "view=")
+          view = String.delete_prefix(path, "view=")
+        elsif String.end_with?(path, ".rb")
           decl_path = path
           Array.concat(bodies, ActiveSupport::Generate.parse(File.read(path), path))
         else
@@ -287,8 +445,8 @@ module ActionController
       end
       ks = controllers(classes)
       s = ""
-      Array.each(ks) { |k| s += class_source(k, classes, bodies, decl_path) }
-      s + controller_set_source(ks)
+      Array.each(ks) { |k| s += class_source(k, classes, bodies, decl_path, view) }
+      s + helper_methods_source(ks, classes, bodies, decl_path, view) + controller_set_source(ks)
     end
   end
 end

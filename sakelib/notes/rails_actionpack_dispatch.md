@@ -435,6 +435,9 @@ middleware_stack.sake 2.41 s 91 MB once CookieStore joined the build `case`, whi
 
 ### Left out, and why
 
+- (Third wave: the encrypted jar runs on ActiveSupport's MessageEncryptor and CookieStore uses it with secret_key_base;
+  the class names come from Kernel.class_name and the GTG groups by Regexp keys; see `rails_actioncontroller_view.md`.
+  The items below are the first wave's state.)
 - **The encrypted jar** (`cookies_encrypted.sake`) is written against Rails' MessageEncryptor names and required by
   nothing: activesupport has no MessageEncryptor yet (no cipher). So `signed_or_encrypted` is the signed jar, and
   CookieStore keeps the session signed (Rails does this only without secret_key_base). Signed cookies and the

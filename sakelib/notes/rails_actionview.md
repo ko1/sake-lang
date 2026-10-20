@@ -132,7 +132,8 @@ yielding functions (d2a1beb8) landed while this was written.
 ## Left out, and why
 
 - ActionView::Layouts and ActionView::Rendering (the controller-side modules: `layout "x"`, `_default_layout`,
-  render_to_body): they belong with ActionController's rendering, which was ported at the same time.
+  render_to_body): they belong with ActionController's rendering, which was ported at the same time. (Third wave:
+  ported with ViewPaths, `render_to_object` and the controller's view context; see `rails_actioncontroller_view.md`.)
 - Template locals passed as a Hash at run time (`render template: "x", locals: {...}` from code), `render layout:
   "x" do ... end`, partial layouts, `render_in` objects, Inline/RawFile/Renderable templates, streaming
   (StreamingBuffer, StreamingFlow: a Fiber and stored blocks), collection caching, digests, dependency tracking,

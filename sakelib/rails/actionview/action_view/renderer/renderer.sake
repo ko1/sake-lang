@@ -15,5 +15,63 @@ module ActionView
       end
       TemplateRenderer.render(context, @lookup_context, template: template, layout: layout, prefixes: prefixes, plain: plain, html: html, body: body, formats: formats)
     end
+
+    # Ruby: render_to_object(context, options), the controller's render (ActionView::Rendering#_render_template).
+    # The options are the controller's Hash; a :default/:require layout is the caller's block (see TemplateRenderer).
+    def render_to_object(r, context, options, &b)
+      partial = options[:partial]
+      if Hash.key?(options, :partial)
+        name = Renderer.string_option(partial) || raise(ArgumentError, "'#{Kernel.inspect(partial)}' is not an ActiveModel-compatible object. It must implement #to_partial_path.")
+        return PartialRenderer.render_to_object(context, name, Symbol[]) { |t, buf| Context._compiled(context, Template.method_name(t), buf) }
+      end
+      layout = options[:layout]
+      l = case layout
+          in String | Template then layout
+          in :default | :require then layout
+          else nil
+          end
+      TemplateRenderer.render_to_object(context, @lookup_context, template: Renderer.string_option(options[:template]), layout: l,
+        prefixes: Renderer.strings_option(options[:prefixes]), plain: Renderer.text_option(options, :plain), html: Renderer.html_option(options[:html]),
+        body: Renderer.text_option(options, :body), formats: Renderer.formats_option(options[:formats]), &b)
+    end
+
+    # (Sake only) a controller without a view class: the :body/:plain/:html templates, which need no view; a
+    # template is looked up (and missing: the controller has no view paths)
+    def render_static_to_object(lookup_context, options)
+      details = LookupContext::Details.dup(LookupContext.details(lookup_context))
+      t = TemplateRenderer.determine_template(lookup_context, details, Renderer.string_option(options[:template]), Renderer.strings_option(options[:prefixes]),
+        Renderer.text_option(options, :plain), Renderer.html_option(options[:html]), Renderer.text_option(options, :body))
+      AbstractRenderer::RenderedTemplate.new(Template.static_body(t), t)
+    end
+
+    # The controller's options Hash holds every kind of value: each option is narrowed where it is read
+    def string_option(v)
+      case v
+      in String then v
+      in Symbol then Symbol.to_s(v)
+      else nil
+      end
+    end
+    def strings_option(v)
+      case v
+      in Array then Array.map(v) { |x| Kernel.to_s(x) }
+      else nil
+      end
+    end
+    def text_option(options, key) = Hash.key?(options, key) ? Kernel.to_s(options[key]) : nil
+    def html_option(v)
+      case v
+      in ActiveSupport::SafeBuffer | String then v
+      in nil then nil
+      else Kernel.to_s(v)
+      end
+    end
+    def formats_option(v)
+      case v
+      in Array then Array.map(v) { |x| String.to_sym(Kernel.to_s(x)) }
+      in Symbol then Symbol[v]
+      else nil
+      end
+    end
   end
 end

@@ -1,7 +1,7 @@
 # (Sake only) The view class with its compiled templates: what Rails builds at run time with
 # ActionView::Base.with_empty_template_cache, Template#compile (module_eval) and public_send.
 #
-#   ActionView::Generate.view_class(name, view_paths, records:, includes:, assigns:) => Sake source:
+#   ActionView::Generate.view_class(name, view_paths, records:, includes:, assigns:, controllers:) => Sake source:
 #   class BlogView < ActionView::Base            # Rails: the view class (a subclass per controller or an empty cache)
 #     attr_accessor post, posts                  # the assigns (Rails copies the controller's instance variables)
 #     include BlogUrlHelpers                     # routes.url_helpers, app helpers
@@ -111,7 +111,21 @@ module ActionView
 
     def record_partial(record) = "#{ActiveSupport::Inflector.pluralize(ActiveSupport::Inflector.underscore(record))}/#{ActiveSupport::Inflector.underscore(record)}"
 
-    def view_class(name, view_paths, records: String[], includes: String[], assigns: String[])
+    # `render c, partial: "name"` in a controller's Sake source (no locals): Rails compiles the partial when the
+    # controller renders it; here it gets a function without locals
+    def controller_partials(files)
+      names = String[]
+      Array.each(files) do |f|
+        Array.each(String.lines(File.read(f))) do |line|
+          next if String.include?(line, "locals:")
+          m = String.match(line, /\brender(?:_to_string)?\(?\s*\w+,.*\bpartial: "([^"]+)"/)
+          Array.push(names, Kernel.to_s(m[1])) if m
+        end
+      end
+      names
+    end
+
+    def view_class(name, view_paths, records: String[], includes: String[], assigns: String[], controllers: String[])
       all = Any[]
       Array.each(view_paths) do |vp|
         Array.each(Array.sort(Dir.glob(File.join(vp, "**", "*")))) do |f|
@@ -126,7 +140,8 @@ module ActionView
       Array.push(out, "  attr_accessor #{Array.join(assigns, ", ")}") unless Array.empty?(assigns)
       Array.each(includes) { |m| Array.push(out, "  include #{m}") }
       Array.push(out, "  FormBuilder = ActionView::Helpers::FormBuilder",
-                 "  def default_view_paths(v) = String[#{Array.join(Array.map(view_paths) { |p| Kernel.inspect(p) }, ", ")}]")
+                 "  def compiled_view_paths = String[#{Array.join(Array.map(view_paths) { |p| Kernel.inspect(p) }, ", ")}]",
+                 "  def default_view_paths(v) = compiled_view_paths")
       fns = String[]
       # templates callable without locals (actions, layouts, strict ones without required locals)
       Array.each(all) do |c|
@@ -134,6 +149,9 @@ module ActionView
         if (sig && Array.empty?(strict_required(sig))) || (!sig && !Compiled.partial(c))
           variants[variant_name(c, String[])] = [c, String[]]
         end
+      end
+      Array.each(controller_partials(controllers)) do |pn|
+        Array.each(partial_candidates(all, pn)) { |cc| variants[variant_name(cc, String[])] = [cc, String[]] if accepts?(cc, String[]) }
       end
       need_records = false
       Array.each(all) do |c|

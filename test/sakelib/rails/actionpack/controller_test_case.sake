@@ -1,0 +1,89 @@
+require "rails/actionpack/action_controller/base"
+require "rails/actionpack/action_controller/test_case"
+
+# Functional tests (ActionController::TestCase): get/post/delete an action with params (path, query and body),
+# format:, as: :json, xhr:, session: and flash: given to the request; the session, the flash and the cookies kept
+# between the test's requests; assert_response and assert_redirected_to.
+class NotesController < ActionController::Base
+  def index(c) = render c, plain: "notes visits=#{Kernel.inspect(session(c)[:visits])} notice=#{Kernel.inspect(flash(c)[:notice])} theme=#{Kernel.inspect(cookies(c)[:theme])} page=#{Kernel.inspect(params(c)[:page])} xhr=#{ActionDispatch::Request.xhr?(request(c))}"
+  def show(c) = render c, json: Hash.of("id" => params(c)[:id], "format" => Kernel.to_s(Mime::Type.symbol(ActionDispatch::Request.format(request(c)))))
+  def create(c)
+    theme = params(c)[:theme]
+    cookies(c)[:theme] = theme if theme
+    redirect_to c, "/notes", notice: "Created #{params(c)[:title]}"
+  end
+  def destroy(c) = head c, :no_content
+
+  # private
+  def count_visit(c)
+    v = session(c)[:visits]
+    session(c)[:visits] = ((v in Integer) ? v : 0) + 1
+  end
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_test_case_decl.rb", "controller_test_case.sake"
+
+class ActionDispatch::Routing::Mapper
+  def notes_routes(map) = resources map, :notes, only: Any[:index, :show, :create, :destroy]
+end
+routes = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(routes) { |map| ActionDispatch::Routing::Mapper.notes_routes(map) }
+
+TC = ActionController::TestCase
+suite = Minitest.suite("functional")
+
+def show(tc)
+  r = TC.response(tc)
+  r => ActionDispatch::Response
+  req = TC.request(tc)
+  req => ActionDispatch::Request
+  puts("#{ActionDispatch::Request.request_method(req)} -> #{ActionDispatch::Response.status(r)} #{Kernel.inspect(ActionDispatch::Response.media_type(r))} #{Kernel.inspect(ActionDispatch::Response.location(r))} #{Kernel.inspect(ActionDispatch::Response.body(r))}")
+end
+
+def check(label)
+  yield
+  puts("#{label}: ok")
+rescue Minitest::Assertion => e
+  puts("#{label}: #{Array.map(String.lines(Exception.message(e))) { |l| String.chomp(l) }.Array.reject { |l| String.start_with?(l, "    ") }.join(" | ")}")   # without a backtrace
+end
+
+Minitest.test(suite, "functional") do |t|
+  tc = TC.make(t, "notes", ActionController::ControllerSet.new, routes)
+  puts("-- get, params in the query and the path")
+  TC.get(tc, :index)
+  show(tc)
+  TC.get(tc, :index, params: Hash.of(page: 2))
+  show(tc)
+  TC.get(tc, :show, params: Hash.of(id: 5))
+  show(tc)
+  TC.get(tc, :show, params: Hash.of(id: 5), format: :json)
+  show(tc)
+  puts("-- post with a body, the flash and the cookies on the next requests")
+  TC.post(tc, :create, params: Hash.of(title: "First", theme: "dark"))
+  show(tc)
+  check("redirected to /notes") { TC.assert_redirected_to(tc, "/notes") }
+  check("redirected to /other") { TC.assert_redirected_to(tc, "/other") }
+  check("redirect") { TC.assert_response(tc, :redirect) }
+  TC.get(tc, :index)
+  show(tc)
+  TC.get(tc, :index)
+  show(tc)
+  p(TC.session(tc)[:visits])
+  puts("-- session:, flash:, xhr:, as: :json")
+  TC.get(tc, :index, session: Hash.of(visits: 10))
+  show(tc)
+  TC.get(tc, :index, flash: Hash.of(notice: "given"))
+  show(tc)
+  TC.get(tc, :index, xhr: true)
+  show(tc)
+  TC.post(tc, :create, params: Hash.of(title: "Json"), as: :json)
+  show(tc)
+  req = TC.request(tc)
+  req => ActionDispatch::Request
+  p(ActionDispatch::Request.content_type(req))
+  puts("-- delete, assert_response")
+  TC.delete(tc, :destroy, params: Hash.of(id: 1))
+  show(tc)
+  check("no_content") { TC.assert_response(tc, :no_content) }
+  check("success") { TC.assert_response(tc, :success) }
+  check("200") { TC.assert_response(tc, 200) }
+end

@@ -1,0 +1,155 @@
+# Port of actionpack-8.1.3/lib/action_controller/test_case.rb (partial: no Live responses, no multipart uploads, no xml params, no executor, no template assertions (rails-controller-testing), no html_document; the controller is found by its path through the app's generated ControllerSet)
+#
+# Rails' functional test calls the controller directly, without the middleware: `get :show, params: { id: 1 }`
+# builds a TestRequest whose path parameters come from the routes (generate_extras), keeps a TestSession, the
+# flash and the cookies between requests, and calls `@controller.dispatch(action, @request, @response)`.
+# Here a TestCase is a value made in each Minitest.test block (as ActionDispatch::IntegrationTest is), holding the
+# block's Minitest::Test, the controller's path ("posts", Rails' `tests PostsController`), the app's controllers
+# (the generated ActionController::ControllerSet, which makes a new controller per request: Rails recycles one)
+# and the routes:
+#
+#   Rails                                        Sake
+#   class PostsControllerTest < ActionController::TestCase
+#     test "show" do                             Minitest.test(suite, "show") do |t|
+#                                                  tc = ActionController::TestCase.make(t, "posts", ActionController::ControllerSet.new, routes)
+#       get :show, params: { id: 1 }               TC.get(tc, :show, params: Hash.of(id: 1))
+#       assert_response :success                   TC.assert_response(tc, :success)
+
+require "rails/actionpack/action_dispatch/testing/assertions"
+require "rails/actionpack/action_dispatch/testing/test_response"
+require "rails/actionpack/action_dispatch/middleware/flash"
+require "rails/actionpack/action_dispatch/middleware/cookies"
+require "rails/activesupport/active_support/core_ext/object/to_query"
+
+module ActionController
+  # Ruby's TestRequest < ActionDispatch::TestRequest: functions over an ActionDispatch::Request
+  module TestRequest
+    module_function
+
+    # ActionDispatch::TestRequest::DEFAULT_ENV (without PATH_INFO): Rack::MockRequest.env_for("/") on test.host
+    def default_headers = Hash.of("HTTP_HOST" => "test.host", "REMOTE_ADDR" => "0.0.0.0", "HTTP_USER_AGENT" => "Rails Testing")
+
+    # Ruby: assign_parameters(routes, controller_path, action, parameters, generated_path, query_string_keys),
+    # here before the Request exists (Sake's env is made once): the parameters that are not in the path go to
+    # the query string (GET) or the body; returns the Request with its path parameters
+    def build(method, parameters, generated_path, query_string_keys, controller_path, action, headers, content_type: nil, body: nil)
+      non_path_parameters = Hash.new
+      path_parameters = Hash.new
+      Hash.each(parameters) do |key, value|
+        if Array.include?(query_string_keys, key)
+          non_path_parameters[key] = value
+        else
+          path_parameters[key] = (value in Array) ? Array.map(value) { |v| Object.to_param(v) } : Object.to_param(value)
+        end
+      end
+      env_headers = Hash.merge(default_headers, headers)
+      uri = "http://test.host#{generated_path}"
+      input = nil
+      if method == "GET"
+        query = Hash.to_query(non_path_parameters)
+        uri += "?#{query}" if query != ""
+      else
+        ct = content_type || "application/x-www-form-urlencoded"
+        env_headers["CONTENT_TYPE"] = ct
+        input = body || (String.include?(ct, "json") ? ActiveSupport::JSON.encode(non_path_parameters) : Hash.to_query(non_path_parameters))
+      end
+      env = Rack::MockRequest.env_for(uri, method: method, input: input, headers: env_headers)
+      req = ActionDispatch::Request.new(env)
+      path_parameters[:controller] = controller_path
+      path_parameters[:action] = action
+      ActionDispatch::Request.set_path_parameters(req, path_parameters)
+      req
+    end
+  end
+
+  # Ruby's TestSession: a loaded, enabled session Hash that stays between the test's requests
+  module TestSession
+    module_function
+    def make(req, data)
+      s = ActionDispatch::Request::Session.new(nil, req)   # its initialize starts empty and not loaded
+      ActionDispatch::Request::Session.update(s, data)
+      s
+    end
+  end
+
+  class TestCase
+    attr_reader minitest, controllers, controller_path, routes
+    attr_accessor request, response
+    private attr_accessor session_data, cookie_values
+    include ActionDispatch::Assertions::ResponseAssertions
+
+    def make(t, controller_path, controllers, routes) = TestCase.new(t, controllers, controller_path, routes, nil, nil, Hash.new, Hash.new)
+
+    def get(tc, action, **args) = process(tc, action, method: "GET", **args)
+    def post(tc, action, **args) = process(tc, action, method: "POST", **args)
+    def patch(tc, action, **args) = process(tc, action, method: "PATCH", **args)
+    def put(tc, action, **args) = process(tc, action, method: "PUT", **args)
+    def delete(tc, action, **args) = process(tc, action, method: "DELETE", **args)
+    def head(tc, action, **args) = process(tc, action, method: "HEAD", **args)
+
+    # Simulate an HTTP request to the action; returns the response
+    def process(tc, action, method: "GET", params: nil, session: nil, body: nil, flash: nil, format: nil, xhr: false, as: nil)
+      action = Kernel.to_s(action)
+      http_method = String.upcase(Kernel.to_s(method))
+      content_type = nil
+      if as
+        mime = Mime.fetch(as)
+        content_type = mime ? Mime::Type.to_s(mime) : nil
+        format ||= as
+      end
+      parameters = Hash.new
+      Hash.each(params) { |k, v| parameters[String.to_sym(Kernel.to_s(k))] = v } if params
+      parameters[:format] = format if format
+      # setup_request
+      generated_path, extras = ActionDispatch::Routing::RouteSet.generate_extras(@routes, Hash.merge(parameters, Hash.of(controller: @controller_path, action: action)))
+      query_string_keys = extras + Symbol[:controller, :action]
+      headers = Hash.new
+      headers["HTTP_COOKIE"] = Array.join(Hash.map(@cookie_values) { |k, v| "#{k}=#{v}" }, "; ") if !Hash.empty?(@cookie_values)
+      if xhr
+        headers["HTTP_X_REQUESTED_WITH"] = "XMLHttpRequest"
+        headers["HTTP_ACCEPT"] = "text/javascript, text/html, application/xml, text/xml, */*"
+      end
+      req = TestRequest.build(http_method, parameters, generated_path, query_string_keys, @controller_path, action, headers, content_type: content_type, body: body)
+      s = TestSession.make(req, @session_data)
+      ActionDispatch::Request.set_session(req, s)
+      Hash.each(session) { |k, v| ActionDispatch::Request::Session.[]=(s, k, v) } if session
+      ActionDispatch::Flash::FlashHash.update(ActionDispatch::Request.flash(req), flash) if flash
+      status, response_headers, response_body = ActionDispatch::Routing::Controllers.dispatch(@controllers, @controller_path, action, req)
+      @session_data = ActionDispatch::Request::Session.to_hash(s)   # with the flash the request committed
+      # the cookie jar is written into the response (Ruby: @request.cookie_jar.write(@response)), and kept
+      if ActionDispatch::Request.have_cookie_jar?(req)
+        jar = ActionDispatch::Request.cookie_jar(req)
+        ActionDispatch::Cookies::CookieJar.write(jar, response_headers) unless ActionDispatch::Cookies::CookieJar.committed?(jar)
+      end
+      keep_cookies(tc, response_headers["set-cookie"])
+      res = ActionDispatch::TestResponse.from_response(status, response_headers, Array.map(response_body) { |b| Kernel.to_s(b) })
+      ActionDispatch::Response.set_request(res, req)
+      @request = req
+      @response = res
+      res
+    end
+
+    def keep_cookies(tc, set_cookie)
+      lines = case set_cookie
+              in Array then Array.map(set_cookie) { |x| Kernel.to_s(x) }
+              in String then String.split(set_cookie, "\n")
+              else String[]
+              end
+      Array.each(lines) do |l|
+        name, rest = String.split(l, "=", 2).Array.values_at(0, 1)
+        value = String.split(Kernel.to_s(rest), ";", 2)[0] || ""
+        if String.include?(l, "max-age=0")
+          Hash.delete(@cookie_values, Kernel.to_s(name))
+        else
+          @cookie_values[Kernel.to_s(name)] = value
+        end
+      end
+      nil
+    end
+
+    # ActionDispatch::TestProcess: session, flash and cookies of the last request
+    def session(tc) = ActionDispatch::Request.session(@request || raise(ArgumentError, "no request yet"))
+    def flash(tc) = ActionDispatch::Request.flash(@request || raise(ArgumentError, "no request yet"))
+    def cookies(tc) = ActionDispatch::Request.cookie_jar(@request || raise(ArgumentError, "no request yet"))
+  end
+end

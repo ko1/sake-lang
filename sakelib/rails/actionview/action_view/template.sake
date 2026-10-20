@@ -10,6 +10,7 @@
 
 require "template/error"
 require "buffers"
+require "../../actionpack/action_dispatch/http/mime_types"
 
 module ActionView
   class Template
@@ -22,8 +23,8 @@ module ActionView
 
     module Types
       module_function
-      # Ruby: Template::Types.symbols (Mime::SET's when ActionDispatch is loaded; ActionView's own list here)
-      def symbols = Symbol[:html, :text, :js, :css, :xml, :json]
+      # Ruby: Template::Types.symbols, Mime::SET's once ActionDispatch is loaded (ActionView loads its Mime types)
+      def symbols = Mime.symbols
       def valid_symbols?(syms) = Array.all?(syms) { |s| Array.include?(symbols, s) }
     end
 
@@ -48,9 +49,12 @@ module ActionView
       Template.new(identifier, handler, locals, format, variant, virtual_path, variable, strict, :template, nil)
     end
 
-    # Ruby: Template::Text.new(string) and Template::HTML.new(string, type): the body is given
+    # Ruby: Template::Text.new(string) and Template::HTML.new(string, type), which escapes the string (ERB::Util.h:
+    # an html_safe SafeBuffer as it is)
     def text(string) = Template.new("text template", :raw, Symbol[], :text, nil, nil, nil, nil, :text, string)
-    def html(string) = Template.new("html template", :raw, Symbol[], :html, nil, nil, nil, nil, :html, string)
+    def html(string, type = :html)
+      Template.new("html template", :raw, Symbol[], type, nil, nil, nil, nil, :html, ActiveSupport::CoreExt::ERBUtil.unwrapped_html_escape(string))
+    end
 
     def strict_locals?(t) = @strict_locals != nil
     def short_identifier(t) = @identifier
@@ -70,7 +74,6 @@ module ActionView
     # the compiled function with the buffer (Rails' public_send inside view._run)
     def render(t, view, buffer = nil, add_to_stack: true)
       if @kind != :template
-        return ActiveSupport::CoreExt::ERBUtil.html_escape(@body || "") if @kind == :html
         return String.html_safe(@body || "")
       end
       buf = buffer || OutputBuffer.make
@@ -78,12 +81,16 @@ module ActionView
         Context._run(view, t, buf, add_to_stack) { yield(buf) }
       rescue Template::Error => e
         raise e
-      rescue MissingTemplate => e
-        raise e
       rescue => e
         raise Template::Error.new(Exception.message(e), @identifier)
       end
       buffer ? nil : OutputBuffer.to_s(buf)
+    end
+
+    # (Sake only) the body of a :text/:html template, which needs no view
+    def static_body(t)
+      raise Template::Error.new("#{@identifier} needs a view to render (the controller has no view class)", @identifier) if @kind == :template
+      String.html_safe(@body || "")
     end
 
     # (Sake only) a template found at run time that the generator did not compile for these locals

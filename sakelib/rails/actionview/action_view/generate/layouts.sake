@@ -1,0 +1,70 @@
+# (Sake only) ActionView::Layouts' _write_layout_method: the `_layout` of a controller class as Sake source
+#
+# Ruby writes `_layout(lookup_context, formats, keys)` with class_eval for each class (inherited calls it again),
+# from the class attribute `_layout` (the nearest `layout` line: a String, a Symbol naming a method, false, nil)
+# and `_layout_conditions` (only:/except:); `super` is the parent's _layout. Here each level of the class's
+# lineage is one function of the class, `__layout_<i>`, calling the one below as its super. The conditions are the
+# object's class's at every level (Ruby's _conditional_layout? reads self.class._layout_conditions), so they are
+# the owner's (the `condition` and `actions` of the last level):
+#
+#   def PostsController.__layout_1(c, lookup_context, formats, keys)      # PostsController: no layout line
+#     ActionView::Layouts.find_implied(lookup_context, "posts", String["layouts"], keys, formats) || __layout_0(c, lookup_context, formats, keys)
+#   end
+#   def PostsController._layout(c, lookup_context, formats, keys) = __layout_1(c, lookup_context, formats, keys)
+
+module ActionView
+  module Generate
+    # One class of the lineage: its name, implied layout name (controller_path), and the `layout` line it
+    # inherits or declares (value as written in Ruby: "\"admin\"", ":choose", "false", "nil"; nil without one)
+    class LayoutLevel
+      attr_reader name, implied, value, condition, actions
+    end
+
+    module_function
+
+    def layout_level_source(owner, levels, i)
+      level = levels[i] || raise(ArgumentError, "no layout level #{i}")
+      args = "c, lookup_context, formats, keys"
+      implied = LayoutLevel.implied(level)
+      prefixes = String.match?(implied, /\blayouts/) ? "String[]" : "String[\"layouts\"]"
+      super_call = i == 0 ? "ActionView::Layouts.find_implied(lookup_context, \"action_controller/base\", String[\"layouts\"], keys, formats)" : "__layout_#{i - 1}(#{args})"
+      default_behavior = "ActionView::Layouts.find_implied(lookup_context, #{Kernel.inspect(implied)}, #{prefixes}, keys, formats) || #{super_call}"
+      value = LayoutLevel.value(level)
+      definition = case value
+                   in nil | "nil" then String[default_behavior]
+                   in "false" then String["nil"]
+                   in "true" then raise ArgumentError, "Layouts must be specified as a String, Symbol, Proc, false, or nil"
+                   else
+                     if String.start_with?(value, ":")
+                       m = String.delete_prefix(value, ":")
+                       String["layout = #{m}(c)", "return #{default_behavior} if layout == nil",
+                              "raise ArgumentError, \"Your layout method :#{m} returned \#{layout}. It should have returned a String, false, or nil\" unless (layout in String) || !layout",
+                              "layout"]
+                     else
+                       String[value]
+                     end
+                   end
+      lines = String["def #{owner}.__layout_#{i}(#{args})"]
+      own = Array.last(levels) || level
+      cond = LayoutLevel.condition(own)
+      if cond
+        list = "String[#{Array.join(Array.map(LayoutLevel.actions(own)) { |a| Kernel.inspect(a) }, ", ")}]"
+        test = cond == "only" ? "Array.include?(#{list}, action_name(c))" : "!Array.include?(#{list}, action_name(c))"
+        Array.push(lines, "  if #{test}")
+        Array.each(definition) { |l| Array.push(lines, "    #{l}") }
+        Array.push(lines, "  else", "    #{default_behavior}", "  end")
+      else
+        Array.each(definition) { |l| Array.push(lines, "  #{l}") }
+      end
+      Array.push(lines, "end")
+      Array.join(lines, "\n") + "\n"
+    end
+
+    # The class's _layout and one function per level of its lineage (root first)
+    def layout_source(owner, levels)
+      s = ""
+      Array.each_with_index(levels) { |_, i| s += layout_level_source(owner, levels, i) }
+      s + "def #{owner}._layout(c, lookup_context, formats, keys) = __layout_#{Array.size(levels) - 1}(c, lookup_context, formats, keys)\n"
+    end
+  end
+end

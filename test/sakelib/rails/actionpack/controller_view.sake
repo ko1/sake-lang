@@ -1,0 +1,227 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+require "rails/actionpack/action_controller/base"
+require "rails/actionview/action_view"
+require "fixtures/view_routes"
+generate "fixtures/view_url_helpers", "ViewUrlHelpers"
+generate "rails/actionview/action_view/generate/view_class", "AppView", "views=controller_views", "records=Post", "include=ViewUrlHelpers,ActionController::Helpers::HelperMethods", "assigns=post,posts", "controllers=controller_view.sake"
+
+# Controllers rendering ActionView templates through the routes: implicit render of the action's template in the
+# application layout, `render :new, status: :unprocessable_entity`, a layout by name with except:, layout: false,
+# a template of another controller, render_to_string, respond_to with an html and a json template, a missing
+# template, partials and collections of records, form_with a record, url helpers from the RouteSet, the flash
+# after a redirect, csrf_meta_tags and a helper_method in the layout.
+# (the form defaults are load_defaults 8.1's in the port; the .rb sets them)
+ActionController::RequestForgeryProtection.set_allow_forgery_protection(true)
+
+class Post
+  attr_accessor id, title, body, validated
+  include ActionView::ModelNaming::Model
+  def route_key(r) = "posts"
+  def singular_route_key(r) = "post"
+  def param_key(r) = "post"
+  def persisted?(r) = @id != nil
+  def to_param(r) = persisted?(r) ? Kernel.to_s(@id) : nil
+  def to_key(r) = persisted?(r) ? Any[@id] : nil
+  def read_attribute_for_validation(r, name)
+    case Kernel.to_s(name)
+    in "id" then @id
+    in "title" then @title
+    in "body" then @body
+    else nil
+    end
+  end
+  # validates :title, presence: true (the errors are there after valid?)
+  def valid?(r)
+    @validated = true
+    Array.empty?(errors_for(r, "title"))
+  end
+  def errors_for(r, attribute) = @validated == true && attribute == "title" && Object.blank?(@title) ? String["can't be blank"] : String[]
+  def errors_count(r) = Array.size(errors_for(r, "title"))
+end
+
+# The posts (a database's stand-in)
+def posts_store = once { Post[Post.new(1, "Hello", "First <post>", nil), Post.new(2, "Second", "More", nil)] }
+
+class ApplicationController < ActionController::Base
+  include ViewUrlHelpers
+
+  # private
+  def current_user(c) = "ko1"
+  def greeting(c, word, name: current_user(c)) = "#{word}, #{name}!"
+end
+
+class PostsController < ApplicationController
+  attr_reader post, posts
+
+  def index(c) = @posts = posts_store
+  def show(c) = nil
+  def new_(c) = @post = Post.new(nil, nil, nil, nil)
+  def create(c)
+    t = params(c)[:title]
+    post = Post.new(nil, (t in String) ? t : nil, "", nil)
+    @post = post
+    if Post.valid?(post)
+      Post.set_id(post, Array.size(posts_store) + 1)
+      Array.push(posts_store, post)
+      redirect_to c, post_path(c, post), notice: "Post was successfully created."
+    else
+      render c, :new, status: :unprocessable_entity
+    end
+  end
+  def edit(c) = nil
+  def update(c)
+    post = @post || raise(ArgumentError, "no post")
+    t = params(c)[:title]
+    Post.set_title(post, (t in String) ? t : nil)
+    if Post.valid?(post)
+      redirect_to c, post, notice: "Post was successfully updated."
+    else
+      render c, :edit, status: :unprocessable_entity
+    end
+  end
+  def destroy(c)
+    post = @post
+    Array.delete(posts_store, post) if post
+    redirect_to c, posts_path(c), notice: "Post was successfully destroyed.", status: :see_other
+  end
+
+  # private
+  def set_post(c)
+    id = Kernel.to_s(params(c)[:id])
+    @post = Array.find(posts_store) { |p| Post.id(p) == String.to_i(id) } || raise(ActionController::RoutingError.new("no post #{id}", Any[]))
+  end
+end
+
+class PagesController < ApplicationController
+  def about(c) = nil
+  def home(c) = nil
+  def plain(c) = render c, plain: "plain text"
+  def plain_with_layout(c) = render c, plain: "plain in a layout", layout: "application"
+  def bare(c) = render c, :about, layout: false
+  def other(c) = render c, "posts/new"
+  def string(c)
+    html = render_to_string(c, :home, layout: false)
+    render c, plain: "home is #{String.size(html)} bytes: #{String.strip(html)}"
+  end
+  def negotiate(c)
+    respond_to(c, :html, :json) do |format|
+      case format
+      in :html then render c, :about
+      in :json then render c, :about
+      else nil
+      end
+    end
+  end
+  def missing(c) = render c, :nope
+  def partial(c) = render c, partial: "fragment"
+  def helper(c)
+    view = helpers(c) || raise(ArgumentError, "no view class")
+    render c, plain: "#{ActionView::Helpers::NumberHelper.number_to_currency(view, 1234.5)} #{ActionView::Helpers::TextHelper.pluralize(view, 2, "page")} #{AppView.greeting(view, "Bye")}"
+  end
+end
+
+# layout :choose_layout: a name, or nil for the implied lookup (layouts/admin_pages, then PagesController's layout)
+class AdminPagesController < PagesController
+  def fixed(c) = render c, :home
+  def about(c) = render c, template: "pages/about"
+
+  # private
+  def choose_layout(c) = action_name(c) == "fixed" ? "application" : nil
+end
+
+# layout false: none, unless the render names one (or asks for the default with layout: true)
+class BareController < ApplicationController
+  def index(c) = nil
+  def with_admin(c) = render c, :index, layout: "admin"
+  def required(c) = render c, :index, layout: true
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_view_decl.rb", "controller_view.sake", "view=AppView"
+
+set = view_route_set
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+# Rails.application.env_config, which Rails::Engine#call merges into the env before the stack
+def configure(req)
+  c = ActionDispatch::Request.env_config(req)
+  c["action_dispatch.key_generator"] = ActiveSupport::CachingKeyGenerator.new(ActiveSupport::KeyGenerator.new("b" * 64, iterations: 2))
+  c["action_dispatch.secret_key_base"] = "b" * 64   # the session goes in the encrypted jar, as in a Rails app
+  c["action_dispatch.authenticated_encrypted_cookie_salt"] = "authenticated encrypted cookie"
+  c["action_dispatch.use_authenticated_cookie_encryption"] = true
+  c["action_dispatch.cookies_serializer"] = :json
+  c["action_dispatch.use_cookies_with_metadata"] = true
+end
+class Config
+  attr_reader app
+  include ActionDispatch::App
+  def call(c, req)
+    configure(req)
+    ActionDispatch::App.call(@app, req)
+  end
+end
+
+stack = ActionDispatch::MiddlewareStack.new
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Cookies")
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Session::CookieStore", Hash.of(key: "_blog_session"))
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Flash")
+app = ActionDispatch::RackApp.new(Config.new(ActionDispatch::MiddlewareStack.build(stack, set)))
+
+# The response: status, the headers that matter, the body (CSRF tokens are random: replaced).
+def send_request(app, jar, method, path, headers = Hash.new)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}", method: method)
+  env["HTTP_COOKIE"] = Array.join(Hash.map(jar) { |k, v| "#{k}=#{v}" }, "; ") if !Hash.empty?(jar)
+  Hash.each(headers) { |k, v| env[k] = v }
+  begin
+    status, hs, body = Rack::App.call(app, env)
+  rescue => e
+    puts("#{method} #{path} -> #{class_name(e)}: #{String.sub(String.split(Exception.message(e), "\n")[0] || "", / in #<ActionView::PathSet.*/, "")}")
+    return
+  end
+  out = ""
+  Array.each(body) { |s| out += s }
+  puts("#{method} #{path} -> #{status}")
+  Array.each(String["content-type", "location", "vary"]) { |k| puts("  #{k}: #{hs[k]}") if hs[k] }
+  out = String.gsub(out, /(name="csrf-token" content=|name="authenticity_token" value=)"[^"]*"/) { |m| String.sub(m, /"[^"]*"\z/, "\"TOKEN\"") }
+  puts(Array.join(Array.map(String.lines(out)) { |l| "  | #{l}" }, ""))
+  h = hs["set-cookie"]
+  lines = case h
+          in Array then Array.map(h) { |x| Kernel.to_s(x) }
+          in String then String.split(h, "\n")
+          else String[]
+          end
+  Array.each(lines) do |l|
+    name, rest = String.split(l, "=", 2).Array.values_at(0, 1)
+    jar[Kernel.to_s(name)] = String.split(Kernel.to_s(rest), ";", 2)[0] || ""
+  end
+end
+
+jar = Hash.new
+send_request(app, jar, "GET", "/posts")
+send_request(app, jar, "GET", "/posts/1")
+send_request(app, jar, "GET", "/posts/new")
+send_request(app, jar, "POST", "/posts?title=")
+send_request(app, jar, "POST", "/posts?title=Third")
+send_request(app, jar, "GET", "/posts/3")
+send_request(app, jar, "GET", "/posts/3/edit")
+send_request(app, jar, "PATCH", "/posts/3?title=")
+send_request(app, jar, "PATCH", "/posts/3?title=Third+again")
+send_request(app, jar, "DELETE", "/posts/3")
+send_request(app, jar, "GET", "/posts")
+send_request(app, jar, "GET", "/about?who=you")
+send_request(app, jar, "GET", "/home")
+send_request(app, jar, "GET", "/plain")
+send_request(app, jar, "GET", "/plain_with_layout")
+send_request(app, jar, "GET", "/bare")
+send_request(app, jar, "GET", "/other")
+send_request(app, jar, "GET", "/string")
+send_request(app, jar, "GET", "/negotiate")
+send_request(app, jar, "GET", "/negotiate", Hash.of("HTTP_ACCEPT" => "application/json"))
+send_request(app, jar, "GET", "/missing")
+send_request(app, jar, "GET", "/partial")
+send_request(app, jar, "GET", "/helper")
+send_request(app, jar, "GET", "/posts/9")
+send_request(app, jar, "GET", "/admin/home")
+send_request(app, jar, "GET", "/admin/about")
+send_request(app, jar, "GET", "/admin/fixed")
+send_request(app, jar, "GET", "/nolayout/index")
+send_request(app, jar, "GET", "/nolayout/with_admin")
+send_request(app, jar, "GET", "/nolayout/required")

@@ -1,0 +1,90 @@
+# Port of actionview-8.1.3/lib/action_view/rendering.rb (partial: no I18nProxy in process; no view_context_class: the view class is generated (generate/view_class.sake) and the controller's view_context is generated per controller)
+#
+# The controller side of ActionView: render_to_body renders a template (or :plain/:html/:body) with the controller's
+# view context. Ruby's `super` chain: ActionController::Rendering#render_to_body calls this module's as
+# `view_rendering_render_to_body` (ActionController::Base wires it); the overridden bodies keep `view_rendering_`
+# names. `view_context(c)` is the app's view class with the controller's fields as assigns (nil when the app has
+# none: then only :plain/:html/:body render).
+#
+#   Ruby                                             Sake (generated per controller)
+#   view_context_class.new(lookup_context,           def PostsController.view_context(c) = AppView.new(controller: c,
+#     view_assigns, self)                              lookup_context: lookup_context(c), request: request(c), routes: _routes(c), post: @post)
+
+require "view_paths"
+require "context"
+require "renderer/renderer"
+
+module ActionView
+  module Rendering
+    def _rendered_format(c) = raise(NotImplementedError)
+    def set__rendered_format(c, f) = raise(NotImplementedError)
+    def view_context(c) = raise(NotImplementedError)
+    def action_name(c) = raise(NotImplementedError)
+    def _prefixes(c) = raise(NotImplementedError)
+    def _process_options(c, options) = raise(NotImplementedError)
+
+    def rendered_format(c) = _rendered_format(c)
+
+    def view_rendering_render_to_body(c, options)
+      _process_options(c, options)
+      _process_render_template_options(c, options)
+      _render_template(c, options)
+    end
+
+    # Find and render a template based on the options given.
+    def _render_template(c, options)
+      variant = Hash.delete(options, :variant)
+      lc = lookup_context(c)
+      LookupContext.set_variants(lc, Array.map(variant) { |v| String.to_sym(Kernel.to_s(v)) }) if (variant in Array)
+      context = view_context(c)
+      rendered = if context
+                   Context.in_rendering_context(context, Renderer.formats_option(options[:formats])) do |renderer|
+                     Renderer.render_to_object(renderer, context, options) { |l, formats, keys, required| _default_layout(c, l, formats, keys, required) }
+                   end
+                 else
+                   Renderer.render_static_to_object(lc, options)
+                 end
+      format = AbstractRenderer::RenderedTemplate.format(rendered) || Array.first(LookupContext.formats(lc))
+      set__rendered_format(c, format ? Mime.[](format) : nil)
+      body = AbstractRenderer::RenderedTemplate.body(rendered)
+      body ? ActiveSupport::SafeBuffer.to_str(body) : nil
+    end
+
+    # The layout of a render without `layout:` (ActionView::Layouts overrides it)
+    def _default_layout(c, lookup_context, formats, keys, require_layout) = nil
+
+    # Assign the rendered format to look up context.
+    def _process_format(c, format)
+      sym = Mime::Type.symbol(format)
+      LookupContext.set_formats(lookup_context(c), Symbol[sym]) if sym
+      nil
+    end
+
+    # Normalize args by converting render "foo" to render action: "foo" and render "foo/bar" to render
+    # template: "foo/bar".
+    def _normalize_args(c, action, options)
+      case action
+      in nil then nil
+      in String | Symbol
+        a = Kernel.to_s(action)
+        options[String.include?(a, "/") ? :template : :action] = a
+      else options[:partial] = action
+      end
+      options
+    end
+
+    # Normalize options.
+    def view_rendering_process_render_template_options(c, options)
+      options[:partial] = action_name(c) if options[:partial] == true
+      if !Array.intersect?(Hash.keys(options), Symbol[:partial, :file, :template])
+        options[:prefixes] = _prefixes(c) unless options[:prefixes]
+      end
+      unless options[:template]
+        action = options[:action]
+        options[:template] = action ? Kernel.to_s(action) : action_name(c)
+      end
+      nil
+    end
+    def _process_render_template_options(c, options) = view_rendering_process_render_template_options(c, options)
+  end
+end

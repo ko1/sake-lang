@@ -1,7 +1,7 @@
 # Port of actionpack-8.1.3/lib/action_dispatch/middleware/cookies.rb, the signed jar (ChainedCookieJars#signed and
 # #signed_or_encrypted, SerializedCookieJars, SignedKeyRotatingCookieJar), on activesupport's KeyGenerator and
 # MessageVerifier (sakelib/rails/activesupport/) (partial: no rotations, the :json cookie serializer only (no
-# Marshal); the encrypted jar is cookies_encrypted.sake, which needs a MessageEncryptor not ported yet)
+# Marshal); the encrypted jar is cookies_encrypted.sake)
 #
 # Rails' cookie jars give the verifier a NullSerializer and serialize the value themselves (JSON), and with a
 # NullSerializer ActiveSupport's Messages::Metadata writes its pre-7.1 envelope:
@@ -15,6 +15,7 @@ require "base64"
 require "cookies"
 require "rails/activesupport/active_support/key_generator"
 require "rails/activesupport/active_support/message_verifier"
+require "cookies_encrypted"
 
 module ActionDispatch
   class Request
@@ -32,8 +33,6 @@ module ActionDispatch
   class Cookies
     class CookieJar
       def signed(jar) = @_signed ||= SignedKeyRotatingCookieJar.new(jar)
-      # Rails: encrypted when secret_key_base is set, else signed; the encrypted jar is in cookies_encrypted.sake
-      def signed_or_encrypted(jar) = signed(jar)
     end
 
     class PermanentCookieJar
@@ -49,6 +48,30 @@ module ActionDispatch
       rescue JSON::ParserError
         nil
       end
+      # ActiveSupport's Messages::Metadata with a NullSerializer (the jars' SERIALIZER): the serialized value in its
+      # pre-7.1 envelope when there is a purpose or an expiry, else as it is
+      def wrap_metadata(j, dumped, md)
+        return dumped unless Hash.key?(md, :purpose) || md[:expires_at] != nil
+        ex = md[:expires_at]
+        JSON.generate(Hash.of("_rails" => Hash.of("message" => Base64.strict_encode64(dumped),
+          "exp" => (ex in Time) ? Time.iso8601(Time.utc(ex), 3) : nil, "pur" => md[:purpose])))
+      end
+
+      # The serialized value out of the envelope (nil for another purpose or an expired one)
+      def unwrap_metadata(j, payload, purpose)
+        data = JSON.parse(payload)
+        return (purpose == nil ? payload : nil) unless (data in Hash) && Hash.key?(data, "_rails")
+        meta = data["_rails"]
+        return nil unless meta in Hash
+        return nil unless meta["pur"] == purpose
+        ex = meta["exp"]
+        return nil if (ex in String) && Time.iso8601(Time.utc(Time.now), 3) > ex     # both UTC ISO 8601
+        message = meta["message"]
+        (message in String) ? Base64.strict_decode64(message) : nil
+      rescue JSON::ParserError
+        purpose == nil ? payload : nil
+      end
+
       def check_for_overflow!(j, name, options)
         total_size = String.bytesize(Kernel.to_s(name)) + String.bytesize(Kernel.to_s(options[:value]))
         if total_size > Cookies.max_cookie_size
@@ -77,34 +100,15 @@ module ActionDispatch
       # Rails: @verifier.verified(signed_message, purpose:) then the serializer's load
       def parse(j, name, signed_message, purpose)
         encoded = ActiveSupport::MessageVerifier.extract_encoded(@verifier, signed_message)
-        data = JSON.parse(Base64.strict_decode64(encoded))
-        if (data in Hash) && Hash.key?(data, "_rails")
-          meta = data["_rails"]
-          return nil unless meta in Hash
-          return nil unless meta["pur"] == purpose
-          ex = meta["exp"]
-          return nil if (ex in String) && Time.iso8601(Time.utc(Time.now), 3) > ex     # both UTC ISO 8601
-          message = meta["message"]
-          return nil unless message in String
-          deserialize(j, Base64.strict_decode64(message))
-        else
-          purpose == nil ? data : nil
-        end
+        dumped = unwrap_metadata(j, Base64.strict_decode64(encoded), purpose)
+        dumped ? deserialize(j, dumped) : nil
       rescue ActiveSupport::Messages::InvalidMessageFormat, JSON::ParserError, ArgumentError
         nil
       end
 
       # Rails: options[:value] = @verifier.generate(serializer.dump(value), expires_at:, purpose:)
       def commit(j, name, options)
-        md = cookie_metadata(j, name, options)
-        dumped = serialize(j, options[:value])
-        payload = if Hash.key?(md, :purpose) || md[:expires_at] != nil
-          ex = md[:expires_at]
-          JSON.generate(Hash.of("_rails" => Hash.of("message" => Base64.strict_encode64(dumped),
-            "exp" => (ex in Time) ? Time.iso8601(Time.utc(ex), 3) : nil, "pur" => md[:purpose])))
-        else
-          dumped
-        end
+        payload = wrap_metadata(j, serialize(j, options[:value]), cookie_metadata(j, name, options))
         options[:value] = ActiveSupport::MessageVerifier.sign_encoded(@verifier, Base64.strict_encode64(payload))
         check_for_overflow!(j, name, options)
       end
