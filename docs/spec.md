@@ -105,6 +105,9 @@ A program is a file and the files it requires. Its top level may contain:
   it generates for, nor read its own output. The same generator with the same arguments is run once.
   A problem in a generator, or an error it ends with, is reported at the `generate` statement and
   nothing runs (exit 2). `bin/sake --dump=generated FILE.sake` prints each generated source.
+  Like a required file, the generated source is read before the file with the `generate` line, so a
+  `class Post` it prints is the first `class Post`, the one that declares the fields: a generator
+  adds functions to a class the program declares with `def Post.f(p) ...` instead of reopening it.
   **Origins**: a generated line `# sake-origin: FILE:LINE` says that the lines after it, up to the
   next marker, came from FILE:LINE (a template, a schema); static and runtime errors, backtraces and
   "reached by" hints in those lines name FILE:LINE, with the generated line in a hint.

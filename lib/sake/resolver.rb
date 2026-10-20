@@ -230,6 +230,8 @@ module Sake
             # As Ruby's ancestors (B, B's modules, A): a module B includes itself wins over what `B < A` pasted.
             have = lookup(ns, name)
             next if have && !(have.is_a?(UserFunction) && have.pasted && @own_includes&.dig(ns)&.include?(mod))
+            # A module function stays M's (Ruby runs it with M as self): its unqualified calls mean M's names.
+            next (@functions[ns] ||= {})[name] = fn if fn.module_function
             (@functions[ns] ||= {})[name] = fn.dup.tap do |c|
               c.namespace = ns
               c.origin = mod
