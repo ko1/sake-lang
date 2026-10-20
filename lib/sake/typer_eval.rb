@@ -767,6 +767,31 @@ module Sake
         return xs.size == 4 ? index_set(o, xs[0], xs[1], lit, xs[3], xs[2]) : index_set(o, xs[0], xs[1], lit, xs[2])
       end
       args = arg_types(n.args, env)
+      overlay = init_overlay_for_call(env, n)
+      return with_init_overlay(overlay) { call_after_args(n, env, args, o) } if overlay
+      call_after_args(n, env, args, o)
+    end
+
+    # While initialize passes the new instance to a function, the function reads the fields as they are at that
+    # point (as when it runs), besides what they ever hold: else a field it reads is still empty, the call never
+    # returns, and nothing after the construction is checked. The fields themselves keep what initialize leaves.
+    def init_overlay_for_call(env, n)
+      return nil unless @init_frames&.key?(env.frame) && [CallUser, CallDispatch, CallUnion].include?(n.class)
+      return nil unless n.args.any? { _1.is_a?(LVarGet) && _1.slot.zero? }
+      key = fields_key(@init_site.fetch(env.frame).first)
+      fields = @program.struct_types.fetch(env.frame.fn.namespace).fields.filter_map { |f| (v = env.lookup([:field, f])) && [f, v] }.to_h
+      [key, fields]
+    end
+
+    def with_init_overlay((key, fields))
+      saved = (@init_overlay ||= {})[key]
+      @init_overlay[key] = saved ? saved.merge(fields) { |_, a, b| u(a, b) } : fields
+      yield
+    ensure
+      saved ? @init_overlay[key] = saved : @init_overlay.delete(key)
+    end
+
+    def call_after_args(n, env, args, o)
       init_escape(env, n)
       if n.block.is_a?(BlockPass) # its breaks go to its own call
         given = env.frame&.block
@@ -943,7 +968,8 @@ module Sake
       return unless @init_frames&.key?(env.frame) && [CallUser, CallDispatch, CallUnion].include?(n.class)
       return unless n.args.any? { _1.is_a?(LVarGet) && _1.slot.zero? }
       dt = env.frame.fn.namespace
-      key = fields_key(@init_site.fetch(env.frame).first) # the new instance's own site
+      me = @init_site.fetch(env.frame)
+      key = fields_key(me.first) # the new instance's own site
       @program.struct_types.fetch(dt).fields.each do |f|
         cur = env.lookup([:field, f]) or next
         read(field_cell(key, f))

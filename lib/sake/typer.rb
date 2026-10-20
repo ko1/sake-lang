@@ -766,6 +766,9 @@ module Sake
         key_args = args.each_with_index.map { |a, i| (ok[i] && (sk = shape_key(a))) ? sk : a }
       end
       key = inst_key(fn, key_args)
+      # Run from initialize with the new instance's fields as they are then (with_init_overlay): another instantiation,
+      # so what it gives does not mix with the calls after the construction.
+      key = [key, :in_initialize, *@init_overlay.keys.map(&:__id__)] if @init_overlay&.any?
       key = (@inst_keys ||= {})[key] ||= key # one object per instantiation: the cell of its result
       @cur_inst&.children&.store(key, true) # also when cached: a pass that uses the result has its effects
       if @in_progress[key] || @done[key]
@@ -1520,7 +1523,7 @@ module Sake
         me
       when *dt.fields # the reader `T.x(v)`: the field of each value's site (a value named by its type: the type's table)
         mine = args[0].select { struct_atom?(_1) && struct_name(_1) == dt.name }
-        u(*mine.map { |a| k = fields_key(a); read(field_cell(k, name)); @fields[k][name] || [] })
+        u(*mine.map { |a| k = fields_key(a); read(field_cell(k, name)); u(@fields[k][name] || [], @init_overlay&.dig(k, name) || []) })
       when /\Aset_(.+)\z/
         field_write(dt.name, $1, args[1], node, atoms: args[0])
         args[1]
