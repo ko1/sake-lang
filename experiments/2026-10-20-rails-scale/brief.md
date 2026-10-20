@@ -73,7 +73,7 @@ operation" (`String.upcase(s)`, not `s.upcase`), and Rails is the most metaprogr
   - Types are on operations: `Array.map(xs) { }`. A chain step continues with the type the chain names last:
     `String.strip(s).downcase` is `String.strip(s).String.downcase`; write the type where the value's type changes
     (`Array.group_by(xs) { }.Hash.keys`).
-  - No keyword arguments at call sites of Sake functions (take a Record `{a: 1}` or a Hash).
+  - Keyword arguments work at call sites of Sake functions (`resources map, :posts, only: Any[:index] do`).
   - `def f = expr` only for short bodies (about 50 characters, no blocks), as in Ruby.
   - A module groups exception classes (`rescue M`).
 - **Breadth over depth, by use.** Port what a Rails app exercises first, with the code paths a typical app runs:
@@ -139,3 +139,60 @@ actionview, actioncontroller, railties) builds on them.
    recognize/generate results with the real gem (`ActionDispatch::Routing::RouteSet.new` runs without an app).
 
 A fifth agent adds the SQLite3 built-in to the interpreter (its own brief).
+
+## Second wave (2026-10-20)
+
+What the first wave built is committed: `sakelib/rails/activesupport/` (notes `rails_activesupport_{a,b}.md`),
+`sakelib/rails/actionpack/action_dispatch/` (`rails_actionpack_dispatch.md`), `sakelib/rails/activerecord/arel`
+and the sqlite3 adapter with `sakelib/rails/activemodel/active_model/type*` (`rails_arel.md`), and the SQLite3
+built-in (`docs/manual/en/ref/SQLite3-Database.md`). Read the notes of the parts you build on before you start.
+
+Lessons from the first wave:
+- **Callbacks**: ActiveSupport::Callbacks keeps the chain as data with method names as Symbols, and the class body's
+  `define_callbacks`/`set_callback` lines live in a declarations file that `generate/active_support.sake` turns into
+  dispatch functions (see `rails_activesupport_b.md`). Build `before_save`, `before_validation`, `before_action`,
+  `around_*`, `after_commit` on it rather than inventing a second mechanism.
+- **No `super`**: keep an overridden body as `super_<name>` and call it (`rails_arel.md`).
+- **Shadowing is silent**: inside `module ActiveModel::Type`, a bare `String` is the type class (write `::String`),
+  and a field named like an included function (`value`) makes a reader that quietly wins. Check names.
+- **Generated code** must not reopen a class the program declares (`def Post.f(p)` instead), because generated
+  source is read before the file with the `generate` line.
+- **Check time is the measurement.** Write Rails' shape. If a check takes more than about 30 s, keep that version as
+  a repro (`bugs/<part>_slow_check_<what>/`, with the timing) before you restructure: the first ActionDispatch
+  Mapper (block-taking scope helpers recursing through `nested { }`) took 2 min 5 s for 30 routes; that shape is
+  what Rails is made of, and the lead is looking at the checker for it.
+- You may split your part among forks of yourself (the ActionDispatch agent did); you remain responsible for the
+  whole part, the notes and the tests.
+
+The parts:
+
+5. **activemodel**: the rest of `activemodel-8.1.3/lib/active_model/` on the ported types: Model, API, the attributes
+   API and AttributeMethods (generated from `attribute :name, :type` declarations), AttributeAssignment, Validations
+   (every validator, `validates`/`validate`/`validates_with`, conditions, contexts) on ActiveSupport::Callbacks,
+   Errors and Error (full messages, details, i18n), Naming, Translation, Conversion, Dirty, Callbacks
+   (define_model_callbacks), Serialization and JSON, SecurePassword (ask for a bcrypt built-in), Validations::Callbacks.
+6. **activerecord** (the model layer; the largest part, split it among forks): Base and its modules as includes (core,
+   model_schema and attributes from the schema through generated code, persistence, querying, Relation with
+   query/finder methods, calculations, spawn/merge, batches, scoping and named scopes, inheritance if reasonable,
+   timestamps, callbacks, validations integration with uniqueness, transactions per record, enum, store, secure_token,
+   counter_cache, readonly, locking optimistic), associations (belongs_to, has_one, has_many, has_many :through,
+   has_and_belongs_to_many, reflection, preloading/includes/eager_load, autosave, dependent, nested attributes,
+   inverse_of), migrations (Migration DSL, Schema.define, the schema dumper, the migrator with schema_migrations),
+   fixtures if time allows. It sits on the committed Arel and sqlite3 adapter (extend them where needed, in their files,
+   with tests). Rails' generated readers (`post.title`, `post.comments`) become generated functions from the schema and
+   the model's declarations; follow the 10-12 framework's experience (`experiments/2026-10-12-web/rails/notes.md`).
+7. **actionview**: template handlers (ERB through Erubi, compiled to Sake functions by generated code, with Rails'
+   strict locals), the LookupContext and file resolver, rendering (templates, partials, collections with counters and
+   spacers, layouts, `yield`/`content_for`/`provide`), and the helpers: tag/content_tag/tag builder, url (link_to,
+   button_to, url_for through ActionDispatch's routes, mail_to, current_page?), form_with/form_for/FormBuilder and
+   form tag helpers, form_options, number, text (pluralize, truncate, simple_format, cycle, highlight, excerpt),
+   date (time_ago_in_words, distance_of_time_in_words, date selects), sanitize (rails-html-sanitizer is Loofah over
+   Nokogiri: write the allowlist sanitizer in Sake or ask), asset tag/url, capture, output safety, translation,
+   record identifier (dom_id), csrf/csp meta tags. Compare HTML with real ActionView, which runs without an app.
+8. **actionpack B: ActionController and AbstractController**: Metal, Base and API with their modules as includes
+   (rendering with ActionView, redirecting, head, StrongParameters, callbacks `before_action`/`around_action` with
+   only/except/if on ActiveSupport::Callbacks, rescue_from, flash, cookies, request forgery protection, MimeResponds
+   `respond_to`, conditional GET/ETag, data streaming `send_data`/`send_file`, HTTP basic/token auth, default headers,
+   instrumentation, ParamsWrapper), on the committed ActionDispatch. The action dispatch `send(action_name)` becomes
+   generated code; ActionController::TestCase / integration tests if time allows.
+9. **built-ins** (the interpreter; the only part that changes `lib/`): see its own brief.
