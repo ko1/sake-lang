@@ -222,3 +222,22 @@ checks fast) are in `git log`; the open checker issues are listed in experiments
     records, flash, csrf_meta_tags); encrypted cookies on OpenSSL::Cipher; ActionController::TestCase if time
     allows. Tests compare full responses (status, headers that matter, body) with real ActionController +
     ActionView on the same templates.
+
+## Fourth wave (2026-10-20): railties
+
+12. **railties**: `railties-8.1.3/lib/rails/` as far as an app needs it: Rails::Application (and Engine/Railtie as far
+    as the app needs), configuration (`config.*` of config/application.rb and config/environments/*.rb), the
+    initializers, Rails.root/env/logger/cache, credentials (encrypted with ActiveSupport::MessageEncryptor),
+    `Rails.application.routes.draw`, the app's boot: one program reads config/, the app's files (Sake has no
+    autoload: the boot lists or globs them) and runs every gem's generators (activerecord's schema+models,
+    actionpack's routes and controllers, actionview's view class and templates) as `generate` steps, so an app is
+    checked as a whole before it serves; the commands of `bin/rails` (server on Rackup/WEBrick, routes, runner,
+    db:migrate, db:rollback, db:schema:load, db:seed, about, middleware); and the generators (`rails new` as far as
+    it is offline, `rails generate scaffold/model/controller/migration/resource`, on sakelib/thor.sake) writing
+    the Sake app files a Rails developer would expect. Then the Rails guide's blog (articles with comments,
+    validations, a layout, flash, authentication with has_secure_password) generated with these generators and
+    finished by hand, served by WEBrick on 127.0.0.1 and a random port, with a run.sh that walks it with curl.
+    If `rails new --skip-bundle` works offline with the installed gems, build the same app in real Rails too and
+    compare the responses (status, headers that matter, body) request by request. Put the app in
+    experiments/2026-10-20-rails-scale/blog/ and the Ruby twin in experiments/2026-10-20-rails-scale/blog_rb/.
+    Measure `bin/sake -c` of the whole app (the time the check takes before serving; several runs).
