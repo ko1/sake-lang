@@ -1572,7 +1572,10 @@ module Sake
     # Inner scope wins: the current namespace, then top-level functions, then Kernel.
     def resolve_unqualified(node, ctx)
       name = node.name.to_s
-      found = (ctx.ns && lookup(ctx.ns, name)) || @functions.dig(nil, name) || @registry.lookup("Kernel", name)
+      own = ctx.ns && lookup(ctx.ns, name)
+      found = own || @functions.dig(nil, name) || @registry.lookup("Kernel", name)
+      # In a mixin, a name the includers define is theirs, as Ruby's call on self finds it before a top-level def.
+      found = nil if !own && ctx.trait && @linearized.any? { |t, l| l.any? { _1[0] == ctx.ns } && lookup(t, name) }
       if found
         @direct_calls << [node, found] if found.is_a?(UserFunction) && !ctx.trait
         return found
