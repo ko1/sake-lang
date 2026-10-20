@@ -196,3 +196,29 @@ The parts:
    instrumentation, ParamsWrapper), on the committed ActionDispatch. The action dispatch `send(action_name)` becomes
    generated code; ActionController::TestCase / integration tests if time allows.
 9. **built-ins** (the interpreter; the only part that changes `lib/`): see its own brief.
+
+## Third wave (2026-10-20): integration
+
+Everything of the first two waves is committed: activesupport, actionpack (ActionDispatch, ActionController,
+AbstractController), actionview, activemodel, activerecord (Arel, the sqlite3 adapter, the model layer), and the
+built-ins (OpenSSL HMAC/KDF/Cipher, throw/catch, Kernel.class_name, NoMethodError, Regexp keys and Regexp[...],
+SQLite3::Statement with column types and total_changes, sakelib/bcrypt.sake, Zlib.crc32). Each part's notes are in
+sakelib/notes/rails_*.md: read those of the parts you integrate, including what they say the next part must do.
+The language fixes since then (include order as Ruby's, a module B includes beats what `B < A` pasted, required
+stubs are fulfilled by pasted functions, `def PostsC.f` inside `module Admin`, *rest with **opts, yield-heavy code
+checks fast) are in `git log`; the open checker issues are listed in experiments/2026-10-20-rails-scale/bugs/.
+
+10. **ActiveRecord on ActiveModel**: replace ActiveRecord's stand-ins (`active_record/stand_in/`) with part 5's
+    ActiveModel (Errors, Validations, AttributeSet/Attribute, Dirty, Callbacks, naming, conversion, serialization;
+    the swap plan is in rails_activerecord.md, the integration requirements in rails_activemodel.md), so one program
+    can require both; use SQLite3::Statement's column types for ActiveRecord::Result as Rails does; replace the
+    first wave's workarounds that built-ins now cover (Sake PBKDF2 in key_generator → OpenSSL::PKCS5, the class-name
+    parsers → Kernel.class_name, ActiveSupport's own NoMethodError → the built-in, ParameterFilter's Any[] →
+    Regexp[], `SELECT total_changes()` → SQLite3::Database.total_changes, MessageEncryptor on OpenSSL::Cipher).
+    All activerecord/activemodel/activesupport tests must still print what Rails prints.
+11. **ActionController on ActionView**: ActionView::Layouts and ActionView::Rendering (controller side), so actions
+    render templates with layouts, partials and `render :edit, status: :unprocessable_entity` as Rails;
+    implicit render of the action's template; helpers in views (url helpers from the RouteSet, form_with with
+    records, flash, csrf_meta_tags); encrypted cookies on OpenSSL::Cipher; ActionController::TestCase if time
+    allows. Tests compare full responses (status, headers that matter, body) with real ActionController +
+    ActionView on the same templates.
